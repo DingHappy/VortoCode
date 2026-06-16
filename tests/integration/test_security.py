@@ -46,11 +46,28 @@ def test_terminal_disabled_by_default(client):
 
 def test_terminal_enabled_via_env(client, monkeypatch):
     monkeypatch.setenv("AUTODEV_ENABLE_SHELL", "1")
-    # 显式给一个必然存在的 workdir（cwd）：默认 state.workdir 是 ~/personal_project，
-    # 在 CI runner 上不存在会导致 subprocess cwd 失败、stdout 为空。
+    # 显式传一个必然存在的 workdir（cwd），与默认值解耦。
     r = client.post("/api/terminal/execute", json={"command": "echo hi", "workdir": "."})
     assert r.status_code == 200
     assert r.json().get("stdout", "").strip() == "hi"
+
+
+def test_terminal_nonexistent_workdir_gives_clear_error(client, monkeypatch):
+    # 真 bug 修复：workdir 不存在时给明确报错，而非 subprocess 闷头失败/空输出。
+    monkeypatch.setenv("AUTODEV_ENABLE_SHELL", "1")
+    r = client.post("/api/terminal/execute",
+                    json={"command": "echo hi", "workdir": "/nonexistent/xyz_123"})
+    assert r.status_code == 200
+    j = r.json()
+    assert j["success"] is False
+    assert "工作目录不存在" in j["error"]
+
+
+def test_default_workdir_is_a_real_directory():
+    # 真 bug 修复：默认 workdir 必须是真实存在的目录（改为 cwd，不再是 ~/personal_project）。
+    from pathlib import Path
+    from src.web.state import state
+    assert Path(state.workdir).is_dir()
 
 
 def test_cloud_sandbox_execute_disabled_by_default(client):

@@ -64,7 +64,8 @@ class AppState:
     def __init__(self):
         self.running = False
         self.goal = ""
-        self.workdir = str(Path.home() / "personal_project")  # 默认工作目录
+        self.workdir = str(Path.cwd())  # 默认工作目录：进程当前目录（总是存在）。
+        # 旧默认 ~/personal_project 在多数环境不存在，会让 terminal/文件等端点失败。
         self.model = "mimo-v2.5"  # 默认模型
         self.auto_approve = False  # 自动批准
         self.tasks: List[Dict[str, Any]] = []

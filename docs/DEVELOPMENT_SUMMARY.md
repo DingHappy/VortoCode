@@ -10,7 +10,7 @@
 | `src/` 子包 | 23 |
 | Python 文件（src） | 106 |
 | 代码行（src） | ~21,900 |
-| 测试 | 153 个用例（集成/契约/安全/回归/编排/闭环/流式/沙箱/检索/自治/增量/长程编码/指标/成本/trace/预算/向量后端/分位/工作区执行/权限闸/生成器/JS-TS AST/浏览器闸/SSRF） |
+| 测试 | 155 个用例（集成/契约/安全/回归/编排/闭环/流式/沙箱/检索/自治/增量/长程编码/指标/成本/trace/预算/向量后端/分位/工作区执行/权限闸/生成器/JS-TS AST/浏览器闸/SSRF/工作目录健壮性） |
 | Web API 路由 | 115（按域拆分到 19 个 router） |
 
 ## 近期新增能力
@@ -81,6 +81,10 @@
   现 **fail-closed**：默认 403，需 `AUTODEV_ENABLE_BROWSER=1`（仿 shell 闸）；navigate 经
   `validate_navigation_url` 仅放行 http/https 且拒绝环回/私有/链路本地/保留 IP
   （挡 `file://`、`127.0.0.1`、`169.254.169.254` 云元数据、内网段）。校验在启动浏览器前完成。
+- **工作目录健壮性**：默认 `state.workdir` 从写死的 `~/personal_project`（多数环境不存在，
+  会让 terminal/文件端点失败）改为进程当前目录 `Path.cwd()`；`/api/terminal/execute` 在
+  `cwd=workdir` 前校验目录存在，不存在给明确报错而非闷头失败。
+  （这是 CI 首跑只在测试层盖住、后来才真正修到产品的健壮性 bug。）
 
 ## 二、已落地（真实可用）
 
@@ -127,7 +131,7 @@
 ## 六、测试
 
 ```bash
-python -m pytest tests/ -q     # 153 passed（无 tree-sitter 时 151 passed, 2 skipped）
+python -m pytest tests/ -q     # 155 passed（无 tree-sitter 时 153 passed, 2 skipped）
 ```
 覆盖：记忆/技能/Hook/分析器单测、真实化 Agent（注入 FakeLLM 离线）、
 编排路由回归、server 路由契约 + WebSocket + 全 GET 无 500、安全（鉴权/执行闸/路径穿越）、
