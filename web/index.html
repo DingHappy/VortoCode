@@ -1,0 +1,1603 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auto-Dev-Crew - AI 软件开发平台</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --bg-hover: #30363d;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --text-muted: #484f58;
+            --accent: #58a6ff;
+            --accent-purple: #a371f7;
+            --success: #3fb950;
+            --warning: #d29922;
+            --error: #f85149;
+            --border: #30363d;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        /* 头部 */
+        .header {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            height: 48px;
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+        }
+        
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 600;
+            font-size: 15px;
+        }
+        
+        .logo-icon {
+            width: 28px;
+            height: 28px;
+            background: linear-gradient(135deg, var(--accent), var(--accent-purple));
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .header-nav {
+            display: flex;
+            margin-left: 32px;
+            gap: 4px;
+        }
+        
+        .nav-item {
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        
+        .nav-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+        .nav-item.active { background: var(--accent); color: #fff; }
+        
+        .header-actions {
+            margin-left: auto;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        
+        .btn {
+            padding: 6px 12px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            font-size: 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.15s;
+        }
+        
+        .btn:hover { background: var(--bg-hover); }
+        .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+        
+        /* 主体布局 */
+        .main {
+            display: flex;
+            height: calc(100vh - 48px);
+        }
+        
+        /* 左侧面板 */
+        .sidebar {
+            width: 56px;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 12px 0;
+            gap: 8px;
+        }
+        
+        .sidebar-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-secondary);
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        
+        .sidebar-icon:hover { background: var(--bg-hover); color: var(--text-primary); }
+        .sidebar-icon.active { background: var(--accent); color: #fff; }
+        
+        /* 工作区 */
+        .workspace {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        /* 输入区 */
+        .input-section {
+            padding: 16px 20px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .input-wrapper {
+            display: flex;
+            gap: 12px;
+        }
+        
+        .input-field {
+            flex: 1;
+            padding: 10px 14px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 14px;
+            outline: none;
+        }
+        
+        .input-field:focus {
+            border-color: var(--accent);
+        }
+        
+        /* 内容区 */
+        .content {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+        
+        /* 视图面板 */
+        .view-panel {
+            display: none;
+            flex: 1;
+            overflow: hidden;
+        }
+        
+        .view-panel.active {
+            display: flex;
+        }
+        
+        /* 主面板 */
+        .main-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+        }
+        
+        /* 消息区 */
+        .messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 16px;
+        }
+        
+        .message {
+            margin-bottom: 16px;
+            animation: fadeIn 0.3s ease;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .message-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+        }
+        
+        .message-avatar {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+        }
+        
+        .message-avatar.user { background: var(--accent); }
+        .message-avatar.agent { background: var(--accent-purple); }
+        
+        .message-content {
+            padding: 10px 12px;
+            background: var(--bg-primary);
+            border-radius: 8px;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+        
+        .message-content pre {
+            background: var(--bg-tertiary);
+            padding: 10px;
+            border-radius: 6px;
+            margin-top: 8px;
+            overflow-x: auto;
+            font-size: 12px;
+        }
+        
+        /* 终端区 */
+        .terminal-section {
+            height: 180px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .terminal-header {
+            padding: 8px 12px;
+            background: var(--bg-tertiary);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 12px;
+        }
+        
+        .terminal-content {
+            flex: 1;
+            padding: 10px;
+            font-family: 'SFMono-Regular', Consolas, monospace;
+            font-size: 12px;
+            line-height: 1.6;
+            overflow-y: auto;
+            background: #000;
+            color: #0f0;
+        }
+        
+        /* 右侧面板 */
+        .right-panel {
+            width: 320px;
+            background: var(--bg-secondary);
+            border-left: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .panel-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .panel-title {
+            font-size: 13px;
+            font-weight: 600;
+        }
+        
+        .panel-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+        }
+        
+        /* 统计区 */
+        .stats-bar {
+            padding: 10px 16px;
+            background: var(--bg-tertiary);
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 16px;
+        }
+        
+        .stat-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        
+        .stat-value {
+            color: var(--text-primary);
+            font-weight: 600;
+        }
+        
+        /* Agent 卡片 */
+        .agent-card {
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 8px;
+        }
+        
+        .agent-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 6px;
+        }
+        
+        .agent-name {
+            font-weight: 600;
+            font-size: 13px;
+        }
+        
+        .agent-status {
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 10px;
+            font-weight: 600;
+        }
+        
+        .status-idle { background: var(--bg-tertiary); color: var(--text-muted); }
+        .status-working { background: rgba(88, 166, 255, 0.2); color: var(--accent); }
+        .status-done { background: rgba(63, 185, 80, 0.2); color: var(--success); }
+        
+        /* 补全弹窗 */
+        .completion-popup {
+            display: none;
+            position: fixed;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 8px;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 1000;
+            min-width: 200px;
+        }
+        
+        .completion-item {
+            padding: 6px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+        }
+        
+        .completion-item:hover { background: var(--bg-hover); }
+        .completion-item.active { background: var(--accent); color: #fff; }
+        
+        .completion-kind {
+            padding: 1px 4px;
+            border-radius: 3px;
+            font-size: 10px;
+            background: var(--bg-tertiary);
+        }
+        
+        /* 错误分析 */
+        .error-card {
+            background: var(--bg-primary);
+            border: 1px solid var(--error);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 8px;
+        }
+        
+        .error-title {
+            color: var(--error);
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+        
+        .error-suggestions {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+        
+        .suggestion-item {
+            padding: 4px 0;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .suggestion-item::before {
+            content: "•";
+            color: var(--accent);
+        }
+        
+        /* 项目管理 */
+        .project-selector {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 4px 8px;
+            background: var(--bg-tertiary);
+            border-radius: 6px;
+            font-size: 12px;
+            cursor: pointer;
+            margin-right: 16px;
+        }
+        
+        .project-selector:hover {
+            background: var(--bg-hover);
+        }
+        
+        .project-name {
+            max-width: 150px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        .project-badge {
+            padding: 1px 6px;
+            background: var(--accent);
+            color: #fff;
+            border-radius: 10px;
+            font-size: 10px;
+        }
+        
+        /* 项目列表 */
+        .project-list {
+            padding: 12px;
+        }
+        
+        .project-card {
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+        
+        .project-card:hover {
+            border-color: var(--accent);
+        }
+        
+        .project-card.active {
+            border-color: var(--accent);
+            background: rgba(88, 166, 255, 0.1);
+        }
+        
+        .project-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 6px;
+        }
+        
+        .project-title {
+            font-weight: 600;
+            font-size: 13px;
+        }
+        
+        .project-path {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-family: monospace;
+        }
+        
+        .project-stats {
+            display: flex;
+            gap: 12px;
+            margin-top: 8px;
+            font-size: 11px;
+            color: var(--text-secondary);
+        }
+        
+        .project-stat {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        
+        /* 滚动条 */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--bg-hover); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+    </style>
+</head>
+<body>
+    <!-- 头部 -->
+    <header class="header">
+        <div class="logo">
+            <div class="logo-icon"><i class="fas fa-robot"></i></div>
+            <span>Auto-Dev-Crew</span>
+        </div>
+        
+        <!-- 项目选择器 -->
+        <div class="project-selector" onclick="toggleProjectPanel()">
+            <i class="fas fa-folder"></i>
+            <span class="project-name" id="currentProject">选择项目</span>
+            <i class="fas fa-chevron-down" style="font-size: 10px;"></i>
+        </div>
+        
+        <nav class="header-nav">
+            <div class="nav-item active" onclick="switchView('chat')">对话</div>
+            <div class="nav-item" onclick="switchView('sessions')">会话</div>
+            <div class="nav-item" onclick="switchView('skills')">技能</div>
+            <div class="nav-item" onclick="switchView('agents')">Agent</div>
+        </nav>
+        
+        <div class="header-actions">
+            <button class="btn" onclick="clearChat()"><i class="fas fa-trash"></i> 清空</button>
+            <button class="btn btn-primary" onclick="exportChat()"><i class="fas fa-download"></i> 导出</button>
+        </div>
+    </header>
+    
+    <!-- 主体 -->
+    <div class="main">
+        <!-- 侧边栏 -->
+        <aside class="sidebar">
+            <div class="sidebar-icon active" title="对话" onclick="switchView('chat')">
+                <i class="fas fa-comment"></i>
+            </div>
+            <div class="sidebar-icon" title="项目" onclick="switchView('projects')">
+                <i class="fas fa-folder-open"></i>
+            </div>
+            <div class="sidebar-icon" title="会话" onclick="switchView('sessions')">
+                <i class="fas fa-history"></i>
+            </div>
+            <div class="sidebar-icon" title="技能" onclick="switchView('skills')">
+                <i class="fas fa-magic"></i>
+            </div>
+            <div class="sidebar-icon" title="Agent" onclick="switchView('agents')">
+                <i class="fas fa-users"></i>
+            </div>
+            <div class="sidebar-icon" title="设置" onclick="switchView('settings')">
+                <i class="fas fa-cog"></i>
+            </div>
+        </aside>
+        
+        <!-- 工作区 -->
+        <div class="workspace">
+            <!-- 输入区 -->
+            <div class="input-section">
+                <div class="input-wrapper">
+                    <input type="text" class="input-field" id="goalInput" 
+                           placeholder="描述你想要开发的功能..."
+                           onkeydown="if(event.key==='Enter')sendMessage()">
+                    <button class="btn btn-primary" onclick="sendMessage()">
+                        <i class="fas fa-paper-plane"></i> 发送
+                    </button>
+                </div>
+            </div>
+            
+            <!-- 内容区 -->
+            <div class="content">
+                <!-- 对话视图 -->
+                <div class="view-panel active" id="chatView">
+                    <!-- 主面板 -->
+                    <div class="main-panel">
+                        <!-- 消息区 -->
+                        <div class="messages" id="messages">
+                            <div class="message">
+                                <div class="message-header">
+                                    <div class="message-avatar agent"><i class="fas fa-robot"></i></div>
+                                    <span>Auto-Dev-Crew</span>
+                                </div>
+                                <div class="message-content">
+                                    👋 你好！我是 Auto-Dev-Crew，一个多 Agent 协作开发平台。<br><br>
+                                    <strong>核心功能：</strong><br>
+                                    • 🤖 多 Agent 协作<br>
+                                    • 📝 代码理解与编辑<br>
+                                    • 🔍 语义搜索<br>
+                                    • 🧪 沙箱执行<br>
+                                    • 🌐 浏览器自动化<br><br>
+                                    试试输入：<em>"创建一个用户认证系统"</em>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- 终端区 -->
+                        <div class="terminal-section">
+                            <div class="terminal-header">
+                                <span><i class="fas fa-terminal"></i> 终端</span>
+                                <button class="btn" style="padding: 2px 6px; font-size: 11px;" onclick="clearTerminal()">清空</button>
+                            </div>
+                            <div class="terminal-content" id="terminal">
+                                <div>$ ready</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 右侧面板 -->
+                    <div class="right-panel">
+                        <div class="panel-header">
+                            <span class="panel-title">Agent 状态</span>
+                        </div>
+                        
+                        <div class="panel-content">
+                            <!-- Agent 列表 -->
+                            <div class="agent-card">
+                                <div class="agent-header">
+                                    <span class="agent-name">🤖 Product Agent</span>
+                                    <span class="agent-status status-idle">待命</span>
+                                </div>
+                                <div style="font-size: 11px; color: var(--text-secondary);">需求分析师</div>
+                            </div>
+                            
+                            <div class="agent-card">
+                                <div class="agent-header">
+                                    <span class="agent-name">🏗️ Architect Agent</span>
+                                    <span class="agent-status status-idle">待命</span>
+                                </div>
+                                <div style="font-size: 11px; color: var(--text-secondary);">架构师</div>
+                            </div>
+                            
+                            <div class="agent-card">
+                                <div class="agent-header">
+                                    <span class="agent-name">💻 Developer Agent</span>
+                                    <span class="agent-status status-idle">待命</span>
+                                </div>
+                                <div style="font-size: 11px; color: var(--text-secondary);">开发工程师</div>
+                            </div>
+                            
+                            <div class="agent-card">
+                                <div class="agent-header">
+                                    <span class="agent-name">🧪 Tester Agent</span>
+                                    <span class="agent-status status-idle">待命</span>
+                                </div>
+                                <div style="font-size: 11px; color: var(--text-secondary);">测试工程师</div>
+                            </div>
+                            
+                            <div class="agent-card">
+                                <div class="agent-header">
+                                    <span class="agent-name">🔍 Reviewer Agent</span>
+                                    <span class="agent-status status-idle">待命</span>
+                                </div>
+                                <div style="font-size: 11px; color: var(--text-secondary);">代码审查员</div>
+                            </div>
+                        </div>
+                        
+                        <!-- 统计 -->
+                        <div class="stats-bar">
+                            <div class="stat-item">
+                                <i class="fas fa-tasks"></i>
+                                <span>任务: <span class="stat-value" id="taskCount">0</span></span>
+                            </div>
+                            <div class="stat-item">
+                                <i class="fas fa-coins"></i>
+                                <span>Tokens: <span class="stat-value" id="tokenCount">0</span></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 项目视图 -->
+                <div class="view-panel" id="projectsView" style="display: none;">
+                    <div style="padding: 20px; flex: 1; overflow-y: auto;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                            <h2 style="font-size: 20px;">📁 项目管理</h2>
+                            <button class="btn btn-primary" onclick="addProject()">
+                                <i class="fas fa-plus"></i> 添加项目
+                            </button>
+                        </div>
+                        <div id="projectList" class="project-list">
+                            <!-- 项目列表会动态生成 -->
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 会话视图 -->
+                <div class="view-panel" id="sessionsView" style="display: none;">
+                    <div style="padding: 20px; flex: 1; overflow-y: auto;">
+                        <h2 style="font-size: 20px; margin-bottom: 20px;">💬 会话历史</h2>
+                        <div id="sessionList">
+                            <div style="text-align: center; color: var(--text-muted); padding: 40px;">
+                                暂无会话历史
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 技能视图 -->
+                <div class="view-panel" id="skillsView" style="display: none;">
+                    <div style="padding: 20px; flex: 1; overflow-y: auto;">
+                        <h2 style="font-size: 20px; margin-bottom: 20px;">✨ 技能库</h2>
+                        <div id="skillList" class="skills-grid">
+                            <!-- 技能列表会动态生成 -->
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Agent 视图 -->
+                <div class="view-panel" id="agentsView" style="display: none;">
+                    <div style="padding: 20px; flex: 1; overflow-y: auto;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                            <h2 style="font-size: 20px;">🤖 Agent 管理</h2>
+                            <button class="btn btn-primary" onclick="showCreateAgentModal()">
+                                <i class="fas fa-plus"></i> 创建 Agent
+                            </button>
+                        </div>
+                        
+                        <!-- 自定义 Agent 列表 -->
+                        <div style="margin-bottom: 24px;">
+                            <h3 style="font-size: 16px; margin-bottom: 12px; color: var(--text-secondary);">
+                                <i class="fas fa-user-cog"></i> 自定义 Agent
+                            </h3>
+                            <div id="customAgentList">
+                                <!-- 自定义 Agent 列表会动态生成 -->
+                            </div>
+                        </div>
+                        
+                        <!-- Agent 模板 -->
+                        <div>
+                            <h3 style="font-size: 16px; margin-bottom: 12px; color: var(--text-secondary);">
+                                <i class="fas fa-clipboard-list"></i> Agent 模板
+                                <span style="font-size: 12px; margin-left: 8px; color: var(--text-muted);">点击创建</span>
+                            </h3>
+                            <div id="agentTemplateList" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px;">
+                                <!-- Agent 模板列表会动态生成 -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 创建 Agent 模态框 -->
+                <div id="createAgentModal" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+                    <div style="background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 12px; padding: 24px; width: 500px; max-height: 80vh; overflow-y: auto;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                            <h3 style="font-size: 18px;">创建自定义 Agent</h3>
+                            <button class="btn" onclick="hideCreateAgentModal()" style="padding: 4px 8px;">✕</button>
+                        </div>
+                        
+                        <div style="margin-bottom: 16px;">
+                            <label style="display: block; font-size: 13px; margin-bottom: 6px; color: var(--text-secondary);">名称</label>
+                            <input type="text" id="agentName" class="input-field" placeholder="例如：API 专家" style="width: 100%;">
+                        </div>
+                        
+                        <div style="margin-bottom: 16px;">
+                            <label style="display: block; font-size: 13px; margin-bottom: 6px; color: var(--text-secondary);">角色</label>
+                            <select id="agentRole" class="input-field" style="width: 100%;">
+                                <option value="custom">自定义</option>
+                                <option value="developer">开发工程师</option>
+                                <option value="tester">测试工程师</option>
+                                <option value="reviewer">审查员</option>
+                                <option value="architect">架构师</option>
+                                <option value="product">产品经理</option>
+                            </select>
+                        </div>
+                        
+                        <div style="margin-bottom: 16px;">
+                            <label style="display: block; font-size: 13px; margin-bottom: 6px; color: var(--text-secondary);">描述</label>
+                            <input type="text" id="agentDescription" class="input-field" placeholder="这个 Agent 擅长什么" style="width: 100%;">
+                        </div>
+                        
+                        <div style="margin-bottom: 16px;">
+                            <label style="display: block; font-size: 13px; margin-bottom: 6px; color: var(--text-secondary);">系统提示词</label>
+                            <textarea id="agentPrompt" class="input-field" placeholder="定义 Agent 的行为和能力..." style="width: 100%; min-height: 100px; resize: vertical;"></textarea>
+                        </div>
+                        
+                        <div style="display: flex; justify-content: flex-end; gap: 8px;">
+                            <button class="btn" onclick="hideCreateAgentModal()">取消</button>
+                            <button class="btn btn-primary" onclick="createCustomAgent()">创建</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 补全弹窗 -->
+    <div class="completion-popup" id="completionPopup"></div>
+    
+    <script>
+        // 状态管理
+        const state = {
+            running: false,
+            tasks: [],
+            messages: [],
+            currentView: 'chat',
+            currentSession: null
+        };
+        
+        // WebSocket
+        let ws = null;
+        
+        function connectWebSocket() {
+            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${location.host}/ws`);
+            
+            ws.onopen = () => addTerminal('Connected to server');
+            ws.onmessage = (e) => handleMessage(JSON.parse(e.data));
+            ws.onclose = () => setTimeout(connectWebSocket, 3000);
+        }
+        
+        function handleMessage(msg) {
+            switch (msg.type) {
+                case 'execution_started':
+                    resetTimeline();
+                    addMessage('agent', `🚀 开始: ${msg.data.goal}`);
+                    break;
+                case 'task_started':
+                    _streamEl = null;
+                    addMessage('agent', `🤖 ${msg.data.agent} 开始执行: ${msg.data.task.title}`);
+                    break;
+                case 'task_completed':
+                    _streamEl = null;
+                    addMessage('agent', `✓ ${msg.data.task.title} 完成`);
+                    break;
+                case 'task_failed':
+                    _streamEl = null;
+                    addMessage('agent', `✗ ${msg.data.task.title} 失败: ${msg.data.error || ''}`);
+                    break;
+                case 'dev_iteration': {
+                    _streamEl = null;
+                    const d = msg.data || {};
+                    renderIteration(d);     // 时间线卡片
+                    addTerminal(`[迭代 ${d.iteration}] tests_passed=${d.tests_passed} verdict=${d.review_verdict}`,
+                                d.tests_passed ? 'success' : 'error');
+                    break;
+                }
+                case 'execution_completed':
+                    _streamEl = null;
+                    markTimelineDone(msg.data);
+                    addMessage('agent', `🏁 完成（进度 ${msg.data.progress}%，迭代 ${msg.data.iterations} 轮）`);
+                    break;
+                case 'token':
+                    appendStreamToken(msg.data.role, msg.data.text);
+                    break;
+                case 'log':
+                    addTerminal(msg.data.message);
+                    break;
+            }
+        }
+        
+        // 视图切换
+        function switchView(view) {
+            state.currentView = view;
+            
+            // 更新导航栏高亮
+            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+            document.querySelectorAll('.sidebar-icon').forEach(i => i.classList.remove('active'));
+            
+            document.querySelector(`.nav-item[onclick*="${view}"]`)?.classList.add('active');
+            document.querySelector(`.sidebar-icon[onclick*="${view}"]`)?.classList.add('active');
+            
+            // 隐藏所有视图面板
+            document.querySelectorAll('.view-panel').forEach(panel => {
+                panel.style.display = 'none';
+                panel.classList.remove('active');
+            });
+            
+            // 显示对应的视图面板
+            const viewPanel = document.getElementById(`${view}View`);
+            if (viewPanel) {
+                viewPanel.style.display = 'flex';
+                viewPanel.classList.add('active');
+            }
+            
+            // 加载视图数据
+            switch(view) {
+                case 'projects':
+                    loadProjectList();
+                    break;
+                case 'skills':
+                    loadSkillList();
+                    break;
+                case 'agents':
+                    loadAgentList();
+                    break;
+                case 'sessions':
+                    loadSessionList();
+                    break;
+            }
+        }
+        
+        // 发送消息
+        async function sendMessage() {
+            const input = document.getElementById('goalInput');
+            const message = input.value.trim();
+            if (!message) return;
+            
+            addMessage('user', message);
+            input.value = '';
+            
+            // 调用 API
+            try {
+                const response = await fetch('/api/goal', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({goal: message})
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    await fetch('/api/start', {method: 'POST'});
+                    addTerminal(`Starting: ${message}`);
+                    addMessage('agent', '好的，我来帮你完成这个任务...');
+                }
+            } catch (e) {
+                addTerminal(`Error: ${e.message}`, 'error');
+            }
+        }
+        
+        // 添加消息
+        function addMessage(type, content) {
+            const messages = document.getElementById('messages');
+            const time = new Date().toLocaleTimeString();
+            
+            const html = `
+                <div class="message">
+                    <div class="message-header">
+                        <div class="message-avatar ${type}">
+                            <i class="fas ${type === 'user' ? 'fa-user' : 'fa-robot'}"></i>
+                        </div>
+                        <span>${type === 'user' ? '你' : 'Agent'}</span>
+                        <span style="font-size: 11px; color: var(--text-muted); margin-left: auto;">${time}</span>
+                    </div>
+                    <div class="message-content">${content}</div>
+                </div>
+            `;
+            
+            messages.insertAdjacentHTML('beforeend', html);
+            messages.scrollTop = messages.scrollHeight;
+        }
+        
+        // 添加终端
+        function addTerminal(text, type = 'info') {
+            const terminal = document.getElementById('terminal');
+            const color = type === 'error' ? '#f00' : type === 'success' ? '#0f0' : '#0f0';
+            terminal.insertAdjacentHTML('beforeend', 
+                `<div style="color: ${color}">${text}</div>`
+            );
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+
+        // 流式 token：在终端区域以一个持续追加的行显示
+        let _streamEl = null;
+        function appendStreamToken(role, text) {
+            const terminal = document.getElementById('terminal');
+            if (!terminal) return;
+            if (!_streamEl) {
+                _streamEl = document.createElement('div');
+                _streamEl.style.color = '#6cf';
+                _streamEl.dataset.role = role || '';
+                terminal.appendChild(_streamEl);
+            }
+            _streamEl.textContent += text;
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+
+        // 独立的迭代开发时间线面板（右侧固定，可关闭）
+        function _devPanelBody() {
+            let panel = document.getElementById('devPanel');
+            if (!panel) {
+                panel = document.createElement('div');
+                panel.id = 'devPanel';
+                panel.style.cssText = 'position:fixed;top:64px;right:16px;width:340px;max-height:72vh;overflow:auto;z-index:9999;background:#11151c;border:1px solid #2a3340;border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.45);font-size:13px;color:#ddd;';
+                panel.innerHTML =
+                    '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid #2a3340;position:sticky;top:0;background:#11151c;">' +
+                      '<span style="font-weight:700;color:#6cf;">🔁 迭代开发闭环</span>' +
+                      '<span style="cursor:pointer;color:#888;" title="关闭" ' +
+                        'onclick="document.getElementById(\'devPanel\').style.display=\'none\'">✕</span>' +
+                    '</div>' +
+                    '<div id="devPanelStatus" style="padding:6px 12px;color:#aaa;"></div>' +
+                    '<div id="devPanelBody" style="padding:0 12px 12px;"></div>';
+                document.body.appendChild(panel);
+            }
+            panel.style.display = 'block';
+            return document.getElementById('devPanelBody');
+        }
+        function resetTimeline() {                      // execution_started：显示并清空
+            const body = _devPanelBody();
+            body.innerHTML = '';
+            const st = document.getElementById('devPanelStatus');
+            if (st) st.textContent = '运行中…';
+        }
+        function renderIteration(d) {                   // dev_iteration：追加卡片
+            const body = _devPanelBody();
+            const ok = !!d.tests_passed, approved = d.review_verdict === 'approve';
+            const card = document.createElement('div');
+            card.style.cssText = 'padding:8px;margin:6px 0;border-radius:8px;background:rgba(255,255,255,.03);border-left:3px solid ' + (ok && approved ? '#2a7' : '#a72') + ';';
+            card.innerHTML =
+                '<div style="font-weight:600;margin-bottom:4px;">第 ' + (d.iteration || '?') + ' 轮</div>' +
+                '<span style="padding:1px 7px;border-radius:10px;color:#fff;font-size:12px;margin-right:6px;background:' + (ok ? '#2a7' : '#a33') + ';">' + (ok ? '测试通过' : '测试未过') + '</span>' +
+                '<span style="padding:1px 7px;border-radius:10px;color:#fff;font-size:12px;background:' + (approved ? '#2a7' : '#a72') + ';">' + (approved ? '审查通过' : ('审查:' + (d.review_verdict || '?'))) + '</span>' +
+                (d.test_summary ? ('<div style="color:#888;font-size:12px;margin-top:4px;">' + d.test_summary + '</div>') : '');
+            body.appendChild(card);
+            if (body.parentElement) body.parentElement.scrollTop = body.parentElement.scrollHeight;
+        }
+        function markTimelineDone(data) {               // execution_completed：收尾
+            const st = document.getElementById('devPanelStatus');
+            if (st) st.textContent = '🏁 完成 — 进度 ' + (data.progress || 0) + '%，' + (data.iterations || 0) + ' 轮';
+        }
+
+        // ============ 指标 / 成本 仪表盘 ============
+        let _metricsTimer = null;
+        function _metricsPanel() {
+            let p = document.getElementById('metricsPanel');
+            if (!p) {
+                p = document.createElement('div');
+                p.id = 'metricsPanel';
+                p.style.cssText = 'position:fixed;left:16px;bottom:64px;width:300px;max-height:60vh;overflow:auto;z-index:9998;background:#11151c;border:1px solid #2a3340;border-radius:10px;box-shadow:0 8px 28px rgba(0,0,0,.45);font-size:13px;color:#ddd;display:none;';
+                p.innerHTML =
+                    '<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid #2a3340;">' +
+                      '<span style="font-weight:700;color:#6cf;">📊 指标 / 成本</span>' +
+                      '<span style="cursor:pointer;color:#888;" onclick="toggleMetrics()">✕</span></div>' +
+                    '<div style="padding:8px 12px;"><div style="color:#6cf;font-weight:600;margin-bottom:4px;">成本</div><div id="metricsCost"></div>' +
+                    '<div style="color:#6cf;font-weight:600;margin:8px 0 4px;">计数器</div><div id="metricsCounters"></div>' +
+                    '<div style="color:#6cf;font-weight:600;margin:8px 0 4px;">延迟 (avg / p95)</div><div id="metricsTimers"></div></div>';
+                document.body.appendChild(p);
+            }
+            return p;
+        }
+        function _renderKV(obj) {
+            let html = '';
+            for (const k in (obj || {})) {
+                const v = obj[k];
+                if (typeof v === 'number') {
+                    html += '<div style="display:flex;justify-content:space-between;gap:8px;">' +
+                            '<span style="color:#9ab;word-break:break-all;">' + k + '</span>' +
+                            '<span>' + (Number.isInteger(v) ? v : v.toFixed(5)) + '</span></div>';
+                }
+            }
+            return html || '<div style="color:#666;">（暂无）</div>';
+        }
+        function _renderTimers(obj) {
+            let html = '';
+            for (const k in (obj || {})) {
+                const t = obj[k];
+                if (t && typeof t.avg === 'number') {
+                    html += '<div style="display:flex;justify-content:space-between;gap:8px;">' +
+                            '<span style="color:#9ab;word-break:break-all;">' + k + '</span>' +
+                            '<span>' + t.avg.toFixed(3) + ' / ' + (t.p95 || 0).toFixed(3) + '</span></div>';
+                }
+            }
+            return html || '<div style="color:#666;">（暂无）</div>';
+        }
+        async function refreshMetrics() {
+            try {
+                const m = await (await fetch('/api/monitoring/metrics')).json();
+                document.getElementById('metricsCounters').innerHTML = _renderKV((m.metrics || {}).counters);
+                document.getElementById('metricsTimers').innerHTML = _renderTimers((m.metrics || {}).timers);
+            } catch (e) { /* ignore */ }
+            try {
+                const c = await (await fetch('/api/cost/report?period=all')).json();
+                document.getElementById('metricsCost').innerHTML = _renderKV(c);
+            } catch (e) { /* ignore */ }
+        }
+        function toggleMetrics() {
+            const p = _metricsPanel();
+            const open = p.style.display === 'none';
+            p.style.display = open ? 'block' : 'none';
+            if (open) { refreshMetrics(); _metricsTimer = setInterval(refreshMetrics, 3000); }
+            else if (_metricsTimer) { clearInterval(_metricsTimer); _metricsTimer = null; }
+        }
+        (function _ensureMetricsButton() {
+            const add = () => {
+                if (document.getElementById('metricsBtn')) return;
+                const btn = document.createElement('div');
+                btn.id = 'metricsBtn';
+                btn.textContent = '📊';
+                btn.title = '指标 / 成本';
+                btn.style.cssText = 'position:fixed;left:16px;bottom:16px;z-index:9998;width:40px;height:40px;border-radius:50%;background:#1b2330;border:1px solid #2a3340;color:#6cf;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:18px;';
+                btn.onclick = toggleMetrics;
+                document.body.appendChild(btn);
+            };
+            if (document.body) add(); else document.addEventListener('DOMContentLoaded', add);
+        })();
+
+        // 清空终端
+        function clearTerminal() {
+            document.getElementById('terminal').innerHTML = '';
+        }
+        
+        // 清空聊天
+        function clearChat() {
+            document.getElementById('messages').innerHTML = '';
+        }
+        
+        // 导出聊天
+        function exportChat() {
+            const messages = document.getElementById('messages').innerText;
+            const blob = new Blob([messages], {type: 'text/plain'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'chat-export.txt';
+            a.click();
+        }
+        
+        // 项目管理
+        let projects = [];
+        let currentProjectId = null;
+        
+        // 加载项目列表
+        async function loadProjectList() {
+            try {
+                const response = await fetch('/api/projects');
+                const data = await response.json();
+                projects = data.projects || [];
+                
+                const container = document.getElementById('projectList');
+                if (projects.length === 0) {
+                    container.innerHTML = `
+                        <div style="text-align: center; color: var(--text-muted); padding: 40px;">
+                            <i class="fas fa-folder-open" style="font-size: 48px; margin-bottom: 16px; opacity: 0.3;"></i>
+                            <p>暂无项目，点击上方按钮添加</p>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                container.innerHTML = projects.map(p => `
+                    <div class="project-card ${p.is_active ? 'active' : ''}" onclick="switchToProject('${p.id}')">
+                        <div class="project-header">
+                            <span class="project-title">${p.name}</span>
+                            ${p.is_active ? '<span class="project-badge">活跃</span>' : ''}
+                        </div>
+                        <div class="project-path">${p.path}</div>
+                        ${p.description ? `<div style="font-size: 12px; color: var(--text-secondary); margin-top: 4px;">${p.description}</div>` : ''}
+                        <div class="project-stats">
+                            <span class="project-stat"><i class="fas fa-tasks"></i> ${p.stats?.tasks_completed || 0} 任务</span>
+                            <span class="project-stat"><i class="fas fa-coins"></i> ${p.stats?.tokens_used || 0} Tokens</span>
+                            <span class="project-stat"><i class="fas fa-file"></i> ${p.stats?.files_modified || 0} 文件</span>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (e) {
+                console.error('Failed to load projects:', e);
+            }
+        }
+        
+        // 加载技能列表
+        async function loadSkillList() {
+            try {
+                const response = await fetch('/api/skills');
+                const data = await response.json();
+                const skills = data.skills || [];
+                
+                const container = document.getElementById('skillList');
+                if (skills.length === 0) {
+                    container.innerHTML = `
+                        <div style="text-align: center; color: var(--text-muted); padding: 40px; grid-column: 1 / -1;">
+                            <i class="fas fa-magic" style="font-size: 48px; margin-bottom: 16px; opacity: 0.3;"></i>
+                            <p>暂无技能</p>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                const icons = {
+                    'review': 'fa-search',
+                    'testing': 'fa-flask',
+                    'development': 'fa-code',
+                    'documentation': 'fa-book',
+                    'architecture': 'fa-drafting-compass',
+                    'general': 'fa-magic'
+                };
+                
+                container.innerHTML = skills.map(skill => `
+                    <div class="skill-card" onclick="executeSkill('${skill.name}')">
+                        <div class="skill-card-header">
+                            <div class="skill-icon">
+                                <i class="fas ${icons[skill.category] || 'fa-magic'}"></i>
+                            </div>
+                            <span class="skill-name">${skill.name}</span>
+                        </div>
+                        <div class="skill-desc">${skill.description}</div>
+                        <div class="skill-tags">
+                            ${skill.capabilities.slice(0, 2).map(c => `<span class="skill-tag">${c}</span>`).join('')}
+                        </div>
+                    </div>
+                `).join('');
+            } catch (e) {
+                console.error('Failed to load skills:', e);
+            }
+        }
+        
+        // 加载 Agent 列表
+        async function loadAgentList() {
+            try {
+                // 加载模板
+                const templatesResponse = await fetch('/api/agents/templates');
+                const templatesData = await templatesResponse.json();
+                const templates = templatesData.templates || [];
+                
+                // 加载自定义 Agent
+                const customResponse = await fetch('/api/agents/custom');
+                const customData = await customResponse.json();
+                const customAgents = customData.agents || [];
+                
+                // 渲染自定义 Agent 列表
+                const customContainer = document.getElementById('customAgentList');
+                if (customAgents.length === 0) {
+                    customContainer.innerHTML = `
+                        <div style="text-align: center; color: var(--text-muted); padding: 20px; background: var(--bg-primary); border-radius: 8px; border: 1px dashed var(--border);">
+                            <p>暂无自定义 Agent，点击上方按钮创建</p>
+                        </div>
+                    `;
+                } else {
+                    customContainer.innerHTML = customAgents.map(agent => `
+                        <div class="agent-card" style="margin-bottom: 8px;">
+                            <div class="agent-header">
+                                <span class="agent-name">${agent.name}</span>
+                                <div style="display: flex; gap: 6px;">
+                                    <span class="agent-status ${agent.is_active ? 'status-working' : 'status-idle'}">
+                                        ${agent.is_active ? '活跃' : '停用'}
+                                    </span>
+                                    <button class="btn" style="padding: 2px 6px; font-size: 11px;" onclick="toggleAgent('${agent.id}', ${!agent.is_active})">
+                                        ${agent.is_active ? '停用' : '激活'}
+                                    </button>
+                                    <button class="btn" style="padding: 2px 6px; font-size: 11px; color: var(--error);" onclick="deleteAgent('${agent.id}')">
+                                        删除
+                                    </button>
+                                </div>
+                            </div>
+                            <div style="font-size: 11px; color: var(--text-secondary); margin-top: 4px;">
+                                ${agent.description || agent.role}
+                            </div>
+                            <div style="display: flex; gap: 4px; margin-top: 6px;">
+                                ${agent.capabilities.slice(0, 3).map(c => `<span class="skill-tag">${c}</span>`).join('')}
+                            </div>
+                        </div>
+                    `).join('');
+                }
+                
+                // 渲染模板列表
+                const templateContainer = document.getElementById('agentTemplateList');
+                const icons = {
+                    'fa-code': 'fa-code',
+                    'fa-palette': 'fa-palette',
+                    'fa-server': 'fa-server',
+                    'fa-flask': 'fa-flask',
+                    'fa-shield-alt': 'fa-shield-alt',
+                    'fa-book': 'fa-book',
+                    'fa-cloud': 'fa-cloud',
+                    'fa-tachometer-alt': 'fa-tachometer-alt'
+                };
+                
+                templateContainer.innerHTML = templates.map(t => `
+                    <div class="agent-card" onclick="createFromTemplate('${t.name}')" style="cursor: pointer;">
+                        <div class="agent-header">
+                            <span class="agent-name"><i class="fas ${t.icon || 'fa-robot'}"></i> ${t.name}</span>
+                        </div>
+                        <div style="font-size: 11px; color: var(--text-secondary); margin-top: 4px;">${t.description}</div>
+                        <div style="display: flex; gap: 4px; margin-top: 6px;">
+                            ${t.capabilities.slice(0, 2).map(c => `<span class="skill-tag">${c}</span>`).join('')}
+                        </div>
+                    </div>
+                `).join('');
+                
+            } catch (e) {
+                console.error('Failed to load agents:', e);
+            }
+        }
+        
+        // 创建自定义 Agent
+        async function createCustomAgent() {
+            const name = document.getElementById('agentName').value;
+            const role = document.getElementById('agentRole').value;
+            const description = document.getElementById('agentDescription').value;
+            const systemPrompt = document.getElementById('agentPrompt').value;
+            
+            if (!name) {
+                alert('请输入 Agent 名称');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/agents/custom', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        name,
+                        role,
+                        description,
+                        system_prompt: systemPrompt,
+                        capabilities: [],
+                        tools: ['read_file', 'write_file']
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    hideCreateAgentModal();
+                    loadAgentList();
+                    addTerminal(`Created agent: ${name}`);
+                    addMessage('system', `已创建 Agent: ${name}`);
+                } else {
+                    alert('创建失败: ' + data.error);
+                }
+            } catch (e) {
+                console.error('Failed to create agent:', e);
+                alert('创建失败');
+            }
+        }
+        
+        // 切换 Agent 状态
+        async function toggleAgent(agentId, activate) {
+            try {
+                const action = activate ? 'activate' : 'deactivate';
+                await fetch(`/api/agents/custom/${agentId}/${action}`, {method: 'POST'});
+                loadAgentList();
+                addTerminal(`Agent ${agentId} ${activate ? 'activated' : 'deactivated'}`);
+            } catch (e) {
+                console.error('Failed to toggle agent:', e);
+            }
+        }
+        
+        // 删除 Agent
+        async function deleteAgent(agentId) {
+            if (!confirm('确定要删除这个 Agent 吗？')) return;
+            
+            try {
+                await fetch(`/api/agents/custom/${agentId}`, {method: 'DELETE'});
+                loadAgentList();
+                addTerminal(`Deleted agent: ${agentId}`);
+            } catch (e) {
+                console.error('Failed to delete agent:', e);
+            }
+        }
+        
+        // 显示创建 Agent 模态框
+        function showCreateAgentModal() {
+            document.getElementById('createAgentModal').style.display = 'flex';
+        }
+        
+        // 隐藏创建 Agent 模态框
+        function hideCreateAgentModal() {
+            document.getElementById('createAgentModal').style.display = 'none';
+            // 清空表单
+            document.getElementById('agentName').value = '';
+            document.getElementById('agentDescription').value = '';
+            document.getElementById('agentPrompt').value = '';
+        }
+        
+        // 从模板创建 Agent
+        async function createFromTemplate(templateName) {
+            try {
+                const response = await fetch(`/api/agents/templates/${encodeURIComponent(templateName)}`, {
+                    method: 'POST'
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    addTerminal(`Created agent from template: ${templateName}`);
+                    addMessage('system', `已从模板创建 Agent: ${templateName}`);
+                    loadAgentList();
+                } else {
+                    alert('创建失败: ' + data.error);
+                }
+            } catch (e) {
+                console.error('Failed to create agent:', e);
+            }
+        }
+        
+        // 加载会话列表
+        async function loadSessionList() {
+            try {
+                const response = await fetch('/api/sessions');
+                const data = await response.json();
+                const sessions = data.sessions || [];
+                
+                const container = document.getElementById('sessionList');
+                if (sessions.length === 0) {
+                    container.innerHTML = `
+                        <div style="text-align: center; color: var(--text-muted); padding: 40px;">
+                            <i class="fas fa-history" style="font-size: 48px; margin-bottom: 16px; opacity: 0.3;"></i>
+                            <p>暂无会话历史</p>
+                        </div>
+                    `;
+                    return;
+                }
+                
+                container.innerHTML = sessions.map(s => `
+                    <div class="agent-card" onclick="resumeSession('${s.id}')">
+                        <div class="agent-header">
+                            <span class="agent-name">${s.name || '会话 ' + s.id}</span>
+                            <span style="font-size: 11px; color: var(--text-muted);">${new Date(s.created_at).toLocaleString()}</span>
+                        </div>
+                    </div>
+                `).join('');
+            } catch (e) {
+                console.error('Failed to load sessions:', e);
+            }
+        }
+        
+        // 恢复会话
+        async function resumeSession(sessionId) {
+            try {
+                const response = await fetch(`/api/sessions/${sessionId}/messages`);
+                const data = await response.json();
+                const messages = data.messages || [];
+                
+                // 切换到对话视图
+                switchView('chat');
+                
+                // 清空当前消息
+                document.getElementById('messages').innerHTML = '';
+                
+                // 加载历史消息
+                messages.forEach(msg => {
+                    addMessage(msg.role, msg.content);
+                });
+                
+                addTerminal(`Resumed session: ${sessionId}`);
+            } catch (e) {
+                console.error('Failed to resume session:', e);
+            }
+        }
+        
+        // 执行技能
+        async function executeSkill(skillName) {
+            const args = prompt('输入参数 (JSON 格式，可留空):');
+            
+            try {
+                const response = await fetch('/api/skills/execute', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        skill_name: skillName,
+                        arguments: args ? JSON.parse(args) : {}
+                    })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    // 切换到对话视图显示结果
+                    switchView('chat');
+                    addMessage('agent', data.result);
+                    addTerminal(`Executed skill: ${skillName}`);
+                }
+            } catch (e) {
+                addTerminal(`Error executing skill: ${e.message}`, 'error');
+            }
+        }
+        
+        // 初始化
+        connectWebSocket();
+        loadProjects();
+        
+        // 更新项目选择器
+        function updateProjectSelector() {
+            const selector = document.getElementById('currentProject');
+            if (currentProjectId) {
+                const project = projects.find(p => p.id === currentProjectId);
+                if (project) {
+                    selector.textContent = project.name;
+                }
+            } else {
+                selector.textContent = '选择项目';
+            }
+        }
+        
+        // 切换项目面板
+        function toggleProjectPanel() {
+            // 简单实现：显示项目列表
+            if (projects.length === 0) {
+                addProject();
+            } else {
+                showProjectList();
+            }
+        }
+        
+        // 显示项目列表
+        function showProjectList() {
+            const html = projects.map(p => `
+                <div class="project-card ${p.id === currentProjectId ? 'active' : ''}" 
+                     onclick="switchToProject('${p.id}')">
+                    <div class="project-header">
+                        <span class="project-title">${p.name}</span>
+                        ${p.is_active ? '<span class="project-badge">活跃</span>' : ''}
+                    </div>
+                    <div class="project-path">${p.path}</div>
+                    <div class="project-stats">
+                        <span class="project-stat"><i class="fas fa-tasks"></i> ${p.stats?.tasks_completed || 0}</span>
+                        <span class="project-stat"><i class="fas fa-coins"></i> ${p.stats?.tokens_used || 0}</span>
+                    </div>
+                </div>
+            `).join('');
+            
+            addMessage('system', `
+                <div style="margin-bottom: 12px;">
+                    <strong>项目列表</strong>
+                    <button class="btn" style="float: right; padding: 4px 8px; font-size: 11px;" onclick="addProject()">
+                        <i class="fas fa-plus"></i> 新建
+                    </button>
+                </div>
+                ${html}
+            `);
+        }
+        
+        // 切换项目
+        async function switchToProject(projectId) {
+            try {
+                const response = await fetch(`/api/projects/${projectId}/switch`, {method: 'POST'});
+                const data = await response.json();
+                
+                if (data.success) {
+                    currentProjectId = projectId;
+                    updateProjectSelector();
+                    addTerminal(`Switched to project: ${projectId}`);
+                    addMessage('system', `已切换到项目: ${projects.find(p => p.id === projectId)?.name}`);
+                }
+            } catch (e) {
+                addTerminal(`Error switching project: ${e.message}`, 'error');
+            }
+        }
+        
+        // 添加项目
+        async function addProject() {
+            const name = prompt('项目名称:');
+            if (!name) return;
+            
+            const path = prompt('项目路径 (绝对路径):');
+            if (!path) return;
+            
+            const description = prompt('项目描述 (可选):') || '';
+            
+            try {
+                const response = await fetch('/api/projects', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name, path, description})
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    addTerminal(`Added project: ${name}`);
+                    addMessage('system', `已添加项目: ${name}`);
+                    await loadProjects();
+                    loadProjectList();
+                } else {
+                    addTerminal(`Error: ${data.error}`, 'error');
+                }
+            } catch (e) {
+                addTerminal(`Error adding project: ${e.message}`, 'error');
+            }
+        }
+        
+        // 初始化项目数据
+        async function loadProjects() {
+            try {
+                const response = await fetch('/api/projects');
+                const data = await response.json();
+                projects = data.projects || [];
+                
+                // 更新项目选择器
+                const activeProject = projects.find(p => p.is_active);
+                if (activeProject) {
+                    currentProjectId = activeProject.id;
+                    document.getElementById('currentProject').textContent = activeProject.name;
+                } else if (projects.length > 0) {
+                    currentProjectId = projects[0].id;
+                    document.getElementById('currentProject').textContent = projects[0].name;
+                }
+            } catch (e) {
+                console.error('Failed to load projects:', e);
+            }
+        }
+        
+        // 初始化
+        connectWebSocket();
+        loadProjects();
+    </script>
+</body>
+</html>

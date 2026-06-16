@@ -1,0 +1,76 @@
+# Auto-Dev-Crew 配置文件
+
+# 编排器配置
+orchestrator:
+  mode: "self-orchestration"  # 或 "workflow"
+  max_decomposition_depth: 3
+  max_parallel_tasks: 5
+
+# 任务分析器配置
+task_analyzer:
+  complexity_threshold: "medium"
+
+# Agent 配置
+agents:
+  product:
+    model: "gpt-4o-mini"
+    temperature: 0.3
+  
+  architect:
+    model: "gpt-4o"
+    temperature: 0.5
+  
+  developer:
+    model: "gpt-4o"
+    temperature: 0.7
+  
+  reviewer:
+    model: "gpt-4o"
+    temperature: 0.3
+  
+  tester:
+    model: "gpt-4o-mini"
+    temperature: 0.5
+
+# 记忆系统配置
+memory:
+  short_term:
+    capacity: 100
+  
+  long_term:
+    storage_path: ".auto-dev-crew/memory"
+    enabled: true
+
+# 技能系统配置
+skills:
+  directories:
+    - "skills"
+    - ".auto-dev-crew/skills"
+    - "~/.auto-dev-crew/skills"
+  
+  auto_discovery:
+    enabled: true
+
+# Hook 系统配置
+hooks:
+  enabled: true
+  log_file: ".auto-dev-crew/logs/hooks.log"
+
+# MCP 配置
+mcp:
+  servers:
+    - name: "filesystem"
+      command: "npx"
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+      transport: "stdio"
+
+# Web 服务器配置
+web:
+  host: "0.0.0.0"
+  port: 8000
+  debug: false
+
+# 日志配置
+logging:
+  level: "INFO"
+  file: ".auto-dev-crew/logs/app.log"
