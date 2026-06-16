@@ -73,6 +73,58 @@ def require_shell() -> None:
         )
 
 
+def browser_enabled() -> bool:
+    return os.getenv("AUTODEV_ENABLE_BROWSER", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def require_browser() -> None:
+    """浏览器自动化入口调用；未显式开启则拒绝（fail-closed）。
+
+    浏览器能力可被滥用（SSRF 探内网、读本地文件），与 shell 同样默认禁用。
+    """
+    if not browser_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail=("浏览器自动化已默认禁用。如确需启用，请在可信环境中"
+                    "设置环境变量 AUTODEV_ENABLE_BROWSER=1。"),
+        )
+
+
+def validate_navigation_url(url: str) -> Optional[str]:
+    """校验导航 URL；返回拒绝原因（None=放行）。
+
+    防 SSRF / 本地文件读取：仅允许 http/https，且目标解析出的 IP 不得为
+    环回/私有/链路本地/保留地址（挡 file://、127.0.0.1、169.254.169.254 云元数据、
+    10/172/192 内网等）。
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return "URL 无法解析"
+    if parsed.scheme not in ("http", "https"):
+        return f"仅允许 http/https（拒绝 scheme={parsed.scheme or '空'}）"
+    host = parsed.hostname
+    if not host:
+        return "URL 缺少主机名"
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except Exception:
+        return f"无法解析主机：{host}"
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            continue
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            return f"拒绝访问内网/环回/保留地址：{ip}"
+    return None
+
+
 def ws_token_ok(websocket) -> bool:
     """WebSocket 鉴权：未配置 token 放行，否则校验 ?token= 或 Bearer。"""
     token = get_api_token()
