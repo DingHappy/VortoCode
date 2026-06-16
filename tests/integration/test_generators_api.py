@@ -13,7 +13,56 @@ from src.web.server import app
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.delenv("AUTODEV_API_TOKEN", raising=False)
+    # 去掉 key：端点走确定性回退，断言稳定（本地 .env 有 key 时也不打真网络）
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     return TestClient(app, raise_server_exceptions=False)
+
+
+class _FakeLLM:
+    """注入用：模拟 LLMClient.analyze（prompt→text），不触网。"""
+    def __init__(self, out):
+        self._out = out
+
+    async def analyze(self, prompt, system_prompt=""):
+        return self._out
+
+
+@pytest.mark.asyncio
+async def test_agenerate_tests_uses_llm_when_provided():
+    from src.testing import TestGenerator
+    out = await TestGenerator().agenerate_tests(
+        "def f():\n    return 1\n", "python", "unit",
+        llm_client=_FakeLLM("def test_f():\n    assert f() == 1\n"))
+    assert out == "def test_f():\n    assert f() == 1\n"
+
+
+@pytest.mark.asyncio
+async def test_agenerate_strips_code_fence():
+    from src.testing import TestGenerator
+    out = await TestGenerator().agenerate_tests(
+        "def f(): pass", llm_client=_FakeLLM("```python\nX = 1\n```"))
+    assert out == "X = 1"
+
+
+@pytest.mark.asyncio
+async def test_agenerate_tests_falls_back_on_llm_error():
+    from src.testing import TestGenerator
+
+    class _Boom:
+        async def analyze(self, *a, **k):
+            raise RuntimeError("boom")
+
+    out = await TestGenerator().agenerate_tests(
+        "def add(a, b):\n    return a + b\n", llm_client=_Boom())
+    assert "def test_add" in out  # 回退到确定性骨架
+
+
+@pytest.mark.asyncio
+async def test_agenerate_docs_uses_llm_when_provided():
+    from src.documentation import DocGenerator
+    out = await DocGenerator().agenerate_docs(
+        "def f(): pass", "python", llm_client=_FakeLLM("# LLM 文档"))
+    assert out == "# LLM 文档"
 
 
 def test_docs_generate_python(client):
