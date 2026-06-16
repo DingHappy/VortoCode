@@ -52,6 +52,14 @@
 - **可扩展**: 支持自定义 Hook 类型
 - **审计日志**: 完整的操作记录
 
+### Loop Engineering（循环工程）
+
+- **自动化验证**: 让 Agent 自己验证工作，而不是人工检查
+- **闭环反馈**: 执行→验证→改进→重复
+- **子代理验证**: 使用独立的子代理进行代码审查
+- **持续改进**: 定期检查和优化任务执行
+- **上下文管理**: 智能上下文压缩和优化
+
 ### 性能监控
 
 - **实时指标**: CPU、内存、磁盘、网络使用率
@@ -86,7 +94,7 @@ auto-dev-crew/
 ├── main.py              CLI 入口（run / server / analyze / test / demo）
 ├── src/
 │   ├── agents/          角色化 Agent（product/architect/developer/reviewer/tester，真实 LLM 驱动）
-│   ├── orchestrator/    自我编排引擎（任务分析 / 分解 / 能力匹配 / 失败恢复）
+│   ├── orchestrator/    自我编排引擎（任务分析 / 分解 / 能力匹配 / 失败恢复 / Loop Engineering）
 │   ├── llm/             LLM 客户端（One API 网关，异步 AsyncOpenAI）
 │   ├── web/             FastAPI 服务：server.py 装配 + routers/ 各域路由 + state/schemas/deps/auth
 │   ├── memory/          记忆系统（SQLite 会话 + JSON 长期记忆 + 向量数据库）
@@ -94,10 +102,11 @@ auto-dev-crew/
 │   ├── hooks/           生命周期 Hook
 │   ├── tools/           MCP 工具集成（动态发现 / 权限管理）
 │   ├── monitoring/      性能监控（指标收集 / 仪表盘 / 告警 / 性能分析）
+│   ├── context/         上下文管理（智能压缩 / 优先级管理）
 │   ├── editor/          代码编辑与索引
 │   ├── sandbox/         Docker 沙箱（cloud_sandbox 为非隔离简化执行，默认关闭）
 │   ├── security/        权限 / 审批模型
-│   └── context/ projects/ workspaces/ browser/ github/ templates/ …
+│   └── projects/ workspaces/ browser/ github/ templates/ …
 ├── web/                 控制台前端（原生 HTML/CSS/JS，无构建步骤）
 ├── examples/            使用示例（basic_usage / llm_analysis / real_pipeline …）
 ├── tests/               单元 + 集成测试（含路由契约安全网）

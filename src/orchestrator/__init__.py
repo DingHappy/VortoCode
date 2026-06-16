@@ -26,6 +26,23 @@ from .collaboration import (
     TaskType,
     TaskStatus
 )
+from .verification_loop import (
+    VerificationLoop,
+    VerificationStatus,
+    VerificationResult,
+    VerificationCheck,
+    TestVerificationLoop,
+    CodeReviewVerificationLoop,
+    create_verification_loop
+)
+from .loop_controller import (
+    LoopController,
+    LoopConfig,
+    LoopIteration,
+    PollingLoopController,
+    ContinuousImprovementLoop,
+    create_loop_controller
+)
 
 __all__ = [
     "TaskAnalyzer",
@@ -61,4 +78,17 @@ __all__ = [
     "CollaborationTask",
     "TaskType",
     "TaskStatus",
+    "VerificationLoop",
+    "VerificationStatus",
+    "VerificationResult",
+    "VerificationCheck",
+    "TestVerificationLoop",
+    "CodeReviewVerificationLoop",
+    "create_verification_loop",
+    "LoopController",
+    "LoopConfig",
+    "LoopIteration",
+    "PollingLoopController",
+    "ContinuousImprovementLoop",
+    "create_loop_controller",
 ]
