@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auto-Dev-Crew - 多工作区</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        
+        :root {
+            --bg-primary: #0a0a1a;
+            --bg-secondary: #12122a;
+            --bg-tertiary: #1a1a3a;
+            --bg-card: #1e1e3e;
+            --text-primary: #e6e6ff;
+            --text-secondary: #8888aa;
+            --text-muted: #555577;
+            --accent: #6366f1;
+            --accent-light: #818cf8;
+            --success: #22c55e;
+            --warning: #f59e0b;
+            --error: #ef4444;
+            --border: #2a2a4a;
+            --glow: rgba(99, 102, 241, 0.3);
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        /* 头部 */
+        .header {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            height: 56px;
+            display: flex;
+            align-items: center;
+            padding: 0 24px;
+        }
+        
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .logo-icon {
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, var(--accent), #a855f7);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+        }
+        
+        .logo-text {
+            font-size: 18px;
+            font-weight: 700;
+        }
+        
+        .header-center {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+        }
+        
+        .workspace-tab {
+            padding: 6px 16px;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .workspace-tab:hover {
+            border-color: var(--accent);
+        }
+        
+        .workspace-tab.active {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #fff;
+        }
+        
+        .workspace-tab .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+        }
+        
+        .workspace-tab .status-dot.idle { background: var(--text-muted); }
+        .workspace-tab .status-dot.running { background: var(--success); animation: pulse 1.5s infinite; }
+        .workspace-tab .status-dot.completed { background: var(--accent); }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .header-actions {
+            display: flex;
+            gap: 12px;
+        }
+        
+        .btn {
+            padding: 8px 16px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            font-size: 13px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+        }
+        
+        .btn:hover {
+            background: var(--bg-card);
+            border-color: var(--accent);
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent), #7c3aed);
+            border-color: transparent;
+            color: #fff;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px var(--glow);
+        }
+        
+        .btn-success {
+            background: var(--success);
+            border-color: transparent;
+            color: #fff;
+        }
+        
+        /* 主体 */
+        .main {
+            display: flex;
+            height: calc(100vh - 56px);
+        }
+        
+        /* 工作区网格 */
+        .workspace-grid {
+            flex: 1;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+            gap: 16px;
+            padding: 16px;
+            overflow-y: auto;
+        }
+        
+        /* 工作区面板 */
+        .workspace-panel {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            transition: all 0.3s;
+        }
+        
+        .workspace-panel:hover {
+            border-color: var(--accent);
+        }
+        
+        .workspace-panel.active {
+            border-color: var(--accent);
+            box-shadow: 0 0 20px var(--glow);
+        }
+        
+        /* 工作区头部 */
+        .ws-header {
+            padding: 16px;
+            background: var(--bg-tertiary);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .ws-title {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .ws-name {
+            font-weight: 600;
+            font-size: 15px;
+        }
+        
+        .ws-status {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        
+        .ws-status.idle { background: var(--bg-card); color: var(--text-muted); }
+        .ws-status.running { background: rgba(34, 197, 94, 0.2); color: var(--success); }
+        .ws-status.completed { background: rgba(99, 102, 241, 0.2); color: var(--accent); }
+        
+        .ws-actions {
+            display: flex;
+            gap: 8px;
+        }
+        
+        /* 工作区内容 */
+        .ws-content {
+            flex: 1;
+            padding: 16px;
+            overflow-y: auto;
+        }
+        
+        /* Agent 工位 */
+        .agent-workstation {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 12px;
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            margin-bottom: 10px;
+            transition: all 0.2s;
+        }
+        
+        .agent-workstation.working {
+            border-color: var(--success);
+            background: rgba(34, 197, 94, 0.05);
+        }
+        
+        .agent-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            position: relative;
+        }
+        
+        .agent-avatar.product { background: linear-gradient(135deg, #22c55e, #16a34a); }
+        .agent-avatar.architect { background: linear-gradient(135deg, #3b82f6, #2563eb); }
+        .agent-avatar.developer { background: linear-gradient(135deg, #8b5cf6, #7c3aed); }
+        .agent-avatar.tester { background: linear-gradient(135deg, #f59e0b, #d97706); }
+        .agent-avatar.reviewer { background: linear-gradient(135deg, #ef4444, #dc2626); }
+        
+        .agent-status-dot {
+            position: absolute;
+            bottom: -2px;
+            right: -2px;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            border: 2px solid var(--bg-card);
+        }
+        
+        .agent-status-dot.idle { background: var(--text-muted); }
+        .agent-status-dot.working { background: var(--success); animation: pulse 1.5s infinite; }
+        
+        .agent-info {
+            flex: 1;
+            min-width: 0;
+        }
+        
+        .agent-name {
+            font-weight: 600;
+            font-size: 13px;
+            margin-bottom: 2px;
+        }
+        
+        .agent-task {
+            font-size: 11px;
+            color: var(--text-secondary);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .agent-progress {
+            width: 80px;
+        }
+        
+        .progress-bar {
+            height: 4px;
+            background: var(--bg-tertiary);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent), #a855f7);
+            border-radius: 2px;
+            transition: width 0.3s ease;
+        }
+        
+        .progress-fill.complete { background: var(--success); }
+        
+        .progress-text {
+            font-size: 10px;
+            color: var(--text-muted);
+            text-align: right;
+            margin-top: 2px;
+        }
+        
+        /* 工作区输入 */
+        .ws-input {
+            padding: 12px 16px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            gap: 8px;
+        }
+        
+        .ws-input-field {
+            flex: 1;
+            padding: 8px 12px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 13px;
+            outline: none;
+        }
+        
+        .ws-input-field:focus {
+            border-color: var(--accent);
+        }
+        
+        .ws-send-btn {
+            width: 36px;
+            height: 36px;
+            border-radius: 8px;
+            background: var(--accent);
+            border: none;
+            color: #fff;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        /* 统计栏 */
+        .stats-bar {
+            padding: 12px 16px;
+            background: var(--bg-tertiary);
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: space-around;
+        }
+        
+        .stat-item {
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 20px;
+            font-weight: 700;
+            color: var(--accent);
+        }
+        
+        .stat-label {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-top: 2px;
+        }
+        
+        /* 日志面板 */
+        .log-panel {
+            width: 300px;
+            background: var(--bg-secondary);
+            border-left: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .log-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            font-weight: 600;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .log-header i {
+            color: var(--accent);
+        }
+        
+        .log-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+        }
+        
+        .log-item {
+            padding: 6px 8px;
+            margin-bottom: 4px;
+            border-radius: 6px;
+            font-size: 11px;
+            line-height: 1.4;
+        }
+        
+        .log-item.info { background: rgba(99, 102, 241, 0.1); }
+        .log-item.success { background: rgba(34, 197, 94, 0.1); }
+        .log-item.error { background: rgba(239, 68, 68, 0.1); }
+        
+        .log-time {
+            color: var(--text-muted);
+            margin-right: 6px;
+        }
+        
+        /* 空状态 */
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-muted);
+        }
+        
+        .empty-state i {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.3;
+        }
+        
+        /* 滚动条 */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    </style>
+</head>
+<body>
+    <!-- 头部 -->
+    <header class="header">
+        <div class="logo">
+            <div class="logo-icon">🤖</div>
+            <span class="logo-text">Auto-Dev-Crew</span>
+        </div>
+        
+        <div class="header-center" id="workspaceTabs">
+            <!-- 工作区标签会动态生成 -->
+        </div>
+        
+        <div class="header-actions">
+            <button class="btn" onclick="addWorkspace()">
+                <i class="fas fa-plus"></i> 新建工作区
+            </button>
+            <button class="btn btn-primary" onclick="executeAll()">
+                <i class="fas fa-play"></i> 全部执行
+            </button>
+        </div>
+    </header>
+    
+    <!-- 主体 -->
+    <div class="main">
+        <!-- 工作区网格 -->
+        <div class="workspace-grid" id="workspaceGrid">
+            <!-- 工作区面板会动态生成 -->
+        </div>
+        
+        <!-- 日志面板 -->
+        <div class="log-panel">
+            <div class="log-header">
+                <i class="fas fa-stream"></i>
+                <span>活动日志</span>
+            </div>
+            <div class="log-content" id="logContent">
+                <div class="empty-state">
+                    <i class="fas fa-stream"></i>
+                    <p>暂无活动</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // 状态管理
+        const state = {
+            workspaces: {},
+            activeWorkspace: null,
+            logs: []
+        };
+        
+        // WebSocket
+        let ws = null;
+        
+        function connectWebSocket() {
+            const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            ws = new WebSocket(`${protocol}//${location.host}/ws`);
+            
+            ws.onopen = () => addLog('info', '系统已连接');
+            ws.onmessage = (e) => handleMessage(JSON.parse(e.data));
+            ws.onclose = () => setTimeout(connectWebSocket, 3000);
+        }
+        
+        function handleMessage(msg) {
+            if (msg.type.startsWith('workspace_')) {
+                const event = msg.type.replace('workspace_', '');
+                const wsId = msg.data.workspace_id;
+                
+                switch (event) {
+                    case 'task_started':
+                        updateAgentStatus(wsId, msg.data.agent, 'working', msg.data.task);
+                        addLog('info', `[${wsId}] ${msg.data.agent}: ${msg.data.task}`);
+                        break;
+                    case 'task_progress':
+                        updateAgentProgress(wsId, msg.data.agent, msg.data.progress);
+                        break;
+                    case 'task_completed':
+                        updateAgentStatus(wsId, msg.data.agent, 'idle', null);
+                        addLog('success', `[${wsId}] ${msg.data.agent}: 完成`);
+                        break;
+                    case 'workspace_completed':
+                        updateWorkspaceStatus(wsId, 'completed');
+                        addLog('success', `[${wsId}] 所有任务完成！`);
+                        break;
+                }
+            }
+        }
+        
+        // 加载工作区
+        async function loadWorkspaces() {
+            try {
+                const response = await fetch('/api/workspaces');
+                const data = await response.json();
+                state.workspaces = {};
+                
+                (data.workspaces || []).forEach(ws => {
+                    state.workspaces[ws.id] = ws;
+                });
+                
+                renderWorkspaceTabs();
+                renderWorkspaceGrid();
+            } catch (e) {
+                console.error('Failed to load workspaces:', e);
+            }
+        }
+        
+        // 渲染工作区标签
+        function renderWorkspaceTabs() {
+            const container = document.getElementById('workspaceTabs');
+            const workspaces = Object.values(state.workspaces);
+            
+            if (workspaces.length === 0) {
+                container.innerHTML = '<span style="color: var(--text-muted); font-size: 13px;">点击"新建工作区"开始</span>';
+                return;
+            }
+            
+            container.innerHTML = workspaces.map(ws => `
+                <div class="workspace-tab ${ws.is_active ? 'active' : ''}" 
+                     onclick="switchWorkspace('${ws.id}')">
+                    <span class="status-dot ${ws.status}"></span>
+                    <span>${ws.name}</span>
+                </div>
+            `).join('');
+        }
+        
+        // 渲染工作区网格
+        function renderWorkspaceGrid() {
+            const container = document.getElementById('workspaceGrid');
+            const workspaces = Object.values(state.workspaces);
+            
+            if (workspaces.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state" style="grid-column: 1 / -1;">
+                        <i class="fas fa-th-large"></i>
+                        <p>暂无工作区，点击"新建工作区"开始</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            container.innerHTML = workspaces.map(ws => renderWorkspacePanel(ws)).join('');
+        }
+        
+        // 渲染工作区面板
+        function renderWorkspacePanel(ws) {
+            const agents = ws.agents || {};
+            const agentRoles = ['product', 'architect', 'developer', 'tester', 'reviewer'];
+            const agentIcons = {
+                product: '📋', architect: '🏗️', developer: '💻', tester: '🧪', reviewer: '🔍'
+            };
+            const agentNames = {
+                product: 'Product Agent', architect: 'Architect Agent', 
+                developer: 'Developer Agent', tester: 'Tester Agent', reviewer: 'Reviewer Agent'
+            };
+            
+            return `
+                <div class="workspace-panel ${ws.is_active ? 'active' : ''}" id="ws-${ws.id}">
+                    <div class="ws-header">
+                        <div class="ws-title">
+                            <span class="ws-name">${ws.name}</span>
+                            <span class="ws-status ${ws.status}">${ws.status === 'idle' ? '空闲' : ws.status === 'running' ? '运行中' : '完成'}</span>
+                        </div>
+                        <div class="ws-actions">
+                            <button class="btn" onclick="executeWorkspace('${ws.id}')" ${ws.status === 'running' ? 'disabled' : ''}>
+                                <i class="fas fa-play"></i>
+                            </button>
+                            <button class="btn" onclick="deleteWorkspace('${ws.id}')">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="ws-content">
+                        ${agentRoles.map(role => {
+                            const agent = agents[role] || { status: 'idle', task: null, progress: 0 };
+                            return `
+                                <div class="agent-workstation ${agent.status === 'working' ? 'working' : ''}">
+                                    <div class="agent-avatar ${role}">
+                                        ${agentIcons[role]}
+                                        <div class="agent-status-dot ${agent.status}"></div>
+                                    </div>
+                                    <div class="agent-info">
+                                        <div class="agent-name">${agentNames[role]}</div>
+                                        <div class="agent-task">${agent.task || '等待任务...'}</div>
+                                    </div>
+                                    <div class="agent-progress">
+                                        <div class="progress-bar">
+                                            <div class="progress-fill ${agent.progress >= 100 ? 'complete' : ''}" 
+                                                 style="width: ${agent.progress}%"></div>
+                                        </div>
+                                        <div class="progress-text">${agent.progress}%</div>
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                    
+                    <div class="ws-input">
+                        <input type="text" class="ws-input-field" 
+                               placeholder="输入任务目标..."
+                               value="${ws.goal || ''}"
+                               onkeydown="if(event.key==='Enter')executeWorkspace('${ws.id}')"
+                               id="input-${ws.id}">
+                        <button class="ws-send-btn" onclick="executeWorkspace('${ws.id}')">
+                            <i class="fas fa-arrow-up"></i>
+                        </button>
+                    </div>
+                    
+                    <div class="stats-bar">
+                        <div class="stat-item">
+                            <div class="stat-value">${ws.progress || 0}%</div>
+                            <div class="stat-label">进度</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value">${ws.tokens_used || 0}</div>
+                            <div class="stat-label">Tokens</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-value">${ws.agent_count || 5}</div>
+                            <div class="stat-label">Agents</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // 添加工作区
+        async function addWorkspace() {
+            const name = prompt('工作区名称:');
+            if (!name) return;
+            
+            try {
+                const response = await fetch('/api/workspaces', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name, goal: ''})
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    addLog('info', `创建工作区: ${name}`);
+                    await loadWorkspaces();
+                }
+            } catch (e) {
+                console.error('Failed to create workspace:', e);
+            }
+        }
+        
+        // 切换工作区
+        async function switchWorkspace(wsId) {
+            try {
+                await fetch(`/api/workspaces/${wsId}/switch`, {method: 'POST'});
+                state.activeWorkspace = wsId;
+                await loadWorkspaces();
+            } catch (e) {
+                console.error('Failed to switch workspace:', e);
+            }
+        }
+        
+        // 执行工作区任务
+        async function executeWorkspace(wsId) {
+            const input = document.getElementById(`input-${wsId}`);
+            const task = input ? input.value.trim() : '';
+            
+            if (!task) {
+                alert('请输入任务目标');
+                return;
+            }
+            
+            try {
+                updateWorkspaceStatus(wsId, 'running');
+                addLog('info', `[${wsId}] 开始执行: ${task}`);
+                
+                const response = await fetch(`/api/workspaces/${wsId}/execute`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({task})
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    addLog('success', `[${wsId}] 任务完成`);
+                }
+            } catch (e) {
+                console.error('Failed to execute workspace:', e);
+                addLog('error', `[${wsId}] 执行失败: ${e.message}`);
+            }
+        }
+        
+        // 删除工作区
+        async function deleteWorkspace(wsId) {
+            if (!confirm('确定要删除这个工作区吗？')) return;
+            
+            try {
+                await fetch(`/api/workspaces/${wsId}`, {method: 'DELETE'});
+                addLog('info', `删除工作区: ${wsId}`);
+                await loadWorkspaces();
+            } catch (e) {
+                console.error('Failed to delete workspace:', e);
+            }
+        }
+        
+        // 全部执行
+        async function executeAll() {
+            const workspaces = Object.values(state.workspaces).filter(ws => ws.status !== 'running');
+            
+            if (workspaces.length === 0) {
+                alert('没有可执行的工作区');
+                return;
+            }
+            
+            for (const ws of workspaces) {
+                await executeWorkspace(ws.id);
+            }
+        }
+        
+        // 更新 Agent 状态
+        function updateAgentStatus(wsId, agentRole, status, task) {
+            if (state.workspaces[wsId]) {
+                if (!state.workspaces[wsId].agents) {
+                    state.workspaces[wsId].agents = {};
+                }
+                state.workspaces[wsId].agents[agentRole] = {
+                    ...state.workspaces[wsId].agents[agentRole],
+                    status: status,
+                    task: task
+                };
+                renderWorkspaceGrid();
+            }
+        }
+        
+        // 更新 Agent 进度
+        function updateAgentProgress(wsId, agentRole, progress) {
+            if (state.workspaces[wsId] && state.workspaces[wsId].agents[agentRole]) {
+                state.workspaces[wsId].agents[agentRole].progress = progress;
+                renderWorkspaceGrid();
+            }
+        }
+        
+        // 更新工作区状态
+        function updateWorkspaceStatus(wsId, status) {
+            if (state.workspaces[wsId]) {
+                state.workspaces[wsId].status = status;
+                renderWorkspaceTabs();
+                renderWorkspaceGrid();
+            }
+        }
+        
+        // 添加日志
+        function addLog(level, message) {
+            const logContent = document.getElementById('logContent');
+            
+            // 移除空状态
+            const emptyState = logContent.querySelector('.empty-state');
+            if (emptyState) emptyState.remove();
+            
+            const time = new Date().toLocaleTimeString();
+            const item = document.createElement('div');
+            item.className = `log-item ${level}`;
+            item.innerHTML = `<span class="log-time">${time}</span>${message}`;
+            
+            logContent.insertBefore(item, logContent.firstChild);
+            
+            // 限制日志数量
+            while (logContent.children.length > 100) {
+                logContent.removeChild(logContent.lastChild);
+            }
+        }
+        
+        // 初始化
+        connectWebSocket();
+        loadWorkspaces();
+    </script>
+</body>
+</html>
