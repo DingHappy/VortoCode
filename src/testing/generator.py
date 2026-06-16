@@ -90,6 +90,33 @@ class TestGenerator:
             if isinstance(child, ast.Return) and child.value is not None:
                 return True
         return False
+
+    def _analyze_javascript(self, code: str) -> Dict[str, Any]:
+        """分析 JS/TS 代码。
+
+        复用 indexing 的 JavaScriptASTParser（tree-sitter 真 AST，缺依赖时正则回退），
+        而非各写一套。此前本方法缺失，analyze_code(js) 会直接 AttributeError。
+        """
+        try:
+            from src.indexing.ast_parser import JavaScriptASTParser, NodeType
+        except Exception as e:  # 极端兜底：解析器不可用也不让端点崩
+            logger.warning("JS 解析器不可用: %s", e)
+            return {"functions": [], "classes": []}
+
+        nodes = JavaScriptASTParser().parse_code(code)
+        functions, classes = [], []
+        for n in nodes:
+            if n.node_type in (NodeType.FUNCTION, NodeType.METHOD):
+                functions.append({
+                    "name": n.name,
+                    "args": list(n.parameters),
+                    "decorators": [],
+                    "line": n.location.line,
+                    "has_return": True,  # JS 无静态返回信息，默认生成断言体
+                })
+            elif n.node_type == NodeType.CLASS:
+                classes.append({"name": n.name, "methods": [], "line": n.location.line})
+        return {"functions": functions, "classes": classes}
     
     def generate_tests(
         self,

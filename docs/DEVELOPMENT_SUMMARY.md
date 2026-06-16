@@ -10,7 +10,7 @@
 | `src/` 子包 | 23 |
 | Python 文件（src） | 106 |
 | 代码行（src） | ~21,900 |
-| 测试 | 135 个用例（集成/契约/安全/回归/编排/闭环/流式/沙箱/检索/自治/增量/长程编码/指标/成本/trace/预算/向量后端/分位/工作区执行/权限闸/生成器） |
+| 测试 | 140 个用例（集成/契约/安全/回归/编排/闭环/流式/沙箱/检索/自治/增量/长程编码/指标/成本/trace/预算/向量后端/分位/工作区执行/权限闸/生成器/JS-TS AST） |
 | Web API 路由 | 115（按域拆分到 19 个 router） |
 
 ## 近期新增能力
@@ -58,6 +58,12 @@
 - **删假 `CoverageAnalyzer`**：永远返回 0.0 的占位、零消费者 → 移除（去负债）。
 - **补测**：`src/documentation`、`src/testing` 生成器与 `PermissionManager.check_permission`
   此前零测试，补特征测试（含上面那个崩溃端点的回归守门）。
+- **JS/TS AST 接真**：`JavaScriptASTParser` 从「逐行正则」升级为 **tree-sitter 真 AST**
+  （装 `.[parsing]` 时启用，缺依赖回退正则）——现在能解析类方法、箭头函数、命名 import、
+  TS interface/带类型参数，正则版这些全漏。顺手修了 `TestGenerator._analyze_javascript`
+  缺失导致 `/api/testing/generate(js)` 崩溃的 bug（改为复用此解析器），并删除零引用的
+  重复 `tree_sitter_parser.py`。tree-sitter 独有能力的测试用 `importorskip` 守门，
+  CI 无依赖时跳过（138 passed, 2 skipped），本地装了则全 140。
 
 ## 二、已落地（真实可用）
 
@@ -101,7 +107,7 @@
 ## 六、测试
 
 ```bash
-python -m pytest tests/ -q     # 135 passed
+python -m pytest tests/ -q     # 140 passed（无 tree-sitter 时 138 passed, 2 skipped）
 ```
 覆盖：记忆/技能/Hook/分析器单测、真实化 Agent（注入 FakeLLM 离线）、
 编排路由回归、server 路由契约 + WebSocket + 全 GET 无 500、安全（鉴权/执行闸/路径穿越）、

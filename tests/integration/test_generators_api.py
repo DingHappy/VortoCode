@@ -42,3 +42,16 @@ def test_testing_generate_python(client):
     j = r.json()
     assert j["success"] is True
     assert "def test_add" in j["tests"]
+
+
+def test_testing_generate_javascript(client):
+    # 回归：此前 _analyze_javascript 缺失，language=javascript 会 AttributeError/500
+    r = client.post("/api/testing/generate", json={
+        "code": "export function add(a, b) { return a + b }",
+        "language": "javascript",
+        "test_type": "unit",
+    })
+    assert r.status_code == 200
+    j = r.json()
+    assert j["success"] is True
+    assert "describe('add'" in j["tests"]
