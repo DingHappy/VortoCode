@@ -46,7 +46,9 @@ def test_terminal_disabled_by_default(client):
 
 def test_terminal_enabled_via_env(client, monkeypatch):
     monkeypatch.setenv("AUTODEV_ENABLE_SHELL", "1")
-    r = client.post("/api/terminal/execute", json={"command": "echo hi"})
+    # 显式给一个必然存在的 workdir（cwd）：默认 state.workdir 是 ~/personal_project，
+    # 在 CI runner 上不存在会导致 subprocess cwd 失败、stdout 为空。
+    r = client.post("/api/terminal/execute", json={"command": "echo hi", "workdir": "."})
     assert r.status_code == 200
     assert r.json().get("stdout", "").strip() == "hi"
 
