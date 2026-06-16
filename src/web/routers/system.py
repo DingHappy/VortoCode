@@ -174,6 +174,11 @@ async def execute_terminal(request: TerminalRequest):
 
     workdir = request.workdir or state.workdir
 
+    # 工作目录必须存在：否则 subprocess 的 cwd 会失败，且报错隐晦（stdout 为空）。
+    # 给明确报错，而非闷头失败或在意外目录里执行。
+    if not Path(workdir).is_dir():
+        return {"success": False, "error": f"工作目录不存在：{workdir}"}
+
     # 安全检查：经权限模型的 SafetyGuard（黑名单/危险模式 + 记录违规），
     # 替换原先的弱内联黑名单。被拦截的命令进 violation_history，/api/security 可见。
     guard = state.safety_guard.check_command(request.command)
