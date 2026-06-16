@@ -20,12 +20,26 @@ BASELINE = Path(__file__).parent / "server_routes_baseline.json"
 
 
 def _live_routes():
+    """枚举已注册路由。
+
+    兼容 fastapi 0.137+ 的惰性 include：新版 include_router 会往 app.routes 放一个
+    `_IncludedRouter` 包装（带 original_router）而非即时展开，故需递归进 original_router；
+    旧版（即时展开）则直接读 .path。两种都覆盖。
+    """
     routes = []
-    for r in app.routes:
-        path = getattr(r, "path", None)
-        methods = sorted(getattr(r, "methods", []) or [])
-        if path:
-            routes.append((path, tuple(methods)))
+
+    def _collect(route_list):
+        for r in route_list:
+            orig = getattr(r, "original_router", None)
+            if orig is not None:                      # 0.137+ 惰性 _IncludedRouter
+                _collect(orig.routes)
+                continue
+            path = getattr(r, "path", None)
+            methods = sorted(getattr(r, "methods", []) or [])
+            if path:
+                routes.append((path, tuple(methods)))
+
+    _collect(app.routes)
     return sorted(set(routes))
 
 
