@@ -5,7 +5,11 @@ router = APIRouter()
 
 @router.post("/api/browser/navigate")
 async def browser_navigate(request: BrowserNavigateRequest):
-    """浏览器导航"""
+    """浏览器导航（默认禁用，需 AUTODEV_ENABLE_BROWSER=1；URL 防 SSRF/file://）"""
+    require_browser()  # fail-closed：必须在 try 之外，否则 403 会被吞成 200
+    reason = validate_navigation_url(request.url)
+    if reason:
+        raise HTTPException(status_code=400, detail=f"URL 被拒绝：{reason}")
     try:
         browser = state.browser_manager.get_browser(request.browser_name)
         if not browser:
@@ -23,7 +27,8 @@ async def browser_navigate(request: BrowserNavigateRequest):
 
 @router.post("/api/browser/screenshot")
 async def browser_screenshot(browser_name: str = "default"):
-    """浏览器截图"""
+    """浏览器截图（默认禁用，需 AUTODEV_ENABLE_BROWSER=1）"""
+    require_browser()
     try:
         browser = state.browser_manager.get_browser(browser_name)
         if not browser:
@@ -40,7 +45,8 @@ async def browser_screenshot(browser_name: str = "default"):
 
 @router.post("/api/browser/click")
 async def browser_click(selector: str, browser_name: str = "default"):
-    """浏览器点击"""
+    """浏览器点击（默认禁用，需 AUTODEV_ENABLE_BROWSER=1）"""
+    require_browser()
     try:
         browser = state.browser_manager.get_browser(browser_name)
         if not browser:
@@ -53,7 +59,8 @@ async def browser_click(selector: str, browser_name: str = "default"):
 
 @router.post("/api/browser/fill")
 async def browser_fill(selector: str, value: str, browser_name: str = "default"):
-    """浏览器填写表单"""
+    """浏览器填写表单（默认禁用，需 AUTODEV_ENABLE_BROWSER=1）"""
+    require_browser()
     try:
         browser = state.browser_manager.get_browser(browser_name)
         if not browser:

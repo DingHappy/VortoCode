@@ -24,6 +24,6 @@ from src.workspaces import WorkspaceManager
 
 from src.web.state import state, manager, add_log
 from src.web.schemas import *  # noqa: F401,F403
-from src.web.auth import require_shell, resolve_within
+from src.web.auth import require_shell, require_browser, validate_navigation_url, resolve_within
 
 logger = logging.getLogger("src.web")

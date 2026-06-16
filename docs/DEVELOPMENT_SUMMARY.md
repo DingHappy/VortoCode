@@ -10,7 +10,7 @@
 | `src/` 子包 | 23 |
 | Python 文件（src） | 106 |
 | 代码行（src） | ~21,900 |
-| 测试 | 152 个用例（集成/契约/安全/回归/编排/闭环/流式/沙箱/检索/自治/增量/长程编码/指标/成本/trace/预算/向量后端/分位/工作区执行/权限闸/生成器/JS-TS AST/协作/浏览器） |
+| 测试 | 153 个用例（集成/契约/安全/回归/编排/闭环/流式/沙箱/检索/自治/增量/长程编码/指标/成本/trace/预算/向量后端/分位/工作区执行/权限闸/生成器/JS-TS AST/浏览器闸/SSRF） |
 | Web API 路由 | 115（按域拆分到 19 个 router） |
 
 ## 近期新增能力
@@ -70,11 +70,17 @@
   （配置 `OPENAI_API_KEY` 时 LLM 生成真测试/带解释文档，否则回退确定性版）。共享
   `src/llm` 的 `resolve_optional_client`/`strip_code_fence`。端点测试 `delenv OPENAI_API_KEY`
   保证确定性、不打网络；LLM 路径用注入 FakeLLM 测。
-- **协作模块补测**：`src/collaboration/realtime`（房间/用户/事件/观察者/冲突解决）补测。
-  注意：该模块目前**未接入任何路由**（零消费者）——测了逻辑，但特性尚不可经 API 触达，
-  后续可选择「接一个 WebSocket 协作路由」或「移除」。
 - **浏览器自动化补测**：`src/browser` 真实操作需 Playwright，离线测覆盖配置默认值、
   管理器查找、未启动时 fail-fast 抛 `RuntimeError` 的护栏。
+
+### 决策/加固批
+- **移除协作模块**：`src/collaboration/realtime`（多人光标/评论，Google-Docs 式）偏离
+  「AI Agent 写代码」主线、零消费者、未接任何路由。按「零引用=负债」移除（git 历史可恢复），
+  避免给非核心特性接线造成产品臃肿。
+- **浏览器安全加固**：`/api/browser/*` 原先无闸、navigate 不校验 URL（SSRF/`file://` 风险）。
+  现 **fail-closed**：默认 403，需 `AUTODEV_ENABLE_BROWSER=1`（仿 shell 闸）；navigate 经
+  `validate_navigation_url` 仅放行 http/https 且拒绝环回/私有/链路本地/保留 IP
+  （挡 `file://`、`127.0.0.1`、`169.254.169.254` 云元数据、内网段）。校验在启动浏览器前完成。
 
 ## 二、已落地（真实可用）
 
@@ -102,7 +108,10 @@
 - **鉴权**：设置 `AUTODEV_API_TOKEN` 后，所有 `/api/*` 与 `/ws` 强制校验 Bearer/X-API-Token；
   未设则仅本地放行。鉴权逻辑见 `src/web/auth.py`。
 - **执行端点 fail-closed**：`/api/terminal/execute`、云沙箱执行默认 **403**，
-  需显式 `AUTODEV_ENABLE_SHELL=1` 才开启。
+  需显式 `AUTODEV_ENABLE_SHELL=1` 才开启；命令再经 `SafetyGuard.check_command` 黑名单。
+- **浏览器端点 fail-closed**：`/api/browser/*` 默认 **403**，需 `AUTODEV_ENABLE_BROWSER=1`；
+  `navigate` 经 `validate_navigation_url` 仅放行 http/https 公网地址，挡 `file://` 与
+  SSRF（环回/私有/链路本地/保留 IP，如 `169.254.169.254` 云元数据）。
 - **路径围栏**：文件读取/列举/编辑统一经 `resolve_within()` 限定在工作目录内，
   拒绝绝对路径与 `..`（根治字符串前缀绕过）。
 - **默认绑定** `127.0.0.1`；对外绑定且未设 token 时启动告警。
@@ -118,7 +127,7 @@
 ## 六、测试
 
 ```bash
-python -m pytest tests/ -q     # 152 passed（无 tree-sitter 时 150 passed, 2 skipped）
+python -m pytest tests/ -q     # 153 passed（无 tree-sitter 时 151 passed, 2 skipped）
 ```
 覆盖：记忆/技能/Hook/分析器单测、真实化 Agent（注入 FakeLLM 离线）、
 编排路由回归、server 路由契约 + WebSocket + 全 GET 无 500、安全（鉴权/执行闸/路径穿越）、
