@@ -332,24 +332,173 @@ class JavaScriptASTParser(ASTParser):
         r'import\s+(?:{([^}]+)}|(\w+))\s+from\s+[\'"]([^\'"]+)[\'"]'
     )
     
+    # tree-sitter 解析器缓存（按语法种类）；None 表示不可用 → 回退正则
+    _TS_PARSERS: Dict[str, Any] = {}
+
     def parse_file(self, file_path: Path) -> List[CodeNode]:
         """解析 JS/TS 文件"""
         try:
             code = file_path.read_text(encoding='utf-8')
-            return self._parse_code_internal(code, str(file_path))
         except Exception as e:
             logger.error(f"Failed to parse {file_path}: {e}")
             return []
-    
+        return self._parse_code_internal(
+            code, str(file_path), self._kind_for_suffix(file_path.suffix.lower()))
+
     def parse_code(self, code: str, language: CodeLanguage = CodeLanguage.JAVASCRIPT) -> List[CodeNode]:
         """解析代码"""
-        return self._parse_code_internal(code, "<string>")
-    
-    def _parse_code_internal(self, code: str, file_path: str) -> List[CodeNode]:
-        """解析代码内部实现"""
+        kind = "typescript" if language == CodeLanguage.TYPESCRIPT else "javascript"
+        return self._parse_code_internal(code, "<string>", kind)
+
+    @staticmethod
+    def _kind_for_suffix(suffix: str) -> str:
+        if suffix == ".tsx":
+            return "tsx"
+        if suffix == ".ts":
+            return "typescript"
+        return "javascript"
+
+    def _parse_code_internal(self, code: str, file_path: str, kind: str = "javascript") -> List[CodeNode]:
+        """优先 tree-sitter 真 AST；不可用时回退正则（确定性、无需依赖）。"""
+        nodes = self._parse_treesitter(code, file_path, kind)
+        if nodes is not None:
+            return nodes
+        return self._parse_regex(code, file_path)
+
+    # ----------------------------------------------------- tree-sitter 真 AST
+    @classmethod
+    def _get_ts_parser(cls, kind: str):
+        """惰性构建并缓存 tree-sitter 解析器；缺依赖返回 None。"""
+        if kind in cls._TS_PARSERS:
+            return cls._TS_PARSERS[kind]
+        parser = None
+        try:
+            from tree_sitter import Language, Parser
+            if kind in ("typescript", "tsx"):
+                import tree_sitter_typescript as tsts
+                raw = tsts.language_tsx() if kind == "tsx" else tsts.language_typescript()
+                lang = Language(raw)
+            else:
+                import tree_sitter_javascript as tsjs
+                lang = Language(tsjs.language())
+            parser = Parser(lang)
+        except Exception as e:  # 未装 tree-sitter / 语法包
+            logger.info("tree-sitter 不可用(%s)，JS/TS 改用正则回退", e)
+            parser = None
+        cls._TS_PARSERS[kind] = parser
+        return parser
+
+    def _parse_treesitter(self, code: str, file_path: str, kind: str) -> Optional[List[CodeNode]]:
+        parser = self._get_ts_parser(kind)
+        if parser is None:
+            return None
+        try:
+            src = bytes(code, "utf-8")
+            tree = parser.parse(src)
+        except Exception as e:
+            logger.error("tree-sitter 解析失败: %s", e)
+            return None
+        nodes: List[CodeNode] = []
+        self._ts_walk(tree.root_node, src, file_path, nodes)
+        return nodes
+
+    def _ts_walk(self, node, src: bytes, file_path: str, nodes: List[CodeNode]):
+        t = node.type
+        if t in ("function_declaration", "generator_function_declaration"):
+            self._ts_emit(node, src, file_path, nodes, NodeType.FUNCTION)
+        elif t == "method_definition":
+            self._ts_emit(node, src, file_path, nodes, NodeType.METHOD)
+        elif t == "class_declaration":
+            self._ts_emit(node, src, file_path, nodes, NodeType.CLASS)
+        elif t == "interface_declaration":
+            self._ts_emit(node, src, file_path, nodes, NodeType.CLASS, {"kind": "interface"})
+        elif t == "variable_declarator":
+            val = node.child_by_field_name("value")
+            if val is not None and val.type in ("arrow_function", "function", "function_expression"):
+                name = self._ts_text(node.child_by_field_name("name"), src)
+                if name:
+                    nodes.append(CodeNode(
+                        name=name, node_type=NodeType.FUNCTION,
+                        location=CodeLocation(file=file_path, line=node.start_point[0] + 1),
+                        parameters=self._ts_params(val, src),
+                    ))
+        elif t == "import_statement":
+            self._ts_emit_import(node, src, file_path, nodes)
+        for child in node.children:
+            self._ts_walk(child, src, file_path, nodes)
+
+    def _ts_emit(self, node, src, file_path, nodes, node_type, metadata=None):
+        name = ""
+        for c in node.children:
+            if c.type in ("identifier", "property_identifier", "type_identifier"):
+                name = self._ts_text(c, src)
+                break
+        if not name:
+            return
+        nodes.append(CodeNode(
+            name=name, node_type=node_type,
+            location=CodeLocation(file=file_path, line=node.start_point[0] + 1),
+            parameters=self._ts_params(node, src),
+            metadata=metadata or {},
+        ))
+
+    @staticmethod
+    def _ts_text(node, src) -> str:
+        if node is None:
+            return ""
+        return src[node.start_byte:node.end_byte].decode("utf-8", "replace")
+
+    def _ts_params(self, node, src) -> List[str]:
+        params: List[str] = []
+        for c in node.children:
+            if c.type == "formal_parameters":
+                for p in c.children:
+                    if p.type == "identifier":
+                        params.append(self._ts_text(p, src))
+                    elif p.type in ("required_parameter", "optional_parameter"):  # TS
+                        for x in p.children:
+                            if x.type == "identifier":
+                                params.append(self._ts_text(x, src))
+                                break
+        # 单参箭头函数：x => ...（参数是 arrow_function 的直接 identifier 子节点）
+        if node.type == "arrow_function" and not params:
+            for c in node.children:
+                if c.type == "identifier":
+                    params.append(self._ts_text(c, src))
+                    break
+        return params
+
+    def _ts_emit_import(self, node, src, file_path, nodes):
+        module = ""
+        names: List[str] = []
+        for c in node.children:
+            if c.type == "string":
+                module = self._ts_text(c, src).strip("'\"")
+            elif c.type == "import_clause":
+                for sub in c.children:
+                    if sub.type == "identifier":
+                        names.append(self._ts_text(sub, src))
+                    elif sub.type == "named_imports":
+                        for spec in sub.children:
+                            if spec.type == "import_specifier":
+                                for x in spec.children:
+                                    if x.type == "identifier":
+                                        names.append(self._ts_text(x, src))
+                                        break
+        nodes.append(CodeNode(
+            name=module or (names[0] if names else "import"),
+            node_type=NodeType.IMPORT,
+            location=CodeLocation(file=file_path, line=node.start_point[0] + 1),
+            imports=names,
+            metadata={"module": module},
+        ))
+
+    # ----------------------------------------------------- 正则回退（简化）
+    def _parse_regex(self, code: str, file_path: str) -> List[CodeNode]:
+        """逐行正则解析。仅在 tree-sitter 不可用时使用。"""
         nodes = []
         lines = code.split('\n')
-        
+
         for i, line in enumerate(lines, 1):
             # 解析函数
             match = self.FUNCTION_PATTERN.search(line)
@@ -360,7 +509,7 @@ class JavaScriptASTParser(ASTParser):
                     location=CodeLocation(file=file_path, line=i),
                     parameters=self._parse_params(match.group(2))
                 ))
-            
+
             # 解析类
             match = self.CLASS_PATTERN.search(line)
             if match:
@@ -370,7 +519,7 @@ class JavaScriptASTParser(ASTParser):
                     location=CodeLocation(file=file_path, line=i),
                     metadata={"base": match.group(2)}
                 ))
-            
+
             # 解析箭头函数
             match = self.ARROW_FUNCTION_PATTERN.search(line)
             if match:
@@ -380,7 +529,7 @@ class JavaScriptASTParser(ASTParser):
                     location=CodeLocation(file=file_path, line=i),
                     parameters=self._parse_params(match.group(2))
                 ))
-            
+
             # 解析 import
             match = self.IMPORT_PATTERN.search(line)
             if match:
@@ -396,9 +545,9 @@ class JavaScriptASTParser(ASTParser):
                                 location=CodeLocation(file=file_path, line=i),
                                 metadata={"module": module, "name": imp}
                             ))
-        
+
         return nodes
-    
+
     def _parse_params(self, params_str: str) -> List[str]:
         """解析参数"""
         if not params_str.strip():

@@ -15,7 +15,6 @@ from .code_indexer import (
     CodeIndexer, CodeEmbedding, VectorStore, QdrantVectorStore, make_vector_store,
 )
 from .dependency_graph import DependencyGraph, DependencyAnalyzer
-from .tree_sitter_parser import TreeSitterParser, TreeSitterIndexer
 
 __all__ = [
     "ASTParser",
@@ -34,6 +33,4 @@ __all__ = [
     "make_vector_store",
     "DependencyGraph",
     "DependencyAnalyzer",
-    "TreeSitterParser",
-    "TreeSitterIndexer",
 ]
