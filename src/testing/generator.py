@@ -134,6 +134,35 @@ class TestGenerator:
         
         return ""
     
+    async def agenerate_tests(
+        self,
+        code: str,
+        language: str = "python",
+        test_type: str = "unit",
+        llm_client: Any = None,
+    ) -> str:
+        """LLM 优先生成可运行测试；无 key / 调用失败时回退到确定性骨架。
+
+        与全项目一致：配置了 OPENAI_API_KEY 才走 LLM，否则确定性（离线/CI 不打网络）。
+        """
+        from src.llm import resolve_optional_client, strip_code_fence
+
+        client = resolve_optional_client(llm_client)
+        if client is None:
+            return self.generate_tests(code, language, test_type)
+
+        prompt = (
+            f"为下面的 {language} 代码生成 {test_type} 测试。要求：覆盖正常路径与边界，"
+            f"断言具体（不要 `assert True` 占位）。只输出测试代码本身，不要解释、不要 markdown 围栏。\n\n"
+            f"```{language}\n{code}\n```"
+        )
+        try:
+            text = strip_code_fence(await client.analyze(prompt))
+            return text or self.generate_tests(code, language, test_type)
+        except Exception as e:
+            logger.warning("LLM 测试生成失败，回退骨架: %s", e)
+            return self.generate_tests(code, language, test_type)
+
     def _generate_python_tests(self, analysis: Dict[str, Any], test_type: str) -> str:
         """生成 Python 测试"""
         lines = [

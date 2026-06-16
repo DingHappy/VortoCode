@@ -10,7 +10,7 @@
 | `src/` 子包 | 23 |
 | Python 文件（src） | 106 |
 | 代码行（src） | ~21,900 |
-| 测试 | 140 个用例（集成/契约/安全/回归/编排/闭环/流式/沙箱/检索/自治/增量/长程编码/指标/成本/trace/预算/向量后端/分位/工作区执行/权限闸/生成器/JS-TS AST） |
+| 测试 | 152 个用例（集成/契约/安全/回归/编排/闭环/流式/沙箱/检索/自治/增量/长程编码/指标/成本/trace/预算/向量后端/分位/工作区执行/权限闸/生成器/JS-TS AST/协作/浏览器） |
 | Web API 路由 | 115（按域拆分到 19 个 router） |
 
 ## 近期新增能力
@@ -65,6 +65,17 @@
   重复 `tree_sitter_parser.py`。tree-sitter 独有能力的测试用 `importorskip` 守门，
   CI 无依赖时跳过（138 passed, 2 skipped），本地装了则全 140。
 
+### 收尾批（小尾巴）
+- **生成器 LLM 增强**：`/api/testing/generate`、`/api/docs/generate` 改为 **LLM 优先**
+  （配置 `OPENAI_API_KEY` 时 LLM 生成真测试/带解释文档，否则回退确定性版）。共享
+  `src/llm` 的 `resolve_optional_client`/`strip_code_fence`。端点测试 `delenv OPENAI_API_KEY`
+  保证确定性、不打网络；LLM 路径用注入 FakeLLM 测。
+- **协作模块补测**：`src/collaboration/realtime`（房间/用户/事件/观察者/冲突解决）补测。
+  注意：该模块目前**未接入任何路由**（零消费者）——测了逻辑，但特性尚不可经 API 触达，
+  后续可选择「接一个 WebSocket 协作路由」或「移除」。
+- **浏览器自动化补测**：`src/browser` 真实操作需 Playwright，离线测覆盖配置默认值、
+  管理器查找、未启动时 fail-fast 抛 `RuntimeError` 的护栏。
+
 ## 二、已落地（真实可用）
 
 - **多 Agent 协作**：product / architect / developer / reviewer / tester 五个角色，
@@ -107,7 +118,7 @@
 ## 六、测试
 
 ```bash
-python -m pytest tests/ -q     # 140 passed（无 tree-sitter 时 138 passed, 2 skipped）
+python -m pytest tests/ -q     # 152 passed（无 tree-sitter 时 150 passed, 2 skipped）
 ```
 覆盖：记忆/技能/Hook/分析器单测、真实化 Agent（注入 FakeLLM 离线）、
 编排路由回归、server 路由契约 + WebSocket + 全 GET 无 500、安全（鉴权/执行闸/路径穿越）、

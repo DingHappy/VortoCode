@@ -69,25 +69,18 @@ async def create_from_template(template_id: str, output_dir: str, variables: Dic
 
 @router.post("/api/testing/generate")
 async def generate_tests(request: TestGenerateRequest):
-    """生成测试代码"""
+    """生成测试代码（有 OPENAI_API_KEY 时 LLM 生成真测试，否则确定性骨架）"""
     from src.testing import TestGenerator
-    
+
     generator = TestGenerator()
-    tests = generator.generate_tests(request.code, request.language, request.test_type)
+    tests = await generator.agenerate_tests(request.code, request.language, request.test_type)
     return {"success": True, "tests": tests}
 
 @router.post("/api/docs/generate")
 async def generate_docs(request: DocGenerateRequest):
-    """生成文档"""
+    """生成文档（有 OPENAI_API_KEY 时 LLM 增强，否则确定性 AST 文档）"""
     from src.documentation import DocGenerator
-    
+
     generator = DocGenerator()
-    
-    if request.language == "python":
-        # 分析代码
-        analysis = generator.analyze_python_file_content(request.code)
-        docs = generator.generate_markdown(analysis)
-    else:
-        docs = f"# Documentation\n\n{request.code}"
-    
+    docs = await generator.agenerate_docs(request.code, request.language)
     return {"success": True, "docs": docs}

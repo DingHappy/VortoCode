@@ -207,6 +207,40 @@ class DocGenerator:
         
         return "\n".join(lines)
     
+    def generate_docs(self, code: str, language: str = "python") -> str:
+        """确定性文档：python 走 AST→markdown，其它语言原样包装。
+
+        收编原先散在路由里的逻辑，使确定性与 LLM 两条路径共用同一回退实现。
+        """
+        if language == "python":
+            return self.generate_markdown(self.analyze_python_file_content(code))
+        return f"# Documentation\n\n{code}"
+
+    async def agenerate_docs(
+        self,
+        code: str,
+        language: str = "python",
+        llm_client: Any = None,
+    ) -> str:
+        """LLM 优先生成带解释的文档；无 key / 失败时回退到确定性 AST 文档。"""
+        from src.llm import resolve_optional_client, strip_code_fence
+
+        client = resolve_optional_client(llm_client)
+        if client is None:
+            return self.generate_docs(code, language)
+
+        prompt = (
+            f"为下面的 {language} 代码生成 Markdown API 文档：模块/类/函数用途、参数、返回值、"
+            f"必要的用法示例。只输出 Markdown，不要额外解释、不要外层代码围栏。\n\n"
+            f"```{language}\n{code}\n```"
+        )
+        try:
+            text = strip_code_fence(await client.analyze(prompt))
+            return text or self.generate_docs(code, language)
+        except Exception as e:
+            logger.warning("LLM 文档生成失败，回退确定性: %s", e)
+            return self.generate_docs(code, language)
+
     def generate_api_doc(self, endpoints: List[Dict[str, Any]]) -> str:
         """生成 API 文档"""
         lines = [
