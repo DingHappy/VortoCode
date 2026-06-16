@@ -238,35 +238,3 @@ describe('{func_name}', () => {{
         """保存测试文件"""
         Path(output_path).write_text(tests, encoding='utf-8')
         logger.info(f"Tests saved to: {output_path}")
-
-
-class CoverageAnalyzer:
-    """覆盖率分析器"""
-    
-    def __init__(self):
-        self.coverage_data: Dict[str, Dict[str, Any]] = {}
-    
-    def analyze_file(self, file_path: str, test_results: Dict[str, Any]) -> Dict[str, Any]:
-        """分析文件覆盖率"""
-        # 这里可以集成 coverage.py 或其他覆盖率工具
-        return {
-            "file": file_path,
-            "line_coverage": 0.0,
-            "branch_coverage": 0.0,
-            "function_coverage": 0.0,
-            "uncovered_lines": []
-        }
-    
-    def generate_report(self, coverage_data: Dict[str, Any]) -> str:
-        """生成覆盖率报告"""
-        report = [
-            "# 测试覆盖率报告",
-            "",
-            f"## 总体覆盖率",
-            f"- 行覆盖率: {coverage_data.get('line_coverage', 0):.1%}",
-            f"- 分支覆盖率: {coverage_data.get('branch_coverage', 0):.1%}",
-            f"- 函数覆盖率: {coverage_data.get('function_coverage', 0):.1%}",
-            "",
-        ]
-        
-        return "\n".join(report)

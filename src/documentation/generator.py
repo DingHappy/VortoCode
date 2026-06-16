@@ -49,32 +49,38 @@ class DocGenerator:
         self.api_docs: List[Dict[str, Any]] = []
     
     def analyze_python_file(self, file_path: str) -> ModuleDoc:
-        """分析 Python 文件"""
+        """分析 Python 文件（按路径）。"""
         try:
             content = Path(file_path).read_text(encoding='utf-8')
-            tree = ast.parse(content)
         except Exception as e:
-            logger.error(f"Failed to parse {file_path}: {e}")
+            logger.error(f"Failed to read {file_path}: {e}")
             return ModuleDoc(name=Path(file_path).stem)
-        
-        module_doc = ModuleDoc(name=Path(file_path).stem)
-        
+        return self.analyze_python_file_content(content, name=Path(file_path).stem)
+
+    def analyze_python_file_content(self, content: str, name: str = "module") -> ModuleDoc:
+        """分析 Python 源码（按内容字符串）。
+
+        /api/docs/generate 拿到的是源码字符串而非路径，故走此入口；
+        analyze_python_file 读文件后也委托到这里（共用一套 AST 抽取）。
+        """
+        try:
+            tree = ast.parse(content)
+        except SyntaxError as e:
+            logger.error(f"Failed to parse content: {e}")
+            return ModuleDoc(name=name)
+
+        module_doc = ModuleDoc(name=name)
         # 提取模块文档字符串
         module_doc.description = ast.get_docstring(tree) or ""
-        
+
         for node in ast.iter_child_nodes(tree):
             if isinstance(node, ast.ClassDef):
-                class_doc = self._extract_class_doc(node)
-                module_doc.classes.append(class_doc)
-            
+                module_doc.classes.append(self._extract_class_doc(node))
             elif isinstance(node, ast.FunctionDef):
-                func_doc = self._extract_func_doc(node)
-                module_doc.functions.append(func_doc)
-            
+                module_doc.functions.append(self._extract_func_doc(node))
             elif isinstance(node, (ast.Import, ast.ImportFrom)):
-                imports = self._extract_imports(node)
-                module_doc.imports.extend(imports)
-        
+                module_doc.imports.extend(self._extract_imports(node))
+
         return module_doc
     
     def _extract_class_doc(self, node: ast.ClassDef) -> ClassDoc:

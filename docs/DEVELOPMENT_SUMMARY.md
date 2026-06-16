@@ -10,7 +10,7 @@
 | `src/` 子包 | 23 |
 | Python 文件（src） | 106 |
 | 代码行（src） | ~21,900 |
-| 测试 | 120 个用例（集成/契约/安全/回归/编排/闭环/流式/沙箱/检索/自治/增量/长程编码/指标/成本/trace/预算/向量后端/分位/工作区执行/权限闸） |
+| 测试 | 135 个用例（集成/契约/安全/回归/编排/闭环/流式/沙箱/检索/自治/增量/长程编码/指标/成本/trace/预算/向量后端/分位/工作区执行/权限闸/生成器） |
 | Web API 路由 | 115（按域拆分到 19 个 router） |
 
 ## 近期新增能力
@@ -48,6 +48,16 @@
   新增 `SafetyGuard.check_command()`（黑名单/危险模式 + 记录违规），在
   `/api/terminal/execute` 与 `/api/sandbox/{id}/execute` **执行前**调用，替换原弱内联黑名单；
   被拦截的命令进 `violation_history`，经 `/api/security/*` 可见。
+
+### 工程基建 + 去重/补测批
+- **版本控制**：项目纳入 git（此前无），机密经 `.gitignore` 隔离（已审计暂存区无密钥）。
+- **CI**：`.github/workflows/ci.yml`，push(main)/PR 触发，矩阵 Python 3.10/3.12，
+  无密钥 clean-room 跑 `pytest`（保证离线确定性）。
+- **修复 `/api/docs/generate` 崩溃**：路由调用了不存在的 `analyze_python_file_content`
+  （只有按路径的 `analyze_python_file`），python 分支必 500；补出按源码字符串分析的入口。
+- **删假 `CoverageAnalyzer`**：永远返回 0.0 的占位、零消费者 → 移除（去负债）。
+- **补测**：`src/documentation`、`src/testing` 生成器与 `PermissionManager.check_permission`
+  此前零测试，补特征测试（含上面那个崩溃端点的回归守门）。
 
 ## 二、已落地（真实可用）
 
@@ -91,7 +101,7 @@
 ## 六、测试
 
 ```bash
-python -m pytest tests/ -q     # 120 passed
+python -m pytest tests/ -q     # 135 passed
 ```
 覆盖：记忆/技能/Hook/分析器单测、真实化 Agent（注入 FakeLLM 离线）、
 编排路由回归、server 路由契约 + WebSocket + 全 GET 无 500、安全（鉴权/执行闸/路径穿越）、

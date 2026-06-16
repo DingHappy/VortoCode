@@ -39,3 +39,33 @@ def test_banned_agent_blocked_outright():
     g = _guard()
     g.banned_agents.add("operator")
     assert g.check_command("ls", agent_id="operator")["allowed"] is False
+
+
+# ----------------------------------------- check_permission（面向文件目标）
+
+def test_unregistered_agent_denied():
+    assert PermissionManager().check_permission("ghost", "write", "x.py")["allowed"] is False
+
+
+def test_developer_write_in_workdir_allowed():
+    # 相对路径解析到 cwd（项目目录，无 /etc /var /usr 等敏感子串）→ 放行
+    r = PermissionManager().check_permission("developer", "write", "m.py")
+    assert r["allowed"] is True
+
+
+def test_write_to_sensitive_path_blocked():
+    r = PermissionManager().check_permission("developer", "write", "/etc/passwd")
+    assert r["allowed"] is False
+
+
+def test_execute_requires_approval():
+    pm = PermissionManager()
+    r = pm.check_permission("developer", "execute", "ls")
+    assert r["allowed"] is False
+    assert r.get("pending") is True
+    assert len(pm.get_pending_requests()) == 1
+
+
+def test_reviewer_cannot_write():
+    # reviewer 只有读权限，未授予 WRITE_FILE
+    assert PermissionManager().check_permission("reviewer", "write", "m.py")["allowed"] is False
