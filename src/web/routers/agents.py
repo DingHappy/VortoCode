@@ -22,94 +22,88 @@ async def get_agent_templates():
         ]
     }
 
+# 统一：custom 与 advanced 共用同一个 agent_manager 存储（重启不丢、两页互通）。
+# custom 端点保留原响应形状（前端无感），但读写都打到 state.agent_manager。
+def _to_custom_shape(a):
+    return {
+        "id": a.config.id,
+        "name": a.config.name,
+        "role": a.config.role,
+        "description": a.config.description,
+        "capabilities": [c.value for c in a.config.capabilities],
+        "model": a.config.model,
+        "is_active": a.config.is_active,
+        "created_at": a.config.created_at.isoformat(),
+    }
+
+
+def _map_caps(values):
+    """把字符串能力映射到 AgentManager 的 AgentCapability，跳过无法识别的。"""
+    from src.agents.manager import AgentCapability as _Cap
+    out = []
+    for v in values or []:
+        try:
+            out.append(_Cap(v.value if hasattr(v, "value") else v))
+        except ValueError:
+            pass
+    return out
+
+
 @router.get("/api/agents/custom")
 async def get_custom_agents():
-    """获取自定义 Agent 列表"""
-    agents = state.custom_agent_manager.list_agents()
-    return {
-        "agents": [
-            {
-                "id": a.id,
-                "name": a.name,
-                "role": a.role.value,
-                "description": a.description,
-                "capabilities": [c.value for c in a.capabilities],
-                "model": a.model,
-                "is_active": a.is_active,
-                "created_at": a.created_at.isoformat()
-            }
-            for a in agents
-        ]
-    }
+    """获取 Agent 列表（与 advanced 同一份存储）"""
+    return {"agents": [_to_custom_shape(a) for a in state.agent_manager.list_agents()]}
 
 @router.post("/api/agents/custom")
 async def create_custom_agent(request: CreateAgentRequest):
-    """创建自定义 Agent"""
+    """创建 Agent（写入统一存储）"""
     try:
-        # 转换角色
-        role = AgentRole(request.role)
-        
-        # 转换能力
-        capabilities = []
-        for cap in request.capabilities:
-            try:
-                capabilities.append(CustomAgentCapability(cap))
-            except ValueError:
-                pass
-        
-        agent = state.custom_agent_manager.create_agent(
+        agent = state.agent_manager.create_agent(
             name=request.name,
-            role=role,
+            role=str(request.role),
             description=request.description,
-            system_prompt=request.system_prompt,
-            capabilities=capabilities,
+            capabilities=_map_caps(request.capabilities),
             tools=request.tools,
-            model=request.model
+            system_prompt=request.system_prompt,
+            model=request.model,
         )
-        
-        return {
-            "success": True,
-            "agent": {
-                "id": agent.id,
-                "name": agent.name,
-                "role": agent.role.value
-            }
-        }
+        return {"success": True, "agent": {"id": agent.config.id, "name": agent.config.name,
+                                           "role": agent.config.role}}
     except Exception as e:
         return {"success": False, "error": str(e)}
 
 @router.post("/api/agents/templates/{template_name}")
 async def create_agent_from_template(template_name: str):
-    """从模板创建 Agent"""
-    agent = state.custom_agent_manager.create_from_template(template_name)
-    if agent:
-        return {
-            "success": True,
-            "agent": {
-                "id": agent.id,
-                "name": agent.name,
-                "role": agent.role.value
-            }
-        }
-    return {"success": False, "error": f"Template not found: {template_name}"}
+    """从（custom 那套）模板创建 Agent，写入统一存储"""
+    tmpl = next((t for t in state.custom_agent_manager.list_templates()
+                 if t.name == template_name), None)
+    if not tmpl:
+        return {"success": False, "error": f"Template not found: {template_name}"}
+    agent = state.agent_manager.create_agent(
+        name=tmpl.name,
+        role=tmpl.role.value,
+        description=tmpl.description,
+        capabilities=_map_caps(tmpl.capabilities),
+        tools=tmpl.tools,
+        system_prompt=tmpl.system_prompt,
+    )
+    return {"success": True, "agent": {"id": agent.config.id, "name": agent.config.name,
+                                       "role": agent.config.role}}
 
 @router.delete("/api/agents/custom/{agent_id}")
 async def delete_custom_agent(agent_id: str):
-    """删除自定义 Agent"""
-    success = state.custom_agent_manager.delete_agent(agent_id)
-    return {"success": success}
+    """删除 Agent（统一存储）"""
+    return {"success": state.agent_manager.delete_agent(agent_id)}
 
 @router.post("/api/agents/custom/{agent_id}/activate")
 async def activate_agent(agent_id: str):
     """激活 Agent"""
-    success = state.custom_agent_manager.activate_agent(agent_id)
-    return {"success": success}
+    return {"success": state.agent_manager.set_active(agent_id, True)}
 
 @router.post("/api/agents/custom/{agent_id}/deactivate")
 async def deactivate_agent(agent_id: str):
     """停用 Agent"""
-    success = state.custom_agent_manager.deactivate_agent(agent_id)
-    return {"success": success}
+    return {"success": state.agent_manager.set_active(agent_id, False)}
 
 # 高级 Agent 管理 API
 @router.get("/api/agents/advanced")
