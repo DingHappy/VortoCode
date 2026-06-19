@@ -377,9 +377,7 @@ class LocalVectorStore(VectorStore):
         top_k: int = 5,
         filter_dict: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
-        """搜索向量（numpy 向量化，比逐条循环快 10-100x）"""
-        import numpy as np
-
+        """搜索向量：有 numpy 走向量化快路径，无 numpy 则纯 Python 兜底。"""
         if not self.vectors:
             return []
 
@@ -396,8 +394,15 @@ class LocalVectorStore(VectorStore):
         if not candidates:
             return []
 
-        # 批量向量化计算
         ids = list(candidates.keys())
+
+        try:
+            import numpy as np
+        except ImportError:
+            # 本地轻量存储不硬依赖 numpy：无 numpy 时纯 Python 兜底（CI clean-room 即如此）
+            return self._search_pure_python(ids, candidates, query_vector, top_k)
+
+        # 批量向量化计算
         matrix = np.array([candidates[vid]["vector"] for vid in ids], dtype=np.float32)
         query = np.array(query_vector, dtype=np.float32)
 
@@ -429,7 +434,31 @@ class LocalVectorStore(VectorStore):
             }
             for i in top_indices
         ]
-    
+
+    def _search_pure_python(
+        self, ids: List[str], candidates: Dict[str, Any],
+        query_vector: List[float], top_k: int,
+    ) -> List[Dict[str, Any]]:
+        """无 numpy 时的余弦相似度检索（结果与 numpy 路径一致）。"""
+        import math
+
+        q_norm = math.sqrt(sum(x * x for x in query_vector)) or 1.0
+        scored = []
+        for vid in ids:
+            vec = candidates[vid]["vector"]
+            v_norm = math.sqrt(sum(x * x for x in vec)) or 1.0
+            dot = sum(a * b for a, b in zip(vec, query_vector))
+            scored.append((vid, dot / (v_norm * q_norm)))
+        scored.sort(key=lambda t: t[1], reverse=True)
+        return [
+            {
+                "id": vid,
+                "score": float(score),
+                "metadata": candidates[vid].get("metadata", {}),
+            }
+            for vid, score in scored[:top_k]
+        ]
+
     async def delete_vectors(self, ids: List[str]) -> bool:
         """删除向量"""
         for vector_id in ids:
