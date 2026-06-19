@@ -2,7 +2,7 @@
 
 ## 概述
 
-工具集成层实现了 Model Context Protocol (MCP) 支持，使 auto-dev-crew 能够动态发现、连接和使用外部工具，极大地扩展了系统的能力边界。
+工具集成层实现了 Model Context Protocol (MCP) 支持，使 vortocode 能够动态发现、连接和使用外部工具，极大地扩展了系统的能力边界。
 
 ## MCP 协议简介
 
@@ -19,7 +19,7 @@ MCP (Model Context Protocol) 是一个开放标准，用于连接 AI 工具与�
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    Auto-Dev-Crew Agent                       │
+│                    VortoCode Agent                       │
 └───────────────────────────┬─────────────────────────────────┘
                             │
 ┌───────────────────────────▼─────────────────────────────────┐
@@ -410,7 +410,7 @@ class ToolExecutor:
         """在沙箱中执行"""
         # 创建临时容器
         container = self.docker_client.containers.run(
-            "auto-dev-crew-sandbox",
+            "vortocode-sandbox",
             command=self._build_command(tool, arguments),
             detach=True,
             network_disabled=True,
@@ -489,8 +489,8 @@ class MCPIntegrationLayer:
         # 扫描配置文件
         config_files = [
             ".mcp.json",
-            ".auto-dev-crew/mcp.json",
-            "~/.config/auto-dev-crew/mcp.json"
+            ".vortocode/mcp.json",
+            "~/.config/vortocode/mcp.json"
         ]
         
         for config_file in config_files:

@@ -1,4 +1,4 @@
-# Auto-Dev-Crew 依赖
+# VortoCode 依赖
 
 # 核心依赖
 fastapi>=0.100.0

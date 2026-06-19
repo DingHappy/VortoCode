@@ -1,4 +1,4 @@
-"""Auto-Dev-Crew 交互式全屏 TUI（仿 opencode 的形）。
+"""VortoCode 交互式全屏 TUI（仿 opencode 的形）。
 
 一个 Textual 应用：上方对话区、中间实时流式区、下方输入区、底部状态栏。
 - 自然语言 = 开发目标（等同 /run）；slash 命令驱动各能力。
@@ -33,7 +33,7 @@ SLASH_COMMANDS = [
 ]
 ACTION_CMDS = {"analyze", "improve", "fix", "run", "runagent"}   # 跑长任务，受忙碌态约束
 
-_AGENTS_DB = lambda root: str(Path(root) / ".auto-dev-crew" / "web_advanced_agents.json")
+_AGENTS_DB = lambda root: str(Path(root) / ".vortocode" / "web_advanced_agents.json")
 
 HELP = """可用命令:
   直接输入自然语言   = 开发目标（等同 /run）；用 @文件 可补全并带入上下文
@@ -126,10 +126,10 @@ class ConfirmScreen(ModalScreen[bool]):
         self.dismiss(False)
 
 
-class AutoDevCrewTUI(App):
+class VortoCodeTUI(App):
     """仿 opencode 的交互式开发 TUI。"""
 
-    TITLE = "Auto-Dev-Crew"
+    TITLE = "VortoCode"
     CSS = """
     #log { height: 1fr; border: round $accent; padding: 0 1; }
     #stream { max-height: 10; overflow-y: auto; color: $text-muted; padding: 0 1; }
@@ -148,7 +148,7 @@ class AutoDevCrewTUI(App):
         self.mode = "plan"                  # plan | build
         self.transcript: list[str] = []     # 完整记录，便于回看与测试
         # 会话持久化（SQLite）：对话落盘，可 /sessions 列出、/resume 恢复
-        self.sessions = SessionManager(str(Path(repo_root) / ".auto-dev-crew" / "sessions.db"))
+        self.sessions = SessionManager(str(Path(repo_root) / ".vortocode" / "sessions.db"))
         self.session_id: str | None = None
         self._persist_on = False            # 开场白阶段先不落盘
         self._busy = False                  # 是否有长任务在跑
@@ -164,7 +164,7 @@ class AutoDevCrewTUI(App):
 
     def on_mount(self) -> None:
         self.query_one("#stream", Static).display = False
-        self._chrome("[b]Auto-Dev-Crew[/b] 交互模式 · 直接说需求，或 [b]/help[/b] 看命令")
+        self._chrome("[b]VortoCode[/b] 交互模式 · 直接说需求，或 [b]/help[/b] 看命令")
         self._chrome("[dim]/sessions 查看历史 · /resume <id> 恢复 · /new 新开[/dim]")
         self._sync_subtitle()
         self.session_id = self.sessions.start_session()
@@ -493,4 +493,4 @@ class AutoDevCrewTUI(App):
 
 def run() -> None:
     """启动 TUI（供 CLI 调用）。"""
-    AutoDevCrewTUI(repo_root=".").run()
+    VortoCodeTUI(repo_root=".").run()

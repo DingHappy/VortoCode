@@ -2,7 +2,7 @@
 
 ## 概述
 
-本文档详细描述了 auto-dev-crew 从当前状态演进到高级自我编排框架的完整实现路线图。
+本文档详细描述了 vortocode 从当前状态演进到高级自我编排框架的完整实现路线图。
 
 ## 阶段划分
 
@@ -323,7 +323,7 @@ pytest-cov>=4.0.0
 ### 目录结构
 
 ```
-auto-dev-crew/
+vortocode/
 ├── src/
 │   ├── orchestrator/
 │   │   ├── __init__.py

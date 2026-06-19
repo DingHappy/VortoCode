@@ -218,7 +218,7 @@ async def execute_tasks():
     )
     from src.orchestrator import IterativeDevLoop
 
-    workspace = str(_Path(".auto-dev-crew") / "workspaces" / f"server-{_uuid.uuid4().hex[:8]}")
+    workspace = str(_Path(".vortocode") / "workspaces" / f"server-{_uuid.uuid4().hex[:8]}")
     ctx = {"task": state.goal, "goal": state.goal, "workspace": workspace, "artifacts": {}}
 
     # 高层阶段（供 UI 展示）

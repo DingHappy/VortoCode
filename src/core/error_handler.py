@@ -114,7 +114,7 @@ class LLMError(AppError):
 def setup_logging(
     level: str = "INFO",
     log_file: Optional[str] = None,
-    log_dir: str = ".auto-dev-crew/logs"
+    log_dir: str = ".vortocode/logs"
 ) -> logging.Logger:
     """设置日志"""
     # 创建日志目录

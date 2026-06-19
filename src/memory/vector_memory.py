@@ -25,7 +25,7 @@ class VectorMemoryConfig(BaseModel):
     use_openai_embeddings: bool = False
     openai_api_key: Optional[str] = None
     openai_api_base: Optional[str] = None
-    storage_path: str = ".auto-dev-crew/vector_memory"
+    storage_path: str = ".vortocode/vector_memory"
 
 
 class EmbeddingGenerator(ABC):
@@ -322,7 +322,7 @@ class QdrantVectorStore(VectorStore):
 class LocalVectorStore(VectorStore):
     """本地向量存储（基于FAISS或简单实现）"""
     
-    def __init__(self, storage_path: str = ".auto-dev-crew/vector_memory"):
+    def __init__(self, storage_path: str = ".vortocode/vector_memory"):
         self.storage_path = Path(storage_path)
         self.storage_path.mkdir(parents=True, exist_ok=True)
         

@@ -1,4 +1,4 @@
-# Auto-Dev-Crew
+# VortoCode
 
 通用多 Agent 软件开发框架，目标：**全栈 Web 项目自动化开发，人工只在"需求确认"和"最终合并"两个环节介入**。
 
@@ -15,13 +15,13 @@
 
 ## 核心特性
 
-### 自我迭代 / dogfooding（用 auto-dev-crew 开发它自己）
+### 自我迭代 / dogfooding（用 vortocode 开发它自己）
 
-- **L1 自分析** (`adc self-analyze`)：只读扫描本仓库，找孤儿模块 / 循环依赖 / 测试缺口 / 未声明依赖（确定性，无需 LLM key）
-- **L2 自改进** (`adc self-improve`)：给"没测试的模块"自动生成测试，**必须真 pytest 通过**才纳入（客观门控，非 LLM 自评）
-- **L2.2 代码修复** (`adc self-fix --paths ...`)：深审 bug/坏味道 → 外科手术式精确编辑 → **全量测试门控**，绿才留、红回滚
+- **L1 自分析** (`vc self-analyze`)：只读扫描本仓库，找孤儿模块 / 循环依赖 / 测试缺口 / 未声明依赖（确定性，无需 LLM key）
+- **L2 自改进** (`vc self-improve`)：给"没测试的模块"自动生成测试，**必须真 pytest 通过**才纳入（客观门控，非 LLM 自评）
+- **L2.2 代码修复** (`vc self-fix --paths ...`)：深审 bug/坏味道 → 外科手术式精确编辑 → **全量测试门控**，绿才留、红回滚
 - **安全边界**：默认 dry-run 只出提案；改动只进新分支、绝不碰 main、需人确认 —— 落实"人在合并口"
-- **交互前端** (`adc tui`)：仿 opencode 的全屏 TUI，把上面能力串成对话式体验（plan/build 模式、token 流式、@文件补全、会话持久化、Esc 取消）
+- **交互前端** (`vc tui`)：仿 opencode 的全屏 TUI，把上面能力串成对话式体验（plan/build 模式、token 流式、@文件补全、会话持久化、Esc 取消）
 
 ### 自我编排引擎
 
@@ -98,7 +98,7 @@
 ## 目录结构
 
 ```
-auto-dev-crew/
+vortocode/
 ├── main.py              CLI 入口（run / server / analyze / test / demo）
 ├── src/
 │   ├── agents/          角色化 Agent（product/architect/developer/reviewer/tester，真实 LLM 驱动）
@@ -186,8 +186,8 @@ AUTODEV_ENABLE_SHELL=
 ### 3. 安装命令行（推荐）
 
 ```bash
-pip install -e .          # 注册 auto-dev-crew / adc 控制台命令
-adc --help                # 查看所有子命令
+pip install -e .          # 注册 vortocode / vc 控制台命令
+vc --help                # 查看所有子命令
 ```
 
 > 不安装也能用 `python main.py <命令>`（薄壳等效）。
@@ -196,19 +196,19 @@ adc --help                # 查看所有子命令
 
 ```bash
 # 自我迭代（dogfooding；self-analyze 无需 key）
-adc self-analyze                      # 只读扫描自己、列出问题
-adc self-improve                      # 给测试缺口生成测试（真 pytest 门控；默认 dry-run）
-adc self-fix --paths src/x.py         # 深审并外科修复指定文件
+vc self-analyze                      # 只读扫描自己、列出问题
+vc self-improve                      # 给测试缺口生成测试（真 pytest 门控；默认 dry-run）
+vc self-fix --paths src/x.py         # 深审并外科修复指定文件
 
 # 交互式全屏 TUI（仿 opencode；需 pip install '.[tui]'）
-adc tui
+vc tui
 
 # Web 控制台（默认 127.0.0.1:8080；对外暴露务必设 AUTODEV_API_TOKEN）
-adc server
+vc server
 
 # 跑完整开发流水线 / 分析任务（需配 API key）
-adc run -t "用 Python 写一个计算阶乘的函数及其单元测试"
-adc analyze -t "创建一个 REST API"
+vc run -t "用 Python 写一个计算阶乘的函数及其单元测试"
+vc analyze -t "创建一个 REST API"
 ```
 
 > 默认仅监听本地回环（127.0.0.1）。**对外暴露前务必设置 `AUTODEV_API_TOKEN`**，见下方「安全」。

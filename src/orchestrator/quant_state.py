@@ -12,7 +12,7 @@ from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_PATH = ".auto-dev-crew/quant_state.json"
+_DEFAULT_PATH = ".vortocode/quant_state.json"
 
 
 class PipelineState:

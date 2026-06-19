@@ -245,10 +245,10 @@ class Agent(ABC):
         return data
 
     def _resolve_workspace(self, context: Dict[str, Any]) -> Path:
-        """确定工作区目录：优先 context，其次默认到 .auto-dev-crew/workspaces/<id>/。"""
+        """确定工作区目录：优先 context，其次默认到 .vortocode/workspaces/<id>/。"""
         ws = context.get("workspace")
         if not ws:
-            ws = Path(".auto-dev-crew") / "workspaces" / self.agent_id
+            ws = Path(".vortocode") / "workspaces" / self.agent_id
         ws = Path(ws)
         ws.mkdir(parents=True, exist_ok=True)
         return ws

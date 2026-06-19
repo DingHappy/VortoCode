@@ -1,8 +1,8 @@
-# Auto-Dev-Crew 改进计划
+# VortoCode 改进计划
 
 ## 概述
 
-基于对 Claude Code、AaaS (Agents as a Service) 和 Manus Killswitch 等先进框架的研究，本计划旨在将自我编排能力、工具集成、记忆系统等关键特性整合到 auto-dev-crew 中，使其成为一个真正智能的软件开发框架。
+基于对 Claude Code、AaaS (Agents as a Service) 和 Manus Killswitch 等先进框架的研究，本计划旨在将自我编排能力、工具集成、记忆系统等关键特性整合到 vortocode 中，使其成为一个真正智能的软件开发框架。
 
 ## 核心改进方向
 
@@ -564,7 +564,7 @@ skills:
 ### 3. 配置驱动
 
 ```yaml
-# auto-dev-crew 配置
+# vortocode 配置
 orchestrator:
   mode: "self-orchestration"  # 或 "workflow"
   self_orchestration:
@@ -579,11 +579,11 @@ memory:
 
 skills:
   enabled: true
-  directory: ".auto-dev-crew/skills/"
+  directory: ".vortocode/skills/"
 
 hooks:
   enabled: true
-  config_file: ".auto-dev-crew/hooks.json"
+  config_file: ".vortocode/hooks.json"
 ```
 
 ## 成功指标
@@ -637,11 +637,11 @@ hooks:
 
 ## 总结
 
-本改进计划将 auto-dev-crew 从一个静态工作流框架升级为一个智能的、自我编排的软件开发系统。通过引入自我编排引擎、动态 Agent 能力、MCP 工具集成、记忆系统、技能系统和 Hooks 系统，框架将能够：
+本改进计划将 vortocode 从一个静态工作流框架升级为一个智能的、自我编排的软件开发系统。通过引入自我编排引擎、动态 Agent 能力、MCP 工具集成、记忆系统、技能系统和 Hooks 系统，框架将能够：
 
 1. **自主决策**: 根据任务特性自动选择最佳执行策略
 2. **持续学习**: 从历史任务中积累经验，不断优化
 3. **灵活扩展**: 通过技能和工具轻松扩展能力
 4. **安全可靠**: 通过权限控制和隔离执行确保安全
 
-这些改进将使 auto-dev-crew 成为一个真正先进的 AI 驱动软件开发框架。
+这些改进将使 vortocode 成为一个真正先进的 AI 驱动软件开发框架。

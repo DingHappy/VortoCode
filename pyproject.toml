@@ -3,14 +3,14 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "auto-dev-crew"
+name = "vortocode"
 version = "0.1.0"
 description = "通用多 Agent 软件开发框架"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 authors = [
-    {name = "Auto-Dev-Crew Team"}
+    {name = "VortoCode Team"}
 ]
 
 dependencies = [
@@ -56,12 +56,12 @@ dev = [
     "ruff>=0.1.0",
 ]
 all = [
-    "auto-dev-crew[memory,llm,mcp,parsing,quant,tui,dev]",
+    "vortocode[memory,llm,mcp,parsing,quant,tui,dev]",
 ]
 
 [project.scripts]
-auto-dev-crew = "src.cli:main"
-adc = "src.cli:main"
+vortocode = "src.cli:main"
+vc = "src.cli:main"
 
 # 显式声明扁平布局：包名就是 src（代码用 from src.xxx 导入）。
 # 否则 setuptools 见到 src/ 会误判为 src-layout，导致安装后 `import src` 不可用。

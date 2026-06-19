@@ -38,7 +38,7 @@ class ProjectContext:
         self.workdir = Path(workdir)
         self.instructions: Optional[ProjectInstructions] = None
         self.memory: ProjectMemory = ProjectMemory()
-        self.memory_file = self.workdir / ".auto-dev-crew" / "memory.md"
+        self.memory_file = self.workdir / ".vortocode" / "memory.md"
         self.instructions_file = self.workdir / "PROJECT.md"
         
         # 加载项目指令和记忆
@@ -56,8 +56,8 @@ class ProjectContext:
         if claude_md.exists():
             self._parse_instructions_file(claude_md)
         
-        # 检查 .auto-dev-crew/instructions.md
-        custom_instructions = self.workdir / ".auto-dev-crew" / "instructions.md"
+        # 检查 .vortocode/instructions.md
+        custom_instructions = self.workdir / ".vortocode" / "instructions.md"
         if custom_instructions.exists():
             self._parse_instructions_file(custom_instructions)
     

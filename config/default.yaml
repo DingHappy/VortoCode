@@ -1,4 +1,4 @@
-# Auto-Dev-Crew 配置文件
+# VortoCode 配置文件
 
 # 编排器配置
 orchestrator:
@@ -38,15 +38,15 @@ memory:
     capacity: 100
   
   long_term:
-    storage_path: ".auto-dev-crew/memory"
+    storage_path: ".vortocode/memory"
     enabled: true
 
 # 技能系统配置
 skills:
   directories:
     - "skills"
-    - ".auto-dev-crew/skills"
-    - "~/.auto-dev-crew/skills"
+    - ".vortocode/skills"
+    - "~/.vortocode/skills"
   
   auto_discovery:
     enabled: true
@@ -54,7 +54,7 @@ skills:
 # Hook 系统配置
 hooks:
   enabled: true
-  log_file: ".auto-dev-crew/logs/hooks.log"
+  log_file: ".vortocode/logs/hooks.log"
 
 # MCP 配置
 mcp:
@@ -73,4 +73,4 @@ web:
 # 日志配置
 logging:
   level: "INFO"
-  file: ".auto-dev-crew/logs/app.log"
+  file: ".vortocode/logs/app.log"

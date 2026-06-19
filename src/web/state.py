@@ -93,13 +93,13 @@ class AppState:
         self.project_context: Optional[ProjectContext] = None
         self._load_project_context()
 
-        # 自定义 Agent 管理器（持久化到 .auto-dev-crew/，重启不丢）
+        # 自定义 Agent 管理器（持久化到 .vortocode/，重启不丢）
         self.custom_agent_manager = CustomAgentManager(
-            persist_path=str(Path(".auto-dev-crew") / "web_custom_agents.json"))
+            persist_path=str(Path(".vortocode") / "web_custom_agents.json"))
 
         # 高级 Agent 管理器（持久化）
         self.agent_manager = AgentManager(
-            persist_path=str(Path(".auto-dev-crew") / "web_advanced_agents.json"))
+            persist_path=str(Path(".vortocode") / "web_advanced_agents.json"))
 
         # 技能管理器
         self.skill_manager = SkillManager(self.workdir)

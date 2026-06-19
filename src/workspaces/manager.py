@@ -229,7 +229,7 @@ class WorkspaceManager:
         与全局 `/api/start`（web/routers/execution.py 的 execute_tasks）同构，
         但产出写进本 workspace 对象（agent 状态/进度/日志/tokens，供 to_dict 与
         前端如实反映），事件经 callback(ws_id, event_type, data) 广播。每个工作区
-        在 .auto-dev-crew/workspaces/<id> 下有独立目录。
+        在 .vortocode/workspaces/<id> 下有独立目录。
         """
         workspace = self.get_workspace(workspace_id)
         if not workspace:
@@ -252,7 +252,7 @@ class WorkspaceManager:
         workspace.progress = 0
         tokens_before = metrics.get_counter("llm.tokens")  # 真实 token 增量（单工作区精确）
 
-        work_dir = str(Path(".auto-dev-crew") / "workspaces" / workspace.config.id)
+        work_dir = str(Path(".vortocode") / "workspaces" / workspace.config.id)
         ctx: Dict[str, Any] = {"task": task, "goal": task, "workspace": work_dir, "artifacts": {}}
 
         async def _emit(event_type: str, data: Dict[str, Any]):
