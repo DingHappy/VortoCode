@@ -36,6 +36,9 @@ class CreateAgentRequest(BaseModel):
     tools: List[str] = []
     model: str = "mimo-v2.5"
 
+class RunAgentRequest(BaseModel):
+    task: str
+
 class ExecuteSkillRequest(BaseModel):
     skill_name: str
     arguments: Dict[str, Any] = {}
