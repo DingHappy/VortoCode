@@ -243,9 +243,38 @@ AGENT_TEMPLATES: List[AgentTemplate] = [
 class CustomAgentManager:
     """自定义 Agent 管理器"""
     
-    def __init__(self):
+    def __init__(self, persist_path: Optional[str] = None):
+        self.persist_path = persist_path
         self.agents: Dict[str, CustomAgentConfig] = {}
         self.templates = AGENT_TEMPLATES
+        if persist_path:
+            self._load()
+
+    def _save(self) -> None:
+        """持久化到 JSON（持久化失败不影响功能）。"""
+        if not self.persist_path:
+            return
+        import json
+        from pathlib import Path
+        try:
+            p = Path(self.persist_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            data = {aid: cfg.model_dump(mode="json") for aid, cfg in self.agents.items()}
+            p.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _load(self) -> None:
+        import json
+        from pathlib import Path
+        try:
+            p = Path(self.persist_path)
+            if not p.exists():
+                return
+            data = json.loads(p.read_text(encoding="utf-8"))
+            self.agents = {aid: CustomAgentConfig(**cfg) for aid, cfg in data.items()}
+        except Exception:
+            pass
     
     def create_agent(
         self,
@@ -279,7 +308,7 @@ class CustomAgentManager:
         
         self.agents[agent.id] = agent
         logger.info(f"Created custom agent: {agent.name} ({agent.id})")
-        
+        self._save()
         return agent
     
     def create_from_template(self, template_name: str) -> Optional[CustomAgentConfig]:
@@ -325,6 +354,7 @@ class CustomAgentManager:
         """删除 Agent"""
         if agent_id in self.agents:
             del self.agents[agent_id]
+            self._save()
             return True
         return False
     
@@ -333,6 +363,7 @@ class CustomAgentManager:
         agent = self.agents.get(agent_id)
         if agent:
             agent.is_active = True
+            self._save()
             return True
         return False
     
@@ -341,6 +372,7 @@ class CustomAgentManager:
         agent = self.agents.get(agent_id)
         if agent:
             agent.is_active = False
+            self._save()
             return True
         return False
     
