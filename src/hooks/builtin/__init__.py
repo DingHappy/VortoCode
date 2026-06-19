@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import List
 
 from ..hook import Hook, HookEvent, HookEventType, HookResult
+from .dingtalk_hook import DingTalkHook, create_dingtalk_hook
 
 logger = logging.getLogger(__name__)
 
