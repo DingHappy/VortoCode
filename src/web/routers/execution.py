@@ -17,6 +17,44 @@ async def _set_agent(role: str, status: str, current_task=None):
     })
 
 
+@router.post("/api/agents/{agent_id}/run")
+async def run_agent(agent_id: str, request: RunAgentRequest):
+    """运行一个已创建的 agent：用它的 system_prompt 执行任务，结果流式广播到 /ws。"""
+    a = state.agent_manager.get_agent(agent_id)
+    if not a:
+        return {"success": False, "error": "Agent not found"}
+    asyncio.create_task(_run_single_agent(agent_id, a.config, request.task))
+    return {"success": True, "agent_id": agent_id}
+
+
+async def _run_single_agent(agent_id, config, task):
+    """后台执行单个配置 agent，并实时广播状态/输出。"""
+    from src.agents.config_agent import build_config_agent
+    from src.web.streaming import TokenBatcher
+
+    await _set_agent(agent_id, "running", task[:60])
+    add_log("info", f"运行 agent「{config.name}」：{task[:50]}")
+
+    async def _emit_token(text):
+        await manager.broadcast({"type": "token", "data": {"role": agent_id, "text": text}})
+
+    batcher = TokenBatcher(_emit_token, max_chars=48)
+    agent = build_config_agent(config.name, config.role, config.system_prompt, config.model)
+    try:
+        result = await agent.execute(task, context={"on_token": batcher.feed})
+        await batcher.flush()
+        await _set_agent(agent_id, "completed" if result.success else "failed")
+        out = str(result.output)[:1000] if result.output else (result.error or "")
+        await manager.broadcast({"type": "agent_run_completed",
+                                 "data": {"agent_id": agent_id, "success": result.success, "output": out}})
+        add_log("success" if result.success else "error",
+                f"agent「{config.name}」{'完成' if result.success else '失败'}")
+    except Exception as e:  # noqa: BLE001
+        await _set_agent(agent_id, "failed")
+        await manager.broadcast({"type": "agent_run_completed",
+                                 "data": {"agent_id": agent_id, "success": False, "error": str(e)}})
+
+
 @router.post("/api/goal")
 async def set_goal(request: GoalRequest):
     """设置目标"""
