@@ -141,3 +141,32 @@ async def test_file_suggester_completes_at_token(tmp_path):
     s = FileSuggester(str(tmp_path))
     assert await s.get_suggestion("改 @src/ut") == "改 @src/util.py"
     assert await s.get_suggestion("没有 at 符号") is None
+
+
+@pytest.mark.asyncio
+async def test_session_persists_messages(tmp_path):
+    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/help")
+        sid = app.session_id
+
+    from src.memory.session_store import SessionStore
+    store = SessionStore(str(tmp_path / ".auto-dev-crew" / "sessions.db"))
+    msgs = store.get_messages(sid)
+    assert any("可用命令" in m["content"] for m in msgs)   # /help 输出已落盘
+
+
+@pytest.mark.asyncio
+async def test_resume_replays_session(tmp_path):
+    from src.memory.session_store import SessionStore
+
+    db = str(tmp_path / ".auto-dev-crew" / "sessions.db")
+    store = SessionStore(db)
+    sid = store.create_session("旧会话")
+    store.add_message(sid, "assistant", "历史内容ABC", {"markup": False})
+
+    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, f"/resume {sid}")
+        assert await _wait_for(app, pilot, "历史内容ABC")    # 旧会话被回放
+        assert app.session_id == sid                          # 当前会话切到它
