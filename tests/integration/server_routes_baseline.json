@@ -72,6 +72,12 @@
     ]
   },
   {
+    "path": "/api/agents/{agent_id}/stop",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
     "path": "/api/agents/custom/{agent_id}",
     "methods": [
       "DELETE"

@@ -17,18 +17,34 @@ async def _set_agent(role: str, status: str, current_task=None):
     })
 
 
+_RUNNING = {}          # agent_id -> asyncio.Task（用于停止与防重复）
+_RUN_TIMEOUT = 300     # 单次运行最长 5 分钟，超时即终止
+
+
 @router.post("/api/agents/{agent_id}/run")
 async def run_agent(agent_id: str, request: RunAgentRequest):
     """运行一个已创建的 agent：用它的 system_prompt 执行任务，结果流式广播到 /ws。"""
     a = state.agent_manager.get_agent(agent_id)
     if not a:
         return {"success": False, "error": "Agent not found"}
-    asyncio.create_task(_run_single_agent(agent_id, a.config, request.task))
+    if agent_id in _RUNNING and not _RUNNING[agent_id].done():
+        return {"success": False, "error": "Agent already running"}
+    _RUNNING[agent_id] = asyncio.create_task(_run_single_agent(agent_id, a.config, request.task))
     return {"success": True, "agent_id": agent_id}
 
 
+@router.post("/api/agents/{agent_id}/stop")
+async def stop_agent(agent_id: str):
+    """停止正在运行的 agent。"""
+    t = _RUNNING.get(agent_id)
+    if t and not t.done():
+        t.cancel()
+        return {"success": True, "agent_id": agent_id}
+    return {"success": False, "error": "Agent not running"}
+
+
 async def _run_single_agent(agent_id, config, task):
-    """后台执行单个配置 agent，并实时广播状态/输出。"""
+    """后台执行单个配置 agent，并实时广播状态/输出；支持超时与取消。"""
     from src.agents.config_agent import build_config_agent
     from src.web.streaming import TokenBatcher
 
@@ -41,7 +57,8 @@ async def _run_single_agent(agent_id, config, task):
     batcher = TokenBatcher(_emit_token, max_chars=48)
     agent = build_config_agent(config.name, config.role, config.system_prompt, config.model)
     try:
-        result = await agent.execute(task, context={"on_token": batcher.feed})
+        result = await asyncio.wait_for(
+            agent.execute(task, context={"on_token": batcher.feed}), timeout=_RUN_TIMEOUT)
         await batcher.flush()
         await _set_agent(agent_id, "completed" if result.success else "failed")
         out = str(result.output)[:1000] if result.output else (result.error or "")
@@ -49,10 +66,24 @@ async def _run_single_agent(agent_id, config, task):
                                  "data": {"agent_id": agent_id, "success": result.success, "output": out}})
         add_log("success" if result.success else "error",
                 f"agent「{config.name}」{'完成' if result.success else '失败'}")
+    except (asyncio.CancelledError, asyncio.TimeoutError) as e:
+        cancelled = isinstance(e, asyncio.CancelledError)
+        reason = "已取消" if cancelled else f"超时（{_RUN_TIMEOUT}s）"
+        try:
+            await _set_agent(agent_id, "cancelled" if cancelled else "failed")
+            await manager.broadcast({"type": "agent_run_completed",
+                                     "data": {"agent_id": agent_id, "success": False, "error": reason}})
+        except Exception:  # noqa: BLE001
+            pass
+        add_log("warning", f"agent「{config.name}」{reason}")
+        if cancelled:
+            raise   # 让任务真正进入 cancelled 状态
     except Exception as e:  # noqa: BLE001
         await _set_agent(agent_id, "failed")
         await manager.broadcast({"type": "agent_run_completed",
                                  "data": {"agent_id": agent_id, "success": False, "error": str(e)}})
+    finally:
+        _RUNNING.pop(agent_id, None)
 
 
 @router.post("/api/goal")
