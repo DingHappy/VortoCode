@@ -323,9 +323,41 @@ class AgentTemplate:
 class AgentManager:
     """Agent 管理器"""
     
-    def __init__(self):
+    def __init__(self, persist_path: Optional[str] = None):
+        self.persist_path = persist_path
         self.agents: Dict[str, AgentInstance] = {}
-        self._init_default_agents()
+        loaded = False
+        if persist_path:
+            from pathlib import Path
+            if Path(persist_path).exists():
+                self._load()
+                loaded = True
+        if not loaded:
+            self._init_default_agents()
+            self._save()
+
+    def _save(self) -> None:
+        """持久化 agent 配置到 JSON（失败不影响功能；运行期统计不落盘）。"""
+        if not self.persist_path:
+            return
+        import json
+        from pathlib import Path
+        try:
+            p = Path(self.persist_path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            data = {aid: inst.config.model_dump(mode="json") for aid, inst in self.agents.items()}
+            p.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _load(self) -> None:
+        import json
+        from pathlib import Path
+        try:
+            data = json.loads(Path(self.persist_path).read_text(encoding="utf-8"))
+            self.agents = {aid: AgentInstance(AgentConfig(**cfg)) for aid, cfg in data.items()}
+        except Exception:
+            self._init_default_agents()
     
     def _init_default_agents(self):
         """初始化默认 Agent"""
@@ -374,7 +406,7 @@ class AgentManager:
         
         agent = AgentInstance(config)
         self.agents[config.id] = agent
-        
+        self._save()
         logger.info(f"Created agent: {name} ({config.id})")
         return agent
     
@@ -386,7 +418,7 @@ class AgentManager:
         
         agent = AgentInstance(config)
         self.agents[config.id] = agent
-        
+        self._save()
         logger.info(f"Created agent from template: {template_name}")
         return agent
     
@@ -439,14 +471,16 @@ class AgentManager:
         """删除 Agent"""
         if agent_id in self.agents:
             del self.agents[agent_id]
+            self._save()
             return True
         return False
-    
+
     def toggle_agent(self, agent_id: str) -> bool:
         """切换 Agent 状态"""
         agent = self.agents.get(agent_id)
         if agent:
             agent.config.is_active = not agent.config.is_active
+            self._save()
             return True
         return False
     

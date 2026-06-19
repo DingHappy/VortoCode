@@ -8,6 +8,15 @@ from src.web.deps import *  # noqa: F401,F403
 router = APIRouter()
 
 
+async def _set_agent(role: str, status: str, current_task=None):
+    """更新某 agent 的状态并实时广播（前端 admin 监听 agent_status）。"""
+    state.agents[role] = {"status": status, "current_task": current_task}
+    await manager.broadcast({
+        "type": "agent_status",
+        "data": {"agent_id": role, "role": role, "status": status, "current_task": current_task},
+    })
+
+
 @router.post("/api/goal")
 async def set_goal(request: GoalRequest):
     """设置目标"""
@@ -101,7 +110,7 @@ async def _run_phase(ctx, task, agent, instruction):
     """跑一个单 Agent 阶段并广播；成功则把产出登记进共享上下文。"""
     role = task["agent"]
     task["status"] = "running"
-    state.agents[role] = {"status": "running", "current_task": task["title"]}
+    await _set_agent(role, "running", task["title"])
     await manager.broadcast({"type": "task_started", "data": {"task": task, "agent": role}})
     add_log("info", f"{role} Agent 开始：{task['title']}")
     try:
@@ -111,7 +120,7 @@ async def _run_phase(ctx, task, agent, instruction):
         task["status"] = "completed" if result.success else "failed"
         task["output"] = (str(result.output)[:500] if result.output
                            else ("完成" if result.success else (result.error or "失败")))
-        state.agents[role] = {"status": task["status"], "current_task": None}
+        await _set_agent(role, task["status"])
         await manager.broadcast({
             "type": "task_completed" if result.success else "task_failed",
             "data": {"task": task, "agent": role},
@@ -122,7 +131,7 @@ async def _run_phase(ctx, task, agent, instruction):
     except Exception as e:
         task["status"] = "failed"
         task["output"] = str(e)
-        state.agents[role] = {"status": "failed", "current_task": None}
+        await _set_agent(role, "failed")
         await manager.broadcast({"type": "task_failed",
                                  "data": {"task": task, "agent": role, "error": str(e)}})
         add_log("error", f"{task['title']} 失败: {e}")
@@ -170,7 +179,7 @@ async def execute_tasks():
         if state.running:
             t3 = tasks[2]
             t3["status"] = "running"
-            state.agents["developer"] = {"status": "running", "current_task": t3["title"]}
+            await _set_agent("developer", "running", t3["title"])
             await manager.broadcast({"type": "task_started", "data": {"task": t3, "agent": "developer"}})
             add_log("info", "进入迭代开发闭环：开发→测试→审查→修复")
 
@@ -206,7 +215,7 @@ async def execute_tasks():
             await _batcher.flush()   # 冲掉末尾余量
             t3["status"] = "completed" if result.success else "failed"
             t3["output"] = f"{result.reason}；文件：{result.files}"
-            state.agents["developer"] = {"status": t3["status"], "current_task": None}
+            await _set_agent("developer", t3["status"])
             await manager.broadcast({
                 "type": "task_completed" if result.success else "task_failed",
                 "data": {"task": t3, "agent": "developer", "result": result.model_dump()},
