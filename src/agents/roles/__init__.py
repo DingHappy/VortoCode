@@ -74,7 +74,7 @@ class ProductAgent(Agent):
     async def execute(self, task: str, **kwargs) -> AgentResult:
         try:
             spec = await self._analyze_requirements(task)
-            return AgentResult(success=True, output=spec, metadata={"role": "product"})
+            return AgentResult(success=True, output=spec, reasoning=self._last_reasoning, metadata={"role": "product"})
         except Exception as e:
             logger.exception("ProductAgent failed")
             return AgentResult(success=False, error=str(e))
@@ -129,7 +129,7 @@ class ArchitectAgent(Agent):
             ctx = self._merge_context(kwargs)
             spec = ctx.get("spec") or (ctx.get("artifacts", {}) or {}).get("product", {})
             plan = await self._design_architecture(task, spec)
-            return AgentResult(success=True, output=plan, metadata={"role": "architect"})
+            return AgentResult(success=True, output=plan, reasoning=self._last_reasoning, metadata={"role": "architect"})
         except Exception as e:
             logger.exception("ArchitectAgent failed")
             return AgentResult(success=False, error=str(e))
@@ -199,6 +199,7 @@ class DeveloperAgent(Agent):
                 files_created=result.get("files_created", []),
                 files_modified=result.get("files_modified", []),
                 error=None if result.get("files_created") else "未生成任何文件",
+                reasoning=self._last_reasoning,
                 metadata={"role": "developer", "workspace": str(workspace)},
             )
         except Exception as e:
@@ -266,7 +267,7 @@ class ReviewerAgent(Agent):
             if not code:
                 code = self._gather_workspace_code(ctx)
             review = await self._review_code(code, ctx.get("spec", {}))
-            return AgentResult(success=True, output=review, metadata={"role": "reviewer"})
+            return AgentResult(success=True, output=review, reasoning=self._last_reasoning, metadata={"role": "reviewer"})
         except Exception as e:
             logger.exception("ReviewerAgent failed")
             return AgentResult(success=False, error=str(e))
@@ -330,6 +331,7 @@ class TesterAgent(Agent):
                 success=bool(test_result.get("passed")),
                 output=test_result,
                 error=None if test_result.get("passed") else test_result.get("reason"),
+                reasoning=self._last_reasoning,
                 metadata={"role": "tester"},
             )
         except Exception as e:

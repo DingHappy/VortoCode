@@ -25,6 +25,9 @@ class IterationRecord(BaseModel):
     test_summary: str = ""
     review_verdict: str = ""
     review_summary: str = ""
+    # 本轮 developer/reviewer 的推理链（推理型模型才有）。跨迭代串起来即可审计的推理链。
+    dev_reasoning: str = ""
+    review_reasoning: str = ""
 
 
 class DevLoopResult(BaseModel):
@@ -132,6 +135,8 @@ class IterativeDevLoop:
                               f"passed={test_out.get('passed_count', 0)} failed={test_out.get('failed_count', 0)}"),
                 review_verdict=verdict,
                 review_summary=review_out.get("summary", ""),
+                dev_reasoning=getattr(dev_res, "reasoning", None) or "",
+                review_reasoning=getattr(review_res, "reasoning", None) or "",
             )
             history.append(record)
             metrics.increment("devloop.iterations")

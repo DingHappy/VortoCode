@@ -99,6 +99,8 @@ class AgentResult(BaseModel):
     success: bool
     output: Any = None
     error: Optional[str] = None
+    # 本次执行的推理过程（推理型模型的思维链；普通模型为 None）。用于可审计与自我分析。
+    reasoning: Optional[str] = None
     files_created: List[str] = Field(default_factory=list)
     files_modified: List[str] = Field(default_factory=list)
     tokens_used: int = 0
@@ -132,6 +134,8 @@ class Agent(ABC):
         self._start_time: Optional[datetime] = None
         # LLM 客户端可注入（便于离线测试），否则首次使用时懒加载
         self._llm_client = llm_client
+        # 最近一次 _complete 调用捕获到的推理内容（思维链），由各角色回填进 AgentResult
+        self._last_reasoning: Optional[str] = None
 
     @property
     def agent_id(self) -> str:
@@ -170,6 +174,9 @@ class Agent(ABC):
         model = None if self.config.model in ("", "inherit") else self.config.model
         temp = temperature if temperature is not None else self.config.temperature
 
+        # 每次调用先清空，避免上一轮的推理串味到本轮结果
+        self._last_reasoning = None
+
         from ..core.monitoring import metrics
         import time as _t
         _start = _t.time()
@@ -191,6 +198,10 @@ class Agent(ABC):
 
             resp = await self.llm.chat(messages, model=model, temperature=temp)
             if isinstance(resp, dict):
+                reasoning = resp.get("reasoning")
+                if reasoning:
+                    self._last_reasoning = reasoning
+                    logger.debug("[%s] 捕获推理链 %d 字", self.role, len(reasoning))
                 usage = resp.get("usage") or {}
                 if usage.get("total_tokens"):
                     metrics.increment("llm.tokens", int(usage["total_tokens"]))
