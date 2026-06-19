@@ -1,0 +1,135 @@
+# MCP服务器配置
+
+servers:
+  # 文件系统服务器
+  - name: "filesystem"
+    transport: "stdio"
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+    env: {}
+    enabled: true
+    
+  # Git服务器
+  - name: "git"
+    transport: "stdio"
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-git"]
+    env: {}
+    enabled: true
+    
+  # 浏览器服务器
+  - name: "browser"
+    transport: "stdio"
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-playwright"]
+    env: {}
+    enabled: false  # 需要额外配置
+    
+  # 数据库服务器
+  - name: "database"
+    transport: "stdio"
+    command: "npx"
+    args: ["-y", "@modelcontextprotocol/server-sqlite"]
+    env: {}
+    enabled: false  # 需要额外配置
+
+  # 量化平台工具服务器
+  - name: "quant-platform"
+    transport: "stdio"
+    command: "python"
+    args: ["src/tools/quant_mcp_server.py"]
+    env:
+      QUANT_API_BASE: "${QUANT_API_BASE:-http://localhost:8000}"
+    enabled: true
+
+# 工具权限配置
+permissions:
+  # 默认规则
+  rules:
+    - id: "filesystem-read"
+      name: "Filesystem Read"
+      description: "Allow reading files from filesystem"
+      scope: "global"
+      action: "allow"
+      tool_names: ["read_file", "list_directory", "search_files"]
+      priority: 10
+      
+    - id: "filesystem-write"
+      name: "Filesystem Write"
+      description: "Ask for confirmation for file writes"
+      scope: "global"
+      action: "ask"
+      tool_names: ["write_file", "edit_file", "create_directory"]
+      priority: 10
+      
+    - id: "git-operations"
+      name: "Git Operations"
+      description: "Ask for confirmation for git operations"
+      scope: "global"
+      action: "ask"
+      tool_names: ["git_commit", "git_push", "git_pull"]
+      priority: 10
+      
+    - id: "dangerous-operations"
+      name: "Dangerous Operations"
+      description: "Block dangerous operations"
+      scope: "global"
+      action: "deny"
+      tool_names: ["rm", "rmdir", "format", "mkfs"]
+      priority: 100
+
+    - id: "quant-tools-read"
+      name: "Quant Platform Read Tools"
+      description: "Allow read-only quant platform tools"
+      scope: "global"
+      action: "allow"
+      tool_names:
+        - "quant_market_overview"
+        - "quant_market_movers"
+        - "quant_market_sparklines"
+        - "quant_paper_status"
+        - "quant_paper_positions"
+        - "quant_paper_signals"
+        - "quant_templates"
+        - "quant_system_info"
+        - "akshare_news"
+        - "akshare_fundamentals"
+      priority: 10
+
+    - id: "quant-tools-execute"
+      name: "Quant Platform Execute Tools"
+      description: "Allow quant platform execution tools"
+      scope: "global"
+      action: "allow"
+      tool_names:
+        - "quant_screen"
+        - "quant_factor_run"
+        - "quant_backtest"
+        - "quant_backtest_batch"
+      priority: 20
+
+# 工具发现配置
+discovery:
+  # 自动发现工具
+  auto_discover: true
+  
+  # 刷新间隔（秒）
+  refresh_interval: 300
+  
+  # 工具缓存
+  cache:
+    enabled: true
+    ttl: 3600  # 缓存有效期（秒）
+    
+# 执行配置
+execution:
+  # 默认超时（秒）
+  default_timeout: 30
+  
+  # 最大并发数
+  max_concurrent: 5
+  
+  # 重试策略
+  retry:
+    max_retries: 3
+    retry_delay: 1  # 重试延迟（秒）

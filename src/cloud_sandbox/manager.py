@@ -273,7 +273,7 @@ class CloudSandboxManager:
         if config:
             sandbox_config = config
         elif template in self.templates:
-            sandbox_config = self.templates[template].copy()
+            sandbox_config = self.templates[template].model_copy()
             if name:
                 sandbox_config.name = name
         else:

@@ -292,34 +292,119 @@ class SelfOrchestratingEngine:
             )
 
             if recovery.strategy == RecoveryStrategy.RETRY:
-                # 重试
-                try:
-                    result = await agent.execute(
-                        subtask.description, context=shared_context
-                    )
-                    self._record_artifact(shared_context, agent, result)
-                    return {
-                        "subtask_id": subtask_id,
-                        "agent_id": agent.agent_id,
-                        "role": agent.role,
-                        "success": result.success,
-                        "output": result.output,
-                        "error": result.error
-                    }
-                except Exception as retry_error:
+                # 重试（带退避）
+                import asyncio as _aio
+
+                delay = 1.0
+                for attempt in range(recovery.max_retries):
+                    try:
+                        await _aio.sleep(delay)
+                        result = await agent.execute(
+                            subtask.description, context=shared_context
+                        )
+                        self._record_artifact(shared_context, agent, result)
+                        return {
+                            "subtask_id": subtask_id,
+                            "agent_id": agent.agent_id,
+                            "role": agent.role,
+                            "success": result.success,
+                            "output": result.output,
+                            "error": result.error,
+                        }
+                    except Exception as retry_error:
+                        if attempt == recovery.max_retries - 1:
+                            return {
+                                "subtask_id": subtask_id,
+                                "agent_id": agent.agent_id,
+                                "success": False,
+                                "error": str(retry_error),
+                                "recovery_strategy": "retry_exhausted",
+                            }
+                        # 指数退避
+                        delay *= 2
+
+            elif recovery.strategy == RecoveryStrategy.SKIP:
+                logger.warning("Skipping subtask %s: %s", subtask_id, recovery.reason)
+                return {
+                    "subtask_id": subtask_id,
+                    "agent_id": agent.agent_id,
+                    "success": True,  # 跳过视为成功（不阻塞流水线）
+                    "output": f"[SKIPPED] {recovery.reason}",
+                    "recovery_strategy": "skip",
+                }
+
+            elif recovery.strategy == RecoveryStrategy.ALTERNATIVE:
+                # 尝试用其他 Agent 执行
+                alternative_agent = self._find_alternative_agent(agent, subtask)
+                if alternative_agent:
+                    try:
+                        logger.info(
+                            "Trying alternative agent %s for subtask %s",
+                            alternative_agent.agent_id,
+                            subtask_id,
+                        )
+                        result = await alternative_agent.execute(
+                            subtask.description, context=shared_context
+                        )
+                        self._record_artifact(
+                            shared_context, alternative_agent, result
+                        )
+                        return {
+                            "subtask_id": subtask_id,
+                            "agent_id": alternative_agent.agent_id,
+                            "role": alternative_agent.role,
+                            "success": result.success,
+                            "output": result.output,
+                            "error": result.error,
+                            "recovery_strategy": "alternative",
+                        }
+                    except Exception as alt_error:
+                        return {
+                            "subtask_id": subtask_id,
+                            "agent_id": agent.agent_id,
+                            "success": False,
+                            "error": f"Alternative also failed: {alt_error}",
+                            "recovery_strategy": "alternative_failed",
+                        }
+                else:
                     return {
                         "subtask_id": subtask_id,
                         "agent_id": agent.agent_id,
                         "success": False,
-                        "error": str(retry_error)
+                        "error": str(e),
+                        "recovery_strategy": "no_alternative",
                     }
+
+            elif recovery.strategy == RecoveryStrategy.ESCALATE:
+                logger.error(
+                    "Escalating subtask %s: %s", subtask_id, recovery.reason
+                )
+                return {
+                    "subtask_id": subtask_id,
+                    "agent_id": agent.agent_id,
+                    "success": False,
+                    "error": f"[ESCALATED] {recovery.reason}: {e}",
+                    "recovery_strategy": "escalate",
+                    "escalation_target": recovery.escalation_target,
+                }
+
+            elif recovery.strategy == RecoveryStrategy.ROLLBACK:
+                logger.warning("Rolling back subtask %s: %s", subtask_id, recovery.reason)
+                return {
+                    "subtask_id": subtask_id,
+                    "agent_id": agent.agent_id,
+                    "success": False,
+                    "error": f"[ROLLED BACK] {recovery.reason}: {e}",
+                    "recovery_strategy": "rollback",
+                }
+
             else:
                 return {
                     "subtask_id": subtask_id,
                     "agent_id": agent.agent_id,
                     "success": False,
                     "error": str(e),
-                    "recovery_strategy": recovery.strategy.value
+                    "recovery_strategy": recovery.strategy.value,
                 }
 
     async def _execute_parallel(
@@ -357,6 +442,21 @@ class SelfOrchestratingEngine:
             "agents": len(self.agents),
             "failure_stats": self.failure_handler.get_failure_stats()
         }
+
+    def _find_alternative_agent(
+        self, failed_agent: Agent, subtask: "SubTask"
+    ) -> Optional[Agent]:
+        """找一个能胜任该子任务的替代 Agent（排除已失败的）"""
+        best: Optional[Agent] = None
+        best_score = 0.0
+        for agent in self.agents.values():
+            if agent.agent_id == failed_agent.agent_id:
+                continue
+            score = self.agent_matcher._calculate_match_score(agent, subtask)
+            if score > best_score:
+                best_score = score
+                best = agent
+        return best if best_score > 0 else None
 
 
 async def create_default_engine(**kwargs) -> "SelfOrchestratingEngine":
