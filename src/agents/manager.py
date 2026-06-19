@@ -483,6 +483,15 @@ class AgentManager:
             self._save()
             return True
         return False
+
+    def set_active(self, agent_id: str, active: bool) -> bool:
+        """显式设置启用/停用。"""
+        agent = self.agents.get(agent_id)
+        if agent:
+            agent.config.is_active = active
+            self._save()
+            return True
+        return False
     
     def get_agent_by_role(self, role: str) -> Optional[AgentInstance]:
         """根据角色获取 Agent"""
