@@ -47,8 +47,9 @@ class Memory(ABC):
 class ShortTermMemory(Memory):
     """短期记忆 - 当前会话的工作记忆"""
     
-    def __init__(self, capacity: int = 100):
+    def __init__(self, capacity: int = 100, ttl_hours: int = 24):
         self.capacity = capacity
+        self.ttl_hours = ttl_hours
         self.items: List[MemoryItem] = []
         self.index: Dict[str, MemoryItem] = {}
     
@@ -65,6 +66,18 @@ class ShortTermMemory(Memory):
         while len(self.items) > self.capacity:
             oldest = self.items.pop(0)
             del self.index[oldest.id]
+    
+    async def cleanup(self, max_age_hours: Optional[int] = None) -> int:
+        """清理过期记忆，返回删除数量"""
+        from datetime import datetime, timedelta
+        cutoff = datetime.now() - timedelta(hours=max_age_hours or self.ttl_hours)
+        before = len(self.items)
+        self.items = [i for i in self.items if i.timestamp >= cutoff]
+        self.index = {i.id: i for i in self.items}
+        removed = before - len(self.items)
+        if removed:
+            logger.info("ShortTermMemory: cleaned up %d expired items", removed)
+        return removed
     
     async def retrieve(
         self, 
@@ -360,9 +373,15 @@ class MemorySystem:
             await self.store(
                 f"Failed task: {task}. Error: {result['error']}",
                 memory_type="failure",
-                importance=0.9,
-                metadata={"task": task, "error": result["error"]}
+                importance=0.6,
+                metadata={"task": task, "error": result.get("error")}
             )
+    
+    async def cleanup(self, max_age_hours: int = 72) -> Dict[str, int]:
+        """清理过期记忆，返回各层删除数量"""
+        short_removed = await self.short_term.cleanup(max_age_hours)
+        # 长期记忆不自动清理（importance > 0.7 的才存入，值得保留）
+        return {"short_term": short_removed}
     
     async def clear(self) -> None:
         """清除所有记忆"""

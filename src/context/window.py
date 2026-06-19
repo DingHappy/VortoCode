@@ -112,9 +112,12 @@ class ContextManager:
         self.window.current_tokens = sum(i.token_count for i in recent)
     
     def _estimate_tokens(self, text: str) -> int:
-        """估算 token 数"""
-        # 简化估算：1 token ≈ 4 字符
-        return len(text) // 4
+        """估算 token 数（混合中英文更准确）"""
+        if not text:
+            return 0
+        cn_chars = sum(1 for ch in text if '\u4e00' <= ch <= '\u9fff')
+        other_len = len(text) - cn_chars
+        return int(cn_chars * 1.8 + other_len * 0.25)
     
     def _item_to_dict(self, item: ContextItem) -> Dict[str, Any]:
         """转换为字典"""

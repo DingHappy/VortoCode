@@ -1,6 +1,7 @@
 """动态 Agent 实现"""
 
 import logging
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from .base import Agent, AgentConfig, AgentResult, AgentCapability, AgentStatus
@@ -126,8 +127,6 @@ class DynamicAgent(Agent):
             "average_duration": avg_duration
         }
 
-
-from datetime import datetime
 
 
 class SubAgentManager:

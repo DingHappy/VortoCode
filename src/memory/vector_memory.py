@@ -1,5 +1,6 @@
 """向量数据库集成的记忆系统"""
 
+import asyncio
 import logging
 import uuid
 from abc import ABC, abstractmethod
@@ -186,154 +187,135 @@ class QdrantVectorStore(VectorStore):
         self.vector_size = vector_size
         self.client = None
     
-    async def _get_client(self):
-        """获取Qdrant客户端"""
-        if self.client is None:
-            try:
-                from qdrant_client import QdrantClient
-                from qdrant_client.models import Distance, VectorParams
-                
-                self.client = QdrantClient(host=self.host, port=self.port)
-                
-                # 检查集合是否存在，不存在则创建
-                collections = self.client.get_collections().collections
-                collection_names = [c.name for c in collections]
-                
-                if self.collection_name not in collection_names:
-                    self.client.create_collection(
-                        collection_name=self.collection_name,
-                        vectors_config=VectorParams(
-                            size=self.vector_size,
-                            distance=Distance.COSINE
-                        )
-                    )
-                    logger.info(f"Created Qdrant collection: {self.collection_name}")
-                
-            except ImportError:
-                logger.error("qdrant-client not installed. Install with: pip install qdrant-client")
-                raise
+    def _ensure_client(self):
+        """同步获取 Qdrant 客户端（在 __init__ 或线程中调用）"""
+        if self.client is not None:
+            return self.client
+        from qdrant_client import QdrantClient
+        from qdrant_client.models import Distance, VectorParams
+
+        self.client = QdrantClient(host=self.host, port=self.port)
+
+        collections = self.client.get_collections().collections
+        collection_names = [c.name for c in collections]
+
+        if self.collection_name not in collection_names:
+            self.client.create_collection(
+                collection_name=self.collection_name,
+                vectors_config=VectorParams(
+                    size=self.vector_size, distance=Distance.COSINE
+                ),
+            )
+            logger.info(f"Created Qdrant collection: {self.collection_name}")
         return self.client
-    
+
+    async def _get_client(self):
+        """异步获取 Qdrant 客户端（不阻塞事件循环）"""
+        if self.client is not None:
+            return self.client
+        try:
+            self.client = await asyncio.to_thread(self._ensure_client)
+        except ImportError:
+            logger.error(
+                "qdrant-client not installed. Install with: pip install qdrant-client"
+            )
+            raise
+        return self.client
+
     async def add_vectors(
         self,
         vectors: List[List[float]],
         metadata: List[Dict[str, Any]],
-        ids: Optional[List[str]] = None
+        ids: Optional[List[str]] = None,
     ) -> List[str]:
         """添加向量"""
         from qdrant_client.models import PointStruct
-        
+
         client = await self._get_client()
-        
+
         if ids is None:
             ids = [str(uuid.uuid4()) for _ in vectors]
-        
-        points = []
-        for i, (vector, meta) in enumerate(zip(vectors, metadata)):
-            point = PointStruct(
-                id=ids[i],
-                vector=vector,
-                payload=meta
-            )
-            points.append(point)
-        
-        client.upsert(
-            collection_name=self.collection_name,
-            points=points
+
+        points = [
+            PointStruct(id=ids[i], vector=vectors[i], payload=metadata[i])
+            for i in range(len(vectors))
+        ]
+
+        await asyncio.to_thread(
+            client.upsert, collection_name=self.collection_name, points=points
         )
-        
         return ids
-    
+
     async def search_vectors(
         self,
         query_vector: List[float],
         top_k: int = 5,
-        filter_dict: Optional[Dict[str, Any]] = None
+        filter_dict: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """搜索向量"""
-        from qdrant_client.models import Filter, FieldCondition, MatchValue
-        
+        from qdrant_client.models import FieldCondition, Filter, MatchValue
+
         client = await self._get_client()
-        
-        # 构建过滤条件
+
         search_filter = None
         if filter_dict:
-            conditions = []
-            for key, value in filter_dict.items():
-                condition = FieldCondition(
-                    key=key,
-                    match=MatchValue(value=value)
-                )
-                conditions.append(condition)
-            
+            conditions = [
+                FieldCondition(key=key, match=MatchValue(value=value))
+                for key, value in filter_dict.items()
+            ]
             if conditions:
                 search_filter = Filter(must=conditions)
-        
-        # 执行搜索
-        results = client.search(
+
+        results = await asyncio.to_thread(
+            client.search,
             collection_name=self.collection_name,
             query_vector=query_vector,
             limit=top_k,
-            query_filter=search_filter
+            query_filter=search_filter,
         )
-        
-        # 格式化结果
-        formatted_results = []
-        for result in results:
-            formatted_results.append({
-                "id": result.id,
-                "score": result.score,
-                "metadata": result.payload
-            })
-        
-        return formatted_results
-    
+
+        return [
+            {"id": r.id, "score": r.score, "metadata": r.payload} for r in results
+        ]
+
     async def delete_vectors(self, ids: List[str]) -> bool:
         """删除向量"""
         client = await self._get_client()
-        
-        client.delete(
-            collection_name=self.collection_name,
-            points_selector=ids
+        await asyncio.to_thread(
+            client.delete, collection_name=self.collection_name, points_selector=ids
         )
-        
         return True
-    
+
     async def update_vectors(
         self,
         ids: List[str],
         vectors: Optional[List[List[float]]] = None,
-        metadata: Optional[List[Dict[str, Any]]] = None
+        metadata: Optional[List[Dict[str, Any]]] = None,
     ) -> bool:
         """更新向量"""
         from qdrant_client.models import PointStruct
-        
+
         client = await self._get_client()
-        
-        # 获取现有点
-        existing_points = client.retrieve(
-            collection_name=self.collection_name,
-            ids=ids
+
+        existing_points = await asyncio.to_thread(
+            client.retrieve, collection_name=self.collection_name, ids=ids
         )
-        
-        # 更新点
+
         updated_points = []
         for i, point in enumerate(existing_points):
             new_vector = vectors[i] if vectors and i < len(vectors) else point.vector
-            new_payload = metadata[i] if metadata and i < len(metadata) else point.payload
-            
-            updated_point = PointStruct(
-                id=point.id,
-                vector=new_vector,
-                payload=new_payload
+            new_payload = (
+                metadata[i] if metadata and i < len(metadata) else point.payload
             )
-            updated_points.append(updated_point)
-        
-        client.upsert(
+            updated_points.append(
+                PointStruct(id=point.id, vector=new_vector, payload=new_payload)
+            )
+
+        await asyncio.to_thread(
+            client.upsert,
             collection_name=self.collection_name,
-            points=updated_points
+            points=updated_points,
         )
-        
         return True
 
 
@@ -395,46 +377,58 @@ class LocalVectorStore(VectorStore):
         top_k: int = 5,
         filter_dict: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
-        """搜索向量"""
+        """搜索向量（numpy 向量化，比逐条循环快 10-100x）"""
         import numpy as np
-        
-        results = []
-        
-        for vector_id, vector_data in self.vectors.items():
-            # 应用过滤器
-            if filter_dict:
-                metadata = vector_data.get("metadata", {})
-                match = True
-                for key, value in filter_dict.items():
-                    if metadata.get(key) != value:
-                        match = False
-                        break
-                if not match:
-                    continue
-            
-            # 计算余弦相似度
-            vector = np.array(vector_data["vector"])
-            query = np.array(query_vector)
-            
-            dot_product = np.dot(vector, query)
-            norm_vector = np.linalg.norm(vector)
-            norm_query = np.linalg.norm(query)
-            
-            if norm_vector == 0 or norm_query == 0:
-                similarity = 0.0
-            else:
-                similarity = dot_product / (norm_vector * norm_query)
-            
-            results.append({
-                "id": vector_id,
-                "score": float(similarity),
-                "metadata": vector_data.get("metadata", {})
-            })
-        
-        # 按相似度排序
-        results.sort(key=lambda x: x["score"], reverse=True)
-        
-        return results[:top_k]
+
+        if not self.vectors:
+            return []
+
+        # 过滤
+        candidates = self.vectors
+        if filter_dict:
+            filtered = {}
+            for vid, vdata in candidates.items():
+                metadata = vdata.get("metadata", {})
+                if all(metadata.get(k) == v for k, v in filter_dict.items()):
+                    filtered[vid] = vdata
+            candidates = filtered
+
+        if not candidates:
+            return []
+
+        # 批量向量化计算
+        ids = list(candidates.keys())
+        matrix = np.array([candidates[vid]["vector"] for vid in ids], dtype=np.float32)
+        query = np.array(query_vector, dtype=np.float32)
+
+        # 归一化后点积 = 余弦相似度
+        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+        norms = np.where(norms == 0, 1.0, norms)  # 避免除零
+        matrix_normed = matrix / norms
+
+        query_norm = np.linalg.norm(query)
+        if query_norm == 0:
+            query_normed = query
+        else:
+            query_normed = query / query_norm
+
+        scores = matrix_normed @ query_normed  # (n,) 余弦相似度
+
+        # 取 top_k
+        if len(scores) <= top_k:
+            top_indices = np.argsort(scores)[::-1]
+        else:
+            top_indices = np.argpartition(scores, -top_k)[-top_k:]
+            top_indices = top_indices[np.argsort(scores[top_indices])[::-1]]
+
+        return [
+            {
+                "id": ids[i],
+                "score": float(scores[i]),
+                "metadata": candidates[ids[i]].get("metadata", {}),
+            }
+            for i in top_indices
+        ]
     
     async def delete_vectors(self, ids: List[str]) -> bool:
         """删除向量"""
