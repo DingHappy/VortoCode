@@ -129,7 +129,7 @@ async def example_orchestration():
 
 async def main():
     """主函数"""
-    print("Auto-Dev-Crew 使用示例")
+    print("VortoCode 使用示例")
     print("=" * 50)
     
     await example_basic_usage()

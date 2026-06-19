@@ -48,8 +48,8 @@ class SkillRegistry:
     
     def __init__(self, skill_dirs: Optional[List[str]] = None):
         self.skill_dirs = skill_dirs or [
-            ".auto-dev-crew/skills",
-            "~/.auto-dev-crew/skills"
+            ".vortocode/skills",
+            "~/.vortocode/skills"
         ]
         self.skills: Dict[str, Skill] = {}
         

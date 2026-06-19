@@ -1,4 +1,4 @@
-"""Auto-Dev-Crew: 通用多 Agent 软件开发框架"""
+"""VortoCode: 通用多 Agent 软件开发框架"""
 
 __version__ = "0.1.0"
 

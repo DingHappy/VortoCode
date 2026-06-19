@@ -199,7 +199,7 @@ class SkillManager:
         self._add_default_skills()
         
         # 添加项目技能目录
-        project_skills = self.workdir / ".auto-dev-crew" / "skills"
+        project_skills = self.workdir / ".vortocode" / "skills"
         if project_skills.exists():
             self.registry.add_skill_directory(project_skills)
     
@@ -375,7 +375,7 @@ ${code}
     def create_skill(self, name: str, description: str, content: str, **kwargs) -> Skill:
         """创建新技能"""
         # 创建技能目录
-        skill_dir = self.workdir / ".auto-dev-crew" / "skills" / name
+        skill_dir = self.workdir / ".vortocode" / "skills" / name
         skill_dir.mkdir(parents=True, exist_ok=True)
         
         # 创建 SKILL.md

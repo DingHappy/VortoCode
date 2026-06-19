@@ -105,7 +105,7 @@ class SelfOrchestratingEngine:
             shared_context: Dict[str, Any] = {
                 "task": task,
                 "workspace": str(
-                    Path(".auto-dev-crew") / "workspaces" / f"run-{uuid.uuid4().hex[:8]}"
+                    Path(".vortocode") / "workspaces" / f"run-{uuid.uuid4().hex[:8]}"
                 ),
                 "artifacts": {},
             }

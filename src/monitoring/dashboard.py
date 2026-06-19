@@ -67,7 +67,7 @@ class TableWidget(Widget):
 
 class DashboardConfig(BaseModel):
     """仪表盘配置"""
-    title: str = "Auto-Dev-Crew 监控仪表盘"
+    title: str = "VortoCode 监控仪表盘"
     description: str = ""
     refresh_interval: int = 30  # 秒
     time_range: int = 3600  # 默认1小时

@@ -10,7 +10,7 @@ pytest.importorskip("textual")  # 无 textual 时跳过（CI 装了 .[tui]）
 
 from textual.widgets import Input
 
-from src.tui.app import AutoDevCrewTUI
+from src.tui.app import VortoCodeTUI
 
 
 async def _submit(app, pilot, text):
@@ -59,7 +59,7 @@ def _fake_improve_loop(applied):
 
 @pytest.mark.asyncio
 async def test_starts_in_plan_mode_and_greets():
-    app = AutoDevCrewTUI(repo_root=".")
+    app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
         await pilot.pause()
         assert app.mode == "plan"
@@ -68,7 +68,7 @@ async def test_starts_in_plan_mode_and_greets():
 
 @pytest.mark.asyncio
 async def test_help_lists_commands():
-    app = AutoDevCrewTUI(repo_root=".")
+    app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
         await _submit(app, pilot, "/help")
         joined = "\n".join(app.transcript)
@@ -77,7 +77,7 @@ async def test_help_lists_commands():
 
 @pytest.mark.asyncio
 async def test_toggle_mode_via_command_and_key():
-    app = AutoDevCrewTUI(repo_root=".")
+    app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
         await _submit(app, pilot, "/mode")
         assert app.mode == "build"
@@ -87,7 +87,7 @@ async def test_toggle_mode_via_command_and_key():
 
 @pytest.mark.asyncio
 async def test_unknown_command_is_reported():
-    app = AutoDevCrewTUI(repo_root=".")
+    app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
         await _submit(app, pilot, "/bogus")
         assert any("未知命令" in t for t in app.transcript)
@@ -95,7 +95,7 @@ async def test_unknown_command_is_reported():
 
 @pytest.mark.asyncio
 async def test_empty_input_does_nothing():
-    app = AutoDevCrewTUI(repo_root=".")
+    app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
         before = len(app.transcript)
         await _submit(app, pilot, "   ")
@@ -114,7 +114,7 @@ async def test_analyze_runs_l1_and_reports(tmp_path):
         "from src.util import f\n\n\ndef test_f():\n    assert f() == 1\n"
     )
 
-    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
         await _submit(app, pilot, "/analyze")
         assert await _wait_for(app, pilot, "自我分析报告"), "L1 报告未出现在对话区"
@@ -140,7 +140,7 @@ async def test_natural_language_routes_to_run_and_streams(monkeypatch, tmp_path)
                                     workspace=str(tmp_path), files=["a.py"], reason="ok")
 
     monkeypatch.setattr(dl, "IterativeDevLoop", FakeLoop)
-    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
         await _submit(app, pilot, "做一个加法函数")
         assert await _wait_for(app, pilot, "开发（dev→test→review")   # 自然语言被路由到 run
@@ -151,7 +151,7 @@ async def test_natural_language_routes_to_run_and_streams(monkeypatch, tmp_path)
 def test_expand_at_files(tmp_path):
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "util.py").write_text("x = 1\n")
-    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    app = VortoCodeTUI(repo_root=str(tmp_path))
 
     cleaned, files = app._expand_at_files("改 @src/util.py 顺便 @nope.py")
 
@@ -173,13 +173,13 @@ async def test_file_suggester_completes_at_token(tmp_path):
 
 @pytest.mark.asyncio
 async def test_session_persists_messages(tmp_path):
-    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
         await _submit(app, pilot, "/help")
         sid = app.session_id
 
     from src.memory.session_store import SessionStore
-    store = SessionStore(str(tmp_path / ".auto-dev-crew" / "sessions.db"))
+    store = SessionStore(str(tmp_path / ".vortocode" / "sessions.db"))
     msgs = store.get_messages(sid)
     assert any("可用命令" in m["content"] for m in msgs)   # /help 输出已落盘
 
@@ -188,12 +188,12 @@ async def test_session_persists_messages(tmp_path):
 async def test_resume_replays_session(tmp_path):
     from src.memory.session_store import SessionStore
 
-    db = str(tmp_path / ".auto-dev-crew" / "sessions.db")
+    db = str(tmp_path / ".vortocode" / "sessions.db")
     store = SessionStore(db)
     sid = store.create_session("旧会话")
     store.add_message(sid, "assistant", "历史内容ABC", {"markup": False})
 
-    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
         await _submit(app, pilot, f"/resume {sid}")
         assert await _wait_for(app, pilot, "历史内容ABC")    # 旧会话被回放
@@ -211,7 +211,7 @@ async def test_suggester_completes_slash_commands(tmp_path):
 
 @pytest.mark.asyncio
 async def test_busy_shown_in_subtitle(tmp_path):
-    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
         app._busy = True
         app._sync_subtitle()
@@ -223,7 +223,7 @@ async def test_busy_shown_in_subtitle(tmp_path):
 
 @pytest.mark.asyncio
 async def test_action_blocked_while_busy(tmp_path):
-    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
         app._busy = True                              # 手动置忙（无真任务）
         await _submit(app, pilot, "/analyze")         # 动作命令应被挡
@@ -233,7 +233,7 @@ async def test_action_blocked_while_busy(tmp_path):
 
 @pytest.mark.asyncio
 async def test_cancel_only_when_busy(tmp_path):
-    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
         app.action_cancel()                           # 不忙：无副作用
         assert not any("已取消" in t for t in app.transcript)
@@ -245,10 +245,10 @@ async def test_cancel_only_when_busy(tmp_path):
 @pytest.mark.asyncio
 async def test_agents_lists_created_agents(tmp_path):
     from src.agents.manager import AgentManager
-    db = str(tmp_path / ".auto-dev-crew" / "web_advanced_agents.json")
+    db = str(tmp_path / ".vortocode" / "web_advanced_agents.json")
     a = AgentManager(persist_path=db).create_agent("我的助手", "custom")
 
-    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
         await _submit(app, pilot, "/agents")
         joined = "\n".join(app.transcript)
@@ -257,7 +257,7 @@ async def test_agents_lists_created_agents(tmp_path):
 
 @pytest.mark.asyncio
 async def test_runagent_unknown_id(tmp_path):
-    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
         await _submit(app, pilot, "/runagent nope 做事")
         assert await _wait_for(app, pilot, "没有 agent")
@@ -268,7 +268,7 @@ async def test_runagent_runs_a_stored_agent(monkeypatch, tmp_path):
     from src.agents.manager import AgentManager
     import src.agents.config_agent as ca
 
-    db = str(tmp_path / ".auto-dev-crew" / "web_advanced_agents.json")
+    db = str(tmp_path / ".vortocode" / "web_advanced_agents.json")
     aid = AgentManager(persist_path=db).create_agent("跑跑", "custom").config.id
 
     class FakeLLM:
@@ -281,7 +281,7 @@ async def test_runagent_runs_a_stored_agent(monkeypatch, tmp_path):
         return ca.ConfigAgent(cfg, llm_client=FakeLLM())
 
     monkeypatch.setattr(ca, "build_config_agent", fake_build)
-    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
         await _submit(app, pilot, f"/runagent {aid} 做点事")
         assert await _wait_for(app, pilot, "干完了")        # 用存储的 agent 真跑出结果
@@ -293,7 +293,7 @@ async def test_build_apply_confirm_cancel(monkeypatch, tmp_path):
     si, FakeLoop = _fake_improve_loop(applied)
     monkeypatch.setattr(si, "SelfImprovementLoop", FakeLoop)
 
-    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
         await _submit(app, pilot, "/mode")            # → build
         assert app.mode == "build"
@@ -311,7 +311,7 @@ async def test_build_apply_confirm_accept(monkeypatch, tmp_path):
     si, FakeLoop = _fake_improve_loop(applied)
     monkeypatch.setattr(si, "SelfImprovementLoop", FakeLoop)
 
-    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
         await _submit(app, pilot, "/mode")
         await _submit(app, pilot, "/improve")
@@ -329,7 +329,7 @@ async def test_plan_mode_never_writes(monkeypatch, tmp_path):
     si, FakeLoop = _fake_improve_loop(applied)
     monkeypatch.setattr(si, "SelfImprovementLoop", FakeLoop)
 
-    app = AutoDevCrewTUI(repo_root=str(tmp_path))   # 默认 plan
+    app = VortoCodeTUI(repo_root=str(tmp_path))   # 默认 plan
     async with app.run_test() as pilot:
         await _submit(app, pilot, "/improve")
         assert await _wait_for(app, pilot, "tests/x.py")   # render_result 提案行出现=跑完

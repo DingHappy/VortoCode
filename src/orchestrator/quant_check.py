@@ -116,7 +116,7 @@ async def check_environment() -> bool:
         checks.append(_check("钉钉 webhook", False, "配置读取失败", ""))
 
     # 10. 记忆存储目录
-    mem_dir = Path(".auto-dev-crew/memory")
+    mem_dir = Path(".vortocode/memory")
     mem_dir.mkdir(parents=True, exist_ok=True)
     checks.append(_check("记忆目录", True, str(mem_dir)))
 

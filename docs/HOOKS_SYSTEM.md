@@ -2,7 +2,7 @@
 
 ## 概述
 
-Hooks 系统使 auto-dev-crew 能够在 Agent 生命周期的关键点执行自定义逻辑，实现自动化、监控和扩展功能。这是构建可扩展、可观察系统的关键组件。
+Hooks 系统使 vortocode 能够在 Agent 生命周期的关键点执行自定义逻辑，实现自动化、监控和扩展功能。这是构建可扩展、可观察系统的关键组件。
 
 ## 生命周期事件
 
@@ -619,7 +619,7 @@ class HookSystem:
 
 ### 1. 配置文件
 
-创建 `.auto-dev-crew/hooks.yaml`:
+创建 `.vortocode/hooks.yaml`:
 
 ```yaml
 hooks:
@@ -658,10 +658,10 @@ hooks:
 ### 2. 使用 Hook 系统
 
 ```python
-from auto_dev_crew.hooks import HookSystem, HookEventType, CommandHook
+from vortocode.hooks import HookSystem, HookEventType, CommandHook
 
 # 初始化 hook 系统
-hook_system = HookSystem(".auto-dev-crew/hooks.yaml")
+hook_system = HookSystem(".vortocode/hooks.yaml")
 
 # 注册自定义 hook
 hook_system.register_hook(CommandHook(
@@ -887,7 +887,7 @@ class NotificationHook(Hook):
 ## 配置
 
 ```yaml
-# .auto-dev-crew/hooks.yaml
+# .vortocode/hooks.yaml
 hooks:
   # 全局配置
   config:
