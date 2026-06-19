@@ -38,6 +38,10 @@ mcp = [
 quant = [
     "akshare",
 ]
+tui = [
+    "textual>=8.0",
+    "rich>=13.0",
+]
 parsing = [
     "tree-sitter>=0.21.0",
     "tree-sitter-python>=0.21.0",
@@ -52,7 +56,7 @@ dev = [
     "ruff>=0.1.0",
 ]
 all = [
-    "auto-dev-crew[memory,llm,mcp,parsing,quant,dev]",
+    "auto-dev-crew[memory,llm,mcp,parsing,quant,tui,dev]",
 ]
 
 [project.scripts]
