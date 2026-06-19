@@ -1,0 +1,42 @@
+# 量化研究流水线配置
+quant:
+  # quant-platform API 地址
+  api_base: "http://localhost:8000"
+
+  # 关注的市场
+  markets:
+    - "astock"
+    - "crypto"
+
+  # A 股关注板块（用于新闻采集过滤）
+  watch_sectors:
+    - "半导体"
+    - "新能源"
+    - "医药"
+    - "消费"
+
+  # 关注个股（可选）
+  watch_symbols: []
+
+  # 因子研究配置
+  factors:
+    default_factors:
+      - "momentum_20d"
+      - "reversal_5d"
+      - "low_vol_20d"
+      - "bias_20d"
+    default_weighting: "ic"
+    holding_period: 20
+
+  # 定时调度间隔（秒）
+  schedule:
+    news_interval: 1800        # 30 分钟
+    sentiment_interval: 3600   # 1 小时
+    factor_interval: 86400     # 每天
+    review_interval: 86400     # 每天
+
+  # 通知配置
+  notifications:
+    dingtalk:
+      webhook: ""      # 填入钉钉 webhook URL
+      secret: ""       # 钉钉加签密钥（可选）
