@@ -134,6 +134,84 @@ async def test_non_fixable_category_is_ignored(tmp_path):
     assert result.proposals == []
 
 
+def _orphan_finding(file="src/dead.py"):
+    return Finding(category="orphan-module", severity="medium",
+                   title=f"模块 {file.replace('/', '.')[:-3]} 没有任何静态导入方",
+                   file=file, evidence="无 import 指向它", suggestion="确认死代码后删除")
+
+
+@pytest.mark.asyncio
+async def test_orphan_deleted_when_suite_stays_green(tmp_path):
+    (tmp_path / "src").mkdir()
+    dead = tmp_path / "src" / "dead.py"
+    dead.write_text("X = 1\n")
+
+    async def gate():
+        # 门控运行时文件应已被移除
+        return (not dead.exists()), "green"
+
+    loop = CodeFixLoop(str(tmp_path), gate=gate)
+    result = await loop.propose([_orphan_finding()])
+
+    assert len(result.accepted) == 1
+    p = result.accepted[0]
+    assert p.operation == "delete"
+    assert "-X = 1" in p.diff                  # 全文删除的 diff
+    assert dead.exists()                        # dry-run：已还原
+
+
+@pytest.mark.asyncio
+async def test_orphan_kept_when_deletion_breaks_suite(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "dead.py").write_text("X = 1\n")
+
+    async def gate():
+        return False, "ImportError: No module named dead"
+
+    loop = CodeFixLoop(str(tmp_path), gate=gate)
+    result = await loop.propose([_orphan_finding()])
+
+    assert result.accepted == []
+    assert "删除会破坏测试" in result.rejected[0].reason
+    assert (tmp_path / "src" / "dead.py").exists()   # 还原
+
+
+@pytest.mark.asyncio
+async def test_refuses_to_delete_test_file(tmp_path):
+    loop = CodeFixLoop(str(tmp_path), gate=None)
+    result = await loop.propose([_orphan_finding(file="tests/unit/test_dead.py")])
+
+    assert result.accepted == []
+    assert "不删除测试文件" in result.rejected[0].reason
+
+
+def test_apply_deletes_orphan_on_branch(tmp_path):
+    def git(*a):
+        subprocess.run(["git", *a], cwd=tmp_path, check=True, capture_output=True, text=True)
+
+    git("init")
+    git("config", "user.email", "t@t.com")
+    git("config", "user.name", "t")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "dead.py").write_text("X = 1\n")
+    git("add", "-A")
+    git("commit", "-m", "init")
+
+    loop = CodeFixLoop(str(tmp_path))
+    result = CodeFixResult(proposals=[CodeProposal(
+        finding_title="orphan", file="src/dead.py", operation="delete",
+        diff="(deletion)", accepted=True, reason="ok",
+    )])
+
+    branch = loop.apply(result, branch="l2fix/del-x")
+
+    assert branch == "l2fix/del-x"
+    assert not (tmp_path / "src" / "dead.py").exists()   # 已删除
+    status = subprocess.run(["git", "status", "--porcelain"], cwd=tmp_path,
+                            capture_output=True, text=True).stdout.strip()
+    assert status == ""                                   # 删除已提交，干净
+
+
 def test_apply_writes_accepted_fix_to_branch(tmp_path):
     def git(*a):
         subprocess.run(["git", *a], cwd=tmp_path, check=True, capture_output=True, text=True)
