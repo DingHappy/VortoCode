@@ -25,13 +25,18 @@ from ..editor.surgical import Edit, apply_edits, render_diff
 
 logger = logging.getLogger(__name__)
 
-FIXABLE_CATEGORIES = {"bug", "code-smell"}
+# 改既有代码（外科编辑）
+EDIT_CATEGORIES = {"bug", "code-smell"}
+# 提议删除（门控：删了之后全量仍绿）—— orphan 已由 L1 三重信号筛过
+DELETE_CATEGORIES = {"orphan-module"}
+FIXABLE_CATEGORIES = EDIT_CATEGORIES | DELETE_CATEGORIES
 
 
 class CodeProposal(BaseModel):
     """对单个 finding 的一条代码修复提案。"""
     finding_title: str
     file: str
+    operation: str = "edit"      # edit | delete
     diff: str = ""
     new_content: str = ""
     rationale: str = ""          # editor 给的修改理由
@@ -135,6 +140,11 @@ class CodeFixLoop:
         )
 
     async def _fix_one(self, f: Any) -> CodeProposal:
+        if getattr(f, "category", "") in DELETE_CATEGORIES:
+            return await self._fix_by_deletion(f)
+        return await self._fix_by_edit(f)
+
+    async def _fix_by_edit(self, f: Any) -> CodeProposal:
         rel = f.file
         base = CodeProposal(finding_title=getattr(f, "title", ""), file=rel)
 
@@ -198,6 +208,38 @@ class CodeFixLoop:
         finally:
             path.write_text(snapshot, encoding="utf-8")
 
+    async def _fix_by_deletion(self, f: Any) -> CodeProposal:
+        """孤儿模块的修复 = 提议删除，门控为“删掉后全量测试仍绿”。"""
+        rel = f.file
+        base = CodeProposal(finding_title=getattr(f, "title", ""), file=rel, operation="delete")
+
+        if _is_test_file(rel):
+            base.reason = "拒绝：不删除测试文件"
+            return base
+        path = self.root / rel
+        if not path.exists():
+            base.reason = "拒绝：目标文件不存在"
+            return base
+
+        content = path.read_text(encoding="utf-8")
+        passed, gout = await self._gate_without_file(rel)
+        base.diff = render_diff(content, "", rel)   # 全文删除的 diff
+        base.accepted = passed
+        base.reason = ("删除后全量测试仍绿（待人审是否确为死代码）" if passed
+                       else f"删除会破坏测试，保留: {gout.strip()[-300:]}")
+        return base
+
+    async def _gate_without_file(self, rel: str) -> Tuple[bool, str]:
+        """临时移除文件 → 跑门控 → 无论绿红都还原（dry-run 不留痕）。"""
+        path = self.root / rel
+        snapshot = path.read_text(encoding="utf-8")
+        path.unlink()
+        try:
+            gate = self.gate or self._default_gate
+            return await gate()
+        finally:
+            path.write_text(snapshot, encoding="utf-8")
+
     async def _default_gate(self) -> Tuple[bool, str]:
         env = {**os.environ, "PYTHONPATH": str(self.root),
                "OPENAI_API_KEY": "", "AUTODEV_API_TOKEN": ""}
@@ -220,15 +262,19 @@ class CodeFixLoop:
         branch = branch or f"l2fix/auto-{uuid.uuid4().hex[:8]}"
         self._git("checkout", "-b", branch)
 
-        written = []
+        written, deleted = [], []
         for p in accepted:
-            (self.root / p.file).write_text(p.new_content, encoding="utf-8")
-            written.append(p.file)
-        self._git("add", *written)
+            if p.operation == "delete":
+                self._git("rm", p.file)
+                deleted.append(p.file)
+            else:
+                (self.root / p.file).write_text(p.new_content, encoding="utf-8")
+                self._git("add", p.file)
+                written.append(p.file)
         files = ", ".join(p.file for p in accepted)
         self._git("commit", "-m",
                   f"fix: L2.2 自动修复 {files}\n\n由 self-fix 生成，已通过全量测试门控；待人工审查后合并。",
-                  "--", *written)
+                  "--", *(written + deleted))
         result.branch = branch
         return branch
 
@@ -242,7 +288,8 @@ def render_result(result: CodeFixResult) -> str:
              result.summary, "-" * 64]
     for i, p in enumerate(result.proposals, 1):
         mark = "✅ 纳入" if p.accepted else "❌ 跳过"
-        lines.append(f"{i}. {mark}  {p.file}")
+        op = "🗑 删除" if p.operation == "delete" else "✏️ 编辑"
+        lines.append(f"{i}. {mark}  [{op}]  {p.file}")
         lines.append(f"   针对: {p.finding_title}")
         if p.rationale:
             lines.append(f"   修改理由: {p.rationale}")
