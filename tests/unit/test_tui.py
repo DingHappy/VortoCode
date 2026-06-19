@@ -90,3 +90,54 @@ async def test_analyze_runs_l1_and_reports(tmp_path):
     async with app.run_test() as pilot:
         await _submit(app, pilot, "/analyze")
         assert await _wait_for(app, pilot, "自我分析报告"), "L1 报告未出现在对话区"
+
+
+@pytest.mark.asyncio
+async def test_natural_language_routes_to_run_and_streams(monkeypatch, tmp_path):
+    # 自然语言（非 slash）应路由到开发；流式 on_token 应被调用。用 FakeLoop 避免触网。
+    import src.orchestrator.dev_loop as dl
+
+    seen_tokens = []
+
+    class FakeLoop:
+        def __init__(self, *a, **k):
+            pass
+
+        async def run(self, task, on_token=None, on_iteration=None, **k):
+            if on_token:
+                on_token("hel")
+                on_token("lo")
+                seen_tokens.append("ok")
+            return dl.DevLoopResult(success=True, iterations=1,
+                                    workspace=str(tmp_path), files=["a.py"], reason="ok")
+
+    monkeypatch.setattr(dl, "IterativeDevLoop", FakeLoop)
+    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "做一个加法函数")
+        assert await _wait_for(app, pilot, "开发（dev→test→review")   # 自然语言被路由到 run
+        assert await _wait_for(app, pilot, "结果: 成功")
+        assert seen_tokens == ["ok"]                                   # 流式回调确实被调用
+
+
+def test_expand_at_files(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "util.py").write_text("x = 1\n")
+    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+
+    cleaned, files = app._expand_at_files("改 @src/util.py 顺便 @nope.py")
+
+    assert files == ["src/util.py"]
+    assert "@src/util.py" not in cleaned and "src/util.py" in cleaned
+    assert "@nope.py" in cleaned          # 不存在的文件原样保留
+
+
+@pytest.mark.asyncio
+async def test_file_suggester_completes_at_token(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "util.py").write_text("x = 1\n")
+    from src.tui.app import FileSuggester
+
+    s = FileSuggester(str(tmp_path))
+    assert await s.get_suggestion("改 @src/ut") == "改 @src/util.py"
+    assert await s.get_suggestion("没有 at 符号") is None

@@ -264,6 +264,34 @@ async def test_reasoning_none_for_plain_model():
     assert result.reasoning is None
 
 
+class FakeStreamLLM:
+    """模拟支持流式的 LLM：stream() 分块产出，chat() 一次性返回。"""
+
+    def __init__(self, content):
+        self._content = content
+
+    async def chat(self, messages, model=None, temperature=None, max_tokens=None, stream=False):
+        return {"content": self._content}
+
+    async def stream(self, messages, model=None, temperature=None):
+        for i in range(0, len(self._content), 7):
+            yield self._content[i:i + 7]
+
+
+@pytest.mark.asyncio
+async def test_developer_streams_tokens_via_on_token(tmp_path):
+    """提供 on_token 且客户端支持 stream 时，应逐块回调并最终拼回完整内容。"""
+    payload = json.dumps({"files": [{"path": "h.py", "content": "def hi():\n    return 1\n"}]})
+    toks = []
+    dev = DeveloperAgent(llm_client=FakeStreamLLM(payload))
+
+    result = await dev.execute("写 hi", context={"workspace": str(tmp_path), "on_token": toks.append})
+
+    assert result.success is True
+    assert "".join(toks) == payload          # 流式收齐了全部内容
+    assert (tmp_path / "h.py").exists()
+
+
 @pytest.mark.asyncio
 async def test_dev_loop_assembles_reasoning_chain(tmp_path):
     """dev_loop 应把每轮 developer/reviewer 的推理链汇入 IterationRecord（可审计链）。"""
