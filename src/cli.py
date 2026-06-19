@@ -20,6 +20,7 @@ def main():
               %(prog)s self-fix --paths src/foo.py        深审并外科修复指定文件
               %(prog)s server --port 8080                 启动 Web 控制台
               %(prog)s quant run --mock                   量化流水线（mock 数据）
+              %(prog)s tui                                进入交互式 TUI（仿 opencode，需 .[tui]）
 
             每个命令都有自己的帮助，例如:  %(prog)s self-fix -h
         """),
@@ -63,6 +64,7 @@ def main():
 
     sub.add_parser("test", help="运行测试套件（pytest）")
     sub.add_parser("demo", help="演示模式：打印指引并启动 Web 服务")
+    sub.add_parser("tui", help="进入交互式全屏 TUI（仿 opencode；需 textual: pip install '.[tui]'）")
 
     args = parser.parse_args()
 
@@ -100,6 +102,9 @@ def main():
 
     elif args.command == "demo":
         run_demo()
+
+    elif args.command == "tui":
+        run_tui()
 
     elif args.command == "quant":
         if args.mode == "check":
@@ -211,6 +216,18 @@ async def run_self_fix(paths=None, apply: bool = False, max_fixes: int = 3):
         branch = loop.apply(result)
         print(f"已把 {len(result.accepted)} 个通过门控的修复写到分支: {branch}")
     print(render_result(result))
+
+
+def run_tui():
+    """启动交互式 TUI（仿 opencode）。未装 textual 时给出安装提示，不崩。"""
+    try:
+        from src.tui.app import run as run_tui_app
+    except ImportError as e:
+        if (getattr(e, "name", "") or "") in ("textual", "rich") or "textual" in str(e) or "rich" in str(e):
+            print("交互式 TUI 需要 textual：请先  pip install '.[tui]'（或 pip install textual rich）")
+            return
+        raise
+    run_tui_app()
 
 
 def run_tests():
