@@ -9,11 +9,19 @@
 ## 核心理念
 
 1. **工作流优先，LLM 其次** —— 状态机/DAG 是骨架，Agent 是节点，不让 LLM 自由决定全局流程
-2. **任务级自我迭代，而非框架级自我进化** —— 第一版只闭环"开发→审核→修改→测试"，框架自身不改自己代码
+2. **自我迭代，人在合并口** —— 框架可对自身**提议**修改（经审查 PR 由人合并），但绝不自主热更新/自动合并；任务级"开发→测试→审查→修复"闭环已落地（见下「自我迭代 / dogfooding」）
 3. **人在两个关口** —— 需求确认(入口)、PR 合并(出口)，中间全自动
 4. **LLM 网关化** —— 所有模型调用走自建 One API 中转，统一计费/观测/路由
 
 ## 核心特性
+
+### 自我迭代 / dogfooding（用 auto-dev-crew 开发它自己）
+
+- **L1 自分析** (`adc self-analyze`)：只读扫描本仓库，找孤儿模块 / 循环依赖 / 测试缺口 / 未声明依赖（确定性，无需 LLM key）
+- **L2 自改进** (`adc self-improve`)：给"没测试的模块"自动生成测试，**必须真 pytest 通过**才纳入（客观门控，非 LLM 自评）
+- **L2.2 代码修复** (`adc self-fix --paths ...`)：深审 bug/坏味道 → 外科手术式精确编辑 → **全量测试门控**，绿才留、红回滚
+- **安全边界**：默认 dry-run 只出提案；改动只进新分支、绝不碰 main、需人确认 —— 落实"人在合并口"
+- **交互前端** (`adc tui`)：仿 opencode 的全屏 TUI，把上面能力串成对话式体验（plan/build 模式、token 流式、@文件补全、会话持久化、Esc 取消）
 
 ### 自我编排引擎
 
@@ -175,36 +183,35 @@ AUTODEV_API_TOKEN=
 AUTODEV_ENABLE_SHELL=
 ```
 
-### 3. 启动服务
+### 3. 安装命令行（推荐）
 
 ```bash
-# 启动后端（默认 127.0.0.1:8080）
-python main.py server
+pip install -e .          # 注册 auto-dev-crew / adc 控制台命令
+adc --help                # 查看所有子命令
+```
 
-# 或用 uvicorn
-uvicorn src.web.server:app --reload
+> 不安装也能用 `python main.py <命令>`（薄壳等效）。
+
+### 4. 使用
+
+```bash
+# 自我迭代（dogfooding；self-analyze 无需 key）
+adc self-analyze                      # 只读扫描自己、列出问题
+adc self-improve                      # 给测试缺口生成测试（真 pytest 门控；默认 dry-run）
+adc self-fix --paths src/x.py         # 深审并外科修复指定文件
+
+# 交互式全屏 TUI（仿 opencode；需 pip install '.[tui]'）
+adc tui
+
+# Web 控制台（默认 127.0.0.1:8080；对外暴露务必设 AUTODEV_API_TOKEN）
+adc server
+
+# 跑完整开发流水线 / 分析任务（需配 API key）
+adc run -t "用 Python 写一个计算阶乘的函数及其单元测试"
+adc analyze -t "创建一个 REST API"
 ```
 
 > 默认仅监听本地回环（127.0.0.1）。**对外暴露前务必设置 `AUTODEV_API_TOKEN`**，见下方「安全」。
-
-### 4. 运行示例
-
-```bash
-# 基本使用示例
-python examples/basic_usage.py
-
-# LLM 增强分析示例
-python examples/llm_analysis.py
-
-# 端到端真实流水线（产品→架构→开发→审查→测试，需配置 API key）
-python examples/real_pipeline.py "用 Python 写一个计算阶乘的函数及其单元测试"
-
-# 分析任务
-python main.py analyze --task "创建一个 REST API"
-
-# 运行任务
-python main.py run --task "实现用户认证功能"
-```
 
 ## 开发路线图
 
