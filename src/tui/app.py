@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -21,12 +22,17 @@ from textual.binding import Binding
 from textual.suggester import Suggester
 from textual.widgets import Footer, Header, Input, RichLog, Static
 
+from src.memory.session_store import SessionManager
+
 HELP = """可用命令:
   直接输入自然语言   = 开发目标（等同 /run）；用 @文件 可补全并带入上下文
   /analyze            L1 自分析（只读扫描本仓库，无需 LLM key）
   /improve            L2 给测试缺口生成测试（需 key；build 模式下才写分支）
   /fix <文件,...>     L2.2 深审并外科修复指定文件（需 key；build 模式下才写分支）
   /run <目标>         跑开发循环（dev→test→review，流式）
+  /sessions           列出历史会话
+  /resume <id>        恢复某个历史会话
+  /new                新开一个会话
   /mode               切换 plan(只读/提案) / build(可写分支)
   /clear              清屏
   /help               显示本帮助
@@ -91,6 +97,10 @@ class AutoDevCrewTUI(App):
         self.repo_root = repo_root
         self.mode = "plan"                  # plan | build
         self.transcript: list[str] = []     # 完整记录，便于回看与测试
+        # 会话持久化（SQLite）：对话落盘，可 /sessions 列出、/resume 恢复
+        self.sessions = SessionManager(str(Path(repo_root) / ".auto-dev-crew" / "sessions.db"))
+        self.session_id: str | None = None
+        self._persist_on = False            # 开场白阶段先不落盘
 
     # ---------------------------------------------------------------- 布局
     def compose(self) -> ComposeResult:
@@ -104,7 +114,10 @@ class AutoDevCrewTUI(App):
     def on_mount(self) -> None:
         self.query_one("#stream", Static).display = False
         self._chrome("[b]Auto-Dev-Crew[/b] 交互模式 · 直接说需求，或 [b]/help[/b] 看命令")
+        self._chrome("[dim]/sessions 查看历史 · /resume <id> 恢复 · /new 新开[/dim]")
         self._sync_subtitle()
+        self.session_id = self.sessions.start_session()
+        self._persist_on = True            # 之后的对话才落盘（不存开场白）
         self.query_one("#prompt", Input).focus()
 
     # ---------------------------------------------------------------- 输出
@@ -112,11 +125,22 @@ class AutoDevCrewTUI(App):
         """UI 提示（解析 Rich 标记）。"""
         self.transcript.append(markup)
         self.query_one("#log", RichLog).write(markup)
+        self._persist(markup, markup=True)
 
     def _emit(self, text: str) -> None:
         """工具输出（按字面写，避免 [xxx] 被当成标记解析）。"""
         self.transcript.append(text)
         self.query_one("#log", RichLog).write(Text(text))
+        self._persist(text, markup=False)
+
+    def _persist(self, content: str, markup: bool) -> None:
+        """把一条对话写进当前会话（落盘）。失败不影响交互。"""
+        if not self._persist_on:
+            return
+        try:
+            self.sessions.add_message("assistant", content, metadata={"markup": markup})
+        except Exception:  # noqa: BLE001
+            pass
 
     def _sync_subtitle(self) -> None:
         desc = "只读/提案" if self.mode == "plan" else "可写分支"
@@ -169,8 +193,57 @@ class AutoDevCrewTUI(App):
                 self._do_run(arg)
             else:
                 self._chrome("[red]/run 需要目标[/red]，如 /run 实现一个阶乘函数")
+        elif cmd == "sessions":
+            self._cmd_sessions()
+        elif cmd == "resume":
+            if arg:
+                self._cmd_resume(arg)
+            else:
+                self._chrome("[red]/resume 需要会话 id[/red]，先 /sessions 查看")
+        elif cmd == "new":
+            self._cmd_new()
         else:
             self._chrome(f"[red]未知命令 /{cmd}[/red] · /help 看命令")
+
+    # ---------------------------------------------------------------- 会话
+    def _cmd_sessions(self) -> None:
+        rows = self.sessions.list_recent_sessions(10)
+        if not rows:
+            self._emit("(暂无历史会话)")
+            return
+        lines = ["历史会话（/resume <id> 恢复）:"]
+        for r in rows:
+            summ = self.sessions.store.get_session_summary(r["id"])
+            mark = " ← 当前" if r["id"] == self.session_id else ""
+            lines.append(f"  {r['id']}  {(r.get('updated_at') or '')[:19]}  消息 {summ.get('messages', 0)}{mark}")
+        self._emit("\n".join(lines))
+
+    def _cmd_resume(self, sid: str) -> None:
+        if not self.sessions.resume_session(sid):
+            self._chrome(f"[red]没有会话 {sid}[/red]")
+            return
+        self.session_id = sid
+        msgs = self.sessions.get_messages(500)
+        self.query_one("#log", RichLog).clear()
+        self.transcript.clear()
+        self._persist_on = False            # 回放期间不重复落盘
+        self._chrome(f"[green]已恢复会话 {sid}（{len(msgs)} 条）[/green]")
+        for m in msgs:
+            try:
+                md = json.loads(m.get("metadata") or "{}")
+            except Exception:  # noqa: BLE001
+                md = {}
+            if md.get("markup"):
+                self._chrome(m["content"])
+            else:
+                self._emit(m["content"])
+        self._persist_on = True
+
+    def _cmd_new(self) -> None:
+        self.session_id = self.sessions.start_session()
+        self.query_one("#log", RichLog).clear()
+        self.transcript.clear()
+        self._chrome(f"[green]已新建会话 {self.session_id}[/green]")
 
     # ---------------------------------------------------------------- @文件
     def _expand_at_files(self, text: str) -> tuple[str, list[str]]:
