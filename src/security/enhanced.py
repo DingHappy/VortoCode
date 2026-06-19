@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import logging
+import os
 import secrets
 import time
 from datetime import datetime, timedelta
@@ -12,6 +13,22 @@ from typing import Any, Dict, List, Optional, Set
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
+
+def _hash_password(password: str, salt: Optional[bytes] = None) -> tuple[str, str]:
+    """哈希密码，返回 (salt_hex, hash_hex)"""
+    if salt is None:
+        salt = os.urandom(32)
+    else:
+        salt = bytes.fromhex(salt) if isinstance(salt, str) else salt
+    pw_hash = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations=100_000)
+    return salt.hex(), pw_hash.hex()
+
+
+def _verify_password(password: str, salt_hex: str, hash_hex: str) -> bool:
+    """验证密码"""
+    _, computed_hex = _hash_password(password, salt_hex)
+    return hmac.compare_digest(computed_hex, hash_hex)
 
 
 class Permission(str, Enum):
@@ -28,6 +45,8 @@ class User(BaseModel):
     id: str
     username: str
     email: str = ""
+    password_hash: str = ""
+    password_salt: str = ""
     permissions: Set[Permission] = Field(default_factory=lambda: {Permission.READ})
     created_at: datetime = Field(default_factory=datetime.now)
     last_login: Optional[datetime] = None
@@ -57,71 +76,92 @@ class AuditLog(BaseModel):
 
 class AuthManager:
     """认证管理器"""
-    
+
     def __init__(self, secret_key: str = None):
         self.secret_key = secret_key or secrets.token_hex(32)
         self.users: Dict[str, User] = {}
         self.sessions: Dict[str, Session] = {}
         self.audit_logs: List[AuditLog] = []
-        
-        # 创建默认管理员
-        self._create_default_admin()
-    
-    def _create_default_admin(self):
+
+        # 创建默认管理员（密码从环境变量读取，或生成随机密码）
+        default_password = os.getenv("AUTODEV_ADMIN_PASSWORD", "")
+        self._create_default_admin(default_password)
+
+    def _create_default_admin(self, password: str):
         """创建默认管理员"""
+        if not password:
+            password = secrets.token_urlsafe(16)
+            logger.warning(
+                "No AUTODEV_ADMIN_PASSWORD set. Generated random admin password: %s  "
+                "Set AUTODEV_ADMIN_PASSWORD env var for persistent access.",
+                password,
+            )
+        salt_hex, hash_hex = _hash_password(password)
         admin = User(
             id="admin",
             username="admin",
             email="admin@example.com",
-            permissions={Permission.READ, Permission.WRITE, Permission.EXECUTE, Permission.DELETE, Permission.ADMIN}
+            password_hash=hash_hex,
+            password_salt=salt_hex,
+            permissions={Permission.READ, Permission.WRITE, Permission.EXECUTE, Permission.DELETE, Permission.ADMIN},
         )
         self.users["admin"] = admin
-    
+
     def create_user(
         self,
         username: str,
+        password: str,
         email: str = "",
-        permissions: Set[Permission] = None
+        permissions: Set[Permission] = None,
     ) -> User:
-        """创建用户"""
+        """创建用户（必须提供密码）"""
         user_id = secrets.token_hex(8)
+        salt_hex, hash_hex = _hash_password(password)
         user = User(
             id=user_id,
             username=username,
             email=email,
-            permissions=permissions or {Permission.READ}
+            password_hash=hash_hex,
+            password_salt=salt_hex,
+            permissions=permissions or {Permission.READ},
         )
         self.users[user_id] = user
         return user
-    
+
     def authenticate(self, username: str, password: str) -> Optional[Session]:
-        """认证"""
-        # 简化的认证（实际应该验证密码哈希）
+        """认证（验证密码哈希）"""
         user = None
         for u in self.users.values():
-            if u.username == username:
+            if u.username == username and u.is_active:
                 user = u
                 break
-        
+
         if not user:
             return None
-        
+
+        if not user.password_hash or not user.password_salt:
+            logger.warning("User %s has no password set", username)
+            return None
+
+        if not _verify_password(password, user.password_salt, user.password_hash):
+            self._audit(user.id, "login_failed", "session", {"reason": "bad_password"})
+            return None
+
         # 创建会话
         token = secrets.token_hex(32)
         session = Session(
             id=secrets.token_hex(8),
             user_id=user.id,
-            token=token
+            token=token,
         )
-        
+
         self.sessions[session.id] = session
         user.last_login = datetime.now()
-        
-        # 审计日志
+
         self._audit(user.id, "login", "session", {"session_id": session.id})
-        
+
         return session
-    
+
     def validate_token(self, token: str) -> Optional[User]:
         """验证 token"""
         for session in self.sessions.values():
@@ -131,14 +171,14 @@ class AuthManager:
                 else:
                     session.is_valid = False
         return None
-    
+
     def check_permission(self, user_id: str, permission: Permission) -> bool:
         """检查权限"""
         user = self.users.get(user_id)
         if user:
             return permission in user.permissions or Permission.ADMIN in user.permissions
         return False
-    
+
     def revoke_session(self, session_id: str) -> bool:
         """撤销会话"""
         session = self.sessions.get(session_id)
@@ -146,19 +186,20 @@ class AuthManager:
             session.is_valid = False
             return True
         return False
-    
+
     def _audit(self, user_id: str, action: str, resource: str, details: Dict = None):
         """审计日志"""
         import uuid
+
         log = AuditLog(
             id=str(uuid.uuid4())[:8],
             user_id=user_id,
             action=action,
             resource=resource,
-            details=details or {}
+            details=details or {},
         )
         self.audit_logs.append(log)
-    
+
     def get_audit_logs(self, user_id: str = None, limit: int = 100) -> List[AuditLog]:
         """获取审计日志"""
         logs = self.audit_logs
@@ -210,38 +251,40 @@ class RateLimiter:
 
 class InputSanitizer:
     """输入清理器"""
-    
-    # 危险模式
+
+    # 危险模式（全部小写比较）
     DANGEROUS_PATTERNS = [
         "rm -rf",
-        "DROP TABLE",
-        "DELETE FROM",
+        "drop table",
+        "delete from",
         "__import__",
         "eval(",
         "exec(",
-        "<script>",
+        "<script",
         "javascript:",
+        "onerror=",
+        "onload=",
     ]
-    
+
     @staticmethod
     def sanitize(text: str) -> str:
-        """清理输入"""
-        # 移除潜在的注入
+        """清理输入 — 只移除明确危险的模式，不转义代码中的正常字符"""
+        text_lower = text.lower()
         for pattern in InputSanitizer.DANGEROUS_PATTERNS:
-            text = text.replace(pattern, "")
-        
-        # 转义特殊字符
-        text = text.replace("<", "&lt;")
-        text = text.replace(">", "&gt;")
-        
+            # 大小写无关替换
+            idx = text_lower.find(pattern)
+            while idx != -1:
+                text = text[:idx] + text[idx + len(pattern):]
+                text_lower = text.lower()
+                idx = text_lower.find(pattern)
         return text.strip()
-    
+
     @staticmethod
     def is_safe(text: str) -> bool:
         """检查是否安全"""
         text_lower = text.lower()
         for pattern in InputSanitizer.DANGEROUS_PATTERNS:
-            if pattern.lower() in text_lower:
+            if pattern in text_lower:
                 return False
         return True
 

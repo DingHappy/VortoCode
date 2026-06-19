@@ -35,6 +35,9 @@ llm = [
 mcp = [
     "mcp>=1.0.0",
 ]
+quant = [
+    "akshare",
+]
 parsing = [
     "tree-sitter>=0.21.0",
     "tree-sitter-python>=0.21.0",
@@ -49,7 +52,7 @@ dev = [
     "ruff>=0.1.0",
 ]
 all = [
-    "auto-dev-crew[memory,llm,mcp,parsing,dev]",
+    "auto-dev-crew[memory,llm,mcp,parsing,quant,dev]",
 ]
 
 [tool.pytest.ini_options]

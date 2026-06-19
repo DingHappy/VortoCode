@@ -35,6 +35,7 @@
 - **长期记忆**: 跨会话的知识积累
 - **专家记忆**: 领域专业知识库
 - **知识图谱**: 实体关联关系
+- **向量记忆**: 基于语义的长期记忆检索
 
 ### 技能系统
 
@@ -42,6 +43,7 @@
 - **动态加载**: 按需加载技能
 - **技能组合**: 支持技能链和并行执行
 - **版本管理**: 技能版本控制
+- **自动发现**: 智能技能发现和匹配
 
 ### Hooks 系统
 
@@ -49,6 +51,22 @@
 - **事件驱动**: 基于事件触发
 - **可扩展**: 支持自定义 Hook 类型
 - **审计日志**: 完整的操作记录
+
+### Loop Engineering（循环工程）
+
+- **自动化验证**: 让 Agent 自己验证工作，而不是人工检查
+- **闭环反馈**: 执行→验证→改进→重复
+- **子代理验证**: 使用独立的子代理进行代码审查
+- **持续改进**: 定期检查和优化任务执行
+- **上下文管理**: 智能上下文压缩和优化
+
+### 性能监控
+
+- **实时指标**: CPU、内存、磁盘、网络使用率
+- **应用指标**: HTTP请求、Agent任务、技能执行、LLM调用
+- **可视化仪表盘**: 可定制的监控面板
+- **智能告警**: 基于规则的自动告警系统
+- **性能分析**: 函数级性能分析和内存分析
 
 ## 文档
 
@@ -76,20 +94,24 @@ auto-dev-crew/
 ├── main.py              CLI 入口（run / server / analyze / test / demo）
 ├── src/
 │   ├── agents/          角色化 Agent（product/architect/developer/reviewer/tester，真实 LLM 驱动）
-│   ├── orchestrator/    自我编排引擎（任务分析 / 分解 / 能力匹配 / 失败恢复）
+│   ├── orchestrator/    自我编排引擎（任务分析 / 分解 / 能力匹配 / 失败恢复 / Loop Engineering）
 │   ├── llm/             LLM 客户端（One API 网关，异步 AsyncOpenAI）
 │   ├── web/             FastAPI 服务：server.py 装配 + routers/ 各域路由 + state/schemas/deps/auth
-│   ├── memory/          记忆系统（SQLite 会话 + JSON 长期记忆）
-│   ├── skills/  hooks/   技能系统、生命周期 Hook
-│   ├── editor/  indexing/ 代码编辑与索引
+│   ├── memory/          记忆系统（SQLite 会话 + JSON 长期记忆 + 向量数据库）
+│   ├── skills/          技能系统（技能发现 / 版本管理 / 自动加载）
+│   ├── hooks/           生命周期 Hook
+│   ├── tools/           MCP 工具集成（动态发现 / 权限管理）
+│   ├── monitoring/      性能监控（指标收集 / 仪表盘 / 告警 / 性能分析）
+│   ├── context/         上下文管理（智能压缩 / 优先级管理）
+│   ├── editor/          代码编辑与索引
 │   ├── sandbox/         Docker 沙箱（cloud_sandbox 为非隔离简化执行，默认关闭）
 │   ├── security/        权限 / 审批模型
-│   └── context/ projects/ workspaces/ browser/ github/ templates/ …
+│   └── projects/ workspaces/ browser/ github/ templates/ …
 ├── web/                 控制台前端（原生 HTML/CSS/JS，无构建步骤）
 ├── examples/            使用示例（basic_usage / llm_analysis / real_pipeline …）
 ├── tests/               单元 + 集成测试（含路由契约安全网）
 ├── docs/                设计与分析文档
-└── config/              默认配置（default.yaml）
+└── config/              默认配置（default.yaml / mcp.yaml）
 ```
 
 > 注：早期版本曾计划把代码放在顶层 `orchestrator/`、`agents/`、`sandbox/`，
@@ -99,9 +121,10 @@ auto-dev-crew/
 
 - **后端**: FastAPI + Python 3.10+（异步）
 - **前端**: 原生 HTML/CSS/JavaScript 控制台页面（无构建步骤）
-- **存储**: SQLite（会话）+ JSON 文件（长期记忆 / 项目）
+- **存储**: SQLite（会话）+ JSON 文件（长期记忆 / 项目）+ 向量数据库（语义检索）
 - **容器化**: Docker（代码沙箱，可选）
 - **LLM 网关**: 自建 One API（OpenAI 兼容接口）
+- **监控**: 自定义指标收集 + 可视化仪表盘 + 智能告警
 - **可选 / 规划中**: 向量数据库 Qdrant（`pip install '.[memory]'` 启用语义检索）；Redis / PostgreSQL 暂未接入
 
 ## 快速开始
@@ -110,6 +133,18 @@ auto-dev-crew/
 
 ```bash
 pip install -r requirements.txt
+
+# 可选：安装向量数据库支持（用于语义记忆）
+pip install '.[memory]'
+
+# 可选：安装LLM支持
+pip install '.[llm]'
+
+# 可选：安装MCP支持
+pip install '.[mcp]'
+
+# 可选：安装所有依赖
+pip install '.[all]'
 ```
 
 ### 2. 配置环境
@@ -173,14 +208,17 @@ python main.py run --task "实现用户认证功能"
 
 ## 开发路线图
 
-- **Phase 0**: 基础架构升级 (1-2 周)
-- **Phase 1**: 自我编排引擎 (2-3 周)
-- **Phase 2**: 工具集成层 (2-3 周)
-- **Phase 3**: 记忆与学习系统 (2-3 周)
-- **Phase 4**: 技能与子代理系统 (2-3 周)
-- **Phase 5**: 高级特性与优化 (3-4 周)
+> 下面是最初规划的阶段划分，**不代表全部已完成**。各能力的真实落地状态
+> （可用 / 部分实现 / 规划中）以 [DEVELOPMENT_SUMMARY](docs/DEVELOPMENT_SUMMARY.md) 为准。
 
-详细路线图请参考 [实现路线图](docs/IMPLEMENTATION_ROADMAP.md)
+- **Phase 0**: 基础架构升级 — 已落地
+- **Phase 1**: 自我编排引擎 — 主链路可用（分析/分解/匹配/失败恢复/Loop 闭环真实工作）
+- **Phase 2**: 工具集成层 — MCP 工具自动发现+注册可用
+- **Phase 3**: 记忆与学习系统 — 会话/长期/向量记忆可用；知识图谱已移除（未集成的孤儿模块）
+- **Phase 4**: 技能与子代理系统 — 技能/Hooks 可用；子代理（SubAgentManager）尚未接入主链路
+- **Phase 5**: 高级特性与优化 — 监控/安全/沙箱可用；实时补全、内联编辑、多模型协商等仍为规划项
+
+详细规划见 [实现路线图](docs/IMPLEMENTATION_ROADMAP.md)；当前真实现状见 [DEVELOPMENT_SUMMARY](docs/DEVELOPMENT_SUMMARY.md)。
 
 ## 贡献指南
 

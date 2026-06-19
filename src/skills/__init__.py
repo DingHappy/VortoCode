@@ -30,6 +30,15 @@ from .checklists import (
     PERFORMANCE_CHECKLIST,
     CODE_QUALITY_CHECKLIST
 )
+from .discovery import (
+    SkillVersion,
+    SkillManifest,
+    SkillDiscoveryConfig,
+    SkillDiscovery,
+    SkillVersionManager,
+    AutoReloadingSkillDiscovery,
+    create_skill_discovery
+)
 
 __all__ = [
     # 基础技能
@@ -68,4 +77,13 @@ __all__ = [
     "SECURITY_CHECKLIST",
     "PERFORMANCE_CHECKLIST",
     "CODE_QUALITY_CHECKLIST",
+    
+    # 技能发现
+    "SkillVersion",
+    "SkillManifest",
+    "SkillDiscoveryConfig",
+    "SkillDiscovery",
+    "SkillVersionManager",
+    "AutoReloadingSkillDiscovery",
+    "create_skill_discovery",
 ]

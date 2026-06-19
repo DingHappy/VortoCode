@@ -15,6 +15,7 @@ from src.agents.base import Agent, AgentConfig, AgentResult, extract_json
 # TesterAgent 以别名导入：别名不以 "Test" 开头，避免 pytest 误把它当测试类收集
 from src.agents.roles import DeveloperAgent, ReviewerAgent, TesterAgent as _TesterAgent
 from src.orchestrator.engine import SelfOrchestratingEngine
+from src.orchestrator.dev_loop import IterativeDevLoop
 from src.orchestrator.matcher import MatchResult
 from src.orchestrator.task_analyzer import SubTask
 
@@ -223,3 +224,67 @@ async def test_shared_context_accumulates_artifacts():
     await engine._execute_single("s1", subtask_map, assignments, ctx)
 
     assert ctx["artifacts"]["developer"] == "done:developer"
+
+
+# ---------------------------------------------------------------- 推理链（地基）
+
+class FakeLLMR:
+    """模拟推理型模型：chat 额外返回 reasoning 字段。"""
+
+    def __init__(self, content, reasoning):
+        self._content = content
+        self._reasoning = reasoning
+
+    async def chat(self, messages, model=None, temperature=None,
+                   max_tokens=None, stream=False):
+        return {"content": self._content, "reasoning": self._reasoning}
+
+
+@pytest.mark.asyncio
+async def test_agent_result_captures_reasoning():
+    """推理型模型的思维链应被捕获并回填进 AgentResult.reasoning。"""
+    payload = json.dumps({"verdict": "approve", "summary": "ok", "findings": []})
+    rev = ReviewerAgent(llm_client=FakeLLMR(payload, reasoning="先看除零，再看边界，均无问题"))
+
+    result = await rev.execute("review", context={"code": "def f(): return 1"})
+
+    assert result.success is True
+    assert result.reasoning == "先看除零，再看边界，均无问题"
+
+
+@pytest.mark.asyncio
+async def test_reasoning_none_for_plain_model():
+    """普通模型（chat 不返回 reasoning）时 reasoning 应为 None —— 回归护栏。"""
+    payload = json.dumps({"verdict": "approve", "summary": "ok", "findings": []})
+    rev = ReviewerAgent(llm_client=FakeLLM(payload))  # FakeLLM 只返回 content
+
+    result = await rev.execute("review", context={"code": "def f(): return 1"})
+
+    assert result.success is True
+    assert result.reasoning is None
+
+
+@pytest.mark.asyncio
+async def test_dev_loop_assembles_reasoning_chain(tmp_path):
+    """dev_loop 应把每轮 developer/reviewer 的推理链汇入 IterationRecord（可审计链）。"""
+    dev = DeveloperAgent(llm_client=FakeLLMR(
+        json.dumps({"files": [{"path": "mod.py", "content": "def add(a, b):\n    return a + b\n"}]}),
+        reasoning="DEV：实现一个最小 add 函数",
+    ))
+    tester = _TesterAgent(llm_client=FakeLLMR(
+        json.dumps({"files": [{"path": "test_mod.py",
+                               "content": "from mod import add\n\n\ndef test_add():\n    assert add(1, 2) == 3\n"}]}),
+        reasoning="TESTER：覆盖正例",
+    ))
+    reviewer = ReviewerAgent(llm_client=FakeLLMR(
+        json.dumps({"verdict": "approve", "summary": "实现正确", "findings": []}),
+        reasoning="REV：逻辑正确，批准",
+    ))
+
+    loop = IterativeDevLoop(dev, tester, reviewer, max_iterations=2)
+    result = await loop.run("实现 add 函数", workspace=str(tmp_path))
+
+    assert result.success is True, result.reason
+    record = result.history[0]
+    assert record.dev_reasoning == "DEV：实现一个最小 add 函数"
+    assert record.review_reasoning == "REV：逻辑正确，批准"
