@@ -170,3 +170,45 @@ async def test_resume_replays_session(tmp_path):
         await _submit(app, pilot, f"/resume {sid}")
         assert await _wait_for(app, pilot, "历史内容ABC")    # 旧会话被回放
         assert app.session_id == sid                          # 当前会话切到它
+
+
+@pytest.mark.asyncio
+async def test_suggester_completes_slash_commands(tmp_path):
+    from src.tui.app import FileSuggester
+    s = FileSuggester(str(tmp_path))
+    assert await s.get_suggestion("/an") == "/analyze"
+    assert await s.get_suggestion("/se") == "/sessions"
+    assert await s.get_suggestion("/analyze") is None      # 已完整就不再建议
+
+
+@pytest.mark.asyncio
+async def test_busy_shown_in_subtitle(tmp_path):
+    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app._busy = True
+        app._sync_subtitle()
+        assert "运行中" in app.sub_title
+        app._busy = False
+        app._sync_subtitle()
+        assert "运行中" not in app.sub_title
+
+
+@pytest.mark.asyncio
+async def test_action_blocked_while_busy(tmp_path):
+    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app._busy = True                              # 手动置忙（无真任务）
+        await _submit(app, pilot, "/analyze")         # 动作命令应被挡
+        assert any("正在处理" in t for t in app.transcript)
+        assert not any("运行 L1" in t for t in app.transcript)   # analyze 未启动
+
+
+@pytest.mark.asyncio
+async def test_cancel_only_when_busy(tmp_path):
+    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app.action_cancel()                           # 不忙：无副作用
+        assert not any("已取消" in t for t in app.transcript)
+        app._busy = True
+        app.action_cancel()                           # 忙：提示已取消
+        assert any("已取消" in t for t in app.transcript)
