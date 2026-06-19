@@ -234,6 +234,13 @@ async def handle_tool_call(name: str, arguments: dict) -> str:
 
 async def _fetch_akshare_news(args: dict) -> str:
     """akshare 新闻采集（同步库用 asyncio.to_thread 包装）"""
+    try:
+        import akshare  # noqa: F401  仅探测，未装则友好降级
+    except ImportError:
+        return json.dumps(
+            {"error": "akshare 未安装，请 pip install akshare（或 pip install '.[quant]'）"},
+            ensure_ascii=False,
+        )
 
     def _sync():
         import akshare as ak
@@ -264,6 +271,13 @@ async def _fetch_akshare_news(args: dict) -> str:
 
 async def _fetch_akshare_fundamentals(args: dict) -> str:
     """akshare 基本面采集"""
+    try:
+        import akshare  # noqa: F401  仅探测，未装则友好降级
+    except ImportError:
+        return json.dumps(
+            {"error": "akshare 未安装，请 pip install akshare（或 pip install '.[quant]'）"},
+            ensure_ascii=False,
+        )
 
     def _sync():
         import akshare as ak
