@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Auto-Dev-Crew - 管理控制台</title>
+    <title>VortoCode - 管理控制台</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -429,7 +429,7 @@
             <div class="sidebar-header">
                 <div class="logo">
                     <div class="logo-icon"><i class="fas fa-robot"></i></div>
-                    <span>Auto-Dev-Crew</span>
+                    <span>VortoCode</span>
                 </div>
             </div>
             
@@ -1242,13 +1242,13 @@
                 workdir: document.getElementById('setting-workdir').value,
                 maxWorkspaces: document.getElementById('setting-max-workspaces').value
             };
-            localStorage.setItem('auto-dev-crew-settings', JSON.stringify(settings));
+            localStorage.setItem('vortocode-settings', JSON.stringify(settings));
             showNotification('设置已保存', 'success');
         }
         
         // 加载设置
         function loadSettings() {
-            const saved = localStorage.getItem('auto-dev-crew-settings');
+            const saved = localStorage.getItem('vortocode-settings');
             if (saved) {
                 const settings = JSON.parse(saved);
                 document.getElementById('setting-model').value = settings.model || 'mimo-v2.5';
@@ -1263,7 +1263,7 @@
                 apiBase: document.getElementById('setting-api-base').value,
                 apiKey: document.getElementById('setting-api-key').value
             };
-            localStorage.setItem('auto-dev-crew-api-config', JSON.stringify(config));
+            localStorage.setItem('vortocode-api-config', JSON.stringify(config));
             showNotification('API 配置已保存', 'success');
         }
         

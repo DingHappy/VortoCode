@@ -2,7 +2,7 @@
 
 ## 概述
 
-自我编排引擎是 auto-dev-crew 的核心创新，它使系统能够自主决策任务分配、执行顺序和资源调度，而不是依赖预定义的静态工作流。
+自我编排引擎是 vortocode 的核心创新，它使系统能够自主决策任务分配、执行顺序和资源调度，而不是依赖预定义的静态工作流。
 
 ## 核心组件
 
@@ -573,7 +573,7 @@ print(f"Token 消耗: {result.tokens_used}")
 ## 配置
 
 ```yaml
-# .auto-dev-crew/config.yaml
+# .vortocode/config.yaml
 self_orchestration:
   enabled: true
   max_decomposition_depth: 3

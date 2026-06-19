@@ -122,7 +122,7 @@ class StdioMCPClient(MCPClient):
                 "protocolVersion": "2024-11-05",
                 "capabilities": {},
                 "clientInfo": {
-                    "name": "auto-dev-crew",
+                    "name": "vortocode",
                     "version": "0.1.0"
                 }
             })

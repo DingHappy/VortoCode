@@ -14,9 +14,9 @@ credentials.*
 
 # ─────────────────────────────────────────────────────────────
 # 运行时状态 / 产物（可再生，不应入库）
-# .auto-dev-crew/ 内含 sessions.db / memory / projects / logs 等
+# .vortocode/ 内含 sessions.db / memory / projects / logs 等
 # ─────────────────────────────────────────────────────────────
-.auto-dev-crew/
+.vortocode/
 *.db
 *.sqlite
 *.sqlite3

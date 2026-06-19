@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from src.web.auth import auth_middleware, get_api_token
 
 app = FastAPI(
-    title="Auto-Dev-Crew",
+    title="VortoCode",
     description="多 Agent 协作开发平台",
     version="0.1.0",
 )
@@ -61,7 +61,7 @@ def start_server(host: str = "127.0.0.1", port: int = 8000):
     """启动服务器"""
     import uvicorn
     print(f"\n{'='*50}")
-    print(f"  Auto-Dev-Crew 服务器启动")
+    print(f"  VortoCode 服务器启动")
     print(f"  访问: http://{host}:{port}")
     if host not in ("127.0.0.1", "localhost", "::1") and not get_api_token():
         print("  ⚠️  正绑定到非本地地址且未设置 AUTODEV_API_TOKEN，")

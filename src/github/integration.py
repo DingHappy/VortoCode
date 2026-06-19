@@ -88,7 +88,7 @@ class GitHubClient:
                 headers={
                     "Authorization": f"token {self.token}",
                     "Accept": "application/vnd.github.v3+json",
-                    "User-Agent": "Auto-Dev-Crew"
+                    "User-Agent": "VortoCode"
                 }
             )
         return self._session
@@ -455,7 +455,7 @@ class GitHubIntegration:
         # 添加评论
         await self.client.create_issue_comment(
             issue_number,
-            f"🤖 Auto-Dev-Crew is working on this issue...\n\n"
+            f"🤖 VortoCode is working on this issue...\n\n"
             f"Branch: `{branch_name}`\n"
             f"Status: In Progress"
         )

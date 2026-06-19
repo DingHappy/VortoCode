@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """quant-platform MCP 工具服务器
 
-通过 stdio JSON-RPC 与 auto-dev-crew 通信，封装 quant-platform REST API + akshare。
+通过 stdio JSON-RPC 与 vortocode 通信，封装 quant-platform REST API + akshare。
 与 src/tools/mcp_client.py 中的 StdioMCPClient 协议兼容。
 
 用法：

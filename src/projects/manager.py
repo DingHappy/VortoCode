@@ -58,7 +58,7 @@ class ProjectState:
 class ProjectManager:
     """项目管理器"""
     
-    def __init__(self, storage_path: str = ".auto-dev-crew/projects"):
+    def __init__(self, storage_path: str = ".vortocode/projects"):
         self.storage_path = Path(storage_path)
         self.storage_path.mkdir(parents=True, exist_ok=True)
         

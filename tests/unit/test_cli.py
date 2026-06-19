@@ -12,7 +12,7 @@ from src import cli
 
 
 def test_no_command_prints_overview_and_exits_zero(monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["auto-dev-crew"])
+    monkeypatch.setattr(sys, "argv", ["vortocode"])
     with pytest.raises(SystemExit) as e:
         cli.main()
     assert e.value.code == 0
@@ -23,7 +23,7 @@ def test_no_command_prints_overview_and_exits_zero(monkeypatch, capsys):
 
 
 def test_self_fix_requires_paths(monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["auto-dev-crew", "self-fix"])
+    monkeypatch.setattr(sys, "argv", ["vortocode", "self-fix"])
     with pytest.raises(SystemExit) as e:
         cli.main()
     assert e.value.code != 0                                 # argparse 缺必填参数 -> 退出码 2
@@ -32,7 +32,7 @@ def test_self_fix_requires_paths(monkeypatch, capsys):
 
 
 def test_run_requires_task(monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["auto-dev-crew", "run"])
+    monkeypatch.setattr(sys, "argv", ["vortocode", "run"])
     with pytest.raises(SystemExit) as e:
         cli.main()
     assert e.value.code != 0
@@ -41,7 +41,7 @@ def test_run_requires_task(monkeypatch, capsys):
 
 def test_help_is_per_command(monkeypatch, capsys):
     # 子命令 -h 只显示该命令自己的参数（不再是全局糊一脸）
-    monkeypatch.setattr(sys, "argv", ["auto-dev-crew", "self-improve", "-h"])
+    monkeypatch.setattr(sys, "argv", ["vortocode", "self-improve", "-h"])
     with pytest.raises(SystemExit) as e:
         cli.main()
     assert e.value.code == 0

@@ -84,7 +84,7 @@ class IterativeDevLoop:
         from ..core.tracing import ensure_trace_id
         ensure_trace_id()
 
-        ws = workspace or str(Path(".auto-dev-crew") / "workspaces" / f"devloop-{uuid.uuid4().hex[:8]}")
+        ws = workspace or str(Path(".vortocode") / "workspaces" / f"devloop-{uuid.uuid4().hex[:8]}")
         Path(ws).mkdir(parents=True, exist_ok=True)
 
         ctx: Dict[str, Any] = {"task": task, "workspace": ws, "artifacts": {}}
@@ -234,7 +234,7 @@ async def run_autonomous_coding(
                 max_iterations=max_iterations_per_step,
             )
 
-    ws = workspace or str(Path(".auto-dev-crew") / "workspaces" / f"coding-{uuid.uuid4().hex[:8]}")
+    ws = workspace or str(Path(".vortocode") / "workspaces" / f"coding-{uuid.uuid4().hex[:8]}")
     steps = await _plan_coding_steps(planner, goal, max_steps)
 
     step_results: List[Dict[str, Any]] = []
