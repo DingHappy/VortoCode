@@ -208,14 +208,17 @@ python main.py run --task "实现用户认证功能"
 
 ## 开发路线图
 
-- ✅ **Phase 0**: 基础架构升级 (1-2 周) - 已完成
-- ✅ **Phase 1**: 自我编排引擎 (2-3 周) - 已完成
-- ✅ **Phase 2**: 工具集成层 (2-3 周) - 已完成
-- ✅ **Phase 3**: 记忆与学习系统 (2-3 周) - 已完成
-- ✅ **Phase 4**: 技能与子代理系统 (2-3 周) - 已完成
-- ✅ **Phase 5**: 高级特性与优化 (3-4 周) - 已完成
+> 下面是最初规划的阶段划分，**不代表全部已完成**。各能力的真实落地状态
+> （可用 / 部分实现 / 规划中）以 [DEVELOPMENT_SUMMARY](docs/DEVELOPMENT_SUMMARY.md) 为准。
 
-详细路线图请参考 [实现路线图](docs/IMPLEMENTATION_ROADMAP.md)
+- **Phase 0**: 基础架构升级 — 已落地
+- **Phase 1**: 自我编排引擎 — 主链路可用（分析/分解/匹配/失败恢复/Loop 闭环真实工作）
+- **Phase 2**: 工具集成层 — MCP 工具自动发现+注册可用
+- **Phase 3**: 记忆与学习系统 — 会话/长期/向量记忆可用；知识图谱已移除（未集成的孤儿模块）
+- **Phase 4**: 技能与子代理系统 — 技能/Hooks 可用；子代理（SubAgentManager）尚未接入主链路
+- **Phase 5**: 高级特性与优化 — 监控/安全/沙箱可用；实时补全、内联编辑、多模型协商等仍为规划项
+
+详细规划见 [实现路线图](docs/IMPLEMENTATION_ROADMAP.md)；当前真实现状见 [DEVELOPMENT_SUMMARY](docs/DEVELOPMENT_SUMMARY.md)。
 
 ## 贡献指南
 
