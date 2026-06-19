@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Auto-Dev-Crew CLI 实现（既是 console_scripts 入口 auto-dev-crew/adc，也被根 main.py 复用）。"""
+"""VortoCode CLI 实现（既是 console_scripts 入口 vortocode/vc，也被根 main.py 复用）。"""
 
 import argparse
 import asyncio
@@ -10,7 +10,7 @@ from pathlib import Path
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Auto-Dev-Crew · 多 Agent 协作开发框架（能自分析 / 自改进自己）",
+        description="VortoCode · 多 Agent 协作开发框架（能自分析 / 自改进自己）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""\
             常用示例:
@@ -240,7 +240,7 @@ def run_demo():
     """运行演示"""
     print("""
 ╔══════════════════════════════════════════════════════════════╗
-║                 Auto-Dev-Crew 演示模式                        ║
+║                 VortoCode 演示模式                        ║
 ╠══════════════════════════════════════════════════════════════╣
 ║                                                              ║
 ║  1. 启动 Web 服务器:                                         ║

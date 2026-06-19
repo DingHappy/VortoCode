@@ -21,7 +21,7 @@ from src.agents.roles import (  # noqa: E402
 
 
 async def run(goal: str) -> None:
-    workspace = Path(".auto-dev-crew") / "workspaces" / "demo-real-pipeline"
+    workspace = Path(".vortocode") / "workspaces" / "demo-real-pipeline"
     ctx = {"task": goal, "goal": goal, "workspace": str(workspace), "artifacts": {}}
 
     print(f"🎯 目标: {goal}")

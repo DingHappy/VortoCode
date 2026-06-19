@@ -2,7 +2,7 @@
 
 ## 概述
 
-技能系统使 auto-dev-crew 能够定义、发现和执行可重用的工作流。技能是模块化的知识单元，可以组合使用，大大提高了系统的灵活性和可扩展性。
+技能系统使 vortocode 能够定义、发现和执行可重用的工作流。技能是模块化的知识单元，可以组合使用，大大提高了系统的灵活性和可扩展性。
 
 ## 技能定义格式
 
@@ -14,7 +14,7 @@
 name: api-developer
 description: 实现 RESTful API 端点，遵循团队约定
 version: "1.0.0"
-author: auto-dev-crew
+author: vortocode
 
 # 调用控制
 disable-model-invocation: false  # 是否禁止自动调用
@@ -303,8 +303,8 @@ class SkillRegistry:
     
     def __init__(self, skill_dirs: List[str] = None):
         self.skill_dirs = skill_dirs or [
-            ".auto-dev-crew/skills",
-            "~/.auto-dev-crew/skills"
+            ".vortocode/skills",
+            "~/.vortocode/skills"
         ]
         self.skills: Dict[str, Skill] = {}
         self._discover_skills()
@@ -682,7 +682,7 @@ class CompositeSkill(Skill):
 
 ### 1. 定义技能
 
-创建 `.auto-dev-crew/skills/code-review/SKILL.md`:
+创建 `.vortocode/skills/code-review/SKILL.md`:
 
 ```yaml
 ---
@@ -729,10 +729,10 @@ arguments:
 ### 2. 使用技能
 
 ```python
-from auto_dev_crew.skills import SkillRegistry, SkillExecutor
+from vortocode.skills import SkillRegistry, SkillExecutor
 
 # 初始化
-registry = SkillRegistry([".auto-dev-crew/skills"])
+registry = SkillRegistry([".vortocode/skills"])
 executor = SkillExecutor(registry)
 
 # 执行技能
@@ -754,7 +754,7 @@ results = await executor.execute_chain([
 ### 3. 组合技能
 
 ```python
-from auto_dev_crew.skills import SkillComposer
+from vortocode.skills import SkillComposer
 
 composer = SkillRegistry(registry)
 
@@ -809,12 +809,12 @@ skills = registry.recommend_for_context(context)
 ## 配置
 
 ```yaml
-# .auto-dev-crew/skills.yaml
+# .vortocode/skills.yaml
 skills:
   directories:
-    - ".auto-dev-crew/skills"
-    - "~/.auto-dev-crew/skills"
-    - "/etc/auto-dev-crew/skills"
+    - ".vortocode/skills"
+    - "~/.vortocode/skills"
+    - "/etc/vortocode/skills"
   
   auto_discovery:
     enabled: true

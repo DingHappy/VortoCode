@@ -194,7 +194,7 @@ async def demo_vector_memory():
 
 async def main():
     """主演示函数"""
-    print("Auto-Dev-Crew 新功能演示")
+    print("VortoCode 新功能演示")
     print("=" * 50)
     
     # 运行各个演示

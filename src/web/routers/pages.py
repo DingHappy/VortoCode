@@ -13,7 +13,7 @@ async def root():
     html_path = _WEB_DIR / "admin.html"
     if html_path.exists():
         return FileResponse(html_path, media_type="text/html")
-    return {"message": "Auto-Dev-Crew API", "version": "0.1.0"}
+    return {"message": "VortoCode API", "version": "0.1.0"}
 
 @router.get("/workspace")
 async def workspace_view():
@@ -21,7 +21,7 @@ async def workspace_view():
     html_path = _WEB_DIR / "multi-workspace.html"
     if html_path.exists():
         return FileResponse(html_path, media_type="text/html")
-    return {"message": "Auto-Dev-Crew API", "version": "0.1.0"}
+    return {"message": "VortoCode API", "version": "0.1.0"}
 
 @router.get("/workstation")
 async def workstation_view():
@@ -29,7 +29,7 @@ async def workstation_view():
     html_path = _WEB_DIR / "workstation.html"
     if html_path.exists():
         return FileResponse(html_path, media_type="text/html")
-    return {"message": "Auto-Dev-Crew API", "version": "0.1.0"}
+    return {"message": "VortoCode API", "version": "0.1.0"}
 
 @router.get("/classic")
 async def classic_view():
@@ -37,7 +37,7 @@ async def classic_view():
     html_path = _WEB_DIR / "index.html"
     if html_path.exists():
         return FileResponse(html_path, media_type="text/html")
-    return {"message": "Auto-Dev-Crew API", "version": "0.1.0"}
+    return {"message": "VortoCode API", "version": "0.1.0"}
 
 
 @router.get("/quant")

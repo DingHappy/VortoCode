@@ -55,7 +55,7 @@ class UnifiedState(BaseModel):
 class StateManager:
     """状态管理器"""
     
-    def __init__(self, persistence_path: str = ".auto-dev-crew/states"):
+    def __init__(self, persistence_path: str = ".vortocode/states"):
         self.persistence_path = Path(persistence_path)
         self.persistence_path.mkdir(parents=True, exist_ok=True)
         

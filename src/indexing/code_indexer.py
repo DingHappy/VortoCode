@@ -176,7 +176,7 @@ class CodeIndexer:
         self.file_hashes: Dict[str, str] = {}       # file -> 内容 hash（用于增量）
 
         # 索引文件路径
-        self.index_path = self.workdir / ".auto-dev-crew" / "code_index.json"
+        self.index_path = self.workdir / ".vortocode" / "code_index.json"
     
     async def index_repository(self, progress_callback=None, incremental: bool = True):
         """索引仓库。
@@ -191,7 +191,7 @@ class CodeIndexer:
 
         extensions = {'.py', '.js', '.jsx', '.ts', '.tsx', '.mjs'}
         ignore_dirs = {'.git', 'node_modules', '__pycache__', 'venv', '.venv',
-                       'dist', 'build', '.auto-dev-crew'}
+                       'dist', 'build', '.vortocode'}
         files = []
         for ext in extensions:
             files.extend(self.workdir.rglob(f"*{ext}"))

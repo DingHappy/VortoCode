@@ -126,7 +126,7 @@ class ShortTermMemory(Memory):
 class LongTermMemory(Memory):
     """长期记忆 - 持久化存储"""
     
-    def __init__(self, storage_path: str = ".auto-dev-crew/memory"):
+    def __init__(self, storage_path: str = ".vortocode/memory"):
         self.storage_path = storage_path
         self.items: Dict[str, MemoryItem] = {}
         self._load_from_disk()
@@ -299,7 +299,7 @@ class MemorySystem:
             capacity=self.config.get("short_term_capacity", 100)
         )
         self.long_term = LongTermMemory(
-            storage_path=self.config.get("storage_path", ".auto-dev-crew/memory")
+            storage_path=self.config.get("storage_path", ".vortocode/memory")
         )
         self.expert = ExpertMemory()
     

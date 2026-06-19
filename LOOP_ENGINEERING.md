@@ -189,7 +189,7 @@ done
 > "Think of delegating to a capable colleague. Give context and direction, 
 > then trust Claude to figure out the details."
 
-## 在 Auto-Dev-Crew 中的应用
+## 在 VortoCode 中的应用
 
 我们可以将 Loop Engineering 思想应用到我们的项目中：
 
@@ -244,4 +244,4 @@ Loop Engineering 的核心思想是：
 4. **委托验证**: 使用子代理进行独立验证
 5. **持续监控**: 使用 /loop 定期检查状态
 
-这些思想可以应用到任何 AI 代理系统中，包括我们的 Auto-Dev-Crew 框架。
+这些思想可以应用到任何 AI 代理系统中，包括我们的 VortoCode 框架。

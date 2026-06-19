@@ -51,8 +51,8 @@ class SkillDiscoveryConfig(BaseModel):
     # 技能目录
     skill_dirs: List[str] = Field(default_factory=lambda: [
         "skills",
-        ".auto-dev-crew/skills",
-        "~/.auto-dev-crew/skills"
+        ".vortocode/skills",
+        "~/.vortocode/skills"
     ])
     
     # 自动发现

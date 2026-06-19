@@ -63,7 +63,7 @@ class DockerSandbox:
                 raise RuntimeError("Docker is not available")
             
             # 创建临时目录
-            self.temp_dir = Path(tempfile.mkdtemp(prefix="auto-dev-crew-"))
+            self.temp_dir = Path(tempfile.mkdtemp(prefix="vortocode-"))
             
             # 构建 docker run 命令
             cmd = ["docker", "run", "-d"]

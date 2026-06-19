@@ -2,7 +2,7 @@
 
 ## 概述
 
-记忆系统使 auto-dev-crew 能够跨会话积累知识，从历史任务中学习，并在新任务中应用经验。这是实现真正智能代理的关键组件。
+记忆系统使 vortocode 能够跨会话积累知识，从历史任务中学习，并在新任务中应用经验。这是实现真正智能代理的关键组件。
 
 ## 记忆层次结构
 
@@ -179,7 +179,7 @@ class EmbeddingGenerator:
 class LongTermMemory:
     """长期记忆"""
     
-    def __init__(self, storage_path: str = "~/.auto-dev-crew/memory"):
+    def __init__(self, storage_path: str = "~/.vortocode/memory"):
         self.storage_path = storage_path
         self.vector_store = VectorStore()
         self.embedding_generator = EmbeddingGenerator()
@@ -459,7 +459,7 @@ class MemorySystem:
             capacity=self.config.get("short_term_capacity", 100)
         )
         self.long_term = LongTermMemory(
-            storage_path=self.config.get("storage_path", "~/.auto-dev-crew/memory")
+            storage_path=self.config.get("storage_path", "~/.vortocode/memory")
         )
         self.expert = ExpertMemory()
         self.knowledge_graph = KnowledgeGraph()
@@ -693,7 +693,7 @@ class MemoryRetriever:
 # 初始化记忆系统
 memory = MemorySystem({
     "short_term_capacity": 100,
-    "storage_path": "~/.auto-dev-crew/memory"
+    "storage_path": "~/.vortocode/memory"
 })
 
 # 存储记忆
@@ -732,22 +732,22 @@ await memory.learn_from_task(
 ## 配置
 
 ```yaml
-# .auto-dev-crew/memory.yaml
+# .vortocode/memory.yaml
 memory:
   short_term:
     capacity: 100
   
   long_term:
-    storage_path: "~/.auto-dev-crew/memory"
+    storage_path: "~/.vortocode/memory"
     embedding_model: "text-embedding-3-small"
     vector_store: "qdrant"  # 或 "milvus", "pinecone"
   
   expert:
-    knowledge_base_path: "~/.auto-dev-crew/expert_knowledge"
+    knowledge_base_path: "~/.vortocode/expert_knowledge"
     auto_validate: false
   
   knowledge_graph:
-    storage_path: "~/.auto-dev-crew/knowledge_graph"
+    storage_path: "~/.vortocode/knowledge_graph"
     max_entities: 10000
   
   retrieval:
