@@ -21,8 +21,15 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.suggester import Suggester
 from textual.widgets import Footer, Header, Input, RichLog, Static
+from textual.worker import WorkerState
 
 from src.memory.session_store import SessionManager
+
+SLASH_COMMANDS = [
+    "/analyze", "/improve", "/fix", "/run", "/sessions", "/resume",
+    "/new", "/mode", "/clear", "/help", "/quit",
+]
+ACTION_CMDS = {"analyze", "improve", "fix", "run"}   # 这些会跑长任务，受忙碌态约束
 
 HELP = """可用命令:
   直接输入自然语言   = 开发目标（等同 /run）；用 @文件 可补全并带入上下文
@@ -37,7 +44,8 @@ HELP = """可用命令:
   /clear              清屏
   /help               显示本帮助
   /quit               退出（也可 Ctrl+C）
-键位: Tab=切模式  Ctrl+L=清屏  Ctrl+C=退出  输入 @ 触发文件补全（→ 接受）"""
+键位: Tab=切模式  Esc=取消当前操作  Ctrl+L=清屏  Ctrl+C=退出
+补全: 输入 / 补全命令、@ 补全文件（→ 接受）"""
 
 _IGNORE = {"__pycache__", ".git", ".venv", "venv"}
 
@@ -65,6 +73,11 @@ class FileSuggester(Suggester):
         self._files = _repo_files(repo_root)
 
     async def get_suggestion(self, value: str) -> str | None:
+        # 1) slash 命令补全（输入以 / 开头且还没输到空格）
+        if value.startswith("/") and " " not in value:
+            vl = value.lower()
+            return next((c for c in SLASH_COMMANDS if c.startswith(vl) and c != vl), None)
+        # 2) @文件补全
         at = value.rfind("@")
         if at == -1:
             return None
@@ -88,6 +101,7 @@ class AutoDevCrewTUI(App):
     """
     BINDINGS = [
         Binding("ctrl+c", "quit", "退出", priority=True),
+        Binding("escape", "cancel", "取消"),
         Binding("tab", "toggle_mode", "切模式"),
         Binding("ctrl+l", "clear_log", "清屏"),
     ]
@@ -101,6 +115,7 @@ class AutoDevCrewTUI(App):
         self.sessions = SessionManager(str(Path(repo_root) / ".auto-dev-crew" / "sessions.db"))
         self.session_id: str | None = None
         self._persist_on = False            # 开场白阶段先不落盘
+        self._busy = False                  # 是否有长任务在跑
 
     # ---------------------------------------------------------------- 布局
     def compose(self) -> ComposeResult:
@@ -144,7 +159,21 @@ class AutoDevCrewTUI(App):
 
     def _sync_subtitle(self) -> None:
         desc = "只读/提案" if self.mode == "plan" else "可写分支"
-        self.sub_title = f"模式 {self.mode}（{desc}）"
+        sid = f" · 会话 {self.session_id}" if self.session_id else ""
+        busy = " · ⏳运行中(Esc 取消)" if self._busy else ""
+        self.sub_title = f"模式 {self.mode}（{desc}）{sid}{busy}"
+
+    # 集中管理忙碌态：动作 worker 一进入运行就置忙、结束(成功/失败/取消)即解除
+    def on_worker_state_changed(self, event) -> None:
+        if getattr(event.worker, "group", None) != "action":
+            return
+        self._busy = event.state == WorkerState.RUNNING
+        self._sync_subtitle()
+
+    def action_cancel(self) -> None:
+        if self._busy:
+            self.workers.cancel_all()
+            self._chrome("[yellow]已取消当前操作[/yellow]")
 
     # ---------------------------------------------------------------- 键位动作
     def action_toggle_mode(self) -> None:
@@ -164,6 +193,8 @@ class AutoDevCrewTUI(App):
         self._chrome(f"[dim]› {text}[/dim]")
         if text.startswith("/"):
             self._dispatch(text)
+        elif self._busy:
+            self._chrome("[yellow]正在处理上一条，Esc 取消或稍候[/yellow]")
         else:
             self._do_run(text)          # 自然语言 = 开发目标
 
@@ -171,6 +202,9 @@ class AutoDevCrewTUI(App):
         parts = text[1:].split(maxsplit=1)
         cmd = parts[0] if parts else ""
         arg = parts[1].strip() if len(parts) > 1 else ""
+        if cmd in ACTION_CMDS and self._busy:
+            self._chrome("[yellow]正在处理上一条，Esc 取消或稍候[/yellow]")
+            return
         if cmd in ("help", "h"):
             self._emit(HELP)
         elif cmd in ("quit", "exit", "q"):
