@@ -1,4 +1,6 @@
-"""创建的 agent 现在能真跑：ConfigAgent 执行 + /api/agents/{id}/run 端点（离线）。"""
+"""创建的 agent 现在能真跑：ConfigAgent 执行 + /run /stop 端点（离线）。"""
+
+import asyncio
 
 import pytest
 from fastapi.testclient import TestClient
@@ -42,3 +44,30 @@ def test_run_known_agent_dispatches(monkeypatch):
         assert r["success"] is True and r["agent_id"] == aid
     finally:
         client.delete(f"/api/agents/{aid}")
+
+
+def test_stop_not_running_returns_error():
+    r = client.post("/api/agents/whatever/stop")
+    assert r.json()["success"] is False
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_a_tracked_running_task():
+    from src.web.routers import execution
+
+    started = asyncio.Event()
+
+    async def sleeper():
+        started.set()
+        await asyncio.sleep(60)
+
+    t = asyncio.create_task(sleeper())
+    execution._RUNNING["TASKID"] = t
+    try:
+        await started.wait()
+        r = await execution.stop_agent("TASKID")
+        assert r["success"] is True
+        await asyncio.sleep(0.02)
+        assert t.cancelled()                      # 真的被取消了
+    finally:
+        execution._RUNNING.pop("TASKID", None)
