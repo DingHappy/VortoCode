@@ -55,6 +55,16 @@ all = [
     "auto-dev-crew[memory,llm,mcp,parsing,quant,dev]",
 ]
 
+[project.scripts]
+auto-dev-crew = "src.cli:main"
+adc = "src.cli:main"
+
+# 显式声明扁平布局：包名就是 src（代码用 from src.xxx 导入）。
+# 否则 setuptools 见到 src/ 会误判为 src-layout，导致安装后 `import src` 不可用。
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
