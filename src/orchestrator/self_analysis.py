@@ -224,6 +224,123 @@ def _find_cycles(graph: Dict[str, Set[str]]) -> List[Finding]:
     return findings
 
 
+# ------------------------------------------ 未声明依赖（import 了但没写进 requirements/pyproject）
+
+_IMPORT_ALIAS = {  # import 名 -> 发行包名（packages_distributions 缺失时的兜底）
+    "yaml": "pyyaml", "dotenv": "python-dotenv", "bs4": "beautifulsoup4",
+    "PIL": "pillow", "sklearn": "scikit-learn", "cv2": "opencv-python",
+    "dateutil": "python-dateutil", "attr": "attrs", "git": "gitpython",
+}
+
+
+def _norm_pkg(spec: str) -> str:
+    import re
+    head = re.split(r"[\[<>=!~;()\s]", spec.strip(), maxsplit=1)[0]
+    return head.lower().replace("_", "-").replace(".", "-")
+
+
+def _declared_dependencies(root: Path) -> Set[str]:
+    """从 requirements.txt + pyproject.toml 收集已声明的依赖（含 optional extras）。"""
+    import re
+    names: Set[str] = set()
+    req = root / "requirements.txt"
+    if req.exists():
+        for line in req.read_text(encoding="utf-8").splitlines():
+            line = line.split("#")[0].strip()
+            if line and not line.startswith("-"):
+                names.add(_norm_pkg(line))
+    pyproject = root / "pyproject.toml"
+    if pyproject.exists():
+        # 不依赖 tomllib（3.10 无）：抓引号串里的包名。宁可多收（=少误报）。
+        for s in re.findall(r'"([A-Za-z][A-Za-z0-9._-]*(?:\[[^\]]*\])?[^"]*)"',
+                            pyproject.read_text(encoding="utf-8")):
+            names.add(_norm_pkg(s))
+    names.discard("")
+    return names
+
+
+def _guarded_import_nodes(tree: ast.AST) -> Set[int]:
+    """try 块体里的 import 视为可选依赖（有意的降级），不报。"""
+    guarded: Set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Try):
+            for stmt in node.body:
+                for sub in ast.walk(stmt):
+                    if isinstance(sub, (ast.Import, ast.ImportFrom)):
+                        guarded.add(id(sub))
+    return guarded
+
+
+def _find_undeclared_deps(root: Path, src_files: List[Path],
+                          texts: Dict[Path, str]) -> List[Finding]:
+    import sys as _sys
+
+    stdlib = set(getattr(_sys, "stdlib_module_names", set()))
+    declared = _declared_dependencies(root)
+    try:
+        import importlib.metadata as _md
+        pkg_dists = _md.packages_distributions()
+    except Exception:
+        pkg_dists = {}
+
+    first_party = {"src"}
+    for child in root.iterdir():
+        if child.name in _IGNORE_PARTS:
+            continue
+        if child.is_dir() and (child / "__init__.py").exists():
+            first_party.add(child.name)
+        elif child.suffix == ".py":
+            first_party.add(child.stem)
+
+    def _declared_ok(name: str) -> bool:
+        if _norm_pkg(name) in declared:
+            return True
+        for dist in pkg_dists.get(name, []):
+            if _norm_pkg(dist) in declared:
+                return True
+        alias = _IMPORT_ALIAS.get(name)
+        return bool(alias and _norm_pkg(alias) in declared)
+
+    offenders: Dict[str, Set[str]] = defaultdict(set)
+    for p in src_files:
+        text = texts.get(p)
+        if text is None:
+            continue
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+        guarded = _guarded_import_nodes(tree)
+        rel = str(p.relative_to(root))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                tops = [a.name.split(".")[0] for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and not node.level and node.module:
+                tops = [node.module.split(".")[0]]
+            else:
+                continue
+            if id(node) in guarded:
+                continue
+            for top in tops:
+                if not top or top in stdlib or top in first_party:
+                    continue
+                if not _declared_ok(top):
+                    offenders[top].add(rel)
+
+    findings = []
+    for name in sorted(offenders):
+        files = sorted(offenders[name])
+        findings.append(Finding(
+            category="undeclared-dependency", severity="medium",
+            title=f"导入了未声明的第三方依赖：{name}",
+            file=files[0],
+            evidence=f"在 {len(files)} 个文件无 try/except 保护地 import，但 requirements/pyproject 未声明",
+            suggestion=f"把 {name} 写入依赖声明；若为可选功能则用 try/except ImportError 降级。",
+            source="structural",
+        ))
+    return findings
+
+
 # -------------------------------------------------------------------- LLM 深审
 
 async def _llm_review(root: Path, rel_paths: List[str],
@@ -296,8 +413,9 @@ async def analyze_self(root: str = ".", llm_paths: Optional[List[str]] = None,
     orphan_names = {f.title.split()[1] for f in orphans}  # "模块 X 没有..." -> X
     test_gaps = _find_test_gaps(src_modules, reachable_from_tests, orphan_names, module_path, root)
     cycles = _find_cycles(graph)
+    undeclared = _find_undeclared_deps(root, src_files, texts)
 
-    findings = orphans + cycles + test_gaps
+    findings = orphans + cycles + undeclared + test_gaps
     skipped = [
         "doc-drift（文档与代码漂移）—— 待 LLM 层",
         "re-exported-but-unused（被重导出但从未真正使用，如曾经的 knowledge_graph）—— 需用法追踪，待后续",

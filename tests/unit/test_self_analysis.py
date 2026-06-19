@@ -71,6 +71,34 @@ async def test_detects_orphan_cycle_and_test_gap(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_detects_undeclared_dependency(tmp_path):
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "__init__.py").write_text("")
+    (tmp_path / "requirements.txt").write_text("fastapi>=0.100\n")
+    # requests：未声明、未保护 -> 报；numpy：未声明但 try/except 保护 -> 不报；
+    # fastapi：已声明 -> 不报；os：标准库 -> 不报
+    (src / "app.py").write_text(
+        "import os\n"
+        "import requests\n"
+        "import fastapi\n"
+        "try:\n"
+        "    import numpy\n"
+        "except ImportError:\n"
+        "    numpy = None\n"
+    )
+
+    report = await analyze_self(str(tmp_path))
+    undeclared = {f.title.split("：")[-1] for f in report.findings
+                  if f.category == "undeclared-dependency"}
+
+    assert "requests" in undeclared
+    assert "numpy" not in undeclared       # try/except 保护 -> 视为可选，不报
+    assert "fastapi" not in undeclared     # requirements 已声明
+    assert "os" not in undeclared          # 标准库
+
+
+@pytest.mark.asyncio
 async def test_report_renders_and_declares_skips(tmp_path):
     _make_repo(tmp_path)
 
