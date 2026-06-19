@@ -29,6 +29,34 @@ async def _wait_for(app, pilot, needle, tries=60):
     return False
 
 
+async def _wait_modal(app, pilot, tries=60):
+    for _ in range(tries):
+        if len(app.screen_stack) > 1:
+            return True
+        await pilot.pause(0.05)
+    return False
+
+
+def _fake_improve_loop(applied):
+    import src.orchestrator.self_improve as si
+
+    class FakeLoop:
+        def __init__(self, root):
+            pass
+
+        async def propose(self):
+            return si.ImprovementResult(proposals=[si.Proposal(
+                finding_title="t", module="m", test_path="tests/x.py",
+                accepted=True, reason="ok")])
+
+        def apply(self, result):
+            applied.append(True)
+            result.branch = "l2/fake"
+            return "l2/fake"
+
+    return si, FakeLoop
+
+
 @pytest.mark.asyncio
 async def test_starts_in_plan_mode_and_greets():
     app = AutoDevCrewTUI(repo_root=".")
@@ -212,3 +240,53 @@ async def test_cancel_only_when_busy(tmp_path):
         app._busy = True
         app.action_cancel()                           # 忙：提示已取消
         assert any("已取消" in t for t in app.transcript)
+
+
+@pytest.mark.asyncio
+async def test_build_apply_confirm_cancel(monkeypatch, tmp_path):
+    applied = []
+    si, FakeLoop = _fake_improve_loop(applied)
+    monkeypatch.setattr(si, "SelfImprovementLoop", FakeLoop)
+
+    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/mode")            # → build
+        assert app.mode == "build"
+        await _submit(app, pilot, "/improve")
+        assert await _wait_modal(app, pilot), "写分支前应弹确认"
+        await pilot.press("n")                        # 取消
+        await pilot.pause()
+        assert applied == []                          # 没写分支
+        assert await _wait_for(app, pilot, "已取消写入")
+
+
+@pytest.mark.asyncio
+async def test_build_apply_confirm_accept(monkeypatch, tmp_path):
+    applied = []
+    si, FakeLoop = _fake_improve_loop(applied)
+    monkeypatch.setattr(si, "SelfImprovementLoop", FakeLoop)
+
+    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/mode")
+        await _submit(app, pilot, "/improve")
+        assert await _wait_modal(app, pilot)
+        await pilot.press("y")                        # 确认
+        await pilot.pause()
+        assert applied == [True]                      # 写了分支
+        assert await _wait_for(app, pilot, "已写入分支")
+
+
+@pytest.mark.asyncio
+async def test_plan_mode_never_writes(monkeypatch, tmp_path):
+    # plan 模式即使有可纳入项也不应弹确认/不写分支
+    applied = []
+    si, FakeLoop = _fake_improve_loop(applied)
+    monkeypatch.setattr(si, "SelfImprovementLoop", FakeLoop)
+
+    app = AutoDevCrewTUI(repo_root=str(tmp_path))   # 默认 plan
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/improve")
+        assert await _wait_for(app, pilot, "tests/x.py")   # render_result 提案行出现=跑完
+        assert applied == []                                # plan 模式没写
+        assert len(app.screen_stack) == 1                   # 没弹确认
