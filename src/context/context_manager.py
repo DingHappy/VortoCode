@@ -124,10 +124,13 @@ class ContextManager:
         return False
     
     def _estimate_tokens(self, text: str) -> int:
-        """估算 token 数量"""
-        # 简单估算：1个中文字符约等于2个token，1个英文单词约等于1个token
-        # 这里使用更简单的估算：每4个字符约等于1个token
-        return len(text) // 4
+        """估算 token 数量（混合中英文更准确）"""
+        if not text:
+            return 0
+        cn_chars = sum(1 for ch in text if '\u4e00' <= ch <= '\u9fff')
+        other_len = len(text) - cn_chars
+        # 中文字符 ~1.8 token，英文/符号 ~0.25 token per char
+        return int(cn_chars * 1.8 + other_len * 0.25)
     
     def _compress(self, required_tokens: int = 0) -> None:
         """压缩上下文"""
@@ -362,17 +365,10 @@ class ConversationContextManager(ContextManager):
     
     def get_llm_messages(self) -> List[Dict[str, str]]:
         """获取用于 LLM 的消息格式"""
-        # 获取所有内容
-        all_content = self.get_all_content()
-        
-        # 解析成消息格式
-        messages = []
-        for line in all_content.split("\n"):
-            if ": " in line:
-                role, content = line.split(": ", 1)
-                messages.append({"role": role, "content": content})
-        
-        return messages
+        return [
+            {"role": msg["role"], "content": msg["content"]}
+            for msg in self.messages
+        ]
 
 
 class TaskContextManager(ContextManager):

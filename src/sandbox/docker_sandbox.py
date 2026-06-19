@@ -148,10 +148,13 @@ class DockerSandbox:
             )
             
             try:
+                import time as _time
+                _t0 = _time.monotonic()
                 stdout, stderr = await asyncio.wait_for(
                     proc.communicate(),
                     timeout=timeout
                 )
+                _elapsed = _time.monotonic() - _t0
             except asyncio.TimeoutError:
                 proc.kill()
                 return SandboxResult(
@@ -167,7 +170,7 @@ class DockerSandbox:
                 stdout=stdout.decode(),
                 stderr=stderr.decode(),
                 exit_code=proc.returncode,
-                duration=0  # TODO: 计算实际耗时
+                duration=_elapsed
             )
         
         except Exception as e:
