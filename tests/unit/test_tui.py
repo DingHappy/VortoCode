@@ -243,6 +243,51 @@ async def test_cancel_only_when_busy(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_agents_lists_created_agents(tmp_path):
+    from src.agents.manager import AgentManager
+    db = str(tmp_path / ".auto-dev-crew" / "web_advanced_agents.json")
+    a = AgentManager(persist_path=db).create_agent("我的助手", "custom")
+
+    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/agents")
+        joined = "\n".join(app.transcript)
+        assert "我的助手" in joined and a.config.id in joined
+
+
+@pytest.mark.asyncio
+async def test_runagent_unknown_id(tmp_path):
+    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/runagent nope 做事")
+        assert await _wait_for(app, pilot, "没有 agent")
+
+
+@pytest.mark.asyncio
+async def test_runagent_runs_a_stored_agent(monkeypatch, tmp_path):
+    from src.agents.manager import AgentManager
+    import src.agents.config_agent as ca
+
+    db = str(tmp_path / ".auto-dev-crew" / "web_advanced_agents.json")
+    aid = AgentManager(persist_path=db).create_agent("跑跑", "custom").config.id
+
+    class FakeLLM:
+        async def chat(self, messages, model=None, temperature=None, max_tokens=None, stream=False):
+            return {"content": "干完了"}
+
+    def fake_build(name, role="custom", system_prompt="", model="inherit", llm_client=None):
+        cfg = ca.AgentConfig(role=role or "custom", name=name,
+                             system_prompt=system_prompt or "x", model="inherit")
+        return ca.ConfigAgent(cfg, llm_client=FakeLLM())
+
+    monkeypatch.setattr(ca, "build_config_agent", fake_build)
+    app = AutoDevCrewTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, f"/runagent {aid} 做点事")
+        assert await _wait_for(app, pilot, "干完了")        # 用存储的 agent 真跑出结果
+
+
+@pytest.mark.asyncio
 async def test_build_apply_confirm_cancel(monkeypatch, tmp_path):
     applied = []
     si, FakeLoop = _fake_improve_loop(applied)

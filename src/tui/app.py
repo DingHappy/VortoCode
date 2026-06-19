@@ -28,10 +28,12 @@ from textual.worker import WorkerState
 from src.memory.session_store import SessionManager
 
 SLASH_COMMANDS = [
-    "/analyze", "/improve", "/fix", "/run", "/sessions", "/resume",
-    "/new", "/mode", "/clear", "/help", "/quit",
+    "/analyze", "/improve", "/fix", "/run", "/agents", "/runagent",
+    "/sessions", "/resume", "/new", "/mode", "/clear", "/help", "/quit",
 ]
-ACTION_CMDS = {"analyze", "improve", "fix", "run"}   # 这些会跑长任务，受忙碌态约束
+ACTION_CMDS = {"analyze", "improve", "fix", "run", "runagent"}   # 跑长任务，受忙碌态约束
+
+_AGENTS_DB = lambda root: str(Path(root) / ".auto-dev-crew" / "web_advanced_agents.json")
 
 HELP = """可用命令:
   直接输入自然语言   = 开发目标（等同 /run）；用 @文件 可补全并带入上下文
@@ -39,6 +41,8 @@ HELP = """可用命令:
   /improve            L2 给测试缺口生成测试（需 key；build 模式下才写分支）
   /fix <文件,...>     L2.2 深审并外科修复指定文件（需 key；build 模式下才写分支）
   /run <目标>         跑开发循环（dev→test→review，流式）
+  /agents             列出已创建的 agent（网页/API 建的，同一份存储）
+  /runagent <id> <任务>  用某个已创建的 agent 执行任务（流式）
   /sessions           列出历史会话
   /resume <id>        恢复某个历史会话
   /new                新开一个会话
@@ -268,8 +272,67 @@ class AutoDevCrewTUI(App):
                 self._chrome("[red]/resume 需要会话 id[/red]，先 /sessions 查看")
         elif cmd == "new":
             self._cmd_new()
+        elif cmd == "agents":
+            self._cmd_agents()
+        elif cmd == "runagent":
+            if arg:
+                self._do_runagent(arg)
+            else:
+                self._chrome("[red]用法: /runagent <id> <任务>[/red]")
         else:
             self._chrome(f"[red]未知命令 /{cmd}[/red] · /help 看命令")
+
+    # ---------------------------------------------------------------- 已创建的 agent
+    def _cmd_agents(self) -> None:
+        from src.agents.manager import AgentManager
+        mgr = AgentManager(persist_path=_AGENTS_DB(self.repo_root))
+        agents = mgr.list_agents()
+        if not agents:
+            self._emit("(无已创建的 agent；可在网页或 API 创建)")
+            return
+        lines = ["已创建的 agent（/runagent <id> <任务> 运行）:"]
+        for a in agents:
+            off = "" if a.config.is_active else " (停用)"
+            lines.append(f"  {a.config.id}  {a.config.name} [{a.config.role}]{off}")
+        self._emit("\n".join(lines))
+
+    @work(exclusive=True, group="action")
+    async def _do_runagent(self, arg: str) -> None:
+        parts = arg.split(maxsplit=1)
+        if len(parts) < 2:
+            self._chrome("[red]用法: /runagent <id> <任务>[/red]")
+            return
+        aid, task = parts[0], parts[1]
+        from src.agents.manager import AgentManager
+        from src.agents.config_agent import build_config_agent
+
+        inst = AgentManager(persist_path=_AGENTS_DB(self.repo_root)).get_agent(aid)
+        if not inst:
+            self._chrome(f"[red]没有 agent {aid}（/agents 查看）[/red]")
+            return
+        cfg = inst.config
+        self._chrome(f"[cyan]运行 agent「{cfg.name}」：{task}[/cyan]")
+        stream = self.query_one("#stream", Static)
+        stream.display = True
+        buf: list[str] = []
+
+        def on_token(tok: str) -> None:
+            buf.append(tok)
+            stream.update(Text("".join(buf)[-1500:]))
+
+        try:
+            agent = build_config_agent(cfg.name, cfg.role, cfg.system_prompt, cfg.model)
+            result = await agent.execute(task, context={"on_token": on_token})
+            self._emit(f"「{cfg.name}」结果: {'成功' if result.success else '失败'}")
+            if result.output:
+                self._emit(str(result.output)[:2000])
+            elif result.error:
+                self._emit(f"错误: {result.error}")
+        except Exception as e:  # noqa: BLE001
+            self._emit(f"执行出错: {e}")
+        finally:
+            stream.update("")
+            stream.display = False
 
     # ---------------------------------------------------------------- 会话
     def _cmd_sessions(self) -> None:
