@@ -19,6 +19,8 @@ from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
+from textual.containers import Vertical
+from textual.screen import ModalScreen
 from textual.suggester import Suggester
 from textual.widgets import Footer, Header, Input, RichLog, Static
 from textual.worker import WorkerState
@@ -88,6 +90,36 @@ class FileSuggester(Suggester):
         cand = (next((f for f in self._files if f.lower().startswith(pl)), None)
                 or next((f for f in self._files if pl in f.lower()), None))
         return value[:at + 1] + cand if cand else None
+
+
+class ConfirmScreen(ModalScreen[bool]):
+    """写分支前的确认弹窗（对齐 opencode 的权限确认 / 项目“人在关口”理念）。"""
+
+    CSS = """
+    ConfirmScreen { align: center middle; }
+    #dialog { width: 64; height: auto; border: thick $warning; background: $surface; padding: 1 2; }
+    #confirm-hint { color: $text-muted; margin-top: 1; }
+    """
+    BINDINGS = [
+        Binding("y", "yes", "确认"),
+        Binding("n", "no", "取消"),
+        Binding("escape", "no", "取消"),
+    ]
+
+    def __init__(self, message: str):
+        super().__init__()
+        self._message = message
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Static(self._message, id="confirm-msg")
+            yield Static("[y] 确认    [n]/Esc 取消", id="confirm-hint")
+
+    def action_yes(self) -> None:
+        self.dismiss(True)
+
+    def action_no(self) -> None:
+        self.dismiss(False)
 
 
 class AutoDevCrewTUI(App):
@@ -304,6 +336,18 @@ class AutoDevCrewTUI(App):
         return "\n\n".join(chunks)
 
     # ---------------------------------------------------------------- 动作（worker，不阻塞 UI）
+    async def _confirm_apply(self, loop, result, what: str) -> None:
+        """build 模式下，写分支前弹确认；确认才 apply。"""
+        n = len(result.accepted)
+        ok = await self.push_screen_wait(
+            ConfirmScreen(f"build 模式：把 {n} 项{what}写入一个新分支？（不会碰 main）")
+        )
+        if ok:
+            branch = loop.apply(result)
+            self._chrome(f"[green]已写入分支 {branch}（请 review 后合并）[/green]")
+        else:
+            self._chrome("[yellow]已取消写入（保留为提案）[/yellow]")
+
     @work(exclusive=True, group="action")
     async def _do_analyze(self) -> None:
         self._chrome("[cyan]运行 L1 自分析…[/cyan]")
@@ -322,8 +366,7 @@ class AutoDevCrewTUI(App):
             loop = SelfImprovementLoop(self.repo_root)
             result = await loop.propose()
             if self.mode == "build" and result.accepted:
-                branch = loop.apply(result)
-                self._chrome(f"[green]已写入分支 {branch}（请 review 后合并）[/green]")
+                await self._confirm_apply(loop, result, "测试")
             self._emit(render_result(result))
         except Exception as e:  # noqa: BLE001
             self._emit(f"自改进出错: {e}")
@@ -339,8 +382,7 @@ class AutoDevCrewTUI(App):
             loop = CodeFixLoop(self.repo_root)
             result = await loop.propose(report.findings)
             if self.mode == "build" and result.accepted:
-                branch = loop.apply(result)
-                self._chrome(f"[green]已写入分支 {branch}（请 review 后合并）[/green]")
+                await self._confirm_apply(loop, result, "修复")
             self._emit(render_result(result))
         except Exception as e:  # noqa: BLE001
             self._emit(f"修复出错: {e}")
