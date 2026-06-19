@@ -30,6 +30,7 @@ from .completion_engine import (
     InlineCompletionProvider,
     CompletionCache
 )
+from .surgical import Edit, EditApplyResult, apply_edits, render_diff
 
 __all__ = [
     # Code editor
@@ -61,4 +62,10 @@ __all__ = [
     "CompletionContext",
     "InlineCompletionProvider",
     "CompletionCache",
+
+    # Surgical edit (agent 驱动的精确编辑原语)
+    "Edit",
+    "EditApplyResult",
+    "apply_edits",
+    "render_diff",
 ]
