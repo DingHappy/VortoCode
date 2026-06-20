@@ -6,6 +6,12 @@
     ]
   },
   {
+    "path": "/agent",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
     "path": "/api/agents/advanced",
     "methods": [
       "GET"
