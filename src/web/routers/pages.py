@@ -47,3 +47,12 @@ async def quant_view():
     if html_path.exists():
         return FileResponse(html_path, media_type="text/html")
     return {"message": "Quant page not found"}
+
+
+@router.get("/agent")
+async def agent_view():
+    """返回主 agent 网页对话台（WebSocket 流式，复用 TUI 的主 agent loop）"""
+    html_path = _WEB_DIR / "agent.html"
+    if html_path.exists():
+        return FileResponse(html_path, media_type="text/html")
+    return {"message": "Agent page not found"}

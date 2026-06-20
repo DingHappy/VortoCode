@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VortoCode · 主 Agent</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+         background: #14161b; color: #d7dae0; display: flex; flex-direction: column; height: 100vh; }
+  header { padding: 10px 16px; border-bottom: 1px solid #2a2e37; display: flex; gap: 12px;
+           align-items: center; font-size: 14px; }
+  header b { color: #fff; }
+  header .sp { flex: 1; }
+  #mode { background: #222732; color: #d7dae0; border: 1px solid #3a4150; border-radius: 6px;
+          padding: 4px 8px; cursor: pointer; }
+  #log { flex: 1; overflow-y: auto; padding: 16px; line-height: 1.5; }
+  .msg { margin: 0 0 10px; white-space: pre-wrap; word-break: break-word; }
+  .user { color: #8ab4f8; }
+  .user::before { content: "› "; }
+  .say  { color: #7f8896; font-size: 13px; }
+  .emit { color: #d7dae0; }
+  .err  { color: #f08a8a; }
+  #stream { color: #9aa3b2; min-height: 0; white-space: pre-wrap; }
+  footer { border-top: 1px solid #2a2e37; padding: 10px; display: flex; gap: 8px; }
+  #inp { flex: 1; resize: none; height: 44px; background: #1b1f27; color: #e8eaed;
+         border: 1px solid #3a4150; border-radius: 8px; padding: 10px; font: inherit; }
+  #send { background: #2f6feb; color: #fff; border: 0; border-radius: 8px; padding: 0 18px;
+          cursor: pointer; font: inherit; }
+  #send:disabled { opacity: .5; cursor: default; }
+  .hint { color: #6b7280; font-size: 12px; padding: 0 16px 8px; }
+</style>
+</head>
+<body>
+  <header>
+    <b>VortoCode</b> · 主 Agent（Web）
+    <span class="sp"></span>
+    <span id="state" style="color:#7f8896">连接中…</span>
+    <button id="mode" title="切换 plan(只读)/build(可写)">plan</button>
+  </header>
+  <div id="log"></div>
+  <div id="stream" class="msg"></div>
+  <div class="hint">回车发送 · Shift+回车换行 · plan 只读、build 才放开写/重型工具 · 需配 OPENAI_API_KEY</div>
+  <footer>
+    <textarea id="inp" placeholder="问点什么，或让它读代码 / 扫描仓库…"></textarea>
+    <button id="send">发送</button>
+  </footer>
+<script>
+const $ = (s) => document.querySelector(s);
+const log = $("#log"), streamEl = $("#stream"), stateEl = $("#state");
+let mode = "plan", busy = false, ws = null, streamBuf = "";
+
+function add(cls, text) {
+  const d = document.createElement("div");
+  d.className = "msg " + cls; d.textContent = text;
+  log.appendChild(d); log.scrollTop = log.scrollHeight;
+}
+function setBusy(b) { busy = b; $("#send").disabled = b; }
+
+function connect() {
+  const token = new URLSearchParams(location.search).get("token");
+  const url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host +
+              "/ws" + (token ? "?token=" + encodeURIComponent(token) : "");
+  ws = new WebSocket(url);
+  ws.onopen = () => { stateEl.textContent = "已连接"; stateEl.style.color = "#7fce9a"; };
+  ws.onclose = () => { stateEl.textContent = "已断开"; stateEl.style.color = "#f08a8a"; setBusy(false); };
+  ws.onerror = () => { stateEl.textContent = "连接错误"; stateEl.style.color = "#f08a8a"; };
+  ws.onmessage = (e) => {
+    let m; try { m = JSON.parse(e.data); } catch { return; }
+    switch (m.type) {
+      case "agent_say":    add("say", m.text); break;
+      case "agent_stream": streamBuf = m.text; streamEl.textContent = streamBuf; log.scrollTop = log.scrollHeight; break;
+      case "agent_emit":   streamBuf = ""; streamEl.textContent = ""; add("emit", m.text); break;
+      case "agent_error":  add("err", "出错: " + m.text); break;
+      case "agent_done":   streamBuf = ""; streamEl.textContent = ""; setBusy(false); break;
+    }
+  };
+}
+
+function sendMsg() {
+  const inp = $("#inp"), text = inp.value.trim();
+  if (!text || busy || !ws || ws.readyState !== 1) return;
+  add("user", text); inp.value = ""; setBusy(true);
+  ws.send(JSON.stringify({ type: "agent", text, mode }));
+}
+
+$("#send").onclick = sendMsg;
+$("#inp").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(); }
+});
+$("#mode").onclick = () => {
+  mode = mode === "plan" ? "build" : "plan";
+  $("#mode").textContent = mode;
+  $("#mode").style.color = mode === "build" ? "#f0b86e" : "#d7dae0";
+};
+connect();
+</script>
+</body>
+</html>

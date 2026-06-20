@@ -220,6 +220,16 @@ async def run_self_fix(paths=None, apply: bool = False, max_fixes: int = 3):
 
 def run_tui():
     """启动交互式 TUI（仿 opencode）。未装 textual 时给出安装提示，不崩。"""
+    # 中文/输入法(IME)输入修复：禁用 Kitty 键盘协议。
+    # textual 8.x 启用 Kitty 协议时会带上「关联文本上报」标志(\x1b[>25u)，但它自己的
+    # CSI u 解析器(textual/_xterm_parser.py)处理不了输入法一次性提交的多码点中文——
+    # 形如 \x1b[32;;20320:22909u（“你好”）：正则不接受冒号子参数、chr(int(text)) 也只认
+    # 单码点，于是整段转义序列被当成普通文字漏进输入框（显示成 [32;;20320:22909u）。
+    # 关掉后终端回退传统编码，IME 中文以普通 UTF-8 字符到达，输入恢复正常。
+    # 必须在 import textual 之前设置（textual.constants 在导入时读取该变量）。
+    # 仍想用 Kitty 协议者可显式覆盖：export TEXTUAL_DISABLE_KITTY_KEY=0
+    import os
+    os.environ.setdefault("TEXTUAL_DISABLE_KITTY_KEY", "1")
     try:
         from src.tui.app import run as run_tui_app
     except ImportError as e:
