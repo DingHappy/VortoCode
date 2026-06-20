@@ -28,25 +28,30 @@ from textual.worker import WorkerState
 from src.memory.session_store import SessionManager
 
 SLASH_COMMANDS = [
-    "/analyze", "/improve", "/fix", "/run", "/agents", "/runagent",
-    "/sessions", "/resume", "/new", "/mode", "/clear", "/help", "/quit",
+    "/analyze", "/improve", "/fix", "/run", "/agents", "/runagent", "/skills", "/mcp",
+    "/sessions", "/resume", "/new", "/mode", "/usage", "/tools", "/audit", "/clear", "/help", "/quit",
 ]
-ACTION_CMDS = {"analyze", "improve", "fix", "run", "runagent"}   # 跑长任务，受忙碌态约束
+ACTION_CMDS = {"analyze", "improve", "fix", "run", "runagent", "mcp"}   # 跑长任务，受忙碌态约束
 
 _AGENTS_DB = lambda root: str(Path(root) / ".vortocode" / "web_advanced_agents.json")
 
 HELP = """可用命令:
-  直接输入自然语言   = 开发目标（等同 /run）；用 @文件 可补全并带入上下文
+  直接输入自然语言   和主 agent 对话：答疑/读代码/扫描仓库，需要时调起 dev→test→review 开发（仅 build；/run 可强制）；@文件 带入上下文
   /analyze            L1 自分析（只读扫描本仓库，无需 LLM key）
   /improve            L2 给测试缺口生成测试（需 key；build 模式下才写分支）
   /fix <文件,...>     L2.2 深审并外科修复指定文件（需 key；build 模式下才写分支）
   /run <目标>         跑开发循环（dev→test→review，流式）
+  /skills [reload]    列出 SKILL.md 技能（reload 重新扫描）
+  /tools              列出主 agent 可用工具及其读写权限
+  /audit              查看工具调用审计日志（.vortocode/audit.log）
+  /mcp [list|off]     接入 config/mcp.yaml 的 MCP 服务器工具（build 门控）
   /agents             列出已创建的 agent（网页/API 建的，同一份存储）
   /runagent <id> <任务>  用某个已创建的 agent 执行任务（流式）
   /sessions           列出历史会话
   /resume <id>        恢复某个历史会话
   /new                新开一个会话
   /mode               切换 plan(只读/提案) / build(可写分支)
+  /usage [reset]      本会话 token 用量（估算；reset 清零）
   /clear              清屏
   /help               显示本帮助
   /quit               退出（也可 Ctrl+C）
@@ -152,6 +157,10 @@ class VortoCodeTUI(App):
         self.session_id: str | None = None
         self._persist_on = False            # 开场白阶段先不落盘
         self._busy = False                  # 是否有长任务在跑
+        self.agent = None                   # 主 agent loop（首次用到时惰性构建）
+        self._skills = None                 # SkillRegistry（惰性构建、可 /skills reload）
+        self._mcp = None                    # ToolManager（/mcp 连接后才有）
+        self._mcp_tools: list = []          # 已接入的 MCP 工具（包成主 agent 的 Tool）
 
     # ---------------------------------------------------------------- 布局
     def compose(self) -> ComposeResult:
@@ -163,8 +172,10 @@ class VortoCodeTUI(App):
         yield Footer()
 
     def on_mount(self) -> None:
+        from src.llm.client import reset_usage
+        reset_usage()                       # 每个会话从零计量
         self.query_one("#stream", Static).display = False
-        self._chrome("[b]VortoCode[/b] 交互模式 · 直接说需求，或 [b]/help[/b] 看命令")
+        self._chrome("[b]VortoCode[/b] 交互模式 · 直接提问或说需求，[b]/help[/b] 看命令")
         self._chrome("[dim]/sessions 查看历史 · /resume <id> 恢复 · /new 新开[/dim]")
         self._sync_subtitle()
         self.session_id = self.sessions.start_session()
@@ -197,7 +208,12 @@ class VortoCodeTUI(App):
         desc = "只读/提案" if self.mode == "plan" else "可写分支"
         sid = f" · 会话 {self.session_id}" if self.session_id else ""
         busy = " · ⏳运行中(Esc 取消)" if self._busy else ""
-        self.sub_title = f"模式 {self.mode}（{desc}）{sid}{busy}"
+        from src.llm.client import get_usage
+        u = get_usage()
+        tot = u["total_tokens"]
+        tok = (f" · ~{tot // 1000}k tok/{u['calls']}call" if tot >= 1000
+               else f" · ~{tot} tok/{u['calls']}call") if u["calls"] else ""
+        self.sub_title = f"模式 {self.mode}（{desc}）{sid}{busy}{tok}"
 
     # 集中管理忙碌态：动作 worker 一进入运行就置忙、结束(成功/失败/取消)即解除
     def on_worker_state_changed(self, event) -> None:
@@ -232,7 +248,7 @@ class VortoCodeTUI(App):
         elif self._busy:
             self._chrome("[yellow]正在处理上一条，Esc 取消或稍候[/yellow]")
         else:
-            self._do_run(text)          # 自然语言 = 开发目标
+            self._route(text)           # 普通话：先判意图（闲聊/提问 vs 开发需求）再分流
 
     def _dispatch(self, text: str) -> None:
         parts = text[1:].split(maxsplit=1)
@@ -272,6 +288,16 @@ class VortoCodeTUI(App):
                 self._chrome("[red]/resume 需要会话 id[/red]，先 /sessions 查看")
         elif cmd == "new":
             self._cmd_new()
+        elif cmd == "skills":
+            self._cmd_skills(arg)
+        elif cmd == "usage":
+            self._cmd_usage(arg)
+        elif cmd == "tools":
+            self._cmd_tools()
+        elif cmd == "audit":
+            self._cmd_audit(arg)
+        elif cmd == "mcp":
+            self._cmd_mcp(arg)
         elif cmd == "agents":
             self._cmd_agents()
         elif cmd == "runagent":
@@ -281,6 +307,101 @@ class VortoCodeTUI(App):
                 self._chrome("[red]用法: /runagent <id> <任务>[/red]")
         else:
             self._chrome(f"[red]未知命令 /{cmd}[/red] · /help 看命令")
+
+    # ---------------------------------------------------------------- 技能（SKILL.md）
+    def _cmd_skills(self, arg: str) -> None:
+        """/skills 列出技能；/skills reload 重新扫描并让主 agent 下次重建。"""
+        if arg.strip() == "reload":
+            reg = self._skill_registry(reload=True)
+            self.agent = None               # 让主 agent 下次重建、拿到新技能目录
+            self._chrome(f"[green]已重载技能（{len(reg.skills)} 个）；下次对话生效[/green]")
+            return
+        reg = self._skill_registry()
+        if not reg.skills:
+            self._emit("(没有技能。把 SKILL.md 放到 skills/<名>/ 或 .vortocode/skills/<名>/ 后 /skills reload)")
+            return
+        lines = ["可用技能（对话里说\"用 X 技能\"，或主 agent 自动选用；/skills reload 重载）:"]
+        for s in reg.skills.values():
+            lines.append(f"  {s.name} — {s.description}")
+        self._emit("\n".join(lines))
+
+    def _cmd_tools(self) -> None:
+        """列出主 agent 可用工具（plan 只读可用；写/重型仅 build）。"""
+        agent = self.agent or self._build_main_agent()
+        lines = ["主 agent 工具（plan 只读可用；写/重型仅 build）:"]
+        for t in agent._tool_list:
+            gate = "只读" if t.read_only else "写/重型"
+            lines.append(f"  {t.name} [{gate}] — {t.description}")
+        self._emit("\n".join(lines))
+
+    def _cmd_audit(self, arg: str) -> None:
+        """/audit 看最近的工具调用审计（.vortocode/audit.log）。"""
+        p = Path(self.repo_root) / ".vortocode" / "audit.log"
+        if not p.is_file():
+            self._emit("(暂无审计记录；主 agent 调用工具后才有)")
+            return
+        lines = p.read_text(encoding="utf-8").splitlines()
+        self._emit(f"工具调用审计（共 {len(lines)} 条，显示最近 15）:\n" + "\n".join(lines[-15:]))
+
+    # ---------------------------------------------------------------- MCP 工具接入
+    def _wrap_mcp_tools(self) -> list:
+        """把已连接的 MCP server 工具包成主 agent 的 Tool。
+
+        命名 mcp__<server>__<tool> 防冲突；外部工具一律 build 门控（read_only=False，人在关口）。
+        """
+        from src.agents.main_agent import Tool
+        wrapped = []
+        for mt in self._mcp.list_tools():
+            orig = mt.name
+            server = getattr(mt, "server_name", "") or "mcp"
+            props = (getattr(mt, "input_schema", None) or {}).get("properties", {}) or {}
+            targs = {k: str(v.get("description") or v.get("type") or "") for k, v in props.items()}
+
+            async def handler(a: dict, _orig=orig) -> str:
+                res = await self._mcp.execute_tool(_orig, a)
+                if getattr(res, "success", True):
+                    return str(getattr(res, "output", res))
+                return f"MCP 工具出错: {getattr(res, 'error', res)}"
+
+            wrapped.append(Tool(f"mcp__{server}__{orig}",
+                                f"[MCP:{server}] {mt.description}", targs, handler, read_only=False))
+        return wrapped
+
+    @work(exclusive=True, group="action")
+    async def _cmd_mcp(self, arg: str) -> None:
+        """/mcp 连接 config/mcp.yaml 的 MCP 服务器；/mcp list 列出；/mcp off 断开。"""
+        arg = arg.strip()
+        if arg in ("off", "disconnect"):
+            if self._mcp is not None:
+                try:
+                    await self._mcp.shutdown()
+                except Exception:  # noqa: BLE001
+                    pass
+            self._mcp, self._mcp_tools, self.agent = None, [], None
+            self._chrome("[green]已断开 MCP[/green]")
+            return
+        if arg == "list":
+            if not self._mcp_tools:
+                self._emit("(未连接 MCP；/mcp 连接 config/mcp.yaml 里 enabled 的服务器)")
+            else:
+                self._emit("已接入的 MCP 工具:\n"
+                           + "\n".join(f"  {t.name} — {t.description}" for t in self._mcp_tools))
+            return
+        # 连接
+        self._chrome("[cyan]连接 MCP 服务器（config/mcp.yaml）…[/cyan]")
+        try:
+            from src.tools.manager import ToolManager
+            mgr = ToolManager(str(Path(self.repo_root) / "config" / "mcp.yaml"))
+            await mgr.initialize()
+            self._mcp = mgr
+            self._mcp_tools = self._wrap_mcp_tools()
+            self.agent = None            # 让主 agent 下次重建、拿到 MCP 工具
+            servers = list(getattr(mgr, "mcp_clients", {}).keys())
+            self._emit(f"已接入 {len(self._mcp_tools)} 个 MCP 工具，来自服务器: {', '.join(servers) or '（无）'}")
+            if not self._mcp_tools:
+                self._emit("（没连上工具：检查 config/mcp.yaml 是否 enabled、命令如 npx 是否可用）")
+        except Exception as e:  # noqa: BLE001
+            self._emit(f"MCP 连接失败: {e}")
 
     # ---------------------------------------------------------------- 已创建的 agent
     def _cmd_agents(self) -> None:
@@ -356,23 +477,58 @@ class VortoCodeTUI(App):
         self.query_one("#log", RichLog).clear()
         self.transcript.clear()
         self._persist_on = False            # 回放期间不重复落盘
+        self.agent = None                   # 丢掉上个会话的 agent 上下文
         self._chrome(f"[green]已恢复会话 {sid}（{len(msgs)} 条）[/green]")
+        last_snapshot = None
         for m in msgs:
             try:
                 md = json.loads(m.get("metadata") or "{}")
             except Exception:  # noqa: BLE001
                 md = {}
+            if md.get("agent_history"):     # agent 上下文快照：不显示，只留最后一份用于重建
+                last_snapshot = m["content"]
+                continue
             if md.get("markup"):
                 self._chrome(m["content"])
             else:
                 self._emit(m["content"])
         self._persist_on = True
+        self._restore_agent_history(last_snapshot)
+
+    def _restore_agent_history(self, snapshot) -> None:
+        """从快照重建 agent 历史，让 /resume 后主 agent 记得之前聊了什么。"""
+        if not snapshot:
+            return
+        try:
+            hist = json.loads(snapshot)
+        except Exception:  # noqa: BLE001
+            return
+        if isinstance(hist, list) and hist:
+            self.agent = self._build_main_agent()
+            self.agent.history = hist
+            self._chrome("[dim]↻ 已恢复对话上下文（主 agent 记得之前的对话）[/dim]")
 
     def _cmd_new(self) -> None:
+        from src.llm.client import reset_usage
         self.session_id = self.sessions.start_session()
+        self.agent = None                   # 新会话 = 全新 agent 上下文
+        reset_usage()                       # 用量也清零
         self.query_one("#log", RichLog).clear()
         self.transcript.clear()
         self._chrome(f"[green]已新建会话 {self.session_id}[/green]")
+        self._sync_subtitle()
+
+    def _cmd_usage(self, arg: str) -> None:
+        """/usage 看本会话用量（估算）；/usage reset 清零。"""
+        from src.llm.client import get_usage, reset_usage
+        if arg.strip() == "reset":
+            reset_usage()
+            self._sync_subtitle()
+            self._chrome("[green]已清零用量计数[/green]")
+            return
+        u = get_usage()
+        self._emit(f"本会话用量（估算）: 调用 {u['calls']} 次 · 输入 ~{u['prompt_tokens']} · "
+                   f"输出 ~{u['completion_tokens']} · 合计 ~{u['total_tokens']} tokens")
 
     # ---------------------------------------------------------------- @文件
     def _expand_at_files(self, text: str) -> tuple[str, list[str]]:
@@ -387,6 +543,64 @@ class VortoCodeTUI(App):
             return m.group(0)
 
         return re.sub(r"@(\S+)", repl, text), files
+
+    def _expand_context(self, text: str) -> tuple[str, str]:
+        """把 @提及 展开成上下文注入主 agent：@文件→内容；@目录→文件清单；@符号→AST 定义位置。
+
+        返回 (去掉 @ 的文本, 拼好的上下文串)；没解析到的 @token 原样保留。
+        符号用 AST（src.indexing.PythonASTParser）解析，比 grep 准；整次调用只建一次索引。
+        """
+        base = Path(self.repo_root)
+        parts: list[str] = []
+        sym_index: dict[str, list[str]] = {}
+        index_built: list[bool] = []
+
+        def symbol_index() -> dict[str, list[str]]:
+            if not index_built:
+                index_built.append(True)
+                try:
+                    from src.indexing.ast_parser import NodeType, PythonASTParser
+                except Exception:  # noqa: BLE001
+                    return sym_index
+                parser = PythonASTParser()
+                for f in _repo_files(self.repo_root):
+                    try:
+                        nodes = parser.parse_file(base / f)
+                    except Exception:  # noqa: BLE001
+                        continue
+                    for n in nodes:
+                        if n.node_type not in (NodeType.CLASS, NodeType.FUNCTION, NodeType.METHOD):
+                            continue
+                        head = (f"class {n.name}" if n.node_type == NodeType.CLASS
+                                else f"def {n.name}({', '.join(n.parameters)})")
+                        doc = (n.docstring or "").strip().splitlines()
+                        doc0 = f"  — {doc[0][:80]}" if doc else ""
+                        sym_index.setdefault(n.name, []).append(f"{f}:{n.location.line}  {head}{doc0}")
+            return sym_index
+
+        def repl(m: "re.Match") -> str:
+            ref = m.group(1)
+            p = base / ref
+            if p.is_file():
+                try:
+                    parts.append(f"# 文件 {ref}\n{p.read_text(encoding='utf-8')[:3000]}")
+                    return ref
+                except OSError:
+                    return m.group(0)
+            if p.is_dir():
+                sub = ref.rstrip("/")
+                hits = [f for f in _repo_files(self.repo_root) if f.startswith(sub)][:50]
+                parts.append(f"# 目录 {ref} 下的源码文件\n" + ("\n".join(hits) or "(空)"))
+                return ref
+            if "/" not in ref and "." not in ref:        # 当作符号：AST 找 def/class 定义
+                defs = symbol_index().get(ref)
+                if defs:
+                    parts.append(f"# 符号 {ref} 的定义（AST）\n" + "\n".join(defs[:20]))
+                    return ref
+            return m.group(0)
+
+        clean = re.sub(r"@([\w./一-鿿-]+)", repl, text)
+        return clean, "\n\n".join(parts)
 
     def _read_files(self, rels: list[str]) -> str:
         chunks = []
@@ -450,8 +664,331 @@ class VortoCodeTUI(App):
         except Exception as e:  # noqa: BLE001
             self._emit(f"修复出错: {e}")
 
+    # ---------------------------------------------------------------- 主 agent loop
+    @work(exclusive=True, group="action")
+    async def _route(self, text: str) -> None:
+        """普通话（非 / 命令）入口：交给主 agent loop。
+
+        主 agent 自己决定是聊天/读代码/扫描（只读工具），还是把正经开发任务交给
+        run_dev_workflow（重型，build 模式）—— 不再需要前置意图分类器，闲聊天然由它处理。
+        """
+        import os
+        if not os.getenv("OPENAI_API_KEY"):
+            self._chrome("[green]对话[/green] [dim](未配置 OPENAI_API_KEY)[/dim]")
+            self._emit("配置 OPENAI_API_KEY 后即可自由对话/开发（见 .env）。")
+            self._emit("现在无需 key 也能用：/analyze 扫描本仓库、/help 看全部命令。")
+            return
+        if self.agent is None:
+            self.agent = self._build_main_agent()
+        user_text, ctx = self._expand_context(text)
+        if ctx:
+            self._chrome(f"[dim]＋ 已注入 @提及的上下文（{len(ctx)} 字）[/dim]")
+            user_text = f"{user_text}\n\n[@提及的上下文]\n{ctx}"
+        stream = self.query_one("#stream", Static)
+
+        def stream_cb(partial: str) -> None:
+            stream.display = True
+            stream.update(Text(partial[-1500:]))   # 显示尾部，避免无限增高
+
+        try:
+            await self.agent.run_turn(user_text, mode=self.mode, say=self._chrome,
+                                      emit=self._emit, stream_cb=stream_cb)
+        finally:
+            stream.update("")
+            stream.display = False
+        self._persist_agent_history()
+
+    def _persist_agent_history(self) -> None:
+        """把 agent 当前上下文快照进会话，供 /resume 跨会话续上记忆。失败不影响交互。"""
+        if not (self.agent and self.session_id and self._persist_on):
+            return
+        try:
+            snap = json.dumps(self.agent.history[-40:], ensure_ascii=False)
+            self.sessions.add_message("agent", snap, {"agent_history": True})
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _skill_registry(self, reload: bool = False):
+        """技能注册表（惰性构建+缓存）。/skills reload 时 reload=True 重新扫描。"""
+        from src.agents.main_agent import SkillRegistry
+        if self._skills is None or reload:
+            self._skills = SkillRegistry([
+                str(Path(self.repo_root) / "skills"),
+                str(Path(self.repo_root) / ".vortocode" / "skills"),
+            ]).load()
+        return self._skills
+
+    def _build_main_agent(self):
+        """构建主 agent 及其工具集（工具是闭包，复用本 TUI 已有的能力）。
+
+        只读工具（read_file/list_files/analyze_repo）plan 也可用；写/重型工具
+        （run_dev_workflow）仅 build —— 这就是 opencode Plan/Build 的"工具权限门"。
+        """
+        from src.agents.main_agent import MainAgent, Tool
+
+        async def _t_read_file(args: dict) -> str:
+            rel = str(args.get("path", "")).strip().lstrip("@")
+            if not rel:
+                return "缺少 path 参数。"
+            try:
+                return self._read_files([rel]) or f"(空文件或不存在: {rel})"
+            except Exception as e:  # noqa: BLE001
+                return f"读取失败: {e}"
+
+        async def _t_list_files(args: dict) -> str:
+            sub = str(args.get("dir", "")).strip().strip("/")
+            files = _repo_files(self.repo_root)
+            if sub:
+                files = [f for f in files if f.startswith(sub)]
+            return "\n".join(files[:200]) if files else "(没有匹配的源码文件)"
+
+        async def _t_analyze_repo(args: dict) -> str:
+            from src.orchestrator.self_analysis import analyze_self, render_report
+            report = await analyze_self(self.repo_root)
+            return render_report(report)
+
+        async def _t_grep(args: dict) -> str:
+            pat = str(args.get("pattern", "")).strip()
+            if not pat:
+                return "缺少 pattern 参数。"
+            try:
+                rx = re.compile(pat)
+            except re.error as e:
+                return f"无效正则: {e}"
+            sub = str(args.get("dir", "")).strip().strip("/")
+            files = _repo_files(self.repo_root)
+            if sub:
+                files = [f for f in files if f.startswith(sub)]
+            hits: list[str] = []
+            for f in files:
+                try:
+                    lines = (Path(self.repo_root) / f).read_text(encoding="utf-8", errors="ignore").splitlines()
+                except Exception:  # noqa: BLE001
+                    continue
+                for i, line in enumerate(lines, 1):
+                    if rx.search(line):
+                        hits.append(f"{f}:{i}: {line.strip()[:200]}")
+                        if len(hits) >= 100:
+                            hits.append("…(命中过多，已截断)")
+                            return "\n".join(hits)
+            return "\n".join(hits) if hits else f"没有匹配 /{pat}/ 的内容。"
+
+        def _safe_path(rel: str):
+            """把相对路径锁在仓库内，防止 ../ 或绝对路径越界。返回 Path 或 None。"""
+            base = Path(self.repo_root).resolve()
+            try:
+                p = (base / rel).resolve()
+            except Exception:  # noqa: BLE001
+                return None
+            return p if (p == base or base in p.parents) else None
+
+        async def _t_edit_file(args: dict) -> str:
+            rel = str(args.get("path", "")).strip().lstrip("@")
+            old, new = str(args.get("old", "")), str(args.get("new", ""))
+            if not rel:
+                return "缺少 path 参数。"
+            if not old:
+                return "edit_file 需要 old（要替换的原文）。"
+            p = _safe_path(rel)
+            if p is None:
+                return f"路径越界或非法: {rel}"
+            if not p.is_file():
+                return f"文件不存在: {rel}"
+            text = p.read_text(encoding="utf-8")
+            cnt = text.count(old)
+            if cnt == 0:
+                return f"在 {rel} 中找不到要替换的原文（old）。"
+            if cnt > 1:
+                return f"原文在 {rel} 中出现 {cnt} 次、不唯一；请给更长、唯一的 old。"
+            ok = await self.push_screen_wait(ConfirmScreen(
+                f"build 模式：修改 {rel}？替换 1 处（{len(old)}→{len(new)} 字符）。改动只进工作区，不碰 main。"))
+            if not ok:
+                return f"用户取消了对 {rel} 的修改。"
+            p.write_text(text.replace(old, new, 1), encoding="utf-8")
+            self._chrome(f"[green]已修改 {rel}（请 review；git diff 可查）[/green]")
+            return f"已修改 {rel}（替换 1 处）。"
+
+        async def _t_write_file(args: dict) -> str:
+            rel = str(args.get("path", "")).strip().lstrip("@")
+            content = str(args.get("content", ""))
+            if not rel:
+                return "缺少 path 参数。"
+            p = _safe_path(rel)
+            if p is None or p.is_dir():
+                return f"路径越界或非法: {rel}"
+            verb = "覆盖" if p.is_file() else "新建"
+            ok = await self.push_screen_wait(ConfirmScreen(
+                f"build 模式：{verb}文件 {rel}（{len(content)} 字符）？改动只进工作区，不碰 main。"))
+            if not ok:
+                return f"用户取消了写入 {rel}。"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content, encoding="utf-8")
+            self._chrome(f"[green]已{verb} {rel}（请 review）[/green]")
+            return f"已{verb} {rel}。"
+
+        async def _t_run_dev(args: dict) -> str:
+            goal = str(args.get("goal", "")).strip()
+            if not goal:
+                return "run_dev_workflow 需要 goal 参数（开发目标）。"
+            return await self._run_dev(goal)
+
+        # 只读工具：plan 也能用；也是子 agent 的工具集（无 task/写工具 → 不嵌套、不改文件）
+        read_tools = [
+            Tool("read_file", "读取仓库内某个文件的内容",
+                 {"path": "相对路径，如 src/cli.py"}, _t_read_file, read_only=True),
+            Tool("list_files", "列出仓库内的源码文件（可按子目录前缀过滤）",
+                 {"dir": "可选，子目录前缀，如 src/tui"}, _t_list_files, read_only=True),
+            Tool("grep", "在仓库源码里按正则搜索，返回 path:line: 命中行",
+                 {"pattern": "正则表达式", "dir": "可选，子目录前缀"}, _t_grep, read_only=True),
+            Tool("analyze_repo", "只读扫描本仓库，列出问题清单（孤儿模块/循环依赖/测试缺口等），无需 key",
+                 {}, _t_analyze_repo, read_only=True),
+        ]
+
+        async def _spawn_research(desc: str) -> str:
+            """起一个隔离的只读子 agent 做调研，返回结论。task 与 research_parallel 共用。"""
+            sub = MainAgent(read_tools, max_steps=8, on_tool=self._audit_tool, extra_system=(
+                "你是只读研究子 agent：只用工具调研代码/仓库并返回简洁结论，绝不修改任何东西。"))
+            try:
+                r = await sub.run_turn(desc, mode=self.mode, say=self._chrome, emit=lambda _t: None)
+            except Exception as e:  # noqa: BLE001
+                return f"(子任务出错: {e})"
+            return r or "(无结论)"
+
+        def _preview(s: str, n: int = 200) -> str:
+            s = s.replace("\n", " ")
+            return s[:n] + ("…" if len(s) > n else "")
+
+        async def _t_task(args: dict) -> str:
+            desc = str(args.get("description") or args.get("task") or "").strip()
+            if not desc:
+                return "task 需要 description（要委派给子 agent 的研究任务）。"
+            self._chrome(f"[magenta]🤖 子 agent 研究：{desc}[/magenta]")
+            result = await _spawn_research(desc)
+            self._chrome(f"[dim]  ↳ 结论：{_preview(result)}[/dim]")   # 子 agent 结论可见
+            return result
+
+        async def _t_research_parallel(args: dict) -> str:
+            tasks = args.get("tasks") or args.get("descriptions") or []
+            if isinstance(tasks, str):
+                tasks = [tasks]
+            tasks = [str(t).strip() for t in tasks if str(t).strip()][:5]
+            if not tasks:
+                return "research_parallel 需要 tasks（字符串列表，每项一个独立子问题）。"
+            import asyncio
+            self._chrome(f"[magenta]🤖 并行子 agent（{len(tasks)}）研究中…[/magenta]")
+            results = await asyncio.gather(*[_spawn_research(t) for t in tasks])
+            for t, r in zip(tasks, results):     # 各路结论都可见
+                self._chrome(f"[dim]  ↳ [{_preview(t, 30)}] {_preview(r, 160)}[/dim]")
+            return "\n\n".join(f"【{t}】\n{r}" for t, r in zip(tasks, results))
+
+        # SKILL.md 技能：按需加载（progressive disclosure），复用 src.skills 的解析器
+        registry = self._skill_registry()
+
+        async def _t_use_skill(args: dict) -> str:
+            name = str(args.get("name") or args.get("skill") or "").strip()
+            sk = registry.get(name)
+            if not sk:
+                avail = "、".join(registry.skills) or "（无）"
+                return f"没有名为 {name} 的技能。可用：{avail}"
+            return (f"【技能「{sk.name}」完整指令】请据此执行（用你的其它工具完成），"
+                    f"不要原样复述给用户：\n\n{sk.instructions}")
+
+        async def _t_save_skill(args: dict) -> str:
+            name = re.sub(r"[^\w一-鿿-]", "-", str(args.get("name", "")).strip()).strip("-")
+            desc = str(args.get("description", "")).strip()
+            instr = str(args.get("instructions", "")).strip()
+            if not name or not instr:
+                return "save_skill 需要 name 和 instructions（技能正文）。"
+            p = Path(self.repo_root) / ".vortocode" / "skills" / name / "SKILL.md"
+            ok = await self.push_screen_wait(ConfirmScreen(
+                f"build 模式：把技能「{name}」写到 .vortocode/skills/{name}/SKILL.md？（用户技能目录，不碰 main）"))
+            if not ok:
+                return f"用户取消了保存技能 {name}。"
+            content = f"---\nname: {name}\ndescription: {desc}\n---\n\n{instr}\n"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content, encoding="utf-8")
+            self._skill_registry(reload=True)   # 原地重扫：当前 agent 立刻能 use_skill 到它
+            self._chrome(f"[green]已保存技能 {name}（/skills 可见）[/green]")
+            return f"已保存技能 {name} 到 .vortocode/skills/{name}/SKILL.md。"
+
+        # 跨会话长期记忆（固定 __longterm__ session_id，复用 SessionStore 的 memories 表）
+        async def _t_save_memory(args: dict) -> str:
+            content = str(args.get("content", "")).strip()
+            if not content:
+                return "save_memory 需要 content（要长期记住的事实/偏好/约定）。"
+            try:
+                self.sessions.store.add_memory("__longterm__", "fact", content, importance=0.6)
+            except Exception as e:  # noqa: BLE001
+                return f"保存记忆失败: {e}"
+            return f"已记住（跨会话）：{content[:80]}"
+
+        async def _t_recall_memory(args: dict) -> str:
+            q = str(args.get("query", "")).strip()
+            try:
+                rows = (self.sessions.store.search_memories("__longterm__", q, 10) if q
+                        else self.sessions.store.get_memories("__longterm__"))
+            except Exception as e:  # noqa: BLE001
+                return f"检索记忆失败: {e}"
+            if not rows:
+                return "（没有相关的长期记忆）"
+            return "相关长期记忆:\n" + "\n".join(f"- {r['content']}" for r in rows[:10])
+
+        tools = read_tools + [
+            Tool("task", "把一个独立的研究/调研子任务委派给只读子 agent（隔离上下文），返回它的结论",
+                 {"description": "要委派的子任务"}, _t_task, read_only=True),
+            Tool("save_memory", "把一条要跨会话长期记住的事实/偏好/约定存起来",
+                 {"content": "要记住的内容"}, _t_save_memory, read_only=True),
+            Tool("recall_memory", "检索跨会话长期记忆（不传 query 则列出全部）",
+                 {"query": "可选，关键词"}, _t_recall_memory, read_only=True),
+            Tool("research_parallel", "并行委派多个只读子 agent 同时研究不同子问题，汇总各自结论（最多 5 个）",
+                 {"tasks": "子问题字符串列表"}, _t_research_parallel, read_only=True),
+            Tool("use_skill", "加载某个技能(SKILL.md)的完整指令到上下文，然后据此执行",
+                 {"name": "技能名"}, _t_use_skill, read_only=True),
+            Tool("save_skill", "把一套可复用流程保存成新技能(SKILL.md)到用户技能目录；写操作，需确认，仅 build",
+                 {"name": "技能名", "description": "一句话描述", "instructions": "技能正文（自然语言步骤）"},
+                 _t_save_skill, read_only=False),
+            Tool("edit_file", "对仓库文件做精确字符串替换（old 必须唯一存在）；写操作，需确认，仅 build",
+                 {"path": "相对路径", "old": "要替换的原文(需唯一)", "new": "替换为"},
+                 _t_edit_file, read_only=False),
+            Tool("write_file", "新建或覆盖仓库文件；写操作，需确认，仅 build",
+                 {"path": "相对路径", "content": "文件全部内容"}, _t_write_file, read_only=False),
+            Tool("run_dev_workflow",
+                 "把一个明确的开发目标交给 dev→test→review 流水线自动实现+测试（重型，仅 build 模式）",
+                 {"goal": "开发目标（自然语言）"}, _t_run_dev, read_only=False),
+        ]
+        tools += self._mcp_tools             # 已接入的外部 MCP 工具（build 门控）
+        catalog = registry.catalog()
+        extra = f"【可用技能】(需要时用 use_skill 加载其完整指令再执行)\n{catalog}" if catalog else None
+        import os
+        native = os.getenv("VORTOCODE_NATIVE_TOOLS", "").lower() in ("1", "true", "yes", "on")
+        return MainAgent(tools, extra_system=extra, native=native, on_tool=self._audit_tool)
+
+    def _audit_tool(self, name: str, args: dict, result: str) -> None:
+        """把一次工具调用写进审计日志（.vortocode/audit.log，JSONL）。失败不影响交互。"""
+        from datetime import datetime
+        try:
+            p = Path(self.repo_root) / ".vortocode" / "audit.log"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            rec = {
+                "ts": datetime.now().isoformat(timespec="seconds"),
+                "mode": self.mode,
+                "tool": name,
+                "args": {k: str(v)[:120] for k, v in (args or {}).items()},
+                "result_len": len(str(result)),
+            }
+            with p.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except Exception:  # noqa: BLE001
+            pass
+
+    # ---------------------------------------------------------------- 开发流水线
     @work(exclusive=True, group="action")
     async def _do_run(self, goal: str) -> None:
+        """/run 入口：直接进开发流水线（不经意图判定）。"""
+        await self._run_dev(goal)
+
+    async def _run_dev(self, goal: str) -> str:
+        """跑 dev→test→review 流水线。返回一句结果摘要（供主 agent 回灌/汇总）。"""
         goal_text, ctx_files = self._expand_at_files(goal)
         if ctx_files:
             self._chrome(f"[dim]带入文件上下文: {', '.join(ctx_files)}[/dim]")
@@ -481,14 +1018,19 @@ class VortoCodeTUI(App):
                                     max_iterations=2)
             result = await loop.run(task, on_token=on_token, on_iteration=on_iter)
             ok = "成功" if result.success else "未完成"
-            self._emit(f"结果: {ok} · 迭代 {result.iterations} · 工作区 {result.workspace}")
+            summary = f"结果: {ok} · 迭代 {result.iterations} · 工作区 {result.workspace}"
+            self._emit(summary)
             if result.files:
-                self._emit("产出文件: " + ", ".join(result.files))
+                files_line = "产出文件: " + ", ".join(result.files)
+                self._emit(files_line)
+                summary += " · " + files_line
         except Exception as e:  # noqa: BLE001
-            self._emit(f"执行出错: {e}")
+            summary = f"执行出错: {e}"
+            self._emit(summary)
         finally:
             stream.update("")
             stream.display = False
+        return summary
 
 
 def run() -> None:
