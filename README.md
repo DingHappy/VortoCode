@@ -15,13 +15,29 @@
 
 ## 核心特性
 
+### 交互式主 Agent（agent loop · 仿 Claude Code / opencode）
+
+`vc tui`（终端）与 Web 控制台 `/agent`（浏览器）共用同一个**主 agent loop**：一个会聊天的 LLM，在"输入 → 模型 →（工具 → 回灌）\* → 流式回复"的循环里自己决定该聊天、读代码，还是把开发任务交给流水线 —— **寒暄不会触发构建，要动手才动手**。
+
+- **工具集**：`read_file` / `list_files` / `grep` / `analyze_repo`（只读）· `edit_file` / `write_file` / `run_dev_workflow`（写/重型，需确认）· `task` / `research_parallel`（子 agent 委派）· `use_skill` / `save_skill`（技能）· `save_memory` / `recall_memory`（长期记忆）· 以及 `/mcp` 接入的任意外部 MCP 工具
+- **plan / build = 工具权限门**：plan 只放只读工具；写/重型/外部工具仅 build，且写盘前弹确认 —— 落实"人在关口"
+- **子 agent 委派**：把独立调研任务派给隔离上下文的只读子 agent，支持并行 fan-out
+- **SKILL.md 技能**：渐进式按需加载（复用 `src/skills` 解析器），还能让 agent 现场起草新技能
+- **跨会话记忆**：`/resume` 重建对话上下文；`save_memory`/`recall_memory` 沉淀跨会话知识
+- **@上下文注入**：`@文件`→内容、`@目录`→清单、`@符号`→AST 定义位置
+- **双协议**：模型无关的提示式工具协议，`VORTOCODE_NATIVE_TOOLS=1` 可切原生 function-calling（失败自动回退）
+- **可观测/可审计**：token 用量统计（`/usage`）、工具调用审计日志（`/audit`）
+- **命令**：`/run /analyze /improve /fix /skills /tools /mcp /usage /audit /agents /runagent /sessions /resume /new /mode /clear /help`
+
+> 早期版本把"任何自然语言 = 开发目标（等同 `/run`）"，会出现"打个招呼也跑完整 dev→test→review"的尴尬；现已收敛为上面的主 agent loop，开发只是它的一个工具。
+
 ### 自我迭代 / dogfooding（用 vortocode 开发它自己）
 
 - **L1 自分析** (`vc self-analyze`)：只读扫描本仓库，找孤儿模块 / 循环依赖 / 测试缺口 / 未声明依赖（确定性，无需 LLM key）
 - **L2 自改进** (`vc self-improve`)：给"没测试的模块"自动生成测试，**必须真 pytest 通过**才纳入（客观门控，非 LLM 自评）
 - **L2.2 代码修复** (`vc self-fix --paths ...`)：深审 bug/坏味道 → 外科手术式精确编辑 → **全量测试门控**，绿才留、红回滚
 - **安全边界**：默认 dry-run 只出提案；改动只进新分支、绝不碰 main、需人确认 —— 落实"人在合并口"
-- **交互前端** (`vc tui`)：仿 opencode 的全屏 TUI，把上面能力串成对话式体验（plan/build 模式、token 流式、@文件补全、会话持久化、Esc 取消）
+- **交互前端** (`vc tui` / Web `/agent`)：把上面能力串进交互式主 agent loop（详见上文「交互式主 Agent」）
 
 ### 自我编排引擎
 
@@ -200,11 +216,11 @@ vc self-analyze                      # 只读扫描自己、列出问题
 vc self-improve                      # 给测试缺口生成测试（真 pytest 门控；默认 dry-run）
 vc self-fix --paths src/x.py         # 深审并外科修复指定文件
 
-# 交互式全屏 TUI（仿 opencode；需 pip install '.[tui]'）
+# 交互式主 agent（终端全屏 TUI；需 pip install '.[tui]' 与 OPENAI_API_KEY）
 vc tui
 
 # Web 控制台（默认 127.0.0.1:8080；对外暴露务必设 AUTODEV_API_TOKEN）
-vc server
+vc server                            # 起服务后浏览器打开 /agent 即是网页版主 agent
 
 # 跑完整开发流水线 / 分析任务（需配 API key）
 vc run -t "用 Python 写一个计算阶乘的函数及其单元测试"
