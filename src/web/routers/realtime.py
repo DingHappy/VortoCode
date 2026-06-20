@@ -30,9 +30,11 @@ async def websocket_endpoint(websocket: WebSocket):
     
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+        _WS_AGENTS.pop(id(websocket), None)
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         manager.disconnect(websocket)
+        _WS_AGENTS.pop(id(websocket), None)
 
 
 async def handle_websocket_message(websocket: WebSocket, message: Dict[str, Any]):
@@ -47,3 +49,71 @@ async def handle_websocket_message(websocket: WebSocket, message: Dict[str, Any]
             "type": "status",
             "data": state.to_dict()
         })
+
+    elif msg_type == "agent":
+        await handle_agent_message(websocket, message)
+
+
+# 每个 WebSocket 连接一个主 agent（含多轮上下文）；断开时清理
+_WS_AGENTS: Dict[int, Any] = {}
+
+
+def _ws_agent(websocket):
+    key = id(websocket)
+    agent = _WS_AGENTS.get(key)
+    if agent is None:
+        import os
+        from src.agents.main_agent import MainAgent, build_read_tools
+        agent = MainAgent(build_read_tools(os.getcwd()))
+        _WS_AGENTS[key] = agent
+    return agent
+
+
+async def handle_agent_message(websocket, message: Dict[str, Any]):
+    """在 Web 端驱动主 agent（只读工具）并把事件流式发回前端。
+
+    事件类型：agent_say(工具提示) / agent_stream(增量) / agent_emit(成段输出) /
+    agent_error / agent_done。前端据此渲染对话与流式。
+    """
+    import asyncio
+    import os
+
+    text = str(message.get("text", "")).strip()
+    if not text:
+        await websocket.send_json({"type": "agent_error", "text": "空输入"})
+        return
+    if not os.getenv("OPENAI_API_KEY"):
+        await websocket.send_json({"type": "agent_emit", "text": "未配置 OPENAI_API_KEY，无法对话。"})
+        await websocket.send_json({"type": "agent_done"})
+        return
+
+    mode = message.get("mode", "plan")
+    agent = _ws_agent(websocket)
+    q: asyncio.Queue = asyncio.Queue()
+
+    def agent_say(m):
+        q.put_nowait({"type": "agent_say", "text": m})
+
+    def agent_emit(m):
+        q.put_nowait({"type": "agent_emit", "text": m})
+
+    def agent_stream(p):
+        q.put_nowait({"type": "agent_stream", "text": p})
+
+    async def _run():
+        try:
+            await agent.run_turn(text, mode=mode, say=agent_say,
+                                 emit=agent_emit, stream_cb=agent_stream)
+        except Exception as e:  # noqa: BLE001
+            q.put_nowait({"type": "agent_error", "text": str(e)})
+        finally:
+            q.put_nowait(None)
+
+    task = asyncio.create_task(_run())
+    while True:
+        evt = await q.get()
+        if evt is None:
+            break
+        await websocket.send_json(evt)
+    await task
+    await websocket.send_json({"type": "agent_done"})
