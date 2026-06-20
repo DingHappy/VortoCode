@@ -64,7 +64,10 @@ def _ws_agent(websocket):
     if agent is None:
         import os
         from src.agents.main_agent import MainAgent, build_read_tools
-        agent = MainAgent(build_read_tools(os.getcwd()))
+        from src.web.artifacts import build_artifact_tools
+        # 制品(publish_artifact)是写工具：Web 无模态确认，靠 build 模式门控「人在关口」。
+        tools = build_read_tools(os.getcwd()) + build_artifact_tools(os.getcwd())
+        agent = MainAgent(tools)
         _WS_AGENTS[key] = agent
     return agent
 

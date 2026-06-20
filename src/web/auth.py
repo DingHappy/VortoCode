@@ -48,6 +48,10 @@ def _token_ok(request) -> bool:
     token = get_api_token()
     if not token:
         return True  # 未配置 token：本地开发放行
+    # ?token= 查询参数（与 WebSocket 的 ws_token_ok 一致）：让浏览器直接打开/分享的
+    # 链接（如制品 /artifact/<id>?token=）也能通过——浏览器 GET 无法自带 Bearer 头。
+    if request.query_params.get("token", "").strip() == token:
+        return True
     auth = request.headers.get("authorization", "")
     if auth.startswith("Bearer ") and auth[7:].strip() == token:
         return True
