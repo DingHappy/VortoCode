@@ -19,7 +19,7 @@
 
 `vc tui`（终端）与 Web 控制台 `/agent`（浏览器）共用同一个**主 agent loop**：一个会聊天的 LLM，在"输入 → 模型 →（工具 → 回灌）\* → 流式回复"的循环里自己决定该聊天、读代码，还是把开发任务交给流水线 —— **寒暄不会触发构建，要动手才动手**。
 
-- **工具集**：`read_file` / `list_files` / `grep` / `analyze_repo`（只读）· `edit_file` / `write_file` / `run_dev_workflow`（写/重型，需确认）· `task` / `research_parallel`（子 agent 委派）· `use_skill` / `save_skill`（技能）· `save_memory` / `recall_memory`（长期记忆）· 以及 `/mcp` 接入的任意外部 MCP 工具
+- **工具集**：`read_file` / `list_files` / `grep` / `analyze_repo`（只读）· `edit_file` / `write_file` / `run_dev_workflow`（写/重型，需确认）· `task` / `research_parallel`（子 agent 委派）· `use_skill` / `save_skill`（技能）· `save_memory` / `recall_memory`（长期记忆）· `publish_artifact` / `list_artifacts`（制品，见下）· 以及 `/mcp` 接入的任意外部 MCP 工具
 - **plan / build = 工具权限门**：plan 只放只读工具；写/重型/外部工具仅 build，且写盘前弹确认 —— 落实"人在关口"
 - **子 agent 委派**：把独立调研任务派给隔离上下文的只读子 agent，支持并行 fan-out
 - **SKILL.md 技能**：渐进式按需加载（复用 `src/skills` 解析器），还能让 agent 现场起草新技能
@@ -30,6 +30,17 @@
 - **命令**：`/run /analyze /improve /fix /skills /tools /mcp /usage /audit /agents /runagent /sessions /resume /new /mode /clear /help`
 
 > 早期版本把"任何自然语言 = 开发目标（等同 `/run`）"，会出现"打个招呼也跑完整 dev→test→review"的尴尬；现已收敛为上面的主 agent loop，开发只是它的一个工具。
+
+### 制品（Artifacts · 仿 Claude Code）
+
+让主 agent 把会话产出**发布成一个可分享、随会话实时更新的网页**——带注释的 PR 走查、数据看板、方案对比、交互控件、迁移/排查进度清单等。
+
+- **一句话发布**：build 模式里说"把这个做成一个可分享的页面"，agent 调 `publish_artifact`（自包含 HTML）→ 返回链接 `/(…)/artifact/<id>`
+- **实时更新**：带相同 `id` 重新发布即 `version+1`，已打开的查看页**自动刷新**（轮询版本号）
+- **静态隔离**：查看页用 `iframe sandbox` + 原始内容带限制性 **CSP（`default-src 'none'`，禁止任何外联/SSRF）**——对齐 CC「静态、无外部请求」
+- **可分享 / 认证可见**：链接即可分享；设了 `AUTODEV_API_TOKEN` 时需带 `?token=`（仅认证者可见）。画廊 `/artifacts` 列出全部
+- **人在关口**：发布是写操作——TUI 首次发布弹确认（之后静默更新），Web 端靠 build 模式门控
+- **落盘**：`.vortocode/artifacts/<id>/`（gitignored，运行时产物）；由 Web 服务器渲染，`VORTOCODE_WEB_BASE` 可改链接前缀
 
 ### 自我迭代 / dogfooding（用 vortocode 开发它自己）
 

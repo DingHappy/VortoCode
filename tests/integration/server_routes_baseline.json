@@ -72,18 +72,6 @@
     ]
   },
   {
-    "path": "/api/agents/{agent_id}/run",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/agents/{agent_id}/stop",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
     "path": "/api/agents/custom/{agent_id}",
     "methods": [
       "DELETE"
@@ -114,6 +102,18 @@
     ]
   },
   {
+    "path": "/api/agents/{agent_id}/run",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/agents/{agent_id}/stop",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
     "path": "/api/approvals",
     "methods": [
       "GET"
@@ -123,6 +123,18 @@
     "path": "/api/approvals/{request_id}",
     "methods": [
       "POST"
+    ]
+  },
+  {
+    "path": "/api/artifacts",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/artifacts/{artifact_id}",
+    "methods": [
+      "GET"
     ]
   },
   {
@@ -687,6 +699,24 @@
     "path": "/api/workspaces/{workspace_id}/switch",
     "methods": [
       "POST"
+    ]
+  },
+  {
+    "path": "/artifact/{artifact_id}",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/artifact/{artifact_id}/raw",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/artifacts",
+    "methods": [
+      "GET"
     ]
   },
   {

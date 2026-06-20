@@ -956,6 +956,22 @@ class VortoCodeTUI(App):
                  "把一个明确的开发目标交给 dev→test→review 流水线自动实现+测试（重型，仅 build 模式）",
                  {"goal": "开发目标（自然语言）"}, _t_run_dev, read_only=False),
         ]
+
+        # 制品（artifact）：把会话产出发布成可分享、实时更新的网页（由 Web 服务器在 /artifact 渲染）。
+        # 首次发布弹确认（对齐 CC「批准后再发不再问」：更新静默），发布成功提示可点链接。
+        from src.web.artifacts import build_artifact_tools
+
+        async def _artifact_confirm(preview: dict, _is_update: bool) -> bool:
+            t = preview.get("title") or preview.get("id") or "未命名"
+            return await self.push_screen_wait(ConfirmScreen(
+                f"build 模式：把制品「{t}」发布成网页？"
+                f"（存到 .vortocode/artifacts/，Web 服务器在 /artifact/<id> 渲染、可分享）"))
+
+        def _artifact_published(meta: dict, url: str) -> None:
+            self._chrome(f"[green]制品已发布 v{meta['version']}：{url}（/artifacts 看全部）[/green]")
+
+        tools += build_artifact_tools(self.repo_root, confirm=_artifact_confirm,
+                                      on_published=_artifact_published)
         tools += self._mcp_tools             # 已接入的外部 MCP 工具（build 门控）
         catalog = registry.catalog()
         extra = f"【可用技能】(需要时用 use_skill 加载其完整指令再执行)\n{catalog}" if catalog else None
