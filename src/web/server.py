@@ -45,6 +45,7 @@ from src.web.routers.ops import router as ops_router
 from src.web.routers.generators import router as generators_router
 from src.web.routers.realtime import router as realtime_router
 from src.web.routers.quant import router as quant_router
+from src.web.routers.artifacts import router as artifacts_router
 
 for _router in (
     pages_router, system_router, execution_router,
@@ -52,7 +53,7 @@ for _router in (
     agents_router, skills_router, indexing_router, sessions_router,
     projects_router, workspaces_router, editor_router, sandbox_router,
     browser_router, github_router, ops_router, generators_router, realtime_router,
-    quant_router,
+    quant_router, artifacts_router,
 ):
     app.include_router(_router)
 

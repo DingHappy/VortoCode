@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VortoCode · 制品画廊</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+         background: #14161b; color: #d7dae0; }
+  header { padding: 12px 18px; border-bottom: 1px solid #2a2e37; display: flex; gap: 12px;
+           align-items: center; font-size: 14px; }
+  header b { color: #fff; }
+  .sp { flex: 1; }
+  a.tab { color: #8ab4f8; text-decoration: none; }
+  main { padding: 18px; display: grid; gap: 12px;
+         grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+  .card { background: #1b1f27; border: 1px solid #2a2e37; border-radius: 10px; padding: 14px;
+          display: flex; flex-direction: column; gap: 8px; }
+  .card h3 { margin: 0; font-size: 15px; color: #e8eaed; word-break: break-word; }
+  .meta { color: #7f8896; font-size: 12px; }
+  .open { align-self: flex-start; color: #fff; background: #2f6feb; border-radius: 6px;
+          padding: 5px 12px; text-decoration: none; font-size: 13px; }
+  .empty { color: #7f8896; padding: 24px 18px; line-height: 1.6; }
+  code { background: #0f1115; padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+  <header>
+    <b>VortoCode</b> · 制品画廊
+    <span class="sp"></span>
+    <a class="tab" href="/agent">← 主 Agent</a>
+  </header>
+  <main id="grid"></main>
+<script>
+const qs = location.search || "";
+function fmt(n) { return n > 1024 ? (n / 1024).toFixed(1) + " KB" : n + " B"; }
+
+async function load() {
+  const grid = document.getElementById("grid");
+  let data;
+  try {
+    const r = await fetch("/api/artifacts" + qs, { cache: "no-store" });
+    data = await r.json();
+  } catch (e) {
+    grid.innerHTML = '<div class="empty">加载失败：' + e + "</div>";
+    return;
+  }
+  const items = (data && data.artifacts) || [];
+  if (!items.length) {
+    grid.innerHTML = '<div class="empty">还没有制品。<br>在主 Agent（build 模式）里让它'
+      + '<code>publish_artifact</code>，或直接说"把这个做成一个可分享的页面"。</div>';
+    return;
+  }
+  grid.innerHTML = "";
+  for (const m of items) {
+    const view = "/artifact/" + encodeURIComponent(m.id) + qs;
+    const card = document.createElement("div");
+    card.className = "card";
+    const h = document.createElement("h3"); h.textContent = m.title; card.appendChild(h);
+    const meta = document.createElement("div"); meta.className = "meta";
+    meta.textContent = "v" + m.version + " · " + m.updated_at + " · " + fmt(m.bytes || 0)
+      + " · id=" + m.id;
+    card.appendChild(meta);
+    const a = document.createElement("a"); a.className = "open"; a.href = view;
+    a.textContent = "打开"; card.appendChild(a);
+    grid.appendChild(card);
+  }
+}
+load();
+setInterval(load, 5000);   // 画廊也跟着会话刷新
+</script>
+</body>
+</html>

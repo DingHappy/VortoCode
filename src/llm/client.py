@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +39,57 @@ MODELS: Dict[str, Dict[str, str]] = {
 }
 
 
+# ---------------------------------------------------------------- 用量观测
+# 进程级累计：所有真实 LLM 调用都过 chat/stream/_chat_with_requests，故这里能涵盖
+# 主 agent + 所有子 agent 的总用量。优先用 API 精确值，拿不到时用估算（流式）。
+_USAGE = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+
+def estimate_tokens(text: str) -> int:
+    """粗略 token 估算：CJK 字 ~1 token，其余 ~4 字符/token。够用于用量提示。"""
+    if not text:
+        return 0
+    cjk = sum(1 for c in text if "一" <= c <= "鿿")
+    return max(1, cjk + (len(text) - cjk) // 4)
+
+
+def add_usage(prompt_tokens: int, completion_tokens: int) -> None:
+    _USAGE["calls"] += 1
+    _USAGE["prompt_tokens"] += int(prompt_tokens or 0)
+    _USAGE["completion_tokens"] += int(completion_tokens or 0)
+    _USAGE["total_tokens"] += int(prompt_tokens or 0) + int(completion_tokens or 0)
+
+
+def get_usage() -> Dict[str, int]:
+    return dict(_USAGE)
+
+
+def reset_usage() -> None:
+    for k in _USAGE:
+        _USAGE[k] = 0
+
+
+def _account(messages: List[Dict[str, str]], content: Optional[str], usage: Any = None) -> None:
+    """记一次调用用量：有 API 精确 usage 就用，否则按文本估算。"""
+    pt = ct = None
+    if usage is not None:
+        pt = getattr(usage, "prompt_tokens", None)
+        ct = getattr(usage, "completion_tokens", None)
+        if isinstance(usage, dict):
+            pt, ct = usage.get("prompt_tokens"), usage.get("completion_tokens")
+    if pt is None or ct is None:
+        pt = sum(estimate_tokens(str(m.get("content", ""))) for m in messages)
+        ct = estimate_tokens(content or "")
+    add_usage(pt, ct)
+
+
 class LLMConfig(BaseModel):
     """LLM 配置"""
 
     base_url: str = "https://relay.dinghappy.com/v1"
     api_key: str = ""
-    model: str = "gpt-4o-mini"
+    # 默认模型读 .env 的 DEFAULT_MODEL/OPENAI_MODEL（之前写死 gpt-4o-mini，令牌无权会 403）
+    model: str = Field(default_factory=lambda: os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini")
     temperature: float = 0.7
     max_tokens: int = 4096
     timeout: float = 120.0
@@ -94,23 +139,32 @@ class LLMClient:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
         stream: bool = False,
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        """发送聊天请求（异步，连接池复用）"""
+        """发送聊天请求（异步，连接池复用）。
+
+        给了 tools（OpenAI function schema 列表）则启用原生 function-calling，
+        返回里多一个 tool_calls 字段（[{id,name,arguments}, ...] 或 None）。
+        """
         client = await self._get_client()
 
         if client is None:
-            # 无 openai 库时回退到 aiohttp
+            # 无 openai 库时回退到 aiohttp（不支持原生 tools）
             return await self._chat_with_requests(
                 messages, model, temperature, max_tokens
             )
 
-        response = await client.chat.completions.create(
+        kwargs: Dict[str, Any] = dict(
             model=model or self.config.model,
             messages=messages,
             temperature=temperature if temperature is not None else self.config.temperature,
             max_tokens=max_tokens or self.config.max_tokens,
             stream=stream,
         )
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
+        response = await client.chat.completions.create(**kwargs)
 
         if stream:
             return {"stream": response}
@@ -119,9 +173,17 @@ class LLMClient:
         # 推理型模型（如 DeepSeek-R1 系）会把思维链放在 reasoning_content/reasoning，
         # 普通模型没有该字段，getattr 取 None。这是推理链的源头。
         reasoning = getattr(message, "reasoning_content", None) or getattr(message, "reasoning", None)
+        tool_calls = None
+        if getattr(message, "tool_calls", None):
+            tool_calls = [
+                {"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments}
+                for tc in message.tool_calls
+            ]
+        _account(messages, message.content, getattr(response, "usage", None))
         return {
             "content": message.content,
             "reasoning": reasoning,
+            "tool_calls": tool_calls,
             "model": response.model,
             "usage": {
                 "prompt_tokens": response.usage.prompt_tokens,
@@ -148,21 +210,34 @@ class LLMClient:
                 yield content
             return
 
-        resp = await client.chat.completions.create(
+        create = dict(
             model=model or self.config.model,
             messages=messages,
             temperature=temperature if temperature is not None else self.config.temperature,
             max_tokens=self.config.max_tokens,
             stream=True,
         )
+        # 优先请求精确 usage（最后一个 chunk 带 usage）；relay 不支持该参数就退回普通流式
+        try:
+            resp = await client.chat.completions.create(
+                **create, stream_options={"include_usage": True})
+        except Exception:  # noqa: BLE001
+            resp = await client.chat.completions.create(**create)
+        parts: List[str] = []
+        exact = None
         async for chunk in resp:
+            u = getattr(chunk, "usage", None)
+            if u is not None:
+                exact = u                       # include_usage 的尾 chunk
             choices = getattr(chunk, "choices", None)
             if not choices:
                 continue
             delta = getattr(choices[0], "delta", None)
             content = getattr(delta, "content", None) if delta else None
             if content:
+                parts.append(content)
                 yield content
+        _account(messages, "".join(parts), exact)   # 有精确 usage 用精确，否则估算
 
     async def _chat_with_requests(
         self,
@@ -192,6 +267,7 @@ class LLMClient:
                 if response.status == 200:
                     data = await response.json()
                     msg = data["choices"][0]["message"]
+                    _account(messages, msg.get("content"), data.get("usage"))
                     return {
                         "content": msg["content"],
                         "reasoning": msg.get("reasoning_content") or msg.get("reasoning"),
