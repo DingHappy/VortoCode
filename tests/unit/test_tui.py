@@ -121,9 +121,11 @@ async def test_analyze_runs_l1_and_reports(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_natural_language_routes_to_run_and_streams(monkeypatch, tmp_path):
-    # 自然语言（非 slash）应路由到开发；流式 on_token 应被调用。用 FakeLoop 避免触网。
+async def test_agent_loop_invokes_dev_workflow(monkeypatch, tmp_path):
+    # 主 agent loop：被判为开发任务时，模型调用 run_dev_workflow 工具 → 真跑流水线。
+    # 脚本化假 LLM（先出工具调用、再出最终回复）+ FakeLoop，确定性、不触网。
     import src.orchestrator.dev_loop as dl
+    import src.llm.client as llmmod
 
     seen_tokens = []
 
@@ -139,13 +141,403 @@ async def test_natural_language_routes_to_run_and_streams(monkeypatch, tmp_path)
             return dl.DevLoopResult(success=True, iterations=1,
                                     workspace=str(tmp_path), files=["a.py"], reason="ok")
 
+    class ScriptedLLM:
+        def __init__(self, *a, **k):
+            self.n = 0
+
+        async def chat(self, messages, **k):
+            self.n += 1
+            if self.n == 1:                       # 第一步：决定调用开发流水线工具
+                return {"content": '{"tool": "run_dev_workflow", "args": {"goal": "写一个加法函数"}}'}
+            return {"content": "开发完成，已在工作区生成代码。"}   # 第二步：看到结果后最终回复
+
     monkeypatch.setattr(dl, "IterativeDevLoop", FakeLoop)
+    monkeypatch.setattr(llmmod, "LLMClient", ScriptedLLM)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
     app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
-        await _submit(app, pilot, "做一个加法函数")
-        assert await _wait_for(app, pilot, "开发（dev→test→review")   # 自然语言被路由到 run
-        assert await _wait_for(app, pilot, "结果: 成功")
+        await _submit(app, pilot, "/mode")                            # plan → build（重型工具仅 build）
+        assert app.mode == "build"
+        await _submit(app, pilot, "帮我写一个加法函数")
+        assert await _wait_for(app, pilot, "开发（dev→test→review")   # 工具触发了流水线
+        assert await _wait_for(app, pilot, "开发完成")                 # 主 agent 的最终回复
         assert seen_tokens == ["ok"]                                   # 流式回调确实被调用
+
+
+@pytest.mark.asyncio
+async def test_agent_delegates_to_subagent(monkeypatch, tmp_path):
+    # 主 agent 调 task → 只读子 agent（隔离上下文）读文件得结论 → 父 agent 用结论作答。
+    import src.llm.client as llmmod
+
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "m.py").write_text("x = 1\n")
+
+    class FakeLLM:
+        # 父/子 agent 各自有独立的 LLMClient 实例；靠系统提示里的"研究子 agent"标记区分剧本
+        def __init__(self, *a, **k):
+            self.n = 0
+
+        async def chat(self, messages, **k):
+            self.n += 1
+            is_sub = any("研究子 agent" in m["content"] for m in messages if m["role"] == "system")
+            if is_sub:
+                if self.n == 1:
+                    return {"content": '{"tool":"read_file","args":{"path":"src/m.py"}}'}
+                return {"content": "m.py 里定义了 x=1。"}
+            if self.n == 1:
+                return {"content": '{"tool":"task","args":{"description":"看看 src/m.py 是什么"}}'}
+            return {"content": "子 agent 调研完成：m.py 里 x=1。"}
+
+    monkeypatch.setattr(llmmod, "LLMClient", FakeLLM)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "去研究下 src/m.py")
+        assert await _wait_for(app, pilot, "🤖 子 agent")           # 委派确实发生
+        assert await _wait_for(app, pilot, "↳ 结论")               # 子 agent 结论在日志可见
+        assert await _wait_for(app, pilot, "子 agent 调研完成")      # 父 agent 用子 agent 的结论作答
+
+
+@pytest.mark.asyncio
+async def test_agent_use_skill_loads_instructions(monkeypatch, tmp_path):
+    # 主 agent 调 use_skill → 技能正文被加载进上下文（下一步模型能"看到"正文）。
+    import src.llm.client as llmmod
+
+    d = tmp_path / "skills" / "hello"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(
+        "---\nname: hello\ndescription: 测试技能\n---\n\n技能正文标记XYZ。\n", encoding="utf-8")
+
+    class FakeLLM:
+        def __init__(self, *a, **k):
+            self.n = 0
+
+        async def chat(self, messages, **k):
+            self.n += 1
+            if self.n == 1:
+                return {"content": '{"tool":"use_skill","args":{"name":"hello"}}'}
+            got = any("技能正文标记XYZ" in m["content"] for m in messages if m["role"] == "user")
+            return {"content": "已加载技能。" + ("看到正文了。" if got else "没看到正文。")}
+
+    monkeypatch.setattr(llmmod, "LLMClient", FakeLLM)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "用 hello 技能")
+        assert await _wait_for(app, pilot, "看到正文了")            # 技能正文确实回灌进上下文
+
+
+@pytest.mark.asyncio
+async def test_agent_edit_file_requires_confirm(monkeypatch, tmp_path):
+    # 主 agent 调 edit_file 写文件，必须先过"人在关口"确认弹窗，确认后才落盘。
+    import src.llm.client as llmmod
+
+    (tmp_path / "src").mkdir()
+    target = tmp_path / "src" / "m.py"
+    target.write_text("x = 1\n")
+
+    class ScriptedLLM:
+        def __init__(self, *a, **k):
+            self.n = 0
+
+        async def chat(self, messages, **k):
+            self.n += 1
+            if self.n == 1:
+                return {"content": '{"tool":"edit_file","args":{"path":"src/m.py","old":"x = 1","new":"x = 2"}}'}
+            return {"content": "已把 1 改成 2。"}
+
+    monkeypatch.setattr(llmmod, "LLMClient", ScriptedLLM)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/mode")              # plan → build（写工具仅 build）
+        await _submit(app, pilot, "把 src/m.py 里的 1 改成 2")
+        assert await _wait_modal(app, pilot)            # 写前必弹确认
+        await pilot.press("y")                          # 人确认
+        assert await _wait_for(app, pilot, "已把 1 改成 2")
+        assert target.read_text() == "x = 2\n"          # 确认后才真正落盘
+
+
+@pytest.mark.asyncio
+async def test_plain_text_no_key_offline_and_no_pipeline(monkeypatch, tmp_path):
+    # 没 key：普通话走离线引导，绝不触发流水线、也不构建主 agent（回归：修"你好也去开发 app.py"）。
+    import src.orchestrator.dev_loop as dl
+
+    class BoomLoop:
+        def __init__(self, *a, **k):
+            raise AssertionError("无 key 不应触发开发流水线")
+
+    monkeypatch.setattr(dl, "IterativeDevLoop", BoomLoop)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "你好")
+        assert await _wait_for(app, pilot, "OPENAI_API_KEY")            # 给出离线引导
+        assert not any("dev→test→review" in t for t in app.transcript)  # 未进流水线
+        assert app.agent is None                                        # 主 agent 未构建
+
+
+@pytest.mark.asyncio
+async def test_resume_restores_agent_history(monkeypatch, tmp_path):
+    # /resume 后主 agent 应记得之前聊了什么（跨会话重建 agent 上下文）。
+    import src.llm.client as llmmod
+
+    class FakeLLM:
+        def __init__(self, *a, **k):
+            pass
+
+        async def chat(self, messages, **k):
+            return {"content": "记住了：香蕉。"}
+
+    monkeypatch.setattr(llmmod, "LLMClient", FakeLLM)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    # 第一段会话：聊一句 → 产生 agent 历史快照（同一 repo_root → 同一 sessions.db）
+    app1 = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app1.run_test() as pilot:
+        await _submit(app1, pilot, "我喜欢香蕉")
+        assert await _wait_for(app1, pilot, "记住了")
+        sid = app1.session_id
+        assert app1.agent is not None and len(app1.agent.history) >= 2
+
+    # 第二段：新 app 恢复该会话 → agent 历史被重建
+    app2 = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app2.run_test() as pilot:
+        await _submit(app2, pilot, f"/resume {sid}")
+        assert await _wait_for(app2, pilot, "已恢复对话上下文")
+        assert app2.agent is not None
+        assert any("香蕉" in m["content"] for m in app2.agent.history)   # 之前的对话进了 agent 记忆
+
+
+@pytest.mark.asyncio
+async def test_new_session_resets_agent(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app.agent = object()                 # 假装已有 agent 上下文
+        await _submit(app, pilot, "/new")
+        assert app.agent is None             # 新会话 = 全新 agent 上下文
+
+
+@pytest.mark.asyncio
+async def test_skills_command_lists(tmp_path):
+    d = tmp_path / "skills" / "demo"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text(
+        "---\nname: demo\ndescription: 演示技能\n---\n\n正文\n", encoding="utf-8")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/skills")
+        assert await _wait_for(app, pilot, "演示技能")     # 列出技能 name — description
+
+
+@pytest.mark.asyncio
+async def test_skills_reload_resets_agent(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app.agent = object()
+        await _submit(app, pilot, "/skills reload")
+        assert app.agent is None                          # 重载后主 agent 重建以拿到新技能
+        assert any("已重载技能" in t for t in app.transcript)
+
+
+@pytest.mark.asyncio
+async def test_research_parallel_fans_out(monkeypatch, tmp_path):
+    # 主 agent 调 research_parallel → 并发起多个只读子 agent，汇总结论。
+    import src.llm.client as llmmod
+
+    class FakeLLM:
+        def __init__(self, *a, **k):
+            self.n = 0
+
+        async def chat(self, messages, **k):
+            self.n += 1
+            is_sub = any("研究子 agent" in m["content"] for m in messages if m["role"] == "system")
+            if is_sub:
+                return {"content": "这是子结论。"}
+            if self.n == 1:
+                return {"content": '{"tool":"research_parallel","args":{"tasks":["问题A","问题B"]}}'}
+            return {"content": "已汇总两路结论。"}
+
+    monkeypatch.setattr(llmmod, "LLMClient", FakeLLM)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "并行研究 A 和 B")
+        assert await _wait_for(app, pilot, "并行子 agent（2）")   # 一次性派了 2 个
+        assert await _wait_for(app, pilot, "这是子结论")          # 各路结论在日志可见
+        assert await _wait_for(app, pilot, "已汇总两路结论")       # 父 agent 汇总作答
+
+
+@pytest.mark.asyncio
+async def test_save_skill_writes_and_registers(monkeypatch, tmp_path):
+    # build 模式下主 agent 调 save_skill → 确认 → 写出 SKILL.md 并原地注册。
+    import src.llm.client as llmmod
+
+    class FakeLLM:
+        def __init__(self, *a, **k):
+            self.n = 0
+
+        async def chat(self, messages, **k):
+            self.n += 1
+            if self.n == 1:
+                return {"content": '{"tool":"save_skill","args":{"name":"myskill",'
+                                   '"description":"我的技能","instructions":"步骤一二三"}}'}
+            return {"content": "技能已保存。"}
+
+    monkeypatch.setattr(llmmod, "LLMClient", FakeLLM)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/mode")                 # build（写工具仅 build）
+        await _submit(app, pilot, "把这套流程存成技能")
+        assert await _wait_modal(app, pilot)               # 写前确认
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "技能已保存")
+        p = tmp_path / ".vortocode" / "skills" / "myskill" / "SKILL.md"
+        assert p.is_file() and "我的技能" in p.read_text(encoding="utf-8")
+        assert "myskill" in app._skill_registry().skills   # 原地重扫已注册，立刻可用
+
+
+@pytest.mark.asyncio
+async def test_subtitle_and_usage_command(tmp_path):
+    from src.llm.client import add_usage, get_usage
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        add_usage(1500, 500)                        # on_mount 已清零，这里模拟用量
+        app._sync_subtitle()
+        assert "tok" in app.sub_title and "~2k" in app.sub_title   # subtitle 显示用量
+        await _submit(app, pilot, "/usage")
+        assert await _wait_for(app, pilot, "合计 ~2000 tokens")     # /usage 明细
+        await _submit(app, pilot, "/usage reset")
+        assert get_usage()["calls"] == 0                           # /usage reset 清零
+        assert any("已清零" in t for t in app.transcript)
+
+
+@pytest.mark.asyncio
+async def test_mcp_connect_wraps_tools(monkeypatch, tmp_path):
+    # /mcp 连接 → 把 MCP server 工具包成 agent 工具（前缀防冲突、build 门控、handler 调 execute_tool）。
+    import src.tools.manager as mgrmod
+
+    class FakeTool:
+        def __init__(self):
+            self.name = "read"
+            self.description = "读文件"
+            self.server_name = "filesystem"
+            self.input_schema = {"properties": {"path": {"description": "路径"}}}
+
+    class FakeResult:
+        def __init__(self, output):
+            self.success = True
+            self.output = output
+
+    class FakeMgr:
+        def __init__(self, *a, **k):
+            pass
+
+        async def initialize(self):
+            return True
+
+        def list_tools(self):
+            return [FakeTool()]
+
+        async def execute_tool(self, name, args, **k):
+            return FakeResult(f"called {name} {args}")
+
+        mcp_clients = {"filesystem": object()}
+
+        async def shutdown(self):
+            pass
+
+    monkeypatch.setattr(mgrmod, "ToolManager", FakeMgr)
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/mcp")
+        assert await _wait_for(app, pilot, "已接入 1 个 MCP 工具")
+        names = [t.name for t in app._mcp_tools]
+        assert "mcp__filesystem__read" in names          # 命名前缀防冲突
+        assert app._mcp_tools[0].read_only is False       # 外部工具 build 门控
+        out = await app._mcp_tools[0].handler({"path": "a.py"})
+        assert "called read" in out                       # handler 走 execute_tool
+        app.agent = app._build_main_agent()
+        assert "mcp__filesystem__read" in app.agent.tools  # 重建后 agent 含 MCP 工具
+        # /mcp off 断开
+        await _submit(app, pilot, "/mcp off")
+        assert await _wait_for(app, pilot, "已断开 MCP")
+        assert app._mcp_tools == [] and app._mcp is None
+
+
+@pytest.mark.asyncio
+async def test_tools_command_lists(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/tools")
+        joined = "\n".join(app.transcript)
+        assert "read_file" in joined and "[只读]" in joined
+        assert "run_dev_workflow" in joined and "[写/重型]" in joined
+
+
+@pytest.mark.asyncio
+async def test_memory_tools_roundtrip_cross_session(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    agent = app._build_main_agent()
+    await agent.tools["save_memory"].handler({"content": "用户喜欢用 pytest"})
+    out = await agent.tools["recall_memory"].handler({"query": "pytest"})
+    assert "pytest" in out
+    # 跨会话：新 app（同 repo_root → 同 sessions.db）也能召回
+    agent2 = VortoCodeTUI(repo_root=str(tmp_path))._build_main_agent()
+    assert "pytest" in await agent2.tools["recall_memory"].handler({"query": "pytest"})
+    # save_memory/recall_memory 都是只读门（plan 可用）
+    assert agent.tools["save_memory"].read_only and agent.tools["recall_memory"].read_only
+
+
+@pytest.mark.asyncio
+async def test_tool_calls_are_audited(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    agent = app._build_main_agent()                       # on_tool=app._audit_tool
+    await agent._run_tool("list_files", {}, "plan", lambda _m: None)
+    p = tmp_path / ".vortocode" / "audit.log"
+    assert p.is_file()
+    import json as _json
+    rec = _json.loads(p.read_text(encoding="utf-8").splitlines()[-1])
+    assert rec["tool"] == "list_files" and "ts" in rec and rec["mode"] == "plan"
+
+
+@pytest.mark.asyncio
+async def test_audit_command_shows_log(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/audit")
+        assert any("暂无审计" in t for t in app.transcript)   # 还没调用工具
+        agent = app._build_main_agent()
+        await agent._run_tool("analyze_repo", {}, "plan", lambda _m: None)
+        await _submit(app, pilot, "/audit")
+        assert await _wait_for(app, pilot, "analyze_repo")
+
+
+def test_expand_context_file_dir_symbol(tmp_path):
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "util.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    clean, ctx = app._expand_context("看 @src/util.py 和 @src 还有 @helper")
+    assert "@" not in clean                                # 三种 @ 都被解析、去掉了 @
+    assert "# 文件 src/util.py" in ctx
+    assert "# 目录 src" in ctx
+    assert "# 符号 helper 的定义（AST）" in ctx            # 走 AST 索引
+    assert "def helper()" in ctx and "src/util.py:1" in ctx   # 带签名与精确位置
+
+
+def test_expand_context_unknown_ref_kept(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    clean, ctx = app._expand_context("提到 @不存在的东西 应原样保留")
+    assert "@不存在的东西" in clean and ctx == ""
 
 
 def test_expand_at_files(tmp_path):
