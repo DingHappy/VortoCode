@@ -783,6 +783,118 @@ async def test_user_input_echoed_plain_in_transcript():
 
 
 @pytest.mark.asyncio
+async def test_input_history_up_down():
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", Input)
+        inp.focus()
+        inp.value = "一"; await pilot.press("enter"); await pilot.pause()
+        inp.value = "二"; await pilot.press("enter"); await pilot.pause()
+        await pilot.press("up"); await pilot.pause()
+        assert inp.value == "二"                            # ↑ 最近一条
+        await pilot.press("up"); await pilot.pause()
+        assert inp.value == "一"                            # 再 ↑ 更早一条
+        await pilot.press("down"); await pilot.pause()
+        assert inp.value == "二"
+        await pilot.press("down"); await pilot.pause()
+        assert inp.value == ""                              # 到底恢复草稿（空）
+
+
+@pytest.mark.asyncio
+async def test_at_file_palette_and_tab_complete():
+    from textual.widgets import Static
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", Input)
+        inp.focus()
+        inp.value = "看 @src/tui/ap"; await pilot.pause()
+        pal = app.query_one("#palette", Static)
+        assert pal.display is True and "app.py" in str(pal.render())   # @ 文件补全面板
+        app.action_toggle_mode(); await pilot.pause()                  # Tab 补全
+        assert inp.value.startswith("看 @src/tui/app")
+
+
+@pytest.mark.asyncio
+async def test_show_diff_renders_colored(tmp_path):
+    from textual.widgets import RichLog
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app._show_diff("x.py", "a\nb\nc\n", "a\nB\nc\n")
+        await pilot.pause()
+        text = "\n".join(s.text for s in app.query_one("#log", RichLog).lines)
+        assert "-b" in text and "+B" in text and "@@" in text   # unified diff hunk
+
+
+def _git(tmp_path, *args):
+    import subprocess
+    return subprocess.run(["git", *args], cwd=str(tmp_path), capture_output=True)
+
+
+@pytest.mark.asyncio
+async def test_cmd_diff_renders_git_diff(tmp_path):
+    from textual.widgets import RichLog
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "f.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "f.py").write_text("x = 2\n")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app._cmd_diff()
+        await pilot.pause()
+        text = "\n".join(s.text for s in app.query_one("#log", RichLog).lines)
+        assert "-x = 1" in text and "+x = 2" in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_diff_empty_is_graceful(tmp_path):
+    _git(tmp_path, "init", "-q")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app._cmd_diff()                                  # 无改动 → 优雅提示，不崩
+        await pilot.pause()
+        assert any("git diff 为空" in t for t in app.transcript)
+
+
+@pytest.mark.asyncio
+async def test_always_allow_skips_confirm(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app._allow_writes_session = True
+        ok = await app._confirm_write("写吗？")          # 始终允许 → 直接放行
+        assert ok is True and len(app.screen_stack) == 1  # 没弹确认框
+
+
+@pytest.mark.asyncio
+async def test_improve_confirm_always_sets_flag(monkeypatch, tmp_path):
+    applied = []
+    si, FakeLoop = _fake_improve_loop(applied)
+    monkeypatch.setattr(si, "SelfImprovementLoop", FakeLoop)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/mode")                # → build
+        await _submit(app, pilot, "/improve")
+        assert await _wait_modal(app, pilot)
+        await pilot.press("a")                            # 选"本会话始终允许"
+        await pilot.pause()
+        assert applied == [True]                          # a 也算确认 → 写了
+        assert app._allow_writes_session is True          # 且置位会话标志
+
+
+@pytest.mark.asyncio
+async def test_input_history_persists_across_apps(tmp_path):
+    app1 = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app1.run_test() as pilot:
+        await _submit(app1, pilot, "记住我")              # 写进 .vortocode/tui_history
+    app2 = VortoCodeTUI(repo_root=str(tmp_path))           # 新进程
+    async with app2.run_test() as pilot:
+        assert "记住我" in app2._history                  # 跨会话载入
+        inp = app2.query_one("#prompt", Input); inp.focus()
+        await pilot.press("up"); await pilot.pause()
+        assert inp.value == "记住我"                       # ↑ 调出上次会话的输入
+
+
+@pytest.mark.asyncio
 async def test_working_spinner_toggles():
     from textual.widgets import Static
     from src.tui.app import _SPIN_VERBS
@@ -807,6 +919,19 @@ async def test_assistant_markdown_does_not_crash_and_records_raw():
         app._assistant(md)
         await pilot.pause()
         assert md in app.transcript          # 原文入 transcript（markdown 渲染只影响显示）
+
+
+@pytest.mark.asyncio
+async def test_at_artifact_injects_content(tmp_path):
+    from src.web.artifacts import ArtifactStore
+    aid = ArtifactStore(str(tmp_path)).publish("看板", "<h1>DASH</h1>")["id"]
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        clean, ctx = app._expand_context(f"改一下 @artifact:{aid}")
+        assert f"制品[{aid}]" in clean            # @artifact 被换成可读引用
+        assert "DASH" in ctx and "看板" in ctx     # 内容+标题注入上下文
+        clean2, ctx2 = app._expand_context("@artifact:nope")
+        assert "@artifact:nope" in clean2 and ctx2 == ""   # 不存在 → 原样保留
 
 
 @pytest.mark.asyncio

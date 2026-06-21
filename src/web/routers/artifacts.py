@@ -60,12 +60,35 @@ async def artifacts_list(request: Request):
 
 @router.get("/api/artifacts/{artifact_id}")
 async def artifact_meta(artifact_id: str, request: Request):
-    """单个制品 meta（查看页轮询版本号用）。"""
+    """单个制品 meta（查看页轮询版本号/pin 用）。"""
     m = _store().meta(artifact_id)
     if not m:
         raise HTTPException(status_code=404, detail="制品不存在")
     m["url"] = _abs_url(request, m["id"])
     return m
+
+
+@router.get("/api/artifacts/{artifact_id}/versions")
+async def artifact_versions(artifact_id: str):
+    """版本清单 + 当前/被 pin 的版本（查看页的版本选择器用）。"""
+    store = _store()
+    m = store.meta(artifact_id)
+    if not m:
+        raise HTTPException(status_code=404, detail="制品不存在")
+    return {"id": m["id"], "current": m["version"], "pinned": m.get("pinned"),
+            "versions": store.versions(artifact_id)}
+
+
+@router.post("/api/artifacts/{artifact_id}/pin")
+async def artifact_pin(artifact_id: str, version: int | None = None):
+    """把"当前"指向某历史版本（CC：选给查看者看哪一版）；不带 version 则取消 pin 回到最新。"""
+    store = _store()
+    if not store.meta(artifact_id):
+        raise HTTPException(status_code=404, detail="制品不存在")
+    m = store.pin(artifact_id, version)
+    if not m:
+        raise HTTPException(status_code=400, detail="版本不存在")
+    return {"id": m["id"], "pinned": m.get("pinned"), "current": m["version"]}
 
 
 @router.delete("/api/artifacts/{artifact_id}")
@@ -77,9 +100,9 @@ async def artifact_delete(artifact_id: str):
 
 
 @router.get("/artifact/{artifact_id}/raw")
-async def artifact_raw(artifact_id: str):
-    """制品原始 HTML（限制性 CSP，禁止外联）。"""
-    content = _store().html(artifact_id)
+async def artifact_raw(artifact_id: str, v: int | None = None):
+    """制品原始 HTML（限制性 CSP，禁止外联）。?v=N 取某历史版本。"""
+    content = _store().html(artifact_id, v)
     if content is None:
         raise HTTPException(status_code=404, detail="制品不存在")
     return HTMLResponse(
@@ -125,12 +148,16 @@ _VIEW_TEMPLATE = """<!DOCTYPE html>
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
   a.btn, button.btn { color: #8ab4f8; background: #1b1f27; border: 1px solid #3a4150;
         border-radius: 6px; padding: 4px 10px; cursor: pointer; text-decoration: none; font: inherit; }
+  select { background: #1b1f27; color: #d7dae0; border: 1px solid #3a4150; border-radius: 6px;
+           padding: 3px 6px; font: inherit; }
+  label { color: #7f8896; }
   iframe { flex: 1; width: 100%; border: 0; background: #fff; }
 </style></head>
 <body>
   <header>
     <b>VortoCode</b> · <span id="title">__TITLE__</span>
-    <span id="v">v__VERSION__</span>
+    <label>版本 <select id="vsel"></select></label>
+    <button class="btn" id="pin">设为默认</button>
     <span class="sp"></span>
     <span class="badge"><span class="dot"></span>live</span>
     <a class="btn" id="raw" target="_blank" rel="noopener">新窗口打开</a>
@@ -139,27 +166,64 @@ _VIEW_TEMPLATE = """<!DOCTYPE html>
   </header>
   <iframe id="frame" sandbox="allow-scripts" title="__TITLE__"></iframe>
 <script>
-  var AID = "__AID__", ver = __VERSION__;
-  var qs = location.search || "";   // 透传 ?token=，让设了 token 的部署也能轮询/刷新
-  var rawUrl = "/artifact/" + encodeURIComponent(AID) + "/raw" + qs;
-  document.getElementById("frame").src = rawUrl;
-  document.getElementById("raw").href = rawUrl;
+  var AID = "__AID__", curVer = __VERSION__, pinned = null;
+  var token = new URLSearchParams(location.search).get("token");
+  var tokQ = token ? "?token=" + encodeURIComponent(token) : "";     // 透传给 GET
+  var tokAmp = token ? "&token=" + encodeURIComponent(token) : "";   // 透传给带 ?v= 的 URL
+  var sel = document.getElementById("vsel"), frame = document.getElementById("frame");
+  var pinBtn = document.getElementById("pin");
+
+  function show(v) {   // 在 iframe 里载入指定版本（沙箱 + CSP 不变）
+    var u = "/artifact/" + encodeURIComponent(AID) + "/raw?v=" + v + tokAmp;
+    frame.src = u; document.getElementById("raw").href = u;
+  }
+  function syncPinBtn() {
+    pinBtn.textContent = (parseInt(sel.value, 10) === pinned) ? "已是默认" : "设为默认";
+  }
+  async function loadVersions(initial) {
+    try {
+      var r = await fetch("/api/artifacts/" + encodeURIComponent(AID) + "/versions" + tokQ,
+                          { cache: "no-store" });
+      if (!r.ok) return;
+      var d = await r.json(); curVer = d.current; pinned = d.pinned;
+      var keep = sel.value;
+      sel.innerHTML = "";
+      d.versions.slice().reverse().forEach(function (it) {
+        var o = document.createElement("option"); o.value = it.v;
+        o.textContent = "v" + it.v + (it.v === d.current ? " · 当前" : "")
+                        + (it.v === d.pinned ? " · 📌默认" : "");
+        sel.appendChild(o);
+      });
+      sel.value = initial ? (pinned || curVer) : (keep || pinned || curVer);
+      syncPinBtn();
+      if (initial) show(sel.value);
+    } catch (e) {}
+  }
+  sel.onchange = function () { show(sel.value); syncPinBtn(); };
+  pinBtn.onclick = async function () {
+    try {
+      var r = await fetch("/api/artifacts/" + encodeURIComponent(AID) + "/pin?version="
+                          + sel.value + tokAmp, { method: "POST" });
+      if (r.ok) await loadVersions(false);
+    } catch (e) {}
+  };
   document.getElementById("copy").onclick = function () {
     try { navigator.clipboard.writeText(location.href); } catch (e) {}
     var b = this; b.textContent = "已复制"; setTimeout(function () { b.textContent = "复制链接"; }, 1200);
   };
-  // 轮询版本号：变了就刷新 iframe —— 会话里用相同 id 重新发布即自动更新本页。
+  // 轮询：出现更高版本就刷新版本列表；若用户正看着"当前"，顺带载入新版本（实时更新不变）。
   setInterval(async function () {
     try {
-      var r = await fetch("/api/artifacts/" + encodeURIComponent(AID) + qs, { cache: "no-store" });
+      var r = await fetch("/api/artifacts/" + encodeURIComponent(AID) + tokQ, { cache: "no-store" });
       if (!r.ok) return;
       var m = await r.json();
-      if (m.version !== ver) {
-        ver = m.version;
-        document.getElementById("v").textContent = "v" + ver;
-        document.getElementById("frame").contentWindow.location.reload();
+      if (m.version !== curVer || m.pinned !== pinned) {
+        var atLatest = (parseInt(sel.value, 10) === curVer);
+        await loadVersions(false);
+        if (atLatest) { sel.value = curVer; show(sel.value); syncPinBtn(); }
       }
     } catch (e) {}
   }, 2000);
+  loadVersions(true);
 </script>
 </body></html>"""
