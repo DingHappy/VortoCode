@@ -1,5 +1,7 @@
 """远端集成（src/agents/vcs.py）单测——全程 mock，绝不真 push/开 PR。"""
 
+import pytest
+
 from src.agents import vcs
 
 
@@ -49,3 +51,20 @@ def test_push_and_open_pr_skips_pr_when_push_fails(monkeypatch):
                         lambda *a, **k: (called.__setitem__("pr", True), {"ok": True})[1])
     r = vcs.push_and_open_pr("/x", "b", "t")
     assert r["ok"] is False and r["pushed"] is False and called["pr"] is False   # push 失败不开 PR
+
+
+@pytest.mark.asyncio
+async def test_build_pr_tool_confirm_gate(monkeypatch):
+    from src.agents.main_agent import build_pr_tool
+    monkeypatch.setattr(vcs, "push_and_open_pr",
+                        lambda *a, **k: {"ok": True, "pushed": True, "url": "https://x/pull/1", "error": ""})
+
+    async def no(_m):
+        return False
+
+    async def yes(_m):
+        return True
+    t_no = {x.name: x for x in build_pr_tool("/x", no)}["open_pr"]
+    assert "拒绝" in await t_no.handler({"branch": "vorto/x", "title": "t"})   # 拒绝 → 不 push
+    t_yes = {x.name: x for x in build_pr_tool("/x", yes)}["open_pr"]
+    assert "pull/1" in await t_yes.handler({"branch": "vorto/x", "title": "t"})   # 允许 → 开 PR
