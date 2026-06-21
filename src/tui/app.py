@@ -1255,15 +1255,18 @@ class VortoCodeTUI(App):
             return await self._run_dev(goal)
 
         async def _t_dev_isolated(args: dict) -> str:
-            """在一次性 git worktree 里让可写子 agent 实现一步，产出 diff 待人工确认；绝不碰主工作区。"""
+            """隔离 worktree 里实现一步 + 在其中跑测试逐件验证，产出 diff（绿=可应用）待人工确认。"""
             desc = str(args.get("description") or args.get("task") or args.get("goal") or "").strip()
             if not desc:
                 return "dev_isolated 需要 description（要在隔离工作区实现的任务）。"
+            import sys
             import uuid
             from src.agents.worktree import run_isolated_task
             from src.agents.main_agent import build_read_tools, build_write_tools
             wid = "wt-" + uuid.uuid4().hex[:8]
-            self._chrome(f"[magenta]🧪 隔离实现：{desc}[/magenta][dim]（独立 worktree，绝不碰主工作区）[/dim]")
+            sel = str(args.get("test") or "").strip()                 # 可选：narrow 到某些测试
+            test_cmd = [sys.executable, "-m", "pytest", "-q", sel or "tests/"]
+            self._chrome(f"[magenta]🧪 隔离实现：{desc}[/magenta][dim]（独立 worktree，完成后跑测试验证）[/dim]")
 
             def _build(wt_path: str):
                 return MainAgent(
@@ -1273,16 +1276,27 @@ class VortoCodeTUI(App):
                                   "用 edit_file/write_file 在这个隔离工作树里实现任务，完成后一两句说明改了什么。"
                                   "只动与任务相关的文件。"))
             try:
-                diff, conclusion = await run_isolated_task(self.repo_root, wid, desc, _build)
+                diff, conclusion, ver = await run_isolated_task(
+                    self.repo_root, wid, desc, _build, test_cmd=test_cmd)
             except Exception as e:  # noqa: BLE001
                 return f"(隔离实现出错: {e})"
             if not (diff or "").strip():
                 return f"子 agent 没产生任何改动。结论：{conclusion}"
-            self._chrome("[b]🧪 隔离工作区改动（待确认，未并入主工作区）[/b]")
+            self._chrome("[b]🧪 隔离工作区改动（未并入主工作区）[/b]")
             self._render_diff_text(diff)
-            self._chrome("[dim]↑ 改动在一次性 worktree 完成、已清理；review 后可人工 git apply（一键应用是下一步）。[/dim]")
-            return (f"已在隔离 worktree 实现并产出 diff（{diff.count(chr(10))} 行，未并入）。"
-                    f"子 agent 结论：{conclusion}")
+            nlines = diff.count("\n")
+            tail = (ver or {}).get("output", "")[-1200:]
+            cmd = (ver or {}).get("cmd", "")
+            if ver and ver["ok"]:
+                self._chrome(f"[{self._tc('text-success', '#7fce9a')}]✅ 测试通过[/]"
+                             f"[dim]（{cmd}）—— 这块可应用，review 后 git apply。[/dim]")
+                return (f"✅ 隔离实现完成且测试通过（{cmd}）。diff {nlines} 行，未并入。结论：{conclusion}")
+            self._chrome(f"[{self._tc('text-error', '#f08a8a')}]❌ 测试未过[/]"
+                         f"[dim]（{cmd}）—— 这块先别并入。[/dim]")
+            if tail:
+                self._chrome(f"[dim]{tail.replace('[', chr(92) + '[')}[/dim]")   # 转义 [ 防当成标记
+            return (f"❌ 隔离实现完成但测试未过（{cmd}）。失败输出尾部：\n{tail}\n"
+                    f"请据此修正后重试（再调 dev_isolated）。diff {nlines} 行，未并入。结论：{conclusion}")
 
         # 只读工具：plan 也能用；也是子 agent 的工具集（无 task/写工具 → 不嵌套、不改文件）
         read_tools = [
@@ -1409,9 +1423,12 @@ class VortoCodeTUI(App):
                  "把一个明确的开发目标交给 dev→test→review 流水线自动实现+测试（重型，仅 build 模式）",
                  {"goal": "开发目标（自然语言）"}, _t_run_dev, read_only=False),
             Tool("dev_isolated",
-                 "在隔离的 git worktree 里让可写子 agent 实现一个独立子任务，产出 diff 待人工确认；"
-                 "绝不碰主工作区。大任务可对计划里相互独立的步骤逐个调它（仅 build）",
-                 {"description": "要在隔离工作区实现的子任务"}, _t_dev_isolated, read_only=False),
+                 "在隔离 git worktree 里让可写子 agent 实现一个独立子任务，并在其中跑测试逐件验证，"
+                 "产出 diff（✅通过=可应用 / ❌未过=带失败输出供修正）待人工确认；绝不碰主工作区。"
+                 "大任务可对计划里相互独立的步骤逐个调它（仅 build）",
+                 {"description": "要在隔离工作区实现的子任务",
+                  "test": "可选，pytest 选择器(如 tests/unit/test_x.py)，省略则跑全量 tests/"},
+                 _t_dev_isolated, read_only=False),
         ]
 
         # 制品（artifact）：把会话产出发布成可分享、实时更新的网页（由 Web 服务器在 /artifact 渲染）。

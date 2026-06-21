@@ -67,10 +67,11 @@ async def test_run_isolated_task_with_injected_agent(tmp_path):
             (Path(self.root) / "impl.py").write_text("# " + desc + "\n")
             return "实现完成"
 
-    diff, conclusion = await worktree.run_isolated_task(
+    diff, conclusion, ver = await worktree.run_isolated_task(
         str(tmp_path), "wt-run", "加个模块", lambda root: FakeAgent(root))
     assert conclusion == "实现完成"
     assert "impl.py" in diff and "加个模块" in diff
+    assert ver is None                                      # 没给 test_cmd → 不验证
     assert not (tmp_path / "impl.py").exists()              # 主工作区干净
 
 
@@ -113,7 +114,41 @@ async def test_run_isolated_task_with_real_main_agent(monkeypatch, tmp_path):
     def _build(wt):
         return MainAgent(build_read_tools(wt) + build_write_tools(wt), max_steps=6)
 
-    diff, conclusion = await worktree.run_isolated_task(str(tmp_path), "wt-real", "加 hello.py", _build)
+    diff, conclusion, ver = await worktree.run_isolated_task(str(tmp_path), "wt-real", "加 hello.py", _build)
     assert "hello.py" in diff and "print(1)" in diff      # 子 agent 的写改动进了 diff
     assert "加了 hello.py" in conclusion
     assert not (tmp_path / "hello.py").exists()            # 主工作区干净
+
+
+def test_run_tests_pass_and_fail(tmp_path):
+    import sys
+    from src.agents.worktree import run_tests
+    assert run_tests(tmp_path, [sys.executable, "-c", "print('hi')"])["ok"] is True
+    r = run_tests(tmp_path, [sys.executable, "-c", "import sys; sys.stderr.write('boom'); sys.exit(1)"])
+    assert r["ok"] is False and "boom" in r["output"]
+
+
+@pytest.mark.asyncio
+async def test_run_isolated_task_verifies_in_worktree(tmp_path):
+    import sys
+    _init_repo(tmp_path)
+
+    class WriteAgent:
+        def __init__(self, root):
+            self.root = root
+
+        async def run_turn(self, desc, mode, emit):
+            from pathlib import Path
+            (Path(self.root) / "m.py").write_text("ok\n")
+            return "done"
+
+    # 测试通过 → ok True
+    _d, _c, ver = await worktree.run_isolated_task(
+        str(tmp_path), "wt-vp", "x", lambda r: WriteAgent(r),
+        test_cmd=[sys.executable, "-c", "import sys; sys.exit(0)"])
+    assert ver and ver["ok"] is True
+    # 测试失败 → ok False + 失败输出（供 agent 据此重试）
+    _d, _c, ver2 = await worktree.run_isolated_task(
+        str(tmp_path), "wt-vf", "x", lambda r: WriteAgent(r),
+        test_cmd=[sys.executable, "-c", "import sys; sys.stderr.write('XFAIL'); sys.exit(1)"])
+    assert ver2["ok"] is False and "XFAIL" in ver2["output"]
