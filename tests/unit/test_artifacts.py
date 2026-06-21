@@ -8,7 +8,9 @@ import os
 import pytest
 from fastapi.testclient import TestClient
 
-from src.web.artifacts import ArtifactStore, artifact_url, build_artifact_tools
+from src.web.artifacts import (
+    ArtifactStore, artifact_url, build_artifact_tools, render_markdown_doc, max_bytes,
+)
 
 
 # --------------------------------------------------------------- ArtifactStore
@@ -180,3 +182,106 @@ def test_query_token_allows_when_token_set(tmp_path, monkeypatch):
     assert c.get(f"/api/artifacts/{aid}").status_code == 401
     assert c.get(f"/api/artifacts/{aid}?token=secret").status_code == 200
     assert c.get(f"/api/artifacts/{aid}?token=wrong").status_code == 401
+
+
+# --------------------------------------------------------------- 体积上限
+def test_publish_rejects_oversize(tmp_path, monkeypatch):
+    monkeypatch.setenv("VORTOCODE_ARTIFACT_MAX_BYTES", "100")
+    assert max_bytes() == 100
+    store = ArtifactStore(str(tmp_path))
+    with pytest.raises(ValueError):
+        store.publish("big", "x" * 101)
+    assert store.publish("ok", "x" * 100)["bytes"] == 100   # 边界内可发
+
+
+@pytest.mark.asyncio
+async def test_publish_tool_oversize_message(tmp_path, monkeypatch):
+    monkeypatch.setenv("VORTOCODE_ARTIFACT_MAX_BYTES", "50")
+    pub = {t.name: t for t in build_artifact_tools(str(tmp_path))}["publish_artifact"]
+    out = await pub.handler({"title": "t", "html": "y" * 999})
+    assert "发布失败" in out and "上限" in out
+    assert ArtifactStore(str(tmp_path)).list() == []        # 未落盘
+
+
+def test_max_bytes_default_and_bad_env(monkeypatch):
+    monkeypatch.delenv("VORTOCODE_ARTIFACT_MAX_BYTES", raising=False)
+    assert max_bytes() == 16 * 1024 * 1024
+    monkeypatch.setenv("VORTOCODE_ARTIFACT_MAX_BYTES", "notint")
+    assert max_bytes() == 16 * 1024 * 1024                  # 坏值回退默认
+
+
+# --------------------------------------------------------------- markdown
+def test_render_markdown_doc():
+    html = render_markdown_doc("标题", "# Hello\n\n- a\n- b\n")
+    assert "<h1>Hello</h1>" in html
+    assert "<li>a</li>" in html and "<li>b</li>" in html
+    assert "标题" in html and html.lstrip().startswith("<!doctype html>")
+
+
+@pytest.mark.asyncio
+async def test_publish_tool_markdown_kind(tmp_path):
+    pub = {t.name: t for t in build_artifact_tools(str(tmp_path))}["publish_artifact"]
+    out = await pub.handler({"title": "报告", "markdown": "# 标题\n正文"})
+    assert "markdown" in out
+    m = ArtifactStore(str(tmp_path)).list()[0]
+    assert m["kind"] == "markdown"
+    assert "<h1>标题</h1>" in ArtifactStore(str(tmp_path)).html(m["id"])
+
+
+@pytest.mark.asyncio
+async def test_publish_tool_needs_html_or_markdown(tmp_path):
+    pub = {t.name: t for t in build_artifact_tools(str(tmp_path))}["publish_artifact"]
+    out = await pub.handler({"title": "t"})
+    assert "html 或 markdown" in out
+
+
+# --------------------------------------------------------------- 删除
+def test_store_delete(tmp_path):
+    store = ArtifactStore(str(tmp_path))
+    aid = store.publish("D", "<p>x</p>")["id"]
+    assert store.exists(aid)
+    assert store.delete(aid) is True
+    assert not store.exists(aid)
+    assert store.delete(aid) is False           # 再删不存在
+    assert store.delete("../evil") is False      # 非法 id
+
+
+@pytest.mark.asyncio
+async def test_delete_tool_confirm_and_cancel(tmp_path):
+    calls = []
+
+    async def confirm_del(preview):
+        calls.append(preview["id"])
+        return preview["id"].startswith("keep") is False   # 取消以 keep 开头的
+
+    tools = {t.name: t for t in build_artifact_tools(str(tmp_path), confirm_delete=confirm_del)}
+    store = ArtifactStore(str(tmp_path))
+    aid = store.publish("X", "<p>x</p>")["id"]
+    assert "delete_artifact" in tools and not tools["delete_artifact"].read_only
+    out = await tools["delete_artifact"].handler({"id": aid})
+    assert "已删除" in out and not store.exists(aid)
+    assert calls == [aid]
+    # 不存在的 id
+    assert "没有" in await tools["delete_artifact"].handler({"id": "nope"})
+    # 缺 id
+    assert "需要 id" in await tools["delete_artifact"].handler({})
+
+
+@pytest.mark.asyncio
+async def test_delete_tool_respects_cancel(tmp_path):
+    async def deny(preview):
+        return False
+
+    tools = {t.name: t for t in build_artifact_tools(str(tmp_path), confirm_delete=deny)}
+    store = ArtifactStore(str(tmp_path))
+    aid = store.publish("X", "<p>x</p>")["id"]
+    out = await tools["delete_artifact"].handler({"id": aid})
+    assert "取消" in out and store.exists(aid)   # 取消则保留
+
+
+def test_delete_route(client):
+    c, root = client
+    aid = ArtifactStore(str(root)).publish("R", "<p>x</p>")["id"]
+    assert c.delete(f"/api/artifacts/{aid}").json() == {"deleted": aid}
+    assert c.get(f"/api/artifacts/{aid}").status_code == 404   # 已删
+    assert c.delete("/api/artifacts/nope").status_code == 404  # 删不存在 → 404

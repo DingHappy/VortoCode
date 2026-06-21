@@ -727,3 +727,93 @@ async def test_plan_mode_never_writes(monkeypatch, tmp_path):
         assert await _wait_for(app, pilot, "tests/x.py")   # render_result 提案行出现=跑完
         assert applied == []                                # plan 模式没写
         assert len(app.screen_stack) == 1                   # 没弹确认
+
+
+# ---------------------------------------------------------------- TUI 交互 UX
+@pytest.mark.asyncio
+async def test_command_palette_lists_matching_commands():
+    from textual.widgets import Static
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", Input)
+        inp.focus()
+        inp.value = "/a"
+        await pilot.pause()
+        palette = app.query_one("#palette", Static)
+        assert palette.display is True
+        txt = str(palette.render())
+        assert "/analyze" in txt and "/artifacts" in txt    # 列出匹配命令
+        inp.value = "你好"                                   # 非 / 输入
+        await pilot.pause()
+        assert palette.display is False                     # → 隐藏
+
+
+@pytest.mark.asyncio
+async def test_tab_completes_slash_command():
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", Input)
+        inp.focus()
+        inp.value = "/art"
+        await pilot.pause()
+        m0 = app.mode
+        app.action_toggle_mode()                            # Tab：补全而非切模式
+        await pilot.pause()
+        assert inp.value == "/artifacts"
+        assert app.mode == m0                               # 未切模式
+
+
+@pytest.mark.asyncio
+async def test_tab_toggles_mode_when_input_not_command():
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        app.query_one("#prompt", Input).value = ""
+        await pilot.pause()
+        m0 = app.mode
+        app.action_toggle_mode()                            # 空输入 → Tab 切模式
+        assert app.mode != m0
+
+
+@pytest.mark.asyncio
+async def test_user_input_echoed_plain_in_transcript():
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/help")
+        assert "/help" in app.transcript                    # _say_user 以原文记录用户输入
+
+
+@pytest.mark.asyncio
+async def test_working_spinner_toggles():
+    from textual.widgets import Static
+    from src.tui.app import _SPIN_VERBS
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        status = app.query_one("#status", Static)
+        app._start_status()
+        await pilot.pause()
+        assert status.display is True and app._spin_timer is not None
+        txt = str(status.render())
+        assert "esc 中断" in txt and any(v in txt for v in _SPIN_VERBS)   # 计时+动词+中断提示
+        app._stop_status()
+        await pilot.pause()
+        assert status.display is False and app._spin_timer is None        # 停了即清理
+
+
+@pytest.mark.asyncio
+async def test_assistant_markdown_does_not_crash_and_records_raw():
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        md = "## 标题\n\n- 一\n- 二\n\n```python\nx = 1\n```"
+        app._assistant(md)
+        await pilot.pause()
+        assert md in app.transcript          # 原文入 transcript（markdown 渲染只影响显示）
+
+
+@pytest.mark.asyncio
+async def test_tool_preview_and_audit_no_crash(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app._tool_preview("第一行\n第二行\n第三行")           # 不抛即可（视觉由截图验证）
+        app._audit_tool("read_file", {"path": "x"}, "a\nb")  # 审计 + 结果预览
+        await pilot.pause()
+        assert (tmp_path / ".vortocode" / "audit.log").is_file()   # 审计仍写盘

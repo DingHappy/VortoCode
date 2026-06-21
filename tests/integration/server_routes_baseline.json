@@ -134,6 +134,12 @@
   {
     "path": "/api/artifacts/{artifact_id}",
     "methods": [
+      "DELETE"
+    ]
+  },
+  {
+    "path": "/api/artifacts/{artifact_id}",
+    "methods": [
       "GET"
     ]
   },
