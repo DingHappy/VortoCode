@@ -95,6 +95,11 @@ async def handle_agent_message(websocket, message: Dict[str, Any]):
     q: asyncio.Queue = asyncio.Queue()
 
     def agent_say(m):
+        try:                                  # 剥掉 Rich 标记，Web 端不显示 [b]/[dim] 等原文
+            from rich.text import Text as _Rt
+            m = _Rt.from_markup(str(m)).plain
+        except Exception:  # noqa: BLE001
+            pass
         q.put_nowait({"type": "agent_say", "text": m})
 
     def agent_emit(m):
