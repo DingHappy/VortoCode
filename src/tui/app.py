@@ -1406,7 +1406,22 @@ class VortoCodeTUI(App):
         import os
         native = os.getenv("VORTOCODE_NATIVE_TOOLS", "").lower() in ("1", "true", "yes", "on")
         return MainAgent(tools, extra_system=extra, native=native,
-                         on_tool=self._audit_tool, on_escalate=self._escalate_to_build)
+                         on_tool=self._audit_tool, on_escalate=self._escalate_to_build,
+                         on_plan=self._render_plan, plan_tool=True)
+
+    def _render_plan(self, plan: list) -> None:
+        """把主 agent 的任务清单渲染成一块带进度的可见面板（每次更新重渲，看着它推进）。"""
+        from src.agents.plan import plan_progress
+        done, total = plan_progress(plan)
+        styles = {"completed": ("✓", self._tc("text-success", "#7fce9a")),
+                  "in_progress": ("▸", self._tc("text-warning", "#f0b86e")),
+                  "pending": ("○", "dim")}
+        lines = [f"[b]📋 计划 · {done}/{total}[/b]"]
+        for p in plan:
+            glyph, color = styles.get(p.get("status"), ("○", "dim"))
+            step = p["step"].replace("[", r"\[")       # 防步骤文本里的方括号被当成标记
+            lines.append(f"  [{color}]{glyph}[/] {step}")
+        self._chrome("\n".join(lines))
 
     async def _escalate_to_build(self, name: str, args: dict) -> bool:
         """plan 模式下主 agent 想用写/重型工具时：问用户切不切 build，同意则切并继续。

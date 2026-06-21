@@ -144,12 +144,25 @@ class MainAgent:
         native: bool = False,
         on_tool: Optional[Callable[[str, dict, str], None]] = None,
         on_escalate: Optional[Callable[[str, dict], Awaitable[bool]]] = None,
+        on_plan: Optional[Callable[[list], None]] = None,
+        plan_tool: bool = False,
     ) -> None:
         import os
         self._tool_list = list(tools)
-        self.tools = {t.name: t for t in tools}
         self._llm = llm
         self.max_steps = int(os.getenv("VORTOCODE_MAX_STEPS") or max_steps)   # 可全局调高预算
+        # 持久任务清单：大任务的可见/可续骨架。注入系统提示让 agent 始终看得见进度；
+        # on_plan 给 UI 渲染。是后续"分解→并行实现→逐件验证"的地基。
+        self.plan: list[dict] = []
+        self._on_plan = on_plan
+        if plan_tool:
+            self._tool_list.append(Tool(
+                "update_plan",
+                "维护任务清单：把当前任务拆成有序步骤并标状态。开始一步标 in_progress、做完标 "
+                "completed。工程量大时务必先用它列计划、再逐步推进并更新（每次传完整列表）。",
+                {"steps": "步骤列表；每项 {step: 一句话, status: pending|in_progress|completed}"},
+                self._update_plan, read_only=True))
+        self.tools = {t.name: t for t in self._tool_list}
         self.max_history = max_history
         self.extra_system = extra_system       # 追加到系统提示（如技能目录、子 agent 角色）
         self._native = native                  # 原生 function-calling（失败自动回退提示式协议）
@@ -180,7 +193,23 @@ class MainAgent:
         )
         if self.extra_system:
             prompt += "\n\n" + self.extra_system
+        if self.plan:                          # 当前计划常驻系统提示：跨步/跨历史裁剪也不丢
+            from src.agents.plan import render_plan
+            prompt += ("\n\n【当前计划】(用 update_plan 维护：开始一步标 in_progress、做完标 completed)\n"
+                       + render_plan(self.plan))
         return prompt
+
+    async def _update_plan(self, args: dict) -> str:
+        """update_plan 工具：用模型给的步骤列表整体替换当前计划，渲染回灌 + 通知 UI。"""
+        from src.agents.plan import normalize_plan, render_plan
+        self.plan = normalize_plan(args.get("steps", args))
+        if self._on_plan:
+            try:
+                self._on_plan(self.plan)
+            except Exception:  # noqa: BLE001
+                pass
+        done = sum(1 for p in self.plan if p["status"] == "completed")
+        return f"计划已更新（{done}/{len(self.plan)} 完成）：\n{render_plan(self.plan)}"
 
     def _trimmed_history(self) -> list[dict]:
         if len(self.history) <= self.max_history:

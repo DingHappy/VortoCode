@@ -52,6 +52,12 @@
   #send:disabled { opacity: .5; cursor: default; }
   #send.stop { background: #b4433a; }       /* 忙时变「停止」红 */
   .hint { color: #6b7280; font-size: 12px; padding: 0 16px 8px; }
+  #plan { display: none; border-bottom: 1px solid #2a2e37; padding: 8px 16px; font-size: 13px; background: #171a21; }
+  #plan.show { display: block; }
+  #plan .head { color: #d7dae0; font-weight: 600; margin-bottom: 4px; }
+  #plan .row { color: #9aa3b2; padding: 1px 0; white-space: pre-wrap; }
+  #plan .row.done { color: #7fce9a; }
+  #plan .row.doing { color: #f0b86e; }
 </style>
 </head>
 <body>
@@ -61,6 +67,7 @@
     <span id="state" style="color:#7f8896">连接中…</span>
     <button id="mode" title="切换 plan(只读)/build(可写)">plan</button>
   </header>
+  <div id="plan"></div>
   <div id="log"></div>
   <div id="stream" class="msg"></div>
   <div class="hint">回车发送 · Shift+回车换行 · 运行中 Esc 或点「停止」中断 · plan 只读、build 才放开写/重型工具 · 需配 OPENAI_API_KEY</div>
@@ -214,6 +221,7 @@ function connect() {
     let m; try { m = JSON.parse(e.data); } catch { return; }
     switch (m.type) {
       case "agent_history": if (log.children.length === 0) renderHistory(m.items); break;  // 刷新/重连回放（空 log 才放，避免重复）
+      case "agent_plan":   renderPlan(m.items); break;   // 任务清单：原地替换面板（幂等，重连也恢复）
       case "agent_say":    toolLine(m.text); break;
       case "agent_stream": streamBuf = m.text; streamEl.textContent = streamBuf; log.scrollTop = log.scrollHeight; break;
       case "agent_emit":   endToolGroup(); streamBuf = ""; streamEl.textContent = ""; addHTML("emit", renderMarkdown(m.text)); break;
@@ -229,6 +237,25 @@ function renderHistory(items) {          // 回放之前的对话：用户行 + 
     if (it.role === "user") add("user", it.text);
     else addHTML("emit", renderMarkdown(it.text));
   });
+}
+
+function renderPlan(items) {             // 任务清单面板：原地重渲；步骤文本用 textContent，绝无 XSS
+  const el = $("#plan");
+  el.textContent = "";
+  if (!items || !items.length) { el.className = ""; return; }
+  const done = items.filter((p) => p.status === "completed").length;
+  const head = document.createElement("div");
+  head.className = "head"; head.textContent = "📋 计划 · " + done + "/" + items.length;
+  el.appendChild(head);
+  const glyph = { completed: "✓", in_progress: "▸", pending: "○" };
+  const cls = { completed: "done", in_progress: "doing", pending: "" };
+  items.forEach((p) => {
+    const row = document.createElement("div");
+    row.className = "row " + (cls[p.status] || "");
+    row.textContent = (glyph[p.status] || "○") + " " + p.step;
+    el.appendChild(row);
+  });
+  el.className = "show";
 }
 
 function cancelTurn() {                  // 「停止」：请求中断正在跑的回合
