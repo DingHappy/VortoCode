@@ -19,7 +19,8 @@ async def websocket_endpoint(websocket: WebSocket):
             "type": "init",
             "data": state.to_dict()
         })
-        
+        await _replay_history(websocket)        # 重连/刷新：回放该会话之前的对话
+
         # 监听消息
         while True:
             data = await websocket.receive_text()
@@ -31,14 +32,13 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
         _cancel_agent_turn(websocket)                  # 断开即中断在跑的回合
-        _WS_AGENTS.pop(id(websocket), None)
-        _WS_AGENT_TASKS.pop(id(websocket), None)
+        _WS_AGENT_TASKS.pop(_session_key(websocket), None)
+        # 保留 _SESSIONS[key]（agent + transcript）以便重连恢复；靠 _MAX_SESSIONS 淘汰
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         manager.disconnect(websocket)
         _cancel_agent_turn(websocket)
-        _WS_AGENTS.pop(id(websocket), None)
-        _WS_AGENT_TASKS.pop(id(websocket), None)
+        _WS_AGENT_TASKS.pop(_session_key(websocket), None)
 
 
 async def handle_websocket_message(websocket: WebSocket, message: Dict[str, Any]):
@@ -61,31 +61,76 @@ async def handle_websocket_message(websocket: WebSocket, message: Dict[str, Any]
         _cancel_agent_turn(websocket)
 
 
-# 每个 WebSocket 连接一个主 agent（含多轮上下文）；断开时清理
-_WS_AGENTS: Dict[int, Any] = {}
+# ---- 会话级持久化：按客户端 sid 让 agent 跨重连/刷新存活，另留一份干净的展示用 transcript ----
+# 以前 agent 按 id(websocket) 存活、断开即丢，刷新就重来。现在按 sid（前端 sessionStorage，
+# 刷新仍在）存活，重连后回放对话。靠 _MAX_SESSIONS 上限淘汰最久未活动者，防泄漏。
+_SESSIONS: Dict[str, Dict[str, Any]] = {}
+_MAX_SESSIONS = 50
+_MAX_TRANSCRIPT = 200
+
+
+def _session_key(websocket) -> str:
+    """稳定会话键：优先客户端 ?sid=（刷新仍在），否则退回连接 id（旧行为，单连接生命周期）。"""
+    try:
+        sid = websocket.query_params.get("sid")
+    except Exception:  # noqa: BLE001
+        sid = None
+    return f"sid-{sid}" if sid else f"ws-{id(websocket)}"
+
+
+def _new_agent():
+    import os
+    from src.agents.main_agent import MainAgent, build_read_tools
+    from src.web.artifacts import build_artifact_tools
+    # 制品(publish_artifact)是写工具：Web 无模态确认，靠 build 模式门控「人在关口」。
+    tools = build_read_tools(os.getcwd()) + build_artifact_tools(os.getcwd())
+    return MainAgent(tools)
+
+
+def _get_session(websocket) -> Dict[str, Any]:
+    """取/建该会话状态（agent + 展示 transcript + 活动时间）；超额淘汰最久未活动的。"""
+    import time
+    key = _session_key(websocket)
+    sess = _SESSIONS.get(key)
+    if sess is None:
+        if len(_SESSIONS) >= _MAX_SESSIONS:
+            oldest = min(_SESSIONS, key=lambda k: _SESSIONS[k]["last"])
+            _SESSIONS.pop(oldest, None)
+        sess = {"agent": _new_agent(), "transcript": [], "last": 0.0}
+        _SESSIONS[key] = sess
+    sess["last"] = time.monotonic()
+    return sess
 
 
 def _ws_agent(websocket):
-    key = id(websocket)
-    agent = _WS_AGENTS.get(key)
-    if agent is None:
-        import os
-        from src.agents.main_agent import MainAgent, build_read_tools
-        from src.web.artifacts import build_artifact_tools
-        # 制品(publish_artifact)是写工具：Web 无模态确认，靠 build 模式门控「人在关口」。
-        tools = build_read_tools(os.getcwd()) + build_artifact_tools(os.getcwd())
-        agent = MainAgent(tools)
-        _WS_AGENTS[key] = agent
-    return agent
+    return _get_session(websocket)["agent"]
 
 
-# 每个连接同时只跑一个回合；记下任务，供「停止」(agent_cancel)与断开时取消
-_WS_AGENT_TASKS: Dict[int, Any] = {}
+def _record(websocket, role: str, text: str) -> None:
+    """把一条用户输入/最终回复记进展示 transcript，供重连回放（截断防膨胀）。"""
+    sess = _SESSIONS.get(_session_key(websocket))
+    if sess is None:
+        return
+    t = sess["transcript"]
+    t.append({"role": role, "text": str(text)})
+    if len(t) > _MAX_TRANSCRIPT:
+        del t[:-_MAX_TRANSCRIPT]
+
+
+async def _replay_history(websocket) -> None:
+    """重连/刷新时把这个会话之前的对话回放给前端（init 之后调用）。"""
+    sess = _SESSIONS.get(_session_key(websocket))
+    if sess and sess["transcript"]:
+        await websocket.send_json({"type": "agent_history", "items": sess["transcript"]})
+
+
+# 每个会话同时只跑一个回合；记下任务，供「停止」(agent_cancel)与断开时取消
+_WS_AGENT_TASKS: Dict[str, Any] = {}
 
 
 def _cancel_agent_turn(websocket) -> bool:
-    """取消该连接正在跑的回合（若有）。返回是否真的发起了取消。"""
-    task = _WS_AGENT_TASKS.get(id(websocket))
+    """取消该会话正在跑的回合（若有）。返回是否真的发起了取消。"""
+    task = _WS_AGENT_TASKS.get(_session_key(websocket))
     if task is not None and not task.done():
         task.cancel()
         return True
@@ -107,13 +152,14 @@ async def handle_agent_message(websocket, message: Dict[str, Any]):
         await websocket.send_json({"type": "agent_done"})
         return
 
-    existing = _WS_AGENT_TASKS.get(id(websocket))
+    key = _session_key(websocket)
+    existing = _WS_AGENT_TASKS.get(key)
     if existing is not None and not existing.done():       # 不并发：上一条还在跑就提示
         await websocket.send_json({"type": "agent_error", "text": "上一条还在跑，先等它结束或点「停止」。"})
         return
 
     mode = message.get("mode", "plan")
-    _WS_AGENT_TASKS[id(websocket)] = asyncio.create_task(
+    _WS_AGENT_TASKS[key] = asyncio.create_task(
         _run_agent_turn(websocket, text, mode))
 
 
@@ -125,7 +171,8 @@ async def _run_agent_turn(websocket, text: str, mode: str):
     """
     import contextlib
 
-    agent = _ws_agent(websocket)
+    agent = _ws_agent(websocket)              # 确保会话存在
+    _record(websocket, "user", text)          # 记进展示历史，供重连回放
     q: asyncio.Queue = asyncio.Queue()
 
     def agent_say(m):
@@ -137,6 +184,7 @@ async def _run_agent_turn(websocket, text: str, mode: str):
         q.put_nowait({"type": "agent_say", "text": m})
 
     def agent_emit(m):
+        _record(websocket, "assistant", m)    # 最终回复进展示历史
         q.put_nowait({"type": "agent_emit", "text": m})
 
     def agent_stream(p):
@@ -171,5 +219,6 @@ async def _run_agent_turn(websocket, text: str, mode: str):
             await websocket.send_json({"type": "agent_cancelled", "text": "已中断"})
         # 故意吞掉 CancelledError：这是一次性后台任务，优雅收尾即可
     finally:
-        if _WS_AGENT_TASKS.get(id(websocket)) is asyncio.current_task():
-            _WS_AGENT_TASKS.pop(id(websocket), None)
+        key = _session_key(websocket)
+        if _WS_AGENT_TASKS.get(key) is asyncio.current_task():
+            _WS_AGENT_TASKS.pop(key, None)

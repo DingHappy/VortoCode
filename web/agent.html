@@ -182,10 +182,22 @@ function renderMarkdown(src) {
   return out.join("\n").replace(/\u0000B(\d+)\u0000/g, (_, n) => blocks[Number(n)]);  // 还原代码块
 }
 
+function sessionId() {       // 每标签页一个稳定 sid（刷新仍在）→ 服务端据此让会话跨重连/刷新存活
+  let sid = sessionStorage.getItem("vorto_sid");
+  if (!sid) {
+    sid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
+        : "s" + Date.now().toString(36) + Math.random().toString(36).slice(2);
+    sessionStorage.setItem("vorto_sid", sid);
+  }
+  return sid;
+}
+
 function connect() {
   const token = new URLSearchParams(location.search).get("token");
-  const url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host +
-              "/ws" + (token ? "?token=" + encodeURIComponent(token) : "");
+  const qs = new URLSearchParams();
+  if (token) qs.set("token", token);
+  qs.set("sid", sessionId());
+  const url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws?" + qs.toString();
   ws = new WebSocket(url);
   ws.onopen = () => {
     reconnectAttempts = 0;                           // 连上即重置退避
@@ -194,13 +206,14 @@ function connect() {
   };
   ws.onclose = () => {
     setBusy(false);
-    endToolGroup(); streamBuf = ""; streamEl.textContent = "";   // 清掉半截回合（重连后是全新上下文）
+    endToolGroup(); streamBuf = ""; streamEl.textContent = "";   // 清掉半截回合（断线已中断在跑的回合）
     scheduleReconnect();
   };
   ws.onerror = () => { stateEl.textContent = "连接错误"; stateEl.style.color = "#f08a8a"; };
   ws.onmessage = (e) => {
     let m; try { m = JSON.parse(e.data); } catch { return; }
     switch (m.type) {
+      case "agent_history": if (log.children.length === 0) renderHistory(m.items); break;  // 刷新/重连回放（空 log 才放，避免重复）
       case "agent_say":    toolLine(m.text); break;
       case "agent_stream": streamBuf = m.text; streamEl.textContent = streamBuf; log.scrollTop = log.scrollHeight; break;
       case "agent_emit":   endToolGroup(); streamBuf = ""; streamEl.textContent = ""; addHTML("emit", renderMarkdown(m.text)); break;
@@ -209,6 +222,13 @@ function connect() {
       case "agent_cancelled": endToolGroup(); streamBuf = ""; streamEl.textContent = ""; add("say", "⏹ 已中断"); setBusy(false); break;
     }
   };
+}
+
+function renderHistory(items) {          // 回放之前的对话：用户行 + 最终回复（markdown）
+  (items || []).forEach((it) => {
+    if (it.role === "user") add("user", it.text);
+    else addHTML("emit", renderMarkdown(it.text));
+  });
 }
 
 function cancelTurn() {                  // 「停止」：请求中断正在跑的回合
