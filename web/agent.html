@@ -71,6 +71,16 @@
 const $ = (s) => document.querySelector(s);
 const log = $("#log"), streamEl = $("#stream"), stateEl = $("#state");
 let mode = "plan", busy = false, ws = null, streamBuf = "";
+let reconnectAttempts = 0, reconnectTimer = null;
+
+// 断线自动重连：指数退避 0.8s→1.6→3.2→6.4→12.8→封顶15s（纯函数，便于测试）
+function backoffDelay(n) { return Math.min(15000, 800 * Math.pow(2, n)); }
+function scheduleReconnect() {
+  if (reconnectTimer) return;                       // 已排队就不重复排
+  const delay = backoffDelay(reconnectAttempts++);
+  stateEl.textContent = "重连中…"; stateEl.style.color = "#f0b86e";
+  reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, delay);
+}
 
 function add(cls, text) {
   const d = document.createElement("div");
@@ -171,8 +181,16 @@ function connect() {
   const url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host +
               "/ws" + (token ? "?token=" + encodeURIComponent(token) : "");
   ws = new WebSocket(url);
-  ws.onopen = () => { stateEl.textContent = "已连接"; stateEl.style.color = "#7fce9a"; };
-  ws.onclose = () => { stateEl.textContent = "已断开"; stateEl.style.color = "#f08a8a"; setBusy(false); };
+  ws.onopen = () => {
+    reconnectAttempts = 0;                           // 连上即重置退避
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+    stateEl.textContent = "已连接"; stateEl.style.color = "#7fce9a";
+  };
+  ws.onclose = () => {
+    setBusy(false);
+    endToolGroup(); streamBuf = ""; streamEl.textContent = "";   // 清掉半截回合（重连后是全新上下文）
+    scheduleReconnect();
+  };
   ws.onerror = () => { stateEl.textContent = "连接错误"; stateEl.style.color = "#f08a8a"; };
   ws.onmessage = (e) => {
     let m; try { m = JSON.parse(e.data); } catch { return; }
