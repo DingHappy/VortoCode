@@ -58,6 +58,13 @@
   #plan .row { color: #9aa3b2; padding: 1px 0; white-space: pre-wrap; }
   #plan .row.done { color: #7fce9a; }
   #plan .row.doing { color: #f0b86e; }
+  .confirm { border: 1px solid #3a4150; border-left: 3px solid #f0b86e; border-radius: 8px; padding: 10px 12px; background: #1b1f27; }
+  .confirm .cmsg { color: #e8eaed; white-space: pre-wrap; margin-bottom: 8px; }
+  .confirm .crow { display: flex; gap: 8px; }
+  .confirm button { border: 0; border-radius: 6px; padding: 4px 14px; cursor: pointer; font: inherit; }
+  .confirm .cyes { background: #2f6feb; color: #fff; }
+  .confirm .cno { background: #2a2e37; color: #d7dae0; }
+  .confirm button:disabled { opacity: .5; cursor: default; }
 </style>
 </head>
 <body>
@@ -228,8 +235,28 @@ function connect() {
       case "agent_error":  endToolGroup(); add("err", "出错: " + m.text); setBusy(false); break;
       case "agent_done":   endToolGroup(); streamBuf = ""; streamEl.textContent = ""; setBusy(false); break;
       case "agent_cancelled": endToolGroup(); streamBuf = ""; streamEl.textContent = ""; add("say", "⏹ 已中断"); setBusy(false); break;
+      case "agent_confirm": renderConfirm(m.id, m.text); break;   // 工具请求确认：弹允许/拒绝
     }
   };
+}
+
+function renderConfirm(id, text) {       // 确认块：消息 + 允许/拒绝；点一下即回应、按钮失效
+    const box = document.createElement("div");
+    box.className = "msg confirm";
+    const msg = document.createElement("div");
+    msg.className = "cmsg"; msg.textContent = "需要确认：" + text;   // textContent → 安全
+    box.appendChild(msg);
+    const row = document.createElement("div"); row.className = "crow";
+    const reply = (ok) => {
+      if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "agent_confirm_response", id, ok }));
+      row.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+      msg.textContent += ok ? "  → 已允许" : "  → 已拒绝";
+    };
+    const yes = document.createElement("button"); yes.className = "cyes"; yes.textContent = "允许";
+    const no = document.createElement("button"); no.className = "cno"; no.textContent = "拒绝";
+    yes.onclick = () => reply(true); no.onclick = () => reply(false);
+    row.appendChild(yes); row.appendChild(no); box.appendChild(row);
+    log.appendChild(box); log.scrollTop = log.scrollHeight;
 }
 
 function renderHistory(items) {          // 回放之前的对话：用户行 + 最终回复（markdown）
