@@ -1296,8 +1296,10 @@ class VortoCodeTUI(App):
                 applied = ""
                 if await self._confirm_write(
                         f"测试已过。把这块改动应用到新分支 {branch}？（不碰 main / 当前工作区）"):
+                    import asyncio
                     from src.agents.worktree import apply_diff_to_branch
-                    res = apply_diff_to_branch(self.repo_root, branch, diff, f"dev_isolated: {desc}")
+                    res = await asyncio.to_thread(
+                        apply_diff_to_branch, self.repo_root, branch, diff, f"dev_isolated: {desc}")
                     if res["ok"]:
                         self._chrome(f"[{self._tc('text-success', '#7fce9a')}]✅ 已应用到分支 "
                                      f"[b]{branch}[/b]（git checkout {branch} 查看，仍未碰 main）[/]")
@@ -1314,6 +1316,73 @@ class VortoCodeTUI(App):
                 self._chrome(f"[dim]{tail.replace('[', chr(92) + '[')}[/dim]")   # 转义 [ 防当成标记
             return (f"❌ 隔离实现完成但测试未过（{cmd}）。失败输出尾部：\n{tail}\n"
                     f"请据此修正后重试（再调 dev_isolated）。diff {nlines} 行，未并入。结论：{conclusion}")
+
+        async def _t_dev_parallel(args: dict) -> str:
+            """并行实现：多个相互独立的子任务各起一个隔离 worktree 同时实现+验证（互不冲突），
+            汇总各自 ✅/❌；通过的可一并应用到一个新分支待人工确认。"""
+            tasks = args.get("tasks") or args.get("descriptions") or []
+            if isinstance(tasks, str):
+                tasks = [tasks]
+            tasks = [str(t).strip() for t in tasks if str(t).strip()][:5]   # 最多 5，防失控
+            if not tasks:
+                return "dev_parallel 需要 tasks（相互独立的子任务字符串列表）。"
+            import asyncio
+            import sys
+            import uuid
+            from src.agents.worktree import run_isolated_task, apply_diffs_to_branch
+            from src.agents.main_agent import build_read_tools, build_write_tools
+            sel = str(args.get("test") or "").strip()
+            test_cmd = [sys.executable, "-m", "pytest", "-q", sel or "tests/"]
+            self._chrome(f"[magenta]🧪 并行隔离实现（{len(tasks)}）—— 各自独立 worktree、互不冲突[/magenta]")
+
+            async def _one(desc):
+                wid = "wt-" + uuid.uuid4().hex[:8]
+
+                def _b(wt):
+                    return MainAgent(
+                        build_read_tools(wt) + build_write_tools(wt), max_steps=12,
+                        on_tool=self._audit_tool,
+                        extra_system=("你是隔离工作区里的实现子 agent：用 read/grep 看代码、用 edit_file/"
+                                      "write_file 实现任务，完成后一两句说明改了什么。只动相关文件。"))
+                try:
+                    diff, conclusion, ver = await run_isolated_task(self.repo_root, wid, desc, _b, test_cmd=test_cmd)
+                    return {"desc": desc, "diff": diff, "conclusion": conclusion, "ver": ver, "error": None}
+                except Exception as e:  # noqa: BLE001
+                    return {"desc": desc, "diff": "", "conclusion": "", "ver": None, "error": str(e)}
+
+            results = await asyncio.gather(*[_one(t) for t in tasks])
+
+            greens = []
+            for r in results:
+                head = f"[b]· {r['desc']}[/b]"
+                if r["error"]:
+                    self._chrome(f"{head} [{self._tc('text-error', '#f08a8a')}](出错: {r['error']})[/]")
+                elif not (r["diff"] or "").strip():
+                    self._chrome(f"{head} [dim](无改动)[/dim]")
+                elif r["ver"] and r["ver"]["ok"]:
+                    self._chrome(f"{head} [{self._tc('text-success', '#7fce9a')}]✅ 通过[/]"
+                                 f"[dim]（{r['diff'].count(chr(10))} 行）[/dim]")
+                    greens.append(r)
+                else:
+                    self._chrome(f"{head} [{self._tc('text-error', '#f08a8a')}]❌ 未过[/]"
+                                 f"[dim]（{r['diff'].count(chr(10))} 行）[/dim]")
+
+            if not greens:
+                return f"并行 {len(tasks)} 个子任务完成；没有通过测试、可应用的改动。"
+            branch = "vorto/parallel-" + uuid.uuid4().hex[:8]
+            note = "（未应用，diff 仅展示）"
+            if await self._confirm_write(
+                    f"{len(greens)} 个子任务测试通过。把它们都应用到新分支 {branch}？（不碰 main / 当前工作区）"):
+                items = [(g["diff"], f"dev_parallel: {g['desc']}") for g in greens]
+                res = await asyncio.to_thread(apply_diffs_to_branch, self.repo_root, branch, items)
+                if res["applied"]:
+                    self._chrome(f"[{self._tc('text-success', '#7fce9a')}]✅ 已应用 {len(res['applied'])} 块到分支 "
+                                 f"[b]{branch}[/b]（git checkout {branch} 查看）[/]")
+                    note = f"，{len(res['applied'])}/{len(greens)} 块已应用到 {branch}"
+                if res["failed"]:
+                    self._chrome(f"[{self._tc('text-warning', '#f0b86e')}]{len(res['failed'])} 块未能干净应用"
+                                 f"（可能互相冲突），已跳过[/]")
+            return f"并行 {len(tasks)} 个子任务：{len(greens)} 通过测试{note}。"
 
         # 只读工具：plan 也能用；也是子 agent 的工具集（无 task/写工具 → 不嵌套、不改文件）
         read_tools = [
@@ -1446,6 +1515,13 @@ class VortoCodeTUI(App):
                  {"description": "要在隔离工作区实现的子任务",
                   "test": "可选，pytest 选择器(如 tests/unit/test_x.py)，省略则跑全量 tests/"},
                  _t_dev_isolated, read_only=False),
+            Tool("dev_parallel",
+                 "并行实现：多个**相互独立**的子任务各起一个隔离 worktree 同时实现+验证（互不冲突），"
+                 "汇总各自 ✅/❌；通过的可一并应用到一个新分支待确认。把计划里独立的步骤一次交给它"
+                 "（最多 5 个，仅 build）",
+                 {"tasks": "相互独立的子任务字符串列表",
+                  "test": "可选，pytest 选择器，省略则各自跑全量 tests/"},
+                 _t_dev_parallel, read_only=False),
         ]
 
         # 制品（artifact）：把会话产出发布成可分享、实时更新的网页（由 Web 服务器在 /artifact 渲染）。
