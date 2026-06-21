@@ -315,3 +315,46 @@ async def test_native_falls_back_to_prompted_on_error():
     await agent.run_turn("hi", mode="plan", say=say, emit=emit)
     assert agent._native is False                 # 已永久回退提示式
     assert out["emit"] == ["回退后回复。"]
+
+
+@pytest.mark.asyncio
+async def test_plan_escalation_runs_write_tool_when_accepted():
+    ran = []
+
+    async def w_handler(args):
+        ran.append(1)
+        return "wrote"
+
+    escalated = []
+
+    async def on_escalate(name, args):
+        escalated.append(name)
+        return True                               # 用户同意切 build 并继续
+
+    w = Tool("w", "写工具", {}, w_handler, read_only=False)
+    agent = MainAgent([w], llm=ScriptedLLM('{"tool":"w","args":{}}', "做完了。"),
+                      on_escalate=on_escalate)
+    out, say, emit = _capture()
+    await agent.run_turn("动手", mode="plan", say=say, emit=emit)
+    assert escalated == ["w"] and ran == [1]      # 问了升级、且执行了写工具
+    assert out["emit"] == ["做完了。"]
+
+
+@pytest.mark.asyncio
+async def test_plan_escalation_refused_blocks_write_tool():
+    ran = []
+
+    async def w_handler(args):
+        ran.append(1)
+        return "wrote"
+
+    async def on_escalate(name, args):
+        return False                              # 用户拒绝切 build
+
+    w = Tool("w", "写工具", {}, w_handler, read_only=False)
+    agent = MainAgent([w], llm=ScriptedLLM('{"tool":"w","args":{}}', "那先不动。"),
+                      on_escalate=on_escalate)
+    out, say, emit = _capture()
+    await agent.run_turn("动手", mode="plan", say=say, emit=emit)
+    assert ran == []                              # 拒绝 → 没执行写工具
+    assert any("plan 模式下不可用" in m["content"] for m in agent.history)
