@@ -31,7 +31,7 @@ from src.memory.session_store import SessionManager
 
 SLASH_COMMANDS = [
     "/analyze", "/improve", "/fix", "/run", "/agents", "/runagent", "/skills", "/mcp",
-    "/artifacts", "/sessions", "/resume", "/new", "/mode", "/usage", "/tools", "/audit",
+    "/artifacts", "/diff", "/sessions", "/resume", "/new", "/mode", "/usage", "/tools", "/audit",
     "/clear", "/help", "/quit",
 ]
 # 命令 → 一句话说明（命令补全面板用，让 / 命令可发现、可补全）
@@ -45,6 +45,7 @@ COMMAND_INFO = {
     "/skills": "列出 SKILL.md 技能（reload 重扫）",
     "/mcp": "接入 MCP 服务器工具（build 门控）",
     "/artifacts": "列出已发布的制品（画廊在 /artifacts）",
+    "/diff": "看工作区改动（git diff，着色）",
     "/sessions": "列出历史会话",
     "/resume": "恢复某个历史会话",
     "/new": "新开一个会话",
@@ -65,7 +66,7 @@ _SPIN_VERBS = ["思考中", "琢磨中", "检索中", "运转中", "推敲中"]
 _AGENTS_DB = lambda root: str(Path(root) / ".vortocode" / "web_advanced_agents.json")
 
 HELP = """可用命令:
-  直接输入自然语言   和主 agent 对话：答疑/读代码/扫描仓库，需要时调起 dev→test→review 开发（仅 build；/run 可强制）；@文件 带入上下文
+  直接输入自然语言   和主 agent 对话：答疑/读代码/扫描仓库，需要时调起 dev→test→review 开发（仅 build；/run 可强制）；@文件 / @artifact:<id> 带入上下文
   /analyze            L1 自分析（只读扫描本仓库，无需 LLM key）
   /improve            L2 给测试缺口生成测试（需 key；build 模式下才写分支）
   /fix <文件,...>     L2.2 深审并外科修复指定文件（需 key；build 模式下才写分支）
@@ -74,6 +75,7 @@ HELP = """可用命令:
   /tools              列出主 agent 可用工具及其读写权限
   /audit              查看工具调用审计日志（.vortocode/audit.log）
   /artifacts          列出已发布的制品（标题/版本/链接；浏览器开 /artifacts 是画廊）
+  /diff               看工作区改动（git diff，+绿/-红着色）—— review 主 agent 改了什么
   /mcp [list|off]     接入 config/mcp.yaml 的 MCP 服务器工具（build 门控）
   /agents             列出已创建的 agent（网页/API 建的，同一份存储）
   /runagent <id> <任务>  用某个已创建的 agent 执行任务（流式）
@@ -85,8 +87,8 @@ HELP = """可用命令:
   /clear              清屏
   /help               显示本帮助
   /quit               退出（也可 Ctrl+C）
-键位: Tab=补全命令/切模式  Esc=取消  Ctrl+L=清屏  Ctrl+C=退出
-补全: 输入 / 即在上方列出命令并高亮首选，Tab 或 → 接受；@ 补全文件（→ 接受）"""
+键位: Tab=补全/切模式  ↑↓=翻输入历史  Esc=取消  Ctrl+L=清屏  Ctrl+C=退出
+补全: 输入 / 列命令、@ 列文件，上方面板高亮首选，Tab 或 → 接受；继续输入可筛选"""
 
 _IGNORE = {"__pycache__", ".git", ".venv", "venv"}
 
@@ -141,6 +143,7 @@ class ConfirmScreen(ModalScreen[bool]):
     """
     BINDINGS = [
         Binding("y", "yes", "确认"),
+        Binding("a", "always", "始终允许"),
         Binding("n", "no", "取消"),
         Binding("escape", "no", "取消"),
     ]
@@ -152,9 +155,17 @@ class ConfirmScreen(ModalScreen[bool]):
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
             yield Static(self._message, id="confirm-msg")
-            yield Static("[y] 确认    [n]/Esc 取消", id="confirm-hint")
+            yield Static("[y] 确认    [a] 本会话始终允许    [n]/Esc 取消", id="confirm-hint")
 
     def action_yes(self) -> None:
+        self.dismiss(True)
+
+    def action_always(self) -> None:
+        """本会话内后续写操作不再逐个确认（对齐 Claude Code 的 Always allow）。"""
+        try:
+            self.app._allow_writes_session = True
+        except Exception:  # noqa: BLE001
+            pass
         self.dismiss(True)
 
     def action_no(self) -> None:
@@ -178,7 +189,9 @@ class VortoCodeTUI(App):
     BINDINGS = [
         Binding("ctrl+c", "quit", "退出", priority=True),
         Binding("escape", "cancel", "取消"),
-        Binding("tab", "toggle_mode", "切模式"),
+        Binding("tab", "toggle_mode", "补全/切模式"),
+        Binding("up", "history_prev", "上一条", show=False),
+        Binding("down", "history_next", "下一条", show=False),
         Binding("ctrl+l", "clear_log", "清屏"),
     ]
 
@@ -199,6 +212,10 @@ class VortoCodeTUI(App):
         self._spin_i = 0                    # 工作指示器：帧/计时/定时器
         self._busy_since = 0.0
         self._spin_timer = None
+        self._history: list[str] = []       # 提交过的输入（↑/↓ 调出，仿 shell；跨会话持久化）
+        self._history_idx: int | None = None
+        self._history_draft = ""            # 进入历史浏览前的草稿，↓ 到底恢复
+        self._allow_writes_session = False  # 本会话"始终允许"写操作（ConfirmScreen 的 [a]）
 
     # ---------------------------------------------------------------- 布局
     def compose(self) -> ComposeResult:
@@ -214,11 +231,12 @@ class VortoCodeTUI(App):
     def on_mount(self) -> None:
         from src.llm.client import reset_usage
         reset_usage()                       # 每个会话从零计量
+        self._load_history()                # 跨会话输入历史（↑/↓ 可调出上次的）
         self.query_one("#stream", Static).display = False
         self.query_one("#status", Static).display = False
         self.query_one("#palette", Static).display = False
         self._chrome("[b]VortoCode[/b] 交互模式 · 直接提问或说需求，[b]/help[/b] 看命令")
-        self._chrome("[dim]输入 / 看命令补全 · Tab/→ 接受 · /sessions 历史 · /resume 恢复 · /new 新开[/dim]")
+        self._chrome("[dim]输入 / 或 @ 看补全 · Tab/→ 接受 · ↑↓ 翻历史 · /sessions /resume /new[/dim]")
         self._sync_subtitle()
         self.session_id = self.sessions.start_session()
         self._persist_on = True            # 之后的对话才落盘（不存开场白）
@@ -276,12 +294,13 @@ class VortoCodeTUI(App):
         desc = "只读/提案" if self.mode == "plan" else "可写分支"
         sid = f" · 会话 {self.session_id}" if self.session_id else ""
         busy = " · ⏳运行中(Esc 取消)" if self._busy else ""
+        allow = " · 写:始终允许✓" if self._allow_writes_session else ""
         from src.llm.client import get_usage
         u = get_usage()
         tot = u["total_tokens"]
         tok = (f" · ~{tot // 1000}k tok/{u['calls']}call" if tot >= 1000
                else f" · ~{tot} tok/{u['calls']}call") if u["calls"] else ""
-        self.sub_title = f"模式 {self.mode}（{desc}）{sid}{busy}{tok}"
+        self.sub_title = f"模式 {self.mode}（{desc}）{sid}{busy}{allow}{tok}"
 
     # 集中管理忙碌态：动作 worker 一进入运行就置忙、结束(成功/失败/取消)即解除
     def on_worker_state_changed(self, event) -> None:
@@ -332,18 +351,90 @@ class VortoCodeTUI(App):
 
     # ---------------------------------------------------------------- 键位动作
     def action_toggle_mode(self) -> None:
-        # Tab 上下文化：正在敲 / 命令且能补全 → 补全到首个匹配；否则切 plan/build 模式。
-        inp = self.query_one("#prompt", Input)
-        v = inp.value
+        # Tab 上下文化：在敲 / 命令或 @文件且能补全 → 补全到首个匹配；否则切 plan/build 模式。
+        v = self.query_one("#prompt", Input).value
         if v.startswith("/") and " " not in v:
             matches = [c for c in SLASH_COMMANDS if c.startswith(v.lower())]
             if matches and matches[0].lower() != v.lower():
-                inp.value = matches[0]
-                inp.cursor_position = len(inp.value)
+                self._set_input(matches[0])
+                return
+        at = v.rfind("@")
+        if at != -1 and " " not in v[at:] and ":" not in v[at:]:
+            tl = v[at + 1:].lower()
+            files = _repo_files(self.repo_root)
+            cand = (next((f for f in files if f.lower().startswith(tl)), None)
+                    or next((f for f in files if tl in f.lower()), None))
+            if cand and v[at + 1:] != cand:
+                self._set_input(v[:at + 1] + cand)
                 return
         self.mode = "build" if self.mode == "plan" else "plan"
         self._sync_subtitle()
         self._chrome(f"→ 切到 [b]{self.mode}[/b] 模式")
+
+    def _set_input(self, val: str) -> None:
+        inp = self.query_one("#prompt", Input)
+        inp.value = val
+        inp.cursor_position = len(val)
+
+    async def _confirm_write(self, message: str) -> bool:
+        """写操作确认门：本会话已选"始终允许"则直接放行，否则弹 ConfirmScreen。
+
+        统一所有写工具(edit/write/save_skill/制品/分支)的确认，支持 [a] 始终允许（仿 CC）。
+        """
+        if self._allow_writes_session:
+            return True
+        return await self.push_screen_wait(ConfirmScreen(message))
+
+    def action_history_prev(self) -> None:
+        """↑：调出上一条历史输入（编辑过则当作新输入，从末尾重新起）。"""
+        if not self._history:
+            return
+        inp = self.query_one("#prompt", Input)
+        if self._history_idx is not None and inp.value != self._history[self._history_idx]:
+            self._history_idx = None
+        if self._history_idx is None:
+            self._history_draft = inp.value
+            self._history_idx = len(self._history)
+        if self._history_idx > 0:
+            self._history_idx -= 1
+            self._set_input(self._history[self._history_idx])
+
+    def action_history_next(self) -> None:
+        """↓：回到下一条历史；到底则恢复草稿。"""
+        if self._history_idx is None:
+            return
+        inp = self.query_one("#prompt", Input)
+        if inp.value != self._history[self._history_idx]:
+            self._history_idx = None
+            return
+        if self._history_idx < len(self._history) - 1:
+            self._history_idx += 1
+            self._set_input(self._history[self._history_idx])
+        else:
+            self._history_idx = None
+            self._set_input(self._history_draft)
+
+    def _history_file(self) -> Path:
+        return Path(self.repo_root) / ".vortocode" / "tui_history"
+
+    def _load_history(self) -> None:
+        """启动时载入跨会话输入历史（取尾部 200 条）。失败不影响。"""
+        try:
+            p = self._history_file()
+            if p.is_file():
+                self._history = [ln for ln in p.read_text(encoding="utf-8").splitlines() if ln][-200:]
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _append_history(self, text: str) -> None:
+        """把一条提交追加到历史文件（单行；跨会话持久）。失败不影响。"""
+        try:
+            p = self._history_file()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            with p.open("a", encoding="utf-8") as f:
+                f.write(text.replace("\n", " ") + "\n")
+        except Exception:  # noqa: BLE001
+            pass
 
     def action_clear_log(self) -> None:
         self.query_one("#log", RichLog).clear()
@@ -353,8 +444,12 @@ class VortoCodeTUI(App):
         text = event.value.strip()
         self.query_one("#prompt", Input).value = ""
         self.query_one("#palette", Static).display = False
+        self._history_idx = None                # 提交后退出历史浏览
         if not text:
             return
+        if not self._history or self._history[-1] != text:
+            self._history.append(text)          # 记入输入历史（去重相邻）
+            self._append_history(text)          # 跨会话持久化
         self._say_user(text)
         if text.startswith("/"):
             self._dispatch(text)
@@ -368,26 +463,36 @@ class VortoCodeTUI(App):
         self._update_palette(event.value)
 
     def _update_palette(self, value: str) -> None:
-        """输入框上方列出匹配的 / 命令 + 说明，高亮首选（Tab/→ 接受）。非 / 输入则隐藏。"""
-        palette = self.query_one("#palette", Static)
-        v = value.strip()
-        if not (v.startswith("/") and " " not in v):
-            palette.display = False
-            return
-        vl = v.lower()
-        matches = [c for c in SLASH_COMMANDS if c.startswith(vl)]
-        if not matches:
-            palette.display = False
-            return
+        """输入框上方列出补全候选、高亮首选（Tab/→ 接受）：/ → 命令；@ → 仓库文件。否则隐藏。"""
+        s = value.strip()
+        if s.startswith("/") and " " not in s:                 # 斜杠命令
+            vl = s.lower()
+            matches = [c for c in SLASH_COMMANDS if c.startswith(vl)]
+            if matches:
+                self._render_palette([(c, COMMAND_INFO.get(c, "")) for c in matches], "命令")
+                return
+        at = value.rfind("@")                                  # @文件（非 @artifact: 这种带冒号的）
+        if at != -1:
+            token = value[at + 1:]
+            if " " not in token and ":" not in token:
+                tl = token.lower()
+                files = _repo_files(self.repo_root)
+                hits = ([f for f in files if f.lower().startswith(tl)]
+                        or [f for f in files if tl in f.lower()])
+                if hits:
+                    self._render_palette([(f, "") for f in hits[:8]], "文件")
+                    return
+        self.query_one("#palette", Static).display = False
+
+    def _render_palette(self, items: list, kind: str) -> None:
+        """渲染补全面板：items=[(text, desc)]，首项高亮（= Tab/→ 接受目标）。"""
         rows = []
-        for i, c in enumerate(matches[:8]):
-            desc = COMMAND_INFO.get(c, "")
-            if i == 0:                       # 首选：会被 Tab/→ 接受，高亮
-                rows.append(f"[b #8ab4f8]›[/] [b]{c}[/b]  [dim]{desc}[/dim]")
-            else:
-                rows.append(f"  {c}  [dim]{desc}[/dim]")
-        more = f" · +{len(matches) - 8} 更多" if len(matches) > 8 else ""
-        rows.append(f"[dim]Tab/→ 接受首选 · 继续输入筛选{more}[/dim]")
+        for i, (txt, desc) in enumerate(items[:8]):
+            d = f"  [dim]{desc}[/dim]" if desc else ""
+            rows.append(f"[b #8ab4f8]›[/] [b]{txt}[/b]{d}" if i == 0 else f"  {txt}{d}")
+        more = f" · +{len(items) - 8} 更多" if len(items) > 8 else ""
+        rows.append(f"[dim]{kind}补全 · Tab/→ 接受首选 · 继续输入筛选{more}[/dim]")
+        palette = self.query_one("#palette", Static)
         palette.update(Text.from_markup("\n".join(rows)))
         palette.display = True
 
@@ -439,6 +544,8 @@ class VortoCodeTUI(App):
             self._cmd_audit(arg)
         elif cmd == "artifacts":
             self._cmd_artifacts()
+        elif cmd == "diff":
+            self._cmd_diff()
         elif cmd == "mcp":
             self._cmd_mcp(arg)
         elif cmd == "agents":
@@ -498,7 +605,24 @@ class VortoCodeTUI(App):
         for m in items:
             lines.append(f"  {m['title']} [v{m['version']} · {m.get('kind', 'html')}] "
                          f"— {artifact_url(None, m['id'])}")
+        lines.append("提示：对话里 @artifact:<id> 可把某制品当前内容带给主 agent 迭代。")
         self._emit("\n".join(lines))
+
+    def _cmd_diff(self) -> None:
+        """/diff：把工作区改动（git diff）着色渲染出来，方便 review 主 agent 改了什么。"""
+        import subprocess
+        try:
+            r = subprocess.run(["git", "diff"], cwd=self.repo_root,
+                               capture_output=True, text=True, timeout=15)
+        except Exception as e:  # noqa: BLE001
+            self._emit(f"git diff 失败: {e}（不是 git 仓库？）")
+            return
+        diff = r.stdout or ""
+        if not diff.strip():
+            self._emit("(工作区无未提交改动；git diff 为空)")
+            return
+        self._chrome("[dim]工作区改动（git diff）:[/dim]")
+        self._render_diff_text(diff, max_lines=400)
 
     # ---------------------------------------------------------------- MCP 工具接入
     def _wrap_mcp_tools(self) -> list:
@@ -669,6 +793,7 @@ class VortoCodeTUI(App):
         from src.llm.client import reset_usage
         self.session_id = self.sessions.start_session()
         self.agent = None                   # 新会话 = 全新 agent 上下文
+        self._allow_writes_session = False  # "始终允许"也随新会话复位
         reset_usage()                       # 用量也清零
         self.query_one("#log", RichLog).clear()
         self.transcript.clear()
@@ -735,6 +860,22 @@ class VortoCodeTUI(App):
                         sym_index.setdefault(n.name, []).append(f"{f}:{n.location.line}  {head}{doc0}")
             return sym_index
 
+        def repl_artifact(m: "re.Match") -> str:
+            aid = m.group(1)
+            try:
+                from src.web.artifacts import ArtifactStore
+                store = ArtifactStore(self.repo_root)
+                meta = store.meta(aid)
+                content = store.html(aid)
+            except Exception:  # noqa: BLE001
+                return m.group(0)
+            if not meta or content is None:
+                return m.group(0)                       # 没这个制品 → 原样保留
+            parts.append(
+                f"# 制品 {aid}（{meta.get('title', '')}, v{meta.get('version')}, "
+                f"{meta.get('kind', 'html')}）的当前内容\n{content[:3000]}")
+            return f"制品[{aid}]"
+
         def repl(m: "re.Match") -> str:
             ref = m.group(1)
             p = base / ref
@@ -756,7 +897,9 @@ class VortoCodeTUI(App):
                     return ref
             return m.group(0)
 
-        clean = re.sub(r"@([\w./一-鿿-]+)", repl, text)
+        # 先处理 @artifact:<id>（含 ':'，一般 @ 规则匹配不到），再处理 @文件/@目录/@符号
+        clean = re.sub(r"@artifact:([A-Za-z0-9_-]+)", repl_artifact, text)
+        clean = re.sub(r"@([\w./一-鿿-]+)", repl, clean)
         return clean, "\n\n".join(parts)
 
     def _read_files(self, rels: list[str]) -> str:
@@ -773,8 +916,8 @@ class VortoCodeTUI(App):
     async def _confirm_apply(self, loop, result, what: str) -> None:
         """build 模式下，写分支前弹确认；确认才 apply。"""
         n = len(result.accepted)
-        ok = await self.push_screen_wait(
-            ConfirmScreen(f"build 模式：把 {n} 项{what}写入一个新分支？（不会碰 main）")
+        ok = await self._confirm_write(
+            f"build 模式：把 {n} 项{what}写入一个新分支？（不会碰 main）"
         )
         if ok:
             branch = loop.apply(result)
@@ -950,12 +1093,13 @@ class VortoCodeTUI(App):
                 return f"在 {rel} 中找不到要替换的原文（old）。"
             if cnt > 1:
                 return f"原文在 {rel} 中出现 {cnt} 次、不唯一；请给更长、唯一的 old。"
-            ok = await self.push_screen_wait(ConfirmScreen(
-                f"build 模式：修改 {rel}？替换 1 处（{len(old)}→{len(new)} 字符）。改动只进工作区，不碰 main。"))
+            ok = await self._confirm_write(
+                f"build 模式：修改 {rel}？替换 1 处（{len(old)}→{len(new)} 字符）。改动只进工作区，不碰 main。")
             if not ok:
                 return f"用户取消了对 {rel} 的修改。"
             p.write_text(text.replace(old, new, 1), encoding="utf-8")
-            self._chrome(f"[green]已修改 {rel}（请 review；git diff 可查）[/green]")
+            self._show_diff(rel, old, new)        # 着色 diff 进对话区（仿 Claude Code）
+            self._chrome(f"[green]已修改 {rel}（请 review；/diff 或 git diff 看全）[/green]")
             return f"已修改 {rel}（替换 1 处）。"
 
         async def _t_write_file(args: dict) -> str:
@@ -967,13 +1111,15 @@ class VortoCodeTUI(App):
             if p is None or p.is_dir():
                 return f"路径越界或非法: {rel}"
             verb = "覆盖" if p.is_file() else "新建"
-            ok = await self.push_screen_wait(ConfirmScreen(
-                f"build 模式：{verb}文件 {rel}（{len(content)} 字符）？改动只进工作区，不碰 main。"))
+            ok = await self._confirm_write(
+                f"build 模式：{verb}文件 {rel}（{len(content)} 字符）？改动只进工作区，不碰 main。")
             if not ok:
                 return f"用户取消了写入 {rel}。"
+            before = p.read_text(encoding="utf-8") if p.is_file() else ""
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content, encoding="utf-8")
-            self._chrome(f"[green]已{verb} {rel}（请 review）[/green]")
+            self._show_diff(rel, before, content)   # 着色 diff 进对话区
+            self._chrome(f"[green]已{verb} {rel}（请 review；/diff 看全）[/green]")
             return f"已{verb} {rel}。"
 
         async def _t_run_dev(args: dict) -> str:
@@ -1050,8 +1196,8 @@ class VortoCodeTUI(App):
             if not name or not instr:
                 return "save_skill 需要 name 和 instructions（技能正文）。"
             p = Path(self.repo_root) / ".vortocode" / "skills" / name / "SKILL.md"
-            ok = await self.push_screen_wait(ConfirmScreen(
-                f"build 模式：把技能「{name}」写到 .vortocode/skills/{name}/SKILL.md？（用户技能目录，不碰 main）"))
+            ok = await self._confirm_write(
+                f"build 模式：把技能「{name}」写到 .vortocode/skills/{name}/SKILL.md？（用户技能目录，不碰 main）")
             if not ok:
                 return f"用户取消了保存技能 {name}。"
             content = f"---\nname: {name}\ndescription: {desc}\n---\n\n{instr}\n"
@@ -1113,16 +1259,16 @@ class VortoCodeTUI(App):
 
         async def _artifact_confirm(preview: dict, _is_update: bool) -> bool:
             t = preview.get("title") or preview.get("id") or "未命名"
-            return await self.push_screen_wait(ConfirmScreen(
+            return await self._confirm_write(
                 f"build 模式：把制品「{t}」发布成网页？"
-                f"（存到 .vortocode/artifacts/，Web 服务器在 /artifact/<id> 渲染、可分享）"))
+                f"（存到 .vortocode/artifacts/，Web 服务器在 /artifact/<id> 渲染、可分享）")
 
         def _artifact_published(meta: dict, url: str) -> None:
             self._chrome(f"[green]制品已发布 v{meta['version']}：{url}（/artifacts 看全部）[/green]")
 
         async def _artifact_confirm_delete(preview: dict) -> bool:
-            return await self.push_screen_wait(ConfirmScreen(
-                f"build 模式：删除制品 {preview.get('id')}？此操作不可撤销。"))
+            return await self._confirm_write(
+                f"build 模式：删除制品 {preview.get('id')}？此操作不可撤销。")
 
         tools += build_artifact_tools(self.repo_root, confirm=_artifact_confirm,
                                       on_published=_artifact_published,
@@ -1166,6 +1312,37 @@ class VortoCodeTUI(App):
         if len(lines) > 1:
             t.append(f"  (+{len(lines) - 1} 行)", style="dim")
         self.query_one("#log", RichLog).write(t)
+
+    def _render_diff_text(self, diff_text: str, max_lines: int = 200) -> None:
+        """把 unified diff 着色渲染到对话区：+绿 / -红 / @@蓝 / 文件头 dim（仿 Claude Code）。"""
+        lines = diff_text.splitlines()
+        log = self.query_one("#log", RichLog)
+        for line in lines[:max_lines]:
+            if line.startswith("+") and not line.startswith("+++"):
+                style = "#7fce9a"
+            elif line.startswith("-") and not line.startswith("---"):
+                style = "#f08a8a"
+            elif line.startswith("@@"):
+                style = "#8ab4f8"
+            elif line.startswith(("+++", "---", "diff ", "index ", "new file", "deleted")):
+                style = "bold dim"
+            else:
+                style = "dim"
+            log.write(Text(line, style=style))
+        if len(lines) > max_lines:
+            log.write(Text(f"  … (+{len(lines) - max_lines} 行 diff，/diff 或 git diff 看全)", style="dim"))
+
+    def _show_diff(self, rel: str, old_text: str, new_text: str, max_lines: int = 40) -> None:
+        """渲染一次编辑的 unified diff（old→new）；无变化则不显示。失败不影响写入。"""
+        try:
+            import difflib
+            diff = "\n".join(difflib.unified_diff(
+                old_text.splitlines(), new_text.splitlines(),
+                fromfile=f"a/{rel}", tofile=f"b/{rel}", lineterm=""))
+            if diff.strip():
+                self._render_diff_text(diff, max_lines)
+        except Exception:  # noqa: BLE001
+            pass
 
     # ---------------------------------------------------------------- 开发流水线
     @work(exclusive=True, group="action")
