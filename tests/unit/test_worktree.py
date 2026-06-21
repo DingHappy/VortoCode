@@ -195,6 +195,40 @@ async def test_apply_diffs_partial_failure_keeps_good_ones(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_build_dev_tools_lands_green_on_branch(monkeypatch, tmp_path):
+    # UI 无关的 dev_isolated（Web 用）：实现+验证通过 → 自动落到 vorto/ 分支，不碰 main
+    import sys
+    import src.llm.client as llmmod
+    from src.agents.main_agent import build_dev_tools
+
+    def git(*a):
+        subprocess.run(["git", "-C", str(tmp_path), *a], check=True, capture_output=True)
+    git("init", "-q"); git("config", "user.email", "t@t"); git("config", "user.name", "t")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_pass.py").write_text("def test_ok():\n    assert True\n")
+    git("add", "-A"); git("commit", "-q", "-m", "init")
+
+    class FakeLLM:
+        def __init__(self, *a, **k):
+            self.n = 0
+
+        async def chat(self, messages, **k):
+            self.n += 1
+            if self.n == 1:
+                return {"content": '{"tool":"write_file","args":{"path":"feat.py","content":"x = 1\\n"}}'}
+            return {"content": "加了 feat.py。"}
+    monkeypatch.setattr(llmmod, "LLMClient", FakeLLM)
+
+    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_isolated"]
+    out = await tool.handler({"description": "加 feat 模块", "test": "tests/test_pass.py"})
+    assert "✅" in out and "vorto/" in out                      # 绿了、落到分支
+    branches = subprocess.run(["git", "-C", str(tmp_path), "branch", "--list", "vorto/*"],
+                              capture_output=True, text=True).stdout
+    assert "vorto/" in branches                                 # 分支建出来了
+    assert not (tmp_path / "feat.py").exists()                  # 主工作区没被碰
+
+
+@pytest.mark.asyncio
 async def test_build_test_tool_lets_subagent_self_check(tmp_path):
     import sys
     from src.agents.main_agent import build_test_tool

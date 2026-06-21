@@ -80,11 +80,13 @@ def _session_key(websocket) -> str:
 
 def _new_agent():
     import os
-    from src.agents.main_agent import MainAgent, build_read_tools
+    from src.agents.main_agent import MainAgent, build_read_tools, build_dev_tools
     from src.web.artifacts import build_artifact_tools
-    # 制品(publish_artifact)是写工具：Web 无模态确认，靠 build 模式门控「人在关口」。
-    tools = build_read_tools(os.getcwd()) + build_artifact_tools(os.getcwd())
-    return MainAgent(tools, plan_tool=True)        # 网页主 agent 也有持久任务清单
+    # 制品(publish_artifact)/dev_isolated 都是写工具：Web 无模态确认，靠 build 门控 +（dev 的）
+    # 完全隔离 + 落新分支保证「人在关口」。dev_isolated 在隔离 worktree 实现+验证、绿了落 vorto 分支。
+    cwd = os.getcwd()
+    tools = build_read_tools(cwd) + build_artifact_tools(cwd) + build_dev_tools(cwd)
+    return MainAgent(tools, plan_tool=True)        # 网页主 agent 也有持久任务清单 + 隔离 dev
 
 
 def _get_session(websocket) -> Dict[str, Any]:
