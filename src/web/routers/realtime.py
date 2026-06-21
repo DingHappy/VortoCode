@@ -111,7 +111,7 @@ def _session_key(websocket) -> str:
 def _new_agent():
     import os
     from src.agents.main_agent import (MainAgent, build_command_tool,
-                                        build_dev_tools, build_read_tools)
+                                        build_dev_tools, build_pr_tool, build_read_tools)
     from src.web.artifacts import build_artifact_tools
     # 制品/dev_isolated 靠隔离 + build 门控；run_command 高危 → 走 WS 确认（confirm_holder 每回合
     # 重绑到当前连接，见 _run_agent_turn）。无回合上下文时 confirm 默认拒绝。
@@ -122,8 +122,8 @@ def _new_agent():
         fn = confirm_holder["fn"]
         return bool(await fn(message)) if fn is not None else False
 
-    tools = (build_read_tools(cwd) + build_artifact_tools(cwd)
-             + build_dev_tools(cwd) + build_command_tool(cwd, _confirm))
+    tools = (build_read_tools(cwd) + build_artifact_tools(cwd) + build_dev_tools(cwd)
+             + build_command_tool(cwd, _confirm) + build_pr_tool(cwd, _confirm))
     agent = MainAgent(tools, plan_tool=True)       # 网页主 agent：持久计划 + 隔离 dev + 受 WS 确认的 shell
     agent._web_confirm_holder = confirm_holder     # _run_agent_turn 每回合把它指向当前 ws
     return agent

@@ -715,3 +715,29 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
                  "在仓库根目录跑任意 shell 命令（pytest/ruff/git/pip/make…）；高危，每条都需确认、"
                  "明显危险操作直接拒（仅 build）",
                  {"command": "要执行的 shell 命令"}, _run, read_only=False)]
+
+
+def build_pr_tool(repo_root: str, confirm) -> list[Tool]:
+    """UI 无关的 open_pr（给 Web 用，注入 async confirm 门）。外向操作：push + gh pr create，需确认。"""
+    async def _open_pr(args: dict) -> str:
+        import asyncio
+        from src.agents.vcs import push_and_open_pr
+        branch = str(args.get("branch", "")).strip()
+        title = str(args.get("title", "")).strip()
+        body = str(args.get("body", "")).strip()
+        if not branch or not title:
+            return "open_pr 需要 branch 和 title。"
+        if not await confirm(f"把分支 {branch} push 到 origin 并开 PR「{title}」？这是外向操作（推到远端、建 PR）。"):
+            return f"用户拒绝了为 {branch} 开 PR。"
+        res = await asyncio.to_thread(push_and_open_pr, repo_root, branch, title, body)
+        if res["ok"]:
+            return f"已 push {branch} 并开 PR：{res['url']}"
+        if res.get("pushed"):
+            return f"已 push {branch}，但开 PR 失败：{res['error']}（可手动 gh pr create）"
+        return f"开 PR 失败：{res['error']}"
+
+    return [Tool("open_pr",
+                 "把一个本地分支（如 dev_isolated 产出的 vorto/...）push 到 origin 并开 PR；"
+                 "外向操作、需确认，gh 不可用则只 push（仅 build）",
+                 {"branch": "要开 PR 的分支名", "title": "PR 标题", "body": "可选，PR 正文"},
+                 _open_pr, read_only=False)]
