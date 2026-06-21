@@ -437,6 +437,10 @@ class VortoCodeTUI(App):
             return True
         return await self.push_screen_wait(ConfirmScreen(message))
 
+    async def _confirm_outward(self, message: str) -> bool:
+        """外向操作（push / 开 PR 等推到远端的动作）确认：**始终弹窗**，不吃"始终允许写"的豁免。"""
+        return await self.push_screen_wait(ConfirmScreen(message))
+
     def action_history_prev(self) -> None:
         """↑：调出上一条历史输入（编辑过则当作新输入，从末尾重新起）。"""
         if not self._history:
@@ -1384,6 +1388,28 @@ class VortoCodeTUI(App):
                                  f"（可能互相冲突），已跳过[/]")
             return f"并行 {len(tasks)} 个子任务：{len(greens)} 通过测试{note}。"
 
+        async def _t_open_pr(args: dict) -> str:
+            """把一个本地分支（如 dev_isolated 产出的 vorto/...）push 上去并开 PR。外向操作，强确认。"""
+            branch = str(args.get("branch", "")).strip()
+            title = str(args.get("title", "")).strip()
+            body = str(args.get("body", "")).strip()
+            if not branch or not title:
+                return "open_pr 需要 branch 和 title。"
+            if not await self._confirm_outward(
+                    f"把分支 {branch} push 到 origin 并开 PR「{title}」？这是外向操作（推到远端、建 PR）。"):
+                return f"用户取消了为 {branch} 开 PR。"
+            import asyncio
+            from src.agents.vcs import push_and_open_pr
+            res = await asyncio.to_thread(push_and_open_pr, self.repo_root, branch, title, body)
+            if res["ok"]:
+                self._chrome(f"[{self._tc('text-success', '#7fce9a')}]✅ 已开 PR：{res['url']}[/]")
+                return f"已 push {branch} 并开 PR：{res['url']}"
+            if res.get("pushed"):
+                self._chrome(f"[{self._tc('text-warning', '#f0b86e')}]已 push {branch}，但开 PR 失败：{res['error']}[/]")
+                return f"已 push {branch}，但开 PR 失败：{res['error']}（可手动 gh pr create）"
+            self._chrome(f"[{self._tc('text-error', '#f08a8a')}]开 PR 失败：{res['error']}[/]")
+            return f"开 PR 失败：{res['error']}"
+
         # 只读工具：plan 也能用；也是子 agent 的工具集（无 task/写工具 → 不嵌套、不改文件）
         read_tools = [
             Tool("read_file", "读取仓库内某个文件的内容",
@@ -1522,6 +1548,11 @@ class VortoCodeTUI(App):
                  {"tasks": "相互独立的子任务字符串列表",
                   "test": "可选，pytest 选择器，省略则各自跑全量 tests/"},
                  _t_dev_parallel, read_only=False),
+            Tool("open_pr",
+                 "把一个本地分支（如 dev_isolated/dev_parallel 产出的 vorto/...）push 到 origin 并开 PR；"
+                 "外向操作、强确认，gh 不可用则只 push（仅 build）",
+                 {"branch": "要开 PR 的分支名", "title": "PR 标题", "body": "可选，PR 正文"},
+                 _t_open_pr, read_only=False),
         ]
 
         # 制品（artifact）：把会话产出发布成可分享、实时更新的网页（由 Web 服务器在 /artifact 渲染）。
