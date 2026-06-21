@@ -30,9 +30,9 @@ from textual.worker import WorkerState
 from src.memory.session_store import SessionManager
 
 SLASH_COMMANDS = [
-    "/analyze", "/improve", "/fix", "/run", "/agents", "/runagent", "/skills", "/mcp",
-    "/artifacts", "/diff", "/sessions", "/resume", "/new", "/mode", "/usage", "/tools", "/audit",
-    "/clear", "/help", "/quit",
+    "/analyze", "/improve", "/fix", "/run", "/apply", "/agents", "/runagent", "/skills", "/mcp",
+    "/artifacts", "/diff", "/sessions", "/resume", "/new", "/mode", "/theme", "/usage",
+    "/tools", "/audit", "/clear", "/help", "/quit",
 ]
 # 命令 → 一句话说明（命令补全面板用，让 / 命令可发现、可补全）
 COMMAND_INFO = {
@@ -40,6 +40,7 @@ COMMAND_INFO = {
     "/improve": "L2 给测试缺口生成测试（需 key·build）",
     "/fix": "深审并外科修复指定文件（需 key·build）",
     "/run": "跑开发循环 dev→test→review（流式）",
+    "/apply": "把 /run 产出（工作区代码）带 diff 应用到仓库",
     "/agents": "列出已创建的 agent",
     "/runagent": "用某个已创建 agent 执行任务",
     "/skills": "列出 SKILL.md 技能（reload 重扫）",
@@ -50,6 +51,7 @@ COMMAND_INFO = {
     "/resume": "恢复某个历史会话",
     "/new": "新开一个会话",
     "/mode": "切换 plan / build 模式",
+    "/theme": "切换配色主题（21 套内置，记住选择）",
     "/usage": "本会话 token 用量（reset 清零）",
     "/tools": "列出主 agent 工具及读写权限",
     "/audit": "查看工具调用审计日志",
@@ -57,7 +59,7 @@ COMMAND_INFO = {
     "/help": "显示帮助",
     "/quit": "退出",
 }
-ACTION_CMDS = {"analyze", "improve", "fix", "run", "runagent", "mcp"}   # 跑长任务，受忙碌态约束
+ACTION_CMDS = {"analyze", "improve", "fix", "run", "apply", "runagent", "mcp"}   # 跑长任务，受忙碌态约束
 
 # 工作中指示器（仿 Claude Code）：10 帧 braille 旋转 + 轮换动词 + 计时 + esc 中断
 _SPIN_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
@@ -87,6 +89,7 @@ HELP = """可用命令:
   /improve            L2 给测试缺口生成测试（需 key；build 模式下才写分支）
   /fix <文件,...>     L2.2 深审并外科修复指定文件（需 key；build 模式下才写分支）
   /run <目标>         跑开发循环（dev→test→review，流式）
+  /apply              把上次 /run 的产出（工作区代码）带 diff+确认应用到仓库（闭合"实现→落地"）
   /skills [reload]    列出 SKILL.md 技能（reload 重新扫描）
   /tools              列出主 agent 可用工具及其读写权限
   /audit              查看工具调用审计日志（.vortocode/audit.log）
@@ -99,6 +102,7 @@ HELP = """可用命令:
   /resume <id>        恢复某个历史会话
   /new                新开一个会话
   /mode               切换 plan(只读/提案) / build(可写分支)
+  /theme [名]         切换配色主题（不带名=列出全部；选择会记住，下次自动用）
   /usage [reset]      本会话 token 用量（估算；reset 清零）
   /clear              清屏
   /help               显示本帮助
@@ -233,6 +237,7 @@ class VortoCodeTUI(App):
         self._history_draft = ""            # 进入历史浏览前的草稿，↓ 到底恢复
         self._allow_writes_session = False  # 本会话"始终允许"写操作（ConfirmScreen 的 [a]）
         self._turn_tools = 0                # 本回合工具调用计数（回合结束给"✓ 完成"反馈）
+        self._last_dev = None              # 最近一次 dev 流水线产出 {workspace, files}，供 /apply
 
     # ---------------------------------------------------------------- 布局
     def compose(self) -> ComposeResult:
@@ -249,6 +254,7 @@ class VortoCodeTUI(App):
         from src.llm.client import reset_usage
         reset_usage()                       # 每个会话从零计量
         self._load_history()                # 跨会话输入历史（↑/↓ 可调出上次的）
+        self._load_theme()                  # 套用上次选的配色主题
         self.query_one("#stream", Static).display = False
         self.query_one("#status", Static).display = False
         self.query_one("#palette", Static).display = False
@@ -290,13 +296,20 @@ class VortoCodeTUI(App):
         self.query_one("#log", RichLog).write(Text(text))
         self._persist(text, markup=False)
 
+    def _tc(self, name: str, fallback: str) -> str:
+        """取当前主题的某个语义色（Rich 文本用），拿不到/未挂载用 fallback —— 让消息色随主题。"""
+        try:
+            return self.theme_variables.get(name) or fallback
+        except Exception:  # noqa: BLE001
+            return fallback
+
     def _say_user(self, text: str) -> None:
         """用户输入回显：醒目、turn 间留空行，和系统提示/助手回复区分开。"""
         log = self.query_one("#log", RichLog)
         log.write("")                       # turn 之间留白，避免糊成一片
         t = Text()
-        t.append("❯ ", style="bold #8ab4f8")
-        t.append(text, style="#cdd6f4")
+        t.append("❯ ", style=f"bold {self._tc('text-primary', '#8ab4f8')}")
+        t.append(text, style=self._tc("text", "#cdd6f4"))
         log.write(t)
         self.transcript.append(text)
         self._persist(text, markup=False)
@@ -305,7 +318,7 @@ class VortoCodeTUI(App):
         """主 agent 最终回复：● 署名一行 + 正文（markdown 渲染，失败回退纯文本）。"""
         log = self.query_one("#log", RichLog)
         head = Text()
-        head.append("● ", style="bold #7fce9a")
+        head.append("● ", style=f"bold {self._tc('text-success', '#7fce9a')}")
         head.append("vorto", style="dim italic")
         log.write(head)
         try:
@@ -369,9 +382,10 @@ class VortoCodeTUI(App):
         elapsed = int(time.monotonic() - self._busy_since)
         frame = _SPIN_FRAMES[self._spin_i % len(_SPIN_FRAMES)]
         verb = _SPIN_VERBS[(self._spin_i // 12) % len(_SPIN_VERBS)]   # 约 1.2s 换一个词
+        warn = self._tc("text-warning", "#f0b86e")
         t = Text()
-        t.append(f"{frame} ", style="#f0b86e")
-        t.append(f"{verb} ", style="#f0b86e")
+        t.append(f"{frame} ", style=warn)
+        t.append(f"{verb} ", style=warn)
         t.append(f"{elapsed}s", style="dim")
         t.append("  ·  esc 中断", style="dim")
         try:
@@ -530,7 +544,8 @@ class VortoCodeTUI(App):
         rows = []
         for i, (txt, desc) in enumerate(items[:8]):
             d = f"  [dim]{desc}[/dim]" if desc else ""
-            rows.append(f"[b #8ab4f8]›[/] [b]{txt}[/b]{d}" if i == 0 else f"  {txt}{d}")
+            mark = self._tc("text-primary", "#8ab4f8")
+            rows.append(f"[b {mark}]›[/] [b]{txt}[/b]{d}" if i == 0 else f"  {txt}{d}")
         more = f" · +{len(items) - 8} 更多" if len(items) > 8 else ""
         rows.append(f"[dim]{kind}补全 · Tab/→ 接受首选 · 继续输入筛选{more}[/dim]")
         palette = self.query_one("#palette", Static)
@@ -566,6 +581,8 @@ class VortoCodeTUI(App):
                 self._do_run(arg)
             else:
                 self._chrome("[red]/run 需要目标[/red]，如 /run 实现一个阶乘函数")
+        elif cmd == "apply":
+            self._do_apply()
         elif cmd == "sessions":
             self._cmd_sessions()
         elif cmd == "resume":
@@ -577,6 +594,8 @@ class VortoCodeTUI(App):
             self._cmd_new()
         elif cmd == "skills":
             self._cmd_skills(arg)
+        elif cmd == "theme":
+            self._cmd_theme(arg)
         elif cmd == "usage":
             self._cmd_usage(arg)
         elif cmd == "tools":
@@ -852,6 +871,44 @@ class VortoCodeTUI(App):
         u = get_usage()
         self._emit(f"本会话用量（估算）: 调用 {u['calls']} 次 · 输入 ~{u['prompt_tokens']} · "
                    f"输出 ~{u['completion_tokens']} · 合计 ~{u['total_tokens']} tokens")
+
+    def _cmd_theme(self, arg: str) -> None:
+        """/theme：列出/切换配色主题（Textual 内置 21 套）；选择记到 .vortocode/tui_theme。"""
+        names = sorted(self.available_themes)
+        name = arg.strip()
+        if not name:
+            cur = self.theme
+            rows = "  ".join(f"[b]{n}[/b]" if n == cur else n for n in names)
+            self._emit(f"当前主题: {cur}\n可用（/theme <名> 切换，会记住）:\n{rows}")
+            return
+        if name not in self.available_themes:
+            self._emit(f"没有主题「{name}」。/theme 看全部。")
+            return
+        self.theme = name                   # Textual 响应式：立刻重绘 chrome（边框/面板/底色）
+        self._persist_theme(name)
+        self._chrome(f"[green]→ 主题切到 {name}（已记住）[/green]")
+
+    def _theme_file(self) -> Path:
+        return Path(self.repo_root) / ".vortocode" / "tui_theme"
+
+    def _persist_theme(self, name: str) -> None:
+        try:
+            p = self._theme_file()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(name, encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _load_theme(self) -> None:
+        """启动时套用上次选的主题。失败/不存在则用默认。"""
+        try:
+            p = self._theme_file()
+            if p.is_file():
+                name = p.read_text(encoding="utf-8").strip()
+                if name in self.available_themes:
+                    self.theme = name
+        except Exception:  # noqa: BLE001
+            pass
 
     # ---------------------------------------------------------------- @文件
     def _expand_at_files(self, text: str) -> tuple[str, list[str]]:
@@ -1398,16 +1455,19 @@ class VortoCodeTUI(App):
         self.query_one("#log", RichLog).write(t)
 
     def _render_diff_text(self, diff_text: str, max_lines: int = 200) -> None:
-        """把 unified diff 着色渲染到对话区：+绿 / -红 / @@蓝 / 文件头 dim（仿 Claude Code）。"""
+        """把 unified diff 着色渲染到对话区：+绿 / -红 / @@蓝 / 文件头 dim（随主题，仿 Claude Code）。"""
+        add = self._tc("text-success", "#7fce9a")
+        rem = self._tc("text-error", "#f08a8a")
+        hunk = self._tc("text-accent", "#8ab4f8")
         lines = diff_text.splitlines()
         log = self.query_one("#log", RichLog)
         for line in lines[:max_lines]:
             if line.startswith("+") and not line.startswith("+++"):
-                style = "#7fce9a"
+                style = add
             elif line.startswith("-") and not line.startswith("---"):
-                style = "#f08a8a"
+                style = rem
             elif line.startswith("@@"):
-                style = "#8ab4f8"
+                style = hunk
             elif line.startswith(("+++", "---", "diff ", "index ", "new file", "deleted")):
                 style = "bold dim"
             else:
@@ -1433,6 +1493,63 @@ class VortoCodeTUI(App):
     async def _do_run(self, goal: str) -> None:
         """/run 入口：直接进开发流水线（不经意图判定）。"""
         await self._run_dev(goal)
+
+    def _safe_repo_path(self, rel: str):
+        """把相对路径锁在仓库内，挡 ../ 与绝对路径越界。返回 Path 或 None。"""
+        base = Path(self.repo_root).resolve()
+        try:
+            p = (base / rel).resolve()
+        except Exception:  # noqa: BLE001
+            return None
+        return p if (p == base or base in p.parents) else None
+
+    @work(exclusive=True, group="action")
+    async def _do_apply(self) -> None:
+        """/apply：把最近一次 dev 流水线产出（工作区代码）带 diff+确认地落到仓库，闭合"实现→应用"。"""
+        last = self._last_dev
+        if not last or not last.get("files"):
+            self._emit("(没有待应用的产出。先 /run <目标> 或让主 agent 开发，跑出产出后再 /apply。)")
+            return
+        ws = Path(last["workspace"])
+        self._chrome(f"[cyan]待应用产出（{len(last['files'])} 个文件，逐个看 diff）:[/cyan]")
+        pending = []                          # (rel, dst, new)
+        for rel in last["files"]:
+            src = ws / rel
+            if not src.is_file():
+                continue
+            dst = self._safe_repo_path(rel)
+            if dst is None:
+                self._emit(f"(跳过越界路径: {rel})")
+                continue
+            try:
+                new = src.read_text(encoding="utf-8")
+            except Exception:  # noqa: BLE001
+                continue
+            old = dst.read_text(encoding="utf-8") if dst.is_file() else ""
+            if old == new:
+                continue                      # 与仓库一致，无需应用
+            self._chrome(f"[b]{rel}[/b] [dim]({'修改' if old else '新建'})[/dim]")
+            self._show_diff(rel, old, new)
+            pending.append((rel, dst, new))
+        if not pending:
+            self._emit("(工作区产出与仓库一致，无需应用。)")
+            return
+        ok = await self._confirm_write(
+            f"把这 {len(pending)} 个文件从工作区应用到仓库？"
+            f"（只改工作区、不碰 main；/diff 可复核、git 可回滚）")
+        if not ok:
+            self._emit("已取消应用。")
+            return
+        applied = []
+        for rel, dst, new in pending:
+            try:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                dst.write_text(new, encoding="utf-8")
+                applied.append(rel)
+            except Exception as e:  # noqa: BLE001
+                self._emit(f"写 {rel} 失败: {e}")
+        self._chrome(f"[green]已应用 {len(applied)} 个文件到仓库（/diff 复核，git diff 可查）[/green]")
+        self._last_dev = None
 
     async def _run_dev(self, goal: str) -> str:
         """跑 dev→test→review 流水线。返回一句结果摘要（供主 agent 回灌/汇总）。"""
@@ -1471,6 +1588,9 @@ class VortoCodeTUI(App):
                 files_line = "产出文件: " + ", ".join(result.files)
                 self._emit(files_line)
                 summary += " · " + files_line
+                # 记下产出，供 /apply 把工作区代码（带 diff+确认）落到仓库 —— 闭合"实现→应用"流程
+                self._last_dev = {"workspace": result.workspace, "files": list(result.files)}
+                self._chrome("[cyan]产出在工作区。用 [b]/apply[/b] 把它（先给 diff、再确认）应用到仓库。[/cyan]")
         except Exception as e:  # noqa: BLE001
             summary = f"执行出错: {e}"
             self._emit(summary)

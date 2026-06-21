@@ -1014,6 +1014,81 @@ async def test_tool_preview_and_audit_no_crash(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_theme_switch_persist_and_reload(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app._cmd_theme("nord"); await pilot.pause()
+        assert app.theme == "nord"
+        app._cmd_theme("nope-xyz"); await pilot.pause()
+        assert app.theme == "nord"                        # 非法名不改
+        assert (tmp_path / ".vortocode" / "tui_theme").read_text() == "nord"
+    app2 = VortoCodeTUI(repo_root=str(tmp_path))           # 新进程
+    async with app2.run_test() as pilot:
+        await pilot.pause()
+        assert app2.theme == "nord"                       # 重启自动套用上次主题
+
+
+@pytest.mark.asyncio
+async def test_theme_list_shows_current(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app._cmd_theme(""); await pilot.pause()
+        joined = "\n".join(app.transcript)
+        assert "当前主题" in joined and "dracula" in joined   # 列出 + 标当前
+
+
+@pytest.mark.asyncio
+async def test_message_colors_follow_theme(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app._cmd_theme("textual-dark"); await pilot.pause()
+        dark = app._tc("text-success", "x")
+        app._cmd_theme("solarized-light"); await pilot.pause()
+        light = app._tc("text-success", "x")
+        assert dark.startswith("#") and light.startswith("#") and dark != light  # 语义色随主题
+
+
+@pytest.mark.asyncio
+async def test_apply_copies_workspace_output_to_repo(tmp_path):
+    ws = tmp_path / ".vortocode" / "workspaces" / "devloop-test"
+    (ws / "src").mkdir(parents=True)
+    (ws / "src" / "new.py").write_text("print('hi')\n")       # 模拟 dev 产出
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app._last_dev = {"workspace": str(ws), "files": ["src/new.py"]}
+        app._do_apply()                                       # @work worker
+        assert await _wait_modal(app, pilot)                  # 弹"应用到仓库?"
+        await pilot.press("y")
+        for _ in range(40):
+            if (tmp_path / "src" / "new.py").is_file():
+                break
+            await pilot.pause(0.05)
+        assert (tmp_path / "src" / "new.py").read_text() == "print('hi')\n"   # 落到仓库
+        assert app._last_dev is None                          # 应用后清空
+
+
+@pytest.mark.asyncio
+async def test_apply_blocks_path_traversal(tmp_path):
+    ws = tmp_path / ".vortocode" / "workspaces" / "devloop-test"
+    ws.mkdir(parents=True)
+    (ws.parent / "evil.py").write_text("BAD")             # ws/../evil.py 这个源存在
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app._last_dev = {"workspace": str(ws), "files": ["../evil.py"]}   # 越界路径
+        app._do_apply()
+        assert await _wait_for(app, pilot, "跳过越界")        # 越界被拒、不应用
+        assert not (tmp_path.parent / "evil.py").exists()    # 没写到仓库外
+
+
+@pytest.mark.asyncio
+async def test_apply_nothing_pending(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app._do_apply()
+        assert await _wait_for(app, pilot, "没有待应用")
+
+
+@pytest.mark.asyncio
 async def test_reply_streams_then_lands_in_log(monkeypatch, tmp_path):
     from src.agents.main_agent import MainAgent
     from textual.widgets import Static, RichLog
