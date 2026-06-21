@@ -1289,8 +1289,25 @@ class VortoCodeTUI(App):
             cmd = (ver or {}).get("cmd", "")
             if ver and ver["ok"]:
                 self._chrome(f"[{self._tc('text-success', '#7fce9a')}]✅ 测试通过[/]"
-                             f"[dim]（{cmd}）—— 这块可应用，review 后 git apply。[/dim]")
-                return (f"✅ 隔离实现完成且测试通过（{cmd}）。diff {nlines} 行，未并入。结论：{conclusion}")
+                             f"[dim]（{cmd}）[/dim]")
+                import re
+                slug = re.sub(r"[^a-z0-9]+", "-", desc.lower()).strip("-")[:28] or "iso"
+                branch = f"vorto/{slug}-{wid[3:]}"
+                applied = ""
+                if await self._confirm_write(
+                        f"测试已过。把这块改动应用到新分支 {branch}？（不碰 main / 当前工作区）"):
+                    from src.agents.worktree import apply_diff_to_branch
+                    res = apply_diff_to_branch(self.repo_root, branch, diff, f"dev_isolated: {desc}")
+                    if res["ok"]:
+                        self._chrome(f"[{self._tc('text-success', '#7fce9a')}]✅ 已应用到分支 "
+                                     f"[b]{branch}[/b]（git checkout {branch} 查看，仍未碰 main）[/]")
+                        applied = f"，并已应用到新分支 {branch}"
+                    else:
+                        self._chrome(f"[{self._tc('text-error', '#f08a8a')}]应用到分支失败：{res['error']}[/]")
+                        applied = f"，但应用到分支失败：{res['error']}"
+                else:
+                    applied = "（未应用，diff 仅展示）"
+                return (f"✅ 隔离实现完成且测试通过（{cmd}）。diff {nlines} 行{applied}。结论：{conclusion}")
             self._chrome(f"[{self._tc('text-error', '#f08a8a')}]❌ 测试未过[/]"
                          f"[dim]（{cmd}）—— 这块先别并入。[/dim]")
             if tail:

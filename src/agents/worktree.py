@@ -48,6 +48,36 @@ def remove_worktree(repo_root, path) -> None:
     _git(repo_root, "worktree", "prune", check=False)
 
 
+def apply_diff_to_branch(repo_root, branch: str, diff: str, message: str) -> dict:
+    """把 diff 应用到一个**新分支**并提交——用一次性 worktree，绝不碰主工作区/当前分支/main。
+
+    返回 {ok, branch, error}。失败（apply/commit 出错）则删掉刚建的空分支，不留残留。
+    """
+    path = _worktrees_dir(repo_root) / ("apply-" + branch.replace("/", "-"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        remove_worktree(repo_root, path)
+    add = _git(repo_root, "worktree", "add", "-b", branch, str(path), "HEAD", check=False)
+    if add.returncode != 0:
+        return {"ok": False, "branch": branch, "error": (add.stderr or "worktree add 失败").strip()[:300]}
+    ok = False
+    try:
+        ap = subprocess.run(["git", "-C", str(path), "apply", "--whitespace=nowarn"],
+                            input=diff, capture_output=True, text=True)
+        if ap.returncode != 0:
+            return {"ok": False, "branch": branch, "error": "git apply 失败: " + (ap.stderr or "").strip()[:400]}
+        _git(path, "add", "-A")
+        cm = _git(path, "commit", "-m", message, check=False)
+        if cm.returncode != 0:
+            return {"ok": False, "branch": branch, "error": "commit 失败: " + (cm.stderr or "").strip()[:300]}
+        ok = True
+        return {"ok": True, "branch": branch, "error": ""}
+    finally:
+        remove_worktree(repo_root, path)
+        if not ok:
+            _git(repo_root, "branch", "-D", branch, check=False)   # 失败：删掉残留空分支
+
+
 async def in_worktree(repo_root, wid: str,
                       work: Callable[[Path], Awaitable]) -> tuple[str, object]:
     """在隔离 worktree 里 await work(path)，返回 (diff, work 的返回值)；无论成败都清理 worktree。"""
