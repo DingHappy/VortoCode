@@ -216,6 +216,7 @@ class VortoCodeTUI(App):
         self._history_idx: int | None = None
         self._history_draft = ""            # 进入历史浏览前的草稿，↓ 到底恢复
         self._allow_writes_session = False  # 本会话"始终允许"写操作（ConfirmScreen 的 [a]）
+        self._turn_tools = 0                # 本回合工具调用计数（回合结束给"✓ 完成"反馈）
 
     # ---------------------------------------------------------------- 布局
     def compose(self) -> ComposeResult:
@@ -235,12 +236,30 @@ class VortoCodeTUI(App):
         self.query_one("#stream", Static).display = False
         self.query_one("#status", Static).display = False
         self.query_one("#palette", Static).display = False
-        self._chrome("[b]VortoCode[/b] 交互模式 · 直接提问或说需求，[b]/help[/b] 看命令")
-        self._chrome("[dim]输入 / 或 @ 看补全 · Tab/→ 接受 · ↑↓ 翻历史 · /sessions /resume /new[/dim]")
+        self._greet()
         self._sync_subtitle()
         self.session_id = self.sessions.start_session()
         self._persist_on = True            # 之后的对话才落盘（不存开场白）
         self.query_one("#prompt", Input).focus()
+
+    def _greet(self) -> None:
+        """首跑引导：能力速览 + 示例 + plan/build 说明 + 无 key 提示，让新用户立刻知道能干嘛。"""
+        import os
+        self._chrome("[b]VortoCode[/b] · 交互式 AI 开发助手 "
+                     "[dim](一个会话主 agent，自己分流：答疑 / 读代码 / 动手开发)[/dim]")
+        self._chrome("[dim]能做：问答 · 读&搜代码(@文件) · 扫描仓库问题 · 实现/修改/测试代码 · "
+                     "发布可分享制品[/dim]")
+        self._chrome("")
+        self._chrome("[#8ab4f8]试试：[/#8ab4f8] [b]这个项目是做什么的？[/b]   ·   "
+                     "[b]@src/cli.py 讲讲这个文件[/b]   ·   [b]给 xx 模块补测试[/b]")
+        self._chrome("[dim]模式：plan=只读/提案（默认更稳），build=可写新分支（绝不碰 main）。"
+                     "要它动手时会问你切不切，[b]不用先手动切[/b]。[/dim]")
+        self._chrome("[dim]键位：输入 [b]/[/b] 或 [b]@[/b] 看补全 · Tab/→ 接受 · ↑↓ 翻历史 · "
+                     "Tab 切模式 · [b]/help[/b] 全部命令[/dim]")
+        if not os.getenv("OPENAI_API_KEY"):
+            self._chrome("[yellow]⚠ 未配置 OPENAI_API_KEY[/yellow][dim] —— 对话/开发需要它："
+                         "在项目根 [b].env[/b] 写 OPENAI_API_KEY=sk-... 后重启即可；"
+                         "无 key 也能用 [b]/analyze[/b] 扫描、[b]/help[/b]。[/dim]")
 
     # ---------------------------------------------------------------- 输出
     def _chrome(self, markup: str) -> None:
@@ -987,8 +1006,12 @@ class VortoCodeTUI(App):
         # agent 的输出直接落进结果区（对话 log）：忙时转圈("思考中…")给进度反馈，工具调用与
         # 结果(🔧/⎿)实时进 log，回复就绪即作为一条 ● vorto 消息（markdown）写进对话——
         # 不再走单独的流式预览面板（避免"先在下方暗显、再跳到上方"的割裂感）。
+        self._turn_tools = 0
+        t0 = time.monotonic()
         await self.agent.run_turn(user_text, mode=self.mode,
                                   say=self._chrome, emit=self._assistant)
+        if self._turn_tools:                # 用过工具的回合给个清晰收尾
+            self._chrome(f"[dim]✓ 完成 · {self._turn_tools} 个工具 · {time.monotonic() - t0:.0f}s[/dim]")
         self._persist_agent_history()
 
     def _persist_agent_history(self) -> None:
@@ -1278,11 +1301,29 @@ class VortoCodeTUI(App):
         extra = f"【可用技能】(需要时用 use_skill 加载其完整指令再执行)\n{catalog}" if catalog else None
         import os
         native = os.getenv("VORTOCODE_NATIVE_TOOLS", "").lower() in ("1", "true", "yes", "on")
-        return MainAgent(tools, extra_system=extra, native=native, on_tool=self._audit_tool)
+        return MainAgent(tools, extra_system=extra, native=native,
+                         on_tool=self._audit_tool, on_escalate=self._escalate_to_build)
+
+    async def _escalate_to_build(self, name: str, args: dict) -> bool:
+        """plan 模式下主 agent 想用写/重型工具时：问用户切不切 build，同意则切并继续。
+
+        本会话已"始终允许"则直接切（不再问）。切了之后整个会话留在 build。
+        """
+        if self._allow_writes_session:
+            ok = True
+        else:
+            ok = await self.push_screen_wait(ConfirmScreen(
+                f"plan(只读)模式下，这一步要用写/重型工具「{name}」。切到 build 模式并继续？"))
+        if ok and self.mode != "build":
+            self.mode = "build"
+            self._sync_subtitle()
+            self._chrome("[green]→ 已切到 build 模式并继续[/green]")
+        return ok
 
     def _audit_tool(self, name: str, args: dict, result: str) -> None:
         """把一次工具调用写进审计日志（.vortocode/audit.log，JSONL）。失败不影响交互。"""
         from datetime import datetime
+        self._turn_tools += 1               # 本回合工具计数（回合结束反馈用）
         try:
             p = Path(self.repo_root) / ".vortocode" / "audit.log"
             p.parent.mkdir(parents=True, exist_ok=True)

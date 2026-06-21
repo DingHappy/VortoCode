@@ -137,6 +137,7 @@ class MainAgent:
         extra_system: Optional[str] = None,
         native: bool = False,
         on_tool: Optional[Callable[[str, dict, str], None]] = None,
+        on_escalate: Optional[Callable[[str, dict], Awaitable[bool]]] = None,
     ) -> None:
         self._tool_list = list(tools)
         self.tools = {t.name: t for t in tools}
@@ -146,6 +147,9 @@ class MainAgent:
         self.extra_system = extra_system       # 追加到系统提示（如技能目录、子 agent 角色）
         self._native = native                  # 原生 function-calling（失败自动回退提示式协议）
         self._on_tool = on_tool                # 工具执行后的审计钩子(name, args, result)
+        # plan 模式想用写/重型工具时回调：返回 True=用户同意切 build 并继续，False=拒绝
+        self._on_escalate = on_escalate
+        self._escalated = False                # 本轮是否已升级到 build（经 on_escalate 同意）
         self.history: list[dict] = []          # 跨轮对话历史（不含 system）
 
     def _client(self) -> Any:
@@ -219,9 +223,20 @@ class MainAgent:
         tool = self.tools.get(name)
         if tool is None:
             return f"没有名为 {name} 的工具。可用：{', '.join(self.tools)}"
-        if mode == "plan" and not tool.read_only:
-            return f"工具 {name} 在 plan 模式下不可用（只读模式）。如需开发请按 Tab 切到 build 模式。"
-        say(f"[dim]🔧 {name}({_fmt_args(args)})[/dim]")
+        effective = "build" if self._escalated else mode
+        if effective == "plan" and not tool.read_only:
+            # plan 想用写/重型工具：有 on_escalate 就问用户"切 build 并继续？"；同意则升级执行。
+            ok = False
+            if self._on_escalate is not None:
+                try:
+                    ok = await self._on_escalate(name, args)
+                except Exception:  # noqa: BLE001
+                    ok = False
+            if not ok:
+                return (f"工具 {name} 在 plan 模式下不可用（只读/提案）。"
+                        f"如需执行请切到 build 模式（Tab）。")
+            self._escalated = True
+        say(f"🔧 [b]{name}[/b][dim] {_fmt_args(args)}[/dim]")
         try:
             result = str(await tool.handler(args))
         except Exception as e:  # noqa: BLE001
@@ -251,6 +266,7 @@ class MainAgent:
         """
         say = say or (lambda _m: None)
         emit = emit or (lambda _m: None)
+        self._escalated = False                # 每轮重置；切 build 由 UI 持久化到 mode
         self.history.append({"role": "user", "content": user_text})
 
         for _step in range(self.max_steps):
