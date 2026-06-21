@@ -191,6 +191,9 @@ class MainAgent:
             catalog=_tool_catalog(self._tool_list),
             mode=mode, mode_desc=mode_desc, mode_rule=mode_rule,
         )
+        hint = self._orchestration_hint()      # 据可用工具给"大任务怎么展开"的编排指引
+        if hint:
+            prompt += "\n\n" + hint
         if self.extra_system:
             prompt += "\n\n" + self.extra_system
         if self.plan:                          # 当前计划常驻系统提示：跨步/跨历史裁剪也不丢
@@ -198,6 +201,30 @@ class MainAgent:
             prompt += ("\n\n【当前计划】(用 update_plan 维护：开始一步标 in_progress、做完标 completed)\n"
                        + render_plan(self.plan))
         return prompt
+
+    def _orchestration_hint(self) -> str:
+        """大任务的编排指引：仅当具备相应工具时才给（research 子 agent/orchestrator 无这些工具→不给，
+        也就不会被诱导去嵌套/乱用）。让主 agent 把「计划→并行隔离实现→逐件验证」一句话用起来。"""
+        has_plan = "update_plan" in self.tools
+        has_iso = "dev_isolated" in self.tools
+        has_par = "dev_parallel" in self.tools
+        if not (has_plan or has_iso or has_par):
+            return ""
+        lines = ["【怎么干大活】面对多步骤/较大的开发任务，别一上来就埋头改文件，按这个来："]
+        if has_plan:
+            lines.append("1) 先用 update_plan 把任务拆成有序步骤、列计划；每开始一步标 in_progress、做完标 "
+                         "completed，让进度始终可见。")
+        if has_par or has_iso:
+            impl = []
+            if has_par:
+                impl.append("相互独立的实现步骤用 dev_parallel 一次并行实现")
+            if has_iso:
+                impl.append("单个步骤用 dev_isolated")
+            lines.append("2) 实现优先 " + "、".join(impl) +
+                         "——它们在隔离 worktree 里改代码并自动跑测试验证，✅通过才产出可应用的 diff、"
+                         "绝不碰主工作区；不要用 edit_file/write_file 在主工作区直接做大改。")
+            lines.append("3) ❌未过的块会带失败输出回来，据此修正后只重试那一块。")
+        return "\n".join(lines)
 
     async def _update_plan(self, args: dict) -> str:
         """update_plan 工具：用模型给的步骤列表整体替换当前计划，渲染回灌 + 通知 UI。"""
