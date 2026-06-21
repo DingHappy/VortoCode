@@ -84,7 +84,7 @@ def _new_agent():
     from src.web.artifacts import build_artifact_tools
     # 制品(publish_artifact)是写工具：Web 无模态确认，靠 build 模式门控「人在关口」。
     tools = build_read_tools(os.getcwd()) + build_artifact_tools(os.getcwd())
-    return MainAgent(tools)
+    return MainAgent(tools, plan_tool=True)        # 网页主 agent 也有持久任务清单
 
 
 def _get_session(websocket) -> Dict[str, Any]:
@@ -120,8 +120,13 @@ def _record(websocket, role: str, text: str) -> None:
 async def _replay_history(websocket) -> None:
     """重连/刷新时把这个会话之前的对话回放给前端（init 之后调用）。"""
     sess = _SESSIONS.get(_session_key(websocket))
-    if sess and sess["transcript"]:
+    if not sess:
+        return
+    if sess["transcript"]:
         await websocket.send_json({"type": "agent_history", "items": sess["transcript"]})
+    plan = getattr(sess["agent"], "plan", None)        # 重连也恢复当前计划面板
+    if plan:
+        await websocket.send_json({"type": "agent_plan", "items": plan})
 
 
 # 每个会话同时只跑一个回合；记下任务，供「停止」(agent_cancel)与断开时取消
@@ -174,6 +179,7 @@ async def _run_agent_turn(websocket, text: str, mode: str):
     agent = _ws_agent(websocket)              # 确保会话存在
     _record(websocket, "user", text)          # 记进展示历史，供重连回放
     q: asyncio.Queue = asyncio.Queue()
+    agent._on_plan = lambda plan: q.put_nowait({"type": "agent_plan", "items": plan})  # 计划更新 → 推前端
 
     def agent_say(m):
         try:                                  # 剥掉 Rich 标记，Web 端不显示 [b]/[dim] 等原文
