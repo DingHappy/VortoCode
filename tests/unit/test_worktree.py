@@ -120,6 +120,38 @@ async def test_run_isolated_task_with_real_main_agent(monkeypatch, tmp_path):
     assert not (tmp_path / "hello.py").exists()            # 主工作区干净
 
 
+@pytest.mark.asyncio
+async def test_apply_diff_to_branch_creates_branch_without_touching_main(tmp_path):
+    _init_repo(tmp_path)
+
+    def git(*a):
+        return subprocess.run(["git", "-C", str(tmp_path), *a], capture_output=True, text=True)
+
+    cur = git("branch", "--show-current").stdout.strip()
+
+    async def work(wt):
+        (wt / "feat.py").write_text("x = 1\n")
+        return None
+    diff, _ = await worktree.in_worktree(str(tmp_path), "wt-diff", work)
+
+    res = worktree.apply_diff_to_branch(str(tmp_path), "vorto/feat-x", diff, "add feat")
+    assert res["ok"] is True and res["branch"] == "vorto/feat-x"
+    assert "feat.py" in git("ls-tree", "-r", "--name-only", "vorto/feat-x").stdout   # 分支里有新文件
+    assert not (tmp_path / "feat.py").exists()                                        # 主工作区没被碰
+    assert git("branch", "--show-current").stdout.strip() == cur                      # 当前分支没切走
+    wt_dir = tmp_path / ".vortocode" / "worktrees"
+    assert not wt_dir.exists() or not any(wt_dir.iterdir())                           # 临时 worktree 已清
+
+
+def test_apply_diff_to_branch_bad_diff_cleans_up(tmp_path):
+    _init_repo(tmp_path)
+    res = worktree.apply_diff_to_branch(str(tmp_path), "vorto/bad", "这不是合法 diff\n", "x")
+    assert res["ok"] is False and "apply" in res["error"]
+    branches = subprocess.run(["git", "-C", str(tmp_path), "branch", "--list", "vorto/bad"],
+                              capture_output=True, text=True).stdout
+    assert "vorto/bad" not in branches                                                # 残留空分支被删
+
+
 def test_run_tests_pass_and_fail(tmp_path):
     import sys
     from src.agents.worktree import run_tests
