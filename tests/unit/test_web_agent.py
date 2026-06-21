@@ -204,6 +204,13 @@ async def test_cancel_with_no_running_turn_is_noop():
     assert realtime._cancel_agent_turn(ws) is False     # 没有在跑的回合 → False，不报错
 
 
+def test_web_agent_includes_isolated_dev():
+    from src.web.routers import realtime
+    agent = realtime._new_agent()                       # 网页 agent 也有隔离 dev（build 门控）
+    assert "dev_isolated" in agent.tools
+    assert agent.tools["dev_isolated"].read_only is False
+
+
 # ---- 会话持久化：同 sid 跨重连复用 agent + 回放对话 ----
 
 class _EchoAgent:
