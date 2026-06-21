@@ -13,8 +13,10 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 
+from rich.markdown import Markdown
 from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
@@ -29,9 +31,36 @@ from src.memory.session_store import SessionManager
 
 SLASH_COMMANDS = [
     "/analyze", "/improve", "/fix", "/run", "/agents", "/runagent", "/skills", "/mcp",
-    "/sessions", "/resume", "/new", "/mode", "/usage", "/tools", "/audit", "/clear", "/help", "/quit",
+    "/artifacts", "/sessions", "/resume", "/new", "/mode", "/usage", "/tools", "/audit",
+    "/clear", "/help", "/quit",
 ]
+# 命令 → 一句话说明（命令补全面板用，让 / 命令可发现、可补全）
+COMMAND_INFO = {
+    "/analyze": "L1 自分析（只读扫描，无需 key）",
+    "/improve": "L2 给测试缺口生成测试（需 key·build）",
+    "/fix": "深审并外科修复指定文件（需 key·build）",
+    "/run": "跑开发循环 dev→test→review（流式）",
+    "/agents": "列出已创建的 agent",
+    "/runagent": "用某个已创建 agent 执行任务",
+    "/skills": "列出 SKILL.md 技能（reload 重扫）",
+    "/mcp": "接入 MCP 服务器工具（build 门控）",
+    "/artifacts": "列出已发布的制品（画廊在 /artifacts）",
+    "/sessions": "列出历史会话",
+    "/resume": "恢复某个历史会话",
+    "/new": "新开一个会话",
+    "/mode": "切换 plan / build 模式",
+    "/usage": "本会话 token 用量（reset 清零）",
+    "/tools": "列出主 agent 工具及读写权限",
+    "/audit": "查看工具调用审计日志",
+    "/clear": "清屏",
+    "/help": "显示帮助",
+    "/quit": "退出",
+}
 ACTION_CMDS = {"analyze", "improve", "fix", "run", "runagent", "mcp"}   # 跑长任务，受忙碌态约束
+
+# 工作中指示器（仿 Claude Code）：10 帧 braille 旋转 + 轮换动词 + 计时 + esc 中断
+_SPIN_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+_SPIN_VERBS = ["思考中", "琢磨中", "检索中", "运转中", "推敲中"]
 
 _AGENTS_DB = lambda root: str(Path(root) / ".vortocode" / "web_advanced_agents.json")
 
@@ -44,6 +73,7 @@ HELP = """可用命令:
   /skills [reload]    列出 SKILL.md 技能（reload 重新扫描）
   /tools              列出主 agent 可用工具及其读写权限
   /audit              查看工具调用审计日志（.vortocode/audit.log）
+  /artifacts          列出已发布的制品（标题/版本/链接；浏览器开 /artifacts 是画廊）
   /mcp [list|off]     接入 config/mcp.yaml 的 MCP 服务器工具（build 门控）
   /agents             列出已创建的 agent（网页/API 建的，同一份存储）
   /runagent <id> <任务>  用某个已创建的 agent 执行任务（流式）
@@ -55,8 +85,8 @@ HELP = """可用命令:
   /clear              清屏
   /help               显示本帮助
   /quit               退出（也可 Ctrl+C）
-键位: Tab=切模式  Esc=取消当前操作  Ctrl+L=清屏  Ctrl+C=退出
-补全: 输入 / 补全命令、@ 补全文件（→ 接受）"""
+键位: Tab=补全命令/切模式  Esc=取消  Ctrl+L=清屏  Ctrl+C=退出
+补全: 输入 / 即在上方列出命令并高亮首选，Tab 或 → 接受；@ 补全文件（→ 接受）"""
 
 _IGNORE = {"__pycache__", ".git", ".venv", "venv"}
 
@@ -137,8 +167,13 @@ class VortoCodeTUI(App):
     TITLE = "VortoCode"
     CSS = """
     #log { height: 1fr; border: round $accent; padding: 0 1; }
-    #stream { max-height: 10; overflow-y: auto; color: $text-muted; padding: 0 1; }
+    #stream { max-height: 10; overflow-y: auto; color: $text-muted; padding: 0 1;
+              border-left: solid $success; }
+    #status { height: 1; color: $text-muted; padding: 0 1; }
+    #palette { height: auto; max-height: 9; overflow-y: auto; background: $surface;
+               color: $text-muted; padding: 0 1; }
     #prompt { border: round $panel; }
+    #prompt:focus { border: round $accent; }
     """
     BINDINGS = [
         Binding("ctrl+c", "quit", "退出", priority=True),
@@ -161,13 +196,18 @@ class VortoCodeTUI(App):
         self._skills = None                 # SkillRegistry（惰性构建、可 /skills reload）
         self._mcp = None                    # ToolManager（/mcp 连接后才有）
         self._mcp_tools: list = []          # 已接入的 MCP 工具（包成主 agent 的 Tool）
+        self._spin_i = 0                    # 工作指示器：帧/计时/定时器
+        self._busy_since = 0.0
+        self._spin_timer = None
 
     # ---------------------------------------------------------------- 布局
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         yield RichLog(id="log", wrap=True, markup=True, highlight=False, auto_scroll=True)
         yield Static(id="stream")
-        yield Input(placeholder="输入需求（自然语言），或 /help 看命令…",
+        yield Static(id="status")
+        yield Static(id="palette")
+        yield Input(placeholder="输入需求（自然语言），或 / 看命令…",
                     id="prompt", suggester=FileSuggester(self.repo_root))
         yield Footer()
 
@@ -175,8 +215,10 @@ class VortoCodeTUI(App):
         from src.llm.client import reset_usage
         reset_usage()                       # 每个会话从零计量
         self.query_one("#stream", Static).display = False
+        self.query_one("#status", Static).display = False
+        self.query_one("#palette", Static).display = False
         self._chrome("[b]VortoCode[/b] 交互模式 · 直接提问或说需求，[b]/help[/b] 看命令")
-        self._chrome("[dim]/sessions 查看历史 · /resume <id> 恢复 · /new 新开[/dim]")
+        self._chrome("[dim]输入 / 看命令补全 · Tab/→ 接受 · /sessions 历史 · /resume 恢复 · /new 新开[/dim]")
         self._sync_subtitle()
         self.session_id = self.sessions.start_session()
         self._persist_on = True            # 之后的对话才落盘（不存开场白）
@@ -190,9 +232,35 @@ class VortoCodeTUI(App):
         self._persist(markup, markup=True)
 
     def _emit(self, text: str) -> None:
-        """工具输出（按字面写，避免 [xxx] 被当成标记解析）。"""
+        """工具/命令输出（按字面写，避免 [xxx] 被当成标记解析）。"""
         self.transcript.append(text)
         self.query_one("#log", RichLog).write(Text(text))
+        self._persist(text, markup=False)
+
+    def _say_user(self, text: str) -> None:
+        """用户输入回显：醒目、turn 间留空行，和系统提示/助手回复区分开。"""
+        log = self.query_one("#log", RichLog)
+        log.write("")                       # turn 之间留白，避免糊成一片
+        t = Text()
+        t.append("❯ ", style="bold #8ab4f8")
+        t.append(text, style="#cdd6f4")
+        log.write(t)
+        self.transcript.append(text)
+        self._persist(text, markup=False)
+
+    def _assistant(self, text: str) -> None:
+        """主 agent 最终回复：● 署名一行 + 正文（markdown 渲染，失败回退纯文本）。"""
+        log = self.query_one("#log", RichLog)
+        head = Text()
+        head.append("● ", style="bold #7fce9a")
+        head.append("vorto", style="dim italic")
+        log.write(head)
+        try:
+            log.write(Markdown(text) if text.strip() else Text("(无回复)"))
+        except Exception:  # noqa: BLE001
+            log.write(Text(text))            # markdown 渲染异常不致命，退回纯文本
+        log.write("")                        # turn 间留白
+        self.transcript.append(text)
         self._persist(text, markup=False)
 
     def _persist(self, content: str, markup: bool) -> None:
@@ -219,8 +287,43 @@ class VortoCodeTUI(App):
     def on_worker_state_changed(self, event) -> None:
         if getattr(event.worker, "group", None) != "action":
             return
-        self._busy = event.state == WorkerState.RUNNING
+        running = event.state == WorkerState.RUNNING
+        self._busy = running
+        self._start_status() if running else self._stop_status()
         self._sync_subtitle()
+
+    # ---------------------------------------------------------------- 工作指示器
+    def _start_status(self) -> None:
+        """开始转圈（braille 旋转 + 计时 + esc 中断），仿 Claude Code 的"思考中"。"""
+        self._busy_since = time.monotonic()
+        self.query_one("#status", Static).display = True
+        if self._spin_timer is None:
+            self._spin_timer = self.set_interval(0.1, self._tick_status)
+        self._tick_status()
+
+    def _stop_status(self) -> None:
+        if self._spin_timer is not None:
+            self._spin_timer.stop()
+            self._spin_timer = None
+        try:
+            self.query_one("#status", Static).display = False
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _tick_status(self) -> None:
+        self._spin_i += 1
+        elapsed = int(time.monotonic() - self._busy_since)
+        frame = _SPIN_FRAMES[self._spin_i % len(_SPIN_FRAMES)]
+        verb = _SPIN_VERBS[(self._spin_i // 12) % len(_SPIN_VERBS)]   # 约 1.2s 换一个词
+        t = Text()
+        t.append(f"{frame} ", style="#f0b86e")
+        t.append(f"{verb} ", style="#f0b86e")
+        t.append(f"{elapsed}s", style="dim")
+        t.append("  ·  esc 中断", style="dim")
+        try:
+            self.query_one("#status", Static).update(t)
+        except Exception:  # noqa: BLE001
+            pass
 
     def action_cancel(self) -> None:
         if self._busy:
@@ -229,6 +332,15 @@ class VortoCodeTUI(App):
 
     # ---------------------------------------------------------------- 键位动作
     def action_toggle_mode(self) -> None:
+        # Tab 上下文化：正在敲 / 命令且能补全 → 补全到首个匹配；否则切 plan/build 模式。
+        inp = self.query_one("#prompt", Input)
+        v = inp.value
+        if v.startswith("/") and " " not in v:
+            matches = [c for c in SLASH_COMMANDS if c.startswith(v.lower())]
+            if matches and matches[0].lower() != v.lower():
+                inp.value = matches[0]
+                inp.cursor_position = len(inp.value)
+                return
         self.mode = "build" if self.mode == "plan" else "plan"
         self._sync_subtitle()
         self._chrome(f"→ 切到 [b]{self.mode}[/b] 模式")
@@ -240,15 +352,44 @@ class VortoCodeTUI(App):
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         text = event.value.strip()
         self.query_one("#prompt", Input).value = ""
+        self.query_one("#palette", Static).display = False
         if not text:
             return
-        self._chrome(f"[dim]› {text}[/dim]")
+        self._say_user(text)
         if text.startswith("/"):
             self._dispatch(text)
         elif self._busy:
             self._chrome("[yellow]正在处理上一条，Esc 取消或稍候[/yellow]")
         else:
             self._route(text)           # 普通话：先判意图（闲聊/提问 vs 开发需求）再分流
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """输入变化时更新命令补全面板（输入以 / 开头即可见）。"""
+        self._update_palette(event.value)
+
+    def _update_palette(self, value: str) -> None:
+        """输入框上方列出匹配的 / 命令 + 说明，高亮首选（Tab/→ 接受）。非 / 输入则隐藏。"""
+        palette = self.query_one("#palette", Static)
+        v = value.strip()
+        if not (v.startswith("/") and " " not in v):
+            palette.display = False
+            return
+        vl = v.lower()
+        matches = [c for c in SLASH_COMMANDS if c.startswith(vl)]
+        if not matches:
+            palette.display = False
+            return
+        rows = []
+        for i, c in enumerate(matches[:8]):
+            desc = COMMAND_INFO.get(c, "")
+            if i == 0:                       # 首选：会被 Tab/→ 接受，高亮
+                rows.append(f"[b #8ab4f8]›[/] [b]{c}[/b]  [dim]{desc}[/dim]")
+            else:
+                rows.append(f"  {c}  [dim]{desc}[/dim]")
+        more = f" · +{len(matches) - 8} 更多" if len(matches) > 8 else ""
+        rows.append(f"[dim]Tab/→ 接受首选 · 继续输入筛选{more}[/dim]")
+        palette.update(Text.from_markup("\n".join(rows)))
+        palette.display = True
 
     def _dispatch(self, text: str) -> None:
         parts = text[1:].split(maxsplit=1)
@@ -296,6 +437,8 @@ class VortoCodeTUI(App):
             self._cmd_tools()
         elif cmd == "audit":
             self._cmd_audit(arg)
+        elif cmd == "artifacts":
+            self._cmd_artifacts()
         elif cmd == "mcp":
             self._cmd_mcp(arg)
         elif cmd == "agents":
@@ -342,6 +485,20 @@ class VortoCodeTUI(App):
             return
         lines = p.read_text(encoding="utf-8").splitlines()
         self._emit(f"工具调用审计（共 {len(lines)} 条，显示最近 15）:\n" + "\n".join(lines[-15:]))
+
+    def _cmd_artifacts(self) -> None:
+        """/artifacts 列出已发布的制品（标题/版本/类型/链接）。需起 Web 服务器才能打开。"""
+        from src.web.artifacts import ArtifactStore, artifact_url
+        items = ArtifactStore(self.repo_root).list()
+        if not items:
+            self._emit("(还没有制品。build 模式下让主 agent publish_artifact，"
+                       "或说\"把这个做成可分享的页面\")")
+            return
+        lines = [f"已发布制品（共 {len(items)}；浏览器开 /artifacts 是画廊，需先起 Web 服务器）:"]
+        for m in items:
+            lines.append(f"  {m['title']} [v{m['version']} · {m.get('kind', 'html')}] "
+                         f"— {artifact_url(None, m['id'])}")
+        self._emit("\n".join(lines))
 
     # ---------------------------------------------------------------- MCP 工具接入
     def _wrap_mcp_tools(self) -> list:
@@ -684,18 +841,11 @@ class VortoCodeTUI(App):
         if ctx:
             self._chrome(f"[dim]＋ 已注入 @提及的上下文（{len(ctx)} 字）[/dim]")
             user_text = f"{user_text}\n\n[@提及的上下文]\n{ctx}"
-        stream = self.query_one("#stream", Static)
-
-        def stream_cb(partial: str) -> None:
-            stream.display = True
-            stream.update(Text(partial[-1500:]))   # 显示尾部，避免无限增高
-
-        try:
-            await self.agent.run_turn(user_text, mode=self.mode, say=self._chrome,
-                                      emit=self._emit, stream_cb=stream_cb)
-        finally:
-            stream.update("")
-            stream.display = False
+        # agent 的输出直接落进结果区（对话 log）：忙时转圈("思考中…")给进度反馈，工具调用与
+        # 结果(🔧/⎿)实时进 log，回复就绪即作为一条 ● vorto 消息（markdown）写进对话——
+        # 不再走单独的流式预览面板（避免"先在下方暗显、再跳到上方"的割裂感）。
+        await self.agent.run_turn(user_text, mode=self.mode,
+                                  say=self._chrome, emit=self._assistant)
         self._persist_agent_history()
 
     def _persist_agent_history(self) -> None:
@@ -970,8 +1120,13 @@ class VortoCodeTUI(App):
         def _artifact_published(meta: dict, url: str) -> None:
             self._chrome(f"[green]制品已发布 v{meta['version']}：{url}（/artifacts 看全部）[/green]")
 
+        async def _artifact_confirm_delete(preview: dict) -> bool:
+            return await self.push_screen_wait(ConfirmScreen(
+                f"build 模式：删除制品 {preview.get('id')}？此操作不可撤销。"))
+
         tools += build_artifact_tools(self.repo_root, confirm=_artifact_confirm,
-                                      on_published=_artifact_published)
+                                      on_published=_artifact_published,
+                                      confirm_delete=_artifact_confirm_delete)
         tools += self._mcp_tools             # 已接入的外部 MCP 工具（build 门控）
         catalog = registry.catalog()
         extra = f"【可用技能】(需要时用 use_skill 加载其完整指令再执行)\n{catalog}" if catalog else None
@@ -996,6 +1151,21 @@ class VortoCodeTUI(App):
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         except Exception:  # noqa: BLE001
             pass
+        try:
+            self._tool_preview(result)        # 工具结果摘要行（仿 Claude Code 的 ⎿）
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _tool_preview(self, result: str) -> None:
+        """在工具调用(🔧)行下方补一条结果摘要：⎿ 首行 (+N 行)，按字面、不入 transcript。"""
+        lines = str(result or "").strip().splitlines()
+        if not lines:
+            return
+        t = Text("  ⎿ ", style="dim")
+        t.append(lines[0][:120], style="dim")
+        if len(lines) > 1:
+            t.append(f"  (+{len(lines) - 1} 行)", style="dim")
+        self.query_one("#log", RichLog).write(t)
 
     # ---------------------------------------------------------------- 开发流水线
     @work(exclusive=True, group="action")

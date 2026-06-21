@@ -20,8 +20,12 @@
           display: flex; flex-direction: column; gap: 8px; }
   .card h3 { margin: 0; font-size: 15px; color: #e8eaed; word-break: break-word; }
   .meta { color: #7f8896; font-size: 12px; }
-  .open { align-self: flex-start; color: #fff; background: #2f6feb; border-radius: 6px;
+  .actions { display: flex; gap: 8px; align-items: center; }
+  .open { color: #fff; background: #2f6feb; border-radius: 6px;
           padding: 5px 12px; text-decoration: none; font-size: 13px; }
+  .del { color: #f08a8a; background: transparent; border: 1px solid #50343a; border-radius: 6px;
+         padding: 5px 10px; cursor: pointer; font: inherit; font-size: 13px; }
+  .del:hover { background: #2a1d20; }
   .empty { color: #7f8896; padding: 24px 18px; line-height: 1.6; }
   code { background: #0f1115; padding: 1px 5px; border-radius: 4px; }
 </style>
@@ -60,11 +64,23 @@ async function load() {
     card.className = "card";
     const h = document.createElement("h3"); h.textContent = m.title; card.appendChild(h);
     const meta = document.createElement("div"); meta.className = "meta";
-    meta.textContent = "v" + m.version + " · " + m.updated_at + " · " + fmt(m.bytes || 0)
-      + " · id=" + m.id;
+    meta.textContent = "v" + m.version + " · " + (m.kind || "html") + " · " + m.updated_at
+      + " · " + fmt(m.bytes || 0) + " · id=" + m.id;
     card.appendChild(meta);
+    const actions = document.createElement("div"); actions.className = "actions";
     const a = document.createElement("a"); a.className = "open"; a.href = view;
-    a.textContent = "打开"; card.appendChild(a);
+    a.textContent = "打开"; actions.appendChild(a);
+    const del = document.createElement("button"); del.className = "del"; del.textContent = "删除";
+    del.onclick = async () => {
+      if (!confirm("删除制品「" + m.title + "」？此操作不可撤销。")) return;
+      del.disabled = true; del.textContent = "删除中…";
+      try {
+        const r = await fetch("/api/artifacts/" + encodeURIComponent(m.id) + qs, { method: "DELETE" });
+        if (r.ok) { card.remove(); } else { del.disabled = false; del.textContent = "删除失败"; }
+      } catch (e) { del.disabled = false; del.textContent = "删除失败"; }
+    };
+    actions.appendChild(del);
+    card.appendChild(actions);
     grid.appendChild(card);
   }
 }
