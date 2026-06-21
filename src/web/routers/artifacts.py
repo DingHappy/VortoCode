@@ -68,6 +68,14 @@ async def artifact_meta(artifact_id: str, request: Request):
     return m
 
 
+@router.delete("/api/artifacts/{artifact_id}")
+async def artifact_delete(artifact_id: str):
+    """删除一个制品。"""
+    if not _store().delete(artifact_id):
+        raise HTTPException(status_code=404, detail="制品不存在")
+    return {"deleted": artifact_id}
+
+
 @router.get("/artifact/{artifact_id}/raw")
 async def artifact_raw(artifact_id: str):
     """制品原始 HTML（限制性 CSP，禁止外联）。"""
