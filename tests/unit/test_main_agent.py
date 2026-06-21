@@ -140,18 +140,56 @@ async def test_tool_error_fed_back_not_crash():
     assert out["emit"] == ["读取失败了，我换个思路。"]            # 工具炸了循环不崩，能继续给回复
 
 
+class _CapThenFinishLLM:
+    """步内永远想调工具；一旦收到"收尾"指令（禁用工具）就给最终结论。模拟"读完一堆再综合"。"""
+
+    def __init__(self, conclusion):
+        self.conclusion = conclusion
+        self.calls = 0
+
+    async def chat(self, messages, **kwargs):
+        self.calls += 1
+        sys = messages[0]["content"] if messages and messages[0].get("role") == "system" else ""
+        if "禁止再调用任何工具" in sys:      # _FORCE_FINISH_RULE 的标志 → 收尾
+            return {"content": self.conclusion}
+        return {"content": '{"tool":"read_file","args":{"path":"a"}}'}
+
+
 @pytest.mark.asyncio
-async def test_max_steps_cap():
+async def test_force_finish_salvages_work_on_cap():
+    async def handler(args):
+        return "file body"
+
+    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True)
+    # 跑满预算后，强制"无工具"收尾把已读内容综合成结论，而不是丢弃返回空
+    agent = MainAgent([tool], llm=_CapThenFinishLLM("综合结论：A 成熟、B 半成品。"), max_steps=3)
+    out, say, emit = _capture()
+    r = await agent.run_turn("评估各模块", mode="plan", say=say, emit=emit)
+    assert r == "综合结论：A 成熟、B 半成品。"            # 不再返回空
+    assert out["emit"] == ["综合结论：A 成熟、B 半成品。"]  # 用户看到结论，不是"上限"提示
+    assert len([s for s in out["say"] if "read_file" in s]) == 3   # 跑满 3 步工具后才收尾
+
+
+@pytest.mark.asyncio
+async def test_max_steps_cap_degrades_gracefully():
     async def handler(args):
         return "again"
 
     tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True)
-    # 模型永远只返回工具调用 → 触发步数上限保护
+    # 模型连收尾都不听话、仍只返回工具调用 → 优雅降级：给"上限"提示、返回空，但不崩
     agent = MainAgent([tool], llm=ScriptedLLM('{"tool":"read_file","args":{"path":"a"}}'), max_steps=3)
     out, say, emit = _capture()
-    await agent.run_turn("循环", mode="plan", say=say, emit=emit)
+    r = await agent.run_turn("循环", mode="plan", say=say, emit=emit)
+    assert r == ""
     assert len(out["emit"]) == 1 and "工具调用上限" in out["emit"][0]
     assert len([s for s in out["say"] if "read_file" in s]) == 3   # 恰好跑满 max_steps 次
+
+
+def test_env_overrides_max_steps(monkeypatch):
+    monkeypatch.setenv("VORTOCODE_MAX_STEPS", "15")
+    assert MainAgent([], max_steps=6).max_steps == 15           # 环境变量全局调高预算
+    monkeypatch.delenv("VORTOCODE_MAX_STEPS")
+    assert MainAgent([], max_steps=6).max_steps == 6            # 不设则用默认
 
 
 @pytest.mark.asyncio
