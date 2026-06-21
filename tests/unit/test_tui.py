@@ -63,7 +63,9 @@ async def test_starts_in_plan_mode_and_greets():
     async with app.run_test() as pilot:
         await pilot.pause()
         assert app.mode == "plan"
-        assert any("交互模式" in t for t in app.transcript)
+        joined = "\n".join(app.transcript)
+        assert "AI 开发助手" in joined and "试试" in joined        # 首跑引导：能力 + 示例
+        assert "plan" in joined and "build" in joined            # 模式说明
 
 
 @pytest.mark.asyncio
@@ -879,6 +881,42 @@ async def test_improve_confirm_always_sets_flag(monkeypatch, tmp_path):
         await pilot.pause()
         assert applied == [True]                          # a 也算确认 → 写了
         assert app._allow_writes_session is True          # 且置位会话标志
+
+
+@pytest.mark.asyncio
+async def test_plan_escalation_switches_to_build_and_marks_done(monkeypatch, tmp_path):
+    from src.agents.main_agent import MainAgent, Tool
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    ran = []
+
+    async def w(args):
+        ran.append(1)
+        return "ok"
+
+    class FakeLLM:
+        def __init__(self):
+            self.n = 0
+
+        async def chat(self, messages, **kw):
+            self.n += 1
+            return {"content": '{"tool":"w","args":{}}'} if self.n == 1 else {"content": "好了"}
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        assert app.mode == "plan"
+        app.agent = MainAgent([Tool("w", "写", {}, w, read_only=False)], llm=FakeLLM(),
+                              on_escalate=app._escalate_to_build, on_tool=app._audit_tool)
+        inp = app.query_one("#prompt", Input); inp.focus(); inp.value = "动手做"
+        await pilot.press("enter")
+        assert await _wait_modal(app, pilot)              # plan 想写 → 弹"切 build 并继续？"
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "已切到 build")  # 一键切 build
+        for _ in range(40):
+            if app.mode == "build":
+                break
+            await pilot.pause(0.05)
+        assert app.mode == "build" and ran == [1]         # 切了且执行了写工具
+        assert await _wait_for(app, pilot, "✓ 完成")        # 回合结束反馈
 
 
 @pytest.mark.asyncio
