@@ -1254,6 +1254,36 @@ class VortoCodeTUI(App):
                 return "run_dev_workflow 需要 goal 参数（开发目标）。"
             return await self._run_dev(goal)
 
+        async def _t_dev_isolated(args: dict) -> str:
+            """在一次性 git worktree 里让可写子 agent 实现一步，产出 diff 待人工确认；绝不碰主工作区。"""
+            desc = str(args.get("description") or args.get("task") or args.get("goal") or "").strip()
+            if not desc:
+                return "dev_isolated 需要 description（要在隔离工作区实现的任务）。"
+            import uuid
+            from src.agents.worktree import run_isolated_task
+            from src.agents.main_agent import build_read_tools, build_write_tools
+            wid = "wt-" + uuid.uuid4().hex[:8]
+            self._chrome(f"[magenta]🧪 隔离实现：{desc}[/magenta][dim]（独立 worktree，绝不碰主工作区）[/dim]")
+
+            def _build(wt_path: str):
+                return MainAgent(
+                    build_read_tools(wt_path) + build_write_tools(wt_path),
+                    max_steps=12, on_tool=self._audit_tool,
+                    extra_system=("你是隔离工作区里的实现子 agent：用 read_file/list_files/grep 看代码，"
+                                  "用 edit_file/write_file 在这个隔离工作树里实现任务，完成后一两句说明改了什么。"
+                                  "只动与任务相关的文件。"))
+            try:
+                diff, conclusion = await run_isolated_task(self.repo_root, wid, desc, _build)
+            except Exception as e:  # noqa: BLE001
+                return f"(隔离实现出错: {e})"
+            if not (diff or "").strip():
+                return f"子 agent 没产生任何改动。结论：{conclusion}"
+            self._chrome("[b]🧪 隔离工作区改动（待确认，未并入主工作区）[/b]")
+            self._render_diff_text(diff)
+            self._chrome("[dim]↑ 改动在一次性 worktree 完成、已清理；review 后可人工 git apply（一键应用是下一步）。[/dim]")
+            return (f"已在隔离 worktree 实现并产出 diff（{diff.count(chr(10))} 行，未并入）。"
+                    f"子 agent 结论：{conclusion}")
+
         # 只读工具：plan 也能用；也是子 agent 的工具集（无 task/写工具 → 不嵌套、不改文件）
         read_tools = [
             Tool("read_file", "读取仓库内某个文件的内容",
@@ -1378,6 +1408,10 @@ class VortoCodeTUI(App):
             Tool("run_dev_workflow",
                  "把一个明确的开发目标交给 dev→test→review 流水线自动实现+测试（重型，仅 build 模式）",
                  {"goal": "开发目标（自然语言）"}, _t_run_dev, read_only=False),
+            Tool("dev_isolated",
+                 "在隔离的 git worktree 里让可写子 agent 实现一个独立子任务，产出 diff 待人工确认；"
+                 "绝不碰主工作区。大任务可对计划里相互独立的步骤逐个调它（仅 build）",
+                 {"description": "要在隔离工作区实现的子任务"}, _t_dev_isolated, read_only=False),
         ]
 
         # 制品（artifact）：把会话产出发布成可分享、实时更新的网页（由 Web 服务器在 /artifact 渲染）。

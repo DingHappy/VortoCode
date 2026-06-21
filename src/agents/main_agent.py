@@ -488,3 +488,62 @@ def build_read_tools(repo_root: str) -> list[Tool]:
              {"pattern": "正则", "dir": "可选子目录"}, _grep, read_only=True),
         Tool("analyze_repo", "只读扫描本仓库列出问题清单，无需 key", {}, _analyze_repo, read_only=True),
     ]
+
+
+def build_write_tools(root: str) -> list[Tool]:
+    """构建写工具（edit_file/write_file），根目录限定在 root 且**无模态确认**——
+
+    专给隔离 worktree 里的可写子 agent 用：改动只落在一次性工作树、最后整体出 diff 待人工确认，
+    所以这里不逐条弹窗。带 `..` 越界防护，绝不写出 root 之外。
+    """
+    from pathlib import Path
+    base = Path(root).resolve()
+
+    def _safe(rel) -> Optional[Path]:
+        rel = str(rel or "").strip().lstrip("@")
+        if not rel:
+            return None
+        p = (base / rel).resolve()
+        try:
+            p.relative_to(base)                    # 越界(..)/绝对路径 → 拒绝
+        except ValueError:
+            return None
+        return p
+
+    async def _edit_file(args: dict) -> str:
+        rel = str(args.get("path", "")).strip()
+        old, new = str(args.get("old", "")), str(args.get("new", ""))
+        p = _safe(rel)
+        if p is None:
+            return f"路径越界或非法: {rel}"
+        if not old:
+            return "edit_file 需要 old（要替换的原文）。"
+        if not p.is_file():
+            return f"文件不存在: {rel}"
+        text = p.read_text(encoding="utf-8")
+        cnt = text.count(old)
+        if cnt == 0:
+            return f"在 {rel} 中找不到要替换的原文（old）。"
+        if cnt > 1:
+            return f"原文在 {rel} 中出现 {cnt} 次、不唯一；请给更长、唯一的 old。"
+        p.write_text(text.replace(old, new, 1), encoding="utf-8")
+        return f"已修改 {rel}（替换 1 处）。"
+
+    async def _write_file(args: dict) -> str:
+        rel = str(args.get("path", "")).strip()
+        content = str(args.get("content", ""))
+        p = _safe(rel)
+        if p is None or p.is_dir():
+            return f"路径越界或非法: {rel}"
+        verb = "覆盖" if p.is_file() else "新建"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+        return f"已{verb} {rel}（{len(content)} 字符）。"
+
+    return [
+        Tool("edit_file", "精确字符串替换（old 须唯一存在）；在隔离工作区改文件",
+             {"path": "相对路径", "old": "要替换的原文(需唯一)", "new": "替换为"},
+             _edit_file, read_only=False),
+        Tool("write_file", "新建或覆盖文件；在隔离工作区改文件",
+             {"path": "相对路径", "content": "文件全部内容"}, _write_file, read_only=False),
+    ]

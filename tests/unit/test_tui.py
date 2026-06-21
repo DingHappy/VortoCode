@@ -1153,6 +1153,16 @@ async def test_running_status_shows_live_tool_count(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_dev_isolated_registered_build_only():
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        agent = app._build_main_agent()
+        assert "dev_isolated" in agent.tools
+        assert agent.tools["dev_isolated"].read_only is False    # 写工具，仅 build 可用
+
+
+@pytest.mark.asyncio
 async def test_render_plan_panel():
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
