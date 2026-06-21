@@ -70,3 +70,30 @@ async def test_ws_agent_no_key_degrades(monkeypatch):
     await handle_agent_message(ws, {"type": "agent", "text": "你好"})
     assert any("OPENAI_API_KEY" in m.get("text", "") for m in ws.sent)
     assert ws.sent[-1]["type"] == "agent_done"
+
+
+@pytest.mark.asyncio
+async def test_ws_agent_say_strips_rich_markup(monkeypatch):
+    # 工具提示行在主 agent 里带 Rich 标记（🔧 [b]name[/b][dim]…[/dim]）；Web 端必须剥成纯文本，
+    # 否则 agent.html 会原样显示 [b]/[dim] 标签。
+    import src.llm.client as llmmod
+    from src.web.routers.realtime import handle_agent_message
+
+    class FakeLLM:
+        def __init__(self, *a, **k):
+            self.n = 0
+
+        async def chat(self, messages, **k):
+            self.n += 1
+            if self.n == 1:
+                return {"content": '{"tool":"list_files","args":{}}'}
+            return {"content": "好了。"}
+
+    monkeypatch.setattr(llmmod, "LLMClient", FakeLLM)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    ws = _FakeWS()
+    await handle_agent_message(ws, {"type": "agent", "text": "列文件", "mode": "plan"})
+    says = [m["text"] for m in ws.sent if m["type"] == "agent_say"]
+    assert says and any("list_files" in s for s in says)       # 工具名还在
+    assert all("[b]" not in s and "[dim]" not in s and "[/" not in s for s in says)  # 但 Rich 标记没了

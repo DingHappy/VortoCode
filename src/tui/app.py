@@ -272,7 +272,8 @@ class VortoCodeTUI(App):
         self._chrome("[dim]能做：问答 · 读&搜代码(@文件) · 扫描仓库问题 · 实现/修改/测试代码 · "
                      "发布可分享制品[/dim]")
         self._chrome("")
-        self._chrome("[#8ab4f8]试试：[/#8ab4f8] [b]这个项目是做什么的？[/b]   ·   "
+        self._chrome(f"[{self._tc('text-primary', '#8ab4f8')}]试试：[/] "
+                     "[b]这个项目是做什么的？[/b]   ·   "
                      "[b]@src/cli.py 讲讲这个文件[/b]   ·   [b]给 xx 模块补测试[/b]")
         self._chrome("[dim]模式：plan=只读/提案（默认更稳），build=可写新分支（绝不碰 main）。"
                      "要它动手时会问你切不切，[b]不用先手动切[/b]。[/dim]")
@@ -1093,7 +1094,7 @@ class VortoCodeTUI(App):
             self.query_one("#status", Static).display = False   # 有正文了，转圈让位
             stream.display = True
             t = Text()
-            t.append("● ", style="bold #7fce9a")
+            t.append("● ", style=f"bold {self._tc('text-success', '#7fce9a')}")  # 随主题，与最终回复同色
             t.append("vorto", style="dim italic")
             t.append("\n")
             t.append(partial[-1800:])        # 显示尾部，避免面板无限增高
