@@ -1123,3 +1123,30 @@ async def test_reply_streams_then_lands_in_log(monkeypatch, tmp_path):
         assert ok                                        # 最终回复落进 log
         assert any("这是" in u for u in seen)             # 流式过程中 #stream 收到过部分文本
         assert app.query_one("#stream", Static).display is False   # 收尾干净
+
+
+@pytest.mark.asyncio
+async def test_running_status_shows_live_tool_count(monkeypatch):
+    # 运行指示器把本回合工具数也带上，长跑时一眼看出在推进（截图反馈）。
+    import time
+    from textual.widgets import Static
+
+    seen = []
+    orig = Static.update
+    def spy(self, renderable="", *a, **k):
+        if getattr(self, "id", None) == "status":
+            seen.append(str(renderable))
+        return orig(self, renderable, *a, **k)
+    monkeypatch.setattr(Static, "update", spy)
+
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._busy_since = time.monotonic()
+        app._turn_tools = 7
+        seen.clear(); app._tick_status()
+        assert seen and "7 工具" in seen[-1] and "esc 中断" in seen[-1]
+        # 没用过工具的回合不显示工具数（不喧宾夺主）
+        app._turn_tools = 0
+        seen.clear(); app._tick_status()
+        assert seen and "工具" not in seen[-1]

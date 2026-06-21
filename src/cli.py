@@ -125,6 +125,36 @@ def _split_paths(raw):
     return [p.strip() for p in raw.split(",") if p.strip()] if raw else None
 
 
+async def _with_progress(coro, label: str = "运行中"):
+    """跑 coro，运行期间在 stderr 单行刷新「⏳ label Ns…」，让人知道没卡死；结束即清行。
+
+    长跑命令（开发流水线 / 自分析 / 自改进）此前打个标题就闷头跑，看不出是否在动。
+    非 TTY（管道 / 重定向 / 日志）则完全静默、不污染输出。
+    """
+    import time as _time
+    if not sys.stderr.isatty():
+        return await coro
+    t0 = _time.monotonic()
+    done = asyncio.Event()
+
+    async def _ticker():
+        while not done.is_set():
+            el = int(_time.monotonic() - t0)
+            print(f"\r\033[2m⏳ {label} {el}s…\033[0m", end="", file=sys.stderr, flush=True)
+            try:
+                await asyncio.wait_for(done.wait(), 1.0)
+            except asyncio.TimeoutError:
+                pass
+
+    tick = asyncio.create_task(_ticker())
+    try:
+        return await coro
+    finally:
+        done.set()
+        await tick
+        print("\r\033[K", end="", file=sys.stderr, flush=True)   # 清掉计时行，给真正的结果让位
+
+
 async def run_task(task: str):
     """运行任务"""
     from src.orchestrator import create_default_engine
@@ -136,7 +166,7 @@ async def run_task(task: str):
     engine = await create_default_engine()
 
     # 执行任务
-    result = await engine.orchestrate(task)
+    result = await _with_progress(engine.orchestrate(task), "开发流水线")
     
     print(f"\nResult: {'Success' if result.success else 'Failed'}")
     print(f"Duration: {result.duration:.2f}s")
@@ -157,7 +187,7 @@ async def analyze_task(task: str):
     from src.orchestrator import TaskAnalyzer
     
     analyzer = TaskAnalyzer()
-    analysis = await analyzer.analyze(task)
+    analysis = await _with_progress(analyzer.analyze(task), "分析任务")
     
     print(f"Task: {task}")
     print(f"Complexity: {analysis.complexity}")
@@ -176,7 +206,7 @@ async def run_self_analysis(paths=None):
 
     if paths:
         print(f"对 {len(paths)} 个文件启用 LLM 深审：{', '.join(paths)}")
-    report = await analyze_self(".", llm_paths=paths)
+    report = await _with_progress(analyze_self(".", llm_paths=paths), "扫描仓库")
     print(render_report(report))
 
 
@@ -188,7 +218,7 @@ async def run_self_improvement(apply: bool = False, max_fixes: int = 3):
     from src.orchestrator.self_improve import SelfImprovementLoop, render_result
 
     loop = SelfImprovementLoop(".", max_fixes=max_fixes)
-    result = await loop.propose()
+    result = await _with_progress(loop.propose(), "生成并门控测试")
     if apply and result.accepted:
         branch = loop.apply(result)
         print(f"已把 {len(result.accepted)} 个通过门控的测试写到分支: {branch}")
@@ -209,9 +239,9 @@ async def run_self_fix(paths=None, apply: bool = False, max_fixes: int = 3):
         return
 
     print(f"深审 {len(paths)} 个文件以发现 bug/坏味道：{', '.join(paths)}")
-    report = await analyze_self(".", llm_paths=paths)
+    report = await _with_progress(analyze_self(".", llm_paths=paths), "深审文件")
     loop = CodeFixLoop(".", max_fixes=max_fixes)
-    result = await loop.propose(report.findings)   # 内部只挑 bug/code-smell 类
+    result = await _with_progress(loop.propose(report.findings), "修复并门控")   # 内部只挑 bug/code-smell 类
     if apply and result.accepted:
         branch = loop.apply(result)
         print(f"已把 {len(result.accepted)} 个通过门控的修复写到分支: {branch}")
