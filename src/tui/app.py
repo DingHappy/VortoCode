@@ -387,6 +387,8 @@ class VortoCodeTUI(App):
         t = Text()
         t.append(f"{frame} ", style=warn)
         t.append(f"{verb} ", style=warn)
+        if self._turn_tools:                       # 工具数随回合增长 → 一眼看出在推进
+            t.append(f"· {self._turn_tools} 工具 ", style="dim")
         t.append(f"{elapsed}s", style="dim")
         t.append("  ·  esc 中断", style="dim")
         try:
