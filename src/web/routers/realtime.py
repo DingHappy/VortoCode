@@ -60,6 +60,36 @@ async def handle_websocket_message(websocket: WebSocket, message: Dict[str, Any]
     elif msg_type == "agent_cancel":          # 「停止」：中断正在跑的回合（若有）
         _cancel_agent_turn(websocket)
 
+    elif msg_type == "agent_confirm_response":  # 前端对 agent_confirm 的应答 → 解开等待的工具
+        fut = _PENDING_CONFIRMS.get(message.get("id"))
+        if fut is not None and not fut.done():
+            fut.set_result(bool(message.get("ok")))
+
+
+# 等待前端确认的工具：confirm id → Future（前端 agent_confirm_response 来了就 set_result）
+_PENDING_CONFIRMS: Dict[str, Any] = {}
+
+
+def _make_ws_confirm(websocket, q):
+    """造一个 async confirm(message)->bool：发 agent_confirm 事件给前端、等其应答。
+
+    事件经 q 走（与其它事件同序、由 drain 循环发出）；接收循环并发处理应答（#29 起回合不阻塞收消息）。
+    超时/出错/取消都安全返回 False（不放行）。
+    """
+    async def _confirm(message: str) -> bool:
+        import uuid
+        cid = uuid.uuid4().hex
+        fut = asyncio.get_running_loop().create_future()
+        _PENDING_CONFIRMS[cid] = fut
+        q.put_nowait({"type": "agent_confirm", "id": cid, "text": str(message)})
+        try:
+            return bool(await asyncio.wait_for(fut, timeout=300))
+        except Exception:  # noqa: BLE001  # 超时/取消 → 拒绝（安全）
+            return False
+        finally:
+            _PENDING_CONFIRMS.pop(cid, None)
+    return _confirm
+
 
 # ---- 会话级持久化：按客户端 sid 让 agent 跨重连/刷新存活，另留一份干净的展示用 transcript ----
 # 以前 agent 按 id(websocket) 存活、断开即丢，刷新就重来。现在按 sid（前端 sessionStorage，
@@ -80,13 +110,23 @@ def _session_key(websocket) -> str:
 
 def _new_agent():
     import os
-    from src.agents.main_agent import MainAgent, build_read_tools, build_dev_tools
+    from src.agents.main_agent import (MainAgent, build_command_tool,
+                                        build_dev_tools, build_read_tools)
     from src.web.artifacts import build_artifact_tools
-    # 制品(publish_artifact)/dev_isolated 都是写工具：Web 无模态确认，靠 build 门控 +（dev 的）
-    # 完全隔离 + 落新分支保证「人在关口」。dev_isolated 在隔离 worktree 实现+验证、绿了落 vorto 分支。
+    # 制品/dev_isolated 靠隔离 + build 门控；run_command 高危 → 走 WS 确认（confirm_holder 每回合
+    # 重绑到当前连接，见 _run_agent_turn）。无回合上下文时 confirm 默认拒绝。
     cwd = os.getcwd()
-    tools = build_read_tools(cwd) + build_artifact_tools(cwd) + build_dev_tools(cwd)
-    return MainAgent(tools, plan_tool=True)        # 网页主 agent 也有持久任务清单 + 隔离 dev
+    confirm_holder = {"fn": None}
+
+    async def _confirm(message: str) -> bool:
+        fn = confirm_holder["fn"]
+        return bool(await fn(message)) if fn is not None else False
+
+    tools = (build_read_tools(cwd) + build_artifact_tools(cwd)
+             + build_dev_tools(cwd) + build_command_tool(cwd, _confirm))
+    agent = MainAgent(tools, plan_tool=True)       # 网页主 agent：持久计划 + 隔离 dev + 受 WS 确认的 shell
+    agent._web_confirm_holder = confirm_holder     # _run_agent_turn 每回合把它指向当前 ws
+    return agent
 
 
 def _get_session(websocket) -> Dict[str, Any]:
@@ -182,6 +222,9 @@ async def _run_agent_turn(websocket, text: str, mode: str):
     _record(websocket, "user", text)          # 记进展示历史，供重连回放
     q: asyncio.Queue = asyncio.Queue()
     agent._on_plan = lambda plan: q.put_nowait({"type": "agent_plan", "items": plan})  # 计划更新 → 推前端
+    holder = getattr(agent, "_web_confirm_holder", None)
+    if holder is not None:                    # 把 run_command 等的确认门绑到当前连接
+        holder["fn"] = _make_ws_confirm(websocket, q)
 
     def agent_say(m):
         try:                                  # 剥掉 Rich 标记，Web 端不显示 [b]/[dim] 等原文
