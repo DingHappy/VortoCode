@@ -82,9 +82,9 @@ def test_renderer_behavior_via_node():
 def test_tool_activity_grouping_wiring():
     s = _src()
     assert "function toolLine(" in s and "function endToolGroup(" in s
-    # 工具提示走折叠分组，而不是逐行裸 say
+    # 工具提示走折叠分组，而不是逐行裸 say（"⏹ 已中断"是唯一允许的一次性 say 行）
     assert "case \"agent_say\":    toolLine(" in s
-    assert 'add("say"' not in s
+    assert s.count('add("say"') <= 1
     # 每个回合收尾都定格分组：emit / error / done / 新回合(sendMsg)（断线清理是额外一处）
     assert s.count("endToolGroup();") >= 4
     # 折叠用 <details class="tools">，工具行始终 textContent（纯文本）
@@ -176,3 +176,19 @@ def test_backoff_curve_via_node():
     r = subprocess.run(["node", "--input-type=module"], input=harness,
                        capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, (r.stdout + r.stderr)
+
+
+def test_interrupt_wiring():
+    s = _src()
+    # 「停止」：cancelTurn 发 agent_cancel；忙时点发送按钮即取消
+    assert "function cancelTurn(" in s
+    assert 'type: "agent_cancel"' in s
+    assert "if (busy) { cancelTurn(); return; }" in s
+    # 发送按钮忙时变「停止」红，闲时「发送」
+    assert 'b ? "停止" : "发送"' in s
+    assert 'classList.toggle("stop"' in s and "#send.stop" in s
+    # 后端 agent_cancelled 事件被处理并解忙
+    assert 'case "agent_cancelled":' in s
+    # 回车忙时不发送；Esc 在忙时中断
+    assert "if (!busy) sendMsg()" in s
+    assert 'e.key === "Escape" && busy' in s
