@@ -1,4 +1,6 @@
-"""通用命令执行（src/agents/shell.py）单测。"""
+"""通用命令执行（src/agents/shell.py）+ 带确认门的 run_command 工具单测。"""
+
+import pytest
 
 from src.agents.shell import is_dangerous, run_command
 
@@ -28,3 +30,30 @@ def test_run_command_captures_output_and_code(tmp_path):
     (tmp_path / "marker.txt").write_text("x")
     ls = run_command(tmp_path, "ls")
     assert "marker.txt" in ls["output"]
+
+
+@pytest.mark.asyncio
+async def test_build_command_tool_confirm_gate(tmp_path):
+    from src.agents.main_agent import build_command_tool
+
+    async def yes(_m):
+        return True
+
+    async def no(_m):
+        return False
+
+    t_yes = {x.name: x for x in build_command_tool(str(tmp_path), yes)}["run_command"]
+    out = await t_yes.handler({"command": "echo hi"})
+    assert "退出码 0" in out and "hi" in out                     # 允许 → 跑了
+
+    t_no = {x.name: x for x in build_command_tool(str(tmp_path), no)}["run_command"]
+    assert "拒绝" in await t_no.handler({"command": "echo hi"})   # 拒绝 → 不跑
+
+    asked = {"n": 0}
+
+    async def counting(_m):
+        asked["n"] += 1
+        return True
+    t_d = {x.name: x for x in build_command_tool(str(tmp_path), counting)}["run_command"]
+    out3 = await t_d.handler({"command": "rm -rf /"})
+    assert "拒绝" in out3 and asked["n"] == 0                     # 危险硬拒，根本没问 confirm

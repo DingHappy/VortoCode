@@ -689,3 +689,29 @@ def build_dev_tools(repo_root: str) -> list[Tool]:
                  {"description": "要在隔离工作区实现的子任务",
                   "test": "可选，pytest 选择器，省略则跑全量 tests/"},
                  _dev_isolated, read_only=False)]
+
+
+def build_command_tool(repo_root: str, confirm) -> list[Tool]:
+    """UI 无关的 run_command（给 Web 用，注入 async confirm 门）。
+
+    高危但带三层关口：危险操作硬拒 + 逐条 `await confirm(msg)` 确认 + build 门控。
+    confirm(message) 是 async、返回 bool（Web 端走 WS 确认；超时/拒绝都安全不跑）。
+    """
+    async def _run(args: dict) -> str:
+        import asyncio
+        from src.agents.shell import is_dangerous, run_command
+        cmd = str(args.get("command") or args.get("cmd") or "").strip()
+        if not cmd:
+            return "run_command 需要 command。"
+        why = is_dangerous(cmd)
+        if why:
+            return f"拒绝执行（疑似危险操作：{why}）。请换更具体、安全的命令。"
+        if not await confirm(f"在仓库根目录执行命令？\n  $ {cmd}"):
+            return f"用户拒绝了命令：{cmd}"
+        res = await asyncio.to_thread(run_command, repo_root, cmd)
+        return f"命令 `{cmd}` 退出码 {res['code']}。输出尾部：\n{res['output'][-3000:]}"
+
+    return [Tool("run_command",
+                 "在仓库根目录跑任意 shell 命令（pytest/ruff/git/pip/make…）；高危，每条都需确认、"
+                 "明显危险操作直接拒（仅 build）",
+                 {"command": "要执行的 shell 命令"}, _run, read_only=False)]
