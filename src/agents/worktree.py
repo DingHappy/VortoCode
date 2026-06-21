@@ -8,6 +8,7 @@ worktree 建在 .vortocode/worktrees/<id>（gitignored），不污染 git status
 """
 from __future__ import annotations
 
+import asyncio
 import shutil
 import subprocess
 from pathlib import Path
@@ -78,6 +79,44 @@ def apply_diff_to_branch(repo_root, branch: str, diff: str, message: str) -> dic
             _git(repo_root, "branch", "-D", branch, check=False)   # 失败：删掉残留空分支
 
 
+def apply_diffs_to_branch(repo_root, branch: str, items: list) -> dict:
+    """把多个 (diff, message) 依次 apply+commit 到**一个**新分支（一次性 worktree，不碰 main/工作区）。
+
+    用于并行实现的"集成"：每块绿 diff 作为一个提交。某块应用不干净（如互相冲突）则跳过并记账。
+    返回 {ok, branch, applied:[msg...], failed:[{msg,error}...]}；一块都没应用则删掉空分支。
+    """
+    path = _worktrees_dir(repo_root) / ("apply-" + branch.replace("/", "-"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        remove_worktree(repo_root, path)
+    add = _git(repo_root, "worktree", "add", "-b", branch, str(path), "HEAD", check=False)
+    if add.returncode != 0:
+        return {"ok": False, "branch": branch, "applied": [],
+                "failed": [{"msg": "(worktree add)", "error": (add.stderr or "").strip()[:300]}]}
+    applied: list = []
+    failed: list = []
+    try:
+        for diff, msg in items:
+            if not (diff or "").strip():
+                continue
+            ap = subprocess.run(["git", "-C", str(path), "apply", "--whitespace=nowarn"],
+                                input=diff, capture_output=True, text=True)
+            if ap.returncode != 0:
+                failed.append({"msg": msg, "error": (ap.stderr or "").strip()[:300]})
+                continue
+            _git(path, "add", "-A")
+            cm = _git(path, "commit", "-m", msg, check=False)
+            if cm.returncode != 0:
+                failed.append({"msg": msg, "error": "commit 失败: " + (cm.stderr or "").strip()[:200]})
+                continue
+            applied.append(msg)
+        return {"ok": bool(applied), "branch": branch, "applied": applied, "failed": failed}
+    finally:
+        remove_worktree(repo_root, path)
+        if not applied:
+            _git(repo_root, "branch", "-D", branch, check=False)
+
+
 async def in_worktree(repo_root, wid: str,
                       work: Callable[[Path], Awaitable]) -> tuple[str, object]:
     """在隔离 worktree 里 await work(path)，返回 (diff, work 的返回值)；无论成败都清理 worktree。"""
@@ -117,7 +156,8 @@ async def run_isolated_task(repo_root, wid: str, description: str,
         agent = build_agent(str(path))
         conclusion = await agent.run_turn(description, mode=mode, emit=lambda _t: None)
         diff = collect_diff(path)                          # 先收 diff，再跑测试
-        verification = run_tests(path, test_cmd) if test_cmd else None
+        # pytest 慢且阻塞：丢线程跑，既不冻 UI、并行时多个测试也能真并发（各自独立 worktree）
+        verification = (await asyncio.to_thread(run_tests, path, test_cmd)) if test_cmd else None
         return diff, conclusion, verification
     finally:
         remove_worktree(repo_root, path)

@@ -152,6 +152,48 @@ def test_apply_diff_to_branch_bad_diff_cleans_up(tmp_path):
     assert "vorto/bad" not in branches                                                # 残留空分支被删
 
 
+@pytest.mark.asyncio
+async def test_apply_diffs_to_branch_multiple_independent(tmp_path):
+    _init_repo(tmp_path)
+
+    def git(*a):
+        return subprocess.run(["git", "-C", str(tmp_path), *a], capture_output=True, text=True)
+
+    async def w1(wt):
+        (wt / "f1.py").write_text("a = 1\n")
+
+    async def w2(wt):
+        (wt / "f2.py").write_text("b = 2\n")
+    d1, _ = await worktree.in_worktree(str(tmp_path), "wt-1", w1)
+    d2, _ = await worktree.in_worktree(str(tmp_path), "wt-2", w2)
+
+    res = worktree.apply_diffs_to_branch(str(tmp_path), "vorto/multi", [(d1, "add f1"), (d2, "add f2")])
+    assert res["ok"] and len(res["applied"]) == 2 and not res["failed"]
+    tree = git("ls-tree", "-r", "--name-only", "vorto/multi").stdout
+    assert "f1.py" in tree and "f2.py" in tree                          # 两块都进了分支
+    log = git("log", "--oneline", "vorto/multi").stdout
+    assert "add f1" in log and "add f2" in log                          # 各自一个提交
+    assert not (tmp_path / "f1.py").exists()                            # 主工作区没被碰
+
+
+@pytest.mark.asyncio
+async def test_apply_diffs_partial_failure_keeps_good_ones(tmp_path):
+    _init_repo(tmp_path)
+
+    def git(*a):
+        return subprocess.run(["git", "-C", str(tmp_path), *a], capture_output=True, text=True)
+
+    async def wg(wt):
+        (wt / "g.py").write_text("ok\n")
+    good, _ = await worktree.in_worktree(str(tmp_path), "wt-g", wg)
+
+    res = worktree.apply_diffs_to_branch(
+        str(tmp_path), "vorto/partial", [(good, "good"), ("这不是 diff\n", "bad")])
+    assert "good" in res["applied"] and len(res["failed"]) == 1         # 好的进了、坏的记账跳过
+    assert res["ok"] is True                                            # 有成功的就算 ok
+    assert "g.py" in git("ls-tree", "-r", "--name-only", "vorto/partial").stdout
+
+
 def test_run_tests_pass_and_fail(tmp_path):
     import sys
     from src.agents.worktree import run_tests
