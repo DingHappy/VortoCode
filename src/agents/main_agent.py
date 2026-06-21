@@ -635,3 +635,57 @@ def build_test_tool(root: str, default_cmd: Optional[list] = None) -> "Tool":
                 "实现后务必自测，没过就改完再测，直到通过",
                 {"test": "可选，pytest 选择器，如 tests/unit/test_x.py"},
                 _handler, read_only=True)
+
+
+def build_dev_tools(repo_root: str) -> list[Tool]:
+    """UI 无关的隔离 dev 工具（给 Web agent 用）。
+
+    `dev_isolated`：在一次性 git worktree 里让可写子 agent 实现 + 自测，再跑测试验证；✅通过就
+    **自动落到 vorto/<id> 新分支**（绝不碰 main/工作区），返回结论。无模态确认——靠 build 门控 +
+    完全隔离 + 落新分支保证"人在关口"。TUI 那版另带富 diff 渲染 + 确认；这版给没有模态的 Web。
+    """
+    async def _dev_isolated(args: dict) -> str:
+        import asyncio
+        import re
+        import sys
+        import uuid
+        from src.agents.worktree import apply_diff_to_branch, run_isolated_task
+
+        desc = str(args.get("description") or args.get("task") or "").strip()
+        if not desc:
+            return "dev_isolated 需要 description（要在隔离工作区实现的子任务）。"
+        wid = "wt-" + uuid.uuid4().hex[:8]
+        sel = str(args.get("test") or "").strip()
+        test_cmd = [sys.executable, "-m", "pytest", "-q", sel or "tests/"]
+
+        def _build(wt: str):
+            return MainAgent(
+                build_read_tools(wt) + build_write_tools(wt) + [build_test_tool(wt, test_cmd)],
+                max_steps=16,
+                extra_system=("你是隔离工作区里的实现子 agent：用 read/grep 看代码、edit_file/write_file "
+                              "实现任务；改完务必用 run_tests 自测，没过就改完再测直到通过。只动相关文件。"))
+        try:
+            diff, conclusion, ver = await run_isolated_task(repo_root, wid, desc, _build, test_cmd=test_cmd)
+        except Exception as e:  # noqa: BLE001
+            return f"(隔离实现出错: {e})"
+        if not (diff or "").strip():
+            return f"子 agent 没产生任何改动。结论：{conclusion}"
+        nlines = diff.count("\n")
+        if ver and ver["ok"]:
+            slug = re.sub(r"[^a-z0-9]+", "-", desc.lower()).strip("-")[:28] or "iso"
+            branch = f"vorto/{slug}-{wid[3:]}"
+            res = await asyncio.to_thread(apply_diff_to_branch, repo_root, branch, diff, f"dev_isolated: {desc}")
+            if res["ok"]:
+                return (f"✅ 已隔离实现且测试通过，落到新分支 {branch}（{nlines} 行，"
+                        f"git checkout {branch} 查看，未碰 main）。结论：{conclusion}")
+            return f"✅ 实现且测试通过，但落分支失败：{res['error']}。diff {nlines} 行。结论：{conclusion}"
+        tail = (ver or {}).get("output", "")[-1000:]
+        return (f"❌ 隔离实现完成但测试未过。失败输出尾部：\n{tail}\n"
+                f"据此修正后重试（再调 dev_isolated）。diff {nlines} 行，未落地。结论：{conclusion}")
+
+    return [Tool("dev_isolated",
+                 "在隔离 git worktree 里实现一个独立子任务 + 自测 + 跑测试验证；✅通过就自动落到一个"
+                 "vorto/<id> 新分支（绝不碰 main/工作区），❌带失败输出供修正。仅 build",
+                 {"description": "要在隔离工作区实现的子任务",
+                  "test": "可选，pytest 选择器，省略则跑全量 tests/"},
+                 _dev_isolated, read_only=False)]
