@@ -144,6 +144,18 @@
     ]
   },
   {
+    "path": "/api/artifacts/{artifact_id}/pin",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/artifacts/{artifact_id}/versions",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
     "path": "/api/auto-approve",
     "methods": [
       "POST"
