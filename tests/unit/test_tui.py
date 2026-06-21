@@ -1011,3 +1011,40 @@ async def test_tool_preview_and_audit_no_crash(tmp_path):
         app._audit_tool("read_file", {"path": "x"}, "a\nb")  # 审计 + 结果预览
         await pilot.pause()
         assert (tmp_path / ".vortocode" / "audit.log").is_file()   # 审计仍写盘
+
+
+@pytest.mark.asyncio
+async def test_reply_streams_then_lands_in_log(monkeypatch, tmp_path):
+    from src.agents.main_agent import MainAgent
+    from textual.widgets import Static, RichLog
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+
+    class StreamLLM:                       # 有 stream() → 走流式路径（边出边显）
+        async def stream(self, messages, temperature=None):
+            for tok in ["这是", "流式", "输出", "的", "回复。"]:
+                yield tok
+        async def chat(self, messages, **k):
+            return {"content": "这是流式输出的回复。"}
+
+    seen = []
+    orig = Static.update
+    def spy(self, renderable="", *a, **k):
+        seen.append(str(renderable))
+        return orig(self, renderable, *a, **k)
+    monkeypatch.setattr(Static, "update", spy)
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app.agent = MainAgent([], llm=StreamLLM())
+        inp = app.query_one("#prompt", Input); inp.focus(); inp.value = "你好"
+        await pilot.press("enter")
+        ok = False
+        for _ in range(60):
+            log_text = "\n".join(s.text for s in app.query_one("#log", RichLog).lines)
+            if "这是流式输出的回复。" in log_text:
+                ok = True
+                break
+            await pilot.pause(0.05)
+        assert ok                                        # 最终回复落进 log
+        assert any("这是" in u for u in seen)             # 流式过程中 #stream 收到过部分文本
+        assert app.query_one("#stream", Static).display is False   # 收尾干净
