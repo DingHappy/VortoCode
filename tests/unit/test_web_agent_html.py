@@ -77,3 +77,62 @@ def test_renderer_behavior_via_node():
     r = subprocess.run(["node", "--input-type=module"], input=harness,
                        capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, (r.stdout + r.stderr)
+
+
+def test_tool_activity_grouping_wiring():
+    s = _src()
+    assert "function toolLine(" in s and "function endToolGroup(" in s
+    # 工具提示走折叠分组，而不是逐行裸 say
+    assert "case \"agent_say\":    toolLine(" in s
+    assert 'add("say"' not in s
+    # 每个回合收尾都定格分组：emit / error / done / 新回合(sendMsg)
+    assert s.count("endToolGroup();") == 4
+    # 折叠用 <details class="tools">，工具行始终 textContent（纯文本）
+    assert 'createElement("details")' in s and ".tools" in s
+    assert 'd.className = "say"; d.textContent = text' in s
+
+
+_GROUP_HARNESS = r"""
+import { readFileSync } from "node:fs";
+const html = readFileSync("__PATH__", "utf8");
+const m = html.match(/let toolGroup = null[\s\S]*?\nfunction endToolGroup[\s\S]*?\n\}/);
+if (!m) { console.error("tool-group fns not found"); process.exit(2); }
+class El {
+  constructor(tag){ this.tagName = tag; this.children = []; this.className = ""; this._text = ""; this.scrollTop = 0; this.scrollHeight = 0; }
+  appendChild(c){ this.children.push(c); return c; }
+  querySelector(sel){ for (const c of this.children){ if (c.tagName === sel) return c; const f = c.querySelector(sel); if (f) return f; } return null; }
+  get textContent(){ return this._text; }
+  set textContent(v){ this._text = String(v); }
+}
+const document = { createElement: (t) => new El(t) };
+const log = new El("div");
+const api = eval(m[0] + "\n; ({ toolLine, endToolGroup, peek: () => ({ tg: toolGroup, tc: toolCount }) })");
+let bad = 0;
+const ok = (n, c, g) => { if (!c) { bad++; console.error("FAIL " + n + " :: " + JSON.stringify(g)); } };
+
+api.toolLine("a"); api.toolLine("b");
+ok("one group", log.children.length === 1 && log.children[0].tagName === "details", log.children.length);
+const g1 = log.children[0];
+ok("open while running", g1.open === true, g1.open);
+ok("two say lines", g1.children.filter(c => c.tagName === "div").length === 2, g1.children.length);
+ok("live count", g1.querySelector("summary").textContent === "🔧 工具活动 · 2", g1.querySelector("summary").textContent);
+ok("peek 2 / active", api.peek().tc === 2 && api.peek().tg !== null, api.peek());
+
+api.endToolGroup();
+ok("collapsed on end", g1.open === false, g1.open);
+ok("final summary", g1.querySelector("summary").textContent === "🔧 2 个工具调用", g1.querySelector("summary").textContent);
+ok("reset after end", api.peek().tg === null, api.peek().tg);
+
+api.toolLine("c");
+ok("new group next turn", log.children.length === 2, log.children.length);
+ok("count reset", api.peek().tc === 1, api.peek().tc);
+process.exit(bad ? 1 : 0);
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node 不可用，跳过行为测试")
+def test_tool_activity_grouping_via_node():
+    harness = _GROUP_HARNESS.replace("__PATH__", str(AGENT_HTML))
+    r = subprocess.run(["node", "--input-type=module"], input=harness,
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, (r.stdout + r.stderr)
