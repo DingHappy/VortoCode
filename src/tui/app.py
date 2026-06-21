@@ -1268,8 +1268,9 @@ class VortoCodeTUI(App):
 
         async def _spawn_research(desc: str) -> str:
             """起一个隔离的只读子 agent 做调研，返回结论。task 与 research_parallel 共用。"""
-            sub = MainAgent(read_tools, max_steps=8, on_tool=self._audit_tool, extra_system=(
-                "你是只读研究子 agent：只用工具调研代码/仓库并返回简洁结论，绝不修改任何东西。"))
+            sub = MainAgent(read_tools, max_steps=12, on_tool=self._audit_tool, extra_system=(
+                "你是只读研究子 agent：只用工具调研代码/仓库并返回简洁结论，绝不修改任何东西。"
+                "读够信息就尽快收口，别把预算耗在重复读取上。"))
             try:
                 r = await sub.run_turn(desc, mode=self.mode, say=self._chrome, emit=lambda _t: None)
             except Exception as e:  # noqa: BLE001
