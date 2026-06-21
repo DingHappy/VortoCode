@@ -206,8 +206,8 @@ async def test_cancel_with_no_running_turn_is_noop():
 
 def test_web_agent_includes_isolated_dev_and_command():
     from src.web.routers import realtime
-    agent = realtime._new_agent()                       # 网页 agent：隔离 dev + 受确认门的 shell
-    for name in ("dev_isolated", "run_command"):
+    agent = realtime._new_agent()                       # 网页 agent：隔离 dev + 受确认门的 shell/PR
+    for name in ("dev_isolated", "run_command", "open_pr"):
         assert name in agent.tools and agent.tools[name].read_only is False
 
 
