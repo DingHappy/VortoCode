@@ -20,6 +20,12 @@
   .user { color: #8ab4f8; }
   .user::before { content: "› "; }
   .say  { color: #7f8896; font-size: 13px; }
+  .tools { margin: 0 0 10px; border-left: 2px solid #2a2e37; padding-left: 10px; }
+  .tools > summary { color: #7f8896; font-size: 13px; cursor: pointer; list-style: none; outline: none; }
+  .tools > summary::-webkit-details-marker { display: none; }
+  .tools > summary::before { content: "▸ "; }
+  .tools[open] > summary::before { content: "▾ "; }
+  .tools .say { margin: 4px 0 0; }
   .emit { color: #d7dae0; white-space: normal; }
   .emit > :first-child { margin-top: 0; }
   .emit > :last-child  { margin-bottom: 0; }
@@ -77,6 +83,28 @@ function addHTML(cls, html) {     // 仅用于已渲染、已转义的安全 HTM
   log.appendChild(d); log.scrollTop = log.scrollHeight;
 }
 function setBusy(b) { busy = b; $("#send").disabled = b; }
+
+// 工具活动折叠：一回合里的多次工具调用收进一个 <details>，运行时展开看实况、出结果后收起。
+let toolGroup = null, toolCount = 0;
+function toolLine(text) {
+  if (!toolGroup) {
+    toolGroup = document.createElement("details");
+    toolGroup.className = "tools"; toolGroup.open = true;
+    toolGroup.appendChild(document.createElement("summary"));
+    log.appendChild(toolGroup); toolCount = 0;
+  }
+  const d = document.createElement("div");
+  d.className = "say"; d.textContent = text;     // textContent：工具行始终纯文本
+  toolGroup.appendChild(d); toolCount++;
+  toolGroup.querySelector("summary").textContent = "🔧 工具活动 · " + toolCount;
+  log.scrollTop = log.scrollHeight;
+}
+function endToolGroup() {     // 回合收尾：收起并定格计数
+  if (!toolGroup) return;
+  toolGroup.open = false;
+  toolGroup.querySelector("summary").textContent = "🔧 " + toolCount + " 个工具调用";
+  toolGroup = null;
+}
 
 // 轻量 Markdown 渲染：先转义全部 <>& 再只产出白名单标签 —— 模型文本里的任何原始 HTML
 // 都被转义，绝不进 DOM，因此 innerHTML 安全（与 TUI 的 Rich Markdown 对齐）。
@@ -149,11 +177,11 @@ function connect() {
   ws.onmessage = (e) => {
     let m; try { m = JSON.parse(e.data); } catch { return; }
     switch (m.type) {
-      case "agent_say":    add("say", m.text); break;
+      case "agent_say":    toolLine(m.text); break;
       case "agent_stream": streamBuf = m.text; streamEl.textContent = streamBuf; log.scrollTop = log.scrollHeight; break;
-      case "agent_emit":   streamBuf = ""; streamEl.textContent = ""; addHTML("emit", renderMarkdown(m.text)); break;
-      case "agent_error":  add("err", "出错: " + m.text); break;
-      case "agent_done":   streamBuf = ""; streamEl.textContent = ""; setBusy(false); break;
+      case "agent_emit":   endToolGroup(); streamBuf = ""; streamEl.textContent = ""; addHTML("emit", renderMarkdown(m.text)); break;
+      case "agent_error":  endToolGroup(); add("err", "出错: " + m.text); break;
+      case "agent_done":   endToolGroup(); streamBuf = ""; streamEl.textContent = ""; setBusy(false); break;
     }
   };
 }
@@ -161,6 +189,7 @@ function connect() {
 function sendMsg() {
   const inp = $("#inp"), text = inp.value.trim();
   if (!text || busy || !ws || ws.readyState !== 1) return;
+  endToolGroup();                       // 新回合前先定格上一组工具活动
   add("user", text); inp.value = ""; setBusy(true);
   ws.send(JSON.stringify({ type: "agent", text, mode }));
 }
