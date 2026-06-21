@@ -224,6 +224,8 @@ class MainAgent:
                          "——它们在隔离 worktree 里改代码并自动跑测试验证，✅通过才产出可应用的 diff、"
                          "绝不碰主工作区；不要用 edit_file/write_file 在主工作区直接做大改。")
             lines.append("3) ❌未过的块会带失败输出回来，据此修正后只重试那一块。")
+        if "open_pr" in self.tools and (has_par or has_iso):
+            lines.append("4) 改动落到 vorto/... 分支后，需要的话用 open_pr 把分支推上去并开 PR（外向操作、会确认）。")
         return "\n".join(lines)
 
     async def _update_plan(self, args: dict) -> str:
