@@ -35,11 +35,14 @@
 
 让主 agent 把会话产出**发布成一个可分享、随会话实时更新的网页**——带注释的 PR 走查、数据看板、方案对比、交互控件、迁移/排查进度清单等。
 
-- **一句话发布**：build 模式里说"把这个做成一个可分享的页面"，agent 调 `publish_artifact`（自包含 HTML）→ 返回链接 `/(…)/artifact/<id>`
+- **一句话发布**：build 模式里说"把这个做成一个可分享的页面"，agent 调 `publish_artifact`（自包含 HTML 或 **markdown**，markdown 渲染成 GitHub 风整页）→ 返回链接 `/(…)/artifact/<id>`
 - **实时更新**：带相同 `id` 重新发布即 `version+1`，已打开的查看页**自动刷新**（轮询版本号）
-- **静态隔离**：查看页用 `iframe sandbox` + 原始内容带限制性 **CSP（`default-src 'none'`，禁止任何外联/SSRF）**——对齐 CC「静态、无外部请求」
-- **可分享 / 认证可见**：链接即可分享；设了 `AUTODEV_API_TOKEN` 时需带 `?token=`（仅认证者可见）。画廊 `/artifacts` 列出全部
-- **人在关口**：发布是写操作——TUI 首次发布弹确认（之后静默更新），Web 端靠 build 模式门控
+- **版本历史 / pin**：每次发布留快照，查看页可下拉**回看任意历史版本**（`?v=N`）、一键**设为默认**给查看者看哪一版——对齐 CC「choose which version viewers see」
+- **删除**：`delete_artifact` 工具（写·build·确认）/ `DELETE /api/artifacts/<id>` / 画廊删除按钮
+- **`@artifact:<id>` 注入**：对话里 `@artifact:<id>` 把某制品当前内容带给主 agent 迭代（"改一下 @artifact:xxx"）
+- **静态隔离 + 大小上限**：查看页 `iframe sandbox` + 限制性 **CSP（`default-src 'none'`，禁外联/SSRF）**；单页 ≤ **16 MiB**（`VORTOCODE_ARTIFACT_MAX_BYTES` 可调）——对齐 CC
+- **可分享 / 认证可见**：链接即可分享；设了 `AUTODEV_API_TOKEN` 时需带 `?token=`（仅认证者可见）。画廊 `/artifacts` 列全部；TUI `/artifacts` 命令列出
+- **人在关口**：发布/删除是写操作——TUI 弹确认，Web 端靠 build 模式门控
 - **落盘**：`.vortocode/artifacts/<id>/`（gitignored，运行时产物）；由 Web 服务器渲染，`VORTOCODE_WEB_BASE` 可改链接前缀
 
 ### 自我迭代 / dogfooding（用 vortocode 开发它自己）

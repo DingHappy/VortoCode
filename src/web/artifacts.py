@@ -108,23 +108,28 @@ class ArtifactStore:
         d = self._dir(aid)
         d.mkdir(parents=True, exist_ok=True)
         meta_path = d / "meta.json"
-        version, created = 1, now
+        version, created, versions = 1, now, []
         if meta_path.is_file():
             try:
                 old = json.loads(meta_path.read_text(encoding="utf-8"))
                 version = int(old.get("version", 0)) + 1
                 created = old.get("created_at", now)
+                versions = list(old.get("versions") or [])
             except Exception:  # noqa: BLE001
                 pass
-        (d / "index.html").write_text(html or "", encoding="utf-8")
+        (d / f"v{version}.html").write_text(html or "", encoding="utf-8")   # 版本快照（可回看）
+        (d / "index.html").write_text(html or "", encoding="utf-8")          # 当前=最新
+        versions.append({"v": version, "ts": now, "bytes": len(data)})
         meta = {
             "id": aid,
             "title": (title or aid).strip(),
             "kind": kind,
             "version": version,
+            "pinned": None,                  # 发布即展示最新（清除 pin）—— 对齐 CC「选给查看者看哪版」
             "created_at": created,
             "updated_at": now,
             "bytes": len(data),
+            "versions": versions,
         }
         meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
         return meta
@@ -153,12 +158,61 @@ class ArtifactStore:
         except Exception:  # noqa: BLE001
             return None
 
-    def html(self, artifact_id: str) -> Optional[str]:
+    def html(self, artifact_id: str, version: Optional[int] = None) -> Optional[str]:
+        """取制品 HTML。version 给定取该版本快照（缺失则回退当前）；否则取当前(index.html)。"""
         aid = self._safe_id(artifact_id)
         if not aid:
             return None
-        p = self._dir(aid) / "index.html"
+        d = self._dir(aid)
+        if version is not None:
+            try:
+                vp = d / f"v{int(version)}.html"
+            except (TypeError, ValueError):
+                vp = None
+            if vp and vp.is_file():
+                return vp.read_text(encoding="utf-8")
+        p = d / "index.html"
         return p.read_text(encoding="utf-8") if p.is_file() else None
+
+    def versions(self, artifact_id: str) -> list[dict]:
+        """版本清单 [{v, ts, bytes}]，升序。老 meta 无记录则按当前版本合成一条。"""
+        m = self.meta(artifact_id)
+        if not m:
+            return []
+        vs = m.get("versions")
+        if vs:
+            return sorted(vs, key=lambda x: int(x.get("v", 0)))
+        return [{"v": int(m.get("version", 1)), "ts": m.get("updated_at", ""), "bytes": m.get("bytes", 0)}]
+
+    def pin(self, artifact_id: str, version: Optional[int]) -> Optional[dict]:
+        """把"当前"指向某个历史版本（CC：选给查看者看哪一版）。version=None 取消 pin、回到最新。
+
+        返回更新后的 meta；id/版本非法返回 None。
+        """
+        aid = self._safe_id(artifact_id)
+        if not aid:
+            return None
+        m = self.meta(aid)
+        if not m:
+            return None
+        d = self._dir(aid)
+        if version is None:                                   # 取消 pin → 当前 = 最新
+            target = int(m.get("version", 1))
+            m["pinned"] = None
+        else:
+            try:
+                target = int(version)
+            except (TypeError, ValueError):
+                return None
+            if target not in {int(x["v"]) for x in self.versions(aid)}:
+                return None
+            m["pinned"] = target
+        content = self.html(aid, target)
+        if content is None:
+            return None
+        (d / "index.html").write_text(content, encoding="utf-8")   # 当前内容指向目标版本
+        (d / "meta.json").write_text(json.dumps(m, ensure_ascii=False, indent=2), encoding="utf-8")
+        return m
 
     def list(self) -> list[dict]:
         """所有制品 meta，按 updated_at 倒序。"""
