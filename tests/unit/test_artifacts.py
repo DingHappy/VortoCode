@@ -285,3 +285,52 @@ def test_delete_route(client):
     assert c.delete(f"/api/artifacts/{aid}").json() == {"deleted": aid}
     assert c.get(f"/api/artifacts/{aid}").status_code == 404   # 已删
     assert c.delete("/api/artifacts/nope").status_code == 404  # 删不存在 → 404
+
+
+# --------------------------------------------------------------- 版本历史 + pin
+def test_publish_keeps_version_snapshots(tmp_path):
+    store = ArtifactStore(str(tmp_path))
+    a = store.publish("V", "<p>one</p>")
+    b = store.publish("V", "<p>two</p>", artifact_id=a["id"])
+    assert b["version"] == 2 and b["pinned"] is None
+    assert [x["v"] for x in store.versions(a["id"])] == [1, 2]
+    assert store.html(a["id"], 1) == "<p>one</p>"      # 历史版本快照可取
+    assert store.html(a["id"], 2) == "<p>two</p>"
+    assert store.html(a["id"]) == "<p>two</p>"         # 当前=最新
+
+
+def test_pin_and_unpin(tmp_path):
+    store = ArtifactStore(str(tmp_path))
+    a = store.publish("V", "<p>one</p>")
+    store.publish("V", "<p>two</p>", artifact_id=a["id"])
+    m = store.pin(a["id"], 1)
+    assert m["pinned"] == 1 and store.html(a["id"]) == "<p>one</p>"   # 当前指向 pin 的 v1
+    m2 = store.pin(a["id"], None)
+    assert m2["pinned"] is None and store.html(a["id"]) == "<p>two</p>"  # 取消→回最新
+    assert store.pin(a["id"], 99) is None and store.pin("nope", 1) is None  # 非法
+
+
+def test_publish_clears_pin(tmp_path):
+    store = ArtifactStore(str(tmp_path))
+    a = store.publish("V", "<p>one</p>")
+    store.publish("V", "<p>two</p>", artifact_id=a["id"])
+    store.pin(a["id"], 1)
+    c = store.publish("V", "<p>three</p>", artifact_id=a["id"])
+    assert c["pinned"] is None and store.html(a["id"]) == "<p>three</p>"  # 再发布清 pin
+
+
+def test_versions_pin_raw_routes(client):
+    c, root = client
+    store = ArtifactStore(str(root))
+    a = store.publish("R", "<p>1</p>")
+    store.publish("R", "<p>2</p>", artifact_id=a["id"])
+    aid = a["id"]
+    vj = c.get(f"/api/artifacts/{aid}/versions").json()
+    assert vj["current"] == 2 and vj["pinned"] is None and len(vj["versions"]) == 2
+    assert "<p>1</p>" in c.get(f"/artifact/{aid}/raw?v=1").text       # 历史版本
+    assert "<p>2</p>" in c.get(f"/artifact/{aid}/raw").text          # 当前
+    assert c.post(f"/api/artifacts/{aid}/pin?version=1").json()["pinned"] == 1
+    assert "<p>1</p>" in c.get(f"/artifact/{aid}/raw").text          # pin 后当前=v1
+    assert c.post(f"/api/artifacts/{aid}/pin").json()["pinned"] is None   # 取消 pin
+    assert c.post(f"/api/artifacts/{aid}/pin?version=99").status_code == 400
+    assert c.get("/api/artifacts/nope/versions").status_code == 404
