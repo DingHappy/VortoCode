@@ -576,3 +576,27 @@ def build_write_tools(root: str) -> list[Tool]:
         Tool("write_file", "新建或覆盖文件；在隔离工作区改文件",
              {"path": "相对路径", "content": "文件全部内容"}, _write_file, read_only=False),
     ]
+
+
+def build_test_tool(root: str, default_cmd: Optional[list] = None) -> "Tool":
+    """给隔离实现子 agent 一个**受限**的 run_tests 工具：只能在 root 跑测试（不是任意 shell），
+
+    让它 implement→test→fix 自我迭代——产出的 diff 是"已经自己跑通的"，而不是盲改后才发现没过。
+    安全：只跑 pytest，autonomous 也不会乱执行命令。
+    """
+    async def _handler(args: dict) -> str:
+        import asyncio
+        import sys
+        from src.agents.worktree import run_tests
+        sel = str(args.get("test") or "").strip()
+        cmd = ([sys.executable, "-m", "pytest", "-q", sel] if sel
+               else (default_cmd or [sys.executable, "-m", "pytest", "-q"]))
+        res = await asyncio.to_thread(run_tests, root, cmd)
+        tag = "通过 ✓" if res["ok"] else "未过 ✗"
+        return f"测试{tag}（{res['cmd']}）。输出尾部：\n{res['output'][-2500:]}"
+
+    return Tool("run_tests",
+                "在当前隔离工作区跑测试自测（可传 test 选择器 narrow，省略跑默认集）；"
+                "实现后务必自测，没过就改完再测，直到通过",
+                {"test": "可选，pytest 选择器，如 tests/unit/test_x.py"},
+                _handler, read_only=True)

@@ -1273,12 +1273,14 @@ class VortoCodeTUI(App):
             self._chrome(f"[magenta]🧪 隔离实现：{desc}[/magenta][dim]（独立 worktree，完成后跑测试验证）[/dim]")
 
             def _build(wt_path: str):
+                from src.agents.main_agent import build_test_tool
                 return MainAgent(
-                    build_read_tools(wt_path) + build_write_tools(wt_path),
-                    max_steps=12, on_tool=self._audit_tool,
+                    build_read_tools(wt_path) + build_write_tools(wt_path)
+                    + [build_test_tool(wt_path, test_cmd)],
+                    max_steps=16, on_tool=self._audit_tool,
                     extra_system=("你是隔离工作区里的实现子 agent：用 read_file/list_files/grep 看代码，"
-                                  "用 edit_file/write_file 在这个隔离工作树里实现任务，完成后一两句说明改了什么。"
-                                  "只动与任务相关的文件。"))
+                                  "用 edit_file/write_file 实现任务；改完务必用 run_tests 自测，没过就读失败、"
+                                  "改、再测，直到通过再结束。完成后一两句说明改了什么。只动与任务相关的文件。"))
             try:
                 diff, conclusion, ver = await run_isolated_task(
                     self.repo_root, wid, desc, _build, test_cmd=test_cmd)
@@ -1343,11 +1345,13 @@ class VortoCodeTUI(App):
                 wid = "wt-" + uuid.uuid4().hex[:8]
 
                 def _b(wt):
+                    from src.agents.main_agent import build_test_tool
                     return MainAgent(
-                        build_read_tools(wt) + build_write_tools(wt), max_steps=12,
-                        on_tool=self._audit_tool,
+                        build_read_tools(wt) + build_write_tools(wt) + [build_test_tool(wt, test_cmd)],
+                        max_steps=16, on_tool=self._audit_tool,
                         extra_system=("你是隔离工作区里的实现子 agent：用 read/grep 看代码、用 edit_file/"
-                                      "write_file 实现任务，完成后一两句说明改了什么。只动相关文件。"))
+                                      "write_file 实现任务；改完务必用 run_tests 自测，没过就改完再测直到通过。"
+                                      "完成后一两句说明改了什么。只动相关文件。"))
                 try:
                     diff, conclusion, ver = await run_isolated_task(self.repo_root, wid, desc, _b, test_cmd=test_cmd)
                     return {"desc": desc, "diff": diff, "conclusion": conclusion, "ver": ver, "error": None}
