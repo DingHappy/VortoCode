@@ -104,6 +104,37 @@ async def test_empty_input_does_nothing():
         assert len(app.transcript) == before
 
 
+def test_sanitize_strips_terminal_escape_sequences():
+    from src.tui.app import _sanitize_input
+    # 漏进的修饰键序列（Shift+Enter 的 modifyOtherKeys），带/不带 ESC 都要清掉
+    assert _sanitize_input("这个项目是做什么的\x1b[27;2;13~") == "这个项目是做什么的"
+    assert _sanitize_input("这个项目是做什么的[27;2;13~") == "这个项目是做什么的"
+    assert _sanitize_input("\x1b[A\x1b[Bhi") == "hi"            # 方向键序列
+    # 不误伤正常文本（含 CJK、普通方括号、数字）
+    assert _sanitize_input("你好世界") == "你好世界"
+    assert _sanitize_input("看 a[2]b 和 list[0]") == "看 a[2]b 和 list[0]"
+
+
+@pytest.mark.asyncio
+async def test_input_changed_cleans_leaked_sequence(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", Input)
+        inp.focus()
+        inp.value = "问题\x1b[27;2;13~"               # 漏进了序列
+        await pilot.pause()
+        assert inp.value == "问题"                     # 输入框被当场清干净
+
+
+@pytest.mark.asyncio
+async def test_submit_sanitizes_before_dispatch(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/help\x1b[27;2;13~")  # /help 后粘了漏进的序列
+        joined = "\n".join(app.transcript)
+        assert "/analyze" in joined                      # 清洗后 = /help，正确分发（非"未知命令"）
+
+
 @pytest.mark.asyncio
 async def test_analyze_runs_l1_and_reports(tmp_path):
     # 临时小仓库，让 /analyze 确定、快、无需 key
@@ -1055,3 +1086,40 @@ async def test_apply_nothing_pending(tmp_path):
     async with app.run_test() as pilot:
         app._do_apply()
         assert await _wait_for(app, pilot, "没有待应用")
+
+
+@pytest.mark.asyncio
+async def test_reply_streams_then_lands_in_log(monkeypatch, tmp_path):
+    from src.agents.main_agent import MainAgent
+    from textual.widgets import Static, RichLog
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+
+    class StreamLLM:                       # 有 stream() → 走流式路径（边出边显）
+        async def stream(self, messages, temperature=None):
+            for tok in ["这是", "流式", "输出", "的", "回复。"]:
+                yield tok
+        async def chat(self, messages, **k):
+            return {"content": "这是流式输出的回复。"}
+
+    seen = []
+    orig = Static.update
+    def spy(self, renderable="", *a, **k):
+        seen.append(str(renderable))
+        return orig(self, renderable, *a, **k)
+    monkeypatch.setattr(Static, "update", spy)
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app.agent = MainAgent([], llm=StreamLLM())
+        inp = app.query_one("#prompt", Input); inp.focus(); inp.value = "你好"
+        await pilot.press("enter")
+        ok = False
+        for _ in range(60):
+            log_text = "\n".join(s.text for s in app.query_one("#log", RichLog).lines)
+            if "这是流式输出的回复。" in log_text:
+                ok = True
+                break
+            await pilot.pause(0.05)
+        assert ok                                        # 最终回复落进 log
+        assert any("这是" in u for u in seen)             # 流式过程中 #stream 收到过部分文本
+        assert app.query_one("#stream", Static).display is False   # 收尾干净
