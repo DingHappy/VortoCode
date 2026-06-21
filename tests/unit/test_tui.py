@@ -104,6 +104,37 @@ async def test_empty_input_does_nothing():
         assert len(app.transcript) == before
 
 
+def test_sanitize_strips_terminal_escape_sequences():
+    from src.tui.app import _sanitize_input
+    # 漏进的修饰键序列（Shift+Enter 的 modifyOtherKeys），带/不带 ESC 都要清掉
+    assert _sanitize_input("这个项目是做什么的\x1b[27;2;13~") == "这个项目是做什么的"
+    assert _sanitize_input("这个项目是做什么的[27;2;13~") == "这个项目是做什么的"
+    assert _sanitize_input("\x1b[A\x1b[Bhi") == "hi"            # 方向键序列
+    # 不误伤正常文本（含 CJK、普通方括号、数字）
+    assert _sanitize_input("你好世界") == "你好世界"
+    assert _sanitize_input("看 a[2]b 和 list[0]") == "看 a[2]b 和 list[0]"
+
+
+@pytest.mark.asyncio
+async def test_input_changed_cleans_leaked_sequence(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", Input)
+        inp.focus()
+        inp.value = "问题\x1b[27;2;13~"               # 漏进了序列
+        await pilot.pause()
+        assert inp.value == "问题"                     # 输入框被当场清干净
+
+
+@pytest.mark.asyncio
+async def test_submit_sanitizes_before_dispatch(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/help\x1b[27;2;13~")  # /help 后粘了漏进的序列
+        joined = "\n".join(app.transcript)
+        assert "/analyze" in joined                      # 清洗后 = /help，正确分发（非"未知命令"）
+
+
 @pytest.mark.asyncio
 async def test_analyze_runs_l1_and_reports(tmp_path):
     # 临时小仓库，让 /analyze 确定、快、无需 key
