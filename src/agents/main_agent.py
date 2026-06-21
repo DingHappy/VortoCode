@@ -146,8 +146,11 @@ class MainAgent:
         on_escalate: Optional[Callable[[str, dict], Awaitable[bool]]] = None,
         on_plan: Optional[Callable[[list], None]] = None,
         plan_tool: bool = False,
+        hook_system: Optional[Any] = None,
     ) -> None:
         import os
+        # 复用既有 src/hooks 的 HookSystem：把工具生命周期事件（pre/post/error）接进 agent loop
+        self._hook_system = hook_system
         self._tool_list = list(tools)
         self._llm = llm
         self.max_steps = int(os.getenv("VORTOCODE_MAX_STEPS") or max_steps)   # 可全局调高预算
@@ -301,19 +304,51 @@ class MainAgent:
                 return (f"工具 {name} 在 plan 模式下不可用（只读/提案）。"
                         f"如需执行请切到 build 模式（Tab）。")
             self._escalated = True
+        if self._hook_system is not None:       # PRE_TOOL_USE：钩子可阻止该工具（should_stop）
+            block = await self._fire_hook("pre_tool_use", {"tool": name, "args": args}, stoppable=True)
+            if block is not None:
+                say(f"🔧 [b]{name}[/b][dim] —— 被 hook 阻止[/dim]")
+                return block
         say(f"🔧 [b]{name}[/b][dim] {_fmt_args(args)}[/dim]")
         try:
             result = str(await tool.handler(args))
         except Exception as e:  # noqa: BLE001
             result = f"工具 {name} 执行出错: {e}"
+            await self._fire_hook("tool_error", {"tool": name, "args": args, "error": str(e)})
         if len(result) > _MAX_TOOL_RESULT:
             result = result[:_MAX_TOOL_RESULT] + "\n…(结果已截断)"
+        # POST_TOOL_USE：钩子据此做后处理（如自动格式化）；message 附在结果后
+        post = await self._fire_hook("post_tool_use", {"tool": name, "args": args, "result": result})
+        if post:
+            result = result + "\n[hook] " + post
         if self._on_tool is not None:           # 审计钩子（失败不影响工具）
             try:
                 self._on_tool(name, args, result)
             except Exception:  # noqa: BLE001
                 pass
         return result
+
+    async def _fire_hook(self, event_name: str, data: dict, stoppable: bool = False) -> Optional[str]:
+        """触发一个工具生命周期钩子事件（复用 src/hooks 的 HookSystem）。
+
+        stoppable=True（pre）：若任一钩子 should_stop → 返回阻止消息（非空即拦下工具）；否则 None。
+        stoppable=False（post/error）：返回各钩子 message 的拼接（供 post 附在结果后），无则 None。
+        无钩子系统 / 触发出错都安全返回 None（钩子绝不该让工具链崩）。
+        """
+        if self._hook_system is None:
+            return None
+        try:
+            from src.hooks import HookEventType
+            r = await self._hook_system.trigger(HookEventType(event_name), source="main_agent", data=data)
+        except Exception:  # noqa: BLE001
+            return None
+        msgs = [x["result"].message for x in getattr(r, "results", [])
+                if x.get("result") is not None and getattr(x["result"], "message", None)]
+        if stoppable:
+            if getattr(r, "should_stop", False):
+                return f"[hook 阻止 {data.get('tool')}] " + ("；".join(msgs) if msgs else "(无说明)")
+            return None
+        return "；".join(msgs) if msgs else None
 
     async def run_turn(
         self,

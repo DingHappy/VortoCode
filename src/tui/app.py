@@ -1611,9 +1611,22 @@ class VortoCodeTUI(App):
         extra = f"【可用技能】(需要时用 use_skill 加载其完整指令再执行)\n{catalog}" if catalog else None
         import os
         native = os.getenv("VORTOCODE_NATIVE_TOOLS", "").lower() in ("1", "true", "yes", "on")
+        hook_system = self._load_hook_system()   # .vortocode/hooks.yaml 存在才接，避免无谓开销
         return MainAgent(tools, extra_system=extra, native=native,
                          on_tool=self._audit_tool, on_escalate=self._escalate_to_build,
-                         on_plan=self._render_plan, plan_tool=True)
+                         on_plan=self._render_plan, plan_tool=True, hook_system=hook_system)
+
+    def _load_hook_system(self):
+        """有 .vortocode/hooks.yaml 才建 HookSystem（复用 src/hooks，把工具生命周期事件接进 agent）。"""
+        cfg = Path(self.repo_root) / ".vortocode" / "hooks.yaml"
+        if not cfg.is_file():
+            return None
+        try:
+            from src.hooks import HookSystem
+            return HookSystem(config_path=str(cfg))
+        except Exception as e:  # noqa: BLE001
+            self._chrome(f"[dim]（hooks.yaml 加载失败，已忽略：{e}）[/dim]")
+            return None
 
     def _render_plan(self, plan: list) -> None:
         """把主 agent 的任务清单渲染成一块带进度的可见面板（每次更新重渲，看着它推进）。"""
