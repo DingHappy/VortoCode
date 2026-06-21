@@ -1410,6 +1410,29 @@ class VortoCodeTUI(App):
             self._chrome(f"[{self._tc('text-error', '#f08a8a')}]开 PR 失败：{res['error']}[/]")
             return f"开 PR 失败：{res['error']}"
 
+        async def _t_run_command(args: dict) -> str:
+            """跑任意 shell 命令（测试/lint/git/构建…）。高危：build 门控 + 人工确认 + 危险拦截。"""
+            cmd = str(args.get("command") or args.get("cmd") or "").strip()
+            if not cmd:
+                return "run_command 需要 command。"
+            from src.agents.shell import is_dangerous, run_command
+            why = is_dangerous(cmd)
+            if why:                                   # 兜底硬拒（即便始终允许）
+                self._chrome(f"[{self._tc('text-error', '#f08a8a')}]拒绝执行（{why}）：{cmd}[/]")
+                return f"拒绝执行（疑似危险操作：{why}）。请换更具体、安全的命令。"
+            if not await self._confirm_write(
+                    f"build 模式：在仓库根目录执行命令？\n  $ {cmd}\n（可能改动工作区，但不碰 main）"):
+                return f"用户取消了命令：{cmd}"
+            self._chrome(f"[dim]$ {cmd}[/dim]")
+            import asyncio
+            res = await asyncio.to_thread(run_command, self.repo_root, cmd)
+            out = res["output"]
+            if out.strip():
+                self._chrome(f"[dim]{out[-1500:].replace('[', chr(92) + '[')}[/dim]")
+            ok_c = self._tc("text-success", "#7fce9a") if res["ok"] else self._tc("text-error", "#f08a8a")
+            self._chrome(f"[{ok_c}]{'✓' if res['ok'] else '✗'} exit {res['code']}[/]")
+            return f"命令 `{cmd}` 退出码 {res['code']}。输出尾部：\n{out[-3000:]}"
+
         # 只读工具：plan 也能用；也是子 agent 的工具集（无 task/写工具 → 不嵌套、不改文件）
         read_tools = [
             Tool("read_file", "读取仓库内某个文件的内容",
@@ -1553,6 +1576,10 @@ class VortoCodeTUI(App):
                  "外向操作、强确认，gh 不可用则只 push（仅 build）",
                  {"branch": "要开 PR 的分支名", "title": "PR 标题", "body": "可选，PR 正文"},
                  _t_open_pr, read_only=False),
+            Tool("run_command",
+                 "在仓库根目录跑任意 shell 命令（如 pytest 某个文件 / ruff / git log / pip install / make）；"
+                 "高危，每条都需确认、明显危险操作直接拒（仅 build）",
+                 {"command": "要执行的 shell 命令"}, _t_run_command, read_only=False),
         ]
 
         # 制品（artifact）：把会话产出发布成可分享、实时更新的网页（由 Web 服务器在 /artifact 渲染）。
