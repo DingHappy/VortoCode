@@ -167,6 +167,18 @@ async def test_llm_error_is_graceful():
 
 
 @pytest.mark.asyncio
+async def test_llm_error_shows_type_when_message_empty():
+    class BoomLLM:
+        async def chat(self, messages, **kwargs):
+            raise RuntimeError()        # str(e) 为空 —— 复现"空的对话出错:"
+
+    agent = MainAgent([], llm=BoomLLM())
+    out, say, emit = _capture()
+    await agent.run_turn("hi", mode="plan", say=say, emit=emit)
+    assert out["emit"] and "RuntimeError" in out["emit"][0]   # 空消息也能看到异常类型，可诊断
+
+
+@pytest.mark.asyncio
 async def test_history_persists_across_turns():
     agent = MainAgent([], llm=ScriptedLLM("回复一", "回复二"))
     out, say, emit = _capture()
