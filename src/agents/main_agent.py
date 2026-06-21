@@ -23,6 +23,12 @@ from typing import Any, Awaitable, Callable, Optional
 # 单个工具结果回灌给模型的最大字符数，避免长输出把上下文撑爆
 _MAX_TOOL_RESULT = 4000
 
+# 工具预算用尽时的"收尾"指令：禁用工具、强制据已有上下文给最终回答（而不是丢弃一切返回空）
+_FORCE_FINISH_RULE = (
+    "\n\n【收尾】工具调用预算已用尽：现在**禁止再调用任何工具**，"
+    "直接根据上文已获取的信息给出最终结论/回答；信息不全就基于现有内容尽力总结并点明欠缺，"
+    "不要输出任何工具调用 JSON。")
+
 
 @dataclass
 class Tool:
@@ -139,10 +145,11 @@ class MainAgent:
         on_tool: Optional[Callable[[str, dict, str], None]] = None,
         on_escalate: Optional[Callable[[str, dict], Awaitable[bool]]] = None,
     ) -> None:
+        import os
         self._tool_list = list(tools)
         self.tools = {t.name: t for t in tools}
         self._llm = llm
-        self.max_steps = max_steps
+        self.max_steps = int(os.getenv("VORTOCODE_MAX_STEPS") or max_steps)   # 可全局调高预算
         self.max_history = max_history
         self.extra_system = extra_system       # 追加到系统提示（如技能目录、子 agent 角色）
         self._native = native                  # 原生 function-calling（失败自动回退提示式协议）
@@ -323,8 +330,26 @@ class MainAgent:
             result = await self._run_tool(name, args, mode, say)
             self.history.append({"role": "user", "content": f"[工具 {name} 结果]\n{result}"})
 
-        emit("（已达工具调用上限，先停一下；可换种说法，或用 /run 直接开发。）")
-        return ""
+        # 用尽工具预算：不白跑——强制一次"无工具"收尾，把已收集的信息综合成最终回答
+        # （子 agent 尤其受益：读了一堆文件也能交回结论，而不是返回空丢弃全部上下文）。
+        return await self._force_finish(mode, stream_cb, emit)
+
+    async def _force_finish(self, mode: str,
+                            stream_cb: Optional[Callable[[str], None]],
+                            emit: Callable[[str], None]) -> str:
+        """工具预算用尽后的收尾：禁用工具、强制据已有上下文给最终回答，避免丢弃全部工作。"""
+        messages = [{"role": "system", "content": self._system(mode) + _FORCE_FINISH_RULE}] \
+            + self._trimmed_history()
+        try:
+            content = (await self._complete(messages, stream_cb)).strip()
+        except Exception:  # noqa: BLE001
+            emit("（已达工具调用上限；收尾时网络/中转站出错，请稍后重试或换种说法。）")
+            return ""
+        if parse_tool_call(content) is not None:    # 模型仍想调工具：放弃，给降级提示
+            content = ""
+        self.history.append({"role": "assistant", "content": content or "(无回复)"})
+        emit(content or "（已达工具调用上限，且未能据已有信息收尾；可换种说法，或用 /run 直接开发。）")
+        return content
 
 
 @dataclass
