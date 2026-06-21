@@ -50,6 +50,7 @@
   #send { background: #2f6feb; color: #fff; border: 0; border-radius: 8px; padding: 0 18px;
           cursor: pointer; font: inherit; }
   #send:disabled { opacity: .5; cursor: default; }
+  #send.stop { background: #b4433a; }       /* 忙时变「停止」红 */
   .hint { color: #6b7280; font-size: 12px; padding: 0 16px 8px; }
 </style>
 </head>
@@ -62,7 +63,7 @@
   </header>
   <div id="log"></div>
   <div id="stream" class="msg"></div>
-  <div class="hint">回车发送 · Shift+回车换行 · plan 只读、build 才放开写/重型工具 · 需配 OPENAI_API_KEY</div>
+  <div class="hint">回车发送 · Shift+回车换行 · 运行中 Esc 或点「停止」中断 · plan 只读、build 才放开写/重型工具 · 需配 OPENAI_API_KEY</div>
   <footer>
     <textarea id="inp" placeholder="问点什么，或让它读代码 / 扫描仓库…"></textarea>
     <button id="send">发送</button>
@@ -92,7 +93,12 @@ function addHTML(cls, html) {     // 仅用于已渲染、已转义的安全 HTM
   d.className = "msg " + cls; d.innerHTML = html;
   log.appendChild(d); log.scrollTop = log.scrollHeight;
 }
-function setBusy(b) { busy = b; $("#send").disabled = b; }
+function setBusy(b) {                     // 忙时按钮变「停止」（仍可点，用于中断），闲时「发送」
+  busy = b;
+  const btn = $("#send");
+  btn.textContent = b ? "停止" : "发送";
+  btn.classList.toggle("stop", b);
+}
 
 // 工具活动折叠：一回合里的多次工具调用收进一个 <details>，运行时展开看实况、出结果后收起。
 let toolGroup = null, toolCount = 0;
@@ -198,23 +204,29 @@ function connect() {
       case "agent_say":    toolLine(m.text); break;
       case "agent_stream": streamBuf = m.text; streamEl.textContent = streamBuf; log.scrollTop = log.scrollHeight; break;
       case "agent_emit":   endToolGroup(); streamBuf = ""; streamEl.textContent = ""; addHTML("emit", renderMarkdown(m.text)); break;
-      case "agent_error":  endToolGroup(); add("err", "出错: " + m.text); break;
+      case "agent_error":  endToolGroup(); add("err", "出错: " + m.text); setBusy(false); break;
       case "agent_done":   endToolGroup(); streamBuf = ""; streamEl.textContent = ""; setBusy(false); break;
+      case "agent_cancelled": endToolGroup(); streamBuf = ""; streamEl.textContent = ""; add("say", "⏹ 已中断"); setBusy(false); break;
     }
   };
 }
 
+function cancelTurn() {                  // 「停止」：请求中断正在跑的回合
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "agent_cancel" }));
+}
 function sendMsg() {
+  if (busy) { cancelTurn(); return; }    // 忙时点按钮 = 停止
   const inp = $("#inp"), text = inp.value.trim();
-  if (!text || busy || !ws || ws.readyState !== 1) return;
-  endToolGroup();                       // 新回合前先定格上一组工具活动
+  if (!text || !ws || ws.readyState !== 1) return;
+  endToolGroup();                        // 新回合前先定格上一组工具活动
   add("user", text); inp.value = ""; setBusy(true);
   ws.send(JSON.stringify({ type: "agent", text, mode }));
 }
 
 $("#send").onclick = sendMsg;
 $("#inp").addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMsg(); }
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (!busy) sendMsg(); }
+  else if (e.key === "Escape" && busy) { e.preventDefault(); cancelTurn(); }   // Esc 停止
 });
 $("#mode").onclick = () => {
   mode = mode === "plan" ? "build" : "plan";
