@@ -65,6 +65,22 @@ ACTION_CMDS = {"analyze", "improve", "fix", "run", "apply", "runagent", "mcp"}  
 _SPIN_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 _SPIN_VERBS = ["思考中", "琢磨中", "检索中", "运转中", "推敲中"]
 
+# 终端转义/控制序列清洗。为支持中文输入关掉了 kitty 协议后，修饰键（如 Shift+Enter）的
+# CSI 序列会漏进输入框：既弄脏显示，其中的 ESC 控制符发到中转站还会让 API 因"非法字符"报错
+# （表现为空的"对话出错:"）。提交/输入时一律剔除这些序列与残留控制符。
+_CTRL_SEQ_RE = re.compile(
+    r"\x1b\[[0-9;:?]*[ -/]*[@-~]"   # 完整 CSI（带 ESC）：如 \x1b[27;2;13~
+    r"|\x1b[]P^_X].*?(?:\x07|\x1b\\)"  # OSC/DCS/PM/APC（带终止符）
+    r"|\x1b."                        # 其它 ESC 序列（含落单 ESC）
+    r"|\[[0-9;:]+[~u]"              # ESC 被剥掉后漏出的修饰键 CSI 体：如 [27;2;13~ / [..u
+)
+
+
+def _sanitize_input(s: str) -> str:
+    """剔除漏进输入的终端转义/控制序列，返回干净文本（普通可见字符 + 空格/Tab）。"""
+    s = _CTRL_SEQ_RE.sub("", s)
+    return "".join(ch for ch in s if ch >= " " or ch == "\t")
+
 _AGENTS_DB = lambda root: str(Path(root) / ".vortocode" / "web_advanced_agents.json")
 
 HELP = """可用命令:
@@ -474,7 +490,7 @@ class VortoCodeTUI(App):
 
     # ---------------------------------------------------------------- 输入分发
     async def on_input_submitted(self, event: Input.Submitted) -> None:
-        text = event.value.strip()
+        text = _sanitize_input(event.value).strip()   # 剔除漏进的终端转义序列，防脏字符进 agent/API
         self.query_one("#prompt", Input).value = ""
         self.query_one("#palette", Static).display = False
         self._history_idx = None                # 提交后退出历史浏览
@@ -492,7 +508,13 @@ class VortoCodeTUI(App):
             self._route(text)           # 普通话：先判意图（闲聊/提问 vs 开发需求）再分流
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        """输入变化时更新命令补全面板（输入以 / 开头即可见）。"""
+        """输入变化时更新命令补全面板（输入以 / 开头即可见）；并当场抹掉漏进的终端转义序列。"""
+        clean = _sanitize_input(event.value)
+        if clean != event.value:                 # 修饰键 CSI 等漏进来了 → 立即清掉，别弄脏显示
+            inp = self.query_one("#prompt", Input)
+            inp.value = clean
+            inp.cursor_position = len(clean)
+            return                               # 重设会再触发 Changed，那次已干净
         self._update_palette(event.value)
 
     def _update_palette(self, value: str) -> None:
@@ -1062,11 +1084,32 @@ class VortoCodeTUI(App):
             user_text = f"{user_text}\n\n[@提及的上下文]\n{ctx}"
         # agent 的输出直接落进结果区（对话 log）：忙时转圈("思考中…")给进度反馈，工具调用与
         # 结果(🔧/⎿)实时进 log，回复就绪即作为一条 ● vorto 消息（markdown）写进对话——
-        # 不再走单独的流式预览面板（避免"先在下方暗显、再跳到上方"的割裂感）。
+        # 回复**边生成边显示**：流式 token 进 #stream（署名 ● vorto、和最终消息同位同款，
+        # 不再是早期那种"下方暗显再跳上去"的割裂感）；reply 就绪即清掉 #stream、把最终
+        # markdown 写进 log（清在写之前，避免一帧双份 ● vorto）。工具调用的 JSON 不会流式（被 _complete 抑制）。
+        stream = self.query_one("#stream", Static)
+
+        def stream_cb(partial: str) -> None:
+            self.query_one("#status", Static).display = False   # 有正文了，转圈让位
+            stream.display = True
+            t = Text()
+            t.append("● ", style="bold #7fce9a")
+            t.append("vorto", style="dim italic")
+            t.append("\n")
+            t.append(partial[-1800:])        # 显示尾部，避免面板无限增高
+            stream.update(t)
+
+        def emit_final(text: str) -> None:
+            stream.update(""); stream.display = False   # 先清流式区，再落最终（无双份）
+            self._assistant(text)
+
         self._turn_tools = 0
         t0 = time.monotonic()
-        await self.agent.run_turn(user_text, mode=self.mode,
-                                  say=self._chrome, emit=self._assistant)
+        try:
+            await self.agent.run_turn(user_text, mode=self.mode, say=self._chrome,
+                                      emit=emit_final, stream_cb=stream_cb)
+        finally:
+            stream.update(""); stream.display = False   # 出错/取消时也收干净
         if self._turn_tools:                # 用过工具的回合给个清晰收尾
             self._chrome(f"[dim]✓ 完成 · {self._turn_tools} 个工具 · {time.monotonic() - t0:.0f}s[/dim]")
         self._persist_agent_history()
