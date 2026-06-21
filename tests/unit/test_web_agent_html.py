@@ -178,6 +178,18 @@ def test_backoff_curve_via_node():
     assert r.returncode == 0, (r.stdout + r.stderr)
 
 
+def test_persistence_wiring():
+    s = _src()
+    # 每标签页一个 sid，存 sessionStorage（刷新仍在），连接时带上 ?sid=
+    assert "function sessionId(" in s
+    assert 'sessionStorage.getItem("vorto_sid")' in s and 'sessionStorage.setItem("vorto_sid"' in s
+    assert 'qs.set("sid", sessionId())' in s
+    # 回放：处理 agent_history，且仅在 log 为空时渲染（避免就地重连重复）
+    assert 'case "agent_history":' in s
+    assert "log.children.length === 0" in s and "renderHistory(" in s
+    assert "function renderHistory(" in s
+
+
 def test_interrupt_wiring():
     s = _src()
     # 「停止」：cancelTurn 发 agent_cancel；忙时点发送按钮即取消
