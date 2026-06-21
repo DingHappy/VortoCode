@@ -187,6 +187,15 @@ def test_plan_panel_wiring():
     assert "row.textContent =" in s
 
 
+def test_confirm_wiring():
+    s = _src()
+    assert 'case "agent_confirm":' in s and "renderConfirm(" in s
+    assert "function renderConfirm(" in s
+    assert 'type: "agent_confirm_response"' in s          # 点按钮把应答发回
+    # 消息文本走 textContent（模型/命令可控 → 无 XSS），有允许/拒绝按钮 + 样式
+    assert "msg.textContent = " in s and ".confirm {" in s
+
+
 def test_persistence_wiring():
     s = _src()
     # 每标签页一个 sid，存 sessionStorage（刷新仍在），连接时带上 ?sid=

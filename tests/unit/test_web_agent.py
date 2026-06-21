@@ -204,11 +204,27 @@ async def test_cancel_with_no_running_turn_is_noop():
     assert realtime._cancel_agent_turn(ws) is False     # 没有在跑的回合 → False，不报错
 
 
-def test_web_agent_includes_isolated_dev():
+def test_web_agent_includes_isolated_dev_and_command():
     from src.web.routers import realtime
-    agent = realtime._new_agent()                       # 网页 agent 也有隔离 dev（build 门控）
-    assert "dev_isolated" in agent.tools
-    assert agent.tools["dev_isolated"].read_only is False
+    agent = realtime._new_agent()                       # 网页 agent：隔离 dev + 受确认门的 shell
+    for name in ("dev_isolated", "run_command"):
+        assert name in agent.tools and agent.tools[name].read_only is False
+
+
+@pytest.mark.asyncio
+async def test_ws_confirm_round_trip_allow_and_deny():
+    from src.web.routers import realtime
+    for ok in (True, False):
+        ws = _FakeWS()
+        q = asyncio.Queue()
+        confirm = realtime._make_ws_confirm(ws, q)
+        task = asyncio.create_task(confirm("跑命令？"))
+        evt = await asyncio.wait_for(q.get(), 2)
+        assert evt["type"] == "agent_confirm" and "跑命令" in evt["text"]
+        await realtime.handle_websocket_message(
+            ws, {"type": "agent_confirm_response", "id": evt["id"], "ok": ok})
+        assert await asyncio.wait_for(task, 2) is ok    # 前端应答 → confirm 返回对应布尔
+        assert evt["id"] not in realtime._PENDING_CONFIRMS   # 清理
 
 
 # ---- 会话持久化：同 sid 跨重连复用 agent + 回放对话 ----
