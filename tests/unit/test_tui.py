@@ -1158,9 +1158,9 @@ async def test_dev_isolated_registered_build_only():
     async with app.run_test() as pilot:
         await pilot.pause()
         agent = app._build_main_agent()
-        for name in ("dev_isolated", "dev_parallel"):
+        for name in ("dev_isolated", "dev_parallel", "open_pr"):
             assert name in agent.tools
-            assert agent.tools[name].read_only is False          # 写工具，仅 build 可用
+            assert agent.tools[name].read_only is False          # 写/外向工具，仅 build 可用
 
 
 @pytest.mark.asyncio
