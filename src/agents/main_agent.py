@@ -306,7 +306,12 @@ class MainAgent:
             try:
                 content = (await self._complete(messages, stream_cb)).strip()
             except Exception as e:  # noqa: BLE001
-                emit(f"对话出错: {e}")
+                # 有些异常 str 为空（如 5xx），给类型+折行截断的 detail 才可诊断（如 502 Bad Gateway）
+                detail = " ".join((str(e) or repr(e)).split())[:200]
+                hint = "（多为中转站/网络/额度问题，稍后重试或检查 OPENAI_API_BASE/KEY）" \
+                    if any(k in detail for k in ("502", "503", "504", "Bad Gateway",
+                                                 "Connection", "Timeout", "timed out")) else ""
+                emit(f"对话出错: {type(e).__name__}: {detail}{hint}")
                 return ""
             call = parse_tool_call(content)
             if call is None:                       # 最终回复

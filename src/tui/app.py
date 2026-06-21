@@ -63,6 +63,22 @@ ACTION_CMDS = {"analyze", "improve", "fix", "run", "runagent", "mcp"}   # 跑长
 _SPIN_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 _SPIN_VERBS = ["思考中", "琢磨中", "检索中", "运转中", "推敲中"]
 
+# 终端转义/控制序列清洗。为支持中文输入关掉了 kitty 协议后，修饰键（如 Shift+Enter）的
+# CSI 序列会漏进输入框：既弄脏显示，其中的 ESC 控制符发到中转站还会让 API 因"非法字符"报错
+# （表现为空的"对话出错:"）。提交/输入时一律剔除这些序列与残留控制符。
+_CTRL_SEQ_RE = re.compile(
+    r"\x1b\[[0-9;:?]*[ -/]*[@-~]"   # 完整 CSI（带 ESC）：如 \x1b[27;2;13~
+    r"|\x1b[]P^_X].*?(?:\x07|\x1b\\)"  # OSC/DCS/PM/APC（带终止符）
+    r"|\x1b."                        # 其它 ESC 序列（含落单 ESC）
+    r"|\[[0-9;:]+[~u]"              # ESC 被剥掉后漏出的修饰键 CSI 体：如 [27;2;13~ / [..u
+)
+
+
+def _sanitize_input(s: str) -> str:
+    """剔除漏进输入的终端转义/控制序列，返回干净文本（普通可见字符 + 空格/Tab）。"""
+    s = _CTRL_SEQ_RE.sub("", s)
+    return "".join(ch for ch in s if ch >= " " or ch == "\t")
+
 _AGENTS_DB = lambda root: str(Path(root) / ".vortocode" / "web_advanced_agents.json")
 
 HELP = """可用命令:
@@ -460,7 +476,7 @@ class VortoCodeTUI(App):
 
     # ---------------------------------------------------------------- 输入分发
     async def on_input_submitted(self, event: Input.Submitted) -> None:
-        text = event.value.strip()
+        text = _sanitize_input(event.value).strip()   # 剔除漏进的终端转义序列，防脏字符进 agent/API
         self.query_one("#prompt", Input).value = ""
         self.query_one("#palette", Static).display = False
         self._history_idx = None                # 提交后退出历史浏览
@@ -478,7 +494,13 @@ class VortoCodeTUI(App):
             self._route(text)           # 普通话：先判意图（闲聊/提问 vs 开发需求）再分流
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        """输入变化时更新命令补全面板（输入以 / 开头即可见）。"""
+        """输入变化时更新命令补全面板（输入以 / 开头即可见）；并当场抹掉漏进的终端转义序列。"""
+        clean = _sanitize_input(event.value)
+        if clean != event.value:                 # 修饰键 CSI 等漏进来了 → 立即清掉，别弄脏显示
+            inp = self.query_one("#prompt", Input)
+            inp.value = clean
+            inp.cursor_position = len(clean)
+            return                               # 重设会再触发 Changed，那次已干净
         self._update_palette(event.value)
 
     def _update_palette(self, value: str) -> None:
