@@ -251,6 +251,48 @@ async def test_no_history_replayed_for_fresh_session():
         _cleanup(ws)
 
 
+class _PlanAgent:
+    """跑一回合时设置计划并触发 on_plan（模拟主 agent 调 update_plan）。"""
+    def __init__(self):
+        self._on_plan = None
+        self.plan = []
+
+    async def run_turn(self, text, mode, say, emit, stream_cb):
+        self.plan = [{"step": "x", "status": "in_progress"}]
+        if self._on_plan:
+            self._on_plan(self.plan)
+        emit("好了")
+
+
+@pytest.mark.asyncio
+async def test_agent_plan_event_streamed(monkeypatch):
+    from src.web.routers import realtime
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    ws = _FakeWS(sid="s-plan")
+    _inject_session(ws, _PlanAgent())
+    try:
+        await realtime.handle_agent_message(ws, {"type": "agent", "text": "hi", "mode": "plan"})
+        await _drain(ws)
+        plans = [m for m in ws.sent if m["type"] == "agent_plan"]
+        assert plans and plans[0]["items"] == [{"step": "x", "status": "in_progress"}]
+    finally:
+        _cleanup(ws)
+
+
+@pytest.mark.asyncio
+async def test_replay_includes_current_plan():
+    from src.web.routers import realtime
+    ws = _FakeWS(sid="s-planreplay")
+    _inject_session(ws, _PlanAgent())
+    realtime._SESSIONS[_key(ws)]["agent"].plan = [{"step": "y", "status": "completed"}]
+    try:
+        await realtime._replay_history(ws)         # 重连：把当前计划面板也恢复
+        plans = [m for m in ws.sent if m["type"] == "agent_plan"]
+        assert plans and plans[0]["items"] == [{"step": "y", "status": "completed"}]
+    finally:
+        _cleanup(ws)
+
+
 def test_sessions_evict_oldest_over_cap(monkeypatch):
     from src.web.routers import realtime
     monkeypatch.setattr(realtime, "_MAX_SESSIONS", 3)

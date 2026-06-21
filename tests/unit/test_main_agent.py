@@ -192,6 +192,33 @@ def test_env_overrides_max_steps(monkeypatch):
     assert MainAgent([], max_steps=6).max_steps == 6            # 不设则用默认
 
 
+def test_plan_tool_off_by_default():
+    assert "update_plan" not in MainAgent([]).tools            # 默认不带（子 agent/orchestrator 不变）
+    assert "update_plan" in MainAgent([], plan_tool=True).tools
+
+
+@pytest.mark.asyncio
+async def test_update_plan_sets_state_injects_prompt_and_notifies():
+    seen = []
+    agent = MainAgent([], plan_tool=True, on_plan=lambda p: seen.append(p))
+    out = await agent.tools["update_plan"].handler(
+        {"steps": [{"step": "读代码", "status": "in_progress"}, "写测试"]})
+    # 状态落到 agent.plan，规整成 {step,status}
+    assert agent.plan == [{"step": "读代码", "status": "in_progress"},
+                          {"step": "写测试", "status": "pending"}]
+    assert "0/2 完成" in out and "▸ 读代码" in out               # 工具结果回灌（带进度）
+    assert seen and seen[-1] == agent.plan                      # on_plan 被通知（UI 渲染用）
+    # 计划常驻系统提示，跨步不丢
+    sysmsg = agent._system("plan")
+    assert "当前计划" in sysmsg and "读代码" in sysmsg and "写测试" in sysmsg
+
+
+@pytest.mark.asyncio
+async def test_empty_plan_not_injected():
+    agent = MainAgent([], plan_tool=True)
+    assert "当前计划" not in agent._system("plan")              # 没列计划就不污染系统提示
+
+
 @pytest.mark.asyncio
 async def test_llm_error_is_graceful():
     class BoomLLM:

@@ -1150,3 +1150,18 @@ async def test_running_status_shows_live_tool_count(monkeypatch):
         app._turn_tools = 0
         seen.clear(); app._tick_status()
         assert seen and "工具" not in seen[-1]
+
+
+@pytest.mark.asyncio
+async def test_render_plan_panel():
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._render_plan([
+            {"step": "读代码", "status": "completed"},
+            {"step": "写测试", "status": "in_progress"},
+            {"step": "提交 PR", "status": "pending"},
+        ])
+        joined = "\n".join(app.transcript)
+        assert "📋 计划 · 1/3" in joined                       # 带进度
+        assert "读代码" in joined and "写测试" in joined and "提交 PR" in joined

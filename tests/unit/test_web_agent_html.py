@@ -178,6 +178,15 @@ def test_backoff_curve_via_node():
     assert r.returncode == 0, (r.stdout + r.stderr)
 
 
+def test_plan_panel_wiring():
+    s = _src()
+    assert 'case "agent_plan":' in s and "renderPlan(" in s
+    assert "function renderPlan(" in s
+    assert 'id="plan"' in s and "#plan {" in s
+    # 步骤文本走 textContent（模型可控 → 必须无 XSS），不 innerHTML
+    assert "row.textContent =" in s
+
+
 def test_persistence_wiring():
     s = _src()
     # 每标签页一个 sid，存 sessionStorage（刷新仍在），连接时带上 ?sid=
