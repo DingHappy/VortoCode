@@ -85,8 +85,8 @@ def test_tool_activity_grouping_wiring():
     # 工具提示走折叠分组，而不是逐行裸 say
     assert "case \"agent_say\":    toolLine(" in s
     assert 'add("say"' not in s
-    # 每个回合收尾都定格分组：emit / error / done / 新回合(sendMsg)
-    assert s.count("endToolGroup();") == 4
+    # 每个回合收尾都定格分组：emit / error / done / 新回合(sendMsg)（断线清理是额外一处）
+    assert s.count("endToolGroup();") >= 4
     # 折叠用 <details class="tools">，工具行始终 textContent（纯文本）
     assert 'createElement("details")' in s and ".tools" in s
     assert 'd.className = "say"; d.textContent = text' in s
@@ -133,6 +133,46 @@ process.exit(bad ? 1 : 0);
 @pytest.mark.skipif(shutil.which("node") is None, reason="node 不可用，跳过行为测试")
 def test_tool_activity_grouping_via_node():
     harness = _GROUP_HARNESS.replace("__PATH__", str(AGENT_HTML))
+    r = subprocess.run(["node", "--input-type=module"], input=harness,
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, (r.stdout + r.stderr)
+
+
+def test_auto_reconnect_wiring():
+    s = _src()
+    assert "function backoffDelay(" in s and "function scheduleReconnect(" in s
+    # 断线即排队重连
+    assert "scheduleReconnect();" in s
+    # 连上重置退避并清掉 pending 定时器
+    assert "reconnectAttempts = 0" in s
+    # 断线时清掉半截回合 UI（重连后是全新 server 端 agent 上下文）
+    assert 'endToolGroup(); streamBuf = ""; streamEl.textContent = "";' in s
+    # 退避封顶 15s
+    assert "Math.min(15000" in s
+
+
+_BACKOFF_HARNESS = r"""
+import { readFileSync } from "node:fs";
+const html = readFileSync("__PATH__", "utf8");
+const m = html.match(/function backoffDelay.*\}/);
+if (!m) { console.error("backoffDelay not found"); process.exit(2); }
+const backoffDelay = eval("(" + m[0].replace(/^function backoffDelay/, "function") + ")");
+let bad = 0;
+const ok = (n, c, g) => { if (!c) { bad++; console.error("FAIL " + n + " :: " + JSON.stringify(g)); } };
+ok("attempt0", backoffDelay(0) === 800, backoffDelay(0));
+ok("attempt1", backoffDelay(1) === 1600, backoffDelay(1));
+ok("attempt2", backoffDelay(2) === 3200, backoffDelay(2));
+ok("attempt4", backoffDelay(4) === 12800, backoffDelay(4));
+ok("capped@5", backoffDelay(5) === 15000, backoffDelay(5));
+ok("capped@10", backoffDelay(10) === 15000, backoffDelay(10));
+ok("monotonic-then-flat", backoffDelay(3) < backoffDelay(4) && backoffDelay(6) === backoffDelay(20), [backoffDelay(3), backoffDelay(4), backoffDelay(6)]);
+process.exit(bad ? 1 : 0);
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node 不可用，跳过行为测试")
+def test_backoff_curve_via_node():
+    harness = _BACKOFF_HARNESS.replace("__PATH__", str(AGENT_HTML))
     r = subprocess.run(["node", "--input-type=module"], input=harness,
                        capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, (r.stdout + r.stderr)
