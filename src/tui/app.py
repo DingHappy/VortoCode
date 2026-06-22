@@ -32,7 +32,7 @@ from src.memory.session_store import SessionManager
 SLASH_COMMANDS = [
     "/analyze", "/improve", "/fix", "/run", "/apply", "/agents", "/runagent", "/skills", "/mcp",
     "/artifacts", "/diff", "/sessions", "/resume", "/new", "/mode", "/theme", "/usage",
-    "/tools", "/audit", "/clear", "/help", "/quit",
+    "/tools", "/audit", "/speak", "/clear", "/help", "/quit",
 ]
 # 命令 → 一句话说明（命令补全面板用，让 / 命令可发现、可补全）
 COMMAND_INFO = {
@@ -55,6 +55,7 @@ COMMAND_INFO = {
     "/usage": "本会话 token 用量（reset 清零）",
     "/tools": "列出主 agent 工具及读写权限",
     "/audit": "查看工具调用审计日志",
+    "/speak": "朗读 agent 回复开关（mimo-v2.5-tts，需 key）",
     "/clear": "清屏",
     "/help": "显示帮助",
     "/quit": "退出",
@@ -236,6 +237,7 @@ class VortoCodeTUI(App):
         self._history_idx: int | None = None
         self._history_draft = ""            # 进入历史浏览前的草稿，↓ 到底恢复
         self._allow_writes_session = False  # 本会话"始终允许"写操作（ConfirmScreen 的 [a]）
+        self._speak_replies = False         # /speak 开关：开则把每条回复合成语音朗读（mimo-v2.5-tts）
         self._turn_tools = 0                # 本回合工具调用计数（回合结束给"✓ 完成"反馈）
         self._last_dev = None              # 最近一次 dev 流水线产出 {workspace, files}，供 /apply
 
@@ -269,8 +271,8 @@ class VortoCodeTUI(App):
         import os
         self._chrome("[b]VortoCode[/b] · 交互式 AI 开发助手 "
                      "[dim](一个会话主 agent，自己分流：答疑 / 读代码 / 动手开发)[/dim]")
-        self._chrome("[dim]能做：问答 · 读&搜代码(@文件) · 看图(@图片.png) · 扫描仓库问题 · "
-                     "实现/修改/测试代码 · 发布可分享制品[/dim]")
+        self._chrome("[dim]能做：问答 · 读&搜代码(@文件) · 看图(@图片.png) · 听音频(@音频.mp3) · "
+                     "朗读回复(/speak) · 扫描仓库问题 · 实现/修改/测试代码 · 发布可分享制品[/dim]")
         self._chrome("")
         self._chrome(f"[{self._tc('text-primary', '#8ab4f8')}]试试：[/] "
                      "[b]这个项目是做什么的？[/b]   ·   "
@@ -617,6 +619,8 @@ class VortoCodeTUI(App):
             self._cmd_mcp(arg)
         elif cmd == "agents":
             self._cmd_agents()
+        elif cmd == "speak":
+            self._cmd_speak(arg)
         elif cmd == "runagent":
             if arg:
                 self._do_runagent(arg)
@@ -690,6 +694,59 @@ class VortoCodeTUI(App):
             return
         self._chrome("[dim]工作区改动（git diff）:[/dim]")
         self._render_diff_text(diff, max_lines=400)
+
+    def _cmd_speak(self, arg: str = "") -> None:
+        """/speak：朗读 agent 回复的开关（on/off 可显式指定，否则切换）。开了之后每条回复合成语音播放。"""
+        a = (arg or "").strip().lower()
+        if a in ("on", "开"):
+            self._speak_replies = True
+        elif a in ("off", "关"):
+            self._speak_replies = False
+        else:
+            self._speak_replies = not self._speak_replies
+        if self._speak_replies:
+            self._chrome("[green]🔊 朗读已开[/green][dim]（每条回复用 mimo-v2.5-tts 合成播放；再 /speak 关闭）[/dim]")
+        else:
+            self._chrome("[dim]🔊 朗读已关[/dim]")
+
+    def _play_audio_file(self, path: str) -> bool:
+        """best-effort 播放 WAV：afplay/aplay/ffplay 第一个可用的后台播；找不到返回 False。"""
+        import shutil
+        import subprocess
+        for player, flags in (("afplay", []), ("aplay", ["-q"]),
+                              ("ffplay", ["-nodisp", "-autoexit", "-loglevel", "quiet"])):
+            if shutil.which(player):
+                try:
+                    subprocess.Popen([player, *flags, path],
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    return True
+                except Exception:  # noqa: BLE001
+                    return False
+        return False
+
+    async def _speak_text(self, text: str) -> None:
+        """把一段文字合成成语音并播放（/speak 开时对每条回复调用）。失败只提示、不打断对话。"""
+        text = (text or "").strip()
+        if not text:
+            return
+        try:
+            import os
+            import tempfile
+
+            from src.llm.client import LLMClient
+            wav = await LLMClient().tts(text)
+        except Exception as e:  # noqa: BLE001
+            self._chrome(f"[dim]🔊 朗读失败：{e}[/dim]")
+            return
+        try:
+            path = os.path.join(tempfile.gettempdir(), "vorto_tui_reply.wav")
+            with open(path, "wb") as f:
+                f.write(wav)
+        except OSError as e:
+            self._chrome(f"[dim]🔊 写语音文件失败：{e}[/dim]")
+            return
+        if not self._play_audio_file(path):
+            self._chrome("[dim]🔊 已合成语音，但没找到可用播放器（afplay/aplay/ffplay）[/dim]")
 
     # ---------------------------------------------------------------- MCP 工具接入
     def _wrap_mcp_tools(self) -> list:
@@ -937,10 +994,11 @@ class VortoCodeTUI(App):
         返回 (去掉 @ 的文本, 拼好的上下文串)；没解析到的 @token 原样保留。
         符号用 AST（src.indexing.PythonASTParser）解析，比 grep 准；整次调用只建一次索引。
         """
-        from src.llm.content import is_image_ref
+        from src.llm.content import is_audio_ref, is_image_ref
         base = Path(self.repo_root)
         parts: list[str] = []
         images: list[str] = []                     # @图片 → 多模态附件（不当文本注入）
+        audio: list[str] = []                      # @音频 → 多模态附件
         sym_index: dict[str, list[str]] = {}
         index_built: list[bool] = []
 
@@ -990,6 +1048,9 @@ class VortoCodeTUI(App):
                 if is_image_ref(ref):              # 图片：作为多模态附件交给 agent，不读成文本
                     images.append(str(p))
                     return f"图片[{ref}]"
+                if is_audio_ref(ref):              # 音频：同理，作为 input_audio 附件
+                    audio.append(str(p))
+                    return f"音频[{ref}]"
                 try:
                     parts.append(f"# 文件 {ref}\n{p.read_text(encoding='utf-8')[:3000]}")
                     return ref
@@ -1011,6 +1072,7 @@ class VortoCodeTUI(App):
         clean = re.sub(r"@artifact:([A-Za-z0-9_-]+)", repl_artifact, text)
         clean = re.sub(r"@([\w./一-鿿-]+)", repl, clean)
         self._turn_images = images                 # 供本回合 run_turn 取用（@图片）
+        self._turn_audio = audio                   # 同上（@音频）
         return clean, "\n\n".join(parts)
 
     def _read_files(self, rels: list[str]) -> str:
@@ -1093,11 +1155,14 @@ class VortoCodeTUI(App):
             self.agent = self._build_main_agent()
         user_text, ctx = self._expand_context(text)
         images = getattr(self, "_turn_images", []) or []      # @图片 → 多模态附件
+        audio = getattr(self, "_turn_audio", []) or []        # @音频 → 多模态附件
         if ctx:
             self._chrome(f"[dim]＋ 已注入 @提及的上下文（{len(ctx)} 字）[/dim]")
             user_text = f"{user_text}\n\n[@提及的上下文]\n{ctx}"
         if images:
             self._chrome(f"[dim]🖼 附带 {len(images)} 张图（mimo-v2.5 可读图）[/dim]")
+        if audio:
+            self._chrome(f"[dim]🎧 附带 {len(audio)} 段音频（mimo-v2.5 可听音频）[/dim]")
         # agent 的输出直接落进结果区（对话 log）：忙时转圈("思考中…")给进度反馈，工具调用与
         # 结果(🔧/⎿)实时进 log，回复就绪即作为一条 ● vorto 消息（markdown）写进对话——
         # 回复**边生成边显示**：流式 token 进 #stream（署名 ● vorto、和最终消息同位同款，
@@ -1121,13 +1186,18 @@ class VortoCodeTUI(App):
 
         self._turn_tools = 0
         t0 = time.monotonic()
+        reply = ""
         try:
-            await self.agent.run_turn(user_text, mode=self.mode, say=self._chrome,
-                                      emit=emit_final, stream_cb=stream_cb, images=images)
+            reply = await self.agent.run_turn(user_text, mode=self.mode, say=self._chrome,
+                                              emit=emit_final, stream_cb=stream_cb,
+                                              images=images, audio=audio)
         finally:
             stream.update(""); stream.display = False   # 出错/取消时也收干净
         if self._turn_tools:                # 用过工具的回合给个清晰收尾
             self._chrome(f"[dim]✓ 完成 · {self._turn_tools} 个工具 · {time.monotonic() - t0:.0f}s[/dim]")
+        if self._speak_replies and reply:   # /speak 开：把这条回复合成语音朗读
+            self._chrome("[dim]🔊 合成语音中…[/dim]")
+            await self._speak_text(reply)
         self._persist_agent_history()
 
     def _persist_agent_history(self) -> None:
