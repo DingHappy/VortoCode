@@ -229,6 +229,14 @@ async def test_build_dev_tools_lands_green_on_branch(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_build_dev_tools_parallel_empty_guard(tmp_path):
+    from src.agents.main_agent import build_dev_tools
+    tools = {t.name: t for t in build_dev_tools(str(tmp_path))}
+    assert "dev_parallel" in tools
+    assert "需要 tasks" in await tools["dev_parallel"].handler({"tasks": []})   # 空输入有守卫
+
+
+@pytest.mark.asyncio
 async def test_build_test_tool_lets_subagent_self_check(tmp_path):
     import sys
     from src.agents.main_agent import build_test_tool
