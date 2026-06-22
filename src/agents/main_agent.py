@@ -609,6 +609,28 @@ def build_read_tools(repo_root: str) -> list[Tool]:
             return f"{head}  —— 工作区干净，无未提交改动"
         return out
 
+    async def _list_branches(args: dict) -> str:
+        """列本地分支（按最近提交排序，标注当前分支）——尤其方便看 dev_* 产出的 vorto/* 分支。"""
+        try:
+            r = _git_ro("for-each-ref", "--sort=-committerdate", "--count=40",
+                        "--format=%(refname:short)\t%(committerdate:relative)\t%(subject)",
+                        "refs/heads/")
+            cur = _git_ro("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        except Exception as e:  # noqa: BLE001
+            return f"git 列分支失败: {e}（不是 git 仓库？）"
+        rows = [ln for ln in (r.stdout or "").splitlines() if ln.strip()]
+        if not rows:
+            return "(没有本地分支)"
+        out = ["本地分支（按最近提交排序）："]
+        for ln in rows:
+            parts = ln.split("\t")
+            name = parts[0]
+            when = parts[1] if len(parts) > 1 else ""
+            subj = parts[2] if len(parts) > 2 else ""
+            mark = "* " if name == cur else "  "
+            out.append(f"{mark}{name}  ({when}) {subj[:60]}")
+        return "\n".join(out)
+
     async def _show_diff(args: dict) -> str:
         ref = str(args.get("ref") or "").strip()
         extra = ref.split() if ref else []          # ref 作为 git 参数透传（只读、无 shell 注入）
@@ -645,6 +667,10 @@ def build_read_tools(repo_root: str) -> list[Tool]:
              {"path": "相对路径"}, _document_symbols, read_only=True),
         Tool("git_status", "看工作区 git 状态（git status -sb：当前分支 + 改动文件），只读",
              {}, _git_status, read_only=True),
+        Tool("list_branches",
+             "列本地分支（按最近提交排序、标当前分支）；尤其用来看 dev_isolated/dev_parallel/"
+             "dev_auto 产出的 vorto/* 分支有哪些、各自最后提交。只读",
+             {}, _list_branches, read_only=True),
         Tool("show_diff",
              "看 git diff（只读）：不给 ref 看工作区改动；给 ref 看指定范围，如 "
              "`main...vorto/x`（review dev_isolated/dev_parallel 落的分支，不必 checkout）",

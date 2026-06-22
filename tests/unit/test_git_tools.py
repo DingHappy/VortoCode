@@ -26,8 +26,31 @@ def _tools(path):
 
 def test_git_tools_registered_and_readonly(tmp_path):
     by = _tools(tmp_path)
-    assert "git_status" in by and "show_diff" in by
-    assert by["git_status"].read_only and by["show_diff"].read_only
+    assert {"git_status", "show_diff", "list_branches"} <= set(by)
+    assert by["git_status"].read_only and by["show_diff"].read_only and by["list_branches"].read_only
+
+
+@pytest.mark.asyncio
+async def test_list_branches_shows_vorto(tmp_path):
+    _init(tmp_path)
+    base = _git(tmp_path, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    # 造两个 dev 产出的 vorto/* 分支
+    for b in ("vorto/feat-a1", "vorto/feat-b2"):
+        _git(tmp_path, "checkout", "-q", "-b", b)
+        (tmp_path / (b.replace("/", "_") + ".py")).write_text("x=1\n", encoding="utf-8")
+        _git(tmp_path, "add", "-A")                          # -a 不收新文件，得显式 add
+        _git(tmp_path, "commit", "-q", "-m", f"dev: {b}")
+        _git(tmp_path, "checkout", "-q", base)
+    out = await _tools(tmp_path)["list_branches"].handler({})
+    assert "vorto/feat-a1" in out and "vorto/feat-b2" in out
+    assert f"* {base}" in out                                # 当前分支被标星
+
+
+@pytest.mark.asyncio
+async def test_list_branches_single(tmp_path):
+    _init(tmp_path)
+    out = await _tools(tmp_path)["list_branches"].handler({})
+    assert out.startswith("本地分支") and "*" in out          # 只有默认分支也能列、标星
 
 
 @pytest.mark.asyncio
