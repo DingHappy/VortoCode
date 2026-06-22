@@ -288,6 +288,41 @@ class LLMClient:
                         f"LLM request failed: {response.status} - {error}"
                     )
 
+    async def tts(self, text: str, voice: Optional[str] = None,
+                  model: Optional[str] = None) -> bytes:
+        """文本转语音：返回 WAV 字节。
+
+        中转站的 TTS 走 chat/completions——把要朗读的文本作为 **assistant 消息** 发给
+        TTS 模型（默认 mimo-v2.5-tts，可用 TTS_MODEL 覆盖），音频在 message.audio.data（base64）。
+        voice 可选（不同声音）。空文本或无音频返回会抛异常。
+        """
+        import base64
+
+        import aiohttp
+        text = (text or "").strip()
+        if not text:
+            raise ValueError("TTS 需要非空文本。")
+        payload: Dict[str, Any] = {
+            "model": model or os.getenv("TTS_MODEL", "mimo-v2.5-tts"),
+            "messages": [{"role": "assistant", "content": text[:4000]}],   # 过长截断，避免超大请求
+        }
+        if voice:
+            payload["voice"] = voice
+        url = f"{self.config.base_url}/chat/completions"
+        headers = {"Content-Type": "application/json",
+                   "Authorization": f"Bearer {self.config.api_key}"}
+        timeout = aiohttp.ClientTimeout(total=self.config.timeout)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, json=payload, headers=headers) as resp:
+                if resp.status != 200:
+                    raise Exception(f"TTS 请求失败: {resp.status} - {(await resp.text())[:300]}")
+                data = await resp.json()
+        audio = (data.get("choices") or [{}])[0].get("message", {}).get("audio") or {}
+        b64 = audio.get("data")
+        if not b64:
+            raise Exception("TTS 无音频返回（message.audio.data 为空）。")
+        return base64.b64decode(b64)
+
     async def analyze(self, prompt: str, system_prompt: str = "") -> str:
         """分析任务"""
         messages: List[Dict[str, str]] = []
