@@ -104,6 +104,52 @@ def find_references(repo_root: str, symbol: str) -> str:
     return "\n".join(out)
 
 
+def document_symbols(repo_root: str, path: str) -> str:
+    """列一个文件的类/函数结构大纲（jedi）：让 agent 不必读全文就掌握其 API 面。
+
+    只挑真正在本文件定义的 class/def（按源码行确认，排除 import/参数/局部变量）；
+    按缩进体现嵌套（方法缩在类下）。给行号 + 签名（def name(...)/class Name）。
+    """
+    rel = (path or "").strip().lstrip("@")
+    if not rel:
+        return "document_symbols 需要 path（相对仓库根的 .py 文件）。"
+    jedi = _jedi()
+    if jedi is None:
+        return "未安装 jedi（pip install jedi）。可改用 read_file 看文件。"
+    fp = Path(repo_root) / rel
+    if not fp.is_file():
+        return f"文件不存在: {rel}"
+    try:
+        code = fp.read_text(encoding="utf-8", errors="ignore")
+        lines = code.splitlines()
+        names = jedi.Script(code, path=str(fp)).get_names(
+            all_scopes=True, definitions=True, references=False)
+    except Exception as e:  # noqa: BLE001
+        return f"解析出错: {e}（可改用 read_file）。"
+
+    def _is_real_def(n) -> bool:
+        if n.type not in ("class", "function"):
+            return False
+        if not (1 <= n.line <= len(lines)):
+            return False
+        s = lines[n.line - 1].lstrip()
+        return s.startswith(("class ", "def ", "async def "))   # 排除 import 进来的同类型名
+
+    out: List[str] = []
+    for n in names:
+        if not _is_real_def(n):
+            continue
+        indent = "  " * min(n.column // 4, 4)               # 按列缩进体现嵌套（方法在类下）
+        try:
+            desc = (n.description or n.name).strip()
+        except Exception:  # noqa: BLE001
+            desc = n.name
+        out.append(f"  {indent}L{n.line}: {desc[:160]}")
+    if not out:
+        return f"{rel} 里没有类/函数定义（或不是 Python 源码）。"
+    return f"{rel} 的结构（{len(out)} 个定义）：\n" + "\n".join(out)
+
+
 def compute_rename(repo_root: str, symbol: str, new_name: str) -> dict:
     """计算一次项目级语义重命名（jedi），**只算不写**。
 
