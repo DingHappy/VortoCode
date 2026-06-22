@@ -7,8 +7,9 @@ import、推断类型，比 grep 准——但**不用起外部 LSP server / JSON
 只读、UI 无关：经 build_read_tools 进 TUI/网页/CLI 三端的主 agent。jedi 缺失则给提示不崩。
 """
 
+import keyword
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 _MAX_REFS = 40        # 引用最多列这么多（防超长）
 _MAX_DEFS = 10        # 同名定义最多列这么多
@@ -101,3 +102,53 @@ def find_references(repo_root: str, symbol: str) -> str:
     for r in refs[:_MAX_REFS]:
         out.append(f"  {_rel(r.module_path, repo_root)}:{r.line}: {_line_text(r.module_path, r.line)}")
     return "\n".join(out)
+
+
+def compute_rename(repo_root: str, symbol: str, new_name: str) -> dict:
+    """计算一次项目级语义重命名（jedi），**只算不写**。
+
+    返回 {"ok": True, "diff": 统一 diff, "files": {相对路径: 新内容}, "count": 文件数}
+    或 {"ok": False, "error": 说明}。调用方据此预览/确认后再落盘——这样写操作可被门控。
+    安全：new_name 须是合法标识符且非关键字；任何要改的文件越出仓库根则整体拒绝。
+    """
+    symbol = (symbol or "").strip()
+    new_name = (new_name or "").strip()
+    if not symbol or not new_name:
+        return {"ok": False, "error": "rename 需要 symbol 和 new_name。"}
+    if not new_name.isidentifier() or keyword.iskeyword(new_name):
+        return {"ok": False, "error": f"`{new_name}` 不是合法的标识符（或是关键字），不能作新名。"}
+    jedi = _jedi()
+    if jedi is None:
+        return {"ok": False, "error": "未安装 jedi，语义重命名不可用（pip install jedi）。"}
+    try:
+        proj = jedi.Project(repo_root)
+        defs = [d for d in proj.search(symbol) if getattr(d, "module_path", None)]
+        if not defs:
+            return {"ok": False, "error": f"没找到符号 `{symbol}`，无法重命名。"}
+        d = defs[0]
+        code = Path(d.module_path).read_text(encoding="utf-8", errors="ignore")
+        script = jedi.Script(code, path=str(d.module_path), project=proj)
+        ref = script.rename(d.line, d.column, new_name=new_name)   # 行 1-based、列 0-based
+        changed = ref.get_changed_files()
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"重命名计算失败: {e}（符号可能不可重命名或有歧义）。"}
+    base = Path(repo_root).resolve()
+    files: Dict[str, str] = {}
+    for path, cf in changed.items():
+        try:
+            rp = Path(path).resolve()
+            rel = rp.relative_to(base)                # 越界文件（仓库外）→ 整体拒绝，绝不乱改
+        except (ValueError, OSError):
+            return {"ok": False, "error": f"重命名会改到仓库外的文件（{path}），已拒绝。"}
+        try:
+            files[str(rel)] = cf.get_new_code()
+        except Exception as e:  # noqa: BLE001
+            return {"ok": False, "error": f"取新内容失败: {e}"}
+    if not files:
+        return {"ok": False, "error": "没有需要修改的文件（符号可能没有可改的引用）。"}
+    try:
+        diff = ref.get_diff()
+    except Exception:  # noqa: BLE001
+        diff = ""
+    return {"ok": True, "diff": diff, "files": files, "count": len(files),
+            "definition": f"{_rel(d.module_path, repo_root)}:{d.line}"}
