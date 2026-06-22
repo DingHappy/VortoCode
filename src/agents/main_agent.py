@@ -211,12 +211,15 @@ class MainAgent:
         has_plan = "update_plan" in self.tools
         has_iso = "dev_isolated" in self.tools
         has_par = "dev_parallel" in self.tools
-        if not (has_plan or has_iso or has_par):
+        has_auto = "dev_auto" in self.tools
+        if not (has_plan or has_iso or has_par or has_auto):
             return ""
         lines = ["【怎么干大活】面对多步骤/较大的开发任务，别一上来就埋头改文件，按这个来："]
         if has_plan:
             lines.append("1) 先用 update_plan 把任务拆成有序步骤、列计划；每开始一步标 in_progress、做完标 "
                          "completed，让进度始终可见。")
+        if has_auto:
+            lines.append("· 懒人路：拿不准怎么拆就直接 dev_auto(task=整个大任务)——它自动分解成独立子任务并并行隔离实现。")
         if has_par or has_iso:
             impl = []
             if has_par:
@@ -765,6 +768,29 @@ def build_dev_tools(repo_root: str) -> list[Tool]:
                 if res["applied"] else "落分支失败")
         return f"并行 {len(tasks)} 个子任务：{len(greens)} 通过测试，{note}。\n" + "\n".join(lines)
 
+    async def _dev_auto(args: dict) -> str:
+        """自动分解一个大任务 → 取无依赖的独立子任务 → 走 dev_parallel 并行隔离实现+验证+落分支。"""
+        task = str(args.get("task") or args.get("goal") or args.get("description") or "").strip()
+        if not task:
+            return "dev_auto 需要 task（要自动分解并并行实现的大任务）。"
+        from src.agents.decompose import decompose_for_parallel
+        try:
+            plan = await decompose_for_parallel(task)
+        except Exception as e:  # noqa: BLE001
+            return f"(任务分解出错: {e}；可改用 dev_parallel 手动给独立子任务)"
+        descs = plan["descriptions"]
+        if not descs:
+            return (f"分解出 {plan['total']} 个子任务，但没有可并行的独立项（多为链式依赖）；"
+                    f"建议用 dev_isolated 逐个做，或自己拆成独立块喂 dev_parallel。")
+        head = [f"已把任务分解为 {plan['total']} 个子任务，{len(descs)} 个相互独立 → 并行隔离实现："]
+        for d in descs:
+            head.append(f"  • {d[:70]}")
+        if plan["deferred"]:
+            names = "、".join((getattr(s, "title", "") or "?") for s in plan["deferred"])
+            head.append(f"（{len(plan['deferred'])} 个有依赖、本轮不并行，需后续处理：{names}）")
+        body = await _dev_parallel({"tasks": descs, "test": args.get("test")})
+        return "\n".join(head) + "\n\n" + body
+
     return [
         Tool("dev_isolated",
              "在隔离 git worktree 里实现一个独立子任务 + 自测 + 跑测试验证；✅通过就自动落到一个"
@@ -778,6 +804,12 @@ def build_dev_tools(repo_root: str) -> list[Tool]:
              {"tasks": "相互独立的子任务字符串列表",
               "test": "可选，pytest 选择器，省略则各自跑全量 tests/"},
              _dev_parallel, read_only=False),
+        Tool("dev_auto",
+             "把一个大任务自动分解成独立子任务，再并行隔离实现+验证+落 vorto 分支（= 自动版 "
+             "dev_parallel，省去自己拆）；有依赖的子任务会列出待后续处理。仅 build",
+             {"task": "要自动分解并实现的大任务（自然语言）",
+              "test": "可选，pytest 选择器"},
+             _dev_auto, read_only=False),
     ]
 
 
