@@ -52,7 +52,7 @@ class _SlowAgent:
         self.started = asyncio.Event()
         self.cancelled = False
 
-    async def run_turn(self, text, mode, say, emit, stream_cb, images=None):
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None):
         say("🔧 working")
         self.started.set()
         try:
@@ -230,7 +230,7 @@ async def test_ws_confirm_round_trip_allow_and_deny():
 # ---- 会话持久化：同 sid 跨重连复用 agent + 回放对话 ----
 
 class _EchoAgent:
-    async def run_turn(self, text, mode, say, emit, stream_cb, images=None):
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None):
         emit("回复：" + text)
 
 
@@ -280,7 +280,7 @@ class _PlanAgent:
         self._on_plan = None
         self.plan = []
 
-    async def run_turn(self, text, mode, say, emit, stream_cb, images=None):
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None):
         self.plan = [{"step": "x", "status": "in_progress"}]
         if self._on_plan:
             self._on_plan(self.plan)
@@ -336,14 +336,16 @@ def test_sanitize_images():
 
 
 class _CaptureAgent:
-    """记下收到的 images，便于断言图片透传到 run_turn。"""
+    """记下收到的 images/audio，便于断言附件透传到 run_turn。"""
     def __init__(self):
         self._on_plan = None
         self.plan = []
         self.got_images = "unset"
+        self.got_audio = "unset"
 
-    async def run_turn(self, text, mode, say, emit, stream_cb, images=None):
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None):
         self.got_images = images
+        self.got_audio = audio
         emit("收到。")
 
 
@@ -392,6 +394,71 @@ async def test_empty_with_no_images_rejected(monkeypatch):
         assert any(m["type"] == "agent_error" and "空输入" in m.get("text", "") for m in ws.sent)
     finally:
         _cleanup(ws)
+
+
+# ---- 音频输入 + 语音回复(TTS) ----
+
+def test_sanitize_audio():
+    from src.web.routers import realtime
+    big = "data:audio/wav;base64," + ("A" * (realtime._MAX_IMG_CHARS + 5))
+    out = realtime._sanitize_audio([
+        "data:audio/wav;base64,AAAA",     # 收
+        {"url": "data:audio/mp3;base64,BB"},   # dict 形式也收
+        "data:image/png;base64,CC",       # 图不是音频，丢
+        "https://x/y.mp3",                # input_audio 不收 http，丢
+        big,                              # 超大丢
+    ])
+    assert out == ["data:audio/wav;base64,AAAA", "data:audio/mp3;base64,BB"]
+    assert len(realtime._sanitize_audio(["data:audio/wav;base64,A"] * 20)) == realtime._MAX_IMAGES
+    assert realtime._sanitize_audio("x") == [] and realtime._sanitize_audio(None) == []
+
+
+@pytest.mark.asyncio
+async def test_audio_passed_to_run_turn_and_recorded(monkeypatch):
+    from src.web.routers import realtime
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    ws = _FakeWS(sid="s-aud")
+    agent = _CaptureAgent()
+    _inject_session(ws, agent)
+    try:
+        await realtime.handle_agent_message(ws, {
+            "type": "agent", "mode": "plan",
+            "audio": ["data:audio/wav;base64,AAAA", "https://drop"]})
+        await _drain(ws)
+        # CaptureAgent.run_turn 把 images 记下来；audio 走 kwargs，这里验证它被透传
+        assert agent.got_audio == ["data:audio/wav;base64,AAAA"]
+        transcript = realtime._SESSIONS[_key(ws)]["transcript"]
+        assert any("🎧×1" in m["text"] for m in transcript if m["role"] == "user")
+    finally:
+        _cleanup(ws)
+
+
+@pytest.mark.asyncio
+async def test_handle_tts_message(monkeypatch):
+    import src.llm.client as llmmod
+    from src.web.routers import realtime
+
+    class FakeLLM:
+        async def tts(self, text, voice=None, model=None):
+            assert text == "读这句"
+            return b"RIFFfakewav"
+
+    monkeypatch.setattr(llmmod, "LLMClient", FakeLLM)
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    ws = _FakeWS(sid="s-tts")
+    await realtime.handle_tts_message(ws, {"type": "agent_tts", "id": "t1", "text": "读这句"})
+    audio = [m for m in ws.sent if m["type"] == "agent_tts_audio"]
+    assert audio and audio[0]["id"] == "t1"
+    assert audio[0]["data"].startswith("data:audio/wav;base64,")
+
+
+@pytest.mark.asyncio
+async def test_handle_tts_no_key(monkeypatch):
+    from src.web.routers import realtime
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    ws = _FakeWS(sid="s-tts2")
+    await realtime.handle_tts_message(ws, {"type": "agent_tts", "id": "t2", "text": "x"})
+    assert any(m["type"] == "agent_tts_error" for m in ws.sent)
 
 
 def test_sessions_evict_oldest_over_cap(monkeypatch):
