@@ -24,6 +24,24 @@ def _worktrees_dir(repo_root) -> Path:
     return Path(repo_root) / ".vortocode" / "worktrees"
 
 
+def _apply_diff(path, diff: str) -> tuple[bool, str]:
+    """把一个 unified diff 应用到 worktree。先直 apply；失败退一步 `--3way`。
+
+    并行集成里前一块改过的上下文常让后一块直 apply 因"上下文不匹配"被拒，但真实改动并不重叠
+    ——`--3way` 用 diff 的 base blob 做三方合并，这种情况能干净合上（rc=0、无冲突 marker）。
+    真冲突时 3way 返回非 0 并留 `<<<<<<<` marker → 当失败处理（调用方会 reset 清掉，绝不提交 marker）。
+    返回 (是否干净应用, 错误信息)。
+    """
+    common = ["git", "-C", str(path), "apply", "--whitespace=nowarn"]
+    ap = subprocess.run(common, input=diff, capture_output=True, text=True)
+    if ap.returncode == 0:
+        return True, ""
+    ap3 = subprocess.run(common + ["--3way"], input=diff, capture_output=True, text=True)
+    if ap3.returncode == 0:                       # 三方干净合上（无 marker）
+        return True, ""
+    return False, (ap3.stderr or ap.stderr or "").strip()[:300]
+
+
 def add_worktree(repo_root, wid: str) -> Path:
     """在 .vortocode/worktrees/<wid> 建一个基于当前 HEAD 的 detached worktree。"""
     path = _worktrees_dir(repo_root) / wid
@@ -63,10 +81,9 @@ def apply_diff_to_branch(repo_root, branch: str, diff: str, message: str) -> dic
         return {"ok": False, "branch": branch, "error": (add.stderr or "worktree add 失败").strip()[:300]}
     ok = False
     try:
-        ap = subprocess.run(["git", "-C", str(path), "apply", "--whitespace=nowarn"],
-                            input=diff, capture_output=True, text=True)
-        if ap.returncode != 0:
-            return {"ok": False, "branch": branch, "error": "git apply 失败: " + (ap.stderr or "").strip()[:400]}
+        applied, err = _apply_diff(path, diff)    # 直 apply，失败退一步 3way
+        if not applied:
+            return {"ok": False, "branch": branch, "error": "git apply 失败: " + err}
         _git(path, "add", "-A")
         cm = _git(path, "commit", "-m", message, check=False)
         if cm.returncode != 0:
@@ -99,10 +116,11 @@ def apply_diffs_to_branch(repo_root, branch: str, items: list) -> dict:
         for diff, msg in items:
             if not (diff or "").strip():
                 continue
-            ap = subprocess.run(["git", "-C", str(path), "apply", "--whitespace=nowarn"],
-                                input=diff, capture_output=True, text=True)
-            if ap.returncode != 0:
-                failed.append({"msg": msg, "error": (ap.stderr or "").strip()[:300]})
+            applied_ok, err = _apply_diff(path, diff)   # 直 apply，失败退一步 3way
+            if not applied_ok:
+                failed.append({"msg": msg, "error": err})
+                _git(path, "reset", "--hard", "HEAD", check=False)   # 清掉 3way 冲突 marker/半成品
+                _git(path, "clean", "-fd", check=False)              # 顺带清未跟踪残留，保持干净给下一块
                 continue
             _git(path, "add", "-A")
             cm = _git(path, "commit", "-m", msg, check=False)
