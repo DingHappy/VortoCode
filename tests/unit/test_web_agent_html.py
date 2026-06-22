@@ -138,6 +138,59 @@ def test_tool_activity_grouping_via_node():
     assert r.returncode == 0, (r.stdout + r.stderr)
 
 
+# ---- 图片输入（附图：📎/拖拽/粘贴）----
+
+def test_image_attach_wiring():
+    s = _src()
+    # 入口齐全：附件按钮 + 隐藏 file input + 缩略图条
+    assert 'id="attach"' in s and 'id="file"' in s and 'id="thumbs"' in s
+    assert 'accept="image/*"' in s and "multiple" in s
+    # 拖拽与粘贴都接了
+    assert 'addEventListener("paste"' in s
+    assert '"dragenter"' in s and '"drop"' in s and "dataTransfer.files" in s
+    # 发送走 buildAgentPayload（带图才放 images），不再裸发 {type:"agent",text,mode}
+    assert "ws.send(JSON.stringify(buildAgentPayload(text, mode, urls)))" in s
+    assert 'ws.send(JSON.stringify({ type: "agent", text, mode }))' not in s
+    # 缩略图与用户气泡都用 createElement/textContent/src，不引入新的 innerHTML
+    assert s.count(".innerHTML") == 1
+    # 读文件用 FileReader→dataURL
+    assert "readAsDataURL" in s
+
+
+_IMG_HARNESS = r"""
+import { readFileSync } from "node:fs";
+const html = readFileSync("__PATH__", "utf8");
+const m = html.match(/function capImages[\s\S]*?\nfunction buildAgentPayload[\s\S]*?\n\}/);
+if (!m) { console.error("image fns not found"); process.exit(2); }
+const MAX_IMAGES = 6, MAX_IMG_CHARS = 8 * 1024 * 1024;
+const { capImages, buildAgentPayload } = eval(m[0] + "\n; ({ capImages, buildAgentPayload })");
+let bad = 0;
+const ok = (n, c, g) => { if (!c) { bad++; console.error("FAIL " + n + " :: " + JSON.stringify(g)); } };
+
+const dataPng = "data:image/png;base64,AAAA";
+ok("keeps data+http", JSON.stringify(capImages([dataPng, "https://x/y.png", "http://z/w.gif"])).length > 0
+   && capImages([dataPng]).length === 1, capImages([dataPng]));
+ok("drops non-image", capImages(["ftp://x", "javascript:alert(1)", "data:text/html,x", 42, null]).length === 0,
+   capImages(["ftp://x", "data:text/html,x"]));
+ok("caps count", capImages(Array(20).fill(dataPng)).length === MAX_IMAGES, capImages(Array(20).fill(dataPng)).length);
+ok("drops oversize", capImages(["data:image/png;base64," + "A".repeat(MAX_IMG_CHARS + 10)]).length === 0, "oversize");
+
+let p = buildAgentPayload("hi", "plan", []);
+ok("no images field when none", p.type === "agent" && p.text === "hi" && p.mode === "plan" && !("images" in p), p);
+p = buildAgentPayload("看图", "build", [dataPng, "bad"]);
+ok("images field when present", Array.isArray(p.images) && p.images.length === 1 && p.images[0] === dataPng, p);
+process.exit(bad ? 1 : 0);
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node 不可用，跳过行为测试")
+def test_image_helpers_via_node():
+    harness = _IMG_HARNESS.replace("__PATH__", str(AGENT_HTML))
+    r = subprocess.run(["node", "--input-type=module"], input=harness,
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, (r.stdout + r.stderr)
+
+
 def test_auto_reconnect_wiring():
     s = _src()
     assert "function backoffDelay(" in s and "function scheduleReconnect(" in s

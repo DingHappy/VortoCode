@@ -191,7 +191,8 @@ async def handle_agent_message(websocket, message: Dict[str, Any]):
     import os
 
     text = str(message.get("text", "")).strip()
-    if not text:
+    images = _sanitize_images(message.get("images"))       # 多模态：前端传来的 data/URL 图
+    if not text and not images:
         await websocket.send_json({"type": "agent_error", "text": "空输入"})
         return
     if not os.getenv("OPENAI_API_KEY"):
@@ -205,12 +206,39 @@ async def handle_agent_message(websocket, message: Dict[str, Any]):
         await websocket.send_json({"type": "agent_error", "text": "上一条还在跑，先等它结束或点「停止」。"})
         return
 
+    if not text and images:
+        text = "请看图并描述/分析其中内容。"               # 纯图片轮：给个温和的默认指令
     mode = message.get("mode", "plan")
     _WS_AGENT_TASKS[key] = asyncio.create_task(
-        _run_agent_turn(websocket, text, mode))
+        _run_agent_turn(websocket, text, mode, images))
 
 
-async def _run_agent_turn(websocket, text: str, mode: str):
+# 单张图上限 ~8MB（base64 后），整轮最多 6 张——挡住误传大文件撑爆 WS/上下文
+_MAX_IMG_CHARS = 8 * 1024 * 1024
+_MAX_IMAGES = 6
+
+
+def _sanitize_images(raw) -> list:
+    """校验前端传来的图片引用：只收 data:image/ 或 http(s) URL，限大小与张数。"""
+    if not isinstance(raw, list):
+        return []
+    out: list = []
+    for item in raw:
+        ref = item if isinstance(item, str) else (item.get("url") if isinstance(item, dict) else None)
+        if not isinstance(ref, str):
+            continue
+        ref = ref.strip()
+        if not (ref.startswith("data:image/") or ref.startswith(("http://", "https://"))):
+            continue
+        if len(ref) > _MAX_IMG_CHARS:
+            continue
+        out.append(ref)
+        if len(out) >= _MAX_IMAGES:
+            break
+    return out
+
+
+async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list] = None):
     """实际跑一个回合：run_turn 产出的事件经队列串行发回前端；整个任务可被取消（中断）。
 
     事件类型：agent_say(工具提示) / agent_stream(增量) / agent_emit(成段输出) /
@@ -219,7 +247,8 @@ async def _run_agent_turn(websocket, text: str, mode: str):
     import contextlib
 
     agent = _ws_agent(websocket)              # 确保会话存在
-    _record(websocket, "user", text)          # 记进展示历史，供重连回放
+    rec = f"{text}　🖼×{len(images)}" if images else text   # 带图轮在回放里标记
+    _record(websocket, "user", rec)           # 记进展示历史，供重连回放
     q: asyncio.Queue = asyncio.Queue()
     agent._on_plan = lambda plan: q.put_nowait({"type": "agent_plan", "items": plan})  # 计划更新 → 推前端
     holder = getattr(agent, "_web_confirm_holder", None)
@@ -244,7 +273,7 @@ async def _run_agent_turn(websocket, text: str, mode: str):
     async def _run():
         try:
             await agent.run_turn(text, mode=mode, say=agent_say,
-                                 emit=agent_emit, stream_cb=agent_stream)
+                                 emit=agent_emit, stream_cb=agent_stream, images=images)
         except asyncio.CancelledError:        # 中断：直接上抛，不当成错误
             raise
         except Exception as e:  # noqa: BLE001
