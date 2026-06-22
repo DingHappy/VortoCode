@@ -135,7 +135,11 @@ def _new_agent():
 
 
 def _get_session(websocket) -> Dict[str, Any]:
-    """取/建该会话状态（agent + 展示 transcript + 活动时间）；超额淘汰最久未活动的。"""
+    """取/建该会话状态（agent + 展示 transcript + 活动时间）；超额淘汰最久未活动的。
+
+    内存里没有时，先尝试从磁盘按 sid 复原（跨服务器重启）——还原 transcript + agent 历史/计划。
+    """
+    import os
     import time
     key = _session_key(websocket)
     sess = _SESSIONS.get(key)
@@ -143,10 +147,37 @@ def _get_session(websocket) -> Dict[str, Any]:
         if len(_SESSIONS) >= _MAX_SESSIONS:
             oldest = min(_SESSIONS, key=lambda k: _SESSIONS[k]["last"])
             _SESSIONS.pop(oldest, None)
-        sess = {"agent": _new_agent(), "transcript": [], "last": 0.0}
+        agent = _new_agent()
+        transcript: list = []
+        try:                                  # 跨重启复原：磁盘有这个 sid 就把历史/计划灌回 agent
+            from src.web.session_store import load_session
+            saved = load_session(os.getcwd(), key)
+        except Exception:  # noqa: BLE001
+            saved = None
+        if saved:
+            transcript = list(saved.get("transcript") or [])
+            agent.history = list(saved.get("history") or [])
+            if saved.get("plan"):
+                agent.plan = list(saved["plan"])
+        sess = {"agent": agent, "transcript": transcript, "last": 0.0}
         _SESSIONS[key] = sess
     sess["last"] = time.monotonic()
     return sess
+
+
+def _persist_session(websocket) -> None:
+    """把当前会话存盘（跨重启用）。失败安全吞掉，绝不影响对话。"""
+    import os
+    sess = _SESSIONS.get(_session_key(websocket))
+    if not sess:
+        return
+    try:
+        from src.web.session_store import save_session
+        agent = sess.get("agent")
+        save_session(os.getcwd(), _session_key(websocket), sess.get("transcript") or [],
+                     getattr(agent, "history", []) or [], getattr(agent, "plan", None))
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _ws_agent(websocket):
@@ -352,3 +383,4 @@ async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list
         key = _session_key(websocket)
         if _WS_AGENT_TASKS.get(key) is asyncio.current_task():
             _WS_AGENT_TASKS.pop(key, None)
+        _persist_session(websocket)           # 回合收尾存盘（含中断）：跨服务器重启不丢对话
