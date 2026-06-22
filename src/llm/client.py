@@ -70,7 +70,12 @@ def reset_usage() -> None:
 
 
 def _account(messages: List[Dict[str, str]], content: Optional[str], usage: Any = None) -> None:
-    """记一次调用用量：有 API 精确 usage 就用，否则按文本估算。"""
+    """记一次调用用量：有 API 精确 usage 就用，否则按文本估算。
+
+    content 可能是内容块数组（多模态）：只数其中文本，图片按 IMAGE_TOKEN_COST 估，
+    绝不把 base64 当文本计入（否则估算会被撑爆）。
+    """
+    from src.llm.content import IMAGE_TOKEN_COST, content_to_text, count_images
     pt = ct = None
     if usage is not None:
         pt = getattr(usage, "prompt_tokens", None)
@@ -78,8 +83,9 @@ def _account(messages: List[Dict[str, str]], content: Optional[str], usage: Any 
         if isinstance(usage, dict):
             pt, ct = usage.get("prompt_tokens"), usage.get("completion_tokens")
     if pt is None or ct is None:
-        pt = sum(estimate_tokens(str(m.get("content", ""))) for m in messages)
-        ct = estimate_tokens(content or "")
+        pt = sum(estimate_tokens(content_to_text(m.get("content", "")))
+                 + count_images(m.get("content")) * IMAGE_TOKEN_COST for m in messages)
+        ct = estimate_tokens(content_to_text(content) if content is not None else "")
     add_usage(pt, ct)
 
 
