@@ -668,6 +668,17 @@ def test_cmd_hooks_empty_and_configured(tmp_path):
     assert any("fmt" in c and "edit_file" in c for c in chromed)
 
 
+def test_tui_agent_has_shared_read_tools(tmp_path):
+    # TUI 与 web/CLI 同源：build_read_tools 的全部只读工具都在（含 LSP 导航 + git 只读工具）
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    agent = app._build_main_agent()
+    want = {"read_file", "grep", "list_files", "analyze_repo", "find_definition",
+            "find_references", "document_symbols", "git_status", "show_diff", "list_branches"}
+    assert want <= set(agent.tools), want - set(agent.tools)
+    for n in want:
+        assert agent.tools[n].read_only is True              # 都只读 → plan 模式也可用
+
+
 def test_build_main_agent_includes_project_instructions(tmp_path):
     (tmp_path / "AGENTS.md").write_text("TUI 项目约定：先 plan 再 build。", encoding="utf-8")
     app = VortoCodeTUI(repo_root=str(tmp_path))
