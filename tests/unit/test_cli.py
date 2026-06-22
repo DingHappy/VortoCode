@@ -87,3 +87,88 @@ async def test_with_progress_ticks_and_clears_on_tty(monkeypatch, capsys):
     err = capsys.readouterr().err
     assert "测试中" in err and "⏳" in err             # TTY 下出现计时行
     assert "\x1b[K" in err                             # 结束清掉计时行
+
+
+# ---- headless agent（仿 claude -p）----
+
+class _ScriptedLLM:
+    """按调用顺序依次返回预设 content；用完停在最后一条（与 test_main_agent 同构）。"""
+
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.calls = 0
+
+    async def chat(self, messages, **kwargs):
+        i = min(self.calls, len(self.responses) - 1)
+        self.calls += 1
+        return {"content": self.responses[i]}
+
+
+def test_agent_subcommand_parses(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["vortocode", "agent", "-h"])
+    with pytest.raises(SystemExit) as e:
+        cli.main()
+    assert e.value.code == 0
+    out = capsys.readouterr().out
+    assert "--build" in out and "--yes" in out and "--json" in out
+    assert "claude -p" in out                          # 帮助点明对标 headless 模式
+
+
+def test_agent_missing_prompt_exits_2(monkeypatch):
+    # 非 TTY stdin 但给空 → 解析为无 prompt → 退出码 2
+    monkeypatch.setattr(sys, "argv", ["vortocode", "agent"])
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)   # 交互式 → 不读 stdin
+    with pytest.raises(SystemExit) as e:
+        cli.main()
+    assert e.value.code == 2
+
+
+def test_read_prompt_arg_variants(monkeypatch):
+    assert cli._read_prompt_arg("  hi  ") == "hi"            # 显式位置参数
+    import io
+    monkeypatch.setattr(sys, "stdin", io.StringIO("from stdin\n"))
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+    assert cli._read_prompt_arg("-") == "from stdin"         # 显式 - 读 stdin
+    monkeypatch.setattr(sys, "stdin", io.StringIO("piped\n"))
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False, raising=False)
+    assert cli._read_prompt_arg(None) == "piped"             # 管道（非 TTY）省略也读 stdin
+
+
+def test_strip_markup():
+    assert cli._strip_markup("🔧 [b]read_file[/b][dim] path=a[/dim]") == "🔧 read_file path=a"
+    assert cli._strip_markup("[#7fce9a]✓[/] done") == "✓ done"
+
+
+@pytest.mark.asyncio
+async def test_headless_pure_reply_to_stdout(monkeypatch, capsys):
+    # 非 TTY（capsys 下 stdout 非 tty）→ 不流式，一次性 print 回复
+    reply = await cli.run_agent_headless("你好", llm=_ScriptedLLM("我是 VortoCode。"))
+    assert reply == "我是 VortoCode。"
+    cap = capsys.readouterr()
+    assert cap.out.strip() == "我是 VortoCode。"             # 回复进 stdout
+    assert cap.err == ""                                     # 闲聊不调工具，stderr 干净
+
+
+@pytest.mark.asyncio
+async def test_headless_json_output(monkeypatch, capsys):
+    import json
+    reply = await cli.run_agent_headless(
+        "搜一下 main",
+        llm=_ScriptedLLM('{"tool":"grep","args":{"pattern":"def main"}}', "找到了。"),
+        as_json=True)
+    assert reply == "找到了。"
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["reply"] == "找到了。"
+    assert payload["mode"] == "plan"
+    assert any(t["tool"] == "grep" for t in payload["tools"])   # 工具调用被记进 JSON
+
+
+@pytest.mark.asyncio
+async def test_headless_dangerous_op_auto_denied_in_build(monkeypatch, capsys):
+    # build 模式下 run_command 需确认；headless 默认拒绝（不执行任何 shell）
+    reply = await cli.run_agent_headless(
+        "跑一下命令", build=True,
+        llm=_ScriptedLLM('{"tool":"run_command","args":{"command":"echo hi"}}', "已说明。"))
+    assert reply == "已说明。"
+    err = capsys.readouterr().err
+    assert "自动拒绝" in err                                  # 外向/高危操作被默认拦下
