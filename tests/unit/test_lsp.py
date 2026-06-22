@@ -55,10 +55,47 @@ def test_graceful_without_jedi(tmp_path, monkeypatch):
 def test_tools_wired_into_read_tools(tmp_path):
     from src.agents.main_agent import build_read_tools
     names = {t.name for t in build_read_tools(str(tmp_path))}
-    assert "find_definition" in names and "find_references" in names
+    assert {"find_definition", "find_references", "document_symbols"} <= names
     # 都是只读（plan 模式可用）
     by = {t.name: t for t in build_read_tools(str(tmp_path))}
     assert by["find_definition"].read_only and by["find_references"].read_only
+    assert by["document_symbols"].read_only
+
+
+# ---- 文件大纲 document_symbols ----
+
+def test_document_symbols_outline(tmp_path):
+    (tmp_path / "m.py").write_text(
+        "import os\n"                       # import 不该出现在大纲
+        "TOP = 1\n"                         # 模块变量不该出现
+        "def free_fn(a, b):\n    return a\n"
+        "\n"
+        "class Foo:\n"
+        "    def method_a(self):\n        return 1\n"
+        "    def method_b(self, x):\n        return x\n", encoding="utf-8")
+    out = lsp.document_symbols(str(tmp_path), "m.py")
+    assert "free_fn" in out and "class Foo" in out
+    assert "method_a" in out and "method_b" in out
+    assert "import os" not in out and "TOP" not in out      # 排除 import/模块变量
+    # 方法缩进比顶层函数深（嵌套体现）
+    lines = {l.split(":", 1)[0].strip(): l for l in out.splitlines() if "L" in l}
+    fn_line = next(l for l in out.splitlines() if "free_fn" in l)
+    m_line = next(l for l in out.splitlines() if "method_a" in l)
+    assert (len(m_line) - len(m_line.lstrip())) > (len(fn_line) - len(fn_line.lstrip()))
+
+
+def test_document_symbols_missing_file(tmp_path):
+    assert "文件不存在" in lsp.document_symbols(str(tmp_path), "nope.py")
+
+
+def test_document_symbols_empty_path(tmp_path):
+    assert "需要 path" in lsp.document_symbols(str(tmp_path), "")
+
+
+def test_document_symbols_without_jedi(tmp_path, monkeypatch):
+    (tmp_path / "m.py").write_text("def f(): pass\n", encoding="utf-8")
+    monkeypatch.setattr(lsp, "_jedi", lambda: None)
+    assert "未安装 jedi" in lsp.document_symbols(str(tmp_path), "m.py")
 
 
 # ---- 语义重命名 compute_rename ----
