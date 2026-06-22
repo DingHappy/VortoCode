@@ -57,12 +57,14 @@ async def test_show_diff_no_changes(tmp_path):
 @pytest.mark.asyncio
 async def test_show_diff_branch_range(tmp_path):
     _init(tmp_path)
-    # 造一个 vorto 分支，改点东西，用 main...vorto/x 看它带来的改动（不 checkout）
+    # 默认分支名随 git 配置（main 或 master）——动态取，别硬编码
+    base = _git(tmp_path, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    # 造一个 vorto 分支，改点东西，用 base...vorto/x 看它带来的改动（不 checkout）
     _git(tmp_path, "checkout", "-q", "-b", "vorto/x")
     (tmp_path / "a.py").write_text("x = 1\ny = 2\n", encoding="utf-8")
     _git(tmp_path, "commit", "-q", "-am", "add y")
-    _git(tmp_path, "checkout", "-q", "main")
-    out = await _tools(tmp_path)["show_diff"].handler({"ref": "main...vorto/x"})
+    _git(tmp_path, "checkout", "-q", base)
+    out = await _tools(tmp_path)["show_diff"].handler({"ref": f"{base}...vorto/x"})
     assert "y = 2" in out                                         # 分支独有的改动可见
     # 工作区本身干净
     assert "干净" in await _tools(tmp_path)["git_status"].handler({})
