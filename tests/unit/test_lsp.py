@@ -59,3 +59,35 @@ def test_tools_wired_into_read_tools(tmp_path):
     # 都是只读（plan 模式可用）
     by = {t.name: t for t in build_read_tools(str(tmp_path))}
     assert by["find_definition"].read_only and by["find_references"].read_only
+
+
+# ---- 语义重命名 compute_rename ----
+
+def test_compute_rename_multi_file(tmp_path):
+    root = _mkproj(tmp_path)
+    r = lsp.compute_rename(root, "greet", "say_hi")
+    assert r["ok"] and r["count"] == 2
+    assert set(r["files"]) == {"mod.py", "app.py"}
+    assert "def say_hi(name)" in r["files"]["mod.py"]
+    assert "from mod import say_hi" in r["files"]["app.py"]
+    assert "say_hi" in r["diff"] and "--- " in r["diff"]
+    assert "mod.py:1" in r["definition"]
+
+
+def test_compute_rename_rejects_bad_name(tmp_path):
+    root = _mkproj(tmp_path)
+    assert lsp.compute_rename(root, "greet", "1bad")["ok"] is False
+    assert lsp.compute_rename(root, "greet", "class")["ok"] is False    # 关键字
+    assert lsp.compute_rename(root, "greet", "")["ok"] is False
+
+
+def test_compute_rename_missing_symbol(tmp_path):
+    root = _mkproj(tmp_path)
+    r = lsp.compute_rename(root, "no_such", "x")
+    assert r["ok"] is False and "没找到" in r["error"]
+
+
+def test_compute_rename_without_jedi(tmp_path, monkeypatch):
+    monkeypatch.setattr(lsp, "_jedi", lambda: None)
+    r = lsp.compute_rename(str(tmp_path), "greet", "say_hi")
+    assert r["ok"] is False and "jedi" in r["error"]
