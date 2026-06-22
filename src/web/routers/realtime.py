@@ -65,6 +65,9 @@ async def handle_websocket_message(websocket: WebSocket, message: Dict[str, Any]
         if fut is not None and not fut.done():
             fut.set_result(bool(message.get("ok")))
 
+    elif msg_type == "agent_tts":             # 「🔊 播放」：把某条回复合成成语音回传前端播放
+        await handle_tts_message(websocket, message)
+
 
 # 等待前端确认的工具：confirm id → Future（前端 agent_confirm_response 来了就 set_result）
 _PENDING_CONFIRMS: Dict[str, Any] = {}
@@ -191,8 +194,9 @@ async def handle_agent_message(websocket, message: Dict[str, Any]):
     import os
 
     text = str(message.get("text", "")).strip()
-    images = _sanitize_images(message.get("images"))       # 多模态：前端传来的 data/URL 图
-    if not text and not images:
+    images = _sanitize_images(message.get("images"))       # 多模态：前端传来的 data 图
+    audio = _sanitize_audio(message.get("audio"))          # 多模态：前端传来的 data 音频
+    if not text and not images and not audio:
         await websocket.send_json({"type": "agent_error", "text": "空输入"})
         return
     if not os.getenv("OPENAI_API_KEY"):
@@ -206,14 +210,14 @@ async def handle_agent_message(websocket, message: Dict[str, Any]):
         await websocket.send_json({"type": "agent_error", "text": "上一条还在跑，先等它结束或点「停止」。"})
         return
 
-    if not text and images:
-        text = "请看图并描述/分析其中内容。"               # 纯图片轮：给个温和的默认指令
+    if not text and (images or audio):                     # 纯附件轮：给个温和的默认指令
+        text = "请听这段音频并转写/回答。" if audio and not images else "请看图并描述/分析其中内容。"
     mode = message.get("mode", "plan")
     _WS_AGENT_TASKS[key] = asyncio.create_task(
-        _run_agent_turn(websocket, text, mode, images))
+        _run_agent_turn(websocket, text, mode, images, audio))
 
 
-# 单张图上限 ~8MB（base64 后），整轮最多 6 张——挡住误传大文件撑爆 WS/上下文
+# 单个附件上限 ~8MB（base64 后），整轮图/音各最多 6 个——挡住误传大文件撑爆 WS/上下文
 _MAX_IMG_CHARS = 8 * 1024 * 1024
 _MAX_IMAGES = 6
 
@@ -238,7 +242,49 @@ def _sanitize_images(raw) -> list:
     return out
 
 
-async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list] = None):
+def _sanitize_audio(raw) -> list:
+    """校验前端传来的音频引用：只收 data:audio/（input_audio 要内联数据），限大小与个数。"""
+    if not isinstance(raw, list):
+        return []
+    out: list = []
+    for item in raw:
+        ref = item if isinstance(item, str) else (item.get("url") if isinstance(item, dict) else None)
+        if not isinstance(ref, str):
+            continue
+        ref = ref.strip()
+        if not ref.startswith("data:audio/"):
+            continue
+        if len(ref) > _MAX_IMG_CHARS:
+            continue
+        out.append(ref)
+        if len(out) >= _MAX_IMAGES:
+            break
+    return out
+
+
+async def handle_tts_message(websocket, message: Dict[str, Any]):
+    """「🔊 播放」：把指定文本合成成语音，base64 WAV 回前端播放（失败回 agent_tts_error）。"""
+    import base64
+    import os
+    cid = message.get("id")
+    text = str(message.get("text", "")).strip()
+    if not text:
+        return
+    if not os.getenv("OPENAI_API_KEY"):
+        await websocket.send_json({"type": "agent_tts_error", "id": cid, "text": "未配置 OPENAI_API_KEY"})
+        return
+    try:
+        from src.llm.client import LLMClient
+        wav = await LLMClient().tts(text)
+        b64 = base64.b64encode(wav).decode("ascii")
+        await websocket.send_json({"type": "agent_tts_audio", "id": cid,
+                                   "data": f"data:audio/wav;base64,{b64}"})
+    except Exception as e:  # noqa: BLE001
+        await websocket.send_json({"type": "agent_tts_error", "id": cid, "text": str(e)[:200]})
+
+
+async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list] = None,
+                          audio: Optional[list] = None):
     """实际跑一个回合：run_turn 产出的事件经队列串行发回前端；整个任务可被取消（中断）。
 
     事件类型：agent_say(工具提示) / agent_stream(增量) / agent_emit(成段输出) /
@@ -247,7 +293,9 @@ async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list
     import contextlib
 
     agent = _ws_agent(websocket)              # 确保会话存在
-    rec = f"{text}　🖼×{len(images)}" if images else text   # 带图轮在回放里标记
+    marks = (([f"🖼×{len(images)}"] if images else []) +
+             ([f"🎧×{len(audio)}"] if audio else []))      # 带附件轮在回放里标记
+    rec = f"{text}　{' '.join(marks)}" if marks else text
     _record(websocket, "user", rec)           # 记进展示历史，供重连回放
     q: asyncio.Queue = asyncio.Queue()
     agent._on_plan = lambda plan: q.put_nowait({"type": "agent_plan", "items": plan})  # 计划更新 → 推前端
@@ -272,8 +320,8 @@ async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list
 
     async def _run():
         try:
-            await agent.run_turn(text, mode=mode, say=agent_say,
-                                 emit=agent_emit, stream_cb=agent_stream, images=images)
+            await agent.run_turn(text, mode=mode, say=agent_say, emit=agent_emit,
+                                 stream_cb=agent_stream, images=images, audio=audio)
         except asyncio.CancelledError:        # 中断：直接上抛，不当成错误
             raise
         except Exception as e:  # noqa: BLE001
