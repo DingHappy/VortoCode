@@ -527,15 +527,26 @@ def build_read_tools(repo_root: str) -> list[Tool]:
     """构建一组只读工具（read_file/list_files/grep/analyze_repo），UI 无关，供 TUI/Web 共用。"""
     from pathlib import Path
 
+    # 全仓库文本文件（grep/list_files 用）：跳过噪音目录、只收文本类扩展名——
+    # 之前只扫 src/tests 的 .py，搜不到 web/html、examples、docs、配置等，是多语言仓库的大盲区。
+    _SKIP_DIRS = {".git", "node_modules", "__pycache__", ".vortocode", ".venv", "venv",
+                  "dist", "build", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+                  ".idea", ".vscode", "htmlcov", ".eggs", "site-packages"}
+    _TEXT_EXT = {".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".md", ".rst",
+                 ".yaml", ".yml", ".toml", ".json", ".txt", ".cfg", ".ini", ".sh", ".sql", ".env"}
+
     def _files() -> list[str]:
+        import os
         base = Path(repo_root)
         out: list[str] = []
-        for sub in ("src", "tests"):
-            d = base / sub
-            if d.is_dir():
-                out += [str(p.relative_to(base)) for p in sorted(d.rglob("*.py"))
-                        if "__pycache__" not in p.parts]
-        return out[:2000]
+        for root, dirs, files in os.walk(base):
+            dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]   # 原地剪枝：不下钻噪音目录
+            for fn in files:
+                if Path(fn).suffix.lower() in _TEXT_EXT:
+                    out.append(str((Path(root) / fn).relative_to(base)))
+                    if len(out) >= 4000:
+                        return sorted(out)
+        return sorted(out)
 
     def _int(v):
         try:
@@ -676,10 +687,10 @@ def build_read_tools(repo_root: str) -> list[Tool]:
              "document_symbols 给的行号跳到大文件深处；不给则整文件（超长截断、提示用行段）",
              {"path": "相对路径", "start": "可选，起始行号", "end": "可选，结束行号"},
              _read_file, read_only=True),
-        Tool("list_files", "列出仓库源码文件（可按子目录前缀过滤）", {"dir": "可选子目录"},
-             _list_files, read_only=True),
-        Tool("grep", "在仓库源码里按正则搜索，返回 path:line 命中行",
-             {"pattern": "正则", "dir": "可选子目录"}, _grep, read_only=True),
+        Tool("list_files", "列出全仓库文本文件（py/js/html/md/yaml/toml… 跳过 .git/node_modules 等；"
+             "可按子目录前缀过滤）", {"dir": "可选子目录"}, _list_files, read_only=True),
+        Tool("grep", "在全仓库文本文件里按正则搜索（不止 src，含 web/examples/docs/配置等），"
+             "返回 path:line 命中行", {"pattern": "正则", "dir": "可选子目录"}, _grep, read_only=True),
         Tool("analyze_repo", "只读扫描本仓库列出问题清单，无需 key", {}, _analyze_repo, read_only=True),
         Tool("find_definition",
              "语义查符号定义（jedi/LSP 级，跟随 import、比 grep 准）：给函数/类/变量名"
