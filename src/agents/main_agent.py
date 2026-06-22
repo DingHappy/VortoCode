@@ -566,6 +566,41 @@ def build_read_tools(repo_root: str) -> list[Tool]:
         from src.agents.lsp import document_symbols
         return document_symbols(repo_root, str(args.get("path", "")))
 
+    def _git_ro(*a):
+        """只读 git：在 repo_root 跑，超时/出错都安全返回 CompletedProcess-ish。"""
+        import subprocess
+        return subprocess.run(["git", "-C", repo_root, *a], capture_output=True, text=True, timeout=20)
+
+    async def _git_status(args: dict) -> str:
+        try:
+            r = _git_ro("status", "--short", "--branch")
+        except Exception as e:  # noqa: BLE001
+            return f"git status 失败: {e}（不是 git 仓库？）"
+        out = (r.stdout or "").strip()
+        lines = [ln for ln in out.splitlines() if ln.strip()]
+        # `--branch` 总会带一行 `## <branch>`；没有文件改动行 = 干净
+        files = [ln for ln in lines if not ln.startswith("##")]
+        if not files:
+            head = lines[0] if lines else "## (无分支)"
+            return f"{head}  —— 工作区干净，无未提交改动"
+        return out
+
+    async def _show_diff(args: dict) -> str:
+        ref = str(args.get("ref") or "").strip()
+        extra = ref.split() if ref else []          # ref 作为 git 参数透传（只读、无 shell 注入）
+        try:
+            stat = _git_ro("diff", "--stat", *extra)
+            full = _git_ro("diff", *extra)
+        except Exception as e:  # noqa: BLE001
+            return f"git diff 失败: {e}"
+        if stat.returncode != 0:
+            return f"git diff 出错（ref 无效？）: {(stat.stderr or '').strip()[:200]}"
+        diff = full.stdout or ""
+        if not diff.strip():
+            return f"(无改动{('：' + ref) if ref else ''})"
+        body = diff[:6000] + ("\n…(diff 已截断，太长)" if len(diff) > 6000 else "")
+        return f"{(stat.stdout or '').strip()}\n\n{body}"
+
     return [
         Tool("read_file", "读取仓库内某个文件的内容", {"path": "相对路径"}, _read_file, read_only=True),
         Tool("list_files", "列出仓库源码文件（可按子目录前缀过滤）", {"dir": "可选子目录"},
@@ -584,6 +619,12 @@ def build_read_tools(repo_root: str) -> list[Tool]:
              "列一个 .py 文件的类/函数结构大纲（jedi）：给路径，返回各定义的行号+签名，"
              "不必读全文就掌握其 API 面",
              {"path": "相对路径"}, _document_symbols, read_only=True),
+        Tool("git_status", "看工作区 git 状态（git status -sb：当前分支 + 改动文件），只读",
+             {}, _git_status, read_only=True),
+        Tool("show_diff",
+             "看 git diff（只读）：不给 ref 看工作区改动；给 ref 看指定范围，如 "
+             "`main...vorto/x`（review dev_isolated/dev_parallel 落的分支，不必 checkout）",
+             {"ref": "可选，git ref/范围，如 main...vorto/x"}, _show_diff, read_only=True),
     ]
 
 
