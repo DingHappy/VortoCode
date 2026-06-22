@@ -52,7 +52,7 @@ class _SlowAgent:
         self.started = asyncio.Event()
         self.cancelled = False
 
-    async def run_turn(self, text, mode, say, emit, stream_cb):
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None):
         say("🔧 working")
         self.started.set()
         try:
@@ -230,7 +230,7 @@ async def test_ws_confirm_round_trip_allow_and_deny():
 # ---- 会话持久化：同 sid 跨重连复用 agent + 回放对话 ----
 
 class _EchoAgent:
-    async def run_turn(self, text, mode, say, emit, stream_cb):
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None):
         emit("回复：" + text)
 
 
@@ -280,7 +280,7 @@ class _PlanAgent:
         self._on_plan = None
         self.plan = []
 
-    async def run_turn(self, text, mode, say, emit, stream_cb):
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None):
         self.plan = [{"step": "x", "status": "in_progress"}]
         if self._on_plan:
             self._on_plan(self.plan)
@@ -312,6 +312,84 @@ async def test_replay_includes_current_plan():
         await realtime._replay_history(ws)         # 重连：把当前计划面板也恢复
         plans = [m for m in ws.sent if m["type"] == "agent_plan"]
         assert plans and plans[0]["items"] == [{"step": "y", "status": "completed"}]
+    finally:
+        _cleanup(ws)
+
+
+# ---- 图片输入 ----
+
+def test_sanitize_images():
+    from src.web.routers import realtime
+    big = "data:image/png;base64," + ("A" * (realtime._MAX_IMG_CHARS + 5))
+    out = realtime._sanitize_images([
+        "data:image/png;base64,AAAA",     # 收
+        "https://x/y.jpg",                # 收
+        {"url": "data:image/gif;base64,BB"},   # dict 形式也收
+        "ftp://nope", "data:text/html,x", 42,  # 丢
+        big,                              # 超大丢
+    ])
+    assert out == ["data:image/png;base64,AAAA", "https://x/y.jpg", "data:image/gif;base64,BB"]
+    # 张数封顶
+    many = realtime._sanitize_images(["data:image/png;base64,A"] * 20)
+    assert len(many) == realtime._MAX_IMAGES
+    assert realtime._sanitize_images("不是列表") == [] and realtime._sanitize_images(None) == []
+
+
+class _CaptureAgent:
+    """记下收到的 images，便于断言图片透传到 run_turn。"""
+    def __init__(self):
+        self._on_plan = None
+        self.plan = []
+        self.got_images = "unset"
+
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None):
+        self.got_images = images
+        emit("收到。")
+
+
+@pytest.mark.asyncio
+async def test_images_passed_to_run_turn_and_recorded(monkeypatch):
+    from src.web.routers import realtime
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    ws = _FakeWS(sid="s-img")
+    agent = _CaptureAgent()
+    _inject_session(ws, agent)
+    try:
+        await realtime.handle_agent_message(ws, {
+            "type": "agent", "text": "看这张图", "mode": "plan",
+            "images": ["data:image/png;base64,AAAA", "ftp://drop"]})
+        await _drain(ws)
+        assert agent.got_images == ["data:image/png;base64,AAAA"]    # 已过滤、透传
+        transcript = realtime._SESSIONS[_key(ws)]["transcript"]
+        assert any("🖼×1" in m["text"] for m in transcript if m["role"] == "user")  # 回放带图标记
+    finally:
+        _cleanup(ws)
+
+
+@pytest.mark.asyncio
+async def test_image_only_turn_gets_default_prompt(monkeypatch):
+    from src.web.routers import realtime
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    ws = _FakeWS(sid="s-imgonly")
+    agent = _CaptureAgent()
+    _inject_session(ws, agent)
+    try:
+        await realtime.handle_agent_message(ws, {
+            "type": "agent", "mode": "plan", "images": ["data:image/png;base64,AAAA"]})
+        await _drain(ws)
+        assert agent.got_images == ["data:image/png;base64,AAAA"]     # 纯图片轮也能跑
+    finally:
+        _cleanup(ws)
+
+
+@pytest.mark.asyncio
+async def test_empty_with_no_images_rejected(monkeypatch):
+    from src.web.routers import realtime
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    ws = _FakeWS(sid="s-empty")
+    try:
+        await realtime.handle_agent_message(ws, {"type": "agent", "text": "  ", "mode": "plan"})
+        assert any(m["type"] == "agent_error" and "空输入" in m.get("text", "") for m in ws.sent)
     finally:
         _cleanup(ws)
 
