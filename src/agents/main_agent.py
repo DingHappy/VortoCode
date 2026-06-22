@@ -358,20 +358,23 @@ class MainAgent:
         emit: Optional[Callable[[str], None]] = None,
         stream_cb: Optional[Callable[[str], None]] = None,
         images: Optional[list] = None,
+        audio: Optional[list] = None,
     ) -> str:
         """处理一轮用户输入：循环"模型↔工具"，最终把回复交给 emit；并返回最终回复文本。
 
         say(markup): UI 提示行（如"🔧 调用工具"）；emit(text): 最终/工具的字面输出。
         stream_cb(partial): 给了就把"最终回复"边生成边流式回显（疑似工具调用的 JSON 不显示）。
-        images: 可选的图片引用列表（本地路径/URL/data URL）——挂到本轮 user 消息上，
-                整条变成多模态内容块（mimo-v2.5 可读图）。无图则保持纯字符串、完全向后兼容。
+        images: 可选图片引用列表（本地路径/URL/data URL）。
+        audio:  可选音频引用列表（本地路径/data URL）——mimo-v2.5 可直接听音频(input_audio)。
+                有图/音则本轮 user 消息变多模态内容块；都没有则保持纯字符串、完全向后兼容。
         返回值：最终回复文本（供子 agent 把结论交回父 agent）。
         """
         say = say or (lambda _m: None)
         emit = emit or (lambda _m: None)
         self._escalated = False                # 每轮重置；切 build 由 UI 持久化到 mode
         from src.llm.content import build_user_content
-        self.history.append({"role": "user", "content": build_user_content(user_text, images)})
+        self.history.append({"role": "user",
+                             "content": build_user_content(user_text, images, audio)})
 
         for _step in range(self.max_steps):
             messages = [{"role": "system", "content": self._system(mode)}] + self._trimmed_history()
