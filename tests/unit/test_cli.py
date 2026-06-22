@@ -226,4 +226,40 @@ async def test_headless_attaches_image_to_message(tmp_path, capsys):
     assert any(b.get("type") == "text" for b in content)
     img = [b for b in content if b.get("type") == "image_url"]
     assert img and img[0]["image_url"]["url"].startswith("data:image/png;base64,")
-    assert "附带 1 张图" in capsys.readouterr().err           # stderr 提示带图
+    assert "🖼 1 张图" in capsys.readouterr().err            # stderr 提示带图
+
+
+def _wav(tmp_path):
+    import base64
+    raw = base64.b64decode("UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=")
+    p = tmp_path / "clip.wav"
+    p.write_bytes(raw)
+    return p
+
+
+def test_valid_audio_ref(tmp_path):
+    p = _wav(tmp_path)
+    assert cli._valid_audio_ref(str(p))                      # 存在的本地音频
+    assert cli._valid_audio_ref("data:audio/mp3;base64,QQ")  # data URL 放行
+    assert not cli._valid_audio_ref("https://x/y.mp3")       # input_audio 不收 http URL
+    assert not cli._valid_audio_ref(str(tmp_path / "nope.mp3"))   # 不存在
+    assert not cli._valid_audio_ref(str(p) + ".txt")         # 非音频
+
+
+def test_agent_bad_audio_exits_2(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["vortocode", "agent", "-a", "/no/such.mp3", "hi"])
+    with pytest.raises(SystemExit) as e:
+        cli.main()
+    assert e.value.code == 2
+
+
+@pytest.mark.asyncio
+async def test_headless_attaches_audio_to_message(tmp_path, capsys):
+    p = _wav(tmp_path)
+    llm = _CapturingLLM("音频说：你好。")
+    reply = await cli.run_agent_headless("转写", llm=llm, audio=[str(p)])
+    assert reply == "音频说：你好。"
+    content = [m for m in llm.last_messages if m["role"] == "user"][0]["content"]
+    aud = [b for b in content if b.get("type") == "input_audio"]
+    assert aud and aud[0]["input_audio"]["format"] == "wav" and aud[0]["input_audio"]["data"]
+    assert "🎧 1 段音频" in capsys.readouterr().err
