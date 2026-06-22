@@ -461,6 +461,15 @@ async def test_handle_tts_no_key(monkeypatch):
     assert any(m["type"] == "agent_tts_error" for m in ws.sent)
 
 
+def test_web_agent_loads_project_instructions(monkeypatch, tmp_path):
+    # 网页主 agent 也读 AGENTS.md（按当前工作目录）
+    (tmp_path / "AGENTS.md").write_text("网页项目约定：保持简洁。", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    from src.web.routers import realtime
+    agent = realtime._new_agent()
+    assert "项目指令" in agent._system("plan") and "保持简洁" in agent._system("plan")
+
+
 def test_sessions_evict_oldest_over_cap(monkeypatch):
     from src.web.routers import realtime
     monkeypatch.setattr(realtime, "_MAX_SESSIONS", 3)
