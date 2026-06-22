@@ -195,6 +195,57 @@ async def test_apply_diffs_partial_failure_keeps_good_ones(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_apply_diffs_3way_recovers_context_conflict(tmp_path):
+    # 两块改同一文件的不同位置，但后一块的 diff 上下文被前一块改过 → 直 apply 会被拒、3way 救回
+    _init_repo(tmp_path)
+
+    def git(*a):
+        return subprocess.run(["git", "-C", str(tmp_path), *a], capture_output=True, text=True)
+    (tmp_path / "m.py").write_text("a\nb\nc\nd\ne\nf\ng\n")
+    git("add", "-A"); git("commit", "-q", "-m", "add m")
+
+    async def w1(wt):
+        (wt / "m.py").write_text("a\nb\nC_CHANGED\nd\ne\nf\ng\n")    # 改中间的 c
+
+    async def w2(wt):
+        (wt / "m.py").write_text("A_CHANGED\nb\nc\nd\ne\nf\ng\n")    # 改顶部 a（hunk 上下文含 b,c,d）
+    d1, _ = await worktree.in_worktree(str(tmp_path), "wt-c1", w1)
+    d2, _ = await worktree.in_worktree(str(tmp_path), "wt-c2", w2)
+
+    res = worktree.apply_diffs_to_branch(str(tmp_path), "vorto/3way", [(d1, "chg c"), (d2, "chg a")])
+    assert len(res["applied"]) == 2 and not res["failed"]            # 3way 把第二块也合上了
+    content = git("show", "vorto/3way:m.py").stdout
+    assert "A_CHANGED" in content and "C_CHANGED" in content         # 两处改动都在
+    assert "<<<<<<<" not in content                                  # 没有冲突 marker
+
+
+@pytest.mark.asyncio
+async def test_apply_diffs_true_conflict_skipped_no_markers(tmp_path):
+    # 两块改同一行 = 真冲突：第二块跳过、记账；分支里只留第一块，绝不提交冲突 marker
+    _init_repo(tmp_path)
+
+    def git(*a):
+        return subprocess.run(["git", "-C", str(tmp_path), *a], capture_output=True, text=True)
+    (tmp_path / "m.py").write_text("a\nb\nc\nd\ne\n")
+    git("add", "-A"); git("commit", "-q", "-m", "add m")
+
+    async def w1(wt):
+        (wt / "m.py").write_text("a\nb\nC1\nd\ne\n")
+
+    async def w2(wt):
+        (wt / "m.py").write_text("a\nb\nC2\nd\ne\n")
+    d1, _ = await worktree.in_worktree(str(tmp_path), "wt-t1", w1)
+    d2, _ = await worktree.in_worktree(str(tmp_path), "wt-t2", w2)
+
+    res = worktree.apply_diffs_to_branch(str(tmp_path), "vorto/conflict", [(d1, "c1"), (d2, "c2")])
+    assert "c1" in res["applied"] and len(res["failed"]) == 1        # 真冲突 → 第二块跳过
+    content = git("show", "vorto/conflict:m.py").stdout
+    assert "C1" in content and "C2" not in content and "<<<<<<<" not in content  # 第一块在、无 marker
+    # reset 干净：只多了一个提交（init + add m + c1 = 3），失败块没留半成品提交
+    assert len(git("log", "--oneline", "vorto/conflict").stdout.strip().splitlines()) == 3
+
+
+@pytest.mark.asyncio
 async def test_build_dev_tools_lands_green_on_branch(monkeypatch, tmp_path):
     # UI 无关的 dev_isolated（Web 用）：实现+验证通过 → 自动落到 vorto/ 分支，不碰 main
     import sys
