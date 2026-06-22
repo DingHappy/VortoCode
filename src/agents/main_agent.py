@@ -683,12 +683,72 @@ def build_dev_tools(repo_root: str) -> list[Tool]:
         return (f"❌ 隔离实现完成但测试未过。失败输出尾部：\n{tail}\n"
                 f"据此修正后重试（再调 dev_isolated）。diff {nlines} 行，未落地。结论：{conclusion}")
 
-    return [Tool("dev_isolated",
-                 "在隔离 git worktree 里实现一个独立子任务 + 自测 + 跑测试验证；✅通过就自动落到一个"
-                 "vorto/<id> 新分支（绝不碰 main/工作区），❌带失败输出供修正。仅 build",
-                 {"description": "要在隔离工作区实现的子任务",
-                  "test": "可选，pytest 选择器，省略则跑全量 tests/"},
-                 _dev_isolated, read_only=False)]
+    async def _dev_parallel(args: dict) -> str:
+        import asyncio
+        import sys
+        import uuid
+        from src.agents.worktree import apply_diffs_to_branch, run_isolated_task
+
+        tasks = args.get("tasks") or args.get("descriptions") or []
+        if isinstance(tasks, str):
+            tasks = [tasks]
+        tasks = [str(t).strip() for t in tasks if str(t).strip()][:5]   # 最多 5，防失控
+        if not tasks:
+            return "dev_parallel 需要 tasks（相互独立的子任务字符串列表）。"
+        sel = str(args.get("test") or "").strip()
+        test_cmd = [sys.executable, "-m", "pytest", "-q", sel or "tests/"]
+
+        def _mk(_desc):
+            def _b(wt):
+                return MainAgent(
+                    build_read_tools(wt) + build_write_tools(wt) + [build_test_tool(wt, test_cmd)],
+                    max_steps=16,
+                    extra_system=("你是隔离工作区里的实现子 agent：用 read/grep 看代码、edit_file/"
+                                  "write_file 实现任务；改完务必 run_tests 自测直到通过。只动相关文件。"))
+            return _b
+
+        async def _one(desc):
+            wid = "wt-" + uuid.uuid4().hex[:8]
+            try:
+                diff, _c, ver = await run_isolated_task(repo_root, wid, desc, _mk(desc), test_cmd=test_cmd)
+                return {"desc": desc, "diff": diff, "ver": ver}
+            except Exception as e:  # noqa: BLE001
+                return {"desc": desc, "diff": "", "ver": None, "err": str(e)}
+
+        results = await asyncio.gather(*[_one(t) for t in tasks])
+        lines, greens = [], []
+        for r in results:
+            if not (r.get("diff") or "").strip():
+                lines.append(f"· {r['desc']}：无改动/出错")
+            elif r["ver"] and r["ver"]["ok"]:
+                lines.append(f"· {r['desc']}：✅ 通过")
+                greens.append(r)
+            else:
+                lines.append(f"· {r['desc']}：❌ 未过")
+        if not greens:
+            return f"并行 {len(tasks)} 个子任务：无通过测试的改动。\n" + "\n".join(lines)
+        branch = "vorto/parallel-" + uuid.uuid4().hex[:8]
+        res = await asyncio.to_thread(
+            apply_diffs_to_branch, repo_root, branch,
+            [(g["diff"], f"dev_parallel: {g['desc']}") for g in greens])
+        note = (f"{len(res['applied'])} 块落到 {branch}（git checkout 查看，未碰 main）"
+                if res["applied"] else "落分支失败")
+        return f"并行 {len(tasks)} 个子任务：{len(greens)} 通过测试，{note}。\n" + "\n".join(lines)
+
+    return [
+        Tool("dev_isolated",
+             "在隔离 git worktree 里实现一个独立子任务 + 自测 + 跑测试验证；✅通过就自动落到一个"
+             "vorto/<id> 新分支（绝不碰 main/工作区），❌带失败输出供修正。仅 build",
+             {"description": "要在隔离工作区实现的子任务",
+              "test": "可选，pytest 选择器，省略则跑全量 tests/"},
+             _dev_isolated, read_only=False),
+        Tool("dev_parallel",
+             "并行实现：多个**相互独立**的子任务各起隔离 worktree 同时实现+自测+验证（互不冲突），"
+             "绿块一并落到一个 vorto/parallel 新分支（不碰 main），汇报各自 ✅/❌。最多 5（仅 build）",
+             {"tasks": "相互独立的子任务字符串列表",
+              "test": "可选，pytest 选择器，省略则各自跑全量 tests/"},
+             _dev_parallel, read_only=False),
+    ]
 
 
 def build_command_tool(repo_root: str, confirm) -> list[Tool]:
