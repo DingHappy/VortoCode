@@ -32,7 +32,7 @@ from src.memory.session_store import SessionManager
 SLASH_COMMANDS = [
     "/analyze", "/improve", "/fix", "/run", "/apply", "/agents", "/runagent", "/skills", "/mcp",
     "/artifacts", "/diff", "/sessions", "/resume", "/new", "/mode", "/theme", "/usage",
-    "/tools", "/audit", "/speak", "/commands", "/clear", "/help", "/quit",
+    "/tools", "/audit", "/speak", "/commands", "/hooks", "/clear", "/help", "/quit",
 ]
 # 命令 → 一句话说明（命令补全面板用，让 / 命令可发现、可补全）
 COMMAND_INFO = {
@@ -57,6 +57,7 @@ COMMAND_INFO = {
     "/audit": "查看工具调用审计日志",
     "/speak": "朗读 agent 回复开关（mimo-v2.5-tts，需 key）",
     "/commands": "列出 .vortocode/commands 自定义命令（reload 重扫）",
+    "/hooks": "列出 .vortocode/hooks.yaml 工具生命周期钩子",
     "/clear": "清屏",
     "/help": "显示帮助",
     "/quit": "退出",
@@ -635,6 +636,8 @@ class VortoCodeTUI(App):
             self._cmd_speak(arg)
         elif cmd == "commands":
             self._cmd_commands(arg)
+        elif cmd == "hooks":
+            self._cmd_hooks()
         elif cmd == "runagent":
             if arg:
                 self._do_runagent(arg)
@@ -744,6 +747,30 @@ class VortoCodeTUI(App):
         for n, uc in sorted(cmds.items()):
             lines.append(f"  [b]/{n}[/b] — {uc.description}")
         lines.append("[dim]在文件里用 $ARGUMENTS / $1 接收参数；/commands reload 重扫。[/dim]")
+        self._chrome("\n".join(lines))
+
+    def _cmd_hooks(self) -> None:
+        """/hooks：列出 .vortocode/hooks.yaml 配置的工具生命周期钩子（事件 / 工具 matcher）。"""
+        from pathlib import Path
+        cfg = Path(self.repo_root) / ".vortocode" / "hooks.yaml"
+        hs = self._load_hook_system()
+        if hs is None:
+            self._emit(
+                "没有 hooks。在 `.vortocode/hooks.yaml` 配置工具生命周期钩子，例如 edit_file 后自动格式化：\n"
+                "```yaml\nhooks:\n  - name: fmt\n    type: command\n    event_types: [post_tool_use]\n"
+                "    matcher: edit_file|write_file   # 只在这些工具后触发\n    shell: true\n    command: ruff format .\n```")
+            return
+        hooks = [h for h in hs.list_hooks() if h.__class__.__name__ != "AuditLogHook"]
+        if not hooks:
+            self._emit(f"{cfg} 里没有可用钩子（或都解析失败）。")
+            return
+        lines = [f"[b]工具生命周期钩子[/b]（{cfg}）:"]
+        for h in hooks:
+            evs = "/".join(e.value for e in h.event_types)
+            m = f" · 仅工具 [b]{h.matcher}[/b]" if getattr(h, "matcher", None) else ""
+            state = "" if h.enabled else " [dim](禁用)[/dim]"
+            lines.append(f"  [b]{h.name}[/b] [{self._tc('text-primary', '#8ab4f8')}]{evs}[/]{m}{state}")
+        lines.append("[dim]pre_tool_use 可拦工具（should_stop）、post_tool_use 可附信息；matcher 是工具名正则。[/dim]")
         self._chrome("\n".join(lines))
 
     def _cmd_speak(self, arg: str = "") -> None:
