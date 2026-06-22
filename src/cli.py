@@ -42,6 +42,7 @@ def main():
               %(prog)s -i shot.png "这个报错截图说明什么"     附图（mimo-v2.5 能读图）
               %(prog)s -a memo.mp3 "把这段语音转写并总结"     附音频（mimo-v2.5 能听音频）
               %(prog)s --speak "用一句话介绍这个项目"          回复合成语音 WAV（mimo-v2.5-tts）
+              %(prog)s "/review src/cli.py"                  跑 .vortocode/commands/review.md 自定义命令
               echo "审一下 cli.py 的健壮性" | %(prog)s        从 stdin 读 prompt（管道）
               %(prog)s --json "列出 src 模块" | jq .reply    JSON 输出，喂给脚本
 
@@ -122,6 +123,7 @@ def main():
 
     if args.command == "agent":
         prompt = _read_prompt_arg(args.prompt)
+        prompt = _maybe_expand_command(prompt, str(Path.cwd()))   # /<名> → 展开 .vortocode/commands 模板
         images = args.images or []
         audio = args.audio or []
         if not prompt and not images and not audio:
@@ -266,6 +268,27 @@ def _valid_audio_ref(ref: str) -> bool:
     if r.startswith("data:audio/"):
         return True
     return Path(r).expanduser().is_file() and is_audio_ref(r)
+
+
+def _maybe_expand_command(prompt, cwd):
+    """若 prompt 以 /<名> 开头且 <名> 是 .vortocode/commands 里的自定义命令，展开其模板；
+
+    否则原样返回（不是命令就当普通输入）。与 TUI 的 /<名> 同源（user_commands）——
+    自定义命令至此 CLI/TUI 通用，可脚本化：vortocode agent "/review src/foo.py"。
+    """
+    if not prompt or not prompt.startswith("/"):
+        return prompt
+    parts = prompt[1:].split(maxsplit=1)
+    name = parts[0] if parts else ""
+    cmd_args = parts[1] if len(parts) > 1 else ""
+    try:
+        from src.agents.user_commands import expand_command, load_commands
+        uc = load_commands(cwd).get(name)
+    except Exception:  # noqa: BLE001
+        return prompt
+    if uc is None:
+        return prompt                       # 不是已知自定义命令 → 原样（当普通输入交给 agent）
+    return expand_command(uc.template, cmd_args)
 
 
 _MARKUP_RE = None

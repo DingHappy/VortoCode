@@ -134,6 +134,36 @@ def test_read_prompt_arg_variants(monkeypatch):
     assert cli._read_prompt_arg(None) == "piped"             # 管道（非 TTY）省略也读 stdin
 
 
+def test_maybe_expand_command(tmp_path):
+    cmds = tmp_path / ".vortocode" / "commands"
+    cmds.mkdir(parents=True)
+    (cmds / "review.md").write_text("审查代码找 bug：$ARGUMENTS", encoding="utf-8")
+    (cmds / "ping.md").write_text("说一句你好。", encoding="utf-8")
+    d = str(tmp_path)
+    assert cli._maybe_expand_command("/review src/foo.py", d) == "审查代码找 bug：src/foo.py"
+    assert cli._maybe_expand_command("/ping", d) == "说一句你好。"
+    assert cli._maybe_expand_command("/nope x", d) == "/nope x"        # 未知命令原样
+    assert cli._maybe_expand_command("普通问题", d) == "普通问题"        # 非命令原样
+    assert cli._maybe_expand_command("", d) == ""
+
+
+def test_agent_dispatch_expands_custom_command(monkeypatch, tmp_path):
+    cmds = tmp_path / ".vortocode" / "commands"
+    cmds.mkdir(parents=True)
+    (cmds / "review.md").write_text("审查：$ARGUMENTS", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    captured = {}
+
+    async def _fake_headless(prompt, **kw):
+        captured["prompt"] = prompt
+        return ""
+
+    monkeypatch.setattr(cli, "run_agent_headless", _fake_headless)
+    monkeypatch.setattr(sys, "argv", ["vortocode", "agent", "/review cli.py"])
+    cli.main()
+    assert captured["prompt"] == "审查：cli.py"                       # dispatch 层已展开
+
+
 def test_strip_markup():
     assert cli._strip_markup("🔧 [b]read_file[/b][dim] path=a[/dim]") == "🔧 read_file path=a"
     assert cli._strip_markup("[#7fce9a]✓[/] done") == "✓ done"
