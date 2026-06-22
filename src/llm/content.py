@@ -17,10 +17,10 @@ _IMG_MIME = {
     ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
 }
 
-# 音频扩展名 → input_audio 的 format（mp3/wav 已实测；其余透传，模型不支持会报错）
+# 音频扩展名 → input_audio 的 format。实测中转站只支持 mp3/flac/m4a/wav/ogg
+# （webm 会 400「invalid audio format」）——所以浏览器录音走客户端编码成 WAV，不发 webm。
 _AUDIO_FMT = {
-    ".mp3": "mp3", ".wav": "wav", ".m4a": "m4a", ".ogg": "ogg",
-    ".flac": "flac", ".webm": "webm", ".aac": "aac",
+    ".mp3": "mp3", ".wav": "wav", ".m4a": "m4a", ".ogg": "ogg", ".flac": "flac",
 }
 
 # 估算用：图/音各按固定 token 计（真实用量以 API 返回为准；这里只让流式估算不至于离谱）。
