@@ -652,6 +652,14 @@ def test_dispatch_unknown_still_errors(tmp_path):
     assert any("未知命令" in m for m in msgs)
 
 
+def test_build_main_agent_includes_project_instructions(tmp_path):
+    (tmp_path / "AGENTS.md").write_text("TUI 项目约定：先 plan 再 build。", encoding="utf-8")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    agent = app._build_main_agent()
+    sys_prompt = agent._system("plan")
+    assert "项目指令" in sys_prompt and "先 plan 再 build" in sys_prompt
+
+
 def test_cmd_commands_reload(tmp_path):
     app = VortoCodeTUI(repo_root=str(tmp_path))
     app._chrome = lambda *a, **k: None
