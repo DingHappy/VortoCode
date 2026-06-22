@@ -573,6 +573,22 @@ def test_expand_context_unknown_ref_kept(tmp_path):
     assert "@不存在的东西" in clean and ctx == ""
 
 
+def test_expand_context_image_becomes_attachment(tmp_path):
+    import base64
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+    (tmp_path / "shot.png").write_bytes(png)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    clean, ctx = app._expand_context("@shot.png 这是什么")
+    # 图片不当文本注入（ctx 里没有它的内容），而是收集进本回合多模态附件
+    assert "# 文件 shot.png" not in ctx
+    assert app._turn_images == [str(tmp_path / "shot.png")]
+    assert "图片[shot.png]" in clean and "@" not in clean
+    # 非图片的 @文件 这一轮不应混进图片列表
+    clean2, _ = app._expand_context("@不存在 普通问题")
+    assert app._turn_images == []                          # 每次调用重置
+
+
 def test_expand_at_files(tmp_path):
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "util.py").write_text("x = 1\n")
