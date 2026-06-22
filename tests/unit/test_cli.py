@@ -147,6 +147,64 @@ def test_maybe_expand_command(tmp_path):
     assert cli._maybe_expand_command("", d) == ""
 
 
+def test_cli_history_save_load_roundtrip(tmp_path):
+    hist = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}]
+    cli._save_cli_history(str(tmp_path), hist)
+    assert (tmp_path / ".vortocode" / "cli_session.json").is_file()
+    assert cli._load_cli_history(str(tmp_path)) == hist
+    assert cli._load_cli_history(str(tmp_path / "nope")) == []      # 缺文件 → []
+
+
+def test_cli_history_strips_multimodal_blocks(tmp_path):
+    # 多模态 content（图/音 base64）落盘时折成纯文本，不写 base64
+    hist = [{"role": "user", "content": [
+        {"type": "text", "text": "看图"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64," + "A" * 9999}}]}]
+    cli._save_cli_history(str(tmp_path), hist)
+    raw = (tmp_path / ".vortocode" / "cli_session.json").read_text()
+    assert "AAAA" not in raw and "data:image" not in raw            # 没有 base64
+    loaded = cli._load_cli_history(str(tmp_path))
+    assert loaded[0]["content"] == "看图[图片]"
+
+
+@pytest.mark.asyncio
+async def test_headless_continue_carries_history(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    class _SeenLLM:
+        def __init__(self, reply):
+            self.reply = reply
+            self.seen = None
+
+        async def chat(self, messages, **k):
+            self.seen = [m for m in messages if m["role"] != "system"]
+            return {"content": self.reply}
+
+    await cli.run_agent_headless("我叫小明", llm=_SeenLLM("你好小明"), quiet=True)
+    assert (tmp_path / ".vortocode" / "cli_session.json").is_file()  # 第一轮落盘
+    llm2 = _SeenLLM("你叫小明")
+    await cli.run_agent_headless("我叫什么", llm=llm2, quiet=True, continue_session=True)
+    # 续聊：第二轮发给 LLM 的消息里带上了第一轮的历史
+    assert any("小明" in (m.get("content") or "") for m in llm2.seen if isinstance(m.get("content"), str))
+    assert len(llm2.seen) >= 3                                       # 上轮 user+assistant + 本轮 user
+
+
+@pytest.mark.asyncio
+async def test_headless_no_continue_is_fresh(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    class _SeenLLM:
+        def __init__(self): self.seen = None
+        async def chat(self, messages, **k):
+            self.seen = [m for m in messages if m["role"] != "system"]
+            return {"content": "ok"}
+
+    cli._save_cli_history(str(tmp_path), [{"role": "user", "content": "旧对话"}])
+    llm = _SeenLLM()
+    await cli.run_agent_headless("新问题", llm=llm, quiet=True)       # 不 continue
+    assert not any("旧对话" in (m.get("content") or "") for m in llm.seen if isinstance(m.get("content"), str))
+
+
 def test_agent_dispatch_expands_custom_command(monkeypatch, tmp_path):
     cmds = tmp_path / ".vortocode" / "commands"
     cmds.mkdir(parents=True)

@@ -43,6 +43,7 @@ def main():
               %(prog)s -a memo.mp3 "把这段语音转写并总结"     附音频（mimo-v2.5 能听音频）
               %(prog)s --speak "用一句话介绍这个项目"          回复合成语音 WAV（mimo-v2.5-tts）
               %(prog)s "/review src/cli.py"                  跑 .vortocode/commands/review.md 自定义命令
+              %(prog)s "讲讲这个项目" && %(prog)s -c "那架构呢"   -c 续上一次对话（多轮）
               echo "审一下 cli.py 的健壮性" | %(prog)s        从 stdin 读 prompt（管道）
               %(prog)s --json "列出 src 模块" | jq .reply    JSON 输出，喂给脚本
 
@@ -67,6 +68,8 @@ def main():
     p.add_argument("--max-steps", type=int, metavar="N", help="覆盖单回合工具预算步数")
     p.add_argument("--json", action="store_true", dest="as_json",
                    help="以 JSON 输出 {reply, mode, tools, plan}（关闭流式）")
+    p.add_argument("--continue", "-c", action="store_true", dest="continue_session",
+                   help="续上一次 CLI 对话（仿 claude -c）；历史每轮落盘 .vortocode/cli_session.json")
     p.add_argument("--quiet", "-q", action="store_true",
                    help="不在 stderr 打印工具调用/进度，只留最终输出")
 
@@ -143,7 +146,8 @@ def main():
         asyncio.run(run_agent_headless(
             prompt, build=args.build, auto_yes=args.yes, max_steps=args.max_steps,
             as_json=args.as_json, quiet=args.quiet, images=images, audio=audio,
-            speak=args.speak, voice=args.voice, speak_out=args.speak_out))
+            speak=args.speak, voice=args.voice, speak_out=args.speak_out,
+            continue_session=args.continue_session))
 
     elif args.command == "run":
         asyncio.run(run_task(args.task))
@@ -342,7 +346,7 @@ def _build_headless_agent(cwd, *, max_steps, on_tool, on_plan, confirm, llm=None
 
 async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=None,
                              as_json=False, quiet=False, llm=None, images=None, audio=None,
-                             speak=False, voice=None, speak_out=None):
+                             speak=False, voice=None, speak_out=None, continue_session=False):
     """headless 跑一回合主 agent loop（仿 claude -p）：无 UI、跑完即返回。
 
     输出契约：最终回复 → stdout；工具调用/进度 → stderr（--quiet 静默）。
@@ -351,6 +355,8 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
     images: 可选图片引用列表（路径/URL/data URL），挂到本轮 user 消息（mimo-v2.5 能读图）。
     audio:  可选音频引用列表（路径/data URL），挂到本轮 user 消息（mimo-v2.5 能听音频）。
     speak:  True 则把最终回复合成成语音写 WAV（speak_out，默认 vorto-reply.wav）、TTY 下试播。
+    continue_session: True 则续上上一次 CLI 对话（仿 claude -c）——把存盘历史灌回 agent；
+                每轮结束都把历史落盘（.vortocode/cli_session.json），所以下次 -c 能接上。
     """
     import os
     cwd = os.getcwd()
@@ -377,6 +383,12 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
 
     agent = _build_headless_agent(cwd, max_steps=max_steps, on_tool=_on_tool,
                                   on_plan=_on_plan, confirm=_confirm, llm=llm)
+    if continue_session:                          # 续上一次 CLI 对话（claude -c 式）
+        hist = _load_cli_history(cwd)
+        if hist:
+            agent.history = hist
+            if not quiet:
+                print(f"\033[2m↩ 续上上次对话（{len(hist)} 条历史）\033[0m", file=sys.stderr, flush=True)
 
     def say(markup):
         if quiet:
@@ -418,7 +430,44 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
         print(reply)                               # 管道/重定向：一次性输出
     if speak and reply:                            # 语音回复：把最终文字合成成 WAV（mimo-v2.5-tts）
         await _speak_reply(reply, voice, speak_out, llm, quiet)
+    _save_cli_history(cwd, getattr(agent, "history", []))   # 落盘，供下次 --continue 接上
     return reply
+
+
+_CLI_SESSION = ".vortocode/cli_session.json"
+
+
+def _load_cli_history(cwd):
+    """读回上次 CLI 对话历史（list）；不存在/坏文件 → []。"""
+    import json
+    p = Path(cwd) / _CLI_SESSION
+    if not p.is_file():
+        return []
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    return data.get("history", []) if isinstance(data, dict) else []
+
+
+def _save_cli_history(cwd, history):
+    """把 CLI 对话历史落盘（尾 40 条；多模态 content 折成纯文本，免 base64 撑爆文件）。失败安全吞。"""
+    import json
+
+    from src.llm.content import content_to_text
+    out = []
+    for m in list(history or [])[-40:]:
+        c = m.get("content")
+        out.append({"role": m.get("role", ""),
+                    "content": c if isinstance(c, str) else content_to_text(c)})
+    p = Path(cwd) / _CLI_SESSION
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps({"history": out}, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(p)
+    except (OSError, TypeError, ValueError):
+        pass
 
 
 async def _with_progress(coro, label: str = "运行中"):
