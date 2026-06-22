@@ -559,6 +559,10 @@ def build_read_tools(repo_root: str) -> list[Tool]:
         from src.agents.lsp import find_references
         return find_references(repo_root, str(args.get("symbol", "")))
 
+    async def _document_symbols(args: dict) -> str:
+        from src.agents.lsp import document_symbols
+        return document_symbols(repo_root, str(args.get("path", "")))
+
     return [
         Tool("read_file", "读取仓库内某个文件的内容", {"path": "相对路径"}, _read_file, read_only=True),
         Tool("list_files", "列出仓库源码文件（可按子目录前缀过滤）", {"dir": "可选子目录"},
@@ -573,6 +577,10 @@ def build_read_tools(repo_root: str) -> list[Tool]:
         Tool("find_references",
              "语义查符号的全项目引用（jedi/LSP 级）：给符号名，返回所有使用处 path:line",
              {"symbol": "符号名"}, _find_references, read_only=True),
+        Tool("document_symbols",
+             "列一个 .py 文件的类/函数结构大纲（jedi）：给路径，返回各定义的行号+签名，"
+             "不必读全文就掌握其 API 面",
+             {"path": "相对路径"}, _document_symbols, read_only=True),
     ]
 
 
