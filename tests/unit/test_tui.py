@@ -619,6 +619,49 @@ def test_play_audio_file_no_player(tmp_path, monkeypatch):
     assert app._play_audio_file("/tmp/x.wav") is False
 
 
+def _write_cmd(tmp_path, name, body):
+    d = tmp_path / ".vortocode" / "commands"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{name}.md").write_text(body, encoding="utf-8")
+
+
+def test_user_commands_loaded_and_cached(tmp_path):
+    _write_cmd(tmp_path, "review", "---\ndescription: 审代码\n---\n审查：$ARGUMENTS")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    cmds = app._user_commands()
+    assert "review" in cmds and cmds["review"].description == "审代码"
+    assert app._user_commands() is cmds                    # 缓存：同一对象
+
+
+def test_dispatch_runs_user_command(tmp_path):
+    _write_cmd(tmp_path, "review", "审查以下代码找 bug：$ARGUMENTS")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    app._chrome = lambda *a, **k: None
+    app._say_user = lambda *a, **k: None
+    routed = {}
+    app._route = lambda text: routed.setdefault("text", text)   # 截获展开后的输入
+    app._dispatch("/review def foo(): pass")
+    assert routed["text"] == "审查以下代码找 bug：def foo(): pass"
+
+
+def test_dispatch_unknown_still_errors(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    msgs = []
+    app._chrome = lambda m, *a, **k: msgs.append(m)
+    app._dispatch("/不存在的命令")
+    assert any("未知命令" in m for m in msgs)
+
+
+def test_cmd_commands_reload(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    app._chrome = lambda *a, **k: None
+    app._emit = lambda *a, **k: None
+    assert app._user_commands() == {}                      # 一开始没有
+    _write_cmd(tmp_path, "later", "晚加的命令")             # 之后新增
+    app._cmd_commands("reload")                            # 重扫
+    assert "later" in app._user_commands()
+
+
 def test_expand_at_files(tmp_path):
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "util.py").write_text("x = 1\n")
