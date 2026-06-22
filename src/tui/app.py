@@ -1737,8 +1737,15 @@ class VortoCodeTUI(App):
                                       on_published=_artifact_published,
                                       confirm_delete=_artifact_confirm_delete)
         tools += self._mcp_tools             # 已接入的外部 MCP 工具（build 门控）
+        from src.agents.project import load_project_instructions
         catalog = registry.catalog()
-        extra = f"【可用技能】(需要时用 use_skill 加载其完整指令再执行)\n{catalog}" if catalog else None
+        extra_parts = []
+        proj = load_project_instructions(self.repo_root)     # AGENTS.md/CLAUDE.md 项目约定进系统提示
+        if proj:
+            extra_parts.append(proj)
+        if catalog:
+            extra_parts.append(f"【可用技能】(需要时用 use_skill 加载其完整指令再执行)\n{catalog}")
+        extra = "\n\n".join(extra_parts) if extra_parts else None
         import os
         native = os.getenv("VORTOCODE_NATIVE_TOOLS", "").lower() in ("1", "true", "yes", "on")
         hook_system = self._load_hook_system()   # .vortocode/hooks.yaml 存在才接，避免无谓开销
