@@ -32,7 +32,7 @@ from src.memory.session_store import SessionManager
 SLASH_COMMANDS = [
     "/analyze", "/improve", "/fix", "/run", "/apply", "/agents", "/runagent", "/skills", "/mcp",
     "/artifacts", "/diff", "/sessions", "/resume", "/new", "/mode", "/theme", "/usage",
-    "/tools", "/audit", "/speak", "/clear", "/help", "/quit",
+    "/tools", "/audit", "/speak", "/commands", "/clear", "/help", "/quit",
 ]
 # 命令 → 一句话说明（命令补全面板用，让 / 命令可发现、可补全）
 COMMAND_INFO = {
@@ -56,6 +56,7 @@ COMMAND_INFO = {
     "/tools": "列出主 agent 工具及读写权限",
     "/audit": "查看工具调用审计日志",
     "/speak": "朗读 agent 回复开关（mimo-v2.5-tts，需 key）",
+    "/commands": "列出 .vortocode/commands 自定义命令（reload 重扫）",
     "/clear": "清屏",
     "/help": "显示帮助",
     "/quit": "退出",
@@ -135,12 +136,17 @@ class FileSuggester(Suggester):
     def __init__(self, repo_root: str = "."):
         super().__init__(use_cache=True, case_sensitive=False)
         self._files = _repo_files(repo_root)
+        try:                                       # 内置命令 + 用户自定义命令(.vortocode/commands)
+            from src.agents.user_commands import load_commands
+            self._cmds = SLASH_COMMANDS + ["/" + n for n in load_commands(repo_root)]
+        except Exception:  # noqa: BLE001
+            self._cmds = list(SLASH_COMMANDS)
 
     async def get_suggestion(self, value: str) -> str | None:
         # 1) slash 命令补全（输入以 / 开头且还没输到空格）
         if value.startswith("/") and " " not in value:
             vl = value.lower()
-            return next((c for c in SLASH_COMMANDS if c.startswith(vl) and c != vl), None)
+            return next((c for c in self._cmds if c.startswith(vl) and c != vl), None)
         # 2) @文件补全
         at = value.rfind("@")
         if at == -1:
@@ -238,6 +244,7 @@ class VortoCodeTUI(App):
         self._history_draft = ""            # 进入历史浏览前的草稿，↓ 到底恢复
         self._allow_writes_session = False  # 本会话"始终允许"写操作（ConfirmScreen 的 [a]）
         self._speak_replies = False         # /speak 开关：开则把每条回复合成语音朗读（mimo-v2.5-tts）
+        self._user_cmds = None              # 用户自定义命令缓存（.vortocode/commands，惰性加载、/commands reload 重扫）
         self._turn_tools = 0                # 本回合工具调用计数（回合结束给"✓ 完成"反馈）
         self._last_dev = None              # 最近一次 dev 流水线产出 {workspace, files}，供 /apply
 
@@ -408,7 +415,8 @@ class VortoCodeTUI(App):
         # Tab 上下文化：在敲 / 命令或 @文件且能补全 → 补全到首个匹配；否则切 plan/build 模式。
         v = self.query_one("#prompt", Input).value
         if v.startswith("/") and " " not in v:
-            matches = [c for c in SLASH_COMMANDS if c.startswith(v.lower())]
+            names = SLASH_COMMANDS + ["/" + n for n in self._user_commands()]
+            matches = [c for c in names if c.startswith(v.lower())]
             if matches and matches[0].lower() != v.lower():
                 self._set_input(matches[0])
                 return
@@ -529,11 +537,15 @@ class VortoCodeTUI(App):
     def _update_palette(self, value: str) -> None:
         """输入框上方列出补全候选、高亮首选（Tab/→ 接受）：/ → 命令；@ → 仓库文件。否则隐藏。"""
         s = value.strip()
-        if s.startswith("/") and " " not in s:                 # 斜杠命令
+        if s.startswith("/") and " " not in s:                 # 斜杠命令（内置 + 自定义）
             vl = s.lower()
-            matches = [c for c in SLASH_COMMANDS if c.startswith(vl)]
+            info = dict(COMMAND_INFO)
+            for n, uc in self._user_commands().items():
+                info.setdefault("/" + n, uc.description)
+            names = SLASH_COMMANDS + ["/" + n for n in self._user_commands()]
+            matches = [c for c in names if c.startswith(vl)]
             if matches:
-                self._render_palette([(c, COMMAND_INFO.get(c, "")) for c in matches], "命令")
+                self._render_palette([(c, info.get(c, "")) for c in matches], "命令")
                 return
         at = value.rfind("@")                                  # @文件（非 @artifact: 这种带冒号的）
         if at != -1:
@@ -621,11 +633,15 @@ class VortoCodeTUI(App):
             self._cmd_agents()
         elif cmd == "speak":
             self._cmd_speak(arg)
+        elif cmd == "commands":
+            self._cmd_commands(arg)
         elif cmd == "runagent":
             if arg:
                 self._do_runagent(arg)
             else:
                 self._chrome("[red]用法: /runagent <id> <任务>[/red]")
+        elif cmd in self._user_commands():
+            self._run_user_command(cmd, arg)        # 用户自定义命令：展开模板 → 交给主 agent
         else:
             self._chrome(f"[red]未知命令 /{cmd}[/red] · /help 看命令")
 
@@ -694,6 +710,41 @@ class VortoCodeTUI(App):
             return
         self._chrome("[dim]工作区改动（git diff）:[/dim]")
         self._render_diff_text(diff, max_lines=400)
+
+    def _user_commands(self) -> dict:
+        """惰性加载并缓存 .vortocode/commands 下的用户自定义命令（/commands reload 重扫）。"""
+        if self._user_cmds is None:
+            from src.agents.user_commands import load_commands
+            self._user_cmds = load_commands(self.repo_root)
+        return self._user_cmds
+
+    def _run_user_command(self, name: str, arg: str) -> None:
+        """展开某条用户自定义命令的模板（替换占位符），作为一轮输入交给主 agent。"""
+        if self._busy:
+            self._chrome("[yellow]正在处理上一条，Esc 取消或稍候[/yellow]")
+            return
+        from src.agents.user_commands import expand_command
+        uc = self._user_commands().get(name)
+        if uc is None:
+            self._chrome(f"[red]未知命令 /{name}[/red]")
+            return
+        self._chrome(f"[dim]▶ /{name}[/dim] [dim italic]{uc.description}[/dim italic]")
+        self._route(expand_command(uc.template, arg))
+
+    def _cmd_commands(self, arg: str = "") -> None:
+        """/commands：列出 .vortocode/commands 下的自定义命令；/commands reload 重扫目录。"""
+        if (arg or "").strip().lower() == "reload":
+            self._user_cmds = None
+        cmds = self._user_commands()
+        if not cmds:
+            self._emit("没有自定义命令。在 `.vortocode/commands/<名>.md` 写提示模板即可用 `/<名>` 调起"
+                       "（支持 $ARGUMENTS / $1 占位符；可选 frontmatter 的 description）。")
+            return
+        lines = ["[b]自定义命令[/b]（.vortocode/commands）:"]
+        for n, uc in sorted(cmds.items()):
+            lines.append(f"  [b]/{n}[/b] — {uc.description}")
+        lines.append("[dim]在文件里用 $ARGUMENTS / $1 接收参数；/commands reload 重扫。[/dim]")
+        self._chrome("\n".join(lines))
 
     def _cmd_speak(self, arg: str = "") -> None:
         """/speak：朗读 agent 回复的开关（on/off 可显式指定，否则切换）。开了之后每条回复合成语音播放。"""
