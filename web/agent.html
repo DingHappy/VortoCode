@@ -56,10 +56,17 @@
   .thumb { position: relative; width: 56px; height: 56px; border-radius: 6px; overflow: hidden;
            border: 1px solid #3a4150; background: #1b1f27; }
   .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumb.audio { display: flex; align-items: center; justify-content: center; }
+  .thumb .alab { font-size: 22px; }
   .thumb .x { position: absolute; top: 0; right: 0; background: rgba(0,0,0,.6); color: #fff;
               border: 0; cursor: pointer; font: 12px/1 inherit; padding: 2px 5px; border-bottom-left-radius: 6px; }
   .msg .shots { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
   .msg .shots img { max-width: 120px; max-height: 120px; border-radius: 6px; border: 1px solid #3a4150; }
+  .msg audio.clip { display: block; margin-top: 6px; max-width: 260px; height: 32px; }
+  .msg .speak { margin-left: 8px; background: transparent; border: 0; cursor: pointer; font-size: 13px;
+                opacity: .55; padding: 0; vertical-align: middle; }
+  .msg .speak:hover { opacity: 1; }
+  .msg .speak:disabled { cursor: default; }
   #send { background: #2f6feb; color: #fff; border: 0; border-radius: 8px; padding: 0 18px;
           cursor: pointer; font: inherit; }
   #send:disabled { opacity: .5; cursor: default; }
@@ -90,11 +97,11 @@
   <div id="plan"></div>
   <div id="log"></div>
   <div id="stream" class="msg"></div>
-  <div class="hint">回车发送 · Shift+回车换行 · 运行中 Esc 或点「停止」中断 · 📎/拖拽/粘贴可附图 · plan 只读、build 才放开写/重型工具 · 需配 OPENAI_API_KEY</div>
+  <div class="hint">回车发送 · Shift+回车换行 · 运行中 Esc 或点「停止」中断 · 📎/拖拽/粘贴附图或音频 · 回复点🔊朗读 · plan 只读、build 才放开写/重型工具 · 需配 OPENAI_API_KEY</div>
   <div id="thumbs"></div>
   <footer>
-    <button id="attach" title="附图（也可拖拽或粘贴）">📎</button>
-    <input id="file" type="file" accept="image/*" multiple hidden>
+    <button id="attach" title="附图/音频（也可拖拽或粘贴）">📎</button>
+    <input id="file" type="file" accept="image/*,audio/*" multiple hidden>
     <textarea id="inp" placeholder="问点什么，或让它读代码 / 扫描仓库…"></textarea>
     <button id="send">发送</button>
   </footer>
@@ -103,27 +110,34 @@ const $ = (s) => document.querySelector(s);
 const log = $("#log"), streamEl = $("#stream"), stateEl = $("#state");
 let mode = "plan", busy = false, ws = null, streamBuf = "";
 let reconnectAttempts = 0, reconnectTimer = null;
-let pending = [];                          // 待发送的图片：[{name, url(dataURL)}]
+let pending = [];                          // 待发送的附件：[{name, url(dataURL), kind:"image"|"audio"}]
 
-// 多模态：与后端 _sanitize_images 对齐——只收 data:image/ 或 http(s)，限大小与张数（纯函数，便于测试）
+// 多模态：与后端 _sanitize_images/_sanitize_audio 对齐——限前缀/大小/个数（纯函数，便于测试）
 const MAX_IMAGES = 6, MAX_IMG_CHARS = 8 * 1024 * 1024;
-function capImages(urls) {
+function _cap(urls, ok) {
   const out = [];
   for (const u of (urls || [])) {
     if (typeof u !== "string") continue;
     const s = u.trim();
-    if (!(s.startsWith("data:image/") || s.startsWith("http://") || s.startsWith("https://"))) continue;
-    if (s.length > MAX_IMG_CHARS) continue;
+    if (!ok(s) || s.length > MAX_IMG_CHARS) continue;
     out.push(s);
     if (out.length >= MAX_IMAGES) break;
   }
   return out;
 }
-// 组装发往后端的 agent 消息：带图才放 images 字段（纯函数，便于测试）
-function buildAgentPayload(text, mode, urls) {
+function capImages(urls) {
+  return _cap(urls, (s) => s.startsWith("data:image/") || s.startsWith("http://") || s.startsWith("https://"));
+}
+function capAudio(urls) {                   // 音频只收 data:audio/（input_audio 要内联数据，不收 http URL）
+  return _cap(urls, (s) => s.startsWith("data:audio/"));
+}
+// 组装发往后端的 agent 消息：带图/音才放对应字段（纯函数，便于测试）
+function buildAgentPayload(text, mode, images, audio) {
   const msg = { type: "agent", text, mode };
-  const imgs = capImages(urls);
+  const imgs = capImages(images);
+  const auds = capAudio(audio);
   if (imgs.length) msg.images = imgs;
+  if (auds.length) msg.audio = auds;
   return msg;
 }
 
@@ -145,6 +159,33 @@ function addHTML(cls, html) {     // 仅用于已渲染、已转义的安全 HTM
   const d = document.createElement("div");
   d.className = "msg " + cls; d.innerHTML = html;
   log.appendChild(d); log.scrollTop = log.scrollHeight;
+  return d;
+}
+
+// 语音回复：给一条回复挂「🔊」按钮，点了请求后端 TTS、播放（纯 createElement，不碰 innerHTML）
+let ttsSeq = 0; const ttsBtns = {}; let ttsAudio = null;
+function attachSpeak(el, text) {
+  if (!el || !text || !text.trim()) return;
+  const b = document.createElement("button");
+  b.className = "speak"; b.textContent = "🔊"; b.title = "朗读这条回复";
+  b.onclick = () => requestTTS(text, b);
+  el.appendChild(b);
+}
+function requestTTS(text, btn) {
+  if (!ws || ws.readyState !== 1) return;
+  const id = "tts" + (++ttsSeq);
+  ttsBtns[id] = btn; btn.textContent = "⏳"; btn.disabled = true;
+  ws.send(JSON.stringify({ type: "agent_tts", id, text }));
+}
+function playTTS(id, dataUrl) {
+  const btn = ttsBtns[id]; if (btn) { btn.textContent = "🔊"; btn.disabled = false; }
+  delete ttsBtns[id];
+  try { if (ttsAudio) ttsAudio.pause(); ttsAudio = new Audio(dataUrl); ttsAudio.play(); } catch (e) {}
+}
+function ttsError(id, msg) {
+  const btn = ttsBtns[id]; if (btn) { btn.textContent = "🔊"; btn.disabled = false; }
+  delete ttsBtns[id];
+  add("err", "语音合成失败：" + (msg || ""));
 }
 function setBusy(b) {                     // 忙时按钮变「停止」（仍可点，用于中断），闲时「发送」
   busy = b;
@@ -270,11 +311,13 @@ function connect() {
       case "agent_plan":   renderPlan(m.items); break;   // 任务清单：原地替换面板（幂等，重连也恢复）
       case "agent_say":    toolLine(m.text); break;
       case "agent_stream": streamBuf = m.text; streamEl.textContent = streamBuf; log.scrollTop = log.scrollHeight; break;
-      case "agent_emit":   endToolGroup(); streamBuf = ""; streamEl.textContent = ""; addHTML("emit", renderMarkdown(m.text)); break;
+      case "agent_emit":   endToolGroup(); streamBuf = ""; streamEl.textContent = ""; attachSpeak(addHTML("emit", renderMarkdown(m.text)), m.text); break;
       case "agent_error":  endToolGroup(); add("err", "出错: " + m.text); setBusy(false); break;
       case "agent_done":   endToolGroup(); streamBuf = ""; streamEl.textContent = ""; setBusy(false); break;
       case "agent_cancelled": endToolGroup(); streamBuf = ""; streamEl.textContent = ""; add("say", "⏹ 已中断"); setBusy(false); break;
       case "agent_confirm": renderConfirm(m.id, m.text); break;   // 工具请求确认：弹允许/拒绝
+      case "agent_tts_audio": playTTS(m.id, m.data); break;       // 语音回复就绪 → 播放
+      case "agent_tts_error": ttsError(m.id, m.text); break;
     }
   };
 }
@@ -298,10 +341,10 @@ function renderConfirm(id, text) {       // 确认块：消息 + 允许/拒绝�
     log.appendChild(box); log.scrollTop = log.scrollHeight;
 }
 
-function renderHistory(items) {          // 回放之前的对话：用户行 + 最终回复（markdown）
+function renderHistory(items) {          // 回放之前的对话：用户行 + 最终回复（markdown，带🔊）
   (items || []).forEach((it) => {
     if (it.role === "user") add("user", it.text);
-    else addHTML("emit", renderMarkdown(it.text));
+    else attachSpeak(addHTML("emit", renderMarkdown(it.text)), it.text);
   });
 }
 
@@ -327,16 +370,20 @@ function renderPlan(items) {             // 任务清单面板：原地重渲；
 function cancelTurn() {                  // 「停止」：请求中断正在跑的回合
   if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "agent_cancel" }));
 }
-// 把用户这轮的输入（文字 + 缩略图）渲染进对话区
-function addUserMsg(text, urls) {
+// 把用户这轮的输入（文字 + 图缩略图 + 音频条）渲染进对话区
+function addUserMsg(text, images, audio) {
   const d = document.createElement("div");
   d.className = "msg user";
   if (text) d.textContent = text;
-  if (urls && urls.length) {
+  if (images && images.length) {
     const row = document.createElement("div");
     row.className = "shots";
-    for (const u of urls) { const im = document.createElement("img"); im.src = u; row.appendChild(im); }
+    for (const u of images) { const im = document.createElement("img"); im.src = u; row.appendChild(im); }
     d.appendChild(row);
+  }
+  for (const u of (audio || [])) {
+    const a = document.createElement("audio"); a.controls = true; a.src = u; a.className = "clip";
+    d.appendChild(a);
   }
   log.appendChild(d); log.scrollTop = log.scrollHeight;
 }
@@ -345,23 +392,32 @@ function renderThumbs() {
   const box = $("#thumbs");
   while (box.firstChild) box.removeChild(box.firstChild);
   pending.forEach((p, i) => {
-    const t = document.createElement("div"); t.className = "thumb";
-    const im = document.createElement("img"); im.src = p.url; im.title = p.name || ""; t.appendChild(im);
-    const x = document.createElement("button"); x.className = "x"; x.textContent = "×";
-    x.title = "移除"; x.onclick = () => { pending.splice(i, 1); renderThumbs(); };
-    t.appendChild(x); box.appendChild(t);
+    const rm = document.createElement("button"); rm.className = "x"; rm.textContent = "×";
+    rm.title = "移除"; rm.onclick = () => { pending.splice(i, 1); renderThumbs(); };
+    let t;
+    if (p.kind === "audio") {              // 音频用一枚带🎵的小条（不渲染图）
+      t = document.createElement("div"); t.className = "thumb audio";
+      const lab = document.createElement("span"); lab.className = "alab"; lab.textContent = "🎵";
+      lab.title = p.name || "audio"; t.appendChild(lab);
+    } else {
+      t = document.createElement("div"); t.className = "thumb";
+      const im = document.createElement("img"); im.src = p.url; im.title = p.name || ""; t.appendChild(im);
+    }
+    t.appendChild(rm); box.appendChild(t);
   });
   box.classList.toggle("show", pending.length > 0);
 }
 
-// 读入图片文件 → dataURL 进 pending（超量/超大/非图都跳过并提示）
+// 读入图片/音频文件 → dataURL 进 pending（超量/超大/不支持都跳过并提示）
 function addFiles(files) {
   for (const f of (files || [])) {
-    if (!f || !f.type || !f.type.startsWith("image/")) continue;
-    if (pending.length >= MAX_IMAGES) { add("err", `最多附 ${MAX_IMAGES} 张图`); break; }
+    if (!f || !f.type) continue;
+    const kind = f.type.startsWith("image/") ? "image" : (f.type.startsWith("audio/") ? "audio" : null);
+    if (!kind) { add("err", `不支持的文件类型：${f.name}`); continue; }
+    if (pending.length >= MAX_IMAGES) { add("err", `最多附 ${MAX_IMAGES} 个文件`); break; }
     if (f.size > MAX_IMG_CHARS) { add("err", `「${f.name}」太大（>${Math.round(MAX_IMG_CHARS/1048576)}MB）`); continue; }
     const r = new FileReader();
-    r.onload = () => { pending.push({ name: f.name, url: String(r.result) }); renderThumbs(); };
+    r.onload = () => { pending.push({ name: f.name, url: String(r.result), kind }); renderThumbs(); };
     r.readAsDataURL(f);
   }
 }
@@ -369,11 +425,12 @@ function addFiles(files) {
 function sendMsg() {
   if (busy) { cancelTurn(); return; }    // 忙时点按钮 = 停止
   const inp = $("#inp"), text = inp.value.trim();
-  const urls = capImages(pending.map((p) => p.url));
-  if ((!text && !urls.length) || !ws || ws.readyState !== 1) return;
+  const images = capImages(pending.filter((p) => p.kind !== "audio").map((p) => p.url));
+  const audio = capAudio(pending.filter((p) => p.kind === "audio").map((p) => p.url));
+  if ((!text && !images.length && !audio.length) || !ws || ws.readyState !== 1) return;
   endToolGroup();                        // 新回合前先定格上一组工具活动
-  addUserMsg(text, urls); inp.value = ""; pending = []; renderThumbs(); setBusy(true);
-  ws.send(JSON.stringify(buildAgentPayload(text, mode, urls)));
+  addUserMsg(text, images, audio); inp.value = ""; pending = []; renderThumbs(); setBusy(true);
+  ws.send(JSON.stringify(buildAgentPayload(text, mode, images, audio)));
 }
 
 $("#send").onclick = sendMsg;
