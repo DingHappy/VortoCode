@@ -247,9 +247,21 @@ class MainAgent:
         return f"计划已更新（{done}/{len(self.plan)} 完成）：\n{render_plan(self.plan)}"
 
     def _trimmed_history(self) -> list[dict]:
-        if len(self.history) <= self.max_history:
-            return list(self.history)
-        return self.history[-self.max_history:]
+        """裁剪跨轮历史到 max_history 条。
+
+        超长时不裸取尾部——那样会把**第一条 user 消息（原始任务）静默丢掉**，长对话里
+        agent 就忘了「最初要干嘛」。改为：始终保留第一条 user 当锚点 + 最近窗口。锚点取**纯文本**
+        （content_to_text 去掉图/音 base64），免得把首轮的多模态附件每轮重复塞进上下文。
+        """
+        h = self.history
+        if len(h) <= self.max_history:
+            return list(h)
+        first_user = next((m for m in h if m.get("role") == "user"), None)
+        if first_user is None:
+            return list(h[-self.max_history:])
+        from src.llm.content import content_to_text
+        anchor = {"role": "user", "content": content_to_text(first_user.get("content"))}
+        return [anchor] + h[-(self.max_history - 1):]      # 锚点 + 最近窗口，仍 = max_history 条
 
     async def _complete(self, messages: list[dict], stream_cb: Optional[Callable[[str], None]]) -> str:
         """取一步模型输出。
