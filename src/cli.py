@@ -15,6 +15,7 @@ def main():
         epilog=textwrap.dedent("""\
             常用示例:
               %(prog)s self-analyze                       只读扫描自己、列出问题（无需 LLM key）
+              %(prog)s agent "列出 src 下有哪些模块"         headless 跑主 agent（仿 claude -p；可管道/脚本化，需 key）
               %(prog)s run -t "实现阶乘函数及其单测"        跑完整开发流水线（需 key）
               %(prog)s self-improve --apply               给测试缺口自动补测试并写到新分支
               %(prog)s self-fix --paths src/foo.py        深审并外科修复指定文件
@@ -27,6 +28,34 @@ def main():
     )
     sub = parser.add_subparsers(dest="command", metavar="<命令>",
                                 title="可用命令")
+
+    p = sub.add_parser(
+        "agent",
+        help="headless 主 agent：一次性跑 agent loop（仿 claude -p；可管道、可脚本化、可出 JSON）",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=textwrap.dedent("""\
+            仿 claude -p：主 agent 与 TUI/网页同源（读码/grep/隔离 dev/受确认的 shell+开 PR），
+            但无 UI、跑一回合就退，适合管道与脚本化。
+            示例:
+              %(prog)s "src 下有哪些模块、各做什么"          只读问答（默认 plan 模式）
+              %(prog)s -b "给 foo.py 补上缺失的边界测试"      build 模式（可用 dev/写工具，隔离实现）
+              echo "审一下 cli.py 的健壮性" | %(prog)s        从 stdin 读 prompt（管道）
+              %(prog)s --json "列出 src 模块" | jq .reply    JSON 输出，喂给脚本
+
+            高危/外向操作（run_command、open_pr）headless 下默认拒绝；要放行加 --yes。
+        """),
+    )
+    p.add_argument("prompt", nargs="?",
+                   help="交给 agent 的任务/问题；省略或写成 - 时从 stdin 读")
+    p.add_argument("--build", "-b", action="store_true",
+                   help="build 模式（可用写/dev 工具，隔离实现）；默认 plan（只读/提案）")
+    p.add_argument("--yes", "-y", action="store_true",
+                   help="自动确认高危/外向操作（run_command/open_pr）；默认一律拒绝")
+    p.add_argument("--max-steps", type=int, metavar="N", help="覆盖单回合工具预算步数")
+    p.add_argument("--json", action="store_true", dest="as_json",
+                   help="以 JSON 输出 {reply, mode, tools, plan}（关闭流式）")
+    p.add_argument("--quiet", "-q", action="store_true",
+                   help="不在 stderr 打印工具调用/进度，只留最终输出")
 
     p = sub.add_parser("run", help="跑完整多 Agent 开发流水线（产品→架构→开发→审查→测试）")
     p.add_argument("--task", "-t", required=True, help="要实现的开发目标，如 “实现用户登录接口”")
@@ -79,7 +108,17 @@ def main():
         from src.core.tracing import setup_structured_logging
         setup_structured_logging(log_file=_os.getenv("AUTODEV_LOG_FILE") or None)
 
-    if args.command == "run":
+    if args.command == "agent":
+        prompt = _read_prompt_arg(args.prompt)
+        if not prompt:
+            print("agent 需要 prompt（位置参数，或从 stdin 提供）。"
+                  "例：vortocode agent \"列出 src 下有哪些模块\"", file=sys.stderr)
+            sys.exit(2)
+        asyncio.run(run_agent_headless(
+            prompt, build=args.build, auto_yes=args.yes,
+            max_steps=args.max_steps, as_json=args.as_json, quiet=args.quiet))
+
+    elif args.command == "run":
         asyncio.run(run_task(args.task))
 
     elif args.command == "server":
@@ -123,6 +162,134 @@ def main():
 def _split_paths(raw):
     """把 --paths 的逗号分隔串拆成列表；为空则 None。"""
     return [p.strip() for p in raw.split(",") if p.strip()] if raw else None
+
+
+def _read_prompt_arg(raw):
+    """取 headless agent 的 prompt：给了非 - 的位置参数就用它；为 - 或（省略且 stdin 是管道）则读 stdin。
+
+    交互式终端下省略 prompt 不读 stdin（否则会挂住等输入）——交回上层报错指引。
+    """
+    if raw and raw != "-":
+        return raw.strip()
+    if raw == "-" or (raw is None and not sys.stdin.isatty()):
+        try:
+            return sys.stdin.read().strip()
+        except Exception:  # noqa: BLE001
+            return ""
+    return ""
+
+
+_MARKUP_RE = None
+
+
+def _strip_markup(s: str) -> str:
+    """去掉 say() 里的 rich 标记（[b]/[dim]/[/]/[#hex] 等），给纯终端 stderr 用。"""
+    global _MARKUP_RE
+    if _MARKUP_RE is None:
+        import re
+        _MARKUP_RE = re.compile(r"\[/?[a-zA-Z#][^\]]*\]|\[/\]")
+    return _MARKUP_RE.sub("", s)
+
+
+def _load_headless_hooks(cwd: str):
+    """有 .vortocode/hooks.yaml 才建 HookSystem（与 TUI 同源，把工具生命周期事件接进 agent）。"""
+    cfg = Path(cwd) / ".vortocode" / "hooks.yaml"
+    if not cfg.is_file():
+        return None
+    try:
+        from src.hooks import HookSystem
+        return HookSystem(config_path=str(cfg))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _build_headless_agent(cwd, *, max_steps, on_tool, on_plan, confirm, llm=None):
+    """搭一个 headless 主 agent：工具集与网页 /agent 同源——
+
+    只读（read_file/grep/list_files/analyze_repo）+ 隔离 dev（dev_isolated/dev_parallel，
+    绿了落 vorto 分支、不碰主工作区）+ 受确认门控的 run_command/open_pr。带持久计划。
+    """
+    from src.agents.main_agent import (MainAgent, build_command_tool,
+                                       build_dev_tools, build_pr_tool, build_read_tools)
+    tools = (build_read_tools(cwd) + build_dev_tools(cwd)
+             + build_command_tool(cwd, confirm) + build_pr_tool(cwd, confirm))
+    kwargs = {"plan_tool": True, "on_tool": on_tool, "on_plan": on_plan}
+    if max_steps:
+        kwargs["max_steps"] = max_steps
+    if llm is not None:
+        kwargs["llm"] = llm
+    hooks = _load_headless_hooks(cwd)
+    if hooks is not None:
+        kwargs["hook_system"] = hooks
+    return MainAgent(tools, **kwargs)
+
+
+async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=None,
+                             as_json=False, quiet=False, llm=None):
+    """headless 跑一回合主 agent loop（仿 claude -p）：无 UI、跑完即返回。
+
+    输出契约：最终回复 → stdout；工具调用/进度 → stderr（--quiet 静默）。
+    TTY 且非 --json 时把回复流式写 stdout；管道/重定向/--json 则一次性输出（利于脚本/jq）。
+    高危/外向工具（run_command/open_pr）默认拒绝，--yes 才放行（headless 无人值守，安全优先）。
+    """
+    import os
+    cwd = os.getcwd()
+    mode = "build" if build else "plan"
+
+    tools_log: list = []
+    plan_holder = {"plan": []}
+
+    def _on_tool(name, args, result):
+        tools_log.append({"tool": name, "args": args})
+
+    def _on_plan(plan):
+        plan_holder["plan"] = plan
+
+    async def _confirm(message):
+        first = (message or "").splitlines()[0] if message else ""
+        if auto_yes:
+            if not quiet:
+                print(f"\033[2m✓ 自动确认：{first}\033[0m", file=sys.stderr, flush=True)
+            return True
+        if not quiet:
+            print(f"\033[2m✗ 自动拒绝（需 --yes 放行）：{first}\033[0m", file=sys.stderr, flush=True)
+        return False
+
+    agent = _build_headless_agent(cwd, max_steps=max_steps, on_tool=_on_tool,
+                                  on_plan=_on_plan, confirm=_confirm, llm=llm)
+
+    def say(markup):
+        if quiet:
+            return
+        print(f"\033[2m{_strip_markup(markup)}\033[0m", file=sys.stderr, flush=True)
+
+    streaming = (not as_json) and sys.stdout.isatty()
+    seen = {"n": 0}                                # stream_cb 给的是累计文本，按长度算增量
+
+    def stream_cb(text):
+        delta = text[seen["n"]:]
+        if delta:
+            sys.stdout.write(delta)
+            sys.stdout.flush()
+            seen["n"] = len(text)
+
+    reply = await agent.run_turn(
+        prompt, mode=mode, say=say, emit=(lambda _m: None),
+        stream_cb=(stream_cb if streaming else None))
+
+    if as_json:
+        import json
+        print(json.dumps({"reply": reply, "mode": mode,
+                          "tools": tools_log, "plan": plan_holder["plan"]},
+                         ensure_ascii=False, indent=2))
+    elif streaming:
+        if seen["n"] == 0:                         # 没流出任何东西（空回复/出错）→ 兜底打印
+            print(reply)
+        elif not reply.endswith("\n"):
+            print()                                # 给流式文本补个换行
+    else:
+        print(reply)                               # 管道/重定向：一次性输出
+    return reply
 
 
 async def _with_progress(coro, label: str = "运行中"):
