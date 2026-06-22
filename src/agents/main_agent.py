@@ -537,15 +537,38 @@ def build_read_tools(repo_root: str) -> list[Tool]:
                         if "__pycache__" not in p.parts]
         return out[:2000]
 
+    def _int(v):
+        try:
+            return int(str(v).strip())
+        except (TypeError, ValueError):
+            return None
+
     async def _read_file(args: dict) -> str:
         rel = str(args.get("path", "")).strip().lstrip("@")
         if not rel:
             return "缺少 path 参数。"
         p = Path(repo_root) / rel
+        if not p.is_file():
+            return f"(不存在: {rel})"
         try:
-            return p.read_text(encoding="utf-8")[:6000] if p.is_file() else f"(不存在: {rel})"
+            text = p.read_text(encoding="utf-8")
         except Exception as e:  # noqa: BLE001
             return f"读取失败: {e}"
+        start = _int(args.get("start"))
+        # 给了 start：读指定行段（1-based，含端点）——接上 find_definition/document_symbols 给的行号
+        if start is not None:
+            lines = text.splitlines()
+            s = max(1, start)
+            end = _int(args.get("end"))
+            e = min(len(lines), end if (end is not None and end >= s) else s + 120)   # 默认约 120 行
+            chunk = "\n".join(lines[s - 1:e])[:8000]
+            return f"# {rel} 第 {s}–{e} 行（共 {len(lines)} 行）\n{chunk}"
+        # 无 start：整文件；超长截断并提示用 start/end 读指定行段（别只能看开头）
+        if len(text) > 6000:
+            total = text.count("\n") + 1
+            return (f"# {rel}（共 {total} 行，过长，仅显示前部；用 start/end 读指定行段）\n"
+                    f"{text[:6000]}\n…(已截断，用 read_file(path, start, end) 读更后面)")
+        return text
 
     async def _list_files(args: dict) -> str:
         sub = str(args.get("dir", "")).strip().strip("/")
@@ -648,7 +671,11 @@ def build_read_tools(repo_root: str) -> list[Tool]:
         return f"{(stat.stdout or '').strip()}\n\n{body}"
 
     return [
-        Tool("read_file", "读取仓库内某个文件的内容", {"path": "相对路径"}, _read_file, read_only=True),
+        Tool("read_file",
+             "读取仓库内某文件；给 start(/end) 读指定行段（1-based，含端点）——接 find_definition/"
+             "document_symbols 给的行号跳到大文件深处；不给则整文件（超长截断、提示用行段）",
+             {"path": "相对路径", "start": "可选，起始行号", "end": "可选，结束行号"},
+             _read_file, read_only=True),
         Tool("list_files", "列出仓库源码文件（可按子目录前缀过滤）", {"dir": "可选子目录"},
              _list_files, read_only=True),
         Tool("grep", "在仓库源码里按正则搜索，返回 path:line 命中行",
