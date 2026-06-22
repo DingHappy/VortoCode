@@ -41,6 +41,7 @@ def main():
               %(prog)s -b "给 foo.py 补上缺失的边界测试"      build 模式（可用 dev/写工具，隔离实现）
               %(prog)s -i shot.png "这个报错截图说明什么"     附图（mimo-v2.5 能读图）
               %(prog)s -a memo.mp3 "把这段语音转写并总结"     附音频（mimo-v2.5 能听音频）
+              %(prog)s --speak "用一句话介绍这个项目"          回复合成语音 WAV（mimo-v2.5-tts）
               echo "审一下 cli.py 的健壮性" | %(prog)s        从 stdin 读 prompt（管道）
               %(prog)s --json "列出 src 模块" | jq .reply    JSON 输出，喂给脚本
 
@@ -57,6 +58,11 @@ def main():
                    help="build 模式（可用写/dev 工具，隔离实现）；默认 plan（只读/提案）")
     p.add_argument("--yes", "-y", action="store_true",
                    help="自动确认高危/外向操作（run_command/open_pr）；默认一律拒绝")
+    p.add_argument("--speak", action="store_true",
+                   help="把最终回复合成成语音（mimo-v2.5-tts），写 WAV；TTY 下best-effort 播放")
+    p.add_argument("--voice", metavar="名称", help="--speak 的声音（可选，不同音色）")
+    p.add_argument("--speak-out", metavar="路径", dest="speak_out",
+                   help="语音 WAV 写到哪（默认 vorto-reply.wav）")
     p.add_argument("--max-steps", type=int, metavar="N", help="覆盖单回合工具预算步数")
     p.add_argument("--json", action="store_true", dest="as_json",
                    help="以 JSON 输出 {reply, mode, tools, plan}（关闭流式）")
@@ -134,7 +140,8 @@ def main():
             prompt = "请听这段音频并转写/回答。" if audio and not images else "请看图并描述/分析其中内容。"
         asyncio.run(run_agent_headless(
             prompt, build=args.build, auto_yes=args.yes, max_steps=args.max_steps,
-            as_json=args.as_json, quiet=args.quiet, images=images, audio=audio))
+            as_json=args.as_json, quiet=args.quiet, images=images, audio=audio,
+            speak=args.speak, voice=args.voice, speak_out=args.speak_out))
 
     elif args.command == "run":
         asyncio.run(run_task(args.task))
@@ -206,6 +213,52 @@ def _valid_image_ref(ref: str) -> bool:
     return Path(r).expanduser().is_file() and is_image_ref(r)
 
 
+def _play_audio(path: str) -> bool:
+    """best-effort 播放 WAV：找到的第一个系统播放器（afplay/aplay/ffplay）后台播；找不到返回 False。"""
+    import shutil
+    import subprocess
+    for player, flags in (("afplay", []), ("aplay", ["-q"]), ("ffplay", ["-nodisp", "-autoexit", "-loglevel", "quiet"])):
+        if shutil.which(player):
+            try:
+                subprocess.Popen([player, *flags, path],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return True
+            except Exception:  # noqa: BLE001
+                return False
+    return False
+
+
+async def _speak_reply(text, voice, out_path, llm, quiet):
+    """把回复合成成语音写到 out_path（WAV）；TTY 下顺带 best-effort 播放。返回写出的路径或 None。"""
+    text = (text or "").strip()
+    if not text:
+        return None
+    out_path = out_path or "vorto-reply.wav"
+    try:
+        client = llm if llm is not None else _new_llm_client()
+        wav = await client.tts(text, voice=voice)
+    except Exception as e:  # noqa: BLE001
+        if not quiet:
+            print(f"\033[2m🔊 语音合成失败：{e}\033[0m", file=sys.stderr, flush=True)
+        return None
+    try:
+        Path(out_path).write_bytes(wav)
+    except OSError as e:
+        if not quiet:
+            print(f"\033[2m🔊 写语音文件失败：{e}\033[0m", file=sys.stderr, flush=True)
+        return None
+    played = sys.stdout.isatty() and _play_audio(out_path)
+    if not quiet:
+        tail = "，已播放" if played else ""
+        print(f"\033[2m🔊 语音已写入 {out_path}（{len(wav)} 字节{tail}）\033[0m", file=sys.stderr, flush=True)
+    return out_path
+
+
+def _new_llm_client():
+    from src.llm.client import LLMClient
+    return LLMClient()
+
+
 def _valid_audio_ref(ref: str) -> bool:
     """音频引用是否可用：data:audio/ 直接放行；本地路径须存在且像音频（input_audio 不收 http URL）。"""
     from src.llm.content import is_audio_ref
@@ -261,7 +314,8 @@ def _build_headless_agent(cwd, *, max_steps, on_tool, on_plan, confirm, llm=None
 
 
 async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=None,
-                             as_json=False, quiet=False, llm=None, images=None, audio=None):
+                             as_json=False, quiet=False, llm=None, images=None, audio=None,
+                             speak=False, voice=None, speak_out=None):
     """headless 跑一回合主 agent loop（仿 claude -p）：无 UI、跑完即返回。
 
     输出契约：最终回复 → stdout；工具调用/进度 → stderr（--quiet 静默）。
@@ -269,6 +323,7 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
     高危/外向工具（run_command/open_pr）默认拒绝，--yes 才放行（headless 无人值守，安全优先）。
     images: 可选图片引用列表（路径/URL/data URL），挂到本轮 user 消息（mimo-v2.5 能读图）。
     audio:  可选音频引用列表（路径/data URL），挂到本轮 user 消息（mimo-v2.5 能听音频）。
+    speak:  True 则把最终回复合成成语音写 WAV（speak_out，默认 vorto-reply.wav）、TTY 下试播。
     """
     import os
     cwd = os.getcwd()
@@ -334,6 +389,8 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
             print()                                # 给流式文本补个换行
     else:
         print(reply)                               # 管道/重定向：一次性输出
+    if speak and reply:                            # 语音回复：把最终文字合成成 WAV（mimo-v2.5-tts）
+        await _speak_reply(reply, voice, speak_out, llm, quiet)
     return reply
 
 

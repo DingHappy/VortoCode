@@ -263,3 +263,65 @@ async def test_headless_attaches_audio_to_message(tmp_path, capsys):
     aud = [b for b in content if b.get("type") == "input_audio"]
     assert aud and aud[0]["input_audio"]["format"] == "wav" and aud[0]["input_audio"]["data"]
     assert "🎧 1 段音频" in capsys.readouterr().err
+
+
+# ---- 语音回复（TTS：--speak）----
+
+class _TTSLLM:
+    """既能 chat（驱动回合）又能 tts（合成语音）的假 LLM。记下 tts 收到的文本/voice。"""
+    def __init__(self, reply, wav=b"RIFFfake"):
+        self.reply = reply
+        self.wav = wav
+        self.tts_calls = []
+
+    async def chat(self, messages, **k):
+        return {"content": self.reply}
+
+    async def tts(self, text, voice=None, model=None):
+        self.tts_calls.append({"text": text, "voice": voice})
+        return self.wav
+
+
+def test_speak_flag_parses(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["vortocode", "agent", "-h"])
+    with pytest.raises(SystemExit):
+        cli.main()
+    out = capsys.readouterr().out
+    assert "--speak" in out and "--voice" in out
+
+
+def test_play_audio_no_player(monkeypatch):
+    import shutil
+    monkeypatch.setattr(shutil, "which", lambda _p: None)     # 系统没装播放器
+    assert cli._play_audio("/tmp/whatever.wav") is False
+
+
+@pytest.mark.asyncio
+async def test_speak_reply_writes_wav(tmp_path, capsys):
+    out = tmp_path / "r.wav"
+    llm = _TTSLLM("没用到这")
+    path = await cli._speak_reply("你好世界", "alloy", str(out), llm, quiet=False)
+    assert path == str(out)
+    assert out.read_bytes() == b"RIFFfake"                    # 写出了合成音频
+    assert llm.tts_calls == [{"text": "你好世界", "voice": "alloy"}]
+    assert "语音已写入" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_speak_reply_handles_failure(tmp_path, capsys):
+    class _BoomTTS:
+        async def tts(self, text, voice=None, model=None):
+            raise RuntimeError("upstream 500")
+    path = await cli._speak_reply("文字", None, str(tmp_path / "x.wav"), _BoomTTS(), quiet=False)
+    assert path is None                                       # 失败不抛、返回 None
+    assert "语音合成失败" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+async def test_headless_speak_end_to_end(tmp_path, capsys):
+    out = tmp_path / "reply.wav"
+    llm = _TTSLLM("这是回复。")
+    reply = await cli.run_agent_headless("讲一句", llm=llm, speak=True, speak_out=str(out))
+    assert reply == "这是回复。"
+    assert out.read_bytes() == b"RIFFfake"                    # 回复被合成并落盘
+    assert llm.tts_calls and llm.tts_calls[0]["text"] == "这是回复。"
