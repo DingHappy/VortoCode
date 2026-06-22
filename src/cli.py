@@ -47,6 +47,8 @@ def main():
     )
     p.add_argument("prompt", nargs="?",
                    help="交给 agent 的任务/问题；省略或写成 - 时从 stdin 读")
+    p.add_argument("--image", "-i", action="append", metavar="路径/URL", dest="images",
+                   help="给本轮附一张图（本地路径/URL/data URL）；可重复传多张（mimo-v2.5 能读图）")
     p.add_argument("--build", "-b", action="store_true",
                    help="build 模式（可用写/dev 工具，隔离实现）；默认 plan（只读/提案）")
     p.add_argument("--yes", "-y", action="store_true",
@@ -110,13 +112,20 @@ def main():
 
     if args.command == "agent":
         prompt = _read_prompt_arg(args.prompt)
-        if not prompt:
-            print("agent 需要 prompt（位置参数，或从 stdin 提供）。"
+        images = args.images or []
+        if not prompt and not images:
+            print("agent 需要 prompt（位置参数，或从 stdin 提供）或 --image。"
                   "例：vortocode agent \"列出 src 下有哪些模块\"", file=sys.stderr)
             sys.exit(2)
+        bad = [im for im in images if not _valid_image_ref(im)]
+        if bad:
+            print(f"以下图片找不到或不是图片：{', '.join(bad)}", file=sys.stderr)
+            sys.exit(2)
+        if not prompt and images:
+            prompt = "请看图并描述/分析其中内容。"      # 纯图片轮：给个温和的默认指令
         asyncio.run(run_agent_headless(
-            prompt, build=args.build, auto_yes=args.yes,
-            max_steps=args.max_steps, as_json=args.as_json, quiet=args.quiet))
+            prompt, build=args.build, auto_yes=args.yes, max_steps=args.max_steps,
+            as_json=args.as_json, quiet=args.quiet, images=images))
 
     elif args.command == "run":
         asyncio.run(run_task(args.task))
@@ -179,6 +188,15 @@ def _read_prompt_arg(raw):
     return ""
 
 
+def _valid_image_ref(ref: str) -> bool:
+    """图片引用是否可用：URL/data 直接放行；本地路径须存在且像图片。"""
+    from src.llm.content import is_image_ref
+    r = (ref or "").strip()
+    if r.startswith(("data:", "http://", "https://")):
+        return True
+    return Path(r).expanduser().is_file() and is_image_ref(r)
+
+
 _MARKUP_RE = None
 
 
@@ -225,12 +243,13 @@ def _build_headless_agent(cwd, *, max_steps, on_tool, on_plan, confirm, llm=None
 
 
 async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=None,
-                             as_json=False, quiet=False, llm=None):
+                             as_json=False, quiet=False, llm=None, images=None):
     """headless 跑一回合主 agent loop（仿 claude -p）：无 UI、跑完即返回。
 
     输出契约：最终回复 → stdout；工具调用/进度 → stderr（--quiet 静默）。
     TTY 且非 --json 时把回复流式写 stdout；管道/重定向/--json 则一次性输出（利于脚本/jq）。
     高危/外向工具（run_command/open_pr）默认拒绝，--yes 才放行（headless 无人值守，安全优先）。
+    images: 可选图片引用列表（路径/URL/data URL），挂到本轮 user 消息（mimo-v2.5 能读图）。
     """
     import os
     cwd = os.getcwd()
@@ -273,9 +292,11 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
             sys.stdout.flush()
             seen["n"] = len(text)
 
+    if images and not quiet:
+        print(f"\033[2m🖼  附带 {len(images)} 张图\033[0m", file=sys.stderr, flush=True)
     reply = await agent.run_turn(
         prompt, mode=mode, say=say, emit=(lambda _m: None),
-        stream_cb=(stream_cb if streaming else None))
+        stream_cb=(stream_cb if streaming else None), images=images)
 
     if as_json:
         import json
