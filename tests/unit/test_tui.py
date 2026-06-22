@@ -676,6 +676,46 @@ def test_build_main_agent_includes_project_instructions(tmp_path):
     assert "项目指令" in sys_prompt and "先 plan 再 build" in sys_prompt
 
 
+def _rename_app(tmp_path):
+    pytest.importorskip("jedi")
+    (tmp_path / "mod.py").write_text("def greet(n):\n    return n\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text("from mod import greet\nprint(greet(1))\n", encoding="utf-8")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    app._chrome = lambda *a, **k: None
+    app._render_diff_text = lambda *a, **k: None
+    app._show_diff = lambda *a, **k: None
+    return app
+
+
+@pytest.mark.asyncio
+async def test_rename_symbol_tool_applies(tmp_path):
+    app = _rename_app(tmp_path)
+
+    async def _yes(_m):
+        return True
+    app._confirm_write = _yes
+    agent = app._build_main_agent()
+    out = await agent.tools["rename_symbol"].handler({"symbol": "greet", "new_name": "say_hi"})
+    assert "say_hi" in out
+    assert "def say_hi" in (tmp_path / "mod.py").read_text()
+    assert "import say_hi" in (tmp_path / "app.py").read_text()
+
+
+@pytest.mark.asyncio
+async def test_rename_symbol_tool_cancel(tmp_path):
+    app = _rename_app(tmp_path)
+
+    async def _no(_m):
+        return False
+    app._confirm_write = _no
+    agent = app._build_main_agent()
+    out = await agent.tools["rename_symbol"].handler({"symbol": "greet", "new_name": "say_hi"})
+    assert "取消" in out
+    assert "def greet" in (tmp_path / "mod.py").read_text()      # 取消 → 文件没动
+    # rename_symbol 是写工具（非只读）
+    assert agent.tools["rename_symbol"].read_only is False
+
+
 def test_cmd_commands_reload(tmp_path):
     app = VortoCodeTUI(repo_root=str(tmp_path))
     app._chrome = lambda *a, **k: None

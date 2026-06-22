@@ -1409,6 +1409,36 @@ class VortoCodeTUI(App):
             self._chrome(f"[green]已{verb} {rel}（请 review；/diff 看全）[/green]")
             return f"已{verb} {rel}。"
 
+        async def _t_rename_symbol(args: dict) -> str:
+            """语义重命名（jedi）：项目级把 symbol 改成 new_name，预览 diff → 确认 → 落工作区。"""
+            from src.agents.lsp import compute_rename
+            symbol = str(args.get("symbol", "")).strip()
+            new_name = str(args.get("new_name") or args.get("new") or "").strip()
+            if not symbol or not new_name:
+                return "rename_symbol 需要 symbol 和 new_name。"
+            r = compute_rename(self.repo_root, symbol, new_name)
+            if not r.get("ok"):
+                return r.get("error", "重命名失败。")
+            files = r["files"]
+            self._chrome(f"[magenta]✎ 语义重命名 {symbol} → {new_name}[/magenta]"
+                         f"[dim]（{r['count']} 个文件，定义于 {r.get('definition', '?')}）[/dim]")
+            self._render_diff_text(r["diff"], max_lines=400)   # 预览多文件 diff
+            ok = await self._confirm_write(
+                f"build 模式：把 `{symbol}` 语义重命名为 `{new_name}`？将改 {r['count']} 个文件"
+                f"（{', '.join(list(files)[:6])}{'…' if len(files) > 6 else ''}）。改动只进工作区，不碰 main。")
+            if not ok:
+                return f"用户取消了重命名 {symbol} → {new_name}。"
+            written = []
+            for rel, content in files.items():
+                p = _safe_path(rel)
+                if p is None or not p.is_file():
+                    continue                               # 越界/不存在 → 跳过（compute 已挡越界，双保险）
+                p.write_text(content, encoding="utf-8")
+                written.append(rel)
+            self._chrome(f"[green]已重命名 {symbol} → {new_name}，改了 {len(written)} 个文件"
+                         f"（请 review；/diff 看全）[/green]")
+            return f"已把 {symbol} 语义重命名为 {new_name}，修改 {len(written)} 个文件：{', '.join(written)}"
+
         async def _t_run_dev(args: dict) -> str:
             goal = str(args.get("goal", "")).strip()
             if not goal:
@@ -1715,6 +1745,11 @@ class VortoCodeTUI(App):
                  _t_edit_file, read_only=False),
             Tool("write_file", "新建或覆盖仓库文件；写操作，需确认，仅 build",
                  {"path": "相对路径", "content": "文件全部内容"}, _t_write_file, read_only=False),
+            Tool("rename_symbol",
+                 "语义重命名（jedi/LSP 级，跟随 import、改所有引用，比 find+replace 安全）：把某函数/"
+                 "类/变量改名，预览多文件 diff→确认→落工作区；写操作，仅 build",
+                 {"symbol": "现有符号名", "new_name": "新名（合法标识符）"},
+                 _t_rename_symbol, read_only=False),
             Tool("run_dev_workflow",
                  "把一个明确的开发目标交给 dev→test→review 流水线自动实现+测试（重型，仅 build 模式）",
                  {"goal": "开发目标（自然语言）"}, _t_run_dev, read_only=False),
