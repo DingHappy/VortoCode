@@ -80,27 +80,48 @@ class HookResult(BaseModel):
 
 class Hook(ABC):
     """Hook 基类"""
-    
+
     def __init__(
-        self, 
+        self,
         name: str,
         event_types: List[HookEventType],
         priority: int = 0,  # 优先级，数字越小优先级越高
-        enabled: bool = True
+        enabled: bool = True,
+        matcher: Optional[str] = None  # 工具名匹配（正则）：仅当事件 data.tool 命中才触发；None=不限工具
     ):
         self.name = name
         self.event_types = event_types
         self.priority = priority
         self.enabled = enabled
-    
+        self.matcher = matcher
+        self._matcher_re = None
+        if matcher:
+            import re
+            try:
+                self._matcher_re = re.compile(matcher)
+            except re.error:
+                self._matcher_re = None  # 坏正则 → 当作不限（不让坏配置静默吞掉所有触发）
+
     @abstractmethod
     async def execute(self, event: HookEvent) -> HookResult:
         """执行 hook"""
         pass
-    
+
     def matches(self, event_type: HookEventType) -> bool:
         """检查是否匹配事件类型"""
         return event_type in self.event_types
+
+    def matches_tool(self, tool_name: Optional[str]) -> bool:
+        """工具名匹配：无 matcher → 永真（不限工具）；有 matcher → 需事件带 tool 且正则命中。
+
+        让"只在 edit_file/write_file 后跑格式化"这类 CC 式工具级 hook 成为可能。
+        非工具事件（无 tool）遇到带 matcher 的 hook → 不触发（matcher 本就是工具级语义）。
+        """
+        if self.matcher is None or self._matcher_re is None:
+            return True
+        if not tool_name:
+            return False
+        return self._matcher_re.search(tool_name) is not None
     
     def __repr__(self) -> str:
         return f"<Hook(name={self.name}, priority={self.priority}, enabled={self.enabled})>"

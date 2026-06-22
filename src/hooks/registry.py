@@ -86,41 +86,41 @@ class HookRegistry:
             hook_type = hook_config.get("type", "command")
             
             try:
+                # 公共字段：matcher(工具名正则)/priority——三类 hook 都吃
+                matcher = hook_config.get("matcher")
+                priority = hook_config.get("priority", 0)
+                event_types = [HookEventType(et) for et in hook_config["event_types"]]
                 if hook_type == "command":
                     hook = CommandHook(
                         name=hook_config["name"],
-                        event_types=[
-                            HookEventType(et) 
-                            for et in hook_config["event_types"]
-                        ],
+                        event_types=event_types,
                         command=hook_config["command"],
                         args=hook_config.get("args", []),
                         timeout=hook_config.get("timeout", 60),
-                        priority=hook_config.get("priority", 0)
+                        priority=priority,
+                        matcher=matcher,
+                        shell=hook_config.get("shell", False),   # true：command 当 shell 字符串跑（ruff format .）
+                        cwd=hook_config.get("cwd"),
                     )
                 elif hook_type == "http":
                     hook = HTTPHook(
                         name=hook_config["name"],
-                        event_types=[
-                            HookEventType(et) 
-                            for et in hook_config["event_types"]
-                        ],
+                        event_types=event_types,
                         url=hook_config["url"],
                         method=hook_config.get("method", "POST"),
                         headers=hook_config.get("headers", {}),
                         timeout=hook_config.get("timeout", 30),
-                        priority=hook_config.get("priority", 0)
+                        priority=priority,
+                        matcher=matcher,
                     )
                 elif hook_type == "prompt":
                     hook = PromptHook(
                         name=hook_config["name"],
-                        event_types=[
-                            HookEventType(et) 
-                            for et in hook_config["event_types"]
-                        ],
+                        event_types=event_types,
                         prompt=hook_config["prompt"],
                         model=hook_config.get("model", "gpt-4o-mini"),
-                        priority=hook_config.get("priority", 0)
+                        priority=priority,
+                        matcher=matcher,
                     )
                 else:
                     logger.warning(f"Unknown hook type: {hook_type}")
