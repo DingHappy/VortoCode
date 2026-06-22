@@ -317,6 +317,19 @@ async def test_speak_reply_handles_failure(tmp_path, capsys):
     assert "语音合成失败" in capsys.readouterr().err
 
 
+def test_headless_agent_loads_project_instructions(tmp_path):
+    # .vortocode 下放 AGENTS.md → headless 主 agent 的系统提示带上项目约定
+    (tmp_path / "AGENTS.md").write_text("# 约定\n本仓库一律用中文注释。", encoding="utf-8")
+
+    async def _confirm(_m):
+        return False
+
+    agent = cli._build_headless_agent(str(tmp_path), max_steps=None, on_tool=None,
+                                      on_plan=None, confirm=_confirm)
+    sys_prompt = agent._system("plan")
+    assert "项目指令" in sys_prompt and "一律用中文注释" in sys_prompt
+
+
 @pytest.mark.asyncio
 async def test_headless_speak_end_to_end(tmp_path, capsys):
     out = tmp_path / "reply.wav"

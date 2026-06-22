@@ -125,9 +125,11 @@ def _new_agent():
         fn = confirm_holder["fn"]
         return bool(await fn(message)) if fn is not None else False
 
+    from src.agents.project import load_project_instructions
     tools = (build_read_tools(cwd) + build_artifact_tools(cwd) + build_dev_tools(cwd)
              + build_command_tool(cwd, _confirm) + build_pr_tool(cwd, _confirm))
-    agent = MainAgent(tools, plan_tool=True)       # 网页主 agent：持久计划 + 隔离 dev + 受 WS 确认的 shell
+    extra = load_project_instructions(cwd) or None  # AGENTS.md/CLAUDE.md 项目约定进系统提示
+    agent = MainAgent(tools, plan_tool=True, extra_system=extra)  # 网页主 agent：持久计划 + 隔离 dev + 受 WS 确认的 shell
     agent._web_confirm_holder = confirm_holder     # _run_agent_turn 每回合把它指向当前 ws
     return agent
 
