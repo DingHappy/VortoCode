@@ -206,6 +206,52 @@ def test_media_helpers_via_node():
     assert r.returncode == 0, (r.stdout + r.stderr)
 
 
+def test_audio_recording_wiring():
+    s = _src()
+    # 录音入口 + Web Audio 采集（不靠 MediaRecorder，避开 webm 不被支持的坑）
+    assert 'id="rec"' in s
+    assert "getUserMedia" in s and "createScriptProcessor" in s
+    assert "function encodeWAV(" in s and "function wavDataUrl(" in s
+    # 录音产物当作 data:audio/wav 进 pending（复用音频上传管线）
+    assert 'kind: "audio"' in s and "wavDataUrl(" in s
+    # 没引入新的 innerHTML
+    assert s.count(".innerHTML") == 1
+
+
+_WAV_HARNESS = r"""
+import { readFileSync } from "node:fs";
+const html = readFileSync("__PATH__", "utf8");
+const m = html.match(/function encodeWAV[\s\S]*?\n\}/);
+if (!m) { console.error("encodeWAV not found"); process.exit(2); }
+const encodeWAV = eval("(" + m[0].replace(/^function encodeWAV/, "function") + ")");
+let bad = 0;
+const ok = (n, c, g) => { if (!c) { bad++; console.error("FAIL " + n + " :: " + JSON.stringify(g)); } };
+
+const samples = new Float32Array([0, 0.5, -0.5, 1, -1]);
+const bytes = encodeWAV(samples, 16000);
+ok("length", bytes.length === 44 + 5 * 2, bytes.length);
+const dv = new DataView(bytes.buffer);
+const tag = (off) => String.fromCharCode(bytes[off], bytes[off+1], bytes[off+2], bytes[off+3]);
+ok("RIFF", tag(0) === "RIFF", tag(0));
+ok("WAVE", tag(8) === "WAVE", tag(8));
+ok("data", tag(36) === "data", tag(36));
+ok("sampleRate", dv.getUint32(24, true) === 16000, dv.getUint32(24, true));
+ok("mono16", dv.getUint16(22, true) === 1 && dv.getUint16(34, true) === 16, "fmt");
+ok("dataSize", dv.getUint32(40, true) === 10, dv.getUint32(40, true));
+ok("sample1", Math.abs(dv.getInt16(46, true) - 0.5 * 0x7FFF) <= 1, dv.getInt16(46, true));
+ok("clamp+1", dv.getInt16(44 + 6, true) === 0x7FFF, dv.getInt16(50, true));
+process.exit(bad ? 1 : 0);
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node 不可用，跳过行为测试")
+def test_wav_encoder_via_node():
+    harness = _WAV_HARNESS.replace("__PATH__", str(AGENT_HTML))
+    r = subprocess.run(["node", "--input-type=module"], input=harness,
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, (r.stdout + r.stderr)
+
+
 def test_auto_reconnect_wiring():
     s = _src()
     assert "function backoffDelay(" in s and "function scheduleReconnect(" in s
