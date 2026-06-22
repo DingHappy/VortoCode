@@ -454,3 +454,37 @@ async def test_plan_escalation_refused_blocks_write_tool():
     await agent.run_turn("动手", mode="plan", say=say, emit=emit)
     assert ran == []                              # 拒绝 → 没执行写工具
     assert any("plan 模式下不可用" in m["content"] for m in agent.history)
+
+
+# ---- 历史裁剪：锚定原始任务（长对话不丢"最初要干嘛"）----
+
+def test_trimmed_history_keeps_first_user_anchor():
+    agent = MainAgent([], max_history=6)
+    agent.history = [{"role": "user", "content": "原始任务：实现 X"}]
+    # 灌入大量后续轮次，超过 max_history
+    for i in range(20):
+        agent.history.append({"role": "assistant", "content": f"a{i}"})
+        agent.history.append({"role": "user", "content": f"u{i}"})
+    trimmed = agent._trimmed_history()
+    assert len(trimmed) == 6                                   # 仍是 max_history 条
+    assert trimmed[0]["content"] == "原始任务：实现 X"          # 第一条锚点保留
+    assert trimmed[-1] == agent.history[-1]                    # 末尾是最近的
+
+
+def test_trimmed_history_anchor_strips_multimodal():
+    # 首轮带图（content 是块数组）→ 锚点取纯文本，绝不把 base64 每轮重塞
+    agent = MainAgent([], max_history=4)
+    agent.history = [{"role": "user", "content": [
+        {"type": "text", "text": "看这张图实现"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64," + "A" * 5000}}]}]
+    for i in range(10):
+        agent.history.append({"role": "assistant", "content": f"x{i}"})
+    trimmed = agent._trimmed_history()
+    assert trimmed[0]["content"] == "看这张图实现[图片]"        # 纯文本锚，无 base64
+    assert "AAAA" not in trimmed[0]["content"]
+
+
+def test_trimmed_history_short_unchanged():
+    agent = MainAgent([], max_history=24)
+    agent.history = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}]
+    assert agent._trimmed_history() == agent.history          # 没超长 → 原样
