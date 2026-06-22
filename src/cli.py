@@ -39,6 +39,8 @@ def main():
             示例:
               %(prog)s "src 下有哪些模块、各做什么"          只读问答（默认 plan 模式）
               %(prog)s -b "给 foo.py 补上缺失的边界测试"      build 模式（可用 dev/写工具，隔离实现）
+              %(prog)s -i shot.png "这个报错截图说明什么"     附图（mimo-v2.5 能读图）
+              %(prog)s -a memo.mp3 "把这段语音转写并总结"     附音频（mimo-v2.5 能听音频）
               echo "审一下 cli.py 的健壮性" | %(prog)s        从 stdin 读 prompt（管道）
               %(prog)s --json "列出 src 模块" | jq .reply    JSON 输出，喂给脚本
 
@@ -49,6 +51,8 @@ def main():
                    help="交给 agent 的任务/问题；省略或写成 - 时从 stdin 读")
     p.add_argument("--image", "-i", action="append", metavar="路径/URL", dest="images",
                    help="给本轮附一张图（本地路径/URL/data URL）；可重复传多张（mimo-v2.5 能读图）")
+    p.add_argument("--audio", "-a", action="append", metavar="路径", dest="audio",
+                   help="给本轮附一段音频（本地路径/data URL，mp3/wav 等）；可重复（mimo-v2.5 能听音频）")
     p.add_argument("--build", "-b", action="store_true",
                    help="build 模式（可用写/dev 工具，隔离实现）；默认 plan（只读/提案）")
     p.add_argument("--yes", "-y", action="store_true",
@@ -113,19 +117,24 @@ def main():
     if args.command == "agent":
         prompt = _read_prompt_arg(args.prompt)
         images = args.images or []
-        if not prompt and not images:
-            print("agent 需要 prompt（位置参数，或从 stdin 提供）或 --image。"
+        audio = args.audio or []
+        if not prompt and not images and not audio:
+            print("agent 需要 prompt（位置参数，或从 stdin 提供）或 --image/--audio。"
                   "例：vortocode agent \"列出 src 下有哪些模块\"", file=sys.stderr)
             sys.exit(2)
-        bad = [im for im in images if not _valid_image_ref(im)]
-        if bad:
-            print(f"以下图片找不到或不是图片：{', '.join(bad)}", file=sys.stderr)
+        bad_i = [im for im in images if not _valid_image_ref(im)]
+        if bad_i:
+            print(f"以下图片找不到或不是图片：{', '.join(bad_i)}", file=sys.stderr)
             sys.exit(2)
-        if not prompt and images:
-            prompt = "请看图并描述/分析其中内容。"      # 纯图片轮：给个温和的默认指令
+        bad_a = [au for au in audio if not _valid_audio_ref(au)]
+        if bad_a:
+            print(f"以下音频找不到或不是音频：{', '.join(bad_a)}", file=sys.stderr)
+            sys.exit(2)
+        if not prompt and (images or audio):           # 纯附件轮：给个温和的默认指令
+            prompt = "请听这段音频并转写/回答。" if audio and not images else "请看图并描述/分析其中内容。"
         asyncio.run(run_agent_headless(
             prompt, build=args.build, auto_yes=args.yes, max_steps=args.max_steps,
-            as_json=args.as_json, quiet=args.quiet, images=images))
+            as_json=args.as_json, quiet=args.quiet, images=images, audio=audio))
 
     elif args.command == "run":
         asyncio.run(run_task(args.task))
@@ -197,6 +206,15 @@ def _valid_image_ref(ref: str) -> bool:
     return Path(r).expanduser().is_file() and is_image_ref(r)
 
 
+def _valid_audio_ref(ref: str) -> bool:
+    """音频引用是否可用：data:audio/ 直接放行；本地路径须存在且像音频（input_audio 不收 http URL）。"""
+    from src.llm.content import is_audio_ref
+    r = (ref or "").strip()
+    if r.startswith("data:audio/"):
+        return True
+    return Path(r).expanduser().is_file() and is_audio_ref(r)
+
+
 _MARKUP_RE = None
 
 
@@ -243,13 +261,14 @@ def _build_headless_agent(cwd, *, max_steps, on_tool, on_plan, confirm, llm=None
 
 
 async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=None,
-                             as_json=False, quiet=False, llm=None, images=None):
+                             as_json=False, quiet=False, llm=None, images=None, audio=None):
     """headless 跑一回合主 agent loop（仿 claude -p）：无 UI、跑完即返回。
 
     输出契约：最终回复 → stdout；工具调用/进度 → stderr（--quiet 静默）。
     TTY 且非 --json 时把回复流式写 stdout；管道/重定向/--json 则一次性输出（利于脚本/jq）。
     高危/外向工具（run_command/open_pr）默认拒绝，--yes 才放行（headless 无人值守，安全优先）。
     images: 可选图片引用列表（路径/URL/data URL），挂到本轮 user 消息（mimo-v2.5 能读图）。
+    audio:  可选音频引用列表（路径/data URL），挂到本轮 user 消息（mimo-v2.5 能听音频）。
     """
     import os
     cwd = os.getcwd()
@@ -292,11 +311,16 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
             sys.stdout.flush()
             seen["n"] = len(text)
 
-    if images and not quiet:
-        print(f"\033[2m🖼  附带 {len(images)} 张图\033[0m", file=sys.stderr, flush=True)
+    if not quiet and (images or audio):
+        bits = []
+        if images:
+            bits.append(f"🖼 {len(images)} 张图")
+        if audio:
+            bits.append(f"🎧 {len(audio)} 段音频")
+        print(f"\033[2m附带 {' · '.join(bits)}\033[0m", file=sys.stderr, flush=True)
     reply = await agent.run_turn(
         prompt, mode=mode, say=say, emit=(lambda _m: None),
-        stream_cb=(stream_cb if streaming else None), images=images)
+        stream_cb=(stream_cb if streaming else None), images=images, audio=audio)
 
     if as_json:
         import json
