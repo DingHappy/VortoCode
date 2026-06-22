@@ -312,9 +312,9 @@ def test_confirm_wiring():
 
 def test_persistence_wiring():
     s = _src()
-    # 每标签页一个 sid，存 sessionStorage（刷新仍在），连接时带上 ?sid=
+    # 稳定 sid 存 localStorage（跨刷新/关标签/浏览器重启），连接时带上 ?sid= → 服务端按它落盘复原
     assert "function sessionId(" in s
-    assert 'sessionStorage.getItem("vorto_sid")' in s and 'sessionStorage.setItem("vorto_sid"' in s
+    assert 'localStorage.getItem("vorto_sid")' in s and 'localStorage.setItem("vorto_sid"' in s
     assert 'qs.set("sid", sessionId())' in s
     # 回放：处理 agent_history，且仅在 log 为空时渲染（避免就地重连重复）
     assert 'case "agent_history":' in s

@@ -470,6 +470,40 @@ def test_web_agent_loads_project_instructions(monkeypatch, tmp_path):
     assert "项目指令" in agent._system("plan") and "保持简洁" in agent._system("plan")
 
 
+@pytest.mark.asyncio
+async def test_session_persists_and_restores_across_restart(monkeypatch, tmp_path):
+    # 一轮跑完 → 落盘；清空内存（=服务器重启）→ 同 sid 新连接从磁盘复原对话
+    import src.llm.client as llmmod
+    from src.web.routers import realtime
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+
+    class FakeLLM:
+        async def chat(self, messages, **k):
+            return {"content": "持久化回复。"}
+
+    monkeypatch.setattr(llmmod, "LLMClient", FakeLLM)
+    ws = _FakeWS(sid="persist-1")
+    try:
+        await realtime.handle_agent_message(ws, {"type": "agent", "text": "记住这句", "mode": "plan"})
+        await _drain(ws)
+        key = _key(ws)
+        assert realtime._SESSIONS[key]["transcript"]               # 内存里有了
+        # 磁盘也写了
+        from src.web.session_store import load_session
+        saved = load_session(str(tmp_path), key)
+        assert saved and any("记住这句" in m["text"] for m in saved["transcript"])
+
+        realtime._SESSIONS.clear()                                  # 模拟服务器重启：内存全没了
+        ws2 = _FakeWS(sid="persist-1")                             # 同 sid 重新连
+        sess = realtime._get_session(ws2)                          # 应从磁盘复原
+        assert any("记住这句" in m["text"] for m in sess["transcript"])
+        assert any("记住这句" in m.get("content", "") for m in sess["agent"].history)
+    finally:
+        _cleanup(ws)
+        realtime._SESSIONS.pop(_key(ws), None)
+
+
 def test_sessions_evict_oldest_over_cap(monkeypatch):
     from src.web.routers import realtime
     monkeypatch.setattr(realtime, "_MAX_SESSIONS", 3)
