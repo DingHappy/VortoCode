@@ -589,6 +589,36 @@ def test_expand_context_image_becomes_attachment(tmp_path):
     assert app._turn_images == []                          # 每次调用重置
 
 
+def test_expand_context_audio_becomes_attachment(tmp_path):
+    (tmp_path / "clip.wav").write_bytes(b"RIFF....WAVE")    # 内容无所谓，认扩展名
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    clean, ctx = app._expand_context("@clip.wav 转写一下")
+    assert "# 文件 clip.wav" not in ctx                     # 不当文本注入
+    assert app._turn_audio == [str(tmp_path / "clip.wav")]
+    assert "音频[clip.wav]" in clean and "@" not in clean
+    app._expand_context("没有附件")
+    assert app._turn_audio == []                           # 每次调用重置
+
+
+def test_speak_toggle(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    app._chrome = lambda *a, **k: None                     # 静默 UI 输出
+    assert app._speak_replies is False
+    app._cmd_speak("")                                     # 无参 → 切换
+    assert app._speak_replies is True
+    app._cmd_speak("off")
+    assert app._speak_replies is False
+    app._cmd_speak("on")
+    assert app._speak_replies is True
+
+
+def test_play_audio_file_no_player(tmp_path, monkeypatch):
+    import shutil
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    monkeypatch.setattr(shutil, "which", lambda _p: None)  # 没装播放器
+    assert app._play_audio_file("/tmp/x.wav") is False
+
+
 def test_expand_at_files(tmp_path):
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "util.py").write_text("x = 1\n")
