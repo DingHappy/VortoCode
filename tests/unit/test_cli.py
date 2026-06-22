@@ -172,3 +172,58 @@ async def test_headless_dangerous_op_auto_denied_in_build(monkeypatch, capsys):
     assert reply == "已说明。"
     err = capsys.readouterr().err
     assert "自动拒绝" in err                                  # 外向/高危操作被默认拦下
+
+
+# ---- headless agent：图片输入 ----
+
+class _CapturingLLM:
+    """记下最后一次 chat 的 messages，便于断言多模态 content 块；恒定回一句。"""
+
+    def __init__(self, reply):
+        self.reply = reply
+        self.last_messages = None
+
+    async def chat(self, messages, **kwargs):
+        self.last_messages = messages
+        return {"content": self.reply}
+
+
+def _png(tmp_path):
+    import base64
+    raw = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
+    p = tmp_path / "shot.png"
+    p.write_bytes(raw)
+    return p
+
+
+def test_valid_image_ref(tmp_path):
+    p = _png(tmp_path)
+    assert cli._valid_image_ref(str(p))                      # 存在的本地图
+    assert cli._valid_image_ref("https://x/y.png")           # URL 放行
+    assert cli._valid_image_ref("data:image/png;base64,AA")  # data URL 放行
+    assert not cli._valid_image_ref(str(tmp_path / "nope.png"))   # 不存在
+    assert not cli._valid_image_ref(str(p) + ".txt")         # 非图
+
+
+def test_agent_bad_image_exits_2(monkeypatch):
+    monkeypatch.setattr(sys, "argv", ["vortocode", "agent", "-i", "/no/such.png", "hi"])
+    with pytest.raises(SystemExit) as e:
+        cli.main()
+    assert e.value.code == 2
+
+
+@pytest.mark.asyncio
+async def test_headless_attaches_image_to_message(tmp_path, capsys):
+    p = _png(tmp_path)
+    llm = _CapturingLLM("图里是一个 1x1 像素。")
+    reply = await cli.run_agent_headless("这是什么", llm=llm, images=[str(p)])
+    assert reply == "图里是一个 1x1 像素。"
+    # 首条 user 消息应是内容块数组：含 text + image_url(data URL)
+    user_msgs = [m for m in llm.last_messages if m["role"] == "user"]
+    content = user_msgs[0]["content"]
+    assert isinstance(content, list)
+    assert any(b.get("type") == "text" for b in content)
+    img = [b for b in content if b.get("type") == "image_url"]
+    assert img and img[0]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert "附带 1 张图" in capsys.readouterr().err           # stderr 提示带图
