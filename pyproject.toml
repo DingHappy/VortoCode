@@ -22,6 +22,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "psutil>=5.9.0",
     "markdown>=3.4",
+    "jedi>=0.19",          # 语义代码导航（find_definition/find_references，LSP 级、无需外部 server）
 ]
 
 [project.optional-dependencies]

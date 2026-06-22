@@ -551,6 +551,14 @@ def build_read_tools(repo_root: str) -> list[Tool]:
         from src.orchestrator.self_analysis import analyze_self, render_report
         return render_report(await analyze_self(repo_root))
 
+    async def _find_definition(args: dict) -> str:
+        from src.agents.lsp import find_definition
+        return find_definition(repo_root, str(args.get("symbol", "")))
+
+    async def _find_references(args: dict) -> str:
+        from src.agents.lsp import find_references
+        return find_references(repo_root, str(args.get("symbol", "")))
+
     return [
         Tool("read_file", "读取仓库内某个文件的内容", {"path": "相对路径"}, _read_file, read_only=True),
         Tool("list_files", "列出仓库源码文件（可按子目录前缀过滤）", {"dir": "可选子目录"},
@@ -558,6 +566,13 @@ def build_read_tools(repo_root: str) -> list[Tool]:
         Tool("grep", "在仓库源码里按正则搜索，返回 path:line 命中行",
              {"pattern": "正则", "dir": "可选子目录"}, _grep, read_only=True),
         Tool("analyze_repo", "只读扫描本仓库列出问题清单，无需 key", {}, _analyze_repo, read_only=True),
+        Tool("find_definition",
+             "语义查符号定义（jedi/LSP 级，跟随 import、比 grep 准）：给函数/类/变量名"
+             "（可点号如 Class.method），返回定义位置+签名+文档",
+             {"symbol": "符号名"}, _find_definition, read_only=True),
+        Tool("find_references",
+             "语义查符号的全项目引用（jedi/LSP 级）：给符号名，返回所有使用处 path:line",
+             {"symbol": "符号名"}, _find_references, read_only=True),
     ]
 
 
