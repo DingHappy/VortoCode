@@ -1,0 +1,30 @@
+# 桌宠/状态消费者示例 —— 复制到 .vortocode/hooks.yaml 即生效。
+#
+# 思路：用 hooks 把 agent 的动作状态「广播」给任意外部消费者（桌宠 / 菜单栏 / 通知），
+# 完全不依赖网页 WS，且 TUI / CLI / Web 三端通用——因为这些事件在主 agent loop 里触发。
+#
+# 一条 command hook 订阅整条生命周期，把事件 JSON 从 stdin 交给 examples/pet_state.py，
+# 后者算出状态写 .vortocode/pet_state.json；你的桌宠监听这个文件即可。
+#
+# 可触发的事件：
+#   agent_start    —— 回合开始（开工）
+#   pre_tool_use   —— 即将调某工具（data.tool 是工具名；可加 matcher 只盯特定工具）
+#   post_tool_use  —— 工具调用完成
+#   tool_error     —— 工具出错
+#   agent_end      —— 回合结束（完成/收尾）
+
+hooks:
+  - name: pet-state
+    type: command
+    event_types: [agent_start, pre_tool_use, post_tool_use, tool_error, agent_end]
+    shell: true
+    command: python examples/pet_state.py
+    timeout: 5
+
+  # 想只在写文件类工具后做点啥（比如让桌宠"擦汗"）？用 matcher 收窄：
+  # - name: pet-on-edit
+  #   type: command
+  #   event_types: [post_tool_use]
+  #   matcher: edit_file|write_file|rename_symbol
+  #   shell: true
+  #   command: python examples/pet_state.py

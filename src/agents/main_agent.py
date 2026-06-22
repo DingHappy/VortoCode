@@ -363,6 +363,30 @@ class MainAgent:
         images: Optional[list] = None,
         audio: Optional[list] = None,
     ) -> str:
+        """一轮对话的外壳：在回合首尾触发 agent_start / agent_end 生命周期钩子，主体见 _run_turn_body。
+
+        这两个钩子 + 工具级 pre/post_tool_use/tool_error（见 _run_tool）让外部消费者（桌宠/状态栏/
+        通知）能**只靠 hooks** 拿到完整动作状态——UI 无关，TUI/CLI/Web 三端都触发。无 hook_system 时
+        _fire_hook 立即返回、零开销（子 agent 默认无 hook_system，故不会刷状态）。
+        """
+        await self._fire_hook("agent_start", {"text": str(user_text)[:500], "mode": mode})
+        try:
+            return await self._run_turn_body(
+                user_text, mode=mode, say=say, emit=emit,
+                stream_cb=stream_cb, images=images, audio=audio)
+        finally:
+            await self._fire_hook("agent_end", {"mode": mode})
+
+    async def _run_turn_body(
+        self,
+        user_text: str,
+        mode: str = "plan",
+        say: Optional[Callable[[str], None]] = None,
+        emit: Optional[Callable[[str], None]] = None,
+        stream_cb: Optional[Callable[[str], None]] = None,
+        images: Optional[list] = None,
+        audio: Optional[list] = None,
+    ) -> str:
         """处理一轮用户输入：循环"模型↔工具"，最终把回复交给 emit；并返回最终回复文本。
 
         say(markup): UI 提示行（如"🔧 调用工具"）；emit(text): 最终/工具的字面输出。
