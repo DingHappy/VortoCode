@@ -1306,53 +1306,6 @@ class VortoCodeTUI(App):
         """
         from src.agents.main_agent import MainAgent, Tool
 
-        async def _t_read_file(args: dict) -> str:
-            rel = str(args.get("path", "")).strip().lstrip("@")
-            if not rel:
-                return "缺少 path 参数。"
-            try:
-                return self._read_files([rel]) or f"(空文件或不存在: {rel})"
-            except Exception as e:  # noqa: BLE001
-                return f"读取失败: {e}"
-
-        async def _t_list_files(args: dict) -> str:
-            sub = str(args.get("dir", "")).strip().strip("/")
-            files = _repo_files(self.repo_root)
-            if sub:
-                files = [f for f in files if f.startswith(sub)]
-            return "\n".join(files[:200]) if files else "(没有匹配的源码文件)"
-
-        async def _t_analyze_repo(args: dict) -> str:
-            from src.orchestrator.self_analysis import analyze_self, render_report
-            report = await analyze_self(self.repo_root)
-            return render_report(report)
-
-        async def _t_grep(args: dict) -> str:
-            pat = str(args.get("pattern", "")).strip()
-            if not pat:
-                return "缺少 pattern 参数。"
-            try:
-                rx = re.compile(pat)
-            except re.error as e:
-                return f"无效正则: {e}"
-            sub = str(args.get("dir", "")).strip().strip("/")
-            files = _repo_files(self.repo_root)
-            if sub:
-                files = [f for f in files if f.startswith(sub)]
-            hits: list[str] = []
-            for f in files:
-                try:
-                    lines = (Path(self.repo_root) / f).read_text(encoding="utf-8", errors="ignore").splitlines()
-                except Exception:  # noqa: BLE001
-                    continue
-                for i, line in enumerate(lines, 1):
-                    if rx.search(line):
-                        hits.append(f"{f}:{i}: {line.strip()[:200]}")
-                        if len(hits) >= 100:
-                            hits.append("…(命中过多，已截断)")
-                            return "\n".join(hits)
-            return "\n".join(hits) if hits else f"没有匹配 /{pat}/ 的内容。"
-
         def _safe_path(rel: str):
             """把相对路径锁在仓库内，防止 ../ 或绝对路径越界。返回 Path 或 None。"""
             base = Path(self.repo_root).resolve()
@@ -1624,17 +1577,11 @@ class VortoCodeTUI(App):
             self._chrome(f"[{ok_c}]{'✓' if res['ok'] else '✗'} exit {res['code']}[/]")
             return f"命令 `{cmd}` 退出码 {res['code']}。输出尾部：\n{out[-3000:]}"
 
-        # 只读工具：plan 也能用；也是子 agent 的工具集（无 task/写工具 → 不嵌套、不改文件）
-        read_tools = [
-            Tool("read_file", "读取仓库内某个文件的内容",
-                 {"path": "相对路径，如 src/cli.py"}, _t_read_file, read_only=True),
-            Tool("list_files", "列出仓库内的源码文件（可按子目录前缀过滤）",
-                 {"dir": "可选，子目录前缀，如 src/tui"}, _t_list_files, read_only=True),
-            Tool("grep", "在仓库源码里按正则搜索，返回 path:line: 命中行",
-                 {"pattern": "正则表达式", "dir": "可选，子目录前缀"}, _t_grep, read_only=True),
-            Tool("analyze_repo", "只读扫描本仓库，列出问题清单（孤儿模块/循环依赖/测试缺口等），无需 key",
-                 {}, _t_analyze_repo, read_only=True),
-        ]
+        # 只读工具：plan 也能用；也是子 agent 的工具集（无 task/写工具 → 不嵌套、不改文件）。
+        # 直接复用 build_read_tools——TUI 至此与 web/CLI 同源，白拿 read_file 行段 / 全仓库 grep /
+        # find_definition·find_references·document_symbols（jedi 语义导航）/ git_status·show_diff·list_branches。
+        from src.agents.main_agent import build_read_tools
+        read_tools = build_read_tools(self.repo_root)
 
         async def _spawn_research(desc: str) -> str:
             """起一个隔离的只读子 agent 做调研，返回结论。task 与 research_parallel 共用。"""
