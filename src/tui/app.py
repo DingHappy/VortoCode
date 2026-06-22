@@ -269,8 +269,8 @@ class VortoCodeTUI(App):
         import os
         self._chrome("[b]VortoCode[/b] · 交互式 AI 开发助手 "
                      "[dim](一个会话主 agent，自己分流：答疑 / 读代码 / 动手开发)[/dim]")
-        self._chrome("[dim]能做：问答 · 读&搜代码(@文件) · 扫描仓库问题 · 实现/修改/测试代码 · "
-                     "发布可分享制品[/dim]")
+        self._chrome("[dim]能做：问答 · 读&搜代码(@文件) · 看图(@图片.png) · 扫描仓库问题 · "
+                     "实现/修改/测试代码 · 发布可分享制品[/dim]")
         self._chrome("")
         self._chrome(f"[{self._tc('text-primary', '#8ab4f8')}]试试：[/] "
                      "[b]这个项目是做什么的？[/b]   ·   "
@@ -937,8 +937,10 @@ class VortoCodeTUI(App):
         返回 (去掉 @ 的文本, 拼好的上下文串)；没解析到的 @token 原样保留。
         符号用 AST（src.indexing.PythonASTParser）解析，比 grep 准；整次调用只建一次索引。
         """
+        from src.llm.content import is_image_ref
         base = Path(self.repo_root)
         parts: list[str] = []
+        images: list[str] = []                     # @图片 → 多模态附件（不当文本注入）
         sym_index: dict[str, list[str]] = {}
         index_built: list[bool] = []
 
@@ -985,10 +987,13 @@ class VortoCodeTUI(App):
             ref = m.group(1)
             p = base / ref
             if p.is_file():
+                if is_image_ref(ref):              # 图片：作为多模态附件交给 agent，不读成文本
+                    images.append(str(p))
+                    return f"图片[{ref}]"
                 try:
                     parts.append(f"# 文件 {ref}\n{p.read_text(encoding='utf-8')[:3000]}")
                     return ref
-                except OSError:
+                except (OSError, UnicodeDecodeError):   # 二进制等读不动 → 原样保留 @token
                     return m.group(0)
             if p.is_dir():
                 sub = ref.rstrip("/")
@@ -1005,6 +1010,7 @@ class VortoCodeTUI(App):
         # 先处理 @artifact:<id>（含 ':'，一般 @ 规则匹配不到），再处理 @文件/@目录/@符号
         clean = re.sub(r"@artifact:([A-Za-z0-9_-]+)", repl_artifact, text)
         clean = re.sub(r"@([\w./一-鿿-]+)", repl, clean)
+        self._turn_images = images                 # 供本回合 run_turn 取用（@图片）
         return clean, "\n\n".join(parts)
 
     def _read_files(self, rels: list[str]) -> str:
@@ -1086,9 +1092,12 @@ class VortoCodeTUI(App):
         if self.agent is None:
             self.agent = self._build_main_agent()
         user_text, ctx = self._expand_context(text)
+        images = getattr(self, "_turn_images", []) or []      # @图片 → 多模态附件
         if ctx:
             self._chrome(f"[dim]＋ 已注入 @提及的上下文（{len(ctx)} 字）[/dim]")
             user_text = f"{user_text}\n\n[@提及的上下文]\n{ctx}"
+        if images:
+            self._chrome(f"[dim]🖼 附带 {len(images)} 张图（mimo-v2.5 可读图）[/dim]")
         # agent 的输出直接落进结果区（对话 log）：忙时转圈("思考中…")给进度反馈，工具调用与
         # 结果(🔧/⎿)实时进 log，回复就绪即作为一条 ● vorto 消息（markdown）写进对话——
         # 回复**边生成边显示**：流式 token 进 #stream（署名 ● vorto、和最终消息同位同款，
@@ -1114,7 +1123,7 @@ class VortoCodeTUI(App):
         t0 = time.monotonic()
         try:
             await self.agent.run_turn(user_text, mode=self.mode, say=self._chrome,
-                                      emit=emit_final, stream_cb=stream_cb)
+                                      emit=emit_final, stream_cb=stream_cb, images=images)
         finally:
             stream.update(""); stream.display = False   # 出错/取消时也收干净
         if self._turn_tools:                # 用过工具的回合给个清晰收尾
