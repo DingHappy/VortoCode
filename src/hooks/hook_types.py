@@ -14,19 +14,23 @@ class CommandHook(Hook):
     """命令 Hook - 执行 shell 命令"""
     
     def __init__(
-        self, 
+        self,
         name: str,
         event_types: List[HookEventType],
         command: str,
         args: Optional[List[str]] = None,
         timeout: int = 60,
+        shell: bool = False,           # true：command 当完整 shell 字符串跑（如 "ruff format ."）
+        cwd: Optional[str] = None,     # 执行目录（默认进程 cwd = 仓库根）
         **kwargs
     ):
         super().__init__(name, event_types, **kwargs)
         self.command = command
         self.args = args or []
         self.timeout = timeout
-    
+        self.shell = shell
+        self.cwd = cwd
+
     async def execute(self, event: HookEvent) -> HookResult:
         """执行命令"""
         # 准备输入数据
@@ -37,17 +41,27 @@ class CommandHook(Hook):
             "data": event.data,
             "context": event.context
         }, ensure_ascii=False)
-        
+
         try:
-            # 执行命令
-            process = await asyncio.create_subprocess_exec(
-                self.command,
-                *self.args,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            
+            # 执行命令：shell=True 把 command 当整条 shell 跑（方便 "ruff format ."），否则 exec command+args
+            if self.shell:
+                process = await asyncio.create_subprocess_shell(
+                    self.command,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=self.cwd,
+                )
+            else:
+                process = await asyncio.create_subprocess_exec(
+                    self.command,
+                    *self.args,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=self.cwd,
+                )
+
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(input_data.encode()),
                 timeout=self.timeout

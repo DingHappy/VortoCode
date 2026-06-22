@@ -652,6 +652,22 @@ def test_dispatch_unknown_still_errors(tmp_path):
     assert any("未知命令" in m for m in msgs)
 
 
+def test_cmd_hooks_empty_and_configured(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted, chromed = [], []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda m, *a, **k: chromed.append(m)
+    app._cmd_hooks()                                       # 没配置 → 空态给格式示例
+    assert emitted and "hooks.yaml" in emitted[-1] and "matcher" in emitted[-1]
+    # 配上一个带 matcher 的钩子 → /hooks 列出它
+    d = tmp_path / ".vortocode"; d.mkdir(exist_ok=True)
+    (d / "hooks.yaml").write_text(
+        "hooks:\n  - name: fmt\n    type: command\n    event_types: [post_tool_use]\n"
+        "    matcher: edit_file\n    shell: true\n    command: ruff format .\n", encoding="utf-8")
+    app._cmd_hooks()
+    assert any("fmt" in c and "edit_file" in c for c in chromed)
+
+
 def test_build_main_agent_includes_project_instructions(tmp_path):
     (tmp_path / "AGENTS.md").write_text("TUI 项目约定：先 plan 再 build。", encoding="utf-8")
     app = VortoCodeTUI(repo_root=str(tmp_path))

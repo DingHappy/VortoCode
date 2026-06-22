@@ -51,12 +51,15 @@ class HookExecutor:
     ) -> HookExecutionResult:
         """执行事件的所有 hooks"""
         hooks = self.registry.get_hooks_for_event(event.event_type)
-        
+        tool_name = event.data.get("tool") if event.data else None
+
         results = []
         modified_data = {}
-        
+
         for hook in hooks:
             if not hook.enabled:
+                continue
+            if not hook.matches_tool(tool_name):     # 工具名 matcher 不命中 → 跳过（仅工具级 hook 受影响）
                 continue
             
             try:
