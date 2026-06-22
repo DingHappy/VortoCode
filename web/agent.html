@@ -305,12 +305,12 @@ function renderMarkdown(src) {
   return out.join("\n").replace(/\u0000B(\d+)\u0000/g, (_, n) => blocks[Number(n)]);  // 还原代码块
 }
 
-function sessionId() {       // 每标签页一个稳定 sid（刷新仍在）→ 服务端据此让会话跨重连/刷新存活
-  let sid = sessionStorage.getItem("vorto_sid");
+function sessionId() {       // 稳定 sid（localStorage，跨刷新/关标签/浏览器重启）→ 服务端按它把
+  let sid = localStorage.getItem("vorto_sid");   // 会话落盘，连服务器重启都不丢对话
   if (!sid) {
     sid = (window.crypto && crypto.randomUUID) ? crypto.randomUUID()
         : "s" + Date.now().toString(36) + Math.random().toString(36).slice(2);
-    sessionStorage.setItem("vorto_sid", sid);
+    localStorage.setItem("vorto_sid", sid);
   }
   return sid;
 }
