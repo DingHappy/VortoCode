@@ -1256,6 +1256,24 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
     ]
 
 
+def build_web_tools() -> list[Tool]:
+    """联网读取工具 `web_fetch`（给主 agent 查文档/issue/报错页）。
+
+    只读但外向：抓公网 http(s) URL 的正文。带 SSRF 防护（拒私网/环回）、下载封顶、超时、
+    HTML→正文（见 src/agents/web_fetch.py）。read_only=True → plan 也可用、无需逐条确认
+    （GET 不改任何状态，真正的风险靠 SSRF/封顶/超时挡）。"""
+    async def _web_fetch(args: dict) -> str:
+        import asyncio
+        from src.agents.web_fetch import fetch_url
+        url = str(args.get("url") or args.get("href") or "").strip()
+        return await asyncio.to_thread(fetch_url, url)
+
+    return [Tool("web_fetch",
+                 "抓取一个公网 http(s) 网址的正文（查文档/issue/报错页/API 说明）：限 http/https、"
+                 "拒私网与环回(SSRF 防护)、下载封顶、HTML 自动转正文。只读、无需确认",
+                 {"url": "要抓取的 http(s) 网址"}, _web_fetch, read_only=True)]
+
+
 def build_command_tool(repo_root: str, confirm) -> list[Tool]:
     """UI 无关的 run_command（给 Web 用，注入 async confirm 门）。
 
