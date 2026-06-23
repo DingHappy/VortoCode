@@ -1584,8 +1584,8 @@ class VortoCodeTUI(App):
         # 只读工具：plan 也能用；也是子 agent 的工具集（无 task/写工具 → 不嵌套、不改文件）。
         # 直接复用 build_read_tools——TUI 至此与 web/CLI 同源，白拿 read_file 行段 / 全仓库 grep /
         # find_definition·find_references·document_symbols（jedi 语义导航）/ git_status·show_diff·list_branches。
-        from src.agents.main_agent import build_read_tools
-        read_tools = build_read_tools(self.repo_root)
+        from src.agents.main_agent import build_read_tools, build_web_tools
+        read_tools = build_read_tools(self.repo_root) + build_web_tools()   # +web_fetch（查文档/issue/报错页）
 
         async def _spawn_research(desc: str) -> str:
             """起一个隔离的只读子 agent 做调研，返回结论。task 与 research_parallel 共用。"""
