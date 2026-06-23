@@ -683,6 +683,83 @@ async def test_dev_auto_dependent_self_repairs(monkeypatch, tmp_path):
     assert "✅ 已接力提交（修复 1 次后）" in out
 
 
+# ---- 流水线进度可观测（on_progress）：长任务边跑边播，免得对着静默 prompt 干等 ----
+
+@pytest.mark.asyncio
+async def test_dev_parallel_emits_progress(monkeypatch, tmp_path):
+    import src.agents.worktree as wt
+    from src.agents.main_agent import build_dev_tools
+
+    async def ok_isolated(repo, wid, desc, build, test_cmd=None):
+        return ("diff\n", "c", {"ok": True, "output": ""})
+    monkeypatch.setattr(wt, "run_isolated_task", ok_isolated)
+    monkeypatch.setattr(wt, "apply_diffs_to_branch",
+                        lambda repo, br, items, tc=None: {"ok": True, "branch": br,
+                                                          "applied": [m for _d, m in items], "failed": [],
+                                                          "integration": {"ok": True, "output": "", "cmd": "p"}})
+    events = []
+    tool = {t.name: t for t in build_dev_tools(str(tmp_path), on_progress=events.append)}["dev_parallel"]
+    await tool.handler({"tasks": ["甲", "乙"]})
+    joined = "\n".join(events)
+    assert "并行隔离实现 2 个子任务" in joined                # 开工进度
+    assert "落分支" in joined and "集成测试" in joined        # 落分支 + 集成验证进度
+
+
+@pytest.mark.asyncio
+async def test_dev_auto_emits_progress_through_phases(monkeypatch, tmp_path):
+    import src.agents.worktree as wt
+    import src.agents.decompose as dec
+    from src.agents.main_agent import build_dev_tools
+    from src.orchestrator.task_analyzer import SubTask
+    a = SubTask(id="a", title="A")
+    b = SubTask(id="b", title="B", dependencies=["a"])
+
+    async def fake_decompose(task, **k):
+        return {"descriptions": ["实现 A"], "independent": [a], "deferred": [b], "total": 2}
+    monkeypatch.setattr(dec, "decompose_for_parallel", fake_decompose)
+
+    async def ok_isolated(repo, wid, desc, build, test_cmd=None):
+        return ("d\n", "c", {"ok": True, "output": ""})
+    monkeypatch.setattr(wt, "run_isolated_task", ok_isolated)
+    monkeypatch.setattr(wt, "apply_diffs_to_branch",
+                        lambda repo, br, items, tc=None: {"ok": True, "branch": br,
+                                                          "applied": [m for _d, m in items], "failed": [], "integration": None})
+
+    async def ok_dep(repo, wid, branch, desc, build, msg, test_cmd=None):
+        return {"ok": True, "conclusion": "c", "output": ""}
+    monkeypatch.setattr(wt, "run_dependent_on_branch", ok_dep)
+    monkeypatch.setattr(wt, "verify_branch", lambda repo, br, tc, wid: {"ok": True, "output": "", "cmd": "p"})
+
+    events = []
+    tool = {t.name: t for t in build_dev_tools(str(tmp_path), on_progress=events.append)}["dev_auto"]
+    await tool.handler({"task": "big"})
+    joined = "\n".join(events)
+    assert "分解任务" in joined                              # 分解阶段
+    assert "并行隔离实现" in joined                          # 独立批
+    assert "依赖接力实现「B」" in joined                     # 依赖接力（带子任务名）
+    assert "最终集成测试" in joined                          # 最终集成验证
+
+
+@pytest.mark.asyncio
+async def test_progress_callback_errors_dont_break_pipeline(monkeypatch, tmp_path):
+    import src.agents.worktree as wt
+    from src.agents.main_agent import build_dev_tools
+
+    async def ok_isolated(repo, wid, desc, build, test_cmd=None):
+        return ("d\n", "c", {"ok": True, "output": ""})
+    monkeypatch.setattr(wt, "run_isolated_task", ok_isolated)
+    monkeypatch.setattr(wt, "apply_diffs_to_branch",
+                        lambda repo, br, items, tc=None: {"ok": True, "branch": br,
+                                                          "applied": [m for _d, m in items], "failed": [],
+                                                          "integration": {"ok": True, "output": "", "cmd": "p"}})
+
+    def boom(_m):
+        raise RuntimeError("progress sink down")
+    tool = {t.name: t for t in build_dev_tools(str(tmp_path), on_progress=boom)}["dev_parallel"]
+    out = await tool.handler({"tasks": ["x"]})              # 进度回调抛错 → best-effort 吞掉，不影响流水线
+    assert "1 通过测试" in out
+
+
 @pytest.mark.asyncio
 async def test_build_test_tool_lets_subagent_self_check(tmp_path):
     import sys

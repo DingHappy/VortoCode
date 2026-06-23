@@ -319,17 +319,19 @@ def _load_headless_hooks(cwd: str):
         return None
 
 
-def _build_headless_agent(cwd, *, max_steps, on_tool, on_plan, confirm, llm=None):
+def _build_headless_agent(cwd, *, max_steps, on_tool, on_plan, confirm, llm=None, on_progress=None):
     """搭一个 headless 主 agent：工具集与网页 /agent 同源——
 
     只读（read_file/grep/list_files/analyze_repo）+ 隔离 dev（dev_isolated/dev_parallel，
     绿了落 vorto 分支、不碰主工作区）+ 受确认门控的 run_command/open_pr。带持久计划。
+    on_progress：dev 流水线进度回调（长任务边跑边播到 stderr，免得对着静默 prompt 干等）。
     """
     from src.agents.main_agent import (MainAgent, build_command_tool,
                                        build_dev_tools, build_pr_tool, build_read_tools,
                                        build_research_tools)
     from src.agents.project import load_project_instructions
-    tools = (build_read_tools(cwd) + build_research_tools(cwd) + build_dev_tools(cwd)
+    tools = (build_read_tools(cwd) + build_research_tools(cwd)
+             + build_dev_tools(cwd, on_progress=on_progress)
              + build_command_tool(cwd, confirm) + build_pr_tool(cwd, confirm))
     kwargs = {"plan_tool": True, "on_tool": on_tool, "on_plan": on_plan}
     proj = load_project_instructions(cwd)              # AGENTS.md/CLAUDE.md 项目约定进系统提示
@@ -382,8 +384,12 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
             print(f"\033[2m✗ 自动拒绝（需 --yes 放行）：{first}\033[0m", file=sys.stderr, flush=True)
         return False
 
+    def _progress(msg):                           # dev 流水线进度 → stderr（--quiet 静默）
+        if not quiet:
+            print(f"\033[2m{msg}\033[0m", file=sys.stderr, flush=True)
+
     agent = _build_headless_agent(cwd, max_steps=max_steps, on_tool=_on_tool,
-                                  on_plan=_on_plan, confirm=_confirm, llm=llm)
+                                  on_plan=_on_plan, confirm=_confirm, llm=llm, on_progress=_progress)
     if continue_session:                          # 续上一次 CLI 对话（claude -c 式）
         hist = _load_cli_history(cwd)
         if hist:
