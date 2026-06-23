@@ -93,6 +93,40 @@ async def test_build_write_tools_edit_write_and_escape_guard(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_edit_file_replace_all_and_uniqueness(tmp_path):
+    (tmp_path / "f.py").write_text("x = OLD\ny = OLD\nz = OLD\n", encoding="utf-8")
+    edit = {t.name: t for t in build_write_tools(str(tmp_path))}["edit_file"]
+
+    # 默认（不唯一）→ 拒绝、提示可 replace_all，且不改文件
+    r = await edit.handler({"path": "f.py", "old": "OLD", "new": "NEW"})
+    assert "出现 3 次" in r and "replace_all" in r
+    assert (tmp_path / "f.py").read_text(encoding="utf-8").count("OLD") == 3   # 没动
+
+    # replace_all=true → 一次替换全部
+    r2 = await edit.handler({"path": "f.py", "old": "OLD", "new": "NEW", "replace_all": True})
+    assert "替换 3 处" in r2
+    assert (tmp_path / "f.py").read_text(encoding="utf-8") == "x = NEW\ny = NEW\nz = NEW\n"
+
+
+@pytest.mark.asyncio
+async def test_edit_file_replace_all_accepts_string_flag(tmp_path):
+    # 提示式协议里 flag 是字符串 "true"（非原生 bool）也要认
+    (tmp_path / "g.py").write_text("A\nA\n", encoding="utf-8")
+    edit = {t.name: t for t in build_write_tools(str(tmp_path))}["edit_file"]
+    r = await edit.handler({"path": "g.py", "old": "A", "new": "B", "replace_all": "true"})
+    assert "替换 2 处" in r and (tmp_path / "g.py").read_text(encoding="utf-8") == "B\nB\n"
+
+
+@pytest.mark.asyncio
+async def test_edit_file_unique_still_replaces_one(tmp_path):
+    # 唯一时一切照旧：替 1 处（即便没传 replace_all）
+    (tmp_path / "h.py").write_text("only=ONE\nkeep=1\n", encoding="utf-8")
+    edit = {t.name: t for t in build_write_tools(str(tmp_path))}["edit_file"]
+    r = await edit.handler({"path": "h.py", "old": "ONE", "new": "TWO"})
+    assert "替换 1 处" in r and (tmp_path / "h.py").read_text(encoding="utf-8") == "only=TWO\nkeep=1\n"
+
+
+@pytest.mark.asyncio
 async def test_run_isolated_task_with_real_main_agent(monkeypatch, tmp_path):
     # 真集成：真 MainAgent（只读+写工具）+ 假 LLM，在隔离 worktree 里写文件 → 产出 diff、清理
     import src.llm.client as llmmod

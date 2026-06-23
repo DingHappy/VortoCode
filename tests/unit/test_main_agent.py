@@ -590,6 +590,13 @@ async def test_compact_disabled_keeps_full_history():
     assert agent._summary == "" and len(agent.history) > before   # 历史不被物理裁剪
 
 
+def test_truthy_helper_handles_bool_and_string():
+    from src.agents.main_agent import _truthy
+    assert _truthy(True) and _truthy("true") and _truthy("1") and _truthy("yes") and _truthy("all")
+    assert not _truthy(False) and not _truthy("false") and not _truthy("0")
+    assert not _truthy(None) and not _truthy("")          # 缺省/空 → 假（默认仅替 1 处）
+
+
 def test_compact_env_disable(monkeypatch):
     monkeypatch.setenv("VORTOCODE_COMPACT", "0")
     assert MainAgent([]).compact is False                     # env 关闭

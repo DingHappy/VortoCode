@@ -1316,8 +1316,10 @@ class VortoCodeTUI(App):
             return p if (p == base or base in p.parents) else None
 
         async def _t_edit_file(args: dict) -> str:
+            from src.agents.main_agent import _truthy
             rel = str(args.get("path", "")).strip().lstrip("@")
             old, new = str(args.get("old", "")), str(args.get("new", ""))
+            all_ = _truthy(args.get("replace_all", args.get("all")))
             if not rel:
                 return "缺少 path 参数。"
             if not old:
@@ -1331,16 +1333,18 @@ class VortoCodeTUI(App):
             cnt = text.count(old)
             if cnt == 0:
                 return f"在 {rel} 中找不到要替换的原文（old）。"
-            if cnt > 1:
-                return f"原文在 {rel} 中出现 {cnt} 次、不唯一；请给更长、唯一的 old。"
+            if cnt > 1 and not all_:
+                return (f"原文在 {rel} 中出现 {cnt} 次、不唯一；请给更长、唯一的 old，"
+                        f"或传 replace_all=true 一次替换全部 {cnt} 处。")
+            n = cnt if all_ else 1
             ok = await self._confirm_write(
-                f"build 模式：修改 {rel}？替换 1 处（{len(old)}→{len(new)} 字符）。改动只进工作区，不碰 main。")
+                f"build 模式：修改 {rel}？替换 {n} 处（{len(old)}→{len(new)} 字符）。改动只进工作区，不碰 main。")
             if not ok:
                 return f"用户取消了对 {rel} 的修改。"
-            p.write_text(text.replace(old, new, 1), encoding="utf-8")
+            p.write_text(text.replace(old, new, n), encoding="utf-8")
             self._show_diff(rel, old, new)        # 着色 diff 进对话区（仿 Claude Code）
-            self._chrome(f"[green]已修改 {rel}（请 review；/diff 或 git diff 看全）[/green]")
-            return f"已修改 {rel}（替换 1 处）。"
+            self._chrome(f"[green]已修改 {rel}（{n} 处；请 review；/diff 或 git diff 看全）[/green]")
+            return f"已修改 {rel}（替换 {n} 处）。"
 
         async def _t_write_file(args: dict) -> str:
             rel = str(args.get("path", "")).strip().lstrip("@")
@@ -1687,8 +1691,10 @@ class VortoCodeTUI(App):
             Tool("save_skill", "把一套可复用流程保存成新技能(SKILL.md)到用户技能目录；写操作，需确认，仅 build",
                  {"name": "技能名", "description": "一句话描述", "instructions": "技能正文（自然语言步骤）"},
                  _t_save_skill, read_only=False),
-            Tool("edit_file", "对仓库文件做精确字符串替换（old 必须唯一存在）；写操作，需确认，仅 build",
-                 {"path": "相对路径", "old": "要替换的原文(需唯一)", "new": "替换为"},
+            Tool("edit_file", "对仓库文件做精确字符串替换：默认 old 须唯一（替 1 处）；old 出现多次时传 "
+                 "replace_all=true 一次替换全部。写操作，需确认，仅 build",
+                 {"path": "相对路径", "old": "要替换的原文", "new": "替换为",
+                  "replace_all": "可选，true=替换全部出现处"},
                  _t_edit_file, read_only=False),
             Tool("write_file", "新建或覆盖仓库文件；写操作，需确认，仅 build",
                  {"path": "相对路径", "content": "文件全部内容"}, _t_write_file, read_only=False),
