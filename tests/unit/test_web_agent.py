@@ -224,6 +224,12 @@ def test_web_agent_has_progress_holder():
     assert getattr(agent, "_web_progress_holder", None) == {"fn": None}
 
 
+def test_web_agent_includes_web_fetch():
+    from src.web.routers import realtime
+    agent = realtime._new_agent()                       # 联网读取（查文档/issue）——三端都接
+    assert "web_fetch" in agent.tools and agent.tools["web_fetch"].read_only is True
+
+
 @pytest.mark.asyncio
 async def test_ws_confirm_round_trip_allow_and_deny():
     from src.web.routers import realtime

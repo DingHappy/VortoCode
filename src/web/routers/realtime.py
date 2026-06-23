@@ -115,7 +115,7 @@ def _new_agent():
     import os
     from src.agents.main_agent import (MainAgent, build_command_tool,
                                         build_dev_tools, build_pr_tool, build_read_tools,
-                                        build_research_tools)
+                                        build_research_tools, build_web_tools)
     from src.web.artifacts import build_artifact_tools
     # 制品/dev_isolated 靠隔离 + build 门控；run_command 高危 → 走 WS 确认（confirm_holder 每回合
     # 重绑到当前连接，见 _run_agent_turn）。无回合上下文时 confirm 默认拒绝。
@@ -133,8 +133,8 @@ def _new_agent():
             fn(msg)
 
     from src.agents.project import load_project_instructions
-    tools = (build_read_tools(cwd) + build_research_tools(cwd) + build_artifact_tools(cwd)
-             + build_dev_tools(cwd, on_progress=_progress)
+    tools = (build_read_tools(cwd) + build_research_tools(cwd) + build_web_tools()
+             + build_artifact_tools(cwd) + build_dev_tools(cwd, on_progress=_progress)
              + build_command_tool(cwd, _confirm) + build_pr_tool(cwd, _confirm))
     extra = load_project_instructions(cwd) or None  # AGENTS.md/CLAUDE.md 项目约定进系统提示
     agent = MainAgent(tools, plan_tool=True, extra_system=extra)  # 网页主 agent：持久计划 + 隔离 dev + 受 WS 确认的 shell
