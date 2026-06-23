@@ -106,6 +106,13 @@ def parse_tool_call(text: str) -> Optional[tuple[str, dict]]:
     return None
 
 
+def _truthy(v: Any) -> bool:
+    """宽松真值：兼容原生 function-calling 的 bool 与提示式协议的字符串（"true"/"1"/"yes"…）。"""
+    if isinstance(v, bool):
+        return v
+    return str(v).strip().lower() in ("1", "true", "yes", "y", "t", "all")
+
+
 def _fmt_args(args: dict) -> str:
     """把工具参数压成一行短串，供 UI 展示。"""
     parts = []
@@ -847,6 +854,7 @@ def build_write_tools(root: str) -> list[Tool]:
     async def _edit_file(args: dict) -> str:
         rel = str(args.get("path", "")).strip()
         old, new = str(args.get("old", "")), str(args.get("new", ""))
+        all_ = _truthy(args.get("replace_all", args.get("all")))
         p = _safe(rel)
         if p is None:
             return f"路径越界或非法: {rel}"
@@ -858,10 +866,12 @@ def build_write_tools(root: str) -> list[Tool]:
         cnt = text.count(old)
         if cnt == 0:
             return f"在 {rel} 中找不到要替换的原文（old）。"
-        if cnt > 1:
-            return f"原文在 {rel} 中出现 {cnt} 次、不唯一；请给更长、唯一的 old。"
-        p.write_text(text.replace(old, new, 1), encoding="utf-8")
-        return f"已修改 {rel}（替换 1 处）。"
+        if cnt > 1 and not all_:
+            return (f"原文在 {rel} 中出现 {cnt} 次、不唯一；请给更长、唯一的 old，"
+                    f"或传 replace_all=true 一次替换全部 {cnt} 处。")
+        n = cnt if all_ else 1
+        p.write_text(text.replace(old, new, n), encoding="utf-8")
+        return f"已修改 {rel}（替换 {n} 处）。"
 
     async def _write_file(args: dict) -> str:
         rel = str(args.get("path", "")).strip()
@@ -875,8 +885,10 @@ def build_write_tools(root: str) -> list[Tool]:
         return f"已{verb} {rel}（{len(content)} 字符）。"
 
     return [
-        Tool("edit_file", "精确字符串替换（old 须唯一存在）；在隔离工作区改文件",
-             {"path": "相对路径", "old": "要替换的原文(需唯一)", "new": "替换为"},
+        Tool("edit_file", "精确字符串替换：默认 old 须唯一存在（替 1 处）；old 出现多次时传 "
+             "replace_all=true 一次替换全部（批量改名/统一字面量省去逐处加上下文）。在隔离工作区改文件",
+             {"path": "相对路径", "old": "要替换的原文", "new": "替换为",
+              "replace_all": "可选，true=替换全部出现处（默认仅在唯一时替 1 处）"},
              _edit_file, read_only=False),
         Tool("write_file", "新建或覆盖文件；在隔离工作区改文件",
              {"path": "相对路径", "content": "文件全部内容"}, _write_file, read_only=False),
