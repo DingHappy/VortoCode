@@ -586,6 +586,103 @@ async def test_dev_auto_reports_final_integration_failure(monkeypatch, tmp_path)
     assert "集成后全量测试未过" in out and "FINAL_INTEG_RED" in out and "分支保留待修" in out
 
 
+# ---- 失败子任务自修复重试 ----
+
+@pytest.mark.asyncio
+async def test_dev_parallel_self_repairs_on_failure(monkeypatch, tmp_path):
+    # 子任务第一次自测红 → 带失败反馈、换全新 worktree 自动重试 → 第二次绿 → 算通过
+    import src.agents.worktree as wt
+    from src.agents.main_agent import build_dev_tools
+    state = {"n": 0, "descs": []}
+
+    async def flaky_isolated(repo, wid, desc, build, test_cmd=None):
+        state["n"] += 1
+        state["descs"].append(desc)
+        if state["n"] == 1:
+            return ("diff\n", "c", {"ok": False, "output": "FAILED_ONCE_XYZ"})   # 第一次红
+        return ("diff\n", "c", {"ok": True, "output": ""})                        # 修复后绿
+    monkeypatch.setattr(wt, "run_isolated_task", flaky_isolated)
+    monkeypatch.setattr(wt, "apply_diffs_to_branch",
+                        lambda repo, br, items, tc=None: {"ok": True, "branch": br,
+                                                          "applied": [m for _d, m in items], "failed": [],
+                                                          "integration": {"ok": True, "output": "", "cmd": "p"}})
+    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_parallel"]
+    out = await tool.handler({"tasks": ["实现X"]})
+    assert state["n"] == 2                                   # 红 → 自动重试一次
+    assert "FAILED_ONCE_XYZ" in state["descs"][1]           # 第二次把失败输出拼进了描述（定向修复）
+    assert "1 通过测试" in out and "修复 1 次后" in out       # 修复后算通过、标了修复次数
+
+
+@pytest.mark.asyncio
+async def test_dev_parallel_all_attempts_fail_reports_red(monkeypatch, tmp_path):
+    import src.agents.worktree as wt
+    from src.agents.main_agent import build_dev_tools
+    state = {"n": 0}
+
+    async def always_red(repo, wid, desc, build, test_cmd=None):
+        state["n"] += 1
+        return ("diff\n", "c", {"ok": False, "output": "STILL_RED"})
+    monkeypatch.setattr(wt, "run_isolated_task", always_red)
+    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_parallel"]
+    out = await tool.handler({"tasks": ["x"]})
+    assert state["n"] == 2                                   # 默认尝试 2 次（1 初始 + 1 修复）后放弃
+    assert "无通过测试的改动" in out and "试了 2 次" in out
+
+
+@pytest.mark.asyncio
+async def test_dev_attempts_env_override(monkeypatch, tmp_path):
+    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "3")
+    import src.agents.worktree as wt
+    from src.agents.main_agent import build_dev_tools
+    state = {"n": 0}
+
+    async def always_red(repo, wid, desc, build, test_cmd=None):
+        state["n"] += 1
+        return ("diff\n", "c", {"ok": False, "output": "R"})
+    monkeypatch.setattr(wt, "run_isolated_task", always_red)
+    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_parallel"]
+    await tool.handler({"tasks": ["x"]})
+    assert state["n"] == 3                                   # env 把尝试次数调到 3
+
+
+@pytest.mark.asyncio
+async def test_dev_auto_dependent_self_repairs(monkeypatch, tmp_path):
+    # dev_auto 依赖接力：某依赖子任务第一次红 → 带失败反馈自修复重试 → 第二次绿
+    import src.agents.worktree as wt
+    import src.agents.decompose as dec
+    from src.agents.main_agent import build_dev_tools
+    from src.orchestrator.task_analyzer import SubTask
+    a = SubTask(id="a", title="A")
+    b = SubTask(id="b", title="B", dependencies=["a"])
+
+    async def fake_decompose(task, **k):
+        return {"descriptions": ["实现 A"], "independent": [a], "deferred": [b], "total": 2}
+    monkeypatch.setattr(dec, "decompose_for_parallel", fake_decompose)
+
+    async def fake_isolated(repo, wid, desc, build, test_cmd=None):
+        return ("d\n", "c", {"ok": True, "output": ""})
+    monkeypatch.setattr(wt, "run_isolated_task", fake_isolated)
+    monkeypatch.setattr(wt, "apply_diffs_to_branch",
+                        lambda repo, br, items, tc=None: {"ok": True, "branch": br,
+                                                          "applied": [m for _d, m in items], "failed": [], "integration": None})
+    state = {"n": 0, "descs": []}
+
+    async def flaky_dep(repo, wid, branch, desc, build, msg, test_cmd=None):
+        state["n"] += 1
+        state["descs"].append(desc)
+        if state["n"] == 1:
+            return {"ok": False, "conclusion": "c", "output": "DEP_FAILED_ONCE"}
+        return {"ok": True, "conclusion": "c", "output": ""}
+    monkeypatch.setattr(wt, "run_dependent_on_branch", flaky_dep)
+    monkeypatch.setattr(wt, "verify_branch", lambda repo, br, tc, wid: {"ok": True, "output": "", "cmd": "p"})
+
+    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_auto"]
+    out = await tool.handler({"task": "big"})
+    assert state["n"] == 2                                   # 依赖红 → 自修复重试
+    assert "DEP_FAILED_ONCE" in state["descs"][1]           # 第二次带失败反馈
+    assert "✅ 已接力提交（修复 1 次后）" in out
+
+
 @pytest.mark.asyncio
 async def test_build_test_tool_lets_subagent_self_check(tmp_path):
     import sys
