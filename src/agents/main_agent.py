@@ -1011,6 +1011,54 @@ def build_dev_tools(repo_root: str) -> list[Tool]:
     ]
 
 
+def build_research_tools(repo_root: str, *, llm: Any = None,
+                         max_steps: int = 12, max_parallel: int = 5) -> list[Tool]:
+    """UI 无关的只读子 agent 委派工具（task / research_parallel）——给 Web/CLI 用。
+
+    把一个大型只读调查甩给一个**只带 read_tools** 的隔离子 agent：它在独立上下文里
+    读代码/搜仓库、返回简洁结论，**不挤占也不污染主 agent 的对话历史**（大调查不再把
+    主上下文撑爆——配合对话压缩，是"扛大工程量"的另一条腿）。子 agent 无 task/写工具
+    → 不会递归嵌套、绝不改文件。TUI 另有带进度回显的版本（self._chrome），此处是无 UI 版。
+    llm 可注入（便于测试/共享客户端）；不传则子 agent 各自惰性建客户端（同 TUI）。
+    """
+    async def _spawn(desc: str) -> str:
+        # 子 agent 只读：mode 用 plan（read_tools 里无写工具，权限门对它无差别）。
+        sub = MainAgent(build_read_tools(repo_root), llm=llm, max_steps=max_steps, extra_system=(
+            "你是只读研究子 agent：只用工具调研代码/仓库并返回**简洁结论**，绝不修改任何东西。"
+            "读够信息就尽快收口，别把预算耗在重复读取上。"))
+        try:
+            return (await sub.run_turn(desc, mode="plan")) or "(无结论)"
+        except Exception as e:  # noqa: BLE001
+            return f"(子任务出错: {e})"
+
+    async def _task(args: dict) -> str:
+        desc = str(args.get("description") or args.get("task") or "").strip()
+        if not desc:
+            return "task 需要 description（要委派给只读子 agent 的研究/调研子任务）。"
+        return await _spawn(desc)
+
+    async def _research_parallel(args: dict) -> str:
+        import asyncio
+        tasks = args.get("tasks") or args.get("descriptions") or []
+        if isinstance(tasks, str):
+            tasks = [tasks]
+        tasks = [str(t).strip() for t in tasks if str(t).strip()][:max_parallel]
+        if not tasks:
+            return "research_parallel 需要 tasks（字符串列表，每项一个独立子问题）。"
+        results = await asyncio.gather(*[_spawn(t) for t in tasks])
+        return "\n\n".join(f"【{t}】\n{r}" for t, r in zip(tasks, results))
+
+    return [
+        Tool("task",
+             "把一个独立的研究/调研子任务委派给只读子 agent（隔离上下文、不污染主对话），返回它的结论；"
+             "适合大型只读调查（读一堆文件/摸清某子系统）——别在主对话里逐个读，委派出去省上下文",
+             {"description": "要委派给子 agent 的研究/调研子任务"}, _task, read_only=True),
+        Tool("research_parallel",
+             "并行委派多个只读子 agent 同时研究不同**相互独立**的子问题，汇总各自结论（最多 5 个）",
+             {"tasks": "独立子问题字符串列表"}, _research_parallel, read_only=True),
+    ]
+
+
 def build_command_tool(repo_root: str, confirm) -> list[Tool]:
     """UI 无关的 run_command（给 Web 用，注入 async confirm 门）。
 
