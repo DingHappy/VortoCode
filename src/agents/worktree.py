@@ -192,3 +192,58 @@ async def run_isolated_task(repo_root, wid: str, description: str,
         return diff, conclusion, verification
     finally:
         remove_worktree(repo_root, path)
+
+
+def ensure_branch(repo_root, branch: str, base: str = "HEAD") -> None:
+    """branch 不存在则在 base 处建（不切换、不碰工作区/当前分支）。幂等。给依赖子任务一个落脚的基底分支。"""
+    exists = _git(repo_root, "rev-parse", "--verify", "--quiet", branch, check=False).returncode == 0
+    if not exists:
+        _git(repo_root, "branch", branch, base, check=False)
+
+
+async def run_dependent_on_branch(repo_root, wid: str, branch: str, description: str,
+                                  build_agent: Callable[[str], object], message: str,
+                                  test_cmd: Optional[list] = None) -> dict:
+    """在 branch **之上**跑一个有依赖的子任务（接力）：worktree 检出 branch（于是子 agent 看得见
+    前面已落的改动）→ 实现+自测 → 绿则**就地 commit 到 branch**（推进 tip，供下一个依赖子任务看见）；
+    红/无改动则丢弃、branch 不动。返回 {ok, conclusion, output}。绝不碰主工作区/主分支。
+    """
+    path = _worktrees_dir(repo_root) / wid
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        remove_worktree(repo_root, path)
+    add = _git(repo_root, "worktree", "add", str(path), branch, check=False)   # 检出 branch（非 detached）
+    if add.returncode != 0:
+        return {"ok": False, "conclusion": "", "output": "worktree add 失败: " + (add.stderr or "").strip()[:200]}
+    try:
+        agent = build_agent(str(path))
+        conclusion = await agent.run_turn(description, mode="build", emit=lambda _t: None)
+        ver = (await asyncio.to_thread(run_tests, path, test_cmd)) if test_cmd else {"ok": True, "output": ""}
+        if not ver["ok"]:                                  # 自测没过：不提交，branch 保持原样
+            return {"ok": False, "conclusion": conclusion, "output": ver["output"][-1500:]}
+        _git(path, "add", "-A", check=False)
+        cm = _git(path, "commit", "-m", message, check=False)
+        if cm.returncode != 0:                             # 无改动 / 提交失败
+            return {"ok": False, "conclusion": conclusion,
+                    "output": "无改动或提交失败: " + (cm.stdout + cm.stderr).strip()[:200]}
+        return {"ok": True, "conclusion": conclusion, "output": ""}
+    finally:
+        remove_worktree(repo_root, path)
+
+
+def verify_branch(repo_root, branch: str, test_cmd: list, wid: str) -> dict:
+    """在临时 worktree 检出 branch 跑一遍测试做**最终集成验证**，返回 {ok, output, cmd}；清理 worktree。
+
+    （dev_auto 把并行批 + 依赖接力都落到同一分支后，用它对整条分支做一次权威全量复验。）
+    """
+    path = _worktrees_dir(repo_root) / wid
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        remove_worktree(repo_root, path)
+    add = _git(repo_root, "worktree", "add", str(path), branch, check=False)
+    if add.returncode != 0:
+        return {"ok": False, "output": "worktree add 失败: " + (add.stderr or "").strip()[:200], "cmd": ""}
+    try:
+        return run_tests(path, test_cmd)
+    finally:
+        remove_worktree(repo_root, path)

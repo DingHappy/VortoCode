@@ -428,6 +428,164 @@ async def test_dev_parallel_reports_integration_pass_and_passes_test_cmd(monkeyp
     assert seen["test_cmd"] is not None                 # 集成验证用的 test_cmd 已传入
 
 
+# ---- dev_auto 依赖接力：worktree 新原语（真实 git）----
+
+@pytest.mark.asyncio
+async def test_ensure_branch_creates_at_head_idempotent(tmp_path):
+    _init_repo(tmp_path)
+
+    def git(*a):
+        return subprocess.run(["git", "-C", str(tmp_path), *a], capture_output=True, text=True)
+    worktree.ensure_branch(str(tmp_path), "vorto/base")
+    assert "vorto/base" in git("branch", "--list", "vorto/base").stdout
+    assert git("rev-parse", "vorto/base").stdout.strip() == git("rev-parse", "HEAD").stdout.strip()
+    worktree.ensure_branch(str(tmp_path), "vorto/base")             # 再来一次：幂等不报错
+    assert "vorto/base" in git("branch", "--list", "vorto/base").stdout
+
+
+@pytest.mark.asyncio
+async def test_run_dependent_on_branch_green_commits_and_advances_tip(tmp_path):
+    _init_repo(tmp_path)
+
+    def git(*a):
+        return subprocess.run(["git", "-C", str(tmp_path), *a], capture_output=True, text=True)
+    worktree.ensure_branch(str(tmp_path), "vorto/dep")
+    before = git("rev-parse", "vorto/dep").stdout.strip()
+
+    class FakeAgent:
+        def __init__(self, root):
+            self.root = root
+
+        async def run_turn(self, desc, mode, emit):
+            from pathlib import Path
+            (Path(self.root) / "dep.py").write_text("v = 1\n")
+            return "做了"
+
+    r = await worktree.run_dependent_on_branch(
+        str(tmp_path), "wt-dep", "vorto/dep", "加 dep", lambda root: FakeAgent(root),
+        "dep commit", test_cmd=None)
+    assert r["ok"] is True
+    assert git("rev-parse", "vorto/dep").stdout.strip() != before    # tip 推进
+    assert "dep.py" in git("ls-tree", "-r", "--name-only", "vorto/dep").stdout
+    assert "dep commit" in git("log", "--oneline", "vorto/dep").stdout
+    assert not (tmp_path / "dep.py").exists()                        # 主工作区没碰
+    assert not (tmp_path / ".vortocode" / "worktrees" / "wt-dep").exists()   # worktree 清理
+
+
+@pytest.mark.asyncio
+async def test_run_dependent_on_branch_red_does_not_commit(tmp_path):
+    import sys
+    _init_repo(tmp_path)
+
+    def git(*a):
+        return subprocess.run(["git", "-C", str(tmp_path), *a], capture_output=True, text=True)
+    (tmp_path / "test_fail.py").write_text("def test_x():\n    assert False\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-q", "-m", "failing test"],
+                   check=True, capture_output=True)
+    worktree.ensure_branch(str(tmp_path), "vorto/depred")
+    before = git("rev-parse", "vorto/depred").stdout.strip()
+
+    class FakeAgent:
+        def __init__(self, root):
+            self.root = root
+
+        async def run_turn(self, desc, mode, emit):
+            from pathlib import Path
+            (Path(self.root) / "x.py").write_text("y = 1\n")
+            return "做了"
+
+    test_cmd = [sys.executable, "-m", "pytest", "-q", "test_fail.py"]
+    r = await worktree.run_dependent_on_branch(
+        str(tmp_path), "wt-r", "vorto/depred", "改点东西", lambda root: FakeAgent(root),
+        "should not commit", test_cmd)
+    assert r["ok"] is False                                          # 自测红
+    assert git("rev-parse", "vorto/depred").stdout.strip() == before  # 没提交、tip 不动
+    assert "x.py" not in git("ls-tree", "-r", "--name-only", "vorto/depred").stdout
+
+
+@pytest.mark.asyncio
+async def test_verify_branch_runs_tests_and_cleans_up(tmp_path):
+    import sys
+    _init_repo(tmp_path)
+
+    def git(*a):
+        subprocess.run(["git", "-C", str(tmp_path), *a], check=True, capture_output=True)
+    (tmp_path / "test_ok.py").write_text("def test_ok():\n    assert True\n")
+    git("add", "-A"); git("commit", "-q", "-m", "add test")
+    worktree.ensure_branch(str(tmp_path), "vorto/ver")
+    test_cmd = [sys.executable, "-m", "pytest", "-q", "test_ok.py"]
+    res = worktree.verify_branch(str(tmp_path), "vorto/ver", test_cmd, "wt-ver")
+    assert res["ok"] is True
+    assert not (tmp_path / ".vortocode" / "worktrees" / "wt-ver").exists()
+
+
+@pytest.mark.asyncio
+async def test_dev_auto_independent_then_dependent_topo_then_verify(monkeypatch, tmp_path):
+    # dev_auto 端到端编排：独立批并行 → 依赖批按拓扑序接力(B→C) → 最终集成验证 → 如实汇报
+    import src.agents.worktree as wt
+    import src.agents.decompose as dec
+    from src.agents.main_agent import build_dev_tools
+    from src.orchestrator.task_analyzer import SubTask
+
+    a = SubTask(id="a", title="A")
+    b = SubTask(id="b", title="B", dependencies=["a"])
+    c = SubTask(id="c", title="C", dependencies=["b"])
+
+    async def fake_decompose(task, **k):
+        return {"descriptions": ["实现 A"], "independent": [a], "deferred": [c, b], "total": 3}
+    monkeypatch.setattr(dec, "decompose_for_parallel", fake_decompose)
+
+    async def fake_isolated(repo, wid, desc, build, test_cmd=None):
+        return ("diff\n", "ok", {"ok": True, "output": "", "cmd": "pytest"})
+    monkeypatch.setattr(wt, "run_isolated_task", fake_isolated)
+    monkeypatch.setattr(wt, "apply_diffs_to_branch",
+                        lambda repo, br, items, tc=None: {"ok": True, "branch": br,
+                                                          "applied": [m for _d, m in items],
+                                                          "failed": [], "integration": None})
+    calls = []
+
+    async def fake_dep(repo, wid, branch, desc, build, msg, test_cmd=None):
+        calls.append(desc)
+        return {"ok": True, "conclusion": "done", "output": ""}
+    monkeypatch.setattr(wt, "run_dependent_on_branch", fake_dep)
+    monkeypatch.setattr(wt, "verify_branch",
+                        lambda repo, br, tc, wid: {"ok": True, "output": "", "cmd": "pytest"})
+
+    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_auto"]
+    out = await tool.handler({"task": "做个大功能"})
+    assert "独立批" in out and "依赖接力" in out and "集成后全量测试通过" in out
+    assert len(calls) == 2 and "B" in calls[0] and "C" in calls[1]   # 拓扑序：B 先于 C（虽输入是 c,b）
+
+
+@pytest.mark.asyncio
+async def test_dev_auto_reports_final_integration_failure(monkeypatch, tmp_path):
+    import src.agents.worktree as wt
+    import src.agents.decompose as dec
+    from src.agents.main_agent import build_dev_tools
+    from src.orchestrator.task_analyzer import SubTask
+
+    a = SubTask(id="a", title="A")
+
+    async def fake_decompose(task, **k):
+        return {"descriptions": ["实现 A"], "independent": [a], "deferred": [], "total": 1}
+    monkeypatch.setattr(dec, "decompose_for_parallel", fake_decompose)
+
+    async def fake_isolated(repo, wid, desc, build, test_cmd=None):
+        return ("diff\n", "ok", {"ok": True, "output": "", "cmd": "pytest"})
+    monkeypatch.setattr(wt, "run_isolated_task", fake_isolated)
+    monkeypatch.setattr(wt, "apply_diffs_to_branch",
+                        lambda repo, br, items, tc=None: {"ok": True, "branch": br,
+                                                          "applied": [m for _d, m in items],
+                                                          "failed": [], "integration": None})
+    monkeypatch.setattr(wt, "verify_branch",
+                        lambda repo, br, tc, wid: {"ok": False, "output": "FINAL_INTEG_RED", "cmd": "pytest"})
+
+    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_auto"]
+    out = await tool.handler({"task": "做个功能"})
+    assert "集成后全量测试未过" in out and "FINAL_INTEG_RED" in out and "分支保留待修" in out
+
+
 @pytest.mark.asyncio
 async def test_build_test_tool_lets_subagent_self_check(tmp_path):
     import sys

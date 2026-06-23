@@ -67,3 +67,37 @@ def test_dev_auto_tool_registered(tmp_path):
     from src.agents.main_agent import build_dev_tools
     by = {t.name: t for t in build_dev_tools(str(tmp_path))}
     assert "dev_auto" in by and by["dev_auto"].read_only is False
+
+
+def test_describe_subtask_renders_title_desc_acceptance():
+    from src.agents.decompose import describe_subtask
+    s = SubTask(id="a", title="加缓存", description="给 X 加 LRU",
+                acceptance_criteria=["命中率>90%", "无内存泄漏"])
+    out = describe_subtask(s)
+    assert "加缓存：给 X 加 LRU" in out and "命中率>90%" in out and "无内存泄漏" in out
+
+
+def test_topo_order_puts_deps_first():
+    from src.agents.decompose import topo_order
+    a = SubTask(id="a", title="A")                                  # 无依赖
+    b = SubTask(id="b", title="B", dependencies=["a"])              # 依赖 A
+    c = SubTask(id="c", title="C", dependencies=["b"])              # 依赖 B
+    ordered = topo_order([c, b, a])                                 # 故意乱序输入
+    assert [s.id for s in ordered] == ["a", "b", "c"]              # 拓扑序：A→B→C
+
+
+def test_topo_order_respects_satisfied_ids():
+    from src.agents.decompose import topo_order
+    # B 依赖 a；a 已在 satisfied（独立批做过）→ B 可立即排上
+    b = SubTask(id="b", title="B", dependencies=["a"])
+    ordered = topo_order([b], satisfied_ids={"a"})
+    assert [s.id for s in ordered] == ["b"]
+
+
+def test_topo_order_unsatisfiable_appended_not_hang():
+    from src.agents.decompose import topo_order
+    # 环 / 依赖缺失 → best-effort 附末尾，不死循环
+    x = SubTask(id="x", title="X", dependencies=["y"])
+    y = SubTask(id="y", title="Y", dependencies=["x"])
+    ordered = topo_order([x, y])
+    assert {s.id for s in ordered} == {"x", "y"} and len(ordered) == 2

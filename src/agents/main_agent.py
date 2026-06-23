@@ -965,11 +965,50 @@ def build_dev_tools(repo_root: str) -> list[Tool]:
         return (f"❌ 隔离实现完成但测试未过。失败输出尾部：\n{tail}\n"
                 f"据此修正后重试（再调 dev_isolated）。diff {nlines} 行，未落地。结论：{conclusion}")
 
+    def _make_writer(test_cmd):
+        """造一个'隔离实现子 agent'工厂：worktree 里 read+write+run_tests、自测到通过再交。"""
+        def _mk(_desc):
+            def _b(wt):
+                return MainAgent(
+                    build_read_tools(wt) + build_write_tools(wt) + [build_test_tool(wt, test_cmd)],
+                    max_steps=16,
+                    extra_system=("你是隔离工作区里的实现子 agent：用 read/grep 看代码、edit_file/"
+                                  "write_file 实现任务；改完务必 run_tests 自测直到通过。只动相关文件。"))
+            return _b
+        return _mk
+
+    async def _implement_parallel(descs, test_cmd):
+        """并行隔离实现 descs，返回 (greens, lines)。greens=[{desc,diff}]（已自测过），lines=逐条 ✅/❌。"""
+        import asyncio
+        import uuid
+        from src.agents.worktree import run_isolated_task
+        mk = _make_writer(test_cmd)
+
+        async def _one(desc):
+            wid = "wt-" + uuid.uuid4().hex[:8]
+            try:
+                diff, _c, ver = await run_isolated_task(repo_root, wid, desc, mk(desc), test_cmd=test_cmd)
+                return {"desc": desc, "diff": diff, "ver": ver}
+            except Exception as e:  # noqa: BLE001
+                return {"desc": desc, "diff": "", "ver": None, "err": str(e)}
+
+        results = await asyncio.gather(*[_one(t) for t in descs])
+        lines, greens = [], []
+        for r in results:
+            if not (r.get("diff") or "").strip():
+                lines.append(f"· {r['desc']}：无改动/出错")
+            elif r["ver"] and r["ver"]["ok"]:
+                lines.append(f"· {r['desc']}：✅ 通过")
+                greens.append(r)
+            else:
+                lines.append(f"· {r['desc']}：❌ 未过")
+        return greens, lines
+
     async def _dev_parallel(args: dict) -> str:
         import asyncio
         import sys
         import uuid
-        from src.agents.worktree import apply_diffs_to_branch, run_isolated_task
+        from src.agents.worktree import apply_diffs_to_branch
 
         tasks = args.get("tasks") or args.get("descriptions") or []
         if isinstance(tasks, str):
@@ -980,33 +1019,7 @@ def build_dev_tools(repo_root: str) -> list[Tool]:
         sel = str(args.get("test") or "").strip()
         test_cmd = [sys.executable, "-m", "pytest", "-q", sel or "tests/"]
 
-        def _mk(_desc):
-            def _b(wt):
-                return MainAgent(
-                    build_read_tools(wt) + build_write_tools(wt) + [build_test_tool(wt, test_cmd)],
-                    max_steps=16,
-                    extra_system=("你是隔离工作区里的实现子 agent：用 read/grep 看代码、edit_file/"
-                                  "write_file 实现任务；改完务必 run_tests 自测直到通过。只动相关文件。"))
-            return _b
-
-        async def _one(desc):
-            wid = "wt-" + uuid.uuid4().hex[:8]
-            try:
-                diff, _c, ver = await run_isolated_task(repo_root, wid, desc, _mk(desc), test_cmd=test_cmd)
-                return {"desc": desc, "diff": diff, "ver": ver}
-            except Exception as e:  # noqa: BLE001
-                return {"desc": desc, "diff": "", "ver": None, "err": str(e)}
-
-        results = await asyncio.gather(*[_one(t) for t in tasks])
-        lines, greens = [], []
-        for r in results:
-            if not (r.get("diff") or "").strip():
-                lines.append(f"· {r['desc']}：无改动/出错")
-            elif r["ver"] and r["ver"]["ok"]:
-                lines.append(f"· {r['desc']}：✅ 通过")
-                greens.append(r)
-            else:
-                lines.append(f"· {r['desc']}：❌ 未过")
+        greens, lines = await _implement_parallel(tasks, test_cmd)
         if not greens:
             return f"并行 {len(tasks)} 个子任务：无通过测试的改动。\n" + "\n".join(lines)
         branch = "vorto/parallel-" + uuid.uuid4().hex[:8]
@@ -1030,27 +1043,74 @@ def build_dev_tools(repo_root: str) -> list[Tool]:
         return head + note + "\n" + "\n".join(lines)
 
     async def _dev_auto(args: dict) -> str:
-        """自动分解一个大任务 → 取无依赖的独立子任务 → 走 dev_parallel 并行隔离实现+验证+落分支。"""
+        """自动分解大任务 → 无依赖子任务并行隔离实现 → **有依赖的按拓扑序在同一分支上逐个接力实现**
+        （检出该分支、看得见前面的改动、自测绿才提交、推进 tip 给下一个看）→ 最后对整条分支跑一遍
+        集成测试。端到端把大任务做完，不再只做独立那一半就停。全程不碰 main/工作区。"""
+        import asyncio
+        import sys
+        import uuid
+        from src.agents.decompose import decompose_for_parallel, describe_subtask, topo_order
+        from src.agents.worktree import (apply_diffs_to_branch, ensure_branch,
+                                          run_dependent_on_branch, verify_branch)
+
         task = str(args.get("task") or args.get("goal") or args.get("description") or "").strip()
         if not task:
-            return "dev_auto 需要 task（要自动分解并并行实现的大任务）。"
-        from src.agents.decompose import decompose_for_parallel
+            return "dev_auto 需要 task（要自动分解并实现的大任务）。"
+        sel = str(args.get("test") or "").strip()
+        test_cmd = [sys.executable, "-m", "pytest", "-q", sel or "tests/"]
         try:
             plan = await decompose_for_parallel(task)
         except Exception as e:  # noqa: BLE001
             return f"(任务分解出错: {e}；可改用 dev_parallel 手动给独立子任务)"
-        descs = plan["descriptions"]
-        if not descs:
-            return (f"分解出 {plan['total']} 个子任务，但没有可并行的独立项（多为链式依赖）；"
-                    f"建议用 dev_isolated 逐个做，或自己拆成独立块喂 dev_parallel。")
-        head = [f"已把任务分解为 {plan['total']} 个子任务，{len(descs)} 个相互独立 → 并行隔离实现："]
-        for d in descs:
-            head.append(f"  • {d[:70]}")
-        if plan["deferred"]:
-            names = "、".join((getattr(s, "title", "") or "?") for s in plan["deferred"])
-            head.append(f"（{len(plan['deferred'])} 个有依赖、本轮不并行，需后续处理：{names}）")
-        body = await _dev_parallel({"tasks": descs, "test": args.get("test")})
-        return "\n".join(head) + "\n\n" + body
+        descs, deferred = plan["descriptions"], plan["deferred"]
+        if not descs and not deferred:
+            return f"分解出 {plan['total']} 个子任务，但没拿到可实现的描述；建议用 dev_isolated 逐个做。"
+
+        branch = "vorto/auto-" + uuid.uuid4().hex[:8]
+        out = [f"已把任务分解为 {plan['total']} 个子任务：{len(descs)} 个独立(并行) + {len(deferred)} 个有依赖(接力)。"]
+
+        # 1) 独立子任务并行隔离实现 → 落到 branch（此处不跑集成，留到最后整条一起验）
+        greens, lines = (await _implement_parallel(descs, test_cmd)) if descs else ([], [])
+        if greens:
+            await asyncio.to_thread(
+                apply_diffs_to_branch, repo_root, branch,
+                [(g["diff"], f"dev_auto: {g['desc']}") for g in greens], None)
+        elif deferred:
+            await asyncio.to_thread(ensure_branch, repo_root, branch, "HEAD")  # 无绿独立块也给依赖一个基底
+        if descs:
+            out.append(f"\n【独立批】{len(greens)}/{len(descs)} 通过：")
+            out.extend("  " + ln for ln in lines)
+
+        # 2) 依赖子任务：拓扑序，逐个在 branch 之上接力实现+自测，绿则就地提交（推进 branch 供下一个看见）
+        dep_done = 0
+        if deferred:
+            out.append("\n【依赖接力】按拓扑序在分支上逐个实现：")
+            satisfied = set(getattr(s, "id", None) for s in plan["independent"])  # 独立批视为已满足(best-effort)
+            mk = _make_writer(test_cmd)
+            for s in topo_order(deferred, satisfied):
+                wid = "wt-" + uuid.uuid4().hex[:8]
+                r = await run_dependent_on_branch(
+                    repo_root, wid, branch, describe_subtask(s), mk(None),
+                    f"dev_auto(dep): {getattr(s, 'title', '') or getattr(s, 'id', '?')}", test_cmd)
+                title = getattr(s, "title", "") or getattr(s, "id", "?")
+                if r["ok"]:
+                    dep_done += 1
+                    out.append(f"  · {title}：✅ 已接力提交")
+                else:
+                    out.append(f"  · {title}：❌ {(r['output'] or '')[-160:]}")
+
+        # 3) 最终集成验证：整条分支跑一遍全量
+        if not greens and dep_done == 0:
+            return "\n".join(out) + "\n\n没有任何子任务落地（都没过自测）；建议拆细或用 dev_isolated 逐个做。"
+        integ = await asyncio.to_thread(
+            verify_branch, repo_root, branch, test_cmd, "wt-verify-" + uuid.uuid4().hex[:8])
+        if integ["ok"]:
+            out.append(f"\n✅ 全部落到 {branch}（{len(greens)} 独立 + {dep_done} 依赖）且**集成后全量测试通过**"
+                       f"（未碰 main，git checkout {branch} 查看）。")
+        else:
+            out.append(f"\n⚠️ 已落到 {branch}（{len(greens)} 独立 + {dep_done} 依赖），但**集成后全量测试未过**。"
+                       f"失败尾部：\n{integ['output'][-1000:]}\n分支保留待修：git checkout {branch}。")
+        return "\n".join(out)
 
     return [
         Tool("dev_isolated",
@@ -1067,8 +1127,9 @@ def build_dev_tools(repo_root: str) -> list[Tool]:
               "test": "可选，pytest 选择器，省略则各自跑全量 tests/"},
              _dev_parallel, read_only=False),
         Tool("dev_auto",
-             "把一个大任务自动分解成独立子任务，再并行隔离实现+验证+落 vorto 分支（= 自动版 "
-             "dev_parallel，省去自己拆）；有依赖的子任务会列出待后续处理。仅 build",
+             "把一个大任务**端到端**做完：自动分解→无依赖子任务并行隔离实现→**有依赖的按拓扑序"
+             "在同一 vorto/auto 分支上逐个接力实现**（看得见前面的改动、自测绿才提交）→最后整条分支"
+             "跑一遍集成测试。不再只做独立那一半就停。绝不碰 main。仅 build",
              {"task": "要自动分解并实现的大任务（自然语言）",
               "test": "可选，pytest 选择器"},
              _dev_auto, read_only=False),
