@@ -113,6 +113,21 @@ def _truthy(v: Any) -> bool:
     return str(v).strip().lower() in ("1", "true", "yes", "y", "t", "all")
 
 
+def _dev_attempts() -> int:
+    """隔离实现的最多尝试次数（1 次初始 + 自修复重试）。env VORTOCODE_DEV_ATTEMPTS 调，默认 2、下限 1。"""
+    import os
+    try:
+        return max(1, int(os.getenv("VORTOCODE_DEV_ATTEMPTS") or 2))
+    except ValueError:
+        return 2
+
+
+def _repair_prompt(base: str, failure_tail: str) -> str:
+    """把上一次的测试失败输出拼回子任务描述，引导下一个全新隔离子 agent 定向修复。"""
+    return (f"{base}\n\n【上一次尝试失败】测试未过，失败输出尾部：\n{failure_tail}\n"
+            f"请据此定位并修正实现，确保 run_tests 通过。")
+
+
 def _fmt_args(args: dict) -> str:
     """把工具参数压成一行短串，供 UI 展示。"""
     parts = []
@@ -977,32 +992,66 @@ def build_dev_tools(repo_root: str) -> list[Tool]:
             return _b
         return _mk
 
-    async def _implement_parallel(descs, test_cmd):
-        """并行隔离实现 descs，返回 (greens, lines)。greens=[{desc,diff}]（已自测过），lines=逐条 ✅/❌。"""
-        import asyncio
+    async def _implement_with_repair(desc, test_cmd):
+        """隔离实现 desc + 自测；红了把失败输出拼回描述、换**全新 worktree** 再试，最多 _dev_attempts() 次。
+
+        返回 {desc, diff, ver, attempts}。绿（ver.ok 且有 diff）即提前收口；都没绿则返回最后一次。
+        每次都是干净 worktree + 全新子 agent（不背着上次的半成品），只把失败输出当线索喂进去。
+        """
         import uuid
         from src.agents.worktree import run_isolated_task
         mk = _make_writer(test_cmd)
-
-        async def _one(desc):
+        cur = desc
+        last = {"desc": desc, "diff": "", "ver": None, "attempts": 0}
+        for attempt in range(1, _dev_attempts() + 1):
             wid = "wt-" + uuid.uuid4().hex[:8]
             try:
-                diff, _c, ver = await run_isolated_task(repo_root, wid, desc, mk(desc), test_cmd=test_cmd)
-                return {"desc": desc, "diff": diff, "ver": ver}
+                diff, _c, ver = await run_isolated_task(repo_root, wid, cur, mk(cur), test_cmd=test_cmd)
             except Exception as e:  # noqa: BLE001
-                return {"desc": desc, "diff": "", "ver": None, "err": str(e)}
+                last = {"desc": desc, "diff": "", "ver": None, "attempts": attempt, "err": str(e)}
+                continue
+            last = {"desc": desc, "diff": diff, "ver": ver, "attempts": attempt}
+            if ver and ver["ok"] and (diff or "").strip():
+                return last                                  # 绿了就收
+            cur = _repair_prompt(desc, (ver or {}).get("output", "")[-1500:])   # 红：带失败反馈再试
+        return last
 
-        results = await asyncio.gather(*[_one(t) for t in descs])
+    async def _implement_parallel(descs, test_cmd):
+        """并行隔离实现 descs（每个内部自修复重试），返回 (greens, lines)。lines=逐条 ✅/❌（标修复次数）。"""
+        import asyncio
+        results = await asyncio.gather(*[_implement_with_repair(t, test_cmd) for t in descs])
         lines, greens = [], []
         for r in results:
-            if not (r.get("diff") or "").strip():
-                lines.append(f"· {r['desc']}：无改动/出错")
-            elif r["ver"] and r["ver"]["ok"]:
-                lines.append(f"· {r['desc']}：✅ 通过")
+            att = r.get("attempts", 1)
+            green = r.get("ver") and r["ver"]["ok"] and (r.get("diff") or "").strip()
+            if green:
+                lines.append(f"· {r['desc']}：✅ 通过" + (f"（修复 {att - 1} 次后）" if att > 1 else ""))
                 greens.append(r)
+            elif not (r.get("diff") or "").strip():
+                lines.append(f"· {r['desc']}：无改动/出错" + (f"（试了 {att} 次）" if att > 1 else ""))
             else:
-                lines.append(f"· {r['desc']}：❌ 未过")
+                lines.append(f"· {r['desc']}：❌ 未过（试了 {att} 次）")
         return greens, lines
+
+    async def _dependent_with_repair(branch, subtask, test_cmd):
+        """在 branch 之上接力实现一个依赖子任务 + 自测；红了带失败反馈、换全新 worktree 再试，最多 _dev_attempts() 次。
+        绿则就地提交（推进 branch）后返回。返回 run_dependent_on_branch 的结果 dict（附 attempts）。"""
+        import uuid
+        from src.agents.decompose import describe_subtask
+        from src.agents.worktree import run_dependent_on_branch
+        mk = _make_writer(test_cmd)
+        base = describe_subtask(subtask)
+        cur = base
+        msg = f"dev_auto(dep): {getattr(subtask, 'title', '') or getattr(subtask, 'id', '?')}"
+        r = {"ok": False, "output": "未尝试", "attempts": 0}
+        for attempt in range(1, _dev_attempts() + 1):
+            wid = "wt-" + uuid.uuid4().hex[:8]
+            r = await run_dependent_on_branch(repo_root, wid, branch, cur, mk(None), msg, test_cmd)
+            r["attempts"] = attempt
+            if r["ok"]:
+                return r
+            cur = _repair_prompt(base, (r.get("output") or "")[-1500:])
+        return r
 
     async def _dev_parallel(args: dict) -> str:
         import asyncio
@@ -1049,9 +1098,8 @@ def build_dev_tools(repo_root: str) -> list[Tool]:
         import asyncio
         import sys
         import uuid
-        from src.agents.decompose import decompose_for_parallel, describe_subtask, topo_order
-        from src.agents.worktree import (apply_diffs_to_branch, ensure_branch,
-                                          run_dependent_on_branch, verify_branch)
+        from src.agents.decompose import decompose_for_parallel, topo_order
+        from src.agents.worktree import apply_diffs_to_branch, ensure_branch, verify_branch
 
         task = str(args.get("task") or args.get("goal") or args.get("description") or "").strip()
         if not task:
@@ -1081,23 +1129,20 @@ def build_dev_tools(repo_root: str) -> list[Tool]:
             out.append(f"\n【独立批】{len(greens)}/{len(descs)} 通过：")
             out.extend("  " + ln for ln in lines)
 
-        # 2) 依赖子任务：拓扑序，逐个在 branch 之上接力实现+自测，绿则就地提交（推进 branch 供下一个看见）
+        # 2) 依赖子任务：拓扑序，逐个在 branch 之上接力实现+自测（红了自修复重试），绿则就地提交（推进 branch）
         dep_done = 0
         if deferred:
             out.append("\n【依赖接力】按拓扑序在分支上逐个实现：")
             satisfied = set(getattr(s, "id", None) for s in plan["independent"])  # 独立批视为已满足(best-effort)
-            mk = _make_writer(test_cmd)
             for s in topo_order(deferred, satisfied):
-                wid = "wt-" + uuid.uuid4().hex[:8]
-                r = await run_dependent_on_branch(
-                    repo_root, wid, branch, describe_subtask(s), mk(None),
-                    f"dev_auto(dep): {getattr(s, 'title', '') or getattr(s, 'id', '?')}", test_cmd)
+                r = await _dependent_with_repair(branch, s, test_cmd)
                 title = getattr(s, "title", "") or getattr(s, "id", "?")
+                att = r.get("attempts", 1)
                 if r["ok"]:
                     dep_done += 1
-                    out.append(f"  · {title}：✅ 已接力提交")
+                    out.append(f"  · {title}：✅ 已接力提交" + (f"（修复 {att - 1} 次后）" if att > 1 else ""))
                 else:
-                    out.append(f"  · {title}：❌ {(r['output'] or '')[-160:]}")
+                    out.append(f"  · {title}：❌ 试了 {att} 次仍未过：{(r['output'] or '')[-140:]}")
 
         # 3) 最终集成验证：整条分支跑一遍全量
         if not greens and dep_done == 0:
@@ -1120,16 +1165,16 @@ def build_dev_tools(repo_root: str) -> list[Tool]:
               "test": "可选，pytest 选择器，省略则跑全量 tests/"},
              _dev_isolated, read_only=False),
         Tool("dev_parallel",
-             "并行实现：多个**相互独立**的子任务各起隔离 worktree 同时实现+自测+验证（互不冲突），"
-             "绿块一并落到一个 vorto/parallel 新分支（不碰 main），**落分支后再跑一遍集成测试**抓"
-             "'单独绿合起来红'，汇报各自 ✅/❌ 及集成结果。最多 5（仅 build）",
+             "并行实现：多个**相互独立**的子任务各起隔离 worktree 同时实现+自测+验证（互不冲突，"
+             "红了带失败反馈自修复重试），绿块一并落到一个 vorto/parallel 新分支（不碰 main），"
+             "**落分支后再跑一遍集成测试**抓'单独绿合起来红'，汇报各自 ✅/❌ 及集成结果。最多 5（仅 build）",
              {"tasks": "相互独立的子任务字符串列表",
               "test": "可选，pytest 选择器，省略则各自跑全量 tests/"},
              _dev_parallel, read_only=False),
         Tool("dev_auto",
              "把一个大任务**端到端**做完：自动分解→无依赖子任务并行隔离实现→**有依赖的按拓扑序"
              "在同一 vorto/auto 分支上逐个接力实现**（看得见前面的改动、自测绿才提交）→最后整条分支"
-             "跑一遍集成测试。不再只做独立那一半就停。绝不碰 main。仅 build",
+             "跑一遍集成测试。子任务红了都会带失败反馈自修复重试。不再只做独立那一半就停。绝不碰 main。仅 build",
              {"task": "要自动分解并实现的大任务（自然语言）",
               "test": "可选，pytest 选择器"},
              _dev_auto, read_only=False),
