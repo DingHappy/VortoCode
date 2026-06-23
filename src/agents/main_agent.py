@@ -1012,10 +1012,22 @@ def build_dev_tools(repo_root: str) -> list[Tool]:
         branch = "vorto/parallel-" + uuid.uuid4().hex[:8]
         res = await asyncio.to_thread(
             apply_diffs_to_branch, repo_root, branch,
-            [(g["diff"], f"dev_parallel: {g['desc']}") for g in greens])
-        note = (f"{len(res['applied'])} 块落到 {branch}（git checkout 查看，未碰 main）"
-                if res["applied"] else "落分支失败")
-        return f"并行 {len(tasks)} 个子任务：{len(greens)} 通过测试，{note}。\n" + "\n".join(lines)
+            [(g["diff"], f"dev_parallel: {g['desc']}") for g in greens],
+            test_cmd)                                    # 落完在集成分支上再跑一遍全量，抓"单独绿合起来红"
+        head = f"并行 {len(tasks)} 个子任务：{len(greens)} 通过测试。"
+        if not res["applied"]:
+            return head + "落分支失败。\n" + "\n".join(lines)
+        integ = res.get("integration")
+        if integ and not integ["ok"]:                    # 各块单独绿、但合到一起红 → 如实说，别谎报全绿
+            tail = integ["output"][-1200:]
+            note = (f"⚠️ {len(res['applied'])} 块已落到 {branch}，但**集成后全量测试未过**"
+                    f"（单独绿、合起来红，多为语义冲突/相互破坏）。失败尾部：\n{tail}\n"
+                    f"分支已保留待修：git checkout {branch}，据失败修正后再集成。")
+        elif integ and integ["ok"]:
+            note = f"✅ {len(res['applied'])} 块落到 {branch} 且**集成后全量测试通过**（git checkout 查看，未碰 main）。"
+        else:                                            # 没跑集成测试（理论上 test_cmd 恒有，留兜底）
+            note = f"{len(res['applied'])} 块落到 {branch}（git checkout 查看，未碰 main）。"
+        return head + note + "\n" + "\n".join(lines)
 
     async def _dev_auto(args: dict) -> str:
         """自动分解一个大任务 → 取无依赖的独立子任务 → 走 dev_parallel 并行隔离实现+验证+落分支。"""
@@ -1049,7 +1061,8 @@ def build_dev_tools(repo_root: str) -> list[Tool]:
              _dev_isolated, read_only=False),
         Tool("dev_parallel",
              "并行实现：多个**相互独立**的子任务各起隔离 worktree 同时实现+自测+验证（互不冲突），"
-             "绿块一并落到一个 vorto/parallel 新分支（不碰 main），汇报各自 ✅/❌。最多 5（仅 build）",
+             "绿块一并落到一个 vorto/parallel 新分支（不碰 main），**落分支后再跑一遍集成测试**抓"
+             "'单独绿合起来红'，汇报各自 ✅/❌ 及集成结果。最多 5（仅 build）",
              {"tasks": "相互独立的子任务字符串列表",
               "test": "可选，pytest 选择器，省略则各自跑全量 tests/"},
              _dev_parallel, read_only=False),

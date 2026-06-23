@@ -254,6 +254,70 @@ async def test_apply_diffs_3way_recovers_context_conflict(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_apply_diffs_integration_pass(tmp_path):
+    # 各块干净落分支后，在集成分支上再跑一遍测试 → 全绿 → integration.ok True
+    import sys
+    _init_repo(tmp_path)
+    (tmp_path / "n.py").write_text("V = 1\n")
+    (tmp_path / "test_n.py").write_text("from n import V\ndef test_v(): assert V >= 1\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-q", "-m", "base"], check=True, capture_output=True)
+
+    async def w(wt):
+        (wt / "n.py").write_text("V = 2\n")                 # 改后仍满足 V>=1
+    d, _ = await worktree.in_worktree(str(tmp_path), "wt-n", w)
+
+    test_cmd = [sys.executable, "-m", "pytest", "-q", "test_n.py"]
+    res = worktree.apply_diffs_to_branch(str(tmp_path), "vorto/integ-ok", [(d, "bump V")], test_cmd)
+    assert res["applied"] == ["bump V"]
+    assert res["integration"] is not None and res["integration"]["ok"] is True   # 集成测试通过
+
+
+@pytest.mark.asyncio
+async def test_apply_diffs_integration_fail_keeps_branch(tmp_path):
+    # 两块改不同文件、各自干净 apply，但合到一起破坏了共用测试（单独绿、合起来红）→ integration.ok False、分支保留
+    import sys
+    _init_repo(tmp_path)
+    (tmp_path / "a.py").write_text("A = 1\n")
+    (tmp_path / "b.py").write_text("B = 1\n")
+    # 共用测试：A+B 不得超过 3；各自 +1 后单独都 ≤3，合起来 =4 越界
+    (tmp_path / "test_ab.py").write_text(
+        "from a import A\nfrom b import B\ndef test_sum(): assert A + B <= 3\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True, capture_output=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-q", "-m", "base"], check=True, capture_output=True)
+
+    async def wa(wt):
+        (wt / "a.py").write_text("A = 2\n")                 # 只改 a.py：单独 A+B=3 ≤3
+    async def wb(wt):
+        (wt / "b.py").write_text("B = 2\n")                 # 只改 b.py：单独 A+B=3 ≤3
+    da, _ = await worktree.in_worktree(str(tmp_path), "wt-a", wa)
+    db, _ = await worktree.in_worktree(str(tmp_path), "wt-b", wb)
+
+    test_cmd = [sys.executable, "-m", "pytest", "-q", "test_ab.py"]
+    res = worktree.apply_diffs_to_branch(str(tmp_path), "vorto/integ-bad", [(da, "A"), (db, "B")], test_cmd)
+    assert len(res["applied"]) == 2                          # 改不同文件 → 两块都干净 apply
+    # 但合起来 A+B=4 >3 → 集成测试红（单独绿、合起来红，这正是要抓的）
+    assert res["integration"] is not None and res["integration"]["ok"] is False
+    assert "test_ab" in res["integration"]["output"] or "fail" in res["integration"]["output"].lower()
+    # 红了不删分支：保留待修
+    branches = subprocess.run(["git", "-C", str(tmp_path), "branch", "--list", "vorto/integ-bad"],
+                              capture_output=True, text=True).stdout
+    assert "vorto/integ-bad" in branches
+
+
+@pytest.mark.asyncio
+async def test_apply_diffs_no_test_cmd_integration_none(tmp_path):
+    # 不给 test_cmd → integration 为 None（向后兼容，老调用方不变）
+    _init_repo(tmp_path)
+
+    async def w(wt):
+        (wt / "z.py").write_text("z = 1\n")
+    d, _ = await worktree.in_worktree(str(tmp_path), "wt-z", w)
+    res = worktree.apply_diffs_to_branch(str(tmp_path), "vorto/nointeg", [(d, "add z")])
+    assert res["applied"] == ["add z"] and res["integration"] is None
+
+
+@pytest.mark.asyncio
 async def test_apply_diffs_true_conflict_skipped_no_markers(tmp_path):
     # 两块改同一行 = 真冲突：第二块跳过、记账；分支里只留第一块，绝不提交冲突 marker
     _init_repo(tmp_path)
@@ -319,6 +383,49 @@ async def test_build_dev_tools_parallel_empty_guard(tmp_path):
     tools = {t.name: t for t in build_dev_tools(str(tmp_path))}
     assert "dev_parallel" in tools
     assert "需要 tasks" in await tools["dev_parallel"].handler({"tasks": []})   # 空输入有守卫
+
+
+@pytest.mark.asyncio
+async def test_dev_parallel_reports_integration_failure(monkeypatch, tmp_path):
+    # _dev_parallel：各块单独绿、但集成后全量红 → 如实报"集成后全量测试未过"+失败尾部，不谎报全绿
+    import src.agents.worktree as wt
+    from src.agents.main_agent import build_dev_tools
+
+    async def fake_run_isolated(repo_root, wid, desc, build, test_cmd=None):
+        return ("diff --git a/x b/x\n", f"做了 {desc}", {"ok": True, "output": "", "cmd": "pytest"})
+
+    def fake_apply(repo_root, branch, items, test_cmd=None):
+        return {"ok": True, "branch": branch, "applied": [m for _d, m in items], "failed": [],
+                "integration": {"ok": False, "output": "BOOM_integration_failed", "cmd": "pytest"}}
+    monkeypatch.setattr(wt, "run_isolated_task", fake_run_isolated)
+    monkeypatch.setattr(wt, "apply_diffs_to_branch", fake_apply)
+
+    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_parallel"]
+    out = await tool.handler({"tasks": ["子任务甲", "子任务乙"]})
+    assert "集成后全量测试未过" in out and "BOOM_integration_failed" in out
+    assert "分支已保留待修" in out                                   # 红了保留分支供修
+
+
+@pytest.mark.asyncio
+async def test_dev_parallel_reports_integration_pass_and_passes_test_cmd(monkeypatch, tmp_path):
+    import src.agents.worktree as wt
+    from src.agents.main_agent import build_dev_tools
+    seen = {}
+
+    async def fake_run_isolated(repo_root, wid, desc, build, test_cmd=None):
+        return ("diff\n", "ok", {"ok": True, "output": "", "cmd": "pytest"})
+
+    def fake_apply(repo_root, branch, items, test_cmd=None):
+        seen["test_cmd"] = test_cmd                      # 确认 dev_parallel 把 test_cmd 传下去做集成验证
+        return {"ok": True, "branch": branch, "applied": [m for _d, m in items], "failed": [],
+                "integration": {"ok": True, "output": "", "cmd": "pytest"}}
+    monkeypatch.setattr(wt, "run_isolated_task", fake_run_isolated)
+    monkeypatch.setattr(wt, "apply_diffs_to_branch", fake_apply)
+
+    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_parallel"]
+    out = await tool.handler({"tasks": ["甲", "乙"]})
+    assert "集成后全量测试通过" in out
+    assert seen["test_cmd"] is not None                 # 集成验证用的 test_cmd 已传入
 
 
 @pytest.mark.asyncio
