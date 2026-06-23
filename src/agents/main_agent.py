@@ -663,19 +663,55 @@ def build_read_tools(repo_root: str) -> list[Tool]:
             rx = re.compile(pat)
         except re.error as e:
             return f"无效正则: {e}"
+        sub = str(args.get("dir", "")).strip().strip("/")        # 此前 dir 被宣传却没生效→在此兜上
+        files = [f for f in _files() if f.startswith(sub)] if sub else _files()
+        ctx = max(0, min(_int(args.get("context")) or 0, 5))     # 上下文行数（±N），上限 5 防输出爆炸
         base = Path(repo_root)
-        hits: list[str] = []
-        for f in _files():
+
+        if ctx == 0:                                             # 紧凑模式（默认）：path:line: text 单行命中
+            hits: list[str] = []
+            for f in files:
+                try:
+                    lines = (base / f).read_text(encoding="utf-8", errors="ignore").splitlines()
+                except Exception:  # noqa: BLE001
+                    continue
+                for i, line in enumerate(lines, 1):
+                    if rx.search(line):
+                        hits.append(f"{f}:{i}: {line.strip()[:200]}")
+                        if len(hits) >= 100:
+                            return "\n".join(hits)
+            return "\n".join(hits) if hits else f"没有匹配 /{pat}/ 的内容。"
+
+        # context > 0：按文件分组、合并相邻窗口、标出命中行（> 前缀），类似 ripgrep -C，定位后不必再 read_file
+        out: list[str] = []
+        for f in files:
             try:
                 lines = (base / f).read_text(encoding="utf-8", errors="ignore").splitlines()
             except Exception:  # noqa: BLE001
                 continue
-            for i, line in enumerate(lines, 1):
-                if rx.search(line):
-                    hits.append(f"{f}:{i}: {line.strip()[:200]}")
-                    if len(hits) >= 100:
-                        return "\n".join(hits)
-        return "\n".join(hits) if hits else f"没有匹配 /{pat}/ 的内容。"
+            matches = [i for i, line in enumerate(lines) if rx.search(line)]   # 0-based 命中行
+            if not matches:
+                continue
+            ranges: list[list[int]] = []                         # 把每个命中的 ±ctx 窗口合并、相邻即并
+            for m in matches:
+                lo, hi = max(0, m - ctx), min(len(lines) - 1, m + ctx)
+                if ranges and lo <= ranges[-1][1] + 1:
+                    ranges[-1][1] = max(ranges[-1][1], hi)
+                else:
+                    ranges.append([lo, hi])
+            mset = set(matches)
+            out.append(f"{f}:")
+            for ri, (lo, hi) in enumerate(ranges):
+                if ri:
+                    out.append("   ⋯")                           # 同文件内不连续窗口的分隔
+                for ln in range(lo, hi + 1):
+                    mark = ">" if ln in mset else " "
+                    out.append(f"{ln + 1:>5} {mark} {lines[ln][:200]}")
+            out.append("")
+            if sum(len(x) for x in out) > 6000:                  # 总输出兜底，防爆
+                out.append("…(结果较多，已截断；缩小 pattern、给 dir 或调小 context)")
+                break
+        return "\n".join(out).rstrip() if out else f"没有匹配 /{pat}/ 的内容。"
 
     async def _analyze_repo(args: dict) -> str:
         from src.orchestrator.self_analysis import analyze_self, render_report
@@ -759,7 +795,10 @@ def build_read_tools(repo_root: str) -> list[Tool]:
         Tool("list_files", "列出全仓库文本文件（py/js/html/md/yaml/toml… 跳过 .git/node_modules 等；"
              "可按子目录前缀过滤）", {"dir": "可选子目录"}, _list_files, read_only=True),
         Tool("grep", "在全仓库文本文件里按正则搜索（不止 src，含 web/examples/docs/配置等），"
-             "返回 path:line 命中行", {"pattern": "正则", "dir": "可选子目录"}, _grep, read_only=True),
+             "返回 path:line 命中行；给 context=N 则带每处命中前后各 N 行（≤5，> 标命中行，"
+             "类似 ripgrep -C，定位后不必再 read_file）",
+             {"pattern": "正则", "dir": "可选子目录", "context": "可选，命中行前后各显示的行数(±N，≤5)"},
+             _grep, read_only=True),
         Tool("analyze_repo", "只读扫描本仓库列出问题清单，无需 key", {}, _analyze_repo, read_only=True),
         Tool("find_definition",
              "语义查符号定义（jedi/LSP 级，跟随 import、比 grep 准）：给函数/类/变量名"
