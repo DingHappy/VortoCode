@@ -934,13 +934,24 @@ def build_test_tool(root: str, default_cmd: Optional[list] = None) -> "Tool":
                 _handler, read_only=True)
 
 
-def build_dev_tools(repo_root: str) -> list[Tool]:
-    """UI 无关的隔离 dev 工具（给 Web agent 用）。
+def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]] = None) -> list[Tool]:
+    """UI 无关的隔离 dev 工具（给 Web/CLI agent 用）。
 
     `dev_isolated`：在一次性 git worktree 里让可写子 agent 实现 + 自测，再跑测试验证；✅通过就
     **自动落到 vorto/<id> 新分支**（绝不碰 main/工作区），返回结论。无模态确认——靠 build 门控 +
     完全隔离 + 落新分支保证"人在关口"。TUI 那版另带富 diff 渲染 + 确认；这版给没有模态的 Web。
+
+    on_progress(msg)：可选进度回调。dev_parallel/dev_auto 跑大任务时一个子任务就可能要 1-2 分钟、
+    整条链路十几分钟——没有它调用方只能对着静默的 prompt 干等、像卡死。有了它能边跑边播
+    "并行实现中/某块修复重试/依赖接力/集成验证…"。best-effort、出错不影响流水线；不传则零开销。
     """
+    def _progress(msg: str) -> None:
+        if on_progress is not None:
+            try:
+                on_progress(msg)
+            except Exception:  # noqa: BLE001
+                pass
+
     async def _dev_isolated(args: dict) -> str:
         import asyncio
         import re
@@ -961,6 +972,7 @@ def build_dev_tools(repo_root: str) -> list[Tool]:
                 max_steps=16,
                 extra_system=("你是隔离工作区里的实现子 agent：用 read/grep 看代码、edit_file/write_file "
                               "实现任务；改完务必用 run_tests 自测，没过就改完再测直到通过。只动相关文件。"))
+        _progress(f"⚙️ 隔离实现「{desc[:40]}」中（worktree 实现+自测，可能要 1-2 分钟）…")
         try:
             diff, conclusion, ver = await run_isolated_task(repo_root, wid, desc, _build, test_cmd=test_cmd)
         except Exception as e:  # noqa: BLE001
@@ -1004,6 +1016,8 @@ def build_dev_tools(repo_root: str) -> list[Tool]:
         cur = desc
         last = {"desc": desc, "diff": "", "ver": None, "attempts": 0}
         for attempt in range(1, _dev_attempts() + 1):
+            if attempt > 1:
+                _progress(f"↻ 「{desc[:32]}」自测未过，第 {attempt} 次修复重试中…")
             wid = "wt-" + uuid.uuid4().hex[:8]
             try:
                 diff, _c, ver = await run_isolated_task(repo_root, wid, cur, mk(cur), test_cmd=test_cmd)
@@ -1012,13 +1026,16 @@ def build_dev_tools(repo_root: str) -> list[Tool]:
                 continue
             last = {"desc": desc, "diff": diff, "ver": ver, "attempts": attempt}
             if ver and ver["ok"] and (diff or "").strip():
+                _progress(f"✅ 「{desc[:32]}」实现并自测通过" + (f"（修复 {attempt - 1} 次后）" if attempt > 1 else ""))
                 return last                                  # 绿了就收
             cur = _repair_prompt(desc, (ver or {}).get("output", "")[-1500:])   # 红：带失败反馈再试
+        _progress(f"❌ 「{desc[:32]}」试了 {_dev_attempts()} 次仍未过")
         return last
 
     async def _implement_parallel(descs, test_cmd):
         """并行隔离实现 descs（每个内部自修复重试），返回 (greens, lines)。lines=逐条 ✅/❌（标修复次数）。"""
         import asyncio
+        _progress(f"⚙️ 并行隔离实现 {len(descs)} 个子任务中（各自起 worktree 实现+自测）…")
         results = await asyncio.gather(*[_implement_with_repair(t, test_cmd) for t in descs])
         lines, greens = [], []
         for r in results:
@@ -1042,9 +1059,11 @@ def build_dev_tools(repo_root: str) -> list[Tool]:
         mk = _make_writer(test_cmd)
         base = describe_subtask(subtask)
         cur = base
-        msg = f"dev_auto(dep): {getattr(subtask, 'title', '') or getattr(subtask, 'id', '?')}"
+        title = getattr(subtask, "title", "") or getattr(subtask, "id", "?")
+        msg = f"dev_auto(dep): {title}"
         r = {"ok": False, "output": "未尝试", "attempts": 0}
         for attempt in range(1, _dev_attempts() + 1):
+            _progress(f"🔗 依赖接力实现「{title}」" + (f"（第 {attempt} 次修复重试）" if attempt > 1 else "…"))
             wid = "wt-" + uuid.uuid4().hex[:8]
             r = await run_dependent_on_branch(repo_root, wid, branch, cur, mk(None), msg, test_cmd)
             r["attempts"] = attempt
@@ -1072,6 +1091,7 @@ def build_dev_tools(repo_root: str) -> list[Tool]:
         if not greens:
             return f"并行 {len(tasks)} 个子任务：无通过测试的改动。\n" + "\n".join(lines)
         branch = "vorto/parallel-" + uuid.uuid4().hex[:8]
+        _progress(f"📦 {len(greens)} 块通过 → 落分支 {branch} 并跑集成测试中…")
         res = await asyncio.to_thread(
             apply_diffs_to_branch, repo_root, branch,
             [(g["diff"], f"dev_parallel: {g['desc']}") for g in greens],
@@ -1106,6 +1126,7 @@ def build_dev_tools(repo_root: str) -> list[Tool]:
             return "dev_auto 需要 task（要自动分解并实现的大任务）。"
         sel = str(args.get("test") or "").strip()
         test_cmd = [sys.executable, "-m", "pytest", "-q", sel or "tests/"]
+        _progress("🧩 自动分解任务中…")
         try:
             plan = await decompose_for_parallel(task)
         except Exception as e:  # noqa: BLE001
@@ -1147,6 +1168,7 @@ def build_dev_tools(repo_root: str) -> list[Tool]:
         # 3) 最终集成验证：整条分支跑一遍全量
         if not greens and dep_done == 0:
             return "\n".join(out) + "\n\n没有任何子任务落地（都没过自测）；建议拆细或用 dev_isolated 逐个做。"
+        _progress(f"🔍 对整条分支 {branch}（{len(greens)} 独立 + {dep_done} 依赖）跑最终集成测试中…")
         integ = await asyncio.to_thread(
             verify_branch, repo_root, branch, test_cmd, "wt-verify-" + uuid.uuid4().hex[:8])
         if integ["ok"]:

@@ -218,6 +218,12 @@ def test_web_agent_includes_research_delegation():
         assert name in agent.tools and agent.tools[name].read_only is True
 
 
+def test_web_agent_has_progress_holder():
+    from src.web.routers import realtime
+    agent = realtime._new_agent()                       # dev 流水线进度 holder：_run_agent_turn 每回合重绑到 ws
+    assert getattr(agent, "_web_progress_holder", None) == {"fn": None}
+
+
 @pytest.mark.asyncio
 async def test_ws_confirm_round_trip_allow_and_deny():
     from src.web.routers import realtime

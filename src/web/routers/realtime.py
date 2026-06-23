@@ -121,18 +121,25 @@ def _new_agent():
     # 重绑到当前连接，见 _run_agent_turn）。无回合上下文时 confirm 默认拒绝。
     cwd = os.getcwd()
     confirm_holder = {"fn": None}
+    progress_holder = {"fn": None}                 # dev 流水线进度 → 每回合重绑到当前 ws 的 agent_say
 
     async def _confirm(message: str) -> bool:
         fn = confirm_holder["fn"]
         return bool(await fn(message)) if fn is not None else False
 
+    def _progress(msg: str) -> None:               # 同步、best-effort：长流水线边跑边播，不让前端干等
+        fn = progress_holder["fn"]
+        if fn is not None:
+            fn(msg)
+
     from src.agents.project import load_project_instructions
     tools = (build_read_tools(cwd) + build_research_tools(cwd) + build_artifact_tools(cwd)
-             + build_dev_tools(cwd)
+             + build_dev_tools(cwd, on_progress=_progress)
              + build_command_tool(cwd, _confirm) + build_pr_tool(cwd, _confirm))
     extra = load_project_instructions(cwd) or None  # AGENTS.md/CLAUDE.md 项目约定进系统提示
     agent = MainAgent(tools, plan_tool=True, extra_system=extra)  # 网页主 agent：持久计划 + 隔离 dev + 受 WS 确认的 shell
     agent._web_confirm_holder = confirm_holder     # _run_agent_turn 每回合把它指向当前 ws
+    agent._web_progress_holder = progress_holder
     return agent
 
 
@@ -345,6 +352,10 @@ async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list
         except Exception:  # noqa: BLE001
             pass
         q.put_nowait({"type": "agent_say", "text": m})
+
+    ph = getattr(agent, "_web_progress_holder", None)
+    if ph is not None:                        # dev 流水线进度（并行实现/修复/接力/集成验证）也走 agent_say
+        ph["fn"] = agent_say
 
     def agent_emit(m):
         _record(websocket, "assistant", m)    # 最终回复进展示历史
