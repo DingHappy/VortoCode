@@ -418,6 +418,17 @@ def test_headless_agent_loads_project_instructions(tmp_path):
     assert "项目指令" in sys_prompt and "一律用中文注释" in sys_prompt
 
 
+def test_headless_agent_has_research_delegation(tmp_path):
+    # headless CLI agent 现也带只读子 agent 委派（task/research_parallel）——补齐与 TUI 的差距
+    async def _confirm(_m):
+        return False
+
+    agent = cli._build_headless_agent(str(tmp_path), max_steps=None, on_tool=None,
+                                      on_plan=None, confirm=_confirm)
+    for name in ("task", "research_parallel"):
+        assert name in agent.tools and agent.tools[name].read_only is True
+
+
 @pytest.mark.asyncio
 async def test_headless_speak_end_to_end(tmp_path, capsys):
     out = tmp_path / "reply.wav"
