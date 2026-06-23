@@ -914,23 +914,28 @@ def build_test_tool(root: str, default_cmd: Optional[list] = None) -> "Tool":
     """给隔离实现子 agent 一个**受限**的 run_tests 工具：只能在 root 跑测试（不是任意 shell），
 
     让它 implement→test→fix 自我迭代——产出的 diff 是"已经自己跑通的"，而不是盲改后才发现没过。
-    安全：只跑 pytest，autonomous 也不会乱执行命令。
+    命令按仓库类型自动探测（pytest/npm/go/cargo/make），不再写死 pytest；autonomous 也只跑测试、不乱执行。
     """
     async def _handler(args: dict) -> str:
         import asyncio
         import sys
+        from src.agents.test_detect import detect_test_cmd, is_pytest_cmd
         from src.agents.worktree import run_tests
+        base = default_cmd or detect_test_cmd(root)
         sel = str(args.get("test") or "").strip()
-        cmd = ([sys.executable, "-m", "pytest", "-q", sel] if sel
-               else (default_cmd or [sys.executable, "-m", "pytest", "-q"]))
+        # selector 只对 pytest 有意义（文件级 narrow）；非 pytest 命令忽略 selector、跑整套
+        if sel and is_pytest_cmd(base):
+            cmd = [sys.executable, "-m", "pytest", "-q", sel]
+        else:
+            cmd = list(base)
         res = await asyncio.to_thread(run_tests, root, cmd)
         tag = "通过 ✓" if res["ok"] else "未过 ✗"
         return f"测试{tag}（{res['cmd']}）。输出尾部：\n{res['output'][-2500:]}"
 
     return Tool("run_tests",
-                "在当前隔离工作区跑测试自测（可传 test 选择器 narrow，省略跑默认集）；"
-                "实现后务必自测，没过就改完再测，直到通过",
-                {"test": "可选，pytest 选择器，如 tests/unit/test_x.py"},
+                "在当前隔离工作区跑测试自测（命令按仓库类型自动探测；pytest 可传 test 选择器 narrow，"
+                "省略/非 pytest 跑整套）；实现后务必自测，没过就改完再测，直到通过",
+                {"test": "可选，pytest 文件级选择器，如 tests/unit/test_x.py（仅 pytest 生效）"},
                 _handler, read_only=True)
 
 
@@ -955,7 +960,6 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
     async def _dev_isolated(args: dict) -> str:
         import asyncio
         import re
-        import sys
         import uuid
         from src.agents.worktree import apply_diff_to_branch, run_isolated_task
 
@@ -964,7 +968,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             return "dev_isolated 需要 description（要在隔离工作区实现的子任务）。"
         wid = "wt-" + uuid.uuid4().hex[:8]
         sel = str(args.get("test") or "").strip()
-        test_cmd = [sys.executable, "-m", "pytest", "-q", sel or "tests/"]
+        from src.agents.test_detect import detect_test_cmd
+        test_cmd = detect_test_cmd(repo_root, sel)          # 按仓库类型探测（pytest/npm/go/cargo/make）
 
         def _build(wt: str):
             return MainAgent(
@@ -1074,7 +1079,6 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
 
     async def _dev_parallel(args: dict) -> str:
         import asyncio
-        import sys
         import uuid
         from src.agents.worktree import apply_diffs_to_branch
 
@@ -1085,7 +1089,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         if not tasks:
             return "dev_parallel 需要 tasks（相互独立的子任务字符串列表）。"
         sel = str(args.get("test") or "").strip()
-        test_cmd = [sys.executable, "-m", "pytest", "-q", sel or "tests/"]
+        from src.agents.test_detect import detect_test_cmd
+        test_cmd = detect_test_cmd(repo_root, sel)          # 按仓库类型探测（pytest/npm/go/cargo/make）
 
         greens, lines = await _implement_parallel(tasks, test_cmd)
         if not greens:
@@ -1116,7 +1121,6 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         （检出该分支、看得见前面的改动、自测绿才提交、推进 tip 给下一个看）→ 最后对整条分支跑一遍
         集成测试。端到端把大任务做完，不再只做独立那一半就停。全程不碰 main/工作区。"""
         import asyncio
-        import sys
         import uuid
         from src.agents.decompose import decompose_for_parallel, topo_order
         from src.agents.worktree import apply_diffs_to_branch, ensure_branch, verify_branch
@@ -1125,7 +1129,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         if not task:
             return "dev_auto 需要 task（要自动分解并实现的大任务）。"
         sel = str(args.get("test") or "").strip()
-        test_cmd = [sys.executable, "-m", "pytest", "-q", sel or "tests/"]
+        from src.agents.test_detect import detect_test_cmd
+        test_cmd = detect_test_cmd(repo_root, sel)          # 按仓库类型探测（pytest/npm/go/cargo/make）
         _progress("🧩 自动分解任务中…")
         try:
             plan = await decompose_for_parallel(task)
