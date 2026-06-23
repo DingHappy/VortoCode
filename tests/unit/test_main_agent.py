@@ -488,3 +488,112 @@ def test_trimmed_history_short_unchanged():
     agent = MainAgent([], max_history=24)
     agent.history = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}]
     assert agent._trimmed_history() == agent.history          # 没超长 → 原样
+
+
+# ---- 对话压缩：历史超窗时把老段摘要成滚动纪要（不再硬丢中段决策）----
+
+class CompactLLM:
+    """摘要请求（系统提示=压缩器）→ 给纪要并记录；普通回合 → 给最终回复。"""
+
+    def __init__(self, summary="纪要：用户要实现 X，已完成 A、B；待办 C。", reply="好的。"):
+        self.summary, self.reply = summary, reply
+        self.summarized = 0
+        self.summary_prompts: list[str] = []
+
+    async def chat(self, messages, **kwargs):
+        sys = messages[0]["content"] if messages and messages[0].get("role") == "system" else ""
+        if "对话压缩器" in sys:                       # _SUMMARY_SYSTEM 的标志
+            self.summarized += 1
+            self.summary_prompts.append(messages[1]["content"])
+            return {"content": self.summary}
+        return {"content": self.reply}
+
+
+def _prefill(agent, n, first="原始任务：实现 SUPER_GOAL"):
+    """灌满超过 max_history 的历史：第一条带可识别的原始目标，便于断言被纪要保住。"""
+    agent.history = [{"role": "user", "content": first}]
+    for i in range(n):
+        agent.history.append({"role": "assistant", "content": f"决策{i}_KEEPME"})
+        agent.history.append({"role": "user", "content": f"u{i}"})
+
+
+@pytest.mark.asyncio
+async def test_compact_summarizes_old_turns_and_injects():
+    llm = CompactLLM()
+    agent = MainAgent([], llm=llm, max_history=6)
+    _prefill(agent, 8)                                        # 远超 max_history
+    out, say, emit = _capture()
+    await agent.run_turn("继续", mode="plan", say=say, emit=emit)
+    assert llm.summarized == 1                                # 触发了一次摘要
+    assert agent._summary == llm.summary                      # 滚动纪要落到 agent
+    assert len(agent.history) <= agent.max_history            # 老段被物理移出，历史收缩
+    # 纪要常驻系统提示，且最近窗口仍逐字在历史里
+    sysmsg = agent._system("plan")
+    assert "对话纪要" in sysmsg and "已完成 A、B" in sysmsg
+    # 摘要请求里确实带上了被压掉的老段（含原始目标）
+    assert "SUPER_GOAL" in llm.summary_prompts[0] and "决策0_KEEPME" in llm.summary_prompts[0]
+    assert any("🗜️" in s for s in out["say"])                 # 给了压缩提示
+
+
+@pytest.mark.asyncio
+async def test_compact_rolling_merges_prior_summary():
+    llm = CompactLLM(summary="新纪要")
+    agent = MainAgent([], llm=llm, max_history=6)
+    agent._summary = "旧纪要：曾决定用方案甲"                   # 已有纪要
+    _prefill(agent, 8)
+    out, say, emit = _capture()
+    await agent.run_turn("继续", mode="plan", say=say, emit=emit)
+    # 摘要请求把已有纪要也喂进去，要求合并而非丢弃
+    assert "已有纪要" in llm.summary_prompts[0] and "方案甲" in llm.summary_prompts[0]
+    assert agent._summary == "新纪要"
+
+
+@pytest.mark.asyncio
+async def test_compact_summary_failure_degrades():
+    class FailSummaryLLM(CompactLLM):
+        async def chat(self, messages, **kwargs):
+            sys = messages[0]["content"] if messages and messages[0].get("role") == "system" else ""
+            if "对话压缩器" in sys:
+                return {"content": ""}                        # 摘要失败：空
+            return {"content": "回复"}
+
+    llm = FailSummaryLLM()
+    agent = MainAgent([], llm=llm, max_history=6)
+    _prefill(agent, 8)
+    before = len(agent.history)
+    out, say, emit = _capture()
+    await agent.run_turn("继续", mode="plan", say=say, emit=emit)
+    assert agent._summary == ""                               # 没成功 → 不设纪要
+    assert len(agent.history) >= before                       # 历史未被裁掉（仍由 _trimmed_history 兜底）
+    assert out["emit"] == ["回复"]                             # 回合照常完成，没崩
+    assert not any("🗜️" in s for s in out["say"])             # 没成功就不报压缩
+
+
+@pytest.mark.asyncio
+async def test_compact_skipped_when_short():
+    llm = CompactLLM()
+    agent = MainAgent([], llm=llm, max_history=24)
+    out, say, emit = _capture()
+    await agent.run_turn("你好", mode="plan", say=say, emit=emit)
+    assert llm.summarized == 0                                # 短对话零摘要调用、零开销
+    assert agent._summary == ""
+
+
+@pytest.mark.asyncio
+async def test_compact_disabled_keeps_full_history():
+    llm = CompactLLM()
+    agent = MainAgent([], llm=llm, max_history=6, compact=False)
+    _prefill(agent, 8)
+    before = len(agent.history)
+    await agent.run_turn("继续", mode="plan")
+    assert llm.summarized == 0                                # 关掉压缩 → 不摘要
+    assert agent._summary == "" and len(agent.history) > before   # 历史不被物理裁剪
+
+
+def test_compact_env_disable(monkeypatch):
+    monkeypatch.setenv("VORTOCODE_COMPACT", "0")
+    assert MainAgent([]).compact is False                     # env 关闭
+    monkeypatch.setenv("VORTOCODE_COMPACT", "1")
+    assert MainAgent([]).compact is True
+    monkeypatch.delenv("VORTOCODE_COMPACT")
+    assert MainAgent([]).compact is True                      # 默认开

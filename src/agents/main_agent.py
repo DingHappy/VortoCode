@@ -29,6 +29,15 @@ _FORCE_FINISH_RULE = (
     "直接根据上文已获取的信息给出最终结论/回答；信息不全就基于现有内容尽力总结并点明欠缺，"
     "不要输出任何工具调用 JSON。")
 
+# 对话压缩器的系统提示：把"老段"对话压成滚动纪要，避免长会话里中段决策被硬丢弃。
+# 强约束保留原始目标——这正是 #72 锚点想守住的，纪要把它连同关键决策一起守住、且语义化。
+_SUMMARY_SYSTEM = (
+    "你是对话压缩器。把给定的对话历史压成一段**简洁中文纪要**，务必保留："
+    "①用户的原始目标/任务（尽量原话）②已做的关键决策与结论 ③已改动的文件/分支/PR "
+    "④尚未完成或待办的事项 ⑤重要约束与踩过的坑。丢弃寒暄与冗余过程细节。"
+    "若给了【已有纪要】，把【新增对话】融合进去、输出更新后的**完整**纪要，绝不丢失旧纪要要点。"
+    "只输出纪要正文，不要任何前后缀、不要工具调用 JSON。")
+
 
 @dataclass
 class Tool:
@@ -147,6 +156,7 @@ class MainAgent:
         on_plan: Optional[Callable[[list], None]] = None,
         plan_tool: bool = False,
         hook_system: Optional[Any] = None,
+        compact: bool = True,
     ) -> None:
         import os
         # 复用既有 src/hooks 的 HookSystem：把工具生命周期事件（pre/post/error）接进 agent loop
@@ -174,6 +184,11 @@ class MainAgent:
         self._on_escalate = on_escalate
         self._escalated = False                # 本轮是否已升级到 build（经 on_escalate 同意）
         self.history: list[dict] = []          # 跨轮对话历史（不含 system）
+        # 对话压缩：历史超窗时把"老段"摘要成滚动纪要（_summary）注入系统提示，物理移出 history，
+        # 而非像 #72 那样硬丢中段。env VORTOCODE_COMPACT=0 关闭（关掉就退回纯锚点裁剪）。
+        env_compact = os.getenv("VORTOCODE_COMPACT")
+        self.compact = (env_compact not in ("0", "false", "no")) if env_compact is not None else compact
+        self._summary = ""                     # 早先轮次的压缩纪要（滚动合并）
 
     def _client(self) -> Any:
         # 惰性构建并缓存：跨步/跨轮复用同一个客户端（复用底层连接池），也便于测试注入
@@ -199,6 +214,9 @@ class MainAgent:
             prompt += "\n\n" + hint
         if self.extra_system:
             prompt += "\n\n" + self.extra_system
+        if self._summary:                      # 早先轮次的压缩纪要：常驻系统提示，最近对话仍在历史里逐字给
+            prompt += ("\n\n【对话纪要】(更早轮次的压缩摘要，含原始目标与关键决策；"
+                       "最近的对话在下方消息里逐字给出)\n" + self._summary)
         if self.plan:                          # 当前计划常驻系统提示：跨步/跨历史裁剪也不丢
             from src.agents.plan import render_plan
             prompt += ("\n\n【当前计划】(用 update_plan 维护：开始一步标 in_progress、做完标 completed)\n"
@@ -262,6 +280,44 @@ class MainAgent:
         from src.llm.content import content_to_text
         anchor = {"role": "user", "content": content_to_text(first_user.get("content"))}
         return [anchor] + h[-(self.max_history - 1):]      # 锚点 + 最近窗口，仍 = max_history 条
+
+    async def _maybe_compact(self, say: Callable[[str], None]) -> None:
+        """历史远超窗口时，把"老段"摘要成滚动纪要、物理移出 history（保留最近窗口逐字）。
+
+        在回合开始时调一次（跨轮增长在此收口；单轮内的 max_steps 增长由 _trimmed_history 兜底）。
+        摘要失败/无 LLM 都安全跳过 —— 历史原样保留，下游 _trimmed_history 仍按 #72 锚点裁剪，纯降级。
+        关闭压缩（compact=False）时直接返回。
+        """
+        if not self.compact:
+            return
+        h = self.history
+        if len(h) <= self.max_history:         # 没超窗就不折腾（短对话零开销、零 LLM 调用）
+            return
+        keep = max(4, self.max_history // 2)   # 最近一半窗口逐字保留；其余老段压成纪要
+        older, recent = h[:len(h) - keep], h[len(h) - keep:]
+        if not older:
+            return
+        digest = await self._summarize(older)
+        if not digest:                         # 摘要失败：保持原历史，安全降级（不丢消息、不阻塞回合）
+            return
+        self._summary = digest                 # 含已有纪要的滚动合并（在 _summarize 内拼）
+        self.history = recent
+        say(f"[dim]🗜️ 已把 {len(older)} 条更早的对话压成纪要（保留原始目标与关键决策）。[/dim]")
+
+    async def _summarize(self, msgs: list[dict]) -> str:
+        """把一段历史消息（+ 已有纪要）交给 LLM 压成更新后的纪要；任何异常都返回空串（让上游降级）。"""
+        from src.llm.content import content_to_text
+        convo = "\n".join(
+            f"{m.get('role', '?')}: {content_to_text(m.get('content'))[:1500]}" for m in msgs)
+        user = (f"【已有纪要】\n{self._summary}\n\n" if self._summary else "") + \
+               f"【新增对话】\n{convo}\n\n请输出更新后的完整纪要。"
+        prompt = [{"role": "system", "content": _SUMMARY_SYSTEM},
+                  {"role": "user", "content": user}]
+        try:
+            resp = await self._client().chat(prompt, temperature=0.2)
+        except Exception:  # noqa: BLE001
+            return ""
+        return (resp.get("content") or "").strip()[:2000]   # 纪要本身也设上限，防越滚越大
 
     async def _complete(self, messages: list[dict], stream_cb: Optional[Callable[[str], None]]) -> str:
         """取一步模型输出。
@@ -414,6 +470,7 @@ class MainAgent:
         from src.llm.content import build_user_content
         self.history.append({"role": "user",
                              "content": build_user_content(user_text, images, audio)})
+        await self._maybe_compact(say)         # 跨轮历史超窗→把老段摘要成纪要（失败安全降级）
 
         for _step in range(self.max_steps):
             messages = [{"role": "system", "content": self._system(mode)}] + self._trimmed_history()
