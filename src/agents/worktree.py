@@ -96,11 +96,19 @@ def apply_diff_to_branch(repo_root, branch: str, diff: str, message: str) -> dic
             _git(repo_root, "branch", "-D", branch, check=False)   # 失败：删掉残留空分支
 
 
-def apply_diffs_to_branch(repo_root, branch: str, items: list) -> dict:
+def apply_diffs_to_branch(repo_root, branch: str, items: list,
+                          test_cmd: Optional[list] = None) -> dict:
     """把多个 (diff, message) 依次 apply+commit 到**一个**新分支（一次性 worktree，不碰 main/工作区）。
 
     用于并行实现的"集成"：每块绿 diff 作为一个提交。某块应用不干净（如互相冲突）则跳过并记账。
-    返回 {ok, branch, applied:[msg...], failed:[{msg,error}...]}；一块都没应用则删掉空分支。
+    返回 {ok, branch, applied:[msg...], failed:[{msg,error}...], integration}。
+    一块都没应用则删掉空分支。
+
+    **集成后验证（给了 test_cmd 时）**：各块只在自己的隔离 worktree（同一 base HEAD）单独验证过，
+    组合到一个分支上可能语义冲突/相互破坏（A 改了 B 依赖的行为、共用的测试被同时影响…）——
+    全部 apply+commit 后，在集成分支的 worktree 里**再跑一遍测试**，抓"单独绿、合起来红"。
+    integration = {ok, output, cmd}（未给 test_cmd 则 None）。集成测试红**不删分支**（保留待修），
+    但如实把 integration.ok 标 False，让上层别再谎报"全绿"。
     """
     path = _worktrees_dir(repo_root) / ("apply-" + branch.replace("/", "-"))
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -108,10 +116,11 @@ def apply_diffs_to_branch(repo_root, branch: str, items: list) -> dict:
         remove_worktree(repo_root, path)
     add = _git(repo_root, "worktree", "add", "-b", branch, str(path), "HEAD", check=False)
     if add.returncode != 0:
-        return {"ok": False, "branch": branch, "applied": [],
+        return {"ok": False, "branch": branch, "applied": [], "integration": None,
                 "failed": [{"msg": "(worktree add)", "error": (add.stderr or "").strip()[:300]}]}
     applied: list = []
     failed: list = []
+    integration: Optional[dict] = None
     try:
         for diff, msg in items:
             if not (diff or "").strip():
@@ -128,7 +137,11 @@ def apply_diffs_to_branch(repo_root, branch: str, items: list) -> dict:
                 failed.append({"msg": msg, "error": "commit 失败: " + (cm.stderr or "").strip()[:200]})
                 continue
             applied.append(msg)
-        return {"ok": bool(applied), "branch": branch, "applied": applied, "failed": failed}
+        # 集成后验证：在合并了全部绿块的分支上再跑一遍测试（worktree 还没拆，正好就地测）
+        if applied and test_cmd:
+            integration = run_tests(path, test_cmd)
+        return {"ok": bool(applied), "branch": branch, "applied": applied,
+                "failed": failed, "integration": integration}
     finally:
         remove_worktree(repo_root, path)
         if not applied:
