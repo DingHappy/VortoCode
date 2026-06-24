@@ -418,6 +418,42 @@ def test_headless_agent_loads_project_instructions(tmp_path):
     assert "项目指令" in sys_prompt and "一律用中文注释" in sys_prompt
 
 
+@pytest.mark.asyncio
+async def test_headless_mcp_connects_adds_tools_and_shuts_down(monkeypatch, tmp_path):
+    # --mcp：连 MCP → 把工具接入本回合 → agent 能调 mcp__* 工具 → 回合结束关掉 manager
+    import src.agents.mcp_tools as mt
+    from src.agents.main_agent import Tool
+    calls = {"ping": 0, "shutdown": 0}
+
+    async def ping_handler(a):
+        calls["ping"] += 1
+        return "pong"
+
+    class FakeMgr:
+        async def shutdown(self):
+            calls["shutdown"] += 1
+
+    async def fake_connect(repo_root):
+        return FakeMgr(), [Tool("mcp__srv__ping", "[MCP:srv] ping", {}, ping_handler, read_only=False)]
+    monkeypatch.setattr(mt, "connect_mcp", fake_connect)
+    monkeypatch.chdir(tmp_path)
+
+    llm = _ScriptedLLM('{"tool":"mcp__srv__ping","args":{}}', "调用完成。")
+    reply = await cli.run_agent_headless("用 ping", build=True, use_mcp=True, quiet=True, llm=llm)
+    assert reply == "调用完成。"
+    assert calls["ping"] == 1                          # MCP 工具确被接入并调用
+    assert calls["shutdown"] == 1                      # 回合结束关掉 MCP（不残留子进程）
+
+
+@pytest.mark.asyncio
+async def test_headless_mcp_no_config_runs_clean(monkeypatch, tmp_path):
+    # --mcp 但仓库无 config/mcp.yaml → 不报错、照常跑
+    monkeypatch.chdir(tmp_path)
+    reply = await cli.run_agent_headless("你好", use_mcp=True, quiet=True,
+                                         llm=_ScriptedLLM("你好呀。"))
+    assert reply == "你好呀。"
+
+
 def test_headless_agent_has_research_delegation(tmp_path):
     # headless CLI agent 现也带只读子 agent 委派（task/research_parallel）——补齐与 TUI 的差距
     async def _confirm(_m):
