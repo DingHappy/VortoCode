@@ -231,6 +231,88 @@ def test_web_agent_includes_web_fetch():
 
 
 @pytest.mark.asyncio
+async def test_web_ensure_mcp_connects_once(monkeypatch):
+    # 网页会话首回合按需连 MCP、接入工具；再调一次 no-op（只试一次）
+    import src.agents.mcp_tools as mt
+    from src.agents.main_agent import MainAgent, Tool
+    from src.web.routers import realtime
+    calls = {"connect": 0}
+
+    async def _h(a):
+        return "ok"
+
+    class FakeMgr:
+        async def shutdown(self):
+            pass
+
+    async def fake_connect(repo):
+        calls["connect"] += 1
+        return FakeMgr(), [Tool("mcp__s__t", "[MCP:s] t", {}, _h, read_only=False)]
+    monkeypatch.setattr(mt, "connect_mcp", fake_connect)
+    monkeypatch.setenv("VORTOCODE_WEB_MCP", "1")        # 网页 MCP 是 opt-in
+
+    agent = MainAgent([])
+    says = []
+    await realtime._ensure_mcp(agent, says.append)
+    assert "mcp__s__t" in agent.tools and agent._mcp_mgr is not None
+    assert calls["connect"] == 1 and any("MCP" in s for s in says)
+    await realtime._ensure_mcp(agent, says.append)      # 第二回合不再连
+    assert calls["connect"] == 1
+
+
+@pytest.mark.asyncio
+async def test_web_ensure_mcp_no_config_is_noop(monkeypatch):
+    import src.agents.mcp_tools as mt
+    from src.agents.main_agent import MainAgent
+    from src.web.routers import realtime
+
+    async def fake_connect(repo):
+        return None, []
+    monkeypatch.setattr(mt, "connect_mcp", fake_connect)
+    monkeypatch.setenv("VORTOCODE_WEB_MCP", "1")        # opt-in 开着，但无配置 → 仍是 no-op
+    agent = MainAgent([])
+    await realtime._ensure_mcp(agent, lambda _m: None)
+    assert agent._mcp_mgr is None and not any(n.startswith("mcp__") for n in agent.tools)
+
+
+@pytest.mark.asyncio
+async def test_web_ensure_mcp_default_off_never_connects(monkeypatch):
+    # 默认（未设 VORTOCODE_WEB_MCP）绝不连——防回归：自动连会让坏 mcp.yaml 卡死每回合
+    import src.agents.mcp_tools as mt
+    from src.agents.main_agent import MainAgent
+    from src.web.routers import realtime
+    monkeypatch.delenv("VORTOCODE_WEB_MCP", raising=False)
+    called = {"n": 0}
+
+    async def boom_connect(repo):
+        called["n"] += 1
+        raise AssertionError("默认不应连 MCP")
+    monkeypatch.setattr(mt, "connect_mcp", boom_connect)
+    agent = MainAgent([])
+    await realtime._ensure_mcp(agent, lambda _m: None)   # 不抛、不连
+    assert called["n"] == 0 and agent._mcp_mgr is None
+
+
+@pytest.mark.asyncio
+async def test_web_shutdown_mcp_async_runs_and_safe_without_mgr():
+    import asyncio
+    from src.agents.main_agent import MainAgent
+    from src.web.routers import realtime
+    flag = {"down": False}
+
+    class FakeMgr:
+        async def shutdown(self):
+            flag["down"] = True
+
+    agent = MainAgent([])
+    agent._mcp_mgr = FakeMgr()
+    realtime._shutdown_mcp_async(agent)
+    await asyncio.sleep(0.05)                            # 让 fire-and-forget 的 shutdown task 跑完
+    assert flag["down"] is True
+    realtime._shutdown_mcp_async(MainAgent([]))          # 无 mgr → 安全 no-op，不抛
+
+
+@pytest.mark.asyncio
 async def test_ws_confirm_round_trip_allow_and_deny():
     from src.web.routers import realtime
     for ok in (True, False):
