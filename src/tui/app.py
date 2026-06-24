@@ -828,27 +828,12 @@ class VortoCodeTUI(App):
 
     # ---------------------------------------------------------------- MCP 工具接入
     def _wrap_mcp_tools(self) -> list:
-        """把已连接的 MCP server 工具包成主 agent 的 Tool。
+        """把已连接的 MCP server 工具包成主 agent 的 Tool（复用共享 wrap_mcp_manager，与 Web/CLI 同源）。
 
         命名 mcp__<server>__<tool> 防冲突；外部工具一律 build 门控（read_only=False，人在关口）。
         """
-        from src.agents.main_agent import Tool
-        wrapped = []
-        for mt in self._mcp.list_tools():
-            orig = mt.name
-            server = getattr(mt, "server_name", "") or "mcp"
-            props = (getattr(mt, "input_schema", None) or {}).get("properties", {}) or {}
-            targs = {k: str(v.get("description") or v.get("type") or "") for k, v in props.items()}
-
-            async def handler(a: dict, _orig=orig) -> str:
-                res = await self._mcp.execute_tool(_orig, a)
-                if getattr(res, "success", True):
-                    return str(getattr(res, "output", res))
-                return f"MCP 工具出错: {getattr(res, 'error', res)}"
-
-            wrapped.append(Tool(f"mcp__{server}__{orig}",
-                                f"[MCP:{server}] {mt.description}", targs, handler, read_only=False))
-        return wrapped
+        from src.agents.mcp_tools import wrap_mcp_manager
+        return wrap_mcp_manager(self._mcp)
 
     @work(exclusive=True, group="action")
     async def _cmd_mcp(self, arg: str) -> None:
