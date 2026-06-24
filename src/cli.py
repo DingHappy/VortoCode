@@ -331,11 +331,13 @@ def _build_headless_agent(cwd, *, max_steps, on_tool, on_plan, confirm, llm=None
     from src.agents.main_agent import (MainAgent, build_command_tool,
                                        build_dev_tools, build_pr_tool, build_read_tools,
                                        build_research_tools, build_web_tools)
+    from src.agents.permissions import load_permissions
     from src.agents.project import load_project_instructions
     tools = (build_read_tools(cwd) + build_research_tools(cwd) + build_web_tools()
              + build_dev_tools(cwd, on_progress=on_progress)
              + build_command_tool(cwd, confirm) + build_pr_tool(cwd, confirm))
-    kwargs = {"plan_tool": True, "on_tool": on_tool, "on_plan": on_plan}
+    kwargs = {"plan_tool": True, "on_tool": on_tool, "on_plan": on_plan,
+              "permissions": load_permissions(cwd)}
     proj = load_project_instructions(cwd)              # AGENTS.md/CLAUDE.md 项目约定进系统提示
     if proj:
         kwargs["extra_system"] = proj

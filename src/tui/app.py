@@ -1749,9 +1749,11 @@ class VortoCodeTUI(App):
         import os
         native = os.getenv("VORTOCODE_NATIVE_TOOLS", "").lower() in ("1", "true", "yes", "on")
         hook_system = self._load_hook_system()   # .vortocode/hooks.yaml 存在才接，避免无谓开销
+        from src.agents.permissions import load_permissions
         return MainAgent(tools, extra_system=extra, native=native,
                          on_tool=self._audit_tool, on_escalate=self._escalate_to_build,
-                         on_plan=self._render_plan, plan_tool=True, hook_system=hook_system)
+                         on_plan=self._render_plan, plan_tool=True, hook_system=hook_system,
+                         permissions=load_permissions(self.repo_root))   # .vortocode/permissions.yaml deny
 
     def _load_hook_system(self):
         """有 .vortocode/hooks.yaml 才建 HookSystem（复用 src/hooks，把工具生命周期事件接进 agent）。"""
