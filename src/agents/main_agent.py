@@ -219,6 +219,12 @@ class MainAgent:
             self._llm = LLMClient()
         return self._llm
 
+    def add_tools(self, tools: list) -> None:
+        """运行时追加工具（如连上 MCP 后注入 mcp__* 工具）；同步进 _tool_list（喂系统提示目录）与 tools。"""
+        for t in tools:
+            self._tool_list.append(t)
+            self.tools[t.name] = t
+
     def _system(self, mode: str) -> str:
         mode_desc = "只读/提案" if mode == "plan" else "可写分支"
         mode_rule = (
