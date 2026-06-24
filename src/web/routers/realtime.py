@@ -143,6 +143,42 @@ def _new_agent():
     return agent
 
 
+async def _ensure_mcp(agent, say) -> None:
+    """网页会话首回合：**opt-in** 连 MCP（env VORTOCODE_WEB_MCP=1 才连）、把工具接入本会话 agent（只试一次）。
+
+    默认不连——网页无 /mcp 这类显式入口，若每回合自动连，一个慢/坏的 server 会拖死每回合；
+    故与 TUI(/mcp)、CLI(--mcp) 一样走显式 opt-in。开了之后无配置 → connect_mcp 返 (None, [])、
+    静默跳过；失败不影响回合。manager 挂 agent._mcp_mgr，会话淘汰时 _shutdown_mcp_async 关掉。
+    """
+    if getattr(agent, "_mcp_tried", False):
+        return
+    agent._mcp_tried = True
+    agent._mcp_mgr = None
+    import os
+    if os.getenv("VORTOCODE_WEB_MCP") not in ("1", "true", "yes"):
+        return                              # 默认关闭（避免坏配置卡死每回合）
+    try:
+        from src.agents.mcp_tools import connect_mcp
+        mgr, mcp_tools = await connect_mcp(os.getcwd())
+        if mcp_tools:
+            agent.add_tools(mcp_tools)
+            agent._mcp_mgr = mgr
+            say(f"🔌 接入 {len(mcp_tools)} 个 MCP 工具")
+    except Exception as e:  # noqa: BLE001
+        say(f"🔌 MCP 连接失败: {e}")
+
+
+def _shutdown_mcp_async(agent) -> None:
+    """会话淘汰时异步关掉其 MCP manager（fire-and-forget；没有运行中的 loop 就跳过）。"""
+    mgr = getattr(agent, "_mcp_mgr", None)
+    if mgr is None:
+        return
+    try:
+        asyncio.create_task(mgr.shutdown())
+    except RuntimeError:           # 没有运行中的事件循环
+        pass
+
+
 def _get_session(websocket) -> Dict[str, Any]:
     """取/建该会话状态（agent + 展示 transcript + 活动时间）；超额淘汰最久未活动的。
 
@@ -155,7 +191,9 @@ def _get_session(websocket) -> Dict[str, Any]:
     if sess is None:
         if len(_SESSIONS) >= _MAX_SESSIONS:
             oldest = min(_SESSIONS, key=lambda k: _SESSIONS[k]["last"])
-            _SESSIONS.pop(oldest, None)
+            evicted = _SESSIONS.pop(oldest, None)
+            if evicted:
+                _shutdown_mcp_async(evicted["agent"])   # 淘汰会话顺手关其 MCP，别残留子进程
         agent = _new_agent()
         transcript: list = []
         try:                                  # 跨重启复原：磁盘有这个 sid 就把历史/计划灌回 agent
@@ -366,6 +404,7 @@ async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list
 
     async def _run():
         try:
+            await _ensure_mcp(agent, agent_say)   # 首回合按需连 MCP（config/mcp.yaml 存在才连）
             await agent.run_turn(text, mode=mode, say=agent_say, emit=agent_emit,
                                  stream_cb=agent_stream, images=images, audio=audio)
         except asyncio.CancelledError:        # 中断：直接上抛，不当成错误
