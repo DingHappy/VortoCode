@@ -179,6 +179,7 @@ class MainAgent:
         plan_tool: bool = False,
         hook_system: Optional[Any] = None,
         compact: bool = True,
+        permissions: Optional[Any] = None,
     ) -> None:
         import os
         # 复用既有 src/hooks 的 HookSystem：把工具生命周期事件（pre/post/error）接进 agent loop
@@ -211,6 +212,7 @@ class MainAgent:
         env_compact = os.getenv("VORTOCODE_COMPACT")
         self.compact = (env_compact not in ("0", "false", "no")) if env_compact is not None else compact
         self._summary = ""                     # 早先轮次的压缩纪要（滚动合并）
+        self._permissions = permissions        # 可选 .vortocode/permissions.yaml deny 规则（_run_tool 硬拦）
 
     def _client(self) -> Any:
         # 惰性构建并缓存：跨步/跨轮复用同一个客户端（复用底层连接池），也便于测试注入
@@ -390,6 +392,11 @@ class MainAgent:
         tool = self.tools.get(name)
         if tool is None:
             return f"没有名为 {name} 的工具。可用：{', '.join(self.tools)}"
+        if self._permissions is not None:           # .vortocode/permissions.yaml deny：硬拦（不分模式、最优先）
+            reason = self._permissions.denied(name, args)
+            if reason:
+                say(f"🔧 [b]{name}[/b][dim] —— 被权限规则拦下[/dim]")
+                return f"[权限拦截] {reason}"
         effective = "build" if self._escalated else mode
         if effective == "plan" and not tool.read_only:
             # plan 想用写/重型工具：有 on_escalate 就问用户"切 build 并继续？"；同意则升级执行。
