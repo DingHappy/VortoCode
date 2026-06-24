@@ -72,6 +72,8 @@ def main():
                    help="续上一次 CLI 对话（仿 claude -c）；历史每轮落盘 .vortocode/cli_session.json")
     p.add_argument("--quiet", "-q", action="store_true",
                    help="不在 stderr 打印工具调用/进度，只留最终输出")
+    p.add_argument("--mcp", action="store_true",
+                   help="连接 config/mcp.yaml 里 enabled 的 MCP 服务器，把其工具接入本回合")
 
     p = sub.add_parser("run", help="跑完整多 Agent 开发流水线（产品→架构→开发→审查→测试）")
     p.add_argument("--task", "-t", required=True, help="要实现的开发目标，如 “实现用户登录接口”")
@@ -147,7 +149,7 @@ def main():
             prompt, build=args.build, auto_yes=args.yes, max_steps=args.max_steps,
             as_json=args.as_json, quiet=args.quiet, images=images, audio=audio,
             speak=args.speak, voice=args.voice, speak_out=args.speak_out,
-            continue_session=args.continue_session))
+            continue_session=args.continue_session, use_mcp=args.mcp))
 
     elif args.command == "run":
         asyncio.run(run_task(args.task))
@@ -349,7 +351,8 @@ def _build_headless_agent(cwd, *, max_steps, on_tool, on_plan, confirm, llm=None
 
 async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=None,
                              as_json=False, quiet=False, llm=None, images=None, audio=None,
-                             speak=False, voice=None, speak_out=None, continue_session=False):
+                             speak=False, voice=None, speak_out=None, continue_session=False,
+                             use_mcp=False):
     """headless 跑一回合主 agent loop（仿 claude -p）：无 UI、跑完即返回。
 
     输出契约：最终回复 → stdout；工具调用/进度 → stderr（--quiet 静默）。
@@ -397,6 +400,22 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
             if not quiet:
                 print(f"\033[2m↩ 续上上次对话（{len(hist)} 条历史）\033[0m", file=sys.stderr, flush=True)
 
+    mcp_mgr = None
+    if use_mcp:                                   # --mcp：接 config/mcp.yaml 的 MCP 服务器工具
+        from src.agents.mcp_tools import connect_mcp
+        try:
+            mcp_mgr, mcp_tools = await connect_mcp(cwd)
+            if mcp_tools:
+                agent.add_tools(mcp_tools)
+                if not quiet:
+                    print(f"\033[2m🔌 接入 {len(mcp_tools)} 个 MCP 工具\033[0m", file=sys.stderr, flush=True)
+            elif not quiet:
+                print("\033[2m🔌 无 MCP 工具（config/mcp.yaml 缺失或无 enabled 服务器）\033[0m",
+                      file=sys.stderr, flush=True)
+        except Exception as e:  # noqa: BLE001
+            if not quiet:
+                print(f"\033[2m🔌 MCP 连接失败: {e}\033[0m", file=sys.stderr, flush=True)
+
     def say(markup):
         if quiet:
             return
@@ -438,6 +457,11 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
     if speak and reply:                            # 语音回复：把最终文字合成成 WAV（mimo-v2.5-tts）
         await _speak_reply(reply, voice, speak_out, llm, quiet)
     _save_cli_history(cwd, getattr(agent, "history", []))   # 落盘，供下次 --continue 接上
+    if mcp_mgr is not None:                        # 关掉 MCP 子进程，别残留
+        try:
+            await mcp_mgr.shutdown()
+        except Exception:  # noqa: BLE001
+            pass
     return reply
 
 
