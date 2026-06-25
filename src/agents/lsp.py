@@ -8,6 +8,7 @@ import、推断类型，比 grep 准——但**不用起外部 LSP server / JSON
 """
 
 import keyword
+import os
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -44,20 +45,33 @@ def _line_text(path, line: int) -> str:
 
 
 def find_definition(repo_root: str, symbol: str) -> str:
-    """按符号名找定义（项目范围）。返回位置 + 类型 + 签名 + 文档首行。"""
+    """按符号名找定义（项目范围）。先 jedi(Python)，找不到再回退到 LSP 语言服务器(TS/JS…)。"""
     symbol = (symbol or "").strip()
     if not symbol:
         return "find_definition 需要 symbol（函数/类/变量名，可点号如 Class.method）。"
+    res = _jedi_find_definition(repo_root, symbol)
+    if res is not None:
+        return res
+    from src.agents import lsp_client
+    lres = lsp_client.lsp_find_definition(repo_root, symbol)
+    if lres is not None:
+        return lres
+    return (f"没找到符号 `{symbol}` 的定义（拼写？或来自未索引的第三方库；"
+            f"非 Python 语言需装对应 LSP server）。可用 grep 兜底。")
+
+
+def _jedi_find_definition(repo_root: str, symbol: str) -> Optional[str]:
+    """jedi(Python) 找定义；jedi 缺失/出错/没找到都返回 None（让上层回退 LSP）。"""
     jedi = _jedi()
     if jedi is None:
-        return "未安装 jedi，语义导航不可用（pip install jedi）。可改用 grep 近似。"
+        return None
     try:
         proj = jedi.Project(repo_root)
         defs = [d for d in proj.search(symbol) if getattr(d, "module_path", None)]
-    except Exception as e:  # noqa: BLE001
-        return f"语义解析出错: {e}（可改用 grep）。"
+    except Exception:  # noqa: BLE001
+        return None
     if not defs:
-        return f"没找到符号 `{symbol}` 的定义（拼写？或它来自未索引的第三方库）。可用 grep 兜底。"
+        return None
     out: List[str] = [f"符号 `{symbol}` 的定义（{min(len(defs), _MAX_DEFS)} 处）："]
     for d in defs[:_MAX_DEFS]:
         loc = f"{_rel(d.module_path, repo_root)}:{d.line}"
@@ -76,26 +90,38 @@ def find_definition(repo_root: str, symbol: str) -> str:
 
 
 def find_references(repo_root: str, symbol: str) -> str:
-    """按符号名找全项目引用。先定位定义，再从定义处取 references（jedi，scope=project）。"""
+    """按符号名找全项目引用。先 jedi(Python)，找不到再回退到 LSP 语言服务器(TS/JS…)。"""
     symbol = (symbol or "").strip()
     if not symbol:
         return "find_references 需要 symbol。"
+    res = _jedi_find_references(repo_root, symbol)
+    if res is not None:
+        return res
+    from src.agents import lsp_client
+    lres = lsp_client.lsp_find_references(repo_root, symbol)
+    if lres is not None:
+        return lres
+    return (f"没找到符号 `{symbol}` 的引用（拼写？或非 Python 语言需装对应 LSP server）。可用 grep 兜底。")
+
+
+def _jedi_find_references(repo_root: str, symbol: str) -> Optional[str]:
+    """jedi(Python) 找引用；jedi 缺失/出错/没找到都返回 None（让上层回退 LSP）。"""
     jedi = _jedi()
     if jedi is None:
-        return "未安装 jedi，语义导航不可用（pip install jedi）。可改用 grep 近似。"
+        return None
     try:
         proj = jedi.Project(repo_root)
         defs = [d for d in proj.search(symbol) if getattr(d, "module_path", None)]
         if not defs:
-            return f"没找到符号 `{symbol}`，无法找引用。可用 grep 兜底。"
+            return None
         d = defs[0]
         code = Path(d.module_path).read_text(encoding="utf-8", errors="ignore")
         script = jedi.Script(code, path=str(d.module_path), project=proj)
         refs = script.get_references(d.line, d.column, scope="project")  # jedi 行 1-based、列 0-based
-    except Exception as e:  # noqa: BLE001
-        return f"语义解析出错: {e}（可改用 grep）。"
+    except Exception:  # noqa: BLE001
+        return None
     if not refs:
-        return f"符号 `{symbol}` 没有找到引用。"
+        return None
     head = (f"符号 `{symbol}`（定义于 {_rel(d.module_path, repo_root)}:{d.line}）共 {len(refs)} 处引用"
             + (f"，列前 {_MAX_REFS}：" if len(refs) > _MAX_REFS else "："))
     out: List[str] = [head]
@@ -112,7 +138,15 @@ def document_symbols(repo_root: str, path: str) -> str:
     """
     rel = (path or "").strip().lstrip("@")
     if not rel:
-        return "document_symbols 需要 path（相对仓库根的 .py 文件）。"
+        return "document_symbols 需要 path（相对仓库根的源码文件）。"
+    ext = os.path.splitext(rel)[1].lower()
+    if ext and ext != ".py":                       # 非 Python → 走 LSP 语言服务器（TS/JS…）
+        from src.agents import lsp_client
+        lres = lsp_client.lsp_document_symbols(repo_root, rel)
+        if lres is not None:
+            return lres
+        return (f"{rel}: 没拿到结构大纲。非 Python 文件需装对应 LSP server"
+                f"（如 npm i -g typescript-language-server）。可改用 read_file。")
     jedi = _jedi()
     if jedi is None:
         return "未安装 jedi（pip install jedi）。可改用 read_file 看文件。"
