@@ -122,6 +122,33 @@ def _dev_attempts() -> int:
         return 2
 
 
+def _dev_parallelism() -> int:
+    """并行隔离实现时最多同时在跑的子任务数。env VORTOCODE_DEV_PARALLEL 调，默认 4、下限 1。
+
+    防 dev_auto 分解出很多独立子任务时一次性 fan-out 几十个 worktree+LLM 把中转站/磁盘打爆
+    （dev_parallel 另有 [:5] 上限，但 dev_auto 的独立批数量取决于分解结果、原先无界）。
+    """
+    import os
+    try:
+        return max(1, int(os.getenv("VORTOCODE_DEV_PARALLEL") or 4))
+    except (TypeError, ValueError):
+        return 4
+
+
+def _clip_middle(text: str, limit: int) -> str:
+    """超长文本保「头 + 尾」、只省中段，不超过 limit。
+
+    报错/异常栈/测试失败摘要通常在**末尾**——纯头截（text[:limit]）会把它整段丢掉，模型只看到
+    冗长的前奏、看不到真正的失败原因，调试/自修复全凭猜。保头是为留住命令与上下文，保尾是为留住结论。
+    """
+    if len(text) <= limit:
+        return text
+    head = limit * 2 // 3                 # 头 2/3（上下文）、尾 1/3（结论/报错）
+    tail = limit - head
+    omitted = len(text) - head - tail
+    return f"{text[:head]}\n…(中间省略 {omitted} 字)…\n{text[-tail:]}"
+
+
 def _repair_prompt(base: str, failure_tail: str) -> str:
     """把上一次的测试失败输出拼回子任务描述，引导下一个全新隔离子 agent 定向修复。"""
     return (f"{base}\n\n【上一次尝试失败】测试未过，失败输出尾部：\n{failure_tail}\n"
@@ -421,8 +448,7 @@ class MainAgent:
         except Exception as e:  # noqa: BLE001
             result = f"工具 {name} 执行出错: {e}"
             await self._fire_hook("tool_error", {"tool": name, "args": args, "error": str(e)})
-        if len(result) > _MAX_TOOL_RESULT:
-            result = result[:_MAX_TOOL_RESULT] + "\n…(结果已截断)"
+        result = _clip_middle(result, _MAX_TOOL_RESULT)   # 超长保头+尾：别把末尾的报错/失败摘要截没了
         # POST_TOOL_USE：钩子据此做后处理（如自动格式化）；message 附在结果后
         post = await self._fire_hook("post_tool_use", {"tool": name, "args": args, "result": result})
         if post:
@@ -1051,10 +1077,22 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         return last
 
     async def _implement_parallel(descs, test_cmd):
-        """并行隔离实现 descs（每个内部自修复重试），返回 (greens, lines)。lines=逐条 ✅/❌（标修复次数）。"""
+        """并行隔离实现 descs（每个内部自修复重试），返回 (greens, lines)。lines=逐条 ✅/❌（标修复次数）。
+
+        并发受 _dev_parallelism() 上限约束（信号量）：descs 很多时也只同时跑 N 个、其余排队，
+        防一次性 fan-out 几十个 worktree+LLM 打爆中转站/磁盘——所有子任务仍都会被处理，只是不再挤在一起。
+        """
         import asyncio
-        _progress(f"⚙️ 并行隔离实现 {len(descs)} 个子任务中（各自起 worktree 实现+自测）…")
-        results = await asyncio.gather(*[_implement_with_repair(t, test_cmd) for t in descs])
+        cap = _dev_parallelism()
+        _progress(f"⚙️ 并行隔离实现 {len(descs)} 个子任务中"
+                  f"（各自起 worktree 实现+自测；最多 {cap} 个同时跑）…")
+        sem = asyncio.Semaphore(cap)
+
+        async def _bounded(t):
+            async with sem:
+                return await _implement_with_repair(t, test_cmd)
+
+        results = await asyncio.gather(*[_bounded(t) for t in descs])
         lines, greens = [], []
         for r in results:
             att = r.get("attempts", 1)
