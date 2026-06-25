@@ -135,6 +135,23 @@ def _dev_parallelism() -> int:
         return 4
 
 
+def _glob_to_regex(pattern: str) -> "re.Pattern":
+    """把含 '/' 的 glob 译成正则（真·glob 语义）：`**/`=任意层目录(含零层)、`**`=跨 / 任意、
+    `*`=段内任意(不跨 /)、`?`=段内单字符。比 fnmatch 强在 `src/**/*.ts` 能匹配 src 下任意深度。"""
+    i, n, out = 0, len(pattern), []
+    while i < n:
+        if pattern[i] == "*":
+            if pattern[i:i + 3] == "**/":
+                out.append(r"(?:.*/)?"); i += 3; continue
+            if pattern[i:i + 2] == "**":
+                out.append(r".*"); i += 2; continue
+            out.append(r"[^/]*"); i += 1; continue
+        if pattern[i] == "?":
+            out.append(r"[^/]"); i += 1; continue
+        out.append(re.escape(pattern[i])); i += 1
+    return re.compile("(?s:" + "".join(out) + r")\Z")
+
+
 def _clip_middle(text: str, limit: int) -> str:
     """超长文本保「头 + 尾」、只省中段，不超过 limit。
 
@@ -716,6 +733,50 @@ def build_read_tools(repo_root: str) -> list[Tool]:
         fs = [f for f in _files() if f.startswith(sub)] if sub else _files()
         return "\n".join(fs[:200]) if fs else "(无源码文件)"
 
+    async def _glob(args: dict) -> str:
+        """按文件名 glob 找文件（对标 CC 的 Glob）：不限文本扩展名、跳噪音目录、按最近修改排序。
+
+        pattern 不含 '/' → 匹配**文件名**（最常用，如 `*.ts`/`*.test.js`/`conftest.py`，任意深度）；
+        含 '/' → 匹配相对路径全程（`**` 为 best-effort）。可选 dir 限定子目录。
+        """
+        import fnmatch
+        import os
+        pattern = str(args.get("pattern", "")).strip()
+        if not pattern:
+            return "glob 需要 pattern（如 *.ts、**/*.test.js、src/**/*.py）。"
+        sub = str(args.get("dir", "")).strip().strip("/")
+        base = Path(repo_root)
+        slash_re = _glob_to_regex(pattern) if "/" in pattern else None
+
+        def _match(rel_posix: str) -> bool:
+            if slash_re is not None:                     # 含 / → 全路径真·glob（** 跨目录）
+                return slash_re.match(rel_posix) is not None
+            return fnmatch.fnmatch(os.path.basename(rel_posix), pattern)   # 否则匹配文件名、任意深度
+
+        hits: list[tuple[float, str]] = []
+        for root, dirs, files in os.walk(base / sub if sub else base):
+            dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
+            for fn in files:
+                fp = Path(root) / fn
+                try:
+                    rel = str(fp.relative_to(base))
+                except ValueError:
+                    continue
+                if _match(rel.replace(os.sep, "/")):
+                    try:
+                        mtime = fp.stat().st_mtime
+                    except OSError:
+                        mtime = 0.0
+                    hits.append((mtime, rel))
+                    if len(hits) >= 5000:                # 防超大仓走查爆内存
+                        break
+        if not hits:
+            return f"没有匹配 `{pattern}` 的文件{('（在 ' + sub + '/ 下）') if sub else ''}。"
+        hits.sort(key=lambda t: t[0], reverse=True)      # 最近修改的排前（像 CC，方便找刚动过的）
+        shown = [r for _m, r in hits[:200]]
+        tail = f"\n…(共 {len(hits)} 个，只列最近 200)" if len(hits) > 200 else ""
+        return "\n".join(shown) + tail
+
     async def _grep(args: dict) -> str:
         pat = str(args.get("pattern", "")).strip()
         if not pat:
@@ -855,6 +916,11 @@ def build_read_tools(repo_root: str) -> list[Tool]:
              _read_file, read_only=True),
         Tool("list_files", "列出全仓库文本文件（py/js/html/md/yaml/toml… 跳过 .git/node_modules 等；"
              "可按子目录前缀过滤）", {"dir": "可选子目录"}, _list_files, read_only=True),
+        Tool("glob", "按文件名模式找文件（不限文本扩展名、跳 .git/node_modules 等、最近修改排前）："
+             "pattern 不含 / 匹配文件名（如 *.ts、*.test.js、conftest.py，任意深度），含 / 匹配相对路径"
+             "（**最常用就给 *.ext）。可选 dir 限子目录",
+             {"pattern": "文件名 glob，如 *.ts / **/*.py / src/**/*.css", "dir": "可选子目录"},
+             _glob, read_only=True),
         Tool("grep", "在全仓库文本文件里按正则搜索（不止 src，含 web/examples/docs/配置等），"
              "返回 path:line 命中行；给 context=N 则带每处命中前后各 N 行（≤5，> 标命中行，"
              "类似 ripgrep -C，定位后不必再 read_file）",
