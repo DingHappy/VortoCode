@@ -604,3 +604,80 @@ def test_compact_env_disable(monkeypatch):
     assert MainAgent([]).compact is True
     monkeypatch.delenv("VORTOCODE_COMPACT")
     assert MainAgent([]).compact is True                      # 默认开
+
+
+# ---- 工具结果超长保「头+尾」：别把末尾的报错/失败摘要截没了 ----
+
+def test_clip_middle_short_text_unchanged():
+    from src.agents.main_agent import _clip_middle
+    assert _clip_middle("short output", 100) == "short output"   # 没超 → 原样
+
+
+def test_clip_middle_keeps_head_and_tail():
+    from src.agents.main_agent import _clip_middle
+    text = "CMD_HEAD" + "x" * 5000 + "Traceback...ERR_AT_TAIL"
+    out = _clip_middle(text, 300)
+    assert out.startswith("CMD_HEAD")                            # 头：命令/上下文留住
+    assert out.endswith("ERR_AT_TAIL")                           # 尾：真正的报错没被丢
+    assert "省略" in out and len(out) < len(text)                # 只省中段
+
+
+@pytest.mark.asyncio
+async def test_run_tool_long_result_preserves_tail():
+    """回归：旧实现 result[:4000] 头截会丢掉末尾报错；现在保头+尾。"""
+    from src.agents.main_agent import _MAX_TOOL_RESULT
+    big = "START" + "y" * (_MAX_TOOL_RESULT + 2000) + "FATAL_ERROR_TAIL"
+
+    async def handler(args):
+        return big
+
+    tool = Tool("run_command", "shell", {"command": "命令"}, handler, read_only=False)
+    agent = MainAgent([tool], llm=ScriptedLLM(
+        '{"tool":"run_command","args":{"command":"c"}}', "看到报错了。"))
+    await agent.run_turn("跑一下", mode="build", emit=lambda _m: None)
+    tool_msg = next(m["content"] for m in agent.history
+                    if "[工具 run_command 结果]" in str(m.get("content", "")))
+    assert "FATAL_ERROR_TAIL" in tool_msg                        # 末尾报错回灌给了模型
+    assert "省略" in tool_msg
+
+
+# ---- dev 流水线并行度封顶：descs 很多也只同时跑 N 个 ----
+
+def test_dev_parallelism_env_override(monkeypatch):
+    from src.agents.main_agent import _dev_parallelism
+    monkeypatch.setenv("VORTOCODE_DEV_PARALLEL", "3")
+    assert _dev_parallelism() == 3
+    monkeypatch.setenv("VORTOCODE_DEV_PARALLEL", "garbage")
+    assert _dev_parallelism() == 4                              # 坏值 → 默认 4
+    monkeypatch.setenv("VORTOCODE_DEV_PARALLEL", "0")
+    assert _dev_parallelism() == 1                              # 下限 1
+    monkeypatch.delenv("VORTOCODE_DEV_PARALLEL")
+    assert _dev_parallelism() == 4                              # 默认 4
+
+
+@pytest.mark.asyncio
+async def test_dev_parallel_caps_concurrency(monkeypatch, tmp_path):
+    """5 个子任务、并发上限 2 → 任意时刻最多 2 个 worktree 子 agent 在跑（其余排队），全都被处理。"""
+    monkeypatch.setenv("VORTOCODE_DEV_PARALLEL", "2")
+    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "1")           # 不重试，计数干净
+    import asyncio
+    import src.agents.worktree as wt
+    from src.agents.main_agent import build_dev_tools
+
+    state = {"now": 0, "peak": 0, "ran": 0}
+
+    async def fake_run_isolated_task(repo_root, wid, desc, builder, *, test_cmd=None):
+        state["now"] += 1
+        state["ran"] += 1
+        state["peak"] = max(state["peak"], state["now"])
+        await asyncio.sleep(0.02)                               # 强制重叠，暴露真实并发峰值
+        state["now"] -= 1
+        return ("", None, {"ok": False, "output": "未绿"})       # 不绿 → dev_parallel 早退、不碰 git
+
+    monkeypatch.setattr(wt, "run_isolated_task", fake_run_isolated_task)
+    tools = {t.name: t for t in build_dev_tools(str(tmp_path))}
+    out = await tools["dev_parallel"].handler({"tasks": ["a", "b", "c", "d", "e"]})
+
+    assert state["ran"] == 5                                    # 5 个全跑了（只是没挤在一起）
+    assert state["peak"] <= 2                                   # 并发峰值被信号量压在 2
+    assert "无通过测试" in out                                  # 都不绿 → 如实早退
