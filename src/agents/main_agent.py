@@ -1044,7 +1044,20 @@ def build_test_tool(root: str, default_cmd: Optional[list] = None) -> "Tool":
                 _handler, read_only=True)
 
 
-def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]] = None) -> list[Tool]:
+def _detect_base_branch(repo_root: str) -> str:
+    """dev_auto 开 PR 时的 base：取当前 HEAD 所在分支（PR 合回你出发的地方）；分离头/出错回退 main。"""
+    import subprocess
+    try:
+        r = subprocess.run(["git", "-C", str(repo_root), "rev-parse", "--abbrev-ref", "HEAD"],
+                           capture_output=True, text=True)
+        b = (r.stdout or "").strip()
+        return b if b and b != "HEAD" else "main"
+    except Exception:  # noqa: BLE001
+        return "main"
+
+
+def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]] = None,
+                    confirm: Optional[Callable] = None) -> list[Tool]:
     """UI 无关的隔离 dev 工具（给 Web/CLI agent 用）。
 
     `dev_isolated`：在一次性 git worktree 里让可写子 agent 实现 + 自测，再跑测试验证；✅通过就
@@ -1054,6 +1067,10 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
     on_progress(msg)：可选进度回调。dev_parallel/dev_auto 跑大任务时一个子任务就可能要 1-2 分钟、
     整条链路十几分钟——没有它调用方只能对着静默的 prompt 干等、像卡死。有了它能边跑边播
     "并行实现中/某块修复重试/依赖接力/集成验证…"。best-effort、出错不影响流水线；不传则零开销。
+
+    confirm(message)->awaitable bool：可选**外向操作确认门**（同 build_command_tool）。给了它，
+    dev_auto 才支持 `open_pr=true`——集成测试通过后经确认把 vorto/auto 分支 push 上去并开 PR，
+    补上"一句话→PR"的最后一环。不传/未确认/集成红 都不开 PR（只留分支），完全向后兼容。
     """
     def _progress(msg: str) -> None:
         if on_progress is not None:
@@ -1233,10 +1250,28 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             note = f"{len(res['applied'])} 块落到 {branch}（git checkout 查看，未碰 main）。"
         return head + note + "\n" + "\n".join(lines)
 
+    async def _open_pr_for_branch(branch: str, task: str, body: str, base: str) -> str:
+        """dev_auto 集成绿后、经确认把分支 push 并开 PR。confirm 缺失/被拒/失败都给清楚说明、不抛。"""
+        import asyncio
+        if confirm is None:
+            return ("\n（本环境未接确认门，未自动开 PR；分支已就绪，可用 open_pr 工具手动开。）")
+        title = f"dev_auto: {task[:60]}"
+        if not await confirm(f"把 {branch} push 到远端并对 {base} 开 PR？\n  标题：{title}"):
+            return f"\n（已取消开 PR；分支 {branch} 保留，可稍后手动 open_pr。）"
+        _progress(f"🚀 push {branch} 并对 {base} 开 PR…")
+        from src.agents.vcs import push_and_open_pr
+        res = await asyncio.to_thread(push_and_open_pr, repo_root, branch, title, body[:4000], base)
+        if res.get("ok") and res.get("url"):
+            return f"\n🎉 已开 PR：{res['url']}"
+        if res.get("pushed"):
+            return f"\n（已 push {branch}，但开 PR 失败：{res.get('error')}。可手动 gh pr create。）"
+        return f"\n（开 PR 失败：{res.get('error')}；分支 {branch} 保留。）"
+
     async def _dev_auto(args: dict) -> str:
         """自动分解大任务 → 无依赖子任务并行隔离实现 → **有依赖的按拓扑序在同一分支上逐个接力实现**
         （检出该分支、看得见前面的改动、自测绿才提交、推进 tip 给下一个看）→ 最后对整条分支跑一遍
-        集成测试。端到端把大任务做完，不再只做独立那一半就停。全程不碰 main/工作区。"""
+        集成测试。端到端把大任务做完，不再只做独立那一半就停。全程不碰 main/工作区。
+        给 open_pr=true 且接了确认门：集成绿后经确认把分支 push 并开 PR（"一句话→PR"闭环）。"""
         import asyncio
         import uuid
         from src.agents.decompose import decompose_for_parallel, topo_order
@@ -1245,6 +1280,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         task = str(args.get("task") or args.get("goal") or args.get("description") or "").strip()
         if not task:
             return "dev_auto 需要 task（要自动分解并实现的大任务）。"
+        want_pr = _truthy(args.get("open_pr") or args.get("pr") or False)
+        base = _detect_base_branch(repo_root)               # PR base：dev_auto 出发时所在分支
         sel = str(args.get("test") or "").strip()
         from src.agents.test_detect import detect_test_cmd
         test_cmd = detect_test_cmd(repo_root, sel)          # 按仓库类型探测（pytest/npm/go/cargo/make）
@@ -1296,9 +1333,13 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         if integ["ok"]:
             out.append(f"\n✅ 全部落到 {branch}（{len(greens)} 独立 + {dep_done} 依赖）且**集成后全量测试通过**"
                        f"（未碰 main，git checkout {branch} 查看）。")
+            if want_pr:                                      # 集成绿 + 要求开 PR → 经确认 push+开 PR
+                out.append(await _open_pr_for_branch(branch, task, "\n".join(out), base))
         else:
             out.append(f"\n⚠️ 已落到 {branch}（{len(greens)} 独立 + {dep_done} 依赖），但**集成后全量测试未过**。"
                        f"失败尾部：\n{integ['output'][-1000:]}\n分支保留待修：git checkout {branch}。")
+            if want_pr:
+                out.append("（集成测试未过，未自动开 PR——先把分支修绿再开。）")
         return "\n".join(out)
 
     return [
@@ -1318,9 +1359,11 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         Tool("dev_auto",
              "把一个大任务**端到端**做完：自动分解→无依赖子任务并行隔离实现→**有依赖的按拓扑序"
              "在同一 vorto/auto 分支上逐个接力实现**（看得见前面的改动、自测绿才提交）→最后整条分支"
-             "跑一遍集成测试。子任务红了都会带失败反馈自修复重试。不再只做独立那一半就停。绝不碰 main。仅 build",
+             "跑一遍集成测试。子任务红了都会带失败反馈自修复重试。不再只做独立那一半就停。绝不碰 main。"
+             "给 open_pr=true 则集成通过后（经确认）把分支 push 并开 PR，一句话直达 PR。仅 build",
              {"task": "要自动分解并实现的大任务（自然语言）",
-              "test": "可选，pytest 选择器"},
+              "test": "可选，pytest 选择器",
+              "open_pr": "可选，true 则集成绿后经确认 push 分支并开 PR"},
              _dev_auto, read_only=False),
     ]
 
