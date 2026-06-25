@@ -43,11 +43,14 @@
 - **解法**：在装好对应 LSP server 的环境里实现 + 真机验证；用 `multilspy` 类封装统一 spawn/JSON-RPC。
   按语言分多个 PR、每个都需对应 server 在场。
 
-### E1 — OS 级沙箱
-- **缺口**：`run_command` / 测试执行靠 worktree 隔离 + `is_dangerous` 黑名单 + 逐条确认 + #85 权限，
+### E1 — OS 级沙箱 ✅ macOS 版已落地（PR #89）
+- **缺口（原）**：`run_command` 靠 worktree 隔离 + `is_dangerous` 黑名单 + 逐条确认 + #85 权限，
   **没有真正的系统级沙箱**。Codex 用 Seatbelt(macOS)/Landlock(Linux) 限 syscall/文件/网络。
-- **卡点**：平台相关、工程量大；且上述多层已兜底，全自主跑任意命令才迫切 → 紧迫性最低。
-- **解法**：可先做 macOS 单平台版（`sandbox-exec` 包 `run_command`），价值边际、平台单一。
+- **已做**：`src/agents/sandbox.py` —— macOS `sandbox-exec`(Seatbelt) 包 `run_command`，文件写入
+  限制在仓库根 + 临时目录（写不出仓库去，挡 `rm -rf ~`/改系统文件），读/exec/网络放行（不掐 pip/git）。
+  **opt-in**（env `VORTOCODE_SANDBOX=1`）默认关、零行为改变；非 macOS / 无 `sandbox-exec` 优雅降级直跑。
+  真机验证过（写家目录被 Operation not permitted 挡、写仓库内放行）。三端共用 `shell.run_command` → 全覆盖。
+- **剩余**：Linux 版（Landlock / bubblewrap）—— 需对应内核特性/二进制，CI 测不了，按需再做。
 
 ### F — 外围（低优先）
 GitHub 深度（PR 评论 / issue / 读 CI 日志）、后台长时任务管理、代码 checkpoint/回退、IDE 扩展
