@@ -134,7 +134,7 @@ def _new_agent():
 
     from src.agents.project import load_project_instructions
     tools = (build_read_tools(cwd) + build_research_tools(cwd) + build_web_tools()
-             + build_artifact_tools(cwd) + build_dev_tools(cwd, on_progress=_progress)
+             + build_artifact_tools(cwd) + build_dev_tools(cwd, on_progress=_progress, confirm=_confirm)
              + build_command_tool(cwd, _confirm) + build_pr_tool(cwd, _confirm))
     extra = load_project_instructions(cwd) or None  # AGENTS.md/CLAUDE.md 项目约定进系统提示
     from src.agents.permissions import load_permissions
