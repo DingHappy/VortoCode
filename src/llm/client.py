@@ -39,6 +39,18 @@ MODELS: Dict[str, Dict[str, str]] = {
 }
 
 
+# 暂时性 HTTP 状态：值得重试（限流/网关/服务端抖动）。永久性的（400/401/403/404）立刻抛、不重试。
+_TRANSIENT_STATUS = {408, 409, 429, 500, 502, 503, 504}
+
+
+def _int_env(name: str, default: int) -> int:
+    """读整型环境变量；缺省/坏值都回退到 default。"""
+    try:
+        return int(os.getenv(name) or default)
+    except (TypeError, ValueError):
+        return default
+
+
 # ---------------------------------------------------------------- 用量观测
 # 进程级累计：所有真实 LLM 调用都过 chat/stream/_chat_with_requests，故这里能涵盖
 # 主 agent + 所有子 agent 的总用量。优先用 API 精确值，拿不到时用估算（流式）。
@@ -101,6 +113,10 @@ class LLMConfig(BaseModel):
     temperature: float = 0.7
     max_tokens: int = 4096
     timeout: float = 120.0
+    # 中转站偶发 502/超时——SDK 默认重试 2 次，这里默认 3 且可经 OPENAI_MAX_RETRIES 调高。
+    # 同时透传给 AsyncOpenAI（主路径）与 aiohttp 降级路径（原先零重试）。
+    max_retries: int = Field(default_factory=lambda: _int_env("OPENAI_MAX_RETRIES", 3))
+    retry_base_delay: float = 0.5      # 降级路径的退避基数（指数退避；测试可设 0 免真睡）
 
 
 class LLMClient:
@@ -135,6 +151,7 @@ class LLMClient:
                     base_url=self.config.base_url,
                     api_key=self.config.api_key,
                     timeout=self.config.timeout,
+                    max_retries=self.config.max_retries,   # 暂时性错误的内建退避重试（原先用 SDK 默认 2、不可调）
                 )
             except ImportError:
                 self._client = None
@@ -254,7 +271,11 @@ class LLMClient:
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """使用 aiohttp 发送请求（openai 库不可用时的降级方案）"""
+        """使用 aiohttp 发送请求（openai 库不可用时的降级方案）。
+
+        对暂时性错误（_TRANSIENT_STATUS / 连接 / 超时）做指数退避重试，最多 max_retries 次——
+        原先此路径零重试，中转站一次 502 就让整轮对话直接报错。永久性错误（400/401/403/404）立刻抛。
+        """
         import aiohttp
 
         url = f"{self.config.base_url}/chat/completions"
@@ -270,23 +291,33 @@ class LLMClient:
         }
 
         timeout = aiohttp.ClientTimeout(total=self.config.timeout)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
-            async with session.post(url, json=payload, headers=headers) as response:
-                if response.status == 200:
-                    data = await response.json()
-                    msg = data["choices"][0]["message"]
-                    _account(messages, msg.get("content"), data.get("usage"))
-                    return {
-                        "content": msg["content"],
-                        "reasoning": msg.get("reasoning_content") or msg.get("reasoning"),
-                        "model": data.get("model", ""),
-                        "usage": data.get("usage", {}),
-                    }
-                else:
-                    error = await response.text()
-                    raise Exception(
-                        f"LLM request failed: {response.status} - {error}"
-                    )
+        last_err: Optional[Exception] = None
+        for attempt in range(self.config.max_retries + 1):
+            if attempt:                                  # 重试前指数退避（首次 attempt=0 不睡）
+                await asyncio.sleep(self.config.retry_base_delay * (2 ** (attempt - 1)))
+            try:
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.post(url, json=payload, headers=headers) as response:
+                        if response.status == 200:
+                            data = await response.json()
+                            msg = data["choices"][0]["message"]
+                            _account(messages, msg.get("content"), data.get("usage"))
+                            return {
+                                "content": msg["content"],
+                                "reasoning": msg.get("reasoning_content") or msg.get("reasoning"),
+                                "model": data.get("model", ""),
+                                "usage": data.get("usage", {}),
+                            }
+                        error = await response.text()
+                        err = Exception(f"LLM request failed: {response.status} - {error}")
+                        if response.status in _TRANSIENT_STATUS:
+                            last_err = err                # 暂时性 → 记下、重试
+                            continue
+                        raise err                         # 永久性 → 立刻抛、不浪费重试
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:   # 连接/超时也属暂时性
+                last_err = e
+                continue
+        raise last_err or Exception("LLM request failed: 重试已用尽")
 
     async def tts(self, text: str, voice: Optional[str] = None,
                   model: Optional[str] = None) -> bytes:
