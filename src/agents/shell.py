@@ -30,10 +30,19 @@ def is_dangerous(cmd: str) -> str:
 
 
 def run_command(repo_root, cmd: str, timeout: int = 300) -> dict:
-    """在 repo_root 跑 shell 命令，返回 {ok, code, output}。输出截尾、超时/异常兜底。"""
+    """在 repo_root 跑 shell 命令，返回 {ok, code, output}。输出截尾、超时/异常兜底。
+
+    若启用了 OS 沙箱（env VORTOCODE_SANDBOX + macOS sandbox-exec，见 src/agents/sandbox.py），
+    则把命令包进 Seatbelt——文件写入限制在仓库内、写不出去；未启用/不支持则照常 shell 直跑（行为不变）。
+    """
+    from src.agents.sandbox import sandbox_enabled, sandboxed_argv
     try:
-        r = subprocess.run(cmd, shell=True, cwd=str(repo_root),
-                           capture_output=True, text=True, timeout=timeout)
+        if sandbox_enabled():
+            r = subprocess.run(sandboxed_argv(repo_root, cmd), cwd=str(repo_root),
+                               capture_output=True, text=True, timeout=timeout)
+        else:
+            r = subprocess.run(cmd, shell=True, cwd=str(repo_root),
+                               capture_output=True, text=True, timeout=timeout)
         return {"ok": r.returncode == 0, "code": r.returncode, "output": (r.stdout + r.stderr)[-8000:]}
     except subprocess.TimeoutExpired:
         return {"ok": False, "code": -1, "output": f"命令超时（>{timeout}s）"}
