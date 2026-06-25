@@ -1308,21 +1308,32 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
 
 
 def build_web_tools() -> list[Tool]:
-    """联网读取工具 `web_fetch`（给主 agent 查文档/issue/报错页）。
+    """联网工具：`web_fetch`（按 URL 抓正文）+ `web_search`（按查询找网页）。
 
-    只读但外向：抓公网 http(s) URL 的正文。带 SSRF 防护（拒私网/环回）、下载封顶、超时、
-    HTML→正文（见 src/agents/web_fetch.py）。read_only=True → plan 也可用、无需逐条确认
-    （GET 不改任何状态，真正的风险靠 SSRF/封顶/超时挡）。"""
+    两者都只读但外向。web_fetch 抓公网 http(s) URL 正文（SSRF 防护/封顶/超时/HTML→正文，
+    见 src/agents/web_fetch.py）。web_search 走 DuckDuckGo HTML 端点把查询变成结果列表
+    （无需 API key，见 src/agents/web_search.py），典型用法：web_search 找链接 → web_fetch 深读。
+    read_only=True → plan 也可用、无需逐条确认（GET 不改状态，风险靠 SSRF/封顶/超时挡）。"""
     async def _web_fetch(args: dict) -> str:
         import asyncio
         from src.agents.web_fetch import fetch_url
         url = str(args.get("url") or args.get("href") or "").strip()
         return await asyncio.to_thread(fetch_url, url)
 
+    async def _web_search(args: dict) -> str:
+        import asyncio
+        from src.agents.web_search import web_search
+        query = str(args.get("query") or args.get("q") or "").strip()
+        return await asyncio.to_thread(web_search, query)
+
     return [Tool("web_fetch",
                  "抓取一个公网 http(s) 网址的正文（查文档/issue/报错页/API 说明）：限 http/https、"
                  "拒私网与环回(SSRF 防护)、下载封顶、HTML 自动转正文。只读、无需确认",
-                 {"url": "要抓取的 http(s) 网址"}, _web_fetch, read_only=True)]
+                 {"url": "要抓取的 http(s) 网址"}, _web_fetch, read_only=True),
+            Tool("web_search",
+                 "联网搜索（DuckDuckGo，无需 key）：给查询返回若干「标题/URL/摘要」，再用 web_fetch "
+                 "深读感兴趣的链接。查最新信息/报错/库用法时先搜后读。只读、无需确认",
+                 {"query": "搜索关键词/问题"}, _web_search, read_only=True)]
 
 
 def build_command_tool(repo_root: str, confirm) -> list[Tool]:
