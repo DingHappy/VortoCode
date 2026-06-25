@@ -27,13 +27,14 @@
 
 ## 三、剩余方向（**都被基础设施 / 平台卡住，非不愿做**）
 
-### B2 — web_search（联网搜索）
-- **缺口**：agent 不能搜索（只有 B1 的按 URL 抓取）。CC/Codex 有 WebSearch。
-- **卡点**：中转站实测 4 个搜索端点全 **404**（`/web_search` `/search` `/responses` `/tools/web_search`），
-  且无外部搜索 API key → **没有干净后端**。
-- **解法**：① 提供搜索 API（Brave/Bing/SerpAPI 等）key + base，即可接 `web_search` 工具并真机验证；
-  ② 退而求其次爬 DuckDuckGo HTML（`html.duckduckgo.com/html/?q=`）——无需 key，但**脆**（结构易变、
-  易被限流）、CI 无法联网测，不推荐作为主路。
+### B2 — web_search（联网搜索）✅ 已落地（PR #90，DuckDuckGo 爬取）
+- **缺口（原）**：agent 不能搜索（只有 B1 的按 URL 抓取）。CC/Codex 有 WebSearch。
+- **已做**：`src/agents/web_search.py` 走 **DuckDuckGo HTML 端点**（`html.duckduckgo.com/html/?q=`，
+  **无需 API key**，用户明确选了不接搜索 API）。复用 web_fetch 的 `_urlopen` 接口 + SSRF 校验；解析
+  `result__a`(标题/跳转链接) + `result__snippet`(摘要)，从 `?uddg=` 解出真实 URL；接进 `build_web_tools()`
+  → 三端齐。典型：web_search 找链接 → web_fetch 深读。真机验证过（live DDG 返回干净结果）。
+- **取舍**：best-effort——DDG 改版/限流可能解析不到，一律优雅降级成 '(' 说明串（不抛）。解析器用
+  仿真 HTML 写了确定性单测（不触网）；live 部分 CI 不测。relay 本身无搜索后端（4 端点全 404），故不走 relay。
 
 ### A3 — 多语言语义导航（LSP）
 - **缺口**：`find_definition / find_references / rename_symbol` 只支持 Python（jedi）。
