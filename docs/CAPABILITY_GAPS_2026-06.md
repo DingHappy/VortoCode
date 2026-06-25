@@ -36,13 +36,17 @@
 - **取舍**：best-effort——DDG 改版/限流可能解析不到，一律优雅降级成 '(' 说明串（不抛）。解析器用
   仿真 HTML 写了确定性单测（不触网）；live 部分 CI 不测。relay 本身无搜索后端（4 端点全 404），故不走 relay。
 
-### A3 — 多语言语义导航（LSP）
-- **缺口**：`find_definition / find_references / rename_symbol` 只支持 Python（jedi）。
-  CC/opencode 经 LSP 支持任意语言。
-- **卡点**：jedi 是**纯 Python 库**才能进 CI；TS/Go/Rust 等要跑**真的 LSP server 二进制**
-  （typescript-language-server / gopls / rust-analyzer），CI 里没装、测不了、且 stdio JSON-RPC 进程脆。
-- **解法**：在装好对应 LSP server 的环境里实现 + 真机验证；用 `multilspy` 类封装统一 spawn/JSON-RPC。
-  按语言分多个 PR、每个都需对应 server 在场。
+### A3 — 多语言语义导航（LSP）✅ TS/JS 已落地（PR #91）
+- **缺口（原）**：`find_definition / find_references / document_symbols` 只支持 Python（jedi）。
+- **已做**：`src/agents/lsp_client.py` —— 自写的最小 LSP 客户端（JSON-RPC over stdio，封帧抽成纯函数
+  `encode_frame`/`decode_frames` 可在 CI 确定性测）+ 语言服务器登记表（按扩展名派发）。对接
+  `typescript-language-server` 做 **TS/JS/TSX/JSX** 的 workspace/symbol（定义）、textDocument/references
+  （引用）、documentSymbol（大纲）。`lsp.py` 的公开 `find_definition`/`find_references`/`document_symbols`
+  改为 **jedi(Python) 找不到 → 回退 LSP**，工具签名不变、对 agent 透明。真机验证过（实测跨文件定义/4 处引用/类方法大纲全对）。
+- **设计**：每次调用起一次性 server 子进程、查完即关（导航低频，延迟可接受）；server 未装 →
+  优雅降级（提示装 / 回退 grep），绝不崩。
+- **剩余**：Go(gopls)/Rust(rust-analyzer)/Java… —— 登记表加一条 + 装好二进制即可扩；
+  rename 的多语言版（LSP WorkspaceEdit）暂未做，仍 jedi/Python。CI 无对应 server，行为测 skipif。
 
 ### E1 — OS 级沙箱 ✅ macOS 版已落地（PR #89）
 - **缺口（原）**：`run_command` 靠 worktree 隔离 + `is_dangerous` 黑名单 + 逐条确认 + #85 权限，
