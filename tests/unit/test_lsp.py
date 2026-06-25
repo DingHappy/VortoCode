@@ -47,9 +47,12 @@ def test_empty_symbol(tmp_path):
 
 
 def test_graceful_without_jedi(tmp_path, monkeypatch):
-    monkeypatch.setattr(lsp, "_jedi", lambda: None)           # 模拟 jedi 缺失
-    assert "未安装 jedi" in lsp.find_definition(str(tmp_path), "greet")
-    assert "未安装 jedi" in lsp.find_references(str(tmp_path), "greet")
+    # jedi 缺失 + 空目录（无 TS 文件）→ 回退 LSP 也无果 → 友好兜底，不崩
+    monkeypatch.setattr(lsp, "_jedi", lambda: None)
+    d = lsp.find_definition(str(tmp_path), "greet")
+    r = lsp.find_references(str(tmp_path), "greet")
+    assert "没找到" in d and "grep" in d
+    assert "没找到" in r and "grep" in r
 
 
 def test_tools_wired_into_read_tools(tmp_path):
