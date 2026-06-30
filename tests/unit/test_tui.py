@@ -88,6 +88,33 @@ async def test_toggle_mode_via_command_and_key():
 
 
 @pytest.mark.asyncio
+async def test_statusbar_shows_context_and_tracks_mode():
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert "📁" in app._sb_last                    # 仓库名
+        assert "🧠" in app._sb_last                    # 模型
+        assert "plan" in app._sb_last                  # 当前模式
+        from src.llm.client import LLMConfig          # 显示的模型须与客户端真实模型同源（非写死 gpt-4o-mini）
+        assert LLMConfig().model in app._sb_last
+
+        await _submit(app, pilot, "/mode")             # 切模式 → 状态栏跟着变
+        assert app.mode == "build"
+        assert "build" in app._sb_last
+
+        app._refresh_git()                             # 无头下不自动轮询，手动触发一次 git 刷新
+        for _ in range(60):                            # 后台 worker 异步填充分支（本仓库是 git repo）
+            if "⎇" in app._sb_last:
+                break
+            await pilot.pause(0.05)
+        assert "⎇" in app._sb_last
+
+        app._sb["pr"] = "PR #99 open"                  # PR 注入 → 重绘体现（PR worker 30s 才跑、测试期不触网）
+        app._render_statusbar()
+        assert "PR #99 open" in app._sb_last
+
+
+@pytest.mark.asyncio
 async def test_unknown_command_is_reported():
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
