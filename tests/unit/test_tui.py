@@ -88,6 +88,47 @@ async def test_toggle_mode_via_command_and_key():
 
 
 @pytest.mark.asyncio
+async def test_statusbar_shows_context_and_tracks_mode():
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert "📁" in app._sb_last                    # 仓库名
+        assert "🧠" in app._sb_last                    # 模型
+        assert "plan" in app._sb_last                  # 当前模式
+        from src.llm.client import LLMConfig          # 显示的模型须与客户端真实模型同源（非写死 gpt-4o-mini）
+        assert LLMConfig().model in app._sb_last
+
+        await _submit(app, pilot, "/mode")             # 切模式 → 状态栏跟着变
+        assert app.mode == "build"
+        assert "build" in app._sb_last
+
+        app._refresh_git()                             # 无头下不自动轮询，手动触发一次 git 刷新
+        for _ in range(60):                            # 后台 worker 异步填充分支（本仓库是 git repo）
+            if "⎇" in app._sb_last:
+                break
+            await pilot.pause(0.05)
+        assert "⎇" in app._sb_last
+
+        app._sb["pr"] = "PR #99 open"                  # PR 注入 → 重绘体现（PR worker 30s 才跑、测试期不触网）
+        app._render_statusbar()
+        assert "PR #99 open" in app._sb_last
+
+
+@pytest.mark.asyncio
+async def test_model_command_shows_and_switches():
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _submit(app, pilot, "/model")               # 无参：显示当前模型
+        assert any("当前模型" in t for t in app.transcript)
+
+        await _submit(app, pilot, "/model mimo-v2.5-pro")  # 带参：切换本会话模型
+        assert app._model_override == "mimo-v2.5-pro"      # 记下覆盖（agent 未建时，建时会应用）
+        assert "mimo-v2.5-pro" in app._sb_last             # 状态栏同步更新
+        assert any("已切换模型" in t for t in app.transcript)
+
+
+@pytest.mark.asyncio
 async def test_unknown_command_is_reported():
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:

@@ -249,6 +249,17 @@ def _repair_prompt(base: str, failure_tail: str) -> str:
             f"请据此定位并修正实现，确保 run_tests 通过。")
 
 
+def _noop_retry_prompt(base: str) -> str:
+    """上一次子 agent 没真正改文件（no-op）→ 下一次用更命令式的提示逼它实际动手。
+
+    推理模型对模糊描述常"只看代码/只跑下已有测试就交差"（diff 0 行）。这里把"必须真改文件"
+    说死，配合换全新 worktree 重试，能把命中率从"看运气"拉回来。
+    """
+    return (f"{base}\n\n【上一次尝试没有产生任何改动】你只是查看或跑了测试，并没有真正实现。"
+            f"必须用 edit_file / write_file **实际修改文件**来完成任务，再用 run_tests 自测通过——"
+            f"只跑测试而不改文件不算完成。")
+
+
 def _fmt_args(args: dict) -> str:
     """把工具参数压成一行短串，供 UI 展示。"""
     parts = []
@@ -384,6 +395,17 @@ class MainAgent:
             from src.llm.client import LLMClient
             self._llm = LLMClient()
         return self._llm
+
+    def set_model(self, model: str) -> None:
+        """切换本 agent 后续调用使用的模型：就地改客户端 config.model（惰性客户端先建再改）。"""
+        self._client().config.model = str(model)
+
+    def current_model(self) -> str:
+        """当前 agent 实际会用的模型名（读客户端 config）。拿不到返回空串。"""
+        try:
+            return self._client().config.model
+        except Exception:  # noqa: BLE001
+            return ""
 
     def add_tools(self, tools: list) -> None:
         """运行时追加工具（如连上 MCP 后注入 mcp__* 工具）；同步进 _tool_list（喂系统提示目录）与 tools。"""
@@ -1235,41 +1257,40 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         import asyncio
         import re
         import uuid
-        from src.agents.worktree import apply_diff_to_branch, run_isolated_task
+        from src.agents.worktree import apply_diff_to_branch
 
         desc = str(args.get("description") or args.get("task") or "").strip()
         if not desc:
             return "dev_isolated 需要 description（要在隔离工作区实现的子任务）。"
-        wid = "wt-" + uuid.uuid4().hex[:8]
         sel = str(args.get("test") or "").strip()
         from src.agents.test_detect import detect_test_cmd
         test_cmd = detect_test_cmd(repo_root, sel)          # 按仓库类型探测（pytest/npm/go/cargo/make）
-
-        def _build(wt: str):
-            return MainAgent(
-                build_read_tools(wt) + build_write_tools(wt) + [build_test_tool(wt, test_cmd)],
-                max_steps=16,
-                extra_system=("你是隔离工作区里的实现子 agent：用 read/grep 看代码、edit_file/write_file "
-                              "实现任务；改完务必用 run_tests 自测，没过就改完再测直到通过。只动相关文件。"))
         _progress(f"⚙️ 隔离实现「{desc[:40]}」中（worktree 实现+自测，可能要 1-2 分钟）…")
         try:
-            diff, conclusion, ver = await run_isolated_task(repo_root, wid, desc, _build, test_cmd=test_cmd)
+            # 复用自修复重试循环：子 agent no-op（没真改文件）或自测红时，换全新 worktree 自动重试，
+            # 最多 _dev_attempts() 次。这样单次 dev_isolated 调用就不易交白卷，不必指望主 agent 再调一次。
+            last = await _implement_with_repair(desc, test_cmd)
         except Exception as e:  # noqa: BLE001
             return f"(隔离实现出错: {e})"
-        if not (diff or "").strip():
-            return f"子 agent 没产生任何改动。结论：{conclusion}"
+        diff = (last.get("diff") or "")
+        ver = last.get("ver")
+        attempts = last.get("attempts", 1)
+        fixed = f"（自修复 {attempts - 1} 次后）" if attempts > 1 else ""
+        if not diff.strip():
+            return (f"❌ 隔离实现未产生任何改动（试了 {attempts} 次，子 agent 始终没真正修改文件）。"
+                    f"请把任务描述写得更具体、可执行（明确要改哪个文件、加什么）后再调 dev_isolated。")
         nlines = diff.count("\n")
         if ver and ver["ok"]:
             slug = re.sub(r"[^a-z0-9]+", "-", desc.lower()).strip("-")[:28] or "iso"
-            branch = f"vorto/{slug}-{wid[3:]}"
+            branch = f"vorto/{slug}-{uuid.uuid4().hex[:8]}"
             res = await asyncio.to_thread(apply_diff_to_branch, repo_root, branch, diff, f"dev_isolated: {desc}")
             if res["ok"]:
-                return (f"✅ 已隔离实现且测试通过，落到新分支 {branch}（{nlines} 行，"
-                        f"git checkout {branch} 查看，未碰 main）。结论：{conclusion}")
-            return f"✅ 实现且测试通过，但落分支失败：{res['error']}。diff {nlines} 行。结论：{conclusion}"
+                return (f"✅ 已隔离实现且测试通过{fixed}，落到新分支 {branch}（{nlines} 行，"
+                        f"git checkout {branch} 查看，未碰 main）。")
+            return f"✅ 实现且测试通过{fixed}，但落分支失败：{res['error']}。diff {nlines} 行。"
         tail = (ver or {}).get("output", "")[-1000:]
-        return (f"❌ 隔离实现完成但测试未过。失败输出尾部：\n{tail}\n"
-                f"据此修正后重试（再调 dev_isolated）。diff {nlines} 行，未落地。结论：{conclusion}")
+        return (f"❌ 隔离实现完成但测试未过（试了 {attempts} 次）。失败输出尾部：\n{tail}\n"
+                f"据此修正后重试（再调 dev_isolated）。diff {nlines} 行，未落地。")
 
     def _make_writer(test_cmd):
         """造一个'隔离实现子 agent'工厂：worktree 里 read+write+run_tests、自测到通过再交。"""
@@ -1278,8 +1299,9 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 return MainAgent(
                     build_read_tools(wt) + build_write_tools(wt) + [build_test_tool(wt, test_cmd)],
                     max_steps=16,
-                    extra_system=("你是隔离工作区里的实现子 agent：用 read/grep 看代码、edit_file/"
-                                  "write_file 实现任务；改完务必 run_tests 自测直到通过。只动相关文件。"))
+                    extra_system=("你是隔离工作区里的实现子 agent：用 read/grep 看代码，然后**必须用 "
+                                  "edit_file/write_file 实际修改文件**实现任务——只查看或只跑测试不改文件不算完成。"
+                                  "改完务必 run_tests 自测直到通过。只动相关文件。"))
             return _b
         return _mk
 
@@ -1296,7 +1318,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         last = {"desc": desc, "diff": "", "ver": None, "attempts": 0}
         for attempt in range(1, _dev_attempts() + 1):
             if attempt > 1:
-                _progress(f"↻ 「{desc[:32]}」自测未过，第 {attempt} 次修复重试中…")
+                _progress(f"↻ 「{desc[:32]}」上次未达标（红/无改动），第 {attempt} 次换全新 worktree 重试…")
             wid = "wt-" + uuid.uuid4().hex[:8]
             try:
                 diff, _c, ver = await run_isolated_task(repo_root, wid, cur, mk(cur), test_cmd=test_cmd)
@@ -1307,7 +1329,11 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             if ver and ver["ok"] and (diff or "").strip():
                 _progress(f"✅ 「{desc[:32]}」实现并自测通过" + (f"（修复 {attempt - 1} 次后）" if attempt > 1 else ""))
                 return last                                  # 绿了就收
-            cur = _repair_prompt(desc, (ver or {}).get("output", "")[-1500:])   # 红：带失败反馈再试
+            # 准备下一次的反馈：no-op（没改文件）和测试红是两码事，提示也不同
+            if not (diff or "").strip():
+                cur = _noop_retry_prompt(desc)               # 没改动：用更命令式提示逼它真动手
+            else:
+                cur = _repair_prompt(desc, (ver or {}).get("output", "")[-1500:])   # 红：带失败反馈再试
         _progress(f"❌ 「{desc[:32]}」试了 {_dev_attempts()} 次仍未过")
         return last
 

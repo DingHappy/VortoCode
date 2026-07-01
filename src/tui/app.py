@@ -31,7 +31,7 @@ from src.memory.session_store import SessionManager
 
 SLASH_COMMANDS = [
     "/analyze", "/improve", "/fix", "/run", "/apply", "/agents", "/runagent", "/skills", "/mcp",
-    "/artifacts", "/diff", "/sessions", "/resume", "/new", "/mode", "/theme", "/usage",
+    "/artifacts", "/diff", "/sessions", "/resume", "/new", "/mode", "/model", "/theme", "/usage",
     "/tools", "/audit", "/speak", "/commands", "/hooks", "/clear", "/help", "/quit",
 ]
 # 命令 → 一句话说明（命令补全面板用，让 / 命令可发现、可补全）
@@ -51,6 +51,7 @@ COMMAND_INFO = {
     "/resume": "恢复某个历史会话",
     "/new": "新开一个会话",
     "/mode": "切换 plan / build 模式",
+    "/model": "查看/切换模型（/model 名称，本会话生效）",
     "/theme": "切换配色主题（21 套内置，记住选择）",
     "/usage": "本会话 token 用量（reset 清零）",
     "/tools": "列出主 agent 工具及读写权限",
@@ -67,6 +68,21 @@ ACTION_CMDS = {"analyze", "improve", "fix", "run", "apply", "runagent", "mcp"}  
 # 工作中指示器（仿 Claude Code）：10 帧 braille 旋转 + 轮换动词 + 计时 + esc 中断
 _SPIN_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
 _SPIN_VERBS = ["思考中", "琢磨中", "检索中", "运转中", "推敲中"]
+
+
+def _model_name() -> str:
+    """状态栏显示的模型名：直接取 LLMConfig().model（与客户端同源）。
+
+    必须经 LLMConfig 取、别只读 os.getenv——加载 .env（设 DEFAULT_MODEL）的是 src.llm.client 的
+    模块级 load_dotenv。若此函数在 client 导入前就读 env，会读不到 DEFAULT_MODEL 而错误回退成
+    gpt-4o-mini（状态栏一进来就显示错的）。import LLMConfig 会确保 .env 已加载，得到真实模型。
+    """
+    try:
+        from src.llm.client import LLMConfig
+        return LLMConfig().model
+    except Exception:  # noqa: BLE001 —— 兜底：拿不到就退回 env 取法
+        import os
+        return os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
 
 # 终端转义/控制序列清洗。为支持中文输入关掉了 kitty 协议后，修饰键（如 Shift+Enter）的
 # CSI 序列会漏进输入框：既弄脏显示，其中的 ESC 控制符发到中转站还会让 API 因"非法字符"报错
@@ -211,6 +227,7 @@ class VortoCodeTUI(App):
     #status { height: 1; color: $text-muted; padding: 0 1; }
     #palette { height: auto; max-height: 9; overflow-y: auto; background: $surface;
                color: $text-muted; padding: 0 1; }
+    #statusbar { height: 1; color: $text-muted; background: $surface; padding: 0 1; }
     #prompt { border: round $panel; }
     #prompt:focus { border: round $accent; }
     """
@@ -248,6 +265,11 @@ class VortoCodeTUI(App):
         self._user_cmds = None              # 用户自定义命令缓存（.vortocode/commands，惰性加载、/commands reload 重扫）
         self._turn_tools = 0                # 本回合工具调用计数（回合结束给"✓ 完成"反馈）
         self._last_dev = None              # 最近一次 dev 流水线产出 {workspace, files}，供 /apply
+        # 常驻状态栏缓存：仓库/分支/dirty/PR 由后台 worker 异步刷新，render 只读缓存（不阻塞 UI）
+        self._sb = {"branch": "", "dirty": False, "pr": "", "model": _model_name(),
+                    "pr_branch": None, "pr_on": True}
+        self._sb_last = ""                  # 最近一次状态栏渲染出的纯文本（测试/调试用）
+        self._model_override = None         # /model 切换的模型（本会话覆盖 .env 的 DEFAULT_MODEL）
 
     # ---------------------------------------------------------------- 布局
     def compose(self) -> ComposeResult:
@@ -256,6 +278,7 @@ class VortoCodeTUI(App):
         yield Static(id="stream")
         yield Static(id="status")
         yield Static(id="palette")
+        yield Static(id="statusbar")
         yield Input(placeholder="输入需求（自然语言），或 / 看命令…",
                     id="prompt", suggester=FileSuggester(self.repo_root))
         yield Footer()
@@ -273,6 +296,13 @@ class VortoCodeTUI(App):
         self.session_id = self.sessions.start_session()
         self._persist_on = True            # 之后的对话才落盘（不存开场白）
         self.query_one("#prompt", Input).focus()
+        # 常驻状态栏：先渲染缓存（仓库/模型/模式立显）。后台轮询（git 分支/dirty + gh PR）只在
+        # 真终端起——无头(run_test)下不起定时器/worker，免得每个 TUI 测试都白跑 git/gh、拖慢测试。
+        self._render_statusbar()
+        if not self.is_headless:
+            self._refresh_git()
+            self.set_interval(4.0, self._refresh_git)   # 分支/改动：勤刷（本地 git，快）
+            self.set_interval(30.0, self._refresh_pr)   # PR 状态：慢刷（gh 走网络）
 
     def _greet(self) -> None:
         """首跑引导：能力速览 + 示例 + plan/build 说明 + 无 key 提示，让新用户立刻知道能干嘛。"""
@@ -360,6 +390,117 @@ class VortoCodeTUI(App):
         tok = (f" · ~{tot // 1000}k tok/{u['calls']}call" if tot >= 1000
                else f" · ~{tot} tok/{u['calls']}call") if u["calls"] else ""
         self.sub_title = f"模式 {self.mode}（{desc}）{sid}{busy}{allow}{tok}"
+        self._render_statusbar()           # 模式/用量变化时同步刷新状态栏
+
+    # ---------------------------------------------------------------- 状态栏
+    def _render_statusbar(self) -> None:
+        """渲染常驻底部状态栏：仓库 · 分支(改动) · PR · 模型 · 模式 · token。只读缓存，不触网/不阻塞。"""
+        try:
+            bar = self.query_one("#statusbar", Static)
+        except Exception:  # noqa: BLE001 —— 组件还没挂载（早于 compose）就跳过
+            return
+        sb = self._sb
+        try:
+            repo = Path(self.repo_root).resolve().name or str(self.repo_root)
+        except Exception:  # noqa: BLE001
+            repo = str(self.repo_root)
+        parts = [f"📁 {repo}"]
+        if sb.get("branch"):
+            parts.append(f"⎇ {sb['branch']}" + ("*" if sb.get("dirty") else ""))
+        if sb.get("pr"):
+            parts.append(sb["pr"])
+        parts.append(f"🧠 {sb.get('model', '?')}")
+        parts.append("🟢 build" if self.mode == "build" else "🔵 plan")
+        from src.llm.client import get_usage
+        u = get_usage()
+        if u["calls"]:
+            tot = u["total_tokens"]
+            parts.append(f"~{tot // 1000}k tok" if tot >= 1000 else f"~{tot} tok")
+        line = " · ".join(parts)
+        self._sb_last = line                # 存一份纯文本，便于测试/版本无关地读取当前状态栏
+        bar.update(Text(line, style="dim"))
+
+    @work(thread=True, exclusive=True, group="sb-git")
+    def _refresh_git(self) -> None:
+        """后台拉当前 git 分支 + 是否有未提交改动（本地、快），写缓存后回主线程重绘状态栏。
+
+        一次 `git status -b --porcelain` 同时拿到分支（首行 `## ...`）和改动（其余行），省一半子进程。
+        """
+        import subprocess
+        try:
+            r = subprocess.run(["git", "-C", str(self.repo_root), "status", "--porcelain=v1", "--branch"],
+                               capture_output=True, text=True, timeout=3)
+        except Exception:  # noqa: BLE001 —— 无 git 二进制：状态栏就不显示分支
+            return
+        if r.returncode != 0:                  # 非 git 仓库等
+            return
+        lines = r.stdout.splitlines()
+        branch = ""
+        if lines and lines[0].startswith("## "):
+            head = lines[0][3:]
+            if head.startswith("No commits yet on "):
+                branch = head[len("No commits yet on "):].strip()
+            elif head.startswith("HEAD (no branch)"):
+                branch = "HEAD"
+            else:
+                branch = head.split("...", 1)[0].split(" ", 1)[0]   # "br...origin/br [ahead]" → "br"
+        dirty = any(not ln.startswith("## ") for ln in lines)
+        self._sb["branch"], self._sb["dirty"] = branch, dirty
+        self.call_from_thread(self._render_statusbar)
+
+    @work(thread=True, exclusive=True, group="sb-pr")
+    def _refresh_pr(self) -> None:
+        """后台用 gh 查当前分支的 PR 状态（走网络、慢）。没装 gh 就关掉、不再轮询；失败静默。"""
+        import json
+        import subprocess
+        if not self._sb.get("pr_on", True):
+            return
+        branch = self._sb.get("branch")
+        if not branch or branch == "HEAD":
+            return
+        try:
+            r = subprocess.run(
+                ["gh", "pr", "list", "--head", branch, "--state", "all",
+                 "--json", "number,state", "--limit", "1"],
+                cwd=str(self.repo_root), capture_output=True, text=True, timeout=8)
+        except FileNotFoundError:
+            self._sb["pr_on"] = False        # 没装 gh：关掉 PR 轮询，省得每 30s 白跑
+            return
+        except Exception:  # noqa: BLE001 —— 超时/其它：本次跳过，下次再试
+            return
+        pr = ""
+        if r.returncode == 0 and r.stdout.strip():
+            try:
+                data = json.loads(r.stdout)
+                if data:
+                    pr = f"PR #{data[0]['number']} {str(data[0].get('state', '')).lower()}"
+            except Exception:  # noqa: BLE001
+                pr = ""
+        self._sb["pr"], self._sb["pr_branch"] = pr, branch
+        self.call_from_thread(self._render_statusbar)
+
+    def _cmd_model(self, arg: str) -> None:
+        """/model：无参看当前模型 + 常用列表；带参切本会话模型（就地改客户端，状态栏同步）。"""
+        arg = (arg or "").strip()
+        cur = self._sb.get("model", "?")
+        if not arg:
+            common = ("mimo-v2.5 · mimo-v2.5-pro · mimo-v2-pro · mimo-v2-omni · "
+                      "mimo-v2.5-asr · mimo-v2.5-tts")
+            self._chrome(f"[b]当前模型[/b]：{cur}")
+            self._chrome("[dim]切换：[b]/model 名称[/b]（本会话生效；重启回到 .env 的 DEFAULT_MODEL）[/dim]")
+            self._chrome(f"[dim]中转站常用：{common}[/dim]")
+            return
+        self._model_override = arg          # agent 未建时，_build_main_agent 会读它应用
+        if self.agent is not None:
+            try:
+                self.agent.set_model(arg)
+            except Exception as e:  # noqa: BLE001
+                self._chrome(f"[red]切换模型失败：{e}[/red]")
+                return
+        self._sb["model"] = arg
+        self._render_statusbar()
+        self._chrome(f"[green]已切换模型 → {arg}[/green]"
+                     "[dim]（本会话后续对话生效；未授权的模型会在下次调用时报 403）[/dim]")
 
     # 集中管理忙碌态：动作 worker 一进入运行就置忙、结束(成功/失败/取消)即解除
     def on_worker_state_changed(self, event) -> None:
@@ -587,6 +728,8 @@ class VortoCodeTUI(App):
             self.exit()
         elif cmd == "mode":
             self.action_toggle_mode()
+        elif cmd == "model":
+            self._cmd_model(arg)
         elif cmd == "clear":
             self.action_clear_log()
         elif cmd == "analyze":
@@ -1240,8 +1383,15 @@ class VortoCodeTUI(App):
             t.append("● ", style=f"bold {self._tc('text-success', '#7fce9a')}")  # 随主题，与最终回复同色
             t.append("vorto", style="dim italic")
             t.append("\n")
-            t.append(partial[-1800:])        # 显示尾部，避免面板无限增高
+            # 始终显示最新尾部：#stream 是 max-height:10 的小框，先按字符截、再只留最近 ~9 行
+            # （配合 max-height 不溢出），让最新 token 落在可见窗口里——早期只截字符，长回复会把
+            # 最新行挤出 10 行框外、滚不到底就看不见（这正是"实时输出要一直显示最新"要解决的）。
+            t.append("\n".join(partial[-1800:].splitlines()[-9:]))
             stream.update(t)
+            try:
+                stream.scroll_end(animate=False)   # 双保险：内容有换行/换行折叠时也把框滚到底，跟住最新
+            except Exception:  # noqa: BLE001
+                pass
 
         def emit_final(text: str) -> None:
             stream.update(""); stream.display = False   # 先清流式区，再落最终（无双份）
@@ -1750,11 +1900,17 @@ class VortoCodeTUI(App):
         native = os.getenv("VORTOCODE_NATIVE_TOOLS", "").lower() in ("1", "true", "yes", "on")
         hook_system = self._load_hook_system()   # .vortocode/hooks.yaml 存在才接，避免无谓开销
         from src.agents.permissions import load_permissions
-        return MainAgent(tools, extra_system=extra, native=native,
-                         on_tool=self._audit_tool, on_escalate=self._escalate_to_build,
-                         on_plan=self._render_plan, plan_tool=True, hook_system=hook_system,
-                         permissions=load_permissions(self.repo_root),   # .vortocode/permissions.yaml deny
-                         env_context=True)                # 顶层交互 agent：注入 <env>（cwd/git/日期/目录）
+        agent = MainAgent(tools, extra_system=extra, native=native,
+                          on_tool=self._audit_tool, on_escalate=self._escalate_to_build,
+                          on_plan=self._render_plan, plan_tool=True, hook_system=hook_system,
+                          permissions=load_permissions(self.repo_root),   # .vortocode/permissions.yaml deny
+                          env_context=True)                # 顶层交互 agent：注入 <env>（cwd/git/日期/目录）
+        if self._model_override:            # /model 切过 → 新建的 agent 也带上（重建时不丢）
+            try:
+                agent.set_model(self._model_override)
+            except Exception:  # noqa: BLE001
+                pass
+        return agent
 
     def _load_hook_system(self):
         """有 .vortocode/hooks.yaml 才建 HookSystem（复用 src/hooks，把工具生命周期事件接进 agent）。"""
