@@ -48,10 +48,10 @@ class DingTalkHook(Hook):
         report = event.data.get("report", event.data.get("error", ""))
 
         if event.event_type == HookEventType.TASK_END:
-            title = f"[量化平台] {stage} 完成"
+            title = f"[VortoCode] {stage} 完成"
             color = "green"
         else:
-            title = f"[量化平台] {stage} 异常"
+            title = f"[VortoCode] {stage} 异常"
             color = "red"
 
         text_content = f"## {title}\n\n{str(report)[:2000]}"

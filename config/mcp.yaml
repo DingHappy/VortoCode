@@ -33,15 +33,6 @@ servers:
     env: {}
     enabled: false  # 需要额外配置
 
-  # 量化平台工具服务器
-  - name: "quant-platform"
-    transport: "stdio"
-    command: "python"
-    args: ["src/tools/quant_mcp_server.py"]
-    env:
-      QUANT_API_BASE: "${QUANT_API_BASE:-http://localhost:8000}"
-    enabled: true
-
 # 工具权限配置
 permissions:
   # 默认规则
@@ -77,36 +68,6 @@ permissions:
       action: "deny"
       tool_names: ["rm", "rmdir", "format", "mkfs"]
       priority: 100
-
-    - id: "quant-tools-read"
-      name: "Quant Platform Read Tools"
-      description: "Allow read-only quant platform tools"
-      scope: "global"
-      action: "allow"
-      tool_names:
-        - "quant_market_overview"
-        - "quant_market_movers"
-        - "quant_market_sparklines"
-        - "quant_paper_status"
-        - "quant_paper_positions"
-        - "quant_paper_signals"
-        - "quant_templates"
-        - "quant_system_info"
-        - "akshare_news"
-        - "akshare_fundamentals"
-      priority: 10
-
-    - id: "quant-tools-execute"
-      name: "Quant Platform Execute Tools"
-      description: "Allow quant platform execution tools"
-      scope: "global"
-      action: "allow"
-      tool_names:
-        - "quant_screen"
-        - "quant_factor_run"
-        - "quant_backtest"
-        - "quant_backtest_batch"
-      priority: 20
 
 # 工具发现配置
 discovery:
