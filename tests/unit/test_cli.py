@@ -31,12 +31,12 @@ def test_self_fix_requires_paths(monkeypatch, capsys):
     assert "--paths" in err
 
 
-def test_run_requires_task(monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["vortocode", "run"])
+def test_run_command_retired(monkeypatch, capsys):
+    # 5 角色批处理入口 vc run 已退役（被 agent 隔离 dev 流水线取代）→ 应作为未知命令报错
+    monkeypatch.setattr(sys, "argv", ["vortocode", "run", "-t", "x"])
     with pytest.raises(SystemExit) as e:
         cli.main()
-    assert e.value.code != 0
-    assert "--task" in capsys.readouterr().err
+    assert e.value.code != 0                       # 无效命令：非零退出
 
 
 def test_help_is_per_command(monkeypatch, capsys):

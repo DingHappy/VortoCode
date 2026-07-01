@@ -16,7 +16,7 @@ def main():
             常用示例:
               %(prog)s self-analyze                       只读扫描自己、列出问题（无需 LLM key）
               %(prog)s agent "列出 src 下有哪些模块"         headless 跑主 agent（仿 claude -p；可管道/脚本化，需 key）
-              %(prog)s run -t "实现阶乘函数及其单测"        跑完整开发流水线（需 key）
+              %(prog)s agent -b "实现阶乘函数及其单测"       build 模式：主 agent 用隔离 dev 流水线实现（取代已退役的 run）
               %(prog)s self-improve --apply               给测试缺口自动补测试并写到新分支
               %(prog)s self-fix --paths src/foo.py        深审并外科修复指定文件
               %(prog)s server --port 8080                 启动 Web 控制台
@@ -77,9 +77,6 @@ def main():
     p.add_argument("--mcp", action="store_true",
                    help="连接 config/mcp.yaml 里 enabled 的 MCP 服务器，把其工具接入本回合")
 
-    p = sub.add_parser("run", help="跑完整多 Agent 开发流水线（产品→架构→开发→审查→测试）")
-    p.add_argument("--task", "-t", required=True, help="要实现的开发目标，如 “实现用户登录接口”")
-
     p = sub.add_parser("server", help="启动 FastAPI Web 控制台")
     p.add_argument("--host", default="127.0.0.1", help="监听地址（默认仅本地 127.0.0.1）")
     p.add_argument("--port", type=int, default=8080, help="端口（默认 8080）")
@@ -99,7 +96,7 @@ def main():
     p.add_argument("--apply", action="store_true", help="把通过门控的修复写到新分支（默认 dry-run）")
     p.add_argument("--max-fixes", type=int, default=3, metavar="N", help="单次最多处理几个（默认 3）")
 
-    p = sub.add_parser("quant", help="量化研究流水线（新闻/情绪/因子/复盘）",
+    p = sub.add_parser("quant", help="[实验性·可选] 量化研究流水线（新闻/情绪/因子/复盘）；与编码助手主线无关，按需用",
                        formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("mode", nargs="?", default="run",
                    choices=["run", "cli", "server", "check", "results"],
@@ -152,9 +149,6 @@ def main():
             as_json=args.as_json, quiet=args.quiet, images=images, audio=audio,
             speak=args.speak, voice=args.voice, speak_out=args.speak_out,
             continue_session=args.continue_session, use_mcp=args.mcp, model=args.model))
-
-    elif args.command == "run":
-        asyncio.run(run_task(args.task))
 
     elif args.command == "server":
         run_server(args.host, args.port)
@@ -547,27 +541,6 @@ async def _with_progress(coro, label: str = "运行中"):
         done.set()
         await tick
         print("\r\033[K", end="", file=sys.stderr, flush=True)   # 清掉计时行，给真正的结果让位
-
-
-async def run_task(task: str):
-    """运行任务"""
-    from src.orchestrator import create_default_engine
-
-    print(f"Running task: {task}")
-    print("=" * 50)
-
-    # 初始化引擎（注册全部 5 个角色 Agent：product/architect/developer/reviewer/tester）
-    engine = await create_default_engine()
-
-    # 执行任务
-    result = await _with_progress(engine.orchestrate(task), "开发流水线")
-    
-    print(f"\nResult: {'Success' if result.success else 'Failed'}")
-    print(f"Duration: {result.duration:.2f}s")
-    print(f"Subtasks: {len(result.results)}")
-    
-    if result.error:
-        print(f"Error: {result.error}")
 
 
 def run_server(host: str, port: int):
