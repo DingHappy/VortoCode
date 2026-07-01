@@ -276,6 +276,17 @@ class MainAgent:
             self._llm = LLMClient()
         return self._llm
 
+    def set_model(self, model: str) -> None:
+        """切换本 agent 后续调用使用的模型：就地改客户端 config.model（惰性客户端先建再改）。"""
+        self._client().config.model = str(model)
+
+    def current_model(self) -> str:
+        """当前 agent 实际会用的模型名（读客户端 config）。拿不到返回空串。"""
+        try:
+            return self._client().config.model
+        except Exception:  # noqa: BLE001
+            return ""
+
     def add_tools(self, tools: list) -> None:
         """运行时追加工具（如连上 MCP 后注入 mcp__* 工具）；同步进 _tool_list（喂系统提示目录）与 tools。"""
         for t in tools:
