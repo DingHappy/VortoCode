@@ -106,6 +106,83 @@ def parse_tool_call(text: str) -> Optional[tuple[str, dict]]:
     return None
 
 
+def parse_tool_calls(text: str) -> Optional[list[tuple[str, dict]]]:
+    """解析一个或多个工具调用（仿 Claude Code 的并行工具）：模型可输出单个 {"tool",...}，
+    也可输出一个 JSON 数组 [{"tool",...}, ...] 一次调多个（如并行读几个文件）。都不是则 None。"""
+    body = _strip_fences(text)
+    if body.startswith("[") and body.endswith("]"):     # 数组：一批工具
+        try:
+            arr = json.loads(body)
+        except Exception:  # noqa: BLE001
+            arr = None
+        if isinstance(arr, list):
+            calls = []
+            for obj in arr:
+                if isinstance(obj, dict) and isinstance(obj.get("tool"), str):
+                    a = obj.get("args")
+                    calls.append((obj["tool"], a if isinstance(a, dict) else {}))
+            if calls:
+                return calls
+    single = parse_tool_call(text)                       # 退回单个对象
+    return [single] if single else None
+
+
+def _tool_results_msg(results: list) -> str:
+    """把一批 (工具名, 结果) 合成一条回灌消息（多工具并行时一次性给回模型）。"""
+    return "\n\n".join(f"[工具 {n} 结果]\n{r}" for n, r in results)
+
+
+def _split_tool_results(text: str, count: int) -> list:
+    """把 _tool_results_msg 合成的多结果串按 `[工具 X 结果]` 头拆回每个工具的结果正文（顺序保持）。"""
+    parts = re.split(r"(?m)^\[工具 .+? 结果\]\n", text)
+    bodies = [p.rstrip("\n") for p in parts if p.strip() != ""]
+    return bodies if len(bodies) == count else ([text] + [""] * (count - 1) if count else [])
+
+
+def _to_native_messages(messages: list) -> list:
+    """仿 Claude Code 的消息结构：把提示式历史转成 OpenAI 原生 tool_calls / tool 角色消息，
+    只在 native 模式发请求时转换——存储的 history 仍是提示式（跨协议一致，便于裁剪/压缩/持久化）。
+
+    转换规则：assistant 的 {"tool":...}/[...] → assistant.tool_calls；紧跟的 [工具 X 结果] user
+    消息 → 每个工具一条 role=tool（带 tool_call_id）。其余消息原样透传。"""
+    out, i, n = [], 0, len(messages)
+    while i < n:
+        m = messages[i]
+        content = m.get("content")
+        if m.get("role") == "assistant" and isinstance(content, str):
+            calls = parse_tool_calls(content)
+            if calls:
+                tcs = [{"id": f"call_{i}_{j}", "type": "function",
+                        "function": {"name": nm, "arguments": json.dumps(a, ensure_ascii=False)}}
+                       for j, (nm, a) in enumerate(calls)]
+                out.append({"role": "assistant", "content": None, "tool_calls": tcs})
+                nxt = messages[i + 1] if i + 1 < n else None
+                if (nxt and nxt.get("role") == "user" and isinstance(nxt.get("content"), str)
+                        and nxt["content"].startswith("[工具 ")):
+                    for tc, res in zip(tcs, _split_tool_results(nxt["content"], len(tcs))):
+                        out.append({"role": "tool", "tool_call_id": tc["id"], "content": res})
+                    i += 2
+                    continue
+                i += 1
+                continue
+        out.append(m)
+        i += 1
+    return out
+
+
+# 纠偏：模型既没给有效回答、也没正确调用工具（空收尾 / 残缺工具 JSON 当结论）时，回灌这条让它重来一次
+_NUDGE = ("（上一步没有给出有效回答，也没有正确调用工具。请二选一：要么直接用自然语言给出最终回答；"
+          "要么严格按协议只输出工具调用 JSON。不要输出残缺的 JSON 或空内容。）")
+
+
+def _is_weak_final(content: str) -> bool:
+    """疑似"没收好尾"：空内容，或看着像想调工具却没解析成（残缺 JSON/围栏）→ 值得纠偏重试一次。"""
+    c = (content or "").strip()
+    if not c:
+        return True
+    return c.startswith("{") or c.startswith("[") or c.startswith("```")
+
+
 def _truthy(v: Any) -> bool:
     """宽松真值：兼容原生 function-calling 的 bool 与提示式协议的字符串（"true"/"1"/"yes"…）。"""
     if isinstance(v, bool):
@@ -201,6 +278,46 @@ def _tool_catalog(tools: list[Tool]) -> str:
     return "\n".join(lines)
 
 
+def _env_block() -> str:
+    """仿 Claude Code 的 <env>：给模型注入运行时上下文——工作目录、平台、今天日期、git 分支/改动、
+    顶层条目。让模型不再"不知道今天几号、在哪个仓库、哪个分支"。全部 best-effort，取不到就略过。"""
+    import os
+    import platform
+    import subprocess
+    from datetime import datetime
+    cwd = os.getcwd()
+    lines = [f"工作目录: {cwd}", f"平台: {platform.system().lower()}"]
+    try:
+        lines.append(f"今天: {datetime.now():%Y-%m-%d (%A)}")
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        r = subprocess.run(["git", "-C", cwd, "status", "-b", "--porcelain=v1"],
+                           capture_output=True, text=True, timeout=2)
+        if r.returncode == 0:
+            rows = r.stdout.splitlines()
+            branch = ""
+            if rows and rows[0].startswith("## "):
+                head = rows[0][3:]
+                branch = ("HEAD" if head.startswith("HEAD (no branch)")
+                          else head.split("...", 1)[0].split(" ", 1)[0])
+            changed = sum(1 for x in rows if not x.startswith("## "))
+            lines.append(f"git 分支: {branch or '?'}" +
+                         (f"（{changed} 处未提交改动）" if changed else "（干净）"))
+    except Exception:  # noqa: BLE001 —— 非 git 仓库/无 git：不显示分支
+        pass
+    try:
+        entries = sorted(e + ("/" if os.path.isdir(os.path.join(cwd, e)) else "")
+                         for e in os.listdir(cwd) if not e.startswith("."))
+        if entries:
+            shown = entries[:40]
+            more = f" …(+{len(entries) - 40})" if len(entries) > 40 else ""
+            lines.append("顶层条目: " + ", ".join(shown) + more)
+    except Exception:  # noqa: BLE001
+        pass
+    return "<env>\n" + "\n".join(lines) + "\n</env>"
+
+
 SYSTEM_TEMPLATE = """你是 VortoCode 的主助手，在一个终端 TUI 里和用户对话。VortoCode 是一个多 Agent 软件开发框架。
 你可以调用下列工具来读代码、扫描仓库，或把"正经的开发任务"交给开发流水线（dev→test→review，会真跑测试与审查）：
 
@@ -235,6 +352,7 @@ class MainAgent:
         hook_system: Optional[Any] = None,
         compact: bool = True,
         permissions: Optional[Any] = None,
+        env_context: bool = False,
     ) -> None:
         import os
         # 复用既有 src/hooks 的 HookSystem：把工具生命周期事件（pre/post/error）接进 agent loop
@@ -268,6 +386,8 @@ class MainAgent:
         self.compact = (env_compact not in ("0", "false", "no")) if env_compact is not None else compact
         self._summary = ""                     # 早先轮次的压缩纪要（滚动合并）
         self._permissions = permissions        # 可选 .vortocode/permissions.yaml deny 规则（_run_tool 硬拦）
+        self._env_context = env_context        # 仿 CC 注入 <env>（cwd/git/日期/目录）；仅顶层交互 agent 开，子 agent 不开省开销
+        self._env = ""                         # 当轮环境快照（run_turn 开始时刷新，_system 注入）
 
     def _client(self) -> Any:
         # 惰性构建并缓存：跨步/跨轮复用同一个客户端（复用底层连接池），也便于测试注入
@@ -305,6 +425,8 @@ class MainAgent:
             catalog=_tool_catalog(self._tool_list),
             mode=mode, mode_desc=mode_desc, mode_rule=mode_rule,
         )
+        if self._env:                          # 仿 CC 的 <env>：运行时上下文（cwd/git/日期/目录）
+            prompt += "\n\n" + self._env
         hint = self._orchestration_hint()      # 据可用工具给"大任务怎么展开"的编排指引
         if hint:
             prompt += "\n\n" + hint
@@ -499,6 +621,25 @@ class MainAgent:
                 pass
         return result
 
+    async def _run_tools(self, calls: list, mode: str,
+                         say: Callable[[str], None]) -> list:
+        """执行一批工具调用（仿 CC 并行）：全是只读 → 并发跑；含写/重型 → 顺序跑（写工具有
+        确认弹窗、不能并发）。返回 [(工具名, 结果字符串)]，顺序与 calls 一致。单个调用直接跑。"""
+        import asyncio
+        if len(calls) == 1:
+            n, a = calls[0]
+            return [(n, await self._run_tool(n, a, mode, say))]
+        all_ro = all(self.tools.get(n) is not None and self.tools[n].read_only for n, _ in calls)
+        if all_ro:                                  # 全只读 → 并发（CC 式并行读）
+            rs = await asyncio.gather(*[self._run_tool(n, a, mode, say) for n, a in calls],
+                                      return_exceptions=True)
+            return [(n, (r if not isinstance(r, BaseException) else f"(工具出错: {r})"))
+                    for (n, _), r in zip(calls, rs)]
+        out = []                                    # 含写/重型 → 顺序（确认 UI 不能并发、写有先后）
+        for n, a in calls:
+            out.append((n, await self._run_tool(n, a, mode, say)))
+        return out
+
     async def _fire_hook(self, event_name: str, data: dict, stoppable: bool = False) -> Optional[str]:
         """触发一个工具生命周期钩子事件（复用 src/hooks 的 HookSystem）。
 
@@ -571,38 +712,45 @@ class MainAgent:
         self.history.append({"role": "user",
                              "content": build_user_content(user_text, images, audio)})
         await self._maybe_compact(say)         # 跨轮历史超窗→把老段摘要成纪要（失败安全降级）
+        if self._env_context:                  # 仿 CC：每轮刷新一次运行时环境（cwd/git/日期/目录）注入系统提示
+            self._env = _env_block()
 
+        nudged = False                         # 本轮是否已纠偏过一次（空收尾/残缺工具 JSON → 只重试一次）
         for _step in range(self.max_steps):
             messages = [{"role": "system", "content": self._system(mode)}] + self._trimmed_history()
 
             # 原生 function-calling 路径（opt-in）；模型不支持就永久回退到提示式协议
             if self._native:
                 try:
+                    # 结构化 tool_use/tool_result：把提示式历史转成原生 tool_calls/tool 消息再发
                     resp = await self._client().chat(
-                        messages, temperature=0.3, tools=self._tools_schema())
+                        _to_native_messages(messages), temperature=0.3, tools=self._tools_schema())
                 except Exception:  # noqa: BLE001
                     self._native = False
                     resp = None
                 if resp is not None:
-                    tcs = resp.get("tool_calls")
+                    tcs = resp.get("tool_calls") or []
                     content = (resp.get("content") or "").strip()
-                    if not tcs:                    # 最终回复
+                    calls = []                     # 执行模型给出的**全部** tool_calls（CC 式并行，不再只取第一个）
+                    for tc in tcs:
+                        try:
+                            a = json.loads(tc.get("arguments") or "{}")
+                        except Exception:  # noqa: BLE001
+                            a = {}
+                        calls.append((tc.get("name", ""), a if isinstance(a, dict) else {}))
+                    if not calls:                  # 最终回复
+                        if not nudged and _is_weak_final(content):   # 空收尾 → 纠偏重试一次
+                            nudged = True
+                            self.history.append({"role": "user", "content": _NUDGE})
+                            continue
                         self.history.append({"role": "assistant", "content": content})
                         emit(content or "(无回复)")
                         return content
-                    tc = tcs[0]                     # 保持"单步一个工具"语义，取第一个
-                    name = tc.get("name", "")
-                    try:
-                        args = json.loads(tc.get("arguments") or "{}")
-                    except Exception:  # noqa: BLE001
-                        args = {}
-                    if not isinstance(args, dict):
-                        args = {}
-                    # 用提示式历史表示这一步（简单稳健，跨协议一致）
-                    self.history.append({"role": "assistant",
-                                         "content": json.dumps({"tool": name, "args": args}, ensure_ascii=False)})
-                    result = await self._run_tool(name, args, mode, say)
-                    self.history.append({"role": "user", "content": f"[工具 {name} 结果]\n{result}"})
+                    # 用提示式历史表示这一步（简单稳健、跨协议一致、便于裁剪/持久化）
+                    self.history.append({"role": "assistant", "content": json.dumps(
+                        [{"tool": n, "args": a} for n, a in calls], ensure_ascii=False)})
+                    results = await self._run_tools(calls, mode, say)
+                    self.history.append({"role": "user", "content": _tool_results_msg(results)})
                     continue
 
             # 提示式协议（默认；也是 native 回退后的路径）
@@ -616,15 +764,19 @@ class MainAgent:
                                                  "Connection", "Timeout", "timed out")) else ""
                 emit(f"对话出错: {type(e).__name__}: {detail}{hint}")
                 return ""
-            call = parse_tool_call(content)
-            if call is None:                       # 最终回复
+            calls = parse_tool_calls(content)      # 单个或一批（JSON 数组）工具调用
+            if not calls:                          # 最终回复
+                if not nudged and _is_weak_final(content):   # 空/残缺工具 JSON 当结论 → 纠偏重试一次
+                    nudged = True
+                    self.history.append({"role": "assistant", "content": content or ""})
+                    self.history.append({"role": "user", "content": _NUDGE})
+                    continue
                 self.history.append({"role": "assistant", "content": content})
                 emit(content or "(无回复)")
                 return content
-            name, args = call
             self.history.append({"role": "assistant", "content": content})
-            result = await self._run_tool(name, args, mode, say)
-            self.history.append({"role": "user", "content": f"[工具 {name} 结果]\n{result}"})
+            results = await self._run_tools(calls, mode, say)   # 全只读→并发；含写→顺序
+            self.history.append({"role": "user", "content": _tool_results_msg(results)})
 
         # 用尽工具预算：不白跑——强制一次"无工具"收尾，把已收集的信息综合成最终回答
         # （子 agent 尤其受益：读了一堆文件也能交回结论，而不是返回空丢弃全部上下文）。

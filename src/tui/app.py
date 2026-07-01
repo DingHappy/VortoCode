@@ -1903,7 +1903,8 @@ class VortoCodeTUI(App):
         agent = MainAgent(tools, extra_system=extra, native=native,
                           on_tool=self._audit_tool, on_escalate=self._escalate_to_build,
                           on_plan=self._render_plan, plan_tool=True, hook_system=hook_system,
-                          permissions=load_permissions(self.repo_root))   # .vortocode/permissions.yaml deny
+                          permissions=load_permissions(self.repo_root),   # .vortocode/permissions.yaml deny
+                          env_context=True)                # 顶层交互 agent：注入 <env>（cwd/git/日期/目录）
         if self._model_override:            # /model 切过 → 新建的 agent 也带上（重建时不丢）
             try:
                 agent.set_model(self._model_override)

@@ -339,7 +339,7 @@ def _build_headless_agent(cwd, *, max_steps, on_tool, on_plan, confirm, llm=None
              + build_dev_tools(cwd, on_progress=on_progress, confirm=confirm)
              + build_command_tool(cwd, confirm) + build_pr_tool(cwd, confirm))
     kwargs = {"plan_tool": True, "on_tool": on_tool, "on_plan": on_plan,
-              "permissions": load_permissions(cwd)}
+              "permissions": load_permissions(cwd), "env_context": True}   # 注入 <env>（cwd/git/日期/目录）
     proj = load_project_instructions(cwd)              # AGENTS.md/CLAUDE.md 项目约定进系统提示
     if proj:
         kwargs["extra_system"] = proj
