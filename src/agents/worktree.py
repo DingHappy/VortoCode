@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
 
@@ -52,10 +53,39 @@ def add_worktree(repo_root, wid: str) -> Path:
     return path
 
 
+# 收集 diff 时兜底排除的构建/缓存噪音（gitignore 语法）：隔离实现子 agent 自测会生成
+# __pycache__/*.pyc 等产物，它们随 `git add -A` 进 diff 后，落分支的 `git apply` 会栽在
+# 二进制补丁上（"cannot apply binary patch ... without full index line"）→ 绿了也落不了分支。
+# 目标仓库没配 .gitignore 时必中招；VortoCode 自己有 .gitignore，故 dogfooding 一直没暴露。
+# 这里用临时 excludesFile 在 `git add` 阶段就挡掉，不依赖目标仓库的 .gitignore。
+_DIFF_ARTIFACT_IGNORES = (
+    "__pycache__/",
+    "*.py[cod]",
+    ".pytest_cache/",
+    ".mypy_cache/",
+    ".ruff_cache/",
+    "*.egg-info/",
+    "node_modules/",
+    ".DS_Store",
+)
+
+
 def collect_diff(worktree) -> str:
-    """worktree 内相对 HEAD 的全部改动（含新增文件）的 unified diff。"""
-    _git(worktree, "add", "-A")                    # 暂存全部（含新文件）→ diff --cached 能看全
-    return _git(worktree, "diff", "--cached").stdout
+    """worktree 内相对 HEAD 的全部改动（含新增文件）的 unified diff。
+
+    用临时 excludesFile 把构建/缓存噪音（见 _DIFF_ARTIFACT_IGNORES）挡在 `git add` 之外，
+    不依赖目标仓库自带 .gitignore——否则自测生成的 .pyc 等会污染 diff 并令落分支失败。
+    """
+    with tempfile.NamedTemporaryFile("w", suffix=".gitexclude",
+                                     delete=False, encoding="utf-8") as f:
+        f.write("\n".join(_DIFF_ARTIFACT_IGNORES) + "\n")
+        excludes = f.name
+    try:
+        # `git add` 默认跳过被忽略的未跟踪文件；用 -c 注入 excludesFile 即兜底忽略上面这些。
+        _git(worktree, "-c", f"core.excludesFile={excludes}", "add", "-A")
+        return _git(worktree, "diff", "--cached").stdout
+    finally:
+        Path(excludes).unlink(missing_ok=True)
 
 
 def remove_worktree(repo_root, path) -> None:

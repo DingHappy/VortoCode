@@ -65,6 +65,8 @@ def main():
     p.add_argument("--voice", metavar="名称", help="--speak 的声音（可选，不同音色）")
     p.add_argument("--speak-out", metavar="路径", dest="speak_out",
                    help="语音 WAV 写到哪（默认 vorto-reply.wav）")
+    p.add_argument("--model", metavar="名称",
+                   help="本次用哪个模型（覆盖 .env 的 DEFAULT_MODEL），如 --model mimo-v2.5-pro")
     p.add_argument("--max-steps", type=int, metavar="N", help="覆盖单回合工具预算步数")
     p.add_argument("--json", action="store_true", dest="as_json",
                    help="以 JSON 输出 {reply, mode, tools, plan}（关闭流式）")
@@ -149,7 +151,7 @@ def main():
             prompt, build=args.build, auto_yes=args.yes, max_steps=args.max_steps,
             as_json=args.as_json, quiet=args.quiet, images=images, audio=audio,
             speak=args.speak, voice=args.voice, speak_out=args.speak_out,
-            continue_session=args.continue_session, use_mcp=args.mcp))
+            continue_session=args.continue_session, use_mcp=args.mcp, model=args.model))
 
     elif args.command == "run":
         asyncio.run(run_task(args.task))
@@ -354,7 +356,7 @@ def _build_headless_agent(cwd, *, max_steps, on_tool, on_plan, confirm, llm=None
 async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=None,
                              as_json=False, quiet=False, llm=None, images=None, audio=None,
                              speak=False, voice=None, speak_out=None, continue_session=False,
-                             use_mcp=False):
+                             use_mcp=False, model=None):
     """headless 跑一回合主 agent loop（仿 claude -p）：无 UI、跑完即返回。
 
     输出契约：最终回复 → stdout；工具调用/进度 → stderr（--quiet 静默）。
@@ -395,6 +397,13 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
 
     agent = _build_headless_agent(cwd, max_steps=max_steps, on_tool=_on_tool,
                                   on_plan=_on_plan, confirm=_confirm, llm=llm, on_progress=_progress)
+    if model:                                     # --model：本次覆盖 .env 的 DEFAULT_MODEL
+        try:
+            agent.set_model(model)
+            if not quiet:
+                print(f"\033[2m🧠 用模型 {model}\033[0m", file=sys.stderr, flush=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"设置模型失败: {e}", file=sys.stderr)
     if continue_session:                          # 续上一次 CLI 对话（claude -c 式）
         hist = _load_cli_history(cwd)
         if hist:
