@@ -1240,8 +1240,15 @@ class VortoCodeTUI(App):
             t.append("● ", style=f"bold {self._tc('text-success', '#7fce9a')}")  # 随主题，与最终回复同色
             t.append("vorto", style="dim italic")
             t.append("\n")
-            t.append(partial[-1800:])        # 显示尾部，避免面板无限增高
+            # 始终显示最新尾部：#stream 是 max-height:10 的小框，先按字符截、再只留最近 ~9 行
+            # （配合 max-height 不溢出），让最新 token 落在可见窗口里——早期只截字符，长回复会把
+            # 最新行挤出 10 行框外、滚不到底就看不见（这正是"实时输出要一直显示最新"要解决的）。
+            t.append("\n".join(partial[-1800:].splitlines()[-9:]))
             stream.update(t)
+            try:
+                stream.scroll_end(animate=False)   # 双保险：内容有换行/换行折叠时也把框滚到底，跟住最新
+            except Exception:  # noqa: BLE001
+                pass
 
         def emit_final(text: str) -> None:
             stream.update(""); stream.display = False   # 先清流式区，再落最终（无双份）
