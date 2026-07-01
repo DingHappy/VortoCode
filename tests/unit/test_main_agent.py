@@ -681,3 +681,126 @@ async def test_dev_parallel_caps_concurrency(monkeypatch, tmp_path):
     assert state["ran"] == 5                                    # 5 个全跑了（只是没挤在一起）
     assert state["peak"] <= 2                                   # 并发峰值被信号量压在 2
     assert "无通过测试" in out                                  # 都不绿 → 如实早退
+
+
+# ---- Claude Code 式对话流程：<env> 上下文 / 并行工具 / 空收尾纠偏 ----
+
+class _ScriptLLM:
+    """按脚本逐次返回 chat content 的假 LLM（超出脚本则重复最后一条）。"""
+    def __init__(self, scripts):
+        self.scripts = scripts
+        self.n = 0
+
+    async def chat(self, messages, **k):
+        r = self.scripts[min(self.n, len(self.scripts) - 1)]
+        self.n += 1
+        return {"content": r}
+
+
+def test_env_block_has_runtime_context():
+    from src.agents.main_agent import _env_block
+    b = _env_block()
+    assert b.startswith("<env>") and b.endswith("</env>")
+    assert "工作目录:" in b and "平台:" in b and "今天:" in b
+
+
+@pytest.mark.asyncio
+async def test_env_context_injected_into_system_prompt():
+    from src.agents.main_agent import MainAgent
+    a = MainAgent([], llm=_ScriptLLM(["hi"]), env_context=True)
+    await a.run_turn("hello", mode="plan")             # 一轮刷新 self._env
+    sysmsg = a._system("plan")
+    assert "<env>" in sysmsg and "工作目录:" in sysmsg   # 环境块进了系统提示
+
+    b = MainAgent([], llm=_ScriptLLM(["hi"]))          # 默认不开 → 不注入（子 agent 省开销）
+    await b.run_turn("hello", mode="plan")
+    assert "<env>" not in b._system("plan")
+
+
+@pytest.mark.asyncio
+async def test_parallel_read_only_tools_run_in_one_step():
+    from src.agents.main_agent import MainAgent, Tool
+    ran = []
+
+    async def h1(_a):
+        ran.append("t1"); return "R1"
+
+    async def h2(_a):
+        ran.append("t2"); return "R2"
+
+    tools = [Tool("t1", "读1", {}, h1, read_only=True),
+             Tool("t2", "读2", {}, h2, read_only=True)]
+    llm = _ScriptLLM(['[{"tool":"t1","args":{}},{"tool":"t2","args":{}}]', "两个都读完了"])
+    a = MainAgent(tools, llm=llm, max_steps=5)
+    out = await a.run_turn("并行读两个文件", mode="plan")
+    assert out == "两个都读完了"
+    assert set(ran) == {"t1", "t2"}                    # 一步里两个只读工具都跑了（并行）
+    hist = "\n".join(m["content"] for m in a.history if isinstance(m.get("content"), str))
+    assert "R1" in hist and "R2" in hist               # 两个结果都回灌了
+
+
+@pytest.mark.asyncio
+async def test_weak_final_triggers_one_nudge_then_answers():
+    from src.agents.main_agent import MainAgent
+    llm = _ScriptLLM(["", "这是最终回答"])              # 第一步空收尾 → 纠偏重试 → 第二步给答案
+    a = MainAgent([], llm=llm, max_steps=5)
+    out = await a.run_turn("你好", mode="plan")
+    assert out == "这是最终回答"                        # 没交白卷
+    assert any(isinstance(m.get("content"), str) and "没有给出有效回答" in m["content"]
+               for m in a.history)                     # 注入过纠偏提示
+
+
+@pytest.mark.asyncio
+async def test_broken_tool_json_as_final_is_nudged():
+    from src.agents.main_agent import MainAgent
+    # 残缺的工具 JSON（解析不成工具、又不像自然语言回答）→ 纠偏，而非当"(无回复)"交白卷
+    llm = _ScriptLLM(['{"tool": "read_file", "args": {', "好的，这是答案"])
+    a = MainAgent([], llm=llm, max_steps=5)
+    out = await a.run_turn("问题", mode="plan")
+    assert out == "好的，这是答案"
+
+
+def test_to_native_messages_structures_tool_use():
+    # #4：提示式历史 → 原生 tool_calls / tool 角色（带 id），普通消息透传
+    from src.agents.main_agent import _to_native_messages
+    hist = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "读文件"},
+        {"role": "assistant", "content": '[{"tool":"read_file","args":{"path":"a.py"}},{"tool":"grep","args":{"q":"x"}}]'},
+        {"role": "user", "content": "[工具 read_file 结果]\nA 内容\n\n[工具 grep 结果]\n命中 3 处"},
+        {"role": "assistant", "content": "综合来看…"},
+    ]
+    out = _to_native_messages(hist)
+    tc = out[2]
+    assert tc["role"] == "assistant" and tc["content"] is None
+    assert [c["function"]["name"] for c in tc["tool_calls"]] == ["read_file", "grep"]   # 两个 tool_call
+    r1, r2 = out[3], out[4]
+    assert r1["role"] == "tool" and r1["tool_call_id"] == tc["tool_calls"][0]["id"] and "A 内容" in r1["content"]
+    assert r2["role"] == "tool" and r2["tool_call_id"] == tc["tool_calls"][1]["id"] and "命中 3 处" in r2["content"]
+    assert out[0]["content"] == "sys" and out[1]["content"] == "读文件"                 # 透传
+    assert out[5]["content"] == "综合来看…"                                            # 最终回答透传
+
+
+@pytest.mark.asyncio
+async def test_native_path_runs_all_tool_calls():
+    # native 模式一步执行**全部** tool_calls（不再只取第一个），结果结构化回灌
+    from src.agents.main_agent import MainAgent, Tool
+    ran = []
+
+    async def h(_a):
+        ran.append(1); return "ok"
+
+    class NativeLLM:
+        def __init__(self):
+            self.n = 0
+
+        async def chat(self, messages, tools=None, **k):
+            self.n += 1
+            if self.n == 1:
+                return {"content": "", "tool_calls": [
+                    {"name": "t", "arguments": "{}"}, {"name": "t", "arguments": "{}"}]}
+            return {"content": "都跑完了", "tool_calls": []}
+
+    a = MainAgent([Tool("t", "", {}, h, read_only=True)], llm=NativeLLM(), native=True, max_steps=5)
+    out = await a.run_turn("并行", mode="plan")
+    assert out == "都跑完了" and len(ran) == 2                # 两个 tool_call 都执行了
