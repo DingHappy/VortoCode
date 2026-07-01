@@ -42,6 +42,35 @@ async def test_in_worktree_isolates_and_collects_diff(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_collect_diff_excludes_build_artifacts_and_lands(tmp_path):
+    # 回归（真实历练发现的 bug）：目标仓库**没有 .gitignore** 时，隔离自测生成的
+    # __pycache__/*.pyc 会随 git add -A 进 diff，落分支的 git apply 栽在二进制补丁上。
+    # collect_diff 须兜底排除这些噪音，diff 干净、能正常落分支。
+    _init_repo(tmp_path)                                     # _init_repo 不建 .gitignore
+
+    async def work(wt):
+        (wt / "mod.py").write_text("def f():\n    return 1\n")   # 真实源码改动
+        cache = wt / "__pycache__"
+        cache.mkdir()
+        (cache / "mod.cpython-311.pyc").write_bytes(b"\x00\x01\x02BIN\xff")  # 自测产物（二进制）
+        (wt / "sub").mkdir()
+        (wt / "sub" / "__pycache__").mkdir()
+        (wt / "sub" / "__pycache__" / "x.pyc").write_bytes(b"\xfe\xednested")  # 嵌套也得挡
+        (wt / "top.pyc").write_bytes(b"\x00\xfftop")             # 顶层 .pyc
+        return None
+
+    diff, _ = await worktree.in_worktree(str(tmp_path), "wt-artifact", work)
+    assert "mod.py" in diff and "return 1" in diff              # 源码改动进 diff
+    assert "__pycache__" not in diff and ".pyc" not in diff     # 构建噪音被挡在 diff 外
+    # 关键：含二进制噪音本会让 git apply 失败；排除后落分支必须成功（绿了能交付）
+    res = worktree.apply_diff_to_branch(str(tmp_path), "vorto/artifact", diff, "add mod")
+    assert res["ok"] is True, res.get("error")
+    tree = subprocess.run(["git", "-C", str(tmp_path), "ls-tree", "-r", "--name-only", "vorto/artifact"],
+                          capture_output=True, text=True).stdout
+    assert "mod.py" in tree and ".pyc" not in tree             # 分支里有源码、无 .pyc
+
+
+@pytest.mark.asyncio
 async def test_in_worktree_cleans_up_on_error(tmp_path):
     _init_repo(tmp_path)
 
@@ -643,6 +672,49 @@ async def test_dev_attempts_env_override(monkeypatch, tmp_path):
     tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_parallel"]
     await tool.handler({"tasks": ["x"]})
     assert state["n"] == 3                                   # env 把尝试次数调到 3
+
+
+@pytest.mark.asyncio
+async def test_dev_isolated_retries_on_noop_then_lands(monkeypatch, tmp_path):
+    # 真实历练发现的"无改动不重试"缺口：子 agent 第一次 no-op（没改文件、diff 空、测试碰巧绿）
+    # → dev_isolated 自动换全新 worktree、用更命令式描述重试 → 第二次真改了 → 落分支。
+    import src.agents.worktree as wt
+    from src.agents.main_agent import build_dev_tools
+    state = {"n": 0, "descs": []}
+
+    async def flaky(repo, wid, desc, build, test_cmd=None):
+        state["n"] += 1
+        state["descs"].append(desc)
+        if state["n"] == 1:
+            return ("", "啥也没干", {"ok": True, "output": ""})                 # no-op：绿但无 diff
+        return ("diff --git a/f b/f\n+x\n", "改了", {"ok": True, "output": ""})  # 重试后真改
+    monkeypatch.setattr(wt, "run_isolated_task", flaky)
+    monkeypatch.setattr(wt, "apply_diff_to_branch",
+                        lambda repo, br, diff, msg: {"ok": True, "branch": br, "error": ""})
+
+    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_isolated"]
+    out = await tool.handler({"description": "加个函数"})
+    assert state["n"] == 2                                       # no-op → 自动重试一次
+    assert "没有产生任何改动" in state["descs"][1]               # 第二次用了更命令式的 no-op 提示
+    assert "✅" in out and "vorto/" in out and "自修复 1 次后" in out   # 重试后落分支、标了次数
+
+
+@pytest.mark.asyncio
+async def test_dev_isolated_all_noop_reports_clearly(monkeypatch, tmp_path):
+    # 全程 no-op（始终没改文件）→ 不谎报，清楚说"未产生任何改动"并建议把描述写具体
+    import src.agents.worktree as wt
+    from src.agents.main_agent import build_dev_tools
+    state = {"n": 0}
+
+    async def always_noop(repo, wid, desc, build, test_cmd=None):
+        state["n"] += 1
+        return ("", "没干", {"ok": True, "output": ""})
+    monkeypatch.setattr(wt, "run_isolated_task", always_noop)
+
+    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_isolated"]
+    out = await tool.handler({"description": "做点啥"})
+    assert state["n"] == 2                                       # 默认尝试 2 次后放弃
+    assert "未产生任何改动" in out and "更具体" in out
 
 
 @pytest.mark.asyncio
