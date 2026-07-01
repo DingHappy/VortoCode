@@ -236,8 +236,8 @@ vc tui
 # Web 控制台（默认 127.0.0.1:8080；对外暴露务必设 AUTODEV_API_TOKEN）
 vc server                            # 起服务后浏览器打开 /agent 即是网页版主 agent
 
-# 跑完整开发流水线 / 分析任务（需配 API key）
-vc run -t "用 Python 写一个计算阶乘的函数及其单元测试"
+# 开发任务：主 agent 用隔离 dev 流水线实现（需配 API key）
+vc agent -b "用 Python 写一个计算阶乘的函数及其单元测试"   # 取代已退役的 5 角色批处理 vc run
 vc analyze -t "创建一个 REST API"
 ```
 

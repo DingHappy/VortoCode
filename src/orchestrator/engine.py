@@ -1,4 +1,10 @@
-"""自我编排引擎"""
+"""自我编排引擎（⚠️ 已退役/冻结，非主线）。
+
+这是早期"5 角色批处理（产品→架构→开发→审查→测试）"范式，已被**交互式主 agent loop + 隔离
+dev 流水线**取代，用户入口 `vc run` 已移除。本模块暂不删除，仅因 quant 子系统（quant_engine/
+quant_pipeline，实验性可选）与 projects/manager 仍内部复用；不再新增功能。彻底移除需先把 quant
+与本引擎解耦。主线代码见 src/agents/main_agent.py。
+"""
 
 import asyncio
 import logging
