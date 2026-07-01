@@ -300,23 +300,10 @@ class MultiProjectOrchestrator:
         project = self.project_manager.get_project(project_id)
         if not project:
             return {"success": False, "error": "Project not found"}
-        
-        # 切换到该项目
-        self.project_manager.switch_project(project_id)
-        
-        # 获取或创建项目的编排器
-        orchestrator = self._get_orchestrator(project_id)
-        
-        # 执行任务
-        result = await orchestrator.orchestrate(task, **kwargs)
-        
-        # 更新统计
-        self.project_manager.update_stats(
-            project_id,
-            tasks_completed=1 if result.get("success") else 0
-        )
-        
-        return result
+        # 5 角色批处理编排引擎已退役删除；项目级自动开发请改用交互式主 agent（vc tui / vc agent）
+        # 或隔离 dev 流水线（dev_isolated/dev_auto）。这里保留接口、明确返回退役说明，不再拉起老引擎。
+        return {"success": False,
+                "error": "批处理编排引擎已退役；请用 vc tui / vc agent（隔离 dev 流水线）实现项目任务"}
     
     async def execute_parallel(
         self,
@@ -335,22 +322,6 @@ class MultiProjectOrchestrator:
             )
         
         return await asyncio.gather(*coroutines, return_exceptions=True)
-    
-    def _get_orchestrator(self, project_id: str) -> Any:
-        """获取项目的编排器"""
-        if project_id not in self.project_orchestrators:
-            # 延迟导入避免循环依赖
-            from .engine import SelfOrchestratingEngine
-            
-            project = self.project_manager.get_project(project_id)
-            orchestrator = SelfOrchestratingEngine()
-            
-            # 设置工作目录
-            orchestrator.workdir = project.workdir
-            
-            self.project_orchestrators[project_id] = orchestrator
-        
-        return self.project_orchestrators[project_id]
     
     def get_all_stats(self) -> Dict[str, Any]:
         """获取所有项目统计"""

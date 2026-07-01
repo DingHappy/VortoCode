@@ -1,47 +1,15 @@
-"""编排器"""
+"""编排器（保留任务分析/分解 + 迭代 dev loop；老的 5 角色批处理引擎与 quant 已退役删除）。
 
-from .task_analyzer import TaskAnalyzer, TaskAnalysis, TaskComplexity, SubTask
-from .matcher import AgentCapabilityMatcher, MatchResult, WorkflowOptimizer, ExecutionPlan
-from .recovery import FailureRecoveryHandler, RecoveryStrategy, RecoveryPlan
-from .engine import SelfOrchestratingEngine, OrchestrationResult, create_default_engine
+历史上这里还有 SelfOrchestratingEngine / matcher / collaboration / loop_controller /
+verification_loop / autonomous_loop / recovery（5 角色批处理范式）——已被交互式主 agent loop +
+隔离 dev 流水线取代并删除。分析/分解（task_analyzer）与迭代 dev loop（dev_loop）仍被
+/analyze、dev 流水线复用，予以保留。
+"""
+
+from .task_analyzer import TaskAnalyzer, TaskAnalysis, TaskComplexity, SubTask, TaskDecomposer
 from .dev_loop import (
     IterativeDevLoop, DevLoopResult, run_iterative_development,
     AutonomousCodingResult, run_autonomous_coding,
-)
-from .autonomous_loop import (
-    AutonomousLoop,
-    GoalOrientedAgent,
-    LoopStatus,
-    GoalStatus,
-    IterationResult,
-    GoalMetrics,
-    run_autonomous_goal,
-)
-from .collaboration import (
-    MultiAgentCollaborator,
-    DevelopmentPipeline,
-    SubAgentWorker,
-    AgentTeam,
-    CollaborationTask,
-    TaskType,
-    TaskStatus
-)
-from .verification_loop import (
-    VerificationLoop,
-    VerificationStatus,
-    VerificationResult,
-    VerificationCheck,
-    TestVerificationLoop,
-    CodeReviewVerificationLoop,
-    create_verification_loop
-)
-from .loop_controller import (
-    LoopController,
-    LoopConfig,
-    LoopIteration,
-    PollingLoopController,
-    ContinuousImprovementLoop,
-    create_loop_controller
 )
 
 __all__ = [
@@ -49,46 +17,10 @@ __all__ = [
     "TaskAnalysis",
     "TaskComplexity",
     "SubTask",
-    "AgentCapabilityMatcher",
-    "MatchResult",
-    "WorkflowOptimizer",
-    "ExecutionPlan",
-    "FailureRecoveryHandler",
-    "RecoveryStrategy",
-    "RecoveryPlan",
-    "SelfOrchestratingEngine",
-    "OrchestrationResult",
-    "create_default_engine",
+    "TaskDecomposer",
     "IterativeDevLoop",
     "DevLoopResult",
     "run_iterative_development",
     "AutonomousCodingResult",
     "run_autonomous_coding",
-    "AutonomousLoop",
-    "GoalOrientedAgent",
-    "LoopStatus",
-    "GoalStatus",
-    "IterationResult",
-    "GoalMetrics",
-    "run_autonomous_goal",
-    "MultiAgentCollaborator",
-    "DevelopmentPipeline",
-    "SubAgentWorker",
-    "AgentTeam",
-    "CollaborationTask",
-    "TaskType",
-    "TaskStatus",
-    "VerificationLoop",
-    "VerificationStatus",
-    "VerificationResult",
-    "VerificationCheck",
-    "TestVerificationLoop",
-    "CodeReviewVerificationLoop",
-    "create_verification_loop",
-    "LoopController",
-    "LoopConfig",
-    "LoopIteration",
-    "PollingLoopController",
-    "ContinuousImprovementLoop",
-    "create_loop_controller",
 ]
