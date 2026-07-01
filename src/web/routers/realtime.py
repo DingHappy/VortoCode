@@ -139,7 +139,8 @@ def _new_agent():
     extra = load_project_instructions(cwd) or None  # AGENTS.md/CLAUDE.md 项目约定进系统提示
     from src.agents.permissions import load_permissions
     agent = MainAgent(tools, plan_tool=True, extra_system=extra,
-                      permissions=load_permissions(cwd))  # 网页主 agent：持久计划 + 隔离 dev + 受 WS 确认的 shell + 权限 deny
+                      permissions=load_permissions(cwd),   # 网页主 agent：持久计划 + 隔离 dev + 受 WS 确认的 shell + 权限 deny
+                      env_context=True)                    # 注入 <env>（cwd/git/日期/目录）
     agent._web_confirm_holder = confirm_holder     # _run_agent_turn 每回合把它指向当前 ws
     agent._web_progress_holder = progress_holder
     return agent
