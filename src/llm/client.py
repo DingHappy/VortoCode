@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -222,8 +222,12 @@ class LLMClient:
         messages: List[Dict[str, str]],
         model: Optional[str] = None,
         temperature: Optional[float] = None,
+        on_reasoning: Optional[Callable[[str], None]] = None,
     ):
-        """异步逐块产出文本增量（用于流式展示）"""
+        """异步逐块产出**正文**文本增量（用于流式展示）。
+
+        on_reasoning：可选侧信道回调——推理型模型（DeepSeek-R1/mimo 等）的思维链增量
+        （delta.reasoning_content）会走它，不混进正文 yield。通用：靠 getattr 探测，无则不触发。"""
         client = await self._get_client()
 
         if client is None:
@@ -258,6 +262,13 @@ class LLMClient:
             if not choices:
                 continue
             delta = getattr(choices[0], "delta", None)
+            if delta is not None and on_reasoning is not None:   # 推理增量走侧信道（不混进正文）
+                rc = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+                if rc:
+                    try:
+                        on_reasoning(rc)
+                    except Exception:  # noqa: BLE001 —— 展示回调不该影响生成
+                        pass
             content = getattr(delta, "content", None) if delta else None
             if content:
                 parts.append(content)

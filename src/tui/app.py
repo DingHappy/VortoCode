@@ -31,7 +31,7 @@ from src.memory.session_store import SessionManager
 
 SLASH_COMMANDS = [
     "/analyze", "/improve", "/fix", "/run", "/apply", "/agents", "/runagent", "/skills", "/mcp",
-    "/artifacts", "/diff", "/sessions", "/resume", "/new", "/mode", "/model", "/theme", "/usage",
+    "/artifacts", "/diff", "/sessions", "/resume", "/new", "/mode", "/model", "/think", "/theme", "/usage",
     "/tools", "/audit", "/speak", "/commands", "/hooks", "/clear", "/help", "/quit",
 ]
 # 命令 → 一句话说明（命令补全面板用，让 / 命令可发现、可补全）
@@ -52,6 +52,7 @@ COMMAND_INFO = {
     "/new": "新开一个会话",
     "/mode": "切换 plan / build 模式",
     "/model": "查看/切换模型（/model 名称，本会话生效）",
+    "/think": "开关「思考呈现」（推理型模型的思维链 dim 显示）",
     "/theme": "切换配色主题（21 套内置，记住选择）",
     "/usage": "本会话 token 用量（reset 清零）",
     "/tools": "列出主 agent 工具及读写权限",
@@ -222,6 +223,8 @@ class VortoCodeTUI(App):
     TITLE = "VortoCode"
     CSS = """
     #log { height: 1fr; border: round $accent; padding: 0 1; }
+    #thinking { max-height: 6; overflow-y: auto; color: $text-muted; padding: 0 1;
+                border-left: solid $panel; }
     #stream { max-height: 10; overflow-y: auto; color: $text-muted; padding: 0 1;
               border-left: solid $success; }
     #status { height: 1; color: $text-muted; padding: 0 1; }
@@ -270,11 +273,13 @@ class VortoCodeTUI(App):
                     "pr_branch": None, "pr_on": True}
         self._sb_last = ""                  # 最近一次状态栏渲染出的纯文本（测试/调试用）
         self._model_override = None         # /model 切换的模型（本会话覆盖 .env 的 DEFAULT_MODEL）
+        self._show_thinking = True          # 思考呈现开关（/think 切；推理型模型的思维链 dim 显示）
 
     # ---------------------------------------------------------------- 布局
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         yield RichLog(id="log", wrap=True, markup=True, highlight=False, auto_scroll=True)
+        yield Static(id="thinking")
         yield Static(id="stream")
         yield Static(id="status")
         yield Static(id="palette")
@@ -288,6 +293,7 @@ class VortoCodeTUI(App):
         reset_usage()                       # 每个会话从零计量
         self._load_history()                # 跨会话输入历史（↑/↓ 可调出上次的）
         self._load_theme()                  # 套用上次选的配色主题
+        self.query_one("#thinking", Static).display = False
         self.query_one("#stream", Static).display = False
         self.query_one("#status", Static).display = False
         self.query_one("#palette", Static).display = False
@@ -730,6 +736,16 @@ class VortoCodeTUI(App):
             self.action_toggle_mode()
         elif cmd == "model":
             self._cmd_model(arg)
+        elif cmd == "think":
+            self._show_thinking = not self._show_thinking
+            self._chrome(f"[dim]💭 思考呈现已{'开' if self._show_thinking else '关'}"
+                         "（推理型模型的思维链；对无 reasoning 的模型无影响）[/dim]")
+            if not self._show_thinking:
+                try:
+                    th = self.query_one("#thinking", Static)
+                    th.update(""); th.display = False
+                except Exception:  # noqa: BLE001
+                    pass
         elif cmd == "clear":
             self.action_clear_log()
         elif cmd == "analyze":
@@ -1375,8 +1391,29 @@ class VortoCodeTUI(App):
         # 不再是早期那种"下方暗显再跳上去"的割裂感）；reply 就绪即清掉 #stream、把最终
         # markdown 写进 log（清在写之前，避免一帧双份 ● vorto）。工具调用的 JSON 不会流式（被 _complete 抑制）。
         stream = self.query_one("#stream", Static)
+        thinking = self.query_one("#thinking", Static)
+        think_buf = []                          # 累积推理型模型的思维链（reasoning_content）
+
+        def think_cb(delta: str) -> None:
+            # 思考呈现：思维链走这里、与正文分开，dim 显示在 #thinking（可 /think 关）。通用：任何
+            # 带 reasoning_content 的模型都触发；没有的模型自然不触发、零打扰。
+            if not self._show_thinking:
+                return
+            think_buf.append(delta)
+            t = Text()
+            t.append("💭 ", style="dim")
+            t.append("思考中", style="dim italic")
+            t.append("\n")
+            t.append("\n".join("".join(think_buf)[-1600:].splitlines()[-5:]), style="dim")
+            thinking.display = True
+            thinking.update(t)
+            try:
+                thinking.scroll_end(animate=False)
+            except Exception:  # noqa: BLE001
+                pass
 
         def stream_cb(partial: str) -> None:
+            thinking.update(""); thinking.display = False       # 正文开始 → 收起思考区
             self.query_one("#status", Static).display = False   # 有正文了，转圈让位
             stream.display = True
             t = Text()
@@ -1394,7 +1431,8 @@ class VortoCodeTUI(App):
                 pass
 
         def emit_final(text: str) -> None:
-            stream.update(""); stream.display = False   # 先清流式区，再落最终（无双份）
+            thinking.update(""); thinking.display = False   # 收起思考区
+            stream.update(""); stream.display = False       # 先清流式区，再落最终（无双份）
             self._assistant(text)
 
         self._turn_tools = 0
@@ -1403,9 +1441,10 @@ class VortoCodeTUI(App):
         try:
             reply = await self.agent.run_turn(user_text, mode=self.mode, say=self._chrome,
                                               emit=emit_final, stream_cb=stream_cb,
-                                              images=images, audio=audio)
+                                              images=images, audio=audio, reasoning_cb=think_cb)
         finally:
-            stream.update(""); stream.display = False   # 出错/取消时也收干净
+            thinking.update(""); thinking.display = False   # 出错/取消也收干净
+            stream.update(""); stream.display = False
         if self._turn_tools:                # 用过工具的回合给个清晰收尾
             self._chrome(f"[dim]✓ 完成 · {self._turn_tools} 个工具 · {time.monotonic() - t0:.0f}s[/dim]")
         if self._speak_replies and reply:   # /speak 开：把这条回复合成语音朗读
