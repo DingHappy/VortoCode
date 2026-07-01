@@ -681,3 +681,13 @@ async def test_dev_parallel_caps_concurrency(monkeypatch, tmp_path):
     assert state["ran"] == 5                                    # 5 个全跑了（只是没挤在一起）
     assert state["peak"] <= 2                                   # 并发峰值被信号量压在 2
     assert "无通过测试" in out                                  # 都不绿 → 如实早退
+
+
+def test_set_model_changes_client_config():
+    # /model 与 --model 的底座：set_model 就地改客户端 config.model，current_model 读回
+    from src.agents.main_agent import MainAgent
+    a = MainAgent([])                                  # 无工具、惰性建真 LLMClient（构造不触网）
+    a.set_model("mimo-v2.5-pro")
+    assert a.current_model() == "mimo-v2.5-pro"        # 后续 chat 会用新模型（model or config.model）
+    a.set_model("mimo-v2-omni")                        # 可再切
+    assert a.current_model() == "mimo-v2-omni"
