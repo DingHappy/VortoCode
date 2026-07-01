@@ -68,36 +68,6 @@ async def set_model(request: ModelRequest):
     
     return {"success": True, "model": state.model}
 
-@router.get("/api/files")
-async def list_files(path: str = ""):
-    """列出工作目录下的文件"""
-    base_dir = Path(state.workdir).resolve()
-    target_dir = resolve_within(state.workdir, path or ".")
-    if target_dir is None:
-        return {"success": False, "error": "访问被拒绝"}
-
-    if not target_dir.exists():
-        return {"success": False, "error": "目录不存在"}
-    
-    files = []
-    try:
-        for item in sorted(target_dir.iterdir()):
-            # 跳过隐藏文件和常见忽略目录
-            if item.name.startswith('.') or item.name in ['node_modules', '__pycache__', 'venv']:
-                continue
-            
-            files.append({
-                "name": item.name,
-                "path": str(item.relative_to(base_dir)),
-                "type": "directory" if item.is_dir() else "file",
-                "size": item.stat().st_size if item.is_file() else 0,
-                "modified": item.stat().st_mtime
-            })
-    except PermissionError:
-        return {"success": False, "error": "权限不足"}
-    
-    return {"success": True, "files": files}
-
 # 文件浏览器 API
 @router.get("/api/files")
 async def list_files(path: str = ""):
