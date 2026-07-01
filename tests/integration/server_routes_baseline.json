@@ -444,42 +444,6 @@
     ]
   },
   {
-    "path": "/api/quant/export",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/quant/health",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/quant/run/{stage}",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/quant/start",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/quant/status",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/quant/stop",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
     "path": "/api/reset",
     "methods": [
       "POST"
@@ -765,12 +729,6 @@
     ]
   },
   {
-    "path": "/quant",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
     "path": "/redoc",
     "methods": [
       "GET",
@@ -791,10 +749,6 @@
   },
   {
     "path": "/ws",
-    "methods": []
-  },
-  {
-    "path": "/ws/quant",
     "methods": []
   }
 ]

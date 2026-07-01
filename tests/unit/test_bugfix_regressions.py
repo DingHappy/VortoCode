@@ -31,16 +31,6 @@ async def test_b3_decomposition_is_chained():
 
 
 @pytest.mark.asyncio
-async def test_b6_retry_count_exact_match():
-    """B6: subtask-1 的重试计数不应被 subtask-12 的前缀串号污染。"""
-    from src.orchestrator.recovery import FailureRecoveryHandler
-    h = FailureRecoveryHandler()
-    h.retry_counts = {"subtask-12:agentA": 99}   # 属于 subtask-12
-    plan = await h._select_strategy("subtask-1", "timeout")
-    assert plan.strategy.value != "escalate"
-
-
-@pytest.mark.asyncio
 async def test_b5_taskqueue_stop_does_not_hang():
     """B5: 队列非空时 stop() 不应死锁（先 join 再停）。"""
     from src.core.task_queue import TaskQueue, Task
@@ -53,38 +43,3 @@ async def test_b5_taskqueue_stop_does_not_hang():
     # 修复前这里会永久阻塞；要求 5 秒内完成并处理完所有任务
     await asyncio.wait_for(q.stop(), timeout=5)
     assert len(done) == 5
-
-
-@pytest.mark.asyncio
-async def test_b4_parallel_context_isolation():
-    """B4: 并行分支拿到上下文快照，产出最终合并回主上下文。"""
-    from src.orchestrator.engine import SelfOrchestratingEngine
-    from src.orchestrator.matcher import MatchResult
-    from src.orchestrator.task_analyzer import SubTask
-    from src.agents.base import Agent, AgentConfig, AgentResult
-
-    class _Rec(Agent):
-        def __init__(self, role):
-            super().__init__(AgentConfig(role=role))
-
-        async def execute(self, task, **kwargs):
-            return AgentResult(success=True, output=f"out:{self.role}")
-
-    engine = SelfOrchestratingEngine()
-    a, b = _Rec("developer"), _Rec("tester")
-    engine.register_agent(a)
-    engine.register_agent(b)
-    subtask_map = {
-        "s1": SubTask(id="s1", title="x", description="d1"),
-        "s2": SubTask(id="s2", title="y", description="d2"),
-    }
-    assignments = {
-        "s1": MatchResult(agent_id=a.agent_id, agent_role="developer"),
-        "s2": MatchResult(agent_id=b.agent_id, agent_role="tester"),
-    }
-    ctx = {"artifacts": {}}
-    results = await engine._execute_parallel(["s1", "s2"], subtask_map, assignments, ctx)
-    assert len(results) == 2
-    # 两个角色的产出都被合并回主上下文
-    assert ctx["artifacts"]["developer"] == "out:developer"
-    assert ctx["artifacts"]["tester"] == "out:tester"

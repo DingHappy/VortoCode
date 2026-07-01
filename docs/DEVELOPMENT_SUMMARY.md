@@ -1,7 +1,12 @@
 # VortoCode 开发总结
 
-> 更新于 2026-06。本文档反映**当前真实状态**，已修正早期版本中夸大的"全部完成"
-> 与不准确的代码统计。功能按"真实可用 / 部分实现 / 规划中"如实分级。
+> ⚠️ **2026-07 更新（路线 A · 主线聚焦）——本文部分内容已过时**：以下能力已**退役删除**，
+> 别再按本文找它们的 API——五角色批处理编排引擎（`SelfOrchestratingEngine` / 能力匹配 matcher /
+> 失败恢复 recovery / `vc run`）、长目标自治（`AutonomousLoop` / `run_autonomous_goal`）、
+> 多角色协作编排、quant 子系统。**当前主线 = 交互式主 agent loop + 隔离 dev 流水线**
+> （见 [README](../README.md) 的「交互式主 Agent」）。本文其余为历史演进记录。
+>
+> （原注）更新于 2026-06：曾修正早期夸大的"全部完成"与代码统计，按"真实可用/部分实现/规划中"分级。
 
 ## 一、现状概览
 
@@ -20,7 +25,7 @@
 - **LLM 流式输出**：`LLMClient.stream()` + Agent `_complete(on_token=...)`，开发阶段 token 实时上屏。
 - **统一沙箱**：`src/sandbox/runner.py` 优先 Docker 真隔离，无 Docker 时按 `AUTODEV_ENABLE_SHELL` 降级宿主机，否则 fail-closed。
 - **语义检索**：`code_indexer` 向量检索；回退 embedder 改为词袋哈希向量，无 key 也能按词重叠排序。
-- **长目标自治**：`run_autonomous_goal()` / `AutonomousLoop` 用通用 `LLMAgent` 规划→迭代→自评进度→收敛/停止。
+- ~~**长目标自治**：`run_autonomous_goal()` / `AutonomousLoop`~~ —— **已退役删除**（路线 A）；长任务改用隔离 dev 流水线（`dev_auto`/`dev_parallel`）。
 
 ### 打磨批
 - **Tester 隔离**：`run_pytest` 在配置了 `AUTODEV_SANDBOX_IMAGE` 且有 Docker 时容器内隔离跑 pytest（断网），否则宿主机（默认不破坏开发流程）。
@@ -88,11 +93,12 @@
 
 ## 二、已落地（真实可用）
 
-- **多 Agent 协作**：product / architect / developer / reviewer / tester 五个角色，
-  **真实调用 LLM**（经 One API 网关，异步）。developer 会把生成代码写入工作区，
-  tester 会真实运行 pytest 并诚实报告通过/失败，reviewer 给出真实裁决（可 request_changes）。
-- **自我编排引擎**：任务分析 → 分解 → 能力匹配 → 执行 → 失败恢复；子任务按
-  依赖链式调度，按 subtask_id 正确路由到对应 Agent，贯穿共享上下文传递产物。
+- ~~**多角色批处理协作**：product/architect/developer/reviewer/tester 五角色编排~~ ——
+  **编排引擎已退役删除**（路线 A）。角色类文件尚存，但驱动它们的 `SelfOrchestratingEngine` /
+  `vc run` 已移除；开发任务改由**交互式主 agent + 隔离 dev 流水线**完成。
+- ~~**自我编排引擎**：任务分析 → 分解 → 能力匹配 → 执行 → 失败恢复~~ —— **已退役删除**（路线 A）。
+  仅保留**任务分析/分解**（`task_analyzer`，被 dev 流水线的 `dev_auto` 复用）；能力匹配（matcher）/
+  失败恢复（recovery）/编排执行均已删除。
 - **Web 控制台**：FastAPI，`server.py` 为薄装配器，路由按域拆到 `src/web/routers/`，
   共享状态/请求模型/依赖分别在 `state.py` / `schemas.py` / `deps.py`。
 - **记忆**：SQLite 会话持久化 + JSON 长期记忆。

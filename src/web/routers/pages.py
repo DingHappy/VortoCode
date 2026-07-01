@@ -40,13 +40,6 @@ async def classic_view():
     return {"message": "VortoCode API", "version": "0.1.0"}
 
 
-@router.get("/quant")
-async def quant_view():
-    """返回量化研究监控页面"""
-    html_path = _WEB_DIR / "quant.html"
-    if html_path.exists():
-        return FileResponse(html_path, media_type="text/html")
-    return {"message": "Quant page not found"}
 
 
 @router.get("/agent")
