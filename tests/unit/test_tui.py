@@ -115,6 +115,20 @@ async def test_statusbar_shows_context_and_tracks_mode():
 
 
 @pytest.mark.asyncio
+async def test_model_command_shows_and_switches():
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _submit(app, pilot, "/model")               # 无参：显示当前模型
+        assert any("当前模型" in t for t in app.transcript)
+
+        await _submit(app, pilot, "/model mimo-v2.5-pro")  # 带参：切换本会话模型
+        assert app._model_override == "mimo-v2.5-pro"      # 记下覆盖（agent 未建时，建时会应用）
+        assert "mimo-v2.5-pro" in app._sb_last             # 状态栏同步更新
+        assert any("已切换模型" in t for t in app.transcript)
+
+
+@pytest.mark.asyncio
 async def test_unknown_command_is_reported():
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:

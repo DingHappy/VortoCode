@@ -31,7 +31,7 @@ from src.memory.session_store import SessionManager
 
 SLASH_COMMANDS = [
     "/analyze", "/improve", "/fix", "/run", "/apply", "/agents", "/runagent", "/skills", "/mcp",
-    "/artifacts", "/diff", "/sessions", "/resume", "/new", "/mode", "/theme", "/usage",
+    "/artifacts", "/diff", "/sessions", "/resume", "/new", "/mode", "/model", "/theme", "/usage",
     "/tools", "/audit", "/speak", "/commands", "/hooks", "/clear", "/help", "/quit",
 ]
 # 命令 → 一句话说明（命令补全面板用，让 / 命令可发现、可补全）
@@ -51,6 +51,7 @@ COMMAND_INFO = {
     "/resume": "恢复某个历史会话",
     "/new": "新开一个会话",
     "/mode": "切换 plan / build 模式",
+    "/model": "查看/切换模型（/model 名称，本会话生效）",
     "/theme": "切换配色主题（21 套内置，记住选择）",
     "/usage": "本会话 token 用量（reset 清零）",
     "/tools": "列出主 agent 工具及读写权限",
@@ -268,6 +269,7 @@ class VortoCodeTUI(App):
         self._sb = {"branch": "", "dirty": False, "pr": "", "model": _model_name(),
                     "pr_branch": None, "pr_on": True}
         self._sb_last = ""                  # 最近一次状态栏渲染出的纯文本（测试/调试用）
+        self._model_override = None         # /model 切换的模型（本会话覆盖 .env 的 DEFAULT_MODEL）
 
     # ---------------------------------------------------------------- 布局
     def compose(self) -> ComposeResult:
@@ -476,6 +478,29 @@ class VortoCodeTUI(App):
                 pr = ""
         self._sb["pr"], self._sb["pr_branch"] = pr, branch
         self.call_from_thread(self._render_statusbar)
+
+    def _cmd_model(self, arg: str) -> None:
+        """/model：无参看当前模型 + 常用列表；带参切本会话模型（就地改客户端，状态栏同步）。"""
+        arg = (arg or "").strip()
+        cur = self._sb.get("model", "?")
+        if not arg:
+            common = ("mimo-v2.5 · mimo-v2.5-pro · mimo-v2-pro · mimo-v2-omni · "
+                      "mimo-v2.5-asr · mimo-v2.5-tts")
+            self._chrome(f"[b]当前模型[/b]：{cur}")
+            self._chrome("[dim]切换：[b]/model 名称[/b]（本会话生效；重启回到 .env 的 DEFAULT_MODEL）[/dim]")
+            self._chrome(f"[dim]中转站常用：{common}[/dim]")
+            return
+        self._model_override = arg          # agent 未建时，_build_main_agent 会读它应用
+        if self.agent is not None:
+            try:
+                self.agent.set_model(arg)
+            except Exception as e:  # noqa: BLE001
+                self._chrome(f"[red]切换模型失败：{e}[/red]")
+                return
+        self._sb["model"] = arg
+        self._render_statusbar()
+        self._chrome(f"[green]已切换模型 → {arg}[/green]"
+                     "[dim]（本会话后续对话生效；未授权的模型会在下次调用时报 403）[/dim]")
 
     # 集中管理忙碌态：动作 worker 一进入运行就置忙、结束(成功/失败/取消)即解除
     def on_worker_state_changed(self, event) -> None:
@@ -703,6 +728,8 @@ class VortoCodeTUI(App):
             self.exit()
         elif cmd == "mode":
             self.action_toggle_mode()
+        elif cmd == "model":
+            self._cmd_model(arg)
         elif cmd == "clear":
             self.action_clear_log()
         elif cmd == "analyze":
@@ -1866,10 +1893,16 @@ class VortoCodeTUI(App):
         native = os.getenv("VORTOCODE_NATIVE_TOOLS", "").lower() in ("1", "true", "yes", "on")
         hook_system = self._load_hook_system()   # .vortocode/hooks.yaml 存在才接，避免无谓开销
         from src.agents.permissions import load_permissions
-        return MainAgent(tools, extra_system=extra, native=native,
-                         on_tool=self._audit_tool, on_escalate=self._escalate_to_build,
-                         on_plan=self._render_plan, plan_tool=True, hook_system=hook_system,
-                         permissions=load_permissions(self.repo_root))   # .vortocode/permissions.yaml deny
+        agent = MainAgent(tools, extra_system=extra, native=native,
+                          on_tool=self._audit_tool, on_escalate=self._escalate_to_build,
+                          on_plan=self._render_plan, plan_tool=True, hook_system=hook_system,
+                          permissions=load_permissions(self.repo_root))   # .vortocode/permissions.yaml deny
+        if self._model_override:            # /model 切过 → 新建的 agent 也带上（重建时不丢）
+            try:
+                agent.set_model(self._model_override)
+            except Exception:  # noqa: BLE001
+                pass
+        return agent
 
     def _load_hook_system(self):
         """有 .vortocode/hooks.yaml 才建 HookSystem（复用 src/hooks，把工具生命周期事件接进 agent）。"""
