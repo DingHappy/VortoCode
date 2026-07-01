@@ -442,6 +442,12 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
             sys.stdout.flush()
             seen["n"] = len(text)
 
+    def reason_cb(delta):                          # 思考呈现：思维链 → stderr(dim)，不进 stdout/json；--quiet 静默
+        if quiet:
+            return
+        sys.stderr.write(f"\033[2m{delta}\033[0m")
+        sys.stderr.flush()
+
     if not quiet and (images or audio):
         bits = []
         if images:
@@ -451,7 +457,8 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
         print(f"\033[2m附带 {' · '.join(bits)}\033[0m", file=sys.stderr, flush=True)
     reply = await agent.run_turn(
         prompt, mode=mode, say=say, emit=(lambda _m: None),
-        stream_cb=(stream_cb if streaming else None), images=images, audio=audio)
+        stream_cb=(stream_cb if streaming else None), images=images, audio=audio,
+        reasoning_cb=reason_cb)
 
     if as_json:
         import json
