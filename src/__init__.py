@@ -12,7 +12,6 @@ from .skills.executor import SkillExecutor
 from .skills.discovery import SkillDiscovery, SkillDiscoveryConfig, SkillVersionManager
 from .memory.base import MemorySystem
 from .memory.vector_memory import VectorMemory, VectorMemoryConfig
-from .orchestrator.engine import SelfOrchestratingEngine
 from .tools.registry import ToolRegistry, Tool, ToolPermission
 from .tools.permission import ToolPermissionManager, PermissionRule
 from .tools.executor import ToolExecutor, ToolExecutionResult
@@ -43,7 +42,6 @@ __all__ = [
     "MemorySystem",
     "VectorMemory",
     "VectorMemoryConfig",
-    "SelfOrchestratingEngine",
     "ToolRegistry",
     "Tool",
     "ToolPermission",

@@ -37,9 +37,6 @@ llm = [
 mcp = [
     "mcp>=1.0.0",
 ]
-quant = [
-    "akshare",
-]
 tui = [
     "textual>=8.0",
     "rich>=13.0",
@@ -58,7 +55,7 @@ dev = [
     "ruff>=0.1.0",
 ]
 all = [
-    "vortocode[memory,llm,mcp,parsing,quant,tui,dev]",
+    "vortocode[memory,llm,mcp,parsing,tui,dev]",
 ]
 
 [project.scripts]
