@@ -539,19 +539,30 @@ class MainAgent:
             return ""
         return (resp.get("content") or "").strip()[:2000]   # 纪要本身也设上限，防越滚越大
 
-    async def _complete(self, messages: list[dict], stream_cb: Optional[Callable[[str], None]]) -> str:
+    async def _complete(self, messages: list[dict], stream_cb: Optional[Callable[[str], None]],
+                        reasoning_cb: Optional[Callable[[str], None]] = None) -> str:
         """取一步模型输出。
 
         给了 stream_cb 且客户端支持流式 → 边生成边回显；但**疑似工具调用**（首个非空字符是
         `{` 或 ``` ）则静默缓冲、不把原始 JSON 流给 UI。否则退回一次性 chat（也便于测试）。
+        reasoning_cb：推理型模型的思维链（reasoning_content）走它做"思考呈现"，与正文分开。
         """
         client = self._client()
         if stream_cb is None or not hasattr(client, "stream"):
             resp = await client.chat(messages, temperature=0.3)
+            if reasoning_cb is not None and resp.get("reasoning"):   # 非流式：整段思维链一次性给
+                try:
+                    reasoning_cb(str(resp["reasoning"]))
+                except Exception:  # noqa: BLE001
+                    pass
             return resp.get("content") or ""
         buf: list[str] = []
         show: Optional[bool] = None        # None=未定；True=显示；False=抑制(疑似工具调用)
-        async for tok in client.stream(messages, temperature=0.3):
+        try:
+            gen = client.stream(messages, temperature=0.3, on_reasoning=reasoning_cb)
+        except TypeError:                  # 老客户端/假 LLM 不认 on_reasoning：退回不带它
+            gen = client.stream(messages, temperature=0.3)
+        async for tok in gen:
             buf.append(tok)
             if show is None:
                 head = "".join(buf).lstrip()
@@ -673,18 +684,20 @@ class MainAgent:
         stream_cb: Optional[Callable[[str], None]] = None,
         images: Optional[list] = None,
         audio: Optional[list] = None,
+        reasoning_cb: Optional[Callable[[str], None]] = None,
     ) -> str:
         """一轮对话的外壳：在回合首尾触发 agent_start / agent_end 生命周期钩子，主体见 _run_turn_body。
 
         这两个钩子 + 工具级 pre/post_tool_use/tool_error（见 _run_tool）让外部消费者（桌宠/状态栏/
         通知）能**只靠 hooks** 拿到完整动作状态——UI 无关，TUI/CLI/Web 三端都触发。无 hook_system 时
         _fire_hook 立即返回、零开销（子 agent 默认无 hook_system，故不会刷状态）。
+        reasoning_cb：可选——推理型模型的思维链（reasoning_content）走它做"思考呈现"，与正文分开。
         """
         await self._fire_hook("agent_start", {"text": str(user_text)[:500], "mode": mode})
         try:
             return await self._run_turn_body(
                 user_text, mode=mode, say=say, emit=emit,
-                stream_cb=stream_cb, images=images, audio=audio)
+                stream_cb=stream_cb, images=images, audio=audio, reasoning_cb=reasoning_cb)
         finally:
             await self._fire_hook("agent_end", {"mode": mode})
 
@@ -697,6 +710,7 @@ class MainAgent:
         stream_cb: Optional[Callable[[str], None]] = None,
         images: Optional[list] = None,
         audio: Optional[list] = None,
+        reasoning_cb: Optional[Callable[[str], None]] = None,
     ) -> str:
         """处理一轮用户输入：循环"模型↔工具"，最终把回复交给 emit；并返回最终回复文本。
 
@@ -731,6 +745,11 @@ class MainAgent:
                     self._native = False
                     resp = None
                 if resp is not None:
+                    if reasoning_cb is not None and resp.get("reasoning"):   # 思考呈现（native 路径）
+                        try:
+                            reasoning_cb(str(resp["reasoning"]))
+                        except Exception:  # noqa: BLE001
+                            pass
                     tcs = resp.get("tool_calls") or []
                     content = (resp.get("content") or "").strip()
                     calls = []                     # 执行模型给出的**全部** tool_calls（CC 式并行，不再只取第一个）
@@ -757,7 +776,7 @@ class MainAgent:
 
             # 提示式协议（默认；也是 native 回退后的路径）
             try:
-                content = (await self._complete(messages, stream_cb)).strip()
+                content = (await self._complete(messages, stream_cb, reasoning_cb)).strip()
             except Exception as e:  # noqa: BLE001
                 # 有些异常 str 为空（如 5xx），给类型+折行截断的 detail 才可诊断（如 502 Bad Gateway）
                 detail = " ".join((str(e) or repr(e)).split())[:200]
@@ -782,16 +801,17 @@ class MainAgent:
 
         # 用尽工具预算：不白跑——强制一次"无工具"收尾，把已收集的信息综合成最终回答
         # （子 agent 尤其受益：读了一堆文件也能交回结论，而不是返回空丢弃全部上下文）。
-        return await self._force_finish(mode, stream_cb, emit)
+        return await self._force_finish(mode, stream_cb, emit, reasoning_cb)
 
     async def _force_finish(self, mode: str,
                             stream_cb: Optional[Callable[[str], None]],
-                            emit: Callable[[str], None]) -> str:
+                            emit: Callable[[str], None],
+                            reasoning_cb: Optional[Callable[[str], None]] = None) -> str:
         """工具预算用尽后的收尾：禁用工具、强制据已有上下文给最终回答，避免丢弃全部工作。"""
         messages = [{"role": "system", "content": self._system(mode) + _FORCE_FINISH_RULE}] \
             + self._trimmed_history()
         try:
-            content = (await self._complete(messages, stream_cb)).strip()
+            content = (await self._complete(messages, stream_cb, reasoning_cb)).strip()
         except Exception:  # noqa: BLE001
             emit("（已达工具调用上限；收尾时网络/中转站出错，请稍后重试或换种说法。）")
             return ""
