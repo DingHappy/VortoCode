@@ -1753,7 +1753,8 @@ class VortoCodeTUI(App):
         return MainAgent(tools, extra_system=extra, native=native,
                          on_tool=self._audit_tool, on_escalate=self._escalate_to_build,
                          on_plan=self._render_plan, plan_tool=True, hook_system=hook_system,
-                         permissions=load_permissions(self.repo_root))   # .vortocode/permissions.yaml deny
+                         permissions=load_permissions(self.repo_root),   # .vortocode/permissions.yaml deny
+                         env_context=True)                # 顶层交互 agent：注入 <env>（cwd/git/日期/目录）
 
     def _load_hook_system(self):
         """有 .vortocode/hooks.yaml 才建 HookSystem（复用 src/hooks，把工具生命周期事件接进 agent）。"""
