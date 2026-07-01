@@ -53,12 +53,14 @@
 - **安全边界**：默认 dry-run 只出提案；改动只进新分支、绝不碰 main、需人确认 —— 落实"人在合并口"
 - **交互前端** (`vc tui` / Web `/agent`)：把上面能力串进交互式主 agent loop（详见上文「交互式主 Agent」）
 
-### 自我编排引擎
+### 隔离 dev 流水线（差异化护城河）
 
-- **动态任务分解**: 根据任务复杂度自动拆分子任务
-- **能力匹配**: 根据 Agent 能力和历史表现动态分配任务
-- **并行优化**: 自动识别可并行执行的任务
-- **失败恢复**: 智能重试、回滚和升级机制
+> 取代了早期的「5 角色批处理编排引擎」（能力匹配/失败恢复等已随「路线 A」退役删除）。
+
+- **一句话 → PR**: `dev_auto` 自动分解 → 并行隔离实现 → 逐件+集成验证 → 自修复重试 → 落 `vorto/*` 分支 → 开 PR
+- **隔离安全**: 每个子任务在一次性 git worktree 里实现+自测，**全程不碰 main/主工作区**
+- **任务分解**: 复用 `task_analyzer` 拆无依赖并行批 + 有依赖拓扑接力
+- **CC/opencode 都不内置**：详见上文「交互式主 Agent」与 knowledge base
 
 ### MCP 工具集成
 
@@ -90,13 +92,14 @@
 - **可扩展**: 支持自定义 Hook 类型
 - **审计日志**: 完整的操作记录
 
-### Loop Engineering（循环工程）
+### 验证闭环（隔离 dev 流水线内）
 
-- **自动化验证**: 让 Agent 自己验证工作，而不是人工检查
-- **闭环反馈**: 执行→验证→改进→重复
-- **子代理验证**: 使用独立的子代理进行代码审查
-- **持续改进**: 定期检查和优化任务执行
-- **上下文管理**: 智能上下文压缩和优化
+> 早期独立的 `verification_loop`/`loop_controller` 模块已随「路线 A」退役删除；验证能力现内建在隔离 dev 流水线里。
+
+- **子 agent 自测**: 隔离 worktree 里 implement→run_tests→fix 自纠直到通过
+- **逐件 + 集成验证**: 单件绿才落分支，多件合并后再跑一遍全量（防"单独绿、合起来红"）
+- **自修复重试**: 某件红了换全新 worktree 带失败反馈重试
+- **上下文管理**: 长对话锚点裁剪 + 滚动纪要压缩
 
 ### 性能监控
 
@@ -129,10 +132,10 @@
 
 ```
 vortocode/
-├── main.py              CLI 入口（run / server / analyze / test / demo）
+├── main.py              CLI 入口（agent / server / analyze / self-* / tui / test / demo）
 ├── src/
-│   ├── agents/          角色化 Agent（product/architect/developer/reviewer/tester，真实 LLM 驱动）
-│   ├── orchestrator/    自我编排引擎（任务分析 / 分解 / 能力匹配 / 失败恢复 / Loop Engineering）
+│   ├── agents/          交互式主 agent loop（main_agent）+ 隔离 dev 流水线（worktree/decompose）+ 工具工厂
+│   ├── orchestrator/    任务分析/分解（task_analyzer）+ 迭代 dev loop + 自迭代（analyze/improve/fix）；5 角色批处理引擎已退役删除
 │   ├── llm/             LLM 客户端（One API 网关，异步 AsyncOpenAI）
 │   ├── web/             FastAPI 服务：server.py 装配 + routers/ 各域路由 + state/schemas/deps/auth
 │   ├── memory/          记忆系统（SQLite 会话 + JSON 长期记忆 + 向量数据库）
@@ -245,17 +248,17 @@ vc analyze -t "创建一个 REST API"
 
 ## 开发路线图
 
-> 下面是最初规划的阶段划分，**不代表全部已完成**。各能力的真实落地状态
-> （可用 / 部分实现 / 规划中）以 [DEVELOPMENT_SUMMARY](docs/DEVELOPMENT_SUMMARY.md) 为准。
+> 下面是最初规划的阶段划分（**历史规划，非当前现状**）。当前主线是「交互式主 Agent（见上文）
+> + 隔离 dev 流水线」；[DEVELOPMENT_SUMMARY](docs/DEVELOPMENT_SUMMARY.md) 为**历史演进记录**、部分内容已随「路线 A」退役而过时。
 
 - **Phase 0**: 基础架构升级 — 已落地
-- **Phase 1**: 自我编排引擎 — 主链路可用（分析/分解/匹配/失败恢复/Loop 闭环真实工作）
+- **Phase 1**: ~~自我编排引擎~~ — **已退役**（5 角色批处理/能力匹配/失败恢复删除）；仅保留任务分析/分解，并入隔离 dev 流水线
 - **Phase 2**: 工具集成层 — MCP 工具自动发现+注册可用
 - **Phase 3**: 记忆与学习系统 — 会话/长期/向量记忆可用；知识图谱已移除（未集成的孤儿模块）
 - **Phase 4**: 技能与子代理系统 — 技能/Hooks 可用；子代理（SubAgentManager）尚未接入主链路
 - **Phase 5**: 高级特性与优化 — 监控/安全/沙箱可用；实时补全、内联编辑、多模型协商等仍为规划项
 
-详细规划见 [实现路线图](docs/IMPLEMENTATION_ROADMAP.md)；当前真实现状见 [DEVELOPMENT_SUMMARY](docs/DEVELOPMENT_SUMMARY.md)。
+详细规划见 [实现路线图](docs/IMPLEMENTATION_ROADMAP.md)；当前真实能力以本 README 上文「核心特性」为准（DEVELOPMENT_SUMMARY 为历史记录、部分已过时）。
 
 ## 贡献指南
 
