@@ -812,3 +812,40 @@ def test_set_model_changes_client_config():
     assert a.current_model() == "mimo-v2.5-pro"        # 后续 chat 会用新模型（model or config.model）
     a.set_model("mimo-v2-omni")                        # 可再切
     assert a.current_model() == "mimo-v2-omni"
+
+
+# ---- thinking 呈现：reasoning_content 走 reasoning_cb（通用，不依赖某模型）----
+
+@pytest.mark.asyncio
+async def test_reasoning_cb_surfaces_thinking_chat_path():
+    from src.agents.main_agent import MainAgent
+
+    class RLLM:                                    # 只有 chat（非流式路径）
+        async def chat(self, messages, **k):
+            return {"content": "最终回答", "reasoning": "让我想想…先看 A 再看 B。"}
+
+    got = []
+    a = MainAgent([], llm=RLLM())
+    out = await a.run_turn("问题", mode="plan", reasoning_cb=got.append)
+    assert out == "最终回答"
+    assert got and "先看 A" in got[0]              # 思维链走了 reasoning_cb、与正文分开
+
+
+@pytest.mark.asyncio
+async def test_reasoning_cb_stream_path_side_channel():
+    from src.agents.main_agent import MainAgent
+
+    class StreamLLM:                               # 流式：on_reasoning 侧信道给思维链、yield 只给正文
+        async def chat(self, messages, **k):
+            return {"content": "x"}
+
+        async def stream(self, messages, on_reasoning=None, **k):
+            if on_reasoning:
+                on_reasoning("思考A"); on_reasoning("思考B")
+            for t in ["最终", "回答"]:
+                yield t
+
+    got = []
+    a = MainAgent([], llm=StreamLLM())
+    out = await a.run_turn("问题", mode="plan", stream_cb=lambda _p: None, reasoning_cb=got.append)
+    assert out == "最终回答" and "".join(got) == "思考A思考B"   # 思维链走侧信道、不混进正文

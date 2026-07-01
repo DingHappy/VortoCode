@@ -129,6 +129,19 @@ async def test_model_command_shows_and_switches():
 
 
 @pytest.mark.asyncio
+async def test_think_command_toggles_thinking_display():
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert app._show_thinking is True              # 默认开
+        await _submit(app, pilot, "/think")
+        assert app._show_thinking is False
+        assert any("思考呈现已关" in t for t in app.transcript)
+        await _submit(app, pilot, "/think")
+        assert app._show_thinking is True              # 再切回开
+
+
+@pytest.mark.asyncio
 async def test_unknown_command_is_reported():
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
