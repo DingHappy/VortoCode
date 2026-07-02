@@ -3,8 +3,6 @@
 from .base import Agent, AgentConfig, AgentResult, AgentCapability, AgentStatus
 from .general import LLMAgent
 from .roles import (
-    ProductAgent,
-    ArchitectAgent,
     DeveloperAgent,
     ReviewerAgent,
     TesterAgent
@@ -44,14 +42,10 @@ __all__ = [
     "AgentCapability",
     "AgentStatus",
     
-    # Dynamic
-
     # General
     "LLMAgent",
-    
+
     # Roles
-    "ProductAgent",
-    "ArchitectAgent",
     "DeveloperAgent",
     "ReviewerAgent",
     "TesterAgent",

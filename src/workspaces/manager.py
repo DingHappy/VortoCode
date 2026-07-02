@@ -224,114 +224,17 @@ class WorkspaceManager:
         task: str,
         callback=None
     ) -> Dict[str, Any]:
-        """在指定工作区跑真实的多 Agent 流程：需求 → 架构 → 迭代开发闭环。
+        """（已退役）此前在工作区跑 5 角色批处理流水线（需求→架构→迭代开发闭环）。
 
-        与全局 `/api/start`（web/routers/execution.py 的 execute_tasks）同构，
-        但产出写进本 workspace 对象（agent 状态/进度/日志/tokens，供 to_dict 与
-        前端如实反映），事件经 callback(ws_id, event_type, data) 广播。每个工作区
-        在 .vortocode/workspaces/<id> 下有独立目录。
+        路线 A（2026-07）已随全局 `/api/start` 一并退役该流水线；接口保留、返回退役
+        说明，不再拉起老引擎。工作区级自动开发请改用交互式主 agent（vc tui / vc agent）
+        或隔离 dev 流水线（dev_isolated / dev_auto）。
         """
         workspace = self.get_workspace(workspace_id)
         if not workspace:
             return {"success": False, "error": "Workspace not found"}
-
-        # 延迟导入：workspaces 是低层包，避免在导入期硬依赖 agents/orchestrator。
-        from pathlib import Path
-        from src.agents import (
-            ProductAgent, ArchitectAgent, DeveloperAgent, ReviewerAgent, TesterAgent,
-        )
-        from src.orchestrator import IterativeDevLoop
-        from src.core import metrics
-        from src.core.tracing import set_trace_id
-
-        set_trace_id()  # 本次执行一个 trace_id，贯穿日志
-        workspace.config.goal = task
-        workspace.status = WorkspaceStatus.RUNNING
-        workspace.start_time = datetime.now()
-        workspace.end_time = None
-        workspace.progress = 0
-        tokens_before = metrics.get_counter("llm.tokens")  # 真实 token 增量（单工作区精确）
-
-        work_dir = str(Path(".vortocode") / "workspaces" / workspace.config.id)
-        ctx: Dict[str, Any] = {"task": task, "goal": task, "workspace": work_dir, "artifacts": {}}
-
-        async def _emit(event_type: str, data: Dict[str, Any]):
-            if callback:
-                await callback(workspace_id, event_type, data)
-
-        async def _run_phase(role: str, title: str, agent, progress_to: int):
-            workspace.update_agent_status(role, "working", title)
-            workspace.add_log("info", f"{role}: {title}")
-            await _emit("task_started", {"agent": role, "task": title})
-            result = await agent.execute(task, context=ctx)
-            if result.success and result.output is not None:
-                ctx["artifacts"][role] = result.output
-            workspace.update_agent_progress(role, 100)
-            workspace.update_agent_status(role, "idle" if result.success else "error", None)
-            workspace.progress = progress_to
-            workspace.add_log("success" if result.success else "error",
-                              f"{role}: {'完成' if result.success else '失败'}")
-            await _emit("task_completed" if result.success else "task_failed", {"agent": role})
-            return result
-
-        try:
-            # 1. 需求分析  2. 架构设计
-            await _run_phase("product", "分析需求...", ProductAgent(), 20)
-            await _run_phase("architect", "设计架构...", ArchitectAgent(), 35)
-
-            # 3. 迭代开发闭环（开发→测试→审查→失败反馈修复）
-            workspace.update_agent_status("developer", "working", "迭代开发（开发→测试→审查→修复）")
-            workspace.add_log("info", "进入迭代开发闭环")
-            await _emit("task_started", {"agent": "developer", "task": "迭代开发"})
-
-            async def _on_iter(rec):
-                workspace.update_agent_progress("developer", min(100, rec.iteration * 30))
-                workspace.progress = min(95, 35 + rec.iteration * 20)
-                workspace.add_log("info" if rec.tests_passed else "warning",
-                                  f"第 {rec.iteration} 轮：测试{'通过' if rec.tests_passed else '未过'}，"
-                                  f"审查={rec.review_verdict or '?'}")
-                await _emit("dev_iteration", rec.model_dump())
-
-            loop = IterativeDevLoop(
-                DeveloperAgent(), TesterAgent(), ReviewerAgent(), max_iterations=3,
-            )
-            result = await loop.run(
-                task, workspace=work_dir,
-                spec=ctx["artifacts"].get("product"),
-                architecture=ctx["artifacts"].get("architect"),
-                on_iteration=_on_iter,
-            )
-            workspace.update_agent_status("developer", "idle" if result.success else "error", None)
-            workspace.add_log("success" if result.success else "error",
-                              f"开发闭环{'完成' if result.success else '未通过'}：{result.reason}")
-            await _emit("task_completed" if result.success else "task_failed",
-                        {"agent": "developer", "result": result.model_dump()})
-
-            workspace.tokens_used = max(0, metrics.get_counter("llm.tokens") - tokens_before)
-            if result.success:
-                workspace.complete()
-            else:
-                workspace.status = WorkspaceStatus.FAILED
-                workspace.end_time = datetime.now()
-                workspace.progress = 100
-            await _emit("workspace_completed",
-                        {"tokens_used": workspace.tokens_used, "success": result.success})
-
-            return {
-                "success": result.success,
-                "workspace_id": workspace_id,
-                "tokens_used": workspace.tokens_used,
-                "files": result.files,
-                "reason": result.reason,
-                "iterations": result.iterations,
-                "duration": (workspace.end_time - workspace.start_time).total_seconds(),
-            }
-        except Exception as e:
-            workspace.status = WorkspaceStatus.FAILED
-            workspace.end_time = datetime.now()
-            workspace.add_log("error", f"执行失败：{e}")
-            await _emit("workspace_failed", {"error": str(e)})
-            return {"success": False, "workspace_id": workspace_id, "error": str(e)}
+        return {"success": False, "workspace_id": workspace_id,
+                "error": "5 角色批处理流水线已退役；请用 vc tui / vc agent（隔离 dev 流水线）"}
     
     async def execute_parallel(
         self,
