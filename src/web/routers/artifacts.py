@@ -25,11 +25,14 @@ _PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 _WEB_DIR = _PROJECT_ROOT / "web"
 
 # 禁止外联：默认 none，仅放行内联样式/脚本与 data: 图片/字体；禁表单提交与 base 改写。
+# frame-ancestors 'self'：只允许自家查看页（同源）嵌 raw，禁外站 iframe（防点击劫持/外部嵌套）。
 _ARTIFACT_CSP = (
     "default-src 'none'; img-src data: blob:; media-src data: blob:; "
     "style-src 'unsafe-inline'; script-src 'unsafe-inline'; font-src data:; "
-    "form-action 'none'; base-uri 'none'"
+    "form-action 'none'; base-uri 'none'; frame-ancestors 'self'"
 )
+# 查看页外壳自身不该被任何页面嵌（防被外站框住做 UI redress）。
+_VIEW_CSP = "frame-ancestors 'none'"
 
 
 def _store() -> ArtifactStore:
@@ -123,7 +126,7 @@ async def artifact_view(artifact_id: str):
         .replace("__AID__", _html.escape(m["id"]))
         .replace("__VERSION__", str(int(m["version"])))
     )
-    return HTMLResponse(page)
+    return HTMLResponse(page, headers={"Content-Security-Policy": _VIEW_CSP})
 
 
 # 查看页外壳（用 .replace 注入，避开 .format 的花括号转义）。制品本体在沙箱 iframe 内。
