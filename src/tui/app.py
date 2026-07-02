@@ -193,9 +193,10 @@ class ConfirmScreen(ModalScreen[bool]):
         Binding("escape", "no", "取消"),
     ]
 
-    def __init__(self, message: str):
+    def __init__(self, message: str, scope: str = "writes"):
         super().__init__()
         self._message = message
+        self._scope = scope           # "始终允许"的作用域：writes（写文件）/ commands（跑命令），各自独立
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
@@ -206,9 +207,13 @@ class ConfirmScreen(ModalScreen[bool]):
         self.dismiss(True)
 
     def action_always(self) -> None:
-        """本会话内后续写操作不再逐个确认（对齐 Claude Code 的 Always allow）。"""
+        """本会话内后续**同类**操作不再逐个确认（对齐 Claude Code 的 Always allow）。
+
+        作用域隔离：写文件的 [a] 只静默后续写、跑命令的 [a] 只静默后续命令——
+        否则为省文件编辑确认按下的 [a] 会连任意 shell 命令一起放行（权限提升）。
+        """
         try:
-            self.app._allow_writes_session = True
+            setattr(self.app, f"_allow_{self._scope}_session", True)
         except Exception:  # noqa: BLE001
             pass
         self.dismiss(True)
@@ -263,7 +268,8 @@ class VortoCodeTUI(App):
         self._history: list[str] = []       # 提交过的输入（↑/↓ 调出，仿 shell；跨会话持久化）
         self._history_idx: int | None = None
         self._history_draft = ""            # 进入历史浏览前的草稿，↓ 到底恢复
-        self._allow_writes_session = False  # 本会话"始终允许"写操作（ConfirmScreen 的 [a]）
+        self._allow_writes_session = False  # 本会话"始终允许"写操作（ConfirmScreen 的 [a]，scope=writes）
+        self._allow_commands_session = False  # 本会话"始终允许"跑命令（独立作用域，不吃写豁免）
         self._speak_replies = False         # /speak 开关：开则把每条回复合成语音朗读（mimo-v2.5-tts）
         self._user_cmds = None              # 用户自定义命令缓存（.vortocode/commands，惰性加载、/commands reload 重扫）
         self._turn_tools = 0                # 本回合工具调用计数（回合结束给"✓ 完成"反馈）
@@ -389,7 +395,8 @@ class VortoCodeTUI(App):
         desc = "只读/提案" if self.mode == "plan" else "可写分支"
         sid = f" · 会话 {self.session_id}" if self.session_id else ""
         busy = " · ⏳运行中(Esc 取消)" if self._busy else ""
-        allow = " · 写:始终允许✓" if self._allow_writes_session else ""
+        allow = ("" + (" · 写:始终允许✓" if self._allow_writes_session else "")
+                 + (" · 命令:始终允许✓" if self._allow_commands_session else ""))
         from src.llm.client import get_usage
         u = get_usage()
         tot = u["total_tokens"]
@@ -598,6 +605,16 @@ class VortoCodeTUI(App):
     async def _confirm_outward(self, message: str) -> bool:
         """外向操作（push / 开 PR 等推到远端的动作）确认：**始终弹窗**，不吃"始终允许写"的豁免。"""
         return await self.push_screen_wait(ConfirmScreen(message))
+
+    async def _confirm_command(self, message: str) -> bool:
+        """任意 shell 命令确认门：**独立作用域**，不吃"始终允许写文件"的豁免。
+
+        否则用户为省文件编辑逐条确认按下的 [a]，会静默放行后续所有任意命令（=权限提升）。
+        本会话对命令单独选过"始终允许"（scope=commands）才免确认。
+        """
+        if self._allow_commands_session:
+            return True
+        return await self.push_screen_wait(ConfirmScreen(message, scope="commands"))
 
     def action_history_prev(self) -> None:
         """↑：调出上一条历史输入（编辑过则当作新输入，从末尾重新起）。"""
@@ -1140,6 +1157,7 @@ class VortoCodeTUI(App):
         self.session_id = self.sessions.start_session()
         self.agent = None                   # 新会话 = 全新 agent 上下文
         self._allow_writes_session = False  # "始终允许"也随新会话复位
+        self._allow_commands_session = False
         reset_usage()                       # 用量也清零
         self.query_one("#log", RichLog).clear()
         self.transcript.clear()
@@ -1742,7 +1760,7 @@ class VortoCodeTUI(App):
             if why:                                   # 兜底硬拒（即便始终允许）
                 self._chrome(f"[{self._tc('text-error', '#f08a8a')}]拒绝执行（{why}）：{cmd}[/]")
                 return f"拒绝执行（疑似危险操作：{why}）。请换更具体、安全的命令。"
-            if not await self._confirm_write(
+            if not await self._confirm_command(
                     f"build 模式：在仓库根目录执行命令？\n  $ {cmd}\n（可能改动工作区，但不碰 main）"):
                 return f"用户取消了命令：{cmd}"
             self._chrome(f"[dim]$ {cmd}[/dim]")
