@@ -667,6 +667,58 @@ async def test_compact_keeps_current_user_even_if_it_alone_exceeds_budget():
     assert any("CURRENT_REQUEST_" in content_to_text(m.get("content")) for m in agent.history)
 
 
+def test_native_error_permanence_classification():
+    from src.agents.main_agent import _native_error_is_permanent
+
+    class _E(Exception):
+        def __init__(self, msg, status=None):
+            super().__init__(msg)
+            self.status_code = status
+
+    # 瞬时（超时/连接/5xx/限流）→ 不永久降级
+    assert not _native_error_is_permanent(_E("Request timed out"))
+    assert not _native_error_is_permanent(_E("502 Bad Gateway"))
+    assert not _native_error_is_permanent(_E("Connection reset by peer"))
+    assert not _native_error_is_permanent(_E("rate limited", status=429))
+    assert not _native_error_is_permanent(_E("service unavailable", status=503))
+    # 永久（模型/端点不支持 tools，4xx 非 429）→ 永久回退
+    assert _native_error_is_permanent(_E("model does not support tools", status=400))
+    assert _native_error_is_permanent(_E("400 bad request: tools unsupported"))
+    assert _native_error_is_permanent(_E("not found", status=404))
+
+
+class _NativeFailLLM:
+    """native 路径（带 tools 的 chat）抛指定异常；提示式回退（无 tools）正常给回复。"""
+
+    def __init__(self, exc):
+        self.exc = exc
+
+    async def chat(self, messages, **kwargs):
+        if "tools" in kwargs:                        # native function-calling 调用
+            raise self.exc
+        return {"content": "回退完成"}                # 提示式协议兜底回复
+
+
+@pytest.mark.asyncio
+async def test_native_keeps_on_transient_error():
+    """瞬时错误不该把 native 永久关掉（下轮可重试）；本轮仍走提示式兜底、回合照常完成。"""
+    agent = MainAgent([], llm=_NativeFailLLM(TimeoutError("timed out")), native=True)
+    out, say, emit = _capture()
+    await agent.run_turn("hi", mode="plan", say=say, emit=emit)
+    assert agent._native is True                      # 瞬时 → 保留 native
+    assert out["emit"] == ["回退完成"]                # 本轮经提示式兜底照常完成
+
+
+@pytest.mark.asyncio
+async def test_native_downgrades_on_permanent_error():
+    """模型不支持 tools 这类永久错误 → 永久回退提示式。"""
+    err = ValueError("model does not support tools")
+    err.status_code = 400
+    agent = MainAgent([], llm=_NativeFailLLM(err), native=True)
+    await agent.run_turn("hi", mode="plan")
+    assert agent._native is False                     # 永久 → 关掉 native
+
+
 def test_truthy_helper_handles_bool_and_string():
     from src.agents.main_agent import _truthy
     assert _truthy(True) and _truthy("true") and _truthy("1") and _truthy("yes") and _truthy("all")

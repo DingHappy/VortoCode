@@ -184,6 +184,27 @@ def _is_weak_final(content: str) -> bool:
     return c.startswith("{") or c.startswith("[") or c.startswith("```")
 
 
+def _native_error_is_permanent(exc: BaseException) -> bool:
+    """native function-calling 调用出错时，判断是否"永久"（模型/端点根本不支持 tools）——
+    只有永久错误才该把该 agent 整个生命周期回退提示式；瞬时错误（超时/连接/5xx/限流）不该。
+
+    旧实现 `except Exception: self._native=False` 把一次瞬时 502/超时也当永久，永久关掉原生工具。
+    判据：4xx（除 429）视为永久（请求本身不被接受，如模型不支持 function-calling）；429/5xx/
+    超时/连接等视为瞬时；拿不准 → 当瞬时（宁可下轮重试，也别因一次抖动永久关死能力）。
+    """
+    status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
+    if isinstance(status, int):
+        return 400 <= status < 500 and status != 429
+    msg = str(exc).lower()
+    transient = ("timeout", "timed out", "connection", "connect", "temporarily", "reset",
+                 "rate limit", "overloaded", "unavailable", "429", "500", "502", "503", "504")
+    if any(m in msg for m in transient):
+        return False
+    permanent = ("400", "404", "422", "unsupported", "not support", "does not support",
+                 "no tools", "invalid request", "bad request")
+    return any(m in msg for m in permanent)
+
+
 def _truthy(v: Any) -> bool:
     """宽松真值：兼容原生 function-calling 的 bool 与提示式协议的字符串（"true"/"1"/"yes"…）。"""
     if isinstance(v, bool):
@@ -793,8 +814,11 @@ class MainAgent:
                     # 结构化 tool_use/tool_result：把提示式历史转成原生 tool_calls/tool 消息再发
                     resp = await self._client().chat(
                         _to_native_messages(messages), temperature=0.3, tools=self._tools_schema())
-                except Exception:  # noqa: BLE001
-                    self._native = False
+                except Exception as e:  # noqa: BLE001
+                    # 只有"模型不支持 tools"这类永久错误才永久回退提示式；瞬时错误（超时/5xx/限流）
+                    # 保留 native、下轮重试。本步无论如何走下面的提示式协议兜底，回合照常推进。
+                    if _native_error_is_permanent(e):
+                        self._native = False
                     resp = None
                 if resp is not None:
                     if reasoning_cb is not None and resp.get("reasoning"):   # 思考呈现（native 路径）
