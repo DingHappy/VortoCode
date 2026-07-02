@@ -31,17 +31,44 @@ def _path(repo_root: str, sid: str) -> Path:
     return Path(repo_root) / ".vortocode" / _DIRNAME / f"{sid}.json"
 
 
+def _clean_sid(sid: str) -> Optional[str]:
+    """把前端传来的原始 sid 清洗成文件名安全字符（挡 ../ 等）；空/非法 → None。"""
+    if not sid:
+        return None
+    s = _BAD.sub("_", str(sid)).strip("_")
+    return s or None
+
+
+def _title_from_transcript(transcript: List[dict]) -> str:
+    """无显式标题时，用首条用户消息当会话标题（截断、单行）。"""
+    for m in transcript or []:
+        if m.get("role") == "user":
+            t = " ".join(str(m.get("text") or "").split())
+            if t:
+                return (t[:40] + "…") if len(t) > 40 else t
+    return "新对话"
+
+
 def save_session(repo_root: str, key: str, transcript: List[dict],
-                 history: List[dict], plan: Optional[List[dict]]) -> bool:
-    """把一个 sid 会话存盘。返回是否真的写了（非 sid 会话/出错 → False）。"""
+                 history: List[dict], plan: Optional[List[dict]], title: Optional[str] = None) -> bool:
+    """把一个 sid 会话存盘。返回是否真的写了（非 sid 会话/出错 → False）。
+
+    title：显式标题（重命名用）。不传则**保留磁盘上已有标题**，避免每回合存盘把用户改的名冲掉。
+    """
     sid = _sid_of(key)
     if sid is None:
         return False
     p = _path(repo_root, sid)
+    if title is None and p.is_file():                # 保留已有标题（别被每回合存盘覆盖）
+        try:
+            title = json.loads(p.read_text(encoding="utf-8")).get("title")
+        except (OSError, ValueError):
+            title = None
     data = {
         "transcript": list(transcript or [])[-_MAX_TRANSCRIPT:],
         "history": list(history or [])[-_MAX_HISTORY:],
         "plan": list(plan or []),
+        "title": title,
     }
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -71,4 +98,66 @@ def load_session(repo_root: str, key: str) -> Optional[Dict[str, Any]]:
         "transcript": data.get("transcript") or [],
         "history": data.get("history") or [],
         "plan": data.get("plan") or [],
+        "title": data.get("title"),
     }
+
+
+def list_sessions(repo_root: str) -> List[Dict[str, Any]]:
+    """列出所有已落盘会话（供多会话管理 UI）：{sid, title, messages, updated}，按最近更新排序。"""
+    d = Path(repo_root) / ".vortocode" / _DIRNAME
+    if not d.is_dir():
+        return []
+    out: List[Dict[str, Any]] = []
+    for p in sorted(d.glob("*.json")):
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            mtime = p.stat().st_mtime
+        except (OSError, ValueError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        transcript = data.get("transcript") or []
+        out.append({
+            "sid": p.stem,
+            "title": data.get("title") or _title_from_transcript(transcript),
+            "messages": len(transcript),
+            "updated": mtime,
+        })
+    out.sort(key=lambda s: s["updated"], reverse=True)
+    return out
+
+
+def delete_session(repo_root: str, sid: str) -> bool:
+    """删除一个已落盘会话（幂等）。sid 非法 → False；文件不存在 → False。"""
+    clean = _clean_sid(sid)
+    if clean is None:
+        return False
+    p = _path(repo_root, clean)
+    try:
+        if p.is_file():
+            p.unlink()
+            return True
+    except OSError:
+        pass
+    return False
+
+
+def rename_session(repo_root: str, sid: str, title: str) -> bool:
+    """重命名一个已落盘会话（写入 title 字段，原子替换）。会话不存在/sid 非法 → False。"""
+    clean = _clean_sid(sid)
+    if clean is None:
+        return False
+    p = _path(repo_root, clean)
+    if not p.is_file():
+        return False
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return False
+        data["title"] = " ".join(str(title or "").split())[:80] or None
+        tmp = p.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(p)
+        return True
+    except (OSError, ValueError, TypeError):
+        return False
