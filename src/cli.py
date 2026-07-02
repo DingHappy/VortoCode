@@ -298,14 +298,12 @@ def _build_headless_agent(cwd, *, max_steps, on_tool, on_plan, confirm, llm=None
     绿了落 vorto 分支、不碰主工作区）+ 受确认门控的 run_command/open_pr。带持久计划。
     on_progress：dev 流水线进度回调（长任务边跑边播到 stderr，免得对着静默 prompt 干等）。
     """
-    from src.agents.main_agent import (MainAgent, build_command_tool,
-                                       build_dev_tools, build_pr_tool, build_read_tools,
-                                       build_research_tools, build_web_tools)
+    from src.agents.main_agent import MainAgent, build_agent_tools
     from src.agents.permissions import load_permissions
     from src.agents.project import load_project_instructions
-    tools = (build_read_tools(cwd) + build_research_tools(cwd) + build_web_tools()
-             + build_dev_tools(cwd, on_progress=on_progress, confirm=confirm)
-             + build_command_tool(cwd, confirm) + build_pr_tool(cwd, confirm))
+    # 与 Web /agent 共用同一工具装配（build_agent_tools），保证"同源"、不漂移；
+    # headless 无浏览器 → 不含制品工具（with_artifacts=False）。
+    tools = build_agent_tools(cwd, confirm=confirm, on_progress=on_progress, with_artifacts=False)
     kwargs = {"plan_tool": True, "on_tool": on_tool, "on_plan": on_plan,
               "permissions": load_permissions(cwd), "env_context": True}   # 注入 <env>（cwd/git/日期/目录）
     proj = load_project_instructions(cwd)              # AGENTS.md/CLAUDE.md 项目约定进系统提示
