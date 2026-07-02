@@ -341,6 +341,14 @@ def test_extra_system_injected_into_prompt():
     assert "【可用技能】" in sysmsg and "hello" in sysmsg
 
 
+def test_system_prompt_frames_tool_results_and_forbids_fabrication():
+    """dogfood 发现：mimo 曾把 [工具 X 结果] 误当用户消息、编造未做的分支/测试。系统提示须明确框定。"""
+    s = MainAgent([])._system("plan")
+    assert "不是用户发来的新消息" in s                # 工具结果 = 工具输出，非用户新消息
+    assert "只读一眼代码不等于完成" in s              # 只 read 不算做完
+    assert "绝不编造分支名或测试结果" in s            # 反幻觉：没做的别说做了
+
+
 def test_skill_registry_loads_parses_and_catalogs(tmp_path):
     d = tmp_path / "skills" / "greet"
     d.mkdir(parents=True)
