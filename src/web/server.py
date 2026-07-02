@@ -92,7 +92,10 @@ def start_server(host: str = "127.0.0.1", port: int = 8000):
     if host not in _LOCAL_HOSTS:
         print("  ⚠️  绑定到非本地地址；已设置鉴权/显式放行。请确认 token 足够强。")
     print(f"{'='*50}\n")
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    # access_log=False：鉴权走 ?token= 查询参数（浏览器 GET/WS 无法自带头），uvicorn 的
+    # info 访问日志会把含 ?token=… 的完整 URL 明文写进日志 → token 被动泄漏。关掉访问日志
+    # 堵住这条我们完全能控的泄漏面（2026-07 审计 P0#4）。应用级日志不受影响。
+    uvicorn.run(app, host=host, port=port, log_level="warning", access_log=False)
 
 
 if __name__ == "__main__":
