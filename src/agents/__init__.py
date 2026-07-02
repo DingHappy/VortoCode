@@ -1,11 +1,8 @@
 """Agent 系统"""
 
 from .base import Agent, AgentConfig, AgentResult, AgentCapability, AgentStatus
-from .dynamic_agent import DynamicAgent, SubAgentManager
 from .general import LLMAgent
 from .roles import (
-    ProductAgent,
-    ArchitectAgent,
     DeveloperAgent,
     ReviewerAgent,
     TesterAgent
@@ -45,16 +42,10 @@ __all__ = [
     "AgentCapability",
     "AgentStatus",
     
-    # Dynamic
-    "DynamicAgent",
-    "SubAgentManager",
-
     # General
     "LLMAgent",
-    
+
     # Roles
-    "ProductAgent",
-    "ArchitectAgent",
     "DeveloperAgent",
     "ReviewerAgent",
     "TesterAgent",

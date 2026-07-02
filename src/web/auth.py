@@ -38,9 +38,10 @@ def shell_enabled() -> bool:
     return os.getenv("AUTODEV_ENABLE_SHELL", "").strip().lower() in ("1", "true", "yes", "on")
 
 
-# 鉴权豁免：页面、API 文档、健康检查
+# 鉴权豁免：页面 HTML 外壳（本身不含数据，数据走各自需鉴权的 API）、API 文档、健康检查。
+# 路线 A 下线遗留页后只剩主线页 /、/agent、/artifacts（含制品分享链接）。
 _EXEMPT_PREFIXES = ("/docs", "/redoc", "/openapi.json", "/static")
-_EXEMPT_EXACT = {"/", "/workspace", "/workstation", "/classic",
+_EXEMPT_EXACT = {"/", "/agent", "/artifacts",
                  "/api/health", "/api/health/quick"}
 
 

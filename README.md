@@ -120,8 +120,8 @@
 
 ### 改进计划文档
 
-- [改进计划总览](docs/IMPROVEMENT_PLAN.md)
-- [自我编排引擎设计](docs/SELF_ORCHESTRATION_ENGINE.md)
+- [改进计划总览](docs/IMPROVEMENT_PLAN.md) —— ⚠️历史设计，其中的自我编排引擎已随路线 A 退役删除
+- [自我编排引擎设计](docs/SELF_ORCHESTRATION_ENGINE.md) —— ⚠️历史设计（子系统已退役删除，仅存档参考）
 - [MCP 工具集成层设计](docs/MCP_INTEGRATION_LAYER.md)
 - [记忆系统设计](docs/MEMORY_SYSTEM.md)
 - [技能系统设计](docs/SKILL_SYSTEM.md)
@@ -142,14 +142,14 @@ vortocode/
 │   ├── skills/          技能系统（技能发现 / 版本管理 / 自动加载）
 │   ├── hooks/           生命周期 Hook
 │   ├── tools/           MCP 工具集成（动态发现 / 权限管理）
-│   ├── monitoring/      性能监控（指标收集 / 仪表盘 / 告警 / 性能分析）
+│   ├── core/            核心设施（monitoring 指标 / self_healing / cache / tracing / task_queue）
 │   ├── context/         上下文管理（智能压缩 / 优先级管理）
 │   ├── editor/          代码编辑与索引
 │   ├── sandbox/         Docker 沙箱（cloud_sandbox 为非隔离简化执行，默认关闭）
 │   ├── security/        权限 / 审批模型
 │   └── projects/ workspaces/ browser/ github/ templates/ …
 ├── web/                 控制台前端（原生 HTML/CSS/JS，无构建步骤）
-├── examples/            使用示例（basic_usage / llm_analysis / real_pipeline …）
+├── examples/            使用示例（iterative_dev / llm_analysis / pet_state 桌宠钩子 …）
 ├── tests/               单元 + 集成测试（含路由契约安全网）
 ├── docs/                设计与分析文档
 └── config/              默认配置（default.yaml / mcp.yaml）

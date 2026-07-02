@@ -9,16 +9,6 @@ from .permissions import (
     PermissionManager,
     SafetyGuard
 )
-from .enhanced import (
-    User,
-    Session,
-    AuditLog,
-    AuthManager,
-    RateLimiter,
-    InputSanitizer,
-    SecurityManager
-)
-
 __all__ = [
     # 权限管理
     "Permission",
@@ -28,13 +18,4 @@ __all__ = [
     "ApprovalRequest",
     "PermissionManager",
     "SafetyGuard",
-    
-    # 增强安全
-    "User",
-    "Session",
-    "AuditLog",
-    "AuthManager",
-    "RateLimiter",
-    "InputSanitizer",
-    "SecurityManager",
 ]

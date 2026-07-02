@@ -1,26 +1,5 @@
 """核心模块"""
 
-from .error_handler import (
-    # 错误类
-    AppError,
-    AgentError,
-    CodeError,
-    SandboxError,
-    BrowserError,
-    LLMError,
-    
-    # 错误代码
-    ErrorCode,
-    
-    # 工具函数
-    setup_logging,
-    get_logger,
-    handle_errors,
-    safe_execute,
-    safe_execute_async,
-    ErrorCollector,
-)
-
 from .self_healing import (
     AutoFixer,
     ErrorAnalyzer,
@@ -77,21 +56,6 @@ __all__ = [
     "ensure_trace_id",
     "setup_structured_logging",
     "JsonFormatter",
-    # 错误处理
-    "AppError",
-    "AgentError",
-    "CodeError",
-    "SandboxError",
-    "BrowserError",
-    "LLMError",
-    "ErrorCode",
-    "setup_logging",
-    "get_logger",
-    "handle_errors",
-    "safe_execute",
-    "safe_execute_async",
-    "ErrorCollector",
-    
     # 自修复
     "AutoFixer",
     "ErrorAnalyzer",
