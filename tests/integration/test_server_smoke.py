@@ -96,6 +96,13 @@ def test_goal_then_status_reflects_it(client):
     assert "冒烟测试目标" in json.dumps(status, ensure_ascii=False)
 
 
+def test_root_serves_main_agent_console(client):
+    """P1#8：默认首页 `/` 指向主线 agent 对话台，而非遗留 admin.html。"""
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "主 Agent" in r.text and "管理控制台" not in r.text
+
+
 def test_websocket_basic(client):
     """/ws 实时通道：init + ping→pong + get_status→status（覆盖 realtime router）。"""
     with client.websocket_connect("/ws") as ws:
