@@ -57,12 +57,27 @@ def _int_env(name: str, default: int) -> int:
 _USAGE = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
 
+def _is_wide_char(c: str) -> bool:
+    """宽字符（CJK/日文假名/谚文/兼容表意等）：粗估 ~1 token/字。
+
+    旧版只覆盖 BMP 基本汉字（一..鿿 = U+4E00..U+9FFF），漏了扩展区/假名/谚文——
+    中日韩混排会低估 token 数，进而让窗口预算失真。这里补齐常见宽字区段。
+    """
+    o = ord(c)
+    return (0x3040 <= o <= 0x30FF        # 平假名 + 片假名
+            or 0x3400 <= o <= 0x9FFF     # CJK 扩展 A + 基本
+            or 0xAC00 <= o <= 0xD7A3     # 谚文音节
+            or 0xF900 <= o <= 0xFAFF     # CJK 兼容表意
+            or 0xFF00 <= o <= 0xFFEF     # 全角/半角形
+            or 0x20000 <= o <= 0x3FFFF)  # CJK 扩展 B–G（星平面）
+
+
 def estimate_tokens(text: str) -> int:
-    """粗略 token 估算：CJK 字 ~1 token，其余 ~4 字符/token。够用于用量提示。"""
+    """粗略 token 估算：CJK/假名/谚文等宽字 ~1 token，其余 ~4 字符/token。够用于窗口预算与用量提示。"""
     if not text:
         return 0
-    cjk = sum(1 for c in text if "一" <= c <= "鿿")
-    return max(1, cjk + (len(text) - cjk) // 4)
+    wide = sum(1 for c in text if _is_wide_char(c))
+    return max(1, wide + (len(text) - wide) // 4)
 
 
 def add_usage(prompt_tokens: int, completion_tokens: int) -> None:
