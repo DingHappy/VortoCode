@@ -1767,3 +1767,26 @@ def build_pr_tool(repo_root: str, confirm) -> list[Tool]:
                  "外向操作、需确认，gh 不可用则只 push（仅 build）",
                  {"branch": "要开 PR 的分支名", "title": "PR 标题", "body": "可选，PR 正文"},
                  _open_pr, read_only=False)]
+
+
+def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable[[str], None]] = None,
+                      with_artifacts: bool = False) -> list[Tool]:
+    """标准主 agent 工具集（headless CLI 与 Web /agent 共用，保证二者"同源"、不漂移）。
+
+    此前 cli._build_headless_agent 与 web._new_agent 各自手写同一串 build_*，极易漂移
+    （工具清单/顺序/confirm 语义不一致）。收敛到这里一处装配：
+      read（行段/grep/glob/git 只读/语义导航）+ research（只读子 agent 委派）+ web（fetch/search）
+      [+ artifact（发布/列制品，仅 with_artifacts）] + dev（隔离实现/并行，绿落 vorto 分支）
+      + command（run_command）+ pr（open_pr）。
+    confirm: async (message)->bool 确认门——CLI 走 --yes 门控、Web 走 WS 确认，语义由调用方注入。
+    on_progress: dev 流水线进度回调（长任务边跑边播）。
+    with_artifacts: 是否含制品工具（Web 有查看页故开；headless CLI 无浏览器故关）。
+    TUI 不走本工厂——它用富 UI 版写/dev/command 工具（着色 diff + ConfirmScreen），刻意不同源。
+    """
+    tools = build_read_tools(repo_root) + build_research_tools(repo_root) + build_web_tools()
+    if with_artifacts:
+        from src.web.artifacts import build_artifact_tools    # 惰性导入：避免 agents 层在导入期硬依赖 web
+        tools += build_artifact_tools(repo_root)
+    tools += (build_dev_tools(repo_root, on_progress=on_progress, confirm=confirm)
+              + build_command_tool(repo_root, confirm) + build_pr_tool(repo_root, confirm))
+    return tools
