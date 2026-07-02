@@ -206,7 +206,8 @@ def _get_session(websocket) -> Dict[str, Any]:
             agent.history = list(saved.get("history") or [])
             if saved.get("plan"):
                 agent.plan = list(saved["plan"])
-        sess = {"agent": agent, "transcript": transcript, "last": 0.0}
+        from src.llm.client import new_usage
+        sess = {"agent": agent, "transcript": transcript, "last": 0.0, "usage": new_usage()}
         _SESSIONS[key] = sess
     sess["last"] = time.monotonic()
     return sess
@@ -404,6 +405,10 @@ async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list
 
     async def _run():
         try:
+            sess = _SESSIONS.get(_session_key(websocket))   # 本会话独立用量作用域（多会话互不串扰）
+            if sess and sess.get("usage") is not None:
+                from src.llm.client import bind_usage
+                bind_usage(sess["usage"])
             await _ensure_mcp(agent, agent_say)   # 首回合按需连 MCP（config/mcp.yaml 存在才连）
             await agent.run_turn(text, mode=mode, say=agent_say, emit=agent_emit,
                                  stream_cb=agent_stream, images=images, audio=audio)

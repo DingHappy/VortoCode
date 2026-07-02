@@ -56,6 +56,29 @@ def _int_env(name: str, default: int) -> int:
 # 主 agent + 所有子 agent 的总用量。优先用 API 精确值，拿不到时用估算（流式）。
 _USAGE = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
 
+# 按上下文（会话/回合）隔离的用量作用域：多会话服务端场景下，不同会话各记各的、互不串扰，
+# 也不会因某会话 reset_usage 把所有人清零（旧版 _USAGE 是进程级全局）。默认 None → 回退全局
+# _USAGE（TUI/CLI 单会话沿用旧行为、零改动）。contextvars 会随 create_task/gather/to_thread 传播，
+# 故绑定一次即涵盖该回合的主 + 子 agent 全部 LLM 调用。
+import contextvars
+
+_usage_ctx: "contextvars.ContextVar" = contextvars.ContextVar("vc_usage", default=None)
+
+
+def _cur_usage() -> Dict[str, int]:
+    u = _usage_ctx.get()
+    return u if u is not None else _USAGE
+
+
+def new_usage() -> Dict[str, int]:
+    """新建一个零初始化的用量计数器（供 bind_usage 绑定到某会话）。"""
+    return {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+
+
+def bind_usage(scope: Dict[str, int]) -> None:
+    """把**当前上下文**的用量计数绑定到给定 dict（每会话一份）。在回合任务内调用即隔离该回合计量。"""
+    _usage_ctx.set(scope)
+
 
 def _is_wide_char(c: str) -> bool:
     """宽字符（CJK/日文假名/谚文/兼容表意等）：粗估 ~1 token/字。
@@ -81,19 +104,21 @@ def estimate_tokens(text: str) -> int:
 
 
 def add_usage(prompt_tokens: int, completion_tokens: int) -> None:
-    _USAGE["calls"] += 1
-    _USAGE["prompt_tokens"] += int(prompt_tokens or 0)
-    _USAGE["completion_tokens"] += int(completion_tokens or 0)
-    _USAGE["total_tokens"] += int(prompt_tokens or 0) + int(completion_tokens or 0)
+    u = _cur_usage()
+    u["calls"] += 1
+    u["prompt_tokens"] += int(prompt_tokens or 0)
+    u["completion_tokens"] += int(completion_tokens or 0)
+    u["total_tokens"] += int(prompt_tokens or 0) + int(completion_tokens or 0)
 
 
 def get_usage() -> Dict[str, int]:
-    return dict(_USAGE)
+    return dict(_cur_usage())
 
 
 def reset_usage() -> None:
-    for k in _USAGE:
-        _USAGE[k] = 0
+    u = _cur_usage()
+    for k in u:
+        u[k] = 0
 
 
 def _account(messages: List[Dict[str, str]], content: Optional[str], usage: Any = None) -> None:
