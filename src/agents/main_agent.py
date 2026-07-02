@@ -866,6 +866,27 @@ class SkillRegistry:
         return self.skills.get((name or "").strip())
 
 
+def _resolve_within(base: Any, rel: Any) -> Optional["Path"]:
+    """把相对路径解析进 base 并做边界校验：`..` 越界、绝对路径、软链逃逸都返回 None。
+
+    读工具与写工具**共用同一套防护**——避免"写路径防了、读路径没防"的不对称
+    （否则 read_file("../../etc/passwd") 或绝对路径能读仓库外任意文件）。
+    用 resolve() 后 relative_to(base) 判定：绝对路径会被 `base / "/x"` 语义丢掉 base
+    → 落到根 → relative_to 抛 ValueError；`..` 与软链在 resolve() 后同样落到 base 外被拒。
+    """
+    from pathlib import Path
+    rel = str(rel or "").strip().lstrip("@")
+    if not rel:
+        return None
+    try:
+        root = Path(base).resolve()
+        p = (root / rel).resolve()
+        p.relative_to(root)
+    except (ValueError, OSError):
+        return None
+    return p
+
+
 def build_read_tools(repo_root: str) -> list[Tool]:
     """构建一组只读工具（read_file/list_files/grep/analyze_repo），UI 无关，供 TUI/Web 共用。"""
     from pathlib import Path
@@ -901,7 +922,9 @@ def build_read_tools(repo_root: str) -> list[Tool]:
         rel = str(args.get("path", "")).strip().lstrip("@")
         if not rel:
             return "缺少 path 参数。"
-        p = Path(repo_root) / rel
+        p = _resolve_within(repo_root, rel)
+        if p is None:
+            return f"路径越界或非法（只能读仓库内文件）: {rel}"
         if not p.is_file():
             return f"(不存在: {rel})"
         try:
@@ -942,6 +965,8 @@ def build_read_tools(repo_root: str) -> list[Tool]:
             return "glob 需要 pattern（如 *.ts、**/*.test.js、src/**/*.py）。"
         sub = str(args.get("dir", "")).strip().strip("/")
         base = Path(repo_root)
+        if sub and _resolve_within(repo_root, sub) is None:   # dir 不得指向仓库外（防 os.walk 逃逸）
+            return f"dir 越界或非法（只能在仓库内查找）: {sub}"
         slash_re = _glob_to_regex(pattern) if "/" in pattern else None
 
         def _match(rel_posix: str) -> bool:
@@ -1045,7 +1070,10 @@ def build_read_tools(repo_root: str) -> list[Tool]:
 
     async def _document_symbols(args: dict) -> str:
         from src.agents.lsp import document_symbols
-        return document_symbols(repo_root, str(args.get("path", "")))
+        rel = str(args.get("path", "")).strip().lstrip("@")
+        if rel and _resolve_within(repo_root, rel) is None:   # 与 read_file 同一边界防护
+            return f"路径越界或非法（只能读仓库内文件）: {rel}"
+        return document_symbols(repo_root, rel)
 
     def _git_ro(*a):
         """只读 git：在 repo_root 跑，超时/出错都安全返回 CompletedProcess-ish。"""
@@ -1157,15 +1185,7 @@ def build_write_tools(root: str) -> list[Tool]:
     base = Path(root).resolve()
 
     def _safe(rel) -> Optional[Path]:
-        rel = str(rel or "").strip().lstrip("@")
-        if not rel:
-            return None
-        p = (base / rel).resolve()
-        try:
-            p.relative_to(base)                    # 越界(..)/绝对路径 → 拒绝
-        except ValueError:
-            return None
-        return p
+        return _resolve_within(base, rel)          # 与读工具共用同一边界防护，避免读/写漂移
 
     async def _edit_file(args: dict) -> str:
         rel = str(args.get("path", "")).strip()
