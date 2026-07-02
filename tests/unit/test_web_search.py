@@ -38,6 +38,9 @@ class _FakeResp:
 
 def _patch_html(monkeypatch, html: str):
     monkeypatch.setattr(web_fetch, "_urlopen", lambda req, timeout: _FakeResp(html.encode("utf-8")))
+    # 同时跳过 _host_is_safe 的真实 DNS/SSRF 解析——本组测试针对解析/格式化，不测 SSRF；
+    # 否则无网络（如 CI runner / 沙箱）时 getaddrinfo 失败会让这些"离线"测试假性红。
+    monkeypatch.setattr(web_fetch, "_host_is_safe", lambda host: True)
 
 
 def test_decode_ddg_href_unwraps_uddg():
@@ -90,6 +93,7 @@ def test_web_search_no_results_graceful(monkeypatch):
 def test_web_search_fetch_error_graceful(monkeypatch):
     def _boom(req, timeout):
         raise OSError("connection reset")
+    monkeypatch.setattr(web_fetch, "_host_is_safe", lambda host: True)   # 跳过真实 DNS，测的是 _urlopen 抛错路径
     monkeypatch.setattr(web_fetch, "_urlopen", _boom)
     out = ws.web_search("anything")
     assert out.startswith("(搜索失败")                      # 网络炸了也只返回说明串、不抛

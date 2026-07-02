@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path            # 模块级：供 _resolve_within 的返回注解引用（各工厂内仍按需局部导入）
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional
 
