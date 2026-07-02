@@ -8,10 +8,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src import (
-    MetricsCollector, SystemMetrics, ApplicationMetrics,
-    Dashboard, DashboardConfig, DashboardManager,
-    AlertManager, AlertRule, AlertSeverity,
-    Profiler, MemoryProfiler, CPUProfiler,
     ToolRegistry, Tool, ToolPermission,
     ToolPermissionManager, PermissionRule,
     SkillDiscovery, SkillDiscoveryConfig,
@@ -19,94 +15,8 @@ from src import (
 )
 from src.memory.base import MemoryItem
 
-
-async def demo_metrics():
-    """演示指标收集功能"""
-    print("\n=== 指标收集演示 ===")
-    
-    # 创建指标收集器
-    collector = MetricsCollector()
-    system_metrics = SystemMetrics(collector)
-    app_metrics = ApplicationMetrics(collector)
-    
-    # 记录一些指标
-    await app_metrics.record_http_request("GET", "/api/test", 200, 0.5)
-    await app_metrics.record_http_request("POST", "/api/data", 201, 1.2)
-    await app_metrics.record_agent_task("developer", "success", 2.5)
-    
-    # 获取统计信息
-    stats = collector.get_statistics("http_requests_total")
-    print(f"HTTP请求总数: {stats.get('current', 0)}")
-    
-    stats = collector.get_statistics("agent_tasks_total")
-    print(f"Agent任务总数: {stats.get('current', 0)}")
-
-
-async def demo_dashboard():
-    """演示仪表盘功能"""
-    print("\n=== 仪表盘演示 ===")
-    
-    collector = MetricsCollector()
-    config = DashboardConfig(title="演示仪表盘")
-    dashboard = Dashboard(config, collector)
-    
-    widgets = dashboard.list_widgets()
-    print(f"仪表盘包含 {len(widgets)} 个组件:")
-    for widget in widgets[:5]:  # 只显示前5个
-        print(f"  - {widget.title} ({widget.widget_type.value})")
-
-
-async def demo_alerts():
-    """演示告警功能"""
-    print("\n=== 告警系统演示 ===")
-    
-    collector = MetricsCollector()
-    alert_manager = AlertManager(collector)
-    
-    # 添加告警规则
-    rules = [
-        AlertRule(
-            name="high_cpu",
-            description="CPU使用率过高",
-            metric_name="system_cpu_usage",
-            condition="> 80",
-            threshold=80.0,
-            severity=AlertSeverity.WARNING
-        ),
-        AlertRule(
-            name="high_memory",
-            description="内存使用率过高",
-            metric_name="system_memory_usage",
-            condition="> 90",
-            threshold=90.0,
-            severity=AlertSeverity.ERROR
-        ),
-    ]
-    
-    for rule in rules:
-        alert_manager.add_rule(rule)
-    
-    print(f"已添加 {len(alert_manager.list_rules())} 条告警规则:")
-    for rule in alert_manager.list_rules():
-        print(f"  - {rule.name}: {rule.description}")
-
-
-async def demo_profiler():
-    """演示性能分析功能"""
-    print("\n=== 性能分析演示 ===")
-    
-    profiler = Profiler()
-    
-    # 使用性能分析器
-    with profiler.profile("demo_function") as profile_id:
-        # 模拟一些工作
-        total = sum(range(10000))
-        await asyncio.sleep(0.1)
-    
-    profiles = profiler.list_profiles()
-    print(f"已完成 {len(profiles)} 次性能分析")
-    if profiles:
-        print(f"  - 最近一次: {profiles[0]['name']}, 耗时: {profiles[0]['duration']:.3f}秒")
+# 注：性能监控演示（metrics/dashboard/alerts/profiler）随 src/monitoring 孤儿包一并移除
+# （路线 A）；生产监控见 src/core/monitoring。
 
 
 async def demo_tools():
@@ -198,21 +108,16 @@ async def main():
     print("=" * 50)
     
     # 运行各个演示
-    await demo_metrics()
-    await demo_dashboard()
-    await demo_alerts()
-    await demo_profiler()
     await demo_tools()
     await demo_skill_discovery()
     await demo_vector_memory()
-    
+
     print("\n" + "=" * 50)
     print("所有演示完成！")
     print("\n新功能包括:")
     print("1. 完整的MCP工具集成 - 动态发现和权限管理")
     print("2. 向量数据库支持 - 语义记忆检索")
     print("3. 技能自动发现 - 版本管理和智能匹配")
-    print("4. 性能监控系统 - 实时指标、仪表盘、告警")
 
 
 if __name__ == "__main__":

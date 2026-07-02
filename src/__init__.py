@@ -16,10 +16,7 @@ from .tools.registry import ToolRegistry, Tool, ToolPermission
 from .tools.permission import ToolPermissionManager, PermissionRule
 from .tools.executor import ToolExecutor, ToolExecutionResult
 from .tools.mcp_client import MCPClient, MCPTransport, MCPTool
-from .monitoring.metrics import MetricsCollector, SystemMetrics, ApplicationMetrics
-from .monitoring.dashboard import Dashboard, DashboardConfig, DashboardManager
-from .monitoring.alerts import AlertManager, AlertRule, AlertSeverity
-from .monitoring.profiler import Profiler, MemoryProfiler, CPUProfiler
+# 注：src/monitoring 孤儿包（与生产在用的 src/core/monitoring 重名并行）随路线 A 删除。
 
 __all__ = [
     "Agent",
@@ -52,16 +49,4 @@ __all__ = [
     "MCPClient",
     "MCPTransport",
     "MCPTool",
-    "MetricsCollector",
-    "SystemMetrics",
-    "ApplicationMetrics",
-    "Dashboard",
-    "DashboardConfig",
-    "DashboardManager",
-    "AlertManager",
-    "AlertRule",
-    "AlertSeverity",
-    "Profiler",
-    "MemoryProfiler",
-    "CPUProfiler",
 ]

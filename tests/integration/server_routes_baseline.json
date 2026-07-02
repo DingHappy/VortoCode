@@ -702,12 +702,6 @@
     ]
   },
   {
-    "path": "/classic",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
     "path": "/docs",
     "methods": [
       "GET",
@@ -733,18 +727,6 @@
     "methods": [
       "GET",
       "HEAD"
-    ]
-  },
-  {
-    "path": "/workspace",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/workstation",
-    "methods": [
-      "GET"
     ]
   },
   {

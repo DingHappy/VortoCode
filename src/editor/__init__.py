@@ -12,17 +12,6 @@ from .code_editor import (
     DiffHunk,
     DiffResult
 )
-from .inline_editor import (
-    InlineEditor,
-    InlineEditRequest,
-    EditMode,
-    Selection,
-    Range,
-    Position,
-    EditAction,
-    InlineDiff,
-    DiffLine
-)
 from .completion_engine import (
     CompletionEngine,
     CompletionItem,
@@ -44,17 +33,6 @@ __all__ = [
     "EditOperation",
     "DiffHunk",
     "DiffResult",
-    
-    # Inline editor
-    "InlineEditor",
-    "InlineEditRequest",
-    "EditMode",
-    "Selection",
-    "Range",
-    "Position",
-    "EditAction",
-    "InlineDiff",
-    "DiffLine",
     
     # Completion
     "CompletionEngine",
