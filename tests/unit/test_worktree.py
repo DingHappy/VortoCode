@@ -22,6 +22,37 @@ def _init_repo(path):
 
 
 @pytest.mark.asyncio
+async def test_parallel_in_worktree_no_git_race(tmp_path):
+    """#18：多个 in_worktree 经 asyncio.gather 真并发（git 操作丢线程 + 全局锁）——
+    各自 diff 正确、互不串扰、主工作区干净、无残留 worktree（防共享 .git 竞争 / 事件循环冻结）。"""
+    import asyncio
+    _init_repo(tmp_path)
+
+    def _mk(i):
+        async def work(wt):
+            (wt / f"f{i}.py").write_text(f"V = {i}\n")       # 每路各写一个独立文件
+            await asyncio.sleep(0)                            # 让出，逼真交错调度
+            return i
+        return work
+
+    results = await asyncio.gather(*[
+        worktree.in_worktree(str(tmp_path), f"wt-par-{i}", _mk(i)) for i in range(6)])
+
+    for i, (diff, res) in enumerate(results):
+        assert res == i
+        assert f"f{i}.py" in diff and f"V = {i}" in diff     # 各路只含自己的改动，无串扰
+        assert all(f"f{j}.py" not in diff for j in range(6) if j != i)
+    # 主工作区未被碰、所有 worktree 都清理干净
+    assert not any((tmp_path / f"f{i}.py").exists() for i in range(6))
+    wdir = tmp_path / ".vortocode" / "worktrees"
+    assert not wdir.exists() or not any(wdir.iterdir())
+    # 主仓库 git 状态干净（无残留登记/锁）
+    st = subprocess.run(["git", "-C", str(tmp_path), "status", "--porcelain"],
+                        capture_output=True, text=True)
+    assert st.stdout.strip() == ""
+
+
+@pytest.mark.asyncio
 async def test_in_worktree_isolates_and_collects_diff(tmp_path):
     _init_repo(tmp_path)
 
