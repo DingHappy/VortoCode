@@ -1,5 +1,6 @@
 """技能发现和版本管理"""
 
+import asyncio
 import json
 import logging
 import os
