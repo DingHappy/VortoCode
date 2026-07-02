@@ -10,7 +10,7 @@ pytest.importorskip("textual")  # 无 textual 时跳过（CI 装了 .[tui]）
 
 from textual.widgets import Input
 
-from src.tui.app import VortoCodeTUI
+from src.tui.app import VortoCodeTUI, ConfirmScreen
 
 
 async def _submit(app, pilot, text):
@@ -1130,6 +1130,48 @@ async def test_improve_confirm_always_sets_flag(monkeypatch, tmp_path):
         await pilot.pause()
         assert applied == [True]                          # a 也算确认 → 写了
         assert app._allow_writes_session is True          # 且置位会话标志
+
+
+@pytest.mark.asyncio
+async def test_write_blanket_does_not_silence_commands(tmp_path):
+    """P0#2：只按过"始终允许写文件"不得静默后续任意命令（否则=权限提升）。"""
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app._allow_writes_session = True                  # 仅写豁免
+        pushed = []
+
+        async def _fake_push(screen):
+            pushed.append(screen)
+            return False
+
+        app.push_screen_wait = _fake_push
+        ok = await app._confirm_command("跑命令？")        # 命令仍需确认
+        assert ok is False and len(pushed) == 1           # 未被写豁免放行、确实弹了确认
+        assert pushed[0]._scope == "commands"             # 且是命令作用域的确认框
+
+
+@pytest.mark.asyncio
+async def test_command_always_allow_is_independent(tmp_path):
+    """命令的"始终允许"独立于写：命令豁免放行命令、但不置写豁免。"""
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app._allow_commands_session = True
+        ok = await app._confirm_command("跑命令？")
+        assert ok is True and len(app.screen_stack) == 1  # 直接放行、没弹框
+        assert app._allow_writes_session is False         # 未串到写作用域
+
+
+@pytest.mark.asyncio
+async def test_confirm_screen_command_scope_sets_only_command_flag(tmp_path):
+    """ConfirmScreen(scope=commands) 的 [a] 只置命令标志、不动写标志。"""
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app.push_screen(ConfirmScreen("跑命令？", scope="commands"))
+        await pilot.pause()
+        await pilot.press("a")
+        await pilot.pause()
+        assert app._allow_commands_session is True
+        assert app._allow_writes_session is False
 
 
 @pytest.mark.asyncio
