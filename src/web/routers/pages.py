@@ -9,10 +9,16 @@ _WEB_DIR = _PROJECT_ROOT / "web"
 # API 路由
 @router.get("/")
 async def root():
-    """返回管理控制台"""
-    html_path = _WEB_DIR / "admin.html"
-    if html_path.exists():
-        return FileResponse(html_path, media_type="text/html")
+    """默认首页 = 主线 agent 对话台。
+
+    2026-07 审计 P1#8：此前 `/` 指向遗留 admin.html（其 5 角色批处理后端已退役），
+    而主线 `/agent` 没有任何导航能到达——新用户从首页进来永远看不到主线控制台。
+    现 `/` 直接给 agent.html；遗留页仍保留在各自路由（/classic 等），但不再是默认。
+    """
+    for name in ("agent.html", "admin.html"):        # 主线优先，缺失才回退旧页
+        html_path = _WEB_DIR / name
+        if html_path.exists():
+            return FileResponse(html_path, media_type="text/html")
     return {"message": "VortoCode API", "version": "0.1.0"}
 
 @router.get("/workspace")
