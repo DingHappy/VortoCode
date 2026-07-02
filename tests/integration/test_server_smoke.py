@@ -103,6 +103,14 @@ def test_root_serves_main_agent_console(client):
     assert "主 Agent" in r.text and "管理控制台" not in r.text
 
 
+def test_start_execution_retired(client):
+    """P1#7：5 角色批处理流水线已退役——/api/start 返回退役说明、不再拉起流程。"""
+    r = client.post("/api/start")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["success"] is False and "退役" in body["error"]
+
+
 def test_websocket_basic(client):
     """/ws 实时通道：init + ping→pong + get_status→status（覆盖 realtime router）。"""
     with client.websocket_connect("/ws") as ws:

@@ -1,14 +1,15 @@
 """角色化 Agent 实现（真实 LLM 驱动）
 
-每个角色都通过基类的 LLM 助手真正调用模型：
-- ProductAgent  : 需求 → 结构化规格
-- ArchitectAgent: 规格 → 架构与任务分解
+主线复用的开发闭环角色（IterativeDevLoop：dev_loop / self_analysis / TUI /improve）：
 - DeveloperAgent: 任务 → 生成代码并真实写入工作区
 - ReviewerAgent : 代码 → 真实裁决（可 approve / request_changes）
 - TesterAgent   : 代码 → 生成并真实运行 pytest，诚实报告通过/失败
 
 约定：execute(task, context=<dict>, **kwargs)。context 在编排流程中贯穿传递，
 内含 workspace 路径与各前序角色的产出（context["artifacts"][role]）。
+
+注：ProductAgent / ArchitectAgent（需求→架构的前置阶段）随 5 角色批处理流水线
+一并退役删除（2026-07 路线 A）——它们只服务已退役的 web/workspaces 批处理入口。
 """
 
 import asyncio
@@ -50,114 +51,6 @@ def _write_files(workspace: Path, files: List[Dict[str, Any]]) -> List[str]:
         target.write_text(content if isinstance(content, str) else str(content), encoding="utf-8")
         written.append(str(target.relative_to(workspace.resolve())))
     return written
-
-
-class ProductAgent(Agent):
-    """产品 Agent - 需求澄清"""
-
-    SYSTEM = (
-        "你是资深需求分析师。把用户的开发目标转化为结构化、可验收的需求规格。"
-        "只返回 JSON，不要任何解释文字或 markdown 围栏。"
-    )
-
-    def __init__(self, config: Optional[AgentConfig] = None, llm_client: Optional[Any] = None):
-        default_config = AgentConfig(
-            role="product",
-            name="Product Agent",
-            description="需求分析师，负责澄清需求和生成规格说明",
-            capabilities=["requirements_analysis", "user_story_generation"],
-            tools=["ask_human"],
-            temperature=0.3,
-        )
-        super().__init__(config or default_config, llm_client=llm_client)
-
-    async def execute(self, task: str, **kwargs) -> AgentResult:
-        try:
-            spec = await self._analyze_requirements(task)
-            return AgentResult(success=True, output=spec, reasoning=self._last_reasoning, metadata={"role": "product"})
-        except Exception as e:
-            logger.exception("ProductAgent failed")
-            return AgentResult(success=False, error=str(e))
-
-    async def _analyze_requirements(self, task: str) -> Dict[str, Any]:
-        prompt = f"""开发目标：
-{task}
-
-请输出 JSON，字段如下：
-{{
-  "project_name": "短横线命名的项目名",
-  "summary": "一句话概述",
-  "user_stories": [
-    {{"id": "US-001", "description": "作为…我想…以便…", "acceptance": ["可验收的具体条件"]}}
-  ],
-  "constraints": ["技术或业务约束"],
-  "out_of_scope": ["明确不做的事"]
-}}"""
-        default = {
-            "project_name": "auto-dev-project",
-            "summary": task,
-            "user_stories": [
-                {"id": "US-001", "description": task, "acceptance": ["功能正常工作"]}
-            ],
-            "constraints": [],
-            "out_of_scope": [],
-        }
-        return await self._complete_json(prompt, system=self.SYSTEM, default=default)
-
-
-class ArchitectAgent(Agent):
-    """架构师 Agent - 技术方案"""
-
-    SYSTEM = (
-        "你是资深软件架构师。基于需求规格设计简洁可落地的技术方案，并拆分为可执行任务。"
-        "只返回 JSON，不要任何解释文字或 markdown 围栏。"
-    )
-
-    def __init__(self, config: Optional[AgentConfig] = None, llm_client: Optional[Any] = None):
-        default_config = AgentConfig(
-            role="architect",
-            name="Architect Agent",
-            description="架构师，负责设计技术方案和拆分任务",
-            capabilities=["architecture_design", "task_decomposition"],
-            tools=["read_file", "web_search"],
-            temperature=0.4,
-        )
-        super().__init__(config or default_config, llm_client=llm_client)
-
-    async def execute(self, task: str, **kwargs) -> AgentResult:
-        try:
-            ctx = self._merge_context(kwargs)
-            spec = ctx.get("spec") or (ctx.get("artifacts", {}) or {}).get("product", {})
-            plan = await self._design_architecture(task, spec)
-            return AgentResult(success=True, output=plan, reasoning=self._last_reasoning, metadata={"role": "architect"})
-        except Exception as e:
-            logger.exception("ArchitectAgent failed")
-            return AgentResult(success=False, error=str(e))
-
-    async def _design_architecture(self, task: str, spec: Dict[str, Any]) -> Dict[str, Any]:
-        spec_text = f"\n需求规格：\n{spec}\n" if spec else ""
-        prompt = f"""目标：{task}
-{spec_text}
-请输出 JSON，字段如下：
-{{
-  "tech_stack": ["选用的语言/框架"],
-  "architecture": {{
-    "modules": [{{"name": "模块名", "responsibility": "职责"}}],
-    "data_models": [{{"name": "模型名", "fields": ["字段:类型"]}}],
-    "api_contracts": [{{"method": "GET", "path": "/x", "desc": "说明"}}]
-  }},
-  "tasks": [
-    {{"id": "T-001", "title": "任务标题", "files_to_create": ["相对路径"],
-      "files_to_modify": [], "depends_on": []}}
-  ]
-}}"""
-        default = {
-            "tech_stack": [],
-            "architecture": {"modules": [], "data_models": [], "api_contracts": []},
-            "tasks": [{"id": "T-001", "title": task, "files_to_create": [],
-                       "files_to_modify": [], "depends_on": []}],
-        }
-        return await self._complete_json(prompt, system=self.SYSTEM, default=default)
 
 
 class DeveloperAgent(Agent):
