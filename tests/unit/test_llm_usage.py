@@ -14,6 +14,13 @@ def test_estimate_tokens_cjk_vs_ascii():
     assert estimate_tokens("a") == 1                      # 非空至少 1
 
 
+def test_estimate_tokens_covers_wide_scripts():
+    # 旧版只覆盖基本汉字；扩展区/假名/谚文此前被当 ASCII 低估，现应 ~1 token/字
+    assert estimate_tokens("こんにちは") == 5            # 平假名 5 字
+    assert estimate_tokens("안녕하세요") == 5            # 谚文 5 字
+    assert estimate_tokens("𠀀𠀁𠀂") == 3               # CJK 扩展 B（星平面）3 字
+
+
 def test_add_get_reset_usage():
     reset_usage()
     add_usage(100, 50)
