@@ -115,7 +115,7 @@ def _session_key(websocket) -> str:
 
 def _new_agent():
     import os
-    from src.agents.main_agent import MainAgent, build_agent_tools
+    from src.agents.main_agent import MainAgent, build_agent_tools, native_default
     # 制品/dev_isolated 靠隔离 + build 门控；run_command 高危 → 走 WS 确认（confirm_holder 每回合
     # 重绑到当前连接，见 _run_agent_turn）。无回合上下文时 confirm 默认拒绝。
     cwd = os.getcwd()
@@ -139,7 +139,8 @@ def _new_agent():
     from src.agents.permissions import load_permissions
     agent = MainAgent(tools, plan_tool=True, extra_system=extra,
                       permissions=load_permissions(cwd),   # 网页主 agent：持久计划 + 隔离 dev + 受 WS 确认的 shell + 权限 deny
-                      env_context=True)                    # 注入 <env>（cwd/git/日期/目录）
+                      env_context=True,                    # 注入 <env>（cwd/git/日期/目录）
+                      native=native_default())             # 三端统一 native 开关（此前 web 忽略 VORTOCODE_NATIVE_TOOLS）
     agent._web_confirm_holder = confirm_holder     # _run_agent_turn 每回合把它指向当前 ws
     agent._web_progress_holder = progress_holder
     return agent
