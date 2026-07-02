@@ -57,17 +57,45 @@ for _router in (
     app.include_router(_router)
 
 
+_LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1", "::ffff:127.0.0.1"}
+
+
+def _insecure_bind_reason(host: str) -> str:
+    """绑定非本地地址却没鉴权 → 返回拒绝理由（非空）；安全则空串。
+
+    fail-closed（2026-07 审计 P0#5）：此前只打印警告，忘设 token 就把所有 API
+    （含驱动主 agent 读写文件、跑命令的 /ws）无鉴权暴露到公网。确需开放（如自建
+    反代已鉴权）设 AUTODEV_ALLOW_INSECURE_BIND=1 显式放行。
+    """
+    import os
+    if host in _LOCAL_HOSTS:
+        return ""
+    if get_api_token():
+        return ""
+    if os.getenv("AUTODEV_ALLOW_INSECURE_BIND", "").strip().lower() in ("1", "true", "yes", "on"):
+        return ""
+    return (f"拒绝启动：绑定到非本地地址 {host} 但未设置 AUTODEV_API_TOKEN，"
+            f"会把所有 API（含 /ws 主 agent、可读写文件/跑命令）无鉴权暴露到网络。\n"
+            f"      请先设置一个强随机 token：export AUTODEV_API_TOKEN=<随机串>\n"
+            f"      或（确知风险、已有外层鉴权时）：export AUTODEV_ALLOW_INSECURE_BIND=1")
+
+
 def start_server(host: str = "127.0.0.1", port: int = 8000):
-    """启动服务器"""
+    """启动服务器（绑非本地且无鉴权时 fail-closed 拒绝启动，见 _insecure_bind_reason）。"""
     import uvicorn
+    reason = _insecure_bind_reason(host)
+    if reason:
+        raise SystemExit(f"  ⛔ {reason}")
     print(f"\n{'='*50}")
     print(f"  VortoCode 服务器启动")
     print(f"  访问: http://{host}:{port}")
-    if host not in ("127.0.0.1", "localhost", "::1") and not get_api_token():
-        print("  ⚠️  正绑定到非本地地址且未设置 AUTODEV_API_TOKEN，")
-        print("      所有 API 将无鉴权暴露。请设置 AUTODEV_API_TOKEN 后再对外开放。")
+    if host not in _LOCAL_HOSTS:
+        print("  ⚠️  绑定到非本地地址；已设置鉴权/显式放行。请确认 token 足够强。")
     print(f"{'='*50}\n")
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    # access_log=False：鉴权走 ?token= 查询参数（浏览器 GET/WS 无法自带头），uvicorn 的
+    # info 访问日志会把含 ?token=… 的完整 URL 明文写进日志 → token 被动泄漏。关掉访问日志
+    # 堵住这条我们完全能控的泄漏面（2026-07 审计 P0#4）。应用级日志不受影响。
+    uvicorn.run(app, host=host, port=port, log_level="warning", access_log=False)
 
 
 if __name__ == "__main__":

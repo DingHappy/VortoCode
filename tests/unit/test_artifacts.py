@@ -144,11 +144,13 @@ def test_routes_list_view_raw_meta(client):
     assert raw.status_code == 200 and "<h1>Body</h1>" in raw.text
     csp = raw.headers["content-security-policy"]
     assert "default-src 'none'" in csp                # 禁外联
+    assert "frame-ancestors 'self'" in csp            # 只许同源查看页嵌、禁外站 iframe
 
     view = c.get(f"/artifact/{aid}")
     assert view.status_code == 200
     assert 'sandbox="allow-scripts"' in view.text     # iframe 隔离
     assert aid in view.text and "Title" in view.text
+    assert "frame-ancestors 'none'" in view.headers["content-security-policy"]  # 查看页禁被嵌
 
 
 def test_missing_artifact_404(client):
