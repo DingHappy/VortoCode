@@ -14,6 +14,30 @@ def test_estimate_tokens_cjk_vs_ascii():
     assert estimate_tokens("a") == 1                      # 非空至少 1
 
 
+def test_usage_scope_isolation():
+    """按会话隔离用量：两个 scope 各记各的，互不串扰；未绑定则回退进程全局。"""
+    import contextvars
+
+    from src.llm.client import add_usage, bind_usage, get_usage, new_usage, reset_usage
+
+    reset_usage()                                    # 清全局（当前上下文未绑定 → 操作全局）
+    s1, s2 = new_usage(), new_usage()
+
+    def _in_scope(scope, pt, ct):
+        def _f():
+            bind_usage(scope)
+            add_usage(pt, ct)
+            return get_usage()
+        return contextvars.copy_context().run(_f)    # 每个"会话"在独立 context 里，绑定不外泄
+
+    r1 = _in_scope(s1, 100, 50)
+    r2 = _in_scope(s2, 7, 3)
+    assert r1["prompt_tokens"] == 100 and r1["calls"] == 1
+    assert r2["prompt_tokens"] == 7 and r2["calls"] == 1        # 第二会话不含第一会话的量
+    assert s1["total_tokens"] == 150 and s2["total_tokens"] == 10
+    assert get_usage()["prompt_tokens"] == 0                    # 全局未被两会话污染
+
+
 def test_estimate_tokens_covers_wide_scripts():
     # 旧版只覆盖基本汉字；扩展区/假名/谚文此前被当 ASCII 低估，现应 ~1 token/字
     assert estimate_tokens("こんにちは") == 5            # 平假名 5 字
