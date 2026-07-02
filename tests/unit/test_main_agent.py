@@ -635,6 +635,38 @@ async def test_compact_anchor_survives_not_orphan_tool_result():
     assert "工具 read_file 结果" not in trimmed[0]["content"]                        # 不是孤儿工具结果
 
 
+@pytest.mark.asyncio
+async def test_compact_keeps_current_user_even_if_it_alone_exceeds_budget():
+    """回归（codex 审 #108）：本轮 user 单独超半预算时，压缩不得把它整条划进 older 只喂摘要器——
+    主模型必须仍拿到本轮请求原文。"""
+    from src.llm.content import content_to_text
+
+    class CaptureMainLLM(CompactLLM):
+        def __init__(self, **kw):
+            super().__init__(**kw)
+            self.main_calls: list[list] = []
+
+        async def chat(self, messages, **kwargs):
+            sys = messages[0]["content"] if messages and messages[0].get("role") == "system" else ""
+            if "对话压缩器" not in sys:                    # 非摘要 = 主模型调用，记录其消息
+                self.main_calls.append(messages)
+            return await super().chat(messages, **kwargs)
+
+    llm = CaptureMainLLM()
+    agent = MainAgent([], llm=llm, max_context_tokens=60)
+    _prefill(agent, 4)                                    # 一些更早的历史（会被压）
+    huge = "CURRENT_REQUEST_" + "DETAIL " * 200           # 本轮请求单独就超半预算
+    await agent.run_turn(huge, mode="plan")
+
+    assert llm.main_calls, "主模型应被调用"
+    seen = any("CURRENT_REQUEST_" in content_to_text(m.get("content")) and
+               "DETAIL" in content_to_text(m.get("content"))
+               for msgs in llm.main_calls for m in msgs)
+    assert seen, "主模型必须收到本轮请求原文（不能只在摘要器里出现）"
+    # 且本轮 user 原文仍留在 history 里（没被整条移进纪要）
+    assert any("CURRENT_REQUEST_" in content_to_text(m.get("content")) for m in agent.history)
+
+
 def test_truthy_helper_handles_bool_and_string():
     from src.agents.main_agent import _truthy
     assert _truthy(True) and _truthy("true") and _truthy("1") and _truthy("yes") and _truthy("all")

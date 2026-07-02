@@ -560,8 +560,12 @@ class MainAgent:
             if used > half:
                 cut = i + 1
                 break
+        # recent 必须至少保留**当前轮最新 user**（h[-1]）：run_turn 刚把本轮用户请求追加到末尾，
+        # 若它单独就超半预算，上面的 cut 会等于 len(h) → recent 空 → 本轮请求被整体划进 older 只喂给
+        # 摘要器，主模型收不到原文细节。钳住 cut ≤ len(h)-1，保证本轮请求始终逐字进主模型上下文。
+        cut = min(cut, len(h) - 1)
         older, recent = h[:cut], h[cut:]
-        if not older:                          # 单条就超半预算等极端情形：无老段可压，交给 _trimmed_history 兜底
+        if not older:                          # 无老段可压（如历史仅当前轮）：交给 _trimmed_history 兜底
             return
         digest = await self._summarize(older)
         if not digest:                         # 摘要失败：保持原历史，安全降级（不丢消息、不阻塞回合）
