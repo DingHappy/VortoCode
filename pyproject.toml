@@ -79,3 +79,10 @@ target-version = ["py310"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+[tool.ruff.lint]
+# 首个 CI lint 门禁：只拦"真错误"——语法错误(E9) + pyflakes 逻辑错误
+# (F63 无效比较/断言、F7 语法误用、F82 未定义名)。这些几乎必然是运行时 bug。
+# 刻意先不启用风格/未用导入(E/W/F401/I 等)：全量清理量大且会与在飞 PR 冲突，
+# 留待 route-a 合并后专门做一轮 `ruff --fix` 清理再逐步收紧 select。
+select = ["E9", "F63", "F7", "F82"]
