@@ -1,4 +1,6 @@
 """realtime 路由（从 server.py 拆出）。"""
+from fastapi import Request
+
 from src.web.deps import *  # noqa: F401,F403
 
 router = APIRouter()
@@ -241,6 +243,43 @@ def _record(websocket, role: str, text: str) -> None:
     t.append({"role": role, "text": str(text)})
     if len(t) > _MAX_TRANSCRIPT:
         del t[:-_MAX_TRANSCRIPT]
+
+
+# ---- 多会话管理 API（供 agent.html 的会话侧栏：列表/删除/重命名；新建=前端换 sid 隐式创建）----
+
+@router.get("/api/agent/sessions")
+async def agent_sessions_list():
+    """列出所有已落盘会话（{sid,title,messages,updated}，最近更新在前）。"""
+    import os
+    from src.web.session_store import list_sessions
+    return {"sessions": list_sessions(os.getcwd())}
+
+
+@router.delete("/api/agent/sessions/{sid}")
+async def agent_sessions_delete(sid: str):
+    """删除一个会话：磁盘落盘 + 顺手逐出内存 _SESSIONS（并关其 MCP，别残留子进程）。"""
+    import os
+    from src.web.session_store import delete_session
+    on_disk = delete_session(os.getcwd(), sid)
+    sess = _SESSIONS.pop(f"sid-{sid}", None)
+    if sess:
+        _shutdown_mcp_async(sess.get("agent"))
+    return {"deleted": bool(on_disk or sess)}
+
+
+@router.patch("/api/agent/sessions/{sid}")
+async def agent_sessions_rename(sid: str, request: Request):
+    """重命名一个会话（body: {"title": "..."}）。"""
+    import os
+    from src.web.session_store import rename_session
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    title = str((body or {}).get("title") or "").strip()
+    if not title:
+        return {"ok": False, "error": "title required"}
+    return {"ok": rename_session(os.getcwd(), sid, title)}
 
 
 async def _replay_history(websocket) -> None:

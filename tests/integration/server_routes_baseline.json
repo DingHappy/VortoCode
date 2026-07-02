@@ -732,5 +732,23 @@
   {
     "path": "/ws",
     "methods": []
+  },
+  {
+    "path": "/api/agent/sessions",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/agent/sessions/{sid}",
+    "methods": [
+      "DELETE"
+    ]
+  },
+  {
+    "path": "/api/agent/sessions/{sid}",
+    "methods": [
+      "PATCH"
+    ]
   }
 ]
