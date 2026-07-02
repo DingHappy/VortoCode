@@ -520,13 +520,15 @@ def _prefill(agent, n, first="原始任务：实现 SUPER_GOAL"):
 @pytest.mark.asyncio
 async def test_compact_summarizes_old_turns_and_injects():
     llm = CompactLLM()
-    agent = MainAgent([], llm=llm, max_history=6)
-    _prefill(agent, 8)                                        # 远超 max_history
+    agent = MainAgent([], llm=llm, max_context_tokens=60)     # 按 token 预算触发（小消息也能超）
+    _prefill(agent, 8)                                        # 累计 token 远超预算
+    before = len(agent.history)
     out, say, emit = _capture()
     await agent.run_turn("继续", mode="plan", say=say, emit=emit)
     assert llm.summarized == 1                                # 触发了一次摘要
     assert agent._summary == llm.summary                      # 滚动纪要落到 agent
-    assert len(agent.history) <= agent.max_history            # 老段被物理移出，历史收缩
+    assert len(agent.history) < before                        # 老段被物理移出，历史收缩
+    assert sum(agent._msg_tokens(m) for m in agent.history) <= agent.max_context_tokens  # 收进 token 预算
     # 纪要常驻系统提示，且最近窗口仍逐字在历史里
     sysmsg = agent._system("plan")
     assert "对话纪要" in sysmsg and "已完成 A、B" in sysmsg
@@ -538,7 +540,7 @@ async def test_compact_summarizes_old_turns_and_injects():
 @pytest.mark.asyncio
 async def test_compact_rolling_merges_prior_summary():
     llm = CompactLLM(summary="新纪要")
-    agent = MainAgent([], llm=llm, max_history=6)
+    agent = MainAgent([], llm=llm, max_context_tokens=60)
     agent._summary = "旧纪要：曾决定用方案甲"                   # 已有纪要
     _prefill(agent, 8)
     out, say, emit = _capture()
@@ -558,7 +560,7 @@ async def test_compact_summary_failure_degrades():
             return {"content": "回复"}
 
     llm = FailSummaryLLM()
-    agent = MainAgent([], llm=llm, max_history=6)
+    agent = MainAgent([], llm=llm, max_context_tokens=60)
     _prefill(agent, 8)
     before = len(agent.history)
     out, say, emit = _capture()
@@ -582,12 +584,55 @@ async def test_compact_skipped_when_short():
 @pytest.mark.asyncio
 async def test_compact_disabled_keeps_full_history():
     llm = CompactLLM()
-    agent = MainAgent([], llm=llm, max_history=6, compact=False)
+    agent = MainAgent([], llm=llm, max_context_tokens=60, compact=False)
     _prefill(agent, 8)
     before = len(agent.history)
     await agent.run_turn("继续", mode="plan")
     assert llm.summarized == 0                                # 关掉压缩 → 不摘要
     assert agent._summary == "" and len(agent.history) > before   # 历史不被物理裁剪
+
+
+def test_trimmed_history_token_budget_trims_huge_messages():
+    """#15：少量超大消息即便条数 < max_history，也应按 token 预算裁掉（防爆窗）。"""
+    agent = MainAgent([], max_history=24, max_context_tokens=300)
+    agent.history = [{"role": "user", "content": "原始任务：实现 X"}]
+    for i in range(5):                                         # 仅 11 条（< max_history=24）但每条巨大
+        agent.history.append({"role": "assistant", "content": "big " * 400})   # ~400 token/条
+        agent.history.append({"role": "user", "content": f"u{i}"})
+    trimmed = agent._trimmed_history()
+    assert len(trimmed) < len(agent.history)                  # 条数没超，但 token 超了 → 仍裁剪
+    assert sum(agent._msg_tokens(m) for m in trimmed) <= agent.max_context_tokens + 500  # 收进预算(+锚点余量)
+    assert trimmed[0]["content"] == "原始任务：实现 X"          # 原始任务锚点仍在
+
+
+def test_trimmed_history_many_tiny_messages_not_trimmed():
+    """#15 反向：大量小消息只要 token 不超预算，就不该被裁（条数多 ≠ 该裁）。"""
+    agent = MainAgent([], max_history=200, max_context_tokens=8000)
+    agent.history = [{"role": "user", "content": "任务"}]
+    for i in range(60):
+        agent.history.append({"role": "assistant", "content": "ok"})
+    assert agent._trimmed_history() == agent.history          # token 远未超 → 原样，无谓裁剪
+
+
+@pytest.mark.asyncio
+async def test_compact_anchor_survives_not_orphan_tool_result():
+    """#16：压缩后原始 user 被移出 history；若历史再次涨过预算触发裁剪，锚点必须仍是**原始任务**，
+    而非 recent 里的孤儿工具结果（旧实现 next(first user) 会锚到孤儿）。"""
+    llm = CompactLLM()
+    agent = MainAgent([], llm=llm, max_context_tokens=60)
+    agent.history = [{"role": "user", "content": "原始任务：实现 SUPER_GOAL"}]
+    for i in range(8):
+        agent.history.append({"role": "assistant", "content": f"决策{i}"})
+        agent.history.append({"role": "user", "content": f"[工具 read_file 结果]\n块{i}"})
+    await agent.run_turn("继续", mode="plan")
+    assert agent._summary == llm.summary                      # 压缩发生，原始 user 已移出 history
+    assert "SUPER_GOAL" in agent._task_anchor                 # 但原始任务被捕获进 _task_anchor
+    # 让 post-compaction 历史再次超预算 → 触发 _trimmed_history 裁剪路径
+    for _i in range(10):
+        agent.history.append({"role": "user", "content": "[工具 read_file 结果]\n" + "x" * 400})
+    trimmed = agent._trimmed_history()
+    assert trimmed[0]["role"] == "user" and "SUPER_GOAL" in trimmed[0]["content"]   # 锚点=原始任务
+    assert "工具 read_file 结果" not in trimmed[0]["content"]                        # 不是孤儿工具结果
 
 
 def test_truthy_helper_handles_bool_and_string():

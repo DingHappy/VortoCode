@@ -346,6 +346,7 @@ class MainAgent:
         llm: Any = None,
         max_steps: int = 6,
         max_history: int = 24,
+        max_context_tokens: int = 8000,
         extra_system: Optional[str] = None,
         native: bool = False,
         on_tool: Optional[Callable[[str, dict, str], None]] = None,
@@ -375,7 +376,12 @@ class MainAgent:
                 {"steps": "步骤列表；每项 {step: 一句话, status: pending|in_progress|completed}"},
                 self._update_plan, read_only=True))
         self.tools = {t.name: t for t in self._tool_list}
+        # 上下文预算：主要按 **token** 裁剪/压缩（真正决定是否撑爆窗口的是 token，不是消息条数——
+        # 少量超大消息条数虽少却能爆窗，大量小消息条数虽多却很省）。max_history 退为**硬条数上限**
+        # 兜底（防极端条数），不再作为压缩触发。env VORTOCODE_MAX_CONTEXT_TOKENS 可调。
         self.max_history = max_history
+        self.max_context_tokens = int(os.getenv("VORTOCODE_MAX_CONTEXT_TOKENS") or max_context_tokens)
+        self._task_anchor = ""                 # 原始任务纯文本（首个 user）；压缩后仍作锚点，修"锚到孤儿工具结果"
         self.extra_system = extra_system       # 追加到系统提示（如技能目录、子 agent 角色）
         self._native = native                  # 原生 function-calling（失败自动回退提示式协议）
         self._on_tool = on_tool                # 工具执行后的审计钩子(name, args, result)
@@ -485,38 +491,77 @@ class MainAgent:
         done = sum(1 for p in self.plan if p["status"] == "completed")
         return f"计划已更新（{done}/{len(self.plan)} 完成）：\n{render_plan(self.plan)}"
 
-    def _trimmed_history(self) -> list[dict]:
-        """裁剪跨轮历史到 max_history 条。
+    def _msg_tokens(self, m: dict) -> int:
+        """单条消息的粗略 token 数：只算文本（content_to_text 去掉图/音 base64）+ 少量角色开销。"""
+        from src.llm.content import content_to_text
+        from src.llm.client import estimate_tokens
+        return estimate_tokens(content_to_text(m.get("content"))) + 4
 
-        超长时不裸取尾部——那样会把**第一条 user 消息（原始任务）静默丢掉**，长对话里
-        agent 就忘了「最初要干嘛」。改为：始终保留第一条 user 当锚点 + 最近窗口。锚点取**纯文本**
-        （content_to_text 去掉图/音 base64），免得把首轮的多模态附件每轮重复塞进上下文。
+    def _anchor_text(self) -> str:
+        """原始任务纯文本：优先用捕获的 _task_anchor（压缩后仍在），否则回退扫历史首个 user。"""
+        if self._task_anchor:
+            return self._task_anchor
+        from src.llm.content import content_to_text
+        fu = next((m for m in self.history if m.get("role") == "user"), None)
+        return content_to_text(fu.get("content")) if fu else ""
+
+    def _is_anchor_msg(self, m: Optional[dict], anchor: str) -> bool:
+        """m 是否就是锚点本身（原始 user 且纯文本一致）——避免把锚点重复塞一遍。"""
+        if not m or m.get("role") != "user":
+            return False
+        from src.llm.content import content_to_text
+        return content_to_text(m.get("content")) == anchor
+
+    def _trimmed_history(self) -> list[dict]:
+        """按 **token 预算** 裁剪跨轮历史（max_history 仅作硬条数上限兜底）。
+
+        为什么按 token 而非条数：真正撑爆上下文窗口的是 token——少量超大消息（一段 8000 字的
+        read_file、注入的 @上下文）条数虽 <max_history 却能爆窗；大量小消息条数虽多却很省。
+        裁剪时不裸取尾部——那样会把**原始任务**静默丢掉。始终把原始任务（_anchor_text，纯文本、
+        去 base64）当锚点置顶 + 从最近往前收进 token 预算的窗口。
         """
         h = self.history
-        if len(h) <= self.max_history:
-            return list(h)
-        first_user = next((m for m in h if m.get("role") == "user"), None)
-        if first_user is None:
-            return list(h[-self.max_history:])
-        from src.llm.content import content_to_text
-        anchor = {"role": "user", "content": content_to_text(first_user.get("content"))}
-        return [anchor] + h[-(self.max_history - 1):]      # 锚点 + 最近窗口，仍 = max_history 条
+        total = sum(self._msg_tokens(m) for m in h)
+        if len(h) <= self.max_history and total <= self.max_context_tokens:
+            return list(h)                                 # 未超条数也未超 token 预算 → 原样（短对话零改动）
+        anchor = self._anchor_text()
+        limit_n = max(1, self.max_history - (1 if anchor else 0))   # 给锚点留 1 条，总数仍 ≤ max_history
+        kept: list[dict] = []
+        used = 0
+        for m in reversed(h):                              # 从最近往前收，受 token 预算 + 条数上限双约束
+            t = self._msg_tokens(m)
+            if kept and (used + t > self.max_context_tokens or len(kept) >= limit_n):
+                break
+            kept.append(m)
+            used += t
+        kept.reverse()
+        if anchor and not self._is_anchor_msg(kept[0] if kept else None, anchor):
+            kept = [{"role": "user", "content": anchor}] + kept
+        return kept
 
     async def _maybe_compact(self, say: Callable[[str], None]) -> None:
-        """历史远超窗口时，把"老段"摘要成滚动纪要、物理移出 history（保留最近窗口逐字）。
+        """历史 **token 数** 超预算时，把"老段"摘要成滚动纪要、物理移出 history（保留最近窗口逐字）。
 
         在回合开始时调一次（跨轮增长在此收口；单轮内的 max_steps 增长由 _trimmed_history 兜底）。
-        摘要失败/无 LLM 都安全跳过 —— 历史原样保留，下游 _trimmed_history 仍按 #72 锚点裁剪，纯降级。
+        按 token 触发（而非条数）：大量小消息不会白白触发一次 LLM 摘要；少量超大消息则会及时压。
+        摘要失败/无 LLM 都安全跳过 —— 历史原样保留，下游 _trimmed_history 仍按锚点裁剪，纯降级。
         关闭压缩（compact=False）时直接返回。
         """
         if not self.compact:
             return
         h = self.history
-        if len(h) <= self.max_history:         # 没超窗就不折腾（短对话零开销、零 LLM 调用）
+        total = sum(self._msg_tokens(m) for m in h)
+        if total <= self.max_context_tokens:   # 没超 token 预算就不折腾（短对话/小消息零开销、零 LLM 调用）
             return
-        keep = max(4, self.max_history // 2)   # 最近一半窗口逐字保留；其余老段压成纪要
-        older, recent = h[:len(h) - keep], h[len(h) - keep:]
-        if not older:
+        half = max(1, self.max_context_tokens // 2)   # 最近约半预算逐字保留；更早的老段压成纪要
+        used, cut = 0, 0
+        for i in range(len(h) - 1, -1, -1):    # 从最近往前累计，越过半预算处即为切点
+            used += self._msg_tokens(h[i])
+            if used > half:
+                cut = i + 1
+                break
+        older, recent = h[:cut], h[cut:]
+        if not older:                          # 单条就超半预算等极端情形：无老段可压，交给 _trimmed_history 兜底
             return
         digest = await self._summarize(older)
         if not digest:                         # 摘要失败：保持原历史，安全降级（不丢消息、不阻塞回合）
@@ -728,7 +773,9 @@ class MainAgent:
         from src.llm.content import build_user_content
         self.history.append({"role": "user",
                              "content": build_user_content(user_text, images, audio)})
-        await self._maybe_compact(say)         # 跨轮历史超窗→把老段摘要成纪要（失败安全降级）
+        if not self._task_anchor:              # 捕获原始任务（首个 user 纯文本）——压缩后仍作锚点（修 #16）
+            self._task_anchor = self._anchor_text()
+        await self._maybe_compact(say)         # 跨轮历史超 token 预算→把老段摘要成纪要（失败安全降级）
         if self._env_context:                  # 仿 CC：每轮刷新一次运行时环境（cwd/git/日期/目录）注入系统提示
             self._env = _env_block()
 
