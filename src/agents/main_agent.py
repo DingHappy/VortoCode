@@ -1348,6 +1348,35 @@ def _detect_base_branch(repo_root: str) -> str:
         return "main"
 
 
+def _count_test_files(diff: str) -> int:
+    """数一个 unified diff 里改动的**测试文件**数（路径像 test：tests/、test_*.py、*_test.py、*.test./*.spec.）。"""
+    import re as _re
+    n = 0
+    for path in _re.findall(r"^\+\+\+ b/(.+)$", diff or "", _re.M):
+        p = path.strip().lower()
+        base = p.rsplit("/", 1)[-1]
+        if ("tests/" in p or p.startswith("test/") or "/test/" in p
+                or base.startswith("test_") or base.endswith("_test.py")
+                or ".test." in base or ".spec." in base):
+            n += 1
+    return n
+
+
+def _test_delta_note(diff: str) -> str:
+    """成功落地时附一句诚实的测试增量说明。
+
+    dogfood（2026-07-02）暴露：隔离实现子 agent 只加了源码、没加要求的测试，但 run_tests 里
+    **既有测试仍绿** → 报"测试通过" → 主 agent 据此**谎称补了测试**。根因是"测试通过"这个信号
+    不区分"既有测试还绿"与"新代码被覆盖"。这里在结果里如实点出测试文件增量，既给用户诚实信号，
+    也给主 agent 据实依据（别再编造补了测试）。
+    """
+    n = _count_test_files(diff)
+    if n:
+        return f"（本次改动含 {n} 个测试文件）"
+    return ("（⚠ 本次改动**未新增/改动任何测试文件**——“测试通过”仅表示既有测试仍绿，"
+            "新增/改动的代码未必被测试覆盖；若任务要求测试请核对是否真的补了）")
+
+
 def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]] = None,
                     confirm: Optional[Callable] = None) -> list[Tool]:
     """UI 无关的隔离 dev 工具（给 Web/CLI agent 用）。
@@ -1404,7 +1433,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             res = await asyncio.to_thread(apply_diff_to_branch, repo_root, branch, diff, f"dev_isolated: {desc}")
             if res["ok"]:
                 return (f"✅ 已隔离实现且测试通过{fixed}，落到新分支 {branch}（{nlines} 行，"
-                        f"git checkout {branch} 查看，未碰 main）。")
+                        f"git checkout {branch} 查看，未碰 main）。" + _test_delta_note(diff))
             return f"✅ 实现且测试通过{fixed}，但落分支失败：{res['error']}。diff {nlines} 行。"
         tail = (ver or {}).get("output", "")[-1000:]
         return (f"❌ 隔离实现完成但测试未过（试了 {attempts} 次）。失败输出尾部：\n{tail}\n"
@@ -1541,7 +1570,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     f"（单独绿、合起来红，多为语义冲突/相互破坏）。失败尾部：\n{tail}\n"
                     f"分支已保留待修：git checkout {branch}，据失败修正后再集成。")
         elif integ and integ["ok"]:
-            note = f"✅ {len(res['applied'])} 块落到 {branch} 且**集成后全量测试通过**（git checkout 查看，未碰 main）。"
+            note = (f"✅ {len(res['applied'])} 块落到 {branch} 且**集成后全量测试通过**（git checkout 查看，未碰 main）。"
+                    + _test_delta_note("\n".join(g["diff"] for g in greens)))
         else:                                            # 没跑集成测试（理论上 test_cmd 恒有，留兜底）
             note = f"{len(res['applied'])} 块落到 {branch}（git checkout 查看，未碰 main）。"
         return head + note + "\n" + "\n".join(lines)
@@ -1627,8 +1657,11 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         integ = await asyncio.to_thread(
             verify_branch, repo_root, branch, test_cmd, "wt-verify-" + uuid.uuid4().hex[:8])
         if integ["ok"]:
-            out.append(f"\n✅ 全部落到 {branch}（{len(greens)} 独立 + {dep_done} 依赖）且**集成后全量测试通过**"
-                       f"（未碰 main，git checkout {branch} 查看）。")
+            done = (f"\n✅ 全部落到 {branch}（{len(greens)} 独立 + {dep_done} 依赖）且**集成后全量测试通过**"
+                    f"（未碰 main，git checkout {branch} 查看）。")
+            if greens:                                       # 诚实提示测试增量（独立批 diff 可见；防"假绿被当补了测试"）
+                done += _test_delta_note("\n".join(g["diff"] for g in greens))
+            out.append(done)
             if want_pr:                                      # 集成绿 + 要求开 PR → 经确认 push+开 PR
                 out.append(await _open_pr_for_branch(branch, task, "\n".join(out), base))
         else:
