@@ -39,6 +39,27 @@ def test_renderer_escapes_first_and_sanitizes_links():
     assert '"%22"' in s
 
 
+def test_multi_session_ui_wired_and_safe():
+    """多会话侧栏：列表/切换/新建/删除/重命名齐全，且标题走 textContent（无 XSS）、token 透传。"""
+    s = _src()
+    # 会话管理函数齐全
+    for fn in ("function loadSessions(", "function renderSessions(", "function switchSession(",
+               "function newSession(", "async function deleteSession(", "async function renameSession(",
+               "function apiUrl("):
+        assert fn in s, fn
+    # 后端契约：列表 GET / 删除 DELETE / 重命名 PATCH
+    assert 'fetch(apiUrl("/api/agent/sessions")' in s
+    assert 'method: "DELETE"' in s and 'method: "PATCH"' in s
+    # 侧栏 DOM + 接线
+    assert 'id="sidebar"' in s and 'id="sessions"' in s and 'id="newchat"' in s
+    assert "$(\"#newchat\").onclick = newSession" in s
+    # 安全：会话标题用 textContent 注入，绝不 innerHTML；清空用 replaceChildren（不新增 innerHTML 面）
+    assert "t.textContent = s.title" in s
+    assert s.count(".innerHTML") == 1                 # 仍只有 addHTML 一处（受控、喂已转义输出）
+    # 切换会话会刷新列表 + 连上/回合结束也刷新
+    assert "loadSessions();" in s
+
+
 _NODE_HARNESS = r"""
 import { readFileSync } from "node:fs";
 const html = readFileSync("__PATH__", "utf8");
