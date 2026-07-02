@@ -39,10 +39,9 @@ def shell_enabled() -> bool:
 
 
 # 鉴权豁免：页面 HTML 外壳（本身不含数据，数据走各自需鉴权的 API）、API 文档、健康检查。
-# 主线页 /agent、/artifacts 之前漏在豁免外——设了 token 后遗留页能直接开、主线页反而
-# 打不开（HTML 也要 token），逻辑颠倒（2026-07 审计）。这里补齐主线页。
+# 路线 A 下线遗留页后只剩主线页 /、/agent、/artifacts（含制品分享链接）。
 _EXEMPT_PREFIXES = ("/docs", "/redoc", "/openapi.json", "/static")
-_EXEMPT_EXACT = {"/", "/agent", "/artifacts", "/workspace", "/workstation", "/classic",
+_EXEMPT_EXACT = {"/", "/agent", "/artifacts",
                  "/api/health", "/api/health/quick"}
 
 
