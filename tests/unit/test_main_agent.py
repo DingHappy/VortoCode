@@ -719,6 +719,22 @@ async def test_native_downgrades_on_permanent_error():
     assert agent._native is False                     # 永久 → 关掉 native
 
 
+def test_test_delta_note_flags_missing_tests():
+    """dogfood 修复：隔离实现落地时如实点出测试文件增量，防'既有测试绿'被当成'已补测试'。"""
+    from src.agents.main_agent import _count_test_files, _test_delta_note
+    src_only = "--- a/mathlib.py\n+++ b/mathlib.py\n@@ x @@\n+def sub(a, b):\n+    return a - b\n"
+    with_tests = (src_only
+                  + "--- a/tests/test_mathlib.py\n+++ b/tests/test_mathlib.py\n@@ @@\n+def test_sub(): pass\n")
+    assert _count_test_files(src_only) == 0
+    assert _count_test_files(with_tests) == 1
+    assert "未新增/改动任何测试文件" in _test_delta_note(src_only)      # 只改源码 → 诚实告警
+    assert "含 1 个测试文件" in _test_delta_note(with_tests)
+    # 覆盖多种测试文件命名
+    assert _count_test_files("+++ b/pkg/foo_test.py\n") == 1
+    assert _count_test_files("+++ b/src/app.spec.ts\n") == 1
+    assert _count_test_files("+++ b/src/app.ts\n") == 0             # 源码文件不算
+
+
 def test_truthy_helper_handles_bool_and_string():
     from src.agents.main_agent import _truthy
     assert _truthy(True) and _truthy("true") and _truthy("1") and _truthy("yes") and _truthy("all")
