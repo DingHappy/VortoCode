@@ -719,6 +719,56 @@ async def test_native_downgrades_on_permanent_error():
     assert agent._native is False                     # 永久 → 关掉 native
 
 
+def test_test_delta_note_flags_missing_tests():
+    """dogfood 修复：隔离实现落地时如实点出测试文件增量，防'既有测试绿'被当成'已补测试'。"""
+    from src.agents.main_agent import _count_test_files, _is_test_path, _test_delta_note
+    src_only = "--- a/mathlib.py\n+++ b/mathlib.py\n@@ x @@\n+def sub(a, b):\n+    return a - b\n"
+    with_tests = (src_only
+                  + "--- a/tests/test_mathlib.py\n+++ b/tests/test_mathlib.py\n@@ @@\n+def test_sub(): pass\n")
+    assert _count_test_files(src_only) == 0
+    assert _count_test_files(with_tests) == 1
+    assert "未新增/改动任何测试文件" in _test_delta_note(src_only)      # 只改源码 → 诚实告警
+    assert "含 1 个测试文件" in _test_delta_note(with_tests)
+    # _is_test_path 覆盖多种命名
+    for t in ("tests/x.py", "pkg/foo_test.py", "src/app.spec.ts", "test/mathlib.test.js"):
+        assert _is_test_path(t), t
+    for s in ("src/app.ts", "mathlib.py", "pkg/main.go"):
+        assert not _is_test_path(s), s
+
+
+def test_branch_changed_files_covers_dependent_relay(tmp_path):
+    """codex 审 #113：dev_auto 的测试增量须从**整条分支实际 diff**算——依赖接力直接 commit 到分支、
+    diff 不在内存 greens 里；纯依赖成功若只看 greens 会漏诚实提示。这里用真 git 分支验证。"""
+    import subprocess
+
+    from src.agents.main_agent import _branch_changed_files, _is_test_path, _test_delta_msg
+
+    def git(*a):
+        subprocess.run(["git", "-C", str(tmp_path), *a], check=True, capture_output=True)
+    git("init", "-q"); git("config", "user.email", "t@t"); git("config", "user.name", "t")
+    (tmp_path / "a.py").write_text("x = 1\n"); git("add", "-A"); git("commit", "-q", "-m", "init")
+    git("branch", "vorto/auto-x")
+    # 模拟"依赖接力"：直接在分支上 commit 一个**只改源码、没加测试**的改动
+    git("checkout", "-q", "vorto/auto-x")
+    (tmp_path / "b.py").write_text("y = 2\n"); git("add", "-A"); git("commit", "-q", "-m", "dep")
+    git("checkout", "-q", "main" if _has_main(tmp_path) else "master")
+
+    changed = _branch_changed_files(str(tmp_path), _cur_default_branch(tmp_path), "vorto/auto-x")
+    assert changed == ["b.py"]                                        # 拿到分支实际改动（含依赖接力提交）
+    note = _test_delta_msg(sum(1 for p in changed if _is_test_path(p)))
+    assert "未新增/改动任何测试文件" in note                          # 只改源码 → 仍如实告警（不再被纯依赖绕过）
+
+
+def _has_main(root):
+    import subprocess
+    return subprocess.run(["git", "-C", str(root), "rev-parse", "--verify", "main"],
+                          capture_output=True).returncode == 0
+
+
+def _cur_default_branch(root):
+    return "main" if _has_main(root) else "master"
+
+
 def test_truthy_helper_handles_bool_and_string():
     from src.agents.main_agent import _truthy
     assert _truthy(True) and _truthy("true") and _truthy("1") and _truthy("yes") and _truthy("all")
