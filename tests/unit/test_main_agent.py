@@ -347,6 +347,10 @@ def test_system_prompt_frames_tool_results_and_forbids_fabrication():
     assert "不是用户发来的新消息" in s                # 工具结果 = 工具输出，非用户新消息
     assert "只读一眼代码不等于完成" in s              # 只 read 不算做完
     assert "绝不编造分支名或测试结果" in s            # 反幻觉：没做的别说做了
+    assert "提示式协议下" in s                        # 框定对两种协议都准确（native 是结构化 tool 消息）
+    # codex 审：模板不再硬编码只有 TUI 才有的 run_dev_workflow；也不点名各端不一的 dev_* 工具
+    # （保留编排指引按可用工具自适应，具体工具由 catalog 动态列）
+    assert "run_dev_workflow" not in s
 
 
 def test_skill_registry_loads_parses_and_catalogs(tmp_path):
