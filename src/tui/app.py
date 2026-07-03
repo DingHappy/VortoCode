@@ -1747,6 +1747,9 @@ class VortoCodeTUI(App):
                 if res["failed"]:
                     self._chrome(f"[{self._tc('text-warning', '#f0b86e')}]{len(res['failed'])} 块未能干净应用"
                                  f"（可能互相冲突），已跳过[/]")
+                    # 也写进返回值：否则主 agent 只看到"N 块已应用"、以为都进去了，被丢的块被静默漏报
+                    note += (f"；⚠️ {len(res['failed'])} 块虽自测绿但**文本冲突、未能干净落分支**（已跳过）："
+                             + "、".join(d.get("msg", "?") for d in res["failed"]))
             return f"并行 {len(tasks)} 个子任务：{len(greens)} 通过测试{note}。"
 
         async def _t_open_pr(args: dict) -> str:

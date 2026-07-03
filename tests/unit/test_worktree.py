@@ -467,6 +467,31 @@ async def test_dev_parallel_reports_integration_failure(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_dev_parallel_reports_dropped_blocks(monkeypatch, tmp_path):
+    # _dev_parallel：某块自测绿、但落分支时与其它块**文本冲突被跳过** → 必须如实点名"未能干净落分支"，
+    # 不能只报落地的那块、把被丢的块静默漏掉（与 dev_auto #117 对齐；此前 dev_parallel 漏了这一半）。
+    import src.agents.worktree as wt
+    from src.agents.main_agent import build_dev_tools
+
+    async def fake_run_isolated(repo_root, wid, desc, build, test_cmd=None):
+        return ("diff --git a/x b/x\n", f"做了 {desc}", {"ok": True, "output": "", "cmd": "pytest"})
+
+    def fake_apply(repo_root, branch, items, test_cmd=None):
+        # 两块自测都绿，但第二块落分支时文本冲突被跳过 → 只落一块、另一块进 failed；落地那块集成绿
+        return {"ok": True, "branch": branch, "applied": [items[0][1]],
+                "failed": [{"msg": items[1][1], "error": "patch does not apply"}],
+                "integration": {"ok": True, "output": "", "cmd": "pytest"}}
+    monkeypatch.setattr(wt, "run_isolated_task", fake_run_isolated)
+    monkeypatch.setattr(wt, "apply_diffs_to_branch", fake_apply)
+
+    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_parallel"]
+    out = await tool.handler({"tasks": ["子任务甲", "子任务乙"]})
+    assert "未能干净落分支" in out                                   # 如实报告被丢的块（不再静默）
+    assert "子任务乙" in out                                        # 点名是哪块被丢
+    assert "1 块落到" in out                                        # 落地计数按实际应用（1）
+
+
+@pytest.mark.asyncio
 async def test_dev_auto_reports_independent_block_dropped_on_apply(monkeypatch, tmp_path):
     # dev_auto 独立批：某块自测绿、但落分支时与其它块**文本冲突被跳过** → 必须如实报告"未能干净落分支"，
     # 且最终落地/集成的计数按**实际落地**算，而非自测绿的块数（codex 审：此前 apply 返回值被丢、静默漏报）。
