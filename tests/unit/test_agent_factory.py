@@ -4,11 +4,39 @@
 build_agent_tools，本测试钉住"同源"契约：二者工具集一致，唯一差异是 Web 多出制品工具。
 """
 
-from src.agents.main_agent import build_agent_tools
+from src.agents.main_agent import build_agent_tools, native_default
 
 
 async def _confirm(_m):
     return True
+
+
+def test_native_default_reads_env(monkeypatch):
+    monkeypatch.delenv("VORTOCODE_NATIVE_TOOLS", raising=False)
+    assert native_default() is False                          # 默认关（提示式、模型无关）
+    for v in ("1", "true", "yes", "on", "TRUE"):
+        monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", v)
+        assert native_default() is True
+    monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", "0")
+    assert native_default() is False
+
+
+def test_headless_and_web_agents_honor_native_env(monkeypatch, tmp_path):
+    """回归：此前 CLI/web 硬写 native=False、忽略 VORTOCODE_NATIVE_TOOLS（只 TUI 读它）。现三端统一。"""
+    monkeypatch.chdir(tmp_path)
+    from src.cli import _build_headless_agent
+    from src.web.routers.realtime import _new_agent
+
+    monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", "1")
+    cli_agent = _build_headless_agent(str(tmp_path), max_steps=None, on_tool=None,
+                                      on_plan=None, confirm=_confirm)
+    assert cli_agent._native is True                          # CLI 现遵从 env
+    assert _new_agent()._native is True                       # web 现遵从 env
+
+    monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", "0")
+    assert _build_headless_agent(str(tmp_path), max_steps=None, on_tool=None,
+                                 on_plan=None, confirm=_confirm)._native is False
+    assert _new_agent()._native is False
 
 
 def _names(tools):
