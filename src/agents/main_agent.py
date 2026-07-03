@@ -662,6 +662,29 @@ class MainAgent:
                 stream_cb("".join(buf))
         return "".join(buf)
 
+    async def _native_complete(self, native_msgs: list, schema: list,
+                               stream_cb: Optional[Callable[[str], None]],
+                               reasoning_cb: Optional[Callable[[str], None]]) -> tuple[dict, bool]:
+        """原生 function-calling 取一步。返回 (resp, streamed)。
+
+        给了 stream_cb 且客户端支持 stream_chat → 流式：最终正文边生成边累计回显（stream_cb 收
+        **累计**文本，与提示式 _complete 一致）；工具调用响应静默累积、不回显碎语。否则退回一次性
+        chat（也便于测试的假 LLM）。异常交由调用方处理（永久错误→回退提示式）。streamed=True 时思维链
+        已过 on_reasoning 增量给出，调用方别再整段重放。"""
+        client = self._client()
+        if stream_cb is not None and hasattr(client, "stream_chat"):
+            buf: list[str] = []
+
+            def _on_content(delta: str) -> None:
+                buf.append(delta)
+                stream_cb("".join(buf))            # 累计文本（三端 stream_cb 契约）
+
+            resp = await client.stream_chat(
+                native_msgs, temperature=0.3, tools=schema,
+                on_content=_on_content, on_reasoning=reasoning_cb)
+            return resp, True
+        return await client.chat(native_msgs, temperature=0.3, tools=schema), False
+
     def _tools_schema(self) -> list[dict]:
         """把工具表转成 OpenAI function-calling 的 schema（原生工具模式用）。"""
         schema = []
@@ -829,10 +852,12 @@ class MainAgent:
 
             # 原生 function-calling 路径（opt-in）；模型不支持就永久回退到提示式协议
             if self._native:
+                streamed = False
                 try:
-                    # 结构化 tool_use/tool_result：把提示式历史转成原生 tool_calls/tool 消息再发
-                    resp = await self._client().chat(
-                        _to_native_messages(messages), temperature=0.3, tools=self._tools_schema())
+                    # 结构化 tool_use/tool_result：把提示式历史转成原生 tool_calls/tool 消息再发。
+                    # 给了 stream_cb → 流式回显最终回复（修：#116 翻默认后 native 曾丢失流式输出）。
+                    resp, streamed = await self._native_complete(
+                        _to_native_messages(messages), self._tools_schema(), stream_cb, reasoning_cb)
                 except Exception as e:  # noqa: BLE001
                     # 只有"模型不支持 tools"这类永久错误才永久回退提示式；瞬时错误（超时/5xx/限流）
                     # 保留 native、下轮重试。本步无论如何走下面的提示式协议兜底，回合照常推进。
@@ -840,7 +865,8 @@ class MainAgent:
                         self._native = False
                     resp = None
                 if resp is not None:
-                    if reasoning_cb is not None and resp.get("reasoning"):   # 思考呈现（native 路径）
+                    # 流式时思维链已过 on_reasoning 增量给出；非流式才整段重放一次（避免重复）
+                    if not streamed and reasoning_cb is not None and resp.get("reasoning"):
                         try:
                             reasoning_cb(str(resp["reasoning"]))
                         except Exception:  # noqa: BLE001
