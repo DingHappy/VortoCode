@@ -1,8 +1,7 @@
 """向量记忆系统测试"""
 
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime
 
 from src.memory import (

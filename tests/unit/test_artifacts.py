@@ -2,8 +2,6 @@
 
 复刻 Claude Code artifact 的本地版：发布自包含 HTML → 可分享/实时更新的网页。
 """
-import json
-import os
 
 import pytest
 from fastapi.testclient import TestClient

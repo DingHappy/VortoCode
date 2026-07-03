@@ -1,8 +1,7 @@
 """用户自定义斜杠命令加载/展开（src/agents/user_commands）—— 纯离线。"""
 
-from pathlib import Path
 
-from src.agents.user_commands import (UserCommand, expand_command,
+from src.agents.user_commands import (expand_command,
                                       load_commands)
 
 

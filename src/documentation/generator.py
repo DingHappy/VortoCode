@@ -3,7 +3,7 @@
 import ast
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)

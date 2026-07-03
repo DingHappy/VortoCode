@@ -250,7 +250,6 @@ class DependencyAnalyzer:
     
     def _resolve_module(self, from_file: str, module: str) -> Optional[str]:
         """解析模块路径"""
-        from pathlib import PurePath
         
         # 处理相对导入
         if module.startswith('.'):

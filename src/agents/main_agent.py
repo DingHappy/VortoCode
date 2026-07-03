@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path            # 模块级：供 _resolve_within 的返回注解引用（各工厂内仍按需局部导入）
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
 
 # 单个工具结果回灌给模型的最大字符数，避免长输出把上下文撑爆

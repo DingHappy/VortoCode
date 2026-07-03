@@ -6,13 +6,12 @@
 - 避免实现者自己验证自己
 """
 
-import asyncio
 import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
-from .base import Agent, AgentConfig, AgentResult, AgentStatus
+from .base import Agent, AgentConfig, AgentResult
 
 logger = logging.getLogger(__name__)
 

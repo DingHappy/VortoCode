@@ -2,11 +2,7 @@ import logging
 logger = logging.getLogger(__name__)
 """技能基类和数据模型"""
 
-import re
-import uuid
 from abc import ABC, abstractmethod
-from datetime import datetime
-from enum import Enum
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
