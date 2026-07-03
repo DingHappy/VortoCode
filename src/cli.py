@@ -99,8 +99,8 @@ def main():
     sub.add_parser("demo", help="演示模式：打印指引并启动 Web 服务")
     sub.add_parser("tui", help="进入交互式全屏 TUI（仿 opencode；需 textual: pip install '.[tui]'）")
 
-    p = sub.add_parser("im", help="IM 通道桥：常驻长轮询，把主 agent 搬上 IM（手机发任务/按钮确认/回报）")
-    p.add_argument("channel", choices=["telegram"], help="IM 通道（目前支持 telegram）")
+    p = sub.add_parser("im", help="IM 通道桥：常驻长连，把主 agent 搬上 IM（手机发任务/确认/回报）")
+    p.add_argument("channel", choices=["telegram", "dingtalk"], help="IM 通道（telegram / dingtalk）")
     p.add_argument("--mode", choices=["plan", "build"], default="plan",
                    help="初始模式（默认 plan；IM 里可 /mode 切）")
 
@@ -189,6 +189,27 @@ async def run_im(channel: str, *, mode: str = "plan"):
         adapter = TelegramAdapter(token, owner)
         bridge = IMBridge(cwd, adapter, owner, channel="telegram", mode=mode)
         print(f"🌉 Telegram 桥启动（仓库 {Path(cwd).name}，{mode} 模式）。只服务 owner "
+              f"{owner}，Ctrl-C 退出。", file=sys.stderr)
+        try:
+            await bridge.run()
+        finally:
+            await adapter.close()
+    elif channel == "dingtalk":
+        cid = os.getenv("VORTOCODE_DD_CLIENT_ID", "").strip()
+        secret = os.getenv("VORTOCODE_DD_CLIENT_SECRET", "").strip()
+        owner = os.getenv("VORTOCODE_DD_OWNER_ID", "").strip()
+        if not cid or not secret or not owner:
+            print("✗ 钉钉桥需要环境变量 VORTOCODE_DD_CLIENT_ID / VORTOCODE_DD_CLIENT_SECRET / "
+                  "VORTOCODE_DD_OWNER_ID（配对制，fail-closed）。\n"
+                  "  钉钉开放平台建企业内机器人应用（Stream 模式）拿 AppKey(ClientID)/AppSecret；"
+                  "OWNER_ID 填你自己的 senderStaffId（给机器人发条消息即可在回调里看到）。",
+                  file=sys.stderr)
+            sys.exit(2)
+        from src.im.bridge import IMBridge
+        from src.im.dingtalk import DingTalkAdapter
+        adapter = DingTalkAdapter(cid, secret, owner)
+        bridge = IMBridge(cwd, adapter, owner, channel="dingtalk", mode=mode)
+        print(f"🌉 钉钉桥启动（仓库 {Path(cwd).name}，{mode} 模式）。只服务 staffId "
               f"{owner}，Ctrl-C 退出。", file=sys.stderr)
         try:
             await bridge.run()
