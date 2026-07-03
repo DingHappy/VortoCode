@@ -26,6 +26,18 @@ def test_ledger_write_ahead_and_recover(tmp_path):
     assert led.load(t.id).status == "interrupted"      # running → interrupted（可 dev_resume 续跑）
 
 
+def test_ledger_save_leaves_worktree_clean(tmp_path):
+    """台账落 .vortocode/tasks/ 后，目标仓库（无自带 .gitignore）git status 仍干净（.vortocode/ 自忽略）。"""
+    import subprocess
+    def git(*a):
+        return subprocess.run(["git", "-C", str(tmp_path), *a], capture_output=True, text=True)
+    git("init", "-q"); git("config", "user.email", "t@t"); git("config", "user.name", "t")
+    (tmp_path / "f.py").write_text("x=1\n", encoding="utf-8"); git("add", "-A"); git("commit", "-qm", "init")
+    TaskLedger(str(tmp_path)).create("dev", "干活")
+    assert (tmp_path / ".vortocode" / "tasks").is_dir()
+    assert git("status", "--porcelain").stdout.strip() == ""     # 台账对 git status 隐形
+
+
 def test_ledger_roundtrip_and_list_sorted(tmp_path):
     led = TaskLedger(str(tmp_path))
     a = led.create("dev", "A")

@@ -114,6 +114,8 @@ class TaskLedger:
         task.log = task.log[-_MAX_LOG:]
         p = self._path(tid)
         try:
+            from src.agents.dev_plan import ensure_state_gitignore
+            ensure_state_gitignore(self.repo_root)       # .vortocode/ 自忽略：台账不污染目标仓库 git status
             p.parent.mkdir(parents=True, exist_ok=True)
             tmp = p.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(task.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
