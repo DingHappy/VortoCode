@@ -27,8 +27,10 @@ def wrap_mcp_manager(manager: Any) -> List:
                 return str(getattr(res, "output", res))
             return f"MCP 工具出错: {getattr(res, 'error', res)}"
 
+        # untrusted_source=True：MCP server 返回的是**外部不可信内容**，摄入即给本回合打污点，
+        # 之后同回合的对外动作会被提升确认等级（D0 防提示注入外发）。
         wrapped.append(Tool(f"mcp__{server}__{orig}", f"[MCP:{server}] {mt.description}",
-                            targs, handler, read_only=False))
+                            targs, handler, read_only=False, untrusted_source=True))
     return wrapped
 
 
