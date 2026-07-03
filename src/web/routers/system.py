@@ -138,7 +138,7 @@ async def get_file_content(path: str):
 
 @router.post("/api/terminal/execute")
 async def execute_terminal(request: TerminalRequest):
-    """执行终端命令（默认禁用，需 AUTODEV_ENABLE_SHELL=1）"""
+    """执行终端命令（默认禁用，需 VORTOCODE_ENABLE_SHELL=1）"""
     require_shell()  # fail-closed：必须在 try 之外，否则 403 会被吞成 200
     import asyncio
 

@@ -4,13 +4,13 @@ from src.indexing.code_indexer import make_vector_store, VectorStore
 
 
 def test_in_memory_by_default(monkeypatch):
-    monkeypatch.delenv("AUTODEV_QDRANT_URL", raising=False)
+    monkeypatch.delenv("VORTOCODE_QDRANT_URL", raising=False)
     assert isinstance(make_vector_store(), VectorStore)
 
 
 def test_falls_back_when_qdrant_unavailable(monkeypatch):
     # 配了 URL 但 qdrant-client 未装 → QdrantVectorStore 构造抛错 → 降级内存
-    monkeypatch.setenv("AUTODEV_QDRANT_URL", "http://localhost:6333")
+    monkeypatch.setenv("VORTOCODE_QDRANT_URL", "http://localhost:6333")
     assert isinstance(make_vector_store(), VectorStore)
 
 

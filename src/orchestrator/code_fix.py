@@ -242,7 +242,7 @@ class CodeFixLoop:
 
     async def _default_gate(self) -> Tuple[bool, str]:
         env = {**os.environ, "PYTHONPATH": str(self.root),
-               "OPENAI_API_KEY": "", "AUTODEV_API_TOKEN": ""}
+               "OPENAI_API_KEY": "", "VORTOCODE_API_TOKEN": "", "AUTODEV_API_TOKEN": ""}
         try:
             proc = await asyncio.create_subprocess_exec(
                 sys.executable, "-m", "pytest", "tests/", "-q", "-p", "no:cacheprovider",
