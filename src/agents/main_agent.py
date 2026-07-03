@@ -630,12 +630,15 @@ class MainAgent:
         return (resp.get("content") or "").strip()[:2000]   # 纪要本身也设上限，防越滚越大
 
     async def _complete(self, messages: list[dict], stream_cb: Optional[Callable[[str], None]],
-                        reasoning_cb: Optional[Callable[[str], None]] = None) -> str:
+                        reasoning_cb: Optional[Callable[[str], None]] = None,
+                        stream_shown: Optional[list[str]] = None) -> str:
         """取一步模型输出。
 
         给了 stream_cb 且客户端支持流式 → 边生成边回显；但**疑似工具调用**（首个非空字符是
         `{` 或 ``` ）则静默缓冲、不把原始 JSON 流给 UI。否则退回一次性 chat（也便于测试）。
         reasoning_cb：推理型模型的思维链（reasoning_content）走它做"思考呈现"，与正文分开。
+        stream_shown：本回合**已回显**的正文分段（回合级累加器）。stream_cb 收到的必须是**整回合**
+        的累计文本（三端契约、CLI 按累计长度算增量）；本步回显在其前缀之后追加，回合内单调不回退。
         """
         client = self._client()
         if stream_cb is None or not hasattr(client, "stream"):
@@ -646,6 +649,7 @@ class MainAgent:
                 except Exception:  # noqa: BLE001
                     pass
             return resp.get("content") or ""
+        prefix = "".join(stream_shown) if stream_shown is not None else ""   # 本回合已回显前缀
         buf: list[str] = []
         show: Optional[bool] = None        # None=未定；True=显示；False=抑制(疑似工具调用)
         try:
@@ -659,29 +663,37 @@ class MainAgent:
                 if head:
                     show = not (head.startswith("{") or head.startswith("```"))
             if show:
-                stream_cb("".join(buf))
+                stream_cb(prefix + "".join(buf))     # 前缀 + 本步 → 整回合累计
+        if show and stream_shown is not None:        # 本步确有回显 → 并入回合累加器
+            stream_shown.append("".join(buf))
         return "".join(buf)
 
     async def _native_complete(self, native_msgs: list, schema: list,
                                stream_cb: Optional[Callable[[str], None]],
-                               reasoning_cb: Optional[Callable[[str], None]]) -> tuple[dict, bool]:
+                               reasoning_cb: Optional[Callable[[str], None]],
+                               stream_shown: list[str]) -> tuple[dict, bool]:
         """原生 function-calling 取一步。返回 (resp, streamed)。
 
-        给了 stream_cb 且客户端支持 stream_chat → 流式：最终正文边生成边累计回显（stream_cb 收
-        **累计**文本，与提示式 _complete 一致）；工具调用响应静默累积、不回显碎语。否则退回一次性
-        chat（也便于测试的假 LLM）。异常交由调用方处理（永久错误→回退提示式）。streamed=True 时思维链
-        已过 on_reasoning 增量给出，调用方别再整段重放。"""
+        给了 stream_cb 且客户端支持 stream_chat → 流式：正文边生成边回显；stream_cb 收到的是**整回合**
+        累计文本（stream_shown 为回合级已回显前缀，本步在其后追加，回合内单调不回退——保证 CLI 按累计
+        长度算增量不错位）。stream_chat 里"出现 tool_call 即停回显"只能抑制 tool_call **之后**的正文；
+        兼容模型若先流出一段前言再给 tool_call，那段前言会被回显——此时它作为前缀留在 stream_shown 里，
+        最终回复接在其后，宁可多显示一句前言，也不让最终回复在 CLI 上被吞。否则退回一次性 chat（也便于
+        测试的假 LLM）。streamed=True 时思维链已过 on_reasoning 增量给出，调用方别再整段重放。"""
         client = self._client()
         if stream_cb is not None and hasattr(client, "stream_chat"):
-            buf: list[str] = []
+            prefix = "".join(stream_shown)            # 本回合已回显前缀
+            shown: list[str] = []
 
             def _on_content(delta: str) -> None:
-                buf.append(delta)
-                stream_cb("".join(buf))            # 累计文本（三端 stream_cb 契约）
+                shown.append(delta)
+                stream_cb(prefix + "".join(shown))    # 前缀 + 本步 → 整回合累计（单调）
 
             resp = await client.stream_chat(
                 native_msgs, temperature=0.3, tools=schema,
                 on_content=_on_content, on_reasoning=reasoning_cb)
+            if shown:                                 # 本步确有回显 → 并入回合累加器
+                stream_shown.append("".join(shown))
             return resp, True
         return await client.chat(native_msgs, temperature=0.3, tools=schema), False
 
@@ -847,6 +859,7 @@ class MainAgent:
             self._env = _env_block()
 
         nudged = False                         # 本轮是否已纠偏过一次（空收尾/残缺工具 JSON → 只重试一次）
+        stream_shown: list[str] = []           # 本回合已回显的正文（回合级累加器→保证 stream_cb 单调、CLI 不错位）
         for _step in range(self.max_steps):
             messages = [{"role": "system", "content": self._system(mode)}] + self._trimmed_history()
 
@@ -857,7 +870,8 @@ class MainAgent:
                     # 结构化 tool_use/tool_result：把提示式历史转成原生 tool_calls/tool 消息再发。
                     # 给了 stream_cb → 流式回显最终回复（修：#116 翻默认后 native 曾丢失流式输出）。
                     resp, streamed = await self._native_complete(
-                        _to_native_messages(messages), self._tools_schema(), stream_cb, reasoning_cb)
+                        _to_native_messages(messages), self._tools_schema(),
+                        stream_cb, reasoning_cb, stream_shown)
                 except Exception as e:  # noqa: BLE001
                     # 只有"模型不支持 tools"这类永久错误才永久回退提示式；瞬时错误（超时/5xx/限流）
                     # 保留 native、下轮重试。本步无论如何走下面的提示式协议兜底，回合照常推进。
@@ -897,7 +911,8 @@ class MainAgent:
 
             # 提示式协议（默认；也是 native 回退后的路径）
             try:
-                content = (await self._complete(messages, stream_cb, reasoning_cb)).strip()
+                content = (await self._complete(
+                    messages, stream_cb, reasoning_cb, stream_shown)).strip()
             except Exception as e:  # noqa: BLE001
                 # 有些异常 str 为空（如 5xx），给类型+折行截断的 detail 才可诊断（如 502 Bad Gateway）
                 detail = " ".join((str(e) or repr(e)).split())[:200]
@@ -922,17 +937,20 @@ class MainAgent:
 
         # 用尽工具预算：不白跑——强制一次"无工具"收尾，把已收集的信息综合成最终回答
         # （子 agent 尤其受益：读了一堆文件也能交回结论，而不是返回空丢弃全部上下文）。
-        return await self._force_finish(mode, stream_cb, emit, reasoning_cb)
+        return await self._force_finish(mode, stream_cb, emit, reasoning_cb, stream_shown)
 
     async def _force_finish(self, mode: str,
                             stream_cb: Optional[Callable[[str], None]],
                             emit: Callable[[str], None],
-                            reasoning_cb: Optional[Callable[[str], None]] = None) -> str:
-        """工具预算用尽后的收尾：禁用工具、强制据已有上下文给最终回答，避免丢弃全部工作。"""
+                            reasoning_cb: Optional[Callable[[str], None]] = None,
+                            stream_shown: Optional[list[str]] = None) -> str:
+        """工具预算用尽后的收尾：禁用工具、强制据已有上下文给最终回答，避免丢弃全部工作。
+
+        stream_shown：延续本回合已回显前缀，让收尾回复的流式在 CLI 上接着累计、不错位。"""
         messages = [{"role": "system", "content": self._system(mode) + _FORCE_FINISH_RULE}] \
             + self._trimmed_history()
         try:
-            content = (await self._complete(messages, stream_cb, reasoning_cb)).strip()
+            content = (await self._complete(messages, stream_cb, reasoning_cb, stream_shown)).strip()
         except Exception:  # noqa: BLE001
             emit("（已达工具调用上限；收尾时网络/中转站出错，请稍后重试或换种说法。）")
             return ""
