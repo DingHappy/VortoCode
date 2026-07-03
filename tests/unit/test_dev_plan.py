@@ -53,6 +53,52 @@ def test_from_dict_tolerates_unknown_keys(tmp_path):
     assert plan.plan_id == "p1" and plan.blocks[0].id == "x"
 
 
+def _porcelain(repo):
+    return subprocess.run(["git", "-C", str(repo), "status", "--porcelain"],
+                          capture_output=True, text=True).stdout
+
+
+def test_save_plan_leaves_worktree_clean(tmp_path):
+    """save_plan 落 .vortocode/dev_plans/ 后，目标仓库（无自带 .gitignore）git status 仍干净——
+    工具生成态经 .vortocode/.gitignore 自忽略，不污染用户工作区（评测 dependency_chain clean=False 根治）。"""
+    def git(*a):
+        subprocess.run(["git", "-C", str(tmp_path), *a], check=True, capture_output=True)
+    git("init", "-q"); git("config", "user.email", "t@t"); git("config", "user.name", "t")
+    (tmp_path / "mod.py").write_text("x=1\n", encoding="utf-8")
+    git("add", "-A"); git("commit", "-q", "-m", "init")
+    assert _porcelain(tmp_path).strip() == ""            # 起点干净
+
+    plan = dp.DevPlan.new("任务", "vorto/auto-x", "main")
+    plan.blocks = [dp.Block(id="d1", kind="dependent", desc="做甲")]
+    dp.save_plan(str(tmp_path), plan)
+    assert (tmp_path / ".vortocode" / "dev_plans").is_dir()      # 计划确实落了盘
+    assert (tmp_path / ".vortocode" / ".gitignore").is_file()    # 自忽略清单已放
+    assert _porcelain(tmp_path).strip() == ""            # .vortocode/ 生成态对 git status 隐形
+
+
+def test_state_gitignore_keeps_user_config_versionable(tmp_path):
+    """自忽略清单只挡生成态；用户配置（permissions.yaml 等）仍可 git add。"""
+    def git(*a):
+        return subprocess.run(["git", "-C", str(tmp_path), *a], capture_output=True, text=True)
+    git("init", "-q"); git("config", "user.email", "t@t"); git("config", "user.name", "t")
+    (tmp_path / "mod.py").write_text("x=1\n", encoding="utf-8"); git("add", "-A"); git("commit", "-qm", "init")
+    dp.ensure_state_gitignore(str(tmp_path))
+    (tmp_path / ".vortocode" / "dev_plans").mkdir(parents=True)
+    (tmp_path / ".vortocode" / "dev_plans" / "x.json").write_text("{}", encoding="utf-8")   # 生成态
+    (tmp_path / ".vortocode" / "permissions.yaml").write_text("deny: []", encoding="utf-8")  # 用户配置
+    git("add", ".vortocode/")
+    staged = git("diff", "--cached", "--name-only").stdout
+    assert "permissions.yaml" in staged and "dev_plans" not in staged
+
+
+def test_ensure_state_gitignore_idempotent_respects_existing(tmp_path):
+    """已有 .vortocode/.gitignore 则不覆盖（尊重用户自定义）。"""
+    d = tmp_path / ".vortocode"; d.mkdir()
+    (d / ".gitignore").write_text("custom\n", encoding="utf-8")
+    dp.ensure_state_gitignore(str(tmp_path))
+    assert (d / ".gitignore").read_text(encoding="utf-8") == "custom\n"
+
+
 def test_list_plans_sorted(tmp_path):
     a = dp.DevPlan.new("任务A", "vorto/a", "main")
     dp.save_plan(str(tmp_path), a)
