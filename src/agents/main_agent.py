@@ -1784,12 +1784,15 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             if changed is not None:
                 done += _test_delta_msg(sum(1 for p in changed if _is_test_path(p)))
             out.append(done)
-            if _dev_review_enabled():                        # 集成绿后、开 PR 前：专职挑刺的对抗审查段
+            # PR 前对抗审查段：**仅在真要开 PR 时**跑（名副其实的"PR 前"）。只落本地分支（open_pr 未给）
+            # 时不跑——否则会平白多花 reviewer LLM、可能自修复改动分支、甚至 blocked 早退，与"我只想要个
+            # 本地分支"的意图不符（codex 审 #120 P1）。
+            if want_pr and _dev_review_enabled():
                 note, blocked = await _run_review_gate(branch, base, test_cmd)
                 out.append(note)
                 if blocked:
                     return "\n".join(out)                    # 审查未过 → 不开 PR、分支保留待人工
-            if want_pr:                                      # 集成绿 + （审查过）+ 要求开 PR → 经确认 push+开 PR
+            if want_pr:                                      # 集成绿 + 审查过 → 经确认 push+开 PR
                 out.append(await _open_pr_for_branch(branch, task, "\n".join(out), base))
         else:
             out.append(f"\n⚠️ 已落到 {branch}（{landed} 独立 + {dep_done} 依赖），但**集成后全量测试未过**。"
