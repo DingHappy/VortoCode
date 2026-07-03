@@ -53,6 +53,8 @@ class Tool:
     args: dict[str, str]                       # 参数名 -> 说明（仅用于给模型的工具目录）
     handler: Callable[[dict], Awaitable[str]]
     read_only: bool = True
+    untrusted_source: bool = False             # 结果含**不可信外部内容**（网页/搜索/MCP）→ 本回合污点标记
+    outward: bool = False                      # **对外/外向动作**（run_command/open_pr）→ 污点态下强制重确认
 
 
 # ----------------------------------------------------------------------- 协议解析
@@ -195,6 +197,15 @@ def native_default() -> bool:
     """
     import os
     return os.getenv("VORTOCODE_NATIVE_TOOLS", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _taint_prefix() -> str:
+    """污点态（本回合摄入过不可信外部内容）下，给对外操作的确认文案加警示前缀（D0）。"""
+    from src.agents.taint import is_tainted
+    if is_tainted():
+        return ("⚠ 本回合已摄入外部内容（网页/搜索/MCP），下面是**对外操作**，"
+                "请人工核对是否确是你的本意（防提示注入）：\n")
+    return ""
 
 
 def _dev_review_enabled() -> bool:
@@ -774,18 +785,30 @@ class MainAgent:
         """执行一批工具调用（仿 CC 并行）：全是只读 → 并发跑；含写/重型 → 顺序跑（写工具有
         确认弹窗、不能并发）。返回 [(工具名, 结果字符串)]，顺序与 calls 一致。单个调用直接跑。"""
         import asyncio
+
+        def _mark_taint() -> None:
+            # 在**父（回合）上下文**里打污点：并行读走 gather 子任务、子任务里 mark 会随其上下文丢失，
+            # 故统一在这里按本批工具是否含 untrusted_source 打，保证后续步骤（顺序跑的写工具）看得见。
+            if any(self.tools.get(n) is not None and self.tools[n].untrusted_source for n, _ in calls):
+                from src.agents.taint import mark_tainted
+                mark_tainted()
+
         if len(calls) == 1:
             n, a = calls[0]
-            return [(n, await self._run_tool(n, a, mode, say))]
+            r = [(n, await self._run_tool(n, a, mode, say))]
+            _mark_taint()
+            return r
         all_ro = all(self.tools.get(n) is not None and self.tools[n].read_only for n, _ in calls)
         if all_ro:                                  # 全只读 → 并发（CC 式并行读）
             rs = await asyncio.gather(*[self._run_tool(n, a, mode, say) for n, a in calls],
                                       return_exceptions=True)
+            _mark_taint()
             return [(n, (r if not isinstance(r, BaseException) else f"(工具出错: {r})"))
                     for (n, _), r in zip(calls, rs)]
         out = []                                    # 含写/重型 → 顺序（确认 UI 不能并发、写有先后）
         for n, a in calls:
             out.append((n, await self._run_tool(n, a, mode, say)))
+        _mark_taint()
         return out
 
     async def _fire_hook(self, event_name: str, data: dict, stoppable: bool = False) -> Optional[str]:
@@ -828,6 +851,8 @@ class MainAgent:
         _fire_hook 立即返回、零开销（子 agent 默认无 hook_system，故不会刷状态）。
         reasoning_cb：可选——推理型模型的思维链（reasoning_content）走它做"思考呈现"，与正文分开。
         """
+        from src.agents.taint import reset_taint
+        reset_taint()                       # 回合作用域污点：每回合从"未摄入外部内容"开始（D0）
         await self._fire_hook("agent_start", {"text": str(user_text)[:500], "mode": mode})
         try:
             return await self._run_turn_body(
@@ -1894,14 +1919,16 @@ def build_web_tools() -> list[Tool]:
         query = str(args.get("query") or args.get("q") or "").strip()
         return await asyncio.to_thread(web_search, query)
 
+    # untrusted_source=True：抓来的网页/搜索结果是**不可信外部内容**，摄入即给本回合打污点，
+    # 之后同回合的对外动作（run_command/open_pr）会被提升确认等级（D0 防提示注入外发）。
     return [Tool("web_fetch",
                  "抓取一个公网 http(s) 网址的正文（查文档/issue/报错页/API 说明）：限 http/https、"
                  "拒私网与环回(SSRF 防护)、下载封顶、HTML 自动转正文。只读、无需确认",
-                 {"url": "要抓取的 http(s) 网址"}, _web_fetch, read_only=True),
+                 {"url": "要抓取的 http(s) 网址"}, _web_fetch, read_only=True, untrusted_source=True),
             Tool("web_search",
                  "联网搜索（DuckDuckGo，无需 key）：给查询返回若干「标题/URL/摘要」，再用 web_fetch "
                  "深读感兴趣的链接。查最新信息/报错/库用法时先搜后读。只读、无需确认",
-                 {"query": "搜索关键词/问题"}, _web_search, read_only=True)]
+                 {"query": "搜索关键词/问题"}, _web_search, read_only=True, untrusted_source=True)]
 
 
 def build_command_tool(repo_root: str, confirm) -> list[Tool]:
@@ -1919,7 +1946,7 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
         why = is_dangerous(cmd)
         if why:
             return f"拒绝执行（疑似危险操作：{why}）。请换更具体、安全的命令。"
-        if not await confirm(f"在仓库根目录执行命令？\n  $ {cmd}"):
+        if not await confirm(_taint_prefix() + f"在仓库根目录执行命令？\n  $ {cmd}"):
             return f"用户拒绝了命令：{cmd}"
         res = await asyncio.to_thread(run_command, repo_root, cmd)
         return f"命令 `{cmd}` 退出码 {res['code']}。输出尾部：\n{res['output'][-3000:]}"
@@ -1927,7 +1954,7 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
     return [Tool("run_command",
                  "在仓库根目录跑任意 shell 命令（pytest/ruff/git/pip/make…）；高危，每条都需确认、"
                  "明显危险操作直接拒（仅 build）",
-                 {"command": "要执行的 shell 命令"}, _run, read_only=False)]
+                 {"command": "要执行的 shell 命令"}, _run, read_only=False, outward=True)]
 
 
 def build_pr_tool(repo_root: str, confirm) -> list[Tool]:
@@ -1940,7 +1967,8 @@ def build_pr_tool(repo_root: str, confirm) -> list[Tool]:
         body = str(args.get("body", "")).strip()
         if not branch or not title:
             return "open_pr 需要 branch 和 title。"
-        if not await confirm(f"把分支 {branch} push 到 origin 并开 PR「{title}」？这是外向操作（推到远端、建 PR）。"):
+        if not await confirm(_taint_prefix()
+                             + f"把分支 {branch} push 到 origin 并开 PR「{title}」？这是外向操作（推到远端、建 PR）。"):
             return f"用户拒绝了为 {branch} 开 PR。"
         res = await asyncio.to_thread(push_and_open_pr, repo_root, branch, title, body)
         if res["ok"]:
@@ -1953,7 +1981,7 @@ def build_pr_tool(repo_root: str, confirm) -> list[Tool]:
                  "把一个本地分支（如 dev_isolated 产出的 vorto/...）push 到 origin 并开 PR；"
                  "外向操作、需确认，gh 不可用则只 push（仅 build）",
                  {"branch": "要开 PR 的分支名", "title": "PR 标题", "body": "可选，PR 正文"},
-                 _open_pr, read_only=False)]
+                 _open_pr, read_only=False, outward=True)]
 
 
 def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable[[str], None]] = None,
