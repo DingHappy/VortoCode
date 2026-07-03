@@ -467,6 +467,44 @@ async def test_dev_parallel_reports_integration_failure(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_dev_auto_reports_independent_block_dropped_on_apply(monkeypatch, tmp_path):
+    # dev_auto 独立批：某块自测绿、但落分支时与其它块**文本冲突被跳过** → 必须如实报告"未能干净落分支"，
+    # 且最终落地/集成的计数按**实际落地**算，而非自测绿的块数（codex 审：此前 apply 返回值被丢、静默漏报）。
+    import src.agents.decompose as dc
+    import src.agents.worktree as wt
+    from src.agents.main_agent import build_dev_tools
+
+    def git(*a):
+        subprocess.run(["git", "-C", str(tmp_path), *a], check=True, capture_output=True)
+    git("init", "-q"); git("config", "user.email", "t@t"); git("config", "user.name", "t")
+    (tmp_path / "f.txt").write_text("x\n"); git("add", "-A"); git("commit", "-q", "-m", "init")
+
+    async def fake_decompose(task):
+        return {"descriptions": ["块甲", "块乙"], "deferred": [], "total": 2, "independent": []}
+    monkeypatch.setattr(dc, "decompose_for_parallel", fake_decompose)
+
+    async def fake_run_isolated(repo_root, wid, desc, build, test_cmd=None):
+        return ("diff --git a/x b/x\n", f"做了 {desc}", {"ok": True, "output": "", "cmd": "pytest"})
+    monkeypatch.setattr(wt, "run_isolated_task", fake_run_isolated)
+
+    def fake_apply(repo_root, branch, items, test_cmd=None):
+        # 两块自测都绿，但第二块落分支时文本冲突被跳过 → 只落一块、另一块进 failed
+        return {"ok": True, "branch": branch, "applied": [items[0][1]],
+                "failed": [{"msg": items[1][1], "error": "patch does not apply"}], "integration": None}
+    monkeypatch.setattr(wt, "apply_diffs_to_branch", fake_apply)
+
+    def fake_verify(repo_root, branch, test_cmd, wid):
+        return {"ok": True, "output": "", "cmd": "pytest"}                 # 落地的那块集成绿
+    monkeypatch.setattr(wt, "verify_branch", fake_verify)
+
+    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_auto"]
+    out = await tool.handler({"task": "做两件相互冲突的事"})
+    assert "未能干净落分支" in out                          # 如实报告被丢的块
+    assert "1 独立" in out                                  # 计数按实际落地（1）而非自测绿（2）
+    assert "块乙" in out or "dev_auto: 块乙" in out          # 点名是哪块被丢
+
+
+@pytest.mark.asyncio
 async def test_dev_parallel_reports_integration_pass_and_passes_test_cmd(monkeypatch, tmp_path):
     import src.agents.worktree as wt
     from src.agents.main_agent import build_dev_tools
