@@ -22,6 +22,7 @@ credentials.*
 *.sqlite3
 *.log
 logs/
+evals/reports/
 
 # ─────────────────────────────────────────────────────────────
 # Python
