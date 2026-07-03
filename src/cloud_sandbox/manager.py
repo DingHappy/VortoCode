@@ -109,7 +109,7 @@ class SandboxInstance:
         start_time = time.time()
         timeout = timeout or self.config.timeout
 
-        # 统一走 runner：Docker 可用则容器内真隔离；否则按 AUTODEV_ENABLE_SHELL 降级宿主机
+        # 统一走 runner：Docker 可用则容器内真隔离；否则按 VORTOCODE_ENABLE_SHELL 降级宿主机
         from ..sandbox.runner import run_code
         r = await run_code(command, language=language, timeout=timeout)
 
