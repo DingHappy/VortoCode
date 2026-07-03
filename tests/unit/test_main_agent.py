@@ -425,6 +425,129 @@ async def test_native_falls_back_to_prompted_on_error():
     assert out["emit"] == ["回退后回复。"]
 
 
+class NativeStreamLLM:
+    """原生流式假 LLM：按步给 (content_tokens, tool_calls)。
+
+    有 stream_chat（流式）也有 chat（兜底）。工具步（tool_calls 非空）不把正文喂给 on_content，
+    模拟真实客户端"出现工具调用即抑制正文"的行为。"""
+
+    def __init__(self, steps):
+        self.steps = steps            # [(tokens:list[str], tool_calls:list|None), ...]
+        self.n = 0
+
+    def _step(self):
+        toks, tcs = self.steps[min(self.n, len(self.steps) - 1)]
+        self.n += 1
+        return toks, tcs
+
+    async def stream_chat(self, messages, tools=None, on_content=None, on_reasoning=None, **k):
+        assert tools is not None                   # 原生模式应把 schema 传下去
+        toks, tcs = self._step()
+        for t in toks:
+            if on_content is not None and not tcs:  # 工具步不回显碎语（与真实客户端一致）
+                on_content(t)
+        return {"content": "".join(toks), "reasoning": None, "tool_calls": tcs, "model": "x"}
+
+    async def chat(self, messages, tools=None, **k):
+        toks, tcs = self._step()
+        return {"content": "".join(toks), "reasoning": None, "tool_calls": tcs}
+
+
+@pytest.mark.asyncio
+async def test_native_final_reply_streams_incrementally():
+    # #116 修回归：native 默认后，最终回复必须仍走 stream_cb 流式回显（累计文本）
+    seen = []
+    agent = MainAgent([], llm=NativeStreamLLM([(["你", "好", "呀"], None)]), native=True)
+    out, say, emit = _capture()
+    await agent.run_turn("hi", mode="plan", say=say, emit=emit,
+                         stream_cb=lambda t: seen.append(t))
+    assert seen == ["你", "你好", "你好呀"]         # 累计回显（三端 stream_cb 契约）
+    assert out["emit"] == ["你好呀"]               # 最终仍落定到 emit
+
+
+@pytest.mark.asyncio
+async def test_native_streams_only_final_not_tool_step():
+    # 工具步不回显（否则 CLI 的累计偏移会被非最终步推进而错位）；只有最终回复步流式
+    seen = []
+    calls = []
+
+    async def handler(args):
+        calls.append(args)
+        return "ok"
+
+    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True)
+    agent = MainAgent([tool], llm=NativeStreamLLM([
+        ([], [{"id": "1", "name": "read_file", "arguments": '{"path": "a"}'}]),  # 工具步
+        (["读", "完", "了"], None),                                              # 最终步
+    ]), native=True)
+    out, say, emit = _capture()
+    await agent.run_turn("读 a", mode="plan", say=say, emit=emit,
+                         stream_cb=lambda t: seen.append(t))
+    assert calls == [{"path": "a"}]
+    assert seen == ["读", "读完", "读完了"]         # 只有最终步累计回显，工具步不回显
+    assert out["emit"] == ["读完了"]
+
+
+class NativePreambleLLM:
+    """兼容模型：工具步**先流出一段前言正文、再给 tool_call**（stream_chat 的"出现 tool_call 即停回显"
+    只能挡 tool_call 之后的正文，挡不住之前的前言）——用来复现 codex 指出的跨步回退。"""
+
+    def __init__(self, preamble, tool_call, final_tokens):
+        self.preamble = preamble
+        self.tool_call = tool_call
+        self.final = final_tokens
+        self.n = 0
+
+    async def stream_chat(self, messages, tools=None, on_content=None, on_reasoning=None, **k):
+        self.n += 1
+        if self.n == 1:                            # 工具步：先流前言，再返回 tool_call
+            for t in self.preamble:
+                if on_content is not None:
+                    on_content(t)
+            return {"content": "".join(self.preamble), "reasoning": None,
+                    "tool_calls": [self.tool_call], "model": "x"}
+        for t in self.final:                       # 最终步：流最终回复
+            if on_content is not None:
+                on_content(t)
+        return {"content": "".join(self.final), "reasoning": None,
+                "tool_calls": None, "model": "x"}
+
+    async def chat(self, messages, tools=None, **k):
+        return {"content": "", "tool_calls": None}
+
+
+@pytest.mark.asyncio
+async def test_native_preamble_before_toolcall_keeps_stream_monotonic():
+    # codex 复现：工具步先 on_content('先看') 再给 tool_call、最终步给'结果'。若按步重置累计，
+    # stream_cb 会收到 ['先','先看','结','结果']（长度回退），CLI 按累计长度算增量会**吞掉最终回复**。
+    # 修复后必须整回合单调，最终回复完整出现在流末尾。
+    seen = []
+    calls = []
+
+    async def handler(args):
+        calls.append(args)
+        return "ok"
+
+    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True)
+    llm = NativePreambleLLM(["先", "看"],
+                            {"id": "1", "name": "read_file", "arguments": '{"path": "a"}'},
+                            ["结", "果"])
+    agent = MainAgent([tool], llm=llm, native=True)
+    out, say, emit = _capture()
+    await agent.run_turn("读 a", mode="plan", say=say, emit=emit,
+                         stream_cb=lambda t: seen.append(t))
+    assert calls == [{"path": "a"}]
+    # 核心不变量：整回合累计单调不回退（长度非递减）——CLI 安全的前提
+    assert all(len(seen[i]) <= len(seen[i + 1]) for i in range(len(seen) - 1)), seen
+    # 用 CLI 的"按累计长度算增量"重建屏幕输出：最终答案必须在里面、不被吞
+    rebuilt, off = "", 0
+    for t in seen:
+        rebuilt += t[off:]
+        off = len(t)
+    assert rebuilt.endswith("结果"), rebuilt
+    assert out["emit"] == ["结果"]                 # emit 仍是干净的最终回复
+
+
 @pytest.mark.asyncio
 async def test_plan_escalation_runs_write_tool_when_accepted():
     ran = []

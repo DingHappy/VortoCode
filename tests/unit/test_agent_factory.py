@@ -13,12 +13,13 @@ async def _confirm(_m):
 
 def test_native_default_reads_env(monkeypatch):
     monkeypatch.delenv("VORTOCODE_NATIVE_TOOLS", raising=False)
-    assert native_default() is False                          # 默认关（提示式、模型无关）
-    for v in ("1", "true", "yes", "on", "TRUE"):
+    assert native_default() is True                           # 2026-07 起**默认开**（native 对 mimo 更可靠）
+    for v in ("1", "true", "yes", "on", "TRUE", ""):          # 空/真值都算开（默认开）
         monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", v)
         assert native_default() is True
-    monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", "0")
-    assert native_default() is False
+    for v in ("0", "false", "no", "off"):                    # 只有显式假值才关（强制提示式）
+        monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", v)
+        assert native_default() is False
 
 
 def test_headless_and_web_agents_honor_native_env(monkeypatch, tmp_path):
