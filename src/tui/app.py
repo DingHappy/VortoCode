@@ -602,19 +602,29 @@ class VortoCodeTUI(App):
             return True
         return await self.push_screen_wait(ConfirmScreen(message))
 
+    def _taint_msg(self, message: str) -> str:
+        """污点态（本回合摄入过网页/搜索/MCP 外部内容）下给对外操作确认加警示前缀（D0 防提示注入）。"""
+        from src.agents.taint import is_tainted
+        if is_tainted():
+            return ("⚠ 本回合已摄入外部内容（网页/搜索/MCP），下面是对外操作，"
+                    "请人工核对是否确是你的本意（防提示注入）：\n" + message)
+        return message
+
     async def _confirm_outward(self, message: str) -> bool:
         """外向操作（push / 开 PR 等推到远端的动作）确认：**始终弹窗**，不吃"始终允许写"的豁免。"""
-        return await self.push_screen_wait(ConfirmScreen(message))
+        return await self.push_screen_wait(ConfirmScreen(self._taint_msg(message)))
 
     async def _confirm_command(self, message: str) -> bool:
         """任意 shell 命令确认门：**独立作用域**，不吃"始终允许写文件"的豁免。
 
         否则用户为省文件编辑逐条确认按下的 [a]，会静默放行后续所有任意命令（=权限提升）。
         本会话对命令单独选过"始终允许"（scope=commands）才免确认。
+        污点态（本回合摄入过外部内容）下**无视命令'始终允许'、强制弹确认**（D0 防提示注入外发）。
         """
-        if self._allow_commands_session:
+        from src.agents.taint import is_tainted
+        if self._allow_commands_session and not is_tainted():
             return True
-        return await self.push_screen_wait(ConfirmScreen(message, scope="commands"))
+        return await self.push_screen_wait(ConfirmScreen(self._taint_msg(message), scope="commands"))
 
     def action_history_prev(self) -> None:
         """↑：调出上一条历史输入（编辑过则当作新输入，从末尾重新起）。"""
@@ -1863,6 +1873,10 @@ class VortoCodeTUI(App):
             content = str(args.get("content", "")).strip()
             if not content:
                 return "save_memory 需要 content（要长期记住的事实/偏好/约定）。"
+            from src.agents.taint import is_tainted
+            if is_tainted():        # 记忆是持久化注入面（ClawHavoc 教训）：标注来源含外部内容、可追溯
+                import datetime
+                content = f"[⚠ 来源含外部内容 · {datetime.date.today().isoformat()}] {content}"
             try:
                 self.sessions.store.add_memory("__longterm__", "fact", content, importance=0.6)
             except Exception as e:  # noqa: BLE001
@@ -1927,11 +1941,11 @@ class VortoCodeTUI(App):
                  "把一个本地分支（如 dev_isolated/dev_parallel 产出的 vorto/...）push 到 origin 并开 PR；"
                  "外向操作、强确认，gh 不可用则只 push（仅 build）",
                  {"branch": "要开 PR 的分支名", "title": "PR 标题", "body": "可选，PR 正文"},
-                 _t_open_pr, read_only=False),
+                 _t_open_pr, read_only=False, outward=True),
             Tool("run_command",
                  "在仓库根目录跑任意 shell 命令（如 pytest 某个文件 / ruff / git log / pip install / make）；"
                  "高危，每条都需确认、明显危险操作直接拒（仅 build）",
-                 {"command": "要执行的 shell 命令"}, _t_run_command, read_only=False),
+                 {"command": "要执行的 shell 命令"}, _t_run_command, read_only=False, outward=True),
         ]
 
         # 制品（artifact）：把会话产出发布成可分享、实时更新的网页（由 Web 服务器在 /artifact 渲染）。
