@@ -260,3 +260,16 @@ class TaskRunner:
     def is_active(self, tid: str) -> bool:
         t = self._running.get(tid)
         return t is not None and not t.done()
+
+    async def join(self, tid: str) -> None:
+        """等某个后台任务的 asyncio 任务真正跑完（供一次性/CLI 场景 drain，别让进程退出前把它取消掉）。
+
+        已完成/未知 id → 立即返回。取消异常吞掉（join 只为等落地，不重抛内部取消）。
+        """
+        t = self._running.get(tid)
+        if t is None:
+            return
+        try:
+            await t
+        except asyncio.CancelledError:
+            pass

@@ -114,6 +114,54 @@ async def test_runner_cancel(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_runner_join_awaits_completion(tmp_path):
+    gate = asyncio.Event()
+    done = []
+
+    async def worker(task, on_progress):
+        await gate.wait()
+        done.append(task.id)
+        return "ok"
+
+    runner = TaskRunner(str(tmp_path), worker)
+    t = await runner.submit("t")
+    gate.set()
+    await runner.join(t.id)                              # 等它真跑完（不是提交即返回）
+    assert done == [t.id] and runner.get(t.id).status == "done"
+    await runner.join("unknown")                        # 未知 id → 立即返回不炸
+
+
+@pytest.mark.asyncio
+async def test_dev_worker_pins_plan_no_cross_attribution(tmp_path, monkeypatch):
+    """并发跑两个后台 dev 任务：各自按 task-scoped plan_id 取回**自己**的 branch，绝不串单（#128 评审）。"""
+    monkeypatch.chdir(tmp_path)
+    import src.agents.main_agent as ma
+    import src.web.routers.tasks as tm
+    from src.agents import dev_plan as _dp
+    from src.gateway.tasks import BackgroundTask
+
+    class _T:
+        def __init__(self, name, handler):
+            self.name, self.handler = name, handler
+
+    def fake_build(root, on_progress=None, confirm=None, draft_pr=False):
+        async def dev_auto(args):
+            pid = args["plan_id"]                        # 用调用方钉的 id 落计划，分支由 id 派生
+            plan = _dp.DevPlan.new(args["task"], f"vorto/auto-{pid}", "main", plan_id=pid)
+            plan.status = "integrated"
+            _dp.save_plan(root, plan)
+            return f"done {pid}"
+        return [_T("dev_auto", dev_auto)]
+    monkeypatch.setattr(ma, "build_dev_tools", fake_build)
+
+    a = BackgroundTask.new("dev", "任务A")
+    b = BackgroundTask.new("dev", "任务B")
+    await asyncio.gather(tm._dev_worker(a, lambda _m: None), tm._dev_worker(b, lambda _m: None))
+    assert a.plan_id == f"bg-{a.id}" and a.branch == f"vorto/auto-bg-{a.id}"   # A 拿 A 的
+    assert b.plan_id == f"bg-{b.id}" and b.branch == f"vorto/auto-bg-{b.id}"   # B 拿 B 的（不串）
+
+
+@pytest.mark.asyncio
 async def test_runner_worker_exception_marks_failed(tmp_path):
     async def worker(task, on_progress):
         raise RuntimeError("炸了")
@@ -175,6 +223,21 @@ def test_rest_open_pr_guards_non_vorto_branch(client_with_fake_runner, monkeypat
     runner.ledger.save(t2)
     assert client.post(f"/api/tasks/{t2.id}/open_pr").status_code == 400
     assert client.post("/api/tasks/nope/open_pr").status_code == 404
+
+
+def test_rest_open_pr_requires_task_done(client_with_fake_runner):
+    """只对**成功完成**的任务开 PR——running/failed 都拒（即使已有 vorto/ 分支，#128 评审）。"""
+    client, runner = client_with_fake_runner
+    t = runner.ledger.create("dev", "x")
+    t.status = "running"; t.branch = "vorto/auto-x"
+    runner.ledger.save(t)
+    r = client.post(f"/api/tasks/{t.id}/open_pr")
+    assert r.status_code == 400 and "未成功完成" in r.json()["detail"]
+    # 标 done 但有 error（失败）→ 也拒
+    t2 = runner.ledger.create("dev", "y")
+    t2.status = "done"; t2.error = "boom"; t2.branch = "vorto/auto-y"
+    runner.ledger.save(t2)
+    assert client.post(f"/api/tasks/{t2.id}/open_pr").status_code == 400
 
 
 def test_rest_open_pr_draft_for_vorto_branch(client_with_fake_runner, monkeypatch):

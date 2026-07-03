@@ -18,18 +18,21 @@ _RUNNER = None
 async def _dev_worker(task, on_progress):
     """dev 型后台任务：直接跑 dev_auto（确定性），落 vorto/* 分支 + C1 计划；不 push（后台无人值守）。"""
     from src.agents.main_agent import build_dev_tools
-    from src.agents.dev_plan import list_plans
+    from src.agents.dev_plan import load_plan
 
     async def _deny(_m):                       # 后台无人值守：外向操作默认拒绝（push 交给人点 open_pr）
         return False
 
     tools = {t.name: t for t in build_dev_tools(os.getcwd(), on_progress=on_progress,
                                                 confirm=_deny, draft_pr=True)}
-    result = await tools["dev_auto"].handler({"task": task.prompt})
-    plans = list_plans(os.getcwd())            # 关联刚落的 C1 计划（可 dev_resume 续跑）
-    if plans:
-        task.plan_id = plans[0]["plan_id"]
-        task.branch = plans[0].get("branch", "")
+    # 用 **task-scoped plan_id** 钉住本次计划——绝不靠 list_plans()[0]（全局最新）猜：并发跑多任务时
+    # 那会拿到别的任务刚生成的 plan/branch，导致 open_pr 给错任务推错分支（#128 评审）。
+    pid = f"bg-{task.id}"
+    result = await tools["dev_auto"].handler({"task": task.prompt, "plan_id": pid})
+    plan = load_plan(os.getcwd(), pid)         # 按确定 id 精确取回本次 C1 计划（可 dev_resume 续跑）
+    if plan is not None:
+        task.plan_id = plan.plan_id
+        task.branch = plan.branch
     return result
 
 
@@ -90,6 +93,9 @@ async def open_task_pr(tid: str):
     t = get_runner().get(tid)
     if t is None:
         raise HTTPException(status_code=404, detail=f"无此任务 {tid}")
+    if t.status != "done" or t.error:            # 只对**成功完成**的任务开 PR——running/failed/cancelled/
+        raise HTTPException(status_code=400,     # interrupted 都不许（否则会给半成品/失败分支开 PR，#128 评审）
+                            detail=f"任务未成功完成（status={t.status}{'，有错误' if t.error else ''}），暂不能开 PR")
     if not t.branch:
         raise HTTPException(status_code=400, detail="该任务没有产出分支，无法开 PR")
     if not t.branch.startswith("vorto/"):        # 硬闸：只对隔离流水线分支开 PR，绝不碰 main/其它
