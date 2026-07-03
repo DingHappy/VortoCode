@@ -473,3 +473,35 @@ async def test_headless_speak_end_to_end(tmp_path, capsys):
     assert reply == "这是回复。"
     assert out.read_bytes() == b"RIFFfake"                    # 回复被合成并落盘
     assert llm.tts_calls and llm.tts_calls[0]["text"] == "这是回复。"
+
+
+# ---- cron / heartbeat 子命令（D3）----
+def test_cron_subcommand_parses(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["vortocode", "cron", "-h"])
+    with pytest.raises(SystemExit) as e:
+        cli.main()
+    assert e.value.code == 0
+    assert "list" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_run_cron_list_empty_and_populated(tmp_path, monkeypatch, capsys):
+    monkeypatch.chdir(tmp_path)
+    await cli.run_cron("list")
+    assert "无 cron 作业" in capsys.readouterr().out
+
+    d = tmp_path / ".vortocode"
+    d.mkdir()
+    (d / "cron.yaml").write_text(
+        'jobs:\n  - name: nightly\n    schedule: "at 02:00"\n    prompt: 跑夜跑\n', encoding="utf-8")
+    await cli.run_cron("list")
+    out = capsys.readouterr().out
+    assert "nightly" in out and "at 02:00" in out
+
+
+@pytest.mark.asyncio
+async def test_run_cron_run_unknown_exits(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as e:
+        await cli.run_cron("run", "nope")
+    assert e.value.code == 2

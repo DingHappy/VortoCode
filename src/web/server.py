@@ -20,15 +20,29 @@ from src.web.auth import auth_middleware, get_api_token
 
 @asynccontextmanager
 async def _lifespan(_app):
-    """启动/关停钩子：启动时恢复上次崩在半路的后台任务（running→interrupted，可 dev_resume 续跑）。"""
+    """启动/关停钩子：①恢复上次崩在半路的后台任务（running→interrupted）；②opt-in 起 cron/heartbeat 调度循环。"""
+    import asyncio
+    import os as _os
+    sched_task = None
+    stop_event = asyncio.Event()
     try:
-        from src.web.routers.tasks import get_runner
+        from src.web.routers.tasks import get_runner, scheduler_loop
         recovered = get_runner().recover()
         if recovered:
             print(f"  ↻ 恢复 {len(recovered)} 个中断的后台任务（标 interrupted，可 dev_resume 续跑）")
-    except Exception as e:  # noqa: BLE001 —— 恢复失败不该挡服务启动
-        print(f"  （后台任务恢复跳过：{e}）")
-    yield
+        # cron / heartbeat 调度循环：**opt-in**（任一开关开才起，默认全关——不擅自跑自主 LLM 作业）
+        if any(_os.getenv(k, "").strip().lower() in ("1", "true", "yes", "on")
+               for k in ("VORTOCODE_CRON", "VORTOCODE_HEARTBEAT")):
+            sched_task = asyncio.create_task(scheduler_loop(stop_event))
+            print("  ⏰ cron/heartbeat 调度循环已启动（opt-in）")
+    except Exception as e:  # noqa: BLE001 —— 恢复/调度失败不该挡服务启动
+        print(f"  （后台任务恢复/调度跳过：{e}）")
+    try:
+        yield
+    finally:
+        stop_event.set()
+        if sched_task is not None:
+            sched_task.cancel()
 
 
 app = FastAPI(
