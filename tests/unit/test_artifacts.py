@@ -173,17 +173,19 @@ def test_view_escapes_title(client):
     assert "&lt;x&gt;&amp;" in html and "<x>&" not in html.replace("<x>&amp;", "")
 
 
-# --------------------------------------------------------------- 鉴权：?token= 透传
-def test_query_token_allows_when_token_set(tmp_path, monkeypatch):
+# --------------------------------------------------------------- 鉴权：Cookie（token 已移出 URL，审计 P0#4）
+def test_artifact_api_auth_via_cookie(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("AUTODEV_API_TOKEN", "secret")
     from src.web.server import app
     c = TestClient(app)
     aid = ArtifactStore(str(tmp_path)).publish("T", "<p>x</p>")["id"]
-    # 无 token → 401；?token= 正确 → 放行（分享链接可直接浏览器打开）
+    # 无凭证 → 401；?token= 已不再被接受 → 仍 401；登录种 Cookie 后 → 放行
     assert c.get(f"/api/artifacts/{aid}").status_code == 401
-    assert c.get(f"/api/artifacts/{aid}?token=secret").status_code == 200
-    assert c.get(f"/api/artifacts/{aid}?token=wrong").status_code == 401
+    assert c.get(f"/api/artifacts/{aid}?token=secret").status_code == 401     # 移出 URL
+    c.post("/api/auth/login", json={"token": "secret"})
+    assert c.get(f"/api/artifacts/{aid}").status_code == 200                  # Cookie 鉴权
+    assert c.get(f"/api/artifacts/{aid}", headers={"Authorization": "Bearer secret"}).status_code == 200
 
 
 # --------------------------------------------------------------- 体积上限

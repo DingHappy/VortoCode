@@ -45,6 +45,7 @@ from src.web.routers.ops import router as ops_router
 from src.web.routers.generators import router as generators_router
 from src.web.routers.realtime import router as realtime_router
 from src.web.routers.artifacts import router as artifacts_router
+from src.web.routers.auth_routes import router as auth_router
 
 for _router in (
     pages_router, system_router, execution_router,
@@ -52,7 +53,7 @@ for _router in (
     agents_router, skills_router, indexing_router, sessions_router,
     projects_router, workspaces_router, editor_router, sandbox_router,
     browser_router, github_router, ops_router, generators_router, realtime_router,
-    artifacts_router,
+    artifacts_router, auth_router,
 ):
     app.include_router(_router)
 
@@ -92,9 +93,8 @@ def start_server(host: str = "127.0.0.1", port: int = 8000):
     if host not in _LOCAL_HOSTS:
         print("  ⚠️  绑定到非本地地址；已设置鉴权/显式放行。请确认 token 足够强。")
     print(f"{'='*50}\n")
-    # access_log=False：鉴权走 ?token= 查询参数（浏览器 GET/WS 无法自带头），uvicorn 的
-    # info 访问日志会把含 ?token=… 的完整 URL 明文写进日志 → token 被动泄漏。关掉访问日志
-    # 堵住这条我们完全能控的泄漏面（2026-07 审计 P0#4）。应用级日志不受影响。
+    # access_log=False：token 现已移出 URL（走 httpOnly Cookie / Authorization 头，审计 P0#4 已收口），
+    # URL 里不再有敏感串；仍关访问日志作为纵深防御（少一处可能记录敏感请求体/头的面）。应用级日志不受影响。
     uvicorn.run(app, host=host, port=port, log_level="warning", access_log=False)
 
 

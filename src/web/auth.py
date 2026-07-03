@@ -34,29 +34,40 @@ def get_api_token() -> str:
     return os.getenv("AUTODEV_API_TOKEN", "").strip()
 
 
+# 登录后种下的 httpOnly Cookie 名——token 走 Cookie（浏览器）/ Authorization 头（程序化），
+# **绝不再进 URL**（审计 P0#4：?token= 会被 access log / referer / 分享链接泄漏，且 allow-scripts
+# 制品 iframe 的脚本能从 location 外带）。
+SESSION_COOKIE = "vortocode_session"
+
+
 def shell_enabled() -> bool:
     return os.getenv("AUTODEV_ENABLE_SHELL", "").strip().lower() in ("1", "true", "yes", "on")
 
 
-# 鉴权豁免：页面 HTML 外壳（本身不含数据，数据走各自需鉴权的 API）、API 文档、健康检查。
+# 鉴权豁免：页面 HTML 外壳（本身不含数据，数据走各自需鉴权的 API）、API 文档、健康检查、
+# 登录/状态端点（必须能在鉴权前访问，否则没法登录）。
 # 路线 A 下线遗留页后只剩主线页 /、/agent、/artifacts（含制品分享链接）。
 _EXEMPT_PREFIXES = ("/docs", "/redoc", "/openapi.json", "/static")
 _EXEMPT_EXACT = {"/", "/agent", "/artifacts",
-                 "/api/health", "/api/health/quick"}
+                 "/api/health", "/api/health/quick",
+                 "/api/auth/login", "/api/auth/logout", "/api/auth/status"}
 
 
 def _token_ok(request) -> bool:
     token = get_api_token()
     if not token:
         return True  # 未配置 token：本地开发放行
-    # ?token= 查询参数（与 WebSocket 的 ws_token_ok 一致）：让浏览器直接打开/分享的
-    # 链接（如制品 /artifact/<id>?token=）也能通过——浏览器 GET 无法自带 Bearer 头。
-    if request.query_params.get("token", "").strip() == token:
-        return True
     auth = request.headers.get("authorization", "")
-    if auth.startswith("Bearer ") and auth[7:].strip() == token:
+    if auth.startswith("Bearer ") and auth[7:].strip() == token:   # 程序化客户端：Authorization 头
         return True
-    return request.headers.get("x-api-token", "").strip() == token
+    if request.headers.get("x-api-token", "").strip() == token:
+        return True
+    return request.cookies.get(SESSION_COOKIE, "").strip() == token  # 浏览器：登录后 httpOnly Cookie
+
+
+def is_authed(request) -> bool:
+    """当前请求是否已鉴权（供 /api/auth/status 与前端登录门判断）。"""
+    return _token_ok(request)
 
 
 async def auth_middleware(request, call_next):
@@ -131,11 +142,11 @@ def validate_navigation_url(url: str) -> Optional[str]:
 
 
 def ws_token_ok(websocket) -> bool:
-    """WebSocket 鉴权：未配置 token 放行，否则校验 ?token= 或 Bearer。"""
+    """WebSocket 鉴权：未配置 token 放行，否则校验 Bearer 头或**同源握手自带的 Cookie**（不再收 ?token=）。"""
     token = get_api_token()
     if not token:
         return True
-    if websocket.query_params.get("token", "") == token:
-        return True
     auth = websocket.headers.get("authorization", "")
-    return auth.startswith("Bearer ") and auth[7:].strip() == token
+    if auth.startswith("Bearer ") and auth[7:].strip() == token:
+        return True
+    return websocket.cookies.get(SESSION_COOKIE, "").strip() == token
