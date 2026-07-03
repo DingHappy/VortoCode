@@ -1,6 +1,5 @@
 """核心 bug 修复的回归测试（B2/B3/B5/B6）。"""
 
-import asyncio
 
 import pytest
 

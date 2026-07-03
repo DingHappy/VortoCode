@@ -70,6 +70,7 @@ __all__ = [
     "check_memory",
     "check_disk",
     "check_cpu",
+    "metrics",
 
     # 缓存
     "CacheEntry",

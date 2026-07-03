@@ -2,7 +2,6 @@
 
 import json
 import logging
-from datetime import datetime
 from pathlib import Path
 from typing import List
 
@@ -10,6 +9,11 @@ from ..hook import Hook, HookEvent, HookEventType, HookResult
 from .dingtalk_hook import DingTalkHook, create_dingtalk_hook
 
 logger = logging.getLogger(__name__)
+
+# 显式公开的名字（含从 dingtalk_hook 转出的 re-export，供 `from src.hooks.builtin import ...`）
+__all__ = ["AuditLogHook", "PerformanceMonitorHook", "NotificationHook",
+           "DingTalkHook", "create_dingtalk_hook",
+           "Hook", "HookEvent", "HookEventType", "HookResult"]
 
 
 class AuditLogHook(Hook):

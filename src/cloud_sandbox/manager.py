@@ -1,9 +1,8 @@
 """云端沙箱系统 - 类似 E2B 的安全隔离执行环境"""
 
-import asyncio
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional

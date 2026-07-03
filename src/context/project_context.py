@@ -1,6 +1,5 @@
 """项目指令管理 - 类似 Claude Code 的 CLAUDE.md"""
 
-import os
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional

@@ -1,7 +1,5 @@
 """Hook 执行器"""
 
-import asyncio
-import json
 import logging
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field

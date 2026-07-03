@@ -9,10 +9,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .ast_parser import (
     ASTParserFactory,
-    CodeChunk,
     CodeLanguage,
-    CodeNode,
-    NodeType
+    CodeNode
 )
 
 logger = logging.getLogger(__name__)

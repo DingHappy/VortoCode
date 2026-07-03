@@ -1,9 +1,9 @@
 """测试"""
 
 import pytest
-from src.hooks import Hook, HookEvent, HookEventType, HookResult, HookRegistry, HookSystem
-from src.skills import Skill, SkillMetadata, SkillResult, SkillRegistry, SkillParser
-from src.agents import Agent, AgentConfig, AgentResult, AgentStatus
+from src.hooks import Hook, HookEvent, HookEventType, HookResult, HookRegistry
+from src.skills import SkillMetadata, SkillParser
+from src.agents import AgentConfig, AgentStatus
 from src.memory import MemorySystem, MemoryItem, ShortTermMemory
 from src.orchestrator import TaskAnalyzer, TaskComplexity
 

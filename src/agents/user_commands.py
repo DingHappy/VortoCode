@@ -17,7 +17,7 @@
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict
 
 # 命令名：字母/数字/下划线/连字符（和文件名一致，避免和内置命令解析冲突）
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")

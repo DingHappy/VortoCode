@@ -1,11 +1,8 @@
 """技能系统测试"""
 
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.skills.skill import (
-    Skill,
     SkillMetadata,
     SkillArgument,
     SkillHook,

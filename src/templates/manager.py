@@ -1,9 +1,8 @@
 """项目模板系统 - 预定义项目模板"""
 
 import logging
-import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
