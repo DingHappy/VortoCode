@@ -89,6 +89,19 @@ def broadcast_task_update(task: dict) -> None:
     loop.create_task(manager.broadcast(payload))
 
 
+def broadcast_notice(text: str) -> None:
+    """把一条后台通知（cron 结果 / heartbeat 发现）广播给所有连着的 WS 客户端（best-effort）。
+
+    daemon 路径的投递终点之一（另一个是持久台账 GET /api/notices），见 tasks.scheduler_loop._notify。
+    """
+    payload = {"type": "notice", "data": {"text": str(text)[:2000]}}
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.create_task(manager.broadcast(payload))
+
+
 # 等待前端确认的工具：confirm id → Future（前端 agent_confirm_response 来了就 set_result）
 _PENDING_CONFIRMS: Dict[str, Any] = {}
 

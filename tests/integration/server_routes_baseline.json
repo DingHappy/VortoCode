@@ -420,6 +420,12 @@
     ]
   },
   {
+    "path": "/api/notices",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
     "path": "/api/permissions",
     "methods": [
       "GET"
