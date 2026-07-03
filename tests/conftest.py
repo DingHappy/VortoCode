@@ -15,3 +15,14 @@ def _default_prompt_protocol(monkeypatch):
     `native_default()` 真实默认的用例先 `delenv`（去掉这里设的 0 → 读到默认开）。
     """
     monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", "0")
+
+
+@pytest.fixture(autouse=True)
+def _default_dev_review_off(monkeypatch):
+    """把测试套件默认钉在**关闭** dev_auto 的 PR 前审查段（VORTOCODE_DEV_REVIEW=0）。
+
+    生产默认**开**，但审查段会另起 reviewer 子 agent（需 LLM），且给 dev_auto 输出追加审查注记——
+    会干扰无关的 dev_auto 单测。审查段有自己的专门测试（test_review.py 直接测 run_gate）。测真实默认
+    的用例先 `delenv`（去掉这里设的 0 → 读到默认开）。
+    """
+    monkeypatch.setenv("VORTOCODE_DEV_REVIEW", "0")
