@@ -1718,11 +1718,22 @@ class VortoCodeTUI(App):
             if await self._confirm_write(
                     f"{len(greens)} 个子任务测试通过。把它们都应用到新分支 {branch}？（不碰 main / 当前工作区）"):
                 items = [(g["diff"], f"dev_parallel: {g['desc']}") for g in greens]
-                res = await asyncio.to_thread(apply_diffs_to_branch, self.repo_root, branch, items)
-                if res["applied"]:
+                # 传 test_cmd：落分支后在集成分支上再跑一遍全量，抓"单独绿合起来红"的语义冲突——
+                # 各块只在自己的隔离 worktree 单独绿过，合到一起可能相互破坏。此前 TUI 没传 test_cmd，
+                # 集成测试根本不跑（apply_diffs_to_branch 的 integration 恒为 None），会静默漏掉语义冲突。
+                res = await asyncio.to_thread(apply_diffs_to_branch, self.repo_root, branch, items, test_cmd)
+                integ = res.get("integration")
+                if res["applied"] and integ and not integ["ok"]:      # 单独绿、合起来红 → 如实说，别谎报
+                    self._chrome(f"[{self._tc('text-warning', '#f0b86e')}]⚠️ {len(res['applied'])} 块已落到 "
+                                 f"[b]{branch}[/b]，但**集成后全量测试未过**（单独绿、合起来红，多为语义冲突/"
+                                 f"相互破坏），分支保留待修[/]")
+                    note = (f"，{len(res['applied'])}/{len(greens)} 块落到 {branch} 但**集成红**（单独绿合起来红）；"
+                            f"失败尾部：\n{integ['output'][-800:]}\n分支已留：git checkout {branch} 据此修正")
+                elif res["applied"]:
+                    ok_note = "且集成测试通过" if integ else ""      # test_cmd 恒有，integ 正常不为 None
                     self._chrome(f"[{self._tc('text-success', '#7fce9a')}]✅ 已应用 {len(res['applied'])} 块到分支 "
-                                 f"[b]{branch}[/b]（git checkout {branch} 查看）[/]")
-                    note = f"，{len(res['applied'])}/{len(greens)} 块已应用到 {branch}"
+                                 f"[b]{branch}[/b]{ok_note}（git checkout {branch} 查看）[/]")
+                    note = f"，{len(res['applied'])}/{len(greens)} 块已应用到 {branch}{ok_note}"
                 if res["failed"]:
                     self._chrome(f"[{self._tc('text-warning', '#f0b86e')}]{len(res['failed'])} 块未能干净应用"
                                  f"（可能互相冲突），已跳过[/]")

@@ -78,6 +78,42 @@ async def test_help_lists_commands():
 
 
 @pytest.mark.asyncio
+async def test_tui_dev_parallel_runs_integration_and_reports_semantic_conflict(monkeypatch, tmp_path):
+    """TUI dev_parallel 落分支后必须跑**集成测试**（给 apply_diffs_to_branch 传 test_cmd），并如实
+    报告"单独绿、合起来红"。此前 TUI 没传 test_cmd → integration 恒 None → 语义冲突被静默漏掉、
+    谎报"✅ 已应用"（Web/CLI 版一直传 test_cmd、会抓；这是三端不一致的假绿漏洞）。"""
+    import src.agents.worktree as wt
+    from src.tui.app import VortoCodeTUI
+
+    async def _fake_isolated(repo_root, wid, desc, build_agent, mode="build", test_cmd=None):
+        return (f"--- diff for {desc} ---\n", "done", {"ok": True, "output": ""})   # 每块隔离自测绿
+    monkeypatch.setattr(wt, "run_isolated_task", _fake_isolated)
+
+    captured = {}
+
+    def _fake_apply(repo_root, branch, items, test_cmd=None):
+        captured["test_cmd"] = test_cmd                    # 记下调用方是否传了 test_cmd
+        # 模拟"单独绿、合起来红"：给了 test_cmd 才跑集成、且集成红
+        integ = {"ok": False, "output": "E  assert 31 == 21\ntest_bump 合起来红"} if test_cmd else None
+        return {"ok": True, "branch": branch, "applied": [m for _d, m in items],
+                "failed": [], "integration": integ}
+    monkeypatch.setattr(wt, "apply_diffs_to_branch", _fake_apply)
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+
+    async def _yes(_m):
+        return True
+    monkeypatch.setattr(app, "_confirm_write", _yes)      # 自动同意落分支
+    monkeypatch.setattr(app, "_chrome", lambda *a, **k: None)
+    agent = app._build_main_agent()
+    out = await agent.tools["dev_parallel"].handler({"tasks": ["加 A", "加 B"]})
+
+    assert captured.get("test_cmd") is not None            # 关键修复：传了 test_cmd → 集成测试会跑
+    assert "集成" in out and "红" in out                   # 如实报告"集成红/单独绿合起来红"，不谎报全绿
+    assert "已应用到" not in out or "但" in out            # 不能只说"已应用"而不提集成失败
+
+
+@pytest.mark.asyncio
 async def test_toggle_mode_via_command_and_key():
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
