@@ -25,7 +25,8 @@ def _score_row(o: dict) -> dict:
         "name": s.name, "run": o.get("run", 1),
         "landed": s.landed, "honest": s.honest, "clean": s.clean,
         "passed": s.passed, "expect_land": s.expect_land, "land_ok": s.land_ok,
-        "surfaced": s.surfaced, "honest_reason": s.honest_reason, "duration_s": s.duration_s,
+        "surfaced": s.surfaced, "changed_ok": s.changed_ok,
+        "honest_reason": s.honest_reason, "duration_s": s.duration_s,
         "message_excerpt": s.message_excerpt,
     }
 
