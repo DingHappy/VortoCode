@@ -1710,15 +1710,25 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
 
         # 1) 独立子任务并行隔离实现 → 落到 branch（此处不跑集成，留到最后整条一起验）
         greens, lines = (await _implement_parallel(descs, test_cmd)) if descs else ([], [])
+        landed = 0
+        dropped: list = []
         if greens:
-            await asyncio.to_thread(
+            # 捕获落分支结果：自测绿但相互**文本冲突**的块 apply 时会被跳过——必须如实报告，
+            # 否则"绿了却没落地"的块被静默丢弃、用户还以为都进去了（codex 审：此前返回值被丢弃）。
+            apply_res = await asyncio.to_thread(
                 apply_diffs_to_branch, repo_root, branch,
                 [(g["diff"], f"dev_auto: {g['desc']}") for g in greens], None)
+            landed = len(apply_res.get("applied", []))
+            dropped = apply_res.get("failed", [])
         elif deferred:
             await asyncio.to_thread(ensure_branch, repo_root, branch, "HEAD")  # 无绿独立块也给依赖一个基底
         if descs:
-            out.append(f"\n【独立批】{len(greens)}/{len(descs)} 通过：")
+            out.append(f"\n【独立批】{len(greens)}/{len(descs)} 通过自测，{landed} 块落到分支：")
             out.extend("  " + ln for ln in lines)
+            if dropped:                              # 自测绿但相互文本冲突、apply 被跳过 → 如实说
+                out.append(f"  ⚠️ {len(dropped)} 块虽自测绿但与其它块**文本冲突、未能干净落分支**（已跳过，"
+                           f"最终只验证实际落地部分）：")
+                out.extend(f"    · {d.get('msg', '?')}：{(d.get('error') or '')[:120]}" for d in dropped)
 
         # 2) 依赖子任务：拓扑序，逐个在 branch 之上接力实现+自测（红了自修复重试），绿则就地提交（推进 branch）
         dep_done = 0
@@ -1736,13 +1746,13 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     out.append(f"  · {title}：❌ 试了 {att} 次仍未过：{(r['output'] or '')[-140:]}")
 
         # 3) 最终集成验证：整条分支跑一遍全量
-        if not greens and dep_done == 0:
-            return "\n".join(out) + "\n\n没有任何子任务落地（都没过自测）；建议拆细或用 dev_isolated 逐个做。"
-        _progress(f"🔍 对整条分支 {branch}（{len(greens)} 独立 + {dep_done} 依赖）跑最终集成测试中…")
+        if landed == 0 and dep_done == 0:
+            return "\n".join(out) + "\n\n没有任何子任务落地（都没过自测/或落分支时相互冲突被丢）；建议拆细或用 dev_isolated 逐个做。"
+        _progress(f"🔍 对整条分支 {branch}（{landed} 独立 + {dep_done} 依赖）跑最终集成测试中…")
         integ = await asyncio.to_thread(
             verify_branch, repo_root, branch, test_cmd, "wt-verify-" + uuid.uuid4().hex[:8])
         if integ["ok"]:
-            done = (f"\n✅ 全部落到 {branch}（{len(greens)} 独立 + {dep_done} 依赖）且**集成后全量测试通过**"
+            done = (f"\n✅ 全部落到 {branch}（{landed} 独立 + {dep_done} 依赖）且**集成后全量测试通过**"
                     f"（未碰 main，git checkout {branch} 查看）。")
             # 诚实提示测试增量：从**整条分支相对 base 的实际 diff**算——独立批 + 依赖接力提交都覆盖到
             # （依赖接力的改动不在内存 greens 里，只看 greens 会让纯依赖成功时漏提示，见 codex 审）。
@@ -1753,7 +1763,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             if want_pr:                                      # 集成绿 + 要求开 PR → 经确认 push+开 PR
                 out.append(await _open_pr_for_branch(branch, task, "\n".join(out), base))
         else:
-            out.append(f"\n⚠️ 已落到 {branch}（{len(greens)} 独立 + {dep_done} 依赖），但**集成后全量测试未过**。"
+            out.append(f"\n⚠️ 已落到 {branch}（{landed} 独立 + {dep_done} 依赖），但**集成后全量测试未过**。"
                        f"失败尾部：\n{integ['output'][-1000:]}\n分支保留待修：git checkout {branch}。")
             if want_pr:
                 out.append("（集成测试未过，未自动开 PR——先把分支修绿再开。）")
