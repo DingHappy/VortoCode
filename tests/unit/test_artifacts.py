@@ -174,7 +174,7 @@ def test_view_escapes_title(client):
 # --------------------------------------------------------------- 鉴权：Cookie（token 已移出 URL，审计 P0#4）
 def test_artifact_api_auth_via_cookie(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("AUTODEV_API_TOKEN", "secret")
+    monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
     from src.web.server import app
     c = TestClient(app)
     aid = ArtifactStore(str(tmp_path)).publish("T", "<p>x</p>")["id"]
