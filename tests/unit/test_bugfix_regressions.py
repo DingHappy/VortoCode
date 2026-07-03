@@ -30,16 +30,5 @@ async def test_b3_decomposition_is_chained():
         assert cur.dependencies == [prev.id]   # 每个只依赖紧邻的上一个
 
 
-@pytest.mark.asyncio
-async def test_b5_taskqueue_stop_does_not_hang():
-    """B5: 队列非空时 stop() 不应死锁（先 join 再停）。"""
-    from src.core.task_queue import TaskQueue, Task
-    q = TaskQueue(max_workers=2)
-    done = []
-    q.register_handler("noop", lambda: done.append(1))
-    await q.start()
-    for _ in range(5):
-        await q.submit(Task(name="t", func="noop"))
-    # 修复前这里会永久阻塞；要求 5 秒内完成并处理完所有任务
-    await asyncio.wait_for(q.stop(), timeout=5)
-    assert len(done) == 5
+# 注：test_b5_taskqueue_stop_does_not_hang 已随 src/core/task_queue（从未接线的骨架）
+# 于 2026-07 退役删除。后台任务改由 src/gateway/tasks.TaskRunner 承担，其测试见 test_gateway_tasks.py。

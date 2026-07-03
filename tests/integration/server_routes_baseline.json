@@ -12,6 +12,24 @@
     ]
   },
   {
+    "path": "/api/agent/sessions",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/agent/sessions/{sid}",
+    "methods": [
+      "DELETE"
+    ]
+  },
+  {
+    "path": "/api/agent/sessions/{sid}",
+    "methods": [
+      "PATCH"
+    ]
+  },
+  {
     "path": "/api/agents/advanced",
     "methods": [
       "GET"
@@ -151,6 +169,24 @@
   },
   {
     "path": "/api/artifacts/{artifact_id}/versions",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/auth/login",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/auth/logout",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/auth/status",
     "methods": [
       "GET"
     ]
@@ -576,19 +612,37 @@
     ]
   },
   {
-    "path": "/api/tasks/list",
+    "path": "/api/tasks",
     "methods": [
       "GET"
     ]
   },
   {
-    "path": "/api/tasks/queue",
+    "path": "/api/tasks",
     "methods": [
-      "GET"
+      "POST"
     ]
   },
   {
     "path": "/api/tasks/{task_id}/update",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/tasks/{tid}",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/tasks/{tid}/cancel",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/tasks/{tid}/open_pr",
     "methods": [
       "POST"
     ]
@@ -732,41 +786,5 @@
   {
     "path": "/ws",
     "methods": []
-  },
-  {
-    "path": "/api/agent/sessions",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/agent/sessions/{sid}",
-    "methods": [
-      "DELETE"
-    ]
-  },
-  {
-    "path": "/api/agent/sessions/{sid}",
-    "methods": [
-      "PATCH"
-    ]
-  },
-  {
-    "path": "/api/auth/login",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/auth/logout",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/auth/status",
-    "methods": [
-      "GET"
-    ]
   }
 ]
