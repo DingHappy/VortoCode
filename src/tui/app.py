@@ -1947,7 +1947,8 @@ class VortoCodeTUI(App):
         # 只取 dev_auto——工厂还返回朴素 dev_isolated/dev_parallel，一并加会覆盖上面 TUI 的富 UI 版。
         from src.agents.main_agent import build_dev_tools as _factory_dev_tools
         tools += [t for t in _factory_dev_tools(self.repo_root, on_progress=self._chrome,
-                                                confirm=self._confirm_outward) if t.name == "dev_auto"]
+                                                confirm=self._confirm_outward)
+                  if t.name in ("dev_auto", "dev_resume")]
 
         # 制品（artifact）：把会话产出发布成可分享、实时更新的网页（由 Web 服务器在 /artifact 渲染）。
         # 首次发布弹确认（对齐 CC「批准后再发不再问」：更新静默），发布成功提示可点链接。

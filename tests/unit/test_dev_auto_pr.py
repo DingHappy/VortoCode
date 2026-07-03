@@ -46,8 +46,9 @@ def _patch_pipeline(monkeypatch, *, integration_ok=True):
     async def fake_run_isolated(repo_root, wid, desc, builder, *, test_cmd=None):
         return ("--- diff ---", None, {"ok": True, "output": ""})        # 绿、有 diff
 
-    def fake_apply(*a, **k):
-        return {"ok": True, "applied": [1], "failed": [], "integration": None}
+    def fake_apply(repo_root, branch, items, test_cmd=None):
+        # applied 回真实 msg（与真 apply_diffs_to_branch 一致）——landed 判定以 applied 白名单为准
+        return {"ok": True, "applied": [m for _d, m in items], "failed": [], "integration": None}
 
     def fake_verify(*a, **k):
         return {"ok": integration_ok, "output": "" if integration_ok else "FAIL tail"}
