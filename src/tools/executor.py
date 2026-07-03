@@ -3,13 +3,12 @@
 import asyncio
 import logging
 import time
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
-from .mcp_client import MCPClient, MCPToolCall, MCPToolResult
+from .mcp_client import MCPClient, MCPToolCall
 from .registry import Tool, ToolRegistry
-from .permission import ToolPermissionManager, PermissionCheckResult
+from .permission import ToolPermissionManager
 
 logger = logging.getLogger(__name__)
 

@@ -1074,6 +1074,19 @@ async def test_broken_tool_json_as_final_is_nudged():
     assert out == "好的，这是答案"
 
 
+@pytest.mark.asyncio
+async def test_persistent_weak_final_degrades_gracefully_not_loop():
+    """A5（#97 根治性）：模型持续空收尾 → 只纠偏一次，之后如实收尾（不无限循环、不崩）。"""
+    from src.agents.main_agent import MainAgent
+    llm = _ScriptLLM(["", "", ""])                      # 一直空内容
+    a = MainAgent([], llm=llm, max_steps=5)
+    out = await a.run_turn("你好", mode="plan")
+    assert out == ""                                     # 收尾为空，但没炸/没卡死
+    # 只注入过一次纠偏（nudged 一次性），不会每步都塞
+    assert sum(1 for m in a.history
+               if isinstance(m.get("content"), str) and "没有给出有效回答" in m["content"]) == 1
+
+
 def test_to_native_messages_structures_tool_use():
     # #4：提示式历史 → 原生 tool_calls / tool 角色（带 id），普通消息透传
     from src.agents.main_agent import _to_native_messages

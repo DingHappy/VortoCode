@@ -4,10 +4,9 @@ import asyncio
 import logging
 import uuid
 from abc import ABC, abstractmethod
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
-from pydantic import BaseModel, Field
+from typing import Any, Dict, List, Optional
+from pydantic import BaseModel
 
 from .base import Memory, MemoryItem
 

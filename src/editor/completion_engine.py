@@ -1,6 +1,5 @@
 """实时代码补全引擎"""
 
-import asyncio
 import hashlib
 import logging
 import time

@@ -104,6 +104,13 @@ def main():
     p.add_argument("--mode", choices=["plan", "build"], default="plan",
                    help="初始模式（默认 plan；IM 里可 /mode 切）")
 
+    p = sub.add_parser("cron", help="定时作业（.vortocode/cron.yaml）：list 看表 / run <name> 手动触发一次")
+    p.add_argument("action", choices=["list", "run"], help="list 列出作业 / run 手动跑一个")
+    p.add_argument("name", nargs="?", help="run 时的作业名")
+
+    p = sub.add_parser("heartbeat", help="心跳值班一次（读 .vortocode/HEARTBEAT.md + 领 BACKLOG.md）")
+    p.add_argument("action", choices=["run"], help="run：立刻值班一次（隔离会话、便宜模型）")
+
     args = parser.parse_args()
 
     # 无命令：给友好总览，而不是报错
@@ -111,11 +118,12 @@ def main():
         parser.print_help()
         sys.exit(0)
 
-    # 结构化日志（opt-in）：AUTODEV_JSON_LOGS=1 控制台 JSON；AUTODEV_LOG_FILE=路径 落盘（ELK-ready）
-    import os as _os
-    if _os.getenv("AUTODEV_JSON_LOGS") or _os.getenv("AUTODEV_LOG_FILE"):
+    # 结构化日志（opt-in）：VORTOCODE_JSON_LOGS=1 控制台 JSON；VORTOCODE_LOG_FILE=路径 落盘（ELK-ready）
+    from src.env_compat import env_compat
+    if env_compat("VORTOCODE_JSON_LOGS", "AUTODEV_JSON_LOGS") \
+            or env_compat("VORTOCODE_LOG_FILE", "AUTODEV_LOG_FILE"):
         from src.core.tracing import setup_structured_logging
-        setup_structured_logging(log_file=_os.getenv("AUTODEV_LOG_FILE") or None)
+        setup_structured_logging(log_file=env_compat("VORTOCODE_LOG_FILE", "AUTODEV_LOG_FILE") or None)
 
     if args.command == "agent":
         prompt = _read_prompt_arg(args.prompt)
@@ -169,6 +177,12 @@ def main():
     elif args.command == "im":
         asyncio.run(run_im(args.channel, mode=args.mode))
 
+    elif args.command == "cron":
+        asyncio.run(run_cron(args.action, args.name))
+
+    elif args.command == "heartbeat":
+        asyncio.run(run_heartbeat_cli())
+
 
 async def run_im(channel: str, *, mode: str = "plan"):
     """IM 通道桥入口：常驻长轮询，把主 agent 搬上 IM。fail-closed：缺配对凭证直接拒启。"""
@@ -218,6 +232,64 @@ async def run_im(channel: str, *, mode: str = "plan"):
     else:
         print(f"未知 IM 通道: {channel}", file=sys.stderr)
         sys.exit(2)
+
+
+async def run_cron(action: str, name=None):
+    """cron 子命令：list 列出作业 / run <name> 手动触发一次（隔离会话真跑，进度到 stderr）。"""
+    from src.gateway import cron as _cron
+    cwd = str(Path.cwd())
+    if action == "list":
+        jobs = _cron.load_jobs(cwd)
+        if not jobs:
+            print("（无 cron 作业；在 .vortocode/cron.yaml 里定义 jobs）")
+            return
+        state = _cron.CronState(cwd)
+        for j in jobs:
+            last = state.last_run(j.name)
+            flag = "" if j.enabled else "（禁用）"
+            print(f"· {j.name}{flag}  [{j.schedule.raw}]  announce={j.announce}  "
+                  f"上次={last.isoformat(timespec='minutes') if last else '从未'}")
+        return
+    # action == "run"
+    if not name:
+        print("用法：vortocode cron run <name>", file=sys.stderr)
+        sys.exit(2)
+    if not any(j.name == name for j in _cron.load_jobs(cwd)):
+        print(f"✗ 找不到 cron 作业 {name}（vortocode cron list 看有哪些）", file=sys.stderr)
+        sys.exit(2)
+    print(f"⏰ 手动触发 cron [{name}]（隔离会话）…", file=sys.stderr)
+    result = await _cron.run_job_by_name(cwd, name)
+    print((result or "（无输出）").strip())
+
+
+async def run_heartbeat_cli():
+    """heartbeat run：立刻值班一次（隔离会话、便宜模型）。领 backlog 时 submit 并**等它真跑完**。
+
+    这是一次性命令：若领了 backlog 活就 submit 到本地 runner，然后 **drain（await）** 那个任务——
+    否则 asyncio.run 退出时 pending 任务会被取消，backlog 却已被标 [~]（领走了没干完，误导，#129 评审）。
+    """
+    from src.gateway import heartbeat as _hb
+    from src.gateway import TaskRunner
+    from src.web.routers.tasks import _dev_worker
+    cwd = str(Path.cwd())
+    runner = TaskRunner(cwd, _dev_worker)
+    submitted: list = []
+
+    async def _submit(item):
+        t = await runner.submit(item, kind="dev")
+        submitted.append(t.id)                 # 记下来，函数返回前 drain，别让进程退出把它取消
+
+    async def _notify(text):
+        print(text)
+
+    print("🫀 心跳值班一次…", file=sys.stderr)
+    res = await _hb.run_heartbeat(cwd, submit=_submit, notify=_notify)
+    for tid in submitted:                      # 等领到的活真正跑完（否则 backlog 标了 [~] 却没干完）
+        print(f"⏳ 等后台任务 {tid} 跑完…", file=sys.stderr)
+        await runner.join(tid)
+        done = runner.get(tid)
+        print(f"[task {tid}] {done.status if done else '?'}", file=sys.stderr)
+    print(f"[heartbeat] action={res['action']}", file=sys.stderr)
 
 
 def _split_paths(raw):
@@ -701,7 +773,7 @@ def run_demo():
 ╚══════════════════════════════════════════════════════════════╝
     """)
     
-    # 自动启动服务器（默认仅绑本地；对外暴露请显式传 --host 并设置 AUTODEV_API_TOKEN）
+    # 自动启动服务器（默认仅绑本地；对外暴露请显式传 --host 并设置 VORTOCODE_API_TOKEN）
     run_server("127.0.0.1", 8000)
 
 

@@ -3,8 +3,7 @@
 profile/argv/开关逻辑跨平台测（CI Linux 也跑）；真·挡写行为测仅 macOS（CI 自动 skip）。
 """
 import os
-import shutil
-import sys
+import shutil  # noqa: F401 —— 供下方字符串形式 skipif 在运行时 eval 用（ruff 看不见字符串里的引用）
 
 import pytest
 

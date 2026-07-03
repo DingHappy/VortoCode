@@ -1,0 +1,38 @@
+# VortoCode cron 作业表示例——放到目标仓库的 `.vortocode/cron.yaml` 才生效。
+#
+# 调度循环默认**关**：仅当以 opt-in 方式起服务才跑（不擅自跑自主 LLM 作业）——
+#   VORTOCODE_CRON=1 vortocode server      # 起 cron
+#   VORTOCODE_HEARTBEAT=1 vortocode server # 起 heartbeat
+# 也可手动触发单个作业（不起常驻）：vortocode cron run <name>
+#
+# schedule 支持三种：
+#   at HH:MM          每天该时刻一次（如 at 02:30）
+#   every Nm|Nh|Nd    固定间隔（如 every 6h）
+#   5 段 cron 子集     m h dom mon dow（支持 * / 数字 / */N / a,b / a-b；dow 0=周日）
+# announce: im（把结果推到 IM）| silent（只落台账）
+
+jobs:
+  # 夜跑评测（B3）——每天凌晨跑一遍评测基线。默认注释掉（enabled: false 亦可）。
+  - name: nightly_evals
+    schedule: "at 02:30"
+    prompt: "跑一遍评测基线：python -m evals --baseline，把回归项汇总给我。"
+    model: mimo-v2.5           # 可用便宜/强模型分工（需中转站已授权该型号）
+    announce: im
+    enabled: false             # 默认关，确认要夜跑再改 true
+
+  # CI 红自动修（C3）——扫描本仓库打开的 vorto/* PR，CI 红的用 pr_fix 修。默认关。
+  - name: ci_red_autofix
+    schedule: "every 30m"
+    prompt: >
+      列出本仓库所有打开的 vorto/* 分支的 PR，对其中 CI 检查为红的，
+      调 pr_fix(pr=<号>) 按 review 评论 + CI 失败在该分支上修正并 push。
+      只碰 vorto/* 分支，绝不动 main。修完把结果告诉我。
+    announce: im
+    enabled: false             # 默认关（避免意外自动改动），确认要开再改 true
+
+  # 依赖升级检查——每周一早上看看有没有依赖要升。
+  - name: dep_check
+    schedule: "0 9 * * 1"
+    prompt: "看看 requirements.txt / pyproject 有没有明显该升级的依赖，列个清单（先别动手）。"
+    announce: im
+    enabled: false

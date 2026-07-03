@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path            # 模块级：供 _resolve_within 的返回注解引用（各工厂内仍按需局部导入）
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
 
 # 单个工具结果回灌给模型的最大字符数，避免长输出把上下文撑爆
@@ -1498,7 +1498,7 @@ def _test_delta_note(diff: str) -> str:
 
 
 def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]] = None,
-                    confirm: Optional[Callable] = None) -> list[Tool]:
+                    confirm: Optional[Callable] = None, draft_pr: bool = False) -> list[Tool]:
     """UI 无关的隔离 dev 工具（给 Web/CLI agent 用）。
 
     `dev_isolated`：在一次性 git worktree 里让可写子 agent 实现 + 自测，再跑测试验证；✅通过就
@@ -1712,9 +1712,10 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         title = f"dev_auto: {task[:60]}"
         if not await confirm(f"把 {branch} push 到远端并对 {base} 开 PR？\n  标题：{title}"):
             return f"\n（已取消开 PR；分支 {branch} 保留，可稍后手动 open_pr。）"
-        _progress(f"🚀 push {branch} 并对 {base} 开 PR…")
+        _progress(f"🚀 push {branch} 并对 {base} 开{'（draft）' if draft_pr else ''} PR…")
         from src.agents.vcs import push_and_open_pr
-        res = await asyncio.to_thread(push_and_open_pr, repo_root, branch, title, body[:4000], base)
+        res = await asyncio.to_thread(push_and_open_pr, repo_root, branch, title, body[:4000],
+                                      base, "origin", draft_pr)
         if res.get("ok") and res.get("url"):
             return f"\n🎉 已开 PR：{res['url']}"
         if res.get("pushed"):
@@ -1946,6 +1947,52 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                f"（计划已存盘 plan_id={dp.plan_id}；中断后可 dev_resume 续跑）"]
         return await _execute_plan(dp, test_cmd, out)
 
+    async def _pr_fix(args: dict) -> str:
+        """读一个 PR 的 review 评论 + CI 状态 → 在其分支上逐条修（自测）→ 绿则 push（确认门）。
+
+        硬闸：分支必须匹配 vorto/*，绝不碰 main/master/其它分支。'人在合并口'之前的往返自动化。"""
+        import asyncio
+        from src.agents.vcs import pr_feedback, push_branch
+        from src.agents.test_detect import detect_test_cmd
+
+        ref = str(args.get("pr") or args.get("branch") or args.get("ref") or "").strip()
+        if not ref:
+            return "pr_fix 需要 pr（PR 号）或 branch（vorto/* 分支名）。"
+        fb = await asyncio.to_thread(pr_feedback, repo_root, ref)
+        if not fb.get("ok"):
+            return f"读 PR 反馈失败：{fb.get('error')}"
+        branch = fb.get("branch") or (ref if ref.startswith("vorto/") else "")
+        if not branch.startswith("vorto/"):              # 硬闸：只修隔离流水线分支
+            return (f"拒绝：pr_fix 只在 vorto/* 分支上修（PR 的 head 分支是 {branch or '未知'}）。"
+                    f"绝不碰 main/其它分支。")
+        comments, checks = fb.get("comments") or [], fb.get("failing_checks") or []
+        if not comments and not checks:
+            return f"PR #{fb.get('pr')}（{branch}）没有待办的 review 评论，CI 也没红——无需修。"
+        # 把反馈拼成修复描述，喂到"在分支上接力实现+自测"的循环
+        parts = ["按下面的 PR review 反馈与 CI 失败逐条修正（只改必要处、别引入无关改动）："]
+        for c in comments[:20]:
+            loc = f"（{c['path']}:{c['line']}）" if c.get("path") else ""
+            parts.append(f"- [{c.get('author', '?')}]{loc} {c['body'][:300]}")
+        for ck in checks[:10]:
+            parts.append(f"- CI 失败：{ck['name']}（{ck.get('link', '')}）")
+        fix_desc = "\n".join(parts)
+        sel = str(args.get("test") or "").strip()
+        test_cmd = detect_test_cmd(repo_root, sel)
+        _progress(f"🔧 按 PR #{fb.get('pr')} 的 {len(comments)} 条评论 / {len(checks)} 个失败检查在 {branch} 上修…")
+        r = await _dependent_with_repair(branch, fix_desc, f"pr-fix #{fb.get('pr')}", test_cmd)
+        if not r.get("ok"):
+            return (f"❌ 按 PR 反馈修改后自测仍未过（试了 {r.get('attempts', 1)} 次）：{(r.get('output') or '')[-200:]}\n"
+                    f"分支 {branch} 未推送。")
+        # 绿了 → push（外向操作，走确认门）
+        if confirm is not None and not await confirm(
+                f"已按 PR #{fb.get('pr')} 的反馈在 {branch} 上修好且自测通过，push 到远端更新 PR？"):
+            return f"（已在本地 {branch} 修好并提交，但未 push——你取消了。）"
+        _progress(f"🚀 push {branch} 更新 PR #{fb.get('pr')}…")
+        pushed = await asyncio.to_thread(push_branch, repo_root, branch)
+        if pushed["ok"]:
+            return f"✅ 已按 PR #{fb.get('pr')} 的反馈修好、自测通过并 push 到 {branch}（PR 时间线可见新 commit）。"
+        return f"已在 {branch} 本地修好，但 push 失败：{pushed['output']}"
+
     async def _dev_resume(args: dict) -> str:
         """从落盘的 dev_auto 计划断点续跑：已 landed 的块跳过，未完成的（pending/running/failed）重走，
         最后重跑集成验证 + （若原计划 open_pr）审查段与开 PR。不传 plan_id 则列出最近可续的计划。"""
@@ -2003,6 +2050,13 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
              "不传 plan_id 则列出最近可续的计划。仅 build",
              {"plan_id": "要续跑的计划 id（dev_auto 起跑时会给出、存于 .vortocode/dev_plans/）；省略则列出可续计划"},
              _dev_resume, read_only=False),
+        Tool("pr_fix",
+             "读一个 PR 的 review 评论（含行级、已 resolved 的自动跳过）+ CI 失败检查，在其 **vorto/* 分支**上"
+             "逐条修正 + 自测，绿了经确认 push 更新 PR。'人在合并口'之前的往返自动化。硬闸：只碰 vorto/* 分支。仅 build",
+             {"pr": "PR 号（或用 branch 传 vorto/* 分支名）",
+              "branch": "可选，vorto/* 分支名（与 pr 二选一）",
+              "test": "可选，pytest 选择器"},
+             _pr_fix, read_only=False, outward=True),
     ]
 
 
@@ -2237,7 +2291,7 @@ def build_skill_tools(repo_root: str, confirm) -> list[Tool]:
 
 
 def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable[[str], None]] = None,
-                      with_artifacts: bool = False) -> list[Tool]:
+                      with_artifacts: bool = False, draft_pr: bool = False) -> list[Tool]:
     """标准主 agent 工具集（headless CLI 与 Web /agent 共用，保证二者"同源"、不漂移）。
 
     此前 cli._build_headless_agent 与 web._new_agent 各自手写同一串 build_*，极易漂移
@@ -2257,6 +2311,6 @@ def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable
     if with_artifacts:
         from src.web.artifacts import build_artifact_tools    # 惰性导入：避免 agents 层在导入期硬依赖 web
         tools += build_artifact_tools(repo_root)
-    tools += (build_dev_tools(repo_root, on_progress=on_progress, confirm=confirm)
+    tools += (build_dev_tools(repo_root, on_progress=on_progress, confirm=confirm, draft_pr=draft_pr)
               + build_command_tool(repo_root, confirm) + build_pr_tool(repo_root, confirm))
     return tools

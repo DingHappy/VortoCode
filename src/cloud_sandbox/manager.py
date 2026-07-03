@@ -1,9 +1,8 @@
 """云端沙箱系统 - 类似 E2B 的安全隔离执行环境"""
 
-import asyncio
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -110,7 +109,7 @@ class SandboxInstance:
         start_time = time.time()
         timeout = timeout or self.config.timeout
 
-        # 统一走 runner：Docker 可用则容器内真隔离；否则按 AUTODEV_ENABLE_SHELL 降级宿主机
+        # 统一走 runner：Docker 可用则容器内真隔离；否则按 VORTOCODE_ENABLE_SHELL 降级宿主机
         from ..sandbox.runner import run_code
         r = await run_code(command, language=language, timeout=timeout)
 

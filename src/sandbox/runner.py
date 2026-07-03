@@ -9,7 +9,6 @@
 
 import asyncio
 import logging
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -50,7 +49,9 @@ def docker_available() -> bool:
 
 
 def host_exec_allowed() -> bool:
-    return os.getenv("AUTODEV_ENABLE_SHELL", "").strip().lower() in ("1", "true", "yes", "on")
+    from src.env_compat import env_compat
+    return env_compat("VORTOCODE_ENABLE_SHELL", "AUTODEV_ENABLE_SHELL", "").strip().lower() \
+        in ("1", "true", "yes", "on")
 
 
 async def run_code(code: str, language: str = "python", timeout: int = 30) -> RunResult:
@@ -72,7 +73,7 @@ async def run_code(code: str, language: str = "python", timeout: int = 30) -> Ru
     if not host_exec_allowed():
         return RunResult(
             success=False, runtime="none", isolated=False,
-            error="无 Docker 隔离环境，且未开启宿主机执行（AUTODEV_ENABLE_SHELL=1），已拒绝执行。",
+            error="无 Docker 隔离环境，且未开启宿主机执行（VORTOCODE_ENABLE_SHELL=1），已拒绝执行。",
         )
 
     # 3. 已显式授权 → 宿主机降级执行（exec 数组，无 shell 注入）
@@ -87,8 +88,9 @@ async def run_pytest(workspace: str, timeout: int = 120) -> RunResult:
     否则宿主机执行——这是 dev 流程的内部受信执行（非未鉴权攻击面），不 fail-closed，
     以免在未配置测试镜像的常见环境下破坏开发闭环。
     """
+    from src.env_compat import env_compat
     ws = str(Path(workspace).resolve())
-    image = os.getenv("AUTODEV_SANDBOX_IMAGE", "").strip()
+    image = env_compat("VORTOCODE_SANDBOX_IMAGE", "AUTODEV_SANDBOX_IMAGE", "").strip()
     if image and docker_available():
         argv = ["docker", "run", "--rm", "--network", "none",
                 "-v", f"{ws}:/work", "-w", "/work", image, "python", "-m", "pytest", "-q"]

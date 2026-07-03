@@ -1,6 +1,6 @@
 """Git 相关路由（从 server.py 拆出；共享状态统一来自 src.web.state）。"""
 from fastapi import APIRouter
-from src.web.state import state, manager
+from src.web.state import state
 
 router = APIRouter()
 

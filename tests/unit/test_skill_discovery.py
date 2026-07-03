@@ -1,7 +1,6 @@
 """技能发现系统测试"""
 
 import pytest
-import asyncio
 import tempfile
 import shutil
 from pathlib import Path

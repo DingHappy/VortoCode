@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from .skill import Skill, SkillMetadata, SkillResult
+from .skill import Skill, SkillResult
 from .parser import SkillParser
 
 logger = logging.getLogger(__name__)

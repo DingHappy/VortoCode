@@ -1,6 +1,5 @@
 """技能系统 - 类似 Claude Code 的 Skills"""
 
-import os
 import yaml
 import logging
 from pathlib import Path

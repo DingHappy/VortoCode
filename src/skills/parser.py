@@ -2,9 +2,9 @@
 
 import yaml
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 
-from .skill import Skill, SkillArgument, SkillHook, SkillMetadata
+from .skill import SkillArgument, SkillHook, SkillMetadata
 
 
 class SkillParser:

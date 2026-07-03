@@ -1,15 +1,14 @@
 """工具管理器"""
 
-import asyncio
 import logging
 import yaml
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .mcp_client import MCPClient, MCPTransport, create_mcp_client
-from .registry import ToolRegistry, Tool, ToolPermission, DynamicToolRegistry
+from .registry import Tool, DynamicToolRegistry
 from .permission import ToolPermissionManager, PermissionRule
-from .executor import ToolExecutor, AsyncToolExecutor
+from .executor import AsyncToolExecutor
 
 logger = logging.getLogger(__name__)
 

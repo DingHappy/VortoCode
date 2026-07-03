@@ -1,6 +1,5 @@
 """项目级指令文件加载（src/agents/project，对标 AGENTS.md/CLAUDE.md）—— 纯离线。"""
 
-from pathlib import Path
 
 from src.agents.project import (find_instructions_file,
                                 load_project_instructions)

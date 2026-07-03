@@ -11,8 +11,8 @@ from src.web.server import app
 
 @pytest.fixture
 def client(monkeypatch):
-    monkeypatch.delenv("AUTODEV_API_TOKEN", raising=False)
-    monkeypatch.delenv("AUTODEV_ENABLE_BROWSER", raising=False)
+    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    monkeypatch.delenv("VORTOCODE_ENABLE_BROWSER", raising=False)
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -24,7 +24,7 @@ def test_browser_endpoints_disabled_by_default(client):
 
 
 def test_navigate_rejects_non_http_scheme(client, monkeypatch):
-    monkeypatch.setenv("AUTODEV_ENABLE_BROWSER", "1")
+    monkeypatch.setenv("VORTOCODE_ENABLE_BROWSER", "1")
     r = client.post("/api/browser/navigate", json={"url": "file:///etc/passwd"})
     assert r.status_code == 400
     assert "URL 被拒绝" in r.json().get("detail", "")
@@ -37,6 +37,6 @@ def test_navigate_rejects_non_http_scheme(client, monkeypatch):
     "http://localhost:8080/",                    # 解析到环回
 ])
 def test_navigate_blocks_ssrf_targets(client, monkeypatch, url):
-    monkeypatch.setenv("AUTODEV_ENABLE_BROWSER", "1")
+    monkeypatch.setenv("VORTOCODE_ENABLE_BROWSER", "1")
     r = client.post("/api/browser/navigate", json={"url": url})
     assert r.status_code == 400
