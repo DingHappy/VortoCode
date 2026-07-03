@@ -84,6 +84,12 @@ def main(argv=None) -> int:
                    help="覆盖协议（默认跟随环境=生产默认 native）")
     p.add_argument("--out", help="报告输出目录（默认 evals/reports/）")
     p.add_argument("--list", action="store_true", help="只列出场景后退出")
+    p.add_argument("--baseline", action="store_true",
+                   help="把本次报告存成基线到 evals/baselines/<date>-<model>-<protocol>.json")
+    p.add_argument("--compare", metavar="FILE",
+                   help="与一个基线报告对比，逐场景 Δ；检出回归则退出码非零")
+    p.add_argument("--matrix", metavar="SPEC",
+                   help="模型×协议矩阵串行跑，汇一张对比表（如 'mimo-v2.5,mimo-v2.5-pro × native,prompt'）")
     args = p.parse_args(argv)
 
     if args.list:
@@ -92,28 +98,71 @@ def main(argv=None) -> int:
         return 0
 
     _load_dotenv()
-    if args.model:
-        os.environ["DEFAULT_MODEL"] = args.model
-    if args.protocol == "prompt":
-        os.environ["VORTOCODE_NATIVE_TOOLS"] = "0"
-    elif args.protocol == "native":
-        os.environ.pop("VORTOCODE_NATIVE_TOOLS", None)
     if not os.getenv("OPENAI_API_KEY"):
         print("✗ 无 OPENAI_API_KEY（.env 缺失或未配）——真机评测需要它。", file=sys.stderr)
         return 2
 
-    report = asyncio.run(_run(args))
-
-    md = to_markdown(report)
-    print(md)
     out_dir = Path(args.out) if args.out else _ROOT / "evals" / "reports"
+
+    # 矩阵模式：串行跑每个 (model, protocol) 组合，汇总对比表
+    if args.matrix:
+        from .compare import matrix_markdown, parse_matrix
+        combos = parse_matrix(args.matrix)
+        if not combos:
+            print(f"✗ 无法解析 --matrix：{args.matrix}", file=sys.stderr)
+            return 2
+        rows = []
+        for model, proto in combos:
+            _apply_model_protocol(model, proto)
+            print(f"▶▶ 矩阵：model={model} protocol={proto or '默认'}", file=sys.stderr, flush=True)
+            rep = asyncio.run(_run(args))
+            rows.append({"model": model, "protocol": proto, "aggregate": rep["aggregate"]})
+        md = matrix_markdown(rows)
+        print(md)
+        _write_report({"meta": {"matrix": args.matrix}, "rows": rows}, out_dir, md=md, kind="matrix")
+        return 0
+
+    _apply_model_protocol(args.model, args.protocol)
+    report = asyncio.run(_run(args))
+    md = to_markdown(report)
+
+    # 与基线对比（检出回归 → 非零退出码，供 CI/夜跑门控）
+    exit_code = 0
+    if args.compare:
+        from .compare import compare_markdown, compare_reports, load_report
+        cmp = compare_reports(load_report(args.compare), report)
+        md += "\n" + compare_markdown(cmp)
+        if cmp["has_regression"]:
+            exit_code = 1
+
+    print(md)
+    _write_report(report, out_dir, md=md, kind="report")
+
+    if args.baseline:
+        from .compare import save_baseline
+        path = save_baseline(report, _ROOT / "evals" / "baselines",
+                             date=datetime.now().strftime("%Y%m%d"))
+        print(f"基线已存档：{path}", file=sys.stderr)
+    return exit_code
+
+
+def _apply_model_protocol(model, protocol) -> None:
+    """把 model/protocol 落到环境（DEFAULT_MODEL / VORTOCODE_NATIVE_TOOLS）。"""
+    if model:
+        os.environ["DEFAULT_MODEL"] = model
+    if protocol == "prompt":
+        os.environ["VORTOCODE_NATIVE_TOOLS"] = "0"
+    elif protocol == "native":
+        os.environ.pop("VORTOCODE_NATIVE_TOOLS", None)
+
+
+def _write_report(report: dict, out_dir: Path, *, md: str, kind: str) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    (out_dir / f"{stamp}.json").write_text(json.dumps(report, ensure_ascii=False, indent=2),
-                                           encoding="utf-8")
-    (out_dir / f"{stamp}.md").write_text(md, encoding="utf-8")
-    print(f"报告已写入 {out_dir}/{stamp}.{{json,md}}", file=sys.stderr)
-    return 0
+    (out_dir / f"{stamp}-{kind}.json").write_text(json.dumps(report, ensure_ascii=False, indent=2),
+                                                  encoding="utf-8")
+    (out_dir / f"{stamp}-{kind}.md").write_text(md, encoding="utf-8")
+    print(f"报告已写入 {out_dir}/{stamp}-{kind}.{{json,md}}", file=sys.stderr)
 
 
 if __name__ == "__main__":
