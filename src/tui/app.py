@@ -1609,13 +1609,13 @@ class VortoCodeTUI(App):
             desc = str(args.get("description") or args.get("task") or args.get("goal") or "").strip()
             if not desc:
                 return "dev_isolated 需要 description（要在隔离工作区实现的任务）。"
-            import sys
             import uuid
             from src.agents.worktree import run_isolated_task
             from src.agents.main_agent import build_read_tools, build_write_tools
+            from src.agents.test_detect import detect_test_cmd
             wid = "wt-" + uuid.uuid4().hex[:8]
             sel = str(args.get("test") or "").strip()                 # 可选：narrow 到某些测试
-            test_cmd = [sys.executable, "-m", "pytest", "-q", sel or "tests/"]
+            test_cmd = detect_test_cmd(self.repo_root, sel)           # 按仓库类型探测（pytest/npm/go/cargo/make）
             self._chrome(f"[magenta]🧪 隔离实现：{desc}[/magenta][dim]（独立 worktree，完成后跑测试验证）[/dim]")
 
             def _build(wt_path: str):
@@ -1679,12 +1679,12 @@ class VortoCodeTUI(App):
             if not tasks:
                 return "dev_parallel 需要 tasks（相互独立的子任务字符串列表）。"
             import asyncio
-            import sys
             import uuid
             from src.agents.worktree import run_isolated_task, apply_diffs_to_branch
             from src.agents.main_agent import build_read_tools, build_write_tools
+            from src.agents.test_detect import detect_test_cmd
             sel = str(args.get("test") or "").strip()
-            test_cmd = [sys.executable, "-m", "pytest", "-q", sel or "tests/"]
+            test_cmd = detect_test_cmd(self.repo_root, sel)           # 按仓库类型探测（pytest/npm/go/cargo/make）
             self._chrome(f"[magenta]🧪 并行隔离实现（{len(tasks)}）—— 各自独立 worktree、互不冲突[/magenta]")
 
             async def _one(desc):
