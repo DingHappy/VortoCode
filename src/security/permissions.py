@@ -1,6 +1,5 @@
 """权限管理系统 - 控制 Agent 行为边界"""
 
-import os
 import logging
 from enum import Enum
 from pathlib import Path

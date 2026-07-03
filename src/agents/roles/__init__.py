@@ -12,7 +12,6 @@
 一并退役删除（2026-07 路线 A）——它们只服务已退役的 web/workspaces 批处理入口。
 """
 
-import asyncio
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional

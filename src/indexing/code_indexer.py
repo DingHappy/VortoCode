@@ -9,10 +9,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .ast_parser import (
     ASTParserFactory,
-    CodeChunk,
     CodeLanguage,
-    CodeNode,
-    NodeType
+    CodeNode
 )
 
 logger = logging.getLogger(__name__)
@@ -427,9 +425,9 @@ class QdrantVectorStore:
 
 
 def make_vector_store(dimension: int = 384):
-    """按 env 选择向量后端：AUTODEV_QDRANT_URL 配置且 qdrant-client 可用 → Qdrant，否则内存。"""
-    import os
-    url = os.getenv("AUTODEV_QDRANT_URL", "").strip()
+    """按 env 选择向量后端：VORTOCODE_QDRANT_URL 配置且 qdrant-client 可用 → Qdrant，否则内存。"""
+    from src.env_compat import env_compat
+    url = env_compat("VORTOCODE_QDRANT_URL", "AUTODEV_QDRANT_URL", "").strip()
     if url:
         try:
             return QdrantVectorStore(url=url, dimension=dimension)

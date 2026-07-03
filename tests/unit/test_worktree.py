@@ -406,7 +406,6 @@ async def test_apply_diffs_true_conflict_skipped_no_markers(tmp_path):
 @pytest.mark.asyncio
 async def test_build_dev_tools_lands_green_on_branch(monkeypatch, tmp_path):
     # UI 无关的 dev_isolated（Web 用）：实现+验证通过 → 自动落到 vorto/ 分支，不碰 main
-    import sys
     import src.llm.client as llmmod
     from src.agents.main_agent import build_dev_tools
 

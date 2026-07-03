@@ -23,13 +23,8 @@ from .monitoring import (
     metrics,
 )
 
-from .task_queue import (
-    TaskStatus,
-    TaskPriority,
-    Task,
-    TaskQueue,
-    TaskScheduler,
-)
+# 注：task_queue（TaskQueue/TaskScheduler 骨架）从未接线，已于 2026-07 退役——
+# 后台任务改由常驻运行时 src/gateway/tasks.py（TaskRunner + write-ahead 台账）承担。
 
 from .cache import (
     CacheEntry,
@@ -75,14 +70,8 @@ __all__ = [
     "check_memory",
     "check_disk",
     "check_cpu",
-    
-    # 任务队列
-    "TaskStatus",
-    "TaskPriority",
-    "Task",
-    "TaskQueue",
-    "TaskScheduler",
-    
+    "metrics",
+
     # 缓存
     "CacheEntry",
     "CacheStats",

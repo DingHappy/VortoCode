@@ -19,7 +19,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 from urllib.parse import urljoin
 from urllib.request import pathname2url
 

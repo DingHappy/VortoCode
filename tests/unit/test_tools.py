@@ -1,15 +1,11 @@
 """工具集成测试"""
 
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.tools import (
-    MCPClient, MCPTransport, MCPTool,
-    ToolRegistry, Tool, ToolPermission,
+    MCPTransport, ToolRegistry, Tool, ToolPermission,
     ToolPermissionManager, PermissionRule,
-    ToolExecutor, ToolExecutionResult,
-    ToolManager, ToolManagerFactory
+    ToolExecutor, ToolManager
 )
 
 

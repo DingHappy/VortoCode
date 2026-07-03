@@ -1,6 +1,5 @@
 """状态统一系统 - Factor 5: Unify execution state and business state"""
 
-import asyncio
 import json
 import logging
 import uuid

@@ -12,7 +12,7 @@ from src.web.server import app
 
 @pytest.fixture
 def client(monkeypatch):
-    monkeypatch.delenv("AUTODEV_API_TOKEN", raising=False)
+    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
     # 去掉 key：端点走确定性回退，断言稳定（本地 .env 有 key 时也不打真网络）
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     return TestClient(app, raise_server_exceptions=False)

@@ -95,3 +95,24 @@ harness 极简主义（借鉴 Anthropic）：下面每一项都是"对当前模�
 - **未覆盖**：#114/#116 那类**顶层 agent + 协议**幻觉（模型把工具结果误当用户消息、凭空编造），
   需经真实顶层 MainAgent 驱动——列为 v2（`--via-agent`）。当前 `--protocol` 对直接驱动影响有限
   （实现子 agent 恒提示式），主要为 v2 预留。
+
+## 基线对比 + 模型/协议矩阵（B3）
+
+把"1/3 vs 3/3 轶事"换成有统计基线的对比。换模型/换协议/调提示后必跑 `--compare`，回答上面
+"承重假设还成不成立"。
+
+```bash
+# 存一个基线（当前模型/协议）
+python -m evals --baseline
+
+# 换了模型/提示后，与基线对比——检出回归（含诚实率/落地率下降）即非零退出，可挂 CI/夜跑门控
+python -m evals --compare evals/baselines/20260703-mimo-v2.5-native.json
+
+# 模型 × 协议矩阵，一次跑完汇一张对比表（需中转站已授权对应模型）
+python -m evals --matrix "mimo-v2.5,mimo-v2.5-pro × native,prompt"
+```
+
+- **回归判定**：任一场景通过率下降 = 回归；**诚实率/落地率下降 = 硬回归**（护城河底线，即使无场景级回归也拦）。
+- **夜跑**：`examples/cron.yaml.example` 的 `nightly_evals`（默认关）把 `--compare` 挂到 D3 的 cron 上，
+  结果按 announce 投递。落地前先手动跑。
+- ⚠️ 矩阵里的 `-pro` 等型号需中转站令牌先授权（当前只授权 `mimo-v2.5`）；未授权则只能跑单模型基线。

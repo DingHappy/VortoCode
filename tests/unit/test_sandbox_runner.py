@@ -34,19 +34,19 @@ async def test_uses_docker_when_available(monkeypatch):
 @pytest.mark.asyncio
 async def test_refuses_without_docker_and_without_shell(monkeypatch):
     monkeypatch.setattr(runner, "docker_available", lambda: False)
-    monkeypatch.delenv("AUTODEV_ENABLE_SHELL", raising=False)
+    monkeypatch.delenv("VORTOCODE_ENABLE_SHELL", raising=False)
 
     r = await runner.run_code("print('hi')", "python")
     assert r.success is False
     assert r.runtime == "none"
     assert r.isolated is False
-    assert "AUTODEV_ENABLE_SHELL" in r.error          # 明确告知如何开启
+    assert "VORTOCODE_ENABLE_SHELL" in r.error          # 明确告知如何开启
 
 
 @pytest.mark.asyncio
 async def test_host_fallback_when_shell_enabled(monkeypatch):
     monkeypatch.setattr(runner, "docker_available", lambda: False)
-    monkeypatch.setenv("AUTODEV_ENABLE_SHELL", "1")
+    monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
 
     r = await runner.run_code("print('it works')", "python")
     assert r.runtime == "host"
@@ -58,7 +58,7 @@ async def test_host_fallback_when_shell_enabled(monkeypatch):
 @pytest.mark.asyncio
 async def test_run_pytest_uses_docker_when_image_configured(monkeypatch, tmp_path):
     # 隔离为 opt-in：配置了测试镜像 + Docker 可用才走容器
-    monkeypatch.setenv("AUTODEV_SANDBOX_IMAGE", "myorg/pytest:latest")
+    monkeypatch.setenv("VORTOCODE_SANDBOX_IMAGE", "myorg/pytest:latest")
     monkeypatch.setattr(runner, "docker_available", lambda: True)
     captured = {}
 
@@ -87,7 +87,7 @@ async def test_run_pytest_uses_docker_when_image_configured(monkeypatch, tmp_pat
 @pytest.mark.asyncio
 async def test_run_pytest_host_when_no_image(monkeypatch, tmp_path):
     # 未配置镜像 → 即使 Docker 可用也走宿主机（不破坏默认开发流程）
-    monkeypatch.delenv("AUTODEV_SANDBOX_IMAGE", raising=False)
+    monkeypatch.delenv("VORTOCODE_SANDBOX_IMAGE", raising=False)
     monkeypatch.setattr(runner, "docker_available", lambda: True)
     (tmp_path / "test_x.py").write_text("def test_ok():\n    assert 1 + 1 == 2\n")
 

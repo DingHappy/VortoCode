@@ -1,12 +1,10 @@
 """Hook系统测试"""
 
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.hooks.hook import Hook, HookEvent, HookEventType, HookResult
 from src.hooks.registry import HookRegistry
-from src.hooks.executor import HookExecutor, HookExecutionResult, HookSystem
+from src.hooks.executor import HookExecutor, HookSystem
 
 
 class TestHookEvent:

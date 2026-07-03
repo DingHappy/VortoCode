@@ -4,7 +4,6 @@
 跑格式化"这类工具级 hook 成为可能（之前 post_tool_use hook 对每个工具都触发）。
 """
 
-import sys
 
 import pytest
 
