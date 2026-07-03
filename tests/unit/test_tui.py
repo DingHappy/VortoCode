@@ -114,6 +114,36 @@ async def test_tui_dev_parallel_runs_integration_and_reports_semantic_conflict(m
 
 
 @pytest.mark.asyncio
+async def test_tui_dev_parallel_reports_dropped_block_in_return(monkeypatch, tmp_path):
+    """TUI dev_parallel 落分支时被文本冲突丢掉的块，必须写进**返回值**（主 agent 看得到），
+    不能只 _chrome 到 UI——否则主 agent 只见"N 块已应用"、把被丢的块静默漏报（#8，与 dev_auto 对齐）。"""
+    import src.agents.worktree as wt
+    from src.tui.app import VortoCodeTUI
+
+    async def _fake_isolated(repo_root, wid, desc, build_agent, mode="build", test_cmd=None):
+        return (f"--- diff for {desc} ---\n", "done", {"ok": True, "output": ""})
+    monkeypatch.setattr(wt, "run_isolated_task", _fake_isolated)
+
+    def _fake_apply(repo_root, branch, items, test_cmd=None):
+        # 第一块落地、第二块文本冲突被丢；落地那块集成绿
+        return {"ok": True, "branch": branch, "applied": [items[0][1]],
+                "failed": [{"msg": items[1][1], "error": "patch does not apply"}],
+                "integration": {"ok": True, "output": ""}}
+    monkeypatch.setattr(wt, "apply_diffs_to_branch", _fake_apply)
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+
+    async def _yes(_m):
+        return True
+    monkeypatch.setattr(app, "_confirm_write", _yes)
+    monkeypatch.setattr(app, "_chrome", lambda *a, **k: None)
+    agent = app._build_main_agent()
+    out = await agent.tools["dev_parallel"].handler({"tasks": ["加 A", "加 B"]})
+
+    assert "未能干净落分支" in out                          # 被丢的块写进返回值（不再静默）
+
+
+@pytest.mark.asyncio
 async def test_toggle_mode_via_command_and_key():
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
