@@ -1392,8 +1392,8 @@ class VortoCodeTUI(App):
     async def _route(self, text: str) -> None:
         """普通话（非 / 命令）入口：交给主 agent loop。
 
-        主 agent 自己决定是聊天/读代码/扫描（只读工具），还是把正经开发任务交给
-        run_dev_workflow（重型，build 模式）—— 不再需要前置意图分类器，闲聊天然由它处理。
+        主 agent 自己决定是聊天/读代码/扫描（只读工具），还是把正经开发任务交给隔离 dev 工具
+        （dev_isolated/dev_parallel/dev_auto，重型、build 模式）—— 不再需要前置意图分类器，闲聊天然由它处理。
         """
         import os
         if not os.getenv("OPENAI_API_KEY"):
@@ -1504,7 +1504,7 @@ class VortoCodeTUI(App):
         """构建主 agent 及其工具集（工具是闭包，复用本 TUI 已有的能力）。
 
         只读工具（read_file/list_files/analyze_repo）plan 也可用；写/重型工具
-        （run_dev_workflow）仅 build —— 这就是 opencode Plan/Build 的"工具权限门"。
+        （edit_file/dev_isolated/dev_auto/run_command…）仅 build —— 这就是 opencode Plan/Build 的"工具权限门"。
         """
         from src.agents.main_agent import MainAgent, Tool
 
@@ -1597,12 +1597,6 @@ class VortoCodeTUI(App):
             self._chrome(f"[green]已重命名 {symbol} → {new_name}，改了 {len(written)} 个文件"
                          f"（请 review；/diff 看全）[/green]")
             return f"已把 {symbol} 语义重命名为 {new_name}，修改 {len(written)} 个文件：{', '.join(written)}"
-
-        async def _t_run_dev(args: dict) -> str:
-            goal = str(args.get("goal", "")).strip()
-            if not goal:
-                return "run_dev_workflow 需要 goal 参数（开发目标）。"
-            return await self._run_dev(goal)
 
         async def _t_dev_isolated(args: dict) -> str:
             """隔离 worktree 里实现一步 + 在其中跑测试逐件验证，产出 diff（绿=可应用）待人工确认。"""
@@ -1923,9 +1917,6 @@ class VortoCodeTUI(App):
                  "类/变量改名，预览多文件 diff→确认→落工作区；写操作，仅 build",
                  {"symbol": "现有符号名", "new_name": "新名（合法标识符）"},
                  _t_rename_symbol, read_only=False),
-            Tool("run_dev_workflow",
-                 "把一个明确的开发目标交给 dev→test→review 流水线自动实现+测试（重型，仅 build 模式）",
-                 {"goal": "开发目标（自然语言）"}, _t_run_dev, read_only=False),
             Tool("dev_isolated",
                  "在隔离 git worktree 里让可写子 agent 实现一个独立子任务，并在其中跑测试逐件验证，"
                  "产出 diff（✅通过=可应用 / ❌未过=带失败输出供修正）待人工确认；绝不碰主工作区。"
@@ -1950,6 +1941,13 @@ class VortoCodeTUI(App):
                  "高危，每条都需确认、明显危险操作直接拒（仅 build）",
                  {"command": "要执行的 shell 命令"}, _t_run_command, read_only=False, outward=True),
         ]
+
+        # dev_auto（一句话→自动分解→并行/接力实现→集成→可选开 PR）：复用**工厂版**（自主流水线，
+        # 靠隔离 + build 门 + 落 vorto/auto 分支保关口），进度走 _chrome、开 PR 外向确认走 _confirm_outward。
+        # 只取 dev_auto——工厂还返回朴素 dev_isolated/dev_parallel，一并加会覆盖上面 TUI 的富 UI 版。
+        from src.agents.main_agent import build_dev_tools as _factory_dev_tools
+        tools += [t for t in _factory_dev_tools(self.repo_root, on_progress=self._chrome,
+                                                confirm=self._confirm_outward) if t.name == "dev_auto"]
 
         # 制品（artifact）：把会话产出发布成可分享、实时更新的网页（由 Web 服务器在 /artifact 渲染）。
         # 首次发布弹确认（对齐 CC「批准后再发不再问」：更新静默），发布成功提示可点链接。
