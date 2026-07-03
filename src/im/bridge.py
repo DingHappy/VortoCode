@@ -175,15 +175,17 @@ class IMBridge:
 
     async def _task_worker(self, task, on_progress):
         """后台 dev 任务：跑 dev_auto（open_pr=True + 后台确认门 + draft）；集成绿→按钮→draft PR。"""
-        from src.agents.dev_plan import list_plans
+        from src.agents.dev_plan import load_plan
         from src.agents.main_agent import build_dev_tools
         tools = {t.name: t for t in build_dev_tools(self.repo_root, on_progress=on_progress,
                                                     confirm=self._bg_confirm, draft_pr=True)}
-        result = await tools["dev_auto"].handler({"task": task.prompt, "open_pr": True})
-        plans = list_plans(self.repo_root)
-        if plans:
-            task.plan_id = plans[0]["plan_id"]
-            task.branch = plans[0].get("branch", "")
+        # task-scoped plan_id 钉住本次计划，不靠"全局最新 plan"猜（并发多任务会串单，#128 评审）
+        pid = f"bg-{task.id}"
+        result = await tools["dev_auto"].handler({"task": task.prompt, "open_pr": True, "plan_id": pid})
+        plan = load_plan(self.repo_root, pid)
+        if plan is not None:
+            task.plan_id = plan.plan_id
+            task.branch = plan.branch
         return result
 
     async def _bg_confirm(self, message: str) -> bool:
