@@ -128,6 +128,49 @@ async def test_no_pr_when_integration_red(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_review_gate_runs_before_pr(tmp_path, monkeypatch):
+    """开 PR 时（open_pr=True）：集成绿后先跑 PR 前审查段，再开 PR。"""
+    monkeypatch.setenv("VORTOCODE_DEV_REVIEW", "1")            # 覆盖 conftest 的默认关
+    _init_repo_on_branch(tmp_path, "dev")
+    _patch_pipeline(monkeypatch, integration_ok=True)
+    import src.agents.review as review
+    import src.agents.vcs as vcs
+    calls = {"n": 0}
+
+    async def fake_review(*a, **k):
+        calls["n"] += 1
+        return []                                             # 无 P0/P1 → 放行
+    monkeypatch.setattr(review, "review_branch", fake_review)
+    monkeypatch.setattr(vcs, "push_and_open_pr",
+                        lambda *a, **k: {"ok": True, "pushed": True, "url": "u", "error": ""})
+
+    async def yes(_m):
+        return True
+    out = await _dev_auto(tmp_path, yes).handler({"task": "x", "open_pr": True})
+    assert calls["n"] >= 1 and "审查通过" in out               # 开 PR 前审查确实跑了
+
+
+@pytest.mark.asyncio
+async def test_review_gate_skipped_when_no_pr(tmp_path, monkeypatch):
+    """只落本地分支（open_pr 未给）：**不**跑审查段（#120 P1：审查只在真开 PR 时跑）。"""
+    monkeypatch.setenv("VORTOCODE_DEV_REVIEW", "1")            # 即便开关开着，无 PR 也不跑
+    _init_repo_on_branch(tmp_path, "dev")
+    _patch_pipeline(monkeypatch, integration_ok=True)
+    import src.agents.review as review
+    calls = {"n": 0}
+
+    async def fake_review(*a, **k):
+        calls["n"] += 1
+        return []
+    monkeypatch.setattr(review, "review_branch", fake_review)
+
+    async def yes(_m):
+        return True
+    out = await _dev_auto(tmp_path, yes).handler({"task": "x"})   # 没给 open_pr
+    assert calls["n"] == 0 and "审查" not in out              # 审查未跑、无审查噪音
+
+
+@pytest.mark.asyncio
 async def test_backward_compat_no_open_pr_arg(tmp_path, monkeypatch):
     _patch_pipeline(monkeypatch, integration_ok=True)
     import src.agents.vcs as vcs
