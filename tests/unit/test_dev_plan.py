@@ -333,6 +333,34 @@ async def test_dev_auto_persists_plan_and_reports_id(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_dev_auto_honors_pinned_plan_id(tmp_path, monkeypatch):
+    """dev_auto 接受调用方指定的 plan_id——后台 worker 靠它按确定 id load_plan 拿 branch，
+    不必猜"全局最新 plan"（防并发多任务串单，#128 评审）。"""
+    _init_repo(tmp_path)
+    import src.agents.decompose as dec
+    import src.agents.worktree as wt
+
+    async def fake_decompose(task):
+        return {"descriptions": ["块甲"], "independent": [_Sub("a", "A")], "deferred": [], "total": 1}
+    monkeypatch.setattr(dec, "decompose_for_parallel", fake_decompose)
+
+    async def ok_isolated(repo, wid, desc, build, test_cmd=None):
+        return ("diff\n", "c", {"ok": True, "output": ""})
+    monkeypatch.setattr(wt, "run_isolated_task", ok_isolated)
+    monkeypatch.setattr(wt, "apply_diffs_to_branch",
+                        lambda repo, br, items, tc=None: {"ok": True, "branch": br,
+                                                          "applied": [m for _d, m in items],
+                                                          "failed": [], "integration": None})
+    monkeypatch.setattr(wt, "verify_branch",
+                        lambda repo, br, tc, wid: {"ok": True, "output": "", "cmd": "p"})
+
+    await _dev_tools(tmp_path)["dev_auto"].handler({"task": "做个事", "plan_id": "bg-task-xyz"})
+    loaded = dp.load_plan(str(tmp_path), "bg-task-xyz")       # 按指定 id 精确取回本次计划
+    assert loaded is not None and loaded.plan_id == "bg-task-xyz"
+    assert loaded.branch.startswith("vorto/auto-") and loaded.status == "integrated"
+
+
+@pytest.mark.asyncio
 async def test_apply_whole_failure_never_marks_landed(tmp_path, monkeypatch):
     """整体落分支失败（worktree add 挂）→ 绿块**不得**被误标 landed（#127 P1 回归）。
 

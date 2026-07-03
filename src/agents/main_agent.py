@@ -1912,6 +1912,9 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         if not task:
             return "dev_auto 需要 task（要自动分解并实现的大任务）。"
         want_pr = _truthy(args.get("open_pr") or args.get("pr") or False)
+        # 调用方（如后台任务 worker）可**指定 plan_id**——这样它能在 dev_auto 返回后按这个确定的 id
+        # load_plan 拿到本次的 branch，不必靠"全局最新 plan"猜（并发多任务时会串单，见 #128 评审）。
+        pinned_pid = str(args.get("plan_id") or "").strip() or None
         base = _detect_base_branch(repo_root)               # PR base：dev_auto 出发时所在分支
         sel = str(args.get("test") or "").strip()
         from src.agents.test_detect import detect_test_cmd
@@ -1926,7 +1929,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             return f"分解出 {plan['total']} 个子任务，但没拿到可实现的描述；建议用 dev_isolated 逐个做。"
 
         branch = "vorto/auto-" + uuid.uuid4().hex[:8]
-        dp = _dp.DevPlan.new(task, branch, base, test_sel=sel, want_pr=want_pr)
+        dp = _dp.DevPlan.new(task, branch, base, test_sel=sel, want_pr=want_pr, plan_id=pinned_pid)
         for i, d in enumerate(descs):
             dp.blocks.append(_dp.Block(id=f"ind-{i}", kind="independent", desc=d))
         for s in deferred:
