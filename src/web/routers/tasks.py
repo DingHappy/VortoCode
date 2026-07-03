@@ -83,11 +83,63 @@ async def cancel_task_bg(tid: str):
     return {"ok": ok, "cancelled": ok}
 
 
+# ---- 通知台账：daemon 路径（scheduler 里的 cron/heartbeat）的投递终点，绝不静默丢 ----
+# cron 的 announce=im 结果、heartbeat 的 surfaced 发现，此前在常驻 scheduler 里没接 notify → 无声消失
+# （codex 审 #129）。这里落一条**可查询的持久台账**（.vortocode/logs/notices.jsonl，logs/ 已在
+# .vortocode 自忽略清单内）+ WS 广播给连着的客户端；将来 IM bridge 并进 gateway 后再加 IM 投递。
+_MAX_NOTICES = 500
+
+
+def record_notice(repo_root: str, text: str, *, source: str = "scheduler") -> None:
+    """往通知台账追加一条（JSONL，尾部截断到 _MAX_NOTICES）。best-effort，出错不抛。"""
+    from datetime import datetime, timezone
+    p = Path(repo_root) / ".vortocode" / "logs" / "notices.jsonl"
+    try:
+        from src.agents.dev_plan import ensure_state_gitignore
+        ensure_state_gitignore(repo_root)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        entry = json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                            "source": source, "text": str(text)[:2000]}, ensure_ascii=False)
+        lines = []
+        if p.is_file():
+            lines = p.read_text(encoding="utf-8").splitlines()[-(_MAX_NOTICES - 1):]
+        lines.append(entry)
+        tmp = p.with_suffix(".jsonl.tmp")
+        tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        tmp.replace(p)
+    except (OSError, TypeError, ValueError):
+        pass
+
+
+def load_notices(repo_root: str, limit: int = 50) -> list:
+    """读通知台账尾部 N 条（新的在前）。无文件/坏行 → 尽量返回能解析的。"""
+    p = Path(repo_root) / ".vortocode" / "logs" / "notices.jsonl"
+    if not p.is_file():
+        return []
+    out = []
+    try:
+        for ln in p.read_text(encoding="utf-8").splitlines():
+            try:
+                out.append(json.loads(ln))
+            except ValueError:
+                continue
+    except OSError:
+        return []
+    return list(reversed(out[-limit:]))
+
+
+@router.get("/api/notices")
+async def get_notices(limit: int = 50):
+    """查询后台通知台账（cron 结果 / heartbeat 发现），新的在前。"""
+    return {"notices": load_notices(os.getcwd(), max(1, min(int(limit), _MAX_NOTICES)))}
+
+
 async def scheduler_loop(stop_event):
     """常驻调度循环（server lifespan 起，opt-in）：每分钟 tick 一次 cron；按 heartbeat 间隔值班。
 
     默认关（VORTOCODE_CRON / VORTOCODE_HEARTBEAT 二者都未开则本循环根本不启动，见 lifespan）。
-    cron / heartbeat 都隔离会话跑、产出进台账 / 按 announce 投递，绝不碰主会话。
+    cron / heartbeat 都隔离会话跑、产出进台账 / 按 announce 投递——投递走 _notify（通知台账 +
+    WS 广播），**绝不静默丢**（codex 审 #129：此前没传 notify，announce=im/surfaced 无声消失）。
     """
     import asyncio
     from datetime import datetime
@@ -103,16 +155,24 @@ async def scheduler_loop(stop_event):
     async def _submit(item):
         await get_runner().submit(item, kind="dev")
 
+    async def _notify(text):
+        record_notice(cwd, text)                   # 持久台账（GET /api/notices 可查）
+        try:
+            from src.web.routers.realtime import broadcast_notice
+            broadcast_notice(str(text))            # WS 广播给连着的客户端（best-effort）
+        except Exception:  # noqa: BLE001
+            pass
+
     while not stop_event.is_set():
         try:
             now = datetime.now()
             if cron_on:
-                await _cron.run_due(cwd, now)          # 到点的作业各自隔离跑
+                await _cron.run_due(cwd, now, notify=_notify)   # 到点的作业各自隔离跑，结果按 announce 投递
             if hb_on:
                 mono = asyncio.get_event_loop().time()
                 if mono - last_hb >= hb_every:
                     last_hb = mono
-                    await _hb.run_heartbeat(cwd, submit=_submit, hour=now.hour)
+                    await _hb.run_heartbeat(cwd, submit=_submit, notify=_notify, hour=now.hour)
         except Exception:  # noqa: BLE001 —— 单次 tick 出错不拖垮循环
             pass
         try:

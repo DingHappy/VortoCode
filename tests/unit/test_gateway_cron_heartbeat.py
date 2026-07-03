@@ -234,3 +234,69 @@ async def test_run_heartbeat_ok_discarded_vs_surfaced(tmp_path):
         return "发现 CI 红了，建议看看 test_x"
     res = await heartbeat.run_heartbeat(str(tmp_path), notify=notify, run_session=busy_session, hour=12)
     assert res["action"] == "surfaced" and notified                # 有事 → 通知
+
+
+# --------------------------------------------------------------------- 通知台账 + scheduler 投递（codex 审 #129）
+def test_record_and_load_notices(tmp_path):
+    from src.web.routers.tasks import record_notice, load_notices
+    assert load_notices(str(tmp_path)) == []
+    record_notice(str(tmp_path), "cron 跑完了", source="scheduler")
+    record_notice(str(tmp_path), "heartbeat 发现问题")
+    got = load_notices(str(tmp_path))
+    assert [n["text"] for n in got] == ["heartbeat 发现问题", "cron 跑完了"]   # 新的在前
+    assert all(n.get("ts") for n in got)
+    # 落在 .vortocode/logs/（已在自忽略清单内）
+    assert (tmp_path / ".vortocode" / "logs" / "notices.jsonl").is_file()
+
+
+def test_notices_truncated_to_cap(tmp_path):
+    from src.web.routers import tasks as tm
+    for i in range(tm._MAX_NOTICES + 20):
+        tm.record_notice(str(tmp_path), f"n{i}")
+    got = tm.load_notices(str(tmp_path), limit=tm._MAX_NOTICES)
+    assert len(got) == tm._MAX_NOTICES
+    assert got[0]["text"] == f"n{tm._MAX_NOTICES + 19}"          # 尾部保留最新
+
+
+@pytest.mark.asyncio
+async def test_scheduler_loop_wires_notify_to_cron_and_heartbeat(tmp_path, monkeypatch):
+    """常驻 scheduler 必须给 cron/heartbeat 传 notify——否则 announce=im/surfaced 在 daemon 路径
+    静默丢失（codex 审 #129）。断言两处都收到非空 notify，且 notify 真会落通知台账。"""
+    import asyncio
+    from src.gateway import cron as _cron
+    from src.gateway import heartbeat as _hb
+    from src.web.routers import tasks as tm
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VORTOCODE_CRON", "1")
+    monkeypatch.setenv("VORTOCODE_HEARTBEAT", "1")
+    monkeypatch.setenv("VORTOCODE_HEARTBEAT_EVERY", "1s")
+    captured = {}
+
+    async def fake_run_due(cwd, now, notify=None):
+        captured["cron_notify"] = notify
+        if notify:
+            await notify("⏰ cron [nightly] 跑完：全绿")
+        return ["nightly"]
+    monkeypatch.setattr(_cron, "run_due", fake_run_due)
+
+    async def fake_heartbeat(cwd, *, submit=None, notify=None, hour=None, **k):
+        captured["hb_notify"] = notify
+        if notify:
+            await notify("🫀 心跳发现：CI 红了")
+        return {"action": "surfaced", "detail": "CI 红了"}
+    monkeypatch.setattr(_hb, "run_heartbeat", fake_heartbeat)
+
+    stop = asyncio.Event()
+    loop_task = asyncio.create_task(tm.scheduler_loop(stop))
+    for _ in range(100):                                   # 等第一次 tick 完成
+        if "cron_notify" in captured and "hb_notify" in captured:
+            break
+        await asyncio.sleep(0.01)
+    stop.set()
+    await asyncio.wait_for(loop_task, timeout=5)
+
+    assert captured.get("cron_notify") is not None          # cron 收到了投递路径
+    assert captured.get("hb_notify") is not None            # heartbeat 收到了投递路径
+    texts = [n["text"] for n in tm.load_notices(str(tmp_path))]
+    assert any("cron" in t for t in texts) and any("心跳" in t for t in texts)   # 真落了台账，没静默丢

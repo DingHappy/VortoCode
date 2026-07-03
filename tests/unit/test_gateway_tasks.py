@@ -279,3 +279,13 @@ def test_vcs_open_pr_passes_draft_flag(monkeypatch):
     assert "--draft" in seen["cmd"]
     vcs.open_pr("/repo", "vorto/x", "标题", "正文", "main", draft=False)
     assert "--draft" not in seen["cmd"]
+
+
+def test_rest_notices_endpoint(client_with_fake_runner, tmp_path):
+    """GET /api/notices：daemon 通知台账可查询（codex 审 #129 的"可查询事件台账"要求）。"""
+    client, _runner = client_with_fake_runner
+    assert client.get("/api/notices").json() == {"notices": []}
+    from src.web.routers.tasks import record_notice
+    record_notice(str(tmp_path), "测试通知")
+    got = client.get("/api/notices").json()["notices"]
+    assert len(got) == 1 and got[0]["text"] == "测试通知"
