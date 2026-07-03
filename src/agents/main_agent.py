@@ -1634,16 +1634,15 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 lines.append(f"· {r['desc']}：❌ 未过（试了 {att} 次）")
         return greens, lines
 
-    async def _dependent_with_repair(branch, subtask, test_cmd):
-        """在 branch 之上接力实现一个依赖子任务 + 自测；红了带失败反馈、换全新 worktree 再试，最多 _dev_attempts() 次。
-        绿则就地提交（推进 branch）后返回。返回 run_dependent_on_branch 的结果 dict（附 attempts）。"""
+    async def _dependent_with_repair(branch, desc, title, test_cmd):
+        """在 branch 之上接力实现一个（有依赖的 / resume 补跑的）子任务 + 自测；红了带失败反馈、换全新
+        worktree 再试，最多 _dev_attempts() 次。绿则就地提交（推进 branch）后返回。
+        返回 run_dependent_on_branch 的结果 dict（附 attempts）。desc=实现描述、title=展示名。"""
         import uuid
-        from src.agents.decompose import describe_subtask
         from src.agents.worktree import run_dependent_on_branch
         mk = _make_writer(test_cmd)
-        base = describe_subtask(subtask)
+        base = desc
         cur = base
-        title = getattr(subtask, "title", "") or getattr(subtask, "id", "?")
         msg = f"dev_auto(dep): {title}"
         r = {"ok": False, "output": "未尝试", "attempts": 0}
         for attempt in range(1, _dev_attempts() + 1):
@@ -1736,15 +1735,169 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         return await _review.run_gate(repo_root, branch, base, test_cmd=test_cmd,
                                       repair=_repair, progress=_progress)
 
+    def _branch_exists(branch: str) -> bool:
+        import subprocess
+        return subprocess.run(["git", "-C", str(repo_root), "rev-parse", "--verify", "--quiet", branch],
+                              capture_output=True, text=True).returncode == 0
+
+    async def _execute_plan(dp, test_cmd, out: list) -> str:
+        """从一个（部分或全新的）DevPlan 跑到完成——fresh（全 pending）与 resume（部分 landed）共用一套。
+
+        每个块状态转换都 **write-ahead 落盘**（先标记再干活/先干活再落地），崩溃时计划文件如实反映进度、
+        绝不超前标 landed；resume 据此跳过已 landed、只重跑未完成。out 累积展示文本，返回最终展示串。
+        """
+        import asyncio
+        import types
+        import uuid
+        from src.agents import dev_plan as _dp
+        from src.agents.decompose import topo_order
+        from src.agents.worktree import apply_diffs_to_branch, ensure_branch, verify_branch
+
+        branch = dp.branch
+
+        def _save():
+            _dp.save_plan(repo_root, dp)
+
+        # 1) 独立块：全新时并行实现 + 批量落分支（建分支）；resume 时（分支已在）逐个在分支上接力补跑。
+        todo_ind = dp.pending("independent")
+        if todo_ind:
+            exists = _branch_exists(branch)
+            for b in todo_ind:
+                b.status = "running"
+            _save()                                          # write-ahead：先标 running 再实现
+            if not exists:
+                cap = _dev_parallelism()
+                _progress(f"⚙️ 并行隔离实现 {len(todo_ind)} 个独立子任务中（最多 {cap} 个同时跑）…")
+                sem = asyncio.Semaphore(cap)
+
+                async def _impl(b):
+                    async with sem:
+                        return b, await _implement_with_repair(b.desc, test_cmd)
+
+                results = await asyncio.gather(*[_impl(b) for b in todo_ind])
+                items = []
+                for b, r in results:
+                    b.attempts = r.get("attempts", 1)
+                    green = r.get("ver") and r["ver"]["ok"] and (r.get("diff") or "").strip()
+                    if green:
+                        items.append((r["diff"], f"dev_auto[{b.id}]: {b.desc}"))
+                    else:
+                        b.status = "failed"
+                        b.note = "无改动/出错" if not (r.get("diff") or "").strip() else "自测未过"
+                _save()                                      # 落地前先记下哪些没绿
+                apply_res = await asyncio.to_thread(apply_diffs_to_branch, repo_root, branch, items, None)
+                failed_msgs = {f.get("msg") for f in apply_res.get("failed", [])}
+                for b, r in results:
+                    if b.status == "failed":
+                        continue
+                    if f"dev_auto[{b.id}]: {b.desc}" in failed_msgs:
+                        b.status, b.note = "failed", "自测绿但与其它块文本冲突、未能干净落分支"
+                    else:
+                        b.status, b.note = "landed", ""
+                _save()                                      # 真提交后才标 landed（不超前）
+            else:
+                for b in todo_ind:                           # resume：分支已存在，逐个在其上补跑
+                    r = await _dependent_with_repair(branch, b.desc, b.title or b.id, test_cmd)
+                    b.attempts = r.get("attempts", 1)
+                    if r["ok"]:
+                        b.status, b.note = "landed", ""
+                    else:
+                        b.status, b.note = "failed", (r.get("output") or "")[-140:]
+                    _save()
+
+        ind = dp.independent()
+        if ind:
+            landed_n = sum(1 for b in ind if b.landed)
+            out.append(f"\n【独立批】{landed_n}/{len(ind)} 落到分支：")
+            for b in ind:
+                if b.landed:
+                    out.append(f"  · {b.desc}：✅")
+                elif "文本冲突" in (b.note or ""):           # 自测绿但落分支冲突被跳过 → 如实点名（#123 诚实性）
+                    out.append(f"  · {b.desc}：⚠️ {b.note}")
+                else:
+                    out.append(f"  · {b.desc}：❌ {b.note or '未过'}")
+
+        # 2) 依赖块：拓扑序逐个在 branch 之上接力实现+自测，绿则就地提交（推进 tip 给下一个看）。
+        todo_dep = dp.pending("dependent")
+        if todo_dep:
+            if not _branch_exists(branch):
+                await asyncio.to_thread(ensure_branch, repo_root, branch, dp.base)  # 无独立基底也给依赖一个
+            satisfied = set(dp.satisfied_ids) | dp.landed_ids()
+            shims = [types.SimpleNamespace(id=b.id, dependencies=b.deps, block=b) for b in todo_dep]
+            out.append("\n【依赖接力】按拓扑序在分支上逐个实现：")
+            for shim in topo_order(shims, satisfied):
+                b = shim.block
+                disp = b.title or b.desc[:40] or b.id
+                b.status = "running"
+                _save()                                      # write-ahead
+                r = await _dependent_with_repair(branch, b.desc, disp, test_cmd)
+                b.attempts = r.get("attempts", 1)
+                if r["ok"]:
+                    b.status, b.note = "landed", ""
+                    out.append(f"  · {disp}：✅ 已接力提交"
+                               + (f"（修复 {b.attempts - 1} 次后）" if b.attempts > 1 else ""))
+                else:
+                    b.status, b.note = "failed", (r.get("output") or "")[-140:]
+                    out.append(f"  · {disp}：❌ 试了 {b.attempts} 次仍未过：{b.note}")
+                _save()
+
+        landed_ind = sum(1 for b in dp.independent() if b.landed)
+        dep_done = sum(1 for b in dp.dependent() if b.landed)
+
+        # 3) 最终集成验证：整条分支跑一遍全量
+        if landed_ind == 0 and dep_done == 0:
+            dp.status = "failed"
+            _save()
+            return "\n".join(out) + "\n\n没有任何子任务落地（都没过自测/或落分支时相互冲突被丢）；建议拆细或用 dev_isolated 逐个做。"
+        _progress(f"🔍 对整条分支 {branch}（{landed_ind} 独立 + {dep_done} 依赖）跑最终集成测试中…")
+        integ = await asyncio.to_thread(
+            verify_branch, repo_root, branch, test_cmd, "wt-verify-" + uuid.uuid4().hex[:8])
+        dp.integration = integ
+        if integ["ok"]:
+            dp.status = "integrated"
+            _save()
+            done = (f"\n✅ 全部落到 {branch}（{landed_ind} 独立 + {dep_done} 依赖）且**集成后全量测试通过**"
+                    f"（未碰 main，git checkout {branch} 查看）。")
+            # 诚实提示测试增量：从**整条分支相对 base 的实际 diff**算（独立批 + 依赖接力提交都覆盖）。
+            changed = await asyncio.to_thread(_branch_changed_files, repo_root, dp.base, branch)
+            if changed is not None:
+                done += _test_delta_msg(sum(1 for p in changed if _is_test_path(p)))
+            out.append(done)
+            # PR 前对抗审查段：**仅在真要开 PR 时**跑（名副其实的"PR 前"，codex 审 #120 P1）。
+            if dp.want_pr and _dev_review_enabled():
+                note, blocked = await _run_review_gate(branch, dp.base, test_cmd)
+                dp.review = {"note": note, "blocked": bool(blocked)}
+                _save()
+                out.append(note)
+                if blocked:
+                    return "\n".join(out)                    # 审查未过 → 不开 PR、分支保留待人工
+            if dp.want_pr:                                    # 集成绿 + 审查过 → 经确认 push+开 PR
+                pr_note = await _open_pr_for_branch(branch, dp.task, "\n".join(out), dp.base)
+                out.append(pr_note)
+                dp.pr = {"note": pr_note.strip()}
+                dp.status = "done"
+                _save()
+        else:
+            dp.status = "integration_failed"
+            _save()
+            out.append(f"\n⚠️ 已落到 {branch}（{landed_ind} 独立 + {dep_done} 依赖），但**集成后全量测试未过**。"
+                       f"失败尾部：\n{integ['output'][-1000:]}\n分支保留待修：git checkout {branch}"
+                       f"（可修完再 dev_resume({dp.plan_id})）。")
+            if dp.want_pr:
+                out.append("（集成测试未过，未自动开 PR——先把分支修绿再开。）")
+        return "\n".join(out)
+
     async def _dev_auto(args: dict) -> str:
         """自动分解大任务 → 无依赖子任务并行隔离实现 → **有依赖的按拓扑序在同一分支上逐个接力实现**
         （检出该分支、看得见前面的改动、自测绿才提交、推进 tip 给下一个看）→ 最后对整条分支跑一遍
         集成测试。端到端把大任务做完，不再只做独立那一半就停。全程不碰 main/工作区。
+
+        分解结果 + 逐块状态 **write-ahead 落盘**到 .vortocode/dev_plans/<id>.json（C1）：中断后可用
+        dev_resume(plan_id) 从断点续跑；计划文件也是进度播报/IM /status 的数据源、可手改后重跑。
         给 open_pr=true 且接了确认门：集成绿后经确认把分支 push 并开 PR（"一句话→PR"闭环）。"""
-        import asyncio
         import uuid
-        from src.agents.decompose import decompose_for_parallel, topo_order
-        from src.agents.worktree import apply_diffs_to_branch, ensure_branch, verify_branch
+        from src.agents import dev_plan as _dp
+        from src.agents.decompose import decompose_for_parallel, describe_subtask
 
         task = str(args.get("task") or args.get("goal") or args.get("description") or "").strip()
         if not task:
@@ -1764,76 +1917,50 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             return f"分解出 {plan['total']} 个子任务，但没拿到可实现的描述；建议用 dev_isolated 逐个做。"
 
         branch = "vorto/auto-" + uuid.uuid4().hex[:8]
-        out = [f"已把任务分解为 {plan['total']} 个子任务：{len(descs)} 个独立(并行) + {len(deferred)} 个有依赖(接力)。"]
+        dp = _dp.DevPlan.new(task, branch, base, test_sel=sel, want_pr=want_pr)
+        for i, d in enumerate(descs):
+            dp.blocks.append(_dp.Block(id=f"ind-{i}", kind="independent", desc=d))
+        for s in deferred:
+            sid = str(getattr(s, "id", None) or ("dep-" + uuid.uuid4().hex[:6]))
+            dp.blocks.append(_dp.Block(
+                id=sid, kind="dependent", desc=describe_subtask(s),
+                title=str(getattr(s, "title", "") or ""),
+                deps=[str(x) for x in (getattr(s, "dependencies", None) or [])]))
+        dp.satisfied_ids = [str(getattr(s, "id", None)) for s in plan["independent"]
+                            if getattr(s, "id", None) is not None]
+        _dp.save_plan(repo_root, dp)                         # write-ahead：分解完成即落文件
 
-        # 1) 独立子任务并行隔离实现 → 落到 branch（此处不跑集成，留到最后整条一起验）
-        greens, lines = (await _implement_parallel(descs, test_cmd)) if descs else ([], [])
-        landed = 0
-        dropped: list = []
-        if greens:
-            # 捕获落分支结果：自测绿但相互**文本冲突**的块 apply 时会被跳过——必须如实报告，
-            # 否则"绿了却没落地"的块被静默丢弃、用户还以为都进去了（codex 审：此前返回值被丢弃）。
-            apply_res = await asyncio.to_thread(
-                apply_diffs_to_branch, repo_root, branch,
-                [(g["diff"], f"dev_auto: {g['desc']}") for g in greens], None)
-            landed = len(apply_res.get("applied", []))
-            dropped = apply_res.get("failed", [])
-        elif deferred:
-            await asyncio.to_thread(ensure_branch, repo_root, branch, "HEAD")  # 无绿独立块也给依赖一个基底
-        if descs:
-            out.append(f"\n【独立批】{len(greens)}/{len(descs)} 通过自测，{landed} 块落到分支：")
-            out.extend("  " + ln for ln in lines)
-            if dropped:                              # 自测绿但相互文本冲突、apply 被跳过 → 如实说
-                out.append(f"  ⚠️ {len(dropped)} 块虽自测绿但与其它块**文本冲突、未能干净落分支**（已跳过，"
-                           f"最终只验证实际落地部分）：")
-                out.extend(f"    · {d.get('msg', '?')}：{(d.get('error') or '')[:120]}" for d in dropped)
+        out = [f"已把任务分解为 {plan['total']} 个子任务：{len(descs)} 个独立(并行) + {len(deferred)} 个有依赖(接力)。",
+               f"（计划已存盘 plan_id={dp.plan_id}；中断后可 dev_resume 续跑）"]
+        return await _execute_plan(dp, test_cmd, out)
 
-        # 2) 依赖子任务：拓扑序，逐个在 branch 之上接力实现+自测（红了自修复重试），绿则就地提交（推进 branch）
-        dep_done = 0
-        if deferred:
-            out.append("\n【依赖接力】按拓扑序在分支上逐个实现：")
-            satisfied = set(getattr(s, "id", None) for s in plan["independent"])  # 独立批视为已满足(best-effort)
-            for s in topo_order(deferred, satisfied):
-                r = await _dependent_with_repair(branch, s, test_cmd)
-                title = getattr(s, "title", "") or getattr(s, "id", "?")
-                att = r.get("attempts", 1)
-                if r["ok"]:
-                    dep_done += 1
-                    out.append(f"  · {title}：✅ 已接力提交" + (f"（修复 {att - 1} 次后）" if att > 1 else ""))
-                else:
-                    out.append(f"  · {title}：❌ 试了 {att} 次仍未过：{(r['output'] or '')[-140:]}")
+    async def _dev_resume(args: dict) -> str:
+        """从落盘的 dev_auto 计划断点续跑：已 landed 的块跳过，未完成的（pending/running/failed）重走，
+        最后重跑集成验证 + （若原计划 open_pr）审查段与开 PR。不传 plan_id 则列出最近可续的计划。"""
+        from src.agents import dev_plan as _dp
+        from src.agents.test_detect import detect_test_cmd
 
-        # 3) 最终集成验证：整条分支跑一遍全量
-        if landed == 0 and dep_done == 0:
-            return "\n".join(out) + "\n\n没有任何子任务落地（都没过自测/或落分支时相互冲突被丢）；建议拆细或用 dev_isolated 逐个做。"
-        _progress(f"🔍 对整条分支 {branch}（{landed} 独立 + {dep_done} 依赖）跑最终集成测试中…")
-        integ = await asyncio.to_thread(
-            verify_branch, repo_root, branch, test_cmd, "wt-verify-" + uuid.uuid4().hex[:8])
-        if integ["ok"]:
-            done = (f"\n✅ 全部落到 {branch}（{landed} 独立 + {dep_done} 依赖）且**集成后全量测试通过**"
-                    f"（未碰 main，git checkout {branch} 查看）。")
-            # 诚实提示测试增量：从**整条分支相对 base 的实际 diff**算——独立批 + 依赖接力提交都覆盖到
-            # （依赖接力的改动不在内存 greens 里，只看 greens 会让纯依赖成功时漏提示，见 codex 审）。
-            changed = await asyncio.to_thread(_branch_changed_files, repo_root, base, branch)
-            if changed is not None:
-                done += _test_delta_msg(sum(1 for p in changed if _is_test_path(p)))
-            out.append(done)
-            # PR 前对抗审查段：**仅在真要开 PR 时**跑（名副其实的"PR 前"）。只落本地分支（open_pr 未给）
-            # 时不跑——否则会平白多花 reviewer LLM、可能自修复改动分支、甚至 blocked 早退，与"我只想要个
-            # 本地分支"的意图不符（codex 审 #120 P1）。
-            if want_pr and _dev_review_enabled():
-                note, blocked = await _run_review_gate(branch, base, test_cmd)
-                out.append(note)
-                if blocked:
-                    return "\n".join(out)                    # 审查未过 → 不开 PR、分支保留待人工
-            if want_pr:                                      # 集成绿 + 审查过 → 经确认 push+开 PR
-                out.append(await _open_pr_for_branch(branch, task, "\n".join(out), base))
-        else:
-            out.append(f"\n⚠️ 已落到 {branch}（{landed} 独立 + {dep_done} 依赖），但**集成后全量测试未过**。"
-                       f"失败尾部：\n{integ['output'][-1000:]}\n分支保留待修：git checkout {branch}。")
-            if want_pr:
-                out.append("（集成测试未过，未自动开 PR——先把分支修绿再开。）")
-        return "\n".join(out)
+        pid = str(args.get("plan_id") or args.get("id") or "").strip()
+        if not pid:
+            plans = _dp.list_plans(repo_root)
+            if not plans:
+                return "没有可续跑的计划（.vortocode/dev_plans/ 为空）。先用 dev_auto 起一个大任务。"
+            lines = [f"· {p['plan_id']}：{p['status']} — {p['task'][:50]}" for p in plans[:10]]
+            return "dev_resume 需要 plan_id。最近的计划：\n" + "\n".join(lines)
+        dp = _dp.load_plan(repo_root, pid)
+        if dp is None:
+            return f"找不到计划 {pid}（.vortocode/dev_plans/{pid}.json 不存在或损坏）。dev_resume() 不带参可列出可续计划。"
+        if dp.status == "done":
+            return f"计划 {pid} 已完成（{dp.summary()}），无需续跑。"
+        test_cmd = detect_test_cmd(repo_root, dp.test_sel)
+        c = dp.counts()
+        remaining = c["pending"] + c["running"] + c["failed"]
+        _progress(f"↻ 续跑计划 {pid}（已 landed {c['landed']}，续跑未完成 {remaining} 块）…")
+        out = [f"续跑计划 {pid}：{dp.task[:60]}",
+               f"（已 landed {c['landed']} 块，续跑未完成的 {remaining} 块，不重做已落地部分）"]
+        dp.status = "running"
+        _dp.save_plan(repo_root, dp)
+        return await _execute_plan(dp, test_cmd, out)
 
     return [
         Tool("dev_isolated",
@@ -1858,6 +1985,12 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
               "test": "可选，pytest 选择器",
               "open_pr": "可选，true 则集成绿后经确认 push 分支并开 PR"},
              _dev_auto, read_only=False),
+        Tool("dev_resume",
+             "从一个中断的 dev_auto 计划**断点续跑**：已落地(landed)的子任务块跳过、未完成的（含失败）重走，"
+             "最后重跑集成验证（原计划要开 PR 的还会接着审查+开 PR）。10 个子任务断在第 7 个不用从头再来。"
+             "不传 plan_id 则列出最近可续的计划。仅 build",
+             {"plan_id": "要续跑的计划 id（dev_auto 起跑时会给出、存于 .vortocode/dev_plans/）；省略则列出可续计划"},
+             _dev_resume, read_only=False),
     ]
 
 
