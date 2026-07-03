@@ -25,7 +25,7 @@
 - **SKILL.md 技能**：渐进式按需加载（复用 `src/skills` 解析器），还能让 agent 现场起草新技能
 - **跨会话记忆**：`/resume` 重建对话上下文；`save_memory`/`recall_memory` 沉淀跨会话知识
 - **@上下文注入**：`@文件`→内容、`@目录`→清单、`@符号`→AST 定义位置
-- **双协议**：默认模型无关的提示式工具协议；`VORTOCODE_NATIVE_TOOLS=1` 切原生 function-calling（三端统一生效，模型不支持自动回退）。**支持 function-calling 的模型（如 mimo-v2.5）强烈建议开 native**——真机对照 dogfood：同一开发任务 native 3/3 正确落地、提示式仅 1/3（其余把工具结果误当用户消息、凭空编造交付）
+- **双协议**：**默认走原生 function-calling（native）**——对支持的模型更可靠（真机对照 dogfood：同一开发任务 native 3/3 正确落地、提示式仅 1/3，提示式下模型易把工具结果误当用户消息、凭空编造交付）；模型不支持则**自动回退**提示式协议（模型无关兜底）。`VORTOCODE_NATIVE_TOOLS=0` 可强制走提示式。三端（TUI/Web/CLI）统一
 - **可观测/可审计**：token 用量统计（`/usage`）、工具调用审计日志（`/audit`）
 - **命令**：`/run /analyze /improve /fix /skills /tools /mcp /usage /audit /agents /runagent /sessions /resume /new /mode /clear /help`
 

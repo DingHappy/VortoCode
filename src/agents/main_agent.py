@@ -185,15 +185,16 @@ def _is_weak_final(content: str) -> bool:
 
 
 def native_default() -> bool:
-    """三端统一的 native（原生 function-calling）开关：env `VORTOCODE_NATIVE_TOOLS` 为真则开。
+    """三端统一的 native（原生 function-calling）开关：env `VORTOCODE_NATIVE_TOOLS`。
 
-    此前只有 TUI 读这个变量，web `_new_agent`/CLI `_build_headless_agent` 都硬写 native=False、
-    忽略它——同一开关三端行为不一致（headless/web 根本没法开 native）。收敛到这里一处、三端共用。
-    默认关（提示式协议、模型无关）；置 1/true/yes/on 开启（模型不支持会自动永久回退，见
-    _native_error_is_permanent）。
+    **默认开**（2026-07 真机对照 dogfood：同一开发任务 native 3/3 正确落地 vs 提示式仅 1/3——
+    提示式下模型易把工具结果误当用户消息、凭空编造交付；native 用结构化 tool 消息从根上避免）。
+    模型不支持 function-calling 会**自动永久回退**提示式（见 _native_error_is_permanent + #111），
+    所以默认开对不支持的模型也安全（一次失败即回退）。置 0/false/no/off 显式关（强制提示式）。
+    三端（TUI/Web/CLI）统一读这里。
     """
     import os
-    return os.getenv("VORTOCODE_NATIVE_TOOLS", "").strip().lower() in ("1", "true", "yes", "on")
+    return os.getenv("VORTOCODE_NATIVE_TOOLS", "1").strip().lower() not in ("0", "false", "no", "off")
 
 
 def _native_error_is_permanent(exc: BaseException) -> bool:
