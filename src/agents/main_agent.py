@@ -1683,6 +1683,15 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         head = f"并行 {len(tasks)} 个子任务：{len(greens)} 通过测试。"
         if not res["applied"]:
             return head + "落分支失败。\n" + "\n".join(lines)
+        # 自测绿但落分支时与其它块**文本冲突被跳过**的块，必须如实点名——否则用户以为都进去了、
+        # 实际悄悄丢了一块（与 dev_auto 的 #117 丢块诚实报告对齐；此前 dev_parallel 漏了这一半）。
+        dropped = res.get("failed") or []
+        dropped_note = ""
+        if dropped:
+            dropped_note = (f"\n⚠️ {len(dropped)} 块虽自测绿但与其它块**文本冲突、未能干净落分支**（已跳过，"
+                            f"仅落地/验证实际应用的部分）：\n"
+                            + "\n".join(f"  · {d.get('msg', '?')}：{(d.get('error') or '')[:120]}"
+                                        for d in dropped))
         integ = res.get("integration")
         if integ and not integ["ok"]:                    # 各块单独绿、但合到一起红 → 如实说，别谎报全绿
             tail = integ["output"][-1200:]
@@ -1694,7 +1703,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     + _test_delta_note("\n".join(g["diff"] for g in greens)))
         else:                                            # 没跑集成测试（理论上 test_cmd 恒有，留兜底）
             note = f"{len(res['applied'])} 块落到 {branch}（git checkout 查看，未碰 main）。"
-        return head + note + "\n" + "\n".join(lines)
+        return head + note + dropped_note + "\n" + "\n".join(lines)
 
     async def _open_pr_for_branch(branch: str, task: str, body: str, base: str) -> str:
         """dev_auto 集成绿后、经确认把分支 push 并开 PR。confirm 缺失/被拒/失败都给清楚说明、不抛。"""
