@@ -284,3 +284,41 @@ async def test_dev_auto_persists_plan_and_reports_id(tmp_path, monkeypatch):
     assert "plan_id=" in out and "dev_resume" in out
     plans = dp.list_plans(str(tmp_path))
     assert len(plans) == 1 and plans[0]["status"] == "integrated"
+
+
+@pytest.mark.asyncio
+async def test_apply_whole_failure_never_marks_landed(tmp_path, monkeypatch):
+    """整体落分支失败（worktree add 挂）→ 绿块**不得**被误标 landed（#127 P1 回归）。
+
+    apply_diffs_to_branch 整体失败返回 applied=[]、failed=[{"msg":"(worktree add)"}]——绿块 msg 既不在
+    applied 也不在 failed，'不在 failed 就 landed' 的反推法会把它们全误标 landed，污染计划、令 dev_resume
+    跳过实际没落地的块。修法：只以 applied 白名单判 landed。
+    """
+    _init_repo(tmp_path)
+    import src.agents.decompose as dec
+    import src.agents.worktree as wt
+
+    async def fake_decompose(task):
+        return {"descriptions": ["块甲", "块乙"], "independent": [], "deferred": [], "total": 2}
+    monkeypatch.setattr(dec, "decompose_for_parallel", fake_decompose)
+
+    async def ok_isolated(repo, wid, desc, build, test_cmd=None):
+        return ("diff\n", "c", {"ok": True, "output": ""})       # 两块都自测绿
+    monkeypatch.setattr(wt, "run_isolated_task", ok_isolated)
+    # 整体 apply 失败（worktree add 挂）：applied 空、failed 只含 "(worktree add)"
+    monkeypatch.setattr(wt, "apply_diffs_to_branch",
+                        lambda repo, br, items, tc=None: {
+                            "ok": False, "branch": br, "applied": [],
+                            "failed": [{"msg": "(worktree add)", "error": "fatal: already exists"}],
+                            "integration": None})
+    verified = {"n": 0}
+    monkeypatch.setattr(wt, "verify_branch",
+                        lambda repo, br, tc, wid: verified.__setitem__("n", verified["n"] + 1)
+                        or {"ok": True, "output": "", "cmd": "p"})
+
+    out = await _dev_tools(tmp_path)["dev_auto"].handler({"task": "做两件事"})
+    plan = dp.load_plan(str(tmp_path), dp.list_plans(str(tmp_path))[0]["plan_id"])
+    assert all(b.status == "failed" for b in plan.blocks)         # 绝不误标 landed
+    assert plan.status == "failed"                               # 无任何落地 → 计划整体失败
+    assert verified["n"] == 0                                    # 没落地就不该跑集成验证
+    assert "没有任何子任务落地" in out

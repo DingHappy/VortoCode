@@ -1786,14 +1786,23 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                         b.note = "无改动/出错" if not (r.get("diff") or "").strip() else "自测未过"
                 _save()                                      # 落地前先记下哪些没绿
                 apply_res = await asyncio.to_thread(apply_diffs_to_branch, repo_root, branch, items, None)
-                failed_msgs = {f.get("msg") for f in apply_res.get("failed", [])}
+                # 只以 applied 为**白名单**判 landed——绝不靠"不在 failed 就是 landed"反推：
+                # 整体 apply 失败（如 worktree add 挂了）会返回 applied=[]、failed=[{"msg":"(worktree add)"}]，
+                # 此时绿块 msg 既不在 applied 也不在 failed，反推法会把它们全误标 landed → 污染计划、
+                # dev_resume 跳过实际没落地的块（违反 write-ahead/不超前标记）。
+                applied_msgs = set(apply_res.get("applied", []))
+                conflict_msgs = {f.get("msg") for f in apply_res.get("failed", [])}
+                apply_err = "；".join(str(f.get("error") or "") for f in apply_res.get("failed", []))[:160]
                 for b, r in results:
                     if b.status == "failed":
                         continue
-                    if f"dev_auto[{b.id}]: {b.desc}" in failed_msgs:
+                    msg = f"dev_auto[{b.id}]: {b.desc}"
+                    if msg in applied_msgs:
+                        b.status, b.note = "landed", ""       # 真在 applied 里才算落地
+                    elif msg in conflict_msgs:
                         b.status, b.note = "failed", "自测绿但与其它块文本冲突、未能干净落分支"
-                    else:
-                        b.status, b.note = "landed", ""
+                    else:                                    # 既没落地也没单独冲突 → 整体落分支失败
+                        b.status, b.note = "failed", f"落分支整体失败（未落地）：{apply_err or '见日志'}"
                 _save()                                      # 真提交后才标 landed（不超前）
             else:
                 for b in todo_ind:                           # resume：分支已存在，逐个在其上补跑
