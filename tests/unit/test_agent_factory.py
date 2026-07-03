@@ -4,7 +4,10 @@
 build_agent_tools，本测试钉住"同源"契约：二者工具集一致，唯一差异是 Web 多出制品工具。
 """
 
-from src.agents.main_agent import build_agent_tools, native_default
+import pytest
+
+from src.agents.main_agent import (build_agent_tools, build_memory_tools, build_skill_tools,
+                                    native_default, skill_catalog)
 
 
 async def _confirm(_m):
@@ -71,3 +74,40 @@ def test_all_tools_have_unique_names(tmp_path):
     tools = build_agent_tools(str(tmp_path), confirm=_confirm, with_artifacts=True)
     names = [t.name for t in tools]
     assert len(names) == len(set(names)), "工具名冲突（装配重复）"
+
+
+def test_factory_has_memory_and_skill_tools(tmp_path):
+    # 三端漂移清理：memory/skill 补进工厂 → CLI/Web 也有
+    names = _names(build_agent_tools(str(tmp_path), confirm=_confirm))
+    for n in ("save_memory", "recall_memory", "use_skill", "save_skill"):
+        assert n in names, f"工厂缺 {n}"
+
+
+@pytest.mark.asyncio
+async def test_factory_memory_tools_roundtrip(tmp_path):
+    tools = {t.name: t for t in build_memory_tools(str(tmp_path))}
+    await tools["save_memory"].handler({"content": "用户偏好 pytest -q"})
+    out = await tools["recall_memory"].handler({"query": "pytest"})
+    assert "pytest" in out                                     # 存进去、查得出（同一 db）
+
+
+@pytest.mark.asyncio
+async def test_factory_skill_tools_save_use_and_catalog(tmp_path):
+    tools = {t.name: t for t in build_skill_tools(str(tmp_path), _confirm)}
+    assert tools["use_skill"].read_only is True and tools["save_skill"].read_only is False
+    r = await tools["save_skill"].handler(
+        {"name": "hello", "description": "打招呼技能", "instructions": "第一步：说你好"})
+    assert "已保存技能" in r
+    # 同回合 use_skill 立刻能加载到（共享 registry 实例、写后重扫）
+    used = await tools["use_skill"].handler({"name": "hello"})
+    assert "第一步：说你好" in used
+    assert "打招呼技能" in skill_catalog(str(tmp_path))          # catalog 反映已存技能
+
+
+@pytest.mark.asyncio
+async def test_factory_save_skill_respects_confirm_denial(tmp_path):
+    async def _deny(_m):
+        return False
+    tools = {t.name: t for t in build_skill_tools(str(tmp_path), _deny)}
+    r = await tools["save_skill"].handler({"name": "x", "instructions": "步骤"})
+    assert "取消" in r and not (tmp_path / ".vortocode" / "skills" / "x" / "SKILL.md").exists()

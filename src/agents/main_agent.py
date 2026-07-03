@@ -1993,6 +1993,104 @@ def build_pr_tool(repo_root: str, confirm) -> list[Tool]:
                  _open_pr, read_only=False, outward=True)]
 
 
+def _longterm_store(repo_root: str):
+    """跨会话长期记忆用的 SessionStore（与 TUI 同一 db、同一固定 __longterm__ session_id）。"""
+    from src.memory.session_store import SessionStore
+    return SessionStore(str(Path(repo_root) / ".vortocode" / "sessions.db"))
+
+
+def build_memory_tools(repo_root: str) -> list[Tool]:
+    """UI 无关的跨会话长期记忆工具（save_memory / recall_memory）——三端同源。
+
+    与 TUI 版同 db、同 __longterm__ session_id，跨端记忆天然共享。污点态下给写入内容加来源标注
+    （记忆是持久化注入面，ClawHavoc 教训）。args/read_only 与 TUI 版逐字一致（三端契约）。
+    """
+    async def _save_memory(args: dict) -> str:
+        content = str(args.get("content", "")).strip()
+        if not content:
+            return "save_memory 需要 content（要长期记住的事实/偏好/约定）。"
+        from src.agents.taint import is_tainted
+        if is_tainted():
+            import datetime
+            content = f"[⚠ 来源含外部内容 · {datetime.date.today().isoformat()}] {content}"
+        try:
+            _longterm_store(repo_root).add_memory("__longterm__", "fact", content, importance=0.6)
+        except Exception as e:  # noqa: BLE001
+            return f"保存记忆失败: {e}"
+        return f"已记住（跨会话）：{content[:80]}"
+
+    async def _recall_memory(args: dict) -> str:
+        q = str(args.get("query", "")).strip()
+        try:
+            store = _longterm_store(repo_root)
+            rows = (store.search_memories("__longterm__", q, 10) if q
+                    else store.get_memories("__longterm__"))
+        except Exception as e:  # noqa: BLE001
+            return f"检索记忆失败: {e}"
+        if not rows:
+            return "（没有相关的长期记忆）"
+        return "相关长期记忆:\n" + "\n".join(f"- {r['content']}" for r in rows[:10])
+
+    return [Tool("save_memory", "把一条要跨会话长期记住的事实/偏好/约定存起来",
+                 {"content": "要记住的内容"}, _save_memory, read_only=True),
+            Tool("recall_memory", "检索跨会话长期记忆（不传 query 则列出全部）",
+                 {"query": "可选，关键词"}, _recall_memory, read_only=True)]
+
+
+def _skill_registry_for(repo_root: str):
+    from pathlib import Path as _P
+    return SkillRegistry([str(_P(repo_root) / "skills"),
+                          str(_P(repo_root) / ".vortocode" / "skills")]).load()
+
+
+def skill_catalog(repo_root: str) -> str:
+    """技能目录（name — description 多行串），供 CLI/Web 注入系统提示——让模型知道有哪些技能可 use_skill。"""
+    try:
+        return _skill_registry_for(repo_root).catalog()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def build_skill_tools(repo_root: str, confirm) -> list[Tool]:
+    """UI 无关的技能工具（use_skill / save_skill）——三端同源。
+
+    共享一个 registry 实例：save_skill 写盘后重扫，同回合 use_skill 立刻能加载到。save_skill 是写操作，
+    走注入的 async confirm 门（同 run_command/open_pr）。args/read_only 与 TUI 版逐字一致（三端契约）。
+    """
+    import re as _re
+    registry = _skill_registry_for(repo_root)
+
+    async def _use_skill(args: dict) -> str:
+        name = str(args.get("name") or args.get("skill") or "").strip()
+        sk = registry.get(name)
+        if not sk:
+            avail = "、".join(registry.skills) or "（无）"
+            return f"没有名为 {name} 的技能。可用：{avail}"
+        return (f"【技能「{sk.name}」完整指令】请据此执行（用你的其它工具完成），"
+                f"不要原样复述给用户：\n\n{sk.instructions}")
+
+    async def _save_skill(args: dict) -> str:
+        name = _re.sub(r"[^\w一-鿿-]", "-", str(args.get("name", "")).strip()).strip("-")
+        desc = str(args.get("description", "")).strip()
+        instr = str(args.get("instructions", "")).strip()
+        if not name or not instr:
+            return "save_skill 需要 name 和 instructions（技能正文）。"
+        if confirm is not None and not await confirm(
+                f"把技能「{name}」写到 .vortocode/skills/{name}/SKILL.md？（用户技能目录，不碰 main）"):
+            return f"用户取消了保存技能 {name}。"
+        p = Path(repo_root) / ".vortocode" / "skills" / name / "SKILL.md"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(f"---\nname: {name}\ndescription: {desc}\n---\n\n{instr}\n", encoding="utf-8")
+        registry.load()                              # 原地重扫：当前 agent 立刻能 use_skill 到它
+        return f"已保存技能 {name} 到 .vortocode/skills/{name}/SKILL.md。"
+
+    return [Tool("use_skill", "加载某个技能(SKILL.md)的完整指令到上下文，然后据此执行",
+                 {"name": "技能名"}, _use_skill, read_only=True),
+            Tool("save_skill", "把一套可复用流程保存成新技能(SKILL.md)到用户技能目录；写操作，需确认，仅 build",
+                 {"name": "技能名", "description": "一句话描述", "instructions": "技能正文（自然语言步骤）"},
+                 _save_skill, read_only=False)]
+
+
 def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable[[str], None]] = None,
                       with_artifacts: bool = False) -> list[Tool]:
     """标准主 agent 工具集（headless CLI 与 Web /agent 共用，保证二者"同源"、不漂移）。
@@ -2000,14 +2098,17 @@ def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable
     此前 cli._build_headless_agent 与 web._new_agent 各自手写同一串 build_*，极易漂移
     （工具清单/顺序/confirm 语义不一致）。收敛到这里一处装配：
       read（行段/grep/glob/git 只读/语义导航）+ research（只读子 agent 委派）+ web（fetch/search）
+      + memory（跨会话长期记忆）+ skill（use_skill/save_skill）
       [+ artifact（发布/列制品，仅 with_artifacts）] + dev（隔离实现/并行，绿落 vorto 分支）
       + command（run_command）+ pr（open_pr）。
     confirm: async (message)->bool 确认门——CLI 走 --yes 门控、Web 走 WS 确认，语义由调用方注入。
     on_progress: dev 流水线进度回调（长任务边跑边播）。
     with_artifacts: 是否含制品工具（Web 有查看页故开；headless CLI 无浏览器故关）。
     TUI 不走本工厂——它用富 UI 版写/dev/command 工具（着色 diff + ConfirmScreen），刻意不同源。
+    注：调用方（CLI/Web）应把 `skill_catalog(repo_root)` 注入 extra_system，模型才知道有哪些技能可 use_skill。
     """
-    tools = build_read_tools(repo_root) + build_research_tools(repo_root) + build_web_tools()
+    tools = (build_read_tools(repo_root) + build_research_tools(repo_root) + build_web_tools()
+             + build_memory_tools(repo_root) + build_skill_tools(repo_root, confirm))
     if with_artifacts:
         from src.web.artifacts import build_artifact_tools    # 惰性导入：避免 agents 层在导入期硬依赖 web
         tools += build_artifact_tools(repo_root)
