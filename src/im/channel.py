@@ -24,6 +24,10 @@ class ChannelEvent:
 class ChannelAdapter:
     """一个 IM 通道的收发接口。实现方负责 transport；bridge 负责编排。"""
 
+    # 通道是否支持"编辑已发消息"（Telegram 支持 → 进度原地滚动；钉钉不支持 → 进度只能发新消息，
+    # bridge 据此放慢进度节流、收尾不再多刷一条）。
+    edits_supported: bool = True
+
     async def poll(self) -> AsyncIterator[ChannelEvent]:
         """长轮询/长连接，持续 yield 归一化事件（纯出站）。断线自行退避重连，不抛给 bridge。"""
         raise NotImplementedError
