@@ -138,9 +138,12 @@ class IMBridge:
             await self._safe_send(f"模式已切到 **{self.mode}**（plan=只读、build=可写/跑流水线）。")
         elif cmd == "/status":
             busy = self._turn_task is not None and not self._turn_task.done()
-            await self._safe_send(
-                f"仓库 {Path(self.repo_root).name} · 模式 {self.mode} · "
-                f"{'运行中' if busy else '空闲'} · 已忽略非主人消息 {self._ignored} 条")
+            msg = (f"仓库 {Path(self.repo_root).name} · 模式 {self.mode} · "
+                   f"{'运行中' if busy else '空闲'} · 已忽略非主人消息 {self._ignored} 条")
+            recent = self._recent_plan()                 # 最近的 dev_auto 计划进度（可 dev_resume 续跑）
+            if recent:
+                msg += f"\n最近计划：{recent}"
+            await self._safe_send(msg)
         elif cmd == "/new":
             self.agent.history = []
             if hasattr(self.agent, "plan"):
@@ -231,6 +234,15 @@ class IMBridge:
                 self._pending.pop(cid, None)
 
         return _confirm
+
+    def _recent_plan(self) -> Optional[str]:
+        """最近一条 dev_auto 计划的一行概况（供 /status）；无/出错 → None。未完成的可 dev_resume 续跑。"""
+        try:
+            from src.agents.dev_plan import list_plans
+            plans = list_plans(self.repo_root)
+        except Exception:  # noqa: BLE001
+            return None
+        return plans[0]["summary"] if plans else None
 
     async def _safe_send(self, text: str) -> None:
         try:
