@@ -38,6 +38,9 @@ class IMBridge:
         self._ignored = 0                                # 非主人消息计数（配对制）
         self._confirm_holder = {"fn": None}
         self._progress_holder = {"fn": None}
+        # 不支持编辑的通道（钉钉）进度只能发新消息 → 放慢节流免刷屏
+        self._edits = getattr(adapter, "edits_supported", True)
+        self._progress_interval = 2.0 if self._edits else 10.0
         self.agent = self._build_agent()
 
     # ------------------------------------------------------------ 建 agent（第四端：走同源工厂 + catalog）
@@ -190,7 +193,7 @@ class IMBridge:
                     message, cid = payload
                     await self.adapter.send_confirm(message, cid)
                 elif kind == "final":
-                    if pid is not None:                       # 收尾把进度刷到最终态
+                    if pid is not None and self._edits:       # 收尾把进度刷到最终态（仅支持编辑的通道）
                         await self.adapter.edit_text(pid, "✅ " + "\n".join(lines[-12:]))
                     await self._safe_send(str(payload) or "（无输出）")
         finally:
@@ -207,8 +210,8 @@ class IMBridge:
         now = time.monotonic()
         if pid is None:
             return await self.adapter.send_text(text), now
-        if now - last_edit >= 2.0:                # 节流：≥2s 才编辑一次（防 Telegram 限流/刷屏）
-            await self.adapter.edit_text(pid, text)
+        if now - last_edit >= self._progress_interval:   # 节流（支持编辑=2s，不支持=10s 防刷屏）
+            await self.adapter.edit_text(pid, text)       # 不支持编辑的通道 edit_text 内部发新消息
             return pid, now
         return pid, last_edit
 
