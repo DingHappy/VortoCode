@@ -1,0 +1,50 @@
+"""ChannelAdapter 抽象——bridge 核心只依赖它，各 IM（Telegram/钉钉…）各实现一份。
+
+设计目标：把「一个 IM 通道」收敛成极小接口，bridge 的会话/确认/进度/配对逻辑全通道无关。
+新增一个通道 = 实现本抽象的 5 个方法，不碰 bridge。
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import AsyncIterator
+
+
+@dataclass
+class ChannelEvent:
+    """从通道 poll 出来的一个事件（已归一化，与具体 IM 协议无关）。"""
+    kind: str                     # "message"（用户发来文本）| "callback"（点了内联按钮）
+    sender_id: str = ""           # 发送者 id（配对用：只认 owner）
+    text: str = ""                # kind=message：用户文本
+    callback_id: str = ""         # kind=callback：对应哪个确认请求（bridge 生成的 cid）
+    approved: bool = False        # kind=callback：批准/拒绝
+    ack: object = None            # kind=callback：通道侧回执令牌（如 Telegram callback_query.id），交回 ack_callback
+
+
+class ChannelAdapter:
+    """一个 IM 通道的收发接口。实现方负责 transport；bridge 负责编排。"""
+
+    async def poll(self) -> AsyncIterator[ChannelEvent]:
+        """长轮询/长连接，持续 yield 归一化事件（纯出站）。断线自行退避重连，不抛给 bridge。"""
+        raise NotImplementedError
+        yield  # pragma: no cover  （让类型上是 async generator）
+
+    async def send_text(self, text: str) -> str:
+        """发一条文本消息，返回 message_id（供后续 edit_text 滚动更新进度）。"""
+        raise NotImplementedError
+
+    async def edit_text(self, message_id: str, text: str) -> None:
+        """编辑已发出的消息（进度滚动更新，避免刷屏）。失败 best-effort 吞掉。"""
+        raise NotImplementedError
+
+    async def send_confirm(self, text: str, callback_id: str) -> None:
+        """发一条带 [✅ 批准 | ❌ 拒绝] 内联按钮的消息；按钮回传 callback_id（bridge 据此匹配 Future）。"""
+        raise NotImplementedError
+
+    async def ack_callback(self, event: ChannelEvent) -> None:
+        """回执一次按钮点击（如 Telegram answerCallbackQuery，消掉客户端转圈）。best-effort。"""
+        raise NotImplementedError
+
+    async def close(self) -> None:
+        """释放资源（关 http session 等）。"""
+        raise NotImplementedError

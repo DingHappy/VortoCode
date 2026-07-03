@@ -99,6 +99,11 @@ def main():
     sub.add_parser("demo", help="演示模式：打印指引并启动 Web 服务")
     sub.add_parser("tui", help="进入交互式全屏 TUI（仿 opencode；需 textual: pip install '.[tui]'）")
 
+    p = sub.add_parser("im", help="IM 通道桥：常驻长轮询，把主 agent 搬上 IM（手机发任务/按钮确认/回报）")
+    p.add_argument("channel", choices=["telegram"], help="IM 通道（目前支持 telegram）")
+    p.add_argument("--mode", choices=["plan", "build"], default="plan",
+                   help="初始模式（默认 plan；IM 里可 /mode 切）")
+
     args = parser.parse_args()
 
     # 无命令：给友好总览，而不是报错
@@ -160,6 +165,38 @@ def main():
 
     elif args.command == "tui":
         run_tui()
+
+    elif args.command == "im":
+        asyncio.run(run_im(args.channel, mode=args.mode))
+
+
+async def run_im(channel: str, *, mode: str = "plan"):
+    """IM 通道桥入口：常驻长轮询，把主 agent 搬上 IM。fail-closed：缺配对凭证直接拒启。"""
+    import os
+    cwd = str(Path.cwd())
+    if channel == "telegram":
+        token = os.getenv("VORTOCODE_TG_TOKEN", "").strip()
+        owner = os.getenv("VORTOCODE_TG_OWNER_ID", "").strip()
+        if not token or not owner:
+            print("✗ Telegram 桥需要环境变量 VORTOCODE_TG_TOKEN 和 VORTOCODE_TG_OWNER_ID"
+                  "（配对制，fail-closed）。\n"
+                  "  ① 找 @BotFather 建 bot 拿 token；② 给 bot 发一条消息，再从 "
+                  "https://api.telegram.org/bot<token>/getUpdates 读你自己的数字 chat id。",
+                  file=sys.stderr)
+            sys.exit(2)
+        from src.im.bridge import IMBridge
+        from src.im.telegram import TelegramAdapter
+        adapter = TelegramAdapter(token, owner)
+        bridge = IMBridge(cwd, adapter, owner, channel="telegram", mode=mode)
+        print(f"🌉 Telegram 桥启动（仓库 {Path(cwd).name}，{mode} 模式）。只服务 owner "
+              f"{owner}，Ctrl-C 退出。", file=sys.stderr)
+        try:
+            await bridge.run()
+        finally:
+            await adapter.close()
+    else:
+        print(f"未知 IM 通道: {channel}", file=sys.stderr)
+        sys.exit(2)
 
 
 def _split_paths(raw):
