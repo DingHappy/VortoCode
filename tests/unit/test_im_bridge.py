@@ -206,3 +206,60 @@ async def test_session_persists_across_instances(tmp_path):
     a2 = FakeAdapter()                                     # 新实例、同 owner/仓库 → 应复原历史
     b2 = IMBridge(str(tmp_path), a2, OWNER, channel="test", llm=ScriptedLLM("x"))
     assert any("香蕉" in str(m.get("content", "")) for m in b2.agent.history)
+
+
+# ------------------------------------------------------------ 后台任务（/task /tasks，不占回合）
+def _fake_dev_tools(monkeypatch, reply="跑完了", branch=""):
+    """把 build_dev_tools 换成快 dev_auto（不真跑流水线），供 /task 后台任务测试用。"""
+    import src.agents.main_agent as ma
+
+    class _T:
+        def __init__(self, name, handler):
+            self.name, self.handler = name, handler
+
+    async def fake_dev_auto(args):
+        return f"{reply}：{args.get('task')}"
+
+    def fake_build(root, on_progress=None, confirm=None, draft_pr=False):
+        if on_progress:
+            on_progress("后台干活中")
+        return [_T("dev_auto", fake_dev_auto)]
+    monkeypatch.setattr(ma, "build_dev_tools", fake_build)
+
+
+@pytest.mark.asyncio
+async def test_task_command_runs_in_background_and_notifies(tmp_path, monkeypatch):
+    _fake_dev_tools(monkeypatch, reply="OK")
+    adapter = FakeAdapter()
+    bridge = IMBridge(str(tmp_path), adapter, OWNER, channel="test", llm=ScriptedLLM("x"))
+
+    await _drive_no_turn(bridge, adapter, _msg("/task 加个函数"))
+    assert bridge._turn_task is None                       # /task 不占回合（后台跑）
+    assert any("已在后台开跑" in t for t in adapter.texts())
+
+    runner = bridge._get_runner()
+    tasks = runner.list()
+    assert len(tasks) == 1
+    tid = tasks[0].id
+    for _ in range(50):                                    # 等后台任务跑完（快 worker 可能已完成）
+        if runner.get(tid).status in ("done", "failed", "cancelled"):
+            break
+        await asyncio.sleep(0.01)
+    for _ in range(6):
+        await asyncio.sleep(0)                             # 让 on_update 的终态推送发出去
+    done = runner.get(tid)
+    assert done.status == "done" and "OK" in done.result
+    assert any(f"{tid}" in t and "done" in t for t in adapter.texts())   # 终态推送到 IM
+
+
+@pytest.mark.asyncio
+async def test_tasks_list_command(tmp_path, monkeypatch):
+    _fake_dev_tools(monkeypatch)
+    adapter = FakeAdapter()
+    bridge = IMBridge(str(tmp_path), adapter, OWNER, channel="test", llm=ScriptedLLM("x"))
+    await _drive_no_turn(bridge, adapter, _msg("/tasks"))
+    assert any("暂无后台任务" in t for t in adapter.texts())   # 空
+
+    await bridge._submit_task("干点啥")
+    await _drive_no_turn(bridge, adapter, _msg("/tasks"))
+    assert any("后台任务：" in t for t in adapter.texts())

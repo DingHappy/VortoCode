@@ -11,14 +11,31 @@ from pathlib import Path
 # 确保以任意工作目录运行时都能 import src.*
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from src.web.auth import auth_middleware, get_api_token
+
+
+@asynccontextmanager
+async def _lifespan(_app):
+    """启动/关停钩子：启动时恢复上次崩在半路的后台任务（running→interrupted，可 dev_resume 续跑）。"""
+    try:
+        from src.web.routers.tasks import get_runner
+        recovered = get_runner().recover()
+        if recovered:
+            print(f"  ↻ 恢复 {len(recovered)} 个中断的后台任务（标 interrupted，可 dev_resume 续跑）")
+    except Exception as e:  # noqa: BLE001 —— 恢复失败不该挡服务启动
+        print(f"  （后台任务恢复跳过：{e}）")
+    yield
+
 
 app = FastAPI(
     title="VortoCode",
     description="多 Agent 协作开发平台",
     version="0.1.0",
+    lifespan=_lifespan,
 )
 
 # 鉴权中间件：仅当设置了 AUTODEV_API_TOKEN 时强制（不破坏本地无 token 使用）
@@ -46,6 +63,7 @@ from src.web.routers.generators import router as generators_router
 from src.web.routers.realtime import router as realtime_router
 from src.web.routers.artifacts import router as artifacts_router
 from src.web.routers.auth_routes import router as auth_router
+from src.web.routers.tasks import router as tasks_router
 
 for _router in (
     pages_router, system_router, execution_router,
@@ -53,7 +71,7 @@ for _router in (
     agents_router, skills_router, indexing_router, sessions_router,
     projects_router, workspaces_router, editor_router, sandbox_router,
     browser_router, github_router, ops_router, generators_router, realtime_router,
-    artifacts_router, auth_router,
+    artifacts_router, auth_router, tasks_router,
 ):
     app.include_router(_router)
 

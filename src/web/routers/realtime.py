@@ -70,6 +70,24 @@ async def handle_websocket_message(websocket: WebSocket, message: Dict[str, Any]
     elif msg_type == "agent_tts":             # 「🔊 播放」：把某条回复合成成语音回传前端播放
         await handle_tts_message(websocket, message)
 
+    elif msg_type == "task_list":             # 后台任务快照（客户端连上/刷新时 hydrate 任务列表）
+        from src.web.routers.tasks import get_runner
+        await websocket.send_json({"type": "task_snapshot",
+                                   "data": [t.to_dict() for t in get_runner().list()]})
+
+
+def broadcast_task_update(task: dict) -> None:
+    """把一条后台任务状态变更广播给所有连着的 WS 客户端（best-effort；无循环/无连接则静默）。
+
+    由 gateway.TaskRunner 的 on_update 回调（同步）调用——这里把异步 broadcast 调度到事件循环上。
+    """
+    payload = {"type": "task_update", "data": task}
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:                       # 没有运行中的事件循环（如同步测试路径）→ 静默跳过
+        return
+    loop.create_task(manager.broadcast(payload))
+
 
 # 等待前端确认的工具：confirm id → Future（前端 agent_confirm_response 来了就 set_result）
 _PENDING_CONFIRMS: Dict[str, Any] = {}

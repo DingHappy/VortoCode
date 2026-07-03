@@ -70,7 +70,7 @@ async def test_open_pr_when_green_and_confirmed(tmp_path, monkeypatch):
     captured = {}
     import src.agents.vcs as vcs
 
-    def fake_push_open(repo_root, branch, title, body="", base="main", remote="origin"):
+    def fake_push_open(repo_root, branch, title, body="", base="main", remote="origin", draft=False):
         captured.update(branch=branch, title=title, base=base)
         return {"ok": True, "pushed": True, "url": "https://github.com/x/y/pull/1", "error": ""}
     monkeypatch.setattr(vcs, "push_and_open_pr", fake_push_open)
@@ -87,6 +87,26 @@ async def test_open_pr_when_green_and_confirmed(tmp_path, monkeypatch):
     assert captured["base"] == "dev"                         # PR base = 出发分支
     assert captured["title"].startswith("dev_auto:")
     assert asked                                             # 确实问过确认
+
+
+@pytest.mark.asyncio
+async def test_draft_pr_flag_propagates(tmp_path, monkeypatch):
+    """build_dev_tools(draft_pr=True) → 集成绿开 PR 时把 draft=True 传给 push_and_open_pr（后台/自我迭代默认开 draft）。"""
+    _init_repo_on_branch(tmp_path, "dev")
+    _patch_pipeline(monkeypatch, integration_ok=True)
+    import src.agents.vcs as vcs
+    captured = {}
+
+    def fake_push_open(repo_root, branch, title, body="", base="main", remote="origin", draft=False):
+        captured["draft"] = draft
+        return {"ok": True, "pushed": True, "url": "http://pr/1", "error": ""}
+    monkeypatch.setattr(vcs, "push_and_open_pr", fake_push_open)
+
+    async def yes(_m):
+        return True
+    tool = {t.name: t for t in ma.build_dev_tools(str(tmp_path), confirm=yes, draft_pr=True)}["dev_auto"]
+    await tool.handler({"task": "x", "open_pr": True})
+    assert captured["draft"] is True
 
 
 @pytest.mark.asyncio

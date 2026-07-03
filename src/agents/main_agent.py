@@ -1498,7 +1498,7 @@ def _test_delta_note(diff: str) -> str:
 
 
 def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]] = None,
-                    confirm: Optional[Callable] = None) -> list[Tool]:
+                    confirm: Optional[Callable] = None, draft_pr: bool = False) -> list[Tool]:
     """UI 无关的隔离 dev 工具（给 Web/CLI agent 用）。
 
     `dev_isolated`：在一次性 git worktree 里让可写子 agent 实现 + 自测，再跑测试验证；✅通过就
@@ -1712,9 +1712,10 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         title = f"dev_auto: {task[:60]}"
         if not await confirm(f"把 {branch} push 到远端并对 {base} 开 PR？\n  标题：{title}"):
             return f"\n（已取消开 PR；分支 {branch} 保留，可稍后手动 open_pr。）"
-        _progress(f"🚀 push {branch} 并对 {base} 开 PR…")
+        _progress(f"🚀 push {branch} 并对 {base} 开{'（draft）' if draft_pr else ''} PR…")
         from src.agents.vcs import push_and_open_pr
-        res = await asyncio.to_thread(push_and_open_pr, repo_root, branch, title, body[:4000], base)
+        res = await asyncio.to_thread(push_and_open_pr, repo_root, branch, title, body[:4000],
+                                      base, "origin", draft_pr)
         if res.get("ok") and res.get("url"):
             return f"\n🎉 已开 PR：{res['url']}"
         if res.get("pushed"):
@@ -2237,7 +2238,7 @@ def build_skill_tools(repo_root: str, confirm) -> list[Tool]:
 
 
 def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable[[str], None]] = None,
-                      with_artifacts: bool = False) -> list[Tool]:
+                      with_artifacts: bool = False, draft_pr: bool = False) -> list[Tool]:
     """标准主 agent 工具集（headless CLI 与 Web /agent 共用，保证二者"同源"、不漂移）。
 
     此前 cli._build_headless_agent 与 web._new_agent 各自手写同一串 build_*，极易漂移
@@ -2257,6 +2258,6 @@ def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable
     if with_artifacts:
         from src.web.artifacts import build_artifact_tools    # 惰性导入：避免 agents 层在导入期硬依赖 web
         tools += build_artifact_tools(repo_root)
-    tools += (build_dev_tools(repo_root, on_progress=on_progress, confirm=confirm)
+    tools += (build_dev_tools(repo_root, on_progress=on_progress, confirm=confirm, draft_pr=draft_pr)
               + build_command_tool(repo_root, confirm) + build_pr_tool(repo_root, confirm))
     return tools

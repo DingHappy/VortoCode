@@ -57,39 +57,5 @@ async def clear_cache():
         await state.cache_manager.clear()
     return {"success": True}
 
-# 任务队列 API
-@router.get("/api/tasks/queue")
-async def get_task_queue():
-    """获取任务队列状态"""
-    from src.core import TaskQueue
-    
-    # 初始化任务队列（如果不存在）
-    if not hasattr(state, 'task_queue'):
-        state.task_queue = TaskQueue()
-    
-    return {"stats": state.task_queue.get_stats()}
-
-@router.get("/api/tasks/list")
-async def list_tasks(status: str = None):
-    """列出任务"""
-    if not hasattr(state, 'task_queue'):
-        return {"tasks": []}
-    
-    from src.core import TaskStatus
-    
-    task_status = TaskStatus(status) if status else None
-    tasks = state.task_queue.list_tasks(task_status)
-    
-    return {
-        "tasks": [
-            {
-                "id": t.id,
-                "name": t.name,
-                "status": t.status.value,
-                "priority": t.priority.value,
-                "created_at": t.created_at.isoformat(),
-                "error": t.error
-            }
-            for t in tasks
-        ]
-    }
+# 注：旧的 /api/tasks/queue 与 /api/tasks/list（基于从未接线的 src/core/task_queue 骨架）已退役。
+# 后台任务改由常驻运行时提供：见 src/web/routers/tasks.py（POST/GET /api/tasks…，gateway.TaskRunner）。

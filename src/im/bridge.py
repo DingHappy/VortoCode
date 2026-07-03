@@ -41,6 +41,8 @@ class IMBridge:
         # 不支持编辑的通道（钉钉）进度只能发新消息 → 放慢节流免刷屏
         self._edits = getattr(adapter, "edits_supported", True)
         self._progress_interval = 2.0 if self._edits else 10.0
+        self._runner = None                              # 后台任务运行时（懒建）
+        self._task_prog: dict = {}                       # tid -> 上次进度推送时间（节流）
         self.agent = self._build_agent()
 
     # ------------------------------------------------------------ 建 agent（第四端：走同源工厂 + catalog）
@@ -150,13 +152,83 @@ class IMBridge:
                 self.agent.plan = None
             self._persist()
             await self._safe_send("已开新会话（清空上下文）。")
+        elif cmd == "/task":
+            await self._submit_task(text[len("/task"):].strip())
+        elif cmd == "/tasks":
+            await self._list_tasks()
         elif cmd == "/help":
             await self._safe_send(
                 "直接发任务 → 我跑隔离流水线（分解/实现/自测/落 vorto 分支）。\n"
+                "/task <描述> 后台跑（不占当前会话，进度自动推、完成发开 PR 按钮）· /tasks 看后台任务。\n"
                 "/mode plan|build 切模式 · /status 看状态 · /new 清空会话。\n"
                 "写文件/跑命令/开 PR 会发按钮让你确认（人在关口）。")
         else:
             await self._safe_send(f"未知命令 {cmd}。/help 看用法。")
+
+    # ------------------------------------------------------------ 后台任务（不占回合）
+    def _get_runner(self):
+        if self._runner is None:
+            from src.gateway import TaskRunner
+            self._runner = TaskRunner(self.repo_root, self._task_worker,
+                                      on_update=self._on_task_update)
+        return self._runner
+
+    async def _task_worker(self, task, on_progress):
+        """后台 dev 任务：跑 dev_auto（open_pr=True + 后台确认门 + draft）；集成绿→按钮→draft PR。"""
+        from src.agents.dev_plan import list_plans
+        from src.agents.main_agent import build_dev_tools
+        tools = {t.name: t for t in build_dev_tools(self.repo_root, on_progress=on_progress,
+                                                    confirm=self._bg_confirm, draft_pr=True)}
+        result = await tools["dev_auto"].handler({"task": task.prompt, "open_pr": True})
+        plans = list_plans(self.repo_root)
+        if plans:
+            task.plan_id = plans[0]["plan_id"]
+            task.branch = plans[0].get("branch", "")
+        return result
+
+    async def _bg_confirm(self, message: str) -> bool:
+        """回合外确认（后台任务用）：发按钮 → 等 owner 点击（poll 循环的 callback 分支解 Future）。超时=拒绝。"""
+        cid = uuid.uuid4().hex[:12]
+        fut = asyncio.get_event_loop().create_future()
+        self._pending[cid] = fut
+        try:
+            await self.adapter.send_confirm(_strip(message), cid)
+            return bool(await asyncio.wait_for(fut, timeout=_CONFIRM_TIMEOUT))
+        except Exception:  # noqa: BLE001 —— 超时/取消/出错一律拒绝（安全不放行）
+            return False
+        finally:
+            self._pending.pop(cid, None)
+
+    def _on_task_update(self, task) -> None:
+        """runner 的状态回调（同步）：进度节流推送、终态发结论。调度到事件循环上异步发。"""
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            return
+        if task.status in ("done", "failed", "cancelled", "interrupted"):
+            tail = (task.result or task.error or "").strip()[-500:]
+            loop.create_task(self._safe_send(f"后台任务 {task.id} · {task.status}\n{tail}"))
+        elif task.status == "running" and task.log:
+            now = time.monotonic()
+            if now - self._task_prog.get(task.id, 0.0) >= self._progress_interval:
+                self._task_prog[task.id] = now
+                loop.create_task(self._safe_send(f"🏃 {task.id}: {_strip(task.log[-1])}"))
+
+    async def _submit_task(self, prompt: str) -> None:
+        if not prompt:
+            await self._safe_send("用法：/task <要后台跑的任务描述>")
+            return
+        task = await self._get_runner().submit(prompt, kind="dev")
+        await self._safe_send(f"✅ 已在后台开跑 {task.id}（不占当前会话；进度会自动推、完成发开 PR 按钮）。"
+                              f"\n/tasks 看全部后台任务。")
+
+    async def _list_tasks(self) -> None:
+        tasks = self._get_runner().list()
+        if not tasks:
+            await self._safe_send("暂无后台任务。/task <描述> 开一个。")
+            return
+        lines = [f"· {t.summary()}" for t in tasks[:10]]
+        await self._safe_send("后台任务：\n" + "\n".join(lines))
 
     # ------------------------------------------------------------ 一个回合（queue+drain+Future）
     async def _run_turn(self, text: str) -> None:
