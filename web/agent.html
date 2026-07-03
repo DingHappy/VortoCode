@@ -345,9 +345,8 @@ function sessionId() {       // 稳定 sid（localStorage，跨刷新/关标签/
 }
 
 // ---- 多会话管理：列表/切换/新建/删除/重命名（后端 /api/agent/sessions）----
-function apiUrl(path) {                     // 带上 ?token=（与 ws 鉴权一致），支持分享/鉴权链接
-  const token = new URLSearchParams(location.search).get("token");
-  return token ? path + (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token) : path;
+function apiUrl(path) {                     // token 不再进 URL（审计 P0#4）：同源 fetch 自动带 httpOnly Cookie
+  return path;
 }
 
 async function loadSessions() {
@@ -418,9 +417,7 @@ async function renameSession(sid, old) {
 }
 
 function connect() {
-  const token = new URLSearchParams(location.search).get("token");
-  const qs = new URLSearchParams();
-  if (token) qs.set("token", token);
+  const qs = new URLSearchParams();          // token 不进 URL：同源 WS 握手自动带 httpOnly Cookie 鉴权
   qs.set("sid", sessionId());
   const url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws?" + qs.toString();
   ws = new WebSocket(url);
@@ -618,7 +615,40 @@ $("#mode").onclick = () => {
   $("#mode").textContent = mode;
   $("#mode").style.color = mode === "build" ? "#f0b86e" : "#d7dae0";
 };
-connect();
+
+// ---- 登录门（审计 P0#4）：设了 token 且未登录 → 弹框收 token → POST 种 httpOnly Cookie → 再连 ----
+function showLogin() {
+  return new Promise((resolve) => {
+    const ov = document.createElement("div");
+    ov.style.cssText = "position:fixed;inset:0;background:#0d0f14;display:flex;align-items:center;justify-content:center;z-index:9999";
+    const card = document.createElement("div");
+    card.style.cssText = "background:#161a22;border:1px solid #2a2f3a;border-radius:10px;padding:24px;width:320px;color:#d7dae0;font:14px system-ui";
+    const h = document.createElement("div"); h.textContent = "🔒 需要访问令牌"; h.style.cssText = "font-weight:600;margin-bottom:12px";
+    const inp = document.createElement("input"); inp.type = "password"; inp.placeholder = "API Token";
+    inp.style.cssText = "width:100%;box-sizing:border-box;padding:8px;background:#0d0f14;border:1px solid #2a2f3a;border-radius:6px;color:#d7dae0;margin-bottom:10px";
+    const err = document.createElement("div"); err.style.cssText = "color:#f08a8a;font-size:12px;height:16px;margin-bottom:8px";
+    const go = document.createElement("button"); go.textContent = "登录";
+    go.style.cssText = "width:100%;padding:8px;background:#8ab4f8;color:#0d0f14;border:0;border-radius:6px;cursor:pointer;font-weight:600";
+    card.append(h, inp, err, go); ov.appendChild(card); document.body.appendChild(ov); inp.focus();
+    async function submit() {
+      err.textContent = "";
+      try {
+        const r = await fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: inp.value }) });
+        if (r.ok) { ov.remove(); resolve(); } else { err.textContent = "令牌不正确"; inp.select(); }
+      } catch { err.textContent = "登录失败，请重试"; }
+    }
+    go.onclick = submit;
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+  });
+}
+async function boot() {
+  try {
+    const st = await (await fetch("/api/auth/status", { cache: "no-store" })).json();
+    if (st.auth_required && !st.authed) await showLogin();   // 需鉴权且未登录 → 先登录
+  } catch { /* 状态查不到：按无鉴权处理，直接连 */ }
+  connect();
+}
+boot();
 </script>
 </body>
 </html>

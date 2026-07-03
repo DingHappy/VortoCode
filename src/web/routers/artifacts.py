@@ -8,8 +8,8 @@
 
 复刻 Claude Code「静态、无外部请求」的隔离：raw 带 CSP（default-src none，仅放行内联与
 data:），查看页用 iframe sandbox（仅 allow-scripts，不给 same-origin）。两者叠加 → 制品脚本
-能跑、但拿不到父页 cookie、也无法联网（挡外联/SSRF）。鉴权沿用全局中间件（设了 token 时
-分享链接需带 ?token=，即「认证可见」；本地无 token 直接可看）。
+能跑、但拿不到父页 cookie、也无法联网（挡外联/SSRF）。鉴权沿用全局中间件（设了 token 时按
+httpOnly Cookie 「认证可见」——同源子资源自动带 Cookie，token 不进 URL；本地无 token 直接可看）。
 """
 import html as _html
 import os
@@ -170,14 +170,13 @@ _VIEW_TEMPLATE = """<!DOCTYPE html>
   <iframe id="frame" sandbox="allow-scripts" title="__TITLE__"></iframe>
 <script>
   var AID = "__AID__", curVer = __VERSION__, pinned = null;
-  var token = new URLSearchParams(location.search).get("token");
-  var tokQ = token ? "?token=" + encodeURIComponent(token) : "";     // 透传给 GET
-  var tokAmp = token ? "&token=" + encodeURIComponent(token) : "";   // 透传给带 ?v= 的 URL
+  // token 不再进 URL（审计 P0#4）：同源请求（含此沙箱 iframe 的子资源）自动带 httpOnly Cookie 鉴权，
+  // allow-scripts 脚本既读不到 httpOnly Cookie、也无从 location 里捞 token。
   var sel = document.getElementById("vsel"), frame = document.getElementById("frame");
   var pinBtn = document.getElementById("pin");
 
-  function show(v) {   // 在 iframe 里载入指定版本（沙箱 + CSP 不变）
-    var u = "/artifact/" + encodeURIComponent(AID) + "/raw?v=" + v + tokAmp;
+  function show(v) {   // 在 iframe 里载入指定版本（沙箱 + CSP 不变；Cookie 同源自动带）
+    var u = "/artifact/" + encodeURIComponent(AID) + "/raw?v=" + v;
     frame.src = u; document.getElementById("raw").href = u;
   }
   function syncPinBtn() {
@@ -185,7 +184,7 @@ _VIEW_TEMPLATE = """<!DOCTYPE html>
   }
   async function loadVersions(initial) {
     try {
-      var r = await fetch("/api/artifacts/" + encodeURIComponent(AID) + "/versions" + tokQ,
+      var r = await fetch("/api/artifacts/" + encodeURIComponent(AID) + "/versions",
                           { cache: "no-store" });
       if (!r.ok) return;
       var d = await r.json(); curVer = d.current; pinned = d.pinned;
@@ -206,7 +205,7 @@ _VIEW_TEMPLATE = """<!DOCTYPE html>
   pinBtn.onclick = async function () {
     try {
       var r = await fetch("/api/artifacts/" + encodeURIComponent(AID) + "/pin?version="
-                          + sel.value + tokAmp, { method: "POST" });
+                          + sel.value, { method: "POST" });
       if (r.ok) await loadVersions(false);
     } catch (e) {}
   };
@@ -217,7 +216,7 @@ _VIEW_TEMPLATE = """<!DOCTYPE html>
   // 轮询：出现更高版本就刷新版本列表；若用户正看着"当前"，顺带载入新版本（实时更新不变）。
   setInterval(async function () {
     try {
-      var r = await fetch("/api/artifacts/" + encodeURIComponent(AID) + tokQ, { cache: "no-store" });
+      var r = await fetch("/api/artifacts/" + encodeURIComponent(AID), { cache: "no-store" });
       if (!r.ok) return;
       var m = await r.json();
       if (m.version !== curVer || m.pinned !== pinned) {
