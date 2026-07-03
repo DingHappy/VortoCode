@@ -52,7 +52,7 @@ app = FastAPI(
     lifespan=_lifespan,
 )
 
-# 鉴权中间件：仅当设置了 AUTODEV_API_TOKEN 时强制（不破坏本地无 token 使用）
+# 鉴权中间件：仅当设置了 VORTOCODE_API_TOKEN 时强制（不破坏本地无 token 使用）
 app.middleware("http")(auth_middleware)
 
 # 按域拆分的路由
@@ -98,19 +98,20 @@ def _insecure_bind_reason(host: str) -> str:
 
     fail-closed（2026-07 审计 P0#5）：此前只打印警告，忘设 token 就把所有 API
     （含驱动主 agent 读写文件、跑命令的 /ws）无鉴权暴露到公网。确需开放（如自建
-    反代已鉴权）设 AUTODEV_ALLOW_INSECURE_BIND=1 显式放行。
+    反代已鉴权）设 VORTOCODE_ALLOW_INSECURE_BIND=1 显式放行。
     """
-    import os
+    from src.env_compat import env_compat
     if host in _LOCAL_HOSTS:
         return ""
     if get_api_token():
         return ""
-    if os.getenv("AUTODEV_ALLOW_INSECURE_BIND", "").strip().lower() in ("1", "true", "yes", "on"):
+    if env_compat("VORTOCODE_ALLOW_INSECURE_BIND", "AUTODEV_ALLOW_INSECURE_BIND", "") \
+            .strip().lower() in ("1", "true", "yes", "on"):
         return ""
-    return (f"拒绝启动：绑定到非本地地址 {host} 但未设置 AUTODEV_API_TOKEN，"
+    return (f"拒绝启动：绑定到非本地地址 {host} 但未设置 VORTOCODE_API_TOKEN，"
             f"会把所有 API（含 /ws 主 agent、可读写文件/跑命令）无鉴权暴露到网络。\n"
-            f"      请先设置一个强随机 token：export AUTODEV_API_TOKEN=<随机串>\n"
-            f"      或（确知风险、已有外层鉴权时）：export AUTODEV_ALLOW_INSECURE_BIND=1")
+            f"      请先设置一个强随机 token：export VORTOCODE_API_TOKEN=<随机串>\n"
+            f"      或（确知风险、已有外层鉴权时）：export VORTOCODE_ALLOW_INSECURE_BIND=1")
 
 
 def start_server(host: str = "127.0.0.1", port: int = 8000):

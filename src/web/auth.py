@@ -1,13 +1,12 @@
 """Web 层鉴权与执行开关（安全默认值）。
 
 设计原则：本地开发不被打扰，但默认不裸奔危险能力。
-- 鉴权：仅当设置了环境变量 AUTODEV_API_TOKEN 时强制校验
+- 鉴权：仅当设置了环境变量 VORTOCODE_API_TOKEN 时强制校验
   （Bearer 或 X-API-Token）；未设则放行（配合默认仅绑 127.0.0.1）。
   这样既不破坏本地 UI，又能在对外暴露时一键加固。
-- 危险的宿主机命令执行端点默认禁用，需显式 AUTODEV_ENABLE_SHELL=1。
+- 危险的宿主机命令执行端点默认禁用，需显式 VORTOCODE_ENABLE_SHELL=1。
 """
 
-import os
 from pathlib import Path
 from typing import Optional
 
@@ -31,7 +30,8 @@ def resolve_within(base, rel) -> Optional[Path]:
 
 
 def get_api_token() -> str:
-    return os.getenv("AUTODEV_API_TOKEN", "").strip()
+    from src.env_compat import env_compat
+    return env_compat("VORTOCODE_API_TOKEN", "AUTODEV_API_TOKEN", "").strip()
 
 
 # 登录后种下的 httpOnly Cookie 名——token 走 Cookie（浏览器）/ Authorization 头（程序化），
@@ -41,7 +41,9 @@ SESSION_COOKIE = "vortocode_session"
 
 
 def shell_enabled() -> bool:
-    return os.getenv("AUTODEV_ENABLE_SHELL", "").strip().lower() in ("1", "true", "yes", "on")
+    from src.env_compat import env_compat
+    return env_compat("VORTOCODE_ENABLE_SHELL", "AUTODEV_ENABLE_SHELL", "").strip().lower() \
+        in ("1", "true", "yes", "on")
 
 
 # 鉴权豁免：页面 HTML 外壳（本身不含数据，数据走各自需鉴权的 API）、API 文档、健康检查、
@@ -71,7 +73,7 @@ def is_authed(request) -> bool:
 
 
 async def auth_middleware(request, call_next):
-    """仅当配置了 AUTODEV_API_TOKEN 时，对非豁免路径强制校验。"""
+    """仅当配置了 VORTOCODE_API_TOKEN 时，对非豁免路径强制校验。"""
     path = request.url.path
     exempt = path in _EXEMPT_EXACT or path.startswith(_EXEMPT_PREFIXES)
     if not exempt and not _token_ok(request):
@@ -85,12 +87,14 @@ def require_shell() -> None:
         raise HTTPException(
             status_code=403,
             detail=("宿主机命令执行已默认禁用。如确需启用，请在可信环境中"
-                    "设置环境变量 AUTODEV_ENABLE_SHELL=1。"),
+                    "设置环境变量 VORTOCODE_ENABLE_SHELL=1。"),
         )
 
 
 def browser_enabled() -> bool:
-    return os.getenv("AUTODEV_ENABLE_BROWSER", "").strip().lower() in ("1", "true", "yes", "on")
+    from src.env_compat import env_compat
+    return env_compat("VORTOCODE_ENABLE_BROWSER", "AUTODEV_ENABLE_BROWSER", "").strip().lower() \
+        in ("1", "true", "yes", "on")
 
 
 def require_browser() -> None:
@@ -102,7 +106,7 @@ def require_browser() -> None:
         raise HTTPException(
             status_code=403,
             detail=("浏览器自动化已默认禁用。如确需启用，请在可信环境中"
-                    "设置环境变量 AUTODEV_ENABLE_BROWSER=1。"),
+                    "设置环境变量 VORTOCODE_ENABLE_BROWSER=1。"),
         )
 
 

@@ -118,11 +118,12 @@ def main():
         parser.print_help()
         sys.exit(0)
 
-    # 结构化日志（opt-in）：AUTODEV_JSON_LOGS=1 控制台 JSON；AUTODEV_LOG_FILE=路径 落盘（ELK-ready）
-    import os as _os
-    if _os.getenv("AUTODEV_JSON_LOGS") or _os.getenv("AUTODEV_LOG_FILE"):
+    # 结构化日志（opt-in）：VORTOCODE_JSON_LOGS=1 控制台 JSON；VORTOCODE_LOG_FILE=路径 落盘（ELK-ready）
+    from src.env_compat import env_compat
+    if env_compat("VORTOCODE_JSON_LOGS", "AUTODEV_JSON_LOGS") \
+            or env_compat("VORTOCODE_LOG_FILE", "AUTODEV_LOG_FILE"):
         from src.core.tracing import setup_structured_logging
-        setup_structured_logging(log_file=_os.getenv("AUTODEV_LOG_FILE") or None)
+        setup_structured_logging(log_file=env_compat("VORTOCODE_LOG_FILE", "AUTODEV_LOG_FILE") or None)
 
     if args.command == "agent":
         prompt = _read_prompt_arg(args.prompt)
@@ -772,7 +773,7 @@ def run_demo():
 ╚══════════════════════════════════════════════════════════════╝
     """)
     
-    # 自动启动服务器（默认仅绑本地；对外暴露请显式传 --host 并设置 AUTODEV_API_TOKEN）
+    # 自动启动服务器（默认仅绑本地；对外暴露请显式传 --host 并设置 VORTOCODE_API_TOKEN）
     run_server("127.0.0.1", 8000)
 
 

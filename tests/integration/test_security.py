@@ -12,8 +12,8 @@ from src.web.server import app
 @pytest.fixture
 def client(monkeypatch):
     # 每个测试默认无 token、shell 关闭；各用例按需覆盖
-    monkeypatch.delenv("AUTODEV_API_TOKEN", raising=False)
-    monkeypatch.delenv("AUTODEV_ENABLE_SHELL", raising=False)
+    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    monkeypatch.delenv("VORTOCODE_ENABLE_SHELL", raising=False)
     return TestClient(app, raise_server_exceptions=False)
 
 
@@ -24,7 +24,7 @@ def test_no_token_allows_local(client):
 
 
 def test_token_enforced_when_set(client, monkeypatch):
-    monkeypatch.setenv("AUTODEV_API_TOKEN", "secret")
+    monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
     assert client.get("/api/status").status_code == 401
     assert client.get(
         "/api/status", headers={"Authorization": "Bearer secret"}
@@ -39,12 +39,12 @@ def test_token_enforced_when_set(client, monkeypatch):
 
 def test_query_token_rejected(client, monkeypatch):
     """审计 P0#4：?token= 查询参数不再被接受（token 已彻底移出 URL）。"""
-    monkeypatch.setenv("AUTODEV_API_TOKEN", "secret")
+    monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
     assert client.get("/api/status", params={"token": "secret"}).status_code == 401
 
 
 def test_login_sets_httponly_cookie_and_authorizes(client, monkeypatch):
-    monkeypatch.setenv("AUTODEV_API_TOKEN", "secret")
+    monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
     assert client.get("/api/status").status_code == 401          # 未登录
     bad = client.post("/api/auth/login", json={"token": "wrong"})
     assert bad.status_code == 401 and "vortocode_session" not in bad.headers.get("set-cookie", "")
@@ -56,7 +56,7 @@ def test_login_sets_httponly_cookie_and_authorizes(client, monkeypatch):
 
 
 def test_logout_clears_cookie(client, monkeypatch):
-    monkeypatch.setenv("AUTODEV_API_TOKEN", "secret")
+    monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
     client.post("/api/auth/login", json={"token": "secret"})
     assert client.get("/api/status").status_code == 200
     client.post("/api/auth/logout")
@@ -67,7 +67,7 @@ def test_auth_status_endpoint(client, monkeypatch):
     # 无 token：不需鉴权、视为已授权
     assert client.get("/api/auth/status").json() == {"auth_required": False, "authed": True}
     # 设 token 未登录：需鉴权、未授权
-    monkeypatch.setenv("AUTODEV_API_TOKEN", "secret")
+    monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
     st = client.get("/api/auth/status").json()
     assert st["auth_required"] is True and st["authed"] is False
     # 登录后：已授权
@@ -78,7 +78,7 @@ def test_auth_status_endpoint(client, monkeypatch):
 def test_ws_auth_via_cookie(client, monkeypatch):
     """WS 握手鉴权走同源自带的 Cookie（不再收 ?token=）：未登录被拒、登录后放行。"""
     from starlette.websockets import WebSocketDisconnect
-    monkeypatch.setenv("AUTODEV_API_TOKEN", "secret")
+    monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
     with pytest.raises(WebSocketDisconnect):                 # 未登录 → close(1008)
         with client.websocket_connect("/ws?sid=t") as ws:
             ws.receive_json()
@@ -95,7 +95,7 @@ def test_terminal_disabled_by_default(client):
 
 
 def test_terminal_enabled_via_env(client, monkeypatch):
-    monkeypatch.setenv("AUTODEV_ENABLE_SHELL", "1")
+    monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
     # 显式传一个必然存在的 workdir（cwd），与默认值解耦。
     r = client.post("/api/terminal/execute", json={"command": "echo hi", "workdir": "."})
     assert r.status_code == 200
@@ -104,7 +104,7 @@ def test_terminal_enabled_via_env(client, monkeypatch):
 
 def test_terminal_nonexistent_workdir_gives_clear_error(client, monkeypatch):
     # 真 bug 修复：workdir 不存在时给明确报错，而非 subprocess 闷头失败/空输出。
-    monkeypatch.setenv("AUTODEV_ENABLE_SHELL", "1")
+    monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
     r = client.post("/api/terminal/execute",
                     json={"command": "echo hi", "workdir": "/nonexistent/xyz_123"})
     assert r.status_code == 200
@@ -128,7 +128,7 @@ def test_cloud_sandbox_execute_disabled_by_default(client):
 def test_terminal_blocks_dangerous_command_via_guard(client, monkeypatch):
     # shell 开启后，命令仍要过权限模型的 SafetyGuard；危险命令在执行前被拦截。
     # 用 'eval echo hi'：匹配危险模式 'eval ' 必被拦，且万一回归泄漏到 subprocess 也无害。
-    monkeypatch.setenv("AUTODEV_ENABLE_SHELL", "1")
+    monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
     r = client.post("/api/terminal/execute", json={"command": "eval echo hi"})
     assert r.status_code == 200
     j = r.json()
