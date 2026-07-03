@@ -315,6 +315,96 @@ class LLMClient:
                 yield content
         _account(messages, "".join(parts), exact)   # 有精确 usage 用精确，否则估算
 
+    async def stream_chat(
+        self,
+        messages: List[Dict[str, Any]],
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        on_content: Optional[Callable[[str], None]] = None,
+        on_reasoning: Optional[Callable[[str], None]] = None,
+    ) -> Dict[str, Any]:
+        """流式跑一次（可带 tools）对话，返回与 chat() 同形的 dict：{content, reasoning, tool_calls, model}。
+
+        用于**原生 function-calling 的流式**：最终正文增量走 on_content（供 UI 边生成边回显），
+        同时把分片的 tool_calls 跨 chunk 累积成完整列表。一旦出现 tool_call 增量就停止把后续正文喂给
+        on_content——本次是"调工具"响应，附带碎语不该当最终回复回显（与提示式 _complete 的"疑似工具
+        调用则抑制"对齐；也保证 CLI 的累计偏移只在最终步推进）。思维链增量走 on_reasoning，不混进正文。
+        无 openai 库 → 回退非流式 chat（同样透传 tools），保证"模型无关"兜底不破。
+        """
+        client = await self._get_client()
+        if client is None:                     # 无 openai 库：降级路径不支持流式/原生 tools
+            return await self.chat(messages, model, temperature, tools=tools)
+
+        create: Dict[str, Any] = dict(
+            model=model or self.config.model,
+            messages=messages,
+            temperature=temperature if temperature is not None else self.config.temperature,
+            max_tokens=self.config.max_tokens,
+            stream=True,
+        )
+        if tools:
+            create["tools"] = tools
+            create["tool_choice"] = "auto"
+        # 优先请求精确 usage（尾 chunk 带 usage）；relay 不支持该参数就退回普通流式
+        try:
+            resp = await client.chat.completions.create(
+                **create, stream_options={"include_usage": True})
+        except Exception:  # noqa: BLE001
+            resp = await client.chat.completions.create(**create)
+
+        parts: List[str] = []
+        tc_acc: Dict[int, Dict[str, str]] = {}    # index -> {id,name,arguments}（分片累积）
+        exact = None
+        async for chunk in resp:
+            u = getattr(chunk, "usage", None)
+            if u is not None:
+                exact = u                          # include_usage 的尾 chunk
+            choices = getattr(chunk, "choices", None)
+            if not choices:
+                continue
+            delta = getattr(choices[0], "delta", None)
+            if delta is None:
+                continue
+            if on_reasoning is not None:           # 推理增量走侧信道（不混进正文）
+                rc = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+                if rc:
+                    try:
+                        on_reasoning(rc)
+                    except Exception:  # noqa: BLE001 —— 展示回调不该影响生成
+                        pass
+            for tc in (getattr(delta, "tool_calls", None) or []):   # 组装 tool_calls
+                idx = getattr(tc, "index", 0) or 0
+                slot = tc_acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                if getattr(tc, "id", None):
+                    slot["id"] = tc.id
+                fn = getattr(tc, "function", None)
+                if fn is not None:
+                    if getattr(fn, "name", None):
+                        slot["name"] += fn.name
+                    if getattr(fn, "arguments", None):
+                        slot["arguments"] += fn.arguments
+            content = getattr(delta, "content", None)
+            if content:
+                parts.append(content)
+                if on_content is not None and not tc_acc:   # 出现工具调用后不再回显正文
+                    try:
+                        on_content(content)
+                    except Exception:  # noqa: BLE001
+                        pass
+        full = "".join(parts)
+        _account(messages, full, exact)            # 有精确 usage 用精确，否则估算
+        tool_calls = None
+        if tc_acc:
+            tool_calls = [
+                {"id": tc_acc[i].get("id") or "", "name": tc_acc[i]["name"],
+                 "arguments": tc_acc[i]["arguments"]}
+                for i in sorted(tc_acc)
+            ]
+        # reasoning 已经过 on_reasoning 增量给出，这里返 None，避免调用方再整段重放一次
+        return {"content": full, "reasoning": None,
+                "tool_calls": tool_calls, "model": model or self.config.model}
+
     async def _chat_with_requests(
         self,
         messages: List[Dict[str, str]],

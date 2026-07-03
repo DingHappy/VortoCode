@@ -184,3 +184,84 @@ async def test_fallback_retries_on_timeout(monkeypatch):
     out = await _client(2)._chat_with_requests([{"content": "yo"}])
     assert out["content"] == "ok"
     assert session.posts == 2                                  # 超时也算暂时性 → 重试后成功
+
+
+# ---- 原生流式（stream_chat）：正文流式回显 + tool_calls 跨 chunk 累积 ----
+
+from types import SimpleNamespace
+
+
+class _FakeStreamResp:
+    """伪流式响应：async-for 逐个吐预设 chunk。"""
+
+    def __init__(self, chunks):
+        self._chunks = chunks
+
+    def __aiter__(self):
+        async def _gen():
+            for c in self._chunks:
+                yield c
+        return _gen()
+
+
+class _FakeOpenAI:
+    """伪 AsyncOpenAI：chat.completions.create(**k) 返回预设流式响应（忽略 kwargs）。"""
+
+    def __init__(self, chunks):
+        async def _create(**k):
+            return _FakeStreamResp(chunks)
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=_create))
+
+
+def _delta(content=None, reasoning=None, tool_calls=None):
+    return SimpleNamespace(content=content, reasoning_content=reasoning,
+                           reasoning=None, tool_calls=tool_calls)
+
+
+def _chunk(delta=None, usage=None):
+    choices = [SimpleNamespace(delta=delta)] if delta is not None else []
+    return SimpleNamespace(choices=choices, usage=usage)
+
+
+def _tc(index, id=None, name=None, arguments=None):
+    return SimpleNamespace(index=index, id=id,
+                           function=SimpleNamespace(name=name, arguments=arguments))
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_streams_content_and_no_tools(monkeypatch):
+    reset_usage()
+    chunks = [_chunk(_delta(content="你")), _chunk(_delta(content="好")),
+              _chunk(_delta(content="呀"))]
+    c = _client(3)
+
+    async def _fake_get():
+        return _FakeOpenAI(chunks)
+    monkeypatch.setattr(c, "_get_client", _fake_get)
+    seen = []
+    out = await c.stream_chat([{"role": "user", "content": "hi"}],
+                              on_content=lambda d: seen.append(d))
+    assert seen == ["你", "好", "呀"]                # 正文增量走 on_content
+    assert out["content"] == "你好呀"
+    assert out["tool_calls"] is None
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_assembles_tool_calls_and_suppresses_content(monkeypatch):
+    reset_usage()
+    chunks = [
+        _chunk(_delta(tool_calls=[_tc(0, id="1", name="read_file", arguments='{"pa')])),
+        _chunk(_delta(tool_calls=[_tc(0, arguments='th": "a.py"}')])),   # arguments 跨 chunk 分片
+        _chunk(_delta(content="附带碎语")),          # tool_call 之后的正文——应被抑制、不回显
+    ]
+    c = _client(3)
+
+    async def _fake_get():
+        return _FakeOpenAI(chunks)
+    monkeypatch.setattr(c, "_get_client", _fake_get)
+    seen = []
+    out = await c.stream_chat([{"role": "user", "content": "读 a"}], tools=[{"x": 1}],
+                              on_content=lambda d: seen.append(d))
+    assert seen == []                                # 出现 tool_call 后正文不回显
+    assert out["tool_calls"] == [
+        {"id": "1", "name": "read_file", "arguments": '{"path": "a.py"}'}]  # 分片被拼回完整
