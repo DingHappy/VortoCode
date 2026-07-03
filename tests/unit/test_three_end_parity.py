@@ -54,19 +54,12 @@ WEB_ONLY_ARTIFACTS = {"publish_artifact", "list_artifacts", "delete_artifact"}
 # 依据：build_agent_tools docstring（main_agent.py:1939）。
 INTENTIONAL_TUI_ONLY = {"edit_file", "write_file", "rename_symbol"}
 
-# TUI 独有、**存疑漂移**（本 PR 只登记冻结，待人决定；见 PR 描述"待决定的三端漂移"）：
-#   - save_memory / recall_memory：跨会话记忆，headless/web 一样用得上，工厂却没有 → 疑似漏。
-#   - use_skill / save_skill：技能是横切能力，工厂里缺 → 疑似漏。
-#   - run_dev_workflow：**legacy** dev→test→review 入口，工厂已改用 dev_isolated/parallel/auto
-#     → TUI 侧候选删除。
-# TODO(三端漂移): 逐条决定"补进工厂 / 从 TUI 删"，决定后从本集合移除。
-KNOWN_DRIFT_TUI_ONLY = {"save_memory", "recall_memory", "use_skill", "save_skill",
-                        "run_dev_workflow"}
-
-# 工厂（CLI/Web）有、TUI 没有、**存疑漂移**：dev_auto 是"一句话→自动分解→接力→集成→开 PR"的
-# 旗舰工具，主交互端 TUI 反而没暴露。
-# TODO(三端漂移): 决定是否把 dev_auto 补进 TUI；决定后从本集合移除。
-KNOWN_DRIFT_FACTORY_ONLY = {"dev_auto"}
+# 曾登记的"存疑漂移"已全部清零（三端漂移清理 PR）：save_memory/recall_memory/use_skill/save_skill
+# 已抽 UI 无关版补进工厂（build_memory_tools/build_skill_tools，CLI/Web 同步获得）；dev_auto 已补进
+# TUI（复用工厂 Tool）；legacy run_dev_workflow 已从 TUI 删除。→ 两个漂移集合现应为**空**。
+# 若将来某端又加/删工具而没在此登记，下面契约 A 立刻红。
+KNOWN_DRIFT_TUI_ONLY = set()
+KNOWN_DRIFT_FACTORY_ONLY = set()
 
 
 # ------------------------------------------------------------ 契约 A：工具集冻结
