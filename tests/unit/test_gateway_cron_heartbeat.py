@@ -86,6 +86,18 @@ def test_cron_state_persist(tmp_path):
     assert cron.CronState(str(tmp_path)).last_run("j") == when      # 跨实例持久化
 
 
+def test_cron_state_leaves_worktree_clean(tmp_path):
+    """cron_state.json 落 .vortocode/ 后，目标仓库（无自带 .gitignore）git status 仍干净（.vortocode/ 自忽略）。"""
+    import subprocess
+    def git(*a):
+        return subprocess.run(["git", "-C", str(tmp_path), *a], capture_output=True, text=True)
+    git("init", "-q"); git("config", "user.email", "t@t"); git("config", "user.name", "t")
+    (tmp_path / "f.py").write_text("x=1\n", encoding="utf-8"); git("add", "-A"); git("commit", "-qm", "init")
+    cron.CronState(str(tmp_path)).mark("job", datetime(2026, 7, 3, 2, 0))
+    assert (tmp_path / ".vortocode" / "cron_state.json").is_file()
+    assert git("status", "--porcelain").stdout.strip() == ""     # cron 状态对 git status 隐形
+
+
 def test_due_jobs_filters_by_state(tmp_path):
     _write_cron_yaml(tmp_path, """
 jobs:

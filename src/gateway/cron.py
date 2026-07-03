@@ -182,6 +182,7 @@ def load_jobs(repo_root: str) -> List[CronJob]:
 class CronState:
     """每个 job 上次运行时刻的持久化（.vortocode/cron_state.json），防重复触发、重启不忘。"""
     def __init__(self, repo_root: str):
+        self._repo_root = str(repo_root)
         self._path = Path(repo_root) / ".vortocode" / _STATE_FILE
         self._data: Dict[str, str] = {}
         if self._path.is_file():
@@ -202,6 +203,8 @@ class CronState:
     def mark(self, name: str, when: datetime) -> None:
         self._data[name] = when.isoformat()
         try:
+            from src.agents.dev_plan import ensure_state_gitignore
+            ensure_state_gitignore(self._repo_root)      # .vortocode/ 自忽略：cron 状态不污染目标仓库 git status
             self._path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._path.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(self._data, ensure_ascii=False, indent=2), encoding="utf-8")
