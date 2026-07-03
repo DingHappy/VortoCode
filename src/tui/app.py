@@ -1953,8 +1953,8 @@ class VortoCodeTUI(App):
         if catalog:
             extra_parts.append(f"【可用技能】(需要时用 use_skill 加载其完整指令再执行)\n{catalog}")
         extra = "\n\n".join(extra_parts) if extra_parts else None
-        import os
-        native = os.getenv("VORTOCODE_NATIVE_TOOLS", "").lower() in ("1", "true", "yes", "on")
+        from src.agents.main_agent import native_default
+        native = native_default()                # 三端统一 native 开关（收敛到 main_agent.native_default）
         hook_system = self._load_hook_system()   # .vortocode/hooks.yaml 存在才接，避免无谓开销
         from src.agents.permissions import load_permissions
         agent = MainAgent(tools, extra_system=extra, native=native,
