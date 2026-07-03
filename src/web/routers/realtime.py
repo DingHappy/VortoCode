@@ -115,7 +115,7 @@ def _session_key(websocket) -> str:
 
 def _new_agent():
     import os
-    from src.agents.main_agent import MainAgent, build_agent_tools, native_default
+    from src.agents.main_agent import MainAgent, build_agent_tools, native_default, skill_catalog
     # 制品/dev_isolated 靠隔离 + build 门控；run_command 高危 → 走 WS 确认（confirm_holder 每回合
     # 重绑到当前连接，见 _run_agent_turn）。无回合上下文时 confirm 默认拒绝。
     cwd = os.getcwd()
@@ -135,7 +135,14 @@ def _new_agent():
     # 与 headless CLI 共用同一工具装配（build_agent_tools），保证"同源"、不漂移；
     # Web 有制品查看页 → 含制品工具（with_artifacts=True）。
     tools = build_agent_tools(cwd, confirm=_confirm, on_progress=_progress, with_artifacts=True)
-    extra = load_project_instructions(cwd) or None  # AGENTS.md/CLAUDE.md 项目约定进系统提示
+    _parts = []
+    _proj = load_project_instructions(cwd)          # AGENTS.md/CLAUDE.md 项目约定进系统提示
+    if _proj:
+        _parts.append(_proj)
+    _catalog = skill_catalog(cwd)                   # 技能目录进系统提示（模型才知道有哪些技能可 use_skill）
+    if _catalog:
+        _parts.append(f"【可用技能】(需要时用 use_skill 加载其完整指令再执行)\n{_catalog}")
+    extra = "\n\n".join(_parts) if _parts else None
     from src.agents.permissions import load_permissions
     agent = MainAgent(tools, plan_tool=True, extra_system=extra,
                       permissions=load_permissions(cwd),   # 网页主 agent：持久计划 + 隔离 dev + 受 WS 确认的 shell + 权限 deny

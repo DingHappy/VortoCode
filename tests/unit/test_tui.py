@@ -274,11 +274,10 @@ async def test_analyze_runs_l1_and_reports(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_agent_loop_invokes_dev_workflow(monkeypatch, tmp_path):
-    # 主 agent loop：被判为开发任务时，模型调用 run_dev_workflow 工具 → 真跑流水线。
-    # 脚本化假 LLM（先出工具调用、再出最终回复）+ FakeLoop，确定性、不触网。
+async def test_run_command_invokes_dev_loop(monkeypatch, tmp_path):
+    # /run 命令：把开发目标交给 IterativeDevLoop 跑（流式）。legacy run_dev_workflow **工具已退役**
+    # （三端漂移清理），老 dev→test→review 循环现只经 /run（及 /apply 复用其产出）触达。FakeLoop 不触网。
     import src.orchestrator.dev_loop as dl
-    import src.llm.client as llmmod
 
     seen_tokens = []
 
@@ -294,27 +293,14 @@ async def test_agent_loop_invokes_dev_workflow(monkeypatch, tmp_path):
             return dl.DevLoopResult(success=True, iterations=1,
                                     workspace=str(tmp_path), files=["a.py"], reason="ok")
 
-    class ScriptedLLM:
-        def __init__(self, *a, **k):
-            self.n = 0
-
-        async def chat(self, messages, **k):
-            self.n += 1
-            if self.n == 1:                       # 第一步：决定调用开发流水线工具
-                return {"content": '{"tool": "run_dev_workflow", "args": {"goal": "写一个加法函数"}}'}
-            return {"content": "开发完成，已在工作区生成代码。"}   # 第二步：看到结果后最终回复
-
     monkeypatch.setattr(dl, "IterativeDevLoop", FakeLoop)
-    monkeypatch.setattr(llmmod, "LLMClient", ScriptedLLM)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
     app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
-        await _submit(app, pilot, "/mode")                            # plan → build（重型工具仅 build）
-        assert app.mode == "build"
-        await _submit(app, pilot, "帮我写一个加法函数")
-        assert await _wait_for(app, pilot, "开发（dev→test→review")   # 工具触发了流水线
-        assert await _wait_for(app, pilot, "开发完成")                 # 主 agent 的最终回复
+        await _submit(app, pilot, "/run 写一个加法函数")
+        assert await _wait_for(app, pilot, "开发（dev→test→review")   # /run 触发了流水线
+        assert await _wait_for(app, pilot, "结果: 成功")               # 汇总回显
         assert seen_tokens == ["ok"]                                   # 流式回调确实被调用
 
 
@@ -634,7 +620,7 @@ async def test_tools_command_lists(tmp_path):
         await _submit(app, pilot, "/tools")
         joined = "\n".join(app.transcript)
         assert "read_file" in joined and "[只读]" in joined
-        assert "run_dev_workflow" in joined and "[写/重型]" in joined
+        assert "dev_isolated" in joined and "[写/重型]" in joined      # run_dev_workflow 已退役，用隔离 dev 工具
 
 
 @pytest.mark.asyncio
