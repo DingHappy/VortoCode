@@ -505,3 +505,25 @@ async def test_run_cron_run_unknown_exits(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as e:
         await cli.run_cron("run", "nope")
     assert e.value.code == 2
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_cli_drains_claimed_task(tmp_path, monkeypatch):
+    """vc heartbeat run 领了 backlog 活后**等它真跑完**（否则 asyncio.run 退出会取消，标了 [~] 却没干，#129 评审）。"""
+    import asyncio
+    monkeypatch.chdir(tmp_path)
+    d = tmp_path / ".vortocode"; d.mkdir()
+    (d / "BACKLOG.md").write_text("- [ ] 补个测试\n", encoding="utf-8")
+
+    ran = []
+    import src.web.routers.tasks as tasks_mod
+
+    async def fake_worker(task, on_progress):
+        await asyncio.sleep(0.02)               # 有 await 点：不 drain 的话回调返回时它还没跑完
+        ran.append(task.prompt)
+        return "done"
+    monkeypatch.setattr(tasks_mod, "_dev_worker", fake_worker)
+
+    await cli.run_heartbeat_cli()
+    assert ran == ["补个测试"]                    # 领的活真的跑完了（drain 生效）
+    assert "- [~] 补个测试" in (d / "BACKLOG.md").read_text(encoding="utf-8")   # backlog 标了在跑

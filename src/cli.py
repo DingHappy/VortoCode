@@ -262,21 +262,32 @@ async def run_cron(action: str, name=None):
 
 
 async def run_heartbeat_cli():
-    """heartbeat run：立刻值班一次（隔离会话、便宜模型）。领 backlog 时 submit 到后台运行时。"""
+    """heartbeat run：立刻值班一次（隔离会话、便宜模型）。领 backlog 时 submit 并**等它真跑完**。
+
+    这是一次性命令：若领了 backlog 活就 submit 到本地 runner，然后 **drain（await）** 那个任务——
+    否则 asyncio.run 退出时 pending 任务会被取消，backlog 却已被标 [~]（领走了没干完，误导，#129 评审）。
+    """
     from src.gateway import heartbeat as _hb
     from src.gateway import TaskRunner
     from src.web.routers.tasks import _dev_worker
     cwd = str(Path.cwd())
     runner = TaskRunner(cwd, _dev_worker)
+    submitted: list = []
 
     async def _submit(item):
-        await runner.submit(item, kind="dev")
+        t = await runner.submit(item, kind="dev")
+        submitted.append(t.id)                 # 记下来，函数返回前 drain，别让进程退出把它取消
 
     async def _notify(text):
         print(text)
 
     print("🫀 心跳值班一次…", file=sys.stderr)
     res = await _hb.run_heartbeat(cwd, submit=_submit, notify=_notify)
+    for tid in submitted:                      # 等领到的活真正跑完（否则 backlog 标了 [~] 却没干完）
+        print(f"⏳ 等后台任务 {tid} 跑完…", file=sys.stderr)
+        await runner.join(tid)
+        done = runner.get(tid)
+        print(f"[task {tid}] {done.status if done else '?'}", file=sys.stderr)
     print(f"[heartbeat] action={res['action']}", file=sys.stderr)
 
 
