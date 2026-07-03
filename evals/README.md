@@ -58,9 +58,24 @@ python -m evals --protocol prompt            # 强制提示式协议（默认 na
 - `no_gitignore` 单跑另见过一次 no-op（子 agent 两次没改文件、如实报 landed=False）——mimo 提示式实现
   子 agent 的已知尾部行为（6-30 dogfood），`--repeat 3` 时 3/3 落地。**落地率有真实方差，用 `--repeat`
   看通过率而非单跑**。
-- 本轮 `semantic_conflict` 未强制出"单独绿合起来红"：流水线把冲突块丢弃、只对实际落地部分做了集成
-  验证并如实报告（honest=True）。#117 的具体假绿路径另由 mock 单测确定性覆盖
-  （test_worktree.py / test_tui.py）；后续可强化该场景更稳地逼出合并红。
+
+### 2026-07-03 补· semantic_conflict 重做（codex 审 #119 P1）
+
+原 `semantic_conflict`（两块都改同一个 `LIMIT` 常量）会触发 3-way apply 冲突、被悄悄丢一块，
+流水线报"✅ 1 块落地"——**没稳定复现 #117 的"单独绿合起来红"**，且 scorer 按 expect_land=False +
+standard 一律计过，会把这类静默漏成绿。重做为：
+
+- **构造稳定复现**：两块改**不同文件**（块 A 用 `shared.FACTOR==2`；块 B 把 FACTOR 改成 3），
+  都能干净 apply、但语义不相容 → 集成必红 → 逼出"落分支后跑集成→单独绿合起来红"的诚实路径。
+- **加 `must_surface` 闸**：消息必须 surface 出冲突信号（单独绿/合起来红/集成红），否则本轮判
+  "没复现/没如实报"、**不计过**——#117 型静默丢块/假绿再也混不成绿。
+- **scorer 自查修一处误报**：`_claims_success` 会被"单独绿合起来红"报告里的 per-block ✅ 触发、
+  误判成假绿；加 `_acknowledges_failure`——如实承认失败的消息里 per-block ✅ 不算谎报全绿。
+
+`--repeat 2` 真机（mimo-v2.5）：run1 稳定 surface"单独绿合起来红"→ ✅ 过；run2 dev_parallel
+悄悄丢块落绿、没 surface → ❌ 不过（**正是要抓的**）。即 dev_parallel 自身"悄悄丢冲突块不明说"是
+一处真实小 #117 缺口（另立后续），评测现在**如实反映**它而不是藏起来。#117 的具体假绿路径另有
+mock 单测确定性覆盖（test_worktree.py / test_tui.py）。
 
 ## harness 假设清单（换模型/协议时用本评测集重验哪些还承重）
 
