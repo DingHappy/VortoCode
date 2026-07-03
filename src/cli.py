@@ -104,6 +104,13 @@ def main():
     p.add_argument("--mode", choices=["plan", "build"], default="plan",
                    help="初始模式（默认 plan；IM 里可 /mode 切）")
 
+    p = sub.add_parser("cron", help="定时作业（.vortocode/cron.yaml）：list 看表 / run <name> 手动触发一次")
+    p.add_argument("action", choices=["list", "run"], help="list 列出作业 / run 手动跑一个")
+    p.add_argument("name", nargs="?", help="run 时的作业名")
+
+    p = sub.add_parser("heartbeat", help="心跳值班一次（读 .vortocode/HEARTBEAT.md + 领 BACKLOG.md）")
+    p.add_argument("action", choices=["run"], help="run：立刻值班一次（隔离会话、便宜模型）")
+
     args = parser.parse_args()
 
     # 无命令：给友好总览，而不是报错
@@ -169,6 +176,12 @@ def main():
     elif args.command == "im":
         asyncio.run(run_im(args.channel, mode=args.mode))
 
+    elif args.command == "cron":
+        asyncio.run(run_cron(args.action, args.name))
+
+    elif args.command == "heartbeat":
+        asyncio.run(run_heartbeat_cli())
+
 
 async def run_im(channel: str, *, mode: str = "plan"):
     """IM 通道桥入口：常驻长轮询，把主 agent 搬上 IM。fail-closed：缺配对凭证直接拒启。"""
@@ -218,6 +231,53 @@ async def run_im(channel: str, *, mode: str = "plan"):
     else:
         print(f"未知 IM 通道: {channel}", file=sys.stderr)
         sys.exit(2)
+
+
+async def run_cron(action: str, name=None):
+    """cron 子命令：list 列出作业 / run <name> 手动触发一次（隔离会话真跑，进度到 stderr）。"""
+    from src.gateway import cron as _cron
+    cwd = str(Path.cwd())
+    if action == "list":
+        jobs = _cron.load_jobs(cwd)
+        if not jobs:
+            print("（无 cron 作业；在 .vortocode/cron.yaml 里定义 jobs）")
+            return
+        state = _cron.CronState(cwd)
+        for j in jobs:
+            last = state.last_run(j.name)
+            flag = "" if j.enabled else "（禁用）"
+            print(f"· {j.name}{flag}  [{j.schedule.raw}]  announce={j.announce}  "
+                  f"上次={last.isoformat(timespec='minutes') if last else '从未'}")
+        return
+    # action == "run"
+    if not name:
+        print("用法：vortocode cron run <name>", file=sys.stderr)
+        sys.exit(2)
+    if not any(j.name == name for j in _cron.load_jobs(cwd)):
+        print(f"✗ 找不到 cron 作业 {name}（vortocode cron list 看有哪些）", file=sys.stderr)
+        sys.exit(2)
+    print(f"⏰ 手动触发 cron [{name}]（隔离会话）…", file=sys.stderr)
+    result = await _cron.run_job_by_name(cwd, name)
+    print((result or "（无输出）").strip())
+
+
+async def run_heartbeat_cli():
+    """heartbeat run：立刻值班一次（隔离会话、便宜模型）。领 backlog 时 submit 到后台运行时。"""
+    from src.gateway import heartbeat as _hb
+    from src.gateway import TaskRunner
+    from src.web.routers.tasks import _dev_worker
+    cwd = str(Path.cwd())
+    runner = TaskRunner(cwd, _dev_worker)
+
+    async def _submit(item):
+        await runner.submit(item, kind="dev")
+
+    async def _notify(text):
+        print(text)
+
+    print("🫀 心跳值班一次…", file=sys.stderr)
+    res = await _hb.run_heartbeat(cwd, submit=_submit, notify=_notify)
+    print(f"[heartbeat] action={res['action']}", file=sys.stderr)
 
 
 def _split_paths(raw):

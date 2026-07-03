@@ -83,6 +83,44 @@ async def cancel_task_bg(tid: str):
     return {"ok": ok, "cancelled": ok}
 
 
+async def scheduler_loop(stop_event):
+    """常驻调度循环（server lifespan 起，opt-in）：每分钟 tick 一次 cron；按 heartbeat 间隔值班。
+
+    默认关（VORTOCODE_CRON / VORTOCODE_HEARTBEAT 二者都未开则本循环根本不启动，见 lifespan）。
+    cron / heartbeat 都隔离会话跑、产出进台账 / 按 announce 投递，绝不碰主会话。
+    """
+    import asyncio
+    from datetime import datetime
+    from src.gateway import cron as _cron
+    from src.gateway import heartbeat as _hb
+
+    cwd = os.getcwd()
+    cron_on = os.getenv("VORTOCODE_CRON", "").strip().lower() in ("1", "true", "yes", "on")
+    hb_on = os.getenv("VORTOCODE_HEARTBEAT", "").strip().lower() in ("1", "true", "yes", "on")
+    hb_every = _hb.heartbeat_every_seconds()
+    last_hb = 0.0
+
+    async def _submit(item):
+        await get_runner().submit(item, kind="dev")
+
+    while not stop_event.is_set():
+        try:
+            now = datetime.now()
+            if cron_on:
+                await _cron.run_due(cwd, now)          # 到点的作业各自隔离跑
+            if hb_on:
+                mono = asyncio.get_event_loop().time()
+                if mono - last_hb >= hb_every:
+                    last_hb = mono
+                    await _hb.run_heartbeat(cwd, submit=_submit, hour=now.hour)
+        except Exception:  # noqa: BLE001 —— 单次 tick 出错不拖垮循环
+            pass
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=60)   # 每分钟 tick 一次（可被停止打断）
+        except asyncio.TimeoutError:
+            pass
+
+
 @router.post("/api/tasks/{tid}/open_pr")
 async def open_task_pr(tid: str):
     """对已完成任务落的 vorto/* 分支开一个 **draft** PR（人主动点 = 人在合并口的确认）。"""
