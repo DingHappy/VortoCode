@@ -208,6 +208,16 @@ def _taint_prefix() -> str:
     return ""
 
 
+def _dev_review_enabled() -> bool:
+    """dev_auto 的 PR 前对抗审查段开关：env `VORTOCODE_DEV_REVIEW`，**默认开**（=0/false/no/off 关）。
+
+    集成绿后、开 PR 前跑一个专职挑刺的 reviewer 子 agent（见 src/agents/review.py），把 codex 外审
+    反复抓真 bug 的经验内化进流水线。关掉可省一轮 LLM（评测/省钱场景）。
+    """
+    import os
+    return os.getenv("VORTOCODE_DEV_REVIEW", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
 def _native_error_is_permanent(exc: BaseException) -> bool:
     """native function-calling 调用出错时，判断是否"永久"（模型/端点根本不支持 tools）——
     只有永久错误才该把该 agent 整个生命周期回退提示式；瞬时错误（超时/连接/5xx/限流）不该。
@@ -1703,6 +1713,20 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             return f"\n（已 push {branch}，但开 PR 失败：{res.get('error')}。可手动 gh pr create。）"
         return f"\n（开 PR 失败：{res.get('error')}；分支 {branch} 保留。）"
 
+    async def _run_review_gate(branch: str, base: str, test_cmd) -> tuple:
+        """薄封装：把"依赖接力修复"作为 repair 注入 review.run_gate（挑刺→修→重审），返回 (note, blocked)。"""
+        import uuid
+        from src.agents import review as _review
+        from src.agents.worktree import run_dependent_on_branch
+        mk = _make_writer(test_cmd)
+
+        async def _repair(fix_desc: str) -> None:
+            await run_dependent_on_branch(repo_root, "wt-" + uuid.uuid4().hex[:8], branch,
+                                          fix_desc, mk(None), "dev_auto(review-fix)", test_cmd)
+
+        return await _review.run_gate(repo_root, branch, base, test_cmd=test_cmd,
+                                      repair=_repair, progress=_progress)
+
     async def _dev_auto(args: dict) -> str:
         """自动分解大任务 → 无依赖子任务并行隔离实现 → **有依赖的按拓扑序在同一分支上逐个接力实现**
         （检出该分支、看得见前面的改动、自测绿才提交、推进 tip 给下一个看）→ 最后对整条分支跑一遍
@@ -1785,7 +1809,15 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             if changed is not None:
                 done += _test_delta_msg(sum(1 for p in changed if _is_test_path(p)))
             out.append(done)
-            if want_pr:                                      # 集成绿 + 要求开 PR → 经确认 push+开 PR
+            # PR 前对抗审查段：**仅在真要开 PR 时**跑（名副其实的"PR 前"）。只落本地分支（open_pr 未给）
+            # 时不跑——否则会平白多花 reviewer LLM、可能自修复改动分支、甚至 blocked 早退，与"我只想要个
+            # 本地分支"的意图不符（codex 审 #120 P1）。
+            if want_pr and _dev_review_enabled():
+                note, blocked = await _run_review_gate(branch, base, test_cmd)
+                out.append(note)
+                if blocked:
+                    return "\n".join(out)                    # 审查未过 → 不开 PR、分支保留待人工
+            if want_pr:                                      # 集成绿 + 审查过 → 经确认 push+开 PR
                 out.append(await _open_pr_for_branch(branch, task, "\n".join(out), base))
         else:
             out.append(f"\n⚠️ 已落到 {branch}（{landed} 独立 + {dep_done} 依赖），但**集成后全量测试未过**。"
