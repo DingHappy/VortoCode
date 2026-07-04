@@ -47,6 +47,7 @@ def test_outbound_registry_frozen():
     assert sorted(P.OUTBOUND) == sorted([
         "init", "pong", "status",
         "agent_history", "agent_plan", "agent_say", "agent_stream", "agent_emit",
+        "agent_reasoning",      # PR-4 加：思维链增量（仅 want_reasoning 的客户端收，TUI attach 用）
         "agent_error", "agent_done", "agent_cancelled", "agent_confirm",
         "agent_tts_audio", "agent_tts_error",
         "task_update", "task_snapshot", "notice",

@@ -71,6 +71,8 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
         "title": title,
     }
     try:
+        from src.agents.dev_plan import ensure_state_gitignore
+        ensure_state_gitignore(repo_root)    # 会话持久化也是 .vortocode 生成态写入点（自忽略，防足迹）
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
