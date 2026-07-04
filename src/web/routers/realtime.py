@@ -6,6 +6,7 @@ P.make_event 构造/P.parse_event 校验，新事件类型必须先在 protocol 
 from fastapi import Request
 
 from src.gateway import protocol as P
+from src.gateway.sessions import SessionTable
 from src.web.deps import *  # noqa: F401,F403
 
 router = APIRouter()
@@ -132,8 +133,10 @@ def _make_ws_confirm(websocket, q):
 
 # ---- 会话级持久化：按客户端 sid 让 agent 跨重连/刷新存活，另留一份干净的展示用 transcript ----
 # 以前 agent 按 id(websocket) 存活、断开即丢，刷新就重来。现在按 sid（前端 sessionStorage，
-# 刷新仍在）存活，重连后回放对话。靠 _MAX_SESSIONS 上限淘汰最久未活动者，防泄漏。
-_SESSIONS: Dict[str, Dict[str, Any]] = {}
+# 刷新仍在）存活，重连后回放对话。生命周期管理在 gateway.SessionTable（上限淘汰/磁盘复原/持久），
+# 这里只持有表 + WS 侧的键规范；_SESSIONS 是表底层 dict 的别名（回放/删除/测试直接操作同一对象）。
+_TABLE = SessionTable(on_evict=lambda sess: _shutdown_mcp_async(sess.get("agent")))
+_SESSIONS: Dict[str, Dict[str, Any]] = _TABLE.data
 _MAX_SESSIONS = 50
 _MAX_TRANSCRIPT = 200
 
@@ -148,11 +151,10 @@ def _session_key(websocket) -> str:
 
 
 def _new_agent():
+    """Web 端薄壳：装配走 gateway 的单一工厂（kind="web"，含制品工具）；端侧只留 holder 模式——
+    confirm/progress 每回合重绑到当前连接（见 _run_agent_turn），无回合上下文时 confirm 默认拒绝。"""
     import os
-    from src.agents.main_agent import MainAgent, build_agent_tools, native_default, skill_catalog
-    # 制品/dev_isolated 靠隔离 + build 门控；run_command 高危 → 走 WS 确认（confirm_holder 每回合
-    # 重绑到当前连接，见 _run_agent_turn）。无回合上下文时 confirm 默认拒绝。
-    cwd = os.getcwd()
+    from src.gateway.agent_session import build_session
     confirm_holder = {"fn": None}
     progress_holder = {"fn": None}                 # dev 流水线进度 → 每回合重绑到当前 ws 的 agent_say
 
@@ -165,23 +167,7 @@ def _new_agent():
         if fn is not None:
             fn(msg)
 
-    from src.agents.project import load_project_instructions
-    # 与 headless CLI 共用同一工具装配（build_agent_tools），保证"同源"、不漂移；
-    # Web 有制品查看页 → 含制品工具（with_artifacts=True）。
-    tools = build_agent_tools(cwd, confirm=_confirm, on_progress=_progress, with_artifacts=True)
-    _parts = []
-    _proj = load_project_instructions(cwd)          # AGENTS.md/CLAUDE.md 项目约定进系统提示
-    if _proj:
-        _parts.append(_proj)
-    _catalog = skill_catalog(cwd)                   # 技能目录进系统提示（模型才知道有哪些技能可 use_skill）
-    if _catalog:
-        _parts.append(f"【可用技能】(需要时用 use_skill 加载其完整指令再执行)\n{_catalog}")
-    extra = "\n\n".join(_parts) if _parts else None
-    from src.agents.permissions import load_permissions
-    agent = MainAgent(tools, plan_tool=True, extra_system=extra,
-                      permissions=load_permissions(cwd),   # 网页主 agent：持久计划 + 隔离 dev + 受 WS 确认的 shell + 权限 deny
-                      env_context=True,                    # 注入 <env>（cwd/git/日期/目录）
-                      native=native_default())             # 三端统一 native 开关（此前 web 忽略 VORTOCODE_NATIVE_TOOLS）
+    agent = build_session(os.getcwd(), kind="web", confirm=_confirm, on_progress=_progress)
     agent._web_confirm_holder = confirm_holder     # _run_agent_turn 每回合把它指向当前 ws
     agent._web_progress_holder = progress_holder
     return agent
@@ -224,52 +210,19 @@ def _shutdown_mcp_async(agent) -> None:
 
 
 def _get_session(websocket) -> Dict[str, Any]:
-    """取/建该会话状态（agent + 展示 transcript + 活动时间）；超额淘汰最久未活动的。
+    """取/建该会话状态（agent + 展示 transcript + 活动时间）——生命周期全在 SessionTable。
 
-    内存里没有时，先尝试从磁盘按 sid 复原（跨服务器重启）——还原 transcript + agent 历史/计划。
+    factory/_MAX_SESSIONS 按当前模块属性取（测试可 monkeypatch）；淘汰时表回调关 MCP。
     """
     import os
-    import time
-    key = _session_key(websocket)
-    sess = _SESSIONS.get(key)
-    if sess is None:
-        if len(_SESSIONS) >= _MAX_SESSIONS:
-            oldest = min(_SESSIONS, key=lambda k: _SESSIONS[k]["last"])
-            evicted = _SESSIONS.pop(oldest, None)
-            if evicted:
-                _shutdown_mcp_async(evicted["agent"])   # 淘汰会话顺手关其 MCP，别残留子进程
-        agent = _new_agent()
-        transcript: list = []
-        try:                                  # 跨重启复原：磁盘有这个 sid 就把历史/计划灌回 agent
-            from src.web.session_store import load_session
-            saved = load_session(os.getcwd(), key)
-        except Exception:  # noqa: BLE001
-            saved = None
-        if saved:
-            transcript = list(saved.get("transcript") or [])
-            agent.history = list(saved.get("history") or [])
-            if saved.get("plan"):
-                agent.plan = list(saved["plan"])
-        from src.llm.client import new_usage
-        sess = {"agent": agent, "transcript": transcript, "last": 0.0, "usage": new_usage()}
-        _SESSIONS[key] = sess
-    sess["last"] = time.monotonic()
-    return sess
+    return _TABLE.get(_session_key(websocket), repo_root=os.getcwd(),
+                      factory=_new_agent, max_sessions=_MAX_SESSIONS)
 
 
 def _persist_session(websocket) -> None:
     """把当前会话存盘（跨重启用）。失败安全吞掉，绝不影响对话。"""
     import os
-    sess = _SESSIONS.get(_session_key(websocket))
-    if not sess:
-        return
-    try:
-        from src.web.session_store import save_session
-        agent = sess.get("agent")
-        save_session(os.getcwd(), _session_key(websocket), sess.get("transcript") or [],
-                     getattr(agent, "history", []) or [], getattr(agent, "plan", None))
-    except Exception:  # noqa: BLE001
-        pass
+    _TABLE.persist(_session_key(websocket), os.getcwd())
 
 
 def _ws_agent(websocket):
