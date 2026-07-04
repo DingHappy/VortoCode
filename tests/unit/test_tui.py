@@ -1366,6 +1366,41 @@ async def test_busy_input_queues_then_auto_sends(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_tool_lines_fold_into_pane_then_summary():
+    """回合内 🔧 工具行进实况面板（不刷屏对话区）；收尾折叠成一行摘要，面板隐藏。"""
+    from textual.widgets import Static
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        app._turn_say("🔧 [b]read_file[/b][dim] path=a.py[/dim]")
+        app._turn_say("🔧 [b]read_file[/b][dim] path=b.py[/dim]")
+        app._turn_say("🔧 [b]grep[/b][dim] pattern=x[/dim]")
+        app._turn_say("[dim]🗜️ 压缩了更早的对话[/dim]")          # 非工具提示照旧进对话区
+        await pilot.pause()
+        pane = app.query_one("#toolpane", Static)
+        assert pane.display is True                              # 实况面板展开
+        assert not any("read_file" in t for t in app.transcript)  # 工具行没刷进对话区
+        assert any("压缩了更早的对话" in t for t in app.transcript)
+        app._fold_tool_activity(); await pilot.pause()
+        assert pane.display is False                             # 收尾面板隐藏
+        joined = "\n".join(app.transcript)
+        assert "3 个工具调用" in joined                          # 折叠摘要一行
+        assert "read_file×2" in joined and "grep×1" in joined
+        assert not app._turn_tool_lines and not app._turn_tool_counts   # 状态清零
+
+
+@pytest.mark.asyncio
+async def test_fold_without_tools_is_silent():
+    """没用工具的回合：不写摘要行、面板保持隐藏（不产生噪音）。"""
+    from textual.widgets import Static
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        n0 = len(app.transcript)
+        app._fold_tool_activity(); await pilot.pause()
+        assert len(app.transcript) == n0
+        assert app.query_one("#toolpane", Static).display is False
+
+
+@pytest.mark.asyncio
 async def test_cancel_clears_queued_inputs():
     """忙时 Esc 主动取消：排队消息一起清空，不会取消完又自动冒一条。"""
     app = VortoCodeTUI(repo_root=".")
