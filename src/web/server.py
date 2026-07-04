@@ -117,6 +117,10 @@ def _insecure_bind_reason(host: str) -> str:
 def start_server(host: str = "127.0.0.1", port: int = 8000):
     """启动服务器（绑非本地且无鉴权时 fail-closed 拒绝启动，见 _insecure_bind_reason）。"""
     import uvicorn
+
+    import src.llm.client  # noqa: F401 —— 导入即加载 .env（OPENAI_API_KEY 等进 os.environ）。
+    # 不导它的话：shell 没 export key 时，/agent 首回合的 key 早检查（realtime.handle_agent_message）
+    # 永远走"未配置"降级——llm.client 只会在会话创建后才被导入，而会话创建在检查之后（先有鸡问题）。
     reason = _insecure_bind_reason(host)
     if reason:
         raise SystemExit(f"  ⛔ {reason}")
