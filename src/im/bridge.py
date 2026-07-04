@@ -45,12 +45,11 @@ class IMBridge:
         self._task_prog: dict = {}                       # tid -> 上次进度推送时间（节流）
         self.agent = self._build_agent()
 
-    # ------------------------------------------------------------ 建 agent（第四端：走同源工厂 + catalog）
+    # ------------------------------------------------------------ 建 agent（第四端：走 gateway 单一工厂）
     def _build_agent(self):
-        from src.agents.main_agent import (MainAgent, build_agent_tools, native_default,
-                                           skill_catalog)
-        from src.agents.permissions import load_permissions
-        from src.agents.project import load_project_instructions
+        """薄壳：装配走 gateway 的单一工厂（kind="im"，最小面）；端侧只留 holder 模式
+        （confirm/progress 每回合重绑到当前聊天，见 _run_turn）+ 会话磁盘复原。"""
+        from src.gateway.agent_session import build_session
 
         async def _confirm(message: str) -> bool:
             fn = self._confirm_holder["fn"]
@@ -61,22 +60,8 @@ class IMBridge:
             if fn is not None:
                 fn(msg)
 
-        tools = build_agent_tools(self.repo_root, confirm=_confirm, on_progress=_progress,
-                                  with_artifacts=False)
-        parts = []
-        proj = load_project_instructions(self.repo_root)
-        if proj:
-            parts.append(proj)
-        cat = skill_catalog(self.repo_root)
-        if cat:
-            parts.append(f"【可用技能】(需要时用 use_skill 加载其完整指令再执行)\n{cat}")
-        kwargs = dict(plan_tool=True, permissions=load_permissions(self.repo_root),
-                      env_context=True, native=native_default())
-        if parts:
-            kwargs["extra_system"] = "\n\n".join(parts)
-        if self._llm is not None:
-            kwargs["llm"] = self._llm
-        agent = MainAgent(tools, **kwargs)
+        agent = build_session(self.repo_root, kind="im", confirm=_confirm,
+                              on_progress=_progress, llm=self._llm)
         self._restore_session(agent)
         return agent
 

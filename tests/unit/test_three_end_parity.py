@@ -132,6 +132,51 @@ def test_contract_C_native_default_honored_by_all_three_ends(monkeypatch, tmp_pa
     assert _tui_agent(tmp_path)._native is False
 
 
+# ------------------------------------------------------------ 契约 E：三端装配出自同一工厂（PR-2 · D1）
+def test_contract_E_all_shells_delegate_to_gateway_factory(monkeypatch, tmp_path):
+    """Web/CLI/IM 的装配薄壳必须都路由到 gateway.agent_session.build_session（各自 kind 正确）。
+
+    这是"装配单一事实源"的守门：谁在某端重新手写装配串（漂移温床），这里就红。
+    """
+    from types import SimpleNamespace
+
+    import src.gateway.agent_session as fac
+    monkeypatch.chdir(tmp_path)
+
+    calls = []
+    real = fac.build_session
+
+    def spy(repo_root, **kw):
+        calls.append(kw.get("kind"))
+        return real(repo_root, **kw)
+
+    monkeypatch.setattr(fac, "build_session", spy)
+
+    _cli_agent(tmp_path)
+    _web_agent()
+    from src.im.bridge import IMBridge
+    stub = SimpleNamespace(repo_root=str(tmp_path), _llm=None,
+                           _confirm_holder={"fn": None}, _progress_holder={"fn": None},
+                           _restore_session=lambda agent: None)
+    IMBridge._build_agent(stub)
+
+    assert calls == ["cli", "web", "im"], f"三端装配没有全走工厂（或 kind 错了）: {calls}"
+
+
+def test_contract_E_im_toolset_equals_cli(monkeypatch, tmp_path):
+    """IM 与 CLI 的工具面必须完全一致（同厂 kind 差异只有 web 的制品位）。"""
+    from types import SimpleNamespace
+
+    from src.im.bridge import IMBridge
+    monkeypatch.chdir(tmp_path)
+    stub = SimpleNamespace(repo_root=str(tmp_path), _llm=None,
+                           _confirm_holder={"fn": None}, _progress_holder={"fn": None},
+                           _restore_session=lambda agent: None)
+    im = _names(IMBridge._build_agent(stub))
+    cli = _names(_cli_agent(tmp_path))
+    assert im == cli, f"IM/CLI 工具面漂移：IM 多 {im - cli}，少 {cli - im}"
+
+
 # ------------------------------------------------------------ 契约 D：共享工具的参数 schema / 权限一致
 def test_contract_D_shared_tools_have_identical_args_and_gate(monkeypatch, tmp_path):
     """凡三端共有的工具，其对模型暴露的参数键集合与 read_only（plan/build 门）必须逐一致。
