@@ -88,29 +88,17 @@ def test_ws_auth_via_cookie(client, monkeypatch):
 
 
 # ------------------------------------------------------- 危险执行端点闸
+# （原 /api/terminal/execute 的确认/危险命令/穿越用例已随该端点在 b4 PR-B3 退役删除——
+#   Web 面不再暴露任意 shell；主线 shell 入口是 agent 的 run_command，走确认门 + is_dangerous。）
 
-def test_terminal_disabled_by_default(client):
+def test_terminal_endpoint_retired(client):
     r = client.post("/api/terminal/execute", json={"command": "echo hi"})
-    assert r.status_code == 403
+    assert r.status_code in (404, 405)                       # 退役：连 403 的机会都不给
 
 
-def test_terminal_enabled_via_env(client, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
-    # 显式传一个必然存在的 workdir（cwd），与默认值解耦。
-    r = client.post("/api/terminal/execute", json={"command": "echo hi", "workdir": "."})
-    assert r.status_code == 200
-    assert r.json().get("stdout", "").strip() == "hi"
-
-
-def test_terminal_nonexistent_workdir_gives_clear_error(client, monkeypatch):
-    # 真 bug 修复：workdir 不存在时给明确报错，而非 subprocess 闷头失败/空输出。
-    monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
-    r = client.post("/api/terminal/execute",
-                    json={"command": "echo hi", "workdir": "/nonexistent/xyz_123"})
-    assert r.status_code == 200
-    j = r.json()
-    assert j["success"] is False
-    assert "工作目录不存在" in j["error"]
+def test_files_endpoints_retired(client):
+    assert client.get("/api/files").status_code in (404, 405)
+    assert client.get("/api/files/content", params={"path": "x"}).status_code in (404, 405)
 
 
 def test_default_workdir_is_a_real_directory():
@@ -123,25 +111,6 @@ def test_default_workdir_is_a_real_directory():
 def test_cloud_sandbox_execute_disabled_by_default(client):
     r = client.post("/api/sandbox/sid/execute", params={"command": "id"})
     assert r.status_code == 403
-
-
-def test_terminal_blocks_dangerous_command_via_guard(client, monkeypatch):
-    # shell 开启后，命令仍要过权限模型的 SafetyGuard；危险命令在执行前被拦截。
-    # 用 'eval echo hi'：匹配危险模式 'eval ' 必被拦，且万一回归泄漏到 subprocess 也无害。
-    monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
-    r = client.post("/api/terminal/execute", json={"command": "eval echo hi"})
-    assert r.status_code == 200
-    j = r.json()
-    assert j.get("success") is False
-    assert "安全策略拦截" in j.get("error", "")
-
-
-# ------------------------------------------------------------ 路径穿越
-
-@pytest.mark.parametrize("path", ["../../../../etc/passwd", "/etc/passwd", "../.env"])
-def test_file_content_traversal_blocked(client, path):
-    j = client.get("/api/files/content", params={"path": path}).json()
-    assert j.get("success") is False
 
 
 def test_editor_out_of_bounds_write_blocked(client):
