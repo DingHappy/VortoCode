@@ -259,3 +259,15 @@ async def test_cli_attach_error_exits_nonzero():
         with pytest.raises(SystemExit) as ei:
             await cli.run_agent_headless("hi", attach=srv.url, quiet=True)
     assert ei.value.code == 1
+
+
+# ------------------------------------------------------------ --attach 参数消歧（dogfood 首日抓的）
+def test_disambiguate_attach_swallowed_prompt():
+    """argparse 的 --attach [URL] 会把紧跟的任务文本吞成 URL——不像 URL 就换回 prompt。"""
+    from src.cli import _disambiguate_attach
+    assert _disambiguate_attach(None, "修个 bug") == ("修个 bug", "")     # 被吞的任务文本 → 换回
+    assert _disambiguate_attach(None, "http://127.0.0.1:9090") == (None, "http://127.0.0.1:9090")
+    assert _disambiguate_attach(None, "localhost:8080") == (None, "localhost:8080")
+    assert _disambiguate_attach("任务", "") == ("任务", "")               # 裸 --attach + 正常 prompt
+    assert _disambiguate_attach("任务", "http://h:1") == ("任务", "http://h:1")
+    assert _disambiguate_attach(None, "") == (None, "")                   # 裸 --attach、stdin 读 prompt
