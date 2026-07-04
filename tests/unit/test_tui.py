@@ -199,18 +199,21 @@ async def test_model_command_shows_and_switches():
 
 @pytest.mark.asyncio
 async def test_model_picker_enter_selects_highlighted():
-    """选择器里 ↓ 到第二项回车 → 真切换（回车=选中当前高亮）。"""
+    """选择器里 ↓ 一项回车 → 真切换到当前模型的下一项（回车=选中当前高亮）。"""
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
         await pilot.pause()
+        cur0 = app._sb["model"]                            # 开弹窗前的当前模型（CI 与本地可不同）
+        models = list(app._COMMON_MODELS)                  # 与 _cmd_model 同逻辑重建选项序
+        if cur0 not in models:
+            models.insert(0, cur0)
+        expect = models[(models.index(cur0) + 1) % len(models)]
         await _submit(app, pilot, "/model")
         assert await _wait_modal(app, pilot)
-        await pilot.press("down")                          # 高亮到第二个模型
+        await pilot.press("down")                          # 打开高亮当前 → ↓ 到下一项
         await pilot.press("enter"); await pilot.pause()
         assert len(app.screen_stack) == 1
-        expect = app._COMMON_MODELS[1] if app._sb["model"] == app._COMMON_MODELS[0] else None
-        if expect:                                         # 默认模型在列表首位时可精确断言
-            assert app._model_override == expect
+        assert app._model_override == expect
 
 
 @pytest.mark.asyncio
