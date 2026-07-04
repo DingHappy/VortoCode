@@ -37,14 +37,42 @@ def _urlopen(req, timeout):
     return opener.open(req, timeout=timeout)
 
 
+def _proxy_in_effect(host: str) -> bool:
+    """该 host 的请求是否会经系统/环境代理出去（build_opener 默认含 ProxyHandler，两处口径一致）。
+
+    走代理时 DNS 由代理**远端**解析——典型国内代理机上本地 getaddrinfo 对外网域名整个不可用。
+    """
+    try:
+        proxies = urllib.request.getproxies()
+        if not (proxies.get("https") or proxies.get("http")):
+            return False
+        return not urllib.request.proxy_bypass(host)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _host_is_safe(host: str) -> bool:
-    """host 的所有解析 IP 都是公网才放行（任一私网/环回/保留 → 拒）。"""
+    """SSRF 校验：内网/保留地址一律拒，公网放行。
+
+    - IP 字面量：直接按地址段判（有无代理都拦内网字面量）；
+    - 域名且本地能解析：任一解析 IP 命中私网/环回/保留 → 拒（内网名照拦）；
+    - 域名且本地解析失败：**配了代理则放行**（DNS 由代理远端解析，本地失败是代理环境常态，
+      真机 dogfood 抓的：代理机上本地 DNS 全挂，这里一票否决把 web_search/web_fetch 全拦死）；
+      无代理维持拒绝（反正连接也会失败，且防解析异常当后门）。
+    """
     if not host:
         return False
     try:
+        addr = ipaddress.ip_address(host.strip("[]"))     # IP 字面量：不查 DNS 直接判段
+    except ValueError:
+        addr = None
+    if addr is not None:
+        return not (addr.is_private or addr.is_loopback or addr.is_link_local
+                    or addr.is_reserved or addr.is_multicast or addr.is_unspecified)
+    try:
         infos = socket.getaddrinfo(host, None)
-    except Exception:  # noqa: BLE001 —— 解析不了就拒
-        return False
+    except Exception:  # noqa: BLE001
+        return _proxy_in_effect(host)                     # 解析不了：代理环境放行，否则拒
     for info in infos:
         try:
             addr = ipaddress.ip_address(info[4][0])
