@@ -121,6 +121,8 @@ def main():
     p = sub.add_parser("heartbeat", help="心跳值班一次（读 .vortocode/HEARTBEAT.md + 领 BACKLOG.md）")
     p.add_argument("action", choices=["run"], help="run：立刻值班一次（隔离会话、便宜模型）")
 
+    sub.add_parser("doctor", help="一键自检：git/凭证/中转站/serve/权限文件/gh/IM——常驻化后'用不了'大多是管道问题")
+
     args = parser.parse_args()
 
     # 无命令：给友好总览，而不是报错
@@ -196,6 +198,19 @@ def main():
 
     elif args.command == "heartbeat":
         asyncio.run(run_heartbeat_cli())
+
+    elif args.command == "doctor":
+        sys.exit(asyncio.run(run_doctor()))
+
+
+async def run_doctor() -> int:
+    """一键自检：逐项查管道（git/凭证/中转站/serve/权限/gh/IM），返回退出码（硬伤=1）。"""
+    from src.gateway.doctor import run_checks, summarize
+    print("VortoCode doctor · 自检中…\n", file=sys.stderr)
+    checks = await run_checks(str(Path.cwd()))
+    text, code = summarize(checks)
+    print(text)
+    return code
 
 
 async def run_im(channel: str, *, mode: str = "plan"):
