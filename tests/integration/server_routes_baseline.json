@@ -1,796 +1,694 @@
 [
-  {
-    "path": "/",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/agent",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/agent/sessions",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/agent/sessions/{sid}",
-    "methods": [
-      "DELETE"
-    ]
-  },
-  {
-    "path": "/api/agent/sessions/{sid}",
-    "methods": [
-      "PATCH"
-    ]
-  },
-  {
-    "path": "/api/agents/advanced",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/agents/advanced",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/agents/advanced/from-template/{template_name}",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/agents/advanced/stats",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/agents/advanced/{agent_id}",
-    "methods": [
-      "DELETE"
-    ]
-  },
-  {
-    "path": "/api/agents/advanced/{agent_id}",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/agents/advanced/{agent_id}/performance",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/agents/advanced/{agent_id}/toggle",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/agents/custom",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/agents/custom",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/agents/custom/{agent_id}",
-    "methods": [
-      "DELETE"
-    ]
-  },
-  {
-    "path": "/api/agents/custom/{agent_id}/activate",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/agents/custom/{agent_id}/deactivate",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/agents/templates",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/agents/templates/{template_name}",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/agents/{agent_id}/run",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/agents/{agent_id}/stop",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/approvals",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/approvals/{request_id}",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/artifacts",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/artifacts/{artifact_id}",
-    "methods": [
-      "DELETE"
-    ]
-  },
-  {
-    "path": "/api/artifacts/{artifact_id}",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/artifacts/{artifact_id}/pin",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/artifacts/{artifact_id}/versions",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/auth/login",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/auth/logout",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/auth/status",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/auto-approve",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/browser/click",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/browser/fill",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/browser/navigate",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/browser/screenshot",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/cache/clear",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/cache/stats",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/chat/history",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/chat/send",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/completion",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/context",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/context/memory",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/cost/report",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/docs/generate",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/editor/apply",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/editor/edit",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/editor/undo",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/error/analyze",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/files",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/files/content",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/git/commit",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/git/diff",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/git/log",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/git/status",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/github/issues",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/github/issues/{issue_number}",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/github/issues/{issue_number}/fix",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/goal",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/health",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/health/quick",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/indexing/search",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/indexing/start",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/model",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/models",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/models/available",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/models/recommend",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/monitoring/metrics",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/monitoring/reset",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/notices",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/permissions",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/projects",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/projects",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/projects/stats/all",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/projects/{project_id}",
-    "methods": [
-      "DELETE"
-    ]
-  },
-  {
-    "path": "/api/projects/{project_id}",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/projects/{project_id}/execute",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/projects/{project_id}/files",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/projects/{project_id}/search",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/projects/{project_id}/switch",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/reset",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/sandbox/create",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/sandbox/execute",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/sandbox/list",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/sandbox/{sandbox_id}/destroy",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/sandbox/{sandbox_id}/execute",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/search",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/security/stats",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/security/unban/{agent_id}",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/sessions",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/sessions",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/sessions/{session_id}/messages",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/skills",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/skills",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/skills/execute",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/skills/reload",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/skills/search/{query}",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/skills/{skill_name}",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/start",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/status",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/stop",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/system/info",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/tasks",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/tasks",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/tasks/{task_id}/update",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/tasks/{tid}",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/tasks/{tid}/cancel",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/tasks/{tid}/open_pr",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/templates",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/templates/{template_id}",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/templates/{template_id}/create",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/terminal/execute",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/testing/generate",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/workdir",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/workdir",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/workspaces",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/workspaces",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/workspaces/execute-parallel",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/workspaces/stats/all",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/workspaces/{workspace_id}",
-    "methods": [
-      "DELETE"
-    ]
-  },
-  {
-    "path": "/api/workspaces/{workspace_id}",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/workspaces/{workspace_id}/execute",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/workspaces/{workspace_id}/switch",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/artifact/{artifact_id}",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/artifact/{artifact_id}/raw",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/artifacts",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/docs",
-    "methods": [
-      "GET",
-      "HEAD"
-    ]
-  },
-  {
-    "path": "/docs/oauth2-redirect",
-    "methods": [
-      "GET",
-      "HEAD"
-    ]
-  },
-  {
-    "path": "/openapi.json",
-    "methods": [
-      "GET",
-      "HEAD"
-    ]
-  },
-  {
-    "path": "/redoc",
-    "methods": [
-      "GET",
-      "HEAD"
-    ]
-  },
-  {
-    "path": "/ws",
-    "methods": []
-  }
+ {
+  "path": "/",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/agent",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/agent/sessions",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/agent/sessions/{sid}",
+  "methods": [
+   "DELETE"
+  ]
+ },
+ {
+  "path": "/api/agent/sessions/{sid}",
+  "methods": [
+   "PATCH"
+  ]
+ },
+ {
+  "path": "/api/agents/advanced",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/agents/advanced",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/agents/advanced/from-template/{template_name}",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/agents/advanced/stats",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/agents/advanced/{agent_id}",
+  "methods": [
+   "DELETE"
+  ]
+ },
+ {
+  "path": "/api/agents/advanced/{agent_id}",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/agents/advanced/{agent_id}/performance",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/agents/advanced/{agent_id}/toggle",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/agents/custom",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/agents/custom",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/agents/custom/{agent_id}",
+  "methods": [
+   "DELETE"
+  ]
+ },
+ {
+  "path": "/api/agents/custom/{agent_id}/activate",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/agents/custom/{agent_id}/deactivate",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/agents/templates",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/agents/templates/{template_name}",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/agents/{agent_id}/run",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/agents/{agent_id}/stop",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/approvals",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/approvals/{request_id}",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/artifacts",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/artifacts/{artifact_id}",
+  "methods": [
+   "DELETE"
+  ]
+ },
+ {
+  "path": "/api/artifacts/{artifact_id}",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/artifacts/{artifact_id}/pin",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/artifacts/{artifact_id}/versions",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/auth/login",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/auth/logout",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/auth/status",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/auto-approve",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/browser/click",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/browser/fill",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/browser/navigate",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/browser/screenshot",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/cache/clear",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/cache/stats",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/context",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/context/memory",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/cost/report",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/docs/generate",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/editor/apply",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/editor/edit",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/editor/undo",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/files",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/files/content",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/git/commit",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/git/diff",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/git/log",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/git/status",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/github/issues",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/github/issues/{issue_number}",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/github/issues/{issue_number}/fix",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/goal",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/health",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/health/quick",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/model",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/models",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/models/available",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/models/recommend",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/monitoring/metrics",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/monitoring/reset",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/notices",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/permissions",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/projects",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/projects",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/projects/stats/all",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/projects/{project_id}",
+  "methods": [
+   "DELETE"
+  ]
+ },
+ {
+  "path": "/api/projects/{project_id}",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/projects/{project_id}/execute",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/projects/{project_id}/files",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/projects/{project_id}/search",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/projects/{project_id}/switch",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/reset",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/sandbox/create",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/sandbox/execute",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/sandbox/list",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/sandbox/{sandbox_id}/destroy",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/sandbox/{sandbox_id}/execute",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/search",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/security/stats",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/security/unban/{agent_id}",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/skills",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/skills",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/skills/execute",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/skills/reload",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/skills/search/{query}",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/skills/{skill_name}",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/start",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/status",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/stop",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/system/info",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/tasks",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/tasks",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/tasks/{task_id}/update",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/tasks/{tid}",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/tasks/{tid}/cancel",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/tasks/{tid}/open_pr",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/templates",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/templates/{template_id}",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/templates/{template_id}/create",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/terminal/execute",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/testing/generate",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/workdir",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/workdir",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/artifact/{artifact_id}",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/artifact/{artifact_id}/raw",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/artifacts",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/docs",
+  "methods": [
+   "GET",
+   "HEAD"
+  ]
+ },
+ {
+  "path": "/docs/oauth2-redirect",
+  "methods": [
+   "GET",
+   "HEAD"
+  ]
+ },
+ {
+  "path": "/openapi.json",
+  "methods": [
+   "GET",
+   "HEAD"
+  ]
+ },
+ {
+  "path": "/redoc",
+  "methods": [
+   "GET",
+   "HEAD"
+  ]
+ },
+ {
+  "path": "/ws",
+  "methods": []
+ }
 ]
