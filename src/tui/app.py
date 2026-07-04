@@ -22,9 +22,9 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
+from textual.message import Message
 from textual.screen import ModalScreen
-from textual.suggester import Suggester
-from textual.widgets import Footer, Header, Input, RichLog, Static
+from textual.widgets import Footer, Header, Input, RichLog, Static, TextArea
 from textual.worker import WorkerState
 
 from src.memory.session_store import SessionManager
@@ -99,9 +99,12 @@ _CTRL_SEQ_RE = re.compile(
 
 
 def _sanitize_input(s: str) -> str:
-    """剔除漏进输入的终端转义/控制序列，返回干净文本（普通可见字符 + 空格/Tab）。"""
+    """剔除漏进输入的终端转义/控制序列，返回干净文本（普通可见字符 + 空格/Tab/换行）。
+
+    换行是多行编辑器（PromptEditor，Ctrl+J）的合法内容，必须放行；其余控制字符照剔。
+    """
     s = _CTRL_SEQ_RE.sub("", s)
-    return "".join(ch for ch in s if ch >= " " or ch == "\t")
+    return "".join(ch for ch in s if ch >= " " or ch in ("\t", "\n"))
 
 _AGENTS_DB = lambda root: str(Path(root) / ".vortocode" / "web_advanced_agents.json")
 
@@ -150,34 +153,181 @@ def _repo_files(root: str) -> list[str]:
     return out[:2000]
 
 
-class FileSuggester(Suggester):
-    """输入里出现 @前缀时，补全为匹配的仓库文件路径（幽灵文本）。"""
+class PaletteView(Static):
+    """补全面板：候选行可点击——点击=选中并接受（与 Tab 同义），末尾提示行忽略。"""
 
-    def __init__(self, repo_root: str = "."):
-        super().__init__(use_cache=True, case_sensitive=False)
-        self._files = _repo_files(repo_root)
-        try:                                       # 内置命令 + 用户自定义命令(.vortocode/commands)
-            from src.agents.user_commands import load_commands
-            self._cmds = SLASH_COMMANDS + ["/" + n for n in load_commands(repo_root)]
-        except Exception:  # noqa: BLE001
-            self._cmds = list(SLASH_COMMANDS)
+    def on_click(self, event) -> None:
+        try:
+            self.app._palette_click(int(event.y))
+        except Exception:  # noqa: BLE001 —— 点击失败绝不影响输入
+            pass
 
-    async def get_suggestion(self, value: str) -> str | None:
-        # 1) slash 命令补全（输入以 / 开头且还没输到空格）
-        if value.startswith("/") and " " not in value:
-            vl = value.lower()
-            return next((c for c in self._cmds if c.startswith(vl) and c != vl), None)
-        # 2) @文件补全
-        at = value.rfind("@")
-        if at == -1:
-            return None
-        prefix = value[at + 1:]
-        if not prefix or " " in prefix:    # 该 @token 已输完
-            return None
-        pl = prefix.lower()
-        cand = (next((f for f in self._files if f.lower().startswith(pl)), None)
-                or next((f for f in self._files if pl in f.lower()), None))
-        return value[:at + 1] + cand if cand else None
+
+class PromptEditor(TextArea):
+    """opencode 式多行输入框：回车提交、Ctrl+J 换行、随内容自动长高（1~6 行）。
+
+    对外提供 .value / .cursor_position 属性，兼容原 Input 的全部调用点。
+    ↑↓/Tab/Esc 在这里按上下文分流给 app（补全面板选择 / 历史 / 切模式 / 取消）——
+    TextArea 自己会吞这些键（光标移动/缩进），必须在进 super 前拦截。
+    """
+
+    class Submitted(Message):
+        """回车提交（等价原 Input.Submitted，供 app 的 on_prompt_editor_submitted）。"""
+
+        def __init__(self, editor: "PromptEditor", value: str) -> None:
+            super().__init__()
+            self.editor = editor
+            self.value = value
+
+    @property
+    def value(self) -> str:
+        return self.text
+
+    @value.setter
+    def value(self, v: str) -> None:
+        self.text = v or ""
+        self.move_cursor(self.document.end)
+        self.post_message(TextArea.Changed(self))   # 程序化赋值不自动发 Changed → 手动补发，
+                                                    # 否则 Tab 接受候选后面板/高度不刷新
+
+    @property
+    def cursor_position(self) -> int:           # 兼容旧 Input 接口（调用点只用它"置尾"）
+        return len(self.text)
+
+    @cursor_position.setter
+    def cursor_position(self, _pos) -> None:
+        self.move_cursor(self.document.end)
+
+    async def _on_key(self, event) -> None:
+        app = self.app
+        key = event.key
+        if key == "enter":                       # 回车=提交（换行用 Ctrl+J）
+            event.stop()
+            event.prevent_default()
+            self.post_message(self.Submitted(self, self.text))
+            return
+        if key in ("ctrl+j", "shift+enter"):     # 换行（shift+enter 依终端协议，能收到就支持）
+            event.stop()
+            event.prevent_default()
+            self.insert("\n")
+            return
+        if key == "tab":                         # Tab 不缩进：补全/切模式（与全局键位一致）
+            event.stop()
+            event.prevent_default()
+            app.action_toggle_mode()
+            return
+        if key == "escape":                      # Esc：收面板 / 取消任务（app 统一裁决）
+            event.stop()
+            event.prevent_default()
+            app.action_cancel()
+            return
+        at_first = self.cursor_location[0] == 0
+        at_last = self.cursor_location[0] >= self.document.line_count - 1
+        if key == "up" and (app._palette_visible() or at_first):
+            event.stop()                         # 面板选择/翻历史；多行中间行仍是光标上移
+            event.prevent_default()
+            app.action_history_prev()
+            return
+        if key == "down" and (app._palette_visible() or at_last):
+            event.stop()
+            event.prevent_default()
+            app.action_history_next()
+            return
+        await super()._on_key(event)
+
+
+class ListPicker(ModalScreen):
+    """opencode 式选择弹窗：↑↓/点击 选、回车确认、Esc 取消、顶部输入即筛选。
+
+    items=[(value, label)]；dismiss 返回选中的 value（取消返回 None）。
+    on_highlight（可选）：高亮变化即回调 value——给 /theme 做实时预览用。
+    """
+
+    CSS = """
+    ListPicker { align: center middle; }
+    #lp-box { width: 76; max-height: 80%; border: round $accent; background: $surface; padding: 1 1; }
+    #lp-title { color: $text; text-style: bold; padding: 0 1; }
+    #lp-filter { border: round $panel; }
+    #lp-list { height: auto; max-height: 14; }
+    #lp-hint { color: $text-muted; padding: 0 1; }
+    """
+    BINDINGS = [
+        Binding("escape", "cancel", "取消"),
+        Binding("up", "hl_up", show=False),
+        Binding("down", "hl_down", show=False),
+    ]
+
+    def __init__(self, title: str, items: list, on_highlight=None, initial=None):
+        super().__init__()
+        self._title = title
+        self._items = list(items)
+        self._on_highlight = on_highlight
+        self._initial = initial             # 打开时高亮的 value（当前主题/模型），不给则第一项
+
+    def compose(self) -> ComposeResult:
+        from textual.widgets import OptionList
+        with Vertical(id="lp-box"):
+            yield Static(self._title, id="lp-title")
+            yield Input(placeholder="输入筛选…", id="lp-filter")
+            yield OptionList(id="lp-list")
+            yield Static("↑↓/点击 选 · 回车确认 · Esc 取消", id="lp-hint")
+
+    def on_mount(self) -> None:
+        self._refill("")
+        self.query_one("#lp-filter", Input).focus()   # 焦点在筛选框：直接打字即筛，↑↓ 走绑定
+
+    def _list(self):
+        from textual.widgets import OptionList
+        return self.query_one("#lp-list", OptionList)
+
+    def _refill(self, needle: str) -> None:
+        from textual.widgets.option_list import Option
+        ol = self._list()
+        ol.clear_options()
+        nl = needle.strip().lower()
+        shown = []
+        for val, label in self._items:
+            if not nl or nl in str(val).lower() or nl in str(label).lower():
+                ol.add_option(Option(label, id=str(val)))
+                shown.append(str(val))
+        if shown:                           # 首次打开高亮"当前项"（否则 /theme 一打开就预览成第一项）
+            want = str(self._initial) if self._initial is not None else None
+            ol.highlighted = shown.index(want) if want in shown else 0
+            self._initial = None            # 只对首次生效；之后筛选回到第一项
+
+    def _move(self, step: int) -> None:
+        ol = self._list()
+        if ol.option_count:
+            ol.highlighted = ((ol.highlighted or 0) + step) % ol.option_count
+
+    def action_hl_up(self) -> None:
+        self._move(-1)
+
+    def action_hl_down(self) -> None:
+        self._move(1)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        event.stop()                                  # 筛选框事件别冒泡进 app 的输入处理
+        self._refill(event.value)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        ol = self._list()                             # 回车 = 选当前高亮
+        if ol.option_count and ol.highlighted is not None:
+            self.dismiss(ol.get_option_at_index(ol.highlighted).id)
+
+    def on_option_list_option_selected(self, event) -> None:
+        self.dismiss(event.option.id)                 # 点击/在列表上回车
+
+    def on_option_list_option_highlighted(self, event) -> None:
+        if self._on_highlight is not None and event.option is not None:
+            try:
+                self._on_highlight(event.option.id)   # 实时预览（/theme 用）
+            except Exception:  # noqa: BLE001
+                pass
 
 
 class ConfirmScreen(ModalScreen[bool]):
@@ -238,8 +388,9 @@ class VortoCodeTUI(App):
     #palette { height: auto; max-height: 9; overflow-y: auto; background: $surface;
                color: $text-muted; padding: 0 1; }
     #statusbar { height: 1; color: $text-muted; background: $surface; padding: 0 1; }
-    #prompt { border: round $panel; }
+    #prompt { border: round $panel; height: 3; }
     #prompt:focus { border: round $accent; }
+    #prompt .text-area--placeholder { color: $text-muted; }
     """
     BINDINGS = [
         Binding("ctrl+c", "quit", "退出", priority=True),
@@ -276,8 +427,10 @@ class VortoCodeTUI(App):
         self._history_draft = ""            # 进入历史浏览前的草稿，↓ 到底恢复
         self._pal_items: list = []          # 补全面板候选 [(显示文本, 说明)]（空=面板隐藏）
         self._pal_accepts: list[str] = []   # 各候选被接受后的完整输入值（与 _pal_items 对齐）
-        self._pal_idx = 0                   # 当前高亮候选（↑↓ 移动，Tab 补全，回车执行/接受）
+        self._pal_idx = 0                   # 当前高亮候选（↑↓/点击 移动，Tab 补全，回车执行/接受）
         self._pal_kind = ""                 # "命令" / "文件"（回车语义不同：执行 vs 接受）
+        self._pal_start = 0                 # 开窗起点（渲染时更新；点击换算行号用）
+        self._queued_inputs: list[str] = []  # 忙时提交的消息排队（回合结束自动发送，不再丢弃）
         self._allow_writes_session = False  # 本会话"始终允许"写操作（ConfirmScreen 的 [a]，scope=writes）
         self._allow_commands_session = False  # 本会话"始终允许"跑命令（独立作用域，不吃写豁免）
         self._speak_replies = False         # /speak 开关：开则把每条回复合成语音朗读（mimo-v2.5-tts）
@@ -298,10 +451,12 @@ class VortoCodeTUI(App):
         yield Static(id="thinking")
         yield Static(id="stream")
         yield Static(id="status")
-        yield Static(id="palette")
+        yield PaletteView(id="palette")
         yield Static(id="statusbar")
-        yield Input(placeholder="输入需求（自然语言），或 / 看命令…",
-                    id="prompt", suggester=FileSuggester(self.repo_root))
+        # opencode 式多行编辑器（回车提交 / Ctrl+J 换行 / 自动长高）；补全提示全靠面板，
+        # 不做幽灵文字——↑↓ 选了 /run 幽灵还写 /analyze 的打架问题在结构上消失。
+        yield PromptEditor(placeholder="输入需求（自然语言），或 / 看命令…  · Ctrl+J 换行",
+                           id="prompt")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -317,7 +472,7 @@ class VortoCodeTUI(App):
         self._sync_subtitle()
         self.session_id = self.sessions.start_session()
         self._persist_on = True            # 之后的对话才落盘（不存开场白）
-        self.query_one("#prompt", Input).focus()
+        self.query_one("#prompt", PromptEditor).focus()
         # 常驻状态栏：先渲染缓存（仓库/模型/模式立显）。后台轮询（git 分支/dirty + gh PR）只在
         # 真终端起——无头(run_test)下不起定时器/worker，免得每个 TUI 测试都白跑 git/gh、拖慢测试。
         self._render_statusbar()
@@ -339,8 +494,8 @@ class VortoCodeTUI(App):
                      "[b]@src/cli.py 讲讲这个文件[/b]   ·   [b]给 xx 模块补测试[/b]")
         self._chrome("[dim]模式：plan=只读/提案（默认更稳），build=可写新分支（绝不碰 main）。"
                      "要它动手时会问你切不切，[b]不用先手动切[/b]。[/dim]")
-        self._chrome("[dim]键位：输入 [b]/[/b] 或 [b]@[/b] 看补全 · Tab/→ 接受 · ↑↓ 翻历史 · "
-                     "Tab 切模式 · [b]/help[/b] 全部命令[/dim]")
+        self._chrome("[dim]键位：输入 [b]/[/b] 或 [b]@[/b] 看补全（↑↓/点击 选 · Tab 补全 · 回车执行）· "
+                     "↑↓ 翻历史 · Tab 切模式 · [b]/help[/b] 全部命令[/dim]")
         if not os.getenv("OPENAI_API_KEY"):
             self._chrome("[yellow]⚠ 未配置 OPENAI_API_KEY[/yellow][dim] —— 对话/开发需要它："
                          "在项目根 [b].env[/b] 写 OPENAI_API_KEY=sk-... 后重启即可；"
@@ -502,16 +657,25 @@ class VortoCodeTUI(App):
         self._sb["pr"], self._sb["pr_branch"] = pr, branch
         self.call_from_thread(self._render_statusbar)
 
+    _COMMON_MODELS = ["mimo-v2.5", "mimo-v2.5-pro", "mimo-v2-pro", "mimo-v2-omni",
+                      "mimo-v2.5-asr", "mimo-v2.5-tts"]
+
     def _cmd_model(self, arg: str) -> None:
-        """/model：无参看当前模型 + 常用列表；带参切本会话模型（就地改客户端，状态栏同步）。"""
+        """/model：无参弹 opencode 式模型选择器（回车切换，本会话生效）；带参直接切。"""
         arg = (arg or "").strip()
         cur = self._sb.get("model", "?")
         if not arg:
-            common = ("mimo-v2.5 · mimo-v2.5-pro · mimo-v2-pro · mimo-v2-omni · "
-                      "mimo-v2.5-asr · mimo-v2.5-tts")
-            self._chrome(f"[b]当前模型[/b]：{cur}")
-            self._chrome("[dim]切换：[b]/model 名称[/b]（本会话生效；重启回到 .env 的 DEFAULT_MODEL）[/dim]")
-            self._chrome(f"[dim]中转站常用：{common}[/dim]")
+            models = list(self._COMMON_MODELS)
+            if cur and cur not in models:
+                models.insert(0, cur)
+            items = [(m, f"{m}{'  ← 当前' if m == cur else ''}") for m in models]
+
+            def _done(m) -> None:
+                if m and m != cur:
+                    self._cmd_model(m)      # 复用带参路径（就地改客户端 + 状态栏同步）
+
+            self.push_screen(ListPicker("选择模型 · 本会话生效（重启回 .env 的 DEFAULT_MODEL）",
+                                        items, initial=cur), _done)
             return
         self._model_override = arg          # agent 未建时，_build_main_agent 会读它应用
         if self.agent is not None:
@@ -533,6 +697,16 @@ class VortoCodeTUI(App):
         self._busy = running
         self._start_status() if running else self._stop_status()
         self._sync_subtitle()
+        if event.state in (WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED):
+            self._drain_queued()                # 回合真正收尾（终态）才放下一条排队消息
+
+    def _drain_queued(self) -> None:
+        """发送一条排队中的消息（一次一条：它的回合结束后本方法会再次被触发，天然接力）。"""
+        if self._busy or not self._queued_inputs:
+            return
+        text = self._queued_inputs.pop(0)
+        self._say_user(text)
+        self._route(text)
 
     # ---------------------------------------------------------------- 工作指示器
     def _start_status(self) -> None:
@@ -575,6 +749,9 @@ class VortoCodeTUI(App):
             self._hide_palette()
             return
         if self._busy:
+            if self._queued_inputs:           # 主动取消 = 连排队的一起清（别取消完又自动冒一条）
+                self._chrome(f"[dim]已清空 {len(self._queued_inputs)} 条排队消息[/dim]")
+                self._queued_inputs.clear()
             self.workers.cancel_all()
             self._chrome("[yellow]已取消当前操作[/yellow]")
 
@@ -583,7 +760,7 @@ class VortoCodeTUI(App):
         # Tab 上下文化：补全面板可见 → 接受选中候选（输入已是该值则先跳下一个，shell 式轮换）；
         # 否则切 plan/build 模式。
         if self._palette_visible():
-            v = self.query_one("#prompt", Input).value
+            v = self.query_one("#prompt", PromptEditor).value
             if v == self._pal_accepts[self._pal_idx] and len(self._pal_accepts) > 1:
                 self._palette_move(1)
             self._palette_accept()
@@ -593,7 +770,7 @@ class VortoCodeTUI(App):
         self._chrome(f"→ 切到 [b]{self.mode}[/b] 模式")
 
     def _set_input(self, val: str) -> None:
-        inp = self.query_one("#prompt", Input)
+        inp = self.query_one("#prompt", PromptEditor)
         inp.value = val
         inp.cursor_position = len(val)
 
@@ -637,7 +814,7 @@ class VortoCodeTUI(App):
             return
         if not self._history:
             return
-        inp = self.query_one("#prompt", Input)
+        inp = self.query_one("#prompt", PromptEditor)
         if self._history_idx is not None and inp.value != self._history[self._history_idx]:
             self._history_idx = None
         if self._history_idx is None:
@@ -654,7 +831,7 @@ class VortoCodeTUI(App):
             return
         if self._history_idx is None:
             return
-        inp = self.query_one("#prompt", Input)
+        inp = self.query_one("#prompt", PromptEditor)
         if inp.value != self._history[self._history_idx]:
             self._history_idx = None
             return
@@ -691,7 +868,7 @@ class VortoCodeTUI(App):
         self.query_one("#log", RichLog).clear()
 
     # ---------------------------------------------------------------- 输入分发
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
+    async def on_prompt_editor_submitted(self, event: "PromptEditor.Submitted") -> None:
         text = _sanitize_input(event.value).strip()   # 剔除漏进的终端转义序列，防脏字符进 agent/API
         if self._palette_visible():             # 回车语义：命令=执行选中项；文件=接受进输入框继续写
             sel = self._pal_accepts[self._pal_idx]
@@ -704,7 +881,7 @@ class VortoCodeTUI(App):
                 return
             else:
                 text = sel                      # 执行面板里选中的命令（输入未敲全也可回车）
-        self.query_one("#prompt", Input).value = ""
+        self.query_one("#prompt", PromptEditor).value = ""
         self._hide_palette()
         self._history_idx = None                # 提交后退出历史浏览
         if not text:
@@ -712,26 +889,34 @@ class VortoCodeTUI(App):
         if not self._history or self._history[-1] != text:
             self._history.append(text)          # 记入输入历史（去重相邻）
             self._append_history(text)          # 跨会话持久化
-        self._say_user(text)
         if text.startswith("/"):
+            self._say_user(text)
             self._dispatch(text)
         elif self._busy:
-            self._chrome("[yellow]正在处理上一条，Esc 取消或稍候[/yellow]")
+            # 排队而非丢弃：此前是回显后直接丢（看着像发出去了、实际没处理——真机 dogfood 抓的）。
+            # 回显推迟到真正发送时做，免得 transcript 顺序骗人。
+            self._queued_inputs.append(text)
+            self._chrome(f"[dim]⏳ 已排队（{len(self._queued_inputs)} 条）—— 当前回合结束后自动发送；"
+                         "Esc 取消当前回合并清空队列[/dim]")
         else:
+            self._say_user(text)
             self._route(text)           # 普通话：先判意图（闲聊/提问 vs 开发需求）再分流
 
-    def on_input_changed(self, event: Input.Changed) -> None:
-        """输入变化时更新命令补全面板（输入以 / 开头即可见）；并当场抹掉漏进的终端转义序列。"""
-        clean = _sanitize_input(event.value)
-        if clean != event.value:                 # 修饰键 CSI 等漏进来了 → 立即清掉，别弄脏显示
-            inp = self.query_one("#prompt", Input)
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        """输入变化：更新补全面板、随内容自动长高；并当场抹掉漏进的终端转义序列。"""
+        if getattr(event.text_area, "id", "") != "prompt":
+            return
+        inp = event.text_area
+        clean = _sanitize_input(inp.text)
+        if clean != inp.text:                    # 修饰键 CSI 等漏进来了 → 立即清掉，别弄脏显示
             inp.value = clean
-            inp.cursor_position = len(clean)
             return                               # 重设会再触发 Changed，那次已干净
+        # 自动长高：1~6 行内容（+2 边框），超出滚动——opencode 式编辑器手感
+        inp.styles.height = min(8, max(3, inp.document.line_count + 2))
         if (self._history_idx is not None        # 编辑了调出的历史 → 当作新输入（恢复补全等常规行为）
                 and clean != self._history[self._history_idx]):
             self._history_idx = None
-        self._update_palette(event.value)
+        self._update_palette(clean)
 
     def _update_palette(self, value: str) -> None:
         """输入框上方列出补全候选（↑↓ 选、Tab 补全、回车执行/接受）：/ → 命令；@ → 仓库文件。否则隐藏。"""
@@ -739,7 +924,7 @@ class VortoCodeTUI(App):
             self._hide_palette()
             return
         s = value.strip()
-        if s.startswith("/") and " " not in s:                 # 斜杠命令（内置 + 自定义）
+        if s.startswith("/") and " " not in s and "\n" not in s:   # 斜杠命令（内置 + 自定义）
             vl = s.lower()
             info = dict(COMMAND_INFO)
             for n, uc in self._user_commands().items():
@@ -789,6 +974,16 @@ class VortoCodeTUI(App):
             self._pal_idx = (self._pal_idx + step) % len(self._pal_items)
             self._render_palette()
 
+    def _palette_click(self, y: int) -> None:
+        """面板第 y 行被点击：选中该候选并接受（与 Tab 同义）。提示行/越界忽略。"""
+        i = self._pal_start + y
+        n_shown = min(self._pal_start + 8, len(self._pal_items)) - self._pal_start
+        if not self._pal_items or y < 0 or y >= n_shown:
+            return
+        self._pal_idx = i
+        self._render_palette()
+        self._palette_accept()
+
     def _palette_accept(self) -> str | None:
         """把当前选中候选写进输入框，返回接受后的完整输入值；无候选返回 None。"""
         if not self._pal_accepts:
@@ -801,6 +996,7 @@ class VortoCodeTUI(App):
         """渲染补全面板：高亮选中项（↑↓ 移动），候选超一屏时按选中位置开窗。"""
         items, idx, win = self._pal_items, self._pal_idx, 8
         start = max(0, min(idx - win // 2, len(items) - win))
+        self._pal_start = start                       # 点击换算行号用
         rows = []
         for i in range(start, min(start + win, len(items))):
             txt, desc = items[i]
@@ -809,7 +1005,7 @@ class VortoCodeTUI(App):
             rows.append(f"[b {mark}]›[/] [b]{txt}[/b]{d}" if i == idx else f"  {txt}{d}")
         pos = f" · {idx + 1}/{len(items)}" if len(items) > win else ""
         act = "回车执行" if self._pal_kind == "命令" else "回车接受"
-        rows.append(f"[dim]{self._pal_kind}补全 · ↑↓ 选 · Tab 补全 · {act} · Esc 收起{pos}[/dim]")
+        rows.append(f"[dim]{self._pal_kind}补全 · ↑↓/点击 选 · Tab 补全 · {act} · Esc 收起{pos}[/dim]")
         palette = self.query_one("#palette", Static)
         palette.update(Text.from_markup("\n".join(rows)))
         palette.display = True
@@ -1177,16 +1373,23 @@ class VortoCodeTUI(App):
 
     # ---------------------------------------------------------------- 会话
     def _cmd_sessions(self) -> None:
-        rows = self.sessions.list_recent_sessions(10)
+        """/sessions：opencode 式会话选择器——↑↓/筛选选中、回车即恢复（免记 id 敲 /resume）。"""
+        rows = self.sessions.list_recent_sessions(20)
         if not rows:
             self._emit("(暂无历史会话)")
             return
-        lines = ["历史会话（/resume <id> 恢复）:"]
+        items = []
         for r in rows:
             summ = self.sessions.store.get_session_summary(r["id"])
-            mark = " ← 当前" if r["id"] == self.session_id else ""
-            lines.append(f"  {r['id']}  {(r.get('updated_at') or '')[:19]}  消息 {summ.get('messages', 0)}{mark}")
-        self._emit("\n".join(lines))
+            mark = "  ← 当前" if r["id"] == self.session_id else ""
+            items.append((r["id"],
+                          f"{r['id']}  {(r.get('updated_at') or '')[:19]} · 消息 {summ.get('messages', 0)}{mark}"))
+
+        def _done(sid) -> None:
+            if sid and sid != self.session_id:
+                self._cmd_resume(sid)
+
+        self.push_screen(ListPicker("历史会话 · 回车恢复", items, initial=self.session_id), _done)
 
     def _cmd_resume(self, sid: str) -> None:
         if not self.sessions.resume_session(sid):
@@ -1253,13 +1456,26 @@ class VortoCodeTUI(App):
                    f"输出 ~{u['completion_tokens']} · 合计 ~{u['total_tokens']} tokens")
 
     def _cmd_theme(self, arg: str) -> None:
-        """/theme：列出/切换配色主题（Textual 内置 21 套）；选择记到 .vortocode/tui_theme。"""
+        """/theme：无参弹主题选择器（↑↓ **实时预览**，回车定、Esc 恢复）；带参直接切。"""
         names = sorted(self.available_themes)
         name = arg.strip()
         if not name:
             cur = self.theme
-            rows = "  ".join(f"[b]{n}[/b]" if n == cur else n for n in names)
-            self._emit(f"当前主题: {cur}\n可用（/theme <名> 切换，会记住）:\n{rows}")
+            items = [(n, f"{n}{'  ← 当前' if n == cur else ''}") for n in names]
+
+            def _preview(n) -> None:        # 高亮即套用（opencode 式实时预览）
+                if n in self.available_themes:
+                    self.theme = n
+
+            def _done(sel) -> None:
+                if sel and sel in self.available_themes:
+                    self.theme = sel
+                    self._persist_theme(sel)
+                    self._chrome(f"[green]→ 主题切到 {sel}（已记住）[/green]")
+                else:
+                    self.theme = cur        # Esc：恢复进弹窗前的主题
+            self.push_screen(ListPicker("选择主题 · ↑↓ 实时预览", items, on_highlight=_preview,
+                                        initial=cur), _done)
             return
         if name not in self.available_themes:
             self._emit(f"没有主题「{name}」。/theme 看全部。")
