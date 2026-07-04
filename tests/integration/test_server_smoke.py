@@ -71,7 +71,6 @@ CORE_OK = [
     "/api/agents/custom",
     "/api/agents/advanced",
     "/api/context",
-    "/api/permissions",
     "/api/projects",
     "/api/templates",
     "/api/system/info",
@@ -87,12 +86,11 @@ def test_core_readonly_endpoints_ok(client, path):
     assert resp.status_code == 200, f"{path} 返回 {resp.status_code}: {resp.text[:200]}"
 
 
-def test_goal_then_status_reflects_it(client):
-    r = client.post("/api/goal", json={"goal": "冒烟测试目标"})
-    assert r.status_code == 200, r.text
-    status = client.get("/api/status").json()
-    # state 里应记录刚设置的目标
-    assert "冒烟测试目标" in json.dumps(status, ensure_ascii=False)
+def test_retired_execution_endpoints_gone(client):
+    """b4 PR-B2：execution/security 路由已退役——端点必须 404（不是 500/退役桩）。"""
+    for path in ("/api/goal", "/api/start", "/api/reset", "/api/permissions", "/api/approvals"):
+        r = client.post(path) if path in ("/api/goal", "/api/start", "/api/reset") else client.get(path)
+        assert r.status_code in (404, 405), f"{path} 应已退役，实为 {r.status_code}"
 
 
 def test_root_serves_main_agent_console(client):
@@ -100,14 +98,6 @@ def test_root_serves_main_agent_console(client):
     r = client.get("/")
     assert r.status_code == 200
     assert "主 Agent" in r.text and "管理控制台" not in r.text
-
-
-def test_start_execution_retired(client):
-    """P1#7：5 角色批处理流水线已退役——/api/start 返回退役说明、不再拉起流程。"""
-    r = client.post("/api/start")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["success"] is False and "退役" in body["error"]
 
 
 def test_websocket_basic(client):

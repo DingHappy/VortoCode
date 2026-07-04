@@ -1,6 +1,5 @@
-"""web 后端地基测试：agent 持久化 + 实时 agent_status 广播（离线）。"""
+"""web 后端地基测试：自定义/高级 agent 持久化（离线）。"""
 
-import pytest
 
 
 def test_custom_agent_persists_across_reload(tmp_path):
@@ -48,20 +47,4 @@ def test_advanced_manager_no_persist_is_backward_compatible():
     assert len(m.list_agents()) == 5                 # 仍有 5 个默认
 
 
-@pytest.mark.asyncio
-async def test_set_agent_updates_state_and_broadcasts(monkeypatch):
-    from src.web.routers import execution
-
-    sent = []
-
-    async def fake_broadcast(msg):
-        sent.append(msg)
-
-    monkeypatch.setattr(execution.manager, "broadcast", fake_broadcast)
-
-    await execution._set_agent("developer", "running", "写代码")
-
-    assert execution.state.agents["developer"] == {"status": "running", "current_task": "写代码"}
-    assert sent and sent[-1]["type"] == "agent_status"
-    assert sent[-1]["data"]["agent_id"] == "developer"
-    assert sent[-1]["data"]["status"] == "running"
+# （原 test_set_agent_updates_state_and_broadcasts 已随路线 A execution 路由退役删除，b4 PR-B2）

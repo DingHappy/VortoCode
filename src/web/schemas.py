@@ -1,5 +1,5 @@
 """Web 层请求模型与配置常量（从 server.py 抽出）。"""
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from pydantic import BaseModel
 
 # 可用模型列表
@@ -12,19 +12,11 @@ AVAILABLE_MODELS = [
 ]
 
 # 请求模型
-class GoalRequest(BaseModel):
-    goal: str
-
 class WorkdirRequest(BaseModel):
     workdir: str
 
 class ModelRequest(BaseModel):
     model: str
-
-class TaskUpdate(BaseModel):
-    task_id: str
-    status: str
-    output: Optional[str] = None
 
 class CreateAgentRequest(BaseModel):
     name: str
@@ -34,9 +26,6 @@ class CreateAgentRequest(BaseModel):
     capabilities: List[str] = []
     tools: List[str] = []
     model: str = "mimo-v2.5"
-
-class RunAgentRequest(BaseModel):
-    task: str
 
 class ExecuteSkillRequest(BaseModel):
     skill_name: str

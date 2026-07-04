@@ -60,18 +60,13 @@ manager = ConnectionManager()
 
 class AppState:
     def __init__(self):
-        self.running = False
-        self.goal = ""
+        # 旧流水线字段（running/goal/tasks/agents/progress/iterations/tokens_used/auto_approve）
+        # 已随路线 A execution/security 路由退役删除（b4 PR-B2）——它们此前经 to_dict 泄漏进
+        # /ws init 握手，前端从不读。
         self.workdir = str(Path.cwd())  # 默认工作目录：进程当前目录（总是存在）。
         # 旧默认 ~/personal_project 在多数环境不存在，会让 terminal/文件等端点失败。
         self.model = "mimo-v2.5"  # 默认模型
-        self.auto_approve = False  # 自动批准
-        self.tasks: List[Dict[str, Any]] = []
-        self.agents: Dict[str, Dict[str, Any]] = {}
         self.logs: List[Dict[str, Any]] = []
-        self.progress = 0
-        self.iterations = 0
-        self.tokens_used = 0
 
         # 项目管理器
         self.project_manager = ProjectManager()
@@ -116,19 +111,11 @@ class AppState:
             logger.warning(f"Failed to load project context: {e}")
 
     def to_dict(self) -> Dict[str, Any]:
+        """状态快照——/ws init 握手与 GET /api/status 共用（旧流水线字段已退役，前端不读）。"""
         return {
-            "running": self.running,
-            "goal": self.goal,
             "workdir": self.workdir,
             "model": self.model,
-            "auto_approve": self.auto_approve,
-            "tasks": self.tasks,
-            "agents": self.agents,
             "logs": self.logs[-100:],  # 只返回最近100条日志
-            "progress": self.progress,
-            "iterations": self.iterations,
-            "tokens_used": self.tokens_used,
-            "pending_approvals": len(self.permission_manager.get_pending_requests())
         }
 
 

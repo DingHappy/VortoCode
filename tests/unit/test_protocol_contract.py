@@ -21,16 +21,13 @@ from src.gateway import protocol as P
 _WEB_DIR = Path(__file__).resolve().parents[2] / "src" / "web"
 _REALTIME = _WEB_DIR / "routers" / "realtime.py"
 
-# 路线 A 退役面的 legacy /ws 广播（audit-2026-07 定性，b3 PR-6 收口清退）。
+# 路线 A 退役面的 legacy /ws 广播（audit-2026-07 定性，b4 逐 PR 清退中）。
 # **双向冻结**：新增即红（新事件该走 protocol.OUTBOUND）；退役后忘删清单项也红（清单保持如实）。
 _LEGACY_WS_TYPES = {
-    # execution.py（5 角色流水线遗留）
-    "agent_status", "token", "agent_run_completed",
-    "goal_set", "execution_stopped", "state_reset", "task_updated",
-    # 其余 admin/遗留页
-    "approval_resolved",     # security.py（b4 PR-B2 清退）
-    "workdir_changed", "model_changed",   # system.py（b4 PR-B3 清退）
-    # 已清退：indexing_progress / chat_message（b4 PR-B1，随 indexing/sessions 路由删除）
+    "workdir_changed", "model_changed",   # system.py（b4 PR-B3 清退后本清单归零、冻结块拆除）
+    # 已清退：indexing_progress / chat_message（PR-B1）；agent_status / token /
+    # agent_run_completed / goal_set / execution_stopped / state_reset / task_updated /
+    # approval_resolved（PR-B2，随 execution/security 路由删除）
 }
 
 
