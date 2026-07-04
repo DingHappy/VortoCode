@@ -39,7 +39,7 @@ class FakeAdapter:
 
 
 class FakeRunner:
-    """最小共享 runner：记录 submit 与订阅。"""
+    """最小共享 runner：记录 submit 与订阅（subscribe 返回真退订，供泄漏断言）。"""
     def __init__(self):
         self.submitted: list = []
         self.subs: list = []
@@ -52,7 +52,7 @@ class FakeRunner:
 
     def subscribe(self, cb):
         self.subs.append(cb)
-        return lambda: None
+        return lambda: self.subs.remove(cb)
 
 
 @pytest.fixture(autouse=True)
@@ -74,9 +74,23 @@ async def test_start_embedded_shares_runner_and_registers_dispatch(tmp_path, mon
     # IM 的 /task 提交走共享 runner、kind="im-dev"
     await bridge._submit_task("修个 bug")
     assert runner.submitted == [("im-dev", "修个 bug")]
-    # 注销后干净
+    # 注销后干净：单例清、kind 分发清、**runner 订阅退掉**（评审抓的泄漏——否则 lifespan
+    # 重启/动态启停会把任务更新继续投给已停的 bridge/adapter）
     im_service.stop_embedded()
     assert im_service.current_bridge() is None and tr._IM_WORKER is None
+    assert runner.subs == [], "stop_embedded 后共享 runner 上不许残留旧 bridge 的订阅"
+
+
+@pytest.mark.asyncio
+async def test_restart_embedded_leaves_single_subscription(tmp_path):
+    """启-停-再启（lifespan 重启/动态启停）：订阅数始终 1，不随轮次累积。"""
+    runner = FakeRunner()
+    for _ in range(3):
+        im_service.start_embedded("telegram", str(tmp_path),
+                                  adapter=FakeAdapter(), owner="42", runner=runner)
+        assert len(runner.subs) == 1
+        im_service.stop_embedded()
+        assert len(runner.subs) == 0
 
 
 @pytest.mark.asyncio

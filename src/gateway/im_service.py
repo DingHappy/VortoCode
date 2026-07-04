@@ -24,7 +24,7 @@ class IMConfigError(Exception):
     """IM 通道凭证缺失/不合法（fail-closed：宁可拒启，不带残缺配对上线）。"""
 
 
-_ACTIVE: dict = {"bridge": None}      # serve 内嵌的 bridge（进程内单例；standalone 模式不登记）
+_ACTIVE: dict = {"bridge": None, "unsubscribe": None}   # serve 内嵌单例（standalone 模式不登记）
 
 
 def build_adapter(channel: str) -> Tuple[object, str]:
@@ -70,14 +70,23 @@ def start_embedded(channel: str, repo_root: str, *, mode: str = "plan",
     bridge = IMBridge(repo_root, adapter, str(owner), channel=channel, mode=mode, runner=runner)
     from src.web.routers import tasks as tasks_router
     tasks_router.register_im_worker(bridge._task_worker)   # kind="im-dev" 分发回 bridge worker
-    runner.subscribe(bridge._on_task_update)               # IM 也收任务进度/终态（与 WS 同一订阅集）
+    # IM 也收任务进度/终态（与 WS 同一订阅集）；unsubscribe 必须留着——stop 时不退订的话，
+    # lifespan 重启/动态启停会把更新继续投给已停的 bridge/adapter（评审抓的订阅泄漏）
+    _ACTIVE["unsubscribe"] = runner.subscribe(bridge._on_task_update)
     _ACTIVE["bridge"] = bridge
     return bridge, adapter
 
 
 def stop_embedded() -> None:
-    """注销内嵌 bridge（serve 关停时调；adapter 的关闭由调用方负责）。"""
+    """注销内嵌 bridge（serve 关停时调；adapter 的关闭由调用方负责）：单例、kind 分发、订阅全清。"""
     _ACTIVE["bridge"] = None
+    unsub = _ACTIVE.pop("unsubscribe", None)
+    _ACTIVE["unsubscribe"] = None
+    if unsub is not None:
+        try:
+            unsub()                                        # 从共享 runner 退订（防泄漏到已停 bridge）
+        except Exception:  # noqa: BLE001
+            pass
     try:
         from src.web.routers import tasks as tasks_router
         tasks_router.register_im_worker(None)
