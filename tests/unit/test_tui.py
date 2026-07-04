@@ -856,14 +856,32 @@ def test_expand_at_files(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_file_suggester_completes_at_token(tmp_path):
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "util.py").write_text("x = 1\n")
-    from src.tui.app import FileSuggester
+async def test_ghost_follows_palette_selection():
+    """幽灵文字由面板**选中项**驱动（单一真相源）：↓ 移动后幽灵跟着走，→/Tab 一致。"""
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", Input)
+        inp.focus()
+        inp.value = "/a"
+        await pilot.pause()
+        assert inp._suggestion == "/analyze"                  # 初始 = 首选
+        await pilot.press("down"); await pilot.pause()
+        assert inp._suggestion == app._pal_accepts[1]          # ↓ 后幽灵跟随选中项
+        await pilot.press("escape"); await pilot.pause()
+        assert inp._suggestion == ""                           # 面板收起幽灵一起收
 
-    s = FileSuggester(str(tmp_path))
-    assert await s.get_suggestion("改 @src/ut") == "改 @src/util.py"
-    assert await s.get_suggestion("没有 at 符号") is None
+
+@pytest.mark.asyncio
+async def test_ghost_cleared_on_substring_match():
+    """子串命中（/dit→/audit）不是前缀延伸，幽灵显示会错位 → 清空，只留面板。"""
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", Input)
+        inp.focus()
+        inp.value = "/dit"
+        await pilot.pause()
+        assert app._palette_visible()
+        assert inp._suggestion == ""
 
 
 @pytest.mark.asyncio
@@ -896,12 +914,22 @@ async def test_resume_replays_session(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_suggester_completes_slash_commands(tmp_path):
-    from src.tui.app import FileSuggester
-    s = FileSuggester(str(tmp_path))
-    assert await s.get_suggestion("/an") == "/analyze"
-    assert await s.get_suggestion("/se") == "/sessions"
-    assert await s.get_suggestion("/analyze") is None      # 已完整就不再建议
+async def test_palette_click_selects_and_accepts():
+    """鼠标点击候选行 = 选中并接受（与 Tab 同义）；点提示行/越界忽略。"""
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", Input)
+        inp.focus()
+        inp.value = "/a"
+        await pilot.pause()
+        third = app._pal_accepts[2]
+        app._palette_click(2)                                  # 点第 3 行（窗口起点为 0）
+        await pilot.pause()
+        assert inp.value == third
+        n0 = inp.value
+        app._palette_click(99)                                 # 越界/提示行：忽略不炸
+        await pilot.pause()
+        assert inp.value == n0
 
 
 @pytest.mark.asyncio

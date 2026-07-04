@@ -23,7 +23,6 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import ModalScreen
-from textual.suggester import Suggester
 from textual.widgets import Footer, Header, Input, RichLog, Static
 from textual.worker import WorkerState
 
@@ -150,34 +149,14 @@ def _repo_files(root: str) -> list[str]:
     return out[:2000]
 
 
-class FileSuggester(Suggester):
-    """输入里出现 @前缀时，补全为匹配的仓库文件路径（幽灵文本）。"""
+class PaletteView(Static):
+    """补全面板：候选行可点击——点击=选中并接受（与 Tab 同义），末尾提示行忽略。"""
 
-    def __init__(self, repo_root: str = "."):
-        super().__init__(use_cache=True, case_sensitive=False)
-        self._files = _repo_files(repo_root)
-        try:                                       # 内置命令 + 用户自定义命令(.vortocode/commands)
-            from src.agents.user_commands import load_commands
-            self._cmds = SLASH_COMMANDS + ["/" + n for n in load_commands(repo_root)]
-        except Exception:  # noqa: BLE001
-            self._cmds = list(SLASH_COMMANDS)
-
-    async def get_suggestion(self, value: str) -> str | None:
-        # 1) slash 命令补全（输入以 / 开头且还没输到空格）
-        if value.startswith("/") and " " not in value:
-            vl = value.lower()
-            return next((c for c in self._cmds if c.startswith(vl) and c != vl), None)
-        # 2) @文件补全
-        at = value.rfind("@")
-        if at == -1:
-            return None
-        prefix = value[at + 1:]
-        if not prefix or " " in prefix:    # 该 @token 已输完
-            return None
-        pl = prefix.lower()
-        cand = (next((f for f in self._files if f.lower().startswith(pl)), None)
-                or next((f for f in self._files if pl in f.lower()), None))
-        return value[:at + 1] + cand if cand else None
+    def on_click(self, event) -> None:
+        try:
+            self.app._palette_click(int(event.y))
+        except Exception:  # noqa: BLE001 —— 点击失败绝不影响输入
+            pass
 
 
 class ConfirmScreen(ModalScreen[bool]):
@@ -276,8 +255,9 @@ class VortoCodeTUI(App):
         self._history_draft = ""            # 进入历史浏览前的草稿，↓ 到底恢复
         self._pal_items: list = []          # 补全面板候选 [(显示文本, 说明)]（空=面板隐藏）
         self._pal_accepts: list[str] = []   # 各候选被接受后的完整输入值（与 _pal_items 对齐）
-        self._pal_idx = 0                   # 当前高亮候选（↑↓ 移动，Tab 补全，回车执行/接受）
+        self._pal_idx = 0                   # 当前高亮候选（↑↓/点击 移动，Tab 补全，回车执行/接受）
         self._pal_kind = ""                 # "命令" / "文件"（回车语义不同：执行 vs 接受）
+        self._pal_start = 0                 # 开窗起点（渲染时更新；点击换算行号用）
         self._allow_writes_session = False  # 本会话"始终允许"写操作（ConfirmScreen 的 [a]，scope=writes）
         self._allow_commands_session = False  # 本会话"始终允许"跑命令（独立作用域，不吃写豁免）
         self._speak_replies = False         # /speak 开关：开则把每条回复合成语音朗读（mimo-v2.5-tts）
@@ -298,10 +278,11 @@ class VortoCodeTUI(App):
         yield Static(id="thinking")
         yield Static(id="stream")
         yield Static(id="status")
-        yield Static(id="palette")
+        yield PaletteView(id="palette")
         yield Static(id="statusbar")
-        yield Input(placeholder="输入需求（自然语言），或 / 看命令…",
-                    id="prompt", suggester=FileSuggester(self.repo_root))
+        # 不挂 Suggester：幽灵文字由补全面板的选中项驱动（_sync_ghost），单一真相源——
+        # 否则 ↑↓ 选了 /run、幽灵还显示 /analyze，Tab 和 → 各接受各的（真机体验抓的打架）。
+        yield Input(placeholder="输入需求（自然语言），或 / 看命令…", id="prompt")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -339,8 +320,8 @@ class VortoCodeTUI(App):
                      "[b]@src/cli.py 讲讲这个文件[/b]   ·   [b]给 xx 模块补测试[/b]")
         self._chrome("[dim]模式：plan=只读/提案（默认更稳），build=可写新分支（绝不碰 main）。"
                      "要它动手时会问你切不切，[b]不用先手动切[/b]。[/dim]")
-        self._chrome("[dim]键位：输入 [b]/[/b] 或 [b]@[/b] 看补全 · Tab/→ 接受 · ↑↓ 翻历史 · "
-                     "Tab 切模式 · [b]/help[/b] 全部命令[/dim]")
+        self._chrome("[dim]键位：输入 [b]/[/b] 或 [b]@[/b] 看补全（↑↓/点击 选 · Tab 补全 · 回车执行）· "
+                     "↑↓ 翻历史 · Tab 切模式 · [b]/help[/b] 全部命令[/dim]")
         if not os.getenv("OPENAI_API_KEY"):
             self._chrome("[yellow]⚠ 未配置 OPENAI_API_KEY[/yellow][dim] —— 对话/开发需要它："
                          "在项目根 [b].env[/b] 写 OPENAI_API_KEY=sk-... 后重启即可；"
@@ -777,6 +758,7 @@ class VortoCodeTUI(App):
         self._pal_items, self._pal_accepts, self._pal_idx, self._pal_kind = [], [], 0, ""
         try:
             self.query_one("#palette", Static).display = False
+            self.query_one("#prompt", Input)._suggestion = ""   # 面板收起 → 幽灵一起收
         except Exception:  # noqa: BLE001
             pass
 
@@ -789,6 +771,16 @@ class VortoCodeTUI(App):
             self._pal_idx = (self._pal_idx + step) % len(self._pal_items)
             self._render_palette()
 
+    def _palette_click(self, y: int) -> None:
+        """面板第 y 行被点击：选中该候选并接受（与 Tab 同义）。提示行/越界忽略。"""
+        i = self._pal_start + y
+        n_shown = min(self._pal_start + 8, len(self._pal_items)) - self._pal_start
+        if not self._pal_items or y < 0 or y >= n_shown:
+            return
+        self._pal_idx = i
+        self._render_palette()
+        self._palette_accept()
+
     def _palette_accept(self) -> str | None:
         """把当前选中候选写进输入框，返回接受后的完整输入值；无候选返回 None。"""
         if not self._pal_accepts:
@@ -797,10 +789,25 @@ class VortoCodeTUI(App):
         self._set_input(val)
         return val
 
+    def _sync_ghost(self) -> None:
+        """幽灵文字跟随面板**选中项**（单一真相源，→ 键接受的就是它）。
+
+        只在选中项是当前输入的前缀延伸时显示（子串命中如 /dit→/audit 显示会错位，清空）。
+        """
+        try:
+            inp = self.query_one("#prompt", Input)
+        except Exception:  # noqa: BLE001
+            return
+        sel = self._pal_accepts[self._pal_idx] if self._pal_accepts else ""
+        v = inp.value
+        inp._suggestion = (sel if v and len(sel) > len(v) and sel.lower().startswith(v.lower())
+                           else "")
+
     def _render_palette(self) -> None:
         """渲染补全面板：高亮选中项（↑↓ 移动），候选超一屏时按选中位置开窗。"""
         items, idx, win = self._pal_items, self._pal_idx, 8
         start = max(0, min(idx - win // 2, len(items) - win))
+        self._pal_start = start                       # 点击换算行号用
         rows = []
         for i in range(start, min(start + win, len(items))):
             txt, desc = items[i]
@@ -809,10 +816,11 @@ class VortoCodeTUI(App):
             rows.append(f"[b {mark}]›[/] [b]{txt}[/b]{d}" if i == idx else f"  {txt}{d}")
         pos = f" · {idx + 1}/{len(items)}" if len(items) > win else ""
         act = "回车执行" if self._pal_kind == "命令" else "回车接受"
-        rows.append(f"[dim]{self._pal_kind}补全 · ↑↓ 选 · Tab 补全 · {act} · Esc 收起{pos}[/dim]")
+        rows.append(f"[dim]{self._pal_kind}补全 · ↑↓/点击 选 · Tab/→ 补全 · {act} · Esc 收起{pos}[/dim]")
         palette = self.query_one("#palette", Static)
         palette.update(Text.from_markup("\n".join(rows)))
         palette.display = True
+        self._sync_ghost()                            # 幽灵与选中项同步刷新
 
     def _dispatch(self, text: str) -> None:
         parts = text[1:].split(maxsplit=1)
