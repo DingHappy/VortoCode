@@ -72,7 +72,6 @@ CORE_OK = [
     "/api/agents/advanced",
     "/api/context",
     "/api/permissions",
-    "/api/workspaces",
     "/api/projects",
     "/api/templates",
     "/api/system/info",

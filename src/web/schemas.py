@@ -1,7 +1,6 @@
 """Web 层请求模型与配置常量（从 server.py 抽出）。"""
-from datetime import datetime
 from typing import Any, Dict, List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 # 可用模型列表
 AVAILABLE_MODELS = [
@@ -51,20 +50,6 @@ class CreateSkillRequest(BaseModel):
     capabilities: List[str] = []
     tools: List[str] = []
 
-# 代码补全 API
-class CompletionRequest(BaseModel):
-    file: str
-    line: int
-    column: int
-    content: str
-    language: str = "python"
-
-# 错误分析 API
-class ErrorAnalysisRequest(BaseModel):
-    error_message: str
-    traceback: str = ""
-    code: str = ""
-
 # 项目管理 API
 class AddProjectRequest(BaseModel):
     name: str
@@ -82,15 +67,6 @@ class CreateAdvancedAgentRequest(BaseModel):
     tools: List[str] = []
     system_prompt: str = ""
     model: str = "mimo-v2.5"
-
-# 工作区管理 API
-class CreateWorkspaceRequest(BaseModel):
-    name: str
-    goal: str = ""
-    project_id: str = None
-
-class ExecuteWorkspaceRequest(BaseModel):
-    task: str
 
 # 代码编辑 API
 class EditRequest(BaseModel):
@@ -114,12 +90,6 @@ class BrowserNavigateRequest(BaseModel):
 class TerminalRequest(BaseModel):
     command: str
     workdir: str = ""
-
-# 对话历史 API
-class ChatMessage(BaseModel):
-    role: str  # user, assistant, system
-    content: str
-    timestamp: datetime = Field(default_factory=datetime.now)
 
 # 测试生成 API
 class TestGenerateRequest(BaseModel):
