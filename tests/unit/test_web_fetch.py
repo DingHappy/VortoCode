@@ -16,6 +16,27 @@ def test_host_is_safe_rejects_private_and_loopback():
     assert not wf._host_is_safe("")
 
 
+def test_host_is_safe_proxy_aware(monkeypatch):
+    """代理环境（真机 dogfood 抓的）：本地 DNS 对外网整个不可用，解析失败不再一票否决。"""
+    def _no_dns(host, port):
+        raise OSError("resolution unavailable")
+    monkeypatch.setattr(wf.socket, "getaddrinfo", _no_dns)
+
+    monkeypatch.setattr(wf.urllib.request, "getproxies", lambda: {})
+    assert not wf._host_is_safe("example.com")             # 无代理：解析不了 → 拒（旧行为）
+
+    monkeypatch.setattr(wf.urllib.request, "getproxies",
+                        lambda: {"https": "http://127.0.0.1:7897"})
+    monkeypatch.setattr(wf.urllib.request, "proxy_bypass", lambda host: False)
+    assert wf._host_is_safe("example.com")                 # 有代理：DNS 由代理远端解析 → 放行
+
+    monkeypatch.setattr(wf.urllib.request, "proxy_bypass", lambda host: True)
+    assert not wf._host_is_safe("internal.corp")           # 命中代理绕过名单：不吃代理豁免
+
+    monkeypatch.setattr(wf.urllib.request, "proxy_bypass", lambda host: False)
+    assert not wf._host_is_safe("10.0.0.8")                # 内网 IP 字面量：有代理也照拦
+
+
 def test_strip_html_to_text():
     html = "<html><head><style>x{}</style></head><body>Hello <b>World</b>&amp;Co<script>bad()</script></body></html>"
     out = wf._strip_html(html)
