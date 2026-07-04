@@ -1867,13 +1867,33 @@ class VortoCodeTUI(App):
         from src.agents.main_agent import build_read_tools, build_web_tools
         read_tools = build_read_tools(self.repo_root) + build_web_tools()   # +web_fetch（查文档/issue/报错页）
 
-        async def _spawn_research(desc: str) -> str:
-            """起一个隔离的只读子 agent 做调研，返回结论。task 与 research_parallel 共用。"""
-            sub = MainAgent(read_tools, max_steps=12, on_tool=self._audit_tool, extra_system=(
-                "你是只读研究子 agent：只用工具调研代码/仓库并返回简洁结论，绝不修改任何东西。"
-                "读够信息就尽快收口，别把预算耗在重复读取上。"))
+        async def _spawn_research(desc: str, agent_name: str = "") -> str:
+            """起一个隔离子 agent，返回结论。task 与 research_parallel 共用。
+
+            agent_name 非空 → 按 .vortocode/agents/<名>.md 装配自定义角色（与工厂版同一注册表/
+            同一安全面）；dev 型角色过 _confirm_write 人闸（headless 之外 TUI 有真人在）。"""
+            if agent_name:
+                from src.agents.subagents import build_subagent, registry_for
+                reg = registry_for(self.repo_root)
+                spec = reg.get(agent_name)
+                if spec is None:
+                    avail = "、".join(reg.specs) or "（无——在 .vortocode/agents/ 放 <名>.md 定义角色）"
+                    return f"没有名为 {agent_name!r} 的子 agent。可用：{avail}"
+                sub = build_subagent(self.repo_root, spec, confirm=self._confirm_write,
+                                     on_progress=lambda m: self._chrome(f"[dim]{m}[/dim]"))
+                if spec.tools == "dev" and not await self._confirm_write(
+                        f"委派角色「{agent_name}」用隔离 dev 流水线实现：{desc[:120]}\n"
+                        f"（产出落 vorto/* 分支，不碰主工作区）"):
+                    return f"已取消：未放行 dev 型角色 {agent_name} 的委派。"
+                sub._on_tool = self._audit_tool
+                mode = "build" if spec.tools == "dev" else "plan"
+            else:
+                sub = MainAgent(read_tools, max_steps=12, on_tool=self._audit_tool, extra_system=(
+                    "你是只读研究子 agent：只用工具调研代码/仓库并返回简洁结论，绝不修改任何东西。"
+                    "读够信息就尽快收口，别把预算耗在重复读取上。"))
+                mode = self.mode
             try:
-                r = await sub.run_turn(desc, mode=self.mode, say=self._chrome, emit=lambda _t: None)
+                r = await sub.run_turn(desc, mode=mode, say=self._chrome, emit=lambda _t: None)
             except Exception as e:  # noqa: BLE001
                 return f"(子任务出错: {e})"
             return r or "(无结论)"
@@ -1886,8 +1906,9 @@ class VortoCodeTUI(App):
             desc = str(args.get("description") or args.get("task") or "").strip()
             if not desc:
                 return "task 需要 description（要委派给子 agent 的研究任务）。"
-            self._chrome(f"[magenta]🤖 子 agent 研究：{desc}[/magenta]")
-            result = await _spawn_research(desc)
+            agent_name = str(args.get("agent") or "").strip()
+            self._chrome(f"[magenta]🤖 子 agent{f'「{agent_name}」' if agent_name else ''} 处理：{desc}[/magenta]")
+            result = await _spawn_research(desc, agent_name)
             self._chrome(f"[dim]  ↳ 结论：{_preview(result)}[/dim]")   # 子 agent 结论可见
             return result
 
@@ -1899,8 +1920,9 @@ class VortoCodeTUI(App):
             if not tasks:
                 return "research_parallel 需要 tasks（字符串列表，每项一个独立子问题）。"
             import asyncio
+            agent_name = str(args.get("agent") or "").strip()
             self._chrome(f"[magenta]🤖 并行子 agent（{len(tasks)}）研究中…[/magenta]")
-            results = await asyncio.gather(*[_spawn_research(t) for t in tasks])
+            results = await asyncio.gather(*[_spawn_research(t, agent_name) for t in tasks])
             for t, r in zip(tasks, results):     # 各路结论都可见
                 self._chrome(f"[dim]  ↳ [{_preview(t, 30)}] {_preview(r, 160)}[/dim]")
             return "\n\n".join(f"【{t}】\n{r}" for t, r in zip(tasks, results))
@@ -1963,13 +1985,17 @@ class VortoCodeTUI(App):
 
         tools = read_tools + [
             Tool("task", "把一个独立的研究/调研子任务委派给只读子 agent（隔离上下文），返回它的结论",
-                 {"description": "要委派的子任务"}, _t_task, read_only=True),
+                 {"description": "要委派的子任务",
+                  "agent": "可选：自定义角色名（.vortocode/agents/ 里定义；缺省=只读研究员）"},
+                 _t_task, read_only=True),
             Tool("save_memory", "把一条要跨会话长期记住的事实/偏好/约定存起来",
                  {"content": "要记住的内容"}, _t_save_memory, read_only=True),
             Tool("recall_memory", "检索跨会话长期记忆（不传 query 则列出全部）",
                  {"query": "可选，关键词"}, _t_recall_memory, read_only=True),
             Tool("research_parallel", "并行委派多个只读子 agent 同时研究不同子问题，汇总各自结论（最多 5 个）",
-                 {"tasks": "子问题字符串列表"}, _t_research_parallel, read_only=True),
+                 {"tasks": "子问题字符串列表",
+                  "agent": "可选：自定义角色名（应用到本组全部子任务）"},
+                 _t_research_parallel, read_only=True),
             Tool("use_skill", "加载某个技能(SKILL.md)的完整指令到上下文，然后据此执行",
                  {"name": "技能名"}, _t_use_skill, read_only=True),
             Tool("save_skill", "把一套可复用流程保存成新技能(SKILL.md)到用户技能目录；写操作，需确认，仅 build",
@@ -2049,6 +2075,11 @@ class VortoCodeTUI(App):
             extra_parts.append(proj)
         if catalog:
             extra_parts.append(f"【可用技能】(需要时用 use_skill 加载其完整指令再执行)\n{catalog}")
+        from src.agents.subagents import subagent_catalog
+        agents_cat = subagent_catalog(self.repo_root)        # 自定义角色目录（task 的 agent 参数按名委派）
+        if agents_cat:
+            extra_parts.append("【可用子 agent】(用 task/research_parallel 的 agent 参数按名委派；"
+                               "dev 型角色经隔离流水线写代码、需确认)\n" + agents_cat)
         extra = "\n\n".join(extra_parts) if extra_parts else None
         from src.agents.main_agent import native_default
         native = native_default()                # 三端统一 native 开关（收敛到 main_agent.native_default）
