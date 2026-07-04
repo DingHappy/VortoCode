@@ -20,11 +20,14 @@ from src.web.auth import auth_middleware, get_api_token
 
 @asynccontextmanager
 async def _lifespan(_app):
-    """启动/关停钩子：①恢复上次崩在半路的后台任务（running→interrupted）；②opt-in 起 cron/heartbeat 调度循环。"""
+    """启动/关停钩子：①恢复上次崩在半路的后台任务（running→interrupted）；②opt-in 起 cron/heartbeat
+    调度循环；③opt-in 内嵌 IM 桥（VORTOCODE_IM=telegram|dingtalk——单进程唯一状态所有者，PR-5）。"""
     import asyncio
     import os as _os
     sched_task = None
     stop_event = asyncio.Event()
+    im_task = None
+    im_adapter = None
     try:
         from src.web.routers.tasks import get_runner, scheduler_loop
         recovered = get_runner().recover()
@@ -37,12 +40,26 @@ async def _lifespan(_app):
             print("  ⏰ cron/heartbeat 调度循环已启动（opt-in）")
     except Exception as e:  # noqa: BLE001 —— 恢复/调度失败不该挡服务启动
         print(f"  （后台任务恢复/调度跳过：{e}）")
+    im_channel = _os.getenv("VORTOCODE_IM", "").strip().lower()
+    if im_channel:                             # 显式 opt-in 的 IM 凭证缺失要响（fail-closed，不静默降级）
+        from src.gateway import im_service
+        bridge, im_adapter = im_service.start_embedded(im_channel, _os.getcwd())
+        im_task = asyncio.create_task(bridge.run())
+        print(f"  🌉 IM 桥已内嵌（{im_channel}，共享任务池；只服务已配对 owner）")
     try:
         yield
     finally:
         stop_event.set()
         if sched_task is not None:
             sched_task.cancel()
+        if im_task is not None:
+            im_task.cancel()
+            from src.gateway import im_service
+            im_service.stop_embedded()
+            if im_adapter is not None:
+                import contextlib
+                with contextlib.suppress(Exception):
+                    await im_adapter.close()
 
 
 app = FastAPI(
@@ -114,8 +131,12 @@ def _insecure_bind_reason(host: str) -> str:
             f"      或（确知风险、已有外层鉴权时）：export VORTOCODE_ALLOW_INSECURE_BIND=1")
 
 
-def start_server(host: str = "127.0.0.1", port: int = 8000):
-    """启动服务器（绑非本地且无鉴权时 fail-closed 拒绝启动，见 _insecure_bind_reason）。"""
+def start_server(host: str = "127.0.0.1", port: int = 8000, im: str = ""):
+    """启动服务器（绑非本地且无鉴权时 fail-closed 拒绝启动，见 _insecure_bind_reason）。
+
+    im：非空则内嵌 IM 桥（telegram|dingtalk，凭证缺失 fail-closed 拒启——显式要了就不能静默没有）。
+    """
+    import os
     import uvicorn
 
     import src.llm.client  # noqa: F401 —— 导入即加载 .env（OPENAI_API_KEY 等进 os.environ）。
@@ -124,6 +145,15 @@ def start_server(host: str = "127.0.0.1", port: int = 8000):
     reason = _insecure_bind_reason(host)
     if reason:
         raise SystemExit(f"  ⛔ {reason}")
+    im = (im or os.getenv("VORTOCODE_IM", "")).strip().lower()
+    if im:                                    # 凭证前置检查：启动前就 fail-closed，不等 lifespan 半路炸
+        from src.gateway.im_service import IMConfigError, build_adapter
+        try:
+            adapter, _owner = build_adapter(im)
+        except IMConfigError as e:
+            raise SystemExit(f"  ⛔ {e}")
+        del adapter                            # 只验配置；真正的 adapter 由 lifespan 构造并管生命周期
+        os.environ["VORTOCODE_IM"] = im        # lifespan 从 env 读（uvicorn.run 不传自定义参数）
     print(f"\n{'='*50}")
     print(f"  VortoCode 服务器启动")
     print(f"  访问: http://{host}:{port}")
