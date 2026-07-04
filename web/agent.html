@@ -108,6 +108,56 @@
   .confirm .cyes { background: #2f6feb; color: #fff; }
   .confirm .cno { background: #2a2e37; color: #d7dae0; }
   .confirm button:disabled { opacity: .5; cursor: default; }
+  /* ---- 右侧控制台（后台任务 / 通知）：把 gateway 的任务台账与通知台账露出来 ---- */
+  #console { width: 320px; flex: 0 0 320px; border-left: 1px solid #2a2e37; background: #171a21;
+             display: flex; flex-direction: column; height: 100vh; }
+  #console.hidden { display: none; }
+  .cs-tabs { display: flex; border-bottom: 1px solid #2a2e37; }
+  .cs-tab { flex: 1; text-align: center; padding: 9px 0; font-size: 13px; color: #7f8896;
+            cursor: pointer; border-bottom: 2px solid transparent; user-select: none; }
+  .cs-tab.active { color: #e8eaed; border-bottom-color: #2f6feb; }
+  .badge { display: inline-block; min-width: 16px; padding: 0 4px; margin-left: 4px; text-align: center;
+           border-radius: 8px; background: #f0b86e; color: #14161b; font-size: 11px; }
+  .badge.hide { display: none; }
+  .cs-tab .badge { background: #b4433a; color: #fff; }
+  .cs-body { flex: 1; overflow-y: auto; padding: 8px; }
+  #tasknew { display: flex; gap: 6px; padding: 8px; border-bottom: 1px solid #2a2e37; }
+  #taskinp { flex: 1; resize: none; height: 42px; background: #1b1f27; color: #e8eaed;
+             border: 1px solid #3a4150; border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 12px; }
+  #taskgo { background: #2f6feb; color: #fff; border: 0; border-radius: 6px; padding: 0 10px;
+            cursor: pointer; font: inherit; font-size: 12px; flex: 0 0 auto; }
+  #taskgo:disabled { opacity: .5; cursor: default; }
+  .task { border: 1px solid #2a2e37; border-radius: 8px; padding: 8px 10px; margin-bottom: 8px;
+          cursor: pointer; font-size: 12px; }
+  .task .trow { display: flex; gap: 8px; align-items: baseline; }
+  .task .st { flex: 0 0 auto; white-space: nowrap; }
+  .task .st.running { color: #f0b86e; } .task .st.done { color: #7fce9a; }
+  .task .st.failed { color: #f08a8a; } .task .st.queued { color: #9aa3b2; } .task .st.cancelled { color: #6b7280; }
+  .task .tp { flex: 1; color: #d7dae0; overflow: hidden; display: -webkit-box;
+              -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; }
+  .task .meta { color: #6b7280; font-size: 11px; margin-top: 4px; overflow: hidden;
+                text-overflow: ellipsis; white-space: nowrap; }
+  .task .detail { display: none; margin-top: 6px; cursor: auto; }
+  .task.open .detail { display: block; }
+  .task .tlog { background: #10131a; border: 1px solid #232833; border-radius: 6px; padding: 6px 8px;
+                max-height: 180px; overflow-y: auto; white-space: pre-wrap; word-break: break-word;
+                color: #9aa3b2; font-size: 11px; }
+  .task .tres { color: #aab2c0; margin-top: 6px; white-space: pre-wrap; word-break: break-word; }
+  .task .terr { color: #f08a8a; margin-top: 6px; white-space: pre-wrap; word-break: break-word; }
+  .task .tbtns { display: flex; gap: 6px; margin-top: 8px; }
+  .task .tbtns button { border: 0; border-radius: 6px; padding: 3px 10px; cursor: pointer; font: inherit; font-size: 12px; }
+  .task .bpr { background: #2f6feb; color: #fff; }
+  .task .bcancel { background: #2a2e37; color: #d7dae0; }
+  .task .tbtns button:disabled { opacity: .5; cursor: default; }
+  .notice { border-bottom: 1px solid #20242d; padding: 8px 4px; font-size: 12px; }
+  .notice .nt { color: #6b7280; font-size: 11px; margin-bottom: 2px; }
+  .notice .nx { color: #c6cbd4; white-space: pre-wrap; word-break: break-word; }
+  .cs-empty { color: #6b7280; font-size: 12px; padding: 12px 8px; line-height: 1.6; }
+  .hbtn { background: #222732; color: #d7dae0; border: 1px solid #3a4150; border-radius: 6px;
+          padding: 4px 8px; cursor: pointer; font-size: 13px; text-decoration: none; font-family: inherit; }
+  /* 窄屏：侧栏/控制台改浮层，不挤压聊天区 */
+  @media (max-width: 1100px) { #console { position: fixed; right: 0; top: 0; z-index: 50; box-shadow: -8px 0 24px rgba(0,0,0,.5); } }
+  @media (max-width: 700px)  { #sidebar { position: fixed; left: 0; top: 0; z-index: 50; box-shadow: 8px 0 24px rgba(0,0,0,.5); } }
 </style>
 </head>
 <body>
@@ -122,11 +172,13 @@
     <span class="sp"></span>
     <span id="state" style="color:#7f8896">连接中…</span>
     <button id="mode" title="切换 plan(只读)/build(可写)">plan</button>
+    <a class="hbtn" href="/artifacts" target="_blank" title="制品画廊（agent 产出的可分享网页）">制品</a>
+    <button class="hbtn" id="ctoggle" title="后台任务 / 通知控制台">任务<span class="badge hide" id="hbadge"></span></button>
   </header>
   <div id="plan"></div>
   <div id="log"></div>
   <div id="stream" class="msg"></div>
-  <div class="hint">回车发送 · Shift+回车换行 · 运行中 Esc 或点「停止」中断 · 📎/拖拽/粘贴附图或音频 · 回复点🔊朗读 · plan 只读、build 才放开写/重型工具 · 需配 OPENAI_API_KEY</div>
+  <div class="hint">回车发送 · Shift+回车换行 · 运行中 Esc 或点「停止」中断 · 📎/拖拽/粘贴附图或音频 · 回复点🔊朗读 · plan 只读、build 才放开写/重型工具 · 右上「任务」= 后台隔离流水线与通知</div>
   <div id="thumbs"></div>
   <footer>
     <button id="attach" title="附图/音频（也可拖拽或粘贴）">📎</button>
@@ -136,6 +188,18 @@
     <button id="send">发送</button>
   </footer>
   </div>
+  <aside id="console" class="hidden">
+    <div class="cs-tabs">
+      <div class="cs-tab active" id="tab-tasks">后台任务</div>
+      <div class="cs-tab" id="tab-notices">通知<span class="badge hide" id="nbadge"></span></div>
+    </div>
+    <div id="tasknew">
+      <textarea id="taskinp" placeholder="描述一个开发任务，隔离流水线后台跑（worktree 实现 → 自测 → 落 vorto/* 分支，不碰 main）"></textarea>
+      <button id="taskgo">后台跑</button>
+    </div>
+    <div class="cs-body" id="tasks"></div>
+    <div class="cs-body" id="notices" style="display:none"></div>
+  </aside>
 <script>
 const $ = (s) => document.querySelector(s);
 const log = $("#log"), streamEl = $("#stream"), stateEl = $("#state");
@@ -426,6 +490,8 @@ function connect() {
     if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
     stateEl.textContent = "已连接"; stateEl.style.color = "#7fce9a";
     loadSessions();                                  // 连上即刷新会话列表（高亮当前）
+    try { ws.send(JSON.stringify({ type: "task_list" })); } catch {}   // hydrate 后台任务面板
+    loadNotices();                                   // 顺手刷新通知台账
   };
   ws.onclose = () => {
     setBusy(false);
@@ -447,6 +513,10 @@ function connect() {
       case "agent_confirm": renderConfirm(m.id, m.text); break;   // 工具请求确认：弹允许/拒绝
       case "agent_tts_audio": playTTS(m.id, m.data); break;       // 语音回复就绪 → 播放
       case "agent_tts_error": ttsError(m.id, m.text); break;
+      case "task_snapshot": taskMap = new Map((m.data || []).map((t) => [t.id, t])); renderTasks(); break;  // 连上/刷新的全量任务
+      case "task_update":   upsertTask(m.data); break;            // 后台任务状态实时推送
+      case "notice":        addNotice({ ts: new Date().toISOString(), source: "后台",
+                                        text: (m.data && m.data.text) || "" }); break;   // cron/heartbeat 通知
     }
   };
 }
@@ -615,6 +685,170 @@ $("#mode").onclick = () => {
   $("#mode").textContent = mode;
   $("#mode").style.color = mode === "build" ? "#f0b86e" : "#d7dae0";
 };
+
+// ---- 右侧控制台：后台任务（gateway TaskRunner 台账）+ 通知（cron/heartbeat 台账）----
+// 数据三来源：WS task_snapshot（连上 hydrate）/ task_update（实时增量）/ GET /api/notices（持久台账）。
+const tasksEl = $("#tasks"), noticesEl = $("#notices");
+let taskMap = new Map();               // id → 任务 dict
+const openTaskIds = new Set();         // 展开中的任务卡（重渲染保持）
+let noticeList = [], noticeUnread = 0, consoleTab = "tasks";
+
+function fmtTime(s) {
+  const d = new Date(s);
+  if (isNaN(d)) return String(s || "").slice(0, 16);
+  const p = (n) => String(n).padStart(2, "0");
+  return p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes());
+}
+
+const ST_LABEL = { queued: "○ 排队", running: "▸ 运行中", done: "✓ 完成", failed: "✗ 失败", cancelled: "⏹ 已取消" };
+
+function renderTasks() {
+  tasksEl.replaceChildren();
+  const list = [...taskMap.values()].sort((a, b) => String(b.updated || "").localeCompare(String(a.updated || "")));
+  if (!list.length) {
+    const e = document.createElement("div"); e.className = "cs-empty";
+    e.textContent = "还没有后台任务。上面描述一个开发任务点「后台跑」：自动分解 → 隔离 worktree 并行实现 → 自测自修复 → 落 vorto/* 分支，完成后可一键开 draft PR，全程不碰 main。";
+    tasksEl.appendChild(e);
+  }
+  list.forEach((t) => tasksEl.appendChild(taskCard(t)));
+  updateBadges();
+}
+
+function taskCard(t) {                 // 全部 textContent 渲染，任务文本/日志绝不进 innerHTML
+  const card = document.createElement("div");
+  card.className = "task" + (openTaskIds.has(t.id) ? " open" : "");
+  const row = document.createElement("div"); row.className = "trow";
+  const st = document.createElement("span"); st.className = "st " + (t.status || "");
+  st.textContent = ST_LABEL[t.status] || (t.status || "?");
+  const tp = document.createElement("span"); tp.className = "tp"; tp.textContent = t.prompt || "";
+  row.append(st, tp);
+  const meta = document.createElement("div"); meta.className = "meta";
+  meta.textContent = [t.id, t.branch, fmtTime(t.updated)].filter(Boolean).join(" · ");
+  meta.title = meta.textContent;
+  const detail = document.createElement("div"); detail.className = "detail";
+  if (t.log && t.log.length) {
+    const lg = document.createElement("div"); lg.className = "tlog";
+    lg.textContent = t.log.slice(-30).join("\n");
+    detail.appendChild(lg);
+    requestAnimationFrame(() => { lg.scrollTop = lg.scrollHeight; });   // 日志自动滚到最新
+  }
+  if (t.result) { const r = document.createElement("div"); r.className = "tres"; r.textContent = String(t.result).slice(-600); detail.appendChild(r); }
+  if (t.error)  { const r = document.createElement("div"); r.className = "terr"; r.textContent = t.error; detail.appendChild(r); }
+  const btns = document.createElement("div"); btns.className = "tbtns";
+  if (t.status === "queued" || t.status === "running") {
+    const b = document.createElement("button"); b.className = "bcancel"; b.textContent = "取消";
+    b.onclick = (e) => { e.stopPropagation(); cancelBgTask(t.id); };
+    btns.appendChild(b);
+  }
+  if (t.status === "done" && !t.error && t.branch && t.branch.startsWith("vorto/")) {
+    const b = document.createElement("button"); b.className = "bpr"; b.textContent = "开 Draft PR";
+    b.onclick = (e) => { e.stopPropagation(); openTaskPr(t.id, b); };   // 人在合并口：点这下=确认
+    btns.appendChild(b);
+  }
+  if (btns.children.length) detail.appendChild(btns);
+  card.append(row, meta, detail);
+  card.onclick = (e) => {
+    if (detail.contains(e.target)) return;          // 详情区内点击（选中日志等）不折叠
+    if (openTaskIds.has(t.id)) openTaskIds.delete(t.id); else openTaskIds.add(t.id);
+    card.classList.toggle("open");
+  };
+  return card;
+}
+
+function upsertTask(t) { if (t && t.id) { taskMap.set(t.id, t); renderTasks(); } }
+
+function updateBadges() {              // 头部「任务」角标 = 排队+运行中数；通知 tab 角标 = 未读数
+  const act = [...taskMap.values()].filter((t) => t.status === "running" || t.status === "queued").length;
+  const hb = $("#hbadge");
+  hb.textContent = act; hb.classList.toggle("hide", act === 0);
+  const nb = $("#nbadge");
+  nb.textContent = noticeUnread; nb.classList.toggle("hide", noticeUnread === 0);
+}
+
+async function submitBgTask() {
+  const inp = $("#taskinp"), prompt = inp.value.trim();
+  if (!prompt) return;
+  $("#taskgo").disabled = true;
+  try {
+    const r = await fetch("/api/tasks", { method: "POST", headers: { "Content-Type": "application/json" },
+                                          body: JSON.stringify({ prompt }) });
+    if (r.ok) inp.value = "";                       // 提交即返回；列表靠 task_update 推送刷新
+    else add("err", "提交后台任务失败：HTTP " + r.status);
+  } catch (e) { add("err", "提交后台任务失败：" + e); }
+  $("#taskgo").disabled = false;
+}
+
+async function cancelBgTask(id) {
+  try { await fetch("/api/tasks/" + encodeURIComponent(id) + "/cancel", { method: "POST" }); } catch {}
+}
+
+async function openTaskPr(id, btn) {
+  if (!confirm("对该任务落的 vorto/* 分支开一个 draft PR？")) return;
+  btn.disabled = true; btn.textContent = "开 PR 中…";
+  try {
+    const r = await (await fetch("/api/tasks/" + encodeURIComponent(id) + "/open_pr", { method: "POST" })).json();
+    if (r.ok && r.url) {
+      addNotice({ ts: new Date().toISOString(), source: "pr", text: "已开 draft PR：" + r.url });
+      window.open(r.url, "_blank");
+    } else add("err", "开 PR 失败：" + (r.error || "未知错误"));
+  } catch (e) { add("err", "开 PR 失败：" + e); }
+  btn.disabled = false; btn.textContent = "开 Draft PR";
+}
+
+async function loadNotices() {
+  try {
+    const r = await fetch("/api/notices?limit=50", { cache: "no-store" });
+    if (r.ok) { noticeList = (await r.json()).notices || []; renderNotices(); }
+  } catch { /* 离线/未鉴权：静默降级 */ }
+}
+
+function renderNotices() {
+  noticesEl.replaceChildren();
+  if (!noticeList.length) {
+    const e = document.createElement("div"); e.className = "cs-empty";
+    e.textContent = "暂无后台通知。cron 作业结果、heartbeat 值班发现、开 PR 记录会出现在这里。";
+    noticesEl.appendChild(e); return;
+  }
+  noticeList.forEach((n) => {
+    const d = document.createElement("div"); d.className = "notice";
+    const t = document.createElement("div"); t.className = "nt";
+    t.textContent = fmtTime(n.ts) + (n.source ? " · " + n.source : "");
+    const x = document.createElement("div"); x.className = "nx"; x.textContent = n.text || "";
+    d.append(t, x); noticesEl.appendChild(d);
+  });
+}
+
+function addNotice(n) {
+  noticeList.unshift(n); noticeList = noticeList.slice(0, 100); renderNotices();
+  if (consoleTab !== "notices" || $("#console").classList.contains("hidden")) { noticeUnread++; updateBadges(); }
+}
+
+function showConsoleTab(name) {
+  consoleTab = name;
+  $("#tab-tasks").classList.toggle("active", name === "tasks");
+  $("#tab-notices").classList.toggle("active", name === "notices");
+  $("#tasknew").style.display = name === "tasks" ? "flex" : "none";
+  tasksEl.style.display = name === "tasks" ? "" : "none";
+  noticesEl.style.display = name === "notices" ? "" : "none";
+  if (name === "notices") { noticeUnread = 0; updateBadges(); loadNotices(); }
+}
+$("#tab-tasks").onclick = () => showConsoleTab("tasks");
+$("#tab-notices").onclick = () => showConsoleTab("notices");
+$("#taskgo").onclick = submitBgTask;
+$("#taskinp").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitBgTask(); }
+});
+$("#ctoggle").onclick = () => {
+  const el = $("#console"), want = el.classList.contains("hidden");
+  el.classList.toggle("hidden", !want);
+  localStorage.setItem("vorto_console", want ? "1" : "0");
+  if (want && consoleTab === "notices") { noticeUnread = 0; updateBadges(); }
+};
+// 初始：记住上次开合；没记录时宽屏默认开（让后台能力第一眼可见）、窄屏默认收
+if (localStorage.getItem("vorto_console") === "1" ||
+    (localStorage.getItem("vorto_console") == null && window.innerWidth >= 1100)) {
+  $("#console").classList.remove("hidden");
+}
 
 // ---- 登录门（审计 P0#4）：设了 token 且未登录 → 弹框收 token → POST 种 httpOnly Cookie → 再连 ----
 function showLogin() {
