@@ -430,6 +430,7 @@ class VortoCodeTUI(App):
         self._pal_idx = 0                   # 当前高亮候选（↑↓/点击 移动，Tab 补全，回车执行/接受）
         self._pal_kind = ""                 # "命令" / "文件"（回车语义不同：执行 vs 接受）
         self._pal_start = 0                 # 开窗起点（渲染时更新；点击换算行号用）
+        self._queued_inputs: list[str] = []  # 忙时提交的消息排队（回合结束自动发送，不再丢弃）
         self._allow_writes_session = False  # 本会话"始终允许"写操作（ConfirmScreen 的 [a]，scope=writes）
         self._allow_commands_session = False  # 本会话"始终允许"跑命令（独立作用域，不吃写豁免）
         self._speak_replies = False         # /speak 开关：开则把每条回复合成语音朗读（mimo-v2.5-tts）
@@ -696,6 +697,16 @@ class VortoCodeTUI(App):
         self._busy = running
         self._start_status() if running else self._stop_status()
         self._sync_subtitle()
+        if event.state in (WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED):
+            self._drain_queued()                # 回合真正收尾（终态）才放下一条排队消息
+
+    def _drain_queued(self) -> None:
+        """发送一条排队中的消息（一次一条：它的回合结束后本方法会再次被触发，天然接力）。"""
+        if self._busy or not self._queued_inputs:
+            return
+        text = self._queued_inputs.pop(0)
+        self._say_user(text)
+        self._route(text)
 
     # ---------------------------------------------------------------- 工作指示器
     def _start_status(self) -> None:
@@ -738,6 +749,9 @@ class VortoCodeTUI(App):
             self._hide_palette()
             return
         if self._busy:
+            if self._queued_inputs:           # 主动取消 = 连排队的一起清（别取消完又自动冒一条）
+                self._chrome(f"[dim]已清空 {len(self._queued_inputs)} 条排队消息[/dim]")
+                self._queued_inputs.clear()
             self.workers.cancel_all()
             self._chrome("[yellow]已取消当前操作[/yellow]")
 
@@ -875,12 +889,17 @@ class VortoCodeTUI(App):
         if not self._history or self._history[-1] != text:
             self._history.append(text)          # 记入输入历史（去重相邻）
             self._append_history(text)          # 跨会话持久化
-        self._say_user(text)
         if text.startswith("/"):
+            self._say_user(text)
             self._dispatch(text)
         elif self._busy:
-            self._chrome("[yellow]正在处理上一条，Esc 取消或稍候[/yellow]")
+            # 排队而非丢弃：此前是回显后直接丢（看着像发出去了、实际没处理——真机 dogfood 抓的）。
+            # 回显推迟到真正发送时做，免得 transcript 顺序骗人。
+            self._queued_inputs.append(text)
+            self._chrome(f"[dim]⏳ 已排队（{len(self._queued_inputs)} 条）—— 当前回合结束后自动发送；"
+                         "Esc 取消当前回合并清空队列[/dim]")
         else:
+            self._say_user(text)
             self._route(text)           # 普通话：先判意图（闲聊/提问 vs 开发需求）再分流
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
