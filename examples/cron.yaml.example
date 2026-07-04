@@ -12,10 +12,13 @@
 # announce: im（把结果推到 IM）| silent（只落台账）
 
 jobs:
-  # 夜跑评测（B3）——每天凌晨跑一遍评测基线。默认注释掉（enabled: false 亦可）。
+  # 夜跑评测（B3）——每天凌晨对最新基线跑回归对比（诚实率/落地率降 = 退出码非零 = 硬回归）。
   - name: nightly_evals
     schedule: "at 02:30"
-    prompt: "跑一遍评测基线：python -m evals --baseline，把回归项汇总给我。"
+    prompt: >
+      跑评测回归：先 ls evals/baselines/ 找**最新**的基线 json，然后
+      python -m evals --compare evals/baselines/<最新文件>。退出码非零说明有硬回归
+      （诚实率/落地率下降）——把逐场景 Δ 表和回归项原样报给我；全绿就说一声全绿。
     model: mimo-v2.5           # 可用便宜/强模型分工（需中转站已授权该型号）
     announce: im
     enabled: false             # 默认关，确认要夜跑再改 true

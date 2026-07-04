@@ -1,0 +1,12 @@
+# 活儿清单（BACKLOG.md）——放到目标仓库 `.vortocode/BACKLOG.md` 才生效
+
+<!--
+  heartbeat 从这里领活：`- [ ]` 未开始 → 领走时自动标 `- [~]`（进行中）→ 人验收后自己改 `- [x]`。
+  每条写成"一句话可执行任务"（会直接喂给 dev_auto 分解），写具体：改哪个文件/加什么行为/怎么验收。
+  例子（按需替换）：
+-->
+
+- [ ] 给 src/utils/foo.py 的 parse_range 补边界测试（空串/负数/倒序区间），放 tests/unit/
+- [ ] README 的安装一节补 Python 3.10+ 与 `pip install -e '.[tui]'` 说明
+- [~] （示例：这条已被 heartbeat 领走，正在后台流水线里跑）
+- [x] （示例：这条已完成并验收）
