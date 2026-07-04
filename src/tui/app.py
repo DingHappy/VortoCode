@@ -380,6 +380,8 @@ class VortoCodeTUI(App):
     TITLE = "VortoCode"
     CSS = """
     #log { height: 1fr; border: round $accent; padding: 0 1; }
+    #toolpane { max-height: 7; overflow-y: auto; color: $text-muted; padding: 0 1;
+                border-left: solid $accent; }
     #thinking { max-height: 6; overflow-y: auto; color: $text-muted; padding: 0 1;
                 border-left: solid $panel; }
     #stream { max-height: 10; overflow-y: auto; color: $text-muted; padding: 0 1;
@@ -436,6 +438,8 @@ class VortoCodeTUI(App):
         self._speak_replies = False         # /speak 开关：开则把每条回复合成语音朗读（mimo-v2.5-tts）
         self._user_cmds = None              # 用户自定义命令缓存（.vortocode/commands，惰性加载、/commands reload 重扫）
         self._turn_tools = 0                # 本回合工具调用计数（回合结束给"✓ 完成"反馈）
+        self._turn_tool_lines: list[str] = []   # 本回合 🔧 工具行（实况面板显示，收尾折叠）
+        self._turn_tool_counts: dict[str, int] = {}  # 工具名 → 次数（折叠摘要用）
         self._last_dev = None              # 最近一次 dev 流水线产出 {workspace, files}，供 /apply
         # 常驻状态栏缓存：仓库/分支/dirty/PR 由后台 worker 异步刷新，render 只读缓存（不阻塞 UI）
         self._sb = {"branch": "", "dirty": False, "pr": "", "model": _model_name(),
@@ -448,6 +452,7 @@ class VortoCodeTUI(App):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         yield RichLog(id="log", wrap=True, markup=True, highlight=False, auto_scroll=True)
+        yield Static(id="toolpane")
         yield Static(id="thinking")
         yield Static(id="stream")
         yield Static(id="status")
@@ -464,6 +469,7 @@ class VortoCodeTUI(App):
         reset_usage()                       # 每个会话从零计量
         self._load_history()                # 跨会话输入历史（↑/↓ 可调出上次的）
         self._load_theme()                  # 套用上次选的配色主题
+        self.query_one("#toolpane", Static).display = False
         self.query_one("#thinking", Static).display = False
         self.query_one("#stream", Static).display = False
         self.query_one("#status", Static).display = False
@@ -507,6 +513,46 @@ class VortoCodeTUI(App):
         self.transcript.append(markup)
         self.query_one("#log", RichLog).write(markup)
         self._persist(markup, markup=True)
+
+    # ---- 回合内工具活动折叠（对齐 Web/opencode：运行中实况区展开，收尾折叠成一行）----
+    def _turn_say(self, markup: str) -> None:
+        """回合内 say 路由：🔧 工具行进「工具活动」实况面板（不刷屏对话区），
+        其余提示（里程碑/警告/压缩说明等）照旧进对话 log。"""
+        try:
+            plain = Text.from_markup(str(markup)).plain
+        except Exception:  # noqa: BLE001 —— 非法标记按原文处理
+            plain = str(markup)
+        s = plain.strip()
+        if s.startswith("🔧"):
+            name = (s[1:].strip().split() or ["?"])[0]
+            self._turn_tool_counts[name] = self._turn_tool_counts.get(name, 0) + 1
+            self._turn_tool_lines.append(s)
+            self._render_toolpane()
+            return
+        self._chrome(markup)
+
+    def _render_toolpane(self) -> None:
+        """实况面板：标题行 + 最近 5 条工具行（纯文本渲染，长回合只占固定几行）。"""
+        pane = self.query_one("#toolpane", Static)
+        head = f"🔧 工具活动 · {sum(self._turn_tool_counts.values())}"
+        rows = [head] + ["  " + ln for ln in self._turn_tool_lines[-5:]]
+        pane.update(Text("\n".join(rows), style="dim"))
+        pane.display = True
+
+    def _fold_tool_activity(self) -> None:
+        """回合收尾：藏实况面板，把整回合工具活动折叠成一行摘要写进对话区（成败都写，
+        错误/取消也不丢工具轨迹；完整参数见 /audit）。"""
+        try:
+            self.query_one("#toolpane", Static).display = False
+        except Exception:  # noqa: BLE001
+            pass
+        if not self._turn_tool_counts:
+            return
+        total = sum(self._turn_tool_counts.values())
+        parts = " ".join(f"{n}×{c}" for n, c in self._turn_tool_counts.items())
+        self._chrome(f"[dim]🔧 {total} 个工具调用 · {parts} · 详情 /audit[/dim]")
+        self._turn_tool_lines.clear()
+        self._turn_tool_counts.clear()
 
     def _emit(self, text: str) -> None:
         """工具/命令输出（按字面写，避免 [xxx] 被当成标记解析）。"""
@@ -1706,13 +1752,14 @@ class VortoCodeTUI(App):
         t0 = time.monotonic()
         reply = ""
         try:
-            reply = await self.agent.run_turn(user_text, mode=self.mode, say=self._chrome,
+            reply = await self.agent.run_turn(user_text, mode=self.mode, say=self._turn_say,
                                               emit=emit_final, stream_cb=stream_cb,
                                               images=images, audio=audio, reasoning_cb=think_cb)
         finally:
             cleanup()                        # 出错/取消也收干净
+            self._fold_tool_activity()       # 工具活动折叠成一行摘要（错误/取消也不丢轨迹）
         if self._turn_tools:                # 用过工具的回合给个清晰收尾
-            self._chrome(f"[dim]✓ 完成 · {self._turn_tools} 个工具 · {time.monotonic() - t0:.0f}s[/dim]")
+            self._chrome(f"[dim]✓ 完成 · {time.monotonic() - t0:.0f}s[/dim]")
         if self._speak_replies and reply:   # /speak 开：把这条回复合成语音朗读
             self._chrome("[dim]🔊 合成语音中…[/dim]")
             await self._speak_text(reply)
@@ -1725,6 +1772,8 @@ class VortoCodeTUI(App):
         回复**边生成边显示**：流式 token 进 #stream（署名 ● vorto、和最终消息同位同款）；reply 就绪
         即清掉 #stream、把最终 markdown 写进 log（清在写之前，避免一帧双份 ● vorto）。
         """
+        self._turn_tool_lines.clear()           # 新回合从零开始收工具活动（防上回合残留）
+        self._turn_tool_counts.clear()
         stream = self.query_one("#stream", Static)
         thinking = self.query_one("#thinking", Static)
         think_buf = []                          # 累积推理型模型的思维链（reasoning_content）
@@ -1812,10 +1861,11 @@ class VortoCodeTUI(App):
                 user_text, mode=self.mode,
                 images=[local_ref_to_data_url(i) for i in images],
                 audio=[local_ref_to_data_url(a, is_audio=True) for a in audio],
-                on_say=self._chrome, on_stream=stream_cb, on_emit=emit_final,
+                on_say=self._turn_say, on_stream=stream_cb, on_emit=emit_final,
                 on_plan=self._render_plan, on_reasoning=think_cb, confirm=confirm)
         finally:
             cleanup()
+            self._fold_tool_activity()       # serve 侧回合同样折叠（同一观感）
             await client.__aexit__()
         if outcome.status == "error":
             self._emit(f"[red]serve 回合出错：{outcome.error}[/red]")
