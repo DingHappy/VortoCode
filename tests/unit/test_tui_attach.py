@@ -9,15 +9,13 @@ import pytest
 pytest.importorskip("textual")
 pytest.importorskip("aiohttp")
 
-from textual.widgets import Input  # noqa: E402
-
 from src.gateway import protocol as P  # noqa: E402
-from src.tui.app import VortoCodeTUI  # noqa: E402
+from src.tui.app import PromptEditor, VortoCodeTUI  # noqa: E402
 from tests.unit.test_gateway_client import FakeServe  # noqa: E402
 
 
 async def _submit(app, pilot, text):
-    inp = app.query_one("#prompt", Input)
+    inp = app.query_one("#prompt", PromptEditor)
     inp.focus()
     inp.value = text
     await pilot.press("enter")

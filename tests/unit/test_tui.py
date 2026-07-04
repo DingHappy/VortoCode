@@ -10,11 +10,11 @@ pytest.importorskip("textual")  # 无 textual 时跳过（CI 装了 .[tui]）
 
 from textual.widgets import Input
 
-from src.tui.app import VortoCodeTUI, ConfirmScreen
+from src.tui.app import VortoCodeTUI, ConfirmScreen, PromptEditor
 
 
 async def _submit(app, pilot, text):
-    inp = app.query_one("#prompt", Input)
+    inp = app.query_one("#prompt", PromptEditor)
     inp.focus()
     inp.value = text
     await pilot.press("enter")
@@ -185,13 +185,71 @@ async def test_model_command_shows_and_switches():
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
         await pilot.pause()
-        await _submit(app, pilot, "/model")               # 无参：显示当前模型
-        assert any("当前模型" in t for t in app.transcript)
+        await _submit(app, pilot, "/model")               # 无参：弹 opencode 式模型选择器
+        assert await _wait_modal(app, pilot)
+        await pilot.press("escape"); await pilot.pause()  # Esc 取消 → 不换模型
+        assert len(app.screen_stack) == 1
+        assert app._model_override is None
 
         await _submit(app, pilot, "/model mimo-v2.5-pro")  # 带参：切换本会话模型
         assert app._model_override == "mimo-v2.5-pro"      # 记下覆盖（agent 未建时，建时会应用）
         assert "mimo-v2.5-pro" in app._sb_last             # 状态栏同步更新
         assert any("已切换模型" in t for t in app.transcript)
+
+
+@pytest.mark.asyncio
+async def test_model_picker_enter_selects_highlighted():
+    """选择器里 ↓ 到第二项回车 → 真切换（回车=选中当前高亮）。"""
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _submit(app, pilot, "/model")
+        assert await _wait_modal(app, pilot)
+        await pilot.press("down")                          # 高亮到第二个模型
+        await pilot.press("enter"); await pilot.pause()
+        assert len(app.screen_stack) == 1
+        expect = app._COMMON_MODELS[1] if app._sb["model"] == app._COMMON_MODELS[0] else None
+        if expect:                                         # 默认模型在列表首位时可精确断言
+            assert app._model_override == expect
+
+
+@pytest.mark.asyncio
+async def test_sessions_picker_resumes_selected(tmp_path):
+    """/sessions 弹会话选择器，回车恢复选中会话（免记 id）。"""
+    from src.memory.session_store import SessionStore
+    db = str(tmp_path / ".vortocode" / "sessions.db")
+    store = SessionStore(db)
+    old = store.create_session("旧会话")
+    store.add_message(old, "assistant", "历史XYZ", {"markup": False})
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _submit(app, pilot, "/sessions")
+        assert await _wait_modal(app, pilot)
+        # 筛选到旧会话（输入 id 前几位），回车恢复
+        inp = app.screen.query_one("#lp-filter", Input)
+        inp.value = old[:8]
+        await pilot.pause()
+        await pilot.press("enter"); await pilot.pause()
+        assert app.session_id == old                       # 已切到旧会话
+        assert await _wait_for(app, pilot, "历史XYZ")       # 内容已回放
+
+
+@pytest.mark.asyncio
+async def test_theme_picker_previews_and_restores_on_escape():
+    """/theme 选择器：打开时高亮**当前主题**（不预览跳变）；↑↓ 实时预览；Esc 恢复原主题。"""
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        before = app.theme
+        await _submit(app, pilot, "/theme")
+        assert await _wait_modal(app, pilot)
+        assert app.theme == before                         # 打开即定位当前主题，不乱跳
+        await pilot.press("down"); await pilot.pause()
+        assert app.theme != before or len(app.available_themes) < 2   # 高亮即预览
+        await pilot.press("escape"); await pilot.pause()
+        assert app.theme == before                         # Esc 恢复原主题
 
 
 @pytest.mark.asyncio
@@ -239,7 +297,7 @@ def test_sanitize_strips_terminal_escape_sequences():
 async def test_input_changed_cleans_leaked_sequence(tmp_path):
     app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
-        inp = app.query_one("#prompt", Input)
+        inp = app.query_one("#prompt", PromptEditor)
         inp.focus()
         inp.value = "问题\x1b[27;2;13~"               # 漏进了序列
         await pilot.pause()
@@ -856,32 +914,40 @@ def test_expand_at_files(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_ghost_follows_palette_selection():
-    """幽灵文字由面板**选中项**驱动（单一真相源）：↓ 移动后幽灵跟着走，→/Tab 一致。"""
+async def test_editor_ctrl_j_newline_and_enter_submits_multiline():
+    """opencode 式编辑器：Ctrl+J 换行、回车提交多行文本、提交后清空。"""
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
-        inp = app.query_one("#prompt", Input)
+        inp = app.query_one("#prompt", PromptEditor)
         inp.focus()
-        inp.value = "/a"
+        for ch in "第一行":
+            await pilot.press(ch)
+        await pilot.press("ctrl+j")                            # 换行不提交
+        for ch in "第二行":
+            await pilot.press(ch)
         await pilot.pause()
-        assert inp._suggestion == "/analyze"                  # 初始 = 首选
-        await pilot.press("down"); await pilot.pause()
-        assert inp._suggestion == app._pal_accepts[1]          # ↓ 后幽灵跟随选中项
-        await pilot.press("escape"); await pilot.pause()
-        assert inp._suggestion == ""                           # 面板收起幽灵一起收
+        assert inp.value == "第一行\n第二行"
+        await pilot.press("enter"); await pilot.pause()        # 回车提交整段
+        assert inp.value == ""
+        assert any("第一行" in t and "第二行" in t for t in app.transcript)
 
 
 @pytest.mark.asyncio
-async def test_ghost_cleared_on_substring_match():
-    """子串命中（/dit→/audit）不是前缀延伸，幽灵显示会错位 → 清空，只留面板。"""
+async def test_editor_autogrows_with_content():
+    """输入框随内容自动长高（内容行数 + 边框，封顶 8），清空回落。"""
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
-        inp = app.query_one("#prompt", Input)
+        inp = app.query_one("#prompt", PromptEditor)
         inp.focus()
-        inp.value = "/dit"
+        inp.value = "a"
         await pilot.pause()
-        assert app._palette_visible()
-        assert inp._suggestion == ""
+        h1 = inp.styles.height.value
+        inp.value = "a\nb\nc\nd"
+        await pilot.pause()
+        assert inp.styles.height.value > h1                    # 4 行比 1 行高
+        inp.value = "x"
+        await pilot.pause()
+        assert inp.styles.height.value == h1                   # 回落
 
 
 @pytest.mark.asyncio
@@ -918,7 +984,7 @@ async def test_palette_click_selects_and_accepts():
     """鼠标点击候选行 = 选中并接受（与 Tab 同义）；点提示行/越界忽略。"""
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
-        inp = app.query_one("#prompt", Input)
+        inp = app.query_one("#prompt", PromptEditor)
         inp.focus()
         inp.value = "/a"
         await pilot.pause()
@@ -1066,7 +1132,7 @@ async def test_command_palette_lists_matching_commands():
     from textual.widgets import Static
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
-        inp = app.query_one("#prompt", Input)
+        inp = app.query_one("#prompt", PromptEditor)
         inp.focus()
         inp.value = "/a"
         await pilot.pause()
@@ -1083,7 +1149,7 @@ async def test_command_palette_lists_matching_commands():
 async def test_tab_completes_slash_command():
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
-        inp = app.query_one("#prompt", Input)
+        inp = app.query_one("#prompt", PromptEditor)
         inp.focus()
         inp.value = "/art"
         await pilot.pause()
@@ -1098,7 +1164,7 @@ async def test_tab_completes_slash_command():
 async def test_tab_toggles_mode_when_input_not_command():
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
-        app.query_one("#prompt", Input).value = ""
+        app.query_one("#prompt", PromptEditor).value = ""
         await pilot.pause()
         m0 = app.mode
         app.action_toggle_mode()                            # 空输入 → Tab 切模式
@@ -1117,7 +1183,7 @@ async def test_user_input_echoed_plain_in_transcript():
 async def test_input_history_up_down():
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
-        inp = app.query_one("#prompt", Input)
+        inp = app.query_one("#prompt", PromptEditor)
         inp.focus()
         inp.value = "一"; await pilot.press("enter"); await pilot.pause()
         inp.value = "二"; await pilot.press("enter"); await pilot.pause()
@@ -1136,7 +1202,7 @@ async def test_at_file_palette_and_tab_complete():
     from textual.widgets import Static
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
-        inp = app.query_one("#prompt", Input)
+        inp = app.query_one("#prompt", PromptEditor)
         inp.focus()
         inp.value = "看 @src/tui/ap"; await pilot.pause()
         pal = app.query_one("#palette", Static)
@@ -1151,7 +1217,7 @@ async def test_palette_arrow_keys_select_candidate():
     from textual.widgets import Static
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
-        inp = app.query_one("#prompt", Input)
+        inp = app.query_one("#prompt", PromptEditor)
         inp.focus()
         inp.value = "/a"; await pilot.pause()
         assert app._pal_idx == 0
@@ -1168,7 +1234,7 @@ async def test_palette_tab_accepts_selected_not_first():
     """Tab 接受的是**选中**候选，而不再只认第一个。"""
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
-        inp = app.query_one("#prompt", Input)
+        inp = app.query_one("#prompt", PromptEditor)
         inp.focus()
         inp.value = "/a"; await pilot.pause()
         await pilot.press("down"); await pilot.pause()
@@ -1182,7 +1248,7 @@ async def test_palette_tab_cycles_when_exact():
     """输入已等于选中候选时，再按 Tab 轮换到下一个候选（shell 式）。"""
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
-        inp = app.query_one("#prompt", Input)
+        inp = app.query_one("#prompt", PromptEditor)
         inp.focus()
         inp.value = "/ru"; await pilot.pause()
         app.action_toggle_mode(); await pilot.pause()
@@ -1196,7 +1262,7 @@ async def test_palette_enter_runs_selected_command():
     """回车直接执行面板选中的命令（未敲全也行）：/hel + 回车 → 跑 /help。"""
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
-        inp = app.query_one("#prompt", Input)
+        inp = app.query_one("#prompt", PromptEditor)
         inp.focus()
         inp.value = "/hel"; await pilot.pause()
         await pilot.press("enter"); await pilot.pause()
@@ -1209,7 +1275,7 @@ async def test_palette_enter_on_arg_command_fills_input():
     """必带参数的命令（/fix 等）回车不执行，补成 '/fix ' 等用户填参数。"""
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
-        inp = app.query_one("#prompt", Input)
+        inp = app.query_one("#prompt", PromptEditor)
         inp.focus()
         inp.value = "/fi"; await pilot.pause()
         n0 = len(app.transcript)
@@ -1223,7 +1289,7 @@ async def test_palette_enter_accepts_file_without_submit():
     """@文件补全里回车=接受路径进输入框（通常还要接着写需求），不提交。"""
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
-        inp = app.query_one("#prompt", Input)
+        inp = app.query_one("#prompt", PromptEditor)
         inp.focus()
         inp.value = "看 @src/tui/ap"; await pilot.pause()
         n0 = len(app.transcript)
@@ -1238,7 +1304,7 @@ async def test_palette_esc_hides_and_keeps_input():
     from textual.widgets import Static
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
-        inp = app.query_one("#prompt", Input)
+        inp = app.query_one("#prompt", PromptEditor)
         inp.focus()
         inp.value = "/a"; await pilot.pause()
         assert app.query_one("#palette", Static).display is True
@@ -1253,7 +1319,7 @@ async def test_palette_substring_match():
     from textual.widgets import Static
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
-        inp = app.query_one("#prompt", Input)
+        inp = app.query_one("#prompt", PromptEditor)
         inp.focus()
         inp.value = "/dit"; await pilot.pause()
         pal = app.query_one("#palette", Static)
@@ -1266,7 +1332,7 @@ async def test_history_recall_of_slash_does_not_open_palette():
     from textual.widgets import Static
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
-        inp = app.query_one("#prompt", Input)
+        inp = app.query_one("#prompt", PromptEditor)
         inp.focus()
         await _submit(app, pilot, "/usage")
         await _submit(app, pilot, "/help")
@@ -1409,7 +1475,7 @@ async def test_plan_escalation_switches_to_build_and_marks_done(monkeypatch, tmp
         assert app.mode == "plan"
         app.agent = MainAgent([Tool("w", "写", {}, w, read_only=False)], llm=FakeLLM(),
                               on_escalate=app._escalate_to_build, on_tool=app._audit_tool)
-        inp = app.query_one("#prompt", Input); inp.focus(); inp.value = "动手做"
+        inp = app.query_one("#prompt", PromptEditor); inp.focus(); inp.value = "动手做"
         await pilot.press("enter")
         assert await _wait_modal(app, pilot)              # plan 想写 → 弹"切 build 并继续？"
         await pilot.press("y")
@@ -1430,7 +1496,7 @@ async def test_input_history_persists_across_apps(tmp_path):
     app2 = VortoCodeTUI(repo_root=str(tmp_path))           # 新进程
     async with app2.run_test() as pilot:
         assert "记住我" in app2._history                  # 跨会话载入
-        inp = app2.query_one("#prompt", Input); inp.focus()
+        inp = app2.query_one("#prompt", PromptEditor); inp.focus()
         await pilot.press("up"); await pilot.pause()
         assert inp.value == "记住我"                       # ↑ 调出上次会话的输入
 
@@ -1502,11 +1568,16 @@ async def test_theme_switch_persist_and_reload(tmp_path):
 
 @pytest.mark.asyncio
 async def test_theme_list_shows_current(tmp_path):
+    """无参 /theme 现在弹 opencode 式选择器：列出全部主题、标当前。"""
+    from textual.widgets import OptionList
     app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
         app._cmd_theme(""); await pilot.pause()
-        joined = "\n".join(app.transcript)
-        assert "当前主题" in joined and "dracula" in joined   # 列出 + 标当前
+        assert len(app.screen_stack) > 1                       # 弹窗出现
+        ol = app.screen.query_one("#lp-list", OptionList)
+        ids = [ol.get_option_at_index(i).id for i in range(ol.option_count)]
+        assert "dracula" in ids and app.theme in ids           # 列出 + 含当前主题
+        await pilot.press("escape"); await pilot.pause()       # Esc 关闭不改主题
 
 
 @pytest.mark.asyncio
@@ -1583,7 +1654,7 @@ async def test_reply_streams_then_lands_in_log(monkeypatch, tmp_path):
     app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
         app.agent = MainAgent([], llm=StreamLLM())
-        inp = app.query_one("#prompt", Input); inp.focus(); inp.value = "你好"
+        inp = app.query_one("#prompt", PromptEditor); inp.focus(); inp.value = "你好"
         await pilot.press("enter")
         ok = False
         for _ in range(60):
