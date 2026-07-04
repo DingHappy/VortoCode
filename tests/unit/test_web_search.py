@@ -43,6 +43,23 @@ def _patch_html(monkeypatch, html: str):
     monkeypatch.setattr(web_fetch, "_host_is_safe", lambda host: True)
 
 
+@pytest.fixture(autouse=True)
+def _reset_backend_state(monkeypatch):
+    """每测归零粘性降级标志（模块全局），并清掉 env 钉死——测试间互不污染。"""
+    monkeypatch.setattr(ws, "_ddg_down", False)
+    monkeypatch.delenv("VORTOCODE_SEARCH_BACKEND", raising=False)
+
+
+# 仿 Bing RSS（format=rss）：稳定 XML、直链无跳转包装（国内兜底后端）。
+BING_RSS = """<?xml version="1.0" encoding="utf-8" ?><rss version="2.0"><channel>
+<title>Bing: 宁波 天气</title>
+<item><title>宁波天气预报_一周天气</title><link>https://weather.example.cn/ningbo</link>
+<description>宁波今天多云转晴，气温 24~31℃。</description></item>
+<item><title>Ningbo Weather - Wikipedia</title><link>https://en.wikipedia.org/wiki/Ningbo</link>
+<description>Climate of Ningbo city.</description></item>
+</channel></rss>"""
+
+
 def test_decode_ddg_href_unwraps_uddg():
     got = ws._decode_ddg_href("//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fa&amp;rut=x")
     assert got == "https://example.com/a"                  # uddg 解码出真实 URL
@@ -96,7 +113,45 @@ def test_web_search_fetch_error_graceful(monkeypatch):
     monkeypatch.setattr(web_fetch, "_host_is_safe", lambda host: True)   # 跳过真实 DNS，测的是 _urlopen 抛错路径
     monkeypatch.setattr(web_fetch, "_urlopen", _boom)
     out = ws.web_search("anything")
-    assert out.startswith("(搜索失败")                      # 网络炸了也只返回说明串、不抛
+    assert out.startswith("(搜索失败")                      # 双后端都网络炸 → 说明串、不抛
+    assert "ddg" in out and "bing" in out                   # 两个后端的失败都如实列出
+
+
+def test_parse_bing_rss_extracts_items():
+    res = ws._parse_bing_rss(BING_RSS, limit=10)
+    assert len(res) == 2
+    assert res[0] == {"title": "宁波天气预报_一周天气",
+                      "url": "https://weather.example.cn/ningbo",
+                      "snippet": "宁波今天多云转晴，气温 24~31℃。"}
+    assert ws._parse_bing_rss(BING_RSS, limit=1) == res[:1]   # limit 生效
+
+
+def test_ddg_refused_falls_back_to_bing(monkeypatch):
+    """真机场景：DDG 域名被 DNS 污染、SSRF 校验拒 → 自动落 Bing，仍出结果。"""
+    monkeypatch.setattr(web_fetch, "_host_is_safe",
+                        lambda host: "duckduckgo" not in host)          # 只拒 DDG（仿被污染）
+    monkeypatch.setattr(web_fetch, "_urlopen",
+                        lambda req, timeout: _FakeResp(BING_RSS.encode("utf-8")))
+    out = ws.web_search("宁波 天气")
+    assert "宁波天气预报" in out                             # Bing 兜底出了结果
+    assert ws._ddg_down is True                              # 粘性降级已记下
+    assert ws._backend_order()[0] == "bing"                  # 后续搜索 Bing 优先，不再白等 DDG
+
+
+def test_env_pins_single_backend(monkeypatch):
+    """VORTOCODE_SEARCH_BACKEND=bing 钉死单后端：只请求 Bing，不碰 DDG。"""
+    hit = []
+
+    def _urlopen(req, timeout):
+        hit.append(req.full_url)
+        return _FakeResp(BING_RSS.encode("utf-8"))
+
+    monkeypatch.setenv("VORTOCODE_SEARCH_BACKEND", "bing")
+    monkeypatch.setattr(web_fetch, "_host_is_safe", lambda host: True)
+    monkeypatch.setattr(web_fetch, "_urlopen", _urlopen)
+    out = ws.web_search("anything")
+    assert "宁波天气预报" in out
+    assert hit and all("bing.com" in u for u in hit)         # 全程没请求 DDG
 
 
 @pytest.mark.asyncio
