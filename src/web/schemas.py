@@ -1,23 +1,8 @@
-"""Web 层请求模型与配置常量（从 server.py 抽出）。"""
+"""Web 层请求模型（从 server.py 抽出）。"""
 from typing import Any, Dict, List
 from pydantic import BaseModel
 
-# 可用模型列表
-AVAILABLE_MODELS = [
-    {"id": "mimo-v2.5", "name": "MiMo v2.5", "provider": "Xiaomi", "description": "小米 AI 模型"},
-    {"id": "gpt-4o", "name": "GPT-4o", "provider": "OpenAI", "description": "OpenAI 最强模型"},
-    {"id": "gpt-4o-mini", "name": "GPT-4o Mini", "provider": "OpenAI", "description": "轻量版 GPT-4o"},
-    {"id": "claude-3.5-sonnet", "name": "Claude 3.5 Sonnet", "provider": "Anthropic", "description": "Claude 最新模型"},
-    {"id": "deepseek-chat", "name": "DeepSeek Chat", "provider": "DeepSeek", "description": "深度求索模型"},
-]
-
 # 请求模型
-class WorkdirRequest(BaseModel):
-    workdir: str
-
-class ModelRequest(BaseModel):
-    model: str
-
 class CreateAgentRequest(BaseModel):
     name: str
     role: str = "custom"
@@ -74,11 +59,6 @@ class SandboxExecuteRequest(BaseModel):
 class BrowserNavigateRequest(BaseModel):
     url: str
     browser_name: str = "default"
-
-# 终端执行 API
-class TerminalRequest(BaseModel):
-    command: str
-    workdir: str = ""
 
 # 测试生成 API
 class TestGenerateRequest(BaseModel):

@@ -3,6 +3,22 @@ from src.web.deps import *  # noqa: F401,F403
 
 router = APIRouter()
 
+
+# 状态快照（从退役的 system.py 迁来——它是冻结协议 get_status→status 的 REST 孪生，
+# 且是鉴权测试的探针端点；路线 A 其余 system 端点已随 b4 PR-B3 删除）
+@router.get("/api/status")
+async def get_status():
+    return state.to_dict()
+
+
+# 成本报告（从退役的 system.py 迁来——cost_tracker 是主线 LLM 埋点，归 ops 域）
+@router.get("/api/cost/report")
+async def get_cost_report(period: str = "daily"):
+    """获取成本报告（进程级全局 cost_tracker：LLM 调用实时埋点）+ 预算告警"""
+    from src.models import cost_tracker
+    return {**cost_tracker.get_report(period), "alerts": cost_tracker.alerts}
+
+
 # 监控和指标 API
 @router.get("/api/monitoring/metrics")
 async def get_metrics():
