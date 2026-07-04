@@ -91,12 +91,38 @@ def test_state_gitignore_keeps_user_config_versionable(tmp_path):
     assert "permissions.yaml" in staged and "dev_plans" not in staged
 
 
-def test_ensure_state_gitignore_idempotent_respects_existing(tmp_path):
-    """已有 .vortocode/.gitignore 则不覆盖（尊重用户自定义）。"""
+def test_ensure_state_gitignore_upgrades_legacy_and_keeps_custom(tmp_path):
+    """旧版无标记文件缺托管条目 → 追加托管区（老仓库也能收到清单升级，#140 评审）；
+    用户自定义行逐字保留。"""
     d = tmp_path / ".vortocode"; d.mkdir()
-    (d / ".gitignore").write_text("custom\n", encoding="utf-8")
+    (d / ".gitignore").write_text("custom\nworktrees/\n", encoding="utf-8")   # 旧清单：缺新条目
     dp.ensure_state_gitignore(str(tmp_path))
-    assert (d / ".gitignore").read_text(encoding="utf-8") == "custom\n"
+    content = (d / ".gitignore").read_text(encoding="utf-8")
+    assert content.startswith("custom\nworktrees/\n")             # 用户自定义逐字保留
+    assert "tui_history" in content and "notices.jsonl" in content  # 缺的托管条目补上了
+    assert dp._MANAGED_BEGIN in content                           # 已迁到托管区（下次幂等升级）
+
+
+def test_ensure_state_gitignore_legacy_fully_covered_untouched(tmp_path):
+    """旧版无标记文件但托管条目**全齐**（用户可能删过注释/改过顺序）→ 一字不动（grandfather）。"""
+    d = tmp_path / ".vortocode"; d.mkdir()
+    legacy = "\n".join(["# 我的注释"] + dp._STATE_ENTRIES) + "\n"
+    (d / ".gitignore").write_text(legacy, encoding="utf-8")
+    dp.ensure_state_gitignore(str(tmp_path))
+    assert (d / ".gitignore").read_text(encoding="utf-8") == legacy
+
+
+def test_ensure_state_gitignore_managed_block_idempotent_upgrade(tmp_path):
+    """标记区内容过期 → 原地重写补齐；区外（用户前后自定义）原样保留；再跑一遍零改动（幂等）。"""
+    d = tmp_path / ".vortocode"; d.mkdir()
+    stale = (f"pre-custom\n{dp._MANAGED_BEGIN}\nworktrees/\n{dp._MANAGED_END}\npost-custom\n")
+    (d / ".gitignore").write_text(stale, encoding="utf-8")
+    dp.ensure_state_gitignore(str(tmp_path))
+    content = (d / ".gitignore").read_text(encoding="utf-8")
+    assert content.startswith("pre-custom\n") and content.rstrip().endswith("post-custom")
+    assert "tui_history" in content and "notices.jsonl" in content
+    dp.ensure_state_gitignore(str(tmp_path))                      # 幂等：第二遍无变化
+    assert (d / ".gitignore").read_text(encoding="utf-8") == content
 
 
 def test_list_plans_sorted(tmp_path):
