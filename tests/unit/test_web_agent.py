@@ -605,6 +605,76 @@ async def test_session_persists_and_restores_across_restart(monkeypatch, tmp_pat
         realtime._SESSIONS.pop(_key(ws), None)
 
 
+# ---- 协议冻结（PR-1）：rid 回带 + 不合法入站按旧行为静默忽略 ----
+
+@pytest.mark.asyncio
+async def test_rid_echoed_on_all_turn_events(monkeypatch):
+    """入站 agent 带 rid → 本回合全部出站事件（say/plan/emit/done）都回带同一 rid。"""
+    from src.web.routers import realtime
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    ws = _FakeWS(sid="s-rid")
+    _inject_session(ws, _PlanAgent())
+    try:
+        await realtime.handle_agent_message(
+            ws, {"type": "agent", "text": "hi", "mode": "plan", "rid": "r-42"})
+        await _drain(ws)
+        turn_events = [m for m in ws.sent if m["type"].startswith("agent_")]
+        assert turn_events and all(m.get("rid") == "r-42" for m in turn_events), turn_events
+        assert any(m["type"] == "agent_done" for m in turn_events)
+    finally:
+        _cleanup(ws)
+
+
+@pytest.mark.asyncio
+async def test_no_rid_means_no_rid_field(monkeypatch):
+    """不带 rid 的客户端（现网 agent.html）：事件里**不出现** rid 字段，与从前逐字节一致。"""
+    from src.web.routers import realtime
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    ws = _FakeWS(sid="s-norid")
+    _inject_session(ws, _EchoAgent())
+    try:
+        await realtime.handle_agent_message(ws, {"type": "agent", "text": "hi", "mode": "plan"})
+        await _drain(ws)
+        assert ws.sent and all("rid" not in m for m in ws.sent), ws.sent
+    finally:
+        _cleanup(ws)
+
+
+@pytest.mark.asyncio
+async def test_rid_echoed_on_early_errors(monkeypatch):
+    from src.web.routers import realtime
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    ws = _FakeWS(sid="s-riderr")
+    try:
+        await realtime.handle_agent_message(ws, {"type": "agent", "text": "  ", "rid": "r-e"})
+        err = [m for m in ws.sent if m["type"] == "agent_error"]
+        assert err and err[0]["rid"] == "r-e"                  # 空输入的早退错误也回带
+    finally:
+        _cleanup(ws)
+
+
+@pytest.mark.asyncio
+async def test_unregistered_inbound_silently_ignored():
+    """未登记类型/缺必填的入站消息：不抛、不回——与从前"未知类型掉落"同效。"""
+    from src.web.routers import realtime
+    ws = _FakeWS(sid="s-junk")
+    await realtime.handle_websocket_message(ws, {"type": "made_up_type", "x": 1})
+    await realtime.handle_websocket_message(ws, {"type": "agent_confirm_response"})   # 缺 id
+    await realtime.handle_websocket_message(ws, {"no": "type"})
+    assert ws.sent == []
+
+
+@pytest.mark.asyncio
+async def test_ping_pong_and_init_version():
+    from src.gateway import protocol as P
+    from src.web.routers import realtime
+    ws = _FakeWS(sid="s-ping")
+    await realtime.handle_websocket_message(ws, {"type": "ping"})
+    assert ws.sent == [{"type": "pong"}]
+    evt = P.make_event(P.INIT, v=P.PROTOCOL_VERSION, data={})   # endpoint 的 init 构造式
+    assert evt["v"] == 1
+
+
 def test_sessions_evict_oldest_over_cap(monkeypatch):
     from src.web.routers import realtime
     monkeypatch.setattr(realtime, "_MAX_SESSIONS", 3)
