@@ -64,6 +64,8 @@ async def run_scenario(scenario, workdir: Path) -> Tuple[Optional[Score], str]:
     repo.mkdir(parents=True, exist_ok=True)
     scenario.setup(repo)
     _git_init(repo)
+    if scenario.post_init is not None:      # resume 类场景：git init 后预置"跑到一半"的状态（分支/计划）
+        scenario.post_init(repo)
     base_branch = _current_branch(repo)
     base_head = _rev(repo)
 

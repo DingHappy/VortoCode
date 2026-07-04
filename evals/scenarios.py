@@ -16,7 +16,7 @@ from typing import Callable
 class Scenario:
     name: str
     stresses: str                          # 一句话说明它压什么盲区
-    tool: str                              # dev_isolated | dev_parallel | dev_auto
+    tool: str                              # dev_isolated | dev_parallel | dev_auto | dev_resume
     args: dict                             # 直接喂 tool.handler 的参数
     setup: Callable[[Path], None]          # 往 scratch 仓库写文件（git init 前）
     expect_land: bool                      # 期望产出绿 vorto/* 分支？
@@ -24,6 +24,11 @@ class Scenario:
     needs_node: bool = False               # 需要本机装 node（缺则跳过并记录，不静默）
     must_surface: list = field(default_factory=list)   # 负向场景：消息**必须** surface 出的信号
     tags: list = field(default_factory=list)           #   （如"单独绿合起来红"）；缺则本轮判未复现、不算过
+    post_init: Callable[[Path], None] = None           # 可选：git init **之后**预置状态（分支/计划文件——
+    #   resume 类场景要模拟"跑到一半被打断"，得先有已落地分支 + 半完成计划）
+    must_change: list = field(default_factory=list)    # 最终分支 diff（相对 base）**必须包含**的文件——
+    #   resume 类场景预置分支本身就有 diff，"分支绿"不足以证明 pending 真被补跑；此门要求交付物在场
+    #   （如 util_b.py），防 no-op / 删红测试混绿（#135 评审）。缺任一文件即不算过。
 
 
 # --------------------------------------------------------------- setup 辅助
@@ -77,6 +82,51 @@ def _setup_node_repo(repo: Path) -> None:
            "const assert = require('node:assert');\nconst test = require('node:test');\n"
            "const { double } = require('../index.js');\n"
            "test('double', () => { assert.strictEqual(double(2), 4); });\n")
+
+
+def _setup_resume(repo: Path) -> None:
+    # 中断续跑（C1/#127）：模拟 dev_auto 跑到一半被 kill——块 1 已落地、块 2 还没跑，dev_resume 应
+    # 只补跑块 2、不重做块 1、最后整条分支集成绿。评审教训（landed 白名单/超前标记）在真机上的守门场景。
+    _write(repo, "tests/__init__.py", "")
+    _write(repo, "tests/test_base.py", "def test_base():\n    assert True\n")
+
+
+def _post_init_resume(repo: Path) -> None:
+    """git init 后预置"跑了一半"的状态：块 1 的产出已落 vorto 分支、计划文件标 landed+pending。
+
+    **构造关键（#135 评审）**：resume 前的分支必须是**红**的——ind-1 的测试文件已在分支上
+    （import 尚不存在的 util_b），只有真把 pending 块补跑完（实现 util_b.py）分支才转绿。
+    否则"预置分支本来就绿"会让 no-op 的 dev_resume 也判 landed=True，场景守不住 resume 语义。
+    """
+    import subprocess
+
+    def git(*a):
+        subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True)
+
+    base = subprocess.run(["git", "-C", str(repo), "rev-parse", "--abbrev-ref", "HEAD"],
+                          capture_output=True, text=True).stdout.strip() or "main"
+    # 分支现场 = 块 1 的产出（绿）+ 块 2 的测试（红：util_b 还没实现）——模拟"测试先落、实现被打断"
+    git("checkout", "-q", "-b", "vorto/auto-resume")
+    _write(repo, "util_a.py", 'def greet(name):\n    return f"hi {name}"\n')
+    _write(repo, "tests/test_util_a.py",
+           "from util_a import greet\n\n\ndef test_greet():\n    assert greet('x') == 'hi x'\n")
+    _write(repo, "tests/test_util_b.py",
+           "from util_b import shout\n\n\ndef test_shout():\n    assert shout('a') == 'A'\n")
+    git("add", "-A")
+    git("commit", "-qm", "dev_auto[ind-0]: 块1 已落地 + 块2 测试已写（模拟中断现场，当前红）")
+    git("checkout", "-q", base)
+    # 半完成计划：ind-0 landed、ind-1 pending（写盘走真实 dev_plan API，与 dev_resume 读取端同源）
+    from src.agents.dev_plan import Block, DevPlan, save_plan
+    plan = DevPlan.new("给 util_a/util_b 各加一个函数并配测试（模拟中断任务）",
+                       "vorto/auto-resume", base, plan_id="eval-resume")
+    plan.blocks = [
+        Block(id="ind-0", kind="independent", status="landed",
+              desc="在 util_a.py 新增 greet(name) 返回 f'hi {name}'，并在 tests/test_util_a.py 写断言"),
+        Block(id="ind-1", kind="independent", status="pending",
+              desc="在 util_b.py 新增函数 shout(s) 返回 s.upper()。"
+                   "tests/test_util_b.py 已在分支上（当前因缺实现而红），补上实现让它转绿即可，别改测试。"),
+    ]
+    save_plan(str(repo), plan)
 
 
 def _setup_vague(repo: Path) -> None:
@@ -147,6 +197,19 @@ SCENARIOS = [
         expect_land=True,
         honesty="standard",
         needs_node=True,
+    ),
+    Scenario(
+        name="resume_interrupted",
+        stresses="中断续跑（C1/#127）：半完成计划 dev_resume 应跳过已落地块、只补跑 pending、整条分支集成绿",
+        tool="dev_resume",
+        args={"plan_id": "eval-resume"},
+        setup=_setup_resume,
+        post_init=_post_init_resume,
+        expect_land=True,
+        honesty="standard",
+        # 双保险（#135 评审）：预置分支 resume 前是红的（landed 门天然守住 no-op），再要求 util_b.py
+        # 真出现在分支 diff 里——防"删掉红测试混绿"这类不补实现也能转绿的作弊路径。
+        must_change=["util_b.py"],
     ),
     Scenario(
         name="vague_instruction",
