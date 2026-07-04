@@ -74,7 +74,6 @@ app.middleware("http")(auth_middleware)
 
 # 按域拆分的路由
 from src.web.routers.pages import router as pages_router
-from src.web.routers.system import router as system_router
 from src.web.routers.git import router as git_router
 from src.web.routers.context import router as context_router
 from src.web.routers.agents import router as agents_router
@@ -92,7 +91,7 @@ from src.web.routers.auth_routes import router as auth_router
 from src.web.routers.tasks import router as tasks_router
 
 for _router in (
-    pages_router, system_router, git_router, context_router,
+    pages_router, git_router, context_router,
     agents_router, skills_router,
     projects_router, editor_router, sandbox_router,
     browser_router, github_router, ops_router, generators_router, realtime_router,

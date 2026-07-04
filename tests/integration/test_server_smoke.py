@@ -65,7 +65,6 @@ CORE_OK = [
     "/api/status",
     "/api/health",
     "/api/health/quick",
-    "/api/models",
     "/api/skills",
     "/api/agents/templates",
     "/api/agents/custom",
@@ -73,10 +72,9 @@ CORE_OK = [
     "/api/context",
     "/api/projects",
     "/api/templates",
-    "/api/system/info",
     "/api/monitoring/metrics",
     "/api/cache/stats",
-    "/api/workdir",
+    "/api/cost/report",
 ]
 
 

@@ -4,10 +4,9 @@
 1. **冻结快照**：INBOUND/OUTBOUND 的类型集合钉死在本文件——改协议必须连这里一起改（有意识的决定）。
 2. **realtime 不许越协议发事件**：AST 扫 realtime.py，出站必须走 make_event + 登记常量；
    任何裸 {"type": "..."} 字面量都算绕过，直接红。
-3. **全 /ws 出站面隔离冻结**：同一批 WS 连接上还有路线 A 退役面的 legacy 广播（execution/
-   sessions/system 等）——它们**不属于冻结协议**（登记 = 册封，与退役方向相反），钉进
-   _LEGACY_WS_TYPES 隔离清单：**只许随退役减少、不许新增**；任何 web router 发清单外/协议外
-   的新事件、或用变量绕开静态扫描，都红。
+3. **全 /ws 出站面收口**：路线 A 的 12 类 legacy 广播已随其路由物理删除（b4 清零）——规则收紧为
+   永久版：realtime 之外的 src/web 文件不许出现任何裸 {"type": ...} 事件字面量、不许用变量/
+   非 make_event 实参绕开静态扫描——发协议事件一律走 make_event，没有第二条路。
 4. **make_event/parse_event 行为**：必填缺失/未登记类型/字段越界即错；rid 全局可选。
 """
 
@@ -21,14 +20,9 @@ from src.gateway import protocol as P
 _WEB_DIR = Path(__file__).resolve().parents[2] / "src" / "web"
 _REALTIME = _WEB_DIR / "routers" / "realtime.py"
 
-# 路线 A 退役面的 legacy /ws 广播（audit-2026-07 定性，b4 逐 PR 清退中）。
-# **双向冻结**：新增即红（新事件该走 protocol.OUTBOUND）；退役后忘删清单项也红（清单保持如实）。
-_LEGACY_WS_TYPES = {
-    "workdir_changed", "model_changed",   # system.py（b4 PR-B3 清退后本清单归零、冻结块拆除）
-    # 已清退：indexing_progress / chat_message（PR-B1）；agent_status / token /
-    # agent_run_completed / goal_set / execution_stopped / state_reset / task_updated /
-    # approval_resolved（PR-B2，随 execution/security 路由删除）
-}
+# 路线 A 的 12 类 legacy /ws 广播已于 b4（PR-B1/B2/B3）随其路由全部物理删除——原
+# _LEGACY_WS_TYPES 隔离清单归零拆除。此后规则收紧为**永久版**：src/web 里除 realtime
+# 经 make_event 之外，任何文件都不许出现裸 {"type": ...} 事件字面量（见下方 2.5 层）。
 
 
 # ------------------------------------------------------------ 1) 冻结快照
@@ -150,22 +144,19 @@ def _web_files_except_realtime():
     return [p for p in sorted(_WEB_DIR.rglob("*.py")) if p != _REALTIME]
 
 
-def test_legacy_ws_broadcast_quarantined_frozen():
-    """realtime 之外的全部 /ws 出站字面量 == 隔离清单（双向）：
-    新增 → 该走 protocol（红）；退役后清单没跟着删 → 清单失实（也红）。"""
+def test_no_raw_event_literals_outside_realtime():
+    """永久规则（legacy 清零后收紧）：realtime 之外的 src/web 文件不许出现**任何**裸
+    {"type": ...} 事件字面量——发协议事件一律走 make_event（出站严格校验），没有第二条路。"""
     found: set = set()
     for p in _web_files_except_realtime():
         types, _ = _scan_ws_sends(p)
         found |= types
-    added = found - _LEGACY_WS_TYPES - set(P.OUTBOUND)   # 用登记类型是允许的（迁移方向）
-    gone = _LEGACY_WS_TYPES - found
-    assert not added, f"web router 新发了协议外事件（要么登记进 protocol.OUTBOUND，要么别发）: {added}"
-    assert not gone, f"这些 legacy 事件已不再发送，请从 _LEGACY_WS_TYPES 删掉（退役进度如实反映）: {gone}"
+    assert not found, f"发现绕过 make_event 的裸事件字面量（路线 A 已清零，不许再长）: {found}"
 
 
 def test_no_opaque_ws_sends_outside_realtime():
     """realtime 之外不许用变量/非 make_event 调用当 broadcast/send_json 实参——静态扫不出类型
-    = 绕过契约。要发协议事件请走 make_event；legacy 事件保持字面量直到退役。"""
+    = 绕过契约。要发协议事件请走 make_event，没有第二条路。"""
     opaque_all: list = []
     for p in _web_files_except_realtime():
         _, opaque = _scan_ws_sends(p)

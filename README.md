@@ -212,7 +212,8 @@ OPENAI_API_KEY=sk-你的令牌
 # 设置后，所有 /api/* 与 /ws 强制鉴权（请求需带 Authorization: Bearer <token> 或 X-API-Token）
 # 不设置则仅本地放行；对外暴露务必设置
 AUTODEV_API_TOKEN=
-# 宿主机命令执行端点（/api/terminal/execute 等）默认禁用，仅在可信环境置 1 开启
+# 非隔离 sandbox/cloud_sandbox 的宿主机降级执行默认禁用，仅在可信环境置 1 开启
+# （/api/terminal/execute 已随路线 A 退役删除；agent 的 run_command 走确认门，不受此开关）
 AUTODEV_ENABLE_SHELL=
 ```
 
