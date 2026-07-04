@@ -28,10 +28,9 @@ _LEGACY_WS_TYPES = {
     "agent_status", "token", "agent_run_completed",
     "goal_set", "execution_stopped", "state_reset", "task_updated",
     # 其余 admin/遗留页
-    "indexing_progress",     # indexing.py
-    "approval_resolved",     # security.py
-    "chat_message",          # sessions.py
-    "workdir_changed", "model_changed",   # system.py
+    "approval_resolved",     # security.py（b4 PR-B2 清退）
+    "workdir_changed", "model_changed",   # system.py（b4 PR-B3 清退）
+    # 已清退：indexing_progress / chat_message（b4 PR-B1，随 indexing/sessions 路由删除）
 }
 
 

@@ -17,12 +17,10 @@ from src.security import PermissionManager, SafetyGuard
 from src.context import ProjectContext, GitIntegration
 from src.agents import CustomAgentManager, AgentManager
 from src.skills import SkillManager
-from src.indexing import CodeIndexer
 from src.editor import CodeEditor
 from src.sandbox import SandboxManager, SandboxExecutor
 from src.browser import BrowserManager
 from src.projects import ProjectManager, MultiProjectOrchestrator
-from src.workspaces import WorkspaceManager
 
 logger = logging.getLogger(__name__)
 
@@ -79,9 +77,6 @@ class AppState:
         self.project_manager = ProjectManager()
         self.multi_project_orchestrator = MultiProjectOrchestrator(self.project_manager)
 
-        # 工作区管理器
-        self.workspace_manager = WorkspaceManager()
-
         # 权限管理
         self.permission_manager = PermissionManager(self.workdir)
         self.safety_guard = SafetyGuard(self.permission_manager)
@@ -104,8 +99,6 @@ class AppState:
         # 技能管理器
         self.skill_manager = SkillManager(self.workdir)
 
-        # 代码索引器
-        self.code_indexer: Optional[CodeIndexer] = None
         self.code_editor: Optional[CodeEditor] = None
 
         # 沙箱管理器
