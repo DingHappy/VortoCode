@@ -26,7 +26,7 @@ def _strip(text: str) -> str:
 
 class IMBridge:
     def __init__(self, repo_root: str, adapter: ChannelAdapter, owner_id: str, *,
-                 channel: str = "im", mode: str = "plan", llm=None):
+                 channel: str = "im", mode: str = "plan", llm=None, runner=None):
         self.repo_root = str(repo_root)
         self.adapter = adapter
         self.owner_id = str(owner_id)
@@ -41,7 +41,10 @@ class IMBridge:
         # 不支持编辑的通道（钉钉）进度只能发新消息 → 放慢节流免刷屏
         self._edits = getattr(adapter, "edits_supported", True)
         self._progress_interval = 2.0 if self._edits else 10.0
-        self._runner = None                              # 后台任务运行时（懒建）
+        # 后台任务运行时：serve 内嵌模式注入共享 runner（单一并发池/台账/订阅集，kind="im-dev"
+        # 分发回本 bridge 的 worker，见 gateway/im_service）；standalone 懒建自己的（向后兼容）
+        self._runner = runner
+        self._shared_runner = runner is not None
         self._task_prog: dict = {}                       # tid -> 上次进度推送时间（节流）
         self.agent = self._build_agent()
 
@@ -205,7 +208,10 @@ class IMBridge:
         if not prompt:
             await self._safe_send("用法：/task <要后台跑的任务描述>")
             return
-        task = await self._get_runner().submit(prompt, kind="dev")
+        # 共享 runner（serve 内嵌）：kind="im-dev" 让分发路由回本 bridge 的 worker（保住在跑中的
+        # 按钮确认 UX）；standalone 自己的 runner worker 就是 _task_worker，kind 只是标注。
+        kind = "im-dev" if self._shared_runner else "dev"
+        task = await self._get_runner().submit(prompt, kind=kind)
         await self._safe_send(f"✅ 已在后台开跑 {task.id}（不占当前会话；进度会自动推、完成发开 PR 按钮）。"
                               f"\n/tasks 看全部后台任务。")
 
