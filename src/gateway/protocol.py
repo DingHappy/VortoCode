@@ -1,6 +1,7 @@
 """三端统一实时协议——把 realtime 的隐式 WS 协议抽成显式中立层（D1 单核化 PR-1：先冻结面、不改行为）。
 
-事件 = 一个带 "type" 的扁平 dict（WS JSON）。本模块是事件类型的**唯一登记处**：
+事件 = 一个带 "type" 的扁平 dict（WS JSON）。本模块是 **/agent 实时协议**的唯一登记处
+（D1 单核化的目标协议，TUI/CLI/IM 客户端化即对着这个面做）：
 
 - 入站（客户端 → gateway）与出站（gateway → 客户端）分开登记，每类声明必填/可选字段；
 - `make_event`/`parse_event` 在两端把关——出站**严格**（类型必须登记、字段不许越界，我们全权控制），
@@ -9,6 +10,11 @@
 - `PROTOCOL_VERSION` 随 init 事件（"v" 字段）下发，客户端据此判兼容；
 - 所有出站事件可带可选 `rid`（request id）：回带发起该回合的 agent 入站消息里的 rid——
   多路复用/并发回合的地基（当前单回合串行，客户端不带 rid 时行为与从前完全一致）。
+
+⚠️ 边界如实交代：同一 /ws 连接上目前还有**路线 A 退役面**的 legacy 广播（execution/sessions/
+system 等 12 类，audit-2026-07 定性、b3 PR-6 收口清退）。它们**不属于本协议**——不在这里登记
+（登记 = 册封，与退役方向相反），而是被契约测试的隔离清单冻结：**只许随退役减少、不许新增**，
+任何 web router 发未登记的新事件（无论走不走 make_event）都会红。清单见 test_protocol_contract.py。
 """
 
 from __future__ import annotations
