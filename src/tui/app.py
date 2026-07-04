@@ -34,6 +34,8 @@ SLASH_COMMANDS = [
     "/artifacts", "/diff", "/sessions", "/resume", "/new", "/mode", "/model", "/think", "/theme", "/usage",
     "/tools", "/audit", "/speak", "/commands", "/hooks", "/clear", "/help", "/quit",
 ]
+# 必须带参数的命令：补全面板里回车不直接执行，先补成 "/cmd " 让用户接着填参数
+ARG_SLASH_CMDS = {"/fix", "/run", "/resume", "/runagent"}
 # 命令 → 一句话说明（命令补全面板用，让 / 命令可发现、可补全）
 COMMAND_INFO = {
     "/analyze": "L1 自分析（只读扫描，无需 key）",
@@ -128,7 +130,7 @@ HELP = """可用命令:
   /help               显示本帮助
   /quit               退出（也可 Ctrl+C）
 键位: Tab=补全/切模式  ↑↓=翻输入历史  Esc=取消  Ctrl+L=清屏  Ctrl+C=退出
-补全: 输入 / 列命令、@ 列文件，上方面板高亮首选，Tab 或 → 接受；继续输入可筛选"""
+补全: 输入 / 列命令、@ 列文件；↑↓ 选、Tab 补全（再按轮换）、回车执行/接受、Esc 收起；继续输入可筛选"""
 
 _IGNORE = {"__pycache__", ".git", ".venv", "venv"}
 
@@ -272,6 +274,10 @@ class VortoCodeTUI(App):
         self._history: list[str] = []       # 提交过的输入（↑/↓ 调出，仿 shell；跨会话持久化）
         self._history_idx: int | None = None
         self._history_draft = ""            # 进入历史浏览前的草稿，↓ 到底恢复
+        self._pal_items: list = []          # 补全面板候选 [(显示文本, 说明)]（空=面板隐藏）
+        self._pal_accepts: list[str] = []   # 各候选被接受后的完整输入值（与 _pal_items 对齐）
+        self._pal_idx = 0                   # 当前高亮候选（↑↓ 移动，Tab 补全，回车执行/接受）
+        self._pal_kind = ""                 # "命令" / "文件"（回车语义不同：执行 vs 接受）
         self._allow_writes_session = False  # 本会话"始终允许"写操作（ConfirmScreen 的 [a]，scope=writes）
         self._allow_commands_session = False  # 本会话"始终允许"跑命令（独立作用域，不吃写豁免）
         self._speak_replies = False         # /speak 开关：开则把每条回复合成语音朗读（mimo-v2.5-tts）
@@ -565,29 +571,23 @@ class VortoCodeTUI(App):
             pass
 
     def action_cancel(self) -> None:
+        if self._palette_visible():           # 先收补全面板；再按一次 Esc 才是取消任务
+            self._hide_palette()
+            return
         if self._busy:
             self.workers.cancel_all()
             self._chrome("[yellow]已取消当前操作[/yellow]")
 
     # ---------------------------------------------------------------- 键位动作
     def action_toggle_mode(self) -> None:
-        # Tab 上下文化：在敲 / 命令或 @文件且能补全 → 补全到首个匹配；否则切 plan/build 模式。
-        v = self.query_one("#prompt", Input).value
-        if v.startswith("/") and " " not in v:
-            names = SLASH_COMMANDS + ["/" + n for n in self._user_commands()]
-            matches = [c for c in names if c.startswith(v.lower())]
-            if matches and matches[0].lower() != v.lower():
-                self._set_input(matches[0])
-                return
-        at = v.rfind("@")
-        if at != -1 and " " not in v[at:] and ":" not in v[at:]:
-            tl = v[at + 1:].lower()
-            files = _repo_files(self.repo_root)
-            cand = (next((f for f in files if f.lower().startswith(tl)), None)
-                    or next((f for f in files if tl in f.lower()), None))
-            if cand and v[at + 1:] != cand:
-                self._set_input(v[:at + 1] + cand)
-                return
+        # Tab 上下文化：补全面板可见 → 接受选中候选（输入已是该值则先跳下一个，shell 式轮换）；
+        # 否则切 plan/build 模式。
+        if self._palette_visible():
+            v = self.query_one("#prompt", Input).value
+            if v == self._pal_accepts[self._pal_idx] and len(self._pal_accepts) > 1:
+                self._palette_move(1)
+            self._palette_accept()
+            return
         self.mode = "build" if self.mode == "plan" else "plan"
         self._sync_subtitle()
         self._chrome(f"→ 切到 [b]{self.mode}[/b] 模式")
@@ -631,7 +631,10 @@ class VortoCodeTUI(App):
         return await self.push_screen_wait(ConfirmScreen(self._taint_msg(message), scope="commands"))
 
     def action_history_prev(self) -> None:
-        """↑：调出上一条历史输入（编辑过则当作新输入，从末尾重新起）。"""
+        """↑：补全面板可见时选上一个候选；否则调出上一条历史输入（编辑过则当作新输入）。"""
+        if self._palette_visible():
+            self._palette_move(-1)
+            return
         if not self._history:
             return
         inp = self.query_one("#prompt", Input)
@@ -645,7 +648,10 @@ class VortoCodeTUI(App):
             self._set_input(self._history[self._history_idx])
 
     def action_history_next(self) -> None:
-        """↓：回到下一条历史；到底则恢复草稿。"""
+        """↓：补全面板可见时选下一个候选；否则回到下一条历史，到底恢复草稿。"""
+        if self._palette_visible():
+            self._palette_move(1)
+            return
         if self._history_idx is None:
             return
         inp = self.query_one("#prompt", Input)
@@ -687,8 +693,19 @@ class VortoCodeTUI(App):
     # ---------------------------------------------------------------- 输入分发
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         text = _sanitize_input(event.value).strip()   # 剔除漏进的终端转义序列，防脏字符进 agent/API
+        if self._palette_visible():             # 回车语义：命令=执行选中项；文件=接受进输入框继续写
+            sel = self._pal_accepts[self._pal_idx]
+            if self._pal_kind == "文件":
+                if sel != event.value:
+                    self._set_input(sel)        # 只接受文件路径，不提交（通常还要接着写需求）
+                    return
+            elif sel in ARG_SLASH_CMDS:         # 必带参数的命令：补成 "/cmd " 等用户填参数
+                self._set_input(sel + " ")
+                return
+            else:
+                text = sel                      # 执行面板里选中的命令（输入未敲全也可回车）
         self.query_one("#prompt", Input).value = ""
-        self.query_one("#palette", Static).display = False
+        self._hide_palette()
         self._history_idx = None                # 提交后退出历史浏览
         if not text:
             return
@@ -711,10 +728,16 @@ class VortoCodeTUI(App):
             inp.value = clean
             inp.cursor_position = len(clean)
             return                               # 重设会再触发 Changed，那次已干净
+        if (self._history_idx is not None        # 编辑了调出的历史 → 当作新输入（恢复补全等常规行为）
+                and clean != self._history[self._history_idx]):
+            self._history_idx = None
         self._update_palette(event.value)
 
     def _update_palette(self, value: str) -> None:
-        """输入框上方列出补全候选、高亮首选（Tab/→ 接受）：/ → 命令；@ → 仓库文件。否则隐藏。"""
+        """输入框上方列出补全候选（↑↓ 选、Tab 补全、回车执行/接受）：/ → 命令；@ → 仓库文件。否则隐藏。"""
+        if self._history_idx is not None:                      # 历史浏览中不弹补全（↑↓ 留给翻历史）
+            self._hide_palette()
+            return
         s = value.strip()
         if s.startswith("/") and " " not in s:                 # 斜杠命令（内置 + 自定义）
             vl = s.lower()
@@ -722,9 +745,11 @@ class VortoCodeTUI(App):
             for n, uc in self._user_commands().items():
                 info.setdefault("/" + n, uc.description)
             names = SLASH_COMMANDS + ["/" + n for n in self._user_commands()]
-            matches = [c for c in names if c.startswith(vl)]
+            matches = ([c for c in names if c.startswith(vl)]  # 前缀命中优先
+                       + [c for c in names                     # 子串兜底（/dit → /audit）
+                          if vl[1:] and vl[1:] in c[1:] and not c.startswith(vl)])
             if matches:
-                self._render_palette([(c, info.get(c, "")) for c in matches], "命令")
+                self._show_palette([(c, info.get(c, "")) for c in matches], list(matches), "命令")
                 return
         at = value.rfind("@")                                  # @文件（非 @artifact: 这种带冒号的）
         if at != -1:
@@ -733,21 +758,58 @@ class VortoCodeTUI(App):
                 tl = token.lower()
                 files = _repo_files(self.repo_root)
                 hits = ([f for f in files if f.lower().startswith(tl)]
-                        or [f for f in files if tl in f.lower()])
+                        or [f for f in files if tl in f.lower()])[:50]
                 if hits:
-                    self._render_palette([(f, "") for f in hits[:8]], "文件")
+                    self._show_palette([(f, "") for f in hits],
+                                       [value[:at + 1] + f for f in hits], "文件")
                     return
-        self.query_one("#palette", Static).display = False
+        self._hide_palette()
 
-    def _render_palette(self, items: list, kind: str) -> None:
-        """渲染补全面板：items=[(text, desc)]，首项高亮（= Tab/→ 接受目标）。"""
+    def _show_palette(self, items: list, accepts: list, kind: str) -> None:
+        """更新候选并渲染；继续输入筛选时尽量保住已选中的候选（还在列表里就跟着走）。"""
+        prev = (self._pal_accepts[self._pal_idx]
+                if self._pal_idx < len(self._pal_accepts) else None)
+        self._pal_items, self._pal_accepts, self._pal_kind = items, accepts, kind
+        self._pal_idx = accepts.index(prev) if prev in accepts else 0
+        self._render_palette()
+
+    def _hide_palette(self) -> None:
+        self._pal_items, self._pal_accepts, self._pal_idx, self._pal_kind = [], [], 0, ""
+        try:
+            self.query_one("#palette", Static).display = False
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _palette_visible(self) -> bool:
+        return bool(self._pal_items)
+
+    def _palette_move(self, step: int) -> None:
+        """↑↓ 在候选间移动（回绕）。"""
+        if self._pal_items:
+            self._pal_idx = (self._pal_idx + step) % len(self._pal_items)
+            self._render_palette()
+
+    def _palette_accept(self) -> str | None:
+        """把当前选中候选写进输入框，返回接受后的完整输入值；无候选返回 None。"""
+        if not self._pal_accepts:
+            return None
+        val = self._pal_accepts[self._pal_idx]
+        self._set_input(val)
+        return val
+
+    def _render_palette(self) -> None:
+        """渲染补全面板：高亮选中项（↑↓ 移动），候选超一屏时按选中位置开窗。"""
+        items, idx, win = self._pal_items, self._pal_idx, 8
+        start = max(0, min(idx - win // 2, len(items) - win))
         rows = []
-        for i, (txt, desc) in enumerate(items[:8]):
+        for i in range(start, min(start + win, len(items))):
+            txt, desc = items[i]
             d = f"  [dim]{desc}[/dim]" if desc else ""
             mark = self._tc("text-primary", "#8ab4f8")
-            rows.append(f"[b {mark}]›[/] [b]{txt}[/b]{d}" if i == 0 else f"  {txt}{d}")
-        more = f" · +{len(items) - 8} 更多" if len(items) > 8 else ""
-        rows.append(f"[dim]{kind}补全 · Tab/→ 接受首选 · 继续输入筛选{more}[/dim]")
+            rows.append(f"[b {mark}]›[/] [b]{txt}[/b]{d}" if i == idx else f"  {txt}{d}")
+        pos = f" · {idx + 1}/{len(items)}" if len(items) > win else ""
+        act = "回车执行" if self._pal_kind == "命令" else "回车接受"
+        rows.append(f"[dim]{self._pal_kind}补全 · ↑↓ 选 · Tab 补全 · {act} · Esc 收起{pos}[/dim]")
         palette = self.query_one("#palette", Static)
         palette.update(Text.from_markup("\n".join(rows)))
         palette.display = True
