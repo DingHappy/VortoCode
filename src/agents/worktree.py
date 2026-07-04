@@ -59,6 +59,8 @@ def _apply_diff(path, diff: str) -> tuple[bool, str]:
 
 def add_worktree(repo_root, wid: str) -> Path:
     """在 .vortocode/worktrees/<wid> 建一个基于当前 HEAD 的 detached worktree。"""
+    from src.agents.dev_plan import ensure_state_gitignore
+    ensure_state_gitignore(repo_root)              # dev_isolated-only 流程也要自忽略（没有计划文件可触发）
     path = _worktrees_dir(repo_root) / wid
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():                              # 残留则先清，避免 add 冲突

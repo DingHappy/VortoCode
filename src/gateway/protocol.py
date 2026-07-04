@@ -40,6 +40,8 @@ AGENT_HISTORY = "agent_history"              # 重连回放：之前的对话
 AGENT_PLAN = "agent_plan"                    # 计划面板更新/恢复
 AGENT_SAY = "agent_say"                      # 工具提示/流水线进度（回合内侧栏文本）
 AGENT_STREAM = "agent_stream"                # 流式增量（当前为累计文本，见 main_agent.run_turn）
+AGENT_REASONING = "agent_reasoning"          # 思维链增量（delta）；仅当入站 agent 带 want_reasoning
+#                                              才发（web 前端不用不订阅，省流量；TUI attach 用）
 AGENT_EMIT = "agent_emit"                    # 成段最终输出
 AGENT_ERROR = "agent_error"
 AGENT_DONE = "agent_done"                    # 回合收尾
@@ -57,7 +59,7 @@ _Spec = Tuple[Tuple[str, ...], Tuple[str, ...]]
 INBOUND: Dict[str, _Spec] = {
     PING: ((), ()),
     GET_STATUS: ((), ()),
-    AGENT: ((), ("text", "mode", "images", "audio", "rid")),   # 纯附件轮允许无 text
+    AGENT: ((), ("text", "mode", "images", "audio", "rid", "want_reasoning")),  # 纯附件轮允许无 text
     AGENT_CANCEL: ((), ()),
     AGENT_CONFIRM_RESPONSE: (("id",), ("ok",)),
     AGENT_TTS: (("id", "text"), ()),         # 无 id 的应答前端无法归位，白白烧一次合成 → 必填
@@ -72,6 +74,7 @@ OUTBOUND: Dict[str, _Spec] = {
     AGENT_PLAN: (("items",), ()),
     AGENT_SAY: (("text",), ()),
     AGENT_STREAM: (("text",), ()),
+    AGENT_REASONING: (("text",), ()),
     AGENT_EMIT: (("text",), ()),
     AGENT_ERROR: (("text",), ()),
     AGENT_DONE: ((), ()),

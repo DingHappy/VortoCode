@@ -141,27 +141,43 @@ class DevPlan:
 
 # .vortocode/ 里"工具生成的运行时状态"清单——放进 .vortocode/.gitignore 让它们对目标仓库 git status
 # 隐形（含 .gitignore 自身，避免自己冒出来当噪音）；用户配置不在此列，仍可正常 git add。
-_STATE_GITIGNORE = """\
-# VortoCode 自动生成的运行时状态——不进版本控制。
-# 用户配置（permissions.yaml / hooks.yaml / cron.yaml / HEARTBEAT.md / BACKLOG.md /
-# commands/ / skills/ / AGENTS.md 等）不在此列，可自行 git add。
-.gitignore
-worktrees/
-dev_plans/
-tasks/
-web_sessions/
-artifacts/
-states/
-projects/
-logs/
-vector_memory/
-memory/
-sessions.db
-audit.log
-cron_state.json
-cli_session.json
-tui_theme
-"""
+# 托管的生成态忽略清单（.vortocode/ 相对路径）。新增生成态目录/文件时在这里登记——
+# ensure_state_gitignore 会把它幂等升级进所有仓库的托管区（老仓库也能收到，不只新仓库）。
+_STATE_ENTRIES = [
+    ".gitignore",
+    "worktrees/",
+    "dev_plans/",
+    "tasks/",
+    "web_sessions/",
+    "artifacts/",
+    "states/",
+    "projects/",
+    "logs/",
+    "vector_memory/",
+    "memory/",
+    "sessions.db",
+    "audit.log",
+    "cron_state.json",
+    "cli_session.json",
+    "tui_theme",
+    "tui_history",
+    "web_advanced_agents.json",
+    "notices.jsonl",
+]
+
+_MANAGED_BEGIN = "# >>> vortocode managed —— 自动维护区，勿手改（升级会重写本区）；自定义规则请写在区外 >>>"
+_MANAGED_END = "# <<< vortocode managed <<<"
+
+
+def _managed_block() -> str:
+    return "\n".join([
+        _MANAGED_BEGIN,
+        "# VortoCode 自动生成的运行时状态——不进版本控制。",
+        "# 用户配置（permissions.yaml / hooks.yaml / cron.yaml / HEARTBEAT.md / BACKLOG.md /",
+        "# commands/ / skills/ / AGENTS.md 等）不在此列，可自行 git add。",
+        *_STATE_ENTRIES,
+        _MANAGED_END,
+    ])
 
 
 def ensure_state_gitignore(repo_root: str) -> None:
@@ -170,15 +186,33 @@ def ensure_state_gitignore(repo_root: str) -> None:
     .vortocode/ 混放了生成态（worktrees/dev_plans/tasks/…）与用户配置（permissions.yaml/commands/…）：
     前者不该进用户的版本控制，后者用户可能想 commit。放这个**选择性**忽略清单，让 dev_auto/后台任务/cron
     在任何目标仓库（无论其有没有 gitignore .vortocode/）都不污染 git status，同时不挡用户版本化自己的配置。
-    幂等（已存在则不动，尊重用户自定义）、best-effort（IO 出错不影响真正落盘）。凡往 .vortocode/ 落生成态
-    的入口（dev_plan / task ledger / cron state…）都应先调它。
+
+    托管清单走 **managed block**（#140 评审：只写新文件的话，清单升级永远到不了老仓库）：
+    - 标记区（_MANAGED_BEGIN…END）内容由我们幂等升级——清单加了新条目，老仓库下次任何写入点触发即补齐；
+    - 标记区**外**的内容（用户自定义）原样保留；想覆盖托管规则可在区后写否定规则（gitignore 后行优先）；
+    - 旧版无标记文件：托管条目全齐则不动（grandfather），缺条目才在尾部追加托管区（用户内容逐字保留）。
+    best-effort（IO 出错不影响真正落盘）。凡往 .vortocode/ 落生成态的写入点都应先调它。
     """
     try:
         d = Path(repo_root) / ".vortocode"
         gi = d / ".gitignore"
+        block = _managed_block()
         if not gi.exists():
             d.mkdir(parents=True, exist_ok=True)
-            gi.write_text(_STATE_GITIGNORE, encoding="utf-8")
+            gi.write_text(block + "\n", encoding="utf-8")
+            return
+        cur = gi.read_text(encoding="utf-8")
+        if _MANAGED_BEGIN in cur and _MANAGED_END in cur:
+            pre, rest = cur.split(_MANAGED_BEGIN, 1)
+            _, post = rest.split(_MANAGED_END, 1)
+            new = pre + block + post                  # 只重写标记区，区外原样
+            if new != cur:
+                gi.write_text(new, encoding="utf-8")
+        else:
+            have = {ln.strip() for ln in cur.splitlines()}
+            if all(e in have for e in _STATE_ENTRIES):
+                return                                # 旧文件已覆盖全部托管条目 → 不动
+            gi.write_text(cur.rstrip("\n") + "\n\n" + block + "\n", encoding="utf-8")
     except OSError:
         pass
 

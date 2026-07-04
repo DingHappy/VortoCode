@@ -653,6 +653,47 @@ async def test_rid_echoed_on_early_errors(monkeypatch):
         _cleanup(ws)
 
 
+class _ThinkingAgent:
+    """带思维链的假 agent：验证 want_reasoning 时 reasoning_cb 被接上、事件发出。"""
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None,
+                       reasoning_cb=None):
+        if reasoning_cb:
+            reasoning_cb("想一想")
+        emit("答案")
+
+
+@pytest.mark.asyncio
+async def test_want_reasoning_streams_reasoning_events(monkeypatch):
+    """入站 agent 带 want_reasoning=True → 回合发 agent_reasoning 事件（且回带 rid）。"""
+    from src.web.routers import realtime
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    ws = _FakeWS(sid="s-think")
+    _inject_session(ws, _ThinkingAgent())
+    try:
+        await realtime.handle_agent_message(
+            ws, {"type": "agent", "text": "hi", "rid": "r-t", "want_reasoning": True})
+        await _drain(ws)
+        think = [m for m in ws.sent if m["type"] == "agent_reasoning"]
+        assert think and think[0]["text"] == "想一想" and think[0]["rid"] == "r-t"
+    finally:
+        _cleanup(ws)
+
+
+@pytest.mark.asyncio
+async def test_no_want_reasoning_sends_none(monkeypatch):
+    """不带 want_reasoning：不发 agent_reasoning（web 前端不用不订阅，省流量）。"""
+    from src.web.routers import realtime
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    ws = _FakeWS(sid="s-nothink")
+    _inject_session(ws, _ThinkingAgent())
+    try:
+        await realtime.handle_agent_message(ws, {"type": "agent", "text": "hi"})
+        await _drain(ws)
+        assert not any(m["type"] == "agent_reasoning" for m in ws.sent)
+    finally:
+        _cleanup(ws)
+
+
 @pytest.mark.asyncio
 async def test_unregistered_inbound_silently_ignored():
     """未登记类型/缺必填的入站消息：不抛、不回——与从前"未知类型掉落"同效。"""

@@ -56,6 +56,18 @@ def _safe(cb: Optional[Callable], *args) -> None:
         pass
 
 
+def local_ref_to_data_url(ref: str, *, is_audio: bool = False) -> str:
+    """把本地路径附件转成 serve 端可收的 data URL（服务端 sanitize 只收 data:/http(s)）。
+
+    data:/http(s) 引用原样透传；attach 端（CLI/TUI）发附件前都过这一道。
+    """
+    from src.llm.content import audio_block, image_block
+    if is_audio:
+        blk = audio_block(ref)["input_audio"]
+        return f"data:audio/{blk['format']};base64,{blk['data']}"
+    return image_block(ref)["image_url"]["url"]
+
+
 async def delete_session(base_url: str, sid: str, *, token: Optional[str] = None,
                          timeout: float = 5.0) -> bool:
     """删 serve 侧一个会话（REST，best-effort）——attach 端"全新开始"用（如 CLI 无 -c 时）。"""
@@ -136,10 +148,12 @@ class ProtocolClient:
                        on_stream: Optional[Callable[[str], None]] = None,
                        on_emit: Optional[Callable[[str], None]] = None,
                        on_plan: Optional[Callable[[list], None]] = None,
+                       on_reasoning: Optional[Callable[[str], None]] = None,
                        confirm: Optional[Callable[[str], Any]] = None,
                        idle_timeout: float = 600.0) -> TurnOutcome:
         """跑一个回合到收尾。confirm 为 async(text)->bool；缺省一律拒绝（与 headless 同：安全优先）。
 
+        on_reasoning 非空才向 serve 订阅思维链（want_reasoning——不用不发，省流量）。
         idle_timeout：两个事件之间的最长安静时间（防服务端挂死泵永等）；超时按 error 收尾。
         """
         assert self._ws is not None, "未连接（用 async with ProtocolClient(...)）"
@@ -149,6 +163,8 @@ class ProtocolClient:
             req["images"] = images
         if audio:
             req["audio"] = audio
+        if on_reasoning is not None:
+            req["want_reasoning"] = True
         await self._ws.send_json(req)
 
         emits: list = []
@@ -172,6 +188,8 @@ class ProtocolClient:
                 _safe(on_say, evt.get("text", ""))
             elif etype == P.AGENT_STREAM:
                 _safe(on_stream, evt.get("text", ""))
+            elif etype == P.AGENT_REASONING:
+                _safe(on_reasoning, evt.get("text", ""))
             elif etype == P.AGENT_EMIT:
                 emits.append(str(evt.get("text", "")))
                 _safe(on_emit, evt.get("text", ""))
