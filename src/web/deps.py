@@ -19,12 +19,10 @@ from src.security import PermissionManager, SafetyGuard, RiskLevel  # noqa: F401
 from src.context import ProjectContext, GitIntegration, DiffViewer  # noqa: F401
 from src.agents import CustomAgentManager, AgentRole, CustomAgentCapability, AgentManager  # noqa: F401
 from src.skills import SkillManager  # noqa: F401
-from src.indexing import CodeIndexer, CodeEmbedding  # noqa: F401
 from src.editor import CodeEditor, DiffGenerator  # noqa: F401
 from src.sandbox import SandboxManager, SandboxExecutor, SandboxConfig  # noqa: F401
 from src.browser import BrowserManager, BrowserConfig  # noqa: F401
 from src.projects import ProjectManager, MultiProjectOrchestrator  # noqa: F401
-from src.workspaces import WorkspaceManager  # noqa: F401
 
 from src.web.state import state, manager, add_log  # noqa: F401
 from src.web.schemas import *  # noqa: F401,F403

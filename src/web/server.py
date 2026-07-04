@@ -81,10 +81,7 @@ from src.web.routers.git import router as git_router
 from src.web.routers.context import router as context_router
 from src.web.routers.agents import router as agents_router
 from src.web.routers.skills import router as skills_router
-from src.web.routers.indexing import router as indexing_router
-from src.web.routers.sessions import router as sessions_router
 from src.web.routers.projects import router as projects_router
-from src.web.routers.workspaces import router as workspaces_router
 from src.web.routers.editor import router as editor_router
 from src.web.routers.sandbox import router as sandbox_router
 from src.web.routers.browser import router as browser_router
@@ -99,8 +96,8 @@ from src.web.routers.tasks import router as tasks_router
 for _router in (
     pages_router, system_router, execution_router,
     security_router, git_router, context_router,
-    agents_router, skills_router, indexing_router, sessions_router,
-    projects_router, workspaces_router, editor_router, sandbox_router,
+    agents_router, skills_router,
+    projects_router, editor_router, sandbox_router,
     browser_router, github_router, ops_router, generators_router, realtime_router,
     artifacts_router, auth_router, tasks_router,
 ):

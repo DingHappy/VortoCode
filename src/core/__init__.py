@@ -1,15 +1,8 @@
 """核心模块"""
 
-from .self_healing import (
-    AutoFixer,
-    ErrorAnalyzer,
-    ErrorPatternMatcher,
-    SelfHealingExecutor,
-    ErrorType,
-    FixStrategy,
-    ErrorInfo,
-    FixResult,
-)
+# 注：self_healing（AutoFixer/ErrorAnalyzer 自修复引擎）已于 2026-07 第四批退役——
+# 唯一活入口是退役的 /api/error/analyze（路线 A indexing 路由）；主线自修复走
+# dev 流水线的换 worktree 重试（agents/worktree.py），不经此引擎。
 
 from .monitoring import (
     MetricType,
@@ -51,16 +44,6 @@ __all__ = [
     "ensure_trace_id",
     "setup_structured_logging",
     "JsonFormatter",
-    # 自修复
-    "AutoFixer",
-    "ErrorAnalyzer",
-    "ErrorPatternMatcher",
-    "SelfHealingExecutor",
-    "ErrorType",
-    "FixStrategy",
-    "ErrorInfo",
-    "FixResult",
-    
     # 监控
     "MetricType",
     "Metric",
