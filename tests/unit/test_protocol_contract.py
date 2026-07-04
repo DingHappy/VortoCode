@@ -192,6 +192,57 @@ def test_no_hand_serialized_ws_sends():
     assert not offenders, f"发现 send_text 手动发送点（请改走 send_json + make_event）: {offenders}"
 
 
+# ------------------------------------------------------------ 2.7) 回合事件序列契约（PR-6：端无关）
+# attach 化后 CLI/TUI 消费同一事件泵（契约 E 已钉三端装配同厂）；这里钉**服务端**：同一回合形状
+# 产出的协议事件类型序列是确定的、与客户端无关——rid 只回带不改序列，want_reasoning 只按订阅增删
+# agent_reasoning。谁改了回合语义（丢事件/换序），这里就红。
+class _ScriptedAgent:
+    """固定回合形状：say → reasoning → stream → plan → emit。"""
+    def __init__(self):
+        self._on_plan = None
+        self.plan = []
+
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None,
+                       reasoning_cb=None):
+        say("🔧 tool")
+        if reasoning_cb:
+            reasoning_cb("想")
+        if stream_cb:
+            stream_cb("部分")
+        if self._on_plan:
+            self._on_plan([{"step": "x", "status": "in_progress"}])
+        emit("答案")
+
+
+async def _turn_types(message: dict) -> list:
+    import asyncio as _aio
+
+    from tests.unit.test_web_agent import _FakeWS, _cleanup, _inject_session
+    from src.web.routers import realtime
+    ws = _FakeWS(sid=f"seq-{message.get('rid', 'base')}-{message.get('want_reasoning', 0)}")
+    _inject_session(ws, _ScriptedAgent())
+    try:
+        await realtime.handle_agent_message(ws, {"type": "agent", "text": "hi", **message})
+        task = realtime._WS_AGENT_TASKS.get(realtime._session_key(ws))
+        if task is not None:
+            await _aio.wait_for(task, 5)
+        return [m["type"] for m in ws.sent]
+    finally:
+        _cleanup(ws)
+
+
+@pytest.mark.asyncio
+async def test_turn_event_sequence_is_deterministic_and_client_agnostic(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    base = await _turn_types({})
+    assert base == ["agent_say", "agent_stream", "agent_plan", "agent_emit", "agent_done"], base
+    with_rid = await _turn_types({"rid": "r1"})
+    assert with_rid == base                                   # rid 只回带，不改序列
+    with_reason = await _turn_types({"rid": "r2", "want_reasoning": True})
+    assert with_reason == ["agent_say", "agent_reasoning", "agent_stream",
+                           "agent_plan", "agent_emit", "agent_done"]   # 订阅只增 reasoning，不动其余
+
+
 # ------------------------------------------------------------ 3) make_event / parse_event 行为
 def test_make_event_valid_and_drops_none():
     evt = P.make_event(P.AGENT_SAY, text="hi", rid=None)      # rid=None 直接丢弃，方便无条件传
