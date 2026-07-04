@@ -84,6 +84,8 @@ def main():
     p = sub.add_parser("server", help="启动 FastAPI Web 控制台")
     p.add_argument("--host", default="127.0.0.1", help="监听地址（默认仅本地 127.0.0.1）")
     p.add_argument("--port", type=int, default=8080, help="端口（默认 8080）")
+    p.add_argument("--im", choices=["telegram", "dingtalk"], default="",
+                   help="内嵌 IM 桥（单进程唯一状态所有者，共享任务池；凭证缺失拒启）")
 
     p = sub.add_parser("analyze", help="只分析一个任务的复杂度/拆解，不执行")
     p.add_argument("--task", "-t", required=True, help="要分析的任务")
@@ -163,7 +165,7 @@ def main():
             sys.exit(130)
 
     elif args.command == "server":
-        run_server(args.host, args.port)
+        run_server(args.host, args.port, im=args.im)
 
     elif args.command == "analyze":
         asyncio.run(analyze_task(args.task))
@@ -198,52 +200,21 @@ def main():
 
 async def run_im(channel: str, *, mode: str = "plan"):
     """IM 通道桥入口：常驻长轮询，把主 agent 搬上 IM。fail-closed：缺配对凭证直接拒启。"""
-    import os
     cwd = str(Path.cwd())
-    if channel == "telegram":
-        token = os.getenv("VORTOCODE_TG_TOKEN", "").strip()
-        owner = os.getenv("VORTOCODE_TG_OWNER_ID", "").strip()
-        if not token or not owner:
-            print("✗ Telegram 桥需要环境变量 VORTOCODE_TG_TOKEN 和 VORTOCODE_TG_OWNER_ID"
-                  "（配对制，fail-closed）。\n"
-                  "  ① 找 @BotFather 建 bot 拿 token；② 给 bot 发一条消息，再从 "
-                  "https://api.telegram.org/bot<token>/getUpdates 读你自己的数字 chat id。",
-                  file=sys.stderr)
-            sys.exit(2)
-        from src.im.bridge import IMBridge
-        from src.im.telegram import TelegramAdapter
-        adapter = TelegramAdapter(token, owner)
-        bridge = IMBridge(cwd, adapter, owner, channel="telegram", mode=mode)
-        print(f"🌉 Telegram 桥启动（仓库 {Path(cwd).name}，{mode} 模式）。只服务 owner "
-              f"{owner}，Ctrl-C 退出。", file=sys.stderr)
-        try:
-            await bridge.run()
-        finally:
-            await adapter.close()
-    elif channel == "dingtalk":
-        cid = os.getenv("VORTOCODE_DD_CLIENT_ID", "").strip()
-        secret = os.getenv("VORTOCODE_DD_CLIENT_SECRET", "").strip()
-        owner = os.getenv("VORTOCODE_DD_OWNER_ID", "").strip()
-        if not cid or not secret or not owner:
-            print("✗ 钉钉桥需要环境变量 VORTOCODE_DD_CLIENT_ID / VORTOCODE_DD_CLIENT_SECRET / "
-                  "VORTOCODE_DD_OWNER_ID（配对制，fail-closed）。\n"
-                  "  钉钉开放平台建企业内机器人应用（Stream 模式）拿 AppKey(ClientID)/AppSecret；"
-                  "OWNER_ID 填你自己的 senderStaffId（给机器人发条消息即可在回调里看到）。",
-                  file=sys.stderr)
-            sys.exit(2)
-        from src.im.bridge import IMBridge
-        from src.im.dingtalk import DingTalkAdapter
-        adapter = DingTalkAdapter(cid, secret, owner)
-        bridge = IMBridge(cwd, adapter, owner, channel="dingtalk", mode=mode)
-        print(f"🌉 钉钉桥启动（仓库 {Path(cwd).name}，{mode} 模式）。只服务 staffId "
-              f"{owner}，Ctrl-C 退出。", file=sys.stderr)
-        try:
-            await bridge.run()
-        finally:
-            await adapter.close()
-    else:
-        print(f"未知 IM 通道: {channel}", file=sys.stderr)
+    from src.gateway.im_service import IMConfigError, build_adapter
+    try:
+        adapter, owner = build_adapter(channel)      # 凭证解析/fail-closed 与 serve 内嵌同源，不抄两份
+    except IMConfigError as e:
+        print(f"✗ {e}", file=sys.stderr)
         sys.exit(2)
+    from src.im.bridge import IMBridge
+    bridge = IMBridge(cwd, adapter, owner, channel=channel, mode=mode)   # standalone：自己的 runner
+    print(f"🌉 {channel} 桥启动（仓库 {Path(cwd).name}，{mode} 模式）。只服务 owner "
+          f"{owner}，Ctrl-C 退出。", file=sys.stderr)
+    try:
+        await bridge.run()
+    finally:
+        await adapter.close()
 
 
 async def run_cron(action: str, name=None):
@@ -744,10 +715,10 @@ async def _with_progress(coro, label: str = "运行中"):
         print("\r\033[K", end="", file=sys.stderr, flush=True)   # 清掉计时行，给真正的结果让位
 
 
-def run_server(host: str, port: int):
-    """运行服务器"""
+def run_server(host: str, port: int, im: str = ""):
+    """运行服务器（im 非空 = 内嵌 IM 桥，见 gateway/im_service）"""
     from src.web.server import start_server
-    start_server(host, port)
+    start_server(host, port, im=im)
 
 
 async def analyze_task(task: str):

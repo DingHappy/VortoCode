@@ -13,12 +13,26 @@ router = APIRouter()
 
 # 进程内单例运行时（绑到 server 的 cwd）。lifespan 里 recover()；测试可覆盖 _RUNNER / _worker。
 _RUNNER = None
+_IM_WORKER = None      # serve 内嵌 IM 时登记（gateway/im_service）：kind="im-dev" 的任务路由给它
+
+
+def register_im_worker(worker) -> None:
+    """登记/注销 IM 的任务 worker（共享 runner 的 kind 分发目标；None=注销）。"""
+    global _IM_WORKER
+    _IM_WORKER = worker
 
 
 async def _dev_worker(task, on_progress):
-    """dev 型后台任务：直接跑 dev_auto（确定性），落 vorto/* 分支 + C1 计划；不 push（后台无人值守）。"""
+    """dev 型后台任务：直接跑 dev_auto（确定性），落 vorto/* 分支 + C1 计划；不 push（后台无人值守）。
+
+    kind="im-dev"（serve 内嵌 IM 的 /task 提交）分发给 bridge 的 worker——它带按钮确认门
+    （在跑中经 IM 确认 push+开 draft PR），共享同一 runner 的并发池/台账/订阅集。
+    """
     from src.agents.main_agent import build_dev_tools
     from src.agents.dev_plan import load_plan
+
+    if task.kind == "im-dev" and _IM_WORKER is not None:
+        return await _IM_WORKER(task, on_progress)
 
     async def _deny(_m):                       # 后台无人值守：外向操作默认拒绝（push 交给人点 open_pr）
         return False
@@ -134,12 +148,31 @@ async def get_notices(limit: int = 50):
     return {"notices": load_notices(os.getcwd(), max(1, min(int(limit), _MAX_NOTICES)))}
 
 
+def make_notifier(cwd: str):
+    """造调度通知投递器（三路，**绝不静默丢**——codex 审 #129）：
+    ①持久台账（GET /api/notices 可查）②WS 广播 ③IM 推 owner（serve 内嵌 bridge 时，PR-5 收口）。
+    每路 best-effort：一路挂不拖另两路。"""
+    async def _notify(text):
+        record_notice(cwd, text)                   # ① 持久台账
+        try:
+            from src.web.routers.realtime import broadcast_notice
+            broadcast_notice(str(text))            # ② WS 广播给连着的客户端
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            from src.gateway.im_service import notify_owner
+            await notify_owner(f"🔔 {text}")       # ③ IM 推已配对 owner（没内嵌 bridge 即 no-op）
+        except Exception:  # noqa: BLE001
+            pass
+    return _notify
+
+
 async def scheduler_loop(stop_event):
     """常驻调度循环（server lifespan 起，opt-in）：每分钟 tick 一次 cron；按 heartbeat 间隔值班。
 
     默认关（VORTOCODE_CRON / VORTOCODE_HEARTBEAT 二者都未开则本循环根本不启动，见 lifespan）。
-    cron / heartbeat 都隔离会话跑、产出进台账 / 按 announce 投递——投递走 _notify（通知台账 +
-    WS 广播），**绝不静默丢**（codex 审 #129：此前没传 notify，announce=im/surfaced 无声消失）。
+    cron / heartbeat 都隔离会话跑、产出进台账 / 按 announce 投递——投递走 make_notifier 三路
+    （台账 + WS 广播 + IM 推 owner），**绝不静默丢**。
     """
     import asyncio
     from datetime import datetime
@@ -155,13 +188,7 @@ async def scheduler_loop(stop_event):
     async def _submit(item):
         await get_runner().submit(item, kind="dev")
 
-    async def _notify(text):
-        record_notice(cwd, text)                   # 持久台账（GET /api/notices 可查）
-        try:
-            from src.web.routers.realtime import broadcast_notice
-            broadcast_notice(str(text))            # WS 广播给连着的客户端（best-effort）
-        except Exception:  # noqa: BLE001
-            pass
+    _notify = make_notifier(cwd)
 
     while not stop_event.is_set():
         try:
