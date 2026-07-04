@@ -70,11 +70,16 @@ def main():
     p.add_argument("--json", action="store_true", dest="as_json",
                    help="以 JSON 输出 {reply, mode, tools, plan}（关闭流式）")
     p.add_argument("--continue", "-c", action="store_true", dest="continue_session",
-                   help="续上一次 CLI 对话（仿 claude -c）；历史每轮落盘 .vortocode/cli_session.json")
+                   help="续上一次 CLI 对话（仿 claude -c）；历史每轮落盘 .vortocode/cli_session.json"
+                        "（--attach 下续的是 serve 侧的 cli 会话）")
     p.add_argument("--quiet", "-q", action="store_true",
                    help="不在 stderr 打印工具调用/进度，只留最终输出")
     p.add_argument("--mcp", action="store_true",
                    help="连接 config/mcp.yaml 里 enabled 的 MCP 服务器，把其工具接入本回合")
+    p.add_argument("--attach", nargs="?", const="", metavar="URL",
+                   help="把回合交给常驻 serve 跑（协议客户端模式）：连 URL 的 /ws"
+                        "（缺省 $VORTOCODE_SERVE_URL 或 http://127.0.0.1:8080）；"
+                        "serve 不在则自动回退进程内执行")
 
     p = sub.add_parser("server", help="启动 FastAPI Web 控制台")
     p.add_argument("--host", default="127.0.0.1", help="监听地址（默认仅本地 127.0.0.1）")
@@ -144,11 +149,15 @@ def main():
             sys.exit(2)
         if not prompt and (images or audio):           # 纯附件轮：给个温和的默认指令
             prompt = "请听这段音频并转写/回答。" if audio and not images else "请看图并描述/分析其中内容。"
-        asyncio.run(run_agent_headless(
-            prompt, build=args.build, auto_yes=args.yes, max_steps=args.max_steps,
-            as_json=args.as_json, quiet=args.quiet, images=images, audio=audio,
-            speak=args.speak, voice=args.voice, speak_out=args.speak_out,
-            continue_session=args.continue_session, use_mcp=args.mcp, model=args.model))
+        try:
+            asyncio.run(run_agent_headless(
+                prompt, build=args.build, auto_yes=args.yes, max_steps=args.max_steps,
+                as_json=args.as_json, quiet=args.quiet, images=images, audio=audio,
+                speak=args.speak, voice=args.voice, speak_out=args.speak_out,
+                continue_session=args.continue_session, use_mcp=args.mcp, model=args.model,
+                attach=args.attach))
+        except KeyboardInterrupt:              # Ctrl-C：WS 断开即中断 serve 侧回合（disconnect 兜底）
+            sys.exit(130)
 
     elif args.command == "server":
         run_server(args.host, args.port)
@@ -420,10 +429,116 @@ def _build_headless_agent(cwd, *, max_steps, on_tool, on_plan, confirm, llm=None
                          on_tool=on_tool, on_plan=on_plan, llm=llm, max_steps=max_steps)
 
 
+class ServeUnreachable(Exception):
+    """attach 连接阶段失败（serve 不在/拒连/握手超时）——回合尚未发出，可安全回退进程内。"""
+
+
+def _attach_ref_to_data_url(ref: str, *, is_audio: bool) -> str:
+    """把本地路径附件转成 serve 端可收的 data URL（服务端 sanitize 只收 data:/http(s)）。"""
+    from src.llm.content import audio_block, image_block
+    if is_audio:
+        blk = audio_block(ref)["input_audio"]
+        return f"data:audio/{blk['format']};base64,{blk['data']}"
+    return image_block(ref)["image_url"]["url"]
+
+
+async def _run_agent_attached(prompt, url, *, build=False, auto_yes=False, as_json=False,
+                              quiet=False, continue_session=False, images=None, audio=None,
+                              speak=False, voice=None, speak_out=None, llm=None):
+    """attach 模式：回合在常驻 serve 里跑，本进程只是协议客户端（渲染 + confirm 应答）。
+
+    输出契约与进程内一致：emit → stdout（TTY 非 json 时按 stream 增量流式）、say → stderr、
+    confirm → TTY 问询（--yes 自动允许；非 TTY 默认拒绝，安全优先）。退出码：done=0 /
+    error=1 / cancelled=130。连接阶段失败抛 ServeUnreachable（调用方回退进程内）。
+    """
+    from src.gateway import protocol as gp
+    from src.gateway.client import ProtocolClient, delete_session
+    from src.web.auth import get_api_token
+
+    mode = "build" if build else "plan"
+    # 语义对齐进程内（每轮都存、-c 才续）：attach 固定用 serve 侧 "cli" 会话；
+    # 无 -c = 全新开始 → 先删掉旧会话（best-effort），有 -c 直接续上。
+    sid = "cli"
+    token = get_api_token() or None
+    if not continue_session:
+        await delete_session(url, sid, token=token)
+    imgs = [_attach_ref_to_data_url(i, is_audio=False) for i in (images or [])]
+    auds = [_attach_ref_to_data_url(a, is_audio=True) for a in (audio or [])]
+
+    def say(text):
+        if not quiet:
+            print(f"\033[2m{text}\033[0m", file=sys.stderr, flush=True)
+
+    streaming = (not as_json) and sys.stdout.isatty()
+    seen = {"n": 0}                                # agent_stream 是累计文本，按长度算增量
+
+    def on_stream(text):
+        delta = text[seen["n"]:]
+        if delta:
+            sys.stdout.write(delta)
+            sys.stdout.flush()
+            seen["n"] = len(text)
+
+    async def confirm(text):
+        first = (text or "").splitlines()[0] if text else ""
+        if auto_yes:
+            say(f"✓ 自动确认：{first}")
+            return True
+        if sys.stdin.isatty() and sys.stderr.isatty():   # 交互终端：真问人（attach 有人守着）
+            print(f"需要确认：{text}", file=sys.stderr, flush=True)
+            ans = (await asyncio.to_thread(input, "允许吗？[y/N] ")).strip().lower()
+            return ans in ("y", "yes")
+        say(f"✗ 自动拒绝（非交互终端，需 --yes 放行）：{first}")
+        return False
+
+    client = ProtocolClient(url, sid=sid, token=token)
+    try:
+        await client.__aenter__()
+    except Exception as e:  # noqa: BLE001 —— 回合未发出，安全回退
+        raise ServeUnreachable(str(e)[:200]) from e
+    try:
+        if client.server_version not in (None, gp.PROTOCOL_VERSION):
+            say(f"⚠ serve 协议版本 v{client.server_version} ≠ 本客户端 v{gp.PROTOCOL_VERSION}，"
+                f"事件面可能不齐")
+        turn = asyncio.ensure_future(client.run_turn(
+            prompt, mode=mode, images=imgs, audio=auds,
+            on_say=say, on_stream=(on_stream if streaming else None), confirm=confirm))
+        try:
+            outcome = await asyncio.shield(turn)
+        except asyncio.CancelledError:          # Ctrl-C：礼貌发 agent_cancel、等收尾再退
+            await client.cancel()
+            import contextlib as _ctx
+            with _ctx.suppress(Exception, asyncio.CancelledError):
+                await asyncio.wait_for(turn, 5)
+            sys.exit(130)
+    finally:
+        await client.__aexit__()
+
+    if as_json:
+        import json as _json
+        print(_json.dumps({"reply": outcome.reply, "mode": mode, "status": outcome.status,
+                           "attached": True}, ensure_ascii=False, indent=2))
+    elif streaming:
+        if seen["n"] == 0 and outcome.reply:
+            print(outcome.reply)
+        elif seen["n"] and not outcome.reply.endswith("\n"):
+            print()
+    elif outcome.reply:
+        print(outcome.reply)
+    if outcome.status == "error":
+        print(f"回合出错：{outcome.error}", file=sys.stderr, flush=True)
+        sys.exit(1)
+    if outcome.status == "cancelled":
+        sys.exit(130)
+    if speak and outcome.reply:                    # 语音回复在本地合成（与进程内同一路径）
+        await _speak_reply(outcome.reply, voice, speak_out, llm, quiet)
+    return outcome.reply
+
+
 async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=None,
                              as_json=False, quiet=False, llm=None, images=None, audio=None,
                              speak=False, voice=None, speak_out=None, continue_session=False,
-                             use_mcp=False, model=None):
+                             use_mcp=False, model=None, attach=None):
     """headless 跑一回合主 agent loop（仿 claude -p）：无 UI、跑完即返回。
 
     输出契约：最终回复 → stdout；工具调用/进度 → stderr（--quiet 静默）。
@@ -434,10 +549,29 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
     speak:  True 则把最终回复合成成语音写 WAV（speak_out，默认 vorto-reply.wav）、TTY 下试播。
     continue_session: True 则续上上一次 CLI 对话（仿 claude -c）——把存盘历史灌回 agent；
                 每轮结束都把历史落盘（.vortocode/cli_session.json），所以下次 -c 能接上。
+    attach: 非 None 则走协议客户端模式（回合交给常驻 serve；"" = 默认 URL）。连接失败
+                自动回退进程内（提示一行），**回合发出后的错误不回退**（防重复执行）。
     """
     import os
     cwd = os.getcwd()
     mode = "build" if build else "plan"
+
+    if attach is not None:                        # --attach：先试 serve，够不着再进程内
+        url = attach or os.getenv("VORTOCODE_SERVE_URL") or "http://127.0.0.1:8080"
+        ignored = [n for n, v in (("--model", model), ("--max-steps", max_steps),
+                                  ("--mcp", use_mcp)) if v]
+        if ignored and not quiet:
+            print(f"\033[2m⚠ attach 下由 serve 决定、本次忽略：{'、'.join(ignored)}\033[0m",
+                  file=sys.stderr, flush=True)
+        try:
+            return await _run_agent_attached(
+                prompt, url, build=build, auto_yes=auto_yes, as_json=as_json, quiet=quiet,
+                continue_session=continue_session, images=images, audio=audio,
+                speak=speak, voice=voice, speak_out=speak_out, llm=llm)
+        except ServeUnreachable as e:
+            if not quiet:
+                print(f"\033[2m⚠ 未连上 serve（{url}：{e}），进程内执行\033[0m",
+                      file=sys.stderr, flush=True)
 
     tools_log: list = []
     plan_holder = {"plan": []}
