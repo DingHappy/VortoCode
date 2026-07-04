@@ -1,8 +1,9 @@
 """pages 路由（从 server.py 拆出）。
 
 2026-07 路线 A：遗留页 admin / index(classic) / workstation / multi-workspace 及其
-路由已下线删除——它们是 5 角色批处理编排时代的 UI，后端引擎已退役（见 execution.py /
-workspaces/manager.py）。主线只保留 /（agent 台）、/agent、/artifacts。
+路由已下线删除——它们是 5 角色批处理编排时代的 UI；其后端（execution/security/
+workspaces/indexing/sessions 路由与引擎）已于 b4 全部物理删除。
+主线只保留 /（agent 台）、/agent、/artifacts。
 """
 from src.web.deps import *  # noqa: F401,F403
 
