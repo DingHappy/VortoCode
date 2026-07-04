@@ -98,15 +98,23 @@ async def _check_serve() -> Check:
 
 
 def _check_permissions(cwd: str) -> Check:
+    """permissions.yaml 严格解析。**不走** load_permissions——它为运行时安全吞解析错误、
+    坏文件静默降级成空权限（fail-safe 对运行时正确，对自检就是漏报：doctor 的职责恰恰是
+    把这种静默降级暴露出来，评审 #142）。"""
     p = Path(cwd) / ".vortocode" / "permissions.yaml"
     if not p.is_file():
         return Check("permissions", "ok", "无 permissions.yaml（默认权限面）")
     try:
-        from src.agents.permissions import load_permissions
-        load_permissions(cwd)
-        return Check("permissions", "ok", "permissions.yaml 可解析")
+        import yaml
+        data = yaml.safe_load(p.read_text(encoding="utf-8"))
     except Exception as e:  # noqa: BLE001
-        return Check("permissions", "fail", f"permissions.yaml 解析失败：{e}")
+        return Check("permissions", "fail",
+                     f"permissions.yaml 解析失败（运行时会静默降级成空权限！）：{e}")
+    if data is not None and not isinstance(data, dict):
+        return Check("permissions", "fail",
+                     f"permissions.yaml 结构不对（应为映射，实为 {type(data).__name__}）"
+                     f"——运行时会静默降级成空权限")
+    return Check("permissions", "ok", "permissions.yaml 可解析")
 
 
 def _check_gh() -> Check:
