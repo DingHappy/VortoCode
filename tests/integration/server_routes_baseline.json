@@ -246,18 +246,6 @@
   ]
  },
  {
-  "path": "/api/files",
-  "methods": [
-   "GET"
-  ]
- },
- {
-  "path": "/api/files/content",
-  "methods": [
-   "GET"
-  ]
- },
- {
   "path": "/api/git/commit",
   "methods": [
    "POST"
@@ -307,30 +295,6 @@
  },
  {
   "path": "/api/health/quick",
-  "methods": [
-   "GET"
-  ]
- },
- {
-  "path": "/api/model",
-  "methods": [
-   "POST"
-  ]
- },
- {
-  "path": "/api/models",
-  "methods": [
-   "GET"
-  ]
- },
- {
-  "path": "/api/models/available",
-  "methods": [
-   "GET"
-  ]
- },
- {
-  "path": "/api/models/recommend",
   "methods": [
    "GET"
   ]
@@ -438,12 +402,6 @@
   ]
  },
  {
-  "path": "/api/search",
-  "methods": [
-   "GET"
-  ]
- },
- {
   "path": "/api/skills",
   "methods": [
    "GET"
@@ -481,12 +439,6 @@
  },
  {
   "path": "/api/status",
-  "methods": [
-   "GET"
-  ]
- },
- {
-  "path": "/api/system/info",
   "methods": [
    "GET"
   ]
@@ -540,25 +492,7 @@
   ]
  },
  {
-  "path": "/api/terminal/execute",
-  "methods": [
-   "POST"
-  ]
- },
- {
   "path": "/api/testing/generate",
-  "methods": [
-   "POST"
-  ]
- },
- {
-  "path": "/api/workdir",
-  "methods": [
-   "GET"
-  ]
- },
- {
-  "path": "/api/workdir",
   "methods": [
    "POST"
   ]
