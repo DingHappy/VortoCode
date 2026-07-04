@@ -409,52 +409,15 @@ def _strip_markup(s: str) -> str:
     return _MARKUP_RE.sub("", s)
 
 
-def _load_headless_hooks(cwd: str):
-    """有 .vortocode/hooks.yaml 才建 HookSystem（与 TUI 同源，把工具生命周期事件接进 agent）。"""
-    cfg = Path(cwd) / ".vortocode" / "hooks.yaml"
-    if not cfg.is_file():
-        return None
-    try:
-        from src.hooks import HookSystem
-        return HookSystem(config_path=str(cfg))
-    except Exception:  # noqa: BLE001
-        return None
-
-
 def _build_headless_agent(cwd, *, max_steps, on_tool, on_plan, confirm, llm=None, on_progress=None):
-    """搭一个 headless 主 agent：工具集与网页 /agent 同源——
+    """薄壳：装配走 gateway 的单一工厂（kind="cli"，无制品、读 .vortocode/hooks.yaml）。
 
-    只读（read_file/grep/list_files/analyze_repo）+ 隔离 dev（dev_isolated/dev_parallel，
-    绿了落 vorto 分支、不碰主工作区）+ 受确认门控的 run_command/open_pr。带持久计划。
+    工具集与网页 /agent 同源（同一工厂），签名保持兼容供既有调用方/测试。
     on_progress：dev 流水线进度回调（长任务边跑边播到 stderr，免得对着静默 prompt 干等）。
     """
-    from src.agents.main_agent import (MainAgent, build_agent_tools, native_default,
-                                        skill_catalog)
-    from src.agents.permissions import load_permissions
-    from src.agents.project import load_project_instructions
-    # 与 Web /agent 共用同一工具装配（build_agent_tools），保证"同源"、不漂移；
-    # headless 无浏览器 → 不含制品工具（with_artifacts=False）。
-    tools = build_agent_tools(cwd, confirm=confirm, on_progress=on_progress, with_artifacts=False)
-    kwargs = {"plan_tool": True, "on_tool": on_tool, "on_plan": on_plan,
-              "permissions": load_permissions(cwd), "env_context": True,   # 注入 <env>（cwd/git/日期/目录）
-              "native": native_default()}      # 三端统一 native 开关（此前 CLI 忽略 VORTOCODE_NATIVE_TOOLS）
-    parts = []
-    proj = load_project_instructions(cwd)              # AGENTS.md/CLAUDE.md 项目约定进系统提示
-    if proj:
-        parts.append(proj)
-    catalog = skill_catalog(cwd)                       # 技能目录进系统提示（模型才知道有哪些技能可 use_skill）
-    if catalog:
-        parts.append(f"【可用技能】(需要时用 use_skill 加载其完整指令再执行)\n{catalog}")
-    if parts:
-        kwargs["extra_system"] = "\n\n".join(parts)
-    if max_steps:
-        kwargs["max_steps"] = max_steps
-    if llm is not None:
-        kwargs["llm"] = llm
-    hooks = _load_headless_hooks(cwd)
-    if hooks is not None:
-        kwargs["hook_system"] = hooks
-    return MainAgent(tools, **kwargs)
+    from src.gateway.agent_session import build_session
+    return build_session(cwd, kind="cli", confirm=confirm, on_progress=on_progress,
+                         on_tool=on_tool, on_plan=on_plan, llm=llm, max_steps=max_steps)
 
 
 async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=None,
