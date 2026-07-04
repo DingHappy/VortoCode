@@ -44,6 +44,19 @@ def test_check_permissions(tmp_path):
     assert doctor._check_permissions(str(tmp_path)).level == "ok"
 
 
+def test_check_permissions_bad_yaml_is_fail(tmp_path):
+    """坏 YAML 必须报 fail（评审 #142：load_permissions 为运行时安全吞错、静默降级成空权限——
+    doctor 借它检查等于永远绿；自检要 strict parse，把静默降级暴露出来）。"""
+    d = tmp_path / ".vortocode"
+    d.mkdir()
+    (d / "permissions.yaml").write_text("deny: [unclosed", encoding="utf-8")   # 评审的复现输入
+    c = doctor._check_permissions(str(tmp_path))
+    assert c.level == "fail" and "降级" in c.detail
+    (d / "permissions.yaml").write_text("- 只是个列表\n- 不是映射", encoding="utf-8")
+    c2 = doctor._check_permissions(str(tmp_path))
+    assert c2.level == "fail" and "结构不对" in c2.detail
+
+
 def test_check_im_unconfigured_is_warn(monkeypatch):
     for k in ("VORTOCODE_TG_TOKEN", "VORTOCODE_TG_OWNER_ID",
               "VORTOCODE_DD_CLIENT_ID", "VORTOCODE_DD_CLIENT_SECRET", "VORTOCODE_DD_OWNER_ID"):
