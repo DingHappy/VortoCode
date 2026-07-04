@@ -1118,6 +1118,138 @@ async def test_at_file_palette_and_tab_complete():
 
 
 @pytest.mark.asyncio
+async def test_palette_arrow_keys_select_candidate():
+    """补全面板可见时 ↑↓ 移动选中项（不翻历史），高亮跟着走。"""
+    from textual.widgets import Static
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", Input)
+        inp.focus()
+        inp.value = "/a"; await pilot.pause()
+        assert app._pal_idx == 0
+        await pilot.press("down"); await pilot.pause()
+        assert app._pal_idx == 1                                       # ↓ 选中第二个候选
+        second = app._pal_items[1][0]
+        assert f"› {second}" in str(app.query_one("#palette", Static).render())
+        await pilot.press("up"); await pilot.pause()
+        assert app._pal_idx == 0                                       # ↑ 回到首选
+
+
+@pytest.mark.asyncio
+async def test_palette_tab_accepts_selected_not_first():
+    """Tab 接受的是**选中**候选，而不再只认第一个。"""
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", Input)
+        inp.focus()
+        inp.value = "/a"; await pilot.pause()
+        await pilot.press("down"); await pilot.pause()
+        chosen = app._pal_accepts[app._pal_idx]
+        app.action_toggle_mode(); await pilot.pause()
+        assert inp.value == chosen
+
+
+@pytest.mark.asyncio
+async def test_palette_tab_cycles_when_exact():
+    """输入已等于选中候选时，再按 Tab 轮换到下一个候选（shell 式）。"""
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", Input)
+        inp.focus()
+        inp.value = "/ru"; await pilot.pause()
+        app.action_toggle_mode(); await pilot.pause()
+        assert inp.value == "/run"
+        app.action_toggle_mode(); await pilot.pause()
+        assert inp.value == "/runagent"                                # 轮换而非卡死
+
+
+@pytest.mark.asyncio
+async def test_palette_enter_runs_selected_command():
+    """回车直接执行面板选中的命令（未敲全也行）：/hel + 回车 → 跑 /help。"""
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", Input)
+        inp.focus()
+        inp.value = "/hel"; await pilot.pause()
+        await pilot.press("enter"); await pilot.pause()
+        assert await _wait_for(app, pilot, "可用命令")                  # HELP 已输出
+        assert inp.value == ""
+
+
+@pytest.mark.asyncio
+async def test_palette_enter_on_arg_command_fills_input():
+    """必带参数的命令（/fix 等）回车不执行，补成 '/fix ' 等用户填参数。"""
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", Input)
+        inp.focus()
+        inp.value = "/fi"; await pilot.pause()
+        n0 = len(app.transcript)
+        await pilot.press("enter"); await pilot.pause()
+        assert inp.value == "/fix "                                    # 停在输入框等参数
+        assert len(app.transcript) == n0                               # 没有提交
+
+
+@pytest.mark.asyncio
+async def test_palette_enter_accepts_file_without_submit():
+    """@文件补全里回车=接受路径进输入框（通常还要接着写需求），不提交。"""
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", Input)
+        inp.focus()
+        inp.value = "看 @src/tui/ap"; await pilot.pause()
+        n0 = len(app.transcript)
+        await pilot.press("enter"); await pilot.pause()
+        assert inp.value.startswith("看 @src/tui/app")                 # 已接受文件路径
+        assert len(app.transcript) == n0                               # 未提交
+
+
+@pytest.mark.asyncio
+async def test_palette_esc_hides_and_keeps_input():
+    """Esc 只收起补全面板，输入保留；再按才轮到取消任务语义。"""
+    from textual.widgets import Static
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", Input)
+        inp.focus()
+        inp.value = "/a"; await pilot.pause()
+        assert app.query_one("#palette", Static).display is True
+        await pilot.press("escape"); await pilot.pause()
+        assert app.query_one("#palette", Static).display is False
+        assert inp.value == "/a"
+
+
+@pytest.mark.asyncio
+async def test_palette_substring_match():
+    """非前缀也能匹配：/dit → /audit（子串兜底）。"""
+    from textual.widgets import Static
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", Input)
+        inp.focus()
+        inp.value = "/dit"; await pilot.pause()
+        pal = app.query_one("#palette", Static)
+        assert pal.display is True and "/audit" in str(pal.render())
+
+
+@pytest.mark.asyncio
+async def test_history_recall_of_slash_does_not_open_palette():
+    """↑ 调出以 / 开头的历史时不弹补全——↑↓ 留给翻历史；编辑后恢复补全。"""
+    from textual.widgets import Static
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", Input)
+        inp.focus()
+        await _submit(app, pilot, "/usage")
+        await _submit(app, pilot, "/help")
+        await pilot.press("up"); await pilot.pause()
+        assert inp.value == "/help"                                    # ↑ 翻历史
+        assert app.query_one("#palette", Static).display is False      # 不弹补全
+        await pilot.press("up"); await pilot.pause()
+        assert inp.value == "/usage"                                   # 继续翻历史（没被面板截胡）
+
+
+@pytest.mark.asyncio
 async def test_show_diff_renders_colored(tmp_path):
     from textual.widgets import RichLog
     app = VortoCodeTUI(repo_root=str(tmp_path))
