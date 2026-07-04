@@ -88,6 +88,32 @@ def test_build_subagent_dev_face_is_isolated_pipeline_only(tmp_path):
     assert sub.max_steps == 8                                    # max_steps 生效
 
 
+def test_build_subagent_inherits_project_permissions(tmp_path):
+    """项目级 permissions.yaml deny 必须继承到子 agent（#148 评审：否则角色文件成了
+    绕过项目规则的后门——deny: [dev_isolated] 时 dev 型子 agent 照跑）。"""
+    _write_agent(tmp_path, "backend.md", _BACKEND)
+    (tmp_path / ".vortocode" / "permissions.yaml").write_text(
+        "deny:\n  - dev_isolated\n", encoding="utf-8")
+    spec = registry_for(str(tmp_path)).get("backend-dev")
+    sub = build_subagent(str(tmp_path), spec)
+    assert sub._permissions is not None
+    assert sub._permissions.denied("dev_isolated", {})           # deny 规则真进了子 agent
+    assert not sub._permissions.denied("read_file", {})          # 没被 deny 的照常
+
+
+@pytest.mark.asyncio
+async def test_denied_tool_blocked_at_dispatch_in_subagent(tmp_path):
+    """行为级：被 deny 的工具在子 agent 执行层被硬拦（不是只挂了个对象）。"""
+    _write_agent(tmp_path, "backend.md", _BACKEND)
+    (tmp_path / ".vortocode" / "permissions.yaml").write_text(
+        "deny:\n  - dev_isolated\n", encoding="utf-8")
+    spec = registry_for(str(tmp_path)).get("backend-dev")
+    sub = build_subagent(str(tmp_path), spec)
+    out = await sub._run_tool("dev_isolated", {"description": "x"}, mode="build",
+                              say=lambda _m: None)
+    assert "权限拦截" in out                                      # 硬拦生效、最优先
+
+
 # ------------------------------------------------------------ task 工具按名委派
 class _EchoLLM:
     """记下子 agent 收到的 system，直接回一句结论。"""

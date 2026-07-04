@@ -131,6 +131,7 @@ def build_subagent(repo_root: str, spec: SubagentSpec, *, llm=None,
     永远不给 task/research_parallel（不递归）、不给裸写/shell/PR 工具。
     """
     from src.agents.main_agent import MainAgent, build_dev_tools, build_read_tools
+    from src.agents.permissions import load_permissions
 
     tools = build_read_tools(repo_root)
     extra = spec.system_prompt + _SUB_RULES
@@ -139,7 +140,10 @@ def build_subagent(repo_root: str, spec: SubagentSpec, *, llm=None,
                if t.name in ("dev_isolated", "dev_parallel")]
         tools = tools + dev
         extra += _DEV_RULES
-    sub = MainAgent(tools, llm=llm, max_steps=spec.max_steps, extra_system=extra)
+    # 项目级权限硬拦（.vortocode/permissions.yaml deny）**必须继承**——否则角色文件成了
+    # 绕过项目规则的后门（deny: [dev_isolated] 时 dev 型子 agent 照跑，#148 评审）。
+    sub = MainAgent(tools, llm=llm, max_steps=spec.max_steps, extra_system=extra,
+                    permissions=load_permissions(repo_root))
     if spec.model:
         try:
             sub.set_model(spec.model)
