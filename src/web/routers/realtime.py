@@ -333,7 +333,8 @@ async def handle_agent_message(websocket, message: Dict[str, Any]):
         text = "请听这段音频并转写/回答。" if audio and not images else "请看图并描述/分析其中内容。"
     mode = message.get("mode", "plan")
     _WS_AGENT_TASKS[key] = asyncio.create_task(
-        _run_agent_turn(websocket, text, mode, images, audio, rid=rid))
+        _run_agent_turn(websocket, text, mode, images, audio, rid=rid,
+                        want_reasoning=bool(message.get("want_reasoning"))))
 
 
 # 单个附件上限 ~8MB（base64 后），整轮图/音各最多 6 个——挡住误传大文件撑爆 WS/上下文
@@ -403,12 +404,14 @@ async def handle_tts_message(websocket, message: Dict[str, Any]):
 
 
 async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list] = None,
-                          audio: Optional[list] = None, rid: Optional[str] = None):
+                          audio: Optional[list] = None, rid: Optional[str] = None,
+                          want_reasoning: bool = False):
     """实际跑一个回合：run_turn 产出的事件经队列串行发回前端；整个任务可被取消（中断）。
 
     事件类型：agent_say(工具提示) / agent_stream(增量) / agent_emit(成段输出) /
     agent_error / agent_done / agent_cancelled。rid 非空时本回合**所有**出站事件都回带它
-    （统一在 drain 循环注入，单点覆盖队列里的全部事件）。
+    （统一在 drain 循环注入，单点覆盖队列里的全部事件）。want_reasoning：客户端显式要
+    思维链才发 agent_reasoning（web 前端不用不订阅，省流量；TUI attach 用）。
     """
     import contextlib
 
@@ -442,6 +445,10 @@ async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list
     def agent_stream(p):
         q.put_nowait(P.make_event(P.AGENT_STREAM, text=p))
 
+    extra_cbs = {}
+    if want_reasoning:                        # 只在客户端显式要时才传（免碰假 agent 的窄签名）
+        extra_cbs["reasoning_cb"] = lambda d: q.put_nowait(P.make_event(P.AGENT_REASONING, text=d))
+
     async def _run():
         try:
             sess = _SESSIONS.get(_session_key(websocket))   # 本会话独立用量作用域（多会话互不串扰）
@@ -450,7 +457,8 @@ async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list
                 bind_usage(sess["usage"])
             await _ensure_mcp(agent, agent_say)   # 首回合按需连 MCP（config/mcp.yaml 存在才连）
             await agent.run_turn(text, mode=mode, say=agent_say, emit=agent_emit,
-                                 stream_cb=agent_stream, images=images, audio=audio)
+                                 stream_cb=agent_stream, images=images, audio=audio,
+                                 **extra_cbs)
         except asyncio.CancelledError:        # 中断：直接上抛，不当成错误
             raise
         except Exception as e:  # noqa: BLE001

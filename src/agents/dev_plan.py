@@ -161,6 +161,9 @@ audit.log
 cron_state.json
 cli_session.json
 tui_theme
+tui_history
+web_advanced_agents.json
+notices.jsonl
 """
 
 

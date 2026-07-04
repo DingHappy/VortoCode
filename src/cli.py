@@ -102,7 +102,10 @@ def main():
 
     sub.add_parser("test", help="运行测试套件（pytest）")
     sub.add_parser("demo", help="演示模式：打印指引并启动 Web 服务")
-    sub.add_parser("tui", help="进入交互式全屏 TUI（仿 opencode；需 textual: pip install '.[tui]'）")
+    p = sub.add_parser("tui", help="进入交互式全屏 TUI（仿 opencode；需 textual: pip install '.[tui]'）")
+    p.add_argument("--attach", nargs="?", const="", metavar="URL",
+                   help="协议客户端模式：回合交常驻 serve 跑（缺省 $VORTOCODE_SERVE_URL 或 "
+                        "http://127.0.0.1:8080）；serve 不在则该回合自动回退进程内")
 
     p = sub.add_parser("im", help="IM 通道桥：常驻长连，把主 agent 搬上 IM（手机发任务/确认/回报）")
     p.add_argument("channel", choices=["telegram", "dingtalk"], help="IM 通道（telegram / dingtalk）")
@@ -181,7 +184,7 @@ def main():
         run_demo()
 
     elif args.command == "tui":
-        run_tui()
+        run_tui(attach=args.attach)
 
     elif args.command == "im":
         asyncio.run(run_im(args.channel, mode=args.mode))
@@ -433,15 +436,6 @@ class ServeUnreachable(Exception):
     """attach 连接阶段失败（serve 不在/拒连/握手超时）——回合尚未发出，可安全回退进程内。"""
 
 
-def _attach_ref_to_data_url(ref: str, *, is_audio: bool) -> str:
-    """把本地路径附件转成 serve 端可收的 data URL（服务端 sanitize 只收 data:/http(s)）。"""
-    from src.llm.content import audio_block, image_block
-    if is_audio:
-        blk = audio_block(ref)["input_audio"]
-        return f"data:audio/{blk['format']};base64,{blk['data']}"
-    return image_block(ref)["image_url"]["url"]
-
-
 async def _run_agent_attached(prompt, url, *, build=False, auto_yes=False, as_json=False,
                               quiet=False, continue_session=False, images=None, audio=None,
                               speak=False, voice=None, speak_out=None, llm=None):
@@ -452,7 +446,7 @@ async def _run_agent_attached(prompt, url, *, build=False, auto_yes=False, as_js
     error=1 / cancelled=130。连接阶段失败抛 ServeUnreachable（调用方回退进程内）。
     """
     from src.gateway import protocol as gp
-    from src.gateway.client import ProtocolClient, delete_session
+    from src.gateway.client import ProtocolClient, delete_session, local_ref_to_data_url
     from src.web.auth import get_api_token
 
     mode = "build" if build else "plan"
@@ -462,8 +456,8 @@ async def _run_agent_attached(prompt, url, *, build=False, auto_yes=False, as_js
     token = get_api_token() or None
     if not continue_session:
         await delete_session(url, sid, token=token)
-    imgs = [_attach_ref_to_data_url(i, is_audio=False) for i in (images or [])]
-    auds = [_attach_ref_to_data_url(a, is_audio=True) for a in (audio or [])]
+    imgs = [local_ref_to_data_url(i) for i in (images or [])]
+    auds = [local_ref_to_data_url(a, is_audio=True) for a in (audio or [])]
 
     def say(text):
         if not quiet:
@@ -822,8 +816,11 @@ async def run_self_fix(paths=None, apply: bool = False, max_fixes: int = 3):
     print(render_result(result))
 
 
-def run_tui():
-    """启动交互式 TUI（仿 opencode）。未装 textual 时给出安装提示，不崩。"""
+def run_tui(attach=None):
+    """启动交互式 TUI（仿 opencode）。未装 textual 时给出安装提示，不崩。
+
+    attach 非 None = 协议客户端模式（"" 用缺省 URL：$VORTOCODE_SERVE_URL 或 127.0.0.1:8080）。
+    """
     # 中文/输入法(IME)输入修复：禁用 Kitty 键盘协议。
     # textual 8.x 启用 Kitty 协议时会带上「关联文本上报」标志(\x1b[>25u)，但它自己的
     # CSI u 解析器(textual/_xterm_parser.py)处理不了输入法一次性提交的多码点中文——
@@ -841,7 +838,10 @@ def run_tui():
             print("交互式 TUI 需要 textual：请先  pip install '.[tui]'（或 pip install textual rich）")
             return
         raise
-    run_tui_app()
+    url = None
+    if attach is not None:
+        url = attach or os.getenv("VORTOCODE_SERVE_URL") or "http://127.0.0.1:8080"
+    run_tui_app(attach=url)
 
 
 def run_tests():

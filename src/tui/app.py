@@ -248,12 +248,16 @@ class VortoCodeTUI(App):
         Binding("ctrl+l", "clear_log", "清屏"),
     ]
 
-    def __init__(self, repo_root: str = "."):
+    def __init__(self, repo_root: str = ".", attach: str | None = None):
         super().__init__()
         self.repo_root = repo_root
+        self._attach_url = attach           # 非 None = attach 模式：回合交常驻 serve 跑（协议客户端）
         self.mode = "plan"                  # plan | build
         self.transcript: list[str] = []     # 完整记录，便于回看与测试
-        # 会话持久化（SQLite）：对话落盘，可 /sessions 列出、/resume 恢复
+        # 会话持久化（SQLite）：对话落盘，可 /sessions 列出、/resume 恢复。
+        # TUI 启动即写 .vortocode 生成态（sessions.db/tui_history）→ 先放自忽略 .gitignore（防足迹）。
+        from src.agents.dev_plan import ensure_state_gitignore
+        ensure_state_gitignore(repo_root)
         self.sessions = SessionManager(str(Path(repo_root) / ".vortocode" / "sessions.db"))
         self.session_id: str | None = None
         self._persist_on = False            # 开场白阶段先不落盘
@@ -1394,15 +1398,10 @@ class VortoCodeTUI(App):
 
         主 agent 自己决定是聊天/读代码/扫描（只读工具），还是把正经开发任务交给隔离 dev 工具
         （dev_isolated/dev_parallel/dev_auto，重型、build 模式）—— 不再需要前置意图分类器，闲聊天然由它处理。
+        attach 模式（--attach）：回合交常驻 serve 跑，本 TUI 只是协议客户端（渲染 + confirm 应答）；
+        serve 够不着（连接阶段失败）→ 提示一行、本回合回退进程内。
         """
         import os
-        if not os.getenv("OPENAI_API_KEY"):
-            self._chrome("[green]对话[/green] [dim](未配置 OPENAI_API_KEY)[/dim]")
-            self._emit("配置 OPENAI_API_KEY 后即可自由对话/开发（见 .env）。")
-            self._emit("现在无需 key 也能用：/analyze 扫描本仓库、/help 看全部命令。")
-            return
-        if self.agent is None:
-            self.agent = self._build_main_agent()
         user_text, ctx = self._expand_context(text)
         images = getattr(self, "_turn_images", []) or []      # @图片 → 多模态附件
         audio = getattr(self, "_turn_audio", []) or []        # @音频 → 多模态附件
@@ -1413,11 +1412,41 @@ class VortoCodeTUI(App):
             self._chrome(f"[dim]🖼 附带 {len(images)} 张图（mimo-v2.5 可读图）[/dim]")
         if audio:
             self._chrome(f"[dim]🎧 附带 {len(audio)} 段音频（mimo-v2.5 可听音频）[/dim]")
-        # agent 的输出直接落进结果区（对话 log）：忙时转圈("思考中…")给进度反馈，工具调用与
-        # 结果(🔧/⎿)实时进 log，回复就绪即作为一条 ● vorto 消息（markdown）写进对话——
-        # 回复**边生成边显示**：流式 token 进 #stream（署名 ● vorto、和最终消息同位同款，
-        # 不再是早期那种"下方暗显再跳上去"的割裂感）；reply 就绪即清掉 #stream、把最终
-        # markdown 写进 log（清在写之前，避免一帧双份 ● vorto）。工具调用的 JSON 不会流式（被 _complete 抑制）。
+        if self._attach_url:
+            if await self._route_attached(user_text, images, audio):
+                return                       # attach 回合完成（含 serve 侧出错——已如实渲染，不重跑）
+            self._chrome(f"[yellow]⚠ 未连上 serve（{self._attach_url}），本回合进程内执行[/yellow]")
+        if not os.getenv("OPENAI_API_KEY"):
+            self._chrome("[green]对话[/green] [dim](未配置 OPENAI_API_KEY)[/dim]")
+            self._emit("配置 OPENAI_API_KEY 后即可自由对话/开发（见 .env）。")
+            self._emit("现在无需 key 也能用：/analyze 扫描本仓库、/help 看全部命令。")
+            return
+        if self.agent is None:
+            self.agent = self._build_main_agent()
+        think_cb, stream_cb, emit_final, cleanup = self._turn_renderers()
+        self._turn_tools = 0
+        t0 = time.monotonic()
+        reply = ""
+        try:
+            reply = await self.agent.run_turn(user_text, mode=self.mode, say=self._chrome,
+                                              emit=emit_final, stream_cb=stream_cb,
+                                              images=images, audio=audio, reasoning_cb=think_cb)
+        finally:
+            cleanup()                        # 出错/取消也收干净
+        if self._turn_tools:                # 用过工具的回合给个清晰收尾
+            self._chrome(f"[dim]✓ 完成 · {self._turn_tools} 个工具 · {time.monotonic() - t0:.0f}s[/dim]")
+        if self._speak_replies and reply:   # /speak 开：把这条回复合成语音朗读
+            self._chrome("[dim]🔊 合成语音中…[/dim]")
+            await self._speak_text(reply)
+        self._persist_agent_history()
+
+    def _turn_renderers(self):
+        """一个回合的四件套 UI 渲染闭包（进程内与 attach 两条路径共用，保证同一观感）：
+
+        (think_cb 思维链→#thinking, stream_cb 流式→#stream, emit_final 最终回复→log, cleanup 收尾清区)。
+        回复**边生成边显示**：流式 token 进 #stream（署名 ● vorto、和最终消息同位同款）；reply 就绪
+        即清掉 #stream、把最终 markdown 写进 log（清在写之前，避免一帧双份 ● vorto）。
+        """
         stream = self.query_one("#stream", Static)
         thinking = self.query_one("#thinking", Static)
         think_buf = []                          # 累积推理型模型的思维链（reasoning_content）
@@ -1463,22 +1492,63 @@ class VortoCodeTUI(App):
             stream.update(""); stream.display = False       # 先清流式区，再落最终（无双份）
             self._assistant(text)
 
-        self._turn_tools = 0
-        t0 = time.monotonic()
-        reply = ""
-        try:
-            reply = await self.agent.run_turn(user_text, mode=self.mode, say=self._chrome,
-                                              emit=emit_final, stream_cb=stream_cb,
-                                              images=images, audio=audio, reasoning_cb=think_cb)
-        finally:
-            thinking.update(""); thinking.display = False   # 出错/取消也收干净
+        def cleanup() -> None:
+            thinking.update(""); thinking.display = False
             stream.update(""); stream.display = False
-        if self._turn_tools:                # 用过工具的回合给个清晰收尾
-            self._chrome(f"[dim]✓ 完成 · {self._turn_tools} 个工具 · {time.monotonic() - t0:.0f}s[/dim]")
-        if self._speak_replies and reply:   # /speak 开：把这条回复合成语音朗读
+
+        return think_cb, stream_cb, emit_final, cleanup
+
+    async def _route_attached(self, user_text: str, images: list, audio: list) -> bool:
+        """attach 模式跑一个回合：serve 是唯一状态所有者，TUI 只渲染 + confirm 应答。
+
+        返回 True=回合已完成（含 serve 侧出错——已如实渲染，**不回退重跑**，防重复执行）；
+        False=连接阶段失败（回合未发出，调用方安全回退进程内）。
+        协议事件 → UI 面映射：say→_chrome、stream→#stream、reasoning→#thinking、
+        plan→计划面板、confirm→ConfirmScreen 应答回传、emit/done→收尾。
+        富 UI 取舍（v1，如实交代）：工具在 serve 端跑（与 Web 同一工厂），TUI 的着色 diff
+        直写工具在 attach 下不参与；进程内模式保留全部富 UI。
+        """
+        from src.gateway import protocol as gp
+        from src.gateway.client import ProtocolClient, local_ref_to_data_url
+        from src.web.auth import get_api_token
+
+        client = ProtocolClient(self._attach_url, sid=f"tui-{self.session_id or 'default'}",
+                                token=get_api_token() or None)
+        try:
+            await client.__aenter__()
+        except Exception:  # noqa: BLE001 —— 回合未发出，调用方回退进程内
+            return False
+        think_cb, stream_cb, emit_final, cleanup = self._turn_renderers()
+
+        async def confirm(message: str) -> bool:
+            # serve 端工具的确认经协议回到 TUI 弹窗：**始终弹**、不吃本地"始终允许"豁免
+            # （scope 信息不过协议，宁多问不越权；与 _confirm_outward 同一保守面）。
+            return bool(await self.push_screen_wait(ConfirmScreen(message)))
+
+        t0 = time.monotonic()
+        try:
+            if client.server_version not in (None, gp.PROTOCOL_VERSION):
+                self._chrome(f"[yellow]⚠ serve 协议版本 v{client.server_version} ≠ "
+                             f"本端 v{gp.PROTOCOL_VERSION}，事件面可能不齐[/yellow]")
+            outcome = await client.run_turn(
+                user_text, mode=self.mode,
+                images=[local_ref_to_data_url(i) for i in images],
+                audio=[local_ref_to_data_url(a, is_audio=True) for a in audio],
+                on_say=self._chrome, on_stream=stream_cb, on_emit=emit_final,
+                on_plan=self._render_plan, on_reasoning=think_cb, confirm=confirm)
+        finally:
+            cleanup()
+            await client.__aexit__()
+        if outcome.status == "error":
+            self._emit(f"[red]serve 回合出错：{outcome.error}[/red]")
+        elif outcome.status == "cancelled":
+            self._chrome("[yellow]serve 侧已中断[/yellow]")
+        else:
+            self._chrome(f"[dim]✓ 完成（serve）· {time.monotonic() - t0:.0f}s[/dim]")
+        if self._speak_replies and outcome.reply:      # /speak 开：本地合成朗读（与进程内同路径）
             self._chrome("[dim]🔊 合成语音中…[/dim]")
-            await self._speak_text(reply)
-        self._persist_agent_history()
+            await self._speak_text(outcome.reply)
+        return True
 
     def _persist_agent_history(self) -> None:
         """把 agent 当前上下文快照进会话，供 /resume 跨会话续上记忆。失败不影响交互。"""
@@ -2218,6 +2288,6 @@ class VortoCodeTUI(App):
         return summary
 
 
-def run() -> None:
-    """启动 TUI（供 CLI 调用）。"""
-    VortoCodeTUI(repo_root=".").run()
+def run(attach: str | None = None) -> None:
+    """启动 TUI（供 CLI 调用）。attach 非 None = 协议客户端模式（回合交常驻 serve 跑）。"""
+    VortoCodeTUI(repo_root=".", attach=attach).run()
