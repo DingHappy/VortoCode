@@ -138,6 +138,9 @@ def main():
         setup_structured_logging(log_file=env_compat("VORTOCODE_LOG_FILE", "AUTODEV_LOG_FILE") or None)
 
     if args.command == "agent":
+        # argparse 的 --attach [URL]（nargs="?"）会把紧跟的任务文本吞成 URL：
+        # `vc agent --attach "修个 bug"` → attach="修个 bug"、prompt 空。按"像不像 URL"消歧回来。
+        args.prompt, args.attach = _disambiguate_attach(args.prompt, args.attach)
         prompt = _read_prompt_arg(args.prompt)
         prompt = _maybe_expand_command(prompt, str(Path.cwd()))   # /<名> → 展开 .vortocode/commands 模板
         images = args.images or []
@@ -416,6 +419,24 @@ def _build_headless_agent(cwd, *, max_steps, on_tool, on_plan, confirm, llm=None
     from src.gateway.agent_session import build_session
     return build_session(cwd, kind="cli", confirm=confirm, on_progress=on_progress,
                          on_tool=on_tool, on_plan=on_plan, llm=llm, max_steps=max_steps)
+
+
+def _looks_like_serve_url(s: str) -> bool:
+    """s 像 --attach 的 URL 吗（scheme:// 或 host:port）——不像就是被 nargs="?" 误吞的任务文本。"""
+    import re
+    s = (s or "").strip()
+    if s.startswith(("http://", "https://", "ws://", "wss://")):
+        return True
+    return re.fullmatch(r"[A-Za-z0-9.\-]+:\d{1,5}", s) is not None
+
+
+def _disambiguate_attach(prompt, attach):
+    """修 argparse `--attach [URL]` 吞任务文本：`vc agent --attach "修个 bug"` 里
+    "修个 bug" 会被当成 URL、prompt 落空。若 prompt 空且 attach 值不像 URL，
+    则它其实是任务文本——换回去（attach 用默认 URL）。"""
+    if attach and prompt is None and not _looks_like_serve_url(attach):
+        return attach, ""
+    return prompt, attach
 
 
 class ServeUnreachable(Exception):
