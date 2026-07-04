@@ -1347,6 +1347,37 @@ async def test_history_recall_of_slash_does_not_open_palette():
 
 
 @pytest.mark.asyncio
+async def test_busy_input_queues_then_auto_sends(monkeypatch):
+    """忙时提交不再丢弃：先排队（不回显不执行），回合收尾自动发送（回显 + 路由）。"""
+    app = VortoCodeTUI(repo_root=".")
+    routed = []
+    async with app.run_test() as pilot:
+        monkeypatch.setattr(app, "_route", lambda t: routed.append(t))
+        app._busy = True
+        await _submit(app, pilot, "宁波")
+        assert app._queued_inputs == ["宁波"]                # 进了队列
+        assert routed == []                                  # 没被立刻执行
+        assert not any("宁波" in t for t in app.transcript)  # 也没提前回显（顺序不骗人）
+        app._busy = False
+        app._drain_queued(); await pilot.pause()             # 模拟回合终态触发排空
+        assert routed == ["宁波"]                            # 自动发送
+        assert app._queued_inputs == []
+        assert any("宁波" in t for t in app.transcript)      # 发送时才回显
+
+
+@pytest.mark.asyncio
+async def test_cancel_clears_queued_inputs():
+    """忙时 Esc 主动取消：排队消息一起清空，不会取消完又自动冒一条。"""
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        app._busy = True
+        await _submit(app, pilot, "排队消息一")
+        assert app._queued_inputs == ["排队消息一"]
+        app.action_cancel(); await pilot.pause()
+        assert app._queued_inputs == []                      # Esc 连队列一起清
+
+
+@pytest.mark.asyncio
 async def test_show_diff_renders_colored(tmp_path):
     from textual.widgets import RichLog
     app = VortoCodeTUI(repo_root=str(tmp_path))
