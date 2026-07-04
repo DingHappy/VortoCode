@@ -120,30 +120,6 @@
   ]
  },
  {
-  "path": "/api/agents/{agent_id}/run",
-  "methods": [
-   "POST"
-  ]
- },
- {
-  "path": "/api/agents/{agent_id}/stop",
-  "methods": [
-   "POST"
-  ]
- },
- {
-  "path": "/api/approvals",
-  "methods": [
-   "GET"
-  ]
- },
- {
-  "path": "/api/approvals/{request_id}",
-  "methods": [
-   "POST"
-  ]
- },
- {
   "path": "/api/artifacts",
   "methods": [
    "GET"
@@ -189,12 +165,6 @@
   "path": "/api/auth/status",
   "methods": [
    "GET"
-  ]
- },
- {
-  "path": "/api/auto-approve",
-  "methods": [
-   "POST"
   ]
  },
  {
@@ -330,12 +300,6 @@
   ]
  },
  {
-  "path": "/api/goal",
-  "methods": [
-   "POST"
-  ]
- },
- {
   "path": "/api/health",
   "methods": [
    "GET"
@@ -385,12 +349,6 @@
  },
  {
   "path": "/api/notices",
-  "methods": [
-   "GET"
-  ]
- },
- {
-  "path": "/api/permissions",
   "methods": [
    "GET"
   ]
@@ -450,12 +408,6 @@
   ]
  },
  {
-  "path": "/api/reset",
-  "methods": [
-   "POST"
-  ]
- },
- {
   "path": "/api/sandbox/create",
   "methods": [
    "POST"
@@ -489,18 +441,6 @@
   "path": "/api/search",
   "methods": [
    "GET"
-  ]
- },
- {
-  "path": "/api/security/stats",
-  "methods": [
-   "GET"
-  ]
- },
- {
-  "path": "/api/security/unban/{agent_id}",
-  "methods": [
-   "POST"
   ]
  },
  {
@@ -540,21 +480,9 @@
   ]
  },
  {
-  "path": "/api/start",
-  "methods": [
-   "POST"
-  ]
- },
- {
   "path": "/api/status",
   "methods": [
    "GET"
-  ]
- },
- {
-  "path": "/api/stop",
-  "methods": [
-   "POST"
   ]
  },
  {
@@ -571,12 +499,6 @@
  },
  {
   "path": "/api/tasks",
-  "methods": [
-   "POST"
-  ]
- },
- {
-  "path": "/api/tasks/{task_id}/update",
   "methods": [
    "POST"
   ]
