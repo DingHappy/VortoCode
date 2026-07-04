@@ -59,6 +59,11 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
     catalog = skill_catalog(repo_root)                 # 技能目录进系统提示（模型才知道能 use_skill 什么）
     if catalog:
         parts.append(f"{_SKILL_HEADER}\n{catalog}")
+    from src.agents.subagents import subagent_catalog
+    agents_cat = subagent_catalog(repo_root)           # 自定义角色目录（task 工具的 agent 参数按名委派）
+    if agents_cat:
+        parts.append("【可用子 agent】(用 task/research_parallel 的 agent 参数按名委派；"
+                     "dev 型角色经隔离流水线写代码、需确认)\n" + agents_cat)
     if parts:
         kwargs["extra_system"] = "\n\n".join(parts)
     if on_tool is not None:

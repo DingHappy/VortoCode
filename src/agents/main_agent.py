@@ -2061,30 +2061,62 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
 
 
 def build_research_tools(repo_root: str, *, llm: Any = None,
-                         max_steps: int = 12, max_parallel: int = 5) -> list[Tool]:
-    """UI 无关的只读子 agent 委派工具（task / research_parallel）——给 Web/CLI 用。
+                         max_steps: int = 12, max_parallel: int = 5,
+                         confirm: Any = None, on_progress: Any = None) -> list[Tool]:
+    """UI 无关的子 agent 委派工具（task / research_parallel）——给 Web/CLI 用。
 
     把一个大型只读调查甩给一个**只带 read_tools** 的隔离子 agent：它在独立上下文里
     读代码/搜仓库、返回简洁结论，**不挤占也不污染主 agent 的对话历史**（大调查不再把
     主上下文撑爆——配合对话压缩，是"扛大工程量"的另一条腿）。子 agent 无 task/写工具
     → 不会递归嵌套、绝不改文件。TUI 另有带进度回显的版本（self._chrome），此处是无 UI 版。
     llm 可注入（便于测试/共享客户端）；不传则子 agent 各自惰性建客户端（同 TUI）。
+
+    **按名委派自定义角色**（`.vortocode/agents/*.md`，公司架构式分工）：可选 `agent` 参数
+    指定角色——产品经理/评审/QA 等 read 型仍只读；`tools: dev` 型角色额外可用隔离 dev
+    流水线真写代码（落 vorto/* 分支，绝不碰主区）。confirm/on_progress 只喂给 dev 面。
     """
-    async def _spawn(desc: str) -> str:
-        # 子 agent 只读：mode 用 plan（read_tools 里无写工具，权限门对它无差别）。
-        sub = MainAgent(build_read_tools(repo_root), llm=llm, max_steps=max_steps, extra_system=(
-            "你是只读研究子 agent：只用工具调研代码/仓库并返回**简洁结论**，绝不修改任何东西。"
-            "读够信息就尽快收口，别把预算耗在重复读取上。"))
+    def _sub_for(agent_name: str):
+        """按角色名装配子 agent；无角色名给默认只读研究员。返回 (sub, err)。"""
+        if not agent_name:
+            return MainAgent(build_read_tools(repo_root), llm=llm, max_steps=max_steps,
+                             extra_system=(
+                "你是只读研究子 agent：只用工具调研代码/仓库并返回**简洁结论**，绝不修改任何东西。"
+                "读够信息就尽快收口，别把预算耗在重复读取上。")), None
+        from src.agents.subagents import build_subagent, registry_for
+        reg = registry_for(repo_root)
+        spec = reg.get(agent_name)
+        if spec is None:
+            avail = "、".join(reg.specs) or "（无——在 .vortocode/agents/ 放 <名>.md 定义角色）"
+            return None, f"没有名为 {agent_name!r} 的子 agent。可用：{avail}"
+        return build_subagent(repo_root, spec, llm=llm, confirm=confirm,
+                              on_progress=on_progress), None
+
+    async def _spawn(desc: str, agent_name: str = "") -> str:
+        sub, err = _sub_for(agent_name)
+        if err:
+            return err
+        # dev 型角色能产出写入（隔离流水线落 vorto/* 分支）。task 本身 read_only（plan 可用），
+        # 不能让 dev 委派从 plan 门下偷渡——**过人闸**：无确认通道拒绝（fail-closed），
+        # 有则问一次（headless 默认拒、--yes 放行；TUI/Web 弹确认），与 run_command 同一哲学。
+        has_dev = any(t.startswith("dev_") for t in sub.tools)
+        if has_dev:
+            if confirm is None:
+                return (f"角色 {agent_name} 是 dev 型（会经隔离流水线写代码），当前入口没有确认"
+                        f"通道——已拒绝（fail-closed）。请在带确认的入口（TUI/Web/--yes）委派。")
+            if not await confirm(f"委派角色「{agent_name}」用隔离 dev 流水线实现：{desc[:120]}\n"
+                                 f"（产出落 vorto/* 分支，不碰主工作区）"):
+                return f"已取消：用户未放行 dev 型角色 {agent_name} 的委派。"
+        mode = "build" if has_dev else "plan"
         try:
-            return (await sub.run_turn(desc, mode="plan")) or "(无结论)"
+            return (await sub.run_turn(desc, mode=mode)) or "(无结论)"
         except Exception as e:  # noqa: BLE001
             return f"(子任务出错: {e})"
 
     async def _task(args: dict) -> str:
         desc = str(args.get("description") or args.get("task") or "").strip()
         if not desc:
-            return "task 需要 description（要委派给只读子 agent 的研究/调研子任务）。"
-        return await _spawn(desc)
+            return "task 需要 description（要委派给子 agent 的子任务）。"
+        return await _spawn(desc, str(args.get("agent") or "").strip())
 
     async def _research_parallel(args: dict) -> str:
         import asyncio
@@ -2094,17 +2126,24 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
         tasks = [str(t).strip() for t in tasks if str(t).strip()][:max_parallel]
         if not tasks:
             return "research_parallel 需要 tasks（字符串列表，每项一个独立子问题）。"
-        results = await asyncio.gather(*[_spawn(t) for t in tasks])
+        agent_name = str(args.get("agent") or "").strip()
+        results = await asyncio.gather(*[_spawn(t, agent_name) for t in tasks])
         return "\n\n".join(f"【{t}】\n{r}" for t, r in zip(tasks, results))
 
     return [
         Tool("task",
-             "把一个独立的研究/调研子任务委派给只读子 agent（隔离上下文、不污染主对话），返回它的结论；"
-             "适合大型只读调查（读一堆文件/摸清某子系统）——别在主对话里逐个读，委派出去省上下文",
-             {"description": "要委派给子 agent 的研究/调研子任务"}, _task, read_only=True),
+             "把一个独立子任务委派给子 agent（隔离上下文、不污染主对话），返回它的结论；"
+             "适合大型只读调查（读一堆文件/摸清某子系统）——别在主对话里逐个读，委派出去省上下文。"
+             "可选 agent=<角色名> 用自定义角色（见系统提示【可用子 agent】；dev 型角色能用隔离流水线写代码）",
+             {"description": "要委派给子 agent 的子任务",
+              "agent": "可选：自定义角色名（.vortocode/agents/ 里定义；缺省=只读研究员）"},
+             _task, read_only=True),
         Tool("research_parallel",
-             "并行委派多个只读子 agent 同时研究不同**相互独立**的子问题，汇总各自结论（最多 5 个）",
-             {"tasks": "独立子问题字符串列表"}, _research_parallel, read_only=True),
+             "并行委派多个子 agent 同时处理**相互独立**的子问题，汇总各自结论（最多 5 个）；"
+             "可选 agent=<角色名> 让全组用同一自定义角色",
+             {"tasks": "独立子问题字符串列表",
+              "agent": "可选：自定义角色名（应用到本组全部子任务）"},
+             _research_parallel, read_only=True),
     ]
 
 
@@ -2306,7 +2345,9 @@ def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable
     TUI 不走本工厂——它用富 UI 版写/dev/command 工具（着色 diff + ConfirmScreen），刻意不同源。
     注：调用方（CLI/Web）应把 `skill_catalog(repo_root)` 注入 extra_system，模型才知道有哪些技能可 use_skill。
     """
-    tools = (build_read_tools(repo_root) + build_research_tools(repo_root) + build_web_tools()
+    tools = (build_read_tools(repo_root)
+             + build_research_tools(repo_root, confirm=confirm, on_progress=on_progress)
+             + build_web_tools()
              + build_memory_tools(repo_root) + build_skill_tools(repo_root, confirm))
     if with_artifacts:
         from src.web.artifacts import build_artifact_tools    # 惰性导入：避免 agents 层在导入期硬依赖 web

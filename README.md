@@ -22,6 +22,7 @@
 - **工具集**：`read_file` / `list_files` / `grep` / `analyze_repo`（只读）· `edit_file` / `write_file` / `run_dev_workflow`（写/重型，需确认）· `task` / `research_parallel`（子 agent 委派）· `use_skill` / `save_skill`（技能）· `save_memory` / `recall_memory`（长期记忆）· `publish_artifact` / `list_artifacts`（制品，见下）· 以及 `/mcp` 接入的任意外部 MCP 工具
 - **plan / build = 工具权限门**：plan 只放只读工具；写/重型/外部工具仅 build，且写盘前弹确认 —— 落实"人在关口"
 - **子 agent 委派**：把独立调研任务派给隔离上下文的只读子 agent，支持并行 fan-out
+- **自定义角色子 agent**（`.vortocode/agents/*.md`，公司架构式分工）：frontmatter 定角色（产品经理/前端/后端/QA…），正文即 system prompt；`task`/`research_parallel` 用 `agent=<名>` 按名委派——read 型只读，`tools: dev` 型可经**隔离流水线**真写代码（落 `vorto/*` 分支、委派需人工确认，绝不碰主区）。模板见 `examples/agents/`
 - **SKILL.md 技能**：渐进式按需加载（复用 `src/skills` 解析器），还能让 agent 现场起草新技能
 - **跨会话记忆**：`/resume` 重建对话上下文；`save_memory`/`recall_memory` 沉淀跨会话知识
 - **@上下文注入**：`@文件`→内容、`@目录`→清单、`@符号`→AST 定义位置
