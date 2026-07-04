@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  VortoCode 常驻 serve（macOS launchd 用户级守护）——dogfood「常驻开发同事」形态的底座。
+
+  安装（三步，路径按机器实际改）：
+    1. 把本文件按注释改好路径/开关，另存为
+         ~/Library/LaunchAgents/com.vortocode.serve.plist
+    2. launchctl load ~/Library/LaunchAgents/com.vortocode.serve.plist     # 开机自启 + 立即拉起
+    3. vortocode doctor                                                    # 验管道（serve 应 ✅）
+
+  卸载/停止：launchctl unload ~/Library/LaunchAgents/com.vortocode.serve.plist
+  看日志：  tail -f ~/Library/Logs/vortocode-serve.log
+
+  ⚠️ 开销提示：VORTOCODE_HEARTBEAT=1 让 agent 定期自主值班（烧中转站 token）——
+  确认要花这个钱再开；只想要 attach/后台任务/通知，不开 CRON/HEARTBEAT 即可（零自主消耗）。
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.vortocode.serve</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <!-- 改成你的 python 与仓库路径（which python3 / 项目 venv 皆可） -->
+        <string>/usr/bin/env</string>
+        <string>python3</string>
+        <string>-m</string>
+        <string>src.cli</string>
+        <string>server</string>
+        <string>--port</string>
+        <string>8080</string>
+        <!-- 要内嵌 IM：再追加两个 string 参数（"im 开关"与通道名，写法见 docs/OPS.md；需凭证 env） -->
+    </array>
+
+    <!-- 改成 VortoCode 仓库根目录（serve 的状态所有权就落在这个仓库的 .vortocode/） -->
+    <key>WorkingDirectory</key>
+    <string>/Users/YOU/personal_project/VortoCode</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- 自主作业开关（默认建议先关，跑顺 attach 后再逐个开）：
+             VORTOCODE_CRON=1        起 .vortocode/cron.yaml 定时作业
+             VORTOCODE_HEARTBEAT=1   起值班心跳（读 HEARTBEAT.md/BACKLOG.md，烧 token！）
+             VORTOCODE_HEARTBEAT_EVERY=30m -->
+        <key>VORTOCODE_CRON</key>
+        <string>0</string>
+        <key>VORTOCODE_HEARTBEAT</key>
+        <string>0</string>
+        <!-- 经代理出网的机器把代理也带上（launchd 不继承 shell 环境）：
+        <key>HTTPS_PROXY</key><string>http://127.0.0.1:7897</string>
+        <key>HTTP_PROXY</key><string>http://127.0.0.1:7897</string> -->
+        <!-- OPENAI_API_KEY 不用写这里：serve 启动会加载仓库 .env -->
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/YOU/Library/Logs/vortocode-serve.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOU/Library/Logs/vortocode-serve.log</string>
+</dict>
+</plist>
