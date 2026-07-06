@@ -2182,7 +2182,7 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
                              extra_system=(
                 "你是只读研究子 agent：只用工具调研代码/仓库并返回**简洁结论**，绝不修改任何东西。"
                 "读够信息就尽快收口，别把预算耗在重复读取上。")), None
-        from src.agents.subagents import build_subagent, registry_for
+        from src.agents.subagents import registry_for
         reg = registry_for(repo_root)
         spec = reg.get(agent_name)
         if spec is None:
@@ -2249,6 +2249,38 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
               "agent": "可选：自定义角色名（应用到本组全部子任务）"},
              _research_parallel, read_only=True),
     ]
+
+
+_SUB_RULES = ("\n\n【子 agent 通用约束】你是被主 agent 委派的角色，只做角色职责内的事；"
+              "完成后返回**简洁结论**（发现/建议/产出物指引），别复述过程。")
+_DEV_RULES = ("你可以用 dev_isolated/dev_parallel 真正实现代码——它们在隔离 worktree 里做、"
+              "自测绿才落 vorto/* 分支，绝不碰主工作区；除此之外你没有任何直接写文件的手段。")
+
+
+def build_subagent(repo_root: str, spec: Any, *, llm: Any = None,
+                   confirm: Any = None, on_progress: Any = None) -> MainAgent:
+    """按自定义角色定义装配一个子 agent。
+
+    `src.agents.subagents` 只保留注册表/规格解析，避免反向导入 MainAgent 形成循环依赖。
+    """
+    from src.agents.permissions import load_permissions
+
+    tools = build_read_tools(repo_root)
+    extra = spec.system_prompt + _SUB_RULES
+    if spec.tools == "dev":
+        dev = [t for t in build_dev_tools(repo_root, on_progress=on_progress, confirm=confirm)
+               if t.name in ("dev_isolated", "dev_parallel")]
+        tools = tools + dev
+        extra += _DEV_RULES
+    # 项目级权限硬拦（.vortocode/permissions.yaml deny）必须继承，避免角色文件绕过项目规则。
+    sub = MainAgent(tools, llm=llm, max_steps=spec.max_steps, extra_system=extra,
+                    permissions=load_permissions(repo_root))
+    if spec.model:
+        try:
+            sub.set_model(spec.model)
+        except Exception:  # noqa: BLE001
+            pass
+    return sub
 
 
 def build_web_tools() -> list[Tool]:
