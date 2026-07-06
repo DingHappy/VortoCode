@@ -754,7 +754,7 @@ class VortoCodeTUI(App):
             pass
 
     def _update_session_summary(self, summary: str) -> None:
-        """把最近一轮摘要写到 sessions.metadata.summary，供 /sessions 选择时辨认。"""
+        """把最近一轮摘要和轻量运行上下文写到 sessions.metadata，供 /sessions 和 /resume 辨认。"""
         if not (self._persist_on and self.session_id):
             return
         try:
@@ -764,9 +764,73 @@ class VortoCodeTUI(App):
             except Exception:  # noqa: BLE001
                 md = {}
             md["summary"] = self._summary_text(summary, 110)
+            if self._session_last_user:
+                md["last_user"] = self._session_last_user
+            if "回复：" in summary:
+                md["last_reply"] = self._summary_text(summary.rsplit("回复：", 1)[-1], 88)
+            md["mode"] = self.mode
+            branch = str(self._sb.get("branch") or "")
+            if branch:
+                md["branch"] = branch
+            md["dirty"] = bool(self._sb.get("dirty"))
+            if self.agent is not None:
+                try:
+                    usage = self.agent.context_usage(self.mode)
+                    md["context"] = {
+                        "pct": int(usage.get("pct", 0)),
+                        "policy": str(usage.get("policy") or ""),
+                        "history_messages": int(usage.get("history_messages", 0)),
+                    }
+                except Exception:  # noqa: BLE001
+                    pass
             self.sessions.store.update_session(self.session_id, metadata=json.dumps(md, ensure_ascii=False))
         except Exception:  # noqa: BLE001
             pass
+
+    def _session_metadata(self, row: dict | None) -> dict:
+        try:
+            data = json.loads((row or {}).get("metadata") or "{}")
+            return data if isinstance(data, dict) else {}
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def _session_picker_label(self, row: dict) -> str:
+        md = self._session_metadata(row)
+        name = row.get("name") or row.get("id")
+        bits = []
+        if md.get("mode"):
+            bits.append(str(md["mode"]))
+        if md.get("branch"):
+            bits.append(str(md["branch"]) + ("*" if md.get("dirty") else ""))
+        ctx = md.get("context") if isinstance(md.get("context"), dict) else {}
+        if ctx.get("pct") is not None and ctx.get("policy"):
+            bits.append(f"ctx {ctx.get('pct')}%/{ctx.get('policy')}")
+        meta = f" [{' · '.join(bits)}]" if bits else ""
+        summary = md.get("summary") or md.get("last_user") or ""
+        suffix = f" — {summary}" if summary else ""
+        return f"{name}{meta}{suffix}"
+
+    def _resume_context_text(self, row: dict | None) -> str:
+        md = self._session_metadata(row)
+        lines = ["↻ 已恢复会话"]
+        if row:
+            lines.append(f"  session: {row.get('name') or row.get('id')} ({row.get('id')})")
+        if md.get("mode") or md.get("branch"):
+            mode = md.get("mode") or "?"
+            branch = md.get("branch") or "?"
+            dirty = "*" if md.get("dirty") else ""
+            lines.append(f"  上次状态: {mode} · {branch}{dirty}")
+        if md.get("last_user"):
+            lines.append(f"  最后用户: {md['last_user']}")
+        if md.get("last_reply"):
+            lines.append(f"  最后回复: {md['last_reply']}")
+        elif md.get("summary"):
+            lines.append(f"  摘要: {md['summary']}")
+        ctx = md.get("context") if isinstance(md.get("context"), dict) else {}
+        if ctx:
+            lines.append(f"  上下文: {ctx.get('pct', 0)}% · {ctx.get('policy') or 'unknown'}"
+                         f" · {ctx.get('history_messages', 0)} messages")
+        return "\n".join(lines)
 
     def _sync_subtitle(self) -> None:
         desc = "只读/提案" if self.mode == "plan" else "可写分支"
@@ -2133,17 +2197,11 @@ class VortoCodeTUI(App):
         items = []
         for r in rows:
             summ = self.sessions.store.get_session_summary(r["id"])
-            try:
-                md = json.loads(r.get("metadata") or "{}")
-            except Exception:  # noqa: BLE001
-                md = {}
             mark = "  ← 当前" if r["id"] == self.session_id else ""
-            title = self._summary_text(r.get("name") or r["id"], 34)
-            overview = self._summary_text(md.get("summary") or "", 56)
-            tail = f" · {overview}" if overview else ""
+            label = self._session_picker_label(r)
             items.append((r["id"],
-                          f"{r['id']}  {title} · 消息 {summ.get('messages', 0)} · "
-                          f"{(r.get('updated_at') or '')[:19]}{tail}{mark}"))
+                          f"{r['id']}  {label} · 消息 {summ.get('messages', 0)} · "
+                          f"{(r.get('updated_at') or '')[:19]}{mark}"))
 
         def _done(sid) -> None:
             if sid and sid != self.session_id:
@@ -2180,10 +2238,12 @@ class VortoCodeTUI(App):
         session_summary = ""
         try:
             row = self.sessions.store.get_session(sid) or {}
-            session_md = json.loads(row.get("metadata") or "{}")
+            session_md = self._session_metadata(row)
             session_summary = str(session_md.get("summary") or "")
         except Exception:  # noqa: BLE001
+            row = {}
             session_summary = ""
+        self._emit(self._resume_context_text(row))
         self._restore_agent_history(last_snapshot, fallback_summary=session_summary)
 
     def _restore_agent_history(self, snapshot, *, fallback_summary: str = "") -> None:

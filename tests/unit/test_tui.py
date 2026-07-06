@@ -277,6 +277,57 @@ async def test_sessions_picker_resumes_selected(tmp_path):
         assert await _wait_for(app, pilot, "历史XYZ")       # 内容已回放
 
 
+def test_session_summary_records_runtime_context(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    sid = app.sessions.start_session()
+    app.session_id = sid
+    app._persist_on = True
+    app.mode = "build"
+    app._session_last_user = "继续开发会话恢复"
+    app._sb["branch"] = "feature/session"
+    app._sb["dirty"] = True
+
+    class FakeAgent:
+        def context_usage(self, mode):
+            return {"pct": 42, "policy": "preserve", "history_messages": 9}
+
+    app.agent = FakeAgent()
+    app._update_session_summary("用户：继续开发会话恢复 · 回复：已经完成一半")
+
+    row = app.sessions.store.get_session(sid)
+    md = json.loads(row["metadata"])
+    assert md["summary"] == "用户：继续开发会话恢复 · 回复：已经完成一半"
+    assert md["last_user"] == "继续开发会话恢复"
+    assert md["last_reply"] == "已经完成一半"
+    assert md["mode"] == "build"
+    assert md["branch"] == "feature/session"
+    assert md["dirty"] is True
+    assert md["context"] == {"pct": 42, "policy": "preserve", "history_messages": 9}
+
+
+def test_session_picker_label_includes_runtime_context(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    row = {
+        "id": "abc123",
+        "name": "恢复体验",
+        "metadata": json.dumps({
+            "summary": "用户要继续开发 session 摘要",
+            "mode": "build",
+            "branch": "feature/session",
+            "dirty": True,
+            "context": {"pct": 42, "policy": "preserve", "history_messages": 9},
+        }, ensure_ascii=False),
+    }
+
+    label = app._session_picker_label(row)
+
+    assert "恢复体验" in label
+    assert "build" in label
+    assert "feature/session*" in label
+    assert "ctx 42%/preserve" in label
+    assert "用户要继续开发 session 摘要" in label
+
+
 @pytest.mark.asyncio
 async def test_theme_picker_previews_and_restores_on_escape():
     """/theme 选择器：打开时高亮**当前主题**（不预览跳变）；↑↓ 实时预览；Esc 恢复原主题。"""
@@ -1474,6 +1525,35 @@ async def test_resume_replays_session(tmp_path):
         await _submit(app, pilot, f"/resume {sid}")
         assert await _wait_for(app, pilot, "历史内容ABC")    # 旧会话被回放
         assert app.session_id == sid                          # 当前会话切到它
+
+
+@pytest.mark.asyncio
+async def test_resume_shows_session_context_summary(tmp_path):
+    from src.memory.session_store import SessionStore
+
+    db = str(tmp_path / ".vortocode" / "sessions.db")
+    store = SessionStore(db)
+    sid = store.create_session("恢复上下文")
+    store.update_session(sid, metadata=json.dumps({
+        "summary": "用户：继续开发恢复体验 · 回复：完成一半",
+        "last_user": "继续开发恢复体验",
+        "last_reply": "完成一半",
+        "mode": "build",
+        "branch": "feature/session",
+        "dirty": True,
+        "context": {"pct": 51, "policy": "preserve", "history_messages": 7},
+    }, ensure_ascii=False))
+    store.add_message(sid, "assistant", "历史内容ABC", {"markup": False})
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, f"/resume {sid}")
+        assert await _wait_for(app, pilot, "↻ 已恢复会话")
+        joined = "\n".join(app.transcript)
+        assert "上次状态: build · feature/session*" in joined
+        assert "最后用户: 继续开发恢复体验" in joined
+        assert "最后回复: 完成一半" in joined
+        assert "上下文: 51% · preserve · 7 messages" in joined
 
 
 @pytest.mark.asyncio
