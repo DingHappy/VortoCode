@@ -4,12 +4,15 @@
 真正驱动 L1 并把报告写进对话区。LLM 相关命令（/run 等）需 key，不在此测。
 """
 
+import json
+
 import pytest
 
 pytest.importorskip("textual")  # 无 textual 时跳过（CI 装了 .[tui]）
 
 from textual.widgets import Input
 
+import src.tui.app as tui_app
 from src.tui.app import VortoCodeTUI, ConfirmScreen, PromptEditor
 
 
@@ -1025,6 +1028,82 @@ async def test_session_title_and_summary_are_updated(tmp_path, monkeypatch):
     assert row["name"].startswith("帮我看看 TUI session")
     assert "TUI session" in md["summary"]
     assert "修改建议" in md["summary"]
+
+
+def test_tui_run_disables_mouse_capture_for_native_copy(monkeypatch):
+    called = {}
+
+    def fake_run(self, **kwargs):
+        called.update(kwargs)
+
+    monkeypatch.setattr(tui_app.VortoCodeTUI, "run", fake_run)
+    tui_app.run()
+
+    assert called["mouse"] is False
+
+
+@pytest.mark.asyncio
+async def test_resume_restores_agent_structured_state(monkeypatch, tmp_path):
+    import src.llm.client as llmmod
+    from src.memory.session_store import SessionStore
+
+    class FakeLLM:
+        def __init__(self, *a, **k):
+            pass
+
+    monkeypatch.setattr(llmmod, "LLMClient", FakeLLM)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    store = SessionStore(str(tmp_path / ".vortocode" / "sessions.db"))
+    sid = store.create_session("结构化快照")
+    snapshot = {
+        "version": 2,
+        "history": [{"role": "user", "content": "旧目标：写路线图"}],
+        "summary": "压缩纪要：已经讨论过路线图阶段。",
+        "task_anchor": "旧目标：写路线图",
+        "plan": [{"step": "补文档", "status": "pending"}],
+    }
+    store.add_message(sid, "agent", json.dumps(snapshot, ensure_ascii=False), {"agent_history": True})
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, f"/resume {sid}")
+        assert await _wait_for(app, pilot, "已恢复对话上下文")
+        assert app.agent is not None
+        assert app.agent.history == snapshot["history"]
+        assert app.agent._summary == snapshot["summary"]
+        assert app.agent._task_anchor == snapshot["task_anchor"]
+        assert app.agent.plan == snapshot["plan"]
+
+
+@pytest.mark.asyncio
+async def test_resume_legacy_agent_history_uses_session_summary(monkeypatch, tmp_path):
+    import src.llm.client as llmmod
+    from src.memory.session_store import SessionStore
+
+    class FakeLLM:
+        def __init__(self, *a, **k):
+            pass
+
+    monkeypatch.setattr(llmmod, "LLMClient", FakeLLM)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    store = SessionStore(str(tmp_path / ".vortocode" / "sessions.db"))
+    sid = store.create_session("旧格式快照")
+    store.update_session(sid, metadata=json.dumps({"summary": "会话摘要：用户要继续 phase 1 路线图。"}, ensure_ascii=False))
+    store.add_message(
+        sid,
+        "agent",
+        json.dumps([{"role": "user", "content": "我想继续做 phase 1"}], ensure_ascii=False),
+        {"agent_history": True},
+    )
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, f"/resume {sid}")
+        assert await _wait_for(app, pilot, "已恢复对话上下文")
+        assert app.agent is not None
+        assert app.agent._summary == "会话摘要：用户要继续 phase 1 路线图。"
 
 
 @pytest.mark.asyncio

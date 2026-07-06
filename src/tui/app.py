@@ -1552,19 +1552,48 @@ class VortoCodeTUI(App):
             else:
                 self._emit(m["content"])
         self._persist_on = True
-        self._restore_agent_history(last_snapshot)
+        session_summary = ""
+        try:
+            row = self.sessions.store.get_session(sid) or {}
+            session_md = json.loads(row.get("metadata") or "{}")
+            session_summary = str(session_md.get("summary") or "")
+        except Exception:  # noqa: BLE001
+            session_summary = ""
+        self._restore_agent_history(last_snapshot, fallback_summary=session_summary)
 
-    def _restore_agent_history(self, snapshot) -> None:
+    def _restore_agent_history(self, snapshot, *, fallback_summary: str = "") -> None:
         """从快照重建 agent 历史，让 /resume 后主 agent 记得之前聊了什么。"""
         if not snapshot:
+            if fallback_summary:
+                self.agent = self._build_main_agent()
+                self.agent._summary = fallback_summary
+                self._chrome("[dim]↻ 已恢复会话摘要（可继续接上历史话题）[/dim]")
             return
         try:
-            hist = json.loads(snapshot)
+            raw = json.loads(snapshot)
         except Exception:  # noqa: BLE001
             return
-        if isinstance(hist, list) and hist:
+        summary = fallback_summary
+        task_anchor = ""
+        plan = []
+        if isinstance(raw, dict):
+            hist = raw.get("history") if isinstance(raw.get("history"), list) else []
+            summary = str(raw.get("summary") or summary or "")
+            task_anchor = str(raw.get("task_anchor") or "")
+            plan = raw.get("plan") if isinstance(raw.get("plan"), list) else []
+        elif isinstance(raw, list):
+            hist = raw
+        else:
+            return
+        if hist or summary or plan:
             self.agent = self._build_main_agent()
             self.agent.history = hist
+            if summary:
+                self.agent._summary = summary
+            if task_anchor:
+                self.agent._task_anchor = task_anchor
+            if plan:
+                self.agent.plan = plan
             self._chrome("[dim]↻ 已恢复对话上下文（主 agent 记得之前的对话）[/dim]")
 
     def _cmd_new(self) -> None:
@@ -1954,13 +1983,23 @@ class VortoCodeTUI(App):
             await self._speak_text(outcome.reply)
         return True
 
+    def _agent_snapshot(self) -> str:
+        """主 agent 可恢复状态；兼容历史压缩后继续对话。"""
+        data = {
+            "version": 2,
+            "history": getattr(self.agent, "history", [])[-40:],
+            "summary": getattr(self.agent, "_summary", ""),
+            "task_anchor": getattr(self.agent, "_task_anchor", ""),
+            "plan": getattr(self.agent, "plan", []),
+        }
+        return json.dumps(data, ensure_ascii=False)
+
     def _persist_agent_history(self) -> None:
         """把 agent 当前上下文快照进会话，供 /resume 跨会话续上记忆。失败不影响交互。"""
         if not (self.agent and self.session_id and self._persist_on):
             return
         try:
-            snap = json.dumps(self.agent.history[-40:], ensure_ascii=False)
-            self.sessions.add_message("agent", snap, {"agent_history": True})
+            self.sessions.add_message("agent", self._agent_snapshot(), {"agent_history": True})
         except Exception:  # noqa: BLE001
             pass
 
@@ -2743,4 +2782,4 @@ class VortoCodeTUI(App):
 
 def run(attach: str | None = None) -> None:
     """启动 TUI（供 CLI 调用）。attach 非 None = 协议客户端模式（回合交常驻 serve 跑）。"""
-    VortoCodeTUI(repo_root=".", attach=attach).run()
+    VortoCodeTUI(repo_root=".", attach=attach).run(mouse=False)
