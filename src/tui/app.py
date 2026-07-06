@@ -32,7 +32,7 @@ from src.memory.session_store import SessionManager
 
 SLASH_COMMANDS = [
     "/analyze", "/improve", "/fix", "/run", "/apply", "/agents", "/runagent", "/skills", "/mcp",
-    "/artifacts", "/diff", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
+    "/artifacts", "/diff", "/git", "/commit", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
     "/context", "/compact", "/permissions", "/memory", "/tools", "/audit", "/speak", "/commands", "/hooks", "/clear", "/help", "/quit",
 ]
 # 必须带参数的命令：补全面板里回车不直接执行，先补成 "/cmd " 让用户接着填参数
@@ -50,6 +50,8 @@ COMMAND_INFO = {
     "/mcp": "接入 MCP 服务器工具（build 门控）",
     "/artifacts": "列出已发布的制品（画廊在 /artifacts）",
     "/diff": "看工作区改动（支持 stat/cached/路径过滤）",
+    "/git": "查看 git 状态、staged/unstaged diffstat",
+    "/commit": "提交已 staged 改动；all 先 git add -A",
     "/sessions": "列出历史会话",
     "/resume": "恢复某个历史会话",
     "/new": "新开一个会话",
@@ -127,6 +129,8 @@ HELP = """可用命令:
   /audit              查看工具调用审计日志（.vortocode/audit.log）
   /artifacts          列出已发布的制品（标题/版本/链接；浏览器开 /artifacts 是画廊）
   /diff [stat|cached] [路径]  看工作区改动（+绿/-红着色）—— review 主 agent 改了什么
+  /git                查看 git 状态、staged/unstaged diffstat
+  /commit <msg>       提交已 staged 改动；/commit all <msg> 先 git add -A
   /mcp [list|off]     接入 config/mcp.yaml 的 MCP 服务器工具（build 门控）
   /agents             列出已创建的 agent（网页/API 建的，同一份存储）
   /runagent <id> <任务>  用某个已创建的 agent 执行任务（流式）
@@ -1552,6 +1556,10 @@ class VortoCodeTUI(App):
             self._cmd_artifacts()
         elif cmd == "diff":
             self._cmd_diff(arg)
+        elif cmd == "git":
+            self._cmd_git(arg)
+        elif cmd == "commit":
+            self._cmd_commit(arg)
         elif cmd == "mcp":
             self._cmd_mcp(arg)
         elif cmd == "agents":
@@ -1848,6 +1856,65 @@ class VortoCodeTUI(App):
             self._emit(diff.rstrip())
             return
         self._render_diff_text(diff, max_lines=400)
+
+    def _cmd_git(self, arg: str = "") -> None:
+        """/git：查看当前分支、改动文件、staged/unstaged diffstat。"""
+        if (arg or "").strip():
+            self._emit("用法: /git")
+            return
+        from src.agents.git_workflow import format_status_summary, status_summary
+        self._emit(format_status_summary(status_summary(self.repo_root)))
+
+    def _cmd_commit(self, arg: str = "") -> None:
+        """/commit <msg>：提交 staged 改动；/commit all <msg> 先 git add -A。"""
+        import shlex
+        try:
+            tokens = shlex.split(arg or "")
+        except ValueError as e:
+            self._emit(f"用法: /commit <message> 或 /commit all <message>（参数解析失败: {e}）")
+            return
+        if not tokens:
+            self._emit("用法: /commit <message> 或 /commit all <message>")
+            return
+        stage_all = tokens[0].lower() == "all"
+        message = " ".join(tokens[1:] if stage_all else tokens).strip()
+        if not message:
+            self._emit("用法: /commit <message> 或 /commit all <message>")
+            return
+
+        async def _run():
+            from src.agents.git_workflow import commit_changes, has_any_changes, has_staged_changes
+            if stage_all:
+                if not has_any_changes(self.repo_root):
+                    self._emit("没有工作区改动可提交。")
+                    return
+            elif not has_staged_changes(self.repo_root):
+                self._emit("没有 staged 改动可提交。用 /commit all <message> 可先 git add -A。")
+                return
+            if self.mode != "build":
+                prompt = "当前是 plan 模式。切到 build 并执行本地 git commit？"
+            else:
+                prompt = "执行本地 git commit？"
+            detail = f"\n  message: {message}"
+            if stage_all:
+                detail += "\n  会先执行: git add -A"
+            if not await self._confirm_command(prompt + detail):
+                self._emit("已取消 commit。")
+                return
+            if self.mode != "build":
+                self.mode = "build"
+                self._sync_subtitle()
+                self._chrome("[green]→ 已切到 build 模式[/green]")
+                self._record_mode_change()
+            result = await asyncio.to_thread(commit_changes, self.repo_root, message, stage_all=stage_all)
+            if not result.get("ok"):
+                self._emit(f"commit 失败: {result.get('error', '')}")
+                return
+            self._audit_event("commit", {"sha": result.get("sha"), "stage_all": stage_all, "message": message})
+            self._emit(f"已提交 {result.get('sha')}: {message}")
+            self._render_statusbar()
+
+        self.run_worker(_run(), exclusive=True, group="git")
 
     def _user_commands(self) -> dict:
         """惰性加载并缓存 .vortocode/commands 下的用户自定义命令（/commands reload 重扫）。"""

@@ -1983,6 +1983,72 @@ def test_cmd_diff_rejects_unknown_git_flags(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_cmd_git_shows_status_summary(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "f.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "f.py").write_text("x = 2\n")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/git")
+        assert await _wait_for(app, pilot, "Git 状态")
+        joined = "\n".join(app.transcript)
+        assert "f.py" in joined
+        assert "未 staged diffstat" in joined
+
+
+@pytest.mark.asyncio
+async def test_cmd_commit_commits_staged_after_confirm(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "f.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "f.py").write_text("x = 2\n")
+    _git(tmp_path, "add", "f.py")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/commit update f")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "已提交")
+        assert b"update f" in _git(tmp_path, "log", "-1", "--pretty=%s").stdout
+        assert app.mode == "build"
+        assert '"event": "commit"' in (tmp_path / ".vortocode" / "audit.log").read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_cmd_commit_all_stages_before_commit(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "f.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "g.py").write_text("g = 1\n")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/build")
+        await _submit(app, pilot, "/commit all add g")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "已提交")
+        assert b"add g" in _git(tmp_path, "log", "-1", "--pretty=%s").stdout
+
+
+@pytest.mark.asyncio
+async def test_cmd_commit_without_staged_changes_does_not_confirm(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "f.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "f.py").write_text("x = 2\n")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/commit update")
+        assert await _wait_for(app, pilot, "没有 staged 改动")
+        assert not app._inline_confirm_active()
+
+
+@pytest.mark.asyncio
 async def test_cmd_diff_empty_is_graceful(tmp_path):
     _git(tmp_path, "init", "-q")
     app = VortoCodeTUI(repo_root=str(tmp_path))
