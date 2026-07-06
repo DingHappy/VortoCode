@@ -67,7 +67,7 @@ COMMAND_INFO = {
     "/compact": "手动压缩旧对话上下文；preview 只预估",
     "/permissions": "查看/解释工具权限；可 deny 规则或 reset 会话放行",
     "/memory": "查看/管理项目指令和跨会话记忆",
-    "/tasks": "列出/查看 dev_auto 持久化计划",
+    "/tasks": "列出/查看/续跑 dev_auto 持久化计划",
     "/tools": "列出主 agent 工具及读写权限",
     "/audit": "查看工具调用审计日志",
     "/speak": "朗读 agent 回复开关（mimo-v2.5-tts，需 key）",
@@ -149,7 +149,7 @@ HELP = """可用命令:
   /compact [preview]  手动压缩旧对话上下文；preview 只预估
   /permissions [操作] 查看/解释工具权限；explain <tool> [value]，deny <tool> [glob] 加规则
   /memory [操作]      查看/管理长期记忆；list/delete/auto/add/init
-  /tasks [show <id>]  列出或查看 dev_auto 持久化计划
+  /tasks [show|resume <id>]  列出、查看或续跑 dev_auto 持久化计划
   /clear              清屏
   /help               显示本帮助
   /quit               退出（也可 Ctrl+C）
@@ -2048,16 +2048,17 @@ class VortoCodeTUI(App):
         )
 
     def _cmd_tasks(self, arg: str = "") -> None:
-        """/tasks：列出 dev_auto 持久化计划；/tasks show <plan_id> 查看详情。"""
+        """/tasks：列出 dev_auto 持久化计划；show 看详情；resume 续跑。"""
         raw = (arg or "").strip()
         from src.agents.dev_plan import format_plan_detail, format_plan_list, list_plans, load_plan
         if not raw or raw.lower() in {"list", "ls"}:
             self._emit(format_plan_list(list_plans(self.repo_root)))
             return
         parts = raw.split(maxsplit=1)
-        if parts[0].lower() in {"show", "detail", "details"}:
+        action = parts[0].lower()
+        if action in {"show", "detail", "details", "resume", "continue"}:
             if len(parts) < 2 or not parts[1].strip():
-                self._emit("用法: /tasks show <plan_id>")
+                self._emit("用法: /tasks show <plan_id> 或 /tasks resume <plan_id>")
                 return
             pid = parts[1].strip()
         else:
@@ -2065,6 +2066,28 @@ class VortoCodeTUI(App):
         plan = load_plan(self.repo_root, pid)
         if plan is None:
             self._emit(f"找不到 dev 计划 {pid}。用 /tasks 查看最近计划。")
+            return
+        if action in {"resume", "continue"}:
+            prompt = (
+                f"续跑 dev 计划 {plan.plan_id}？\n"
+                f"任务: {plan.task[:120]}\n"
+                f"分支: {plan.branch} · 状态: {plan.status}\n"
+                "这会切到 build，并让主 agent 调用 dev_resume。"
+            )
+
+            def _done(ok: bool | None) -> None:
+                if not ok:
+                    self._emit("已取消续跑计划。")
+                    return
+                if self.mode != "build":
+                    self.mode = "build"
+                    self._sync_subtitle()
+                    self._chrome("[green]→ 已切到 build 模式[/green]")
+                    self._record_mode_change()
+                self._continue_text_route(
+                    f"请续跑 dev 计划 plan_id={plan.plan_id}，调用 dev_resume 工具继续未完成任务。")
+
+            self._begin_inline_confirm(prompt, scope="writes", callback=_done)
             return
         self._emit(format_plan_detail(plan))
 

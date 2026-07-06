@@ -1028,6 +1028,47 @@ def test_cmd_tasks_unknown_and_missing_show_id(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_cmd_tasks_resume_confirms_switches_build_and_routes(tmp_path):
+    from src.agents import dev_plan as dp
+
+    plan = dp.DevPlan.new("续跑任务", "vorto/resume", "main", plan_id="resume-me")
+    dp.save_plan(str(tmp_path), plan)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    routed = {}
+    async with app.run_test() as pilot:
+        app._continue_text_route = lambda text: routed.setdefault("text", text)
+        await _submit(app, pilot, "/tasks resume resume-me")
+        assert await _wait_inline_confirm(app, pilot)
+        assert "续跑 dev 计划 resume-me" in app.query_one("#palette").render().plain
+        await pilot.press("y")
+        await pilot.pause()
+
+        assert app.mode == "build"
+        assert "plan_id=resume-me" in routed["text"]
+        assert "dev_resume" in routed["text"]
+
+
+@pytest.mark.asyncio
+async def test_cmd_tasks_resume_cancel_does_not_route(tmp_path):
+    from src.agents import dev_plan as dp
+
+    plan = dp.DevPlan.new("续跑任务", "vorto/resume", "main", plan_id="resume-me")
+    dp.save_plan(str(tmp_path), plan)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    routed = {}
+    async with app.run_test() as pilot:
+        app._continue_text_route = lambda text: routed.setdefault("text", text)
+        await _submit(app, pilot, "/tasks resume resume-me")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("n")
+        await pilot.pause()
+
+        assert app.mode == "plan"
+        assert routed == {}
+        assert any("已取消续跑计划" in t for t in app.transcript)
+
+
+@pytest.mark.asyncio
 async def test_auto_memory_candidate_prompts_and_saves(tmp_path):
     app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
