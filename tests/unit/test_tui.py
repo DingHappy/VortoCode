@@ -574,6 +574,39 @@ async def test_research_parallel_fans_out(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_research_parallel_expands_with_reason(monkeypatch, tmp_path):
+    import src.llm.client as llmmod
+
+    class FakeLLM:
+        def __init__(self, *a, **k):
+            self.n = 0
+
+        async def chat(self, messages, **k):
+            self.n += 1
+            is_sub = any("研究子 agent" in m["content"] for m in messages if m["role"] == "system")
+            if is_sub:
+                return {"content": "这是子结论。"}
+            if self.n == 1:
+                return {"content": (
+                    '{"tool":"research_parallel","args":{'
+                    '"tasks":["问题A","问题B","问题C"],'
+                    '"max_parallel":3,'
+                    '"reason":"用户明确要求多角度全面审查"'
+                    '}}'
+                )}
+            return {"content": "已汇总三路结论。"}
+
+    monkeypatch.setattr(llmmod, "LLMClient", FakeLLM)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "多角度全面审查 A/B/C")
+        assert await _wait_for(app, pilot, "并行子 agent（3）")
+        assert await _wait_for(app, pilot, "已汇总三路结论。")
+
+
+@pytest.mark.asyncio
 async def test_save_skill_writes_and_registers(monkeypatch, tmp_path):
     # build 模式下主 agent 调 save_skill → 确认 → 写出 SKILL.md 并原地注册。
     import src.llm.client as llmmod

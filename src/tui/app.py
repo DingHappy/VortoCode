@@ -2216,7 +2216,8 @@ class VortoCodeTUI(App):
                 sub._on_tool = self._audit_tool
                 mode = "build" if spec.tools == "dev" else "plan"
             else:
-                sub = MainAgent(read_tools, max_steps=12, on_tool=self._audit_tool, extra_system=(
+                child_steps = 4 if self.mode == "plan" else 12
+                sub = MainAgent(read_tools, max_steps=child_steps, on_tool=self._audit_tool, extra_system=(
                     "你是只读研究子 agent：只用工具调研代码/仓库并返回简洁结论，绝不修改任何东西。"
                     "读够信息就尽快收口，别把预算耗在重复读取上。"))
                 mode = self.mode
@@ -2244,7 +2245,12 @@ class VortoCodeTUI(App):
             tasks = args.get("tasks") or args.get("descriptions") or []
             if isinstance(tasks, str):
                 tasks = [tasks]
-            tasks = [str(t).strip() for t in tasks if str(t).strip()][:5]
+            if self.mode == "plan":
+                from src.agents.main_agent import research_parallel_cap
+                max_tasks = research_parallel_cap(args, default=2, maximum=5)
+            else:
+                max_tasks = 5
+            tasks = [str(t).strip() for t in tasks if str(t).strip()][:max_tasks]
             if not tasks:
                 return "research_parallel 需要 tasks（字符串列表，每项一个独立子问题）。"
             import asyncio
@@ -2320,8 +2326,11 @@ class VortoCodeTUI(App):
                  {"content": "要记住的内容"}, _t_save_memory, read_only=True),
             Tool("recall_memory", "检索跨会话长期记忆（不传 query 则列出全部）",
                  {"query": "可选，关键词"}, _t_recall_memory, read_only=True),
-            Tool("research_parallel", "并行委派多个只读子 agent 同时研究不同子问题，汇总各自结论（最多 5 个）",
+            Tool("research_parallel", "并行委派多个只读子 agent 同时研究不同子问题，汇总各自结论。"
+                 "plan 默认最多 2 个；用户明确要求全面/多角度/深挖时，可传 max_parallel 和 reason 放宽到 5。",
                  {"tasks": "子问题字符串列表",
+                  "max_parallel": "可选，并行子 agent 数；plan 默认 2，需配合 reason 才能超过默认，硬上限 5",
+                  "reason": "可选；说明为什么需要超过默认并行度，如用户明确要求全面审查/多角度分析",
                   "agent": "可选：自定义角色名（应用到本组全部子任务）"},
                  _t_research_parallel, read_only=True),
             Tool("use_skill", "加载某个技能(SKILL.md)的完整指令到上下文，然后据此执行",
