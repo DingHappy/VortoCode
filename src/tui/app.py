@@ -65,7 +65,7 @@ COMMAND_INFO = {
     "/usage": "本会话 token 用量（reset 清零）",
     "/context": "查看/切换上下文策略（auto/compact/balanced/preserve）",
     "/compact": "手动压缩旧对话上下文；preview 只预估",
-    "/permissions": "查看/切换工具权限；可 deny 规则或 reset 会话放行",
+    "/permissions": "查看/解释工具权限；可 deny 规则或 reset 会话放行",
     "/memory": "查看/管理项目指令和跨会话记忆",
     "/tools": "列出主 agent 工具及读写权限",
     "/audit": "查看工具调用审计日志",
@@ -146,7 +146,7 @@ HELP = """可用命令:
   /usage [reset]      本会话 token 用量（估算；reset 清零）
   /context [策略]     查看/切换上下文策略（auto/compact/balanced/preserve）
   /compact [preview]  手动压缩旧对话上下文；preview 只预估
-  /permissions [操作] 查看工具权限；plan/build 切模式，reset 清会话放行，deny <tool> [glob] 加规则
+  /permissions [操作] 查看/解释工具权限；explain <tool> [value]，deny <tool> [glob] 加规则
   /memory [操作]      查看/管理长期记忆；list/delete/auto/add/init
   /clear              清屏
   /help               显示本帮助
@@ -1719,12 +1719,98 @@ class VortoCodeTUI(App):
         self.agent = None          # 新规则立即影响下一次主 agent 构建
         return cfg
 
+    def _permission_effective_text(self) -> str:
+        from src.agents.permissions import load_permissions
+        agent = self.agent or self._build_main_agent()
+        perm = load_permissions(self.repo_root)
+        lines = [
+            "[b]有效工具权限[/b]",
+            f"当前模式: {self.mode}",
+            f"本会话始终允许: 写={'yes' if self._allow_writes_session else 'no'} · "
+            f"命令={'yes' if self._allow_commands_session else 'no'}",
+        ]
+        for t in agent._tool_list:
+            deny = perm.denied(t.name, {})
+            if deny:
+                status = "deny"
+            elif self.mode == "plan" and not t.read_only:
+                status = "needs build"
+            elif t.read_only:
+                status = "allowed"
+            elif t.name == "run_command" and self._allow_commands_session:
+                status = "allowed this session"
+            elif t.name != "run_command" and self._allow_writes_session:
+                status = "allowed this session"
+            else:
+                status = "confirm required"
+            gate = "只读" if t.read_only else "写/重型"
+            lines.append(f"  {t.name} [{gate}] -> {status}")
+        if perm.rules:
+            lines.append("")
+            lines.append("项目 deny 规则:")
+            for tool, glob in perm.rules:
+                lines.append(f"  deny {tool}: {glob if glob is not None else '*'}")
+        return "\n".join(lines)
+
+    def _permission_explain_text(self, tool_name: str, value: str = "") -> str:
+        from src.agents.permissions import load_permissions, primary_arg_keys
+        agent = self.agent or self._build_main_agent()
+        tool = agent.tools.get(tool_name)
+        if tool is None:
+            names = ", ".join(sorted(agent.tools)[:20])
+            return f"未知工具 {tool_name}。可用工具示例: {names}"
+        perm = load_permissions(self.repo_root)
+        keys = primary_arg_keys(tool_name)
+        args = {keys[0]: value} if (value and keys) else {}
+        deny = perm.denied(tool_name, args)
+        matching = perm.rules_for(tool_name)
+        lines = [
+            f"[b]权限解释: {tool_name}[/b]",
+            f"工具类型: {'只读' if tool.read_only else '写/重型'}",
+            f"当前模式: {self.mode}",
+        ]
+        if keys:
+            lines.append(f"主参数键: {', '.join(keys)}" + (f"；本次值: {value}" if value else ""))
+        if matching:
+            lines.append("匹配到项目规则:")
+            for _, glob in matching:
+                lines.append(f"  deny {tool_name}: {glob if glob is not None else '*'}")
+        else:
+            lines.append("项目规则: 无针对该工具的 deny")
+        if deny:
+            lines.append(f"结论: 硬拦截。原因: {deny}")
+        elif self.mode == "plan" and not tool.read_only:
+            lines.append("结论: 当前 plan 模式不可直接执行；需要切 build，且仍可能要求确认。")
+        elif tool.read_only:
+            lines.append("结论: 当前模式允许执行；仍会受项目 deny 规则硬拦。")
+        elif tool_name == "run_command" and self._allow_commands_session:
+            lines.append("结论: build 下本会话已允许命令；危险命令和 deny 规则仍会硬拦。")
+        elif tool_name != "run_command" and self._allow_writes_session:
+            lines.append("结论: build 下本会话已允许写/重型工具；deny 规则仍会硬拦。")
+        else:
+            lines.append("结论: build 下可请求执行，但需要人工确认。")
+        if matching and not value and any(glob is not None for _, glob in matching):
+            lines.append("提示: 该工具有参数 glob 规则；用 /permissions explain <tool> <value> 可判断具体值是否命中。")
+        return "\n".join(lines)
+
     def _cmd_permissions(self, arg: str = "") -> None:
         """/permissions：查看本会话权限状态与 deny 规则；plan/build/reset/deny 可管理权限。"""
         raw = (arg or "").strip()
         low = raw.lower()
         if low in ("plan", "build"):
             self._set_mode(low)
+        elif low in ("show --effective", "effective", "show effective"):
+            self._emit(self._permission_effective_text())
+            return
+        elif low.startswith("explain "):
+            parts = raw.split(maxsplit=2)
+            tool = parts[1].strip() if len(parts) > 1 else ""
+            value = parts[2].strip() if len(parts) > 2 else ""
+            if not tool:
+                self._emit("用法: /permissions explain <tool> [value]")
+                return
+            self._emit(self._permission_explain_text(tool, value))
+            return
         elif low in ("reset", "reset-session", "session-reset"):
             self._allow_writes_session = False
             self._allow_commands_session = False
@@ -1744,7 +1830,7 @@ class VortoCodeTUI(App):
             shown = f"{tool}: {pattern}" if pattern else tool
             self._chrome(f"[green]已追加 deny 规则：{shown}（{cfg}）[/green]")
         elif raw:
-            self._emit("用法: /permissions [plan|build|reset|deny <tool> [glob]]")
+            self._emit("用法: /permissions [show --effective|explain <tool> [value]|plan|build|reset|deny <tool> [glob]]")
             return
         from src.agents.permissions import load_permissions
         agent = self.agent or self._build_main_agent()
@@ -1778,6 +1864,7 @@ class VortoCodeTUI(App):
             "```",
             "",
             "提示: 选择“本会话始终允许”只影响当前 TUI 会话；项目 deny 规则始终优先硬拦。",
+            "排查: /permissions show --effective · /permissions explain <tool> [value]",
         ]
         self._emit("\n".join(lines))
 

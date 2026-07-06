@@ -1256,6 +1256,50 @@ def test_cmd_permissions_deny_rejects_bad_tool_name(tmp_path):
     assert not (tmp_path / ".vortocode" / "permissions.yaml").exists()
 
 
+def test_cmd_permissions_show_effective_lists_statuses(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda *a, **k: None
+    app._cmd_permissions("deny web_fetch")
+
+    app._cmd_permissions("show --effective")
+
+    out = emitted[-1]
+    assert "有效工具权限" in out
+    assert "web_fetch" in out and "deny" in out
+    assert "run_command" in out and "needs build" in out
+
+
+def test_cmd_permissions_explain_denied_value(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda *a, **k: None
+    app._cmd_permissions('deny run_command "rm *"')
+
+    app._cmd_permissions("explain run_command rm -rf tmp")
+
+    out = emitted[-1]
+    assert "权限解释: run_command" in out
+    assert "主参数键: command, cmd" in out
+    assert "硬拦截" in out
+    assert "rm *" in out
+
+
+def test_cmd_permissions_explain_plan_gate_for_write_tool(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+
+    app._cmd_permissions("explain edit_file src/a.py")
+
+    out = emitted[-1]
+    assert "权限解释: edit_file" in out
+    assert "写/重型" in out
+    assert "plan 模式不可直接执行" in out
+
+
 def test_tui_agent_has_shared_read_tools(tmp_path):
     # TUI 与 web/CLI 同源：build_read_tools 的全部只读工具都在（含 LSP 导航 + git 只读工具）
     app = VortoCodeTUI(repo_root=str(tmp_path))
