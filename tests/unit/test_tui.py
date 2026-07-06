@@ -1030,6 +1030,25 @@ def test_dispatch_runs_user_command(tmp_path):
     assert routed["text"] == "审查以下代码找 bug：def foo(): pass"
 
 
+def test_dispatch_user_command_can_switch_declared_mode(tmp_path):
+    _write_cmd(tmp_path, "ship", "---\ndescription: 发版\nmode: build\nargument-hint: '<title>'\n---\n发版：$ARGUMENTS")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    chromed = []
+    routed = {}
+    app._chrome = lambda m, *a, **k: chromed.append(m)
+    app._say_user = lambda *a, **k: None
+    app._route = lambda text: routed.setdefault("text", text)
+
+    app._dispatch("/ship v1")
+
+    assert app.mode == "build"
+    assert routed["text"] == "发版：v1"
+    joined = "\n".join(chromed)
+    assert "切到 [b]build" in joined
+    assert "args: <title>" in joined
+    assert "mode: build" in joined
+
+
 def test_dispatch_unknown_still_errors(tmp_path):
     app = VortoCodeTUI(repo_root=str(tmp_path))
     msgs = []

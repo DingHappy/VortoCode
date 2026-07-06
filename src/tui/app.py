@@ -1400,7 +1400,7 @@ class VortoCodeTUI(App):
             vl = s.lower()
             info = dict(COMMAND_INFO)
             for n, uc in self._user_commands().items():
-                info.setdefault("/" + n, uc.description)
+                info.setdefault("/" + n, self._user_command_label(uc))
             names = SLASH_COMMANDS + ["/" + n for n in self._user_commands()]
             matches = ([c for c in names if c.startswith(vl)]  # 前缀命中优先
                        + [c for c in names                     # 子串兜底（/dit → /audit）
@@ -1571,6 +1571,17 @@ class VortoCodeTUI(App):
             self._run_user_command(cmd, arg)        # 用户自定义命令：展开模板 → 交给主 agent
         else:
             self._chrome(f"[red]未知命令 /{cmd}[/red] · /help 看命令")
+
+    def _user_command_label(self, uc) -> str:
+        """补全/列表里展示自定义命令元数据。"""
+        parts = [uc.description]
+        if getattr(uc, "argument_hint", ""):
+            parts.append(f"args: {uc.argument_hint}")
+        if getattr(uc, "mode", ""):
+            parts.append(f"mode: {uc.mode}")
+        if getattr(uc, "model", ""):
+            parts.append(f"model: {uc.model}")
+        return " · ".join(p for p in parts if p)
 
     # ---------------------------------------------------------------- 技能（SKILL.md）
     def _cmd_skills(self, arg: str) -> None:
@@ -1819,7 +1830,9 @@ class VortoCodeTUI(App):
         if uc is None:
             self._chrome(f"[red]未知命令 /{name}[/red]")
             return
-        self._chrome(f"[dim]▶ /{name}[/dim] [dim italic]{uc.description}[/dim italic]")
+        if getattr(uc, "mode", "") and uc.mode != self.mode:
+            self._set_mode(uc.mode)
+        self._chrome(f"[dim]▶ /{name}[/dim] [dim italic]{self._user_command_label(uc)}[/dim italic]")
         self._route(expand_command(uc.template, arg))
 
     def _cmd_commands(self, arg: str = "") -> None:
@@ -1829,12 +1842,12 @@ class VortoCodeTUI(App):
         cmds = self._user_commands()
         if not cmds:
             self._emit("没有自定义命令。在 `.vortocode/commands/<名>.md` 写提示模板即可用 `/<名>` 调起"
-                       "（支持 $ARGUMENTS / $1 占位符；可选 frontmatter 的 description）。")
+                       "（支持 $ARGUMENTS / $1 占位符；frontmatter 可写 description/mode/argument-hint/model）。")
             return
         lines = ["[b]自定义命令[/b]（.vortocode/commands）:"]
         for n, uc in sorted(cmds.items()):
-            lines.append(f"  [b]/{n}[/b] — {uc.description}")
-        lines.append("[dim]在文件里用 $ARGUMENTS / $1 接收参数；/commands reload 重扫。[/dim]")
+            lines.append(f"  [b]/{n}[/b] — {self._user_command_label(uc)}")
+        lines.append("[dim]在文件里用 $ARGUMENTS / $1 接收参数；frontmatter 可写 mode: plan/build；/commands reload 重扫。[/dim]")
         self._chrome("\n".join(lines))
 
     def _cmd_hooks(self) -> None:

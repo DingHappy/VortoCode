@@ -20,6 +20,32 @@ def test_load_with_frontmatter_description(tmp_path):
     assert "$ARGUMENTS" in cmds["review"].template
 
 
+def test_load_frontmatter_metadata(tmp_path):
+    (_cmd_dir(tmp_path) / "ship.md").write_text(
+        "---\n"
+        "description: 提交并开 PR\n"
+        "mode: build\n"
+        "argument-hint: '<branch> <title>'\n"
+        "model: gpt-5\n"
+        "---\n"
+        "提交 $1，并用标题 $2 开 PR。",
+        encoding="utf-8")
+
+    cmd = load_commands(str(tmp_path))["ship"]
+
+    assert cmd.description == "提交并开 PR"
+    assert cmd.mode == "build"
+    assert cmd.argument_hint == "<branch> <title>"
+    assert cmd.model == "gpt-5"
+
+
+def test_load_ignores_invalid_mode(tmp_path):
+    (_cmd_dir(tmp_path) / "note.md").write_text(
+        "---\ndescription: 记笔记\nmode: admin\n---\n记笔记。", encoding="utf-8")
+    cmd = load_commands(str(tmp_path))["note"]
+    assert cmd.mode == ""
+
+
 def test_load_description_falls_back_to_first_line(tmp_path):
     (_cmd_dir(tmp_path) / "explain.md").write_text("解释这段代码做什么。", encoding="utf-8")
     cmds = load_commands(str(tmp_path))
