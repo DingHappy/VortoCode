@@ -2201,7 +2201,8 @@ class VortoCodeTUI(App):
             agent_name 非空 → 按 .vortocode/agents/<名>.md 装配自定义角色（与工厂版同一注册表/
             同一安全面）；dev 型角色过 _confirm_write 人闸（headless 之外 TUI 有真人在）。"""
             if agent_name:
-                from src.agents.subagents import build_subagent, registry_for
+                from src.agents.main_agent import build_subagent
+                from src.agents.subagents import registry_for
                 reg = registry_for(self.repo_root)
                 spec = reg.get(agent_name)
                 if spec is None:

@@ -115,38 +115,3 @@ def subagent_catalog(repo_root: str) -> str:
         return registry_for(repo_root).catalog()
     except Exception:  # noqa: BLE001
         return ""
-
-
-_SUB_RULES = ("\n\n【子 agent 通用约束】你是被主 agent 委派的角色，只做角色职责内的事；"
-              "完成后返回**简洁结论**（发现/建议/产出物指引），别复述过程。")
-_DEV_RULES = ("你可以用 dev_isolated/dev_parallel 真正实现代码——它们在隔离 worktree 里做、"
-              "自测绿才落 vorto/* 分支，绝不碰主工作区；除此之外你没有任何直接写文件的手段。")
-
-
-def build_subagent(repo_root: str, spec: SubagentSpec, *, llm=None,
-                   confirm=None, on_progress=None):
-    """按角色定义装配一个子 agent（MainAgent）。
-
-    工具面：read=只读；dev=只读 + dev_isolated/dev_parallel（隔离流水线，落 vorto/* 分支）。
-    永远不给 task/research_parallel（不递归）、不给裸写/shell/PR 工具。
-    """
-    from src.agents.main_agent import MainAgent, build_dev_tools, build_read_tools
-    from src.agents.permissions import load_permissions
-
-    tools = build_read_tools(repo_root)
-    extra = spec.system_prompt + _SUB_RULES
-    if spec.tools == "dev":
-        dev = [t for t in build_dev_tools(repo_root, on_progress=on_progress, confirm=confirm)
-               if t.name in ("dev_isolated", "dev_parallel")]
-        tools = tools + dev
-        extra += _DEV_RULES
-    # 项目级权限硬拦（.vortocode/permissions.yaml deny）**必须继承**——否则角色文件成了
-    # 绕过项目规则的后门（deny: [dev_isolated] 时 dev 型子 agent 照跑，#148 评审）。
-    sub = MainAgent(tools, llm=llm, max_steps=spec.max_steps, extra_system=extra,
-                    permissions=load_permissions(repo_root))
-    if spec.model:
-        try:
-            sub.set_model(spec.model)
-        except Exception:  # noqa: BLE001 —— 模型名不合法就随主 agent，不拦委派
-            pass
-    return sub
