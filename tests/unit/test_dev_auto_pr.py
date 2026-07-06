@@ -158,10 +158,10 @@ async def test_review_gate_runs_before_pr(tmp_path, monkeypatch):
     import src.agents.vcs as vcs
     calls = {"n": 0}
 
-    async def fake_review(*a, **k):
+    async def fake_run_gate(*a, **k):
         calls["n"] += 1
-        return []                                             # 无 P0/P1 → 放行
-    monkeypatch.setattr(review, "review_branch", fake_review)
+        return ("\n🔍 PR 前审查通过：无 P0/P1。", False)
+    monkeypatch.setattr(review, "run_gate", fake_run_gate)
     monkeypatch.setattr(vcs, "push_and_open_pr",
                         lambda *a, **k: {"ok": True, "pushed": True, "url": "u", "error": ""})
 
@@ -180,10 +180,10 @@ async def test_review_gate_skipped_when_no_pr(tmp_path, monkeypatch):
     import src.agents.review as review
     calls = {"n": 0}
 
-    async def fake_review(*a, **k):
+    async def fake_run_gate(*a, **k):
         calls["n"] += 1
-        return []
-    monkeypatch.setattr(review, "review_branch", fake_review)
+        return ("\n🔍 PR 前审查通过：无 P0/P1。", False)
+    monkeypatch.setattr(review, "run_gate", fake_run_gate)
 
     async def yes(_m):
         return True
