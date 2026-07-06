@@ -2468,8 +2468,20 @@ class VortoCodeTUI(App):
         if self._allow_writes_session:
             ok = True
         else:
+            if name == "request_build":
+                reason = str(args.get("reason") or "").strip()
+                next_action = str(args.get("next_action") or "").strip()
+                parts = ["plan 阶段已完成必要分析，主 agent 请求切到 build 模式继续。"]
+                if reason:
+                    parts.append(f"原因：{reason}")
+                if next_action:
+                    parts.append(f"下一步：{next_action}")
+                parts.append("切到 build 模式并继续？")
+                prompt = "\n".join(parts)
+            else:
+                prompt = f"plan(只读)模式下，这一步要用写/重型工具「{name}」。切到 build 模式并继续？"
             ok = await self.push_screen_wait(ConfirmScreen(
-                f"plan(只读)模式下，这一步要用写/重型工具「{name}」。切到 build 模式并继续？"))
+                prompt))
         if ok and self.mode != "build":
             self.mode = "build"
             self._sync_subtitle()
