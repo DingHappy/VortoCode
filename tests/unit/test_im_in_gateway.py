@@ -124,11 +124,11 @@ async def test_standalone_bridge_keeps_own_runner(tmp_path):
 @pytest.mark.asyncio
 async def test_notifier_delivers_three_ways(tmp_path, monkeypatch):
     """make_notifier：台账 + WS 广播 + IM 推 owner 三路都到；一路挂不拖另两路。"""
-    import src.web.routers.realtime as rt
+    import src.web.task_events as task_events
     from src.web.routers import tasks as tr
 
     ws_got: list = []
-    monkeypatch.setattr(rt, "broadcast_notice", ws_got.append)
+    monkeypatch.setattr(task_events, "broadcast_notice", ws_got.append)
     adapter = FakeAdapter()
     im_service.start_embedded("telegram", str(tmp_path),
                               adapter=adapter, owner="42", runner=FakeRunner())
@@ -142,10 +142,10 @@ async def test_notifier_delivers_three_ways(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_notifier_without_bridge_still_two_ways(tmp_path, monkeypatch):
     """没内嵌 bridge：IM 路 no-op，台账/WS 照常（不抛、不丢）。"""
-    import src.web.routers.realtime as rt
+    import src.web.task_events as task_events
     from src.web.routers import tasks as tr
     ws_got: list = []
-    monkeypatch.setattr(rt, "broadcast_notice", ws_got.append)
+    monkeypatch.setattr(task_events, "broadcast_notice", ws_got.append)
     notify = tr.make_notifier(str(tmp_path))
     await notify("值班发现：CI 红了")
     assert any("CI 红" in n.get("text", "") for n in tr.load_notices(str(tmp_path), 10))
