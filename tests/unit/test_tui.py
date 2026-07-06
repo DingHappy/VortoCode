@@ -1591,6 +1591,52 @@ async def test_plan_escalation_switches_to_build_and_marks_done(monkeypatch, tmp
 
 
 @pytest.mark.asyncio
+async def test_plan_can_request_build_when_ready(monkeypatch, tmp_path):
+    from src.agents.main_agent import MainAgent, Tool
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    ran = []
+
+    async def w(args):
+        ran.append(args)
+        return "ok"
+
+    class FakeLLM:
+        def __init__(self):
+            self.n = 0
+
+        async def chat(self, messages, **kw):
+            self.n += 1
+            if self.n == 1:
+                return {"content": (
+                    '{"tool":"request_build","args":{'
+                    '"reason":"方案已确认，下一步需要写入代码",'
+                    '"next_action":"调用写工具落地修复"'
+                    '}}'
+                )}
+            if self.n == 2:
+                return {"content": '{"tool":"w","args":{"file":"a.py"}}'}
+            return {"content": "好了"}
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        assert app.mode == "plan"
+        app.agent = MainAgent([Tool("w", "写", {}, w, read_only=False)], llm=FakeLLM(),
+                              on_escalate=app._escalate_to_build, on_tool=app._audit_tool,
+                              plan_tool=True)
+        inp = app.query_one("#prompt", PromptEditor); inp.focus(); inp.value = "先分析，成熟后动手"
+        await pilot.press("enter")
+        assert await _wait_modal(app, pilot)
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "已切到 build")
+        for _ in range(40):
+            if ran:
+                break
+            await pilot.pause(0.05)
+        assert app.mode == "build" and ran == [{"file": "a.py"}]
+        assert await _wait_for(app, pilot, "✓ 完成")
+
+
+@pytest.mark.asyncio
 async def test_input_history_persists_across_apps(tmp_path):
     app1 = VortoCodeTUI(repo_root=str(tmp_path))
     async with app1.run_test() as pilot:
