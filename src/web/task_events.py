@@ -33,17 +33,17 @@ def task_snapshot() -> list:
 
 def broadcast_task_update(task: dict) -> None:
     """把一条后台任务状态变更广播给所有连着的 WS 客户端（best-effort）。"""
-    _broadcast(P.make_event(P.TASK_UPDATE, data=task))
-
-
-def broadcast_notice(text: str) -> None:
-    """把一条后台通知（cron 结果 / heartbeat 发现）广播给所有连着的 WS 客户端（best-effort）。"""
-    _broadcast(P.make_event(P.NOTICE, data={"text": str(text)[:2000]}))
-
-
-def _broadcast(payload: dict) -> None:
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return
-    loop.create_task(manager.broadcast(payload))
+    loop.create_task(manager.broadcast(P.make_event(P.TASK_UPDATE, data=task)))
+
+
+def broadcast_notice(text: str) -> None:
+    """把一条后台通知（cron 结果 / heartbeat 发现）广播给所有连着的 WS 客户端（best-effort）。"""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.create_task(manager.broadcast(P.make_event(P.NOTICE, data={"text": str(text)[:2000]})))
