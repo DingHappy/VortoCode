@@ -40,6 +40,19 @@ async def _wait_modal(app, pilot, tries=60):
     return False
 
 
+class _FakeKey:
+    def __init__(self, key: str):
+        self.key = key
+        self.stopped = False
+        self.prevented = False
+
+    def stop(self):
+        self.stopped = True
+
+    def prevent_default(self):
+        self.prevented = True
+
+
 def _fake_improve_loop(applied):
     import src.orchestrator.self_improve as si
 
@@ -658,6 +671,31 @@ async def test_subtitle_and_usage_command(tmp_path):
         assert any("已清零" in t for t in app.transcript)
 
 
+def test_statusbar_shows_context_usage_when_agent_exists(tmp_path):
+    class FakeAgent:
+        def context_usage(self, mode):
+            return {"used_tokens": 1234, "max_context_tokens": 8000, "pct": 15}
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    app.agent = FakeAgent()
+
+    assert app._context_usage_label() == "ctx 1.2k/8k 15%"
+
+
+@pytest.mark.asyncio
+async def test_usage_command_includes_context_usage(tmp_path):
+    class FakeAgent:
+        def context_usage(self, mode):
+            return {"used_tokens": 2000, "max_context_tokens": 8000, "pct": 25}
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app.agent = FakeAgent()
+        await _submit(app, pilot, "/usage")
+        assert await _wait_for(app, pilot, "当前上下文占用")
+        assert any("ctx 2k/8k 25%" in t for t in app.transcript)
+
+
 @pytest.mark.asyncio
 async def test_mcp_connect_wraps_tools(monkeypatch, tmp_path):
     # /mcp 连接 → 把 MCP server 工具包成 agent 工具（前缀防冲突、build 门控、handler 调 execute_tool）。
@@ -892,6 +930,17 @@ def test_build_main_agent_includes_project_instructions(tmp_path):
     assert "项目指令" in sys_prompt and "先 plan 再 build" in sys_prompt
 
 
+def test_tui_main_agent_uses_interactive_step_budget(monkeypatch, tmp_path):
+    monkeypatch.delenv("VORTOCODE_MAX_STEPS", raising=False)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    agent = app._build_main_agent()
+
+    assert agent.max_steps == 16
+    assert agent.build_auto_continues == 3
+    assert agent.plan_max_steps == 16
+    assert agent.plan_max_tool_calls == 0
+
+
 def _rename_app(tmp_path):
     pytest.importorskip("jedi")
     (tmp_path / "mod.py").write_text("def greet(n):\n    return n\n", encoding="utf-8")
@@ -971,6 +1020,40 @@ async def test_editor_ctrl_j_newline_and_enter_submits_multiline():
         await pilot.press("enter"); await pilot.pause()        # 回车提交整段
         assert inp.value == ""
         assert any("第一行" in t and "第二行" in t for t in app.transcript)
+
+
+@pytest.mark.asyncio
+async def test_editor_shift_enter_inserts_newline():
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", PromptEditor)
+        inp.focus()
+        inp.value = "第一行"
+        await inp._on_key(_FakeKey("shift+enter"))
+        inp.insert("第二行")
+        await pilot.pause()
+
+        assert inp.value == "第一行\n第二行"
+
+
+@pytest.mark.asyncio
+async def test_prompt_page_keys_scroll_result_log(monkeypatch):
+    from textual.widgets import RichLog
+
+    called = []
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        log = app.query_one("#log", RichLog)
+        monkeypatch.setattr(log, "scroll_page_up", lambda **kw: called.append(("up", kw)))
+        monkeypatch.setattr(log, "scroll_page_down", lambda **kw: called.append(("down", kw)))
+        inp = app.query_one("#prompt", PromptEditor)
+        inp.focus()
+
+        await inp._on_key(_FakeKey("pageup"))
+        await inp._on_key(_FakeKey("pagedown"))
+        await pilot.pause()
+
+        assert called == [("up", {"animate": False}), ("down", {"animate": False})]
 
 
 @pytest.mark.asyncio
@@ -1759,6 +1842,70 @@ async def test_plan_can_request_build_when_ready(monkeypatch, tmp_path):
             await pilot.pause(0.05)
         assert app.mode == "build" and ran == [{"file": "a.py"}]
         assert await _wait_for(app, pilot, "✓ 完成")
+
+
+def test_build_intent_detection_is_conservative(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+
+    assert app._looks_like_build_intent("帮我修复这个问题")
+    assert app._looks_like_build_intent("继续开发这个功能")
+    assert app._looks_like_build_intent("提交并合并吧")
+    assert not app._looks_like_build_intent("你看一下有没有修复")
+    assert not app._looks_like_build_intent("审一下现在的修改")
+    assert not app._looks_like_build_intent("有什么建议修改的地方")
+
+
+@pytest.mark.asyncio
+async def test_plan_preflight_offer_build_for_clear_dev_intent(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    seen = {}
+
+    class FakeAgent:
+        history = []
+
+        async def run_turn(self, user_text, mode="plan", **kwargs):
+            seen["mode"] = mode
+            seen["text"] = user_text
+            kwargs["emit"]("build 执行了")
+            return "build 执行了"
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app.agent = FakeAgent()
+        await _submit(app, pilot, "帮我修复这个问题")
+        assert await _wait_modal(app, pilot)
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "build 执行了")
+
+        assert app.mode == "build"
+        assert seen["mode"] == "build"
+        assert "帮我修复这个问题" in seen["text"]
+
+
+@pytest.mark.asyncio
+async def test_plan_preflight_reject_keeps_plan(monkeypatch, tmp_path):
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    seen = {}
+
+    class FakeAgent:
+        history = []
+
+        async def run_turn(self, user_text, mode="plan", **kwargs):
+            seen["mode"] = mode
+            kwargs["emit"]("plan 方案")
+            return "plan 方案"
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app.agent = FakeAgent()
+        await _submit(app, pilot, "继续开发这个功能")
+        assert await _wait_modal(app, pilot)
+        await pilot.press("n")
+        assert await _wait_for(app, pilot, "plan 方案")
+
+        assert app.mode == "plan"
+        assert seen["mode"] == "plan"
+        assert any("继续保持 plan 模式" in t for t in app.transcript)
 
 
 @pytest.mark.asyncio

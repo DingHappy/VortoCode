@@ -26,7 +26,7 @@ _MAX_TOOL_RESULT = 4000
 
 # 工具预算用尽时的"收尾"指令：禁用工具、强制据已有上下文给最终回答（而不是丢弃一切返回空）
 _FORCE_FINISH_RULE = (
-    "\n\n【收尾】工具调用预算已用尽：现在**禁止再调用任何工具**，"
+    "\n\n【收尾】本段执行预算已到：现在**禁止再调用任何工具**，"
     "直接根据上文已获取的信息给出最终结论/回答；信息不全就基于现有内容尽力总结并点明欠缺，"
     "不要输出任何工具调用 JSON。")
 
@@ -453,10 +453,11 @@ class MainAgent:
         self._tool_list = list(tools)
         self._llm = llm
         self.max_steps = _env_int("VORTOCODE_MAX_STEPS", max_steps)   # 可全局调高 build/普通预算
-        # plan 是轻量调研/提案模式：除 step 外再加真实工具调用数硬上限，防 native 一步吐多
-        # 个 tool_calls 或 research 工具 fan-out 时把成本/延迟打爆。需要深挖可显式用 env 调高。
-        self.plan_max_steps = _env_int("VORTOCODE_PLAN_MAX_STEPS", min(self.max_steps, 3))
-        self.plan_max_tool_calls = _env_int("VORTOCODE_PLAN_MAX_TOOL_CALLS", 5)
+        # build 是真实开发模式，固定 max_steps 只作为"单段预算"；到段尾会自动续跑若干段。
+        # 这个安全阈值只防模型无限循环，不应成为正常开发的停止点。
+        self.build_auto_continues = _env_int("VORTOCODE_BUILD_AUTO_CONTINUES", 3, minimum=0)
+        self.plan_max_steps = self.max_steps       # 兼容旧属性；plan 不再有专属低步数限制
+        self.plan_max_tool_calls = 0               # 0 = 不限制；保留属性给旧代码/测试读取
         # 持久任务清单：大任务的可见/可续骨架。注入系统提示让 agent 始终看得见进度；
         # on_plan 给 UI 渲染。是后续"分解→并行实现→逐件验证"的地基。
         self.plan: list[dict] = []
@@ -529,8 +530,7 @@ class MainAgent:
             "若用户想开发，请提示他按 Tab 切到 build 模式。 "
             "当你已完成必要分析/计划、判断时机成熟且下一步必须动手修改或跑 dev 流水线时，"
             "可以调用 request_build(reason,next_action) 主动请求用户切到 build；不要过早请求。 "
-            f"plan 只做轻量探查：默认最多 {self.plan_max_steps} 轮模型循环、"
-            f"{self.plan_max_tool_calls} 次工具调用；优先定向读取/搜索，信息够用就停止并总结，"
+            "plan 可以充分使用只读工具完成分析，但要目标明确、信息够用就停止并总结；"
             "不要默认启动大量子 agent。"
             if mode == "plan"
             else "build 模式下所有工具可用。"
@@ -662,6 +662,24 @@ class MainAgent:
         if anchor and not self._is_anchor_msg(kept[0] if kept else None, anchor):
             kept = [{"role": "user", "content": anchor}] + kept
         return kept
+
+    def context_usage(self, mode: str = "plan") -> dict:
+        """估算下一次模型调用会携带的上下文占用。
+
+        used_tokens 包含系统提示和当前会被保留的历史；max_context_tokens 是历史预算，
+        因此系统提示较长时 pct 可能超过 100。它是 UI 提醒，不是 API 精确 usage。
+        """
+        system_tokens = self._msg_tokens({"role": "system", "content": self._system(mode)})
+        history_tokens = sum(self._msg_tokens(m) for m in self._trimmed_history())
+        used = system_tokens + history_tokens
+        limit = max(1, self.max_context_tokens)
+        return {
+            "used_tokens": used,
+            "history_tokens": history_tokens,
+            "system_tokens": system_tokens,
+            "max_context_tokens": limit,
+            "pct": min(999, int(round(used * 100 / limit))),
+        }
 
     async def _maybe_compact(self, say: Callable[[str], None]) -> None:
         """历史 **token 数** 超预算时，把"老段"摘要成滚动纪要、物理移出 history（保留最近窗口逐字）。
@@ -897,22 +915,11 @@ class MainAgent:
         return "；".join(msgs) if msgs else None
 
     def _step_budget(self, mode: str) -> int:
-        if mode == "plan" and not self._escalated:
-            return self.plan_max_steps
         return self.max_steps
 
     def _limit_tool_calls(self, calls: list, mode: str, used: int,
                           say: Callable[[str], None]) -> tuple[list, int, bool]:
-        """按 plan 工具调用硬预算裁剪本批 calls，返回 (可执行 calls, 新 used, 是否已耗尽)。"""
-        if mode != "plan" or self._escalated:
-            return calls, used + len(calls), False
-        remaining = self.plan_max_tool_calls - used
-        if remaining <= 0:
-            say("🔧 [dim]plan 工具调用预算已用尽，转入总结。[/dim]")
-            return [], used, True
-        if len(calls) > remaining:
-            say(f"🔧 [dim]plan 工具调用预算仅剩 {remaining} 次，已截断后续工具调用并转入总结。[/dim]")
-            return calls[:remaining], used + remaining, True
+        """返回 (可执行 calls, 新 used, 是否已耗尽)；plan 不再有专属工具调用上限。"""
         return calls, used + len(calls), False
 
     async def run_turn(
@@ -953,6 +960,7 @@ class MainAgent:
         images: Optional[list] = None,
         audio: Optional[list] = None,
         reasoning_cb: Optional[Callable[[str], None]] = None,
+        auto_continues: int = 0,
     ) -> str:
         """处理一轮用户输入：循环"模型↔工具"，最终把回复交给 emit；并返回最终回复文本。
 
@@ -1072,9 +1080,23 @@ class MainAgent:
 
         # 用尽工具预算：不白跑——强制一次"无工具"收尾，把已收集的信息综合成最终回答
         # （子 agent 尤其受益：读了一堆文件也能交回结论，而不是返回空丢弃全部上下文）。
-        return await self._force_finish(mode, stream_cb, emit, reasoning_cb, stream_shown)
+        if self._should_auto_continue_build(mode, auto_continues):
+            say(f"[dim]↻ build 单段预算已用完，自动继续当前任务（{auto_continues + 1}/{self.build_auto_continues}）[/dim]")
+            return await self._run_turn_body(
+                "继续上一轮任务。刚才只是到达 build 的单段执行预算，不代表任务完成；"
+                "请基于已有上下文继续推进，优先完成当前计划，不要重新从头摸底。",
+                mode="build", say=say, emit=emit,
+                stream_cb=stream_cb, reasoning_cb=reasoning_cb,
+                auto_continues=auto_continues + 1)
+        return await self._force_finish(mode, say, stream_cb, emit, reasoning_cb, stream_shown)
+
+    def _should_auto_continue_build(self, mode: str, auto_continues: int) -> bool:
+        if mode == "plan" and not self._escalated:
+            return False
+        return auto_continues < self.build_auto_continues
 
     async def _force_finish(self, mode: str,
+                            say: Callable[[str], None],
                             stream_cb: Optional[Callable[[str], None]],
                             emit: Callable[[str], None],
                             reasoning_cb: Optional[Callable[[str], None]] = None,
@@ -1087,13 +1109,45 @@ class MainAgent:
         try:
             content = (await self._complete(messages, stream_cb, reasoning_cb, stream_shown)).strip()
         except Exception:  # noqa: BLE001
-            emit("（已达工具调用上限；收尾时网络/中转站出错，请稍后重试或换种说法。）")
+            emit(self._budget_exhausted_message(mode, finish_error=True))
             return ""
         if parse_tool_call(content) is not None:    # 模型仍想调工具：放弃，给降级提示
             content = ""
+        if not content and await self._try_budget_escalation(mode):
+            return await self._run_turn_body(
+                "继续上一轮任务。plan 阶段单段执行预算已到，用户已同意切到 build；"
+                "请基于已有上下文继续完成，不要重新从头开始。",
+                mode="build", say=say, emit=emit,
+                stream_cb=stream_cb, reasoning_cb=reasoning_cb,
+                auto_continues=0)
         self.history.append({"role": "assistant", "content": content or "(无回复)"})
-        emit(content or "（已达工具调用上限，且未能据已有信息收尾；可换种说法，或用 /run 直接开发。）")
+        emit(content or self._budget_exhausted_message(mode))
         return content
+
+    def _budget_exhausted_message(self, mode: str, *, finish_error: bool = False) -> str:
+        if mode == "plan" and not self._escalated:
+            if finish_error:
+                return "（plan 单段执行预算已到；收尾时网络/中转站出错，请稍后重试，或切到 build 后继续。）"
+            return "（plan 单段执行预算已到，且未能据已有信息收尾；请切到 build 后继续，或缩小问题范围。）"
+        if finish_error:
+            return "（build 自动续跑的安全阈值已到；收尾时网络/中转站出错。可以直接输入“继续”，我会接着当前上下文推进。）"
+        return "（build 自动续跑的安全阈值已到，且未能据已有信息收尾；可以直接输入“继续”，我会接着当前上下文推进。）"
+
+    async def _try_budget_escalation(self, mode: str) -> bool:
+        """plan 预算耗尽且无法收尾时，让 UI 有机会切到 build 并继续当前任务。"""
+        if mode != "plan" or self._escalated or self._on_escalate is None:
+            return False
+        try:
+            ok = await self._on_escalate("request_build", {
+                "reason": "plan 阶段单段执行预算已到，已有信息不足以可靠收尾；继续需要切到 build 模式推进。",
+                "next_action": "基于已读取的上下文继续当前任务，必要时执行写文件或开发流水线。",
+            })
+        except Exception:  # noqa: BLE001
+            return False
+        if ok:
+            self._escalated = True
+            return True
+        return False
 
 
 @dataclass
