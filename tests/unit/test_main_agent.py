@@ -192,6 +192,20 @@ def test_env_overrides_max_steps(monkeypatch):
     assert MainAgent([], max_steps=6).max_steps == 6            # 不设则用默认
 
 
+def test_plan_budget_defaults_and_env(monkeypatch):
+    monkeypatch.delenv("VORTOCODE_PLAN_MAX_STEPS", raising=False)
+    monkeypatch.delenv("VORTOCODE_PLAN_MAX_TOOL_CALLS", raising=False)
+    a = MainAgent([], max_steps=6)
+    assert a.plan_max_steps == 3
+    assert a.plan_max_tool_calls == 5
+
+    monkeypatch.setenv("VORTOCODE_PLAN_MAX_STEPS", "8")
+    monkeypatch.setenv("VORTOCODE_PLAN_MAX_TOOL_CALLS", "9")
+    b = MainAgent([], max_steps=6)
+    assert b.plan_max_steps == 8
+    assert b.plan_max_tool_calls == 9
+
+
 def test_plan_tool_off_by_default():
     assert "update_plan" not in MainAgent([]).tools            # 默认不带（子 agent/orchestrator 不变）
     assert "update_plan" in MainAgent([], plan_tool=True).tools
@@ -1131,6 +1145,58 @@ async def test_native_path_runs_all_tool_calls():
     a = MainAgent([Tool("t", "", {}, h, read_only=True)], llm=NativeLLM(), native=True, max_steps=5)
     out = await a.run_turn("并行", mode="plan")
     assert out == "都跑完了" and len(ran) == 2                # 两个 tool_call 都执行了
+
+
+@pytest.mark.asyncio
+async def test_plan_tool_call_budget_truncates_native_batch(monkeypatch):
+    # plan 下限制真实工具调用数：native 一步吐出多个 tool_calls 时也不能突破预算。
+    from src.agents.main_agent import MainAgent, Tool
+    monkeypatch.setenv("VORTOCODE_PLAN_MAX_TOOL_CALLS", "2")
+    ran = []
+
+    async def h(_a):
+        ran.append(1); return "ok"
+
+    class NativeLLM:
+        async def chat(self, messages, tools=None, **k):
+            sys = messages[0]["content"] if messages and messages[0].get("role") == "system" else ""
+            if "禁止再调用任何工具" in sys:
+                return {"content": "已按预算总结。", "tool_calls": []}
+            return {"content": "", "tool_calls": [
+                {"name": "t", "arguments": "{}"},
+                {"name": "t", "arguments": "{}"},
+                {"name": "t", "arguments": "{}"},
+            ]}
+
+    out, say, emit = _capture()
+    a = MainAgent([Tool("t", "", {}, h, read_only=True)], llm=NativeLLM(), native=True, max_steps=5)
+    r = await a.run_turn("并行", mode="plan", say=say, emit=emit)
+    assert r == "已按预算总结。"
+    assert len(ran) == 2
+    assert any("已截断" in s for s in out["say"])
+
+
+@pytest.mark.asyncio
+async def test_plan_tool_call_budget_truncates_prompt_array(monkeypatch):
+    monkeypatch.setenv("VORTOCODE_PLAN_MAX_TOOL_CALLS", "1")
+    ran = []
+
+    async def h(args):
+        ran.append(args); return "ok"
+
+    tool = Tool("t", "", {}, h, read_only=True)
+    agent = MainAgent([tool], llm=ScriptedLLM(
+        '[{"tool":"t","args":{"n":1}},{"tool":"t","args":{"n":2}}]',
+        "已按预算总结。",
+    ), max_steps=5)
+    out, say, emit = _capture()
+    r = await agent.run_turn("并行", mode="plan", say=say, emit=emit)
+    assert r == "已按预算总结。"
+    assert ran == [{"n": 1}]
+    assert any("已截断" in s for s in out["say"])
+    assert "[工具 t 结果]" in agent.history[-2]["content"]
+
+
 def test_set_model_changes_client_config():
     # /model 与 --model 的底座：set_model 就地改客户端 config.model，current_model 读回
     from src.agents.main_agent import MainAgent

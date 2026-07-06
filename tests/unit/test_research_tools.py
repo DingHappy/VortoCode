@@ -70,13 +70,32 @@ async def test_research_parallel_runs_all_and_labels(tmp_path):
 
 @pytest.mark.asyncio
 async def test_research_parallel_coerces_str_and_caps(tmp_path):
-    by = _by_name(str(tmp_path), llm=EchoLLM(), max_parallel=3)
+    by = _by_name(str(tmp_path), llm=EchoLLM(), max_parallel=3, default_parallel=3)
     # 传字符串 → 当单元素
     one = await by["research_parallel"].handler({"tasks": "只一个问题"})
     assert "【只一个问题】" in one
     # 超过上限 → 截断到 max_parallel
     many = await by["research_parallel"].handler({"tasks": [f"q{i}" for i in range(10)]})
     assert "【q0】" in many and "【q2】" in many and "【q3】" not in many
+
+
+@pytest.mark.asyncio
+async def test_research_parallel_defaults_light_but_expands_with_reason(tmp_path):
+    by = _by_name(str(tmp_path), llm=EchoLLM(), max_parallel=5, default_parallel=2)
+    tasks = [f"q{i}" for i in range(5)]
+
+    light = await by["research_parallel"].handler({"tasks": tasks})
+    assert "【q0】" in light and "【q1】" in light and "【q2】" not in light
+
+    no_reason = await by["research_parallel"].handler({"tasks": tasks, "max_parallel": 5})
+    assert "【q0】" in no_reason and "【q1】" in no_reason and "【q2】" not in no_reason
+
+    expanded = await by["research_parallel"].handler({
+        "tasks": tasks,
+        "max_parallel": 5,
+        "reason": "用户明确要求从多个模块全面审查",
+    })
+    assert "【q0】" in expanded and "【q4】" in expanded
 
 
 @pytest.mark.asyncio

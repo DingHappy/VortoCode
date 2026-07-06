@@ -199,6 +199,34 @@ def native_default() -> bool:
     return os.getenv("VORTOCODE_NATIVE_TOOLS", "1").strip().lower() not in ("0", "false", "no", "off")
 
 
+def _env_int(name: str, default: int, minimum: int = 1) -> int:
+    """读取正整数环境变量；非法值安全退回 default。"""
+    import os
+    try:
+        return max(minimum, int(os.getenv(name) or default))
+    except (TypeError, ValueError):
+        return max(minimum, default)
+
+
+def research_parallel_cap(args: dict, *, default: int = 2, maximum: int = 5) -> int:
+    """子 agent 并行度决策：默认轻量；明确给理由/范围或 max_parallel 时才放宽。
+
+    这不是安全边界，只是调度启发式。真正防 runaway 仍靠 MainAgent 的 plan 工具预算和这里的 maximum。
+    """
+    maximum = max(1, maximum)
+    default = min(max(1, default), maximum)
+    reason = str(args.get("reason") or args.get("scope") or args.get("why") or "").strip()
+    raw = args.get("max_parallel") or args.get("parallelism") or args.get("limit")
+    if raw is not None:
+        try:
+            requested = max(1, int(raw))
+        except (TypeError, ValueError):
+            requested = default
+        requested = min(requested, maximum)
+        return requested if reason or requested <= default else default
+    return maximum if reason else default
+
+
 def _taint_prefix() -> str:
     """污点态（本回合摄入过不可信外部内容）下，给对外操作的确认文案加警示前缀（D0）。"""
     from src.agents.taint import is_tainted
@@ -424,7 +452,11 @@ class MainAgent:
         self._hook_system = hook_system
         self._tool_list = list(tools)
         self._llm = llm
-        self.max_steps = int(os.getenv("VORTOCODE_MAX_STEPS") or max_steps)   # 可全局调高预算
+        self.max_steps = _env_int("VORTOCODE_MAX_STEPS", max_steps)   # 可全局调高 build/普通预算
+        # plan 是轻量调研/提案模式：除 step 外再加真实工具调用数硬上限，防 native 一步吐多
+        # 个 tool_calls 或 research 工具 fan-out 时把成本/延迟打爆。需要深挖可显式用 env 调高。
+        self.plan_max_steps = _env_int("VORTOCODE_PLAN_MAX_STEPS", min(self.max_steps, 3))
+        self.plan_max_tool_calls = _env_int("VORTOCODE_PLAN_MAX_TOOL_CALLS", 5)
         # 持久任务清单：大任务的可见/可续骨架。注入系统提示让 agent 始终看得见进度；
         # on_plan 给 UI 渲染。是后续"分解→并行实现→逐件验证"的地基。
         self.plan: list[dict] = []
@@ -487,7 +519,10 @@ class MainAgent:
         mode_desc = "只读/提案" if mode == "plan" else "可写分支"
         mode_rule = (
             "plan 模式下写/重型工具（如 edit_file / write_file 及各类开发流水线工具）不可用；"
-            "若用户想开发，请提示他按 Tab 切到 build 模式。"
+            "若用户想开发，请提示他按 Tab 切到 build 模式。 "
+            f"plan 只做轻量探查：默认最多 {self.plan_max_steps} 轮模型循环、"
+            f"{self.plan_max_tool_calls} 次工具调用；优先定向读取/搜索，信息够用就停止并总结，"
+            "不要默认启动大量子 agent。"
             if mode == "plan"
             else "build 模式下所有工具可用。"
         )
@@ -833,6 +868,25 @@ class MainAgent:
             return None
         return "；".join(msgs) if msgs else None
 
+    def _step_budget(self, mode: str) -> int:
+        if mode == "plan" and not self._escalated:
+            return self.plan_max_steps
+        return self.max_steps
+
+    def _limit_tool_calls(self, calls: list, mode: str, used: int,
+                          say: Callable[[str], None]) -> tuple[list, int, bool]:
+        """按 plan 工具调用硬预算裁剪本批 calls，返回 (可执行 calls, 新 used, 是否已耗尽)。"""
+        if mode != "plan" or self._escalated:
+            return calls, used + len(calls), False
+        remaining = self.plan_max_tool_calls - used
+        if remaining <= 0:
+            say("🔧 [dim]plan 工具调用预算已用尽，转入总结。[/dim]")
+            return [], used, True
+        if len(calls) > remaining:
+            say(f"🔧 [dim]plan 工具调用预算仅剩 {remaining} 次，已截断后续工具调用并转入总结。[/dim]")
+            return calls[:remaining], used + remaining, True
+        return calls, used + len(calls), False
+
     async def run_turn(
         self,
         user_text: str,
@@ -895,7 +949,11 @@ class MainAgent:
 
         nudged = False                         # 本轮是否已纠偏过一次（空收尾/残缺工具 JSON → 只重试一次）
         stream_shown: list[str] = []           # 本回合已回显的正文（回合级累加器→保证 stream_cb 单调、CLI 不错位）
-        for _step in range(self.max_steps):
+        steps = 0
+        tool_calls_used = 0
+        budget_exhausted = False
+        while steps < self._step_budget(mode):
+            steps += 1
             messages = [{"role": "system", "content": self._system(mode)}] + self._trimmed_history()
 
             # 原生 function-calling 路径（opt-in）；模型不支持就永久回退到提示式协议
@@ -937,11 +995,17 @@ class MainAgent:
                         self.history.append({"role": "assistant", "content": content})
                         emit(content or "(无回复)")
                         return content
+                    calls, tool_calls_used, budget_exhausted = self._limit_tool_calls(
+                        calls, mode, tool_calls_used, say)
+                    if not calls:
+                        break
                     # 用提示式历史表示这一步（简单稳健、跨协议一致、便于裁剪/持久化）
                     self.history.append({"role": "assistant", "content": json.dumps(
                         [{"tool": n, "args": a} for n, a in calls], ensure_ascii=False)})
                     results = await self._run_tools(calls, mode, say)
                     self.history.append({"role": "user", "content": _tool_results_msg(results)})
+                    if budget_exhausted:
+                        break
                     continue
 
             # 提示式协议（默认；也是 native 回退后的路径）
@@ -966,9 +1030,17 @@ class MainAgent:
                 self.history.append({"role": "assistant", "content": content})
                 emit(content or "(无回复)")
                 return content
-            self.history.append({"role": "assistant", "content": content})
+            calls, tool_calls_used, budget_exhausted = self._limit_tool_calls(
+                calls, mode, tool_calls_used, say)
+            if not calls:
+                break
+            recorded = json.dumps([{"tool": n, "args": a} for n, a in calls], ensure_ascii=False) \
+                if budget_exhausted else content
+            self.history.append({"role": "assistant", "content": recorded})
             results = await self._run_tools(calls, mode, say)   # 全只读→并发；含写→顺序
             self.history.append({"role": "user", "content": _tool_results_msg(results)})
+            if budget_exhausted:
+                break
 
         # 用尽工具预算：不白跑——强制一次"无工具"收尾，把已收集的信息综合成最终回答
         # （子 agent 尤其受益：读了一堆文件也能交回结论，而不是返回空丢弃全部上下文）。
@@ -2061,7 +2133,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
 
 
 def build_research_tools(repo_root: str, *, llm: Any = None,
-                         max_steps: int = 12, max_parallel: int = 5,
+                         max_steps: int = 12, max_parallel: int = 5, default_parallel: int = 2,
                          confirm: Any = None, on_progress: Any = None) -> list[Tool]:
     """UI 无关的子 agent 委派工具（task / research_parallel）——给 Web/CLI 用。
 
@@ -2123,7 +2195,8 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
         tasks = args.get("tasks") or args.get("descriptions") or []
         if isinstance(tasks, str):
             tasks = [tasks]
-        tasks = [str(t).strip() for t in tasks if str(t).strip()][:max_parallel]
+        cap = research_parallel_cap(args, default=default_parallel, maximum=max_parallel)
+        tasks = [str(t).strip() for t in tasks if str(t).strip()][:cap]
         if not tasks:
             return "research_parallel 需要 tasks（字符串列表，每项一个独立子问题）。"
         agent_name = str(args.get("agent") or "").strip()
@@ -2140,8 +2213,11 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
              _task, read_only=True),
         Tool("research_parallel",
              "并行委派多个子 agent 同时处理**相互独立**的子问题，汇总各自结论（最多 5 个）；"
+             "默认轻量最多 2 个；用户明确要求全面/多角度/并行深挖时，可传 max_parallel 和 reason 放宽。"
              "可选 agent=<角色名> 让全组用同一自定义角色",
              {"tasks": "独立子问题字符串列表",
+              "max_parallel": "可选，并行子 agent 数；默认 2，需配合 reason 才能超过默认，硬上限 5",
+              "reason": "可选；说明为什么需要超过默认并行度，如用户明确要求全面审查/多角度分析",
               "agent": "可选：自定义角色名（应用到本组全部子任务）"},
              _research_parallel, read_only=True),
     ]
