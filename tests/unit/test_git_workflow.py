@@ -2,7 +2,9 @@
 
 import subprocess
 
-from src.agents.git_workflow import (commit_changes,
+from src.agents.git_workflow import (change_review,
+                                     commit_changes,
+                                     format_change_review,
                                      format_pr_preview,
                                      format_status_summary,
                                      pr_preview,
@@ -36,6 +38,36 @@ def test_status_summary_reports_staged_and_unstaged(tmp_path):
     assert "base.txt" in info["porcelain"]
     assert "已 staged diffstat" in text
     assert "未 staged diffstat" in text
+
+
+def test_change_review_flags_source_without_tests(tmp_path):
+    _init_repo(tmp_path)
+    (tmp_path / "app.py").write_text("print('changed')\n", encoding="utf-8")
+    (tmp_path / "notes.md").write_text("draft\n", encoding="utf-8")
+
+    review = change_review(str(tmp_path))
+    text = format_change_review(review)
+
+    assert review["ok"] is True
+    assert "app.py" in review["paths"]
+    assert "notes.md" in review["untracked"]
+    assert any("没有看到测试文件" in r for r in review["risks"])
+    assert "建议下一步" in text
+
+
+def test_change_review_cached_only_ignores_unstaged(tmp_path):
+    _init_repo(tmp_path)
+    (tmp_path / "staged.py").write_text("staged = 1\n", encoding="utf-8")
+    _git(tmp_path, "add", "staged.py")
+    (tmp_path / "base.txt").write_text("unstaged\n", encoding="utf-8")
+
+    review = change_review(str(tmp_path), cached=True)
+    text = format_change_review(review)
+
+    assert review["scope"] == "staged"
+    assert "staged.py" in review["paths"]
+    assert "base.txt" not in review["paths"]
+    assert "已 staged" in text
 
 
 def test_commit_changes_staged_only(tmp_path):

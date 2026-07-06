@@ -2292,6 +2292,52 @@ def test_cmd_diff_rejects_unknown_git_flags(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_cmd_changes_shows_precommit_review(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "f.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "f.py").write_text("x = 2\n")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/changes")
+        assert await _wait_for(app, pilot, "变更审查")
+        joined = "\n".join(app.transcript)
+        assert "f.py" in joined
+        assert "没有看到测试文件" in joined
+        assert "建议下一步" in joined
+
+
+@pytest.mark.asyncio
+async def test_cmd_changes_supports_cached_and_path_filter(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "a.py").write_text("a = 1\n")
+    (tmp_path / "b.py").write_text("b = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "a.py").write_text("a = 2\n")
+    (tmp_path / "b.py").write_text("b = 2\n")
+    _git(tmp_path, "add", "a.py")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/changes cached a.py")
+        assert await _wait_for(app, pilot, "已 staged")
+        joined = "\n".join(app.transcript)
+        assert "a.py" in joined
+        assert "b.py" not in joined
+
+
+def test_cmd_changes_rejects_unknown_git_flags(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+
+    app._cmd_changes("--name-only")
+
+    assert emitted and "不透传其它 git 参数" in emitted[-1]
+
+
+@pytest.mark.asyncio
 async def test_cmd_git_shows_status_summary(tmp_path):
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")

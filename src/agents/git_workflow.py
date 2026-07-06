@@ -72,6 +72,200 @@ def format_status_summary(info: dict) -> str:
     return "\n".join(lines)
 
 
+def _path_matches(path: str, filters: list[str]) -> bool:
+    if not filters:
+        return True
+    p = path.strip("/")
+    for raw in filters:
+        f = str(raw or "").strip().strip("/")
+        if f and (p == f or p.startswith(f.rstrip("/") + "/")):
+            return True
+    return False
+
+
+def _name_status_paths(output: str) -> list[dict]:
+    files: list[dict] = []
+    for line in (output or "").splitlines():
+        parts = line.split("\t")
+        if len(parts) < 2:
+            continue
+        status = parts[0]
+        path = parts[-1].strip()
+        if path:
+            files.append({"status": status, "path": path})
+    return files
+
+
+def _numstat_totals(output: str) -> tuple[int, int]:
+    insertions = 0
+    deletions = 0
+    for line in (output or "").splitlines():
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        try:
+            insertions += int(parts[0])
+        except ValueError:
+            pass
+        try:
+            deletions += int(parts[1])
+        except ValueError:
+            pass
+    return insertions, deletions
+
+
+def _is_test_path(path: str) -> bool:
+    p = path.lower()
+    name = Path(p).name
+    return (
+        p.startswith("tests/")
+        or "/tests/" in p
+        or name.startswith("test_")
+        or name.endswith("_test.py")
+        or name.endswith(".test.js")
+        or name.endswith(".test.ts")
+        or name.endswith(".spec.js")
+        or name.endswith(".spec.ts")
+        or name.endswith("tests.swift")
+    )
+
+
+def _is_source_path(path: str) -> bool:
+    if _is_test_path(path):
+        return False
+    return Path(path).suffix.lower() in {
+        ".py", ".js", ".jsx", ".ts", ".tsx", ".swift", ".go", ".rs", ".java",
+        ".kt", ".rb", ".php", ".cs", ".c", ".cc", ".cpp", ".h", ".hpp",
+    }
+
+
+def _is_docs_path(path: str) -> bool:
+    p = path.lower()
+    return p.startswith("docs/") or Path(p).suffix in {".md", ".mdx", ".rst", ".txt"}
+
+
+def _change_risks(paths: list[str], statuses: dict[str, str], insertions: int, deletions: int) -> list[str]:
+    risks: list[str] = []
+    total = insertions + deletions
+    source_paths = [p for p in paths if _is_source_path(p)]
+    test_paths = [p for p in paths if _is_test_path(p)]
+    docs_only = bool(paths) and all(_is_docs_path(p) for p in paths)
+    if source_paths and not test_paths:
+        risks.append("源码有改动，但没有看到测试文件改动；合并前建议跑相关测试或补回归。")
+    if len(paths) >= 20 or total >= 500:
+        risks.append(f"改动规模偏大（{len(paths)} 个文件，+{insertions}/-{deletions}）；建议拆分提交或先做 targeted review。")
+    if deletions >= 100 and deletions > insertions * 2:
+        risks.append(f"删除量明显高于新增（+{insertions}/-{deletions}）；确认不是误删或生成物漂移。")
+    sensitive = [
+        p for p in paths
+        if any(part in p.lower() for part in (
+            "auth", "permission", "security", "secret", "token", "credential",
+            "migration", "schema", "database", "deploy", ".github/workflows",
+            "package-lock", "poetry.lock", "requirements", "pyproject.toml",
+        ))
+    ]
+    if sensitive:
+        shown = ", ".join(sensitive[:5])
+        more = f" 等 {len(sensitive)} 个文件" if len(sensitive) > 5 else ""
+        risks.append(f"涉及权限/配置/依赖/部署等高影响路径：{shown}{more}。")
+    generated = [
+        p for p in paths
+        if any(part in p for part in (".build/", "node_modules/", "dist/", "__pycache__/", ".pytest_cache/"))
+    ]
+    if generated:
+        risks.append("改动里包含构建缓存或生成目录；通常不应提交这些文件。")
+    deleted = [p for p, st in statuses.items() if st.startswith("D")]
+    if deleted and not docs_only:
+        shown = ", ".join(deleted[:5])
+        risks.append(f"包含删除文件：{shown}；确认调用点、文档和测试都已同步。")
+    return risks
+
+
+def change_review(repo_root: str, *, cached: bool = False, paths: list[str] | None = None) -> dict:
+    """Build a local, deterministic pre-commit review summary for current changes."""
+    filters = [str(p).strip() for p in (paths or []) if str(p).strip()]
+    base_args = ["diff"]
+    if cached:
+        base_args.append("--cached")
+    else:
+        base_args.append("HEAD")
+    if filters:
+        base_args.append("--")
+        base_args.extend(filters)
+    name = _git(repo_root, *(base_args[:1] + ["--name-status"] + base_args[1:]))
+    if name.returncode != 0:
+        return {"ok": False, "error": (name.stderr or name.stdout or "git diff failed").strip()}
+    num = _git(repo_root, *(base_args[:1] + ["--numstat"] + base_args[1:]))
+    if num.returncode != 0:
+        return {"ok": False, "error": (num.stderr or num.stdout or "git diff failed").strip()}
+    files = _name_status_paths(name.stdout or "")
+    statuses = {f["path"]: f["status"] for f in files}
+    untracked: list[str] = []
+    if not cached:
+        info = status_summary(repo_root)
+        for line in str(info.get("porcelain") or "").splitlines():
+            if not line.startswith("?? "):
+                continue
+            p = line[3:].strip()
+            if _path_matches(p, filters):
+                untracked.append(p)
+                statuses.setdefault(p, "??")
+                files.append({"status": "??", "path": p})
+    insertions, deletions = _numstat_totals(num.stdout or "")
+    changed_paths = [f["path"] for f in files]
+    return {
+        "ok": True,
+        "scope": "staged" if cached else "workspace",
+        "paths": changed_paths,
+        "statuses": statuses,
+        "insertions": insertions,
+        "deletions": deletions,
+        "test_paths": [p for p in changed_paths if _is_test_path(p)],
+        "source_paths": [p for p in changed_paths if _is_source_path(p)],
+        "untracked": untracked,
+        "risks": _change_risks(changed_paths, statuses, insertions, deletions),
+    }
+
+
+def format_change_review(review: dict) -> str:
+    if not review.get("ok"):
+        return f"变更审查失败: {review.get('error', '')}".rstrip()
+    paths = review.get("paths") or []
+    scope = "已 staged" if review.get("scope") == "staged" else "工作区"
+    lines = [
+        f"变更审查: {scope}",
+        f"文件: {len(paths)} · +{review.get('insertions', 0)} / -{review.get('deletions', 0)}",
+    ]
+    if not paths:
+        lines.append("")
+        lines.append("没有可审查的改动。")
+        return "\n".join(lines)
+    statuses = review.get("statuses") or {}
+    lines.append("")
+    lines.append("文件概览:")
+    for p in paths[:30]:
+        lines.append(f"  {statuses.get(p, '?'):>3} {p}")
+    if len(paths) > 30:
+        lines.append(f"  ... 还有 {len(paths) - 30} 个文件")
+    risks = review.get("risks") or []
+    lines.append("")
+    if risks:
+        lines.append("需要留意:")
+        lines.extend(f"- {r}" for r in risks)
+    else:
+        lines.append("未发现明显的提交前风险信号。")
+    lines.append("")
+    lines.append("建议下一步:")
+    if review.get("test_paths"):
+        lines.append("- 跑本次改动涉及的测试，确认测试仍然通过。")
+    elif review.get("source_paths"):
+        lines.append("- 先跑相关测试；如果行为有变化，补一条回归测试。")
+    else:
+        lines.append("- 文档/配置类改动为主，确认示例、路径和命令仍然准确。")
+    lines.append("- 用 /diff stat 或 /diff 查看细节；确认后再 /commit。")
+    return "\n".join(lines)
+
+
 def has_staged_changes(repo_root: str) -> bool:
     return _git(repo_root, "diff", "--cached", "--quiet").returncode == 1
 

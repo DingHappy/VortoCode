@@ -32,7 +32,7 @@ from src.memory.session_store import SessionManager
 
 SLASH_COMMANDS = [
     "/analyze", "/improve", "/fix", "/run", "/apply", "/agents", "/runagent", "/skills", "/mcp",
-    "/artifacts", "/diff", "/git", "/commit", "/pr", "/pr-check", "/pr-fix", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
+    "/artifacts", "/diff", "/changes", "/git", "/commit", "/pr", "/pr-check", "/pr-fix", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
     "/context", "/compact", "/permissions", "/memory", "/tasks", "/tools", "/audit", "/speak", "/commands", "/hooks", "/clear", "/help", "/quit",
 ]
 # 必须带参数的命令：补全面板里回车不直接执行，先补成 "/cmd " 让用户接着填参数
@@ -50,6 +50,7 @@ COMMAND_INFO = {
     "/mcp": "接入 MCP 服务器工具（build 门控）",
     "/artifacts": "列出已发布的制品（画廊在 /artifacts）",
     "/diff": "看工作区改动（支持 stat/cached/路径过滤）",
+    "/changes": "提交前变更审查摘要（风险信号/下一步）",
     "/git": "查看 git 状态、staged/unstaged diffstat",
     "/commit": "提交已 staged 改动；all 先 git add -A",
     "/pr": "预览或创建 PR；preview 只预览，draft 开草稿",
@@ -133,6 +134,7 @@ HELP = """可用命令:
   /audit              查看工具调用审计日志（.vortocode/audit.log）
   /artifacts          列出已发布的制品（标题/版本/链接；浏览器开 /artifacts 是画廊）
   /diff [stat|cached] [路径]  看工作区改动（+绿/-红着色）—— review 主 agent 改了什么
+  /changes [cached] [路径]  提交前变更审查摘要（风险信号/下一步）
   /git                查看 git 状态、staged/unstaged diffstat
   /commit <msg>       提交已 staged 改动；/commit all <msg> 先 git add -A
   /pr [preview|draft] [base <ref>] [title]  预览或创建 PR（外向操作需确认）
@@ -1635,6 +1637,8 @@ class VortoCodeTUI(App):
             self._cmd_artifacts()
         elif cmd == "diff":
             self._cmd_diff(arg)
+        elif cmd == "changes":
+            self._cmd_changes(arg)
         elif cmd == "git":
             self._cmd_git(arg)
         elif cmd == "commit":
@@ -2176,6 +2180,28 @@ class VortoCodeTUI(App):
             self._emit(diff.rstrip())
             return
         self._render_diff_text(diff, max_lines=400)
+
+    def _cmd_changes(self, arg: str = "") -> None:
+        """/changes：提交前变更审查摘要；支持 cached/staged 和路径过滤。"""
+        import shlex
+        try:
+            tokens = shlex.split(arg or "")
+        except ValueError as e:
+            self._emit(f"用法: /changes [cached|staged] [路径...]（参数解析失败: {e}）")
+            return
+        cached = False
+        paths: list[str] = []
+        for tok in tokens:
+            low = tok.lower()
+            if low in {"cached", "staged", "--cached", "--staged"}:
+                cached = True
+            elif tok.startswith("-"):
+                self._emit("用法: /changes [cached|staged] [路径...]（不透传其它 git 参数）")
+                return
+            else:
+                paths.append(tok)
+        from src.agents.git_workflow import change_review, format_change_review
+        self._emit(format_change_review(change_review(self.repo_root, cached=cached, paths=paths)))
 
     def _cmd_git(self, arg: str = "") -> None:
         """/git：查看当前分支、改动文件、staged/unstaged diffstat。"""
