@@ -51,9 +51,9 @@ COMMAND_INFO = {
     "/artifacts": "列出已发布的制品（画廊在 /artifacts）",
     "/diff": "看工作区改动（支持 stat/cached/路径过滤）",
     "/changes": "提交前变更审查摘要（风险信号/下一步）",
-    "/verify": "探测并运行仓库测试（可传 pytest selector）",
+    "/verify": "探测并运行仓库测试（支持 --changed）",
     "/git": "查看 git 状态、staged/unstaged diffstat",
-    "/commit": "提交已 staged 改动；all 先 git add -A",
+    "/commit": "提交已 staged 改动；suggest 自动生成提交信息",
     "/pr": "预览或创建 PR；preview 只预览，draft 开草稿",
     "/pr-check": "读取 PR review 评论和失败 CI 检查",
     "/pr-fix": "确认后按 PR 反馈切 build 并调用 pr_fix 修复",
@@ -136,9 +136,9 @@ HELP = """可用命令:
   /artifacts          列出已发布的制品（标题/版本/链接；浏览器开 /artifacts 是画廊）
   /diff [stat|cached] [路径]  看工作区改动（+绿/-红着色）—— review 主 agent 改了什么
   /changes [cached] [路径]  提交前变更审查摘要（风险信号/下一步）
-  /verify [selector]  探测并运行仓库测试；selector 仅对 pytest 生效
+  /verify [selector|--changed]  探测并运行仓库测试；--changed 按改动推断相关测试
   /git                查看 git 状态、staged/unstaged diffstat
-  /commit <msg>       提交已 staged 改动；/commit all <msg> 先 git add -A
+  /commit <msg|suggest> 提交已 staged 改动；/commit all --suggest 先 git add -A 并自动生成信息
   /pr [preview|draft] [base <ref>] [title]  预览或创建 PR（外向操作需确认）
   /pr-check <ref>     读取 PR review 评论和失败 CI 检查
   /pr-fix <ref>       确认后切 build 并让主 agent 调 pr_fix 修复 PR 反馈
@@ -2208,17 +2208,60 @@ class VortoCodeTUI(App):
         self._emit(format_change_review(change_review(self.repo_root, cached=cached, paths=paths)))
 
     def _cmd_verify(self, arg: str = "") -> None:
-        """/verify [selector]：按仓库类型探测测试命令并运行。"""
-        selector = (arg or "").strip()
-        from src.agents.test_detect import detect_test_cmd
-        cmd = detect_test_cmd(self.repo_root, selector or None)
+        """/verify [selector|--changed]：按仓库类型探测测试命令并运行。"""
+        import shlex
+        try:
+            tokens = shlex.split(arg or "")
+        except ValueError as e:
+            self._emit(f"用法: /verify [selector|--changed] [cached]（参数解析失败: {e}）")
+            return
+        changed = False
+        cached = False
+        selector_parts: list[str] = []
+        for tok in tokens:
+            low = tok.lower()
+            if low in {"--changed", "changed"}:
+                changed = True
+            elif low in {"cached", "staged", "--cached", "--staged"}:
+                cached = True
+            elif tok.startswith("-"):
+                self._emit("用法: /verify [selector|--changed] [cached]（不透传其它测试参数）")
+                return
+            else:
+                selector_parts.append(tok)
+        selector = " ".join(selector_parts).strip()
+        if changed and selector:
+            self._emit("用法: /verify [selector] 或 /verify --changed [cached]，二者不要混用")
+            return
+        from src.agents.test_detect import detect_test_cmd, is_pytest_cmd
+        note = ""
+        if changed:
+            from src.agents.git_workflow import changed_test_selection
+            sel = changed_test_selection(self.repo_root, cached=cached)
+            if not sel.get("ok"):
+                self._emit(f"改动测试选择失败: {sel.get('error', '')}")
+                return
+            if not sel.get("changed_paths"):
+                self._emit(sel.get("reason") or "没有改动可验证。")
+                return
+            base_cmd = detect_test_cmd(self.repo_root)
+            selectors = list(sel.get("selectors") or [])
+            if selectors and is_pytest_cmd(base_cmd):
+                import sys
+                cmd = [sys.executable, "-m", "pytest", "-q", *selectors]
+            else:
+                cmd = base_cmd
+            note = str(sel.get("reason") or "")
+        else:
+            cmd = detect_test_cmd(self.repo_root, selector or None)
         cmd_text = " ".join(cmd)
 
         async def _run():
+            detail = f"\n  {note}" if note else ""
             if not await self._confirm_command(
                     "运行仓库测试验证？\n"
                     f"  $ {cmd_text}\n"
-                    "测试可能写入缓存或耗时较久。"):
+                    f"测试可能写入缓存或耗时较久。{detail}"):
                 self._emit("已取消验证。")
                 return
             self._chrome(f"[dim]$ {cmd_text}[/dim]")
@@ -2250,15 +2293,25 @@ class VortoCodeTUI(App):
         try:
             tokens = shlex.split(arg or "")
         except ValueError as e:
-            self._emit(f"用法: /commit <message> 或 /commit all <message>（参数解析失败: {e}）")
+            self._emit(f"用法: /commit <message>|suggest 或 /commit all <message|--suggest>（参数解析失败: {e}）")
             return
         if not tokens:
-            self._emit("用法: /commit <message> 或 /commit all <message>")
+            self._emit("用法: /commit <message>|suggest 或 /commit all <message|--suggest>")
             return
         stage_all = tokens[0].lower() == "all"
-        message = " ".join(tokens[1:] if stage_all else tokens).strip()
+        raw_msg_tokens = tokens[1:] if stage_all else tokens
+        suggest = any(t.lower() in {"suggest", "--suggest"} for t in raw_msg_tokens)
+        msg_tokens = [t for t in raw_msg_tokens if t.lower() not in {"suggest", "--suggest"}]
+        message = " ".join(msg_tokens).strip()
+        if suggest:
+            from src.agents.git_workflow import suggest_commit_message
+            suggested = suggest_commit_message(self.repo_root, stage_all=stage_all)
+            if not suggested.get("ok"):
+                self._emit(f"生成提交信息失败: {suggested.get('error', '')}")
+                return
+            message = str(suggested.get("message") or "").strip()
         if not message:
-            self._emit("用法: /commit <message> 或 /commit all <message>")
+            self._emit("用法: /commit <message>|suggest 或 /commit all <message|--suggest>")
             return
 
         async def _run():
@@ -2275,6 +2328,8 @@ class VortoCodeTUI(App):
             else:
                 prompt = "执行本地 git commit？"
             detail = f"\n  message: {message}"
+            if suggest:
+                detail += "\n  message 由当前改动自动生成"
             if stage_all:
                 detail += "\n  会先执行: git add -A"
             if not await self._confirm_command(prompt + detail):

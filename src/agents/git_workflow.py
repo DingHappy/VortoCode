@@ -203,11 +203,23 @@ def change_review(repo_root: str, *, cached: bool = False, paths: list[str] | No
     untracked: list[str] = []
     if not cached:
         info = status_summary(repo_root)
+        root = Path(repo_root)
         for line in str(info.get("porcelain") or "").splitlines():
             if not line.startswith("?? "):
                 continue
-            p = line[3:].strip()
-            if _path_matches(p, filters):
+            raw = line[3:].strip()
+            full = root / raw
+            if full.is_dir():
+                candidates = [
+                    str(p.relative_to(root))
+                    for p in full.rglob("*")
+                    if p.is_file()
+                ]
+            else:
+                candidates = [raw]
+            for p in candidates:
+                if not _path_matches(p, filters):
+                    continue
                 untracked.append(p)
                 statuses.setdefault(p, "??")
                 files.append({"status": "??", "path": p})
@@ -264,6 +276,138 @@ def format_change_review(review: dict) -> str:
         lines.append("- 文档/配置类改动为主，确认示例、路径和命令仍然准确。")
     lines.append("- 用 /diff stat 或 /diff 查看细节；确认后再 /commit。")
     return "\n".join(lines)
+
+
+def _candidate_test_paths_for_source(repo_root: str, source_path: str) -> list[str]:
+    root = Path(repo_root)
+    p = Path(source_path)
+    stem = p.stem
+    candidates = [
+        root / "tests" / "unit" / f"test_{stem}.py",
+        root / "tests" / f"test_{stem}.py",
+        root / "tests" / "unit" / f"{stem}_test.py",
+        root / "tests" / f"{stem}_test.py",
+    ]
+    found: list[str] = []
+    for c in candidates:
+        if c.is_file():
+            found.append(str(c.relative_to(root)))
+    tests_dir = root / "tests"
+    if tests_dir.is_dir():
+        for c in tests_dir.rglob(f"test_{stem}.py"):
+            rel = str(c.relative_to(root))
+            if rel not in found:
+                found.append(rel)
+        for c in tests_dir.rglob(f"{stem}_test.py"):
+            rel = str(c.relative_to(root))
+            if rel not in found:
+                found.append(rel)
+    return found
+
+
+def changed_test_selection(repo_root: str, *, cached: bool = False, max_selectors: int = 8) -> dict:
+    """Infer a small pytest selector set from changed files.
+
+    This is intentionally deterministic and conservative: if we cannot map source
+    files to tests, callers should fall back to the repository's normal test command.
+    """
+    review = change_review(repo_root, cached=cached)
+    if not review.get("ok"):
+        return {"ok": False, "error": review.get("error", "git diff failed"), "selectors": []}
+    paths = list(review.get("paths") or [])
+    if not paths:
+        return {
+            "ok": True,
+            "scope": review.get("scope"),
+            "changed_paths": [],
+            "selectors": [],
+            "fallback_full": False,
+            "reason": "没有改动可验证。",
+        }
+    selectors: list[str] = []
+    for p in paths:
+        if _is_test_path(p) and Path(repo_root, p).is_file():
+            selectors.append(p)
+    for p in paths:
+        if not _is_source_path(p):
+            continue
+        for c in _candidate_test_paths_for_source(repo_root, p):
+            selectors.append(c)
+    deduped: list[str] = []
+    for s in selectors:
+        if s not in deduped:
+            deduped.append(s)
+    truncated = len(deduped) > max_selectors
+    deduped = deduped[:max_selectors]
+    source_paths = review.get("source_paths") or []
+    if deduped:
+        reason = f"根据 {len(paths)} 个改动文件推断出 {len(deduped)} 个相关测试。"
+        if truncated:
+            reason += f" 结果较多，仅取前 {max_selectors} 个。"
+        return {
+            "ok": True,
+            "scope": review.get("scope"),
+            "changed_paths": paths,
+            "selectors": deduped,
+            "fallback_full": False,
+            "reason": reason,
+        }
+    return {
+        "ok": True,
+        "scope": review.get("scope"),
+        "changed_paths": paths,
+        "selectors": [],
+        "fallback_full": bool(source_paths),
+        "reason": "没有找到可直接映射的测试文件；将回退到仓库默认测试命令。" if source_paths
+        else "改动不是源码/测试文件；可按需运行默认测试命令。",
+    }
+
+
+def suggest_commit_message(repo_root: str, *, stage_all: bool = False) -> dict:
+    """Suggest a deterministic conventional-ish commit message from current changes."""
+    review = change_review(repo_root, cached=not stage_all)
+    if not review.get("ok"):
+        return {"ok": False, "error": review.get("error", "git diff failed")}
+    paths = list(review.get("paths") or [])
+    if not paths and not stage_all:
+        return {"ok": False, "error": "没有 staged 改动可生成提交信息"}
+    if stage_all and not paths:
+        review = change_review(repo_root, cached=False)
+        paths = list(review.get("paths") or [])
+    if not paths:
+        return {"ok": False, "error": "没有工作区改动可生成提交信息"}
+    scopes = []
+    for p in paths:
+        parts = Path(p).parts
+        if len(parts) >= 2 and parts[0] in {"src", "tests", "docs"}:
+            scopes.append(parts[1] if parts[0] != "tests" else "tests")
+        elif parts:
+            scopes.append(parts[0].lstrip("."))
+    scope = scopes[0] if scopes else ""
+    if len(set(scopes)) > 1:
+        scope = ""
+    statuses = review.get("statuses") or {}
+    has_tests = bool(review.get("test_paths"))
+    has_src = bool(review.get("source_paths"))
+    docs_only = all(_is_docs_path(p) for p in paths)
+    deletes = any(str(statuses.get(p, "")).startswith("D") for p in paths)
+    if docs_only:
+        typ = "docs"
+        action = "update documentation"
+    elif has_tests and not has_src:
+        typ = "test"
+        action = "update tests"
+    elif deletes:
+        typ = "refactor"
+        action = "remove obsolete code"
+    elif has_src:
+        typ = "feat" if any(str(statuses.get(p, "")).startswith(("A", "??")) for p in paths) else "fix"
+        action = f"update {scope or 'implementation'}"
+    else:
+        typ = "chore"
+        action = f"update {scope or 'project files'}"
+    prefix = f"{typ}({scope})" if scope else typ
+    return {"ok": True, "message": f"{prefix}: {action}", "paths": paths, "review": review}
 
 
 def has_staged_changes(repo_root: str) -> bool:

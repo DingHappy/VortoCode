@@ -3,11 +3,13 @@
 import subprocess
 
 from src.agents.git_workflow import (change_review,
+                                     changed_test_selection,
                                      commit_changes,
                                      format_change_review,
                                      format_pr_preview,
                                      format_status_summary,
                                      pr_preview,
+                                     suggest_commit_message,
                                      status_summary)
 
 
@@ -68,6 +70,63 @@ def test_change_review_cached_only_ignores_unstaged(tmp_path):
     assert "staged.py" in review["paths"]
     assert "base.txt" not in review["paths"]
     assert "已 staged" in text
+
+
+def test_changed_test_selection_maps_source_to_unit_test(tmp_path):
+    _init_repo(tmp_path)
+    (tmp_path / "src" / "agents").mkdir(parents=True)
+    (tmp_path / "tests" / "unit").mkdir(parents=True)
+    (tmp_path / "src" / "agents" / "sample.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "tests" / "unit" / "test_sample.py").write_text("def test_x(): pass\n", encoding="utf-8")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "add sample")
+    (tmp_path / "src" / "agents" / "sample.py").write_text("x = 2\n", encoding="utf-8")
+
+    sel = changed_test_selection(str(tmp_path))
+
+    assert sel["ok"] is True
+    assert sel["selectors"] == ["tests/unit/test_sample.py"]
+    assert sel["fallback_full"] is False
+
+
+def test_changed_test_selection_includes_changed_test_file(tmp_path):
+    _init_repo(tmp_path)
+    (tmp_path / "tests" / "unit").mkdir(parents=True)
+    (tmp_path / "tests" / "unit" / "test_sample.py").write_text("def test_x(): pass\n", encoding="utf-8")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "add test")
+    (tmp_path / "tests" / "unit" / "test_sample.py").write_text("def test_x():\n    assert True\n", encoding="utf-8")
+
+    sel = changed_test_selection(str(tmp_path))
+
+    assert sel["selectors"] == ["tests/unit/test_sample.py"]
+
+
+def test_suggest_commit_message_for_staged_source_change(tmp_path):
+    _init_repo(tmp_path)
+    (tmp_path / "src" / "agents").mkdir(parents=True)
+    (tmp_path / "src" / "agents" / "sample.py").write_text("x = 1\n", encoding="utf-8")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "add sample")
+    (tmp_path / "src" / "agents" / "sample.py").write_text("x = 2\n", encoding="utf-8")
+    _git(tmp_path, "add", "src/agents/sample.py")
+
+    msg = suggest_commit_message(str(tmp_path))
+
+    assert msg["ok"] is True
+    assert msg["message"] == "fix(agents): update agents"
+
+
+def test_suggest_commit_message_stage_all_expands_untracked_dirs(tmp_path):
+    _init_repo(tmp_path)
+    (tmp_path / "src" / "agents").mkdir(parents=True)
+    (tmp_path / "src" / "agents" / "new_tool.py").write_text("x = 1\n", encoding="utf-8")
+
+    msg = suggest_commit_message(str(tmp_path), stage_all=True)
+
+    assert msg["ok"] is True
+    assert msg["paths"] == ["src/agents/new_tool.py"]
+    assert msg["message"] == "feat(agents): update agents"
 
 
 def test_commit_changes_staged_only(tmp_path):

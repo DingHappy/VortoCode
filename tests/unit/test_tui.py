@@ -2387,6 +2387,34 @@ async def test_cmd_verify_cancel_does_not_run(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_cmd_verify_changed_runs_inferred_tests(tmp_path, monkeypatch):
+    import src.agents.worktree as worktree
+
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "src" / "agents").mkdir(parents=True)
+    (tmp_path / "tests" / "unit").mkdir(parents=True)
+    (tmp_path / "src" / "agents" / "sample.py").write_text("x = 1\n")
+    (tmp_path / "tests" / "unit" / "test_sample.py").write_text("def test_x(): pass\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "src" / "agents" / "sample.py").write_text("x = 2\n")
+    ran = {}
+
+    def fake_run_tests(repo_root, cmd):
+        ran.update({"repo_root": repo_root, "cmd": cmd})
+        return {"ok": True, "cmd": " ".join(cmd), "output": "1 passed"}
+
+    monkeypatch.setattr(worktree, "run_tests", fake_run_tests)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/verify --changed")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "验证通过")
+        assert "tests/unit/test_sample.py" in ran["cmd"]
+
+
+@pytest.mark.asyncio
 async def test_cmd_git_shows_status_summary(tmp_path):
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
@@ -2450,6 +2478,41 @@ async def test_cmd_commit_without_staged_changes_does_not_confirm(tmp_path):
         await _submit(app, pilot, "/commit update")
         assert await _wait_for(app, pilot, "没有 staged 改动")
         assert not app._inline_confirm_active()
+
+
+@pytest.mark.asyncio
+async def test_cmd_commit_suggest_commits_with_generated_message(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "src" / "agents").mkdir(parents=True)
+    (tmp_path / "src" / "agents" / "sample.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "src" / "agents" / "sample.py").write_text("x = 2\n")
+    _git(tmp_path, "add", "src/agents/sample.py")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/commit suggest")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "已提交")
+        assert b"fix(agents): update agents" in _git(tmp_path, "log", "-1", "--pretty=%s").stdout
+
+
+@pytest.mark.asyncio
+async def test_cmd_commit_all_suggest_stages_and_commits(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "base.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "src" / "agents").mkdir(parents=True)
+    (tmp_path / "src" / "agents" / "new_tool.py").write_text("x = 1\n")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/commit all --suggest")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "已提交")
+        assert b"feat(agents): update agents" in _git(tmp_path, "log", "-1", "--pretty=%s").stdout
 
 
 @pytest.mark.asyncio
