@@ -1002,6 +1002,32 @@ async def test_session_persists_messages(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_session_title_and_summary_are_updated(tmp_path, monkeypatch):
+    import src.llm.client as llmmod
+
+    class FakeLLM:
+        async def chat(self, messages, **kw):
+            return {"content": "我会先检查 TUI 会话摘要，然后给出修改建议。"}
+
+    monkeypatch.setattr(llmmod, "LLMClient", FakeLLM)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "帮我看看 TUI session 怎么恢复")
+        assert await _wait_for(app, pilot, "修改建议")
+        sid = app.session_id
+
+    from src.memory.session_store import SessionStore
+    store = SessionStore(str(tmp_path / ".vortocode" / "sessions.db"))
+    row = store.get_session(sid)
+    md = __import__("json").loads(row["metadata"])
+    assert row["name"].startswith("帮我看看 TUI session")
+    assert "TUI session" in md["summary"]
+    assert "修改建议" in md["summary"]
+
+
+@pytest.mark.asyncio
 async def test_resume_replays_session(tmp_path):
     from src.memory.session_store import SessionStore
 
