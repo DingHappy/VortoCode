@@ -2129,6 +2129,72 @@ async def test_cmd_commit_without_staged_changes_does_not_confirm(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_cmd_pr_preview_shows_local_summary(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "f.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    _git(tmp_path, "checkout", "-qb", "feature/pr")
+    (tmp_path / "g.py").write_text("g = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "feat: add g")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/pr preview base main")
+        assert await _wait_for(app, pilot, "PR 预览: feature/pr → main")
+        joined = "\n".join(app.transcript)
+        assert "title: feat: add g" in joined
+        assert "g.py" in joined
+
+
+@pytest.mark.asyncio
+async def test_cmd_pr_create_confirms_and_calls_push_open(tmp_path, monkeypatch):
+    import src.agents.vcs as vcs
+
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "f.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    _git(tmp_path, "checkout", "-qb", "feature/pr")
+    (tmp_path / "g.py").write_text("g = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "feat: add g")
+    calls = {}
+
+    def fake_push_open(repo_root, branch, title, body, base="main", remote="origin", draft=False):
+        calls.update({"repo_root": repo_root, "branch": branch, "title": title,
+                      "body": body, "base": base, "remote": remote, "draft": draft})
+        return {"ok": True, "pushed": True, "url": "https://github.com/x/y/pull/1", "error": ""}
+
+    monkeypatch.setattr(vcs, "push_and_open_pr", fake_push_open)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/pr draft base main Custom title")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "已创建 PR")
+        assert calls["branch"] == "feature/pr"
+        assert calls["base"] == "main"
+        assert calls["title"] == "Custom title"
+        assert calls["draft"] is True
+        assert "feat: add g" in calls["body"]
+        assert '"event": "open_pr"' in (tmp_path / ".vortocode" / "audit.log").read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_cmd_pr_dirty_worktree_does_not_confirm(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "f.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    _git(tmp_path, "checkout", "-qb", "feature/pr")
+    (tmp_path / "dirty.py").write_text("dirty\n")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/pr")
+        assert await _wait_for(app, pilot, "工作区还有未提交改动")
+        assert not app._inline_confirm_active()
+
+
+@pytest.mark.asyncio
 async def test_cmd_diff_empty_is_graceful(tmp_path):
     _git(tmp_path, "init", "-q")
     app = VortoCodeTUI(repo_root=str(tmp_path))

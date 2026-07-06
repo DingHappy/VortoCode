@@ -2,7 +2,11 @@
 
 import subprocess
 
-from src.agents.git_workflow import commit_changes, format_status_summary, status_summary
+from src.agents.git_workflow import (commit_changes,
+                                     format_pr_preview,
+                                     format_status_summary,
+                                     pr_preview,
+                                     status_summary)
 
 
 def _git(path, *args):
@@ -64,3 +68,42 @@ def test_commit_changes_rejects_no_staged_changes(tmp_path):
 
     assert result["ok"] is False
     assert "没有 staged" in result["error"]
+
+
+def test_pr_preview_builds_title_body_and_file_list(tmp_path):
+    _init_repo(tmp_path)
+    _git(tmp_path, "checkout", "-qb", "feature/demo")
+    (tmp_path / "a.txt").write_text("a\n", encoding="utf-8")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "feat: add a")
+
+    preview = pr_preview(str(tmp_path), base="main")
+    text = format_pr_preview(preview)
+
+    assert preview["ok"] is True
+    assert preview["branch"] == "feature/demo"
+    assert preview["base"] == "main"
+    assert preview["title"] == "feat: add a"
+    assert "a.txt" in preview["changed_files"]
+    assert "## Summary" in preview["body"]
+    assert "PR 预览: feature/demo → main" in text
+
+
+def test_pr_preview_rejects_main_branch(tmp_path):
+    _init_repo(tmp_path)
+
+    preview = pr_preview(str(tmp_path), base="main")
+
+    assert preview["ok"] is False
+    assert "当前分支是" in preview["error"]
+
+
+def test_pr_preview_rejects_dirty_worktree(tmp_path):
+    _init_repo(tmp_path)
+    _git(tmp_path, "checkout", "-qb", "feature/demo")
+    (tmp_path / "a.txt").write_text("a\n", encoding="utf-8")
+
+    preview = pr_preview(str(tmp_path), base="main")
+
+    assert preview["ok"] is False
+    assert "未提交改动" in preview["error"]

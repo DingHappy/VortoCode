@@ -32,7 +32,7 @@ from src.memory.session_store import SessionManager
 
 SLASH_COMMANDS = [
     "/analyze", "/improve", "/fix", "/run", "/apply", "/agents", "/runagent", "/skills", "/mcp",
-    "/artifacts", "/diff", "/git", "/commit", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
+    "/artifacts", "/diff", "/git", "/commit", "/pr", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
     "/context", "/compact", "/permissions", "/memory", "/tools", "/audit", "/speak", "/commands", "/hooks", "/clear", "/help", "/quit",
 ]
 # 必须带参数的命令：补全面板里回车不直接执行，先补成 "/cmd " 让用户接着填参数
@@ -52,6 +52,7 @@ COMMAND_INFO = {
     "/diff": "看工作区改动（支持 stat/cached/路径过滤）",
     "/git": "查看 git 状态、staged/unstaged diffstat",
     "/commit": "提交已 staged 改动；all 先 git add -A",
+    "/pr": "预览或创建 PR；preview 只预览，draft 开草稿",
     "/sessions": "列出历史会话",
     "/resume": "恢复某个历史会话",
     "/new": "新开一个会话",
@@ -131,6 +132,7 @@ HELP = """可用命令:
   /diff [stat|cached] [路径]  看工作区改动（+绿/-红着色）—— review 主 agent 改了什么
   /git                查看 git 状态、staged/unstaged diffstat
   /commit <msg>       提交已 staged 改动；/commit all <msg> 先 git add -A
+  /pr [preview|draft] [base <ref>] [title]  预览或创建 PR（外向操作需确认）
   /mcp [list|off]     接入 config/mcp.yaml 的 MCP 服务器工具（build 门控）
   /agents             列出已创建的 agent（网页/API 建的，同一份存储）
   /runagent <id> <任务>  用某个已创建的 agent 执行任务（流式）
@@ -1624,6 +1626,8 @@ class VortoCodeTUI(App):
             self._cmd_git(arg)
         elif cmd == "commit":
             self._cmd_commit(arg)
+        elif cmd == "pr":
+            self._cmd_pr(arg)
         elif cmd == "mcp":
             self._cmd_mcp(arg)
         elif cmd == "agents":
@@ -1977,6 +1981,83 @@ class VortoCodeTUI(App):
             self._audit_event("commit", {"sha": result.get("sha"), "stage_all": stage_all, "message": message})
             self._emit(f"已提交 {result.get('sha')}: {message}")
             self._render_statusbar()
+
+        self.run_worker(_run(), exclusive=True, group="git")
+
+    def _parse_pr_args(self, arg: str) -> dict:
+        import shlex
+        try:
+            tokens = shlex.split(arg or "")
+        except ValueError as e:
+            return {"ok": False, "error": f"参数解析失败: {e}"}
+        preview = False
+        draft = False
+        base = "main"
+        title_parts: list[str] = []
+        i = 0
+        while i < len(tokens):
+            tok = tokens[i]
+            low = tok.lower()
+            if low == "preview":
+                preview = True
+            elif low == "draft":
+                draft = True
+            elif low == "base":
+                if i + 1 >= len(tokens):
+                    return {"ok": False, "error": "base 需要一个引用，如 /pr base main"}
+                base = tokens[i + 1]
+                i += 1
+            elif tok.startswith("-"):
+                return {"ok": False, "error": "用法: /pr [preview|draft] [base <ref>] [title]"}
+            else:
+                title_parts.append(tok)
+            i += 1
+        return {"ok": True, "preview": preview, "draft": draft, "base": base, "title": " ".join(title_parts).strip()}
+
+    def _cmd_pr(self, arg: str = "") -> None:
+        """/pr：预览或创建当前分支 PR。外向操作，创建前必须确认。"""
+        opts = self._parse_pr_args(arg)
+        if not opts.get("ok"):
+            self._emit(opts.get("error", "用法: /pr [preview|draft] [base <ref>] [title]"))
+            return
+        from src.agents.git_workflow import format_pr_preview, pr_preview
+        preview = pr_preview(self.repo_root, base=opts["base"], title=opts["title"])
+        if opts["preview"] or not preview.get("ok"):
+            self._emit(format_pr_preview(preview))
+            return
+
+        async def _run():
+            text = format_pr_preview(preview)
+            if opts.get("draft"):
+                text += "\n\n将创建 draft PR。"
+            if not await self._confirm_outward(text + "\n\n确认 push 当前分支并创建 PR？"):
+                self._emit("已取消开 PR。")
+                return
+            from src.agents.vcs import push_and_open_pr
+            res = await asyncio.to_thread(
+                push_and_open_pr,
+                self.repo_root,
+                preview["branch"],
+                preview["title"],
+                preview["body"],
+                preview["base"],
+                "origin",
+                bool(opts.get("draft")),
+            )
+            self._audit_event("open_pr", {
+                "branch": preview.get("branch"),
+                "base": preview.get("base"),
+                "title": preview.get("title"),
+                "draft": bool(opts.get("draft")),
+                "ok": bool(res.get("ok")),
+                "url": res.get("url", ""),
+            })
+            if res.get("ok"):
+                self._emit(f"已创建 PR: {res.get('url')}")
+            elif res.get("pushed"):
+                self._emit(f"已 push {preview['branch']}，但开 PR 失败: {res.get('error', '')}")
+            else:
+                self._emit(f"开 PR 失败: {res.get('error', '')}")
 
         self.run_worker(_run(), exclusive=True, group="git")
 
