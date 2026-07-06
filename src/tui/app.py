@@ -1,6 +1,6 @@
 """VortoCode 交互式全屏 TUI（仿 opencode 的形）。
 
-一个 Textual 应用：上方对话区、中间实时流式区、下方输入区、底部状态栏。
+一个 Textual 应用：上方对话区、下方输入区、底部状态栏。
 - 自然语言 = 开发目标（等同 /run）；slash 命令驱动各能力。
 - `@文件` 在输入时幽灵文本补全，运行时把文件内容带入上下文。
 - token 级流式：开发过程（developer 写代码）边生成边显示。
@@ -21,10 +21,10 @@ from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Header, Input, RichLog, Static, TextArea
+from textual.widgets import Button, Header, Input, RichLog, Static, TextArea
 from textual.worker import WorkerState
 
 from src.memory.session_store import SessionManager
@@ -337,8 +337,11 @@ class ConfirmScreen(ModalScreen[bool]):
     ConfirmScreen { align: center middle; }
     #dialog { width: 64; height: auto; border: thick $warning; background: $surface; padding: 1 2; }
     #confirm-hint { color: $text-muted; margin-top: 1; }
+    #confirm-actions { height: 3; margin-top: 1; }
+    #confirm-actions Button { margin-right: 2; }
     """
     BINDINGS = [
+        Binding("enter", "yes", "确认"),
         Binding("y", "yes", "确认"),
         Binding("a", "always", "始终允许"),
         Binding("n", "no", "取消"),
@@ -353,7 +356,23 @@ class ConfirmScreen(ModalScreen[bool]):
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
             yield Static(self._message, id="confirm-msg")
-            yield Static("[y] 确认    [a] 本会话始终允许    [n]/Esc 取消", id="confirm-hint")
+            with Horizontal(id="confirm-actions"):
+                yield Button("确认", id="confirm-yes", variant="success")
+                yield Button("本会话始终允许", id="confirm-always", variant="warning")
+                yield Button("取消", id="confirm-no")
+            yield Static("Enter/y 确认 · a 本会话始终允许 · n/Esc 取消", id="confirm-hint")
+
+    def on_mount(self) -> None:
+        self.query_one("#confirm-yes", Button).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        bid = event.button.id
+        if bid == "confirm-yes":
+            self.action_yes()
+        elif bid == "confirm-always":
+            self.action_always()
+        elif bid == "confirm-no":
+            self.action_no()
 
     def action_yes(self) -> None:
         self.dismiss(True)
@@ -380,12 +399,6 @@ class VortoCodeTUI(App):
     TITLE = "VortoCode"
     CSS = """
     #log { height: 1fr; border: round $accent; padding: 0 1; }
-    #toolpane { max-height: 7; overflow-y: auto; color: $text-muted; padding: 0 1;
-                border-left: solid $accent; }
-    #thinking { max-height: 6; overflow-y: auto; color: $text-muted; padding: 0 1;
-                border-left: solid $panel; }
-    #stream { max-height: 10; overflow-y: auto; color: $text-muted; padding: 0 1;
-              border-left: solid $success; }
     #status { height: 1; color: $text-muted; padding: 0 1; }
     #palette { height: auto; max-height: 9; overflow-y: auto; background: $surface;
                color: $text-muted; padding: 0 1; }
@@ -438,23 +451,21 @@ class VortoCodeTUI(App):
         self._speak_replies = False         # /speak 开关：开则把每条回复合成语音朗读（mimo-v2.5-tts）
         self._user_cmds = None              # 用户自定义命令缓存（.vortocode/commands，惰性加载、/commands reload 重扫）
         self._turn_tools = 0                # 本回合工具调用计数（回合结束给"✓ 完成"反馈）
-        self._turn_tool_lines: list[str] = []   # 本回合 🔧 工具行（实况面板显示，收尾折叠）
+        self._turn_tool_lines: list[str] = []   # 本回合 🔧 工具行（结果流预览，收尾折叠）
         self._turn_tool_counts: dict[str, int] = {}  # 工具名 → 次数（折叠摘要用）
+        self._turn_tool_previewed = 0       # 已写入结果流的工具预览数（避免长回合刷屏）
         self._last_dev = None              # 最近一次 dev 流水线产出 {workspace, files}，供 /apply
         # 常驻状态栏缓存：仓库/分支/dirty/PR 由后台 worker 异步刷新，render 只读缓存（不阻塞 UI）
         self._sb = {"branch": "", "dirty": False, "pr": "", "model": _model_name(),
                     "pr_branch": None, "pr_on": True}
         self._sb_last = ""                  # 最近一次状态栏渲染出的纯文本（测试/调试用）
         self._model_override = None         # /model 切换的模型（本会话覆盖 .env 的 DEFAULT_MODEL）
-        self._show_thinking = True          # 思考呈现开关（/think 切；推理型模型的思维链 dim 显示）
+        self._show_thinking = True          # 思考呈现开关（/think 切；推理型模型的过程提示进结果区）
 
     # ---------------------------------------------------------------- 布局
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         yield RichLog(id="log", wrap=True, markup=True, highlight=False, auto_scroll=True)
-        yield Static(id="toolpane")
-        yield Static(id="thinking")
-        yield Static(id="stream")
         yield Static(id="status")
         yield PaletteView(id="palette")
         yield Static(id="statusbar")
@@ -462,16 +473,12 @@ class VortoCodeTUI(App):
         # 不做幽灵文字——↑↓ 选了 /run 幽灵还写 /analyze 的打架问题在结构上消失。
         yield PromptEditor(placeholder="输入需求（自然语言），或 / 看命令…  · Ctrl+J 换行",
                            id="prompt")
-        yield Footer()
 
     def on_mount(self) -> None:
         from src.llm.client import reset_usage
         reset_usage()                       # 每个会话从零计量
         self._load_history()                # 跨会话输入历史（↑/↓ 可调出上次的）
         self._load_theme()                  # 套用上次选的配色主题
-        self.query_one("#toolpane", Static).display = False
-        self.query_one("#thinking", Static).display = False
-        self.query_one("#stream", Static).display = False
         self.query_one("#status", Static).display = False
         self.query_one("#palette", Static).display = False
         self._greet()
@@ -488,20 +495,13 @@ class VortoCodeTUI(App):
             self.set_interval(30.0, self._refresh_pr)   # PR 状态：慢刷（gh 走网络）
 
     def _greet(self) -> None:
-        """首跑引导：能力速览 + 示例 + plan/build 说明 + 无 key 提示，让新用户立刻知道能干嘛。"""
+        """首跑引导：压缩成几行，留出更多真实对话空间。"""
         import os
-        self._chrome("[b]VortoCode[/b] · 交互式 AI 开发助手 "
-                     "[dim](一个会话主 agent，自己分流：答疑 / 读代码 / 动手开发)[/dim]")
-        self._chrome("[dim]能做：问答 · 读&搜代码(@文件) · 看图(@图片.png) · 听音频(@音频.mp3) · "
-                     "朗读回复(/speak) · 扫描仓库问题 · 实现/修改/测试代码 · 发布可分享制品[/dim]")
-        self._chrome("")
+        self._chrome("[b]VortoCode[/b] · 交互式 AI 开发助手 [dim](/ 看命令，@ 带上下文)[/dim]")
         self._chrome(f"[{self._tc('text-primary', '#8ab4f8')}]试试：[/] "
                      "[b]这个项目是做什么的？[/b]   ·   "
                      "[b]@src/cli.py 讲讲这个文件[/b]   ·   [b]给 xx 模块补测试[/b]")
-        self._chrome("[dim]模式：plan=只读/提案（默认更稳），build=可写新分支（绝不碰 main）。"
-                     "要它动手时会问你切不切，[b]不用先手动切[/b]。[/dim]")
-        self._chrome("[dim]键位：输入 [b]/[/b] 或 [b]@[/b] 看补全（↑↓/点击 选 · Tab 补全 · 回车执行）· "
-                     "↑↓ 翻历史 · Tab 切模式 · [b]/help[/b] 全部命令[/dim]")
+        self._chrome("[dim]plan=只读/提案，build=可写分支；Tab 切换，↑↓ 历史，Ctrl+J 换行，/help 全部命令。[/dim]")
         if not os.getenv("OPENAI_API_KEY"):
             self._chrome("[yellow]⚠ 未配置 OPENAI_API_KEY[/yellow][dim] —— 对话/开发需要它："
                          "在项目根 [b].env[/b] 写 OPENAI_API_KEY=sk-... 后重启即可；"
@@ -514,9 +514,9 @@ class VortoCodeTUI(App):
         self.query_one("#log", RichLog).write(markup)
         self._persist(markup, markup=True)
 
-    # ---- 回合内工具活动折叠（对齐 Web/opencode：运行中实况区展开，收尾折叠成一行）----
+    # ---- 回合内工具活动：主结果流里少量预览，收尾折叠成一行摘要 ----
     def _turn_say(self, markup: str) -> None:
-        """回合内 say 路由：🔧 工具行进「工具活动」实况面板（不刷屏对话区），
+        """回合内 say 路由：🔧 工具行进入当前 turn timeline 的轻量预览，长回合只计数；
         其余提示（里程碑/警告/压缩说明等）照旧进对话 log。"""
         try:
             plain = Text.from_markup(str(markup)).plain
@@ -527,25 +527,21 @@ class VortoCodeTUI(App):
             name = (s[1:].strip().split() or ["?"])[0]
             self._turn_tool_counts[name] = self._turn_tool_counts.get(name, 0) + 1
             self._turn_tool_lines.append(s)
-            self._render_toolpane()
+            self._preview_tool_activity(s)
             return
         self._chrome(markup)
 
-    def _render_toolpane(self) -> None:
-        """实况面板：标题行 + 最近 5 条工具行（纯文本渲染，长回合只占固定几行）。"""
-        pane = self.query_one("#toolpane", Static)
-        head = f"🔧 工具活动 · {sum(self._turn_tool_counts.values())}"
-        rows = [head] + ["  " + ln for ln in self._turn_tool_lines[-5:]]
-        pane.update(Text("\n".join(rows), style="dim"))
-        pane.display = True
+    def _preview_tool_activity(self, line: str) -> None:
+        """把本回合前几条工具活动写进主结果区；更多工具留给收尾摘要和 /audit。"""
+        if self._turn_tool_previewed >= 5:
+            return
+        self._turn_tool_previewed += 1
+        self.transcript.append(line)
+        self.query_one("#log", RichLog).write(Text(line, style="dim"))
 
     def _fold_tool_activity(self) -> None:
-        """回合收尾：藏实况面板，把整回合工具活动折叠成一行摘要写进对话区（成败都写，
+        """回合收尾：把整回合工具活动折叠成一行摘要写进对话区（成败都写，
         错误/取消也不丢工具轨迹；完整参数见 /audit）。"""
-        try:
-            self.query_one("#toolpane", Static).display = False
-        except Exception:  # noqa: BLE001
-            pass
         if not self._turn_tool_counts:
             return
         total = sum(self._turn_tool_counts.values())
@@ -553,12 +549,46 @@ class VortoCodeTUI(App):
         self._chrome(f"[dim]🔧 {total} 个工具调用 · {parts} · 详情 /audit[/dim]")
         self._turn_tool_lines.clear()
         self._turn_tool_counts.clear()
+        self._turn_tool_previewed = 0
 
     def _emit(self, text: str) -> None:
         """工具/命令输出（按字面写，避免 [xxx] 被当成标记解析）。"""
         self.transcript.append(text)
         self.query_one("#log", RichLog).write(Text(text))
         self._persist(text, markup=False)
+
+    def _make_stream_preview(self, *, label: str = "vorto", max_updates: int = 8):
+        """Create a throttled stream preview writer that appends to the main result log.
+
+        RichLog is append-oriented, so streaming is represented as sparse snapshots in
+        the same turn timeline. The final assistant message still lands normally.
+        """
+        state = {"started": False, "last": 0.0, "updates": 0}
+
+        def _preview(partial: str) -> None:
+            self.query_one("#status", Static).display = False   # 有正文了，转圈让位
+            text = str(partial or "")
+            if not text:
+                return
+            now = time.monotonic()
+            if state["started"] and state["updates"] >= max_updates:
+                return
+            if state["started"] and now - state["last"] < 0.8:
+                return
+            tail = "\n".join(text[-1200:].splitlines()[-6:]).strip()
+            if not tail:
+                return
+            if not state["started"]:
+                state["started"] = True
+                line = f"● {label}\n{tail}"
+            else:
+                line = f"  {tail}"
+                state["updates"] += 1
+            state["last"] = now
+            self.transcript.append(tail)
+            self.query_one("#log", RichLog).write(Text(line, style="dim"))
+
+        return _preview
 
     def _tc(self, name: str, fallback: str) -> str:
         """取当前主题的某个语义色（Rich 文本用），拿不到/未挂载用 fallback —— 让消息色随主题。"""
@@ -814,6 +844,23 @@ class VortoCodeTUI(App):
         self.mode = "build" if self.mode == "plan" else "plan"
         self._sync_subtitle()
         self._chrome(f"→ 切到 [b]{self.mode}[/b] 模式")
+        self._record_mode_change()
+
+    def _mode_context(self) -> str:
+        desc = "可写分支，写文件/跑命令/开发流水线可用" if self.mode == "build" else "只读/提案，写操作需先切 build"
+        return f"[运行时状态]\n当前 TUI 模式：{self.mode}（{desc}）。"
+
+    def _record_mode_change(self) -> None:
+        """把模式切换写进 agent 历史，避免上一轮 plan 拒绝记录误导后续回合。"""
+        if self.agent is None:
+            return
+        try:
+            self.agent.history.append({
+                "role": "user",
+                "content": f"{self._mode_context()}\n用户刚刚手动切换了模式；后续回合必须以当前模式为准。",
+            })
+        except Exception:  # noqa: BLE001
+            pass
 
     def _set_input(self, val: str) -> None:
         inp = self.query_one("#prompt", PromptEditor)
@@ -1075,12 +1122,6 @@ class VortoCodeTUI(App):
             self._show_thinking = not self._show_thinking
             self._chrome(f"[dim]💭 思考呈现已{'开' if self._show_thinking else '关'}"
                          "（推理型模型的思维链；对无 reasoning 的模型无影响）[/dim]")
-            if not self._show_thinking:
-                try:
-                    th = self.query_one("#thinking", Static)
-                    th.update(""); th.display = False
-                except Exception:  # noqa: BLE001
-                    pass
         elif cmd == "clear":
             self.action_clear_log()
         elif cmd == "analyze":
@@ -1395,13 +1436,12 @@ class VortoCodeTUI(App):
             return
         cfg = inst.config
         self._chrome(f"[cyan]运行 agent「{cfg.name}」：{task}[/cyan]")
-        stream = self.query_one("#stream", Static)
-        stream.display = True
         buf: list[str] = []
+        preview = self._make_stream_preview(label=cfg.name)
 
         def on_token(tok: str) -> None:
             buf.append(tok)
-            stream.update(Text("".join(buf)[-1500:]))
+            preview("".join(buf))
 
         try:
             agent = build_config_agent(cfg.name, cfg.role, cfg.system_prompt, cfg.model)
@@ -1413,9 +1453,6 @@ class VortoCodeTUI(App):
                 self._emit(f"错误: {result.error}")
         except Exception as e:  # noqa: BLE001
             self._emit(f"执行出错: {e}")
-        finally:
-            stream.update("")
-            stream.display = False
 
     # ---------------------------------------------------------------- 会话
     def _cmd_sessions(self) -> None:
@@ -1736,6 +1773,7 @@ class VortoCodeTUI(App):
             self._chrome(f"[dim]🖼 附带 {len(images)} 张图（mimo-v2.5 可读图）[/dim]")
         if audio:
             self._chrome(f"[dim]🎧 附带 {len(audio)} 段音频（mimo-v2.5 可听音频）[/dim]")
+        user_text = f"{user_text}\n\n{self._mode_context()}"
         if self._attach_url:
             if await self._route_attached(user_text, images, audio):
                 return                       # attach 回合完成（含 serve 侧出错——已如实渲染，不重跑）
@@ -1768,60 +1806,45 @@ class VortoCodeTUI(App):
     def _turn_renderers(self):
         """一个回合的四件套 UI 渲染闭包（进程内与 attach 两条路径共用，保证同一观感）：
 
-        (think_cb 思维链→#thinking, stream_cb 流式→#stream, emit_final 最终回复→log, cleanup 收尾清区)。
-        回复**边生成边显示**：流式 token 进 #stream（署名 ● vorto、和最终消息同位同款）；reply 就绪
-        即清掉 #stream、把最终 markdown 写进 log（清在写之前，避免一帧双份 ● vorto）。
+        (think_cb 思维链摘要→log, stream_cb 流式摘要→log, emit_final 最终回复→log, cleanup 收尾)。
+        RichLog 是追加型，流式正文以节流快照进入同一结果流；最终回复仍按 markdown 落地。
         """
         self._turn_tool_lines.clear()           # 新回合从零开始收工具活动（防上回合残留）
         self._turn_tool_counts.clear()
-        stream = self.query_one("#stream", Static)
-        thinking = self.query_one("#thinking", Static)
+        self._turn_tool_previewed = 0
         think_buf = []                          # 累积推理型模型的思维链（reasoning_content）
+        think_state = {"started": False, "last": 0.0, "updates": 0}
+        stream_cb = self._make_stream_preview(label="vorto")
+
+        def _write_thinking_line(text: str) -> None:
+            self.transcript.append(text)
+            self.query_one("#log", RichLog).write(Text(text, style="dim"))
 
         def think_cb(delta: str) -> None:
-            # 思考呈现：思维链走这里、与正文分开，dim 显示在 #thinking（可 /think 关）。通用：任何
-            # 带 reasoning_content 的模型都触发；没有的模型自然不触发、零打扰。
+            # 思考呈现：放进主结果区，而不是输入框上方的临时小框。节流追加，避免 reasoning token
+            # 把正文刷走；没有 reasoning_content 的模型自然不触发、零打扰。
             if not self._show_thinking:
                 return
             think_buf.append(delta)
-            t = Text()
-            t.append("💭 ", style="dim")
-            t.append("思考中", style="dim italic")
-            t.append("\n")
-            t.append("\n".join("".join(think_buf)[-1600:].splitlines()[-5:]), style="dim")
-            thinking.display = True
-            thinking.update(t)
-            try:
-                thinking.scroll_end(animate=False)
-            except Exception:  # noqa: BLE001
-                pass
-
-        def stream_cb(partial: str) -> None:
-            thinking.update(""); thinking.display = False       # 正文开始 → 收起思考区
-            self.query_one("#status", Static).display = False   # 有正文了，转圈让位
-            stream.display = True
-            t = Text()
-            t.append("● ", style=f"bold {self._tc('text-success', '#7fce9a')}")  # 随主题，与最终回复同色
-            t.append("vorto", style="dim italic")
-            t.append("\n")
-            # 始终显示最新尾部：#stream 是 max-height:10 的小框，先按字符截、再只留最近 ~9 行
-            # （配合 max-height 不溢出），让最新 token 落在可见窗口里——早期只截字符，长回复会把
-            # 最新行挤出 10 行框外、滚不到底就看不见（这正是"实时输出要一直显示最新"要解决的）。
-            t.append("\n".join(partial[-1800:].splitlines()[-9:]))
-            stream.update(t)
-            try:
-                stream.scroll_end(animate=False)   # 双保险：内容有换行/换行折叠时也把框滚到底，跟住最新
-            except Exception:  # noqa: BLE001
-                pass
+            now = time.monotonic()
+            tail = " ".join("".join(think_buf)[-900:].splitlines()[-3:]).strip()
+            if not think_state["started"]:
+                think_state["started"] = True
+                think_state["last"] = now
+                _write_thinking_line(f"💭 思考中… {tail[:180]}" if tail else "💭 思考中…")
+                return
+            if think_state["updates"] >= 3 or now - think_state["last"] < 0.8:
+                return
+            if tail:
+                _write_thinking_line(f"  {tail[:240]}")
+                think_state["updates"] += 1
+                think_state["last"] = now
 
         def emit_final(text: str) -> None:
-            thinking.update(""); thinking.display = False   # 收起思考区
-            stream.update(""); stream.display = False       # 先清流式区，再落最终（无双份）
             self._assistant(text)
 
         def cleanup() -> None:
-            thinking.update(""); thinking.display = False
-            stream.update(""); stream.display = False
+            return None
 
         return think_cb, stream_cb, emit_final, cleanup
 
@@ -1830,7 +1853,7 @@ class VortoCodeTUI(App):
 
         返回 True=回合已完成（含 serve 侧出错——已如实渲染，**不回退重跑**，防重复执行）；
         False=连接阶段失败（回合未发出，调用方安全回退进程内）。
-        协议事件 → UI 面映射：say→_chrome、stream→#stream、reasoning→#thinking、
+        协议事件 → UI 面映射：say→_chrome、stream→结果区摘要、reasoning→结果区摘要、
         plan→计划面板、confirm→ConfirmScreen 应答回传、emit/done→收尾。
         富 UI 取舍（v1，如实交代）：工具在 serve 端跑（与 Web 同一工厂），TUI 的着色 diff
         直写工具在 attach 下不参与；进程内模式保留全部富 UI。
@@ -2487,6 +2510,7 @@ class VortoCodeTUI(App):
             self.mode = "build"
             self._sync_subtitle()
             self._chrome("[green]→ 已切到 build 模式并继续[/green]")
+            self._record_mode_change()
         return ok
 
     def _audit_tool(self, name: str, args: dict, result: str) -> None:
@@ -2627,19 +2651,17 @@ class VortoCodeTUI(App):
             self._chrome(f"[dim]带入文件上下文: {', '.join(ctx_files)}[/dim]")
         self._chrome(f"[cyan]开发（dev→test→review，流式）：{goal_text}[/cyan]")
 
-        stream = self.query_one("#stream", Static)
-        stream.display = True
         buf: list[str] = []
+        preview = self._make_stream_preview(label="developer")
 
         def on_token(tok: str) -> None:
             buf.append(tok)
-            stream.update(Text("".join(buf)[-1500:]))   # 显示尾部，避免无限增高
+            preview("".join(buf))
 
         async def on_iter(record) -> None:
             ok = "✓" if record.tests_passed else "✗"
             self._emit(f"  第{record.iteration}轮 · 测试{ok} · 审查={record.review_verdict or '—'}")
             buf.clear()
-            stream.update("")
 
         from src.orchestrator.dev_loop import IterativeDevLoop
         from src.agents.roles import DeveloperAgent, TesterAgent, ReviewerAgent
@@ -2663,9 +2685,6 @@ class VortoCodeTUI(App):
         except Exception as e:  # noqa: BLE001
             summary = f"执行出错: {e}"
             self._emit(summary)
-        finally:
-            stream.update("")
-            stream.display = False
         return summary
 
 

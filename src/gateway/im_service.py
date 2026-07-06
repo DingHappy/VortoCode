@@ -74,12 +74,16 @@ def start_embedded(channel: str, repo_root: str, *, mode: str = "plan",
     # lifespan 重启/动态启停会把更新继续投给已停的 bridge/adapter（评审抓的订阅泄漏）
     _ACTIVE["unsubscribe"] = runner.subscribe(bridge._on_task_update)
     _ACTIVE["bridge"] = bridge
+    from src.gateway import im_runtime
+    im_runtime.set_owner_notifier(bridge._safe_send)
     return bridge, adapter
 
 
 def stop_embedded() -> None:
     """注销内嵌 bridge（serve 关停时调；adapter 的关闭由调用方负责）：单例、kind 分发、订阅全清。"""
     _ACTIVE["bridge"] = None
+    from src.gateway import im_runtime
+    im_runtime.set_owner_notifier(None)
     unsub = _ACTIVE.pop("unsubscribe", None)
     _ACTIVE["unsubscribe"] = None
     if unsub is not None:
@@ -103,11 +107,5 @@ async def notify_owner(text: str) -> bool:
 
     scheduler 通知三路里的 IM 路（#129 收口）：台账/WS 之外，人不在电脑前也能收到。
     """
-    bridge = _ACTIVE["bridge"]
-    if bridge is None:
-        return False
-    try:
-        await bridge._safe_send(str(text))
-        return True
-    except Exception:  # noqa: BLE001 —— IM 断线不拖垮调度循环
-        return False
+    from src.gateway import im_runtime
+    return await im_runtime.notify_owner(text)
