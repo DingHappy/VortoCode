@@ -59,6 +59,7 @@ def _fake_improve_loop(applied):
 
 @pytest.mark.asyncio
 async def test_starts_in_plan_mode_and_greets():
+    from textual.widgets import Footer
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -66,6 +67,7 @@ async def test_starts_in_plan_mode_and_greets():
         joined = "\n".join(app.transcript)
         assert "AI 开发助手" in joined and "试试" in joined        # 首跑引导：能力 + 示例
         assert "plan" in joined and "build" in joined            # 模式说明
+        assert not app.query(Footer)                             # 自定义 statusbar 已覆盖底部提示
 
 
 @pytest.mark.asyncio
@@ -1399,9 +1401,8 @@ async def test_busy_input_queues_then_auto_sends(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_tool_lines_fold_into_pane_then_summary():
-    """回合内 🔧 工具行进实况面板（不刷屏对话区）；收尾折叠成一行摘要，面板隐藏。"""
-    from textual.widgets import Static
+async def test_tool_lines_preview_in_log_then_summary():
+    """回合内 🔧 工具行进结果流轻量预览；收尾折叠成一行摘要。"""
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
         app._turn_say("🔧 [b]read_file[/b][dim] path=a.py[/dim]")
@@ -1409,28 +1410,24 @@ async def test_tool_lines_fold_into_pane_then_summary():
         app._turn_say("🔧 [b]grep[/b][dim] pattern=x[/dim]")
         app._turn_say("[dim]🗜️ 压缩了更早的对话[/dim]")          # 非工具提示照旧进对话区
         await pilot.pause()
-        pane = app.query_one("#toolpane", Static)
-        assert pane.display is True                              # 实况面板展开
-        assert not any("read_file" in t for t in app.transcript)  # 工具行没刷进对话区
+        assert any("read_file" in t for t in app.transcript)      # 工具行进入当前结果流
         assert any("压缩了更早的对话" in t for t in app.transcript)
         app._fold_tool_activity(); await pilot.pause()
-        assert pane.display is False                             # 收尾面板隐藏
         joined = "\n".join(app.transcript)
         assert "3 个工具调用" in joined                          # 折叠摘要一行
         assert "read_file×2" in joined and "grep×1" in joined
         assert not app._turn_tool_lines and not app._turn_tool_counts   # 状态清零
+        assert app._turn_tool_previewed == 0
 
 
 @pytest.mark.asyncio
 async def test_fold_without_tools_is_silent():
-    """没用工具的回合：不写摘要行、面板保持隐藏（不产生噪音）。"""
-    from textual.widgets import Static
+    """没用工具的回合：不写摘要行（不产生噪音）。"""
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
         n0 = len(app.transcript)
         app._fold_tool_activity(); await pilot.pause()
         assert len(app.transcript) == n0
-        assert app.query_one("#toolpane", Static).display is False
 
 
 @pytest.mark.asyncio
@@ -1555,6 +1552,29 @@ async def test_confirm_screen_command_scope_sets_only_command_flag(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_confirm_screen_enter_confirms(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app.push_screen(ConfirmScreen("切到 build？"))
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert len(app.screen_stack) == 1
+
+
+@pytest.mark.asyncio
+async def test_confirm_screen_buttons_are_clickable(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app.push_screen(ConfirmScreen("写文件？"))
+        await pilot.pause()
+        await pilot.click("#confirm-always")
+        await pilot.pause()
+        assert app._allow_writes_session is True
+        assert len(app.screen_stack) == 1
+
+
+@pytest.mark.asyncio
 async def test_plan_escalation_switches_to_build_and_marks_done(monkeypatch, tmp_path):
     from src.agents.main_agent import MainAgent, Tool
     monkeypatch.setenv("OPENAI_API_KEY", "x")
@@ -1634,6 +1654,31 @@ async def test_plan_can_request_build_when_ready(monkeypatch, tmp_path):
             await pilot.pause(0.05)
         assert app.mode == "build" and ran == [{"file": "a.py"}]
         assert await _wait_for(app, pilot, "✓ 完成")
+
+
+@pytest.mark.asyncio
+async def test_build_mode_is_injected_into_agent_turn(monkeypatch, tmp_path):
+    import src.llm.client as llmmod
+
+    seen = {}
+
+    class FakeLLM:
+        async def chat(self, messages, **kw):
+            seen["messages"] = messages
+            return {"content": "知道了"}
+
+    monkeypatch.setattr(llmmod, "LLMClient", FakeLLM)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/mode")
+        assert app.mode == "build"
+        await _submit(app, pilot, "写入吧")
+        assert await _wait_for(app, pilot, "知道了")
+
+    joined = "\n".join(str(m.get("content", "")) for m in seen["messages"])
+    assert "当前 TUI 模式：build" in joined
 
 
 @pytest.mark.asyncio
@@ -1782,7 +1827,7 @@ async def test_apply_nothing_pending(tmp_path):
 @pytest.mark.asyncio
 async def test_reply_streams_then_lands_in_log(monkeypatch, tmp_path):
     from src.agents.main_agent import MainAgent
-    from textual.widgets import Static, RichLog
+    from textual.widgets import RichLog
     monkeypatch.setenv("OPENAI_API_KEY", "x")
 
     class StreamLLM:                       # 有 stream() → 走流式路径（边出边显）
@@ -1791,13 +1836,6 @@ async def test_reply_streams_then_lands_in_log(monkeypatch, tmp_path):
                 yield tok
         async def chat(self, messages, **k):
             return {"content": "这是流式输出的回复。"}
-
-    seen = []
-    orig = Static.update
-    def spy(self, renderable="", *a, **k):
-        seen.append(str(renderable))
-        return orig(self, renderable, *a, **k)
-    monkeypatch.setattr(Static, "update", spy)
 
     app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
@@ -1812,8 +1850,23 @@ async def test_reply_streams_then_lands_in_log(monkeypatch, tmp_path):
                 break
             await pilot.pause(0.05)
         assert ok                                        # 最终回复落进 log
-        assert any("这是" in u for u in seen)             # 流式过程中 #stream 收到过部分文本
-        assert app.query_one("#stream", Static).display is False   # 收尾干净
+        assert any("这是" in u for u in app.transcript)   # 流式预览进主结果流
+        assert not app.query("#stream")                   # 不再有独立流式小框
+
+
+@pytest.mark.asyncio
+async def test_reasoning_lands_in_result_log(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        think_cb, stream_cb, emit_final, cleanup = app._turn_renderers()
+        think_cb("正在读取代码结构")
+        stream_cb("最终正文")
+        emit_final("完成")
+        cleanup()
+        joined = "\n".join(app.transcript)
+        assert "💭 思考中" in joined
+        assert "完成" in joined
 
 
 @pytest.mark.asyncio

@@ -159,7 +159,7 @@ def make_notifier(cwd: str):
         except Exception:  # noqa: BLE001
             pass
         try:
-            from src.gateway.im_service import notify_owner
+            from src.gateway.im_runtime import notify_owner
             await notify_owner(f"🔔 {text}")       # ③ IM 推已配对 owner（没内嵌 bridge 即 no-op）
         except Exception:  # noqa: BLE001
             pass
