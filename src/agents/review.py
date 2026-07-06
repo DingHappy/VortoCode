@@ -5,8 +5,8 @@
 能触发的具体输入）——空口断言的降级为不拦截。confirmed（P0/P1 且有证据）会喂回一轮自修复，修不掉
 就如实拦下 PR、保留分支。把 codex 外审反复抓到真 bug 的经验内化进流水线。
 
-与 main_agent 的循环依赖用**函数内惰性 import** 打破（main_agent 调本模块的 review_branch，
-本模块建 reviewer 子 agent 时才 import main_agent 的工具工厂）。
+review.py 只保留纯审查规则/解析/gate 编排；真正的 reviewer 子 agent 由 main_agent 注入，
+避免 review 反向导入 main_agent 形成循环依赖。
 """
 
 from __future__ import annotations
@@ -14,7 +14,6 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-import uuid
 from pathlib import Path
 from typing import List, Optional
 
@@ -129,38 +128,12 @@ _REVIEWER_SYSTEM = (
 async def review_branch(repo_root: str, branch: str, base: str, *, llm=None,
                         test_cmd: Optional[list] = None, guidelines: str = "",
                         max_steps: int = 8) -> List[dict]:
-    """在临时 worktree 检出 branch，让 reviewer 子 agent 挑刺，返回 findings（list[dict]）。
+    """默认 fail-open reviewer。
 
-    出任何错都返回 []（fail-open：审查是开 PR 前的**顾问级**预检，人在合并口是最终兜底，
-    reviewer 抽风不该拦住绿的集成）。
+    生产路径由 main_agent 注入真正 reviewer；这里保留占位，保证直接调用 run_gate 时仍是顾问级
+    fail-open 行为，不因为缺少 agent 装配层而拦 PR。
     """
-    from src.agents.main_agent import (MainAgent, build_read_tools,  # 惰性：破 review↔main_agent 循环
-                                       build_test_tool)
-    from src.agents.worktree import _git, _worktrees_dir, remove_worktree
-
-    path = _worktrees_dir(repo_root) / ("wt-review-" + uuid.uuid4().hex[:8])
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        remove_worktree(repo_root, path)
-    add = _git(repo_root, "worktree", "add", str(path), branch, check=False)
-    if add.returncode != 0:
-        return []
-    try:
-        diff = _branch_diff(repo_root, base, branch)
-        if not diff.strip():
-            return []
-        tools = build_read_tools(str(path)) + [build_test_tool(str(path), test_cmd)]
-        extra = _REVIEWER_SYSTEM + (f"\n\n【本仓库审查规范】\n{guidelines}" if guidelines else "")
-        agent = MainAgent(tools, llm=llm, max_steps=max_steps, extra_system=extra)
-        prompt = (f"审查分支 {branch}（相对 {base}）的以下改动。只报 P0/P1、每条带验证证据、"
-                  f"用 run_tests 复现你怀疑的问题，最后只输出 JSON 数组：\n\n```diff\n{diff}\n```")
-        try:
-            reply = await agent.run_turn(prompt, mode="build")
-        except Exception:  # noqa: BLE001
-            return []
-        return parse_findings(reply)
-    finally:
-        remove_worktree(repo_root, path)
+    return []
 
 
 # --------------------------------------------------------------- 审查关（orchestration，可注入以便测试）
