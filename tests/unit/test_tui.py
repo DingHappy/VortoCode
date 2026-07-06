@@ -946,6 +946,27 @@ def test_cmd_memory_empty_init_and_add(tmp_path):
     assert "用户偏好 pytest -q" in emitted[-1]
 
 
+def test_cmd_memory_list_delete_and_auto_toggle(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted, chromed = [], []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda m, *a, **k: chromed.append(m)
+    mid = app.sessions.store.add_memory("__longterm__", "fact", "项目默认用 pytest -q", importance=0.6)
+
+    app._cmd_memory("list")
+    assert mid in emitted[-1]
+    assert "项目默认用 pytest -q" in emitted[-1]
+
+    app._cmd_memory("auto off")
+    assert app._auto_memory is False
+    assert app._load_setting("auto_memory") is False
+    assert any("已关闭" in m for m in chromed)
+
+    app._cmd_memory(f"delete {mid}")
+    assert "长期记忆为空" in emitted[-1]
+    assert not app.sessions.store.get_memories("__longterm__")
+
+
 def test_cmd_memory_init_local(tmp_path):
     app = VortoCodeTUI(repo_root=str(tmp_path))
     emitted = []
@@ -966,6 +987,35 @@ def test_cmd_memory_rejects_unknown(tmp_path):
     app._cmd_memory("wat")
 
     assert emitted and "用法: /memory" in emitted[-1]
+
+
+@pytest.mark.asyncio
+async def test_auto_memory_candidate_prompts_and_saves(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app._session_last_user = "以后这个项目默认用 pytest -q 跑测试"
+        app._assistant("好的，记下这个偏好。")
+        assert await _wait_inline_confirm(app, pilot)
+        assert "检测到可能值得跨会话记住" in app.query_one("#palette").render().plain
+        await pilot.press("y")
+        await pilot.pause()
+
+        rows = app.sessions.store.get_memories("__longterm__")
+        assert len(rows) == 1
+        assert "pytest -q" in rows[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_auto_memory_can_be_disabled(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    app._auto_memory = False
+    async with app.run_test() as pilot:
+        app._session_last_user = "以后这个项目默认用 pytest -q 跑测试"
+        app._assistant("好的。")
+        await pilot.pause()
+
+        assert not app._inline_confirm_active()
+        assert not app.sessions.store.get_memories("__longterm__")
 
 
 @pytest.mark.asyncio

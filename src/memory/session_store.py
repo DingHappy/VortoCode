@@ -312,6 +312,15 @@ class SessionStore:
             )
             
             return [dict(row) for row in cursor.fetchall()]
+
+    def delete_memory(self, session_id: str, memory_id: str) -> bool:
+        """删除一条记忆。返回是否确实删除。"""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            cursor = conn.execute(
+                "DELETE FROM memories WHERE session_id = ? AND id = ?",
+                (session_id, memory_id)
+            )
+            return cursor.rowcount > 0
     
     def get_session_summary(self, session_id: str) -> Dict[str, Any]:
         """获取会话摘要"""
@@ -410,6 +419,12 @@ class SessionManager:
         if not self.current_session_id:
             return []
         return self.store.search_memories(self.current_session_id, query, limit)
+
+    def delete_memory(self, memory_id: str) -> bool:
+        """删除记忆"""
+        if not self.current_session_id:
+            return False
+        return self.store.delete_memory(self.current_session_id, memory_id)
     
     def list_recent_sessions(self, limit: int = 10) -> List[Dict[str, Any]]:
         """列出最近的会话"""

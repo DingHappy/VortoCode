@@ -66,7 +66,7 @@ COMMAND_INFO = {
     "/context": "查看/切换上下文策略（auto/compact/balanced/preserve）",
     "/compact": "手动压缩旧对话上下文；preview 只预估",
     "/permissions": "查看/切换工具权限；可 deny 规则或 reset 会话放行",
-    "/memory": "查看/新增项目指令和跨会话记忆",
+    "/memory": "查看/管理项目指令和跨会话记忆",
     "/tools": "列出主 agent 工具及读写权限",
     "/audit": "查看工具调用审计日志",
     "/speak": "朗读 agent 回复开关（mimo-v2.5-tts，需 key）",
@@ -147,7 +147,7 @@ HELP = """可用命令:
   /context [策略]     查看/切换上下文策略（auto/compact/balanced/preserve）
   /compact [preview]  手动压缩旧对话上下文；preview 只预估
   /permissions [操作] 查看工具权限；plan/build 切模式，reset 清会话放行，deny <tool> [glob] 加规则
-  /memory [操作]      查看项目指令/长期记忆；init 建模板，add <文本> 记一条
+  /memory [操作]      查看/管理长期记忆；list/delete/auto/add/init
   /clear              清屏
   /help               显示本帮助
   /quit               退出（也可 Ctrl+C）
@@ -545,6 +545,8 @@ class VortoCodeTUI(App):
         self._speak_replies = False         # /speak 开关：开则把每条回复合成语音朗读（mimo-v2.5-tts）
         self._user_cmds = None              # 用户自定义命令缓存（.vortocode/commands，惰性加载、/commands reload 重扫）
         self._context_policy = self._load_setting("context_policy", "auto")
+        self._auto_memory = bool(self._load_setting("auto_memory", True))
+        self._last_memory_candidate = ""
         self._turn_tools = 0                # 本回合工具调用计数（回合结束给"✓ 完成"反馈）
         self._turn_tool_lines: list[str] = []   # 本回合 🔧 工具行（结果流预览，收尾折叠）
         self._turn_tool_counts: dict[str, int] = {}  # 工具名 → 次数（折叠摘要用）
@@ -725,6 +727,7 @@ class VortoCodeTUI(App):
             self._update_session_summary(f"用户：{self._session_last_user} · 回复：{reply}")
         elif reply:
             self._update_session_summary(f"回复：{reply}")
+        self._maybe_offer_auto_memory()
 
     def _persist(self, content: str, markup: bool) -> None:
         """把一条对话写进当前会话（落盘）。失败不影响交互。"""
@@ -1779,7 +1782,7 @@ class VortoCodeTUI(App):
         self._emit("\n".join(lines))
 
     def _cmd_memory(self, arg: str = "") -> None:
-        """/memory：查看项目指令与长期记忆；init 建项目指令模板；add 直接新增长期记忆。"""
+        """/memory：查看/管理项目指令与长期记忆。"""
         raw = (arg or "").strip()
         low = raw.lower()
         if low.startswith("add "):
@@ -1791,6 +1794,34 @@ class VortoCodeTUI(App):
             self._chrome(f"[green]已加入长期记忆：{content[:80]}[/green]")
             self._emit(self._memory_status_text())
             return
+        if low in ("list", "ls"):
+            self._emit(self._memory_list_text())
+            return
+        if low.startswith(("delete ", "del ", "rm ")):
+            parts = raw.split(maxsplit=1)
+            memory_id = parts[1].strip() if len(parts) > 1 else ""
+            if not memory_id:
+                self._emit("用法: /memory delete <id>")
+                return
+            ok = self.sessions.store.delete_memory("__longterm__", memory_id)
+            if ok:
+                self._chrome(f"[green]已删除长期记忆 {memory_id}[/green]")
+            else:
+                self._emit(f"未找到长期记忆 id={memory_id}")
+            self._emit(self._memory_list_text())
+            return
+        if low in ("auto on", "auto true", "auto 1"):
+            self._auto_memory = True
+            self._save_setting("auto_memory", True)
+            self._chrome("[green]自动记忆候选提示已开启[/green]")
+            self._emit(self._memory_status_text())
+            return
+        if low in ("auto off", "auto false", "auto 0"):
+            self._auto_memory = False
+            self._save_setting("auto_memory", False)
+            self._chrome("[dim]自动记忆候选提示已关闭[/dim]")
+            self._emit(self._memory_status_text())
+            return
         if low in ("init", "init project"):
             self._init_memory_file(local=False)
             self._emit(self._memory_status_text())
@@ -1800,7 +1831,7 @@ class VortoCodeTUI(App):
             self._emit(self._memory_status_text())
             return
         if raw:
-            self._emit("用法: /memory [init|init local|add <文本>]")
+            self._emit("用法: /memory [list|add <文本>|delete <id>|auto on|auto off|init|init local]")
             return
         self._emit(self._memory_status_text())
 
@@ -1840,14 +1871,90 @@ class VortoCodeTUI(App):
             lines.append("项目指令: （未找到 AGENTS.md / CLAUDE.md / VORTO.md / .vortocode/AGENTS.md）")
             lines.append("  用 /memory init 创建共享 AGENTS.md；用 /memory init local 创建本地私有指令。")
         lines.append("")
-        lines.append(f"长期记忆: {len(rows)} 条")
+        lines.append(f"长期记忆: {len(rows)} 条 · 自动候选提示: {'on' if self._auto_memory else 'off'}")
         for r in rows[:8]:
-            lines.append(f"  - {str(r.get('content', ''))[:140]}")
+            lines.append(f"  - {r.get('id')} · {str(r.get('content', ''))[:120]}")
         if len(rows) > 8:
             lines.append(f"  ... 还有 {len(rows) - 8} 条")
         lines.append("")
-        lines.append("用法: /memory add <文本> · /memory init · /memory init local")
+        lines.append("用法: /memory list · /memory add <文本> · /memory delete <id> · /memory auto on/off · /memory init")
         return "\n".join(lines)
+
+    def _memory_list_text(self) -> str:
+        rows = self.sessions.store.get_memories("__longterm__")
+        if not rows:
+            return "长期记忆为空。用 /memory add <文本> 添加。"
+        lines = [f"[b]长期记忆[/b]（{len(rows)} 条）"]
+        for r in rows:
+            created = str(r.get("created_at") or "")[:19]
+            content = str(r.get("content") or "")
+            lines.append(f"  {r.get('id')} · {r.get('type', 'fact')} · {created} · {content}")
+        lines.append("\n用 /memory delete <id> 删除。")
+        return "\n".join(lines)
+
+    def _auto_memory_candidate(self, text: str) -> str:
+        """从用户明确表达的长期偏好/项目约定里提取候选；保守规则，不调用 LLM。"""
+        raw = self._summary_text(text, 220).strip()
+        if not raw or raw.startswith("/"):
+            return ""
+        explicit = ("记住", "帮我记", "长期记忆")
+        preference = ("以后", "后续", "默认", "习惯", "偏好", "项目约定", "统一", "不要再")
+        if not any(w in raw for w in explicit + preference):
+            return ""
+        if not any(w in raw for w in explicit) and any(w in raw for w in ("吗", "？", "?", "为什么", "怎么")):
+            return ""
+        content = raw
+        for marker in ("记住：", "记住:", "帮我记住：", "帮我记住:", "长期记忆：", "长期记忆:"):
+            if marker in content:
+                content = content.split(marker, 1)[1].strip()
+                break
+        content = content.strip(" ，,。.")
+        if len(content) < 6:
+            return ""
+        if any(w in content for w in ("pytest", "ruff", "pnpm", "npm", "yarn", "uv", "cargo", "swift test")):
+            prefix = "项目偏好"
+        elif any(w in content for w in ("项目", "约定", "默认", "统一")):
+            prefix = "项目约定"
+        else:
+            prefix = "用户偏好"
+        return f"{prefix}：{content[:180]}"
+
+    def _memory_exists(self, content: str) -> bool:
+        try:
+            rows = self.sessions.store.get_memories("__longterm__")
+        except Exception:  # noqa: BLE001
+            return False
+        normalized = " ".join(content.split())
+        return any(" ".join(str(r.get("content") or "").split()) == normalized for r in rows)
+
+    def _maybe_offer_auto_memory(self) -> None:
+        if not self._auto_memory or self._inline_confirm_active():
+            return
+        candidate = self._auto_memory_candidate(self._session_last_user)
+        if not candidate or candidate == self._last_memory_candidate or self._memory_exists(candidate):
+            return
+        self._last_memory_candidate = candidate
+
+        def _done(ok: bool | None) -> None:
+            if not ok:
+                self._chrome("[dim]未保存自动记忆候选[/dim]")
+                return
+            try:
+                mid = self.sessions.store.add_memory(
+                    "__longterm__", "fact", candidate, importance=0.65,
+                    metadata={"source": "auto_candidate", "session_id": self.session_id})
+            except Exception as e:  # noqa: BLE001
+                self._emit(f"保存自动记忆失败: {e}")
+                return
+            self._chrome(f"[green]已保存长期记忆 {mid}[/green]")
+
+        self._begin_inline_confirm(
+            "检测到可能值得跨会话记住的项目偏好/约定：\n"
+            f"{candidate}\n"
+            "保存到长期记忆？",
+            scope="memory",
+            callback=_done,
+        )
 
     def _cmd_audit(self, arg: str) -> None:
         """/audit 看最近的工具调用审计（.vortocode/audit.log）。"""
