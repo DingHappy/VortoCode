@@ -429,6 +429,7 @@ class VortoCodeTUI(App):
         self.sessions = SessionManager(str(Path(repo_root) / ".vortocode" / "sessions.db"))
         self.session_id: str | None = None
         self._persist_on = False            # 开场白阶段先不落盘
+        self._session_last_user = ""        # 用于生成 /sessions 的轻量摘要
         self._busy = False                  # 是否有长任务在跑
         self.agent = None                   # 主 agent loop（首次用到时惰性构建）
         self._skills = None                 # SkillRegistry（惰性构建、可 /skills reload）
@@ -607,6 +608,9 @@ class VortoCodeTUI(App):
         log.write(t)
         self.transcript.append(text)
         self._persist(text, markup=False)
+        self._session_last_user = self._summary_text(text)
+        self._ensure_session_title(text)
+        self._update_session_summary(f"用户：{self._session_last_user}")
 
     def _assistant(self, text: str) -> None:
         """主 agent 最终回复：● 署名一行 + 正文（markdown 渲染，失败回退纯文本）。"""
@@ -622,6 +626,11 @@ class VortoCodeTUI(App):
         log.write("")                        # turn 间留白
         self.transcript.append(text)
         self._persist(text, markup=False)
+        reply = self._summary_text(text)
+        if self._session_last_user:
+            self._update_session_summary(f"用户：{self._session_last_user} · 回复：{reply}")
+        elif reply:
+            self._update_session_summary(f"回复：{reply}")
 
     def _persist(self, content: str, markup: bool) -> None:
         """把一条对话写进当前会话（落盘）。失败不影响交互。"""
@@ -629,6 +638,41 @@ class VortoCodeTUI(App):
             return
         try:
             self.sessions.add_message("assistant", content, metadata={"markup": markup})
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _summary_text(self, text: str, limit: int = 72) -> str:
+        """用于 session 列表的确定性短摘要：去控制符/换行/富文本噪声，截断。"""
+        plain = re.sub(r"\[[/?][^\]]+\]", "", str(text or ""))
+        plain = " ".join(plain.replace("\n", " ").split())
+        return (plain[:limit - 1] + "…") if len(plain) > limit else plain
+
+    def _ensure_session_title(self, text: str) -> None:
+        """首条真实用户输入给 session 起可读标题，避免 /sessions 只剩 id。"""
+        if not (self._persist_on and self.session_id):
+            return
+        try:
+            cur = self.sessions.store.get_session(self.session_id) or {}
+            name = str(cur.get("name") or "")
+            if name and not name.startswith("Session "):
+                return
+            title = self._summary_text(text, 42) or self.session_id
+            self.sessions.store.update_session(self.session_id, name=title)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _update_session_summary(self, summary: str) -> None:
+        """把最近一轮摘要写到 sessions.metadata.summary，供 /sessions 选择时辨认。"""
+        if not (self._persist_on and self.session_id):
+            return
+        try:
+            cur = self.sessions.store.get_session(self.session_id) or {}
+            try:
+                md = json.loads(cur.get("metadata") or "{}")
+            except Exception:  # noqa: BLE001
+                md = {}
+            md["summary"] = self._summary_text(summary, 110)
+            self.sessions.store.update_session(self.session_id, metadata=json.dumps(md, ensure_ascii=False))
         except Exception:  # noqa: BLE001
             pass
 
@@ -1464,9 +1508,17 @@ class VortoCodeTUI(App):
         items = []
         for r in rows:
             summ = self.sessions.store.get_session_summary(r["id"])
+            try:
+                md = json.loads(r.get("metadata") or "{}")
+            except Exception:  # noqa: BLE001
+                md = {}
             mark = "  ← 当前" if r["id"] == self.session_id else ""
+            title = self._summary_text(r.get("name") or r["id"], 34)
+            overview = self._summary_text(md.get("summary") or "", 56)
+            tail = f" · {overview}" if overview else ""
             items.append((r["id"],
-                          f"{r['id']}  {(r.get('updated_at') or '')[:19]} · 消息 {summ.get('messages', 0)}{mark}"))
+                          f"{r['id']}  {title} · 消息 {summ.get('messages', 0)} · "
+                          f"{(r.get('updated_at') or '')[:19]}{tail}{mark}"))
 
         def _done(sid) -> None:
             if sid and sid != self.session_id:
@@ -1484,6 +1536,7 @@ class VortoCodeTUI(App):
         self.transcript.clear()
         self._persist_on = False            # 回放期间不重复落盘
         self.agent = None                   # 丢掉上个会话的 agent 上下文
+        self._session_last_user = ""
         self._chrome(f"[green]已恢复会话 {sid}（{len(msgs)} 条）[/green]")
         last_snapshot = None
         for m in msgs:
