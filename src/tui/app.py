@@ -33,7 +33,7 @@ from src.memory.session_store import SessionManager
 SLASH_COMMANDS = [
     "/analyze", "/improve", "/fix", "/run", "/apply", "/agents", "/runagent", "/skills", "/mcp",
     "/artifacts", "/diff", "/git", "/commit", "/pr", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
-    "/context", "/compact", "/permissions", "/memory", "/tools", "/audit", "/speak", "/commands", "/hooks", "/clear", "/help", "/quit",
+    "/context", "/compact", "/permissions", "/memory", "/tasks", "/tools", "/audit", "/speak", "/commands", "/hooks", "/clear", "/help", "/quit",
 ]
 # 必须带参数的命令：补全面板里回车不直接执行，先补成 "/cmd " 让用户接着填参数
 ARG_SLASH_CMDS = {"/fix", "/run", "/resume", "/runagent"}
@@ -67,6 +67,7 @@ COMMAND_INFO = {
     "/compact": "手动压缩旧对话上下文；preview 只预估",
     "/permissions": "查看/解释工具权限；可 deny 规则或 reset 会话放行",
     "/memory": "查看/管理项目指令和跨会话记忆",
+    "/tasks": "列出/查看 dev_auto 持久化计划",
     "/tools": "列出主 agent 工具及读写权限",
     "/audit": "查看工具调用审计日志",
     "/speak": "朗读 agent 回复开关（mimo-v2.5-tts，需 key）",
@@ -148,6 +149,7 @@ HELP = """可用命令:
   /compact [preview]  手动压缩旧对话上下文；preview 只预估
   /permissions [操作] 查看/解释工具权限；explain <tool> [value]，deny <tool> [glob] 加规则
   /memory [操作]      查看/管理长期记忆；list/delete/auto/add/init
+  /tasks [show <id>]  列出或查看 dev_auto 持久化计划
   /clear              清屏
   /help               显示本帮助
   /quit               退出（也可 Ctrl+C）
@@ -1617,6 +1619,8 @@ class VortoCodeTUI(App):
             self._cmd_permissions(arg)
         elif cmd == "memory":
             self._cmd_memory(arg)
+        elif cmd == "tasks":
+            self._cmd_tasks(arg)
         elif cmd == "tools":
             self._cmd_tools()
         elif cmd == "audit":
@@ -2042,6 +2046,27 @@ class VortoCodeTUI(App):
             scope="memory",
             callback=_done,
         )
+
+    def _cmd_tasks(self, arg: str = "") -> None:
+        """/tasks：列出 dev_auto 持久化计划；/tasks show <plan_id> 查看详情。"""
+        raw = (arg or "").strip()
+        from src.agents.dev_plan import format_plan_detail, format_plan_list, list_plans, load_plan
+        if not raw or raw.lower() in {"list", "ls"}:
+            self._emit(format_plan_list(list_plans(self.repo_root)))
+            return
+        parts = raw.split(maxsplit=1)
+        if parts[0].lower() in {"show", "detail", "details"}:
+            if len(parts) < 2 or not parts[1].strip():
+                self._emit("用法: /tasks show <plan_id>")
+                return
+            pid = parts[1].strip()
+        else:
+            pid = raw
+        plan = load_plan(self.repo_root, pid)
+        if plan is None:
+            self._emit(f"找不到 dev 计划 {pid}。用 /tasks 查看最近计划。")
+            return
+        self._emit(format_plan_detail(plan))
 
     def _cmd_audit(self, arg: str) -> None:
         """/audit 看最近的工具调用审计（.vortocode/audit.log）。"""

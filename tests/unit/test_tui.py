@@ -989,6 +989,44 @@ def test_cmd_memory_rejects_unknown(tmp_path):
     assert emitted and "用法: /memory" in emitted[-1]
 
 
+def test_cmd_tasks_empty_list_and_detail(tmp_path):
+    from src.agents import dev_plan as dp
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+
+    app._cmd_tasks()
+    assert "没有 dev 计划" in emitted[-1]
+
+    plan = dp.DevPlan.new("实现任务面板", "vorto/tasks", "main", plan_id="task-panel")
+    plan.blocks = [
+        dp.Block(id="ind-0", kind="independent", desc="已完成块", status="landed"),
+        dp.Block(id="dep-1", kind="dependent", desc="待续跑块", status="pending"),
+    ]
+    dp.save_plan(str(tmp_path), plan)
+
+    app._cmd_tasks()
+    assert "task-panel" in emitted[-1]
+    assert "实现任务面板" in emitted[-1]
+
+    app._cmd_tasks("show task-panel")
+    assert "Dev 计划详情: task-panel" in emitted[-1]
+    assert "进度 1/2 landed" in emitted[-1]
+
+
+def test_cmd_tasks_unknown_and_missing_show_id(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+
+    app._cmd_tasks("show")
+    assert "用法: /tasks show" in emitted[-1]
+
+    app._cmd_tasks("missing")
+    assert "找不到 dev 计划 missing" in emitted[-1]
+
+
 @pytest.mark.asyncio
 async def test_auto_memory_candidate_prompts_and_saves(tmp_path):
     app = VortoCodeTUI(repo_root=str(tmp_path))
