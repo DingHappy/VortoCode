@@ -49,7 +49,7 @@ COMMAND_INFO = {
     "/skills": "列出 SKILL.md 技能（reload 重扫）",
     "/mcp": "接入 MCP 服务器工具（build 门控）",
     "/artifacts": "列出已发布的制品（画廊在 /artifacts）",
-    "/diff": "看工作区改动（git diff，着色）",
+    "/diff": "看工作区改动（支持 stat/cached/路径过滤）",
     "/sessions": "列出历史会话",
     "/resume": "恢复某个历史会话",
     "/new": "新开一个会话",
@@ -126,7 +126,7 @@ HELP = """可用命令:
   /tools              列出主 agent 可用工具及其读写权限
   /audit              查看工具调用审计日志（.vortocode/audit.log）
   /artifacts          列出已发布的制品（标题/版本/链接；浏览器开 /artifacts 是画廊）
-  /diff               看工作区改动（git diff，+绿/-红着色）—— review 主 agent 改了什么
+  /diff [stat|cached] [路径]  看工作区改动（+绿/-红着色）—— review 主 agent 改了什么
   /mcp [list|off]     接入 config/mcp.yaml 的 MCP 服务器工具（build 门控）
   /agents             列出已创建的 agent（网页/API 建的，同一份存储）
   /runagent <id> <任务>  用某个已创建的 agent 执行任务（流式）
@@ -1551,7 +1551,7 @@ class VortoCodeTUI(App):
         elif cmd == "artifacts":
             self._cmd_artifacts()
         elif cmd == "diff":
-            self._cmd_diff()
+            self._cmd_diff(arg)
         elif cmd == "mcp":
             self._cmd_mcp(arg)
         elif cmd == "agents":
@@ -1797,20 +1797,56 @@ class VortoCodeTUI(App):
         lines.append("提示：对话里 @artifact:<id> 可把某制品当前内容带给主 agent 迭代。")
         self._emit("\n".join(lines))
 
-    def _cmd_diff(self) -> None:
-        """/diff：把工作区改动（git diff）着色渲染出来，方便 review 主 agent 改了什么。"""
+    def _cmd_diff(self, arg: str = "") -> None:
+        """/diff：把工作区改动着色渲染出来；支持 stat/cached/路径过滤，方便 review。"""
+        import shlex
         import subprocess
         try:
-            r = subprocess.run(["git", "diff"], cwd=self.repo_root,
+            tokens = shlex.split(arg or "")
+        except ValueError as e:
+            self._emit(f"用法: /diff [stat|cached|staged] [路径...]（参数解析失败: {e}）")
+            return
+        cached = False
+        stat = False
+        paths: list[str] = []
+        for tok in tokens:
+            low = tok.lower()
+            if low in {"cached", "staged", "--cached", "--staged"}:
+                cached = True
+            elif low in {"stat", "--stat"}:
+                stat = True
+            elif tok.startswith("-"):
+                self._emit("用法: /diff [stat|cached|staged] [路径...]（不透传其它 git 参数）")
+                return
+            else:
+                paths.append(tok)
+        cmd = ["git", "diff"]
+        if cached:
+            cmd.append("--cached")
+        if stat:
+            cmd.append("--stat")
+        if paths:
+            cmd.append("--")
+            cmd.extend(paths)
+        try:
+            r = subprocess.run(cmd, cwd=self.repo_root,
                                capture_output=True, text=True, timeout=15)
         except Exception as e:  # noqa: BLE001
             self._emit(f"git diff 失败: {e}（不是 git 仓库？）")
             return
+        if r.returncode != 0:
+            self._emit((r.stderr or r.stdout or "git diff 失败").strip())
+            return
         diff = r.stdout or ""
         if not diff.strip():
-            self._emit("(工作区无未提交改动；git diff 为空)")
+            label = " ".join(cmd)
+            self._emit(f"({label} 为空)")
             return
-        self._chrome("[dim]工作区改动（git diff）:[/dim]")
+        label = " ".join(cmd)
+        self._chrome(f"[dim]工作区改动（{label}）:[/dim]")
+        if stat:
+            self._emit(diff.rstrip())
+            return
         self._render_diff_text(diff, max_lines=400)
 
     def _user_commands(self) -> dict:

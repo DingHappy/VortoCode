@@ -1934,6 +1934,55 @@ async def test_cmd_diff_renders_git_diff(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_cmd_diff_supports_stat_and_path_filter(tmp_path):
+    from textual.widgets import RichLog
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "a.py").write_text("a = 1\n")
+    (tmp_path / "b.py").write_text("b = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "a.py").write_text("a = 2\n")
+    (tmp_path / "b.py").write_text("b = 2\n")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app._cmd_diff("stat a.py")
+        await pilot.pause()
+        joined = "\n".join(app.transcript)
+        assert "a.py" in joined
+        assert "b.py" not in joined
+        text = "\n".join(s.text for s in app.query_one("#log", RichLog).lines)
+        assert "git diff --stat -- a.py" in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_diff_supports_cached(tmp_path):
+    from textual.widgets import RichLog
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "f.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "f.py").write_text("x = 2\n")
+    _git(tmp_path, "add", "f.py")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app._cmd_diff("cached")
+        await pilot.pause()
+        text = "\n".join(s.text for s in app.query_one("#log", RichLog).lines)
+        assert "git diff --cached" in text
+        assert "-x = 1" in text and "+x = 2" in text
+
+
+def test_cmd_diff_rejects_unknown_git_flags(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+
+    app._cmd_diff("--name-only")
+
+    assert emitted and "不透传其它 git 参数" in emitted[-1]
+
+
+@pytest.mark.asyncio
 async def test_cmd_diff_empty_is_graceful(tmp_path):
     _git(tmp_path, "init", "-q")
     app = VortoCodeTUI(repo_root=str(tmp_path))
