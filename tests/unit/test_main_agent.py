@@ -181,8 +181,52 @@ async def test_max_steps_cap_degrades_gracefully():
     out, say, emit = _capture()
     r = await agent.run_turn("循环", mode="plan", say=say, emit=emit)
     assert r == ""
-    assert len(out["emit"]) == 1 and "工具调用上限" in out["emit"][0]
+    assert len(out["emit"]) == 1 and "plan 单段执行预算" in out["emit"][0]
     assert len([s for s in out["say"] if "read_file" in s]) == 3   # 恰好跑满 max_steps 次
+
+
+@pytest.mark.asyncio
+async def test_build_safety_cap_mentions_auto_continue_limit(monkeypatch):
+    monkeypatch.setenv("VORTOCODE_BUILD_AUTO_CONTINUES", "0")
+
+    async def handler(args):
+        return "again"
+
+    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True)
+    agent = MainAgent([tool], llm=ScriptedLLM('{"tool":"read_file","args":{"path":"a"}}'), max_steps=3)
+    out, say, emit = _capture()
+    r = await agent.run_turn("循环", mode="build", say=say, emit=emit)
+
+    assert r == ""
+    assert len(out["emit"]) == 1
+    assert "build 自动续跑的安全阈值" in out["emit"][0]
+    assert "继续" in out["emit"][0]
+    assert len([s for s in out["say"] if "read_file" in s]) == 3
+
+
+@pytest.mark.asyncio
+async def test_build_auto_continues_past_single_step_budget(monkeypatch):
+    monkeypatch.setenv("VORTOCODE_BUILD_AUTO_CONTINUES", "2")
+    ran = []
+
+    async def handler(args):
+        ran.append(args)
+        return "again"
+
+    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True)
+    agent = MainAgent([tool], llm=ScriptedLLM(
+        '{"tool":"read_file","args":{"path":"a"}}',
+        '{"tool":"read_file","args":{"path":"b"}}',
+        "完成了。",
+    ), max_steps=1)
+    out, say, emit = _capture()
+
+    r = await agent.run_turn("继续开发", mode="build", say=say, emit=emit)
+
+    assert r == "完成了。"
+    assert ran == [{"path": "a"}, {"path": "b"}]
+    assert any("自动继续当前任务" in s for s in out["say"])
+    assert out["emit"] == ["完成了。"]
 
 
 def test_env_overrides_max_steps(monkeypatch):
@@ -192,18 +236,18 @@ def test_env_overrides_max_steps(monkeypatch):
     assert MainAgent([], max_steps=6).max_steps == 6            # 不设则用默认
 
 
-def test_plan_budget_defaults_and_env(monkeypatch):
+def test_plan_has_no_dedicated_low_budget(monkeypatch):
     monkeypatch.delenv("VORTOCODE_PLAN_MAX_STEPS", raising=False)
     monkeypatch.delenv("VORTOCODE_PLAN_MAX_TOOL_CALLS", raising=False)
     a = MainAgent([], max_steps=6)
-    assert a.plan_max_steps == 3
-    assert a.plan_max_tool_calls == 5
+    assert a.plan_max_steps == 6
+    assert a.plan_max_tool_calls == 0
 
     monkeypatch.setenv("VORTOCODE_PLAN_MAX_STEPS", "8")
     monkeypatch.setenv("VORTOCODE_PLAN_MAX_TOOL_CALLS", "9")
     b = MainAgent([], max_steps=6)
-    assert b.plan_max_steps == 8
-    assert b.plan_max_tool_calls == 9
+    assert b.plan_max_steps == 6
+    assert b.plan_max_tool_calls == 0
 
 
 def test_plan_tool_off_by_default():
@@ -815,6 +859,21 @@ def test_trimmed_history_many_tiny_messages_not_trimmed():
     assert agent._trimmed_history() == agent.history          # token 远未超 → 原样，无谓裁剪
 
 
+def test_context_usage_reports_prompt_budget_estimate():
+    agent = MainAgent([], max_context_tokens=300)
+    agent.history = [
+        {"role": "user", "content": "任务"},
+        {"role": "assistant", "content": "ok " * 50},
+    ]
+
+    usage = agent.context_usage("plan")
+
+    assert usage["used_tokens"] >= usage["history_tokens"] > 0
+    assert usage["system_tokens"] > 0
+    assert usage["max_context_tokens"] == 300
+    assert usage["pct"] > 0
+
+
 @pytest.mark.asyncio
 async def test_compact_anchor_survives_not_orphan_tool_result():
     """#16：压缩后原始 user 被移出 history；若历史再次涨过预算触发裁剪，锚点必须仍是**原始任务**，
@@ -1200,8 +1259,7 @@ async def test_native_path_runs_all_tool_calls():
 
 
 @pytest.mark.asyncio
-async def test_plan_tool_call_budget_truncates_native_batch(monkeypatch):
-    # plan 下限制真实工具调用数：native 一步吐出多个 tool_calls 时也不能突破预算。
+async def test_plan_native_batch_is_not_truncated_by_tool_budget(monkeypatch):
     from src.agents.main_agent import MainAgent, Tool
     monkeypatch.setenv("VORTOCODE_PLAN_MAX_TOOL_CALLS", "2")
     ran = []
@@ -1210,9 +1268,15 @@ async def test_plan_tool_call_budget_truncates_native_batch(monkeypatch):
         ran.append(1); return "ok"
 
     class NativeLLM:
+        def __init__(self):
+            self.n = 0
+
         async def chat(self, messages, tools=None, **k):
+            self.n += 1
             sys = messages[0]["content"] if messages and messages[0].get("role") == "system" else ""
             if "禁止再调用任何工具" in sys:
+                return {"content": "已按预算总结。", "tool_calls": []}
+            if self.n > 1:
                 return {"content": "已按预算总结。", "tool_calls": []}
             return {"content": "", "tool_calls": [
                 {"name": "t", "arguments": "{}"},
@@ -1224,12 +1288,12 @@ async def test_plan_tool_call_budget_truncates_native_batch(monkeypatch):
     a = MainAgent([Tool("t", "", {}, h, read_only=True)], llm=NativeLLM(), native=True, max_steps=5)
     r = await a.run_turn("并行", mode="plan", say=say, emit=emit)
     assert r == "已按预算总结。"
-    assert len(ran) == 2
-    assert any("已截断" in s for s in out["say"])
+    assert len(ran) == 3
+    assert not any("已截断" in s for s in out["say"])
 
 
 @pytest.mark.asyncio
-async def test_plan_tool_call_budget_truncates_prompt_array(monkeypatch):
+async def test_plan_prompt_array_is_not_truncated_by_tool_budget(monkeypatch):
     monkeypatch.setenv("VORTOCODE_PLAN_MAX_TOOL_CALLS", "1")
     ran = []
 
@@ -1244,9 +1308,39 @@ async def test_plan_tool_call_budget_truncates_prompt_array(monkeypatch):
     out, say, emit = _capture()
     r = await agent.run_turn("并行", mode="plan", say=say, emit=emit)
     assert r == "已按预算总结。"
-    assert ran == [{"n": 1}]
-    assert any("已截断" in s for s in out["say"])
+    assert ran == [{"n": 1}, {"n": 2}]
+    assert not any("已截断" in s for s in out["say"])
     assert "[工具 t 结果]" in agent.history[-2]["content"]
+
+
+@pytest.mark.asyncio
+async def test_plan_step_cap_empty_finish_requests_build_and_continues():
+    ran = []
+    escalations = []
+
+    async def h(args):
+        ran.append(args)
+        return "ok"
+
+    async def escalate(name, payload):
+        escalations.append((name, payload))
+        return True
+
+    tool = Tool("t", "", {}, h, read_only=True)
+    agent = MainAgent([tool], llm=ScriptedLLM(
+        '{"tool":"t","args":{"n":1}}',
+        "",
+        "build 已继续完成。",
+    ), max_steps=1, on_escalate=escalate)
+    out, say, emit = _capture()
+
+    r = await agent.run_turn("继续开发", mode="plan", say=say, emit=emit)
+
+    assert r == "build 已继续完成。"
+    assert ran == [{"n": 1}]
+    assert escalations and escalations[0][0] == "request_build"
+    assert "单段执行预算已到" in escalations[0][1]["reason"]
+    assert out["emit"][-1] == "build 已继续完成。"
 
 
 def test_set_model_changes_client_config():

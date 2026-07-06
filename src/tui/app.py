@@ -164,7 +164,7 @@ class PaletteView(Static):
 
 
 class PromptEditor(TextArea):
-    """opencode 式多行输入框：回车提交、Ctrl+J 换行、随内容自动长高（1~6 行）。
+    """opencode 式多行输入框：回车提交、Shift+Enter/Ctrl+J 换行、随内容自动长高（1~6 行）。
 
     对外提供 .value / .cursor_position 属性，兼容原 Input 的全部调用点。
     ↑↓/Tab/Esc 在这里按上下文分流给 app（补全面板选择 / 历史 / 切模式 / 取消）——
@@ -210,6 +210,16 @@ class PromptEditor(TextArea):
             event.stop()
             event.prevent_default()
             self.insert("\n")
+            return
+        if key in ("pageup", "ctrl+u"):          # mouse=False 时滚轮不可用；键盘滚结果区
+            event.stop()
+            event.prevent_default()
+            app.action_scroll_log_up()
+            return
+        if key in ("pagedown", "ctrl+d"):
+            event.stop()
+            event.prevent_default()
+            app.action_scroll_log_down()
             return
         if key == "tab":                         # Tab 不缩进：补全/切模式（与全局键位一致）
             event.stop()
@@ -411,6 +421,10 @@ class VortoCodeTUI(App):
         Binding("ctrl+c", "quit", "退出", priority=True),
         Binding("escape", "cancel", "取消"),
         Binding("tab", "toggle_mode", "补全/切模式"),
+        Binding("pageup", "scroll_log_up", "上翻", show=False),
+        Binding("pagedown", "scroll_log_down", "下翻", show=False),
+        Binding("ctrl+u", "scroll_log_up", "上翻", show=False),
+        Binding("ctrl+d", "scroll_log_down", "下翻", show=False),
         Binding("up", "history_prev", "上一条", show=False),
         Binding("down", "history_next", "下一条", show=False),
         Binding("ctrl+l", "clear_log", "清屏"),
@@ -472,7 +486,7 @@ class VortoCodeTUI(App):
         yield Static(id="statusbar")
         # opencode 式多行编辑器（回车提交 / Ctrl+J 换行 / 自动长高）；补全提示全靠面板，
         # 不做幽灵文字——↑↓ 选了 /run 幽灵还写 /analyze 的打架问题在结构上消失。
-        yield PromptEditor(placeholder="输入需求（自然语言），或 / 看命令…  · Ctrl+J 换行",
+        yield PromptEditor(placeholder="输入需求（自然语言），或 / 看命令…  · Shift+Enter/Ctrl+J 换行",
                            id="prompt")
 
     def on_mount(self) -> None:
@@ -691,6 +705,22 @@ class VortoCodeTUI(App):
         self._render_statusbar()           # 模式/用量变化时同步刷新状态栏
 
     # ---------------------------------------------------------------- 状态栏
+    def _fmt_tokens_short(self, n: int) -> str:
+        if n >= 1000:
+            return f"{n / 1000:.1f}k".replace(".0k", "k")
+        return str(n)
+
+    def _context_usage_label(self) -> str:
+        if self.agent is None:
+            return ""
+        try:
+            u = self.agent.context_usage(self.mode)
+            used = self._fmt_tokens_short(int(u["used_tokens"]))
+            limit = self._fmt_tokens_short(int(u["max_context_tokens"]))
+            return f"ctx {used}/{limit} {int(u['pct'])}%"
+        except Exception:  # noqa: BLE001
+            return ""
+
     def _render_statusbar(self) -> None:
         """渲染常驻底部状态栏：仓库 · 分支(改动) · PR · 模型 · 模式 · token。只读缓存，不触网/不阻塞。"""
         try:
@@ -709,6 +739,9 @@ class VortoCodeTUI(App):
             parts.append(sb["pr"])
         parts.append(f"🧠 {sb.get('model', '?')}")
         parts.append("🟢 build" if self.mode == "build" else "🔵 plan")
+        ctx = self._context_usage_label()
+        if ctx:
+            parts.append(ctx)
         from src.llm.client import get_usage
         u = get_usage()
         if u["calls"]:
@@ -979,6 +1012,20 @@ class VortoCodeTUI(App):
             self._history_idx = None
             self._set_input(self._history_draft)
 
+    def action_scroll_log_up(self) -> None:
+        """PageUp/Ctrl+U：焦点留在输入框，向上翻结果区。"""
+        try:
+            self.query_one("#log", RichLog).scroll_page_up(animate=False)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def action_scroll_log_down(self) -> None:
+        """PageDown/Ctrl+D：焦点留在输入框，向下翻结果区。"""
+        try:
+            self.query_one("#log", RichLog).scroll_page_down(animate=False)
+        except Exception:  # noqa: BLE001
+            pass
+
     def _history_file(self) -> Path:
         return Path(self.repo_root) / ".vortocode" / "tui_history"
 
@@ -1036,8 +1083,65 @@ class VortoCodeTUI(App):
             self._chrome(f"[dim]⏳ 已排队（{len(self._queued_inputs)} 条）—— 当前回合结束后自动发送；"
                          "Esc 取消当前回合并清空队列[/dim]")
         else:
-            self._say_user(text)
-            self._route(text)           # 普通话：先判意图（闲聊/提问 vs 开发需求）再分流
+            if self._maybe_offer_build_before_route(text):
+                return
+            self._continue_text_route(text)
+
+    def _continue_text_route(self, text: str) -> None:
+        self._say_user(text)
+        self._route(text)           # 普通话：先判意图（闲聊/提问 vs 开发需求）再分流
+
+    def _looks_like_build_intent(self, text: str) -> bool:
+        """保守判断用户是否已经在要求动手改项目；命中时先询问切 build。"""
+        s = text.strip().lower()
+        if not s:
+            return False
+        review_words = ("看看", "看一下", "审", "review", "分析", "检查", "解释", "为什么", "建议")
+        question_only = ("有没有修改", "有没有修复", "是否修改", "是否修复", "改了吗", "修了吗", "修复了吗")
+        action_words = (
+            "修复", "修一下", "改掉", "修改", "改一下", "实现", "开发", "继续开发", "落地",
+            "写入", "写到", "创建", "新增", "添加", "删除", "重构", "提交", "commit",
+            "merge", "合并", "push", "开pr", "开 pr",
+        )
+        if any(w in s for w in question_only):
+            return False
+        if any(w in s for w in action_words):
+            return not (any(w in s for w in review_words) and not any(
+                w in s for w in ("帮我修", "修一下", "改掉", "改一下", "实现", "开发", "写入", "提交", "commit", "合并", "merge")))
+        return False
+
+    def _maybe_offer_build_before_route(self, text: str) -> bool:
+        """plan 下用户明确要动手时，先切 build 再进入同一回合，避免 plan 预算空转。
+
+        返回 True 表示已弹确认，提交流程暂停；弹窗回调会继续同一条输入。
+        """
+        if self.mode != "plan" or not self._looks_like_build_intent(text):
+            return False
+        if self._allow_writes_session:
+            ok = True
+        else:
+            def _done(ok: bool | None) -> None:
+                if ok and self.mode != "build":
+                    self.mode = "build"
+                    self._sync_subtitle()
+                    self._chrome("[green]→ 已切到 build 模式并继续[/green]")
+                    self._record_mode_change()
+                elif not ok:
+                    self._chrome("[yellow]继续保持 plan 模式：只做分析/方案，不执行写入。[/yellow]")
+                self._continue_text_route(text)
+
+            self.push_screen(ConfirmScreen(
+                "当前是 plan（只读/提案）模式，但这条需求看起来需要修改项目或执行开发动作。\n"
+                "切到 build 模式并用这条需求继续？\n"
+                "拒绝后仍会按 plan 模式只给方案/建议。"
+            ), _done)
+            return True
+        if ok and self.mode != "build":
+            self.mode = "build"
+            self._sync_subtitle()
+            self._chrome("[green]→ 已切到 build 模式并继续[/green]")
+            self._record_mode_change()
+        return False
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         """输入变化：更新补全面板、随内容自动长高；并当场抹掉漏进的终端转义序列。"""
@@ -1568,6 +1672,7 @@ class VortoCodeTUI(App):
                 self.agent = self._build_main_agent()
                 self.agent._summary = fallback_summary
                 self._chrome("[dim]↻ 已恢复会话摘要（可继续接上历史话题）[/dim]")
+                self._render_statusbar()
             return
         try:
             raw = json.loads(snapshot)
@@ -1595,6 +1700,7 @@ class VortoCodeTUI(App):
             if plan:
                 self.agent.plan = plan
             self._chrome("[dim]↻ 已恢复对话上下文（主 agent 记得之前的对话）[/dim]")
+            self._render_statusbar()
 
     def _cmd_new(self) -> None:
         from src.llm.client import reset_usage
@@ -1617,8 +1723,12 @@ class VortoCodeTUI(App):
             self._chrome("[green]已清零用量计数[/green]")
             return
         u = get_usage()
-        self._emit(f"本会话用量（估算）: 调用 {u['calls']} 次 · 输入 ~{u['prompt_tokens']} · "
-                   f"输出 ~{u['completion_tokens']} · 合计 ~{u['total_tokens']} tokens")
+        msg = (f"本会话用量（估算）: 调用 {u['calls']} 次 · 输入 ~{u['prompt_tokens']} · "
+               f"输出 ~{u['completion_tokens']} · 合计 ~{u['total_tokens']} tokens")
+        ctx = self._context_usage_label()
+        if ctx:
+            msg += f"\n当前上下文占用（估算）: {ctx}"
+        self._emit(msg)
 
     def _cmd_theme(self, arg: str) -> None:
         """/theme：无参弹主题选择器（↑↓ **实时预览**，回车定、Esc 恢复）；带参直接切。"""
@@ -1884,6 +1994,7 @@ class VortoCodeTUI(App):
             self._chrome("[dim]🔊 合成语音中…[/dim]")
             await self._speak_text(reply)
         self._persist_agent_history()
+        self._render_statusbar()
 
     def _turn_renderers(self):
         """一个回合的四件套 UI 渲染闭包（进程内与 attach 两条路径共用，保证同一观感）：
@@ -2538,7 +2649,7 @@ class VortoCodeTUI(App):
         native = native_default()                # 三端统一 native 开关（收敛到 main_agent.native_default）
         hook_system = self._load_hook_system()   # .vortocode/hooks.yaml 存在才接，避免无谓开销
         from src.agents.permissions import load_permissions
-        agent = MainAgent(tools, extra_system=extra, native=native,
+        agent = MainAgent(tools, max_steps=16, extra_system=extra, native=native,
                           on_tool=self._audit_tool, on_escalate=self._escalate_to_build,
                           on_plan=self._render_plan, plan_tool=True, hook_system=hook_system,
                           permissions=load_permissions(self.repo_root),   # .vortocode/permissions.yaml deny
