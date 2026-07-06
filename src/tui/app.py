@@ -32,7 +32,7 @@ from src.memory.session_store import SessionManager
 
 SLASH_COMMANDS = [
     "/analyze", "/improve", "/fix", "/run", "/apply", "/agents", "/runagent", "/skills", "/mcp",
-    "/artifacts", "/diff", "/changes", "/git", "/commit", "/pr", "/pr-check", "/pr-fix", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
+    "/artifacts", "/diff", "/changes", "/verify", "/git", "/commit", "/pr", "/pr-check", "/pr-fix", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
     "/context", "/compact", "/permissions", "/memory", "/tasks", "/tools", "/audit", "/speak", "/commands", "/hooks", "/clear", "/help", "/quit",
 ]
 # 必须带参数的命令：补全面板里回车不直接执行，先补成 "/cmd " 让用户接着填参数
@@ -51,6 +51,7 @@ COMMAND_INFO = {
     "/artifacts": "列出已发布的制品（画廊在 /artifacts）",
     "/diff": "看工作区改动（支持 stat/cached/路径过滤）",
     "/changes": "提交前变更审查摘要（风险信号/下一步）",
+    "/verify": "探测并运行仓库测试（可传 pytest selector）",
     "/git": "查看 git 状态、staged/unstaged diffstat",
     "/commit": "提交已 staged 改动；all 先 git add -A",
     "/pr": "预览或创建 PR；preview 只预览，draft 开草稿",
@@ -80,7 +81,7 @@ COMMAND_INFO = {
     "/help": "显示帮助",
     "/quit": "退出",
 }
-ACTION_CMDS = {"analyze", "improve", "fix", "run", "apply", "runagent", "mcp"}   # 跑长任务，受忙碌态约束
+ACTION_CMDS = {"analyze", "improve", "fix", "run", "apply", "runagent", "mcp", "verify"}   # 跑长任务，受忙碌态约束
 
 # 工作中指示器（仿 Claude Code）：10 帧 braille 旋转 + 轮换动词 + 计时 + esc 中断
 _SPIN_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
@@ -135,6 +136,7 @@ HELP = """可用命令:
   /artifacts          列出已发布的制品（标题/版本/链接；浏览器开 /artifacts 是画廊）
   /diff [stat|cached] [路径]  看工作区改动（+绿/-红着色）—— review 主 agent 改了什么
   /changes [cached] [路径]  提交前变更审查摘要（风险信号/下一步）
+  /verify [selector]  探测并运行仓库测试；selector 仅对 pytest 生效
   /git                查看 git 状态、staged/unstaged diffstat
   /commit <msg>       提交已 staged 改动；/commit all <msg> 先 git add -A
   /pr [preview|draft] [base <ref>] [title]  预览或创建 PR（外向操作需确认）
@@ -1639,6 +1641,8 @@ class VortoCodeTUI(App):
             self._cmd_diff(arg)
         elif cmd == "changes":
             self._cmd_changes(arg)
+        elif cmd == "verify":
+            self._cmd_verify(arg)
         elif cmd == "git":
             self._cmd_git(arg)
         elif cmd == "commit":
@@ -2202,6 +2206,35 @@ class VortoCodeTUI(App):
                 paths.append(tok)
         from src.agents.git_workflow import change_review, format_change_review
         self._emit(format_change_review(change_review(self.repo_root, cached=cached, paths=paths)))
+
+    def _cmd_verify(self, arg: str = "") -> None:
+        """/verify [selector]：按仓库类型探测测试命令并运行。"""
+        selector = (arg or "").strip()
+        from src.agents.test_detect import detect_test_cmd
+        cmd = detect_test_cmd(self.repo_root, selector or None)
+        cmd_text = " ".join(cmd)
+
+        async def _run():
+            if not await self._confirm_command(
+                    "运行仓库测试验证？\n"
+                    f"  $ {cmd_text}\n"
+                    "测试可能写入缓存或耗时较久。"):
+                self._emit("已取消验证。")
+                return
+            self._chrome(f"[dim]$ {cmd_text}[/dim]")
+            from src.agents.worktree import run_tests
+            res = await asyncio.to_thread(run_tests, self.repo_root, cmd)
+            ok = bool(res.get("ok"))
+            status = "验证通过 ✓" if ok else "验证失败 ✗"
+            color = self._tc("text-success", "#7fce9a") if ok else self._tc("text-error", "#f08a8a")
+            self._chrome(f"[{color}]{status}[/][dim]（{res.get('cmd') or cmd_text}）[/dim]")
+            out = str(res.get("output") or "").strip()
+            if out:
+                self._emit(f"{status}（{res.get('cmd') or cmd_text}）\n输出尾部:\n{out[-3000:]}")
+            else:
+                self._emit(f"{status}（{res.get('cmd') or cmd_text}）")
+
+        self.run_worker(_run(), exclusive=True, group="verify")
 
     def _cmd_git(self, arg: str = "") -> None:
         """/git：查看当前分支、改动文件、staged/unstaged diffstat。"""

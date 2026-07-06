@@ -2338,6 +2338,55 @@ def test_cmd_changes_rejects_unknown_git_flags(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_cmd_verify_confirms_and_runs_detected_tests(tmp_path, monkeypatch):
+    import src.agents.test_detect as test_detect
+    import src.agents.worktree as worktree
+
+    detected = {}
+    ran = {}
+
+    def fake_detect(repo_root, selector=None):
+        detected.update({"repo_root": repo_root, "selector": selector})
+        return ["pytest", "-q", selector or "tests/"]
+
+    def fake_run_tests(repo_root, cmd):
+        ran.update({"repo_root": repo_root, "cmd": cmd})
+        return {"ok": True, "cmd": " ".join(cmd), "output": "2 passed"}
+
+    monkeypatch.setattr(test_detect, "detect_test_cmd", fake_detect)
+    monkeypatch.setattr(worktree, "run_tests", fake_run_tests)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/verify tests/unit/test_demo.py")
+        assert await _wait_inline_confirm(app, pilot)
+        assert app._confirm_scope == "commands"
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "验证通过")
+        assert detected["selector"] == "tests/unit/test_demo.py"
+        assert ran["cmd"] == ["pytest", "-q", "tests/unit/test_demo.py"]
+        assert "2 passed" in "\n".join(app.transcript)
+
+
+@pytest.mark.asyncio
+async def test_cmd_verify_cancel_does_not_run(tmp_path, monkeypatch):
+    import src.agents.test_detect as test_detect
+    import src.agents.worktree as worktree
+
+    monkeypatch.setattr(test_detect, "detect_test_cmd", lambda repo_root, selector=None: ["pytest", "-q"])
+
+    def fake_run_tests(repo_root, cmd):
+        raise AssertionError("run_tests should not run after cancel")
+
+    monkeypatch.setattr(worktree, "run_tests", fake_run_tests)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/verify")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("n")
+        assert await _wait_for(app, pilot, "已取消验证")
+
+
+@pytest.mark.asyncio
 async def test_cmd_git_shows_status_summary(tmp_path):
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
