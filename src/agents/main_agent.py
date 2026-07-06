@@ -21,6 +21,8 @@ from pathlib import Path            # 模块级：供 _resolve_within 的返回�
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
 
+from src.agents.tool import Tool
+
 # 单个工具结果回灌给模型的最大字符数，避免长输出把上下文撑爆
 _MAX_TOOL_RESULT = 4000
 
@@ -59,23 +61,6 @@ def _normalize_context_policy(value: Any) -> str:
     }
     policy = aliases.get(policy, policy)
     return policy if policy in {"auto", *_CONTEXT_POLICY_PROFILES} else "auto"
-
-
-@dataclass
-class Tool:
-    """一个可被主 agent 调用的工具。
-
-    handler 接收解析好的 args(dict)、返回一段字符串结果（会回灌给模型）。
-    read_only=True 的工具在 plan 模式下也可用；False（写/重型）仅 build 模式可用。
-    """
-
-    name: str
-    description: str
-    args: dict[str, str]                       # 参数名 -> 说明（仅用于给模型的工具目录）
-    handler: Callable[[dict], Awaitable[str]]
-    read_only: bool = True
-    untrusted_source: bool = False             # 结果含**不可信外部内容**（网页/搜索/MCP）→ 本回合污点标记
-    outward: bool = False                      # **对外/外向动作**（run_command/open_pr）→ 污点态下强制重确认
 
 
 # ----------------------------------------------------------------------- 协议解析

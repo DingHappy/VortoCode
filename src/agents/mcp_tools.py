@@ -13,7 +13,7 @@ from typing import Any, List, Optional, Tuple
 
 def wrap_mcp_manager(manager: Any) -> List:
     """把已初始化的 ToolManager 的 MCP 工具包成 main_agent.Tool 列表。"""
-    from src.agents.main_agent import Tool
+    from src.agents.tool import Tool
     wrapped: List = []
     for mt in manager.list_tools():
         orig = mt.name
