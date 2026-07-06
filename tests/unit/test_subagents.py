@@ -6,8 +6,8 @@ task 工具的 dev 委派过确认门（fail-closed）、坏定义文件安全�
 
 import pytest
 
-from src.agents.subagents import (_parse_agent_md, build_subagent,
-                                  registry_for, subagent_catalog)
+from src.agents.main_agent import build_subagent
+from src.agents.subagents import _parse_agent_md, registry_for, subagent_catalog
 
 _PM = """---
 name: product-manager
