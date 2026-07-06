@@ -75,35 +75,9 @@ async def handle_websocket_message(websocket: WebSocket, message: Dict[str, Any]
         await handle_tts_message(websocket, message)
 
     elif msg_type == P.TASK_LIST:             # 后台任务快照（客户端连上/刷新时 hydrate 任务列表）
-        from src.web.routers.tasks import get_runner
+        from src.web.task_events import task_snapshot
         await websocket.send_json(P.make_event(
-            P.TASK_SNAPSHOT, data=[t.to_dict() for t in get_runner().list()]))
-
-
-def broadcast_task_update(task: dict) -> None:
-    """把一条后台任务状态变更广播给所有连着的 WS 客户端（best-effort；无循环/无连接则静默）。
-
-    由 gateway.TaskRunner 的 on_update 回调（同步）调用——这里把异步 broadcast 调度到事件循环上。
-    """
-    payload = P.make_event(P.TASK_UPDATE, data=task)
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:                       # 没有运行中的事件循环（如同步测试路径）→ 静默跳过
-        return
-    loop.create_task(manager.broadcast(payload))
-
-
-def broadcast_notice(text: str) -> None:
-    """把一条后台通知（cron 结果 / heartbeat 发现）广播给所有连着的 WS 客户端（best-effort）。
-
-    daemon 路径的投递终点之一（另一个是持久台账 GET /api/notices），见 tasks.scheduler_loop._notify。
-    """
-    payload = P.make_event(P.NOTICE, data={"text": str(text)[:2000]})
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        return
-    loop.create_task(manager.broadcast(payload))
+            P.TASK_SNAPSHOT, data=task_snapshot()))
 
 
 # 等待前端确认的工具：confirm id → Future（前端 agent_confirm_response 来了就 set_result）

@@ -8,6 +8,7 @@
 import os
 
 from src.web.deps import *  # noqa: F401,F403
+from src.web import task_events
 
 router = APIRouter()
 
@@ -55,9 +56,8 @@ def get_runner():
     global _RUNNER
     if _RUNNER is None:
         from src.gateway import TaskRunner
-        from src.web.routers.realtime import broadcast_task_update
         _RUNNER = TaskRunner(os.getcwd(), _dev_worker,
-                             on_update=lambda t: broadcast_task_update(t.to_dict()))
+                             on_update=lambda t: task_events.broadcast_task_update(t.to_dict()))
     return _RUNNER
 
 
@@ -155,8 +155,7 @@ def make_notifier(cwd: str):
     async def _notify(text):
         record_notice(cwd, text)                   # ① 持久台账
         try:
-            from src.web.routers.realtime import broadcast_notice
-            broadcast_notice(str(text))            # ② WS 广播给连着的客户端
+            task_events.broadcast_notice(str(text))  # ② WS 广播给连着的客户端
         except Exception:  # noqa: BLE001
             pass
         try:
@@ -229,3 +228,5 @@ async def open_task_pr(tid: str):
     res = await _asyncio.to_thread(push_and_open_pr, os.getcwd(), t.branch,
                                    f"dev_auto: {t.prompt[:60]}", t.result[:2000], base, "origin", True)
     return {"ok": res.get("ok"), "url": res.get("url", ""), "error": res.get("error", "")}
+
+task_events.set_task_snapshot_provider(lambda: [t.to_dict() for t in get_runner().list()])
