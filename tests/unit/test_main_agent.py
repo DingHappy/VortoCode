@@ -209,6 +209,7 @@ def test_plan_budget_defaults_and_env(monkeypatch):
 def test_plan_tool_off_by_default():
     assert "update_plan" not in MainAgent([]).tools            # 默认不带（子 agent/orchestrator 不变）
     assert "update_plan" in MainAgent([], plan_tool=True).tools
+    assert "request_build" in MainAgent([], plan_tool=True).tools
 
 
 @pytest.mark.asyncio
@@ -603,6 +604,57 @@ async def test_plan_escalation_refused_blocks_write_tool():
     await agent.run_turn("动手", mode="plan", say=say, emit=emit)
     assert ran == []                              # 拒绝 → 没执行写工具
     assert any("plan 模式下不可用" in m["content"] for m in agent.history)
+
+
+@pytest.mark.asyncio
+async def test_request_build_accepted_allows_followup_write_tool():
+    ran = []
+
+    async def w_handler(args):
+        ran.append(args)
+        return "wrote"
+
+    escalated = []
+
+    async def on_escalate(name, args):
+        escalated.append((name, args))
+        return True
+
+    w = Tool("w", "写工具", {}, w_handler, read_only=False)
+    agent = MainAgent([w], llm=ScriptedLLM(
+        '{"tool":"request_build","args":{"reason":"方案已确认","next_action":"写入修复"}}',
+        '{"tool":"w","args":{"file":"a.py"}}',
+        "做完了。",
+    ), on_escalate=on_escalate, plan_tool=True)
+    out, say, emit = _capture()
+    await agent.run_turn("分析后动手", mode="plan", say=say, emit=emit)
+    assert escalated == [("request_build", {"reason": "方案已确认", "next_action": "写入修复"})]
+    assert ran == [{"file": "a.py"}]
+    assert out["emit"] == ["做完了。"]
+
+
+@pytest.mark.asyncio
+async def test_request_build_refused_keeps_plan_and_blocks_write_tool():
+    ran = []
+
+    async def w_handler(args):
+        ran.append(args)
+        return "wrote"
+
+    async def on_escalate(name, args):
+        return False
+
+    w = Tool("w", "写工具", {}, w_handler, read_only=False)
+    agent = MainAgent([w], llm=ScriptedLLM(
+        '{"tool":"request_build","args":{"reason":"方案已确认","next_action":"写入修复"}}',
+        '{"tool":"w","args":{}}',
+        "那先给方案。",
+    ), on_escalate=on_escalate, plan_tool=True)
+    out, say, emit = _capture()
+    await agent.run_turn("分析后动手", mode="plan", say=say, emit=emit)
+    assert ran == []
+    assert any("拒绝切换 build" in m["content"] for m in agent.history)
+    assert out["emit"] == ["那先给方案。"]
 
 
 # ---- 历史裁剪：锚定原始任务（长对话不丢"最初要干嘛"）----

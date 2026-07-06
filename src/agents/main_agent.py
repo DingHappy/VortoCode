@@ -468,6 +468,13 @@ class MainAgent:
                 "completed。工程量大时务必先用它列计划、再逐步推进并更新（每次传完整列表）。",
                 {"steps": "步骤列表；每项 {step: 一句话, status: pending|in_progress|completed}"},
                 self._update_plan, read_only=True))
+            self._tool_list.append(Tool(
+                "request_build",
+                "当 plan 阶段已经分析清楚、时机成熟且下一步确实需要写文件/跑 dev 流水线时，"
+                "主动请求用户切到 build 模式。只有用户同意后，后续写/重型工具才会执行。",
+                {"reason": "为什么现在需要切到 build（基于已完成的分析/计划）",
+                 "next_action": "切到 build 后准备执行的具体下一步"},
+                self._request_build, read_only=True))
         self.tools = {t.name: t for t in self._tool_list}
         # 上下文预算：主要按 **token** 裁剪/压缩（真正决定是否撑爆窗口的是 token，不是消息条数——
         # 少量超大消息条数虽少却能爆窗，大量小消息条数虽多却很省）。max_history 退为**硬条数上限**
@@ -520,6 +527,8 @@ class MainAgent:
         mode_rule = (
             "plan 模式下写/重型工具（如 edit_file / write_file 及各类开发流水线工具）不可用；"
             "若用户想开发，请提示他按 Tab 切到 build 模式。 "
+            "当你已完成必要分析/计划、判断时机成熟且下一步必须动手修改或跑 dev 流水线时，"
+            "可以调用 request_build(reason,next_action) 主动请求用户切到 build；不要过早请求。 "
             f"plan 只做轻量探查：默认最多 {self.plan_max_steps} 轮模型循环、"
             f"{self.plan_max_tool_calls} 次工具调用；优先定向读取/搜索，信息够用就停止并总结，"
             "不要默认启动大量子 agent。"
@@ -586,6 +595,25 @@ class MainAgent:
                 pass
         done = sum(1 for p in self.plan if p["status"] == "completed")
         return f"计划已更新（{done}/{len(self.plan)} 完成）：\n{render_plan(self.plan)}"
+
+    async def _request_build(self, args: dict) -> str:
+        """plan 阶段主动请求切 build：只负责过人闸；同意后本回合升级，后续写/重型工具可继续。"""
+        reason = str(args.get("reason") or "").strip()
+        next_action = str(args.get("next_action") or "").strip()
+        if self._on_escalate is None:
+            return "当前入口没有 build 切换确认通道；请让用户手动切到 build 后再继续。"
+        ok = False
+        try:
+            ok = await self._on_escalate("request_build", {
+                "reason": reason,
+                "next_action": next_action,
+            })
+        except Exception:  # noqa: BLE001
+            ok = False
+        if not ok:
+            return "用户拒绝切换 build 模式；继续保持 plan，只给方案/建议，不执行写入。"
+        self._escalated = True
+        return "用户已同意切到 build 模式；本回合后续可以继续调用写/重型工具。"
 
     def _msg_tokens(self, m: dict) -> int:
         """单条消息的粗略 token 数：只算文本（content_to_text 去掉图/音 base64）+ 少量角色开销。"""
