@@ -277,6 +277,62 @@ async def test_sessions_picker_resumes_selected(tmp_path):
         assert await _wait_for(app, pilot, "历史XYZ")       # 内容已回放
 
 
+def test_sessions_rename_and_unknown(tmp_path):
+    from src.memory.session_store import SessionStore
+
+    store = SessionStore(str(tmp_path / ".vortocode" / "sessions.db"))
+    sid = store.create_session("旧名")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted, chromed = [], []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda m, *a, **k: chromed.append(m)
+
+    app._cmd_sessions(f"rename {sid} 新名字")
+
+    assert app.sessions.store.get_session(sid)["name"] == "新名字"
+    assert any("已重命名会话" in m for m in chromed)
+    assert "新名字" in emitted[-1]
+
+    app._cmd_sessions("rename missing 名字")
+    assert "没有会话 missing" in emitted[-1]
+
+
+@pytest.mark.asyncio
+async def test_sessions_delete_confirm_removes_session(tmp_path):
+    from src.memory.session_store import SessionStore
+
+    store = SessionStore(str(tmp_path / ".vortocode" / "sessions.db"))
+    sid = store.create_session("待删")
+    store.add_message(sid, "assistant", "历史XYZ", {"markup": False})
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, f"/sessions delete {sid}")
+        assert await _wait_inline_confirm(app, pilot)
+        assert "删除会话" in app.query_one("#palette").render().plain
+        await pilot.press("y")
+        await pilot.pause()
+
+        assert app.sessions.store.get_session(sid) is None
+        assert await _wait_for(app, pilot, "历史会话")
+
+
+@pytest.mark.asyncio
+async def test_sessions_delete_cancel_keeps_session(tmp_path):
+    from src.memory.session_store import SessionStore
+
+    store = SessionStore(str(tmp_path / ".vortocode" / "sessions.db"))
+    sid = store.create_session("保留")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, f"/sessions delete {sid}")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("n")
+        await pilot.pause()
+
+        assert app.sessions.store.get_session(sid) is not None
+        assert any("已取消删除会话" in t for t in app.transcript)
+
+
 def test_session_summary_records_runtime_context(tmp_path):
     app = VortoCodeTUI(repo_root=str(tmp_path))
     sid = app.sessions.start_session()

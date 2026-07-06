@@ -53,7 +53,7 @@ COMMAND_INFO = {
     "/git": "查看 git 状态、staged/unstaged diffstat",
     "/commit": "提交已 staged 改动；all 先 git add -A",
     "/pr": "预览或创建 PR；preview 只预览，draft 开草稿",
-    "/sessions": "列出历史会话",
+    "/sessions": "列出/恢复/重命名/删除历史会话",
     "/resume": "恢复某个历史会话",
     "/new": "新开一个会话",
     "/mode": "切换 plan / build 模式",
@@ -137,7 +137,7 @@ HELP = """可用命令:
   /mcp [list|off]     接入 config/mcp.yaml 的 MCP 服务器工具（build 门控）
   /agents             列出已创建的 agent（网页/API 建的，同一份存储）
   /runagent <id> <任务>  用某个已创建的 agent 执行任务（流式）
-  /sessions           列出历史会话
+  /sessions [操作]    列出历史会话；rename/delete 管理会话
   /resume <id>        恢复某个历史会话
   /new                新开一个会话
   /mode               切换 plan(只读/提案) / build(可写分支)
@@ -1597,7 +1597,7 @@ class VortoCodeTUI(App):
         elif cmd == "apply":
             self._do_apply()
         elif cmd == "sessions":
-            self._cmd_sessions()
+            self._cmd_sessions(arg)
         elif cmd == "resume":
             if arg:
                 self._cmd_resume(arg)
@@ -2511,8 +2511,62 @@ class VortoCodeTUI(App):
             self._emit(f"执行出错: {e}")
 
     # ---------------------------------------------------------------- 会话
-    def _cmd_sessions(self) -> None:
-        """/sessions：opencode 式会话选择器——↑↓/筛选选中、回车即恢复（免记 id 敲 /resume）。"""
+    def _cmd_sessions(self, arg: str = "") -> None:
+        """/sessions：会话选择器；rename/delete 管理历史会话。"""
+        raw = (arg or "").strip()
+        low = raw.lower()
+        if low.startswith("rename "):
+            parts = raw.split(maxsplit=2)
+            if len(parts) < 3 or not parts[1].strip() or not parts[2].strip():
+                self._emit("用法: /sessions rename <id> <name>")
+                return
+            sid, name = parts[1].strip(), parts[2].strip()
+            if not self.sessions.store.get_session(sid):
+                self._emit(f"没有会话 {sid}")
+                return
+            self.sessions.store.update_session(sid, name=name)
+            self._chrome(f"[green]已重命名会话 {sid} → {name}[/green]")
+            self._emit(self._session_manage_list_text())
+            return
+        if low.startswith(("delete ", "del ", "rm ")):
+            parts = raw.split(maxsplit=1)
+            sid = parts[1].strip() if len(parts) > 1 else ""
+            if not sid:
+                self._emit("用法: /sessions delete <id>")
+                return
+            row = self.sessions.store.get_session(sid)
+            if not row:
+                self._emit(f"没有会话 {sid}")
+                return
+
+            def _done(ok: bool | None) -> None:
+                if not ok:
+                    self._emit("已取消删除会话。")
+                    return
+                self.sessions.store.delete_session(sid)
+                if sid == self.session_id:
+                    self.session_id = self.sessions.start_session()
+                    self.agent = None
+                    self.transcript.clear()
+                    try:
+                        self.query_one("#log", RichLog).clear()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    self._chrome(f"[yellow]已删除当前会话，并新建会话 {self.session_id}[/yellow]")
+                else:
+                    self._chrome(f"[green]已删除会话 {sid}[/green]")
+                self._emit(self._session_manage_list_text())
+
+            self._begin_inline_confirm(
+                f"删除会话 {sid}（{row.get('name') or sid}）及其消息、任务、编辑和记忆？\n"
+                "此操作不可撤销。",
+                scope="sessions",
+                callback=_done,
+            )
+            return
+        if raw and low not in {"list", "ls"}:
+            self._emit("用法: /sessions [list|rename <id> <name>|delete <id>]")
+            return
         rows = self.sessions.list_recent_sessions(20)
         if not rows:
             self._emit("(暂无历史会话)")
@@ -2531,6 +2585,18 @@ class VortoCodeTUI(App):
                 self._cmd_resume(sid)
 
         self.push_screen(ListPicker("历史会话 · 回车恢复", items, initial=self.session_id), _done)
+
+    def _session_manage_list_text(self) -> str:
+        rows = self.sessions.list_recent_sessions(20)
+        if not rows:
+            return "(暂无历史会话)"
+        lines = [f"历史会话（{len(rows)} 个，最近 20 个）:"]
+        for r in rows:
+            label = self._session_picker_label(r)
+            mark = " ← 当前" if r["id"] == self.session_id else ""
+            lines.append(f"  {r['id']} · {label} · {(r.get('updated_at') or '')[:19]}{mark}")
+        lines.append("\n用 /sessions rename <id> <name> 重命名；/sessions delete <id> 删除。")
+        return "\n".join(lines)
 
     def _cmd_resume(self, sid: str) -> None:
         if not self.sessions.resume_session(sid):
