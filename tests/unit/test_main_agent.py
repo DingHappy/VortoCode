@@ -837,6 +837,57 @@ async def test_compact_disabled_keeps_full_history():
     assert agent._summary == "" and len(agent.history) > before   # 历史不被物理裁剪
 
 
+def test_manual_compact_preview_allows_under_budget():
+    agent = MainAgent([], max_context_tokens=8000)
+    _prefill(agent, 3)
+
+    preview = agent.compact_preview("plan")
+
+    assert preview["can_compact"] is True
+    assert preview["older_messages"] >= 1
+    assert preview["recent_messages"] >= 1
+    assert preview["total_tokens"] < preview["limit"]
+
+
+@pytest.mark.asyncio
+async def test_manual_compact_now_summarizes_even_under_budget():
+    llm = CompactLLM(summary="手动纪要：保留 SUPER_GOAL 和关键决策")
+    agent = MainAgent([], llm=llm, max_context_tokens=8000)
+    _prefill(agent, 4)
+    before = len(agent.history)
+
+    result = await agent.compact_now("build")
+
+    assert result["ok"] is True
+    assert llm.summarized == 1
+    assert agent._summary == "手动纪要：保留 SUPER_GOAL 和关键决策"
+    assert len(agent.history) < before
+    assert result["before_messages"] == before
+    assert result["after_messages"] == len(agent.history)
+    assert "SUPER_GOAL" in llm.summary_prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_manual_compact_failure_keeps_history():
+    class FailSummaryLLM(CompactLLM):
+        async def chat(self, messages, **kwargs):
+            sys = messages[0]["content"] if messages and messages[0].get("role") == "system" else ""
+            if "对话压缩器" in sys:
+                return {"content": ""}
+            return {"content": "回复"}
+
+    agent = MainAgent([], llm=FailSummaryLLM(), max_context_tokens=8000)
+    _prefill(agent, 4)
+    before = list(agent.history)
+
+    result = await agent.compact_now("plan")
+
+    assert result["ok"] is False
+    assert result["reason"] == "摘要生成失败"
+    assert agent._summary == ""
+    assert agent.history == before
+
+
 def test_trimmed_history_token_budget_trims_huge_messages():
     """#15：少量超大消息即便条数 < max_history，也应按 token 预算裁掉（防爆窗）。"""
     agent = MainAgent([], max_history=24, max_context_tokens=300)
@@ -872,6 +923,38 @@ def test_context_usage_reports_prompt_budget_estimate():
     assert usage["system_tokens"] > 0
     assert usage["max_context_tokens"] == 300
     assert usage["pct"] > 0
+    assert usage["policy"] == "balanced"
+
+
+def test_context_policy_auto_preserves_more_in_build():
+    agent = MainAgent([], max_context_tokens=300)
+
+    plan = agent.context_usage("plan")
+    build = agent.context_usage("build")
+
+    assert plan["policy"] == "balanced"
+    assert plan["max_context_tokens"] == 300
+    assert build["policy"] == "preserve"
+    assert build["max_context_tokens"] == 600
+
+
+def test_context_policy_compact_uses_smaller_budget():
+    agent = MainAgent([], max_context_tokens=400, context_policy="compact")
+
+    usage = agent.context_usage("build")
+
+    assert usage["policy"] == "compact"
+    assert usage["raw_policy"] == "compact"
+    assert usage["max_context_tokens"] == 300
+
+
+def test_context_policy_env_overrides_constructor(monkeypatch):
+    monkeypatch.setenv("VORTOCODE_CONTEXT_POLICY", "preserve")
+
+    agent = MainAgent([], max_context_tokens=200, context_policy="compact")
+
+    assert agent.context_usage("plan")["policy"] == "preserve"
+    assert agent.context_usage("plan")["max_context_tokens"] == 400
 
 
 @pytest.mark.asyncio

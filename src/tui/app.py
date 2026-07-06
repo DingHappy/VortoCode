@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
@@ -31,8 +32,8 @@ from src.memory.session_store import SessionManager
 
 SLASH_COMMANDS = [
     "/analyze", "/improve", "/fix", "/run", "/apply", "/agents", "/runagent", "/skills", "/mcp",
-    "/artifacts", "/diff", "/sessions", "/resume", "/new", "/mode", "/model", "/think", "/theme", "/usage",
-    "/tools", "/audit", "/speak", "/commands", "/hooks", "/clear", "/help", "/quit",
+    "/artifacts", "/diff", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
+    "/context", "/compact", "/permissions", "/memory", "/tools", "/audit", "/speak", "/commands", "/hooks", "/clear", "/help", "/quit",
 ]
 # 必须带参数的命令：补全面板里回车不直接执行，先补成 "/cmd " 让用户接着填参数
 ARG_SLASH_CMDS = {"/fix", "/run", "/resume", "/runagent"}
@@ -53,10 +54,16 @@ COMMAND_INFO = {
     "/resume": "恢复某个历史会话",
     "/new": "新开一个会话",
     "/mode": "切换 plan / build 模式",
+    "/plan": "进入 plan 权限模式（只读/提案）",
+    "/build": "进入 build 权限模式（可写分支）",
     "/model": "查看/切换模型（/model 名称，本会话生效）",
     "/think": "开关「思考呈现」（推理型模型的思维链 dim 显示）",
     "/theme": "切换配色主题（21 套内置，记住选择）",
     "/usage": "本会话 token 用量（reset 清零）",
+    "/context": "查看/切换上下文策略（auto/compact/balanced/preserve）",
+    "/compact": "手动压缩旧对话上下文；preview 只预估",
+    "/permissions": "查看/切换工具权限；可 deny 规则或 reset 会话放行",
+    "/memory": "查看/新增项目指令和跨会话记忆",
     "/tools": "列出主 agent 工具及读写权限",
     "/audit": "查看工具调用审计日志",
     "/speak": "朗读 agent 回复开关（mimo-v2.5-tts，需 key）",
@@ -127,8 +134,14 @@ HELP = """可用命令:
   /resume <id>        恢复某个历史会话
   /new                新开一个会话
   /mode               切换 plan(只读/提案) / build(可写分支)
+  /plan               进入 plan 权限模式
+  /build              进入 build 权限模式
   /theme [名]         切换配色主题（不带名=列出全部；选择会记住，下次自动用）
   /usage [reset]      本会话 token 用量（估算；reset 清零）
+  /context [策略]     查看/切换上下文策略（auto/compact/balanced/preserve）
+  /compact [preview]  手动压缩旧对话上下文；preview 只预估
+  /permissions [操作] 查看工具权限；plan/build 切模式，reset 清会话放行，deny <tool> [glob] 加规则
+  /memory [操作]      查看项目指令/长期记忆；init 建模板，add <文本> 记一条
   /clear              清屏
   /help               显示本帮助
   /quit               退出（也可 Ctrl+C）
@@ -201,6 +214,11 @@ class PromptEditor(TextArea):
     async def _on_key(self, event) -> None:
         app = self.app
         key = event.key
+        if app._inline_confirm_active():
+            event.stop()
+            event.prevent_default()
+            app._handle_inline_confirm_key(key)
+            return
         if key == "enter":                       # 回车=提交（换行用 Ctrl+J）
             event.stop()
             event.prevent_default()
@@ -221,6 +239,16 @@ class PromptEditor(TextArea):
             event.prevent_default()
             app.action_scroll_log_down()
             return
+        if key == "ctrl+p":
+            event.stop()
+            event.prevent_default()
+            app.action_history_prev()
+            return
+        if key == "ctrl+n":
+            event.stop()
+            event.prevent_default()
+            app.action_history_next()
+            return
         if key == "tab":                         # Tab 不缩进：补全/切模式（与全局键位一致）
             event.stop()
             event.prevent_default()
@@ -233,6 +261,16 @@ class PromptEditor(TextArea):
             return
         at_first = self.cursor_location[0] == 0
         at_last = self.cursor_location[0] >= self.document.line_count - 1
+        if key == "up" and not app._palette_visible() and self.text == "" and app._history_idx is None:
+            event.stop()
+            event.prevent_default()
+            app.action_scroll_log_line_up()
+            return
+        if key == "down" and not app._palette_visible() and self.text == "" and app._history_idx is None:
+            event.stop()
+            event.prevent_default()
+            app.action_scroll_log_line_down()
+            return
         if key == "up" and (app._palette_visible() or at_first):
             event.stop()                         # 面板选择/翻历史；多行中间行仍是光标上移
             event.prevent_default()
@@ -351,7 +389,10 @@ class ConfirmScreen(ModalScreen[bool]):
     #confirm-actions Button { margin-right: 2; }
     """
     BINDINGS = [
-        Binding("enter", "yes", "确认"),
+        Binding("enter", "choose", "执行当前选项"),
+        Binding("left", "prev_choice", "上一个"),
+        Binding("right", "next_choice", "下一个"),
+        Binding("tab", "next_choice", "下一个"),
         Binding("y", "yes", "确认"),
         Binding("a", "always", "始终允许"),
         Binding("n", "no", "取消"),
@@ -362,6 +403,8 @@ class ConfirmScreen(ModalScreen[bool]):
         super().__init__()
         self._message = message
         self._scope = scope           # "始终允许"的作用域：writes（写文件）/ commands（跑命令），各自独立
+        self._choices = ["confirm-yes", "confirm-always", "confirm-no"]
+        self._choice_idx = 0
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
@@ -370,10 +413,16 @@ class ConfirmScreen(ModalScreen[bool]):
                 yield Button("确认", id="confirm-yes", variant="success")
                 yield Button("本会话始终允许", id="confirm-always", variant="warning")
                 yield Button("取消", id="confirm-no")
-            yield Static("Enter/y 确认 · a 本会话始终允许 · n/Esc 取消", id="confirm-hint")
+            yield Static("←/→ 或 Tab 选择 · Enter 执行 · y 确认 · a 本会话始终允许 · n/Esc 取消", id="confirm-hint")
 
     def on_mount(self) -> None:
-        self.query_one("#confirm-yes", Button).focus()
+        self._focus_choice()
+
+    def _focus_choice(self) -> None:
+        try:
+            self.query_one(f"#{self._choices[self._choice_idx]}", Button).focus()
+        except Exception:  # noqa: BLE001
+            pass
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
@@ -382,6 +431,23 @@ class ConfirmScreen(ModalScreen[bool]):
         elif bid == "confirm-always":
             self.action_always()
         elif bid == "confirm-no":
+            self.action_no()
+
+    def action_prev_choice(self) -> None:
+        self._choice_idx = (self._choice_idx - 1) % len(self._choices)
+        self._focus_choice()
+
+    def action_next_choice(self) -> None:
+        self._choice_idx = (self._choice_idx + 1) % len(self._choices)
+        self._focus_choice()
+
+    def action_choose(self) -> None:
+        bid = self._choices[self._choice_idx]
+        if bid == "confirm-yes":
+            self.action_yes()
+        elif bid == "confirm-always":
+            self.action_always()
+        else:
             self.action_no()
 
     def action_yes(self) -> None:
@@ -425,6 +491,8 @@ class VortoCodeTUI(App):
         Binding("pagedown", "scroll_log_down", "下翻", show=False),
         Binding("ctrl+u", "scroll_log_up", "上翻", show=False),
         Binding("ctrl+d", "scroll_log_down", "下翻", show=False),
+        Binding("ctrl+p", "history_prev", "上一条", show=False),
+        Binding("ctrl+n", "history_next", "下一条", show=False),
         Binding("up", "history_prev", "上一条", show=False),
         Binding("down", "history_next", "下一条", show=False),
         Binding("ctrl+l", "clear_log", "清屏"),
@@ -460,11 +528,17 @@ class VortoCodeTUI(App):
         self._pal_idx = 0                   # 当前高亮候选（↑↓/点击 移动，Tab 补全，回车执行/接受）
         self._pal_kind = ""                 # "命令" / "文件"（回车语义不同：执行 vs 接受）
         self._pal_start = 0                 # 开窗起点（渲染时更新；点击换算行号用）
+        self._confirm_future = None         # 内联权限确认：不弹 modal，显示在输入框上方选择区
+        self._confirm_callback = None
+        self._confirm_scope = "writes"
+        self._confirm_message = ""
+        self._confirm_idx = 0
         self._queued_inputs: list[str] = []  # 忙时提交的消息排队（回合结束自动发送，不再丢弃）
         self._allow_writes_session = False  # 本会话"始终允许"写操作（ConfirmScreen 的 [a]，scope=writes）
         self._allow_commands_session = False  # 本会话"始终允许"跑命令（独立作用域，不吃写豁免）
         self._speak_replies = False         # /speak 开关：开则把每条回复合成语音朗读（mimo-v2.5-tts）
         self._user_cmds = None              # 用户自定义命令缓存（.vortocode/commands，惰性加载、/commands reload 重扫）
+        self._context_policy = self._load_setting("context_policy", "auto")
         self._turn_tools = 0                # 本回合工具调用计数（回合结束给"✓ 完成"反馈）
         self._turn_tool_lines: list[str] = []   # 本回合 🔧 工具行（结果流预览，收尾折叠）
         self._turn_tool_counts: dict[str, int] = {}  # 工具名 → 次数（折叠摘要用）
@@ -704,6 +778,36 @@ class VortoCodeTUI(App):
         self.sub_title = f"模式 {self.mode}（{desc}）{sid}{busy}{allow}{tok}"
         self._render_statusbar()           # 模式/用量变化时同步刷新状态栏
 
+    # ---------------------------------------------------------------- 项目设置
+    def _settings_file(self) -> Path:
+        return Path(self.repo_root) / ".vortocode" / "settings.json"
+
+    def _load_settings(self) -> dict:
+        try:
+            p = self._settings_file()
+            if not p.is_file():
+                return {}
+            data = json.loads(p.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def _save_settings(self, data: dict) -> None:
+        try:
+            p = self._settings_file()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _load_setting(self, key: str, default=None):
+        return self._load_settings().get(key, default)
+
+    def _save_setting(self, key: str, value) -> None:
+        data = self._load_settings()
+        data[key] = value
+        self._save_settings(data)
+
     # ---------------------------------------------------------------- 状态栏
     def _fmt_tokens_short(self, n: int) -> str:
         if n >= 1000:
@@ -717,7 +821,11 @@ class VortoCodeTUI(App):
             u = self.agent.context_usage(self.mode)
             used = self._fmt_tokens_short(int(u["used_tokens"]))
             limit = self._fmt_tokens_short(int(u["max_context_tokens"]))
-            return f"ctx {used}/{limit} {int(u['pct'])}%"
+            label = f"ctx {used}/{limit} {int(u['pct'])}%"
+            policy = str(u.get("policy") or "").strip()
+            if policy:
+                label += f" · policy {policy}"
+            return label
         except Exception:  # noqa: BLE001
             return ""
 
@@ -898,6 +1006,9 @@ class VortoCodeTUI(App):
             pass
 
     def action_cancel(self) -> None:
+        if self._inline_confirm_active():
+            self._finish_inline_confirm("no")
+            return
         if self._palette_visible():           # 先收补全面板；再按一次 Esc 才是取消任务
             self._hide_palette()
             return
@@ -912,16 +1023,30 @@ class VortoCodeTUI(App):
     def action_toggle_mode(self) -> None:
         # Tab 上下文化：补全面板可见 → 接受选中候选（输入已是该值则先跳下一个，shell 式轮换）；
         # 否则切 plan/build 模式。
+        if self._inline_confirm_active():
+            self._move_inline_confirm(1)
+            return
         if self._palette_visible():
             v = self.query_one("#prompt", PromptEditor).value
             if v == self._pal_accepts[self._pal_idx] and len(self._pal_accepts) > 1:
                 self._palette_move(1)
             self._palette_accept()
             return
-        self.mode = "build" if self.mode == "plan" else "plan"
+        self._set_mode("build" if self.mode == "plan" else "plan")
+
+    def _set_mode(self, mode: str) -> bool:
+        mode = str(mode or "").strip().lower()
+        if mode not in ("plan", "build"):
+            return False
+        if self.mode == mode:
+            self._sync_subtitle()
+            self._chrome(f"→ 已在 [b]{self.mode}[/b] 模式")
+            return True
+        self.mode = mode
         self._sync_subtitle()
         self._chrome(f"→ 切到 [b]{self.mode}[/b] 模式")
         self._record_mode_change()
+        return True
 
     def _mode_context(self) -> str:
         desc = "可写分支，写文件/跑命令/开发流水线可用" if self.mode == "build" else "只读/提案，写操作需先切 build"
@@ -944,6 +1069,96 @@ class VortoCodeTUI(App):
         inp.value = val
         inp.cursor_position = len(val)
 
+    _CONFIRM_CHOICES = [("yes", "确认"), ("always", "本会话始终允许"), ("no", "取消")]
+
+    def _inline_confirm_active(self) -> bool:
+        fut = self._confirm_future
+        return fut is not None and not fut.done()
+
+    def _begin_inline_confirm(self, message: str, scope: str = "writes", callback=None):
+        """在输入框上方显示 Claude Code 式权限选择项，不使用 modal 弹窗。"""
+        if self._inline_confirm_active():
+            return self._confirm_future
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        self._confirm_future = fut
+        self._confirm_callback = callback
+        self._confirm_scope = scope
+        self._confirm_message = message
+        self._confirm_idx = 0
+        self._pal_items, self._pal_accepts, self._pal_kind = [], [], ""
+        self._render_inline_confirm()
+        try:
+            self.query_one("#prompt", PromptEditor).focus()
+        except Exception:  # noqa: BLE001
+            pass
+        return fut
+
+    async def _inline_confirm(self, message: str, scope: str = "writes") -> bool:
+        return bool(await self._begin_inline_confirm(message, scope=scope))
+
+    def _render_inline_confirm(self) -> None:
+        try:
+            panel = self.query_one("#palette", Static)
+        except Exception:  # noqa: BLE001
+            return
+        msg = " ".join(str(self._confirm_message).split())
+        if len(msg) > 220:
+            msg = msg[:217] + "..."
+        t = Text()
+        t.append("权限确认  ", style="bold")
+        t.append(msg + "\n", style="dim")
+        for i, (_action, label) in enumerate(self._CONFIRM_CHOICES):
+            if i:
+                t.append("  ")
+            if i == self._confirm_idx:
+                t.append(f"› {label} ", style="reverse bold")
+            else:
+                t.append(f"  {label} ", style="dim")
+        t.append("   ←/→/Tab 选择 · Enter 执行 · y/a/n/Esc", style="dim")
+        panel.update(t)
+        panel.display = True
+
+    def _move_inline_confirm(self, delta: int) -> None:
+        self._confirm_idx = (self._confirm_idx + delta) % len(self._CONFIRM_CHOICES)
+        self._render_inline_confirm()
+
+    def _handle_inline_confirm_key(self, key: str) -> None:
+        if key in ("left", "up"):
+            self._move_inline_confirm(-1)
+        elif key in ("right", "down", "tab"):
+            self._move_inline_confirm(1)
+        elif key == "enter":
+            self._finish_inline_confirm(self._CONFIRM_CHOICES[self._confirm_idx][0])
+        elif key == "y":
+            self._finish_inline_confirm("yes")
+        elif key == "a":
+            self._finish_inline_confirm("always")
+        elif key in ("n", "escape"):
+            self._finish_inline_confirm("no")
+
+    def _finish_inline_confirm(self, action: str) -> None:
+        fut = self._confirm_future
+        callback = self._confirm_callback
+        result = action in ("yes", "always")
+        if action == "always":
+            try:
+                setattr(self, f"_allow_{self._confirm_scope}_session", True)
+            except Exception:  # noqa: BLE001
+                pass
+        self._confirm_future = None
+        self._confirm_callback = None
+        self._confirm_message = ""
+        self._confirm_idx = 0
+        try:
+            self.query_one("#palette", Static).display = False
+        except Exception:  # noqa: BLE001
+            pass
+        if fut is not None and not fut.done():
+            fut.set_result(result)
+        if callback is not None:
+            callback(result)
+
     async def _confirm_write(self, message: str) -> bool:
         """写操作确认门：本会话已选"始终允许"则直接放行，否则弹 ConfirmScreen。
 
@@ -951,7 +1166,7 @@ class VortoCodeTUI(App):
         """
         if self._allow_writes_session:
             return True
-        return await self.push_screen_wait(ConfirmScreen(message))
+        return await self._inline_confirm(message, scope="writes")
 
     def _taint_msg(self, message: str) -> str:
         """污点态（本回合摄入过网页/搜索/MCP 外部内容）下给对外操作确认加警示前缀（D0 防提示注入）。"""
@@ -963,7 +1178,7 @@ class VortoCodeTUI(App):
 
     async def _confirm_outward(self, message: str) -> bool:
         """外向操作（push / 开 PR 等推到远端的动作）确认：**始终弹窗**，不吃"始终允许写"的豁免。"""
-        return await self.push_screen_wait(ConfirmScreen(self._taint_msg(message)))
+        return await self._inline_confirm(self._taint_msg(message), scope="writes")
 
     async def _confirm_command(self, message: str) -> bool:
         """任意 shell 命令确认门：**独立作用域**，不吃"始终允许写文件"的豁免。
@@ -975,7 +1190,7 @@ class VortoCodeTUI(App):
         from src.agents.taint import is_tainted
         if self._allow_commands_session and not is_tainted():
             return True
-        return await self.push_screen_wait(ConfirmScreen(self._taint_msg(message), scope="commands"))
+        return await self._inline_confirm(self._taint_msg(message), scope="commands")
 
     def action_history_prev(self) -> None:
         """↑：补全面板可见时选上一个候选；否则调出上一条历史输入（编辑过则当作新输入）。"""
@@ -1023,6 +1238,20 @@ class VortoCodeTUI(App):
         """PageDown/Ctrl+D：焦点留在输入框，向下翻结果区。"""
         try:
             self.query_one("#log", RichLog).scroll_page_down(animate=False)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def action_scroll_log_line_up(self) -> None:
+        """鼠标滚轮在 mouse=False 终端里常退化为 ↑：映射为结果区细滚动。"""
+        try:
+            self.query_one("#log", RichLog).scroll_up(animate=False, immediate=True)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def action_scroll_log_line_down(self) -> None:
+        """鼠标滚轮在 mouse=False 终端里常退化为 ↓：映射为结果区细滚动。"""
+        try:
+            self.query_one("#log", RichLog).scroll_down(animate=False, immediate=True)
         except Exception:  # noqa: BLE001
             pass
 
@@ -1130,11 +1359,11 @@ class VortoCodeTUI(App):
                     self._chrome("[yellow]继续保持 plan 模式：只做分析/方案，不执行写入。[/yellow]")
                 self._continue_text_route(text)
 
-            self.push_screen(ConfirmScreen(
+            self._begin_inline_confirm(
                 "当前是 plan（只读/提案）模式，但这条需求看起来需要修改项目或执行开发动作。\n"
                 "切到 build 模式并用这条需求继续？\n"
-                "拒绝后仍会按 plan 模式只给方案/建议。"
-            ), _done)
+                "拒绝后仍会按 plan 模式只给方案/建议。",
+                callback=_done)
             return True
         if ok and self.mode != "build":
             self.mode = "build"
@@ -1157,6 +1386,8 @@ class VortoCodeTUI(App):
         if (self._history_idx is not None        # 编辑了调出的历史 → 当作新输入（恢复补全等常规行为）
                 and clean != self._history[self._history_idx]):
             self._history_idx = None
+        if self._inline_confirm_active():
+            return
         self._update_palette(clean)
 
     def _update_palette(self, value: str) -> None:
@@ -1264,6 +1495,8 @@ class VortoCodeTUI(App):
             self.exit()
         elif cmd == "mode":
             self.action_toggle_mode()
+        elif cmd in ("plan", "build"):
+            self._set_mode(cmd)
         elif cmd == "model":
             self._cmd_model(arg)
         elif cmd == "think":
@@ -1303,6 +1536,14 @@ class VortoCodeTUI(App):
             self._cmd_theme(arg)
         elif cmd == "usage":
             self._cmd_usage(arg)
+        elif cmd == "context":
+            self._cmd_context(arg)
+        elif cmd == "compact":
+            self._cmd_compact(arg)
+        elif cmd in ("permissions", "permission"):
+            self._cmd_permissions(arg)
+        elif cmd == "memory":
+            self._cmd_memory(arg)
         elif cmd == "tools":
             self._cmd_tools()
         elif cmd == "audit":
@@ -1356,6 +1597,170 @@ class VortoCodeTUI(App):
             gate = "只读" if t.read_only else "写/重型"
             lines.append(f"  {t.name} [{gate}] — {t.description}")
         self._emit("\n".join(lines))
+
+    def _append_permission_deny(self, tool: str, pattern: str = "") -> Path:
+        cfg = Path(self.repo_root) / ".vortocode" / "permissions.yaml"
+        try:
+            import yaml
+            data = yaml.safe_load(cfg.read_text(encoding="utf-8")) if cfg.is_file() else {}
+        except Exception:  # noqa: BLE001
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        deny = data.get("deny")
+        if not isinstance(deny, list):
+            deny = []
+        deny.append({tool: pattern} if pattern else tool)
+        data["deny"] = deny
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            import yaml
+            cfg.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            lines = ["deny:"]
+            for item in deny:
+                if isinstance(item, dict):
+                    for k, v in item.items():
+                        lines.append(f'  - {k}: "{v}"')
+                        break
+                else:
+                    lines.append(f"  - {item}")
+            cfg.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        self.agent = None          # 新规则立即影响下一次主 agent 构建
+        return cfg
+
+    def _cmd_permissions(self, arg: str = "") -> None:
+        """/permissions：查看本会话权限状态与 deny 规则；plan/build/reset/deny 可管理权限。"""
+        raw = (arg or "").strip()
+        low = raw.lower()
+        if low in ("plan", "build"):
+            self._set_mode(low)
+        elif low in ("reset", "reset-session", "session-reset"):
+            self._allow_writes_session = False
+            self._allow_commands_session = False
+            self._sync_subtitle()
+            self._chrome("[green]已清除本会话始终允许的写/命令权限[/green]")
+        elif low.startswith("deny"):
+            parts = raw.split(maxsplit=2)
+            if len(parts) < 2:
+                self._emit("用法: /permissions deny <tool> [glob]")
+                return
+            tool = parts[1].strip()
+            pattern = parts[2].strip().strip('"').strip("'") if len(parts) > 2 else ""
+            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", tool):
+                self._emit("权限规则工具名非法；用法: /permissions deny <tool> [glob]")
+                return
+            cfg = self._append_permission_deny(tool, pattern)
+            shown = f"{tool}: {pattern}" if pattern else tool
+            self._chrome(f"[green]已追加 deny 规则：{shown}（{cfg}）[/green]")
+        elif raw:
+            self._emit("用法: /permissions [plan|build|reset|deny <tool> [glob]]")
+            return
+        from src.agents.permissions import load_permissions
+        agent = self.agent or self._build_main_agent()
+        read_tools = [t.name for t in agent._tool_list if t.read_only]
+        write_tools = [t.name for t in agent._tool_list if not t.read_only]
+        cfg = Path(self.repo_root) / ".vortocode" / "permissions.yaml"
+        perm = load_permissions(self.repo_root)
+        lines = [
+            "[b]工具权限[/b]",
+            f"模式: {self.mode}（plan 只允许只读工具；build 可请求写/重型工具）",
+            f"本会话始终允许: 写={'yes' if self._allow_writes_session else 'no'} · "
+            f"命令={'yes' if self._allow_commands_session else 'no'}",
+            f"工具: 只读 {len(read_tools)} 个 · 写/重型 {len(write_tools)} 个",
+            "",
+            f"项目 deny 规则: {cfg}",
+        ]
+        if perm.rules:
+            for tool, glob in perm.rules:
+                pat = glob if glob is not None else "*"
+                lines.append(f"  deny {tool}: {pat}")
+        else:
+            lines.append("  （无 deny 规则；危险命令仍会走内置拦截和人工确认）")
+        lines += [
+            "",
+            "配置示例:",
+            "```yaml",
+            "deny:",
+            "  - web_fetch",
+            '  - "run_command: rm *"',
+            '  - edit_file: "*/secrets/*"',
+            "```",
+            "",
+            "提示: 选择“本会话始终允许”只影响当前 TUI 会话；项目 deny 规则始终优先硬拦。",
+        ]
+        self._emit("\n".join(lines))
+
+    def _cmd_memory(self, arg: str = "") -> None:
+        """/memory：查看项目指令与长期记忆；init 建项目指令模板；add 直接新增长期记忆。"""
+        raw = (arg or "").strip()
+        low = raw.lower()
+        if low.startswith("add "):
+            content = raw[4:].strip()
+            if not content:
+                self._emit("用法: /memory add <要跨会话记住的事实/偏好/约定>")
+                return
+            self.sessions.store.add_memory("__longterm__", "fact", content, importance=0.6)
+            self._chrome(f"[green]已加入长期记忆：{content[:80]}[/green]")
+            self._emit(self._memory_status_text())
+            return
+        if low in ("init", "init project"):
+            self._init_memory_file(local=False)
+            self._emit(self._memory_status_text())
+            return
+        if low in ("init local", "local"):
+            self._init_memory_file(local=True)
+            self._emit(self._memory_status_text())
+            return
+        if raw:
+            self._emit("用法: /memory [init|init local|add <文本>]")
+            return
+        self._emit(self._memory_status_text())
+
+    def _init_memory_file(self, *, local: bool) -> Path:
+        path = Path(self.repo_root) / (".vortocode/AGENTS.md" if local else "AGENTS.md")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            scope = "本地私有" if local else "项目共享"
+            path.write_text(
+                f"# {scope} Agent 指令\n\n"
+                "## 项目约定\n"
+                "- 使用中文沟通，代码注释遵循现有风格。\n"
+                "- 开发前先确认当前模式：plan 只读分析，build 才写入。\n"
+                "- 修改后说明验证命令和结果。\n\n"
+                "## Review guidelines\n"
+                "- 优先指出真实会影响运行、构建或维护的问题。\n"
+                "- 结论需要绑定文件、行号或可复现证据。\n",
+                encoding="utf-8")
+        self.agent = None          # 下一轮重建，重新加载项目指令
+        self._chrome(f"[green]项目记忆文件已就绪：{path}[/green]")
+        return path
+
+    def _memory_status_text(self) -> str:
+        from src.agents.project import find_instructions_file
+        instr = find_instructions_file(self.repo_root)
+        rows = self.sessions.store.get_memories("__longterm__")
+        lines = ["[b]项目记忆[/b]"]
+        if instr:
+            try:
+                preview = instr.read_text(encoding="utf-8", errors="ignore").strip().splitlines()[:5]
+            except Exception:  # noqa: BLE001
+                preview = []
+            lines.append(f"项目指令: {instr}")
+            if preview:
+                lines.append("  " + "\n  ".join(preview))
+        else:
+            lines.append("项目指令: （未找到 AGENTS.md / CLAUDE.md / VORTO.md / .vortocode/AGENTS.md）")
+            lines.append("  用 /memory init 创建共享 AGENTS.md；用 /memory init local 创建本地私有指令。")
+        lines.append("")
+        lines.append(f"长期记忆: {len(rows)} 条")
+        for r in rows[:8]:
+            lines.append(f"  - {str(r.get('content', ''))[:140]}")
+        if len(rows) > 8:
+            lines.append(f"  ... 还有 {len(rows) - 8} 条")
+        lines.append("")
+        lines.append("用法: /memory add <文本> · /memory init · /memory init local")
+        return "\n".join(lines)
 
     def _cmd_audit(self, arg: str) -> None:
         """/audit 看最近的工具调用审计（.vortocode/audit.log）。"""
@@ -1730,6 +2135,115 @@ class VortoCodeTUI(App):
             msg += f"\n当前上下文占用（估算）: {ctx}"
         self._emit(msg)
 
+    def _set_context_policy(self, policy: str) -> str | None:
+        from src.agents.main_agent import _normalize_context_policy
+        normalized = _normalize_context_policy(policy)
+        if normalized != policy.strip().lower():
+            return None
+        self._context_policy = normalized
+        self._save_setting("context_policy", normalized)
+        if self.agent is not None:
+            self.agent.context_policy = normalized
+        self._render_statusbar()
+        return normalized
+
+    def _cmd_context(self, arg: str) -> None:
+        """/context：查看上下文占用；/context auto|compact|balanced|preserve 切策略并持久化。"""
+        arg = (arg or "").strip().lower()
+        if arg:
+            policy = self._set_context_policy(arg)
+            if policy is None:
+                self._emit("用法: /context [auto|compact|balanced|preserve]")
+                return
+            self._chrome(f"[green]上下文策略已切换为 {policy}（已写入 .vortocode/settings.json）[/green]")
+        if self.agent is None:
+            self.agent = self._build_main_agent()
+        try:
+            u = self.agent.context_usage(self.mode)
+        except Exception as e:  # noqa: BLE001
+            self._emit(f"上下文统计失败: {e}")
+            return
+
+        def tok(name: str) -> str:
+            return self._fmt_tokens_short(int(u.get(name, 0)))
+
+        raw_policy = str(u.get("raw_policy") or "auto")
+        effective = str(u.get("policy") or raw_policy)
+        lines = [
+            "[b]上下文窗口[/b]（估算，按当前下一轮请求计算）",
+            f"策略: {raw_policy} → 当前生效 {effective}",
+            f"占用: {tok('used_tokens')}/{tok('max_context_tokens')} tokens · {int(u.get('pct', 0))}%",
+            "",
+            "分解:",
+            f"  system: {tok('system_tokens')}",
+            f"  history(保留): {tok('history_tokens')} / 原始 {tok('raw_history_tokens')}",
+            f"  summary: {tok('summary_tokens')}",
+            f"  plan: {tok('plan_tokens')}",
+            f"  messages: {int(u.get('trimmed_history_messages', 0))}/{int(u.get('history_messages', 0))}",
+            "",
+            "压缩:",
+            f"  compact: {'on' if u.get('compact_enabled') else 'off'}",
+            f"  当前策略触发线: {tok('max_context_tokens')}",
+            f"  压缩后最近原文预算: {tok('recent_budget')}",
+            f"  下一轮会压缩: {'yes' if u.get('will_compact') else 'no'}",
+            "",
+            "可选策略:",
+            "  /context auto      plan=balanced, build=preserve",
+            "  /context compact   日常轻量对话，更早压缩",
+            "  /context balanced  普通协作",
+            "  /context preserve  高强度开发，尽量保留原文",
+        ]
+        if effective == "preserve":
+            lines.append("\n建议: 当前适合开发/调试长任务；如果只是问答，可切 /context compact 节省上下文。")
+        elif effective == "compact":
+            lines.append("\n建议: 当前适合日常对话；进入长任务或 PR 审核前可切 /context preserve。")
+        else:
+            lines.append("\n建议: auto 会随 plan/build 自动调整；大多数项目默认用它。")
+        self._emit("\n".join(lines))
+
+    def _compact_preview_text(self, data: dict) -> str:
+        return (
+            f"将压缩旧消息 {int(data.get('older_messages', 0))} 条"
+            f"（~{self._fmt_tokens_short(int(data.get('older_tokens', 0)))} tok），"
+            f"保留最近 {int(data.get('recent_messages', 0))} 条"
+            f"（~{self._fmt_tokens_short(int(data.get('recent_tokens', 0)))} tok）。"
+        )
+
+    def _cmd_compact(self, arg: str) -> None:
+        """/compact：手动压缩旧对话；/compact preview 只预估。"""
+        arg = (arg or "").strip().lower()
+        if arg not in ("", "preview"):
+            self._emit("用法: /compact [preview]")
+            return
+        if self.agent is None:
+            self.agent = self._build_main_agent()
+        preview = self.agent.compact_preview(self.mode)
+        if arg == "preview":
+            status = "可压缩" if preview.get("can_compact") else "暂不可压缩"
+            self._emit(f"上下文压缩预览：{status}\n{self._compact_preview_text(preview)}")
+            return
+
+        async def _run():
+            result = await self.agent.compact_now(self.mode)
+            if not result.get("ok"):
+                self._emit(f"上下文压缩未执行：{result.get('reason', '未知原因')}\n"
+                           f"{self._compact_preview_text(result)}")
+                return
+            self._audit_event("compact", {
+                "before_messages": result.get("before_messages"),
+                "after_messages": result.get("after_messages"),
+                "before_tokens": result.get("before_tokens"),
+                "after_tokens": result.get("after_tokens"),
+                "summary_len": len(result.get("summary") or ""),
+            })
+            self._render_statusbar()
+            self._emit("上下文已压缩。\n"
+                       f"{self._compact_preview_text(result)}\n"
+                       f"消息数: {result['before_messages']} → {result['after_messages']}；"
+                       f"history tokens: ~{self._fmt_tokens_short(int(result['before_tokens']))}"
+                       f" → ~{self._fmt_tokens_short(int(result['after_tokens']))}")
+        self.run_worker(_run(), exclusive=True, group="compact")
+
     def _cmd_theme(self, arg: str) -> None:
         """/theme：无参弹主题选择器（↑↓ **实时预览**，回车定、Esc 恢复）；带参直接切。"""
         names = sorted(self.available_themes)
@@ -2064,9 +2578,9 @@ class VortoCodeTUI(App):
         think_cb, stream_cb, emit_final, cleanup = self._turn_renderers()
 
         async def confirm(message: str) -> bool:
-            # serve 端工具的确认经协议回到 TUI 弹窗：**始终弹**、不吃本地"始终允许"豁免
+            # serve 端工具的确认经协议回到 TUI 内联选择：**始终问**、不吃本地"始终允许"豁免
             # （scope 信息不过协议，宁多问不越权；与 _confirm_outward 同一保守面）。
-            return bool(await self.push_screen_wait(ConfirmScreen(message)))
+            return bool(await self._inline_confirm(message, scope="writes"))
 
         t0 = time.monotonic()
         try:
@@ -2652,6 +3166,7 @@ class VortoCodeTUI(App):
         agent = MainAgent(tools, max_steps=16, extra_system=extra, native=native,
                           on_tool=self._audit_tool, on_escalate=self._escalate_to_build,
                           on_plan=self._render_plan, plan_tool=True, hook_system=hook_system,
+                          context_policy=self._context_policy,
                           permissions=load_permissions(self.repo_root),   # .vortocode/permissions.yaml deny
                           env_context=True)                # 顶层交互 agent：注入 <env>（cwd/git/日期/目录）
         if self._model_override:            # /model 切过 → 新建的 agent 也带上（重建时不丢）
@@ -2707,8 +3222,7 @@ class VortoCodeTUI(App):
                 prompt = "\n".join(parts)
             else:
                 prompt = f"plan(只读)模式下，这一步要用写/重型工具「{name}」。切到 build 模式并继续？"
-            ok = await self.push_screen_wait(ConfirmScreen(
-                prompt))
+            ok = await self._inline_confirm(prompt, scope="writes")
         if ok and self.mode != "build":
             self.mode = "build"
             self._sync_subtitle()
@@ -2736,6 +3250,23 @@ class VortoCodeTUI(App):
             pass
         try:
             self._tool_preview(result)        # 工具结果摘要行（仿 Claude Code 的 ⎿）
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _audit_event(self, event: str, data: dict) -> None:
+        """把非工具型事件写进审计日志，复用同一个 JSONL 入口。"""
+        from datetime import datetime
+        try:
+            p = Path(self.repo_root) / ".vortocode" / "audit.log"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            rec = {
+                "ts": datetime.now().isoformat(timespec="seconds"),
+                "mode": self.mode,
+                "event": event,
+                "data": data or {},
+            }
+            with p.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         except Exception:  # noqa: BLE001
             pass
 

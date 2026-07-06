@@ -39,6 +39,27 @@ _SUMMARY_SYSTEM = (
     "若给了【已有纪要】，把【新增对话】融合进去、输出更新后的**完整**纪要，绝不丢失旧纪要要点。"
     "只输出纪要正文，不要任何前后缀、不要工具调用 JSON。")
 
+_CONTEXT_POLICY_PROFILES = {
+    "compact": {"multiplier": 0.75, "recent_ratio": 0.35},
+    "balanced": {"multiplier": 1.0, "recent_ratio": 0.5},
+    "preserve": {"multiplier": 2.0, "recent_ratio": 0.75},
+}
+
+
+def _normalize_context_policy(value: Any) -> str:
+    policy = str(value or "auto").strip().lower()
+    aliases = {
+        "daily": "compact",
+        "normal": "balanced",
+        "low": "compact",
+        "medium": "balanced",
+        "high": "preserve",
+        "low_compression": "preserve",
+        "no_compression": "preserve",
+    }
+    policy = aliases.get(policy, policy)
+    return policy if policy in {"auto", *_CONTEXT_POLICY_PROFILES} else "auto"
+
 
 @dataclass
 class Tool:
@@ -444,6 +465,7 @@ class MainAgent:
         plan_tool: bool = False,
         hook_system: Optional[Any] = None,
         compact: bool = True,
+        context_policy: str = "auto",
         permissions: Optional[Any] = None,
         env_context: bool = False,
     ) -> None:
@@ -494,10 +516,28 @@ class MainAgent:
         # 而非像 #72 那样硬丢中段。env VORTOCODE_COMPACT=0 关闭（关掉就退回纯锚点裁剪）。
         env_compact = os.getenv("VORTOCODE_COMPACT")
         self.compact = (env_compact not in ("0", "false", "no")) if env_compact is not None else compact
+        # 上下文策略：auto 会按模式动态选择；也可用 VORTOCODE_CONTEXT_POLICY 固定为 compact/balanced/preserve。
+        self.context_policy = _normalize_context_policy(os.getenv("VORTOCODE_CONTEXT_POLICY") or context_policy)
+        self._context_mode = "plan"
         self._summary = ""                     # 早先轮次的压缩纪要（滚动合并）
         self._permissions = permissions        # 可选 .vortocode/permissions.yaml deny 规则（_run_tool 硬拦）
         self._env_context = env_context        # 仿 CC 注入 <env>（cwd/git/日期/目录）；仅顶层交互 agent 开，子 agent 不开省开销
         self._env = ""                         # 当轮环境快照（run_turn 开始时刷新，_system 注入）
+
+    def _effective_context_policy(self, mode: str | None = None) -> str:
+        policy = _normalize_context_policy(self.context_policy)
+        if policy != "auto":
+            return policy
+        return "preserve" if (mode or self._context_mode) == "build" else "balanced"
+
+    def _context_limit(self, mode: str | None = None) -> int:
+        policy = self._effective_context_policy(mode)
+        multiplier = float(_CONTEXT_POLICY_PROFILES[policy]["multiplier"])
+        return max(1, int(round(self.max_context_tokens * multiplier)))
+
+    def _recent_context_ratio(self, mode: str | None = None) -> float:
+        policy = self._effective_context_policy(mode)
+        return float(_CONTEXT_POLICY_PROFILES[policy]["recent_ratio"])
 
     def _client(self) -> Any:
         # 惰性构建并缓存：跨步/跨轮复用同一个客户端（复用底层连接池），也便于测试注入
@@ -636,7 +676,7 @@ class MainAgent:
         from src.llm.content import content_to_text
         return content_to_text(m.get("content")) == anchor
 
-    def _trimmed_history(self) -> list[dict]:
+    def _trimmed_history(self, mode: str | None = None) -> list[dict]:
         """按 **token 预算** 裁剪跨轮历史（max_history 仅作硬条数上限兜底）。
 
         为什么按 token 而非条数：真正撑爆上下文窗口的是 token——少量超大消息（一段 8000 字的
@@ -646,7 +686,8 @@ class MainAgent:
         """
         h = self.history
         total = sum(self._msg_tokens(m) for m in h)
-        if len(h) <= self.max_history and total <= self.max_context_tokens:
+        limit = self._context_limit(mode)
+        if len(h) <= self.max_history and total <= limit:
             return list(h)                                 # 未超条数也未超 token 预算 → 原样（短对话零改动）
         anchor = self._anchor_text()
         limit_n = max(1, self.max_history - (1 if anchor else 0))   # 给锚点留 1 条，总数仍 ≤ max_history
@@ -654,7 +695,7 @@ class MainAgent:
         used = 0
         for m in reversed(h):                              # 从最近往前收，受 token 预算 + 条数上限双约束
             t = self._msg_tokens(m)
-            if kept and (used + t > self.max_context_tokens or len(kept) >= limit_n):
+            if kept and (used + t > limit or len(kept) >= limit_n):
                 break
             kept.append(m)
             used += t
@@ -669,19 +710,39 @@ class MainAgent:
         used_tokens 包含系统提示和当前会被保留的历史；max_context_tokens 是历史预算，
         因此系统提示较长时 pct 可能超过 100。它是 UI 提醒，不是 API 精确 usage。
         """
+        summary_tokens = self._msg_tokens({"role": "system", "content": self._summary}) if self._summary else 0
+        plan_tokens = 0
+        if self.plan:
+            from src.agents.plan import render_plan
+            plan_tokens = self._msg_tokens({"role": "system", "content": render_plan(self.plan)})
         system_tokens = self._msg_tokens({"role": "system", "content": self._system(mode)})
-        history_tokens = sum(self._msg_tokens(m) for m in self._trimmed_history())
+        raw_history_tokens = sum(self._msg_tokens(m) for m in self.history)
+        trimmed_history = self._trimmed_history(mode)
+        history_tokens = sum(self._msg_tokens(m) for m in trimmed_history)
         used = system_tokens + history_tokens
-        limit = max(1, self.max_context_tokens)
+        limit = self._context_limit(mode)
+        policy = self._effective_context_policy(mode)
+        recent_budget = max(1, int(limit * self._recent_context_ratio(mode)))
         return {
             "used_tokens": used,
             "history_tokens": history_tokens,
+            "raw_history_tokens": raw_history_tokens,
             "system_tokens": system_tokens,
+            "summary_tokens": summary_tokens,
+            "plan_tokens": plan_tokens,
             "max_context_tokens": limit,
+            "base_context_tokens": self.max_context_tokens,
+            "recent_budget": recent_budget,
+            "history_messages": len(self.history),
+            "trimmed_history_messages": len(trimmed_history),
             "pct": min(999, int(round(used * 100 / limit))),
+            "policy": policy,
+            "raw_policy": self.context_policy,
+            "compact_enabled": self.compact,
+            "will_compact": self.compact and raw_history_tokens > limit,
         }
 
-    async def _maybe_compact(self, say: Callable[[str], None]) -> None:
+    async def _maybe_compact(self, say: Callable[[str], None], mode: str = "plan") -> None:
         """历史 **token 数** 超预算时，把"老段"摘要成滚动纪要、物理移出 history（保留最近窗口逐字）。
 
         在回合开始时调一次（跨轮增长在此收口；单轮内的 max_steps 增长由 _trimmed_history 兜底）。
@@ -693,13 +754,14 @@ class MainAgent:
             return
         h = self.history
         total = sum(self._msg_tokens(m) for m in h)
-        if total <= self.max_context_tokens:   # 没超 token 预算就不折腾（短对话/小消息零开销、零 LLM 调用）
+        limit = self._context_limit(mode)
+        if total <= limit:   # 没超 token 预算就不折腾（短对话/小消息零开销、零 LLM 调用）
             return
-        half = max(1, self.max_context_tokens // 2)   # 最近约半预算逐字保留；更早的老段压成纪要
+        recent_budget = max(1, int(limit * self._recent_context_ratio(mode)))
         used, cut = 0, 0
-        for i in range(len(h) - 1, -1, -1):    # 从最近往前累计，越过半预算处即为切点
+        for i in range(len(h) - 1, -1, -1):    # 从最近往前累计，越过保留预算处即为切点
             used += self._msg_tokens(h[i])
-            if used > half:
+            if used > recent_budget:
                 cut = i + 1
                 break
         # recent 必须至少保留**当前轮最新 user**（h[-1]）：run_turn 刚把本轮用户请求追加到末尾，
@@ -715,6 +777,62 @@ class MainAgent:
         self._summary = digest                 # 含已有纪要的滚动合并（在 _summarize 内拼）
         self.history = recent
         say(f"[dim]🗜️ 已把 {len(older)} 条更早的对话压成纪要（保留原始目标与关键决策）。[/dim]")
+
+    def compact_preview(self, mode: str = "plan") -> dict:
+        """预估手动压缩会压掉哪一段，不调用 LLM、不改 history。"""
+        h = self.history
+        total = sum(self._msg_tokens(m) for m in h)
+        limit = self._context_limit(mode)
+        recent_budget = max(1, int(limit * self._recent_context_ratio(mode)))
+        if len(h) < 3:
+            cut = 0
+        else:
+            used, cut = 0, 0
+            for i in range(len(h) - 1, -1, -1):
+                used += self._msg_tokens(h[i])
+                if used > recent_budget:
+                    cut = i + 1
+                    break
+            if cut == 0:                       # 手动压缩：没超预算时也允许压掉较早半段
+                cut = max(1, len(h) // 2)
+            cut = min(cut, len(h) - 1)         # 最新一段上下文始终逐字保留
+        older = h[:cut]
+        recent = h[cut:]
+        return {
+            "can_compact": bool(older and recent),
+            "total_tokens": total,
+            "limit": limit,
+            "recent_budget": recent_budget,
+            "older_messages": len(older),
+            "recent_messages": len(recent),
+            "older_tokens": sum(self._msg_tokens(m) for m in older),
+            "recent_tokens": sum(self._msg_tokens(m) for m in recent),
+        }
+
+    async def compact_now(self, mode: str = "plan") -> dict:
+        """手动压缩旧历史。成功才改写 _summary/history；失败保持原样。"""
+        preview = self.compact_preview(mode)
+        if not preview["can_compact"]:
+            return {"ok": False, "reason": "可压缩的历史不足", **preview}
+        cut = int(preview["older_messages"])
+        older, recent = self.history[:cut], self.history[cut:]
+        digest = await self._summarize(older)
+        if not digest:
+            return {"ok": False, "reason": "摘要生成失败", **preview}
+        before_messages = len(self.history)
+        before_tokens = sum(self._msg_tokens(m) for m in self.history)
+        self._summary = digest
+        self.history = recent
+        after_tokens = sum(self._msg_tokens(m) for m in self.history)
+        return {
+            "ok": True,
+            "summary": digest,
+            "before_messages": before_messages,
+            "after_messages": len(self.history),
+            "before_tokens": before_tokens,
+            "after_tokens": after_tokens,
+            **preview,
+        }
 
     async def _summarize(self, msgs: list[dict]) -> str:
         """把一段历史消息（+ 已有纪要）交给 LLM 压成更新后的纪要；任何异常都返回空串（让上游降级）。"""
@@ -973,13 +1091,14 @@ class MainAgent:
         """
         say = say or (lambda _m: None)
         emit = emit or (lambda _m: None)
+        self._context_mode = mode
         self._escalated = False                # 每轮重置；切 build 由 UI 持久化到 mode
         from src.llm.content import build_user_content
         self.history.append({"role": "user",
                              "content": build_user_content(user_text, images, audio)})
         if not self._task_anchor:              # 捕获原始任务（首个 user 纯文本）——压缩后仍作锚点（修 #16）
             self._task_anchor = self._anchor_text()
-        await self._maybe_compact(say)         # 跨轮历史超 token 预算→把老段摘要成纪要（失败安全降级）
+        await self._maybe_compact(say, mode)   # 跨轮历史超 token 预算→把老段摘要成纪要（失败安全降级）
         if self._env_context:                  # 仿 CC：每轮刷新一次运行时环境（cwd/git/日期/目录）注入系统提示
             self._env = _env_block()
 
@@ -990,7 +1109,7 @@ class MainAgent:
         budget_exhausted = False
         while steps < self._step_budget(mode):
             steps += 1
-            messages = [{"role": "system", "content": self._system(mode)}] + self._trimmed_history()
+            messages = [{"role": "system", "content": self._system(mode)}] + self._trimmed_history(mode)
 
             # 原生 function-calling 路径（opt-in）；模型不支持就永久回退到提示式协议
             if self._native:
@@ -1105,7 +1224,7 @@ class MainAgent:
 
         stream_shown：延续本回合已回显前缀，让收尾回复的流式在 CLI 上接着累计、不错位。"""
         messages = [{"role": "system", "content": self._system(mode) + _FORCE_FINISH_RULE}] \
-            + self._trimmed_history()
+            + self._trimmed_history(mode)
         try:
             content = (await self._complete(messages, stream_cb, reasoning_cb, stream_shown)).strip()
         except Exception:  # noqa: BLE001

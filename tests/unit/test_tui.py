@@ -40,6 +40,14 @@ async def _wait_modal(app, pilot, tries=60):
     return False
 
 
+async def _wait_inline_confirm(app, pilot, tries=60):
+    for _ in range(tries):
+        if app._inline_confirm_active():
+            return True
+        await pilot.pause(0.05)
+    return False
+
+
 class _FakeKey:
     def __init__(self, key: str):
         self.key = key
@@ -168,6 +176,18 @@ async def test_toggle_mode_via_command_and_key():
         await _submit(app, pilot, "/mode")
         assert app.mode == "build"
         await _submit(app, pilot, "/mode")
+        assert app.mode == "plan"
+
+
+@pytest.mark.asyncio
+async def test_explicit_plan_build_commands_set_mode():
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/build")
+        assert app.mode == "build"
+        await _submit(app, pilot, "/build")
+        assert app.mode == "build"
+        await _submit(app, pilot, "/plan")
         assert app.mode == "plan"
 
 
@@ -474,7 +494,7 @@ async def test_agent_edit_file_requires_confirm(monkeypatch, tmp_path):
     async with app.run_test() as pilot:
         await _submit(app, pilot, "/mode")              # plan → build（写工具仅 build）
         await _submit(app, pilot, "把 src/m.py 里的 1 改成 2")
-        assert await _wait_modal(app, pilot)            # 写前必弹确认
+        assert await _wait_inline_confirm(app, pilot)   # 写前必确认
         await pilot.press("y")                          # 人确认
         assert await _wait_for(app, pilot, "已把 1 改成 2")
         assert target.read_text() == "x = 2\n"          # 确认后才真正落盘
@@ -647,7 +667,7 @@ async def test_save_skill_writes_and_registers(monkeypatch, tmp_path):
     async with app.run_test() as pilot:
         await _submit(app, pilot, "/mode")                 # build（写工具仅 build）
         await _submit(app, pilot, "把这套流程存成技能")
-        assert await _wait_modal(app, pilot)               # 写前确认
+        assert await _wait_inline_confirm(app, pilot)      # 写前确认
         await pilot.press("y")
         assert await _wait_for(app, pilot, "技能已保存")
         p = tmp_path / ".vortocode" / "skills" / "myskill" / "SKILL.md"
@@ -682,6 +702,17 @@ def test_statusbar_shows_context_usage_when_agent_exists(tmp_path):
     assert app._context_usage_label() == "ctx 1.2k/8k 15%"
 
 
+def test_statusbar_shows_context_policy_when_agent_reports_it(tmp_path):
+    class FakeAgent:
+        def context_usage(self, mode):
+            return {"used_tokens": 1234, "max_context_tokens": 16000, "pct": 8, "policy": "preserve"}
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    app.agent = FakeAgent()
+
+    assert app._context_usage_label() == "ctx 1.2k/16k 8% · policy preserve"
+
+
 @pytest.mark.asyncio
 async def test_usage_command_includes_context_usage(tmp_path):
     class FakeAgent:
@@ -694,6 +725,78 @@ async def test_usage_command_includes_context_usage(tmp_path):
         await _submit(app, pilot, "/usage")
         assert await _wait_for(app, pilot, "当前上下文占用")
         assert any("ctx 2k/8k 25%" in t for t in app.transcript)
+
+
+@pytest.mark.asyncio
+async def test_context_command_shows_breakdown_and_policy(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/context")
+        assert await _wait_for(app, pilot, "上下文窗口")
+        joined = "\n".join(app.transcript)
+        assert "策略: auto" in joined
+        assert "分解:" in joined
+        assert "压缩:" in joined
+
+
+@pytest.mark.asyncio
+async def test_context_command_switches_and_persists_policy(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/context preserve")
+        assert await _wait_for(app, pilot, "上下文策略已切换为 preserve")
+        assert app._context_policy == "preserve"
+        assert app.agent.context_policy == "preserve"
+        data = json.loads((tmp_path / ".vortocode" / "settings.json").read_text(encoding="utf-8"))
+        assert data["context_policy"] == "preserve"
+        assert "policy preserve" in app._context_usage_label()
+
+    app2 = VortoCodeTUI(repo_root=str(tmp_path))
+    assert app2._context_policy == "preserve"
+
+
+@pytest.mark.asyncio
+async def test_context_command_rejects_unknown_policy(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/context wild")
+        assert await _wait_for(app, pilot, "用法: /context")
+        assert app._context_policy == "auto"
+
+
+@pytest.mark.asyncio
+async def test_compact_preview_command_shows_estimate(tmp_path):
+    from tests.unit.test_main_agent import _prefill
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app.agent = app._build_main_agent()
+        _prefill(app.agent, 3)
+        await _submit(app, pilot, "/compact preview")
+
+        assert await _wait_for(app, pilot, "上下文压缩预览")
+        joined = "\n".join(app.transcript)
+        assert "将压缩旧消息" in joined
+        assert "保留最近" in joined
+
+
+@pytest.mark.asyncio
+async def test_compact_command_runs_and_audits(tmp_path):
+    from src.agents.main_agent import MainAgent
+    from tests.unit.test_main_agent import CompactLLM, _prefill
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app.agent = MainAgent([], llm=CompactLLM(), max_context_tokens=8000)
+        _prefill(app.agent, 4)
+        await _submit(app, pilot, "/compact")
+
+        assert await _wait_for(app, pilot, "上下文已压缩")
+        log = tmp_path / ".vortocode" / "audit.log"
+        assert log.is_file()
+        line = log.read_text(encoding="utf-8")
+        assert '"event": "compact"' in line
+        assert '"before_messages"' in line
 
 
 @pytest.mark.asyncio
@@ -772,6 +875,46 @@ async def test_memory_tools_roundtrip_cross_session(tmp_path):
     assert "pytest" in await agent2.tools["recall_memory"].handler({"query": "pytest"})
     # save_memory/recall_memory 都是只读门（plan 可用）
     assert agent.tools["save_memory"].read_only and agent.tools["recall_memory"].read_only
+
+
+def test_cmd_memory_empty_init_and_add(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted, chromed = [], []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda m, *a, **k: chromed.append(m)
+
+    app._cmd_memory()
+    assert emitted and "未找到 AGENTS.md" in emitted[-1]
+
+    app._cmd_memory("init")
+    assert (tmp_path / "AGENTS.md").is_file()
+    assert "项目指令:" in emitted[-1] and "AGENTS.md" in emitted[-1]
+    assert any("项目记忆文件已就绪" in m for m in chromed)
+
+    app._cmd_memory("add 用户偏好 pytest -q")
+    assert "用户偏好 pytest -q" in emitted[-1]
+
+
+def test_cmd_memory_init_local(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda *a, **k: None
+
+    app._cmd_memory("init local")
+
+    assert (tmp_path / ".vortocode" / "AGENTS.md").is_file()
+    assert ".vortocode/AGENTS.md" in emitted[-1]
+
+
+def test_cmd_memory_rejects_unknown(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+
+    app._cmd_memory("wat")
+
+    assert emitted and "用法: /memory" in emitted[-1]
 
 
 @pytest.mark.asyncio
@@ -909,6 +1052,88 @@ def test_cmd_hooks_empty_and_configured(tmp_path):
         "    matcher: edit_file\n    shell: true\n    command: ruff format .\n", encoding="utf-8")
     app._cmd_hooks()
     assert any("fmt" in c and "edit_file" in c for c in chromed)
+
+
+def test_cmd_permissions_empty_and_configured(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+
+    app._cmd_permissions()
+    assert emitted and "工具权限" in emitted[-1] and "无 deny 规则" in emitted[-1]
+
+    d = tmp_path / ".vortocode"; d.mkdir(exist_ok=True)
+    (d / "permissions.yaml").write_text(
+        'deny:\n  - web_fetch\n  - "run_command: rm *"\n  - edit_file: "*/secrets/*"\n',
+        encoding="utf-8")
+    app._cmd_permissions()
+    out = emitted[-1]
+    assert "deny web_fetch: *" in out
+    assert "deny run_command: rm *" in out
+    assert "deny edit_file: */secrets/*" in out
+
+
+def test_cmd_permissions_can_switch_mode(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted, chromed = [], []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda m, *a, **k: chromed.append(m)
+
+    app._cmd_permissions("build")
+    assert app.mode == "build"
+    assert any("切到 [b]build" in m for m in chromed)
+    assert emitted and "模式: build" in emitted[-1]
+
+    app._cmd_permissions("plan")
+    assert app.mode == "plan"
+    assert "模式: plan" in emitted[-1]
+
+    app._cmd_permissions("unknown")
+    assert "用法: /permissions" in emitted[-1]
+
+
+def test_cmd_permissions_reset_session_allowances(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    app._allow_writes_session = True
+    app._allow_commands_session = True
+    emitted, chromed = [], []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda m, *a, **k: chromed.append(m)
+
+    app._cmd_permissions("reset")
+
+    assert app._allow_writes_session is False
+    assert app._allow_commands_session is False
+    assert any("已清除本会话" in m for m in chromed)
+    assert "本会话始终允许: 写=no · 命令=no" in emitted[-1]
+
+
+def test_cmd_permissions_deny_appends_rule_and_rebuilds_agent(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted, chromed = [], []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda m, *a, **k: chromed.append(m)
+    app.agent = object()
+
+    app._cmd_permissions('deny run_command "rm *"')
+
+    assert app.agent is None
+    cfg = tmp_path / ".vortocode" / "permissions.yaml"
+    text = cfg.read_text(encoding="utf-8")
+    assert "run_command" in text and "rm *" in text
+    assert any("已追加 deny 规则" in m for m in chromed)
+    assert "deny run_command: rm *" in emitted[-1]
+
+
+def test_cmd_permissions_deny_rejects_bad_tool_name(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+
+    app._cmd_permissions("deny bad-name *")
+
+    assert emitted and "工具名非法" in emitted[-1]
+    assert not (tmp_path / ".vortocode" / "permissions.yaml").exists()
 
 
 def test_tui_agent_has_shared_read_tools(tmp_path):
@@ -1054,6 +1279,33 @@ async def test_prompt_page_keys_scroll_result_log(monkeypatch):
         await pilot.pause()
 
         assert called == [("up", {"animate": False}), ("down", {"animate": False})]
+
+
+@pytest.mark.asyncio
+async def test_empty_prompt_arrow_keys_scroll_log_not_history(monkeypatch):
+    from textual.widgets import RichLog
+
+    called = []
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        app._history = ["历史一"]
+        log = app.query_one("#log", RichLog)
+        monkeypatch.setattr(log, "scroll_up", lambda **kw: called.append(("up", kw)))
+        monkeypatch.setattr(log, "scroll_down", lambda **kw: called.append(("down", kw)))
+        inp = app.query_one("#prompt", PromptEditor)
+        inp.focus()
+        inp.value = ""
+
+        await inp._on_key(_FakeKey("up"))
+        await inp._on_key(_FakeKey("down"))
+        await pilot.pause()
+
+        assert inp.value == ""
+        assert app._history_idx is None
+        assert called == [
+            ("up", {"animate": False, "immediate": True}),
+            ("down", {"animate": False, "immediate": True}),
+        ]
 
 
 @pytest.mark.asyncio
@@ -1313,7 +1565,7 @@ async def test_build_apply_confirm_cancel(monkeypatch, tmp_path):
         await _submit(app, pilot, "/mode")            # → build
         assert app.mode == "build"
         await _submit(app, pilot, "/improve")
-        assert await _wait_modal(app, pilot), "写分支前应弹确认"
+        assert await _wait_inline_confirm(app, pilot), "写分支前应确认"
         await pilot.press("n")                        # 取消
         await pilot.pause()
         assert applied == []                          # 没写分支
@@ -1330,7 +1582,7 @@ async def test_build_apply_confirm_accept(monkeypatch, tmp_path):
     async with app.run_test() as pilot:
         await _submit(app, pilot, "/mode")
         await _submit(app, pilot, "/improve")
-        assert await _wait_modal(app, pilot)
+        assert await _wait_inline_confirm(app, pilot)
         await pilot.press("y")                        # 确认
         await pilot.pause()
         assert applied == [True]                      # 写了分支
@@ -1413,13 +1665,13 @@ async def test_input_history_up_down():
         inp.focus()
         inp.value = "一"; await pilot.press("enter"); await pilot.pause()
         inp.value = "二"; await pilot.press("enter"); await pilot.pause()
-        await pilot.press("up"); await pilot.pause()
+        await inp._on_key(_FakeKey("ctrl+p")); await pilot.pause()
         assert inp.value == "二"                            # ↑ 最近一条
-        await pilot.press("up"); await pilot.pause()
+        await inp._on_key(_FakeKey("ctrl+p")); await pilot.pause()
         assert inp.value == "一"                            # 再 ↑ 更早一条
-        await pilot.press("down"); await pilot.pause()
+        await inp._on_key(_FakeKey("ctrl+n")); await pilot.pause()
         assert inp.value == "二"
-        await pilot.press("down"); await pilot.pause()
+        await inp._on_key(_FakeKey("ctrl+n")); await pilot.pause()
         assert inp.value == ""                              # 到底恢复草稿（空）
 
 
@@ -1562,10 +1814,10 @@ async def test_history_recall_of_slash_does_not_open_palette():
         inp.focus()
         await _submit(app, pilot, "/usage")
         await _submit(app, pilot, "/help")
-        await pilot.press("up"); await pilot.pause()
+        await inp._on_key(_FakeKey("ctrl+p")); await pilot.pause()
         assert inp.value == "/help"                                    # ↑ 翻历史
         assert app.query_one("#palette", Static).display is False      # 不弹补全
-        await pilot.press("up"); await pilot.pause()
+        await inp._on_key(_FakeKey("ctrl+p")); await pilot.pause()
         assert inp.value == "/usage"                                   # 继续翻历史（没被面板截胡）
 
 
@@ -1682,6 +1934,24 @@ async def test_always_allow_skips_confirm(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_inline_confirm_write_uses_palette_not_modal(tmp_path):
+    import asyncio
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        task = asyncio.create_task(app._confirm_write("写文件？"))
+        assert await _wait_inline_confirm(app, pilot)
+        assert len(app.screen_stack) == 1
+        assert "权限确认" in app.query_one("#palette").render().plain
+        await pilot.press("right")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert await task is True
+        assert app._allow_writes_session is True
+
+
+@pytest.mark.asyncio
 async def test_improve_confirm_always_sets_flag(monkeypatch, tmp_path):
     applied = []
     si, FakeLoop = _fake_improve_loop(applied)
@@ -1690,7 +1960,7 @@ async def test_improve_confirm_always_sets_flag(monkeypatch, tmp_path):
     async with app.run_test() as pilot:
         await _submit(app, pilot, "/mode")                # → build
         await _submit(app, pilot, "/improve")
-        assert await _wait_modal(app, pilot)
+        assert await _wait_inline_confirm(app, pilot)
         await pilot.press("a")                            # 选"本会话始终允许"
         await pilot.pause()
         assert applied == [True]                          # a 也算确认 → 写了
@@ -1700,19 +1970,19 @@ async def test_improve_confirm_always_sets_flag(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_write_blanket_does_not_silence_commands(tmp_path):
     """P0#2：只按过"始终允许写文件"不得静默后续任意命令（否则=权限提升）。"""
+    import asyncio
+
     app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
         app._allow_writes_session = True                  # 仅写豁免
-        pushed = []
+        task = asyncio.create_task(app._confirm_command("跑命令？"))  # 命令仍需确认
+        assert await _wait_inline_confirm(app, pilot)
+        assert app._confirm_scope == "commands"
+        await pilot.press("n")
+        await pilot.pause()
 
-        async def _fake_push(screen):
-            pushed.append(screen)
-            return False
-
-        app.push_screen_wait = _fake_push
-        ok = await app._confirm_command("跑命令？")        # 命令仍需确认
-        assert ok is False and len(pushed) == 1           # 未被写豁免放行、确实弹了确认
-        assert pushed[0]._scope == "commands"             # 且是命令作用域的确认框
+        assert await task is False
+        assert len(app.screen_stack) == 1
 
 
 @pytest.mark.asyncio
@@ -1747,6 +2017,35 @@ async def test_confirm_screen_enter_confirms(tmp_path):
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
+        assert len(app.screen_stack) == 1
+
+
+@pytest.mark.asyncio
+async def test_confirm_screen_arrows_choose_current_option(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app.push_screen(ConfirmScreen("写文件？"))
+        await pilot.pause()
+        await pilot.press("right")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app._allow_writes_session is True
+        assert len(app.screen_stack) == 1
+
+
+@pytest.mark.asyncio
+async def test_confirm_screen_can_keyboard_select_cancel(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app.push_screen(ConfirmScreen("写文件？"))
+        await pilot.pause()
+        await pilot.press("right")
+        await pilot.press("right")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app._allow_writes_session is False
         assert len(app.screen_stack) == 1
 
 
@@ -1787,7 +2086,7 @@ async def test_plan_escalation_switches_to_build_and_marks_done(monkeypatch, tmp
                               on_escalate=app._escalate_to_build, on_tool=app._audit_tool)
         inp = app.query_one("#prompt", PromptEditor); inp.focus(); inp.value = "动手做"
         await pilot.press("enter")
-        assert await _wait_modal(app, pilot)              # plan 想写 → 弹"切 build 并继续？"
+        assert await _wait_inline_confirm(app, pilot)     # plan 想写 → 确认"切 build 并继续？"
         await pilot.press("y")
         assert await _wait_for(app, pilot, "已切到 build")  # 一键切 build
         for _ in range(40):
@@ -1833,7 +2132,7 @@ async def test_plan_can_request_build_when_ready(monkeypatch, tmp_path):
                               plan_tool=True)
         inp = app.query_one("#prompt", PromptEditor); inp.focus(); inp.value = "先分析，成熟后动手"
         await pilot.press("enter")
-        assert await _wait_modal(app, pilot)
+        assert await _wait_inline_confirm(app, pilot)
         await pilot.press("y")
         assert await _wait_for(app, pilot, "已切到 build")
         for _ in range(40):
@@ -1873,7 +2172,7 @@ async def test_plan_preflight_offer_build_for_clear_dev_intent(monkeypatch, tmp_
     async with app.run_test() as pilot:
         app.agent = FakeAgent()
         await _submit(app, pilot, "帮我修复这个问题")
-        assert await _wait_modal(app, pilot)
+        assert await _wait_inline_confirm(app, pilot)
         await pilot.press("y")
         assert await _wait_for(app, pilot, "build 执行了")
 
@@ -1899,7 +2198,7 @@ async def test_plan_preflight_reject_keeps_plan(monkeypatch, tmp_path):
     async with app.run_test() as pilot:
         app.agent = FakeAgent()
         await _submit(app, pilot, "继续开发这个功能")
-        assert await _wait_modal(app, pilot)
+        assert await _wait_inline_confirm(app, pilot)
         await pilot.press("n")
         assert await _wait_for(app, pilot, "plan 方案")
 
@@ -1942,7 +2241,7 @@ async def test_input_history_persists_across_apps(tmp_path):
     async with app2.run_test() as pilot:
         assert "记住我" in app2._history                  # 跨会话载入
         inp = app2.query_one("#prompt", PromptEditor); inp.focus()
-        await pilot.press("up"); await pilot.pause()
+        await inp._on_key(_FakeKey("ctrl+p")); await pilot.pause()
         assert inp.value == "记住我"                       # ↑ 调出上次会话的输入
 
 
@@ -2045,7 +2344,7 @@ async def test_apply_copies_workspace_output_to_repo(tmp_path):
     async with app.run_test() as pilot:
         app._last_dev = {"workspace": str(ws), "files": ["src/new.py"]}
         app._do_apply()                                       # @work worker
-        assert await _wait_modal(app, pilot)                  # 弹"应用到仓库?"
+        assert await _wait_inline_confirm(app, pilot)         # 确认"应用到仓库?"
         await pilot.press("y")
         for _ in range(40):
             if (tmp_path / "src" / "new.py").is_file():
