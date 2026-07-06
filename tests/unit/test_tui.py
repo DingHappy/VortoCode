@@ -2424,6 +2424,72 @@ async def test_cmd_pr_dirty_worktree_does_not_confirm(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_cmd_pr_check_requires_ref(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/pr-check")
+        assert await _wait_for(app, pilot, "用法: /pr-check")
+
+
+@pytest.mark.asyncio
+async def test_cmd_pr_check_shows_review_and_ci_feedback(tmp_path, monkeypatch):
+    import src.agents.vcs as vcs
+
+    def fake_feedback(repo_root, ref):
+        return {
+            "ok": True,
+            "pr": 12,
+            "branch": "vorto/fix-review",
+            "comments": [{"author": "reviewer", "body": "这里需要补边界测试",
+                          "path": "src/foo.py", "line": 42, "resolved": False}],
+            "failing_checks": [{"name": "pytest", "link": "https://ci.example/1"}],
+            "error": "",
+        }
+
+    monkeypatch.setattr(vcs, "pr_feedback", fake_feedback)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/pr-check 12")
+        assert await _wait_for(app, pilot, "PR #12")
+        joined = "\n".join(app.transcript)
+        assert "vorto/fix-review" in joined
+        assert "pytest" in joined
+        assert "src/foo.py:42" in joined
+        assert "补边界测试" in joined
+
+
+@pytest.mark.asyncio
+async def test_cmd_pr_fix_confirms_switches_build_and_routes(tmp_path, monkeypatch):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    routed = []
+    monkeypatch.setattr(app, "_continue_text_route", lambda text: routed.append(text))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/pr-fix 12")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("y")
+        for _ in range(20):
+            if routed:
+                break
+            await pilot.pause(0.05)
+        assert app.mode == "build"
+        assert routed and "PR 12" in routed[0] and "pr_fix" in routed[0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_pr_fix_cancel_does_not_route(tmp_path, monkeypatch):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    routed = []
+    monkeypatch.setattr(app, "_continue_text_route", lambda text: routed.append(text))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/pr-fix 12")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("n")
+        assert await _wait_for(app, pilot, "已取消 PR 反馈修复")
+        assert app.mode == "plan"
+        assert routed == []
+
+
+@pytest.mark.asyncio
 async def test_cmd_diff_empty_is_graceful(tmp_path):
     _git(tmp_path, "init", "-q")
     app = VortoCodeTUI(repo_root=str(tmp_path))

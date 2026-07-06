@@ -32,11 +32,11 @@ from src.memory.session_store import SessionManager
 
 SLASH_COMMANDS = [
     "/analyze", "/improve", "/fix", "/run", "/apply", "/agents", "/runagent", "/skills", "/mcp",
-    "/artifacts", "/diff", "/git", "/commit", "/pr", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
+    "/artifacts", "/diff", "/git", "/commit", "/pr", "/pr-check", "/pr-fix", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
     "/context", "/compact", "/permissions", "/memory", "/tasks", "/tools", "/audit", "/speak", "/commands", "/hooks", "/clear", "/help", "/quit",
 ]
 # 必须带参数的命令：补全面板里回车不直接执行，先补成 "/cmd " 让用户接着填参数
-ARG_SLASH_CMDS = {"/fix", "/run", "/resume", "/runagent"}
+ARG_SLASH_CMDS = {"/fix", "/run", "/resume", "/runagent", "/pr-check", "/pr-fix"}
 # 命令 → 一句话说明（命令补全面板用，让 / 命令可发现、可补全）
 COMMAND_INFO = {
     "/analyze": "L1 自分析（只读扫描，无需 key）",
@@ -53,6 +53,8 @@ COMMAND_INFO = {
     "/git": "查看 git 状态、staged/unstaged diffstat",
     "/commit": "提交已 staged 改动；all 先 git add -A",
     "/pr": "预览或创建 PR；preview 只预览，draft 开草稿",
+    "/pr-check": "读取 PR review 评论和失败 CI 检查",
+    "/pr-fix": "确认后按 PR 反馈切 build 并调用 pr_fix 修复",
     "/sessions": "列出/恢复/重命名/删除历史会话",
     "/resume": "恢复某个历史会话",
     "/new": "新开一个会话",
@@ -134,6 +136,8 @@ HELP = """可用命令:
   /git                查看 git 状态、staged/unstaged diffstat
   /commit <msg>       提交已 staged 改动；/commit all <msg> 先 git add -A
   /pr [preview|draft] [base <ref>] [title]  预览或创建 PR（外向操作需确认）
+  /pr-check <ref>     读取 PR review 评论和失败 CI 检查
+  /pr-fix <ref>       确认后切 build 并让主 agent 调 pr_fix 修复 PR 反馈
   /mcp [list|off]     接入 config/mcp.yaml 的 MCP 服务器工具（build 门控）
   /agents             列出已创建的 agent（网页/API 建的，同一份存储）
   /runagent <id> <任务>  用某个已创建的 agent 执行任务（流式）
@@ -1364,7 +1368,9 @@ class VortoCodeTUI(App):
                 if sel != event.value:
                     self._set_input(sel)        # 只接受文件路径，不提交（通常还要接着写需求）
                     return
-            elif sel in ARG_SLASH_CMDS:         # 必带参数的命令：补成 "/cmd " 等用户填参数
+            elif sel in ARG_SLASH_CMDS and text != sel:
+                # 从候选面板选择必带参数命令时补成 "/cmd " 让用户填参数；用户已完整输入
+                # "/cmd" 并回车时仍执行命令本身，让命令给出用法提示。
                 self._set_input(sel + " ")
                 return
             else:
@@ -1635,6 +1641,10 @@ class VortoCodeTUI(App):
             self._cmd_commit(arg)
         elif cmd == "pr":
             self._cmd_pr(arg)
+        elif cmd == "pr-check":
+            self._cmd_pr_check(arg)
+        elif cmd == "pr-fix":
+            self._cmd_pr_fix(arg)
         elif cmd == "mcp":
             self._cmd_mcp(arg)
         elif cmd == "agents":
@@ -2302,6 +2312,76 @@ class VortoCodeTUI(App):
                 self._emit(f"开 PR 失败: {res.get('error', '')}")
 
         self.run_worker(_run(), exclusive=True, group="git")
+
+    def _format_pr_feedback(self, fb: dict, ref: str) -> str:
+        if not fb.get("ok"):
+            return f"PR 反馈读取失败（{ref}）: {fb.get('error', '')}"
+        pr = fb.get("pr") or ref
+        branch = fb.get("branch") or "未知分支"
+        comments = fb.get("comments") or []
+        checks = fb.get("failing_checks") or []
+        lines = [f"PR #{pr} · {branch}", f"待处理 review 评论: {len(comments)}", f"失败检查: {len(checks)}"]
+        if checks:
+            lines.append("")
+            lines.append("失败检查:")
+            for ck in checks[:10]:
+                link = f" — {ck.get('link')}" if ck.get("link") else ""
+                lines.append(f"- {ck.get('name') or 'check'}{link}")
+            if len(checks) > 10:
+                lines.append(f"- ... 还有 {len(checks) - 10} 个")
+        if comments:
+            lines.append("")
+            lines.append("Review 评论:")
+            for c in comments[:20]:
+                if c.get("path") and c.get("line"):
+                    loc = f"{c.get('path')}:{c.get('line')}"
+                else:
+                    loc = str(c.get("path") or "PR")
+                author = c.get("author") or "?"
+                body = self._summary_text(str(c.get("body") or ""), 180)
+                lines.append(f"- [{author}] {loc} {body}")
+            if len(comments) > 20:
+                lines.append(f"- ... 还有 {len(comments) - 20} 条")
+        if not comments and not checks:
+            lines.append("")
+            lines.append("没有待处理 review 评论，CI 也没有失败检查。")
+        return "\n".join(lines)
+
+    def _cmd_pr_check(self, arg: str = "") -> None:
+        """/pr-check <ref>：读取 PR review 评论 + 失败 CI。只读命令。"""
+        ref = (arg or "").strip()
+        if not ref:
+            self._emit("用法: /pr-check <PR号或分支名>")
+            return
+
+        async def _run():
+            from src.agents.vcs import pr_feedback
+            fb = await asyncio.to_thread(pr_feedback, self.repo_root, ref)
+            self._emit(self._format_pr_feedback(fb, ref))
+
+        self.run_worker(_run(), exclusive=True, group="git")
+
+    def _cmd_pr_fix(self, arg: str = "") -> None:
+        """/pr-fix <ref>：确认后切 build，并让主 agent 调 pr_fix 工具。"""
+        ref = (arg or "").strip()
+        if not ref:
+            self._emit("用法: /pr-fix <PR号或vorto/*分支名>")
+            return
+
+        def _after_confirm(ok: bool | None) -> None:
+            if not ok:
+                self._emit("已取消 PR 反馈修复。")
+                return
+            self._set_mode("build")
+            self._continue_text_route(
+                f"请读取并修复 PR {ref} 的 review/CI 反馈；调用 pr_fix 工具，参数 pr={ref}。"
+            )
+
+        self._begin_inline_confirm(
+            f"按 PR {ref} 的 review/CI 反馈自动修复？会切到 build 模式，并由 pr_fix 在 vorto/* 分支上改动、自测、再确认 push。",
+            scope="writes",
+            callback=_after_confirm,
+        )
 
     def _user_commands(self) -> dict:
         """惰性加载并缓存 .vortocode/commands 下的用户自定义命令（/commands reload 重扫）。"""
