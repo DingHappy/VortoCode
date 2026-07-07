@@ -9,6 +9,17 @@ import pytest
 from src.agents.main_agent import MainAgent, SkillRegistry, Tool, parse_tool_call
 
 
+@pytest.fixture(autouse=True)
+def _pin_default_model(monkeypatch):
+    """把默认模型钉在 mimo-v2.5（项目 .env/.env.example 的真实默认，未知窗口）。
+
+    上下文预算测试假设默认模型窗口未知 → 保守回退 8000。本地靠 .env 的 DEFAULT_MODEL
+    生效，但 CI 检出时没有 .env（被 gitignore），LLMConfig 会回落到写死的 gpt-4o-mini
+    （前缀命中 → 窗口 128k → 预算 64k），这些断言就全崩。显式钉死，去掉对 .env 的隐式依赖。
+    需要别的模型的用例自行 setenv 覆盖。"""
+    monkeypatch.setenv("DEFAULT_MODEL", "mimo-v2.5")
+
+
 def test_parse_tool_call_variants():
     # 纯文字 → 当最终回复（None）
     assert parse_tool_call("你好呀") is None

@@ -2577,6 +2577,17 @@ class VortoCodeTUI(App):
 
     def _cmd_verify_run(self, cmd: str, *, label: str = "runtime 验证命令") -> None:
         """Run a user-supplied runtime/smoke command with existing command gates."""
+        # 空命令 / 高危命令同步 fail-fast：既立即给用户反馈，也避免为一条注定被拒的命令
+        # 起 worker（无运行中的事件循环时 run_worker 会抛 RuntimeError）。真正执行时协程内还会再查一遍。
+        cmd = (cmd or "").strip()
+        if not cmd:
+            self._emit("用法: /verify run <命令>")
+            return
+        from src.agents.shell import is_dangerous
+        danger = is_dangerous(cmd)
+        if danger:
+            self._emit(f"拒绝执行高危验证命令: {danger}")
+            return
         self.run_worker(self._run_verify_command_now(cmd, label=label), exclusive=True, group="verify")
 
     def _cmd_preflight(self, arg: str = "") -> None:

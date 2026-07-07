@@ -2246,6 +2246,10 @@ async def test_show_diff_renders_colored(tmp_path):
 
 def _git(tmp_path, *args):
     import subprocess
+    # 强制初始分支为 main：CI runner 的 git 默认分支可能是 master，
+    # 会让依赖 base=main 的 /pr preview / create 找不到 base（init.defaultBranch 自 git 2.28 起支持）。
+    if args and args[0] == "init":
+        args = ("-c", "init.defaultBranch=main", *args)
     return subprocess.run(["git", *args], cwd=str(tmp_path), capture_output=True)
 
 
