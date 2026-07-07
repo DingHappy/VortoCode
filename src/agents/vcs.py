@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 from typing import Optional
@@ -66,6 +67,99 @@ def _gh_json(repo_root, *args) -> Optional[dict]:
 
 
 _FAIL_CONCLUSIONS = {"FAILURE", "TIMED_OUT", "CANCELLED", "ACTION_REQUIRED", "STARTUP_FAILURE", "STALE"}
+_ACTIONS_RUN_RE = re.compile(r"/actions/runs/(\d+)")
+_FAILURE_MARKERS = (
+    "::error", "traceback", "assertionerror", "failed", "failure", "error:",
+    "process completed with exit code", "exit code", "panic:", "exception",
+)
+
+
+def _run_id_from_check(check: dict) -> str:
+    for key in ("run_id", "runId", "workflowRunId", "workflow_run_id"):
+        val = str(check.get(key) or "").strip()
+        if val.isdigit():
+            return val
+    link = str(check.get("link") or check.get("detailsUrl") or check.get("targetUrl") or "")
+    m = _ACTIONS_RUN_RE.search(link)
+    return m.group(1) if m else ""
+
+
+def _clean_log_line(line: str) -> str:
+    parts = str(line or "").rstrip().split("\t")
+    if len(parts) >= 3:
+        return parts[-1].strip()
+    return str(line or "").rstrip()
+
+
+def _failure_excerpt(log_text: str, max_chars: int = 1200) -> str:
+    """Extract a compact, useful failure excerpt from `gh run view --log-failed` output."""
+    lines = [_clean_log_line(ln) for ln in str(log_text or "").splitlines()]
+    lines = [ln for ln in lines if ln.strip()]
+    if not lines:
+        return ""
+    marker_indexes = []
+    for i, line in enumerate(lines):
+        low = line.lower()
+        if any(marker in low for marker in _FAILURE_MARKERS):
+            marker_indexes.append(i)
+    start = max(0, marker_indexes[0] - 5) if marker_indexes else max(0, len(lines) - 40)
+    selected: list[str] = []
+    total = 0
+    for line in lines[start:]:
+        total += len(line) + 1
+        if selected and total > max_chars:
+            break
+        selected.append(line)
+    text = "\n".join(selected).strip()
+    if len(text) > max_chars:
+        text = text[: max(0, max_chars - 1)].rstrip() + "…"
+    return text
+
+
+def failed_check_log_excerpts(repo_root, checks: list[dict], *,
+                              max_checks: int = 3, max_chars: int = 1200) -> dict:
+    """Fetch short failed-log excerpts for GitHub Actions checks.
+
+    The function is deliberately best-effort. It never raises for missing `gh`,
+    non-Actions checks, or unavailable logs; callers can show the partial logs
+    and keep the normal PR feedback flow working.
+    """
+    if not checks:
+        return {"ok": True, "logs": [], "error": ""}
+    if not shutil.which("gh"):
+        return {"ok": False, "logs": [], "error": "gh CLI 不可用，无法读取失败日志"}
+
+    logs: list[dict] = []
+    cache: dict[str, dict] = {}
+    for ck in checks[:max_checks]:
+        name = str(ck.get("name") or ck.get("context") or "check")
+        run_id = _run_id_from_check(ck)
+        if not run_id:
+            logs.append({"name": name, "run_id": "", "excerpt": "", "error": "未找到 GitHub Actions run id"})
+            continue
+        if run_id not in cache:
+            r = subprocess.run(["gh", "run", "view", run_id, "--log-failed"],
+                               cwd=str(repo_root), capture_output=True, text=True)
+            if r.returncode != 0:
+                cache[run_id] = {
+                    "ok": False,
+                    "excerpt": "",
+                    "error": (r.stderr or r.stdout or "").strip()[-400:] or "gh run view 失败",
+                }
+            else:
+                cache[run_id] = {
+                    "ok": True,
+                    "excerpt": _failure_excerpt(r.stdout, max_chars=max_chars),
+                    "error": "",
+                }
+        item = cache[run_id]
+        logs.append({
+            "name": name,
+            "run_id": run_id,
+            "excerpt": item.get("excerpt", ""),
+            "error": item.get("error", ""),
+        })
+    return {"ok": True, "logs": logs, "error": ""}
 
 
 def pr_feedback(repo_root, ref: str) -> dict:

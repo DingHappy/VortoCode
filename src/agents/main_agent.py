@@ -2288,7 +2288,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
 
         硬闸：分支必须匹配 vorto/*，绝不碰 main/master/其它分支。'人在合并口'之前的往返自动化。"""
         import asyncio
-        from src.agents.vcs import pr_feedback, push_branch
+        from src.agents.vcs import failed_check_log_excerpts, pr_feedback, push_branch
         from src.agents.test_detect import detect_test_cmd
 
         ref = str(args.get("pr") or args.get("branch") or args.get("ref") or "").strip()
@@ -2311,6 +2311,11 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             parts.append(f"- [{c.get('author', '?')}]{loc} {c['body'][:300]}")
         for ck in checks[:10]:
             parts.append(f"- CI 失败：{ck['name']}（{ck.get('link', '')}）")
+        log_result = await asyncio.to_thread(failed_check_log_excerpts, repo_root, checks)
+        for item in (log_result.get("logs") or [])[:3]:
+            excerpt = str(item.get("excerpt") or "").strip()
+            if excerpt:
+                parts.append(f"- CI 日志摘录：{item.get('name') or 'check'}\n{excerpt[:900]}")
         fix_desc = "\n".join(parts)
         sel = str(args.get("test") or "").strip()
         test_cmd = detect_test_cmd(repo_root, sel)

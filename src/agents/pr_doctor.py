@@ -48,7 +48,9 @@ def _verify_suggestions(repo_root: str, checks: list[dict]) -> list[dict]:
     return out
 
 
-def build_pr_doctor_report(repo_root: str, ref: str, feedback: dict) -> dict:
+def build_pr_doctor_report(repo_root: str, ref: str, feedback: dict, *,
+                           check_logs: list[dict] | None = None,
+                           check_log_error: str = "") -> dict:
     """Build a normalized PR diagnosis from ``vcs.pr_feedback`` output."""
     if not feedback.get("ok"):
         return {
@@ -76,14 +78,24 @@ def build_pr_doctor_report(repo_root: str, ref: str, feedback: dict) -> dict:
         "can_fix": can_fix,
         "cannot_fix_reason": cannot_fix_reason,
         "verify_suggestions": _verify_suggestions(repo_root, checks),
+        "check_logs": check_logs or [],
+        "check_log_error": check_log_error,
         "feedback": feedback,
     }
 
 
 def pr_doctor_report(repo_root: str, ref: str) -> dict:
-    from src.agents.vcs import pr_feedback
+    from src.agents.vcs import failed_check_log_excerpts, pr_feedback
 
-    return build_pr_doctor_report(repo_root, ref, pr_feedback(repo_root, ref))
+    feedback = pr_feedback(repo_root, ref)
+    logs: list[dict] = []
+    log_error = ""
+    if feedback.get("ok") and feedback.get("failing_checks"):
+        log_result = failed_check_log_excerpts(repo_root, list(feedback.get("failing_checks") or []))
+        logs = list(log_result.get("logs") or [])
+        if not log_result.get("ok"):
+            log_error = str(log_result.get("error") or "")
+    return build_pr_doctor_report(repo_root, ref, feedback, check_logs=logs, check_log_error=log_error)
 
 
 def format_pr_doctor_report(report: dict) -> str:
@@ -126,6 +138,17 @@ def format_pr_doctor_report(report: dict) -> str:
             lines.append(f"- {name}{link}")
         if len(checks) > 10:
             lines.append(f"- ... 还有 {len(checks) - 10} 个")
+
+    logs = [item for item in (report.get("check_logs") or []) if item.get("excerpt")]
+    if logs:
+        lines += ["", "失败日志摘录:"]
+        for item in logs[:3]:
+            run = f" run {item.get('run_id')}" if item.get("run_id") else ""
+            lines.append(f"- {item.get('name') or 'check'}{run}:")
+            for ln in str(item.get("excerpt") or "").splitlines()[:40]:
+                lines.append(f"  {ln}")
+    elif checks and report.get("check_log_error"):
+        lines += ["", f"失败日志摘录: 未读取（{report.get('check_log_error')}）"]
 
     if comments:
         lines += ["", "Review 待办:"]

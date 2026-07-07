@@ -78,6 +78,33 @@ def test_pr_feedback_no_pr(monkeypatch):
     assert fb["ok"] is False and "找不到" in fb["error"]
 
 
+def test_failed_check_log_excerpts_fetches_actions_log(monkeypatch):
+    monkeypatch.setattr(vcs.shutil, "which", lambda _n: "/usr/bin/gh")
+
+    def fake_run(cmd, cwd=None, capture_output=True, text=True):
+        class R:
+            returncode = 0
+            stdout = (
+                "unit\tRun pytest\tcollecting tests\n"
+                "unit\tRun pytest\tFAILED tests/test_x.py::test_y - AssertionError: nope\n"
+                "unit\tRun pytest\tError: Process completed with exit code 1.\n"
+            )
+            stderr = ""
+        assert cmd == ["gh", "run", "view", "123", "--log-failed"]
+        return R()
+
+    monkeypatch.setattr(vcs.subprocess, "run", fake_run)
+    result = vcs.failed_check_log_excerpts(
+        "/repo",
+        [{"name": "pytest", "link": "https://github.com/o/r/actions/runs/123/job/456"}],
+        max_chars=240,
+    )
+    assert result["ok"] is True
+    assert result["logs"][0]["run_id"] == "123"
+    assert "AssertionError: nope" in result["logs"][0]["excerpt"]
+    assert "unit\tRun pytest" not in result["logs"][0]["excerpt"]
+
+
 def test_pr_doctor_report_recommends_fix_and_verify(tmp_path):
     (tmp_path / "tests" / "unit").mkdir(parents=True)
     feedback = {
@@ -88,12 +115,18 @@ def test_pr_doctor_report_recommends_fix_and_verify(tmp_path):
                       "path": "tests/unit/test_x.py", "line": 7}],
         "failing_checks": [{"name": "pytest / unit", "link": "https://ci.example/1"}],
     }
-    report = pr_doctor.build_pr_doctor_report(str(tmp_path), "12", feedback)
+    report = pr_doctor.build_pr_doctor_report(
+        str(tmp_path),
+        "12",
+        feedback,
+        check_logs=[{"name": "pytest / unit", "run_id": "123", "excerpt": "AssertionError: nope"}],
+    )
     assert report["can_fix"] is True
     text = pr_doctor.format_pr_doctor_report(report)
     assert "PR Doctor #12" in text
     assert "/pr-fix 12" in text
     assert "/verify unit" in text
+    assert "失败日志摘录" in text and "AssertionError: nope" in text
     assert "缺少失败路径测试" in text
 
 

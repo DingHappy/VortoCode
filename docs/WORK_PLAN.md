@@ -94,10 +94,29 @@ Acceptance:
   build-mode repair confirmation.
 - Clean PR feedback reports do not show a repair confirmation.
 
+## 2026-07-07 Batch: Failed Check Log Excerpts
+
+Goals:
+
+- Fetch short failed-log excerpts for GitHub Actions checks referenced by PR
+  feedback.
+- Keep log fetching best-effort so non-Actions checks, missing `gh`, or log
+  access failures do not break PR Doctor.
+- Include the same excerpts in the `pr_fix` repair prompt so CI repair has more
+  context than the check name alone.
+
+Acceptance:
+
+- Actions URLs such as `/actions/runs/<id>/job/<id>` resolve to
+  `gh run view <id> --log-failed`.
+- PR Doctor prints only compact failure excerpts, not full CI logs.
+- `pr_fix` includes up to a few relevant excerpts in its repair description.
+- Unit tests mock `gh` and do not require network.
+
 ## Backlog
 
-- GitHub and CI integration: fetch failed-check logs and surface the smallest
-  relevant failure excerpt in PR Doctor.
+- GitHub and CI integration: classify failed-check excerpts into likely test,
+  lint, type-check, dependency, or environment failures.
 - Session resume quality: show session summaries, branch/workdir/mode health,
   and recovery hints before resuming.
 - Memory automation: propose project memory updates after successful commits or
