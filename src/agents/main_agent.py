@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path            # 模块级：供 _resolve_within 的返回注解引用（各工厂内仍按需局部导入）
 from dataclasses import dataclass
@@ -46,6 +47,14 @@ _CONTEXT_POLICY_PROFILES = {
     "balanced": {"multiplier": 1.0, "recent_ratio": 0.5},
     "preserve": {"multiplier": 2.0, "recent_ratio": 0.75},
 }
+
+# 按模型窗口自适应历史预算的参数：
+# - 只取窗口的一部分给「历史」，给系统提示/工具 schema/推理/输出留足空间。
+# - 只对窗口够大的模型放大（小窗口/未知模型维持保守默认，避免历史预算反超窗口而溢出）。
+# - 绝对硬顶：即便超大窗口也别把历史堆到天上（成本/失焦），用户可用 VORTOCODE_MAX_CONTEXT_TOKENS 精确覆盖。
+_CONTEXT_WINDOW_FRACTION = float(os.getenv("VORTOCODE_CONTEXT_WINDOW_FRACTION") or 0.5)
+_CONTEXT_MIN_WINDOW_TO_SCALE = 16_000
+_CONTEXT_BUDGET_HARD_CAP = int(os.getenv("VORTOCODE_CONTEXT_BUDGET_CAP") or 200_000)
 
 
 def _normalize_context_policy(value: Any) -> str:
@@ -488,7 +497,12 @@ class MainAgent:
         # 少量超大消息条数虽少却能爆窗，大量小消息条数虽多却很省）。max_history 退为**硬条数上限**
         # 兜底（防极端条数），不再作为压缩触发。env VORTOCODE_MAX_CONTEXT_TOKENS 可调。
         self.max_history = max_history
+        # max_context_tokens 是历史预算的**保守默认/下限**（8000，刻意压成本/防失焦）。
+        # 当用户没用 env 钉死时，_base_context_budget() 会按当前模型的真实窗口**向上自适应**——
+        # 大窗口模型（gpt-4o/claude/…）自动放大，mimo/未知模型保持这个默认（除非配 window env）。
         self.max_context_tokens = int(os.getenv("VORTOCODE_MAX_CONTEXT_TOKENS") or max_context_tokens)
+        # env 钉死 = 用户显式指定精确预算 → 不再自适应；否则按模型窗口自适应。
+        self._context_budget_auto = os.getenv("VORTOCODE_MAX_CONTEXT_TOKENS") is None
         self._task_anchor = ""                 # 原始任务纯文本（首个 user）；压缩后仍作锚点，修"锚到孤儿工具结果"
         self.extra_system = extra_system       # 追加到系统提示（如技能目录、子 agent 角色）
         self._native = native                  # 原生 function-calling（失败自动回退提示式协议）
@@ -515,10 +529,30 @@ class MainAgent:
             return policy
         return "preserve" if (mode or self._context_mode) == "build" else "balanced"
 
+    def _base_context_budget(self) -> int:
+        """历史预算基数：用户 env 钉死则原样用；否则按**当前模型窗口**自适应放大。
+
+        - 窗口够大的已知模型（gpt-4o/claude/… 或经 env 配了 window 的自有中转）→ 取窗口的一部分，
+          但不低于保守默认、不超硬顶。
+        - 小窗口/未知模型（含默认 mimo，未配 window）→ 维持保守默认（8000），绝不反超其窗口。
+        运行时可 set_model 切模型，故每次动态解析、不在 __init__ 冻死。"""
+        default = self.max_context_tokens
+        if not self._context_budget_auto:
+            return default                                  # env 显式钉死 → 不自适应
+        try:
+            from src.llm.client import model_context_window
+            window = model_context_window(self.current_model())
+        except Exception:  # noqa: BLE001
+            window = None
+        if window and window >= _CONTEXT_MIN_WINDOW_TO_SCALE:
+            derived = int(window * _CONTEXT_WINDOW_FRACTION)
+            return max(default, min(derived, _CONTEXT_BUDGET_HARD_CAP))
+        return default
+
     def _context_limit(self, mode: str | None = None) -> int:
         policy = self._effective_context_policy(mode)
         multiplier = float(_CONTEXT_POLICY_PROFILES[policy]["multiplier"])
-        return max(1, int(round(self.max_context_tokens * multiplier)))
+        return max(1, int(round(self._base_context_budget() * multiplier)))
 
     def _recent_context_ratio(self, mode: str | None = None) -> float:
         policy = self._effective_context_policy(mode)
@@ -716,7 +750,7 @@ class MainAgent:
             "summary_tokens": summary_tokens,
             "plan_tokens": plan_tokens,
             "max_context_tokens": limit,
-            "base_context_tokens": self.max_context_tokens,
+            "base_context_tokens": self._base_context_budget(),
             "recent_budget": recent_budget,
             "history_messages": len(self.history),
             "trimmed_history_messages": len(trimmed_history),

@@ -256,6 +256,48 @@ def test_plan_tool_off_by_default():
     assert "request_build" in MainAgent([], plan_tool=True).tools
 
 
+def test_model_context_window_lookup(monkeypatch):
+    from src.llm.client import model_context_window
+    monkeypatch.delenv("VORTOCODE_MODEL_CONTEXT_WINDOW", raising=False)
+    assert model_context_window("gpt-4o-2024-08-06") == 128_000   # 前缀匹配带日期后缀
+    assert model_context_window("claude-3.5-sonnet") == 200_000
+    assert model_context_window("deepseek-chat") == 65_536
+    assert model_context_window("mimo-v2.5") is None              # 自有中转不写死，回退默认
+    assert model_context_window("") is None
+    # env 全局覆盖（自有中转按上游真实窗口配）
+    monkeypatch.setenv("VORTOCODE_MODEL_CONTEXT_WINDOW", "131072")
+    assert model_context_window("mimo-v2.5") == 131_072
+
+
+def test_context_budget_adapts_to_model_window(monkeypatch):
+    monkeypatch.delenv("VORTOCODE_MAX_CONTEXT_TOKENS", raising=False)
+    monkeypatch.delenv("VORTOCODE_MODEL_CONTEXT_WINDOW", raising=False)
+    # 未知模型（默认 mimo，未配 window）→ 维持保守默认 8000
+    a = MainAgent([], max_context_tokens=8000)
+    assert a._base_context_budget() == 8000
+
+    # 配了大窗口（等价于自有中转的真实窗口）→ 取窗口一半、封顶 200k
+    monkeypatch.setenv("VORTOCODE_MODEL_CONTEXT_WINDOW", "128000")
+    b = MainAgent([], max_context_tokens=8000)
+    assert b._base_context_budget() == 64000                      # 128k * 0.5
+    # balanced 策略下 _context_limit 就是基数 ×1.0
+    assert b._context_limit("plan") == 64000
+
+    # 小窗口（< 16k 门槛）→ 不放大，维持默认，避免历史预算反超窗口溢出
+    monkeypatch.setenv("VORTOCODE_MODEL_CONTEXT_WINDOW", "8192")
+    c = MainAgent([], max_context_tokens=8000)
+    assert c._base_context_budget() == 8000
+
+
+def test_context_budget_env_pin_disables_autoscale(monkeypatch):
+    # 用户 env 精确钉死 → 不再自适应，哪怕模型窗口很大
+    monkeypatch.setenv("VORTOCODE_MAX_CONTEXT_TOKENS", "5000")
+    monkeypatch.setenv("VORTOCODE_MODEL_CONTEXT_WINDOW", "200000")
+    a = MainAgent([], max_context_tokens=8000)
+    assert a._context_budget_auto is False
+    assert a._base_context_budget() == 5000
+
+
 @pytest.mark.asyncio
 async def test_update_plan_sets_state_injects_prompt_and_notifies():
     seen = []

@@ -43,6 +43,49 @@ MODELS: Dict[str, Dict[str, str]] = {
 _TRANSIENT_STATUS = {408, 409, 429, 500, 502, 503, 504}
 
 
+# 各模型的**上下文窗口**（token）：让历史预算按模型自适应，而非死守一个保守值。
+# 只登记「有把握」的公开模型；自有中转 mimo-* 的真实窗口不写死（避免猜错撑爆），
+# 由用户经 env VORTOCODE_MODEL_CONTEXT_WINDOW 显式给（他清楚自己中转的上游窗口）。
+# 前缀匹配（模型名常带日期/版本后缀），命中即取。
+MODEL_CONTEXT_WINDOWS: Dict[str, int] = {
+    "gpt-4o": 128_000,
+    "gpt-4.1": 128_000,
+    "gpt-4-turbo": 128_000,
+    "o1": 128_000,
+    "o3": 128_000,
+    "claude-3.5": 200_000,
+    "claude-3.7": 200_000,
+    "claude-3-opus": 200_000,
+    "claude-sonnet": 200_000,
+    "claude-opus": 200_000,
+    "claude": 200_000,
+    "deepseek": 65_536,
+    "qwen": 128_000,
+    "gemini-1.5": 1_000_000,
+    "gemini": 128_000,
+}
+
+
+def model_context_window(model: str) -> Optional[int]:
+    """当前模型的上下文窗口（token）。优先 env 全局覆盖（自有中转按上游真实窗口配），
+    否则按已知公开模型前缀匹配；都拿不到返回 None（调用方回退到保守默认）。"""
+    env = os.getenv("VORTOCODE_MODEL_CONTEXT_WINDOW")
+    if env:
+        try:
+            v = int(env)
+            if v > 0:
+                return v
+        except (TypeError, ValueError):
+            pass
+    name = (model or "").strip().lower()
+    if not name:
+        return None
+    for prefix, window in MODEL_CONTEXT_WINDOWS.items():
+        if name.startswith(prefix) or prefix in name:
+            return window
+    return None
+
+
 def _int_env(name: str, default: int) -> int:
     """读整型环境变量；缺省/坏值都回退到 default。"""
     try:
