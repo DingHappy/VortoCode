@@ -113,10 +113,28 @@ Acceptance:
 - `pr_fix` includes up to a few relevant excerpts in its repair description.
 - Unit tests mock `gh` and do not require network.
 
+## 2026-07-07 Batch: Failed Check Classification
+
+Goals:
+
+- Classify failed CI feedback into likely test, lint, type-check, dependency,
+  environment, timeout, build, or unknown failures.
+- Show the classification and a concrete next action in PR Doctor.
+- Pass the classification into `pr_fix` so automated repair sees the failure
+  shape before reading raw excerpts.
+
+Acceptance:
+
+- Explicit timed-out/cancelled check states classify as timeout even when the
+  check name looks like a test.
+- Common log signatures such as `ruff`, `has no attribute`, and
+  `ModuleNotFoundError` classify into the expected categories.
+- Unknown failures still degrade to the existing log-based workflow.
+
 ## Backlog
 
-- GitHub and CI integration: classify failed-check excerpts into likely test,
-  lint, type-check, dependency, or environment failures.
+- GitHub and CI integration: fetch individual GitHub Actions job names and step
+  names for more precise failure localization.
 - Session resume quality: show session summaries, branch/workdir/mode health,
   and recovery hints before resuming.
 - Memory automation: propose project memory updates after successful commits or

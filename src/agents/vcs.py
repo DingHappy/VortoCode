@@ -210,6 +210,8 @@ def pr_feedback(repo_root, ref: str) -> dict:
         state = (c.get("state") or "").upper()
         if concl in _FAIL_CONCLUSIONS or state in _FAIL_CONCLUSIONS:
             failing.append({"name": c.get("name") or c.get("context") or "check",
-                            "link": c.get("detailsUrl") or c.get("targetUrl") or ""})
+                            "link": c.get("detailsUrl") or c.get("targetUrl") or "",
+                            "conclusion": c.get("conclusion") or "",
+                            "state": c.get("state") or ""})
     return {"ok": True, "pr": number, "branch": branch, "comments": comments,
             "failing_checks": failing, "error": ""}

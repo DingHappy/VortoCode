@@ -8,6 +8,68 @@ from __future__ import annotations
 from typing import Any
 
 
+_FAILURE_CATEGORIES = {
+    "test": {
+        "label": "测试失败",
+        "next_action": "先复现最小失败测试；修复断言、fixture 或业务行为后再跑相关 verify profile。",
+        "patterns": (
+            "pytest", "failed tests/", "failed test", "assertionerror", "assert ",
+            "test_", "tests/", "unittest", "jest", "vitest", "rspec",
+        ),
+    },
+    "lint": {
+        "label": "Lint/格式失败",
+        "next_action": "先运行对应 lint/format 命令；优先做机械修复，避免混入行为改动。",
+        "patterns": (
+            "ruff", "flake8", "eslint", "pylint", "lint", "black", "prettier",
+            "would reformat", "format check", "trailing whitespace",
+        ),
+    },
+    "type-check": {
+        "label": "类型检查失败",
+        "next_action": "先运行对应 type-check 命令；修复类型签名、None 分支或导入类型不一致。",
+        "patterns": (
+            "mypy", "pyright", "tsc", "type check", "type-check", "type error",
+            "incompatible type", "has no attribute", "argument of type",
+        ),
+    },
+    "dependency": {
+        "label": "依赖/导入失败",
+        "next_action": "先确认依赖声明、锁文件和 CI 安装步骤；不要只在本地环境补包。",
+        "patterns": (
+            "modulenotfounderror", "no module named", "importerror", "cannot import name",
+            "no matching distribution", "could not find a version", "resolution impossible",
+            "npm err", "pnpm", "poetry install", "pip install",
+        ),
+    },
+    "environment": {
+        "label": "环境/权限失败",
+        "next_action": "先区分 CI 环境问题和代码问题；检查权限、缓存目录、系统依赖、secret 或命令是否存在。",
+        "patterns": (
+            "permission denied", "operation not permitted", "no space left", "command not found",
+            "not found: command", "network is unreachable", "connection timed out", "rate limit",
+            "secret", "xcode-select", "java_home", "modulecache",
+        ),
+    },
+    "timeout": {
+        "label": "超时/挂起",
+        "next_action": "先定位卡住的测试或 worker；缩小选择器、补超时诊断，再修复阻塞点。",
+        "patterns": (
+            "timed out", "timeout", "cancelled", "canceled", "exceeded", "hung",
+            "hanging", "deadline",
+        ),
+    },
+    "build": {
+        "label": "构建/语法失败",
+        "next_action": "先运行最小构建或编译检查；修复语法、导入路径或构建配置。",
+        "patterns": (
+            "syntaxerror", "compileerror", "compilation failed", "build failed",
+            "compileall", "failed to compile", "linker command failed",
+        ),
+    },
+}
+
+
 def _clip(text: Any, limit: int = 220) -> str:
     raw = " ".join(str(text or "").split())
     if len(raw) <= limit:
@@ -48,6 +110,57 @@ def _verify_suggestions(repo_root: str, checks: list[dict]) -> list[dict]:
     return out
 
 
+def classify_failed_checks(checks: list[dict], check_logs: list[dict] | None = None) -> dict:
+    """Classify CI failures from check names and short log excerpts."""
+    sources: list[str] = []
+    states: list[str] = []
+    for ck in checks:
+        sources.append(str(ck.get("name") or ck.get("context") or ""))
+        state = str(ck.get("conclusion") or ck.get("state") or "")
+        states.append(state)
+        sources.append(state)
+    for item in check_logs or []:
+        sources.append(str(item.get("name") or ""))
+        sources.append(str(item.get("excerpt") or ""))
+        sources.append(str(item.get("error") or ""))
+    haystack = "\n".join(sources).lower()
+    state_text = " ".join(states).lower()
+    if any(marker in state_text for marker in ("timed_out", "timed out", "timeout", "cancelled", "canceled")):
+        spec = _FAILURE_CATEGORIES["timeout"]
+        return {
+            "category": "timeout",
+            "label": spec["label"],
+            "confidence": "high",
+            "evidence": state_text.strip(),
+            "next_action": spec["next_action"],
+        }
+    best: tuple[str, str, int] | None = None
+    for category, spec in _FAILURE_CATEGORIES.items():
+        for pattern in spec["patterns"]:
+            idx = haystack.find(pattern)
+            if idx < 0:
+                continue
+            if best is None or idx < best[2]:
+                best = (category, pattern, idx)
+    if best is None:
+        return {
+            "category": "unknown",
+            "label": "未知失败",
+            "confidence": "low",
+            "evidence": "",
+            "next_action": "先查看失败日志摘录和原始 CI；必要时运行 /pr-check 获取完整反馈。",
+        }
+    category, evidence, _idx = best
+    spec = _FAILURE_CATEGORIES[category]
+    return {
+        "category": category,
+        "label": spec["label"],
+        "confidence": "medium",
+        "evidence": evidence,
+        "next_action": spec["next_action"],
+    }
+
+
 def build_pr_doctor_report(repo_root: str, ref: str, feedback: dict, *,
                            check_logs: list[dict] | None = None,
                            check_log_error: str = "") -> dict:
@@ -67,6 +180,7 @@ def build_pr_doctor_report(repo_root: str, ref: str, feedback: dict, *,
     cannot_fix_reason = ""
     if has_findings and not can_fix:
         cannot_fix_reason = f"PR head 分支是 {branch or '未知'}，自动修复只允许 vorto/* 分支"
+    logs = check_logs or []
     return {
         "ok": True,
         "ref": ref,
@@ -78,7 +192,8 @@ def build_pr_doctor_report(repo_root: str, ref: str, feedback: dict, *,
         "can_fix": can_fix,
         "cannot_fix_reason": cannot_fix_reason,
         "verify_suggestions": _verify_suggestions(repo_root, checks),
-        "check_logs": check_logs or [],
+        "failure_classification": classify_failed_checks(checks, logs) if checks else {},
+        "check_logs": logs,
         "check_log_error": check_log_error,
         "feedback": feedback,
     }
@@ -149,6 +264,17 @@ def format_pr_doctor_report(report: dict) -> str:
                 lines.append(f"  {ln}")
     elif checks and report.get("check_log_error"):
         lines += ["", f"失败日志摘录: 未读取（{report.get('check_log_error')}）"]
+
+    classification = report.get("failure_classification") or {}
+    if classification:
+        lines += [
+            "",
+            "失败类型判断:",
+            f"- {classification.get('label', '未知失败')}（置信度: {classification.get('confidence', 'low')}）",
+        ]
+        if classification.get("evidence"):
+            lines.append(f"  证据: {classification.get('evidence')}")
+        lines.append(f"  建议: {classification.get('next_action')}")
 
     if comments:
         lines += ["", "Review 待办:"]

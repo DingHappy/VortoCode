@@ -127,7 +127,34 @@ def test_pr_doctor_report_recommends_fix_and_verify(tmp_path):
     assert "/pr-fix 12" in text
     assert "/verify unit" in text
     assert "失败日志摘录" in text and "AssertionError: nope" in text
+    assert "失败类型判断" in text and "测试失败" in text
     assert "缺少失败路径测试" in text
+
+
+def test_pr_doctor_classifies_common_ci_failures():
+    lint = pr_doctor.classify_failed_checks(
+        [{"name": "lint"}],
+        [{"excerpt": "ruff check failed: trailing whitespace"}],
+    )
+    assert lint["category"] == "lint"
+
+    typecheck = pr_doctor.classify_failed_checks(
+        [{"name": "typecheck"}],
+        [{"excerpt": 'error: "User" has no attribute "email"'}],
+    )
+    assert typecheck["category"] == "type-check"
+
+    dependency = pr_doctor.classify_failed_checks(
+        [{"name": "unit"}],
+        [{"excerpt": "ModuleNotFoundError: No module named 'yaml'"}],
+    )
+    assert dependency["category"] == "dependency"
+
+    environment = pr_doctor.classify_failed_checks(
+        [{"name": "pytest", "conclusion": "TIMED_OUT"}],
+        [],
+    )
+    assert environment["category"] == "timeout"
 
 
 def test_pr_doctor_report_blocks_non_vorto_autofix(tmp_path):
