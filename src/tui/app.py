@@ -1388,7 +1388,10 @@ class VortoCodeTUI(App):
         text = _sanitize_input(event.value).strip()   # 剔除漏进的终端转义序列，防脏字符进 agent/API
         if self._palette_visible():             # 回车语义：命令=执行选中项；文件=接受进输入框继续写
             sel = self._pal_accepts[self._pal_idx]
-            if self._pal_kind == "文件":
+            exact_cmd = self._exact_palette_command(text)
+            if exact_cmd:
+                text = exact_cmd                # 完整命令优先按用户输入执行，不被高亮候选抢走
+            elif self._pal_kind == "文件":
                 if sel != event.value:
                     self._set_input(sel)        # 只接受文件路径，不提交（通常还要接着写需求）
                     return
@@ -1511,7 +1514,13 @@ class VortoCodeTUI(App):
                        + [c for c in names                     # 子串兜底（/dit → /audit）
                           if vl[1:] and vl[1:] in c[1:] and not c.startswith(vl)])
             if matches:
-                self._show_palette([(c, info.get(c, "")) for c in matches], list(matches), "命令")
+                exact = next((c for c in matches if c.lower() == vl), None)
+                self._show_palette(
+                    [(c, info.get(c, "")) for c in matches],
+                    list(matches),
+                    "命令",
+                    preferred=exact,
+                )
                 return
         at = value.rfind("@")                                  # @文件（非 @artifact: 这种带冒号的）
         if at != -1:
@@ -1527,12 +1536,15 @@ class VortoCodeTUI(App):
                     return
         self._hide_palette()
 
-    def _show_palette(self, items: list, accepts: list, kind: str) -> None:
+    def _show_palette(self, items: list, accepts: list, kind: str, preferred: str | None = None) -> None:
         """更新候选并渲染；继续输入筛选时尽量保住已选中的候选（还在列表里就跟着走）。"""
         prev = (self._pal_accepts[self._pal_idx]
                 if self._pal_idx < len(self._pal_accepts) else None)
         self._pal_items, self._pal_accepts, self._pal_kind = items, accepts, kind
-        self._pal_idx = accepts.index(prev) if prev in accepts else 0
+        if preferred in accepts:
+            self._pal_idx = accepts.index(preferred)
+        else:
+            self._pal_idx = accepts.index(prev) if prev in accepts else 0
         self._render_palette()
 
     def _hide_palette(self) -> None:
@@ -1544,6 +1556,15 @@ class VortoCodeTUI(App):
 
     def _palette_visible(self) -> bool:
         return bool(self._pal_items)
+
+    def _exact_palette_command(self, text: str) -> str | None:
+        if self._pal_kind != "命令" or not text.startswith("/"):
+            return None
+        tl = text.lower()
+        for accept in self._pal_accepts:
+            if str(accept).lower() == tl:
+                return str(accept)
+        return None
 
     def _palette_move(self, step: int) -> None:
         """↑↓ 在候选间移动（回绕）。"""

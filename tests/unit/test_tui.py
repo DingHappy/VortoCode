@@ -1531,6 +1531,8 @@ def test_expand_at_files(tmp_path):
 async def test_editor_ctrl_j_newline_and_enter_submits_multiline():
     """opencode 式编辑器：Ctrl+J 换行、回车提交多行文本、提交后清空。"""
     app = VortoCodeTUI(repo_root=".")
+    routed = []
+    app._route = lambda text: routed.append(text)
     async with app.run_test() as pilot:
         inp = app.query_one("#prompt", PromptEditor)
         inp.focus()
@@ -1544,6 +1546,7 @@ async def test_editor_ctrl_j_newline_and_enter_submits_multiline():
         await pilot.press("enter"); await pilot.pause()        # 回车提交整段
         assert inp.value == ""
         assert any("第一行" in t and "第二行" in t for t in app.transcript)
+        assert routed == ["第一行\n第二行"]
 
 
 @pytest.mark.asyncio
@@ -2788,6 +2791,29 @@ async def test_cmd_pr_dirty_worktree_does_not_confirm(tmp_path):
         await _submit(app, pilot, "/pr")
         assert await _wait_for(app, pilot, "工作区还有未提交改动")
         assert not app._inline_confirm_active()
+
+
+@pytest.mark.asyncio
+async def test_exact_slash_command_not_replaced_by_highlighted_palette_candidate(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "f.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    _git(tmp_path, "checkout", "-qb", "feature/pr")
+    (tmp_path / "dirty.py").write_text("dirty\n")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", PromptEditor)
+        inp.focus()
+        inp.value = "/pr"
+        await pilot.pause()
+        assert "/preflight" in app._pal_accepts and "/pr" in app._pal_accepts
+        app._pal_idx = app._pal_accepts.index("/preflight")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert any(t == "/pr" for t in app.transcript)
+        assert not any(t == "/preflight" for t in app.transcript)
+        assert await _wait_for(app, pilot, "工作区还有未提交改动")
 
 
 @pytest.mark.asyncio
