@@ -2946,8 +2946,53 @@ async def test_cmd_fix_ci_verify_runs_first_safe_template(tmp_path, monkeypatch)
         assert await _wait_inline_confirm(app, pilot)
         await pilot.press("y")
         assert await _wait_for(app, pilot, "runtime 验证通过")
+        assert await _wait_for(app, pilot, "本地验证通过")
         assert ran["cmd"] == "python -m pytest -q tests/unit/test_x.py::test_y"
         assert app.mode == "plan"
+
+
+@pytest.mark.asyncio
+async def test_cmd_fix_ci_verify_failure_suggests_pr_fix(tmp_path, monkeypatch):
+    import src.agents.pr_doctor as pr_doctor
+    import src.agents.shell as shell
+
+    def fake_report(repo_root, ref):
+        return {
+            "ok": True,
+            "ref": ref,
+            "pr": 12,
+            "branch": "vorto/fix-ci",
+            "comments": [],
+            "failing_checks": [{"name": "pytest / unit", "link": ""}],
+            "has_findings": True,
+            "can_fix": True,
+            "failure_classification": {"label": "测试失败", "confidence": "medium",
+                                       "next_action": "先复现最小失败测试"},
+            "repair_templates": [{
+                "kind": "verify",
+                "title": "复现最小失败测试",
+                "command": "python -m pytest -q tests/unit/test_x.py::test_y",
+                "detail": "先只跑失败 selector。",
+                "safe": True,
+                "slash": "/verify run python -m pytest -q tests/unit/test_x.py::test_y",
+            }],
+            "check_logs": [],
+        }
+
+    monkeypatch.setattr(pr_doctor, "pr_doctor_report", fake_report)
+
+    def fake_run_command(repo_root, cmd):
+        return {"ok": False, "output": "FAILED tests/unit/test_x.py::test_y - AssertionError: nope"}
+
+    monkeypatch.setattr(shell, "run_command", fake_run_command)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/fix-ci verify 12")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "本地已复现失败")
+        assert await _wait_for(app, pilot, "/pr-fix 12")
+        assert await _wait_for(app, pilot, "AssertionError: nope")
 
 
 @pytest.mark.asyncio

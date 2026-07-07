@@ -2544,23 +2544,23 @@ class VortoCodeTUI(App):
         label = f"profile {resolved.get('name')}" + (f" · {desc}" if desc else "")
         self._cmd_verify_run(str(profile.get("cmd") or ""), label=label)
 
-    async def _run_verify_command_now(self, cmd: str, *, label: str = "runtime 验证命令") -> None:
+    async def _run_verify_command_now(self, cmd: str, *, label: str = "runtime 验证命令") -> dict:
         """Run a user-supplied runtime/smoke command inside the current worker."""
         cmd = (cmd or "").strip()
         if not cmd:
             self._emit("用法: /verify run <命令>")
-            return
+            return {"ran": False, "ok": False, "cmd": cmd, "error": "empty command"}
         from src.agents.shell import is_dangerous
         danger = is_dangerous(cmd)
         if danger:
             self._emit(f"拒绝执行高危验证命令: {danger}")
-            return
+            return {"ran": False, "ok": False, "cmd": cmd, "error": str(danger)}
         if not await self._confirm_command(
                 f"运行 {label}？\n"
                 f"  $ {cmd}\n"
                 "适合 smoke test、启动检查、端到端脚本；请确认命令不会做外向或破坏性操作。"):
             self._emit("已取消 runtime 验证。")
-            return
+            return {"ran": False, "ok": False, "cmd": cmd, "cancelled": True}
         self._chrome(f"[dim]$ {cmd}[/dim]")
         from src.agents.shell import run_command
         res = await asyncio.to_thread(run_command, self.repo_root, cmd)
@@ -2573,6 +2573,7 @@ class VortoCodeTUI(App):
             self._emit(f"{status}（{cmd}）\n输出尾部:\n{out[-3000:]}")
         else:
             self._emit(f"{status}（{cmd}）")
+        return {"ran": True, "ok": ok, "cmd": cmd, "output": out, "raw": res}
 
     def _cmd_verify_run(self, cmd: str, *, label: str = "runtime 验证命令") -> None:
         """Run a user-supplied runtime/smoke command with existing command gates."""
@@ -2886,6 +2887,43 @@ class VortoCodeTUI(App):
             return "", ""
         return self._verify_template_command(templates[idx])
 
+    def _format_pr_verify_followup(self, report: dict, ref: str, result: dict) -> str:
+        cmd = str(result.get("cmd") or "")
+        if not result.get("ran"):
+            if result.get("cancelled"):
+                return "PR Doctor verify 已取消；没有执行本地复现命令。"
+            reason = str(result.get("error") or "没有执行")
+            return f"PR Doctor verify 未执行：{reason}"
+        ok = bool(result.get("ok"))
+        lines = [
+            "PR Doctor verify 结果",
+            f"命令: {cmd}",
+        ]
+        if ok:
+            lines += [
+                "结论: 本地验证通过，当前没有复现 CI 失败。",
+                "判断: CI 可能是旧提交、环境差异、依赖缓存、外部服务或偶发失败；先不要盲目改业务代码。",
+                "下一步:",
+                f"- /pr-check {ref}  刷新 PR review/CI 原始反馈",
+            ]
+            if report.get("can_fix") and report.get("comments"):
+                lines.append(f"- /pr-fix {ref}  仍可处理待办 review 评论")
+            else:
+                lines.append("- 如 GitHub 仍红，优先重跑失败 job 或继续查看 job/step 日志。")
+        else:
+            lines += [
+                "结论: 本地已复现失败，适合进入修复。",
+                "下一步:",
+            ]
+            if report.get("can_fix"):
+                lines.append(f"- /pr-fix {ref}  按 PR Doctor 诊断自动修复 review/CI 反馈")
+            else:
+                lines.append("- 当前 PR head 不是 vorto/*，自动修复硬闸不会接管；请人工修复或切到受控分支。")
+            out = str(result.get("output") or "").strip()
+            if out:
+                lines += ["", "失败输出摘要:", self._summary_text(out[-1200:], 900)]
+        return "\n".join(lines)
+
     def _cmd_pr_doctor(self, arg: str = "", *, alias: str = "/pr doctor") -> None:
         """/pr doctor <ref> 或 /fix-ci <ref>：诊断 PR review/CI，确认后切 build 修复。"""
         opts = self._parse_pr_doctor_args(arg, alias)
@@ -2909,7 +2947,8 @@ class VortoCodeTUI(App):
                 if not cmd:
                     self._emit("未选择 PR Doctor verify 动作，或没有可安全执行的 verify 模板。")
                     return
-                await self._run_verify_command_now(cmd, label=label or "PR Doctor 最小复现")
+                result = await self._run_verify_command_now(cmd, label=label or "PR Doctor 最小复现")
+                self._emit(self._format_pr_verify_followup(report, ref, result))
                 return
             if not report.get("can_fix"):
                 return

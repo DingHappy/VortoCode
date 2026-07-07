@@ -200,10 +200,27 @@ Acceptance:
 - Multiple safe verify templates open a picker and run the selected template.
 - Cancelling the picker does not run a command or switch modes.
 
+## 2026-07-07 Batch: PR Doctor Verify Follow-up
+
+Goals:
+
+- Return structured results from the runtime verify runner.
+- After `/fix-ci verify <ref>` finishes, append a PR Doctor-specific follow-up
+  plan instead of leaving only generic command output.
+- Distinguish "local failure reproduced" from "local verification passed".
+
+Acceptance:
+
+- Passing local verify explains that CI may be stale, environment-specific, or
+  flaky, and suggests refreshing PR feedback before changing code.
+- Failing local verify recommends `/pr-fix <ref>` when the PR head is eligible
+  for automated repair.
+- Cancelled or blocked verify actions do not produce a misleading repair plan.
+
 ## Backlog
 
-- GitHub and CI integration: capture verify action results back into the PR
-  Doctor report or follow-up repair plan.
+- GitHub and CI integration: persist PR Doctor verify results into the session
+  audit stream so resume can show the latest reproduction state.
 - Session resume quality: show session summaries, branch/workdir/mode health,
   and recovery hints before resuming.
 - Memory automation: propose project memory updates after successful commits or
