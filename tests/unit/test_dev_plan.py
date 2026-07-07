@@ -135,6 +135,28 @@ def test_list_plans_sorted(tmp_path):
     assert all("summary" in p and "status" in p for p in listed)
 
 
+def test_format_plan_list_and_detail(tmp_path):
+    plan = dp.DevPlan.new("实现任务面板", "vorto/tasks", "main", plan_id="task-panel")
+    plan.blocks = [
+        dp.Block(id="ind-0", kind="independent", desc="已完成块", status="landed"),
+        dp.Block(id="dep-1", kind="dependent", desc="待续跑块", title="续跑块", status="failed",
+                 deps=["ind-0"], attempts=2, note="测试失败"),
+    ]
+    plan.integration = {"ok": False, "cmd": "pytest"}
+    dp.save_plan(str(tmp_path), plan)
+    plans = dp.list_plans(str(tmp_path))
+
+    listed = dp.format_plan_list(plans)
+    detail = dp.format_plan_detail(dp.load_plan(str(tmp_path), "task-panel"))
+
+    assert "task-panel" in listed
+    assert "vorto/tasks" in listed
+    assert "Dev 计划详情: task-panel" in detail
+    assert "进度 1/2 landed" in detail
+    assert "dep-1 [dependent] failed deps=ind-0 attempts=2" in detail
+    assert "dev_resume(plan_id=task-panel)" in detail
+
+
 # --------------------------------------------------------------------- 编排：write-ahead + resume
 def _init_repo(tmp_path):
     def git(*a):

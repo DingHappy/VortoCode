@@ -283,3 +283,58 @@ def list_plans(repo_root: str) -> List[Dict[str, Any]]:
                     "branch": plan.branch, "summary": plan.summary(), "updated": mtime})
     out.sort(key=lambda s: s["updated"], reverse=True)
     return out
+
+
+def format_plan_list(plans: List[Dict[str, Any]], *, limit: int = 20) -> str:
+    """Format a compact dev plan list for human-facing UIs."""
+    if not plans:
+        return "没有 dev 计划（.vortocode/dev_plans/ 为空）。"
+    lines = [f"Dev 计划（{len(plans)} 个，最近 {min(len(plans), limit)} 个）:"]
+    for p in plans[:limit]:
+        lines.append(
+            f"  {p['plan_id']} · {p.get('status', '?')} · {p.get('branch', '?')} · "
+            f"{str(p.get('task') or '')[:72]}"
+        )
+    lines.append("\n用 /tasks show <plan_id> 查看详情；用 dev_resume(plan_id) 续跑未完成计划。")
+    return "\n".join(lines)
+
+
+def format_plan_detail(plan: DevPlan) -> str:
+    """Format a single dev plan with progress and block-level status."""
+    c = plan.counts()
+    total = len(plan.blocks)
+    lines = [
+        f"Dev 计划详情: {plan.plan_id}",
+        f"任务: {plan.task}",
+        f"状态: {plan.status} · 进度 {c['landed']}/{total} landed · "
+        f"{c['failed']} failed · {c['pending'] + c['running']} pending/running",
+        f"分支: {plan.branch} · base: {plan.base} · want_pr: {'yes' if plan.want_pr else 'no'}",
+    ]
+    if plan.test_sel:
+        lines.append(f"测试选择: {plan.test_sel}")
+    if plan.integration:
+        ok = "绿" if plan.integration.get("ok") else "红"
+        cmd = plan.integration.get("cmd") or ""
+        lines.append(f"集成: {ok}" + (f" · {cmd}" if cmd else ""))
+    if plan.review:
+        blocked = "blocked" if plan.review.get("blocked") else "ok"
+        note = str(plan.review.get("note") or "")[:120]
+        lines.append(f"审查: {blocked}" + (f" · {note}" if note else ""))
+    if plan.pr:
+        lines.append("PR: " + (plan.pr.get("url") or plan.pr.get("error") or str(plan.pr)))
+    if plan.blocks:
+        lines.append("")
+        lines.append("块:")
+        for b in plan.blocks:
+            title = b.title or b.desc
+            deps = f" deps={','.join(b.deps)}" if b.deps else ""
+            attempts = f" attempts={b.attempts}" if b.attempts else ""
+            lines.append(f"  {b.id} [{b.kind}] {b.status}{deps}{attempts} — {title[:100]}")
+            if b.note:
+                lines.append(f"    note: {b.note[:140]}")
+    lines.append("")
+    if plan.status in {"running", "integration_failed", "failed"} or any(not b.landed for b in plan.blocks):
+        lines.append(f"下一步: build 模式下让主 agent 调 dev_resume(plan_id={plan.plan_id}) 续跑。")
+    else:
+        lines.append("下一步: 计划已完成；如需发布可开 PR 或继续 review。")
+    return "\n".join(lines)

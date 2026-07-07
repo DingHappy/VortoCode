@@ -16,10 +16,13 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path            # 模块级：供 _resolve_within 的返回注解引用（各工厂内仍按需局部导入）
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
+
+from src.agents.tool import Tool
 
 # 单个工具结果回灌给模型的最大字符数，避免长输出把上下文撑爆
 _MAX_TOOL_RESULT = 4000
@@ -39,22 +42,47 @@ _SUMMARY_SYSTEM = (
     "若给了【已有纪要】，把【新增对话】融合进去、输出更新后的**完整**纪要，绝不丢失旧纪要要点。"
     "只输出纪要正文，不要任何前后缀、不要工具调用 JSON。")
 
+_CONTEXT_POLICY_PROFILES = {
+    "compact": {"multiplier": 0.75, "recent_ratio": 0.35},
+    "balanced": {"multiplier": 1.0, "recent_ratio": 0.5},
+    "preserve": {"multiplier": 2.0, "recent_ratio": 0.75},
+}
 
-@dataclass
-class Tool:
-    """一个可被主 agent 调用的工具。
+def _env_num(name: str, default, cast):
+    """安全解析数值环境变量：缺省/空/坏值（如 =auto）都回退默认，绝不在 import 阶段抛 ValueError。"""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        v = cast(raw)
+    except (TypeError, ValueError):
+        return default
+    return v if v > 0 else default
 
-    handler 接收解析好的 args(dict)、返回一段字符串结果（会回灌给模型）。
-    read_only=True 的工具在 plan 模式下也可用；False（写/重型）仅 build 模式可用。
-    """
 
-    name: str
-    description: str
-    args: dict[str, str]                       # 参数名 -> 说明（仅用于给模型的工具目录）
-    handler: Callable[[dict], Awaitable[str]]
-    read_only: bool = True
-    untrusted_source: bool = False             # 结果含**不可信外部内容**（网页/搜索/MCP）→ 本回合污点标记
-    outward: bool = False                      # **对外/外向动作**（run_command/open_pr）→ 污点态下强制重确认
+# 按模型窗口自适应历史预算的参数：
+# - 只取窗口的一部分给「历史」，给系统提示/工具 schema/推理/输出留足空间。
+# - 只对窗口够大的模型放大（小窗口/未知模型维持保守默认，避免历史预算反超窗口而溢出）。
+# - 绝对硬顶：即便超大窗口也别把历史堆到天上（成本/失焦），用户可用 VORTOCODE_MAX_CONTEXT_TOKENS 精确覆盖。
+# fraction 夹到 (0,1]：>1 会让历史预算反超模型窗口而溢出，属危险取值，直接钳掉。
+_CONTEXT_WINDOW_FRACTION = min(_env_num("VORTOCODE_CONTEXT_WINDOW_FRACTION", 0.5, float), 1.0)
+_CONTEXT_MIN_WINDOW_TO_SCALE = 16_000
+_CONTEXT_BUDGET_HARD_CAP = _env_num("VORTOCODE_CONTEXT_BUDGET_CAP", 200_000, int)
+
+
+def _normalize_context_policy(value: Any) -> str:
+    policy = str(value or "auto").strip().lower()
+    aliases = {
+        "daily": "compact",
+        "normal": "balanced",
+        "low": "compact",
+        "medium": "balanced",
+        "high": "preserve",
+        "low_compression": "preserve",
+        "no_compression": "preserve",
+    }
+    policy = aliases.get(policy, policy)
+    return policy if policy in {"auto", *_CONTEXT_POLICY_PROFILES} else "auto"
 
 
 # ----------------------------------------------------------------------- 协议解析
@@ -444,6 +472,7 @@ class MainAgent:
         plan_tool: bool = False,
         hook_system: Optional[Any] = None,
         compact: bool = True,
+        context_policy: str = "auto",
         permissions: Optional[Any] = None,
         env_context: bool = False,
     ) -> None:
@@ -481,7 +510,13 @@ class MainAgent:
         # 少量超大消息条数虽少却能爆窗，大量小消息条数虽多却很省）。max_history 退为**硬条数上限**
         # 兜底（防极端条数），不再作为压缩触发。env VORTOCODE_MAX_CONTEXT_TOKENS 可调。
         self.max_history = max_history
-        self.max_context_tokens = int(os.getenv("VORTOCODE_MAX_CONTEXT_TOKENS") or max_context_tokens)
+        # max_context_tokens 是历史预算的**保守默认/下限**（8000，刻意压成本/防失焦）。
+        # 当用户没用 env 钉死时，_base_context_budget() 会按当前模型的真实窗口**向上自适应**——
+        # 大窗口模型（gpt-4o/claude/…）自动放大，mimo/未知模型保持这个默认（除非配 window env）。
+        # env 钉死 = 用户显式指定**有效**精确预算 → 不再自适应；缺省/空/坏值都回退默认并自适应。
+        _pinned = _env_num("VORTOCODE_MAX_CONTEXT_TOKENS", None, int)
+        self.max_context_tokens = _pinned if _pinned is not None else max_context_tokens
+        self._context_budget_auto = _pinned is None
         self._task_anchor = ""                 # 原始任务纯文本（首个 user）；压缩后仍作锚点，修"锚到孤儿工具结果"
         self.extra_system = extra_system       # 追加到系统提示（如技能目录、子 agent 角色）
         self._native = native                  # 原生 function-calling（失败自动回退提示式协议）
@@ -494,10 +529,48 @@ class MainAgent:
         # 而非像 #72 那样硬丢中段。env VORTOCODE_COMPACT=0 关闭（关掉就退回纯锚点裁剪）。
         env_compact = os.getenv("VORTOCODE_COMPACT")
         self.compact = (env_compact not in ("0", "false", "no")) if env_compact is not None else compact
+        # 上下文策略：auto 会按模式动态选择；也可用 VORTOCODE_CONTEXT_POLICY 固定为 compact/balanced/preserve。
+        self.context_policy = _normalize_context_policy(os.getenv("VORTOCODE_CONTEXT_POLICY") or context_policy)
+        self._context_mode = "plan"
         self._summary = ""                     # 早先轮次的压缩纪要（滚动合并）
         self._permissions = permissions        # 可选 .vortocode/permissions.yaml deny 规则（_run_tool 硬拦）
         self._env_context = env_context        # 仿 CC 注入 <env>（cwd/git/日期/目录）；仅顶层交互 agent 开，子 agent 不开省开销
         self._env = ""                         # 当轮环境快照（run_turn 开始时刷新，_system 注入）
+
+    def _effective_context_policy(self, mode: str | None = None) -> str:
+        policy = _normalize_context_policy(self.context_policy)
+        if policy != "auto":
+            return policy
+        return "preserve" if (mode or self._context_mode) == "build" else "balanced"
+
+    def _base_context_budget(self) -> int:
+        """历史预算基数：用户 env 钉死则原样用；否则按**当前模型窗口**自适应放大。
+
+        - 窗口够大的已知模型（gpt-4o/claude/… 或经 env 配了 window 的自有中转）→ 取窗口的一部分，
+          但不低于保守默认、不超硬顶。
+        - 小窗口/未知模型（含默认 mimo，未配 window）→ 维持保守默认（8000），绝不反超其窗口。
+        运行时可 set_model 切模型，故每次动态解析、不在 __init__ 冻死。"""
+        default = self.max_context_tokens
+        if not self._context_budget_auto:
+            return default                                  # env 显式钉死 → 不自适应
+        try:
+            from src.llm.client import model_context_window
+            window = model_context_window(self.current_model())
+        except Exception:  # noqa: BLE001
+            window = None
+        if window and window >= _CONTEXT_MIN_WINDOW_TO_SCALE:
+            derived = int(window * _CONTEXT_WINDOW_FRACTION)
+            return max(default, min(derived, _CONTEXT_BUDGET_HARD_CAP))
+        return default
+
+    def _context_limit(self, mode: str | None = None) -> int:
+        policy = self._effective_context_policy(mode)
+        multiplier = float(_CONTEXT_POLICY_PROFILES[policy]["multiplier"])
+        return max(1, int(round(self._base_context_budget() * multiplier)))
+
+    def _recent_context_ratio(self, mode: str | None = None) -> float:
+        policy = self._effective_context_policy(mode)
+        return float(_CONTEXT_POLICY_PROFILES[policy]["recent_ratio"])
 
     def _client(self) -> Any:
         # 惰性构建并缓存：跨步/跨轮复用同一个客户端（复用底层连接池），也便于测试注入
@@ -636,7 +709,7 @@ class MainAgent:
         from src.llm.content import content_to_text
         return content_to_text(m.get("content")) == anchor
 
-    def _trimmed_history(self) -> list[dict]:
+    def _trimmed_history(self, mode: str | None = None) -> list[dict]:
         """按 **token 预算** 裁剪跨轮历史（max_history 仅作硬条数上限兜底）。
 
         为什么按 token 而非条数：真正撑爆上下文窗口的是 token——少量超大消息（一段 8000 字的
@@ -646,7 +719,8 @@ class MainAgent:
         """
         h = self.history
         total = sum(self._msg_tokens(m) for m in h)
-        if len(h) <= self.max_history and total <= self.max_context_tokens:
+        limit = self._context_limit(mode)
+        if len(h) <= self.max_history and total <= limit:
             return list(h)                                 # 未超条数也未超 token 预算 → 原样（短对话零改动）
         anchor = self._anchor_text()
         limit_n = max(1, self.max_history - (1 if anchor else 0))   # 给锚点留 1 条，总数仍 ≤ max_history
@@ -654,7 +728,7 @@ class MainAgent:
         used = 0
         for m in reversed(h):                              # 从最近往前收，受 token 预算 + 条数上限双约束
             t = self._msg_tokens(m)
-            if kept and (used + t > self.max_context_tokens or len(kept) >= limit_n):
+            if kept and (used + t > limit or len(kept) >= limit_n):
                 break
             kept.append(m)
             used += t
@@ -669,19 +743,39 @@ class MainAgent:
         used_tokens 包含系统提示和当前会被保留的历史；max_context_tokens 是历史预算，
         因此系统提示较长时 pct 可能超过 100。它是 UI 提醒，不是 API 精确 usage。
         """
+        summary_tokens = self._msg_tokens({"role": "system", "content": self._summary}) if self._summary else 0
+        plan_tokens = 0
+        if self.plan:
+            from src.agents.plan import render_plan
+            plan_tokens = self._msg_tokens({"role": "system", "content": render_plan(self.plan)})
         system_tokens = self._msg_tokens({"role": "system", "content": self._system(mode)})
-        history_tokens = sum(self._msg_tokens(m) for m in self._trimmed_history())
+        raw_history_tokens = sum(self._msg_tokens(m) for m in self.history)
+        trimmed_history = self._trimmed_history(mode)
+        history_tokens = sum(self._msg_tokens(m) for m in trimmed_history)
         used = system_tokens + history_tokens
-        limit = max(1, self.max_context_tokens)
+        limit = self._context_limit(mode)
+        policy = self._effective_context_policy(mode)
+        recent_budget = max(1, int(limit * self._recent_context_ratio(mode)))
         return {
             "used_tokens": used,
             "history_tokens": history_tokens,
+            "raw_history_tokens": raw_history_tokens,
             "system_tokens": system_tokens,
+            "summary_tokens": summary_tokens,
+            "plan_tokens": plan_tokens,
             "max_context_tokens": limit,
+            "base_context_tokens": self._base_context_budget(),
+            "recent_budget": recent_budget,
+            "history_messages": len(self.history),
+            "trimmed_history_messages": len(trimmed_history),
             "pct": min(999, int(round(used * 100 / limit))),
+            "policy": policy,
+            "raw_policy": self.context_policy,
+            "compact_enabled": self.compact,
+            "will_compact": self.compact and raw_history_tokens > limit,
         }
 
-    async def _maybe_compact(self, say: Callable[[str], None]) -> None:
+    async def _maybe_compact(self, say: Callable[[str], None], mode: str = "plan") -> None:
         """历史 **token 数** 超预算时，把"老段"摘要成滚动纪要、物理移出 history（保留最近窗口逐字）。
 
         在回合开始时调一次（跨轮增长在此收口；单轮内的 max_steps 增长由 _trimmed_history 兜底）。
@@ -693,13 +787,14 @@ class MainAgent:
             return
         h = self.history
         total = sum(self._msg_tokens(m) for m in h)
-        if total <= self.max_context_tokens:   # 没超 token 预算就不折腾（短对话/小消息零开销、零 LLM 调用）
+        limit = self._context_limit(mode)
+        if total <= limit:   # 没超 token 预算就不折腾（短对话/小消息零开销、零 LLM 调用）
             return
-        half = max(1, self.max_context_tokens // 2)   # 最近约半预算逐字保留；更早的老段压成纪要
+        recent_budget = max(1, int(limit * self._recent_context_ratio(mode)))
         used, cut = 0, 0
-        for i in range(len(h) - 1, -1, -1):    # 从最近往前累计，越过半预算处即为切点
+        for i in range(len(h) - 1, -1, -1):    # 从最近往前累计，越过保留预算处即为切点
             used += self._msg_tokens(h[i])
-            if used > half:
+            if used > recent_budget:
                 cut = i + 1
                 break
         # recent 必须至少保留**当前轮最新 user**（h[-1]）：run_turn 刚把本轮用户请求追加到末尾，
@@ -715,6 +810,62 @@ class MainAgent:
         self._summary = digest                 # 含已有纪要的滚动合并（在 _summarize 内拼）
         self.history = recent
         say(f"[dim]🗜️ 已把 {len(older)} 条更早的对话压成纪要（保留原始目标与关键决策）。[/dim]")
+
+    def compact_preview(self, mode: str = "plan") -> dict:
+        """预估手动压缩会压掉哪一段，不调用 LLM、不改 history。"""
+        h = self.history
+        total = sum(self._msg_tokens(m) for m in h)
+        limit = self._context_limit(mode)
+        recent_budget = max(1, int(limit * self._recent_context_ratio(mode)))
+        if len(h) < 3:
+            cut = 0
+        else:
+            used, cut = 0, 0
+            for i in range(len(h) - 1, -1, -1):
+                used += self._msg_tokens(h[i])
+                if used > recent_budget:
+                    cut = i + 1
+                    break
+            if cut == 0:                       # 手动压缩：没超预算时也允许压掉较早半段
+                cut = max(1, len(h) // 2)
+            cut = min(cut, len(h) - 1)         # 最新一段上下文始终逐字保留
+        older = h[:cut]
+        recent = h[cut:]
+        return {
+            "can_compact": bool(older and recent),
+            "total_tokens": total,
+            "limit": limit,
+            "recent_budget": recent_budget,
+            "older_messages": len(older),
+            "recent_messages": len(recent),
+            "older_tokens": sum(self._msg_tokens(m) for m in older),
+            "recent_tokens": sum(self._msg_tokens(m) for m in recent),
+        }
+
+    async def compact_now(self, mode: str = "plan") -> dict:
+        """手动压缩旧历史。成功才改写 _summary/history；失败保持原样。"""
+        preview = self.compact_preview(mode)
+        if not preview["can_compact"]:
+            return {"ok": False, "reason": "可压缩的历史不足", **preview}
+        cut = int(preview["older_messages"])
+        older, recent = self.history[:cut], self.history[cut:]
+        digest = await self._summarize(older)
+        if not digest:
+            return {"ok": False, "reason": "摘要生成失败", **preview}
+        before_messages = len(self.history)
+        before_tokens = sum(self._msg_tokens(m) for m in self.history)
+        self._summary = digest
+        self.history = recent
+        after_tokens = sum(self._msg_tokens(m) for m in self.history)
+        return {
+            "ok": True,
+            "summary": digest,
+            "before_messages": before_messages,
+            "after_messages": len(self.history),
+            "before_tokens": before_tokens,
+            "after_tokens": after_tokens,
+            **preview,
+        }
 
     async def _summarize(self, msgs: list[dict]) -> str:
         """把一段历史消息（+ 已有纪要）交给 LLM 压成更新后的纪要；任何异常都返回空串（让上游降级）。"""
@@ -973,13 +1124,14 @@ class MainAgent:
         """
         say = say or (lambda _m: None)
         emit = emit or (lambda _m: None)
+        self._context_mode = mode
         self._escalated = False                # 每轮重置；切 build 由 UI 持久化到 mode
         from src.llm.content import build_user_content
         self.history.append({"role": "user",
                              "content": build_user_content(user_text, images, audio)})
         if not self._task_anchor:              # 捕获原始任务（首个 user 纯文本）——压缩后仍作锚点（修 #16）
             self._task_anchor = self._anchor_text()
-        await self._maybe_compact(say)         # 跨轮历史超 token 预算→把老段摘要成纪要（失败安全降级）
+        await self._maybe_compact(say, mode)   # 跨轮历史超 token 预算→把老段摘要成纪要（失败安全降级）
         if self._env_context:                  # 仿 CC：每轮刷新一次运行时环境（cwd/git/日期/目录）注入系统提示
             self._env = _env_block()
 
@@ -990,7 +1142,7 @@ class MainAgent:
         budget_exhausted = False
         while steps < self._step_budget(mode):
             steps += 1
-            messages = [{"role": "system", "content": self._system(mode)}] + self._trimmed_history()
+            messages = [{"role": "system", "content": self._system(mode)}] + self._trimmed_history(mode)
 
             # 原生 function-calling 路径（opt-in）；模型不支持就永久回退到提示式协议
             if self._native:
@@ -1105,7 +1257,7 @@ class MainAgent:
 
         stream_shown：延续本回合已回显前缀，让收尾回复的流式在 CLI 上接着累计、不错位。"""
         messages = [{"role": "system", "content": self._system(mode) + _FORCE_FINISH_RULE}] \
-            + self._trimmed_history()
+            + self._trimmed_history(mode)
         try:
             content = (await self._complete(messages, stream_cb, reasoning_cb, stream_shown)).strip()
         except Exception:  # noqa: BLE001
@@ -2136,7 +2288,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
 
         硬闸：分支必须匹配 vorto/*，绝不碰 main/master/其它分支。'人在合并口'之前的往返自动化。"""
         import asyncio
-        from src.agents.vcs import pr_feedback, push_branch
+        from src.agents.vcs import failed_check_log_excerpts, pr_feedback, push_branch
         from src.agents.test_detect import detect_test_cmd
 
         ref = str(args.get("pr") or args.get("branch") or args.get("ref") or "").strip()
@@ -2159,6 +2311,30 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             parts.append(f"- [{c.get('author', '?')}]{loc} {c['body'][:300]}")
         for ck in checks[:10]:
             parts.append(f"- CI 失败：{ck['name']}（{ck.get('link', '')}）")
+        log_result = await asyncio.to_thread(failed_check_log_excerpts, repo_root, checks)
+        from src.agents.pr_doctor import classify_failed_checks, repair_templates
+        classification = classify_failed_checks(checks, list(log_result.get("logs") or []))
+        if classification.get("category") and classification.get("category") != "unknown":
+            parts.append(
+                f"- CI 类型判断：{classification.get('label')}；"
+                f"建议：{classification.get('next_action')}"
+            )
+        for item in repair_templates(checks, list(log_result.get("logs") or []), classification)[:4]:
+            slash = str(item.get("slash") or "")
+            slash_part = f"；可执行动作：{slash}" if slash else ""
+            parts.append(
+                f"- 推荐修复模板：{item.get('title')}；"
+                f"命令：{item.get('command')}{slash_part}；说明：{item.get('detail')}"
+            )
+        for item in (log_result.get("logs") or [])[:3]:
+            loc = str(item.get("job_name") or "")
+            if item.get("step_name"):
+                loc = (loc + " > " if loc else "") + str(item.get("step_name"))
+            if loc:
+                parts.append(f"- CI 失败定位：{item.get('name') or 'check'} -> {loc}")
+            excerpt = str(item.get("excerpt") or "").strip()
+            if excerpt:
+                parts.append(f"- CI 日志摘录：{item.get('name') or 'check'}\n{excerpt[:900]}")
         fix_desc = "\n".join(parts)
         sel = str(args.get("test") or "").strip()
         test_cmd = detect_test_cmd(repo_root, sel)
@@ -2406,22 +2582,66 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
     """
     async def _run(args: dict) -> str:
         import asyncio
-        from src.agents.shell import is_dangerous, run_command
+        from src.agents.shell import is_dangerous, run_command, run_command_background
         cmd = str(args.get("command") or args.get("cmd") or "").strip()
         if not cmd:
             return "run_command 需要 command。"
         why = is_dangerous(cmd)
         if why:
             return f"拒绝执行（疑似危险操作：{why}）。请换更具体、安全的命令。"
-        if not await confirm(_taint_prefix() + f"在仓库根目录执行命令？\n  $ {cmd}"):
+        bg = _truthy(args.get("background"))
+        label = "后台启动命令" if bg else "执行命令"
+        if not await confirm(_taint_prefix() + f"在仓库根目录{label}？\n  $ {cmd}"):
             return f"用户拒绝了命令：{cmd}"
+        if bg:
+            res = await asyncio.to_thread(run_command_background, repo_root, cmd)
+            if not res.get("ok"):
+                return f"后台启动失败：{res.get('error')}"
+            return (f"已后台启动命令 `{cmd}`，句柄 {res['id']}（pid {res['pid']}）。"
+                    f"用 read_output(id={res['id']}) 看输出、stop_command(id={res['id']}) 停止。")
         res = await asyncio.to_thread(run_command, repo_root, cmd)
         return f"命令 `{cmd}` 退出码 {res['code']}。输出尾部：\n{res['output'][-3000:]}"
 
+    async def _read_output(args: dict) -> str:
+        import asyncio
+        from src.agents.shell import read_background
+        bid = str(args.get("id") or args.get("bid") or "").strip()
+        if not bid:
+            return "read_output 需要 id（后台命令句柄，如 bg1）。"
+        tail = args.get("tail")
+        tail = int(tail) if str(tail).strip().isdigit() else None
+        res = await asyncio.to_thread(read_background, bid, tail)
+        if not res.get("ok"):
+            return res.get("error", "读取失败")
+        head = f"[{res['id']}] {res['status']}" + (f"（退出码 {res['code']}）" if res['code'] is not None else "")
+        drop = f"\n（⚠ 有 {res['dropped']} 行因缓冲上限被挤掉、未读到）" if res.get("dropped") else ""
+        return f"{head}{drop}\n{(res['output'] or '(暂无新输出)')[-3000:]}"
+
+    async def _stop(args: dict) -> str:
+        import asyncio
+        from src.agents.shell import stop_background
+        bid = str(args.get("id") or args.get("bid") or "").strip()
+        if not bid:
+            return "stop_command 需要 id。"
+        res = await asyncio.to_thread(stop_background, bid)
+        if not res.get("ok"):
+            return res.get("error", "停止失败")
+        return f"已停止后台命令 {bid}（退出码 {res.get('code')}）。"
+
     return [Tool("run_command",
                  "在仓库根目录跑任意 shell 命令（pytest/ruff/git/pip/make…）；高危，每条都需确认、"
-                 "明显危险操作直接拒（仅 build）",
-                 {"command": "要执行的 shell 命令"}, _run, read_only=False, outward=True)]
+                 "明显危险操作直接拒（仅 build）。长驻命令（dev server / watch / tail -f）传 "
+                 "background=true 后台起、立即返回句柄，再用 read_output 看输出",
+                 {"command": "要执行的 shell 命令",
+                  "background": "可选，true=后台起长驻进程（不阻塞），用 read_output/stop_command 管理"},
+                 _run, read_only=False, outward=True),
+            Tool("read_output",
+                 "读某后台命令（run_command background=true 起的）的新增输出 + 运行状态；tail=N 看最近 N 行。只读",
+                 {"id": "后台命令句柄，如 bg1", "tail": "可选，看最近 N 行"},
+                 _read_output, read_only=True),
+            Tool("stop_command",
+                 "停掉某后台命令（terminate→kill）。用完 dev server / watcher 记得收摊",
+                 {"id": "后台命令句柄，如 bg1"}, _stop, read_only=False)]   # 终止进程是运行态副作用→仅 build
 
 
 def build_pr_tool(repo_root: str, confirm) -> list[Tool]:

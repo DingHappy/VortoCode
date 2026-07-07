@@ -9,6 +9,17 @@ import pytest
 from src.agents.main_agent import MainAgent, SkillRegistry, Tool, parse_tool_call
 
 
+@pytest.fixture(autouse=True)
+def _pin_default_model(monkeypatch):
+    """把默认模型钉在 mimo-v2.5（项目 .env/.env.example 的真实默认，未知窗口）。
+
+    上下文预算测试假设默认模型窗口未知 → 保守回退 8000。本地靠 .env 的 DEFAULT_MODEL
+    生效，但 CI 检出时没有 .env（被 gitignore），LLMConfig 会回落到写死的 gpt-4o-mini
+    （前缀命中 → 窗口 128k → 预算 64k），这些断言就全崩。显式钉死，去掉对 .env 的隐式依赖。
+    需要别的模型的用例自行 setenv 覆盖。"""
+    monkeypatch.setenv("DEFAULT_MODEL", "mimo-v2.5")
+
+
 def test_parse_tool_call_variants():
     # 纯文字 → 当最终回复（None）
     assert parse_tool_call("你好呀") is None
@@ -254,6 +265,69 @@ def test_plan_tool_off_by_default():
     assert "update_plan" not in MainAgent([]).tools            # 默认不带（子 agent/orchestrator 不变）
     assert "update_plan" in MainAgent([], plan_tool=True).tools
     assert "request_build" in MainAgent([], plan_tool=True).tools
+
+
+def test_model_context_window_lookup(monkeypatch):
+    from src.llm.client import model_context_window
+    monkeypatch.delenv("VORTOCODE_MODEL_CONTEXT_WINDOW", raising=False)
+    assert model_context_window("gpt-4o-2024-08-06") == 128_000   # 前缀匹配带日期后缀
+    assert model_context_window("claude-3.5-sonnet") == 200_000
+    assert model_context_window("deepseek-chat") == 65_536
+    assert model_context_window("mimo-v2.5") is None              # 自有中转不写死，回退默认
+    assert model_context_window("") is None
+    # env 全局覆盖（自有中转按上游真实窗口配）
+    monkeypatch.setenv("VORTOCODE_MODEL_CONTEXT_WINDOW", "131072")
+    assert model_context_window("mimo-v2.5") == 131_072
+
+
+def test_context_budget_adapts_to_model_window(monkeypatch):
+    monkeypatch.delenv("VORTOCODE_MAX_CONTEXT_TOKENS", raising=False)
+    monkeypatch.delenv("VORTOCODE_MODEL_CONTEXT_WINDOW", raising=False)
+    # 未知模型（默认 mimo，未配 window）→ 维持保守默认 8000
+    a = MainAgent([], max_context_tokens=8000)
+    assert a._base_context_budget() == 8000
+
+    # 配了大窗口（等价于自有中转的真实窗口）→ 取窗口一半、封顶 200k
+    monkeypatch.setenv("VORTOCODE_MODEL_CONTEXT_WINDOW", "128000")
+    b = MainAgent([], max_context_tokens=8000)
+    assert b._base_context_budget() == 64000                      # 128k * 0.5
+    # balanced 策略下 _context_limit 就是基数 ×1.0
+    assert b._context_limit("plan") == 64000
+
+    # 小窗口（< 16k 门槛）→ 不放大，维持默认，避免历史预算反超窗口溢出
+    monkeypatch.setenv("VORTOCODE_MODEL_CONTEXT_WINDOW", "8192")
+    c = MainAgent([], max_context_tokens=8000)
+    assert c._base_context_budget() == 8000
+
+
+def test_env_num_safe_parse(monkeypatch):
+    from src.agents.main_agent import _env_num
+    monkeypatch.delenv("X", raising=False)
+    assert _env_num("X", 0.5, float) == 0.5              # 未设 → 默认
+    monkeypatch.setenv("X", "auto")
+    assert _env_num("X", 0.5, float) == 0.5              # 坏值（=auto）→ 默认，不抛
+    monkeypatch.setenv("X", "")
+    assert _env_num("X", 0.5, float) == 0.5              # 空 → 默认
+    monkeypatch.setenv("X", "-3")
+    assert _env_num("X", 200, int) == 200                # 非正 → 默认
+    monkeypatch.setenv("X", "0.7")
+    assert _env_num("X", 0.5, float) == 0.7              # 有效值照用
+
+
+def test_bad_context_env_does_not_crash_agent(monkeypatch):
+    # 用户把 VORTOCODE_MAX_CONTEXT_TOKENS 填成坏值 → 构造 agent 不该抛，回退默认 + 自适应
+    monkeypatch.setenv("VORTOCODE_MAX_CONTEXT_TOKENS", "lots")
+    a = MainAgent([], max_context_tokens=8000)
+    assert a.max_context_tokens == 8000 and a._context_budget_auto is True
+
+
+def test_context_budget_env_pin_disables_autoscale(monkeypatch):
+    # 用户 env 精确钉死 → 不再自适应，哪怕模型窗口很大
+    monkeypatch.setenv("VORTOCODE_MAX_CONTEXT_TOKENS", "5000")
+    monkeypatch.setenv("VORTOCODE_MODEL_CONTEXT_WINDOW", "200000")
+    a = MainAgent([], max_context_tokens=8000)
+    assert a._context_budget_auto is False
+    assert a._base_context_budget() == 5000
 
 
 @pytest.mark.asyncio
@@ -837,6 +911,57 @@ async def test_compact_disabled_keeps_full_history():
     assert agent._summary == "" and len(agent.history) > before   # 历史不被物理裁剪
 
 
+def test_manual_compact_preview_allows_under_budget():
+    agent = MainAgent([], max_context_tokens=8000)
+    _prefill(agent, 3)
+
+    preview = agent.compact_preview("plan")
+
+    assert preview["can_compact"] is True
+    assert preview["older_messages"] >= 1
+    assert preview["recent_messages"] >= 1
+    assert preview["total_tokens"] < preview["limit"]
+
+
+@pytest.mark.asyncio
+async def test_manual_compact_now_summarizes_even_under_budget():
+    llm = CompactLLM(summary="手动纪要：保留 SUPER_GOAL 和关键决策")
+    agent = MainAgent([], llm=llm, max_context_tokens=8000)
+    _prefill(agent, 4)
+    before = len(agent.history)
+
+    result = await agent.compact_now("build")
+
+    assert result["ok"] is True
+    assert llm.summarized == 1
+    assert agent._summary == "手动纪要：保留 SUPER_GOAL 和关键决策"
+    assert len(agent.history) < before
+    assert result["before_messages"] == before
+    assert result["after_messages"] == len(agent.history)
+    assert "SUPER_GOAL" in llm.summary_prompts[0]
+
+
+@pytest.mark.asyncio
+async def test_manual_compact_failure_keeps_history():
+    class FailSummaryLLM(CompactLLM):
+        async def chat(self, messages, **kwargs):
+            sys = messages[0]["content"] if messages and messages[0].get("role") == "system" else ""
+            if "对话压缩器" in sys:
+                return {"content": ""}
+            return {"content": "回复"}
+
+    agent = MainAgent([], llm=FailSummaryLLM(), max_context_tokens=8000)
+    _prefill(agent, 4)
+    before = list(agent.history)
+
+    result = await agent.compact_now("plan")
+
+    assert result["ok"] is False
+    assert result["reason"] == "摘要生成失败"
+    assert agent._summary == ""
+    assert agent.history == before
+
+
 def test_trimmed_history_token_budget_trims_huge_messages():
     """#15：少量超大消息即便条数 < max_history，也应按 token 预算裁掉（防爆窗）。"""
     agent = MainAgent([], max_history=24, max_context_tokens=300)
@@ -872,6 +997,38 @@ def test_context_usage_reports_prompt_budget_estimate():
     assert usage["system_tokens"] > 0
     assert usage["max_context_tokens"] == 300
     assert usage["pct"] > 0
+    assert usage["policy"] == "balanced"
+
+
+def test_context_policy_auto_preserves_more_in_build():
+    agent = MainAgent([], max_context_tokens=300)
+
+    plan = agent.context_usage("plan")
+    build = agent.context_usage("build")
+
+    assert plan["policy"] == "balanced"
+    assert plan["max_context_tokens"] == 300
+    assert build["policy"] == "preserve"
+    assert build["max_context_tokens"] == 600
+
+
+def test_context_policy_compact_uses_smaller_budget():
+    agent = MainAgent([], max_context_tokens=400, context_policy="compact")
+
+    usage = agent.context_usage("build")
+
+    assert usage["policy"] == "compact"
+    assert usage["raw_policy"] == "compact"
+    assert usage["max_context_tokens"] == 300
+
+
+def test_context_policy_env_overrides_constructor(monkeypatch):
+    monkeypatch.setenv("VORTOCODE_CONTEXT_POLICY", "preserve")
+
+    agent = MainAgent([], max_context_tokens=200, context_policy="compact")
+
+    assert agent.context_usage("plan")["policy"] == "preserve"
+    assert agent.context_usage("plan")["max_context_tokens"] == 400
 
 
 @pytest.mark.asyncio

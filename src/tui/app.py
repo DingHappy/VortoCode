@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 import time
@@ -31,11 +32,11 @@ from src.memory.session_store import SessionManager
 
 SLASH_COMMANDS = [
     "/analyze", "/improve", "/fix", "/run", "/apply", "/agents", "/runagent", "/skills", "/mcp",
-    "/artifacts", "/diff", "/sessions", "/resume", "/new", "/mode", "/model", "/think", "/theme", "/usage",
-    "/tools", "/audit", "/speak", "/commands", "/hooks", "/clear", "/help", "/quit",
+    "/artifacts", "/diff", "/changes", "/review", "/verify", "/preflight", "/git", "/commit", "/pr", "/pr-check", "/pr-fix", "/fix-ci", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
+    "/context", "/compact", "/permissions", "/memory", "/tasks", "/tools", "/audit", "/speak", "/commands", "/hooks", "/clear", "/help", "/quit",
 ]
 # 必须带参数的命令：补全面板里回车不直接执行，先补成 "/cmd " 让用户接着填参数
-ARG_SLASH_CMDS = {"/fix", "/run", "/resume", "/runagent"}
+ARG_SLASH_CMDS = {"/fix", "/run", "/resume", "/runagent", "/pr-check", "/pr-fix", "/fix-ci"}
 # 命令 → 一句话说明（命令补全面板用，让 / 命令可发现、可补全）
 COMMAND_INFO = {
     "/analyze": "L1 自分析（只读扫描，无需 key）",
@@ -48,15 +49,32 @@ COMMAND_INFO = {
     "/skills": "列出 SKILL.md 技能（reload 重扫）",
     "/mcp": "接入 MCP 服务器工具（build 门控）",
     "/artifacts": "列出已发布的制品（画廊在 /artifacts）",
-    "/diff": "看工作区改动（git diff，着色）",
-    "/sessions": "列出历史会话",
+    "/diff": "看工作区改动（支持 stat/cached/路径过滤）",
+    "/changes": "提交前变更审查摘要（风险信号/下一步）",
+    "/review": "LLM 审查当前 diff/hunk（只报 P0/P1；--fix 可确认后修复）",
+    "/verify": "探测测试或运行 profile/runtime 验证",
+    "/preflight": "提交/开 PR 前检查（风险/审查/测试/提交建议）",
+    "/git": "查看 git 状态、staged/unstaged diffstat",
+    "/commit": "提交已 staged 改动；suggest 自动生成提交信息",
+    "/pr": "预览或创建 PR；preview 只预览，draft 开草稿",
+    "/pr-check": "读取 PR review 评论和失败 CI 检查",
+    "/pr-fix": "确认后按 PR 反馈切 build 并调用 pr_fix 修复",
+    "/fix-ci": "诊断 PR review/CI；verify 先跑最小复现",
+    "/sessions": "列出/恢复/重命名/删除历史会话",
     "/resume": "恢复某个历史会话",
     "/new": "新开一个会话",
     "/mode": "切换 plan / build 模式",
+    "/plan": "进入 plan 权限模式（只读/提案）",
+    "/build": "进入 build 权限模式（可写分支）",
     "/model": "查看/切换模型（/model 名称，本会话生效）",
     "/think": "开关「思考呈现」（推理型模型的思维链 dim 显示）",
     "/theme": "切换配色主题（21 套内置，记住选择）",
     "/usage": "本会话 token 用量（reset 清零）",
+    "/context": "查看/切换上下文策略（auto/compact/balanced/preserve）",
+    "/compact": "手动压缩旧对话上下文；preview 只预估",
+    "/permissions": "查看/解释工具权限；可 deny 规则或 reset 会话放行",
+    "/memory": "查看/管理项目指令和跨会话记忆",
+    "/tasks": "列出/查看/续跑 dev_auto 持久化计划",
     "/tools": "列出主 agent 工具及读写权限",
     "/audit": "查看工具调用审计日志",
     "/speak": "朗读 agent 回复开关（mimo-v2.5-tts，需 key）",
@@ -66,7 +84,12 @@ COMMAND_INFO = {
     "/help": "显示帮助",
     "/quit": "退出",
 }
-ACTION_CMDS = {"analyze", "improve", "fix", "run", "apply", "runagent", "mcp"}   # 跑长任务，受忙碌态约束
+ACTION_CMDS = {
+    "analyze", "improve", "fix", "run", "apply", "runagent", "mcp",
+    "review", "verify", "commit", "pr", "pr-check", "pr-fix", "fix-ci", "compact",
+}   # 跑长任务，受忙碌态约束
+BUSY_WORKER_GROUPS = {"action", "review", "verify", "git", "compact"}
+WORKER_STALL_SECONDS = 120
 
 # 工作中指示器（仿 Claude Code）：10 帧 braille 旋转 + 轮换动词 + 计时 + esc 中断
 _SPIN_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
@@ -119,16 +142,35 @@ HELP = """可用命令:
   /tools              列出主 agent 可用工具及其读写权限
   /audit              查看工具调用审计日志（.vortocode/audit.log）
   /artifacts          列出已发布的制品（标题/版本/链接；浏览器开 /artifacts 是画廊）
-  /diff               看工作区改动（git diff，+绿/-红着色）—— review 主 agent 改了什么
+  /diff [stat|hunks|cached] [路径]  看工作区改动；hunks 显示可 review 的 hunk 编号
+  /changes [cached] [路径]  提交前变更审查摘要（风险信号/下一步）
+  /review [--fix] [hunk H1] [cached] [路径]  LLM 审查当前 diff/hunk；--fix 确认后切 build 修复
+  /verify [selector|--changed]  探测并运行仓库测试；--changed 按改动推断相关测试
+  /verify profiles     列出 verify profile；/verify <profile> 运行 profile
+  /verify run <命令>   运行 runtime/smoke 验证命令（危险拦截 + 人工确认）
+  /preflight [cached] 提交/开 PR 前检查：风险、建议审查、建议验证、建议提交信息
+  /git                查看 git 状态、staged/unstaged diffstat
+  /commit <msg|suggest> 提交已 staged 改动；/commit all --suggest 先 git add -A 并自动生成信息
+  /pr [preview|draft|doctor] [base <ref>] [title]  预览或创建 PR；doctor [verify] 诊断 PR 反馈
+  /pr-check <ref>     读取 PR review 评论和失败 CI 检查
+  /pr-fix <ref>       确认后切 build 并让主 agent 调 pr_fix 修复 PR 反馈
+  /fix-ci [verify] <ref>  诊断 PR review/CI；verify 先跑最小安全复现
   /mcp [list|off]     接入 config/mcp.yaml 的 MCP 服务器工具（build 门控）
   /agents             列出已创建的 agent（网页/API 建的，同一份存储）
   /runagent <id> <任务>  用某个已创建的 agent 执行任务（流式）
-  /sessions           列出历史会话
+  /sessions [操作]    列出历史会话；rename/delete 管理会话
   /resume <id>        恢复某个历史会话
   /new                新开一个会话
   /mode               切换 plan(只读/提案) / build(可写分支)
+  /plan               进入 plan 权限模式
+  /build              进入 build 权限模式
   /theme [名]         切换配色主题（不带名=列出全部；选择会记住，下次自动用）
   /usage [reset]      本会话 token 用量（估算；reset 清零）
+  /context [策略]     查看/切换上下文策略（auto/compact/balanced/preserve）
+  /compact [preview]  手动压缩旧对话上下文；preview 只预估
+  /permissions [操作] 查看/解释工具权限；explain <tool> [value]，deny <tool> [glob] 加规则
+  /memory [操作]      查看/管理长期记忆；list/delete/auto/add/init
+  /tasks [show|resume <id>]  列出、查看或续跑 dev_auto 持久化计划
   /clear              清屏
   /help               显示本帮助
   /quit               退出（也可 Ctrl+C）
@@ -201,6 +243,11 @@ class PromptEditor(TextArea):
     async def _on_key(self, event) -> None:
         app = self.app
         key = event.key
+        if app._inline_confirm_active():
+            event.stop()
+            event.prevent_default()
+            app._handle_inline_confirm_key(key)
+            return
         if key == "enter":                       # 回车=提交（换行用 Ctrl+J）
             event.stop()
             event.prevent_default()
@@ -221,6 +268,16 @@ class PromptEditor(TextArea):
             event.prevent_default()
             app.action_scroll_log_down()
             return
+        if key == "ctrl+p":
+            event.stop()
+            event.prevent_default()
+            app.action_history_prev()
+            return
+        if key == "ctrl+n":
+            event.stop()
+            event.prevent_default()
+            app.action_history_next()
+            return
         if key == "tab":                         # Tab 不缩进：补全/切模式（与全局键位一致）
             event.stop()
             event.prevent_default()
@@ -233,6 +290,16 @@ class PromptEditor(TextArea):
             return
         at_first = self.cursor_location[0] == 0
         at_last = self.cursor_location[0] >= self.document.line_count - 1
+        if key == "up" and not app._palette_visible() and self.text == "" and app._history_idx is None:
+            event.stop()
+            event.prevent_default()
+            app.action_scroll_log_line_up()
+            return
+        if key == "down" and not app._palette_visible() and self.text == "" and app._history_idx is None:
+            event.stop()
+            event.prevent_default()
+            app.action_scroll_log_line_down()
+            return
         if key == "up" and (app._palette_visible() or at_first):
             event.stop()                         # 面板选择/翻历史；多行中间行仍是光标上移
             event.prevent_default()
@@ -351,7 +418,10 @@ class ConfirmScreen(ModalScreen[bool]):
     #confirm-actions Button { margin-right: 2; }
     """
     BINDINGS = [
-        Binding("enter", "yes", "确认"),
+        Binding("enter", "choose", "执行当前选项"),
+        Binding("left", "prev_choice", "上一个"),
+        Binding("right", "next_choice", "下一个"),
+        Binding("tab", "next_choice", "下一个"),
         Binding("y", "yes", "确认"),
         Binding("a", "always", "始终允许"),
         Binding("n", "no", "取消"),
@@ -362,6 +432,8 @@ class ConfirmScreen(ModalScreen[bool]):
         super().__init__()
         self._message = message
         self._scope = scope           # "始终允许"的作用域：writes（写文件）/ commands（跑命令），各自独立
+        self._choices = ["confirm-yes", "confirm-always", "confirm-no"]
+        self._choice_idx = 0
 
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
@@ -370,10 +442,16 @@ class ConfirmScreen(ModalScreen[bool]):
                 yield Button("确认", id="confirm-yes", variant="success")
                 yield Button("本会话始终允许", id="confirm-always", variant="warning")
                 yield Button("取消", id="confirm-no")
-            yield Static("Enter/y 确认 · a 本会话始终允许 · n/Esc 取消", id="confirm-hint")
+            yield Static("←/→ 或 Tab 选择 · Enter 执行 · y 确认 · a 本会话始终允许 · n/Esc 取消", id="confirm-hint")
 
     def on_mount(self) -> None:
-        self.query_one("#confirm-yes", Button).focus()
+        self._focus_choice()
+
+    def _focus_choice(self) -> None:
+        try:
+            self.query_one(f"#{self._choices[self._choice_idx]}", Button).focus()
+        except Exception:  # noqa: BLE001
+            pass
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
@@ -382,6 +460,23 @@ class ConfirmScreen(ModalScreen[bool]):
         elif bid == "confirm-always":
             self.action_always()
         elif bid == "confirm-no":
+            self.action_no()
+
+    def action_prev_choice(self) -> None:
+        self._choice_idx = (self._choice_idx - 1) % len(self._choices)
+        self._focus_choice()
+
+    def action_next_choice(self) -> None:
+        self._choice_idx = (self._choice_idx + 1) % len(self._choices)
+        self._focus_choice()
+
+    def action_choose(self) -> None:
+        bid = self._choices[self._choice_idx]
+        if bid == "confirm-yes":
+            self.action_yes()
+        elif bid == "confirm-always":
+            self.action_always()
+        else:
             self.action_no()
 
     def action_yes(self) -> None:
@@ -410,6 +505,8 @@ class VortoCodeTUI(App):
     CSS = """
     #log { height: 1fr; border: round $accent; padding: 0 1; }
     #status { height: 1; color: $text-muted; padding: 0 1; }
+    #plan { height: auto; max-height: 10; overflow-y: auto; border: round $accent;
+            background: $surface; padding: 0 1; }
     #palette { height: auto; max-height: 9; overflow-y: auto; background: $surface;
                color: $text-muted; padding: 0 1; }
     #statusbar { height: 1; color: $text-muted; background: $surface; padding: 0 1; }
@@ -425,6 +522,8 @@ class VortoCodeTUI(App):
         Binding("pagedown", "scroll_log_down", "下翻", show=False),
         Binding("ctrl+u", "scroll_log_up", "上翻", show=False),
         Binding("ctrl+d", "scroll_log_down", "下翻", show=False),
+        Binding("ctrl+p", "history_prev", "上一条", show=False),
+        Binding("ctrl+n", "history_next", "下一条", show=False),
         Binding("up", "history_prev", "上一条", show=False),
         Binding("down", "history_next", "下一条", show=False),
         Binding("ctrl+l", "clear_log", "清屏"),
@@ -451,6 +550,7 @@ class VortoCodeTUI(App):
         self._mcp_tools: list = []          # 已接入的 MCP 工具（包成主 agent 的 Tool）
         self._spin_i = 0                    # 工作指示器：帧/计时/定时器
         self._busy_since = 0.0
+        self._busy_workers: dict[str, dict] = {}
         self._spin_timer = None
         self._history: list[str] = []       # 提交过的输入（↑/↓ 调出，仿 shell；跨会话持久化）
         self._history_idx: int | None = None
@@ -460,11 +560,19 @@ class VortoCodeTUI(App):
         self._pal_idx = 0                   # 当前高亮候选（↑↓/点击 移动，Tab 补全，回车执行/接受）
         self._pal_kind = ""                 # "命令" / "文件"（回车语义不同：执行 vs 接受）
         self._pal_start = 0                 # 开窗起点（渲染时更新；点击换算行号用）
+        self._confirm_future = None         # 内联权限确认：不弹 modal，显示在输入框上方选择区
+        self._confirm_callback = None
+        self._confirm_scope = "writes"
+        self._confirm_message = ""
+        self._confirm_idx = 0
         self._queued_inputs: list[str] = []  # 忙时提交的消息排队（回合结束自动发送，不再丢弃）
         self._allow_writes_session = False  # 本会话"始终允许"写操作（ConfirmScreen 的 [a]，scope=writes）
         self._allow_commands_session = False  # 本会话"始终允许"跑命令（独立作用域，不吃写豁免）
         self._speak_replies = False         # /speak 开关：开则把每条回复合成语音朗读（mimo-v2.5-tts）
         self._user_cmds = None              # 用户自定义命令缓存（.vortocode/commands，惰性加载、/commands reload 重扫）
+        self._context_policy = self._load_setting("context_policy", "auto")
+        self._auto_memory = bool(self._load_setting("auto_memory", True))
+        self._last_memory_candidate = ""
         self._turn_tools = 0                # 本回合工具调用计数（回合结束给"✓ 完成"反馈）
         self._turn_tool_lines: list[str] = []   # 本回合 🔧 工具行（结果流预览，收尾折叠）
         self._turn_tool_counts: dict[str, int] = {}  # 工具名 → 次数（折叠摘要用）
@@ -474,6 +582,7 @@ class VortoCodeTUI(App):
         self._sb = {"branch": "", "dirty": False, "pr": "", "model": _model_name(),
                     "pr_branch": None, "pr_on": True}
         self._sb_last = ""                  # 最近一次状态栏渲染出的纯文本（测试/调试用）
+        self._plan_last = ""                # 最近一次计划面板渲染出的文本（测试/版本无关地读取）
         self._model_override = None         # /model 切换的模型（本会话覆盖 .env 的 DEFAULT_MODEL）
         self._show_thinking = True          # 思考呈现开关（/think 切；推理型模型的过程提示进结果区）
 
@@ -482,6 +591,8 @@ class VortoCodeTUI(App):
         yield Header(show_clock=False)
         yield RichLog(id="log", wrap=True, markup=True, highlight=False, auto_scroll=True)
         yield Static(id="status")
+        # 常驻任务清单面板：update_plan 更新即重渲、钉在输入框上方不随日志滚走（对标 CC 的 TODO 常显）。
+        yield Static(id="plan")
         yield PaletteView(id="palette")
         yield Static(id="statusbar")
         # opencode 式多行编辑器（回车提交 / Ctrl+J 换行 / 自动长高）；补全提示全靠面板，
@@ -495,6 +606,7 @@ class VortoCodeTUI(App):
         self._load_history()                # 跨会话输入历史（↑/↓ 可调出上次的）
         self._load_theme()                  # 套用上次选的配色主题
         self.query_one("#status", Static).display = False
+        self.query_one("#plan", Static).display = False    # 无计划时不占地方，update_plan 后才现身
         self.query_one("#palette", Static).display = False
         self._greet()
         self._sync_subtitle()
@@ -508,6 +620,14 @@ class VortoCodeTUI(App):
             self._refresh_git()
             self.set_interval(4.0, self._refresh_git)   # 分支/改动：勤刷（本地 git，快）
             self.set_interval(30.0, self._refresh_pr)   # PR 状态：慢刷（gh 走网络）
+
+    def on_unmount(self) -> None:
+        """退出时收摊：停掉所有后台命令，别把 dev server/watcher 进程泄漏成孤儿。"""
+        try:
+            from src.agents.shell import stop_all_background
+            stop_all_background()
+        except Exception:  # noqa: BLE001
+            pass
 
     def _greet(self) -> None:
         """首跑引导：压缩成几行，留出更多真实对话空间。"""
@@ -645,6 +765,7 @@ class VortoCodeTUI(App):
             self._update_session_summary(f"用户：{self._session_last_user} · 回复：{reply}")
         elif reply:
             self._update_session_summary(f"回复：{reply}")
+        self._maybe_offer_auto_memory()
 
     def _persist(self, content: str, markup: bool) -> None:
         """把一条对话写进当前会话（落盘）。失败不影响交互。"""
@@ -676,7 +797,7 @@ class VortoCodeTUI(App):
             pass
 
     def _update_session_summary(self, summary: str) -> None:
-        """把最近一轮摘要写到 sessions.metadata.summary，供 /sessions 选择时辨认。"""
+        """把最近一轮摘要和轻量运行上下文写到 sessions.metadata，供 /sessions 和 /resume 辨认。"""
         if not (self._persist_on and self.session_id):
             return
         try:
@@ -686,14 +807,79 @@ class VortoCodeTUI(App):
             except Exception:  # noqa: BLE001
                 md = {}
             md["summary"] = self._summary_text(summary, 110)
+            if self._session_last_user:
+                md["last_user"] = self._session_last_user
+            if "回复：" in summary:
+                md["last_reply"] = self._summary_text(summary.rsplit("回复：", 1)[-1], 88)
+            md["mode"] = self.mode
+            branch = str(self._sb.get("branch") or "")
+            if branch:
+                md["branch"] = branch
+            md["dirty"] = bool(self._sb.get("dirty"))
+            if self.agent is not None:
+                try:
+                    usage = self.agent.context_usage(self.mode)
+                    md["context"] = {
+                        "pct": int(usage.get("pct", 0)),
+                        "policy": str(usage.get("policy") or ""),
+                        "history_messages": int(usage.get("history_messages", 0)),
+                    }
+                except Exception:  # noqa: BLE001
+                    pass
             self.sessions.store.update_session(self.session_id, metadata=json.dumps(md, ensure_ascii=False))
         except Exception:  # noqa: BLE001
             pass
 
+    def _session_metadata(self, row: dict | None) -> dict:
+        try:
+            data = json.loads((row or {}).get("metadata") or "{}")
+            return data if isinstance(data, dict) else {}
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def _session_picker_label(self, row: dict) -> str:
+        md = self._session_metadata(row)
+        name = row.get("name") or row.get("id")
+        bits = []
+        if md.get("mode"):
+            bits.append(str(md["mode"]))
+        if md.get("branch"):
+            bits.append(str(md["branch"]) + ("*" if md.get("dirty") else ""))
+        ctx = md.get("context") if isinstance(md.get("context"), dict) else {}
+        if ctx.get("pct") is not None and ctx.get("policy"):
+            bits.append(f"ctx {ctx.get('pct')}%/{ctx.get('policy')}")
+        meta = f" [{' · '.join(bits)}]" if bits else ""
+        summary = md.get("summary") or md.get("last_user") or ""
+        suffix = f" — {summary}" if summary else ""
+        return f"{name}{meta}{suffix}"
+
+    def _resume_context_text(self, row: dict | None) -> str:
+        md = self._session_metadata(row)
+        lines = ["↻ 已恢复会话"]
+        if row:
+            lines.append(f"  session: {row.get('name') or row.get('id')} ({row.get('id')})")
+        if md.get("mode") or md.get("branch"):
+            mode = md.get("mode") or "?"
+            branch = md.get("branch") or "?"
+            dirty = "*" if md.get("dirty") else ""
+            lines.append(f"  上次状态: {mode} · {branch}{dirty}")
+        if md.get("last_user"):
+            lines.append(f"  最后用户: {md['last_user']}")
+        if md.get("last_reply"):
+            lines.append(f"  最后回复: {md['last_reply']}")
+        elif md.get("summary"):
+            lines.append(f"  摘要: {md['summary']}")
+        ctx = md.get("context") if isinstance(md.get("context"), dict) else {}
+        if ctx:
+            lines.append(f"  上下文: {ctx.get('pct', 0)}% · {ctx.get('policy') or 'unknown'}"
+                         f" · {ctx.get('history_messages', 0)} messages")
+        return "\n".join(lines)
+
     def _sync_subtitle(self) -> None:
         desc = "只读/提案" if self.mode == "plan" else "可写分支"
         sid = f" · 会话 {self.session_id}" if self.session_id else ""
-        busy = " · ⏳运行中(Esc 取消)" if self._busy else ""
+        label = self._current_worker_label()
+        busy = f" · ⏳{label or '运行中'}(Esc 取消)" if self._busy else ""
         allow = ("" + (" · 写:始终允许✓" if self._allow_writes_session else "")
                  + (" · 命令:始终允许✓" if self._allow_commands_session else ""))
         from src.llm.client import get_usage
@@ -703,6 +889,36 @@ class VortoCodeTUI(App):
                else f" · ~{tot} tok/{u['calls']}call") if u["calls"] else ""
         self.sub_title = f"模式 {self.mode}（{desc}）{sid}{busy}{allow}{tok}"
         self._render_statusbar()           # 模式/用量变化时同步刷新状态栏
+
+    # ---------------------------------------------------------------- 项目设置
+    def _settings_file(self) -> Path:
+        return Path(self.repo_root) / ".vortocode" / "settings.json"
+
+    def _load_settings(self) -> dict:
+        try:
+            p = self._settings_file()
+            if not p.is_file():
+                return {}
+            data = json.loads(p.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except Exception:  # noqa: BLE001
+            return {}
+
+    def _save_settings(self, data: dict) -> None:
+        try:
+            p = self._settings_file()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _load_setting(self, key: str, default=None):
+        return self._load_settings().get(key, default)
+
+    def _save_setting(self, key: str, value) -> None:
+        data = self._load_settings()
+        data[key] = value
+        self._save_settings(data)
 
     # ---------------------------------------------------------------- 状态栏
     def _fmt_tokens_short(self, n: int) -> str:
@@ -717,7 +933,11 @@ class VortoCodeTUI(App):
             u = self.agent.context_usage(self.mode)
             used = self._fmt_tokens_short(int(u["used_tokens"]))
             limit = self._fmt_tokens_short(int(u["max_context_tokens"]))
-            return f"ctx {used}/{limit} {int(u['pct'])}%"
+            label = f"ctx {used}/{limit} {int(u['pct'])}%"
+            policy = str(u.get("policy") or "").strip()
+            if policy:
+                label += f" · policy {policy}"
+            return label
         except Exception:  # noqa: BLE001
             return ""
 
@@ -842,16 +1062,57 @@ class VortoCodeTUI(App):
         self._chrome(f"[green]已切换模型 → {arg}[/green]"
                      "[dim]（本会话后续对话生效；未授权的模型会在下次调用时报 403）[/dim]")
 
-    # 集中管理忙碌态：动作 worker 一进入运行就置忙、结束(成功/失败/取消)即解除
+    # 集中管理忙碌态：长任务 worker 一进入运行就置忙、结束(成功/失败/取消)即解除
     def on_worker_state_changed(self, event) -> None:
-        if getattr(event.worker, "group", None) != "action":
+        worker = event.worker
+        group = getattr(worker, "group", None)
+        if group not in BUSY_WORKER_GROUPS:
             return
-        running = event.state == WorkerState.RUNNING
-        self._busy = running
-        self._start_status() if running else self._stop_status()
+        key = self._worker_key(worker)
+        was_busy = self._busy
+        if event.state == WorkerState.RUNNING:
+            self._busy_workers[key] = {
+                "group": str(group),
+                "label": self._worker_label(worker),
+                "started": time.monotonic(),
+            }
+        elif event.state in (WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED):
+            self._busy_workers.pop(key, None)
+        self._busy = bool(self._busy_workers)
+        if self._busy and not was_busy:
+            self._start_status()
+        elif not self._busy and was_busy:
+            self._stop_status()
         self._sync_subtitle()
         if event.state in (WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED):
             self._drain_queued()                # 回合真正收尾（终态）才放下一条排队消息
+
+    def _worker_key(self, worker) -> str:
+        return str(getattr(worker, "id", "") or id(worker))
+
+    def _worker_label(self, worker) -> str:
+        name = str(getattr(worker, "name", "") or getattr(worker, "description", "") or "")
+        if name and name != "Worker":
+            return name.removeprefix("VortoCodeTUI.")
+        group = str(getattr(worker, "group", "") or "worker")
+        return group
+
+    def _current_worker_label(self) -> str:
+        if not self._busy_workers:
+            return ""
+        meta = min(self._busy_workers.values(), key=lambda x: float(x.get("started") or 0))
+        return str(meta.get("label") or meta.get("group") or "worker")
+
+    def _active_worker_lines(self) -> list[str]:
+        if not self._busy_workers:
+            return []
+        now = time.monotonic()
+        lines = ["活跃 worker:"]
+        for meta in sorted(self._busy_workers.values(), key=lambda x: float(x.get("started") or 0)):
+            elapsed = int(now - float(meta.get("started") or now))
+            warn = " ⚠ 可能卡住" if elapsed >= WORKER_STALL_SECONDS else ""
+            lines.append(f"  - {meta.get('label') or meta.get('group')}: {elapsed}s{warn}")
+        return lines
 
     def _drain_queued(self) -> None:
         """发送一条排队中的消息（一次一条：它的回合结束后本方法会再次被触发，天然接力）。"""
@@ -864,7 +1125,8 @@ class VortoCodeTUI(App):
     # ---------------------------------------------------------------- 工作指示器
     def _start_status(self) -> None:
         """开始转圈（braille 旋转 + 计时 + esc 中断），仿 Claude Code 的"思考中"。"""
-        self._busy_since = time.monotonic()
+        starts = [float(m.get("started") or 0) for m in self._busy_workers.values()]
+        self._busy_since = min(starts) if starts else time.monotonic()
         self.query_one("#status", Static).display = True
         if self._spin_timer is None:
             self._spin_timer = self.set_interval(0.1, self._tick_status)
@@ -888,9 +1150,14 @@ class VortoCodeTUI(App):
         t = Text()
         t.append(f"{frame} ", style=warn)
         t.append(f"{verb} ", style=warn)
+        label = self._current_worker_label()
+        if label:
+            t.append(f"· {label} ", style="dim")
         if self._turn_tools:                       # 工具数随回合增长 → 一眼看出在推进
             t.append(f"· {self._turn_tools} 工具 ", style="dim")
         t.append(f"{elapsed}s", style="dim")
+        if elapsed >= WORKER_STALL_SECONDS:
+            t.append(" · 可能卡住，/audit 查看", style=warn)
         t.append("  ·  esc 中断", style="dim")
         try:
             self.query_one("#status", Static).update(t)
@@ -898,6 +1165,9 @@ class VortoCodeTUI(App):
             pass
 
     def action_cancel(self) -> None:
+        if self._inline_confirm_active():
+            self._finish_inline_confirm("no")
+            return
         if self._palette_visible():           # 先收补全面板；再按一次 Esc 才是取消任务
             self._hide_palette()
             return
@@ -912,16 +1182,30 @@ class VortoCodeTUI(App):
     def action_toggle_mode(self) -> None:
         # Tab 上下文化：补全面板可见 → 接受选中候选（输入已是该值则先跳下一个，shell 式轮换）；
         # 否则切 plan/build 模式。
+        if self._inline_confirm_active():
+            self._move_inline_confirm(1)
+            return
         if self._palette_visible():
             v = self.query_one("#prompt", PromptEditor).value
             if v == self._pal_accepts[self._pal_idx] and len(self._pal_accepts) > 1:
                 self._palette_move(1)
             self._palette_accept()
             return
-        self.mode = "build" if self.mode == "plan" else "plan"
+        self._set_mode("build" if self.mode == "plan" else "plan")
+
+    def _set_mode(self, mode: str) -> bool:
+        mode = str(mode or "").strip().lower()
+        if mode not in ("plan", "build"):
+            return False
+        if self.mode == mode:
+            self._sync_subtitle()
+            self._chrome(f"→ 已在 [b]{self.mode}[/b] 模式")
+            return True
+        self.mode = mode
         self._sync_subtitle()
         self._chrome(f"→ 切到 [b]{self.mode}[/b] 模式")
         self._record_mode_change()
+        return True
 
     def _mode_context(self) -> str:
         desc = "可写分支，写文件/跑命令/开发流水线可用" if self.mode == "build" else "只读/提案，写操作需先切 build"
@@ -944,6 +1228,96 @@ class VortoCodeTUI(App):
         inp.value = val
         inp.cursor_position = len(val)
 
+    _CONFIRM_CHOICES = [("yes", "确认"), ("always", "本会话始终允许"), ("no", "取消")]
+
+    def _inline_confirm_active(self) -> bool:
+        fut = self._confirm_future
+        return fut is not None and not fut.done()
+
+    def _begin_inline_confirm(self, message: str, scope: str = "writes", callback=None):
+        """在输入框上方显示 Claude Code 式权限选择项，不使用 modal 弹窗。"""
+        if self._inline_confirm_active():
+            return self._confirm_future
+        loop = asyncio.get_running_loop()
+        fut = loop.create_future()
+        self._confirm_future = fut
+        self._confirm_callback = callback
+        self._confirm_scope = scope
+        self._confirm_message = message
+        self._confirm_idx = 0
+        self._pal_items, self._pal_accepts, self._pal_kind = [], [], ""
+        self._render_inline_confirm()
+        try:
+            self.query_one("#prompt", PromptEditor).focus()
+        except Exception:  # noqa: BLE001
+            pass
+        return fut
+
+    async def _inline_confirm(self, message: str, scope: str = "writes") -> bool:
+        return bool(await self._begin_inline_confirm(message, scope=scope))
+
+    def _render_inline_confirm(self) -> None:
+        try:
+            panel = self.query_one("#palette", Static)
+        except Exception:  # noqa: BLE001
+            return
+        msg = " ".join(str(self._confirm_message).split())
+        if len(msg) > 220:
+            msg = msg[:217] + "..."
+        t = Text()
+        t.append("权限确认  ", style="bold")
+        t.append(msg + "\n", style="dim")
+        for i, (_action, label) in enumerate(self._CONFIRM_CHOICES):
+            if i:
+                t.append("  ")
+            if i == self._confirm_idx:
+                t.append(f"› {label} ", style="reverse bold")
+            else:
+                t.append(f"  {label} ", style="dim")
+        t.append("   ←/→/Tab 选择 · Enter 执行 · y/a/n/Esc", style="dim")
+        panel.update(t)
+        panel.display = True
+
+    def _move_inline_confirm(self, delta: int) -> None:
+        self._confirm_idx = (self._confirm_idx + delta) % len(self._CONFIRM_CHOICES)
+        self._render_inline_confirm()
+
+    def _handle_inline_confirm_key(self, key: str) -> None:
+        if key in ("left", "up"):
+            self._move_inline_confirm(-1)
+        elif key in ("right", "down", "tab"):
+            self._move_inline_confirm(1)
+        elif key == "enter":
+            self._finish_inline_confirm(self._CONFIRM_CHOICES[self._confirm_idx][0])
+        elif key == "y":
+            self._finish_inline_confirm("yes")
+        elif key == "a":
+            self._finish_inline_confirm("always")
+        elif key in ("n", "escape"):
+            self._finish_inline_confirm("no")
+
+    def _finish_inline_confirm(self, action: str) -> None:
+        fut = self._confirm_future
+        callback = self._confirm_callback
+        result = action in ("yes", "always")
+        if action == "always":
+            try:
+                setattr(self, f"_allow_{self._confirm_scope}_session", True)
+            except Exception:  # noqa: BLE001
+                pass
+        self._confirm_future = None
+        self._confirm_callback = None
+        self._confirm_message = ""
+        self._confirm_idx = 0
+        try:
+            self.query_one("#palette", Static).display = False
+        except Exception:  # noqa: BLE001
+            pass
+        if fut is not None and not fut.done():
+            fut.set_result(result)
+        if callback is not None:
+            callback(result)
+
     async def _confirm_write(self, message: str) -> bool:
         """写操作确认门：本会话已选"始终允许"则直接放行，否则弹 ConfirmScreen。
 
@@ -951,7 +1325,7 @@ class VortoCodeTUI(App):
         """
         if self._allow_writes_session:
             return True
-        return await self.push_screen_wait(ConfirmScreen(message))
+        return await self._inline_confirm(message, scope="writes")
 
     def _taint_msg(self, message: str) -> str:
         """污点态（本回合摄入过网页/搜索/MCP 外部内容）下给对外操作确认加警示前缀（D0 防提示注入）。"""
@@ -963,7 +1337,7 @@ class VortoCodeTUI(App):
 
     async def _confirm_outward(self, message: str) -> bool:
         """外向操作（push / 开 PR 等推到远端的动作）确认：**始终弹窗**，不吃"始终允许写"的豁免。"""
-        return await self.push_screen_wait(ConfirmScreen(self._taint_msg(message)))
+        return await self._inline_confirm(self._taint_msg(message), scope="writes")
 
     async def _confirm_command(self, message: str) -> bool:
         """任意 shell 命令确认门：**独立作用域**，不吃"始终允许写文件"的豁免。
@@ -975,7 +1349,7 @@ class VortoCodeTUI(App):
         from src.agents.taint import is_tainted
         if self._allow_commands_session and not is_tainted():
             return True
-        return await self.push_screen_wait(ConfirmScreen(self._taint_msg(message), scope="commands"))
+        return await self._inline_confirm(self._taint_msg(message), scope="commands")
 
     def action_history_prev(self) -> None:
         """↑：补全面板可见时选上一个候选；否则调出上一条历史输入（编辑过则当作新输入）。"""
@@ -1026,6 +1400,20 @@ class VortoCodeTUI(App):
         except Exception:  # noqa: BLE001
             pass
 
+    def action_scroll_log_line_up(self) -> None:
+        """鼠标滚轮在 mouse=False 终端里常退化为 ↑：映射为结果区细滚动。"""
+        try:
+            self.query_one("#log", RichLog).scroll_up(animate=False, immediate=True)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def action_scroll_log_line_down(self) -> None:
+        """鼠标滚轮在 mouse=False 终端里常退化为 ↓：映射为结果区细滚动。"""
+        try:
+            self.query_one("#log", RichLog).scroll_down(animate=False, immediate=True)
+        except Exception:  # noqa: BLE001
+            pass
+
     def _history_file(self) -> Path:
         return Path(self.repo_root) / ".vortocode" / "tui_history"
 
@@ -1056,11 +1444,16 @@ class VortoCodeTUI(App):
         text = _sanitize_input(event.value).strip()   # 剔除漏进的终端转义序列，防脏字符进 agent/API
         if self._palette_visible():             # 回车语义：命令=执行选中项；文件=接受进输入框继续写
             sel = self._pal_accepts[self._pal_idx]
-            if self._pal_kind == "文件":
+            exact_cmd = self._exact_palette_command(text)
+            if exact_cmd:
+                text = exact_cmd                # 完整命令优先按用户输入执行，不被高亮候选抢走
+            elif self._pal_kind == "文件":
                 if sel != event.value:
                     self._set_input(sel)        # 只接受文件路径，不提交（通常还要接着写需求）
                     return
-            elif sel in ARG_SLASH_CMDS:         # 必带参数的命令：补成 "/cmd " 等用户填参数
+            elif sel in ARG_SLASH_CMDS and text != sel:
+                # 从候选面板选择必带参数命令时补成 "/cmd " 让用户填参数；用户已完整输入
+                # "/cmd" 并回车时仍执行命令本身，让命令给出用法提示。
                 self._set_input(sel + " ")
                 return
             else:
@@ -1130,11 +1523,11 @@ class VortoCodeTUI(App):
                     self._chrome("[yellow]继续保持 plan 模式：只做分析/方案，不执行写入。[/yellow]")
                 self._continue_text_route(text)
 
-            self.push_screen(ConfirmScreen(
+            self._begin_inline_confirm(
                 "当前是 plan（只读/提案）模式，但这条需求看起来需要修改项目或执行开发动作。\n"
                 "切到 build 模式并用这条需求继续？\n"
-                "拒绝后仍会按 plan 模式只给方案/建议。"
-            ), _done)
+                "拒绝后仍会按 plan 模式只给方案/建议。",
+                callback=_done)
             return True
         if ok and self.mode != "build":
             self.mode = "build"
@@ -1157,6 +1550,8 @@ class VortoCodeTUI(App):
         if (self._history_idx is not None        # 编辑了调出的历史 → 当作新输入（恢复补全等常规行为）
                 and clean != self._history[self._history_idx]):
             self._history_idx = None
+        if self._inline_confirm_active():
+            return
         self._update_palette(clean)
 
     def _update_palette(self, value: str) -> None:
@@ -1169,13 +1564,19 @@ class VortoCodeTUI(App):
             vl = s.lower()
             info = dict(COMMAND_INFO)
             for n, uc in self._user_commands().items():
-                info.setdefault("/" + n, uc.description)
+                info.setdefault("/" + n, self._user_command_label(uc))
             names = SLASH_COMMANDS + ["/" + n for n in self._user_commands()]
             matches = ([c for c in names if c.startswith(vl)]  # 前缀命中优先
                        + [c for c in names                     # 子串兜底（/dit → /audit）
                           if vl[1:] and vl[1:] in c[1:] and not c.startswith(vl)])
             if matches:
-                self._show_palette([(c, info.get(c, "")) for c in matches], list(matches), "命令")
+                exact = next((c for c in matches if c.lower() == vl), None)
+                self._show_palette(
+                    [(c, info.get(c, "")) for c in matches],
+                    list(matches),
+                    "命令",
+                    preferred=exact,
+                )
                 return
         at = value.rfind("@")                                  # @文件（非 @artifact: 这种带冒号的）
         if at != -1:
@@ -1191,12 +1592,15 @@ class VortoCodeTUI(App):
                     return
         self._hide_palette()
 
-    def _show_palette(self, items: list, accepts: list, kind: str) -> None:
+    def _show_palette(self, items: list, accepts: list, kind: str, preferred: str | None = None) -> None:
         """更新候选并渲染；继续输入筛选时尽量保住已选中的候选（还在列表里就跟着走）。"""
         prev = (self._pal_accepts[self._pal_idx]
                 if self._pal_idx < len(self._pal_accepts) else None)
         self._pal_items, self._pal_accepts, self._pal_kind = items, accepts, kind
-        self._pal_idx = accepts.index(prev) if prev in accepts else 0
+        if preferred in accepts:
+            self._pal_idx = accepts.index(preferred)
+        else:
+            self._pal_idx = accepts.index(prev) if prev in accepts else 0
         self._render_palette()
 
     def _hide_palette(self) -> None:
@@ -1208,6 +1612,15 @@ class VortoCodeTUI(App):
 
     def _palette_visible(self) -> bool:
         return bool(self._pal_items)
+
+    def _exact_palette_command(self, text: str) -> str | None:
+        if self._pal_kind != "命令" or not text.startswith("/"):
+            return None
+        tl = text.lower()
+        for accept in self._pal_accepts:
+            if str(accept).lower() == tl:
+                return str(accept)
+        return None
 
     def _palette_move(self, step: int) -> None:
         """↑↓ 在候选间移动（回绕）。"""
@@ -1264,6 +1677,8 @@ class VortoCodeTUI(App):
             self.exit()
         elif cmd == "mode":
             self.action_toggle_mode()
+        elif cmd in ("plan", "build"):
+            self._set_mode(cmd)
         elif cmd == "model":
             self._cmd_model(arg)
         elif cmd == "think":
@@ -1289,7 +1704,7 @@ class VortoCodeTUI(App):
         elif cmd == "apply":
             self._do_apply()
         elif cmd == "sessions":
-            self._cmd_sessions()
+            self._cmd_sessions(arg)
         elif cmd == "resume":
             if arg:
                 self._cmd_resume(arg)
@@ -1303,6 +1718,16 @@ class VortoCodeTUI(App):
             self._cmd_theme(arg)
         elif cmd == "usage":
             self._cmd_usage(arg)
+        elif cmd == "context":
+            self._cmd_context(arg)
+        elif cmd == "compact":
+            self._cmd_compact(arg)
+        elif cmd in ("permissions", "permission"):
+            self._cmd_permissions(arg)
+        elif cmd == "memory":
+            self._cmd_memory(arg)
+        elif cmd == "tasks":
+            self._cmd_tasks(arg)
         elif cmd == "tools":
             self._cmd_tools()
         elif cmd == "audit":
@@ -1310,7 +1735,27 @@ class VortoCodeTUI(App):
         elif cmd == "artifacts":
             self._cmd_artifacts()
         elif cmd == "diff":
-            self._cmd_diff()
+            self._cmd_diff(arg)
+        elif cmd == "changes":
+            self._cmd_changes(arg)
+        elif cmd == "review":
+            self._cmd_review(arg)
+        elif cmd == "verify":
+            self._cmd_verify(arg)
+        elif cmd == "preflight":
+            self._cmd_preflight(arg)
+        elif cmd == "git":
+            self._cmd_git(arg)
+        elif cmd == "commit":
+            self._cmd_commit(arg)
+        elif cmd == "pr":
+            self._cmd_pr(arg)
+        elif cmd == "pr-check":
+            self._cmd_pr_check(arg)
+        elif cmd == "pr-fix":
+            self._cmd_pr_fix(arg)
+        elif cmd == "fix-ci":
+            self._cmd_pr_doctor(arg, alias="/fix-ci")
         elif cmd == "mcp":
             self._cmd_mcp(arg)
         elif cmd == "agents":
@@ -1330,6 +1775,17 @@ class VortoCodeTUI(App):
             self._run_user_command(cmd, arg)        # 用户自定义命令：展开模板 → 交给主 agent
         else:
             self._chrome(f"[red]未知命令 /{cmd}[/red] · /help 看命令")
+
+    def _user_command_label(self, uc) -> str:
+        """补全/列表里展示自定义命令元数据。"""
+        parts = [uc.description]
+        if getattr(uc, "argument_hint", ""):
+            parts.append(f"args: {uc.argument_hint}")
+        if getattr(uc, "mode", ""):
+            parts.append(f"mode: {uc.mode}")
+        if getattr(uc, "model", ""):
+            parts.append(f"model: {uc.model}")
+        return " · ".join(p for p in parts if p)
 
     # ---------------------------------------------------------------- 技能（SKILL.md）
     def _cmd_skills(self, arg: str) -> None:
@@ -1357,14 +1813,420 @@ class VortoCodeTUI(App):
             lines.append(f"  {t.name} [{gate}] — {t.description}")
         self._emit("\n".join(lines))
 
+    def _append_permission_deny(self, tool: str, pattern: str = "") -> Path:
+        cfg = Path(self.repo_root) / ".vortocode" / "permissions.yaml"
+        try:
+            import yaml
+            data = yaml.safe_load(cfg.read_text(encoding="utf-8")) if cfg.is_file() else {}
+        except Exception:  # noqa: BLE001
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        deny = data.get("deny")
+        if not isinstance(deny, list):
+            deny = []
+        deny.append({tool: pattern} if pattern else tool)
+        data["deny"] = deny
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            import yaml
+            cfg.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            lines = ["deny:"]
+            for item in deny:
+                if isinstance(item, dict):
+                    for k, v in item.items():
+                        lines.append(f'  - {k}: "{v}"')
+                        break
+                else:
+                    lines.append(f"  - {item}")
+            cfg.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        self.agent = None          # 新规则立即影响下一次主 agent 构建
+        return cfg
+
+    def _permission_effective_text(self) -> str:
+        from src.agents.permissions import load_permissions
+        agent = self.agent or self._build_main_agent()
+        perm = load_permissions(self.repo_root)
+        lines = [
+            "[b]有效工具权限[/b]",
+            f"当前模式: {self.mode}",
+            f"本会话始终允许: 写={'yes' if self._allow_writes_session else 'no'} · "
+            f"命令={'yes' if self._allow_commands_session else 'no'}",
+        ]
+        for t in agent._tool_list:
+            deny = perm.denied(t.name, {})
+            if deny:
+                status = "deny"
+            elif self.mode == "plan" and not t.read_only:
+                status = "needs build"
+            elif t.read_only:
+                status = "allowed"
+            elif t.name == "run_command" and self._allow_commands_session:
+                status = "allowed this session"
+            elif t.name != "run_command" and self._allow_writes_session:
+                status = "allowed this session"
+            else:
+                status = "confirm required"
+            gate = "只读" if t.read_only else "写/重型"
+            lines.append(f"  {t.name} [{gate}] -> {status}")
+        if perm.rules:
+            lines.append("")
+            lines.append("项目 deny 规则:")
+            for tool, glob in perm.rules:
+                lines.append(f"  deny {tool}: {glob if glob is not None else '*'}")
+        return "\n".join(lines)
+
+    def _permission_explain_text(self, tool_name: str, value: str = "") -> str:
+        from src.agents.permissions import load_permissions, primary_arg_keys
+        agent = self.agent or self._build_main_agent()
+        tool = agent.tools.get(tool_name)
+        if tool is None:
+            names = ", ".join(sorted(agent.tools)[:20])
+            return f"未知工具 {tool_name}。可用工具示例: {names}"
+        perm = load_permissions(self.repo_root)
+        keys = primary_arg_keys(tool_name)
+        args = {keys[0]: value} if (value and keys) else {}
+        deny = perm.denied(tool_name, args)
+        matching = perm.rules_for(tool_name)
+        lines = [
+            f"[b]权限解释: {tool_name}[/b]",
+            f"工具类型: {'只读' if tool.read_only else '写/重型'}",
+            f"当前模式: {self.mode}",
+        ]
+        if keys:
+            lines.append(f"主参数键: {', '.join(keys)}" + (f"；本次值: {value}" if value else ""))
+        if matching:
+            lines.append("匹配到项目规则:")
+            for _, glob in matching:
+                lines.append(f"  deny {tool_name}: {glob if glob is not None else '*'}")
+        else:
+            lines.append("项目规则: 无针对该工具的 deny")
+        if deny:
+            lines.append(f"结论: 硬拦截。原因: {deny}")
+        elif self.mode == "plan" and not tool.read_only:
+            lines.append("结论: 当前 plan 模式不可直接执行；需要切 build，且仍可能要求确认。")
+        elif tool.read_only:
+            lines.append("结论: 当前模式允许执行；仍会受项目 deny 规则硬拦。")
+        elif tool_name == "run_command" and self._allow_commands_session:
+            lines.append("结论: build 下本会话已允许命令；危险命令和 deny 规则仍会硬拦。")
+        elif tool_name != "run_command" and self._allow_writes_session:
+            lines.append("结论: build 下本会话已允许写/重型工具；deny 规则仍会硬拦。")
+        else:
+            lines.append("结论: build 下可请求执行，但需要人工确认。")
+        if matching and not value and any(glob is not None for _, glob in matching):
+            lines.append("提示: 该工具有参数 glob 规则；用 /permissions explain <tool> <value> 可判断具体值是否命中。")
+        return "\n".join(lines)
+
+    def _cmd_permissions(self, arg: str = "") -> None:
+        """/permissions：查看本会话权限状态与 deny 规则；plan/build/reset/deny 可管理权限。"""
+        raw = (arg or "").strip()
+        low = raw.lower()
+        if low in ("plan", "build"):
+            self._set_mode(low)
+        elif low in ("show --effective", "effective", "show effective"):
+            self._emit(self._permission_effective_text())
+            return
+        elif low.startswith("explain "):
+            parts = raw.split(maxsplit=2)
+            tool = parts[1].strip() if len(parts) > 1 else ""
+            value = parts[2].strip() if len(parts) > 2 else ""
+            if not tool:
+                self._emit("用法: /permissions explain <tool> [value]")
+                return
+            self._emit(self._permission_explain_text(tool, value))
+            return
+        elif low in ("reset", "reset-session", "session-reset"):
+            self._allow_writes_session = False
+            self._allow_commands_session = False
+            self._sync_subtitle()
+            self._chrome("[green]已清除本会话始终允许的写/命令权限[/green]")
+        elif low.startswith("deny"):
+            parts = raw.split(maxsplit=2)
+            if len(parts) < 2:
+                self._emit("用法: /permissions deny <tool> [glob]")
+                return
+            tool = parts[1].strip()
+            pattern = parts[2].strip().strip('"').strip("'") if len(parts) > 2 else ""
+            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", tool):
+                self._emit("权限规则工具名非法；用法: /permissions deny <tool> [glob]")
+                return
+            cfg = self._append_permission_deny(tool, pattern)
+            shown = f"{tool}: {pattern}" if pattern else tool
+            self._chrome(f"[green]已追加 deny 规则：{shown}（{cfg}）[/green]")
+        elif raw:
+            self._emit("用法: /permissions [show --effective|explain <tool> [value]|plan|build|reset|deny <tool> [glob]]")
+            return
+        from src.agents.permissions import load_permissions
+        agent = self.agent or self._build_main_agent()
+        read_tools = [t.name for t in agent._tool_list if t.read_only]
+        write_tools = [t.name for t in agent._tool_list if not t.read_only]
+        cfg = Path(self.repo_root) / ".vortocode" / "permissions.yaml"
+        perm = load_permissions(self.repo_root)
+        lines = [
+            "[b]工具权限[/b]",
+            f"模式: {self.mode}（plan 只允许只读工具；build 可请求写/重型工具）",
+            f"本会话始终允许: 写={'yes' if self._allow_writes_session else 'no'} · "
+            f"命令={'yes' if self._allow_commands_session else 'no'}",
+            f"工具: 只读 {len(read_tools)} 个 · 写/重型 {len(write_tools)} 个",
+            "",
+            f"项目 deny 规则: {cfg}",
+        ]
+        if perm.rules:
+            for tool, glob in perm.rules:
+                pat = glob if glob is not None else "*"
+                lines.append(f"  deny {tool}: {pat}")
+        else:
+            lines.append("  （无 deny 规则；危险命令仍会走内置拦截和人工确认）")
+        lines += [
+            "",
+            "配置示例:",
+            "```yaml",
+            "deny:",
+            "  - web_fetch",
+            '  - "run_command: rm *"',
+            '  - edit_file: "*/secrets/*"',
+            "```",
+            "",
+            "提示: 选择“本会话始终允许”只影响当前 TUI 会话；项目 deny 规则始终优先硬拦。",
+            "排查: /permissions show --effective · /permissions explain <tool> [value]",
+        ]
+        self._emit("\n".join(lines))
+
+    def _cmd_memory(self, arg: str = "") -> None:
+        """/memory：查看/管理项目指令与长期记忆。"""
+        raw = (arg or "").strip()
+        low = raw.lower()
+        if low.startswith("add "):
+            content = raw[4:].strip()
+            if not content:
+                self._emit("用法: /memory add <要跨会话记住的事实/偏好/约定>")
+                return
+            self.sessions.store.add_memory("__longterm__", "fact", content, importance=0.6)
+            self._chrome(f"[green]已加入长期记忆：{content[:80]}[/green]")
+            self._emit(self._memory_status_text())
+            return
+        if low in ("list", "ls"):
+            self._emit(self._memory_list_text())
+            return
+        if low.startswith(("delete ", "del ", "rm ")):
+            parts = raw.split(maxsplit=1)
+            memory_id = parts[1].strip() if len(parts) > 1 else ""
+            if not memory_id:
+                self._emit("用法: /memory delete <id>")
+                return
+            ok = self.sessions.store.delete_memory("__longterm__", memory_id)
+            if ok:
+                self._chrome(f"[green]已删除长期记忆 {memory_id}[/green]")
+            else:
+                self._emit(f"未找到长期记忆 id={memory_id}")
+            self._emit(self._memory_list_text())
+            return
+        if low in ("auto on", "auto true", "auto 1"):
+            self._auto_memory = True
+            self._save_setting("auto_memory", True)
+            self._chrome("[green]自动记忆候选提示已开启[/green]")
+            self._emit(self._memory_status_text())
+            return
+        if low in ("auto off", "auto false", "auto 0"):
+            self._auto_memory = False
+            self._save_setting("auto_memory", False)
+            self._chrome("[dim]自动记忆候选提示已关闭[/dim]")
+            self._emit(self._memory_status_text())
+            return
+        if low in ("init", "init project"):
+            self._init_memory_file(local=False)
+            self._emit(self._memory_status_text())
+            return
+        if low in ("init local", "local"):
+            self._init_memory_file(local=True)
+            self._emit(self._memory_status_text())
+            return
+        if raw:
+            self._emit("用法: /memory [list|add <文本>|delete <id>|auto on|auto off|init|init local]")
+            return
+        self._emit(self._memory_status_text())
+
+    def _init_memory_file(self, *, local: bool) -> Path:
+        path = Path(self.repo_root) / (".vortocode/AGENTS.md" if local else "AGENTS.md")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            scope = "本地私有" if local else "项目共享"
+            path.write_text(
+                f"# {scope} Agent 指令\n\n"
+                "## 项目约定\n"
+                "- 使用中文沟通，代码注释遵循现有风格。\n"
+                "- 开发前先确认当前模式：plan 只读分析，build 才写入。\n"
+                "- 修改后说明验证命令和结果。\n\n"
+                "## Review guidelines\n"
+                "- 优先指出真实会影响运行、构建或维护的问题。\n"
+                "- 结论需要绑定文件、行号或可复现证据。\n",
+                encoding="utf-8")
+        self.agent = None          # 下一轮重建，重新加载项目指令
+        self._chrome(f"[green]项目记忆文件已就绪：{path}[/green]")
+        return path
+
+    def _memory_status_text(self) -> str:
+        from src.agents.project import find_instructions_file
+        instr = find_instructions_file(self.repo_root)
+        rows = self.sessions.store.get_memories("__longterm__")
+        lines = ["[b]项目记忆[/b]"]
+        if instr:
+            try:
+                preview = instr.read_text(encoding="utf-8", errors="ignore").strip().splitlines()[:5]
+            except Exception:  # noqa: BLE001
+                preview = []
+            lines.append(f"项目指令: {instr}")
+            if preview:
+                lines.append("  " + "\n  ".join(preview))
+        else:
+            lines.append("项目指令: （未找到 AGENTS.md / CLAUDE.md / VORTO.md / .vortocode/AGENTS.md）")
+            lines.append("  用 /memory init 创建共享 AGENTS.md；用 /memory init local 创建本地私有指令。")
+        lines.append("")
+        lines.append(f"长期记忆: {len(rows)} 条 · 自动候选提示: {'on' if self._auto_memory else 'off'}")
+        for r in rows[:8]:
+            lines.append(f"  - {r.get('id')} · {str(r.get('content', ''))[:120]}")
+        if len(rows) > 8:
+            lines.append(f"  ... 还有 {len(rows) - 8} 条")
+        lines.append("")
+        lines.append("用法: /memory list · /memory add <文本> · /memory delete <id> · /memory auto on/off · /memory init")
+        return "\n".join(lines)
+
+    def _memory_list_text(self) -> str:
+        rows = self.sessions.store.get_memories("__longterm__")
+        if not rows:
+            return "长期记忆为空。用 /memory add <文本> 添加。"
+        lines = [f"[b]长期记忆[/b]（{len(rows)} 条）"]
+        for r in rows:
+            created = str(r.get("created_at") or "")[:19]
+            content = str(r.get("content") or "")
+            lines.append(f"  {r.get('id')} · {r.get('type', 'fact')} · {created} · {content}")
+        lines.append("\n用 /memory delete <id> 删除。")
+        return "\n".join(lines)
+
+    def _auto_memory_candidate(self, text: str) -> str:
+        """从用户明确表达的长期偏好/项目约定里提取候选；保守规则，不调用 LLM。"""
+        raw = self._summary_text(text, 220).strip()
+        if not raw or raw.startswith("/"):
+            return ""
+        explicit = ("记住", "帮我记", "长期记忆")
+        preference = ("以后", "后续", "默认", "习惯", "偏好", "项目约定", "统一", "不要再")
+        if not any(w in raw for w in explicit + preference):
+            return ""
+        if not any(w in raw for w in explicit) and any(w in raw for w in ("吗", "？", "?", "为什么", "怎么")):
+            return ""
+        content = raw
+        for marker in ("记住：", "记住:", "帮我记住：", "帮我记住:", "长期记忆：", "长期记忆:"):
+            if marker in content:
+                content = content.split(marker, 1)[1].strip()
+                break
+        content = content.strip(" ，,。.")
+        if len(content) < 6:
+            return ""
+        if any(w in content for w in ("pytest", "ruff", "pnpm", "npm", "yarn", "uv", "cargo", "swift test")):
+            prefix = "项目偏好"
+        elif any(w in content for w in ("项目", "约定", "默认", "统一")):
+            prefix = "项目约定"
+        else:
+            prefix = "用户偏好"
+        return f"{prefix}：{content[:180]}"
+
+    def _memory_exists(self, content: str) -> bool:
+        try:
+            rows = self.sessions.store.get_memories("__longterm__")
+        except Exception:  # noqa: BLE001
+            return False
+        normalized = " ".join(content.split())
+        return any(" ".join(str(r.get("content") or "").split()) == normalized for r in rows)
+
+    def _maybe_offer_auto_memory(self) -> None:
+        if not self._auto_memory or self._inline_confirm_active():
+            return
+        candidate = self._auto_memory_candidate(self._session_last_user)
+        if not candidate or candidate == self._last_memory_candidate or self._memory_exists(candidate):
+            return
+        self._last_memory_candidate = candidate
+
+        def _done(ok: bool | None) -> None:
+            if not ok:
+                self._chrome("[dim]未保存自动记忆候选[/dim]")
+                return
+            try:
+                mid = self.sessions.store.add_memory(
+                    "__longterm__", "fact", candidate, importance=0.65,
+                    metadata={"source": "auto_candidate", "session_id": self.session_id})
+            except Exception as e:  # noqa: BLE001
+                self._emit(f"保存自动记忆失败: {e}")
+                return
+            self._chrome(f"[green]已保存长期记忆 {mid}[/green]")
+
+        self._begin_inline_confirm(
+            "检测到可能值得跨会话记住的项目偏好/约定：\n"
+            f"{candidate}\n"
+            "保存到长期记忆？",
+            scope="memory",
+            callback=_done,
+        )
+
+    def _cmd_tasks(self, arg: str = "") -> None:
+        """/tasks：列出 dev_auto 持久化计划；show 看详情；resume 续跑。"""
+        raw = (arg or "").strip()
+        from src.agents.dev_plan import format_plan_detail, format_plan_list, list_plans, load_plan
+        if not raw or raw.lower() in {"list", "ls"}:
+            self._emit(format_plan_list(list_plans(self.repo_root)))
+            return
+        parts = raw.split(maxsplit=1)
+        action = parts[0].lower()
+        if action in {"show", "detail", "details", "resume", "continue"}:
+            if len(parts) < 2 or not parts[1].strip():
+                self._emit("用法: /tasks show <plan_id> 或 /tasks resume <plan_id>")
+                return
+            pid = parts[1].strip()
+        else:
+            pid = raw
+        plan = load_plan(self.repo_root, pid)
+        if plan is None:
+            self._emit(f"找不到 dev 计划 {pid}。用 /tasks 查看最近计划。")
+            return
+        if action in {"resume", "continue"}:
+            prompt = (
+                f"续跑 dev 计划 {plan.plan_id}？\n"
+                f"任务: {plan.task[:120]}\n"
+                f"分支: {plan.branch} · 状态: {plan.status}\n"
+                "这会切到 build，并让主 agent 调用 dev_resume。"
+            )
+
+            def _done(ok: bool | None) -> None:
+                if not ok:
+                    self._emit("已取消续跑计划。")
+                    return
+                if self.mode != "build":
+                    self.mode = "build"
+                    self._sync_subtitle()
+                    self._chrome("[green]→ 已切到 build 模式[/green]")
+                    self._record_mode_change()
+                self._continue_text_route(
+                    f"请续跑 dev 计划 plan_id={plan.plan_id}，调用 dev_resume 工具继续未完成任务。")
+
+            self._begin_inline_confirm(prompt, scope="writes", callback=_done)
+            return
+        self._emit(format_plan_detail(plan))
+
     def _cmd_audit(self, arg: str) -> None:
         """/audit 看最近的工具调用审计（.vortocode/audit.log）。"""
         p = Path(self.repo_root) / ".vortocode" / "audit.log"
+        active = self._active_worker_lines()
         if not p.is_file():
-            self._emit("(暂无审计记录；主 agent 调用工具后才有)")
+            if active:
+                self._emit("\n".join(active) + "\n\n(暂无审计记录；主 agent 调用工具后才有)")
+            else:
+                self._emit("(暂无审计记录；主 agent 调用工具后才有)")
             return
         lines = p.read_text(encoding="utf-8").splitlines()
-        self._emit(f"工具调用审计（共 {len(lines)} 条，显示最近 15）:\n" + "\n".join(lines[-15:]))
+        text = f"工具调用审计（共 {len(lines)} 条，显示最近 15）:\n" + "\n".join(lines[-15:])
+        if active:
+            text = "\n".join(active) + "\n\n" + text
+        self._emit(text)
 
     def _cmd_artifacts(self) -> None:
         """/artifacts 列出已发布的制品（标题/版本/类型/链接）。需起 Web 服务器才能打开。"""
@@ -1381,21 +2243,761 @@ class VortoCodeTUI(App):
         lines.append("提示：对话里 @artifact:<id> 可把某制品当前内容带给主 agent 迭代。")
         self._emit("\n".join(lines))
 
-    def _cmd_diff(self) -> None:
-        """/diff：把工作区改动（git diff）着色渲染出来，方便 review 主 agent 改了什么。"""
+    def _cmd_diff(self, arg: str = "") -> None:
+        """/diff：把工作区改动着色渲染出来；支持 stat/hunks/cached/路径过滤。"""
+        import shlex
         import subprocess
         try:
-            r = subprocess.run(["git", "diff"], cwd=self.repo_root,
+            tokens = shlex.split(arg or "")
+        except ValueError as e:
+            self._emit(f"用法: /diff [stat|hunks|cached|staged] [路径...]（参数解析失败: {e}）")
+            return
+        cached = False
+        stat = False
+        hunks = False
+        paths: list[str] = []
+        for tok in tokens:
+            low = tok.lower()
+            if low in {"cached", "staged", "--cached", "--staged"}:
+                cached = True
+            elif low in {"stat", "--stat"}:
+                stat = True
+            elif low in {"hunk", "hunks", "--hunks"}:
+                hunks = True
+            elif tok.startswith("-"):
+                self._emit("用法: /diff [stat|hunks|cached|staged] [路径...]（不透传其它 git 参数）")
+                return
+            else:
+                paths.append(tok)
+        if stat and hunks:
+            self._emit("用法: /diff stat 或 /diff hunks，二者不要混用")
+            return
+        if hunks:
+            from src.agents.git_workflow import diff_hunks_for_review, format_diff_hunks
+            self._emit(format_diff_hunks(diff_hunks_for_review(self.repo_root, cached=cached, paths=paths)))
+            return
+        cmd = ["git", "diff"]
+        if cached:
+            cmd.append("--cached")
+        if stat:
+            cmd.append("--stat")
+        if paths:
+            cmd.append("--")
+            cmd.extend(paths)
+        try:
+            r = subprocess.run(cmd, cwd=self.repo_root,
                                capture_output=True, text=True, timeout=15)
         except Exception as e:  # noqa: BLE001
             self._emit(f"git diff 失败: {e}（不是 git 仓库？）")
             return
+        if r.returncode != 0:
+            self._emit((r.stderr or r.stdout or "git diff 失败").strip())
+            return
         diff = r.stdout or ""
         if not diff.strip():
-            self._emit("(工作区无未提交改动；git diff 为空)")
+            label = " ".join(cmd)
+            self._emit(f"({label} 为空)")
             return
-        self._chrome("[dim]工作区改动（git diff）:[/dim]")
+        label = " ".join(cmd)
+        self._chrome(f"[dim]工作区改动（{label}）:[/dim]")
+        if stat:
+            self._emit(diff.rstrip())
+            return
         self._render_diff_text(diff, max_lines=400)
+
+    def _cmd_changes(self, arg: str = "") -> None:
+        """/changes：提交前变更审查摘要；支持 cached/staged 和路径过滤。"""
+        import shlex
+        try:
+            tokens = shlex.split(arg or "")
+        except ValueError as e:
+            self._emit(f"用法: /changes [cached|staged] [路径...]（参数解析失败: {e}）")
+            return
+        cached = False
+        paths: list[str] = []
+        for tok in tokens:
+            low = tok.lower()
+            if low in {"cached", "staged", "--cached", "--staged"}:
+                cached = True
+            elif tok.startswith("-"):
+                self._emit("用法: /changes [cached|staged] [路径...]（不透传其它 git 参数）")
+                return
+            else:
+                paths.append(tok)
+        from src.agents.git_workflow import change_review, format_change_review
+        self._emit(format_change_review(change_review(self.repo_root, cached=cached, paths=paths)))
+
+    def _cmd_review(self, arg: str = "") -> None:
+        """/review [--fix] [hunk H1] [cached] [路径...]：LLM diff review，只报 P0/P1。"""
+        import shlex
+        try:
+            tokens = shlex.split(arg or "")
+        except ValueError as e:
+            self._emit(f"用法: /review [--fix] [hunk H1] [cached|staged] [路径...]（参数解析失败: {e}）")
+            return
+        cached = False
+        fix = False
+        hunk_id = ""
+        paths: list[str] = []
+        i = 0
+        while i < len(tokens):
+            tok = tokens[i]
+            low = tok.lower()
+            if low in {"cached", "staged", "--cached", "--staged"}:
+                cached = True
+            elif low in {"--fix", "fix"}:
+                fix = True
+            elif low in {"hunk", "--hunk"}:
+                i += 1
+                if i >= len(tokens) or tokens[i].startswith("-"):
+                    self._emit("用法: /review [--fix] [hunk H1] [cached|staged] [路径...]")
+                    return
+                hunk_id = tokens[i].strip().upper()
+            elif tok.startswith("-"):
+                self._emit("用法: /review [--fix] [hunk H1] [cached|staged] [路径...]（不透传其它参数）")
+                return
+            else:
+                paths.append(tok)
+            i += 1
+
+        async def _run():
+            try:
+                result = await self._run_diff_review(cached=cached, paths=paths, hunk_id=hunk_id)
+            except Exception as e:  # noqa: BLE001
+                self._emit(f"review 出错: {e}")
+                return
+            self._emit(result)
+            if fix:
+                self._offer_review_fix(result, cached=cached, paths=paths, hunk_id=hunk_id)
+
+        self.run_worker(_run(), exclusive=True, group="review")
+
+    def _offer_review_fix(self, review_text: str, *, cached: bool = False,
+                          paths: list[str] | None = None, hunk_id: str = "") -> None:
+        text = str(review_text or "").strip()
+        low = text.lower()
+        no_findings = "未发现 p0/p1" in low or "no p0/p1" in low
+        unavailable = "review 失败" in text or "OPENAI_API_KEY" in text
+        if no_findings or unavailable:
+            self._emit("review 未发现可自动修复的 P0/P1，已保持只读。")
+            return
+        scope = "已 staged diff" if cached else "工作区 diff"
+        if hunk_id:
+            scope += f" · {hunk_id}"
+        path_hint = f"；路径: {', '.join(paths)}" if paths else ""
+        prompt = (
+            f"按 /review 发现的问题自动修复？范围: {scope}{path_hint}。\n"
+            "这会切到 build 模式，并让主 agent 只修 P0/P1，不处理风格建议。"
+        )
+
+        def _done(ok: bool | None) -> None:
+            if not ok:
+                self._emit("已取消 review 修复。")
+                return
+            self._set_mode("build")
+            excerpt = text[:4000]
+            self._continue_text_route(
+                "请根据刚才 /review 的 P0/P1 审查结论修复当前 diff。"
+                "要求：只改必要处，修完后运行最相关验证；不要处理风格、命名或微优化。\n\n"
+                f"范围: {scope}{path_hint}\n\n审查结论:\n{excerpt}"
+            )
+
+        self._begin_inline_confirm(prompt, scope="writes", callback=_done)
+
+    async def _run_diff_review(self, *, cached: bool = False, paths: list[str] | None = None,
+                               hunk_id: str = "") -> str:
+        import os
+        if not os.getenv("OPENAI_API_KEY"):
+            return "配置 OPENAI_API_KEY 后可用 /review 做 LLM diff 审查；无需 key 可先用 /changes 和 /preflight。"
+        from src.agents.git_workflow import diff_for_review
+        payload = diff_for_review(self.repo_root, cached=cached, paths=paths or [], hunk_id=hunk_id)
+        if not payload.get("ok"):
+            return f"review 失败: {payload.get('error', '')}".rstrip()
+        diff = str(payload.get("diff") or "").strip()
+        if not diff:
+            return "review 失败: diff 为空（未跟踪文件请先 git add，或用 /changes 查看范围）。"
+        from src.agents.main_agent import MainAgent
+        from src.agents.review import load_review_guidelines
+        guidelines = load_review_guidelines(self.repo_root)
+        extra = (
+            "你是一个严格的代码审查员。只审查用户给出的 diff。\n"
+            "只报告 P0/P1：P0=会导致崩溃、数据丢失、安全漏洞、明显错误结果；"
+            "P1=重要正确性问题。不要报告风格、命名、可读性、微优化。\n"
+            "每条问题必须包含：severity、文件/行号或 hunk、问题、为什么会发生、建议修复。"
+            "没有足够证据的猜测不要报。若没有 P0/P1，直接说“未发现 P0/P1”。"
+        )
+        if guidelines:
+            extra += "\n\n项目 Review guidelines:\n" + guidelines
+        agent = MainAgent([], max_steps=2, extra_system=extra, native=False)
+        scope = "staged" if cached else "workspace"
+        if hunk_id:
+            scope += f" hunk {hunk_id.upper()}"
+        prompt = (
+            f"请审查下面 {scope} diff，只输出审查结论。"
+            "优先列 Findings；没有发现就说未发现 P0/P1。\n\n"
+            f"```diff\n{diff}\n```"
+        )
+        return await agent.run_turn(prompt, mode="plan")
+
+    def _cmd_verify(self, arg: str = "") -> None:
+        """/verify [selector|--changed] 或 /verify run <命令>。"""
+        import shlex
+        raw_arg = arg or ""
+        try:
+            tokens = shlex.split(raw_arg)
+        except ValueError as e:
+            self._emit(f"用法: /verify [selector|--changed] [cached] 或 /verify run <命令>（参数解析失败: {e}）")
+            return
+        if tokens and tokens[0].lower() in {"profiles", "profile", "list"}:
+            if len(tokens) == 1 or tokens[0].lower() in {"profiles", "list"}:
+                from src.agents.verify_profiles import format_verify_profiles, load_verify_profiles
+                self._emit(format_verify_profiles(load_verify_profiles(self.repo_root)))
+                return
+            self._cmd_verify_profile(tokens[1])
+            return
+        if len(tokens) == 1 and not tokens[0].startswith("-"):
+            from src.agents.verify_profiles import resolve_verify_profile
+            resolved = resolve_verify_profile(self.repo_root, tokens[0])
+            if resolved.get("ok"):
+                self._cmd_verify_profile(str(resolved.get("name") or tokens[0]))
+                return
+        if tokens and tokens[0].lower() in {"run", "runtime", "cmd", "command"}:
+            parts = raw_arg.strip().split(maxsplit=1)
+            cmd = parts[1].strip() if len(parts) > 1 else ""
+            self._cmd_verify_run(cmd)
+            return
+        changed = False
+        cached = False
+        selector_parts: list[str] = []
+        for tok in tokens:
+            low = tok.lower()
+            if low in {"--changed", "changed"}:
+                changed = True
+            elif low in {"cached", "staged", "--cached", "--staged"}:
+                cached = True
+            elif tok.startswith("-"):
+                self._emit("用法: /verify [selector|--changed] [cached] 或 /verify run <命令>（不透传其它测试参数）")
+                return
+            else:
+                selector_parts.append(tok)
+        selector = " ".join(selector_parts).strip()
+        if changed and selector:
+            self._emit("用法: /verify [selector] 或 /verify --changed [cached]，二者不要混用")
+            return
+        from src.agents.test_detect import detect_test_cmd, is_pytest_cmd
+        note = ""
+        if changed:
+            from src.agents.git_workflow import changed_test_selection
+            sel = changed_test_selection(self.repo_root, cached=cached)
+            if not sel.get("ok"):
+                self._emit(f"改动测试选择失败: {sel.get('error', '')}")
+                return
+            if not sel.get("changed_paths"):
+                self._emit(sel.get("reason") or "没有改动可验证。")
+                return
+            base_cmd = detect_test_cmd(self.repo_root)
+            selectors = list(sel.get("selectors") or [])
+            if selectors and is_pytest_cmd(base_cmd):
+                import sys
+                cmd = [sys.executable, "-m", "pytest", "-q", *selectors]
+            else:
+                cmd = base_cmd
+            note = str(sel.get("reason") or "")
+        else:
+            cmd = detect_test_cmd(self.repo_root, selector or None)
+        cmd_text = " ".join(cmd)
+
+        async def _run():
+            detail = f"\n  {note}" if note else ""
+            if not await self._confirm_command(
+                    "运行仓库测试验证？\n"
+                    f"  $ {cmd_text}\n"
+                    f"测试可能写入缓存或耗时较久。{detail}"):
+                self._emit("已取消验证。")
+                return
+            self._chrome(f"[dim]$ {cmd_text}[/dim]")
+            from src.agents.worktree import run_tests
+            res = await asyncio.to_thread(run_tests, self.repo_root, cmd)
+            ok = bool(res.get("ok"))
+            status = "验证通过 ✓" if ok else "验证失败 ✗"
+            color = self._tc("text-success", "#7fce9a") if ok else self._tc("text-error", "#f08a8a")
+            self._chrome(f"[{color}]{status}[/][dim]（{res.get('cmd') or cmd_text}）[/dim]")
+            out = str(res.get("output") or "").strip()
+            if out:
+                self._emit(f"{status}（{res.get('cmd') or cmd_text}）\n输出尾部:\n{out[-3000:]}")
+            else:
+                self._emit(f"{status}（{res.get('cmd') or cmd_text}）")
+
+        self.run_worker(_run(), exclusive=True, group="verify")
+
+    def _cmd_verify_profile(self, name: str) -> None:
+        from src.agents.verify_profiles import format_verify_profiles, resolve_verify_profile
+        resolved = resolve_verify_profile(self.repo_root, name)
+        if not resolved.get("ok"):
+            self._emit(str(resolved.get("error") or "verify profile 加载失败"))
+            profiles = resolved.get("profiles") or {}
+            if profiles:
+                self._emit(format_verify_profiles({"ok": True, "profiles": profiles}))
+            return
+        profile = resolved.get("profile") or {}
+        desc = str(profile.get("description") or "").strip()
+        label = f"profile {resolved.get('name')}" + (f" · {desc}" if desc else "")
+        self._cmd_verify_run(str(profile.get("cmd") or ""), label=label)
+
+    async def _run_verify_command_now(self, cmd: str, *, label: str = "runtime 验证命令") -> dict:
+        """Run a user-supplied runtime/smoke command inside the current worker."""
+        cmd = (cmd or "").strip()
+        if not cmd:
+            self._emit("用法: /verify run <命令>")
+            return {"ran": False, "ok": False, "cmd": cmd, "error": "empty command"}
+        from src.agents.shell import is_dangerous
+        danger = is_dangerous(cmd)
+        if danger:
+            self._emit(f"拒绝执行高危验证命令: {danger}")
+            return {"ran": False, "ok": False, "cmd": cmd, "error": str(danger)}
+        if not await self._confirm_command(
+                f"运行 {label}？\n"
+                f"  $ {cmd}\n"
+                "适合 smoke test、启动检查、端到端脚本；请确认命令不会做外向或破坏性操作。"):
+            self._emit("已取消 runtime 验证。")
+            return {"ran": False, "ok": False, "cmd": cmd, "cancelled": True}
+        self._chrome(f"[dim]$ {cmd}[/dim]")
+        from src.agents.shell import run_command
+        res = await asyncio.to_thread(run_command, self.repo_root, cmd)
+        ok = bool(res.get("ok"))
+        status = "runtime 验证通过 ✓" if ok else "runtime 验证失败 ✗"
+        color = self._tc("text-success", "#7fce9a") if ok else self._tc("text-error", "#f08a8a")
+        self._chrome(f"[{color}]{status}[/][dim]（{cmd}）[/dim]")
+        out = str(res.get("output") or "").strip()
+        if out:
+            self._emit(f"{status}（{cmd}）\n输出尾部:\n{out[-3000:]}")
+        else:
+            self._emit(f"{status}（{cmd}）")
+        return {"ran": True, "ok": ok, "cmd": cmd, "output": out, "raw": res}
+
+    def _cmd_verify_run(self, cmd: str, *, label: str = "runtime 验证命令") -> None:
+        """Run a user-supplied runtime/smoke command with existing command gates."""
+        # 空命令 / 高危命令同步 fail-fast：既立即给用户反馈，也避免为一条注定被拒的命令
+        # 起 worker（无运行中的事件循环时 run_worker 会抛 RuntimeError）。真正执行时协程内还会再查一遍。
+        cmd = (cmd or "").strip()
+        if not cmd:
+            self._emit("用法: /verify run <命令>")
+            return
+        from src.agents.shell import is_dangerous
+        danger = is_dangerous(cmd)
+        if danger:
+            self._emit(f"拒绝执行高危验证命令: {danger}")
+            return
+        self.run_worker(self._run_verify_command_now(cmd, label=label), exclusive=True, group="verify")
+
+    def _cmd_preflight(self, arg: str = "") -> None:
+        """/preflight [cached]：提交/开 PR 前只读检查。"""
+        import shlex
+        try:
+            tokens = shlex.split(arg or "")
+        except ValueError as e:
+            self._emit(f"用法: /preflight [cached|staged]（参数解析失败: {e}）")
+            return
+        cached = False
+        for tok in tokens:
+            low = tok.lower()
+            if low in {"cached", "staged", "--cached", "--staged"}:
+                cached = True
+            else:
+                self._emit("用法: /preflight [cached|staged]")
+                return
+        from src.agents.git_workflow import format_preflight_report, preflight_report
+        self._emit(format_preflight_report(preflight_report(self.repo_root, cached=cached)))
+
+    def _cmd_git(self, arg: str = "") -> None:
+        """/git：查看当前分支、改动文件、staged/unstaged diffstat。"""
+        if (arg or "").strip():
+            self._emit("用法: /git")
+            return
+        from src.agents.git_workflow import format_status_summary, status_summary
+        self._emit(format_status_summary(status_summary(self.repo_root)))
+
+    def _cmd_commit(self, arg: str = "") -> None:
+        """/commit <msg>：提交 staged 改动；/commit all <msg> 先 git add -A。"""
+        import shlex
+        try:
+            tokens = shlex.split(arg or "")
+        except ValueError as e:
+            self._emit(f"用法: /commit <message>|suggest 或 /commit all <message|--suggest>（参数解析失败: {e}）")
+            return
+        if not tokens:
+            self._emit("用法: /commit <message>|suggest 或 /commit all <message|--suggest>")
+            return
+        stage_all = tokens[0].lower() == "all"
+        raw_msg_tokens = tokens[1:] if stage_all else tokens
+        suggest = any(t.lower() in {"suggest", "--suggest"} for t in raw_msg_tokens)
+        msg_tokens = [t for t in raw_msg_tokens if t.lower() not in {"suggest", "--suggest"}]
+        message = " ".join(msg_tokens).strip()
+        if suggest:
+            from src.agents.git_workflow import suggest_commit_message
+            suggested = suggest_commit_message(self.repo_root, stage_all=stage_all)
+            if not suggested.get("ok"):
+                self._emit(f"生成提交信息失败: {suggested.get('error', '')}")
+                return
+            message = str(suggested.get("message") or "").strip()
+        if not message:
+            self._emit("用法: /commit <message>|suggest 或 /commit all <message|--suggest>")
+            return
+
+        async def _run():
+            from src.agents.git_workflow import commit_changes, has_any_changes, has_staged_changes
+            if stage_all:
+                if not has_any_changes(self.repo_root):
+                    self._emit("没有工作区改动可提交。")
+                    return
+            elif not has_staged_changes(self.repo_root):
+                self._emit("没有 staged 改动可提交。用 /commit all <message> 可先 git add -A。")
+                return
+            if self.mode != "build":
+                prompt = "当前是 plan 模式。切到 build 并执行本地 git commit？"
+            else:
+                prompt = "执行本地 git commit？"
+            detail = f"\n  message: {message}"
+            if suggest:
+                detail += "\n  message 由当前改动自动生成"
+            if stage_all:
+                detail += "\n  会先执行: git add -A"
+            if not await self._confirm_command(prompt + detail):
+                self._emit("已取消 commit。")
+                return
+            if self.mode != "build":
+                self.mode = "build"
+                self._sync_subtitle()
+                self._chrome("[green]→ 已切到 build 模式[/green]")
+                self._record_mode_change()
+            result = await asyncio.to_thread(commit_changes, self.repo_root, message, stage_all=stage_all)
+            if not result.get("ok"):
+                self._emit(f"commit 失败: {result.get('error', '')}")
+                return
+            self._audit_event("commit", {"sha": result.get("sha"), "stage_all": stage_all, "message": message})
+            self._emit(f"已提交 {result.get('sha')}: {message}")
+            self._render_statusbar()
+
+        self.run_worker(_run(), exclusive=True, group="git")
+
+    def _try_pr_subcommand(self, arg: str) -> bool:
+        import shlex
+        try:
+            tokens = shlex.split(arg or "")
+        except ValueError as e:
+            self._emit(f"用法: /pr [preview|draft|doctor|check|fix] ...（参数解析失败: {e}）")
+            return True
+        if not tokens:
+            return False
+        sub = tokens[0].lower()
+        rest = " ".join(tokens[1:]).strip()
+        if sub in {"doctor", "diagnose"}:
+            self._cmd_pr_doctor(rest, alias="/pr doctor")
+            return True
+        if sub == "check":
+            self._cmd_pr_check(rest)
+            return True
+        if sub == "fix":
+            self._cmd_pr_fix(rest)
+            return True
+        return False
+
+    def _parse_pr_args(self, arg: str) -> dict:
+        import shlex
+        try:
+            tokens = shlex.split(arg or "")
+        except ValueError as e:
+            return {"ok": False, "error": f"参数解析失败: {e}"}
+        preview = False
+        draft = False
+        base = "main"
+        title_parts: list[str] = []
+        i = 0
+        while i < len(tokens):
+            tok = tokens[i]
+            low = tok.lower()
+            if low == "preview":
+                preview = True
+            elif low == "draft":
+                draft = True
+            elif low == "base":
+                if i + 1 >= len(tokens):
+                    return {"ok": False, "error": "base 需要一个引用，如 /pr base main"}
+                base = tokens[i + 1]
+                i += 1
+            elif tok.startswith("-"):
+                return {"ok": False, "error": "用法: /pr [preview|draft] [base <ref>] [title]"}
+            else:
+                title_parts.append(tok)
+            i += 1
+        return {"ok": True, "preview": preview, "draft": draft, "base": base, "title": " ".join(title_parts).strip()}
+
+    def _cmd_pr(self, arg: str = "") -> None:
+        """/pr：预览或创建当前分支 PR。外向操作，创建前必须确认。"""
+        if self._try_pr_subcommand(arg):
+            return
+        opts = self._parse_pr_args(arg)
+        if not opts.get("ok"):
+            self._emit(opts.get("error", "用法: /pr [preview|draft] [base <ref>] [title]"))
+            return
+        from src.agents.git_workflow import format_pr_preview, pr_preview
+        preview = pr_preview(self.repo_root, base=opts["base"], title=opts["title"])
+        if opts["preview"] or not preview.get("ok"):
+            self._emit(format_pr_preview(preview))
+            return
+
+        async def _run():
+            text = format_pr_preview(preview)
+            if opts.get("draft"):
+                text += "\n\n将创建 draft PR。"
+            if not await self._confirm_outward(text + "\n\n确认 push 当前分支并创建 PR？"):
+                self._emit("已取消开 PR。")
+                return
+            from src.agents.vcs import push_and_open_pr
+            res = await asyncio.to_thread(
+                push_and_open_pr,
+                self.repo_root,
+                preview["branch"],
+                preview["title"],
+                preview["body"],
+                preview["base"],
+                "origin",
+                bool(opts.get("draft")),
+            )
+            self._audit_event("open_pr", {
+                "branch": preview.get("branch"),
+                "base": preview.get("base"),
+                "title": preview.get("title"),
+                "draft": bool(opts.get("draft")),
+                "ok": bool(res.get("ok")),
+                "url": res.get("url", ""),
+            })
+            if res.get("ok"):
+                self._emit(f"已创建 PR: {res.get('url')}")
+            elif res.get("pushed"):
+                self._emit(f"已 push {preview['branch']}，但开 PR 失败: {res.get('error', '')}")
+            else:
+                self._emit(f"开 PR 失败: {res.get('error', '')}")
+
+        self.run_worker(_run(), exclusive=True, group="git")
+
+    def _format_pr_feedback(self, fb: dict, ref: str) -> str:
+        if not fb.get("ok"):
+            return f"PR 反馈读取失败（{ref}）: {fb.get('error', '')}"
+        pr = fb.get("pr") or ref
+        branch = fb.get("branch") or "未知分支"
+        comments = fb.get("comments") or []
+        checks = fb.get("failing_checks") or []
+        lines = [f"PR #{pr} · {branch}", f"待处理 review 评论: {len(comments)}", f"失败检查: {len(checks)}"]
+        if checks:
+            lines.append("")
+            lines.append("失败检查:")
+            for ck in checks[:10]:
+                link = f" — {ck.get('link')}" if ck.get("link") else ""
+                lines.append(f"- {ck.get('name') or 'check'}{link}")
+            if len(checks) > 10:
+                lines.append(f"- ... 还有 {len(checks) - 10} 个")
+        if comments:
+            lines.append("")
+            lines.append("Review 评论:")
+            for c in comments[:20]:
+                if c.get("path") and c.get("line"):
+                    loc = f"{c.get('path')}:{c.get('line')}"
+                else:
+                    loc = str(c.get("path") or "PR")
+                author = c.get("author") or "?"
+                body = self._summary_text(str(c.get("body") or ""), 180)
+                lines.append(f"- [{author}] {loc} {body}")
+            if len(comments) > 20:
+                lines.append(f"- ... 还有 {len(comments) - 20} 条")
+        if not comments and not checks:
+            lines.append("")
+            lines.append("没有待处理 review 评论，CI 也没有失败检查。")
+        return "\n".join(lines)
+
+    def _cmd_pr_check(self, arg: str = "") -> None:
+        """/pr-check <ref>：读取 PR review 评论 + 失败 CI。只读命令。"""
+        ref = (arg or "").strip()
+        if not ref:
+            self._emit("用法: /pr-check <PR号或分支名>")
+            return
+
+        async def _run():
+            from src.agents.vcs import pr_feedback
+            fb = await asyncio.to_thread(pr_feedback, self.repo_root, ref)
+            self._emit(self._format_pr_feedback(fb, ref))
+
+        self.run_worker(_run(), exclusive=True, group="git")
+
+    def _parse_pr_doctor_args(self, arg: str, alias: str) -> dict:
+        import shlex
+        try:
+            tokens = shlex.split(arg or "")
+        except ValueError as e:
+            return {"ok": False, "error": f"用法: {alias} [verify|fix] <PR号或vorto/*分支名>（参数解析失败: {e}）"}
+        if not tokens:
+            return {"ok": False, "error": f"用法: {alias} [verify|fix] <PR号或vorto/*分支名>"}
+        action = "fix"
+        if tokens[0].lower() in {"verify", "run", "repro", "reproduce"}:
+            action = "verify"
+            tokens = tokens[1:]
+        elif tokens[0].lower() in {"fix", "repair"}:
+            action = "fix"
+            tokens = tokens[1:]
+        if len(tokens) != 1:
+            return {"ok": False, "error": f"用法: {alias} [verify|fix] <PR号或vorto/*分支名>"}
+        return {"ok": True, "action": action, "ref": tokens[0]}
+
+    def _safe_verify_templates(self, report: dict) -> list[dict]:
+        out: list[dict] = []
+        for item in report.get("repair_templates") or []:
+            slash = str(item.get("slash") or "")
+            if not item.get("safe") or not slash.startswith("/verify"):
+                continue
+            out.append(item)
+        return out
+
+    def _verify_template_command(self, item: dict) -> tuple[str, str]:
+        slash = str(item.get("slash") or "")
+        if not item.get("safe") or not slash.startswith("/verify"):
+            return "", ""
+        if slash.startswith("/verify run "):
+            return slash.removeprefix("/verify run ").strip(), str(item.get("title") or "PR Doctor verify")
+        parts = slash.split(maxsplit=1)
+        if len(parts) == 2:
+            from src.agents.verify_profiles import resolve_verify_profile
+            resolved = resolve_verify_profile(self.repo_root, parts[1])
+            if resolved.get("ok"):
+                profile = resolved.get("profile") or {}
+                return str(profile.get("cmd") or ""), f"PR Doctor profile {resolved.get('name')}"
+        return "", ""
+
+    async def _choose_verify_template(self, report: dict) -> tuple[str, str]:
+        templates = self._safe_verify_templates(report)
+        if not templates:
+            return "", ""
+        if len(templates) == 1:
+            return self._verify_template_command(templates[0])
+        items = []
+        for i, item in enumerate(templates, start=1):
+            slash = str(item.get("slash") or "")
+            title = str(item.get("title") or f"动作 {i}")
+            detail = str(item.get("detail") or "")
+            label = f"{i}. {title} · {slash}"
+            if detail:
+                label += f" · {detail}"
+            items.append((str(i - 1), label))
+        selected = await self.push_screen_wait(ListPicker("选择 PR Doctor verify 动作", items))
+        if selected is None:
+            return "", ""
+        try:
+            idx = int(selected)
+        except (TypeError, ValueError):
+            return "", ""
+        if idx < 0 or idx >= len(templates):
+            return "", ""
+        return self._verify_template_command(templates[idx])
+
+    def _format_pr_verify_followup(self, report: dict, ref: str, result: dict) -> str:
+        cmd = str(result.get("cmd") or "")
+        if not result.get("ran"):
+            if result.get("cancelled"):
+                return "PR Doctor verify 已取消；没有执行本地复现命令。"
+            reason = str(result.get("error") or "没有执行")
+            return f"PR Doctor verify 未执行：{reason}"
+        ok = bool(result.get("ok"))
+        lines = [
+            "PR Doctor verify 结果",
+            f"命令: {cmd}",
+        ]
+        if ok:
+            lines += [
+                "结论: 本地验证通过，当前没有复现 CI 失败。",
+                "判断: CI 可能是旧提交、环境差异、依赖缓存、外部服务或偶发失败；先不要盲目改业务代码。",
+                "下一步:",
+                f"- /pr-check {ref}  刷新 PR review/CI 原始反馈",
+            ]
+            if report.get("can_fix") and report.get("comments"):
+                lines.append(f"- /pr-fix {ref}  仍可处理待办 review 评论")
+            else:
+                lines.append("- 如 GitHub 仍红，优先重跑失败 job 或继续查看 job/step 日志。")
+        else:
+            lines += [
+                "结论: 本地已复现失败，适合进入修复。",
+                "下一步:",
+            ]
+            if report.get("can_fix"):
+                lines.append(f"- /pr-fix {ref}  按 PR Doctor 诊断自动修复 review/CI 反馈")
+            else:
+                lines.append("- 当前 PR head 不是 vorto/*，自动修复硬闸不会接管；请人工修复或切到受控分支。")
+            out = str(result.get("output") or "").strip()
+            if out:
+                lines += ["", "失败输出摘要:", self._summary_text(out[-1200:], 900)]
+        return "\n".join(lines)
+
+    def _cmd_pr_doctor(self, arg: str = "", *, alias: str = "/pr doctor") -> None:
+        """/pr doctor <ref> 或 /fix-ci <ref>：诊断 PR review/CI，确认后切 build 修复。"""
+        opts = self._parse_pr_doctor_args(arg, alias)
+        if not opts.get("ok"):
+            self._emit(str(opts.get("error") or f"用法: {alias} [verify|fix] <ref>"))
+            return
+        ref = str(opts["ref"])
+        action = str(opts["action"])
+        if not ref:
+            self._emit(f"用法: {alias} <PR号或vorto/*分支名>")
+            return
+
+        async def _run():
+            from src.agents.pr_doctor import format_pr_doctor_report, pr_doctor_report
+            report = await asyncio.to_thread(pr_doctor_report, self.repo_root, ref)
+            self._emit(format_pr_doctor_report(report))
+            if not report.get("ok"):
+                return
+            if action == "verify":
+                cmd, label = await self._choose_verify_template(report)
+                if not cmd:
+                    self._emit("未选择 PR Doctor verify 动作，或没有可安全执行的 verify 模板。")
+                    return
+                result = await self._run_verify_command_now(cmd, label=label or "PR Doctor 最小复现")
+                self._emit(self._format_pr_verify_followup(report, ref, result))
+                return
+            if not report.get("can_fix"):
+                return
+            pr = report.get("pr") or ref
+            branch = report.get("branch") or "未知分支"
+            if not await self._confirm_write(
+                    f"按 PR #{pr} 的诊断切到 build 并修复 {branch}？\n"
+                    "将调用 pr_fix 处理 review/CI 反馈；push 更新 PR 前仍会二次确认。"):
+                self._emit(f"已保留在 {self.mode} 模式；可稍后运行 /pr-fix {ref}。")
+                return
+            self._set_mode("build")
+            self._continue_text_route(
+                f"请根据 PR Doctor 诊断修复 PR {ref} 的 review/CI 反馈；调用 pr_fix 工具，参数 pr={ref}。"
+            )
+
+        self.run_worker(_run(), exclusive=True, group="git")
+
+    def _cmd_pr_fix(self, arg: str = "") -> None:
+        """/pr-fix <ref>：确认后切 build，并让主 agent 调 pr_fix 工具。"""
+        ref = (arg or "").strip()
+        if not ref:
+            self._emit("用法: /pr-fix <PR号或vorto/*分支名>")
+            return
+
+        def _after_confirm(ok: bool | None) -> None:
+            if not ok:
+                self._emit("已取消 PR 反馈修复。")
+                return
+            self._set_mode("build")
+            self._continue_text_route(
+                f"请读取并修复 PR {ref} 的 review/CI 反馈；调用 pr_fix 工具，参数 pr={ref}。"
+            )
+
+        self._begin_inline_confirm(
+            f"按 PR {ref} 的 review/CI 反馈自动修复？会切到 build 模式，并由 pr_fix 在 vorto/* 分支上改动、自测、再确认 push。",
+            scope="writes",
+            callback=_after_confirm,
+        )
 
     def _user_commands(self) -> dict:
         """惰性加载并缓存 .vortocode/commands 下的用户自定义命令（/commands reload 重扫）。"""
@@ -1414,7 +3016,9 @@ class VortoCodeTUI(App):
         if uc is None:
             self._chrome(f"[red]未知命令 /{name}[/red]")
             return
-        self._chrome(f"[dim]▶ /{name}[/dim] [dim italic]{uc.description}[/dim italic]")
+        if getattr(uc, "mode", "") and uc.mode != self.mode:
+            self._set_mode(uc.mode)
+        self._chrome(f"[dim]▶ /{name}[/dim] [dim italic]{self._user_command_label(uc)}[/dim italic]")
         self._route(expand_command(uc.template, arg))
 
     def _cmd_commands(self, arg: str = "") -> None:
@@ -1424,12 +3028,12 @@ class VortoCodeTUI(App):
         cmds = self._user_commands()
         if not cmds:
             self._emit("没有自定义命令。在 `.vortocode/commands/<名>.md` 写提示模板即可用 `/<名>` 调起"
-                       "（支持 $ARGUMENTS / $1 占位符；可选 frontmatter 的 description）。")
+                       "（支持 $ARGUMENTS / $1 占位符；frontmatter 可写 description/mode/argument-hint/model）。")
             return
         lines = ["[b]自定义命令[/b]（.vortocode/commands）:"]
         for n, uc in sorted(cmds.items()):
-            lines.append(f"  [b]/{n}[/b] — {uc.description}")
-        lines.append("[dim]在文件里用 $ARGUMENTS / $1 接收参数；/commands reload 重扫。[/dim]")
+            lines.append(f"  [b]/{n}[/b] — {self._user_command_label(uc)}")
+        lines.append("[dim]在文件里用 $ARGUMENTS / $1 接收参数；frontmatter 可写 mode: plan/build；/commands reload 重扫。[/dim]")
         self._chrome("\n".join(lines))
 
     def _cmd_hooks(self) -> None:
@@ -1603,8 +3207,62 @@ class VortoCodeTUI(App):
             self._emit(f"执行出错: {e}")
 
     # ---------------------------------------------------------------- 会话
-    def _cmd_sessions(self) -> None:
-        """/sessions：opencode 式会话选择器——↑↓/筛选选中、回车即恢复（免记 id 敲 /resume）。"""
+    def _cmd_sessions(self, arg: str = "") -> None:
+        """/sessions：会话选择器；rename/delete 管理历史会话。"""
+        raw = (arg or "").strip()
+        low = raw.lower()
+        if low.startswith("rename "):
+            parts = raw.split(maxsplit=2)
+            if len(parts) < 3 or not parts[1].strip() or not parts[2].strip():
+                self._emit("用法: /sessions rename <id> <name>")
+                return
+            sid, name = parts[1].strip(), parts[2].strip()
+            if not self.sessions.store.get_session(sid):
+                self._emit(f"没有会话 {sid}")
+                return
+            self.sessions.store.update_session(sid, name=name)
+            self._chrome(f"[green]已重命名会话 {sid} → {name}[/green]")
+            self._emit(self._session_manage_list_text())
+            return
+        if low.startswith(("delete ", "del ", "rm ")):
+            parts = raw.split(maxsplit=1)
+            sid = parts[1].strip() if len(parts) > 1 else ""
+            if not sid:
+                self._emit("用法: /sessions delete <id>")
+                return
+            row = self.sessions.store.get_session(sid)
+            if not row:
+                self._emit(f"没有会话 {sid}")
+                return
+
+            def _done(ok: bool | None) -> None:
+                if not ok:
+                    self._emit("已取消删除会话。")
+                    return
+                self.sessions.store.delete_session(sid)
+                if sid == self.session_id:
+                    self.session_id = self.sessions.start_session()
+                    self.agent = None
+                    self.transcript.clear()
+                    try:
+                        self.query_one("#log", RichLog).clear()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    self._chrome(f"[yellow]已删除当前会话，并新建会话 {self.session_id}[/yellow]")
+                else:
+                    self._chrome(f"[green]已删除会话 {sid}[/green]")
+                self._emit(self._session_manage_list_text())
+
+            self._begin_inline_confirm(
+                f"删除会话 {sid}（{row.get('name') or sid}）及其消息、任务、编辑和记忆？\n"
+                "此操作不可撤销。",
+                scope="sessions",
+                callback=_done,
+            )
+            return
+        if raw and low not in {"list", "ls"}:
+            self._emit("用法: /sessions [list|rename <id> <name>|delete <id>]")
+            return
         rows = self.sessions.list_recent_sessions(20)
         if not rows:
             self._emit("(暂无历史会话)")
@@ -1612,23 +3270,29 @@ class VortoCodeTUI(App):
         items = []
         for r in rows:
             summ = self.sessions.store.get_session_summary(r["id"])
-            try:
-                md = json.loads(r.get("metadata") or "{}")
-            except Exception:  # noqa: BLE001
-                md = {}
             mark = "  ← 当前" if r["id"] == self.session_id else ""
-            title = self._summary_text(r.get("name") or r["id"], 34)
-            overview = self._summary_text(md.get("summary") or "", 56)
-            tail = f" · {overview}" if overview else ""
+            label = self._session_picker_label(r)
             items.append((r["id"],
-                          f"{r['id']}  {title} · 消息 {summ.get('messages', 0)} · "
-                          f"{(r.get('updated_at') or '')[:19]}{tail}{mark}"))
+                          f"{r['id']}  {label} · 消息 {summ.get('messages', 0)} · "
+                          f"{(r.get('updated_at') or '')[:19]}{mark}"))
 
         def _done(sid) -> None:
             if sid and sid != self.session_id:
                 self._cmd_resume(sid)
 
         self.push_screen(ListPicker("历史会话 · 回车恢复", items, initial=self.session_id), _done)
+
+    def _session_manage_list_text(self) -> str:
+        rows = self.sessions.list_recent_sessions(20)
+        if not rows:
+            return "(暂无历史会话)"
+        lines = [f"历史会话（{len(rows)} 个，最近 20 个）:"]
+        for r in rows:
+            label = self._session_picker_label(r)
+            mark = " ← 当前" if r["id"] == self.session_id else ""
+            lines.append(f"  {r['id']} · {label} · {(r.get('updated_at') or '')[:19]}{mark}")
+        lines.append("\n用 /sessions rename <id> <name> 重命名；/sessions delete <id> 删除。")
+        return "\n".join(lines)
 
     def _cmd_resume(self, sid: str) -> None:
         if not self.sessions.resume_session(sid):
@@ -1659,10 +3323,12 @@ class VortoCodeTUI(App):
         session_summary = ""
         try:
             row = self.sessions.store.get_session(sid) or {}
-            session_md = json.loads(row.get("metadata") or "{}")
+            session_md = self._session_metadata(row)
             session_summary = str(session_md.get("summary") or "")
         except Exception:  # noqa: BLE001
+            row = {}
             session_summary = ""
+        self._emit(self._resume_context_text(row))
         self._restore_agent_history(last_snapshot, fallback_summary=session_summary)
 
     def _restore_agent_history(self, snapshot, *, fallback_summary: str = "") -> None:
@@ -1699,6 +3365,7 @@ class VortoCodeTUI(App):
                 self.agent._task_anchor = task_anchor
             if plan:
                 self.agent.plan = plan
+                self._render_plan(plan)          # 恢复后计划面板也重新钉出来，别让它看着像丢了
             self._chrome("[dim]↻ 已恢复对话上下文（主 agent 记得之前的对话）[/dim]")
             self._render_statusbar()
 
@@ -1709,6 +3376,11 @@ class VortoCodeTUI(App):
         self._allow_writes_session = False  # "始终允许"也随新会话复位
         self._allow_commands_session = False
         reset_usage()                       # 用量也清零
+        self._render_plan([])               # 收起上个会话的计划面板
+        from src.agents.shell import stop_all_background
+        n_bg = stop_all_background()        # 收掉上个会话遗留的后台命令，别泄漏 dev server 进程
+        if n_bg:
+            self._chrome(f"[dim]■ 已停止 {n_bg} 个后台命令[/dim]")
         self.query_one("#log", RichLog).clear()
         self.transcript.clear()
         self._chrome(f"[green]已新建会话 {self.session_id}[/green]")
@@ -1725,10 +3397,125 @@ class VortoCodeTUI(App):
         u = get_usage()
         msg = (f"本会话用量（估算）: 调用 {u['calls']} 次 · 输入 ~{u['prompt_tokens']} · "
                f"输出 ~{u['completion_tokens']} · 合计 ~{u['total_tokens']} tokens")
+        cached = u.get("cached_tokens", 0)
+        if cached:                              # 上游缓存确有命中 → 报命中率，证明缓存在自有中转生效
+            pt = max(1, u.get("prompt_tokens", 0))
+            msg += f"\n其中输入命中缓存 ~{cached} tokens（约 {int(cached * 100 / pt)}%，上游 prompt 缓存已生效）"
+        else:
+            msg += "\n[输入缓存未观测到命中：上游/中转未回报 cached_tokens，或本会话前缀尚未复用]"
         ctx = self._context_usage_label()
         if ctx:
             msg += f"\n当前上下文占用（估算）: {ctx}"
         self._emit(msg)
+
+    def _set_context_policy(self, policy: str) -> str | None:
+        from src.agents.main_agent import _normalize_context_policy
+        normalized = _normalize_context_policy(policy)
+        if normalized != policy.strip().lower():
+            return None
+        self._context_policy = normalized
+        self._save_setting("context_policy", normalized)
+        if self.agent is not None:
+            self.agent.context_policy = normalized
+        self._render_statusbar()
+        return normalized
+
+    def _cmd_context(self, arg: str) -> None:
+        """/context：查看上下文占用；/context auto|compact|balanced|preserve 切策略并持久化。"""
+        arg = (arg or "").strip().lower()
+        if arg:
+            policy = self._set_context_policy(arg)
+            if policy is None:
+                self._emit("用法: /context [auto|compact|balanced|preserve]")
+                return
+            self._chrome(f"[green]上下文策略已切换为 {policy}（已写入 .vortocode/settings.json）[/green]")
+        if self.agent is None:
+            self.agent = self._build_main_agent()
+        try:
+            u = self.agent.context_usage(self.mode)
+        except Exception as e:  # noqa: BLE001
+            self._emit(f"上下文统计失败: {e}")
+            return
+
+        def tok(name: str) -> str:
+            return self._fmt_tokens_short(int(u.get(name, 0)))
+
+        raw_policy = str(u.get("raw_policy") or "auto")
+        effective = str(u.get("policy") or raw_policy)
+        lines = [
+            "[b]上下文窗口[/b]（估算，按当前下一轮请求计算）",
+            f"策略: {raw_policy} → 当前生效 {effective}",
+            f"占用: {tok('used_tokens')}/{tok('max_context_tokens')} tokens · {int(u.get('pct', 0))}%",
+            "",
+            "分解:",
+            f"  system: {tok('system_tokens')}",
+            f"  history(保留): {tok('history_tokens')} / 原始 {tok('raw_history_tokens')}",
+            f"  summary: {tok('summary_tokens')}",
+            f"  plan: {tok('plan_tokens')}",
+            f"  messages: {int(u.get('trimmed_history_messages', 0))}/{int(u.get('history_messages', 0))}",
+            "",
+            "压缩:",
+            f"  compact: {'on' if u.get('compact_enabled') else 'off'}",
+            f"  当前策略触发线: {tok('max_context_tokens')}",
+            f"  压缩后最近原文预算: {tok('recent_budget')}",
+            f"  下一轮会压缩: {'yes' if u.get('will_compact') else 'no'}",
+            "",
+            "可选策略:",
+            "  /context auto      plan=balanced, build=preserve",
+            "  /context compact   日常轻量对话，更早压缩",
+            "  /context balanced  普通协作",
+            "  /context preserve  高强度开发，尽量保留原文",
+        ]
+        if effective == "preserve":
+            lines.append("\n建议: 当前适合开发/调试长任务；如果只是问答，可切 /context compact 节省上下文。")
+        elif effective == "compact":
+            lines.append("\n建议: 当前适合日常对话；进入长任务或 PR 审核前可切 /context preserve。")
+        else:
+            lines.append("\n建议: auto 会随 plan/build 自动调整；大多数项目默认用它。")
+        self._emit("\n".join(lines))
+
+    def _compact_preview_text(self, data: dict) -> str:
+        return (
+            f"将压缩旧消息 {int(data.get('older_messages', 0))} 条"
+            f"（~{self._fmt_tokens_short(int(data.get('older_tokens', 0)))} tok），"
+            f"保留最近 {int(data.get('recent_messages', 0))} 条"
+            f"（~{self._fmt_tokens_short(int(data.get('recent_tokens', 0)))} tok）。"
+        )
+
+    def _cmd_compact(self, arg: str) -> None:
+        """/compact：手动压缩旧对话；/compact preview 只预估。"""
+        arg = (arg or "").strip().lower()
+        if arg not in ("", "preview"):
+            self._emit("用法: /compact [preview]")
+            return
+        if self.agent is None:
+            self.agent = self._build_main_agent()
+        preview = self.agent.compact_preview(self.mode)
+        if arg == "preview":
+            status = "可压缩" if preview.get("can_compact") else "暂不可压缩"
+            self._emit(f"上下文压缩预览：{status}\n{self._compact_preview_text(preview)}")
+            return
+
+        async def _run():
+            result = await self.agent.compact_now(self.mode)
+            if not result.get("ok"):
+                self._emit(f"上下文压缩未执行：{result.get('reason', '未知原因')}\n"
+                           f"{self._compact_preview_text(result)}")
+                return
+            self._audit_event("compact", {
+                "before_messages": result.get("before_messages"),
+                "after_messages": result.get("after_messages"),
+                "before_tokens": result.get("before_tokens"),
+                "after_tokens": result.get("after_tokens"),
+                "summary_len": len(result.get("summary") or ""),
+            })
+            self._render_statusbar()
+            self._emit("上下文已压缩。\n"
+                       f"{self._compact_preview_text(result)}\n"
+                       f"消息数: {result['before_messages']} → {result['after_messages']}；"
+                       f"history tokens: ~{self._fmt_tokens_short(int(result['before_tokens']))}"
+                       f" → ~{self._fmt_tokens_short(int(result['after_tokens']))}")
+        self.run_worker(_run(), exclusive=True, group="compact")
 
     def _cmd_theme(self, arg: str) -> None:
         """/theme：无参弹主题选择器（↑↓ **实时预览**，回车定、Esc 恢复）；带参直接切。"""
@@ -1944,6 +3731,31 @@ class VortoCodeTUI(App):
         except Exception as e:  # noqa: BLE001
             self._emit(f"修复出错: {e}")
 
+    def _auto_recall(self, text: str):
+        """回合前按用户话**自动召回**最相关的几条长期记忆，作为轻量上下文注入。
+
+        默认开（env VORTOCODE_AUTO_RECALL=0 关）。严格封顶（top 3、每条 ≤200 字、总 ≤600 字）避免撑爆
+        上下文预算；只召回**用户已确认存过**的记忆（非自动写入，风险低）；透明提示、非静默。
+        返回 {n, text} 或 None。"""
+        import os
+        if os.getenv("VORTOCODE_AUTO_RECALL", "1").strip().lower() in ("0", "false", "no", "off"):
+            return None
+        q = (text or "").strip()
+        if len(q) < 6:                       # 太短（寒暄/单字）没检索价值，免得乱注入
+            return None
+        try:
+            rows = self.sessions.store.search_memories("__longterm__", q, 3)
+        except Exception:  # noqa: BLE001
+            return None
+        parts, total = [], 0
+        for r in rows or []:
+            c = " ".join(str(r.get("content", "")).split())[:200]
+            if not c or total + len(c) > 600:
+                continue
+            parts.append(f"- {c}")
+            total += len(c)
+        return {"n": len(parts), "text": "\n".join(parts)} if parts else None
+
     # ---------------------------------------------------------------- 主 agent loop
     @work(exclusive=True, group="action")
     async def _route(self, text: str) -> None:
@@ -1961,6 +3773,10 @@ class VortoCodeTUI(App):
         if ctx:
             self._chrome(f"[dim]＋ 已注入 @提及的上下文（{len(ctx)} 字）[/dim]")
             user_text = f"{user_text}\n\n[@提及的上下文]\n{ctx}"
+        recalled = self._auto_recall(text)                    # 自动召回相关长期记忆（默认开、封顶、透明）
+        if recalled:
+            self._chrome(f"[dim]＋ 召回 {recalled['n']} 条相关长期记忆[/dim]")
+            user_text = f"{user_text}\n\n[相关长期记忆（自动召回，供参考；不一定切题）]\n{recalled['text']}"
         if images:
             self._chrome(f"[dim]🖼 附带 {len(images)} 张图（mimo-v2.5 可读图）[/dim]")
         if audio:
@@ -2047,7 +3863,7 @@ class VortoCodeTUI(App):
         返回 True=回合已完成（含 serve 侧出错——已如实渲染，**不回退重跑**，防重复执行）；
         False=连接阶段失败（回合未发出，调用方安全回退进程内）。
         协议事件 → UI 面映射：say→_chrome、stream→结果区摘要、reasoning→结果区摘要、
-        plan→计划面板、confirm→ConfirmScreen 应答回传、emit/done→收尾。
+        plan→计划面板、confirm→内联确认应答回传、emit/done→收尾。
         富 UI 取舍（v1，如实交代）：工具在 serve 端跑（与 Web 同一工厂），TUI 的着色 diff
         直写工具在 attach 下不参与；进程内模式保留全部富 UI。
         """
@@ -2064,9 +3880,9 @@ class VortoCodeTUI(App):
         think_cb, stream_cb, emit_final, cleanup = self._turn_renderers()
 
         async def confirm(message: str) -> bool:
-            # serve 端工具的确认经协议回到 TUI 弹窗：**始终弹**、不吃本地"始终允许"豁免
+            # serve 端工具的确认经协议回到 TUI 内联选择：**始终问**、不吃本地"始终允许"豁免
             # （scope 信息不过协议，宁多问不越权；与 _confirm_outward 同一保守面）。
-            return bool(await self.push_screen_wait(ConfirmScreen(message)))
+            return bool(await self._inline_confirm(message, scope="writes"))
 
         t0 = time.monotonic()
         try:
@@ -2393,20 +4209,33 @@ class VortoCodeTUI(App):
             return f"开 PR 失败：{res['error']}"
 
         async def _t_run_command(args: dict) -> str:
-            """跑任意 shell 命令（测试/lint/git/构建…）。高危：build 门控 + 人工确认 + 危险拦截。"""
+            """跑任意 shell 命令（测试/lint/git/构建…）。高危：build 门控 + 人工确认 + 危险拦截。
+            background=true 则后台起长驻进程（dev server/watcher/tail），立即返回句柄、不阻塞回合。"""
             cmd = str(args.get("command") or args.get("cmd") or "").strip()
             if not cmd:
                 return "run_command 需要 command。"
-            from src.agents.shell import is_dangerous, run_command
+            from src.agents.main_agent import _truthy
+            bg = _truthy(args.get("background"))
+            from src.agents.shell import is_dangerous, run_command, run_command_background
             why = is_dangerous(cmd)
             if why:                                   # 兜底硬拒（即便始终允许）
                 self._chrome(f"[{self._tc('text-error', '#f08a8a')}]拒绝执行（{why}）：{cmd}[/]")
                 return f"拒绝执行（疑似危险操作：{why}）。请换更具体、安全的命令。"
+            label = "后台启动" if bg else "执行命令"
             if not await self._confirm_command(
-                    f"build 模式：在仓库根目录执行命令？\n  $ {cmd}\n（可能改动工作区，但不碰 main）"):
+                    f"build 模式：在仓库根目录{label}？\n  $ {cmd}\n（可能改动工作区，但不碰 main）"):
                 return f"用户取消了命令：{cmd}"
-            self._chrome(f"[dim]$ {cmd}[/dim]")
             import asyncio
+            if bg:
+                self._chrome(f"[dim]$ {cmd}  [/dim][{self._tc('text-warning', '#f0b86e')}]&（后台）[/]")
+                res = await asyncio.to_thread(run_command_background, self.repo_root, cmd)
+                if not res.get("ok"):
+                    self._chrome(f"[{self._tc('text-error', '#f08a8a')}]后台启动失败：{res.get('error')}[/]")
+                    return f"后台启动失败：{res.get('error')}"
+                self._chrome(f"[{self._tc('text-success', '#7fce9a')}]▸ 已后台启动 {res['id']}（pid {res['pid']}）[/]")
+                return (f"已后台启动命令 `{cmd}`，句柄 {res['id']}（pid {res['pid']}）。"
+                        f"用 read_output(id={res['id']}) 看输出、stop_command(id={res['id']}) 停止。")
+            self._chrome(f"[dim]$ {cmd}[/dim]")
             res = await asyncio.to_thread(run_command, self.repo_root, cmd)
             out = res["output"]
             if out.strip():
@@ -2414,6 +4243,34 @@ class VortoCodeTUI(App):
             ok_c = self._tc("text-success", "#7fce9a") if res["ok"] else self._tc("text-error", "#f08a8a")
             self._chrome(f"[{ok_c}]{'✓' if res['ok'] else '✗'} exit {res['code']}[/]")
             return f"命令 `{cmd}` 退出码 {res['code']}。输出尾部：\n{out[-3000:]}"
+
+        async def _t_read_output(args: dict) -> str:
+            """读某后台命令的新增输出（或 tail=N 看最近 N 行）+ 运行状态。只读，无需确认。"""
+            from src.agents.shell import read_background
+            bid = str(args.get("id") or args.get("bid") or "").strip()
+            if not bid:
+                return "read_output 需要 id（后台命令句柄，如 bg1）。"
+            tail = args.get("tail")
+            tail = int(tail) if str(tail).strip().isdigit() else None
+            res = await asyncio.to_thread(read_background, bid, tail)
+            if not res.get("ok"):
+                return res.get("error", "读取失败")
+            head = f"[{res['id']}] {res['status']}" + (f"（退出码 {res['code']}）" if res['code'] is not None else "")
+            drop = f"\n（⚠ 有 {res['dropped']} 行因缓冲上限被挤掉、未读到）" if res.get("dropped") else ""
+            body = res["output"] or "(暂无新输出)"
+            return f"{head}{drop}\n{body[-3000:]}"
+
+        async def _t_stop_command(args: dict) -> str:
+            """停某后台命令（terminate→kill）。低风险、无需确认。"""
+            from src.agents.shell import stop_background
+            bid = str(args.get("id") or args.get("bid") or "").strip()
+            if not bid:
+                return "stop_command 需要 id。"
+            res = await asyncio.to_thread(stop_background, bid)
+            if not res.get("ok"):
+                return res.get("error", "停止失败")
+            self._chrome(f"[dim]■ 已停止后台命令 {bid}[/dim]")
+            return f"已停止后台命令 {bid}（退出码 {res.get('code')}）。"
 
         # 只读工具：plan 也能用；也是子 agent 的工具集（无 task/写工具 → 不嵌套、不改文件）。
         # 直接复用 build_read_tools——TUI 至此与 web/CLI 同源，白拿 read_file 行段 / 全仓库 grep /
@@ -2598,8 +4455,19 @@ class VortoCodeTUI(App):
                  _t_open_pr, read_only=False, outward=True),
             Tool("run_command",
                  "在仓库根目录跑任意 shell 命令（如 pytest 某个文件 / ruff / git log / pip install / make）；"
-                 "高危，每条都需确认、明显危险操作直接拒（仅 build）",
-                 {"command": "要执行的 shell 命令"}, _t_run_command, read_only=False, outward=True),
+                 "高危，每条都需确认、明显危险操作直接拒（仅 build）。长驻命令（dev server / npm run dev / "
+                 "watch / tail -f）传 background=true 后台起、立即返回句柄，再用 read_output 看输出",
+                 {"command": "要执行的 shell 命令",
+                  "background": "可选，true=后台起长驻进程（不阻塞回合），用 read_output/stop_command 管理"},
+                 _t_run_command, read_only=False, outward=True),
+            Tool("read_output",
+                 "读某后台命令（run_command background=true 起的）的**新增**输出 + 运行状态；"
+                 "传 tail=N 看最近 N 行。只读、无需确认",
+                 {"id": "后台命令句柄，如 bg1", "tail": "可选，看最近 N 行（默认给上次读之后的增量）"},
+                 _t_read_output, read_only=True),
+            Tool("stop_command",
+                 "停掉某后台命令（terminate→kill）。用完 dev server / watcher 记得收摊",
+                 {"id": "后台命令句柄，如 bg1"}, _t_stop_command, read_only=False),   # 终止进程=运行态副作用→仅 build
         ]
 
         # dev_auto（一句话→自动分解→并行/接力实现→集成→可选开 PR）：复用**工厂版**（自主流水线，
@@ -2652,6 +4520,7 @@ class VortoCodeTUI(App):
         agent = MainAgent(tools, max_steps=16, extra_system=extra, native=native,
                           on_tool=self._audit_tool, on_escalate=self._escalate_to_build,
                           on_plan=self._render_plan, plan_tool=True, hook_system=hook_system,
+                          context_policy=self._context_policy,
                           permissions=load_permissions(self.repo_root),   # .vortocode/permissions.yaml deny
                           env_context=True)                # 顶层交互 agent：注入 <env>（cwd/git/日期/目录）
         if self._model_override:            # /model 切过 → 新建的 agent 也带上（重建时不丢）
@@ -2674,18 +4543,35 @@ class VortoCodeTUI(App):
             return None
 
     def _render_plan(self, plan: list) -> None:
-        """把主 agent 的任务清单渲染成一块带进度的可见面板（每次更新重渲，看着它推进）。"""
+        """把主 agent 的任务清单渲染成**常驻**进度面板（钉在输入框上方，每次 update_plan 原地重渲、
+        不随对话日志滚走）。空计划则收起面板，不占地方。"""
         from src.agents.plan import plan_progress
+        try:
+            panel = self.query_one("#plan", Static)
+        except Exception:  # noqa: BLE001 —— 无头/尚未挂载时静默跳过
+            return
+        if not plan:                                    # 计划清空（/new、update_plan 传空）→ 收起
+            panel.display = False
+            panel.update("")
+            self._plan_last = ""
+            return
         done, total = plan_progress(plan)
         styles = {"completed": ("✓", self._tc("text-success", "#7fce9a")),
                   "in_progress": ("▸", self._tc("text-warning", "#f0b86e")),
                   "pending": ("○", "dim")}
-        lines = [f"[b]📋 计划 · {done}/{total}[/b]"]
+        bar = "█" * done + "░" * max(0, total - done)   # 一眼可见的进度条
+        lines = [f"[b]📋 计划[/b] [dim]{bar}[/] {done}/{total}"]
         for p in plan:
-            glyph, color = styles.get(p.get("status"), ("○", "dim"))
-            step = p["step"].replace("[", r"\[")       # 防步骤文本里的方括号被当成标记
+            status = p.get("status")
+            glyph, color = styles.get(status, ("○", "dim"))
+            step = str(p.get("step", "")).replace("[", r"\[")   # 防步骤文本里的方括号被当成标记
+            # 进行中的一步加粗高亮，让"现在做到哪"一眼可辨
+            step = f"[b]{step}[/b]" if status == "in_progress" else step
             lines.append(f"  [{color}]{glyph}[/] {step}")
-        self._chrome("\n".join(lines))
+        body = "\n".join(lines)
+        panel.update(body)
+        panel.display = True
+        self._plan_last = body
 
     async def _escalate_to_build(self, name: str, args: dict) -> bool:
         """plan 模式下主 agent 想用写/重型工具时：问用户切不切 build，同意则切并继续。
@@ -2707,8 +4593,7 @@ class VortoCodeTUI(App):
                 prompt = "\n".join(parts)
             else:
                 prompt = f"plan(只读)模式下，这一步要用写/重型工具「{name}」。切到 build 模式并继续？"
-            ok = await self.push_screen_wait(ConfirmScreen(
-                prompt))
+            ok = await self._inline_confirm(prompt, scope="writes")
         if ok and self.mode != "build":
             self.mode = "build"
             self._sync_subtitle()
@@ -2736,6 +4621,23 @@ class VortoCodeTUI(App):
             pass
         try:
             self._tool_preview(result)        # 工具结果摘要行（仿 Claude Code 的 ⎿）
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _audit_event(self, event: str, data: dict) -> None:
+        """把非工具型事件写进审计日志，复用同一个 JSONL 入口。"""
+        from datetime import datetime
+        try:
+            p = Path(self.repo_root) / ".vortocode" / "audit.log"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            rec = {
+                "ts": datetime.now().isoformat(timespec="seconds"),
+                "mode": self.mode,
+                "event": event,
+                "data": data or {},
+            }
+            with p.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         except Exception:  # noqa: BLE001
             pass
 

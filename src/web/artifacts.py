@@ -249,7 +249,7 @@ def build_artifact_tools(
     - base_url：拼链接用（见 artifact_url）。
     - on_published(meta, url)：发布成功回调，供 UI 提示链接。
     """
-    from src.agents.main_agent import Tool
+    from src.agents.tool import Tool
 
     store = ArtifactStore(repo_root)
 
