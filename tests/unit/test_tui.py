@@ -1248,21 +1248,21 @@ def _write_cmd(tmp_path, name, body):
 
 
 def test_user_commands_loaded_and_cached(tmp_path):
-    _write_cmd(tmp_path, "review", "---\ndescription: 审代码\n---\n审查：$ARGUMENTS")
+    _write_cmd(tmp_path, "inspect", "---\ndescription: 审代码\n---\n审查：$ARGUMENTS")
     app = VortoCodeTUI(repo_root=str(tmp_path))
     cmds = app._user_commands()
-    assert "review" in cmds and cmds["review"].description == "审代码"
+    assert "inspect" in cmds and cmds["inspect"].description == "审代码"
     assert app._user_commands() is cmds                    # 缓存：同一对象
 
 
 def test_dispatch_runs_user_command(tmp_path):
-    _write_cmd(tmp_path, "review", "审查以下代码找 bug：$ARGUMENTS")
+    _write_cmd(tmp_path, "inspect", "审查以下代码找 bug：$ARGUMENTS")
     app = VortoCodeTUI(repo_root=str(tmp_path))
     app._chrome = lambda *a, **k: None
     app._say_user = lambda *a, **k: None
     routed = {}
     app._route = lambda text: routed.setdefault("text", text)   # 截获展开后的输入
-    app._dispatch("/review def foo(): pass")
+    app._dispatch("/inspect def foo(): pass")
     assert routed["text"] == "审查以下代码找 bug：def foo(): pass"
 
 
@@ -2335,6 +2335,32 @@ def test_cmd_changes_rejects_unknown_git_flags(tmp_path):
     app._cmd_changes("--name-only")
 
     assert emitted and "不透传其它 git 参数" in emitted[-1]
+
+
+@pytest.mark.asyncio
+async def test_cmd_review_runs_diff_reviewer(tmp_path, monkeypatch):
+    calls = {}
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+
+    async def fake_review(*, cached=False, paths=None):
+        calls.update({"cached": cached, "paths": paths})
+        return "未发现 P0/P1"
+
+    monkeypatch.setattr(app, "_run_diff_review", fake_review)
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/review cached src/foo.py")
+        assert await _wait_for(app, pilot, "未发现 P0/P1")
+        assert calls == {"cached": True, "paths": ["src/foo.py"]}
+
+
+def test_cmd_review_rejects_unknown_flags(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+
+    app._cmd_review("--full")
+
+    assert emitted and "不透传其它参数" in emitted[-1]
 
 
 @pytest.mark.asyncio

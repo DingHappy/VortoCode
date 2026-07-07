@@ -475,6 +475,39 @@ def format_preflight_report(report: dict) -> str:
     return "\n".join(lines)
 
 
+def diff_for_review(repo_root: str, *, cached: bool = False,
+                    paths: list[str] | None = None, limit: int = 30000) -> dict:
+    """Return a bounded git diff payload suitable for LLM review."""
+    filters = [str(p).strip() for p in (paths or []) if str(p).strip()]
+    review = change_review(repo_root, cached=cached, paths=filters)
+    if not review.get("ok"):
+        return {"ok": False, "error": review.get("error", "git diff failed")}
+    if not review.get("paths"):
+        return {"ok": False, "error": "没有可审查的改动"}
+    cmd = ["diff"]
+    if cached:
+        cmd.append("--cached")
+    else:
+        cmd.append("HEAD")
+    if filters:
+        cmd.append("--")
+        cmd.extend(filters)
+    r = _git(repo_root, *cmd, timeout=30)
+    if r.returncode != 0:
+        return {"ok": False, "error": (r.stderr or r.stdout or "git diff failed").strip()}
+    diff = r.stdout or ""
+    truncated = len(diff) > limit
+    if truncated:
+        diff = diff[:limit] + "\n...(diff truncated)"
+    return {
+        "ok": True,
+        "scope": "staged" if cached else "workspace",
+        "diff": diff,
+        "truncated": truncated,
+        "review": review,
+    }
+
+
 def has_staged_changes(repo_root: str) -> bool:
     return _git(repo_root, "diff", "--cached", "--quiet").returncode == 1
 

@@ -32,7 +32,7 @@ from src.memory.session_store import SessionManager
 
 SLASH_COMMANDS = [
     "/analyze", "/improve", "/fix", "/run", "/apply", "/agents", "/runagent", "/skills", "/mcp",
-    "/artifacts", "/diff", "/changes", "/verify", "/preflight", "/git", "/commit", "/pr", "/pr-check", "/pr-fix", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
+    "/artifacts", "/diff", "/changes", "/review", "/verify", "/preflight", "/git", "/commit", "/pr", "/pr-check", "/pr-fix", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
     "/context", "/compact", "/permissions", "/memory", "/tasks", "/tools", "/audit", "/speak", "/commands", "/hooks", "/clear", "/help", "/quit",
 ]
 # 必须带参数的命令：补全面板里回车不直接执行，先补成 "/cmd " 让用户接着填参数
@@ -51,6 +51,7 @@ COMMAND_INFO = {
     "/artifacts": "列出已发布的制品（画廊在 /artifacts）",
     "/diff": "看工作区改动（支持 stat/cached/路径过滤）",
     "/changes": "提交前变更审查摘要（风险信号/下一步）",
+    "/review": "LLM 审查当前 diff（只报 P0/P1）",
     "/verify": "探测并运行仓库测试（支持 --changed）",
     "/preflight": "提交/开 PR 前检查（风险/测试/提交建议）",
     "/git": "查看 git 状态、staged/unstaged diffstat",
@@ -137,6 +138,7 @@ HELP = """可用命令:
   /artifacts          列出已发布的制品（标题/版本/链接；浏览器开 /artifacts 是画廊）
   /diff [stat|cached] [路径]  看工作区改动（+绿/-红着色）—— review 主 agent 改了什么
   /changes [cached] [路径]  提交前变更审查摘要（风险信号/下一步）
+  /review [cached] [路径]  LLM 审查当前 diff，只报 P0/P1
   /verify [selector|--changed]  探测并运行仓库测试；--changed 按改动推断相关测试
   /preflight [cached] 提交/开 PR 前检查：风险、建议验证、建议提交信息
   /git                查看 git 状态、staged/unstaged diffstat
@@ -1643,6 +1645,8 @@ class VortoCodeTUI(App):
             self._cmd_diff(arg)
         elif cmd == "changes":
             self._cmd_changes(arg)
+        elif cmd == "review":
+            self._cmd_review(arg)
         elif cmd == "verify":
             self._cmd_verify(arg)
         elif cmd == "preflight":
@@ -2210,6 +2214,68 @@ class VortoCodeTUI(App):
                 paths.append(tok)
         from src.agents.git_workflow import change_review, format_change_review
         self._emit(format_change_review(change_review(self.repo_root, cached=cached, paths=paths)))
+
+    def _cmd_review(self, arg: str = "") -> None:
+        """/review [cached] [路径...]：只读 LLM diff review，只报 P0/P1。"""
+        import shlex
+        try:
+            tokens = shlex.split(arg or "")
+        except ValueError as e:
+            self._emit(f"用法: /review [cached|staged] [路径...]（参数解析失败: {e}）")
+            return
+        cached = False
+        paths: list[str] = []
+        for tok in tokens:
+            low = tok.lower()
+            if low in {"cached", "staged", "--cached", "--staged"}:
+                cached = True
+            elif tok.startswith("-"):
+                self._emit("用法: /review [cached|staged] [路径...]（不透传其它参数）")
+                return
+            else:
+                paths.append(tok)
+
+        async def _run():
+            try:
+                result = await self._run_diff_review(cached=cached, paths=paths)
+            except Exception as e:  # noqa: BLE001
+                self._emit(f"review 出错: {e}")
+                return
+            self._emit(result)
+
+        self.run_worker(_run(), exclusive=True, group="review")
+
+    async def _run_diff_review(self, *, cached: bool = False, paths: list[str] | None = None) -> str:
+        import os
+        if not os.getenv("OPENAI_API_KEY"):
+            return "配置 OPENAI_API_KEY 后可用 /review 做 LLM diff 审查；无需 key 可先用 /changes 和 /preflight。"
+        from src.agents.git_workflow import diff_for_review
+        payload = diff_for_review(self.repo_root, cached=cached, paths=paths or [])
+        if not payload.get("ok"):
+            return f"review 失败: {payload.get('error', '')}".rstrip()
+        diff = str(payload.get("diff") or "").strip()
+        if not diff:
+            return "review 失败: diff 为空（未跟踪文件请先 git add，或用 /changes 查看范围）。"
+        from src.agents.main_agent import MainAgent
+        from src.agents.review import load_review_guidelines
+        guidelines = load_review_guidelines(self.repo_root)
+        extra = (
+            "你是一个严格的代码审查员。只审查用户给出的 diff。\n"
+            "只报告 P0/P1：P0=会导致崩溃、数据丢失、安全漏洞、明显错误结果；"
+            "P1=重要正确性问题。不要报告风格、命名、可读性、微优化。\n"
+            "每条问题必须包含：severity、文件/行号或 hunk、问题、为什么会发生、建议修复。"
+            "没有足够证据的猜测不要报。若没有 P0/P1，直接说“未发现 P0/P1”。"
+        )
+        if guidelines:
+            extra += "\n\n项目 Review guidelines:\n" + guidelines
+        agent = MainAgent([], max_steps=2, extra_system=extra, native=False)
+        scope = "staged" if cached else "workspace"
+        prompt = (
+            f"请审查下面 {scope} diff，只输出审查结论。"
+            "优先列 Findings；没有发现就说未发现 P0/P1。\n\n"
+            f"```diff\n{diff}\n```"
+        )
+        return await agent.run_turn(prompt, mode="plan")
 
     def _cmd_verify(self, arg: str = "") -> None:
         """/verify [selector|--changed]：按仓库类型探测测试命令并运行。"""

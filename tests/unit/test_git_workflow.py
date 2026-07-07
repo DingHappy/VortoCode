@@ -5,6 +5,7 @@ import subprocess
 from src.agents.git_workflow import (change_review,
                                      changed_test_selection,
                                      commit_changes,
+                                     diff_for_review,
                                      format_change_review,
                                      format_preflight_report,
                                      format_pr_preview,
@@ -150,6 +151,27 @@ def test_preflight_report_combines_risks_tests_and_commit_message(tmp_path):
     assert "Preflight: 工作区" in text
     assert "/verify --changed" in text
     assert "/commit all --suggest" in text
+
+
+def test_diff_for_review_returns_bounded_diff(tmp_path):
+    _init_repo(tmp_path)
+    (tmp_path / "base.txt").write_text("changed\n", encoding="utf-8")
+
+    payload = diff_for_review(str(tmp_path), limit=80)
+
+    assert payload["ok"] is True
+    assert payload["scope"] == "workspace"
+    assert "diff --git" in payload["diff"]
+    assert "base.txt" in payload["diff"]
+
+
+def test_diff_for_review_rejects_empty_changes(tmp_path):
+    _init_repo(tmp_path)
+
+    payload = diff_for_review(str(tmp_path))
+
+    assert payload["ok"] is False
+    assert "没有可审查" in payload["error"]
 
 
 def test_commit_changes_staged_only(tmp_path):
