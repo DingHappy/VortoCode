@@ -72,12 +72,32 @@ Acceptance:
 - All recommendations still run through `/verify <profile>`, which reuses the
   existing dangerous-command guard and confirmation prompt.
 
+## 2026-07-07 Batch: PR Doctor And Fix-CI Loop
+
+Goals:
+
+- Add a UI-neutral PR Doctor report that turns PR review comments and failing
+  CI checks into a concrete action plan.
+- Add `/fix-ci <ref>` as the direct TUI entry for diagnosing PR feedback.
+- Add `/pr doctor <ref>` as the PR-subcommand form, without letting it fall
+  through to PR creation title parsing.
+- Keep diagnosis read-only first, then route to build-mode `pr_fix` only after
+  inline confirmation.
+
+Acceptance:
+
+- PR Doctor reports pending review comments, failing CI checks, recommended
+  verify profiles, and whether auto-fix is allowed.
+- Auto-fix is offered only for PR heads on `vorto/*`, matching the existing
+  `pr_fix` hard gate.
+- `/fix-ci <ref>` and `/pr doctor <ref>` show the report before asking for a
+  build-mode repair confirmation.
+- Clean PR feedback reports do not show a repair confirmation.
+
 ## Backlog
 
-- TUI hang governance: isolate long Textual workers, add lightweight watchdog
-  diagnostics, and keep test selectors focused.
-- GitHub and CI integration: read PR review comments, failing checks, and
-  suggested fix plans in one preflight/review surface.
+- GitHub and CI integration: fetch failed-check logs and surface the smallest
+  relevant failure excerpt in PR Doctor.
 - Session resume quality: show session summaries, branch/workdir/mode health,
   and recovery hints before resuming.
 - Memory automation: propose project memory updates after successful commits or

@@ -9,6 +9,7 @@ import json
 import pytest
 
 from src.agents import main_agent as ma
+from src.agents import pr_doctor
 from src.agents import vcs
 
 
@@ -75,6 +76,40 @@ def test_pr_feedback_no_pr(monkeypatch):
     monkeypatch.setattr(vcs.subprocess, "run", _mk_gh_dispatcher(view={}))   # 无 number
     fb = vcs.pr_feedback("/repo", "vorto/x")
     assert fb["ok"] is False and "找不到" in fb["error"]
+
+
+def test_pr_doctor_report_recommends_fix_and_verify(tmp_path):
+    (tmp_path / "tests" / "unit").mkdir(parents=True)
+    feedback = {
+        "ok": True,
+        "pr": 12,
+        "branch": "vorto/fix-ci",
+        "comments": [{"author": "reviewer", "body": "缺少失败路径测试",
+                      "path": "tests/unit/test_x.py", "line": 7}],
+        "failing_checks": [{"name": "pytest / unit", "link": "https://ci.example/1"}],
+    }
+    report = pr_doctor.build_pr_doctor_report(str(tmp_path), "12", feedback)
+    assert report["can_fix"] is True
+    text = pr_doctor.format_pr_doctor_report(report)
+    assert "PR Doctor #12" in text
+    assert "/pr-fix 12" in text
+    assert "/verify unit" in text
+    assert "缺少失败路径测试" in text
+
+
+def test_pr_doctor_report_blocks_non_vorto_autofix(tmp_path):
+    feedback = {
+        "ok": True,
+        "pr": 13,
+        "branch": "main",
+        "comments": [{"author": "reviewer", "body": "不要自动改 main", "path": None, "line": None}],
+        "failing_checks": [],
+    }
+    report = pr_doctor.build_pr_doctor_report(str(tmp_path), "13", feedback)
+    assert report["can_fix"] is False
+    text = pr_doctor.format_pr_doctor_report(report)
+    assert "不能自动修复" in text
+    assert "vorto/*" in text
 
 
 # --------------------------------------------------------------------- pr_fix 工具

@@ -48,7 +48,7 @@ async def test_attach_turn_maps_protocol_events_to_ui(monkeypatch):
             assert await _wait_for(app, pilot, "serve 端回复"), app.transcript[-5:]
             joined = "\n".join(app.transcript)
             assert "read_file" in joined                 # say → _chrome
-            assert "读代码" in joined and "计划" in joined  # plan → 计划面板
+            assert "读代码" in app._plan_last and "计划" in app._plan_last  # plan → 常驻计划面板
             assert "✓ 完成（serve）" in joined            # 收尾标记（serve 路径）
             assert app.agent is None                     # 关键：没装配本地 agent（serve 是唯一所有者）
     sent = [m for m in srv.received if m.get("type") == P.AGENT]
@@ -57,8 +57,8 @@ async def test_attach_turn_maps_protocol_events_to_ui(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_attach_confirm_round_trip_via_confirm_screen():
-    """serve 端确认经协议回 TUI 弹窗：按 y → 应答 ok=True 回传。"""
+async def test_attach_confirm_round_trip_via_inline_confirm():
+    """serve 端确认经协议回 TUI 内联确认：按 y → 应答 ok=True 回传。"""
     script = [
         (P.AGENT_CONFIRM, {"id": "c1", "text": "要跑 pytest -q，允许吗？"}, True),
         (P.AGENT_EMIT, {"text": "跑完了"}, True),
@@ -68,11 +68,11 @@ async def test_attach_confirm_round_trip_via_confirm_screen():
         app = VortoCodeTUI(repo_root=".", attach=srv.url)
         async with app.run_test() as pilot:
             await _submit(app, pilot, "跑下测试")
-            for _ in range(100):                          # 等确认弹窗出现
-                if len(app.screen_stack) > 1:
+            for _ in range(100):                          # 等内联确认出现
+                if app._inline_confirm_active():
                     break
                 await pilot.pause(0.05)
-            assert len(app.screen_stack) > 1, "ConfirmScreen 没弹出来"
+            assert app._inline_confirm_active(), "内联确认没出现"
             await pilot.press("y")
             assert await _wait_for(app, pilot, "跑完了")
     resp = [m for m in srv.received if m.get("type") == P.AGENT_CONFIRM_RESPONSE]

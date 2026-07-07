@@ -5,11 +5,13 @@
 """
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
 pytest.importorskip("textual")  # 无 textual 时跳过（CI 装了 .[tui]）
 
+from textual.worker import WorkerState
 from textual.widgets import Input
 
 import src.tui.app as tui_app
@@ -1841,6 +1843,24 @@ async def test_cancel_only_when_busy(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_non_action_worker_sets_busy_and_audit_shows_stall(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        worker = SimpleNamespace(group="verify", name="verify tui", id="w1")
+        app.on_worker_state_changed(SimpleNamespace(worker=worker, state=WorkerState.RUNNING))
+        assert app._busy is True
+        assert "verify tui" in app.sub_title
+
+        app._busy_workers["w1"]["started"] -= 121
+        await _submit(app, pilot, "/audit")
+        joined = "\n".join(app.transcript)
+        assert "活跃 worker" in joined and "verify tui" in joined and "可能卡住" in joined
+
+        app.on_worker_state_changed(SimpleNamespace(worker=worker, state=WorkerState.SUCCESS))
+        assert app._busy is False
+
+
+@pytest.mark.asyncio
 async def test_agents_lists_created_agents(tmp_path):
     from src.agents.manager import AgentManager
     db = str(tmp_path / ".vortocode" / "web_advanced_agents.json")
@@ -2849,6 +2869,53 @@ async def test_cmd_pr_check_shows_review_and_ci_feedback(tmp_path, monkeypatch):
         assert "pytest" in joined
         assert "src/foo.py:42" in joined
         assert "补边界测试" in joined
+
+
+@pytest.mark.asyncio
+async def test_cmd_fix_ci_reports_doctor_and_routes_after_confirm(tmp_path, monkeypatch):
+    import src.agents.vcs as vcs
+
+    def fake_feedback(repo_root, ref):
+        return {
+            "ok": True,
+            "pr": 12,
+            "branch": "vorto/fix-review",
+            "comments": [{"author": "reviewer", "body": "这里需要补边界测试",
+                          "path": "src/foo.py", "line": 42, "resolved": False}],
+            "failing_checks": [{"name": "pytest / unit", "link": "https://ci.example/1"}],
+            "error": "",
+        }
+
+    monkeypatch.setattr(vcs, "pr_feedback", fake_feedback)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    routed = []
+    monkeypatch.setattr(app, "_continue_text_route", lambda text: routed.append(text))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/fix-ci 12")
+        assert await _wait_for(app, pilot, "PR Doctor #12")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("y")
+        for _ in range(20):
+            if routed:
+                break
+            await pilot.pause(0.05)
+        assert app.mode == "build"
+        assert routed and "PR 12" in routed[0] and "pr_fix" in routed[0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_pr_doctor_no_findings_does_not_confirm(tmp_path, monkeypatch):
+    import src.agents.vcs as vcs
+
+    monkeypatch.setattr(vcs, "pr_feedback",
+                        lambda repo_root, ref: {"ok": True, "pr": 12, "branch": "vorto/clean",
+                                                "comments": [], "failing_checks": [], "error": ""})
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/pr doctor 12")
+        assert await _wait_for(app, pilot, "PR Doctor #12")
+        assert await _wait_for(app, pilot, "没有待处理 review 评论")
+        assert not app._inline_confirm_active()
 
 
 @pytest.mark.asyncio

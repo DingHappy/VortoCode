@@ -32,11 +32,11 @@ from src.memory.session_store import SessionManager
 
 SLASH_COMMANDS = [
     "/analyze", "/improve", "/fix", "/run", "/apply", "/agents", "/runagent", "/skills", "/mcp",
-    "/artifacts", "/diff", "/changes", "/review", "/verify", "/preflight", "/git", "/commit", "/pr", "/pr-check", "/pr-fix", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
+    "/artifacts", "/diff", "/changes", "/review", "/verify", "/preflight", "/git", "/commit", "/pr", "/pr-check", "/pr-fix", "/fix-ci", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
     "/context", "/compact", "/permissions", "/memory", "/tasks", "/tools", "/audit", "/speak", "/commands", "/hooks", "/clear", "/help", "/quit",
 ]
 # 必须带参数的命令：补全面板里回车不直接执行，先补成 "/cmd " 让用户接着填参数
-ARG_SLASH_CMDS = {"/fix", "/run", "/resume", "/runagent", "/pr-check", "/pr-fix"}
+ARG_SLASH_CMDS = {"/fix", "/run", "/resume", "/runagent", "/pr-check", "/pr-fix", "/fix-ci"}
 # 命令 → 一句话说明（命令补全面板用，让 / 命令可发现、可补全）
 COMMAND_INFO = {
     "/analyze": "L1 自分析（只读扫描，无需 key）",
@@ -59,6 +59,7 @@ COMMAND_INFO = {
     "/pr": "预览或创建 PR；preview 只预览，draft 开草稿",
     "/pr-check": "读取 PR review 评论和失败 CI 检查",
     "/pr-fix": "确认后按 PR 反馈切 build 并调用 pr_fix 修复",
+    "/fix-ci": "诊断 PR review/CI 反馈，确认后切 build 修复",
     "/sessions": "列出/恢复/重命名/删除历史会话",
     "/resume": "恢复某个历史会话",
     "/new": "新开一个会话",
@@ -83,7 +84,12 @@ COMMAND_INFO = {
     "/help": "显示帮助",
     "/quit": "退出",
 }
-ACTION_CMDS = {"analyze", "improve", "fix", "run", "apply", "runagent", "mcp", "verify"}   # 跑长任务，受忙碌态约束
+ACTION_CMDS = {
+    "analyze", "improve", "fix", "run", "apply", "runagent", "mcp",
+    "review", "verify", "commit", "pr", "pr-check", "pr-fix", "fix-ci", "compact",
+}   # 跑长任务，受忙碌态约束
+BUSY_WORKER_GROUPS = {"action", "review", "verify", "git", "compact"}
+WORKER_STALL_SECONDS = 120
 
 # 工作中指示器（仿 Claude Code）：10 帧 braille 旋转 + 轮换动词 + 计时 + esc 中断
 _SPIN_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
@@ -145,9 +151,10 @@ HELP = """可用命令:
   /preflight [cached] 提交/开 PR 前检查：风险、建议审查、建议验证、建议提交信息
   /git                查看 git 状态、staged/unstaged diffstat
   /commit <msg|suggest> 提交已 staged 改动；/commit all --suggest 先 git add -A 并自动生成信息
-  /pr [preview|draft] [base <ref>] [title]  预览或创建 PR（外向操作需确认）
+  /pr [preview|draft|doctor] [base <ref>] [title]  预览或创建 PR；doctor 诊断 PR 反馈
   /pr-check <ref>     读取 PR review 评论和失败 CI 检查
   /pr-fix <ref>       确认后切 build 并让主 agent 调 pr_fix 修复 PR 反馈
+  /fix-ci <ref>       诊断 PR review/CI 反馈，确认后切 build 修复
   /mcp [list|off]     接入 config/mcp.yaml 的 MCP 服务器工具（build 门控）
   /agents             列出已创建的 agent（网页/API 建的，同一份存储）
   /runagent <id> <任务>  用某个已创建的 agent 执行任务（流式）
@@ -543,6 +550,7 @@ class VortoCodeTUI(App):
         self._mcp_tools: list = []          # 已接入的 MCP 工具（包成主 agent 的 Tool）
         self._spin_i = 0                    # 工作指示器：帧/计时/定时器
         self._busy_since = 0.0
+        self._busy_workers: dict[str, dict] = {}
         self._spin_timer = None
         self._history: list[str] = []       # 提交过的输入（↑/↓ 调出，仿 shell；跨会话持久化）
         self._history_idx: int | None = None
@@ -870,7 +878,8 @@ class VortoCodeTUI(App):
     def _sync_subtitle(self) -> None:
         desc = "只读/提案" if self.mode == "plan" else "可写分支"
         sid = f" · 会话 {self.session_id}" if self.session_id else ""
-        busy = " · ⏳运行中(Esc 取消)" if self._busy else ""
+        label = self._current_worker_label()
+        busy = f" · ⏳{label or '运行中'}(Esc 取消)" if self._busy else ""
         allow = ("" + (" · 写:始终允许✓" if self._allow_writes_session else "")
                  + (" · 命令:始终允许✓" if self._allow_commands_session else ""))
         from src.llm.client import get_usage
@@ -1053,16 +1062,57 @@ class VortoCodeTUI(App):
         self._chrome(f"[green]已切换模型 → {arg}[/green]"
                      "[dim]（本会话后续对话生效；未授权的模型会在下次调用时报 403）[/dim]")
 
-    # 集中管理忙碌态：动作 worker 一进入运行就置忙、结束(成功/失败/取消)即解除
+    # 集中管理忙碌态：长任务 worker 一进入运行就置忙、结束(成功/失败/取消)即解除
     def on_worker_state_changed(self, event) -> None:
-        if getattr(event.worker, "group", None) != "action":
+        worker = event.worker
+        group = getattr(worker, "group", None)
+        if group not in BUSY_WORKER_GROUPS:
             return
-        running = event.state == WorkerState.RUNNING
-        self._busy = running
-        self._start_status() if running else self._stop_status()
+        key = self._worker_key(worker)
+        was_busy = self._busy
+        if event.state == WorkerState.RUNNING:
+            self._busy_workers[key] = {
+                "group": str(group),
+                "label": self._worker_label(worker),
+                "started": time.monotonic(),
+            }
+        elif event.state in (WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED):
+            self._busy_workers.pop(key, None)
+        self._busy = bool(self._busy_workers)
+        if self._busy and not was_busy:
+            self._start_status()
+        elif not self._busy and was_busy:
+            self._stop_status()
         self._sync_subtitle()
         if event.state in (WorkerState.SUCCESS, WorkerState.ERROR, WorkerState.CANCELLED):
             self._drain_queued()                # 回合真正收尾（终态）才放下一条排队消息
+
+    def _worker_key(self, worker) -> str:
+        return str(getattr(worker, "id", "") or id(worker))
+
+    def _worker_label(self, worker) -> str:
+        name = str(getattr(worker, "name", "") or getattr(worker, "description", "") or "")
+        if name and name != "Worker":
+            return name.removeprefix("VortoCodeTUI.")
+        group = str(getattr(worker, "group", "") or "worker")
+        return group
+
+    def _current_worker_label(self) -> str:
+        if not self._busy_workers:
+            return ""
+        meta = min(self._busy_workers.values(), key=lambda x: float(x.get("started") or 0))
+        return str(meta.get("label") or meta.get("group") or "worker")
+
+    def _active_worker_lines(self) -> list[str]:
+        if not self._busy_workers:
+            return []
+        now = time.monotonic()
+        lines = ["活跃 worker:"]
+        for meta in sorted(self._busy_workers.values(), key=lambda x: float(x.get("started") or 0)):
+            elapsed = int(now - float(meta.get("started") or now))
+            warn = " ⚠ 可能卡住" if elapsed >= WORKER_STALL_SECONDS else ""
+            lines.append(f"  - {meta.get('label') or meta.get('group')}: {elapsed}s{warn}")
+        return lines
 
     def _drain_queued(self) -> None:
         """发送一条排队中的消息（一次一条：它的回合结束后本方法会再次被触发，天然接力）。"""
@@ -1075,7 +1125,8 @@ class VortoCodeTUI(App):
     # ---------------------------------------------------------------- 工作指示器
     def _start_status(self) -> None:
         """开始转圈（braille 旋转 + 计时 + esc 中断），仿 Claude Code 的"思考中"。"""
-        self._busy_since = time.monotonic()
+        starts = [float(m.get("started") or 0) for m in self._busy_workers.values()]
+        self._busy_since = min(starts) if starts else time.monotonic()
         self.query_one("#status", Static).display = True
         if self._spin_timer is None:
             self._spin_timer = self.set_interval(0.1, self._tick_status)
@@ -1099,9 +1150,14 @@ class VortoCodeTUI(App):
         t = Text()
         t.append(f"{frame} ", style=warn)
         t.append(f"{verb} ", style=warn)
+        label = self._current_worker_label()
+        if label:
+            t.append(f"· {label} ", style="dim")
         if self._turn_tools:                       # 工具数随回合增长 → 一眼看出在推进
             t.append(f"· {self._turn_tools} 工具 ", style="dim")
         t.append(f"{elapsed}s", style="dim")
+        if elapsed >= WORKER_STALL_SECONDS:
+            t.append(" · 可能卡住，/audit 查看", style=warn)
         t.append("  ·  esc 中断", style="dim")
         try:
             self.query_one("#status", Static).update(t)
@@ -1698,6 +1754,8 @@ class VortoCodeTUI(App):
             self._cmd_pr_check(arg)
         elif cmd == "pr-fix":
             self._cmd_pr_fix(arg)
+        elif cmd == "fix-ci":
+            self._cmd_pr_doctor(arg, alias="/fix-ci")
         elif cmd == "mcp":
             self._cmd_mcp(arg)
         elif cmd == "agents":
@@ -2157,11 +2215,18 @@ class VortoCodeTUI(App):
     def _cmd_audit(self, arg: str) -> None:
         """/audit 看最近的工具调用审计（.vortocode/audit.log）。"""
         p = Path(self.repo_root) / ".vortocode" / "audit.log"
+        active = self._active_worker_lines()
         if not p.is_file():
-            self._emit("(暂无审计记录；主 agent 调用工具后才有)")
+            if active:
+                self._emit("\n".join(active) + "\n\n(暂无审计记录；主 agent 调用工具后才有)")
+            else:
+                self._emit("(暂无审计记录；主 agent 调用工具后才有)")
             return
         lines = p.read_text(encoding="utf-8").splitlines()
-        self._emit(f"工具调用审计（共 {len(lines)} 条，显示最近 15）:\n" + "\n".join(lines[-15:]))
+        text = f"工具调用审计（共 {len(lines)} 条，显示最近 15）:\n" + "\n".join(lines[-15:])
+        if active:
+            text = "\n".join(active) + "\n\n" + text
+        self._emit(text)
 
     def _cmd_artifacts(self) -> None:
         """/artifacts 列出已发布的制品（标题/版本/类型/链接）。需起 Web 服务器才能打开。"""
@@ -2603,6 +2668,28 @@ class VortoCodeTUI(App):
 
         self.run_worker(_run(), exclusive=True, group="git")
 
+    def _try_pr_subcommand(self, arg: str) -> bool:
+        import shlex
+        try:
+            tokens = shlex.split(arg or "")
+        except ValueError as e:
+            self._emit(f"用法: /pr [preview|draft|doctor|check|fix] ...（参数解析失败: {e}）")
+            return True
+        if not tokens:
+            return False
+        sub = tokens[0].lower()
+        rest = " ".join(tokens[1:]).strip()
+        if sub in {"doctor", "diagnose"}:
+            self._cmd_pr_doctor(rest, alias="/pr doctor")
+            return True
+        if sub == "check":
+            self._cmd_pr_check(rest)
+            return True
+        if sub == "fix":
+            self._cmd_pr_fix(rest)
+            return True
+        return False
+
     def _parse_pr_args(self, arg: str) -> dict:
         import shlex
         try:
@@ -2635,6 +2722,8 @@ class VortoCodeTUI(App):
 
     def _cmd_pr(self, arg: str = "") -> None:
         """/pr：预览或创建当前分支 PR。外向操作，创建前必须确认。"""
+        if self._try_pr_subcommand(arg):
+            return
         opts = self._parse_pr_args(arg)
         if not opts.get("ok"):
             self._emit(opts.get("error", "用法: /pr [preview|draft] [base <ref>] [title]"))
@@ -2725,6 +2814,33 @@ class VortoCodeTUI(App):
             from src.agents.vcs import pr_feedback
             fb = await asyncio.to_thread(pr_feedback, self.repo_root, ref)
             self._emit(self._format_pr_feedback(fb, ref))
+
+        self.run_worker(_run(), exclusive=True, group="git")
+
+    def _cmd_pr_doctor(self, arg: str = "", *, alias: str = "/pr doctor") -> None:
+        """/pr doctor <ref> 或 /fix-ci <ref>：诊断 PR review/CI，确认后切 build 修复。"""
+        ref = (arg or "").strip()
+        if not ref:
+            self._emit(f"用法: {alias} <PR号或vorto/*分支名>")
+            return
+
+        async def _run():
+            from src.agents.pr_doctor import format_pr_doctor_report, pr_doctor_report
+            report = await asyncio.to_thread(pr_doctor_report, self.repo_root, ref)
+            self._emit(format_pr_doctor_report(report))
+            if not report.get("ok") or not report.get("can_fix"):
+                return
+            pr = report.get("pr") or ref
+            branch = report.get("branch") or "未知分支"
+            if not await self._confirm_write(
+                    f"按 PR #{pr} 的诊断切到 build 并修复 {branch}？\n"
+                    "将调用 pr_fix 处理 review/CI 反馈；push 更新 PR 前仍会二次确认。"):
+                self._emit(f"已保留在 {self.mode} 模式；可稍后运行 /pr-fix {ref}。")
+                return
+            self._set_mode("build")
+            self._continue_text_route(
+                f"请根据 PR Doctor 诊断修复 PR {ref} 的 review/CI 反馈；调用 pr_fix 工具，参数 pr={ref}。"
+            )
 
         self.run_worker(_run(), exclusive=True, group="git")
 
@@ -3614,7 +3730,7 @@ class VortoCodeTUI(App):
         返回 True=回合已完成（含 serve 侧出错——已如实渲染，**不回退重跑**，防重复执行）；
         False=连接阶段失败（回合未发出，调用方安全回退进程内）。
         协议事件 → UI 面映射：say→_chrome、stream→结果区摘要、reasoning→结果区摘要、
-        plan→计划面板、confirm→ConfirmScreen 应答回传、emit/done→收尾。
+        plan→计划面板、confirm→内联确认应答回传、emit/done→收尾。
         富 UI 取舍（v1，如实交代）：工具在 serve 端跑（与 Web 同一工厂），TUI 的着色 diff
         直写工具在 attach 下不参与；进程内模式保留全部富 UI。
         """
