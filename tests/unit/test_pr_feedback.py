@@ -84,13 +84,23 @@ def test_failed_check_log_excerpts_fetches_actions_log(monkeypatch):
     def fake_run(cmd, cwd=None, capture_output=True, text=True):
         class R:
             returncode = 0
-            stdout = (
+            stdout = ""
+            stderr = ""
+        if cmd == ["gh", "run", "view", "123", "--log-failed"]:
+            R.stdout = (
                 "unit\tRun pytest\tcollecting tests\n"
                 "unit\tRun pytest\tFAILED tests/test_x.py::test_y - AssertionError: nope\n"
                 "unit\tRun pytest\tError: Process completed with exit code 1.\n"
             )
-            stderr = ""
-        assert cmd == ["gh", "run", "view", "123", "--log-failed"]
+        elif cmd == ["gh", "run", "view", "123", "--json", "jobs"]:
+            R.stdout = json.dumps({"jobs": [
+                {"name": "lint", "conclusion": "success", "steps": []},
+                {"name": "unit", "conclusion": "failure", "steps": [
+                    {"name": "Run pytest", "conclusion": "failure"},
+                ]},
+            ]})
+        else:
+            raise AssertionError(cmd)
         return R()
 
     monkeypatch.setattr(vcs.subprocess, "run", fake_run)
@@ -101,6 +111,8 @@ def test_failed_check_log_excerpts_fetches_actions_log(monkeypatch):
     )
     assert result["ok"] is True
     assert result["logs"][0]["run_id"] == "123"
+    assert result["logs"][0]["job_name"] == "unit"
+    assert result["logs"][0]["step_name"] == "Run pytest"
     assert "AssertionError: nope" in result["logs"][0]["excerpt"]
     assert "unit\tRun pytest" not in result["logs"][0]["excerpt"]
 
@@ -119,14 +131,17 @@ def test_pr_doctor_report_recommends_fix_and_verify(tmp_path):
         str(tmp_path),
         "12",
         feedback,
-        check_logs=[{"name": "pytest / unit", "run_id": "123", "excerpt": "AssertionError: nope"}],
+        check_logs=[{"name": "pytest / unit", "run_id": "123",
+                     "job_name": "unit", "step_name": "Run pytest",
+                     "excerpt": "AssertionError: nope"}],
     )
     assert report["can_fix"] is True
     text = pr_doctor.format_pr_doctor_report(report)
     assert "PR Doctor #12" in text
     assert "/pr-fix 12" in text
     assert "/verify unit" in text
-    assert "失败日志摘录" in text and "AssertionError: nope" in text
+    assert "失败定位/日志摘录" in text and "unit > Run pytest" in text
+    assert "AssertionError: nope" in text
     assert "失败类型判断" in text and "测试失败" in text
     assert "缺少失败路径测试" in text
 

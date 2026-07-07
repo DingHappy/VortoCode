@@ -2320,6 +2320,11 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 f"建议：{classification.get('next_action')}"
             )
         for item in (log_result.get("logs") or [])[:3]:
+            loc = str(item.get("job_name") or "")
+            if item.get("step_name"):
+                loc = (loc + " > " if loc else "") + str(item.get("step_name"))
+            if loc:
+                parts.append(f"- CI 失败定位：{item.get('name') or 'check'} -> {loc}")
             excerpt = str(item.get("excerpt") or "").strip()
             if excerpt:
                 parts.append(f"- CI 日志摘录：{item.get('name') or 'check'}\n{excerpt[:900]}")

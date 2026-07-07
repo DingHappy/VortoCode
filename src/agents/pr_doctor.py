@@ -121,6 +121,8 @@ def classify_failed_checks(checks: list[dict], check_logs: list[dict] | None = N
         sources.append(state)
     for item in check_logs or []:
         sources.append(str(item.get("name") or ""))
+        sources.append(str(item.get("job_name") or ""))
+        sources.append(str(item.get("step_name") or ""))
         sources.append(str(item.get("excerpt") or ""))
         sources.append(str(item.get("error") or ""))
     haystack = "\n".join(sources).lower()
@@ -254,12 +256,18 @@ def format_pr_doctor_report(report: dict) -> str:
         if len(checks) > 10:
             lines.append(f"- ... 还有 {len(checks) - 10} 个")
 
-    logs = [item for item in (report.get("check_logs") or []) if item.get("excerpt")]
+    logs = [item for item in (report.get("check_logs") or [])
+            if item.get("excerpt") or item.get("job_name") or item.get("step_name")]
     if logs:
-        lines += ["", "失败日志摘录:"]
+        lines += ["", "失败定位/日志摘录:"]
         for item in logs[:3]:
             run = f" run {item.get('run_id')}" if item.get("run_id") else ""
             lines.append(f"- {item.get('name') or 'check'}{run}:")
+            if item.get("job_name") or item.get("step_name"):
+                loc = str(item.get("job_name") or "job")
+                if item.get("step_name"):
+                    loc += f" > {item.get('step_name')}"
+                lines.append(f"  位置: {loc}")
             for ln in str(item.get("excerpt") or "").splitlines()[:40]:
                 lines.append(f"  {ln}")
     elif checks and report.get("check_log_error"):

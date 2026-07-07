@@ -74,6 +74,10 @@ _FAILURE_MARKERS = (
 )
 
 
+def _failed_status(value: str) -> bool:
+    return str(value or "").upper() in _FAIL_CONCLUSIONS
+
+
 def _run_id_from_check(check: dict) -> str:
     for key in ("run_id", "runId", "workflowRunId", "workflow_run_id"):
         val = str(check.get(key) or "").strip()
@@ -116,6 +120,47 @@ def _failure_excerpt(log_text: str, max_chars: int = 1200) -> str:
     return text
 
 
+def _failed_run_location(repo_root, run_id: str, check_name: str = "") -> dict:
+    """Best-effort failed GitHub Actions job/step localization."""
+    r = subprocess.run(["gh", "run", "view", run_id, "--json", "jobs"],
+                       cwd=str(repo_root), capture_output=True, text=True)
+    if r.returncode != 0:
+        return {"job_name": "", "step_name": "", "error": (r.stderr or r.stdout or "").strip()[-300:]}
+    try:
+        data = json.loads(r.stdout or "{}")
+    except (ValueError, TypeError):
+        return {"job_name": "", "step_name": "", "error": "gh run jobs JSON 解析失败"}
+    jobs = data.get("jobs") or []
+    if not isinstance(jobs, list):
+        return {"job_name": "", "step_name": "", "error": ""}
+    check_low = str(check_name or "").lower()
+    failed: list[dict] = []
+    for job in jobs:
+        if not isinstance(job, dict):
+            continue
+        steps = [s for s in (job.get("steps") or []) if isinstance(s, dict)]
+        failed_step = next((s for s in steps if _failed_status(s.get("conclusion") or s.get("status"))), None)
+        job_failed = _failed_status(job.get("conclusion") or job.get("status"))
+        if not job_failed and failed_step is None:
+            continue
+        name = str(job.get("name") or "")
+        failed.append({
+            "job_name": name,
+            "step_name": str((failed_step or {}).get("name") or ""),
+            "job_conclusion": str(job.get("conclusion") or job.get("status") or ""),
+            "step_conclusion": str((failed_step or {}).get("conclusion") or (failed_step or {}).get("status") or ""),
+        })
+    if not failed:
+        return {"job_name": "", "step_name": "", "error": ""}
+    if check_low:
+        matched = next((j for j in failed
+                        if (job_low := str(j.get("job_name") or "").lower())
+                        and (check_low in job_low or job_low in check_low)), None)
+        if matched:
+            return matched
+    return failed[0]
+
+
 def failed_check_log_excerpts(repo_root, checks: list[dict], *,
                               max_checks: int = 3, max_chars: int = 1200) -> dict:
     """Fetch short failed-log excerpts for GitHub Actions checks.
@@ -131,11 +176,13 @@ def failed_check_log_excerpts(repo_root, checks: list[dict], *,
 
     logs: list[dict] = []
     cache: dict[str, dict] = {}
+    location_cache: dict[str, dict] = {}
     for ck in checks[:max_checks]:
         name = str(ck.get("name") or ck.get("context") or "check")
         run_id = _run_id_from_check(ck)
         if not run_id:
-            logs.append({"name": name, "run_id": "", "excerpt": "", "error": "未找到 GitHub Actions run id"})
+            logs.append({"name": name, "run_id": "", "job_name": "", "step_name": "",
+                         "excerpt": "", "error": "未找到 GitHub Actions run id"})
             continue
         if run_id not in cache:
             r = subprocess.run(["gh", "run", "view", run_id, "--log-failed"],
@@ -152,12 +199,18 @@ def failed_check_log_excerpts(repo_root, checks: list[dict], *,
                     "excerpt": _failure_excerpt(r.stdout, max_chars=max_chars),
                     "error": "",
                 }
+        if run_id not in location_cache:
+            location_cache[run_id] = _failed_run_location(repo_root, run_id, name)
         item = cache[run_id]
+        location = location_cache.get(run_id) or {}
         logs.append({
             "name": name,
             "run_id": run_id,
+            "job_name": location.get("job_name", ""),
+            "step_name": location.get("step_name", ""),
             "excerpt": item.get("excerpt", ""),
             "error": item.get("error", ""),
+            "location_error": location.get("error", ""),
         })
     return {"ok": True, "logs": logs, "error": ""}
 

@@ -131,10 +131,26 @@ Acceptance:
   `ModuleNotFoundError` classify into the expected categories.
 - Unknown failures still degrade to the existing log-based workflow.
 
+## 2026-07-07 Batch: Failed Check Job Step Localization
+
+Goals:
+
+- Fetch failed GitHub Actions job and step names for each failed run when
+  available.
+- Show the job/step location next to PR Doctor log excerpts.
+- Include job/step location in the `pr_fix` repair prompt.
+
+Acceptance:
+
+- Each failed run uses at most one extra `gh run view <id> --json jobs` call.
+- Missing or unsupported job JSON does not break log excerpts or failure
+  classification.
+- PR Doctor can show `job > step` before the compact excerpt.
+
 ## Backlog
 
-- GitHub and CI integration: fetch individual GitHub Actions job names and step
-  names for more precise failure localization.
+- GitHub and CI integration: map failure categories to repair templates such as
+  "run exact pytest selector", "run ruff --fix", or "inspect dependency file".
 - Session resume quality: show session summaries, branch/workdir/mode health,
   and recovery hints before resuming.
 - Memory automation: propose project memory updates after successful commits or
