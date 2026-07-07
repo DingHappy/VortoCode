@@ -4197,7 +4197,7 @@ class VortoCodeTUI(App):
                  _t_read_output, read_only=True),
             Tool("stop_command",
                  "停掉某后台命令（terminate→kill）。用完 dev server / watcher 记得收摊",
-                 {"id": "后台命令句柄，如 bg1"}, _t_stop_command, read_only=True),
+                 {"id": "后台命令句柄，如 bg1"}, _t_stop_command, read_only=False),   # 终止进程=运行态副作用→仅 build
         ]
 
         # dev_auto（一句话→自动分解→并行/接力实现→集成→可选开 PR）：复用**工厂版**（自主流水线，

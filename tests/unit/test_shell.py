@@ -80,6 +80,42 @@ def test_background_command_lifecycle(tmp_path):
     stop_all_background()
 
 
+def test_background_stop_kills_child_processes(tmp_path):
+    """P1 回归：长驻命令常经 shell 再拉起子进程（dev server/watcher）。stop 必须连子进程一起收，
+    否则只 kill 顶层 shell、子进程继续跑。旧实现（只 terminate Popen）会让本测试失败。"""
+    import os
+    import re
+    import time
+    from src.agents.shell import (read_background, run_command_background,
+                                   stop_all_background, stop_background)
+
+    def alive(pid):
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+
+    stop_all_background()
+    # `sleep 30 &` 让 sleep 成为 shell 的后台子进程；只 kill shell 会漏掉它
+    start = run_command_background(tmp_path, "sleep 30 & echo CHILD=$!; wait")
+    time.sleep(0.4)
+    out = read_background(start["id"], tail=10)["output"]
+    m = re.search(r"CHILD=(\d+)", out)
+    assert m, f"没拿到子进程 pid：{out!r}"
+    child = int(m.group(1))
+    assert alive(child)                                   # 子进程确实在跑
+    assert stop_background(start["id"])["stopped"] is True
+    for _ in range(20):                                   # 宽限收割（进程组信号 + 回收有微小延迟）
+        if not alive(child):
+            break
+        time.sleep(0.1)
+    assert not alive(child)                               # 停止后子进程也被 killpg 整组收掉
+    stop_all_background()
+
+
 def test_background_output_survives_and_reports_exit(tmp_path):
     import time
     from src.agents.shell import read_background, run_command_background, stop_all_background
@@ -101,6 +137,9 @@ async def test_build_command_tool_background(tmp_path):
 
     tools = {x.name: x for x in build_command_tool(str(tmp_path), yes)}
     assert "run_command" in tools and "read_output" in tools and "stop_command" in tools
+    # read_output 是纯读→plan 可用；stop_command 终止进程=运行态副作用→必须 build（read_only=False）
+    assert tools["read_output"].read_only is True
+    assert tools["stop_command"].read_only is False
     out = await tools["run_command"].handler({"command": "sleep 5", "background": True})
     assert "已后台启动" in out and "bg" in out
     import re

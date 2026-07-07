@@ -225,16 +225,29 @@ class _BgProc:
                 "dropped": dropped, "output": "\n".join(out)}
 
     def stop(self, timeout: int = 5) -> bool:
-        """先 terminate，宽限后仍在就 kill。返回是否已终止。"""
+        """先 SIGTERM、宽限后仍在就 SIGKILL；对**整个进程组** killpg，把 shell 拉起的子进程一并收
+        （否则 dev server/watcher 会漏杀继续跑）。killpg 不可用（非 POSIX/组已没）时退回只对主进程。"""
+        import os
+        import signal
         import subprocess as _sp
         if self.popen.poll() is not None:
             return True
+
+        def _sig(sig) -> None:
+            try:
+                os.killpg(os.getpgid(self.popen.pid), sig)   # 整组：连根收子进程
+            except (ProcessLookupError, PermissionError, OSError, AttributeError):
+                try:
+                    self.popen.send_signal(sig)              # 退回只对主进程（组已没/平台不支持）
+                except Exception:  # noqa: BLE001
+                    pass
+
         try:
-            self.popen.terminate()
+            _sig(signal.SIGTERM)
             try:
                 self.popen.wait(timeout=timeout)
             except _sp.TimeoutExpired:
-                self.popen.kill()
+                _sig(signal.SIGKILL)
         except Exception:  # noqa: BLE001
             pass
         return self.popen.poll() is not None
@@ -252,15 +265,18 @@ def run_command_background(repo_root, cmd: str) -> dict:
         if len(alive) >= _BG_MAX_PROCS:
             return {"ok": False, "error": f"后台进程已达上限 {_BG_MAX_PROCS} 个；先 stop_command 收掉一些。"}
         bid = f"bg{next(_BG_COUNTER)}"
+    # start_new_session=True：把命令放进**独立进程组/会话**（子进程 = 组长，pgid==pid）。
+    # 长驻命令常经 shell 再拉起子进程（npm run dev→node…），只 kill 顶层 shell 会漏掉子进程；
+    # 独立进程组让 stop() 能对**整组** killpg，把 dev server/watcher 连根收干净（POSIX；见 stop()）。
     try:
         if sandbox_enabled():
             popen = subprocess.Popen(sandboxed_argv(repo_root, cmd), cwd=str(repo_root),
                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                     text=True, bufsize=1)
+                                     text=True, bufsize=1, start_new_session=True)
         else:
             popen = subprocess.Popen(cmd, shell=True, cwd=str(repo_root),
                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                     text=True, bufsize=1)
+                                     text=True, bufsize=1, start_new_session=True)
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "error": f"无法启动: {e}"}
     proc = _BgProc(bid, cmd, popen)

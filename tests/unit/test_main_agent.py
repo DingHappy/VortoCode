@@ -289,6 +289,27 @@ def test_context_budget_adapts_to_model_window(monkeypatch):
     assert c._base_context_budget() == 8000
 
 
+def test_env_num_safe_parse(monkeypatch):
+    from src.agents.main_agent import _env_num
+    monkeypatch.delenv("X", raising=False)
+    assert _env_num("X", 0.5, float) == 0.5              # 未设 → 默认
+    monkeypatch.setenv("X", "auto")
+    assert _env_num("X", 0.5, float) == 0.5              # 坏值（=auto）→ 默认，不抛
+    monkeypatch.setenv("X", "")
+    assert _env_num("X", 0.5, float) == 0.5              # 空 → 默认
+    monkeypatch.setenv("X", "-3")
+    assert _env_num("X", 200, int) == 200                # 非正 → 默认
+    monkeypatch.setenv("X", "0.7")
+    assert _env_num("X", 0.5, float) == 0.7              # 有效值照用
+
+
+def test_bad_context_env_does_not_crash_agent(monkeypatch):
+    # 用户把 VORTOCODE_MAX_CONTEXT_TOKENS 填成坏值 → 构造 agent 不该抛，回退默认 + 自适应
+    monkeypatch.setenv("VORTOCODE_MAX_CONTEXT_TOKENS", "lots")
+    a = MainAgent([], max_context_tokens=8000)
+    assert a.max_context_tokens == 8000 and a._context_budget_auto is True
+
+
 def test_context_budget_env_pin_disables_autoscale(monkeypatch):
     # 用户 env 精确钉死 → 不再自适应，哪怕模型窗口很大
     monkeypatch.setenv("VORTOCODE_MAX_CONTEXT_TOKENS", "5000")

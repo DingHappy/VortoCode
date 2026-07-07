@@ -48,13 +48,26 @@ _CONTEXT_POLICY_PROFILES = {
     "preserve": {"multiplier": 2.0, "recent_ratio": 0.75},
 }
 
+def _env_num(name: str, default, cast):
+    """安全解析数值环境变量：缺省/空/坏值（如 =auto）都回退默认，绝不在 import 阶段抛 ValueError。"""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        v = cast(raw)
+    except (TypeError, ValueError):
+        return default
+    return v if v > 0 else default
+
+
 # 按模型窗口自适应历史预算的参数：
 # - 只取窗口的一部分给「历史」，给系统提示/工具 schema/推理/输出留足空间。
 # - 只对窗口够大的模型放大（小窗口/未知模型维持保守默认，避免历史预算反超窗口而溢出）。
 # - 绝对硬顶：即便超大窗口也别把历史堆到天上（成本/失焦），用户可用 VORTOCODE_MAX_CONTEXT_TOKENS 精确覆盖。
-_CONTEXT_WINDOW_FRACTION = float(os.getenv("VORTOCODE_CONTEXT_WINDOW_FRACTION") or 0.5)
+# fraction 夹到 (0,1]：>1 会让历史预算反超模型窗口而溢出，属危险取值，直接钳掉。
+_CONTEXT_WINDOW_FRACTION = min(_env_num("VORTOCODE_CONTEXT_WINDOW_FRACTION", 0.5, float), 1.0)
 _CONTEXT_MIN_WINDOW_TO_SCALE = 16_000
-_CONTEXT_BUDGET_HARD_CAP = int(os.getenv("VORTOCODE_CONTEXT_BUDGET_CAP") or 200_000)
+_CONTEXT_BUDGET_HARD_CAP = _env_num("VORTOCODE_CONTEXT_BUDGET_CAP", 200_000, int)
 
 
 def _normalize_context_policy(value: Any) -> str:
@@ -500,9 +513,10 @@ class MainAgent:
         # max_context_tokens 是历史预算的**保守默认/下限**（8000，刻意压成本/防失焦）。
         # 当用户没用 env 钉死时，_base_context_budget() 会按当前模型的真实窗口**向上自适应**——
         # 大窗口模型（gpt-4o/claude/…）自动放大，mimo/未知模型保持这个默认（除非配 window env）。
-        self.max_context_tokens = int(os.getenv("VORTOCODE_MAX_CONTEXT_TOKENS") or max_context_tokens)
-        # env 钉死 = 用户显式指定精确预算 → 不再自适应；否则按模型窗口自适应。
-        self._context_budget_auto = os.getenv("VORTOCODE_MAX_CONTEXT_TOKENS") is None
+        # env 钉死 = 用户显式指定**有效**精确预算 → 不再自适应；缺省/空/坏值都回退默认并自适应。
+        _pinned = _env_num("VORTOCODE_MAX_CONTEXT_TOKENS", None, int)
+        self.max_context_tokens = _pinned if _pinned is not None else max_context_tokens
+        self._context_budget_auto = _pinned is None
         self._task_anchor = ""                 # 原始任务纯文本（首个 user）；压缩后仍作锚点，修"锚到孤儿工具结果"
         self.extra_system = extra_system       # 追加到系统提示（如技能目录、子 agent 角色）
         self._native = native                  # 原生 function-calling（失败自动回退提示式协议）
@@ -2603,7 +2617,7 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
                  _read_output, read_only=True),
             Tool("stop_command",
                  "停掉某后台命令（terminate→kill）。用完 dev server / watcher 记得收摊",
-                 {"id": "后台命令句柄，如 bg1"}, _stop, read_only=True)]
+                 {"id": "后台命令句柄，如 bg1"}, _stop, read_only=False)]   # 终止进程是运行态副作用→仅 build
 
 
 def build_pr_tool(repo_root: str, confirm) -> list[Tool]:
