@@ -27,13 +27,58 @@ Acceptance:
 - Focused TUI and git-workflow tests cover the command parsing and user-visible
   reports.
 
-## Next Batches
+## 2026-07-07 Batch: Diff Review UX And Verify Profiles
 
-- Diff review UX: hunk navigation, selected-hunk review/fix, and clearer
-  before/after presentation.
+Goals:
+
+- Add `/diff hunks` so a user can see stable H1/H2 style ids for the current
+  workspace or staged diff.
+- Add `/review hunk H1` and `/review --fix hunk H1` so review and repair can be
+  scoped to one concrete diff hunk.
+- Add verify profiles so common runtime checks do not require retyping shell
+  commands. Builtins cover this repository, and `.vortocode/verify.yaml` can
+  define project-local profiles.
+
+Acceptance:
+
+- `/diff hunks [cached] [path...]` prints hunk ids, file paths, and hunk headers.
+- `/review hunk H1` sends only that hunk to the reviewer; missing ids give a
+  useful error that points back to `/diff hunks`.
+- `/review --fix hunk H1` keeps the same inline confirmation and build-mode gate
+  as whole-diff fix.
+- `/verify profiles` lists builtin and project profiles.
+- `/verify <profile>` and `/verify profile <profile>` resolve to the configured
+  command, then reuse the same dangerous-command guard and confirmation prompt
+  as `/verify run`.
+
+## 2026-07-07 Batch: Preflight Verify Profile Recommendations
+
+Goals:
+
+- Let `/preflight` recommend concrete verify profiles when the current changed
+  paths match built-in repository heuristics or project `.vortocode/verify.yaml`
+  path rules.
+- Keep `/verify --changed` in the report as a precise test-selector fallback.
+- Support project profile metadata such as `paths: [docs/**]` without changing
+  the execution permission model.
+
+Acceptance:
+
+- TUI changes recommend `/verify tui` when TUI files change.
+- Python source or tests recommend `/verify unit` when a unit profile is
+  available.
+- Project profiles with `paths` / `match` patterns appear in `/preflight` when
+  changed files match them.
+- All recommendations still run through `/verify <profile>`, which reuses the
+  existing dangerous-command guard and confirmation prompt.
+
+## Backlog
+
 - TUI hang governance: isolate long Textual workers, add lightweight watchdog
   diagnostics, and keep test selectors focused.
 - GitHub and CI integration: read PR review comments, failing checks, and
   suggested fix plans in one preflight/review surface.
-- Runtime verification: promote common project smoke commands into reusable
-  profiles instead of requiring manual shell text every time.
+- Session resume quality: show session summaries, branch/workdir/mode health,
+  and recovery hints before resuming.
+- Memory automation: propose project memory updates after successful commits or
+  repeated user preferences, with explicit review before saving.

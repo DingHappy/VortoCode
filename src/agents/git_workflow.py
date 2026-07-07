@@ -5,6 +5,7 @@ not pass arbitrary git flags through user input for write operations.
 """
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 
@@ -418,12 +419,18 @@ def preflight_report(repo_root: str, *, cached: bool = False) -> dict:
     status = status_summary(repo_root)
     tests = changed_test_selection(repo_root, cached=cached)
     commit = suggest_commit_message(repo_root, stage_all=not cached)
+    try:
+        from src.agents.verify_profiles import recommend_verify_profiles
+        verify_profiles = recommend_verify_profiles(repo_root, review.get("paths") or [])
+    except Exception as e:  # noqa: BLE001
+        verify_profiles = {"ok": False, "error": f"verify profile 推荐失败: {e}", "recommendations": []}
     return {
         "ok": True,
         "scope": "staged" if cached else "workspace",
         "status": status,
         "review": review,
         "tests": tests,
+        "verify_profiles": verify_profiles,
         "commit": commit,
     }
 
@@ -433,6 +440,7 @@ def format_preflight_report(report: dict) -> str:
         return f"Preflight 失败: {report.get('error', '')}".rstrip()
     review = report.get("review") or {}
     tests = report.get("tests") or {}
+    verify_profiles = report.get("verify_profiles") or {}
     commit = report.get("commit") or {}
     status = report.get("status") or {}
     scope = "已 staged" if report.get("scope") == "staged" else "工作区"
@@ -459,8 +467,16 @@ def format_preflight_report(report: dict) -> str:
     lines.append("建议审查:")
     lines.append(f"- {review_cmd}（只报 P0/P1；确认需要修复时用 {fix_cmd}）")
     selectors = tests.get("selectors") or []
+    profile_recs = verify_profiles.get("recommendations") or []
     lines.append("")
     lines.append("建议验证:")
+    if profile_recs:
+        lines.append("- 推荐 profile:")
+        for rec in profile_recs[:5]:
+            reason = f" · {rec.get('reason')}" if rec.get("reason") else ""
+            lines.append(f"  · /verify {rec.get('name')}{reason}")
+    elif verify_profiles and not verify_profiles.get("ok"):
+        lines.append(f"- verify profile 推荐不可用: {verify_profiles.get('error', '')}")
     if selectors:
         lines.append("- /verify --changed" + (" cached" if report.get("scope") == "staged" else ""))
         lines.extend(f"  · {s}" for s in selectors[:8])
@@ -480,9 +496,8 @@ def format_preflight_report(report: dict) -> str:
     return "\n".join(lines)
 
 
-def diff_for_review(repo_root: str, *, cached: bool = False,
-                    paths: list[str] | None = None, limit: int = 30000) -> dict:
-    """Return a bounded git diff payload suitable for LLM review."""
+def _diff_payload(repo_root: str, *, cached: bool = False,
+                  paths: list[str] | None = None) -> dict:
     filters = [str(p).strip() for p in (paths or []) if str(p).strip()]
     review = change_review(repo_root, cached=cached, paths=filters)
     if not review.get("ok"):
@@ -500,16 +515,141 @@ def diff_for_review(repo_root: str, *, cached: bool = False,
     r = _git(repo_root, *cmd, timeout=30)
     if r.returncode != 0:
         return {"ok": False, "error": (r.stderr or r.stdout or "git diff failed").strip()}
-    diff = r.stdout or ""
+    return {
+        "ok": True,
+        "scope": "staged" if cached else "workspace",
+        "diff": r.stdout or "",
+        "review": review,
+    }
+
+
+_HUNK_RE = re.compile(
+    r"@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? "
+    r"\+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@(?P<section>.*)"
+)
+
+
+def _parse_hunks(diff: str) -> list[dict]:
+    hunks: list[dict] = []
+    current_file = ""
+    current: dict | None = None
+    headers: list[str] = []
+    for line in (diff or "").splitlines():
+        if line.startswith("diff --git "):
+            if current is not None:
+                current["diff"] = "\n".join(headers + current["lines"])
+                hunks.append(current)
+                current = None
+            headers = [line]
+            parts = line.split()
+            if len(parts) >= 4:
+                current_file = parts[3][2:] if parts[3].startswith("b/") else parts[3]
+            else:
+                current_file = ""
+            continue
+        if line.startswith(("index ", "new file mode ", "deleted file mode ", "similarity index ",
+                            "rename from ", "rename to ", "--- ", "+++ ")):
+            headers.append(line)
+            if line.startswith("+++ ") and line != "+++ /dev/null":
+                p = line[4:].strip()
+                current_file = p[2:] if p.startswith("b/") else p
+            continue
+        if line.startswith("@@ "):
+            if current is not None:
+                current["diff"] = "\n".join(headers + current["lines"])
+                hunks.append(current)
+            match = _HUNK_RE.match(line)
+            old_start = int(match.group("old_start")) if match else 0
+            new_start = int(match.group("new_start")) if match else 0
+            current = {
+                "id": f"H{len(hunks) + 1}",
+                "path": current_file,
+                "header": line,
+                "old_start": old_start,
+                "new_start": new_start,
+                "section": (match.group("section").strip() if match else ""),
+                "lines": [line],
+            }
+            continue
+        if current is not None:
+            current["lines"].append(line)
+    if current is not None:
+        current["diff"] = "\n".join(headers + current["lines"])
+        hunks.append(current)
+    return hunks
+
+
+def diff_hunks_for_review(repo_root: str, *, cached: bool = False,
+                          paths: list[str] | None = None, limit: int = 30000) -> dict:
+    """Return parsed git diff hunks with stable H1/H2 ids for the current diff."""
+    payload = _diff_payload(repo_root, cached=cached, paths=paths)
+    if not payload.get("ok"):
+        return payload
+    hunks = _parse_hunks(str(payload.get("diff") or ""))
+    for h in hunks:
+        body = str(h.get("diff") or "")
+        h["truncated"] = len(body) > limit
+        if h["truncated"]:
+            h["diff"] = body[:limit] + "\n...(hunk truncated)"
+    return {
+        "ok": True,
+        "scope": payload.get("scope"),
+        "hunks": hunks,
+        "review": payload.get("review"),
+    }
+
+
+def format_diff_hunks(payload: dict) -> str:
+    if not payload.get("ok"):
+        return f"diff hunk 解析失败: {payload.get('error', '')}".rstrip()
+    hunks = payload.get("hunks") or []
+    scope = "已 staged" if payload.get("scope") == "staged" else "工作区"
+    if not hunks:
+        return f"{scope} 没有可审查的 diff hunk。"
+    lines = [f"Diff hunks: {scope} · {len(hunks)} 个 hunk"]
+    for h in hunks[:80]:
+        loc = f"+{h.get('new_start', 0)}" if h.get("new_start") else "new"
+        lines.append(f"- {h.get('id')} {h.get('path')}:{loc} {h.get('header')}")
+    if len(hunks) > 80:
+        lines.append(f"... 还有 {len(hunks) - 80} 个 hunk")
+    lines.append("")
+    lines.append("下一步: /review hunk H1 或 /review --fix hunk H1")
+    return "\n".join(lines)
+
+
+def diff_for_review(repo_root: str, *, cached: bool = False,
+                    paths: list[str] | None = None, hunk_id: str = "",
+                    limit: int = 30000) -> dict:
+    """Return a bounded git diff payload suitable for LLM review."""
+    if hunk_id:
+        payload = diff_hunks_for_review(repo_root, cached=cached, paths=paths, limit=limit)
+        if not payload.get("ok"):
+            return payload
+        target = str(hunk_id).strip().upper()
+        for h in payload.get("hunks") or []:
+            if str(h.get("id")).upper() == target:
+                return {
+                    "ok": True,
+                    "scope": payload.get("scope"),
+                    "diff": h.get("diff") or "",
+                    "truncated": bool(h.get("truncated")),
+                    "review": payload.get("review"),
+                    "hunk": h,
+                }
+        return {"ok": False, "error": f"找不到 diff hunk {hunk_id}；先用 /diff hunks 查看当前编号"}
+    payload = _diff_payload(repo_root, cached=cached, paths=paths)
+    if not payload.get("ok"):
+        return payload
+    diff = str(payload.get("diff") or "")
     truncated = len(diff) > limit
     if truncated:
         diff = diff[:limit] + "\n...(diff truncated)"
     return {
         "ok": True,
-        "scope": "staged" if cached else "workspace",
+        "scope": payload.get("scope"),
         "diff": diff,
         "truncated": truncated,
-        "review": review,
+        "review": payload.get("review"),
     }
 
 

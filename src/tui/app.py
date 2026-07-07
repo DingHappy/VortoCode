@@ -51,8 +51,8 @@ COMMAND_INFO = {
     "/artifacts": "列出已发布的制品（画廊在 /artifacts）",
     "/diff": "看工作区改动（支持 stat/cached/路径过滤）",
     "/changes": "提交前变更审查摘要（风险信号/下一步）",
-    "/review": "LLM 审查当前 diff（只报 P0/P1；--fix 可确认后修复）",
-    "/verify": "探测并运行仓库测试；run 可执行 runtime 验证命令",
+    "/review": "LLM 审查当前 diff/hunk（只报 P0/P1；--fix 可确认后修复）",
+    "/verify": "探测测试或运行 profile/runtime 验证",
     "/preflight": "提交/开 PR 前检查（风险/审查/测试/提交建议）",
     "/git": "查看 git 状态、staged/unstaged diffstat",
     "/commit": "提交已 staged 改动；suggest 自动生成提交信息",
@@ -136,10 +136,11 @@ HELP = """可用命令:
   /tools              列出主 agent 可用工具及其读写权限
   /audit              查看工具调用审计日志（.vortocode/audit.log）
   /artifacts          列出已发布的制品（标题/版本/链接；浏览器开 /artifacts 是画廊）
-  /diff [stat|cached] [路径]  看工作区改动（+绿/-红着色）—— review 主 agent 改了什么
+  /diff [stat|hunks|cached] [路径]  看工作区改动；hunks 显示可 review 的 hunk 编号
   /changes [cached] [路径]  提交前变更审查摘要（风险信号/下一步）
-  /review [--fix] [cached] [路径]  LLM 审查当前 diff，只报 P0/P1；--fix 确认后切 build 修复
+  /review [--fix] [hunk H1] [cached] [路径]  LLM 审查当前 diff/hunk；--fix 确认后切 build 修复
   /verify [selector|--changed]  探测并运行仓库测试；--changed 按改动推断相关测试
+  /verify profiles     列出 verify profile；/verify <profile> 运行 profile
   /verify run <命令>   运行 runtime/smoke 验证命令（危险拦截 + 人工确认）
   /preflight [cached] 提交/开 PR 前检查：风险、建议审查、建议验证、建议提交信息
   /git                查看 git 状态、staged/unstaged diffstat
@@ -2143,16 +2144,17 @@ class VortoCodeTUI(App):
         self._emit("\n".join(lines))
 
     def _cmd_diff(self, arg: str = "") -> None:
-        """/diff：把工作区改动着色渲染出来；支持 stat/cached/路径过滤，方便 review。"""
+        """/diff：把工作区改动着色渲染出来；支持 stat/hunks/cached/路径过滤。"""
         import shlex
         import subprocess
         try:
             tokens = shlex.split(arg or "")
         except ValueError as e:
-            self._emit(f"用法: /diff [stat|cached|staged] [路径...]（参数解析失败: {e}）")
+            self._emit(f"用法: /diff [stat|hunks|cached|staged] [路径...]（参数解析失败: {e}）")
             return
         cached = False
         stat = False
+        hunks = False
         paths: list[str] = []
         for tok in tokens:
             low = tok.lower()
@@ -2160,11 +2162,20 @@ class VortoCodeTUI(App):
                 cached = True
             elif low in {"stat", "--stat"}:
                 stat = True
+            elif low in {"hunk", "hunks", "--hunks"}:
+                hunks = True
             elif tok.startswith("-"):
-                self._emit("用法: /diff [stat|cached|staged] [路径...]（不透传其它 git 参数）")
+                self._emit("用法: /diff [stat|hunks|cached|staged] [路径...]（不透传其它 git 参数）")
                 return
             else:
                 paths.append(tok)
+        if stat and hunks:
+            self._emit("用法: /diff stat 或 /diff hunks，二者不要混用")
+            return
+        if hunks:
+            from src.agents.git_workflow import diff_hunks_for_review, format_diff_hunks
+            self._emit(format_diff_hunks(diff_hunks_for_review(self.repo_root, cached=cached, paths=paths)))
+            return
         cmd = ["git", "diff"]
         if cached:
             cmd.append("--cached")
@@ -2217,42 +2228,52 @@ class VortoCodeTUI(App):
         self._emit(format_change_review(change_review(self.repo_root, cached=cached, paths=paths)))
 
     def _cmd_review(self, arg: str = "") -> None:
-        """/review [--fix] [cached] [路径...]：LLM diff review，只报 P0/P1。"""
+        """/review [--fix] [hunk H1] [cached] [路径...]：LLM diff review，只报 P0/P1。"""
         import shlex
         try:
             tokens = shlex.split(arg or "")
         except ValueError as e:
-            self._emit(f"用法: /review [--fix] [cached|staged] [路径...]（参数解析失败: {e}）")
+            self._emit(f"用法: /review [--fix] [hunk H1] [cached|staged] [路径...]（参数解析失败: {e}）")
             return
         cached = False
         fix = False
+        hunk_id = ""
         paths: list[str] = []
-        for tok in tokens:
+        i = 0
+        while i < len(tokens):
+            tok = tokens[i]
             low = tok.lower()
             if low in {"cached", "staged", "--cached", "--staged"}:
                 cached = True
             elif low in {"--fix", "fix"}:
                 fix = True
+            elif low in {"hunk", "--hunk"}:
+                i += 1
+                if i >= len(tokens) or tokens[i].startswith("-"):
+                    self._emit("用法: /review [--fix] [hunk H1] [cached|staged] [路径...]")
+                    return
+                hunk_id = tokens[i].strip().upper()
             elif tok.startswith("-"):
-                self._emit("用法: /review [--fix] [cached|staged] [路径...]（不透传其它参数）")
+                self._emit("用法: /review [--fix] [hunk H1] [cached|staged] [路径...]（不透传其它参数）")
                 return
             else:
                 paths.append(tok)
+            i += 1
 
         async def _run():
             try:
-                result = await self._run_diff_review(cached=cached, paths=paths)
+                result = await self._run_diff_review(cached=cached, paths=paths, hunk_id=hunk_id)
             except Exception as e:  # noqa: BLE001
                 self._emit(f"review 出错: {e}")
                 return
             self._emit(result)
             if fix:
-                self._offer_review_fix(result, cached=cached, paths=paths)
+                self._offer_review_fix(result, cached=cached, paths=paths, hunk_id=hunk_id)
 
         self.run_worker(_run(), exclusive=True, group="review")
 
     def _offer_review_fix(self, review_text: str, *, cached: bool = False,
-                          paths: list[str] | None = None) -> None:
+                          paths: list[str] | None = None, hunk_id: str = "") -> None:
         text = str(review_text or "").strip()
         low = text.lower()
         no_findings = "未发现 p0/p1" in low or "no p0/p1" in low
@@ -2261,6 +2282,8 @@ class VortoCodeTUI(App):
             self._emit("review 未发现可自动修复的 P0/P1，已保持只读。")
             return
         scope = "已 staged diff" if cached else "工作区 diff"
+        if hunk_id:
+            scope += f" · {hunk_id}"
         path_hint = f"；路径: {', '.join(paths)}" if paths else ""
         prompt = (
             f"按 /review 发现的问题自动修复？范围: {scope}{path_hint}。\n"
@@ -2276,17 +2299,18 @@ class VortoCodeTUI(App):
             self._continue_text_route(
                 "请根据刚才 /review 的 P0/P1 审查结论修复当前 diff。"
                 "要求：只改必要处，修完后运行最相关验证；不要处理风格、命名或微优化。\n\n"
-                f"审查结论:\n{excerpt}"
+                f"范围: {scope}{path_hint}\n\n审查结论:\n{excerpt}"
             )
 
         self._begin_inline_confirm(prompt, scope="writes", callback=_done)
 
-    async def _run_diff_review(self, *, cached: bool = False, paths: list[str] | None = None) -> str:
+    async def _run_diff_review(self, *, cached: bool = False, paths: list[str] | None = None,
+                               hunk_id: str = "") -> str:
         import os
         if not os.getenv("OPENAI_API_KEY"):
             return "配置 OPENAI_API_KEY 后可用 /review 做 LLM diff 审查；无需 key 可先用 /changes 和 /preflight。"
         from src.agents.git_workflow import diff_for_review
-        payload = diff_for_review(self.repo_root, cached=cached, paths=paths or [])
+        payload = diff_for_review(self.repo_root, cached=cached, paths=paths or [], hunk_id=hunk_id)
         if not payload.get("ok"):
             return f"review 失败: {payload.get('error', '')}".rstrip()
         diff = str(payload.get("diff") or "").strip()
@@ -2306,6 +2330,8 @@ class VortoCodeTUI(App):
             extra += "\n\n项目 Review guidelines:\n" + guidelines
         agent = MainAgent([], max_steps=2, extra_system=extra, native=False)
         scope = "staged" if cached else "workspace"
+        if hunk_id:
+            scope += f" hunk {hunk_id.upper()}"
         prompt = (
             f"请审查下面 {scope} diff，只输出审查结论。"
             "优先列 Findings；没有发现就说未发现 P0/P1。\n\n"
@@ -2322,6 +2348,19 @@ class VortoCodeTUI(App):
         except ValueError as e:
             self._emit(f"用法: /verify [selector|--changed] [cached] 或 /verify run <命令>（参数解析失败: {e}）")
             return
+        if tokens and tokens[0].lower() in {"profiles", "profile", "list"}:
+            if len(tokens) == 1 or tokens[0].lower() in {"profiles", "list"}:
+                from src.agents.verify_profiles import format_verify_profiles, load_verify_profiles
+                self._emit(format_verify_profiles(load_verify_profiles(self.repo_root)))
+                return
+            self._cmd_verify_profile(tokens[1])
+            return
+        if len(tokens) == 1 and not tokens[0].startswith("-"):
+            from src.agents.verify_profiles import resolve_verify_profile
+            resolved = resolve_verify_profile(self.repo_root, tokens[0])
+            if resolved.get("ok"):
+                self._cmd_verify_profile(str(resolved.get("name") or tokens[0]))
+                return
         if tokens and tokens[0].lower() in {"run", "runtime", "cmd", "command"}:
             parts = raw_arg.strip().split(maxsplit=1)
             cmd = parts[1].strip() if len(parts) > 1 else ""
@@ -2391,7 +2430,21 @@ class VortoCodeTUI(App):
 
         self.run_worker(_run(), exclusive=True, group="verify")
 
-    def _cmd_verify_run(self, cmd: str) -> None:
+    def _cmd_verify_profile(self, name: str) -> None:
+        from src.agents.verify_profiles import format_verify_profiles, resolve_verify_profile
+        resolved = resolve_verify_profile(self.repo_root, name)
+        if not resolved.get("ok"):
+            self._emit(str(resolved.get("error") or "verify profile 加载失败"))
+            profiles = resolved.get("profiles") or {}
+            if profiles:
+                self._emit(format_verify_profiles({"ok": True, "profiles": profiles}))
+            return
+        profile = resolved.get("profile") or {}
+        desc = str(profile.get("description") or "").strip()
+        label = f"profile {resolved.get('name')}" + (f" · {desc}" if desc else "")
+        self._cmd_verify_run(str(profile.get("cmd") or ""), label=label)
+
+    def _cmd_verify_run(self, cmd: str, *, label: str = "runtime 验证命令") -> None:
         """Run a user-supplied runtime/smoke command with existing command gates."""
         cmd = (cmd or "").strip()
         if not cmd:
@@ -2405,7 +2458,7 @@ class VortoCodeTUI(App):
 
         async def _run():
             if not await self._confirm_command(
-                    "运行 runtime 验证命令？\n"
+                    f"运行 {label}？\n"
                     f"  $ {cmd}\n"
                     "适合 smoke test、启动检查、端到端脚本；请确认命令不会做外向或破坏性操作。"):
                 self._emit("已取消 runtime 验证。")

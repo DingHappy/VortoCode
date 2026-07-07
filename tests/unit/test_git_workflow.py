@@ -5,7 +5,9 @@ import subprocess
 from src.agents.git_workflow import (change_review,
                                      changed_test_selection,
                                      commit_changes,
+                                     diff_hunks_for_review,
                                      diff_for_review,
+                                     format_diff_hunks,
                                      format_change_review,
                                      format_preflight_report,
                                      format_pr_preview,
@@ -14,6 +16,10 @@ from src.agents.git_workflow import (change_review,
                                      pr_preview,
                                      suggest_commit_message,
                                      status_summary)
+from src.agents.verify_profiles import (format_verify_profiles,
+                                        load_verify_profiles,
+                                        recommend_verify_profiles,
+                                        resolve_verify_profile)
 
 
 def _git(path, *args):
@@ -77,6 +83,7 @@ def test_change_review_cached_only_ignores_unstaged(tmp_path):
 
 def test_changed_test_selection_maps_source_to_unit_test(tmp_path):
     _init_repo(tmp_path)
+    (tmp_path / "main.py").write_text("print('ok')\n", encoding="utf-8")
     (tmp_path / "src" / "agents").mkdir(parents=True)
     (tmp_path / "tests" / "unit").mkdir(parents=True)
     (tmp_path / "src" / "agents" / "sample.py").write_text("x = 1\n", encoding="utf-8")
@@ -134,6 +141,7 @@ def test_suggest_commit_message_stage_all_expands_untracked_dirs(tmp_path):
 
 def test_preflight_report_combines_risks_tests_and_commit_message(tmp_path):
     _init_repo(tmp_path)
+    (tmp_path / "main.py").write_text("print('ok')\n", encoding="utf-8")
     (tmp_path / "src" / "agents").mkdir(parents=True)
     (tmp_path / "tests" / "unit").mkdir(parents=True)
     (tmp_path / "src" / "agents" / "sample.py").write_text("x = 1\n", encoding="utf-8")
@@ -151,8 +159,29 @@ def test_preflight_report_combines_risks_tests_and_commit_message(tmp_path):
     assert "Preflight: 工作区" in text
     assert "/review" in text
     assert "/review --fix" in text
+    assert "/verify unit" in text
+    assert "/verify self-analyze" in text
     assert "/verify --changed" in text
     assert "/commit all --suggest" in text
+
+
+def test_preflight_report_recommends_targeted_builtin_profile(tmp_path):
+    _init_repo(tmp_path)
+    (tmp_path / "src" / "tui").mkdir(parents=True)
+    (tmp_path / "tests" / "unit").mkdir(parents=True)
+    (tmp_path / "src" / "tui" / "app.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "tests" / "unit" / "test_tui.py").write_text("def test_x(): pass\n", encoding="utf-8")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "add tui")
+    (tmp_path / "src" / "tui" / "app.py").write_text("x = 2\n", encoding="utf-8")
+
+    report = preflight_report(str(tmp_path))
+    text = format_preflight_report(report)
+
+    assert report["verify_profiles"]["ok"] is True
+    assert [r["name"] for r in report["verify_profiles"]["recommendations"]][:2] == ["tui", "unit"]
+    assert "/verify tui" in text
+    assert "TUI 相关文件有改动" in text
 
 
 def test_diff_for_review_returns_bounded_diff(tmp_path):
@@ -167,6 +196,30 @@ def test_diff_for_review_returns_bounded_diff(tmp_path):
     assert "base.txt" in payload["diff"]
 
 
+def test_diff_hunks_for_review_lists_and_selects_hunks(tmp_path):
+    _init_repo(tmp_path)
+    lines = [f"line {i}\n" for i in range(30)]
+    (tmp_path / "base.txt").write_text("".join(lines), encoding="utf-8")
+    _git(tmp_path, "add", "base.txt")
+    _git(tmp_path, "commit", "-qm", "expand base")
+    lines[1] = "line two changed\n"
+    lines[25] = "line twenty five changed\n"
+    (tmp_path / "base.txt").write_text("".join(lines), encoding="utf-8")
+
+    payload = diff_hunks_for_review(str(tmp_path))
+    text = format_diff_hunks(payload)
+    selected = diff_for_review(str(tmp_path), hunk_id="H2")
+
+    assert payload["ok"] is True
+    assert [h["id"] for h in payload["hunks"]] == ["H1", "H2"]
+    assert "H1 base.txt" in text
+    assert "H2 base.txt" in text
+    assert selected["ok"] is True
+    assert selected["hunk"]["id"] == "H2"
+    assert "line twenty five changed" in selected["diff"]
+    assert "line two changed" not in selected["diff"]
+
+
 def test_diff_for_review_rejects_empty_changes(tmp_path):
     _init_repo(tmp_path)
 
@@ -174,6 +227,46 @@ def test_diff_for_review_rejects_empty_changes(tmp_path):
 
     assert payload["ok"] is False
     assert "没有可审查" in payload["error"]
+
+
+def test_verify_profiles_load_project_yaml_and_resolve(tmp_path):
+    _init_repo(tmp_path)
+    (tmp_path / ".vortocode").mkdir()
+    (tmp_path / ".vortocode" / "verify.yaml").write_text(
+        "profiles:\n"
+        "  smoke:\n"
+        "    cmd: python main.py self-analyze\n"
+        "    description: quick scan\n",
+        encoding="utf-8",
+    )
+
+    loaded = load_verify_profiles(str(tmp_path))
+    text = format_verify_profiles(loaded)
+    resolved = resolve_verify_profile(str(tmp_path), "SMOKE")
+
+    assert loaded["ok"] is True
+    assert loaded["profiles"]["smoke"]["cmd"] == "python main.py self-analyze"
+    assert "smoke [project]" in text
+    assert resolved["ok"] is True
+    assert resolved["name"] == "smoke"
+
+
+def test_verify_profiles_recommend_project_path_match(tmp_path):
+    _init_repo(tmp_path)
+    (tmp_path / ".vortocode").mkdir()
+    (tmp_path / ".vortocode" / "verify.yaml").write_text(
+        "profiles:\n"
+        "  docs:\n"
+        "    cmd: python -m docs_check\n"
+        "    paths: [docs/**]\n",
+        encoding="utf-8",
+    )
+
+    rec = recommend_verify_profiles(str(tmp_path), ["docs/WORK_PLAN.md"])
+
+    assert rec["ok"] is True
+    assert rec["recommendations"][0]["name"] == "docs"
+    assert rec["recommendations"][0]["reason"] == "匹配 docs/**"
 
 
 def test_commit_changes_staged_only(tmp_path):
