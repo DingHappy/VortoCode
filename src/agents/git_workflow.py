@@ -410,6 +410,71 @@ def suggest_commit_message(repo_root: str, *, stage_all: bool = False) -> dict:
     return {"ok": True, "message": f"{prefix}: {action}", "paths": paths, "review": review}
 
 
+def preflight_report(repo_root: str, *, cached: bool = False) -> dict:
+    """Build a local preflight summary before committing or opening a PR."""
+    review = change_review(repo_root, cached=cached)
+    if not review.get("ok"):
+        return {"ok": False, "error": review.get("error", "git diff failed")}
+    status = status_summary(repo_root)
+    tests = changed_test_selection(repo_root, cached=cached)
+    commit = suggest_commit_message(repo_root, stage_all=not cached)
+    return {
+        "ok": True,
+        "scope": "staged" if cached else "workspace",
+        "status": status,
+        "review": review,
+        "tests": tests,
+        "commit": commit,
+    }
+
+
+def format_preflight_report(report: dict) -> str:
+    if not report.get("ok"):
+        return f"Preflight 失败: {report.get('error', '')}".rstrip()
+    review = report.get("review") or {}
+    tests = report.get("tests") or {}
+    commit = report.get("commit") or {}
+    status = report.get("status") or {}
+    scope = "已 staged" if report.get("scope") == "staged" else "工作区"
+    paths = review.get("paths") or []
+    lines = [
+        f"Preflight: {scope}",
+        f"分支: {status.get('branch') or '(unknown)'}",
+        f"改动: {len(paths)} 个文件 · +{review.get('insertions', 0)} / -{review.get('deletions', 0)}",
+    ]
+    if not paths:
+        lines.append("")
+        lines.append("没有可检查的改动。")
+        return "\n".join(lines)
+    risks = review.get("risks") or []
+    lines.append("")
+    if risks:
+        lines.append("风险信号:")
+        lines.extend(f"- {r}" for r in risks[:8])
+    else:
+        lines.append("风险信号: 未发现明显提交前风险。")
+    selectors = tests.get("selectors") or []
+    lines.append("")
+    lines.append("建议验证:")
+    if selectors:
+        lines.append("- /verify --changed" + (" cached" if report.get("scope") == "staged" else ""))
+        lines.extend(f"  · {s}" for s in selectors[:8])
+    elif tests.get("changed_paths"):
+        lines.append("- /verify --changed" + (" cached" if report.get("scope") == "staged" else ""))
+        lines.append(f"  · {tests.get('reason')}")
+    else:
+        lines.append(f"- {tests.get('reason') or '没有改动可验证。'}")
+    lines.append("")
+    if commit.get("ok"):
+        cmd = "/commit --suggest" if report.get("scope") == "staged" else "/commit all --suggest"
+        lines.append(f"建议提交: {commit.get('message')}")
+        lines.append(f"下一步: {cmd}")
+    else:
+        lines.append(f"建议提交: 暂不可生成（{commit.get('error', '')}）")
+    lines.append("发布前: /diff stat 复核范围；功能分支上再 /pr preview。")
+    return "\n".join(lines)
+
+
 def has_staged_changes(repo_root: str) -> bool:
     return _git(repo_root, "diff", "--cached", "--quiet").returncode == 1
 

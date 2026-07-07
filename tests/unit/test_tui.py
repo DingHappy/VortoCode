@@ -2415,6 +2415,46 @@ async def test_cmd_verify_changed_runs_inferred_tests(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_cmd_preflight_shows_readiness_summary(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "src" / "agents").mkdir(parents=True)
+    (tmp_path / "tests" / "unit").mkdir(parents=True)
+    (tmp_path / "src" / "agents" / "sample.py").write_text("x = 1\n")
+    (tmp_path / "tests" / "unit" / "test_sample.py").write_text("def test_x(): pass\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "src" / "agents" / "sample.py").write_text("x = 2\n")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/preflight")
+        assert await _wait_for(app, pilot, "Preflight: 工作区")
+        joined = "\n".join(app.transcript)
+        assert "/verify --changed" in joined
+        assert "tests/unit/test_sample.py" in joined
+        assert "fix(agents): update agents" in joined
+        assert "/commit all --suggest" in joined
+
+
+@pytest.mark.asyncio
+async def test_cmd_preflight_cached_uses_staged_scope(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "a.py").write_text("a = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "a.py").write_text("a = 2\n")
+    _git(tmp_path, "add", "a.py")
+    (tmp_path / "b.py").write_text("b = 1\n")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/preflight cached")
+        assert await _wait_for(app, pilot, "Preflight: 已 staged")
+        joined = "\n".join(app.transcript)
+        assert "a.py" in joined
+        assert "b.py" not in joined
+        assert "/commit --suggest" in joined
+
+
+@pytest.mark.asyncio
 async def test_cmd_git_shows_status_summary(tmp_path):
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")

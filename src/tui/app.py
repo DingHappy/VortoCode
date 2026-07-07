@@ -32,7 +32,7 @@ from src.memory.session_store import SessionManager
 
 SLASH_COMMANDS = [
     "/analyze", "/improve", "/fix", "/run", "/apply", "/agents", "/runagent", "/skills", "/mcp",
-    "/artifacts", "/diff", "/changes", "/verify", "/git", "/commit", "/pr", "/pr-check", "/pr-fix", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
+    "/artifacts", "/diff", "/changes", "/verify", "/preflight", "/git", "/commit", "/pr", "/pr-check", "/pr-fix", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
     "/context", "/compact", "/permissions", "/memory", "/tasks", "/tools", "/audit", "/speak", "/commands", "/hooks", "/clear", "/help", "/quit",
 ]
 # 必须带参数的命令：补全面板里回车不直接执行，先补成 "/cmd " 让用户接着填参数
@@ -52,6 +52,7 @@ COMMAND_INFO = {
     "/diff": "看工作区改动（支持 stat/cached/路径过滤）",
     "/changes": "提交前变更审查摘要（风险信号/下一步）",
     "/verify": "探测并运行仓库测试（支持 --changed）",
+    "/preflight": "提交/开 PR 前检查（风险/测试/提交建议）",
     "/git": "查看 git 状态、staged/unstaged diffstat",
     "/commit": "提交已 staged 改动；suggest 自动生成提交信息",
     "/pr": "预览或创建 PR；preview 只预览，draft 开草稿",
@@ -137,6 +138,7 @@ HELP = """可用命令:
   /diff [stat|cached] [路径]  看工作区改动（+绿/-红着色）—— review 主 agent 改了什么
   /changes [cached] [路径]  提交前变更审查摘要（风险信号/下一步）
   /verify [selector|--changed]  探测并运行仓库测试；--changed 按改动推断相关测试
+  /preflight [cached] 提交/开 PR 前检查：风险、建议验证、建议提交信息
   /git                查看 git 状态、staged/unstaged diffstat
   /commit <msg|suggest> 提交已 staged 改动；/commit all --suggest 先 git add -A 并自动生成信息
   /pr [preview|draft] [base <ref>] [title]  预览或创建 PR（外向操作需确认）
@@ -1643,6 +1645,8 @@ class VortoCodeTUI(App):
             self._cmd_changes(arg)
         elif cmd == "verify":
             self._cmd_verify(arg)
+        elif cmd == "preflight":
+            self._cmd_preflight(arg)
         elif cmd == "git":
             self._cmd_git(arg)
         elif cmd == "commit":
@@ -2278,6 +2282,25 @@ class VortoCodeTUI(App):
                 self._emit(f"{status}（{res.get('cmd') or cmd_text}）")
 
         self.run_worker(_run(), exclusive=True, group="verify")
+
+    def _cmd_preflight(self, arg: str = "") -> None:
+        """/preflight [cached]：提交/开 PR 前只读检查。"""
+        import shlex
+        try:
+            tokens = shlex.split(arg or "")
+        except ValueError as e:
+            self._emit(f"用法: /preflight [cached|staged]（参数解析失败: {e}）")
+            return
+        cached = False
+        for tok in tokens:
+            low = tok.lower()
+            if low in {"cached", "staged", "--cached", "--staged"}:
+                cached = True
+            else:
+                self._emit("用法: /preflight [cached|staged]")
+                return
+        from src.agents.git_workflow import format_preflight_report, preflight_report
+        self._emit(format_preflight_report(preflight_report(self.repo_root, cached=cached)))
 
     def _cmd_git(self, arg: str = "") -> None:
         """/git：查看当前分支、改动文件、staged/unstaged diffstat。"""

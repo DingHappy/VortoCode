@@ -6,8 +6,10 @@ from src.agents.git_workflow import (change_review,
                                      changed_test_selection,
                                      commit_changes,
                                      format_change_review,
+                                     format_preflight_report,
                                      format_pr_preview,
                                      format_status_summary,
+                                     preflight_report,
                                      pr_preview,
                                      suggest_commit_message,
                                      status_summary)
@@ -127,6 +129,27 @@ def test_suggest_commit_message_stage_all_expands_untracked_dirs(tmp_path):
     assert msg["ok"] is True
     assert msg["paths"] == ["src/agents/new_tool.py"]
     assert msg["message"] == "feat(agents): update agents"
+
+
+def test_preflight_report_combines_risks_tests_and_commit_message(tmp_path):
+    _init_repo(tmp_path)
+    (tmp_path / "src" / "agents").mkdir(parents=True)
+    (tmp_path / "tests" / "unit").mkdir(parents=True)
+    (tmp_path / "src" / "agents" / "sample.py").write_text("x = 1\n", encoding="utf-8")
+    (tmp_path / "tests" / "unit" / "test_sample.py").write_text("def test_x(): pass\n", encoding="utf-8")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "add sample")
+    (tmp_path / "src" / "agents" / "sample.py").write_text("x = 2\n", encoding="utf-8")
+
+    report = preflight_report(str(tmp_path))
+    text = format_preflight_report(report)
+
+    assert report["ok"] is True
+    assert report["tests"]["selectors"] == ["tests/unit/test_sample.py"]
+    assert report["commit"]["message"] == "fix(agents): update agents"
+    assert "Preflight: 工作区" in text
+    assert "/verify --changed" in text
+    assert "/commit all --suggest" in text
 
 
 def test_commit_changes_staged_only(tmp_path):
