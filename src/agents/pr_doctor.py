@@ -5,8 +5,13 @@ turns it into a concise action plan for TUI/CLI callers.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
+
+_PYTEST_SELECTOR_RE = re.compile(
+    r"((?:tests|src|examples)/[A-Za-z0-9_./-]+\.py(?:::[A-Za-z0-9_./\-\[\]:]+)+)"
+)
 
 _FAILURE_CATEGORIES = {
     "test": {
@@ -163,6 +168,117 @@ def classify_failed_checks(checks: list[dict], check_logs: list[dict] | None = N
     }
 
 
+def _failure_text(checks: list[dict], check_logs: list[dict] | None = None) -> str:
+    parts: list[str] = []
+    for ck in checks:
+        parts.append(str(ck.get("name") or ck.get("context") or ""))
+        parts.append(str(ck.get("link") or ""))
+    for item in check_logs or []:
+        parts.append(str(item.get("name") or ""))
+        parts.append(str(item.get("job_name") or ""))
+        parts.append(str(item.get("step_name") or ""))
+        parts.append(str(item.get("excerpt") or ""))
+    return "\n".join(parts)
+
+
+def extract_pytest_selectors(check_logs: list[dict] | None = None, *, limit: int = 3) -> list[str]:
+    """Extract precise pytest selectors from failed log excerpts."""
+    seen: set[str] = set()
+    out: list[str] = []
+    text = _failure_text([], check_logs)
+    for match in _PYTEST_SELECTOR_RE.finditer(text):
+        selector = match.group(1).strip().rstrip(".,;:")
+        if selector in seen:
+            continue
+        seen.add(selector)
+        out.append(selector)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def repair_templates(checks: list[dict], check_logs: list[dict] | None,
+                     classification: dict | None = None) -> list[dict]:
+    """Return concrete repair templates for the classified failure shape."""
+    classification = classification or classify_failed_checks(checks, check_logs)
+    category = classification.get("category") or "unknown"
+    text = _failure_text(checks, check_logs).lower()
+    selectors = extract_pytest_selectors(check_logs)
+    templates: list[dict] = []
+
+    if category == "test":
+        if selectors:
+            templates.append({
+                "title": "复现最小失败测试",
+                "command": "python -m pytest -q " + " ".join(selectors[:2]),
+                "detail": "先只跑日志里出现的失败 selector，确认本地可复现后再改代码。",
+            })
+        templates.append({
+            "title": "修复后跑相关测试",
+            "command": "/verify unit",
+            "detail": "没有更精确 selector 时，使用项目 unit profile 兜底验证。",
+        })
+    elif category == "lint":
+        if "ruff" in text:
+            command = "ruff check . --fix"
+        elif "prettier" in text:
+            command = "prettier --write ."
+        else:
+            command = "运行项目 lint/format 命令"
+        templates.append({
+            "title": "机械修复 lint/格式",
+            "command": command,
+            "detail": "先做格式或 lint 机械修复，再确认没有行为 diff 混入。",
+        })
+    elif category == "type-check":
+        if "mypy" in text:
+            command = "mypy ."
+        elif "pyright" in text:
+            command = "pyright"
+        elif "tsc" in text:
+            command = "npx tsc --noEmit"
+        else:
+            command = "运行项目 type-check 命令"
+        templates.append({
+            "title": "复现类型检查失败",
+            "command": command,
+            "detail": "优先修类型签名、None 分支、导入类型或泛型不一致。",
+        })
+    elif category == "dependency":
+        templates.append({
+            "title": "修依赖声明而不是只补本地环境",
+            "command": "检查 pyproject.toml / requirements / lock file / CI install step",
+            "detail": "确认缺失包或版本约束写进项目依赖声明，并更新对应锁文件。",
+        })
+    elif category == "environment":
+        templates.append({
+            "title": "先区分环境问题和源码问题",
+            "command": "检查 CI 权限、缓存目录、secret、系统依赖和命令可用性",
+            "detail": "环境类失败通常不应通过业务代码绕过，先修 workflow 或诊断输出。",
+        })
+    elif category == "timeout":
+        command = "python -m pytest -q " + " ".join(selectors[:2]) if selectors else "/verify unit"
+        templates.append({
+            "title": "缩小超时范围",
+            "command": command,
+            "detail": "先用最小 selector 或 unit profile 定位卡住点，再补超时/worker 诊断。",
+        })
+    elif category == "build":
+        templates.append({
+            "title": "复现最小构建/编译失败",
+            "command": "python -m compileall -q src tests",
+            "detail": "若 CI 不是 Python 构建，换成对应 job 的 build command。",
+        })
+
+    if not templates:
+        templates.append({
+            "title": "人工读取原始失败上下文",
+            "command": "/pr-check <ref>",
+            "detail": "当前启发式无法稳定归类，先看原始 review/CI 反馈再决定修复路径。",
+        })
+    return templates
+
+
 def build_pr_doctor_report(repo_root: str, ref: str, feedback: dict, *,
                            check_logs: list[dict] | None = None,
                            check_log_error: str = "") -> dict:
@@ -183,6 +299,7 @@ def build_pr_doctor_report(repo_root: str, ref: str, feedback: dict, *,
     if has_findings and not can_fix:
         cannot_fix_reason = f"PR head 分支是 {branch or '未知'}，自动修复只允许 vorto/* 分支"
     logs = check_logs or []
+    classification = classify_failed_checks(checks, logs) if checks else {}
     return {
         "ok": True,
         "ref": ref,
@@ -194,7 +311,8 @@ def build_pr_doctor_report(repo_root: str, ref: str, feedback: dict, *,
         "can_fix": can_fix,
         "cannot_fix_reason": cannot_fix_reason,
         "verify_suggestions": _verify_suggestions(repo_root, checks),
-        "failure_classification": classify_failed_checks(checks, logs) if checks else {},
+        "failure_classification": classification,
+        "repair_templates": repair_templates(checks, logs, classification) if checks else [],
         "check_logs": logs,
         "check_log_error": check_log_error,
         "feedback": feedback,
@@ -283,6 +401,17 @@ def format_pr_doctor_report(report: dict) -> str:
         if classification.get("evidence"):
             lines.append(f"  证据: {classification.get('evidence')}")
         lines.append(f"  建议: {classification.get('next_action')}")
+
+    templates = list(report.get("repair_templates") or [])
+    if templates:
+        lines += ["", "推荐修复模板:"]
+        for item in templates[:4]:
+            lines.append(f"- {item.get('title') or '修复步骤'}")
+            command = str(item.get("command") or "").replace("<ref>", ref)
+            if command:
+                lines.append(f"  命令: {command}")
+            if item.get("detail"):
+                lines.append(f"  说明: {item.get('detail')}")
 
     if comments:
         lines += ["", "Review 待办:"]

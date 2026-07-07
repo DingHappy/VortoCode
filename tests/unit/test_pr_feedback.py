@@ -133,7 +133,7 @@ def test_pr_doctor_report_recommends_fix_and_verify(tmp_path):
         feedback,
         check_logs=[{"name": "pytest / unit", "run_id": "123",
                      "job_name": "unit", "step_name": "Run pytest",
-                     "excerpt": "AssertionError: nope"}],
+                     "excerpt": "FAILED tests/unit/test_x.py::test_y - AssertionError: nope"}],
     )
     assert report["can_fix"] is True
     text = pr_doctor.format_pr_doctor_report(report)
@@ -143,6 +143,8 @@ def test_pr_doctor_report_recommends_fix_and_verify(tmp_path):
     assert "失败定位/日志摘录" in text and "unit > Run pytest" in text
     assert "AssertionError: nope" in text
     assert "失败类型判断" in text and "测试失败" in text
+    assert "推荐修复模板" in text
+    assert "python -m pytest -q tests/unit/test_x.py::test_y" in text
     assert "缺少失败路径测试" in text
 
 
@@ -170,6 +172,20 @@ def test_pr_doctor_classifies_common_ci_failures():
         [],
     )
     assert environment["category"] == "timeout"
+
+
+def test_pr_doctor_repair_templates_for_lint_and_dependency():
+    lint = pr_doctor.repair_templates(
+        [{"name": "lint"}],
+        [{"excerpt": "ruff check failed: trailing whitespace"}],
+    )
+    assert lint[0]["command"] == "ruff check . --fix"
+
+    dependency = pr_doctor.repair_templates(
+        [{"name": "unit"}],
+        [{"excerpt": "ModuleNotFoundError: No module named 'yaml'"}],
+    )
+    assert "pyproject" in dependency[0]["command"]
 
 
 def test_pr_doctor_report_blocks_non_vorto_autofix(tmp_path):

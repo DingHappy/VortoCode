@@ -147,10 +147,28 @@ Acceptance:
   classification.
 - PR Doctor can show `job > step` before the compact excerpt.
 
+## 2026-07-07 Batch: Repair Templates From Failure Categories
+
+Goals:
+
+- Map failed-check categories to concrete repair templates in PR Doctor.
+- Extract precise pytest selectors from failed log excerpts when available.
+- Pass the same templates into `pr_fix` so automated repair gets a recommended
+  command and repair posture.
+
+Acceptance:
+
+- Test failures with selectors recommend a minimal `python -m pytest -q ...`
+  command.
+- Ruff lint failures recommend `ruff check . --fix`.
+- Dependency failures point to project dependency declarations and lock files
+  rather than local-only package installation.
+- Unknown failures still fall back to the raw PR feedback flow.
+
 ## Backlog
 
-- GitHub and CI integration: map failure categories to repair templates such as
-  "run exact pytest selector", "run ruff --fix", or "inspect dependency file".
+- GitHub and CI integration: turn repair templates into optional one-click
+  `/verify run ...` or `/pr-fix` preflight actions.
 - Session resume quality: show session summaries, branch/workdir/mode health,
   and recovery hints before resuming.
 - Memory automation: propose project memory updates after successful commits or

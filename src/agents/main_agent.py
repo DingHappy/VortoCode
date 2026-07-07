@@ -2312,12 +2312,17 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         for ck in checks[:10]:
             parts.append(f"- CI 失败：{ck['name']}（{ck.get('link', '')}）")
         log_result = await asyncio.to_thread(failed_check_log_excerpts, repo_root, checks)
-        from src.agents.pr_doctor import classify_failed_checks
+        from src.agents.pr_doctor import classify_failed_checks, repair_templates
         classification = classify_failed_checks(checks, list(log_result.get("logs") or []))
         if classification.get("category") and classification.get("category") != "unknown":
             parts.append(
                 f"- CI 类型判断：{classification.get('label')}；"
                 f"建议：{classification.get('next_action')}"
+            )
+        for item in repair_templates(checks, list(log_result.get("logs") or []), classification)[:4]:
+            parts.append(
+                f"- 推荐修复模板：{item.get('title')}；"
+                f"命令：{item.get('command')}；说明：{item.get('detail')}"
             )
         for item in (log_result.get("logs") or [])[:3]:
             loc = str(item.get("job_name") or "")
