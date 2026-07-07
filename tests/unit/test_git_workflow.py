@@ -149,6 +149,8 @@ def test_preflight_report_combines_risks_tests_and_commit_message(tmp_path):
     assert report["tests"]["selectors"] == ["tests/unit/test_sample.py"]
     assert report["commit"]["message"] == "fix(agents): update agents"
     assert "Preflight: 工作区" in text
+    assert "/review" in text
+    assert "/review --fix" in text
     assert "/verify --changed" in text
     assert "/commit all --suggest" in text
 

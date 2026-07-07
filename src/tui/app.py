@@ -51,9 +51,9 @@ COMMAND_INFO = {
     "/artifacts": "列出已发布的制品（画廊在 /artifacts）",
     "/diff": "看工作区改动（支持 stat/cached/路径过滤）",
     "/changes": "提交前变更审查摘要（风险信号/下一步）",
-    "/review": "LLM 审查当前 diff（只报 P0/P1）",
-    "/verify": "探测并运行仓库测试（支持 --changed）",
-    "/preflight": "提交/开 PR 前检查（风险/测试/提交建议）",
+    "/review": "LLM 审查当前 diff（只报 P0/P1；--fix 可确认后修复）",
+    "/verify": "探测并运行仓库测试；run 可执行 runtime 验证命令",
+    "/preflight": "提交/开 PR 前检查（风险/审查/测试/提交建议）",
     "/git": "查看 git 状态、staged/unstaged diffstat",
     "/commit": "提交已 staged 改动；suggest 自动生成提交信息",
     "/pr": "预览或创建 PR；preview 只预览，draft 开草稿",
@@ -138,9 +138,10 @@ HELP = """可用命令:
   /artifacts          列出已发布的制品（标题/版本/链接；浏览器开 /artifacts 是画廊）
   /diff [stat|cached] [路径]  看工作区改动（+绿/-红着色）—— review 主 agent 改了什么
   /changes [cached] [路径]  提交前变更审查摘要（风险信号/下一步）
-  /review [cached] [路径]  LLM 审查当前 diff，只报 P0/P1
+  /review [--fix] [cached] [路径]  LLM 审查当前 diff，只报 P0/P1；--fix 确认后切 build 修复
   /verify [selector|--changed]  探测并运行仓库测试；--changed 按改动推断相关测试
-  /preflight [cached] 提交/开 PR 前检查：风险、建议验证、建议提交信息
+  /verify run <命令>   运行 runtime/smoke 验证命令（危险拦截 + 人工确认）
+  /preflight [cached] 提交/开 PR 前检查：风险、建议审查、建议验证、建议提交信息
   /git                查看 git 状态、staged/unstaged diffstat
   /commit <msg|suggest> 提交已 staged 改动；/commit all --suggest 先 git add -A 并自动生成信息
   /pr [preview|draft] [base <ref>] [title]  预览或创建 PR（外向操作需确认）
@@ -2216,21 +2217,24 @@ class VortoCodeTUI(App):
         self._emit(format_change_review(change_review(self.repo_root, cached=cached, paths=paths)))
 
     def _cmd_review(self, arg: str = "") -> None:
-        """/review [cached] [路径...]：只读 LLM diff review，只报 P0/P1。"""
+        """/review [--fix] [cached] [路径...]：LLM diff review，只报 P0/P1。"""
         import shlex
         try:
             tokens = shlex.split(arg or "")
         except ValueError as e:
-            self._emit(f"用法: /review [cached|staged] [路径...]（参数解析失败: {e}）")
+            self._emit(f"用法: /review [--fix] [cached|staged] [路径...]（参数解析失败: {e}）")
             return
         cached = False
+        fix = False
         paths: list[str] = []
         for tok in tokens:
             low = tok.lower()
             if low in {"cached", "staged", "--cached", "--staged"}:
                 cached = True
+            elif low in {"--fix", "fix"}:
+                fix = True
             elif tok.startswith("-"):
-                self._emit("用法: /review [cached|staged] [路径...]（不透传其它参数）")
+                self._emit("用法: /review [--fix] [cached|staged] [路径...]（不透传其它参数）")
                 return
             else:
                 paths.append(tok)
@@ -2242,8 +2246,40 @@ class VortoCodeTUI(App):
                 self._emit(f"review 出错: {e}")
                 return
             self._emit(result)
+            if fix:
+                self._offer_review_fix(result, cached=cached, paths=paths)
 
         self.run_worker(_run(), exclusive=True, group="review")
+
+    def _offer_review_fix(self, review_text: str, *, cached: bool = False,
+                          paths: list[str] | None = None) -> None:
+        text = str(review_text or "").strip()
+        low = text.lower()
+        no_findings = "未发现 p0/p1" in low or "no p0/p1" in low
+        unavailable = "review 失败" in text or "OPENAI_API_KEY" in text
+        if no_findings or unavailable:
+            self._emit("review 未发现可自动修复的 P0/P1，已保持只读。")
+            return
+        scope = "已 staged diff" if cached else "工作区 diff"
+        path_hint = f"；路径: {', '.join(paths)}" if paths else ""
+        prompt = (
+            f"按 /review 发现的问题自动修复？范围: {scope}{path_hint}。\n"
+            "这会切到 build 模式，并让主 agent 只修 P0/P1，不处理风格建议。"
+        )
+
+        def _done(ok: bool | None) -> None:
+            if not ok:
+                self._emit("已取消 review 修复。")
+                return
+            self._set_mode("build")
+            excerpt = text[:4000]
+            self._continue_text_route(
+                "请根据刚才 /review 的 P0/P1 审查结论修复当前 diff。"
+                "要求：只改必要处，修完后运行最相关验证；不要处理风格、命名或微优化。\n\n"
+                f"审查结论:\n{excerpt}"
+            )
+
+        self._begin_inline_confirm(prompt, scope="writes", callback=_done)
 
     async def _run_diff_review(self, *, cached: bool = False, paths: list[str] | None = None) -> str:
         import os
@@ -2278,12 +2314,18 @@ class VortoCodeTUI(App):
         return await agent.run_turn(prompt, mode="plan")
 
     def _cmd_verify(self, arg: str = "") -> None:
-        """/verify [selector|--changed]：按仓库类型探测测试命令并运行。"""
+        """/verify [selector|--changed] 或 /verify run <命令>。"""
         import shlex
+        raw_arg = arg or ""
         try:
-            tokens = shlex.split(arg or "")
+            tokens = shlex.split(raw_arg)
         except ValueError as e:
-            self._emit(f"用法: /verify [selector|--changed] [cached]（参数解析失败: {e}）")
+            self._emit(f"用法: /verify [selector|--changed] [cached] 或 /verify run <命令>（参数解析失败: {e}）")
+            return
+        if tokens and tokens[0].lower() in {"run", "runtime", "cmd", "command"}:
+            parts = raw_arg.strip().split(maxsplit=1)
+            cmd = parts[1].strip() if len(parts) > 1 else ""
+            self._cmd_verify_run(cmd)
             return
         changed = False
         cached = False
@@ -2295,7 +2337,7 @@ class VortoCodeTUI(App):
             elif low in {"cached", "staged", "--cached", "--staged"}:
                 cached = True
             elif tok.startswith("-"):
-                self._emit("用法: /verify [selector|--changed] [cached]（不透传其它测试参数）")
+                self._emit("用法: /verify [selector|--changed] [cached] 或 /verify run <命令>（不透传其它测试参数）")
                 return
             else:
                 selector_parts.append(tok)
@@ -2346,6 +2388,40 @@ class VortoCodeTUI(App):
                 self._emit(f"{status}（{res.get('cmd') or cmd_text}）\n输出尾部:\n{out[-3000:]}")
             else:
                 self._emit(f"{status}（{res.get('cmd') or cmd_text}）")
+
+        self.run_worker(_run(), exclusive=True, group="verify")
+
+    def _cmd_verify_run(self, cmd: str) -> None:
+        """Run a user-supplied runtime/smoke command with existing command gates."""
+        cmd = (cmd or "").strip()
+        if not cmd:
+            self._emit("用法: /verify run <命令>")
+            return
+        from src.agents.shell import is_dangerous
+        danger = is_dangerous(cmd)
+        if danger:
+            self._emit(f"拒绝执行高危验证命令: {danger}")
+            return
+
+        async def _run():
+            if not await self._confirm_command(
+                    "运行 runtime 验证命令？\n"
+                    f"  $ {cmd}\n"
+                    "适合 smoke test、启动检查、端到端脚本；请确认命令不会做外向或破坏性操作。"):
+                self._emit("已取消 runtime 验证。")
+                return
+            self._chrome(f"[dim]$ {cmd}[/dim]")
+            from src.agents.shell import run_command
+            res = await asyncio.to_thread(run_command, self.repo_root, cmd)
+            ok = bool(res.get("ok"))
+            status = "runtime 验证通过 ✓" if ok else "runtime 验证失败 ✗"
+            color = self._tc("text-success", "#7fce9a") if ok else self._tc("text-error", "#f08a8a")
+            self._chrome(f"[{color}]{status}[/][dim]（{cmd}）[/dim]")
+            out = str(res.get("output") or "").strip()
+            if out:
+                self._emit(f"{status}（{cmd}）\n输出尾部:\n{out[-3000:]}")
+            else:
+                self._emit(f"{status}（{cmd}）")
 
         self.run_worker(_run(), exclusive=True, group="verify")
 

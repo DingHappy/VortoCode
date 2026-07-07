@@ -2353,6 +2353,44 @@ async def test_cmd_review_runs_diff_reviewer(tmp_path, monkeypatch):
         assert calls == {"cached": True, "paths": ["src/foo.py"]}
 
 
+@pytest.mark.asyncio
+async def test_cmd_review_fix_prompts_and_routes_to_build(tmp_path, monkeypatch):
+    routed = []
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+
+    async def fake_review(*, cached=False, paths=None):
+        return "[P1] src/foo.py:10 修复空指针问题"
+
+    monkeypatch.setattr(app, "_run_diff_review", fake_review)
+    monkeypatch.setattr(app, "_continue_text_route", lambda text: routed.append(text))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/review --fix cached src/foo.py")
+        assert await _wait_for(app, pilot, "[P1] src/foo.py")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("y")
+        await pilot.pause()
+        assert app.mode == "build"
+        assert routed and "只改必要处" in routed[0]
+        assert "[P1] src/foo.py" in routed[0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_review_fix_skips_when_no_findings(tmp_path, monkeypatch):
+    routed = []
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+
+    async def fake_review(*, cached=False, paths=None):
+        return "未发现 P0/P1"
+
+    monkeypatch.setattr(app, "_run_diff_review", fake_review)
+    monkeypatch.setattr(app, "_continue_text_route", lambda text: routed.append(text))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/review --fix")
+        assert await _wait_for(app, pilot, "已保持只读")
+        assert not app._inline_confirm_active()
+        assert routed == []
+
+
 def test_cmd_review_rejects_unknown_flags(tmp_path):
     app = VortoCodeTUI(repo_root=str(tmp_path))
     emitted = []
@@ -2441,6 +2479,38 @@ async def test_cmd_verify_changed_runs_inferred_tests(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_cmd_verify_run_confirms_and_runs_runtime_command(tmp_path, monkeypatch):
+    import src.agents.shell as shell
+
+    ran = {}
+
+    def fake_run_command(repo_root, cmd):
+        ran.update({"repo_root": repo_root, "cmd": cmd})
+        return {"ok": True, "code": 0, "output": "smoke ok"}
+
+    monkeypatch.setattr(shell, "run_command", fake_run_command)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/verify run python -m smoke --fast")
+        assert await _wait_inline_confirm(app, pilot)
+        assert app._confirm_scope == "commands"
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "runtime 验证通过")
+        assert ran["cmd"] == "python -m smoke --fast"
+        assert "smoke ok" in "\n".join(app.transcript)
+
+
+def test_cmd_verify_run_rejects_dangerous_command(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+
+    app._cmd_verify("run rm -rf /")
+
+    assert emitted and "拒绝执行高危验证命令" in emitted[-1]
+
+
+@pytest.mark.asyncio
 async def test_cmd_preflight_shows_readiness_summary(tmp_path):
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
@@ -2455,6 +2525,8 @@ async def test_cmd_preflight_shows_readiness_summary(tmp_path):
         await _submit(app, pilot, "/preflight")
         assert await _wait_for(app, pilot, "Preflight: 工作区")
         joined = "\n".join(app.transcript)
+        assert "/review" in joined
+        assert "/review --fix" in joined
         assert "/verify --changed" in joined
         assert "tests/unit/test_sample.py" in joined
         assert "fix(agents): update agents" in joined
@@ -2477,6 +2549,8 @@ async def test_cmd_preflight_cached_uses_staged_scope(tmp_path):
         joined = "\n".join(app.transcript)
         assert "a.py" in joined
         assert "b.py" not in joined
+        assert "/review cached" in joined
+        assert "/review --fix cached" in joined
         assert "/commit --suggest" in joined
 
 

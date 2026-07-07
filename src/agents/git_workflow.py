@@ -453,6 +453,11 @@ def format_preflight_report(report: dict) -> str:
         lines.extend(f"- {r}" for r in risks[:8])
     else:
         lines.append("风险信号: 未发现明显提交前风险。")
+    review_cmd = "/review" + (" cached" if report.get("scope") == "staged" else "")
+    fix_cmd = "/review --fix" + (" cached" if report.get("scope") == "staged" else "")
+    lines.append("")
+    lines.append("建议审查:")
+    lines.append(f"- {review_cmd}（只报 P0/P1；确认需要修复时用 {fix_cmd}）")
     selectors = tests.get("selectors") or []
     lines.append("")
     lines.append("建议验证:")
