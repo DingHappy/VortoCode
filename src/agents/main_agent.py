@@ -2544,22 +2544,66 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
     """
     async def _run(args: dict) -> str:
         import asyncio
-        from src.agents.shell import is_dangerous, run_command
+        from src.agents.shell import is_dangerous, run_command, run_command_background
         cmd = str(args.get("command") or args.get("cmd") or "").strip()
         if not cmd:
             return "run_command 需要 command。"
         why = is_dangerous(cmd)
         if why:
             return f"拒绝执行（疑似危险操作：{why}）。请换更具体、安全的命令。"
-        if not await confirm(_taint_prefix() + f"在仓库根目录执行命令？\n  $ {cmd}"):
+        bg = _truthy(args.get("background"))
+        label = "后台启动命令" if bg else "执行命令"
+        if not await confirm(_taint_prefix() + f"在仓库根目录{label}？\n  $ {cmd}"):
             return f"用户拒绝了命令：{cmd}"
+        if bg:
+            res = await asyncio.to_thread(run_command_background, repo_root, cmd)
+            if not res.get("ok"):
+                return f"后台启动失败：{res.get('error')}"
+            return (f"已后台启动命令 `{cmd}`，句柄 {res['id']}（pid {res['pid']}）。"
+                    f"用 read_output(id={res['id']}) 看输出、stop_command(id={res['id']}) 停止。")
         res = await asyncio.to_thread(run_command, repo_root, cmd)
         return f"命令 `{cmd}` 退出码 {res['code']}。输出尾部：\n{res['output'][-3000:]}"
 
+    async def _read_output(args: dict) -> str:
+        import asyncio
+        from src.agents.shell import read_background
+        bid = str(args.get("id") or args.get("bid") or "").strip()
+        if not bid:
+            return "read_output 需要 id（后台命令句柄，如 bg1）。"
+        tail = args.get("tail")
+        tail = int(tail) if str(tail).strip().isdigit() else None
+        res = await asyncio.to_thread(read_background, bid, tail)
+        if not res.get("ok"):
+            return res.get("error", "读取失败")
+        head = f"[{res['id']}] {res['status']}" + (f"（退出码 {res['code']}）" if res['code'] is not None else "")
+        drop = f"\n（⚠ 有 {res['dropped']} 行因缓冲上限被挤掉、未读到）" if res.get("dropped") else ""
+        return f"{head}{drop}\n{(res['output'] or '(暂无新输出)')[-3000:]}"
+
+    async def _stop(args: dict) -> str:
+        import asyncio
+        from src.agents.shell import stop_background
+        bid = str(args.get("id") or args.get("bid") or "").strip()
+        if not bid:
+            return "stop_command 需要 id。"
+        res = await asyncio.to_thread(stop_background, bid)
+        if not res.get("ok"):
+            return res.get("error", "停止失败")
+        return f"已停止后台命令 {bid}（退出码 {res.get('code')}）。"
+
     return [Tool("run_command",
                  "在仓库根目录跑任意 shell 命令（pytest/ruff/git/pip/make…）；高危，每条都需确认、"
-                 "明显危险操作直接拒（仅 build）",
-                 {"command": "要执行的 shell 命令"}, _run, read_only=False, outward=True)]
+                 "明显危险操作直接拒（仅 build）。长驻命令（dev server / watch / tail -f）传 "
+                 "background=true 后台起、立即返回句柄，再用 read_output 看输出",
+                 {"command": "要执行的 shell 命令",
+                  "background": "可选，true=后台起长驻进程（不阻塞），用 read_output/stop_command 管理"},
+                 _run, read_only=False, outward=True),
+            Tool("read_output",
+                 "读某后台命令（run_command background=true 起的）的新增输出 + 运行状态；tail=N 看最近 N 行。只读",
+                 {"id": "后台命令句柄，如 bg1", "tail": "可选，看最近 N 行"},
+                 _read_output, read_only=True),
+            Tool("stop_command",
+                 "停掉某后台命令（terminate→kill）。用完 dev server / watcher 记得收摊",
+                 {"id": "后台命令句柄，如 bg1"}, _stop, read_only=True)]
 
 
 def build_pr_tool(repo_root: str, confirm) -> list[Tool]:

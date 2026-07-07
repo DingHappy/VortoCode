@@ -613,6 +613,14 @@ class VortoCodeTUI(App):
             self.set_interval(4.0, self._refresh_git)   # 分支/改动：勤刷（本地 git，快）
             self.set_interval(30.0, self._refresh_pr)   # PR 状态：慢刷（gh 走网络）
 
+    def on_unmount(self) -> None:
+        """退出时收摊：停掉所有后台命令，别把 dev server/watcher 进程泄漏成孤儿。"""
+        try:
+            from src.agents.shell import stop_all_background
+            stop_all_background()
+        except Exception:  # noqa: BLE001
+            pass
+
     def _greet(self) -> None:
         """首跑引导：压缩成几行，留出更多真实对话空间。"""
         import os
@@ -3098,6 +3106,11 @@ class VortoCodeTUI(App):
         self._allow_writes_session = False  # "始终允许"也随新会话复位
         self._allow_commands_session = False
         reset_usage()                       # 用量也清零
+        self._render_plan([])               # 收起上个会话的计划面板
+        from src.agents.shell import stop_all_background
+        n_bg = stop_all_background()        # 收掉上个会话遗留的后台命令，别泄漏 dev server 进程
+        if n_bg:
+            self._chrome(f"[dim]■ 已停止 {n_bg} 个后台命令[/dim]")
         self.query_one("#log", RichLog).clear()
         self.transcript.clear()
         self._chrome(f"[green]已新建会话 {self.session_id}[/green]")
@@ -3926,20 +3939,33 @@ class VortoCodeTUI(App):
             return f"开 PR 失败：{res['error']}"
 
         async def _t_run_command(args: dict) -> str:
-            """跑任意 shell 命令（测试/lint/git/构建…）。高危：build 门控 + 人工确认 + 危险拦截。"""
+            """跑任意 shell 命令（测试/lint/git/构建…）。高危：build 门控 + 人工确认 + 危险拦截。
+            background=true 则后台起长驻进程（dev server/watcher/tail），立即返回句柄、不阻塞回合。"""
             cmd = str(args.get("command") or args.get("cmd") or "").strip()
             if not cmd:
                 return "run_command 需要 command。"
-            from src.agents.shell import is_dangerous, run_command
+            from src.agents.main_agent import _truthy
+            bg = _truthy(args.get("background"))
+            from src.agents.shell import is_dangerous, run_command, run_command_background
             why = is_dangerous(cmd)
             if why:                                   # 兜底硬拒（即便始终允许）
                 self._chrome(f"[{self._tc('text-error', '#f08a8a')}]拒绝执行（{why}）：{cmd}[/]")
                 return f"拒绝执行（疑似危险操作：{why}）。请换更具体、安全的命令。"
+            label = "后台启动" if bg else "执行命令"
             if not await self._confirm_command(
-                    f"build 模式：在仓库根目录执行命令？\n  $ {cmd}\n（可能改动工作区，但不碰 main）"):
+                    f"build 模式：在仓库根目录{label}？\n  $ {cmd}\n（可能改动工作区，但不碰 main）"):
                 return f"用户取消了命令：{cmd}"
-            self._chrome(f"[dim]$ {cmd}[/dim]")
             import asyncio
+            if bg:
+                self._chrome(f"[dim]$ {cmd}  [/dim][{self._tc('text-warning', '#f0b86e')}]&（后台）[/]")
+                res = await asyncio.to_thread(run_command_background, self.repo_root, cmd)
+                if not res.get("ok"):
+                    self._chrome(f"[{self._tc('text-error', '#f08a8a')}]后台启动失败：{res.get('error')}[/]")
+                    return f"后台启动失败：{res.get('error')}"
+                self._chrome(f"[{self._tc('text-success', '#7fce9a')}]▸ 已后台启动 {res['id']}（pid {res['pid']}）[/]")
+                return (f"已后台启动命令 `{cmd}`，句柄 {res['id']}（pid {res['pid']}）。"
+                        f"用 read_output(id={res['id']}) 看输出、stop_command(id={res['id']}) 停止。")
+            self._chrome(f"[dim]$ {cmd}[/dim]")
             res = await asyncio.to_thread(run_command, self.repo_root, cmd)
             out = res["output"]
             if out.strip():
@@ -3947,6 +3973,34 @@ class VortoCodeTUI(App):
             ok_c = self._tc("text-success", "#7fce9a") if res["ok"] else self._tc("text-error", "#f08a8a")
             self._chrome(f"[{ok_c}]{'✓' if res['ok'] else '✗'} exit {res['code']}[/]")
             return f"命令 `{cmd}` 退出码 {res['code']}。输出尾部：\n{out[-3000:]}"
+
+        async def _t_read_output(args: dict) -> str:
+            """读某后台命令的新增输出（或 tail=N 看最近 N 行）+ 运行状态。只读，无需确认。"""
+            from src.agents.shell import read_background
+            bid = str(args.get("id") or args.get("bid") or "").strip()
+            if not bid:
+                return "read_output 需要 id（后台命令句柄，如 bg1）。"
+            tail = args.get("tail")
+            tail = int(tail) if str(tail).strip().isdigit() else None
+            res = await asyncio.to_thread(read_background, bid, tail)
+            if not res.get("ok"):
+                return res.get("error", "读取失败")
+            head = f"[{res['id']}] {res['status']}" + (f"（退出码 {res['code']}）" if res['code'] is not None else "")
+            drop = f"\n（⚠ 有 {res['dropped']} 行因缓冲上限被挤掉、未读到）" if res.get("dropped") else ""
+            body = res["output"] or "(暂无新输出)"
+            return f"{head}{drop}\n{body[-3000:]}"
+
+        async def _t_stop_command(args: dict) -> str:
+            """停某后台命令（terminate→kill）。低风险、无需确认。"""
+            from src.agents.shell import stop_background
+            bid = str(args.get("id") or args.get("bid") or "").strip()
+            if not bid:
+                return "stop_command 需要 id。"
+            res = await asyncio.to_thread(stop_background, bid)
+            if not res.get("ok"):
+                return res.get("error", "停止失败")
+            self._chrome(f"[dim]■ 已停止后台命令 {bid}[/dim]")
+            return f"已停止后台命令 {bid}（退出码 {res.get('code')}）。"
 
         # 只读工具：plan 也能用；也是子 agent 的工具集（无 task/写工具 → 不嵌套、不改文件）。
         # 直接复用 build_read_tools——TUI 至此与 web/CLI 同源，白拿 read_file 行段 / 全仓库 grep /
@@ -4131,8 +4185,19 @@ class VortoCodeTUI(App):
                  _t_open_pr, read_only=False, outward=True),
             Tool("run_command",
                  "在仓库根目录跑任意 shell 命令（如 pytest 某个文件 / ruff / git log / pip install / make）；"
-                 "高危，每条都需确认、明显危险操作直接拒（仅 build）",
-                 {"command": "要执行的 shell 命令"}, _t_run_command, read_only=False, outward=True),
+                 "高危，每条都需确认、明显危险操作直接拒（仅 build）。长驻命令（dev server / npm run dev / "
+                 "watch / tail -f）传 background=true 后台起、立即返回句柄，再用 read_output 看输出",
+                 {"command": "要执行的 shell 命令",
+                  "background": "可选，true=后台起长驻进程（不阻塞回合），用 read_output/stop_command 管理"},
+                 _t_run_command, read_only=False, outward=True),
+            Tool("read_output",
+                 "读某后台命令（run_command background=true 起的）的**新增**输出 + 运行状态；"
+                 "传 tail=N 看最近 N 行。只读、无需确认",
+                 {"id": "后台命令句柄，如 bg1", "tail": "可选，看最近 N 行（默认给上次读之后的增量）"},
+                 _t_read_output, read_only=True),
+            Tool("stop_command",
+                 "停掉某后台命令（terminate→kill）。用完 dev server / watcher 记得收摊",
+                 {"id": "后台命令句柄，如 bg1"}, _t_stop_command, read_only=True),
         ]
 
         # dev_auto（一句话→自动分解→并行/接力实现→集成→可选开 PR）：复用**工厂版**（自主流水线，

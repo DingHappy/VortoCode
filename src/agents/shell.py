@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 import shlex
 import subprocess
+from typing import Optional
 
 # 可对整条（归一化后）命令直接匹配的灾难图案——与具体操作数无关
 _GLOBAL_DANGER = [
@@ -158,6 +159,159 @@ def is_dangerous(cmd: str) -> str:
         if why:
             return why
     return ""
+
+
+# ---------------------------------------------------------------- 后台/长驻命令
+# run_command 阻塞到结束，起不了 dev server / watcher / tail -f 再继续对话。这里加**后台**执行：
+# Popen 起进程 → 后台线程把输出汇进环形缓冲 → agent 用 read_output 取增量、stop_command 收摊。
+# 对标 CC 的后台 Bash + BashOutput。危险拦截/沙箱与前台 run_command 同源（调用方仍先过 is_dangerous 门）。
+import itertools
+import threading
+from collections import deque
+
+_BG_LOCK = threading.Lock()
+_BG_PROCS: "dict[str, _BgProc]" = {}
+_BG_COUNTER = itertools.count(1)
+_BG_MAX_LINES = 4000          # 每个后台进程最多留最近这么多行（环形缓冲，防长跑 OOM）
+_BG_MAX_PROCS = 10            # 并发后台进程上限，防失控
+
+
+class _BgProc:
+    """一个后台进程 + 其输出环形缓冲。输出在后台线程里 drain，读取按绝对行号算增量。"""
+
+    def __init__(self, bid: str, cmd: str, popen) -> None:
+        self.id = bid
+        self.cmd = cmd
+        self.popen = popen
+        self.lines: "deque[str]" = deque(maxlen=_BG_MAX_LINES)
+        self.total = 0                 # 迄今产出的总行数（含已被环形缓冲挤掉的）
+        self.read_pos = 0              # 下一条未读的绝对行号
+        self._lock = threading.Lock()
+        self._reader = threading.Thread(target=self._drain, daemon=True)
+        self._reader.start()
+
+    def _drain(self) -> None:
+        try:
+            for line in self.popen.stdout:          # 逐行阻塞读，进程写多少读多少
+                with self._lock:
+                    self.lines.append(line.rstrip("\n"))
+                    self.total += 1
+        except Exception:  # noqa: BLE001 —— 管道关闭/进程没了都不该炸线程
+            pass
+        finally:
+            try:
+                self.popen.stdout.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def status(self) -> "tuple[str, Optional[int]]":
+        code = self.popen.poll()
+        return ("running", None) if code is None else ("exited", code)
+
+    def read(self, tail: Optional[int] = None) -> dict:
+        """取输出。tail=None → 上次读之后的**增量**；tail=N → 最近 N 行（不动读游标）。"""
+        with self._lock:
+            first_idx = self.total - len(self.lines)    # 缓冲里第一行的绝对行号
+            if tail is not None:
+                out = list(self.lines)[-max(0, int(tail)):] if tail else []
+                dropped = 0
+            else:
+                start = max(self.read_pos, first_idx)
+                dropped = max(0, first_idx - self.read_pos)   # 读得太慢、被环形缓冲挤掉的行数
+                out = list(self.lines)[start - first_idx:]
+                self.read_pos = self.total
+        state, code = self.status()
+        return {"id": self.id, "cmd": self.cmd, "status": state, "code": code,
+                "dropped": dropped, "output": "\n".join(out)}
+
+    def stop(self, timeout: int = 5) -> bool:
+        """先 terminate，宽限后仍在就 kill。返回是否已终止。"""
+        import subprocess as _sp
+        if self.popen.poll() is not None:
+            return True
+        try:
+            self.popen.terminate()
+            try:
+                self.popen.wait(timeout=timeout)
+            except _sp.TimeoutExpired:
+                self.popen.kill()
+        except Exception:  # noqa: BLE001
+            pass
+        return self.popen.poll() is not None
+
+
+def run_command_background(repo_root, cmd: str) -> dict:
+    """后台起一个长驻命令（dev server / watcher / tail…），立即返回句柄 id，不阻塞回合。
+
+    危险拦截由调用方（工具层）先过；沙箱与前台 run_command 同源。返回 {ok, id, pid} 或 {ok:False, error}。
+    """
+    import subprocess
+    from src.agents.sandbox import sandbox_enabled, sandboxed_argv
+    with _BG_LOCK:
+        alive = [p for p in _BG_PROCS.values() if p.popen.poll() is None]
+        if len(alive) >= _BG_MAX_PROCS:
+            return {"ok": False, "error": f"后台进程已达上限 {_BG_MAX_PROCS} 个；先 stop_command 收掉一些。"}
+        bid = f"bg{next(_BG_COUNTER)}"
+    try:
+        if sandbox_enabled():
+            popen = subprocess.Popen(sandboxed_argv(repo_root, cmd), cwd=str(repo_root),
+                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                     text=True, bufsize=1)
+        else:
+            popen = subprocess.Popen(cmd, shell=True, cwd=str(repo_root),
+                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                     text=True, bufsize=1)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": f"无法启动: {e}"}
+    proc = _BgProc(bid, cmd, popen)
+    with _BG_LOCK:
+        _BG_PROCS[bid] = proc
+    return {"ok": True, "id": bid, "pid": popen.pid}
+
+
+def read_background(bid: str, tail: Optional[int] = None) -> dict:
+    """读某后台命令的输出（增量或最近 N 行）+ 运行状态。找不到句柄返回 ok:False。"""
+    with _BG_LOCK:
+        proc = _BG_PROCS.get(bid)
+    if proc is None:
+        return {"ok": False, "error": f"没有后台命令 {bid}（用 list 看当前有哪些）。"}
+    res = proc.read(tail=tail)
+    res["ok"] = True
+    return res
+
+
+def stop_background(bid: str) -> dict:
+    """停某后台命令（terminate→kill）。找不到句柄返回 ok:False。"""
+    with _BG_LOCK:
+        proc = _BG_PROCS.get(bid)
+    if proc is None:
+        return {"ok": False, "error": f"没有后台命令 {bid}。"}
+    stopped = proc.stop()
+    return {"ok": True, "id": bid, "stopped": stopped, "code": proc.popen.poll()}
+
+
+def list_background() -> "list[dict]":
+    """列出所有后台命令（含已退出的，直到被清理）。"""
+    with _BG_LOCK:
+        procs = list(_BG_PROCS.values())
+    out = []
+    for p in procs:
+        state, code = p.status()
+        out.append({"id": p.id, "cmd": p.cmd, "status": state, "code": code, "pid": p.popen.pid})
+    return out
+
+
+def stop_all_background() -> int:
+    """停掉并清空所有后台命令（会话切换/退出时收摊）。返回停掉的个数。"""
+    with _BG_LOCK:
+        procs = list(_BG_PROCS.values())
+        _BG_PROCS.clear()
+    for p in procs:
+        try:
+            p.stop()
+        except Exception:  # noqa: BLE001
+            pass
+    return len(procs)
 
 
 def run_command(repo_root, cmd: str, timeout: int = 300) -> dict:

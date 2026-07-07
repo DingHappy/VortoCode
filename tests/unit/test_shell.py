@@ -56,6 +56,61 @@ def test_run_command_captures_output_and_code(tmp_path):
     assert "marker.txt" in ls["output"]
 
 
+def test_background_command_lifecycle(tmp_path):
+    import time
+    from src.agents.shell import (list_background, read_background,
+                                   run_command_background, stop_all_background,
+                                   stop_background)
+    stop_all_background()                                   # 干净起点
+    # 起一个会持续打印的长驻进程
+    start = run_command_background(tmp_path, "for i in 1 2 3; do echo line$i; sleep 0.1; done; sleep 5")
+    assert start["ok"] is True and start["id"].startswith("bg")
+    bid = start["id"]
+    assert any(p["id"] == bid for p in list_background())   # 列得出来
+    time.sleep(0.6)                                         # 让它打几行
+    r1 = read_background(bid)
+    assert r1["ok"] is True and "line1" in r1["output"] and r1["status"] == "running"
+    r2 = read_background(bid)                               # 增量：已读过的不再返回
+    assert "line1" not in r2["output"]
+    # tail 模式：不动读游标、给最近 N 行
+    assert "line3" in read_background(bid, tail=5)["output"]
+    stopped = stop_background(bid)
+    assert stopped["ok"] is True and stopped["stopped"] is True
+    assert read_background("bg-nope")["ok"] is False        # 未知句柄
+    stop_all_background()
+
+
+def test_background_output_survives_and_reports_exit(tmp_path):
+    import time
+    from src.agents.shell import read_background, run_command_background, stop_all_background
+    stop_all_background()
+    start = run_command_background(tmp_path, "echo done && exit 7")
+    time.sleep(0.4)
+    r = read_background(start["id"])
+    assert "done" in r["output"] and r["status"] == "exited" and r["code"] == 7
+    stop_all_background()
+
+
+@pytest.mark.asyncio
+async def test_build_command_tool_background(tmp_path):
+    from src.agents.main_agent import build_command_tool
+    from src.agents.shell import stop_all_background
+
+    async def yes(_m):
+        return True
+
+    tools = {x.name: x for x in build_command_tool(str(tmp_path), yes)}
+    assert "run_command" in tools and "read_output" in tools and "stop_command" in tools
+    out = await tools["run_command"].handler({"command": "sleep 5", "background": True})
+    assert "已后台启动" in out and "bg" in out
+    import re
+    bid = re.search(r"句柄 (bg\d+)", out).group(1)
+    read = await tools["read_output"].handler({"id": bid})
+    assert bid in read
+    assert "已停止" in await tools["stop_command"].handler({"id": bid})
+    stop_all_background()
+
+
 @pytest.mark.asyncio
 async def test_build_command_tool_confirm_gate(tmp_path):
     from src.agents.main_agent import build_command_tool
