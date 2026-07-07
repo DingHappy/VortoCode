@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 import sqlite3
 import uuid
 from datetime import datetime
@@ -302,16 +303,44 @@ class SessionStore:
             return [dict(row) for row in cursor.fetchall()]
     
     def search_memories(self, session_id: str, query: str, limit: int = 10) -> List[Dict[str, Any]]:
-        """搜索记忆"""
+        """搜索记忆：**按查询词重叠度排序**，而非旧的 `LIKE '%整句%'`。
+
+        旧版要求整条 query 作为**子串**原样出现，极脆——问「测试命令」而记忆写「跑测试用 pytest」
+        就完全不匹配。这里把 query 切成词，按命中词数打分（大小写无关）、整句命中额外加权，
+        再以既有的 importance/recency 次序稳定收尾。零依赖、召回大幅变准（语义向量召回留作后续）。
+        """
+        rows = self.get_memories(session_id)          # 已按 importance DESC, created_at DESC 排好
+        q = (query or "").strip().lower()
+        if not q:
+            return rows[:limit]
+        # 中英混排都能切：按空白 + 常见标点分词；退化时用整句
+        terms = [t for t in re.split(r"[\s,，。;；、/：:()（）\[\]{}]+", q) if t] or [q]
+        # 中文无空格，整词子串匹配几乎必失（问「测试怎么跑」配不上「跑测试用 pytest」）。补 CJK 相邻
+        # 二元组（测试/试怎/怎么/么跑…）捕捉「测试」这类核心词——经典轻量中文匹配，零依赖。
+        for run in re.findall(r"[㐀-鿿]{2,}", q):
+            terms.extend(run[i:i + 2] for i in range(len(run) - 1))
+        terms = list(dict.fromkeys(terms))            # 去重，避免同词重复计分
+        scored = []
+        for r in rows:
+            content = str(r.get("content", "")).lower()
+            score = sum(1 for t in terms if t in content)
+            if q in content:                          # 整句原样命中额外加权（保留旧行为的强信号）
+                score += len(terms)
+            if score > 0:
+                scored.append((score, r))
+        if not scored:
+            return []
+        scored.sort(key=lambda sr: sr[0], reverse=True)   # 稳定排序：同分保留 importance/recency 次序
+        return [r for _, r in scored][:limit]
+
+    def delete_memory(self, session_id: str, memory_id: str) -> bool:
+        """删除一条记忆。返回是否确实删除。"""
         with sqlite3.connect(str(self.db_path)) as conn:
-            conn.row_factory = sqlite3.Row
-            
             cursor = conn.execute(
-                "SELECT * FROM memories WHERE session_id = ? AND content LIKE ? ORDER BY importance DESC LIMIT ?",
-                (session_id, f"%{query}%", limit)
+                "DELETE FROM memories WHERE session_id = ? AND id = ?",
+                (session_id, memory_id)
             )
-            
-            return [dict(row) for row in cursor.fetchall()]
+            return cursor.rowcount > 0
     
     def get_session_summary(self, session_id: str) -> Dict[str, Any]:
         """获取会话摘要"""
@@ -410,6 +439,12 @@ class SessionManager:
         if not self.current_session_id:
             return []
         return self.store.search_memories(self.current_session_id, query, limit)
+
+    def delete_memory(self, memory_id: str) -> bool:
+        """删除记忆"""
+        if not self.current_session_id:
+            return False
+        return self.store.delete_memory(self.current_session_id, memory_id)
     
     def list_recent_sessions(self, limit: int = 10) -> List[Dict[str, Any]]:
         """列出最近的会话"""

@@ -9,6 +9,7 @@ import json
 import pytest
 
 from src.agents import main_agent as ma
+from src.agents import pr_doctor
 from src.agents import vcs
 
 
@@ -75,6 +76,133 @@ def test_pr_feedback_no_pr(monkeypatch):
     monkeypatch.setattr(vcs.subprocess, "run", _mk_gh_dispatcher(view={}))   # 无 number
     fb = vcs.pr_feedback("/repo", "vorto/x")
     assert fb["ok"] is False and "找不到" in fb["error"]
+
+
+def test_failed_check_log_excerpts_fetches_actions_log(monkeypatch):
+    monkeypatch.setattr(vcs.shutil, "which", lambda _n: "/usr/bin/gh")
+
+    def fake_run(cmd, cwd=None, capture_output=True, text=True):
+        class R:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        if cmd == ["gh", "run", "view", "123", "--log-failed"]:
+            R.stdout = (
+                "unit\tRun pytest\tcollecting tests\n"
+                "unit\tRun pytest\tFAILED tests/test_x.py::test_y - AssertionError: nope\n"
+                "unit\tRun pytest\tError: Process completed with exit code 1.\n"
+            )
+        elif cmd == ["gh", "run", "view", "123", "--json", "jobs"]:
+            R.stdout = json.dumps({"jobs": [
+                {"name": "lint", "conclusion": "success", "steps": []},
+                {"name": "unit", "conclusion": "failure", "steps": [
+                    {"name": "Run pytest", "conclusion": "failure"},
+                ]},
+            ]})
+        else:
+            raise AssertionError(cmd)
+        return R()
+
+    monkeypatch.setattr(vcs.subprocess, "run", fake_run)
+    result = vcs.failed_check_log_excerpts(
+        "/repo",
+        [{"name": "pytest", "link": "https://github.com/o/r/actions/runs/123/job/456"}],
+        max_chars=240,
+    )
+    assert result["ok"] is True
+    assert result["logs"][0]["run_id"] == "123"
+    assert result["logs"][0]["job_name"] == "unit"
+    assert result["logs"][0]["step_name"] == "Run pytest"
+    assert "AssertionError: nope" in result["logs"][0]["excerpt"]
+    assert "unit\tRun pytest" not in result["logs"][0]["excerpt"]
+
+
+def test_pr_doctor_report_recommends_fix_and_verify(tmp_path):
+    (tmp_path / "tests" / "unit").mkdir(parents=True)
+    feedback = {
+        "ok": True,
+        "pr": 12,
+        "branch": "vorto/fix-ci",
+        "comments": [{"author": "reviewer", "body": "缺少失败路径测试",
+                      "path": "tests/unit/test_x.py", "line": 7}],
+        "failing_checks": [{"name": "pytest / unit", "link": "https://ci.example/1"}],
+    }
+    report = pr_doctor.build_pr_doctor_report(
+        str(tmp_path),
+        "12",
+        feedback,
+        check_logs=[{"name": "pytest / unit", "run_id": "123",
+                     "job_name": "unit", "step_name": "Run pytest",
+                     "excerpt": "FAILED tests/unit/test_x.py::test_y - AssertionError: nope"}],
+    )
+    assert report["can_fix"] is True
+    text = pr_doctor.format_pr_doctor_report(report)
+    assert "PR Doctor #12" in text
+    assert "/pr-fix 12" in text
+    assert "/verify unit" in text
+    assert "失败定位/日志摘录" in text and "unit > Run pytest" in text
+    assert "AssertionError: nope" in text
+    assert "失败类型判断" in text and "测试失败" in text
+    assert "推荐修复模板" in text
+    assert "python -m pytest -q tests/unit/test_x.py::test_y" in text
+    assert "动作: /verify run python -m pytest -q tests/unit/test_x.py::test_y" in text
+    assert "缺少失败路径测试" in text
+
+
+def test_pr_doctor_classifies_common_ci_failures():
+    lint = pr_doctor.classify_failed_checks(
+        [{"name": "lint"}],
+        [{"excerpt": "ruff check failed: trailing whitespace"}],
+    )
+    assert lint["category"] == "lint"
+
+    typecheck = pr_doctor.classify_failed_checks(
+        [{"name": "typecheck"}],
+        [{"excerpt": 'error: "User" has no attribute "email"'}],
+    )
+    assert typecheck["category"] == "type-check"
+
+    dependency = pr_doctor.classify_failed_checks(
+        [{"name": "unit"}],
+        [{"excerpt": "ModuleNotFoundError: No module named 'yaml'"}],
+    )
+    assert dependency["category"] == "dependency"
+
+    environment = pr_doctor.classify_failed_checks(
+        [{"name": "pytest", "conclusion": "TIMED_OUT"}],
+        [],
+    )
+    assert environment["category"] == "timeout"
+
+
+def test_pr_doctor_repair_templates_for_lint_and_dependency():
+    lint = pr_doctor.repair_templates(
+        [{"name": "lint"}],
+        [{"excerpt": "ruff check failed: trailing whitespace"}],
+    )
+    assert lint[0]["command"] == "ruff check . --fix"
+    assert lint[0]["safe"] is False and lint[0]["slash"] == ""
+
+    dependency = pr_doctor.repair_templates(
+        [{"name": "unit"}],
+        [{"excerpt": "ModuleNotFoundError: No module named 'yaml'"}],
+    )
+    assert "pyproject" in dependency[0]["command"]
+
+
+def test_pr_doctor_report_blocks_non_vorto_autofix(tmp_path):
+    feedback = {
+        "ok": True,
+        "pr": 13,
+        "branch": "main",
+        "comments": [{"author": "reviewer", "body": "不要自动改 main", "path": None, "line": None}],
+        "failing_checks": [],
+    }
+    report = pr_doctor.build_pr_doctor_report(str(tmp_path), "13", feedback)
+    assert report["can_fix"] is False
+    text = pr_doctor.format_pr_doctor_report(report)
+    assert "不能自动修复" in text
+    assert "vorto/*" in text
 
 
 # --------------------------------------------------------------------- pr_fix 工具

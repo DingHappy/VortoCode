@@ -41,6 +41,11 @@ def _primary_value(tool: str, args: dict) -> str:
     return ""
 
 
+def primary_arg_keys(tool: str) -> tuple[str, ...]:
+    """Return the argument keys used for pattern matching for a tool."""
+    return _PRIMARY_ARG.get(tool, ())
+
+
 class Permissions:
     """一组 deny 规则：(tool, glob_or_None)。glob=None → 整工具禁用。"""
 
@@ -50,6 +55,10 @@ class Permissions:
     @property
     def rules(self) -> List[Tuple[str, Optional[str]]]:
         return list(self._deny)
+
+    def rules_for(self, tool: str) -> List[Tuple[str, Optional[str]]]:
+        """Return deny rules that target a specific tool."""
+        return [(rtool, glob) for rtool, glob in self._deny if rtool == tool]
 
     def denied(self, tool: str, args: dict) -> Optional[str]:
         """命中 deny → 返回原因串（调用方据此拦下并回灌模型）；否则 None。"""

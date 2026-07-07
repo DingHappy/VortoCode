@@ -5,11 +5,13 @@
 """
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
 pytest.importorskip("textual")  # 无 textual 时跳过（CI 装了 .[tui]）
 
+from textual.worker import WorkerState
 from textual.widgets import Input
 
 import src.tui.app as tui_app
@@ -35,6 +37,14 @@ async def _wait_for(app, pilot, needle, tries=60):
 async def _wait_modal(app, pilot, tries=60):
     for _ in range(tries):
         if len(app.screen_stack) > 1:
+            return True
+        await pilot.pause(0.05)
+    return False
+
+
+async def _wait_inline_confirm(app, pilot, tries=60):
+    for _ in range(tries):
+        if app._inline_confirm_active():
             return True
         await pilot.pause(0.05)
     return False
@@ -172,6 +182,18 @@ async def test_toggle_mode_via_command_and_key():
 
 
 @pytest.mark.asyncio
+async def test_explicit_plan_build_commands_set_mode():
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/build")
+        assert app.mode == "build"
+        await _submit(app, pilot, "/build")
+        assert app.mode == "build"
+        await _submit(app, pilot, "/plan")
+        assert app.mode == "plan"
+
+
+@pytest.mark.asyncio
 async def test_statusbar_shows_context_and_tracks_mode():
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
@@ -255,6 +277,113 @@ async def test_sessions_picker_resumes_selected(tmp_path):
         await pilot.press("enter"); await pilot.pause()
         assert app.session_id == old                       # 已切到旧会话
         assert await _wait_for(app, pilot, "历史XYZ")       # 内容已回放
+
+
+def test_sessions_rename_and_unknown(tmp_path):
+    from src.memory.session_store import SessionStore
+
+    store = SessionStore(str(tmp_path / ".vortocode" / "sessions.db"))
+    sid = store.create_session("旧名")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted, chromed = [], []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda m, *a, **k: chromed.append(m)
+
+    app._cmd_sessions(f"rename {sid} 新名字")
+
+    assert app.sessions.store.get_session(sid)["name"] == "新名字"
+    assert any("已重命名会话" in m for m in chromed)
+    assert "新名字" in emitted[-1]
+
+    app._cmd_sessions("rename missing 名字")
+    assert "没有会话 missing" in emitted[-1]
+
+
+@pytest.mark.asyncio
+async def test_sessions_delete_confirm_removes_session(tmp_path):
+    from src.memory.session_store import SessionStore
+
+    store = SessionStore(str(tmp_path / ".vortocode" / "sessions.db"))
+    sid = store.create_session("待删")
+    store.add_message(sid, "assistant", "历史XYZ", {"markup": False})
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, f"/sessions delete {sid}")
+        assert await _wait_inline_confirm(app, pilot)
+        assert "删除会话" in app.query_one("#palette").render().plain
+        await pilot.press("y")
+        await pilot.pause()
+
+        assert app.sessions.store.get_session(sid) is None
+        assert await _wait_for(app, pilot, "历史会话")
+
+
+@pytest.mark.asyncio
+async def test_sessions_delete_cancel_keeps_session(tmp_path):
+    from src.memory.session_store import SessionStore
+
+    store = SessionStore(str(tmp_path / ".vortocode" / "sessions.db"))
+    sid = store.create_session("保留")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, f"/sessions delete {sid}")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("n")
+        await pilot.pause()
+
+        assert app.sessions.store.get_session(sid) is not None
+        assert any("已取消删除会话" in t for t in app.transcript)
+
+
+def test_session_summary_records_runtime_context(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    sid = app.sessions.start_session()
+    app.session_id = sid
+    app._persist_on = True
+    app.mode = "build"
+    app._session_last_user = "继续开发会话恢复"
+    app._sb["branch"] = "feature/session"
+    app._sb["dirty"] = True
+
+    class FakeAgent:
+        def context_usage(self, mode):
+            return {"pct": 42, "policy": "preserve", "history_messages": 9}
+
+    app.agent = FakeAgent()
+    app._update_session_summary("用户：继续开发会话恢复 · 回复：已经完成一半")
+
+    row = app.sessions.store.get_session(sid)
+    md = json.loads(row["metadata"])
+    assert md["summary"] == "用户：继续开发会话恢复 · 回复：已经完成一半"
+    assert md["last_user"] == "继续开发会话恢复"
+    assert md["last_reply"] == "已经完成一半"
+    assert md["mode"] == "build"
+    assert md["branch"] == "feature/session"
+    assert md["dirty"] is True
+    assert md["context"] == {"pct": 42, "policy": "preserve", "history_messages": 9}
+
+
+def test_session_picker_label_includes_runtime_context(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    row = {
+        "id": "abc123",
+        "name": "恢复体验",
+        "metadata": json.dumps({
+            "summary": "用户要继续开发 session 摘要",
+            "mode": "build",
+            "branch": "feature/session",
+            "dirty": True,
+            "context": {"pct": 42, "policy": "preserve", "history_messages": 9},
+        }, ensure_ascii=False),
+    }
+
+    label = app._session_picker_label(row)
+
+    assert "恢复体验" in label
+    assert "build" in label
+    assert "feature/session*" in label
+    assert "ctx 42%/preserve" in label
+    assert "用户要继续开发 session 摘要" in label
 
 
 @pytest.mark.asyncio
@@ -474,7 +603,7 @@ async def test_agent_edit_file_requires_confirm(monkeypatch, tmp_path):
     async with app.run_test() as pilot:
         await _submit(app, pilot, "/mode")              # plan → build（写工具仅 build）
         await _submit(app, pilot, "把 src/m.py 里的 1 改成 2")
-        assert await _wait_modal(app, pilot)            # 写前必弹确认
+        assert await _wait_inline_confirm(app, pilot)   # 写前必确认
         await pilot.press("y")                          # 人确认
         assert await _wait_for(app, pilot, "已把 1 改成 2")
         assert target.read_text() == "x = 2\n"          # 确认后才真正落盘
@@ -647,7 +776,7 @@ async def test_save_skill_writes_and_registers(monkeypatch, tmp_path):
     async with app.run_test() as pilot:
         await _submit(app, pilot, "/mode")                 # build（写工具仅 build）
         await _submit(app, pilot, "把这套流程存成技能")
-        assert await _wait_modal(app, pilot)               # 写前确认
+        assert await _wait_inline_confirm(app, pilot)      # 写前确认
         await pilot.press("y")
         assert await _wait_for(app, pilot, "技能已保存")
         p = tmp_path / ".vortocode" / "skills" / "myskill" / "SKILL.md"
@@ -682,6 +811,17 @@ def test_statusbar_shows_context_usage_when_agent_exists(tmp_path):
     assert app._context_usage_label() == "ctx 1.2k/8k 15%"
 
 
+def test_statusbar_shows_context_policy_when_agent_reports_it(tmp_path):
+    class FakeAgent:
+        def context_usage(self, mode):
+            return {"used_tokens": 1234, "max_context_tokens": 16000, "pct": 8, "policy": "preserve"}
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    app.agent = FakeAgent()
+
+    assert app._context_usage_label() == "ctx 1.2k/16k 8% · policy preserve"
+
+
 @pytest.mark.asyncio
 async def test_usage_command_includes_context_usage(tmp_path):
     class FakeAgent:
@@ -694,6 +834,78 @@ async def test_usage_command_includes_context_usage(tmp_path):
         await _submit(app, pilot, "/usage")
         assert await _wait_for(app, pilot, "当前上下文占用")
         assert any("ctx 2k/8k 25%" in t for t in app.transcript)
+
+
+@pytest.mark.asyncio
+async def test_context_command_shows_breakdown_and_policy(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/context")
+        assert await _wait_for(app, pilot, "上下文窗口")
+        joined = "\n".join(app.transcript)
+        assert "策略: auto" in joined
+        assert "分解:" in joined
+        assert "压缩:" in joined
+
+
+@pytest.mark.asyncio
+async def test_context_command_switches_and_persists_policy(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/context preserve")
+        assert await _wait_for(app, pilot, "上下文策略已切换为 preserve")
+        assert app._context_policy == "preserve"
+        assert app.agent.context_policy == "preserve"
+        data = json.loads((tmp_path / ".vortocode" / "settings.json").read_text(encoding="utf-8"))
+        assert data["context_policy"] == "preserve"
+        assert "policy preserve" in app._context_usage_label()
+
+    app2 = VortoCodeTUI(repo_root=str(tmp_path))
+    assert app2._context_policy == "preserve"
+
+
+@pytest.mark.asyncio
+async def test_context_command_rejects_unknown_policy(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/context wild")
+        assert await _wait_for(app, pilot, "用法: /context")
+        assert app._context_policy == "auto"
+
+
+@pytest.mark.asyncio
+async def test_compact_preview_command_shows_estimate(tmp_path):
+    from tests.unit.test_main_agent import _prefill
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app.agent = app._build_main_agent()
+        _prefill(app.agent, 3)
+        await _submit(app, pilot, "/compact preview")
+
+        assert await _wait_for(app, pilot, "上下文压缩预览")
+        joined = "\n".join(app.transcript)
+        assert "将压缩旧消息" in joined
+        assert "保留最近" in joined
+
+
+@pytest.mark.asyncio
+async def test_compact_command_runs_and_audits(tmp_path):
+    from src.agents.main_agent import MainAgent
+    from tests.unit.test_main_agent import CompactLLM, _prefill
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app.agent = MainAgent([], llm=CompactLLM(), max_context_tokens=8000)
+        _prefill(app.agent, 4)
+        await _submit(app, pilot, "/compact")
+
+        assert await _wait_for(app, pilot, "上下文已压缩")
+        log = tmp_path / ".vortocode" / "audit.log"
+        assert log.is_file()
+        line = log.read_text(encoding="utf-8")
+        assert '"event": "compact"' in line
+        assert '"before_messages"' in line
 
 
 @pytest.mark.asyncio
@@ -772,6 +984,175 @@ async def test_memory_tools_roundtrip_cross_session(tmp_path):
     assert "pytest" in await agent2.tools["recall_memory"].handler({"query": "pytest"})
     # save_memory/recall_memory 都是只读门（plan 可用）
     assert agent.tools["save_memory"].read_only and agent.tools["recall_memory"].read_only
+
+
+def test_cmd_memory_empty_init_and_add(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted, chromed = [], []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda m, *a, **k: chromed.append(m)
+
+    app._cmd_memory()
+    assert emitted and "未找到 AGENTS.md" in emitted[-1]
+
+    app._cmd_memory("init")
+    assert (tmp_path / "AGENTS.md").is_file()
+    assert "项目指令:" in emitted[-1] and "AGENTS.md" in emitted[-1]
+    assert any("项目记忆文件已就绪" in m for m in chromed)
+
+    app._cmd_memory("add 用户偏好 pytest -q")
+    assert "用户偏好 pytest -q" in emitted[-1]
+
+
+def test_cmd_memory_list_delete_and_auto_toggle(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted, chromed = [], []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda m, *a, **k: chromed.append(m)
+    mid = app.sessions.store.add_memory("__longterm__", "fact", "项目默认用 pytest -q", importance=0.6)
+
+    app._cmd_memory("list")
+    assert mid in emitted[-1]
+    assert "项目默认用 pytest -q" in emitted[-1]
+
+    app._cmd_memory("auto off")
+    assert app._auto_memory is False
+    assert app._load_setting("auto_memory") is False
+    assert any("已关闭" in m for m in chromed)
+
+    app._cmd_memory(f"delete {mid}")
+    assert "长期记忆为空" in emitted[-1]
+    assert not app.sessions.store.get_memories("__longterm__")
+
+
+def test_cmd_memory_init_local(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda *a, **k: None
+
+    app._cmd_memory("init local")
+
+    assert (tmp_path / ".vortocode" / "AGENTS.md").is_file()
+    assert ".vortocode/AGENTS.md" in emitted[-1]
+
+
+def test_cmd_memory_rejects_unknown(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+
+    app._cmd_memory("wat")
+
+    assert emitted and "用法: /memory" in emitted[-1]
+
+
+def test_cmd_tasks_empty_list_and_detail(tmp_path):
+    from src.agents import dev_plan as dp
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+
+    app._cmd_tasks()
+    assert "没有 dev 计划" in emitted[-1]
+
+    plan = dp.DevPlan.new("实现任务面板", "vorto/tasks", "main", plan_id="task-panel")
+    plan.blocks = [
+        dp.Block(id="ind-0", kind="independent", desc="已完成块", status="landed"),
+        dp.Block(id="dep-1", kind="dependent", desc="待续跑块", status="pending"),
+    ]
+    dp.save_plan(str(tmp_path), plan)
+
+    app._cmd_tasks()
+    assert "task-panel" in emitted[-1]
+    assert "实现任务面板" in emitted[-1]
+
+    app._cmd_tasks("show task-panel")
+    assert "Dev 计划详情: task-panel" in emitted[-1]
+    assert "进度 1/2 landed" in emitted[-1]
+
+
+def test_cmd_tasks_unknown_and_missing_show_id(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+
+    app._cmd_tasks("show")
+    assert "用法: /tasks show" in emitted[-1]
+
+    app._cmd_tasks("missing")
+    assert "找不到 dev 计划 missing" in emitted[-1]
+
+
+@pytest.mark.asyncio
+async def test_cmd_tasks_resume_confirms_switches_build_and_routes(tmp_path):
+    from src.agents import dev_plan as dp
+
+    plan = dp.DevPlan.new("续跑任务", "vorto/resume", "main", plan_id="resume-me")
+    dp.save_plan(str(tmp_path), plan)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    routed = {}
+    async with app.run_test() as pilot:
+        app._continue_text_route = lambda text: routed.setdefault("text", text)
+        await _submit(app, pilot, "/tasks resume resume-me")
+        assert await _wait_inline_confirm(app, pilot)
+        assert "续跑 dev 计划 resume-me" in app.query_one("#palette").render().plain
+        await pilot.press("y")
+        await pilot.pause()
+
+        assert app.mode == "build"
+        assert "plan_id=resume-me" in routed["text"]
+        assert "dev_resume" in routed["text"]
+
+
+@pytest.mark.asyncio
+async def test_cmd_tasks_resume_cancel_does_not_route(tmp_path):
+    from src.agents import dev_plan as dp
+
+    plan = dp.DevPlan.new("续跑任务", "vorto/resume", "main", plan_id="resume-me")
+    dp.save_plan(str(tmp_path), plan)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    routed = {}
+    async with app.run_test() as pilot:
+        app._continue_text_route = lambda text: routed.setdefault("text", text)
+        await _submit(app, pilot, "/tasks resume resume-me")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("n")
+        await pilot.pause()
+
+        assert app.mode == "plan"
+        assert routed == {}
+        assert any("已取消续跑计划" in t for t in app.transcript)
+
+
+@pytest.mark.asyncio
+async def test_auto_memory_candidate_prompts_and_saves(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app._session_last_user = "以后这个项目默认用 pytest -q 跑测试"
+        app._assistant("好的，记下这个偏好。")
+        assert await _wait_inline_confirm(app, pilot)
+        assert "检测到可能值得跨会话记住" in app.query_one("#palette").render().plain
+        await pilot.press("y")
+        await pilot.pause()
+
+        rows = app.sessions.store.get_memories("__longterm__")
+        assert len(rows) == 1
+        assert "pytest -q" in rows[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_auto_memory_can_be_disabled(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    app._auto_memory = False
+    async with app.run_test() as pilot:
+        app._session_last_user = "以后这个项目默认用 pytest -q 跑测试"
+        app._assistant("好的。")
+        await pilot.pause()
+
+        assert not app._inline_confirm_active()
+        assert not app.sessions.store.get_memories("__longterm__")
 
 
 @pytest.mark.asyncio
@@ -869,22 +1250,41 @@ def _write_cmd(tmp_path, name, body):
 
 
 def test_user_commands_loaded_and_cached(tmp_path):
-    _write_cmd(tmp_path, "review", "---\ndescription: 审代码\n---\n审查：$ARGUMENTS")
+    _write_cmd(tmp_path, "inspect", "---\ndescription: 审代码\n---\n审查：$ARGUMENTS")
     app = VortoCodeTUI(repo_root=str(tmp_path))
     cmds = app._user_commands()
-    assert "review" in cmds and cmds["review"].description == "审代码"
+    assert "inspect" in cmds and cmds["inspect"].description == "审代码"
     assert app._user_commands() is cmds                    # 缓存：同一对象
 
 
 def test_dispatch_runs_user_command(tmp_path):
-    _write_cmd(tmp_path, "review", "审查以下代码找 bug：$ARGUMENTS")
+    _write_cmd(tmp_path, "inspect", "审查以下代码找 bug：$ARGUMENTS")
     app = VortoCodeTUI(repo_root=str(tmp_path))
     app._chrome = lambda *a, **k: None
     app._say_user = lambda *a, **k: None
     routed = {}
     app._route = lambda text: routed.setdefault("text", text)   # 截获展开后的输入
-    app._dispatch("/review def foo(): pass")
+    app._dispatch("/inspect def foo(): pass")
     assert routed["text"] == "审查以下代码找 bug：def foo(): pass"
+
+
+def test_dispatch_user_command_can_switch_declared_mode(tmp_path):
+    _write_cmd(tmp_path, "ship", "---\ndescription: 发版\nmode: build\nargument-hint: '<title>'\n---\n发版：$ARGUMENTS")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    chromed = []
+    routed = {}
+    app._chrome = lambda m, *a, **k: chromed.append(m)
+    app._say_user = lambda *a, **k: None
+    app._route = lambda text: routed.setdefault("text", text)
+
+    app._dispatch("/ship v1")
+
+    assert app.mode == "build"
+    assert routed["text"] == "发版：v1"
+    joined = "\n".join(chromed)
+    assert "切到 [b]build" in joined
+    assert "args: <title>" in joined
+    assert "mode: build" in joined
 
 
 def test_dispatch_unknown_still_errors(tmp_path):
@@ -909,6 +1309,132 @@ def test_cmd_hooks_empty_and_configured(tmp_path):
         "    matcher: edit_file\n    shell: true\n    command: ruff format .\n", encoding="utf-8")
     app._cmd_hooks()
     assert any("fmt" in c and "edit_file" in c for c in chromed)
+
+
+def test_cmd_permissions_empty_and_configured(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+
+    app._cmd_permissions()
+    assert emitted and "工具权限" in emitted[-1] and "无 deny 规则" in emitted[-1]
+
+    d = tmp_path / ".vortocode"; d.mkdir(exist_ok=True)
+    (d / "permissions.yaml").write_text(
+        'deny:\n  - web_fetch\n  - "run_command: rm *"\n  - edit_file: "*/secrets/*"\n',
+        encoding="utf-8")
+    app._cmd_permissions()
+    out = emitted[-1]
+    assert "deny web_fetch: *" in out
+    assert "deny run_command: rm *" in out
+    assert "deny edit_file: */secrets/*" in out
+
+
+def test_cmd_permissions_can_switch_mode(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted, chromed = [], []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda m, *a, **k: chromed.append(m)
+
+    app._cmd_permissions("build")
+    assert app.mode == "build"
+    assert any("切到 [b]build" in m for m in chromed)
+    assert emitted and "模式: build" in emitted[-1]
+
+    app._cmd_permissions("plan")
+    assert app.mode == "plan"
+    assert "模式: plan" in emitted[-1]
+
+    app._cmd_permissions("unknown")
+    assert "用法: /permissions" in emitted[-1]
+
+
+def test_cmd_permissions_reset_session_allowances(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    app._allow_writes_session = True
+    app._allow_commands_session = True
+    emitted, chromed = [], []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda m, *a, **k: chromed.append(m)
+
+    app._cmd_permissions("reset")
+
+    assert app._allow_writes_session is False
+    assert app._allow_commands_session is False
+    assert any("已清除本会话" in m for m in chromed)
+    assert "本会话始终允许: 写=no · 命令=no" in emitted[-1]
+
+
+def test_cmd_permissions_deny_appends_rule_and_rebuilds_agent(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted, chromed = [], []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda m, *a, **k: chromed.append(m)
+    app.agent = object()
+
+    app._cmd_permissions('deny run_command "rm *"')
+
+    assert app.agent is None
+    cfg = tmp_path / ".vortocode" / "permissions.yaml"
+    text = cfg.read_text(encoding="utf-8")
+    assert "run_command" in text and "rm *" in text
+    assert any("已追加 deny 规则" in m for m in chromed)
+    assert "deny run_command: rm *" in emitted[-1]
+
+
+def test_cmd_permissions_deny_rejects_bad_tool_name(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+
+    app._cmd_permissions("deny bad-name *")
+
+    assert emitted and "工具名非法" in emitted[-1]
+    assert not (tmp_path / ".vortocode" / "permissions.yaml").exists()
+
+
+def test_cmd_permissions_show_effective_lists_statuses(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda *a, **k: None
+    app._cmd_permissions("deny web_fetch")
+
+    app._cmd_permissions("show --effective")
+
+    out = emitted[-1]
+    assert "有效工具权限" in out
+    assert "web_fetch" in out and "deny" in out
+    assert "run_command" in out and "needs build" in out
+
+
+def test_cmd_permissions_explain_denied_value(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda *a, **k: None
+    app._cmd_permissions('deny run_command "rm *"')
+
+    app._cmd_permissions("explain run_command rm -rf tmp")
+
+    out = emitted[-1]
+    assert "权限解释: run_command" in out
+    assert "主参数键: command, cmd" in out
+    assert "硬拦截" in out
+    assert "rm *" in out
+
+
+def test_cmd_permissions_explain_plan_gate_for_write_tool(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+
+    app._cmd_permissions("explain edit_file src/a.py")
+
+    out = emitted[-1]
+    assert "权限解释: edit_file" in out
+    assert "写/重型" in out
+    assert "plan 模式不可直接执行" in out
 
 
 def test_tui_agent_has_shared_read_tools(tmp_path):
@@ -1007,6 +1533,8 @@ def test_expand_at_files(tmp_path):
 async def test_editor_ctrl_j_newline_and_enter_submits_multiline():
     """opencode 式编辑器：Ctrl+J 换行、回车提交多行文本、提交后清空。"""
     app = VortoCodeTUI(repo_root=".")
+    routed = []
+    app._route = lambda text: routed.append(text)
     async with app.run_test() as pilot:
         inp = app.query_one("#prompt", PromptEditor)
         inp.focus()
@@ -1020,6 +1548,7 @@ async def test_editor_ctrl_j_newline_and_enter_submits_multiline():
         await pilot.press("enter"); await pilot.pause()        # 回车提交整段
         assert inp.value == ""
         assert any("第一行" in t and "第二行" in t for t in app.transcript)
+        assert routed == ["第一行\n第二行"]
 
 
 @pytest.mark.asyncio
@@ -1054,6 +1583,33 @@ async def test_prompt_page_keys_scroll_result_log(monkeypatch):
         await pilot.pause()
 
         assert called == [("up", {"animate": False}), ("down", {"animate": False})]
+
+
+@pytest.mark.asyncio
+async def test_empty_prompt_arrow_keys_scroll_log_not_history(monkeypatch):
+    from textual.widgets import RichLog
+
+    called = []
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        app._history = ["历史一"]
+        log = app.query_one("#log", RichLog)
+        monkeypatch.setattr(log, "scroll_up", lambda **kw: called.append(("up", kw)))
+        monkeypatch.setattr(log, "scroll_down", lambda **kw: called.append(("down", kw)))
+        inp = app.query_one("#prompt", PromptEditor)
+        inp.focus()
+        inp.value = ""
+
+        await inp._on_key(_FakeKey("up"))
+        await inp._on_key(_FakeKey("down"))
+        await pilot.pause()
+
+        assert inp.value == ""
+        assert app._history_idx is None
+        assert called == [
+            ("up", {"animate": False, "immediate": True}),
+            ("down", {"animate": False, "immediate": True}),
+        ]
 
 
 @pytest.mark.asyncio
@@ -1206,6 +1762,35 @@ async def test_resume_replays_session(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_resume_shows_session_context_summary(tmp_path):
+    from src.memory.session_store import SessionStore
+
+    db = str(tmp_path / ".vortocode" / "sessions.db")
+    store = SessionStore(db)
+    sid = store.create_session("恢复上下文")
+    store.update_session(sid, metadata=json.dumps({
+        "summary": "用户：继续开发恢复体验 · 回复：完成一半",
+        "last_user": "继续开发恢复体验",
+        "last_reply": "完成一半",
+        "mode": "build",
+        "branch": "feature/session",
+        "dirty": True,
+        "context": {"pct": 51, "policy": "preserve", "history_messages": 7},
+    }, ensure_ascii=False))
+    store.add_message(sid, "assistant", "历史内容ABC", {"markup": False})
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, f"/resume {sid}")
+        assert await _wait_for(app, pilot, "↻ 已恢复会话")
+        joined = "\n".join(app.transcript)
+        assert "上次状态: build · feature/session*" in joined
+        assert "最后用户: 继续开发恢复体验" in joined
+        assert "最后回复: 完成一半" in joined
+        assert "上下文: 51% · preserve · 7 messages" in joined
+
+
+@pytest.mark.asyncio
 async def test_palette_click_selects_and_accepts():
     """鼠标点击候选行 = 选中并接受（与 Tab 同义）；点提示行/越界忽略。"""
     app = VortoCodeTUI(repo_root=".")
@@ -1255,6 +1840,24 @@ async def test_cancel_only_when_busy(tmp_path):
         app._busy = True
         app.action_cancel()                           # 忙：提示已取消
         assert any("已取消" in t for t in app.transcript)
+
+
+@pytest.mark.asyncio
+async def test_non_action_worker_sets_busy_and_audit_shows_stall(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        worker = SimpleNamespace(group="verify", name="verify tui", id="w1")
+        app.on_worker_state_changed(SimpleNamespace(worker=worker, state=WorkerState.RUNNING))
+        assert app._busy is True
+        assert "verify tui" in app.sub_title
+
+        app._busy_workers["w1"]["started"] -= 121
+        await _submit(app, pilot, "/audit")
+        joined = "\n".join(app.transcript)
+        assert "活跃 worker" in joined and "verify tui" in joined and "可能卡住" in joined
+
+        app.on_worker_state_changed(SimpleNamespace(worker=worker, state=WorkerState.SUCCESS))
+        assert app._busy is False
 
 
 @pytest.mark.asyncio
@@ -1313,7 +1916,7 @@ async def test_build_apply_confirm_cancel(monkeypatch, tmp_path):
         await _submit(app, pilot, "/mode")            # → build
         assert app.mode == "build"
         await _submit(app, pilot, "/improve")
-        assert await _wait_modal(app, pilot), "写分支前应弹确认"
+        assert await _wait_inline_confirm(app, pilot), "写分支前应确认"
         await pilot.press("n")                        # 取消
         await pilot.pause()
         assert applied == []                          # 没写分支
@@ -1330,7 +1933,7 @@ async def test_build_apply_confirm_accept(monkeypatch, tmp_path):
     async with app.run_test() as pilot:
         await _submit(app, pilot, "/mode")
         await _submit(app, pilot, "/improve")
-        assert await _wait_modal(app, pilot)
+        assert await _wait_inline_confirm(app, pilot)
         await pilot.press("y")                        # 确认
         await pilot.pause()
         assert applied == [True]                      # 写了分支
@@ -1413,13 +2016,13 @@ async def test_input_history_up_down():
         inp.focus()
         inp.value = "一"; await pilot.press("enter"); await pilot.pause()
         inp.value = "二"; await pilot.press("enter"); await pilot.pause()
-        await pilot.press("up"); await pilot.pause()
+        await inp._on_key(_FakeKey("ctrl+p")); await pilot.pause()
         assert inp.value == "二"                            # ↑ 最近一条
-        await pilot.press("up"); await pilot.pause()
+        await inp._on_key(_FakeKey("ctrl+p")); await pilot.pause()
         assert inp.value == "一"                            # 再 ↑ 更早一条
-        await pilot.press("down"); await pilot.pause()
+        await inp._on_key(_FakeKey("ctrl+n")); await pilot.pause()
         assert inp.value == "二"
-        await pilot.press("down"); await pilot.pause()
+        await inp._on_key(_FakeKey("ctrl+n")); await pilot.pause()
         assert inp.value == ""                              # 到底恢复草稿（空）
 
 
@@ -1562,10 +2165,10 @@ async def test_history_recall_of_slash_does_not_open_palette():
         inp.focus()
         await _submit(app, pilot, "/usage")
         await _submit(app, pilot, "/help")
-        await pilot.press("up"); await pilot.pause()
+        await inp._on_key(_FakeKey("ctrl+p")); await pilot.pause()
         assert inp.value == "/help"                                    # ↑ 翻历史
         assert app.query_one("#palette", Static).display is False      # 不弹补全
-        await pilot.press("up"); await pilot.pause()
+        await inp._on_key(_FakeKey("ctrl+p")); await pilot.pause()
         assert inp.value == "/usage"                                   # 继续翻历史（没被面板截胡）
 
 
@@ -1643,6 +2246,10 @@ async def test_show_diff_renders_colored(tmp_path):
 
 def _git(tmp_path, *args):
     import subprocess
+    # 强制初始分支为 main：CI runner 的 git 默认分支可能是 master，
+    # 会让依赖 base=main 的 /pr preview / create 找不到 base（init.defaultBranch 自 git 2.28 起支持）。
+    if args and args[0] == "init":
+        args = ("-c", "init.defaultBranch=main", *args)
     return subprocess.run(["git", *args], cwd=str(tmp_path), capture_output=True)
 
 
@@ -1660,6 +2267,840 @@ async def test_cmd_diff_renders_git_diff(tmp_path):
         await pilot.pause()
         text = "\n".join(s.text for s in app.query_one("#log", RichLog).lines)
         assert "-x = 1" in text and "+x = 2" in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_diff_supports_stat_and_path_filter(tmp_path):
+    from textual.widgets import RichLog
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "a.py").write_text("a = 1\n")
+    (tmp_path / "b.py").write_text("b = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "a.py").write_text("a = 2\n")
+    (tmp_path / "b.py").write_text("b = 2\n")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app._cmd_diff("stat a.py")
+        await pilot.pause()
+        joined = "\n".join(app.transcript)
+        assert "a.py" in joined
+        assert "b.py" not in joined
+        text = "\n".join(s.text for s in app.query_one("#log", RichLog).lines)
+        assert "git diff --stat -- a.py" in text
+
+
+@pytest.mark.asyncio
+async def test_cmd_diff_supports_cached(tmp_path):
+    from textual.widgets import RichLog
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "f.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "f.py").write_text("x = 2\n")
+    _git(tmp_path, "add", "f.py")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app._cmd_diff("cached")
+        await pilot.pause()
+        text = "\n".join(s.text for s in app.query_one("#log", RichLog).lines)
+        assert "git diff --cached" in text
+        assert "-x = 1" in text and "+x = 2" in text
+
+
+def test_cmd_diff_rejects_unknown_git_flags(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+
+    app._cmd_diff("--name-only")
+
+    assert emitted and "不透传其它 git 参数" in emitted[-1]
+
+
+@pytest.mark.asyncio
+async def test_cmd_changes_shows_precommit_review(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "f.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "f.py").write_text("x = 2\n")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/changes")
+        assert await _wait_for(app, pilot, "变更审查")
+        joined = "\n".join(app.transcript)
+        assert "f.py" in joined
+        assert "没有看到测试文件" in joined
+        assert "建议下一步" in joined
+
+
+@pytest.mark.asyncio
+async def test_cmd_changes_supports_cached_and_path_filter(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "a.py").write_text("a = 1\n")
+    (tmp_path / "b.py").write_text("b = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "a.py").write_text("a = 2\n")
+    (tmp_path / "b.py").write_text("b = 2\n")
+    _git(tmp_path, "add", "a.py")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/changes cached a.py")
+        assert await _wait_for(app, pilot, "已 staged")
+        joined = "\n".join(app.transcript)
+        assert "a.py" in joined
+        assert "b.py" not in joined
+
+
+def test_cmd_changes_rejects_unknown_git_flags(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+
+    app._cmd_changes("--name-only")
+
+    assert emitted and "不透传其它 git 参数" in emitted[-1]
+
+
+@pytest.mark.asyncio
+async def test_cmd_diff_hunks_shows_hunk_ids(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x")
+    _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+    _git(tmp_path, "add", "-A")
+    _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "a.py").write_text("x = 2\n", encoding="utf-8")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/diff hunks")
+        assert await _wait_for(app, pilot, "Diff hunks")
+        joined = "\n".join(app.transcript)
+        assert "H1" in joined
+        assert "a.py" in joined
+        assert "/review hunk H1" in joined
+
+
+@pytest.mark.asyncio
+async def test_cmd_review_runs_diff_reviewer(tmp_path, monkeypatch):
+    calls = {}
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+
+    async def fake_review(*, cached=False, paths=None, hunk_id=""):
+        calls.update({"cached": cached, "paths": paths, "hunk_id": hunk_id})
+        return "未发现 P0/P1"
+
+    monkeypatch.setattr(app, "_run_diff_review", fake_review)
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/review cached src/foo.py")
+        assert await _wait_for(app, pilot, "未发现 P0/P1")
+        assert calls == {"cached": True, "paths": ["src/foo.py"], "hunk_id": ""}
+
+
+@pytest.mark.asyncio
+async def test_cmd_review_hunk_routes_hunk_id(tmp_path, monkeypatch):
+    calls = {}
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+
+    async def fake_review(*, cached=False, paths=None, hunk_id=""):
+        calls.update({"cached": cached, "paths": paths, "hunk_id": hunk_id})
+        return "未发现 P0/P1"
+
+    monkeypatch.setattr(app, "_run_diff_review", fake_review)
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/review hunk h2 cached src/foo.py")
+        assert await _wait_for(app, pilot, "未发现 P0/P1")
+        assert calls == {"cached": True, "paths": ["src/foo.py"], "hunk_id": "H2"}
+
+
+@pytest.mark.asyncio
+async def test_cmd_review_fix_prompts_and_routes_to_build(tmp_path, monkeypatch):
+    routed = []
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+
+    async def fake_review(*, cached=False, paths=None, hunk_id=""):
+        return "[P1] src/foo.py:10 修复空指针问题"
+
+    monkeypatch.setattr(app, "_run_diff_review", fake_review)
+    monkeypatch.setattr(app, "_continue_text_route", lambda text: routed.append(text))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/review --fix hunk H1 cached src/foo.py")
+        assert await _wait_for(app, pilot, "[P1] src/foo.py")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("y")
+        await pilot.pause()
+        assert app.mode == "build"
+        assert routed and "只改必要处" in routed[0]
+        assert "[P1] src/foo.py" in routed[0]
+        assert "H1" in routed[0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_review_fix_skips_when_no_findings(tmp_path, monkeypatch):
+    routed = []
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+
+    async def fake_review(*, cached=False, paths=None, hunk_id=""):
+        return "未发现 P0/P1"
+
+    monkeypatch.setattr(app, "_run_diff_review", fake_review)
+    monkeypatch.setattr(app, "_continue_text_route", lambda text: routed.append(text))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/review --fix")
+        assert await _wait_for(app, pilot, "已保持只读")
+        assert not app._inline_confirm_active()
+        assert routed == []
+
+
+def test_cmd_review_rejects_unknown_flags(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+
+    app._cmd_review("--full")
+
+    assert emitted and "不透传其它参数" in emitted[-1]
+
+
+@pytest.mark.asyncio
+async def test_cmd_verify_confirms_and_runs_detected_tests(tmp_path, monkeypatch):
+    import src.agents.test_detect as test_detect
+    import src.agents.worktree as worktree
+
+    detected = {}
+    ran = {}
+
+    def fake_detect(repo_root, selector=None):
+        detected.update({"repo_root": repo_root, "selector": selector})
+        return ["pytest", "-q", selector or "tests/"]
+
+    def fake_run_tests(repo_root, cmd):
+        ran.update({"repo_root": repo_root, "cmd": cmd})
+        return {"ok": True, "cmd": " ".join(cmd), "output": "2 passed"}
+
+    monkeypatch.setattr(test_detect, "detect_test_cmd", fake_detect)
+    monkeypatch.setattr(worktree, "run_tests", fake_run_tests)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/verify tests/unit/test_demo.py")
+        assert await _wait_inline_confirm(app, pilot)
+        assert app._confirm_scope == "commands"
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "验证通过")
+        assert detected["selector"] == "tests/unit/test_demo.py"
+        assert ran["cmd"] == ["pytest", "-q", "tests/unit/test_demo.py"]
+        assert "2 passed" in "\n".join(app.transcript)
+
+
+@pytest.mark.asyncio
+async def test_cmd_verify_cancel_does_not_run(tmp_path, monkeypatch):
+    import src.agents.test_detect as test_detect
+    import src.agents.worktree as worktree
+
+    monkeypatch.setattr(test_detect, "detect_test_cmd", lambda repo_root, selector=None: ["pytest", "-q"])
+
+    def fake_run_tests(repo_root, cmd):
+        raise AssertionError("run_tests should not run after cancel")
+
+    monkeypatch.setattr(worktree, "run_tests", fake_run_tests)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/verify")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("n")
+        assert await _wait_for(app, pilot, "已取消验证")
+
+
+@pytest.mark.asyncio
+async def test_cmd_verify_changed_runs_inferred_tests(tmp_path, monkeypatch):
+    import src.agents.worktree as worktree
+
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "src" / "agents").mkdir(parents=True)
+    (tmp_path / "tests" / "unit").mkdir(parents=True)
+    (tmp_path / "src" / "agents" / "sample.py").write_text("x = 1\n")
+    (tmp_path / "tests" / "unit" / "test_sample.py").write_text("def test_x(): pass\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "src" / "agents" / "sample.py").write_text("x = 2\n")
+    ran = {}
+
+    def fake_run_tests(repo_root, cmd):
+        ran.update({"repo_root": repo_root, "cmd": cmd})
+        return {"ok": True, "cmd": " ".join(cmd), "output": "1 passed"}
+
+    monkeypatch.setattr(worktree, "run_tests", fake_run_tests)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/verify --changed")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "验证通过")
+        assert "tests/unit/test_sample.py" in ran["cmd"]
+
+
+@pytest.mark.asyncio
+async def test_cmd_verify_run_confirms_and_runs_runtime_command(tmp_path, monkeypatch):
+    import src.agents.shell as shell
+
+    ran = {}
+
+    def fake_run_command(repo_root, cmd):
+        ran.update({"repo_root": repo_root, "cmd": cmd})
+        return {"ok": True, "code": 0, "output": "smoke ok"}
+
+    monkeypatch.setattr(shell, "run_command", fake_run_command)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/verify run python -m smoke --fast")
+        assert await _wait_inline_confirm(app, pilot)
+        assert app._confirm_scope == "commands"
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "runtime 验证通过")
+        assert ran["cmd"] == "python -m smoke --fast"
+        assert "smoke ok" in "\n".join(app.transcript)
+
+
+@pytest.mark.asyncio
+async def test_cmd_verify_profile_lists_and_runs_project_profile(tmp_path, monkeypatch):
+    import src.agents.shell as shell
+
+    (tmp_path / ".vortocode").mkdir()
+    (tmp_path / ".vortocode" / "verify.yaml").write_text(
+        "profiles:\n"
+        "  smoke:\n"
+        "    cmd: python main.py self-analyze\n"
+        "    description: quick scan\n",
+        encoding="utf-8",
+    )
+    ran = {}
+
+    def fake_run_command(repo_root, cmd):
+        ran.update({"repo_root": repo_root, "cmd": cmd})
+        return {"ok": True, "code": 0, "output": "scan ok"}
+
+    monkeypatch.setattr(shell, "run_command", fake_run_command)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/verify profiles")
+        assert await _wait_for(app, pilot, "smoke [project]")
+        await _submit(app, pilot, "/verify smoke")
+        assert await _wait_inline_confirm(app, pilot)
+        assert "profile smoke" in str(app._confirm_message)
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "runtime 验证通过")
+        assert ran["cmd"] == "python main.py self-analyze"
+        assert "scan ok" in "\n".join(app.transcript)
+
+
+def test_cmd_verify_run_rejects_dangerous_command(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+
+    app._cmd_verify("run rm -rf /")
+
+    assert emitted and "拒绝执行高危验证命令" in emitted[-1]
+
+
+@pytest.mark.asyncio
+async def test_cmd_preflight_shows_readiness_summary(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "src" / "agents").mkdir(parents=True)
+    (tmp_path / "tests" / "unit").mkdir(parents=True)
+    (tmp_path / "src" / "agents" / "sample.py").write_text("x = 1\n")
+    (tmp_path / "tests" / "unit" / "test_sample.py").write_text("def test_x(): pass\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "src" / "agents" / "sample.py").write_text("x = 2\n")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/preflight")
+        assert await _wait_for(app, pilot, "Preflight: 工作区")
+        joined = "\n".join(app.transcript)
+        assert "/review" in joined
+        assert "/review --fix" in joined
+        assert "/verify unit" in joined
+        assert "/verify --changed" in joined
+        assert "tests/unit/test_sample.py" in joined
+        assert "fix(agents): update agents" in joined
+        assert "/commit all --suggest" in joined
+
+
+@pytest.mark.asyncio
+async def test_cmd_preflight_cached_uses_staged_scope(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "a.py").write_text("a = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "a.py").write_text("a = 2\n")
+    _git(tmp_path, "add", "a.py")
+    (tmp_path / "b.py").write_text("b = 1\n")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/preflight cached")
+        assert await _wait_for(app, pilot, "Preflight: 已 staged")
+        joined = "\n".join(app.transcript)
+        assert "a.py" in joined
+        assert "b.py" not in joined
+        assert "/review cached" in joined
+        assert "/review --fix cached" in joined
+        assert "/commit --suggest" in joined
+
+
+@pytest.mark.asyncio
+async def test_cmd_git_shows_status_summary(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "f.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "f.py").write_text("x = 2\n")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/git")
+        assert await _wait_for(app, pilot, "Git 状态")
+        joined = "\n".join(app.transcript)
+        assert "f.py" in joined
+        assert "未 staged diffstat" in joined
+
+
+@pytest.mark.asyncio
+async def test_cmd_commit_commits_staged_after_confirm(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "f.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "f.py").write_text("x = 2\n")
+    _git(tmp_path, "add", "f.py")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/commit update f")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "已提交")
+        assert b"update f" in _git(tmp_path, "log", "-1", "--pretty=%s").stdout
+        assert app.mode == "build"
+        assert '"event": "commit"' in (tmp_path / ".vortocode" / "audit.log").read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_cmd_commit_all_stages_before_commit(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "f.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "g.py").write_text("g = 1\n")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/build")
+        await _submit(app, pilot, "/commit all add g")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "已提交")
+        assert b"add g" in _git(tmp_path, "log", "-1", "--pretty=%s").stdout
+
+
+@pytest.mark.asyncio
+async def test_cmd_commit_without_staged_changes_does_not_confirm(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "f.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "f.py").write_text("x = 2\n")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/commit update")
+        assert await _wait_for(app, pilot, "没有 staged 改动")
+        assert not app._inline_confirm_active()
+
+
+@pytest.mark.asyncio
+async def test_cmd_commit_suggest_commits_with_generated_message(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "src" / "agents").mkdir(parents=True)
+    (tmp_path / "src" / "agents" / "sample.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "src" / "agents" / "sample.py").write_text("x = 2\n")
+    _git(tmp_path, "add", "src/agents/sample.py")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/commit suggest")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "已提交")
+        assert b"fix(agents): update agents" in _git(tmp_path, "log", "-1", "--pretty=%s").stdout
+
+
+@pytest.mark.asyncio
+async def test_cmd_commit_all_suggest_stages_and_commits(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "base.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    (tmp_path / "src" / "agents").mkdir(parents=True)
+    (tmp_path / "src" / "agents" / "new_tool.py").write_text("x = 1\n")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/commit all --suggest")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "已提交")
+        assert b"feat(agents): update agents" in _git(tmp_path, "log", "-1", "--pretty=%s").stdout
+
+
+@pytest.mark.asyncio
+async def test_cmd_pr_preview_shows_local_summary(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "f.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    _git(tmp_path, "checkout", "-qb", "feature/pr")
+    (tmp_path / "g.py").write_text("g = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "feat: add g")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/pr preview base main")
+        assert await _wait_for(app, pilot, "PR 预览: feature/pr → main")
+        joined = "\n".join(app.transcript)
+        assert "title: feat: add g" in joined
+        assert "g.py" in joined
+
+
+@pytest.mark.asyncio
+async def test_cmd_pr_create_confirms_and_calls_push_open(tmp_path, monkeypatch):
+    import src.agents.vcs as vcs
+
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "f.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    _git(tmp_path, "checkout", "-qb", "feature/pr")
+    (tmp_path / "g.py").write_text("g = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "feat: add g")
+    calls = {}
+
+    def fake_push_open(repo_root, branch, title, body, base="main", remote="origin", draft=False):
+        calls.update({"repo_root": repo_root, "branch": branch, "title": title,
+                      "body": body, "base": base, "remote": remote, "draft": draft})
+        return {"ok": True, "pushed": True, "url": "https://github.com/x/y/pull/1", "error": ""}
+
+    monkeypatch.setattr(vcs, "push_and_open_pr", fake_push_open)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/pr draft base main Custom title")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "已创建 PR")
+        assert calls["branch"] == "feature/pr"
+        assert calls["base"] == "main"
+        assert calls["title"] == "Custom title"
+        assert calls["draft"] is True
+        assert "feat: add g" in calls["body"]
+        assert '"event": "open_pr"' in (tmp_path / ".vortocode" / "audit.log").read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_cmd_pr_dirty_worktree_does_not_confirm(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "f.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    _git(tmp_path, "checkout", "-qb", "feature/pr")
+    (tmp_path / "dirty.py").write_text("dirty\n")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/pr")
+        assert await _wait_for(app, pilot, "工作区还有未提交改动")
+        assert not app._inline_confirm_active()
+
+
+@pytest.mark.asyncio
+async def test_exact_slash_command_not_replaced_by_highlighted_palette_candidate(tmp_path):
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "config", "user.email", "x@x"); _git(tmp_path, "config", "user.name", "x")
+    (tmp_path / "f.py").write_text("x = 1\n")
+    _git(tmp_path, "add", "-A"); _git(tmp_path, "commit", "-qm", "init")
+    _git(tmp_path, "checkout", "-qb", "feature/pr")
+    (tmp_path / "dirty.py").write_text("dirty\n")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        inp = app.query_one("#prompt", PromptEditor)
+        inp.focus()
+        inp.value = "/pr"
+        await pilot.pause()
+        assert "/preflight" in app._pal_accepts and "/pr" in app._pal_accepts
+        app._pal_idx = app._pal_accepts.index("/preflight")
+        await pilot.press("enter")
+        await pilot.pause()
+        assert any(t == "/pr" for t in app.transcript)
+        assert not any(t == "/preflight" for t in app.transcript)
+        assert await _wait_for(app, pilot, "工作区还有未提交改动")
+
+
+@pytest.mark.asyncio
+async def test_cmd_pr_check_requires_ref(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/pr-check")
+        assert await _wait_for(app, pilot, "用法: /pr-check")
+
+
+@pytest.mark.asyncio
+async def test_cmd_pr_check_shows_review_and_ci_feedback(tmp_path, monkeypatch):
+    import src.agents.vcs as vcs
+
+    def fake_feedback(repo_root, ref):
+        return {
+            "ok": True,
+            "pr": 12,
+            "branch": "vorto/fix-review",
+            "comments": [{"author": "reviewer", "body": "这里需要补边界测试",
+                          "path": "src/foo.py", "line": 42, "resolved": False}],
+            "failing_checks": [{"name": "pytest", "link": "https://ci.example/1"}],
+            "error": "",
+        }
+
+    monkeypatch.setattr(vcs, "pr_feedback", fake_feedback)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/pr-check 12")
+        assert await _wait_for(app, pilot, "PR #12")
+        joined = "\n".join(app.transcript)
+        assert "vorto/fix-review" in joined
+        assert "pytest" in joined
+        assert "src/foo.py:42" in joined
+        assert "补边界测试" in joined
+
+
+@pytest.mark.asyncio
+async def test_cmd_fix_ci_reports_doctor_and_routes_after_confirm(tmp_path, monkeypatch):
+    import src.agents.vcs as vcs
+
+    def fake_feedback(repo_root, ref):
+        return {
+            "ok": True,
+            "pr": 12,
+            "branch": "vorto/fix-review",
+            "comments": [{"author": "reviewer", "body": "这里需要补边界测试",
+                          "path": "src/foo.py", "line": 42, "resolved": False}],
+            "failing_checks": [{"name": "pytest / unit", "link": "https://ci.example/1"}],
+            "error": "",
+        }
+
+    monkeypatch.setattr(vcs, "pr_feedback", fake_feedback)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    routed = []
+    monkeypatch.setattr(app, "_continue_text_route", lambda text: routed.append(text))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/fix-ci 12")
+        assert await _wait_for(app, pilot, "PR Doctor #12")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("y")
+        for _ in range(20):
+            if routed:
+                break
+            await pilot.pause(0.05)
+        assert app.mode == "build"
+        assert routed and "PR 12" in routed[0] and "pr_fix" in routed[0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_fix_ci_verify_runs_first_safe_template(tmp_path, monkeypatch):
+    import src.agents.pr_doctor as pr_doctor
+    import src.agents.shell as shell
+
+    def fake_report(repo_root, ref):
+        return {
+            "ok": True,
+            "ref": ref,
+            "pr": 12,
+            "branch": "feature/pr",
+            "comments": [],
+            "failing_checks": [{"name": "pytest / unit", "link": ""}],
+            "has_findings": True,
+            "can_fix": False,
+            "failure_classification": {"label": "测试失败", "confidence": "medium",
+                                       "next_action": "先复现最小失败测试"},
+            "repair_templates": [{
+                "kind": "verify",
+                "title": "复现最小失败测试",
+                "command": "python -m pytest -q tests/unit/test_x.py::test_y",
+                "detail": "先只跑失败 selector。",
+                "safe": True,
+                "slash": "/verify run python -m pytest -q tests/unit/test_x.py::test_y",
+            }],
+            "check_logs": [],
+        }
+
+    monkeypatch.setattr(pr_doctor, "pr_doctor_report", fake_report)
+    ran = {}
+
+    def fake_run_command(repo_root, cmd):
+        ran["cmd"] = cmd
+        return {"ok": True, "output": "ok"}
+
+    monkeypatch.setattr(shell, "run_command", fake_run_command)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/fix-ci verify 12")
+        assert await _wait_for(app, pilot, "PR Doctor #12")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "runtime 验证通过")
+        assert await _wait_for(app, pilot, "本地验证通过")
+        assert ran["cmd"] == "python -m pytest -q tests/unit/test_x.py::test_y"
+        assert app.mode == "plan"
+
+
+@pytest.mark.asyncio
+async def test_cmd_fix_ci_verify_failure_suggests_pr_fix(tmp_path, monkeypatch):
+    import src.agents.pr_doctor as pr_doctor
+    import src.agents.shell as shell
+
+    def fake_report(repo_root, ref):
+        return {
+            "ok": True,
+            "ref": ref,
+            "pr": 12,
+            "branch": "vorto/fix-ci",
+            "comments": [],
+            "failing_checks": [{"name": "pytest / unit", "link": ""}],
+            "has_findings": True,
+            "can_fix": True,
+            "failure_classification": {"label": "测试失败", "confidence": "medium",
+                                       "next_action": "先复现最小失败测试"},
+            "repair_templates": [{
+                "kind": "verify",
+                "title": "复现最小失败测试",
+                "command": "python -m pytest -q tests/unit/test_x.py::test_y",
+                "detail": "先只跑失败 selector。",
+                "safe": True,
+                "slash": "/verify run python -m pytest -q tests/unit/test_x.py::test_y",
+            }],
+            "check_logs": [],
+        }
+
+    monkeypatch.setattr(pr_doctor, "pr_doctor_report", fake_report)
+
+    def fake_run_command(repo_root, cmd):
+        return {"ok": False, "output": "FAILED tests/unit/test_x.py::test_y - AssertionError: nope"}
+
+    monkeypatch.setattr(shell, "run_command", fake_run_command)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/fix-ci verify 12")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "本地已复现失败")
+        assert await _wait_for(app, pilot, "/pr-fix 12")
+        assert await _wait_for(app, pilot, "AssertionError: nope")
+
+
+@pytest.mark.asyncio
+async def test_cmd_fix_ci_verify_picker_selects_template(tmp_path, monkeypatch):
+    import src.agents.pr_doctor as pr_doctor
+    import src.agents.shell as shell
+
+    def fake_report(repo_root, ref):
+        return {
+            "ok": True,
+            "ref": ref,
+            "pr": 12,
+            "branch": "feature/pr",
+            "comments": [],
+            "failing_checks": [{"name": "pytest / unit", "link": ""}],
+            "has_findings": True,
+            "can_fix": False,
+            "failure_classification": {"label": "测试失败", "confidence": "medium",
+                                       "next_action": "先复现最小失败测试"},
+            "repair_templates": [
+                {
+                    "kind": "verify",
+                    "title": "复现失败 A",
+                    "command": "python -m pytest -q tests/unit/test_a.py::test_a",
+                    "detail": "先跑 A。",
+                    "safe": True,
+                    "slash": "/verify run python -m pytest -q tests/unit/test_a.py::test_a",
+                },
+                {
+                    "kind": "verify",
+                    "title": "复现失败 B",
+                    "command": "python -m pytest -q tests/unit/test_b.py::test_b",
+                    "detail": "先跑 B。",
+                    "safe": True,
+                    "slash": "/verify run python -m pytest -q tests/unit/test_b.py::test_b",
+                },
+            ],
+            "check_logs": [],
+        }
+
+    monkeypatch.setattr(pr_doctor, "pr_doctor_report", fake_report)
+    ran = {}
+
+    def fake_run_command(repo_root, cmd):
+        ran["cmd"] = cmd
+        return {"ok": True, "output": "ok"}
+
+    monkeypatch.setattr(shell, "run_command", fake_run_command)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/fix-ci verify 12")
+        assert await _wait_modal(app, pilot)
+        await pilot.press("down")
+        await pilot.press("enter")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "runtime 验证通过")
+        assert ran["cmd"] == "python -m pytest -q tests/unit/test_b.py::test_b"
+
+
+@pytest.mark.asyncio
+async def test_cmd_pr_doctor_no_findings_does_not_confirm(tmp_path, monkeypatch):
+    import src.agents.vcs as vcs
+
+    monkeypatch.setattr(vcs, "pr_feedback",
+                        lambda repo_root, ref: {"ok": True, "pr": 12, "branch": "vorto/clean",
+                                                "comments": [], "failing_checks": [], "error": ""})
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/pr doctor 12")
+        assert await _wait_for(app, pilot, "PR Doctor #12")
+        assert await _wait_for(app, pilot, "没有待处理 review 评论")
+        assert not app._inline_confirm_active()
+
+
+@pytest.mark.asyncio
+async def test_cmd_pr_fix_confirms_switches_build_and_routes(tmp_path, monkeypatch):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    routed = []
+    monkeypatch.setattr(app, "_continue_text_route", lambda text: routed.append(text))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/pr-fix 12")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("y")
+        for _ in range(20):
+            if routed:
+                break
+            await pilot.pause(0.05)
+        assert app.mode == "build"
+        assert routed and "PR 12" in routed[0] and "pr_fix" in routed[0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_pr_fix_cancel_does_not_route(tmp_path, monkeypatch):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    routed = []
+    monkeypatch.setattr(app, "_continue_text_route", lambda text: routed.append(text))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/pr-fix 12")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("n")
+        assert await _wait_for(app, pilot, "已取消 PR 反馈修复")
+        assert app.mode == "plan"
+        assert routed == []
 
 
 @pytest.mark.asyncio
@@ -1682,6 +3123,24 @@ async def test_always_allow_skips_confirm(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_inline_confirm_write_uses_palette_not_modal(tmp_path):
+    import asyncio
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        task = asyncio.create_task(app._confirm_write("写文件？"))
+        assert await _wait_inline_confirm(app, pilot)
+        assert len(app.screen_stack) == 1
+        assert "权限确认" in app.query_one("#palette").render().plain
+        await pilot.press("right")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert await task is True
+        assert app._allow_writes_session is True
+
+
+@pytest.mark.asyncio
 async def test_improve_confirm_always_sets_flag(monkeypatch, tmp_path):
     applied = []
     si, FakeLoop = _fake_improve_loop(applied)
@@ -1690,7 +3149,7 @@ async def test_improve_confirm_always_sets_flag(monkeypatch, tmp_path):
     async with app.run_test() as pilot:
         await _submit(app, pilot, "/mode")                # → build
         await _submit(app, pilot, "/improve")
-        assert await _wait_modal(app, pilot)
+        assert await _wait_inline_confirm(app, pilot)
         await pilot.press("a")                            # 选"本会话始终允许"
         await pilot.pause()
         assert applied == [True]                          # a 也算确认 → 写了
@@ -1700,19 +3159,19 @@ async def test_improve_confirm_always_sets_flag(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_write_blanket_does_not_silence_commands(tmp_path):
     """P0#2：只按过"始终允许写文件"不得静默后续任意命令（否则=权限提升）。"""
+    import asyncio
+
     app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
         app._allow_writes_session = True                  # 仅写豁免
-        pushed = []
+        task = asyncio.create_task(app._confirm_command("跑命令？"))  # 命令仍需确认
+        assert await _wait_inline_confirm(app, pilot)
+        assert app._confirm_scope == "commands"
+        await pilot.press("n")
+        await pilot.pause()
 
-        async def _fake_push(screen):
-            pushed.append(screen)
-            return False
-
-        app.push_screen_wait = _fake_push
-        ok = await app._confirm_command("跑命令？")        # 命令仍需确认
-        assert ok is False and len(pushed) == 1           # 未被写豁免放行、确实弹了确认
-        assert pushed[0]._scope == "commands"             # 且是命令作用域的确认框
+        assert await task is False
+        assert len(app.screen_stack) == 1
 
 
 @pytest.mark.asyncio
@@ -1747,6 +3206,35 @@ async def test_confirm_screen_enter_confirms(tmp_path):
         await pilot.pause()
         await pilot.press("enter")
         await pilot.pause()
+        assert len(app.screen_stack) == 1
+
+
+@pytest.mark.asyncio
+async def test_confirm_screen_arrows_choose_current_option(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app.push_screen(ConfirmScreen("写文件？"))
+        await pilot.pause()
+        await pilot.press("right")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app._allow_writes_session is True
+        assert len(app.screen_stack) == 1
+
+
+@pytest.mark.asyncio
+async def test_confirm_screen_can_keyboard_select_cancel(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app.push_screen(ConfirmScreen("写文件？"))
+        await pilot.pause()
+        await pilot.press("right")
+        await pilot.press("right")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        assert app._allow_writes_session is False
         assert len(app.screen_stack) == 1
 
 
@@ -1787,7 +3275,7 @@ async def test_plan_escalation_switches_to_build_and_marks_done(monkeypatch, tmp
                               on_escalate=app._escalate_to_build, on_tool=app._audit_tool)
         inp = app.query_one("#prompt", PromptEditor); inp.focus(); inp.value = "动手做"
         await pilot.press("enter")
-        assert await _wait_modal(app, pilot)              # plan 想写 → 弹"切 build 并继续？"
+        assert await _wait_inline_confirm(app, pilot)     # plan 想写 → 确认"切 build 并继续？"
         await pilot.press("y")
         assert await _wait_for(app, pilot, "已切到 build")  # 一键切 build
         for _ in range(40):
@@ -1833,7 +3321,7 @@ async def test_plan_can_request_build_when_ready(monkeypatch, tmp_path):
                               plan_tool=True)
         inp = app.query_one("#prompt", PromptEditor); inp.focus(); inp.value = "先分析，成熟后动手"
         await pilot.press("enter")
-        assert await _wait_modal(app, pilot)
+        assert await _wait_inline_confirm(app, pilot)
         await pilot.press("y")
         assert await _wait_for(app, pilot, "已切到 build")
         for _ in range(40):
@@ -1873,7 +3361,7 @@ async def test_plan_preflight_offer_build_for_clear_dev_intent(monkeypatch, tmp_
     async with app.run_test() as pilot:
         app.agent = FakeAgent()
         await _submit(app, pilot, "帮我修复这个问题")
-        assert await _wait_modal(app, pilot)
+        assert await _wait_inline_confirm(app, pilot)
         await pilot.press("y")
         assert await _wait_for(app, pilot, "build 执行了")
 
@@ -1899,7 +3387,7 @@ async def test_plan_preflight_reject_keeps_plan(monkeypatch, tmp_path):
     async with app.run_test() as pilot:
         app.agent = FakeAgent()
         await _submit(app, pilot, "继续开发这个功能")
-        assert await _wait_modal(app, pilot)
+        assert await _wait_inline_confirm(app, pilot)
         await pilot.press("n")
         assert await _wait_for(app, pilot, "plan 方案")
 
@@ -1942,7 +3430,7 @@ async def test_input_history_persists_across_apps(tmp_path):
     async with app2.run_test() as pilot:
         assert "记住我" in app2._history                  # 跨会话载入
         inp = app2.query_one("#prompt", PromptEditor); inp.focus()
-        await pilot.press("up"); await pilot.pause()
+        await inp._on_key(_FakeKey("ctrl+p")); await pilot.pause()
         assert inp.value == "记住我"                       # ↑ 调出上次会话的输入
 
 
@@ -2045,7 +3533,7 @@ async def test_apply_copies_workspace_output_to_repo(tmp_path):
     async with app.run_test() as pilot:
         app._last_dev = {"workspace": str(ws), "files": ["src/new.py"]}
         app._do_apply()                                       # @work worker
-        assert await _wait_modal(app, pilot)                  # 弹"应用到仓库?"
+        assert await _wait_inline_confirm(app, pilot)         # 确认"应用到仓库?"
         await pilot.press("y")
         for _ in range(40):
             if (tmp_path / "src" / "new.py").is_file():
@@ -2160,15 +3648,54 @@ async def test_dev_isolated_registered_build_only():
 
 
 @pytest.mark.asyncio
-async def test_render_plan_panel():
+async def test_auto_recall_injects_relevant_memories(monkeypatch):
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
         await pilot.pause()
+        monkeypatch.delenv("VORTOCODE_AUTO_RECALL", raising=False)
+        canned = [{"content": "跑测试用 pytest -q"}, {"content": "前端用 Vite"}]
+        monkeypatch.setattr(app.sessions.store, "search_memories", lambda *a, **k: canned)
+        # 正常长句 → 召回并封顶格式化
+        r = app._auto_recall("测试应该怎么跑起来")
+        assert r and r["n"] == 2 and "pytest" in r["text"]
+        # 太短 → 不召回（免得寒暄也注入）
+        assert app._auto_recall("hi") is None
+        # env 关 → 不召回
+        monkeypatch.setenv("VORTOCODE_AUTO_RECALL", "0")
+        assert app._auto_recall("测试应该怎么跑起来") is None
+
+
+@pytest.mark.asyncio
+async def test_auto_recall_caps_total_length(monkeypatch):
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        monkeypatch.delenv("VORTOCODE_AUTO_RECALL", raising=False)
+        big = [{"content": "x" * 500}, {"content": "y" * 500}, {"content": "z" * 500}]
+        monkeypatch.setattr(app.sessions.store, "search_memories", lambda *a, **k: big)
+        r = app._auto_recall("一个足够长的查询句子")
+        assert r and len(r["text"]) <= 700          # 每条≤200、总≤600（+ 前缀符号）
+
+
+@pytest.mark.asyncio
+async def test_render_plan_panel():
+    from textual.widgets import Static
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        panel = app.query_one("#plan", Static)
+        assert panel.display is False                          # 无计划时收起
         app._render_plan([
             {"step": "读代码", "status": "completed"},
             {"step": "写测试", "status": "in_progress"},
             {"step": "提交 PR", "status": "pending"},
         ])
-        joined = "\n".join(app.transcript)
-        assert "📋 计划 · 1/3" in joined                       # 带进度
-        assert "读代码" in joined and "写测试" in joined and "提交 PR" in joined
+        # 计划渲染到**常驻面板**（不进滚动 transcript），钉在输入框上方看着推进
+        content = app._plan_last
+        assert panel.display is True
+        assert "📋 计划" in content and "1/3" in content       # 带进度
+        assert "读代码" in content and "写测试" in content and "提交 PR" in content
+        assert "读代码" not in "\n".join(app.transcript)        # 不再灌进滚动日志
+        # 传空计划 → 面板收起（/new 复位）
+        app._render_plan([])
+        assert app.query_one("#plan", Static).display is False

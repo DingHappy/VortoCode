@@ -145,21 +145,25 @@ def test_untrusted_and_outward_consistent_across_ends(monkeypatch, tmp_path):
 # ------------------------------------------------------------ TUI：污点态无视"始终允许" + 记忆标注
 @pytest.mark.asyncio
 async def test_tui_command_confirm_forced_when_tainted(tmp_path):
+    import asyncio
     pytest.importorskip("textual")
     from src.tui.app import VortoCodeTUI
     app = VortoCodeTUI(repo_root=str(tmp_path))
     app._allow_commands_session = True                # 本会话已"始终允许"命令
-    pushed = []
+    async with app.run_test() as pilot:
+        assert await app._confirm_command("run?") is True                   # 未污点 → 吃豁免、免确认
+        assert app._confirm_future is None
 
-    async def _fake_push(screen):
-        pushed.append(screen)
-        return True
-    app.push_screen_wait = _fake_push
-
-    assert await app._confirm_command("run?") is True and len(pushed) == 0   # 未污点 → 吃豁免、免确认
-    taint.mark_tainted()
-    await app._confirm_command("run?")
-    assert len(pushed) == 1 and "外部内容" in pushed[0]._message            # 污点 → 无视豁免、强制弹带警示
+        taint.mark_tainted()
+        task = asyncio.create_task(app._confirm_command("run?"))
+        for _ in range(60):
+            if app._confirm_future is not None:
+                break
+            await pilot.pause(0.05)
+        assert app._confirm_future is not None
+        assert "外部内容" in app._confirm_message                            # 污点 → 无视豁免、强制确认
+        app._finish_inline_confirm("yes")
+        assert await task is True
 
 
 @pytest.mark.asyncio
