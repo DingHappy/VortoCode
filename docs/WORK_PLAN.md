@@ -165,10 +165,28 @@ Acceptance:
   rather than local-only package installation.
 - Unknown failures still fall back to the raw PR feedback flow.
 
+## 2026-07-07 Batch: Executable PR Doctor Actions
+
+Goals:
+
+- Mark repair templates as `verify`, `fix`, or `inspect` actions.
+- Show safe executable slash actions such as `/verify run ...` in PR Doctor.
+- Add `/fix-ci verify <ref>` and `/pr doctor verify <ref>` to run the first
+  safe verification template after confirmation.
+
+Acceptance:
+
+- Safe reproduction templates run through the existing command confirmation
+  gate.
+- Mutating templates such as `ruff check . --fix` are shown as fix suggestions,
+  not as verification actions.
+- `/fix-ci verify <ref>` does not require the PR head branch to be `vorto/*`
+  because it only runs local verification.
+
 ## Backlog
 
-- GitHub and CI integration: turn repair templates into optional one-click
-  `/verify run ...` or `/pr-fix` preflight actions.
+- GitHub and CI integration: add a small action picker for multiple PR Doctor
+  templates instead of always choosing the first safe verify template.
 - Session resume quality: show session summaries, branch/workdir/mode health,
   and recovery hints before resuming.
 - Memory automation: propose project memory updates after successful commits or

@@ -59,7 +59,7 @@ COMMAND_INFO = {
     "/pr": "预览或创建 PR；preview 只预览，draft 开草稿",
     "/pr-check": "读取 PR review 评论和失败 CI 检查",
     "/pr-fix": "确认后按 PR 反馈切 build 并调用 pr_fix 修复",
-    "/fix-ci": "诊断 PR review/CI 反馈，确认后切 build 修复",
+    "/fix-ci": "诊断 PR review/CI；verify 先跑最小复现",
     "/sessions": "列出/恢复/重命名/删除历史会话",
     "/resume": "恢复某个历史会话",
     "/new": "新开一个会话",
@@ -151,10 +151,10 @@ HELP = """可用命令:
   /preflight [cached] 提交/开 PR 前检查：风险、建议审查、建议验证、建议提交信息
   /git                查看 git 状态、staged/unstaged diffstat
   /commit <msg|suggest> 提交已 staged 改动；/commit all --suggest 先 git add -A 并自动生成信息
-  /pr [preview|draft|doctor] [base <ref>] [title]  预览或创建 PR；doctor 诊断 PR 反馈
+  /pr [preview|draft|doctor] [base <ref>] [title]  预览或创建 PR；doctor [verify] 诊断 PR 反馈
   /pr-check <ref>     读取 PR review 评论和失败 CI 检查
   /pr-fix <ref>       确认后切 build 并让主 agent 调 pr_fix 修复 PR 反馈
-  /fix-ci <ref>       诊断 PR review/CI 反馈，确认后切 build 修复
+  /fix-ci [verify] <ref>  诊断 PR review/CI；verify 先跑最小安全复现
   /mcp [list|off]     接入 config/mcp.yaml 的 MCP 服务器工具（build 门控）
   /agents             列出已创建的 agent（网页/API 建的，同一份存储）
   /runagent <id> <任务>  用某个已创建的 agent 执行任务（流式）
@@ -2544,8 +2544,8 @@ class VortoCodeTUI(App):
         label = f"profile {resolved.get('name')}" + (f" · {desc}" if desc else "")
         self._cmd_verify_run(str(profile.get("cmd") or ""), label=label)
 
-    def _cmd_verify_run(self, cmd: str, *, label: str = "runtime 验证命令") -> None:
-        """Run a user-supplied runtime/smoke command with existing command gates."""
+    async def _run_verify_command_now(self, cmd: str, *, label: str = "runtime 验证命令") -> None:
+        """Run a user-supplied runtime/smoke command inside the current worker."""
         cmd = (cmd or "").strip()
         if not cmd:
             self._emit("用法: /verify run <命令>")
@@ -2555,28 +2555,28 @@ class VortoCodeTUI(App):
         if danger:
             self._emit(f"拒绝执行高危验证命令: {danger}")
             return
+        if not await self._confirm_command(
+                f"运行 {label}？\n"
+                f"  $ {cmd}\n"
+                "适合 smoke test、启动检查、端到端脚本；请确认命令不会做外向或破坏性操作。"):
+            self._emit("已取消 runtime 验证。")
+            return
+        self._chrome(f"[dim]$ {cmd}[/dim]")
+        from src.agents.shell import run_command
+        res = await asyncio.to_thread(run_command, self.repo_root, cmd)
+        ok = bool(res.get("ok"))
+        status = "runtime 验证通过 ✓" if ok else "runtime 验证失败 ✗"
+        color = self._tc("text-success", "#7fce9a") if ok else self._tc("text-error", "#f08a8a")
+        self._chrome(f"[{color}]{status}[/][dim]（{cmd}）[/dim]")
+        out = str(res.get("output") or "").strip()
+        if out:
+            self._emit(f"{status}（{cmd}）\n输出尾部:\n{out[-3000:]}")
+        else:
+            self._emit(f"{status}（{cmd}）")
 
-        async def _run():
-            if not await self._confirm_command(
-                    f"运行 {label}？\n"
-                    f"  $ {cmd}\n"
-                    "适合 smoke test、启动检查、端到端脚本；请确认命令不会做外向或破坏性操作。"):
-                self._emit("已取消 runtime 验证。")
-                return
-            self._chrome(f"[dim]$ {cmd}[/dim]")
-            from src.agents.shell import run_command
-            res = await asyncio.to_thread(run_command, self.repo_root, cmd)
-            ok = bool(res.get("ok"))
-            status = "runtime 验证通过 ✓" if ok else "runtime 验证失败 ✗"
-            color = self._tc("text-success", "#7fce9a") if ok else self._tc("text-error", "#f08a8a")
-            self._chrome(f"[{color}]{status}[/][dim]（{cmd}）[/dim]")
-            out = str(res.get("output") or "").strip()
-            if out:
-                self._emit(f"{status}（{cmd}）\n输出尾部:\n{out[-3000:]}")
-            else:
-                self._emit(f"{status}（{cmd}）")
-
-        self.run_worker(_run(), exclusive=True, group="verify")
+    def _cmd_verify_run(self, cmd: str, *, label: str = "runtime 验证命令") -> None:
+        """Run a user-supplied runtime/smoke command with existing command gates."""
+        self.run_worker(self._run_verify_command_now(cmd, label=label), exclusive=True, group="verify")
 
     def _cmd_preflight(self, arg: str = "") -> None:
         """/preflight [cached]：提交/开 PR 前只读检查。"""
@@ -2817,9 +2817,49 @@ class VortoCodeTUI(App):
 
         self.run_worker(_run(), exclusive=True, group="git")
 
+    def _parse_pr_doctor_args(self, arg: str, alias: str) -> dict:
+        import shlex
+        try:
+            tokens = shlex.split(arg or "")
+        except ValueError as e:
+            return {"ok": False, "error": f"用法: {alias} [verify|fix] <PR号或vorto/*分支名>（参数解析失败: {e}）"}
+        if not tokens:
+            return {"ok": False, "error": f"用法: {alias} [verify|fix] <PR号或vorto/*分支名>"}
+        action = "fix"
+        if tokens[0].lower() in {"verify", "run", "repro", "reproduce"}:
+            action = "verify"
+            tokens = tokens[1:]
+        elif tokens[0].lower() in {"fix", "repair"}:
+            action = "fix"
+            tokens = tokens[1:]
+        if len(tokens) != 1:
+            return {"ok": False, "error": f"用法: {alias} [verify|fix] <PR号或vorto/*分支名>"}
+        return {"ok": True, "action": action, "ref": tokens[0]}
+
+    def _verify_template_command(self, report: dict) -> tuple[str, str]:
+        for item in report.get("repair_templates") or []:
+            slash = str(item.get("slash") or "")
+            if not item.get("safe") or not slash.startswith("/verify"):
+                continue
+            if slash.startswith("/verify run "):
+                return slash.removeprefix("/verify run ").strip(), str(item.get("title") or "PR Doctor verify")
+            parts = slash.split(maxsplit=1)
+            if len(parts) == 2:
+                from src.agents.verify_profiles import resolve_verify_profile
+                resolved = resolve_verify_profile(self.repo_root, parts[1])
+                if resolved.get("ok"):
+                    profile = resolved.get("profile") or {}
+                    return str(profile.get("cmd") or ""), f"PR Doctor profile {resolved.get('name')}"
+        return "", ""
+
     def _cmd_pr_doctor(self, arg: str = "", *, alias: str = "/pr doctor") -> None:
         """/pr doctor <ref> 或 /fix-ci <ref>：诊断 PR review/CI，确认后切 build 修复。"""
-        ref = (arg or "").strip()
+        opts = self._parse_pr_doctor_args(arg, alias)
+        if not opts.get("ok"):
+            self._emit(str(opts.get("error") or f"用法: {alias} [verify|fix] <ref>"))
+            return
+        ref = str(opts["ref"])
+        action = str(opts["action"])
         if not ref:
             self._emit(f"用法: {alias} <PR号或vorto/*分支名>")
             return
@@ -2828,7 +2868,16 @@ class VortoCodeTUI(App):
             from src.agents.pr_doctor import format_pr_doctor_report, pr_doctor_report
             report = await asyncio.to_thread(pr_doctor_report, self.repo_root, ref)
             self._emit(format_pr_doctor_report(report))
-            if not report.get("ok") or not report.get("can_fix"):
+            if not report.get("ok"):
+                return
+            if action == "verify":
+                cmd, label = self._verify_template_command(report)
+                if not cmd:
+                    self._emit("PR Doctor 没找到可安全执行的 verify 模板；可按报告中的 /pr-fix 或手动命令继续。")
+                    return
+                await self._run_verify_command_now(cmd, label=label or "PR Doctor 最小复现")
+                return
+            if not report.get("can_fix"):
                 return
             pr = report.get("pr") or ref
             branch = report.get("branch") or "未知分支"

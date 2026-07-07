@@ -2320,9 +2320,11 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 f"建议：{classification.get('next_action')}"
             )
         for item in repair_templates(checks, list(log_result.get("logs") or []), classification)[:4]:
+            slash = str(item.get("slash") or "")
+            slash_part = f"；可执行动作：{slash}" if slash else ""
             parts.append(
                 f"- 推荐修复模板：{item.get('title')}；"
-                f"命令：{item.get('command')}；说明：{item.get('detail')}"
+                f"命令：{item.get('command')}{slash_part}；说明：{item.get('detail')}"
             )
         for item in (log_result.get("logs") or [])[:3]:
             loc = str(item.get("job_name") or "")

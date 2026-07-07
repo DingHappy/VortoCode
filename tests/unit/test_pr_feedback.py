@@ -145,6 +145,7 @@ def test_pr_doctor_report_recommends_fix_and_verify(tmp_path):
     assert "失败类型判断" in text and "测试失败" in text
     assert "推荐修复模板" in text
     assert "python -m pytest -q tests/unit/test_x.py::test_y" in text
+    assert "动作: /verify run python -m pytest -q tests/unit/test_x.py::test_y" in text
     assert "缺少失败路径测试" in text
 
 
@@ -180,6 +181,7 @@ def test_pr_doctor_repair_templates_for_lint_and_dependency():
         [{"excerpt": "ruff check failed: trailing whitespace"}],
     )
     assert lint[0]["command"] == "ruff check . --fix"
+    assert lint[0]["safe"] is False and lint[0]["slash"] == ""
 
     dependency = pr_doctor.repair_templates(
         [{"name": "unit"}],

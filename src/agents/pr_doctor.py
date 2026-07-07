@@ -197,6 +197,30 @@ def extract_pytest_selectors(check_logs: list[dict] | None = None, *, limit: int
     return out
 
 
+def _verify_slash(command: str) -> str:
+    command = str(command or "").strip()
+    if not command:
+        return ""
+    if command.startswith("/verify"):
+        return command
+    if command.startswith("/") or "运行项目" in command or "检查 " in command:
+        return ""
+    return f"/verify run {command}"
+
+
+def _template(kind: str, title: str, command: str, detail: str, *,
+              safe: bool = False, slash: str = "") -> dict:
+    slash_cmd = slash or (_verify_slash(command) if safe else "")
+    return {
+        "kind": kind,
+        "title": title,
+        "command": command,
+        "detail": detail,
+        "safe": safe,
+        "slash": slash_cmd,
+    }
+
+
 def repair_templates(checks: list[dict], check_logs: list[dict] | None,
                      classification: dict | None = None) -> list[dict]:
     """Return concrete repair templates for the classified failure shape."""
@@ -208,16 +232,22 @@ def repair_templates(checks: list[dict], check_logs: list[dict] | None,
 
     if category == "test":
         if selectors:
-            templates.append({
-                "title": "复现最小失败测试",
-                "command": "python -m pytest -q " + " ".join(selectors[:2]),
-                "detail": "先只跑日志里出现的失败 selector，确认本地可复现后再改代码。",
-            })
-        templates.append({
-            "title": "修复后跑相关测试",
-            "command": "/verify unit",
-            "detail": "没有更精确 selector 时，使用项目 unit profile 兜底验证。",
-        })
+            cmd = "python -m pytest -q " + " ".join(selectors[:2])
+            templates.append(_template(
+                "verify",
+                "复现最小失败测试",
+                cmd,
+                "先只跑日志里出现的失败 selector，确认本地可复现后再改代码。",
+                safe=True,
+            ))
+        templates.append(_template(
+            "verify",
+            "修复后跑相关测试",
+            "/verify unit",
+            "没有更精确 selector 时，使用项目 unit profile 兜底验证。",
+            safe=True,
+            slash="/verify unit",
+        ))
     elif category == "lint":
         if "ruff" in text:
             command = "ruff check . --fix"
@@ -225,11 +255,13 @@ def repair_templates(checks: list[dict], check_logs: list[dict] | None,
             command = "prettier --write ."
         else:
             command = "运行项目 lint/format 命令"
-        templates.append({
-            "title": "机械修复 lint/格式",
-            "command": command,
-            "detail": "先做格式或 lint 机械修复，再确认没有行为 diff 混入。",
-        })
+        templates.append(_template(
+            "fix",
+            "机械修复 lint/格式",
+            command,
+            "先做格式或 lint 机械修复，再确认没有行为 diff 混入。",
+            safe=False,
+        ))
     elif category == "type-check":
         if "mypy" in text:
             command = "mypy ."
@@ -239,43 +271,54 @@ def repair_templates(checks: list[dict], check_logs: list[dict] | None,
             command = "npx tsc --noEmit"
         else:
             command = "运行项目 type-check 命令"
-        templates.append({
-            "title": "复现类型检查失败",
-            "command": command,
-            "detail": "优先修类型签名、None 分支、导入类型或泛型不一致。",
-        })
+        templates.append(_template(
+            "verify",
+            "复现类型检查失败",
+            command,
+            "优先修类型签名、None 分支、导入类型或泛型不一致。",
+            safe=not command.startswith("运行项目"),
+        ))
     elif category == "dependency":
-        templates.append({
-            "title": "修依赖声明而不是只补本地环境",
-            "command": "检查 pyproject.toml / requirements / lock file / CI install step",
-            "detail": "确认缺失包或版本约束写进项目依赖声明，并更新对应锁文件。",
-        })
+        templates.append(_template(
+            "inspect",
+            "修依赖声明而不是只补本地环境",
+            "检查 pyproject.toml / requirements / lock file / CI install step",
+            "确认缺失包或版本约束写进项目依赖声明，并更新对应锁文件。",
+        ))
     elif category == "environment":
-        templates.append({
-            "title": "先区分环境问题和源码问题",
-            "command": "检查 CI 权限、缓存目录、secret、系统依赖和命令可用性",
-            "detail": "环境类失败通常不应通过业务代码绕过，先修 workflow 或诊断输出。",
-        })
+        templates.append(_template(
+            "inspect",
+            "先区分环境问题和源码问题",
+            "检查 CI 权限、缓存目录、secret、系统依赖和命令可用性",
+            "环境类失败通常不应通过业务代码绕过，先修 workflow 或诊断输出。",
+        ))
     elif category == "timeout":
         command = "python -m pytest -q " + " ".join(selectors[:2]) if selectors else "/verify unit"
-        templates.append({
-            "title": "缩小超时范围",
-            "command": command,
-            "detail": "先用最小 selector 或 unit profile 定位卡住点，再补超时/worker 诊断。",
-        })
+        templates.append(_template(
+            "verify",
+            "缩小超时范围",
+            command,
+            "先用最小 selector 或 unit profile 定位卡住点，再补超时/worker 诊断。",
+            safe=True,
+            slash=command if command.startswith("/verify") else "",
+        ))
     elif category == "build":
-        templates.append({
-            "title": "复现最小构建/编译失败",
-            "command": "python -m compileall -q src tests",
-            "detail": "若 CI 不是 Python 构建，换成对应 job 的 build command。",
-        })
+        templates.append(_template(
+            "verify",
+            "复现最小构建/编译失败",
+            "python -m compileall -q src tests",
+            "若 CI 不是 Python 构建，换成对应 job 的 build command。",
+            safe=True,
+        ))
 
     if not templates:
-        templates.append({
-            "title": "人工读取原始失败上下文",
-            "command": "/pr-check <ref>",
-            "detail": "当前启发式无法稳定归类，先看原始 review/CI 反馈再决定修复路径。",
-        })
+        templates.append(_template(
+            "inspect",
+            "人工读取原始失败上下文",
+            "/pr-check <ref>",
+            "当前启发式无法稳定归类，先看原始 review/CI 反馈再决定修复路径。",
+            slash="/pr-check <ref>",
+        ))
     return templates
 
 
@@ -406,10 +449,14 @@ def format_pr_doctor_report(report: dict) -> str:
     if templates:
         lines += ["", "推荐修复模板:"]
         for item in templates[:4]:
-            lines.append(f"- {item.get('title') or '修复步骤'}")
+            kind = f"[{item.get('kind')}]" if item.get("kind") else ""
+            lines.append(f"- {kind} {item.get('title') or '修复步骤'}".strip())
             command = str(item.get("command") or "").replace("<ref>", ref)
             if command:
                 lines.append(f"  命令: {command}")
+            slash = str(item.get("slash") or "").replace("<ref>", ref)
+            if slash:
+                lines.append(f"  动作: {slash}")
             if item.get("detail"):
                 lines.append(f"  说明: {item.get('detail')}")
 
