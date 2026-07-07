@@ -3441,6 +3441,31 @@ class VortoCodeTUI(App):
         except Exception as e:  # noqa: BLE001
             self._emit(f"修复出错: {e}")
 
+    def _auto_recall(self, text: str):
+        """回合前按用户话**自动召回**最相关的几条长期记忆，作为轻量上下文注入。
+
+        默认开（env VORTOCODE_AUTO_RECALL=0 关）。严格封顶（top 3、每条 ≤200 字、总 ≤600 字）避免撑爆
+        上下文预算；只召回**用户已确认存过**的记忆（非自动写入，风险低）；透明提示、非静默。
+        返回 {n, text} 或 None。"""
+        import os
+        if os.getenv("VORTOCODE_AUTO_RECALL", "1").strip().lower() in ("0", "false", "no", "off"):
+            return None
+        q = (text or "").strip()
+        if len(q) < 6:                       # 太短（寒暄/单字）没检索价值，免得乱注入
+            return None
+        try:
+            rows = self.sessions.store.search_memories("__longterm__", q, 3)
+        except Exception:  # noqa: BLE001
+            return None
+        parts, total = [], 0
+        for r in rows or []:
+            c = " ".join(str(r.get("content", "")).split())[:200]
+            if not c or total + len(c) > 600:
+                continue
+            parts.append(f"- {c}")
+            total += len(c)
+        return {"n": len(parts), "text": "\n".join(parts)} if parts else None
+
     # ---------------------------------------------------------------- 主 agent loop
     @work(exclusive=True, group="action")
     async def _route(self, text: str) -> None:
@@ -3458,6 +3483,10 @@ class VortoCodeTUI(App):
         if ctx:
             self._chrome(f"[dim]＋ 已注入 @提及的上下文（{len(ctx)} 字）[/dim]")
             user_text = f"{user_text}\n\n[@提及的上下文]\n{ctx}"
+        recalled = self._auto_recall(text)                    # 自动召回相关长期记忆（默认开、封顶、透明）
+        if recalled:
+            self._chrome(f"[dim]＋ 召回 {recalled['n']} 条相关长期记忆[/dim]")
+            user_text = f"{user_text}\n\n[相关长期记忆（自动召回，供参考；不一定切题）]\n{recalled['text']}"
         if images:
             self._chrome(f"[dim]🖼 附带 {len(images)} 张图（mimo-v2.5 可读图）[/dim]")
         if audio:
