@@ -2951,6 +2951,64 @@ async def test_cmd_fix_ci_verify_runs_first_safe_template(tmp_path, monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_cmd_fix_ci_verify_picker_selects_template(tmp_path, monkeypatch):
+    import src.agents.pr_doctor as pr_doctor
+    import src.agents.shell as shell
+
+    def fake_report(repo_root, ref):
+        return {
+            "ok": True,
+            "ref": ref,
+            "pr": 12,
+            "branch": "feature/pr",
+            "comments": [],
+            "failing_checks": [{"name": "pytest / unit", "link": ""}],
+            "has_findings": True,
+            "can_fix": False,
+            "failure_classification": {"label": "测试失败", "confidence": "medium",
+                                       "next_action": "先复现最小失败测试"},
+            "repair_templates": [
+                {
+                    "kind": "verify",
+                    "title": "复现失败 A",
+                    "command": "python -m pytest -q tests/unit/test_a.py::test_a",
+                    "detail": "先跑 A。",
+                    "safe": True,
+                    "slash": "/verify run python -m pytest -q tests/unit/test_a.py::test_a",
+                },
+                {
+                    "kind": "verify",
+                    "title": "复现失败 B",
+                    "command": "python -m pytest -q tests/unit/test_b.py::test_b",
+                    "detail": "先跑 B。",
+                    "safe": True,
+                    "slash": "/verify run python -m pytest -q tests/unit/test_b.py::test_b",
+                },
+            ],
+            "check_logs": [],
+        }
+
+    monkeypatch.setattr(pr_doctor, "pr_doctor_report", fake_report)
+    ran = {}
+
+    def fake_run_command(repo_root, cmd):
+        ran["cmd"] = cmd
+        return {"ok": True, "output": "ok"}
+
+    monkeypatch.setattr(shell, "run_command", fake_run_command)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/fix-ci verify 12")
+        assert await _wait_modal(app, pilot)
+        await pilot.press("down")
+        await pilot.press("enter")
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "runtime 验证通过")
+        assert ran["cmd"] == "python -m pytest -q tests/unit/test_b.py::test_b"
+
+
+@pytest.mark.asyncio
 async def test_cmd_pr_doctor_no_findings_does_not_confirm(tmp_path, monkeypatch):
     import src.agents.vcs as vcs
 

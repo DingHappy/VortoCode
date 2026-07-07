@@ -2836,21 +2836,55 @@ class VortoCodeTUI(App):
             return {"ok": False, "error": f"用法: {alias} [verify|fix] <PR号或vorto/*分支名>"}
         return {"ok": True, "action": action, "ref": tokens[0]}
 
-    def _verify_template_command(self, report: dict) -> tuple[str, str]:
+    def _safe_verify_templates(self, report: dict) -> list[dict]:
+        out: list[dict] = []
         for item in report.get("repair_templates") or []:
             slash = str(item.get("slash") or "")
             if not item.get("safe") or not slash.startswith("/verify"):
                 continue
-            if slash.startswith("/verify run "):
-                return slash.removeprefix("/verify run ").strip(), str(item.get("title") or "PR Doctor verify")
-            parts = slash.split(maxsplit=1)
-            if len(parts) == 2:
-                from src.agents.verify_profiles import resolve_verify_profile
-                resolved = resolve_verify_profile(self.repo_root, parts[1])
-                if resolved.get("ok"):
-                    profile = resolved.get("profile") or {}
-                    return str(profile.get("cmd") or ""), f"PR Doctor profile {resolved.get('name')}"
+            out.append(item)
+        return out
+
+    def _verify_template_command(self, item: dict) -> tuple[str, str]:
+        slash = str(item.get("slash") or "")
+        if not item.get("safe") or not slash.startswith("/verify"):
+            return "", ""
+        if slash.startswith("/verify run "):
+            return slash.removeprefix("/verify run ").strip(), str(item.get("title") or "PR Doctor verify")
+        parts = slash.split(maxsplit=1)
+        if len(parts) == 2:
+            from src.agents.verify_profiles import resolve_verify_profile
+            resolved = resolve_verify_profile(self.repo_root, parts[1])
+            if resolved.get("ok"):
+                profile = resolved.get("profile") or {}
+                return str(profile.get("cmd") or ""), f"PR Doctor profile {resolved.get('name')}"
         return "", ""
+
+    async def _choose_verify_template(self, report: dict) -> tuple[str, str]:
+        templates = self._safe_verify_templates(report)
+        if not templates:
+            return "", ""
+        if len(templates) == 1:
+            return self._verify_template_command(templates[0])
+        items = []
+        for i, item in enumerate(templates, start=1):
+            slash = str(item.get("slash") or "")
+            title = str(item.get("title") or f"动作 {i}")
+            detail = str(item.get("detail") or "")
+            label = f"{i}. {title} · {slash}"
+            if detail:
+                label += f" · {detail}"
+            items.append((str(i - 1), label))
+        selected = await self.push_screen_wait(ListPicker("选择 PR Doctor verify 动作", items))
+        if selected is None:
+            return "", ""
+        try:
+            idx = int(selected)
+        except (TypeError, ValueError):
+            return "", ""
+        if idx < 0 or idx >= len(templates):
+            return "", ""
+        return self._verify_template_command(templates[idx])
 
     def _cmd_pr_doctor(self, arg: str = "", *, alias: str = "/pr doctor") -> None:
         """/pr doctor <ref> 或 /fix-ci <ref>：诊断 PR review/CI，确认后切 build 修复。"""
@@ -2871,9 +2905,9 @@ class VortoCodeTUI(App):
             if not report.get("ok"):
                 return
             if action == "verify":
-                cmd, label = self._verify_template_command(report)
+                cmd, label = await self._choose_verify_template(report)
                 if not cmd:
-                    self._emit("PR Doctor 没找到可安全执行的 verify 模板；可按报告中的 /pr-fix 或手动命令继续。")
+                    self._emit("未选择 PR Doctor verify 动作，或没有可安全执行的 verify 模板。")
                     return
                 await self._run_verify_command_now(cmd, label=label or "PR Doctor 最小复现")
                 return

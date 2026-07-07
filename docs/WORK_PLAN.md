@@ -183,10 +183,27 @@ Acceptance:
 - `/fix-ci verify <ref>` does not require the PR head branch to be `vorto/*`
   because it only runs local verification.
 
+## 2026-07-07 Batch: PR Doctor Action Picker
+
+Goals:
+
+- Let `/fix-ci verify <ref>` choose among multiple safe verification templates
+  instead of always taking the first one.
+- Reuse the existing TUI list picker so filtering, arrow navigation, Enter, and
+  Esc behave like model/session pickers.
+- Keep command execution behind the existing command confirmation gate after a
+  template is selected.
+
+Acceptance:
+
+- A single safe verify template still runs directly after confirmation.
+- Multiple safe verify templates open a picker and run the selected template.
+- Cancelling the picker does not run a command or switch modes.
+
 ## Backlog
 
-- GitHub and CI integration: add a small action picker for multiple PR Doctor
-  templates instead of always choosing the first safe verify template.
+- GitHub and CI integration: capture verify action results back into the PR
+  Doctor report or follow-up repair plan.
 - Session resume quality: show session summaries, branch/workdir/mode health,
   and recovery hints before resuming.
 - Memory automation: propose project memory updates after successful commits or
