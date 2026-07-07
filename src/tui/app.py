@@ -3107,6 +3107,12 @@ class VortoCodeTUI(App):
         u = get_usage()
         msg = (f"本会话用量（估算）: 调用 {u['calls']} 次 · 输入 ~{u['prompt_tokens']} · "
                f"输出 ~{u['completion_tokens']} · 合计 ~{u['total_tokens']} tokens")
+        cached = u.get("cached_tokens", 0)
+        if cached:                              # 上游缓存确有命中 → 报命中率，证明缓存在自有中转生效
+            pt = max(1, u.get("prompt_tokens", 0))
+            msg += f"\n其中输入命中缓存 ~{cached} tokens（约 {int(cached * 100 / pt)}%，上游 prompt 缓存已生效）"
+        else:
+            msg += "\n[输入缓存未观测到命中：上游/中转未回报 cached_tokens，或本会话前缀尚未复用]"
         ctx = self._context_usage_label()
         if ctx:
             msg += f"\n当前上下文占用（估算）: {ctx}"

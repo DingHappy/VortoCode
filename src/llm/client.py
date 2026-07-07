@@ -97,7 +97,9 @@ def _int_env(name: str, default: int) -> int:
 # ---------------------------------------------------------------- 用量观测
 # 进程级累计：所有真实 LLM 调用都过 chat/stream/_chat_with_requests，故这里能涵盖
 # 主 agent + 所有子 agent 的总用量。优先用 API 精确值，拿不到时用估算（流式）。
-_USAGE = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+# cached_tokens：命中上游 prompt 缓存的输入 token 数（若中转/上游支持自动前缀缓存则 >0）——
+# 用来**验证缓存到底有没有在自有中转生效**（OpenAI 兼容协议下缓存是自动的、无需 cache_control）。
+_USAGE = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cached_tokens": 0}
 
 # 按上下文（会话/回合）隔离的用量作用域：多会话服务端场景下，不同会话各记各的、互不串扰，
 # 也不会因某会话 reset_usage 把所有人清零（旧版 _USAGE 是进程级全局）。默认 None → 回退全局
@@ -113,9 +115,30 @@ def _cur_usage() -> Dict[str, int]:
     return u if u is not None else _USAGE
 
 
+def _extract_cached_tokens(usage: Any) -> int:
+    """从 usage 里抠出「命中缓存的输入 token」。兼容多家字段：
+    OpenAI: prompt_tokens_details.cached_tokens；DeepSeek: prompt_cache_hit_tokens。拿不到记 0。"""
+    if usage is None:
+        return 0
+    def _get(obj, key):
+        if isinstance(obj, dict):
+            return obj.get(key)
+        return getattr(obj, key, None)
+    details = _get(usage, "prompt_tokens_details")
+    for src, key in ((details, "cached_tokens"), (usage, "prompt_cache_hit_tokens"),
+                     (usage, "cached_tokens")):
+        v = _get(src, key) if src is not None else None
+        if v:
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                pass
+    return 0
+
+
 def new_usage() -> Dict[str, int]:
     """新建一个零初始化的用量计数器（供 bind_usage 绑定到某会话）。"""
-    return {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    return {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cached_tokens": 0}
 
 
 def bind_usage(scope: Dict[str, int]) -> None:
@@ -146,12 +169,13 @@ def estimate_tokens(text: str) -> int:
     return max(1, wide + (len(text) - wide) // 4)
 
 
-def add_usage(prompt_tokens: int, completion_tokens: int) -> None:
+def add_usage(prompt_tokens: int, completion_tokens: int, cached_tokens: int = 0) -> None:
     u = _cur_usage()
     u["calls"] += 1
     u["prompt_tokens"] += int(prompt_tokens or 0)
     u["completion_tokens"] += int(completion_tokens or 0)
     u["total_tokens"] += int(prompt_tokens or 0) + int(completion_tokens or 0)
+    u["cached_tokens"] = u.get("cached_tokens", 0) + int(cached_tokens or 0)   # 老作用域缺键也不炸
 
 
 def get_usage() -> Dict[str, int]:
@@ -173,6 +197,7 @@ def _account(messages: List[Dict[str, str]], content: Optional[str], usage: Any 
     from src.llm.content import (AUDIO_TOKEN_COST, IMAGE_TOKEN_COST,
                                  content_to_text, count_audio, count_images)
     pt = ct = None
+    cached = _extract_cached_tokens(usage)         # 命中缓存的输入 token（拿不到=0）
     if usage is not None:
         pt = getattr(usage, "prompt_tokens", None)
         ct = getattr(usage, "completion_tokens", None)
@@ -183,7 +208,7 @@ def _account(messages: List[Dict[str, str]], content: Optional[str], usage: Any 
                  + count_images(m.get("content")) * IMAGE_TOKEN_COST
                  + count_audio(m.get("content")) * AUDIO_TOKEN_COST for m in messages)
         ct = estimate_tokens(content_to_text(content) if content is not None else "")
-    add_usage(pt, ct)
+    add_usage(pt, ct, cached)
 
 
 class LLMConfig(BaseModel):

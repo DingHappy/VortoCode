@@ -48,12 +48,25 @@ def test_estimate_tokens_covers_wide_scripts():
 def test_add_get_reset_usage():
     reset_usage()
     add_usage(100, 50)
-    add_usage(10, 5)
-    assert get_usage() == {"calls": 2, "prompt_tokens": 110,
-                           "completion_tokens": 55, "total_tokens": 165}
+    add_usage(10, 5, cached_tokens=80)         # 第二次命中 80 输入缓存
+    assert get_usage() == {"calls": 2, "prompt_tokens": 110, "completion_tokens": 55,
+                           "total_tokens": 165, "cached_tokens": 80}
     reset_usage()
-    assert get_usage() == {"calls": 0, "prompt_tokens": 0,
-                           "completion_tokens": 0, "total_tokens": 0}
+    assert get_usage() == {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
+                           "total_tokens": 0, "cached_tokens": 0}
+
+
+def test_account_extracts_cached_tokens():
+    from src.llm.client import _extract_cached_tokens
+    reset_usage()
+    # OpenAI 形状：usage.prompt_tokens_details.cached_tokens
+    _account([{"content": "x"}], "y", {"prompt_tokens": 100, "completion_tokens": 5,
+                                       "prompt_tokens_details": {"cached_tokens": 64}})
+    assert get_usage()["cached_tokens"] == 64
+    # DeepSeek 形状：prompt_cache_hit_tokens
+    assert _extract_cached_tokens({"prompt_cache_hit_tokens": 42}) == 42
+    assert _extract_cached_tokens({"prompt_tokens": 10}) == 0        # 没缓存字段 → 0
+    assert _extract_cached_tokens(None) == 0
 
 
 def test_account_prefers_exact_usage():
