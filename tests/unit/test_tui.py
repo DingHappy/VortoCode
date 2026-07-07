@@ -3401,15 +3401,54 @@ async def test_dev_isolated_registered_build_only():
 
 
 @pytest.mark.asyncio
-async def test_render_plan_panel():
+async def test_auto_recall_injects_relevant_memories(monkeypatch):
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
         await pilot.pause()
+        monkeypatch.delenv("VORTOCODE_AUTO_RECALL", raising=False)
+        canned = [{"content": "跑测试用 pytest -q"}, {"content": "前端用 Vite"}]
+        monkeypatch.setattr(app.sessions.store, "search_memories", lambda *a, **k: canned)
+        # 正常长句 → 召回并封顶格式化
+        r = app._auto_recall("测试应该怎么跑起来")
+        assert r and r["n"] == 2 and "pytest" in r["text"]
+        # 太短 → 不召回（免得寒暄也注入）
+        assert app._auto_recall("hi") is None
+        # env 关 → 不召回
+        monkeypatch.setenv("VORTOCODE_AUTO_RECALL", "0")
+        assert app._auto_recall("测试应该怎么跑起来") is None
+
+
+@pytest.mark.asyncio
+async def test_auto_recall_caps_total_length(monkeypatch):
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        monkeypatch.delenv("VORTOCODE_AUTO_RECALL", raising=False)
+        big = [{"content": "x" * 500}, {"content": "y" * 500}, {"content": "z" * 500}]
+        monkeypatch.setattr(app.sessions.store, "search_memories", lambda *a, **k: big)
+        r = app._auto_recall("一个足够长的查询句子")
+        assert r and len(r["text"]) <= 700          # 每条≤200、总≤600（+ 前缀符号）
+
+
+@pytest.mark.asyncio
+async def test_render_plan_panel():
+    from textual.widgets import Static
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        panel = app.query_one("#plan", Static)
+        assert panel.display is False                          # 无计划时收起
         app._render_plan([
             {"step": "读代码", "status": "completed"},
             {"step": "写测试", "status": "in_progress"},
             {"step": "提交 PR", "status": "pending"},
         ])
-        joined = "\n".join(app.transcript)
-        assert "📋 计划 · 1/3" in joined                       # 带进度
-        assert "读代码" in joined and "写测试" in joined and "提交 PR" in joined
+        # 计划渲染到**常驻面板**（不进滚动 transcript），钉在输入框上方看着推进
+        content = app._plan_last
+        assert panel.display is True
+        assert "📋 计划" in content and "1/3" in content       # 带进度
+        assert "读代码" in content and "写测试" in content and "提交 PR" in content
+        assert "读代码" not in "\n".join(app.transcript)        # 不再灌进滚动日志
+        # 传空计划 → 面板收起（/new 复位）
+        app._render_plan([])
+        assert app.query_one("#plan", Static).display is False

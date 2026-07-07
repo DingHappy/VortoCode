@@ -498,6 +498,8 @@ class VortoCodeTUI(App):
     CSS = """
     #log { height: 1fr; border: round $accent; padding: 0 1; }
     #status { height: 1; color: $text-muted; padding: 0 1; }
+    #plan { height: auto; max-height: 10; overflow-y: auto; border: round $accent;
+            background: $surface; padding: 0 1; }
     #palette { height: auto; max-height: 9; overflow-y: auto; background: $surface;
                color: $text-muted; padding: 0 1; }
     #statusbar { height: 1; color: $text-muted; background: $surface; padding: 0 1; }
@@ -572,6 +574,7 @@ class VortoCodeTUI(App):
         self._sb = {"branch": "", "dirty": False, "pr": "", "model": _model_name(),
                     "pr_branch": None, "pr_on": True}
         self._sb_last = ""                  # 最近一次状态栏渲染出的纯文本（测试/调试用）
+        self._plan_last = ""                # 最近一次计划面板渲染出的文本（测试/版本无关地读取）
         self._model_override = None         # /model 切换的模型（本会话覆盖 .env 的 DEFAULT_MODEL）
         self._show_thinking = True          # 思考呈现开关（/think 切；推理型模型的过程提示进结果区）
 
@@ -580,6 +583,8 @@ class VortoCodeTUI(App):
         yield Header(show_clock=False)
         yield RichLog(id="log", wrap=True, markup=True, highlight=False, auto_scroll=True)
         yield Static(id="status")
+        # 常驻任务清单面板：update_plan 更新即重渲、钉在输入框上方不随日志滚走（对标 CC 的 TODO 常显）。
+        yield Static(id="plan")
         yield PaletteView(id="palette")
         yield Static(id="statusbar")
         # opencode 式多行编辑器（回车提交 / Ctrl+J 换行 / 自动长高）；补全提示全靠面板，
@@ -593,6 +598,7 @@ class VortoCodeTUI(App):
         self._load_history()                # 跨会话输入历史（↑/↓ 可调出上次的）
         self._load_theme()                  # 套用上次选的配色主题
         self.query_one("#status", Static).display = False
+        self.query_one("#plan", Static).display = False    # 无计划时不占地方，update_plan 后才现身
         self.query_one("#palette", Static).display = False
         self._greet()
         self._sync_subtitle()
@@ -3081,6 +3087,7 @@ class VortoCodeTUI(App):
                 self.agent._task_anchor = task_anchor
             if plan:
                 self.agent.plan = plan
+                self._render_plan(plan)          # 恢复后计划面板也重新钉出来，别让它看着像丢了
             self._chrome("[dim]↻ 已恢复对话上下文（主 agent 记得之前的对话）[/dim]")
             self._render_statusbar()
 
@@ -4201,18 +4208,35 @@ class VortoCodeTUI(App):
             return None
 
     def _render_plan(self, plan: list) -> None:
-        """把主 agent 的任务清单渲染成一块带进度的可见面板（每次更新重渲，看着它推进）。"""
+        """把主 agent 的任务清单渲染成**常驻**进度面板（钉在输入框上方，每次 update_plan 原地重渲、
+        不随对话日志滚走）。空计划则收起面板，不占地方。"""
         from src.agents.plan import plan_progress
+        try:
+            panel = self.query_one("#plan", Static)
+        except Exception:  # noqa: BLE001 —— 无头/尚未挂载时静默跳过
+            return
+        if not plan:                                    # 计划清空（/new、update_plan 传空）→ 收起
+            panel.display = False
+            panel.update("")
+            self._plan_last = ""
+            return
         done, total = plan_progress(plan)
         styles = {"completed": ("✓", self._tc("text-success", "#7fce9a")),
                   "in_progress": ("▸", self._tc("text-warning", "#f0b86e")),
                   "pending": ("○", "dim")}
-        lines = [f"[b]📋 计划 · {done}/{total}[/b]"]
+        bar = "█" * done + "░" * max(0, total - done)   # 一眼可见的进度条
+        lines = [f"[b]📋 计划[/b] [dim]{bar}[/] {done}/{total}"]
         for p in plan:
-            glyph, color = styles.get(p.get("status"), ("○", "dim"))
-            step = p["step"].replace("[", r"\[")       # 防步骤文本里的方括号被当成标记
+            status = p.get("status")
+            glyph, color = styles.get(status, ("○", "dim"))
+            step = str(p.get("step", "")).replace("[", r"\[")   # 防步骤文本里的方括号被当成标记
+            # 进行中的一步加粗高亮，让"现在做到哪"一眼可辨
+            step = f"[b]{step}[/b]" if status == "in_progress" else step
             lines.append(f"  [{color}]{glyph}[/] {step}")
-        self._chrome("\n".join(lines))
+        body = "\n".join(lines)
+        panel.update(body)
+        panel.display = True
+        self._plan_last = body
 
     async def _escalate_to_build(self, name: str, args: dict) -> bool:
         """plan 模式下主 agent 想用写/重型工具时：问用户切不切 build，同意则切并继续。
