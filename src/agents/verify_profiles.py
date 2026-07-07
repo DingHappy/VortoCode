@@ -39,7 +39,15 @@ def _builtin_profiles(repo_root: str) -> dict[str, dict]:
     return profiles
 
 
+def _truthy(v) -> bool:
+    return str(v).strip().lower() in ("1", "true", "yes", "on") if not isinstance(v, bool) else v
+
+
 def _normalize_profile(name: str, value) -> dict | None:
+    serve = ""
+    check = ""
+    ready_timeout = 30
+    auto = False
     if isinstance(value, str):
         cmd = value.strip()
         desc = ""
@@ -47,6 +55,15 @@ def _normalize_profile(name: str, value) -> dict | None:
     elif isinstance(value, dict):
         cmd = str(value.get("cmd") or value.get("command") or "").strip()
         desc = str(value.get("description") or value.get("desc") or "").strip()
+        # 运行时验证扩展：serve（后台起服务）+ check（前台探活，重试到通过或 ready_timeout）。
+        # 只给 cmd = 自包含冒烟/e2e（跑完退出、退出码判定）；给 serve 则 check 是健康探针。
+        serve = str(value.get("serve") or "").strip()
+        check = str(value.get("check") or value.get("probe") or "").strip()
+        try:
+            ready_timeout = max(1, int(value.get("ready_timeout") or value.get("ready") or 30))
+        except (TypeError, ValueError):
+            ready_timeout = 30
+        auto = _truthy(value.get("auto") or value.get("auto_verify") or False)
         raw_patterns = value.get("paths") or value.get("match") or value.get("matches") or []
         if isinstance(raw_patterns, str):
             patterns = [raw_patterns]
@@ -56,9 +73,11 @@ def _normalize_profile(name: str, value) -> dict | None:
             patterns = []
     else:
         return None
-    if not name or not cmd:
+    # 有 serve 时可只给 serve+check（cmd 省略）；否则必须有 cmd。展示/交互仍以 cmd 为准（无则回落 check）。
+    if not name or not (cmd or (serve and check)):
         return None
-    return {"cmd": cmd, "description": desc, "paths": patterns, "source": "project"}
+    return {"cmd": cmd or check, "description": desc, "paths": patterns, "source": "project",
+            "serve": serve, "check": check, "ready_timeout": ready_timeout, "auto": auto}
 
 
 def load_verify_profiles(repo_root: str) -> dict:
@@ -94,6 +113,23 @@ def load_verify_profiles(repo_root: str) -> dict:
         if profile:
             profiles[name] = profile
     return {"ok": True, "profiles": profiles, "path": str(path)}
+
+
+def auto_verify_profiles(repo_root: str) -> list[dict]:
+    """自主流水线（dev_auto 集成验证）该跑的运行时验证 profile —— **仅** `.vortocode/verify.yaml`
+    里显式标了 `auto: true` 的。内置 profile 永不自动跑（它们是给交互 `/verify` 用的）。
+
+    保守 opt-in：没配 auto профиль时返回 []，dev_auto 行为与今天完全一致（只跑单测）。每条附上 name。
+    """
+    loaded = load_verify_profiles(repo_root)
+    if not loaded.get("ok"):
+        return []
+    out: list[dict] = []
+    for name in sorted(loaded.get("profiles") or {}):
+        prof = (loaded["profiles"] or {}).get(name) or {}
+        if prof.get("auto") and prof.get("source") == "project":
+            out.append({**prof, "name": name})
+    return out
 
 
 def format_verify_profiles(result: dict) -> str:
