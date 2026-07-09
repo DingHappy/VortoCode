@@ -72,7 +72,7 @@ COMMAND_INFO = {
     "/usage": "本会话 token 用量（reset 清零）",
     "/context": "查看/切换上下文策略（auto/compact/balanced/preserve）",
     "/compact": "手动压缩旧对话上下文；preview 只预估",
-    "/permissions": "查看/解释工具权限；可 deny 规则或 reset 会话放行",
+    "/permissions": "查看/解释工具权限；可 allow/deny/profile 或 reset 会话放行",
     "/memory": "查看/管理项目指令和跨会话记忆",
     "/tasks": "列出/查看/续跑 dev_auto 持久化计划",
     "/tools": "列出主 agent 工具及读写权限",
@@ -1318,11 +1318,33 @@ class VortoCodeTUI(App):
         if callback is not None:
             callback(result)
 
-    async def _confirm_write(self, message: str) -> bool:
+    def _permission_allow_reason(self, tool_name: str, args: dict | None = None) -> str | None:
+        if not tool_name:
+            return None
+        from src.agents.permissions import load_permissions
+        perm = load_permissions(self.repo_root)
+        arg_map = args or {}
+        if perm.denied(tool_name, arg_map):
+            return None
+        return perm.allowed(tool_name, arg_map)
+
+    def _permission_deny_reason(self, tool_name: str, args: dict | None = None) -> str | None:
+        if not tool_name:
+            return None
+        from src.agents.permissions import load_permissions
+        return load_permissions(self.repo_root).denied(tool_name, args or {})
+
+    async def _confirm_write(self, message: str, *, tool_name: str = "", args: dict | None = None) -> bool:
         """写操作确认门：本会话已选"始终允许"则直接放行，否则弹 ConfirmScreen。
 
         统一所有写工具(edit/write/save_skill/制品/分支)的确认，支持 [a] 始终允许（仿 CC）。
         """
+        deny = self._permission_deny_reason(tool_name, args)
+        if deny:
+            self._emit(f"权限拦截: {deny}")
+            return False
+        if self._permission_allow_reason(tool_name, args):
+            return True
         if self._allow_writes_session:
             return True
         return await self._inline_confirm(message, scope="writes")
@@ -1339,7 +1361,7 @@ class VortoCodeTUI(App):
         """外向操作（push / 开 PR 等推到远端的动作）确认：**始终弹窗**，不吃"始终允许写"的豁免。"""
         return await self._inline_confirm(self._taint_msg(message), scope="writes")
 
-    async def _confirm_command(self, message: str) -> bool:
+    async def _confirm_command(self, message: str, *, tool_name: str = "", args: dict | None = None) -> bool:
         """任意 shell 命令确认门：**独立作用域**，不吃"始终允许写文件"的豁免。
 
         否则用户为省文件编辑逐条确认按下的 [a]，会静默放行后续所有任意命令（=权限提升）。
@@ -1347,6 +1369,12 @@ class VortoCodeTUI(App):
         污点态（本回合摄入过外部内容）下**无视命令'始终允许'、强制弹确认**（D0 防提示注入外发）。
         """
         from src.agents.taint import is_tainted
+        deny = self._permission_deny_reason(tool_name, args)
+        if deny:
+            self._emit(f"权限拦截: {deny}")
+            return False
+        if not is_tainted() and self._permission_allow_reason(tool_name, args):
+            return True
         if self._allow_commands_session and not is_tainted():
             return True
         return await self._inline_confirm(self._taint_msg(message), scope="commands")
@@ -1813,7 +1841,7 @@ class VortoCodeTUI(App):
             lines.append(f"  {t.name} [{gate}] — {t.description}")
         self._emit("\n".join(lines))
 
-    def _append_permission_deny(self, tool: str, pattern: str = "") -> Path:
+    def _read_permission_config(self) -> tuple[Path, dict]:
         cfg = Path(self.repo_root) / ".vortocode" / "permissions.yaml"
         try:
             import yaml
@@ -1822,46 +1850,87 @@ class VortoCodeTUI(App):
             data = {}
         if not isinstance(data, dict):
             data = {}
-        deny = data.get("deny")
-        if not isinstance(deny, list):
-            deny = []
-        deny.append({tool: pattern} if pattern else tool)
-        data["deny"] = deny
+        return cfg, data
+
+    def _write_permission_config(self, cfg: Path, data: dict) -> None:
         cfg.parent.mkdir(parents=True, exist_ok=True)
         try:
             import yaml
             cfg.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
         except Exception:  # noqa: BLE001
-            lines = ["deny:"]
-            for item in deny:
-                if isinstance(item, dict):
-                    for k, v in item.items():
-                        lines.append(f'  - {k}: "{v}"')
-                        break
+            lines = []
+            for key in ("profile", "deny", "allow", "profiles"):
+                if key not in data:
+                    continue
+                value = data[key]
+                if key == "profile":
+                    lines.append(f"profile: {value}")
+                elif isinstance(value, list):
+                    lines.append(f"{key}:")
+                    for item in value:
+                        if isinstance(item, dict):
+                            for k, v in item.items():
+                                lines.append(f'  - {k}: "{v}"')
+                                break
+                        else:
+                            lines.append(f"  - {item}")
                 else:
-                    lines.append(f"  - {item}")
+                    lines.append(f"{key}: {value}")
             cfg.write_text("\n".join(lines) + "\n", encoding="utf-8")
         self.agent = None          # 新规则立即影响下一次主 agent 构建
+
+    def _append_permission_rule(self, kind: str, tool: str, pattern: str = "") -> Path:
+        cfg, data = self._read_permission_config()
+        rules = data.get(kind)
+        if not isinstance(rules, list):
+            rules = []
+        rules.append({tool: pattern} if pattern else tool)
+        data[kind] = rules
+        self._write_permission_config(cfg, data)
+        return cfg
+
+    def _append_permission_deny(self, tool: str, pattern: str = "") -> Path:
+        return self._append_permission_rule("deny", tool, pattern)
+
+    def _append_permission_allow(self, tool: str, pattern: str = "") -> Path:
+        return self._append_permission_rule("allow", tool, pattern)
+
+    def _set_permission_profile(self, profile: str) -> Path:
+        cfg, data = self._read_permission_config()
+        if profile:
+            data["profile"] = profile
+        else:
+            data.pop("profile", None)
+            data.pop("active_profile", None)
+        self._write_permission_config(cfg, data)
         return cfg
 
     def _permission_effective_text(self) -> str:
         from src.agents.permissions import load_permissions
         agent = self.agent or self._build_main_agent()
         perm = load_permissions(self.repo_root)
+        if perm.profile:
+            profile = perm.profile if perm.profile_found else f"{perm.profile}（未找到，不生效）"
+        else:
+            profile = "未设置"
         lines = [
             "[b]有效工具权限[/b]",
             f"当前模式: {self.mode}",
+            f"项目 profile: {profile}",
             f"本会话始终允许: 写={'yes' if self._allow_writes_session else 'no'} · "
             f"命令={'yes' if self._allow_commands_session else 'no'}",
         ]
         for t in agent._tool_list:
             deny = perm.denied(t.name, {})
+            allow = perm.allowed(t.name, {})
             if deny:
                 status = "deny"
             elif self.mode == "plan" and not t.read_only:
                 status = "needs build"
             elif t.read_only:
                 status = "allowed"
+            elif allow:
+                status = "allowed by project"
             elif t.name == "run_command" and self._allow_commands_session:
                 status = "allowed this session"
             elif t.name != "run_command" and self._allow_writes_session:
@@ -1870,6 +1939,11 @@ class VortoCodeTUI(App):
                 status = "confirm required"
             gate = "只读" if t.read_only else "写/重型"
             lines.append(f"  {t.name} [{gate}] -> {status}")
+        if perm.allow_rules:
+            lines.append("")
+            lines.append("项目 allow 规则:")
+            for tool, glob in perm.allow_rules:
+                lines.append(f"  allow {tool}: {glob if glob is not None else '*'}")
         if perm.rules:
             lines.append("")
             lines.append("项目 deny 规则:")
@@ -1888,38 +1962,48 @@ class VortoCodeTUI(App):
         keys = primary_arg_keys(tool_name)
         args = {keys[0]: value} if (value and keys) else {}
         deny = perm.denied(tool_name, args)
-        matching = perm.rules_for(tool_name)
+        allow = perm.allowed(tool_name, args)
+        matching_deny = perm.rules_for(tool_name)
+        matching_allow = perm.allow_rules_for(tool_name)
         lines = [
             f"[b]权限解释: {tool_name}[/b]",
             f"工具类型: {'只读' if tool.read_only else '写/重型'}",
             f"当前模式: {self.mode}",
         ]
+        if perm.profile:
+            suffix = "" if perm.profile_found else "（未找到，不生效）"
+            lines.append(f"项目 profile: {perm.profile}{suffix}")
         if keys:
             lines.append(f"主参数键: {', '.join(keys)}" + (f"；本次值: {value}" if value else ""))
-        if matching:
+        if matching_deny or matching_allow:
             lines.append("匹配到项目规则:")
-            for _, glob in matching:
+            for _, glob in matching_deny:
                 lines.append(f"  deny {tool_name}: {glob if glob is not None else '*'}")
+            for _, glob in matching_allow:
+                lines.append(f"  allow {tool_name}: {glob if glob is not None else '*'}")
         else:
-            lines.append("项目规则: 无针对该工具的 deny")
+            lines.append("项目规则: 无针对该工具的 deny/allow")
         if deny:
             lines.append(f"结论: 硬拦截。原因: {deny}")
         elif self.mode == "plan" and not tool.read_only:
             lines.append("结论: 当前 plan 模式不可直接执行；需要切 build，且仍可能要求确认。")
         elif tool.read_only:
             lines.append("结论: 当前模式允许执行；仍会受项目 deny 规则硬拦。")
+        elif allow:
+            lines.append("结论: build 下命中项目 allow，可免人工确认；危险命令/外发强确认/deny 仍优先。")
         elif tool_name == "run_command" and self._allow_commands_session:
             lines.append("结论: build 下本会话已允许命令；危险命令和 deny 规则仍会硬拦。")
         elif tool_name != "run_command" and self._allow_writes_session:
             lines.append("结论: build 下本会话已允许写/重型工具；deny 规则仍会硬拦。")
         else:
             lines.append("结论: build 下可请求执行，但需要人工确认。")
-        if matching and not value and any(glob is not None for _, glob in matching):
+        rules = matching_deny + matching_allow
+        if rules and not value and any(glob is not None for _, glob in rules):
             lines.append("提示: 该工具有参数 glob 规则；用 /permissions explain <tool> <value> 可判断具体值是否命中。")
         return "\n".join(lines)
 
     def _cmd_permissions(self, arg: str = "") -> None:
-        """/permissions：查看本会话权限状态与 deny 规则；plan/build/reset/deny 可管理权限。"""
+        """/permissions：查看本会话权限状态与项目 allow/deny/profile 规则。"""
         raw = (arg or "").strip()
         low = raw.lower()
         if low in ("plan", "build"):
@@ -1954,8 +2038,37 @@ class VortoCodeTUI(App):
             cfg = self._append_permission_deny(tool, pattern)
             shown = f"{tool}: {pattern}" if pattern else tool
             self._chrome(f"[green]已追加 deny 规则：{shown}（{cfg}）[/green]")
+        elif low.startswith("allow"):
+            parts = raw.split(maxsplit=2)
+            if len(parts) < 2:
+                self._emit("用法: /permissions allow <tool> [glob]")
+                return
+            tool = parts[1].strip()
+            pattern = parts[2].strip().strip('"').strip("'") if len(parts) > 2 else ""
+            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", tool):
+                self._emit("权限规则工具名非法；用法: /permissions allow <tool> [glob]")
+                return
+            cfg = self._append_permission_allow(tool, pattern)
+            shown = f"{tool}: {pattern}" if pattern else tool
+            self._chrome(f"[green]已追加 allow 规则：{shown}（{cfg}）[/green]")
+        elif low.startswith("profile"):
+            parts = raw.split(maxsplit=1)
+            if len(parts) < 2 or not parts[1].strip():
+                self._emit("用法: /permissions profile <name|none>")
+                return
+            profile = parts[1].strip()
+            if profile.lower() in ("none", "off", "clear", "default", "-"):
+                profile = ""
+            elif not re.match(r"^[A-Za-z0-9_.-]+$", profile):
+                self._emit("权限 profile 名非法；仅支持字母、数字、点、下划线和短横线。")
+                return
+            cfg = self._set_permission_profile(profile)
+            if profile:
+                self._chrome(f"[green]已切换权限 profile：{profile}（{cfg}）[/green]")
+            else:
+                self._chrome(f"[green]已清除权限 profile（{cfg}）[/green]")
         elif raw:
-            self._emit("用法: /permissions [show --effective|explain <tool> [value]|plan|build|reset|deny <tool> [glob]]")
+            self._emit("用法: /permissions [show --effective|explain <tool> [value]|plan|build|reset|allow <tool> [glob]|deny <tool> [glob]|profile <name|none>]")
             return
         from src.agents.permissions import load_permissions
         agent = self.agent or self._build_main_agent()
@@ -1963,12 +2076,27 @@ class VortoCodeTUI(App):
         write_tools = [t.name for t in agent._tool_list if not t.read_only]
         cfg = Path(self.repo_root) / ".vortocode" / "permissions.yaml"
         perm = load_permissions(self.repo_root)
+        if perm.profile:
+            profile = perm.profile if perm.profile_found else f"{perm.profile}（未找到，不生效）"
+        else:
+            profile = "未设置"
         lines = [
             "[b]工具权限[/b]",
             f"模式: {self.mode}（plan 只允许只读工具；build 可请求写/重型工具）",
+            f"项目 profile: {profile}",
             f"本会话始终允许: 写={'yes' if self._allow_writes_session else 'no'} · "
             f"命令={'yes' if self._allow_commands_session else 'no'}",
             f"工具: 只读 {len(read_tools)} 个 · 写/重型 {len(write_tools)} 个",
+            "",
+            f"项目 allow 规则: {cfg}",
+        ]
+        if perm.allow_rules:
+            for tool, glob in perm.allow_rules:
+                pat = glob if glob is not None else "*"
+                lines.append(f"  allow {tool}: {pat}")
+        else:
+            lines.append("  （无 allow 规则；写/命令默认仍需人工确认）")
+        lines += [
             "",
             f"项目 deny 规则: {cfg}",
         ]
@@ -1982,13 +2110,21 @@ class VortoCodeTUI(App):
             "",
             "配置示例:",
             "```yaml",
+            "allow:",
+            '  - "run_command: pytest *"',
+            '  - write_file: "docs/*.md"',
             "deny:",
             "  - web_fetch",
             '  - "run_command: rm *"',
             '  - edit_file: "*/secrets/*"',
+            "profile: dev",
+            "profiles:",
+            "  dev:",
+            "    allow:",
+            '      - "run_command: ruff *"',
             "```",
             "",
-            "提示: 选择“本会话始终允许”只影响当前 TUI 会话；项目 deny 规则始终优先硬拦。",
+            "提示: allow 只免人工确认；deny、plan/build、危险命令和外发确认仍优先。",
             "排查: /permissions show --effective · /permissions explain <tool> [value]",
         ]
         self._emit("\n".join(lines))
@@ -2512,7 +2648,9 @@ class VortoCodeTUI(App):
             if not await self._confirm_command(
                     "运行仓库测试验证？\n"
                     f"  $ {cmd_text}\n"
-                    f"测试可能写入缓存或耗时较久。{detail}"):
+                    f"测试可能写入缓存或耗时较久。{detail}",
+                    tool_name="run_command",
+                    args={"command": cmd_text}):
                 self._emit("已取消验证。")
                 return
             self._chrome(f"[dim]$ {cmd_text}[/dim]")
@@ -2596,7 +2734,9 @@ class VortoCodeTUI(App):
         if not await self._confirm_command(
                 f"运行 {label}？\n"
                 f"  $ {cmd}\n"
-                "适合 smoke test、启动检查、端到端脚本；请确认命令不会做外向或破坏性操作。"):
+                "适合 smoke test、启动检查、端到端脚本；请确认命令不会做外向或破坏性操作。",
+                tool_name="run_command",
+                args={"command": cmd}):
             self._emit("已取消 runtime 验证。")
             return {"ran": False, "ok": False, "cmd": cmd, "cancelled": True}
         self._chrome(f"[dim]$ {cmd}[/dim]")
@@ -4154,7 +4294,9 @@ class VortoCodeTUI(App):
                         f"或传 replace_all=true 一次替换全部 {cnt} 处。")
             n = cnt if all_ else 1
             ok = await self._confirm_write(
-                f"build 模式：修改 {rel}？替换 {n} 处（{len(old)}→{len(new)} 字符）。改动只进工作区，不碰 main。")
+                f"build 模式：修改 {rel}？替换 {n} 处（{len(old)}→{len(new)} 字符）。改动只进工作区，不碰 main。",
+                tool_name="edit_file",
+                args={"path": rel})
             if not ok:
                 return f"用户取消了对 {rel} 的修改。"
             p.write_text(text.replace(old, new, n), encoding="utf-8")
@@ -4172,7 +4314,9 @@ class VortoCodeTUI(App):
                 return f"路径越界或非法: {rel}"
             verb = "覆盖" if p.is_file() else "新建"
             ok = await self._confirm_write(
-                f"build 模式：{verb}文件 {rel}（{len(content)} 字符）？改动只进工作区，不碰 main。")
+                f"build 模式：{verb}文件 {rel}（{len(content)} 字符）？改动只进工作区，不碰 main。",
+                tool_name="write_file",
+                args={"path": rel})
             if not ok:
                 return f"用户取消了写入 {rel}。"
             before = p.read_text(encoding="utf-8") if p.is_file() else ""
@@ -4397,7 +4541,9 @@ class VortoCodeTUI(App):
                 return f"拒绝执行（疑似危险操作：{why}）。请换更具体、安全的命令。"
             label = "后台启动" if bg else "执行命令"
             if not await self._confirm_command(
-                    f"build 模式：在仓库根目录{label}？\n  $ {cmd}\n（可能改动工作区，但不碰 main）"):
+                    f"build 模式：在仓库根目录{label}？\n  $ {cmd}\n（可能改动工作区，但不碰 main）",
+                    tool_name="run_command",
+                    args={"command": cmd}):
                 return f"用户取消了命令：{cmd}"
             import asyncio
             if bg:

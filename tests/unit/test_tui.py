@@ -1420,6 +1420,41 @@ def test_cmd_permissions_deny_appends_rule_and_rebuilds_agent(tmp_path):
     assert "deny run_command: rm *" in emitted[-1]
 
 
+def test_cmd_permissions_allow_appends_rule_and_rebuilds_agent(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted, chromed = [], []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda m, *a, **k: chromed.append(m)
+    app.agent = object()
+
+    app._cmd_permissions('allow run_command "pytest *"')
+
+    assert app.agent is None
+    cfg = tmp_path / ".vortocode" / "permissions.yaml"
+    text = cfg.read_text(encoding="utf-8")
+    assert "allow" in text and "run_command" in text and "pytest *" in text
+    assert any("已追加 allow 规则" in m for m in chromed)
+    assert "allow run_command: pytest *" in emitted[-1]
+
+
+def test_cmd_permissions_profile_switches_active_profile(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted, chromed = [], []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda m, *a, **k: chromed.append(m)
+
+    app._cmd_permissions("profile dev")
+
+    cfg = tmp_path / ".vortocode" / "permissions.yaml"
+    assert "profile: dev" in cfg.read_text(encoding="utf-8")
+    assert any("已切换权限 profile" in m for m in chromed)
+    assert "项目 profile: dev" in emitted[-1]
+
+    app._cmd_permissions("profile none")
+    assert "profile:" not in cfg.read_text(encoding="utf-8")
+    assert "项目 profile: 未设置" in emitted[-1]
+
+
 def test_cmd_permissions_deny_rejects_bad_tool_name(tmp_path):
     app = VortoCodeTUI(repo_root=str(tmp_path))
     emitted = []
@@ -1460,6 +1495,22 @@ def test_cmd_permissions_explain_denied_value(tmp_path):
     assert "主参数键: command, cmd" in out
     assert "硬拦截" in out
     assert "rm *" in out
+
+
+def test_cmd_permissions_explain_allowed_value(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda *a, **k: None
+    app._cmd_permissions('allow run_command "pytest *"')
+    app._cmd_permissions("build")
+
+    app._cmd_permissions("explain run_command pytest -q")
+
+    out = emitted[-1]
+    assert "权限解释: run_command" in out
+    assert "allow run_command: pytest *" in out
+    assert "免人工确认" in out
 
 
 def test_cmd_permissions_explain_plan_gate_for_write_tool(tmp_path):
@@ -3272,6 +3323,83 @@ async def test_command_always_allow_is_independent(tmp_path):
         ok = await app._confirm_command("跑命令？")
         assert ok is True and len(app.screen_stack) == 1  # 直接放行、没弹框
         assert app._allow_writes_session is False         # 未串到写作用域
+
+
+@pytest.mark.asyncio
+async def test_project_allow_skips_command_confirm(tmp_path):
+    (tmp_path / ".vortocode").mkdir()
+    (tmp_path / ".vortocode" / "permissions.yaml").write_text(
+        'allow:\n  - "run_command: echo *"\n',
+        encoding="utf-8")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as _pilot:
+        ok = await app._confirm_command(
+            "跑命令？",
+            tool_name="run_command",
+            args={"command": "echo hi"})
+        assert ok is True
+        assert len(app.screen_stack) == 1
+
+
+@pytest.mark.asyncio
+async def test_project_allow_skips_write_confirm(tmp_path):
+    (tmp_path / ".vortocode").mkdir()
+    (tmp_path / ".vortocode" / "permissions.yaml").write_text(
+        'allow:\n  - write_file: "docs/*.md"\n',
+        encoding="utf-8")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as _pilot:
+        ok = await app._confirm_write(
+            "写文件？",
+            tool_name="write_file",
+            args={"path": "docs/ROADMAP.md"})
+        assert ok is True
+        assert len(app.screen_stack) == 1
+
+
+@pytest.mark.asyncio
+async def test_project_deny_blocks_command_confirm(tmp_path):
+    (tmp_path / ".vortocode").mkdir()
+    (tmp_path / ".vortocode" / "permissions.yaml").write_text(
+        'deny:\n  - "run_command: pytest *"\n',
+        encoding="utf-8")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted = []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    async with app.run_test() as _pilot:
+        ok = await app._confirm_command(
+            "跑命令？",
+            tool_name="run_command",
+            args={"command": "pytest -q"})
+        assert ok is False
+        assert len(app.screen_stack) == 1
+        assert emitted and "权限拦截" in emitted[-1]
+
+
+@pytest.mark.asyncio
+async def test_project_allow_does_not_skip_tainted_command_confirm(tmp_path):
+    import asyncio
+    from src.agents import taint
+
+    (tmp_path / ".vortocode").mkdir()
+    (tmp_path / ".vortocode" / "permissions.yaml").write_text(
+        'allow:\n  - "run_command: echo *"\n',
+        encoding="utf-8")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        taint.mark_tainted()
+        try:
+            task = asyncio.create_task(app._confirm_command(
+                "跑命令？",
+                tool_name="run_command",
+                args={"command": "echo hi"}))
+            assert await _wait_inline_confirm(app, pilot)
+            assert app._confirm_scope == "commands"
+            await pilot.press("n")
+            await pilot.pause()
+            assert await task is False
+        finally:
+            taint.reset_taint()
 
 
 @pytest.mark.asyncio
