@@ -1391,6 +1391,26 @@ def build_read_tools(repo_root: str) -> list[Tool]:
         sub = sub.strip("/")
         return rel == sub or rel.startswith(sub + "/")
 
+    def _normalize_dir_arg(value: Any) -> tuple[str, str]:
+        """Validate a dir argument and normalize it to repo-relative POSIX form.
+
+        Returns (normalized_subdir, bad_value). bad_value is non-empty when the input points
+        outside the repository. "." becomes "" so callers search the whole repo.
+        """
+        raw = str(value or "").strip().lstrip("@")
+        if not raw:
+            return "", ""
+        p = _resolve_within(repo_root, raw)
+        if p is None:
+            return "", raw
+        try:
+            rel = p.relative_to(Path(repo_root).resolve()).as_posix()
+        except (ValueError, OSError):
+            return "", raw
+        if rel == ".":
+            return "", ""
+        return rel.strip("/"), ""
+
     def _git_visible_files(base: Path) -> list[str] | None:
         """Return git-visible files, respecting .gitignore/info excludes/global excludes.
 
@@ -1537,9 +1557,9 @@ def build_read_tools(repo_root: str) -> list[Tool]:
         return text
 
     async def _list_files(args: dict) -> str:
-        sub = str(args.get("dir", "")).strip().strip("/")
-        if sub and _resolve_within(repo_root, sub) is None:
-            return f"dir 越界或非法（只能在仓库内列出）: {sub}"
+        sub, bad = _normalize_dir_arg(args.get("dir", ""))
+        if bad:
+            return f"dir 越界或非法（只能在仓库内列出）: {bad}"
         fs = [f for f in _files() if _under_dir(f, sub)] if sub else _files()
         return "\n".join(fs[:200]) if fs else "(无源码文件)"
 
@@ -1553,10 +1573,10 @@ def build_read_tools(repo_root: str) -> list[Tool]:
         pattern = str(args.get("pattern", "")).strip()
         if not pattern:
             return "glob 需要 pattern（如 *.ts、**/*.test.js、src/**/*.py）。"
-        sub = str(args.get("dir", "")).strip().strip("/")
+        sub, bad = _normalize_dir_arg(args.get("dir", ""))
         base = Path(repo_root)
-        if sub and _resolve_within(repo_root, sub) is None:   # dir 不得指向仓库外（防 os.walk 逃逸）
-            return f"dir 越界或非法（只能在仓库内查找）: {sub}"
+        if bad:                                           # dir 不得指向仓库外（防 os.walk 逃逸）
+            return f"dir 越界或非法（只能在仓库内查找）: {bad}"
         slash_re = _glob_to_regex(pattern) if "/" in pattern else None
 
         def _match(rel_posix: str) -> bool:
@@ -1591,9 +1611,9 @@ def build_read_tools(repo_root: str) -> list[Tool]:
             rx = re.compile(pat)
         except re.error as e:
             return f"无效正则: {e}"
-        sub = str(args.get("dir", "")).strip().strip("/")        # 此前 dir 被宣传却没生效→在此兜上
-        if sub and _resolve_within(repo_root, sub) is None:
-            return f"dir 越界或非法（只能在仓库内搜索）: {sub}"
+        sub, bad = _normalize_dir_arg(args.get("dir", ""))       # 此前 dir 被宣传却没生效→在此兜上
+        if bad:
+            return f"dir 越界或非法（只能在仓库内搜索）: {bad}"
         files = [f for f in _files() if _under_dir(f, sub)] if sub else _files()
         ctx = max(0, min(_int(args.get("context")) or 0, 5))     # 上下文行数（±N），上限 5 防输出爆炸
         base = Path(repo_root)
