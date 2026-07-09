@@ -22,7 +22,7 @@ except ImportError:
 
 
 # 模型分级配置（可通过环境变量覆盖）
-_DEFAULT_CHAT_MODEL = os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
+_DEFAULT_CHAT_MODEL = os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "mimo-v2.5"
 MODELS: Dict[str, Dict[str, str]] = {
     "cheap": {
         "model": os.getenv("LLM_MODEL_CHEAP", _DEFAULT_CHAT_MODEL),
@@ -99,7 +99,7 @@ def _int_env(name: str, default: int) -> int:
 # 主 agent + 所有子 agent 的总用量。优先用 API 精确值，拿不到时用估算（流式）。
 # cached_tokens：命中上游 prompt 缓存的输入 token 数（若中转/上游支持自动前缀缓存则 >0）——
 # 用来**验证缓存到底有没有在自有中转生效**（OpenAI 兼容协议下缓存是自动的、无需 cache_control）。
-DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
+DEFAULT_LLM_BASE_URL = "https://relay.dinghappy.com/v1"
 
 _USAGE = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cached_tokens": 0}
 
@@ -216,10 +216,10 @@ def _account(messages: List[Dict[str, str]], content: Optional[str], usage: Any 
 class LLMConfig(BaseModel):
     """LLM 配置"""
 
-    base_url: str = Field(default_factory=lambda: os.getenv("OPENAI_API_BASE", DEFAULT_OPENAI_BASE_URL))
+    base_url: str = Field(default_factory=lambda: os.getenv("OPENAI_API_BASE", DEFAULT_LLM_BASE_URL))
     api_key: str = ""
-    # 默认模型读 .env 的 DEFAULT_MODEL/OPENAI_MODEL（之前写死 gpt-4o-mini，令牌无权会 403）
-    model: str = Field(default_factory=lambda: os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini")
+    # 默认模型读 .env 的 DEFAULT_MODEL/OPENAI_MODEL；没有配置时走 VortoCode Relay 的默认国产模型。
+    model: str = Field(default_factory=lambda: os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "mimo-v2.5")
     temperature: float = 0.7
     max_tokens: int = 4096
     timeout: float = 120.0
@@ -240,7 +240,7 @@ class LLMClient:
             self.config.api_key = os.getenv("OPENAI_API_KEY", "")
         if not self.config.base_url:
             self.config.base_url = os.getenv(
-                "OPENAI_API_BASE", DEFAULT_OPENAI_BASE_URL
+                "OPENAI_API_BASE", DEFAULT_LLM_BASE_URL
             )
 
         self._client: Optional[Any] = None  # 懒加载 AsyncOpenAI 单例
@@ -596,7 +596,7 @@ def get_llm_client(model_tier: str = "balanced") -> LLMClient:
 
     model_info = MODELS.get(model_tier, MODELS["balanced"])
     config = LLMConfig(
-        base_url=os.getenv("OPENAI_API_BASE", DEFAULT_OPENAI_BASE_URL),
+        base_url=os.getenv("OPENAI_API_BASE", DEFAULT_LLM_BASE_URL),
         api_key=os.getenv("OPENAI_API_KEY", ""),
         model=model_info["model"],
     )

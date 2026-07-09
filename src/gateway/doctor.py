@@ -52,8 +52,8 @@ def _check_api_key() -> Check:
 async def _check_relay() -> Check:
     """LLM 接口连通：GET /models（带 key、短超时）。不烧 token，只验网络+鉴权。"""
     import aiohttp
-    from src.llm.client import DEFAULT_OPENAI_BASE_URL
-    base = os.getenv("OPENAI_API_BASE", DEFAULT_OPENAI_BASE_URL).rstrip("/")
+    from src.llm.client import DEFAULT_LLM_BASE_URL
+    base = os.getenv("OPENAI_API_BASE", DEFAULT_LLM_BASE_URL).rstrip("/")
     key = os.getenv("OPENAI_API_KEY", "").strip()
     if not key:
         return Check("relay", "warn", f"跳过（无 key）：{base}")

@@ -101,14 +101,14 @@ def _model_name() -> str:
 
     必须经 LLMConfig 取、别只读 os.getenv——加载 .env（设 DEFAULT_MODEL）的是 src.llm.client 的
     模块级 load_dotenv。若此函数在 client 导入前就读 env，会读不到 DEFAULT_MODEL 而错误回退成
-    gpt-4o-mini（状态栏一进来就显示错的）。import LLMConfig 会确保 .env 已加载，得到真实模型。
+    mimo-v2.5（状态栏一进来就显示错的）。import LLMConfig 会确保 .env 已加载，得到真实模型。
     """
     try:
         from src.llm.client import LLMConfig
         return LLMConfig().model
     except Exception:  # noqa: BLE001 —— 兜底：拿不到就退回 env 取法
         import os
-        return os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
+        return os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "mimo-v2.5"
 
 # 终端转义/控制序列清洗。为支持中文输入关掉了 kitty 协议后，修饰键（如 Shift+Enter）的
 # CSI 序列会漏进输入框：既弄脏显示，其中的 ESC 控制符发到中转站还会让 API 因"非法字符"报错
