@@ -73,6 +73,62 @@ async def test_glob_blocks_dir_traversal(tmp_path):
     assert "越界" in out                                          # dir 指向仓库外：拒，不列 outside.py
 
 
+@pytest.mark.asyncio
+async def test_list_files_and_grep_block_dir_traversal(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    tools = _read(repo)
+
+    listed = await tools["list_files"].handler({"dir": "../"})
+    grepped = await tools["grep"].handler({"pattern": "x", "dir": "../"})
+
+    assert "越界" in listed
+    assert "越界" in grepped
+
+
+@pytest.mark.asyncio
+async def test_read_tools_respect_gitignore(tmp_path):
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    (repo / ".gitignore").write_text("ignored/\n*.log\n", encoding="utf-8")
+    (repo / "keep.py").write_text("VISIBLE_TOKEN = 1\n", encoding="utf-8")
+    (repo / "trace.log").write_text("HIDDEN_TOKEN in log\n", encoding="utf-8")
+    (repo / "ignored").mkdir()
+    (repo / "ignored" / "secret.py").write_text("HIDDEN_TOKEN = 1\n", encoding="utf-8")
+
+    tools = _read(repo)
+    listed = await tools["list_files"].handler({})
+    globbed = await tools["glob"].handler({"pattern": "*.py"})
+    grepped = await tools["grep"].handler({"pattern": "HIDDEN_TOKEN"})
+
+    assert "keep.py" in listed
+    assert "ignored/secret.py" not in listed
+    assert "trace.log" not in listed
+    assert "ignored/secret.py" not in globbed
+    assert "没有匹配" in grepped
+
+
+@pytest.mark.asyncio
+async def test_list_files_dir_filter_is_path_segment(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "src").mkdir()
+    (repo / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+    (repo / "src2").mkdir()
+    (repo / "src2" / "b.py").write_text("y = 1\n", encoding="utf-8")
+
+    out = await _read(repo)["list_files"].handler({"dir": "src"})
+    grep_out = await _read(repo)["grep"].handler({"pattern": "=", "dir": "src"})
+
+    assert "src/a.py" in out
+    assert "src2/b.py" not in out
+    assert "src/a.py" in grep_out
+    assert "src2/b.py" not in grep_out
+
+
 # ---- document_symbols ----
 
 @pytest.mark.asyncio

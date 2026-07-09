@@ -4,6 +4,27 @@
 > roadmap documents may contain historical route-A ideas; this file tracks the
 > active TUI and developer-workflow direction.
 
+## 2026-07-09 Batch: Read-Tool Noise Reduction And Resume Handoff
+
+Goals:
+
+- Make `list_files` / `glob` / `grep` respect repository ignore rules so
+  generated caches and build outputs do not burn context or tool-call budget.
+- Improve session resume handoff with working directory, last mode/branch,
+  current branch/dirty health, context usage, and recent verify/commit/PR/audit
+  events.
+- Persist verify results into the session audit stream so a resumed session can
+  show the last reproduction state instead of forcing the user to remember it.
+
+Acceptance:
+
+- Git repositories use `git ls-files --cached --others --exclude-standard`;
+  non-git directories still honor common root `.gitignore` patterns.
+- `dir` filters for `list_files` / `glob` / `grep` reject traversal and match
+  path segments precisely (`src` does not include `src2`).
+- `/resume` prints a compact handoff card with previous state, current health,
+  context policy, and recent session-scoped audit events.
+
 ## 2026-07-07 Batch: Review To Fix Loop
 
 Goals:
