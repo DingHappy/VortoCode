@@ -2542,7 +2542,45 @@ class VortoCodeTUI(App):
         profile = resolved.get("profile") or {}
         desc = str(profile.get("description") or "").strip()
         label = f"profile {resolved.get('name')}" + (f" · {desc}" if desc else "")
-        self._cmd_verify_run(str(profile.get("cmd") or ""), label=label)
+        if str(profile.get("serve") or "").strip():
+            # serve+check profile：必须**起服务再探活**，不能只跑 check（否则误红/误打外部服务）。
+            self._cmd_verify_runtime_profile(str(resolved.get("name") or ""), profile, label)
+        else:
+            self._cmd_verify_run(str(profile.get("cmd") or ""), label=label)
+
+    def _cmd_verify_runtime_profile(self, name: str, profile: dict, label: str) -> None:
+        """跑一个 serve+check 运行时验证 profile：后台起 serve → 探活 → 无论成败都停 serve。
+
+        复用 worktree.run_runtime_check（与自主流水线同源）。危险命令同步 fail-fast（serve/check 任一），
+        再起 worker 跑（内部阻塞轮询丢线程），带确认门。"""
+        serve = str(profile.get("serve") or "").strip()
+        check = str(profile.get("check") or profile.get("cmd") or "").strip()
+        from src.agents.shell import is_dangerous
+        for c in (serve, check):
+            danger = is_dangerous(c)
+            if danger:
+                self._emit(f"拒绝执行高危验证命令: {danger}")
+                return
+
+        async def _run():
+            if not await self._confirm_command(
+                    f"运行 {label}（起服务 + 探活）？\n"
+                    f"  serve: {serve}\n"
+                    f"  check: {check}\n"
+                    "会后台起服务、探活后自动停掉；请确认命令不会做外向或破坏性操作。"):
+                self._emit("已取消 runtime 验证。")
+                return
+            self._chrome(f"[dim]$ serve: {serve} | check: {check}[/dim]")
+            from src.agents.worktree import run_runtime_check
+            res = await asyncio.to_thread(run_runtime_check, self.repo_root, {**profile, "name": name})
+            ok = bool(res.get("ok"))
+            status = "runtime 验证通过 ✓" if ok else "runtime 验证失败 ✗"
+            color = self._tc("text-success", "#7fce9a") if ok else self._tc("text-error", "#f08a8a")
+            self._chrome(f"[{color}]{status}[/][dim]（{name}）[/dim]")
+            out = str(res.get("output") or "").strip()
+            self._emit(f"{status}（{name}）" + (f"\n输出尾部:\n{out[-3000:]}" if out else ""))
+
+        self.run_worker(_run(), exclusive=True, group="verify")
 
     async def _run_verify_command_now(self, cmd: str, *, label: str = "runtime 验证命令") -> dict:
         """Run a user-supplied runtime/smoke command inside the current worker."""

@@ -2090,6 +2090,19 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         from src.agents.decompose import topo_order
         from src.agents.worktree import apply_diffs_to_branch, ensure_branch, verify_branch
 
+        def _fmt_runtime(integ: dict) -> str:
+            """把集成验证里的运行时验证结果渲染成逐条 ✅/❌（红的带输出尾部）。无运行时验证则空串。"""
+            rt = integ.get("runtime") or []
+            if not rt:
+                return ""
+            lines = ["\n运行时验证:"]
+            for rc in rt:
+                mark = "✅" if rc.get("ok") else "❌"
+                lines.append(f"  {mark} {rc.get('name')}: {rc.get('cmd')}")
+                if not rc.get("ok"):
+                    lines.append(f"     {(rc.get('output') or '')[-300:]}")
+            return "\n".join(lines)
+
         branch = dp.branch
 
         def _save():
@@ -2195,15 +2208,20 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             dp.status = "failed"
             _save()
             return "\n".join(out) + "\n\n没有任何子任务落地（都没过自测/或落分支时相互冲突被丢）；建议拆细或用 dev_isolated 逐个做。"
-        _progress(f"🔍 对整条分支 {branch}（{landed_ind} 独立 + {dep_done} 依赖）跑最终集成测试中…")
+        _progress(f"🔍 对整条分支 {branch}（{landed_ind} 独立 + {dep_done} 依赖）跑最终集成测试"
+                  f"（含运行时验证，如分支配了 .vortocode/verify.yaml）中…")
+        # runtime=True：verify_branch 会在**目标分支的 worktree 内**读 verify.yaml 决定跑不跑运行时验证
+        # ——从分支自己的配置读（本次改动的 verify.yaml 生效），坏配置判红、没配则只跑单测。
         integ = await asyncio.to_thread(
-            verify_branch, repo_root, branch, test_cmd, "wt-verify-" + uuid.uuid4().hex[:8])
+            verify_branch, repo_root, branch, test_cmd, "wt-verify-" + uuid.uuid4().hex[:8], True)
         dp.integration = integ
         if integ["ok"]:
             dp.status = "integrated"
             _save()
-            done = (f"\n✅ 全部落到 {branch}（{landed_ind} 独立 + {dep_done} 依赖）且**集成后全量测试通过**"
+            passed = "**集成后全量测试 + 运行时验证通过**" if (integ.get("runtime")) else "**集成后全量测试通过**"
+            done = (f"\n✅ 全部落到 {branch}（{landed_ind} 独立 + {dep_done} 依赖）且{passed}"
                     f"（未碰 main，git checkout {branch} 查看）。")
+            done += _fmt_runtime(integ)
             # 诚实提示测试增量：从**整条分支相对 base 的实际 diff**算（独立批 + 依赖接力提交都覆盖）。
             changed = await asyncio.to_thread(_branch_changed_files, repo_root, dp.base, branch)
             if changed is not None:
@@ -2226,11 +2244,16 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         else:
             dp.status = "integration_failed"
             _save()
-            out.append(f"\n⚠️ 已落到 {branch}（{landed_ind} 独立 + {dep_done} 依赖），但**集成后全量测试未过**。"
-                       f"失败尾部：\n{integ['output'][-1000:]}\n分支保留待修：git checkout {branch}"
-                       f"（可修完再 dev_resume({dp.plan_id})）。")
+            rt = integ.get("runtime") or []
+            if rt and any(not rc.get("ok") for rc in rt):
+                # 单测过了、栽在运行时验证：别拿绿的单测输出当"失败尾部"误导，直接列运行时结果。
+                detail = f"集成单测过了，但**运行时验证未过**。{_fmt_runtime(integ)}"
+            else:
+                detail = f"**集成后全量测试未过**。失败尾部：\n{integ['output'][-1000:]}"
+            out.append(f"\n⚠️ 已落到 {branch}（{landed_ind} 独立 + {dep_done} 依赖），但{detail}\n"
+                       f"分支保留待修：git checkout {branch}（可修完再 dev_resume({dp.plan_id})）。")
             if dp.want_pr:
-                out.append("（集成测试未过，未自动开 PR——先把分支修绿再开。）")
+                out.append("（集成验证未过，未自动开 PR——先把分支修绿再开。）")
         return "\n".join(out)
 
     async def _dev_auto(args: dict) -> str:

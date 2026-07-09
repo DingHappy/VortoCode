@@ -278,10 +278,109 @@ async def run_dependent_on_branch(repo_root, wid: str, branch: str, description:
         await _git_op(remove_worktree, repo_root, path)
 
 
-def verify_branch(repo_root, branch: str, test_cmd: list, wid: str) -> dict:
+def run_runtime_check(worktree, profile: dict, timeout: int = 180) -> dict:
+    """在 worktree 里跑一条**运行时验证** profile（"真能跑起来"，不止"测试绿"），返回 {ok, name, cmd, output}。
+
+    两种形态（见 verify_profiles）：
+    - **serve + check**：后台起 serve（复用后台命令基础设施——沙箱同源、退出时按进程组 killpg 连根收），
+      反复跑 check 探活直到通过或 ready_timeout 秒；无论成败**都停掉 serve**。判定=最后一次 check 是否通过。
+      serve 中途自己崩了则带其输出提前判失败。
+    - **只有 cmd**：阻塞跑 cmd，退出码判定（自包含冒烟/e2e/build/self-analyze）。
+    危险命令（serve/check/cmd 任一）一律先被 is_dangerous 拦下：拒绝执行、判不通过。
+    """
+    import time
+    from src.agents.shell import (is_dangerous, read_background,
+                                   run_command_background, stop_background)
+    name = str(profile.get("name") or "runtime")
+    serve = str(profile.get("serve") or "").strip()
+    check = str(profile.get("check") or "").strip()
+    cmd = str(profile.get("cmd") or "").strip()
+
+    def _guard(command: str) -> str:
+        why = is_dangerous(command)
+        return f"拒绝执行高危验证命令: {why}" if why else ""
+
+    def _run_once(command: str, tmo: int) -> tuple[bool, str]:
+        try:
+            r = subprocess.run(command, shell=True, cwd=str(worktree),
+                               capture_output=True, text=True, timeout=tmo)
+            return r.returncode == 0, (r.stdout + r.stderr)
+        except subprocess.TimeoutExpired:
+            return False, f"命令超时（>{tmo}s）"
+        except Exception as e:  # noqa: BLE001
+            return False, f"命令无法运行: {e}"
+
+    if serve:
+        probe = check or cmd
+        for command in (serve, probe):
+            blocked = _guard(command)
+            if blocked:
+                return {"ok": False, "name": name, "cmd": command, "output": blocked}
+        ready_timeout = int(profile.get("ready_timeout") or 30)
+        bg = run_command_background(worktree, serve)
+        if not bg.get("ok"):
+            return {"ok": False, "name": name, "cmd": serve,
+                    "output": f"起 serve 失败: {bg.get('error', '')}"}
+        bid = bg["id"]
+        ok, probe_out = False, ""
+        try:
+            deadline = time.monotonic() + ready_timeout
+            while True:
+                st = read_background(bid, tail=40)
+                if st.get("ok") and st.get("status") == "exited":   # serve 先崩了 → 别再探
+                    probe_out = f"serve 进程提前退出（code={st.get('code')}）:\n{st.get('output', '')}"
+                    break
+                ok, probe_out = _run_once(probe, min(ready_timeout, 30))
+                if ok or time.monotonic() >= deadline:
+                    break
+                time.sleep(1.5)
+            serve_tail = (read_background(bid, tail=25) or {}).get("output", "")
+            out = probe_out + (f"\n--- serve 输出尾部 ---\n{serve_tail}" if serve_tail else "")
+            return {"ok": ok, "name": name, "cmd": f"serve: {serve} | check: {probe}",
+                    "output": out[-4000:]}
+        finally:
+            stop_background(bid)
+
+    target = cmd or check
+    blocked = _guard(target)
+    if blocked:
+        return {"ok": False, "name": name, "cmd": target, "output": blocked}
+    ok, out = _run_once(target, timeout)
+    return {"ok": ok, "name": name, "cmd": target, "output": out[-4000:]}
+
+
+def _fold_runtime_verify(worktree, result: dict) -> dict:
+    """单测过后，按**目标分支自己**的 `.vortocode/verify.yaml`（从 worktree 读，不是主工作区！）跑
+    运行时验证并把结果并进 result。
+
+    - 从 worktree 读配置：这样本次分支新增/改的 verify.yaml 会按分支自己的配置执行（而非主工作区旧配置）。
+    - verify.yaml 解析失败 → **不静默跳过**：记一条失败的 runtime 项、整体判红（用户 opt-in 了就得让他修配置）。
+    - 有 auto profile → 逐条跑，任一红则整体红；没配 → result 原样返回（行为与不开运行时验证一致）。
+    """
+    from src.agents.verify_profiles import auto_verify_profiles
+    profiles, err = auto_verify_profiles(str(worktree))
+    if err:
+        result["runtime"] = [{"name": "verify.yaml", "ok": False,
+                              "cmd": ".vortocode/verify.yaml",
+                              "output": f".vortocode/verify.yaml 解析失败，无法执行运行时验证：{err}"}]
+        result["ok"] = False
+    elif profiles:
+        runtime = [run_runtime_check(worktree, prof) for prof in profiles]
+        result["runtime"] = runtime
+        if not all(rc.get("ok") for rc in runtime):
+            result["ok"] = False
+    return result
+
+
+def verify_branch(repo_root, branch: str, test_cmd: list, wid: str,
+                  runtime: bool = False) -> dict:
     """在临时 worktree 检出 branch 跑一遍测试做**最终集成验证**，返回 {ok, output, cmd}；清理 worktree。
 
     （dev_auto 把并行批 + 依赖接力都落到同一分支后，用它对整条分支做一次权威全量复验。）
+
+    runtime=True 且**单测先过**时，再按**目标分支自己**的 `.vortocode/verify.yaml` 里标 auto 的
+    profile 跑运行时验证（"真能跑起来"），结果并进 `result["runtime"]`、任一红/配置坏则整体 ok=False。
+    单测就红则跳过运行时（省时，反正已判失败）。
     """
     path = _worktrees_dir(repo_root) / wid
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -291,6 +390,9 @@ def verify_branch(repo_root, branch: str, test_cmd: list, wid: str) -> dict:
     if add.returncode != 0:
         return {"ok": False, "output": "worktree add 失败: " + (add.stderr or "").strip()[:200], "cmd": ""}
     try:
-        return run_tests(path, test_cmd)
+        result = run_tests(path, test_cmd)
+        if result.get("ok") and runtime:
+            result = _fold_runtime_verify(path, result)
+        return result
     finally:
         remove_worktree(repo_root, path)
