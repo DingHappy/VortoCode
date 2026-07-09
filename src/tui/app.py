@@ -1765,7 +1765,7 @@ class VortoCodeTUI(App):
         elif cmd == "commands":
             self._cmd_commands(arg)
         elif cmd == "hooks":
-            self._cmd_hooks()
+            self._cmd_hooks(arg)
         elif cmd == "runagent":
             if arg:
                 self._do_runagent(arg)
@@ -3060,24 +3060,90 @@ class VortoCodeTUI(App):
         self._route(expand_command(uc.template, arg))
 
     def _cmd_commands(self, arg: str = "") -> None:
-        """/commands：列出 .vortocode/commands 下的自定义命令；/commands reload 重扫目录。"""
-        if (arg or "").strip().lower() == "reload":
+        """/commands：列出/初始化/预览 .vortocode/commands 下的自定义命令。"""
+        raw = (arg or "").strip()
+        low = raw.lower()
+        if low == "reload":
             self._user_cmds = None
+        elif low.startswith("init "):
+            name = raw.split(maxsplit=1)[1].strip()
+            from src.agents.user_commands import default_command_template, is_valid_command_name
+            if not is_valid_command_name(name):
+                self._emit("用法: /commands init <name>（name 只能包含字母、数字、下划线和连字符）")
+                return
+            path = Path(self.repo_root) / ".vortocode" / "commands" / f"{name}.md"
+            if path.exists():
+                self._emit(f"命令 /{name} 已存在：{path}")
+                return
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(default_command_template(name), encoding="utf-8")
+            self._user_cmds = None
+            self._chrome(f"[green]已创建自定义命令模板：{path}[/green]")
+            self._emit(f"可用 `/commands preview {name} 示例目标` 预览展开结果，或直接 `/{name} ...` 执行。")
+            return
+        elif low.startswith("preview "):
+            parts = raw.split(maxsplit=2)
+            if len(parts) < 2:
+                self._emit("用法: /commands preview <name> [args...]")
+                return
+            name = parts[1].lstrip("/")
+            args = parts[2] if len(parts) > 2 else ""
+            from src.agents.user_commands import expand_command
+            uc = self._user_commands().get(name)
+            if uc is None:
+                self._emit(f"没有自定义命令 /{name}。先用 /commands init {name} 创建，或 /commands reload 重扫。")
+                return
+            expanded = expand_command(uc.template, args)
+            meta = self._user_command_label(uc)
+            self._emit(f"预览 /{name}" + (f" · {meta}" if meta else "") + f"\n\n```text\n{expanded}\n```")
+            return
+        elif raw and low not in {"list", "ls"}:
+            self._emit("用法: /commands [list|reload|init <name>|preview <name> [args...]]")
+            return
         cmds = self._user_commands()
         if not cmds:
             self._emit("没有自定义命令。在 `.vortocode/commands/<名>.md` 写提示模板即可用 `/<名>` 调起"
-                       "（支持 $ARGUMENTS / $1 占位符；frontmatter 可写 description/mode/argument-hint/model）。")
+                       "（支持 $ARGUMENTS / $1 占位符；frontmatter 可写 description/mode/model/args）。\n"
+                       "也可用 `/commands init <name>` 生成模板。")
             return
         lines = ["[b]自定义命令[/b]（.vortocode/commands）:"]
         for n, uc in sorted(cmds.items()):
             lines.append(f"  [b]/{n}[/b] — {self._user_command_label(uc)}")
-        lines.append("[dim]在文件里用 $ARGUMENTS / $1 接收参数；frontmatter 可写 mode: plan/build；/commands reload 重扫。[/dim]")
+        lines.append("[dim]/commands init <name> 生成模板；/commands preview <name> [args] 只预览展开；/commands reload 重扫。[/dim]")
         self._chrome("\n".join(lines))
 
-    def _cmd_hooks(self) -> None:
-        """/hooks：列出 .vortocode/hooks.yaml 配置的工具生命周期钩子（事件 / 工具 matcher）。"""
-        from pathlib import Path
+    def _cmd_hooks(self, arg: str = "") -> None:
+        """/hooks：列出、初始化、dry-run 测试 .vortocode/hooks.yaml 生命周期钩子。"""
         cfg = Path(self.repo_root) / ".vortocode" / "hooks.yaml"
+        raw = (arg or "").strip()
+        low = raw.lower()
+        if low == "init":
+            if cfg.exists():
+                self._emit(f"{cfg} 已存在；不会覆盖。用 /hooks 查看，或手动编辑。")
+                return
+            cfg.parent.mkdir(parents=True, exist_ok=True)
+            cfg.write_text(
+                "# VortoCode tool lifecycle hooks. /hooks test post_tool_use write_file 可 dry-run matcher。\n"
+                "hooks:\n"
+                "  - name: sample-tool-hook\n"
+                "    type: command\n"
+                "    event_types: [post_tool_use]\n"
+                "    matcher: write_file|edit_file\n"
+                "    shell: true\n"
+                "    timeout: 10\n"
+                "    command: python -c \"import json,sys; e=json.load(sys.stdin); print('hook saw '+e['data'].get('tool',''))\"\n",
+                encoding="utf-8",
+            )
+            self._chrome(f"[green]已创建 hooks 模板：{cfg}[/green]")
+            self._emit("用 `/hooks test post_tool_use write_file` 试跑 matcher；确认后可把 command 改成格式化/通知脚本。")
+            return
+        if low == "test" or low.startswith("test "):
+            rest = raw.split(maxsplit=1)[1] if len(raw.split(maxsplit=1)) > 1 else ""
+            self._cmd_hooks_test(rest.strip())
+            return
+        if raw and low not in {"list", "ls"}:
+            self._emit("用法: /hooks [list|init|test [event] [tool]]")
+            return
         hs = self._load_hook_system()
         if hs is None:
             self._emit(
@@ -3095,8 +3161,52 @@ class VortoCodeTUI(App):
             m = f" · 仅工具 [b]{h.matcher}[/b]" if getattr(h, "matcher", None) else ""
             state = "" if h.enabled else " [dim](禁用)[/dim]"
             lines.append(f"  [b]{h.name}[/b] [{self._tc('text-primary', '#8ab4f8')}]{evs}[/]{m}{state}")
-        lines.append("[dim]pre_tool_use 可拦工具（should_stop）、post_tool_use 可附信息；matcher 是工具名正则。[/dim]")
+        lines.append("[dim]/hooks init 生成模板；/hooks test [event] [tool] dry-run matcher，不执行 hook 命令。[/dim]")
         self._chrome("\n".join(lines))
+
+    def _cmd_hooks_test(self, arg: str = "") -> None:
+        """只测试 hook event/matcher 是否命中，不执行 hook 命令。"""
+        from src.hooks import HookEventType
+        hs = self._load_hook_system()
+        if hs is None:
+            self._emit("没有 hooks.yaml。先用 /hooks init 生成模板，或手动创建 .vortocode/hooks.yaml。")
+            return
+        parts = (arg or "").split()
+        event_name = "post_tool_use"
+        tool = "write_file"
+        valid_events = {e.value for e in HookEventType}
+        if len(parts) == 1:
+            if parts[0] in valid_events:
+                event_name = parts[0]
+            else:
+                tool = parts[0]
+        elif len(parts) >= 2:
+            event_name, tool = parts[0], parts[1]
+        if event_name not in valid_events:
+            self._emit(f"未知 hook event: {event_name}。可用示例: post_tool_use/pre_tool_use/tool_error。")
+            return
+        event_type = HookEventType(event_name)
+        hooks = [h for h in hs.list_hooks() if h.__class__.__name__ != "AuditLogHook"]
+        matched, skipped = [], []
+        for h in hooks:
+            event_ok = event_type in h.event_types
+            tool_ok = h.matches_tool(tool)
+            if h.enabled and event_ok and tool_ok:
+                matched.append(h.name)
+            else:
+                why = []
+                if not h.enabled:
+                    why.append("disabled")
+                if not event_ok:
+                    why.append("event")
+                if not tool_ok:
+                    why.append("matcher")
+                skipped.append(f"{h.name}({','.join(why)})")
+        lines = [f"hooks dry-run: event={event_name}, tool={tool}"]
+        lines.append("命中: " + (", ".join(matched) if matched else "（无）"))
+        if skipped:
+            lines.append("跳过: " + ", ".join(skipped))
+        self._emit("\n".join(lines))
 
     def _cmd_speak(self, arg: str = "") -> None:
         """/speak：朗读 agent 回复的开关（on/off 可显式指定，否则切换）。开了之后每条回复合成语音播放。"""
@@ -3246,9 +3356,35 @@ class VortoCodeTUI(App):
 
     # ---------------------------------------------------------------- 会话
     def _cmd_sessions(self, arg: str = "") -> None:
-        """/sessions：会话选择器；rename/delete 管理历史会话。"""
+        """/sessions：会话选择器；search/rename/delete 管理历史会话。"""
         raw = (arg or "").strip()
         low = raw.lower()
+        if low.startswith(("search ", "find ")):
+            parts = raw.split(maxsplit=1)
+            query = parts[1].strip() if len(parts) > 1 else ""
+            if not query:
+                self._emit("用法: /sessions search <关键词>")
+                return
+            rows = [r for r in self.sessions.store.search_sessions(query, limit=30)
+                    if r.get("id") != self.session_id]
+            if not rows:
+                self._emit(f"没有匹配的其他历史会话: {query}")
+                return
+            items = []
+            for r in rows:
+                label = self._session_picker_label(r)
+                snippet = self._summary_text(r.get("match_snippet") or "", 120)
+                hit = f" · 命中消息 {r.get('match_count', 0)}" if r.get("match_count") else ""
+                snip = f" · {snippet}" if snippet else ""
+                mark = "  ← 当前" if r["id"] == self.session_id else ""
+                items.append((r["id"], f"{r['id']}  {label}{hit}{snip}{mark}"))
+
+            def _done(sid) -> None:
+                if sid and sid != self.session_id:
+                    self._cmd_resume(sid)
+
+            self.push_screen(ListPicker(f"搜索会话: {query} · 回车恢复", items, initial=self.session_id), _done)
+            return
         if low.startswith("rename "):
             parts = raw.split(maxsplit=2)
             if len(parts) < 3 or not parts[1].strip() or not parts[2].strip():
@@ -3299,7 +3435,7 @@ class VortoCodeTUI(App):
             )
             return
         if raw and low not in {"list", "ls"}:
-            self._emit("用法: /sessions [list|rename <id> <name>|delete <id>]")
+            self._emit("用法: /sessions [list|search <关键词>|rename <id> <name>|delete <id>]")
             return
         rows = self.sessions.list_recent_sessions(20)
         if not rows:
@@ -3329,7 +3465,7 @@ class VortoCodeTUI(App):
             label = self._session_picker_label(r)
             mark = " ← 当前" if r["id"] == self.session_id else ""
             lines.append(f"  {r['id']} · {label} · {(r.get('updated_at') or '')[:19]}{mark}")
-        lines.append("\n用 /sessions rename <id> <name> 重命名；/sessions delete <id> 删除。")
+        lines.append("\n用 /sessions search <关键词> 搜索；/sessions rename <id> <name> 重命名；/sessions delete <id> 删除。")
         return "\n".join(lines)
 
     def _cmd_resume(self, sid: str) -> None:

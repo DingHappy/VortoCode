@@ -39,6 +39,27 @@ def test_load_frontmatter_metadata(tmp_path):
     assert cmd.model == "gpt-5"
 
 
+def test_load_args_schema(tmp_path):
+    (_cmd_dir(tmp_path) / "explain.md").write_text(
+        "---\n"
+        "description: 解释文件\n"
+        "args:\n"
+        "  - name: file\n"
+        "    required: true\n"
+        "    description: 要解释的文件\n"
+        "  - name: question\n"
+        "    required: false\n"
+        "---\n"
+        "解释 $1，并回答 $2。",
+        encoding="utf-8")
+
+    cmd = load_commands(str(tmp_path))["explain"]
+
+    assert cmd.argument_hint == "<file> [question]"
+    assert cmd.args_schema[0]["name"] == "file"
+    assert cmd.args_schema[0]["required"] is True
+
+
 def test_load_ignores_invalid_mode(tmp_path):
     (_cmd_dir(tmp_path) / "note.md").write_text(
         "---\ndescription: 记笔记\nmode: admin\n---\n记笔记。", encoding="utf-8")

@@ -128,6 +128,38 @@ class SessionStore:
                 (limit,)
             )
             return [dict(row) for row in cursor.fetchall()]
+
+    def search_sessions(self, query: str, limit: int = 30) -> List[Dict[str, Any]]:
+        """搜索历史会话：匹配 session id/name/metadata 摘要和消息正文。
+
+        `/sessions` 选择器只看最近会话；这里给跨历史的轻量搜索。返回每个 session 一行，并附带
+        `match_count` 与 `match_snippet`，方便 UI 展示为什么命中。
+        """
+        q = (query or "").strip().lower()
+        if not q:
+            return self.list_sessions(limit)
+        like = f"%{q}%"
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                """
+                SELECT
+                    s.*,
+                    COUNT(m.id) AS match_count,
+                    MAX(CASE WHEN lower(m.content) LIKE ? THEN substr(m.content, 1, 180) ELSE '' END) AS match_snippet
+                FROM sessions s
+                LEFT JOIN messages m ON m.session_id = s.id AND lower(m.content) LIKE ?
+                WHERE lower(s.id) LIKE ?
+                   OR lower(COALESCE(s.name, '')) LIKE ?
+                   OR lower(COALESCE(s.metadata, '')) LIKE ?
+                   OR m.id IS NOT NULL
+                GROUP BY s.id
+                ORDER BY s.updated_at DESC
+                LIMIT ?
+                """,
+                (like, like, like, like, like, int(limit)),
+            )
+            return [dict(row) for row in cursor.fetchall()]
     
     def update_session(self, session_id: str, **kwargs) -> bool:
         """更新会话"""

@@ -19,9 +19,9 @@
 """
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 
 # 命令名：字母/数字/下划线/连字符（和文件名一致，避免和内置命令解析冲突）
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -36,10 +36,89 @@ class UserCommand:
     mode: str = ""
     argument_hint: str = ""
     model: str = ""
+    args_schema: List[dict] = field(default_factory=list)
 
 
 def _clean_scalar(value: object) -> str:
     return str(value or "").strip().strip("'\"")
+
+
+def is_valid_command_name(name: str) -> bool:
+    """命令文件名是否合法。"""
+    return bool(_NAME_RE.match(str(name or "").strip()))
+
+
+def _normalize_args_schema(value: object) -> list[dict]:
+    """解析 frontmatter args/arguments 为轻量 schema，供列表和 preview 展示。
+
+    支持：
+    args: "<file> <question>"
+    args:
+      - name: file
+        required: true
+        description: 要读取的文件
+    """
+    if not value:
+        return []
+    if isinstance(value, str):
+        return [{"name": value.strip(), "required": False, "description": ""}] if value.strip() else []
+    raw = value
+    if isinstance(value, dict):
+        raw = value.get("items") or value.get("arguments") or value.get("args") or []
+        if not isinstance(raw, list):
+            raw = [value]
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for item in raw:
+        if isinstance(item, str):
+            name = item.strip()
+            if name:
+                out.append({"name": name, "required": False, "description": ""})
+            continue
+        if not isinstance(item, dict):
+            continue
+        name = _clean_scalar(item.get("name") or item.get("id") or item.get("key"))
+        if not name:
+            continue
+        required = item.get("required", False)
+        required = required if isinstance(required, bool) else str(required).strip().lower() in {"1", "true", "yes", "on"}
+        out.append({
+            "name": name,
+            "required": required,
+            "description": _clean_scalar(item.get("description") or item.get("desc")),
+            "default": _clean_scalar(item.get("default")),
+        })
+    return out
+
+
+def _schema_hint(schema: list[dict]) -> str:
+    bits = []
+    for item in schema:
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        bits.append(f"<{name}>" if item.get("required") else f"[{name}]")
+    return " ".join(bits)
+
+
+def default_command_template(name: str) -> str:
+    """新建自定义命令时写入的安全模板。"""
+    name = str(name or "custom").strip() or "custom"
+    return (
+        "---\n"
+        f"description: {name} workflow\n"
+        "mode: plan\n"
+        "args:\n"
+        "  - name: target\n"
+        "    required: false\n"
+        "    description: 文件、分支、PR 或任务描述\n"
+        "---\n"
+        "\n"
+        "请根据以下目标给出执行计划或检查结果：\n"
+        "\n"
+        "$ARGUMENTS\n"
+    )
 
 
 def _parse(text: str, name: str) -> UserCommand:
@@ -48,6 +127,7 @@ def _parse(text: str, name: str) -> UserCommand:
     mode = ""
     argument_hint = ""
     model = ""
+    args_schema: list[dict] = []
     body = text
     if text.lstrip().startswith("---"):
         parts = text.split("---", 2)
@@ -62,7 +142,8 @@ def _parse(text: str, name: str) -> UserCommand:
                 desc = _clean_scalar(meta.get("description"))
                 raw_mode = _clean_scalar(meta.get("mode")).lower()
                 mode = raw_mode if raw_mode in {"plan", "build"} else ""
-                argument_hint = _clean_scalar(meta.get("argument-hint") or meta.get("args"))
+                args_schema = _normalize_args_schema(meta.get("arguments") or meta.get("args"))
+                argument_hint = _clean_scalar(meta.get("argument-hint")) or _schema_hint(args_schema)
                 model = _clean_scalar(meta.get("model"))
     body = body.strip()
     if not desc:                                  # 没写 description → 取正文首个非空行
@@ -77,6 +158,7 @@ def _parse(text: str, name: str) -> UserCommand:
         mode=mode,
         argument_hint=argument_hint,
         model=model,
+        args_schema=args_schema,
     )
 
 
