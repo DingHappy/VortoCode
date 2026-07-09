@@ -1379,17 +1379,146 @@ def build_read_tools(repo_root: str) -> list[Tool]:
     _TEXT_EXT = {".py", ".js", ".ts", ".tsx", ".jsx", ".html", ".css", ".md", ".rst",
                  ".yaml", ".yml", ".toml", ".json", ".txt", ".cfg", ".ini", ".sh", ".sql", ".env"}
 
-    def _files() -> list[str]:
+    def _rel_posix(path: Path, base: Path) -> str:
+        return path.relative_to(base).as_posix()
+
+    def _skip_builtin(rel: str) -> bool:
+        return any(part in _SKIP_DIRS for part in Path(rel).parts)
+
+    def _under_dir(rel: str, sub: str) -> bool:
+        if not sub:
+            return True
+        sub = sub.strip("/")
+        return rel == sub or rel.startswith(sub + "/")
+
+    def _normalize_dir_arg(value: Any) -> tuple[str, str]:
+        """Validate a dir argument and normalize it to repo-relative POSIX form.
+
+        Returns (normalized_subdir, bad_value). bad_value is non-empty when the input points
+        outside the repository. "." becomes "" so callers search the whole repo.
+        """
+        raw = str(value or "").strip().lstrip("@")
+        if not raw:
+            return "", ""
+        p = _resolve_within(repo_root, raw)
+        if p is None:
+            return "", raw
+        try:
+            rel = p.relative_to(Path(repo_root).resolve()).as_posix()
+        except (ValueError, OSError):
+            return "", raw
+        if rel == ".":
+            return "", ""
+        return rel.strip("/"), ""
+
+    def _git_visible_files(base: Path) -> list[str] | None:
+        """Return git-visible files, respecting .gitignore/info excludes/global excludes.
+
+        `git ls-files --cached --others --exclude-standard` gives the exact file set a developer
+        expects: tracked files plus untracked non-ignored files. This avoids walking build caches
+        and generated outputs into list_files/glob/grep.
+        """
+        import subprocess
+        try:
+            r = subprocess.run(
+                ["git", "-C", str(base), "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+                capture_output=True,
+                timeout=3,
+            )
+        except Exception:  # noqa: BLE001
+            return None
+        if r.returncode != 0:
+            return None
+        out: list[str] = []
+        for raw in r.stdout.split(b"\0"):
+            if not raw:
+                continue
+            try:
+                rel = raw.decode("utf-8", errors="replace")
+            except Exception:  # noqa: BLE001
+                continue
+            if rel and not _skip_builtin(rel) and (base / rel).is_file():
+                out.append(rel)
+        return sorted(set(out))
+
+    def _load_root_gitignore(base: Path):
+        """Small fallback matcher for non-git directories.
+
+        It intentionally covers common .gitignore forms (comments, negation, anchored paths,
+        directory patterns, basename globs). Git repositories use `git ls-files`, so the fallback
+        only needs to keep non-git workspaces from reading obvious ignored output.
+        """
+        import fnmatch
+        rules: list[tuple[bool, str, bool, bool]] = []
+        p = base / ".gitignore"
+        if not p.is_file():
+            return lambda _rel, is_dir=False: False
+        for line in p.read_text(encoding="utf-8", errors="ignore").splitlines():
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            neg = s.startswith("!")
+            if neg:
+                s = s[1:].strip()
+            if not s:
+                continue
+            anchored = s.startswith("/")
+            s = s.lstrip("/")
+            dir_only = s.endswith("/")
+            s = s.rstrip("/")
+            if s:
+                rules.append((neg, s, anchored, dir_only))
+
+        def _ignored(rel: str, is_dir: bool = False) -> bool:
+            rel = rel.replace("\\", "/").strip("/")
+            ignored = False
+            for neg, pat, anchored, dir_only in rules:
+                if dir_only and not (is_dir or rel.startswith(pat.rstrip("/") + "/")):
+                    continue
+                if anchored or "/" in pat:
+                    match = fnmatch.fnmatch(rel, pat) or rel.startswith(pat.rstrip("/") + "/")
+                else:
+                    parts = rel.split("/")
+                    match = any(fnmatch.fnmatch(part, pat) for part in parts)
+                if match:
+                    ignored = not neg
+            return ignored
+
+        return _ignored
+
+    def _all_files() -> list[str]:
         import os
         base = Path(repo_root)
+        git_files = _git_visible_files(base)
+        if git_files is not None:
+            return git_files
+        ignored = _load_root_gitignore(base)
         out: list[str] = []
         for root, dirs, files in os.walk(base):
-            dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]   # 原地剪枝：不下钻噪音目录
+            kept_dirs = []
+            for d in dirs:
+                rel_dir = _rel_posix(Path(root) / d, base)
+                if d in _SKIP_DIRS or ignored(rel_dir, is_dir=True):
+                    continue
+                kept_dirs.append(d)
+            dirs[:] = kept_dirs                         # 原地剪枝：不下钻噪音/忽略目录
             for fn in files:
-                if Path(fn).suffix.lower() in _TEXT_EXT:
-                    out.append(str((Path(root) / fn).relative_to(base)))
-                    if len(out) >= 4000:
-                        return sorted(out)
+                fp = Path(root) / fn
+                rel = _rel_posix(fp, base)
+                if _skip_builtin(rel) or ignored(rel, is_dir=False):
+                    continue
+                out.append(rel)
+                if len(out) >= 6000:
+                    return sorted(out)
+        return sorted(out)
+
+    def _files() -> list[str]:
+        out: list[str] = []
+        for rel in _all_files():
+            if Path(rel).suffix.lower() in _TEXT_EXT:
+                out.append(rel)
+                if len(out) >= 4000:
+                    return sorted(out)
         return sorted(out)
 
     def _int(v):
@@ -1428,8 +1557,10 @@ def build_read_tools(repo_root: str) -> list[Tool]:
         return text
 
     async def _list_files(args: dict) -> str:
-        sub = str(args.get("dir", "")).strip().strip("/")
-        fs = [f for f in _files() if f.startswith(sub)] if sub else _files()
+        sub, bad = _normalize_dir_arg(args.get("dir", ""))
+        if bad:
+            return f"dir 越界或非法（只能在仓库内列出）: {bad}"
+        fs = [f for f in _files() if _under_dir(f, sub)] if sub else _files()
         return "\n".join(fs[:200]) if fs else "(无源码文件)"
 
     async def _glob(args: dict) -> str:
@@ -1439,38 +1570,32 @@ def build_read_tools(repo_root: str) -> list[Tool]:
         含 '/' → 匹配相对路径全程（`**` 为 best-effort）。可选 dir 限定子目录。
         """
         import fnmatch
-        import os
         pattern = str(args.get("pattern", "")).strip()
         if not pattern:
             return "glob 需要 pattern（如 *.ts、**/*.test.js、src/**/*.py）。"
-        sub = str(args.get("dir", "")).strip().strip("/")
+        sub, bad = _normalize_dir_arg(args.get("dir", ""))
         base = Path(repo_root)
-        if sub and _resolve_within(repo_root, sub) is None:   # dir 不得指向仓库外（防 os.walk 逃逸）
-            return f"dir 越界或非法（只能在仓库内查找）: {sub}"
+        if bad:                                           # dir 不得指向仓库外（防 os.walk 逃逸）
+            return f"dir 越界或非法（只能在仓库内查找）: {bad}"
         slash_re = _glob_to_regex(pattern) if "/" in pattern else None
 
         def _match(rel_posix: str) -> bool:
             if slash_re is not None:                     # 含 / → 全路径真·glob（** 跨目录）
                 return slash_re.match(rel_posix) is not None
-            return fnmatch.fnmatch(os.path.basename(rel_posix), pattern)   # 否则匹配文件名、任意深度
+            return fnmatch.fnmatch(Path(rel_posix).name, pattern)   # 否则匹配文件名、任意深度
 
         hits: list[tuple[float, str]] = []
-        for root, dirs, files in os.walk(base / sub if sub else base):
-            dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
-            for fn in files:
-                fp = Path(root) / fn
+        for rel in _all_files():
+            if not _under_dir(rel, sub):
+                continue
+            if _match(rel):
                 try:
-                    rel = str(fp.relative_to(base))
-                except ValueError:
-                    continue
-                if _match(rel.replace(os.sep, "/")):
-                    try:
-                        mtime = fp.stat().st_mtime
-                    except OSError:
-                        mtime = 0.0
-                    hits.append((mtime, rel))
-                    if len(hits) >= 5000:                # 防超大仓走查爆内存
-                        break
+                    mtime = (base / rel).stat().st_mtime
+                except OSError:
+                    mtime = 0.0
+                hits.append((mtime, rel))
+                if len(hits) >= 5000:                # 防超大仓走查爆内存
+                    break
         if not hits:
             return f"没有匹配 `{pattern}` 的文件{('（在 ' + sub + '/ 下）') if sub else ''}。"
         hits.sort(key=lambda t: t[0], reverse=True)      # 最近修改的排前（像 CC，方便找刚动过的）
@@ -1486,8 +1611,10 @@ def build_read_tools(repo_root: str) -> list[Tool]:
             rx = re.compile(pat)
         except re.error as e:
             return f"无效正则: {e}"
-        sub = str(args.get("dir", "")).strip().strip("/")        # 此前 dir 被宣传却没生效→在此兜上
-        files = [f for f in _files() if f.startswith(sub)] if sub else _files()
+        sub, bad = _normalize_dir_arg(args.get("dir", ""))       # 此前 dir 被宣传却没生效→在此兜上
+        if bad:
+            return f"dir 越界或非法（只能在仓库内搜索）: {bad}"
+        files = [f for f in _files() if _under_dir(f, sub)] if sub else _files()
         ctx = max(0, min(_int(args.get("context")) or 0, 5))     # 上下文行数（±N），上限 5 防输出爆炸
         base = Path(repo_root)
 
