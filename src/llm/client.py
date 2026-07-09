@@ -1,4 +1,4 @@
-"""LLM 客户端 - 集成 One API 网关"""
+"""LLM 客户端 - OpenAI 兼容接口 / One API 网关"""
 
 import asyncio
 import logging
@@ -21,19 +21,19 @@ except ImportError:
     pass
 
 
-# 模型分级配置
 # 模型分级配置（可通过环境变量覆盖）
+_DEFAULT_CHAT_MODEL = os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
 MODELS: Dict[str, Dict[str, str]] = {
     "cheap": {
-        "model": os.getenv("LLM_MODEL_CHEAP", "mimo-v2.5"),
+        "model": os.getenv("LLM_MODEL_CHEAP", _DEFAULT_CHAT_MODEL),
         "description": "低成本模型，适合简单任务",
     },
     "balanced": {
-        "model": os.getenv("LLM_MODEL_BALANCED", "mimo-v2.5"),
+        "model": os.getenv("LLM_MODEL_BALANCED", _DEFAULT_CHAT_MODEL),
         "description": "平衡模型，适合大多数任务",
     },
     "powerful": {
-        "model": os.getenv("LLM_MODEL_POWERFUL", "mimo-v2.5-pro"),
+        "model": os.getenv("LLM_MODEL_POWERFUL", _DEFAULT_CHAT_MODEL),
         "description": "高性能模型，适合复杂任务",
     },
 }
@@ -99,6 +99,8 @@ def _int_env(name: str, default: int) -> int:
 # 主 agent + 所有子 agent 的总用量。优先用 API 精确值，拿不到时用估算（流式）。
 # cached_tokens：命中上游 prompt 缓存的输入 token 数（若中转/上游支持自动前缀缓存则 >0）——
 # 用来**验证缓存到底有没有在自有中转生效**（OpenAI 兼容协议下缓存是自动的、无需 cache_control）。
+DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
+
 _USAGE = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cached_tokens": 0}
 
 # 按上下文（会话/回合）隔离的用量作用域：多会话服务端场景下，不同会话各记各的、互不串扰，
@@ -214,14 +216,14 @@ def _account(messages: List[Dict[str, str]], content: Optional[str], usage: Any 
 class LLMConfig(BaseModel):
     """LLM 配置"""
 
-    base_url: str = "https://relay.dinghappy.com/v1"
+    base_url: str = Field(default_factory=lambda: os.getenv("OPENAI_API_BASE", DEFAULT_OPENAI_BASE_URL))
     api_key: str = ""
     # 默认模型读 .env 的 DEFAULT_MODEL/OPENAI_MODEL（之前写死 gpt-4o-mini，令牌无权会 403）
     model: str = Field(default_factory=lambda: os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-4o-mini")
     temperature: float = 0.7
     max_tokens: int = 4096
     timeout: float = 120.0
-    # 中转站偶发 502/超时——SDK 默认重试 2 次，这里默认 3 且可经 OPENAI_MAX_RETRIES 调高。
+    # 上游 API 网关偶发 502/超时——SDK 默认重试 2 次，这里默认 3 且可经 OPENAI_MAX_RETRIES 调高。
     # 同时透传给 AsyncOpenAI（主路径）与 aiohttp 降级路径（原先零重试）。
     max_retries: int = Field(default_factory=lambda: _int_env("OPENAI_MAX_RETRIES", 3))
     retry_base_delay: float = 0.5      # 降级路径的退避基数（指数退避；测试可设 0 免真睡）
@@ -238,7 +240,7 @@ class LLMClient:
             self.config.api_key = os.getenv("OPENAI_API_KEY", "")
         if not self.config.base_url:
             self.config.base_url = os.getenv(
-                "OPENAI_API_BASE", "https://relay.dinghappy.com/v1"
+                "OPENAI_API_BASE", DEFAULT_OPENAI_BASE_URL
             )
 
         self._client: Optional[Any] = None  # 懒加载 AsyncOpenAI 单例
@@ -483,7 +485,7 @@ class LLMClient:
         """使用 aiohttp 发送请求（openai 库不可用时的降级方案）。
 
         对暂时性错误（_TRANSIENT_STATUS / 连接 / 超时）做指数退避重试，最多 max_retries 次——
-        原先此路径零重试，中转站一次 502 就让整轮对话直接报错。永久性错误（400/401/403/404）立刻抛。
+        原先此路径零重试，上游 API 网关一次 502 就让整轮对话直接报错。永久性错误（400/401/403/404）立刻抛。
         """
         import aiohttp
 
@@ -532,7 +534,7 @@ class LLMClient:
                   model: Optional[str] = None) -> bytes:
         """文本转语音：返回 WAV 字节。
 
-        中转站的 TTS 走 chat/completions——把要朗读的文本作为 **assistant 消息** 发给
+        兼容网关的 TTS 走 chat/completions——把要朗读的文本作为 **assistant 消息** 发给
         TTS 模型（默认 mimo-v2.5-tts，可用 TTS_MODEL 覆盖），音频在 message.audio.data（base64）。
         voice 可选（不同声音）。空文本或无音频返回会抛异常。
         """
@@ -594,7 +596,7 @@ def get_llm_client(model_tier: str = "balanced") -> LLMClient:
 
     model_info = MODELS.get(model_tier, MODELS["balanced"])
     config = LLMConfig(
-        base_url=os.getenv("OPENAI_API_BASE", "https://relay.dinghappy.com/v1"),
+        base_url=os.getenv("OPENAI_API_BASE", DEFAULT_OPENAI_BASE_URL),
         api_key=os.getenv("OPENAI_API_KEY", ""),
         model=model_info["model"],
     )

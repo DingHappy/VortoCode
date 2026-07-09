@@ -1,6 +1,6 @@
 """`vc doctor`——常驻化后的一键自检（b3 PR-6，plan-2026-07 D1 运维借鉴项）。
 
-常驻/attach 化之后，"用不了"大多是**管道问题**（serve 没起/凭证没配/中转站断了/gh 没登录），
+常驻/attach 化之后，"用不了"大多是**管道问题**（serve 没起/凭证没配/LLM 接口断了/gh 没登录），
 不是代码问题。doctor 把这些逐项查清、一屏给结论，省得逐个猜。
 
 每项检查独立 try/except（一项炸不拖全体）、网络项带短超时（不挂死）。
@@ -50,25 +50,26 @@ def _check_api_key() -> Check:
 
 
 async def _check_relay() -> Check:
-    """中转站连通：GET /models（带 key、短超时）。不烧 token，只验网络+鉴权。"""
+    """LLM 接口连通：GET /models（带 key、短超时）。不烧 token，只验网络+鉴权。"""
     import aiohttp
-    base = os.getenv("OPENAI_API_BASE", "https://relay.dinghappy.com/v1").rstrip("/")
+    from src.llm.client import DEFAULT_OPENAI_BASE_URL
+    base = os.getenv("OPENAI_API_BASE", DEFAULT_OPENAI_BASE_URL).rstrip("/")
     key = os.getenv("OPENAI_API_KEY", "").strip()
     if not key:
         return Check("relay", "warn", f"跳过（无 key）：{base}")
     try:
         # trust_env=True：吃 HTTP(S)_PROXY——用户经代理出网时（LLM SDK/httpx 默认吃），
-        # aiohttp 默认直连会误报"中转站不可达"（真机 doctor 首跑就踩了这个）。
+        # aiohttp 默认直连会误报"LLM 接口不可达"（真机 doctor 首跑就踩了这个）。
         async with aiohttp.ClientSession(trust_env=True) as s:
             async with s.get(f"{base}/models", headers={"Authorization": f"Bearer {key}"},
                              timeout=aiohttp.ClientTimeout(total=_TIMEOUT)) as r:
                 if r.status == 200:
-                    return Check("relay", "ok", f"中转站可达且鉴权通过：{base}")
+                    return Check("relay", "ok", f"LLM 接口可达且鉴权通过：{base}")
                 if r.status in (401, 403):
-                    return Check("relay", "fail", f"中转站可达但鉴权被拒（HTTP {r.status}）：{base}")
-                return Check("relay", "warn", f"中转站响应异常（HTTP {r.status}）：{base}")
+                    return Check("relay", "fail", f"LLM 接口可达但鉴权被拒（HTTP {r.status}）：{base}")
+                return Check("relay", "warn", f"LLM 接口响应异常（HTTP {r.status}）：{base}")
     except Exception as e:  # noqa: BLE001
-        return Check("relay", "fail", f"中转站不可达：{base}（{type(e).__name__}）")
+        return Check("relay", "fail", f"LLM 接口不可达：{base}（{type(e).__name__}）")
 
 
 async def _check_serve() -> Check:
