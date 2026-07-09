@@ -129,6 +129,25 @@ async def test_list_files_dir_filter_is_path_segment(tmp_path):
     assert "src2/b.py" not in grep_out
 
 
+@pytest.mark.asyncio
+async def test_read_tool_dir_filter_normalizes_dot_and_relative_segments(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "src").mkdir()
+    (repo / "src" / "a.py").write_text("x = 1\n", encoding="utf-8")
+
+    tools = _read(repo)
+    list_dot_src = await tools["list_files"].handler({"dir": "./src"})
+    list_parent_src = await tools["list_files"].handler({"dir": "src/../src"})
+    glob_dot = await tools["glob"].handler({"pattern": "*.py", "dir": "."})
+    grep_dot_src = await tools["grep"].handler({"pattern": "x", "dir": "./src"})
+
+    assert "src/a.py" in list_dot_src
+    assert "src/a.py" in list_parent_src
+    assert "src/a.py" in glob_dot
+    assert "src/a.py" in grep_dot_src
+
+
 # ---- document_symbols ----
 
 @pytest.mark.asyncio
