@@ -2,9 +2,19 @@
 
 通用多 Agent 软件开发框架，目标：**全栈 Web 项目自动化开发，人工只在"需求确认"和"最终合并"两个环节介入**。
 
+> Public preview / dogfooding project：项目仍在快速迭代，接口、命令和工作流可能调整。欢迎试用、反馈问题和提交小步 PR；生产环境暴露、可信凭证和自托管 runner 请按 [SECURITY.md](SECURITY.md) 的安全约定处理。
+
 ## 定位
 
 不是又一个 AutoGPT 玩具，也不是 MetaGPT 的换皮。目标是把"软件公司"这件事跑成一个**可重入、可审计、可干预**的工作流引擎，LLM 只是其中执行节点。
+
+## 产品形态方向
+
+VortoCode 后续会按同一 agent runtime 拆成三种入口，而不是分裂成三套实现：
+
+- **CLI 版**：面向开发者本机日常使用，保留 `vc tui` / `vc agent` / `vc server`，优先打磨速度、可审计、Git 工作流和本地项目上下文。
+- **Desktop 版**：面向本地常驻工作台，把会话、diff review、权限确认、artifact、项目记忆和后台任务做成可视化客户端，仍以本机工作区和本地权限为中心。
+- **Web 服务版**：面向团队/托管服务，提供类「龙虾」的浏览器工作台、多项目/多会话、共享 artifact、队列化任务和权限/账单/审计能力；底层仍走隔离 dev 流水线。
 
 ## 核心理念
 
@@ -42,7 +52,7 @@
 - **删除**：`delete_artifact` 工具（写·build·确认）/ `DELETE /api/artifacts/<id>` / 画廊删除按钮
 - **`@artifact:<id>` 注入**：对话里 `@artifact:<id>` 把某制品当前内容带给主 agent 迭代（"改一下 @artifact:xxx"）
 - **静态隔离 + 大小上限**：查看页 `iframe sandbox` + 限制性 **CSP（`default-src 'none'`，禁外联/SSRF）**；单页 ≤ **16 MiB**（`VORTOCODE_ARTIFACT_MAX_BYTES` 可调）——对齐 CC
-- **可分享 / 认证可见**：链接即可分享；设了 `AUTODEV_API_TOKEN` 时需带 `?token=`（仅认证者可见）。画廊 `/artifacts` 列全部；TUI `/artifacts` 命令列出
+- **可分享 / 认证可见**：链接即可分享；设了 `VORTOCODE_API_TOKEN` 时需要先登录或用 Authorization/X-API-Token 访问（token 不进 URL）。画廊 `/artifacts` 列全部；TUI `/artifacts` 命令列出
 - **人在关口**：发布/删除是写操作——TUI 弹确认，Web 端靠 build 模式门控
 - **落盘**：`.vortocode/artifacts/<id>/`（gitignored，运行时产物）；由 Web 服务器渲染，`VORTOCODE_WEB_BASE` 可改链接前缀
 
@@ -196,26 +206,30 @@ cp .env.example .env
 # 编辑 .env 文件，配置 LLM API 密钥等
 ```
 
-**LLM 配置（使用 One API 网关）：**
+**LLM 配置（最快路径：VortoCode Relay，OpenAI 兼容接口）：**
 
 ```bash
-# One API 网关地址
+# 默认使用 VortoCode Relay，提供国产大模型基础；只需要填你的 relay key
 OPENAI_API_BASE=https://relay.dinghappy.com/v1
-# 你的令牌（sk- 开头）
-OPENAI_API_KEY=sk-你的令牌
+DEFAULT_MODEL=mimo-v2.5
+OPENAI_API_KEY=your-vortocode-relay-key
+
+# 如果使用 OpenAI 官方接口，可改成：
+# OPENAI_API_BASE=https://api.openai.com/v1
+# DEFAULT_MODEL=gpt-4o-mini
 ```
 
-> `.env` 已被 `.gitignore` 忽略，切勿提交真实密钥。
+> `.env` 已被 `.gitignore` 忽略，切勿提交真实密钥。仓库不内置 key；实际调用和费用按你配置的 relay/API 账号计算。
 
 **安全相关（默认安全）：**
 
 ```bash
 # 设置后，所有 /api/* 与 /ws 强制鉴权（请求需带 Authorization: Bearer <token> 或 X-API-Token）
 # 不设置则仅本地放行；对外暴露务必设置
-AUTODEV_API_TOKEN=
+VORTOCODE_API_TOKEN=
 # 非隔离 sandbox/cloud_sandbox 的宿主机降级执行默认禁用，仅在可信环境置 1 开启
 # （/api/terminal/execute 已随路线 A 退役删除；agent 的 run_command 走确认门，不受此开关）
-AUTODEV_ENABLE_SHELL=
+VORTOCODE_ENABLE_SHELL=
 ```
 
 ### 3. 安装命令行（推荐）
@@ -238,7 +252,7 @@ vc self-fix --paths src/x.py         # 深审并外科修复指定文件
 # 交互式主 agent（终端全屏 TUI；需 pip install '.[tui]' 与 OPENAI_API_KEY）
 vc tui
 
-# Web 控制台（默认 127.0.0.1:8080；对外暴露务必设 AUTODEV_API_TOKEN）
+# Web 控制台（默认 127.0.0.1:8080；对外暴露务必设 VORTOCODE_API_TOKEN）
 vc server                            # 起服务后浏览器打开 /agent 即是网页版主 agent
 
 # 开发任务：主 agent 用隔离 dev 流水线实现（需配 API key）
@@ -246,7 +260,7 @@ vc agent -b "用 Python 写一个计算阶乘的函数及其单元测试"   # �
 vc analyze -t "创建一个 REST API"
 ```
 
-> 默认仅监听本地回环（127.0.0.1）。**对外暴露前务必设置 `AUTODEV_API_TOKEN`**，见下方「安全」。
+> 默认仅监听本地回环（127.0.0.1）。**对外暴露前务必设置 `VORTOCODE_API_TOKEN`**，见下方「安全」。
 
 ## 开发路线图
 

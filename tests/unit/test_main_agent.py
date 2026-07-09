@@ -13,9 +13,8 @@ from src.agents.main_agent import MainAgent, SkillRegistry, Tool, parse_tool_cal
 def _pin_default_model(monkeypatch):
     """把默认模型钉在 mimo-v2.5（项目 .env/.env.example 的真实默认，未知窗口）。
 
-    上下文预算测试假设默认模型窗口未知 → 保守回退 8000。本地靠 .env 的 DEFAULT_MODEL
-    生效，但 CI 检出时没有 .env（被 gitignore），LLMConfig 会回落到写死的 gpt-4o-mini
-    （前缀命中 → 窗口 128k → 预算 64k），这些断言就全崩。显式钉死，去掉对 .env 的隐式依赖。
+    上下文预算测试假设默认模型窗口未知 → 保守回退 8000。显式钉死能避免开发者
+    本地环境变量把默认模型改成已知大窗口模型，进而让这些断言失真。
     需要别的模型的用例自行 setenv 覆盖。"""
     monkeypatch.setenv("DEFAULT_MODEL", "mimo-v2.5")
 

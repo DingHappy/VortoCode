@@ -2,7 +2,7 @@
 
 设计：
 - Docker 可用 → 走 DockerSandbox（容器内执行，network 关闭），isolated=True。
-- 无 Docker：仅当 AUTODEV_ENABLE_SHELL=1（显式授权）时降级到宿主机执行；
+- 无 Docker：仅当 VORTOCODE_ENABLE_SHELL=1（兼容旧名 AUTODEV_ENABLE_SHELL）时降级到宿主机执行；
   否则 fail-closed 拒绝执行，避免"以为有隔离其实没有"的安全假象。
 - 用 exec + 参数数组，杜绝 shell 字符串拼接注入。
 """
@@ -83,7 +83,7 @@ async def run_code(code: str, language: str = "python", timeout: int = 30) -> Ru
 async def run_pytest(workspace: str, timeout: int = 120) -> RunResult:
     """在工作区运行 pytest。
 
-    隔离为 opt-in：设置了含 pytest 的镜像 AUTODEV_SANDBOX_IMAGE 且 Docker 可用时，
+    隔离为 opt-in：设置了含 pytest 的镜像 VORTOCODE_SANDBOX_IMAGE（兼容旧名 AUTODEV_SANDBOX_IMAGE）且 Docker 可用时，
     挂载工作区到容器内隔离执行（network 关闭，命令仅 pytest，无需联网）；
     否则宿主机执行——这是 dev 流程的内部受信执行（非未鉴权攻击面），不 fail-closed，
     以免在未配置测试镜像的常见环境下破坏开发闭环。

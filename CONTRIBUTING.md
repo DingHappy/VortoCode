@@ -13,6 +13,7 @@ cp .env.example .env         # 配置 LLM 网关密钥（详见 README）
 
 ```bash
 python -m pytest tests/ -q   # 跑全部测试，应全绿
+ruff check src tests         # Lint
 ```
 
 - **改动 Web 层 / 安全 / Agent 前后务必先跑测试。** `tests/integration/` 里有
@@ -31,8 +32,19 @@ ruff check src tests         # Lint
 ## 安全约定
 
 - 切勿提交 `.env` 或任何密钥（已被 `.gitignore` 忽略）。
+- 示例配置只能使用占位符或公共 API 域名，不要提交个人中转站、私有 webhook、
+  内网地址或真实账号标识。
 - 新增"执行命令/写文件/读文件"类能力时：命令执行走 `require_shell()` 闸，
   文件路径必须经 `resolve_within()` 限定在工作目录内（见 `src/web/auth.py`）。
+- 不要在公开 PR 中依赖 repository secrets；live/联网/烧 token 测试必须默认跳过。
+- 不要把来自 fork 或不可信作者的 PR 跑在带私有凭证的 self-hosted runner 上。
+
+## 公开协作范围
+
+- 优先欢迎 bug 修复、测试补充、文档澄清、TUI/Web 体验改进和小范围工具增强。
+- 大型架构调整、权限模型变化、自动执行策略、长期记忆策略请先开 issue/discussion
+  说明动机和安全边界。
+- PR 尽量保持单一主题；涉及行为变化时请在描述里写清楚验证命令和剩余风险。
 
 ## 提交
 

@@ -3,7 +3,16 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
   pull_request:
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+
+permissions:
+  contents: read
 
 # 取消同分支上仍在跑的旧 CI，省额度
 concurrency:
@@ -52,10 +61,12 @@ jobs:
       - name: Run tests (offline, deterministic)
         # 刻意不提供任何 API key / token：
         # 无 OPENAI_API_KEY → 角色 Agent 不会自动启用真实 LLM（保持离线）
-        # 无 AUTODEV_API_TOKEN / AUTODEV_ENABLE_SHELL → 安全默认值生效
+        # 无 VORTOCODE_API_TOKEN / VORTOCODE_ENABLE_SHELL → 安全默认值生效
         env:
           OPENAI_API_KEY: ""
-          AUTODEV_API_TOKEN: ""
+          VORTOCODE_API_TOKEN: ""
+          VORTOCODE_ENABLE_SHELL: ""
+          VORTOCODE_ENABLE_BROWSER: ""
           PYTHONUNBUFFERED: "1"
           SUITE: ${{ matrix.suite }}
         run: |
