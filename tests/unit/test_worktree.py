@@ -517,7 +517,7 @@ async def test_dev_auto_reports_independent_block_dropped_on_apply(monkeypatch, 
                 "failed": [{"msg": items[1][1], "error": "patch does not apply"}], "integration": None}
     monkeypatch.setattr(wt, "apply_diffs_to_branch", fake_apply)
 
-    def fake_verify(repo_root, branch, test_cmd, wid):
+    def fake_verify(repo_root, branch, test_cmd, wid, *a, **k):
         return {"ok": True, "output": "", "cmd": "pytest"}                 # 落地的那块集成绿
     monkeypatch.setattr(wt, "verify_branch", fake_verify)
 
@@ -672,7 +672,7 @@ async def test_dev_auto_independent_then_dependent_topo_then_verify(monkeypatch,
         return {"ok": True, "conclusion": "done", "output": ""}
     monkeypatch.setattr(wt, "run_dependent_on_branch", fake_dep)
     monkeypatch.setattr(wt, "verify_branch",
-                        lambda repo, br, tc, wid: {"ok": True, "output": "", "cmd": "pytest"})
+                        lambda repo, br, tc, wid, *a, **k: {"ok": True, "output": "", "cmd": "pytest"})
 
     tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_auto"]
     out = await tool.handler({"task": "做个大功能"})
@@ -701,7 +701,7 @@ async def test_dev_auto_reports_final_integration_failure(monkeypatch, tmp_path)
                                                           "applied": [m for _d, m in items],
                                                           "failed": [], "integration": None})
     monkeypatch.setattr(wt, "verify_branch",
-                        lambda repo, br, tc, wid: {"ok": False, "output": "FINAL_INTEG_RED", "cmd": "pytest"})
+                        lambda repo, br, tc, wid, *a, **k: {"ok": False, "output": "FINAL_INTEG_RED", "cmd": "pytest"})
 
     tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_auto"]
     out = await tool.handler({"task": "做个功能"})
@@ -839,7 +839,7 @@ async def test_dev_auto_dependent_self_repairs(monkeypatch, tmp_path):
             return {"ok": False, "conclusion": "c", "output": "DEP_FAILED_ONCE"}
         return {"ok": True, "conclusion": "c", "output": ""}
     monkeypatch.setattr(wt, "run_dependent_on_branch", flaky_dep)
-    monkeypatch.setattr(wt, "verify_branch", lambda repo, br, tc, wid: {"ok": True, "output": "", "cmd": "p"})
+    monkeypatch.setattr(wt, "verify_branch", lambda repo, br, tc, wid, *a, **k: {"ok": True, "output": "", "cmd": "p"})
 
     tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_auto"]
     out = await tool.handler({"task": "big"})
@@ -893,7 +893,7 @@ async def test_dev_auto_emits_progress_through_phases(monkeypatch, tmp_path):
     async def ok_dep(repo, wid, branch, desc, build, msg, test_cmd=None):
         return {"ok": True, "conclusion": "c", "output": ""}
     monkeypatch.setattr(wt, "run_dependent_on_branch", ok_dep)
-    monkeypatch.setattr(wt, "verify_branch", lambda repo, br, tc, wid: {"ok": True, "output": "", "cmd": "p"})
+    monkeypatch.setattr(wt, "verify_branch", lambda repo, br, tc, wid, *a, **k: {"ok": True, "output": "", "cmd": "p"})
 
     events = []
     tool = {t.name: t for t in build_dev_tools(str(tmp_path), on_progress=events.append)}["dev_auto"]

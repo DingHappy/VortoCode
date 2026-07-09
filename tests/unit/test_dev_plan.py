@@ -261,7 +261,7 @@ async def test_resume_skips_landed_reruns_unfinished(tmp_path, monkeypatch):
         raise AssertionError("resume 分支已存在时不应走 run_isolated_task")
     monkeypatch.setattr(wt, "run_isolated_task", no_isolated)
     monkeypatch.setattr(wt, "verify_branch",
-                        lambda repo, br, tc, wid: {"ok": True, "output": "", "cmd": "p"})
+                        lambda repo, br, tc, wid, *a, **k: {"ok": True, "output": "", "cmd": "p"})
 
     out = await _dev_tools(tmp_path)["dev_resume"].handler({"plan_id": plan.plan_id})
 
@@ -295,7 +295,7 @@ async def test_resume_all_landed_is_idempotent_only_reverifies(tmp_path, monkeyp
                         lambda *a, **k: (_ for _ in ()).throw(AssertionError("全 landed 不应再实现")))
     verify_calls = {"n": 0}
 
-    def track_verify(repo, br, tc, wid):
+    def track_verify(repo, br, tc, wid, *a, **k):
         verify_calls["n"] += 1
         return {"ok": True, "output": "", "cmd": "p"}
     monkeypatch.setattr(wt, "verify_branch", track_verify)
@@ -332,7 +332,7 @@ async def test_resume_honors_hand_edited_plan(tmp_path, monkeypatch):
         return {"ok": True, "conclusion": "c", "output": ""}
     monkeypatch.setattr(wt, "run_dependent_on_branch", track_dep)
     monkeypatch.setattr(wt, "verify_branch",
-                        lambda repo, br, tc, wid: {"ok": True, "output": "", "cmd": "p"})
+                        lambda repo, br, tc, wid, *a, **k: {"ok": True, "output": "", "cmd": "p"})
 
     await _dev_tools(tmp_path)["dev_resume"].handler({"plan_id": plan.plan_id})
     assert implemented == ["手改后的新描述"]                # 只跑改后留下的那一块、用新描述
@@ -372,7 +372,7 @@ async def test_dev_auto_persists_plan_and_reports_id(tmp_path, monkeypatch):
                                                           "applied": [m for _d, m in items],
                                                           "failed": [], "integration": None})
     monkeypatch.setattr(wt, "verify_branch",
-                        lambda repo, br, tc, wid: {"ok": True, "output": "", "cmd": "p"})
+                        lambda repo, br, tc, wid, *a, **k: {"ok": True, "output": "", "cmd": "p"})
 
     out = await _dev_tools(tmp_path)["dev_auto"].handler({"task": "做个事"})
     assert "plan_id=" in out and "dev_resume" in out
@@ -400,7 +400,7 @@ async def test_dev_auto_honors_pinned_plan_id(tmp_path, monkeypatch):
                                                           "applied": [m for _d, m in items],
                                                           "failed": [], "integration": None})
     monkeypatch.setattr(wt, "verify_branch",
-                        lambda repo, br, tc, wid: {"ok": True, "output": "", "cmd": "p"})
+                        lambda repo, br, tc, wid, *a, **k: {"ok": True, "output": "", "cmd": "p"})
 
     await _dev_tools(tmp_path)["dev_auto"].handler({"task": "做个事", "plan_id": "bg-task-xyz"})
     loaded = dp.load_plan(str(tmp_path), "bg-task-xyz")       # 按指定 id 精确取回本次计划
@@ -435,7 +435,7 @@ async def test_apply_whole_failure_never_marks_landed(tmp_path, monkeypatch):
                             "integration": None})
     verified = {"n": 0}
     monkeypatch.setattr(wt, "verify_branch",
-                        lambda repo, br, tc, wid: verified.__setitem__("n", verified["n"] + 1)
+                        lambda repo, br, tc, wid, *a, **k: verified.__setitem__("n", verified["n"] + 1)
                         or {"ok": True, "output": "", "cmd": "p"})
 
     out = await _dev_tools(tmp_path)["dev_auto"].handler({"task": "做两件事"})

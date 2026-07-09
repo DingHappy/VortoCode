@@ -349,15 +349,38 @@ def run_runtime_check(worktree, profile: dict, timeout: int = 180) -> dict:
     return {"ok": ok, "name": name, "cmd": target, "output": out[-4000:]}
 
 
+def _fold_runtime_verify(worktree, result: dict) -> dict:
+    """单测过后，按**目标分支自己**的 `.vortocode/verify.yaml`（从 worktree 读，不是主工作区！）跑
+    运行时验证并把结果并进 result。
+
+    - 从 worktree 读配置：这样本次分支新增/改的 verify.yaml 会按分支自己的配置执行（而非主工作区旧配置）。
+    - verify.yaml 解析失败 → **不静默跳过**：记一条失败的 runtime 项、整体判红（用户 opt-in 了就得让他修配置）。
+    - 有 auto profile → 逐条跑，任一红则整体红；没配 → result 原样返回（行为与不开运行时验证一致）。
+    """
+    from src.agents.verify_profiles import auto_verify_profiles
+    profiles, err = auto_verify_profiles(str(worktree))
+    if err:
+        result["runtime"] = [{"name": "verify.yaml", "ok": False,
+                              "cmd": ".vortocode/verify.yaml",
+                              "output": f".vortocode/verify.yaml 解析失败，无法执行运行时验证：{err}"}]
+        result["ok"] = False
+    elif profiles:
+        runtime = [run_runtime_check(worktree, prof) for prof in profiles]
+        result["runtime"] = runtime
+        if not all(rc.get("ok") for rc in runtime):
+            result["ok"] = False
+    return result
+
+
 def verify_branch(repo_root, branch: str, test_cmd: list, wid: str,
-                  runtime_profiles: Optional[list] = None) -> dict:
+                  runtime: bool = False) -> dict:
     """在临时 worktree 检出 branch 跑一遍测试做**最终集成验证**，返回 {ok, output, cmd}；清理 worktree。
 
     （dev_auto 把并行批 + 依赖接力都落到同一分支后，用它对整条分支做一次权威全量复验。）
 
-    给了 runtime_profiles（`.vortocode/verify.yaml` 里标 auto 的运行时验证）且**单测先过**，就在
-    同一 worktree 里再跑一遍运行时验证（"真能跑起来"）：结果并进 `result["runtime"]=[...]`，任一红
-    则整体 ok=False。单测就红则跳过运行时（省时，反正已判失败）。
+    runtime=True 且**单测先过**时，再按**目标分支自己**的 `.vortocode/verify.yaml` 里标 auto 的
+    profile 跑运行时验证（"真能跑起来"），结果并进 `result["runtime"]`、任一红/配置坏则整体 ok=False。
+    单测就红则跳过运行时（省时，反正已判失败）。
     """
     path = _worktrees_dir(repo_root) / wid
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -368,11 +391,8 @@ def verify_branch(repo_root, branch: str, test_cmd: list, wid: str,
         return {"ok": False, "output": "worktree add 失败: " + (add.stderr or "").strip()[:200], "cmd": ""}
     try:
         result = run_tests(path, test_cmd)
-        if result.get("ok") and runtime_profiles:
-            runtime = [run_runtime_check(path, prof) for prof in runtime_profiles]
-            result["runtime"] = runtime
-            if not all(rc.get("ok") for rc in runtime):
-                result["ok"] = False
+        if result.get("ok") and runtime:
+            result = _fold_runtime_verify(path, result)
         return result
     finally:
         remove_worktree(repo_root, path)
