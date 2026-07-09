@@ -1,4 +1,4 @@
-"""细粒度工具权限（.vortocode/permissions.yaml deny 规则）—— src/agents/permissions.py
+"""细粒度工具权限（.vortocode/permissions.yaml allow/deny 规则）—— src/agents/permissions.py
 + MainAgent._run_tool 硬拦。"""
 
 import pytest
@@ -26,6 +26,22 @@ def test_path_glob_deny():
     assert perm.denied("edit_file", {"path": "app/main.py"}) is None
 
 
+def test_allow_matches_primary_arg_without_denying():
+    perm = Permissions(allow=[("run_command", "pytest *"), ("write_file", "docs/*.md")])
+    assert perm.allowed("run_command", {"command": "pytest -q tests/unit"}) is not None
+    assert perm.allowed("run_command", {"command": "ruff check"}) is None
+    assert perm.allowed("write_file", {"path": "docs/OPS.md"}) is not None
+    assert perm.denied("run_command", {"command": "pytest -q tests/unit"}) is None
+
+
+def test_deny_and_allow_are_separate_channels():
+    perm = Permissions([("run_command", "rm *")], allow=[("run_command", "pytest *")])
+    assert perm.denied("run_command", {"command": "rm -rf build"}) is not None
+    assert perm.allowed("run_command", {"command": "rm -rf build"}) is None
+    assert perm.denied("run_command", {"command": "pytest -q"}) is None
+    assert perm.allowed("run_command", {"command": "pytest -q"}) is not None
+
+
 def test_no_rules_allows_everything():
     perm = Permissions([])
     assert perm.denied("run_command", {"command": "rm -rf /"}) is None
@@ -39,6 +55,9 @@ def test_load_missing_file_is_empty(tmp_path):
 def test_load_parses_yaml_forms(tmp_path):
     (tmp_path / ".vortocode").mkdir()
     (tmp_path / ".vortocode" / "permissions.yaml").write_text(
+        'allow:\n'
+        '  - "run_command: pytest *"\n'
+        '  - write_file: "docs/*.md"\n'
         'deny:\n'
         '  - web_fetch\n'                       # 字符串无冒号 → 整工具
         '  - "run_command: rm *"\n'             # 字符串 tool: glob
@@ -48,8 +67,56 @@ def test_load_parses_yaml_forms(tmp_path):
     assert ("web_fetch", None) in perm.rules
     assert ("run_command", "rm *") in perm.rules
     assert ("edit_file", "*/secrets/*") in perm.rules
+    assert ("run_command", "pytest *") in perm.allow_rules
+    assert ("write_file", "docs/*.md") in perm.allow_rules
     assert perm.denied("run_command", {"command": "rm -rf x"}) is not None
     assert perm.denied("web_fetch", {"url": "http://x"}) is not None
+    assert perm.allowed("run_command", {"command": "pytest -q"}) is not None
+    assert perm.allowed("write_file", {"path": "docs/OPS.md"}) is not None
+
+
+def test_load_profile_merges_selected_rules(tmp_path):
+    (tmp_path / ".vortocode").mkdir()
+    (tmp_path / ".vortocode" / "permissions.yaml").write_text(
+        'profile: dev\n'
+        'allow:\n'
+        '  - "run_command: pytest *"\n'
+        'deny:\n'
+        '  - web_fetch\n'
+        'profiles:\n'
+        '  dev:\n'
+        '    allow:\n'
+        '      - "run_command: ruff *"\n'
+        '      - write_file: "docs/*.md"\n'
+        '    deny:\n'
+        '      - edit_file: "*/secrets/*"\n',
+        encoding="utf-8")
+    perm = load_permissions(str(tmp_path))
+    assert perm.profile == "dev"
+    assert perm.profile_found is True
+    assert ("web_fetch", None) in perm.rules
+    assert ("edit_file", "*/secrets/*") in perm.rules
+    assert ("run_command", "pytest *") in perm.allow_rules
+    assert ("run_command", "ruff *") in perm.allow_rules
+    assert perm.allowed("write_file", {"path": "docs/ROADMAP.md"}) is not None
+
+
+def test_load_missing_profile_keeps_root_rules_only(tmp_path):
+    (tmp_path / ".vortocode").mkdir()
+    (tmp_path / ".vortocode" / "permissions.yaml").write_text(
+        'profile: missing\n'
+        'allow:\n'
+        '  - "run_command: pytest *"\n'
+        'profiles:\n'
+        '  dev:\n'
+        '    deny:\n'
+        '      - web_fetch\n',
+        encoding="utf-8")
+    perm = load_permissions(str(tmp_path))
+    assert perm.profile == "missing"
+    assert perm.profile_found is False
+    assert perm.allowed("run_command", {"command": "pytest -q"}) is not None
+    assert perm.denied("web_fetch", {"url": "https://example.com"}) is None
 
 
 def test_load_broken_yaml_safe(tmp_path):
