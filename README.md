@@ -198,16 +198,20 @@ cp .env.example .env
 # 编辑 .env 文件，配置 LLM API 密钥等
 ```
 
-**LLM 配置（OpenAI 兼容接口；可替换成自己的 One API 网关）：**
+**LLM 配置（最快路径：VortoCode Relay，OpenAI 兼容接口）：**
 
 ```bash
-# OpenAI 官方接口示例；如果使用 One API/中转网关，改成你的网关地址
-OPENAI_API_BASE=https://api.openai.com/v1
-# 你的令牌
-OPENAI_API_KEY=sk-your-api-key
+# 默认使用 VortoCode Relay，提供国产大模型基础；只需要填你的 relay key
+OPENAI_API_BASE=https://relay.dinghappy.com/v1
+DEFAULT_MODEL=mimo-v2.5
+OPENAI_API_KEY=your-vortocode-relay-key
+
+# 如果使用 OpenAI 官方接口，可改成：
+# OPENAI_API_BASE=https://api.openai.com/v1
+# DEFAULT_MODEL=gpt-4o-mini
 ```
 
-> `.env` 已被 `.gitignore` 忽略，切勿提交真实密钥。
+> `.env` 已被 `.gitignore` 忽略，切勿提交真实密钥。仓库不内置 key；实际调用和费用按你配置的 relay/API 账号计算。
 
 **安全相关（默认安全）：**
 

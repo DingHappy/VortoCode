@@ -8,8 +8,10 @@ external traffic.
 - `.env` is ignored and not tracked.
 - `.env.example` contains placeholders only.
 - README examples use public endpoints or explicit user-owned gateway wording.
-- No real API keys, webhook URLs with secrets, bot tokens, private hostnames, or
-  personal relay domains are present in tracked files.
+- If the default relay endpoint is enabled, it is an intentional public
+  OpenAI-compatible service and still requires the user's own API key.
+- No real API keys, webhook URLs with secrets, bot tokens, or private hostnames
+  are present in tracked files.
 
 Suggested local checks:
 
