@@ -2595,6 +2595,37 @@ async def test_cmd_verify_profile_lists_and_runs_project_profile(tmp_path, monke
         assert "scan ok" in "\n".join(app.transcript)
 
 
+@pytest.mark.asyncio
+async def test_cmd_verify_serve_profile_runs_full_runtime_check(tmp_path, monkeypatch):
+    """serve+check profile 走完整运行时验证（起服务→探活），不能只跑 check（否则误红/误打外部服务）。"""
+    import src.agents.worktree as wt
+
+    (tmp_path / ".vortocode").mkdir()
+    (tmp_path / ".vortocode" / "verify.yaml").write_text(
+        "profiles:\n"
+        "  web:\n"
+        "    serve: npm run dev\n"
+        "    check: curl -sf http://localhost:3000\n",
+        encoding="utf-8",
+    )
+    captured = {}
+
+    def fake_runtime_check(repo_root, profile, timeout=180):
+        captured["profile"] = profile
+        return {"ok": True, "name": profile.get("name"), "cmd": "serve+check", "output": "up"}
+
+    monkeypatch.setattr(wt, "run_runtime_check", fake_runtime_check)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/verify web")
+        assert await _wait_inline_confirm(app, pilot)
+        assert "serve: npm run dev" in str(app._confirm_message)     # 确认里展示 serve（起服务）
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "runtime 验证通过")
+    assert captured["profile"]["serve"] == "npm run dev"             # 真走了完整运行时验证
+    assert captured["profile"]["name"] == "web"
+
+
 def test_cmd_verify_run_rejects_dangerous_command(tmp_path):
     app = VortoCodeTUI(repo_root=str(tmp_path))
     emitted = []

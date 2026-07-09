@@ -115,21 +115,25 @@ def load_verify_profiles(repo_root: str) -> dict:
     return {"ok": True, "profiles": profiles, "path": str(path)}
 
 
-def auto_verify_profiles(repo_root: str) -> list[dict]:
-    """自主流水线（dev_auto 集成验证）该跑的运行时验证 profile —— **仅** `.vortocode/verify.yaml`
-    里显式标了 `auto: true` 的。内置 profile 永不自动跑（它们是给交互 `/verify` 用的）。
+def auto_verify_profiles(repo_root: str) -> "tuple[list[dict], str]":
+    """自主流水线（dev_auto 集成验证）该跑的运行时验证 profile，返回 (profiles, error)。
 
-    保守 opt-in：没配 auto профиль时返回 []，dev_auto 行为与今天完全一致（只跑单测）。每条附上 name。
+    **仅** `.vortocode/verify.yaml` 里显式标了 `auto: true` 的项目 profile 入选；内置 profile 永不
+    自动跑（它们是给交互 `/verify` 用的）。每条附上 name。
+
+    - 没配 auto profile → ([], "")，dev_auto 只跑单测（行为与今天一致）。
+    - verify.yaml **存在但解析失败** → ([], "<错误>")：调用方**必须据此判集成失败**，绝不能当成
+      "没配置"而静默降级——用户明明 opt-in 了运行时验证，配置坏了要显式报红让他修，而不是偷偷跳过。
     """
     loaded = load_verify_profiles(repo_root)
     if not loaded.get("ok"):
-        return []
+        return [], str(loaded.get("error") or "verify.yaml 解析失败")
     out: list[dict] = []
     for name in sorted(loaded.get("profiles") or {}):
         prof = (loaded["profiles"] or {}).get(name) or {}
         if prof.get("auto") and prof.get("source") == "project":
             out.append({**prof, "name": name})
-    return out
+    return out, ""
 
 
 def format_verify_profiles(result: dict) -> str:

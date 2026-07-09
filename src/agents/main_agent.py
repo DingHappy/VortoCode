@@ -2088,7 +2088,6 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         import uuid
         from src.agents import dev_plan as _dp
         from src.agents.decompose import topo_order
-        from src.agents.verify_profiles import auto_verify_profiles
         from src.agents.worktree import apply_diffs_to_branch, ensure_branch, verify_branch
 
         def _fmt_runtime(integ: dict) -> str:
@@ -2209,13 +2208,12 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             dp.status = "failed"
             _save()
             return "\n".join(out) + "\n\n没有任何子任务落地（都没过自测/或落分支时相互冲突被丢）；建议拆细或用 dev_isolated 逐个做。"
-        runtime_profiles = auto_verify_profiles(repo_root)      # 仅 verify.yaml 里标 auto:true 的（否则 []）
-        rt_note = f" + {len(runtime_profiles)} 运行时验证" if runtime_profiles else ""
-        _progress(f"🔍 对整条分支 {branch}（{landed_ind} 独立 + {dep_done} 依赖）跑最终集成测试{rt_note}中…")
-        # 没配 auto 运行时验证时不传第 5 参 → 与今天完全一致（只跑单测）；配了才附上。
-        extra = (runtime_profiles,) if runtime_profiles else ()
+        _progress(f"🔍 对整条分支 {branch}（{landed_ind} 独立 + {dep_done} 依赖）跑最终集成测试"
+                  f"（含运行时验证，如分支配了 .vortocode/verify.yaml）中…")
+        # runtime=True：verify_branch 会在**目标分支的 worktree 内**读 verify.yaml 决定跑不跑运行时验证
+        # ——从分支自己的配置读（本次改动的 verify.yaml 生效），坏配置判红、没配则只跑单测。
         integ = await asyncio.to_thread(
-            verify_branch, repo_root, branch, test_cmd, "wt-verify-" + uuid.uuid4().hex[:8], *extra)
+            verify_branch, repo_root, branch, test_cmd, "wt-verify-" + uuid.uuid4().hex[:8], True)
         dp.integration = integ
         if integ["ok"]:
             dp.status = "integrated"
