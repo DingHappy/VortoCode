@@ -279,6 +279,25 @@ async def test_sessions_picker_resumes_selected(tmp_path):
         assert await _wait_for(app, pilot, "历史XYZ")       # 内容已回放
 
 
+@pytest.mark.asyncio
+async def test_sessions_search_finds_message_and_resumes(tmp_path):
+    """/sessions search 跨历史消息搜索，并能从结果选择器恢复会话。"""
+    from src.memory.session_store import SessionStore
+    db = str(tmp_path / ".vortocode" / "sessions.db")
+    store = SessionStore(db)
+    sid = store.create_session("需求讨论")
+    store.add_message(sid, "user", "这里有一个 UNIQUE_SEARCH_TOKEN 需要继续", {"markup": False})
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/sessions search UNIQUE_SEARCH_TOKEN")
+        assert await _wait_modal(app, pilot)
+        await pilot.press("enter")
+
+        assert await _wait_for(app, pilot, "UNIQUE_SEARCH_TOKEN")
+        assert app.session_id == sid
+
+
 def test_sessions_rename_and_unknown(tmp_path):
     from src.memory.session_store import SessionStore
 
@@ -1311,6 +1330,25 @@ def test_cmd_hooks_empty_and_configured(tmp_path):
     assert any("fmt" in c and "edit_file" in c for c in chromed)
 
 
+def test_cmd_hooks_init_and_test_matcher(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted, chromed = [], []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda m, *a, **k: chromed.append(m)
+
+    app._cmd_hooks("init")
+
+    cfg = tmp_path / ".vortocode" / "hooks.yaml"
+    assert cfg.is_file()
+    assert any("已创建 hooks 模板" in c for c in chromed)
+
+    app._cmd_hooks("test post_tool_use write_file")
+    assert "命中: sample-tool-hook" in emitted[-1]
+
+    app._cmd_hooks("test post_tool_use read_file")
+    assert "sample-tool-hook(matcher)" in emitted[-1]
+
+
 def test_cmd_permissions_empty_and_configured(tmp_path):
     app = VortoCodeTUI(repo_root=str(tmp_path))
     emitted = []
@@ -1515,6 +1553,26 @@ def test_cmd_commands_reload(tmp_path):
     _write_cmd(tmp_path, "later", "晚加的命令")             # 之后新增
     app._cmd_commands("reload")                            # 重扫
     assert "later" in app._user_commands()
+
+
+def test_cmd_commands_init_and_preview(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    emitted, chromed = [], []
+    app._emit = lambda m, *a, **k: emitted.append(m)
+    app._chrome = lambda m, *a, **k: chromed.append(m)
+
+    app._cmd_commands("init inspect")
+
+    path = tmp_path / ".vortocode" / "commands" / "inspect.md"
+    assert path.is_file()
+    assert any("已创建自定义命令模板" in c for c in chromed)
+
+    app._cmd_commands("preview inspect src/app.py")
+    assert "预览 /inspect" in emitted[-1]
+    assert "src/app.py" in emitted[-1]
+
+    app._cmd_commands("init inspect")
+    assert "已存在" in emitted[-1]
 
 
 def test_expand_at_files(tmp_path):
