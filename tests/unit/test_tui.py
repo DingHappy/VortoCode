@@ -201,7 +201,7 @@ async def test_statusbar_shows_context_and_tracks_mode():
         assert "📁" in app._sb_last                    # 仓库名
         assert "🧠" in app._sb_last                    # 模型
         assert "plan" in app._sb_last                  # 当前模式
-        from src.llm.client import LLMConfig          # 显示的模型须与客户端真实模型同源（非写死 gpt-4o-mini）
+        from src.llm.client import LLMConfig          # 显示的模型须与客户端真实模型同源（非写死）
         assert LLMConfig().model in app._sb_last
 
         await _submit(app, pilot, "/mode")             # 切模式 → 状态栏跟着变
