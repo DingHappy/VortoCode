@@ -1,5 +1,41 @@
 # 开发路线图
 
+> 2026-07 更新：早期阶段规划保留为历史参考；当前产品方向是把同一个 VortoCode agent runtime
+> 拆成 **CLI 版、Desktop 版、Web 服务版** 三种入口，避免三套实现各自分叉。
+
+## 产品版本路线
+
+### CLI 版（开发者本机入口）
+
+定位：最快可用、最贴近 Git 工作流的本机开发工具。
+
+- `vc tui` / `vc agent` / `vc server` 继续作为核心入口
+- plan/build 权限门、写盘确认、工具审计、token/context 使用量保持一等能力
+- 默认接入 VortoCode Relay + 国产基础模型，用户填 key 后即可跑；同时保留 OpenAI 兼容网关替换能力
+- 优先打磨 session resume、diff review、PR/branch 自动化、slash commands、project memory
+
+### Desktop 版（本地常驻工作台）
+
+定位：把 CLI 能力变成可视化、本地优先的桌面协作工作台。
+
+- 会话列表、摘要、恢复、跨项目切换
+- diff review、hunk 级 accept/reject、权限确认、工具审计可视化
+- artifact/gallery、项目记忆、后台任务、通知中心
+- 本机工作区和用户权限仍是边界，不默认上传代码
+
+### Web 服务版（团队/托管入口）
+
+定位：类「龙虾」的浏览器服务形态，适合团队共享和托管运行。
+
+- 多项目、多会话、多用户队列和权限分层
+- 共享 artifact、PR 走查、团队审计、用量/账单可观测
+- runtime verify、隔离 worktree、沙箱 runner 和 runner 池
+- 面向私有部署与托管服务两种形态
+
+---
+
+## 历史阶段规划
+
 按"能跑 → 能用 → 好用"三阶段推进,每个阶段必须有可演示成果。
 
 ## Phase 0:技术验证(1~2 周)
@@ -67,7 +103,7 @@
 - ❌ 框架自我修改代码(自我进化级别的自动化太不稳定)
 - ❌ 通用 agent 框架(只服务"全栈 Web 开发"这一垂直场景)
 - ❌ 自己训模型 / fine-tune(全部用通用模型 + prompt 工程)
-- ❌ 移动端 / 桌面端项目支持
+- ❌ 移动端 / 桌面端项目生成支持（这里指不把 VortoCode 扩成通用桌面应用生成器；VortoCode 自身的 Desktop 客户端属于产品入口）
 - ❌ 替代人类架构师做核心系统设计(只做 CRUD 级 Web)
 
 ---
