@@ -318,6 +318,44 @@ def test_sessions_rename_and_unknown(tmp_path):
     assert "没有会话 missing" in emitted[-1]
 
 
+def test_resume_context_shows_health_and_session_audit(tmp_path):
+    import subprocess
+    from src.memory.session_store import SessionStore
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "dirty.py").write_text("x = 1\n", encoding="utf-8")
+    store = SessionStore(str(tmp_path / ".vortocode" / "sessions.db"))
+    sid = store.create_session("恢复测试")
+    store.update_session(sid, metadata=json.dumps({
+        "cwd": str(tmp_path.resolve()),
+        "mode": "build",
+        "branch": "old-branch",
+        "dirty": False,
+        "last_user": "继续修 CI",
+        "last_reply": "上次已经定位到 verify 失败",
+        "context": {"pct": 42, "policy": "preserve", "history_messages": 12},
+    }, ensure_ascii=False))
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    app.session_id = sid
+    app._audit_event("verify", {"ok": False, "cmd": "pytest -q tests/unit/test_x.py"})
+    app.session_id = "other-session"
+    app._audit_event("commit", {"sha": "deadbeef1234", "message": "other"})
+    app.session_id = sid
+
+    text = app._resume_context_text(store.get_session(sid))
+
+    assert "工作目录:" in text
+    assert "上次状态: build · old-branch" in text
+    assert "当前状态:" in text
+    assert "分支已变化" in text
+    assert "当前工作区已有未提交改动" in text
+    assert "最后用户: 继续修 CI" in text
+    assert "上下文: 42% · preserve · 12 messages" in text
+    assert "verify ✗: pytest -q tests/unit/test_x.py" in text
+    assert "deadbeef" not in text
+
+
 @pytest.mark.asyncio
 async def test_sessions_delete_confirm_removes_session(tmp_path):
     from src.memory.session_store import SessionStore

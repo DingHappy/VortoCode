@@ -807,6 +807,10 @@ class VortoCodeTUI(App):
             except Exception:  # noqa: BLE001
                 md = {}
             md["summary"] = self._summary_text(summary, 110)
+            try:
+                md["cwd"] = str(Path(self.repo_root).resolve())
+            except Exception:  # noqa: BLE001
+                md["cwd"] = str(self.repo_root)
             if self._session_last_user:
                 md["last_user"] = self._session_last_user
             if "回复：" in summary:
@@ -853,16 +857,98 @@ class VortoCodeTUI(App):
         suffix = f" — {summary}" if summary else ""
         return f"{name}{meta}{suffix}"
 
+    def _current_git_resume_hint(self, md: dict) -> str:
+        import subprocess
+        try:
+            r = subprocess.run(["git", "-C", str(self.repo_root), "status", "--porcelain=v1", "--branch"],
+                               capture_output=True, text=True, timeout=3)
+        except Exception:  # noqa: BLE001
+            return ""
+        if r.returncode != 0:
+            return ""
+        lines = r.stdout.splitlines()
+        branch = ""
+        if lines and lines[0].startswith("## "):
+            head = lines[0][3:]
+            if head.startswith("No commits yet on "):
+                branch = head[len("No commits yet on "):].strip()
+            elif head.startswith("HEAD (no branch)"):
+                branch = "HEAD"
+            else:
+                branch = head.split("...", 1)[0].split(" ", 1)[0]
+        dirty = any(not ln.startswith("## ") for ln in lines)
+        if not branch and not dirty:
+            return ""
+        bits = [f"当前状态: {branch or '?'}{'*' if dirty else ''}"]
+        last_branch = str(md.get("branch") or "")
+        if last_branch and branch and last_branch != branch:
+            bits.append(f"分支已变化: 上次 {last_branch} → 当前 {branch}")
+        if dirty and not md.get("dirty"):
+            bits.append("当前工作区已有未提交改动")
+        return "  " + "；".join(bits)
+
+    def _audit_resume_line(self, rec: dict) -> str:
+        event = str(rec.get("event") or "")
+        data = rec.get("data") if isinstance(rec.get("data"), dict) else {}
+        mark = "✓" if data.get("ok") else "✗"
+        if event == "verify":
+            return f"{rec.get('ts', '')} verify {mark}: {self._summary_text(data.get('cmd') or '', 80)}"
+        if event == "verify_runtime":
+            name = data.get("name") or "runtime"
+            cmd = data.get("cmd") or data.get("check") or ""
+            return f"{rec.get('ts', '')} runtime {mark} {name}: {self._summary_text(cmd, 70)}"
+        if event == "commit":
+            sha = str(data.get("sha") or "")[:8]
+            msg = self._summary_text(data.get("message") or "", 70)
+            return f"{rec.get('ts', '')} commit {sha}: {msg}".rstrip()
+        if event == "open_pr":
+            url = data.get("url") or data.get("branch") or ""
+            return f"{rec.get('ts', '')} open_pr: {self._summary_text(url, 80)}"
+        if event == "compact":
+            return f"{rec.get('ts', '')} compact: {data.get('before_messages', '?')}→{data.get('after_messages', '?')} messages"
+        tool = str(rec.get("tool") or "")
+        if tool:
+            return f"{rec.get('ts', '')} tool {tool}: result {rec.get('result_len', 0)} chars"
+        return self._summary_text(json.dumps(rec, ensure_ascii=False), 100)
+
+    def _recent_session_audit_lines(self, session_id: str, limit: int = 3) -> list[str]:
+        p = Path(self.repo_root) / ".vortocode" / "audit.log"
+        if not session_id or not p.is_file():
+            return []
+        try:
+            raw_lines = p.read_text(encoding="utf-8", errors="ignore").splitlines()
+        except Exception:  # noqa: BLE001
+            return []
+        out: list[str] = []
+        for line in reversed(raw_lines[-500:]):
+            try:
+                rec = json.loads(line)
+            except Exception:  # noqa: BLE001
+                continue
+            if not isinstance(rec, dict) or rec.get("session") != session_id:
+                continue
+            if not (rec.get("event") or rec.get("tool")):
+                continue
+            out.append(self._audit_resume_line(rec))
+            if len(out) >= limit:
+                break
+        return list(reversed(out))
+
     def _resume_context_text(self, row: dict | None) -> str:
         md = self._session_metadata(row)
         lines = ["↻ 已恢复会话"]
         if row:
             lines.append(f"  session: {row.get('name') or row.get('id')} ({row.get('id')})")
+        if md.get("cwd"):
+            lines.append(f"  工作目录: {md['cwd']}")
         if md.get("mode") or md.get("branch"):
             mode = md.get("mode") or "?"
             branch = md.get("branch") or "?"
             dirty = "*" if md.get("dirty") else ""
             lines.append(f"  上次状态: {mode} · {branch}{dirty}")
+        hint = self._current_git_resume_hint(md)
+        if hint:
+            lines.append(hint)
         if md.get("last_user"):
             lines.append(f"  最后用户: {md['last_user']}")
         if md.get("last_reply"):
@@ -873,6 +959,11 @@ class VortoCodeTUI(App):
         if ctx:
             lines.append(f"  上下文: {ctx.get('pct', 0)}% · {ctx.get('policy') or 'unknown'}"
                          f" · {ctx.get('history_messages', 0)} messages")
+        if row:
+            audit_lines = self._recent_session_audit_lines(str(row.get("id") or ""))
+            if audit_lines:
+                lines.append("  最近操作:")
+                lines.extend(f"    - {line}" for line in audit_lines)
         return "\n".join(lines)
 
     def _sync_subtitle(self) -> None:
@@ -2657,6 +2748,13 @@ class VortoCodeTUI(App):
             from src.agents.worktree import run_tests
             res = await asyncio.to_thread(run_tests, self.repo_root, cmd)
             ok = bool(res.get("ok"))
+            self._audit_event("verify", {
+                "ok": ok,
+                "cmd": res.get("cmd") or cmd_text,
+                "changed": changed,
+                "cached": cached,
+                "note": note,
+            })
             status = "验证通过 ✓" if ok else "验证失败 ✗"
             color = self._tc("text-success", "#7fce9a") if ok else self._tc("text-error", "#f08a8a")
             self._chrome(f"[{color}]{status}[/][dim]（{res.get('cmd') or cmd_text}）[/dim]")
@@ -2712,6 +2810,12 @@ class VortoCodeTUI(App):
             from src.agents.worktree import run_runtime_check
             res = await asyncio.to_thread(run_runtime_check, self.repo_root, {**profile, "name": name})
             ok = bool(res.get("ok"))
+            self._audit_event("verify_runtime", {
+                "ok": ok,
+                "name": name,
+                "serve": serve,
+                "cmd": res.get("cmd") or check,
+            })
             status = "runtime 验证通过 ✓" if ok else "runtime 验证失败 ✗"
             color = self._tc("text-success", "#7fce9a") if ok else self._tc("text-error", "#f08a8a")
             self._chrome(f"[{color}]{status}[/][dim]（{name}）[/dim]")
@@ -2743,6 +2847,11 @@ class VortoCodeTUI(App):
         from src.agents.shell import run_command
         res = await asyncio.to_thread(run_command, self.repo_root, cmd)
         ok = bool(res.get("ok"))
+        self._audit_event("verify", {
+            "ok": ok,
+            "cmd": cmd,
+            "label": label,
+        })
         status = "runtime 验证通过 ✓" if ok else "runtime 验证失败 ✗"
         color = self._tc("text-success", "#7fce9a") if ok else self._tc("text-error", "#f08a8a")
         self._chrome(f"[{color}]{status}[/][dim]（{cmd}）[/dim]")
@@ -4930,6 +5039,7 @@ class VortoCodeTUI(App):
             p.parent.mkdir(parents=True, exist_ok=True)
             rec = {
                 "ts": datetime.now().isoformat(timespec="seconds"),
+                "session": self.session_id,
                 "mode": self.mode,
                 "tool": name,
                 "args": {k: str(v)[:120] for k, v in (args or {}).items()},
@@ -4952,6 +5062,7 @@ class VortoCodeTUI(App):
             p.parent.mkdir(parents=True, exist_ok=True)
             rec = {
                 "ts": datetime.now().isoformat(timespec="seconds"),
+                "session": self.session_id,
                 "mode": self.mode,
                 "event": event,
                 "data": data or {},
