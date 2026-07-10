@@ -2696,7 +2696,9 @@ async def test_cmd_verify_run_confirms_and_runs_runtime_command(tmp_path, monkey
 
     def fake_run_command(repo_root, cmd):
         ran.update({"repo_root": repo_root, "cmd": cmd})
-        return {"ok": True, "code": 0, "output": "smoke ok"}
+        return {"ok": True, "code": 0, "output": "smoke ok",
+                "warning": "⚠ explicit sandbox fallback",
+                "sandbox": {"policy": "auto", "fallback": True}}
 
     monkeypatch.setattr(shell, "run_command", fake_run_command)
     app = VortoCodeTUI(repo_root=str(tmp_path))
@@ -2704,10 +2706,12 @@ async def test_cmd_verify_run_confirms_and_runs_runtime_command(tmp_path, monkey
         await _submit(app, pilot, "/verify run python -m smoke --fast")
         assert await _wait_inline_confirm(app, pilot)
         assert app._confirm_scope == "commands"
+        assert "显式关闭" in str(app._confirm_message)
         await pilot.press("y")
         assert await _wait_for(app, pilot, "runtime 验证通过")
         assert ran["cmd"] == "python -m smoke --fast"
-        assert "smoke ok" in "\n".join(app.transcript)
+        transcript = "\n".join(app.transcript)
+        assert "smoke ok" in transcript and "explicit sandbox fallback" in transcript
 
 
 @pytest.mark.asyncio

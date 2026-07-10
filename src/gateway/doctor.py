@@ -118,6 +118,17 @@ def _check_permissions(cwd: str) -> Check:
     return Check("permissions", "ok", "permissions.yaml 可解析")
 
 
+def _check_sandbox() -> Check:
+    """Report whether unattended/generated-code execution can be isolated."""
+    from src.agents.sandbox import resolve_sandbox
+    decision = resolve_sandbox(require_isolation=True)
+    if decision.isolated:
+        return Check("sandbox", "ok", decision.reason)
+    if decision.allowed:  # only explicit off may allow an unattended host run
+        return Check("sandbox", "warn", decision.reason)
+    return Check("sandbox", "fail", decision.reason)
+
+
 def _check_gh() -> Check:
     import subprocess
     if not shutil.which("gh"):
@@ -148,6 +159,7 @@ async def run_checks(cwd: str) -> List[Check]:
         ("api-key", _check_api_key),
         ("relay", _check_relay),
         ("serve", _check_serve),
+        ("sandbox", _check_sandbox),
         ("permissions", lambda: _check_permissions(cwd)),
         ("gh", _check_gh),
         ("im", _check_im),

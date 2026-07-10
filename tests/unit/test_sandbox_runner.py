@@ -29,6 +29,7 @@ async def test_uses_docker_when_available(monkeypatch):
     assert r.success is True
     assert r.runtime == "docker"
     assert r.isolated is True
+    assert r.sandbox["backend"] == "docker" and r.sandbox["isolated"] is True
 
 
 @pytest.mark.asyncio
@@ -77,6 +78,7 @@ async def test_run_pytest_uses_docker_when_image_configured(monkeypatch, tmp_pat
     r = await runner.run_pytest(str(tmp_path))
     assert r.runtime == "docker"
     assert r.isolated is True
+    assert r.sandbox["backend"] == "docker" and r.sandbox["isolated"] is True
     argv = captured["argv"]
     assert "docker" in argv and "run" in argv            # 走容器
     assert "--network" in argv and "none" in argv          # 断网
@@ -86,11 +88,45 @@ async def test_run_pytest_uses_docker_when_image_configured(monkeypatch, tmp_pat
 
 @pytest.mark.asyncio
 async def test_run_pytest_host_when_no_image(monkeypatch, tmp_path):
-    # 未配置镜像 → 即使 Docker 可用也走宿主机（不破坏默认开发流程）
+    # 测试套件显式 VORTOCODE_SANDBOX=off → 可信 fixture 可走宿主机。
     monkeypatch.delenv("VORTOCODE_SANDBOX_IMAGE", raising=False)
+    monkeypatch.setenv("VORTOCODE_SANDBOX", "off")
     monkeypatch.setattr(runner, "docker_available", lambda: True)
     (tmp_path / "test_x.py").write_text("def test_ok():\n    assert 1 + 1 == 2\n")
 
     r = await runner.run_pytest(str(tmp_path), timeout=60)
     assert r.runtime == "host"
     assert r.isolated is False
+
+
+@pytest.mark.asyncio
+async def test_run_pytest_fails_closed_without_os_sandbox(monkeypatch, tmp_path):
+    from src.agents import sandbox as sb
+    monkeypatch.delenv("VORTOCODE_SANDBOX_IMAGE", raising=False)
+    monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
+    monkeypatch.setattr(runner, "docker_available", lambda: False)
+    monkeypatch.setattr(sb, "sandbox_backend", lambda: "")
+
+    r = await runner.run_pytest(str(tmp_path), timeout=5)
+    assert not r.success and r.runtime == "none" and not r.isolated
+    assert "无人值守" in r.error
+
+
+@pytest.mark.asyncio
+async def test_run_pytest_uses_available_os_sandbox(monkeypatch, tmp_path):
+    from src.agents import sandbox as sb
+    monkeypatch.delenv("VORTOCODE_SANDBOX_IMAGE", raising=False)
+    monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
+    monkeypatch.setattr(runner, "docker_available", lambda: False)
+    monkeypatch.setattr(sb, "sandbox_backend", lambda: "bubblewrap")
+    captured = {}
+
+    async def fake_exec(argv, timeout, runtime, isolated, cwd=None):
+        captured.update(argv=argv, timeout=timeout, runtime=runtime,
+                        isolated=isolated, cwd=cwd)
+        return runner.RunResult(success=True, runtime=runtime, isolated=isolated)
+
+    monkeypatch.setattr(runner, "_exec_argv", fake_exec)
+    r = await runner.run_pytest(str(tmp_path), timeout=5)
+    assert r.success and r.runtime == "bubblewrap" and r.isolated
+    assert captured["argv"][0] == "bwrap" and captured["cwd"] == str(tmp_path)
