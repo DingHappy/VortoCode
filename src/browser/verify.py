@@ -68,6 +68,7 @@ def _base_result(config: dict, elapsed: float = 0.0) -> dict:
         "title": "",
         "screenshot_path": "",
         "console_errors": [],
+        "transient_console_errors": [],
         "page_errors": [],
         "blocked_requests": [],
         "elapsed_seconds": round(max(0.0, elapsed), 3),
@@ -142,6 +143,7 @@ def _run_with_playwright(playwright, config: dict, screenshot_path: Path,
     nav_error = response_error = final_url_error = screenshot_error = ""
     navigated = False
     console_errors: list[str] = result["console_errors"]
+    transient_console_errors: list[str] = result["transient_console_errors"]
     page_errors: list[str] = result["page_errors"]
     blocked: list[dict] = result["blocked_requests"]
     try:
@@ -164,6 +166,7 @@ def _run_with_playwright(playwright, config: dict, screenshot_path: Path,
         while time.monotonic() < deadline:
             remaining = max(0.05, deadline - time.monotonic())
             nav_error = response_error = ""
+            console_start = len(console_errors)
             try:
                 response = page.goto(
                     url,
@@ -177,6 +180,13 @@ def _run_with_playwright(playwright, config: dict, screenshot_path: Path,
                     break
             except Exception as exc:  # noqa: BLE001 - Playwright error classes are optional
                 nav_error = str(exc)
+            # A failed navigation is only a readiness attempt. Chromium reports
+            # main-document 4xx/5xx responses as console.error, so carrying that
+            # message into a later successful attempt would make the retry
+            # vacuously red. Preserve it as transient evidence, while only the
+            # successful attempt's console decides fail_on_console_error.
+            transient_console_errors.extend(console_errors[console_start:])
+            del console_errors[console_start:]
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
@@ -244,6 +254,12 @@ def _run_with_playwright(playwright, config: dict, screenshot_path: Path,
     return result
 
 
+def _load_sync_playwright():
+    """Load the optional Playwright entrypoint without importing it at module load time."""
+    from playwright.sync_api import sync_playwright
+    return sync_playwright
+
+
 def run_browser_probe(config: dict, screenshot_path: str | Path,
                       timeout_seconds: int = 30) -> dict:
     """Run one Chromium probe and always return a JSON-serializable result."""
@@ -255,7 +271,7 @@ def run_browser_probe(config: dict, screenshot_path: str | Path,
         result["output"] = f"browser.url 被拒绝: {url_error}"
         return result
     try:
-        from playwright.sync_api import sync_playwright
+        sync_playwright = _load_sync_playwright()
     except ImportError:
         result = _base_result(config, time.monotonic() - started)
         result["output"] = (
