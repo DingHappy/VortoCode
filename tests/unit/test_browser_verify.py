@@ -232,6 +232,32 @@ def test_main_document_http_error_fails(tmp_path):
     assert result["ok"] is False and "HTTP 503" in result["output"]
 
 
+def test_warmup_http_error_console_does_not_poison_successful_retry(tmp_path):
+    playwright, _calls, page, _context, _browser = _fake_playwright()
+    attempts = iter([
+        (503, "Failed to load resource: the server responded with a status of 503"),
+        (200, ""),
+    ])
+
+    def goto_with_warmup(_url, **_kwargs):
+        status, console_error = next(attempts)
+        if console_error:
+            msg = type("Console", (), {"type": "error", "text": console_error})()
+            page.handlers["console"](msg)
+        response = _Response()
+        response.status = status
+        return response
+
+    page.goto = goto_with_warmup
+    result = browser_verify._run_with_playwright(
+        playwright, _config(), tmp_path / "warmup.png", 2)
+
+    assert result["ok"] is True
+    assert result["console_errors"] == []
+    assert result["transient_console_errors"] == [
+        "Failed to load resource: the server responded with a status of 503"]
+
+
 def test_screenshot_failure_fails_and_still_cleans_up(tmp_path):
     playwright, _calls, page, context, browser = _fake_playwright(screenshot_error="disk full")
     result = browser_verify._run_with_playwright(
@@ -289,9 +315,23 @@ def test_browser_launch_error_has_exact_install_commands(tmp_path, monkeypatch):
         def __exit__(self, *_args):
             return False
 
-    monkeypatch.setattr("playwright.sync_api.sync_playwright", lambda: _BrokenPlaywright())
+    monkeypatch.setattr(browser_verify, "_load_sync_playwright", lambda: _BrokenPlaywright)
     result = browser_verify.run_browser_probe(
         _config(), tmp_path / "missing-browser.png", timeout_seconds=1)
     assert result["ok"] is False
+    assert "pip install 'vortocode[browser]'" in result["output"]
+    assert "playwright install chromium" in result["output"]
+
+
+def test_missing_playwright_has_exact_install_commands(tmp_path, monkeypatch):
+    def missing_playwright():
+        raise ImportError("No module named 'playwright'")
+
+    monkeypatch.setattr(browser_verify, "_load_sync_playwright", missing_playwright)
+    result = browser_verify.run_browser_probe(
+        _config(), tmp_path / "missing-playwright.png", timeout_seconds=1)
+
+    assert result["ok"] is False
+    assert result["screenshot_path"] == ""
     assert "pip install 'vortocode[browser]'" in result["output"]
     assert "playwright install chromium" in result["output"]

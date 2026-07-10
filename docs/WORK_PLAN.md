@@ -33,11 +33,20 @@ Post-review fix-up (high-effort multi-agent review found 7 confirmed issues; all
 - Cleanup: deduplicated the serve-tail folding (`_serve_tail` helper, consistent
   truncation) and the boolean-parsing sets (`_TRUTHY`/`_FALSY` shared by
   `_truthy` and `_config_bool`).
+- Merge-blocker follow-up: the default `unit-core` CI deliberately omits the
+  optional Playwright extra, so the launch-error test now injects the lazy
+  loader instead of importing `playwright.sync_api` during the test. Both core
+  Python jobs can exercise Browser Verify without installing Playwright.
+- Merge-blocker follow-up: console errors from failed readiness navigations
+  (notably Chromium's main-document 503 message) are retained as
+  `transient_console_errors` but do not poison a later successful navigation.
+  `console_errors` and `fail_on_console_error` now describe the final successful
+  attempt; blocked requests and uncaught page exceptions remain sticky and red.
 
-Validation of fix-up: full unit suite green; opt-in live Chromium smoke test
-passes; a real `serve` + real browser probe integration run (python http.server
-+ headless Chromium) verified title/loopback/screenshot evidence and serve
-cleanup (no orphan process).
+Validation of fix-up: the CI-equivalent core suite is green; focused browser /
+runtime tests pass; opt-in live Chromium covers both direct success and a real
+503-then-200 retry; a real `serve` + browser probe integration run verified
+title/loopback/screenshot evidence and serve cleanup (no orphan process).
 
 Goals:
 
@@ -107,7 +116,8 @@ Acceptance:
 - Console and uncaught-page-error listeners are installed before the first
   navigation attempt so initial page-load failures cannot be missed.
 - The JSON-serializable runtime result includes the requested and final URL,
-  page title, screenshot path, console errors, and uncaught page errors.
+  page title, screenshot path, final-attempt console errors, transient console
+  errors from failed readiness attempts, and uncaught page errors.
 - Screenshots are written under the **primary workspace root's**
   `.vortocode/artifacts/browser-verify/` (already a managed gitignored runtime
   area via `dev_plan.py` `_STATE_ENTRIES`), never under the temporary
