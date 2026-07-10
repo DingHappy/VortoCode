@@ -33,6 +33,8 @@ def test_profile_normalization_fails_closed():
         (".env.example", False),
         ("config/private.pem", True),
         ("ops/secrets/token.txt", True),
+        (".vortocode/cli_session.json", True),
+        (".vortocode/sessions.db-wal", True),
         ("src/key.py", False),
         ("docs/credentials.md", False),
     ],
@@ -129,6 +131,27 @@ async def test_external_session_denies_sensitive_direct_read(tmp_path):
     )
     result = await agent._run_tool("read_file", {"path": ".env"}, "plan", lambda _m: None)
     assert "能力拦截" in result and raw not in result
+
+
+@pytest.mark.asyncio
+async def test_external_session_cannot_read_local_cli_history_or_symlink_alias(tmp_path):
+    state = tmp_path / ".vortocode"
+    state.mkdir()
+    raw = "local history secret marker"
+    history = state / "cli_session.json"
+    history.write_text(raw, encoding="utf-8")
+    alias = tmp_path / "public-history.json"
+    alias.symlink_to(history)
+    agent = MainAgent(
+        build_read_tools(str(tmp_path)),
+        capabilities=SessionCapabilities.for_profile(EXTERNAL_PROFILE, str(tmp_path)),
+    )
+    for path in (".vortocode/cli_session.json", "public-history.json"):
+        result = await agent._run_tool("read_file", {"path": path}, "plan", lambda _m: None)
+        assert "能力拦截" in result and raw not in result
+    tools = {tool.name: tool for tool in build_read_tools(str(tmp_path))}
+    assert "public-history.json" not in await tools["list_files"].handler({})
+    assert raw not in await tools["grep"].handler({"pattern": "local history"})
 
 
 @pytest.mark.asyncio

@@ -50,7 +50,7 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
     from src.agents.project import load_project_instructions
 
     profile = capability_profile or ("local" if kind == "cli" else "external")
-    capabilities = SessionCapabilities.for_profile(profile)
+    capabilities = SessionCapabilities.for_profile(profile, repo_root)
     tools = build_agent_tools(repo_root, confirm=confirm, on_progress=on_progress,
                               with_artifacts=(kind == "web"),   # 制品查看页只有 Web 有
                               memory_source=kind, capabilities=capabilities)

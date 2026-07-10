@@ -23,7 +23,7 @@ async def run_isolated_session(repo_root: str, prompt: str, *, mode: str = "buil
     async def _deny(_m):                             # 无人值守：外向操作（push/PR）默认拒绝
         return False
 
-    capabilities = SessionCapabilities.for_profile(UNATTENDED_PROFILE)
+    capabilities = SessionCapabilities.for_profile(UNATTENDED_PROFILE, repo_root)
     tools = build_agent_tools(
         repo_root, confirm=_deny, with_artifacts=False, memory_source="isolated",
         capabilities=capabilities,

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
+from urllib.parse import parse_qsl, unquote_plus, urlsplit
 
 
 def wrap_mcp_manager(manager: Any) -> List:
@@ -35,6 +36,58 @@ def wrap_mcp_manager(manager: Any) -> List:
     return wrapped
 
 
+_CREDENTIAL_QUERY_KEYS = {
+    "apikey", "key", "token", "auth", "authorization", "bearer", "jwt",
+    "accesstoken", "authtoken", "sessiontoken", "sessionid", "accesskey",
+    "secret", "secretkey", "privatekey", "clientsecret", "clientid",
+    "password", "passwd", "credential", "signature", "sig", "code", "ticket",
+    "xamzcredential", "xamzsignature", "xamzsecuritytoken",
+}
+_CREDENTIAL_QUERY_SUFFIXES = (
+    "token", "secret", "password", "passwd", "credential", "signature",
+)
+
+
+def _credential_free_http_url(value: object) -> bool:
+    url = str(value or "").strip()
+    if not url:
+        return False
+    try:
+        parsed = urlsplit(url)
+        hostname = parsed.hostname
+        query = parse_qsl(parsed.query, keep_blank_values=True, max_num_fields=64)
+    except (TypeError, ValueError):
+        return False
+    if parsed.scheme.lower() not in {"http", "https"} or not hostname:
+        return False
+    # Fragments are never sent to the HTTP server, so they have no legitimate
+    # place in an MCP endpoint definition and can otherwise conceal credentials
+    # from query-specific checks.
+    if parsed.fragment:
+        return False
+    if parsed.username is not None or parsed.password is not None or "@" in parsed.netloc:
+        return False
+    from src.memory.write_policy import redact_secret_like
+    _redacted, url_reasons = redact_secret_like(url)
+    if url_reasons:
+        return False
+    for key, item_value in query:
+        # Decode a second time as a fail-closed guard for frameworks/proxies
+        # that normalize percent-encoded query names more than once.
+        for _ in range(2):
+            decoded = unquote_plus(key)
+            if decoded == key:
+                break
+            key = decoded
+        normalized = "".join(ch for ch in key.lower() if ch.isalnum())
+        if normalized in _CREDENTIAL_QUERY_KEYS or normalized.endswith(_CREDENTIAL_QUERY_SUFFIXES):
+            return False
+        _safe_value, value_reasons = redact_secret_like(item_value)
+        if value_reasons:
+            return False
+    return True
+
+
 def _credential_free_http_servers(config: dict) -> list[dict]:
     """Return explicitly credential-free HTTP MCP definitions.
 
@@ -54,6 +107,8 @@ def _credential_free_http_servers(config: dict) -> list[dict]:
         if transport != "http" or server.get("credentialed") is not False:
             continue
         if server.get("headers"):
+            continue
+        if not _credential_free_http_url(server.get("url")):
             continue
         allowed.append(dict(server))
     return allowed

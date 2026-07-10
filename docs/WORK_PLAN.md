@@ -8,7 +8,7 @@
 
 ## 2026-07-11 Batch: Trust Foundation 3 — Credential Session Isolation
 
-Status: Complete
+Status: Complete (post-review hardening applied)
 
 Goals:
 
@@ -67,13 +67,33 @@ Acceptance:
   `ruff check src tests`, `python -m compileall -q src tests`, and
   `git diff --check` pass.
 
+Post-review security fix-up:
+
+- Treat `.vortocode/` session state as sensitive repository data. External and
+  unattended profiles deny direct reads of local CLI history and database
+  files, and bulk repository reads resolve in-repository symlinks before
+  deciding whether a path is safe to expose.
+- `show_diff` accepts only one verified commit-ish or a two/three-dot commit
+  range. Git options, pathspecs, whitespace, and control characters are
+  rejected; configured fsmonitor, external diff, and textconv helpers are
+  disabled so this read-only tool cannot invoke a host-side helper.
+- Credential-free MCP HTTP URLs are parsed before connection. URL userinfo,
+  credential-shaped query names or secret-like values, fragments, non-HTTP
+  schemes, and malformed/missing hosts all fail closed.
+- Regression tests reproduce the reported host-file overwrite and local
+  history disclosure, then prove the target file remains unchanged and neither
+  a direct path nor a symlink alias reaches the external model context.
+
 Validation evidence:
 
-- The full unit suite passes outside the enclosing workspace sandbox (`1296
-  passed`, one pre-existing Textual input-history hang deselected). The rich TUI
-  file passes separately (`222 passed`, the same known test deselected).
+- The full unit suite passes outside the enclosing workspace sandbox (`1312
+  passed`, one pre-existing Textual input-history hang deselected).
 - Integration/live passes (`44 passed, 6 opt-in skips`). `ruff check src tests`,
   isolated-cache `compileall`, and `git diff --check` are green.
+- The post-review capability/Git/MCP regression set passes (`46 passed`). It
+  covers local CLI history and symlink aliases, direct and range-form Git option
+  injection, configured external diff helpers, URL userinfo, encoded credential
+  query keys, secret-like values, fragments, and malformed endpoints.
 - Focused regressions prove capability denial happens before project allow and
   handler confirmation, external TUI `@.env` expansion never reads the value,
   and CLI/TUI resume cannot move raw history across profiles.
