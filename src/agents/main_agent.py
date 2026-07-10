@@ -2734,6 +2734,7 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
     """
     async def _run(args: dict) -> str:
         import asyncio
+        from src.agents.sandbox import resolve_sandbox
         from src.agents.shell import is_dangerous, run_command, run_command_background
         cmd = str(args.get("command") or args.get("cmd") or "").strip()
         if not cmd:
@@ -2743,16 +2744,22 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
             return f"拒绝执行（疑似危险操作：{why}）。请换更具体、安全的命令。"
         bg = _truthy(args.get("background"))
         label = "后台启动命令" if bg else "执行命令"
-        if not await confirm(_taint_prefix() + f"在仓库根目录{label}？\n  $ {cmd}"):
+        decision = resolve_sandbox()
+        if not decision.allowed:
+            return f"拒绝执行：{decision.reason}"
+        sandbox_notice = f"\n{decision.reason}" if not decision.isolated else ""
+        if not await confirm(_taint_prefix() + f"在仓库根目录{label}？\n  $ {cmd}{sandbox_notice}"):
             return f"用户拒绝了命令：{cmd}"
         if bg:
             res = await asyncio.to_thread(run_command_background, repo_root, cmd)
             if not res.get("ok"):
                 return f"后台启动失败：{res.get('error')}"
-            return (f"已后台启动命令 `{cmd}`，句柄 {res['id']}（pid {res['pid']}）。"
+            warning = (f"\n{res.get('warning')}\n" if res.get("warning") else "")
+            return (f"已后台启动命令 `{cmd}`，句柄 {res['id']}（pid {res['pid']}）。{warning}"
                     f"用 read_output(id={res['id']}) 看输出、stop_command(id={res['id']}) 停止。")
         res = await asyncio.to_thread(run_command, repo_root, cmd)
-        return f"命令 `{cmd}` 退出码 {res['code']}。输出尾部：\n{res['output'][-3000:]}"
+        warning = (f"{res.get('warning')}\n" if res.get("warning") else "")
+        return f"命令 `{cmd}` 退出码 {res['code']}。\n{warning}输出尾部：\n{res['output'][-3000:]}"
 
     async def _read_output(args: dict) -> str:
         import asyncio

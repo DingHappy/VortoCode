@@ -2839,6 +2839,7 @@ class VortoCodeTUI(App):
                 "serve": serve,
                 "cmd": res.get("cmd") or probe,
                 "screenshot_path": res.get("screenshot_path") or "",
+                "sandbox": res.get("sandbox") or {},
             })
             status = "runtime 验证通过 ✓" if ok else "runtime 验证失败 ✗"
             color = self._tc("text-success", "#7fce9a") if ok else self._tc("text-error", "#f08a8a")
@@ -2857,14 +2858,21 @@ class VortoCodeTUI(App):
             self._emit("用法: /verify run <命令>")
             return {"ran": False, "ok": False, "cmd": cmd, "error": "empty command"}
         from src.agents.shell import is_dangerous
+        from src.agents.sandbox import resolve_sandbox
         danger = is_dangerous(cmd)
         if danger:
             self._emit(f"拒绝执行高危验证命令: {danger}")
             return {"ran": False, "ok": False, "cmd": cmd, "error": str(danger)}
+        decision = resolve_sandbox()
+        if not decision.allowed:
+            self._emit(f"拒绝执行 runtime 验证：{decision.reason}")
+            return {"ran": False, "ok": False, "cmd": cmd, "error": decision.reason}
+        sandbox_notice = f"\n  {decision.reason}" if not decision.isolated else ""
         if not await self._confirm_command(
                 f"运行 {label}？\n"
                 f"  $ {cmd}\n"
-                "适合 smoke test、启动检查、端到端脚本；请确认命令不会做外向或破坏性操作。",
+                "适合 smoke test、启动检查、端到端脚本；请确认命令不会做外向或破坏性操作。"
+                + sandbox_notice,
                 tool_name="run_command",
                 args={"command": cmd}):
             self._emit("已取消 runtime 验证。")
@@ -2877,15 +2885,18 @@ class VortoCodeTUI(App):
             "ok": ok,
             "cmd": cmd,
             "label": label,
+            "sandbox": res.get("sandbox") or {},
         })
         status = "runtime 验证通过 ✓" if ok else "runtime 验证失败 ✗"
         color = self._tc("text-success", "#7fce9a") if ok else self._tc("text-error", "#f08a8a")
         self._chrome(f"[{color}]{status}[/][dim]（{cmd}）[/dim]")
         out = str(res.get("output") or "").strip()
+        warning = str(res.get("warning") or "").strip()
         if out:
-            self._emit(f"{status}（{cmd}）\n输出尾部:\n{out[-3000:]}")
+            self._emit(f"{status}（{cmd}）" + (f"\n{warning}" if warning else "")
+                       + f"\n输出尾部:\n{out[-3000:]}")
         else:
-            self._emit(f"{status}（{cmd}）")
+            self._emit(f"{status}（{cmd}）" + (f"\n{warning}" if warning else ""))
         return {"ran": True, "ok": ok, "cmd": cmd, "output": out, "raw": res}
 
     def _cmd_verify_run(self, cmd: str, *, label: str = "runtime 验证命令") -> None:
@@ -4669,14 +4680,21 @@ class VortoCodeTUI(App):
                 return "run_command 需要 command。"
             from src.agents.main_agent import _truthy
             bg = _truthy(args.get("background"))
+            from src.agents.sandbox import resolve_sandbox
             from src.agents.shell import is_dangerous, run_command, run_command_background
             why = is_dangerous(cmd)
             if why:                                   # 兜底硬拒（即便始终允许）
                 self._chrome(f"[{self._tc('text-error', '#f08a8a')}]拒绝执行（{why}）：{cmd}[/]")
                 return f"拒绝执行（疑似危险操作：{why}）。请换更具体、安全的命令。"
             label = "后台启动" if bg else "执行命令"
+            decision = resolve_sandbox()
+            if not decision.allowed:
+                self._chrome(f"[{self._tc('text-error', '#f08a8a')}]拒绝执行：{decision.reason}[/]")
+                return f"拒绝执行：{decision.reason}"
+            sandbox_notice = f"\n{decision.reason}" if not decision.isolated else ""
             if not await self._confirm_command(
-                    f"build 模式：在仓库根目录{label}？\n  $ {cmd}\n（可能改动工作区，但不碰 main）",
+                    f"build 模式：在仓库根目录{label}？\n  $ {cmd}\n"
+                    f"（可能改动工作区，但不碰 main）{sandbox_notice}",
                     tool_name="run_command",
                     args={"command": cmd}):
                 return f"用户取消了命令：{cmd}"
@@ -4688,7 +4706,8 @@ class VortoCodeTUI(App):
                     self._chrome(f"[{self._tc('text-error', '#f08a8a')}]后台启动失败：{res.get('error')}[/]")
                     return f"后台启动失败：{res.get('error')}"
                 self._chrome(f"[{self._tc('text-success', '#7fce9a')}]▸ 已后台启动 {res['id']}（pid {res['pid']}）[/]")
-                return (f"已后台启动命令 `{cmd}`，句柄 {res['id']}（pid {res['pid']}）。"
+                warning = (f"\n{res.get('warning')}\n" if res.get("warning") else "")
+                return (f"已后台启动命令 `{cmd}`，句柄 {res['id']}（pid {res['pid']}）。{warning}"
                         f"用 read_output(id={res['id']}) 看输出、stop_command(id={res['id']}) 停止。")
             self._chrome(f"[dim]$ {cmd}[/dim]")
             res = await asyncio.to_thread(run_command, self.repo_root, cmd)
@@ -4697,7 +4716,8 @@ class VortoCodeTUI(App):
                 self._chrome(f"[dim]{out[-1500:].replace('[', chr(92) + '[')}[/dim]")
             ok_c = self._tc("text-success", "#7fce9a") if res["ok"] else self._tc("text-error", "#f08a8a")
             self._chrome(f"[{ok_c}]{'✓' if res['ok'] else '✗'} exit {res['code']}[/]")
-            return f"命令 `{cmd}` 退出码 {res['code']}。输出尾部：\n{out[-3000:]}"
+            warning = (f"{res.get('warning')}\n" if res.get("warning") else "")
+            return f"命令 `{cmd}` 退出码 {res['code']}。\n{warning}输出尾部：\n{out[-3000:]}"
 
         async def _t_read_output(args: dict) -> str:
             """读某后台命令的新增输出（或 tail=N 看最近 N 行）+ 运行状态。只读，无需确认。"""

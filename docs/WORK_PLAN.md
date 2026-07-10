@@ -6,6 +6,77 @@
 > `Status: Active`, when present, is the work to execute; older dated batches are
 > completed history and remain as acceptance examples.
 
+## 2026-07-10 Batch: Trust Foundation 1 — Sandbox Policy And Fallback
+
+Status: Complete
+
+Goals:
+
+- Replace the old boolean, macOS-only, opt-in sandbox switch with an explicit
+  `auto / required / off` policy shared by interactive shell commands and every
+  path that executes generated code.
+- Make host fallback observable for confirmed interactive commands and fail
+  closed for unattended dev/test/runtime verification unless the user has
+  explicitly selected `off` for a trusted environment.
+- Support both macOS Seatbelt and Linux bubblewrap without changing the current
+  boundary inside the sandbox: writes are limited to the repository and temp
+  directories; reads and networking remain unchanged in this batch.
+
+Policy contract:
+
+- `VORTOCODE_SANDBOX` defaults to `auto`.
+- `auto` uses Seatbelt/bubblewrap when available. If unavailable, an interactive
+  confirmed `run_command` may execute on the host only with a structured
+  fallback warning; unattended execution is rejected.
+- `required` rejects every command when no supported sandbox is available.
+- `off` is the only unattended host-execution escape hatch and is always
+  reported as explicit non-isolated execution.
+- Legacy truthy values (`1/true/yes/on`) map to `required`; falsy values
+  (`0/false/no/off`) map to `off`. Invalid values fail closed.
+
+Acceptance:
+
+- Foreground and background `run_command` results include policy, backend,
+  isolated/fallback state, and a user-visible warning whenever execution is not
+  isolated. The warning appears in the confirmation prompt before host
+  execution, not only after the command has already run.
+- `dev_isolated` / `dev_parallel` / `dev_auto` test execution, final integration
+  verification, project runtime verify profiles, and the legacy tester role do
+  not silently run generated code on the host. With default `auto` and no OS
+  backend they return a clear red result before launching the command.
+- A configured Docker pytest image remains the highest-isolation tester path;
+  otherwise the same OS policy applies.
+- `vc doctor` reports the effective sandbox policy/backend: available isolation
+  is green, explicit `off` is a warning, and an unavailable required/unattended
+  boundary is a hard failure with an install/escape-hatch hint.
+- Unit tests cover normalization and invalid values, both OS argv shapes,
+  interactive fallback evidence, unattended fail-closed behavior, explicit
+  `off`, foreground/background execution metadata, runtime verify, worktree
+  tests, Docker/OS tester selection, and doctor reporting.
+- Focused tests, the full unit suite, `ruff check src tests`,
+  `python -m compileall -q src tests`, and `git diff --check` pass.
+
+Validation evidence:
+
+- The backend check runs a cached no-op probe, not only `which`: a present but
+  unusable nested `sandbox-exec` is reported unavailable instead of making
+  `vc doctor` falsely green.
+- A real macOS Seatbelt run outside the enclosing development sandbox allowed
+  repository writes and isolated test execution while rejecting a write to the
+  user's home directory. Linux bubblewrap construction is covered
+  deterministically; no Linux live host was available in this batch.
+- Focused sandbox/shell/worktree/runtime/doctor tests pass; the full unit suite
+  passes (`1246 passed`, one pre-existing local Textual worker test deselected),
+  and integration/live passes (`44 passed, 6 opt-in skips`). Ruff, compileall,
+  and diff-check are green.
+
+Non-goals:
+
+- Network domain allowlists, sensitive-path read denial, and credential/session
+  capability isolation belong to later trust-foundation batches.
+- Native Windows sandboxing is not introduced; `required` fails closed there
+  and `off` remains the explicit trusted-environment escape hatch.
+
 ## 2026-07-10 Batch: Browser Verify V1
 
 Status: Complete (post-review fix-up applied)

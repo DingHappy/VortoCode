@@ -78,7 +78,7 @@ async def test_command_confirm_warns_when_tainted():
     tool = build_command_tool(".", _deny)[0]
 
     await tool.handler({"command": "echo hi"})
-    assert "⚠" not in msgs[-1]                         # 未污点：无警示
+    assert "外部内容" not in msgs[-1]                  # 未污点：可有沙箱提示，但无注入警示
     taint.mark_tainted()
     await tool.handler({"command": "echo hi"})
     assert "⚠" in msgs[-1] and "外部内容" in msgs[-1]   # 污点：确认文案带警示
