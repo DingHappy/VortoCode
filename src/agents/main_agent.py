@@ -1517,7 +1517,7 @@ def build_read_tools(repo_root: str) -> list[Tool]:
         base = Path(repo_root)
         git_files = _git_visible_files(base)
         if git_files is not None:
-            return [rel for rel in git_files if not is_sensitive_repo_path(rel)]
+            return [rel for rel in git_files if not is_sensitive_repo_path(rel, repo_root)]
         ignored = _load_root_gitignore(base)
         out: list[str] = []
         for root, dirs, files in os.walk(base):
@@ -1533,7 +1533,7 @@ def build_read_tools(repo_root: str) -> list[Tool]:
                 rel = _rel_posix(fp, base)
                 if _skip_builtin(rel) or ignored(rel, is_dir=False):
                     continue
-                if not is_sensitive_repo_path(rel):
+                if not is_sensitive_repo_path(rel, repo_root):
                     out.append(rel)
                 if len(out) >= 6000:
                     return sorted(out)
@@ -1712,7 +1712,10 @@ def build_read_tools(repo_root: str) -> list[Tool]:
     def _git_ro(*a):
         """只读 git：在 repo_root 跑，超时/出错都安全返回 CompletedProcess-ish。"""
         import subprocess
-        return subprocess.run(["git", "-C", repo_root, *a], capture_output=True, text=True, timeout=20)
+        return subprocess.run(
+            ["git", "-c", "core.fsmonitor=false", "-C", repo_root, *a],
+            capture_output=True, text=True, timeout=20,
+        )
 
     async def _git_status(args: dict) -> str:
         try:
@@ -1750,12 +1753,46 @@ def build_read_tools(repo_root: str) -> list[Tool]:
             out.append(f"{mark}{name}  ({when}) {subj[:60]}")
         return "\n".join(out)
 
+    def _validated_diff_ref(value: object) -> tuple[list[str], str]:
+        """Accept one verified commit-ish or two/three-dot commit range, never Git options."""
+        ref = str(value or "").strip()
+        if not ref:
+            return [], ""
+        if len(ref) > 256 or any(ch.isspace() or ord(ch) < 32 for ch in ref):
+            return [], "ref 仅支持单个 revision/range，不允许空白或控制字符"
+        if ref.startswith("-") or ":" in ref or "\\" in ref:
+            return [], "ref 仅支持 revision、revision..revision 或 revision...revision，不允许 Git 选项/pathspec"
+        if "..." in ref:
+            if ref.count("...") != 1:
+                return [], "ref range 格式无效"
+            endpoints = ref.split("...", 1)
+        elif ".." in ref:
+            if ref.count("..") != 1:
+                return [], "ref range 格式无效"
+            endpoints = ref.split("..", 1)
+        else:
+            endpoints = [ref]
+        if any(not endpoint for endpoint in endpoints):
+            return [], "ref range 两端都必须是 revision"
+        if any(endpoint.startswith("-") for endpoint in endpoints):
+            return [], "ref range 端点不允许 Git 选项"
+        for endpoint in endpoints:
+            checked = _git_ro(
+                "rev-parse", "--verify", "--quiet", "--end-of-options",
+                f"{endpoint}^{{commit}}",
+            )
+            if checked.returncode != 0:
+                return [], f"ref 含无效 revision: {endpoint[:80]}"
+        return [ref], ""
+
     async def _show_diff(args: dict) -> str:
         ref = str(args.get("ref") or "").strip()
-        extra = ref.split() if ref else []          # ref 作为 git 参数透传（只读、无 shell 注入）
         try:
-            stat = _git_ro("diff", "--stat", *extra)
-            full = _git_ro("diff", *extra)
+            extra, error = _validated_diff_ref(ref)
+            if error:
+                return f"git diff 出错（ref 无效）：{error}"
+            stat = _git_ro("diff", "--no-ext-diff", "--no-textconv", "--stat", *extra)
+            full = _git_ro("diff", "--no-ext-diff", "--no-textconv", *extra)
         except Exception as e:  # noqa: BLE001
             return f"git diff 失败: {e}"
         if stat.returncode != 0:

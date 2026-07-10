@@ -192,7 +192,7 @@ def _repo_files(root: str) -> list[str]:
                 str(p.relative_to(base))
                 for p in sorted(d.rglob("*.py"))
                 if not any(part in _IGNORE for part in p.parts)
-                and not is_sensitive_repo_path(p.relative_to(base))
+                and not is_sensitive_repo_path(p.relative_to(base), root)
             ]
     return out[:2000]
 
@@ -4183,7 +4183,9 @@ class VortoCodeTUI(App):
     def _session_capability_policy(self):
         if self._capabilities is None:
             from src.agents.capabilities import SessionCapabilities
-            self._capabilities = SessionCapabilities.for_profile(self._capability_profile)
+            self._capabilities = SessionCapabilities.for_profile(
+                self._capability_profile, self.repo_root
+            )
         return self._capabilities
 
     def _can_read_context_path(self, rel: str) -> bool:

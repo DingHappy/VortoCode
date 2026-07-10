@@ -9,7 +9,7 @@ entry point choose it explicitly.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Iterable
 
 HOST_PROCESS = "host_process"
@@ -60,6 +60,8 @@ _SENSITIVE_NAMES = {
     "service-account.json",
 }
 _SENSITIVE_DIRS = {".ssh", ".aws", ".docker", ".gnupg", ".kube", "secrets"}
+_SENSITIVE_STATE_DIRS = {".vortocode"}
+_SENSITIVE_STATE_FILES = {"cli_session.json", "sessions.db", "sessions.db-shm", "sessions.db-wal"}
 _SENSITIVE_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".keystore"}
 
 
@@ -69,8 +71,7 @@ def normalize_profile(profile: str | None) -> str:
     return value if value in _PROFILE_CAPABILITIES else EXTERNAL_PROFILE
 
 
-def is_sensitive_repo_path(path: object) -> bool:
-    """Return whether a repository-relative path is likely to hold credentials."""
+def _raw_sensitive_repo_path(path: object) -> bool:
     raw = str(path or "").strip().replace("\\", "/").lstrip("@/")
     if not raw:
         return False
@@ -86,12 +87,32 @@ def is_sensitive_repo_path(path: object) -> bool:
         or name.startswith("secrets.")
     ):
         return True
-    if any(part in _SENSITIVE_DIRS for part in parts):
+    if any(part in _SENSITIVE_DIRS or part in _SENSITIVE_STATE_DIRS for part in parts):
+        return True
+    if name in _SENSITIVE_STATE_FILES:
         return True
     return any(name.endswith(suffix) for suffix in _SENSITIVE_SUFFIXES)
 
 
-def _sensitive_arg(tool_name: str, args: dict) -> str:
+def is_sensitive_repo_path(path: object, repo_root: str | None = None) -> bool:
+    """Return whether a raw or resolved repository path can hold credentials/state."""
+    if _raw_sensitive_repo_path(path):
+        return True
+    if not repo_root:
+        return False
+    raw = str(path or "").strip().lstrip("@")
+    if not raw:
+        return False
+    try:
+        root = Path(repo_root).resolve()
+        resolved = (root / raw).resolve()
+        rel = resolved.relative_to(root).as_posix()
+    except (OSError, ValueError):
+        return False
+    return _raw_sensitive_repo_path(rel)
+
+
+def _sensitive_arg(tool_name: str, args: dict, repo_root: str | None = None) -> str:
     keys = {
         "read_file": ("path",),
         "document_symbols": ("path",),
@@ -101,7 +122,7 @@ def _sensitive_arg(tool_name: str, args: dict) -> str:
     }.get(tool_name, ())
     for key in keys:
         value = args.get(key)
-        if value and is_sensitive_repo_path(value):
+        if value and is_sensitive_repo_path(value, repo_root):
             return str(value)
     return ""
 
@@ -111,13 +132,16 @@ class SessionCapabilities:
     """Immutable-profile capability gate shared by one logical session."""
 
     profile: str
+    repo_root: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "profile", normalize_profile(self.profile))
 
     @classmethod
-    def for_profile(cls, profile: str | None) -> "SessionCapabilities":
-        return cls(normalize_profile(profile))
+    def for_profile(
+        cls, profile: str | None, repo_root: str | None = None
+    ) -> "SessionCapabilities":
+        return cls(normalize_profile(profile), str(repo_root) if repo_root is not None else None)
 
     @property
     def allowed(self) -> frozenset[str]:
@@ -133,7 +157,7 @@ class SessionCapabilities:
     ) -> str | None:
         """Return a stable denial reason, or ``None`` when the call is allowed."""
         needed = set(required or ())
-        sensitive = _sensitive_arg(tool_name, args)
+        sensitive = _sensitive_arg(tool_name, args, self.repo_root)
         if sensitive:
             needed.add(SENSITIVE_FILES)
         if external_content:

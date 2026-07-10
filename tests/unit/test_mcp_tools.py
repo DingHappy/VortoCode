@@ -5,6 +5,7 @@ import pytest
 
 from src.agents.mcp_tools import (
     _credential_free_http_servers,
+    _credential_free_http_url,
     connect_mcp,
     wrap_mcp_manager,
 )
@@ -86,8 +87,34 @@ def test_external_mcp_filter_only_allows_explicit_credential_free_http():
             {"name": "implicit", "transport": "http", "url": "https://mcp.example"},
             {"name": "header", "transport": "http", "credentialed": False,
              "headers": {"Authorization": "Bearer secret"}},
+            {"name": "userinfo", "transport": "http", "credentialed": False,
+             "url": "https://token:secret@example.com/mcp"},
+            {"name": "query", "transport": "http", "credentialed": False,
+             "url": "https://example.com/mcp?api_key=secret"},
             {"name": "safe", "transport": "http", "credentialed": False,
              "url": "https://public.example"},
         ]
     }
     assert [server["name"] for server in _credential_free_http_servers(config)] == ["safe"]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://token:secret@example.com/mcp",
+        "https://example.com/mcp?api_key=secret",
+        "https://example.com/mcp?access%5Ftoken=secret",
+        "https://example.com/mcp?api%255Fkey=secret",
+        "https://example.com/mcp?auth=opaque-value",
+        "https://example.com/mcp?foo=ghp_abcdefghijklmnopqrstuvwxyz123456",
+        "https://example.com/mcp#token=secret",
+        "ftp://example.com/mcp",
+        "https:///missing-host",
+    ],
+)
+def test_external_mcp_url_rejects_embedded_credentials(url):
+    assert _credential_free_http_url(url) is False
+
+
+def test_external_mcp_url_allows_public_http_without_credential_signals():
+    assert _credential_free_http_url("https://example.com/mcp?tenant=public") is True

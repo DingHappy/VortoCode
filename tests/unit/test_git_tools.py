@@ -98,3 +98,41 @@ async def test_show_diff_bad_ref(tmp_path):
     _init(tmp_path)
     out = await _tools(tmp_path)["show_diff"].handler({"ref": "no-such-ref-xyz"})
     assert "出错" in out or "无改动" in out                        # 友好兜底，不抛
+
+
+@pytest.mark.asyncio
+async def test_show_diff_rejects_git_options_without_writing_host_path(tmp_path):
+    _init(tmp_path)
+    victim = tmp_path.parent / "show-diff-victim"
+    victim.write_text("keep", encoding="utf-8")
+    for ref in (f"--output={victim}", f"HEAD..--output={victim}"):
+        out = await _tools(tmp_path)["show_diff"].handler({"ref": ref})
+        assert "ref 无效" in out and "不允许 Git 选项" in out
+        assert victim.read_text(encoding="utf-8") == "keep"
+
+
+@pytest.mark.asyncio
+async def test_show_diff_accepts_single_verified_revision(tmp_path):
+    _init(tmp_path)
+    (tmp_path / "a.py").write_text("x = 2\n", encoding="utf-8")
+    out = await _tools(tmp_path)["show_diff"].handler({"ref": "HEAD"})
+    assert "x = 2" in out
+
+
+@pytest.mark.asyncio
+async def test_show_diff_disables_configured_external_diff_helper(tmp_path):
+    _init(tmp_path)
+    marker = tmp_path.parent / "external-diff-ran"
+    helper = tmp_path / "external-diff.sh"
+    helper.write_text(f"#!/bin/sh\nprintf invoked > '{marker}'\n", encoding="utf-8")
+    helper.chmod(0o755)
+    (tmp_path / ".gitattributes").write_text("*.py diff=external\n", encoding="utf-8")
+    _git(tmp_path, "config", "diff.external.command", str(helper))
+    _git(tmp_path, "add", ".gitattributes")
+    _git(tmp_path, "commit", "-q", "-m", "configure external diff")
+    (tmp_path / "a.py").write_text("x = 3\n", encoding="utf-8")
+
+    out = await _tools(tmp_path)["show_diff"].handler({})
+
+    assert "x = 3" in out
+    assert not marker.exists()
