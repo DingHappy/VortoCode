@@ -26,3 +26,15 @@ def _default_dev_review_off(monkeypatch):
     的用例先 `delenv`（去掉这里设的 0 → 读到默认开）。
     """
     monkeypatch.setenv("VORTOCODE_DEV_REVIEW", "0")
+
+
+@pytest.fixture(autouse=True)
+def _explicit_test_sandbox_off(monkeypatch):
+    """Unit fixtures execute tiny local commands, so authorize host execution explicitly.
+
+    Production defaults to ``auto`` and unattended generated-code paths fail closed when
+    no Seatbelt/bubblewrap backend is available. The sandbox policy and argv construction
+    have dedicated tests which delete/override this variable as needed; unrelated unit
+    tests should not depend on the CI runner having bubblewrap installed.
+    """
+    monkeypatch.setenv("VORTOCODE_SANDBOX", "off")

@@ -2694,9 +2694,12 @@ async def test_cmd_verify_run_confirms_and_runs_runtime_command(tmp_path, monkey
 
     ran = {}
 
-    def fake_run_command(repo_root, cmd):
-        ran.update({"repo_root": repo_root, "cmd": cmd})
-        return {"ok": True, "code": 0, "output": "smoke ok"}
+    def fake_run_command(repo_root, cmd, *, require_isolation=False):
+        ran.update({"repo_root": repo_root, "cmd": cmd,
+                    "require_isolation": require_isolation})
+        return {"ok": True, "code": 0, "output": "smoke ok",
+                "warning": "⚠ explicit sandbox fallback",
+                "sandbox": {"policy": "auto", "fallback": True}}
 
     monkeypatch.setattr(shell, "run_command", fake_run_command)
     app = VortoCodeTUI(repo_root=str(tmp_path))
@@ -2704,10 +2707,13 @@ async def test_cmd_verify_run_confirms_and_runs_runtime_command(tmp_path, monkey
         await _submit(app, pilot, "/verify run python -m smoke --fast")
         assert await _wait_inline_confirm(app, pilot)
         assert app._confirm_scope == "commands"
+        assert "显式关闭" in str(app._confirm_message)
         await pilot.press("y")
         assert await _wait_for(app, pilot, "runtime 验证通过")
         assert ran["cmd"] == "python -m smoke --fast"
-        assert "smoke ok" in "\n".join(app.transcript)
+        assert ran["require_isolation"] is True
+        transcript = "\n".join(app.transcript)
+        assert "smoke ok" in transcript and "explicit sandbox fallback" in transcript
 
 
 @pytest.mark.asyncio
@@ -2724,7 +2730,7 @@ async def test_cmd_verify_profile_lists_and_runs_project_profile(tmp_path, monke
     )
     ran = {}
 
-    def fake_run_command(repo_root, cmd):
+    def fake_run_command(repo_root, cmd, *, require_isolation=False):
         ran.update({"repo_root": repo_root, "cmd": cmd})
         return {"ok": True, "code": 0, "output": "scan ok"}
 
@@ -3156,7 +3162,7 @@ async def test_cmd_fix_ci_verify_runs_first_safe_template(tmp_path, monkeypatch)
     monkeypatch.setattr(pr_doctor, "pr_doctor_report", fake_report)
     ran = {}
 
-    def fake_run_command(repo_root, cmd):
+    def fake_run_command(repo_root, cmd, *, require_isolation=False):
         ran["cmd"] = cmd
         return {"ok": True, "output": "ok"}
 
@@ -3203,7 +3209,7 @@ async def test_cmd_fix_ci_verify_failure_suggests_pr_fix(tmp_path, monkeypatch):
 
     monkeypatch.setattr(pr_doctor, "pr_doctor_report", fake_report)
 
-    def fake_run_command(repo_root, cmd):
+    def fake_run_command(repo_root, cmd, *, require_isolation=False):
         return {"ok": False, "output": "FAILED tests/unit/test_x.py::test_y - AssertionError: nope"}
 
     monkeypatch.setattr(shell, "run_command", fake_run_command)
@@ -3258,7 +3264,7 @@ async def test_cmd_fix_ci_verify_picker_selects_template(tmp_path, monkeypatch):
     monkeypatch.setattr(pr_doctor, "pr_doctor_report", fake_report)
     ran = {}
 
-    def fake_run_command(repo_root, cmd):
+    def fake_run_command(repo_root, cmd, *, require_isolation=False):
         ran["cmd"] = cmd
         return {"ok": True, "output": "ok"}
 
@@ -3417,6 +3423,67 @@ async def test_project_allow_skips_command_confirm(tmp_path):
             args={"command": "echo hi"})
         assert ok is True
         assert len(app.screen_stack) == 1
+
+
+@pytest.mark.asyncio
+async def test_host_fallback_force_prompt_ignores_allow_and_session_blanket(monkeypatch, tmp_path):
+    import asyncio
+
+    (tmp_path / ".vortocode").mkdir()
+    (tmp_path / ".vortocode" / "permissions.yaml").write_text(
+        'allow:\n  - "run_command: echo *"\n',
+        encoding="utf-8")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    app._allow_commands_session = True
+    async with app.run_test() as pilot:
+        task = asyncio.create_task(app._confirm_command(
+            "⚠ host fallback\n$ echo hi",
+            tool_name="run_command",
+            args={"command": "echo hi"},
+            force_prompt=True,
+        ))
+        assert await _wait_inline_confirm(app, pilot)
+        assert app._confirm_scope == "fallback"
+        assert "host fallback" in app._confirm_message
+        assert "始终允许" not in app.query_one("#palette").render().plain
+        await pilot.press("n")
+        await pilot.pause()
+        assert await task is False
+
+
+@pytest.mark.asyncio
+async def test_run_command_auto_fallback_cannot_execute_via_allow_rule(monkeypatch, tmp_path):
+    import asyncio
+    from src.agents import sandbox as sb
+    import src.agents.shell as shell
+
+    (tmp_path / ".vortocode").mkdir()
+    (tmp_path / ".vortocode" / "permissions.yaml").write_text(
+        'allow:\n  - "run_command: echo *"\n',
+        encoding="utf-8")
+    monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
+    monkeypatch.setattr(sb, "sandbox_backend", lambda: "")
+    ran = []
+
+    def fake_run_command(repo_root, cmd, *, require_isolation=False):
+        ran.append((repo_root, cmd, require_isolation))
+        return {"ok": True, "code": 0, "output": "unexpected", "warning": "", "sandbox": {}}
+
+    monkeypatch.setattr(shell, "run_command", fake_run_command)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    app._allow_commands_session = True
+    agent = app._build_main_agent()
+    async with app.run_test() as pilot:
+        task = asyncio.create_task(
+            agent.tools["run_command"].handler({"command": "echo must-confirm"})
+        )
+        assert await _wait_inline_confirm(app, pilot)
+        assert "显式降级" in app._confirm_message
+        assert ran == []
+        await pilot.press("n")
+        await pilot.pause()
+        assert "取消" in await task
+        assert ran == []
 
 
 @pytest.mark.asyncio

@@ -205,17 +205,40 @@ async def in_worktree(repo_root, wid: str,
         await _git_op(remove_worktree, repo_root, path)
 
 
-def run_tests(worktree, cmd: Optional[list] = None, timeout: int = 600) -> dict:
-    """在 worktree 里跑测试做逐件验证，返回 {ok, output, cmd}。默认 `pytest -q`；输出截尾。"""
+def run_tests(worktree, cmd: Optional[list] = None, timeout: int = 600, *,
+              require_isolation: bool = True) -> dict:
+    """在 worktree 里跑测试做逐件验证；生成代码默认必须在 OS 沙箱中执行。
+
+    ``VORTOCODE_SANDBOX=off`` 是可信环境的显式宿主机 escape hatch。结果携带
+    ``sandbox`` 决策证据，避免 autonomous 路径静默降级。
+    """
     import sys
+    from src.agents.sandbox import resolve_sandbox, sandboxed_exec_argv
     cmd = list(cmd) if cmd else [sys.executable, "-m", "pytest", "-q"]
+    decision = resolve_sandbox(require_isolation=require_isolation)
+    evidence = decision.to_dict()
+    shown = " ".join(cmd)
+    if not decision.allowed:
+        return {"ok": False, "output": decision.reason, "cmd": shown,
+                "sandbox": evidence, "warning": ""}
+    exec_cmd = (sandboxed_exec_argv(worktree, cmd, backend=decision.backend)
+                if decision.isolated else cmd)
     try:
-        r = subprocess.run(cmd, cwd=str(worktree), capture_output=True, text=True, timeout=timeout)
-        return {"ok": r.returncode == 0, "output": (r.stdout + r.stderr)[-4000:], "cmd": " ".join(cmd)}
+        r = subprocess.run(exec_cmd, cwd=str(worktree), capture_output=True, text=True, timeout=timeout)
+        warning = decision.reason if not decision.isolated else ""
+        combined = r.stdout + r.stderr + (("\n" + warning) if warning else "")
+        return {"ok": r.returncode == 0, "output": combined[-4000:],
+                "cmd": shown, "sandbox": evidence, "warning": warning}
     except subprocess.TimeoutExpired:
-        return {"ok": False, "output": f"测试超时（>{timeout}s）", "cmd": " ".join(cmd)}
+        warning = decision.reason if not decision.isolated else ""
+        output = f"测试超时（>{timeout}s）" + (("\n" + warning) if warning else "")
+        return {"ok": False, "output": output, "cmd": shown,
+                "sandbox": evidence, "warning": warning}
     except Exception as e:  # noqa: BLE001
-        return {"ok": False, "output": f"测试无法运行: {e}", "cmd": " ".join(cmd)}
+        warning = decision.reason if not decision.isolated else ""
+        output = f"测试无法运行: {e}" + (("\n" + warning) if warning else "")
+        return {"ok": False, "output": output, "cmd": shown,
+                "sandbox": evidence, "warning": warning}
 
 
 async def run_isolated_task(repo_root, wid: str, description: str,
@@ -292,8 +315,8 @@ def run_runtime_check(worktree, profile: dict, timeout: int = 180, *,
     危险命令（serve/check/cmd 任一）一律先被 is_dangerous 拦下：拒绝执行、判不通过。
     """
     import time
-    from src.agents.shell import (is_dangerous, read_background,
-                                   run_command_background, stop_background)
+    from src.agents.shell import (is_dangerous, read_background, run_command,
+                                  run_command_background, stop_background)
     name = str(profile.get("name") or "runtime")
     serve = str(profile.get("serve") or "").strip()
     check = str(profile.get("check") or "").strip()
@@ -304,15 +327,19 @@ def run_runtime_check(worktree, profile: dict, timeout: int = 180, *,
         why = is_dangerous(command)
         return f"拒绝执行高危验证命令: {why}" if why else ""
 
-    def _run_once(command: str, tmo: float) -> tuple[bool, str]:
-        try:
-            r = subprocess.run(command, shell=True, cwd=str(worktree),
-                               capture_output=True, text=True, timeout=tmo)
-            return r.returncode == 0, (r.stdout + r.stderr)
-        except subprocess.TimeoutExpired:
-            return False, f"命令超时（>{tmo:.1f}s）"
-        except Exception as e:  # noqa: BLE001
-            return False, f"命令无法运行: {e}"
+    def _run_once(command: str, tmo: float) -> tuple[bool, str, dict, str]:
+        r = run_command(worktree, command, timeout=tmo, require_isolation=True)
+        warning = str(r.get("warning") or "")
+        return (bool(r.get("ok")), str(r.get("output") or ""),
+                dict(r.get("sandbox") or {}), warning)
+
+    def _with_sandbox_warning(output: str, warning: str, limit: int = 4000) -> str:
+        """Keep non-isolated evidence at the tail so output truncation cannot hide it."""
+        if not warning:
+            return output[-limit:]
+        suffix = "\n" + warning
+        budget = max(0, limit - len(suffix))
+        return output[-budget:] + suffix
 
     def _serve_tail(bid_local) -> str:
         """Formatted, truncated serve stdout tail suffix (empty when there is none)."""
@@ -333,11 +360,14 @@ def run_runtime_check(worktree, profile: dict, timeout: int = 180, *,
             if blocked:
                 return {"ok": False, "name": name, "cmd": command, "output": blocked}
         ready_timeout = int(profile.get("ready_timeout") or 30)
-        bg = run_command_background(worktree, serve)
+        bg = run_command_background(worktree, serve, require_isolation=True)
         if not bg.get("ok"):
             return {"ok": False, "name": name, "cmd": serve,
-                    "output": f"起 serve 失败: {bg.get('error', '')}"}
+                    "output": f"起 serve 失败: {bg.get('error', '')}",
+                    "sandbox": bg.get("sandbox") or {}}
         bid = bg["id"]
+        sandbox_evidence = bg.get("sandbox") or {}
+        sandbox_warning = str(bg.get("warning") or "")
         ok, probe_out = not bool(probe), ""
         try:
             if probe:
@@ -349,7 +379,8 @@ def run_runtime_check(worktree, profile: dict, timeout: int = 180, *,
                                      f"{st.get('output', '')}")
                         break
                     remaining = max(0.05, deadline - time.monotonic())
-                    ok, probe_out = _run_once(probe, max(0.05, min(30.0, remaining)))
+                    ok, probe_out, sandbox_evidence, sandbox_warning = _run_once(
+                        probe, max(0.05, min(30.0, remaining)))
                     if ok:
                         break
                     remaining = deadline - time.monotonic()
@@ -359,7 +390,9 @@ def run_runtime_check(worktree, profile: dict, timeout: int = 180, *,
             if not ok:
                 return {"ok": False, "name": name,
                         "cmd": f"serve: {serve} | {probe_label}: {probe}",
-                        "output": (probe_out + _serve_tail(bid))[-4000:]}
+                        "output": _with_sandbox_warning(
+                            probe_out + _serve_tail(bid), sandbox_warning),
+                        "sandbox": sandbox_evidence}
 
             if browser_config:
                 from src.browser.verify import run_browser_probe, safe_evidence_path
@@ -376,14 +409,17 @@ def run_runtime_check(worktree, profile: dict, timeout: int = 180, *,
                     browser_result["output"] = (
                         (browser_result.get("output") or "")
                         + f"；serve 进程提前退出（code={st.get('code')}）")
-                browser_result["output"] = (
-                    (browser_result.get("output") or "") + _serve_tail(bid))[-4000:]
+                browser_result["output"] = _with_sandbox_warning(
+                    str(browser_result.get("output") or "") + _serve_tail(bid),
+                    sandbox_warning)
                 return {"name": name, "cmd": f"serve: {serve} | browser: {browser_config['url']}",
-                        **browser_result}
+                        "sandbox": sandbox_evidence, **browser_result}
 
             return {"ok": ok, "name": name,
                     "cmd": f"serve: {serve} | {probe_label}: {probe}",
-                    "output": (probe_out + _serve_tail(bid))[-4000:]}
+                    "output": _with_sandbox_warning(
+                        probe_out + _serve_tail(bid), sandbox_warning),
+                    "sandbox": sandbox_evidence}
         finally:
             stop_background(bid)
 
@@ -391,8 +427,10 @@ def run_runtime_check(worktree, profile: dict, timeout: int = 180, *,
     blocked = _guard(target)
     if blocked:
         return {"ok": False, "name": name, "cmd": target, "output": blocked}
-    ok, out = _run_once(target, timeout)
-    return {"ok": ok, "name": name, "cmd": target, "output": out[-4000:]}
+    ok, out, sandbox_evidence, sandbox_warning = _run_once(target, timeout)
+    return {"ok": ok, "name": name, "cmd": target,
+            "output": _with_sandbox_warning(out, sandbox_warning),
+            "sandbox": sandbox_evidence}
 
 
 def _fold_runtime_verify(repo_root, worktree, result: dict, run_id: str) -> dict:

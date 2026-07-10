@@ -57,6 +57,20 @@ def test_check_permissions_bad_yaml_is_fail(tmp_path):
     assert c2.level == "fail" and "结构不对" in c2.detail
 
 
+def test_check_sandbox_reports_isolated_off_and_unavailable(monkeypatch):
+    from src.agents import sandbox as sb
+    monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
+    monkeypatch.setattr(sb, "sandbox_backend", lambda: "seatbelt")
+    assert doctor._check_sandbox().level == "ok"
+
+    monkeypatch.setenv("VORTOCODE_SANDBOX", "off")
+    assert doctor._check_sandbox().level == "warn"
+
+    monkeypatch.setenv("VORTOCODE_SANDBOX", "required")
+    monkeypatch.setattr(sb, "sandbox_backend", lambda: "")
+    assert doctor._check_sandbox().level == "fail"
+
+
 def test_check_im_unconfigured_is_warn(monkeypatch):
     for k in ("VORTOCODE_TG_TOKEN", "VORTOCODE_TG_OWNER_ID",
               "VORTOCODE_DD_CLIENT_ID", "VORTOCODE_DD_CLIENT_SECRET", "VORTOCODE_DD_OWNER_ID"):
@@ -77,7 +91,7 @@ def test_summarize_exit_codes():
 
 @pytest.mark.asyncio
 async def test_run_checks_order_stable_and_isolated(tmp_path, monkeypatch):
-    """七项齐、顺序稳定；单项炸不拖全体（gh 检查抛异常 → 记 fail、其余照常）。"""
+    """八项齐、顺序稳定；单项炸不拖全体（gh 检查抛异常 → 记 fail、其余照常）。"""
     monkeypatch.setenv("VORTOCODE_SERVE_URL", "http://127.0.0.1:9")
     monkeypatch.setenv("OPENAI_API_BASE", "http://127.0.0.1:9/v1")   # 中转站也指向死端口（离线）
 
@@ -87,7 +101,7 @@ async def test_run_checks_order_stable_and_isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(doctor, "_check_gh", _boom)
     checks = await doctor.run_checks(str(tmp_path))
     assert [c.name for c in checks] == ["git", "api-key", "relay", "serve",
-                                        "permissions", "gh", "im"]
+                                        "sandbox", "permissions", "gh", "im"]
     gh = next(c for c in checks if c.name == "gh")
     assert gh.level == "fail" and "检查本身出错" in gh.detail          # 炸的那项记 fail
     assert checks[-1].name == "im"                                    # 后续项没被拖死

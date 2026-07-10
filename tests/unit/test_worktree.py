@@ -941,9 +941,24 @@ async def test_build_test_tool_lets_subagent_self_check(tmp_path):
 def test_run_tests_pass_and_fail(tmp_path):
     import sys
     from src.agents.worktree import run_tests
-    assert run_tests(tmp_path, [sys.executable, "-c", "print('hi')"])["ok"] is True
+    ok = run_tests(tmp_path, [sys.executable, "-c", "print('hi')"])
+    assert ok["ok"] is True and ok["sandbox"]["policy"] == "off"
     r = run_tests(tmp_path, [sys.executable, "-c", "import sys; sys.stderr.write('boom'); sys.exit(1)"])
     assert r["ok"] is False and "boom" in r["output"]
+
+
+def test_run_tests_unattended_fails_closed_without_backend(tmp_path, monkeypatch):
+    import sys
+    from src.agents import sandbox as sb
+    from src.agents.worktree import run_tests
+    marker = tmp_path / "must-not-exist"
+    monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
+    monkeypatch.setattr(sb, "sandbox_backend", lambda: "")
+
+    result = run_tests(
+        tmp_path, [sys.executable, "-c", f"from pathlib import Path; Path({str(marker)!r}).touch()"])
+    assert not result["ok"] and "无人值守" in result["output"]
+    assert not marker.exists()
 
 
 @pytest.mark.asyncio

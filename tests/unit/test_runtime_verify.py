@@ -159,11 +159,22 @@ def test_auto_verify_profiles_reports_parse_error(tmp_path):
 def test_runtime_check_simple_cmd_pass(tmp_path):
     r = worktree.run_runtime_check(tmp_path, {"name": "ok", "cmd": "exit 0"})
     assert r["ok"] is True and r["name"] == "ok"
+    assert r["sandbox"]["policy"] == "off" and "显式关闭" in r["output"]
 
 
 def test_runtime_check_simple_cmd_fail(tmp_path):
     r = worktree.run_runtime_check(tmp_path, {"name": "bad", "cmd": "exit 3"})
     assert r["ok"] is False
+
+
+def test_runtime_check_requires_sandbox_unless_explicitly_off(tmp_path, monkeypatch):
+    from src.agents import sandbox as sb
+    monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
+    monkeypatch.setattr(sb, "sandbox_backend", lambda: "")
+    r = worktree.run_runtime_check(tmp_path, {"name": "blocked", "cmd": "echo nope"})
+    assert r["ok"] is False
+    assert "无人值守" in r["output"]
+    assert r["sandbox"]["allowed"] is False
 
 
 def test_runtime_check_rejects_dangerous(tmp_path):
