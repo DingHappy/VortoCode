@@ -230,6 +230,11 @@ VORTOCODE_API_TOKEN=
 # 非隔离 sandbox/cloud_sandbox 的宿主机降级执行默认禁用，仅在可信环境置 1 开启
 # （/api/terminal/execute 已随路线 A 退役删除；agent 的 run_command 走确认门，不受此开关）
 VORTOCODE_ENABLE_SHELL=
+# Agent shell / generated-code sandbox policy: auto (default) | required | off.
+# auto uses macOS Seatbelt or Linux bubblewrap. Interactive fallback is reported;
+# autonomous dev/test/runtime execution fails closed if no backend is available.
+# Use off only as an explicit trusted-environment host-execution escape hatch.
+VORTOCODE_SANDBOX=auto
 ```
 
 ### 3. 安装命令行（推荐）

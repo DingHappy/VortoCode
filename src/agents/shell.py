@@ -179,10 +179,11 @@ _BG_MAX_PROCS = 10            # 并发后台进程上限，防失控
 class _BgProc:
     """一个后台进程 + 其输出环形缓冲。输出在后台线程里 drain，读取按绝对行号算增量。"""
 
-    def __init__(self, bid: str, cmd: str, popen) -> None:
+    def __init__(self, bid: str, cmd: str, popen, sandbox: dict) -> None:
         self.id = bid
         self.cmd = cmd
         self.popen = popen
+        self.sandbox = sandbox
         self.lines: "deque[str]" = deque(maxlen=_BG_MAX_LINES)
         self.total = 0                 # 迄今产出的总行数（含已被环形缓冲挤掉的）
         self.read_pos = 0              # 下一条未读的绝对行号
@@ -222,7 +223,7 @@ class _BgProc:
                 self.read_pos = self.total
         state, code = self.status()
         return {"id": self.id, "cmd": self.cmd, "status": state, "code": code,
-                "dropped": dropped, "output": "\n".join(out)}
+                "dropped": dropped, "output": "\n".join(out), "sandbox": self.sandbox}
 
     def stop(self, timeout: int = 5) -> bool:
         """先 SIGTERM、宽限后仍在就 SIGKILL；对**整个进程组** killpg，把 shell 拉起的子进程一并收
@@ -253,24 +254,31 @@ class _BgProc:
         return self.popen.poll() is not None
 
 
-def run_command_background(repo_root, cmd: str) -> dict:
+def run_command_background(repo_root, cmd: str, *, require_isolation: bool = False) -> dict:
     """后台起一个长驻命令（dev server / watcher / tail…），立即返回句柄 id，不阻塞回合。
 
     危险拦截由调用方（工具层）先过；沙箱与前台 run_command 同源。返回 {ok, id, pid} 或 {ok:False, error}。
     """
     import subprocess
-    from src.agents.sandbox import sandbox_enabled, sandboxed_argv
+    from src.agents.sandbox import resolve_sandbox, sandboxed_argv
+    decision = resolve_sandbox(require_isolation=require_isolation)
+    evidence = decision.to_dict()
+    if not decision.allowed:
+        return {"ok": False, "error": decision.reason, "sandbox": evidence}
     with _BG_LOCK:
         alive = [p for p in _BG_PROCS.values() if p.popen.poll() is None]
         if len(alive) >= _BG_MAX_PROCS:
-            return {"ok": False, "error": f"后台进程已达上限 {_BG_MAX_PROCS} 个；先 stop_command 收掉一些。"}
+            return {"ok": False, "error": f"后台进程已达上限 {_BG_MAX_PROCS} 个；先 stop_command 收掉一些。",
+                    "sandbox": evidence,
+                    "warning": decision.reason if not decision.isolated else ""}
         bid = f"bg{next(_BG_COUNTER)}"
     # start_new_session=True：把命令放进**独立进程组/会话**（子进程 = 组长，pgid==pid）。
     # 长驻命令常经 shell 再拉起子进程（npm run dev→node…），只 kill 顶层 shell 会漏掉子进程；
     # 独立进程组让 stop() 能对**整组** killpg，把 dev server/watcher 连根收干净（POSIX；见 stop()）。
     try:
-        if sandbox_enabled():
-            popen = subprocess.Popen(sandboxed_argv(repo_root, cmd), cwd=str(repo_root),
+        if decision.isolated:
+            popen = subprocess.Popen(sandboxed_argv(repo_root, cmd, backend=decision.backend),
+                                     cwd=str(repo_root),
                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      text=True, bufsize=1, start_new_session=True)
         else:
@@ -278,11 +286,12 @@ def run_command_background(repo_root, cmd: str) -> dict:
                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      text=True, bufsize=1, start_new_session=True)
     except Exception as e:  # noqa: BLE001
-        return {"ok": False, "error": f"无法启动: {e}"}
-    proc = _BgProc(bid, cmd, popen)
+        return {"ok": False, "error": f"无法启动: {e}", "sandbox": evidence}
+    proc = _BgProc(bid, cmd, popen, evidence)
     with _BG_LOCK:
         _BG_PROCS[bid] = proc
-    return {"ok": True, "id": bid, "pid": popen.pid}
+    return {"ok": True, "id": bid, "pid": popen.pid, "sandbox": evidence,
+            "warning": decision.reason if not decision.isolated else ""}
 
 
 def read_background(bid: str, tail: Optional[int] = None) -> dict:
@@ -313,7 +322,8 @@ def list_background() -> "list[dict]":
     out = []
     for p in procs:
         state, code = p.status()
-        out.append({"id": p.id, "cmd": p.cmd, "status": state, "code": code, "pid": p.popen.pid})
+        out.append({"id": p.id, "cmd": p.cmd, "status": state, "code": code,
+                    "pid": p.popen.pid, "sandbox": p.sandbox})
     return out
 
 
@@ -330,22 +340,35 @@ def stop_all_background() -> int:
     return len(procs)
 
 
-def run_command(repo_root, cmd: str, timeout: int = 300) -> dict:
+def run_command(repo_root, cmd: str, timeout: float = 300, *,
+                require_isolation: bool = False) -> dict:
     """在 repo_root 跑 shell 命令，返回 {ok, code, output}。输出截尾、超时/异常兜底。
 
-    若启用了 OS 沙箱（env VORTOCODE_SANDBOX + macOS sandbox-exec，见 src/agents/sandbox.py），
-    则把命令包进 Seatbelt——文件写入限制在仓库内、写不出去；未启用/不支持则照常 shell 直跑（行为不变）。
+    结果始终携带 ``sandbox`` 决策证据。无人值守调用方传
+    ``require_isolation=True``；只有显式 ``VORTOCODE_SANDBOX=off`` 才可在宿主机执行。
     """
-    from src.agents.sandbox import sandbox_enabled, sandboxed_argv
+    from src.agents.sandbox import resolve_sandbox, sandboxed_argv
+    decision = resolve_sandbox(require_isolation=require_isolation)
+    evidence = decision.to_dict()
+    if not decision.allowed:
+        return {"ok": False, "code": -1, "output": decision.reason,
+                "sandbox": evidence, "warning": ""}
     try:
-        if sandbox_enabled():
-            r = subprocess.run(sandboxed_argv(repo_root, cmd), cwd=str(repo_root),
+        if decision.isolated:
+            r = subprocess.run(sandboxed_argv(repo_root, cmd, backend=decision.backend),
+                               cwd=str(repo_root),
                                capture_output=True, text=True, timeout=timeout)
         else:
             r = subprocess.run(cmd, shell=True, cwd=str(repo_root),
                                capture_output=True, text=True, timeout=timeout)
-        return {"ok": r.returncode == 0, "code": r.returncode, "output": (r.stdout + r.stderr)[-8000:]}
+        return {"ok": r.returncode == 0, "code": r.returncode,
+                "output": (r.stdout + r.stderr)[-8000:], "sandbox": evidence,
+                "warning": decision.reason if not decision.isolated else ""}
     except subprocess.TimeoutExpired:
-        return {"ok": False, "code": -1, "output": f"命令超时（>{timeout}s）"}
+        warning = decision.reason if not decision.isolated else ""
+        return {"ok": False, "code": -1, "output": f"命令超时（>{timeout}s）",
+                "sandbox": evidence, "warning": warning}
     except Exception as e:  # noqa: BLE001
-        return {"ok": False, "code": -1, "output": f"无法执行: {e}"}
+        warning = decision.reason if not decision.isolated else ""
+        return {"ok": False, "code": -1, "output": f"无法执行: {e}",
+                "sandbox": evidence, "warning": warning}

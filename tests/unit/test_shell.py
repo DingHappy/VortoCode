@@ -46,6 +46,7 @@ def test_is_dangerous_allows_normal_dev_commands():
 def test_run_command_captures_output_and_code(tmp_path):
     ok = run_command(tmp_path, "echo hello")
     assert ok["ok"] is True and ok["code"] == 0 and "hello" in ok["output"]
+    assert ok["sandbox"]["policy"] == "off" and "显式关闭" in ok["warning"]
 
     bad = run_command(tmp_path, "exit 3")
     assert bad["ok"] is False and bad["code"] == 3
@@ -65,6 +66,7 @@ def test_background_command_lifecycle(tmp_path):
     # 起一个会持续打印的长驻进程
     start = run_command_background(tmp_path, "for i in 1 2 3; do echo line$i; sleep 0.1; done; sleep 5")
     assert start["ok"] is True and start["id"].startswith("bg")
+    assert start["sandbox"]["policy"] == "off"
     bid = start["id"]
     assert any(p["id"] == bid for p in list_background())   # 列得出来
     time.sleep(0.6)                                         # 让它打几行
@@ -141,7 +143,7 @@ async def test_build_command_tool_background(tmp_path):
     assert tools["read_output"].read_only is True
     assert tools["stop_command"].read_only is False
     out = await tools["run_command"].handler({"command": "sleep 5", "background": True})
-    assert "已后台启动" in out and "bg" in out
+    assert "已后台启动" in out and "bg" in out and "显式关闭" in out
     import re
     bid = re.search(r"句柄 (bg\d+)", out).group(1)
     read = await tools["read_output"].handler({"id": bid})
@@ -162,7 +164,7 @@ async def test_build_command_tool_confirm_gate(tmp_path):
 
     t_yes = {x.name: x for x in build_command_tool(str(tmp_path), yes)}["run_command"]
     out = await t_yes.handler({"command": "echo hi"})
-    assert "退出码 0" in out and "hi" in out                     # 允许 → 跑了
+    assert "退出码 0" in out and "hi" in out and "显式关闭" in out  # 允许 → 跑了且降级有证据
 
     t_no = {x.name: x for x in build_command_tool(str(tmp_path), no)}["run_command"]
     assert "拒绝" in await t_no.handler({"command": "echo hi"})   # 拒绝 → 不跑
@@ -175,3 +177,55 @@ async def test_build_command_tool_confirm_gate(tmp_path):
     t_d = {x.name: x for x in build_command_tool(str(tmp_path), counting)}["run_command"]
     out3 = await t_d.handler({"command": "rm -rf /"})
     assert "拒绝" in out3 and asked["n"] == 0                     # 危险硬拒，根本没问 confirm
+
+
+@pytest.mark.asyncio
+async def test_build_command_tool_surfaces_fallback_before_confirmation(
+        tmp_path, monkeypatch):
+    from src.agents import sandbox as sb
+    from src.agents.main_agent import build_command_tool
+    asked = []
+
+    async def yes(message):
+        asked.append(message)
+        return True
+
+    monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
+    monkeypatch.setattr(sb, "sandbox_backend", lambda: "")
+    tool = {item.name: item for item in build_command_tool(str(tmp_path), yes)}["run_command"]
+    out = await tool.handler({"command": "echo visible"})
+    assert asked and "显式降级到宿主机" in asked[0]
+    assert "visible" in out and "显式降级到宿主机" in out
+
+    monkeypatch.setenv("VORTOCODE_SANDBOX", "required")
+    asked.clear()
+    refused = await tool.handler({"command": "echo blocked"})
+    assert "拒绝执行" in refused and not asked
+
+
+@pytest.mark.asyncio
+async def test_build_command_tool_rechecks_isolation_after_confirmation(tmp_path, monkeypatch):
+    from src.agents import sandbox as sb
+    from src.agents.main_agent import build_command_tool
+    import src.agents.shell as shell
+
+    async def yes(_message):
+        return True
+
+    captured = []
+
+    def fake_run(repo_root, cmd, *, require_isolation=False):
+        captured.append(require_isolation)
+        return {"ok": True, "code": 0, "output": "ok", "warning": "", "sandbox": {}}
+
+    monkeypatch.setattr(shell, "run_command", fake_run)
+    monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
+    tool = {item.name: item for item in build_command_tool(str(tmp_path), yes)}["run_command"]
+
+    monkeypatch.setattr(sb, "sandbox_backend", lambda: "seatbelt")
+    await tool.handler({"command": "echo isolated"})
+    assert captured[-1] is True          # backend 消失时也不允许执行阶段静默降级
+
+    monkeypatch.setattr(sb, "sandbox_backend", lambda: "")
+    await tool.handler({"command": "echo confirmed-fallback"})
+    assert captured[-1] is False         # 只有本次确认过的 auto fallback 才允许 host

@@ -268,7 +268,8 @@ class TesterAgent(Agent):
         r = await run_pytest(str(workspace), timeout=120)
         if r.error and not r.stdout:
             return {"passed": False, "total": 0, "reason": r.error,
-                    "generated_tests": generated, "runtime": r.runtime}
+                    "generated_tests": generated, "runtime": r.runtime,
+                    "sandbox": r.sandbox, "warning": r.warning}
 
         output = r.stdout
         return_code = r.exit_code
@@ -288,9 +289,11 @@ class TesterAgent(Agent):
             "passed_count": passed_count,
             "failed_count": failed_count,
             "error_count": error_count,
+            "sandbox": r.sandbox,
+            "warning": r.warning,
             "return_code": return_code,
             "generated_tests": generated,
-            "runtime": r.runtime,          # docker | host
+            "runtime": r.runtime,          # docker | seatbelt | bubblewrap | host
             "isolated": r.isolated,
             "output": output[-4000:],
         }
