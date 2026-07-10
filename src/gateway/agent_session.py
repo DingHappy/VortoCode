@@ -34,7 +34,8 @@ def _load_cli_hooks(repo_root: str):
 
 
 def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
-                  on_tool=None, on_plan=None, llm=None, max_steps=None):
+                  on_tool=None, on_plan=None, llm=None, max_steps=None,
+                  capability_profile=None):
     """装配一个主 agent（三端同一骨架）。
 
     kind ∈ {web, cli, im} 决定差异位（with_artifacts / hooks）；confirm/on_progress 由调用端
@@ -44,15 +45,19 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         raise ValueError(f"未知装配端 kind={kind!r}（可选 {_KINDS}）")
     from src.agents.main_agent import (MainAgent, build_agent_tools, native_default,
                                        skill_catalog)
+    from src.agents.capabilities import SessionCapabilities
     from src.agents.permissions import load_permissions
     from src.agents.project import load_project_instructions
 
+    profile = capability_profile or ("local" if kind == "cli" else "external")
+    capabilities = SessionCapabilities.for_profile(profile)
     tools = build_agent_tools(repo_root, confirm=confirm, on_progress=on_progress,
                               with_artifacts=(kind == "web"),   # 制品查看页只有 Web 有
-                              memory_source=kind)
+                              memory_source=kind, capabilities=capabilities)
     kwargs = dict(plan_tool=True, permissions=load_permissions(repo_root),
                   env_context=True,                    # 注入 <env>（cwd/git/日期/目录）
-                  native=native_default())             # 三端统一 native 开关
+                  native=native_default(),             # 三端统一 native 开关
+                  capabilities=capabilities)
     parts = []
     proj = load_project_instructions(repo_root)        # AGENTS.md/CLAUDE.md 项目约定进系统提示
     if proj:

@@ -477,6 +477,7 @@ class MainAgent:
         context_policy: str = "auto",
         permissions: Optional[Any] = None,
         env_context: bool = False,
+        capabilities: Optional[Any] = None,
     ) -> None:
         import os
         # 复用既有 src/hooks 的 HookSystem：把工具生命周期事件（pre/post/error）接进 agent loop
@@ -536,6 +537,10 @@ class MainAgent:
         self._context_mode = "plan"
         self._summary = ""                     # 早先轮次的压缩纪要（滚动合并）
         self._permissions = permissions        # 可选 .vortocode/permissions.yaml deny 规则（_run_tool 硬拦）
+        if capabilities is None:
+            from src.agents.capabilities import EXTERNAL_PROFILE, SessionCapabilities
+            capabilities = SessionCapabilities.for_profile(EXTERNAL_PROFILE)
+        self._capabilities = capabilities      # 会话级能力边界；项目配置/确认不能放宽
         self._env_context = env_context        # 仿 CC 注入 <env>（cwd/git/日期/目录）；仅顶层交互 agent 开，子 agent 不开省开销
         self._env = ""                         # 当轮环境快照（run_turn 开始时刷新，_system 注入）
 
@@ -621,6 +626,8 @@ class MainAgent:
             prompt += "\n\n" + hint
         if self.extra_system:
             prompt += "\n\n" + self.extra_system
+        if self._capabilities is not None:
+            prompt += "\n\n" + self._capabilities.system_notice()
         if self._summary:                      # 早先轮次的压缩纪要：常驻系统提示，最近对话仍在历史里逐字给
             prompt += ("\n\n【对话纪要】(更早轮次的压缩摘要，含原始目标与关键决策；"
                        "最近的对话在下方消息里逐字给出)\n" + self._summary)
@@ -975,6 +982,16 @@ class MainAgent:
         tool = self.tools.get(name)
         if tool is None:
             return f"没有名为 {name} 的工具。可用：{', '.join(self.tools)}"
+        if self._capabilities is not None:
+            reason = self._capabilities.denied(
+                name,
+                args,
+                tool.required_capabilities,
+                external_content=tool.external_content,
+            )
+            if reason:
+                say(f"🔧 [b]{name}[/b][dim] —— 被会话能力边界拦下[/dim]")
+                return f"[能力拦截] {reason}"
         if self._permissions is not None:           # .vortocode/permissions.yaml deny：硬拦（不分模式、最优先）
             reason = self._permissions.denied(name, args)
             if reason:
@@ -1496,10 +1513,11 @@ def build_read_tools(repo_root: str) -> list[Tool]:
 
     def _all_files() -> list[str]:
         import os
+        from src.agents.capabilities import is_sensitive_repo_path
         base = Path(repo_root)
         git_files = _git_visible_files(base)
         if git_files is not None:
-            return git_files
+            return [rel for rel in git_files if not is_sensitive_repo_path(rel)]
         ignored = _load_root_gitignore(base)
         out: list[str] = []
         for root, dirs, files in os.walk(base):
@@ -1515,7 +1533,8 @@ def build_read_tools(repo_root: str) -> list[Tool]:
                 rel = _rel_posix(fp, base)
                 if _skip_builtin(rel) or ignored(rel, is_dir=False):
                     continue
-                out.append(rel)
+                if not is_sensitive_repo_path(rel):
+                    out.append(rel)
                 if len(out) >= 6000:
                     return sorted(out)
         return sorted(out)
@@ -1872,7 +1891,7 @@ def build_test_tool(root: str, default_cmd: Optional[list] = None) -> "Tool":
                 "在当前隔离工作区跑测试自测（命令按仓库类型自动探测；pytest 可传 test 选择器 narrow，"
                 "省略/非 pytest 跑整套）；实现后务必自测，没过就改完再测，直到通过",
                 {"test": "可选，pytest 文件级选择器，如 tests/unit/test_x.py（仅 pytest 生效）"},
-                _handler, read_only=True)
+                _handler, read_only=True, required_capabilities=("host_process",))
 
 
 def _detect_base_branch(repo_root: str) -> str:
@@ -1939,7 +1958,8 @@ def _test_delta_note(diff: str) -> str:
 
 
 def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]] = None,
-                    confirm: Optional[Callable] = None, draft_pr: bool = False) -> list[Tool]:
+                    confirm: Optional[Callable] = None, draft_pr: bool = False,
+                    capabilities: Any = None) -> list[Tool]:
     """UI 无关的隔离 dev 工具（给 Web/CLI agent 用）。
 
     `dev_isolated`：在一次性 git worktree 里让可写子 agent 实现 + 自测，再跑测试验证；✅通过就
@@ -2009,7 +2029,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     max_steps=16,
                     extra_system=("你是隔离工作区里的实现子 agent：用 read/grep 看代码，然后**必须用 "
                                   "edit_file/write_file 实际修改文件**实现任务——只查看或只跑测试不改文件不算完成。"
-                                  "改完务必 run_tests 自测直到通过。只动相关文件。"))
+                                  "改完务必 run_tests 自测直到通过。只动相关文件。"),
+                    capabilities=capabilities)
             return _b
         return _mk
 
@@ -2189,7 +2210,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 tools = build_read_tools(str(path)) + [build_test_tool(str(path), test_cmd)]
                 extra = _review._REVIEWER_SYSTEM + (
                     f"\n\n【本仓库审查规范】\n{guidelines}" if guidelines else "")
-                agent = MainAgent(tools, llm=llm, max_steps=max_steps, extra_system=extra)
+                agent = MainAgent(tools, llm=llm, max_steps=max_steps, extra_system=extra,
+                                  capabilities=capabilities)
                 prompt = (f"审查分支 {_branch}（相对 {_base}）的以下改动。只报 P0/P1、每条带验证证据、"
                           f"用 run_tests 复现你怀疑的问题，最后只输出 JSON 数组：\n\n```diff\n{diff}\n```")
                 try:
@@ -2547,14 +2569,14 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
              "vorto/<id> 新分支（绝不碰 main/工作区），❌带失败输出供修正。仅 build",
              {"description": "要在隔离工作区实现的子任务",
               "test": "可选，pytest 选择器，省略则跑全量 tests/"},
-             _dev_isolated, read_only=False),
+             _dev_isolated, read_only=False, required_capabilities=("host_process",)),
         Tool("dev_parallel",
              "并行实现：多个**相互独立**的子任务各起隔离 worktree 同时实现+自测+验证（互不冲突，"
              "红了带失败反馈自修复重试），绿块一并落到一个 vorto/parallel 新分支（不碰 main），"
              "**落分支后再跑一遍集成测试**抓'单独绿合起来红'，汇报各自 ✅/❌ 及集成结果。最多 5（仅 build）",
              {"tasks": "相互独立的子任务字符串列表",
               "test": "可选，pytest 选择器，省略则各自跑全量 tests/"},
-             _dev_parallel, read_only=False),
+             _dev_parallel, read_only=False, required_capabilities=("host_process",)),
         Tool("dev_auto",
              "把一个大任务**端到端**做完：自动分解→无依赖子任务并行隔离实现→**有依赖的按拓扑序"
              "在同一 vorto/auto 分支上逐个接力实现**（看得见前面的改动、自测绿才提交）→最后整条分支"
@@ -2563,26 +2585,28 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
              {"task": "要自动分解并实现的大任务（自然语言）",
               "test": "可选，pytest 选择器",
               "open_pr": "可选，true 则集成绿后经确认 push 分支并开 PR"},
-             _dev_auto, read_only=False),
+             _dev_auto, read_only=False, required_capabilities=("host_process",)),
         Tool("dev_resume",
              "从一个中断的 dev_auto 计划**断点续跑**：已落地(landed)的子任务块跳过、未完成的（含失败）重走，"
              "最后重跑集成验证（原计划要开 PR 的还会接着审查+开 PR）。10 个子任务断在第 7 个不用从头再来。"
              "不传 plan_id 则列出最近可续的计划。仅 build",
              {"plan_id": "要续跑的计划 id（dev_auto 起跑时会给出、存于 .vortocode/dev_plans/）；省略则列出可续计划"},
-             _dev_resume, read_only=False),
+             _dev_resume, read_only=False, required_capabilities=("host_process",)),
         Tool("pr_fix",
              "读一个 PR 的 review 评论（含行级、已 resolved 的自动跳过）+ CI 失败检查，在其 **vorto/* 分支**上"
              "逐条修正 + 自测，绿了经确认 push 更新 PR。'人在合并口'之前的往返自动化。硬闸：只碰 vorto/* 分支。仅 build",
              {"pr": "PR 号（或用 branch 传 vorto/* 分支名）",
               "branch": "可选，vorto/* 分支名（与 pr 二选一）",
               "test": "可选，pytest 选择器"},
-             _pr_fix, read_only=False, outward=True),
+             _pr_fix, read_only=False, outward=True,
+             required_capabilities=("host_process", "authenticated_outbound")),
     ]
 
 
 def build_research_tools(repo_root: str, *, llm: Any = None,
                          max_steps: int = 12, max_parallel: int = 5, default_parallel: int = 2,
-                         confirm: Any = None, on_progress: Any = None) -> list[Tool]:
+                         confirm: Any = None, on_progress: Any = None,
+                         capabilities: Any = None) -> list[Tool]:
     """UI 无关的子 agent 委派工具（task / research_parallel）——给 Web/CLI 用。
 
     把一个大型只读调查甩给一个**只带 read_tools** 的隔离子 agent：它在独立上下文里
@@ -2600,8 +2624,9 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
         if not agent_name:
             return MainAgent(build_read_tools(repo_root), llm=llm, max_steps=max_steps,
                              extra_system=(
-                "你是只读研究子 agent：只用工具调研代码/仓库并返回**简洁结论**，绝不修改任何东西。"
-                "读够信息就尽快收口，别把预算耗在重复读取上。")), None
+                                 "你是只读研究子 agent：只用工具调研代码/仓库并返回**简洁结论**，绝不修改任何东西。"
+                                 "读够信息就尽快收口，别把预算耗在重复读取上。"),
+                             capabilities=capabilities), None
         from src.agents.subagents import registry_for
         reg = registry_for(repo_root)
         spec = reg.get(agent_name)
@@ -2609,7 +2634,7 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
             avail = "、".join(reg.specs) or "（无——在 .vortocode/agents/ 放 <名>.md 定义角色）"
             return None, f"没有名为 {agent_name!r} 的子 agent。可用：{avail}"
         return build_subagent(repo_root, spec, llm=llm, confirm=confirm,
-                              on_progress=on_progress), None
+                              on_progress=on_progress, capabilities=capabilities), None
 
     async def _spawn(desc: str, agent_name: str = "") -> str:
         sub, err = _sub_for(agent_name)
@@ -2678,7 +2703,8 @@ _DEV_RULES = ("你可以用 dev_isolated/dev_parallel 真正实现代码——�
 
 
 def build_subagent(repo_root: str, spec: Any, *, llm: Any = None,
-                   confirm: Any = None, on_progress: Any = None) -> MainAgent:
+                   confirm: Any = None, on_progress: Any = None,
+                   capabilities: Any = None) -> MainAgent:
     """按自定义角色定义装配一个子 agent。
 
     `src.agents.subagents` 只保留注册表/规格解析，避免反向导入 MainAgent 形成循环依赖。
@@ -2688,13 +2714,14 @@ def build_subagent(repo_root: str, spec: Any, *, llm: Any = None,
     tools = build_read_tools(repo_root)
     extra = spec.system_prompt + _SUB_RULES
     if spec.tools == "dev":
-        dev = [t for t in build_dev_tools(repo_root, on_progress=on_progress, confirm=confirm)
+        dev = [t for t in build_dev_tools(repo_root, on_progress=on_progress, confirm=confirm,
+                                          capabilities=capabilities)
                if t.name in ("dev_isolated", "dev_parallel")]
         tools = tools + dev
         extra += _DEV_RULES
     # 项目级权限硬拦（.vortocode/permissions.yaml deny）必须继承，避免角色文件绕过项目规则。
     sub = MainAgent(tools, llm=llm, max_steps=spec.max_steps, extra_system=extra,
-                    permissions=load_permissions(repo_root))
+                    permissions=load_permissions(repo_root), capabilities=capabilities)
     if spec.model:
         try:
             sub.set_model(spec.model)
@@ -2727,11 +2754,13 @@ def build_web_tools() -> list[Tool]:
     return [Tool("web_fetch",
                  "抓取一个公网 http(s) 网址的正文（查文档/issue/报错页/API 说明）：限 http/https、"
                  "拒私网与环回(SSRF 防护)、下载封顶、HTML 自动转正文。只读、无需确认",
-                 {"url": "要抓取的 http(s) 网址"}, _web_fetch, read_only=True, untrusted_source=True),
+                 {"url": "要抓取的 http(s) 网址"}, _web_fetch, read_only=True,
+                 untrusted_source=True, external_content=True),
             Tool("web_search",
                  "联网搜索（DuckDuckGo，无需 key）：给查询返回若干「标题/URL/摘要」，再用 web_fetch "
                  "深读感兴趣的链接。查最新信息/报错/库用法时先搜后读。只读、无需确认",
-                 {"query": "搜索关键词/问题"}, _web_search, read_only=True, untrusted_source=True)]
+                 {"query": "搜索关键词/问题"}, _web_search, read_only=True,
+                 untrusted_source=True, external_content=True)]
 
 
 def build_command_tool(repo_root: str, confirm) -> list[Tool]:
@@ -2808,14 +2837,16 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
                  "background=true 后台起、立即返回句柄，再用 read_output 看输出",
                  {"command": "要执行的 shell 命令",
                   "background": "可选，true=后台起长驻进程（不阻塞），用 read_output/stop_command 管理"},
-                 _run, read_only=False, outward=True),
+                 _run, read_only=False, outward=True,
+                 required_capabilities=("host_process",)),
             Tool("read_output",
                  "读某后台命令（run_command background=true 起的）的新增输出 + 运行状态；tail=N 看最近 N 行。只读",
                  {"id": "后台命令句柄，如 bg1", "tail": "可选，看最近 N 行"},
-                 _read_output, read_only=True),
+                 _read_output, read_only=True, required_capabilities=("host_process",)),
             Tool("stop_command",
                  "停掉某后台命令（terminate→kill）。用完 dev server / watcher 记得收摊",
-                 {"id": "后台命令句柄，如 bg1"}, _stop, read_only=False)]   # 终止进程是运行态副作用→仅 build
+                 {"id": "后台命令句柄，如 bg1"}, _stop, read_only=False,
+                 required_capabilities=("host_process",))]   # 终止进程是运行态副作用→仅 build
 
 
 def build_pr_tool(repo_root: str, confirm) -> list[Tool]:
@@ -2842,7 +2873,8 @@ def build_pr_tool(repo_root: str, confirm) -> list[Tool]:
                  "把一个本地分支（如 dev_isolated 产出的 vorto/...）push 到 origin 并开 PR；"
                  "外向操作、需确认，gh 不可用则只 push（仅 build）",
                  {"branch": "要开 PR 的分支名", "title": "PR 标题", "body": "可选，PR 正文"},
-                 _open_pr, read_only=False, outward=True)]
+                 _open_pr, read_only=False, outward=True,
+                 required_capabilities=("authenticated_outbound",))]
 
 
 def _longterm_store(repo_root: str):
@@ -3037,7 +3069,8 @@ def build_skill_tools(repo_root: str, confirm) -> list[Tool]:
 
 def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable[[str], None]] = None,
                       with_artifacts: bool = False, draft_pr: bool = False,
-                      memory_source: str = "agent", memory_session_id=None) -> list[Tool]:
+                      memory_source: str = "agent", memory_session_id=None,
+                      capabilities: Any = None) -> list[Tool]:
     """标准主 agent 工具集（headless CLI 与 Web /agent 共用，保证二者"同源"、不漂移）。
 
     此前 cli._build_headless_agent 与 web._new_agent 各自手写同一串 build_*，极易漂移
@@ -3053,7 +3086,8 @@ def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable
     注：调用方（CLI/Web）应把 `skill_catalog(repo_root)` 注入 extra_system，模型才知道有哪些技能可 use_skill。
     """
     tools = (build_read_tools(repo_root)
-             + build_research_tools(repo_root, confirm=confirm, on_progress=on_progress)
+             + build_research_tools(repo_root, confirm=confirm, on_progress=on_progress,
+                                    capabilities=capabilities)
              + build_web_tools()
              + build_memory_tools(repo_root, confirm, source=memory_source,
                                   session_id=memory_session_id)
@@ -3061,6 +3095,7 @@ def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable
     if with_artifacts:
         from src.web.artifacts import build_artifact_tools    # 惰性导入：避免 agents 层在导入期硬依赖 web
         tools += build_artifact_tools(repo_root)
-    tools += (build_dev_tools(repo_root, on_progress=on_progress, confirm=confirm, draft_pr=draft_pr)
+    tools += (build_dev_tools(repo_root, on_progress=on_progress, confirm=confirm, draft_pr=draft_pr,
+                              capabilities=capabilities)
               + build_command_tool(repo_root, confirm) + build_pr_tool(repo_root, confirm))
     return tools

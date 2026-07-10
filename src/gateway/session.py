@@ -17,13 +17,16 @@ async def run_isolated_session(repo_root: str, prompt: str, *, mode: str = "buil
     model：指定便宜模型跑（None 用默认）。绝不落任何会话历史、绝不碰主会话。
     """
     from src.agents.main_agent import (MainAgent, build_agent_tools, native_default, skill_catalog)
+    from src.agents.capabilities import SessionCapabilities, UNATTENDED_PROFILE
     from src.agents.permissions import load_permissions
 
     async def _deny(_m):                             # 无人值守：外向操作（push/PR）默认拒绝
         return False
 
+    capabilities = SessionCapabilities.for_profile(UNATTENDED_PROFILE)
     tools = build_agent_tools(
-        repo_root, confirm=_deny, with_artifacts=False, memory_source="isolated"
+        repo_root, confirm=_deny, with_artifacts=False, memory_source="isolated",
+        capabilities=capabilities,
     )
     parts = []
     if not light:                                    # 非轻上下文才带项目指令 + 技能目录
@@ -37,7 +40,7 @@ async def run_isolated_session(repo_root: str, prompt: str, *, mode: str = "buil
     if extra_system:
         parts.append(extra_system)
     kwargs = dict(plan_tool=True, permissions=load_permissions(repo_root),
-                  env_context=True, native=native_default())
+                  env_context=True, native=native_default(), capabilities=capabilities)
     if parts:
         kwargs["extra_system"] = "\n\n".join(parts)
     if llm is not None:
