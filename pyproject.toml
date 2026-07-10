@@ -48,6 +48,9 @@ parsing = [
     "tree-sitter-javascript>=0.21.0",
     "tree-sitter-typescript>=0.21.0",
 ]
+browser = [
+    "playwright>=1.48.0",
+]
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
@@ -56,7 +59,7 @@ dev = [
     "ruff>=0.1.0",
 ]
 all = [
-    "vortocode[memory,llm,mcp,parsing,tui,dev]",
+    "vortocode[memory,llm,mcp,parsing,tui,browser,dev]",
 ]
 
 [project.scripts]

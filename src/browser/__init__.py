@@ -8,6 +8,7 @@ from .playwright_browser import (
     PageInfo,
     ElementInfo
 )
+from .verify import loopback_url_error, run_browser_probe, safe_evidence_path
 
 __all__ = [
     "BrowserAutomation",
@@ -16,4 +17,7 @@ __all__ = [
     "BrowserType",
     "PageInfo",
     "ElementInfo",
+    "loopback_url_error",
+    "run_browser_probe",
+    "safe_evidence_path",
 ]
