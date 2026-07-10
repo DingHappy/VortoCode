@@ -245,7 +245,7 @@ async def test_web_ensure_mcp_connects_once(monkeypatch):
         async def shutdown(self):
             pass
 
-    async def fake_connect(repo):
+    async def fake_connect(repo, **kwargs):
         calls["connect"] += 1
         return FakeMgr(), [Tool("mcp__s__t", "[MCP:s] t", {}, _h, read_only=False)]
     monkeypatch.setattr(mt, "connect_mcp", fake_connect)
@@ -266,7 +266,7 @@ async def test_web_ensure_mcp_no_config_is_noop(monkeypatch):
     from src.agents.main_agent import MainAgent
     from src.web.routers import realtime
 
-    async def fake_connect(repo):
+    async def fake_connect(repo, **kwargs):
         return None, []
     monkeypatch.setattr(mt, "connect_mcp", fake_connect)
     monkeypatch.setenv("VORTOCODE_WEB_MCP", "1")        # opt-in 开着，但无配置 → 仍是 no-op

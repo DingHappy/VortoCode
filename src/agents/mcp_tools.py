@@ -30,20 +30,56 @@ def wrap_mcp_manager(manager: Any) -> List:
         # untrusted_source=True：MCP server 返回的是**外部不可信内容**，摄入即给本回合打污点，
         # 之后同回合的对外动作会被提升确认等级（D0 防提示注入外发）。
         wrapped.append(Tool(f"mcp__{server}__{orig}", f"[MCP:{server}] {mt.description}",
-                            targs, handler, read_only=False, untrusted_source=True))
+                            targs, handler, read_only=False, untrusted_source=True,
+                            external_content=True))
     return wrapped
 
 
-async def connect_mcp(repo_root) -> Tuple[Optional[Any], List]:
+def _credential_free_http_servers(config: dict) -> list[dict]:
+    """Return explicitly credential-free HTTP MCP definitions.
+
+    Stdio servers execute repository-controlled commands on the host, while
+    configured HTTP headers are credentials.  Neither is safe in an external
+    content session.  ``credentialed: false`` is an explicit operator signal;
+    omission fails closed.
+    """
+    servers = config.get("servers") if isinstance(config, dict) else []
+    if not isinstance(servers, list):
+        return []
+    allowed = []
+    for server in servers:
+        if not isinstance(server, dict) or not server.get("enabled", True):
+            continue
+        transport = str(server.get("transport") or "stdio").strip().lower()
+        if transport != "http" or server.get("credentialed") is not False:
+            continue
+        if server.get("headers"):
+            continue
+        allowed.append(dict(server))
+    return allowed
+
+
+async def connect_mcp(repo_root, *, capability_profile: str | None = None) -> Tuple[Optional[Any], List]:
     """据 `repo_root/config/mcp.yaml` 连 MCP 服务器，返回 (manager, wrapped_tools)。
 
     无配置文件 → (None, [])，不报错（多数仓库没 MCP）。连接异常上抛由调用方兜（打印/忽略）。
     用完务必 `await manager.shutdown()`（外部 server 多为子进程，不关会残留）。
     """
+    from src.agents.capabilities import EXTERNAL_PROFILE, UNATTENDED_PROFILE, normalize_profile
+
+    profile = normalize_profile(capability_profile)
+    if profile not in {EXTERNAL_PROFILE, UNATTENDED_PROFILE}:
+        raise PermissionError(
+            f"MCP 是外部内容能力，当前 profile={profile}；请新建 external 会话"
+        )
     cfg = Path(repo_root) / "config" / "mcp.yaml"
     if not cfg.is_file():
         return None, []
     from src.tools.manager import ToolManager
     mgr = ToolManager(str(cfg))
+    safe_servers = _credential_free_http_servers(mgr.config)
+    if not safe_servers:
+        return None, []
+    mgr.config = {**mgr.config, "servers": safe_servers}
     await mgr.initialize()
     return mgr, wrap_mcp_manager(mgr)

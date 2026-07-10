@@ -152,6 +152,7 @@ def test_cli_history_save_load_roundtrip(tmp_path):
     cli._save_cli_history(str(tmp_path), hist)
     assert (tmp_path / ".vortocode" / "cli_session.json").is_file()
     assert cli._load_cli_history(str(tmp_path)) == hist
+    assert cli._load_cli_capability_profile(str(tmp_path)) == "local"
     assert cli._load_cli_history(str(tmp_path / "nope")) == []      # 缺文件 → []
 
 
@@ -165,6 +166,19 @@ def test_cli_history_strips_multimodal_blocks(tmp_path):
     assert "AAAA" not in raw and "data:image" not in raw            # 没有 base64
     loaded = cli._load_cli_history(str(tmp_path))
     assert loaded[0]["content"] == "看图[图片]"
+
+
+def test_cli_corrupt_capability_profile_fails_closed(tmp_path):
+    import json
+
+    state = tmp_path / ".vortocode" / "cli_session.json"
+    state.parent.mkdir(parents=True)
+    state.write_text(
+        json.dumps({"history": [{"role": "user", "content": "x"}],
+                    "capability_profile": "super-admin"}),
+        encoding="utf-8",
+    )
+    assert cli._load_cli_capability_profile(str(tmp_path)) == "external"
 
 
 @pytest.mark.asyncio
@@ -205,6 +219,37 @@ async def test_headless_no_continue_is_fresh(tmp_path, monkeypatch):
     assert not any("旧对话" in (m.get("content") or "") for m in llm.seen if isinstance(m.get("content"), str))
 
 
+@pytest.mark.asyncio
+async def test_headless_continue_does_not_cross_capability_profiles(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    class _SeenLLM:
+        def __init__(self):
+            self.seen = None
+
+        async def chat(self, messages, **kwargs):
+            self.seen = [m for m in messages if m["role"] != "system"]
+            return {"content": "ok"}
+
+    cli._save_cli_history(
+        str(tmp_path), [{"role": "user", "content": "local-secret-context"}], "local"
+    )
+    llm = _SeenLLM()
+    await cli.run_agent_headless(
+        "external question",
+        llm=llm,
+        quiet=True,
+        continue_session=True,
+        capability_profile="external",
+    )
+    assert not any(
+        "local-secret-context" in (m.get("content") or "")
+        for m in llm.seen
+        if isinstance(m.get("content"), str)
+    )
+    assert cli._load_cli_capability_profile(str(tmp_path)) == "external"
+
+
 def test_agent_dispatch_expands_custom_command(monkeypatch, tmp_path):
     cmds = tmp_path / ".vortocode" / "commands"
     cmds.mkdir(parents=True)
@@ -220,6 +265,22 @@ def test_agent_dispatch_expands_custom_command(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "argv", ["vortocode", "agent", "/review cli.py"])
     cli.main()
     assert captured["prompt"] == "审查：cli.py"                       # dispatch 层已展开
+
+
+def test_agent_dispatch_passes_capability_profile(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    captured = {}
+
+    async def _fake_headless(prompt, **kwargs):
+        captured.update(prompt=prompt, **kwargs)
+        return ""
+
+    monkeypatch.setattr(cli, "run_agent_headless", _fake_headless)
+    monkeypatch.setattr(
+        sys, "argv", ["vortocode", "agent", "--capabilities", "external", "查网页"]
+    )
+    cli.main()
+    assert captured["capability_profile"] == "external"
 
 
 def test_strip_markup():
@@ -433,13 +494,16 @@ async def test_headless_mcp_connects_adds_tools_and_shuts_down(monkeypatch, tmp_
         async def shutdown(self):
             calls["shutdown"] += 1
 
-    async def fake_connect(repo_root):
+    async def fake_connect(repo_root, **kwargs):
         return FakeMgr(), [Tool("mcp__srv__ping", "[MCP:srv] ping", {}, ping_handler, read_only=False)]
     monkeypatch.setattr(mt, "connect_mcp", fake_connect)
     monkeypatch.chdir(tmp_path)
 
     llm = _ScriptedLLM('{"tool":"mcp__srv__ping","args":{}}', "调用完成。")
-    reply = await cli.run_agent_headless("用 ping", build=True, use_mcp=True, quiet=True, llm=llm)
+    reply = await cli.run_agent_headless(
+        "用 ping", build=True, use_mcp=True, quiet=True, llm=llm,
+        capability_profile="external",
+    )
     assert reply == "调用完成。"
     assert calls["ping"] == 1                          # MCP 工具确被接入并调用
     assert calls["shutdown"] == 1                      # 回合结束关掉 MCP（不残留子进程）

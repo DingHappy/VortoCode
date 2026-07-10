@@ -220,7 +220,7 @@ def _fake_dev_tools(monkeypatch, reply="跑完了", branch=""):
     async def fake_dev_auto(args):
         return f"{reply}：{args.get('task')}"
 
-    def fake_build(root, on_progress=None, confirm=None, draft_pr=False):
+    def fake_build(root, on_progress=None, confirm=None, draft_pr=False, **kwargs):
         if on_progress:
             on_progress("后台干活中")
         return [_T("dev_auto", fake_dev_auto)]

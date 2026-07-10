@@ -746,6 +746,58 @@ async def test_new_session_resets_agent(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_new_external_session_uses_credential_free_profile(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/new external")
+        assert app._capability_profile == "external"
+        agent = app._build_main_agent()
+        assert agent._capabilities.profile == "external"
+        assert "host_process" in agent.tools["run_command"].required_capabilities
+        assert "host_process" in agent.tools["dev_isolated"].required_capabilities
+        assert "authenticated_outbound" in agent.tools["open_pr"].required_capabilities
+        result = await agent._run_tool(
+            "run_command", {"command": "env"}, "build", lambda _m: None
+        )
+        assert "能力拦截" in result and "host_process" in result
+
+
+def test_external_tui_at_file_cannot_bypass_sensitive_read_gate(tmp_path):
+    raw = "api_key=super-secret-value"
+    (tmp_path / ".env").write_text(raw, encoding="utf-8")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    app._capability_profile = "external"
+    clean, context = app._expand_context("检查 @.env")
+    assert clean == "检查 .env"
+    assert "能力拦截" in context
+    assert raw not in context
+    _, files = app._expand_at_files("检查 @.env")
+    assert files == []
+
+
+@pytest.mark.asyncio
+async def test_resume_restores_external_capability_profile(tmp_path):
+    from src.memory.session_store import SessionStore
+
+    store = SessionStore(str(tmp_path / ".vortocode" / "sessions.db"))
+    sid = store.create_session("external session")
+    snapshot = {
+        "version": 3,
+        "history": [{"role": "user", "content": "外部调研"}],
+        "capabilities": {"version": 1, "profile": "external"},
+    }
+    store.add_message(sid, "agent", json.dumps(snapshot), {"agent_history": True})
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, f"/resume {sid}")
+        assert await _wait_for(app, pilot, "已恢复对话上下文")
+        assert app.agent is not None
+        assert app._capability_profile == "external"
+        assert app.agent._capabilities.profile == "external"
+
+
+@pytest.mark.asyncio
 async def test_skills_command_lists(tmp_path):
     d = tmp_path / "skills" / "demo"
     d.mkdir(parents=True)
@@ -987,7 +1039,7 @@ async def test_compact_command_runs_and_audits(tmp_path):
 @pytest.mark.asyncio
 async def test_mcp_connect_wraps_tools(monkeypatch, tmp_path):
     # /mcp 连接 → 把 MCP server 工具包成 agent 工具（前缀防冲突、build 门控、handler 调 execute_tool）。
-    import src.tools.manager as mgrmod
+    import src.agents.mcp_tools as mt
 
     class FakeTool:
         def __init__(self):
@@ -1019,10 +1071,15 @@ async def test_mcp_connect_wraps_tools(monkeypatch, tmp_path):
         async def shutdown(self):
             pass
 
-    monkeypatch.setattr(mgrmod, "ToolManager", FakeMgr)
+    async def fake_connect(repo_root, **kwargs):
+        mgr = FakeMgr()
+        return mgr, mt.wrap_mcp_manager(mgr)
+
+    monkeypatch.setattr(mt, "connect_mcp", fake_connect)
 
     app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
+        await _submit(app, pilot, "/new external")
         await _submit(app, pilot, "/mcp")
         assert await _wait_for(app, pilot, "已接入 1 个 MCP 工具")
         names = [t.name for t in app._mcp_tools]
@@ -1873,7 +1930,7 @@ def test_tui_run_disables_mouse_capture_for_native_copy(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_resume_restores_agent_structured_state(monkeypatch, tmp_path):
+async def test_resume_pre_capability_snapshot_keeps_only_sanitized_summary(monkeypatch, tmp_path):
     import src.llm.client as llmmod
     from src.memory.session_store import SessionStore
 
@@ -1900,10 +1957,11 @@ async def test_resume_restores_agent_structured_state(monkeypatch, tmp_path):
         await _submit(app, pilot, f"/resume {sid}")
         assert await _wait_for(app, pilot, "已恢复对话上下文")
         assert app.agent is not None
-        assert app.agent.history == snapshot["history"]
+        assert app.agent.history == []
         assert app.agent._summary == snapshot["summary"]
-        assert app.agent._task_anchor == snapshot["task_anchor"]
-        assert app.agent.plan == snapshot["plan"]
+        assert app.agent._task_anchor == ""
+        assert app.agent.plan == []
+        assert app.agent._capabilities.profile == "external"
 
 
 @pytest.mark.asyncio
@@ -1934,6 +1992,8 @@ async def test_resume_legacy_agent_history_uses_session_summary(monkeypatch, tmp
         assert await _wait_for(app, pilot, "已恢复对话上下文")
         assert app.agent is not None
         assert app.agent._summary == "会话摘要：用户要继续 phase 1 路线图。"
+        assert app.agent.history == []
+        assert app.agent._capabilities.profile == "external"
 
 
 @pytest.mark.asyncio
