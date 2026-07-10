@@ -48,7 +48,8 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
     from src.agents.project import load_project_instructions
 
     tools = build_agent_tools(repo_root, confirm=confirm, on_progress=on_progress,
-                              with_artifacts=(kind == "web"))   # 制品查看页只有 Web 有
+                              with_artifacts=(kind == "web"),   # 制品查看页只有 Web 有
+                              memory_source=kind)
     kwargs = dict(plan_tool=True, permissions=load_permissions(repo_root),
                   env_context=True,                    # 注入 <env>（cwd/git/日期/目录）
                   native=native_default())             # 三端统一 native 开关

@@ -22,7 +22,9 @@ async def run_isolated_session(repo_root: str, prompt: str, *, mode: str = "buil
     async def _deny(_m):                             # 无人值守：外向操作（push/PR）默认拒绝
         return False
 
-    tools = build_agent_tools(repo_root, confirm=_deny, with_artifacts=False)
+    tools = build_agent_tools(
+        repo_root, confirm=_deny, with_artifacts=False, memory_source="isolated"
+    )
     parts = []
     if not light:                                    # 非轻上下文才带项目指令 + 技能目录
         from src.agents.project import load_project_instructions
