@@ -39,13 +39,64 @@ def _builtin_profiles(repo_root: str) -> dict[str, dict]:
     return profiles
 
 
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+_FALSY = frozenset({"0", "false", "no", "off"})
+
+
 def _truthy(v) -> bool:
-    return str(v).strip().lower() in ("1", "true", "yes", "on") if not isinstance(v, bool) else v
+    return v if isinstance(v, bool) else str(v).strip().lower() in _TRUTHY
+
+
+def _config_bool(value, *, field: str, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in _TRUTHY:
+        return True
+    if normalized in _FALSY:
+        return False
+    raise ValueError(f"{field} 应为 boolean")
+
+
+def _normalize_browser(name: str, value) -> dict | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"profile {name} 的 browser 应为映射")
+    url = str(value.get("url") or "").strip()
+    if not url:
+        raise ValueError(f"profile {name} 的 browser.url 不能为空")
+    from src.browser.verify import loopback_url_error
+    reason = loopback_url_error(url)
+    if reason:
+        raise ValueError(f"profile {name} 的 browser.url 无效: {reason}")
+    wait_until = str(value.get("wait_until") or "load").strip().lower()
+    if wait_until not in {"commit", "domcontentloaded", "load", "networkidle"}:
+        raise ValueError(
+            f"profile {name} 的 browser.wait_until 应为 commit/domcontentloaded/load/networkidle")
+    raw_ignore = value.get("console_error_ignore") or []
+    if not isinstance(raw_ignore, list) or any(not isinstance(item, str) for item in raw_ignore):
+        raise ValueError(f"profile {name} 的 browser.console_error_ignore 应为字符串列表")
+    return {
+        "url": url,
+        "wait_until": wait_until,
+        "full_page": _config_bool(
+            value.get("full_page"), field=f"profile {name} browser.full_page", default=True),
+        "fail_on_console_error": _config_bool(
+            value.get("fail_on_console_error"),
+            field=f"profile {name} browser.fail_on_console_error",
+            default=True,
+        ),
+        "console_error_ignore": [item for item in raw_ignore if item],
+    }
 
 
 def _normalize_profile(name: str, value) -> dict | None:
     serve = ""
     check = ""
+    browser = None
     ready_timeout = 30
     auto = False
     if isinstance(value, str):
@@ -64,6 +115,7 @@ def _normalize_profile(name: str, value) -> dict | None:
         except (TypeError, ValueError):
             ready_timeout = 30
         auto = _truthy(value.get("auto") or value.get("auto_verify") or False)
+        browser = _normalize_browser(name, value.get("browser"))
         raw_patterns = value.get("paths") or value.get("match") or value.get("matches") or []
         if isinstance(raw_patterns, str):
             patterns = [raw_patterns]
@@ -73,11 +125,16 @@ def _normalize_profile(name: str, value) -> dict | None:
             patterns = []
     else:
         return None
-    # 有 serve 时可只给 serve+check（cmd 省略）；否则必须有 cmd。展示/交互仍以 cmd 为准（无则回落 check）。
-    if not name or not (cmd or (serve and check)):
+    if browser and not serve:
+        raise ValueError(f"profile {name} 配置 browser 时必须同时配置 serve")
+    # 有 serve 时可只给 serve+check 或 serve+browser（cmd 省略）；否则必须有 cmd。
+    # 展示/交互以 cmd 为准（无则回落 check / browser URL）。
+    if not name or not (cmd or (serve and (check or browser))):
         return None
-    return {"cmd": cmd or check, "description": desc, "paths": patterns, "source": "project",
-            "serve": serve, "check": check, "ready_timeout": ready_timeout, "auto": auto}
+    return {"cmd": cmd or check or str((browser or {}).get("url") or ""),
+            "description": desc, "paths": patterns, "source": "project",
+            "serve": serve, "check": check, "browser": browser,
+            "ready_timeout": ready_timeout, "auto": auto}
 
 
 def load_verify_profiles(repo_root: str) -> dict:
@@ -109,7 +166,11 @@ def load_verify_profiles(repo_root: str) -> dict:
         return {"ok": False, "error": "verify.yaml profiles 应为映射", "profiles": profiles, "path": str(path)}
     for raw_name, raw_value in raw_profiles.items():
         name = str(raw_name or "").strip()
-        profile = _normalize_profile(name, raw_value)
+        try:
+            profile = _normalize_profile(name, raw_value)
+        except ValueError as e:
+            return {"ok": False, "error": f"verify.yaml 配置失败: {e}",
+                    "profiles": profiles, "path": str(path)}
         if profile:
             profiles[name] = profile
     return {"ok": True, "profiles": profiles, "path": str(path)}

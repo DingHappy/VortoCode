@@ -9,6 +9,8 @@
 用真实临时 git 仓库 + 无端口的确定性命令（文件存在性探活），不触网、不占端口。
 """
 import subprocess
+import time
+from pathlib import Path
 
 import pytest
 
@@ -77,6 +79,52 @@ smoke:
     p = load_verify_profiles(str(tmp_path))["profiles"]["smoke"]
     assert p["serve"] == "sleep 30" and p["check"] == "true"
     assert p["cmd"] == "true"                       # 无 cmd → 展示回落 check
+
+
+def test_verify_profile_parses_browser_defaults(tmp_path):
+    _write_verify_yaml(tmp_path, """
+profiles:
+  web:
+    serve: npm run dev
+    auto: true
+    browser:
+      url: http://127.0.0.1:3000/
+""")
+    loaded = load_verify_profiles(str(tmp_path))
+    assert loaded["ok"] is True
+    browser = loaded["profiles"]["web"]["browser"]
+    assert browser == {
+        "url": "http://127.0.0.1:3000/",
+        "wait_until": "load",
+        "full_page": True,
+        "fail_on_console_error": True,
+        "console_error_ignore": [],
+    }
+    assert loaded["profiles"]["web"]["cmd"] == "http://127.0.0.1:3000/"
+
+
+@pytest.mark.parametrize("body, expected", [
+    ("browser: {url: https://example.com}", "loopback"),
+    ("browser: {url: 'http://127.0.0.1:3000', wait_until: later}", "wait_until"),
+    ("browser: {url: 'http://127.0.0.1:3000', console_error_ignore: nope}", "字符串列表"),
+])
+def test_verify_profile_rejects_invalid_browser_config(tmp_path, body, expected):
+    _write_verify_yaml(tmp_path, f"profiles:\n  web:\n    serve: npm run dev\n    {body}\n")
+    loaded = load_verify_profiles(str(tmp_path))
+    assert loaded["ok"] is False
+    assert expected in loaded["error"]
+
+
+def test_verify_profile_rejects_browser_without_serve(tmp_path):
+    _write_verify_yaml(tmp_path, """
+profiles:
+  web:
+    cmd: 'true'
+    browser:
+      url: http://127.0.0.1:3000/
+""")
+    loaded = load_verify_profiles(str(tmp_path))
+    assert loaded["ok"] is False and "必须同时配置 serve" in loaded["error"]
 
 
 def test_auto_verify_profiles_only_project_and_auto(tmp_path):
@@ -156,6 +204,98 @@ def test_runtime_check_serve_rejects_dangerous_serve(tmp_path):
     assert r["ok"] is False and "拒绝执行高危" in r["output"]
 
 
+def test_runtime_check_serve_with_cmd_probe_passes(tmp_path):
+    # 向后兼容：serve + cmd（无 check、无 browser）用 cmd 当探活，探到即通过。
+    prof = {
+        "name": "legacy",
+        "serve": "sh -c 'sleep 1; echo up > READY; sleep 30'",
+        "cmd": "test -f READY",
+        "ready_timeout": 15,
+    }
+    r = worktree.run_runtime_check(tmp_path, prof)
+    assert r["ok"] is True
+    assert "serve:" in r["cmd"] and "cmd:" in r["cmd"]
+
+
+def test_runtime_check_serve_with_failing_cmd_probe_is_not_vacuously_green(tmp_path):
+    # 回归护栏：serve 起来但 cmd 探活始终失败，绝不能空转判绿（曾因丢了 cmd 回退而假通过）。
+    prof = {
+        "name": "legacy",
+        "serve": "sh -c 'sleep 30'",
+        "cmd": "test -f NEVER",
+        "ready_timeout": 1,
+    }
+    r = worktree.run_runtime_check(tmp_path, prof)
+    assert r["ok"] is False
+
+
+def test_runtime_check_probe_uses_remaining_deadline(tmp_path, monkeypatch):
+    timeouts = []
+    stopped = []
+    monkeypatch.setattr("src.agents.shell.run_command_background",
+                        lambda *_a, **_k: {"ok": True, "id": "bg-deadline"})
+    monkeypatch.setattr("src.agents.shell.read_background",
+                        lambda *_a, **_k: {"ok": True, "status": "running", "output": ""})
+    monkeypatch.setattr("src.agents.shell.stop_background", lambda bid: stopped.append(bid))
+
+    def fake_run(*_args, **kwargs):
+        timeouts.append(kwargs["timeout"])
+        return subprocess.CompletedProcess([], 1, stdout="", stderr="not ready")
+
+    monkeypatch.setattr(worktree.subprocess, "run", fake_run)
+    started = time.monotonic()
+    result = worktree.run_runtime_check(tmp_path, {
+        "name": "deadline", "serve": "sleep 30", "check": "false", "ready_timeout": 1,
+    })
+    elapsed = time.monotonic() - started
+
+    assert result["ok"] is False and stopped == ["bg-deadline"]
+    assert timeouts and max(timeouts) <= 1
+    assert elapsed < 1.5
+
+
+def test_runtime_check_browser_uses_primary_workspace_evidence_and_cleans_up(
+        tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    worktree_path = tmp_path / "temporary-worktree"
+    root.mkdir()
+    worktree_path.mkdir()
+    stopped = []
+
+    monkeypatch.setattr("src.agents.shell.run_command_background",
+                        lambda *_a, **_k: {"ok": True, "id": "bg-1"})
+    monkeypatch.setattr("src.agents.shell.read_background",
+                        lambda *_a, **_k: {"ok": True, "status": "running", "output": "ready"})
+    monkeypatch.setattr("src.agents.shell.stop_background", lambda bid: stopped.append(bid))
+
+    def fake_probe(config, screenshot_path, timeout_seconds=30):
+        path = screenshot_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"png")
+        return {
+            "ok": True, "requested_url": config["url"], "final_url": config["url"],
+            "title": "ok", "screenshot_path": str(path), "console_errors": [],
+            "page_errors": [], "blocked_requests": [], "elapsed_seconds": 0.1,
+            "output": "browser verify passed",
+        }
+
+    monkeypatch.setattr("src.browser.verify.run_browser_probe", fake_probe)
+    profile = {
+        "name": "../../web",
+        "serve": "sleep 30",
+        "browser": {"url": "http://127.0.0.1:3000/"},
+        "ready_timeout": 5,
+    }
+    result = worktree.run_runtime_check(
+        worktree_path, profile, repo_root=root, run_id="../run")
+
+    screenshot = result["screenshot_path"]
+    assert result["ok"] is True and stopped == ["bg-1"]
+    assert str(root / ".vortocode" / "artifacts" / "browser-verify") in screenshot
+    assert ".." not in str(screenshot).replace(str(root), "")
+    assert str(worktree_path) not in screenshot
+
+
 # ---------------------------------------------------------------- verify_branch 集成（从分支自己的配置读）
 
 _AUTO_GREEN = "profiles:\n  smoke:\n    cmd: 'true'\n    auto: true\n"
@@ -217,6 +357,35 @@ def test_verify_branch_runtime_on_but_no_yaml_ok(tmp_path):
     assert res["ok"] is True and "runtime" not in res   # 没配 → 只跑单测，不影响
 
 
+def test_verify_branch_browser_evidence_survives_worktree_cleanup(tmp_path, monkeypatch):
+    _init_repo(tmp_path)
+    _commit_verify_yaml_on_branch(tmp_path, """
+profiles:
+  browser-smoke:
+    serve: sleep 30
+    auto: true
+    browser:
+      url: http://127.0.0.1:3000/
+""")
+
+    def fake_probe(config, screenshot_path, timeout_seconds=30):
+        screenshot_path.parent.mkdir(parents=True, exist_ok=True)
+        screenshot_path.write_bytes(b"image")
+        return {
+            "ok": True, "requested_url": config["url"], "final_url": config["url"],
+            "title": "fixture", "screenshot_path": str(screenshot_path), "console_errors": [],
+            "page_errors": [], "blocked_requests": [], "elapsed_seconds": 0.1, "output": "ok",
+        }
+
+    monkeypatch.setattr("src.browser.verify.run_browser_probe", fake_probe)
+    result = worktree.verify_branch(
+        str(tmp_path), "vorto/feature", ["true"], "wt-browser-evidence", True)
+    screenshot = result["runtime"][0]["screenshot_path"]
+    assert result["ok"] is True
+    assert not (tmp_path / ".vortocode" / "worktrees" / "wt-browser-evidence").exists()
+    assert screenshot and Path(screenshot).read_bytes() == b"image"
+
+
 # ---------------------------------------------------------------- dev_auto 端到端
 
 @pytest.mark.asyncio
@@ -249,7 +418,8 @@ async def test_dev_auto_requests_runtime_and_reports(tmp_path, monkeypatch):
     def fake_verify(repo, br, tc, wid, *a, **k):
         captured["runtime_flag"] = a[0] if a else k.get("runtime")
         return {"ok": True, "output": "", "cmd": "pytest",
-                "runtime": [{"name": "smoke", "ok": True, "cmd": "true", "output": ""}]}
+                "runtime": [{"name": "smoke", "ok": True, "cmd": "true", "output": "",
+                             "screenshot_path": "/tmp/browser-smoke.png"}]}
 
     monkeypatch.setattr(dec, "decompose_for_parallel", fake_decompose)
     monkeypatch.setattr(wt, "run_isolated_task", fake_run_isolated)
@@ -261,4 +431,5 @@ async def test_dev_auto_requests_runtime_and_reports(tmp_path, monkeypatch):
 
     assert captured["runtime_flag"] is True          # dev_auto 请求了运行时验证
     assert "运行时验证" in out and "smoke" in out
+    assert "screenshot: /tmp/browser-smoke.png" in out
     assert "集成后全量测试 + 运行时验证通过" in out

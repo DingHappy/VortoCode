@@ -2757,8 +2757,10 @@ async def test_cmd_verify_serve_profile_runs_full_runtime_check(tmp_path, monkey
     )
     captured = {}
 
-    def fake_runtime_check(repo_root, profile, timeout=180):
+    def fake_runtime_check(worktree, profile, timeout=180, **kwargs):
         captured["profile"] = profile
+        captured["worktree"] = worktree
+        captured["kwargs"] = kwargs
         return {"ok": True, "name": profile.get("name"), "cmd": "serve+check", "output": "up"}
 
     monkeypatch.setattr(wt, "run_runtime_check", fake_runtime_check)
@@ -2771,6 +2773,44 @@ async def test_cmd_verify_serve_profile_runs_full_runtime_check(tmp_path, monkey
         assert await _wait_for(app, pilot, "runtime 验证通过")
     assert captured["profile"]["serve"] == "npm run dev"             # 真走了完整运行时验证
     assert captured["profile"]["name"] == "web"
+    assert captured["kwargs"]["repo_root"] == str(tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_cmd_verify_browser_profile_shows_browser_and_screenshot(tmp_path, monkeypatch):
+    import src.agents.worktree as wt
+
+    (tmp_path / ".vortocode").mkdir()
+    (tmp_path / ".vortocode" / "verify.yaml").write_text(
+        "profiles:\n"
+        "  web:\n"
+        "    serve: npm run dev\n"
+        "    browser:\n"
+        "      url: http://127.0.0.1:3000/\n",
+        encoding="utf-8",
+    )
+    captured = {}
+
+    def fake_runtime_check(worktree, profile, timeout=180, **kwargs):
+        captured.update({"worktree": worktree, "profile": profile, "kwargs": kwargs})
+        return {
+            "ok": True, "name": "web", "cmd": "serve+browser", "output": "rendered",
+            "screenshot_path": str(tmp_path / ".vortocode/artifacts/browser-verify/x.png"),
+        }
+
+    monkeypatch.setattr(wt, "run_runtime_check", fake_runtime_check)
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        await _submit(app, pilot, "/verify web")
+        assert await _wait_inline_confirm(app, pilot)
+        message = str(app._confirm_message)
+        assert "browser: http://127.0.0.1:3000/" in message
+        assert "check: http://127.0.0.1:3000/" not in message
+        await pilot.press("y")
+        assert await _wait_for(app, pilot, "runtime 验证通过")
+        assert await _wait_for(app, pilot, "截图:")
+    assert captured["profile"]["browser"]["wait_until"] == "load"
+    assert captured["kwargs"]["run_id"].startswith("manual-web-")
 
 
 def test_cmd_verify_run_rejects_dangerous_command(tmp_path):
