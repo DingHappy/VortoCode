@@ -1,9 +1,10 @@
-"""统一代码执行入口：优先 Docker 真隔离，无 Docker 时按显式授权降级宿主机。
+"""统一代码执行入口：优先 Docker，随后严格遵守共享 OS sandbox 策略。
 
 设计：
 - Docker 可用 → 走 DockerSandbox（容器内执行，network 关闭），isolated=True。
-- 无 Docker：仅当 VORTOCODE_ENABLE_SHELL=1（兼容旧名 AUTODEV_ENABLE_SHELL）时降级到宿主机执行；
-  否则 fail-closed 拒绝执行，避免"以为有隔离其实没有"的安全假象。
+- 无 Docker → generated-code 路径按 ``resolve_sandbox(require_isolation=True)`` 选择
+  Seatbelt/bubblewrap；``auto`` / ``required`` 无 backend 都 fail-closed。
+- 只有显式 ``VORTOCODE_SANDBOX=off`` 且 ``VORTOCODE_ENABLE_SHELL=1`` 才允许宿主机执行。
 - 用 exec + 参数数组，杜绝 shell 字符串拼接注入。
 """
 
@@ -56,8 +57,9 @@ def host_exec_allowed() -> bool:
         in ("1", "true", "yes", "on")
 
 
-async def run_code(code: str, language: str = "python", timeout: int = 30) -> RunResult:
-    """统一执行入口：Docker 优先，必要时按授权降级宿主机。"""
+async def run_code(code: str, language: str = "python", timeout: int = 30,
+                   workspace: Optional[str] = None) -> RunResult:
+    """执行生成代码：Docker 优先，否则 OS 隔离；host 仅显式 off + shell gate。"""
     # 1. Docker 真隔离
     if docker_available():
         try:
@@ -72,17 +74,41 @@ async def run_code(code: str, language: str = "python", timeout: int = 30) -> Ru
                          "reason": "Docker 代码沙箱已启用。"},
             )
         except Exception as e:
-            logger.warning("Docker 执行失败，尝试降级宿主机: %s", e)
+            logger.warning("Docker 执行失败，尝试共享 OS sandbox 策略: %s", e)
 
-    # 2. 无隔离：未显式授权则拒绝（fail-closed）
-    if not host_exec_allowed():
+    # 2. 生成代码属于无人值守路径：auto/required 无 backend 必须 fail-closed。
+    from src.agents.sandbox import resolve_sandbox, sandboxed_exec_argv
+    decision = resolve_sandbox(require_isolation=True)
+    evidence = decision.to_dict()
+    if not decision.allowed:
         return RunResult(
             success=False, runtime="none", isolated=False,
-            error="无 Docker 隔离环境，且未开启宿主机执行（VORTOCODE_ENABLE_SHELL=1），已拒绝执行。",
+            error=decision.reason, sandbox=evidence,
         )
 
-    # 3. 已显式授权 → 宿主机降级执行（exec 数组，无 shell 注入）
-    return await _run_on_host(code, language, timeout)
+    # 3. 显式 off 仍需旧的 shell 能力门；环境变量不能单独绕过 sandbox policy。
+    if not decision.isolated and not host_exec_allowed():
+        error = ("OS 沙箱已显式关闭，但未开启宿主机代码执行 "
+                 "（VORTOCODE_ENABLE_SHELL=1），已拒绝执行。")
+        evidence = {**evidence, "allowed": False, "reason": error}
+        return RunResult(success=False, runtime="none", isolated=False,
+                         error=error, sandbox=evidence)
+
+    workdir = str(Path(workspace or Path.cwd()).resolve())
+    argv = _code_argv(code, language)
+    if decision.isolated:
+        argv = sandboxed_exec_argv(workdir, argv, backend=decision.backend)
+    result = await _run_code_argv(
+        argv,
+        timeout,
+        runtime=(decision.backend if decision.isolated else "host"),
+        isolated=decision.isolated,
+        cwd=workdir,
+    )
+    result.sandbox = evidence
+    if not decision.isolated:
+        result.warning = decision.reason
+    return result
 
 
 async def run_pytest(workspace: str, timeout: int = 120) -> RunResult:
@@ -140,25 +166,29 @@ async def _exec_argv(argv, timeout: int, runtime: str, isolated: bool,
         return RunResult(success=False, runtime=runtime, isolated=isolated, error=str(e))
 
 
-async def _run_on_host(code: str, language: str, timeout: int) -> RunResult:
+def _code_argv(code: str, language: str) -> list[str]:
     interpreters = {
         "python": ["python3", "-c", code],
         "javascript": ["node", "-e", code],
         "bash": ["bash", "-c", code],
     }
-    argv = interpreters.get(language, ["sh", "-c", code])
+    return interpreters.get(language, ["sh", "-c", code])
+
+
+async def _run_code_argv(argv: list[str], timeout: int, *, runtime: str,
+                         isolated: bool, cwd: str) -> RunResult:
     try:
         proc = await asyncio.create_subprocess_exec(
-            *argv, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            *argv, cwd=cwd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
         out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         return RunResult(
             success=proc.returncode == 0, stdout=out.decode(errors="replace"),
             stderr=err.decode(errors="replace"), exit_code=proc.returncode,
-            runtime="host", isolated=False,
+            runtime=runtime, isolated=isolated,
         )
     except asyncio.TimeoutError:
-        return RunResult(success=False, runtime="host", isolated=False,
+        return RunResult(success=False, runtime=runtime, isolated=isolated,
                          error=f"执行超时（{timeout}s）")
     except Exception as e:
-        return RunResult(success=False, runtime="host", isolated=False, error=str(e))
+        return RunResult(success=False, runtime=runtime, isolated=isolated, error=str(e))

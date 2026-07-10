@@ -201,3 +201,31 @@ async def test_build_command_tool_surfaces_fallback_before_confirmation(
     asked.clear()
     refused = await tool.handler({"command": "echo blocked"})
     assert "拒绝执行" in refused and not asked
+
+
+@pytest.mark.asyncio
+async def test_build_command_tool_rechecks_isolation_after_confirmation(tmp_path, monkeypatch):
+    from src.agents import sandbox as sb
+    from src.agents.main_agent import build_command_tool
+    import src.agents.shell as shell
+
+    async def yes(_message):
+        return True
+
+    captured = []
+
+    def fake_run(repo_root, cmd, *, require_isolation=False):
+        captured.append(require_isolation)
+        return {"ok": True, "code": 0, "output": "ok", "warning": "", "sandbox": {}}
+
+    monkeypatch.setattr(shell, "run_command", fake_run)
+    monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
+    tool = {item.name: item for item in build_command_tool(str(tmp_path), yes)}["run_command"]
+
+    monkeypatch.setattr(sb, "sandbox_backend", lambda: "seatbelt")
+    await tool.handler({"command": "echo isolated"})
+    assert captured[-1] is True          # backend 消失时也不允许执行阶段静默降级
+
+    monkeypatch.setattr(sb, "sandbox_backend", lambda: "")
+    await tool.handler({"command": "echo confirmed-fallback"})
+    assert captured[-1] is False         # 只有本次确认过的 auto fallback 才允许 host

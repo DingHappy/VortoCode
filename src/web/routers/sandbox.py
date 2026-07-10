@@ -25,7 +25,7 @@ async def execute_in_sandbox(request: SandboxExecuteRequest):
 # 云端沙箱 API
 @router.post("/api/sandbox/create")
 async def create_sandbox(template: str = "python", name: str = None):
-    """创建（非隔离的）云沙箱 —— 默认禁用，需 VORTOCODE_ENABLE_SHELL=1"""
+    """创建云沙箱会话；执行仍受共享 sandbox policy，入口默认需 shell capability。"""
     require_shell()
     from src.cloud_sandbox import CloudSandboxManager
 
@@ -50,7 +50,7 @@ async def list_sandboxes():
 
 @router.post("/api/sandbox/{sandbox_id}/execute")
 async def execute_in_sandbox(sandbox_id: str, command: str, language: str = "bash"):
-    """在（非隔离的）云沙箱中执行 —— 默认禁用，需 VORTOCODE_ENABLE_SHELL=1"""
+    """在云沙箱 workspace 执行；需 shell capability，并严格遵守共享 sandbox policy。"""
     require_shell()
     guard = state.safety_guard.check_command(command)  # 权限模型命令安全检查 + 记录违规
     if not guard.get("allowed"):
