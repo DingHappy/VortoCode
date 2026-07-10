@@ -1321,6 +1321,12 @@ class VortoCodeTUI(App):
 
     _CONFIRM_CHOICES = [("yes", "确认"), ("always", "本会话始终允许"), ("no", "取消")]
 
+    def _inline_confirm_choices(self):
+        # host fallback 必须逐次确认，不能展示/接受“始终允许”。
+        if self._confirm_scope == "fallback":
+            return [self._CONFIRM_CHOICES[0], self._CONFIRM_CHOICES[-1]]
+        return self._CONFIRM_CHOICES
+
     def _inline_confirm_active(self) -> bool:
         fut = self._confirm_future
         return fut is not None and not fut.done()
@@ -1358,7 +1364,7 @@ class VortoCodeTUI(App):
         t = Text()
         t.append("权限确认  ", style="bold")
         t.append(msg + "\n", style="dim")
-        for i, (_action, label) in enumerate(self._CONFIRM_CHOICES):
+        for i, (_action, label) in enumerate(self._inline_confirm_choices()):
             if i:
                 t.append("  ")
             if i == self._confirm_idx:
@@ -1370,7 +1376,7 @@ class VortoCodeTUI(App):
         panel.display = True
 
     def _move_inline_confirm(self, delta: int) -> None:
-        self._confirm_idx = (self._confirm_idx + delta) % len(self._CONFIRM_CHOICES)
+        self._confirm_idx = (self._confirm_idx + delta) % len(self._inline_confirm_choices())
         self._render_inline_confirm()
 
     def _handle_inline_confirm_key(self, key: str) -> None:
@@ -1379,10 +1385,10 @@ class VortoCodeTUI(App):
         elif key in ("right", "down", "tab"):
             self._move_inline_confirm(1)
         elif key == "enter":
-            self._finish_inline_confirm(self._CONFIRM_CHOICES[self._confirm_idx][0])
+            self._finish_inline_confirm(self._inline_confirm_choices()[self._confirm_idx][0])
         elif key == "y":
             self._finish_inline_confirm("yes")
-        elif key == "a":
+        elif key == "a" and self._confirm_scope != "fallback":
             self._finish_inline_confirm("always")
         elif key in ("n", "escape"):
             self._finish_inline_confirm("no")
@@ -1391,7 +1397,7 @@ class VortoCodeTUI(App):
         fut = self._confirm_future
         callback = self._confirm_callback
         result = action in ("yes", "always")
-        if action == "always":
+        if action == "always" and self._confirm_scope != "fallback":
             try:
                 setattr(self, f"_allow_{self._confirm_scope}_session", True)
             except Exception:  # noqa: BLE001
@@ -1452,18 +1458,23 @@ class VortoCodeTUI(App):
         """外向操作（push / 开 PR 等推到远端的动作）确认：**始终弹窗**，不吃"始终允许写"的豁免。"""
         return await self._inline_confirm(self._taint_msg(message), scope="writes")
 
-    async def _confirm_command(self, message: str, *, tool_name: str = "", args: dict | None = None) -> bool:
+    async def _confirm_command(self, message: str, *, tool_name: str = "",
+                               args: dict | None = None, force_prompt: bool = False) -> bool:
         """任意 shell 命令确认门：**独立作用域**，不吃"始终允许写文件"的豁免。
 
         否则用户为省文件编辑逐条确认按下的 [a]，会静默放行后续所有任意命令（=权限提升）。
         本会话对命令单独选过"始终允许"（scope=commands）才免确认。
-        污点态（本回合摄入过外部内容）下**无视命令'始终允许'、强制弹确认**（D0 防提示注入外发）。
+        污点态（本回合摄入过外部内容）或 ``force_prompt=True`` 时**无视**项目 allow / 命令
+        “始终允许”、强制弹确认。force_prompt 用于 OS sandbox 的交互 host fallback：降级授权必须
+        是本次明确的人机确认，不能继承此前的自动授权。
         """
         from src.agents.taint import is_tainted
         deny = self._permission_deny_reason(tool_name, args)
         if deny:
             self._emit(f"权限拦截: {deny}")
             return False
+        if force_prompt:
+            return await self._inline_confirm(self._taint_msg(message), scope="fallback")
         if not is_tainted() and self._permission_allow_reason(tool_name, args):
             return True
         if self._allow_commands_session and not is_tainted():
@@ -2874,12 +2885,18 @@ class VortoCodeTUI(App):
                 "适合 smoke test、启动检查、端到端脚本；请确认命令不会做外向或破坏性操作。"
                 + sandbox_notice,
                 tool_name="run_command",
-                args={"command": cmd}):
+                args={"command": cmd},
+                force_prompt=decision.fallback):
             self._emit("已取消 runtime 验证。")
             return {"ran": False, "ok": False, "cmd": cmd, "cancelled": True}
         self._chrome(f"[dim]$ {cmd}[/dim]")
         from src.agents.shell import run_command
-        res = await asyncio.to_thread(run_command, self.repo_root, cmd)
+        res = await asyncio.to_thread(
+            run_command,
+            self.repo_root,
+            cmd,
+            require_isolation=not decision.fallback,
+        )
         ok = bool(res.get("ok"))
         self._audit_event("verify", {
             "ok": ok,
@@ -4696,12 +4713,18 @@ class VortoCodeTUI(App):
                     f"build 模式：在仓库根目录{label}？\n  $ {cmd}\n"
                     f"（可能改动工作区，但不碰 main）{sandbox_notice}",
                     tool_name="run_command",
-                    args={"command": cmd}):
+                    args={"command": cmd},
+                    force_prompt=decision.fallback):
                 return f"用户取消了命令：{cmd}"
             import asyncio
             if bg:
                 self._chrome(f"[dim]$ {cmd}  [/dim][{self._tc('text-warning', '#f0b86e')}]&（后台）[/]")
-                res = await asyncio.to_thread(run_command_background, self.repo_root, cmd)
+                res = await asyncio.to_thread(
+                    run_command_background,
+                    self.repo_root,
+                    cmd,
+                    require_isolation=not decision.fallback,
+                )
                 if not res.get("ok"):
                     self._chrome(f"[{self._tc('text-error', '#f08a8a')}]后台启动失败：{res.get('error')}[/]")
                     return f"后台启动失败：{res.get('error')}"
@@ -4710,7 +4733,12 @@ class VortoCodeTUI(App):
                 return (f"已后台启动命令 `{cmd}`，句柄 {res['id']}（pid {res['pid']}）。{warning}"
                         f"用 read_output(id={res['id']}) 看输出、stop_command(id={res['id']}) 停止。")
             self._chrome(f"[dim]$ {cmd}[/dim]")
-            res = await asyncio.to_thread(run_command, self.repo_root, cmd)
+            res = await asyncio.to_thread(
+                run_command,
+                self.repo_root,
+                cmd,
+                require_isolation=not decision.fallback,
+            )
             out = res["output"]
             if out.strip():
                 self._chrome(f"[dim]{out[-1500:].replace('[', chr(92) + '[')}[/dim]")

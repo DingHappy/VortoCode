@@ -10,6 +10,33 @@
 
 Status: Complete
 
+Post-review security fix-up:
+
+- `src.sandbox.runner.run_code()` previously treated
+  `VORTOCODE_ENABLE_SHELL=1` as sufficient host authorization after Docker was
+  unavailable, bypassing `VORTOCODE_SANDBOX=required` and the unattended
+  `auto` boundary used by cloud sandbox execution. It now follows Docker →
+  `resolve_sandbox(require_isolation=True)` → Seatbelt/bubblewrap, and permits
+  host execution only when the policy is explicitly `off` **and** the legacy
+  shell capability gate is enabled. Cloud sandbox instances pass their own
+  workspace into the OS sandbox write boundary.
+- TUI project allow rules and the session-level “always allow commands” flag
+  previously skipped the confirmation that authorizes an interactive `auto`
+  host fallback. Fallback now forces a per-execution prompt that ignores both
+  automatic grants. After confirmation, foreground/background commands and
+  manual runtime verification require isolation unless this exact fallback was
+  confirmed; this also closes a preview/execution downgrade race.
+- Regression tests prove `auto`/`required` plus shell enablement cannot create a
+  host marker without an OS backend, available OS isolation is selected without
+  the host gate, cloud execution carries its workspace, and a TUI allow rule
+  plus session blanket cannot execute before the forced fallback confirmation.
+- Post-review focused sandbox/runner/shell coverage passes (`35 passed`, one
+  platform skip) and TUI command/verify permission coverage passes (`22
+  passed`). The full unit suite passes (`1253 passed`, one pre-existing Textual
+  worker test deselected); integration/live passes (`44 passed, 6 opt-in
+  skips`). A real macOS run of `run_code()` used Seatbelt, allowed its workspace
+  marker, and rejected a HOME marker with `PermissionError`.
+
 Goals:
 
 - Replace the old boolean, macOS-only, opt-in sandbox switch with an explicit

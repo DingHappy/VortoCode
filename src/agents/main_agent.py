@@ -2750,14 +2750,21 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
         sandbox_notice = f"\n{decision.reason}" if not decision.isolated else ""
         if not await confirm(_taint_prefix() + f"在仓库根目录{label}？\n  $ {cmd}{sandbox_notice}"):
             return f"用户拒绝了命令：{cmd}"
+        # 若预判时不是已确认的 auto fallback，执行阶段必须继续要求隔离，避免 backend/policy
+        # 在确认后变化时静默降级。显式 off 仍由 policy 自身放行。
+        require_isolation = not decision.fallback
         if bg:
-            res = await asyncio.to_thread(run_command_background, repo_root, cmd)
+            res = await asyncio.to_thread(
+                run_command_background, repo_root, cmd, require_isolation=require_isolation
+            )
             if not res.get("ok"):
                 return f"后台启动失败：{res.get('error')}"
             warning = (f"\n{res.get('warning')}\n" if res.get("warning") else "")
             return (f"已后台启动命令 `{cmd}`，句柄 {res['id']}（pid {res['pid']}）。{warning}"
                     f"用 read_output(id={res['id']}) 看输出、stop_command(id={res['id']}) 停止。")
-        res = await asyncio.to_thread(run_command, repo_root, cmd)
+        res = await asyncio.to_thread(
+            run_command, repo_root, cmd, require_isolation=require_isolation
+        )
         warning = (f"{res.get('warning')}\n" if res.get("warning") else "")
         return f"命令 `{cmd}` 退出码 {res['code']}。\n{warning}输出尾部：\n{res['output'][-3000:]}"
 
