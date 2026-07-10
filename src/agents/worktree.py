@@ -278,13 +278,16 @@ async def run_dependent_on_branch(repo_root, wid: str, branch: str, description:
         await _git_op(remove_worktree, repo_root, path)
 
 
-def run_runtime_check(worktree, profile: dict, timeout: int = 180) -> dict:
+def run_runtime_check(worktree, profile: dict, timeout: int = 180, *,
+                      repo_root=None, run_id: str = "") -> dict:
     """在 worktree 里跑一条**运行时验证** profile（"真能跑起来"，不止"测试绿"），返回 {ok, name, cmd, output}。
 
-    两种形态（见 verify_profiles）：
+    三种形态（见 verify_profiles）：
     - **serve + check**：后台起 serve（复用后台命令基础设施——沙箱同源、退出时按进程组 killpg 连根收），
       反复跑 check 探活直到通过或 ready_timeout 秒；无论成败**都停掉 serve**。判定=最后一次 check 是否通过。
       serve 中途自己崩了则带其输出提前判失败。
+    - **serve + browser**：可选 check 先探活，然后在 loopback-only Playwright 中加载页面、留截图证据。
+      证据写到主工作区而非临时 worktree，所以集成 worktree 清理后仍可诊断。
     - **只有 cmd**：阻塞跑 cmd，退出码判定（自包含冒烟/e2e/build/self-analyze）。
     危险命令（serve/check/cmd 任一）一律先被 is_dangerous 拦下：拒绝执行、判不通过。
     """
@@ -295,24 +298,37 @@ def run_runtime_check(worktree, profile: dict, timeout: int = 180) -> dict:
     serve = str(profile.get("serve") or "").strip()
     check = str(profile.get("check") or "").strip()
     cmd = str(profile.get("cmd") or "").strip()
+    browser_config = profile.get("browser") if isinstance(profile.get("browser"), dict) else None
 
     def _guard(command: str) -> str:
         why = is_dangerous(command)
         return f"拒绝执行高危验证命令: {why}" if why else ""
 
-    def _run_once(command: str, tmo: int) -> tuple[bool, str]:
+    def _run_once(command: str, tmo: float) -> tuple[bool, str]:
         try:
             r = subprocess.run(command, shell=True, cwd=str(worktree),
                                capture_output=True, text=True, timeout=tmo)
             return r.returncode == 0, (r.stdout + r.stderr)
         except subprocess.TimeoutExpired:
-            return False, f"命令超时（>{tmo}s）"
+            return False, f"命令超时（>{tmo:.1f}s）"
         except Exception as e:  # noqa: BLE001
             return False, f"命令无法运行: {e}"
 
+    def _serve_tail(bid_local) -> str:
+        """Formatted, truncated serve stdout tail suffix (empty when there is none)."""
+        tail = (read_background(bid_local, tail=25) or {}).get("output", "")
+        return f"\n--- serve 输出尾部 ---\n{tail}" if tail else ""
+
     if serve:
-        probe = check or cmd
+        # Readiness probe. When a browser probe will run, an explicit `check` is
+        # the only pre-flight (browser does the real verification); otherwise
+        # fall back to `cmd` as the probe so legacy serve+cmd profiles keep
+        # working instead of passing vacuously.
+        probe = check if browser_config else (check or cmd)
+        probe_label = "check" if check else "cmd"
         for command in (serve, probe):
+            if not command:
+                continue
             blocked = _guard(command)
             if blocked:
                 return {"ok": False, "name": name, "cmd": command, "output": blocked}
@@ -322,22 +338,52 @@ def run_runtime_check(worktree, profile: dict, timeout: int = 180) -> dict:
             return {"ok": False, "name": name, "cmd": serve,
                     "output": f"起 serve 失败: {bg.get('error', '')}"}
         bid = bg["id"]
-        ok, probe_out = False, ""
+        ok, probe_out = not bool(probe), ""
         try:
-            deadline = time.monotonic() + ready_timeout
-            while True:
-                st = read_background(bid, tail=40)
-                if st.get("ok") and st.get("status") == "exited":   # serve 先崩了 → 别再探
-                    probe_out = f"serve 进程提前退出（code={st.get('code')}）:\n{st.get('output', '')}"
-                    break
-                ok, probe_out = _run_once(probe, min(ready_timeout, 30))
-                if ok or time.monotonic() >= deadline:
-                    break
-                time.sleep(1.5)
-            serve_tail = (read_background(bid, tail=25) or {}).get("output", "")
-            out = probe_out + (f"\n--- serve 输出尾部 ---\n{serve_tail}" if serve_tail else "")
-            return {"ok": ok, "name": name, "cmd": f"serve: {serve} | check: {probe}",
-                    "output": out[-4000:]}
+            if probe:
+                deadline = time.monotonic() + ready_timeout
+                while time.monotonic() < deadline:
+                    st = read_background(bid, tail=40)
+                    if st.get("ok") and st.get("status") == "exited":   # serve 先崩了 → 别再探
+                        probe_out = (f"serve 进程提前退出（code={st.get('code')}）:\n"
+                                     f"{st.get('output', '')}")
+                        break
+                    remaining = max(0.05, deadline - time.monotonic())
+                    ok, probe_out = _run_once(probe, max(0.05, min(30.0, remaining)))
+                    if ok:
+                        break
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    time.sleep(min(1.5, remaining))
+            if not ok:
+                return {"ok": False, "name": name,
+                        "cmd": f"serve: {serve} | {probe_label}: {probe}",
+                        "output": (probe_out + _serve_tail(bid))[-4000:]}
+
+            if browser_config:
+                from src.browser.verify import run_browser_probe, safe_evidence_path
+                root = Path(repo_root or worktree)
+                evidence = safe_evidence_path(root, run_id or f"manual-{time.time_ns()}", name)
+                browser_result = run_browser_probe(
+                    browser_config, evidence, timeout_seconds=ready_timeout)
+                # Any early serve exit means the browser probed a stale/other
+                # process, not this branch's serve — fail regardless of code,
+                # matching the check path's "exited → failure" semantics.
+                st = read_background(bid, tail=25) or {}
+                if st.get("ok") and st.get("status") == "exited":
+                    browser_result["ok"] = False
+                    browser_result["output"] = (
+                        (browser_result.get("output") or "")
+                        + f"；serve 进程提前退出（code={st.get('code')}）")
+                browser_result["output"] = (
+                    (browser_result.get("output") or "") + _serve_tail(bid))[-4000:]
+                return {"name": name, "cmd": f"serve: {serve} | browser: {browser_config['url']}",
+                        **browser_result}
+
+            return {"ok": ok, "name": name,
+                    "cmd": f"serve: {serve} | {probe_label}: {probe}",
+                    "output": (probe_out + _serve_tail(bid))[-4000:]}
         finally:
             stop_background(bid)
 
@@ -349,7 +395,7 @@ def run_runtime_check(worktree, profile: dict, timeout: int = 180) -> dict:
     return {"ok": ok, "name": name, "cmd": target, "output": out[-4000:]}
 
 
-def _fold_runtime_verify(worktree, result: dict) -> dict:
+def _fold_runtime_verify(repo_root, worktree, result: dict, run_id: str) -> dict:
     """单测过后，按**目标分支自己**的 `.vortocode/verify.yaml`（从 worktree 读，不是主工作区！）跑
     运行时验证并把结果并进 result。
 
@@ -365,7 +411,8 @@ def _fold_runtime_verify(worktree, result: dict) -> dict:
                               "output": f".vortocode/verify.yaml 解析失败，无法执行运行时验证：{err}"}]
         result["ok"] = False
     elif profiles:
-        runtime = [run_runtime_check(worktree, prof) for prof in profiles]
+        runtime = [run_runtime_check(worktree, prof, repo_root=repo_root, run_id=run_id)
+                   for prof in profiles]
         result["runtime"] = runtime
         if not all(rc.get("ok") for rc in runtime):
             result["ok"] = False
@@ -392,7 +439,7 @@ def verify_branch(repo_root, branch: str, test_cmd: list, wid: str,
     try:
         result = run_tests(path, test_cmd)
         if result.get("ok") and runtime:
-            result = _fold_runtime_verify(path, result)
+            result = _fold_runtime_verify(repo_root, path, result, wid)
         return result
     finally:
         remove_worktree(repo_root, path)

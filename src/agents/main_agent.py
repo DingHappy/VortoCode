@@ -2226,6 +2226,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             for rc in rt:
                 mark = "✅" if rc.get("ok") else "❌"
                 lines.append(f"  {mark} {rc.get('name')}: {rc.get('cmd')}")
+                if rc.get("screenshot_path"):
+                    lines.append(f"     screenshot: {rc.get('screenshot_path')}")
                 if not rc.get("ok"):
                     lines.append(f"     {(rc.get('output') or '')[-300:]}")
             return "\n".join(lines)

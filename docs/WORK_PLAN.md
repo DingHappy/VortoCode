@@ -1,8 +1,165 @@
 # VortoCode Work Plan
 
-> Current implementation plan for the Claude Code gap-closing track. Older
-> roadmap documents may contain historical route-A ideas; this file tracks the
-> active TUI and developer-workflow direction.
+> Canonical execution handoff for the current VortoCode implementation track.
+> Read [ROADMAP.md](./ROADMAP.md) before starting a new feature so CLI, Desktop,
+> and Web service work stays on the same agent runtime. The first batch marked
+> `Status: Active`, when present, is the work to execute; older dated batches are
+> completed history and remain as acceptance examples.
+
+## 2026-07-10 Batch: Browser Verify V1
+
+Status: Complete (post-review fix-up applied)
+
+Post-review fix-up (high-effort multi-agent review found 7 confirmed issues; all fixed):
+
+- Backward-compat regression (high): `run_runtime_check` had dropped the
+  `probe = check or cmd` fallback, so legacy `serve + cmd` profiles started the
+  service and returned green without ever running `cmd` or noticing a serve
+  crash — a broken app could auto-create a PR. Restored `cmd` as the readiness
+  probe when no `check`/`browser` is present; added two regression tests
+  (cmd-probe passes; failing cmd-probe is not vacuously green).
+- Readiness false-reds: each `page.goto` was hard-capped at 5s regardless of
+  `ready_timeout` (heavy dev bundles whose load event exceeds 5s could never
+  pass), and a warm-up HTTP >= 400 (e.g. a bundling 503) failed on the first
+  attempt instead of retrying. `goto` now gets the full remaining deadline and
+  warm-up HTTP errors retry until the deadline, matching connection-refused
+  behavior.
+- Serve early-exit in the browser path only failed on non-zero exit; now any
+  early serve exit fails (matching the check path), so a stale server on the
+  port cannot supply the rendered page.
+- Screenshot path was reported even when no file was written (missing
+  Playwright, launch failure); `screenshot_path` is now empty unless a
+  non-empty file exists, so audit evidence never points at a nonexistent file.
+- Cleanup: deduplicated the serve-tail folding (`_serve_tail` helper, consistent
+  truncation) and the boolean-parsing sets (`_TRUTHY`/`_FALSY` shared by
+  `_truthy` and `_config_bool`).
+- Merge-blocker follow-up: the default `unit-core` CI deliberately omits the
+  optional Playwright extra, so the launch-error test now injects the lazy
+  loader instead of importing `playwright.sync_api` during the test. Both core
+  Python jobs can exercise Browser Verify without installing Playwright.
+- Merge-blocker follow-up: console errors from failed readiness navigations
+  (notably Chromium's main-document 503 message) are retained as
+  `transient_console_errors` but do not poison a later successful navigation.
+  `console_errors` and `fail_on_console_error` now describe the final successful
+  attempt; blocked requests and uncaught page exceptions remain sticky and red.
+
+Validation of fix-up: the CI-equivalent core suite is green; focused browser /
+runtime tests pass; opt-in live Chromium covers both direct success and a real
+503-then-200 retry; a real `serve` + browser probe integration run verified
+title/loopback/screenshot evidence and serve cleanup (no orphan process).
+
+Goals:
+
+- Extend project `.vortocode/verify.yaml` profiles with an opt-in browser probe
+  that proves a served application renders in a real headless browser, not only
+  that a shell health check exits successfully.
+- Reuse the existing `serve` / `auto` / `ready_timeout` runtime-verification
+  pipeline so browser evidence participates in the final `dev_auto` integration
+  gate and a red result prevents automatic PR creation.
+- Preserve a full-page screenshot plus structured page evidence that a user or
+  later repair run can inspect after the temporary integration worktree is
+  removed.
+
+Profile contract:
+
+```yaml
+profiles:
+  web:
+    serve: npm run dev
+    auto: true
+    ready_timeout: 30
+    browser:
+      url: http://127.0.0.1:3000/
+      wait_until: load            # default; networkidle is opt-in
+      full_page: true
+      fail_on_console_error: true # default; set false or use ignore patterns
+```
+
+- `browser.url` is required and must be a loopback URL. A redirect whose final
+  URL leaves loopback fails verification.
+- `browser.wait_until` defaults to `load`. `networkidle` is opt-in only, never
+  the default: dev servers with HMR websockets or polling traffic may never
+  reach network idle, so a `networkidle` default would time out the most common
+  `npm run dev` scenario.
+- `browser.fail_on_console_error` defaults to `true` but must be configurable:
+  dev builds of React/Vue report framework warnings through `console.error`, so
+  a hard-wired red would false-fail healthy apps. `false` disables the check;
+  `browser.console_error_ignore: [<literal substring>, ...]` filters known
+  noise using case-sensitive literal substring matching. V1 does not interpret
+  these values as regular expressions. Uncaught page exceptions always mark
+  the profile red and are not configurable.
+- `browser.full_page` defaults to `true`.
+- The profile's existing `ready_timeout` is reused for readiness and for
+  navigation. Each phase gets at most `ready_timeout` seconds, so the
+  worst-case wall time for one browser profile is roughly `2 × ready_timeout`
+  plus screenshot capture; the runtime result reports elapsed time.
+- `check` remains an optional readiness probe. A profile with `serve + browser`
+  is valid without `check`; existing `cmd` and `serve + check` profiles keep
+  their current behavior.
+
+Dependencies:
+
+- Playwright ships as an optional extra: `pyproject.toml` declares a `browser`
+  extra so `pip install 'vortocode[browser]'` followed by
+  `playwright install chromium` is the full install path. Core install stays
+  Playwright-free; nothing imports Playwright at module import time.
+
+Acceptance:
+
+- An `auto: true` project profile with `serve + browser` starts the service in
+  the integration worktree, waits for the page, navigates with headless
+  Playwright, and always stops both browser and background service.
+- Browser request and WebSocket routing is installed before navigation and
+  blocks every non-loopback HTTP(S)/WS(S) destination. Blocked requests are
+  reported and mark verification red rather than silently weakening the
+  network boundary.
+- Console and uncaught-page-error listeners are installed before the first
+  navigation attempt so initial page-load failures cannot be missed.
+- The JSON-serializable runtime result includes the requested and final URL,
+  page title, screenshot path, final-attempt console errors, transient console
+  errors from failed readiness attempts, and uncaught page errors.
+- Screenshots are written under the **primary workspace root's**
+  `.vortocode/artifacts/browser-verify/` (already a managed gitignored runtime
+  area via `dev_plan.py` `_STATE_ENTRIES`), never under the temporary
+  worktree's own `.vortocode/` — otherwise they vanish with worktree cleanup.
+  Paths use a generated run id plus a sanitized profile id and never interpolate
+  raw user-controlled path segments. A test asserts the screenshot file still
+  exists after the worktree is removed.
+- A main-document load failure, redirect away from loopback, uncaught page
+  exception, timeout, or screenshot failure marks the profile red.
+  `console.error` output marks the profile red only when
+  `fail_on_console_error` is true (the default) and the message matches no
+  `console_error_ignore` pattern. When possible, a screenshot is still
+  preserved for diagnosis.
+- Missing Playwright or browser binaries produces an explicit installation
+  error and never silently skips or reports a pass. The error text includes
+  the exact commands to fix it (`pip install 'vortocode[browser]'`,
+  `playwright install chromium`).
+- A red browser profile preserves the implementation branch, blocks automatic
+  PR creation, and reports enough evidence for a later `dev_resume` or manual
+  repair.
+- Existing non-browser verify profiles remain backward compatible.
+
+Validation:
+
+- Unit tests mock the browser boundary and cover profile parsing/defaults,
+  loopback, redirect, subrequest, and WebSocket enforcement; listeners attached
+  before navigation; the console-error policy (default on, disabled, literal
+  ignore patterns); success evidence; each failure class; safe evidence paths
+  anchored to the primary workspace root; per-phase deadline enforcement; and
+  unconditional process cleanup without requiring Playwright in default CI.
+- An explicitly opt-in live smoke test covers headless Chromium against a local
+  fixture server and verifies that the screenshot file is non-empty.
+- Focused runtime-verify tests, the existing unit suite, `ruff check`,
+  `python -m compileall -q src tests`, and `git diff --check` pass.
+
+Non-goals:
+
+- V1 does not feed screenshots back into the model or automatically retry in a
+  fresh worktree. Visual self-repair is a separate follow-up after this
+  verification signal is stable.
+- V1 does not expose arbitrary public/private-network browser navigation or
+  enable the existing Web browser endpoints by default.
 
 ## 2026-07-09 Batch: Read-Tool Noise Reduction And Resume Handoff
 
@@ -240,9 +397,21 @@ Acceptance:
 
 ## Backlog
 
-- GitHub and CI integration: persist PR Doctor verify results into the session
-  audit stream so resume can show the latest reproduction state.
-- Session resume quality: show session summaries, branch/workdir/mode health,
-  and recovery hints before resuming.
-- Memory automation: propose project memory updates after successful commits or
-  repeated user preferences, with explicit review before saving.
+- Trust foundation, split into three bounded batches: sandbox default/fallback
+  policy; instruction filtering plus provenance for memory writes; and
+  credential capability isolation for sessions that ingest external content.
+- D4 repository memory: maintain a bounded `.vortocode/memory/MEMORY.md` index
+  plus lazily loaded topic files, including reviewed update proposals after
+  successful commits or repeated preferences. This depends on memory-write
+  filtering from the trust foundation.
+- B3 evaluation regularization: run the existing evaluation harness through
+  cron, retain model/protocol baselines, and surface regressions instead of
+  relying on anecdotal runs.
+- C5 best-of-N isolated attempts: default to one attempt and escalate only for
+  explicitly open-ended tasks or a failed first attempt. Start after Browser
+  Verify V1 provides a stronger judge signal.
+- IM end-to-end validation with real Telegram or DingTalk credentials. The code
+  path exists; obtaining credentials and approving the live test remain user
+  actions.
+- Mypy adoption in small module-scoped batches; do not turn on a repository-wide
+  blocking gate until the selected module is clean.
