@@ -88,12 +88,37 @@ class SessionStore:
                     FOREIGN KEY (session_id) REFERENCES sessions(id)
                 )
             """)
+
+            # 不可信/敏感内容先进入独立提案区，绝不混进正常 recall 的 memories 表。
+            # 这是纯加法迁移：旧 sessions.db 无需 ALTER，打开时自动补表。
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS memory_proposals (
+                    id TEXT PRIMARY KEY,
+                    content TEXT NOT NULL,
+                    decision TEXT NOT NULL,
+                    reasons TEXT DEFAULT '[]',
+                    source TEXT NOT NULL,
+                    origin_session_id TEXT,
+                    tainted BOOLEAN DEFAULT 0,
+                    write_method TEXT NOT NULL,
+                    memory_type TEXT DEFAULT 'fact',
+                    importance REAL DEFAULT 0.5,
+                    status TEXT DEFAULT 'pending',
+                    created_at TEXT,
+                    reviewed_at TEXT,
+                    reviewer TEXT,
+                    memory_id TEXT,
+                    metadata TEXT DEFAULT '{}'
+                )
+            """)
             
             # 创建索引
             conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_tasks_session ON tasks(session_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_edits_session ON edits(session_id)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_proposals_status "
+                         "ON memory_proposals(status, created_at)")
     
     def create_session(self, name: str = None) -> str:
         """创建会话"""
@@ -364,6 +389,127 @@ class SessionStore:
             return []
         scored.sort(key=lambda sr: sr[0], reverse=True)   # 稳定排序：同分保留 importance/recency 次序
         return [r for _, r in scored][:limit]
+
+    def add_memory_proposal(self, content: str, *, decision: str, reasons: List[str],
+                            source: str, origin_session_id: str, tainted: bool,
+                            write_method: str, memory_type: str = "fact",
+                            importance: float = 0.5, status: str = "pending",
+                            metadata: Dict = None) -> str:
+        """写入隔离的记忆提案；该表不会被 get/search_memories 召回。"""
+        proposal_id = str(uuid.uuid4())[:8]
+        now = datetime.now().isoformat()
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.execute(
+                """
+                INSERT INTO memory_proposals
+                    (id, content, decision, reasons, source, origin_session_id,
+                     tainted, write_method, memory_type, importance, status,
+                     created_at, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (proposal_id, content, decision, json.dumps(reasons, ensure_ascii=False),
+                 source, origin_session_id, int(tainted), write_method, memory_type,
+                 importance, status, now, json.dumps(metadata or {}, ensure_ascii=False)),
+            )
+        return proposal_id
+
+    def get_memory_proposal(self, proposal_id: str) -> Optional[Dict[str, Any]]:
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM memory_proposals WHERE id = ?", (proposal_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def list_memory_proposals(self, status: str = None, limit: int = 50) -> List[Dict[str, Any]]:
+        """列出待审/隔离记录；status=open 同时包含 pending 与 quarantined。"""
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            if status == "open":
+                cur = conn.execute(
+                    """SELECT * FROM memory_proposals
+                       WHERE status IN ('pending', 'quarantined')
+                       ORDER BY created_at DESC LIMIT ?""",
+                    (int(limit),),
+                )
+            elif status:
+                cur = conn.execute(
+                    """SELECT * FROM memory_proposals WHERE status = ?
+                       ORDER BY created_at DESC LIMIT ?""",
+                    (status, int(limit)),
+                )
+            else:
+                cur = conn.execute(
+                    "SELECT * FROM memory_proposals ORDER BY created_at DESC LIMIT ?",
+                    (int(limit),),
+                )
+            return [dict(row) for row in cur.fetchall()]
+
+    def review_memory_proposal(self, proposal_id: str, action: str, *, reviewer: str,
+                               review_metadata: Dict = None) -> Dict[str, Any]:
+        """原子批准/拒绝提案；quarantined 永远不能提升为长期记忆。"""
+        action = str(action or "").strip().lower()
+        if action not in {"approve", "reject"}:
+            return {"ok": False, "error": "action 必须是 approve 或 reject"}
+        now = datetime.now().isoformat()
+        with sqlite3.connect(str(self.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT * FROM memory_proposals WHERE id = ?", (proposal_id,)
+            ).fetchone()
+            if row is None:
+                return {"ok": False, "error": f"未找到记忆提案 {proposal_id}"}
+            proposal = dict(row)
+            if proposal["status"] not in {"pending", "quarantined"}:
+                return {"ok": False, "error": f"提案已是 {proposal['status']} 状态"}
+
+            if action == "reject":
+                conn.execute(
+                    """UPDATE memory_proposals
+                       SET status = 'rejected', reviewed_at = ?, reviewer = ?
+                       WHERE id = ?""",
+                    (now, reviewer, proposal_id),
+                )
+                return {"ok": True, "status": "rejected", "proposal_id": proposal_id}
+
+            if proposal["status"] == "quarantined" or proposal["decision"] == "quarantine":
+                return {
+                    "ok": False,
+                    "error": "隔离记录含疑似凭据，不能批准；请提交脱敏后的安全记忆。",
+                }
+
+            try:
+                metadata = json.loads(proposal.get("metadata") or "{}")
+            except (TypeError, ValueError):
+                metadata = {}
+            metadata["review"] = {
+                "proposal_id": proposal_id,
+                "reviewer": reviewer,
+                "action": "approve",
+                "reviewed_at": now,
+                **(review_metadata or {}),
+            }
+            memory_id = str(uuid.uuid4())[:8]
+            conn.execute(
+                """INSERT INTO memories
+                   (id, session_id, type, content, importance, created_at, metadata)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (memory_id, "__longterm__", proposal["memory_type"], proposal["content"],
+                 proposal["importance"], now, json.dumps(metadata, ensure_ascii=False)),
+            )
+            conn.execute(
+                """UPDATE memory_proposals
+                   SET status = 'approved', reviewed_at = ?, reviewer = ?, memory_id = ?
+                   WHERE id = ?""",
+                (now, reviewer, memory_id, proposal_id),
+            )
+            return {
+                "ok": True,
+                "status": "approved",
+                "proposal_id": proposal_id,
+                "memory_id": memory_id,
+            }
 
     def delete_memory(self, session_id: str, memory_id: str) -> bool:
         """删除一条记忆。返回是否确实删除。"""

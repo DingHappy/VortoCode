@@ -6,7 +6,7 @@ build_agent_tools，本测试钉住"同源"契约：二者工具集一致，唯�
 
 import pytest
 
-from src.agents.main_agent import (build_agent_tools, build_memory_tools, build_skill_tools,
+from src.agents.main_agent import (MainAgent, build_agent_tools, build_memory_tools, build_skill_tools,
                                     native_default, skill_catalog)
 
 
@@ -79,16 +79,46 @@ def test_all_tools_have_unique_names(tmp_path):
 def test_factory_has_memory_and_skill_tools(tmp_path):
     # 三端漂移清理：memory/skill 补进工厂 → CLI/Web 也有
     names = _names(build_agent_tools(str(tmp_path), confirm=_confirm))
-    for n in ("save_memory", "recall_memory", "use_skill", "save_skill"):
+    for n in ("save_memory", "recall_memory", "list_memory_proposals",
+              "review_memory_proposal", "use_skill", "save_skill"):
         assert n in names, f"工厂缺 {n}"
 
 
 @pytest.mark.asyncio
 async def test_factory_memory_tools_roundtrip(tmp_path):
-    tools = {t.name: t for t in build_memory_tools(str(tmp_path))}
+    tools = {t.name: t for t in build_memory_tools(str(tmp_path), _confirm, source="web")}
     await tools["save_memory"].handler({"content": "用户偏好 pytest -q"})
     out = await tools["recall_memory"].handler({"query": "pytest"})
     assert "pytest" in out                                     # 存进去、查得出（同一 db）
+    assert tools["save_memory"].read_only is False
+    assert tools["recall_memory"].read_only is True
+
+
+@pytest.mark.asyncio
+async def test_factory_memory_tools_respect_confirmation_denial(tmp_path):
+    async def _deny(_m):
+        return False
+
+    tools = {t.name: t for t in build_memory_tools(str(tmp_path), _deny)}
+    assert not (tmp_path / ".vortocode" / "sessions.db").exists()  # 仅装配不产生写足迹
+    out = await tools["save_memory"].handler({"content": "用户偏好 pytest -q"})
+    assert "取消" in out
+    assert not (tmp_path / ".vortocode" / "sessions.db").exists()  # 拒绝后仍不落盘
+    assert "pytest" not in await tools["recall_memory"].handler({"query": "pytest"})
+
+
+@pytest.mark.asyncio
+async def test_save_memory_is_blocked_by_plan_mode_before_handler(tmp_path):
+    tools = build_memory_tools(str(tmp_path), _confirm)
+    agent = MainAgent(tools)
+
+    out = await agent._run_tool(
+        "save_memory", {"content": "用户偏好 pytest -q"}, "plan", lambda _m: None
+    )
+
+    assert "plan 模式下不可用" in out
+    recall = await agent.tools["recall_memory"].handler({"query": "pytest"})
+    assert "没有相关" in recall
 
 
 @pytest.mark.asyncio

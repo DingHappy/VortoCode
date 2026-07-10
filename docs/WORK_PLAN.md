@@ -6,6 +6,87 @@
 > `Status: Active`, when present, is the work to execute; older dated batches are
 > completed history and remain as acceptance examples.
 
+## 2026-07-10 Batch: Trust Foundation 2 — Memory Write Policy And Provenance
+
+Status: Complete
+
+Goals:
+
+- Treat every durable-memory mutation as a real write operation: `save_memory`
+  is build-only, asks for explicit confirmation, and shares one policy across
+  CLI, TUI, Web, IM, and isolated gateway sessions.
+- Prevent persistent prompt injection: content produced after untrusted
+  Web/search/MCP input that also looks instructional is stored only as a
+  reviewable proposal and is never returned by normal memory recall.
+- Prevent credential persistence: secret-like values are redacted before an
+  isolated quarantine record is written and cannot be promoted into durable
+  memory through the normal review flow.
+- Preserve provenance for every new durable memory and proposal without making
+  existing SQLite databases or legacy memory rows unreadable.
+
+Policy contract:
+
+- A write records `source`, origin `session_id`, `tainted`, `write_method`,
+  confirmation actor/state, policy decision/reasons, and policy version.
+- Clean content becomes durable memory only after confirmation. Tainted but
+  non-instructional facts may still be confirmed and stored with their tainted
+  provenance; tainted instructional content becomes a pending proposal.
+- Pending proposals are excluded from `recall_memory`. They may be listed and
+  explicitly approved or rejected; approval preserves the original provenance
+  and adds reviewer evidence.
+- Manual recall, proposal listing, and TUI automatic recall are treated as
+  untrusted data sources. Automatic recall carries an explicit boundary that
+  survives attach/serve transport and re-taints the turn after reset.
+- Secret-like content becomes a redacted `quarantined` proposal. The raw
+  credential is never persisted, and quarantine records may be rejected but
+  not approved; the user must submit a safe redacted fact instead.
+- Legacy rows in `memories` remain readable. New provenance uses the existing
+  `metadata` column; proposal/quarantine state lives in a separate additive
+  table created with `IF NOT EXISTS`.
+
+Acceptance:
+
+- `save_memory` is `read_only=False`; plan mode cannot silently persist it, and
+  handler-level confirmation still applies in build mode. Confirmation denial
+  leaves both durable memory and proposal storage unchanged.
+- CLI/Web/IM agent assembly and the rich TUI use the same policy/writer. TUI
+  `/memory add`, confirmed automatic candidates, proposal listing/review, and
+  the legacy Web project-memory POST route cannot bypass classification.
+- Deterministic tests cover clean confirmed writes, denied writes, tainted
+  factual writes, tainted instructional proposals, secret redaction and
+  non-promotability, proposal approve/reject, provenance fields, recall
+  exclusion, and opening a pre-policy SQLite database.
+- Persistent rolling/session summaries redact secret-like values and remove
+  explicit prompt-injection directives before later resume/system injection.
+- Focused memory/agent-factory/TUI/Web tests, the full unit suite,
+  `ruff check src tests`, `python -m compileall -q src tests`, and
+  `git diff --check` pass.
+
+Non-goals:
+
+- D4 repository file memory (`.vortocode/memory/MEMORY.md` plus topic files),
+  index-size compaction, and semantic/vector recall are later batches.
+- Credential capability/session isolation is the next D0 boundary; this batch
+  prevents persistence but does not redesign which process may read secrets.
+- The policy is deterministic defense-in-depth, not a claim that regex-based
+  prompt-injection or secret detection can classify every adversarial input.
+
+Validation evidence:
+
+- Policy/factory/taint/main-agent focused tests pass (`121 passed`); TUI memory,
+  automatic-recall, and persistent-summary tests pass (`11 passed`). A regression proves a mixed
+  native-tool batch propagates taint immediately from `web_fetch` to a later
+  `save_memory` in the same batch.
+- The full unit suite passes outside the enclosing development sandbox
+  (`1264 passed`, one pre-existing Textual worker-leak test deselected). The
+  first in-sandbox run had only 12 loopback-bind permission failures; those two
+  affected test files pass outside the sandbox (`19 passed`).
+- Integration/live passes (`44 passed, 6 opt-in skips`). `ruff check src tests`,
+  `python -m compileall -q src tests`, and `git diff --check` are green.
+- A byte-level regression verifies a detected raw API key never appears in the
+  SQLite file. Another test opens a pre-policy database, reads its legacy
+  memory row unchanged, and observes the additive proposal table migration.
+
 ## 2026-07-10 Batch: Trust Foundation 1 — Sandbox Policy And Fallback
 
 Status: Complete
