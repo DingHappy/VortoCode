@@ -30,6 +30,22 @@ from textual.worker import WorkerState
 
 from src.memory.session_store import SessionManager
 
+
+def _env_int(name: str, default: int) -> int:
+    import os
+    try:
+        v = int(os.getenv(name) or default)
+    except (TypeError, ValueError):
+        return default
+    return v if v > 0 else default
+
+
+# @提及注入上下文的上限。原先 @file 只给 3000 字、@dir 只列 50 个文件——对真实仓库太紧，
+# 模型常拿不全信息。B5-6 与工具结果上限一同放宽（"先给足、后回收"：超预算时由
+# microcompaction 折叠更早回合的工具结果来回收，而不是在入口就掐死）。env 可调。
+_AT_FILE_CHARS = _env_int("VORTOCODE_AT_FILE_CHARS", 8_000)
+_AT_DIR_FILES = _env_int("VORTOCODE_AT_DIR_FILES", 200)
+
 SLASH_COMMANDS = [
     "/analyze", "/improve", "/fix", "/run", "/apply", "/agents", "/runagent", "/skills", "/mcp",
     "/artifacts", "/diff", "/changes", "/review", "/verify", "/preflight", "/git", "/commit", "/pr", "/pr-check", "/pr-fix", "/fix-ci", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
@@ -4291,7 +4307,7 @@ class VortoCodeTUI(App):
                     audio.append(str(p))
                     return f"音频[{ref}]"
                 try:
-                    parts.append(f"# 文件 {ref}\n{p.read_text(encoding='utf-8')[:3000]}")
+                    parts.append(f"# 文件 {ref}\n{p.read_text(encoding='utf-8')[:_AT_FILE_CHARS]}")
                     return ref
                 except (OSError, UnicodeDecodeError):   # 二进制等读不动 → 原样保留 @token
                     return m.group(0)
@@ -4300,7 +4316,7 @@ class VortoCodeTUI(App):
                     parts.append(f"# 能力拦截\n未展开敏感目录 {ref}（当前 {self._capability_profile} 会话）")
                     return ref
                 sub = ref.rstrip("/")
-                hits = [f for f in _repo_files(self.repo_root) if f.startswith(sub)][:50]
+                hits = [f for f in _repo_files(self.repo_root) if f.startswith(sub)][:_AT_DIR_FILES]
                 parts.append(f"# 目录 {ref} 下的源码文件\n" + ("\n".join(hits) or "(空)"))
                 return ref
             if "/" not in ref and "." not in ref:        # 当作符号：AST 找 def/class 定义
@@ -4324,7 +4340,7 @@ class VortoCodeTUI(App):
                 chunks.append(f"# 能力拦截\n未读取敏感路径 {rel}（当前 {self._capability_profile} 会话）")
                 continue
             try:
-                content = (Path(self.repo_root) / rel).read_text(encoding="utf-8")[:3000]
+                content = (Path(self.repo_root) / rel).read_text(encoding="utf-8")[:_AT_FILE_CHARS]
                 chunks.append(f"# {rel}\n{content}")
             except OSError:
                 continue
