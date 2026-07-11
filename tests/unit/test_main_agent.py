@@ -1709,3 +1709,145 @@ async def test_reasoning_cb_stream_path_side_channel():
     a = MainAgent([], llm=StreamLLM())
     out = await a.run_turn("问题", mode="plan", stream_cb=lambda _p: None, reasoning_cb=got.append)
     assert out == "最终回答" and "".join(got) == "思考A思考B"   # 思维链走侧信道、不混进正文
+
+
+# ---- B5-6：microcompaction（压缩前先折叠更早回合的工具结果）+ 放宽入口截断 ----
+
+def _tool_msg(name: str, body: str) -> dict:
+    """一条工具结果回灌消息（与 _tool_results_msg 同格式）。"""
+    return {"role": "user", "content": f"[工具 {name} 结果]\n{body}"}
+
+
+@pytest.mark.asyncio
+async def test_microcompaction_folds_old_tool_results_and_skips_llm_summary():
+    """折叠够了就不调 LLM 摘要——真正的对话（决策/需求）一条不丢，且省一次摘要调用。"""
+    llm = CompactLLM()
+    agent = MainAgent([], llm=llm, max_context_tokens=400)
+    agent.history = [
+        {"role": "user", "content": "原始任务：实现 SUPER_GOAL"},
+        {"role": "assistant", "content": "关键决策：用方案甲_KEEPME"},
+        _tool_msg("read_file", "x" * 4000),          # 大块工具输出（历史的大头）
+        {"role": "assistant", "content": "再一个决策_KEEPME"},
+        _tool_msg("grep", "y" * 4000),
+    ]
+    out, say, emit = _capture()
+    await agent.run_turn("继续", mode="plan", say=say, emit=emit)
+
+    assert llm.summarized == 0                        # 关键：折叠就够了 → 没花 LLM 摘要
+    assert agent._summary == ""
+    texts = [str(m.get("content")) for m in agent.history]
+    assert any("方案甲_KEEPME" in t for t in texts)     # 对话（决策）原文都还在
+    assert any("再一个决策_KEEPME" in t for t in texts)
+    assert any("已折叠" in t for t in texts)            # 工具结果被折成占位
+    assert not any("x" * 100 in t for t in texts)      # 原始大块输出确实没了
+    assert any("🗜️" in s and "折叠" in s for s in out["say"])
+
+
+@pytest.mark.asyncio
+async def test_microcompaction_protects_current_turn_tool_results():
+    """本回合刚读到的文件/刚跑出的测试正是模型这一刻要用的——绝不折叠。"""
+    agent = MainAgent([], llm=CompactLLM(), max_context_tokens=300)
+    agent.history = [
+        {"role": "user", "content": "原始任务"},
+        _tool_msg("read_file", "老结果" * 500),
+    ]
+    folded, _total = agent._fold_old_tool_results(limit=100, protect_from=len(agent.history))
+    assert folded == 1                                 # 老的折了
+
+    agent.history.append(_tool_msg("run_tests", "本回合的测试输出" * 200))
+    folded2, _t = agent._fold_old_tool_results(limit=50, protect_from=len(agent.history) - 1)
+    assert folded2 == 0                                # 受保护区（本回合）一条都不折
+    assert "本回合的测试输出" in str(agent.history[-1]["content"])
+
+
+@pytest.mark.asyncio
+async def test_microcompaction_falls_back_to_summary_when_folding_not_enough():
+    """折叠后仍超预算（对话本身就很长）→ 照旧走 LLM 摘要，不留半吊子状态。"""
+    llm = CompactLLM()
+    agent = MainAgent([], llm=llm, max_context_tokens=200)
+    agent.history = [{"role": "user", "content": "原始任务：实现 SUPER_GOAL"}]
+    for i in range(6):
+        agent.history.append({"role": "assistant", "content": f"很长的决策{i}_" + "话" * 300})
+        agent.history.append(_tool_msg("read_file", "z" * 2000))
+    out, say, emit = _capture()
+    await agent.run_turn("继续", mode="plan", say=say, emit=emit)
+
+    assert llm.summarized == 1                         # 折叠不够 → 仍然摘要
+    assert agent._summary == llm.summary
+    assert sum(agent._msg_tokens(m) for m in agent.history) <= agent.max_context_tokens
+
+
+def test_folded_placeholder_keeps_native_tool_pairing():
+    """折叠必须保住 `[工具 X 结果]` 头：native 转换靠它把每条结果配回 tool_call_id。
+    并行工具（一条消息含多个结果）若折成一行，就会有 tool_call 收不到结果。"""
+    from src.agents.main_agent import _to_native_messages
+    agent = MainAgent([], max_context_tokens=100)
+    parallel = {"role": "user",
+                "content": "[工具 read_file 结果]\n" + "a" * 3000 +
+                           "\n\n[工具 grep 结果]\n" + "b" * 3000}
+    agent.history = [
+        {"role": "user", "content": "任务"},
+        {"role": "assistant",
+         "content": '[{"tool":"read_file","args":{"path":"a"}},{"tool":"grep","args":{"q":"x"}}]'},
+        parallel,
+    ]
+    agent._fold_old_tool_results(limit=50, protect_from=len(agent.history))
+
+    folded = str(agent.history[2]["content"])
+    assert folded.count("[工具 ") == 2 and "已折叠" in folded     # 两个工具头都还在
+    native = _to_native_messages(agent.history)
+    tool_msgs = [m for m in native if m.get("role") == "tool"]
+    assistant_calls = [m for m in native if m.get("tool_calls")]
+    assert len(assistant_calls) == 1
+    assert len(tool_msgs) == 2                                   # 两个 tool_call 各自配到一条结果
+    ids = {m["tool_call_id"] for m in tool_msgs}
+    assert ids == {tc["id"] for tc in assistant_calls[0]["tool_calls"]}
+    assert all(m["content"].strip() for m in tool_msgs)          # 没有空结果
+
+
+def test_folding_is_idempotent_and_not_refolded():
+    agent = MainAgent([], max_context_tokens=100)
+    agent.history = [{"role": "user", "content": "任务"}, _tool_msg("read_file", "x" * 4000)]
+    n1, _ = agent._fold_old_tool_results(limit=50, protect_from=2)
+    snapshot = str(agent.history[1]["content"])
+    n2, _ = agent._fold_old_tool_results(limit=50, protect_from=2)
+    assert n1 == 1 and n2 == 0                                   # 已折叠的不再重折
+    assert str(agent.history[1]["content"]) == snapshot
+
+
+@pytest.mark.asyncio
+async def test_manual_compact_summarizes_raw_tool_output_not_placeholders():
+    """手动 /compact 是"给我一份纪要"——**不**先折叠：否则摘要器只看到占位符，纪要质量变差。
+    折叠只属于自动路径（那里它是 LLM 摘要的更便宜替代）。"""
+    llm = CompactLLM()
+    agent = MainAgent([], llm=llm, max_context_tokens=8000)
+    agent.history = [
+        {"role": "user", "content": "原始任务"},
+        _tool_msg("run_tests", "FAILED test_login - AssertionError: 密码校验漏了大小写"),
+        {"role": "assistant", "content": "我来修"},
+        {"role": "user", "content": "好"},
+    ]
+    result = await agent.compact_now("plan")
+
+    assert result["ok"] and llm.summarized == 1
+    assert "AssertionError: 密码校验漏了大小写" in llm.summary_prompts[0]   # 摘要器看到的是原文
+    assert "已折叠" not in llm.summary_prompts[0]
+
+
+def test_tool_result_and_read_file_limits_relaxed_and_env_tunable(monkeypatch):
+    """"先给足、后回收"：入口上限从 4000/6000 放宽，且 env 可调。
+
+    刻意**不**用 importlib.reload(main_agent) 去验 env：reload 会把 sys.modules 里的模块对象换掉，
+    别处 `from ... import X` 持有的旧引用与新模块错位——实测会把 taint 的跨 agent 合并测试搞挂
+    （测试间污染，且失败现场指向无辜的模块）。模块级常量的 env 生效路径就是 _env_int_early，直接测它。
+    """
+    import src.agents.main_agent as ma
+    assert ma._MAX_TOOL_RESULT >= 12_000       # 4000 → 12000（真实仓库里 4000 常读不全）
+    assert ma._MAX_READ_FILE >= 12_000         # 6000 → 12000
+
+    monkeypatch.setenv("VORTOCODE_MAX_TOOL_RESULT", "20000")
+    assert ma._env_int_early("VORTOCODE_MAX_TOOL_RESULT", 12_000) == 20_000
+    monkeypatch.setenv("VORTOCODE_MAX_TOOL_RESULT", "garbage")
+    assert ma._env_int_early("VORTOCODE_MAX_TOOL_RESULT", 12_000) == 12_000   # 坏值 → 默认
+    monkeypatch.setenv("VORTOCODE_MAX_TOOL_RESULT", "-5")
+    assert ma._env_int_early("VORTOCODE_MAX_TOOL_RESULT", 12_000) == 12_000   # 非正 → 默认
