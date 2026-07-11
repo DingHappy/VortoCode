@@ -1397,6 +1397,86 @@ def test_trimmed_history_sticky_cut_prefix_stable():
     assert agent._trim_start > start                           # 切点只单调前进
 
 
+def test_context_usage_does_not_mutate_trim_state():
+    """审查修复：context_usage 是只读估算（状态栏/UI 刷新随手就调、mode 还可能与实际回合不同），
+    绝不能推进粘性切点——否则一次 plan 视角的渲染就把 build 付得起的历史永久裁掉。"""
+    agent = MainAgent([], max_context_tokens=200)
+    agent.history = [{"role": "user", "content": "原始任务 GOAL"}]
+    for i in range(30):
+        agent.history.append({"role": "assistant", "content": f"a{i} " + "x" * 120})
+    agent.context_usage("plan")
+    agent.context_usage("build")
+    assert agent._trim_start == 0                              # 只读调用不落切点
+    agent._trimmed_history("plan")                             # 真实回合路径才推进
+    start = agent._trim_start
+    assert start > 0
+    agent.context_usage("build")                               # 只读的 build 视角（虚拟回退）也不改状态
+    assert agent._trim_start == start
+
+
+def test_trim_cut_retreats_when_budget_grows():
+    """审查修复：切点记录其预算基准；预算变大（plan→build，×2）时回退重算、找回付得起的历史
+    ——mode 切换本就换 system、前缀已断，回退零额外缓存代价。"""
+    agent = MainAgent([], max_context_tokens=200)              # auto: plan=×1.0=200, build=×2.0=400
+    agent.history = [{"role": "user", "content": "原始任务 GOAL"}]
+    for i in range(30):
+        agent.history.append({"role": "assistant", "content": f"a{i} " + "x" * 120})
+    agent._trimmed_history("plan")
+    start_plan = agent._trim_start
+    assert start_plan > 0
+    build_view = agent._trimmed_history("build")               # 预算翻倍 → 回退重算
+    assert agent._trim_start < start_plan
+    assert len(build_view) > 2
+
+
+def test_current_turn_user_message_never_trimmed_out():
+    """审查修复：本回合 user 消息携带 env/plan 快照与请求原文，回合内工具结果再大也不得把它裁出窗口
+    ——否则剩余步骤既丢计划又丢请求原文。"""
+    agent = MainAgent([], max_context_tokens=200)
+    agent.history = [{"role": "user", "content": "原始任务 GOAL"}]
+    for _i in range(10):
+        agent.history.append({"role": "assistant", "content": "x" * 400})
+    agent.history.append({"role": "user", "content": "本回合请求\n\n【当前计划】(用 update_plan 维护：…)\n▸ 读代码"})
+    agent._turn_user_idx = len(agent.history) - 1
+    for _i in range(5):                                        # 回合内巨型工具结果撑爆预算
+        agent.history.append({"role": "user", "content": "[工具 read_file 结果]\n" + "y" * 2000})
+    trimmed = agent._trimmed_history("plan")
+    assert any("本回合请求" in str(m.get("content")) for m in trimmed)
+    assert any("当前计划" in str(m.get("content")) for m in trimmed)
+
+
+@pytest.mark.asyncio
+async def test_env_reattached_after_compaction():
+    """审查修复：env 载体被压缩折进纪要后（env 本身没变化），必须重新附上——否则 <env> 从此消失。"""
+    from src.llm.content import content_to_text
+    llm = CompactLLM()
+    agent = MainAgent([], llm=llm, max_context_tokens=60, env_context=True)
+    await agent.run_turn("第一轮任务", mode="plan")             # env 附在第一轮 user 消息
+    for i in range(8):                                         # 灌大历史 → 下轮开头触发压缩
+        agent.history.append({"role": "assistant", "content": f"决策{i}_很长的内容_" + "z" * 40})
+    await agent.run_turn("继续", mode="plan")
+    assert llm.summarized >= 1                                 # 压缩确实发生
+    cur = content_to_text(agent.history[agent._turn_user_idx].get("content"))
+    assert "<env>" in cur                                      # 本轮 user 消息重新携带 env
+
+
+def test_anchor_strips_stale_env_and_plan_tail():
+    """审查修复：gateway/IM 恢复的历史里首条 user 可能带着当时的 <env>/plan 尾巴；
+    锚点派生必须剥离（否则过期日期/分支被每轮重注入），且与原消息比对得上（任务不塞两遍）。"""
+    from src.agents.main_agent import _env_block
+    agent = MainAgent([], max_context_tokens=200)
+    first = ("修复登录 bug\n\n" + _env_block()
+             + "\n\n【当前计划】(用 update_plan 维护：开始一步标 in_progress、做完标 completed)\n▸ 读代码")
+    agent.history = [{"role": "user", "content": first}]
+    for i in range(30):
+        agent.history.append({"role": "assistant", "content": f"a{i} " + "x" * 120})
+    assert agent._anchor_text() == "修复登录 bug"               # 锚点 = 纯任务文本
+    trimmed = agent._trimmed_history("plan")
+    heads = [str(m.get("content")) for m in trimmed[:2]]
+    assert any(h == "修复登录 bug" for h in heads)              # 注入的锚点干净
+    assert sum("修复登录 bug" in str(m.get("content")) for m in trimmed) == 1   # 不重复塞
+
+
 @pytest.mark.asyncio
 async def test_parallel_read_only_tools_run_in_one_step():
     from src.agents.main_agent import MainAgent, Tool
