@@ -66,11 +66,18 @@ MODEL_CONTEXT_WINDOWS: Dict[str, int] = {
 }
 
 
+_window_overrides_cache: tuple = ("", {})   # (raw env 串, 解析结果)——热路径每步都查，避免重复解析
+
+
 def _model_window_overrides() -> Dict[str, int]:
     """env VORTOCODE_MODEL_CONTEXT_WINDOWS 的**按模型**窗口表："model=window,model=window"。
     自有中转跑多个模型时用它按名配各自窗口（匹配规则同主表：前缀/包含）；
-    单模型场景用 VORTOCODE_MODEL_CONTEXT_WINDOW 全局值即可。坏项静默跳过、不炸。"""
+    单模型场景用 VORTOCODE_MODEL_CONTEXT_WINDOW 全局值即可。坏项静默跳过、不炸。
+    结果按 env 原串缓存（env 可在运行中改，串没变就不重解析）。"""
+    global _window_overrides_cache
     raw = os.getenv("VORTOCODE_MODEL_CONTEXT_WINDOWS") or ""
+    if raw == _window_overrides_cache[0]:
+        return _window_overrides_cache[1]
     out: Dict[str, int] = {}
     for item in raw.split(","):
         key, _, val = item.partition("=")
@@ -81,6 +88,7 @@ def _model_window_overrides() -> Dict[str, int]:
             continue
         if key and n > 0:
             out[key] = n
+    _window_overrides_cache = (raw, out)
     return out
 
 
