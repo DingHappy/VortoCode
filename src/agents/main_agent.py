@@ -2252,7 +2252,9 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 prompt = (f"审查分支 {_branch}（相对 {_base}）的以下改动。只报 P0/P1、每条带验证证据、"
                           f"用 run_tests 复现你怀疑的问题，最后只输出 JSON 数组：\n\n```diff\n{diff}\n```")
                 try:
-                    reply = await agent.run_turn(prompt, mode="build")
+                    from src.agents.taint import merge_nested_taint
+                    with merge_nested_taint():
+                        reply = await agent.run_turn(prompt, mode="build")
                 except Exception:  # noqa: BLE001
                     return []
                 return _review.parse_findings(reply)
@@ -2673,10 +2675,11 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
         return build_subagent(repo_root, spec, llm=llm, confirm=confirm,
                               on_progress=on_progress, capabilities=capabilities), None
 
-    async def _spawn(desc: str, agent_name: str = "") -> str:
+    async def _spawn(desc: str, agent_name: str = "") -> tuple[str, bool]:
+        from src.agents.taint import is_tainted, merge_nested_taint
         sub, err = _sub_for(agent_name)
         if err:
-            return err
+            return err, is_tainted()
         # dev 型角色能产出写入（隔离流水线落 vorto/* 分支）。task 本身 read_only（plan 可用），
         # 不能让 dev 委派从 plan 门下偷渡——**过人闸**：无确认通道拒绝（fail-closed），
         # 有则问一次（headless 默认拒、--yes 放行；TUI/Web 弹确认），与 run_command 同一哲学。
@@ -2684,21 +2687,28 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
         if has_dev:
             if confirm is None:
                 return (f"角色 {agent_name} 是 dev 型（会经隔离流水线写代码），当前入口没有确认"
-                        f"通道——已拒绝（fail-closed）。请在带确认的入口（TUI/Web/--yes）委派。")
+                        f"通道——已拒绝（fail-closed）。请在带确认的入口（TUI/Web/--yes）委派。",
+                        is_tainted())
             if not await confirm(f"委派角色「{agent_name}」用隔离 dev 流水线实现：{desc[:120]}\n"
                                  f"（产出落 vorto/* 分支，不碰主工作区）"):
-                return f"已取消：用户未放行 dev 型角色 {agent_name} 的委派。"
+                return f"已取消：用户未放行 dev 型角色 {agent_name} 的委派。", is_tainted()
         mode = "build" if has_dev else "plan"
-        try:
-            return (await sub.run_turn(desc, mode=mode)) or "(无结论)"
-        except Exception as e:  # noqa: BLE001
-            return f"(子任务出错: {e})"
+        with merge_nested_taint() as nested:
+            try:
+                result = (await sub.run_turn(desc, mode=mode)) or "(无结论)"
+            except Exception as e:  # noqa: BLE001
+                result = f"(子任务出错: {e})"
+        return result, nested.child_tainted
 
     async def _task(args: dict) -> str:
         desc = str(args.get("description") or args.get("task") or "").strip()
         if not desc:
             return "task 需要 description（要委派给子 agent 的子任务）。"
-        return await _spawn(desc, str(args.get("agent") or "").strip())
+        from src.agents.taint import mark_tainted
+        result, child_tainted = await _spawn(desc, str(args.get("agent") or "").strip())
+        if child_tainted:
+            mark_tainted()
+        return result
 
     async def _research_parallel(args: dict) -> str:
         import asyncio
@@ -2710,7 +2720,11 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
         if not tasks:
             return "research_parallel 需要 tasks（字符串列表，每项一个独立子问题）。"
         agent_name = str(args.get("agent") or "").strip()
-        results = await asyncio.gather(*[_spawn(t, agent_name) for t in tasks])
+        spawned = await asyncio.gather(*[_spawn(t, agent_name) for t in tasks])
+        if any(child_tainted for _, child_tainted in spawned):
+            from src.agents.taint import mark_tainted
+            mark_tainted()
+        results = [result for result, _child_tainted in spawned]
         return "\n\n".join(f"【{t}】\n{r}" for t, r in zip(tasks, results))
 
     return [
