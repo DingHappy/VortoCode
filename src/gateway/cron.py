@@ -242,26 +242,29 @@ def due_jobs(repo_root: str, now: datetime) -> List[CronJob]:
 
 
 # --------------------------------------------------------------------- 执行
-async def run_command_job(repo_root: str, job: CronJob) -> tuple[int, str]:
-    """跑一个确定性 command 作业，返回 (退出码, 输出尾部)。
+async def run_command_job(repo_root: str, job: CronJob) -> tuple[int, str, dict]:
+    """跑一个确定性 command 作业，返回 (退出码, 输出尾部, 沙箱证据)。
 
     退出码即红绿——评测夜跑正是靠 `python -m evals --compare-latest` 的非零退出码判"有回归"。
     超时按失败处理（124，同 coreutils 的 timeout 约定）。
+
+    **必须走 shell.run_command 这个统一执行入口**，而不是自己 create_subprocess_shell：
+    cron 是**无人值守**路径（没人在旁边看着），所以传 require_isolation=True——沙箱不可用时
+    fail-closed 拒绝执行，而不是偷偷在宿主机上裸跑。自己起 subprocess 会绕过整条沙箱边界，
+    连 VORTOCODE_SANDBOX=required 都拦不住它（codex 审出的真问题）。
+    run_command 内部用 subprocess.run(timeout=...)，超时会连同其进程组一起收掉。
     """
     import asyncio as _aio
-    proc = await _aio.create_subprocess_shell(
-        job.command, cwd=str(repo_root),
-        stdout=_aio.subprocess.PIPE, stderr=_aio.subprocess.STDOUT)
-    try:
-        out, _ = await _aio.wait_for(proc.communicate(), timeout=job.timeout)
-    except (TimeoutError, _aio.TimeoutError):
-        try:
-            proc.kill()
-        except ProcessLookupError:
-            pass
-        return 124, f"（超时 {job.timeout}s，已终止）"
-    text = (out or b"").decode("utf-8", errors="replace").strip()
-    return int(proc.returncode or 0), text[-_CMD_OUTPUT_TAIL:]
+
+    from src.agents.shell import run_command
+    res = await _aio.to_thread(run_command, repo_root, job.command,
+                               timeout=float(job.timeout), require_isolation=True)
+    evidence = res.get("sandbox") or {}
+    out = str(res.get("output") or "").strip()[-_CMD_OUTPUT_TAIL:]
+    code = int(res.get("code", -1))
+    if code == -1 and "超时" in out:                # 统一成 coreutils 的超时约定
+        code = 124
+    return code, out, evidence
 
 
 async def run_job(repo_root: str, job: CronJob, *, run_session=None, notify=None,
@@ -272,12 +275,16 @@ async def run_job(repo_root: str, job: CronJob, *, run_session=None, notify=None
     prompt 作业：隔离 LLM 会话（全新 MainAgent，不读不写主会话历史）。
     """
     if job.kind == "command":
-        code, out = await run_command_job(repo_root, job)
+        code, out, sandbox = await run_command_job(repo_root, job)
         if now is not None:
             CronState(repo_root).mark(job.name, now)
         head = (f"✅ cron [{job.name}] 通过" if code == 0
                 else f"🔴 cron [{job.name}] **失败**（退出码 {code}）")
-        result = f"{head}\n$ {job.command}\n\n{out}"
+        # 沙箱证据随通报带出：无人值守跑了什么、在什么隔离下跑的，必须可审计
+        backend = str(sandbox.get("backend") or "") if isinstance(sandbox, dict) else ""
+        iso = bool(sandbox.get("isolated")) if isinstance(sandbox, dict) else False
+        mark = f"沙箱 {backend}" if iso else "⚠ 未隔离"
+        result = f"{head}（{mark}）\n$ {job.command}\n\n{out}"
         if job.announce == "im" and notify is not None:
             await notify(result[:900])
         return result
