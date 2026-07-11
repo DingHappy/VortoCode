@@ -4027,6 +4027,11 @@ class VortoCodeTUI(App):
         self._allow_writes_session = False  # "始终允许"也随新会话复位
         self._allow_commands_session = False
         reset_usage()                       # 用量也清零
+        # 上下文压力告警状态跟着新会话归零：否则旧会话提示过之后 _ctx_alerted 一直是 True，
+        # 而复位只发生在"pct 回落到警戒线以下"——新会话若**第一条输入就冲到 95%**，中间没有
+        # 回落过，于是永远等不到复位、该提示的时候反而不提示（codex 审出的边界问题）。
+        self._ctx_alerted = False
+        self._ctx_pct = 0
         self._render_plan([])               # 收起上个会话的计划面板
         from src.agents.shell import stop_all_background
         n_bg = stop_all_background()        # 收掉上个会话遗留的后台命令，别泄漏 dev server 进程
