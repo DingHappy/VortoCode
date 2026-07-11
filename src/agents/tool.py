@@ -20,3 +20,5 @@ class Tool:
     read_only: bool = True
     untrusted_source: bool = False
     outward: bool = False
+    external_content: bool = False
+    required_capabilities: tuple[str, ...] = ()

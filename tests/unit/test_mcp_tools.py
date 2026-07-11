@@ -3,7 +3,12 @@ TUI/Web/CLI 同源。用假 manager 驱动，不起真 MCP 服务器。"""
 
 import pytest
 
-from src.agents.mcp_tools import connect_mcp, wrap_mcp_manager
+from src.agents.mcp_tools import (
+    _credential_free_http_servers,
+    _credential_free_http_url,
+    connect_mcp,
+    wrap_mcp_manager,
+)
 
 
 class _FakeTool:
@@ -41,6 +46,7 @@ def test_wrap_names_and_gates():
     assert "mcp__brave__search" in tools and "mcp__fs__read" in tools     # mcp__server__tool 命名
     t = tools["mcp__brave__search"]
     assert t.read_only is False                                          # 外部工具一律 build 门控
+    assert t.external_content is True
     assert t.description.startswith("[MCP:brave]")
     assert "q" in t.args                                                 # 参数来自 input_schema
 
@@ -66,3 +72,49 @@ async def test_connect_mcp_no_config_returns_empty(tmp_path):
     # 仓库没有 config/mcp.yaml → (None, [])，不报错（多数仓库无 MCP）
     mgr, tools = await connect_mcp(str(tmp_path))
     assert mgr is None and tools == []
+
+
+@pytest.mark.asyncio
+async def test_connect_mcp_local_profile_refuses_before_starting_server(tmp_path):
+    with pytest.raises(PermissionError, match="external 会话"):
+        await connect_mcp(str(tmp_path), capability_profile="local")
+
+
+def test_external_mcp_filter_only_allows_explicit_credential_free_http():
+    config = {
+        "servers": [
+            {"name": "stdio", "transport": "stdio", "credentialed": False},
+            {"name": "implicit", "transport": "http", "url": "https://mcp.example"},
+            {"name": "header", "transport": "http", "credentialed": False,
+             "headers": {"Authorization": "Bearer secret"}},
+            {"name": "userinfo", "transport": "http", "credentialed": False,
+             "url": "https://token:secret@example.com/mcp"},
+            {"name": "query", "transport": "http", "credentialed": False,
+             "url": "https://example.com/mcp?api_key=secret"},
+            {"name": "safe", "transport": "http", "credentialed": False,
+             "url": "https://public.example"},
+        ]
+    }
+    assert [server["name"] for server in _credential_free_http_servers(config)] == ["safe"]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://token:secret@example.com/mcp",
+        "https://example.com/mcp?api_key=secret",
+        "https://example.com/mcp?access%5Ftoken=secret",
+        "https://example.com/mcp?api%255Fkey=secret",
+        "https://example.com/mcp?auth=opaque-value",
+        "https://example.com/mcp?foo=ghp_abcdefghijklmnopqrstuvwxyz123456",
+        "https://example.com/mcp#token=secret",
+        "ftp://example.com/mcp",
+        "https:///missing-host",
+    ],
+)
+def test_external_mcp_url_rejects_embedded_credentials(url):
+    assert _credential_free_http_url(url) is False
+
+
+def test_external_mcp_url_allows_public_http_without_credential_signals():
+    assert _credential_free_http_url("https://example.com/mcp?tenant=public") is True

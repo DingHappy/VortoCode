@@ -62,7 +62,7 @@ COMMAND_INFO = {
     "/fix-ci": "诊断 PR review/CI；verify 先跑最小复现",
     "/sessions": "列出/恢复/重命名/删除历史会话",
     "/resume": "恢复某个历史会话",
-    "/new": "新开一个会话",
+    "/new": "新开 local/external 会话（凭据与外部内容隔离）",
     "/mode": "切换 plan / build 模式",
     "/plan": "进入 plan 权限模式（只读/提案）",
     "/build": "进入 build 权限模式（可写分支）",
@@ -160,7 +160,7 @@ HELP = """可用命令:
   /runagent <id> <任务>  用某个已创建的 agent 执行任务（流式）
   /sessions [操作]    列出历史会话；rename/delete 管理会话
   /resume <id>        恢复某个历史会话
-  /new                新开一个会话
+  /new [local|external] 新开会话；local=开发/凭据，external=网页/MCP、无凭据
   /mode               切换 plan(只读/提案) / build(可写分支)
   /plan               进入 plan 权限模式
   /build              进入 build 权限模式
@@ -182,6 +182,7 @@ _IGNORE = {"__pycache__", ".git", ".venv", "venv"}
 
 def _repo_files(root: str) -> list[str]:
     """仓库内 .py 文件的相对路径，供 @ 补全。"""
+    from src.agents.capabilities import is_sensitive_repo_path
     base = Path(root)
     out: list[str] = []
     for sub in ("src", "tests"):
@@ -191,6 +192,7 @@ def _repo_files(root: str) -> list[str]:
                 str(p.relative_to(base))
                 for p in sorted(d.rglob("*.py"))
                 if not any(part in _IGNORE for part in p.parts)
+                and not is_sensitive_repo_path(p.relative_to(base), root)
             ]
     return out[:2000]
 
@@ -545,6 +547,8 @@ class VortoCodeTUI(App):
         self._session_last_user = ""        # 用于生成 /sessions 的轻量摘要
         self._busy = False                  # 是否有长任务在跑
         self.agent = None                   # 主 agent loop（首次用到时惰性构建）
+        self._capability_profile = "local"  # local 持凭据但不摄入外部内容；external 反之
+        self._capabilities = None            # 同一逻辑会话内重建 agent 时复用，/new 才重置
         self._skills = None                 # SkillRegistry（惰性构建、可 /skills reload）
         self._mcp = None                    # ToolManager（/mcp 连接后才有）
         self._mcp_tools: list = []          # 已接入的 MCP 工具（包成主 agent 的 Tool）
@@ -829,6 +833,7 @@ class VortoCodeTUI(App):
                 )
                 md["last_reply"] = self._summary_text(reply, 88)
             md["mode"] = self.mode
+            md["capability_profile"] = self._capability_profile
             branch = str(self._sb.get("branch") or "")
             if branch:
                 md["branch"] = branch
@@ -1854,7 +1859,7 @@ class VortoCodeTUI(App):
             else:
                 self._chrome("[red]/resume 需要会话 id[/red]，先 /sessions 查看")
         elif cmd == "new":
-            self._cmd_new()
+            self._cmd_new(arg)
         elif cmd == "skills":
             self._cmd_skills(arg)
         elif cmd == "theme":
@@ -2198,6 +2203,7 @@ class VortoCodeTUI(App):
         lines = [
             "[b]工具权限[/b]",
             f"模式: {self.mode}（plan 只允许只读工具；build 可请求写/重型工具）",
+            f"会话能力 profile: {self._capability_profile}",
             f"项目 profile: {profile}",
             f"本会话始终允许: 写={'yes' if self._allow_writes_session else 'no'} · "
             f"命令={'yes' if self._allow_commands_session else 'no'}",
@@ -3692,16 +3698,17 @@ class VortoCodeTUI(App):
         # 连接
         self._chrome("[cyan]连接 MCP 服务器（config/mcp.yaml）…[/cyan]")
         try:
-            from src.tools.manager import ToolManager
-            mgr = ToolManager(str(Path(self.repo_root) / "config" / "mcp.yaml"))
-            await mgr.initialize()
+            from src.agents.mcp_tools import connect_mcp
+            mgr, mcp_tools = await connect_mcp(
+                self.repo_root, capability_profile=self._capability_profile
+            )
             self._mcp = mgr
-            self._mcp_tools = self._wrap_mcp_tools()
+            self._mcp_tools = mcp_tools
             self.agent = None            # 让主 agent 下次重建、拿到 MCP 工具
-            servers = list(getattr(mgr, "mcp_clients", {}).keys())
+            servers = list(getattr(mgr, "mcp_clients", {}).keys()) if mgr is not None else []
             self._emit(f"已接入 {len(self._mcp_tools)} 个 MCP 工具，来自服务器: {', '.join(servers) or '（无）'}")
             if not self._mcp_tools:
-                self._emit("（没连上工具：检查 config/mcp.yaml 是否 enabled、命令如 npx 是否可用）")
+                self._emit("（external 仅连接 credentialed: false 且无 headers 的 HTTP MCP；stdio 默认拒绝）")
         except Exception as e:  # noqa: BLE001
             self._emit(f"MCP 连接失败: {e}")
 
@@ -3816,6 +3823,8 @@ class VortoCodeTUI(App):
                 if sid == self.session_id:
                     self.session_id = self.sessions.start_session()
                     self.agent = None
+                    self._capability_profile = "local"
+                    self._capabilities = None
                     self.transcript.clear()
                     try:
                         self.query_one("#log", RichLog).clear()
@@ -3877,6 +3886,7 @@ class VortoCodeTUI(App):
         self.transcript.clear()
         self._persist_on = False            # 回放期间不重复落盘
         self.agent = None                   # 丢掉上个会话的 agent 上下文
+        self._capabilities = None
         self._session_last_user = ""
         self._chrome(f"[green]已恢复会话 {sid}（{len(msgs)} 条）[/green]")
         last_snapshot = None
@@ -3898,6 +3908,8 @@ class VortoCodeTUI(App):
             row = self.sessions.store.get_session(sid) or {}
             session_md = self._session_metadata(row)
             session_summary = str(session_md.get("summary") or "")
+            profile = str(session_md.get("capability_profile") or "external").strip().lower()
+            self._capability_profile = profile if profile in {"local", "external"} else "external"
         except Exception:  # noqa: BLE001
             row = {}
             session_summary = ""
@@ -3923,12 +3935,28 @@ class VortoCodeTUI(App):
         task_anchor = ""
         plan = []
         if isinstance(raw, dict):
-            hist = raw.get("history") if isinstance(raw.get("history"), list) else []
             summary = str(raw.get("summary") or summary or "")
-            task_anchor = str(raw.get("task_anchor") or "")
-            plan = raw.get("plan") if isinstance(raw.get("plan"), list) else []
+            cap = raw.get("capabilities") if isinstance(raw.get("capabilities"), dict) else {}
+            profile = str(cap.get("profile") or "").strip().lower()
+            version = raw.get("version")
+            trusted_snapshot = (
+                isinstance(version, (int, float))
+                and version >= 3
+                and profile in {"local", "external"}
+            )
+            if trusted_snapshot:
+                hist = raw.get("history") if isinstance(raw.get("history"), list) else []
+                task_anchor = str(raw.get("task_anchor") or "")
+                plan = raw.get("plan") if isinstance(raw.get("plan"), list) else []
+                self._capability_profile = profile
+            else:
+                # Pre-policy/corrupt snapshots have no trustworthy domain label.  Keep only the
+                # separately sanitized summary; never import raw history into either trust domain.
+                hist, task_anchor, plan = [], "", []
+                self._capability_profile = "external"
         elif isinstance(raw, list):
-            hist = raw
+            hist = []
+            self._capability_profile = "external"
         else:
             return
         summary, _reasons = sanitize_persistent_summary(summary, limit=2000)
@@ -3946,10 +3974,16 @@ class VortoCodeTUI(App):
             self._chrome("[dim]↻ 已恢复对话上下文（主 agent 记得之前的对话）[/dim]")
             self._render_statusbar()
 
-    def _cmd_new(self) -> None:
+    def _cmd_new(self, profile: str = "") -> None:
         from src.llm.client import reset_usage
+        requested = (profile or "local").strip().lower()
+        if requested not in {"local", "external"}:
+            self._emit("用法: /new [local|external]（local=开发/凭据；external=网页/MCP、无凭据）")
+            return
         self.session_id = self.sessions.start_session()
         self.agent = None                   # 新会话 = 全新 agent 上下文
+        self._capability_profile = requested
+        self._capabilities = None
         self._allow_writes_session = False  # "始终允许"也随新会话复位
         self._allow_commands_session = False
         reset_usage()                       # 用量也清零
@@ -3960,7 +3994,7 @@ class VortoCodeTUI(App):
             self._chrome(f"[dim]■ 已停止 {n_bg} 个后台命令[/dim]")
         self.query_one("#log", RichLog).clear()
         self.transcript.clear()
-        self._chrome(f"[green]已新建会话 {self.session_id}[/green]")
+        self._chrome(f"[green]已新建 {requested} 会话 {self.session_id}[/green]")
         self._sync_subtitle()
 
     def _cmd_usage(self, arg: str) -> None:
@@ -4146,13 +4180,25 @@ class VortoCodeTUI(App):
             pass
 
     # ---------------------------------------------------------------- @文件
+    def _session_capability_policy(self):
+        if self._capabilities is None:
+            from src.agents.capabilities import SessionCapabilities
+            self._capabilities = SessionCapabilities.for_profile(
+                self._capability_profile, self.repo_root
+            )
+        return self._capabilities
+
+    def _can_read_context_path(self, rel: str) -> bool:
+        policy = self._session_capability_policy()
+        return policy.denied("read_file", {"path": rel}) is None
+
     def _expand_at_files(self, text: str) -> tuple[str, list[str]]:
         """把 @存在的文件 token 去掉 @（留路径），并收集这些文件；不存在的原样保留。"""
         files: list[str] = []
 
         def repl(m: re.Match) -> str:
             rel = m.group(1)
-            if (Path(self.repo_root) / rel).is_file():
+            if (Path(self.repo_root) / rel).is_file() and self._can_read_context_path(rel):
                 files.append(rel)
                 return rel
             return m.group(0)
@@ -4216,6 +4262,9 @@ class VortoCodeTUI(App):
             ref = m.group(1)
             p = base / ref
             if p.is_file():
+                if not self._can_read_context_path(ref):
+                    parts.append(f"# 能力拦截\n未读取敏感路径 {ref}（当前 {self._capability_profile} 会话）")
+                    return ref
                 if is_image_ref(ref):              # 图片：作为多模态附件交给 agent，不读成文本
                     images.append(str(p))
                     return f"图片[{ref}]"
@@ -4228,6 +4277,9 @@ class VortoCodeTUI(App):
                 except (OSError, UnicodeDecodeError):   # 二进制等读不动 → 原样保留 @token
                     return m.group(0)
             if p.is_dir():
+                if not self._can_read_context_path(ref.rstrip("/") + "/placeholder"):
+                    parts.append(f"# 能力拦截\n未展开敏感目录 {ref}（当前 {self._capability_profile} 会话）")
+                    return ref
                 sub = ref.rstrip("/")
                 hits = [f for f in _repo_files(self.repo_root) if f.startswith(sub)][:50]
                 parts.append(f"# 目录 {ref} 下的源码文件\n" + ("\n".join(hits) or "(空)"))
@@ -4249,6 +4301,9 @@ class VortoCodeTUI(App):
     def _read_files(self, rels: list[str]) -> str:
         chunks = []
         for rel in rels:
+            if not self._can_read_context_path(rel):
+                chunks.append(f"# 能力拦截\n未读取敏感路径 {rel}（当前 {self._capability_profile} 会话）")
+                continue
             try:
                 content = (Path(self.repo_root) / rel).read_text(encoding="utf-8")[:3000]
                 chunks.append(f"# {rel}\n{content}")
@@ -4500,12 +4555,17 @@ class VortoCodeTUI(App):
         anchor, _anchor_reasons = sanitize_persistent_summary(
             getattr(self.agent, "_task_anchor", ""), limit=2000
         )
+        capabilities = getattr(self.agent, "_capabilities", None)
         data = {
-            "version": 2,
+            "version": 3,
             "history": getattr(self.agent, "history", [])[-40:],
             "summary": summary,
             "task_anchor": anchor,
             "plan": getattr(self.agent, "plan", []),
+            "capabilities": capabilities.snapshot() if capabilities is not None else {
+                "version": 1,
+                "profile": self._capability_profile,
+            },
         }
         return json.dumps(data, ensure_ascii=False)
 
@@ -4535,6 +4595,7 @@ class VortoCodeTUI(App):
         （edit_file/dev_isolated/dev_auto/run_command…）仅 build —— 这就是 opencode Plan/Build 的"工具权限门"。
         """
         from src.agents.main_agent import MainAgent, Tool
+        self._session_capability_policy()
 
         def _safe_path(rel: str):
             """把相对路径锁在仓库内，防止 ../ 或绝对路径越界。返回 Path 或 None。"""
@@ -4652,7 +4713,8 @@ class VortoCodeTUI(App):
                     max_steps=16, on_tool=self._audit_tool,
                     extra_system=("你是隔离工作区里的实现子 agent：用 read_file/list_files/grep 看代码，"
                                   "用 edit_file/write_file 实现任务；改完务必用 run_tests 自测，没过就读失败、"
-                                  "改、再测，直到通过再结束。完成后一两句说明改了什么。只动与任务相关的文件。"))
+                                  "改、再测，直到通过再结束。完成后一两句说明改了什么。只动与任务相关的文件。"),
+                    capabilities=self._capabilities)
             try:
                 diff, conclusion, ver = await run_isolated_task(
                     self.repo_root, wid, desc, _build, test_cmd=test_cmd)
@@ -4723,7 +4785,8 @@ class VortoCodeTUI(App):
                         max_steps=16, on_tool=self._audit_tool,
                         extra_system=("你是隔离工作区里的实现子 agent：用 read/grep 看代码、用 edit_file/"
                                       "write_file 实现任务；改完务必用 run_tests 自测，没过就改完再测直到通过。"
-                                      "完成后一两句说明改了什么。只动相关文件。"))
+                                      "完成后一两句说明改了什么。只动相关文件。"),
+                        capabilities=self._capabilities)
                 try:
                     diff, conclusion, ver = await run_isolated_task(self.repo_root, wid, desc, _b, test_cmd=test_cmd)
                     return {"desc": desc, "diff": diff, "conclusion": conclusion, "ver": ver, "error": None}
@@ -4907,7 +4970,8 @@ class VortoCodeTUI(App):
                     avail = "、".join(reg.specs) or "（无——在 .vortocode/agents/ 放 <名>.md 定义角色）"
                     return f"没有名为 {agent_name!r} 的子 agent。可用：{avail}", is_tainted()
                 sub = build_subagent(self.repo_root, spec, confirm=self._confirm_write,
-                                     on_progress=lambda m: self._chrome(f"[dim]{m}[/dim]"))
+                                     on_progress=lambda m: self._chrome(f"[dim]{m}[/dim]"),
+                                     capabilities=self._capabilities)
                 if spec.tools == "dev" and not await self._confirm_write(
                         f"委派角色「{agent_name}」用隔离 dev 流水线实现：{desc[:120]}\n"
                         f"（产出落 vorto/* 分支，不碰主工作区）"):
@@ -4918,7 +4982,8 @@ class VortoCodeTUI(App):
                 child_steps = 4 if self.mode == "plan" else 12
                 sub = MainAgent(read_tools, max_steps=child_steps, on_tool=self._audit_tool, extra_system=(
                     "你是只读研究子 agent：只用工具调研代码/仓库并返回简洁结论，绝不修改任何东西。"
-                    "读够信息就尽快收口，别把预算耗在重复读取上。"))
+                    "读够信息就尽快收口，别把预算耗在重复读取上。"),
+                    capabilities=self._capabilities)
                 mode = self.mode
             with merge_nested_taint() as nested:
                 try:
@@ -5047,34 +5112,37 @@ class VortoCodeTUI(App):
                  "大任务可对计划里相互独立的步骤逐个调它（仅 build）",
                  {"description": "要在隔离工作区实现的子任务",
                   "test": "可选，pytest 选择器(如 tests/unit/test_x.py)，省略则跑全量 tests/"},
-                 _t_dev_isolated, read_only=False),
+                 _t_dev_isolated, read_only=False, required_capabilities=("host_process",)),
             Tool("dev_parallel",
                  "并行实现：多个**相互独立**的子任务各起一个隔离 worktree 同时实现+验证（互不冲突），"
                  "汇总各自 ✅/❌；通过的可一并应用到一个新分支待确认。把计划里独立的步骤一次交给它"
                  "（最多 5 个，仅 build）",
                  {"tasks": "相互独立的子任务字符串列表",
                   "test": "可选，pytest 选择器，省略则各自跑全量 tests/"},
-                 _t_dev_parallel, read_only=False),
+                 _t_dev_parallel, read_only=False, required_capabilities=("host_process",)),
             Tool("open_pr",
                  "把一个本地分支（如 dev_isolated/dev_parallel 产出的 vorto/...）push 到 origin 并开 PR；"
                  "外向操作、强确认，gh 不可用则只 push（仅 build）",
                  {"branch": "要开 PR 的分支名", "title": "PR 标题", "body": "可选，PR 正文"},
-                 _t_open_pr, read_only=False, outward=True),
+                 _t_open_pr, read_only=False, outward=True,
+                 required_capabilities=("authenticated_outbound",)),
             Tool("run_command",
                  "在仓库根目录跑任意 shell 命令（如 pytest 某个文件 / ruff / git log / pip install / make）；"
                  "高危，每条都需确认、明显危险操作直接拒（仅 build）。长驻命令（dev server / npm run dev / "
                  "watch / tail -f）传 background=true 后台起、立即返回句柄，再用 read_output 看输出",
                  {"command": "要执行的 shell 命令",
                   "background": "可选，true=后台起长驻进程（不阻塞回合），用 read_output/stop_command 管理"},
-                 _t_run_command, read_only=False, outward=True),
+                 _t_run_command, read_only=False, outward=True,
+                 required_capabilities=("host_process",)),
             Tool("read_output",
                  "读某后台命令（run_command background=true 起的）的**新增**输出 + 运行状态；"
                  "传 tail=N 看最近 N 行。只读、无需确认",
                  {"id": "后台命令句柄，如 bg1", "tail": "可选，看最近 N 行（默认给上次读之后的增量）"},
-                 _t_read_output, read_only=True),
+                 _t_read_output, read_only=True, required_capabilities=("host_process",)),
             Tool("stop_command",
                  "停掉某后台命令（terminate→kill）。用完 dev server / watcher 记得收摊",
-                 {"id": "后台命令句柄，如 bg1"}, _t_stop_command, read_only=False),   # 终止进程=运行态副作用→仅 build
+                 {"id": "后台命令句柄，如 bg1"}, _t_stop_command, read_only=False,
+                 required_capabilities=("host_process",)),   # 终止进程=运行态副作用→仅 build
         ]
 
         # dev_auto（一句话→自动分解→并行/接力实现→集成→可选开 PR）：复用**工厂版**（自主流水线，
@@ -5082,7 +5150,8 @@ class VortoCodeTUI(App):
         # 只取 dev_auto——工厂还返回朴素 dev_isolated/dev_parallel，一并加会覆盖上面 TUI 的富 UI 版。
         from src.agents.main_agent import build_dev_tools as _factory_dev_tools
         tools += [t for t in _factory_dev_tools(self.repo_root, on_progress=self._chrome,
-                                                confirm=self._confirm_outward)
+                                                confirm=self._confirm_outward,
+                                                capabilities=self._capabilities)
                   if t.name in ("dev_auto", "dev_resume", "pr_fix")]
 
         # 制品（artifact）：把会话产出发布成可分享、实时更新的网页（由 Web 服务器在 /artifact 渲染）。
@@ -5129,6 +5198,7 @@ class VortoCodeTUI(App):
                           on_plan=self._render_plan, plan_tool=True, hook_system=hook_system,
                           context_policy=self._context_policy,
                           permissions=load_permissions(self.repo_root),   # .vortocode/permissions.yaml deny
+                          capabilities=self._capabilities,
                           env_context=True)                # 顶层交互 agent：注入 <env>（cwd/git/日期/目录）
         if self._model_override:            # /model 切过 → 新建的 agent 也带上（重建时不丢）
             try:

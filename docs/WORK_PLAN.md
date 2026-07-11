@@ -6,6 +6,116 @@
 > `Status: Active`, when present, is the work to execute; older dated batches are
 > completed history and remain as acceptance examples.
 
+## 2026-07-11 Batch: Trust Foundation 3 — Credential Session Isolation
+
+Status: Complete (post-review hardening applied)
+
+Goals:
+
+- Make external-content and credential-capable sessions structurally distinct.
+  A model context must not simultaneously contain Web/MCP/IM input and tools
+  that can reach host processes, authenticated remotes, or secret-bearing files.
+- Apply one session capability gate before project allow/deny rules, plan/build
+  escalation, hooks, and handler confirmation so none of those lower layers can
+  grant a capability that the entry point withheld.
+- Keep the three product entries aligned: local CLI/TUI development sessions use
+  `local`; Web and IM sessions use `external`; cron/heartbeat uses the separately
+  auditable `unattended` profile.
+
+Policy contract:
+
+- `local` grants `host_process`, `authenticated_outbound`, and
+  `sensitive_files`, but denies tools marked as external content. External
+  research starts in a new `external` session; it is not an in-place toggle
+  because the old model history may already contain credentials.
+- `external` permits Web/IM content and explicitly credential-free HTTP MCP,
+  but withholds all credential-class capabilities. `unattended` currently has
+  the same restrictive capability set under a distinct name so future runner
+  hardening does not silently broaden it.
+- `run_command`, background output, generated-code/dev runners, runtime tests,
+  PR repair, and authenticated PR creation declare their required capabilities.
+  Web/search and wrapped MCP tools explicitly declare `external_content`.
+- MCP connection is part of the boundary, not merely its later tool call:
+  `local` does not start MCP servers; `external` accepts only HTTP definitions
+  with `credentialed: false` and no configured headers. Repository-controlled
+  stdio commands never start under these strict profiles.
+- Direct reads of `.env`, private keys, credential stores, and secret directories
+  require `sensitive_files`. Bulk file listing/glob/grep excludes those paths so
+  an external session cannot recover them through an unscoped repository scan.
+- The profile is chosen by trusted entry-point code, not by repository files.
+  `.vortocode/permissions.yaml`, an allow rule, `--yes`, build mode, or a user
+  confirmation may narrow behavior but cannot widen the session capability set.
+- CLI/TUI persisted history records the profile. A resume across different
+  profiles does not import the old model history across the trust boundary.
+
+Acceptance:
+
+- Deterministic policy tests cover profile normalization/fail-closed behavior,
+  sensitive path classification, local denial of external tools, and external
+  denial of host/authenticated/sensitive operations before their handlers run.
+- Shared-factory tests prove CLI is `local`, Web/IM are `external`, and isolated
+  gateway work is `unattended`; all credential-capable tool declarations are
+  identical across CLI/Web and the rich TUI equivalents.
+- A project-wide allow rule and a confirmation callback returning true cannot
+  make an external session run a host command or open an authenticated PR.
+- MCP tests prove a local session refuses before process startup and external
+  filtering excludes stdio, implicit credential state, and configured headers.
+- Local CLI/TUI offers an explicit new `external` session. CLI `--continue` and
+  TUI `/resume` preserve the original profile and refuse cross-profile history
+  reuse. Unknown or corrupt persisted profile values restore fail-closed.
+- Focused capability/factory/CLI/TUI/gateway tests, the full unit suite,
+  `ruff check src tests`, `python -m compileall -q src tests`, and
+  `git diff --check` pass.
+
+Post-review security fix-up:
+
+- Treat `.vortocode/` session state as sensitive repository data. External and
+  unattended profiles deny direct reads of local CLI history and database
+  files, and bulk repository reads resolve in-repository symlinks before
+  deciding whether a path is safe to expose.
+- `show_diff` accepts only one verified commit-ish or a two/three-dot commit
+  range. Git options, pathspecs, whitespace, and control characters are
+  rejected; configured fsmonitor, external diff, and textconv helpers are
+  disabled so this read-only tool cannot invoke a host-side helper.
+- Credential-free MCP HTTP URLs are parsed before connection. URL userinfo,
+  credential-shaped query names or secret-like values, fragments, non-HTTP
+  schemes, and malformed/missing hosts all fail closed.
+- Regression tests reproduce the reported host-file overwrite and local
+  history disclosure, then prove the target file remains unchanged and neither
+  a direct path nor a symlink alias reaches the external model context.
+
+Validation evidence:
+
+- After merging the Trust Foundation 2 fix from `main`, the combined full unit
+  suite passes outside the enclosing workspace sandbox (`1322 passed`, one
+  pre-existing Textual input-history hang deselected).
+- Integration/live passes (`44 passed, 6 opt-in skips`). `ruff check src tests`,
+  isolated-cache `compileall`, and `git diff --check` are green.
+- The post-review capability/Git/MCP regression set passes (`46 passed`). It
+  covers local CLI history and symlink aliases, direct and range-form Git option
+  injection, configured external diff helpers, URL userinfo, encoded credential
+  query keys, secret-like values, fragments, and malformed endpoints.
+- The combined Trust Foundation 2/3 security regression set passes (`142
+  passed`), proving child-agent taint preservation and credential capability
+  isolation coexist on the actual `main` merge result.
+- Focused regressions prove capability denial happens before project allow and
+  handler confirmation, external TUI `@.env` expansion never reads the value,
+  and CLI/TUI resume cannot move raw history across profiles.
+- Review found and closed a connection-stage MCP bypass: repo-configured stdio
+  previously launched before tool dispatch and inherited the full host
+  environment. Tests now prove local refusal happens before startup and only
+  explicitly credential-free, header-free HTTP definitions survive external
+  filtering.
+
+Non-goals:
+
+- This batch does not add per-user cloud credential brokers, scoped short-lived
+  GitHub tokens, or an automatic sanitized handoff from an external research
+  session into a fresh local development session.
+- Repository network-domain allowlists and OS-level sensitive-path read denial
+  remain later sandbox hardening. This gate prevents VortoCode tool dispatch; it
+  does not claim to replace process isolation for third-party code.
+
 ## 2026-07-10 Batch: Trust Foundation 2 — Memory Write Policy And Provenance
 
 Status: Complete (post-review hardening applied)

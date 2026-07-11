@@ -6,6 +6,7 @@ task 工具的 dev 委派过确认门（fail-closed）、坏定义文件安全�
 
 import pytest
 
+from src.agents.capabilities import LOCAL_PROFILE, SessionCapabilities
 from src.agents.main_agent import build_subagent
 from src.agents.subagents import _parse_agent_md, registry_for, subagent_catalog
 
@@ -71,7 +72,9 @@ def test_registry_load_and_catalog(tmp_path):
 def test_build_subagent_read_face(tmp_path):
     _write_agent(tmp_path, "pm.md", _PM)
     spec = registry_for(str(tmp_path)).get("product-manager")
-    sub = build_subagent(str(tmp_path), spec)
+    sub = build_subagent(
+        str(tmp_path), spec, capabilities=SessionCapabilities.for_profile(LOCAL_PROFILE)
+    )
     assert "read_file" in sub.tools
     assert not any(n.startswith("dev_") for n in sub.tools)      # read 型无 dev
     assert "task" not in sub.tools and "run_command" not in sub.tools   # 永不递归/无 shell
@@ -108,7 +111,9 @@ async def test_denied_tool_blocked_at_dispatch_in_subagent(tmp_path):
     (tmp_path / ".vortocode" / "permissions.yaml").write_text(
         "deny:\n  - dev_isolated\n", encoding="utf-8")
     spec = registry_for(str(tmp_path)).get("backend-dev")
-    sub = build_subagent(str(tmp_path), spec)
+    sub = build_subagent(
+        str(tmp_path), spec, capabilities=SessionCapabilities.for_profile(LOCAL_PROFILE)
+    )
     out = await sub._run_tool("dev_isolated", {"description": "x"}, mode="build",
                               say=lambda _m: None)
     assert "权限拦截" in out                                      # 硬拦生效、最优先
