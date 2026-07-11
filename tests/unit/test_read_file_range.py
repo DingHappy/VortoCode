@@ -42,11 +42,11 @@ async def test_start_clamped_to_file_end(tmp_path):
 
 @pytest.mark.asyncio
 async def test_large_file_no_range_truncates_with_hint(tmp_path):
-    from src.agents.main_agent import _MAX_READ_FILE
-    (tmp_path / "big.py").write_text("x = 0  # pad\n" * 3000, encoding="utf-8")   # 远超上限
+    (tmp_path / "big.py").write_text("x = 0  # pad\n" * 2000, encoding="utf-8")   # 远超 6000 字符
     out = await _read_tool(tmp_path).handler({"path": "big.py"})
     assert "过长" in out and "start/end" in out             # 提示用行段，别只看开头
-    assert len(out) < _MAX_READ_FILE + 1000                # 截到上限（B5-6 起放宽且 env 可调）
+    # 绝对上界——不拿"被测常量"自己当标尺（那样断言恒真，默认上限被改宽也发现不了）
+    assert len(out) < 7000
 
 
 @pytest.mark.asyncio

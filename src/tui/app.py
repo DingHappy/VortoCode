@@ -31,20 +31,19 @@ from textual.worker import WorkerState
 from src.memory.session_store import SessionManager
 
 
-def _env_int(name: str, default: int) -> int:
-    import os
-    try:
-        v = int(os.getenv(name) or default)
-    except (TypeError, ValueError):
-        return default
-    return v if v > 0 else default
+# @提及注入上下文的上限。**每次用时读 env**，不是在 import 时读——.env 由入口在 import 之后
+# 才加载，模块级常量在那之前读只会读到空、旋钮静默失效。
+# 默认值刻意保持保守：@提及的内容落在**当前回合**的 user 消息里，而当前回合恰恰是
+# microcompaction（只折老段）与裁剪（最新一条永远保留）都够不着的区域——在入口给多了，
+# 后面没有任何机制能回收。要放宽的人自己经 env 开（他清楚自己的窗口）。
+def _at_file_chars() -> int:
+    from src.agents.main_agent import _env_limit
+    return _env_limit("VORTOCODE_AT_FILE_CHARS", 3_000)
 
 
-# @提及注入上下文的上限。原先 @file 只给 3000 字、@dir 只列 50 个文件——对真实仓库太紧，
-# 模型常拿不全信息。B5-6 与工具结果上限一同放宽（"先给足、后回收"：超预算时由
-# microcompaction 折叠更早回合的工具结果来回收，而不是在入口就掐死）。env 可调。
-_AT_FILE_CHARS = _env_int("VORTOCODE_AT_FILE_CHARS", 8_000)
-_AT_DIR_FILES = _env_int("VORTOCODE_AT_DIR_FILES", 200)
+def _at_dir_files() -> int:
+    from src.agents.main_agent import _env_limit
+    return _env_limit("VORTOCODE_AT_DIR_FILES", 50)
 
 SLASH_COMMANDS = [
     "/analyze", "/improve", "/fix", "/run", "/apply", "/agents", "/runagent", "/skills", "/mcp",
@@ -4307,7 +4306,7 @@ class VortoCodeTUI(App):
                     audio.append(str(p))
                     return f"音频[{ref}]"
                 try:
-                    parts.append(f"# 文件 {ref}\n{p.read_text(encoding='utf-8')[:_AT_FILE_CHARS]}")
+                    parts.append(f"# 文件 {ref}\n{p.read_text(encoding='utf-8')[:_at_file_chars()]}")
                     return ref
                 except (OSError, UnicodeDecodeError):   # 二进制等读不动 → 原样保留 @token
                     return m.group(0)
@@ -4316,7 +4315,7 @@ class VortoCodeTUI(App):
                     parts.append(f"# 能力拦截\n未展开敏感目录 {ref}（当前 {self._capability_profile} 会话）")
                     return ref
                 sub = ref.rstrip("/")
-                hits = [f for f in _repo_files(self.repo_root) if f.startswith(sub)][:_AT_DIR_FILES]
+                hits = [f for f in _repo_files(self.repo_root) if f.startswith(sub)][:_at_dir_files()]
                 parts.append(f"# 目录 {ref} 下的源码文件\n" + ("\n".join(hits) or "(空)"))
                 return ref
             if "/" not in ref and "." not in ref:        # 当作符号：AST 找 def/class 定义
@@ -4340,7 +4339,7 @@ class VortoCodeTUI(App):
                 chunks.append(f"# 能力拦截\n未读取敏感路径 {rel}（当前 {self._capability_profile} 会话）")
                 continue
             try:
-                content = (Path(self.repo_root) / rel).read_text(encoding="utf-8")[:_AT_FILE_CHARS]
+                content = (Path(self.repo_root) / rel).read_text(encoding="utf-8")[:_at_file_chars()]
                 chunks.append(f"# {rel}\n{content}")
             except OSError:
                 continue

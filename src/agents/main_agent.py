@@ -25,8 +25,21 @@ from typing import Any, Awaitable, Callable, Optional
 from src.agents.tool import Tool
 
 
-def _env_int_early(name: str, default: int) -> int:
-    """模块级常量用的 env 读取（_env_int 定义在后面，这里需要先能用）。坏值/非正 → 默认。"""
+# 单个工具结果回灌给模型的最大字符数（默认值），与 read_file 整文件截断上限。
+#
+# ⚠️ 这两个值**没有跟着 microcompaction 一起放宽**，是想清楚后的决定：折叠只发生在回合开始、
+# 且只折"老段"，而工具结果是在**回合内**产生、落在当前回合——那恰恰是折叠和裁剪都够不着的
+# 区域（当前回合的消息受保护、最新一条永远保留）。也就是说"先给足"的字节在最要命的地方
+# **无法被回收**：并行 3 个 read_file 就能让一条消息吃掉几倍于整个历史预算的空间。
+# 想放宽的人可以自己经 env 开（他清楚自己的窗口有多大），但默认值必须是能兜住的那个。
+_MAX_TOOL_RESULT_DEFAULT = 4_000
+_MAX_READ_FILE_DEFAULT = 6_000
+
+
+def _env_limit(name: str, default: int) -> int:
+    """读一个正整数上限。**每次调用时读**，不是在 import 时读——.env 由入口（cli/tui/web）在
+    import 之后才加载，模块级常量在那之前读只会读到空值，于是 .env 里配的旋钮**静默失效**
+    （自审逮到的真 bug）。坏值/非正一律回退默认（绝不 clamp 成 1，那会把结果截成一个字符）。"""
     import os as _os
     try:
         v = int(_os.getenv(name) or default)
@@ -35,14 +48,22 @@ def _env_int_early(name: str, default: int) -> int:
     return v if v > 0 else default
 
 
-# 单个工具结果回灌给模型的最大字符数。
-# 4000 曾是"先掐死、不回收"的保守值——真实仓库里模型经常因此拿不到完整信息（读半个函数、
-# 看不到测试失败全貌）。B5-6 起改成 CC 式的"先给足、后回收"：入口放宽到 12000，
-# 压缩触发时再把**更早回合**的工具结果折叠掉（见 _fold_old_tool_results）。env 可调。
-_MAX_TOOL_RESULT = _env_int_early("VORTOCODE_MAX_TOOL_RESULT", 12_000)
+def _max_tool_result() -> int:
+    return _env_limit("VORTOCODE_MAX_TOOL_RESULT", _MAX_TOOL_RESULT_DEFAULT)
 
-# read_file 整文件截断上限（超过则提示用 start/end 读后续）。同样从 6000 放宽。
-_MAX_READ_FILE = _env_int_early("VORTOCODE_MAX_READ_FILE", 12_000)
+
+def _max_read_file() -> int:
+    return _env_limit("VORTOCODE_MAX_READ_FILE", _MAX_READ_FILE_DEFAULT)
+
+
+# 折叠占位符的标记：靠它认出"已折叠"，而不是往消息 dict 里塞私有键——history 的 dict 会**原样
+# 进 API 请求体**，多一个未知键会被 OpenAI 兼容端点 400，且它还会随会话快照落盘（自审逮到）。
+_FOLD_MARK = "（已折叠 · 原 "
+
+# 最近这么多条工具结果**永不折叠**（无论预算切点落在哪）。折叠是"直接删掉"、不像摘要还留个纪要，
+# 所以必须比摘要更保守：一条几千字的测试失败输出单条就能超过 recent 预算、被划进"老段"，
+# 而用户下一句往往正是"修一下这个失败"——那条结果一折，模型就得闭着眼睛改。
+_FOLD_KEEP_RECENT_TOOLS = 2
 
 # 工具预算用尽时的"收尾"指令：禁用工具、强制据已有上下文给最终回答（而不是丢弃一切返回空）
 _FORCE_FINISH_RULE = (
@@ -865,63 +886,73 @@ class MainAgent:
             "will_compact": self.compact and raw_history_tokens > limit,
         }
 
-    @staticmethod
-    def _tool_result_names(m: dict) -> list[str]:
-        """这条消息是工具结果回灌吗？是则返回其中的工具名（多工具并行会合成一条）。"""
-        if m.get("role") != "user" or m.get("_folded"):
-            return []
-        c = m.get("content")
-        if not isinstance(c, str):             # 多模态块（用户发的图/音）绝不是工具结果
-            return []
-        return re.findall(r"(?m)^\[工具 (.+?) 结果\]$", c)
+    def _tool_result_idxs(self, upto: int = -1) -> list[int]:
+        """history 里**真正的**工具结果消息下标（upto<0 = 整个历史）。
 
-    def _fold_old_tool_results(self, limit: int, protect_from: int) -> tuple[int, int]:
-        """microcompaction：把**更早回合**的工具结果折叠成一行占位，直到历史收进预算。
-
-        为什么值得：工具结果占历史的大头，但它们的价值随时间衰减得最快——读过的文件、跑过的
-        测试输出，几轮之后模型只需要知道"做过这件事"，不需要原文。折叠掉它们，往往就不必再花
-        一次 LLM 摘要去压真正有价值的对话（决策、需求）。这是 CC 的"先给足、后回收"里的"回收"。
-
-        边界（都很要命）：
-        - **只在压缩触发点调用**，绝不逐步折叠——否则每步都在改写历史 = 每步击穿前缀缓存。
-        - protect_from 及其之后的消息（=当前回合）一律不折叠：本回合刚读到的文件/刚跑出的测试
-          正是模型这一刻要用的东西。
-        - 从最旧往新折，够了就停——最近的工具结果尽量留原文。
-
-        返回 (折叠条数, 折叠后历史 token)。
+        识别靠**结构**、不靠内容里出现了什么字样：工具结果 = 紧跟在"assistant 的工具调用消息"
+        之后的那条 user 消息——这正是 _to_native_messages 配对时用的同一条契约。
+        绝不能只看内容里有没有 `[工具 X 结果]` 行：用户贴一段终端记录、或 @file 注入一份引用了
+        该标记的日志/设计文档，就会被当成工具结果整条折掉——用户的真实指令直接被销毁。
         """
         h = self.history
-        total = sum(self._msg_tokens(m) for m in h)
-        if total <= limit:
-            return 0, total
-        folded = 0
-        for i in range(min(protect_from, len(h))):        # 从最旧往新；当前回合受保护
-            m = h[i]
-            names = self._tool_result_names(m)
-            if not names:
+        end = len(h) if upto < 0 else min(upto, len(h))
+        out: list[int] = []
+        for i in range(1, end):
+            prev, m = h[i - 1], h[i]
+            if prev.get("role") != "assistant" or not isinstance(prev.get("content"), str):
                 continue
-            before = self._msg_tokens(m)
-            # 占位符**逐工具保留 `[工具 X 结果]` 头**：native 协议转换（_to_native_messages）靠这个头
-            # 把每条结果配回对应的 tool_call_id。并行工具会把多条结果合成一条消息，若折成一行，
-            # _split_tool_results 就切不出对应条数 → 有 tool_call 收不到结果。别动这个结构。
-            bodies = _split_tool_results(str(m.get("content") or ""), len(names))
-            placeholder = "\n\n".join(
-                f"[工具 {n} 结果]\n（已折叠 · 原 {len(b)} 字）" for n, b in zip(names, bodies))
-            h[i] = {"role": "user", "content": placeholder, "_folded": True}
-            total -= before - self._msg_tokens(h[i])
-            folded += 1
-            if total <= limit:                            # 够了就停，最近的工具结果留原文
-                break
-        return folded, total
+            if not parse_tool_calls(prev["content"]):      # 上一条不是工具调用 → 这条不是工具结果
+                continue
+            c = m.get("content")
+            if m.get("role") != "user" or not isinstance(c, str):
+                continue
+            if not c.startswith("[工具 ") or _FOLD_MARK in c:   # 已折叠的不重折
+                continue
+            out.append(i)
+        return out
+
+    def _foldable_idxs(self, cut: int) -> list[int]:
+        """可折叠的工具结果下标：在老段（h[:cut]）里，且**不属于最近 N 条工具结果**。
+
+        为什么"最近 N 条"这条护栏必须独立于预算切点存在：一条大的工具结果（几千字的测试失败
+        输出）单条就能超过 recent 预算，于是它必然被划进"老段"——而用户的下一句往往正是
+        "修一下这个失败"。只按预算切点判断，这条结果照折不误，模型就得闭着眼睛改。
+        摘要路径会把老段压成纪要（信息还在，只是压缩了）；折叠路径是**直接删掉**——
+        所以折叠必须比摘要更保守，而不是更激进。
+        """
+        recent_tool = set(self._tool_result_idxs()[-_FOLD_KEEP_RECENT_TOOLS:])
+        return [i for i in self._tool_result_idxs(cut) if i not in recent_tool]
+
+    def _folded_message(self, m: dict) -> dict:
+        """把一条工具结果折成占位消息。
+
+        **逐工具保留 `[工具 X 结果]` 头**：native 协议转换靠这个头把每条结果配回对应的
+        tool_call_id；并行工具会把多条结果合成一条消息，折成一行就会有 tool_call 收不到结果。
+        另外：只放 role/content 两个键——history 的 dict 会**原样进 API 请求体**，
+        多塞一个私有键（如 _folded）会被 OpenAI 兼容端点当成非法参数 400，而且它还会随会话
+        快照落盘 → 一次折叠永久毁掉会话。已折叠的靠内容里的 _FOLD_MARK 认出来，不靠额外字段。
+        """
+        content = str(m.get("content") or "")
+        names = re.findall(r"(?m)^\[工具 (.+?) 结果\]$", content)
+        bodies = _split_tool_results(content, len(names))
+        return {"role": "user", "content": "\n\n".join(
+            f"[工具 {n} 结果]\n{_FOLD_MARK}{len(b)} 字）" for n, b in zip(names, bodies))}
 
     async def _maybe_compact(self, say: Callable[[str], None], mode: str = "plan") -> None:
-        """历史 **token 数** 超预算时：先折叠更早回合的工具结果（microcompaction），
-        仍超预算才把"老段"摘要成滚动纪要、物理移出 history（保留最近窗口逐字）。
+        """历史 **token 数** 超预算时：能只靠折叠老段的工具结果收进预算，就折叠（零 LLM 调用、
+        对话逐字全留）；否则照旧把"老段"摘要成滚动纪要、物理移出 history（保留最近窗口逐字）。
 
         在回合开始时调一次（跨轮增长在此收口；单轮内的 max_steps 增长由 _trimmed_history 兜底）。
         按 token 触发（而非条数）：大量小消息不会白白触发一次 LLM 摘要；少量超大消息则会及时压。
         摘要失败/无 LLM 都安全跳过 —— 历史原样保留，下游 _trimmed_history 仍按锚点裁剪，纯降级。
         关闭压缩（compact=False）时直接返回。
+
+        microcompaction 的三条铁律（每条都对应一个自审逮到的真 bug，别退回去）：
+        1. **只折"老段"**（h[:cut]，本就要被摘要整段删掉的那部分），且**最近 N 条工具结果永不折**
+           （见 _foldable_idxs）——折叠是直接删、不像摘要还留纪要，所以必须比摘要更保守。
+        2. **折不动就别折**：先试算，只有"光折叠就能收进预算"才真折；不够就一条都不折、把**原文**
+           喂给摘要器。否则摘要器只看到占位符，纪要质量凭空变差——那是拿信息换了个寂寞。
+        3. 折叠只发生在这里（回合开始），绝不逐步折——否则每步改写历史 = 每步击穿前缀缓存。
         """
         if not self.compact:
             return
@@ -929,15 +960,6 @@ class MainAgent:
         total = sum(self._msg_tokens(m) for m in h)
         limit = self._context_limit(mode)
         if total <= limit:   # 没超 token 预算就不折腾（短对话/小消息零开销、零 LLM 调用）
-            return
-
-        # ① 先回收工具结果（零 LLM 调用）。protect_from：本回合的 user 消息刚被 run_turn 追加到
-        # 末尾（此刻 _turn_user_idx 尚未更新），故保护 [len(h)-1, …]——即本回合的请求原文。
-        folded, total = self._fold_old_tool_results(limit, protect_from=max(0, len(h) - 1))
-        if folded:
-            self._trim_start = 0        # 历史内容已改写 → 粘性切点按新体量重算（预算变松了）
-            say(f"[dim]🗜️ 已折叠 {folded} 条更早的工具结果（保留最近的原文）。[/dim]")
-        if total <= limit:              # 折叠就够了 → **不必调 LLM 摘要**，真正的对话一条不丢
             return
 
         recent_budget = max(1, int(limit * self._recent_context_ratio(mode)))
@@ -954,6 +976,28 @@ class MainAgent:
         older, recent = h[:cut], h[cut:]
         if not older:                          # 无老段可压（如历史仅当前轮）：交给 _trimmed_history 兜底
             return
+
+        # ① microcompaction：只折老段里、且不属于"最近 N 条"的工具结果；先试算，够了才真折
+        idxs = self._foldable_idxs(cut)
+        if idxs:
+            after = total
+            chosen: list[int] = []
+            for i in idxs:                     # 从最旧往新试算，够了就停（最近的老结果尽量留原文）
+                chosen.append(i)
+                after -= self._msg_tokens(h[i]) - self._msg_tokens(self._folded_message(h[i]))
+                if after <= limit:
+                    break
+            if after <= limit:                 # 光折叠就够 → 真折；对话（决策/需求）一条不丢、零 LLM
+                for i in chosen:
+                    h[i] = self._folded_message(h[i])
+                self._trim_start = 0           # 内容已改写 → 粘性切点按新体量重算（预算变松了）
+                self._env_sent = ""            # 强制下轮重附 <env>：切点重算后载体是否还在窗口内不好断言，
+                self._env_idx = None           # 宁可多附一次（几十 token），也不能让 env 悄悄消失
+                say(f"[dim]🗜️ 已折叠 {len(chosen)} 条更早回合的工具结果"
+                    f"（对话原文全部保留，未做摘要）。[/dim]")
+                return
+            # 折了也不够 → 一条都不折，把老段**原文**交给摘要器（保住纪要质量）
+
         digest = await self._summarize(older)
         if not digest:                         # 摘要失败：保持原历史，安全降级（不丢消息、不阻塞回合）
             return
@@ -1170,7 +1214,7 @@ class MainAgent:
         except Exception as e:  # noqa: BLE001
             result = f"工具 {name} 执行出错: {e}"
             await self._fire_hook("tool_error", {"tool": name, "args": args, "error": str(e)})
-        result = _clip_middle(result, _MAX_TOOL_RESULT)   # 超长保头+尾：别把末尾的报错/失败摘要截没了
+        result = _clip_middle(result, _max_tool_result())  # 超长保头+尾：别把末尾的报错/失败摘要截没了
         # POST_TOOL_USE：钩子据此做后处理（如自动格式化）；message 附在结果后
         post = await self._fire_hook("post_tool_use", {"tool": name, "args": args, "result": result})
         if post:
@@ -1746,13 +1790,15 @@ def build_read_tools(repo_root: str) -> list[Tool]:
             s = max(1, start)
             end = _int(args.get("end"))
             e = min(len(lines), end if (end is not None and end >= s) else s + 120)   # 默认约 120 行
-            chunk = "\n".join(lines[s - 1:e])[:_MAX_READ_FILE]
+            cap = _max_read_file()
+            chunk = "\n".join(lines[s - 1:e])[:cap]
             return f"# {rel} 第 {s}–{e} 行（共 {len(lines)} 行）\n{chunk}"
         # 无 start：整文件；超长截断并提示用 start/end 读指定行段（别只能看开头）
-        if len(text) > _MAX_READ_FILE:
+        cap = _max_read_file()
+        if len(text) > cap:
             total = text.count("\n") + 1
             return (f"# {rel}（共 {total} 行，过长，仅显示前部；用 start/end 读指定行段）\n"
-                    f"{text[:_MAX_READ_FILE]}\n…(已截断，用 read_file(path, start, end) 读更后面)")
+                    f"{text[:cap]}\n…(已截断，用 read_file(path, start, end) 读更后面)")
         return text
 
     async def _list_files(args: dict) -> str:
