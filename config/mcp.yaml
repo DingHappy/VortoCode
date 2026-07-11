@@ -1,4 +1,7 @@
 # MCP服务器配置
+# 安全默认：local 会话不摄入 MCP；external 会话只连接显式 `credentialed: false`、
+# 无 headers 的 HTTP server。stdio 会执行仓库配置命令并继承宿主能力，因此默认拒绝；
+# 下面的历史示例保留作配置参考，但不会在严格会话 profile 下启动。
 
 servers:
   # 文件系统服务器

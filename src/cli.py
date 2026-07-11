@@ -76,6 +76,8 @@ def main():
                    help="不在 stderr 打印工具调用/进度，只留最终输出")
     p.add_argument("--mcp", action="store_true",
                    help="连接 config/mcp.yaml 里 enabled 的 MCP 服务器，把其工具接入本回合")
+    p.add_argument("--capabilities", choices=["local", "external"], metavar="PROFILE",
+                   help="会话能力：local=开发/凭据且禁 Web/MCP；external=外部内容且无宿主凭据（默认 local）")
     p.add_argument("--attach", nargs="?", const="", metavar="URL",
                    help="把回合交给常驻 serve 跑（协议客户端模式）：连 URL 的 /ws"
                         "（缺省 $VORTOCODE_SERVE_URL 或 http://127.0.0.1:8080）；"
@@ -165,7 +167,7 @@ def main():
                 as_json=args.as_json, quiet=args.quiet, images=images, audio=audio,
                 speak=args.speak, voice=args.voice, speak_out=args.speak_out,
                 continue_session=args.continue_session, use_mcp=args.mcp, model=args.model,
-                attach=args.attach))
+                attach=args.attach, capability_profile=args.capabilities))
         except KeyboardInterrupt:              # Ctrl-C：WS 断开即中断 serve 侧回合（disconnect 兜底）
             sys.exit(130)
 
@@ -410,7 +412,8 @@ def _strip_markup(s: str) -> str:
     return _MARKUP_RE.sub("", s)
 
 
-def _build_headless_agent(cwd, *, max_steps, on_tool, on_plan, confirm, llm=None, on_progress=None):
+def _build_headless_agent(cwd, *, max_steps, on_tool, on_plan, confirm, llm=None, on_progress=None,
+                          capability_profile="local"):
     """薄壳：装配走 gateway 的单一工厂（kind="cli"，无制品、读 .vortocode/hooks.yaml）。
 
     工具集与网页 /agent 同源（同一工厂），签名保持兼容供既有调用方/测试。
@@ -418,7 +421,8 @@ def _build_headless_agent(cwd, *, max_steps, on_tool, on_plan, confirm, llm=None
     """
     from src.gateway.agent_session import build_session
     return build_session(cwd, kind="cli", confirm=confirm, on_progress=on_progress,
-                         on_tool=on_tool, on_plan=on_plan, llm=llm, max_steps=max_steps)
+                         on_tool=on_tool, on_plan=on_plan, llm=llm, max_steps=max_steps,
+                         capability_profile=capability_profile)
 
 
 def _looks_like_serve_url(s: str) -> bool:
@@ -539,7 +543,7 @@ async def _run_agent_attached(prompt, url, *, build=False, auto_yes=False, as_js
 async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=None,
                              as_json=False, quiet=False, llm=None, images=None, audio=None,
                              speak=False, voice=None, speak_out=None, continue_session=False,
-                             use_mcp=False, model=None, attach=None):
+                             use_mcp=False, model=None, attach=None, capability_profile=None):
     """headless 跑一回合主 agent loop（仿 claude -p）：无 UI、跑完即返回。
 
     输出契约：最终回复 → stdout；工具调用/进度 → stderr（--quiet 静默）。
@@ -554,13 +558,15 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
                 自动回退进程内（提示一行），**回合发出后的错误不回退**（防重复执行）。
     """
     import os
+    from src.agents.capabilities import normalize_profile
     cwd = os.getcwd()
     mode = "build" if build else "plan"
+    profile = normalize_profile(capability_profile or "local")
 
     if attach is not None:                        # --attach：先试 serve，够不着再进程内
         url = attach or os.getenv("VORTOCODE_SERVE_URL") or "http://127.0.0.1:8080"
         ignored = [n for n, v in (("--model", model), ("--max-steps", max_steps),
-                                  ("--mcp", use_mcp)) if v]
+                                  ("--mcp", use_mcp), ("--capabilities", capability_profile)) if v]
         if ignored and not quiet:
             print(f"\033[2m⚠ attach 下由 serve 决定、本次忽略：{'、'.join(ignored)}\033[0m",
                   file=sys.stderr, flush=True)
@@ -598,7 +604,8 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
             print(f"\033[2m{msg}\033[0m", file=sys.stderr, flush=True)
 
     agent = _build_headless_agent(cwd, max_steps=max_steps, on_tool=_on_tool,
-                                  on_plan=_on_plan, confirm=_confirm, llm=llm, on_progress=_progress)
+                                  on_plan=_on_plan, confirm=_confirm, llm=llm, on_progress=_progress,
+                                  capability_profile=profile)
     if model:                                     # --model：本次覆盖 .env 的 DEFAULT_MODEL
         try:
             agent.set_model(model)
@@ -607,7 +614,12 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
         except Exception as e:  # noqa: BLE001
             print(f"设置模型失败: {e}", file=sys.stderr)
     if continue_session:                          # 续上一次 CLI 对话（claude -c 式）
-        hist = _load_cli_history(cwd)
+        saved_profile = _load_cli_capability_profile(cwd)
+        can_resume = saved_profile == profile
+        hist = _load_cli_history(cwd) if can_resume else []
+        if not can_resume and not quiet:
+            print(f"\033[2m⚠ 上次 CLI 会话是 {saved_profile}，不能把历史带进 {profile} 信任域；已新开上下文\033[0m",
+                  file=sys.stderr, flush=True)
         if hist:
             agent.history = hist
             if not quiet:
@@ -617,7 +629,7 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
     if use_mcp:                                   # --mcp：接 config/mcp.yaml 的 MCP 服务器工具
         from src.agents.mcp_tools import connect_mcp
         try:
-            mcp_mgr, mcp_tools = await connect_mcp(cwd)
+            mcp_mgr, mcp_tools = await connect_mcp(cwd, capability_profile=profile)
             if mcp_tools:
                 agent.add_tools(mcp_tools)
                 if not quiet:
@@ -676,7 +688,7 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
         print(reply)                               # 管道/重定向：一次性输出
     if speak and reply:                            # 语音回复：把最终文字合成成 WAV（mimo-v2.5-tts）
         await _speak_reply(reply, voice, speak_out, llm, quiet)
-    _save_cli_history(cwd, getattr(agent, "history", []))   # 落盘，供下次 --continue 接上
+    _save_cli_history(cwd, getattr(agent, "history", []), profile)   # 落盘，供下次 --continue 接上
     if mcp_mgr is not None:                        # 关掉 MCP 子进程，别残留
         try:
             await mcp_mgr.shutdown()
@@ -688,20 +700,34 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
 _CLI_SESSION = ".vortocode/cli_session.json"
 
 
-def _load_cli_history(cwd):
-    """读回上次 CLI 对话历史（list）；不存在/坏文件 → []。"""
+def _load_cli_session(cwd):
+    """Read the persisted CLI session with backward-compatible defaults."""
     import json
     p = Path(cwd) / _CLI_SESSION
     if not p.is_file():
-        return []
+        return {}
     try:
         data = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return []
-    return data.get("history", []) if isinstance(data, dict) else []
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
-def _save_cli_history(cwd, history):
+def _load_cli_history(cwd):
+    """读回上次 CLI 对话历史（list）；不存在/坏文件 → []。"""
+    data = _load_cli_session(cwd)
+    return data.get("history", []) if isinstance(data.get("history"), list) else []
+
+
+def _load_cli_capability_profile(cwd):
+    value = _load_cli_session(cwd).get("capability_profile")
+    if value is None:
+        return None                                  # legacy files are treated as local-only by the caller
+    from src.agents.capabilities import normalize_profile
+    return normalize_profile(str(value))             # corrupt/unknown values fail closed to external
+
+
+def _save_cli_history(cwd, history, capability_profile="local"):
     """把 CLI 对话历史落盘（尾 40 条；多模态 content 折成纯文本，免 base64 撑爆文件）。失败安全吞。"""
     import json
 
@@ -715,7 +741,8 @@ def _save_cli_history(cwd, history):
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps({"history": out}, ensure_ascii=False), encoding="utf-8")
+        tmp.write_text(json.dumps({"history": out, "capability_profile": capability_profile},
+                                  ensure_ascii=False), encoding="utf-8")
         tmp.replace(p)
     except (OSError, TypeError, ValueError):
         pass

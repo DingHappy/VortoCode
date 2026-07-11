@@ -163,7 +163,9 @@ async def _ensure_mcp(agent, say) -> None:
         return                              # 默认关闭（避免坏配置卡死每回合）
     try:
         from src.agents.mcp_tools import connect_mcp
-        mgr, mcp_tools = await connect_mcp(os.getcwd())
+        mgr, mcp_tools = await connect_mcp(
+            os.getcwd(), capability_profile=agent._capabilities.profile
+        )
         if mcp_tools:
             agent.add_tools(mcp_tools)
             agent._mcp_mgr = mgr

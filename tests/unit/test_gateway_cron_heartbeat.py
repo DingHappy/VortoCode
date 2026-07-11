@@ -10,6 +10,24 @@ import pytest
 from src.gateway import cron, heartbeat
 
 
+@pytest.mark.asyncio
+async def test_isolated_gateway_session_uses_unattended_capability_profile(tmp_path):
+    from src.gateway.session import run_isolated_session
+
+    class _LLM:
+        def __init__(self):
+            self.messages = None
+
+        async def chat(self, messages, **kwargs):
+            self.messages = messages
+            return {"content": "ok", "tool_calls": None}
+
+    llm = _LLM()
+    assert await run_isolated_session(str(tmp_path), "check", mode="plan", llm=llm) == "ok"
+    system = next(message["content"] for message in llm.messages if message["role"] == "system")
+    assert "profile=unattended" in system
+
+
 # --------------------------------------------------------------------- cron: 解析
 def test_parse_at_every_cron():
     assert cron.parse_schedule("at 03:30").at == (3, 30)
