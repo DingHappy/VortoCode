@@ -71,7 +71,7 @@ COMMAND_INFO = {
     "/theme": "切换配色主题（21 套内置，记住选择）",
     "/usage": "本会话 token 用量（reset 清零）",
     "/context": "查看/切换上下文策略（auto/compact/balanced/preserve）",
-    "/compact": "手动压缩旧对话上下文；preview 只预估",
+    "/compact": "手动压缩旧对话；preview 只预估；跟一句说明可指定重点保留什么",
     "/permissions": "查看/解释工具权限；可 allow/deny/profile 或 reset 撤销「始终允许」",
     "/memory": "查看/管理项目指令和跨会话记忆",
     "/tasks": "列出/查看/续跑 dev_auto 持久化计划",
@@ -4202,21 +4202,23 @@ class VortoCodeTUI(App):
         )
 
     def _cmd_compact(self, arg: str) -> None:
-        """/compact：手动压缩旧对话；/compact preview 只预估。"""
-        arg = (arg or "").strip().lower()
-        if arg not in ("", "preview"):
-            self._emit("用法: /compact [preview]")
-            return
+        """/compact [preview | <重点保留的说明>]：手动压缩旧对话。
+
+        带说明时把"重点保留什么"透传给摘要器（如 `/compact 保留登录改造的决策和踩过的坑`），
+        长任务里能保住自己在意的那条线，而不是听天由命被通用摘要压掉。
+        """
+        raw = (arg or "").strip()
         if self.agent is None:
             self.agent = self._build_main_agent()
         preview = self.agent.compact_preview(self.mode)
-        if arg == "preview":
+        if raw.lower() == "preview":
             status = "可压缩" if preview.get("can_compact") else "暂不可压缩"
             self._emit(f"上下文压缩预览：{status}\n{self._compact_preview_text(preview)}")
             return
+        focus = raw                          # 其余一律当"重点保留"说明（空=按默认策略压缩）
 
         async def _run():
-            result = await self.agent.compact_now(self.mode)
+            result = await self.agent.compact_now(self.mode, focus=focus)
             if not result.get("ok"):
                 self._emit(f"上下文压缩未执行：{result.get('reason', '未知原因')}\n"
                            f"{self._compact_preview_text(result)}")
@@ -4227,9 +4229,11 @@ class VortoCodeTUI(App):
                 "before_tokens": result.get("before_tokens"),
                 "after_tokens": result.get("after_tokens"),
                 "summary_len": len(result.get("summary") or ""),
+                "focus": focus[:200],
             })
             self._render_statusbar()
-            self._emit("上下文已压缩。\n"
+            head = "上下文已压缩。" + (f"（重点保留：{focus[:60]}）" if focus else "")
+            self._emit(f"{head}\n"
                        f"{self._compact_preview_text(result)}\n"
                        f"消息数: {result['before_messages']} → {result['after_messages']}；"
                        f"history tokens: ~{self._fmt_tokens_short(int(result['before_tokens']))}"
