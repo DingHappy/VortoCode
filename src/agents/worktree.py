@@ -254,7 +254,11 @@ async def run_isolated_task(repo_root, wid: str, description: str,
     path = await _git_op(add_worktree, repo_root, wid)     # git 操作丢线程 + 全局串行（不冻循环/不竞争）
     try:
         agent = build_agent(str(path))
-        conclusion = await agent.run_turn(description, mode=mode, emit=lambda _t: None)  # 锁外，真并发
+        from src.agents.taint import merge_nested_taint
+        with merge_nested_taint():
+            conclusion = await agent.run_turn(
+                description, mode=mode, emit=lambda _t: None
+            )  # 锁外，真并发
         diff = await _git_op(collect_diff, path)           # 先收 diff，再跑测试
         # pytest 慢且阻塞：丢线程跑（锁外），既不冻 UI、并行时多个测试也能真并发（各自独立 worktree）
         verification = (await asyncio.to_thread(run_tests, path, test_cmd)) if test_cmd else None
@@ -287,7 +291,11 @@ async def run_dependent_on_branch(repo_root, wid: str, branch: str, description:
         return {"ok": False, "conclusion": "", "output": "worktree add 失败: " + (add.stderr or "").strip()[:200]}
     try:
         agent = build_agent(str(path))
-        conclusion = await agent.run_turn(description, mode="build", emit=lambda _t: None)   # 锁外
+        from src.agents.taint import merge_nested_taint
+        with merge_nested_taint():
+            conclusion = await agent.run_turn(
+                description, mode="build", emit=lambda _t: None
+            )  # 锁外
         ver = (await asyncio.to_thread(run_tests, path, test_cmd)) if test_cmd else {"ok": True, "output": ""}
         if not ver["ok"]:                                  # 自测没过：不提交，branch 保持原样
             return {"ok": False, "conclusion": conclusion, "output": ver["output"][-1500:]}
