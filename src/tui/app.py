@@ -591,6 +591,8 @@ class VortoCodeTUI(App):
         self._sb = {"branch": "", "dirty": False, "pr": "", "model": _model_name(),
                     "pr_branch": None, "pr_on": True}
         self._sb_last = ""                  # 最近一次状态栏渲染出的纯文本（测试/调试用）
+        self._ctx_pct = 0                   # 最近一次估算的上下文占用百分比（状态栏配色 + 一次性提示共用）
+        self._ctx_alerted = False           # 是否已就"逼近上限"提示过（回落到警戒线下自动复位）
         self._plan_last = ""                # 最近一次计划面板渲染出的文本（测试/版本无关地读取）
         self._model_override = None         # /model 切换的模型（本会话覆盖 .env 的 DEFAULT_MODEL）
         self._show_thinking = True          # 思考呈现开关（/think 切；推理型模型的过程提示进结果区）
@@ -1068,20 +1070,44 @@ class VortoCodeTUI(App):
             return f"{n / 1000:.1f}k".replace(".0k", "k")
         return str(n)
 
+    # 上下文压力阈值：≥warn 状态栏标 ⚠ 变色；≥alert 额外给一次性提示（建议 /compact）。
+    # 提示只在"跨过 alert 线"时给一次，回落到 warn 线以下自动复位——压缩/新会话后再涨上来会再提醒。
+    _CTX_WARN_PCT = 80
+    _CTX_ALERT_PCT = 95
+
     def _context_usage_label(self) -> str:
         if self.agent is None:
             return ""
         try:
-            u = self.agent.context_usage(self.mode)
+            u = self.agent.context_usage(self.mode)     # 只读估算（mutate=False，不动裁剪切点）
             used = self._fmt_tokens_short(int(u["used_tokens"]))
             limit = self._fmt_tokens_short(int(u["max_context_tokens"]))
-            label = f"ctx {used}/{limit} {int(u['pct'])}%"
+            pct = int(u["pct"])
+            self._ctx_pct = pct                         # 供状态栏配色/一次性提示复用，不重复算
+            label = f"ctx {used}/{limit} {pct}%"
             policy = str(u.get("policy") or "").strip()
             if policy:
                 label += f" · policy {policy}"
+            if pct >= self._CTX_WARN_PCT:
+                label += " ⚠"
             return label
         except Exception:  # noqa: BLE001
             return ""
+
+    def _maybe_warn_context_pressure(self) -> None:
+        """上下文逼近上限时给一次可操作的提示（回合末调用）。
+
+        只在跨过 alert 线时提示一次（`_ctx_alerted`），回落到 warn 线以下自动复位：
+        /compact、/new 之后历史缩水 → pct 掉下来 → 下次再涨上去会重新提醒，无需手工重置。
+        """
+        pct = int(getattr(self, "_ctx_pct", 0))
+        if pct < self._CTX_WARN_PCT:
+            self._ctx_alerted = False
+            return
+        if pct >= self._CTX_ALERT_PCT and not self._ctx_alerted:
+            self._ctx_alerted = True
+            self._chrome(f"[yellow]⚠ 上下文已用约 {pct}%：再涨会自动压缩旧对话（可能丢细节）。"
+                         f"可 /compact 手动压缩、/context 看占用分解或切策略。[/yellow]")
 
     def _render_statusbar(self) -> None:
         """渲染常驻底部状态栏：仓库 · 分支(改动) · PR · 模型 · 模式 · token。只读缓存，不触网/不阻塞。"""
@@ -1111,7 +1137,21 @@ class VortoCodeTUI(App):
             parts.append(f"~{tot // 1000}k tok" if tot >= 1000 else f"~{tot} tok")
         line = " · ".join(parts)
         self._sb_last = line                # 存一份纯文本，便于测试/版本无关地读取当前状态栏
-        bar.update(Text(line, style="dim"))
+        # 整行 dim；上下文段逼近上限时单独变色（黄=警戒、红=告警），一眼能看见压力
+        ctx_style = ""
+        if ctx and self._ctx_pct >= self._CTX_ALERT_PCT:
+            ctx_style = "bold red"
+        elif ctx and self._ctx_pct >= self._CTX_WARN_PCT:
+            ctx_style = "yellow"
+        if not ctx_style:
+            bar.update(Text(line, style="dim"))
+            return
+        t = Text()
+        for i, p in enumerate(parts):
+            if i:
+                t.append(" · ", style="dim")
+            t.append(p, style=ctx_style if p is ctx else "dim")
+        bar.update(t)
 
     @work(thread=True, exclusive=True, group="sb-git")
     def _refresh_git(self) -> None:
@@ -4031,6 +4071,11 @@ class VortoCodeTUI(App):
         self._load_always_allow()           # "始终允许"是**项目级**常驻授权：/new 不清，按设置重载
         #                                     （要撤销走 /permissions reset）
         reset_usage()                       # 用量也清零
+        # 上下文压力告警状态跟着新会话归零：否则旧会话提示过之后 _ctx_alerted 一直是 True，
+        # 而复位只发生在"pct 回落到警戒线以下"——新会话若**第一条输入就冲到 95%**，中间没有
+        # 回落过，于是永远等不到复位、该提示的时候反而不提示（codex 审出的边界问题）。
+        self._ctx_alerted = False
+        self._ctx_pct = 0
         self._render_plan([])               # 收起上个会话的计划面板
         from src.agents.shell import stop_all_background
         n_bg = stop_all_background()        # 收掉上个会话遗留的后台命令，别泄漏 dev server 进程
@@ -4521,6 +4566,7 @@ class VortoCodeTUI(App):
             await self._speak_text(reply)
         self._persist_agent_history()
         self._render_statusbar()
+        self._maybe_warn_context_pressure()   # 逼近上限给一次可操作提示（渲染后，pct 已是最新）
 
     def _turn_renderers(self):
         """一个回合的四件套 UI 渲染闭包（进程内与 attach 两条路径共用，保证同一观感）：

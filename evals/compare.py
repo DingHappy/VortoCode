@@ -26,6 +26,33 @@ def save_baseline(report: dict, baseline_dir: Path, *, date: str) -> Path:
     return p
 
 
+def latest_baseline(baseline_dir: Path, *, model: Optional[str] = None,
+                    protocol: Optional[str] = None) -> Optional[Path]:
+    """最新的基线文件（按文件名里的日期前缀排，同日取字典序末位）。没有则 None。
+
+    夜跑要"和上一版基线比"，但基线文件名带日期/模型/协议——让 LLM 去 ls 目录挑一个既费 token
+    又可能挑错。这里做成确定性解析：可按 model/protocol 过滤，只比同型号同协议的（跨模型比没意义）。
+    """
+    if not baseline_dir.is_dir():
+        return None
+    cands = []
+    for p in baseline_dir.glob("*.json"):
+        # 文件名是 save_baseline 造的 <date>-<model>-<protocol>；按**字段**精确匹配，
+        # 不能用子串——`mimo-v2.5` 会匹到 `mimo-v2.5-pro`，那就成了拿 pro 的基线比普通型号。
+        date, sep, rest = p.stem.partition("-")
+        if not sep or not date.isdigit():
+            continue
+        f_model, sep2, f_proto = rest.rpartition("-")   # 模型名自身可含 '-'，协议在最后一段
+        if not sep2:
+            continue
+        if model and f_model != re.sub(r"[^A-Za-z0-9._-]", "_", model):
+            continue
+        if protocol and f_proto != protocol:
+            continue
+        cands.append(p)
+    return max(cands, key=lambda p: p.stem) if cands else None
+
+
 def load_report(path: str) -> dict:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
@@ -53,7 +80,12 @@ def compare_reports(baseline: dict, current: dict) -> dict:
         if b is None:
             status = "new"
         elif c is None:
-            status = "removed"
+            # 基线里跑过、这次却没有结果（被 skip / 依赖缺失 / 环境坏了）——**算回归**。
+            # 否则夜跑会"假绿"：场景压根没跑成，has_regression=False，退出码 0，
+            # 于是环境损坏被当成"一切正常"，评测彻底失去意义（codex 审出的真问题）。
+            # 真要下线某个场景，就把基线一起更新掉（显式、人工确认过的移除）。
+            status = "missing"
+            regressions.append(name)
         elif c < b - 1e-9:
             status = "regressed"
             regressions.append(name)
@@ -82,7 +114,7 @@ def compare_reports(baseline: dict, current: dict) -> dict:
 def compare_markdown(cmp: dict) -> str:
     lines = ["## 与基线对比", "", "| 场景 | 基线 | 当前 | Δ | 状态 |", "| --- | --- | --- | --- | --- |"]
     mark = {"regressed": "🔴 回归", "improved": "🟢 进步", "new": "🆕 新增",
-            "removed": "⚪ 移除", "same": "· 持平"}
+            "missing": "🔴 没跑成（skip/环境坏）", "same": "· 持平"}
     for r in cmp["per_scenario"]:
         b = "—" if r["baseline"] is None else f"{r['baseline'] * 100:.0f}%"
         c = "—" if r["current"] is None else f"{r['current'] * 100:.0f}%"
