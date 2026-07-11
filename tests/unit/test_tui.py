@@ -1144,6 +1144,48 @@ async def test_compact_command_runs_and_audits(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_compact_with_focus_passes_it_to_summarizer(tmp_path):
+    """B5-3：/compact <说明> 把"重点保留"透传给摘要器；回执与审计都记下 focus。"""
+    from src.agents.main_agent import MainAgent
+    from tests.unit.test_main_agent import CompactLLM, _prefill
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        llm = CompactLLM()
+        app.agent = MainAgent([], llm=llm, max_context_tokens=8000)
+        _prefill(app.agent, 4)
+        await _submit(app, pilot, "/compact 保留登录改造的决策和踩过的坑")
+
+        assert await _wait_for(app, pilot, "上下文已压缩")
+        assert llm.summary_prompts and "【重点保留】" in llm.summary_prompts[0]
+        assert "保留登录改造的决策和踩过的坑" in llm.summary_prompts[0]
+        assert "重点保留：保留登录改造的决策" in "\n".join(app.transcript)   # 回执明示
+        line = (tmp_path / ".vortocode" / "audit.log").read_text(encoding="utf-8")
+        assert '"focus"' in line                                          # 审计留痕
+
+
+@pytest.mark.asyncio
+async def test_compact_preview_still_works_with_focus_word(tmp_path):
+    """`preview` 仍是保留字（只预估、不调 LLM）；无参 /compact 行为与之前完全一致。"""
+    from src.agents.main_agent import MainAgent
+    from tests.unit.test_main_agent import CompactLLM, _prefill
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        llm = CompactLLM()
+        app.agent = MainAgent([], llm=llm, max_context_tokens=8000)
+        _prefill(app.agent, 3)
+        await _submit(app, pilot, "/compact preview")
+        assert await _wait_for(app, pilot, "上下文压缩预览")
+        assert llm.summarized == 0                                        # preview 不调 LLM
+
+        await _submit(app, pilot, "/compact")                             # 无参 → 无 focus 段
+        assert await _wait_for(app, pilot, "上下文已压缩")
+        assert llm.summarized == 1
+        assert "【重点保留】" not in llm.summary_prompts[0]
+
+
+@pytest.mark.asyncio
 async def test_mcp_connect_wraps_tools(monkeypatch, tmp_path):
     # /mcp 连接 → 把 MCP server 工具包成 agent 工具（前缀防冲突、build 门控、handler 调 execute_tool）。
     import src.agents.mcp_tools as mt
