@@ -43,13 +43,19 @@ def test_pass_rate_by_scenario_averages_runs():
 
 # --------------------------------------------------------------------- 对比
 def test_compare_detects_regression_improvement_new():
+    """注意 `gone`：基线跑过、这次没结果 → **算回归**（status=missing）。
+
+    旧行为是标 "removed" 且不计回归——但"场景消失"和"场景没跑成（skip/依赖缺失/环境坏）"
+    在报告里长得一模一样，分不出来。当成绿的代价是：环境坏掉时夜跑照样退出 0（假绿），
+    评测就白做了。所以取安全的一侧：一律算回归；真要下线某个场景，把基线一起更新掉。
+    """
     base = _report(scenarios=[_scn("keep", True), _scn("drop", True), _scn("gone", True)])
     cur = _report(scenarios=[_scn("keep", True), _scn("drop", False), _scn("added", True)])
     cmp = compare.compare_reports(base, cur)
     by = {r["name"]: r["status"] for r in cmp["per_scenario"]}
     assert by["keep"] == "same" and by["drop"] == "regressed"
-    assert by["added"] == "new" and by["gone"] == "removed"
-    assert cmp["regressions"] == ["drop"] and cmp["has_regression"] is True
+    assert by["added"] == "new" and by["gone"] == "missing"
+    assert sorted(cmp["regressions"]) == ["drop", "gone"] and cmp["has_regression"] is True
 
 
 def test_compare_hard_regression_on_honesty_drop():
