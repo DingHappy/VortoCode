@@ -27,6 +27,14 @@ from src.agents.tool import Tool
 # 单个工具结果回灌给模型的最大字符数，避免长输出把上下文撑爆
 _MAX_TOOL_RESULT = 4000
 
+# 隔离实现子 agent 的角色指令。**所有**造实现子 agent 的地方共用这一份（经
+# repo_memory.dev_subagent_system 再拼上仓库记忆）——此前 main_agent 与 TUI 各拼各的，
+# 加仓库记忆时就漏掉了 TUI 那两个工具（codex 审出的真问题）。
+DEV_SUBAGENT_ROLE = (
+    "你是隔离工作区里的实现子 agent：用 read/grep 看代码，然后**必须用 edit_file/write_file "
+    "实际修改文件**实现任务——只查看或只跑测试不改文件不算完成。"
+    "改完务必 run_tests 自测直到通过。只动相关文件。")
+
 # 工具预算用尽时的"收尾"指令：禁用工具、强制据已有上下文给最终回答（而不是丢弃一切返回空）
 _FORCE_FINISH_RULE = (
     "\n\n【收尾】本段执行预算已到：现在**禁止再调用任何工具**，"
@@ -2154,19 +2162,14 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
 
     def _make_writer(test_cmd):
         """造一个'隔离实现子 agent'工厂：worktree 里 read+write+run_tests、自测到通过再交。"""
-        # 仓库记忆从**主仓库**读（.vortocode/ 是 gitignored，worktree 里没有这份文件）。
-        # 这是仓库记忆最值钱的落点：子 agent 每次都在全新 worktree 里从零开始，
+        # 仓库记忆是这里最值钱的落点：子 agent 每次都在全新 worktree 里从零开始，
         # 构建怪癖/测试命令/已知坑本来每次重踩——现在开局就带着。
-        from src.agents.repo_memory import load_repo_memory
-        repo_mem = load_repo_memory(repo_root)
+        # 走 dev_subagent_system 统一拼装（别再各处各拼一份，那样加东西必漏）。
+        from src.agents.repo_memory import dev_subagent_system
+        extra = dev_subagent_system(repo_root, DEV_SUBAGENT_ROLE)
 
         def _mk(_desc):
             def _b(wt):
-                extra = ("你是隔离工作区里的实现子 agent：用 read/grep 看代码，然后**必须用 "
-                         "edit_file/write_file 实际修改文件**实现任务——只查看或只跑测试不改文件不算完成。"
-                         "改完务必 run_tests 自测直到通过。只动相关文件。")
-                if repo_mem:
-                    extra += "\n\n" + repo_mem
                 return MainAgent(
                     build_read_tools(wt) + build_write_tools(wt) + [build_test_tool(wt, test_cmd)],
                     max_steps=16,
@@ -3138,8 +3141,14 @@ def build_memory_tools(repo_root: str, confirm=None, *, source: str = "agent",
             p = append_repo_memory(repo_root, decision.content)
         except Exception as e:  # noqa: BLE001
             return f"写入仓库记忆失败: {e}"
-        return (f"已写入仓库记忆（{p}）：{decision.content[:80]}\n"
-                "下个会话装配时自动进系统提示（本会话的系统提示保持不变）。")
+        msg = (f"已写入仓库记忆（{p}）：{decision.content[:80]}\n"
+               "下个会话装配时自动进系统提示（本会话的系统提示保持不变）。")
+        from src.agents.repo_memory import repo_memory_body
+        _body, dropped = repo_memory_body(repo_root)
+        if dropped > 0:              # 如实说：文件超上限，注入时会挤掉更早的条目（新写的这条一定在）
+            msg += (f"\n⚠ 仓库记忆已超注入上限：只有最新的若干条会进系统提示，"
+                    f"更早的 {dropped} 条不再注入。建议精简这个文件。")
+        return msg
 
     async def _recall_memory(args: dict) -> str:
         q = str(args.get("query", "")).strip()
