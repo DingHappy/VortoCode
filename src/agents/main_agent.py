@@ -65,6 +65,14 @@ _FOLD_MARK = "（已折叠 · 原 "
 # 而用户下一句往往正是"修一下这个失败"——那条结果一折，模型就得闭着眼睛改。
 _FOLD_KEEP_RECENT_TOOLS = 2
 
+# 隔离实现子 agent 的角色指令。**所有**造实现子 agent 的地方共用这一份（经
+# repo_memory.dev_subagent_system 再拼上仓库记忆）——此前 main_agent 与 TUI 各拼各的，
+# 加仓库记忆时就漏掉了 TUI 那两个工具（codex 审出的真问题）。
+DEV_SUBAGENT_ROLE = (
+    "你是隔离工作区里的实现子 agent：用 read/grep 看代码，然后**必须用 edit_file/write_file "
+    "实际修改文件**实现任务——只查看或只跑测试不改文件不算完成。"
+    "改完务必 run_tests 自测直到通过。只动相关文件。")
+
 # 工具预算用尽时的"收尾"指令：禁用工具、强制据已有上下文给最终回答（而不是丢弃一切返回空）
 _FORCE_FINISH_RULE = (
     "\n\n【收尾】本段执行预算已到：现在**禁止再调用任何工具**，"
@@ -113,6 +121,9 @@ _CONTEXT_BUDGET_HARD_CAP = _env_num("VORTOCODE_CONTEXT_BUDGET_CAP", 200_000, int
 # 这样切点在多数步之间保持不动（消息只追加不滑动）→ 请求前缀稳定 → 上游自动前缀缓存可持续命中；
 # 否则一旦贴线，每步新增的工具结果都会把窗口往前推一格，每步都击穿一次前缀缓存。
 _TRIM_LOW_WATERMARK = 0.8
+
+# `/compact <说明>` 里"重点保留"文本的长度上限（够描述一个主题，又不至于喧宾夺主/撑爆摘要请求）
+_MAX_COMPACT_FOCUS = 500
 
 
 def _normalize_context_policy(value: Any) -> str:
@@ -1040,14 +1051,17 @@ class MainAgent:
             "recent_tokens": sum(self._msg_tokens(m) for m in recent),
         }
 
-    async def compact_now(self, mode: str = "plan") -> dict:
-        """手动压缩旧历史。成功才改写 _summary/history；失败保持原样。"""
+    async def compact_now(self, mode: str = "plan", focus: str = "") -> dict:
+        """手动压缩旧历史。成功才改写 _summary/history；失败保持原样。
+
+        focus：可选的"重点保留"说明（`/compact <说明>`），透传给摘要器；空=按默认策略压缩。
+        """
         preview = self.compact_preview(mode)
         if not preview["can_compact"]:
             return {"ok": False, "reason": "可压缩的历史不足", **preview}
         cut = int(preview["older_messages"])
         older, recent = self.history[:cut], self.history[cut:]
-        digest = await self._summarize(older)
+        digest = await self._summarize(older, focus=focus)
         if not digest:
             return {"ok": False, "reason": "摘要生成失败", **preview}
         before_messages = len(self.history)
@@ -1069,13 +1083,23 @@ class MainAgent:
             **preview,
         }
 
-    async def _summarize(self, msgs: list[dict]) -> str:
-        """把一段历史消息（+ 已有纪要）交给 LLM 压成更新后的纪要；任何异常都返回空串（让上游降级）。"""
+    async def _summarize(self, msgs: list[dict], focus: str = "") -> str:
+        """把一段历史消息（+ 已有纪要）交给 LLM 压成更新后的纪要；任何异常都返回空串（让上游降级）。
+
+        focus：用户给的"重点保留什么"（`/compact <说明>`）。只进**摘要子调用的 user 消息**，
+        既不进主对话 system（保前缀稳定），也不改压缩器的系统提示（防用户文本改写压缩器行为）；
+        产出的纪要照旧过 sanitize_persistent_summary 过滤。
+        """
         from src.llm.content import content_to_text
         convo = "\n".join(
             f"{m.get('role', '?')}: {content_to_text(m.get('content'))[:1500]}" for m in msgs)
         user = (f"【已有纪要】\n{self._summary}\n\n" if self._summary else "") + \
-               f"【新增对话】\n{convo}\n\n请输出更新后的完整纪要。"
+               f"【新增对话】\n{convo}\n\n"
+        focus = " ".join(str(focus or "").split())[:_MAX_COMPACT_FOCUS]
+        if focus:
+            user += (f"【重点保留】用户要求本次纪要**着重保留**与下述内容相关的细节"
+                     f"（其余照常压缩，不得因此丢掉原始目标与关键决策）：\n{focus}\n\n")
+        user += "请输出更新后的完整纪要。"
         prompt = [{"role": "system", "content": _SUMMARY_SYSTEM},
                   {"role": "user", "content": user}]
         try:
@@ -2277,14 +2301,18 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
 
     def _make_writer(test_cmd):
         """造一个'隔离实现子 agent'工厂：worktree 里 read+write+run_tests、自测到通过再交。"""
+        # 仓库记忆是这里最值钱的落点：子 agent 每次都在全新 worktree 里从零开始，
+        # 构建怪癖/测试命令/已知坑本来每次重踩——现在开局就带着。
+        # 走 dev_subagent_system 统一拼装（别再各处各拼一份，那样加东西必漏）。
+        from src.agents.repo_memory import dev_subagent_system
+        extra = dev_subagent_system(repo_root, DEV_SUBAGENT_ROLE)
+
         def _mk(_desc):
             def _b(wt):
                 return MainAgent(
                     build_read_tools(wt) + build_write_tools(wt) + [build_test_tool(wt, test_cmd)],
                     max_steps=16,
-                    extra_system=("你是隔离工作区里的实现子 agent：用 read/grep 看代码，然后**必须用 "
-                                  "edit_file/write_file 实际修改文件**实现任务——只查看或只跑测试不改文件不算完成。"
-                                  "改完务必 run_tests 自测直到通过。只动相关文件。"),
+                    extra_system=extra,
                     capabilities=capabilities)
             return _b
         return _mk
@@ -3210,6 +3238,57 @@ def build_memory_tools(repo_root: str, confirm=None, *, source: str = "agent",
             return f"已记住（跨会话，id={result.record_id}）：{decision.content[:80]}"
         return f"{result.message}（id={result.record_id}）"
 
+    async def _remember_repo(args: dict) -> str:
+        """把一条**关于本仓库**的事实写进 .vortocode/memory/repo.md（下个会话自动进系统提示）。
+
+        写入门槛**高于** save_memory：repo.md 每轮都被注入系统提示 = "系统事实"，故只收
+        policy 判定为 durable 的内容；污点回合的指令性文本（proposal）与疑似凭据（quarantine）
+        一律拒绝——绝不让外部内容经这里变成每轮喂给模型的事实（提示注入的最佳跳板）。
+        """
+        from src.agents.repo_memory import append_repo_memory
+        content = str(args.get("content", "")).strip()
+        if not content:
+            return "remember_repo 需要 content（关于本仓库的事实：构建/测试命令、目录约定、踩过的坑）。"
+        from src.agents.taint import is_tainted
+        tainted = is_tainted()
+        request = MemoryWriteRequest(content=content, source=source,
+                                     session_id=_origin_session(), tainted=tainted,
+                                     write_method="tool", memory_type="repo_fact")
+        decision = policy.evaluate(request)
+        if decision.outcome == "reject":
+            reason = "内容为空" if "empty" in decision.reasons else "内容过长"
+            return f"写入仓库记忆失败: {reason}"
+        if decision.outcome != "durable":
+            # 仓库记忆会自动进系统提示，比会话记忆更敏感 → 非 durable 一律不落盘
+            why = ("疑似含凭据" if decision.outcome == "quarantine"
+                   else "疑似来自外部内容的指令性文本")
+            return (f"拒绝写入仓库记忆（{why}：{'/'.join(decision.reasons) or '策略拦截'}）。"
+                    "仓库记忆每轮都会进系统提示，只接受可信的仓库事实；"
+                    "如确需留存，请改用 save_memory（走提案/隔离审阅流程）。")
+        if confirm is None:
+            return "写入仓库记忆失败: 当前入口没有可用的用户确认门。"
+        try:
+            approved = bool(await confirm(
+                "把这条事实写进**仓库记忆** .vortocode/memory/repo.md？\n"
+                "（今后本仓库的每个会话都会自动带上它，子 agent 也会看到）\n"
+                f"  {decision.content[:240]}"))
+        except Exception as e:  # noqa: BLE001
+            return f"写入仓库记忆确认失败: {e}"
+        if not approved:
+            return "用户取消了仓库记忆写入。"
+        try:
+            p = append_repo_memory(repo_root, decision.content)
+        except Exception as e:  # noqa: BLE001
+            return f"写入仓库记忆失败: {e}"
+        msg = (f"已写入仓库记忆（{p}）：{decision.content[:80]}\n"
+               "下个会话装配时自动进系统提示（本会话的系统提示保持不变）。")
+        from src.agents.repo_memory import repo_memory_body
+        _body, dropped = repo_memory_body(repo_root)
+        if dropped > 0:              # 如实说：文件超上限，注入时会挤掉更早的条目（新写的这条一定在）
+            msg += (f"\n⚠ 仓库记忆已超注入上限：只有最新的若干条会进系统提示，"
+                    f"更早的 {dropped} 条不再注入。建议精简这个文件。")
+        return msg
+
     async def _recall_memory(args: dict) -> str:
         q = str(args.get("query", "")).strip()
         try:
@@ -3271,6 +3350,10 @@ def build_memory_tools(repo_root: str, confirm=None, *, source: str = "agent",
 
     return [Tool("save_memory", "确认后保存跨会话长期记忆；外部指令/疑似凭据进入隔离提案（仅 build）",
                  {"content": "要记住的内容"}, _save_memory, read_only=False),
+            Tool("remember_repo",
+                 "确认后把**关于本仓库**的事实写进仓库记忆（构建/测试命令、目录约定、踩过的坑）；"
+                 "今后每个会话与子 agent 自动带上（仅 build）",
+                 {"content": "关于本仓库的事实"}, _remember_repo, read_only=False),
             Tool("recall_memory", "检索跨会话长期记忆（不传 query 则列出全部）",
                  {"query": "可选，关键词"}, _recall_memory,
                  read_only=True, untrusted_source=True),
