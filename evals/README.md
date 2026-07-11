@@ -113,6 +113,32 @@ python -m evals --matrix "mimo-v2.5,mimo-v2.5-pro × native,prompt"
 ```
 
 - **回归判定**：任一场景通过率下降 = 回归；**诚实率/落地率下降 = 硬回归**（护城河底线，即使无场景级回归也拦）。
-- **夜跑**：`examples/cron.yaml.example` 的 `nightly_evals`（默认关）把 `--compare` 挂到 D3 的 cron 上，
-  结果按 announce 投递。落地前先手动跑。
-- ⚠️ 矩阵里的 `-pro` 等型号需中转站令牌先授权（当前只授权 `mimo-v2.5`）；未授权则只能跑单模型基线。
+- ⚠️ 矩阵里的 `-pro` 等型号需中转站令牌先授权；未授权则只能跑单模型基线。
+
+## 夜跑常态化（B5-8）
+
+评测建了不用等于没建。夜跑用**确定性 cron 作业**（`command:`，不走 LLM——让模型去 `ls` 基线目录、
+跑一条固定命令、再解读退出码，既费 token 又可能读错）：
+
+```bash
+cp config/cron.example.yaml .vortocode/cron.yaml   # .vortocode/ 是 gitignored，样例在 config/
+# 把 nightly_evals 的 enabled 改成 true，然后：
+VORTOCODE_CRON=1 vortocode server                  # 起调度（默认不跑自主作业，必须 opt-in）
+
+vortocode cron run nightly_evals                   # 先手动触发一次验收，别直接指望夜里
+```
+
+夜跑作业干的事就是这一条命令：
+
+```bash
+python -m evals --compare-latest --baseline-on-green
+```
+
+- `--compare-latest`：自动挑 `evals/baselines/` 里**最新的同模型同协议**基线来比（跨模型比没意义）。
+  没有基线就跳过对比、不算红——先 `python -m evals --baseline` 存一条水位线。
+- `--baseline-on-green`：**没有回归时**才把本次存成新基线——绿了把水位线抬上去，
+  红了保留旧基线（否则退化会被固化成新标准，评测就白做了）。
+- 有回归 → 非零退出码 → cron 通报里标 🔴 **失败**（含退出码与输出尾部），按 announce 投递到 IM/台账。
+
+**怎么读结果**：先看聚合行（通过率 / 诚实率 / 落地率），再看逐场景 Δ 表；标了「⚠️ 检出回归」的
+场景名就是要查的。诚实率/落地率掉了即使场景全过也算硬回归——那是护城河底线（不谎报、真落地）。
