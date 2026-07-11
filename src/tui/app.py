@@ -1487,16 +1487,23 @@ class VortoCodeTUI(App):
         """写操作确认门：已选过"始终允许"（含项目设置里跨会话常驻的）则直接放行，否则弹确认。
 
         统一所有写工具(edit/write/save_skill/制品/分支)的确认，支持 [a] 始终允许（仿 CC）。
+
+        **污点回合无视一切免确认授权**（与 _confirm_command 同一条规矩）：本回合摄入过网页/
+        搜索/MCP 的外部内容后，项目 allow 与"始终允许"一律失效、强制逐次人工确认。
+        此前只有命令门查污点、写门没查——外部内容能诱导 agent 静默改文件（D0 的口子）；
+        授权持久化后这个口子还会跨重启保留，所以必须堵上（codex 审出的真问题）。
         """
+        from src.agents.taint import is_tainted
         deny = self._permission_deny_reason(tool_name, args)
         if deny:
             self._emit(f"权限拦截: {deny}")
             return False
-        if self._permission_allow_reason(tool_name, args):
+        tainted = is_tainted()
+        if not tainted and self._permission_allow_reason(tool_name, args):
             return True
-        if self._allow_writes_session:
+        if self._allow_writes_session and not tainted:
             return True
-        return await self._inline_confirm(message, scope="writes")
+        return await self._inline_confirm(self._taint_msg(message), scope="writes")
 
     def _taint_msg(self, message: str) -> str:
         """污点态（本回合摄入过网页/搜索/MCP 外部内容）下给对外操作确认加警示前缀（D0 防提示注入）。"""

@@ -3546,6 +3546,55 @@ async def test_always_allow_never_persisted_from_host_fallback(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_taint_forces_confirm_for_writes_too(tmp_path):
+    """codex 审出的真问题：此前只有**命令**门查污点、**写**门没查——本回合摄入过网页/搜索/MCP
+    的外部内容后，"始终允许写"仍会静默放行，外部内容可诱导 agent 悄悄改文件（D0 的口子）。
+    授权持久化后这个口子还会跨重启保留。写门必须和命令门同一条规矩。"""
+    import asyncio
+    from src.agents import taint
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    app._persist_always_allow("writes")
+    app._load_always_allow()
+    async with app.run_test() as pilot:
+        taint.reset_taint()
+        assert await app._confirm_write("写吗？") is True          # 未污点 → 吃常驻豁免
+        assert app._confirm_future is None
+
+        taint.mark_tainted()                                       # 污点 → 无视授权、强制确认
+        task = asyncio.create_task(app._confirm_write("写吗？"))
+        assert await _wait_inline_confirm(app, pilot)
+        assert "外部内容" in app._confirm_message                   # 且给出防注入警示
+        app._finish_inline_confirm("no")
+        assert await task is False
+        taint.reset_taint()
+
+
+@pytest.mark.asyncio
+async def test_taint_also_overrides_project_allow_for_writes(tmp_path):
+    """项目 allow 规则同样不能在污点回合免确认（否则 allow 就成了绕过 D0 的后门）。"""
+    import asyncio
+    from src.agents import taint
+
+    (tmp_path / ".vortocode").mkdir(exist_ok=True)
+    (tmp_path / ".vortocode" / "permissions.yaml").write_text(
+        'allow:\n  - "edit_file: src/*"\n', encoding="utf-8")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        taint.reset_taint()
+        assert await app._confirm_write("改吗？", tool_name="edit_file",
+                                        args={"path": "src/a.py"}) is True   # 未污点 → allow 免确认
+
+        taint.mark_tainted()
+        task = asyncio.create_task(app._confirm_write("改吗？", tool_name="edit_file",
+                                                      args={"path": "src/a.py"}))
+        assert await _wait_inline_confirm(app, pilot)                        # 污点 → 仍要确认
+        app._finish_inline_confirm("no")
+        assert await task is False
+        taint.reset_taint()
+
+
+@pytest.mark.asyncio
 async def test_persisted_always_allow_still_blocked_by_taint_and_deny(tmp_path):
     """常驻授权只免"逐次确认"：污点回合仍强制确认；deny 规则仍硬拦。"""
     import asyncio
