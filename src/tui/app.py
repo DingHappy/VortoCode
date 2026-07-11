@@ -72,7 +72,7 @@ COMMAND_INFO = {
     "/usage": "本会话 token 用量（reset 清零）",
     "/context": "查看/切换上下文策略（auto/compact/balanced/preserve）",
     "/compact": "手动压缩旧对话上下文；preview 只预估",
-    "/permissions": "查看/解释工具权限；可 allow/deny/profile 或 reset 会话放行",
+    "/permissions": "查看/解释工具权限；可 allow/deny/profile 或 reset 撤销「始终允许」",
     "/memory": "查看/管理项目指令和跨会话记忆",
     "/tasks": "列出/查看/续跑 dev_auto 持久化计划",
     "/tools": "列出主 agent 工具及读写权限",
@@ -442,9 +442,10 @@ class ConfirmScreen(ModalScreen[bool]):
             yield Static(self._message, id="confirm-msg")
             with Horizontal(id="confirm-actions"):
                 yield Button("确认", id="confirm-yes", variant="success")
-                yield Button("本会话始终允许", id="confirm-always", variant="warning")
+                yield Button("始终允许（记住）", id="confirm-always", variant="warning")
                 yield Button("取消", id="confirm-no")
-            yield Static("←/→ 或 Tab 选择 · Enter 执行 · y 确认 · a 本会话始终允许 · n/Esc 取消", id="confirm-hint")
+            yield Static("←/→ 或 Tab 选择 · Enter 执行 · y 确认 · a 始终允许（记住到项目设置） · n/Esc 取消",
+                         id="confirm-hint")
 
     def on_mount(self) -> None:
         self._focus_choice()
@@ -485,13 +486,14 @@ class ConfirmScreen(ModalScreen[bool]):
         self.dismiss(True)
 
     def action_always(self) -> None:
-        """本会话内后续**同类**操作不再逐个确认（对齐 Claude Code 的 Always allow）。
+        """后续**同类**操作不再逐个确认，并记进项目设置跨会话常驻（对齐 Claude Code 的 Always allow）。
 
         作用域隔离：写文件的 [a] 只静默后续写、跑命令的 [a] 只静默后续命令——
         否则为省文件编辑确认按下的 [a] 会连任意 shell 命令一起放行（权限提升）。
         """
         try:
             setattr(self.app, f"_allow_{self._scope}_session", True)
+            self.app._persist_always_allow(self._scope)     # 跨会话常驻（/permissions reset 可撤销）
         except Exception:  # noqa: BLE001
             pass
         self.dismiss(True)
@@ -570,8 +572,11 @@ class VortoCodeTUI(App):
         self._confirm_message = ""
         self._confirm_idx = 0
         self._queued_inputs: list[str] = []  # 忙时提交的消息排队（回合结束自动发送，不再丢弃）
-        self._allow_writes_session = False  # 本会话"始终允许"写操作（ConfirmScreen 的 [a]，scope=writes）
-        self._allow_commands_session = False  # 本会话"始终允许"跑命令（独立作用域，不吃写豁免）
+        # "始终允许"（确认门的 [a]）：写/命令两个独立作用域，跨会话常驻——从项目设置载入。
+        # 只免"逐次确认"，不越过 deny 规则/污点强制确认/host 降级/会话能力边界（见 _confirm_* 各门）。
+        self._allow_writes_session = False
+        self._allow_commands_session = False
+        self._load_always_allow()
         self._speak_replies = False         # /speak 开关：开则把每条回复合成语音朗读（mimo-v2.5-tts）
         self._user_cmds = None              # 用户自定义命令缓存（.vortocode/commands，惰性加载、/commands reload 重扫）
         self._context_policy = self._load_setting("context_policy", "auto")
@@ -1031,6 +1036,34 @@ class VortoCodeTUI(App):
         data[key] = value
         self._save_settings(data)
 
+    # ------------------------------------------------- "始终允许"常驻授权（跨会话）
+    # 存 .vortocode/settings.json 的 always_allow: {"writes": true, "commands": true}。
+    # 边界（都在 _confirm_* 各门里，本机制一概不碰）：deny 规则仍硬拦、污点回合仍强制确认、
+    # host 降级（scope=fallback）永不可"始终允许"、会话能力 profile 仍是外层闸。
+    # 撤销：/permissions reset（清会话标志 + 抹掉持久化记录）。
+    def _load_always_allow(self) -> None:
+        data = self._load_setting("always_allow", {})
+        if not isinstance(data, dict):
+            data = {}
+        self._allow_writes_session = bool(data.get("writes"))
+        self._allow_commands_session = bool(data.get("commands"))
+
+    def _persist_always_allow(self, scope: str) -> None:
+        """把本次 [a] 的选择记进项目设置（仅 writes/commands 两个作用域；fallback 永不记）。"""
+        if scope not in ("writes", "commands"):
+            return
+        data = self._load_setting("always_allow", {})
+        if not isinstance(data, dict):
+            data = {}
+        data[scope] = True
+        self._save_setting("always_allow", data)
+
+    def _clear_always_allow(self) -> None:
+        """撤销常驻授权：清会话标志 + 抹掉持久化记录。"""
+        self._allow_writes_session = False
+        self._allow_commands_session = False
+        self._save_setting("always_allow", {})
+
     # ---------------------------------------------------------------- 状态栏
     def _fmt_tokens_short(self, n: int) -> str:
         if n >= 1000:
@@ -1377,7 +1410,7 @@ class VortoCodeTUI(App):
         inp.value = val
         inp.cursor_position = len(val)
 
-    _CONFIRM_CHOICES = [("yes", "确认"), ("always", "本会话始终允许"), ("no", "取消")]
+    _CONFIRM_CHOICES = [("yes", "确认"), ("always", "始终允许（记住）"), ("no", "取消")]
 
     def _inline_confirm_choices(self):
         # host fallback 必须逐次确认，不能展示/接受“始终允许”。
@@ -1458,6 +1491,7 @@ class VortoCodeTUI(App):
         if action == "always" and self._confirm_scope != "fallback":
             try:
                 setattr(self, f"_allow_{self._confirm_scope}_session", True)
+                self._persist_always_allow(self._confirm_scope)   # 跨会话常驻（/permissions reset 可撤销）
             except Exception:  # noqa: BLE001
                 pass
         self._confirm_future = None
@@ -1490,19 +1524,26 @@ class VortoCodeTUI(App):
         return load_permissions(self.repo_root).denied(tool_name, args or {})
 
     async def _confirm_write(self, message: str, *, tool_name: str = "", args: dict | None = None) -> bool:
-        """写操作确认门：本会话已选"始终允许"则直接放行，否则弹 ConfirmScreen。
+        """写操作确认门：已选过"始终允许"（含项目设置里跨会话常驻的）则直接放行，否则弹确认。
 
         统一所有写工具(edit/write/save_skill/制品/分支)的确认，支持 [a] 始终允许（仿 CC）。
+
+        **污点回合无视一切免确认授权**（与 _confirm_command 同一条规矩）：本回合摄入过网页/
+        搜索/MCP 的外部内容后，项目 allow 与"始终允许"一律失效、强制逐次人工确认。
+        此前只有命令门查污点、写门没查——外部内容能诱导 agent 静默改文件（D0 的口子）；
+        授权持久化后这个口子还会跨重启保留，所以必须堵上（codex 审出的真问题）。
         """
+        from src.agents.taint import is_tainted
         deny = self._permission_deny_reason(tool_name, args)
         if deny:
             self._emit(f"权限拦截: {deny}")
             return False
-        if self._permission_allow_reason(tool_name, args):
+        tainted = is_tainted()
+        if not tainted and self._permission_allow_reason(tool_name, args):
             return True
-        if self._allow_writes_session:
+        if self._allow_writes_session and not tainted:
             return True
-        return await self._inline_confirm(message, scope="writes")
+        return await self._inline_confirm(self._taint_msg(message), scope="writes")
 
     def _taint_msg(self, message: str) -> str:
         """污点态（本回合摄入过网页/搜索/MCP 外部内容）下给对外操作确认加警示前缀（D0 防提示注入）。"""
@@ -1521,7 +1562,7 @@ class VortoCodeTUI(App):
         """任意 shell 命令确认门：**独立作用域**，不吃"始终允许写文件"的豁免。
 
         否则用户为省文件编辑逐条确认按下的 [a]，会静默放行后续所有任意命令（=权限提升）。
-        本会话对命令单独选过"始终允许"（scope=commands）才免确认。
+        对命令单独选过"始终允许"（scope=commands，可跨会话常驻）才免确认。
         污点态（本回合摄入过外部内容）或 ``force_prompt=True`` 时**无视**项目 allow / 命令
         “始终允许”、强制弹确认。force_prompt 用于 OS sandbox 的交互 host fallback：降级授权必须
         是本次明确的人机确认，不能继承此前的自动授权。
@@ -2077,8 +2118,10 @@ class VortoCodeTUI(App):
             "[b]有效工具权限[/b]",
             f"当前模式: {self.mode}",
             f"项目 profile: {profile}",
-            f"本会话始终允许: 写={'yes' if self._allow_writes_session else 'no'} · "
-            f"命令={'yes' if self._allow_commands_session else 'no'}",
+            f"始终允许（记住）: 写={'yes' if self._allow_writes_session else 'no'} · "
+            f"命令={'yes' if self._allow_commands_session else 'no'}"
+            + ("  （/permissions reset 撤销）"
+               if (self._allow_writes_session or self._allow_commands_session) else ""),
         ]
         for t in agent._tool_list:
             deny = perm.denied(t.name, {})
@@ -2092,9 +2135,9 @@ class VortoCodeTUI(App):
             elif allow:
                 status = "allowed by project"
             elif t.name == "run_command" and self._allow_commands_session:
-                status = "allowed this session"
+                status = "allowed (always)"
             elif t.name != "run_command" and self._allow_writes_session:
-                status = "allowed this session"
+                status = "allowed (always)"
             else:
                 status = "confirm required"
             gate = "只读" if t.read_only else "写/重型"
@@ -2181,10 +2224,9 @@ class VortoCodeTUI(App):
             self._emit(self._permission_explain_text(tool, value))
             return
         elif low in ("reset", "reset-session", "session-reset"):
-            self._allow_writes_session = False
-            self._allow_commands_session = False
+            self._clear_always_allow()       # 会话标志 + 项目设置里的常驻授权一并撤销
             self._sync_subtitle()
-            self._chrome("[green]已清除本会话始终允许的写/命令权限[/green]")
+            self._chrome("[green]已清除本会话及项目设置中「始终允许」的写/命令授权[/green]")
         elif low.startswith("deny"):
             parts = raw.split(maxsplit=2)
             if len(parts) < 2:
@@ -2245,8 +2287,10 @@ class VortoCodeTUI(App):
             f"模式: {self.mode}（plan 只允许只读工具；build 可请求写/重型工具）",
             f"会话能力 profile: {self._capability_profile}",
             f"项目 profile: {profile}",
-            f"本会话始终允许: 写={'yes' if self._allow_writes_session else 'no'} · "
-            f"命令={'yes' if self._allow_commands_session else 'no'}",
+            f"始终允许（记住）: 写={'yes' if self._allow_writes_session else 'no'} · "
+            f"命令={'yes' if self._allow_commands_session else 'no'}"
+            + ("  （/permissions reset 撤销）"
+               if (self._allow_writes_session or self._allow_commands_session) else ""),
             f"工具: 只读 {len(read_tools)} 个 · 写/重型 {len(write_tools)} 个",
             "",
             f"项目 allow 规则: {cfg}",
@@ -4024,8 +4068,8 @@ class VortoCodeTUI(App):
         self.agent = None                   # 新会话 = 全新 agent 上下文
         self._capability_profile = requested
         self._capabilities = None
-        self._allow_writes_session = False  # "始终允许"也随新会话复位
-        self._allow_commands_session = False
+        self._load_always_allow()           # "始终允许"是**项目级**常驻授权：/new 不清，按设置重载
+        #                                     （要撤销走 /permissions reset）
         reset_usage()                       # 用量也清零
         # 上下文压力告警状态跟着新会话归零：否则旧会话提示过之后 _ctx_alerted 一直是 True，
         # 而复位只发生在"pct 回落到警戒线以下"——新会话若**第一条输入就冲到 95%**，中间没有

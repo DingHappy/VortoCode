@@ -1637,6 +1637,7 @@ def test_cmd_permissions_reset_session_allowances(tmp_path):
     app = VortoCodeTUI(repo_root=str(tmp_path))
     app._allow_writes_session = True
     app._allow_commands_session = True
+    app._persist_always_allow("writes")               # 已常驻到项目设置
     emitted, chromed = [], []
     app._emit = lambda m, *a, **k: emitted.append(m)
     app._chrome = lambda m, *a, **k: chromed.append(m)
@@ -1645,8 +1646,9 @@ def test_cmd_permissions_reset_session_allowances(tmp_path):
 
     assert app._allow_writes_session is False
     assert app._allow_commands_session is False
-    assert any("已清除本会话" in m for m in chromed)
-    assert "本会话始终允许: 写=no · 命令=no" in emitted[-1]
+    assert app._load_setting("always_allow", {}) == {}     # 持久化记录一并抹掉（撤销通道）
+    assert any("已清除" in m for m in chromed)
+    assert "始终允许（记住）: 写=no · 命令=no" in emitted[-1]
 
 
 def test_cmd_permissions_deny_appends_rule_and_rebuilds_agent(tmp_path):
@@ -3585,10 +3587,149 @@ async def test_improve_confirm_always_sets_flag(monkeypatch, tmp_path):
         await _submit(app, pilot, "/mode")                # → build
         await _submit(app, pilot, "/improve")
         assert await _wait_inline_confirm(app, pilot)
-        await pilot.press("a")                            # 选"本会话始终允许"
+        await pilot.press("a")                            # 选"始终允许（记住）"
         await pilot.pause()
         assert applied == [True]                          # a 也算确认 → 写了
         assert app._allow_writes_session is True          # 且置位会话标志
+
+
+# ---- B5-1：「始终允许」跨会话常驻（写进项目设置；三条边界一律不放宽）----
+
+@pytest.mark.asyncio
+async def test_always_allow_persists_across_restarts(tmp_path):
+    """[a] 记进 .vortocode/settings.json；新建 app（=重启）仍免确认。写/命令作用域各自独立。"""
+    import asyncio
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        task = asyncio.create_task(app._confirm_write("写吗？"))
+        assert await _wait_inline_confirm(app, pilot)
+        await pilot.press("a")
+        await pilot.pause()
+        assert await task is True
+    assert app._load_setting("always_allow", {}) == {"writes": True}   # 只落 writes，不串到 commands
+
+    fresh = VortoCodeTUI(repo_root=str(tmp_path))                      # 重启：从设置载入
+    assert fresh._allow_writes_session is True
+    assert fresh._allow_commands_session is False                      # 命令仍需确认（作用域隔离）
+    async with fresh.run_test():
+        assert await fresh._confirm_write("再写？") is True             # 免确认
+        assert fresh._confirm_future is None
+
+
+@pytest.mark.asyncio
+async def test_always_allow_survives_new_session_but_revocable(tmp_path):
+    """/new 是新会话、不撤项目级授权；/permissions reset 才是撤销通道（清标志 + 抹持久化）。"""
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        app._allow_writes_session = True
+        app._persist_always_allow("writes")
+        await _submit(app, pilot, "/new")
+        assert app._allow_writes_session is True                       # /new 后仍在（项目级常驻）
+        app._cmd_permissions("reset")
+        assert app._allow_writes_session is False
+        assert app._load_setting("always_allow", {}) == {}             # 持久化已抹掉
+    assert VortoCodeTUI(repo_root=str(tmp_path))._allow_writes_session is False   # 重启不再放行
+
+
+@pytest.mark.asyncio
+async def test_always_allow_never_persisted_from_host_fallback(tmp_path):
+    """host 降级（scope=fallback）永不可"始终允许"：不展示该选项、按 a 无效、更不得落盘。"""
+    import asyncio
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        task = asyncio.create_task(app._confirm_command(
+            "⚠ host fallback\n$ echo hi", tool_name="run_command",
+            args={"command": "echo hi"}, force_prompt=True))
+        assert await _wait_inline_confirm(app, pilot)
+        assert app._confirm_scope == "fallback"
+        await pilot.press("a")                                         # fallback 下 a 被忽略
+        await pilot.pause()
+        assert app._confirm_future is not None                         # 确认仍挂着（a 没生效）
+        await pilot.press("y")
+        await pilot.pause()
+        assert await task is True
+    assert app._load_setting("always_allow", {}) == {}                 # 没落盘
+    assert app._allow_commands_session is False
+
+
+@pytest.mark.asyncio
+async def test_taint_forces_confirm_for_writes_too(tmp_path):
+    """codex 审出的真问题：此前只有**命令**门查污点、**写**门没查——本回合摄入过网页/搜索/MCP
+    的外部内容后，"始终允许写"仍会静默放行，外部内容可诱导 agent 悄悄改文件（D0 的口子）。
+    授权持久化后这个口子还会跨重启保留。写门必须和命令门同一条规矩。"""
+    import asyncio
+    from src.agents import taint
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    app._persist_always_allow("writes")
+    app._load_always_allow()
+    async with app.run_test() as pilot:
+        taint.reset_taint()
+        assert await app._confirm_write("写吗？") is True          # 未污点 → 吃常驻豁免
+        assert app._confirm_future is None
+
+        taint.mark_tainted()                                       # 污点 → 无视授权、强制确认
+        task = asyncio.create_task(app._confirm_write("写吗？"))
+        assert await _wait_inline_confirm(app, pilot)
+        assert "外部内容" in app._confirm_message                   # 且给出防注入警示
+        app._finish_inline_confirm("no")
+        assert await task is False
+        taint.reset_taint()
+
+
+@pytest.mark.asyncio
+async def test_taint_also_overrides_project_allow_for_writes(tmp_path):
+    """项目 allow 规则同样不能在污点回合免确认（否则 allow 就成了绕过 D0 的后门）。"""
+    import asyncio
+    from src.agents import taint
+
+    (tmp_path / ".vortocode").mkdir(exist_ok=True)
+    (tmp_path / ".vortocode" / "permissions.yaml").write_text(
+        'allow:\n  - "edit_file: src/*"\n', encoding="utf-8")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    async with app.run_test() as pilot:
+        taint.reset_taint()
+        assert await app._confirm_write("改吗？", tool_name="edit_file",
+                                        args={"path": "src/a.py"}) is True   # 未污点 → allow 免确认
+
+        taint.mark_tainted()
+        task = asyncio.create_task(app._confirm_write("改吗？", tool_name="edit_file",
+                                                      args={"path": "src/a.py"}))
+        assert await _wait_inline_confirm(app, pilot)                        # 污点 → 仍要确认
+        app._finish_inline_confirm("no")
+        assert await task is False
+        taint.reset_taint()
+
+
+@pytest.mark.asyncio
+async def test_persisted_always_allow_still_blocked_by_taint_and_deny(tmp_path):
+    """常驻授权只免"逐次确认"：污点回合仍强制确认；deny 规则仍硬拦。"""
+    import asyncio
+    from src.agents import taint
+    (tmp_path / ".vortocode").mkdir(exist_ok=True)
+    (tmp_path / ".vortocode" / "permissions.yaml").write_text(
+        'deny:\n  - "run_command: rm *"\n', encoding="utf-8")
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    app._persist_always_allow("commands")
+    app._load_always_allow()
+    assert app._allow_commands_session is True
+    async with app.run_test() as pilot:
+        taint.reset_taint()
+        assert await app._confirm_command("跑？") is True               # 未污点 → 吃常驻豁免
+
+        taint.mark_tainted()                                           # 污点 → 无视常驻授权、强制确认
+        task = asyncio.create_task(app._confirm_command("跑？"))
+        assert await _wait_inline_confirm(app, pilot)
+        assert "外部内容" in app._confirm_message
+        app._finish_inline_confirm("no")
+        assert await task is False
+        taint.reset_taint()
+
+        emitted = []                                                   # deny 规则仍硬拦（不弹确认）
+        app._emit = lambda m, *a, **k: emitted.append(m)
+        assert await app._confirm_command("删？", tool_name="run_command",
+                                          args={"command": "rm -rf x"}) is False
+        assert any("权限拦截" in m for m in emitted)
 
 
 @pytest.mark.asyncio
