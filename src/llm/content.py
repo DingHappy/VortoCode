@@ -91,7 +91,7 @@ def audio_block(ref: str) -> dict:
     p = Path(r).expanduser()
     if not p.is_file():
         raise FileNotFoundError(f"找不到音频文件: {ref}")
-    fmt = _AUDIO_FMT.get(p.suffix.lower())
+    fmt = _AUDIO_FMT.get(p.suffix.lower()) or ""
     if not fmt:
         raise ValueError(f"无法识别为音频（扩展名: {p.suffix or '无'}）: {ref}")
     b64 = base64.b64encode(p.read_bytes()).decode("ascii")
