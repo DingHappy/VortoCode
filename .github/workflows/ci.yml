@@ -1,3 +1,11 @@
+# runner 由仓库变量 CI_RUNNER 决定（Settings → Secrets and variables → Actions → Variables）：
+#   未设置       → ubuntu-latest（GitHub 托管；**私有仓库每月仅 2000 分钟免费额度**）
+#   self-hosted  → 自建 runner（**不计费**，私有仓库首选；装机见 docs/OPS.md）
+# 换 runner 不用改这个文件——设个变量就行。
+#
+# 2026-07-12：免费额度耗尽（job 直接不启动、3 秒全红），工作流已 `gh workflow disable CI` 暂停。
+# 自建 runner 就绪后：设 CI_RUNNER=self-hosted → `gh workflow enable CI` → 手动 workflow_dispatch 验一次。
+# 停用期间的等价门禁：本地跑 `./scripts/ci-local.sh`（同样是 ruff + mypy + 全量测试）。
 name: CI
 
 on:
@@ -10,6 +18,7 @@ on:
     paths-ignore:
       - "**/*.md"
       - "docs/**"
+  workflow_dispatch:        # 手动触发：验证自建 runner 通没通，不用先造一个 push
 
 permissions:
   contents: read
@@ -21,7 +30,7 @@ concurrency:
 
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
@@ -36,7 +45,7 @@ jobs:
         run: ruff check src tests
 
   typecheck:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
@@ -53,7 +62,7 @@ jobs:
         run: python -m mypy
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
