@@ -62,6 +62,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
     proj = load_project_instructions(repo_root)        # AGENTS.md/CLAUDE.md 项目约定进系统提示
     if proj:
         parts.append(proj)
+    from src.agents.repo_memory import load_repo_memory
+    repo_mem = load_repo_memory(repo_root)             # 仓库记忆（agent 自己攒的构建/测试/坑）
+    if repo_mem:
+        parts.append(repo_mem)
     catalog = skill_catalog(repo_root)                 # 技能目录进系统提示（模型才知道能 use_skill 什么）
     if catalog:
         parts.append(f"{_SKILL_HEADER}\n{catalog}")
