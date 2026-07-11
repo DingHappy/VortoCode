@@ -57,6 +57,8 @@ dev = [
     "pytest-cov>=4.0.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
+    "mypy>=1.8",
+    "types-PyYAML>=6.0",   # yaml 是核心依赖且有官方 stub：装上而不是 ignore 掉
 ]
 all = [
     "vortocode[memory,llm,mcp,parsing,tui,browser,dev]",
@@ -79,6 +81,24 @@ asyncio_mode = "auto"
 [tool.black]
 line-length = 100
 target-version = ["py310"]
+
+[tool.mypy]
+# 类型检查**起步**（B5-5）：先圈住小而新、且最该被类型钉死的模块——LLM 客户端与三个安全边界
+# （记忆写入策略 / 工具权限 / 会话能力）。全仓一次性开会淹在历史欠债里，故：
+# - files 只列圈定范围；follow_imports=silent 让 mypy 仍跟着 import 拿类型，但**不报告**被引模块的错，
+#   这样圈外的存量问题不阻塞 CI，圈内的却一个都跑不掉。
+# - 范围随代码演进逐步扩，别回头把它改松。
+python_version = "3.10"
+files = [
+    "src/llm",
+    "src/memory/write_policy.py",
+    "src/agents/permissions.py",
+    "src/agents/capabilities.py",
+]
+follow_imports = "silent"
+ignore_missing_imports = true      # 可选依赖（openai/yaml/qdrant…）无 stub，不为此挂门禁
+warn_unused_ignores = true
+no_implicit_optional = true
 
 [tool.ruff]
 line-length = 100
