@@ -139,14 +139,30 @@ def _cron_matches(cron: tuple, now: datetime) -> bool:
 class CronJob:
     name: str
     schedule: Schedule
-    prompt: str
+    prompt: str = ""                             # LLM 作业：隔离会话跑这段提示
+    command: str = ""                            # 确定性作业：直接跑这条命令（与 prompt 二选一）
     model: Optional[str] = None
     announce: str = "im"                         # "im" | "silent"
     enabled: bool = True
+    timeout: int = 3600                          # command 作业的超时（秒）
+
+    @property
+    def kind(self) -> str:
+        return "command" if self.command else "prompt"
+
+
+# command 作业的输出投递上限（台账/IM 只报尾部——失败摘要通常在末尾）
+_CMD_OUTPUT_TAIL = 2_000
 
 
 def load_jobs(repo_root: str) -> List[CronJob]:
-    """读 `.vortocode/cron.yaml`。文件不存在 → 空。非法 schedule 的项跳过（best-effort，不炸整表）。"""
+    """读 `.vortocode/cron.yaml`。文件不存在 → 空。非法 schedule 的项跳过（best-effort，不炸整表）。
+
+    作业二选一：
+    - `prompt:` → 隔离 LLM 会话（自主判断类活儿）。
+    - `command:` → **确定性** shell 作业，退出码即红绿（评测夜跑、依赖扫描这类不需要 LLM 的活）。
+      让 LLM 去跑一条固定命令再解读退出码，既费 token 又可能读错——这类活就该确定性地跑。
+    """
     p = Path(repo_root) / ".vortocode" / "cron.yaml"
     if not p.is_file():
         return []
@@ -165,17 +181,22 @@ def load_jobs(repo_root: str) -> List[CronJob]:
         name = str(item.get("name") or "").strip()
         sched = str(item.get("schedule") or "").strip()
         prompt = str(item.get("prompt") or item.get("task") or "").strip()
-        if not (name and sched and prompt):
+        command = str(item.get("command") or item.get("run") or "").strip()
+        if not (name and sched and (prompt or command)):
             continue
         try:
             schedule = parse_schedule(sched)
         except ScheduleError:
             continue
+        try:
+            timeout = max(1, int(item.get("timeout") or 3600))
+        except (TypeError, ValueError):
+            timeout = 3600
         jobs.append(CronJob(
-            name=name, schedule=schedule, prompt=prompt,
+            name=name, schedule=schedule, prompt=prompt, command=command,
             model=(str(item["model"]).strip() if item.get("model") else None),
             announce=str(item.get("announce") or "im").strip().lower(),
-            enabled=bool(item.get("enabled", True))))
+            enabled=bool(item.get("enabled", True)), timeout=timeout))
     return jobs
 
 
@@ -221,9 +242,45 @@ def due_jobs(repo_root: str, now: datetime) -> List[CronJob]:
 
 
 # --------------------------------------------------------------------- 执行
+async def run_command_job(repo_root: str, job: CronJob) -> tuple[int, str]:
+    """跑一个确定性 command 作业，返回 (退出码, 输出尾部)。
+
+    退出码即红绿——评测夜跑正是靠 `python -m evals --compare-latest` 的非零退出码判"有回归"。
+    超时按失败处理（124，同 coreutils 的 timeout 约定）。
+    """
+    import asyncio as _aio
+    proc = await _aio.create_subprocess_shell(
+        job.command, cwd=str(repo_root),
+        stdout=_aio.subprocess.PIPE, stderr=_aio.subprocess.STDOUT)
+    try:
+        out, _ = await _aio.wait_for(proc.communicate(), timeout=job.timeout)
+    except (TimeoutError, _aio.TimeoutError):
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            pass
+        return 124, f"（超时 {job.timeout}s，已终止）"
+    text = (out or b"").decode("utf-8", errors="replace").strip()
+    return int(proc.returncode or 0), text[-_CMD_OUTPUT_TAIL:]
+
+
 async def run_job(repo_root: str, job: CronJob, *, run_session=None, notify=None,
                   now: Optional[datetime] = None) -> str:
-    """在隔离会话里跑一个作业；给了 now 则记为上次运行（防重复触发）；announce=im 且有 notify 则投递结果。"""
+    """跑一个作业；给了 now 则记为上次运行（防重复触发）；announce=im 且有 notify 则投递结果。
+
+    command 作业：确定性 shell，退出码即红绿（非零 → 通报里明确标红，别让回归静悄悄过去）。
+    prompt 作业：隔离 LLM 会话（全新 MainAgent，不读不写主会话历史）。
+    """
+    if job.kind == "command":
+        code, out = await run_command_job(repo_root, job)
+        if now is not None:
+            CronState(repo_root).mark(job.name, now)
+        head = (f"✅ cron [{job.name}] 通过" if code == 0
+                else f"🔴 cron [{job.name}] **失败**（退出码 {code}）")
+        result = f"{head}\n$ {job.command}\n\n{out}"
+        if job.announce == "im" and notify is not None:
+            await notify(result[:900])
+        return result
     if run_session is None:
         from src.gateway.session import run_isolated_session
         run_session = run_isolated_session

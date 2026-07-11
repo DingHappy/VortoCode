@@ -1,0 +1,47 @@
+# VortoCode cron 作业表**样例**。
+#
+# 用法：复制到目标仓库的 `.vortocode/cron.yaml`（该目录是 gitignored，所以样例放这里）：
+#     cp config/cron.example.yaml .vortocode/cron.yaml
+#
+# 调度循环默认**关**：仅当以 opt-in 方式起服务才跑（不擅自跑自主作业）——
+#     VORTOCODE_CRON=1 vortocode server
+# 手动触发单个作业（不起常驻、便于验收）：
+#     vortocode cron run <name>
+#
+# schedule 三种写法：
+#     at HH:MM          每天该时刻一次（如 at 02:30）
+#     every Nm|Nh|Nd    固定间隔（如 every 6h）
+#     5 段 cron 子集     m h dom mon dow（支持 * / 数字 / */N / a,b / a-b；dow 0=周日）
+#
+# 作业二选一：
+#     command:  确定性 shell，**退出码即红绿**（评测夜跑、依赖扫描这类不需要 LLM 判断的活）
+#     prompt:   隔离 LLM 会话（需要自主判断的活）
+# announce: im（推到 IM）| silent（只落台账）
+
+jobs:
+  # 夜跑评测（B3 常态化）——确定性作业：跑真机评测、与**最新的同模型同协议基线**对比。
+  # 有回归（诚实率/落地率下降）→ 非零退出码 → 通报标红；全绿 → 把水位线抬到本次（新基线）。
+  # 让 LLM 去 ls 基线目录、跑命令、解读退出码既费 token 又可能读错，故这里用 command。
+  - name: nightly_evals
+    schedule: "at 02:30"
+    command: "python -m evals --compare-latest --baseline-on-green"
+    timeout: 5400              # 真机跑全部场景要一会儿；超时按失败处理
+    announce: im
+    enabled: false             # 默认关，确认要夜跑再改 true
+
+  # CI 红自动修（C3）——需要判断，走 LLM 隔离会话。默认关（避免意外自动改动）。
+  - name: ci_red_autofix
+    schedule: "every 30m"
+    prompt: >
+      列出本仓库所有打开的 vorto/* 分支的 PR，对其中 CI 检查为红的，
+      调 pr_fix(pr=<号>) 按 review 评论 + CI 失败在该分支上修正并 push。
+      只碰 vorto/* 分支，绝不动 main。修完把结果告诉我。
+    announce: im
+    enabled: false
+
+  # 依赖升级检查——每周一早上看看有没有依赖要升。
+  - name: dep_check
+    schedule: "0 9 * * 1"
+    prompt: "看看 requirements.txt / pyproject 有没有明显该升级的依赖，列个清单（先别动手）。"
+    announce: im
+    enabled: false
