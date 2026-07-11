@@ -58,3 +58,36 @@ vortocode agent --attach "问题/任务"    # 一次性问答/脚本化；-c 续
 2. 第 2 周：开 `VORTOCODE_CRON=1` 挂 nightly evals（cron.yaml.example 里有模板，`--compare` 出
    回归退出码非零）；观察通知三路。
 3. 觉得稳了再开 `VORTOCODE_HEARTBEAT=1`，让它自己从 BACKLOG 领活——从此摩擦清单自己消化自己。
+
+## 六、CI 现状与自建 runner（2026-07-12）
+
+**CI 已暂停**（`gh workflow disable CI`）。原因：本仓库是**私有**仓库，GitHub Actions 每月只有
+2000 分钟免费额度；额度耗尽后 job 根本不启动（报 *"payments have failed or your spending limit
+needs to be increased"*，表现为 3 秒内全红），不是测试挂了。
+
+**停用期间的门禁**：合并前在本地跑
+
+```bash
+./scripts/ci-local.sh          # ruff + mypy + 全量测试（和 CI 跑的是同三道关）
+./scripts/ci-local.sh quick    # 跳过 integration/live
+```
+
+> 关掉 CI 而不给替代品 = 没有门禁。这个脚本刻意把 `OPENAI_API_KEY` 等清空，
+> 和 CI 一样保证测试离线、确定性——否则本地"绿"可能只是因为你的 `.env` 里有 key。
+
+**恢复 CI（自建 runner 免费、私有仓库不计费）**：
+
+1. 装一台 Linux（**必须 Linux**：Windows 无 OS 沙箱后端，无人值守路径会 fail-closed）。
+   装机步骤 / 发行版选择 / bubblewrap 验证见共享知识库
+   `my-knowledge/docs/projects/vortocode/ops-runner-nightly-machine.md`。
+2. 仓库 Settings → Actions → Runners → New self-hosted runner，注册并装成服务。
+3. 设仓库变量 **`CI_RUNNER=self-hosted`**（Settings → Secrets and variables → Actions → Variables）
+   —— `ci.yml` 的 `runs-on` 是变量驱动的，**不用改代码**。
+4. `gh workflow enable CI`，再手动 `workflow_dispatch` 验一次。
+
+⚠️ self-hosted runner 之所以安全，前提是仓库**私有**（公开仓库任何人都能提 fork PR 在你机器上跑
+任意代码）。**将来转公开预览时，必须把 `CI_RUNNER` 变量删掉切回托管 runner**——公开仓库托管
+runner 免费无限，正好也不需要自建了。
+
+同一台机器还可兼做**夜跑机器**（cron 评测 / heartbeat 值班），但那是**另一个风险等级**：
+CI 只跑离线测试、不需要任何 key；夜跑要 API key、会自主写代码。分阶段上线，别一步到位。
