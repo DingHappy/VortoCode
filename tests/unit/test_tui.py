@@ -1008,6 +1008,29 @@ def test_context_pressure_hint_fires_once_and_resets_after_relief(tmp_path):
     assert len(chromed) == 2
 
 
+@pytest.mark.asyncio
+async def test_new_session_resets_context_alert_state(tmp_path):
+    """codex 审出的边界问题：复位只发生在"pct 回落到警戒线以下"。旧会话已告警过 →
+    /new → 新会话若**第一条输入就冲到 95%**，中间没回落过 → 永远等不到复位、该提示时不提示。"""
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    chromed = []
+    async with app.run_test() as pilot:
+        app.agent = _CtxAgent(97)                      # 旧会话已经告警过一次
+        app._context_usage_label()
+        app._maybe_warn_context_pressure()
+        assert app._ctx_alerted is True
+
+        app._chrome = lambda m, *a, **k: chromed.append(m)
+        await _submit(app, pilot, "/new")
+        assert app._ctx_alerted is False and app._ctx_pct == 0   # 新会话状态归零
+
+        chromed.clear()
+        app.agent = _CtxAgent(96)                      # 新会话第一条就冲到告警线
+        app._context_usage_label()
+        app._maybe_warn_context_pressure()
+        assert any("/compact" in m for m in chromed)   # 仍然提示（不再被旧会话的状态吞掉）
+
+
 def test_statusbar_colors_context_segment_under_pressure(tmp_path):
     """状态栏整行 dim，但 ctx 段在压力下单独变色（黄→红）；纯文本 _sb_last 不受影响。"""
     from rich.text import Text as RichText
