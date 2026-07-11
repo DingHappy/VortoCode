@@ -6,7 +6,7 @@ import subprocess
 
 import pytest
 
-from src.agents import worktree
+from src.agents import taint, worktree
 from src.agents.main_agent import build_write_tools
 
 
@@ -124,11 +124,15 @@ async def test_run_isolated_task_with_injected_agent(tmp_path):
 
         async def run_turn(self, desc, mode, emit):
             from pathlib import Path
+            taint.reset_taint()  # mirror MainAgent.run_turn's child-turn reset
             (Path(self.root) / "impl.py").write_text("# " + desc + "\n")
             return "实现完成"
 
+    taint.mark_tainted()
     diff, conclusion, ver = await worktree.run_isolated_task(
         str(tmp_path), "wt-run", "加个模块", lambda root: FakeAgent(root))
+    assert taint.is_tainted() is True
+    taint.reset_taint()
     assert conclusion == "实现完成"
     assert "impl.py" in diff and "加个模块" in diff
     assert ver is None                                      # 没给 test_cmd → 不验证

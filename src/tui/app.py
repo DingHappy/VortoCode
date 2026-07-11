@@ -4892,11 +4892,12 @@ class VortoCodeTUI(App):
         from src.agents.main_agent import build_memory_tools, build_read_tools, build_web_tools
         read_tools = build_read_tools(self.repo_root) + build_web_tools()   # +web_fetch（查文档/issue/报错页）
 
-        async def _spawn_research(desc: str, agent_name: str = "") -> str:
+        async def _spawn_research(desc: str, agent_name: str = "") -> tuple[str, bool]:
             """起一个隔离子 agent，返回结论。task 与 research_parallel 共用。
 
             agent_name 非空 → 按 .vortocode/agents/<名>.md 装配自定义角色（与工厂版同一注册表/
             同一安全面）；dev 型角色过 _confirm_write 人闸（headless 之外 TUI 有真人在）。"""
+            from src.agents.taint import is_tainted, merge_nested_taint
             if agent_name:
                 from src.agents.main_agent import build_subagent
                 from src.agents.subagents import registry_for
@@ -4904,13 +4905,13 @@ class VortoCodeTUI(App):
                 spec = reg.get(agent_name)
                 if spec is None:
                     avail = "、".join(reg.specs) or "（无——在 .vortocode/agents/ 放 <名>.md 定义角色）"
-                    return f"没有名为 {agent_name!r} 的子 agent。可用：{avail}"
+                    return f"没有名为 {agent_name!r} 的子 agent。可用：{avail}", is_tainted()
                 sub = build_subagent(self.repo_root, spec, confirm=self._confirm_write,
                                      on_progress=lambda m: self._chrome(f"[dim]{m}[/dim]"))
                 if spec.tools == "dev" and not await self._confirm_write(
                         f"委派角色「{agent_name}」用隔离 dev 流水线实现：{desc[:120]}\n"
                         f"（产出落 vorto/* 分支，不碰主工作区）"):
-                    return f"已取消：未放行 dev 型角色 {agent_name} 的委派。"
+                    return f"已取消：未放行 dev 型角色 {agent_name} 的委派。", is_tainted()
                 sub._on_tool = self._audit_tool
                 mode = "build" if spec.tools == "dev" else "plan"
             else:
@@ -4919,11 +4920,14 @@ class VortoCodeTUI(App):
                     "你是只读研究子 agent：只用工具调研代码/仓库并返回简洁结论，绝不修改任何东西。"
                     "读够信息就尽快收口，别把预算耗在重复读取上。"))
                 mode = self.mode
-            try:
-                r = await sub.run_turn(desc, mode=mode, say=self._chrome, emit=lambda _t: None)
-            except Exception as e:  # noqa: BLE001
-                return f"(子任务出错: {e})"
-            return r or "(无结论)"
+            with merge_nested_taint() as nested:
+                try:
+                    result = (await sub.run_turn(
+                        desc, mode=mode, say=self._chrome, emit=lambda _t: None
+                    )) or "(无结论)"
+                except Exception as e:  # noqa: BLE001
+                    result = f"(子任务出错: {e})"
+            return result, nested.child_tainted
 
         def _preview(s: str, n: int = 200) -> str:
             s = s.replace("\n", " ")
@@ -4935,7 +4939,10 @@ class VortoCodeTUI(App):
                 return "task 需要 description（要委派给子 agent 的研究任务）。"
             agent_name = str(args.get("agent") or "").strip()
             self._chrome(f"[magenta]🤖 子 agent{f'「{agent_name}」' if agent_name else ''} 处理：{desc}[/magenta]")
-            result = await _spawn_research(desc, agent_name)
+            from src.agents.taint import mark_tainted
+            result, child_tainted = await _spawn_research(desc, agent_name)
+            if child_tainted:
+                mark_tainted()
             self._chrome(f"[dim]  ↳ 结论：{_preview(result)}[/dim]")   # 子 agent 结论可见
             return result
 
@@ -4954,7 +4961,11 @@ class VortoCodeTUI(App):
             import asyncio
             agent_name = str(args.get("agent") or "").strip()
             self._chrome(f"[magenta]🤖 并行子 agent（{len(tasks)}）研究中…[/magenta]")
-            results = await asyncio.gather(*[_spawn_research(t, agent_name) for t in tasks])
+            spawned = await asyncio.gather(*[_spawn_research(t, agent_name) for t in tasks])
+            if any(child_tainted for _, child_tainted in spawned):
+                from src.agents.taint import mark_tainted
+                mark_tainted()
+            results = [result for result, _child_tainted in spawned]
             for t, r in zip(tasks, results):     # 各路结论都可见
                 self._chrome(f"[dim]  ↳ [{_preview(t, 30)}] {_preview(r, 160)}[/dim]")
             return "\n\n".join(f"【{t}】\n{r}" for t, r in zip(tasks, results))
