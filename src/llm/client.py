@@ -137,8 +137,9 @@ def _int_env(name: str, default: int) -> int:
 # 用来**验证缓存到底有没有在自有中转生效**（OpenAI 兼容协议下缓存是自动的、无需 cache_control）。
 DEFAULT_LLM_BASE_URL = "https://relay.dinghappy.com/v1"
 
-_USAGE = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cached_tokens": 0,
-          "by_model": {}}
+# 值是异构的：计数键为 int，"by_model" 是 {模型名: {计数键: int}}（故标 Any 而非 int）
+_USAGE: Dict[str, Any] = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
+                          "total_tokens": 0, "cached_tokens": 0, "by_model": {}}
 
 # 按上下文（会话/回合）隔离的用量作用域：多会话服务端场景下，不同会话各记各的、互不串扰，
 # 也不会因某会话 reset_usage 把所有人清零（旧版 _USAGE 是进程级全局）。默认 None → 回退全局
@@ -149,7 +150,7 @@ import contextvars
 _usage_ctx: "contextvars.ContextVar" = contextvars.ContextVar("vc_usage", default=None)
 
 
-def _cur_usage() -> Dict[str, int]:
+def _cur_usage() -> Dict[str, Any]:
     u = _usage_ctx.get()
     return u if u is not None else _USAGE
 
@@ -181,7 +182,7 @@ def new_usage() -> Dict[str, Any]:
             "by_model": {}}
 
 
-def bind_usage(scope: Dict[str, int]) -> None:
+def bind_usage(scope: Dict[str, Any]) -> None:
     """把**当前上下文**的用量计数绑定到给定 dict（每会话一份）。在回合任务内调用即隔离该回合计量。"""
     _usage_ctx.set(scope)
 
@@ -218,9 +219,9 @@ def add_usage(prompt_tokens: int, completion_tokens: int, cached_tokens: int = 0
     u["total_tokens"] += int(prompt_tokens or 0) + int(completion_tokens or 0)
     u["cached_tokens"] = u.get("cached_tokens", 0) + int(cached_tokens or 0)   # 老作用域缺键也不炸
     if model:                                       # 按模型分桶：给 /usage 报分项与估算成本
-        bm = u.setdefault("by_model", {})
-        m = bm.setdefault(str(model), {"calls": 0, "prompt_tokens": 0,
-                                       "completion_tokens": 0, "cached_tokens": 0})
+        bm: Dict[str, Dict[str, int]] = u.setdefault("by_model", {})
+        m: Dict[str, int] = bm.setdefault(str(model), {"calls": 0, "prompt_tokens": 0,
+                                                       "completion_tokens": 0, "cached_tokens": 0})
         m["calls"] += 1
         m["prompt_tokens"] += int(prompt_tokens or 0)
         m["completion_tokens"] += int(completion_tokens or 0)
@@ -403,7 +404,7 @@ class LLMClient:
                 yield content
             return
 
-        create = dict(
+        create: Dict[str, Any] = dict(
             model=model or self.config.model,
             messages=messages,
             temperature=temperature if temperature is not None else self.config.temperature,
@@ -548,7 +549,7 @@ class LLMClient:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.config.api_key}",
         }
-        payload = {
+        payload: Dict[str, Any] = {
             "model": model or self.config.model,
             "messages": messages,
             "temperature": temperature or self.config.temperature,

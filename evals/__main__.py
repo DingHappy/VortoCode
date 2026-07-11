@@ -88,6 +88,10 @@ def main(argv=None) -> int:
                    help="把本次报告存成基线到 evals/baselines/<date>-<model>-<protocol>.json")
     p.add_argument("--compare", metavar="FILE",
                    help="与一个基线报告对比，逐场景 Δ；检出回归则退出码非零")
+    p.add_argument("--compare-latest", action="store_true",
+                   help="与 evals/baselines/ 里**最新的同模型同协议**基线对比（夜跑用；无基线则跳过对比）")
+    p.add_argument("--baseline-on-green", action="store_true",
+                   help="没有回归时把本次报告存成新基线（夜跑用：绿了就把水位线抬上去）")
     p.add_argument("--matrix", metavar="SPEC",
                    help="模型×协议矩阵串行跑，汇一张对比表（如 'mimo-v2.5,mimo-v2.5-pro × native,prompt'）")
     args = p.parse_args(argv)
@@ -127,21 +131,37 @@ def main(argv=None) -> int:
     md = to_markdown(report)
 
     # 与基线对比（检出回归 → 非零退出码，供 CI/夜跑门控）
+    from .compare import (compare_markdown, compare_reports, latest_baseline, load_report,
+                          save_baseline)
+    baselines_dir = _ROOT / "evals" / "baselines"
     exit_code = 0
-    if args.compare:
-        from .compare import compare_markdown, compare_reports, load_report
-        cmp = compare_reports(load_report(args.compare), report)
+    compared = False
+    baseline_path = args.compare
+    if not baseline_path and args.compare_latest:
+        # 夜跑：确定性地挑"最新的同模型同协议基线"（跨模型比没意义）；没有基线就跳过对比、不算红
+        meta = report.get("meta", {})
+        found = latest_baseline(baselines_dir, model=meta.get("model"),
+                                protocol=meta.get("protocol"))
+        if found is None:
+            print(f"（{baselines_dir} 里没有同模型同协议的基线，跳过对比；"
+                  f"可用 --baseline 先存一条水位线）", file=sys.stderr)
+        else:
+            baseline_path = str(found)
+            print(f"对比基线：{found.name}", file=sys.stderr)
+    if baseline_path:
+        cmp = compare_reports(load_report(baseline_path), report)
         md += "\n" + compare_markdown(cmp)
+        compared = True
         if cmp["has_regression"]:
             exit_code = 1
 
     print(md)
     _write_report(report, out_dir, md=md, kind="report")
 
-    if args.baseline:
-        from .compare import save_baseline
-        path = save_baseline(report, _ROOT / "evals" / "baselines",
-                             date=datetime.now().strftime("%Y%m%d"))
+    # 绿了就把水位线抬上去（夜跑：无回归 → 新基线；有回归 → 保留旧基线，别把退化固化成新标准）
+    if args.baseline or (args.baseline_on_green and exit_code == 0
+                         and (compared or not args.compare_latest)):
+        path = save_baseline(report, baselines_dir, date=datetime.now().strftime("%Y%m%d"))
         print(f"基线已存档：{path}", file=sys.stderr)
     return exit_code
 
