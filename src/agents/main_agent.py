@@ -71,6 +71,11 @@ _CONTEXT_WINDOW_FRACTION = min(_env_num("VORTOCODE_CONTEXT_WINDOW_FRACTION", 0.5
 _CONTEXT_MIN_WINDOW_TO_SCALE = 16_000
 _CONTEXT_BUDGET_HARD_CAP = _env_num("VORTOCODE_CONTEXT_BUDGET_CAP", 200_000, int)
 
+# 裁剪低水位：超预算触发重算切点时，一次裁到 limit×低水位（而非贴着 limit），给后续步留增长余量。
+# 这样切点在多数步之间保持不动（消息只追加不滑动）→ 请求前缀稳定 → 上游自动前缀缓存可持续命中；
+# 否则一旦贴线，每步新增的工具结果都会把窗口往前推一格，每步都击穿一次前缀缓存。
+_TRIM_LOW_WATERMARK = 0.8
+
 
 def _normalize_context_policy(value: Any) -> str:
     policy = str(value or "auto").strip().lower()
@@ -542,7 +547,11 @@ class MainAgent:
             capabilities = SessionCapabilities.for_profile(EXTERNAL_PROFILE)
         self._capabilities = capabilities      # 会话级能力边界；项目配置/确认不能放宽
         self._env_context = env_context        # 仿 CC 注入 <env>（cwd/git/日期/目录）；仅顶层交互 agent 开，子 agent 不开省开销
-        self._env = ""                         # 当轮环境快照（run_turn 开始时刷新，_system 注入）
+        self._env = ""                         # 最近一次环境快照（run_turn 开始时刷新；随 user 消息注入，不进 system）
+        self._env_sent = ""                    # 已注入过消息流的环境快照：没变化就不重复附，省 token
+        # 粘性裁剪切点：history 里第一条进窗口的消息下标。只单调前进、压缩/历史重写时归零。
+        # 让被裁剪的长对话在多数步之间保持同一前缀（只追加），上游自动前缀缓存才可持续命中。
+        self._trim_start = 0
 
     def _effective_context_policy(self, mode: str | None = None) -> str:
         policy = _normalize_context_policy(self.context_policy)
@@ -604,6 +613,11 @@ class MainAgent:
             self.tools[t.name] = t
 
     def _system(self, mode: str) -> str:
+        """系统提示。刻意保持**会话内字节级稳定**（只随 mode 切换/新增工具这类低频事件变化）：
+        OpenAI 兼容协议的上游前缀缓存按「从第 0 字节起完全一致」命中，system 是第一条消息——
+        日期/git 状态/plan/纪要这类动态内容一旦放进来，每变一次就把整个请求前缀的缓存全部作废。
+        因此动态内容全部走消息流：<env>/plan 附在当轮 user 消息（_run_turn_body），
+        压缩纪要作为历史前部消息（_trimmed_history）。"""
         mode_desc = "只读/提案" if mode == "plan" else "可写分支"
         mode_rule = (
             "plan 模式下写/重型工具（如 edit_file / write_file 及各类开发流水线工具）不可用；"
@@ -619,8 +633,6 @@ class MainAgent:
             catalog=_tool_catalog(self._tool_list),
             mode=mode, mode_desc=mode_desc, mode_rule=mode_rule,
         )
-        if self._env:                          # 仿 CC 的 <env>：运行时上下文（cwd/git/日期/目录）
-            prompt += "\n\n" + self._env
         hint = self._orchestration_hint()      # 据可用工具给"大任务怎么展开"的编排指引
         if hint:
             prompt += "\n\n" + hint
@@ -628,13 +640,6 @@ class MainAgent:
             prompt += "\n\n" + self.extra_system
         if self._capabilities is not None:
             prompt += "\n\n" + self._capabilities.system_notice()
-        if self._summary:                      # 早先轮次的压缩纪要：常驻系统提示，最近对话仍在历史里逐字给
-            prompt += ("\n\n【对话纪要】(更早轮次的压缩摘要，含原始目标与关键决策；"
-                       "最近的对话在下方消息里逐字给出)\n" + self._summary)
-        if self.plan:                          # 当前计划常驻系统提示：跨步/跨历史裁剪也不丢
-            from src.agents.plan import render_plan
-            prompt += ("\n\n【当前计划】(用 update_plan 维护：开始一步标 in_progress、做完标 completed)\n"
-                       + render_plan(self.plan))
         return prompt
 
     def _orchestration_hint(self) -> str:
@@ -718,6 +723,13 @@ class MainAgent:
         from src.llm.content import content_to_text
         return content_to_text(m.get("content")) == anchor
 
+    def _summary_message(self) -> dict:
+        """把压缩纪要包装成历史前部的 user 消息（原先注入 system——那会让 system 随每次压缩变化、
+        击穿前缀缓存；压缩本身已重写历史（必然断一次缓存），纪要跟着历史走则 system 保持稳定）。"""
+        return {"role": "user",
+                "content": ("【对话纪要】(更早轮次的压缩摘要，含原始目标与关键决策；"
+                            "最近的对话在下方消息里逐字给出)\n" + self._summary)}
+
     def _trimmed_history(self, mode: str | None = None) -> list[dict]:
         """按 **token 预算** 裁剪跨轮历史（max_history 仅作硬条数上限兜底）。
 
@@ -725,32 +737,51 @@ class MainAgent:
         read_file、注入的 @上下文）条数虽 <max_history 却能爆窗；大量小消息条数虽多却很省。
         裁剪时不裸取尾部——那样会把**原始任务**静默丢掉。始终把原始任务（_anchor_text，纯文本、
         去 base64）当锚点置顶 + 从最近往前收进 token 预算的窗口。
+
+        **粘性切点**（前缀缓存友好）：切点 _trim_start 一旦定下就复用——窗口只随新消息追加增长、
+        不逐步滑动；直到再次超预算才把切点单调前移到低水位（_TRIM_LOW_WATERMARK）。这样长对话在
+        多数步之间发出的请求共享同一前缀，上游自动前缀缓存能持续命中，而非每步作废一次。
         """
         h = self.history
-        total = sum(self._msg_tokens(m) for m in h)
+        summary = [self._summary_message()] if self._summary else []
+        if self._trim_start >= len(h):
+            self._trim_start = 0                           # 历史被外部重写/清空 → 旧切点失效
         limit = self._context_limit(mode)
-        if len(h) <= self.max_history and total <= limit:
-            return list(h)                                 # 未超条数也未超 token 预算 → 原样（短对话零改动）
+        start = self._trim_start
+        window = h[start:]
+        total = sum(self._msg_tokens(m) for m in window)
+        if start == 0 and len(h) <= self.max_history and total <= limit:
+            return summary + list(h)                       # 未超条数也未超 token 预算 → 原样（短对话零改动）
         anchor = self._anchor_text()
-        limit_n = max(1, self.max_history - (1 if anchor else 0))   # 给锚点留 1 条，总数仍 ≤ max_history
-        kept: list[dict] = []
-        used = 0
-        for m in reversed(h):                              # 从最近往前收，受 token 预算 + 条数上限双约束
-            t = self._msg_tokens(m)
-            if kept and (used + t > limit or len(kept) >= limit_n):
-                break
-            kept.append(m)
-            used += t
-        kept.reverse()
+        if start > 0 and total <= limit and len(window) <= self.max_history:
+            kept = list(window)                            # 复用既有切点：跨步只追加、前缀稳定
+        else:
+            low = max(1, int(limit * _TRIM_LOW_WATERMARK))  # 裁到低水位，给后续步留余量（见常量注释）
+            # 条数上限同样按低水位裁（再给锚点留 1 条）：长对话常被 max_history 卡住而非 token，
+            # 若贴着上限裁，之后每两条新消息就滑动一次切点、照样击穿前缀缓存。
+            limit_n = max(1, int(self.max_history * _TRIM_LOW_WATERMARK) - (1 if anchor else 0))
+            kept = []
+            used = 0
+            for m in reversed(h):                          # 从最近往前收，受 token 预算 + 条数上限双约束
+                t = self._msg_tokens(m)
+                if kept and (used + t > low or len(kept) >= limit_n):
+                    break
+                kept.append(m)
+                used += t
+            kept.reverse()
+            self._trim_start = max(start, len(h) - len(kept))   # 切点只单调前进
+            kept = list(h[self._trim_start:])
+        head: list[dict] = []
         if anchor and not self._is_anchor_msg(kept[0] if kept else None, anchor):
-            kept = [{"role": "user", "content": anchor}] + kept
-        return kept
+            head.append({"role": "user", "content": anchor})   # 锚点=原始任务，始终最前
+        return head + summary + kept                       # 锚点 → 纪要 → 最近窗口（时间序，且前缀稳定）
 
     def context_usage(self, mode: str = "plan") -> dict:
         """估算下一次模型调用会携带的上下文占用。
 
-        used_tokens 包含系统提示和当前会被保留的历史；max_context_tokens 是历史预算，
-        因此系统提示较长时 pct 可能超过 100。它是 UI 提醒，不是 API 精确 usage。
+        used_tokens 包含系统提示、当前会被保留的历史（含纪要前置消息）和下轮会随 user 消息
+        注入的计划快照；max_context_tokens 是历史预算，因此系统提示较长时 pct 可能超过 100。
+        它是 UI 提醒，不是 API 精确 usage。
         """
         summary_tokens = self._msg_tokens({"role": "system", "content": self._summary}) if self._summary else 0
         plan_tokens = 0
@@ -761,7 +792,7 @@ class MainAgent:
         raw_history_tokens = sum(self._msg_tokens(m) for m in self.history)
         trimmed_history = self._trimmed_history(mode)
         history_tokens = sum(self._msg_tokens(m) for m in trimmed_history)
-        used = system_tokens + history_tokens
+        used = system_tokens + history_tokens + plan_tokens
         limit = self._context_limit(mode)
         policy = self._effective_context_policy(mode)
         recent_budget = max(1, int(limit * self._recent_context_ratio(mode)))
@@ -818,6 +849,7 @@ class MainAgent:
             return
         self._summary = digest                 # 含已有纪要的滚动合并（在 _summarize 内拼）
         self.history = recent
+        self._trim_start = 0                   # 历史已重写 → 粘性切点归零（本次压缩必然断一次前缀缓存）
         say(f"[dim]🗜️ 已把 {len(older)} 条更早的对话压成纪要（保留原始目标与关键决策）。[/dim]")
 
     def compact_preview(self, mode: str = "plan") -> dict:
@@ -865,6 +897,7 @@ class MainAgent:
         before_tokens = sum(self._msg_tokens(m) for m in self.history)
         self._summary = digest
         self.history = recent
+        self._trim_start = 0                   # 同 _maybe_compact：历史重写后粘性切点失效
         after_tokens = sum(self._msg_tokens(m) for m in self.history)
         return {
             "ok": True,
@@ -1152,13 +1185,25 @@ class MainAgent:
         self._context_mode = mode
         self._escalated = False                # 每轮重置；切 build 由 UI 持久化到 mode
         from src.llm.content import build_user_content
-        self.history.append({"role": "user",
-                             "content": build_user_content(user_text, images, audio)})
-        if not self._task_anchor:              # 捕获原始任务（首个 user 纯文本）——压缩后仍作锚点（修 #16）
-            self._task_anchor = self._anchor_text()
-        await self._maybe_compact(say, mode)   # 跨轮历史超 token 预算→把老段摘要成纪要（失败安全降级）
-        if self._env_context:                  # 仿 CC：每轮刷新一次运行时环境（cwd/git/日期/目录）注入系统提示
+        if not self._task_anchor:              # 捕获原始任务（首个 user 纯文本）——压缩后仍作锚点（修 #16）。
+            # 先于 env/plan 附加块捕获：历史已有首条 user 就用它；本轮就是首条时用原始 user_text，
+            # 锚点绝不包含运行时附加块（否则跨轮重注入的锚点会带着过期的 env/plan）。
+            self._task_anchor = self._anchor_text() or str(user_text)
+        # 动态上下文走消息流、不进 system（见 _system 注释——保 system 字节级稳定、前缀缓存可命中）：
+        extra_blocks: list[str] = []
+        if self._env_context:                  # 仿 CC：每轮刷新运行时环境（cwd/git/日期/目录）
             self._env = _env_block()
+            if self._env != self._env_sent:    # 没变化就不重复附（追加在消息流尾部，不破坏前缀）
+                extra_blocks.append(self._env)
+                self._env_sent = self._env
+        if self.plan:                          # 计划快照随新回合注入：跨裁剪/压缩不丢；回合内的更新由
+            from src.agents.plan import render_plan   # update_plan 工具结果本身回灌（带完整渲染）
+            extra_blocks.append("【当前计划】(用 update_plan 维护：开始一步标 in_progress、做完标 completed)\n"
+                                + render_plan(self.plan))
+        sent_text = str(user_text) + ("\n\n" + "\n\n".join(extra_blocks) if extra_blocks else "")
+        self.history.append({"role": "user",
+                             "content": build_user_content(sent_text, images, audio)})
+        await self._maybe_compact(say, mode)   # 跨轮历史超 token 预算→把老段摘要成纪要（失败安全降级）
 
         nudged = False                         # 本轮是否已纠偏过一次（空收尾/残缺工具 JSON → 只重试一次）
         stream_shown: list[str] = []           # 本回合已回显的正文（回合级累加器→保证 stream_cb 单调、CLI 不错位）

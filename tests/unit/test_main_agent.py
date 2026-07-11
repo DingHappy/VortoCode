@@ -269,6 +269,7 @@ def test_plan_tool_off_by_default():
 def test_model_context_window_lookup(monkeypatch):
     from src.llm.client import model_context_window
     monkeypatch.delenv("VORTOCODE_MODEL_CONTEXT_WINDOW", raising=False)
+    monkeypatch.delenv("VORTOCODE_MODEL_CONTEXT_WINDOWS", raising=False)
     assert model_context_window("gpt-4o-2024-08-06") == 128_000   # 前缀匹配带日期后缀
     assert model_context_window("claude-3.5-sonnet") == 200_000
     assert model_context_window("deepseek-chat") == 65_536
@@ -277,6 +278,20 @@ def test_model_context_window_lookup(monkeypatch):
     # env 全局覆盖（自有中转按上游真实窗口配）
     monkeypatch.setenv("VORTOCODE_MODEL_CONTEXT_WINDOW", "131072")
     assert model_context_window("mimo-v2.5") == 131_072
+
+
+def test_model_context_window_per_model_env_map(monkeypatch):
+    from src.llm.client import model_context_window
+    monkeypatch.delenv("VORTOCODE_MODEL_CONTEXT_WINDOW", raising=False)
+    monkeypatch.setenv("VORTOCODE_MODEL_CONTEXT_WINDOWS",
+                       "mimo-v2.5=131072, mimo-v2.5-pro=65536, bad=oops, =7")
+    assert model_context_window("mimo-v2.5") == 131_072           # 按模型表命中
+    assert model_context_window("mimo-v2.5-pro") == 65_536        # 最长匹配优先，不被短前缀截胡
+    assert model_context_window("gpt-4o") == 128_000              # 未命中表 → 回退内置表
+    # 按模型表优先于全局值；未命中的模型仍吃全局值
+    monkeypatch.setenv("VORTOCODE_MODEL_CONTEXT_WINDOW", "32000")
+    assert model_context_window("mimo-v2.5") == 131_072
+    assert model_context_window("unknown-model") == 32_000
 
 
 def test_context_budget_adapts_to_model_window(monkeypatch):
@@ -340,9 +355,9 @@ async def test_update_plan_sets_state_injects_prompt_and_notifies():
                           {"step": "写测试", "status": "pending"}]
     assert "0/2 完成" in out and "▸ 读代码" in out               # 工具结果回灌（带进度）
     assert seen and seen[-1] == agent.plan                      # on_plan 被通知（UI 渲染用）
-    # 计划常驻系统提示，跨步不丢
-    sysmsg = agent._system("plan")
-    assert "当前计划" in sysmsg and "读代码" in sysmsg and "写测试" in sysmsg
+    # 计划**不再**注入系统提示（保 system 字节级稳定 → 前缀缓存可命中）；
+    # 回合内靠 update_plan 工具结果回灌，跨轮由新回合 user 消息携带快照（见 test_plan_snapshot_rides_next_turn）
+    assert "当前计划" not in agent._system("plan")
 
 
 @pytest.mark.asyncio
@@ -784,7 +799,8 @@ def test_trimmed_history_keeps_first_user_anchor():
         agent.history.append({"role": "assistant", "content": f"a{i}"})
         agent.history.append({"role": "user", "content": f"u{i}"})
     trimmed = agent._trimmed_history()
-    assert len(trimmed) == 6                                   # 仍是 max_history 条
+    # 首次裁剪裁到低水位（< max_history，给后续追加留余量、保持切点粘性），但绝不超上限
+    assert 2 <= len(trimmed) <= 6
     assert trimmed[0]["content"] == "原始任务：实现 X"          # 第一条锚点保留
     assert trimmed[-1] == agent.history[-1]                    # 末尾是最近的
 
@@ -864,9 +880,12 @@ async def test_compact_summarizes_old_turns_and_injects():
     assert agent._summary == llm.summary                      # 滚动纪要落到 agent
     assert len(agent.history) < before                        # 老段被物理移出，历史收缩
     assert sum(agent._msg_tokens(m) for m in agent.history) <= agent.max_context_tokens  # 收进 token 预算
-    # 纪要常驻系统提示，且最近窗口仍逐字在历史里
-    sysmsg = agent._system("plan")
-    assert "对话纪要" in sysmsg and "已完成 A、B" in sysmsg
+    # 纪要**不再**进系统提示（保 system 稳定）：作为历史前部消息随请求携带，最近窗口仍逐字在历史里
+    assert "对话纪要" not in agent._system("plan")
+    trimmed = agent._trimmed_history("plan")
+    from src.llm.content import content_to_text
+    head = content_to_text(trimmed[0].get("content"))
+    assert "对话纪要" in head and "已完成 A、B" in head
     # 摘要请求里确实带上了被压掉的老段（含原始目标）
     assert "SUPER_GOAL" in llm.summary_prompts[0] and "决策0_KEEPME" in llm.summary_prompts[0]
     assert any("🗜️" in s for s in out["say"])                 # 给了压缩提示
@@ -1317,16 +1336,65 @@ def test_env_block_has_runtime_context():
 
 
 @pytest.mark.asyncio
-async def test_env_context_injected_into_system_prompt():
+async def test_env_context_rides_user_message_not_system():
+    from src.llm.content import content_to_text
     from src.agents.main_agent import MainAgent
     a = MainAgent([], llm=_ScriptLLM(["hi"]), env_context=True)
-    await a.run_turn("hello", mode="plan")             # 一轮刷新 self._env
-    sysmsg = a._system("plan")
-    assert "<env>" in sysmsg and "工作目录:" in sysmsg   # 环境块进了系统提示
+    await a.run_turn("hello", mode="plan")             # 一轮刷新 self._env 并附到当轮 user 消息
+    assert "<env>" not in a._system("plan")            # 不进系统提示（保 system 字节级稳定→前缀缓存）
+    texts = [content_to_text(m.get("content")) for m in a.history if m.get("role") == "user"]
+    assert any("<env>" in t and "工作目录:" in t for t in texts)   # 环境块随消息流注入
 
     b = MainAgent([], llm=_ScriptLLM(["hi"]))          # 默认不开 → 不注入（子 agent 省开销）
     await b.run_turn("hello", mode="plan")
     assert "<env>" not in b._system("plan")
+    tb = [content_to_text(m.get("content")) for m in b.history if m.get("role") == "user"]
+    assert not any("<env>" in t for t in tb)
+
+
+@pytest.mark.asyncio
+async def test_system_prompt_byte_stable_across_turns_and_plan():
+    """前缀缓存回归：system 会话内**字节级稳定**——env 刷新、plan 更新、多轮对话都不得改动它。
+    （上游自动前缀缓存按「从第 0 字节起完全一致」命中，system 是第一条消息。）"""
+    from src.agents.main_agent import MainAgent
+    a = MainAgent([], llm=_ScriptLLM(["好", "好"]), env_context=True, plan_tool=True)
+    s0 = a._system("plan")
+    await a.run_turn("第一轮", mode="plan")
+    a.plan = [{"step": "读代码", "status": "in_progress"}]
+    await a.run_turn("第二轮", mode="plan")
+    assert a._system("plan") == s0
+    assert "<env>" not in s0 and "当前计划" not in s0 and "对话纪要" not in s0
+
+
+@pytest.mark.asyncio
+async def test_plan_snapshot_rides_next_turn():
+    """计划跨轮持久：新回合的 user 消息携带【当前计划】快照（不再依赖 system 注入）。"""
+    from src.llm.content import content_to_text
+    from src.agents.main_agent import MainAgent
+    a = MainAgent([], llm=_ScriptLLM(["好", "好"]), plan_tool=True)
+    await a.run_turn("先聊聊", mode="plan")
+    a.plan = [{"step": "读代码", "status": "in_progress"}, {"step": "写测试", "status": "pending"}]
+    await a.run_turn("继续", mode="plan")
+    last_user = [m for m in a.history if m.get("role") == "user"][-1]
+    text = content_to_text(last_user.get("content"))
+    assert "当前计划" in text and "读代码" in text and "写测试" in text
+
+
+def test_trimmed_history_sticky_cut_prefix_stable():
+    """裁剪滞回：超预算定下的切点在后续追加时复用（请求前缀稳定、缓存可持续命中）；
+    再次超限才重算，且切点只单调前进。"""
+    agent = MainAgent([], max_context_tokens=200)
+    _prefill(agent, 30)                                        # 远超 token/条数预算
+    first = agent._trimmed_history()
+    start = agent._trim_start
+    assert start > 0
+    agent.history.append({"role": "assistant", "content": "小增量"})
+    second = agent._trimmed_history()
+    assert agent._trim_start == start                          # 小增量不动切点
+    assert second[:len(first)] == first                        # 旧前缀原样保留，只在尾部追加
+    agent.history.append({"role": "user", "content": "x" * 2000})   # 大消息再次爆预算
+    agent._trimmed_history()
+    assert agent._trim_start > start                           # 切点只单调前进
 
 
 @pytest.mark.asyncio
