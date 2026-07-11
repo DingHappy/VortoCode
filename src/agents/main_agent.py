@@ -76,6 +76,9 @@ _CONTEXT_BUDGET_HARD_CAP = _env_num("VORTOCODE_CONTEXT_BUDGET_CAP", 200_000, int
 # 否则一旦贴线，每步新增的工具结果都会把窗口往前推一格，每步都击穿一次前缀缓存。
 _TRIM_LOW_WATERMARK = 0.8
 
+# `/compact <说明>` 里"重点保留"文本的长度上限（够描述一个主题，又不至于喧宾夺主/撑爆摘要请求）
+_MAX_COMPACT_FOCUS = 500
+
 
 def _normalize_context_policy(value: Any) -> str:
     policy = str(value or "auto").strip().lower()
@@ -919,14 +922,17 @@ class MainAgent:
             "recent_tokens": sum(self._msg_tokens(m) for m in recent),
         }
 
-    async def compact_now(self, mode: str = "plan") -> dict:
-        """手动压缩旧历史。成功才改写 _summary/history；失败保持原样。"""
+    async def compact_now(self, mode: str = "plan", focus: str = "") -> dict:
+        """手动压缩旧历史。成功才改写 _summary/history；失败保持原样。
+
+        focus：可选的"重点保留"说明（`/compact <说明>`），透传给摘要器；空=按默认策略压缩。
+        """
         preview = self.compact_preview(mode)
         if not preview["can_compact"]:
             return {"ok": False, "reason": "可压缩的历史不足", **preview}
         cut = int(preview["older_messages"])
         older, recent = self.history[:cut], self.history[cut:]
-        digest = await self._summarize(older)
+        digest = await self._summarize(older, focus=focus)
         if not digest:
             return {"ok": False, "reason": "摘要生成失败", **preview}
         before_messages = len(self.history)
@@ -948,13 +954,23 @@ class MainAgent:
             **preview,
         }
 
-    async def _summarize(self, msgs: list[dict]) -> str:
-        """把一段历史消息（+ 已有纪要）交给 LLM 压成更新后的纪要；任何异常都返回空串（让上游降级）。"""
+    async def _summarize(self, msgs: list[dict], focus: str = "") -> str:
+        """把一段历史消息（+ 已有纪要）交给 LLM 压成更新后的纪要；任何异常都返回空串（让上游降级）。
+
+        focus：用户给的"重点保留什么"（`/compact <说明>`）。只进**摘要子调用的 user 消息**，
+        既不进主对话 system（保前缀稳定），也不改压缩器的系统提示（防用户文本改写压缩器行为）；
+        产出的纪要照旧过 sanitize_persistent_summary 过滤。
+        """
         from src.llm.content import content_to_text
         convo = "\n".join(
             f"{m.get('role', '?')}: {content_to_text(m.get('content'))[:1500]}" for m in msgs)
         user = (f"【已有纪要】\n{self._summary}\n\n" if self._summary else "") + \
-               f"【新增对话】\n{convo}\n\n请输出更新后的完整纪要。"
+               f"【新增对话】\n{convo}\n\n"
+        focus = " ".join(str(focus or "").split())[:_MAX_COMPACT_FOCUS]
+        if focus:
+            user += (f"【重点保留】用户要求本次纪要**着重保留**与下述内容相关的细节"
+                     f"（其余照常压缩，不得因此丢掉原始目标与关键决策）：\n{focus}\n\n")
+        user += "请输出更新后的完整纪要。"
         prompt = [{"role": "system", "content": _SUMMARY_SYSTEM},
                   {"role": "user", "content": user}]
         try:
