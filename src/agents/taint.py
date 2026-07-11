@@ -17,6 +17,9 @@
 from __future__ import annotations
 
 import contextvars
+from contextlib import contextmanager
+from dataclasses import dataclass
+from typing import Iterator
 
 _tainted: contextvars.ContextVar = contextvars.ContextVar("vortocode_taint", default=False)
 
@@ -34,3 +37,32 @@ def mark_tainted() -> None:
 def is_tainted() -> bool:
     """本回合是否已摄入不可信外部内容。"""
     return _tainted.get()
+
+
+@dataclass
+class NestedTaintState:
+    """Taint observed inside one nested agent turn."""
+
+    child_tainted: bool = False
+
+
+@contextmanager
+def merge_nested_taint() -> Iterator[NestedTaintState]:
+    """Preserve parent taint and monotonically merge nested-turn taint.
+
+    ``MainAgent.run_turn()`` resets taint at the start of every logical turn.
+    A child agent awaited in the same asyncio task must not erase its parent's
+    state, while external content consumed by that child must still propagate
+    back.  The resulting state is therefore ``parent OR child``.  The exposed
+    ``child_tainted`` bit lets ``asyncio.gather`` callers merge state from copied
+    ContextVar contexts back into their parent task.
+    """
+    state = NestedTaintState()
+    token = _tainted.set(_tainted.get())
+    try:
+        yield state
+    finally:
+        state.child_tainted = _tainted.get()
+        _tainted.reset(token)
+        if state.child_tainted:
+            mark_tainted()

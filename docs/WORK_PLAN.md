@@ -114,7 +114,7 @@ Non-goals:
 
 ## 2026-07-10 Batch: Trust Foundation 2 — Memory Write Policy And Provenance
 
-Status: Complete
+Status: Complete (post-review hardening applied)
 
 Goals:
 
@@ -168,6 +168,21 @@ Acceptance:
   `ruff check src tests`, `python -m compileall -q src tests`, and
   `git diff --check` pass.
 
+Post-review security fix-up:
+
+- Nested agents run inside a token-backed taint scope. A child turn may reset
+  its own logical-turn state, but on return the caller receives the monotonic
+  merge `parent_tainted OR child_tainted`; exceptions cannot erase the parent
+  state.
+- Single `task`, TUI delegation, automated review, and isolated worktree agents
+  all use the same scope. Parallel Web/CLI and TUI delegation also returns each
+  copied ContextVar's child-taint bit and merges it in the parent coroutine.
+- End-to-end regressions cover `web_fetch -> task -> save_memory` in the shared
+  agent factory and rich TUI. Instructional content remains excluded from
+  durable recall, is stored as a pending proposal, and records `tainted=true`.
+- A separate parallel regression proves Web content consumed only inside a
+  child agent still taints the parent before any later memory write.
+
 Non-goals:
 
 - D4 repository file memory (`.vortocode/memory/MEMORY.md` plus topic files),
@@ -183,10 +198,11 @@ Validation evidence:
   automatic-recall, and persistent-summary tests pass (`11 passed`). A regression proves a mixed
   native-tool batch propagates taint immediately from `web_fetch` to a later
   `save_memory` in the same batch.
+- The post-review taint/research/memory/worktree/review regression set passes
+  (`133 passed`); the full rich TUI file passes (`219 passed`, one pre-existing
+  Textual input-history test deselected).
 - The full unit suite passes outside the enclosing development sandbox
-  (`1264 passed`, one pre-existing Textual worker-leak test deselected). The
-  first in-sandbox run had only 12 loopback-bind permission failures; those two
-  affected test files pass outside the sandbox (`19 passed`).
+  (`1281 passed`, the same pre-existing Textual test deselected).
 - Integration/live passes (`44 passed, 6 opt-in skips`). `ruff check src tests`,
   `python -m compileall -q src tests`, and `git diff --check` are green.
 - A byte-level regression verifies a detected raw API key never appears in the
