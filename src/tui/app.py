@@ -73,7 +73,7 @@ COMMAND_INFO = {
     "/context": "查看/切换上下文策略（auto/compact/balanced/preserve）",
     "/compact": "手动压缩旧对话上下文；preview 只预估",
     "/permissions": "查看/解释工具权限；可 allow/deny/profile 或 reset 会话放行",
-    "/memory": "查看/管理项目指令和跨会话记忆",
+    "/memory": "查看/管理项目指令、跨会话记忆与仓库记忆（/memory repo）",
     "/tasks": "列出/查看/续跑 dev_auto 持久化计划",
     "/tools": "列出主 agent 工具及读写权限",
     "/audit": "查看工具调用审计日志",
@@ -2250,6 +2250,50 @@ class VortoCodeTUI(App):
         ]
         self._emit("\n".join(lines))
 
+    def _cmd_memory_repo(self, arg: str = "") -> None:
+        """/memory repo [add <事实>]：看/写**仓库记忆**（.vortocode/memory/repo.md）。
+
+        与长期记忆的区别：仓库记忆跟着代码库走（不跟人），装配时静态注入系统提示、
+        dev 流水线的子 agent 也会带上——存"构建/测试命令、目录约定、踩过的坑"这类事实。
+        """
+        from src.agents.repo_memory import (MAX_REPO_MEMORY_CHARS, append_repo_memory,
+                                            read_repo_memory, repo_memory_path)
+        raw = (arg or "").strip()
+        path = repo_memory_path(self.repo_root)
+        if raw.lower().startswith("add "):
+            content = raw[4:].strip()
+            if not content:
+                self._emit("用法: /memory repo add <关于本仓库的事实>")
+                return
+            # 与 remember_repo 工具同一条策略线：仓库记忆每轮进系统提示，只收 durable。
+            from src.memory.write_policy import MemoryWritePolicy, MemoryWriteRequest
+            decision = MemoryWritePolicy().evaluate(MemoryWriteRequest(
+                content=content, source="tui_user", session_id=self.session_id,
+                write_method="slash_command", memory_type="repo_fact"))
+            if decision.outcome != "durable":
+                self._emit(f"拒绝写入仓库记忆（{'/'.join(decision.reasons) or decision.outcome}）。"
+                           "仓库记忆每轮都会进系统提示，只接受可信的仓库事实。")
+                return
+            try:
+                append_repo_memory(self.repo_root, decision.content)
+            except Exception as e:  # noqa: BLE001
+                self._emit(f"写入仓库记忆失败: {e}")
+                return
+            self._chrome(f"[green]已写入仓库记忆：{decision.content[:80]}[/green]")
+            self._emit(f"下个会话装配时生效（{path}）。")
+            return
+        if raw:
+            self._emit("用法: /memory repo [add <关于本仓库的事实>]")
+            return
+        text = read_repo_memory(self.repo_root)
+        if not text:
+            self._emit(f"（本仓库还没有仓库记忆）\n文件: {path}\n"
+                       "用 /memory repo add <事实> 或让 agent 调 remember_repo 写入。"
+                       "存构建/测试命令、目录约定、踩过的坑——今后每个会话与 dev 子 agent 自动带上。")
+            return
+        note = f"（超过 {MAX_REPO_MEMORY_CHARS} 字，注入时会截断）" if len(text) > MAX_REPO_MEMORY_CHARS else ""
+        self._emit(f"[b]仓库记忆[/b] {path} {note}\n{text}")
+
     def _cmd_memory(self, arg: str = "") -> None:
         """/memory：查看/管理项目指令与长期记忆。"""
         raw = (arg or "").strip()
@@ -2283,6 +2327,9 @@ class VortoCodeTUI(App):
             return
         if low in ("proposals", "proposal", "pending", "quarantine"):
             self._emit(self._memory_proposals_text())
+            return
+        if low == "repo" or low.startswith("repo "):
+            self._cmd_memory_repo(raw[4:].strip())
             return
         if low.startswith(("approve ", "reject ")):
             action, proposal_id = raw.split(maxsplit=1)
@@ -2341,7 +2388,7 @@ class VortoCodeTUI(App):
         if raw:
             self._emit(
                 "用法: /memory [list|add <文本>|delete <id>|proposals|approve <id>|reject <id>|"
-                "auto on|auto off|init|init local]"
+                "repo|repo add <仓库事实>|auto on|auto off|init|init local]"
             )
             return
         self._emit(self._memory_status_text())
@@ -2395,6 +2442,7 @@ class VortoCodeTUI(App):
         lines.append(
             "用法: /memory list · /memory add <文本> · /memory delete <id> · "
             "/memory proposals · /memory approve|reject <id> · /memory auto on/off · /memory init"
+            "\n      /memory repo [add <仓库事实>] —— 仓库记忆（跟着代码库、自动进系统提示、dev 子 agent 也带）"
         )
         return "\n".join(lines)
 
@@ -5211,6 +5259,10 @@ class VortoCodeTUI(App):
         proj = load_project_instructions(self.repo_root)     # AGENTS.md/CLAUDE.md 项目约定进系统提示
         if proj:
             extra_parts.append(proj)
+        from src.agents.repo_memory import load_repo_memory
+        repo_mem = load_repo_memory(self.repo_root)         # 仓库记忆（agent 自己攒的构建/测试/坑）
+        if repo_mem:
+            extra_parts.append(repo_mem)
         if catalog:
             extra_parts.append(f"【可用技能】(需要时用 use_skill 加载其完整指令再执行)\n{catalog}")
         from src.agents.subagents import subagent_catalog

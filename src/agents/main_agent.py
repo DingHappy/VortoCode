@@ -2154,14 +2154,23 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
 
     def _make_writer(test_cmd):
         """造一个'隔离实现子 agent'工厂：worktree 里 read+write+run_tests、自测到通过再交。"""
+        # 仓库记忆从**主仓库**读（.vortocode/ 是 gitignored，worktree 里没有这份文件）。
+        # 这是仓库记忆最值钱的落点：子 agent 每次都在全新 worktree 里从零开始，
+        # 构建怪癖/测试命令/已知坑本来每次重踩——现在开局就带着。
+        from src.agents.repo_memory import load_repo_memory
+        repo_mem = load_repo_memory(repo_root)
+
         def _mk(_desc):
             def _b(wt):
+                extra = ("你是隔离工作区里的实现子 agent：用 read/grep 看代码，然后**必须用 "
+                         "edit_file/write_file 实际修改文件**实现任务——只查看或只跑测试不改文件不算完成。"
+                         "改完务必 run_tests 自测直到通过。只动相关文件。")
+                if repo_mem:
+                    extra += "\n\n" + repo_mem
                 return MainAgent(
                     build_read_tools(wt) + build_write_tools(wt) + [build_test_tool(wt, test_cmd)],
                     max_steps=16,
-                    extra_system=("你是隔离工作区里的实现子 agent：用 read/grep 看代码，然后**必须用 "
-                                  "edit_file/write_file 实际修改文件**实现任务——只查看或只跑测试不改文件不算完成。"
-                                  "改完务必 run_tests 自测直到通过。只动相关文件。"),
+                    extra_system=extra,
                     capabilities=capabilities)
             return _b
         return _mk
@@ -3087,6 +3096,51 @@ def build_memory_tools(repo_root: str, confirm=None, *, source: str = "agent",
             return f"已记住（跨会话，id={result.record_id}）：{decision.content[:80]}"
         return f"{result.message}（id={result.record_id}）"
 
+    async def _remember_repo(args: dict) -> str:
+        """把一条**关于本仓库**的事实写进 .vortocode/memory/repo.md（下个会话自动进系统提示）。
+
+        写入门槛**高于** save_memory：repo.md 每轮都被注入系统提示 = "系统事实"，故只收
+        policy 判定为 durable 的内容；污点回合的指令性文本（proposal）与疑似凭据（quarantine）
+        一律拒绝——绝不让外部内容经这里变成每轮喂给模型的事实（提示注入的最佳跳板）。
+        """
+        from src.agents.repo_memory import append_repo_memory
+        content = str(args.get("content", "")).strip()
+        if not content:
+            return "remember_repo 需要 content（关于本仓库的事实：构建/测试命令、目录约定、踩过的坑）。"
+        from src.agents.taint import is_tainted
+        tainted = is_tainted()
+        request = MemoryWriteRequest(content=content, source=source,
+                                     session_id=_origin_session(), tainted=tainted,
+                                     write_method="tool", memory_type="repo_fact")
+        decision = policy.evaluate(request)
+        if decision.outcome == "reject":
+            reason = "内容为空" if "empty" in decision.reasons else "内容过长"
+            return f"写入仓库记忆失败: {reason}"
+        if decision.outcome != "durable":
+            # 仓库记忆会自动进系统提示，比会话记忆更敏感 → 非 durable 一律不落盘
+            why = ("疑似含凭据" if decision.outcome == "quarantine"
+                   else "疑似来自外部内容的指令性文本")
+            return (f"拒绝写入仓库记忆（{why}：{'/'.join(decision.reasons) or '策略拦截'}）。"
+                    "仓库记忆每轮都会进系统提示，只接受可信的仓库事实；"
+                    "如确需留存，请改用 save_memory（走提案/隔离审阅流程）。")
+        if confirm is None:
+            return "写入仓库记忆失败: 当前入口没有可用的用户确认门。"
+        try:
+            approved = bool(await confirm(
+                "把这条事实写进**仓库记忆** .vortocode/memory/repo.md？\n"
+                "（今后本仓库的每个会话都会自动带上它，子 agent 也会看到）\n"
+                f"  {decision.content[:240]}"))
+        except Exception as e:  # noqa: BLE001
+            return f"写入仓库记忆确认失败: {e}"
+        if not approved:
+            return "用户取消了仓库记忆写入。"
+        try:
+            p = append_repo_memory(repo_root, decision.content)
+        except Exception as e:  # noqa: BLE001
+            return f"写入仓库记忆失败: {e}"
+        return (f"已写入仓库记忆（{p}）：{decision.content[:80]}\n"
+                "下个会话装配时自动进系统提示（本会话的系统提示保持不变）。")
+
     async def _recall_memory(args: dict) -> str:
         q = str(args.get("query", "")).strip()
         try:
@@ -3148,6 +3202,10 @@ def build_memory_tools(repo_root: str, confirm=None, *, source: str = "agent",
 
     return [Tool("save_memory", "确认后保存跨会话长期记忆；外部指令/疑似凭据进入隔离提案（仅 build）",
                  {"content": "要记住的内容"}, _save_memory, read_only=False),
+            Tool("remember_repo",
+                 "确认后把**关于本仓库**的事实写进仓库记忆（构建/测试命令、目录约定、踩过的坑）；"
+                 "今后每个会话与子 agent 自动带上（仅 build）",
+                 {"content": "关于本仓库的事实"}, _remember_repo, read_only=False),
             Tool("recall_memory", "检索跨会话长期记忆（不传 query 则列出全部）",
                  {"query": "可选，关键词"}, _recall_memory,
                  read_only=True, untrusted_source=True),
