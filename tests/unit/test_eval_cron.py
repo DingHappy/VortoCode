@@ -47,6 +47,21 @@ def test_latest_baseline_picks_newest_matching_model_and_protocol(tmp_path):
     assert latest_baseline(tmp_path / "nope") is None                      # 目录不存在也不炸
 
 
+def test_missing_scenario_counts_as_regression_not_silent_green():
+    """codex 审出的真问题：基线里跑过、这次却没结果（skip / 依赖缺失 / 环境坏）——必须算回归。
+    否则夜跑"假绿"：场景压根没跑成却退出 0，环境损坏被当成一切正常，评测彻底失去意义。"""
+    base = _report()                                     # 基线里有场景 s1
+    broken = _report()
+    broken["scenarios"] = []                             # 本次 s1 没跑成（进了 skipped）
+    broken["skipped"] = [{"name": "s1", "note": "缺依赖"}]
+
+    cmp = compare_reports(base, broken)
+
+    assert cmp["has_regression"] is True                 # 不能静悄悄绿
+    assert "s1" in cmp["regressions"]
+    assert any(r["status"] == "missing" for r in cmp["per_scenario"])
+
+
 def test_regression_detected_on_honesty_or_landing_drop():
     """护城河底线：诚实率/落地率下降 = **硬回归**（哪怕场景通过率一点没掉也拦）。"""
     base = _report()
@@ -103,6 +118,29 @@ async def test_command_job_red_is_flagged_with_exit_code(tmp_path):
 async def test_command_job_timeout_counts_as_failure(tmp_path):
     out = await run_job(str(tmp_path), _job("sleep 5", timeout=1))
     assert "🔴" in out and "退出码 124" in out and "超时" in out
+
+
+@pytest.mark.asyncio
+async def test_command_job_fails_closed_when_sandbox_required_but_unavailable(monkeypatch, tmp_path):
+    """codex 审出的真问题：cron 是**无人值守**路径。原实现自己 create_subprocess_shell，
+    绕过整条沙箱边界——连 VORTOCODE_SANDBOX=required 都拦不住它。现在走统一执行入口
+    （require_isolation=True）：沙箱不可用就 fail-closed，绝不偷偷在宿主机裸跑。"""
+    import src.agents.sandbox as sb
+    monkeypatch.setenv("VORTOCODE_SANDBOX", "required")
+    monkeypatch.setattr(sb, "sandbox_backend", lambda: "")      # 本机没有可用后端
+
+    out = await run_job(str(tmp_path), _job("echo 我不该被执行 > /tmp/vc_should_not_exist"))
+
+    assert "🔴" in out and "失败" in out
+    assert "沙箱" in out                                        # 通报里说清为什么
+    assert not (tmp_path / "/tmp/vc_should_not_exist").exists()
+
+
+@pytest.mark.asyncio
+async def test_command_job_reports_sandbox_evidence(tmp_path):
+    """无人值守跑了什么、在什么隔离下跑的，必须可审计——通报带沙箱证据。"""
+    out = await run_job(str(tmp_path), _job("echo ok"))
+    assert ("沙箱" in out) or ("未隔离" in out)                  # 二者必居其一，不能没有交代
 
 
 @pytest.mark.asyncio

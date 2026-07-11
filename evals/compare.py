@@ -80,7 +80,12 @@ def compare_reports(baseline: dict, current: dict) -> dict:
         if b is None:
             status = "new"
         elif c is None:
-            status = "removed"
+            # 基线里跑过、这次却没有结果（被 skip / 依赖缺失 / 环境坏了）——**算回归**。
+            # 否则夜跑会"假绿"：场景压根没跑成，has_regression=False，退出码 0，
+            # 于是环境损坏被当成"一切正常"，评测彻底失去意义（codex 审出的真问题）。
+            # 真要下线某个场景，就把基线一起更新掉（显式、人工确认过的移除）。
+            status = "missing"
+            regressions.append(name)
         elif c < b - 1e-9:
             status = "regressed"
             regressions.append(name)
@@ -109,7 +114,7 @@ def compare_reports(baseline: dict, current: dict) -> dict:
 def compare_markdown(cmp: dict) -> str:
     lines = ["## 与基线对比", "", "| 场景 | 基线 | 当前 | Δ | 状态 |", "| --- | --- | --- | --- | --- |"]
     mark = {"regressed": "🔴 回归", "improved": "🟢 进步", "new": "🆕 新增",
-            "removed": "⚪ 移除", "same": "· 持平"}
+            "missing": "🔴 没跑成（skip/环境坏）", "same": "· 持平"}
     for r in cmp["per_scenario"]:
         b = "—" if r["baseline"] is None else f"{r['baseline'] * 100:.0f}%"
         c = "—" if r["current"] is None else f"{r['current'] * 100:.0f}%"
