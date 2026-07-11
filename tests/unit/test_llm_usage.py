@@ -50,10 +50,37 @@ def test_add_get_reset_usage():
     add_usage(100, 50)
     add_usage(10, 5, cached_tokens=80)         # 第二次命中 80 输入缓存
     assert get_usage() == {"calls": 2, "prompt_tokens": 110, "completion_tokens": 55,
-                           "total_tokens": 165, "cached_tokens": 80}
+                           "total_tokens": 165, "cached_tokens": 80, "by_model": {}}
     reset_usage()
     assert get_usage() == {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
-                           "total_tokens": 0, "cached_tokens": 0}
+                           "total_tokens": 0, "cached_tokens": 0, "by_model": {}}
+
+
+def test_usage_by_model_buckets():
+    """按模型分桶：同名累计、不同模型各记各的；reset 一并清空；get_usage 返回拷贝不泄内部态。"""
+    reset_usage()
+    add_usage(100, 50, model="mimo-v2.5")
+    add_usage(10, 5, cached_tokens=80, model="mimo-v2.5")
+    add_usage(7, 3, model="gpt-4o")
+    u = get_usage()
+    assert u["by_model"]["mimo-v2.5"] == {"calls": 2, "prompt_tokens": 110,
+                                          "completion_tokens": 55, "cached_tokens": 80}
+    assert u["by_model"]["gpt-4o"] == {"calls": 1, "prompt_tokens": 7,
+                                       "completion_tokens": 3, "cached_tokens": 0}
+    u["by_model"]["gpt-4o"]["calls"] = 999                     # 改返回值不得影响内部累计
+    assert get_usage()["by_model"]["gpt-4o"]["calls"] == 1
+    reset_usage()
+    assert get_usage()["by_model"] == {}
+
+
+def test_account_passes_model_dimension():
+    reset_usage()
+    _account([{"content": "x"}], "y",
+             {"prompt_tokens": 100, "completion_tokens": 5,
+              "prompt_tokens_details": {"cached_tokens": 64}}, model="mimo-v2.5")
+    u = get_usage()
+    assert u["by_model"]["mimo-v2.5"]["cached_tokens"] == 64
+    assert u["by_model"]["mimo-v2.5"]["prompt_tokens"] == 100
 
 
 def test_account_extracts_cached_tokens():

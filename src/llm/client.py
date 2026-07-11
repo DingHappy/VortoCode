@@ -66,9 +66,46 @@ MODEL_CONTEXT_WINDOWS: Dict[str, int] = {
 }
 
 
+_window_overrides_cache: tuple = ("", {})   # (raw env 串, 解析结果)——热路径每步都查，避免重复解析
+
+
+def _model_window_overrides() -> Dict[str, int]:
+    """env VORTOCODE_MODEL_CONTEXT_WINDOWS 的**按模型**窗口表："model=window,model=window"。
+    自有中转跑多个模型时用它按名配各自窗口（匹配规则同主表：前缀/包含）；
+    单模型场景用 VORTOCODE_MODEL_CONTEXT_WINDOW 全局值即可。坏项静默跳过、不炸。
+    结果按 env 原串缓存（env 可在运行中改，串没变就不重解析）。"""
+    global _window_overrides_cache
+    raw = os.getenv("VORTOCODE_MODEL_CONTEXT_WINDOWS") or ""
+    if raw == _window_overrides_cache[0]:
+        return _window_overrides_cache[1]
+    out: Dict[str, int] = {}
+    for item in raw.split(","):
+        key, _, val = item.partition("=")
+        key = key.strip().lower()
+        try:
+            n = int(val.strip())
+        except (TypeError, ValueError):
+            continue
+        if key and n > 0:
+            out[key] = n
+    _window_overrides_cache = (raw, out)
+    return out
+
+
 def model_context_window(model: str) -> Optional[int]:
-    """当前模型的上下文窗口（token）。优先 env 全局覆盖（自有中转按上游真实窗口配），
-    否则按已知公开模型前缀匹配；都拿不到返回 None（调用方回退到保守默认）。"""
+    """当前模型的上下文窗口（token）。优先级：按模型 env 表（多模型中转各配各的）→
+    env 全局覆盖（单模型中转一键配）→ 已知公开模型前缀匹配；都拿不到返回 None（调用方回退保守默认）。"""
+    name = (model or "").strip().lower()
+    overrides = _model_window_overrides()
+    if name and overrides:
+        # 最长匹配优先：表里同时有 mimo-v2.5 与 mimo-v2.5-pro 时，pro 模型要命中更长的那条
+        best: Optional[tuple] = None
+        for prefix, window in overrides.items():
+            if name.startswith(prefix) or prefix in name:
+                if best is None or len(prefix) > best[0]:
+                    best = (len(prefix), window)
+        if best is not None:
+            return best[1]
     env = os.getenv("VORTOCODE_MODEL_CONTEXT_WINDOW")
     if env:
         try:
@@ -77,7 +114,6 @@ def model_context_window(model: str) -> Optional[int]:
                 return v
         except (TypeError, ValueError):
             pass
-    name = (model or "").strip().lower()
     if not name:
         return None
     for prefix, window in MODEL_CONTEXT_WINDOWS.items():
@@ -101,7 +137,8 @@ def _int_env(name: str, default: int) -> int:
 # 用来**验证缓存到底有没有在自有中转生效**（OpenAI 兼容协议下缓存是自动的、无需 cache_control）。
 DEFAULT_LLM_BASE_URL = "https://relay.dinghappy.com/v1"
 
-_USAGE = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cached_tokens": 0}
+_USAGE = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cached_tokens": 0,
+          "by_model": {}}
 
 # 按上下文（会话/回合）隔离的用量作用域：多会话服务端场景下，不同会话各记各的、互不串扰，
 # 也不会因某会话 reset_usage 把所有人清零（旧版 _USAGE 是进程级全局）。默认 None → 回退全局
@@ -138,9 +175,10 @@ def _extract_cached_tokens(usage: Any) -> int:
     return 0
 
 
-def new_usage() -> Dict[str, int]:
+def new_usage() -> Dict[str, Any]:
     """新建一个零初始化的用量计数器（供 bind_usage 绑定到某会话）。"""
-    return {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cached_tokens": 0}
+    return {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0, "cached_tokens": 0,
+            "by_model": {}}
 
 
 def bind_usage(scope: Dict[str, int]) -> None:
@@ -171,26 +209,42 @@ def estimate_tokens(text: str) -> int:
     return max(1, wide + (len(text) - wide) // 4)
 
 
-def add_usage(prompt_tokens: int, completion_tokens: int, cached_tokens: int = 0) -> None:
+def add_usage(prompt_tokens: int, completion_tokens: int, cached_tokens: int = 0,
+              model: str = "") -> None:
     u = _cur_usage()
     u["calls"] += 1
     u["prompt_tokens"] += int(prompt_tokens or 0)
     u["completion_tokens"] += int(completion_tokens or 0)
     u["total_tokens"] += int(prompt_tokens or 0) + int(completion_tokens or 0)
     u["cached_tokens"] = u.get("cached_tokens", 0) + int(cached_tokens or 0)   # 老作用域缺键也不炸
+    if model:                                       # 按模型分桶：给 /usage 报分项与估算成本
+        bm = u.setdefault("by_model", {})
+        m = bm.setdefault(str(model), {"calls": 0, "prompt_tokens": 0,
+                                       "completion_tokens": 0, "cached_tokens": 0})
+        m["calls"] += 1
+        m["prompt_tokens"] += int(prompt_tokens or 0)
+        m["completion_tokens"] += int(completion_tokens or 0)
+        m["cached_tokens"] += int(cached_tokens or 0)
 
 
-def get_usage() -> Dict[str, int]:
-    return dict(_cur_usage())
+def get_usage() -> Dict[str, Any]:
+    u = _cur_usage()
+    out = dict(u)
+    out["by_model"] = {k: dict(v) for k, v in u.get("by_model", {}).items()}   # 拷贝，防调用方改内部态
+    return out
 
 
 def reset_usage() -> None:
     u = _cur_usage()
-    for k in u:
-        u[k] = 0
+    for k, v in list(u.items()):
+        if isinstance(v, dict):
+            v.clear()
+        else:
+            u[k] = 0
 
 
-def _account(messages: List[Dict[str, str]], content: Optional[str], usage: Any = None) -> None:
+def _account(messages: List[Dict[str, str]], content: Optional[str], usage: Any = None,
+             model: str = "") -> None:
     """记一次调用用量：有 API 精确 usage 就用，否则按文本估算。
 
     content 可能是内容块数组（多模态）：只数其中文本，图片/音频按固定成本估，
@@ -210,7 +264,7 @@ def _account(messages: List[Dict[str, str]], content: Optional[str], usage: Any 
                  + count_images(m.get("content")) * IMAGE_TOKEN_COST
                  + count_audio(m.get("content")) * AUDIO_TOKEN_COST for m in messages)
         ct = estimate_tokens(content_to_text(content) if content is not None else "")
-    add_usage(pt, ct, cached)
+    add_usage(pt, ct, cached, model=model)
 
 
 class LLMConfig(BaseModel):
@@ -314,7 +368,7 @@ class LLMClient:
                 {"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments}
                 for tc in message.tool_calls
             ]
-        _account(messages, message.content, getattr(response, "usage", None))
+        _account(messages, message.content, getattr(response, "usage", None), model=kwargs["model"])
         return {
             "content": message.content,
             "reasoning": reasoning,
@@ -383,7 +437,7 @@ class LLMClient:
             if content:
                 parts.append(content)
                 yield content
-        _account(messages, "".join(parts), exact)   # 有精确 usage 用精确，否则估算
+        _account(messages, "".join(parts), exact, model=create["model"])   # 有精确 usage 用精确，否则估算
 
     async def stream_chat(
         self,
@@ -463,7 +517,7 @@ class LLMClient:
                     except Exception:  # noqa: BLE001
                         pass
         full = "".join(parts)
-        _account(messages, full, exact)            # 有精确 usage 用精确，否则估算
+        _account(messages, full, exact, model=create["model"])   # 有精确 usage 用精确，否则估算
         tool_calls = None
         if tc_acc:
             tool_calls = [
@@ -512,7 +566,8 @@ class LLMClient:
                         if response.status == 200:
                             data = await response.json()
                             msg = data["choices"][0]["message"]
-                            _account(messages, msg.get("content"), data.get("usage"))
+                            _account(messages, msg.get("content"), data.get("usage"),
+                                     model=payload["model"])
                             return {
                                 "content": msg["content"],
                                 "reasoning": msg.get("reasoning_content") or msg.get("reasoning"),

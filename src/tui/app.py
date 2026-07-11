@@ -4014,6 +4014,25 @@ class VortoCodeTUI(App):
             msg += f"\n其中输入命中缓存 ~{cached} tokens（约 {int(cached * 100 / pt)}%，上游 prompt 缓存已生效）"
         else:
             msg += "\n[输入缓存未观测到命中：上游/中转未回报 cached_tokens，或本会话前缀尚未复用]"
+        by_model = u.get("by_model") or {}
+        if by_model:                            # 按模型分项 + 估算成本（内置单价表，未登记的模型不计价）
+            from src.models.cost import cost_for
+            total_cost = 0.0
+            rows = []
+            for name in sorted(by_model):
+                m = by_model[name]
+                c = cost_for(name, int(m.get("prompt_tokens", 0)), int(m.get("completion_tokens", 0)))
+                total_cost += c
+                row = (f"  {name}: 调用 {m.get('calls', 0)} · 输入 ~{m.get('prompt_tokens', 0)} · "
+                       f"输出 ~{m.get('completion_tokens', 0)}")
+                if m.get("cached_tokens"):
+                    row += f" · 缓存命中 ~{m.get('cached_tokens', 0)}"
+                if c > 0:
+                    row += f" · ≈${c:.4f}"
+                rows.append(row)
+            msg += "\n按模型:\n" + "\n".join(rows)
+            if total_cost > 0:
+                msg += f"\n估算成本合计: ≈${total_cost:.4f}"
         ctx = self._context_usage_label()
         if ctx:
             msg += f"\n当前上下文占用（估算）: {ctx}"
@@ -4431,6 +4450,8 @@ class VortoCodeTUI(App):
             self.agent = self._build_main_agent()
         think_cb, stream_cb, emit_final, cleanup = self._turn_renderers()
         self._turn_tools = 0
+        from src.llm.client import get_usage
+        u0 = get_usage()                     # 回合起点用量快照 → 收尾时报本回合增量
         t0 = time.monotonic()
         reply = ""
         try:
@@ -4440,8 +4461,17 @@ class VortoCodeTUI(App):
         finally:
             cleanup()                        # 出错/取消也收干净
             self._fold_tool_activity()       # 工具活动折叠成一行摘要（错误/取消也不丢轨迹）
-        if self._turn_tools:                # 用过工具的回合给个清晰收尾
-            self._chrome(f"[dim]✓ 完成 · {time.monotonic() - t0:.0f}s[/dim]")
+        if self._turn_tools:                # 用过工具的回合给个清晰收尾（附本回合 token 增量与缓存命中）
+            u1 = get_usage()
+            d_total = int(u1.get("total_tokens", 0)) - int(u0.get("total_tokens", 0))
+            d_prompt = int(u1.get("prompt_tokens", 0)) - int(u0.get("prompt_tokens", 0))
+            d_cached = int(u1.get("cached_tokens", 0)) - int(u0.get("cached_tokens", 0))
+            line = f"✓ 完成 · {time.monotonic() - t0:.0f}s"
+            if d_total > 0:                  # 中途 /usage reset 会出现负增量 → 不显示，只保留耗时
+                line += f" · +{self._fmt_tokens_short(d_total)} tok"
+                if d_cached > 0 and d_prompt > 0:
+                    line += f"（缓存命中 {int(d_cached * 100 / d_prompt)}%）"
+            self._chrome(f"[dim]{line}[/dim]")
         if self._speak_replies and reply:   # /speak 开：把这条回复合成语音朗读
             self._chrome("[dim]🔊 合成语音中…[/dim]")
             await self._speak_text(reply)
