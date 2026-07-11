@@ -950,6 +950,113 @@ def test_statusbar_shows_context_policy_when_agent_reports_it(tmp_path):
     assert app._context_usage_label() == "ctx 1.2k/16k 8% · policy preserve"
 
 
+# ---- B5-2：上下文近上限警告（状态栏 ⚠/变色 + 一次性可操作提示）----
+
+class _CtxAgent:
+    """按给定 pct 伪造上下文占用（只读估算）。"""
+
+    def __init__(self, pct):
+        self.pct = pct
+
+    def context_usage(self, mode):
+        return {"used_tokens": int(80 * self.pct), "max_context_tokens": 8000, "pct": self.pct}
+
+
+def test_context_label_marks_warning_only_near_limit(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+
+    app.agent = _CtxAgent(79)                       # 警戒线下 → 不标记，不打扰
+    assert "⚠" not in app._context_usage_label()
+
+    app.agent = _CtxAgent(80)                       # 到线 → 标 ⚠
+    assert app._context_usage_label().endswith("⚠")
+    assert app._ctx_pct == 80
+
+    app.agent = _CtxAgent(97)
+    assert app._context_usage_label().endswith("⚠")
+
+
+def test_context_pressure_hint_fires_once_and_resets_after_relief(tmp_path):
+    """≥95% 给一次可操作提示；不重复刷屏；压缩/新会话后回落到警戒线下 → 复位，再涨再提醒。"""
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    chromed = []
+    app._chrome = lambda m, *a, **k: chromed.append(m)
+
+    app.agent = _CtxAgent(85)                       # 警戒但未告警 → 只标 ⚠，不提示
+    app._context_usage_label()
+    app._maybe_warn_context_pressure()
+    assert chromed == []
+
+    app.agent = _CtxAgent(96)                       # 跨过告警线 → 提示一次，且给出可操作建议
+    app._context_usage_label()
+    app._maybe_warn_context_pressure()
+    assert len(chromed) == 1
+    assert "/compact" in chromed[0] and "96%" in chromed[0]
+
+    app._context_usage_label()                      # 仍高 → 不重复提示
+    app._maybe_warn_context_pressure()
+    assert len(chromed) == 1
+
+    app.agent = _CtxAgent(30)                       # 压缩后回落 → 复位
+    app._context_usage_label()
+    app._maybe_warn_context_pressure()
+    assert app._ctx_alerted is False
+
+    app.agent = _CtxAgent(97)                       # 再次逼近 → 重新提醒
+    app._context_usage_label()
+    app._maybe_warn_context_pressure()
+    assert len(chromed) == 2
+
+
+@pytest.mark.asyncio
+async def test_new_session_resets_context_alert_state(tmp_path):
+    """codex 审出的边界问题：复位只发生在"pct 回落到警戒线以下"。旧会话已告警过 →
+    /new → 新会话若**第一条输入就冲到 95%**，中间没回落过 → 永远等不到复位、该提示时不提示。"""
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    chromed = []
+    async with app.run_test() as pilot:
+        app.agent = _CtxAgent(97)                      # 旧会话已经告警过一次
+        app._context_usage_label()
+        app._maybe_warn_context_pressure()
+        assert app._ctx_alerted is True
+
+        app._chrome = lambda m, *a, **k: chromed.append(m)
+        await _submit(app, pilot, "/new")
+        assert app._ctx_alerted is False and app._ctx_pct == 0   # 新会话状态归零
+
+        chromed.clear()
+        app.agent = _CtxAgent(96)                      # 新会话第一条就冲到告警线
+        app._context_usage_label()
+        app._maybe_warn_context_pressure()
+        assert any("/compact" in m for m in chromed)   # 仍然提示（不再被旧会话的状态吞掉）
+
+
+def test_statusbar_colors_context_segment_under_pressure(tmp_path):
+    """状态栏整行 dim，但 ctx 段在压力下单独变色（黄→红）；纯文本 _sb_last 不受影响。"""
+    from rich.text import Text as RichText
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    captured = []
+
+    class _Bar:
+        def update(self, renderable):
+            captured.append(renderable)
+
+    app.query_one = lambda *a, **k: _Bar()
+
+    def styles_of(pct):
+        captured.clear()
+        app.agent = _CtxAgent(pct)
+        app._render_statusbar()
+        t = captured[-1]
+        assert isinstance(t, RichText)
+        return {str(sp.style) for sp in t.spans if "ctx" in t.plain[sp.start:sp.end]}
+
+    assert styles_of(50) == set()                   # 平时：整行 dim（无独立 ctx 段样式）
+    assert "yellow" in " ".join(styles_of(85))      # 警戒：黄
+    assert "red" in " ".join(styles_of(96))         # 告警：红
+    assert "ctx" in app._sb_last and "⚠" in app._sb_last
+
+
 @pytest.mark.asyncio
 async def test_usage_command_includes_context_usage(tmp_path):
     class FakeAgent:
