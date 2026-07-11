@@ -86,14 +86,18 @@ Post-review security fix-up:
 
 Validation evidence:
 
-- The full unit suite passes outside the enclosing workspace sandbox (`1312
-  passed`, one pre-existing Textual input-history hang deselected).
+- After merging the Trust Foundation 2 fix from `main`, the combined full unit
+  suite passes outside the enclosing workspace sandbox (`1322 passed`, one
+  pre-existing Textual input-history hang deselected).
 - Integration/live passes (`44 passed, 6 opt-in skips`). `ruff check src tests`,
   isolated-cache `compileall`, and `git diff --check` are green.
 - The post-review capability/Git/MCP regression set passes (`46 passed`). It
   covers local CLI history and symlink aliases, direct and range-form Git option
   injection, configured external diff helpers, URL userinfo, encoded credential
   query keys, secret-like values, fragments, and malformed endpoints.
+- The combined Trust Foundation 2/3 security regression set passes (`142
+  passed`), proving child-agent taint preservation and credential capability
+  isolation coexist on the actual `main` merge result.
 - Focused regressions prove capability denial happens before project allow and
   handler confirmation, external TUI `@.env` expansion never reads the value,
   and CLI/TUI resume cannot move raw history across profiles.
