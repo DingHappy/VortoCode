@@ -300,21 +300,25 @@ async def test_attach_client_taint_dispatch_fails_closed():
 
     got = []
 
-    async def confirm(_text, *, tainted):
-        got.append(tainted)
+    async def confirm(_text, *, tainted, taint_known=True):
+        got.append((tainted, taint_known))
         return True
 
-    # 老 serve 根本不发 tainted → 按可能有污点兜底
+    # 老 serve 根本不发 tainted → 兜底为污点，且标记"未知"（好让端如实解释，不谎称摄入过外部内容）
     assert await ProtocolClient._dispatch_confirm({"text": "x"}, confirm) is True
-    assert got[-1] is True, "缺 tainted 字段应兜底为 True（fail-closed）"
+    assert got[-1] == (True, False), "缺字段应 tainted=True 且 taint_known=False（fail-closed）"
 
-    # serve 显式发 null（不是省略）→ 仍按污点，绝不能 bool(None)=False 而 fail-open
+    # serve 显式发 null（不是省略）→ 仍按污点、仍算未知，绝不能 bool(None)=False 而 fail-open
     await ProtocolClient._dispatch_confirm({"text": "x", "tainted": None}, confirm)
-    assert got[-1] is True, "显式 tainted=null 应按 True 兜底，不能 fail-open"
+    assert got[-1] == (True, False), "显式 tainted=null 应按 True 兜底，不能 fail-open"
 
-    # serve 明确说未污点 → 才透传 False
+    # serve 明确说未污点 → 透传 False，且确知（taint_known=True）
     await ProtocolClient._dispatch_confirm({"text": "x", "tainted": False}, confirm)
-    assert got[-1] is False
+    assert got[-1] == (False, True)
+
+    # serve 明确说有污点 → True 且确知
+    await ProtocolClient._dispatch_confirm({"text": "x", "tainted": True}, confirm)
+    assert got[-1] == (True, True)
 
     # 缺 confirm 回调 → 直接拒
     assert await ProtocolClient._dispatch_confirm({"text": "x"}, None) is False
