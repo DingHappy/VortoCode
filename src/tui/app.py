@@ -1561,12 +1561,13 @@ class VortoCodeTUI(App):
         return await self._inline_confirm(self._taint_msg(message), scope="writes")
 
     def _taint_msg(self, message: str) -> str:
-        """污点态（本回合摄入过网页/搜索/MCP 外部内容）下给对外操作确认加警示前缀（D0 防提示注入）。"""
-        from src.agents.taint import is_tainted
-        if is_tainted():
-            return ("⚠ 本回合已摄入外部内容（网页/搜索/MCP），下面是对外操作，"
-                    "请人工核对是否确是你的本意（防提示注入）：\n" + message)
-        return message
+        """污点态（本回合摄入过网页/搜索/MCP 外部内容）下给确认加警示前缀（D0 防提示注入）。
+
+        文案复用内核的 `_taint_prefix()` —— **单一真相源**。此前 TUI 与内核各写一份警示，
+        改一处漏一处，正是三端漂移的典型症状。
+        """
+        from src.agents.main_agent import _taint_prefix
+        return _taint_prefix() + message
 
     async def _confirm_outward(self, message: str) -> bool:
         """外向操作（push / 开 PR 等推到远端的动作）确认：**始终弹窗**，不吃"始终允许写"的豁免。"""

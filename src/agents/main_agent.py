@@ -311,13 +311,58 @@ def research_parallel_cap(args: dict, *, default: int = 2, maximum: int = 5) -> 
     return maximum if reason else default
 
 
+_TAINT_WARNING = ("⚠ 本回合已摄入外部内容（网页/搜索/MCP）。下面这个操作是模型在读过外部内容之后"
+                  "提出的——请人工核对是否确是你的本意（防提示注入）：\n")
+
+
 def _taint_prefix() -> str:
-    """污点态（本回合摄入过不可信外部内容）下，给对外操作的确认文案加警示前缀（D0）。"""
+    """污点态（本回合摄入过不可信外部内容）下，给对外操作的确认文案加警示前缀（D0）。
+
+    注：文案前缀只是"让人看见"。**真正的拦截在 make_confirm_gate 里**——只加前缀是拦不住
+    自动放行的（CLI 的 --yes 压根不看 message 内容）。
+    """
     from src.agents.taint import is_tainted
-    if is_tainted():
-        return ("⚠ 本回合已摄入外部内容（网页/搜索/MCP），下面是**对外操作**，"
-                "请人工核对是否确是你的本意（防提示注入）：\n")
-    return ""
+    return _TAINT_WARNING if is_tainted() else ""
+
+
+def make_confirm_gate(ask_human, *, auto_approve: bool = False, can_ask_human: bool = True):
+    """把「要不要问人」的判定**收进内核**——端只负责「怎么问人」。
+
+    为什么必须上收（这是三端漂移的根因）：确认门此前是"语义由调用方注入"，于是同一条安全规矩
+    要在 TUI / CLI / Web / IM 各写一遍。实际后果已经出现过两次——污点检查只写在了 TUI 里，
+    CLI 的 `--yes` 和 Web 的确认门完全不查；每加一个端、加一条规矩，就漏一处。
+
+    端只回答两个问题：
+      - `can_ask_human`：这个端**问得到人**吗（headless 非 TTY / 无人值守会话 = 问不到）
+      - `auto_approve`：是否已被授权自动放行（CLI 的 `--yes`）
+    「要不要问、能不能免」由这里统一决定：
+
+      **污点回合（本回合摄入过网页/搜索/MCP 的外部内容）→ 一切自动放行失效。**
+      必须真人确认；问不到人就**拒绝**（fail-closed）——绝不让外部内容诱导出的操作被自动放行，
+      那正是提示注入最想要的路径。
+    """
+    from src.agents.taint import is_tainted
+
+    async def gated(message: str) -> bool:
+        tainted = is_tainted()
+        text = (_TAINT_WARNING + str(message)) if tainted else str(message)
+        if tainted and not can_ask_human:
+            # 污点 + 问不到人 → **一律拒**（--yes / 无人值守都走这条）。
+            # 仍然调一次 ask_human：不是征求意见（结果被无视），而是给端一个**如实交代**的机会
+            # ——用户得知道"为什么这次没放行"，headless 下尤其不能默默失败。
+            try:
+                await ask_human(text)
+            except Exception:  # noqa: BLE001 —— 交代失败不该影响"拒绝"这个结论
+                pass
+            return False
+        if tainted:
+            return bool(await ask_human(text))   # 能问到人：auto_approve 失效，强制真人拍板
+        if auto_approve:
+            return True
+        # 非污点、未授权：交给端——问得到人就问，问不到人的端（headless）自己返回 False 并说明原因
+        return bool(await ask_human(text))
+
+    return gated
 
 
 def _dev_review_enabled() -> bool:
@@ -3082,7 +3127,9 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
         if not decision.allowed:
             return f"拒绝执行：{decision.reason}"
         sandbox_notice = f"\n{decision.reason}" if not decision.isolated else ""
-        if not await confirm(_taint_prefix() + f"在仓库根目录{label}？\n  $ {cmd}{sandbox_notice}"):
+        # 污点警示由内核的 confirm gate 统一加（make_confirm_gate）——这里不再各自拼前缀，
+        # 否则新加的确认点又会漏（此前 9 个确认点里只有 2 个记得加）。
+        if not await confirm(f"在仓库根目录{label}？\n  $ {cmd}{sandbox_notice}"):
             return f"用户拒绝了命令：{cmd}"
         # 若预判时不是已确认的 auto fallback，执行阶段必须继续要求隔离，避免 backend/policy
         # 在确认后变化时静默降级。显式 off 仍由 policy 自身放行。
@@ -3156,8 +3203,8 @@ def build_pr_tool(repo_root: str, confirm) -> list[Tool]:
         body = str(args.get("body", "")).strip()
         if not branch or not title:
             return "open_pr 需要 branch 和 title。"
-        if not await confirm(_taint_prefix()
-                             + f"把分支 {branch} push 到 origin 并开 PR「{title}」？这是外向操作（推到远端、建 PR）。"):
+        if not await confirm(
+                f"把分支 {branch} push 到 origin 并开 PR「{title}」？这是外向操作（推到远端、建 PR）。"):
             return f"用户拒绝了为 {branch} 开 PR。"
         res = await asyncio.to_thread(push_and_open_pr, repo_root, branch, title, body)
         if res["ok"]:
