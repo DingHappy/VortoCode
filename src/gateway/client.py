@@ -142,6 +142,39 @@ class ProtocolClient:
             with contextlib.suppress(Exception):
                 await self._ws.send_json({"type": P.AGENT_CANCEL})
 
+    @staticmethod
+    async def _dispatch_confirm(evt: Dict[str, Any],
+                                confirm: Optional[Callable[..., Any]]) -> bool:
+        """把一条 agent_confirm 事件转给端侧 confirm，返回 ok（缺省/异常一律拒，安全优先）。
+
+        污点 fail-closed 有三处易错点，都在这里钉死：
+        1. tainted 走**结构化字段**。老 serve 不发它、或显式发 ``null`` → 都按"**可能有污点**"处理
+           （``bool(evt.get("tainted", True))`` 只挡缺键，挡不住显式 null → bool(None)=False 会 fail-open）。
+        2. 同时透传 ``taint_known``（字段确实到了、且非 null 才为真）。端据此区分"确知有污点"与
+           "对端报不了、我们兜底为真"——好给后者一句可执行的话（升级 serve / 交互确认），而不是撒谎
+           说"本回合摄入过外部内容"。
+        3. 老 confirm 回调不收关键字会抛 TypeError → 兼容重试一次；**重试再抛也要 fail-closed**，
+           绝不能让异常冒出接收循环把整个回合带崩（外层 except 是 try 的兄弟，兜不住 handler 内的抛出）。
+        """
+        if confirm is None:
+            return False
+        text = str(evt.get("text", ""))
+        raw = evt.get("tainted", True)
+        # 缺字段 / 显式 null 都算"污点状态未知"→ 按可能有污点兜底（fail-closed）。同时把"是否确知"
+        # 透传给端：好让它对"对端太旧、报不了污点"给出可执行提示，而不是对未知一口咬定"本回合摄入
+        # 过外部内容"——那是撒谎，也让老 serve 下的 `--yes` 变成一句莫名其妙的全量拒绝。
+        taint_known = "tainted" in evt and evt.get("tainted") is not None
+        tainted = True if raw is None else bool(raw)
+        try:
+            return bool(await confirm(text, tainted=tainted, taint_known=taint_known))
+        except TypeError:
+            try:
+                return bool(await confirm(text))
+            except Exception:  # noqa: BLE001 —— 兼容重试仍失败：拒，别把接收循环带崩
+                return False
+        except Exception:  # noqa: BLE001
+            return False
+
     async def run_turn(self, prompt: str, *, mode: str = "plan",
                        images: Optional[list] = None, audio: Optional[list] = None,
                        on_say: Optional[Callable[[str], None]] = None,
@@ -196,12 +229,7 @@ class ProtocolClient:
             elif etype == P.AGENT_PLAN:
                 _safe(on_plan, evt.get("items") or [])
             elif etype == P.AGENT_CONFIRM:       # 确认往返：问端侧，应答回传（缺省拒绝，安全优先）
-                ok = False
-                if confirm is not None:
-                    try:
-                        ok = bool(await confirm(str(evt.get("text", ""))))
-                    except Exception:  # noqa: BLE001
-                        ok = False
+                ok = await self._dispatch_confirm(evt, confirm)
                 await self._ws.send_json(
                     {"type": P.AGENT_CONFIRM_RESPONSE, "id": evt.get("id"), "ok": ok})
             elif etype == P.AGENT_DONE:

@@ -95,7 +95,11 @@ def _make_ws_confirm(websocket, q):
         cid = uuid.uuid4().hex
         fut = asyncio.get_running_loop().create_future()
         _PENDING_CONFIRMS[cid] = fut
-        q.put_nowait(P.make_event(P.AGENT_CONFIRM, id=cid, text=str(message)))
+        # tainted 作为**结构化字段**下发：attach 客户端据此判断能否自动放行。
+        # 靠客户端匹配警示文案是 fail-open 的（换版本/改措辞就失效）——这里给它确定的信号。
+        from src.agents.taint import is_tainted
+        q.put_nowait(P.make_event(P.AGENT_CONFIRM, id=cid, text=str(message),
+                                  tainted=bool(is_tainted())))
         try:
             return bool(await asyncio.wait_for(fut, timeout=300))
         except Exception:  # noqa: BLE001  # 超时/取消 → 拒绝（安全）
@@ -141,7 +145,10 @@ def _new_agent():
         if fn is not None:
             fn(msg)
 
-    agent = build_session(os.getcwd(), kind="web", confirm=_confirm, on_progress=_progress)
+    # Web 有人在前端看着 → 问得到人（can_ask_human=True）；没有任何自动放行（auto_approve=False）。
+    # 这两个必须**显式声明**：内核 gate 的默认值是最严格的（问不到人），新端忘了声明只会更严、不会更松。
+    agent = build_session(os.getcwd(), kind="web", confirm=_confirm, on_progress=_progress,
+                          can_ask_human=True)
     agent._web_confirm_holder = confirm_holder     # _run_agent_turn 每回合把它指向当前 ws
     agent._web_progress_holder = progress_holder
     return agent
