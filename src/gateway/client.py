@@ -142,6 +142,32 @@ class ProtocolClient:
             with contextlib.suppress(Exception):
                 await self._ws.send_json({"type": P.AGENT_CANCEL})
 
+    @staticmethod
+    async def _dispatch_confirm(evt: Dict[str, Any],
+                                confirm: Optional[Callable[..., Any]]) -> bool:
+        """把一条 agent_confirm 事件转给端侧 confirm，返回 ok（缺省/异常一律拒，安全优先）。
+
+        污点 fail-closed 有两处易错点，都在这里钉死：
+        1. tainted 走**结构化字段**。老 serve 不发它、或显式发 ``null`` → 都按"**可能有污点**"处理
+           （``bool(evt.get("tainted", True))`` 只挡缺键，挡不住显式 null → bool(None)=False 会 fail-open）。
+        2. 老 confirm 回调不收 tainted 关键字会抛 TypeError → 兼容重试一次；**重试再抛也要 fail-closed**，
+           绝不能让异常冒出接收循环把整个回合带崩（外层 except 是 try 的兄弟，兜不住 handler 内的抛出）。
+        """
+        if confirm is None:
+            return False
+        text = str(evt.get("text", ""))
+        raw = evt.get("tainted", True)
+        tainted = True if raw is None else bool(raw)
+        try:
+            return bool(await confirm(text, tainted=tainted))
+        except TypeError:
+            try:
+                return bool(await confirm(text))
+            except Exception:  # noqa: BLE001 —— 兼容重试仍失败：拒，别把接收循环带崩
+                return False
+        except Exception:  # noqa: BLE001
+            return False
+
     async def run_turn(self, prompt: str, *, mode: str = "plan",
                        images: Optional[list] = None, audio: Optional[list] = None,
                        on_say: Optional[Callable[[str], None]] = None,
@@ -196,17 +222,7 @@ class ProtocolClient:
             elif etype == P.AGENT_PLAN:
                 _safe(on_plan, evt.get("items") or [])
             elif etype == P.AGENT_CONFIRM:       # 确认往返：问端侧，应答回传（缺省拒绝，安全优先）
-                ok = False
-                if confirm is not None:
-                    try:
-                        # tainted 是**结构化字段**。老 serve 不发它 → 读不到时按"**可能有污点**"处理
-                        # （fail-closed）：宁可多问一次，也不能因为对端版本旧就把 --yes 放行了。
-                        tainted = bool(evt.get("tainted", True))
-                        ok = bool(await confirm(str(evt.get("text", "")), tainted=tainted))
-                    except TypeError:            # 老的 confirm 回调不收 tainted → 兼容，但仍按污点处理
-                        ok = bool(await confirm(str(evt.get("text", ""))))
-                    except Exception:  # noqa: BLE001
-                        ok = False
+                ok = await self._dispatch_confirm(evt, confirm)
                 await self._ws.send_json(
                     {"type": P.AGENT_CONFIRM_RESPONSE, "id": evt.get("id"), "ok": ok})
             elif etype == P.AGENT_DONE:

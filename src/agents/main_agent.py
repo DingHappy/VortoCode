@@ -3525,11 +3525,8 @@ def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable
         # 此前这里根本没传 confirm，publish/delete 完全绕过了 gate（自审逮到）。
         # artifact 的 confirm 签名是 (preview, is_update)，这里适配成内核 gate 的 (message)。
         async def _art_publish(preview: dict, is_update: bool) -> bool:
-            from src.agents.taint import is_tainted
-            # 既有约定：批准后再发不再问（对齐 CC）。但**污点回合下连更新也要过门**——
-            # 否则"先发一版无害的、再借外部内容诱导更新成恶意页面"就绕过了确认。
-            if is_update and not is_tainted():
-                return True
+            # "首次发布问、清白更新静默、污点更新仍问"的策略**统一在 build_artifact_tools._publish 里**
+            # （工具边界，覆盖所有端）。这里只做"被调到就过内核 gate"——不再各写一遍污点判定。
             what = "更新" if is_update else "发布"
             return bool(await confirm(
                 f"{what}制品「{preview.get('title') or preview.get('id')}」？"
