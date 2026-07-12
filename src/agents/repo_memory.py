@@ -83,8 +83,25 @@ def load_repo_memory(repo_root: str) -> str:
     """拼成可直接追加到 extra_system 的一段；没有内容则空串。
 
     装配时调用一次（会话内静态 → 不破坏 system 前缀稳定）。
+
+    **注入前脱敏一次**（防御纵深）：repo.md 是普通文件——`run_command`、编辑器、别的进程都能直接
+    往里写，**绕过 remember_repo 的 MemoryWritePolicy**。而它每个会话都进系统提示（无人值守的
+    heartbeat 也读），一旦被塞进凭据，就等于**每一回合都把密钥喂给模型**（潜在外传），所以读的
+    时候也抹一遍疑似凭据。
+
+    **只脱敏、不再逐行剥"指令性文本"**：曾经这里跑整套 `sanitize_persistent_summary`，但那套
+    per-line 指令启发式会误伤正常的中文构建笔记（"部署前先覆盖之前的缓存配置""不要把调试日志展示
+    给用户"都会命中），把合法事实**静默替换成过滤标记**、每个会话都丢——自审逮到的真回归。
+    而它挡的那点注入价值近乎为零：能往 repo.md 写字的回合（run_command 已放行）本就能在当轮
+    直接借未过门的 web_fetch 外传，"留到以后"并不扩大攻击面；真正的出网防线在别处（无人值守
+    直接 with_web=False，交互态靠污点门）。所以这里只保留高价值、低误报的凭据脱敏。
     """
     body, dropped = repo_memory_body(repo_root)
+    if not body:
+        return ""
+    from src.memory.write_policy import redact_secret_like
+    body, _reasons = redact_secret_like(body)
+    body = body.strip()[:MAX_REPO_MEMORY_CHARS]
     if not body:
         return ""
     note = ""

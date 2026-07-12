@@ -311,13 +311,79 @@ def research_parallel_cap(args: dict, *, default: int = 2, maximum: int = 5) -> 
     return maximum if reason else default
 
 
+_TAINT_WARNING = ("⚠ 本回合已摄入外部内容（网页/搜索/MCP）。下面这个操作是模型在读过外部内容之后"
+                  "提出的——请人工核对是否确是你的本意（防提示注入）：\n")
+
+
 def _taint_prefix() -> str:
-    """污点态（本回合摄入过不可信外部内容）下，给对外操作的确认文案加警示前缀（D0）。"""
+    """污点态（本回合摄入过不可信外部内容）下，给对外操作的确认文案加警示前缀（D0）。
+
+    注：文案前缀只是"让人看见"。**真正的拦截在 make_confirm_gate 里**——只加前缀是拦不住
+    自动放行的（CLI 的 --yes 压根不看 message 内容）。
+    """
     from src.agents.taint import is_tainted
-    if is_tainted():
-        return ("⚠ 本回合已摄入外部内容（网页/搜索/MCP），下面是**对外操作**，"
-                "请人工核对是否确是你的本意（防提示注入）：\n")
-    return ""
+    return _TAINT_WARNING if is_tainted() else ""
+
+
+def make_confirm_gate(ask_human, *, auto_approve: bool = False, can_ask_human: bool = False,
+                      on_decision=None):
+    """把「要不要问人」的判定**收进内核**——端只负责「怎么问人」和「怎么如实交代」。
+
+    为什么必须上收（这是三端漂移的根因）：确认门此前是"语义由调用方注入"，于是同一条安全规矩
+    要在 TUI / CLI / Web / IM 各写一遍。实际后果已经出现过两次——污点检查只写在了 TUI 里，
+    CLI 的 `--yes` 和 Web 的确认门完全不查；每加一个端、加一条规矩，就漏一处。
+
+    端声明两件事（**默认都是最严格的**——新端忘了声明只会更严，不会更松）：
+      - `can_ask_human`：这个端**问得到人**吗（headless 非 TTY / 无人值守会话 = 问不到）
+      - `auto_approve`：是否已被授权自动放行（CLI 的 `--yes`）
+    `on_decision(operation, decision, tainted)`：**每个决定**都回调一次（含自动放行/自动拒绝），
+    端用它打印/审计——不然自动放行会静默发生、自动拒绝会不说原因。
+    注意它拿到的是 **operation（不含警示横幅的原始操作文案）**，端要展示"被拒的是什么"就靠它。
+
+    「要不要问、能不能免」由这里统一决定：
+
+      **污点回合（本回合摄入过网页/搜索/MCP 的外部内容）→ 一切自动放行失效。**
+      能问到人就强制真人拍板；问不到人就**拒绝**（fail-closed）——绝不让外部内容诱导出的操作
+      被自动放行，那正是提示注入最想要的路径。
+    """
+    from src.agents.taint import is_tainted
+
+    def _tell(operation: str, decision: bool, tainted: bool) -> None:
+        if on_decision is None:
+            return
+        try:
+            on_decision(operation, decision, tainted)
+        except Exception:  # noqa: BLE001 —— 交代/审计失败不该影响决定本身
+            pass
+
+    async def gated(message: str) -> bool:
+        operation = str(message)                        # 原始操作文案（端展示"拒了什么"用这个）
+        tainted = is_tainted()
+        if tainted:
+            if not can_ask_human:
+                _tell(operation, False, True)           # 污点 + 无人 → 一律拒（--yes / 无人值守）
+                return False
+            ok = bool(await ask_human(_TAINT_WARNING + operation))   # auto_approve 失效，真人拍板
+            _tell(operation, ok, True)
+            return ok
+        if auto_approve:
+            _tell(operation, True, False)               # 自动放行也要留痕，不能静默
+            return True
+        if not can_ask_human:
+            # 问不到人、也没被授权 → 拒。**绝不采纳端的返回值**：它既然声明了"问不到人"，
+            # 它的 ask_human 就不可能代表任何人的意思（自审：否则这个声明在非污点路径上等于没用）。
+            _tell(operation, False, False)
+            return False
+        ok = bool(await ask_human(operation))           # 问得到人的端：真问
+        _tell(operation, ok, False)
+        return ok
+
+    return gated
+
+
+async def deny_all(_message: str) -> bool:
+    """"问不到人"的端的 ask_human：一律拒。用于无人值守会话与 confirm 缺省时的 fail-closed 兜底。"""
+    return False
 
 
 def _dev_review_enabled() -> bool:
@@ -3082,7 +3148,9 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
         if not decision.allowed:
             return f"拒绝执行：{decision.reason}"
         sandbox_notice = f"\n{decision.reason}" if not decision.isolated else ""
-        if not await confirm(_taint_prefix() + f"在仓库根目录{label}？\n  $ {cmd}{sandbox_notice}"):
+        # 污点警示由内核的 confirm gate 统一加（make_confirm_gate）——这里不再各自拼前缀，
+        # 否则新加的确认点又会漏（此前 9 个确认点里只有 2 个记得加）。
+        if not await confirm(f"在仓库根目录{label}？\n  $ {cmd}{sandbox_notice}"):
             return f"用户拒绝了命令：{cmd}"
         # 若预判时不是已确认的 auto fallback，执行阶段必须继续要求隔离，避免 backend/policy
         # 在确认后变化时静默降级。显式 off 仍由 policy 自身放行。
@@ -3156,8 +3224,8 @@ def build_pr_tool(repo_root: str, confirm) -> list[Tool]:
         body = str(args.get("body", "")).strip()
         if not branch or not title:
             return "open_pr 需要 branch 和 title。"
-        if not await confirm(_taint_prefix()
-                             + f"把分支 {branch} push 到 origin 并开 PR「{title}」？这是外向操作（推到远端、建 PR）。"):
+        if not await confirm(
+                f"把分支 {branch} push 到 origin 并开 PR「{title}」？这是外向操作（推到远端、建 PR）。"):
             return f"用户拒绝了为 {branch} 开 PR。"
         res = await asyncio.to_thread(push_and_open_pr, repo_root, branch, title, body)
         if res["ok"]:
@@ -3422,7 +3490,7 @@ def build_skill_tools(repo_root: str, confirm) -> list[Tool]:
 def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable[[str], None]] = None,
                       with_artifacts: bool = False, draft_pr: bool = False,
                       memory_source: str = "agent", memory_session_id=None,
-                      capabilities: Any = None) -> list[Tool]:
+                      capabilities: Any = None, with_web: bool = True) -> list[Tool]:
     """标准主 agent 工具集（headless CLI 与 Web /agent 共用，保证二者"同源"、不漂移）。
 
     此前 cli._build_headless_agent 与 web._new_agent 各自手写同一串 build_*，极易漂移
@@ -3431,22 +3499,45 @@ def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable
       + memory（跨会话长期记忆）+ skill（use_skill/save_skill）
       [+ artifact（发布/列制品，仅 with_artifacts）] + dev（隔离实现/并行，绿落 vorto 分支）
       + command（run_command）+ pr（open_pr）。
-    confirm: async (message)->bool 确认门——CLI 走 --yes 门控、Web 走 WS 确认，语义由调用方注入。
+    confirm: async (message)->bool 确认门。**必须是 make_confirm_gate 包过的**（见 build_session）
+      ——"要不要问、能不能免"由内核判，端只负责怎么问人。别再往这里塞裸 confirm。
     on_progress: dev 流水线进度回调（长任务边跑边播）。
     with_artifacts: 是否含制品工具（Web 有查看页故开；headless CLI 无浏览器故关）。
+    with_web: 是否含联网工具。**无人值守会话必须传 False** —— web_fetch 是 read_only、不过确认门，
+      而 GET 的 query string 就是一条外传通道；无人值守下系统提示可能被本地文件（repo.md /
+      BACKLOG.md / HEARTBEAT.md）污染，一旦模型被诱导去 fetch 攻击者的 URL，就是零人工介入的
+      静默外传。无人值守本来也不需要出网（领 BACKLOG 干活、跑评测都不用）。
     TUI 不走本工厂——它用富 UI 版写/dev/command 工具（着色 diff + ConfirmScreen），刻意不同源。
     注：调用方（CLI/Web）应把 `skill_catalog(repo_root)` 注入 extra_system，模型才知道有哪些技能可 use_skill。
     """
     tools = (build_read_tools(repo_root)
              + build_research_tools(repo_root, confirm=confirm, on_progress=on_progress,
                                     capabilities=capabilities)
-             + build_web_tools()
              + build_memory_tools(repo_root, confirm, source=memory_source,
                                   session_id=memory_session_id)
              + build_skill_tools(repo_root, confirm))
+    if with_web:
+        tools += build_web_tools()
     if with_artifacts:
         from src.web.artifacts import build_artifact_tools    # 惰性导入：避免 agents 层在导入期硬依赖 web
-        tools += build_artifact_tools(repo_root)
+
+        # 制品是**对外发布**（写盘 + 经 /artifact/<id> 提供服务）、删除不可逆 → 必须过确认门。
+        # 此前这里根本没传 confirm，publish/delete 完全绕过了 gate（自审逮到）。
+        # artifact 的 confirm 签名是 (preview, is_update)，这里适配成内核 gate 的 (message)。
+        async def _art_publish(preview: dict, is_update: bool) -> bool:
+            # "首次发布问、清白更新静默、污点更新仍问"的策略**统一在 build_artifact_tools._publish 里**
+            # （工具边界，覆盖所有端）。这里只做"被调到就过内核 gate"——不再各写一遍污点判定。
+            what = "更新" if is_update else "发布"
+            return bool(await confirm(
+                f"{what}制品「{preview.get('title') or preview.get('id')}」？"
+                f"它会被写盘并经 /artifact/ 对外提供访问。"))
+
+        async def _art_delete(preview: dict) -> bool:
+            return bool(await confirm(
+                f"删除制品「{preview.get('title') or preview.get('id')}」？此操作不可逆。"))
+
+        tools += build_artifact_tools(repo_root, confirm=_art_publish,
+                                      confirm_delete=_art_delete)
     tools += (build_dev_tools(repo_root, on_progress=on_progress, confirm=confirm, draft_pr=draft_pr,
                               capabilities=capabilities)
               + build_command_tool(repo_root, confirm) + build_pr_tool(repo_root, confirm))

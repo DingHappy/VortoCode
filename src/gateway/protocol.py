@@ -79,7 +79,11 @@ OUTBOUND: Dict[str, _Spec] = {
     AGENT_ERROR: (("text",), ()),
     AGENT_DONE: ((), ()),
     AGENT_CANCELLED: (("text",), ()),
-    AGENT_CONFIRM: (("id", "text"), ()),
+    # tainted：本回合是否摄入过外部内容（网页/搜索/MCP）。**结构化字段，不能靠客户端猜文案**——
+    # attach 客户端跨进程拿不到 serve 侧的污点状态，若靠字符串匹配警示横幅来推断，
+    # 就是 fail-open：serve 换个版本/改个措辞，客户端的 --yes 又会在污点回合放行。
+    # 可选字段（老客户端忽略即可，不破冻结协议）；**客户端读不到它时必须按"可能有污点"处理**。
+    AGENT_CONFIRM: (("id", "text"), ("tainted",)),
     AGENT_TTS_AUDIO: (("id", "data"), ()),
     AGENT_TTS_ERROR: (("id", "text"), ()),
     TASK_UPDATE: (("data",), ()),
