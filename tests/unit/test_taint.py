@@ -227,12 +227,20 @@ async def test_auto_recalled_memory_marker_retaints_after_turn_reset():
 # ------------------------------------------------------------ 对外操作确认加警示（工厂：CLI/Web）
 @pytest.mark.asyncio
 async def test_command_confirm_warns_when_tainted():
+    """污点警示由**内核的 confirm gate** 统一加（make_confirm_gate），工具内部不再各自拼前缀。
+
+    此前是每个工具自己拼 `_taint_prefix()`——9 个确认点里只有 2 个记得加，加一个新确认点就漏一处。
+    所以这里必须经 gate 装配（真实装配路径就是这样），而不是给工具塞一个裸 confirm。
+    """
+    from src.agents.main_agent import make_confirm_gate
     msgs = []
 
     async def _deny(m):
         msgs.append(m)
         return False                                  # 拒绝 → 不真跑命令
-    tool = build_command_tool(".", _deny)[0]
+
+    gate = make_confirm_gate(_deny, auto_approve=False, can_ask_human=True)
+    tool = build_command_tool(".", gate)[0]
 
     await tool.handler({"command": "echo hi"})
     assert "外部内容" not in msgs[-1]                  # 未污点：可有沙箱提示，但无注入警示
@@ -273,15 +281,18 @@ async def test_full_loop_fetch_then_command_is_capability_blocked(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_open_pr_confirm_warns_when_tainted():
+    """同上：警示由内核 gate 统一加，故必须经 gate 装配（真实装配路径）。"""
+    from src.agents.main_agent import make_confirm_gate
     msgs = []
 
     async def _deny(m):
         msgs.append(m)
         return False
-    tool = build_pr_tool(".", _deny)[0]
+
+    tool = build_pr_tool(".", make_confirm_gate(_deny, can_ask_human=True))[0]
     taint.mark_tainted()
     await tool.handler({"branch": "vorto/x", "title": "t"})
-    assert "⚠" in msgs[-1]
+    assert "⚠" in msgs[-1] and "外部内容" in msgs[-1]
 
 
 # ------------------------------------------------------------ 三端一致（本 PR 自带，PR-1 合并后可并入契约）
