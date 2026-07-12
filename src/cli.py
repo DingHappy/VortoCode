@@ -489,13 +489,14 @@ async def _run_agent_attached(prompt, url, *, build=False, auto_yes=False, as_js
             sys.stdout.flush()
             seen["n"] = len(text)
 
-    async def confirm(text, *, tainted: bool = True):
+    async def confirm(text, *, tainted: bool = True, taint_known: bool = True):
         """attach 的确认门。
 
         attach 是**跨进程**的：agent 在 serve 侧跑，污点状态（contextvar）传不过来。
         所以污点由协议的 `agent_confirm.tainted` **结构化字段**下发（见 protocol.py）——
         绝不能靠匹配警示文案来猜：serve 换个版本/改个措辞，猜测就失效，`--yes` 又会在污点回合
-        放行（fail-open）。老 serve 不发这个字段时，client 按 `tainted=True` 兜底（fail-closed）。
+        放行（fail-open）。老 serve 不发这个字段时，client 按 `tainted=True` 兜底（fail-closed），
+        并置 `taint_known=False`——下面据此如实说明是"确知污点"还是"对端报不了、我们从严"。
         """
         first = (text or "").splitlines()[0] if text else ""
         if auto_yes and not tainted:
@@ -505,8 +506,14 @@ async def _run_agent_attached(prompt, url, *, build=False, auto_yes=False, as_js
             print(f"需要确认：{text}", file=sys.stderr, flush=True)
             ans = (await asyncio.to_thread(input, "允许吗？[y/N] ")).strip().lower()
             return ans in ("y", "yes")
-        why = ("本回合摄入过外部内容，--yes 不放行（防提示注入）" if tainted
-               else "非交互终端，需 --yes 放行")
+        if not taint_known:
+            # tainted 是"未知→兜底为真"，不是"确知有污点"：对端 serve 版本旧、报不了本回合污点状态。
+            # 别谎称"摄入过外部内容"，也别静默拒绝——给出可执行出路。
+            why = "对端未上报本回合污点状态（serve 可能较旧）；--yes 从严不放行，请升级 serve 或用交互终端确认"
+        elif tainted:
+            why = "本回合摄入过外部内容，--yes 不放行（防提示注入）"
+        else:
+            why = "非交互终端，需 --yes 放行"
         say(f"✗ 拒绝（{why}）：{first}")
         return False
 
