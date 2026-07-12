@@ -199,6 +199,11 @@ class ProtocolClient:
                 ok = False
                 if confirm is not None:
                     try:
+                        # tainted 是**结构化字段**。老 serve 不发它 → 读不到时按"**可能有污点**"处理
+                        # （fail-closed）：宁可多问一次，也不能因为对端版本旧就把 --yes 放行了。
+                        tainted = bool(evt.get("tainted", True))
+                        ok = bool(await confirm(str(evt.get("text", "")), tainted=tainted))
+                    except TypeError:            # 老的 confirm 回调不收 tainted → 兼容，但仍按污点处理
                         ok = bool(await confirm(str(evt.get("text", ""))))
                     except Exception:  # noqa: BLE001
                         ok = False

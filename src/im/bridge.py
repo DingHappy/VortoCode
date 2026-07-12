@@ -63,8 +63,10 @@ class IMBridge:
             if fn is not None:
                 fn(msg)
 
+        # IM 有配对的主人在手机那头（send_confirm 按钮/文本应答）→ 问得到人；无自动放行。
+        # 显式声明：内核 gate 默认最严格（问不到人），忘了声明只会更严、不会更松。
         agent = build_session(self.repo_root, kind="im", confirm=_confirm,
-                              on_progress=_progress, llm=self._llm)
+                              on_progress=_progress, llm=self._llm, can_ask_human=True)
         self._restore_session(agent)
         return agent
 

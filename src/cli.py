@@ -413,7 +413,8 @@ def _strip_markup(s: str) -> str:
 
 
 def _build_headless_agent(cwd, *, max_steps, on_tool, on_plan, confirm, llm=None, on_progress=None,
-                          capability_profile="local", auto_approve=False, can_ask_human=True):
+                          capability_profile="local", auto_approve=False, can_ask_human=False,
+                          on_decision=None):
     """薄壳：装配走 gateway 的单一工厂（kind="cli"，无制品、读 .vortocode/hooks.yaml）。
 
     工具集与网页 /agent 同源（同一工厂），签名保持兼容供既有调用方/测试。
@@ -425,7 +426,8 @@ def _build_headless_agent(cwd, *, max_steps, on_tool, on_plan, confirm, llm=None
     return build_session(cwd, kind="cli", confirm=confirm, on_progress=on_progress,
                          on_tool=on_tool, on_plan=on_plan, llm=llm, max_steps=max_steps,
                          capability_profile=capability_profile,
-                         auto_approve=auto_approve, can_ask_human=can_ask_human)
+                         auto_approve=auto_approve, can_ask_human=can_ask_human,
+                         on_decision=on_decision)
 
 
 def _looks_like_serve_url(s: str) -> bool:
@@ -487,14 +489,15 @@ async def _run_agent_attached(prompt, url, *, build=False, auto_yes=False, as_js
             sys.stdout.flush()
             seen["n"] = len(text)
 
-    async def confirm(text):
+    async def confirm(text, *, tainted: bool = True):
+        """attach 的确认门。
+
+        attach 是**跨进程**的：agent 在 serve 侧跑，污点状态（contextvar）传不过来。
+        所以污点由协议的 `agent_confirm.tainted` **结构化字段**下发（见 protocol.py）——
+        绝不能靠匹配警示文案来猜：serve 换个版本/改个措辞，猜测就失效，`--yes` 又会在污点回合
+        放行（fail-open）。老 serve 不发这个字段时，client 按 `tainted=True` 兜底（fail-closed）。
+        """
         first = (text or "").splitlines()[0] if text else ""
-        # attach 是跨进程的：agent 在 serve 侧跑，污点状态（contextvar）传不到这里来。
-        # 但 serve 侧的 confirm gate 已经把污点警示打进了确认文案——据此识别，
-        # 这样 --yes 在污点回合同样失效（否则"读了网页 → 自动放行写操作"这条注入路径在
-        # attach 模式下依然敞着）。用 main_agent 导出的常量匹配，保持单一真相源。
-        from src.agents.main_agent import _TAINT_WARNING
-        tainted = _TAINT_WARNING.splitlines()[0] in (text or "")
         if auto_yes and not tainted:
             say(f"✓ 自动确认：{first}")
             return True
@@ -502,8 +505,9 @@ async def _run_agent_attached(prompt, url, *, build=False, auto_yes=False, as_js
             print(f"需要确认：{text}", file=sys.stderr, flush=True)
             ans = (await asyncio.to_thread(input, "允许吗？[y/N] ")).strip().lower()
             return ans in ("y", "yes")
-        why = "本回合摄入过外部内容，--yes 不放行" if tainted else "非交互终端，需 --yes 放行"
-        say(f"✗ 自动拒绝（{why}）：{first}")
+        why = ("本回合摄入过外部内容，--yes 不放行（防提示注入）" if tainted
+               else "非交互终端，需 --yes 放行")
+        say(f"✗ 拒绝（{why}）：{first}")
         return False
 
     client = ProtocolClient(url, sid=sid, token=token)
@@ -602,12 +606,25 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
     # headless 没有交互终端 → 问不到人（can_ask_human=False）。--yes 是"已授权自动放行"。
     # **要不要问、能不能免，由内核的 confirm gate 判**（污点回合下 --yes 一律失效 → 拒绝）：
     # 让模型读了网页再自动放行写操作，正是提示注入最想要的路径。
-    async def _ask_human(message):                # headless 问不到人，这里只负责如实交代拒绝原因
-        first = (message or "").splitlines()[0] if message else ""
-        if not quiet:
-            print(f"\033[2m✗ 自动拒绝（需 --yes 放行；若本回合摄入过外部内容，--yes 也不放行）："
-                  f"{first}\033[0m", file=sys.stderr, flush=True)
+    async def _ask_human(_message):               # headless 问不到人；决定与交代都走 _on_decision
         return False
+
+    def _on_decision(operation, ok, tainted):
+        """每个确认决定都过这里——自动放行也要留痕，自动拒绝要说清**拒的是什么**。
+
+        注意用的是 `operation`（内核给的原始操作文案，不含污点警示横幅）：
+        若直接取带横幅那份的首行，用户只会看到一大段警示、看不到被拒的究竟是哪条命令。
+        """
+        if quiet:
+            return
+        first = (operation or "").splitlines()[0]
+        if ok:
+            print(f"\033[2m✓ 自动确认：{first}\033[0m", file=sys.stderr, flush=True)
+        elif tainted:
+            print(f"\033[2m✗ 拒绝（本回合摄入过外部内容，--yes 不放行 · 防提示注入）："
+                  f"{first}\033[0m", file=sys.stderr, flush=True)
+        else:
+            print(f"\033[2m✗ 自动拒绝（需 --yes 放行）：{first}\033[0m", file=sys.stderr, flush=True)
 
     def _progress(msg):                           # dev 流水线进度 → stderr（--quiet 静默）
         if not quiet:
@@ -616,7 +633,8 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
     agent = _build_headless_agent(cwd, max_steps=max_steps, on_tool=_on_tool,
                                   on_plan=_on_plan, confirm=_ask_human, llm=llm,
                                   on_progress=_progress, capability_profile=profile,
-                                  auto_approve=auto_yes, can_ask_human=False)
+                                  auto_approve=auto_yes, can_ask_human=False,
+                                  on_decision=_on_decision)
     if model:                                     # --model：本次覆盖 .env 的 DEFAULT_MODEL
         try:
             agent.set_model(model)
