@@ -83,8 +83,17 @@ def load_repo_memory(repo_root: str) -> str:
     """拼成可直接追加到 extra_system 的一段；没有内容则空串。
 
     装配时调用一次（会话内静态 → 不破坏 system 前缀稳定）。
+
+    **注入前再过滤一次**（防御纵深）：写入侧 `remember_repo` 已经过 MemoryWritePolicy 只收 durable，
+    但 repo.md 是普通文件——`run_command`、编辑器、别的进程都能直接往里写，**绕过写入策略**。
+    而它每个会话都进系统提示（无人值守的 heartbeat 也读），是提示注入最理想的落脚点。
+    所以读的时候也剥一遍指令性文本与疑似凭据（与压缩纪要落盘用的是同一把刷子）。
     """
     body, dropped = repo_memory_body(repo_root)
+    if not body:
+        return ""
+    from src.memory.write_policy import sanitize_persistent_summary
+    body, _reasons = sanitize_persistent_summary(body, limit=MAX_REPO_MEMORY_CHARS)
     if not body:
         return ""
     note = ""
