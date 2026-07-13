@@ -1427,9 +1427,15 @@ class VortoCodeTUI(App):
 
     _CONFIRM_CHOICES = [("yes", "确认"), ("always", "始终允许（记住）"), ("no", "取消")]
 
+    # 这些作用域的确认**永不可铸造常驻授权**：不展示 [a]、不接受 [a]、更不落盘。
+    #   fallback —— OS sandbox 降级到宿主机执行：降级必须是本次明确的人机确认。
+    #   outward  —— push / 开 PR 等推到远端的不可逆动作。此前它借用了 scope="writes"，于是在
+    #     push 提示上按 [a]（用户以为"以后 push 都别问了"）会**授予并持久化"始终允许一切文件写"**，
+    #     跨重启生效——把整仓写权限静默交了出去（自审实机复现，settings.json 落了 writes:true）。
+    _NO_STANDING_GRANT_SCOPES = ("fallback", "outward")
+
     def _inline_confirm_choices(self):
-        # host fallback 必须逐次确认，不能展示/接受“始终允许”。
-        if self._confirm_scope == "fallback":
+        if self._confirm_scope in self._NO_STANDING_GRANT_SCOPES:
             return [self._CONFIRM_CHOICES[0], self._CONFIRM_CHOICES[-1]]
         return self._CONFIRM_CHOICES
 
@@ -1494,7 +1500,7 @@ class VortoCodeTUI(App):
             self._finish_inline_confirm(self._inline_confirm_choices()[self._confirm_idx][0])
         elif key == "y":
             self._finish_inline_confirm("yes")
-        elif key == "a" and self._confirm_scope != "fallback":
+        elif key == "a" and self._confirm_scope not in self._NO_STANDING_GRANT_SCOPES:
             self._finish_inline_confirm("always")
         elif key in ("n", "escape"):
             self._finish_inline_confirm("no")
@@ -1503,7 +1509,7 @@ class VortoCodeTUI(App):
         fut = self._confirm_future
         callback = self._confirm_callback
         result = action in ("yes", "always")
-        if action == "always" and self._confirm_scope != "fallback":
+        if action == "always" and self._confirm_scope not in self._NO_STANDING_GRANT_SCOPES:
             try:
                 setattr(self, f"_allow_{self._confirm_scope}_session", True)
                 self._persist_always_allow(self._confirm_scope)   # 跨会话常驻（/permissions reset 可撤销）
@@ -1522,37 +1528,51 @@ class VortoCodeTUI(App):
         if callback is not None:
             callback(result)
 
-    def _permission_allow_reason(self, tool_name: str, args: dict | None = None) -> str | None:
+    def _permission_check(self, tool_name: str, args: dict | None = None):
+        """一次加载权限，同时给出 (deny 理由, allow 理由)。
+
+        此前 `_permission_deny_reason` 与 `_permission_allow_reason` **各自 load 一遍** permissions.yaml
+        （每次确认读两次盘 + 解析两次 YAML）。合成一次后，反而比收编前更省。
+        """
         if not tool_name:
-            return None
+            return None, None
         from src.agents.permissions import load_permissions
         perm = load_permissions(self.repo_root)
         arg_map = args or {}
-        if perm.denied(tool_name, arg_map):
-            return None
-        return perm.allowed(tool_name, arg_map)
+        deny = perm.denied(tool_name, arg_map)
+        if deny:
+            return deny, None                       # deny 压过一切授权，allow 无需再算
+        return None, perm.allowed(tool_name, arg_map)
+
+    def _permission_allow_reason(self, tool_name: str, args: dict | None = None) -> str | None:
+        return self._permission_check(tool_name, args)[1]
 
     def _permission_deny_reason(self, tool_name: str, args: dict | None = None) -> str | None:
-        if not tool_name:
-            return None
-        from src.agents.permissions import load_permissions
-        return load_permissions(self.repo_root).denied(tool_name, args or {})
+        return self._permission_check(tool_name, args)[0]
 
-    async def _gated(self, message: str, *, pre_authorized: bool, scope: str) -> bool:
-        """TUI 的确认执行：**判定交给内核的 `gate.decide()`**，这里只提供输入和"怎么问人"。
+    def _standing_grant_holds(self, pre_authorized: bool) -> bool:
+        """一个既有的免确认授权在**本回合**是否还作数——**由内核说了算**（污点回合一律作废）。
 
         为什么必须走内核（2026-07-13 收编）：TUI 此前自己写了一遍"污点 → 授权失效"的排序，
-        与内核那份**语义恰好一样**——但那是巧合不是保证。内核 gate 再加一条新规矩，TUI 就会
-        静默漏掉，正是"加一端漏一端"的老病（污点检查一度只写在 TUI、CLI/Web 完全不查）。
+        与内核那份**语义恰好一样**——但那是巧合不是保证。内核再加一条新规矩，TUI 就会静默漏掉，
+        正是"加一端漏一端"的老病（污点检查一度只写在 TUI、CLI/Web 完全不查）。
 
-        TUI 永远有真人守着 → `can_ask_human=True`，所以 decide() 只会给出 ALLOW / ASK，不会 DENY。
-        免确认授权（项目 allow 规则、"始终允许"作用域）统一收进 `pre_authorized` 这一维；
-        污点回合下它一律失效，由内核决定，不由这里决定。
+        **凡是消费"始终允许"的地方都必须过这里**，不只是会弹窗的那几个门：plan→build 升级
+        （`_escalate_to_build` / `_maybe_offer_build_before_route`）此前直接读 `_allow_writes_session`，
+        于是它是 TUI 里唯一不被污点作废的授权——污点回合能借旧授权直接升到 build（自审逮到）。
+
+        取的是**模块属性** `gate.decide`（而非 `from ... import decide`）：这样无论导入写在哪，
+        契约测试 monkeypatch 内核判定都能生效——测试不该被导入位置绑架。
         """
-        from src.agents.gate import ALLOW, decide
+        from src.agents import gate
         from src.agents.taint import is_tainted
 
-        if decide(tainted=is_tainted(), pre_authorized=pre_authorized, can_ask_human=True) == ALLOW:
+        return gate.decide(tainted=is_tainted(), pre_authorized=pre_authorized,
+                           can_ask_human=True) == gate.ALLOW      # TUI 永远有真人守着
+
+    async def _gated(self, message: str, *, pre_authorized: bool, scope: str) -> bool:
+        """TUI 的确认执行：判定交给内核（见 `_standing_grant_holds`），这里只管"怎么问人"。"""
+        if self._standing_grant_holds(pre_authorized):
             return True
         return await self._inline_confirm(self._taint_msg(message), scope=scope)
 
@@ -1565,12 +1585,12 @@ class VortoCodeTUI(App):
         TUI 只申报"项目 allow / 始终允许"算作 pre_authorized。此前只有命令门查污点、写门没查，
         外部内容能诱导 agent 静默改文件（D0 的口子），授权持久化后还会跨重启保留（codex 审出）。
         """
-        deny = self._permission_deny_reason(tool_name, args)     # 拒绝规则先行，压过一切授权
+        deny, allow = self._permission_check(tool_name, args)    # 拒绝规则先行，压过一切授权
         if deny:
             self._emit(f"权限拦截: {deny}")
             return False
-        pre = bool(self._permission_allow_reason(tool_name, args)) or self._allow_writes_session
-        return await self._gated(message, pre_authorized=pre, scope="writes")
+        return await self._gated(message, scope="writes",
+                                 pre_authorized=bool(allow) or self._allow_writes_session)
 
     def _taint_msg(self, message: str) -> str:
         """污点态（本回合摄入过网页/搜索/MCP 外部内容）下给确认加警示前缀（D0 防提示注入）。
@@ -1582,11 +1602,14 @@ class VortoCodeTUI(App):
         return taint_prefix() + message
 
     async def _confirm_outward(self, message: str) -> bool:
-        """外向操作（push / 开 PR 等推到远端的动作）确认：**始终弹窗**，不吃"始终允许写"的豁免。
+        """外向操作（push / 开 PR 等推到远端的动作）确认：**始终弹窗**，且**永不可"始终允许"**。
 
         实现即"永不申报 pre_authorized"——于是 decide() 必然给出 ASK。
+        scope 用 `outward`（不是 `writes`）：否则在 push 提示上按 [a]，用户以为"以后 push 别问了"，
+        实际却授予并**持久化了"始终允许一切文件写"**、跨重启生效——把整仓写权限静默交出去
+        （自审实机复现）。`outward` 在 `_NO_STANDING_GRANT_SCOPES` 里，连 [a] 都不展示。
         """
-        return await self._gated(message, pre_authorized=False, scope="writes")
+        return await self._gated(message, pre_authorized=False, scope="outward")
 
     async def _confirm_command(self, message: str, *, tool_name: str = "",
                                args: dict | None = None, force_prompt: bool = False) -> bool:
@@ -1598,14 +1621,14 @@ class VortoCodeTUI(App):
         ——它用于 OS sandbox 的交互 host fallback：降级执行必须是本次明确的人机确认，
         绝不能继承此前的任何自动授权。
         """
-        deny = self._permission_deny_reason(tool_name, args)     # 拒绝规则先行，压过一切授权
+        deny, allow = self._permission_check(tool_name, args)    # 拒绝规则先行，压过一切授权
         if deny:
             self._emit(f"权限拦截: {deny}")
             return False
         if force_prompt:                                          # 降级执行：授权一律不作数
             return await self._gated(message, pre_authorized=False, scope="fallback")
-        pre = bool(self._permission_allow_reason(tool_name, args)) or self._allow_commands_session
-        return await self._gated(message, pre_authorized=pre, scope="commands")
+        return await self._gated(message, scope="commands",
+                                 pre_authorized=bool(allow) or self._allow_commands_session)
 
     def action_history_prev(self) -> None:
         """↑：补全面板可见时选上一个候选；否则调出上一条历史输入（编辑过则当作新输入）。"""
@@ -1766,7 +1789,9 @@ class VortoCodeTUI(App):
         """
         if self.mode != "plan" or not self._looks_like_build_intent(text):
             return False
-        if self._allow_writes_session:
+        # 授权是否还作数由内核判（污点回合一律作废）。此前这里直接读 _allow_writes_session，
+        # 是 TUI 里唯一绕过污点的授权：外部内容诱导下能借旧授权静默升到 build（自审逮到）。
+        if self._standing_grant_holds(self._allow_writes_session):
             ok = True
         else:
             def _done(ok: bool | None) -> None:
@@ -5456,8 +5481,10 @@ class VortoCodeTUI(App):
         """plan 模式下主 agent 想用写/重型工具时：问用户切不切 build，同意则切并继续。
 
         本会话已"始终允许"则直接切（不再问）。切了之后整个会话留在 build。
+        **但污点回合下该授权作废、必须真人拍板**——由内核判（见 `_standing_grant_holds`）：
+        否则外部内容诱导模型 `request_build`，就能借旧授权把整个会话静默升到 build（自审逮到）。
         """
-        if self._allow_writes_session:
+        if self._standing_grant_holds(self._allow_writes_session):
             ok = True
         else:
             if name == "request_build":

@@ -452,6 +452,24 @@ class ServeUnreachable(Exception):
     """attach 连接阶段失败（serve 不在/拒连/握手超时）——回合尚未发出，可安全回退进程内。"""
 
 
+def _tty_can_ask_human() -> bool:
+    """本进程问得到真人吗——需要 stdin 与 stderr 都是 TTY。
+
+    **必须防 None**：从 launchd / systemd / cron 起的进程 fd 0 是关着的，CPython 会把
+    `sys.stdin` 设成 **None**（不是文件对象）。直接 `.isatty()` 会 AttributeError，而 attach 的
+    接收循环用兜底 except 把异常吞成"拒绝"——结果是无人值守的 `--yes` **静默拒掉每一次确认**、
+    什么也没干、也不说为什么（自审实机复现的回归：旧代码先短路 --yes，压根没碰过 sys.stdin）。
+    拿不准一律当"问不到人"（fail-closed）。
+    """
+    def _isatty(stream) -> bool:
+        try:
+            return bool(stream is not None and stream.isatty())
+        except Exception:  # noqa: BLE001 —— 关闭的/异常的流 → 当作问不到人
+            return False
+
+    return _isatty(sys.stdin) and _isatty(sys.stderr)
+
+
 def _make_attach_confirm(auto_yes, say):
     """造 attach 端的确认门。**模块级**（不是闭包）是为了让三端契约表能直接驱动它——
     这一端此前手搓判定、又够不到测试，正是漂移最容易发生的角落。
@@ -462,18 +480,20 @@ def _make_attach_confirm(auto_yes, say):
     这个字段时，client 按 `tainted=True` 兜底（fail-closed）并置 `taint_known=False`。
     """
     async def confirm(text, *, tainted: bool = True, taint_known: bool = True):
-        from src.agents.gate import ALLOW, ASK, TAINT_REFUSED_REASON, decide
+        # 取**模块属性** `gate.decide`（而非 `from ... import decide`）：这样无论导入写在哪，
+        # 契约测试 monkeypatch 内核判定都能生效——测试不该被导入位置绑架。
+        from src.agents import gate
 
         first = (text or "").splitlines()[0] if text else ""
         # **判定不在这里做**：跨进程也好、手搓也罢，排序都必须来自内核那一处（gate.decide）。
         # attach 只负责如实申报三个输入 + 执行结果。此前这里自己写了一遍
         # `if auto_yes and not tainted`，于是内核新加的规矩这一端收不到（审核记为漂移风险）。
-        verdict = decide(tainted=tainted, pre_authorized=auto_yes,
-                         can_ask_human=(sys.stdin.isatty() and sys.stderr.isatty()))
-        if verdict == ALLOW:
+        verdict = gate.decide(tainted=tainted, pre_authorized=auto_yes,
+                              can_ask_human=_tty_can_ask_human())
+        if verdict == gate.ALLOW:
             say(f"✓ 自动确认：{first}")
             return True
-        if verdict == ASK:                               # 交互终端：真问人（attach 有人守着）
+        if verdict == gate.ASK:                          # 交互终端：真问人（attach 有人守着）
             print(f"需要确认：{text}", file=sys.stderr, flush=True)
             ans = (await asyncio.to_thread(input, "允许吗？[y/N] ")).strip().lower()
             return ans in ("y", "yes")
@@ -482,7 +502,7 @@ def _make_attach_confirm(auto_yes, say):
             # 别谎称"摄入过外部内容"，也别静默拒绝——给出可执行出路。
             why = "对端未上报本回合污点状态（serve 可能较旧）；--yes 从严不放行，请升级 serve 或用交互终端确认"
         elif tainted:
-            why = TAINT_REFUSED_REASON                   # 单一真相源（headless 那头用的是同一条）
+            why = gate.TAINT_REFUSED_REASON              # 单一真相源（headless 那头用的是同一条）
         else:
             why = "非交互终端，需 --yes 放行"
         say(f"✗ 拒绝（{why}）：{first}")

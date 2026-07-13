@@ -359,7 +359,12 @@ async def test_attach_client_taint_dispatch_fails_closed():
 # ------------------------------------------------- 富 UI TUI 端（收编进内核，2026-07-13）
 
 def _tui(tmp_path, asked):
-    """造一个可直接驱动确认门的 TUI 实例；把"怎么问人"换成记账。"""
+    """造一个可直接驱动确认门的 TUI 实例；把"怎么问人"换成记账。
+
+    textual 是可选依赖（`.[tui]`）：没装就跳过，别把强制的 ci-local 合并门禁打挂
+    （本仓其它碰 TUI 的测试都这么做）。
+    """
+    pytest.importorskip("textual")
     from src.tui.app import VortoCodeTUI
 
     app = VortoCodeTUI(repo_root=str(tmp_path))
@@ -437,7 +442,55 @@ async def test_tui_outward_never_consumes_always_allow(tmp_path):
     app._allow_writes_session = True
 
     assert await app._confirm_outward("推到远端并开 PR？") is True
-    assert [scope for _m, scope in asked] == ["writes"], "外向操作被'始终允许写'静默放行了"
+    assert [scope for _m, scope in asked] == ["outward"], "外向操作被'始终允许写'静默放行了"
+
+
+def test_tui_outward_prompt_cannot_mint_a_standing_write_grant(tmp_path):
+    """**契约（自审实机复现的真洞）**：在 push / 开 PR 的确认上按 [a]，**不得**授予"始终允许写"。
+
+    此前外向确认借用了 `scope="writes"`：用户以为自己说的是"以后 push 别问了"，实际却授予并
+    **持久化了"始终允许一切文件写"**、跨重启生效——整仓写权限就这么静默交了出去。
+    """
+    pytest.importorskip("textual")
+    from src.tui.app import VortoCodeTUI
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    app._confirm_scope = "outward"                  # 正在问的是一次 push / 开 PR
+
+    # [a] 连显示都不该显示（和 host 降级同一待遇）
+    assert [k for k, _label in app._inline_confirm_choices()] == ["yes", "no"], \
+        "外向确认竟然提供了「始终允许」"
+
+    app._finish_inline_confirm("always")            # 就算硬走 always 分支，也不得铸权
+    assert app._allow_writes_session is False, "在 push 提示上按 [a] 竟授予了「始终允许一切文件写」"
+    assert app._load_setting("always_allow", {}) == {}, "还把这份写权限持久化了（跨重启生效）"
+
+
+@pytest.mark.asyncio
+async def test_tui_taint_voids_the_plan_to_build_escalation(tmp_path, monkeypatch):
+    """**契约（自审逮到的真洞）**：污点回合下，"始终允许"**不能**把会话静默升到 build。
+
+    收编只接了三个会弹窗的确认门，却漏了 plan→build 这两个**不弹窗**的授权点
+    （`_escalate_to_build` / `_maybe_offer_build_before_route` 直接读 `_allow_writes_session`）——
+    于是它是 TUI 里唯一不被污点作废的授权：外部内容诱导模型 `request_build`，就能借旧授权升到 build。
+    """
+    asked = []
+    app = _tui(tmp_path, asked)
+    app.mode = "plan"
+    app._allow_writes_session = True                # 用户早先按过 [a]（还会跨重启常驻）
+    monkeypatch.setattr(app, "_sync_subtitle", lambda: None)
+    monkeypatch.setattr(app, "_record_mode_change", lambda: None)
+    monkeypatch.setattr(app, "_chrome", lambda *a, **k: None)
+
+    # 未污点：授权作数 → 直接升 build，不打扰人（既有行为不许改坏）
+    assert await app._escalate_to_build("request_build", {}) is True
+    assert app.mode == "build"
+
+    # 污点回合：授权作废 → 必须真人拍板，不得静默升级
+    app.mode = "plan"
+    taint.mark_tainted()
+    await app._escalate_to_build("request_build", {})
+    assert asked, "污点回合下仍借「始终允许」静默升到了 build —— 该授权点绕过了内核"
 
 
 # ------------------------------------------------- 跨进程 attach 端（收编进内核，2026-07-13）
@@ -475,6 +528,29 @@ async def test_attach_confirm_consults_the_kernel_decision(monkeypatch):
     monkeypatch.setattr(gate, "decide", lambda **_kw: gate.DENY)
     assert await confirm("写文件？", tainted=False, taint_known=True) is False, \
         "attach 没跟随内核判定——它还在自己手搓排序"
+
+
+@pytest.mark.asyncio
+async def test_attach_yes_survives_a_closed_stdin(monkeypatch):
+    """**契约（自审实机复现的回归）**：fd 0 关着时（launchd / systemd / cron 起的进程），
+    CPython 把 `sys.stdin` 设成 **None**——attach 的 `--yes` 必须照常放行，不能炸也不能静默全拒。
+
+    收编时把 `sys.stdin.isatty()` 写成了 decide() 的实参、被**提前求值**（旧代码先短路 --yes、
+    压根没碰过 sys.stdin）→ AttributeError → 被接收循环的兜底 except 吞成"拒绝"：
+    无人值守的 `--yes` 于是静默拒掉每一次确认、什么也没干、也不说为什么。
+    """
+    import sys
+
+    from src.cli import _make_attach_confirm
+
+    monkeypatch.setattr(sys, "stdin", None)          # = fd 0 已关闭的守护进程
+    said: list = []
+    confirm = _make_attach_confirm(True, said.append)
+
+    assert await confirm("写文件？", tainted=False, taint_known=True) is True, \
+        "stdin 关闭时 --yes 不放行了（AttributeError 被吞成静默拒绝）"
+    taint.mark_tainted()
+    assert await confirm("写文件？", tainted=True, taint_known=True) is False   # 污点仍从严
 
 
 @pytest.mark.asyncio
