@@ -94,6 +94,7 @@ files = [
     "src/memory/write_policy.py",
     "src/agents/permissions.py",
     "src/agents/capabilities.py",
+    "src/agents/gate.py",          # 确认门内核：安全模型的心脏，必须被类型钉死
 ]
 follow_imports = "silent"
 ignore_missing_imports = true      # 可选依赖（openai/yaml/qdrant…）无 stub，不为此挂门禁
