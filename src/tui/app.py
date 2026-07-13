@@ -1431,11 +1431,15 @@ class VortoCodeTUI(App):
     #
     # 是**白名单**而不是黑名单——将来新加一个确认作用域，默认就是"不可铸权"，不会因为忘了登记而
     # 悄悄获得跨重启的持久授权（与本仓"新端忘了申报只会更严、不会更松"同一条原则）。
-    # 现有的非铸权作用域：
+    # 现有的非铸权作用域（它们**都曾经**用着 scope="writes" 或吃它的默认值，于是都能铸权——
+    # 自审对其中数处做了实机复现：settings.json 里真的落下了 always_allow.writes=true）：
+    #   confirm  —— `_begin_inline_confirm` 的**默认值**。默认不铸权 = 忘了传 scope 只会更严。
+    #   escalate —— plan→build 的模式切换（agent 请求升级、/review --fix、/fix-ci、/resume 续跑）。
+    #     用户按 [a] 想说的是"别再问我模式了"，绝不是"把整仓写权限给你、还跨重启"。
+    #   outward  —— push / 开 PR 等推到远端的不可逆动作。
+    #   relay    —— attach 到 serve 时，**远端**工具经协议回传的确认。远端一个 run_command 的确认
+    #     绝不该铸出**本地**的写权限（scope 信息不过协议，宁多问不越权）。
     #   fallback —— OS sandbox 降级到宿主机执行：降级必须是**本次**明确的人机确认。
-    #   outward  —— push / 开 PR 等推到远端的不可逆动作。它此前借用了 scope="writes"，于是在 push
-    #     提示上按 [a]（用户以为"以后 push 都别问了"）会**授予并持久化"始终允许一切文件写"**、
-    #     跨重启生效——整仓写权限就这么静默交了出去（自审实机复现，settings.json 落了 writes:true）。
     #   memory / sessions —— 黑名单版本下它们仍会展示 [a]，按下去 setattr 出一个没人读的幽灵属性
     #     `_allow_memory_session`（不授权任何东西），等于**向用户谎称"已记住"**。白名单一并根治。
     _STANDING_GRANT_SCOPES = ("writes", "commands")
@@ -1449,8 +1453,15 @@ class VortoCodeTUI(App):
         fut = self._confirm_future
         return fut is not None and not fut.done()
 
-    def _begin_inline_confirm(self, message: str, scope: str = "writes", callback=None):
-        """在输入框上方显示 Claude Code 式权限选择项，不使用 modal 弹窗。"""
+    def _begin_inline_confirm(self, message: str, scope: str = "confirm", callback=None):
+        """在输入框上方显示 Claude Code 式权限选择项，不使用 modal 弹窗。
+
+        **默认作用域是不铸权的 `confirm`**（自审逮到的根因）：默认值原本是 `writes` ——而 `writes`
+        恰恰是唯一能铸出"始终允许一切文件写"的作用域。于是每个忘了传 scope 的确认、以及一堆
+        **模式切换**确认（plan→build 升级、/review --fix、/fix-ci、/resume 续跑）都在默认铸权：
+        用户在"切到 build 模式？"上按 [a]，以为"别再问我模式了"，实际交出了跨重启的全仓写权限。
+        默认不铸权 = fail-closed：要铸权的必须**明说** scope（只有 writes / commands 能铸，见白名单）。
+        """
         if self._inline_confirm_active():
             return self._confirm_future
         loop = asyncio.get_running_loop()
@@ -1468,7 +1479,7 @@ class VortoCodeTUI(App):
             pass
         return fut
 
-    async def _inline_confirm(self, message: str, scope: str = "writes") -> bool:
+    async def _inline_confirm(self, message: str, scope: str = "confirm") -> bool:
         return bool(await self._begin_inline_confirm(message, scope=scope))
 
     def _render_inline_confirm(self) -> None:
@@ -1549,12 +1560,6 @@ class VortoCodeTUI(App):
         if deny:
             return deny, None                       # deny 压过一切授权，allow 无需再算
         return None, perm.allowed(tool_name, arg_map)
-
-    def _permission_allow_reason(self, tool_name: str, args: dict | None = None) -> str | None:
-        return self._permission_check(tool_name, args)[1]
-
-    def _permission_deny_reason(self, tool_name: str, args: dict | None = None) -> str | None:
-        return self._permission_check(tool_name, args)[0]
 
     def _standing_grant_holds(self, pre_authorized: bool) -> bool:
         """一个既有的免确认授权在**本回合**是否还作数——**由内核说了算**（污点回合一律作废）。
@@ -1811,9 +1816,11 @@ class VortoCodeTUI(App):
                 self._continue_text_route(text)
 
             self._begin_inline_confirm(
-                "当前是 plan（只读/提案）模式，但这条需求看起来需要修改项目或执行开发动作。\n"
-                "切到 build 模式并用这条需求继续？\n"
-                "拒绝后仍会按 plan 模式只给方案/建议。",
+                self._taint_msg(                    # 污点回合带 D0 防注入警示（收编时漏了这条）
+                    "当前是 plan（只读/提案）模式，但这条需求看起来需要修改项目或执行开发动作。\n"
+                    "切到 build 模式并用这条需求继续？\n"
+                    "拒绝后仍会按 plan 模式只给方案/建议。"),
+                scope="escalate",                   # 模式切换 ≠ 写确认：不得铸出"始终允许写"
                 callback=_done)
             return True
         if ok and self.mode != "build":
@@ -2738,7 +2745,7 @@ class VortoCodeTUI(App):
                 self._continue_text_route(
                     f"请续跑 dev 计划 plan_id={plan.plan_id}，调用 dev_resume 工具继续未完成任务。")
 
-            self._begin_inline_confirm(prompt, scope="writes", callback=_done)
+            self._begin_inline_confirm(prompt, scope="escalate", callback=_done)
             return
         self._emit(format_plan_detail(plan))
 
@@ -2932,7 +2939,7 @@ class VortoCodeTUI(App):
                 f"范围: {scope}{path_hint}\n\n审查结论:\n{excerpt}"
             )
 
-        self._begin_inline_confirm(prompt, scope="writes", callback=_done)
+        self._begin_inline_confirm(prompt, scope="escalate", callback=_done)
 
     async def _run_diff_review(self, *, cached: bool = False, paths: list[str] | None = None,
                                hunk_id: str = "") -> str:
@@ -3628,7 +3635,7 @@ class VortoCodeTUI(App):
 
         self._begin_inline_confirm(
             f"按 PR {ref} 的 review/CI 反馈自动修复？会切到 build 模式，并由 pr_fix 在 vorto/* 分支上改动、自测、再确认 push。",
-            scope="writes",
+            scope="escalate",
             callback=_after_confirm,
         )
 
@@ -4748,7 +4755,7 @@ class VortoCodeTUI(App):
         async def confirm(message: str) -> bool:
             # serve 端工具的确认经协议回到 TUI 内联选择：**始终问**、不吃本地"始终允许"豁免
             # （scope 信息不过协议，宁多问不越权；与 _confirm_outward 同一保守面）。
-            return bool(await self._inline_confirm(message, scope="writes"))
+            return bool(await self._inline_confirm(message, scope="relay"))
 
         t0 = time.monotonic()
         try:
@@ -5505,7 +5512,11 @@ class VortoCodeTUI(App):
                 prompt = "\n".join(parts)
             else:
                 prompt = f"plan(只读)模式下，这一步要用写/重型工具「{name}」。切到 build 模式并继续？"
-            ok = await self._inline_confirm(prompt, scope="writes")
+            # scope=escalate：这是**模式切换**确认，不是写确认——不得铸出"始终允许一切文件写"。
+            # _taint_msg：污点回合必须带 D0 防注入警示——这里展示的 reason/next_action 是**模型给的**，
+            # 而模型可能刚读过攻击者的网页。此前收编时只给它加了污点门、却漏了横幅：人看到的是一段
+            # 攻击者措辞的"升级理由"，却没有任何"本回合摄入过外部内容"的提示（自审逮到）。
+            ok = await self._inline_confirm(self._taint_msg(prompt), scope="escalate")
         if ok and self.mode != "build":
             self.mode = "build"
             self._sync_subtitle()

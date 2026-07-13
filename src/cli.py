@@ -307,7 +307,7 @@ def _read_prompt_arg(raw):
     """
     if raw and raw != "-":
         return raw.strip()
-    if raw == "-" or (raw is None and not sys.stdin.isatty()):
+    if raw == "-" or (raw is None and not _isatty(sys.stdin)):
         try:
             return sys.stdin.read().strip()
         except Exception:  # noqa: BLE001
@@ -358,7 +358,7 @@ async def _speak_reply(text, voice, out_path, llm, quiet):
         if not quiet:
             print(f"\033[2m🔊 写语音文件失败：{e}\033[0m", file=sys.stderr, flush=True)
         return None
-    played = sys.stdout.isatty() and _play_audio(out_path)
+    played = _isatty(sys.stdout) and _play_audio(out_path)
     if not quiet:
         tail = "，已播放" if played else ""
         print(f"\033[2m🔊 语音已写入 {out_path}（{len(wav)} 字节{tail}）\033[0m", file=sys.stderr, flush=True)
@@ -452,21 +452,22 @@ class ServeUnreachable(Exception):
     """attach 连接阶段失败（serve 不在/拒连/握手超时）——回合尚未发出，可安全回退进程内。"""
 
 
-def _tty_can_ask_human() -> bool:
-    """本进程问得到真人吗——需要 stdin 与 stderr 都是 TTY。
+def _isatty(stream) -> bool:
+    """这个流是不是 TTY——**必须防 None**。
 
-    **必须防 None**：从 launchd / systemd / cron 起的进程 fd 0 是关着的，CPython 会把
-    `sys.stdin` 设成 **None**（不是文件对象）。直接 `.isatty()` 会 AttributeError，而 attach 的
-    接收循环用兜底 except 把异常吞成"拒绝"——结果是无人值守的 `--yes` **静默拒掉每一次确认**、
-    什么也没干、也不说为什么（自审实机复现的回归：旧代码先短路 --yes，压根没碰过 sys.stdin）。
-    拿不准一律当"问不到人"（fail-closed）。
+    从 launchd / systemd / cron 起的进程，关掉的标准流会被 CPython 设成 **None**（不是文件对象），
+    直接 `.isatty()` 就是 AttributeError。而 attach 的接收循环用兜底 except 把异常吞成"拒绝"——
+    结果是无人值守的 `--yes` **静默拒掉每一次确认**、什么也没干、也不说为什么（自审实机复现）。
+    拿不准一律当"不是 TTY"。
     """
-    def _isatty(stream) -> bool:
-        try:
-            return bool(stream is not None and stream.isatty())
-        except Exception:  # noqa: BLE001 —— 关闭的/异常的流 → 当作问不到人
-            return False
+    try:
+        return bool(stream is not None and stream.isatty())
+    except Exception:  # noqa: BLE001 —— 关闭的/异常的流 → 当作非 TTY
+        return False
 
+
+def _tty_can_ask_human() -> bool:
+    """本进程问得到真人吗——需要 stdin 与 stderr 都是 TTY（拿不准 → 问不到，fail-closed）。"""
     return _isatty(sys.stdin) and _isatty(sys.stderr)
 
 
@@ -538,7 +539,7 @@ async def _run_agent_attached(prompt, url, *, build=False, auto_yes=False, as_js
         if not quiet:
             print(f"\033[2m{text}\033[0m", file=sys.stderr, flush=True)
 
-    streaming = (not as_json) and sys.stdout.isatty()
+    streaming = (not as_json) and _isatty(sys.stdout)
     seen = {"n": 0}                                # agent_stream 是累计文本，按长度算增量
 
     def on_stream(text):
@@ -646,9 +647,10 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
     # headless 没有交互终端 → 问不到人（can_ask_human=False）。--yes 是"已授权自动放行"。
     # **要不要问、能不能免，由内核的 confirm gate 判**（污点回合下 --yes 一律失效 → 拒绝）：
     # 让模型读了网页再自动放行写操作，正是提示注入最想要的路径。
-    async def _ask_human(_message):               # headless 问不到人；决定与交代都走 _on_decision
-        return False
-
+    #
+    # 不传 ask_human（传 None）：`can_ask_human=False` 时 gate 的 decide() 直接判 DENY、根本不会去问。
+    # 此前这里塞了个"永远返回 False"的哨兵——**函数体永远执行不到**，正是本批次声称已删掉的
+    # `deny_all` 维护陷阱换了个马甲又活了一遍（自审逮到）。fail-closed 只住在 gate 里，别处不设兜底。
     def _on_decision(operation, ok, tainted):
         """每个确认决定都过这里——自动放行也要留痕，自动拒绝要说清**拒的是什么**。
 
@@ -674,7 +676,7 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
             print(f"\033[2m{msg}\033[0m", file=sys.stderr, flush=True)
 
     agent = _build_headless_agent(cwd, max_steps=max_steps, on_tool=_on_tool,
-                                  on_plan=_on_plan, confirm=_ask_human, llm=llm,
+                                  on_plan=_on_plan, confirm=None, llm=llm,
                                   on_progress=_progress, capability_profile=profile,
                                   auto_approve=auto_yes, can_ask_human=False,
                                   on_decision=_on_decision)
@@ -718,7 +720,7 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
             return
         print(f"\033[2m{_strip_markup(markup)}\033[0m", file=sys.stderr, flush=True)
 
-    streaming = (not as_json) and sys.stdout.isatty()
+    streaming = (not as_json) and _isatty(sys.stdout)
     seen = {"n": 0}                                # stream_cb 给的是累计文本，按长度算增量
 
     def stream_cb(text):
@@ -827,7 +829,7 @@ async def _with_progress(coro, label: str = "运行中"):
     非 TTY（管道 / 重定向 / 日志）则完全静默、不污染输出。
     """
     import time as _time
-    if not sys.stderr.isatty():
+    if not _isatty(sys.stderr):
         return await coro
     t0 = _time.monotonic()
     done = asyncio.Event()
