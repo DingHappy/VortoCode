@@ -15,7 +15,7 @@ from textual.worker import WorkerState
 from textual.widgets import Input
 
 import src.tui.app as tui_app
-from src.tui.app import VortoCodeTUI, ConfirmScreen, PromptEditor
+from src.tui.app import VortoCodeTUI, PromptEditor
 
 
 async def _submit(app, pilot, text):
@@ -3939,71 +3939,6 @@ async def test_project_allow_does_not_skip_tainted_command_confirm(tmp_path):
             assert await task is False
         finally:
             taint.reset_taint()
-
-
-@pytest.mark.asyncio
-async def test_confirm_screen_command_scope_sets_only_command_flag(tmp_path):
-    """ConfirmScreen(scope=commands) 的 [a] 只置命令标志、不动写标志。"""
-    app = VortoCodeTUI(repo_root=str(tmp_path))
-    async with app.run_test() as pilot:
-        app.push_screen(ConfirmScreen("跑命令？", scope="commands"))
-        await pilot.pause()
-        await pilot.press("a")
-        await pilot.pause()
-        assert app._allow_commands_session is True
-        assert app._allow_writes_session is False
-
-
-@pytest.mark.asyncio
-async def test_confirm_screen_enter_confirms(tmp_path):
-    app = VortoCodeTUI(repo_root=str(tmp_path))
-    async with app.run_test() as pilot:
-        app.push_screen(ConfirmScreen("切到 build？"))
-        await pilot.pause()
-        await pilot.press("enter")
-        await pilot.pause()
-        assert len(app.screen_stack) == 1
-
-
-@pytest.mark.asyncio
-async def test_confirm_screen_arrows_choose_current_option(tmp_path):
-    app = VortoCodeTUI(repo_root=str(tmp_path))
-    async with app.run_test() as pilot:
-        app.push_screen(ConfirmScreen("写文件？"))
-        await pilot.pause()
-        await pilot.press("right")
-        await pilot.press("enter")
-        await pilot.pause()
-
-        assert app._allow_writes_session is True
-        assert len(app.screen_stack) == 1
-
-
-@pytest.mark.asyncio
-async def test_confirm_screen_can_keyboard_select_cancel(tmp_path):
-    app = VortoCodeTUI(repo_root=str(tmp_path))
-    async with app.run_test() as pilot:
-        app.push_screen(ConfirmScreen("写文件？"))
-        await pilot.pause()
-        await pilot.press("right")
-        await pilot.press("right")
-        await pilot.press("enter")
-        await pilot.pause()
-
-        assert app._allow_writes_session is False
-        assert len(app.screen_stack) == 1
-
-
-@pytest.mark.asyncio
-async def test_confirm_screen_buttons_are_clickable(tmp_path):
-    app = VortoCodeTUI(repo_root=str(tmp_path))
-    async with app.run_test() as pilot:
-        app.push_screen(ConfirmScreen("写文件？"))
-        await pilot.pause()
-        await pilot.click("#confirm-always")
-        await pilot.pause()
-        assert app._allow_writes_session is True
-        assert len(app.screen_stack) == 1
 
 
 @pytest.mark.asyncio

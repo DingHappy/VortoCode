@@ -22,10 +22,10 @@ from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, Vertical
+from textual.containers import Vertical
 from textual.message import Message
 from textual.screen import ModalScreen
-from textual.widgets import Button, Header, Input, RichLog, Static, TextArea
+from textual.widgets import Header, Input, RichLog, Static, TextArea
 from textual.worker import WorkerState
 
 from src.memory.session_store import SessionManager
@@ -422,99 +422,6 @@ class ListPicker(ModalScreen):
                 self._on_highlight(event.option.id)   # 实时预览（/theme 用）
             except Exception:  # noqa: BLE001
                 pass
-
-
-class ConfirmScreen(ModalScreen[bool]):
-    """写分支前的确认弹窗（对齐 opencode 的权限确认 / 项目“人在关口”理念）。"""
-
-    CSS = """
-    ConfirmScreen { align: center middle; }
-    #dialog { width: 64; height: auto; border: thick $warning; background: $surface; padding: 1 2; }
-    #confirm-hint { color: $text-muted; margin-top: 1; }
-    #confirm-actions { height: 3; margin-top: 1; }
-    #confirm-actions Button { margin-right: 2; }
-    """
-    BINDINGS = [
-        Binding("enter", "choose", "执行当前选项"),
-        Binding("left", "prev_choice", "上一个"),
-        Binding("right", "next_choice", "下一个"),
-        Binding("tab", "next_choice", "下一个"),
-        Binding("y", "yes", "确认"),
-        Binding("a", "always", "始终允许"),
-        Binding("n", "no", "取消"),
-        Binding("escape", "no", "取消"),
-    ]
-
-    def __init__(self, message: str, scope: str = "writes"):
-        super().__init__()
-        self._message = message
-        self._scope = scope           # "始终允许"的作用域：writes（写文件）/ commands（跑命令），各自独立
-        self._choices = ["confirm-yes", "confirm-always", "confirm-no"]
-        self._choice_idx = 0
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="dialog"):
-            yield Static(self._message, id="confirm-msg")
-            with Horizontal(id="confirm-actions"):
-                yield Button("确认", id="confirm-yes", variant="success")
-                yield Button("始终允许（记住）", id="confirm-always", variant="warning")
-                yield Button("取消", id="confirm-no")
-            yield Static("←/→ 或 Tab 选择 · Enter 执行 · y 确认 · a 始终允许（记住到项目设置） · n/Esc 取消",
-                         id="confirm-hint")
-
-    def on_mount(self) -> None:
-        self._focus_choice()
-
-    def _focus_choice(self) -> None:
-        try:
-            self.query_one(f"#{self._choices[self._choice_idx]}", Button).focus()
-        except Exception:  # noqa: BLE001
-            pass
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        bid = event.button.id
-        if bid == "confirm-yes":
-            self.action_yes()
-        elif bid == "confirm-always":
-            self.action_always()
-        elif bid == "confirm-no":
-            self.action_no()
-
-    def action_prev_choice(self) -> None:
-        self._choice_idx = (self._choice_idx - 1) % len(self._choices)
-        self._focus_choice()
-
-    def action_next_choice(self) -> None:
-        self._choice_idx = (self._choice_idx + 1) % len(self._choices)
-        self._focus_choice()
-
-    def action_choose(self) -> None:
-        bid = self._choices[self._choice_idx]
-        if bid == "confirm-yes":
-            self.action_yes()
-        elif bid == "confirm-always":
-            self.action_always()
-        else:
-            self.action_no()
-
-    def action_yes(self) -> None:
-        self.dismiss(True)
-
-    def action_always(self) -> None:
-        """后续**同类**操作不再逐个确认，并记进项目设置跨会话常驻（对齐 Claude Code 的 Always allow）。
-
-        作用域隔离：写文件的 [a] 只静默后续写、跑命令的 [a] 只静默后续命令——
-        否则为省文件编辑确认按下的 [a] 会连任意 shell 命令一起放行（权限提升）。
-        """
-        try:
-            setattr(self.app, f"_allow_{self._scope}_session", True)
-            self.app._persist_always_allow(self._scope)     # 跨会话常驻（/permissions reset 可撤销）
-        except Exception:  # noqa: BLE001
-            pass
-        self.dismiss(True)
-
-    def action_no(self) -> None:
-        self.dismiss(False)
 
 
 class VortoCodeTUI(App):
@@ -1612,22 +1519,37 @@ class VortoCodeTUI(App):
         from src.agents.gate import taint_prefix
         return taint_prefix() + message
 
-    async def _confirm_outward(self, message: str) -> bool:
-        """外向操作（push / 开 PR 等推到远端的动作）确认：**始终弹窗**，且**永不可"始终允许"**。
+    async def _confirm_always(self, message: str, *, scope: str) -> bool:
+        """**永不可"始终允许"**的确认：每次都问，[a] 连显示都不展示（scope 不在铸权白名单里）。
 
-        实现即"永不申报 pre_authorized"——于是 decide() 必然给出 ASK。
-        scope 用 `outward`（不是 `writes`）：否则在 push 提示上按 [a]，用户以为"以后 push 别问了"，
-        实际却授予并**持久化了"始终允许一切文件写"**、跨重启生效——把整仓写权限静默交出去
-        （自审实机复现）。`outward` 不在 `_STANDING_GRANT_SCOPES` 白名单里，连 [a] 都不展示。
+        用于影响面**远超"编辑一个文件"**的操作——它们绝不该被用户在一次普通写确认上按下的 [a]
+        顺带授权掉：
+          outward  —— push / 开 PR：推到远端，不可逆。
+          artifact —— 发布/删除制品：页面会经 `/artifact/<id>` **对外提供访问**（可分享）。
+          skill    —— save_skill 写的是 agent 之后会**自动加载并执行**的 SKILL.md（持久化指令面，
+                      提示注入的理想落脚点）。
+          delegate —— 派出带 dev 工具的**自主子 agent**（会建分支、跑生成的测试）。
+
+        这些此前**全都挂在 `_confirm_write`（scope=writes，可铸权）**上：用户在一次"写文件？"上
+        按 [a]，想说的是"别再问我改文件了"，实际却把上面这些**永久且跨重启地**一并授权了
+        （自审逮到的权限提升）。实现即"永不申报 pre_authorized"——于是 decide() 必然给出 ASK。
         """
-        return await self._gated(message, pre_authorized=False, scope="outward")
+        return await self._gated(message, pre_authorized=False, scope=scope)
+
+    async def _confirm_outward(self, message: str) -> bool:
+        """外向操作（push / 开 PR 等推到远端的动作）确认：始终弹窗，永不可"始终允许"。"""
+        return await self._confirm_always(message, scope="outward")
 
     async def _confirm_command(self, message: str, *, tool_name: str = "",
                                args: dict | None = None, force_prompt: bool = False) -> bool:
-        """任意 shell 命令确认门：**独立作用域**，不吃"始终允许写文件"的豁免。
+        """任意 shell 命令确认门：只认 `commands` 这个**独立作用域**的授权。
 
-        否则用户为省文件编辑逐条确认按下的 [a]，会静默放行后续所有任意命令（=权限提升）。
-        对命令单独选过"始终允许"（scope=commands，可跨会话常驻）才免确认。
+        它与"始终允许写文件"的隔离，现在是**结构性**保证的：`_allow_writes_session` 压根不在这里
+        被读取，而 `commands` 与 `writes` 在铸权白名单里各自独立——为省文件编辑逐条确认按下的 [a]
+        因此不可能顺带放行任意 shell 命令（那是权限提升）。
+        （旧 docstring 说的是"不吃写豁免"这个动作，但方法体里从来没有那个检查——机制早已换成
+        作用域隔离；描述一个不存在的检查，会让人去找一段找不到的代码。）
+
         污点态由内核统一否决授权（见 `_gated`）；``force_prompt=True`` 则**在这里就把授权按回 False**
         ——它用于 OS sandbox 的交互 host fallback：降级执行必须是本次明确的人机确认，
         绝不能继承此前的任何自动授权。
@@ -2197,14 +2119,19 @@ class VortoCodeTUI(App):
                 status = "needs build"
             elif t.read_only:
                 status = "allowed"
-            elif allow:
+            elif self._standing_grant_holds(bool(allow)):
                 status = "allowed by project"
-            elif t.name == "run_command" and self._allow_commands_session:
-                status = "allowed (always)"
-            elif t.name != "run_command" and self._allow_writes_session:
+            elif self._standing_grant_holds(
+                    self._allow_commands_session if t.name == "run_command"
+                    else self._allow_writes_session):
                 status = "allowed (always)"
             else:
-                status = "confirm required"
+                # 报告必须说 gate **真会做**的事：污点回合下一切免确认授权作废、照样弹确认。
+                # 此前这里自己判（只看 _allow_*_session），于是污点回合报告说"allowed (always)"、
+                # 而 gate 实际会拦下来问人——报告与执行相反（自审逮到：漂移藏在展示路径里）。
+                status = "confirm required（本回合摄入过外部内容 → 授权失效）" \
+                    if (allow or self._allow_writes_session or self._allow_commands_session) \
+                    else "confirm required"
             gate = "只读" if t.read_only else "写/重型"
             lines.append(f"  {t.name} [{gate}] -> {status}")
         if perm.allow_rules:
@@ -2257,12 +2184,15 @@ class VortoCodeTUI(App):
             lines.append("结论: 当前 plan 模式不可直接执行；需要切 build，且仍可能要求确认。")
         elif tool.read_only:
             lines.append("结论: 当前模式允许执行；仍会受项目 deny 规则硬拦。")
-        elif allow:
+        elif self._standing_grant_holds(bool(allow)):
             lines.append("结论: build 下命中项目 allow，可免人工确认；危险命令/外发强确认/deny 仍优先。")
-        elif tool_name == "run_command" and self._allow_commands_session:
-            lines.append("结论: build 下本会话已允许命令；危险命令和 deny 规则仍会硬拦。")
-        elif tool_name != "run_command" and self._allow_writes_session:
-            lines.append("结论: build 下本会话已允许写/重型工具；deny 规则仍会硬拦。")
+        elif self._standing_grant_holds(
+                self._allow_commands_session if tool_name == "run_command"
+                else self._allow_writes_session):
+            lines.append("结论: build 下本会话已允许；危险命令和 deny 规则仍会硬拦。")
+        elif allow or self._allow_writes_session or self._allow_commands_session:
+            # 有授权但**本回合污点** → gate 会作废它、照样问人。报告必须与执行一致。
+            lines.append("结论: 有免确认授权，但本回合摄入过外部内容 → 授权失效，仍会要求人工确认。")
         else:
             lines.append("结论: build 下可请求执行，但需要人工确认。")
         rules = matching_deny + matching_allow
@@ -3606,9 +3536,10 @@ class VortoCodeTUI(App):
                 return
             pr = report.get("pr") or ref
             branch = report.get("branch") or "未知分支"
-            if not await self._confirm_write(
+            if not await self._confirm_always(     # 模式切换 + 调 pr_fix ≠ 写一个文件，不得铸权
                     f"按 PR #{pr} 的诊断切到 build 并修复 {branch}？\n"
-                    "将调用 pr_fix 处理 review/CI 反馈；push 更新 PR 前仍会二次确认。"):
+                    "将调用 pr_fix 处理 review/CI 反馈；push 更新 PR 前仍会二次确认。",
+                    scope="escalate"):
                 self._emit(f"已保留在 {self.mode} 模式；可稍后运行 /pr-fix {ref}。")
                 return
             self._set_mode("build")
@@ -5209,9 +5140,10 @@ class VortoCodeTUI(App):
                 sub = build_subagent(self.repo_root, spec, confirm=self._confirm_write,
                                      on_progress=lambda m: self._chrome(f"[dim]{m}[/dim]"),
                                      capabilities=self._capabilities)
-                if spec.tools == "dev" and not await self._confirm_write(
+                if spec.tools == "dev" and not await self._confirm_always(
                         f"委派角色「{agent_name}」用隔离 dev 流水线实现：{desc[:120]}\n"
-                        f"（产出落 vorto/* 分支，不碰主工作区）"):
+                        f"（产出落 vorto/* 分支，不碰主工作区）",
+                        scope="delegate"):   # 派出自主子 agent ≠ 写一个文件
                     return f"已取消：未放行 dev 型角色 {agent_name} 的委派。", is_tainted()
                 sub._on_tool = self._audit_tool
                 mode = "build" if spec.tools == "dev" else "plan"
@@ -5291,8 +5223,9 @@ class VortoCodeTUI(App):
             if not name or not instr:
                 return "save_skill 需要 name 和 instructions（技能正文）。"
             p = Path(self.repo_root) / ".vortocode" / "skills" / name / "SKILL.md"
-            ok = await self._confirm_write(
-                f"build 模式：把技能「{name}」写到 .vortocode/skills/{name}/SKILL.md？（用户技能目录，不碰 main）")
+            ok = await self._confirm_always(
+                f"build 模式：把技能「{name}」写到 .vortocode/skills/{name}/SKILL.md？（用户技能目录，不碰 main）",
+                scope="skill")   # 技能=agent 之后会自动加载执行的指令，绝不能被"始终允许写"顺带授权
             if not ok:
                 return f"用户取消了保存技能 {name}。"
             content = f"---\nname: {name}\ndescription: {desc}\n---\n\n{instr}\n"
@@ -5399,16 +5332,17 @@ class VortoCodeTUI(App):
 
         async def _artifact_confirm(preview: dict, _is_update: bool) -> bool:
             t = preview.get("title") or preview.get("id") or "未命名"
-            return await self._confirm_write(
+            return await self._confirm_always(
                 f"build 模式：把制品「{t}」发布成网页？"
-                f"（存到 .vortocode/artifacts/，Web 服务器在 /artifact/<id> 渲染、可分享）")
+                f"（存到 .vortocode/artifacts/，Web 服务器在 /artifact/<id> 渲染、可分享）",
+                scope="artifact")   # 对外提供访问 → 不是普通文件写，不吃"始终允许写"
 
         def _artifact_published(meta: dict, url: str) -> None:
             self._chrome(f"[green]制品已发布 v{meta['version']}：{url}（/artifacts 看全部）[/green]")
 
         async def _artifact_confirm_delete(preview: dict) -> bool:
-            return await self._confirm_write(
-                f"build 模式：删除制品 {preview.get('id')}？此操作不可撤销。")
+            return await self._confirm_always(
+                f"build 模式：删除制品 {preview.get('id')}？此操作不可撤销。", scope="artifact")
 
         tools += build_artifact_tools(self.repo_root, confirm=_artifact_confirm,
                                       on_published=_artifact_published,
