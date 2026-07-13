@@ -6,16 +6,20 @@
 - 污点检查（D0 防提示注入）只写在 TUI 里 → CLI 的 `--yes` 和 Web 的确认门完全不查（codex 审出）
 - 仓库记忆只接了主会话 → cron/heartbeat 的隔离会话拿不到（而那正是最需要它的场景）
 
-解法是把判定上收到内核（`make_confirm_gate`），再用这张表钉死。
+解法是把判定上收到内核（`src/agents/gate.py` 的 `decide` / `make_confirm_gate`），再用这张表钉死。
 
 **这些测试全部断言行为，不断言源码**：第一版用 `inspect.getsource` 查子串，被自审指出
 "会在它声称要防的回归里保持绿色"——那种测试是安慰剂。这里每一条都真装配、真调用、真看结果，
 且都验证过"撤回修复即变红"。
+
+其中"某端是否真的**消费**内核判定"这一类，靠 monkeypatch `gate.decide` 来证：把内核判定换掉，
+该端的行为必须跟着变。若那一端还在自己手搓排序，patch 就不会生效——测试立刻红。这正是
+"内核加一条新规矩，端会不会静默漏掉"的直接体检。
 """
 
 import pytest
 
-from src.agents import taint
+from src.agents import gate, taint
 from src.agents.main_agent import make_confirm_gate
 
 ALL_ENDS = ["cli", "web", "im"]
@@ -26,6 +30,34 @@ def _clean_taint():
     taint.reset_taint()
     yield
     taint.reset_taint()
+
+
+# ---------------------------------------------------------------- 判定内核（decide）
+
+def test_decide_is_the_whole_matrix():
+    """**唯一判定**：六格矩阵全钉死。任何端都不许自己重写这个排序。"""
+    d = gate.decide
+
+    # 污点回合 → 预授权一律失效（这是 D0 防提示注入的核心不变量）
+    assert d(tainted=True, pre_authorized=True, can_ask_human=True) == gate.ASK    # 强制真人拍板
+    assert d(tainted=True, pre_authorized=True, can_ask_human=False) == gate.DENY  # 问不到人 → 拒
+    assert d(tainted=True, pre_authorized=False, can_ask_human=False) == gate.DENY
+
+    # 未污点才谈授权
+    assert d(tainted=False, pre_authorized=True, can_ask_human=False) == gate.ALLOW   # --yes 正常放行
+    assert d(tainted=False, pre_authorized=False, can_ask_human=True) == gate.ASK
+    assert d(tainted=False, pre_authorized=False, can_ask_human=False) == gate.DENY   # 新端默认最严
+
+
+@pytest.mark.asyncio
+async def test_gate_fails_closed_when_end_claims_a_human_but_gives_no_way_to_ask():
+    """**契约**：端申报"问得到人"却没给 ask_human（配置错误）→ 拒，而不是放行或崩。
+
+    fail-closed 的保证必须真的住在 gate 里（此前靠一个函数体永远执行不到的 deny_all 哨兵"兜底"，
+    docstring 却宣称它是兜底——绕着安全机制的维护陷阱，已删）。
+    """
+    assert await make_confirm_gate(None, can_ask_human=True)("危险操作？") is False
+    assert await make_confirm_gate(can_ask_human=False)("危险操作？") is False
 
 
 # ---------------------------------------------------------------- 内核确认门
@@ -200,11 +232,11 @@ async def test_unattended_session_has_no_outbound_web_tools(tmp_path):
     无人值守的系统提示可能被本地文件（repo.md / BACKLOG.md / HEARTBEAT.md）污染——
     一旦模型被诱导 fetch 攻击者的 URL，就是零人工介入的静默外传。
     """
-    from src.agents.main_agent import build_agent_tools, deny_all, make_confirm_gate
+    from src.agents.main_agent import build_agent_tools, make_confirm_gate
     from src.agents.capabilities import SessionCapabilities, UNATTENDED_PROFILE
 
     caps = SessionCapabilities.for_profile(UNATTENDED_PROFILE, str(tmp_path))
-    tools = build_agent_tools(str(tmp_path), confirm=make_confirm_gate(deny_all),
+    tools = build_agent_tools(str(tmp_path), confirm=make_confirm_gate(),   # 问不到人 → 一律拒
                               capabilities=caps, with_web=False)
     names = {t.name for t in tools}
 
@@ -322,6 +354,127 @@ async def test_attach_client_taint_dispatch_fails_closed():
 
     # 缺 confirm 回调 → 直接拒
     assert await ProtocolClient._dispatch_confirm({"text": "x"}, None) is False
+
+
+# ------------------------------------------------- 富 UI TUI 端（收编进内核，2026-07-13）
+
+def _tui(tmp_path, asked):
+    """造一个可直接驱动确认门的 TUI 实例；把"怎么问人"换成记账。"""
+    from src.tui.app import VortoCodeTUI
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+
+    async def _inline(msg, *, scope):
+        asked.append((msg, scope))
+        return True                                 # 人点了"允许"
+
+    app._inline_confirm = _inline
+    app._emit = lambda *a, **k: None
+    return app
+
+
+@pytest.mark.asyncio
+async def test_tui_confirm_consults_the_kernel_decision(tmp_path, monkeypatch):
+    """**契约**：TUI 的确认门必须**消费**内核 decide()，不许自己手搓排序。
+
+    TUI 是最后一个没接内核的端。它此前那份本地判定与内核**语义恰好一样**——但那是巧合、不是保证：
+    内核再加一条新规矩，TUI 就会静默漏掉（"加一端漏一端"的老病）。这里把内核判定换掉，
+    TUI 的行为必须跟着变；它若还在自己判，patch 不生效 → 红。
+    """
+    asked = []
+    app = _tui(tmp_path, asked)
+    app._allow_writes_session = True                # 用户按过 [a] 始终允许写
+
+    assert await app._confirm_write("写文件？") is True
+    assert asked == []                              # 未污点 + 已授权 → 内核判 ALLOW，不打扰人
+
+    monkeypatch.setattr(gate, "decide", lambda **_kw: gate.ASK)   # 内核改判：一律问人
+    assert await app._confirm_write("写文件？") is True
+    assert len(asked) == 1, "TUI 没跟随内核判定——它还在自己手搓排序"
+
+
+@pytest.mark.asyncio
+async def test_tui_taint_voids_every_standing_authorization(tmp_path):
+    """**契约**：污点回合下 TUI 的"始终允许"（写/命令）一律失效、强制逐次人工确认，且带防注入警示。"""
+    asked = []
+    app = _tui(tmp_path, asked)
+    app._allow_writes_session = True
+    app._allow_commands_session = True
+
+    assert await app._confirm_write("写文件？") is True
+    assert await app._confirm_command("跑命令？") is True
+    assert asked == []                              # 未污点 → 授权生效，不打扰
+
+    taint.mark_tainted()
+    assert await app._confirm_write("写文件？") is True
+    assert await app._confirm_command("跑命令？") is True
+    assert len(asked) == 2, "污点回合下 TUI 仍在吃'始终允许'的豁免"
+    assert all("外部内容" in msg for msg, _ in asked), "污点确认没带防注入警示"
+
+
+@pytest.mark.asyncio
+async def test_tui_force_prompt_ignores_every_authorization(tmp_path):
+    """**契约**：sandbox 降级执行（force_prompt）必须是**本次**明确的人机确认，绝不继承任何自动授权。
+
+    收编时最容易改坏的一条：降级授权若能继承此前的"始终允许"，等于把非隔离执行悄悄放行。
+    """
+    asked = []
+    app = _tui(tmp_path, asked)
+    app._allow_commands_session = True              # 未污点 + 已授权
+
+    assert await app._confirm_command("跑命令？") is True
+    assert asked == [], "常规命令：授权应生效"
+
+    assert await app._confirm_command("降级到宿主机执行？", force_prompt=True) is True
+    assert [scope for _m, scope in asked] == ["fallback"], "force_prompt 竟然继承了自动授权"
+
+
+@pytest.mark.asyncio
+async def test_tui_outward_never_consumes_always_allow(tmp_path):
+    """**契约**：push / 开 PR 这类外向操作**始终弹窗**，不吃"始终允许写"的豁免。"""
+    asked = []
+    app = _tui(tmp_path, asked)
+    app._allow_writes_session = True
+
+    assert await app._confirm_outward("推到远端并开 PR？") is True
+    assert [scope for _m, scope in asked] == ["writes"], "外向操作被'始终允许写'静默放行了"
+
+
+# ------------------------------------------------- 跨进程 attach 端（收编进内核，2026-07-13）
+
+@pytest.mark.asyncio
+async def test_attach_confirm_consults_the_kernel_decision(monkeypatch):
+    """**契约**：attach（跨进程）也必须消费内核 decide()，不许手搓 `if auto_yes and not tainted`。
+
+    审核把这一端记为漂移风险：它够不到进程内的 gate，就自己写了一遍排序——内核新加的规矩收不到。
+    """
+    import io
+    import sys
+
+    from src.cli import _make_attach_confirm
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO())      # 非 TTY → 问不到人（= CI 里的 headless attach）
+    said: list = []
+    confirm = _make_attach_confirm(True, said.append)     # --yes
+
+    # 未污点 + --yes → 内核判 ALLOW
+    assert await confirm("写文件？", tainted=False, taint_known=True) is True
+
+    # 污点 → --yes 失效 → 拒，且说清是防注入（文案取自内核的单一真相源）
+    said.clear()
+    assert await confirm("写文件？", tainted=True, taint_known=True) is False
+    assert any(gate.TAINT_REFUSED_REASON in s for s in said)
+
+    # 对端报不了污点状态（老 serve）→ 仍从严拒，但**不许谎称**"确知摄入过外部内容"
+    said.clear()
+    assert await confirm("写文件？", tainted=True, taint_known=False) is False
+    assert any("未上报" in s for s in said), "没如实说明是对端报不了，而非确知有污点"
+    assert not any(gate.TAINT_REFUSED_REASON in s for s in said)
+
+    # 换掉内核判定 → attach 必须跟随（证明它真在消费 decide，而不是自己判）
+    monkeypatch.setattr(gate, "decide", lambda **_kw: gate.DENY)
+    assert await confirm("写文件？", tainted=False, taint_known=True) is False, \
+        "attach 没跟随内核判定——它还在自己手搓排序"
 
 
 @pytest.mark.asyncio

@@ -1538,40 +1538,55 @@ class VortoCodeTUI(App):
         from src.agents.permissions import load_permissions
         return load_permissions(self.repo_root).denied(tool_name, args or {})
 
+    async def _gated(self, message: str, *, pre_authorized: bool, scope: str) -> bool:
+        """TUI 的确认执行：**判定交给内核的 `gate.decide()`**，这里只提供输入和"怎么问人"。
+
+        为什么必须走内核（2026-07-13 收编）：TUI 此前自己写了一遍"污点 → 授权失效"的排序，
+        与内核那份**语义恰好一样**——但那是巧合不是保证。内核 gate 再加一条新规矩，TUI 就会
+        静默漏掉，正是"加一端漏一端"的老病（污点检查一度只写在 TUI、CLI/Web 完全不查）。
+
+        TUI 永远有真人守着 → `can_ask_human=True`，所以 decide() 只会给出 ALLOW / ASK，不会 DENY。
+        免确认授权（项目 allow 规则、"始终允许"作用域）统一收进 `pre_authorized` 这一维；
+        污点回合下它一律失效，由内核决定，不由这里决定。
+        """
+        from src.agents.gate import ALLOW, decide
+        from src.agents.taint import is_tainted
+
+        if decide(tainted=is_tainted(), pre_authorized=pre_authorized, can_ask_human=True) == ALLOW:
+            return True
+        return await self._inline_confirm(self._taint_msg(message), scope=scope)
+
     async def _confirm_write(self, message: str, *, tool_name: str = "", args: dict | None = None) -> bool:
         """写操作确认门：已选过"始终允许"（含项目设置里跨会话常驻的）则直接放行，否则弹确认。
 
         统一所有写工具(edit/write/save_skill/制品/分支)的确认，支持 [a] 始终允许（仿 CC）。
 
-        **污点回合无视一切免确认授权**（与 _confirm_command 同一条规矩）：本回合摄入过网页/
-        搜索/MCP 的外部内容后，项目 allow 与"始终允许"一律失效、强制逐次人工确认。
-        此前只有命令门查污点、写门没查——外部内容能诱导 agent 静默改文件（D0 的口子）；
-        授权持久化后这个口子还会跨重启保留，所以必须堵上（codex 审出的真问题）。
+        **污点回合无视一切免确认授权**——这条规矩现在由内核 `gate.decide()` 执行（见 `_gated`），
+        TUI 只申报"项目 allow / 始终允许"算作 pre_authorized。此前只有命令门查污点、写门没查，
+        外部内容能诱导 agent 静默改文件（D0 的口子），授权持久化后还会跨重启保留（codex 审出）。
         """
-        from src.agents.taint import is_tainted
-        deny = self._permission_deny_reason(tool_name, args)
+        deny = self._permission_deny_reason(tool_name, args)     # 拒绝规则先行，压过一切授权
         if deny:
             self._emit(f"权限拦截: {deny}")
             return False
-        tainted = is_tainted()
-        if not tainted and self._permission_allow_reason(tool_name, args):
-            return True
-        if self._allow_writes_session and not tainted:
-            return True
-        return await self._inline_confirm(self._taint_msg(message), scope="writes")
+        pre = bool(self._permission_allow_reason(tool_name, args)) or self._allow_writes_session
+        return await self._gated(message, pre_authorized=pre, scope="writes")
 
     def _taint_msg(self, message: str) -> str:
         """污点态（本回合摄入过网页/搜索/MCP 外部内容）下给确认加警示前缀（D0 防提示注入）。
 
-        文案复用内核的 `_taint_prefix()` —— **单一真相源**。此前 TUI 与内核各写一份警示，
+        文案复用内核的 `taint_prefix()` —— **单一真相源**。此前 TUI 与内核各写一份警示，
         改一处漏一处，正是三端漂移的典型症状。
         """
-        from src.agents.main_agent import _taint_prefix
-        return _taint_prefix() + message
+        from src.agents.gate import taint_prefix
+        return taint_prefix() + message
 
     async def _confirm_outward(self, message: str) -> bool:
-        """外向操作（push / 开 PR 等推到远端的动作）确认：**始终弹窗**，不吃"始终允许写"的豁免。"""
-        return await self._inline_confirm(self._taint_msg(message), scope="writes")
+        """外向操作（push / 开 PR 等推到远端的动作）确认：**始终弹窗**，不吃"始终允许写"的豁免。
+
+        实现即"永不申报 pre_authorized"——于是 decide() 必然给出 ASK。
+        """
+        return await self._gated(message, pre_authorized=False, scope="writes")
 
     async def _confirm_command(self, message: str, *, tool_name: str = "",
                                args: dict | None = None, force_prompt: bool = False) -> bool:
@@ -1579,22 +1594,18 @@ class VortoCodeTUI(App):
 
         否则用户为省文件编辑逐条确认按下的 [a]，会静默放行后续所有任意命令（=权限提升）。
         对命令单独选过"始终允许"（scope=commands，可跨会话常驻）才免确认。
-        污点态（本回合摄入过外部内容）或 ``force_prompt=True`` 时**无视**项目 allow / 命令
-        “始终允许”、强制弹确认。force_prompt 用于 OS sandbox 的交互 host fallback：降级授权必须
-        是本次明确的人机确认，不能继承此前的自动授权。
+        污点态由内核统一否决授权（见 `_gated`）；``force_prompt=True`` 则**在这里就把授权按回 False**
+        ——它用于 OS sandbox 的交互 host fallback：降级执行必须是本次明确的人机确认，
+        绝不能继承此前的任何自动授权。
         """
-        from src.agents.taint import is_tainted
-        deny = self._permission_deny_reason(tool_name, args)
+        deny = self._permission_deny_reason(tool_name, args)     # 拒绝规则先行，压过一切授权
         if deny:
             self._emit(f"权限拦截: {deny}")
             return False
-        if force_prompt:
-            return await self._inline_confirm(self._taint_msg(message), scope="fallback")
-        if not is_tainted() and self._permission_allow_reason(tool_name, args):
-            return True
-        if self._allow_commands_session and not is_tainted():
-            return True
-        return await self._inline_confirm(self._taint_msg(message), scope="commands")
+        if force_prompt:                                          # 降级执行：授权一律不作数
+            return await self._gated(message, pre_authorized=False, scope="fallback")
+        pre = bool(self._permission_allow_reason(tool_name, args)) or self._allow_commands_session
+        return await self._gated(message, pre_authorized=pre, scope="commands")
 
     def action_history_prev(self) -> None:
         """↑：补全面板可见时选上一个候选；否则调出上一条历史输入（编辑过则当作新输入）。"""

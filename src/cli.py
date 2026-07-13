@@ -452,6 +452,45 @@ class ServeUnreachable(Exception):
     """attach 连接阶段失败（serve 不在/拒连/握手超时）——回合尚未发出，可安全回退进程内。"""
 
 
+def _make_attach_confirm(auto_yes, say):
+    """造 attach 端的确认门。**模块级**（不是闭包）是为了让三端契约表能直接驱动它——
+    这一端此前手搓判定、又够不到测试，正是漂移最容易发生的角落。
+
+    attach 是**跨进程**的：agent 在 serve 侧跑，污点状态（contextvar）传不过来。所以污点由协议的
+    `agent_confirm.tainted` **结构化字段**下发（见 protocol.py）——绝不能靠匹配警示文案来猜：
+    serve 换个版本/改个措辞，猜测就失效，`--yes` 又会在污点回合放行（fail-open）。老 serve 不发
+    这个字段时，client 按 `tainted=True` 兜底（fail-closed）并置 `taint_known=False`。
+    """
+    async def confirm(text, *, tainted: bool = True, taint_known: bool = True):
+        from src.agents.gate import ALLOW, ASK, TAINT_REFUSED_REASON, decide
+
+        first = (text or "").splitlines()[0] if text else ""
+        # **判定不在这里做**：跨进程也好、手搓也罢，排序都必须来自内核那一处（gate.decide）。
+        # attach 只负责如实申报三个输入 + 执行结果。此前这里自己写了一遍
+        # `if auto_yes and not tainted`，于是内核新加的规矩这一端收不到（审核记为漂移风险）。
+        verdict = decide(tainted=tainted, pre_authorized=auto_yes,
+                         can_ask_human=(sys.stdin.isatty() and sys.stderr.isatty()))
+        if verdict == ALLOW:
+            say(f"✓ 自动确认：{first}")
+            return True
+        if verdict == ASK:                               # 交互终端：真问人（attach 有人守着）
+            print(f"需要确认：{text}", file=sys.stderr, flush=True)
+            ans = (await asyncio.to_thread(input, "允许吗？[y/N] ")).strip().lower()
+            return ans in ("y", "yes")
+        if not taint_known:
+            # tainted 是"未知→兜底为真"，不是"确知有污点"：对端 serve 版本旧、报不了本回合污点状态。
+            # 别谎称"摄入过外部内容"，也别静默拒绝——给出可执行出路。
+            why = "对端未上报本回合污点状态（serve 可能较旧）；--yes 从严不放行，请升级 serve 或用交互终端确认"
+        elif tainted:
+            why = TAINT_REFUSED_REASON                   # 单一真相源（headless 那头用的是同一条）
+        else:
+            why = "非交互终端，需 --yes 放行"
+        say(f"✗ 拒绝（{why}）：{first}")
+        return False
+
+    return confirm
+
+
 async def _run_agent_attached(prompt, url, *, build=False, auto_yes=False, as_json=False,
                               quiet=False, continue_session=False, images=None, audio=None,
                               speak=False, voice=None, speak_out=None, llm=None):
@@ -489,33 +528,7 @@ async def _run_agent_attached(prompt, url, *, build=False, auto_yes=False, as_js
             sys.stdout.flush()
             seen["n"] = len(text)
 
-    async def confirm(text, *, tainted: bool = True, taint_known: bool = True):
-        """attach 的确认门。
-
-        attach 是**跨进程**的：agent 在 serve 侧跑，污点状态（contextvar）传不过来。
-        所以污点由协议的 `agent_confirm.tainted` **结构化字段**下发（见 protocol.py）——
-        绝不能靠匹配警示文案来猜：serve 换个版本/改个措辞，猜测就失效，`--yes` 又会在污点回合
-        放行（fail-open）。老 serve 不发这个字段时，client 按 `tainted=True` 兜底（fail-closed），
-        并置 `taint_known=False`——下面据此如实说明是"确知污点"还是"对端报不了、我们从严"。
-        """
-        first = (text or "").splitlines()[0] if text else ""
-        if auto_yes and not tainted:
-            say(f"✓ 自动确认：{first}")
-            return True
-        if sys.stdin.isatty() and sys.stderr.isatty():   # 交互终端：真问人（attach 有人守着）
-            print(f"需要确认：{text}", file=sys.stderr, flush=True)
-            ans = (await asyncio.to_thread(input, "允许吗？[y/N] ")).strip().lower()
-            return ans in ("y", "yes")
-        if not taint_known:
-            # tainted 是"未知→兜底为真"，不是"确知有污点"：对端 serve 版本旧、报不了本回合污点状态。
-            # 别谎称"摄入过外部内容"，也别静默拒绝——给出可执行出路。
-            why = "对端未上报本回合污点状态（serve 可能较旧）；--yes 从严不放行，请升级 serve 或用交互终端确认"
-        elif tainted:
-            why = "本回合摄入过外部内容，--yes 不放行（防提示注入）"
-        else:
-            why = "非交互终端，需 --yes 放行"
-        say(f"✗ 拒绝（{why}）：{first}")
-        return False
+    confirm = _make_attach_confirm(auto_yes, say)     # 判定走内核 gate.decide（见工厂 docstring）
 
     client = ProtocolClient(url, sid=sid, token=token)
     try:
@@ -624,12 +637,15 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
         """
         if quiet:
             return
+        from src.agents.gate import TAINT_REFUSED_REASON
+
         first = (operation or "").splitlines()[0]
         if ok:
             print(f"\033[2m✓ 自动确认：{first}\033[0m", file=sys.stderr, flush=True)
         elif tainted:
-            print(f"\033[2m✗ 拒绝（本回合摄入过外部内容，--yes 不放行 · 防提示注入）："
-                  f"{first}\033[0m", file=sys.stderr, flush=True)
+            # 文案取自内核的单一真相源（attach 那头用的是同一条）——此前两处各写一份、已开始漂移。
+            print(f"\033[2m✗ 拒绝（{TAINT_REFUSED_REASON}）：{first}\033[0m",
+                  file=sys.stderr, flush=True)
         else:
             print(f"\033[2m✗ 自动拒绝（需 --yes 放行）：{first}\033[0m", file=sys.stderr, flush=True)
 
