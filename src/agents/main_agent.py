@@ -24,15 +24,11 @@ from typing import Any, Awaitable, Callable, Optional
 
 from src.agents.tool import Tool
 
-# 确认门已抽到 `src/agents/gate.py`（叶子模块，进得了 mypy 的类型门禁圈）。这里**再导出**，让老调用方
-# （gateway / TUI / 测试）照旧 `from src.agents.main_agent import make_confirm_gate` 不至于断。
+# 确认门已抽到 `src/agents/gate.py`（叶子模块，进得了 mypy 的类型门禁圈）。这里只再导出
+# `make_confirm_gate` —— gateway 与测试仍从 main_agent 取它（8 处）。其余名字（decide / ALLOW /
+# TAINT_* …）一律直接从 `src.agents.gate` 取，不在这里转一道。
 # **判定只有一处：`gate.decide()`**——别在任何端里重写那个排序（那是"加一端漏一端"的病根）。
-from src.agents.gate import (  # noqa: F401
-    ALLOW, ASK, DENY, TAINT_REFUSED_REASON, TAINT_WARNING, decide, make_confirm_gate, taint_prefix,
-)
-
-_TAINT_WARNING = TAINT_WARNING      # 老名字：仍有调用方按下划线名引用
-_taint_prefix = taint_prefix
+from src.agents.gate import make_confirm_gate  # noqa: F401
 
 
 # 单个工具结果回灌给模型的最大字符数（默认值），与 read_file 整文件截断上限。
