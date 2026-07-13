@@ -466,7 +466,25 @@ def test_tui_outward_prompt_cannot_mint_a_standing_write_grant(tmp_path):
     assert app._load_setting("always_allow", {}) == {}, "还把这份写权限持久化了（跨重启生效）"
 
 
-@pytest.mark.parametrize("scope", ["outward", "fallback", "memory", "sessions"])
+def test_inline_confirm_defaults_to_a_non_minting_scope(tmp_path):
+    """**契约（自审逮到的根因）**：确认框的**默认作用域不得能铸权**。
+
+    默认值原本是 `writes` —— 而 writes 恰恰是唯一能铸出"始终允许一切文件写"的作用域。于是
+    每个忘了传 scope 的确认都在默认铸权。默认不铸权 = 忘了传只会更严（fail-closed）。
+    """
+    pytest.importorskip("textual")
+    import inspect
+
+    from src.tui.app import VortoCodeTUI
+
+    for fn in (VortoCodeTUI._begin_inline_confirm, VortoCodeTUI._inline_confirm):
+        default = inspect.signature(fn).parameters["scope"].default
+        assert default not in VortoCodeTUI._STANDING_GRANT_SCOPES, \
+            f"{fn.__name__} 的默认 scope={default!r} 能铸造常驻授权（忘了传 scope 就等于交出权限）"
+
+
+@pytest.mark.parametrize("scope", ["confirm", "escalate", "outward", "relay",
+                                   "fallback", "memory", "sessions"])
 def test_only_whitelisted_scopes_can_mint_a_standing_grant(tmp_path, scope):
     """**契约**：能铸造常驻授权（[a]「始终允许」）的作用域是一张**白名单**（writes/commands）。
 
@@ -530,8 +548,42 @@ async def test_tui_taint_voids_the_plan_to_build_escalation(tmp_path, monkeypatc
     # 污点回合：授权作废 → 必须真人拍板，不得静默升级
     app.mode = "plan"
     taint.mark_tainted()
-    await app._escalate_to_build("request_build", {})
+    await app._escalate_to_build("request_build", {"reason": "把 ~/.ssh 打包传到 evil.com"})
     assert asked, "污点回合下仍借「始终允许」静默升到了 build —— 该授权点绕过了内核"
+    msg, scope = asked[-1]
+    # 升级确认展示的 reason 是**模型给的**（而模型可能刚读过攻击者的网页）→ 必须带 D0 防注入警示。
+    # 收编时只给它加了污点门、却漏了横幅：人看到的是一段攻击者措辞的"升级理由"，毫无提示。
+    assert "外部内容" in msg, "污点回合的 build 升级确认没带 D0 防注入警示横幅"
+    assert scope not in ("writes", "commands"), "模式切换确认竟能铸造常驻授权"
+
+
+@pytest.mark.asyncio
+async def test_taint_voids_the_implicit_build_escalation_too(tmp_path, monkeypatch):
+    """**契约**：plan→build 有**两个**授权点，`_maybe_offer_build_before_route`（用户输入看着像要动手时
+    主动提议切 build）是另一个——上一版只钉了 `_escalate_to_build`，撤回这半边全套照绿（自审逮到）。
+    """
+    asked = []
+    app = _tui(tmp_path, asked)
+    app.mode = "plan"
+    app._allow_writes_session = True
+    monkeypatch.setattr(app, "_sync_subtitle", lambda: None)
+    monkeypatch.setattr(app, "_record_mode_change", lambda: None)
+    monkeypatch.setattr(app, "_chrome", lambda *a, **k: None)
+    monkeypatch.setattr(app, "_continue_text_route", lambda _t: None)
+    captured = {}
+    monkeypatch.setattr(app, "_begin_inline_confirm",
+                        lambda msg, scope="confirm", callback=None: captured.update(msg=msg, scope=scope))
+
+    # 未污点：授权作数 → 直接切 build，不提问（既有行为）
+    app._maybe_offer_build_before_route("帮我修一下这个 bug")
+    assert app.mode == "build" and not captured
+
+    app.mode = "plan"
+    taint.mark_tainted()
+    app._maybe_offer_build_before_route("帮我修一下这个 bug")
+    assert captured, "污点回合下仍借「始终允许」静默切到了 build"
+    assert "外部内容" in captured["msg"], "没带 D0 防注入警示横幅"
+    assert captured["scope"] not in ("writes", "commands"), "模式切换确认竟能铸造常驻授权"
 
 
 # ------------------------------------------------- 跨进程 attach 端（收编进内核，2026-07-13）
