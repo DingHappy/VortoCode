@@ -498,6 +498,7 @@ class VortoCodeTUI(App):
         # 只免"逐次确认"，不越过 deny 规则/污点强制确认/host 降级/会话能力边界（见 _confirm_* 各门）。
         self._allow_writes_session = False
         self._allow_commands_session = False
+        self._stale_grant_notice = False   # 旧版误铸授权被作废 → 挂载后提示用户重新授权
         self._load_always_allow()
         self._speak_replies = False         # /speak 开关：开则把每条回复合成语音朗读（mimo-v2.5-tts）
         self._user_cmds = None              # 用户自定义命令缓存（.vortocode/commands，惰性加载、/commands reload 重扫）
@@ -542,6 +543,10 @@ class VortoCodeTUI(App):
         self.query_one("#plan", Static).display = False    # 无计划时不占地方，update_plan 后才现身
         self.query_one("#palette", Static).display = False
         self._greet()
+        if self._stale_grant_notice:        # __init__ 时 UI 还没挂载，提示只能延到这里发
+            self._stale_grant_notice = False
+            self._chrome("[yellow]⚠ 已作废旧版「始终允许」记录：它可能是在模式切换/发布制品等提示上"
+                         "被误铸出来的（并非你想给的「允许一切文件写」）。需要时请重新授权。[/yellow]")
         self._sync_subtitle()
         self.session_id = self.sessions.start_session()
         self._persist_on = True            # 之后的对话才落盘（不存开场白）
@@ -963,21 +968,36 @@ class VortoCodeTUI(App):
     # 边界（都在 _confirm_* 各门里，本机制一概不碰）：deny 规则仍硬拦、污点回合仍强制确认、
     # host 降级（scope=fallback）永不可"始终允许"、会话能力 profile 仍是外层闸。
     # 撤销：/permissions reset（清会话标志 + 抹掉持久化记录）。
+    # 常驻授权的记录版本。**旧版记录一律作废、不再加载**：v1 时期任何确认（包括"切到 build 模式？"
+    # 这类模式切换、发布制品、委派子 agent）都用着可铸权的 `writes` 作用域，用户在那些提示上按下的
+    # [a] 会**误铸出"始终允许一切文件写"并持久化**。也就是说盘里已有的 v1 授权，可能根本不是用户
+    # 想给的那个东西——修复只能挡住新的误铸，挡不住已经落盘的。所以升版一次、让它重新授权。
+    _ALWAYS_ALLOW_VERSION = 2
+
     def _load_always_allow(self) -> None:
         data = self._load_setting("always_allow", {})
         if not isinstance(data, dict):
+            data = {}
+        if int(data.get("v") or 1) < self._ALWAYS_ALLOW_VERSION:
+            if data.get("writes") or data.get("commands"):
+                # **只有真有旧授权时才写盘**：否则每次启动都无谓地改 .vortocode/settings.json，
+                # 把 git 工作区弄脏（PR 预览/提交那几条测试就是这么被我打红的）。
+                self._save_setting("always_allow", {})
+                # 提示**延到挂载后**再发：这里还在 __init__，_chrome 要 query_one("#log")，会崩。
+                self._stale_grant_notice = True
             data = {}
         self._allow_writes_session = bool(data.get("writes"))
         self._allow_commands_session = bool(data.get("commands"))
 
     def _persist_always_allow(self, scope: str) -> None:
-        """把本次 [a] 的选择记进项目设置（仅 writes/commands 两个作用域；fallback 永不记）。"""
-        if scope not in ("writes", "commands"):
+        """把本次 [a] 的选择记进项目设置。**只认铸权白名单**（单一真相源，见 _STANDING_GRANT_SCOPES）。"""
+        if scope not in self._STANDING_GRANT_SCOPES:
             return
         data = self._load_setting("always_allow", {})
         if not isinstance(data, dict):
             data = {}
         data[scope] = True
+        data["v"] = self._ALWAYS_ALLOW_VERSION      # 记下版本，否则下次启动会被当成旧记录作废
         self._save_setting("always_allow", data)
 
     def _clear_always_allow(self) -> None:
@@ -1369,9 +1389,21 @@ class VortoCodeTUI(App):
         用户在"切到 build 模式？"上按 [a]，以为"别再问我模式了"，实际交出了跨重启的全仓写权限。
         默认不铸权 = fail-closed：要铸权的必须**明说** scope（只有 writes / commands 能铸，见白名单）。
         """
-        if self._inline_confirm_active():
-            return self._confirm_future
         loop = asyncio.get_running_loop()
+        if self._inline_confirm_active():
+            # **绝不把并发确认挂到别人的 future 上**（此前就是 `return self._confirm_future`）：
+            # 那样用户对着 A（"改 README？"）按下的 y/[a]，会把他**从没看见过**的 B 一并放行——
+            # 而 B 可能是 `rm -rf`。这是确认混淆：一次点击，答应了两件事，其中一件不知情。
+            # 并发一律**拒**：宁可让 B 失败重来，也不能替用户答应他没看见的操作。
+            self._chrome("[yellow]已有确认在等待中 → 本次操作已拒绝（先处理上一个确认再重试）[/yellow]")
+            denied = loop.create_future()
+            denied.set_result(False)
+            if callback is not None:
+                try:
+                    callback(False)
+                except Exception:  # noqa: BLE001 —— 回调失败不影响"拒绝"这个结论
+                    pass
+            return denied
         fut = loop.create_future()
         self._confirm_future = fut
         self._confirm_callback = callback
@@ -1407,7 +1439,10 @@ class VortoCodeTUI(App):
                 t.append(f"› {label} ", style="reverse bold")
             else:
                 t.append(f"  {label} ", style="dim")
-        t.append("   ←/→/Tab 选择 · Enter 执行 · y/a/n/Esc", style="dim")
+        # 按键提示要跟着选项走：铸不了权的作用域上 [a] 既不展示也不接受，就别再宣传它
+        # （否则用户按了 a 毫无反应，还以为坏了）。
+        keys = "y/a/n/Esc" if self._confirm_scope in self._STANDING_GRANT_SCOPES else "y/n/Esc"
+        t.append(f"   ←/→/Tab 选择 · Enter 执行 · {keys}", style="dim")
         panel.update(t)
         panel.display = True
 
@@ -1468,8 +1503,25 @@ class VortoCodeTUI(App):
             return deny, None                       # deny 压过一切授权，allow 无需再算
         return None, perm.allowed(tool_name, arg_map)
 
+    # `/permissions` 报告的固定脚注。**说规矩，不假装能看到"本回合"的污点**——见 `_standing_grant_holds`
+    # 里的任务边界说明：报告跑在 pump 任务、回合之间，那里本来就没有污点可看。此前这里写成了
+    # 逐工具的"本回合摄入过外部内容 → 授权失效"，结果只要用户持有任一授权就会印出来——
+    # 比如只授权了写、却去问 run_command，报告就凭空宣称"摄入过外部内容"（自审逮到：报告反向撒谎）。
+    _TAINT_CAVEAT = ("注：以上是当前判定。任何**摄入过外部内容**（网页/搜索/MCP）的回合，"
+                     "免确认授权一律失效、仍会逐次问你（防提示注入）。")
+
     def _standing_grant_holds(self, pre_authorized: bool) -> bool:
         """一个既有的免确认授权在**本回合**是否还作数——**由内核说了算**（污点回合一律作废）。
+
+        ⚠️ **任务边界（别在 pump 任务上加污点检查）**：污点是 `contextvars.ContextVar`，而 Textual 的
+        `@work` worker 是**独立 asyncio Task**、拿的是 context 的**拷贝**——worker 里 `mark_tainted()`
+        的写入**传不回** pump 任务（实测：worker 内 True、pump 侧 False）。
+        - 在 **worker** 里跑、污点看得见 ✓：工具确认（`_confirm_write`/`_confirm_command`）、
+          `_escalate_to_build`（模型被诱导 request_build 的真实攻击面）、记忆确认、自动记忆提示。
+          **载荷路径全在这边，保护是真的。**
+        - 在 **pump** 里跑、污点永远是 False ✗：`_maybe_offer_build_before_route`（输入提交处理器）、
+          `/permissions` 报告。**但它们跑在回合之间，那时本来就没有污点**（污点每回合重置），
+          所以不是漏洞——只是别在那些地方写"污点会拦住它"的代码或测试，那是死的。
 
         为什么必须走内核（2026-07-13 收编）：TUI 此前自己写了一遍"污点 → 授权失效"的排序，
         与内核那份**语义恰好一样**——但那是巧合不是保证。内核再加一条新规矩，TUI 就会静默漏掉，
@@ -1491,6 +1543,9 @@ class VortoCodeTUI(App):
     async def _gated(self, message: str, *, pre_authorized: bool, scope: str) -> bool:
         """TUI 的确认执行：判定交给内核（见 `_standing_grant_holds`），这里只管"怎么问人"。"""
         if self._standing_grant_holds(pre_authorized):
+            # **自动放行也要留痕**——这正是内核 gate 的 on_decision 契约（"不然自动放行会静默发生"）。
+            # TUI 此前是静默返回 True：用户按过一次 [a] 之后，后面发生了什么写操作完全不可见。
+            self._chrome(f"[dim]✓ 已按「始终允许」自动放行：{message.splitlines()[0][:80]}[/dim]")
             return True
         return await self._inline_confirm(self._taint_msg(message), scope=scope)
 
@@ -1533,7 +1588,15 @@ class VortoCodeTUI(App):
         这些此前**全都挂在 `_confirm_write`（scope=writes，可铸权）**上：用户在一次"写文件？"上
         按 [a]，想说的是"别再问我改文件了"，实际却把上面这些**永久且跨重启地**一并授权了
         （自审逮到的权限提升）。实现即"永不申报 pre_authorized"——于是 decide() 必然给出 ASK。
+
+        传进来的 scope **必须**在铸权白名单之外，否则这个方法就名不副实（[a] 照样能铸权）：
+        这里硬拦，把"永不铸权"变成**结构性**保证，而不是"目前所有调用方碰巧都传对了"——后者
+        正是"默认 scope 曾是 writes"那个洞的成因。
         """
+        if scope in self._STANDING_GRANT_SCOPES:
+            raise ValueError(
+                f"_confirm_always 收到可铸权的 scope={scope!r} —— 那它就不是「永不可始终允许」了。"
+                f"高影响操作必须用白名单之外的作用域（skill/artifact/delegate/outward/escalate…）。")
         return await self._gated(message, pre_authorized=False, scope=scope)
 
     async def _confirm_outward(self, message: str) -> bool:
@@ -2126,14 +2189,11 @@ class VortoCodeTUI(App):
                     else self._allow_writes_session):
                 status = "allowed (always)"
             else:
-                # 报告必须说 gate **真会做**的事：污点回合下一切免确认授权作废、照样弹确认。
-                # 此前这里自己判（只看 _allow_*_session），于是污点回合报告说"allowed (always)"、
-                # 而 gate 实际会拦下来问人——报告与执行相反（自审逮到：漂移藏在展示路径里）。
-                status = "confirm required（本回合摄入过外部内容 → 授权失效）" \
-                    if (allow or self._allow_writes_session or self._allow_commands_session) \
-                    else "confirm required"
+                status = "confirm required"
             gate = "只读" if t.read_only else "写/重型"
             lines.append(f"  {t.name} [{gate}] -> {status}")
+        lines.append("")
+        lines.append(self._TAINT_CAVEAT)
         if perm.allow_rules:
             lines.append("")
             lines.append("项目 allow 规则:")
@@ -2190,11 +2250,9 @@ class VortoCodeTUI(App):
                 self._allow_commands_session if tool_name == "run_command"
                 else self._allow_writes_session):
             lines.append("结论: build 下本会话已允许；危险命令和 deny 规则仍会硬拦。")
-        elif allow or self._allow_writes_session or self._allow_commands_session:
-            # 有授权但**本回合污点** → gate 会作废它、照样问人。报告必须与执行一致。
-            lines.append("结论: 有免确认授权，但本回合摄入过外部内容 → 授权失效，仍会要求人工确认。")
         else:
             lines.append("结论: build 下可请求执行，但需要人工确认。")
+        lines.append(self._TAINT_CAVEAT)
         rules = matching_deny + matching_allow
         if rules and not value and any(glob is not None for _, glob in rules):
             lines.append("提示: 该工具有参数 glob 规则；用 /permissions explain <tool> <value> 可判断具体值是否命中。")
@@ -5137,7 +5195,14 @@ class VortoCodeTUI(App):
                 if spec is None:
                     avail = "、".join(reg.specs) or "（无——在 .vortocode/agents/ 放 <名>.md 定义角色）"
                     return f"没有名为 {agent_name!r} 的子 agent。可用：{avail}", is_tainted()
-                sub = build_subagent(self.repo_root, spec, confirm=self._confirm_write,
+                # 子 agent 的**内部**工具确认也不可铸权：dev 型角色拿到的是 dev_isolated/dev_parallel
+                # （自主 worktree 流水线）。若沿用 _confirm_write（scope=writes），它会 ① 吃掉父会话
+                # 那句"始终允许写"的豁免、静默跑流水线；② 一旦弹确认，用户按 [a] 就**从一条 dev
+                # 流水线提示上**铸出全仓写权限——正是本批次要根除的捆绑。
+                async def _sub_confirm(message: str) -> bool:
+                    return await self._confirm_always(message, scope="delegate")
+
+                sub = build_subagent(self.repo_root, spec, confirm=_sub_confirm,
                                      on_progress=lambda m: self._chrome(f"[dim]{m}[/dim]"),
                                      capabilities=self._capabilities)
                 if spec.tools == "dev" and not await self._confirm_always(

@@ -375,6 +375,7 @@ def _tui(tmp_path, asked):
 
     app._inline_confirm = _inline
     app._emit = lambda *a, **k: None
+    app._chrome = lambda *a, **k: None      # 自动放行会走 _chrome 留痕（真实现要查 UI 组件）
     return app
 
 
@@ -496,26 +497,32 @@ def test_auto_memory_confirm_carries_the_taint_banner(tmp_path, monkeypatch):
     assert captured["scope"] not in ("writes", "commands"), "记忆确认竟能铸造常驻授权"
 
 
-def test_permissions_report_does_not_contradict_the_gate(tmp_path):
-    """**契约**：`/permissions` 报告说的必须是 gate **真会做**的事。
+def test_permissions_report_never_fabricates_a_taint_warning(tmp_path):
+    """**契约**：`/permissions` 报告不许**凭空宣称**"本回合摄入过外部内容"。
 
-    污点回合下一切免确认授权作废、照样弹确认——可报告此前只看 `_allow_writes_session`，
-    于是它对用户说"allowed (always)"，而 gate 实际会拦下来问人。**报告与执行相反**：
-    这仍是"端自己重写内核判定"的漂移，只不过藏在展示路径里（自审逮到）。
+    上一版为了让报告"与 gate 一致"，加了一个分支：只要持有任一授权、又没走到放行分支，就印
+    "本回合摄入过外部内容 → 授权失效"。可那个条件根本不含污点——用户只授权了写、却去问
+    `run_command`，报告就**凭空撒谎**说他摄入过外部内容（自审逮到：报告开始反向撒谎）。
+
+    而且报告跑在 **pump 任务**、回合之间，那里**永远看不到污点**（污点是 worker 的 ContextVar，
+    见 `_standing_grant_holds` 的任务边界说明）。所以正确做法是**说规矩、不假装能看到本回合**：
+    给一条固定脚注，而不是逐工具编造污点状态。
     """
     pytest.importorskip("textual")
     from src.tui.app import VortoCodeTUI
 
     app = VortoCodeTUI(repo_root=str(tmp_path))
     app.mode = "build"
-    app._allow_writes_session = True
+    app._allow_writes_session = True          # 只授权了「写」，**没有**命令授权，也**没有**污点
 
-    assert "allowed (always)" in app._permission_effective_text()          # 未污点：授权作数
-
-    taint.mark_tainted()
     report = app._permission_effective_text()
-    assert "allowed (always)" not in report, "污点回合报告仍称「始终允许」，而 gate 其实会问人"
-    assert "授权失效" in report, "没告诉用户为什么这回不算数"
+    assert "allowed (always)" in report                    # 写类工具：授权作数
+    assert "摄入过外部内容 → 授权失效" not in report, \
+        "报告凭空宣称本回合摄入过外部内容（其实只是没有命令授权而已）"
+    assert "免确认授权一律失效" in report, "没把「污点回合授权作废」这条规矩告诉用户"
+
+    explain = app._permission_explain_text("run_command")  # 恰恰是没被授权的那个工具
+    assert "摄入过外部内容 → 授权失效" not in explain, "explain 也在凭空宣称污点"
 
 
 @pytest.mark.asyncio
@@ -567,6 +574,141 @@ async def test_always_allow_writes_does_not_authorize_high_impact_operations(tmp
         assert await app._confirm_always(f"{scope} 操作？", scope=scope) is True
         assert [s for _m, s in asked] == [scope], f"{scope} 被「始终允许写」静默放行了"
         assert scope not in app._STANDING_GRANT_SCOPES, f"{scope} 竟然还能铸权"
+
+
+@pytest.mark.asyncio
+async def test_a_concurrent_confirmation_is_denied_not_piggybacked(tmp_path):
+    """**契约（自审逮到的确认混淆）**：第二个确认**绝不能**挂到第一个的 future 上。
+
+    此前 `_begin_inline_confirm` 在已有确认挂起时直接 `return self._confirm_future`。于是用户
+    对着 A（"改 README？"）按下的 y/[a]，会把他**从没看见过**的 B 一并放行——而 B 可能是 `rm -rf`。
+    一次点击答应两件事，其中一件不知情。并发一律拒：宁可让 B 失败重来。
+    """
+    pytest.importorskip("textual")
+    from src.tui.app import VortoCodeTUI
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    app._chrome = lambda *a, **k: None
+
+    first = app._begin_inline_confirm("A：改 README？", scope="writes")
+    second = app._begin_inline_confirm("B：rm -rf /？", scope="commands")
+
+    assert second is not first, "并发确认复用了同一个 future —— 一次点击会答应两件事"
+    assert second.done() and second.result() is False, "并发确认没有 fail-closed"
+
+    app._finish_inline_confirm("yes")                # 用户只对 A 说了 yes
+    assert first.result() is True
+    assert second.result() is False, "用户对 A 的同意，泄漏成了对 B 的同意"
+
+
+def test_stale_always_allow_grants_are_invalidated_on_load(tmp_path):
+    """**契约**：旧版（v1）持久化的「始终允许」记录**一律作废**。
+
+    v1 时期任何确认（模式切换、发布制品、委派子 agent…）都用着可铸权的 `writes` 作用域，
+    用户在那些提示上按的 [a] 会**误铸出"始终允许一切文件写"并落盘**。修复只挡得住新的误铸，
+    挡不住盘里已有的——那份授权可能根本不是用户想给的东西，所以升版一次、让它重新授权。
+    """
+    pytest.importorskip("textual")
+    from src.tui.app import VortoCodeTUI
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    app._chrome = lambda *a, **k: None
+    app._save_setting("always_allow", {"writes": True})   # ← v1 的记录（无版本号）
+
+    app._load_always_allow()
+    assert app._allow_writes_session is False, "旧版误铸的「始终允许写」仍在生效"
+    assert app._load_setting("always_allow", {}) == {}, "旧记录没被抹掉，下次启动还会复活"
+
+    # 新授权要带版本号，否则每次启动都会被当成旧记录作废
+    app._confirm_scope = "writes"
+    app._finish_inline_confirm("always")
+    app._load_always_allow()
+    assert app._allow_writes_session is True, "新授权在下次加载时被误当成旧记录作废了"
+
+
+@pytest.mark.asyncio
+async def test_standing_grant_auto_approval_is_never_silent(tmp_path):
+    """**契约**：靠「始终允许」自动放行时**必须留痕**——这正是内核 gate 的 on_decision 契约
+    （"不然自动放行会静默发生"）。TUI 此前是静默返回 True：用户按过一次 [a] 之后，
+    后面发生了什么写操作完全不可见。"""
+    asked, traced = [], []
+    app = _tui(tmp_path, asked)
+    app._chrome = lambda m, *a, **k: traced.append(str(m))
+    app._allow_writes_session = True
+
+    assert await app._confirm_write("改 src/foo.py？") is True
+    assert asked == []                                    # 未污点 + 已授权 → 不打扰人
+    assert any("自动放行" in t for t in traced), "自动放行没有留下任何痕迹"
+
+
+@pytest.mark.asyncio
+async def test_confirm_always_refuses_a_mintable_scope(tmp_path):
+    """**契约**：`_confirm_always`（"永不可始终允许"的门）**硬拒**白名单内的作用域。
+
+    否则它名不副实：谁传个 `scope="writes"` 进来，[a] 照样能铸权，这层防护就是纸糊的。
+    把不变量做成**结构性**保证，而不是"目前所有调用方碰巧都传对了"——后者正是"默认值曾是 writes"
+    那个洞的成因。
+    """
+    asked = []
+    app = _tui(tmp_path, asked)
+
+    for bad in app._STANDING_GRANT_SCOPES:           # writes / commands
+        with pytest.raises(ValueError, match="可铸权"):
+            await app._confirm_always("高影响操作？", scope=bad)
+
+
+@pytest.mark.asyncio
+async def test_delegated_subagent_confirm_cannot_ride_or_mint_the_writes_grant(tmp_path, monkeypatch):
+    """**契约**：委派出去的子 agent，其**内部**工具确认不得吃"始终允许写"的豁免，也不得铸权。
+
+    dev 型角色的子 agent 拿到的是 `dev_isolated`/`dev_parallel`——自主 worktree 流水线。
+    若它的确认门是 `_confirm_write`（scope=writes、可铸权），那么 ① 父会话一句"始终允许写"就能让
+    子 agent 静默跑流水线；② 子 agent 一弹确认，用户按 [a] 会**从一条 dev 流水线提示上**铸出全仓写权限。
+    """
+    pytest.importorskip("textual")
+    from src.agents import main_agent
+
+    asked = []
+    app = _tui(tmp_path, asked)
+    app._allow_writes_session = True                 # 父会话按过 [a]（普通写确认）
+
+    captured = {}
+
+    class _FakeSub:                                  # 只要能被赋属性、能跑一回合就行
+        tools: dict = {}
+
+        async def run_turn(self, *_a, **_k):
+            return "done"
+
+    def _fake_build(*_a, **k):
+        captured["confirm"] = k.get("confirm")
+        return _FakeSub()
+
+    monkeypatch.setattr(main_agent, "build_subagent", _fake_build)
+    monkeypatch.setattr(app, "_chrome", lambda *a, **k: None)
+
+    from src.agents.subagents import registry_for
+    reg = registry_for(str(tmp_path))
+    if not reg.specs:                                # 没有自定义角色就造一个 dev 型的
+        d = tmp_path / ".vortocode" / "agents"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "coder.md").write_text("---\ntools: dev\n---\n你是实现工程师。", encoding="utf-8")
+
+    agent = app._build_main_agent()
+    task = next(t for t in agent.tools.values() if t.name == "task")
+    await task.handler({"description": "实现个功能", "agent": "coder"})
+
+    sub_confirm = captured.get("confirm")
+    assert sub_confirm is not None, "没拿到子 agent 的确认门"
+
+    # **只看子 agent 那一次确认**：上面的委派本身也会弹一次（scope=delegate），若不清空，
+    # 断言就会命中委派那条、而不是子 agent 的——那正是安慰剂（save_skill 上刚栽过同一跤）。
+    asked.clear()
+    await sub_confirm("子 agent 想跑 dev_isolated？")
+
+    assert asked, "子 agent 的确认吃掉了父会话的「始终允许写」豁免（压根没问人）"
+    assert [s for _m, s in asked] == ["delegate"], \
+        "子 agent 的确认落在可铸权作用域里 —— [a] 会从一条 dev 流水线提示上铸出全仓写权限"
 
 
 @pytest.mark.asyncio
@@ -628,7 +770,7 @@ def test_whitelisted_scopes_still_grant_and_persist(tmp_path, scope):
 
     app._finish_inline_confirm("always")
     assert getattr(app, f"_allow_{scope}_session") is True
-    assert app._load_setting("always_allow", {}) == {scope: True}   # 跨重启常驻
+    assert app._load_setting("always_allow", {}) == {scope: True, "v": app._ALWAYS_ALLOW_VERSION}
 
     app._clear_always_allow()                       # /permissions reset 仍是撤销通道
     assert app._load_setting("always_allow", {}) == {}
@@ -667,32 +809,38 @@ async def test_tui_taint_voids_the_plan_to_build_escalation(tmp_path, monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_taint_voids_the_implicit_build_escalation_too(tmp_path, monkeypatch):
-    """**契约**：plan→build 有**两个**授权点，`_maybe_offer_build_before_route`（用户输入看着像要动手时
-    主动提议切 build）是另一个——上一版只钉了 `_escalate_to_build`，撤回这半边全套照绿（自审逮到）。
+async def test_implicit_build_escalation_cannot_mint_a_write_grant(tmp_path, monkeypatch):
+    """**契约**：`_maybe_offer_build_before_route`（用户输入看着像要动手时主动提议切 build）
+    是 plan→build 的第二个授权点，它的确认**不得铸权**。
+
+    **这里刻意不测污点**——上一版在这里断言"污点回合会强制问人"，那是**安慰剂**：这条路径跑在
+    Textual 的 **pump 任务**（输入提交处理器），而污点是 worker 任务的 ContextVar，pump 侧
+    **永远看不到**（实测）。测试只因为在同一个任务里 `mark_tainted()` 才绿，而**生产环境造不出
+    这个场景**（自审逮到）。好在它也不是漏洞：这条路径跑在**回合之间**，那时本来就没有污点。
+    真正的攻击面 `_escalate_to_build`（模型被诱导 request_build）在 worker 里，污点看得见——
+    那条另有测试钉死。
     """
     asked = []
     app = _tui(tmp_path, asked)
     app.mode = "plan"
-    app._allow_writes_session = True
     monkeypatch.setattr(app, "_sync_subtitle", lambda: None)
     monkeypatch.setattr(app, "_record_mode_change", lambda: None)
-    monkeypatch.setattr(app, "_chrome", lambda *a, **k: None)
     monkeypatch.setattr(app, "_continue_text_route", lambda _t: None)
     captured = {}
     monkeypatch.setattr(app, "_begin_inline_confirm",
                         lambda msg, scope="confirm", callback=None: captured.update(msg=msg, scope=scope))
 
-    # 未污点：授权作数 → 直接切 build，不提问（既有行为）
+    # 无授权 → 提议切 build，且该确认**铸不出**"始终允许写"（用户按 [a] 想说的是"别再问我模式了"）
+    app._maybe_offer_build_before_route("帮我修一下这个 bug")
+    assert captured, "没弹出切 build 的确认"
+    assert captured["scope"] not in app._STANDING_GRANT_SCOPES, "模式切换确认竟能铸造常驻授权"
+
+    # 已授权 → 直接切，不打扰（既有行为不许改坏）
+    captured.clear()
+    app.mode = "plan"
+    app._allow_writes_session = True
     app._maybe_offer_build_before_route("帮我修一下这个 bug")
     assert app.mode == "build" and not captured
-
-    app.mode = "plan"
-    taint.mark_tainted()
-    app._maybe_offer_build_before_route("帮我修一下这个 bug")
-    assert captured, "污点回合下仍借「始终允许」静默切到了 build"
-    assert "外部内容" in captured["msg"], "没带 D0 防注入警示横幅"
-    assert captured["scope"] not in ("writes", "commands"), "模式切换确认竟能铸造常驻授权"
 
 
 # ------------------------------------------------- 跨进程 attach 端（收编进内核，2026-07-13）

@@ -3648,7 +3648,8 @@ async def test_always_allow_persists_across_restarts(tmp_path):
         await pilot.press("a")
         await pilot.pause()
         assert await task is True
-    assert app._load_setting("always_allow", {}) == {"writes": True}   # 只落 writes，不串到 commands
+    # v 是记录版本（旧版误铸的授权会在加载时作废，见 _ALWAYS_ALLOW_VERSION）
+    assert app._load_setting("always_allow", {}) == {"writes": True, "v": app._ALWAYS_ALLOW_VERSION}
 
     fresh = VortoCodeTUI(repo_root=str(tmp_path))                      # 重启：从设置载入
     assert fresh._allow_writes_session is True
