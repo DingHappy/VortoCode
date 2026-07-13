@@ -466,6 +466,47 @@ def test_tui_outward_prompt_cannot_mint_a_standing_write_grant(tmp_path):
     assert app._load_setting("always_allow", {}) == {}, "还把这份写权限持久化了（跨重启生效）"
 
 
+@pytest.mark.parametrize("scope", ["outward", "fallback", "memory", "sessions"])
+def test_only_whitelisted_scopes_can_mint_a_standing_grant(tmp_path, scope):
+    """**契约**：能铸造常驻授权（[a]「始终允许」）的作用域是一张**白名单**（writes/commands）。
+
+    白名单而非黑名单：将来新加一个确认作用域，默认就是"不可铸权"，不会因为忘了登记而悄悄
+    获得跨重启的持久授权。（黑名单版本下 memory/sessions 仍会展示 [a]，按下去 setattr 出一个
+    没人读的幽灵属性 `_allow_memory_session`——不授权任何东西，等于向用户谎称"已记住"。）
+    """
+    pytest.importorskip("textual")
+    from src.tui.app import VortoCodeTUI
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    app._confirm_scope = scope
+
+    assert [k for k, _l in app._inline_confirm_choices()] == ["yes", "no"], \
+        f"scope={scope} 竟然提供了「始终允许」"
+
+    app._finish_inline_confirm("always")
+    assert getattr(app, f"_allow_{scope}_session", False) is False, f"scope={scope} 铸出了常驻授权"
+    assert app._load_setting("always_allow", {}) == {}, f"scope={scope} 还把它持久化了"
+
+
+@pytest.mark.parametrize("scope", ["writes", "commands"])
+def test_whitelisted_scopes_still_grant_and_persist(tmp_path, scope):
+    """**反向契约**：白名单收紧不能误伤 —— writes/commands 的 [a] 必须照旧生效并跨会话常驻。"""
+    pytest.importorskip("textual")
+    from src.tui.app import VortoCodeTUI
+
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    app._confirm_scope = scope
+
+    assert [k for k, _l in app._inline_confirm_choices()] == ["yes", "always", "no"]
+
+    app._finish_inline_confirm("always")
+    assert getattr(app, f"_allow_{scope}_session") is True
+    assert app._load_setting("always_allow", {}) == {scope: True}   # 跨重启常驻
+
+    app._clear_always_allow()                       # /permissions reset 仍是撤销通道
+    assert app._load_setting("always_allow", {}) == {}
+
+
 @pytest.mark.asyncio
 async def test_tui_taint_voids_the_plan_to_build_escalation(tmp_path, monkeypatch):
     """**契约（自审逮到的真洞）**：污点回合下，"始终允许"**不能**把会话静默升到 build。
