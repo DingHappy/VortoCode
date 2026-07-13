@@ -6,6 +6,168 @@
 > `Status: Active`, when present, is the work to execute; older dated batches are
 > completed history and remain as acceptance examples.
 
+## 2026-07-13 Batch: Architecture Convergence Cleanup — Gate Module, TUI Enrollment, Dead-Model Removal
+
+Status: Active
+
+Context: PR #182 hoisted the confirm/taint decision into the kernel
+(`make_confirm_gate`) and pinned CLI/Web/IM plus unattended sessions with a
+capability-matrix contract table (`tests/unit/test_three_end_contract.py`).
+A post-merge architecture survey (2026-07-13, evidence below) found three
+bounded follow-ups: the kernel gate is buried inside a 3.5k-line module and
+two ends (rich TUI, cross-process attach) still hand-roll the decision; a
+dead second security model and a dead vector-memory module together carry
+~1,300 lines of misleading weight; and the backlog/README no longer describe
+reality. Three tracks, each its own `vorto/*` branch and PR, landed in order.
+
+### Track 1 — Extract the security gate; enroll TUI and attach (security-boundary change)
+
+Evidence:
+
+- `make_confirm_gate` lives at `src/agents/main_agent.py:328-381`, with
+  `_TAINT_WARNING` at :314, `_taint_prefix` at :318, `deny_all` at :384 —
+  inside a 3,544-line module. Consequences: the gate cannot join the mypy
+  scope (`pyproject.toml [tool.mypy] files` pins write_policy/permissions/
+  capabilities but not the gate itself), and `src/gateway/{session,
+  agent_session}.py` lazy-import `main_agent` to dodge import weight.
+- The rich TUI never calls `make_confirm_gate` (zero hits in `src/tui/`).
+  `_confirm_write` (`src/tui/app.py:1541`), `_confirm_outward` (:1572) and
+  `_confirm_command` (:1576) re-implement the taint/allow ordering locally.
+  Today the semantics happen to match (TUI always has a human, tainted
+  always prompts), so this is drift risk, not a live hole — but the next
+  rule added to the kernel gate will silently miss the TUI, which is the
+  exact disease PR #182 cured elsewhere. The contract table's
+  `ALL_ENDS = ["cli", "web", "im"]` (test_three_end_contract.py:21)
+  documents the gap.
+- The attach end hand-rolls the decision too: `src/cli.py:492-527`
+  (`if auto_yes and not tainted` + isatty branching). Review of #182 filed
+  this as PLAUSIBLE future drift, plus two CONFIRMED cleanup items:
+  `deny_all`'s docstring claims it is the fail-closed fallback but its body
+  is unreachable (the gate returns False on every `can_ask_human=False`
+  path before calling it), and the taint-refusal wording exists in three
+  variants (`src/cli.py:508`, `src/cli.py:624`, `_TAINT_WARNING`).
+
+Goals:
+
+- Move the gate — `make_confirm_gate`, `deny_all`, `_TAINT_WARNING`,
+  `_taint_prefix` — into a new small module (`src/agents/gate.py`).
+  `main_agent` re-exports them so existing importers (gateway, TUI, tests)
+  keep working; first-party callers migrate to the new import. Add the new
+  module to `[tool.mypy] files`; mypy stays at 0 errors.
+- One pure decision function becomes the single source of the
+  tainted/pre-authorized/can-ask ordering (recommended shape:
+  `decide(tainted, pre_authorized, can_ask_human) -> allow|ask|deny`, used
+  by `make_confirm_gate` internally). The attach confirm (`src/cli.py`) and
+  the TUI confirm methods consume it instead of re-implementing the
+  ordering. Deviation from this shape is fine with a recorded reason; the
+  non-negotiable part is that no end encodes the ordering locally.
+- TUI enrollment must preserve TUI-specific semantics as *inputs*, not
+  duplicate logic: permission deny rules still run first; project allow
+  rules and session "always allow" scopes act as per-call pre-authorization;
+  `force_prompt` (sandbox host-fallback) still forces a per-execution prompt
+  ignoring all pre-authorization; `_confirm_outward` still never consumes
+  the always-allow-writes scope. Note `make_confirm_gate`'s construction-time
+  `auto_approve` does not fit TUI's per-call allow rules — extending the
+  gate (per-call parameter or callable) is expected.
+- Resolve the `deny_all` trap (make the docstring honest about where the
+  fail-closed guarantee actually lives, or restructure so it lives where
+  claimed) and collapse the three refusal-message variants to one source.
+- Extend the contract table to cover the TUI and attach ends with behavior
+  tests (drive the real confirm methods; existing TUI test harnesses in
+  `tests/unit/test_tui_*.py` show the pattern).
+
+Acceptance:
+
+- Kernel gate decision matrix unchanged (existing contract tests green
+  unmodified): tainted+no-human → deny; tainted+human → forced ask with
+  warning, auto-approve void; untainted+pre-authorized → allow with audit;
+  untainted+no-human → deny without consulting the end; untainted+human →
+  ask. `on_decision` still receives the banner-free operation text.
+- Attach behavior unchanged for both taint-known and taint-unknown
+  (old-serve) cases, including the honest "对端未上报污点状态" wording from
+  commit 564b742.
+- TUI: tainted turns still void allow rules and always-allow scopes
+  (existing TUI permission tests stay green); new contract tests prove the
+  TUI decision comes from the shared kernel function (verified
+  red-on-revert: re-inlining a local decision turns them red).
+- `python -m mypy` green with the gate module in scope; full unit suite
+  green (baseline 1402 passed); `./scripts/ci-local.sh` green.
+
+Process (established norms — binding):
+
+- This track changes security boundaries: run the adversarial multi-agent
+  self-review (`/code-review` at high effort) on the branch before opening
+  the PR; fix all CONFIRMED findings. A review whose verifier agents partly
+  failed is not a pass — re-run it; do not merge on an incomplete review.
+- New pinning tests assert behavior, never source text
+  (no `inspect.getsource` substring checks).
+
+### Track 2 — Remove the dead second security model and dead vector memory (zero behavior change)
+
+Evidence and scope:
+
+- `src/memory/vector_memory.py` (739 lines) has **zero real callers** —
+  only re-exports at `src/__init__.py:14` and `src/memory/__init__.py:12`
+  (the "re-exported-but-unused" pattern `vc self-analyze` cannot detect).
+  It is also the sole user of the `[memory]` extra (qdrant-client,
+  sentence-transformers). Remove: the module, both re-exports,
+  `tests/unit/test_vector_memory.py`, the `[memory]` extra (and its mention
+  in `[all]`), and the README claims it falsifies (核心特性「向量记忆」,
+  技术栈 Qdrant line, quick-start `pip install '.[memory]'`).
+- Old security model `src/security/permissions.py` (535 lines,
+  `PermissionManager`/`SafetyGuard`): the live model is
+  `agents/permissions.py` + `agents/capabilities.py` + the kernel gate.
+  The old one has exactly one real consumer left:
+  `src/web/routers/sandbox.py:55` (`state.safety_guard.check_command`).
+  Migrate that call to the live dangerous-command guard
+  (`src/agents/shell.py:138 is_dangerous`) with **equal-or-stricter**
+  blocking, then remove: the module, `src/security/__init__` exports, the
+  instantiation at `src/web/state.py:76-77`, the `# noqa: F401` re-exports
+  in `src/web/deps.py:18`, and `tests/unit/test_permission_guard.py`.
+  SafetyGuard's violation recording may be dropped with it or routed to the
+  existing audit log if trivial — implementer's choice, note it in the PR.
+  No route set changes → `server_routes_baseline.json` stays untouched.
+- Cruft: `src/workspaces/` and `src/monitoring/` contain only `__pycache__`
+  (the README already declares them retired) — delete. Stale
+  `auto_dev_crew.egg-info/` (root and `src/`) and `default.profraw` —
+  delete and ensure gitignore covers egg-info/profraw. Root
+  `WORK_COMPLETED.md` / `LOOP_ENGINEERING.md`: check references first;
+  archive under `docs/` or leave, do not silently delete referenced files.
+- README 目录结构 updates ride in this PR (they are falsified by these
+  removals). Keep this track strictly deletion + the one guard migration;
+  the guard migration is security-adjacent, so include it explicitly in the
+  review scope before merging.
+
+Acceptance: full unit suite green after removals (count will drop by the
+deleted tests — record old/new counts in the PR); `ruff check src tests`
+green; `python -m compileall -q src tests` green; grep proves no residual
+imports of removed names; `./scripts/ci-local.sh` green.
+
+### Track 3 — Truth-restore the backlog (docs only)
+
+- `.vortocode/BACKLOG.md` still shows all eight B5 items unchecked; every
+  one is merged (B5-1 #174, B5-2 #175, B5-3 #176, B5-5 #177, B5-7 #178,
+  B5-8 #179, B5-6 #180; B5-4's `src/context/window.py`/`state.py` deletion
+  verified already done — `src/context/` holds only the live
+  `project_context.py`). Verify each against git log, then mark `- [x]`.
+- Mark this batch's tracks complete in this file as they land.
+
+Non-goals:
+
+- Decomposing `src/tui/app.py` (5,668 lines) beyond the confirm-method
+  enrollment — a later batch, only after Track 1 proves stable.
+- Checkpoint/rewind, tool lazy-loading, and knowledge-base documents
+  (direction/devlog live outside this repository).
+- Rewriting README's retired-system history notes beyond claims this batch
+  falsifies.
+
+Execution notes:
+
+- CI is disabled (billing); `./scripts/ci-local.sh` is the merge gate for
+  every track. Branches `vorto/*`, merged via PR; never push to `main`.
+- The workspace may hold untracked session files (e.g. `CLAUDE.md`); stage
+  files explicitly, never `git add -A`.
+
 ## 2026-07-11 Batch: Trust Foundation 3 — Credential Session Isolation
 
 Status: Complete (post-review hardening applied)
