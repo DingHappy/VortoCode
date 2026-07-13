@@ -2698,9 +2698,10 @@ class VortoCodeTUI(App):
                 self._chrome(f"[yellow]{result.message}（id={result.record_id}）[/yellow]")
 
         self._begin_inline_confirm(
-            "检测到可能值得跨会话记住的项目偏好/约定：\n"
-            f"{candidate}\n"
-            "保存到长期记忆？",
+            self._taint_msg(                     # 候选可能源自模型刚读过的外部内容 → 带 D0 警示
+                "检测到可能值得跨会话记住的项目偏好/约定：\n"
+                f"{candidate}\n"
+                "保存到长期记忆？"),
             scope="memory",
             callback=_done,
         )
@@ -5303,7 +5304,9 @@ class VortoCodeTUI(App):
 
         async def _confirm_memory(message: str) -> bool:
             # 记忆是跨会话持久化面：不吃普通写操作的“始终允许”，每次都让用户看到内容/去向。
-            return bool(await self._inline_confirm(message, scope="memory"))
+            # _taint_msg：待存内容可能**正是模型刚从网页读来的**——记忆一旦落盘就每轮进系统提示，
+            # 是提示注入最理想的落脚点，所以污点回合必须带 D0 警示（升级点漏过同一条，已补）。
+            return bool(await self._inline_confirm(self._taint_msg(message), scope="memory"))
 
         memory_tools = build_memory_tools(
             self.repo_root,
