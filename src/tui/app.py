@@ -1427,17 +1427,23 @@ class VortoCodeTUI(App):
 
     _CONFIRM_CHOICES = [("yes", "确认"), ("always", "始终允许（记住）"), ("no", "取消")]
 
-    # 这些作用域的确认**永不可铸造常驻授权**：不展示 [a]、不接受 [a]、更不落盘。
-    #   fallback —— OS sandbox 降级到宿主机执行：降级必须是本次明确的人机确认。
-    #   outward  —— push / 开 PR 等推到远端的不可逆动作。此前它借用了 scope="writes"，于是在
-    #     push 提示上按 [a]（用户以为"以后 push 都别问了"）会**授予并持久化"始终允许一切文件写"**，
-    #     跨重启生效——把整仓写权限静默交了出去（自审实机复现，settings.json 落了 writes:true）。
-    _NO_STANDING_GRANT_SCOPES = ("fallback", "outward")
+    # **只有这两个作用域可以铸造常驻授权**（[a]「始终允许」）：其余一律不展示 [a]、不接受 [a]、不落盘。
+    #
+    # 是**白名单**而不是黑名单——将来新加一个确认作用域，默认就是"不可铸权"，不会因为忘了登记而
+    # 悄悄获得跨重启的持久授权（与本仓"新端忘了申报只会更严、不会更松"同一条原则）。
+    # 现有的非铸权作用域：
+    #   fallback —— OS sandbox 降级到宿主机执行：降级必须是**本次**明确的人机确认。
+    #   outward  —— push / 开 PR 等推到远端的不可逆动作。它此前借用了 scope="writes"，于是在 push
+    #     提示上按 [a]（用户以为"以后 push 都别问了"）会**授予并持久化"始终允许一切文件写"**、
+    #     跨重启生效——整仓写权限就这么静默交了出去（自审实机复现，settings.json 落了 writes:true）。
+    #   memory / sessions —— 黑名单版本下它们仍会展示 [a]，按下去 setattr 出一个没人读的幽灵属性
+    #     `_allow_memory_session`（不授权任何东西），等于**向用户谎称"已记住"**。白名单一并根治。
+    _STANDING_GRANT_SCOPES = ("writes", "commands")
 
     def _inline_confirm_choices(self):
-        if self._confirm_scope in self._NO_STANDING_GRANT_SCOPES:
-            return [self._CONFIRM_CHOICES[0], self._CONFIRM_CHOICES[-1]]
-        return self._CONFIRM_CHOICES
+        if self._confirm_scope in self._STANDING_GRANT_SCOPES:
+            return self._CONFIRM_CHOICES
+        return [self._CONFIRM_CHOICES[0], self._CONFIRM_CHOICES[-1]]
 
     def _inline_confirm_active(self) -> bool:
         fut = self._confirm_future
@@ -1500,7 +1506,7 @@ class VortoCodeTUI(App):
             self._finish_inline_confirm(self._inline_confirm_choices()[self._confirm_idx][0])
         elif key == "y":
             self._finish_inline_confirm("yes")
-        elif key == "a" and self._confirm_scope not in self._NO_STANDING_GRANT_SCOPES:
+        elif key == "a" and self._confirm_scope in self._STANDING_GRANT_SCOPES:
             self._finish_inline_confirm("always")
         elif key in ("n", "escape"):
             self._finish_inline_confirm("no")
@@ -1509,7 +1515,7 @@ class VortoCodeTUI(App):
         fut = self._confirm_future
         callback = self._confirm_callback
         result = action in ("yes", "always")
-        if action == "always" and self._confirm_scope not in self._NO_STANDING_GRANT_SCOPES:
+        if action == "always" and self._confirm_scope in self._STANDING_GRANT_SCOPES:
             try:
                 setattr(self, f"_allow_{self._confirm_scope}_session", True)
                 self._persist_always_allow(self._confirm_scope)   # 跨会话常驻（/permissions reset 可撤销）
@@ -1607,7 +1613,7 @@ class VortoCodeTUI(App):
         实现即"永不申报 pre_authorized"——于是 decide() 必然给出 ASK。
         scope 用 `outward`（不是 `writes`）：否则在 push 提示上按 [a]，用户以为"以后 push 别问了"，
         实际却授予并**持久化了"始终允许一切文件写"**、跨重启生效——把整仓写权限静默交出去
-        （自审实机复现）。`outward` 在 `_NO_STANDING_GRANT_SCOPES` 里，连 [a] 都不展示。
+        （自审实机复现）。`outward` 不在 `_STANDING_GRANT_SCOPES` 白名单里，连 [a] 都不展示。
         """
         return await self._gated(message, pre_authorized=False, scope="outward")
 
