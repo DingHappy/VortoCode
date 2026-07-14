@@ -29,12 +29,16 @@ class ToolExecutor:
     def __init__(
         self,
         tool_registry: ToolRegistry,
-        permission_manager: Optional[ToolPermissionManager] = None
+        permission_manager: Optional[ToolPermissionManager] = None,
+        confirm: Optional[Any] = None
     ):
         self.tool_registry = tool_registry
         self.permission_manager = permission_manager or ToolPermissionManager()
         self.execution_history: List[ToolExecutionResult] = []
         self.mcp_clients: Dict[str, MCPClient] = {}  # server_name -> client
+        # ASK 规则的确认门：async (message) -> bool。**缺省 fail-closed**（ASK 判定为拒绝，
+        # 且如实说明原因）——绝不能因为没接确认门就把"要问人"降级成"直接放行"。
+        self.confirm = confirm
     
     async def execute(
         self,
@@ -51,18 +55,43 @@ class ToolExecutor:
             tool_name, agent_role, arguments, self.tool_registry
         )
         
-        if not permission_result.allowed:
+        # ASK 规则：**真的去问人**。此前这段是死的——check_permission 对 ASK 返回
+        # allowed=False + requires_confirmation=True，而上面的 `if not allowed` 先 return 了，
+        # 下面那句 logger.warning 永远执行不到。于是 config/mcp.yaml 里写的 `action: ask`
+        # 规则（filesystem-write / git-operations，以及两条默认 ASK 规则）**全都是静默硬拒**，
+        # 从来不"问"——配置在撒谎。
+        # 修法**只往安全一侧靠**：有确认门就问、同意才放行；**没有确认门仍然拒绝**（fail-closed），
+        # 只是把理由说清楚，绝不把"要问人"降级成"直接放行"。
+        if permission_result.requires_confirmation:
+            if self.confirm is None:
+                return ToolExecutionResult(
+                    success=False,
+                    tool_name=tool_name,
+                    error=(f"Permission denied: 规则要求人工确认（ask），但当前入口没有接确认门 "
+                           f"—— {permission_result.reason}"),
+                    execution_time=time.time() - start_time
+                )
+            try:
+                approved = bool(await self.confirm(
+                    f"MCP 工具 `{tool_name}` 需要确认（权限规则 action=ask）\n  参数：{arguments}"))
+            except Exception as e:  # noqa: BLE001 —— 确认门炸了 → 拒绝（安全优先）
+                approved = False
+                logger.warning(f"Confirm gate failed for {tool_name}: {e}")
+            if not approved:
+                return ToolExecutionResult(
+                    success=False,
+                    tool_name=tool_name,
+                    error=f"用户取消了 MCP 工具 {tool_name} 的调用",
+                    execution_time=time.time() - start_time
+                )
+        elif not permission_result.allowed:
             return ToolExecutionResult(
                 success=False,
                 tool_name=tool_name,
                 error=f"Permission denied: {permission_result.reason}",
                 execution_time=time.time() - start_time
             )
-        
-        if permission_result.requires_confirmation:
-            # 在实际应用中，这里应该提示用户确认
-            logger.warning(f"Tool {tool_name} requires confirmation")
-        
+
         # 获取工具
         tool = self.tool_registry.get(tool_name)
         if not tool:
@@ -275,9 +304,10 @@ class AsyncToolExecutor(ToolExecutor):
         self,
         tool_registry: ToolRegistry,
         permission_manager: Optional[ToolPermissionManager] = None,
-        max_workers: int = 10
+        max_workers: int = 10,
+        confirm: Optional[Any] = None
     ):
-        super().__init__(tool_registry, permission_manager)
+        super().__init__(tool_registry, permission_manager, confirm=confirm)
         self.max_workers = max_workers
         self.worker_semaphore = asyncio.Semaphore(max_workers)
         self.running_tasks: Dict[str, asyncio.Task] = {}

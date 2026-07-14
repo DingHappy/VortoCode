@@ -4005,8 +4005,15 @@ class VortoCodeTUI(App):
         self._chrome("[cyan]连接 MCP 服务器（config/mcp.yaml）…[/cyan]")
         try:
             from src.agents.mcp_tools import connect_mcp
+
+            async def _mcp_confirm(message: str) -> bool:
+                # MCP 权限规则里 action=ask 的工具 → 真的问人。scope="mcp"：外部不可信来源的
+                # 工具调用，**永不可「始终允许」**（不在铸权白名单里，见 _confirm_always）。
+                return await self._confirm_always(message, scope="mcp")
+
             mgr, mcp_tools = await connect_mcp(
-                self.repo_root, capability_profile=self._capability_profile
+                self.repo_root, capability_profile=self._capability_profile,
+                confirm=_mcp_confirm
             )
             self._mcp = mgr
             self._mcp_tools = mcp_tools
