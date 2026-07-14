@@ -47,7 +47,7 @@ def _at_dir_files() -> int:
 
 SLASH_COMMANDS = [
     "/analyze", "/improve", "/fix", "/run", "/apply", "/agents", "/runagent", "/skills", "/mcp",
-    "/artifacts", "/diff", "/changes", "/review", "/verify", "/preflight", "/git", "/commit", "/pr", "/pr-check", "/pr-fix", "/fix-ci", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
+    "/artifacts", "/diff", "/changes", "/rewind", "/review", "/verify", "/preflight", "/git", "/commit", "/pr", "/pr-check", "/pr-fix", "/fix-ci", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
     "/context", "/compact", "/permissions", "/memory", "/tasks", "/tools", "/audit", "/speak", "/commands", "/hooks", "/clear", "/help", "/quit",
 ]
 # 必须带参数的命令：补全面板里回车不直接执行，先补成 "/cmd " 让用户接着填参数
@@ -66,6 +66,7 @@ COMMAND_INFO = {
     "/artifacts": "列出已发布的制品（画廊在 /artifacts）",
     "/diff": "看工作区改动（支持 stat/cached/路径过滤）",
     "/changes": "提交前变更审查摘要（风险信号/下一步）",
+    "/rewind": "预览/撤销 agent 的文件写入（/rewind 预览，/rewind <n> 撤最近 n 个回合）",
     "/review": "LLM 审查当前 diff/hunk（只报 P0/P1；--fix 可确认后修复）",
     "/verify": "探测测试或运行 profile/runtime 验证",
     "/preflight": "提交/开 PR 前检查（风险/审查/测试/提交建议）",
@@ -159,6 +160,7 @@ HELP = """可用命令:
   /artifacts          列出已发布的制品（标题/版本/链接；浏览器开 /artifacts 是画廊）
   /diff [stat|hunks|cached] [路径]  看工作区改动；hunks 显示可 review 的 hunk 编号
   /changes [cached] [路径]  提交前变更审查摘要（风险信号/下一步）
+  /rewind [n]         预览可撤销的 agent 编辑回合；带 n 撤销最近 n 个回合（手改过的文件自动跳过）
   /review [--fix] [hunk H1] [cached] [路径]  LLM 审查当前 diff/hunk；--fix 确认后切 build 修复
   /verify [selector|--changed]  探测并运行仓库测试；--changed 按改动推断相关测试
   /verify profiles     列出 verify profile；/verify <profile> 运行 profile
@@ -469,6 +471,7 @@ class VortoCodeTUI(App):
         self.session_id: str | None = None
         self._persist_on = False            # 开场白阶段先不落盘
         self._session_last_user = ""        # 用于生成 /sessions 的轻量摘要
+        self._edit_turn_id = ""             # /rewind 的回合锚点：每次派发 run_turn 换一个分组 id
         self._busy = False                  # 是否有长任务在跑
         self.agent = None                   # 主 agent loop（首次用到时惰性构建）
         self._capability_profile = "local"  # local 持凭据但不摄入外部内容；external 反之
@@ -2017,6 +2020,8 @@ class VortoCodeTUI(App):
             self._cmd_diff(arg)
         elif cmd == "changes":
             self._cmd_changes(arg)
+        elif cmd == "rewind":
+            self._cmd_rewind(arg)
         elif cmd == "review":
             self._cmd_review(arg)
         elif cmd == "verify":
@@ -2852,6 +2857,53 @@ class VortoCodeTUI(App):
                 paths.append(tok)
         from src.agents.git_workflow import change_review, format_change_review
         self._emit(format_change_review(change_review(self.repo_root, cached=cached, paths=paths)))
+
+    def _cmd_rewind(self, arg: str = "") -> None:
+        """/rewind：预览/撤销主 agent 的工具写入（按回合分组，LIFO）。
+
+        裸命令只**预览**（安全默认），显式给数字才动文件——人敲下的数字即意图，不再弹确认。
+        只覆盖 edit_file/write_file/rename_symbol 的写入；被手改过的文件自动跳过（不覆盖手改）。
+        """
+        from src.memory.rewind import group_turns, rewind_turns
+        if not (self._persist_on and self.session_id):
+            self._chrome("[yellow]会话持久化未开启，没有可撤销的编辑记录[/yellow]")
+            return
+        a = (arg or "").strip()
+        if not a or a == "list":
+            groups = group_turns(self.sessions.store, self.session_id)
+            if not groups:
+                self._emit("本会话没有可撤销的 agent 编辑"
+                           "（只记录 edit_file/write_file/rename_symbol 的写入）。")
+                return
+            lines = ["**可撤销的编辑回合**（新 → 旧）："]
+            for i, g in enumerate(groups[:10], 1):
+                at = g["at"][11:19] if len(g["at"]) >= 19 else g["at"]
+                files = ", ".join(g["files"][:5]) + ("…" if len(g["files"]) > 5 else "")
+                lines.append(f"{i}. {at} · {len(g['edits'])} 处改动：{files}")
+            if len(groups) > 10:
+                lines.append(f"…还有 {len(groups) - 10} 个更早的回合")
+            lines.append("")
+            lines.append("`/rewind 1` 撤销最近 1 个回合（`/rewind 2` 撤两个，以此类推）；"
+                         "被你手改过的文件会自动跳过。")
+            self._emit("\n".join(lines))
+            return
+        try:
+            num = int(a)
+        except ValueError:
+            self._chrome("[red]用法: /rewind（预览）或 /rewind <n>（撤销最近 n 个回合）[/red]")
+            return
+        res = rewind_turns(self.sessions.store, self.session_id, self.repo_root, n=num)
+        if not res["turns"]:
+            self._emit("本会话没有可撤销的 agent 编辑。")
+            return
+        if res["reverted"]:
+            self._chrome(f"[green]↩ 已撤销 {len(res['turns'])} 个回合的写入，"
+                         f"还原 {len(res['reverted'])} 处：{', '.join(res['reverted'])}"
+                         "（/diff 或 git diff 复核）[/green]")
+        for rel, why in res["skipped"]:
+            self._chrome(f"[yellow]  ⤷ 跳过 {rel}：{why}[/yellow]")
+        if not res["reverted"] and res["skipped"]:
+            self._chrome("[yellow]没有文件被还原（全部跳过，见上）[/yellow]")
 
     def _cmd_review(self, arg: str = "") -> None:
         """/review [--fix] [hunk H1] [cached] [路径...]：LLM diff review，只报 P0/P1。"""
@@ -4646,6 +4698,9 @@ class VortoCodeTUI(App):
             self.agent = self._build_main_agent()
         think_cb, stream_cb, emit_final, cleanup = self._turn_renderers()
         self._turn_tools = 0
+        import uuid
+        self._edit_turn_id = uuid.uuid4().hex[:8]   # 本回合工具写入共用一个 /rewind 分组
+
         from src.llm.client import get_usage
         u0 = get_usage()                     # 回合起点用量快照 → 收尾时报本回合增量
         t0 = time.monotonic()
@@ -4815,6 +4870,20 @@ class VortoCodeTUI(App):
             ]).load()
         return self._skills
 
+    def _record_edit(self, rel: str, before: str | None, after: str, *, tool: str) -> None:
+        """把一次工具写入记进会话 edits 表（/rewind 的数据面）。before=None 表示新建文件。
+
+        记录是旁路：任何失败都静默，绝不反过来弄坏编辑本身。
+        """
+        if not (self._persist_on and self.session_id):
+            return
+        try:
+            from src.memory.rewind import record_edit
+            record_edit(self.sessions.store, self.session_id, rel, before, after,
+                        turn_id=self._edit_turn_id, tool=tool)
+        except Exception:  # noqa: BLE001
+            pass
+
     def _build_main_agent(self):
         """构建主 agent 及其工具集（工具是闭包，复用本 TUI 已有的能力）。
 
@@ -4861,7 +4930,9 @@ class VortoCodeTUI(App):
                 args={"path": rel})
             if not ok:
                 return f"用户取消了对 {rel} 的修改。"
-            p.write_text(text.replace(old, new, n), encoding="utf-8")
+            after = text.replace(old, new, n)
+            p.write_text(after, encoding="utf-8")
+            self._record_edit(rel, text, after, tool="edit_file")   # /rewind 数据面
             self._show_diff(rel, old, new)        # 着色 diff 进对话区（仿 Claude Code）
             self._chrome(f"[green]已修改 {rel}（{n} 处；请 review；/diff 或 git diff 看全）[/green]")
             return f"已修改 {rel}（替换 {n} 处）。"
@@ -4881,9 +4952,11 @@ class VortoCodeTUI(App):
                 args={"path": rel})
             if not ok:
                 return f"用户取消了写入 {rel}。"
-            before = p.read_text(encoding="utf-8") if p.is_file() else ""
+            existed = p.is_file()
+            before = p.read_text(encoding="utf-8") if existed else ""
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content, encoding="utf-8")
+            self._record_edit(rel, before if existed else None, content, tool="write_file")
             self._show_diff(rel, before, content)   # 着色 diff 进对话区
             self._chrome(f"[green]已{verb} {rel}（请 review；/diff 看全）[/green]")
             return f"已{verb} {rel}。"
@@ -4912,7 +4985,9 @@ class VortoCodeTUI(App):
                 p = _safe_path(rel)
                 if p is None or not p.is_file():
                     continue                               # 越界/不存在 → 跳过（compute 已挡越界，双保险）
+                before = p.read_text(encoding="utf-8")
                 p.write_text(content, encoding="utf-8")
+                self._record_edit(rel, before, content, tool="rename_symbol")
                 written.append(rel)
             self._chrome(f"[green]已重命名 {symbol} → {new_name}，改了 {len(written)} 个文件"
                          f"（请 review；/diff 看全）[/green]")
