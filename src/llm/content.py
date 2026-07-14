@@ -17,6 +17,9 @@ _IMG_MIME = {
     ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
 }
 
+# 供工具层判断"这个路径是不是图"（read_file 读图走图片附件注入，不走 utf-8 文本）
+IMAGE_EXTS = frozenset(_IMG_MIME)
+
 # 音频扩展名 → input_audio 的 format。实测中转站只支持 mp3/flac/m4a/wav/ogg
 # （webm 会 400「invalid audio format」）——所以浏览器录音走客户端编码成 WAV，不发 webm。
 _AUDIO_FMT = {
