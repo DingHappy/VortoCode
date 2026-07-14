@@ -67,31 +67,31 @@ def test_violations_never_ban_the_shared_identity():
     assert not hasattr(g, "banned_agents")               # ban 机制已拆除，不留死字段
 
 
-# ----------------------------------------- check_permission（面向文件目标）
+@pytest.mark.parametrize("cmd", [
+    "chmod 777 /tmp/x",     # is_dangerous 不管这类（够不上"致命"），靠补充黑名单拦
+    "sudo apt install x",
+    "eval $(cat payload)",
+])
+def test_supplementary_blacklist_still_covers_its_own(cmd):
+    """补充黑名单（chmod 777 / sudo / eval …）必须继续生效。
 
-def test_unregistered_agent_denied():
-    assert PermissionManager().check_permission("ghost", "write", "x.py")["allowed"] is False
-
-
-def test_developer_write_in_workdir_allowed():
-    # 相对路径解析到 cwd（项目目录，无 /etc /var /usr 等敏感子串）→ 放行
-    r = PermissionManager().check_permission("developer", "write", "m.py")
-    assert r["allowed"] is True
-
-
-def test_write_to_sensitive_path_blocked():
-    r = PermissionManager().check_permission("developer", "write", "/etc/passwd")
-    assert r["allowed"] is False
+    回归：把主判定换成 is_dangerous 时，一次重构曾把这张补充网整个弄丢——is_dangerous 只管
+    致命那类（毁盘/关机/fork bomb/下载即执行），够不上致命但云沙箱里不该出现的靠这张网。
+    "只加强不削弱"必须有测试守着，否则下一次重构照样丢。
+    """
+    assert _guard().check_command(cmd)["allowed"] is False
 
 
-def test_execute_requires_approval():
+def test_dead_permission_engine_is_gone():
+    """`check_permission` 那套角色×路径判定引擎、审批流、角色权限表**已删除**。
+
+    它们生产零调用（唯一调用者 `check_and_record` 自己也没人调；`/api/approvals` 已 404），
+    而此处**原本有 5 条测试在测它们** —— 测试绿着，防护却从未生效：典型的安慰剂
+    （与刚删的 MultiVerifier 同型）。删实现的同时删掉背书的测试，并留下这条守着别复活。
+    真正的权限判定在 agents/permissions.py（工具级）与 agents/capabilities.py（会话级）。
+    """
     pm = PermissionManager()
-    r = pm.check_permission("developer", "execute", "ls")
-    assert r["allowed"] is False
-    assert r.get("pending") is True
-    assert len(pm.get_pending_requests()) == 1
-
-
-def test_reviewer_cannot_write():
-    # reviewer 只有读权限，未授予 WRITE_FILE
-    assert PermissionManager().check_permission("reviewer", "write", "m.py")["allowed"] is False
+    for gone in ("check_permission", "register_agent", "get_pending_requests",
+                 "approve_request", "update_working_directory"):
+        assert not hasattr(pm, gone), f"{gone} 又回来了——它是生产零调用的假防护"
+    assert not hasattr(SafetyGuard(pm), "check_and_record")
