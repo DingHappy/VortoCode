@@ -11,7 +11,9 @@ review.py 只保留纯审查规则/解析/gate 编排；真正的 reviewer 子 a
 
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -95,10 +97,12 @@ def format_findings(findings: List[dict]) -> str:
     lines = []
     for f in findings:
         sev = str(f.get("severity", "?")).upper()
+        persp = str(f.get("perspective", "")).strip()
+        tag = f"[{sev}]" + (f"[{persp}]" if persp else "")
         loc = str(f.get("file", "?"))
         issue = str(f.get("issue", "")).strip()
         ev = str(f.get("evidence", "")).strip()
-        lines.append(f"  · [{sev}] {loc}：{issue}\n    证据：{ev[:200]}")
+        lines.append(f"  · {tag} {loc}：{issue}\n    证据：{ev[:200]}")
     return "\n".join(lines)
 
 
@@ -125,6 +129,24 @@ _REVIEWER_SYSTEM = (
 )
 
 
+# --------------------------------------------------------------- 多视角（对抗审查的第二步）
+# 同一个"带工具、每条发现必须给证据"的 reviewer 换镜头**并行**跑：视角多样性能抓到单 agent
+# 冗余重跑抓不到的失效模式。镜头只是聚焦方向，confirmed 的证据铁律对每个视角一视同仁。
+PERSPECTIVES = {
+    "correctness": "本轮你的审查镜头：**正确性**——逻辑错误、边界条件、异常路径、数据流断裂。优先往这些方向挖。",
+    "security": "本轮你的审查镜头：**安全**——注入、路径穿越、越权、凭据泄露、绕过确认/污点防线。优先往这些方向挖。",
+    "regression": "本轮你的审查镜头：**回归与契约**——破坏既有行为/接口契约、测试盲区、向后不兼容。优先往这些方向挖。",
+}
+
+
+def dev_review_perspectives() -> List[str]:
+    """审查视角集：VORTOCODE_DEV_REVIEW_PERSPECTIVES=逗号分隔视角名（默认全部；未知名忽略，全无效回落全部）。"""
+    raw = os.getenv("VORTOCODE_DEV_REVIEW_PERSPECTIVES", "")
+    names = [n.strip().lower() for n in raw.split(",") if n.strip()]
+    picked = [n for n in names if n in PERSPECTIVES]
+    return picked or list(PERSPECTIVES)
+
+
 async def review_branch(repo_root: str, branch: str, base: str, *, llm=None,
                         test_cmd: Optional[list] = None, guidelines: str = "",
                         max_steps: int = 8) -> List[dict]:
@@ -137,25 +159,65 @@ async def review_branch(repo_root: str, branch: str, base: str, *, llm=None,
 
 
 # --------------------------------------------------------------- 审查关（orchestration，可注入以便测试）
+async def _review_round(reviewers: dict, repo_root: str, branch: str, base: str, *,
+                        test_cmd, guidelines: str, log) -> List[dict]:
+    """一轮（可能多视角的）审查：并行跑全部 reviewer，findings 打视角标后去重合并。
+
+    fail-open 的粒度细到视角：单视角异常只丢该视角（log 后其余照常算数）；**全部**视角异常才
+    抛出，让 run_gate 走整体 fail-open。去重键 (file, issue)——不同镜头措辞常不同，重复未去尽
+    也无害（只是修复描述里多一行）。
+    """
+    names = list(reviewers)
+    results = await asyncio.gather(
+        *(reviewers[n](repo_root, branch, base, test_cmd=test_cmd, guidelines=guidelines)
+          for n in names),
+        return_exceptions=True)
+    errors: List[str] = []
+    merged: List[dict] = []
+    seen: set = set()
+    for name, res in zip(names, results):
+        if isinstance(res, BaseException):
+            errors.append(f"{name or 'reviewer'}: {res}")
+            log(f"（视角 {name or 'reviewer'} 审查出错：{res}；已跳过该视角）")
+            continue
+        for f in res or []:
+            if not isinstance(f, dict):
+                continue
+            key = (str(f.get("file", "")), str(f.get("issue", "")).strip())
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append({**f, "perspective": name} if name else dict(f))
+    if errors and len(errors) == len(names):
+        raise RuntimeError("；".join(errors))
+    return merged
+
+
 async def run_gate(repo_root: str, branch: str, base: str, *, test_cmd=None, repair,
-                   reviewer=None, progress=None) -> tuple:
+                   reviewer=None, reviewers=None, progress=None) -> tuple:
     """审查 → confirmed 喂一轮修复（repair(fix_desc)）→ 重审一次。返回 (note, blocked)。
 
     reviewer/repair 都可注入（测试用假的，生产由 dev_auto 注入真 review_branch + 依赖接力修复）。
+    传 reviewers（dict 视角名 → reviewer）则升级为**多视角对抗审查**：各视角并行独立挑刺，
+    合并去重后走同一条 confirmed→修复→重审路径（见 _review_round）。不传则退回单 reviewer，
+    旧注入面不变。
     **fail-open**：审查/重审出错不拦（人在合并口兜底）；只有"确实还有 confirmed"或"修复出错"才 blocked。
     """
-    reviewer = reviewer or review_branch
+    if not reviewers:
+        reviewers = {"": reviewer or review_branch}
     log = progress or (lambda _m: None)
     guidelines = load_review_guidelines(repo_root)
+    lens = f"（{len(reviewers)} 视角）" if len(reviewers) > 1 else ""
 
-    log("🔍 PR 前对抗审查：reviewer 子 agent 挑刺中…")
+    log(f"🔍 PR 前对抗审查{lens}：reviewer 子 agent 挑刺中…")
     try:
-        findings = await reviewer(repo_root, branch, base, test_cmd=test_cmd, guidelines=guidelines)
+        findings = await _review_round(reviewers, repo_root, branch, base,
+                                       test_cmd=test_cmd, guidelines=guidelines, log=log)
     except Exception as e:  # noqa: BLE001
         return (f"\n（审查未能完成：{e}；未拦截，以人工 PR 审核为准。）", False)
     confirmed = confirmed_findings(findings)
     if not confirmed:
-        return ("\n🔍 PR 前审查通过：无 P0/P1。", False)
+        return (f"\n🔍 PR 前审查通过{lens}：无 P0/P1。", False)
 
     log(f"🔧 审查发现 {len(confirmed)} 条 P0/P1，喂回一轮自修复…")
     fix_desc = ("修复以下审查发现的严重问题（P0/P1），改完务必自测通过；只动相关文件：\n"
@@ -169,10 +231,11 @@ async def run_gate(repo_root: str, branch: str, base: str, *, test_cmd=None, rep
     log("🔍 重审修复后的分支…")
     try:
         confirmed2 = confirmed_findings(
-            await reviewer(repo_root, branch, base, test_cmd=test_cmd, guidelines=guidelines))
+            await _review_round(reviewers, repo_root, branch, base,
+                                test_cmd=test_cmd, guidelines=guidelines, log=log))
     except Exception:  # noqa: BLE001
         confirmed2 = []
     if not confirmed2:
-        return (f"\n🔍 PR 前审查发现 {len(confirmed)} 条 P0/P1，已自修复并复审通过。", False)
+        return (f"\n🔍 PR 前审查发现 {len(confirmed)} 条 P0/P1，已自修复并复审通过{lens}。", False)
     return (f"\n⚠️ 审查仍有 {len(confirmed2)} 条 P0/P1 未修掉，**未开 PR**，分支保留待人工处理：\n"
             + format_findings(confirmed2), True)
