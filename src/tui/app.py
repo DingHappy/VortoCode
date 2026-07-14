@@ -47,7 +47,7 @@ def _at_dir_files() -> int:
 
 SLASH_COMMANDS = [
     "/analyze", "/improve", "/fix", "/run", "/apply", "/agents", "/runagent", "/skills", "/mcp",
-    "/artifacts", "/diff", "/changes", "/rewind", "/review", "/verify", "/preflight", "/git", "/commit", "/pr", "/pr-check", "/pr-fix", "/fix-ci", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
+    "/artifacts", "/diff", "/changes", "/rewind", "/checkpoint", "/review", "/verify", "/preflight", "/git", "/commit", "/pr", "/pr-check", "/pr-fix", "/fix-ci", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
     "/context", "/compact", "/permissions", "/memory", "/tasks", "/tools", "/audit", "/speak", "/commands", "/hooks", "/clear", "/help", "/quit",
 ]
 # 必须带参数的命令：补全面板里回车不直接执行，先补成 "/cmd " 让用户接着填参数
@@ -67,6 +67,7 @@ COMMAND_INFO = {
     "/diff": "看工作区改动（支持 stat/cached/路径过滤）",
     "/changes": "提交前变更审查摘要（风险信号/下一步）",
     "/rewind": "预览/撤销 agent 的文件写入（/rewind 预览，/rewind <n> 撤最近 n 个回合）",
+    "/checkpoint": "回合级工作区快照：list 列出，restore <n> 整树还原（含 shell 副作用）",
     "/review": "LLM 审查当前 diff/hunk（只报 P0/P1；--fix 可确认后修复）",
     "/verify": "探测测试或运行 profile/runtime 验证",
     "/preflight": "提交/开 PR 前检查（风险/审查/测试/提交建议）",
@@ -161,6 +162,7 @@ HELP = """可用命令:
   /diff [stat|hunks|cached] [路径]  看工作区改动；hunks 显示可 review 的 hunk 编号
   /changes [cached] [路径]  提交前变更审查摘要（风险信号/下一步）
   /rewind [n]         预览可撤销的 agent 编辑回合；带 n 撤销最近 n 个回合（手改过的文件自动跳过）
+  /checkpoint [restore <n>]  回合级工作区快照（影子 git，不碰你的 .git）；restore 整树还原，能撤 shell 副作用
   /review [--fix] [hunk H1] [cached] [路径]  LLM 审查当前 diff/hunk；--fix 确认后切 build 修复
   /verify [selector|--changed]  探测并运行仓库测试；--changed 按改动推断相关测试
   /verify profiles     列出 verify profile；/verify <profile> 运行 profile
@@ -2022,6 +2024,8 @@ class VortoCodeTUI(App):
             self._cmd_changes(arg)
         elif cmd == "rewind":
             self._cmd_rewind(arg)
+        elif cmd == "checkpoint":
+            self._cmd_checkpoint(arg)
         elif cmd == "review":
             self._cmd_review(arg)
         elif cmd == "verify":
@@ -2904,6 +2908,69 @@ class VortoCodeTUI(App):
             self._chrome(f"[yellow]  ⤷ 跳过 {rel}：{why}[/yellow]")
         if not res["reverted"] and res["skipped"]:
             self._chrome("[yellow]没有文件被还原（全部跳过，见上）[/yellow]")
+
+    @work(exclusive=False, group="checkpoint")
+    async def _cmd_checkpoint(self, arg: str = "") -> None:
+        """/checkpoint [list] | restore <n>：回合级工作区快照（影子 git，含 shell 副作用）。
+
+        restore 是**整树覆盖**（快照之后的一切改动都会没，包括你的手改）——所以先列出会被覆盖的
+        文件、再走确认门，绝不像 /rewind 那样静默跳过手改（那是精细路径，这里是强力路径）。
+        跑在 worker 里：确认门必须在 worker 上下文（见 _standing_grant_holds 的任务边界说明）。
+        """
+        from src.memory.checkpoint import changed_since, checkpoints_enabled, list_snapshots, restore
+        if not checkpoints_enabled():
+            self._chrome("[yellow]工作区快照已关闭（VORTOCODE_CHECKPOINT=0）[/yellow]")
+            return
+        parts = (arg or "").split()
+        snaps = list_snapshots(self.repo_root)
+        if not snaps:
+            self._emit("还没有工作区快照（每个回合开始前自动打一个；本会话尚未跑过回合）。")
+            return
+        if not parts or parts[0] == "list":
+            lines = ["**工作区快照**（新 → 旧；每回合开始前自动打）："]
+            for i, s in enumerate(snaps[:10], 1):
+                at = s["at"][11:19] if len(s["at"]) >= 19 else s["at"]
+                lines.append(f"{i}. {at} · {s['short']} · {s['label'][:50]}")
+            lines.append("")
+            lines.append("`/checkpoint restore 1` 把工作区**整树还原**到第 1 个快照之时"
+                         "（能撤 run_command 等 shell 改动；会覆盖之后的一切改动，含你的手改——"
+                         "会先列清单让你确认）。精细撤销 agent 的逐次编辑用 `/rewind`。")
+            self._emit("\n".join(lines))
+            return
+        if parts[0] != "restore" or len(parts) < 2:
+            self._chrome("[red]用法: /checkpoint [list] 或 /checkpoint restore <n>[/red]")
+            return
+        try:
+            idx = int(parts[1])
+        except ValueError:
+            self._chrome("[red]/checkpoint restore 需要快照编号（先 /checkpoint 看列表）[/red]")
+            return
+        if not 1 <= idx <= len(snaps):
+            self._chrome(f"[red]没有第 {idx} 个快照（共 {len(snaps)} 个）[/red]")
+            return
+        snap = snaps[idx - 1]
+        files = changed_since(self.repo_root, snap["sha"])
+        if not files:
+            self._emit(f"工作区与该快照（{snap['short']}）一致，无需还原。")
+            return
+        shown = "\n".join(f"  · {f}" for f in files[:20])
+        more = f"\n  …还有 {len(files) - 20} 个" if len(files) > 20 else ""
+        self._emit(f"还原到快照 {snap['short']}（{snap['label'][:40]}）将**覆盖**以下 "
+                   f"{len(files)} 个文件的当前内容：\n{shown}{more}")
+        ok = await self._confirm_always(
+            f"整树还原工作区到快照 {snap['short']}？\n"
+            f"  {len(files)} 个文件会被覆盖成快照时的内容；此后的一切改动（含你的手改）都会丢失。\n"
+            f"  精细撤销 agent 编辑请改用 /rewind。",
+            scope="restore")     # 破坏性、影响面远超"改一个文件" → 永不可「始终允许」
+        if not ok:
+            self._chrome("[yellow]已取消还原[/yellow]")
+            return
+        res = restore(self.repo_root, snap["sha"])
+        if not res["ok"]:
+            self._chrome(f"[red]还原失败：{res['error']}[/red]")
+            return
+        self._chrome(f"[green]↩ 已整树还原到快照 {snap['short']}，"
+                     f"{len(res['restored'])} 个文件复位（/diff 或 git diff 复核）[/green]")
 
     def _cmd_review(self, arg: str = "") -> None:
         """/review [--fix] [hunk H1] [cached] [路径...]：LLM diff review，只报 P0/P1。"""
@@ -4700,6 +4767,7 @@ class VortoCodeTUI(App):
         self._turn_tools = 0
         import uuid
         self._edit_turn_id = uuid.uuid4().hex[:8]   # 本回合工具写入共用一个 /rewind 分组
+        self._snapshot_workspace(text)              # 回合前整树快照（/checkpoint 的数据面，含 shell 副作用）
 
         from src.llm.client import get_usage
         u0 = get_usage()                     # 回合起点用量快照 → 收尾时报本回合增量
@@ -4878,6 +4946,18 @@ class VortoCodeTUI(App):
                 str(Path(self.repo_root) / ".vortocode" / "skills"),
             ]).load()
         return self._skills
+
+    def _snapshot_workspace(self, label: str) -> None:
+        """回合开始前给工作区打影子快照（/checkpoint restore 的数据面）。
+
+        补 `/rewind` 的盲区：run_command 跑格式化/生成脚本改的源码不经工具写入，edits 表记不到。
+        影子仓库独立于用户 .git，只覆盖 git 可见文件。best-effort：失败静默，绝不拦回合。
+        """
+        try:
+            from src.memory.checkpoint import snapshot
+            snapshot(self.repo_root, self._summary_text(label, 60) or "回合快照")
+        except Exception:  # noqa: BLE001
+            pass
 
     def _record_edit(self, rel: str, before: str | None, after: str, *, tool: str) -> None:
         """把一次工具写入记进会话 edits 表（/rewind 的数据面）。before=None 表示新建文件。
