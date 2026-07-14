@@ -447,89 +447,55 @@ class SafetyGuard:
     def __init__(self, permission_manager: PermissionManager):
         self.permission_manager = permission_manager
         self.violation_history: List[Dict[str, Any]] = []
-        self.max_violations = 10
-        self.banned_agents: Set[str] = set()
-    
-    def check_and_record(
-        self, 
-        agent_id: str, 
-        action: str, 
-        target: str,
-        auto_approve: bool = False
-    ) -> Dict[str, Any]:
-        """检查并记录"""
-        # 检查 Agent 是否被禁止
-        if agent_id in self.banned_agents:
-            return {
-                "allowed": False,
-                "reason": f"Agent {agent_id} is banned due to too many violations",
-                "risk_level": RiskLevel.CRITICAL
-            }
-        
-        # 检查权限
-        result = self.permission_manager.check_permission(
-            agent_id, action, target, auto_approve
-        )
-        
-        # 记录违规
-        if not result.get("allowed") and not result.get("pending"):
-            self._record_violation(agent_id, action, target, result.get("reason", ""))
-        
-        return result
-    
+
     def check_command(self, command: str, agent_id: str = "operator") -> Dict[str, Any]:
         """在真实执行 shell 命令前调用：跑命令安全检查并记录违规。
 
-        这是 SafetyGuard 接到危险执行点（terminal/cloud sandbox）的入口——
-        让权限模型对真正的危险动作有效力，被拦截的命令进入 violation_history，
-        经 /api/security/* 可见。返回 {"allowed": bool, "reason"?, "risk_level"}。
+        云沙箱执行路由（`POST /api/sandbox/{id}/execute`）唯一的命令闸。返回
+        {"allowed": bool, "reason"?, "risk_level"}；被拦的命令进 violation_history（审计用）。
+
+        **判定用 `agents.shell.is_dangerous`——全仓的单一真相源**（主 agent 的每一次 shell
+        执行都走它：归一化 → 按 shell 操作符分段 → 逐段按可执行名校验）。此前这里用的是
+        本模块自己那份 `_check_command_safety` 的**小写子串匹配**，`rm -rf` 写成 `rm  -rf`
+        （双空格）或 `rm -fr` 就能绕过，`$(...)` 更是完全不看——同一个"危险"概念两份定义、
+        强弱悬殊，云沙箱拿的是弱的那份。旧黑名单**保留为补充**（chown -R 等 is_dangerous
+        未覆盖的条目），只加强、不削弱。
         """
-        if agent_id in self.banned_agents:
-            return {
-                "allowed": False,
-                "reason": f"Agent {agent_id} is banned due to too many violations",
-                "risk_level": RiskLevel.CRITICAL,
-            }
-        check = self.permission_manager.check_command_safety(command)
-        if not check.get("safe"):
-            self._record_violation(agent_id, "execute", command, check.get("reason", ""))
-            return {
-                "allowed": False,
-                "reason": check.get("reason", "Unsafe command"),
-                "risk_level": RiskLevel.CRITICAL,
-            }
+        from src.agents.shell import is_dangerous
+
+        why = is_dangerous(command)                      # 主判定：强（与主 agent 同源）
+        if not why:
+            check = self.permission_manager.check_command_safety(command)   # 补充：旧黑名单
+            if not check.get("safe"):
+                why = str(check.get("reason", "Unsafe command"))
+        if why:
+            self._record_violation(agent_id, "execute", command, why)
+            return {"allowed": False, "reason": why, "risk_level": RiskLevel.CRITICAL}
         return {"allowed": True, "risk_level": RiskLevel.HIGH}
 
     def _record_violation(self, agent_id: str, action: str, target: str, reason: str):
-        """记录违规"""
+        """记录一次违规（审计）。
+
+        **不再据此"拉黑" agent**：调用方（sandbox 路由）根本不传 agent_id，全部落到默认的
+        "operator"，于是累计 10 次拦截就把这个共享身份**永久拉黑**、而解禁方法没有任何路由
+        能触达——一个进程里被拦 10 条危险命令，云沙箱执行就此全线瘫痪、只能重启服务。
+        真正的闸是**每条命令都查**（见 check_command），而不是给一个硬编码身份记过；
+        计数拉黑在这里只制造拒绝服务，不带来任何安全收益。
+        """
         import time
-        
-        violation = {
+
+        self.violation_history.append({
             "agent_id": agent_id,
             "action": action,
             "target": target,
             "reason": reason,
-            "timestamp": time.time()
-        }
-        
-        self.violation_history.append(violation)
+            "timestamp": time.time(),
+        })
         logger.warning(f"Violation recorded: {agent_id} - {reason}")
-        
-        # 检查是否需要禁止 Agent
-        agent_violations = [v for v in self.violation_history if v["agent_id"] == agent_id]
-        if len(agent_violations) >= self.max_violations:
-            self.banned_agents.add(agent_id)
-            logger.error(f"Agent {agent_id} banned due to too many violations")
     
     def get_violation_stats(self) -> Dict[str, Any]:
-        """获取违规统计"""
+        """违规统计（审计用；被拦的命令都在这里）。"""
         return {
             "total_violations": len(self.violation_history),
-            "banned_agents": list(self.banned_agents),
             "recent_violations": self.violation_history[-10:]
         }
-    
-    def unban_agent(self, agent_id: str):
-        """解禁 Agent"""
-        self.banned_agents.discard(agent_id)
-        logger.info(f"Agent {agent_id} unbanned")

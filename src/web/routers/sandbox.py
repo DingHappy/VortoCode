@@ -5,7 +5,13 @@ router = APIRouter()
 
 @router.post("/api/sandbox/execute")
 async def execute_in_sandbox(request: SandboxExecuteRequest):
-    """在沙箱中执行代码"""
+    """在本地沙箱中执行代码；与云沙箱同闸——需 shell capability。
+
+    此前这条路由**既没有 require_shell() 也没有任何安全检查**，而它的兄弟
+    （`/api/sandbox/{id}/execute`）两者都有：同为"执行代码"的入口，一个把着门、一个大敞。
+    执行闸是本仓的硬规矩（CLAUDE.md：命令执行走 require_shell()），补齐。
+    """
+    require_shell()
     try:
         result = await state.sandbox_executor.execute_in_sandbox(
             request.code,
