@@ -66,7 +66,7 @@ class ToolPermissionManager:
     def __init__(self, config_path: Optional[str] = None):
         self.rules: List[PermissionRule] = []
         self.config_path = config_path
-        self.call_counts: Dict[str, Dict[str, int]] = {}  # tool_name -> {minute: count, hour: count}
+        self.call_counts: Dict[str, List[float]] = {}   # tool_name -> [调用时间戳]（滑动窗口）
         
         # 加载默认规则
         self._load_default_rules()
@@ -207,10 +207,16 @@ class ToolPermissionManager:
                 
                 return result
         
-        # 默认拒绝
+        # 默认拒绝（fail-closed，**刻意保留**）。但要说清楚怎么办：
+        # MCP 工具注册时 category="mcp"（registry.py），而内置默认规则只匹配 read/write/execute
+        # 等分类、config/mcp.yaml 的规则只匹配 tool_names —— 于是**任何没被显式点名的 MCP 工具**
+        # 都落到这里被拒，理由却只有一句 "No matching permission rule"，配置者无从下手。
+        # 拒绝是对的（未知外部工具不该默认可用），含糊其辞不对。
         return PermissionCheckResult(
             allowed=False,
-            reason="No matching permission rule"
+            reason=(f"没有匹配的权限规则（工具 {tool_name}，分类 {getattr(tool, 'category', '?')}）。"
+                    f"默认拒绝未知工具；如需放行，在 config/mcp.yaml 的 permissions.rules 里加一条 "
+                    f"tool_names 含 '{tool_name}' 的规则（action: allow|ask）。")
         )
     
     def _rule_matches(
@@ -251,33 +257,37 @@ class ToolPermissionManager:
         
         return True
     
+    # 限流窗口：每分钟 60 次 / 每小时 1000 次
+    _RATE_PER_MINUTE = 60
+    _RATE_PER_HOUR = 1000
+
     def _check_rate_limit(self, tool_name: str) -> bool:
-        """检查调用频率限制"""
-        if tool_name not in self.call_counts:
-            return True
-        
-        counts = self.call_counts[tool_name]
-        
-        # 检查每分钟限制
-        minute_count = counts.get("minute", 0)
-        if minute_count > 60:  # 默认每分钟60次
+        """检查调用频率限制（**滑动时间窗**）。
+
+        此前 call_counts 只增不减、没有任何时间戳：所谓"每分钟 60 次"实为**每进程生命周期
+        60 次**——一个长会话里同一个 MCP 工具调满 60 次之后就永久拒绝，除非有人手动调
+        reset_rate_limits()（而它没有任何调用方）。名不副实的限流器最后会变成拒绝服务。
+        现在按调用时间戳算窗口内计数，过期的自然淘汰。
+        """
+        import time
+
+        now = time.time()
+        stamps = self.call_counts.get(tool_name) or []
+        minute_count = sum(1 for t in stamps if now - t < 60)
+        if minute_count >= self._RATE_PER_MINUTE:
             return False
-        
-        # 检查每小时限制
-        hour_count = counts.get("hour", 0)
-        if hour_count > 1000:  # 默认每小时1000次
-            return False
-        
-        return True
-    
+        hour_count = sum(1 for t in stamps if now - t < 3600)
+        return hour_count < self._RATE_PER_HOUR
+
     def _record_call(self, tool_name: str) -> None:
-        """记录调用"""
-        if tool_name not in self.call_counts:
-            self.call_counts[tool_name] = {"minute": 0, "hour": 0}
-        
-        self.call_counts[tool_name]["minute"] += 1
-        self.call_counts[tool_name]["hour"] += 1
-    
+        """记录一次调用（存时间戳；顺手丢掉一小时前的，防无限增长）。"""
+        import time
+
+        now = time.time()
+        stamps = [t for t in (self.call_counts.get(tool_name) or []) if now - t < 3600]
+        stamps.append(now)
+        self.call_counts[tool_name] = stamps
+
     def reset_rate_limits(self) -> None:
         """重置调用频率计数"""
         self.call_counts.clear()

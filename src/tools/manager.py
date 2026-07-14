@@ -16,16 +16,18 @@ logger = logging.getLogger(__name__)
 class ToolManager:
     """工具管理器"""
     
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self, config_path: Optional[str] = None, confirm: Optional[Any] = None):
         self.config_path = config_path
         self.config: Dict[str, Any] = {}
-        
-        # 初始化组件
+
+        # 初始化组件。confirm：ASK 权限规则的确认门（async (msg)->bool）；不传则 ASK 规则
+        # fail-closed 拒绝（绝不降级成放行），见 executor.execute_tool。
         self.tool_registry = DynamicToolRegistry()
         self.permission_manager = ToolPermissionManager()
         self.tool_executor = AsyncToolExecutor(
             self.tool_registry,
-            self.permission_manager
+            self.permission_manager,
+            confirm=confirm
         )
         
         # MCP客户端
