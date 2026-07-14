@@ -226,6 +226,15 @@ def add_usage(prompt_tokens: int, completion_tokens: int, cached_tokens: int = 0
         m["prompt_tokens"] += int(prompt_tokens or 0)
         m["completion_tokens"] += int(completion_tokens or 0)
         m["cached_tokens"] += int(cached_tokens or 0)
+        # 主线计量与成本系统在此汇合：cost_tracker 是 /api/cost/report 与预算告警的数据源，
+        # 此前只有遗留 BaseAgent 调 track_usage——主 agent 走 LLMClient 直连，花费从不进账
+        # （07-11 复核 🟥"表都建了没接主 agent"）。挂在唯一计量口上，主/子 agent、dev 流水线、
+        # reviewer 全部 LLM 调用自动记账。成本记账绝不反噬 LLM 调用（失败静默）。
+        try:
+            from src.models.cost import track_usage
+            track_usage(str(model), int(prompt_tokens or 0), int(completion_tokens or 0))
+        except Exception:  # noqa: BLE001
+            pass
 
 
 def get_usage() -> Dict[str, Any]:
