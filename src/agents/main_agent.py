@@ -2310,7 +2310,8 @@ def _test_delta_note(diff: str) -> str:
 
 def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]] = None,
                     confirm: Optional[Callable] = None, draft_pr: bool = False,
-                    capabilities: Any = None) -> list[Tool]:
+                    capabilities: Any = None,
+                    on_diff: Optional[Callable[[str, str], None]] = None) -> list[Tool]:
     """UI 无关的隔离 dev 工具（给 Web/CLI agent 用）。
 
     `dev_isolated`：在一次性 git worktree 里让可写子 agent 实现 + 自测，再跑测试验证；✅通过就
@@ -2331,6 +2332,20 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 on_progress(msg)
             except Exception:  # noqa: BLE001
                 pass
+
+    def _emit_diff(title: str, branch: str, base: str) -> None:
+        """on_diff(title, diff)：把分支 diff 结构化推给客户端（AGENT_DIFF），在请求确认**之前**——
+        让人看清要批准的是什么，而不是对着一句纯文本确认。best-effort：取 diff/回调失败都不影响
+        流水线（没有 on_diff 的端零开销，行为与从前一致）。"""
+        if on_diff is None:
+            return
+        try:
+            from src.agents.review import _branch_diff
+            diff = _branch_diff(repo_root, base, branch, limit=20000)
+            if diff.strip():
+                on_diff(title, diff)
+        except Exception:  # noqa: BLE001
+            pass
 
     async def _dev_isolated(args: dict) -> str:
         import asyncio
@@ -2527,6 +2542,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         if confirm is None:
             return ("\n（本环境未接确认门，未自动开 PR；分支已就绪，可用 open_pr 工具手动开。）")
         title = f"dev_auto: {task[:60]}"
+        _emit_diff(f"待开 PR 的改动：{branch} → {base}", branch, base)
         if not await confirm(f"把 {branch} push 到远端并对 {base} 开 PR？\n  标题：{title}"):
             return f"\n（已取消开 PR；分支 {branch} 保留，可稍后手动 open_pr。）"
         _progress(f"🚀 push {branch} 并对 {base} 开{'（draft）' if draft_pr else ''} PR…")
@@ -2896,6 +2912,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             return (f"❌ 按 PR 反馈修改后自测仍未过（试了 {r.get('attempts', 1)} 次）：{(r.get('output') or '')[-200:]}\n"
                     f"分支 {branch} 未推送。")
         # 绿了 → push（外向操作，走确认门）
+        _emit_diff(f"pr_fix 待推送的改动：{branch}（对 origin/{branch}）", branch, f"origin/{branch}")
         if confirm is not None and not await confirm(
                 f"已按 PR #{fb.get('pr')} 的反馈在 {branch} 上修好且自测通过，push 到远端更新 PR？"):
             return f"（已在本地 {branch} 修好并提交，但未 push——你取消了。）"
@@ -3509,7 +3526,8 @@ def build_skill_tools(repo_root: str, confirm) -> list[Tool]:
 def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable[[str], None]] = None,
                       with_artifacts: bool = False, draft_pr: bool = False,
                       memory_source: str = "agent", memory_session_id=None,
-                      capabilities: Any = None, with_web: bool = True) -> list[Tool]:
+                      capabilities: Any = None, with_web: bool = True,
+                      on_diff: Optional[Callable[[str, str], None]] = None) -> list[Tool]:
     """标准主 agent 工具集（headless CLI 与 Web /agent 共用，保证二者"同源"、不漂移）。
 
     此前 cli._build_headless_agent 与 web._new_agent 各自手写同一串 build_*，极易漂移
@@ -3558,6 +3576,6 @@ def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable
         tools += build_artifact_tools(repo_root, confirm=_art_publish,
                                       confirm_delete=_art_delete)
     tools += (build_dev_tools(repo_root, on_progress=on_progress, confirm=confirm, draft_pr=draft_pr,
-                              capabilities=capabilities)
+                              capabilities=capabilities, on_diff=on_diff)
               + build_command_tool(repo_root, confirm) + build_pr_tool(repo_root, confirm))
     return tools
