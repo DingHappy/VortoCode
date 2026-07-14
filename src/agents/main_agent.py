@@ -2465,51 +2465,63 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         return f"\n（开 PR 失败：{res.get('error')}；分支 {branch} 保留。）"
 
     async def _run_review_gate(branch: str, base: str, test_cmd) -> tuple:
-        """薄封装：把"依赖接力修复"作为 repair 注入 review.run_gate（挑刺→修→重审），返回 (note, blocked)。"""
+        """薄封装：把"依赖接力修复"作为 repair 注入 review.run_gate（挑刺→修→重审），返回 (note, blocked)。
+
+        reviewer 按 review.PERSPECTIVES 造多份（同一套工具+证据铁律，各配一只聚焦镜头）并行
+        对抗审查；视角集由 VORTOCODE_DEV_REVIEW_PERSPECTIVES 控制（默认全部）。
+        """
         import uuid
         from src.agents import review as _review
         from src.agents.worktree import run_dependent_on_branch
         mk = _make_writer(test_cmd)
 
-        async def _review_branch(_repo_root: str, _branch: str, _base: str, *, llm=None,
-                                 test_cmd=None, guidelines: str = "", max_steps: int = 8) -> list:
-            """在临时 worktree 检出分支，启动 reviewer 子 agent；放在 main_agent 侧避免 review 反向导入。"""
-            from src.agents.worktree import _git, _worktrees_dir, remove_worktree
+        def _make_reviewer(lens: str):
+            """一只镜头一个 reviewer：在临时 worktree 检出分支，启动带工具的挑刺子 agent。
+            放在 main_agent 侧避免 review 反向导入。"""
 
-            path = _worktrees_dir(_repo_root) / ("wt-review-" + uuid.uuid4().hex[:8])
-            path.parent.mkdir(parents=True, exist_ok=True)
-            if path.exists():
-                remove_worktree(_repo_root, path)
-            add = _git(_repo_root, "worktree", "add", str(path), _branch, check=False)
-            if add.returncode != 0:
-                return []
-            try:
-                diff = _review._branch_diff(_repo_root, _base, _branch)
-                if not diff.strip():
+            async def _review_branch(_repo_root: str, _branch: str, _base: str, *, llm=None,
+                                     test_cmd=None, guidelines: str = "", max_steps: int = 8) -> list:
+                from src.agents.worktree import _git, _worktrees_dir, remove_worktree
+
+                path = _worktrees_dir(_repo_root) / ("wt-review-" + uuid.uuid4().hex[:8])
+                path.parent.mkdir(parents=True, exist_ok=True)
+                if path.exists():
+                    remove_worktree(_repo_root, path)
+                add = _git(_repo_root, "worktree", "add", str(path), _branch, check=False)
+                if add.returncode != 0:
                     return []
-                tools = build_read_tools(str(path)) + [build_test_tool(str(path), test_cmd)]
-                extra = _review._REVIEWER_SYSTEM + (
-                    f"\n\n【本仓库审查规范】\n{guidelines}" if guidelines else "")
-                agent = MainAgent(tools, llm=llm, max_steps=max_steps, extra_system=extra,
-                                  capabilities=capabilities)
-                prompt = (f"审查分支 {_branch}（相对 {_base}）的以下改动。只报 P0/P1、每条带验证证据、"
-                          f"用 run_tests 复现你怀疑的问题，最后只输出 JSON 数组：\n\n```diff\n{diff}\n```")
                 try:
-                    from src.agents.taint import merge_nested_taint
-                    with merge_nested_taint():
-                        reply = await agent.run_turn(prompt, mode="build")
-                except Exception:  # noqa: BLE001
-                    return []
-                return _review.parse_findings(reply)
-            finally:
-                remove_worktree(_repo_root, path)
+                    diff = _review._branch_diff(_repo_root, _base, _branch)
+                    if not diff.strip():
+                        return []
+                    tools = build_read_tools(str(path)) + [build_test_tool(str(path), test_cmd)]
+                    extra = (_review._REVIEWER_SYSTEM
+                             + (f"\n\n{lens}" if lens else "")
+                             + (f"\n\n【本仓库审查规范】\n{guidelines}" if guidelines else ""))
+                    agent = MainAgent(tools, llm=llm, max_steps=max_steps, extra_system=extra,
+                                      capabilities=capabilities)
+                    prompt = (f"审查分支 {_branch}（相对 {_base}）的以下改动。只报 P0/P1、每条带验证证据、"
+                              f"用 run_tests 复现你怀疑的问题，最后只输出 JSON 数组：\n\n```diff\n{diff}\n```")
+                    try:
+                        from src.agents.taint import merge_nested_taint
+                        with merge_nested_taint():
+                            reply = await agent.run_turn(prompt, mode="build")
+                    except Exception:  # noqa: BLE001
+                        return []
+                    return _review.parse_findings(reply)
+                finally:
+                    remove_worktree(_repo_root, path)
+
+            return _review_branch
 
         async def _repair(fix_desc: str) -> None:
             await run_dependent_on_branch(repo_root, "wt-" + uuid.uuid4().hex[:8], branch,
                                           fix_desc, mk(None), "dev_auto(review-fix)", test_cmd)
 
+        reviewers = {name: _make_reviewer(_review.PERSPECTIVES[name])
+                     for name in _review.dev_review_perspectives()}
         return await _review.run_gate(repo_root, branch, base, test_cmd=test_cmd,
-                                      repair=_repair, reviewer=_review_branch, progress=_progress)
+                                      repair=_repair, reviewers=reviewers, progress=_progress)
 
     def _branch_exists(branch: str) -> bool:
         import subprocess
