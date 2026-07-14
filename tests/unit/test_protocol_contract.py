@@ -38,10 +38,21 @@ def test_outbound_registry_frozen():
         "init", "pong", "status",
         "agent_history", "agent_plan", "agent_say", "agent_stream", "agent_emit",
         "agent_reasoning",      # PR-4 加：思维链增量（仅 want_reasoning 的客户端收，TUI attach 用）
+        "agent_diff",           # 富 UI 协议化第一步：确认前的结构化 diff 推送（attach TUI/桌面端渲染）
         "agent_error", "agent_done", "agent_cancelled", "agent_confirm",
         "agent_tts_audio", "agent_tts_error",
         "task_update", "task_snapshot", "notice",
     ])
+
+
+def test_agent_diff_event_shape():
+    """agent_diff：diff 必填、title 可选、rid 可带；缺 diff / 未登记字段即红。"""
+    e = P.make_event(P.AGENT_DIFF, diff="+x", title="待开 PR 的改动", rid="r1")
+    assert e["type"] == "agent_diff" and e["diff"] == "+x" and e["title"]
+    with pytest.raises(P.ProtocolError):
+        P.make_event(P.AGENT_DIFF, title="缺 diff")
+    with pytest.raises(P.ProtocolError):
+        P.make_event(P.AGENT_DIFF, diff="+x", path="未登记字段")
 
 
 def test_protocol_version_carried_by_init():
