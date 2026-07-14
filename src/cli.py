@@ -307,7 +307,7 @@ def _read_prompt_arg(raw):
     """
     if raw and raw != "-":
         return raw.strip()
-    if raw == "-" or (raw is None and not sys.stdin.isatty()):
+    if raw == "-" or (raw is None and not _isatty(sys.stdin)):
         try:
             return sys.stdin.read().strip()
         except Exception:  # noqa: BLE001
@@ -358,7 +358,7 @@ async def _speak_reply(text, voice, out_path, llm, quiet):
         if not quiet:
             print(f"\033[2m🔊 写语音文件失败：{e}\033[0m", file=sys.stderr, flush=True)
         return None
-    played = sys.stdout.isatty() and _play_audio(out_path)
+    played = _isatty(sys.stdout) and _play_audio(out_path)
     if not quiet:
         tail = "，已播放" if played else ""
         print(f"\033[2m🔊 语音已写入 {out_path}（{len(wav)} 字节{tail}）\033[0m", file=sys.stderr, flush=True)
@@ -452,6 +452,66 @@ class ServeUnreachable(Exception):
     """attach 连接阶段失败（serve 不在/拒连/握手超时）——回合尚未发出，可安全回退进程内。"""
 
 
+def _isatty(stream) -> bool:
+    """这个流是不是 TTY——**必须防 None**。
+
+    从 launchd / systemd / cron 起的进程，关掉的标准流会被 CPython 设成 **None**（不是文件对象），
+    直接 `.isatty()` 就是 AttributeError。而 attach 的接收循环用兜底 except 把异常吞成"拒绝"——
+    结果是无人值守的 `--yes` **静默拒掉每一次确认**、什么也没干、也不说为什么（自审实机复现）。
+    拿不准一律当"不是 TTY"。
+    """
+    try:
+        return bool(stream is not None and stream.isatty())
+    except Exception:  # noqa: BLE001 —— 关闭的/异常的流 → 当作非 TTY
+        return False
+
+
+def _tty_can_ask_human() -> bool:
+    """本进程问得到真人吗——需要 stdin 与 stderr 都是 TTY（拿不准 → 问不到，fail-closed）。"""
+    return _isatty(sys.stdin) and _isatty(sys.stderr)
+
+
+def _make_attach_confirm(auto_yes, say):
+    """造 attach 端的确认门。**模块级**（不是闭包）是为了让三端契约表能直接驱动它——
+    这一端此前手搓判定、又够不到测试，正是漂移最容易发生的角落。
+
+    attach 是**跨进程**的：agent 在 serve 侧跑，污点状态（contextvar）传不过来。所以污点由协议的
+    `agent_confirm.tainted` **结构化字段**下发（见 protocol.py）——绝不能靠匹配警示文案来猜：
+    serve 换个版本/改个措辞，猜测就失效，`--yes` 又会在污点回合放行（fail-open）。老 serve 不发
+    这个字段时，client 按 `tainted=True` 兜底（fail-closed）并置 `taint_known=False`。
+    """
+    async def confirm(text, *, tainted: bool = True, taint_known: bool = True):
+        # 取**模块属性** `gate.decide`（而非 `from ... import decide`）：这样无论导入写在哪，
+        # 契约测试 monkeypatch 内核判定都能生效——测试不该被导入位置绑架。
+        from src.agents import gate
+
+        first = (text or "").splitlines()[0] if text else ""
+        # **判定不在这里做**：跨进程也好、手搓也罢，排序都必须来自内核那一处（gate.decide）。
+        # attach 只负责如实申报三个输入 + 执行结果。此前这里自己写了一遍
+        # `if auto_yes and not tainted`，于是内核新加的规矩这一端收不到（审核记为漂移风险）。
+        verdict = gate.decide(tainted=tainted, pre_authorized=auto_yes,
+                              can_ask_human=_tty_can_ask_human())
+        if verdict == gate.ALLOW:
+            say(f"✓ 自动确认：{first}")
+            return True
+        if verdict == gate.ASK:                          # 交互终端：真问人（attach 有人守着）
+            print(f"需要确认：{text}", file=sys.stderr, flush=True)
+            ans = (await asyncio.to_thread(input, "允许吗？[y/N] ")).strip().lower()
+            return ans in ("y", "yes")
+        if not taint_known:
+            # tainted 是"未知→兜底为真"，不是"确知有污点"：对端 serve 版本旧、报不了本回合污点状态。
+            # 别谎称"摄入过外部内容"，也别静默拒绝——给出可执行出路。
+            why = "对端未上报本回合污点状态（serve 可能较旧）；--yes 从严不放行，请升级 serve 或用交互终端确认"
+        elif tainted:
+            why = gate.TAINT_REFUSED_REASON              # 单一真相源（headless 那头用的是同一条）
+        else:
+            why = "非交互终端，需 --yes 放行"
+        say(f"✗ 拒绝（{why}）：{first}")
+        return False
+
+    return confirm
+
+
 async def _run_agent_attached(prompt, url, *, build=False, auto_yes=False, as_json=False,
                               quiet=False, continue_session=False, images=None, audio=None,
                               speak=False, voice=None, speak_out=None, llm=None):
@@ -479,7 +539,7 @@ async def _run_agent_attached(prompt, url, *, build=False, auto_yes=False, as_js
         if not quiet:
             print(f"\033[2m{text}\033[0m", file=sys.stderr, flush=True)
 
-    streaming = (not as_json) and sys.stdout.isatty()
+    streaming = (not as_json) and _isatty(sys.stdout)
     seen = {"n": 0}                                # agent_stream 是累计文本，按长度算增量
 
     def on_stream(text):
@@ -489,33 +549,7 @@ async def _run_agent_attached(prompt, url, *, build=False, auto_yes=False, as_js
             sys.stdout.flush()
             seen["n"] = len(text)
 
-    async def confirm(text, *, tainted: bool = True, taint_known: bool = True):
-        """attach 的确认门。
-
-        attach 是**跨进程**的：agent 在 serve 侧跑，污点状态（contextvar）传不过来。
-        所以污点由协议的 `agent_confirm.tainted` **结构化字段**下发（见 protocol.py）——
-        绝不能靠匹配警示文案来猜：serve 换个版本/改个措辞，猜测就失效，`--yes` 又会在污点回合
-        放行（fail-open）。老 serve 不发这个字段时，client 按 `tainted=True` 兜底（fail-closed），
-        并置 `taint_known=False`——下面据此如实说明是"确知污点"还是"对端报不了、我们从严"。
-        """
-        first = (text or "").splitlines()[0] if text else ""
-        if auto_yes and not tainted:
-            say(f"✓ 自动确认：{first}")
-            return True
-        if sys.stdin.isatty() and sys.stderr.isatty():   # 交互终端：真问人（attach 有人守着）
-            print(f"需要确认：{text}", file=sys.stderr, flush=True)
-            ans = (await asyncio.to_thread(input, "允许吗？[y/N] ")).strip().lower()
-            return ans in ("y", "yes")
-        if not taint_known:
-            # tainted 是"未知→兜底为真"，不是"确知有污点"：对端 serve 版本旧、报不了本回合污点状态。
-            # 别谎称"摄入过外部内容"，也别静默拒绝——给出可执行出路。
-            why = "对端未上报本回合污点状态（serve 可能较旧）；--yes 从严不放行，请升级 serve 或用交互终端确认"
-        elif tainted:
-            why = "本回合摄入过外部内容，--yes 不放行（防提示注入）"
-        else:
-            why = "非交互终端，需 --yes 放行"
-        say(f"✗ 拒绝（{why}）：{first}")
-        return False
+    confirm = _make_attach_confirm(auto_yes, say)     # 判定走内核 gate.decide（见工厂 docstring）
 
     client = ProtocolClient(url, sid=sid, token=token)
     try:
@@ -613,9 +647,10 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
     # headless 没有交互终端 → 问不到人（can_ask_human=False）。--yes 是"已授权自动放行"。
     # **要不要问、能不能免，由内核的 confirm gate 判**（污点回合下 --yes 一律失效 → 拒绝）：
     # 让模型读了网页再自动放行写操作，正是提示注入最想要的路径。
-    async def _ask_human(_message):               # headless 问不到人；决定与交代都走 _on_decision
-        return False
-
+    #
+    # 不传 ask_human（传 None）：`can_ask_human=False` 时 gate 的 decide() 直接判 DENY、根本不会去问。
+    # 此前这里塞了个"永远返回 False"的哨兵——**函数体永远执行不到**，正是本批次声称已删掉的
+    # `deny_all` 维护陷阱换了个马甲又活了一遍（自审逮到）。fail-closed 只住在 gate 里，别处不设兜底。
     def _on_decision(operation, ok, tainted):
         """每个确认决定都过这里——自动放行也要留痕，自动拒绝要说清**拒的是什么**。
 
@@ -624,12 +659,15 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
         """
         if quiet:
             return
+        from src.agents.gate import TAINT_REFUSED_REASON
+
         first = (operation or "").splitlines()[0]
         if ok:
             print(f"\033[2m✓ 自动确认：{first}\033[0m", file=sys.stderr, flush=True)
         elif tainted:
-            print(f"\033[2m✗ 拒绝（本回合摄入过外部内容，--yes 不放行 · 防提示注入）："
-                  f"{first}\033[0m", file=sys.stderr, flush=True)
+            # 文案取自内核的单一真相源（attach 那头用的是同一条）——此前两处各写一份、已开始漂移。
+            print(f"\033[2m✗ 拒绝（{TAINT_REFUSED_REASON}）：{first}\033[0m",
+                  file=sys.stderr, flush=True)
         else:
             print(f"\033[2m✗ 自动拒绝（需 --yes 放行）：{first}\033[0m", file=sys.stderr, flush=True)
 
@@ -638,7 +676,7 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
             print(f"\033[2m{msg}\033[0m", file=sys.stderr, flush=True)
 
     agent = _build_headless_agent(cwd, max_steps=max_steps, on_tool=_on_tool,
-                                  on_plan=_on_plan, confirm=_ask_human, llm=llm,
+                                  on_plan=_on_plan, confirm=None, llm=llm,
                                   on_progress=_progress, capability_profile=profile,
                                   auto_approve=auto_yes, can_ask_human=False,
                                   on_decision=_on_decision)
@@ -682,7 +720,7 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
             return
         print(f"\033[2m{_strip_markup(markup)}\033[0m", file=sys.stderr, flush=True)
 
-    streaming = (not as_json) and sys.stdout.isatty()
+    streaming = (not as_json) and _isatty(sys.stdout)
     seen = {"n": 0}                                # stream_cb 给的是累计文本，按长度算增量
 
     def stream_cb(text):
@@ -791,7 +829,7 @@ async def _with_progress(coro, label: str = "运行中"):
     非 TTY（管道 / 重定向 / 日志）则完全静默、不污染输出。
     """
     import time as _time
-    if not sys.stderr.isatty():
+    if not _isatty(sys.stderr):
         return await coro
     t0 = _time.monotonic()
     done = asyncio.Event()

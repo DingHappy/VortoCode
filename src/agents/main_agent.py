@@ -24,6 +24,12 @@ from typing import Any, Awaitable, Callable, Optional
 
 from src.agents.tool import Tool
 
+# 确认门已抽到 `src/agents/gate.py`（叶子模块，进得了 mypy 的类型门禁圈）。这里只再导出
+# `make_confirm_gate` —— gateway 与测试仍从 main_agent 取它（8 处）。其余名字（decide / ALLOW /
+# TAINT_* …）一律直接从 `src.agents.gate` 取，不在这里转一道。
+# **判定只有一处：`gate.decide()`**——别在任何端里重写那个排序（那是"加一端漏一端"的病根）。
+from src.agents.gate import make_confirm_gate  # noqa: F401
+
 
 # 单个工具结果回灌给模型的最大字符数（默认值），与 read_file 整文件截断上限。
 #
@@ -309,81 +315,6 @@ def research_parallel_cap(args: dict, *, default: int = 2, maximum: int = 5) -> 
         requested = min(requested, maximum)
         return requested if reason or requested <= default else default
     return maximum if reason else default
-
-
-_TAINT_WARNING = ("⚠ 本回合已摄入外部内容（网页/搜索/MCP）。下面这个操作是模型在读过外部内容之后"
-                  "提出的——请人工核对是否确是你的本意（防提示注入）：\n")
-
-
-def _taint_prefix() -> str:
-    """污点态（本回合摄入过不可信外部内容）下，给对外操作的确认文案加警示前缀（D0）。
-
-    注：文案前缀只是"让人看见"。**真正的拦截在 make_confirm_gate 里**——只加前缀是拦不住
-    自动放行的（CLI 的 --yes 压根不看 message 内容）。
-    """
-    from src.agents.taint import is_tainted
-    return _TAINT_WARNING if is_tainted() else ""
-
-
-def make_confirm_gate(ask_human, *, auto_approve: bool = False, can_ask_human: bool = False,
-                      on_decision=None):
-    """把「要不要问人」的判定**收进内核**——端只负责「怎么问人」和「怎么如实交代」。
-
-    为什么必须上收（这是三端漂移的根因）：确认门此前是"语义由调用方注入"，于是同一条安全规矩
-    要在 TUI / CLI / Web / IM 各写一遍。实际后果已经出现过两次——污点检查只写在了 TUI 里，
-    CLI 的 `--yes` 和 Web 的确认门完全不查；每加一个端、加一条规矩，就漏一处。
-
-    端声明两件事（**默认都是最严格的**——新端忘了声明只会更严，不会更松）：
-      - `can_ask_human`：这个端**问得到人**吗（headless 非 TTY / 无人值守会话 = 问不到）
-      - `auto_approve`：是否已被授权自动放行（CLI 的 `--yes`）
-    `on_decision(operation, decision, tainted)`：**每个决定**都回调一次（含自动放行/自动拒绝），
-    端用它打印/审计——不然自动放行会静默发生、自动拒绝会不说原因。
-    注意它拿到的是 **operation（不含警示横幅的原始操作文案）**，端要展示"被拒的是什么"就靠它。
-
-    「要不要问、能不能免」由这里统一决定：
-
-      **污点回合（本回合摄入过网页/搜索/MCP 的外部内容）→ 一切自动放行失效。**
-      能问到人就强制真人拍板；问不到人就**拒绝**（fail-closed）——绝不让外部内容诱导出的操作
-      被自动放行，那正是提示注入最想要的路径。
-    """
-    from src.agents.taint import is_tainted
-
-    def _tell(operation: str, decision: bool, tainted: bool) -> None:
-        if on_decision is None:
-            return
-        try:
-            on_decision(operation, decision, tainted)
-        except Exception:  # noqa: BLE001 —— 交代/审计失败不该影响决定本身
-            pass
-
-    async def gated(message: str) -> bool:
-        operation = str(message)                        # 原始操作文案（端展示"拒了什么"用这个）
-        tainted = is_tainted()
-        if tainted:
-            if not can_ask_human:
-                _tell(operation, False, True)           # 污点 + 无人 → 一律拒（--yes / 无人值守）
-                return False
-            ok = bool(await ask_human(_TAINT_WARNING + operation))   # auto_approve 失效，真人拍板
-            _tell(operation, ok, True)
-            return ok
-        if auto_approve:
-            _tell(operation, True, False)               # 自动放行也要留痕，不能静默
-            return True
-        if not can_ask_human:
-            # 问不到人、也没被授权 → 拒。**绝不采纳端的返回值**：它既然声明了"问不到人"，
-            # 它的 ask_human 就不可能代表任何人的意思（自审：否则这个声明在非污点路径上等于没用）。
-            _tell(operation, False, False)
-            return False
-        ok = bool(await ask_human(operation))           # 问得到人的端：真问
-        _tell(operation, ok, False)
-        return ok
-
-    return gated
-
-
-async def deny_all(_message: str) -> bool:
-    """"问不到人"的端的 ask_human：一律拒。用于无人值守会话与 confirm 缺省时的 fail-closed 兜底。"""
-    return False
 
 
 def _dev_review_enabled() -> bool:
