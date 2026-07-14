@@ -4781,9 +4781,10 @@ class VortoCodeTUI(App):
         返回 True=回合已完成（含 serve 侧出错——已如实渲染，**不回退重跑**，防重复执行）；
         False=连接阶段失败（回合未发出，调用方安全回退进程内）。
         协议事件 → UI 面映射：say→_chrome、stream→结果区摘要、reasoning→结果区摘要、
-        plan→计划面板、confirm→内联确认应答回传、emit/done→收尾。
-        富 UI 取舍（v1，如实交代）：工具在 serve 端跑（与 Web 同一工厂），TUI 的着色 diff
-        直写工具在 attach 下不参与；进程内模式保留全部富 UI。
+        plan→计划面板、diff→着色 diff 渲染（确认前推送）、confirm→内联确认应答回传、emit/done→收尾。
+        富 UI 取舍（如实交代）：工具在 serve 端跑（与 Web 同一工厂），TUI 的着色 diff
+        直写工具在 attach 下不参与；进程内模式保留全部富 UI。dev 流水线的**确认前 diff**
+        已经协议化（AGENT_DIFF → 本端着色渲染），直写工具的逐次 diff 仍是进程内独有。
         """
         from src.gateway import protocol as gp
         from src.gateway.client import ProtocolClient, local_ref_to_data_url
@@ -4802,6 +4803,13 @@ class VortoCodeTUI(App):
             # （scope 信息不过协议，宁多问不越权；与 _confirm_outward 同一保守面）。
             return bool(await self._inline_confirm(message, scope="relay"))
 
+        def diff_cb(title: str, diff: str) -> None:
+            # serve 在请求确认前推来的结构化 diff（AGENT_DIFF）→ 复用进程内的着色渲染，
+            # attach 模式的"富 diff 欠账"就此还上（人看清要批准什么再应答 confirm）。
+            if title:
+                self._chrome(f"[magenta]✎ {title}[/magenta]")
+            self._render_diff_text(diff, max_lines=400)
+
         t0 = time.monotonic()
         try:
             if client.server_version not in (None, gp.PROTOCOL_VERSION):
@@ -4812,7 +4820,8 @@ class VortoCodeTUI(App):
                 images=[local_ref_to_data_url(i) for i in images],
                 audio=[local_ref_to_data_url(a, is_audio=True) for a in audio],
                 on_say=self._turn_say, on_stream=stream_cb, on_emit=emit_final,
-                on_plan=self._render_plan, on_reasoning=think_cb, confirm=confirm)
+                on_plan=self._render_plan, on_reasoning=think_cb, on_diff=diff_cb,
+                confirm=confirm)
         finally:
             cleanup()
             self._fold_tool_activity()       # serve 侧回合同样折叠（同一观感）
@@ -5461,9 +5470,16 @@ class VortoCodeTUI(App):
         # 靠隔离 + build 门 + 落 vorto/auto 分支保关口），进度走 _chrome、开 PR 外向确认走 _confirm_outward。
         # 只取 dev_auto——工厂还返回朴素 dev_isolated/dev_parallel，一并加会覆盖上面 TUI 的富 UI 版。
         from src.agents.main_agent import build_dev_tools as _factory_dev_tools
+
+        def _dev_diff(title: str, diff: str) -> None:
+            # 开 PR / push 确认前的结构化 diff（on_diff）→ 着色渲染，看清要批准什么再答确认
+            self._chrome(f"[magenta]✎ {title}[/magenta]")
+            self._render_diff_text(diff, max_lines=400)
+
         tools += [t for t in _factory_dev_tools(self.repo_root, on_progress=self._chrome,
                                                 confirm=self._confirm_outward,
-                                                capabilities=self._capabilities)
+                                                capabilities=self._capabilities,
+                                                on_diff=_dev_diff)
                   if t.name in ("dev_auto", "dev_resume", "pr_fix")]
 
         # 制品（artifact）：把会话产出发布成可分享、实时更新的网页（由 Web 服务器在 /artifact 渲染）。

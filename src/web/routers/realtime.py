@@ -135,6 +135,7 @@ def _new_agent():
     from src.gateway.agent_session import build_session
     confirm_holder = {"fn": None}
     progress_holder = {"fn": None}                 # dev 流水线进度 → 每回合重绑到当前 ws 的 agent_say
+    diff_holder = {"fn": None}                     # 确认前 diff 推送 → 每回合重绑到当前 ws 的 agent_diff
 
     async def _confirm(message: str) -> bool:
         fn = confirm_holder["fn"]
@@ -145,12 +146,18 @@ def _new_agent():
         if fn is not None:
             fn(msg)
 
+    def _diff(title: str, diff: str) -> None:      # 同步、best-effort（发射端已兜异常，这里只转发）
+        fn = diff_holder["fn"]
+        if fn is not None:
+            fn(title, diff)
+
     # Web 有人在前端看着 → 问得到人（can_ask_human=True）；没有任何自动放行（auto_approve=False）。
     # 这两个必须**显式声明**：内核 gate 的默认值是最严格的（问不到人），新端忘了声明只会更严、不会更松。
     agent = build_session(os.getcwd(), kind="web", confirm=_confirm, on_progress=_progress,
-                          can_ask_human=True)
+                          can_ask_human=True, on_diff=_diff)
     agent._web_confirm_holder = confirm_holder     # _run_agent_turn 每回合把它指向当前 ws
     agent._web_progress_holder = progress_holder
+    agent._web_diff_holder = diff_holder
     return agent
 
 
@@ -420,6 +427,11 @@ async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list
     ph = getattr(agent, "_web_progress_holder", None)
     if ph is not None:                        # dev 流水线进度（并行实现/修复/接力/集成验证）也走 agent_say
         ph["fn"] = agent_say
+
+    dh = getattr(agent, "_web_diff_holder", None)
+    if dh is not None:                        # 确认前的结构化 diff → agent_diff（attach TUI/桌面端渲染）
+        dh["fn"] = lambda title, diff: q.put_nowait(
+            P.make_event(P.AGENT_DIFF, diff=str(diff), title=str(title)))
 
     def agent_emit(m):
         _record(websocket, "assistant", m)    # 最终回复进展示历史

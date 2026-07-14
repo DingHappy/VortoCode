@@ -47,6 +47,9 @@ AGENT_ERROR = "agent_error"
 AGENT_DONE = "agent_done"                    # 回合收尾
 AGENT_CANCELLED = "agent_cancelled"          # 回合被中断
 AGENT_CONFIRM = "agent_confirm"              # 请求前端确认（id + text，应答走 agent_confirm_response）
+AGENT_DIFF = "agent_diff"                    # 结构化 diff 推送（富 UI 协议化第一步）：dev 流水线在请求
+#                                              确认前把改动 diff 推给客户端——attach TUI 着色渲染、
+#                                              未来桌面端消费同一事件；不动 AGENT_CONFIRM 的冻结面
 AGENT_TTS_AUDIO = "agent_tts_audio"          # TTS 结果（id + data: data:audio/... URI）
 AGENT_TTS_ERROR = "agent_tts_error"
 TASK_UPDATE = "task_update"                  # 后台任务状态变更广播
@@ -84,6 +87,7 @@ OUTBOUND: Dict[str, _Spec] = {
     # 就是 fail-open：serve 换个版本/改个措辞，客户端的 --yes 又会在污点回合放行。
     # 可选字段（老客户端忽略即可，不破冻结协议）；**客户端读不到它时必须按"可能有污点"处理**。
     AGENT_CONFIRM: (("id", "text"), ("tainted",)),
+    AGENT_DIFF: (("diff",), ("title",)),     # diff=unified diff 文本（serve 侧已截断）；title=一句话语境
     AGENT_TTS_AUDIO: (("id", "data"), ()),
     AGENT_TTS_ERROR: (("id", "text"), ()),
     TASK_UPDATE: (("data",), ()),

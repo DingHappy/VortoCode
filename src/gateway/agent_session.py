@@ -36,7 +36,7 @@ def _load_cli_hooks(repo_root: str):
 def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
                   on_tool=None, on_plan=None, llm=None, max_steps=None,
                   capability_profile=None, auto_approve: bool = False,
-                  can_ask_human: bool = False, on_decision=None):
+                  can_ask_human: bool = False, on_decision=None, on_diff=None):
     """装配一个主 agent（三端同一骨架）。
 
     kind ∈ {web, cli, im} 决定差异位（with_artifacts / hooks）；confirm/on_progress 由调用端提供。
@@ -64,7 +64,8 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
                                       on_decision=on_decision)
     tools = build_agent_tools(repo_root, confirm=gated_confirm, on_progress=on_progress,
                               with_artifacts=(kind == "web"),   # 制品查看页只有 Web 有
-                              memory_source=kind, capabilities=capabilities)
+                              memory_source=kind, capabilities=capabilities,
+                              on_diff=on_diff)   # 确认前的结构化 diff 推送（AGENT_DIFF，端可不接）
     kwargs = dict(plan_tool=True, permissions=load_permissions(repo_root),
                   env_context=True,                    # 注入 <env>（cwd/git/日期/目录）
                   native=native_default(),             # 三端统一 native 开关
