@@ -114,11 +114,15 @@ def _credential_free_http_servers(config: dict) -> list[dict]:
     return allowed
 
 
-async def connect_mcp(repo_root, *, capability_profile: str | None = None) -> Tuple[Optional[Any], List]:
+async def connect_mcp(repo_root, *, capability_profile: str | None = None,
+                      confirm: Any = None) -> Tuple[Optional[Any], List]:
     """据 `repo_root/config/mcp.yaml` 连 MCP 服务器，返回 (manager, wrapped_tools)。
 
     无配置文件 → (None, [])，不报错（多数仓库没 MCP）。连接异常上抛由调用方兜（打印/忽略）。
     用完务必 `await manager.shutdown()`（外部 server 多为子进程，不关会残留）。
+
+    confirm: `action: ask` 权限规则的确认门（async (msg)->bool）。**不传则 ASK 规则一律拒绝**
+      （fail-closed，绝不降级成放行）——调用方有真人守着就该传自己的确认门进来。
     """
     from src.agents.capabilities import EXTERNAL_PROFILE, UNATTENDED_PROFILE, normalize_profile
 
@@ -131,7 +135,7 @@ async def connect_mcp(repo_root, *, capability_profile: str | None = None) -> Tu
     if not cfg.is_file():
         return None, []
     from src.tools.manager import ToolManager
-    mgr = ToolManager(str(cfg))
+    mgr = ToolManager(str(cfg), confirm=confirm)
     safe_servers = _credential_free_http_servers(mgr.config)
     if not safe_servers:
         return None, []

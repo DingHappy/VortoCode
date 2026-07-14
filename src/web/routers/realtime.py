@@ -177,8 +177,17 @@ async def _ensure_mcp(agent, say) -> None:
         return                              # 默认关闭（避免坏配置卡死每回合）
     try:
         from src.agents.mcp_tools import connect_mcp
+
+        async def _mcp_confirm(message: str) -> bool:
+            # MCP 权限规则里 action=ask 的工具 → 真的问人：复用本回合已绑到当前 ws 的确认门
+            # （_run_agent_turn 里 holder["fn"] = _make_ws_confirm）。拿不到就拒（fail-closed）。
+            holder = getattr(agent, "_web_confirm_holder", None)
+            fn = holder.get("fn") if holder else None
+            return bool(await fn(message)) if fn is not None else False
+
         mgr, mcp_tools = await connect_mcp(
-            os.getcwd(), capability_profile=agent._capabilities.profile
+            os.getcwd(), capability_profile=agent._capabilities.profile,
+            confirm=_mcp_confirm
         )
         if mcp_tools:
             agent.add_tools(mcp_tools)
