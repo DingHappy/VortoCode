@@ -143,6 +143,88 @@ async def test_gate_repair_error_blocks(tmp_path):
     assert blocked and "自修复出错" in note
 
 
+# ------------------------------------------------------------ 多视角 run_gate（reviewers=）
+_P1B = {"severity": "P1", "file": "b.py", "issue": "凭据入日志", "evidence": "跑 t2 复现"}
+
+
+@pytest.mark.asyncio
+async def test_gate_multi_merges_and_tags_perspectives(tmp_path):
+    """两个视角各报一条：合并进同一轮修复描述，且带视角标签。"""
+    ra, ca = _reviewer([_P0], [_P0])
+    rb, cb = _reviewer([_P1B], [_P1B])
+    repair, got = _repair_recorder()
+    note, blocked = await review.run_gate(
+        str(tmp_path), "vorto/x", "main", repair=repair,
+        reviewers={"correctness": ra, "security": rb})
+    assert blocked                                            # 两轮都在 → 拦
+    assert got["n"] == 1
+    assert "越界" in got["desc"] and "凭据入日志" in got["desc"]
+    assert "[correctness]" in got["desc"] and "[security]" in got["desc"]
+    assert ca["n"] == 2 and cb["n"] == 2                      # 每个视角每轮都跑（审+复审）
+
+
+@pytest.mark.asyncio
+async def test_gate_multi_dedupes_same_finding(tmp_path):
+    """两个视角撞出同一条 (file, issue)：只算一条、只修一次。"""
+    ra, _ = _reviewer([_P0], [])
+    rb, _ = _reviewer([_P0], [])
+    repair, got = _repair_recorder()
+    note, blocked = await review.run_gate(
+        str(tmp_path), "vorto/x", "main", repair=repair,
+        reviewers={"correctness": ra, "security": rb})
+    assert not blocked and "1 条" in note
+    assert got["n"] == 1 and got["desc"].count("越界") == 1
+
+
+@pytest.mark.asyncio
+async def test_gate_multi_partial_failure_still_reviews(tmp_path):
+    """单视角挂掉只丢该视角（fail-open 粒度到视角），其余视角照常出结论。"""
+    async def _boom(*a, **k):
+        raise RuntimeError("relay 挂了")
+    rb, cb = _reviewer([])
+    repair, got = _repair_recorder()
+    note, blocked = await review.run_gate(
+        str(tmp_path), "vorto/x", "main", repair=repair,
+        reviewers={"correctness": _boom, "security": rb})
+    assert not blocked and "审查通过" in note and "2 视角" in note
+    assert got["n"] == 0 and cb["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_gate_multi_all_fail_is_fail_open(tmp_path):
+    """全部视角都挂 → 整体 fail-open（与旧单 reviewer 语义一致，不拦绿集成）。"""
+    async def _boom(*a, **k):
+        raise RuntimeError("relay 挂了")
+    note, blocked = await review.run_gate(
+        str(tmp_path), "vorto/x", "main", repair=(lambda *_a: None),
+        reviewers={"correctness": _boom, "security": _boom})
+    assert not blocked and "未能完成" in note
+
+
+@pytest.mark.asyncio
+async def test_gate_multi_fixed_then_passes(tmp_path):
+    ra, ca = _reviewer([_P0], [])
+    rb, cb = _reviewer([], [])
+    repair, got = _repair_recorder()
+    note, blocked = await review.run_gate(
+        str(tmp_path), "vorto/x", "main", repair=repair,
+        reviewers={"correctness": ra, "security": rb})
+    assert not blocked and "已自修复并复审通过" in note
+    assert got["n"] == 1 and ca["n"] == 2 and cb["n"] == 2
+
+
+def test_dev_review_perspectives_env(monkeypatch):
+    """视角集：默认全部；逗号取子集（大小写不敏感）；全是未知名回落全部。"""
+    monkeypatch.delenv("VORTOCODE_DEV_REVIEW_PERSPECTIVES", raising=False)
+    assert review.dev_review_perspectives() == list(review.PERSPECTIVES)
+    monkeypatch.setenv("VORTOCODE_DEV_REVIEW_PERSPECTIVES", "security")
+    assert review.dev_review_perspectives() == ["security"]
+    monkeypatch.setenv("VORTOCODE_DEV_REVIEW_PERSPECTIVES", "Security, correctness")
+    assert review.dev_review_perspectives() == ["security", "correctness"]
+    monkeypatch.setenv("VORTOCODE_DEV_REVIEW_PERSPECTIVES", "bogus,nope")
+    assert review.dev_review_perspectives() == list(review.PERSPECTIVES)
+
+
 # ------------------------------------------------------------ 开关
 def test_dev_review_enabled_default_on(monkeypatch):
     monkeypatch.delenv("VORTOCODE_DEV_REVIEW", raising=False)
