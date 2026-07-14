@@ -102,6 +102,25 @@ async def test_full_turn_renders_and_filters_foreign_events():
 
 
 @pytest.mark.asyncio
+async def test_agent_diff_dispatches_to_on_diff():
+    """agent_diff（确认前的结构化 diff 推送）→ on_diff(title, diff)；不接 on_diff 的老端安全跳过。"""
+    script = [
+        (P.AGENT_DIFF, {"diff": "+++ b/f.txt\n+x", "title": "待开 PR 的改动"}, True),
+        (P.AGENT_EMIT, {"text": "ok"}, True),
+        (P.AGENT_DONE, {}, True),
+    ]
+    diffs = []
+    async with FakeServe(script) as srv:
+        async with ProtocolClient(srv.url, sid="t-diff") as pc:
+            out = await pc.run_turn("hi", on_diff=lambda t, d: diffs.append((t, d)))
+    assert out.ok
+    assert diffs == [("待开 PR 的改动", "+++ b/f.txt\n+x")]
+    async with FakeServe(script) as srv:                    # 不传 on_diff：事件被忽略、回合照常收尾
+        async with ProtocolClient(srv.url, sid="t-diff2") as pc:
+            assert (await pc.run_turn("hi")).ok
+
+
+@pytest.mark.asyncio
 async def test_confirm_round_trip_approves_and_denies():
     for approve in (True, False):
         script = [

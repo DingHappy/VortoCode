@@ -205,3 +205,55 @@ async def test_backward_compat_no_open_pr_arg(tmp_path, monkeypatch):
     out = await _dev_auto(tmp_path, yes).handler({"task": "x"})   # 没给 open_pr
     assert "集成后全量测试通过" in out and "PR" not in out
     assert called["n"] == 0                                 # 不主动开 PR、行为不变
+
+
+@pytest.mark.asyncio
+async def test_open_pr_emits_diff_before_confirm(tmp_path, monkeypatch):
+    """on_diff（AGENT_DIFF 数据面）在开 PR 的确认**之前**推分支 diff——看清要批准什么再答。"""
+    _init_repo_on_branch(tmp_path, "dev")
+    _patch_pipeline(monkeypatch, integration_ok=True)
+    import src.agents.review as review
+    import src.agents.vcs as vcs
+    monkeypatch.setattr(vcs, "push_and_open_pr",
+                        lambda *a, **k: {"ok": True, "pushed": True, "url": "http://pr/9", "error": ""})
+    monkeypatch.setattr(review, "_branch_diff",
+                        lambda root, base, branch, limit=8000: "+++ b/f.txt\n+x")
+    order = []
+
+    async def confirm(msg):
+        order.append(("confirm", msg))
+        return True
+
+    tool = {t.name: t for t in ma.build_dev_tools(
+        str(tmp_path), confirm=confirm,
+        on_diff=lambda title, diff: order.append(("diff", title, diff)))}["dev_auto"]
+    out = await tool.handler({"task": "x", "open_pr": True})
+    assert "已开 PR" in out
+    kinds = [o[0] for o in order]
+    assert kinds.index("diff") < kinds.index("confirm")     # 先看 diff、再问确认
+    d = next(o for o in order if o[0] == "diff")
+    assert "vorto/auto-" in d[1] and "+x" in d[2]
+
+
+@pytest.mark.asyncio
+async def test_on_diff_failure_does_not_block_pr(tmp_path, monkeypatch):
+    """on_diff 渲染炸了绝不拦流水线（best-effort 旁路），PR 照开。"""
+    _init_repo_on_branch(tmp_path, "dev")
+    _patch_pipeline(monkeypatch, integration_ok=True)
+    import src.agents.review as review
+    import src.agents.vcs as vcs
+    monkeypatch.setattr(vcs, "push_and_open_pr",
+                        lambda *a, **k: {"ok": True, "pushed": True, "url": "http://pr/9", "error": ""})
+    monkeypatch.setattr(review, "_branch_diff",
+                        lambda root, base, branch, limit=8000: "+x")
+
+    def boom(_title, _diff):
+        raise RuntimeError("渲染崩了")
+
+    async def yes(_m):
+        return True
+
+    tool = {t.name: t for t in ma.build_dev_tools(str(tmp_path), confirm=yes,
+                                                  on_diff=boom)}["dev_auto"]
+    out = await tool.handler({"task": "x", "open_pr": True})
+    assert "已开 PR" in out

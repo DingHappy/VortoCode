@@ -182,6 +182,7 @@ class ProtocolClient:
                        on_emit: Optional[Callable[[str], None]] = None,
                        on_plan: Optional[Callable[[list], None]] = None,
                        on_reasoning: Optional[Callable[[str], None]] = None,
+                       on_diff: Optional[Callable[[str, str], None]] = None,
                        confirm: Optional[Callable[[str], Any]] = None,
                        idle_timeout: float = 600.0) -> TurnOutcome:
         """跑一个回合到收尾。confirm 为 async(text)->bool；缺省一律拒绝（与 headless 同：安全优先）。
@@ -228,6 +229,8 @@ class ProtocolClient:
                 _safe(on_emit, evt.get("text", ""))
             elif etype == P.AGENT_PLAN:
                 _safe(on_plan, evt.get("items") or [])
+            elif etype == P.AGENT_DIFF:          # 确认前的结构化 diff（on_diff(title, diff)；不接则忽略）
+                _safe(on_diff, str(evt.get("title", "")), str(evt.get("diff", "")))
             elif etype == P.AGENT_CONFIRM:       # 确认往返：问端侧，应答回传（缺省拒绝，安全优先）
                 ok = await self._dispatch_confirm(evt, confirm)
                 await self._ws.send_json(
