@@ -48,7 +48,7 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
     """
     if kind not in _KINDS:
         raise ValueError(f"未知装配端 kind={kind!r}（可选 {_KINDS}）")
-    from src.agents.main_agent import (MainAgent, build_agent_tools, deny_all, make_confirm_gate,
+    from src.agents.main_agent import (MainAgent, build_agent_tools, make_confirm_gate,
                                        native_default, skill_catalog)
     from src.agents.capabilities import SessionCapabilities
     from src.agents.permissions import load_permissions
@@ -56,9 +56,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
 
     profile = capability_profile or ("local" if kind == "cli" else "external")
     capabilities = SessionCapabilities.for_profile(profile, repo_root)
-    # confirm 缺省 → **fail-closed**（deny_all），而不是把 None 塞给工具让它在调用时 TypeError。
+    # confirm 缺省 → **fail-closed**：`can_ask_human` 随之为 False，gate 的 decide() 直接判 DENY，
+    # 既不会去问、也不会把 None 塞给工具让它在调用时 TypeError。
     # 无论如何都过内核 gate：这样"污点回合一切自动放行失效"这条规矩没有任何旁路。
-    gated_confirm = make_confirm_gate(confirm or deny_all, auto_approve=auto_approve,
+    gated_confirm = make_confirm_gate(confirm, auto_approve=auto_approve,
                                       can_ask_human=(can_ask_human and confirm is not None),
                                       on_decision=on_decision)
     tools = build_agent_tools(repo_root, confirm=gated_confirm, on_progress=on_progress,
