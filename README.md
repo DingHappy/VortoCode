@@ -12,9 +12,9 @@
 
 VortoCode 后续会按同一 agent runtime 拆成三种入口，而不是分裂成三套实现：
 
-- **CLI 版**：面向开发者本机日常使用，保留 `vc tui` / `vc agent` / `vc server`，优先打磨速度、可审计、Git 工作流和本地项目上下文。
-- **Desktop 版**：面向本地常驻工作台，把会话、diff review、权限确认、artifact、项目记忆和后台任务做成可视化客户端，仍以本机工作区和本地权限为中心。
-- **Web 服务版**：面向团队/托管服务，提供类「龙虾」的浏览器工作台、多项目/多会话、共享 artifact、队列化任务和权限/账单/审计能力；底层仍走隔离 dev 流水线。
+- **Desktop 版（当前默认产品，P0）**：面向低门槛的本地常驻工作台，启动即进入 General 无目录会话，按需显式升级到隔离 Scratch 或用户选择的 Git Project；跨项目 Inbox、Goal、源码、diff、权限确认、artifact、项目记忆和后台任务共用同一本机 Gateway 内核。
+- **CLI 版（高级/自动化入口）**：保留 `vc tui` / `vc agent` / `vc server`，服务终端重度用户、脚本、CI、远程主机和 runtime 调试，不再作为新用户默认入口。
+- **Web 服务版（后续团队入口）**：面向团队/托管服务，提供多用户、共享 artifact、队列化任务和权限/账单/审计能力；当前界面开发优先让位于 Desktop，底层仍共享同一隔离 dev 流水线。
 
 ## 核心理念
 
@@ -27,7 +27,7 @@ VortoCode 后续会按同一 agent runtime 拆成三种入口，而不是分裂�
 
 ### 交互式主 Agent（agent loop · 仿 Claude Code / opencode）
 
-`vc tui`（终端）与 Web 控制台 `/agent`（浏览器）共用同一个**主 agent loop**：一个会聊天的 LLM，在"输入 → 模型 →（工具 → 回灌）\* → 流式回复"的循环里自己决定该聊天、读代码，还是把开发任务交给流水线 —— **寒暄不会触发构建，要动手才动手**。
+`vc tui`（终端）、Desktop 与 Web 控制台 `/agent`（浏览器）共用同一个**主 agent loop**：一个会聊天的 LLM，在"输入 → 模型 →（工具 → 回灌）\* → 流式回复"的循环里自己决定该聊天、读代码，还是把开发任务交给流水线 —— **寒暄不会触发构建，要动手才动手**。
 
 - **工具集**：`read_file` / `list_files` / `grep` / `analyze_repo`（只读）· `edit_file` / `write_file` / `run_dev_workflow`（写/重型，需确认）· `task` / `research_parallel`（子 agent 委派）· `use_skill` / `save_skill`（技能）· `save_memory` / `recall_memory`（长期记忆）· `publish_artifact` / `list_artifacts`（制品，见下）· 以及 `/mcp` 接入的任意外部 MCP 工具
 - **plan / build = 工具权限门**：plan 只放只读工具；写/重型/外部工具仅 build，且写盘前弹确认 —— 落实"人在关口"
@@ -37,7 +37,8 @@ VortoCode 后续会按同一 agent runtime 拆成三种入口，而不是分裂�
 - **跨会话记忆**：`/resume` 重建对话上下文；`save_memory`/`recall_memory` 沉淀跨会话知识
 - **@上下文注入**：`@文件`→内容、`@目录`→清单、`@符号`→AST 定义位置
 - **双协议**：**默认走原生 function-calling（native）**——对支持的模型更可靠（真机对照 dogfood：同一开发任务 native 3/3 正确落地、提示式仅 1/3，提示式下模型易把工具结果误当用户消息、凭空编造交付）；模型不支持则**自动回退**提示式协议（模型无关兜底）。`VORTOCODE_NATIVE_TOOLS=0` 可强制走提示式。三端（TUI/Web/CLI）统一
-- **可观测/可审计**：token 用量统计（`/usage`）、工具调用审计日志（`/audit`）
+- **可观测/可审计**：token 用量统计（`/usage`）；TUI、Web 与 Desktop 共用脱敏工具/权限审计台账，Desktop 将人工确认、阻塞 Goal、失败任务和 PR/CI 汇成待决策队列
+- **不中断思路**：Desktop 在 Agent 运行时仍可继续输入；后续提示由 Gateway 持久化排队，可删除或提升为“现在执行”，同时维持单会话单前台回合
 - **命令**：`/run /analyze /improve /fix /skills /tools /mcp /usage /audit /agents /runagent /sessions /resume /new /mode /clear /help`
 
 > 早期版本把"任何自然语言 = 开发目标（等同 `/run`）"，会出现"打个招呼也跑完整 dev→test→review"的尴尬；现已收敛为上面的主 agent loop，开发只是它的一个工具。
@@ -71,6 +72,10 @@ VortoCode 后续会按同一 agent runtime 拆成三种入口，而不是分裂�
 - **一句话 → PR**: `dev_auto` 自动分解 → 并行隔离实现 → 逐件+集成验证 → 自修复重试 → 落 `vorto/*` 分支 → 开 PR
 - **隔离安全**: 每个子任务在一次性 git worktree 里实现+自测，**全程不碰 main/主工作区**
 - **任务分解**: 复用 `task_analyzer` 拆无依赖并行批 + 有依赖拓扑接力
+- **Goal 目标合同**: 目标、约束、非目标和验收标准持久化并关联后台任务/`DevPlan`/分支；任务 `done`
+  只代表一次执行结束，只有逐项验收都有通过证据才进入 `achieved`
+- **Project Journal**：Desktop 从审计事件、Goal 证据、任务交接和运行结果确定性生成每日摘要与 7 天周报；本地快照可跨重启恢复，“继续昨天”会先与当前待决策队列重新对账，手工记录会脱敏凭据样式内容
+- **系统通知（显式开启）**：Desktop 只在用户授权后提醒新增的高优先级待决策项；首次开启只建立现状基线，锁屏通知不包含命令、日志或决策正文
 - **CC/opencode 都不内置**：详见上文「交互式主 Agent」与 knowledge base
 
 ### MCP 工具集成
@@ -102,6 +107,7 @@ VortoCode 后续会按同一 agent runtime 拆成三种入口，而不是分裂�
 - **事件驱动**: 基于事件触发
 - **可扩展**: 支持自定义 Hook 类型
 - **审计日志**: 完整的操作记录
+- **项目信任**: 仓库 Hook 默认禁用，Desktop/TUI 显式审查授权，信任记录不写回仓库
 
 ### 验证闭环（隔离 dev 流水线内）
 
@@ -127,6 +133,7 @@ VortoCode 后续会按同一 agent runtime 拆成三种入口，而不是分裂�
 - [架构设计](docs/ARCHITECTURE.md)
 - [Agent 角色定义](docs/AGENTS.md)
 - [开发路线图](docs/ROADMAP.md)
+- [grok-build 融合计划](docs/GROK_BUILD_INTEGRATION.md)
 - [关键技术决策](docs/DECISIONS.md)
 
 ### 改进计划文档
@@ -160,6 +167,7 @@ vortocode/
 │   ├── security/        权限 / 审批模型
 │   └── projects/ browser/ github/ templates/ …（workspaces 已随路线 A 退役删除）
 ├── web/                 控制台前端（原生 HTML/CSS/JS，无构建步骤）
+├── desktop/             Tauri 2 + React 本机工作台（复用 gateway 协议与 Python runtime）
 ├── examples/            使用示例（iterative_dev / llm_analysis / pet_state 桌宠钩子 …）
 ├── tests/               单元 + 集成测试（含路由契约安全网）
 ├── docs/                设计与分析文档
@@ -172,7 +180,7 @@ vortocode/
 ## 技术栈
 
 - **后端**: FastAPI + Python 3.10+（异步）
-- **前端**: 原生 HTML/CSS/JavaScript 控制台页面（无构建步骤）
+- **前端**: Web 为原生 HTML/CSS/JavaScript（无构建步骤）；Desktop 为 Tauri 2 + React + TypeScript
 - **存储**: SQLite（会话）+ JSON 文件（长期记忆 / 项目）+ 向量数据库（语义检索）
 - **容器化**: Docker（代码沙箱，可选）
 - **LLM 网关**: 自建 One API（OpenAI 兼容接口）
@@ -208,9 +216,11 @@ cp .env.example .env
 
 **LLM 配置（最快路径：VortoCode Relay，OpenAI 兼容接口）：**
 
+Relay 控制台：<https://token.vortotech.com>；API Base 使用下方的 `/v1` 地址。
+
 ```bash
 # 默认使用 VortoCode Relay，提供国产大模型基础；只需要填你的 relay key
-OPENAI_API_BASE=https://relay.dinghappy.com/v1
+OPENAI_API_BASE=https://token.vortotech.com/v1
 DEFAULT_MODEL=mimo-v2.5
 OPENAI_API_KEY=your-vortocode-relay-key
 
@@ -260,10 +270,19 @@ vc tui
 # Web 控制台（默认 127.0.0.1:8080；对外暴露务必设 VORTOCODE_API_TOKEN）
 vc server                            # 起服务后浏览器打开 /agent 即是网页版主 agent
 
+# Desktop 本机工作台（需 Node.js、Rust 与 Tauri 2 系统依赖）
+cd desktop && npm install && npm run tauri dev
+
+# Desktop release 自检与 macOS 开发者预览包
+cd desktop && npm run check && npm run bundle:preview
+cd desktop && npm run release:verify -- --mode release  # 正式发布闸门
+
 # 开发任务：主 agent 用隔离 dev 流水线实现（需配 API key）
 vc agent -b "用 Python 写一个计算阶乘的函数及其单元测试"   # 取代已退役的 5 角色批处理 vc run
 vc analyze -t "创建一个 REST API"
 ```
+
+Desktop 预览包已内置只暴露本机 Gateway 的 Python sidecar，不要求用户预装 `vc`；仍可连接已有本机 runtime。构建使用固定并校验的 standalone CPython、锁定的独立环境，并从实际冻结组件和 CPython runtime 生成第三方 notices 与发布证据；公开 macOS 分发还需要许可证人工复核、Developer ID 签名、公证和 Apple Silicon 原生 arm64 成品验收。详见 [Desktop README](./desktop/README.md)。
 
 > 默认仅监听本地回环（127.0.0.1）。**对外暴露前务必设置 `VORTOCODE_API_TOKEN`**，见下方「安全」。
 

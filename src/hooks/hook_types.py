@@ -3,9 +3,11 @@
 import asyncio
 import json
 import logging
+import os
+import signal
 from typing import Dict, List, Optional
 
-from .hook import Hook, HookEvent, HookEventType, HookResult
+from .hook import Hook, HookCapability, HookEvent, HookEventType, HookResult
 
 logger = logging.getLogger(__name__)
 
@@ -31,18 +33,51 @@ class CommandHook(Hook):
         self.shell = shell
         self.cwd = cwd
 
+    @property
+    def action_capability(self) -> HookCapability:
+        return HookCapability.RUN_COMMAND
+
     async def execute(self, event: HookEvent) -> HookResult:
         """执行命令"""
+        from src.gateway.change_sources import capture_workspace_state, record_workspace_side_effects
+
+        attribution_root = self.cwd or os.getcwd()
+        before_state = capture_workspace_state(attribution_root)
+        process = None
+
+        async def stop_process() -> None:
+            if process is None or process.returncode is not None:
+                return
+            try:
+                if os.name == "posix":
+                    os.killpg(process.pid, signal.SIGTERM)
+                else:
+                    process.terminate()
+                await asyncio.wait_for(process.wait(), timeout=1)
+            except Exception:  # noqa: BLE001
+                try:
+                    if os.name == "posix":
+                        os.killpg(process.pid, signal.SIGKILL)
+                    else:
+                        process.kill()
+                    await process.wait()
+                except Exception:  # noqa: BLE001
+                    pass
+
         # 准备输入数据
         input_data = json.dumps({
             "event_type": event.event_type.value,
             "timestamp": event.timestamp.isoformat(),
             "source": event.source,
             "data": event.data,
-            "context": event.context
+            "context": event.context,
+            "capabilities": [item.value for item in event.capabilities],
         }, ensure_ascii=False)
 
         try:
+            spawn_options = {"cwd": self.cwd}
+            if os.name == "posix":
+                spawn_options["start_new_session"] = True
             # 执行命令：shell=True 把 command 当整条 shell 跑（方便 "ruff format ."），否则 exec command+args
             if self.shell:
                 process = await asyncio.create_subprocess_shell(
@@ -50,7 +85,7 @@ class CommandHook(Hook):
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    cwd=self.cwd,
+                    **spawn_options,
                 )
             else:
                 process = await asyncio.create_subprocess_exec(
@@ -59,7 +94,7 @@ class CommandHook(Hook):
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
-                    cwd=self.cwd,
+                    **spawn_options,
                 )
 
             stdout, stderr = await asyncio.wait_for(
@@ -89,14 +124,22 @@ class CommandHook(Hook):
                 )
         
         except asyncio.TimeoutError:
+            await stop_process()
             return HookResult(
                 success=False,
                 error=f"Command execution timeout ({self.timeout}s)"
             )
+        except asyncio.CancelledError:
+            await stop_process()
+            raise
         except Exception as e:
             return HookResult(
                 success=False,
                 error=str(e)
+            )
+        finally:
+            record_workspace_side_effects(
+                attribution_root, before_state, source="hook", tool=f"hook:{self.name}",
             )
 
 
@@ -118,6 +161,10 @@ class HTTPHook(Hook):
         self.method = method
         self.headers = headers or {}
         self.timeout = timeout
+
+    @property
+    def action_capability(self) -> HookCapability:
+        return HookCapability.SEND_HTTP
     
     async def execute(self, event: HookEvent) -> HookResult:
         """执行 HTTP 请求"""
@@ -128,7 +175,8 @@ class HTTPHook(Hook):
             "timestamp": event.timestamp.isoformat(),
             "source": event.source,
             "data": event.data,
-            "context": event.context
+            "context": event.context,
+            "capabilities": [item.value for item in event.capabilities],
         }
         
         try:
@@ -175,6 +223,10 @@ class PromptHook(Hook):
         super().__init__(name, event_types, **kwargs)
         self.prompt = prompt
         self.model = model
+
+    @property
+    def action_capability(self) -> HookCapability:
+        return HookCapability.REQUEST_MODEL
     
     async def execute(self, event: HookEvent) -> HookResult:
         """执行 prompt 评估"""
@@ -182,6 +234,10 @@ class PromptHook(Hook):
         full_prompt = self.prompt.replace(
             "$EVENT_DATA", 
             json.dumps(event.data, indent=2, ensure_ascii=False)
+        )
+        full_prompt = full_prompt.replace(
+            "$HOOK_CAPABILITIES",
+            json.dumps([item.value for item in event.capabilities], ensure_ascii=False),
         )
         
         try:

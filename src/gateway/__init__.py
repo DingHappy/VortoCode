@@ -6,5 +6,31 @@ dev_resume 续跑）。cron/heartbeat（D3）与单核多前端（B2 长期项�
 """
 
 from .tasks import BackgroundTask, TaskLedger, TaskRunner, bg_concurrency
+from .goals import (
+    AcceptanceCriterion,
+    CriterionVerifier,
+    Goal,
+    GoalEvidence,
+    GoalLedger,
+    evaluate_file_verifier,
+)
+from .runs import CommandRun, RunLedger, RunManager
+from .terminals import TerminalManager, TerminalSnapshot
+from .review_threads import ReviewConflict, ReviewThreadStore
+from .git_review import (
+    apply_review_action,
+    commit_reviewed,
+    open_reviewed_pr,
+    review_diff,
+    review_snapshot,
+)
+from .worktree_sessions import worktree_workspace_snapshot
+from .pr_delivery import current_failed_check_log, current_pr_delivery
 
-__all__ = ["BackgroundTask", "TaskLedger", "TaskRunner", "bg_concurrency"]
+__all__ = [
+    "AcceptanceCriterion", "BackgroundTask", "CommandRun", "CriterionVerifier", "Goal", "GoalEvidence", "GoalLedger",
+    "ReviewConflict", "ReviewThreadStore", "RunLedger", "RunManager", "TerminalManager", "TerminalSnapshot", "TaskLedger", "TaskRunner", "apply_review_action",
+    "bg_concurrency", "commit_reviewed", "evaluate_file_verifier", "open_reviewed_pr", "review_diff", "review_snapshot",
+    "worktree_workspace_snapshot",
+    "current_failed_check_log", "current_pr_delivery",
+]

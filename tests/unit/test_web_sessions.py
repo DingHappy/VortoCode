@@ -2,6 +2,8 @@
 
 后端支撑 agent.html 的会话侧栏。前端交互需浏览器验证；这里把后端契约测死。
 """
+import subprocess
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -54,8 +56,38 @@ def test_sid_sanitized_blocks_traversal(tmp_path):
 @pytest.fixture
 def client(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)                  # 路由用 os.getcwd() 定位会话库
+    monkeypatch.setenv("VORTOCODE_HOOK_ISSUE_STORE", str(tmp_path / "user-hook-acks.json"))
     from src.web.server import app
-    return TestClient(app), tmp_path
+    from src.web.routers import realtime
+    realtime._SESSIONS.clear()
+    realtime._WS_AGENT_TASKS.clear()
+    realtime._WS_AGENT_RUNNING.clear()
+    realtime._PENDING_CONFIRMS.clear()
+    realtime._SESSION_SUBSCRIBERS.clear()
+    realtime._SESSION_EVENT_LOGS.clear()
+    realtime._SESSION_EVENT_SEQS.clear()
+    realtime._SESSION_EVENT_LOCKS.clear()
+    realtime._SESSION_EVENT_LOADED.clear()
+    realtime._SESSION_EVENT_ROOTS.clear()
+    for watcher in realtime._GIT_REVIEW_WATCHERS.values():
+        watcher.cancel()
+    realtime._GIT_REVIEW_WATCHERS.clear()
+    realtime._GIT_REVIEW_WATCH_STATES.clear()
+    yield TestClient(app), tmp_path
+    realtime._SESSIONS.clear()
+    realtime._WS_AGENT_TASKS.clear()
+    realtime._WS_AGENT_RUNNING.clear()
+    realtime._PENDING_CONFIRMS.clear()
+    realtime._SESSION_SUBSCRIBERS.clear()
+    realtime._SESSION_EVENT_LOGS.clear()
+    realtime._SESSION_EVENT_SEQS.clear()
+    realtime._SESSION_EVENT_LOCKS.clear()
+    realtime._SESSION_EVENT_LOADED.clear()
+    realtime._SESSION_EVENT_ROOTS.clear()
+    for watcher in realtime._GIT_REVIEW_WATCHERS.values():
+        watcher.cancel()
+    realtime._GIT_REVIEW_WATCHERS.clear()
+    realtime._GIT_REVIEW_WATCH_STATES.clear()
 
 
 def test_api_list_delete_rename(client):
@@ -79,3 +111,132 @@ def test_api_rename_requires_title(client):
     c, root = client
     _mk(root, "s3", [{"role": "user", "text": "x"}])
     assert c.patch("/api/agent/sessions/s3", json={"title": "  "}).json()["ok"] is False
+
+
+def test_api_session_dashboard_merges_live_status_and_prioritizes_action(client):
+    c, root = client
+    from src.web.routers import realtime
+
+    class RunningTask:
+        def done(self):
+            return False
+
+    _mk(root, "offline", [{"role": "user", "text": "磁盘任务"}])
+    subprocess.run(["git", "init", "-q", "-b", "dashboard-main", str(root)], check=True)
+
+    class Agent:
+        def context_usage(self, mode):
+            assert mode == "build"
+            return {"used_tokens": 6000, "max_context_tokens": 8000, "pct": 75,
+                    "history_messages": 20, "policy": "preserve", "will_compact": False}
+
+    realtime._SESSIONS["sid-live"] = {
+        "agent": Agent(),
+        "transcript": [{"role": "user", "text": "修复登录"}],
+        "activities": [{"type": "agent_tool", "status": "running", "summary": "运行 pytest"}],
+        "prompt_queue": [{"id": "q1", "text": "随后更新文档"}],
+        "last": 1.0,
+        "updated": 200.0,
+        "repo_root": str(root),
+    }
+    realtime._WS_AGENT_TASKS["sid-live"] = RunningTask()
+    realtime._WS_AGENT_RUNNING["sid-live"] = {"text": "修复登录", "mode": "build"}
+    realtime._PENDING_CONFIRMS["confirm-1"] = {
+        "session": "sid-live", "text": "允许运行测试？", "created": "2026-07-16T00:00:00Z",
+    }
+    from src.gateway.tasks import TaskLedger
+    background = TaskLedger(str(root)).create("dev", "后台补测试", owner_session="sid-live")
+    background.status = "running"
+    background.branch = "vorto/dashboard"
+    TaskLedger(str(root)).save(background)
+
+    sessions = c.get("/api/agent/sessions").json()["sessions"]
+    assert [item["sid"] for item in sessions] == ["live", "offline"]
+    live = sessions[0]
+    assert live["status"] == "needs_input"
+    assert live["pending_input"] is True and live["pending_input_count"] == 1
+    assert live["queue_count"] == 1
+    assert live["running_prompt"] == "修复登录"
+    assert live["activity"] == "运行 pytest"
+    assert live["mode"] == "build"
+    assert live["cwd"] == str(root.resolve()) and live["branch"] == "dashboard-main"
+    assert live["worktree"]["kind"] == "main"
+    assert live["background_tasks"]["active"] == 1
+    assert live["background_tasks"]["branch"] == "vorto/dashboard"
+    assert live["context"]["pct"] == 75 and live["context"]["max_tokens"] == 8000
+    assert sessions[1]["status"] == "inactive"
+
+
+def test_api_dashboard_promotes_failed_background_work(client):
+    c, root = client
+    from src.gateway.tasks import TaskLedger
+
+    _mk(root, "failed-owner", [{"role": "user", "text": "后台交付"}])
+    task = TaskLedger(str(root)).create("dev", "修复失败", owner_session="sid-failed-owner")
+    task.status = "failed"
+    TaskLedger(str(root)).save(task)
+
+    row = c.get("/api/agent/sessions").json()["sessions"][0]
+    assert row["sid"] == "failed-owner" and row["status"] == "failed"
+    assert row["background_tasks"]["attention"] == 1
+
+
+def test_api_dashboard_promotes_and_acknowledges_hook_failure(client):
+    c, root = client
+    activities = [{
+        "type": "agent_hook", "id": "hook-failed-1", "name": "format",
+        "event": "post_tool_use", "tool": "edit_file", "status": "failed",
+        "summary": "Hook 失败但已隔离 · format", "error": "exit 1",
+        "recorded_at": "2026-07-17T01:00:00Z",
+    }]
+    ss.save_session(
+        str(root), "sid-hook-owner", [{"role": "user", "text": "格式化"}], [], None,
+        activities=activities,
+    )
+
+    row = c.get("/api/agent/sessions").json()["sessions"][0]
+    assert row["sid"] == "hook-owner" and row["status"] == "failed"
+    assert row["hook_issues"]["count"] == 1
+    assert row["hook_issues"]["latest"]["id"] == "hook-failed-1"
+
+    acknowledged = c.post(
+        "/api/agent/sessions/hook-owner/hook-issues/hook-failed-1/ack",
+    )
+    assert acknowledged.status_code == 200
+    assert acknowledged.json()["hook_issues"]["count"] == 0
+    assert "hook_issue_acks" not in (root / ".vortocode" / "web_sessions" / "hook-owner.json").read_text()
+    refreshed = c.get("/api/agent/sessions").json()["sessions"][0]
+    assert refreshed["status"] == "inactive" and refreshed["hook_issues"]["count"] == 0
+    assert c.post(
+        "/api/agent/sessions/hook-owner/hook-issues/hook-failed-1/ack",
+    ).status_code == 404
+
+
+def test_api_session_dashboard_marks_stopped_queue_as_queued(client):
+    c, root = client
+    from src.web.routers import realtime
+
+    realtime._SESSIONS["sid-paused"] = {
+        "agent": object(), "transcript": [], "activities": [],
+        "prompt_queue": [{"id": "q1", "text": "继续"}],
+        "last": 1.0, "updated": 100.0, "repo_root": str(root),
+    }
+    paused = c.get("/api/agent/sessions").json()["sessions"][0]
+    assert paused["sid"] == "paused"
+    assert paused["status"] == "queued"
+    assert paused["queue_count"] == 1
+
+
+def test_api_refuses_to_delete_running_session(client):
+    c, root = client
+    from src.web.routers import realtime
+
+    class RunningTask:
+        def done(self):
+            return False
+
+    _mk(root, "running", [{"role": "user", "text": "正在做"}])
+    realtime._WS_AGENT_TASKS["sid-running"] = RunningTask()
+    response = c.delete("/api/agent/sessions/running")
+    assert response.status_code == 409
+    assert ss.load_session(str(root), "sid-running") is not None

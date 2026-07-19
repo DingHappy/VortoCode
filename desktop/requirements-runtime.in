@@ -1,0 +1,19 @@
+# Direct dependencies for the frozen Desktop core Gateway runtime.
+#
+# Update these intentionally, then refresh requirements-runtime.lock in a clean
+# sidecar environment. Optional model, browser, MCP, TUI, and vector-memory
+# dependencies stay outside the built-in runtime.
+aiohttp==3.11.10
+fastapi==0.136.1
+jedi==0.19.2
+Markdown==3.8
+psutil==5.9.0
+pydantic==2.13.4
+PyYAML==6.0.2
+python-dotenv==1.1.0
+uvicorn==0.47.0
+websockets==16.0
+
+# Build-time package whose bootloader and runtime hooks are embedded by the
+# one-file sidecar.
+pyinstaller==6.20.0

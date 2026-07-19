@@ -1,0 +1,20 @@
+{
+  "formatVersion": 1,
+  "provider": "astral-sh/python-build-standalone",
+  "release": "20260510",
+  "pythonVersion": "3.13.13",
+  "sources": {
+    "aarch64-apple-darwin": {
+      "archive": "cpython-3.13.13+20260510-aarch64-apple-darwin-pgo+lto-full.tar.zst",
+      "sha256": "ed9ff7ac1df91017169e9d76695d060064e4529f2c11758a9f826fb5e49a105b",
+      "size": 58211314,
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260510/cpython-3.13.13%2B20260510-aarch64-apple-darwin-pgo%2Blto-full.tar.zst"
+    },
+    "x86_64-apple-darwin": {
+      "archive": "cpython-3.13.13+20260510-x86_64-apple-darwin-pgo+lto-full.tar.zst",
+      "sha256": "7d2146837802d27d32794551c7708c54121272eefc915a12493f3ca2dfe66dd6",
+      "size": 57362897,
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260510/cpython-3.13.13%2B20260510-x86_64-apple-darwin-pgo%2Blto-full.tar.zst"
+    }
+  }
+}

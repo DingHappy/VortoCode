@@ -4,6 +4,36 @@
 
 Hooks 系统使 vortocode 能够在 Agent 生命周期的关键点执行自定义逻辑，实现自动化、监控和扩展功能。这是构建可扩展、可观察系统的关键组件。
 
+> 安全边界：`.vortocode/hooks.yaml` 属于仓库内容，可能执行命令或向 HTTP 端点发送事件。项目 Hook
+> 默认不执行，必须在 Desktop“工作区与连接”中检查目标后点“信任并启用”，或在 TUI 使用
+> `/hooks trust`。信任记录保存在仓库外的用户配置目录；`/hooks untrust` 可撤销。只有
+> `pre_tool_use` 返回的明确阻止结果能拦截工具，其余生命周期事件为被动贡献者；默认超时 5 秒，
+> 超时、崩溃和坏 matcher 均不会扩大权限或接管 Agent 主循环。每次调用拿到深拷贝事件快照；
+> `modify_data` 仅保留为兼容诊断字段，不再写回下一 Hook 或 Agent 主循环。
+
+受信任项目中的可见 Hook 会通过共享协议发送关联的 `start`/`finish` 生命周期事件，Desktop
+时间线展示运行中、完成、失败、超时和明确阻止状态。内置审计 Hook 标记为不可见，不会给每次
+工具调用制造重复噪音。Command Hook 与 Agent 的 `run_command` 一样，会把它实际造成的文本文件
+副作用登记到仓库外的来源账本；Git review 因此能区分 `Agent`、`Hook`、用户、混合与外部改动。
+
+## 当前运行时能力合同
+
+能力由 Runtime 根据事件类型和 Hook 实现注入，仓库里的 `capabilities` 只能做减法，不能自行提权。
+未声明能力的旧配置仍按 Runtime 推导的最小集合运行；Desktop 信任预览会逐项显示最终有效能力。
+
+| 能力 | 含义 | 默认上界 |
+| --- | --- | --- |
+| `observe_event` | 读取本次深拷贝事件 | 所有 Hook，且不可移除 |
+| `emit_annotation` | 产生可观察消息 | 所有 Hook；可由配置移除 |
+| `block_tool` | 阻止当前工具调用 | 仅 `pre_tool_use` |
+| `run_command` | 执行 Command Hook | 仅 command 类型 |
+| `send_http` | 发出 HTTP Hook 请求 | 仅 http 类型 |
+| `request_model` | 执行 Prompt Hook 模型请求 | 仅 prompt 类型 |
+
+如果 action 能力被移除，对应命令、HTTP 或模型调用不会开始，并产生结构化 capability-denied
+结果。被动事件即使返回 `stop_execution=true` 也会被清洗为失败观察，不能终止主循环；
+`post_tool_use` 等被动 Hook 的消息只进入活动/诊断，不会拼进模型可见的工具结果。
+
 ## 生命周期事件
 
 ```
@@ -121,7 +151,7 @@ class HookResult(BaseModel):
     """Hook 执行结果"""
     success: bool = True
     stop_execution: bool = False  # 是否停止后续 hook 执行
-    modify_data: Dict[str, Any] = {}  # 修改事件数据
+    modify_data: Dict[str, Any] = {}  # 仅兼容诊断；运行时不写回事件或 Agent 状态
     message: Optional[str] = None
     error: Optional[str] = None
 
@@ -488,13 +518,11 @@ class HookExecutor:
                     "result": result
                 })
                 
-                # 合并修改的数据
-                if result.modify_data:
-                    modified_data.update(result.modify_data)
-                    event.data.update(result.modify_data)
+                # 每个 Hook 实际接收 Runtime 注入能力后的深拷贝快照。
+                # modify_data 只保留在结果证据中，不写回 event 或下一 Hook。
                 
-                # 检查是否停止执行
-                if result.stop_execution:
+                # 只有 Runtime 对 pre_tool_use 注入 block_tool 时才允许停止。
+                if result.stop_execution and HookCapability.BLOCK_TOOL in capabilities:
                     break
                 
                 # 检查失败是否停止
@@ -628,6 +656,7 @@ hooks:
     type: command
     event_types:
       - post_tool_use
+    capabilities: [observe_event, emit_annotation, run_command]
     command: "python"
     args: ["-m", "black", "$FILE_PATH"]
     priority: 10
@@ -637,6 +666,7 @@ hooks:
     type: http
     event_types:
       - pre_tool_use
+    capabilities: [observe_event, emit_annotation, block_tool, send_http]
     url: "http://localhost:8080/security/check"
     method: "POST"
     timeout: 5
@@ -647,6 +677,7 @@ hooks:
     type: prompt
     event_types:
       - task_end
+    capabilities: [observe_event, emit_annotation, request_model]
     prompt: |
       审查以下任务结果，检查是否有问题：
       $EVENT_DATA
@@ -654,6 +685,9 @@ hooks:
     model: "gpt-4o-mini"
     priority: 20
 ```
+
+创建配置不会自动执行。先用 `/hooks` 和 `/hooks test post_tool_use write_file` 预览匹配结果，
+确认命令/URL 后再 `/hooks trust`；Desktop 会提供同一信任操作并热重载当前会话。
 
 ### 2. 使用 Hook 系统
 

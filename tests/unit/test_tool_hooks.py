@@ -1,7 +1,7 @@
 """主 agent loop 接入 src/hooks 的工具生命周期钩子（pre/post/error）—— 集成测试。
 
 不是 src/hooks 本身的单测（那是 test_hooks.py），而是验证 _run_tool 把事件正确触发、
-并尊重 should_stop 阻止与 post message 附加。
+并尊重 pre should_stop；被动 post message 只能进入观察时间线，不能注入工具结果。
 """
 import pytest
 
@@ -46,7 +46,7 @@ async def test_pre_tool_hook_can_block_execution():
 
 
 @pytest.mark.asyncio
-async def test_post_tool_hook_fires_and_appends_message():
+async def test_post_tool_hook_fires_without_injecting_message_into_model_result():
     seen = []
     hs = HookSystem()
     hs.register_hook(_RecordPost(seen))
@@ -55,7 +55,7 @@ async def test_post_tool_hook_fires_and_appends_message():
     out = await agent._run_tool("edit_file", {}, "build", lambda _m: None)
     assert ran and "原结果" in out          # 工具执行了
     assert "edit_file" in seen              # post 钩子收到事件
-    assert "已格式化" in out                 # post 钩子 message 附在结果后
+    assert "已格式化" not in out             # 被动 Hook 文案不得写回模型上下文
 
 
 @pytest.mark.asyncio

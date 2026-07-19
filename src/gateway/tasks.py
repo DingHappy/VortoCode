@@ -30,7 +30,7 @@ _PROGRESS_SAVE_INTERVAL = 2.0                     # 进度写盘节流（秒）�
 
 # 任务状态：queued（已提交排队）→ running（执行中，崩溃留在此态）→
 #           done / failed / cancelled（终态）；启动扫描把残留 running 改 interrupted（可 resume 续跑）。
-_TERMINAL = ("done", "failed", "cancelled")
+_TERMINAL = ("done", "failed", "cancelled", "paused", "interrupted")
 
 
 def _now() -> str:
@@ -58,8 +58,11 @@ class BackgroundTask:
     kind: str                                    # "dev"（跑一句话 dev 流水线）等
     prompt: str
     status: str = "queued"
+    owner_session: str = ""                       # 发起任务的稳定会话键（sid-*）；终态交接只唤醒它
+    goal_id: str = ""                            # 关联的一等 Goal 合同（完成任务不等于达成目标）
     plan_id: str = ""                            # 关联的 C1 dev_plan（可 dev_resume 续跑）
     branch: str = ""                            # 产出分支
+    parent_task_id: str = ""                    # 暂停/中断后恢复时保留任务血缘
     result: str = ""                            # 最终结论尾部
     error: str = ""
     log: List[str] = field(default_factory=list)   # 进度尾部
@@ -67,10 +70,14 @@ class BackgroundTask:
     updated: str = ""
 
     @staticmethod
-    def new(kind: str, prompt: str, *, tid: Optional[str] = None) -> "BackgroundTask":
+    def new(kind: str, prompt: str, *, tid: Optional[str] = None, goal_id: str = "",
+            plan_id: str = "", parent_task_id: str = "", owner_session: str = "") -> "BackgroundTask":
         now = _now()
         return BackgroundTask(id=tid or ("task-" + uuid.uuid4().hex[:10]), kind=kind,
-                              prompt=prompt, created=now, updated=now)
+                              prompt=prompt, owner_session=owner_session,
+                              goal_id=goal_id, plan_id=plan_id,
+                              parent_task_id=parent_task_id,
+                              created=now, updated=now)
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -100,8 +107,24 @@ class TaskLedger:
     def _path(self, tid: str) -> Path:
         return self._dir() / f"{tid}.json"
 
-    def create(self, kind: str, prompt: str) -> BackgroundTask:
-        task = BackgroundTask.new(kind, prompt)
+    def create(
+        self,
+        kind: str,
+        prompt: str,
+        *,
+        goal_id: str = "",
+        plan_id: str = "",
+        parent_task_id: str = "",
+        owner_session: str = "",
+    ) -> BackgroundTask:
+        task = BackgroundTask.new(
+            kind,
+            prompt,
+            goal_id=goal_id,
+            plan_id=plan_id,
+            parent_task_id=parent_task_id,
+            owner_session=owner_session,
+        )
         self.save(task)
         return task
 
@@ -142,20 +165,25 @@ class TaskLedger:
         except (TypeError, ValueError):
             return None
 
-    def list(self) -> List[BackgroundTask]:
+    def list(self, limit: Optional[int] = None) -> List[BackgroundTask]:
         d = self._dir()
         if not d.is_dir():
             return []
-        out: List[tuple] = []
+        paths: List[tuple[float, Path]] = []
         for p in d.glob("*.json"):
-            t = self.load(p.stem)
-            if t is not None:
-                try:
-                    out.append((p.stat().st_mtime, t))
-                except OSError:
-                    out.append((0.0, t))
-        out.sort(key=lambda x: x[0], reverse=True)
-        return [t for _m, t in out]
+            try:
+                paths.append((p.stat().st_mtime, p))
+            except OSError:
+                paths.append((0.0, p))
+        paths.sort(key=lambda item: item[0], reverse=True)
+        if limit is not None:
+            paths = paths[:max(0, int(limit))]
+        out: List[BackgroundTask] = []
+        for _mtime, path in paths:
+            task = self.load(path.stem)
+            if task is not None:
+                out.append(task)
+        return out
 
     def recover_interrupted(self) -> List[BackgroundTask]:
         """启动时调用：把上次崩在半路（仍标 running）的任务改标 interrupted（可交 dev_resume 续跑）。"""
@@ -186,6 +214,7 @@ class TaskRunner:
         self._worker = worker
         self._sem = asyncio.Semaphore(max_concurrent or bg_concurrency())
         self._running: Dict[str, asyncio.Task] = {}
+        self._pause_requested: set[str] = set()
         self._subs: set = set()
         if on_update is not None:
             self._subs.add(on_update)
@@ -204,10 +233,23 @@ class TaskRunner:
 
     # -------- 生命周期
     def recover(self) -> List[BackgroundTask]:
-        return self.ledger.recover_interrupted()
+        recovered = self.ledger.recover_interrupted()
+        for task in recovered:
+            self._notify(task)                         # Goal/WS 同步看到 running→interrupted
+        return recovered
 
-    async def submit(self, prompt: str, kind: str = "dev") -> BackgroundTask:
-        task = self.ledger.create(kind, prompt)          # write-ahead：排队即落盘
+    async def submit(self, prompt: str, kind: str = "dev", *, goal_id: str = "",
+                     plan_id: str = "", parent_task_id: str = "",
+                     owner_session: str = "") -> BackgroundTask:
+        task = self.ledger.create(
+            kind,
+            prompt,
+            goal_id=goal_id,
+            plan_id=plan_id,
+            parent_task_id=parent_task_id,
+            owner_session=owner_session,
+        )
+        # write-ahead：排队即落盘；goal_id/plan_id 在第一次通知前已经固定，避免订阅者串单。
         self._notify(task)
         self._running[task.id] = asyncio.create_task(self._run(task))
         return task
@@ -232,7 +274,7 @@ class TaskRunner:
                 task.result = str(result or "")[-4000:]
                 task.status = "done"
         except asyncio.CancelledError:
-            task.status = "cancelled"
+            task.status = "paused" if task.id in self._pause_requested else "cancelled"
             self.ledger.save(task)
             self._notify(task)
             raise
@@ -240,6 +282,7 @@ class TaskRunner:
             task.status = "failed"
             task.error = str(e)[-1000:]
         finally:
+            self._pause_requested.discard(task.id)
             self._running.pop(task.id, None)
         self.ledger.save(task)                           # 终态落盘
         self._notify(task)
@@ -250,6 +293,27 @@ class TaskRunner:
             t.cancel()
             return True
         return False
+
+    async def pause(self, tid: str) -> Optional[BackgroundTask]:
+        """Cooperatively stop an active task while preserving its resumable plan."""
+        running = self._running.get(tid)
+        if running is None or running.done():
+            return None
+        self._pause_requested.add(tid)
+        running.cancel()
+        try:
+            await running
+        except asyncio.CancelledError:
+            pass
+        self._pause_requested.discard(tid)
+        self._running.pop(tid, None)
+        task = self.ledger.load(tid)
+        if task is not None and task.status != "paused":
+            # A task cancelled before its coroutine got its first timeslice never reaches _run's handler.
+            task.status = "paused"
+            self.ledger.save(task)
+            self._notify(task)
+        return task
 
     def get(self, tid: str) -> Optional[BackgroundTask]:
         return self.ledger.load(tid)
