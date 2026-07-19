@@ -29,19 +29,25 @@ _REALTIME = _WEB_DIR / "routers" / "realtime.py"
 def test_inbound_registry_frozen():
     assert sorted(P.INBOUND) == sorted([
         "ping", "get_status", "agent", "agent_cancel",
-        "agent_confirm_response", "agent_tts", "task_list",
+        "agent_queue_remove", "agent_queue_send_now",
+        "agent_confirm_response", "agent_tts", "workspace_edit", "task_list",
+        "agent_events_replay",
     ])
 
 
 def test_outbound_registry_frozen():
     assert sorted(P.OUTBOUND) == sorted([
         "init", "pong", "status",
-        "agent_history", "agent_plan", "agent_say", "agent_stream", "agent_emit",
+        "agent_history", "agent_activity_history", "agent_plan",
+        "agent_say", "agent_phase", "agent_tool", "agent_hook", "agent_stream", "agent_emit",
         "agent_reasoning",      # PR-4 加：思维链增量（仅 want_reasoning 的客户端收，TUI attach 用）
         "agent_diff",           # 富 UI 协议化第一步：确认前的结构化 diff 推送（attach TUI/桌面端渲染）
         "agent_error", "agent_done", "agent_cancelled", "agent_confirm",
+        "agent_queue", "agent_events",
         "agent_tts_audio", "agent_tts_error",
-        "task_update", "task_snapshot", "notice",
+        "workspace_edit_result",
+        "task_update", "task_snapshot", "task_handoff", "notice", "workspace_required",
+        "git_review_changed",
     ])
 
 
@@ -56,8 +62,106 @@ def test_agent_diff_event_shape():
 
 
 def test_protocol_version_carried_by_init():
-    assert P.PROTOCOL_VERSION == 1
+    assert P.PROTOCOL_VERSION == 9
     assert "v" in P.OUTBOUND[P.INIT][0]            # init 必带版本号
+
+
+def test_get_status_hydration_can_recover_protocol_version():
+    """晚挂监听的原生客户端可主动 hydrate，不依赖连接瞬间的 init 首帧。"""
+    _required, optional = P.INBOUND[P.GET_STATUS]
+    assert "hydrate" in optional
+    _required, optional = P.OUTBOUND[P.STATUS]
+    assert "v" in optional
+    assert P.parse_event({"type": P.GET_STATUS, "hydrate": True})[0] == P.GET_STATUS
+    status = P.make_event(P.STATUS, data={}, v=P.PROTOCOL_VERSION, cursor=9)
+    assert status["v"] == P.PROTOCOL_VERSION and status["cursor"] == 9
+
+
+def test_agent_prompt_queue_protocol_is_structured():
+    assert P.parse_event({"type": P.AGENT_QUEUE_REMOVE, "id": "q-1"})[0] == P.AGENT_QUEUE_REMOVE
+    assert P.parse_event({"type": P.AGENT_QUEUE_SEND_NOW, "id": "q-1"})[0] == P.AGENT_QUEUE_SEND_NOW
+    item = {"id": "q-1", "version": 0, "text": "继续修复", "mode": "build",
+            "position": 0, "created_at": "2026-07-16T00:00:00+00:00", "context_count": 0}
+    event = P.make_event(P.AGENT_QUEUE, items=[item], running=None)
+    assert event == {"type": "agent_queue", "items": [item]}
+    with pytest.raises(P.ProtocolError):
+        P.parse_event({"type": P.AGENT_QUEUE_REMOVE})
+
+
+def test_structured_activity_event_shapes():
+    phase = P.make_event(
+        P.AGENT_PHASE, id="r1:thinking", phase="thinking",
+        status="completed", label="已分析任务", duration_ms=1200, rid="r1",
+    )
+    assert phase["duration_ms"] == 1200 and phase["rid"] == "r1"
+    tool = P.make_event(
+        P.AGENT_TOOL, id="tool-1", name="read_file", status="succeeded",
+        summary="读取 README.md", args={"path": "README.md"}, result="VortoCode", duration_ms=8,
+    )
+    assert tool["args"] == {"path": "README.md"}
+    hook = P.make_event(
+        P.AGENT_HOOK, id="hook-1", name="format", event="post_tool_use",
+        tool="edit_file", status="timed_out", summary="Hook 超时但已隔离 · format",
+        error="timeout (5s)", duration_ms=5000,
+    )
+    assert hook["status"] == "timed_out" and hook["tool"] == "edit_file"
+    with pytest.raises(P.ProtocolError):
+        P.make_event(P.AGENT_TOOL, id="tool-1", name="read_file", status="running")
+
+
+def test_git_review_changed_is_a_structured_invalidation_signal():
+    event = P.make_event(
+        P.GIT_REVIEW_CHANGED, baseline="a" * 64, source_revision="b" * 64,
+        head="c" * 40, files=2, paths=["src/app.py"], reason="content",
+        truncated=False,
+    )
+    assert event["files"] == 2 and event["reason"] == "content"
+    with pytest.raises(P.ProtocolError):
+        P.make_event(P.GIT_REVIEW_CHANGED, baseline="a" * 64, head="c" * 40, files=2)
+
+
+def test_workspace_required_is_structured_and_reviewable():
+    event = P.make_event(
+        P.WORKSPACE_REQUIRED,
+        scope="project",
+        reason="需要读取并修改现有代码",
+        task="修复登录页的加载状态",
+        rid="turn-1",
+    )
+    assert event["scope"] == "project"
+    assert event["task"].startswith("修复")
+    with pytest.raises(P.ProtocolError):
+        P.make_event(P.WORKSPACE_REQUIRED, scope="project")
+
+
+def test_workspace_edit_protocol_is_structured_and_versioned():
+    event_type, event = P.parse_event({
+        "type": P.WORKSPACE_EDIT,
+        "path": "src/main.py",
+        "content": "print('hi')\n",
+        "expected_sha256": "a" * 64,
+        "rid": "save-1",
+    })
+    assert event_type == P.WORKSPACE_EDIT and event["expected_sha256"] == "a" * 64
+    result = P.make_event(
+        P.WORKSPACE_EDIT_RESULT, ok=True, path="src/main.py", message="已保存",
+        sha256="b" * 64, rid="save-1",
+    )
+    assert result["ok"] is True and result["rid"] == "save-1"
+
+
+def test_agent_accepts_structured_desktop_file_context():
+    _required, optional = P.INBOUND[P.AGENT]
+    assert "context_files" in optional
+    assert "context_selections" in optional
+    event_type, event = P.parse_event({
+        "type": P.AGENT,
+        "text": "分析这些文件",
+        "context_files": ["src/main.py"],
+        "context_selections": [{"path": "src/lib.py", "start": 10, "end": 20}],
+    })
+    assert event_type == P.AGENT and event["context_files"] == ["src/main.py"]
+    assert event["context_selections"][0]["start"] == 10
 
 
 # ------------------------------------------------------------ 2) realtime 实发 ⊆ 登记面
@@ -233,12 +337,21 @@ async def _turn_types(message: dict) -> list:
 async def test_turn_event_sequence_is_deterministic_and_client_agnostic(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "x")
     base = await _turn_types({})
-    assert base == ["agent_say", "agent_stream", "agent_plan", "agent_emit", "agent_done"], base
+    assert base == [
+        "agent_queue",
+        "agent_phase", "agent_phase", "agent_phase", "agent_say",
+        "agent_phase", "agent_phase", "agent_stream", "agent_plan",
+        "agent_emit", "agent_phase", "agent_done", "agent_queue",
+    ], base
     with_rid = await _turn_types({"rid": "r1"})
     assert with_rid == base                                   # rid 只回带，不改序列
     with_reason = await _turn_types({"rid": "r2", "want_reasoning": True})
-    assert with_reason == ["agent_say", "agent_reasoning", "agent_stream",
-                           "agent_plan", "agent_emit", "agent_done"]   # 订阅只增 reasoning，不动其余
+    assert with_reason == [
+        "agent_queue",
+        "agent_phase", "agent_phase", "agent_phase", "agent_say", "agent_reasoning",
+        "agent_phase", "agent_phase", "agent_stream", "agent_plan",
+        "agent_emit", "agent_phase", "agent_done", "agent_queue",
+    ]   # 订阅只增 reasoning，不动其余
 
 
 # ------------------------------------------------------------ 3) make_event / parse_event 行为
@@ -247,6 +360,25 @@ def test_make_event_valid_and_drops_none():
     assert evt == {"type": "agent_say", "text": "hi"}
     evt2 = P.make_event(P.AGENT_DONE, rid="r1")               # rid 全局可选：任何出站事件都能带
     assert evt2 == {"type": "agent_done", "rid": "r1"}
+
+
+def test_protocol_v9_sequences_replays_and_routes_task_handoffs():
+    assert P.PROTOCOL_VERSION == 9
+    sequenced = P.sequence_event(P.make_event(P.AGENT_SAY, text="hi", rid="r1"), 7)
+    assert sequenced == {"type": "agent_say", "text": "hi", "rid": "r1", "seq": 7}
+    with pytest.raises(P.ProtocolError):
+        P.sequence_event(P.make_event(P.AGENT_DONE), 0)
+    event_type, parsed = P.parse_event({
+        "type": P.AGENT_EVENTS_REPLAY, "after_seq": 7, "limit": 100,
+    })
+    assert event_type == P.AGENT_EVENTS_REPLAY and parsed["after_seq"] == 7
+    batch = P.make_event(
+        P.AGENT_EVENTS, items=[sequenced], cursor=7, earliest_seq=1, latest_seq=7,
+        truncated=False,
+    )
+    assert batch["items"][0]["seq"] == 7
+    handoff = P.make_event(P.TASK_HANDOFF, data={"id": "task-1", "status": "done"})
+    assert handoff == {"type": "task_handoff", "data": {"id": "task-1", "status": "done"}}
 
 
 def test_make_event_rejects_unregistered_type():
