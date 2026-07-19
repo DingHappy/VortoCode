@@ -169,6 +169,7 @@ async def test_run_manager_rejects_dangerous_command_before_spawn(tmp_path, monk
 
 def test_run_rest_validation_and_listing(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")  # 过执行闸，专测校验/列举逻辑
     from fastapi.testclient import TestClient
     from src.web.routers import runs as runs_router
     from src.web.server import app

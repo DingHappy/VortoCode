@@ -31,6 +31,7 @@ async def get_run(run_id: str):
 
 @router.post("/api/runs")
 async def start_run(body: dict):
+    require_shell()  # 宿主机命令执行入口，默认 fail-closed（同 sandbox 路由的硬规矩）
     payload = body or {}
     try:
         run = await get_run_manager().submit(

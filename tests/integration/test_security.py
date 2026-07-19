@@ -88,12 +88,25 @@ def test_ws_auth_via_cookie(client, monkeypatch):
 
 
 # ------------------------------------------------------- 危险执行端点闸
-# （原 /api/terminal/execute 的确认/危险命令/穿越用例已随该端点在 b4 PR-B3 退役删除——
-#   Web 面不再暴露任意 shell；主线 shell 入口是 agent 的 run_command，走确认门 + is_dangerous。）
+# 原 /api/terminal/execute 已在 b4 PR-B3 退役删除。Desktop 波次（b6）重新引入了两条宿主机
+# 命令执行面——POST /api/runs（结构化运行）与 POST /api/terminals（交互式 PTY）——二者
+# **必须**同 sandbox 路由一样走 require_shell() 闸：VORTOCODE_ENABLE_SHELL 未设即默认拒绝
+# （fail-closed）。下面钉死这一不变量，防「加一端漏一端」回潮。
 
 def test_terminal_endpoint_retired(client):
     r = client.post("/api/terminal/execute", json={"command": "echo hi"})
     assert r.status_code in (404, 405)                       # 退役：连 403 的机会都不给
+
+
+def test_runs_endpoint_shell_gated(client):
+    # ENABLE_SHELL 未设（fixture 默认）→ 命令执行面必须 403，且早于任何入参校验
+    assert client.post("/api/runs", json={"command": "echo hi"}).status_code == 403
+    assert client.post("/api/runs", json={}).status_code == 403  # 闸先于 400 校验
+
+
+def test_terminals_endpoint_shell_gated(client):
+    # PTY 创建面同样 fail-closed；create 被拦则拿不到 id，input/resize/stop 自然无从触达
+    assert client.post("/api/terminals", json={}).status_code == 403
 
 
 def test_files_endpoints_retired(client):
