@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.hooks.hook import Hook, HookEvent, HookEventType, HookResult
+from src.hooks.hook import Hook, HookCapability, HookEvent, HookEventType, HookResult
 from src.hooks.registry import HookRegistry
 from src.hooks.executor import HookExecutor, HookSystem
 
@@ -188,6 +188,113 @@ class TestHookExecutor:
         
         assert result.success is True
         assert len(result.results) == 1
+
+    @pytest.mark.asyncio
+    async def test_visible_hook_emits_correlated_lifecycle(self, registry):
+        events = []
+
+        class TestHook(Hook):
+            async def execute(self, event: HookEvent) -> HookResult:
+                return HookResult(success=True, message="formatted")
+
+        registry.register(TestHook(name="format", event_types=[HookEventType.POST_TOOL_USE]))
+        executor = HookExecutor(registry, on_event=lambda stage, item: events.append((stage, item)))
+        await executor.execute(HookEvent(
+            event_type=HookEventType.POST_TOOL_USE,
+            source="test",
+            data={"tool": "edit_file"},
+        ))
+
+        assert [stage for stage, _item in events] == ["start", "finish"]
+        assert events[0][1]["id"] == events[1][1]["id"]
+        assert events[0][1]["status"] == "running"
+        assert events[1][1]["status"] == "succeeded"
+        assert events[1][1]["message"] == "formatted"
+        assert events[1][1]["duration_ms"] >= 0
+        assert events[0][1]["capabilities"] == ["emit_annotation", "observe_event"]
+
+    @pytest.mark.asyncio
+    async def test_passive_hook_cannot_mutate_event_or_block_later_contributors(self, registry):
+        observed = []
+        lifecycle = []
+
+        class Mutator(Hook):
+            async def execute(self, event: HookEvent) -> HookResult:
+                observed.append([item.value for item in event.capabilities])
+                event.data["args"]["path"] = "replaced.py"
+                event.set("tool", "other_tool")
+                return HookResult(
+                    success=True,
+                    stop_execution=True,
+                    modify_data={"tool": "injected_tool"},
+                    message="passive annotation",
+                )
+
+        class Later(Hook):
+            async def execute(self, event: HookEvent) -> HookResult:
+                observed.append((event.data["tool"], event.data["args"]["path"]))
+                return HookResult(success=True)
+
+        registry.register(Mutator(
+            name="mutator", event_types=[HookEventType.POST_TOOL_USE], priority=0,
+        ))
+        registry.register(Later(
+            name="later", event_types=[HookEventType.POST_TOOL_USE], priority=1,
+        ))
+        executor = HookExecutor(registry, on_event=lambda stage, item: lifecycle.append((stage, item)))
+        original = {"tool": "edit_file", "args": {"path": "safe.py"}}
+        result = await executor.execute(HookEvent(
+            event_type=HookEventType.POST_TOOL_USE, source="test", data=original,
+        ))
+
+        assert original == {"tool": "edit_file", "args": {"path": "safe.py"}}
+        assert observed[0] == ["emit_annotation", "observe_event"]
+        assert observed[1] == ("edit_file", "safe.py")
+        assert len(result.results) == 2 and result.should_stop is False
+        assert result.modified_data == {} and result.event.data == original
+        denied = result.results[0]["result"]
+        assert denied.success is False and denied.stop_execution is False
+        assert "block_tool on post_tool_use" in denied.error
+        finishes = [item for stage, item in lifecycle if stage == "finish"]
+        assert [item["status"] for item in finishes] == ["failed", "succeeded"]
+
+    @pytest.mark.asyncio
+    async def test_explicit_capability_allowlist_can_remove_pre_tool_blocking(self, registry):
+        class StopHook(Hook):
+            async def execute(self, event: HookEvent) -> HookResult:
+                assert [item.value for item in event.capabilities] == ["observe_event"]
+                return HookResult(success=True, stop_execution=True)
+
+        registry.register(StopHook(
+            name="observe-only",
+            event_types=[HookEventType.PRE_TOOL_USE],
+            capabilities=[HookCapability.OBSERVE_EVENT],
+        ))
+        result = await HookExecutor(registry).execute(HookEvent(
+            event_type=HookEventType.PRE_TOOL_USE,
+            source="test",
+            data={"tool": "write_file"},
+        ))
+        assert result.should_stop is False
+        assert result.results[0]["result"].success is False
+        assert "capability denied" in result.results[0]["result"].error.lower()
+
+    @pytest.mark.asyncio
+    async def test_invisible_hook_does_not_emit_timeline_noise(self, registry):
+        events = []
+
+        class InternalHook(Hook):
+            async def execute(self, event: HookEvent) -> HookResult:
+                return HookResult(success=True)
+
+        registry.register(InternalHook(
+            name="internal", event_types=[HookEventType.TASK_START], visible=False,
+        ))
+        executor = HookExecutor(registry, on_event=lambda stage, item: events.append((stage, item)))
+        result = await executor.execute(HookEvent(event_type=HookEventType.TASK_START, source="test"))
+
+        assert result.success is True
+        assert events == []
     
     @pytest.mark.asyncio
     async def test_execute_multiple_hooks(self, executor, registry):
@@ -215,6 +322,29 @@ class TestHookExecutor:
         
         assert result.success is True
         assert len(result.results) == 2
+
+    @pytest.mark.asyncio
+    async def test_timeout_is_recorded_and_fails_open(self, executor, registry):
+        import asyncio
+
+        events = []
+        executor.on_event = lambda stage, item: events.append((stage, item))
+
+        class SlowHook(Hook):
+            timeout = 1
+
+            async def execute(self, event: HookEvent) -> HookResult:
+                await asyncio.sleep(2)
+                return HookResult(success=True, stop_execution=True)
+
+        registry.register(SlowHook(name="slow", event_types=[HookEventType.PRE_TOOL_USE]))
+        event = HookEvent(event_type=HookEventType.PRE_TOOL_USE, source="test", data={"tool": "read_file"})
+        result = await executor.execute(event)
+        assert result.success is False
+        assert result.should_stop is False
+        assert result.results == [{"hook": "slow", "error": "timeout (1s)"}]
+        assert [stage for stage, _item in events] == ["start", "finish"]
+        assert events[-1][1]["status"] == "timed_out"
 
 
 class TestHookSystem:
