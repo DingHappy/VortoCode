@@ -1,0 +1,54 @@
+{
+  "name": "vortocode-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "sidecar:python": "node scripts/prepare-managed-python.mjs",
+    "sidecar:build": "node scripts/build-sidecar.mjs",
+    "sidecar:smoke": "node scripts/smoke-sidecar.mjs",
+    "check": "npm run build && node scripts/check-runtime-entry.mjs && npm run sidecar:build && cargo test --manifest-path src-tauri/Cargo.toml --lib && cargo check --manifest-path src-tauri/Cargo.toml",
+    "preview": "vite preview",
+    "tauri": "npm run sidecar:build && tauri",
+    "bundle:app": "npm run sidecar:build && npm run sidecar:smoke && tauri build --bundles app",
+    "bundle:dmg": "npm run sidecar:build && npm run sidecar:smoke && tauri build --bundles dmg",
+    "bundle:preview": "npm run sidecar:build && npm run sidecar:smoke && tauri build --bundles dmg && tauri build --bundles app && npm run smoke:bundle && npm run release:verify -- --mode preview",
+    "smoke:bundle": "node scripts/smoke-bundle.mjs",
+    "release:verify": "node scripts/verify-release.mjs",
+    "signing:setup": "node scripts/dev-signing.mjs setup",
+    "signing:doctor": "node scripts/dev-signing.mjs doctor",
+    "bundle:dev-signed": "node scripts/dev-signing.mjs build",
+    "install:dev-signed": "node scripts/dev-signing.mjs install",
+    "verify:installed": "node scripts/dev-signing.mjs verify"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-http": "^2",
+    "@tauri-apps/plugin-notification": "^2.3.3",
+    "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-websocket": "^2",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "lucide-react": "^1.24.0",
+    "monaco-editor": "^0.55.1",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/react": "^19.1.8",
+    "@types/react-dom": "^19.1.6",
+    "@vitejs/plugin-react": "^4.6.0",
+    "typescript": "~5.8.3",
+    "vite": "^7.0.4"
+  },
+  "overrides": {
+    "monaco-editor": {
+      "dompurify": "^3.4.11"
+    }
+  }
+}
