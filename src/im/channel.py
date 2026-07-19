@@ -12,13 +12,23 @@ from typing import AsyncIterator
 
 @dataclass
 class ChannelEvent:
-    """从通道 poll 出来的一个事件（已归一化，与具体 IM 协议无关）。"""
+    """从通道 poll 出来的一个事件（已归一化，与具体 IM 协议无关）。
+
+    **适配器只如实申报事实，不做安全判定**（与 gate.py 同一分工）：`is_group`/`mentioned` 是
+    通道能看到的客观事实，「群里没 @ 到就不响应」这条规矩由 bridge 一处执行（`_on_event`），
+    否则每加一个通道就得重写一遍门——那正是"加一端漏一端"的老路。
+
+    两个新字段的默认值都取**最保守**的一侧：私聊（is_group=False）不需要 @；一旦通道申报
+    is_group=True 而没申报 mentioned，事件就被丢掉。新通道忘了填只会更严，不会更松。
+    """
     kind: str                     # "message"（用户发来文本）| "callback"（点了内联按钮）
-    sender_id: str = ""           # 发送者 id（配对用：只认 owner）
+    sender_id: str = ""           # 发送者 id（白名单用：只认 allow_from 里的人）
     text: str = ""                # kind=message：用户文本
     callback_id: str = ""         # kind=callback：对应哪个确认请求（bridge 生成的 cid）
     approved: bool = False        # kind=callback：批准/拒绝
     ack: object = None            # kind=callback：通道侧回执令牌（如 Telegram callback_query.id），交回 ack_callback
+    is_group: bool = False        # 该事件是否来自群聊/多人会话（私聊=False）
+    mentioned: bool = False       # 群聊里本条是否**显式 @ 了本机器人**（私聊无意义）
 
 
 class ChannelAdapter:

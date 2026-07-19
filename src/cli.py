@@ -221,16 +221,18 @@ async def run_doctor() -> int:
 async def run_im(channel: str, *, mode: str = "plan"):
     """IM 通道桥入口：常驻长轮询，把主 agent 搬上 IM。fail-closed：缺配对凭证直接拒启。"""
     cwd = str(Path.cwd())
-    from src.gateway.im_service import IMConfigError, build_adapter
+    from src.gateway.im_service import IMConfigError, build_adapter, load_allow_from
     try:
         adapter, owner = build_adapter(channel)      # 凭证解析/fail-closed 与 serve 内嵌同源，不抄两份
     except IMConfigError as e:
         print(f"✗ {e}", file=sys.stderr)
         sys.exit(2)
     from src.im.bridge import IMBridge
-    bridge = IMBridge(cwd, adapter, owner, channel=channel, mode=mode)   # standalone：自己的 runner
-    print(f"🌉 {channel} 桥启动（仓库 {Path(cwd).name}，{mode} 模式）。只服务 owner "
-          f"{owner}，Ctrl-C 退出。", file=sys.stderr)
+    bridge = IMBridge(cwd, adapter, owner, channel=channel, mode=mode,   # standalone：自己的 runner
+                      allow_from=load_allow_from(channel))
+    who = "、".join(sorted(bridge.allow_from)) if bridge.allow_from else "空 → 拒绝一切入站"
+    print(f"🌉 {channel} 桥启动（仓库 {Path(cwd).name}，{mode} 模式）。入站白名单：{who}；"
+          f"群聊须显式 @ 本机器人。Ctrl-C 退出。", file=sys.stderr)
     try:
         await bridge.run()
     finally:

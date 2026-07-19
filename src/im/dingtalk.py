@@ -103,22 +103,28 @@ class DingTalkAdapter(ChannelAdapter):
             if wh:
                 self._webhook = wh                # 更新回复目标
             text = ((data.get("text") or {}).get("content") or "").strip()
-            ev = self._to_event(sender, text)
+            ev = self._to_event(sender, text, is_group=_is_group(data),
+                                mentioned=bool(data.get("isInAtList")))
             return [ev] if ev is not None else []
         return []
 
-    def _to_event(self, sender: str, text: str) -> Optional[ChannelEvent]:
+    def _to_event(self, sender: str, text: str, *, is_group: bool = False,
+                  mentioned: bool = False) -> Optional[ChannelEvent]:
         if not text:
             return None
-        # 文本式确认：pending 且是主人回的 y/n → 翻成 callback（bridge 据此解开确认 Future）
+        # 文本式确认：pending 且是主人回的 y/n → 翻成 callback（bridge 据此解开确认 Future）。
+        # **群聊标记必须一起带过去**：钉钉的"按钮"其实是一条普通群消息，若这里把 is_group 抹平，
+        # 群里任何人一句 "y" 就能替主人批准——群提及门必须照样管得住这条伪 callback。
         if self._awaiting_confirm and sender == self.owner_id:
             low = text.strip().lower()
             if low in _APPROVE or low in _DENY:
                 cid = self._awaiting_confirm
                 self._awaiting_confirm = None
                 return ChannelEvent(kind="callback", sender_id=sender, callback_id=cid,
-                                    approved=low in _APPROVE)
-        return ChannelEvent(kind="message", sender_id=sender, text=text)
+                                    approved=low in _APPROVE, is_group=is_group,
+                                    mentioned=mentioned)
+        return ChannelEvent(kind="message", sender_id=sender, text=text, is_group=is_group,
+                            mentioned=mentioned)
 
     async def send_text(self, text: str) -> str:
         if self._webhook:
@@ -193,6 +199,16 @@ def _resp(message_id, data: dict) -> str:
     return json.dumps({"code": 200,
                        "headers": {"messageId": message_id, "contentType": "application/json"},
                        "message": "OK", "data": json.dumps(data, ensure_ascii=False)})
+
+
+def _is_group(data: dict) -> bool:
+    """钉钉回调的会话类型：conversationType "1"=单聊、"2"=群聊。
+
+    缺字段按单聊（老回调/测试构造的最小帧）；**其它未知取值一律按群**（从严：要求显式 @）。
+    群里是否 @ 到机器人看 `isInAtList`，不去解析正文里的 "@名字"（改个昵称就绕过了）。
+    """
+    conv = str(data.get("conversationType") or "").strip()
+    return conv not in ("", "1")
 
 
 def _loads(s) -> dict:
