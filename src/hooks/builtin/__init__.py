@@ -27,7 +27,8 @@ class AuditLogHook(Hook):
         super().__init__(
             name="audit-log",
             event_types=list(HookEventType),  # 所有事件
-            priority=1000  # 最低优先级
+            priority=1000,  # 最低优先级
+            visible=False,  # 内部审计贡献者不在用户活动时间线制造噪音
         )
         self.log_dir = Path(log_dir)
         self.log_file = self.log_dir / log_file
@@ -39,11 +40,12 @@ class AuditLogHook(Hook):
     
     async def execute(self, event: HookEvent) -> HookResult:
         """记录审计日志"""
+        from src.gateway.audit import sanitize_audit_value
         log_entry = {
             "timestamp": event.timestamp.isoformat(),
             "event_type": event.event_type.value,
             "source": event.source,
-            "data": event.data
+            "data": sanitize_audit_value(event.data)
         }
         
         try:
