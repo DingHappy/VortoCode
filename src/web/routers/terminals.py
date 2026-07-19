@@ -28,6 +28,7 @@ async def list_terminals():
 
 @router.post("/api/terminals")
 async def create_terminal(body: dict):
+    require_shell()  # PTY = 交互式宿主 shell，默认 fail-closed（无 id 则 input/resize/stop 皆 404）
     payload = body or {}
     try:
         return get_terminal_manager().create(
