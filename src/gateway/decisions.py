@@ -157,8 +157,10 @@ def build_decision_queue(
         if decision_id in hidden:
             continue
         detail = getattr(run, "error", "") or getattr(run, "output", "") or getattr(run, "command", "")
+        # cron 的例行班次走同一条 run lane（B6-5），但标题得说人话：它不是谁点的测试。
+        title = "例行作业失败" if getattr(run, "kind", "") == "cron" else "测试或命令运行失败"
         output.append(_item(
-            decision_id, "run", "high", "测试或命令运行失败", detail or "打开运行记录检查失败输出",
+            decision_id, "run", "high", title, detail or "打开运行记录检查失败输出",
             created=getattr(run, "updated", "") or getattr(run, "created", ""),
             target_id=run.id, action="open_run",
         ))
