@@ -112,10 +112,13 @@ class AppState:
 
     def to_dict(self) -> Dict[str, Any]:
         """状态快照——/ws init 握手与 GET /api/status 共用（旧流水线字段已退役，前端不读）。"""
+        from src.gateway.workspace_scope import workspace_scope_snapshot
+
         return {
             "workdir": self.workdir,
             "model": self.model,
             "logs": self.logs[-100:],  # 只返回最近100条日志
+            **workspace_scope_snapshot(self.workdir),
         }
 
 

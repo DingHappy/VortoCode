@@ -30,6 +30,12 @@
   ]
  },
  {
+  "path": "/api/agent/sessions/{sid}/hook-issues/{issue_id}/ack",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
   "path": "/api/agents/advanced",
   "methods": [
    "GET"
@@ -150,6 +156,12 @@
   ]
  },
  {
+  "path": "/api/audit",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
   "path": "/api/auth/login",
   "methods": [
    "POST"
@@ -222,6 +234,24 @@
   ]
  },
  {
+  "path": "/api/decisions",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/decisions/{decision_id}/dismiss",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/runtime-inbox",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
   "path": "/api/docs/generate",
   "methods": [
    "POST"
@@ -241,8 +271,14 @@
  },
  {
   "path": "/api/editor/undo",
-  "methods": [
+ "methods": [
    "POST"
+  ]
+ },
+ {
+  "path": "/api/extensions/inspect",
+  "methods": [
+   "GET"
   ]
  },
  {
@@ -258,9 +294,75 @@
   ]
  },
  {
+  "path": "/api/git/delivery",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/git/delivery/checks/{check_id}/log",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
   "path": "/api/git/log",
   "methods": [
    "GET"
+  ]
+ },
+ {
+  "path": "/api/git/review",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/git/review/action",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/git/review/commit",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/git/review/comments",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/git/review/comments",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/git/review/comments/{comment_id}",
+  "methods": [
+   "DELETE"
+  ]
+ },
+ {
+  "path": "/api/git/review/comments/{comment_id}",
+  "methods": [
+   "PATCH"
+  ]
+ },
+ {
+  "path": "/api/git/review/diff",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/git/review/pr",
+  "methods": [
+   "POST"
   ]
  },
  {
@@ -288,6 +390,60 @@
   ]
  },
  {
+  "path": "/api/goals",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/goals",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/goals/{goal_id}",
+  "methods": [
+   "DELETE"
+  ]
+ },
+ {
+  "path": "/api/goals/{goal_id}",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/goals/{goal_id}",
+  "methods": [
+   "PATCH"
+  ]
+ },
+ {
+  "path": "/api/goals/{goal_id}/criteria/{criterion_id}/evidence",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/goals/{goal_id}/criteria/{criterion_id}/verifier",
+  "methods": [
+   "PUT"
+  ]
+ },
+ {
+  "path": "/api/goals/{goal_id}/run",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/goals/{goal_id}/verify",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
   "path": "/api/health",
   "methods": [
    "GET"
@@ -295,6 +451,54 @@
  },
  {
   "path": "/api/health/quick",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/hooks",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/hooks/trust",
+  "methods": [
+   "PUT"
+  ]
+ },
+ {
+  "path": "/api/journal",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/journal/continuation",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/journal/days",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/journal/notes",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/journal/snapshot",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/journal/weekly",
   "methods": [
    "GET"
   ]
@@ -367,6 +571,42 @@
  },
  {
   "path": "/api/projects/{project_id}/switch",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/repo-memory",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/repo-memory",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/runs",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/runs",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/runs/{run_id}",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/runs/{run_id}/cancel",
   "methods": [
    "POST"
   ]
@@ -469,6 +709,84 @@
  },
  {
   "path": "/api/tasks/{tid}/open_pr",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/tasks/{tid}/pause",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/tasks/{tid}/resume",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/tasks/{tid}/review",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/tasks/{tid}/review/action",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/tasks/{tid}/review/diff",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/tasks/{tid}/review/verify",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/worktrees",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/terminals",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/terminals",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/terminals/{terminal_id}/input",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/terminals/{terminal_id}/output",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/terminals/{terminal_id}/resize",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
+  "path": "/api/terminals/{terminal_id}/stop",
   "methods": [
    "POST"
   ]

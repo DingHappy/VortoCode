@@ -13,9 +13,16 @@ def test_round_trip(tmp_path):
     tr = [{"role": "user", "text": "hi"}, {"role": "assistant", "text": "yo"}]
     hist = [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "yo"}]
     plan = [{"step": "a", "status": "completed"}]
-    assert save_session(str(tmp_path), "sid-abc", tr, hist, plan) is True
+    activities = [{"type": "agent_phase", "id": "r1:thinking", "status": "completed"}]
+    prompt_queue = [{"id": "q1", "text": "下一步", "mode": "plan"}]
+    context_usage = {"used_tokens": 1200, "max_tokens": 8000, "pct": 15}
+    assert save_session(str(tmp_path), "sid-abc", tr, hist, plan, activities=activities,
+                        prompt_queue=prompt_queue, context_usage=context_usage) is True
     got = load_session(str(tmp_path), "sid-abc")
     assert got["transcript"] == tr and got["history"] == hist and got["plan"] == plan
+    assert got["activities"] == activities
+    assert got["prompt_queue"] == prompt_queue
+    assert got["context_usage"] == context_usage
 
 
 def test_load_missing(tmp_path):
@@ -38,3 +45,40 @@ def test_history_and_transcript_capped(tmp_path):
     got = load_session(str(tmp_path), "sid-cap")
     assert len(got["history"]) == 40 and got["history"][-1]["content"] == "99"   # 留尾部
     assert len(got["transcript"]) == 200 and got["transcript"][-1]["text"] == "499"
+
+
+def test_session_table_restores_prompt_queue(tmp_path):
+    from src.gateway.sessions import SessionTable
+
+    class Agent:
+        def __init__(self):
+            self.history = []
+            self.plan = []
+
+    queued = [{"id": "q1", "text": "重启后继续", "mode": "build", "version": 0}]
+    assert save_session(str(tmp_path), "sid-resume", [], [], None, prompt_queue=queued)
+    session = SessionTable().get("sid-resume", repo_root=str(tmp_path), factory=Agent)
+    assert session["prompt_queue"] == queued
+
+
+def test_session_table_persists_dashboard_context_snapshot(tmp_path):
+    from src.gateway.sessions import SessionTable
+
+    class Agent:
+        def __init__(self):
+            self.history = []
+            self.plan = []
+            self._context_mode = "build"
+
+        def context_usage(self, mode):
+            assert mode == "build"
+            return {"used_tokens": 3000, "max_context_tokens": 12000, "pct": 25,
+                    "history_messages": 8, "policy": "preserve", "will_compact": False}
+
+    table = SessionTable()
+    table.get("sid-context", repo_root=str(tmp_path), factory=Agent)
+    table.persist("sid-context", str(tmp_path))
+
+    saved = load_session(str(tmp_path), "sid-context")
+    assert saved["context_usage"]["pct"] == 25
+    assert saved["context_usage"]["max_tokens"] == 12000
