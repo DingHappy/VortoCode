@@ -66,6 +66,8 @@ def add_worktree(repo_root, wid: str) -> Path:
     if path.exists():                              # 残留则先清，避免 add 冲突
         remove_worktree(repo_root, path)
     _git(repo_root, "worktree", "add", "--detach", str(path), "HEAD")
+    from src.agents.worktree_bindings import record_worktree_binding
+    record_worktree_binding(str(repo_root), wid)
     return path
 
 
@@ -111,6 +113,8 @@ def remove_worktree(repo_root, path) -> None:
     if path.exists():
         shutil.rmtree(path, ignore_errors=True)
     _git(repo_root, "worktree", "prune", check=False)
+    from src.agents.worktree_bindings import forget_worktree_binding
+    forget_worktree_binding(str(repo_root), path.name)
 
 
 def apply_diff_to_branch(repo_root, branch: str, diff: str, message: str) -> dict:

@@ -115,6 +115,8 @@ def is_sensitive_repo_path(path: object, repo_root: str | None = None) -> bool:
 def _sensitive_arg(tool_name: str, args: dict, repo_root: str | None = None) -> str:
     keys = {
         "read_file": ("path",),
+        "write_file": ("path",),
+        "edit_file": ("path",),
         "document_symbols": ("path",),
         "list_files": ("dir",),
         "glob": ("dir",),

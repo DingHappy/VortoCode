@@ -134,6 +134,25 @@ async def test_external_session_denies_sensitive_direct_read(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_external_session_denies_sensitive_explicit_write(tmp_path):
+    ran = []
+
+    async def handler(_args):
+        ran.append(True)
+        return "不应执行"
+
+    agent = MainAgent(
+        [],
+        capabilities=SessionCapabilities.for_profile(EXTERNAL_PROFILE, str(tmp_path)),
+    )
+    tool = Tool("write_file", "explicit editor save", {"path": "path"}, handler, read_only=False)
+    result = await agent._run_bound_tool(
+        tool, {"path": ".env", "content": "secret"}, "build", lambda _m: None)
+    assert "能力拦截" in result and SENSITIVE_FILES in result
+    assert ran == []
+
+
+@pytest.mark.asyncio
 async def test_external_session_cannot_read_local_cli_history_or_symlink_alias(tmp_path):
     state = tmp_path / ".vortocode"
     state.mkdir()

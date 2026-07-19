@@ -260,7 +260,12 @@ def _to_native_messages(messages: list) -> list:
                 tcs = [{"id": f"call_{i}_{j}", "type": "function",
                         "function": {"name": nm, "arguments": json.dumps(a, ensure_ascii=False)}}
                        for j, (nm, a) in enumerate(calls)]
-                out.append({"role": "assistant", "content": None, "tool_calls": tcs})
+                native_assistant = {"role": "assistant", "content": None, "tool_calls": tcs}
+                reasoning = m.get("reasoning_content") or m.get("reasoning")
+                if reasoning:
+                    # MiMo 等 thinking 模型要求多轮工具调用保留上一轮 reasoning_content。
+                    native_assistant["reasoning_content"] = reasoning
+                out.append(native_assistant)
                 nxt = messages[i + 1] if i + 1 < n else None
                 if (nxt and nxt.get("role") == "user" and isinstance(nxt.get("content"), str)
                         and nxt["content"].startswith("[工具 ")):
@@ -532,6 +537,7 @@ class MainAgent:
         extra_system: Optional[str] = None,
         native: bool = False,
         on_tool: Optional[Callable[[str, dict, str], None]] = None,
+        on_tool_event: Optional[Callable[[str, dict], None]] = None,
         on_escalate: Optional[Callable[[str, dict], Awaitable[bool]]] = None,
         on_plan: Optional[Callable[[list], None]] = None,
         plan_tool: bool = False,
@@ -544,9 +550,10 @@ class MainAgent:
     ) -> None:
         import os
         # 复用既有 src/hooks 的 HookSystem：把工具生命周期事件（pre/post/error）接进 agent loop
-        self._hook_system = hook_system
+        self._hook_system = None
         self._tool_list = list(tools)
         self._llm = llm
+        self._llm_injected = llm is not None       # 区分测试/调用方注入与 Dashboard 只读查询触发的惰性客户端
         self.max_steps = _env_int("VORTOCODE_MAX_STEPS", max_steps)   # 可全局调高 build/普通预算
         # build 是真实开发模式，固定 max_steps 只作为"单段预算"；到段尾会自动续跑若干段。
         # 这个安全阈值只防模型无限循环，不应成为正常开发的停止点。
@@ -578,7 +585,7 @@ class MainAgent:
         self.max_history = max_history
         # max_context_tokens 是历史预算的**保守默认/下限**（8000，刻意压成本/防失焦）。
         # 当用户没用 env 钉死时，_base_context_budget() 会按当前模型的真实窗口**向上自适应**——
-        # 大窗口模型（gpt-4o/claude/…）自动放大，mimo/未知模型保持这个默认（除非配 window env）。
+        # 大窗口模型（mimo-v2.5/gpt-4o/claude/…）自动放大，未知模型保持这个默认。
         # env 钉死 = 用户显式指定**有效**精确预算 → 不再自适应；缺省/空/坏值都回退默认并自适应。
         _pinned = _env_num("VORTOCODE_MAX_CONTEXT_TOKENS", None, int)
         self.max_context_tokens = _pinned if _pinned is not None else max_context_tokens
@@ -587,6 +594,8 @@ class MainAgent:
         self.extra_system = extra_system       # 追加到系统提示（如技能目录、子 agent 角色）
         self._native = native                  # 原生 function-calling（失败自动回退提示式协议）
         self._on_tool = on_tool                # 工具执行后的审计钩子(name, args, result)
+        self._on_tool_event = on_tool_event    # 结构化工具生命周期钩子(stage, payload)，供富客户端实时渲染
+        self.set_hook_system(hook_system)
         # plan 模式想用写/重型工具时回调：返回 True=用户同意切 build 并继续，False=拒绝
         self._on_escalate = on_escalate
         self._escalated = False                # 本轮是否已升级到 build（经 on_escalate 同意）
@@ -628,7 +637,7 @@ class MainAgent:
 
         - 窗口够大的已知模型（gpt-4o/claude/… 或经 env 配了 window 的自有中转）→ 取窗口的一部分，
           但不低于保守默认、不超硬顶。
-        - 小窗口/未知模型（含默认 mimo，未配 window）→ 维持保守默认（8000），绝不反超其窗口。
+        - 小窗口/未知模型 → 维持保守默认（8000），绝不反超其窗口。
         运行时可 set_model 切模型，故每次动态解析、不在 __init__ 冻死。"""
         default = self.max_context_tokens
         if not self._context_budget_auto:
@@ -642,6 +651,14 @@ class MainAgent:
             derived = int(window * _CONTEXT_WINDOW_FRACTION)
             return max(default, min(derived, _CONTEXT_BUDGET_HARD_CAP))
         return default
+
+    def _model_context_window_info(self) -> tuple[Optional[int], str]:
+        try:
+            from src.llm.client import model_context_window, model_context_window_source
+            model = self.current_model()
+            return model_context_window(model), model_context_window_source(model)
+        except Exception:  # noqa: BLE001
+            return None, "unknown"
 
     def _context_limit(self, mode: str | None = None) -> int:
         policy = self._effective_context_policy(mode)
@@ -770,7 +787,9 @@ class MainAgent:
         """单条消息的粗略 token 数：只算文本（content_to_text 去掉图/音 base64）+ 少量角色开销。"""
         from src.llm.content import content_to_text
         from src.llm.client import estimate_tokens
-        return estimate_tokens(content_to_text(m.get("content"))) + 4
+        reasoning = m.get("reasoning_content") or m.get("reasoning") or ""
+        return (estimate_tokens(content_to_text(m.get("content")))
+                + estimate_tokens(str(reasoning)) + 4)
 
     def _anchor_text(self) -> str:
         """原始任务纯文本：优先用捕获的 _task_anchor（压缩后仍在），否则回退扫历史首个 user。
@@ -886,6 +905,7 @@ class MainAgent:
         history_tokens = sum(self._msg_tokens(m) for m in trimmed_history)
         used = system_tokens + history_tokens + plan_tokens
         limit = self._context_limit(mode)
+        context_window, context_window_source = self._model_context_window_info()
         policy = self._effective_context_policy(mode)
         recent_budget = max(1, int(limit * self._recent_context_ratio(mode)))
         return {
@@ -897,6 +917,11 @@ class MainAgent:
             "plan_tokens": plan_tokens,
             "max_context_tokens": limit,
             "base_context_tokens": self._base_context_budget(),
+            "context_window_tokens": context_window or 0,
+            "context_window_source": context_window_source,
+            "context_window_pct": (
+                round(used * 1000 / context_window) / 10 if context_window else None
+            ),
             "recent_budget": recent_budget,
             "history_messages": len(self.history),
             "trimmed_history_messages": len(trimmed_history),
@@ -1174,17 +1199,43 @@ class MainAgent:
         client = self._client()
         if stream_cb is not None and hasattr(client, "stream_chat"):
             prefix = "".join(stream_shown)            # 本回合已回显前缀
-            shown: list[str] = []
+            received: list[str] = []
+            # 部分 OpenAI 兼容端点虽然接受 tools，却仍把调用按提示式 JSON 塞进 content。
+            # 一旦正文出现 JSON/代码围栏起点，就先冻结该起点之后的流，等完整响应回来再判定：
+            # - 真是 {"tool":...}/[...]：静默执行，绝不把内部协议泄到 UI；
+            # - 只是正常 JSON/代码回答：回合末一次补齐，内容不丢。
+            # 起点之前的自然语言前言可以继续显示，并保留到 stream_shown，保证三端累计流单调。
+            guard_at: Optional[int] = None
+            visible_len = 0
+
+            def _guard_index(text: str) -> Optional[int]:
+                indexes = [i for i in (text.find("{"), text.find("["), text.find("```")) if i >= 0]
+                return min(indexes) if indexes else None
 
             def _on_content(delta: str) -> None:
-                shown.append(delta)
-                stream_cb(prefix + "".join(shown))    # 前缀 + 本步 → 整回合累计（单调）
+                nonlocal guard_at, visible_len
+                received.append(delta)
+                full = "".join(received)
+                if guard_at is None:
+                    guard_at = _guard_index(full)
+                safe = full if guard_at is None else full[:guard_at]
+                if len(safe) > visible_len:
+                    visible_len = len(safe)
+                    stream_cb(prefix + safe)             # 前缀 + 本步安全正文 → 整回合累计（单调）
 
             resp = await client.stream_chat(
                 native_msgs, temperature=0.3, tools=schema,
                 on_content=_on_content, on_reasoning=reasoning_cb)
-            if shown:                                 # 本步确有回显 → 并入回合累加器
-                stream_shown.append("".join(shown))
+            content = str(resp.get("content") or "")
+            suppress_buffer = (bool(resp.get("tool_calls")) or bool(parse_tool_calls(content))
+                               or _is_weak_final(content))
+            if guard_at is not None and not suppress_buffer:
+                # 误判为协议的普通 JSON / Markdown 代码：完成后一次补齐，不让安全缓冲吞正文。
+                stream_cb(prefix + content)
+                visible_len = len(content)
+            if visible_len:
+                # 工具步只保存 guard 前的自然语言前言；最终步保存完整正文。
+                stream_shown.append(content[:visible_len])
             return resp, True
         return await client.chat(native_msgs, temperature=0.3, tools=schema), False
 
@@ -1209,6 +1260,64 @@ class MainAgent:
         tool = self.tools.get(name)
         if tool is None:
             return f"没有名为 {name} 的工具。可用：{', '.join(self.tools)}"
+        return await self._run_bound_tool(tool, args, mode, say)
+
+    def _emit_tool_event(self, stage: str, payload: dict) -> None:
+        """Best-effort 富客户端生命周期旁路；任何 UI/传输故障都不能改变工具执行语义。"""
+        if self._on_tool_event is None:
+            return
+        try:
+            self._on_tool_event(stage, payload)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _emit_hook_event(self, stage: str, payload: dict) -> None:
+        """Bridge HookSystem observations onto the same rich-client side channel."""
+        self._emit_tool_event(f"hook_{stage}", payload)
+
+    def set_hook_system(self, hook_system: Optional[Any]) -> None:
+        """Hot-swap hooks while preserving lifecycle observation wiring."""
+        previous = getattr(self, "_hook_system", None)
+        if previous is not None and hasattr(previous, "set_event_callback"):
+            try:
+                previous.set_event_callback(None)
+            except Exception:  # noqa: BLE001
+                pass
+        self._hook_system = hook_system
+        if hook_system is not None and hasattr(hook_system, "set_event_callback"):
+            try:
+                hook_system.set_event_callback(self._emit_hook_event)
+            except Exception:  # noqa: BLE001
+                pass
+
+    async def _run_bound_tool(self, tool: Tool, args: dict, mode: str,
+                              say: Callable[[str], None]) -> str:
+        """执行已绑定的可信工具实例，让显式客户端动作复用同一能力/权限/hook/审计内核。"""
+        import time
+        import uuid
+
+        name = tool.name
+        call_id = "tool-" + uuid.uuid4().hex[:16]
+        started = time.monotonic()
+        self._emit_tool_event("start", {
+            "id": call_id,
+            "name": name,
+            "args": dict(args or {}),
+            "mode": mode,
+        })
+
+        def finish(status: str, result: str) -> str:
+            self._emit_tool_event("finish", {
+                "id": call_id,
+                "name": name,
+                "args": dict(args or {}),
+                "mode": mode,
+                "status": status,
+                "result": str(result),
+                "duration_ms": max(0, int((time.monotonic() - started) * 1000)),
+            })
+            return result
+
         if self._capabilities is not None:
             reason = self._capabilities.denied(
                 name,
@@ -1218,12 +1327,12 @@ class MainAgent:
             )
             if reason:
                 say(f"🔧 [b]{name}[/b][dim] —— 被会话能力边界拦下[/dim]")
-                return f"[能力拦截] {reason}"
+                return finish("blocked", f"[能力拦截] {reason}")
         if self._permissions is not None:           # .vortocode/permissions.yaml deny：硬拦（不分模式、最优先）
             reason = self._permissions.denied(name, args)
             if reason:
                 say(f"🔧 [b]{name}[/b][dim] —— 被权限规则拦下[/dim]")
-                return f"[权限拦截] {reason}"
+                return finish("blocked", f"[权限拦截] {reason}")
         effective = "build" if self._escalated else mode
         if effective == "plan" and not tool.read_only:
             # plan 想用写/重型工具：有 on_escalate 就问用户"切 build 并继续？"；同意则升级执行。
@@ -1234,31 +1343,35 @@ class MainAgent:
                 except Exception:  # noqa: BLE001
                     ok = False
             if not ok:
-                return (f"工具 {name} 在 plan 模式下不可用（只读/提案）。"
-                        f"如需执行请切到 build 模式（Tab）。")
+                return finish(
+                    "blocked",
+                    f"工具 {name} 在 plan 模式下不可用（只读/提案）。"
+                    f"如需执行请切到 build 模式（Tab）。",
+                )
             self._escalated = True
         if self._hook_system is not None:       # PRE_TOOL_USE：钩子可阻止该工具（should_stop）
             block = await self._fire_hook("pre_tool_use", {"tool": name, "args": args}, stoppable=True)
             if block is not None:
                 say(f"🔧 [b]{name}[/b][dim] —— 被 hook 阻止[/dim]")
-                return block
+                return finish("blocked", block)
         say(f"🔧 [b]{name}[/b][dim] {_fmt_args(args)}[/dim]")
+        status = "succeeded"
         try:
             result = self._absorb_tool_media(await tool.handler(args))
         except Exception as e:  # noqa: BLE001
+            status = "failed"
             result = f"工具 {name} 执行出错: {e}"
             await self._fire_hook("tool_error", {"tool": name, "args": args, "error": str(e)})
         result = _clip_middle(result, _max_tool_result())  # 超长保头+尾：别把末尾的报错/失败摘要截没了
-        # POST_TOOL_USE：钩子据此做后处理（如自动格式化）；message 附在结果后
-        post = await self._fire_hook("post_tool_use", {"tool": name, "args": args, "result": result})
-        if post:
-            result = result + "\n[hook] " + post
+        # POST_TOOL_USE 是被动贡献事件：Hook 可做已信任的格式化/通知并进入活动时间线，
+        # 但返回文案不能写回模型将看到的工具结果或接管主循环。
+        await self._fire_hook("post_tool_use", {"tool": name, "args": args, "result": result})
         if self._on_tool is not None:           # 审计钩子（失败不影响工具）
             try:
                 self._on_tool(name, args, result)
             except Exception:  # noqa: BLE001
                 pass
-        return result
+        return finish(status, result)
 
     _MAX_TURN_TOOL_IMAGES = 4      # 单次注入的图片上限：图按 ~1000 token 计，堆多了挤掉正文预算
 
@@ -1340,7 +1453,7 @@ class MainAgent:
         """触发一个工具生命周期钩子事件（复用 src/hooks 的 HookSystem）。
 
         stoppable=True（pre）：若任一钩子 should_stop → 返回阻止消息（非空即拦下工具）；否则 None。
-        stoppable=False（post/error）：返回各钩子 message 的拼接（供 post 附在结果后），无则 None。
+        stoppable=False（post/error/lifecycle）：只产生观察事件，始终返回 None；Hook message 不注入模型。
         无钩子系统 / 触发出错都安全返回 None（钩子绝不该让工具链崩）。
         """
         if self._hook_system is None:
@@ -1350,13 +1463,13 @@ class MainAgent:
             r = await self._hook_system.trigger(HookEventType(event_name), source="main_agent", data=data)
         except Exception:  # noqa: BLE001
             return None
-        msgs = [x["result"].message for x in getattr(r, "results", [])
-                if x.get("result") is not None and getattr(x["result"], "message", None)]
         if stoppable:
             if getattr(r, "should_stop", False):
+                msgs = [x["result"].message for x in getattr(r, "results", [])
+                        if x.get("result") is not None and getattr(x["result"], "message", None)]
                 return f"[hook 阻止 {data.get('tool')}] " + ("；".join(msgs) if msgs else "(无说明)")
             return None
-        return "；".join(msgs) if msgs else None
+        return None
 
     def _step_budget(self, mode: str) -> int:
         return self.max_steps
@@ -1479,7 +1592,11 @@ class MainAgent:
                     # 保留 native、下轮重试。本步无论如何走下面的提示式协议兜底，回合照常推进。
                     if _native_error_is_permanent(e):
                         self._native = False
-                    resp = None
+                        resp = None
+                    else:
+                        detail = " ".join((str(e) or repr(e)).split())[:200]
+                        emit(f"模型服务暂时无响应：{detail}（未重复发送本次请求，请稍后重试）")
+                        return ""
                 if resp is not None:
                     # 流式时思维链已过 on_reasoning 增量给出；非流式才整段重放一次（避免重复）
                     if not streamed and reasoning_cb is not None and resp.get("reasoning"):
@@ -1496,12 +1613,22 @@ class MainAgent:
                         except Exception:  # noqa: BLE001
                             a = {}
                         calls.append((tc.get("name", ""), a if isinstance(a, dict) else {}))
+                    # 兼容端点可能接受原生 tools 参数，却仍把工具调用放在 content 的提示式 JSON 里。
+                    # 这里把它提升为真正调用；_native_complete 同时负责抑制这段 JSON 的流式回显。
+                    if not calls:
+                        calls = parse_tool_calls(content) or []
                     if not calls:                  # 最终回复
                         if not nudged and _is_weak_final(content):   # 空收尾 → 纠偏重试一次
                             nudged = True
                             self.history.append({"role": "user", "content": _NUDGE})
                             continue
-                        self.history.append({"role": "assistant", "content": content})
+                        if _is_weak_final(content):  # 第二次仍空：交给无工具强制收尾，不展示「(无回复)」
+                            break
+                        final_message = {"role": "assistant", "content": content}
+                        reasoning = resp.get("reasoning_content") or resp.get("reasoning")
+                        if reasoning:
+                            final_message["reasoning_content"] = str(reasoning)
+                        self.history.append(final_message)
                         emit(content or "(无回复)")
                         return content
                     calls, tool_calls_used, budget_exhausted = self._limit_tool_calls(
@@ -1509,10 +1636,17 @@ class MainAgent:
                     if not calls:
                         break
                     # 用提示式历史表示这一步（简单稳健、跨协议一致、便于裁剪/持久化）
-                    self.history.append({"role": "assistant", "content": json.dumps(
-                        [{"tool": n, "args": a} for n, a in calls], ensure_ascii=False)})
+                    recorded = json.dumps(
+                        [{"tool": n, "args": a} for n, a in calls], ensure_ascii=False) \
+                        if budget_exhausted or tcs else content
+                    tool_message = {"role": "assistant", "content": recorded}
+                    reasoning = resp.get("reasoning_content") or resp.get("reasoning")
+                    if reasoning:
+                        tool_message["reasoning_content"] = str(reasoning)
+                    self.history.append(tool_message)
                     results = await self._run_tools(calls, mode, say)
                     self.history.append({"role": "user", "content": _tool_results_msg(results)})
+                    nudged = False                  # 工具结果带来了新信息，允许最终收尾再纠偏一次
                     self._flush_pending_images()   # 工具带回的图紧跟结果注入（read_file 读图）
                     if budget_exhausted:
                         break
@@ -1537,6 +1671,8 @@ class MainAgent:
                     self.history.append({"role": "assistant", "content": content or ""})
                     self.history.append({"role": "user", "content": _NUDGE})
                     continue
+                if _is_weak_final(content):        # 第二次仍空：转无工具强制收尾，绝不展示「(无回复)」
+                    break
                 self.history.append({"role": "assistant", "content": content})
                 emit(content or "(无回复)")
                 return content
@@ -1549,6 +1685,7 @@ class MainAgent:
             self.history.append({"role": "assistant", "content": recorded})
             results = await self._run_tools(calls, mode, say)   # 全只读→并发；含写→顺序
             self.history.append({"role": "user", "content": _tool_results_msg(results)})
+            nudged = False                         # 新工具结果后重新给收尾一次纠偏机会
             self._flush_pending_images()           # 工具带回的图紧跟结果注入（read_file 读图）
             if budget_exhausted:
                 break
@@ -3168,6 +3305,15 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
     高危但带三层关口：危险操作硬拒 + 逐条 `await confirm(msg)` 确认 + build 门控。
     confirm(message) 是 async、返回 bool（Web 端走 WS 确认；超时/拒绝都安全不跑）。
     """
+    background_sources: dict[str, dict] = {}
+
+    def _record_command_effects(before_state, tool: str = "run_command") -> None:
+        from src.gateway.change_sources import record_workspace_side_effects
+
+        record_workspace_side_effects(
+            repo_root, before_state, source="agent", tool=tool,
+        )
+
     async def _run(args: dict) -> str:
         import asyncio
         from src.agents.sandbox import resolve_sandbox
@@ -3188,6 +3334,8 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
         # 否则新加的确认点又会漏（此前 9 个确认点里只有 2 个记得加）。
         if not await confirm(f"在仓库根目录{label}？\n  $ {cmd}{sandbox_notice}"):
             return f"用户拒绝了命令：{cmd}"
+        from src.gateway.change_sources import capture_workspace_state
+        before_state = capture_workspace_state(repo_root)
         # 若预判时不是已确认的 auto fallback，执行阶段必须继续要求隔离，避免 backend/policy
         # 在确认后变化时静默降级。显式 off 仍由 policy 自身放行。
         require_isolation = not decision.fallback
@@ -3197,12 +3345,15 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
             )
             if not res.get("ok"):
                 return f"后台启动失败：{res.get('error')}"
+            _record_command_effects(before_state)
+            background_sources[str(res["id"])] = capture_workspace_state(repo_root) or before_state
             warning = (f"\n{res.get('warning')}\n" if res.get("warning") else "")
             return (f"已后台启动命令 `{cmd}`，句柄 {res['id']}（pid {res['pid']}）。{warning}"
                     f"用 read_output(id={res['id']}) 看输出、stop_command(id={res['id']}) 停止。")
         res = await asyncio.to_thread(
             run_command, repo_root, cmd, require_isolation=require_isolation
         )
+        _record_command_effects(before_state)
         warning = (f"{res.get('warning')}\n" if res.get("warning") else "")
         return f"命令 `{cmd}` 退出码 {res['code']}。\n{warning}输出尾部：\n{res['output'][-3000:]}"
 
@@ -3217,6 +3368,14 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
         res = await asyncio.to_thread(read_background, bid, tail)
         if not res.get("ok"):
             return res.get("error", "读取失败")
+        before_state = background_sources.get(bid)
+        if before_state is not None:
+            _record_command_effects(before_state, tool="run_command:background")
+            if res.get("status") in {"exited", "done", "failed", "cancelled", "stopped"}:
+                background_sources.pop(bid, None)
+            else:
+                from src.gateway.change_sources import capture_workspace_state
+                background_sources[bid] = capture_workspace_state(repo_root) or before_state
         head = f"[{res['id']}] {res['status']}" + (f"（退出码 {res['code']}）" if res['code'] is not None else "")
         drop = f"\n（⚠ 有 {res['dropped']} 行因缓冲上限被挤掉、未读到）" if res.get("dropped") else ""
         return f"{head}{drop}\n{(res['output'] or '(暂无新输出)')[-3000:]}"
@@ -3230,6 +3389,9 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
         res = await asyncio.to_thread(stop_background, bid)
         if not res.get("ok"):
             return res.get("error", "停止失败")
+        before_state = background_sources.pop(bid, None)
+        if before_state is not None:
+            _record_command_effects(before_state, tool="run_command:background")
         return f"已停止后台命令 {bid}（退出码 {res.get('code')}）。"
 
     return [Tool("run_command",
