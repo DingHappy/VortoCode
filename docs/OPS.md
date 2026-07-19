@@ -24,10 +24,18 @@
 | `VORTOCODE_CRON=1` | 跑 `.vortocode/cron.yaml` 定时作业 | 按作业表 |
 | `VORTOCODE_HEARTBEAT=1` | 值班心跳：读 `HEARTBEAT.md`、从 `BACKLOG.md` 领活 | **周期性烧 token**，确认再开 |
 | `VORTOCODE_HEARTBEAT_EVERY=30m` | 心跳间隔 | — |
+| `VORTOCODE_HEARTBEAT_CHECKLIST=` | 换掉默认检查单文件（默认 `.vortocode/HEARTBEAT.md`），路径必须在工作目录内 | — |
 | `--im telegram\|dingtalk` | IM 内嵌（手机收通知/发任务/按钮确认） | 忽略不计 |
 
 配置模板（复制到目标仓库 `.vortocode/` 去掉 `.example`）：
 `examples/cron.yaml.example` · `examples/HEARTBEAT.md.example` · `examples/BACKLOG.md.example`。
+
+**值班惯例（心跳读检查单）**：检查单文件就是值班职责本身。两条约定值得知道：
+
+- **无事静默**：检查单全过时心跳**一个字都不产出**（不通知、不写会话历史），只往 Journal 落一行
+  确定性台账（结果分类 + 检查单路径与条目数，不含模型正文）。想确认"班值过了"就看当天 Journal。
+- **检查单按不可信输入处理**：它虽是本地文件，但读进来即让该回合进**污点态**——免确认授权全部失效，
+  检查单里写的任何指令都不会变成动作。别把"想让它自动做的事"写进检查单，那里只列**要查什么**。
 
 ## 三、日常用法（attach 优先）
 
