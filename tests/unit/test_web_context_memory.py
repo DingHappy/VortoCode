@@ -4,7 +4,10 @@ import pytest
 
 from src.context.project_context import ProjectContext
 from src.memory.session_store import SessionStore
-from src.web.routers.context import add_memory
+from fastapi import HTTPException
+
+from src.web.routers.context import (RepoMemoryWriteRequest, add_memory, add_repo_memory,
+                                     get_repo_memory)
 from src.web.state import state
 
 
@@ -41,3 +44,42 @@ async def test_web_context_memory_quarantines_secret_without_project_write(tmp_p
     proposal = store.get_memory_proposal(result["proposal_id"])
     assert "REDACTED" in proposal["content"] and raw_secret not in proposal["content"]
     assert raw_secret.encode() not in (tmp_path / ".vortocode" / "sessions.db").read_bytes()
+
+
+@pytest.mark.asyncio
+async def test_desktop_repo_memory_requires_confirmation_and_uses_policy(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(HTTPException) as missing_confirmation:
+        await add_repo_memory(RepoMemoryWriteRequest(content="测试命令是 pytest -q"))
+    assert missing_confirmation.value.status_code == 400
+
+    with pytest.raises(HTTPException) as secret:
+        await add_repo_memory(RepoMemoryWriteRequest(
+            content="api_key=sk-proj-abcdefghijklmnopqrstuvwxyz123456",
+            confirm=True,
+        ))
+    assert secret.value.status_code == 422
+    assert not (tmp_path / ".vortocode" / "memory" / "repo.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_desktop_repo_memory_returns_effective_redacted_projection(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    saved = await add_repo_memory(RepoMemoryWriteRequest(
+        content="构建前必须运行 npm run codegen",
+        confirm=True,
+    ))
+    assert saved["total_entries"] == 1
+    assert saved["entries"] == ["构建前必须运行 npm run codegen"]
+    assert saved["message"].endswith("下个新会话开始生效")
+    assert "npm run codegen" in saved["effective"]
+
+    path = tmp_path / ".vortocode" / "memory" / "repo.md"
+    path.write_text(path.read_text(encoding="utf-8") + "- api_key=sk-proj-abcdefghijklmnopqrstuvwxyz123456\n", encoding="utf-8")
+    snapshot = await get_repo_memory()
+    assert snapshot["redacted"] is True
+    assert "sk-proj-abcdefghijklmnopqrstuvwxyz123456" not in snapshot["content"]
+    assert "[REDACTED" in snapshot["content"]
+    assert b"repo_memory_added" in (tmp_path / ".vortocode" / "audit.log").read_bytes()

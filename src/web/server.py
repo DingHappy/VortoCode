@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 
 from src.web.auth import auth_middleware, get_api_token
 
@@ -28,6 +29,8 @@ async def _lifespan(_app):
     stop_event = asyncio.Event()
     im_task = None
     im_adapter = None
+    run_manager = None
+    terminal_manager = None
     try:
         from src.web.routers.tasks import get_runner, scheduler_loop
         recovered = get_runner().recover()
@@ -38,6 +41,13 @@ async def _lifespan(_app):
                for k in ("VORTOCODE_CRON", "VORTOCODE_HEARTBEAT")):
             sched_task = asyncio.create_task(scheduler_loop(stop_event))
             print("  ⏰ cron/heartbeat 调度循环已启动（opt-in）")
+        from src.web.routers.runs import get_run_manager
+        run_manager = get_run_manager()
+        recovered_runs = run_manager.recover()
+        if recovered_runs:
+            print(f"  ↻ 恢复 {len(recovered_runs)} 个中断的 Desktop 运行记录")
+        from src.web.routers.terminals import get_terminal_manager
+        terminal_manager = get_terminal_manager()
     except Exception as e:  # noqa: BLE001 —— 恢复/调度失败不该挡服务启动
         print(f"  （后台任务恢复/调度跳过：{e}）")
     im_channel = _os.getenv("VORTOCODE_IM", "").strip().lower()
@@ -60,6 +70,10 @@ async def _lifespan(_app):
                 import contextlib
                 with contextlib.suppress(Exception):
                     await im_adapter.close()
+        if run_manager is not None:
+            await run_manager.shutdown()
+        if terminal_manager is not None:
+            terminal_manager.shutdown()
 
 
 app = FastAPI(
@@ -71,6 +85,27 @@ app = FastAPI(
 
 # 鉴权中间件：仅当设置了 VORTOCODE_API_TOKEN 时强制（不破坏本地无 token 使用）
 app.middleware("http")(auth_middleware)
+
+
+@app.middleware("http")
+async def workspace_scope_middleware(request, call_next):
+    """General 的 REST 面同样无目录；不能只缩 Agent 工具、却让侧栏 API 偷跑 Shell/Git。"""
+    from src.gateway.workspace_scope import http_workspace_requirement
+
+    required = http_workspace_requirement(request.url.path)
+    if required is not None:
+        label = "已有 Git 项目" if required == "project" else "隔离 Scratch"
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": {
+                    "code": "workspace_required",
+                    "scope": required,
+                    "reason": f"这个功能需要{label}；General 不访问文件、Shell 或 Git",
+                }
+            },
+        )
+    return await call_next(request)
 
 # 按域拆分的路由
 from src.web.routers.pages import router as pages_router
@@ -89,13 +124,21 @@ from src.web.routers.realtime import router as realtime_router
 from src.web.routers.artifacts import router as artifacts_router
 from src.web.routers.auth_routes import router as auth_router
 from src.web.routers.tasks import router as tasks_router
+from src.web.routers.goals import router as goals_router
+from src.web.routers.runs import router as runs_router
+from src.web.routers.terminals import router as terminals_router
+from src.web.routers.decisions import router as decisions_router
+from src.web.routers.journal import router as journal_router
+from src.web.routers.hooks import router as hooks_router
+from src.web.routers.extensions import router as extensions_router
 
 for _router in (
     pages_router, git_router, context_router,
     agents_router, skills_router,
     projects_router, editor_router, sandbox_router,
     browser_router, github_router, ops_router, generators_router, realtime_router,
-    artifacts_router, auth_router, tasks_router,
+    artifacts_router, auth_router, tasks_router, goals_router, runs_router, terminals_router, decisions_router,
+    journal_router, hooks_router, extensions_router,
 ):
     app.include_router(_router)
 

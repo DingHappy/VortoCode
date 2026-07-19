@@ -26,6 +26,20 @@ def test_ledger_write_ahead_and_recover(tmp_path):
     assert led.load(t.id).status == "interrupted"      # running → interrupted（可 dev_resume 续跑）
 
 
+def test_runner_recover_notifies_subscribers(tmp_path):
+    async def worker(task, on_progress):
+        return "ok"
+
+    seen = []
+    runner = TaskRunner(str(tmp_path), worker, on_update=lambda task: seen.append((task.id, task.status)))
+    task = runner.ledger.create("dev", "恢复")
+    task.status = "running"
+    runner.ledger.save(task)
+    recovered = runner.recover()
+    assert [item.id for item in recovered] == [task.id]
+    assert seen == [(task.id, "interrupted")]
+
+
 def test_ledger_save_leaves_worktree_clean(tmp_path):
     """台账落 .vortocode/tasks/ 后，目标仓库（无自带 .gitignore）git status 仍干净（.vortocode/ 自忽略）。"""
     import subprocess
@@ -46,6 +60,16 @@ def test_ledger_roundtrip_and_list_sorted(tmp_path):
     assert ids == {a.id, b.id}
     assert led.load("nope") is None
     assert BackgroundTask.from_dict({"id": "x", "kind": "dev", "prompt": "p", "extra": 1}).id == "x"
+
+
+def test_task_ledger_persists_goal_and_owner_links(tmp_path):
+    task = TaskLedger(str(tmp_path)).create(
+        "dev", "实现", goal_id="goal-1", plan_id="plan-1", owner_session="sid-desktop-1",
+    )
+    loaded = TaskLedger(str(tmp_path)).load(task.id)
+    assert loaded is not None
+    assert loaded.goal_id == "goal-1" and loaded.plan_id == "plan-1"
+    assert loaded.owner_session == "sid-desktop-1"
 
 
 def test_bg_concurrency_env(monkeypatch):
@@ -111,6 +135,26 @@ async def test_runner_cancel(tmp_path):
         await runner._running.get(t.id, _done_future())
     await asyncio.sleep(0.02)
     assert runner.get(t.id).status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_runner_pause_preserves_plan_for_resume(tmp_path):
+    started = asyncio.Event()
+
+    async def worker(task, on_progress):
+        task.plan_id = "plan-pause"
+        on_progress("计划已保存")
+        started.set()
+        await asyncio.sleep(10)
+        return "不该到这"
+
+    runner = TaskRunner(str(tmp_path), worker)
+    task = await runner.submit("长任务")
+    await started.wait()
+    paused = await runner.pause(task.id)
+    assert paused is not None and paused.status == "paused"
+    assert paused.plan_id == "plan-pause"
+    assert not runner.is_active(task.id)
 
 
 @pytest.mark.asyncio
@@ -199,13 +243,68 @@ def client_with_fake_runner(tmp_path, monkeypatch):
 def test_rest_submit_validation_and_list(client_with_fake_runner):
     client, runner = client_with_fake_runner
     assert client.post("/api/tasks", json={}).status_code == 400   # 缺 prompt
-    r = client.post("/api/tasks", json={"prompt": "做个事"})
+    r = client.post("/api/tasks", json={"prompt": "做个事", "session": "desktop-1"})
     assert r.status_code == 200 and r.json()["id"]
     tid = r.json()["id"]
+    assert runner.get(tid).owner_session == "sid-desktop-1"
     lst = client.get("/api/tasks").json()["tasks"]
     assert any(t["id"] == tid for t in lst)
     assert client.get(f"/api/tasks/{tid}").json()["id"] == tid
     assert client.get("/api/tasks/nonexistent").status_code == 404
+    assert client.post("/api/tasks", json={"prompt": "x", "session": "../../escape"}).status_code == 400
+
+
+def test_rest_task_handoff_and_resume_lineage(client_with_fake_runner):
+    client, runner = client_with_fake_runner
+    from src.agents.dev_plan import Block, DevPlan, save_plan
+
+    plan = DevPlan.new("继续交付", "vorto/resume", "main", plan_id="resume-plan")
+    plan.blocks = [
+        Block(id="b1", kind="independent", desc="完成后端", status="landed"),
+        Block(id="b2", kind="dependent", desc="完成 Desktop", status="pending"),
+    ]
+    save_plan(runner.repo_root, plan)
+    previous = runner.ledger.create(
+        "dev", "继续交付", plan_id=plan.plan_id, owner_session="sid-desktop-resume",
+    )
+    previous.status = "paused"
+    previous.log.append("后端已完成")
+    runner.ledger.save(previous)
+
+    detail = client.get(f"/api/tasks/{previous.id}")
+    assert detail.status_code == 200
+    assert detail.json()["can_resume"] is True
+    assert "完成 Desktop" in detail.json()["handoff"]["text"]
+    resumed = client.post(f"/api/tasks/{previous.id}/resume")
+    assert resumed.status_code == 200
+    assert resumed.json()["parent_task_id"] == previous.id
+    assert resumed.json()["plan_id"] == plan.plan_id
+    assert resumed.json()["owner_session"] == "sid-desktop-resume"
+    assert client.post(f"/api/tasks/{previous.id}/pause").status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_terminal_task_handoff_routes_only_to_owner_session(monkeypatch):
+    from src.web import task_events
+
+    seen = []
+
+    async def publish(session, event):
+        seen.append((session, event))
+
+    monkeypatch.setattr(task_events, "_session_event_publisher", publish)
+    task_events.publish_task_handoff(
+        "sid-desktop-1",
+        {"id": "task-1", "status": "done", "handoff": {"next_action": "验收"}},
+    )
+    task_events.publish_task_handoff("", {"id": "task-2", "status": "done"})
+    await asyncio.sleep(0)
+    assert seen == [(
+        "sid-desktop-1",
+        {"type": "task_handoff", "data": {
+            "id": "task-1", "status": "done", "handoff": {"next_action": "验收"},
+        }},
+    )]
 
 
 def test_rest_open_pr_guards_non_vorto_branch(client_with_fake_runner, monkeypatch):

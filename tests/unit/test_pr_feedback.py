@@ -36,7 +36,10 @@ def _mk_gh_dispatcher(view=None, repo=None, graphql=None, has_gh=True):
 def test_pr_feedback_parses_reviews_checks_and_filters_resolved(monkeypatch):
     monkeypatch.setattr(vcs.shutil, "which", lambda _n: "/usr/bin/gh")
     view = {
-        "number": 42, "headRefName": "vorto/auto-abc",
+        "number": 42, "url": "https://github.com/me/VortoCode/pull/42",
+        "title": "Desktop CI", "state": "OPEN", "isDraft": True,
+        "headRefName": "vorto/auto-abc", "baseRefName": "main",
+        "reviewDecision": "CHANGES_REQUESTED", "mergeStateStatus": "BLOCKED",
         "reviews": [
             {"author": {"login": "codex"}, "state": "CHANGES_REQUESTED", "body": "这里有个空指针"},
             {"author": {"login": "bot"}, "state": "APPROVED", "body": ""},          # 无正文/approved → 忽略
@@ -44,6 +47,7 @@ def test_pr_feedback_parses_reviews_checks_and_filters_resolved(monkeypatch):
         "statusCheckRollup": [
             {"name": "pytest", "conclusion": "FAILURE", "detailsUrl": "http://ci/1"},
             {"name": "lint", "conclusion": "SUCCESS"},                              # 绿 → 忽略
+            {"context": "deploy", "state": "PENDING", "targetUrl": "http://ci/2"},
         ],
     }
     repo = {"owner": {"login": "me"}, "name": "VortoCode"}
@@ -61,6 +65,9 @@ def test_pr_feedback_parses_reviews_checks_and_filters_resolved(monkeypatch):
     assert "这里有个空指针" in bodies and "改这行" in bodies
     assert "旧的已解决评论" not in bodies                    # resolved 线程被过滤
     assert [c["name"] for c in fb["failing_checks"]] == ["pytest"]   # 只留失败检查
+    assert fb["draft"] is True and fb["review_decision"] == "CHANGES_REQUESTED"
+    assert fb["summary"] == {"total": 3, "failed": 1, "pending": 1, "passed": 1}
+    assert fb["checks"][0]["id"].startswith("check-")
     line_comment = next(c for c in fb["comments"] if c["body"] == "改这行")
     assert line_comment["path"] == "src/x.py" and line_comment["line"] == 10
 

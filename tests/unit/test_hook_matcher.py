@@ -35,9 +35,9 @@ def test_matches_tool_with_regex():
     assert not h.matches_tool(None)            # 有 matcher 但事件没带 tool → 不触发
 
 
-def test_bad_regex_falls_back_to_unrestricted():
+def test_bad_regex_is_skipped_instead_of_broadening_scope():
     h = _RecordingHook("bad", matcher="(unclosed")
-    assert h.matches_tool("anything") is True  # 坏正则当作不限，不静默吞掉所有触发
+    assert h.matches_tool("anything") is False  # 坏正则绝不能意外扩大成匹配所有工具
 
 
 @pytest.mark.asyncio
@@ -79,6 +79,33 @@ async def test_command_hook_cwd(tmp_path):
     assert res.success and res.message and tmp_path.name in res.message
 
 
+@pytest.mark.asyncio
+async def test_command_hook_timeout_is_visible_and_returns_promptly(tmp_path):
+    import time
+
+    events = []
+    system = HookSystem(on_event=lambda stage, item: events.append((stage, item)))
+    system.register_hook(CommandHook(
+        name="slow-command",
+        event_types=[HookEventType.POST_TOOL_USE],
+        command="sleep 30",
+        shell=True,
+        cwd=str(tmp_path),
+        timeout=1,
+    ))
+
+    started = time.monotonic()
+    result = await system.trigger(
+        HookEventType.POST_TOOL_USE, source="test", data={"tool": "edit_file"},
+    )
+
+    assert time.monotonic() - started < 3
+    assert result.success is False
+    assert any(item.get("error") == "timeout (1s)" for item in result.results)
+    visible = [item for _stage, item in events if item["name"] == "slow-command"]
+    assert [item["status"] for item in visible] == ["running", "timed_out"]
+
+
 def test_config_loads_matcher_and_shell(tmp_path):
     cfg = tmp_path / "hooks.yaml"
     cfg.write_text(
@@ -87,11 +114,49 @@ def test_config_loads_matcher_and_shell(tmp_path):
         "    type: command\n"
         "    event_types: [post_tool_use]\n"
         "    matcher: edit_file|write_file\n"
+        "    capabilities: [observe_event, emit_annotation, run_command]\n"
         "    shell: true\n"
         "    command: ruff format .\n", encoding="utf-8")
     sys_ = HookSystem(config_path=str(cfg))
     hook = sys_.registry.get("fmt")
     assert hook is not None
     assert hook.matcher == "edit_file|write_file"
+    assert {item.value for item in hook.requested_capabilities} == {
+        "observe_event", "emit_annotation", "run_command",
+    }
     assert hook.shell is True and hook.command == "ruff format ."
     assert hook.matches_tool("edit_file") and not hook.matches_tool("read_file")
+
+
+def test_unknown_config_capability_fails_closed(tmp_path):
+    cfg = tmp_path / "hooks.yaml"
+    cfg.write_text(
+        "hooks:\n  - name: unsafe\n    type: command\n"
+        "    event_types: [post_tool_use]\n    command: true\n"
+        "    capabilities: [become_main_loop]\n",
+        encoding="utf-8",
+    )
+    system = HookSystem(config_path=str(cfg))
+    assert system.registry.get("unsafe") is None
+
+
+@pytest.mark.asyncio
+async def test_command_hook_cannot_run_without_injected_action_capability(tmp_path):
+    marker = tmp_path / "must-not-exist.txt"
+    system = HookSystem()
+    system.register_hook(CommandHook(
+        name="observe-only-command",
+        event_types=[HookEventType.POST_TOOL_USE],
+        command=f"echo unsafe > {marker}",
+        shell=True,
+        cwd=str(tmp_path),
+        capabilities=["observe_event"],
+    ))
+    result = await system.trigger(
+        HookEventType.POST_TOOL_USE,
+        source="test",
+        data={"tool": "edit_file"},
+    )
+    assert not marker.exists()
+    assert result.success is False
+    assert result.results[0]["result"].error == "Hook capability denied: run_command"

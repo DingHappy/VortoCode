@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import shutil
 import subprocess
@@ -227,8 +228,15 @@ def pr_feedback(repo_root, ref: str) -> dict:
     if not shutil.which("gh"):
         return {"ok": False, "error": "gh CLI 不可用（装 gh 且 gh auth login 后可读 PR 反馈）",
                 "comments": [], "failing_checks": []}
-    view = _gh_json(repo_root, "pr", "view", str(ref), "--json",
-                    "number,headRefName,reviews,statusCheckRollup")
+    view = _gh_json(
+        repo_root,
+        "pr",
+        "view",
+        str(ref),
+        "--json",
+        "number,url,title,state,isDraft,headRefName,baseRefName,reviewDecision,mergeStateStatus,"
+        "reviews,statusCheckRollup",
+    )
     if not view or not view.get("number"):
         return {"ok": False, "error": f"找不到 {ref} 对应的 PR（先开 PR 再收反馈）",
                 "comments": [], "failing_checks": []}
@@ -239,7 +247,7 @@ def pr_feedback(repo_root, ref: str) -> dict:
         body = (rv.get("body") or "").strip()
         if body and rv.get("state") in ("CHANGES_REQUESTED", "COMMENTED"):
             comments.append({"author": (rv.get("author") or {}).get("login", "?"),
-                             "body": body, "path": None, "line": None, "resolved": False})
+                             "body": body[:4000], "path": None, "line": None, "resolved": False})
     # 行级 review 线程（GraphQL，能拿 isResolved → 过滤已解决的，只留待办的）
     repo = _gh_json(repo_root, "repo", "view", "--json", "owner,name")
     if repo and repo.get("owner"):
@@ -255,16 +263,65 @@ def pr_feedback(repo_root, ref: str) -> dict:
             for c in ((th.get("comments") or {}).get("nodes") or []):
                 if (c.get("body") or "").strip():
                     comments.append({"author": (c.get("author") or {}).get("login", "?"),
-                                     "body": c["body"].strip(), "path": c.get("path"),
+                                     "body": c["body"].strip()[:4000], "path": c.get("path"),
                                      "line": c.get("line"), "resolved": False})
+                    if len(comments) >= 100:
+                        break
+            if len(comments) >= 100:
+                break
     failing = []
-    for c in (view.get("statusCheckRollup") or []):
+    checks = []
+    for index, c in enumerate((view.get("statusCheckRollup") or [])[:200]):
+        name = c.get("name") or c.get("context") or "check"
+        link = c.get("detailsUrl") or c.get("targetUrl") or ""
         concl = (c.get("conclusion") or "").upper()
         state = (c.get("state") or "").upper()
+        status = (c.get("status") or "").upper()
+        check_id = "check-" + hashlib.sha256(
+            f"{index}\0{name}\0{link}".encode("utf-8")
+        ).hexdigest()[:12]
+        normalized_check = {
+            "id": check_id,
+            "name": name,
+            "link": link,
+            "conclusion": c.get("conclusion") or "",
+            "state": c.get("state") or "",
+            "status": c.get("status") or "",
+            "workflow": c.get("workflowName") or "",
+            "started_at": c.get("startedAt") or "",
+            "completed_at": c.get("completedAt") or "",
+            "failing": _failed_status(concl or state),
+            "pending": not _failed_status(concl or state) and (
+                state in {"PENDING", "EXPECTED"}
+                or status in {"QUEUED", "IN_PROGRESS", "PENDING", "WAITING"}
+            ),
+        }
+        checks.append(normalized_check)
         if concl in _FAIL_CONCLUSIONS or state in _FAIL_CONCLUSIONS:
-            failing.append({"name": c.get("name") or c.get("context") or "check",
-                            "link": c.get("detailsUrl") or c.get("targetUrl") or "",
-                            "conclusion": c.get("conclusion") or "",
-                            "state": c.get("state") or ""})
-    return {"ok": True, "pr": number, "branch": branch, "comments": comments,
-            "failing_checks": failing, "error": ""}
+            failing.append(dict(normalized_check))
+    return {
+        "ok": True,
+        "pr": number,
+        "url": view.get("url") or "",
+        "title": view.get("title") or "",
+        "state": view.get("state") or "",
+        "draft": bool(view.get("isDraft")),
+        "branch": branch,
+        "base": view.get("baseRefName") or "",
+        "review_decision": view.get("reviewDecision") or "",
+        "merge_state": view.get("mergeStateStatus") or "",
+        "comments": comments,
+        "checks": checks,
+        "failing_checks": failing,
+        "summary": {
+            "total": len(checks),
+            "failed": sum(1 for check in checks if check["failing"]),
+            "pending": sum(1 for check in checks if check["pending"]),
+            "passed": sum(
+                1 for check in checks
+                if str(check.get("conclusion") or check.get("state") or "").upper()
+                in {"SUCCESS", "NEUTRAL", "SKIPPED"}
+            ),
+        },
+        "error": "",
+    }

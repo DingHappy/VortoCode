@@ -6,17 +6,16 @@
 
 import pytest
 
-from src.agents.main_agent import MainAgent, SkillRegistry, Tool, parse_tool_call
+from src.agents.main_agent import (MainAgent, SkillRegistry, Tool, _to_native_messages,
+                                   parse_tool_call)
 
 
 @pytest.fixture(autouse=True)
 def _pin_default_model(monkeypatch):
-    """把默认模型钉在 mimo-v2.5（项目 .env/.env.example 的真实默认，未知窗口）。
+    """把默认模型钉在未知测试模型，让通用预算测试稳定保持 8K 保守回退。
 
-    上下文预算测试假设默认模型窗口未知 → 保守回退 8000。显式钉死能避免开发者
-    本地环境变量把默认模型改成已知大窗口模型，进而让这些断言失真。
-    需要别的模型的用例自行 setenv 覆盖。"""
-    monkeypatch.setenv("DEFAULT_MODEL", "mimo-v2.5")
+    产品默认 mimo-v2.5 已由官方目录识别为 1M；需要验证产品默认的用例自行 setenv 覆盖。"""
+    monkeypatch.setenv("DEFAULT_MODEL", "unknown-test-model")
 
 
 def test_parse_tool_call_variants():
@@ -33,6 +32,16 @@ def test_parse_tool_call_variants():
     # 无 tool 键 / 坏 JSON → None（当最终回复，不会误当工具）
     assert parse_tool_call('{"foo": 1}') is None
     assert parse_tool_call("坏 json {不是") is None
+
+
+def test_native_tool_history_preserves_reasoning_content():
+    converted = _to_native_messages([
+        {"role": "assistant", "content": '{"tool":"web_search","args":{"query":"x"}}',
+         "reasoning_content": "需要先检索"},
+        {"role": "user", "content": "[工具 web_search 结果]\n结果"},
+    ])
+    assert converted[0]["reasoning_content"] == "需要先检索"
+    assert converted[1] == {"role": "tool", "tool_call_id": "call_0_0", "content": "结果"}
 
 
 class ScriptedLLM:
@@ -81,6 +90,65 @@ async def test_tool_then_reply():
     assert out["emit"] == ["这个文件里是 X。"]      # 最终回复
     assert any("read_file" in s for s in out["say"])
     assert any("[工具 read_file 结果]" in m["content"] for m in agent.history)   # 结果回灌历史
+
+
+@pytest.mark.asyncio
+async def test_structured_tool_lifecycle_reports_success_failure_and_block():
+    events = []
+
+    async def succeeds(args):
+        return f"read {args['path']}"
+
+    async def fails(_args):
+        raise RuntimeError("boom")
+
+    read = Tool("read_file", "读", {"path": "路径"}, succeeds, read_only=True)
+    broken = Tool("broken", "坏工具", {}, fails, read_only=True)
+    write = Tool("write_file", "写", {"path": "路径"}, succeeds, read_only=False)
+    agent = MainAgent([read, broken, write], on_tool_event=lambda stage, item: events.append((stage, item)))
+
+    assert await agent._run_tool("read_file", {"path": "a.py"}, "plan", lambda _m: None) == "read a.py"
+    assert "执行出错" in await agent._run_tool("broken", {}, "plan", lambda _m: None)
+    assert "plan 模式下不可用" in await agent._run_tool(
+        "write_file", {"path": "a.py"}, "plan", lambda _m: None)
+
+    starts = [item for stage, item in events if stage == "start"]
+    finishes = [item for stage, item in events if stage == "finish"]
+    assert len(starts) == len(finishes) == 3
+    assert [item["status"] for item in finishes] == ["succeeded", "failed", "blocked"]
+    assert all(item["duration_ms"] >= 0 for item in finishes)
+    assert [item["id"] for item in starts] == [item["id"] for item in finishes]
+
+
+@pytest.mark.asyncio
+async def test_hook_lifecycle_uses_tool_event_channel_and_survives_hot_swap():
+    from src.hooks.executor import HookSystem
+    from src.hooks.hook import Hook, HookEventType, HookResult
+
+    events = []
+
+    class VisibleHook(Hook):
+        async def execute(self, event):
+            return HookResult(success=True, message=self.name)
+
+    first = HookSystem()
+    first.register_hook(VisibleHook(name="first", event_types=[HookEventType.POST_TOOL_USE]))
+    agent = MainAgent([], hook_system=first,
+                      on_tool_event=lambda stage, item: events.append((stage, item)))
+
+    await agent._fire_hook("post_tool_use", {"tool": "edit_file"})
+    assert [stage for stage, _item in events] == ["hook_start", "hook_finish"]
+    assert events[-1][1]["name"] == "first"
+
+    second = HookSystem()
+    second.register_hook(VisibleHook(name="second", event_types=[HookEventType.POST_TOOL_USE]))
+    agent.set_hook_system(second)
+    assert first.executor.on_event is None
+    events.clear()
+
+    await agent._fire_hook("post_tool_use", {"tool": "edit_file"})
+    assert [stage for stage, _item in events] == ["hook_start", "hook_finish"]
+    assert events[-1][1]["name"] == "second"
 
 
 @pytest.mark.asyncio
@@ -273,7 +341,8 @@ def test_model_context_window_lookup(monkeypatch):
     assert model_context_window("gpt-4o-2024-08-06") == 128_000   # 前缀匹配带日期后缀
     assert model_context_window("claude-3.5-sonnet") == 200_000
     assert model_context_window("deepseek-chat") == 65_536
-    assert model_context_window("mimo-v2.5") is None              # 自有中转不写死，回退默认
+    assert model_context_window("mimo-v2.5") == 1_000_000         # 小米官方模型卡：非 Base 为 1M
+    assert model_context_window("XiaomiMiMo/MiMo-V2.5-Base") == 256_000
     assert model_context_window("") is None
     # env 全局覆盖（自有中转按上游真实窗口配）
     monkeypatch.setenv("VORTOCODE_MODEL_CONTEXT_WINDOW", "131072")
@@ -297,7 +366,7 @@ def test_model_context_window_per_model_env_map(monkeypatch):
 def test_context_budget_adapts_to_model_window(monkeypatch):
     monkeypatch.delenv("VORTOCODE_MAX_CONTEXT_TOKENS", raising=False)
     monkeypatch.delenv("VORTOCODE_MODEL_CONTEXT_WINDOW", raising=False)
-    # 未知模型（默认 mimo，未配 window）→ 维持保守默认 8000
+    # 未知模型 → 维持保守默认 8000
     a = MainAgent([], max_context_tokens=8000)
     assert a._base_context_budget() == 8000
 
@@ -552,6 +621,39 @@ async def test_native_function_calling():
 
 
 @pytest.mark.asyncio
+async def test_native_executes_prompt_style_tool_json_instead_of_emitting_it():
+    """兼容端点接受 tools 却把调用放进 content：仍应执行工具，不能把协议 JSON 当回复。"""
+    calls = []
+    raw = '{"tool":"request_workspace","args":{"scope":"project","reason":"读取 README"}}'
+
+    async def handler(args):
+        calls.append(args)
+        return "已请求工作区"
+
+    tool = Tool("request_workspace", "请求工作区", {"scope": "范围"}, handler, read_only=True)
+
+    class CompatNativeLLM:
+        def __init__(self):
+            self.n = 0
+
+        async def chat(self, messages, tools=None, **k):
+            self.n += 1
+            assert tools is not None
+            if self.n == 1:
+                return {"content": raw, "tool_calls": None}
+            return {"content": "请选择项目后我会继续。", "tool_calls": None}
+
+    agent = MainAgent([tool], llm=CompatNativeLLM(), native=True)
+    out, say, emit = _capture()
+    result = await agent.run_turn("读取 README", mode="plan", say=say, emit=emit)
+
+    assert calls == [{"scope": "project", "reason": "读取 README"}]
+    assert result == "请选择项目后我会继续。"
+    assert out["emit"] == ["请选择项目后我会继续。"]
+    assert raw not in out["emit"]
+
+
+@pytest.mark.asyncio
 async def test_native_falls_back_to_prompted_on_error():
     # 模型不支持 tools（带 tools 调用报错）→ 永久回退到提示式协议，仍能给回复
     async def handler(args):
@@ -633,6 +735,90 @@ async def test_native_streams_only_final_not_tool_step():
     assert calls == [{"path": "a"}]
     assert seen == ["读", "读完", "读完了"]         # 只有最终步累计回显，工具步不回显
     assert out["emit"] == ["读完了"]
+
+
+@pytest.mark.asyncio
+async def test_native_empty_after_tool_retries_and_never_emits_no_reply():
+    calls = []
+
+    async def handler(args):
+        calls.append(args)
+        return "指数 3803"
+
+    tool = Tool("web_search", "搜索", {"query": "关键词"}, handler, read_only=True)
+
+    class EmptyThenFinal:
+        def __init__(self):
+            self.n = 0
+            self.messages = []
+
+        async def stream_chat(self, messages, tools=None, on_content=None, on_reasoning=None, **kwargs):
+            self.messages.append(messages)
+            self.n += 1
+            if self.n == 1:
+                return {"content": "", "reasoning": "先搜索", "reasoning_content": "先搜索",
+                        "tool_calls": [{"id": "1", "name": "web_search",
+                                        "arguments": '{"query":"A股"}'}]}
+            if self.n == 2:
+                return {"content": "", "reasoning": None, "tool_calls": None}
+            if on_content:
+                on_content("今日 A 股下跌。")
+            return {"content": "今日 A 股下跌。", "reasoning": None, "tool_calls": None}
+
+    llm = EmptyThenFinal()
+    agent = MainAgent([tool], llm=llm, native=True)
+    out, say, emit = _capture()
+    result = await agent.run_turn("今天股票行情", mode="plan", say=say, emit=emit,
+                                  stream_cb=lambda _text: None)
+
+    assert calls == [{"query": "A股"}]
+    assert result == "今日 A 股下跌。"
+    assert out["emit"] == ["今日 A 股下跌。"]
+    assert all("无回复" not in text for text in out["emit"])
+    assert llm.messages[1][2]["reasoning_content"] == "先搜索"
+
+
+@pytest.mark.asyncio
+async def test_native_stream_suppresses_prompt_style_tool_json():
+    """提示式工具 JSON 即使由 native stream_chat 按正文增量返回，也不能闪现在 UI。"""
+    raw = '{"tool":"request_workspace","args":{"scope":"project"}}'
+    seen = []
+    calls = []
+
+    async def handler(args):
+        calls.append(args)
+        return "已请求"
+
+    tool = Tool("request_workspace", "请求工作区", {"scope": "范围"}, handler, read_only=True)
+    agent = MainAgent([tool], llm=NativeStreamLLM([
+        ([raw[:12], raw[12:]], None),
+        (["请", "选择", "项目。"], None),
+    ]), native=True)
+    out, say, emit = _capture()
+    await agent.run_turn("读取 README", mode="plan", say=say, emit=emit,
+                         stream_cb=lambda t: seen.append(t))
+
+    assert calls == [{"scope": "project"}]
+    assert seen == ["请", "请选择", "请选择项目。"]
+    assert all(raw not in item and '"tool"' not in item for item in seen)
+    assert out["emit"] == ["请选择项目。"]
+
+
+@pytest.mark.asyncio
+async def test_native_stream_suppresses_weak_json_before_nudge():
+    """非工具的可疑 JSON 会走既有纠偏，第一次坏内容也不能先闪现在 UI。"""
+    content = '{"status":"ok"}'
+    seen = []
+    agent = MainAgent([], llm=NativeStreamLLM([
+        ([content[:8], content[8:]], None),
+        (["这", "是最终回答"], None),
+    ]), native=True)
+    out, say, emit = _capture()
+    await agent.run_turn("给我 JSON", mode="plan", say=say, emit=emit,
+                         stream_cb=lambda t: seen.append(t))
+
+    assert seen == ["这", "这是最终回答"]
+    assert out["emit"] == ["这是最终回答"]
 
 
 class NativePreambleLLM:
@@ -1072,6 +1258,17 @@ def test_context_usage_reports_prompt_budget_estimate():
     assert usage["policy"] == "balanced"
 
 
+def test_context_usage_reports_real_model_window_separately(monkeypatch):
+    monkeypatch.setenv("DEFAULT_MODEL", "mimo-v2.5")
+    agent = MainAgent([], max_context_tokens=8000)
+    usage = agent.context_usage("plan")
+
+    assert usage["context_window_tokens"] == 1_000_000
+    assert usage["context_window_source"] == "catalog"
+    assert usage["max_context_tokens"] == 200_000        # 内部历史管理预算受硬顶约束
+    assert 0 <= usage["context_window_pct"] < 1           # 新会话只占真实 1M 窗口的零点几 percent
+
+
 def test_context_policy_auto_preserves_more_in_build():
     agent = MainAgent([], max_context_tokens=300)
 
@@ -1190,12 +1387,13 @@ class _NativeFailLLM:
 
 @pytest.mark.asyncio
 async def test_native_keeps_on_transient_error():
-    """瞬时错误不该把 native 永久关掉（下轮可重试）；本轮仍走提示式兜底、回合照常完成。"""
+    """瞬时错误保留 native，但不把可能已到上游的请求再用提示式重复发送。"""
     agent = MainAgent([], llm=_NativeFailLLM(TimeoutError("timed out")), native=True)
     out, say, emit = _capture()
     await agent.run_turn("hi", mode="plan", say=say, emit=emit)
     assert agent._native is True                      # 瞬时 → 保留 native
-    assert out["emit"] == ["回退完成"]                # 本轮经提示式兜底照常完成
+    assert len(out["emit"]) == 1
+    assert "未重复发送" in out["emit"][0]
 
 
 @pytest.mark.asyncio

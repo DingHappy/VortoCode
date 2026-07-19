@@ -44,10 +44,12 @@ _TRANSIENT_STATUS = {408, 409, 429, 500, 502, 503, 504}
 
 
 # 各模型的**上下文窗口**（token）：让历史预算按模型自适应，而非死守一个保守值。
-# 只登记「有把握」的公开模型；自有中转 mimo-* 的真实窗口不写死（避免猜错撑爆），
-# 由用户经 env VORTOCODE_MODEL_CONTEXT_WINDOW 显式给（他清楚自己中转的上游窗口）。
-# 前缀匹配（模型名常带日期/版本后缀），命中即取。
+# 只登记「有把握」且来自官方模型资料的公开模型；服务端 /models 返回更小的实际部署上限时，
+# Desktop 会把该值经 VORTOCODE_MODEL_CONTEXT_WINDOW 注入并优先覆盖这里。前缀/包含匹配采用
+# 最长命中，避免 mimo-v2.5-base 被更短的 mimo-v2.5 抢先匹配。
 MODEL_CONTEXT_WINDOWS: Dict[str, int] = {
+    "mimo-v2.5-base": 256_000,
+    "mimo-v2.5": 1_000_000,
     "gpt-4o": 128_000,
     "gpt-4.1": 128_000,
     "gpt-4-turbo": 128_000,
@@ -116,10 +118,46 @@ def model_context_window(model: str) -> Optional[int]:
             pass
     if not name:
         return None
+    best = None
     for prefix, window in MODEL_CONTEXT_WINDOWS.items():
         if name.startswith(prefix) or prefix in name:
-            return window
-    return None
+            if best is None or len(prefix) > best[0]:
+                best = (len(prefix), window)
+    return best[1] if best is not None else None
+
+
+def model_context_window_source(model: str) -> str:
+    """返回窗口值来源，供 Desktop 区分服务探测/配置覆盖/官方目录/未知。"""
+    if os.getenv("VORTOCODE_MODEL_CONTEXT_WINDOW"):
+        return os.getenv("VORTOCODE_MODEL_CONTEXT_WINDOW_SOURCE") or "configured"
+    name = (model or "").strip().lower()
+    if name and any(name.startswith(prefix) or prefix in name
+                    for prefix in _model_window_overrides()):
+        return "configured"
+    return "catalog" if model_context_window(model) is not None else "unknown"
+
+
+def _env_float(name: str, default: float, minimum: float = 0.1) -> float:
+    try:
+        return max(minimum, float(os.getenv(name) or default))
+    except (TypeError, ValueError):
+        return max(minimum, default)
+
+
+def _stream_usage_enabled(base_url: str) -> bool:
+    """精确流式 usage 是可选扩展，不能用一次长超时的失败请求去探测兼容性。
+
+    OpenAI 官方端点默认开启；兼容中转默认关闭并使用本地估算。供应商明确支持时可用
+    VORTOCODE_STREAM_USAGE=1 开启，明确关闭则对官方端点也生效。
+    """
+    override = os.getenv("VORTOCODE_STREAM_USAGE")
+    if override is not None:
+        return override.strip().lower() in ("1", "true", "yes", "on")
+    try:
+        from urllib.parse import urlparse
+        return (urlparse(base_url).hostname or "").lower() == "api.openai.com"
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _int_env(name: str, default: int) -> int:
@@ -135,7 +173,7 @@ def _int_env(name: str, default: int) -> int:
 # 主 agent + 所有子 agent 的总用量。优先用 API 精确值，拿不到时用估算（流式）。
 # cached_tokens：命中上游 prompt 缓存的输入 token 数（若中转/上游支持自动前缀缓存则 >0）——
 # 用来**验证缓存到底有没有在自有中转生效**（OpenAI 兼容协议下缓存是自动的、无需 cache_control）。
-DEFAULT_LLM_BASE_URL = "https://relay.dinghappy.com/v1"
+DEFAULT_LLM_BASE_URL = "https://token.vortotech.com/v1"
 
 # 值是异构的：计数键为 int，"by_model" 是 {模型名: {计数键: int}}（故标 Any 而非 int）
 _USAGE: Dict[str, Any] = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
@@ -286,10 +324,11 @@ class LLMConfig(BaseModel):
     model: str = Field(default_factory=lambda: os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "mimo-v2.5")
     temperature: float = 0.7
     max_tokens: int = 4096
-    timeout: float = 120.0
-    # 上游 API 网关偶发 502/超时——SDK 默认重试 2 次，这里默认 3 且可经 OPENAI_MAX_RETRIES 调高。
-    # 同时透传给 AsyncOpenAI（主路径）与 aiohttp 降级路径（原先零重试）。
-    max_retries: int = Field(default_factory=lambda: _int_env("OPENAI_MAX_RETRIES", 3))
+    # Desktop 交互不能无提示卡两分钟。30 秒是单次请求的读超时；流式响应持续有分片时不会误杀。
+    timeout: float = Field(default_factory=lambda: _env_float("OPENAI_TIMEOUT", 30.0))
+    # 默认不自动重试：超时请求可能已到上游，静默重发会把一次等待翻倍并产生重复计费。
+    # 5xx 会立即呈现给用户，由明确的“重试”动作发起下一次请求；高级用户仍可经 env 开启。
+    max_retries: int = Field(default_factory=lambda: _int_env("OPENAI_MAX_RETRIES", 0))
     retry_base_delay: float = 0.5      # 降级路径的退避基数（指数退避；测试可设 0 免真睡）
 
 
@@ -420,12 +459,11 @@ class LLMClient:
             max_tokens=self.config.max_tokens,
             stream=True,
         )
-        # 优先请求精确 usage（最后一个 chunk 带 usage）；relay 不支持该参数就退回普通流式
-        try:
-            resp = await client.chat.completions.create(
-                **create, stream_options={"include_usage": True})
-        except Exception:  # noqa: BLE001
-            resp = await client.chat.completions.create(**create)
+        # stream_options 是可选扩展。兼容中转默认不带，避免不兼容请求等满 timeout 后又把整次
+        # 生成重发一遍（真机曾表现为简单「你好」卡 120+ 秒）。无精确 usage 时下方安全估算。
+        if _stream_usage_enabled(self.config.base_url):
+            create["stream_options"] = {"include_usage": True}
+        resp = await client.chat.completions.create(**create)
         parts: List[str] = []
         exact = None
         async for chunk in resp:
@@ -480,14 +518,12 @@ class LLMClient:
         if tools:
             create["tools"] = tools
             create["tool_choice"] = "auto"
-        # 优先请求精确 usage（尾 chunk 带 usage）；relay 不支持该参数就退回普通流式
-        try:
-            resp = await client.chat.completions.create(
-                **create, stream_options={"include_usage": True})
-        except Exception:  # noqa: BLE001
-            resp = await client.chat.completions.create(**create)
+        if _stream_usage_enabled(self.config.base_url):
+            create["stream_options"] = {"include_usage": True}
+        resp = await client.chat.completions.create(**create)
 
         parts: List[str] = []
+        reasoning_parts: List[str] = []
         tc_acc: Dict[int, Dict[str, str]] = {}    # index -> {id,name,arguments}（分片累积）
         exact = None
         async for chunk in resp:
@@ -500,9 +536,10 @@ class LLMClient:
             delta = getattr(choices[0], "delta", None)
             if delta is None:
                 continue
-            if on_reasoning is not None:           # 推理增量走侧信道（不混进正文）
-                rc = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
-                if rc:
+            rc = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+            if rc:
+                reasoning_parts.append(str(rc))
+                if on_reasoning is not None:       # 推理增量走侧信道（不混进正文）
                     try:
                         on_reasoning(rc)
                     except Exception:  # noqa: BLE001 —— 展示回调不该影响生成
@@ -535,8 +572,11 @@ class LLMClient:
                  "arguments": tc_acc[i]["arguments"]}
                 for i in sorted(tc_acc)
             ]
-        # reasoning 已经过 on_reasoning 增量给出，这里返 None，避免调用方再整段重放一次
-        return {"content": full, "reasoning": None,
+        # reasoning 已通过 on_reasoning 增量展示，但仍要返回并写入 assistant 工具历史：MiMo 等
+        # thinking 模型要求多轮 tool_call 时把 reasoning_content 原样带回，否则后续可能空回复/400。
+        reasoning = "".join(reasoning_parts) or None
+        return {"content": full, "reasoning": reasoning,
+                "reasoning_content": reasoning,
                 "tool_calls": tool_calls, "model": model or self.config.model}
 
     async def _chat_with_requests(

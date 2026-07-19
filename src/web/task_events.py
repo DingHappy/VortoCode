@@ -7,18 +7,27 @@ tasks 路由负责后台任务运行时，realtime 路由负责 WebSocket 协议
 from __future__ import annotations
 
 import asyncio
-from typing import Callable
+from typing import Awaitable, Callable
 
 from src.gateway import protocol as P
 from src.web.state import manager
 
 _snapshot_provider: Callable[[], list] | None = None
+_session_event_publisher: Callable[[str, dict], Awaitable[None]] | None = None
 
 
 def set_task_snapshot_provider(provider: Callable[[], list] | None) -> None:
     """登记任务快照读取函数（由 tasks 路由设置；测试可置空）。"""
     global _snapshot_provider
     _snapshot_provider = provider
+
+
+def set_session_event_publisher(
+    publisher: Callable[[str, dict], Awaitable[None]] | None,
+) -> None:
+    """登记会话级事件泵；由 realtime 提供，避免 tasks 路由反向导入它。"""
+    global _session_event_publisher
+    _session_event_publisher = publisher
 
 
 def task_snapshot() -> list:
@@ -38,6 +47,20 @@ def broadcast_task_update(task: dict) -> None:
     except RuntimeError:
         return
     loop.create_task(manager.broadcast(P.make_event(P.TASK_UPDATE, data=task)))
+
+
+def publish_task_handoff(session: str, task: dict) -> None:
+    """把终态任务交接投递给所属会话，并进入该会话的持久 cursor journal。"""
+    if not session or _session_event_publisher is None:
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    loop.create_task(_session_event_publisher(
+        session,
+        P.make_event(P.TASK_HANDOFF, data=task),
+    ))
 
 
 def broadcast_notice(text: str) -> None:

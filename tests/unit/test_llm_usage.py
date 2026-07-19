@@ -4,7 +4,8 @@ import asyncio
 
 import pytest
 
-from src.llm.client import _account, add_usage, estimate_tokens, get_usage, reset_usage
+from src.llm.client import (LLMClient, LLMConfig, _account, add_usage, estimate_tokens,
+                            get_usage, reset_usage)
 
 
 def test_estimate_tokens_cjk_vs_ascii():
@@ -117,9 +118,9 @@ def test_max_retries_from_env(monkeypatch):
     monkeypatch.setenv("OPENAI_MAX_RETRIES", "7")
     assert LLMConfig().max_retries == 7
     monkeypatch.setenv("OPENAI_MAX_RETRIES", "garbage")
-    assert LLMConfig().max_retries == 3                        # 坏值 → 默认 3
+    assert LLMConfig().max_retries == 0                        # 坏值 → 交互默认不静默重发
     monkeypatch.delenv("OPENAI_MAX_RETRIES")
-    assert LLMConfig().max_retries == 3                        # 缺省 → 默认 3
+    assert LLMConfig().max_retries == 0                        # 缺省 → 默认 0
     assert _int_env("DEFINITELY_UNSET_VAR", 9) == 9
 
 
@@ -284,6 +285,48 @@ async def test_stream_chat_streams_content_and_no_tools(monkeypatch):
     assert seen == ["你", "好", "呀"]                # 正文增量走 on_content
     assert out["content"] == "你好呀"
     assert out["tool_calls"] is None
+
+
+@pytest.mark.asyncio
+async def test_custom_relay_stream_does_not_probe_stream_usage_twice(monkeypatch):
+    """兼容中转默认不发 stream_options，避免不兼容请求超时后整次生成重发。"""
+    monkeypatch.delenv("VORTOCODE_STREAM_USAGE", raising=False)
+    chunks = [_chunk(_delta(content="好"))]
+    calls = []
+
+    class RecordingOpenAI:
+        def __init__(self):
+            async def _create(**kwargs):
+                calls.append(kwargs)
+                return _FakeStreamResp(chunks)
+            self.chat = SimpleNamespace(completions=SimpleNamespace(create=_create))
+
+    c = LLMClient(LLMConfig(base_url="https://token.vortotech.com/v1", api_key="x"))
+
+    async def _fake_get():
+        return RecordingOpenAI()
+
+    monkeypatch.setattr(c, "_get_client", _fake_get)
+    out = await c.stream_chat([{"role": "user", "content": "hi"}], tools=[{"x": 1}])
+    assert out["content"] == "好"
+    assert len(calls) == 1
+    assert "stream_options" not in calls[0]
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_returns_reasoning_for_tool_history(monkeypatch):
+    chunks = [
+        _chunk(_delta(reasoning="先搜索")),
+        _chunk(_delta(tool_calls=[_tc(0, id="1", name="web_search", arguments='{"query":"x"}')]))
+    ]
+    c = _client(1)
+
+    async def _fake_get():
+        return _FakeOpenAI(chunks)
+
+    monkeypatch.setattr(c, "_get_client", _fake_get)
+    out = await c.stream_chat([{"role": "user", "content": "行情"}], tools=[{"x": 1}])
+    assert out["reasoning_content"] == "先搜索"
 
 
 @pytest.mark.asyncio

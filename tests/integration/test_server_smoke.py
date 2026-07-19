@@ -65,6 +65,7 @@ CORE_OK = [
     "/api/status",
     "/api/health",
     "/api/health/quick",
+    "/api/extensions/inspect",
     "/api/skills",
     "/api/agents/templates",
     "/api/agents/custom",
@@ -99,9 +100,11 @@ def test_root_serves_main_agent_console(client):
 
 
 def test_websocket_basic(client):
-    """/ws 实时通道：init + ping→pong + get_status→status（覆盖 realtime router）。"""
+    """/ws 实时通道：init + 权威队列 hydrate + ping/status（覆盖 realtime router）。"""
     with client.websocket_connect("/ws") as ws:
         assert ws.receive_json()["type"] == "init"
+        queue = ws.receive_json()
+        assert queue["type"] == "agent_queue" and queue["items"] == []
         ws.send_json({"type": "ping"})
         assert ws.receive_json()["type"] == "pong"
         ws.send_json({"type": "get_status"})

@@ -36,6 +36,8 @@ class SessionTable:
                     self._on_evict(evicted)
             agent = factory()
             transcript: list = []
+            activities: list = []
+            prompt_queue: list = []
             try:                                  # 跨重启复原：磁盘有这个键就把历史/计划灌回 agent
                 from src.web.session_store import load_session
                 saved = load_session(repo_root, key)
@@ -43,13 +45,28 @@ class SessionTable:
                 saved = None
             if saved:
                 transcript = list(saved.get("transcript") or [])
+                activities = list(saved.get("activities") or [])
+                prompt_queue = list(saved.get("prompt_queue") or [])
                 agent.history = list(saved.get("history") or [])
                 if saved.get("plan"):
                     agent.plan = list(saved["plan"])
             from src.llm.client import new_usage
-            sess = {"agent": agent, "transcript": transcript, "last": 0.0, "usage": new_usage()}
+            now = time.time()
+            sess = {
+                "agent": agent,
+                "transcript": transcript,
+                "activities": activities,
+                "prompt_queue": prompt_queue,
+                "last": 0.0,
+                "updated": now,
+                "repo_root": repo_root,
+                "persist_events": True,
+                "usage": new_usage(),
+            }
             self.data[key] = sess
         sess["last"] = time.monotonic()
+        sess["updated"] = time.time()
+        sess.setdefault("repo_root", repo_root)
         return sess
 
     def peek(self, key: str) -> Optional[Dict[str, Any]]:
@@ -65,8 +82,13 @@ class SessionTable:
             return
         try:
             from src.web.session_store import save_session
+            from src.gateway.dashboard import agent_context_summary
             agent = sess.get("agent")
+            mode = getattr(agent, "_context_mode", "plan")
             save_session(repo_root, key, sess.get("transcript") or [],
-                         getattr(agent, "history", []) or [], getattr(agent, "plan", None))
+                         getattr(agent, "history", []) or [], getattr(agent, "plan", None),
+                         activities=sess.get("activities") or [],
+                         prompt_queue=sess.get("prompt_queue") or [],
+                         context_usage=agent_context_summary(agent, mode))
         except Exception:  # noqa: BLE001
             pass

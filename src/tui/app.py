@@ -3828,6 +3828,18 @@ class VortoCodeTUI(App):
         cfg = Path(self.repo_root) / ".vortocode" / "hooks.yaml"
         raw = (arg or "").strip()
         low = raw.lower()
+        if low in {"trust", "untrust"}:
+            from src.hooks.trust import set_project_trusted
+            trusted = low == "trust"
+            if not cfg.is_file():
+                self._emit("没有 hooks.yaml。先用 /hooks init 生成模板，再审查并信任。")
+                return
+            if not set_project_trusted(self.repo_root, trusted):
+                self._emit("Hook 信任状态写入失败；项目必须是现有 Git 工作区。")
+                return
+            self._agent = None                 # 下一回合按新信任状态重建，当前主循环不热换控制面
+            self._emit("已信任并启用项目 Hook。" if trusted else "已撤销项目 Hook 信任；下一回合不再执行。")
+            return
         if low == "init":
             if cfg.exists():
                 self._emit(f"{cfg} 已存在；不会覆盖。用 /hooks 查看，或手动编辑。")
@@ -3853,7 +3865,7 @@ class VortoCodeTUI(App):
             self._cmd_hooks_test(rest.strip())
             return
         if raw and low not in {"list", "ls"}:
-            self._emit("用法: /hooks [list|init|test [event] [tool]]")
+            self._emit("用法: /hooks [list|init|trust|untrust|test [event] [tool]]")
             return
         hs = self._load_hook_system()
         if hs is None:
@@ -3866,13 +3878,16 @@ class VortoCodeTUI(App):
         if not hooks:
             self._emit(f"{cfg} 里没有可用钩子（或都解析失败）。")
             return
-        lines = [f"[b]工具生命周期钩子[/b]（{cfg}）:"]
+        from src.hooks.trust import is_project_trusted
+        trusted = is_project_trusted(self.repo_root)
+        lines = [f"[b]工具生命周期钩子[/b]（{cfg}） · "
+                 + ("[green]已信任[/green]" if trusted else "[yellow]未信任，仅预览[/yellow]")]
         for h in hooks:
             evs = "/".join(e.value for e in h.event_types)
             m = f" · 仅工具 [b]{h.matcher}[/b]" if getattr(h, "matcher", None) else ""
             state = "" if h.enabled else " [dim](禁用)[/dim]"
             lines.append(f"  [b]{h.name}[/b] [{self._tc('text-primary', '#8ab4f8')}]{evs}[/]{m}{state}")
-        lines.append("[dim]/hooks init 生成模板；/hooks test [event] [tool] dry-run matcher，不执行 hook 命令。[/dim]")
+        lines.append("[dim]/hooks trust 审查后启用；/hooks untrust 撤销；/hooks test [event] [tool] 只 dry-run matcher。[/dim]")
         self._chrome("\n".join(lines))
 
     def _cmd_hooks_test(self, arg: str = "") -> None:
@@ -4977,6 +4992,11 @@ class VortoCodeTUI(App):
             from src.memory.rewind import record_edit
             record_edit(self.sessions.store, self.session_id, rel, before, after,
                         turn_id=self._edit_turn_id, tool=tool)
+            from src.gateway.change_sources import record_change_source
+            record_change_source(
+                self.repo_root, rel, before or "", after, source="agent",
+                session=self.session_id, turn=self._edit_turn_id, tool=tool,
+            )
         except Exception:  # noqa: BLE001
             pass
 
@@ -5611,7 +5631,7 @@ class VortoCodeTUI(App):
         extra = "\n\n".join(extra_parts) if extra_parts else None
         from src.agents.main_agent import native_default
         native = native_default()                # 三端统一 native 开关（收敛到 main_agent.native_default）
-        hook_system = self._load_hook_system()   # .vortocode/hooks.yaml 存在才接，避免无谓开销
+        hook_system = self._load_hook_system(for_execution=True)  # 项目 Hook 仅在用户目录信任后接入
         from src.agents.permissions import load_permissions
         agent = MainAgent(tools, max_steps=16, extra_system=extra, native=native,
                           on_tool=self._audit_tool, on_escalate=self._escalate_to_build,
@@ -5627,14 +5647,11 @@ class VortoCodeTUI(App):
                 pass
         return agent
 
-    def _load_hook_system(self):
-        """有 .vortocode/hooks.yaml 才建 HookSystem（复用 src/hooks，把工具生命周期事件接进 agent）。"""
-        cfg = Path(self.repo_root) / ".vortocode" / "hooks.yaml"
-        if not cfg.is_file():
-            return None
+    def _load_hook_system(self, *, for_execution: bool = False):
+        """列表可安全解析未信任配置；真正接进 Agent 前必须通过用户目录信任闸门。"""
         try:
-            from src.hooks import HookSystem
-            return HookSystem(config_path=str(cfg))
+            from src.gateway.agent_session import load_project_hook_system
+            return load_project_hook_system(self.repo_root, require_trust=for_execution)
         except Exception as e:  # noqa: BLE001
             self._chrome(f"[dim]（hooks.yaml 加载失败，已忽略：{e}）[/dim]")
             return None
@@ -5705,22 +5722,15 @@ class VortoCodeTUI(App):
         return ok
 
     def _audit_tool(self, name: str, args: dict, result: str) -> None:
-        """把一次工具调用写进审计日志（.vortocode/audit.log，JSONL）。失败不影响交互。"""
-        from datetime import datetime
+        """把一次工具调用写进共享、脱敏的审计日志。"""
         self._turn_tools += 1               # 本回合工具计数（回合结束反馈用）
         try:
-            p = Path(self.repo_root) / ".vortocode" / "audit.log"
-            p.parent.mkdir(parents=True, exist_ok=True)
-            rec = {
-                "ts": datetime.now().isoformat(timespec="seconds"),
-                "session": self.session_id,
-                "mode": self.mode,
-                "tool": name,
-                "args": {k: str(v)[:120] for k, v in (args or {}).items()},
-                "result_len": len(str(result)),
-            }
-            with p.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            from src.gateway.audit import record_tool_audit
+
+            record_tool_audit(
+                self.repo_root, session=self.session_id, mode=self.mode,
+                name=name, args=args, result=result,
+            )
         except Exception:  # noqa: BLE001
             pass
         try:
@@ -5730,19 +5740,13 @@ class VortoCodeTUI(App):
 
     def _audit_event(self, event: str, data: dict) -> None:
         """把非工具型事件写进审计日志，复用同一个 JSONL 入口。"""
-        from datetime import datetime
         try:
-            p = Path(self.repo_root) / ".vortocode" / "audit.log"
-            p.parent.mkdir(parents=True, exist_ok=True)
-            rec = {
-                "ts": datetime.now().isoformat(timespec="seconds"),
-                "session": self.session_id,
-                "mode": self.mode,
-                "event": event,
-                "data": data or {},
-            }
-            with p.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            from src.gateway.audit import record_event_audit
+
+            record_event_audit(
+                self.repo_root, session=self.session_id, mode=self.mode,
+                event=event, data=data,
+            )
         except Exception:  # noqa: BLE001
             pass
 
