@@ -16,6 +16,8 @@ from typing import Any, Dict, List, Optional
 _DIRNAME = "web_sessions"
 _MAX_HISTORY = 40         # agent 历史只存尾部 N 条（与 TUI 持久化一致）
 _MAX_TRANSCRIPT = 200
+_MAX_ACTIVITIES = 300     # 生命周期事件含 start/finish 更新；留足最近若干回合且有硬上限
+_MAX_PROMPT_QUEUE = 20
 _BAD = re.compile(r"[^A-Za-z0-9_-]")
 
 
@@ -39,7 +41,7 @@ def _clean_sid(sid: str) -> Optional[str]:
     return s or None
 
 
-def _title_from_transcript(transcript: List[dict]) -> str:
+def title_from_transcript(transcript: List[dict]) -> str:
     """无显式标题时，用首条用户消息当会话标题（截断、单行）。"""
     for m in transcript or []:
         if m.get("role") == "user":
@@ -50,7 +52,10 @@ def _title_from_transcript(transcript: List[dict]) -> str:
 
 
 def save_session(repo_root: str, key: str, transcript: List[dict],
-                 history: List[dict], plan: Optional[List[dict]], title: Optional[str] = None) -> bool:
+                 history: List[dict], plan: Optional[List[dict]], title: Optional[str] = None,
+                 activities: Optional[List[dict]] = None,
+                 prompt_queue: Optional[List[dict]] = None,
+                 context_usage: Optional[Dict[str, Any]] = None) -> bool:
     """把一个 sid 会话存盘。返回是否真的写了（非 sid 会话/出错 → False）。
 
     title：显式标题（重命名用）。不传则**保留磁盘上已有标题**，避免每回合存盘把用户改的名冲掉。
@@ -59,15 +64,24 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
     if sid is None:
         return False
     p = _path(repo_root, sid)
-    if title is None and p.is_file():                # 保留已有标题（别被每回合存盘覆盖）
+    existing: Dict[str, Any] = {}
+    if (title is None or context_usage is None) and p.is_file():
         try:
-            title = json.loads(p.read_text(encoding="utf-8")).get("title")
+            loaded = json.loads(p.read_text(encoding="utf-8"))
+            existing = loaded if isinstance(loaded, dict) else {}
         except (OSError, ValueError):
-            title = None
+            existing = {}
+    if title is None:                               # 保留已有标题（别被每回合存盘覆盖）
+        title = existing.get("title")
+    if context_usage is None:                       # IM/旧调用方不应抹掉最近一次 Dashboard 快照
+        context_usage = existing.get("context_usage") or {}
     data = {
         "transcript": list(transcript or [])[-_MAX_TRANSCRIPT:],
         "history": list(history or [])[-_MAX_HISTORY:],
         "plan": list(plan or []),
+        "activities": list(activities or [])[-_MAX_ACTIVITIES:],
+        "prompt_queue": list(prompt_queue or [])[:_MAX_PROMPT_QUEUE],
+        "context_usage": dict(context_usage or {}),
         "title": title,
     }
     try:
@@ -83,7 +97,7 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
 
 
 def load_session(repo_root: str, key: str) -> Optional[Dict[str, Any]]:
-    """按 sid 读回会话 {transcript, history, plan}；不存在/坏文件/非 sid → None。"""
+    """按 sid 读回会话 {transcript, history, plan, activities, prompt_queue, context_usage}。"""
     sid = _sid_of(key)
     if sid is None:
         return None
@@ -100,6 +114,9 @@ def load_session(repo_root: str, key: str) -> Optional[Dict[str, Any]]:
         "transcript": data.get("transcript") or [],
         "history": data.get("history") or [],
         "plan": data.get("plan") or [],
+        "activities": data.get("activities") or [],
+        "prompt_queue": data.get("prompt_queue") or [],
+        "context_usage": data.get("context_usage") or {},
         "title": data.get("title"),
     }
 
@@ -109,6 +126,10 @@ def list_sessions(repo_root: str) -> List[Dict[str, Any]]:
     d = Path(repo_root) / ".vortocode" / _DIRNAME
     if not d.is_dir():
         return []
+    from src.gateway.hook_issues import (
+        hook_issue_snapshot, load_hook_issue_acknowledgements,
+    )
+    hook_acknowledgements = load_hook_issue_acknowledgements(repo_root)
     out: List[Dict[str, Any]] = []
     for p in sorted(d.glob("*.json")):
         try:
@@ -119,11 +140,16 @@ def list_sessions(repo_root: str) -> List[Dict[str, Any]]:
         if not isinstance(data, dict):
             continue
         transcript = data.get("transcript") or []
+        hook_issues = hook_issue_snapshot(
+            data.get("activities") or [], hook_acknowledgements.get(f"sid-{p.stem}") or [],
+        )
         out.append({
             "sid": p.stem,
-            "title": data.get("title") or _title_from_transcript(transcript),
+            "title": data.get("title") or title_from_transcript(transcript),
             "messages": len(transcript),
             "updated": mtime,
+            "context": data.get("context_usage") or {},
+            "hook_issues": hook_issues,
         })
     out.sort(key=lambda s: s["updated"], reverse=True)
     return out

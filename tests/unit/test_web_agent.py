@@ -5,6 +5,7 @@
 
 import asyncio
 import contextlib
+import subprocess
 
 import pytest
 
@@ -29,13 +30,29 @@ def _key(ws):
 def _inject_session(ws, agent):
     """把假 agent 塞进会话表（重构后 agent 按会话键存活，不再按 id(ws)）。"""
     from src.web.routers import realtime
-    realtime._SESSIONS[_key(ws)] = {"agent": agent, "transcript": [], "last": 0.0}
+    realtime._SESSIONS[_key(ws)] = {
+        "agent": agent, "transcript": [], "last": 0.0, "persist_events": False,
+    }
 
 
 def _cleanup(ws):
     from src.web.routers import realtime
     realtime._SESSIONS.pop(_key(ws), None)
     realtime._WS_AGENT_TASKS.pop(_key(ws), None)
+    realtime._WS_AGENT_RUNNING.pop(_key(ws), None)
+    realtime._WS_AGENT_PRIORITY.pop(_key(ws), None)
+    realtime._WS_AGENT_STOP_REASONS.pop(_key(ws), None)
+    realtime._SESSION_SUBSCRIBERS.pop(_key(ws), None)
+    realtime._SESSION_EVENT_LOGS.pop(_key(ws), None)
+    realtime._SESSION_EVENT_SEQS.pop(_key(ws), None)
+    realtime._SESSION_EVENT_LOCKS.pop(_key(ws), None)
+    realtime._SESSION_EVENT_LOADED.discard(_key(ws))
+    realtime._SESSION_EVENT_ROOTS.pop(_key(ws), None)
+    watcher = realtime._GIT_REVIEW_WATCHERS.pop(_key(ws), None)
+    if watcher is not None:
+        watcher.cancel()
+    realtime._GIT_REVIEW_WATCH_STATES.pop(_key(ws), None)
+    realtime._DETACHED_WEBSOCKETS.discard(ws)
 
 
 async def _drain(ws):
@@ -44,6 +61,18 @@ async def _drain(ws):
     task = realtime._WS_AGENT_TASKS.get(_key(ws))
     if task is not None:
         await asyncio.wait_for(task, 5)
+
+
+async def _drain_all(ws):
+    """等待当前回合及其自动启动的 FIFO 后继全部完成。"""
+    from src.web.routers import realtime
+    for _ in range(30):
+        task = realtime._WS_AGENT_TASKS.get(_key(ws))
+        if task is None:
+            return
+        await asyncio.wait_for(asyncio.shield(task), 5)
+        await asyncio.sleep(0)
+    raise AssertionError("prompt queue did not drain")
 
 
 class _SlowAgent:
@@ -63,6 +92,28 @@ class _SlowAgent:
             raise
 
 
+class _QueueAgent:
+    """首回合受闸门控制，后续立即完成；记录顺序与最大并发数。"""
+    def __init__(self):
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.seen = []
+        self.active = 0
+        self.max_active = 0
+
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None):
+        self.seen.append(text)
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        try:
+            if text == "a":
+                self.started.set()
+                await self.release.wait()
+            emit("完成：" + text)
+        finally:
+            self.active -= 1
+
+
 @pytest.mark.asyncio
 async def test_ws_agent_handler_streams_reply(monkeypatch):
     import src.llm.client as llmmod
@@ -76,7 +127,7 @@ async def test_ws_agent_handler_streams_reply(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
     ws = _FakeWS()
-    await handle_agent_message(ws, {"type": "agent", "text": "你好", "mode": "plan"})
+    await handle_agent_message(ws, {"type": "agent", "text": "介绍一下这个功能", "mode": "plan"})
     await _drain(ws)
     types = [m["type"] for m in ws.sent]
     assert "agent_done" in types                                   # 收尾事件
@@ -108,6 +159,10 @@ async def test_ws_agent_handler_invokes_read_tool(monkeypatch):
     await _drain(ws)
     types = [m["type"] for m in ws.sent]
     assert "agent_say" in types                                    # 工具调用提示
+    tool_events = [m for m in ws.sent if m["type"] == "agent_tool"]
+    assert [item["status"] for item in tool_events] == ["running", "succeeded"]
+    assert tool_events[0]["id"] == tool_events[1]["id"]
+    assert tool_events[0]["summary"] == "浏览文件"
     assert any("仓库里有这些文件" in m.get("text", "") for m in ws.sent)
     _cleanup(ws)
 
@@ -176,7 +231,7 @@ async def test_agent_turn_runs_in_background_and_can_cancel(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_agent_turn_rejects_concurrent(monkeypatch):
+async def test_agent_turn_queues_concurrent_prompt(monkeypatch):
     from src.web.routers import realtime
     monkeypatch.setenv("OPENAI_API_KEY", "x")
     ws = _FakeWS()
@@ -187,7 +242,9 @@ async def test_agent_turn_rejects_concurrent(monkeypatch):
         await asyncio.wait_for(agent.started.wait(), 2)
         ws.sent.clear()
         await realtime.handle_agent_message(ws, {"type": "agent", "text": "b", "mode": "plan"})
-        assert any("还在跑" in m.get("text", "") for m in ws.sent)    # 第二条被拒，不并发
+        snapshots = [m for m in ws.sent if m["type"] == "agent_queue"]
+        assert snapshots and [item["text"] for item in snapshots[-1]["items"]] == ["b"]
+        assert snapshots[-1]["running"]["text"] == "a"              # 第二条排队，不并发
     finally:
         realtime._cancel_agent_turn(ws)
         task = realtime._WS_AGENT_TASKS.get(_key(ws))
@@ -198,10 +255,226 @@ async def test_agent_turn_rejects_concurrent(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_prompt_queue_auto_drains_fifo_without_concurrency(monkeypatch):
+    from src.web.routers import realtime
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    ws = _FakeWS()
+    agent = _QueueAgent()
+    _inject_session(ws, agent)
+    try:
+        await realtime.handle_agent_message(ws, {"type": "agent", "text": "a", "rid": "qa"})
+        await asyncio.wait_for(agent.started.wait(), 2)
+        await realtime.handle_agent_message(ws, {"type": "agent", "text": "b", "rid": "qb"})
+        await realtime.handle_agent_message(ws, {"type": "agent", "text": "b", "rid": "qb"})
+        await realtime.handle_agent_message(ws, {"type": "agent", "text": "c", "rid": "qc"})
+        agent.release.set()
+        await _drain_all(ws)
+        assert agent.seen == ["a", "b", "c"]
+        assert agent.max_active == 1
+        assert realtime._SESSIONS[_key(ws)]["prompt_queue"] == []
+        assert ws.sent[-1]["type"] == "agent_queue" and ws.sent[-1]["items"] == []
+        assert isinstance(ws.sent[-1]["seq"], int)
+    finally:
+        _cleanup(ws)
+
+
+@pytest.mark.asyncio
+async def test_prompt_queue_send_now_interrupts_then_preserves_fifo(monkeypatch):
+    from src.web.routers import realtime
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    ws = _FakeWS()
+    agent = _QueueAgent()
+    _inject_session(ws, agent)
+    try:
+        await realtime.handle_agent_message(ws, {"type": "agent", "text": "a", "rid": "qa"})
+        await asyncio.wait_for(agent.started.wait(), 2)
+        await realtime.handle_agent_message(ws, {"type": "agent", "text": "b", "rid": "qb"})
+        await realtime.handle_agent_message(ws, {"type": "agent", "text": "c", "rid": "qc"})
+        await realtime.handle_websocket_message(ws, {"type": "agent_queue_send_now", "id": "qc"})
+        await _drain_all(ws)
+        assert agent.seen == ["a", "c", "b"]
+        assert agent.max_active == 1
+        cancelled = [event for event in ws.sent if event["type"] == "agent_cancelled"]
+        assert cancelled and cancelled[0]["rid"] == "qa"
+    finally:
+        _cleanup(ws)
+
+
+@pytest.mark.asyncio
+async def test_prompt_queue_stop_pauses_and_remove_is_authoritative(monkeypatch):
+    from src.web.routers import realtime
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    ws = _FakeWS()
+    agent = _QueueAgent()
+    _inject_session(ws, agent)
+    try:
+        await realtime.handle_agent_message(ws, {"type": "agent", "text": "a", "rid": "qa"})
+        await asyncio.wait_for(agent.started.wait(), 2)
+        await realtime.handle_agent_message(ws, {"type": "agent", "text": "b", "rid": "qb"})
+        await realtime.handle_websocket_message(ws, {"type": "agent_cancel"})
+        await _drain_all(ws)
+        assert agent.seen == ["a"]
+        assert [item["id"] for item in realtime._SESSIONS[_key(ws)]["prompt_queue"]] == ["qb"]
+        await realtime.handle_websocket_message(ws, {"type": "agent_queue_remove", "id": "qb"})
+        assert realtime._SESSIONS[_key(ws)]["prompt_queue"] == []
+        assert ws.sent[-1]["type"] == "agent_queue" and ws.sent[-1]["items"] == []
+        assert isinstance(ws.sent[-1]["seq"], int)
+    finally:
+        _cleanup(ws)
+
+
+@pytest.mark.asyncio
 async def test_cancel_with_no_running_turn_is_noop():
     from src.web.routers import realtime
     ws = _FakeWS()
     assert realtime._cancel_agent_turn(ws) is False     # 没有在跑的回合 → False，不报错
+
+
+@pytest.mark.asyncio
+async def test_session_turn_survives_detach_and_new_client_receives_completion(monkeypatch):
+    """刷新/关窗只移除 subscriber；同 sid 新客户端接管实时流，回合不被取消。"""
+    from src.web.routers import realtime
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    ws1 = _FakeWS(sid="reattach")
+    ws2 = _FakeWS(sid="reattach")
+    agent = _QueueAgent()
+    _inject_session(ws1, agent)
+    try:
+        cursor1 = await realtime._session_event_cursor(_key(ws1))
+        await realtime._attach_session_subscriber(ws1, cursor1)
+        await realtime.handle_agent_message(ws1, {"type": "agent", "text": "a", "rid": "qa"})
+        await asyncio.wait_for(agent.started.wait(), 2)
+
+        cursor2 = await realtime._session_event_cursor(_key(ws2))
+        await realtime._detach_session_subscriber(ws1)
+        await realtime._attach_session_subscriber(ws2, cursor2)
+        first_count = len(ws1.sent)
+        agent.release.set()
+        await _drain_all(ws1)
+
+        assert agent.seen == ["a"]
+        assert any(event["type"] == "agent_done" for event in ws2.sent)
+        assert any(event["type"] == "agent_emit" for event in ws2.sent)
+        assert len(ws1.sent) == first_count             # 已离开的窗口不再接收事件
+    finally:
+        await realtime._detach_session_subscriber(ws2)
+        _cleanup(ws1)
+        realtime._DETACHED_WEBSOCKETS.discard(ws2)
+
+
+@pytest.mark.asyncio
+async def test_session_attach_replays_events_emitted_during_hydrate_gap():
+    from src.gateway import protocol as P
+    from src.web.routers import realtime
+
+    ws = _FakeWS(sid="gap-replay")
+    key = _key(ws)
+    try:
+        cursor = await realtime._session_event_cursor(key)
+        event = P.make_event(P.AGENT_SAY, text="hydrate 期间完成的事件")
+        await realtime._publish_session_event(key, event)
+        await realtime._attach_session_subscriber(ws, cursor)
+        assert ws.sent == [P.sequence_event(event, 1)]
+    finally:
+        await realtime._detach_session_subscriber(ws)
+        _cleanup(ws)
+
+
+@pytest.mark.asyncio
+async def test_session_event_cursor_survives_memory_reset_and_pages_replay(tmp_path):
+    from src.gateway import protocol as P
+    from src.web.routers import realtime
+
+    ws = _FakeWS(sid="durable-replay")
+    _inject_session(ws, _PlanAgent())
+    session = realtime._SESSIONS[_key(ws)]
+    session.update(repo_root=str(tmp_path), persist_events=True)
+    try:
+        await realtime._publish_session_event(
+            _key(ws), P.make_event(P.AGENT_SAY, text="one"), fallback=ws)
+        await realtime._publish_session_event(
+            _key(ws), P.make_event(P.AGENT_SAY, text="two"), fallback=ws)
+        await realtime._publish_session_event(
+            _key(ws), P.make_event(P.AGENT_DONE), fallback=ws)
+        assert [event["seq"] for event in ws.sent] == [1, 2, 3]
+
+        realtime._SESSION_EVENT_LOGS.pop(_key(ws), None)
+        realtime._SESSION_EVENT_SEQS.pop(_key(ws), None)
+        realtime._SESSION_EVENT_LOADED.discard(_key(ws))
+        assert await realtime._session_event_cursor(_key(ws)) == 3
+
+        replay = _FakeWS(sid="durable-replay")
+        await realtime.handle_websocket_message(replay, {
+            "type": P.AGENT_EVENTS_REPLAY, "after_seq": 1, "limit": 1,
+        })
+        first = replay.sent[-1]
+        assert first["type"] == P.AGENT_EVENTS
+        assert [item["seq"] for item in first["items"]] == [2]
+        assert first["cursor"] == 2 and first["latest_seq"] == 3
+        await realtime.handle_websocket_message(replay, {
+            "type": P.AGENT_EVENTS_REPLAY, "after_seq": first["cursor"], "limit": 1,
+        })
+        assert replay.sent[-1]["items"][0]["seq"] == 3
+    finally:
+        _cleanup(ws)
+
+
+@pytest.mark.asyncio
+async def test_nonrecoverable_permission_event_persists_only_cursor(tmp_path):
+    from src.gateway import protocol as P
+    from src.web.routers import realtime
+
+    ws = _FakeWS(sid="permission-cursor")
+    _inject_session(ws, _PlanAgent())
+    realtime._SESSIONS[_key(ws)].update(repo_root=str(tmp_path), persist_events=True)
+    try:
+        await realtime._publish_session_event(
+            _key(ws), P.make_event(P.AGENT_CONFIRM, id="c1", text="token=super-secret"),
+            fallback=ws,
+        )
+        raw = "".join(
+            path.read_text(encoding="utf-8")
+            for path in (tmp_path / ".vortocode" / "session_events" / "permission-cursor").glob("*.jsonl")
+        )
+        assert "super-secret" not in raw and "cursor_only" in raw
+        realtime._SESSION_EVENT_LOGS.pop(_key(ws), None)
+        realtime._SESSION_EVENT_SEQS.pop(_key(ws), None)
+        realtime._SESSION_EVENT_LOADED.discard(_key(ws))
+        assert await realtime._session_event_cursor(_key(ws)) == 1
+        assert realtime._SESSION_EVENT_LOGS[_key(ws)] == []
+    finally:
+        _cleanup(ws)
+
+
+@pytest.mark.asyncio
+async def test_task_handoff_persists_without_loaded_session_actor(tmp_path, monkeypatch):
+    """后台任务可在窗口关闭/Session actor 被逐出后完成，交接仍必须落到 sid journal。"""
+    from src.gateway import protocol as P
+    from src.web.routers import realtime
+
+    monkeypatch.chdir(tmp_path)
+    key = "sid-background-owner"
+    realtime._SESSIONS.pop(key, None)
+    realtime._SESSION_EVENT_ROOTS.pop(key, None)
+    realtime._SESSION_EVENT_LOGS.pop(key, None)
+    realtime._SESSION_EVENT_SEQS.pop(key, None)
+    realtime._SESSION_EVENT_LOADED.discard(key)
+    try:
+        await realtime._publish_task_session_event(
+            key,
+            P.make_event(P.TASK_HANDOFF, data={"id": "task-1", "status": "done"}),
+        )
+        assert realtime._SESSION_EVENT_SEQS[key] == 1
+        raw = "".join(
+            path.read_text(encoding="utf-8")
+            for path in (tmp_path / ".vortocode" / "session_events" / "background-owner").glob("*.jsonl")
+        )
+        assert '"task_handoff"' in raw and '"task-1"' in raw
+    finally:
+        realtime._SESSION_EVENT_ROOTS.pop(key, None)
+        realtime._SESSION_EVENT_LOGS.pop(key, None)
+        realtime._SESSION_EVENT_SEQS.pop(key, None)
+        realtime._SESSION_EVENT_LOADED.discard(key)
 
 
 def test_web_agent_includes_isolated_dev_and_command():
@@ -417,6 +690,265 @@ async def test_replay_includes_current_plan():
         _cleanup(ws)
 
 
+@pytest.mark.asyncio
+async def test_replay_includes_structured_activity_history():
+    from src.web.routers import realtime
+    ws = _FakeWS(sid="s-activity-replay")
+    _inject_session(ws, _PlanAgent())
+    activity = {
+        "type": "agent_tool", "id": "tool-1", "name": "read_file",
+        "status": "succeeded", "summary": "读取 README.md", "rid": "r1",
+    }
+    realtime._SESSIONS[_key(ws)]["activities"] = [activity]
+    try:
+        await realtime._replay_history(ws)
+        histories = [m for m in ws.sent if m["type"] == "agent_activity_history"]
+        assert histories and histories[0]["items"] == [activity]
+    finally:
+        _cleanup(ws)
+
+
+@pytest.mark.asyncio
+async def test_get_status_hydrate_replays_version_history_and_plan():
+    """Desktop 等晚挂监听的客户端能主动恢复握手首帧，且不改变普通 get_status。"""
+    from src.web.routers import realtime
+    ws = _FakeWS(sid="s-hydrate")
+    _inject_session(ws, _PlanAgent())
+    session = realtime._SESSIONS[_key(ws)]
+    session["transcript"] = [{"role": "user", "text": "之前的消息"}]
+    session["agent"].plan = [{"step": "继续", "status": "in_progress"}]
+    try:
+        await realtime.handle_websocket_message(ws, {"type": "get_status", "hydrate": True})
+        assert [event["type"] for event in ws.sent] == ["status", "agent_history", "agent_plan", "agent_queue"]
+        assert ws.sent[0]["v"] == 9 and ws.sent[0]["cursor"] == 0
+        assert ws.sent[1]["items"] == session["transcript"]
+        assert ws.sent[2]["items"] == session["agent"].plan
+    finally:
+        _cleanup(ws)
+
+
+class _DesktopContextAgent:
+    def __init__(self):
+        self.seen_text = ""
+        self.read_args = []
+
+    async def _run_tool(self, name, args, mode, say):
+        assert name == "read_file" and mode == "plan"
+        self.read_args.append(args)
+        say(f"read_file {args['path']}")
+        return f"内容:{args['path']}"
+
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None):
+        self.seen_text = text
+        emit("已分析")
+
+
+@pytest.mark.asyncio
+async def test_desktop_context_files_run_through_shared_read_tool(monkeypatch):
+    """Desktop 不能把本地正文绕过权限内核直塞模型，文件必须逐个经过 agent._run_tool。"""
+    from src.web.routers import realtime
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    ws = _FakeWS(sid="desktop-context")
+    agent = _DesktopContextAgent()
+    _inject_session(ws, agent)
+    try:
+        await realtime.handle_agent_message(ws, {
+            "type": "agent",
+            "text": "解释代码",
+            "mode": "plan",
+            "context_files": ["src/a.py", "src/b.py"],
+            "context_selections": [{"path": "src/c.py", "start": 4, "end": 12}],
+        })
+        await _drain(ws)
+        assert agent.read_args == [
+            {"path": "src/a.py"},
+            {"path": "src/b.py"},
+            {"path": "src/c.py", "start": 4, "end": 12},
+        ]
+        assert "<selected_local_context>" in agent.seen_text
+        assert "内容:src/a.py" in agent.seen_text and "内容:src/b.py" in agent.seen_text
+        assert "# 文件 src/c.py:4-12" in agent.seen_text
+        assert any(event["type"] == "agent_say" for event in ws.sent)
+        assert realtime._SESSIONS[_key(ws)]["transcript"][0]["text"].endswith("📎×3")
+    finally:
+        _cleanup(ws)
+
+
+def test_desktop_context_file_sanitizer_is_bounded_and_relative():
+    from src.web.routers import realtime
+    raw = ["src/a.py", "src/a.py", "../secret", "/etc/passwd", "a//b"]
+    raw += [f"src/{index}.py" for index in range(20)]
+    out = realtime._sanitize_context_files(raw)
+    assert out[0] == "src/a.py"
+    assert len(out) == realtime._MAX_CONTEXT_FILES
+    assert "../secret" not in out and "/etc/passwd" not in out and "a//b" not in out
+
+
+def test_desktop_context_selection_sanitizer_validates_and_bounds_ranges():
+    from src.web.routers import realtime
+    raw = [
+        {"path": "src/a.py", "start": 8, "end": 9999},
+        {"path": "../secret", "start": 1, "end": 2},
+        {"path": "src/b.py", "start": 0, "end": 2},
+        {"path": "src/c.py", "start": True, "end": 2},
+        {"path": "src/d.py", "start": 8, "end": 7},
+    ]
+    out = realtime._sanitize_context_selections(raw)
+    assert out == [{
+        "path": "src/a.py",
+        "start": 8,
+        "end": 8 + realtime._MAX_CONTEXT_SELECTION_LINES - 1,
+    }]
+
+
+def test_desktop_context_items_share_one_eight_item_budget():
+    from src.web.routers import realtime
+    message = {
+        "context_files": ["src/all.py"],
+        "context_selections": [
+            {"path": "src/all.py", "start": 1, "end": 2},
+            *[
+                {"path": f"src/{index}.py", "start": 1, "end": 2}
+                for index in range(20)
+            ],
+        ],
+    }
+    out = realtime._sanitize_context_items(message)
+    assert out[0] == {"path": "src/all.py"}
+    assert len(out) == realtime._MAX_CONTEXT_FILES
+    assert {"path": "src/all.py", "start": 1, "end": 2} not in out
+
+
+class _DesktopEditAgent:
+    def __init__(self):
+        self._web_confirm_holder = {"fn": None}
+        self.bound_tools = []
+        self.confirm_messages = []
+
+    async def _confirm_gate(self, message):
+        self.confirm_messages.append(message)
+        return await self._web_confirm_holder["fn"](message)
+
+    async def _run_bound_tool(self, tool, args, mode, say):
+        self.bound_tools.append((tool.name, args["path"], mode))
+        say(f"{tool.name} {args['path']}")
+        return await tool.handler(args)
+
+
+async def _wait_for_event(ws, event_type):
+    for _ in range(100):
+        matches = [event for event in ws.sent if event["type"] == event_type]
+        if matches:
+            return matches[-1]
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"没有收到 {event_type}")
+
+
+@pytest.mark.asyncio
+async def test_desktop_workspace_edit_sends_diff_then_confirms_and_saves(monkeypatch, tmp_path):
+    import subprocess
+    from src.agents.workspace_editor import content_sha256
+    from src.gateway import protocol as P
+    from src.web.routers import realtime
+
+    original = "answer = 1\n"
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    path = tmp_path / "main.py"
+    path.write_text(original, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    ws = _FakeWS(sid="desktop-edit")
+    agent = realtime._new_agent()
+    _inject_session(ws, agent)
+    try:
+        await realtime.handle_websocket_message(ws, {
+            "type": P.WORKSPACE_EDIT,
+            "path": "main.py",
+            "content": "answer = 2\n",
+            "expected_sha256": content_sha256(original.encode()),
+            "rid": "save-1",
+        })
+        confirm = await _wait_for_event(ws, P.AGENT_CONFIRM)
+        await realtime.handle_websocket_message(ws, {
+            "type": P.AGENT_CONFIRM_RESPONSE,
+            "id": confirm["id"],
+            "ok": True,
+        })
+        await _drain(ws)
+
+        kinds = [event["type"] for event in ws.sent]
+        assert kinds.index(P.AGENT_DIFF) < kinds.index(P.AGENT_CONFIRM) < kinds.index(P.WORKSPACE_EDIT_RESULT)
+        result = [event for event in ws.sent if event["type"] == P.WORKSPACE_EDIT_RESULT][-1]
+        assert result["ok"] is True and result["rid"] == "save-1" and len(result["sha256"]) == 64
+        assert path.read_text(encoding="utf-8") == "answer = 2\n"
+        assert agent._web_confirm_holder["fn"] is None
+    finally:
+        _cleanup(ws)
+
+
+@pytest.mark.asyncio
+async def test_desktop_workspace_edit_rejects_stale_hash_without_confirmation(monkeypatch, tmp_path):
+    import subprocess
+    from src.gateway import protocol as P
+    from src.web.routers import realtime
+
+    path = tmp_path / "main.py"
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    path.write_text("current\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    ws = _FakeWS(sid="desktop-edit-stale")
+    agent = _DesktopEditAgent()
+    _inject_session(ws, agent)
+    try:
+        await realtime.handle_websocket_message(ws, {
+            "type": P.WORKSPACE_EDIT,
+            "path": "main.py",
+            "content": "replacement\n",
+            "expected_sha256": "0" * 64,
+        })
+        await _drain(ws)
+        assert not any(event["type"] == P.AGENT_CONFIRM for event in ws.sent)
+        result = [event for event in ws.sent if event["type"] == P.WORKSPACE_EDIT_RESULT][-1]
+        assert result["ok"] is False and "编辑期间" in result["message"]
+        assert path.read_text(encoding="utf-8") == "current\n"
+    finally:
+        _cleanup(ws)
+
+
+@pytest.mark.asyncio
+async def test_desktop_workspace_edit_denial_keeps_disk_unchanged(monkeypatch, tmp_path):
+    import subprocess
+    from src.agents.workspace_editor import content_sha256
+    from src.gateway import protocol as P
+    from src.web.routers import realtime
+
+    original = "before\n"
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    path = tmp_path / "main.py"
+    path.write_text(original, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    ws = _FakeWS(sid="desktop-edit-denied")
+    _inject_session(ws, realtime._new_agent())
+    try:
+        await realtime.handle_websocket_message(ws, {
+            "type": P.WORKSPACE_EDIT,
+            "path": "main.py",
+            "content": "after\n",
+            "expected_sha256": content_sha256(original.encode()),
+        })
+        confirm = await _wait_for_event(ws, P.AGENT_CONFIRM)
+        await realtime.handle_websocket_message(ws, {
+            "type": P.AGENT_CONFIRM_RESPONSE,
+            "id": confirm["id"],
+            "ok": False,
+        })
+        await _drain(ws)
+        result = [event for event in ws.sent if event["type"] == P.WORKSPACE_EDIT_RESULT][-1]
+        assert result["ok"] is False and "取消" in result["message"]
+        assert path.read_text(encoding="utf-8") == original
+    finally:
+        _cleanup(ws)
+
+
 # ---- 图片输入 ----
 
 def test_sanitize_images():
@@ -618,7 +1150,7 @@ async def test_rid_echoed_on_all_turn_events(monkeypatch):
         await realtime.handle_agent_message(
             ws, {"type": "agent", "text": "hi", "mode": "plan", "rid": "r-42"})
         await _drain(ws)
-        turn_events = [m for m in ws.sent if m["type"].startswith("agent_")]
+        turn_events = [m for m in ws.sent if m["type"].startswith("agent_") and m["type"] != "agent_queue"]
         assert turn_events and all(m.get("rid") == "r-42" for m in turn_events), turn_events
         assert any(m["type"] == "agent_done" for m in turn_events)
     finally:
@@ -660,6 +1192,81 @@ class _ThinkingAgent:
         if reasoning_cb:
             reasoning_cb("想一想")
         emit("答案")
+
+
+class _HookLifecycleAgent:
+    """Emit one Hook lifecycle through the same holder used by MainAgent."""
+
+    def __init__(self):
+        self._web_tool_event_holder = {"fn": None}
+        self.plan = []
+
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None,
+                       reasoning_cb=None):
+        callback = self._web_tool_event_holder["fn"]
+        callback("hook_start", {
+            "id": "hook-visible-1", "name": "format", "event": "post_tool_use",
+            "tool": "edit_file", "status": "running",
+        })
+        callback("hook_finish", {
+            "id": "hook-visible-1", "name": "format", "event": "post_tool_use",
+            "tool": "edit_file", "status": "succeeded", "message": "formatted",
+            "duration_ms": 12, "stop_execution": False,
+        })
+        emit("完成")
+
+
+@pytest.mark.asyncio
+async def test_hook_lifecycle_is_a_structured_persisted_activity(monkeypatch):
+    from src.web.routers import realtime
+
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    ws = _FakeWS(sid="s-hook-lifecycle")
+    _inject_session(ws, _HookLifecycleAgent())
+    try:
+        await realtime.handle_agent_message(
+            ws, {"type": "agent", "text": "format", "rid": "r-hook"})
+        await _drain(ws)
+        hook_events = [message for message in ws.sent if message["type"] == "agent_hook"]
+        assert [message["status"] for message in hook_events] == ["running", "succeeded"]
+        assert hook_events[0]["id"] == hook_events[1]["id"] == "hook-visible-1"
+        assert hook_events[1]["message"] == "formatted"
+        assert all(message["rid"] == "r-hook" and message["seq"] > 0 for message in hook_events)
+        saved = realtime._SESSIONS[realtime._session_key(ws)]["activities"]
+        assert [message["status"] for message in saved if message["type"] == "agent_hook"] == [
+            "running", "succeeded",
+        ]
+    finally:
+        _cleanup(ws)
+
+
+@pytest.mark.asyncio
+async def test_git_review_change_poll_publishes_structured_session_event(tmp_path, monkeypatch):
+    from src.web.routers import realtime
+
+    subprocess.run(["git", "-C", str(tmp_path), "init", "-q", "-b", "main"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "watch@example.com"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Watch Test"], check=True)
+    (tmp_path / "watch.txt").write_text("before\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "watch.txt"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "base"], check=True)
+    monkeypatch.setenv("VORTOCODE_CHANGE_SOURCE_STORE", str(tmp_path.parent / "watch-source.json"))
+    ws = _FakeWS(sid="git-watch")
+    key = _key(ws)
+    realtime._SESSIONS[key] = {
+        "agent": object(), "transcript": [], "activities": [], "last": 0.0,
+        "repo_root": str(tmp_path), "persist_events": False,
+    }
+    realtime._SESSION_SUBSCRIBERS[key] = {ws}
+    try:
+        assert await realtime._poll_git_review_change(key, str(tmp_path)) is False
+        (tmp_path / "watch.txt").write_text("after\n", encoding="utf-8")
+        assert await realtime._poll_git_review_change(key, str(tmp_path)) is True
+        event = next(item for item in ws.sent if item["type"] == "git_review_changed")
+        assert event["files"] == 1 and event["paths"] == ["watch.txt"]
+        assert len(event["baseline"]) == 64 and event["seq"] > 0
+    finally:
+        _cleanup(ws)
 
 
 @pytest.mark.asyncio
@@ -713,7 +1320,7 @@ async def test_ping_pong_and_init_version():
     await realtime.handle_websocket_message(ws, {"type": "ping"})
     assert ws.sent == [{"type": "pong"}]
     evt = P.make_event(P.INIT, v=P.PROTOCOL_VERSION, data={})   # endpoint 的 init 构造式
-    assert evt["v"] == 1
+    assert evt["v"] == P.PROTOCOL_VERSION
 
 
 def test_sessions_evict_oldest_over_cap(monkeypatch):
