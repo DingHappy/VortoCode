@@ -547,6 +547,7 @@ class MainAgent:
         permissions: Optional[Any] = None,
         env_context: bool = False,
         capabilities: Optional[Any] = None,
+        untrusted_input: bool = False,
     ) -> None:
         import os
         # 复用既有 src/hooks 的 HookSystem：把工具生命周期事件（pre/post/error）接进 agent loop
@@ -554,6 +555,10 @@ class MainAgent:
         self._tool_list = list(tools)
         self._llm = llm
         self._llm_injected = llm is not None       # 区分测试/调用方注入与 Dashboard 只读查询触发的惰性客户端
+        # 端级污点声明：这个入口的**用户输入本身**就是不可信外部内容（IM 群消息/转发内容）。
+        # 置位后每个回合在 reset_taint() 之后立刻重新打污点（见 run_turn），
+        # 因为污点是回合作用域的——在 run_turn 外面调 mark_tainted() 会被回合开头的 reset 抹掉。
+        self._untrusted_input = bool(untrusted_input)
         self.max_steps = _env_int("VORTOCODE_MAX_STEPS", max_steps)   # 可全局调高 build/普通预算
         # build 是真实开发模式，固定 max_steps 只作为"单段预算"；到段尾会自动续跑若干段。
         # 这个安全阈值只防模型无限循环，不应成为正常开发的停止点。
@@ -1499,6 +1504,10 @@ class MainAgent:
         """
         from src.agents.taint import mark_tainted, reset_taint
         reset_taint()                       # 回合作用域污点：每回合从"未摄入外部内容"开始（D0）
+        # 端级不可信入口（IM）：用户输入自身就是外部内容，**每回合无条件重新打污点**。
+        # 必须在这里、reset 之后打——装配时打一次会被下一个回合的 reset 抹掉（污点是回合作用域的）。
+        if getattr(self, "_untrusted_input", False):
+            mark_tainted()
         # TUI 自动召回在 agent 外拼接；attach 后 serve 也只能看到文本。显式数据边界让两条路径
         # 都能在 reset 之后重新标污点。用户伪造该标记只会触发更保守的确认，不会获得权限。
         if "<vortocode_untrusted_memory>" in str(user_text):
