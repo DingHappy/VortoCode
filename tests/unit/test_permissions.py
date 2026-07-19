@@ -173,3 +173,20 @@ async def test_main_agent_allows_unmatched():
                       permissions=Permissions([("run_command", "rm *")]))
     await agent.run_turn("看看", mode="build", emit=lambda _m: None)
     assert ran == [{"command": "ls"}]                            # 不匹配 deny → 正常执行
+
+
+@pytest.mark.asyncio
+async def test_explicit_client_tool_uses_same_permission_gate():
+    from src.agents.main_agent import MainAgent, Tool
+    ran = []
+
+    async def handler(args):
+        ran.append(args)
+        return "saved"
+
+    tool = Tool("write_file", "desktop save", {"path": "路径"}, handler, read_only=False)
+    agent = MainAgent([], permissions=Permissions([("write_file", "src/*")]))
+    result = await agent._run_bound_tool(
+        tool, {"path": "src/main.py", "content": "x"}, "build", lambda _m: None)
+    assert "权限拦截" in result
+    assert ran == []

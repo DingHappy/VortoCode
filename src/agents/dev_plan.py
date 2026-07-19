@@ -148,7 +148,9 @@ _STATE_ENTRIES = [
     "worktrees/",
     "dev_plans/",
     "tasks/",
+    "goals/",
     "web_sessions/",
+    "session_events/",
     "artifacts/",
     "states/",
     "projects/",
@@ -163,6 +165,9 @@ _STATE_ENTRIES = [
     "tui_history",
     "web_advanced_agents.json",
     "notices.jsonl",
+    "review_threads.json",
+    "worktree_bindings.json",
+    "task_reviews/",
 ]
 
 _MANAGED_BEGIN = "# >>> vortocode managed —— 自动维护区，勿手改（升级会重写本区）；自定义规则请写在区外 >>>"
@@ -173,7 +178,7 @@ def _managed_block() -> str:
     return "\n".join([
         _MANAGED_BEGIN,
         "# VortoCode 自动生成的运行时状态——不进版本控制。",
-        "# 用户配置（permissions.yaml / hooks.yaml / cron.yaml / HEARTBEAT.md / BACKLOG.md /",
+        "# 用户配置（permissions.yaml / hooks.yaml / review-policy.yaml / cron.yaml / HEARTBEAT.md / BACKLOG.md /",
         "# commands/ / skills/ / AGENTS.md 等）不在此列，可自行 git add。",
         *_STATE_ENTRIES,
         _MANAGED_END,
