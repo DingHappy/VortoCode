@@ -35,6 +35,36 @@ git grep -n -I -E 'sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-
 - Public pull requests should not run on trusted self-hosted runners with local
   credentials, private network access, or deployment keys.
 
+## Desktop Distribution
+
+- Never overwrite an installed development app with an unsigned bundle when it
+  owns Keychain items. Run `npm run signing:doctor` and
+  `npm run install:dev-signed`; the selected non-ad-hoc identity, bundle
+  identifier and designated requirement must remain stable between builds.
+- Treat `VORTOCODE_ALLOW_SIGNING_IDENTITY_CHANGE=1` as a one-time certificate
+  migration override, not a normal build setting. Re-check Keychain access and
+  the installed signature after every intentional identity rotation.
+- Build the PyInstaller sidecar natively for every target triple; do not reuse a
+  binary produced for another OS or architecture.
+- Build from the isolated environment synchronized exactly from
+  `desktop/requirements-runtime.lock`; reject global or extra site-packages.
+- Resolve the target's standalone CPython only from
+  `desktop/managed-python-sources.json`; verify the archive size, SHA-256,
+  upstream metadata, executable architecture, license bundle and runtime-tree
+  hash. Review every source change as a supply-chain update.
+- Run `npm run check` and `npm run bundle:preview`; run
+  `npm run release:verify -- --mode release` before publishing an artifact.
+- Confirm the bundle contains `vortocode-runtime`, and that the sidecar accepts
+  only the fixed local Gateway command surface.
+- Review the generated third-party notices and inventory derived from the actual
+  PyInstaller Analysis table; confirm their hashes match the release evidence.
+- Confirm the generated notices include both the frozen Python distributions
+  and all licenses shipped in the pinned standalone CPython full archive.
+- Build arm64 sidecar, app and DMG natively on Apple Silicon; cross-host asset
+  verification alone is not an arm64 release artifact.
+- Sign and notarize macOS artifacts with release-owned credentials; verify the
+  signature, notarization ticket and installer checksum before upload.
+
 ## Documentation Honesty
 
 - README "core features" reflects current behavior.
