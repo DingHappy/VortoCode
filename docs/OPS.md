@@ -79,6 +79,19 @@ vortocode agent --attach "问题/任务"    # 一次性问答/脚本化；-c 续
    它会一直躺在决策队列（Desktop 决策中心 / Journal）里标「后台任务已暂停」，等你点续跑或明确
    dismiss。这是拍板过的语义（B6-7 ④，2026-07-20），有回归测试钉着，不是漏。
 
+## 四又二分之一、运营部值班：中转站巡检（B8-① 试点一）
+
+第一条 OPC 职责：cron 每夜跑 `python -m src.gateway.relay_duty`（确定性、零 LLM），
+巡检 `https://token.vortotech.com`（生产真身，2026-07-20 实测；relay 仓库文档写的
+relay.dinghappy.com 已 502 弃用。`VORTOCODE_RELAY_URL` 可换目标）：
+
+- 免鉴权：`/api/status` 存活 + **重启检测**（start_time 快照比对，正常发布重启也会报一夜、次夜自动转绿）、
+  `/api/pricing` 非空（DB 读路径）。
+- 配了 `VORTOCODE_RELAY_SK`：计费链路端到端探针；配了 `VORTOCODE_RELAY_ADMIN_TOKEN`：
+  渠道池冷却/禁用、当日消耗（`VORTOCODE_RELAY_DAILY_QUOTA_LIMIT` 配阈值）。未配的项跳过且明说，跳过≠通过。
+- 出口走 cron run lane：全绿静默（只落 Journal 台账一行）；异常 → 决策队列 `run:<id>` + 通报。
+  报告只含数值与原因，凭据绝不回显。手动验收：`vortocode cron run relay_duty`。
+
 ## 五、dogfood 节奏建议（把摩擦变成 BACKLOG）
 
 1. 第 1 周：只常驻 + attach 日用，CRON/HEARTBEAT 先关；遇到的摩擦随手记进 `.vortocode/BACKLOG.md`。
