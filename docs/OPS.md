@@ -92,6 +92,16 @@ relay.dinghappy.com 已 502 弃用。`VORTOCODE_RELAY_URL` 可换目标）：
 - 出口走 cron run lane：全绿静默（只落 Journal 台账一行）；异常 → 决策队列 `run:<id>` + 通报。
   报告只含数值与原因，凭据绝不回显。手动验收：`vortocode cron run relay_duty`。
 
+无人值守硬化三件套（B8-②，"能跑"→"敢托付"的分界）：
+
+- **预算封顶**：prompt 作业可配 `budget:`（或 env `VORTOCODE_CRON_TOKEN_BUDGET` 全局默认）——
+  超限在**发起下一次 LLM 调用前**拦截、作业按失败升级；agent 把异常吞掉也洗不掉（tripped 兜底）。
+- **连败升级**：同一作业连续失败达阈值（`VORTOCODE_CRON_FAIL_ESCALATE`，默认 3）→ 通知台账
+  单独一条 🔺 条目 + 失败 run 自带「已连续失败 N 次」——单次失败会各自进决策队列，连败才是模式信号。
+- **静默死亡检测**：每天 Journal 固定有 `duty`「应跑 vs 实跑」对账节——最怕的不是作业失败
+  （失败会留痕），是调度器整个没醒；启用作业缺勤会点名并给排查话术（serve 在吗 / VORTOCODE_CRON=1 吗）。
+  零 LLM 零新服务，晨读兜底。
+
 ## 五、dogfood 节奏建议（把摩擦变成 BACKLOG）
 
 1. 第 1 周：只常驻 + attach 日用，CRON/HEARTBEAT 先关；遇到的摩擦随手记进 `.vortocode/BACKLOG.md`。

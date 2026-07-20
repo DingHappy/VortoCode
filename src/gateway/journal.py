@@ -156,6 +156,86 @@ def _summary_count(journal: Dict[str, Any], field: str) -> int:
         return 0
 
 
+def _duty_reconciliation(repo_root: str, day: str, cron_runs: list) -> Optional[Dict[str, Any]]:
+    """「应跑 vs 实跑」对账（B8-② 静默死亡检测）：最怕的不是作业失败（失败会留痕、会通报），
+    是调度器整个没醒（launchd 挂了 / VORTOCODE_CRON 没开 / serve 死了）——那时一切都静悄悄。
+    每天的 Journal 固定落这一节，晨读一眼看出"昨晚该跑的到底跑没跑"。确定性对账，零 LLM。
+
+    应跑：按启用作业的 schedule 推算当天窗口（今天只算到当前时刻，别把还没到点的报成没跑；
+    every 间隔大于窗口跨度的推不出确定性预期，不列）。
+    实跑：cron lane 的 run 按 `sandbox.cron_job` 归属作业名（老记录回退用命令文本匹配）。
+    没有启用作业 → 返回 None（这一节整个不出现，不制造噪音）。
+    """
+    try:
+        from src.gateway.cron import load_jobs
+        jobs = [job for job in load_jobs(repo_root) if job.enabled]
+    except Exception:  # noqa: BLE001 —— cron 配置读不了就没有对账可言
+        return None
+    if not jobs:
+        return None
+
+    start = datetime.strptime(day, "%Y-%m-%d").astimezone()
+    end_of_day = start + timedelta(days=1) - timedelta(seconds=1)
+    now = datetime.now().astimezone()
+    end = min(end_of_day, now)
+    if end <= start:
+        return None                                    # 未来的日子没有"应跑"
+
+    def _expected(schedule) -> bool:
+        if schedule.kind == "at":
+            hour, minute = schedule.at
+            target = start.replace(hour=hour, minute=minute)
+            return start <= target <= end
+        if schedule.kind == "every":
+            return schedule.interval <= (end - start)  # 间隔大于窗口 → 推不出确定预期，不列
+        cursor = start.replace(second=0, microsecond=0)
+        while cursor <= end:                           # 5 段 cron：逐分钟扫窗口（≤1440 次）
+            if _cron_field_matches(schedule.cron, cursor):
+                return True
+            cursor += timedelta(minutes=1)
+        return False
+
+    expected = [job.name for job in jobs if _expected(job.schedule)]
+    if not expected:
+        return None
+
+    by_command = {job.command: job.name for job in jobs if job.command}
+    ran = set()
+    for run in cron_runs:
+        created = _parse_time(getattr(run, "created", ""))
+        if created is None or not (start <= created.astimezone() <= end):
+            continue
+        sandbox = getattr(run, "sandbox", None)
+        name = sandbox.get("cron_job") if isinstance(sandbox, dict) else None
+        command = str(getattr(run, "command", "") or "")
+        if not name and command.startswith("cron:"):
+            name = command[5:].strip()
+        if not name:
+            name = by_command.get(command)             # 老记录（没有名字戳）按命令文本回退归属
+        if name:
+            ran.add(str(name))
+
+    missing = [name for name in expected if name not in ran]
+    note = ""
+    if missing:
+        note = (f"⚠ {len(missing)} 个应跑作业没有任何运行痕迹（{', '.join(missing[:6])}）——"
+                "查：serve 是否在跑、VORTOCODE_CRON 是否为 1、launchd 是否存活"
+                if not ran else
+                f"⚠ {len(missing)} 个应跑作业缺勤（{', '.join(missing[:6])}），但其它作业跑了"
+                "——多半是该作业到点时 serve 恰好不在，或 schedule 判定有出入")
+    return {
+        "expected": expected,
+        "ran": sorted(ran & set(expected)),
+        "missing": missing,
+        "note": note,
+    }
+
+
+def _cron_field_matches(cron_fields, moment: datetime) -> bool:
+    from src.gateway.cron import _cron_matches
+    return _cron_matches(cron_fields, moment)
+
+
 def build_daily_journal(repo_root: str, day: str = "") -> Dict[str, Any]:
     """Build a live journal view from durable audit/task/run/goal sources."""
     from src.gateway.audit import list_audit
@@ -345,6 +425,10 @@ def build_daily_journal(repo_root: str, day: str = "") -> Dict[str, Any]:
         "evidence": evidence_view,
         "notes": notes,
         "next_actions": next_actions[:30],
+        "duty": _duty_reconciliation(
+            repo_root, selected_day,
+            [run for run in all_runs if getattr(run, "kind", "") == "cron"],
+        ),
     }
     digest_payload = dict(journal)
     digest_payload.pop("generated_at", None)
