@@ -286,6 +286,42 @@ Desktop 预览包已内置只暴露本机 Gateway 的 Python sidecar，不要求
 
 > 默认仅监听本地回环（127.0.0.1）。**对外暴露前务必设置 `VORTOCODE_API_TOKEN`**，见下方「安全」。
 
+## 快速上手（常驻 + attach 日用）
+
+装好命令行后（见上文「快速开始」），把 VortoCode 跑成一位「常驻开发同事」的推荐路径是三步——
+**先验管道、再常驻、日常 attach**。下面只给最短路径；每步的展开、开关矩阵和排障都在
+[常驻运维手册 docs/OPS.md](docs/OPS.md)，细节以那份手册为准（这里只放链接、不复制内容，避免两处不同步）。
+
+1. **验管道** —— `vc doctor`
+
+   ```bash
+   vc doctor    # git / API key / 中转站 / serve / 沙箱 / 权限 / gh / IM 一屏自检；有硬伤退出码 1
+   ```
+
+   排障清单（serve 未起、中转站不可达、`permissions.yaml` 写坏会静默降级等）见
+   [OPS.md《四、出问题先查什么》](docs/OPS.md#四出问题先查什么)。
+
+2. **常驻** —— `vc server`
+
+   ```bash
+   vc server    # 唯一状态所有者，缺省 127.0.0.1:8080；浏览器开 /agent 即网页版主 agent
+   ```
+
+   macOS 用 launchd 开机常驻、内嵌 IM、代理环境注意事项见
+   [OPS.md《一、常驻（macOS launchd）》](docs/OPS.md#一常驻macos-launchd)；
+   CRON / HEARTBEAT / IM 等开关默认全关（零自主消耗），矩阵见
+   [OPS.md《二、开关矩阵》](docs/OPS.md#二开关矩阵都是-opt-in默认全关--零自主消耗)。
+   **对外暴露前务必先设 `VORTOCODE_API_TOKEN`**（设了则所有 `/api/*` 与 `/ws` 强制鉴权）。
+
+3. **日用** —— `vc tui --attach`
+
+   ```bash
+   vc tui --attach    # TUI 作协议客户端，回合交给常驻 serve 跑；serve 不在时自动回退进程内、不挡活
+   ```
+
+   attach 优先的日常用法（后台任务、通知三路、`vc agent --attach` 脚本化问答）见
+   [OPS.md《三、日常用法（attach 优先）》](docs/OPS.md#三日常用法attach-优先)。
+
 ## 开发路线图
 
 > 下面是最初规划的阶段划分（**历史规划，非当前现状**）。当前主线是「交互式主 Agent（见上文）

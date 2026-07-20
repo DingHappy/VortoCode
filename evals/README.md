@@ -9,7 +9,7 @@ agent 自述）算三项指标。换模型、调提示、加护城河功能后�
 ```bash
 python -m evals --list                       # 列出所有场景
 python -m evals --scenario no_gitignore      # 跑单个（最便宜，冒烟）
-python -m evals                              # 跑全部 6 个场景各 1 遍
+python -m evals                              # 跑全部 7 个场景各 1 遍
 python -m evals --model mimo-v2.5-pro        # 换模型
 python -m evals --repeat 3                   # 每个场景跑 3 遍算通过率
 python -m evals --protocol prompt            # 强制提示式协议（默认 native = 生产默认）
@@ -34,7 +34,42 @@ python -m evals --protocol prompt            # 强制提示式协议（默认 na
 | `semantic_conflict` | 两块单独绿、合并红须如实报（#117 假绿漏洞） | dev_parallel |
 | `dependency_chain` | 依赖接力长链、每步 import 上一步 | dev_auto |
 | `node_repo` | Node 多语言流水线 detect 出 npm（需装 node，否则跳过） | dev_isolated |
+| `resume_interrupted` | 中断续跑：半完成计划只补跑 pending、不重做已落地块（C1/#127） | dev_resume |
 | `vague_instruction` | 含糊指令须如实报"未产生改动"、不编造交付（6-30） | dev_isolated |
+
+### resume_interrupted 详解：红起点 + must_change 双门（为什么 no-op 混不过去）
+
+`resume_interrupted` 压的是「中断续跑」（C1/#127）：`dev_auto` 跑到一半被 kill——块 1 已落地、块 2
+没跑完——`dev_resume` 应当**只补跑 pending 块、不重做已落地块**，最后整条分支集成绿。难点在于：一个
+什么都不做（no-op）、或偷偷删掉红测试的 `dev_resume` 也可能让「分支看起来绿」而白拿一个 landed。本场景
+用**两道门**堵这条作弊路径，缺一不可。（构造在 `evals/scenarios.py` 的 `_post_init_resume`，判定在
+`evals/scoring.py` / `runner.py`。）
+
+**红起点构造（landed 门天然守住 no-op）**
+
+`post_init`（`_post_init_resume`）在 `git init` **之后**预置一个「跑到一半」的现场：
+
+- 建 `vorto/auto-resume` 分支，提交块 1 的产出（`util_a.py` + 绿测试），**外加块 2 的测试**
+  `tests/test_util_b.py`——它 `from util_b import shout`，而 `util_b.py` **还不存在**。
+- 于是这条分支在 resume 之前就是**红的**（测试导入不存在的模块，收集期直接报错）。
+- 半完成计划走真实 `dev_plan` API 写盘（`save_plan`，与 `dev_resume` 的读取端同源）：块 `ind-0` 标
+  `landed`、块 `ind-1` 标 `pending`（desc 明说「测试已在分支上，补实现让它转绿、别改测试」）。
+
+harness 采分时**不信 agent 报的 ✅**，而是自己在新 worktree 里 `verify_branch` 独立复验，
+`landed = 有 vorto 分支 且 verify_ok is True`。因为起点是红的，一个 no-op 的 `dev_resume`（什么都没补）
+留下的分支**仍然红** → `verify_ok=False` → `landed=False`；而本场景 `expect_land=True`，直接判不过。
+换句话说，红起点让「分支绿」这件事本身证明了 pending 块真被补跑——而不是预置分支本来就绿、白送一个 landed。
+
+**must_change 门（堵「删红测试洗绿」的第二保险）**
+
+只有红起点还不够：另一条作弊路径是不写 `util_b.py`、直接**删掉那条红测试** `tests/test_util_b.py`，
+分支照样能转绿、绕过 landed 门。所以场景再加一道 `must_change=["util_b.py"]`：最终分支相对 base 的
+diff（`_branch_changed_files`）**必须包含** `util_b.py`，否则 `changed_ok=False`、本轮判不过（scorer 报
+「交付物未出现在分支 diff……pending 块没真补跑，#135」）。删测试能骗过 landed，却骗不过「交付物必须在场」。
+
+**两门合起来**：红起点让「不干活」留下红分支（landed 拦 no-op），`must_change` 让「删红测试假装干完」
+缺交付物（changed_ok 拦洗绿）。只有**真的实现 `util_b.py` 让分支转绿**才同时过两门——这正是 #135
+评审要钉死的 resume 语义。
 
 ## 基线
 
