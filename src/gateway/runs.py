@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
 import time
 import uuid
@@ -28,6 +29,11 @@ _TEST_RESULT_STATES = frozenset({"done", "failed"})
 _VERIFIER_RESULT_STATES = frozenset({"done", "failed", "interrupted"})
 _MAX_OUTPUT_CHARS = 160_000
 _MAX_COMMAND_CHARS = 4_000
+# run 文件数上限。单条最大 _MAX_OUTPUT_CHARS(160K) 输出，而 list() 会把目录里每个文件都
+# json.load 一遍——Desktop /api/runs 每 900ms 轮询一次、journal 快照每 30s 一次，
+# 再加上 B6-5 之后 cron 每次例行班次也落一条（every 5m 的作业 = 288 条/天），
+# 不封顶就是"跑得越久越慢"的稳定劣化。
+_DEFAULT_MAX_RUN_FILES = 200
 _LOCAL_PREVIEW = re.compile(
     r"https?://(?:localhost|127\.0\.0\.1)(?::\d{1,5})?(?:/[^\s\]\[<>'\"`]*)?",
     re.IGNORECASE,
@@ -132,6 +138,22 @@ def parse_test_results(command: str, output: str) -> Dict[str, Any]:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def max_run_files() -> int:
+    """run 文件保留条数，env `VORTOCODE_MAX_RUN_FILES` 可调。
+
+    0/负数/非数字一律当作"没配"回落默认值——**不当作"一条都不留"**：
+    一个手滑的 `=0` 不该把整个运行台账清空。真想少留就写具体数字。
+    """
+    raw = str(os.getenv("VORTOCODE_MAX_RUN_FILES", "") or "").strip()
+    if not raw:
+        return _DEFAULT_MAX_RUN_FILES
+    try:
+        value = int(raw)
+    except ValueError:
+        return _DEFAULT_MAX_RUN_FILES
+    return value if value > 0 else _DEFAULT_MAX_RUN_FILES
 
 
 def normalize_preview_url(value: str) -> str:
@@ -279,6 +301,10 @@ class RunLedger:
         run.output = run.output[-_MAX_OUTPUT_CHARS:]
         run.updated = _now()
         path = self._path(run_id)
+        # 只有"新增一条记录"才会让文件数变多，才需要轮转。
+        # 判定放在写之前：_monitor 每收一段输出就 save 一次，跟着轮转会把开销加回去；
+        # 而 cron 的例行班次是直接 save 一条全新记录（不走 create），所以钩子必须在 save 里。
+        is_new = not path.exists()
         try:
             from src.agents.dev_plan import ensure_state_gitignore
 
@@ -289,9 +315,11 @@ class RunLedger:
                 json.dumps(run.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8"
             )
             temporary.replace(path)
-            return True
         except (OSError, TypeError, ValueError):
             return False
+        if is_new:
+            self.prune()
+        return True
 
     def load(self, run_id: str) -> Optional[CommandRun]:
         clean = self._clean_id(run_id)
@@ -306,20 +334,83 @@ class RunLedger:
         except (OSError, TypeError, ValueError):
             return None
 
-    def list(self) -> List[CommandRun]:
+    def _files_newest_first(self) -> List[Path]:
+        """按 mtime 新→旧列出 run 文件。只 stat 不 json.load——排序阶段不该付解析的钱。"""
         directory = self._dir()
         if not directory.is_dir():
             return []
-        items = []
+        entries = []
         for path in directory.glob("run-*.json"):
+            try:
+                entries.append((path.stat().st_mtime, path))
+            except OSError:
+                entries.append((0.0, path))
+        entries.sort(key=lambda item: item[0], reverse=True)
+        return [path for _mtime, path in entries]
+
+    def list(self, limit: int = 0) -> List[CommandRun]:
+        """最新在前。`limit>0` 时只解析最新的 limit 条——**读取量的硬上界**。
+
+        轮转已经把文件数压到 max_run_files()，但受保护的失败记录可以顶破那条线
+        （见 prune），所以高频调用方（/api/runs 轮询）仍应显式给 limit，
+        让轮询开销与保留策略解耦。
+        """
+        items: List[CommandRun] = []
+        for path in self._files_newest_first():
+            if limit > 0 and len(items) >= limit:
+                break
             run = self.load(path.stem)
             if run is not None:
-                try:
-                    items.append((path.stat().st_mtime, run))
-                except OSError:
-                    items.append((0.0, run))
-        items.sort(key=lambda item: item[0], reverse=True)
-        return [run for _mtime, run in items]
+                items.append(run)
+        return items
+
+    def _dismissed_decisions(self) -> set:
+        """已被人处理掉的决策 id 集合。取不到就当空集——空集 = 谁都没处理过 = 全都保护，方向是安全的。"""
+        try:
+            from src.gateway.decisions import DecisionStore
+
+            return DecisionStore(self.repo_root).dismissed()
+        except (ImportError, OSError, TypeError, ValueError):
+            return set()
+
+    @staticmethod
+    def _rotation_protected(run: CommandRun, dismissed: set) -> bool:
+        """这条 run 能不能被轮转删掉。"""
+        if run.status not in _TERMINAL:
+            # 还在排队/运行/取消中：删了 recover_interrupted 就再也认不出这条失联进程。
+            return True
+        if run.status in {"failed", "interrupted"}:
+            # 决策队列靠 run:<id> 把失败摆到人面前。人还没处理就删，
+            # 等于待办没被看见就被静默清掉——这正是 B6-7② 验收里点名不许发生的事。
+            return f"run:{run.id}" not in dismissed
+        return False
+
+    def prune(self, max_files: int = 0) -> List[str]:
+        """把 run 文件数压回上限，从最旧的删起。返回被删掉的 run id。
+
+        受保护的记录（未结束、未处理的失败）一律跳过——**宁可超出上限也不删**。
+        所以这是软上限：极端情况下一堆没人管的失败记录会把总数顶在上限之上，
+        那是"有一堆待办没处理"的真实信号，不该靠删证据来消音。
+        """
+        cap = max_files if max_files > 0 else max_run_files()
+        paths = self._files_newest_first()
+        if len(paths) <= cap:
+            return []
+        dismissed = self._dismissed_decisions()
+        removed: List[str] = []
+        for path in reversed(paths):                      # 最旧的先考察
+            if len(paths) - len(removed) <= cap:
+                break
+            run = self.load(path.stem)
+            # run is None = 文件损坏/不是合法记录，顺手清掉
+            if run is not None and self._rotation_protected(run, dismissed):
+                continue
+            try:
+                path.unlink()
+            except OSError:
+                continue
+            removed.append(path.stem)
+        return removed
 
     def recover_interrupted(self) -> List[CommandRun]:
         recovered = []
@@ -556,8 +647,8 @@ class RunManager:
     def get(self, run_id: str) -> Optional[CommandRun]:
         return self.ledger.load(run_id)
 
-    def list(self) -> List[CommandRun]:
-        return self.ledger.list()
+    def list(self, limit: int = 0) -> List[CommandRun]:
+        return self.ledger.list(limit)
 
     async def wait(self, run_id: str, timeout: float = 10.0) -> None:
         """Wait for a run monitor in tests/one-shot clients."""

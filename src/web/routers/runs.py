@@ -18,7 +18,11 @@ def get_run_manager():
 
 @router.get("/api/runs")
 async def list_runs():
-    return {"runs": [run.to_dict() for run in get_run_manager().list()]}
+    # Desktop 每 900ms 轮一次这条。显式给上界，让轮询开销与保留策略解耦——
+    # 轮转是软上限（未处理的失败记录不许删，可以顶破），这里不给限就又变回整目录读。
+    from src.gateway.runs import max_run_files
+
+    return {"runs": [run.to_dict() for run in get_run_manager().list(max_run_files())]}
 
 
 @router.get("/api/runs/{run_id}")
