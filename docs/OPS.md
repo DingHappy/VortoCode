@@ -37,6 +37,22 @@
 - **检查单按不可信输入处理**：它虽是本地文件，但读进来即让该回合进**污点态**——免确认授权全部失效，
   检查单里写的任何指令都不会变成动作。别把"想让它自动做的事"写进检查单，那里只列**要查什么**。
 
+**信任模型：single-token 单用户（刻意如此，不是疏漏）**。Web/REST 层只有一个共享凭据
+`VORTOCODE_API_TOKEN`（不设则完全放行，配合默认只绑 `127.0.0.1`），**没有按用户/按会话的身份**。
+两条推论别误当成 bug：
+
+- 终端与运行记录**不按会话归属**：凡是过了鉴权的调用方都能驱动任意 `terminal id`。
+  这不构成额外授权——拿到该 token 的人本来就能 `POST /api/terminals` 开自己的 PTY、
+  `POST /api/runs` 跑任意命令。把归属挂在调用方自报的 id 上只是摆设：伪造它所需的凭据，
+  正是威胁模型里假定攻击者已经拿到的那一个。
+- 真正承重的是 **fail-closed**：整个命令执行面（`POST /api/runs`、`/api/terminals` 的
+  **全部**端点，含 output/input/resize/stop）都过 `require_shell()`，
+  `VORTOCODE_ENABLE_SHELL` 未设即 403。契约钉在 `tests/integration/test_security.py`。
+
+**所以：暴露到 127.0.0.1 之外前必须设 `VORTOCODE_API_TOKEN`**，并且要清楚它是**全权凭据**——
+没有权限分级，在 `ENABLE_SHELL=1` 时泄漏它等于把宿主机 shell 交出去。
+要多人共用得先做真正的按用户鉴权，那时上面的进程级单例与这些闸都要一并重做。
+
 ## 三、日常用法（attach 优先）
 
 ```bash
