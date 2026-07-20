@@ -257,47 +257,10 @@ async def resume_task_bg(tid: str):
 
 # ---- 通知台账：daemon 路径（scheduler 里的 cron/heartbeat）的投递终点，绝不静默丢 ----
 # cron 的 announce=im 结果、heartbeat 的 surfaced 发现，此前在常驻 scheduler 里没接 notify → 无声消失
-# （codex 审 #129）。这里落一条**可查询的持久台账**（.vortocode/logs/notices.jsonl，logs/ 已在
-# .vortocode 自忽略清单内）+ WS 广播给连着的客户端；将来 IM bridge 并进 gateway 后再加 IM 投递。
-_MAX_NOTICES = 500
-
-
-def record_notice(repo_root: str, text: str, *, source: str = "scheduler") -> None:
-    """往通知台账追加一条（JSONL，尾部截断到 _MAX_NOTICES）。best-effort，出错不抛。"""
-    from datetime import datetime, timezone
-    p = Path(repo_root) / ".vortocode" / "logs" / "notices.jsonl"
-    try:
-        from src.agents.dev_plan import ensure_state_gitignore
-        ensure_state_gitignore(repo_root)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        entry = json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                            "source": source, "text": str(text)[:2000]}, ensure_ascii=False)
-        lines = []
-        if p.is_file():
-            lines = p.read_text(encoding="utf-8").splitlines()[-(_MAX_NOTICES - 1):]
-        lines.append(entry)
-        tmp = p.with_suffix(".jsonl.tmp")
-        tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        tmp.replace(p)
-    except (OSError, TypeError, ValueError):
-        pass
-
-
-def load_notices(repo_root: str, limit: int = 50) -> list:
-    """读通知台账尾部 N 条（新的在前）。无文件/坏行 → 尽量返回能解析的。"""
-    p = Path(repo_root) / ".vortocode" / "logs" / "notices.jsonl"
-    if not p.is_file():
-        return []
-    out = []
-    try:
-        for ln in p.read_text(encoding="utf-8").splitlines():
-            try:
-                out.append(json.loads(ln))
-            except ValueError:
-                continue
-    except OSError:
-        return []
-    return list(reversed(out[-limit:]))
+# （codex 审 #129）。台账本体已下沉到 src/gateway/notices.py（CLI 与调度循环都要写它，不该为了
+# 记一条通知去导入 FastAPI 层），这里只保留 REST 出口 + 旧入口再导出。
+from src.gateway.notices import MAX_NOTICES as _MAX_NOTICES  # noqa: E402
+from src.gateway.notices import load_notices, record_notice  # noqa: E402,F401
 
 
 @router.get("/api/notices")
