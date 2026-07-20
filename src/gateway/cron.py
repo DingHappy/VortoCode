@@ -37,6 +37,10 @@ from typing import Dict, List, Optional
 _STATE_FILE = "cron_state.json"
 
 
+class TokenBudgetTripped(RuntimeError):
+    """prompt 作业的 token 预算被触顶（含 agent 吞掉异常后由 tripped 兜底判定的情形）。"""
+
+
 # --------------------------------------------------------------------- schedule 解析
 class ScheduleError(ValueError):
     """非法 schedule 表达式。"""
@@ -159,6 +163,7 @@ class CronJob:
     announce: str = "im"                         # "im" | "silent"
     enabled: bool = True
     timeout: int = 3600                          # command 作业的超时（秒）
+    budget: int = 0                              # prompt 作业的 token 预算上限（0 = 用 env 默认/不封顶）
 
     @property
     def kind(self) -> str:
@@ -206,11 +211,15 @@ def load_jobs(repo_root: str) -> List[CronJob]:
             timeout = max(1, int(item.get("timeout") or 3600))
         except (TypeError, ValueError):
             timeout = 3600
+        try:
+            budget = max(0, int(item.get("budget") or 0))
+        except (TypeError, ValueError):
+            budget = 0
         jobs.append(CronJob(
             name=name, schedule=schedule, prompt=prompt, command=command,
             model=(str(item["model"]).strip() if item.get("model") else None),
             announce=str(item.get("announce") or "im").strip().lower(),
-            enabled=bool(item.get("enabled", True)), timeout=timeout))
+            enabled=bool(item.get("enabled", True)), timeout=timeout, budget=budget))
     return jobs
 
 
@@ -226,17 +235,47 @@ class CronState:
             except (OSError, ValueError):
                 self._data = {}
 
+    _FAILS_KEY = "__fails__"                     # 保留键：{作业名: 连续失败次数}，与作业名值(str)不冲突
+
     def last_run(self, name: str) -> Optional[datetime]:
         v = self._data.get(name)
-        if not v:
+        if not v or not isinstance(v, str):
             return None
         try:
             return datetime.fromisoformat(v)
         except ValueError:
             return None
 
+    def failures(self, name: str) -> int:
+        fails = self._data.get(self._FAILS_KEY)
+        try:
+            return max(0, int(fails.get(name, 0))) if isinstance(fails, dict) else 0
+        except (TypeError, ValueError):
+            return 0
+
+    def record_result(self, name: str, ok: bool) -> int:
+        """记录一次作业结果，返回**更新后的**连续失败次数（成功清零）。
+
+        连败是「同一个作业连着坏了 N 天没人管」的信号——单次失败已进决策队列，
+        但一条条被各自 dismiss 时看不出模式；连败计数就是给升级动作用的。
+        """
+        fails = self._data.get(self._FAILS_KEY)
+        if not isinstance(fails, dict):
+            fails = {}
+            self._data[self._FAILS_KEY] = fails
+        streak = 0 if ok else self.failures(name) + 1
+        if ok:
+            fails.pop(name, None)
+        else:
+            fails[name] = streak
+        self._persist()
+        return streak
+
     def mark(self, name: str, when: datetime) -> None:
         self._data[name] = when.isoformat()
+        self._persist()
+
+    def _persist(self) -> None:
         try:
             from src.agents.dev_plan import ensure_state_gitignore
             ensure_state_gitignore(self._repo_root)      # .vortocode/ 自忽略：cron 状态不污染目标仓库 git status
@@ -304,6 +343,7 @@ def record_outcome(repo_root: str, name: str, *, ok: bool, summary: str, command
         run.output = str(summary or "")[-_LANE_SUMMARY_CAP:]
         run.error = "" if ok else (str(error or "") or f"cron [{name}] 失败")[:1000]
         run.sandbox = dict(sandbox or {})
+        run.sandbox.setdefault("cron_job", name)     # journal「应跑 vs 实跑」对账按名归属
         return run.id if RunLedger(repo_root).save(run) else ""
     except Exception:  # noqa: BLE001 —— 台账是旁路，绝不反过来炸作业
         return ""
@@ -327,6 +367,33 @@ async def _announce(repo_root: str, job: CronJob, text: str, *, ok: bool, notify
             pass
     from src.gateway.notices import record_notice
     record_notice(repo_root, body, source=f"cron:{job.name}")
+
+
+def _env_int(name: str, default: int) -> int:
+    import os
+    try:
+        value = int(str(os.getenv(name, "") or "").strip() or default)
+    except ValueError:
+        return default
+    return value if value >= 0 else default
+
+
+def _escalate_streak(repo_root: str, job: CronJob, streak: int) -> str:
+    """连败达到阈值 → 返回要拼进通报/错误里的升级标记，并单独落一条通知台账。
+
+    单次失败已各自进决策队列；这里补的是**模式**信号——同一作业连着坏了 N 次还没人管，
+    说明它不是偶发抖动，得有人看。阈值 env `VORTOCODE_CRON_FAIL_ESCALATE`（默认 3，0=关）。
+    """
+    threshold = _env_int("VORTOCODE_CRON_FAIL_ESCALATE", 3)
+    if threshold <= 0 or streak < threshold:
+        return ""
+    marker = f"🔺 已连续失败 {streak} 次（阈值 {threshold}）——不是偶发抖动，需要人工介入"
+    try:
+        from src.gateway.notices import record_notice
+        record_notice(repo_root, f"cron [{job.name}] {marker}", source=f"cron:{job.name}:escalation")
+    except Exception:  # noqa: BLE001 —— 升级通知是旁路，写不进去不影响作业结果本身
+        pass
+    return marker
 
 
 def _mark_ran(repo_root: str, job: CronJob, now: Optional[datetime]) -> None:
@@ -360,17 +427,39 @@ async def run_job(repo_root: str, job: CronJob, *, run_session=None, notify=None
             iso = bool(sandbox.get("isolated")) if isinstance(sandbox, dict) else False
             mark = f"沙箱 {backend}" if iso else "⚠ 未隔离"
             result = f"{head}（{mark}）\n$ {job.command}\n\n{out}"
+            streak = CronState(repo_root).record_result(job.name, ok)
+            escalation = "" if ok else _escalate_streak(repo_root, job, streak)
+            if escalation:
+                result = f"{result}\n{escalation}"
             _mark_ran(repo_root, job, now)
             record_outcome(repo_root, job.name, ok=ok, summary=result, command=job.command,
                            code=code, sandbox=sandbox,
-                           error="" if ok else f"cron [{job.name}] 命令退出码 {code}：{out[-400:]}")
+                           error="" if ok else
+                           f"cron [{job.name}] 命令退出码 {code}{'；' + escalation if escalation else ''}：{out[-400:]}")
             await _announce(repo_root, job, result, ok=ok, notify=notify)
             return result
         if run_session is None:
             from src.gateway.session import run_isolated_session
             run_session = run_isolated_session
-        result = await run_session(repo_root, job.prompt, mode="build", model=job.model)
+        # 预算封顶（B8-②）：作业级 budget（yaml）> env 默认 VORTOCODE_CRON_TOKEN_BUDGET > 不封顶。
+        # 只在配了预算时才注入 llm 代理（不改 run_session 既有签名面；测试注入的假 run_session
+        # 只要不配预算就完全不受影响）。
+        budget = job.budget or _env_int("VORTOCODE_CRON_TOKEN_BUDGET", 0)
+        guard = None
+        extra_kwargs = {}
+        if budget > 0:
+            from src.llm.budget import BudgetedLLM
+            guard = BudgetedLLM(budget_tokens=budget)
+            extra_kwargs["llm"] = guard
+        result = await run_session(repo_root, job.prompt, mode="build", model=job.model,
+                                   **extra_kwargs)
+        if guard is not None and guard.tripped:
+            # 兜底：即使 agent 内部把预算异常吞成一句普通报错文本，这次作业也必须按失败处理——
+            # 预算超限绝不能被静默洗成"跑完了"（那样封顶就成了摆设）。
+            raise TokenBudgetTripped(
+                f"token 预算超限（已用 ≈{guard.spent()} / 上限 {budget}），作业已就地停止")
         text = (result or "").strip()
+        CronState(repo_root).record_result(job.name, True)
         _mark_ran(repo_root, job, now)
         record_outcome(repo_root, job.name, ok=True, summary=text, code=0)
         await _announce(repo_root, job, f"⏰ cron [{job.name}] 跑完：\n{text[:800]}",
@@ -378,6 +467,10 @@ async def run_job(repo_root: str, job: CronJob, *, run_session=None, notify=None
         return result
     except Exception as error:  # noqa: BLE001 —— 例行作业炸了是红线：必须留痕，绝不静默吞
         detail = f"{type(error).__name__}: {error}"[:600]
+        streak = CronState(repo_root).record_result(job.name, False)
+        escalation = _escalate_streak(repo_root, job, streak)
+        if escalation:
+            detail = f"{detail}\n{escalation}"
         _mark_ran(repo_root, job, now)
         record_outcome(repo_root, job.name, ok=False, summary=detail, command=job.command,
                        code=-1, error=f"cron [{job.name}] 执行异常：{detail}")
