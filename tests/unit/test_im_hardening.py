@@ -193,9 +193,9 @@ def test_dingtalk_reports_group_and_mention_facts():
     ev = a._to_event(OWNER, "干活", is_group=True, mentioned=False)
     assert ev.is_group is True and ev.mentioned is False
 
-    a._awaiting_confirm = "cid9"                           # 群里的 y/n 伪 callback 也带着群标记
-    cb = a._to_event(OWNER, "y", is_group=True, mentioned=False)
-    assert cb.kind == "callback" and cb.is_group is True and cb.mentioned is False
+    a._awaiting_confirm = "cid9"                           # 群里 @ 到我的 y/n 伪 callback 带着群标记
+    cb = a._to_event(OWNER, "y", is_group=True, mentioned=True)
+    assert cb.kind == "callback" and cb.is_group is True and cb.mentioned is True
 
 
 # ================================================================ ③ 入站消息一律进污点
@@ -322,3 +322,169 @@ async def test_dingtalk_stranger_cannot_hijack_reply_routing(tmp_path):
     await a.send_text("给主人的话")
     assert sent and set(sent) == {"https://wh/owner"}   # 一个字节都没发进别人的会话
     assert bridge._ignored == 1 and bridge._ignored_no_mention == 1
+
+
+# ================================================================ ⑤ 非阻断小刺（B6-7）
+# 三条都是"闸没错、但一失手就永久哑火/静默吞状态/查不出原因"的可用性事故。修法一律不放宽判定。
+
+# ---------------------------------------------------------------- ⑤-1 getMe 失败不能永久群聋
+
+def _tg_group_update(uid: int, text: str = "@mybot 看下状态"):
+    """一条群里 @ 了 mybot 的 update（entity 覆盖整个 "@mybot"）。"""
+    return {"update_id": uid,
+            "message": {"text": text, "from": {"id": 7}, "chat": {"type": "supergroup"},
+                        "entities": [{"type": "mention", "offset": 0, "length": 6}]}}
+
+
+def _fake_bot_api(batches, me_fails: int, calls: dict):
+    """假 Bot API：getUpdates 按批吐 update；getMe 前 me_fails 次抛错，之后返回身份。"""
+    async def request(method, payload):
+        calls[method] = calls.get(method, 0) + 1
+        if method == "getMe":
+            from src.im.telegram import TelegramError
+            if calls["getMe"] <= me_fails:
+                raise TelegramError("Bad Gateway")
+            return {"username": "mybot", "id": 42}
+        if method == "getUpdates":
+            return batches.pop(0) if batches else []
+        return {}
+    return request
+
+
+@pytest.mark.asyncio
+async def test_getme_failure_is_retried_and_group_recovers(monkeypatch):
+    """getMe 失败**不永久置位**：解析不出来的期间群消息照丢，但后续群消息会退避重试到成功。
+
+    回归的是"一次抖动 → 整个进程再也认不出自己 → 群里 @ 我也判成没 @ → 群消息全成哑弹，
+    直到重启"。断言全走行为：喂真 update 进 poll，看归一化出来的 mentioned 到底是什么。
+    """
+    import src.im.telegram as tg
+
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(tg, "_now", lambda: clock["t"])
+    calls: dict = {}
+    batches = [[_tg_group_update(i)] for i in range(1, 5)]
+    a = tg.TelegramAdapter("token", "owner-1", request_fn=_fake_bot_api(batches, 2, calls))
+
+    advance = [0.0, tg._ME_RETRY_MAX + 1, tg._ME_RETRY_MAX + 1]   # 第 2 条不推进钟，第 3/4 条推进
+    steps = []                       # 每条群消息处理完当时的 (mentioned, 累计 getMe 次数)
+    async for ev in a.poll():
+        steps.append((ev.mentioned, calls["getMe"]))
+        if len(steps) == 4:
+            break
+        assert a._me_resolved is False, "getMe 还没成功就置位了 → 后续群消息永远判不出被 @"
+        clock["t"] += advance[len(steps) - 1]
+
+    assert steps[0] == (False, 1)          # 首次失败：从严丢（判不出被 @），试过一次
+    assert steps[1] == (False, 1)          # 退避窗口内：不重试也不放行（别拿群流量打 getMe）
+    assert steps[2] == (False, 2)          # 过了退避：再试一次，仍失败 → 仍从严
+    assert steps[3] == (True, 3)           # 第三次成功 → 群里终于认得出被 @ 了（不再永久群聋）
+    assert a._me_resolved is True and a._bot_username == "mybot"
+
+
+@pytest.mark.asyncio
+async def test_getme_empty_body_counts_as_failure_and_retries(monkeypatch):
+    """getMe 返回体里既没 username 也没 id（怪代理/空 200）→ 与失败等价：从严 + 继续重试。
+
+    不能把"解析到空"当成"解析完成"——那是同一个永久群聋的回归换了个入口。
+    """
+    import src.im.telegram as tg
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr(tg, "_now", lambda: clock["t"])
+    calls: dict = {}
+
+    async def request(method, payload):
+        calls[method] = calls.get(method, 0) + 1
+        if method == "getMe":
+            return {} if calls["getMe"] == 1 else {"username": "mybot", "id": 42}
+        return [_tg_group_update(calls.get("getUpdates", 1))] if method == "getUpdates" else {}
+
+    a = tg.TelegramAdapter("token", "owner-1", request_fn=request)
+    steps = []
+    async for ev in a.poll():
+        steps.append((ev.mentioned, a._me_resolved))
+        if len(steps) == 2:
+            break
+        clock["t"] += tg._ME_RETRY_MAX + 1
+
+    assert steps[0] == (False, False)      # 空身份 ≠ 解析完成：从严丢 + 不置位（还会再试）
+    assert steps[1] == (True, True)        # 下一条群消息重试拿到身份 → 恢复正常
+    assert calls["getMe"] == 2
+
+
+# ---------------------------------------------------------------- ⑤-2 群里的 y/n 不被静默吃掉
+
+def test_group_confirm_without_mention_keeps_awaiting_state():
+    """钉钉群里没 @ 的 y **不消费**待确认态：这条反正会被群提及门丢掉，先吃掉状态等于把
+    这次确认判了死刑（主人明明回了，却只能干等 600s 超时=拒绝，还不知道自己漏了个 @）。
+
+    放行口径没变宽：没 @ 的 y 依旧翻不成 callback、批不了任何东西。
+    """
+    from src.im.dingtalk import DingTalkAdapter
+
+    a = DingTalkAdapter("c", "s", OWNER)
+    a._awaiting_confirm = "cid1"
+
+    eaten = a._to_event(OWNER, "y", is_group=True, mentioned=False)
+    assert eaten.kind == "message"                         # 没 @ → 批不动（照旧 fail-closed）
+    assert a._awaiting_confirm == "cid1"                   # 但待确认态**必须还在**
+
+    ok = a._to_event(OWNER, "y", is_group=True, mentioned=True)
+    assert ok.kind == "callback" and ok.approved is True    # 补个 @ 就仍然生效
+    assert a._awaiting_confirm is None                     # 真正被采纳时才消费
+
+    a._awaiting_confirm = "cid2"                           # 私聊无提及概念 → 照常直接生效
+    assert a._to_event(OWNER, "n", is_group=False).kind == "callback"
+    assert a._awaiting_confirm is None
+
+
+# ---------------------------------------------------------------- ⑤-3 白名单漏了 owner 要说出来
+
+@pytest.mark.asyncio
+async def test_allow_from_missing_owner_is_reported_but_still_enforced(tmp_path):
+    """显式配了白名单却漏了 owner：**判定一个字不改**（主人自己也被丢），只把原因说出来。
+
+    没有这句提示，现象是"机器人不理我 + 每个确认都等到 600s 超时被拒"，几乎不可能猜到是
+    白名单漏了自己——这才是本条要修的东西（可诊断性），不是放行。
+    """
+    adapter = FakeAdapter()
+    bridge = IMBridge(str(tmp_path), adapter, OWNER, channel="test",
+                      allow_from=["teammate-7"], llm=ScriptedLLM("不该被调用"))
+    await _drive_no_turn(bridge, adapter, _msg("跑个任务"))
+
+    assert bridge._turn_task is None and bridge._ignored == 1      # 判定照旧：主人自己也被丢
+    banner = adapter.texts()[0]
+    assert OWNER in banner and "allowFrom" in banner               # 开机横幅点名"你不在白名单里"
+
+    fut: asyncio.Future = asyncio.get_event_loop().create_future()  # 审批也照旧被丢（没被放宽）
+    bridge._pending["cid1"] = fut
+    await bridge._on_event(ChannelEvent(kind="callback", sender_id=OWNER, callback_id="cid1",
+                                        approved=True, ack="q"))
+    assert not fut.done()
+
+
+@pytest.mark.asyncio
+async def test_status_repeats_the_allow_from_warning(tmp_path):
+    """/status 也带上这句（开机横幅早被聊天刷没了；白名单里的同事也能看到并转告主人）。"""
+    adapter = FakeAdapter()
+    bridge = IMBridge(str(tmp_path), adapter, OWNER, channel="test",
+                      allow_from=["teammate-7"], llm=ScriptedLLM("x"))
+    await _drive_no_turn(bridge, adapter, _msg("/status", sender="teammate-7"))
+
+    status = adapter.texts()[-1]
+    assert "空闲" in status and OWNER in status and "allowFrom" in status
+
+
+@pytest.mark.asyncio
+async def test_no_warning_when_allow_from_is_sane(tmp_path):
+    """配置正常（含 owner，或压根没配）→ 不多嘴，免得警告变噪音没人看。"""
+    adapter = FakeAdapter()
+    ok = IMBridge(str(tmp_path), adapter, OWNER, channel="test",
+                  allow_from=[OWNER, "teammate-7"], llm=ScriptedLLM("x"))
+    assert ok.allow_from_warning() is None
+    default = IMBridge(str(tmp_path), FakeAdapter(), OWNER, channel="test", llm=ScriptedLLM("x"))
+    assert default.allow_from_warning() is None            # 没配 = 配对制只放 owner，正常
+    empty = IMBridge(str(tmp_path), FakeAdapter(), OWNER, channel="test", allow_from=[],
+                     llm=ScriptedLLM("x"))
+    assert "拒绝一切入站消息" in (empty.allow_from_warning() or "")   # 空白名单仍然要说
