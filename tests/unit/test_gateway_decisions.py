@@ -90,3 +90,39 @@ def test_decision_and_audit_rest_endpoints(tmp_path, monkeypatch):
     response = client.post(f"/api/decisions/{decisions[0]['id']}/dismiss")
     assert response.status_code == 200
     assert client.get("/api/decisions").json()["decisions"] == []
+
+
+def test_paused_task_survives_restart_unwoken_but_visible(tmp_path):
+    """B6-7 ④ 拍板（2026-07-20）：暂停是显式人类意图——进程重启**不自动唤醒**，
+    但任务必须一直躺在决策队列里等人处理（丢了可见性 = 周五暂停的任务周一就被遗忘）。
+
+    造真实台账文件、用全新 TaskRunner 模拟重启后的进程，断行为不查源码。
+    """
+    from src.gateway.tasks import TaskLedger, TaskRunner
+
+    ledger = TaskLedger(str(tmp_path))
+    paused = ledger.create(prompt="拆分 App.tsx 文件面板", kind="dev")
+    paused.status = "paused"
+    paused.plan_id = "plan-1"
+    ledger.save(paused)
+    running = ledger.create(prompt="崩溃时还在跑的任务", kind="dev")
+    running.status = "running"
+    ledger.save(running)
+
+    async def worker(_task, _on_progress):
+        return "unused"
+
+    runner = TaskRunner(str(tmp_path), worker)          # 全新进程视角（重启后）
+    recovered = runner.recover()
+
+    # recover 只救「跑到一半失联」的：running → interrupted；paused 原样保留（机器不替人反悔）
+    assert [t.id for t in recovered] == [running.id]
+    reloaded = runner.get(paused.id)
+    assert reloaded is not None and reloaded.status == "paused"
+
+    # 可见性合同：重启后 paused 任务仍在决策队列，且带可续跑动作
+    queue = build_decision_queue(tasks=runner.list())
+    item = next(entry for entry in queue if entry["id"] == f"task:{paused.id}")
+    assert item["title"] == "后台任务已暂停"
+    assert item["action"] == "resume_task"              # plan 还在 → 一键续跑
+    assert item["can_dismiss"] is True                  # 人也可以明确说"不要了"
