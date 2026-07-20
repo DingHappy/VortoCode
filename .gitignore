@@ -48,6 +48,9 @@ wheels/
 .installed.cfg
 *.egg
 
+# 桌面端 TS 源码目录 desktop/src/lib 不是 Python 构建产物，别被上面的 lib/ 规则误伤
+!desktop/src/lib/
+
 # 虚拟环境
 .venv/
 venv/
