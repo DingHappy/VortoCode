@@ -233,6 +233,9 @@ async def run_im(channel: str, *, mode: str = "plan"):
     who = "、".join(sorted(bridge.allow_from)) if bridge.allow_from else "空 → 拒绝一切入站"
     print(f"🌉 {channel} 桥启动（仓库 {Path(cwd).name}，{mode} 模式）。入站白名单：{who}；"
           f"群聊须显式 @ 本机器人。Ctrl-C 退出。", file=sys.stderr)
+    warn = bridge.allow_from_warning()      # 白名单配错（空 / 漏了 owner）→ 开机就在终端讲清楚：
+    if warn:                                # 不是坏了，是配置把你自己也挡在门外了
+        print(warn, file=sys.stderr)
     try:
         await bridge.run()
     finally:

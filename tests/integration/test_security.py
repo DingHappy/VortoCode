@@ -109,6 +109,50 @@ def test_terminals_endpoint_shell_gated(client):
     assert client.post("/api/terminals", json={}).status_code == 403
 
 
+# B6-7③：上面那句「自然无从触达」原本只是注释里的推导——**没有任何测试钉它**，
+# 而它正是 single-token 单用户模型的承重前提。现在闸直接加到每个终端端点上，
+# 让 fail-closed 成为直接强制的性质而非推导出来的性质，并在这里钉死。
+
+def test_terminal_control_surface_is_shell_gated(client):
+    tid = "term-deadbeef01"
+    assert client.get(f"/api/terminals/{tid}/output").status_code == 403
+    assert client.post(f"/api/terminals/{tid}/input", json={"data": "id\n"}).status_code == 403
+    assert client.post(f"/api/terminals/{tid}/resize", json={"cols": 80, "rows": 24}).status_code == 403
+    assert client.post(f"/api/terminals/{tid}/stop").status_code == 403
+
+
+def test_terminals_are_single_user_by_design(client, monkeypatch):
+    """**刻意的设计，不是疏漏**：终端不按会话归属，任一已鉴权调用方都能驱动任意 terminal id。
+
+    Web 层没有会话身份可归属——鉴权只有一个共享 token，拿到它的人本来就能自己开 PTY
+    跑任意命令，所以「按调用方自报的 session id 归属」挡不住威胁模型里的任何人。
+    这条测试把该契约钉住：**哪天有人真加了按用户鉴权、要改成按会话归属，这里会红**，
+    强制他连同 routers/terminals.py 的信任模型说明与 docs/OPS.md 一起更新，而不是默默改掉。
+
+    用假 manager 跑，不起真 PTY（真登录 shell 在单测里既慢又 flake，见 B6-7④）。
+    """
+    from src.web.routers import terminals as terminals_router
+
+    monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
+    written = []
+
+    class _FakeManager:
+        def get(self, terminal_id):
+            return object()
+
+        def write(self, terminal_id, data):
+            written.append((terminal_id, data))
+            return {"id": terminal_id, "ok": True}
+
+    monkeypatch.setattr(terminals_router, "_TERMINAL_MANAGER", _FakeManager())
+
+    # 两次互不相干的调用（现实里就是两个不同客户端）都能驱动同一个终端
+    first = client.post("/api/terminals/term-aaaaaaaa01/input", json={"data": "echo 1\n"})
+    second = client.post("/api/terminals/term-aaaaaaaa01/input", json={"data": "echo 2\n"})
+    assert first.status_code == 200 and second.status_code == 200
+    assert written == [("term-aaaaaaaa01", "echo 1\n"), ("term-aaaaaaaa01", "echo 2\n")]
+
+
 def test_files_endpoints_retired(client):
     assert client.get("/api/files").status_code in (404, 405)
     assert client.get("/api/files/content", params={"path": "x"}).status_code in (404, 405)

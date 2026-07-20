@@ -68,7 +68,7 @@ fi
 # 本机因为有缓存看不出来，换台机器/冷缓存就变成"门禁要联网拉几百 MB"。
 #
 # 所以门禁取不联网的部分：tsc（类型）+ vitest（gateway.ts 纯逻辑单测，B6-3）
-# + cargo test --lib（29 条 Rust 单测，含路径围栏/项目注册那几条安全测试）
+# + cargo test --lib（37 条 Rust 单测，含路径围栏/项目注册那几条安全测试）
 # + cargo check（额外覆盖 main.rs）。约 22s。
 # 打包正确性（vite build ~44s、sidecar、bundle 冒烟）属发布前检查，仍走 `npm run check`。
 # check-runtime-entry.mjs 不重复跑——它就是 pytest tests/unit/test_desktop_runtime_entry.py，
@@ -100,6 +100,22 @@ desktop_rust_gate() {
   return $status
 }
 
+# tauri.conf.json 声明了两个 gitignored 的构建产物，build script 在编译期都要校验存在：
+#   externalBin → binaries/vortocode-runtime-<triple>
+#   resources   → resources/THIRD_PARTY_NOTICES.txt
+# 缺任何一个 cargo 段都编不过。返回缺失项的说明，全齐则返回空串。
+# glob 无匹配时原样留下字面量、[ -f ] 自然为假，不需要 shopt/compgen（bash 3.2 也能跑）。
+_desktop_build_inputs_missing() {
+  local candidate found=""
+  for candidate in desktop/src-tauri/binaries/vortocode-runtime-*; do
+    [ -f "$candidate" ] && found="yes"
+  done
+  [ -z "$found" ] && { echo "binaries/vortocode-runtime-<triple>"; return; }
+  [ -f desktop/src-tauri/resources/THIRD_PARTY_NOTICES.txt ] \
+    || { echo "resources/THIRD_PARTY_NOTICES.txt"; return; }
+  echo ""
+}
+
 run_desktop_section() {
   if [ -n "${SKIP_DESKTOP:-}" ]; then
     skip_gate "desktop" "SKIP_DESKTOP=1 显式跳过"
@@ -124,6 +140,18 @@ run_desktop_section() {
     run_gate "desktop · vitest（gateway 纯逻辑单测）" desktop_vitest_gate
   fi
 
+  # Tauri 的 build script 在**编译期**校验 tauri.conf.json 声明的 externalBin
+  # （binaries/vortocode-runtime-<triple>）真实存在，而 binaries/* 是 gitignored 的构建产物
+  # ——只有 `npm run sidecar:build` 会生成它，那一步要联网拉 managed Python。
+  # 所以任何全新 clone / git worktree 上 cargo 段都编不过。这是环境没备好，不是代码坏了，
+  # 跟 node_modules 缺失同一类：**降级为跳过**，别报一个骗人的红灯。
+  # （这正是本门禁最初要防的那种"本机有产物所以看不出来"的陷阱，第一次没防住自己。）
+  _missing_input="$(_desktop_build_inputs_missing)"
+  if [ -n "$_missing_input" ]; then
+    skip_gate "desktop · cargo" \
+      "构建产物缺失（${_missing_input}）——先 cd desktop && npm run sidecar:build（需联网）"
+    return
+  fi
   if ! command -v cargo >/dev/null 2>&1; then
     skip_gate "desktop · cargo" "没装 cargo——装 Rust 工具链再跑，或 SKIP_DESKTOP=1"
     return
