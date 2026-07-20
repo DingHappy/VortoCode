@@ -223,6 +223,10 @@ async def test_statusbar_shows_context_and_tracks_mode():
 @pytest.mark.asyncio
 async def test_model_command_shows_and_switches():
     app = VortoCodeTUI(repo_root=".")
+
+    async def _no_server_models():
+        return None
+    app._fetch_available_models = _no_server_models    # 钉死静态回落路径（配了 key 的开发机也零网络）
     async with app.run_test() as pilot:
         await pilot.pause()
         await _submit(app, pilot, "/model")               # 无参：弹 opencode 式模型选择器
@@ -241,6 +245,10 @@ async def test_model_command_shows_and_switches():
 async def test_model_picker_enter_selects_highlighted():
     """选择器里 ↓ 一项回车 → 真切换到当前模型的下一项（回车=选中当前高亮）。"""
     app = VortoCodeTUI(repo_root=".")
+
+    async def _no_server_models():
+        return None
+    app._fetch_available_models = _no_server_models    # 钉死静态回落路径（配了 key 的开发机也零网络）
     async with app.run_test() as pilot:
         await pilot.pause()
         cur0 = app._sb["model"]                            # 开弹窗前的当前模型（CI 与本地可不同）
@@ -254,6 +262,48 @@ async def test_model_picker_enter_selects_highlighted():
         await pilot.press("enter"); await pilot.pause()
         assert len(app.screen_stack) == 1
         assert app._model_override == expect
+
+
+@pytest.mark.asyncio
+async def test_model_picker_prefers_server_model_list():
+    """/model 选择器优先用服务端 GET /models 报的实际可用列表（当前模型不在其中则置顶）。"""
+    app = VortoCodeTUI(repo_root=".")
+
+    async def _fetched():
+        return ["srv-model-a", "srv-model-b"]
+    app._fetch_available_models = _fetched
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        cur = app._sb["model"]
+        assert cur not in ("srv-model-a", "srv-model-b")
+        await _submit(app, pilot, "/model")
+        assert await _wait_modal(app, pilot)
+        await pilot.press("down")                      # 置顶的当前模型 → ↓ 到服务端列表第一项
+        await pilot.press("enter"); await pilot.pause()
+        assert len(app.screen_stack) == 1
+        assert app._model_override == "srv-model-a"
+
+
+@pytest.mark.asyncio
+async def test_model_picker_stays_offline_without_api_key(monkeypatch):
+    """没配 key 且服务不在本机 → 连 /models 请求都不发（选择器绝不引入网络依赖）。"""
+    from src.llm.client import LLMClient
+
+    calls = []
+
+    async def _spy(self):
+        calls.append(1)
+        return []
+    monkeypatch.setattr(LLMClient, "list_models", _spy)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_BASE", "https://token.vortotech.com/v1")
+    app = VortoCodeTUI(repo_root=".")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await _submit(app, pilot, "/model")
+        assert await _wait_modal(app, pilot)           # 静态回落列表照样弹出（功能不因离线降级消失）
+        await pilot.press("escape"); await pilot.pause()
+    assert calls == []                                 # 一次 /models 请求都没发
 
 
 @pytest.mark.asyncio
