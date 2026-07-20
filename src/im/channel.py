@@ -12,13 +12,25 @@ from typing import AsyncIterator
 
 @dataclass
 class ChannelEvent:
-    """从通道 poll 出来的一个事件（已归一化，与具体 IM 协议无关）。"""
+    """从通道 poll 出来的一个事件（已归一化，与具体 IM 协议无关）。
+
+    **适配器只如实申报事实，不做安全判定**（与 gate.py 同一分工）：`is_group`/`mentioned` 是
+    通道能看到的客观事实，「群里没 @ 到就不响应」这条规矩由 bridge 一处执行（`_on_event`），
+    否则每加一个通道就得重写一遍门——那正是"加一端漏一端"的老路。
+
+    两个新字段的默认值都取**最保守**的一侧：私聊（is_group=False）不需要 @；一旦通道申报
+    is_group=True 而没申报 mentioned，事件就被丢掉。新通道忘了填只会更严，不会更松。
+    """
     kind: str                     # "message"（用户发来文本）| "callback"（点了内联按钮）
-    sender_id: str = ""           # 发送者 id（配对用：只认 owner）
+    sender_id: str = ""           # 发送者 id（白名单用：只认 allow_from 里的人）
     text: str = ""                # kind=message：用户文本
     callback_id: str = ""         # kind=callback：对应哪个确认请求（bridge 生成的 cid）
     approved: bool = False        # kind=callback：批准/拒绝
     ack: object = None            # kind=callback：通道侧回执令牌（如 Telegram callback_query.id），交回 ack_callback
+    is_group: bool = False        # 该事件是否来自群聊/多人会话（私聊=False）
+    mentioned: bool = False       # 群聊里本条是否**显式 @ 了本机器人**（私聊无意义）
+    reply_to: object = None       # 本条消息的通道侧回复路由令牌（如钉钉 sessionWebhook）——只申报，
+                                  # 采纳与否由 bridge 过闸后调 commit_reply_target 决定
 
 
 class ChannelAdapter:
@@ -48,6 +60,14 @@ class ChannelAdapter:
     async def ack_callback(self, event: ChannelEvent) -> None:
         """回执一次按钮点击（如 Telegram answerCallbackQuery，消掉客户端转圈）。best-effort。"""
         raise NotImplementedError
+
+    def commit_reply_target(self, event: ChannelEvent) -> None:
+        """采纳一条**已过入站闸**事件的回复路由（bridge 在三道闸之后调用，是唯一调用点）。
+
+        默认无路由状态可更新——固定回 owner 的通道（Telegram）不用实现。有会话级路由的通道
+        （钉钉 sessionWebhook）**只能**在这里更新回复目标，绝不在 poll/收帧阶段更新：否则
+        白名单外的任何一条入站消息都能把后续回复劫到自己的会话（内容外泄 + 把主人的确认打聋）。
+        """
 
     async def close(self) -> None:
         """释放资源（关 http session 等）。"""
