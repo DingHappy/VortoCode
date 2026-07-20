@@ -15,9 +15,10 @@ python -m pytest tests/unit/test_taint.py -q        # 单文件
 python -m pytest tests/unit/test_taint.py::test_x -q   # 单条用例
 # asyncio_mode=auto：async 测试无需显式 @pytest.mark.asyncio
 
-# 合并前门禁（**CI 已停用，见下**）——ruff + mypy + pytest 三道关，强制离线环境
-./scripts/ci-local.sh            # 全量（unit+basic+integration+live）
-./scripts/ci-local.sh quick      # 只跑 unit+basic，快一半
+# 合并前门禁（**CI 已停用，见下**）——ruff + mypy + pytest + desktop 四道关，强制离线环境
+./scripts/ci-local.sh            # 全量（unit+basic+integration+live + desktop）
+./scripts/ci-local.sh quick      # 只跑 unit+basic，快一半（不含 desktop）
+SKIP_DESKTOP=1 ./scripts/ci-local.sh   # 逃生口：跳过 desktop 段
 
 # 单项检查（与门禁同口径）
 python -m ruff check src tests   # 只拦真错误：E9/F63/F7/F82/F401/F403
@@ -32,6 +33,8 @@ vc --help                        # 全部子命令：tui/server/agent/self-*/im/
 ```
 
 **CI 状态**：`.github/workflows/ci.yml` 自 2026-07 因私有仓库额度耗尽已 `gh workflow disable`。**合并到 main 前必须本地跑 `./scripts/ci-local.sh`** 作为等价门禁。它刻意清空 `OPENAI_API_KEY/VORTOCODE_API_TOKEN/VORTOCODE_ENABLE_SHELL/ENABLE_BROWSER`，保证测试离线、确定性——别依赖你 `.env` 里的 key 让本地变绿。
+
+**desktop 段只跑离线子集**（tsc + `cargo test --lib` + `cargo check`，约 22s），**刻意不跑 `npm run check`**：那条链里 `sidecar:build` 会 `curl` 一个 python-build-standalone 包，把网络依赖塞进本该离线的门禁。打包正确性（vite build / sidecar / bundle 冒烟）属发布前检查，仍走 `cd desktop && npm run check`；同口径的单命令版是 `npm run check:ci`。缺 node/node_modules/cargo 或 crate 冷缓存时**跳过并计入收尾的「跳过清单」**，且此时结论不会说「全部通过」——跳过 ≠ 通过。
 
 ## 架构大图
 

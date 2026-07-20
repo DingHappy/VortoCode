@@ -5,8 +5,9 @@
 # 工作流已 `gh workflow disable CI` 暂停。**关掉 CI 而不给替代品，等于没有门禁**——
 # 合并前在本地跑这个，至少保证进 main 的东西过了同样的检查。
 #
-#   ./scripts/ci-local.sh            # 三道关全跑（默认）
-#   ./scripts/ci-local.sh quick      # 跳过 integration/live，快一半
+#   ./scripts/ci-local.sh            # 全跑（含 desktop 段，默认）
+#   ./scripts/ci-local.sh quick      # 跳过 integration/live 与 desktop，快一半
+#   SKIP_DESKTOP=1 ./scripts/ci-local.sh   # 跳过 desktop 段（逃生口）
 #
 # 自建 runner 就绪后（装机见 docs/OPS.md）：
 #   设仓库变量 CI_RUNNER=self-hosted → gh workflow enable CI → 手动 workflow_dispatch 验一次
@@ -17,6 +18,7 @@ cd "$(dirname "$0")/.." || exit 2
 
 MODE="${1:-full}"
 FAILED=()
+SKIPPED=()
 
 run_gate() {
   local name="$1"; shift
@@ -28,6 +30,15 @@ run_gate() {
     echo "✗ $name"
     FAILED+=("$name")
   fi
+}
+
+# 跳过 ≠ 通过。记进 SKIPPED，收尾时再列一次——一条滚过去的警告在 4 分钟的输出里等于没说。
+skip_gate() {
+  local name="$1" reason="$2"
+  echo ""
+  echo "──────── $name ────────"
+  echo "⚠️  跳过：$reason"
+  SKIPPED+=("$name —— $reason")
 }
 
 run_gate "ruff（真错误门禁）" python3 -m ruff check src tests
@@ -47,9 +58,97 @@ else
     python3 -m pytest tests/unit tests/test_basic.py tests/integration tests/live -q
 fi
 
+# ─────────────────────────────────────────────────────────────
+# desktop 段（B6-2）——**刻意只跑 `npm run check` 的离线子集**
+#
+# 为什么不直接 `npm run check`：那条链里 sidecar:build → ensureSidecarEnvironment
+# → ensureManagedPython 会 `curl -L` 一个 python-build-standalone 压缩包
+# （见 desktop/scripts/managed-python.mjs:129）。本门禁的立身之本就是离线、确定性
+# ——上面刚把 API key 全清掉就是为这个。把一个联网下载塞进来会毁掉这条不变量：
+# 本机因为有缓存看不出来，换台机器/冷缓存就变成"门禁要联网拉几百 MB"。
+#
+# 所以门禁取不联网的部分：tsc（类型）+ cargo test --lib（29 条 Rust 单测，含
+# 路径围栏/项目注册那几条安全测试）+ cargo check（额外覆盖 main.rs）。约 22s。
+# 打包正确性（vite build ~44s、sidecar、bundle 冒烟）属发布前检查，仍走 `npm run check`。
+# check-runtime-entry.mjs 不重复跑——它就是 pytest tests/unit/test_desktop_runtime_entry.py，
+# 上面的 pytest 段已经覆盖了。
+# 同口径的单命令版本：cd desktop && npm run check:ci
+# ─────────────────────────────────────────────────────────────
+desktop_ts_gate() { ( cd desktop && npx --no-install tsc --noEmit ); }
+
+desktop_rust_gate() {
+  local out status
+  out="$( cd desktop \
+          && cargo test --manifest-path src-tauri/Cargo.toml --lib --offline --quiet 2>&1 \
+          && cargo check --manifest-path src-tauri/Cargo.toml --offline --quiet 2>&1 )"
+  status=$?
+  printf '%s\n' "$out"
+  # 冷缓存（crate 没下过）不是代码问题，别报红骗人——降级成跳过并说清怎么修。
+  # cargo 在这件事上有两种说法，都要认：
+  #   · 索引已缓存、缺具体 crate 包 → "attempting to make an HTTP request, but `--offline` was specified"
+  #   · 索引压根没缓存             → "no matching package named X found" + "note: offline mode (via `--offline`) ..."
+  # 只匹配前者会让空 CARGO_HOME 的机器收到一个假的红灯（实测踩过）。
+  if [ $status -ne 0 ] \
+     && printf '%s' "$out" | grep -qE 'attempting to make an HTTP request|offline mode \(via'; then
+    return 111
+  fi
+  return $status
+}
+
+run_desktop_section() {
+  if [ -n "${SKIP_DESKTOP:-}" ]; then
+    skip_gate "desktop" "SKIP_DESKTOP=1 显式跳过"
+    return
+  fi
+  if [ "$MODE" = "quick" ]; then
+    skip_gate "desktop" "quick 模式不含 desktop（单独验：cd desktop && npm run check:ci）"
+    return
+  fi
+  if [ ! -d desktop ]; then
+    skip_gate "desktop" "没有 desktop/ 目录"
+    return
+  fi
+
+  if ! command -v npx >/dev/null 2>&1; then
+    skip_gate "desktop · tsc" "没装 node/npx——装了再跑，或 SKIP_DESKTOP=1"
+  elif [ ! -d desktop/node_modules ]; then
+    # 新 clone 必然走到这里：npm ci 要联网，门禁不替你装。
+    skip_gate "desktop · tsc" "desktop/node_modules 缺失——先 cd desktop && npm ci（需联网）"
+  else
+    run_gate "desktop · tsc（类型）" desktop_ts_gate
+  fi
+
+  if ! command -v cargo >/dev/null 2>&1; then
+    skip_gate "desktop · cargo" "没装 cargo——装 Rust 工具链再跑，或 SKIP_DESKTOP=1"
+    return
+  fi
+  echo ""
+  echo "──────── desktop · cargo（--lib 单测 + check） ────────"
+  desktop_rust_gate
+  case $? in
+    0)   echo "✓ desktop · cargo（--lib 单测 + check）" ;;
+    111) SKIPPED+=("desktop · cargo —— crate 依赖未缓存，--offline 取不到；先联网跑一次 cd desktop && cargo fetch --manifest-path src-tauri/Cargo.toml")
+         echo "⚠️  跳过：crate 依赖未缓存（--offline 取不到）——先联网 cargo fetch 一次" ;;
+    *)   echo "✗ desktop · cargo（--lib 单测 + check）"
+         FAILED+=("desktop · cargo（--lib 单测 + check）") ;;
+  esac
+}
+
+run_desktop_section
+
 echo ""
+if [ ${#SKIPPED[@]} -ne 0 ]; then
+  echo "⚠️  跳过的检查（**不等于通过**）："
+  for item in "${SKIPPED[@]}"; do echo "   · $item"; done
+  echo ""
+fi
 if [ ${#FAILED[@]} -eq 0 ]; then
-  echo "════ 全部通过 ════"
+  if [ ${#SKIPPED[@]} -ne 0 ]; then
+    # 有跳过项时不说"全部通过"——那正是 B6-2 要防的假绿。
+    echo "════ 已跑的都通过，但有 ${#SKIPPED[@]} 项被跳过（见上）════"
+  else
+    echo "════ 全部通过 ════"
+  fi
   exit 0
 fi
 echo "════ 失败：${FAILED[*]} ════"

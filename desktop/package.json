@@ -10,6 +10,7 @@
     "sidecar:build": "node scripts/build-sidecar.mjs",
     "sidecar:smoke": "node scripts/smoke-sidecar.mjs",
     "check": "npm run build && node scripts/check-runtime-entry.mjs && npm run sidecar:build && cargo test --manifest-path src-tauri/Cargo.toml --lib && cargo check --manifest-path src-tauri/Cargo.toml",
+    "check:ci": "tsc --noEmit && cargo test --manifest-path src-tauri/Cargo.toml --lib --offline && cargo check --manifest-path src-tauri/Cargo.toml --offline",
     "preview": "vite preview",
     "tauri": "npm run sidecar:build && tauri",
     "bundle:app": "npm run sidecar:build && npm run sidecar:smoke && tauri build --bundles app",
