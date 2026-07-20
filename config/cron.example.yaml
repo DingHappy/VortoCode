@@ -17,6 +17,14 @@
 #     command:  确定性 shell，**退出码即红绿**（评测夜跑、依赖扫描这类不需要 LLM 判断的活）
 #     prompt:   隔离 LLM 会话（需要自主判断的活）
 # announce: im（推到 IM）| silent（只落台账）
+#
+# 无人值守硬化（B8-②）：
+#     budget: N          prompt 作业的 token 预算上限；不写吃 env VORTOCODE_CRON_TOKEN_BUDGET，
+#                        都没有 = 不封顶。超限即停本次作业并按失败升级（发起下一次调用前拦截）。
+#     连败升级            同一作业连续失败 N 次（VORTOCODE_CRON_FAIL_ESCALATE，默认 3，0=关）→
+#                        通知台账多一条 🔺 升级条目，失败 run 的错误里也带上模式信号。
+#     死亡对账            每天 Journal 固定有「应跑 vs 实跑」一节：启用作业昨晚该跑没跑一眼看出
+#                        （调度器没醒 / VORTOCODE_CRON 没开 / serve 死了都会现形）。
 
 jobs:
   # 中转站运营值班（B8-① 试点一，OPC 第一条职责）——确定性巡检，零 LLM：
