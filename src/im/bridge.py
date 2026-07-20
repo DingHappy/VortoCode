@@ -143,6 +143,10 @@ class IMBridge:
         ② 群提及门：群聊里没显式 @ 到本机器人 → 当没看见。陌生群/被拉进的群不再能驱动 agent。
         ③ 审批仍只认 owner：白名单可以放同事进来聊天，但**批准/拒绝确认是特权动作**，
            只有配对的主人能点——白名单变宽绝不能顺带把审批权变宽。
+
+        回复路由（钉钉 sessionWebhook 等）也只跟**过了闸**的事件走：commit_reply_target 在
+        ①② 之后才调——被丢掉的消息若能改写回复目标，陌生人发一条废话就能把 agent 的后续
+        产出（进度/结果/确认提问）劫到自己的会话里。
         """
         sender = str(ev.sender_id)
         if sender not in self.allow_from:           # ① 白名单外：静默忽略并计数
@@ -151,6 +155,7 @@ class IMBridge:
         if getattr(ev, "is_group", False) and not getattr(ev, "mentioned", False):
             self._ignored_no_mention += 1           # ② 群里没 @ 到 → 当没看见
             return
+        self.adapter.commit_reply_target(ev)        # 过了闸，才采纳本条的回复路由
         if ev.kind == "callback":                   # 按钮点击 → 解开对应确认 Future
             if sender != self.owner_id:             # ③ 审批只认主人
                 self._ignored += 1

@@ -29,6 +29,8 @@ class ChannelEvent:
     ack: object = None            # kind=callback：通道侧回执令牌（如 Telegram callback_query.id），交回 ack_callback
     is_group: bool = False        # 该事件是否来自群聊/多人会话（私聊=False）
     mentioned: bool = False       # 群聊里本条是否**显式 @ 了本机器人**（私聊无意义）
+    reply_to: object = None       # 本条消息的通道侧回复路由令牌（如钉钉 sessionWebhook）——只申报，
+                                  # 采纳与否由 bridge 过闸后调 commit_reply_target 决定
 
 
 class ChannelAdapter:
@@ -58,6 +60,14 @@ class ChannelAdapter:
     async def ack_callback(self, event: ChannelEvent) -> None:
         """回执一次按钮点击（如 Telegram answerCallbackQuery，消掉客户端转圈）。best-effort。"""
         raise NotImplementedError
+
+    def commit_reply_target(self, event: ChannelEvent) -> None:
+        """采纳一条**已过入站闸**事件的回复路由（bridge 在三道闸之后调用，是唯一调用点）。
+
+        默认无路由状态可更新——固定回 owner 的通道（Telegram）不用实现。有会话级路由的通道
+        （钉钉 sessionWebhook）**只能**在这里更新回复目标，绝不在 poll/收帧阶段更新：否则
+        白名单外的任何一条入站消息都能把后续回复劫到自己的会话（内容外泄 + 把主人的确认打聋）。
+        """
 
     async def close(self) -> None:
         """释放资源（关 http session 等）。"""

@@ -56,7 +56,12 @@ async def test_bot_message_acks_and_yields_message():
     ack = json.loads(ws.sent[0])
     assert ack["headers"]["messageId"] == "m2"           # ACK 回 echo messageId
     assert evs[0].kind == "message" and evs[0].text == "跑个任务" and evs[0].sender_id == "owner-1"
-    assert a._webhook == "https://wh2"                   # 更新回复目标
+    # B6-6：收帧只**申报**回复路由（reply_to），不直接采纳——否则白名单外的消息也能改写
+    # 回复目标（劫走后续产出）。采纳发生在 bridge 过闸后调 commit_reply_target。
+    assert evs[0].reply_to == "https://wh2"
+    assert a._webhook is None
+    a.commit_reply_target(evs[0])                        # 模拟 bridge 放行本条
+    assert a._webhook == "https://wh2"
 
 
 @pytest.mark.asyncio

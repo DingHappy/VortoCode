@@ -48,7 +48,8 @@ class DingTalkAdapter(ChannelAdapter):
         self._connect_fn = connect_fn or self._default_connect
         self._reply_fn = reply_fn or self._default_reply
         self._session = None
-        self._webhook: Optional[str] = None       # 最近一条主人消息的 sessionWebhook（回复目标）
+        self._webhook: Optional[str] = None       # 回复目标：最近一条**过了入站闸**的消息的
+                                                  # sessionWebhook（只在 commit_reply_target 更新）
         self._awaiting_confirm: Optional[str] = None   # 文本式确认：待回 y/n 的 callback_id
 
     # ------------------------------------------------------------ ChannelAdapter
@@ -99,14 +100,20 @@ class DingTalkAdapter(ChannelAdapter):
             await ws.send(_resp(mid, {"response": None}))   # ACK（回 echo messageId）
             data = _loads(frame.get("data"))
             sender = str(data.get("senderStaffId", ""))
-            wh = data.get("sessionWebhook")
-            if wh:
-                self._webhook = wh                # 更新回复目标
             text = ((data.get("text") or {}).get("content") or "").strip()
             ev = self._to_event(sender, text, is_group=_is_group(data),
                                 mentioned=bool(data.get("isInAtList")))
+            if ev is not None:
+                # 回复路由**不在收帧阶段采纳**：sessionWebhook 只随事件申报（reply_to），
+                # 过了 bridge 三道闸才由 commit_reply_target 落成回复目标——否则白名单外的
+                # 任何一条消息都能把后续回复劫到自己的会话（内容外泄 + 把主人的确认打聋）。
+                ev.reply_to = data.get("sessionWebhook") or None
             return [ev] if ev is not None else []
         return []
+
+    def commit_reply_target(self, event: ChannelEvent) -> None:
+        if getattr(event, "reply_to", None):      # bridge 保证：只有过了闸的事件走到这里
+            self._webhook = event.reply_to
 
     def _to_event(self, sender: str, text: str, *, is_group: bool = False,
                   mentioned: bool = False) -> Optional[ChannelEvent]:
