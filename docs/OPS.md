@@ -75,6 +75,9 @@ vortocode agent --attach "问题/任务"    # 一次性问答/脚本化；-c 续
 2. serve 日志：`~/Library/Logs/vortocode-serve.log`（launchd 模板所配）。
 3. 后台任务卡死/崩溃：重启 serve 会把 running 标成 interrupted，可 `dev_resume` 续跑（write-ahead
    台账，进度不丢）。
+4. 「我暂停的任务哪去了」：**暂停是显式人类意图，重启不会自动唤醒它**（recover 只救 running）；
+   它会一直躺在决策队列（Desktop 决策中心 / Journal）里标「后台任务已暂停」，等你点续跑或明确
+   dismiss。这是拍板过的语义（B6-7 ④，2026-07-20），有回归测试钉着，不是漏。
 
 ## 五、dogfood 节奏建议（把摩擦变成 BACKLOG）
 
