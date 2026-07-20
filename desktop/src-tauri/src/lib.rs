@@ -215,9 +215,17 @@ fn context_window_from_models_payload(payload: &serde_json::Value, model: &str) 
     })
 }
 
-async fn discover_model_context_window(profile: &DesktopLlmProfile) -> Option<u64> {
+const LLM_PROBE_TIMEOUT: Duration = Duration::from_secs(8);
+
+async fn discover_model_context_window_with(
+    profile: &DesktopLlmProfile,
+    timeout: Duration,
+) -> Option<u64> {
+    // 探测收敛：只允许打 profile 声明的 base_url 本身——限时，且不跟随重定向，
+    // 避免探测阶段被当跳板打别的 host、或 Bearer Key 随跳转外流。
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(8))
+        .timeout(timeout)
+        .redirect(reqwest::redirect::Policy::none())
         .build()
         .ok()?;
     let mut request = client.get(format!("{}/models", profile.base_url));
@@ -454,26 +462,74 @@ fn get_llm_profile(
     Ok(desktop_llm_profile_status(profile.as_ref()))
 }
 
+async fn confirm_llm_profile_change(
+    app: &AppHandle,
+    profile: &DesktopLlmProfile,
+) -> Result<bool, String> {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    // 改档是敏感动作：base_url+Key 会落 Keychain 并注入后续 runtime 环境。原生对话框在
+    // webview 进程之外，被注入的页面脚本无法替用户点「确认」，静默改档因此不生效。
+    let message = format!(
+        "网页层请求把模型服务改为：\n\n服务地址：{}\n模型：{}\n\n仅当这是你刚在设置页保存的配置时才确认。",
+        profile.base_url, profile.model
+    );
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .message(message)
+            .title("确认修改模型服务")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "确认修改".into(),
+                "取消".into(),
+            ))
+            .blocking_show()
+    })
+    .await
+    .map_err(|error| format!("模型服务确认对话框失败：{error}"))
+}
+
+async fn save_llm_profile_flow(
+    profile: DesktopLlmProfile,
+    confirmed: bool,
+    probe_timeout: Duration,
+    persist: impl FnOnce(&DesktopLlmProfile) -> Result<(), String>,
+) -> Result<DesktopLlmProfile, String> {
+    let mut profile = normalize_llm_profile(profile)?;
+    // 确认门在探测之前：未获用户确认时连一次出网探测都不发生。
+    if !confirmed {
+        return Err("模型服务修改未获用户确认，已取消".into());
+    }
+    if let Some(window) = discover_model_context_window_with(&profile, probe_timeout).await {
+        profile.context_window = Some(window);
+        profile.context_window_source = Some("service".into());
+    }
+    persist(&profile)?;
+    Ok(profile)
+}
+
 #[tauri::command]
 async fn set_llm_profile(
+    app: AppHandle,
     base_url: String,
     api_key: String,
     model: String,
     store: State<'_, DesktopLlmProfileStore>,
 ) -> Result<DesktopLlmProfileStatus, String> {
-    let mut profile = normalize_llm_profile(DesktopLlmProfile {
+    let profile = normalize_llm_profile(DesktopLlmProfile {
         base_url,
         api_key,
         model,
         context_window: None,
         context_window_source: None,
     })?;
-    if let Some(window) = discover_model_context_window(&profile).await {
-        profile.context_window = Some(window);
-        profile.context_window_source = Some("service".into());
-    }
-    let payload = serde_json::to_string(&profile).map_err(|_| "无法序列化模型配置".to_string())?;
-    llm_keychain::write(&payload)?;
+    let confirmed = confirm_llm_profile_change(&app, &profile).await?;
+    let profile = save_llm_profile_flow(profile, confirmed, LLM_PROBE_TIMEOUT, |profile| {
+        let payload =
+            serde_json::to_string(profile).map_err(|_| "无法序列化模型配置".to_string())?;
+        llm_keychain::write(&payload)
+    })
+    .await?;
     store.replace(Some(profile.clone()))?;
     Ok(desktop_llm_profile_status(Some(&profile)))
 }
@@ -1119,9 +1175,92 @@ fn resolve_workspace_file(root: &Path, relative_path: &str) -> Result<(PathBuf, 
     Ok((relative, resolved))
 }
 
+// ---- 工作区命令的路径围栏 ----
+// repo_root 由 webview 传入，不可信：只放行「用户显式登记过 / Desktop 自己创建过」的根
+// 及其子目录——注册项目集（projects.json）∪ Desktop 自管工作区子树（general/scratch）∪
+// 在管 runtime 根 ∪ 恢复记录根。子目录只会缩小可读集，故允许；比对在 canonicalize 之后
+// 按路径组件进行，symlink 会先被解析再判定。
+
+fn workspace_fence_roots(
+    registry: &DesktopProjectRegistry,
+    recoveries: &GatewayRecoveryRegistry,
+    managed_base: Option<PathBuf>,
+    supervisor: &GatewaySupervisorInner,
+) -> Vec<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    roots.extend(
+        registry
+            .projects
+            .iter()
+            .map(|project| PathBuf::from(&project.repo_root)),
+    );
+    roots.extend(managed_base);
+    for record in &recoveries.runtimes {
+        for root in [&record.workspace_root, &record.repo_root] {
+            if !root.is_empty() {
+                roots.push(PathBuf::from(root));
+            }
+        }
+    }
+    for runtime in supervisor.runtimes.values() {
+        roots.extend(runtime.workspace_root.clone());
+        roots.extend(runtime.repo_root.clone());
+    }
+    roots
+}
+
+fn fence_workspace_root(trusted: &[PathBuf], repo_root: &str) -> Result<PathBuf, String> {
+    let requested = canonical_repo_root(repo_root)?;
+    let authorized = trusted.iter().any(|root| {
+        root.canonicalize()
+            .is_ok_and(|canonical| requested.starts_with(&canonical))
+    });
+    if authorized {
+        Ok(requested)
+    } else {
+        Err("该目录不属于 Desktop 已登记的项目或托管工作区，已拒绝访问".into())
+    }
+}
+
+fn desktop_workspace_fence(app: &AppHandle, state: &GatewayProcess) -> Result<Vec<PathBuf>, String> {
+    // 注册表/恢复记录读取失败时按「收窄」处理（fail-closed）：宁可拒绝合法预览，不放宽围栏。
+    let registry = project_registry_path(app)
+        .and_then(|path| load_project_registry(&path))
+        .unwrap_or_default();
+    let recoveries = gateway_recovery_path(app)
+        .and_then(|path| load_gateway_recoveries(&path))
+        .unwrap_or_default();
+    let managed_base = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .map(|directory| directory.join("workspaces"));
+    let supervisor = state
+        .0
+        .lock()
+        .map_err(|_| "runtime 状态锁已损坏".to_string())?;
+    Ok(workspace_fence_roots(
+        &registry,
+        &recoveries,
+        managed_base,
+        &supervisor,
+    ))
+}
+
 #[tauri::command]
-fn list_workspace_files(repo_root: String) -> Result<WorkspaceFileList, String> {
-    let root = canonical_repo_root(&repo_root)?;
+fn list_workspace_files(
+    app: AppHandle,
+    state: State<'_, GatewayProcess>,
+    repo_root: String,
+) -> Result<WorkspaceFileList, String> {
+    list_workspace_files_within(&desktop_workspace_fence(&app, state.inner())?, &repo_root)
+}
+
+fn list_workspace_files_within(
+    trusted: &[PathBuf],
+    repo_root: &str,
+) -> Result<WorkspaceFileList, String> {
+    let root = fence_workspace_root(trusted, repo_root)?;
     let output = Command::new("git")
         .args([
             "ls-files",
@@ -1165,11 +1304,25 @@ fn list_workspace_files(repo_root: String) -> Result<WorkspaceFileList, String> 
 
 #[tauri::command]
 fn read_workspace_file(
+    app: AppHandle,
+    state: State<'_, GatewayProcess>,
     repo_root: String,
     relative_path: String,
 ) -> Result<WorkspaceFileContent, String> {
-    let root = canonical_repo_root(&repo_root)?;
-    let (relative, resolved) = resolve_workspace_file(&root, &relative_path)?;
+    read_workspace_file_within(
+        &desktop_workspace_fence(&app, state.inner())?,
+        &repo_root,
+        &relative_path,
+    )
+}
+
+fn read_workspace_file_within(
+    trusted: &[PathBuf],
+    repo_root: &str,
+    relative_path: &str,
+) -> Result<WorkspaceFileContent, String> {
+    let root = fence_workspace_root(trusted, repo_root)?;
+    let (relative, resolved) = resolve_workspace_file(&root, relative_path)?;
     let size = resolved
         .metadata()
         .map_err(|error| format!("无法读取文件信息：{error}"))?
@@ -1219,12 +1372,28 @@ fn editor_candidates(path: &Path, line: u32) -> Vec<(String, Vec<OsString>, bool
 
 #[tauri::command]
 fn open_workspace_file(
+    app: AppHandle,
+    state: State<'_, GatewayProcess>,
     repo_root: String,
     relative_path: String,
     line: Option<u32>,
 ) -> Result<OpenWorkspaceFileResult, String> {
-    let root = canonical_repo_root(&repo_root)?;
-    let (_relative, resolved) = resolve_workspace_file(&root, &relative_path)?;
+    open_workspace_file_within(
+        &desktop_workspace_fence(&app, state.inner())?,
+        &repo_root,
+        &relative_path,
+        line,
+    )
+}
+
+fn open_workspace_file_within(
+    trusted: &[PathBuf],
+    repo_root: &str,
+    relative_path: &str,
+    line: Option<u32>,
+) -> Result<OpenWorkspaceFileResult, String> {
+    let root = fence_workspace_root(trusted, repo_root)?;
+    let (_relative, resolved) = resolve_workspace_file(&root, relative_path)?;
     let line = line.unwrap_or(1);
     if line == 0 {
         return Err("源码行号必须从 1 开始".into());
@@ -2635,17 +2804,14 @@ mod tests {
         write(root.join("main.rs"), "fn main() {}\n").expect("write source");
         write(root.join("asset.bin"), [1_u8, 0, 2]).expect("write binary");
 
-        let source = read_workspace_file(root.to_string_lossy().into_owned(), "./main.rs".into())
+        let trusted = vec![root.clone()];
+        let source = read_workspace_file_within(&trusted, &root.to_string_lossy(), "./main.rs")
             .expect("read source");
         assert_eq!(source.path, "main.rs");
         assert_eq!(source.content, "fn main() {}\n");
         assert_eq!(source.sha256.len(), 64);
-        assert!(
-            read_workspace_file(root.to_string_lossy().into_owned(), "../outside".into()).is_err()
-        );
-        assert!(
-            read_workspace_file(root.to_string_lossy().into_owned(), "asset.bin".into()).is_err()
-        );
+        assert!(read_workspace_file_within(&trusted, &root.to_string_lossy(), "../outside").is_err());
+        assert!(read_workspace_file_within(&trusted, &root.to_string_lossy(), "asset.bin").is_err());
 
         remove_dir_all(root).expect("remove temp workspace");
     }
@@ -2660,7 +2826,8 @@ mod tests {
         write(outside.join("secret.txt"), "secret").expect("write outside file");
         symlink(outside.join("secret.txt"), root.join("escape.txt")).expect("create symlink");
 
-        let result = read_workspace_file(root.to_string_lossy().into_owned(), "escape.txt".into());
+        let result =
+            read_workspace_file_within(&[root.clone()], &root.to_string_lossy(), "escape.txt");
         assert!(result.is_err());
 
         remove_dir_all(root).expect("remove root");
@@ -2676,7 +2843,8 @@ mod tests {
         write(root.join("ignored.log"), "noise\n").expect("write ignored");
         write(root.join(".gitignore"), "*.log\n").expect("write gitignore");
 
-        let listed = list_workspace_files(root.to_string_lossy().into_owned()).expect("list files");
+        let listed = list_workspace_files_within(&[root.clone()], &root.to_string_lossy())
+            .expect("list files");
         assert!(listed.files.contains(&"src/main.rs".to_string()));
         assert!(listed.files.contains(&".gitignore".to_string()));
         assert!(!listed.files.contains(&"ignored.log".to_string()));
@@ -2705,5 +2873,290 @@ mod tests {
         assert!(candidates
             .iter()
             .all(|(program, _, _)| !program.contains(' ')));
+    }
+
+    #[test]
+    fn workspace_commands_reject_roots_outside_the_fence() {
+        let trusted_root = temp_workspace("fence-trusted");
+        init_git(&trusted_root);
+        write(trusted_root.join("main.rs"), "fn main() {}\n").expect("write source");
+        let untrusted = temp_workspace("fence-untrusted");
+        init_git(&untrusted);
+        write(untrusted.join("secret.txt"), "secret").expect("write secret");
+        let trusted = vec![trusted_root.clone()];
+        let untrusted_str = untrusted.to_string_lossy().into_owned();
+
+        assert!(list_workspace_files_within(&trusted, &untrusted_str)
+            .err()
+            .expect("untrusted root must be rejected")
+            .contains("拒绝"));
+        assert!(
+            read_workspace_file_within(&trusted, &untrusted_str, "secret.txt")
+                .err()
+                .expect("untrusted read must be rejected")
+                .contains("拒绝")
+        );
+        assert!(
+            open_workspace_file_within(&trusted, &untrusted_str, "secret.txt", Some(1))
+                .err()
+                .expect("untrusted open must be rejected")
+                .contains("拒绝")
+        );
+
+        let listed = list_workspace_files_within(&trusted, &trusted_root.to_string_lossy())
+            .expect("trusted root stays allowed");
+        assert!(listed.files.contains(&"main.rs".to_string()));
+
+        remove_dir_all(trusted_root).expect("remove trusted");
+        remove_dir_all(untrusted).expect("remove untrusted");
+    }
+
+    #[test]
+    fn workspace_fence_allows_subdirectories_of_trusted_roots() {
+        let root = temp_workspace("fence-subdir");
+        init_git(&root);
+        create_dir_all(root.join("nested")).expect("create nested");
+        write(root.join("nested/inner.rs"), "fn inner() {}\n").expect("write nested source");
+
+        let listed = list_workspace_files_within(
+            &[root.clone()],
+            &root.join("nested").to_string_lossy(),
+        )
+        .expect("subdirectory of trusted root allowed");
+        assert!(listed.files.contains(&"inner.rs".to_string()));
+
+        remove_dir_all(root).expect("remove temp workspace");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_fence_resolves_symlinks_before_judging() {
+        use std::os::unix::fs::symlink;
+
+        let trusted_root = temp_workspace("fence-symlink-trusted");
+        let outside = temp_workspace("fence-symlink-outside");
+        init_git(&outside);
+        write(outside.join("secret.txt"), "secret").expect("write outside file");
+        // 受信根内的 symlink 指向围栏外目录：canonicalize 解析后落在围栏外，必须被拒。
+        symlink(&outside, trusted_root.join("escape")).expect("create symlink");
+
+        let result = list_workspace_files_within(
+            &[trusted_root.clone()],
+            &trusted_root.join("escape").to_string_lossy(),
+        );
+        assert!(result
+            .err()
+            .expect("symlink escape must be rejected").contains("拒绝"));
+
+        remove_dir_all(trusted_root).expect("remove trusted");
+        remove_dir_all(outside).expect("remove outside");
+    }
+
+    #[test]
+    fn workspace_fence_roots_cover_registry_supervisor_and_recovery() {
+        let registry = DesktopProjectRegistry {
+            projects: vec![DesktopProjectProfile {
+                id: "reg".into(),
+                name: "reg".into(),
+                repo_root: "/tmp/fence-registry".into(),
+                base_url: "http://127.0.0.1:8080".into(),
+                last_opened_at: 1,
+            }],
+        };
+        let recoveries = GatewayRecoveryRegistry {
+            version: 1,
+            runtimes: vec![GatewayRecoveryRecord {
+                runtime_id: "scratch-a".into(),
+                project_id: None,
+                workspace_id: Some("a".into()),
+                scope: SCRATCH_SCOPE.into(),
+                workspace_root: "/tmp/fence-recovery-ws".into(),
+                repo_root: "/tmp/fence-recovery-repo".into(),
+                base_url: "http://127.0.0.1:8123".into(),
+                pid: None,
+                started_at: 1,
+                updated_at: 2,
+                status: "crashed".into(),
+                message: "crashed".into(),
+            }],
+        };
+        let mut supervisor = GatewaySupervisorInner::default();
+        supervisor.runtimes.insert(
+            "project-live".into(),
+            GatewayProcessInner {
+                workspace_root: Some(PathBuf::from("/tmp/fence-live-ws")),
+                repo_root: Some(PathBuf::from("/tmp/fence-live-repo")),
+                ..GatewayProcessInner::default()
+            },
+        );
+
+        let roots = workspace_fence_roots(
+            &registry,
+            &recoveries,
+            Some(PathBuf::from("/tmp/fence-managed/workspaces")),
+            &supervisor,
+        );
+
+        for expected in [
+            "/tmp/fence-registry",
+            "/tmp/fence-managed/workspaces",
+            "/tmp/fence-recovery-ws",
+            "/tmp/fence-recovery-repo",
+            "/tmp/fence-live-ws",
+            "/tmp/fence-live-repo",
+        ] {
+            assert!(
+                roots.contains(&PathBuf::from(expected)),
+                "fence roots missing {expected}"
+            );
+        }
+    }
+
+    fn local_http_server(
+        response: Option<Vec<u8>>,
+        hits: std::sync::Arc<AtomicUsize>,
+    ) -> u16 {
+        use std::io::Read as _;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let port = listener.local_addr().expect("server addr").port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                hits.fetch_add(1, Ordering::SeqCst);
+                let mut buffer = [0_u8; 2048];
+                let _ = stream.read(&mut buffer);
+                match &response {
+                    // 挂起模式：不回任何字节，逼客户端走自己的超时预算。
+                    None => std::thread::sleep(Duration::from_secs(5)),
+                    Some(payload) => {
+                        let _ = stream.write_all(payload);
+                    }
+                }
+            }
+        });
+        port
+    }
+
+    fn probe_profile(port: u16) -> DesktopLlmProfile {
+        DesktopLlmProfile {
+            base_url: format!("http://127.0.0.1:{port}"),
+            api_key: String::new(),
+            model: "mimo-v2.5".into(),
+            context_window: None,
+            context_window_source: None,
+        }
+    }
+
+    #[test]
+    fn llm_probe_refuses_redirects_and_stays_on_declared_base_url() {
+        let leaked_hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let leak_port = local_http_server(
+            Some(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".to_vec()),
+            leaked_hits.clone(),
+        );
+        let redirect_hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let redirect_port = local_http_server(
+            Some(
+                format!(
+                    "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{leak_port}/models\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                )
+                .into_bytes(),
+            ),
+            redirect_hits.clone(),
+        );
+
+        let window = tauri::async_runtime::block_on(discover_model_context_window_with(
+            &probe_profile(redirect_port),
+            Duration::from_secs(2),
+        ));
+
+        assert_eq!(window, None);
+        assert_eq!(redirect_hits.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            leaked_hits.load(Ordering::SeqCst),
+            0,
+            "probe must not follow redirects off the declared base_url"
+        );
+    }
+
+    #[test]
+    fn llm_probe_gives_up_within_its_timeout_budget() {
+        let hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let port = local_http_server(None, hits.clone());
+
+        let started = std::time::Instant::now();
+        let window = tauri::async_runtime::block_on(discover_model_context_window_with(
+            &probe_profile(port),
+            Duration::from_millis(300),
+        ));
+
+        assert_eq!(window, None);
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "probe must give up within its timeout budget"
+        );
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn llm_profile_change_without_consent_neither_probes_nor_persists() {
+        let probe_hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let port = local_http_server(
+            Some(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}".to_vec()),
+            probe_hits.clone(),
+        );
+        let persisted = AtomicUsize::new(0);
+
+        let result = tauri::async_runtime::block_on(save_llm_profile_flow(
+            probe_profile(port),
+            false,
+            Duration::from_secs(1),
+            |_| {
+                persisted.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+        ));
+
+        assert!(result
+            .err()
+            .expect("unconfirmed change must fail")
+            .contains("未获用户确认"));
+        assert_eq!(persisted.load(Ordering::SeqCst), 0, "must not persist");
+        assert_eq!(
+            probe_hits.load(Ordering::SeqCst),
+            0,
+            "must not even probe before consent"
+        );
+    }
+
+    #[test]
+    fn llm_profile_change_with_consent_probes_then_persists() {
+        let body =
+            serde_json::json!({"data": [{"id": "mimo-v2.5", "context_window": 500000}]}).to_string();
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let probe_hits = std::sync::Arc::new(AtomicUsize::new(0));
+        let port = local_http_server(Some(response.into_bytes()), probe_hits.clone());
+        let persisted = AtomicUsize::new(0);
+
+        let saved = tauri::async_runtime::block_on(save_llm_profile_flow(
+            probe_profile(port),
+            true,
+            Duration::from_secs(2),
+            |profile| {
+                persisted.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(profile.context_window, Some(500_000));
+                Ok(())
+            },
+        ))
+        .expect("confirmed change saves");
+
+        assert_eq!(saved.context_window, Some(500_000));
+        assert_eq!(saved.context_window_source.as_deref(), Some("service"));
+        assert_eq!(persisted.load(Ordering::SeqCst), 1);
+        assert_eq!(probe_hits.load(Ordering::SeqCst), 1);
     }
 }
