@@ -120,15 +120,34 @@ class IMBridge:
         except Exception:  # noqa: BLE001
             pass
 
+    # ------------------------------------------------------------ 配置自检（只诊断，不改判定）
+    def allow_from_warning(self) -> Optional[str]:
+        """白名单配错时的一句人话提醒（开机横幅 + /status 都用）；配置正常返回 None。
+
+        **判定逻辑一个字都不改**——下面两种都是显式配置的直接后果，继续按 fail-closed 丢消息。
+        这里只解决可诊断性：这两种配错的表现都是"机器人装死"，主人第一反应是"坏了/连不上"，
+        排查能耗一整晚。开机就把话说明白，比什么都省事。
+        """
+        if not self.allow_from:
+            # 空白名单是合法的 fail-closed 配置（"空 ≠ 不限制"），但必须说出来。
+            return ("⚠ 入站白名单（allowFrom）为空 → 当前**拒绝一切入站消息**，包括你自己。"
+                    "清掉 VORTOCODE_IM_ALLOW_FROM（回到只放 owner）或把要放行的 id 填进去。")
+        if self.owner_id and self.owner_id not in self.allow_from:
+            # 配了白名单却漏了自己：主人的消息、以及**审批 y/n 与按钮点击**都在第一道闸就被丢，
+            # 表现为"机器人不理我 + 每个确认都等到 600s 超时被拒"，极难猜到是白名单漏了自己。
+            return (f"⚠ 入站白名单（allowFrom）里没有 owner（{self.owner_id}）→ 你自己发的消息和"
+                    f"审批（y/n、按钮点击）都会被白名单闸丢掉，表现为「机器人不理人、确认永远超时」。"
+                    f"这是显式配置，判定不会为你放宽——把 {self.owner_id} 加进 "
+                    f"VORTOCODE_IM_ALLOW_FROM（或通道专属的 *_ALLOW_FROM）。")
+        return None
+
     # ------------------------------------------------------------ 主循环
     async def run(self) -> None:
         hello = (f"🤖 VortoCode 已就绪（{self.mode} 模式）· 仓库 {Path(self.repo_root).name}。"
                  f"发任务给我跑隔离流水线；/help 看用法。")
-        if not self.allow_from:
-            # 空白名单是合法的 fail-closed 配置，但必须**说出来**——否则表现为"机器人装死"，
-            # 排查成本极高。开机就讲清楚：不是坏了，是白名单空 = 全拒。
-            hello += ("\n⚠ 入站白名单（allowFrom）为空 → 当前**拒绝一切入站消息**，包括你自己。"
-                      "清掉 VORTOCODE_IM_ALLOW_FROM（回到只放 owner）或把要放行的 id 填进去。")
+        warn = self.allow_from_warning()
+        if warn:
+            hello += "\n" + warn
         await self._safe_send(hello)
         async for ev in self.adapter.poll():
             try:
@@ -191,6 +210,9 @@ class IMBridge:
             recent = self._recent_plan()                 # 最近的 dev_auto 计划进度（可 dev_resume 续跑）
             if recent:
                 msg += f"\n最近计划：{recent}"
+            warn = self.allow_from_warning()             # 白名单配错的自检（开机横幅可能早刷没了）
+            if warn:
+                msg += "\n" + warn
             await self._safe_send(msg)
         elif cmd == "/new":
             self.agent.history = []
