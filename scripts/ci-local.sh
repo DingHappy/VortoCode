@@ -67,14 +67,19 @@ fi
 # ——上面刚把 API key 全清掉就是为这个。把一个联网下载塞进来会毁掉这条不变量：
 # 本机因为有缓存看不出来，换台机器/冷缓存就变成"门禁要联网拉几百 MB"。
 #
-# 所以门禁取不联网的部分：tsc（类型）+ cargo test --lib（37 条 Rust 单测，含
-# 路径围栏/项目注册那几条安全测试）+ cargo check（额外覆盖 main.rs）。约 22s。
+# 所以门禁取不联网的部分：tsc（类型）+ vitest（gateway.ts 纯逻辑单测，B6-3）
+# + cargo test --lib（37 条 Rust 单测，含路径围栏/项目注册那几条安全测试）
+# + cargo check（额外覆盖 main.rs）。约 22s。
 # 打包正确性（vite build ~44s、sidecar、bundle 冒烟）属发布前检查，仍走 `npm run check`。
 # check-runtime-entry.mjs 不重复跑——它就是 pytest tests/unit/test_desktop_runtime_entry.py，
 # 上面的 pytest 段已经覆盖了。
 # 同口径的单命令版本：cd desktop && npm run check:ci
 # ─────────────────────────────────────────────────────────────
 desktop_ts_gate() { ( cd desktop && npx --no-install tsc --noEmit ); }
+
+# `vitest run` 而不是裸 `vitest`——后者是 watch 模式，会让门禁永远挂住不返回。
+# 测试本身全程 mock 掉 WebSocket/fetch，不起 dev server、不联网。
+desktop_vitest_gate() { ( cd desktop && npx --no-install vitest run ); }
 
 desktop_rust_gate() {
   local out status
@@ -126,12 +131,13 @@ run_desktop_section() {
   fi
 
   if ! command -v npx >/dev/null 2>&1; then
-    skip_gate "desktop · tsc" "没装 node/npx——装了再跑，或 SKIP_DESKTOP=1"
+    skip_gate "desktop · tsc + vitest" "没装 node/npx——装了再跑，或 SKIP_DESKTOP=1"
   elif [ ! -d desktop/node_modules ]; then
     # 新 clone 必然走到这里：npm ci 要联网，门禁不替你装。
-    skip_gate "desktop · tsc" "desktop/node_modules 缺失——先 cd desktop && npm ci（需联网）"
+    skip_gate "desktop · tsc + vitest" "desktop/node_modules 缺失——先 cd desktop && npm ci（需联网）"
   else
     run_gate "desktop · tsc（类型）" desktop_ts_gate
+    run_gate "desktop · vitest（gateway 纯逻辑单测）" desktop_vitest_gate
   fi
 
   # Tauri 的 build script 在**编译期**校验 tauri.conf.json 声明的 externalBin
