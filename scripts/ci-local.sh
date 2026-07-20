@@ -67,7 +67,7 @@ fi
 # ——上面刚把 API key 全清掉就是为这个。把一个联网下载塞进来会毁掉这条不变量：
 # 本机因为有缓存看不出来，换台机器/冷缓存就变成"门禁要联网拉几百 MB"。
 #
-# 所以门禁取不联网的部分：tsc（类型）+ cargo test --lib（29 条 Rust 单测，含
+# 所以门禁取不联网的部分：tsc（类型）+ cargo test --lib（37 条 Rust 单测，含
 # 路径围栏/项目注册那几条安全测试）+ cargo check（额外覆盖 main.rs）。约 22s。
 # 打包正确性（vite build ~44s、sidecar、bundle 冒烟）属发布前检查，仍走 `npm run check`。
 # check-runtime-entry.mjs 不重复跑——它就是 pytest tests/unit/test_desktop_runtime_entry.py，
