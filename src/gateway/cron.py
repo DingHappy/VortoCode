@@ -10,6 +10,20 @@
 上次运行时刻持久化到 `.vortocode/cron_state.json`（防重复触发、进程重启不忘）。夜跑评测（B3）、
 依赖升级检查、CI 红自动修（C3）都挂这里。安全：cron.yaml 由主人自己写；隔离会话默认 build，
 外向操作仍走各自确认/硬闸。
+
+## run lane：例行产出不进人类会话（B6-5）
+
+cron 是**机器的例行班次**，不是人的对话。它跑出来的东西只有两个去处：
+
+1. **Journal / 决策台账**——每次作业落一条 `CommandRun(kind="cron")` 到 `.vortocode/runs/`
+   （`record_outcome`）。`build_daily_journal` 从 `RunLedger` 读时间线，`build_decision_queue`
+   把 `failed` 的 run 变成一条 `run:<id>` 决策项——"有东西要你拍板"就是这么冒出来的。
+2. **通知台账**——`_announce` 按 announce 投递（notices.jsonl + WS 广播 + IM 推 owner）。
+
+**不追加任何人类会话历史**：本模块没有任何一处拿得到会话对象，也不写 `.vortocode/sessions/*.json`；
+prompt 作业走 `run_isolated_session`（全新 MainAgent，不读不写主会话历史），command 作业走
+`shell.run_command`。产出的唯一出口是上面两条 lane 与函数返回值——人在聊天流里永远不会被
+例行日志刷屏，只会收到"有东西要你拍板"这一条通知。
 """
 from __future__ import annotations
 
@@ -267,40 +281,117 @@ async def run_command_job(repo_root: str, job: CronJob) -> tuple[int, str, dict]
     return code, out, evidence
 
 
-async def run_job(repo_root: str, job: CronJob, *, run_session=None, notify=None,
-                  now: Optional[datetime] = None) -> str:
-    """跑一个作业；给了 now 则记为上次运行（防重复触发）；announce=im 且有 notify 则投递结果。
+# --------------------------------------------------------------------- run lane（例行产出的唯一去处）
+_LANE_KIND = "cron"                              # CommandRun.kind：把例行班次和人点的 terminal/test 分开
+_LANE_SUMMARY_CAP = 8_000                        # 落台账的产出上限
+_ANNOUNCE_CAP = 900                              # 单条通知长度上限（IM/WS 都不该被例行日志刷屏）
 
-    command 作业：确定性 shell，退出码即红绿（非零 → 通报里明确标红，别让回归静悄悄过去）。
-    prompt 作业：隔离 LLM 会话（全新 MainAgent，不读不写主会话历史）。
+
+def record_outcome(repo_root: str, name: str, *, ok: bool, summary: str, command: str = "",
+                   code: Optional[int] = None, error: str = "",
+                   sandbox: Optional[dict] = None) -> str:
+    """把一次例行作业的结果落进 run lane，返回 run id（写不进去 → 空串）。
+
+    这就是"进 Journal / 决策台账"那一步：`build_daily_journal` 从 `RunLedger` 组装时间线，
+    `build_decision_queue` 把 `status=failed` 的 run 变成一条 `run:<id>` 决策项。
+    best-effort：台账写失败不能把作业本身拖挂（作业已经跑完了，返回值仍然有效）。
     """
-    if job.kind == "command":
-        code, out, sandbox = await run_command_job(repo_root, job)
-        if now is not None:
-            CronState(repo_root).mark(job.name, now)
-        head = (f"✅ cron [{job.name}] 通过" if code == 0
-                else f"🔴 cron [{job.name}] **失败**（退出码 {code}）")
-        # 沙箱证据随通报带出：无人值守跑了什么、在什么隔离下跑的，必须可审计
-        backend = str(sandbox.get("backend") or "") if isinstance(sandbox, dict) else ""
-        iso = bool(sandbox.get("isolated")) if isinstance(sandbox, dict) else False
-        mark = f"沙箱 {backend}" if iso else "⚠ 未隔离"
-        result = f"{head}（{mark}）\n$ {job.command}\n\n{out}"
-        if job.announce == "im" and notify is not None:
-            await notify(result[:900])
-        return result
-    if run_session is None:
-        from src.gateway.session import run_isolated_session
-        run_session = run_isolated_session
-    result = await run_session(repo_root, job.prompt, mode="build", model=job.model)
+    try:
+        from src.gateway.runs import CommandRun, RunLedger
+        run = CommandRun.new(command or f"cron:{name}", _LANE_KIND)
+        run.status = "done" if ok else "failed"
+        run.code = (0 if code is None else int(code)) if ok else (-1 if code is None else int(code))
+        run.output = str(summary or "")[-_LANE_SUMMARY_CAP:]
+        run.error = "" if ok else (str(error or "") or f"cron [{name}] 失败")[:1000]
+        run.sandbox = dict(sandbox or {})
+        return run.id if RunLedger(repo_root).save(run) else ""
+    except Exception:  # noqa: BLE001 —— 台账是旁路，绝不反过来炸作业
+        return ""
+
+
+async def _announce(repo_root: str, job: CronJob, text: str, *, ok: bool, notify=None) -> None:
+    """通知投递。`announce=silent` 只压**成功**产出；**失败一律通报**（红线：别静默吞掉）。
+
+    有 notify（调度循环给的三路投递器：通知台账 + WS 广播 + IM 推 owner）就走它；没有
+    （`vc cron run`、任何没接投递器的调用方）就直接写通知台账兜底。推送这一路挂了也照样兜底落账——
+    去处永远是台账/通知，永远不是谁的聊天记录。
+    """
+    if ok and job.announce != "im":
+        return
+    body = str(text or "")[:_ANNOUNCE_CAP]
+    if notify is not None:
+        try:
+            await notify(body)
+            return
+        except Exception:  # noqa: BLE001 —— 推送挂了不算送到，落台账兜底
+            pass
+    from src.gateway.notices import record_notice
+    record_notice(repo_root, body, source=f"cron:{job.name}")
+
+
+def _mark_ran(repo_root: str, job: CronJob, now: Optional[datetime]) -> None:
+    """记为已跑（防重复触发）。**失败也记**：cron 是定时班次、不是重试队列——不记的话
+    `at HH:MM` 类作业会在到点后每分钟重跑一遍，把决策队列和通知台账刷成噪音。
+    """
     if now is not None:
         CronState(repo_root).mark(job.name, now)
-    if job.announce == "im" and notify is not None:
-        await notify(f"⏰ cron [{job.name}] 跑完：\n{(result or '').strip()[:800]}")
-    return result
+
+
+async def run_job(repo_root: str, job: CronJob, *, run_session=None, notify=None,
+                  now: Optional[datetime] = None) -> str:
+    """跑一个作业；给了 now 则记为上次运行（防重复触发）。
+
+    产出**只**走 run lane：一条 `CommandRun(kind="cron")` 进 Journal/决策台账 + 按 announce
+    投递通知。**不追加任何人类会话历史**——这里既没有会话对象可写，prompt 作业用的
+    `run_isolated_session` 本身也是全新 MainAgent（不读不写主会话历史）。
+
+    command 作业：确定性 shell，退出码即红绿（非零 → 通报里明确标红，别让回归静悄悄过去）。
+    prompt 作业：隔离 LLM 会话。
+    作业炸了（沙箱 fail-closed、模型不可用、脚本抛异常）→ 照样落台账并通报，然后原样抛给调用方。
+    """
+    try:
+        if job.kind == "command":
+            code, out, sandbox = await run_command_job(repo_root, job)
+            ok = code == 0
+            head = (f"✅ cron [{job.name}] 通过" if ok
+                    else f"🔴 cron [{job.name}] **失败**（退出码 {code}）")
+            # 沙箱证据随通报带出：无人值守跑了什么、在什么隔离下跑的，必须可审计
+            backend = str(sandbox.get("backend") or "") if isinstance(sandbox, dict) else ""
+            iso = bool(sandbox.get("isolated")) if isinstance(sandbox, dict) else False
+            mark = f"沙箱 {backend}" if iso else "⚠ 未隔离"
+            result = f"{head}（{mark}）\n$ {job.command}\n\n{out}"
+            _mark_ran(repo_root, job, now)
+            record_outcome(repo_root, job.name, ok=ok, summary=result, command=job.command,
+                           code=code, sandbox=sandbox,
+                           error="" if ok else f"cron [{job.name}] 命令退出码 {code}：{out[-400:]}")
+            await _announce(repo_root, job, result, ok=ok, notify=notify)
+            return result
+        if run_session is None:
+            from src.gateway.session import run_isolated_session
+            run_session = run_isolated_session
+        result = await run_session(repo_root, job.prompt, mode="build", model=job.model)
+        text = (result or "").strip()
+        _mark_ran(repo_root, job, now)
+        record_outcome(repo_root, job.name, ok=True, summary=text, code=0)
+        await _announce(repo_root, job, f"⏰ cron [{job.name}] 跑完：\n{text[:800]}",
+                        ok=True, notify=notify)
+        return result
+    except Exception as error:  # noqa: BLE001 —— 例行作业炸了是红线：必须留痕，绝不静默吞
+        detail = f"{type(error).__name__}: {error}"[:600]
+        _mark_ran(repo_root, job, now)
+        record_outcome(repo_root, job.name, ok=False, summary=detail, command=job.command,
+                       code=-1, error=f"cron [{job.name}] 执行异常：{detail}")
+        await _announce(repo_root, job, f"🔴 cron [{job.name}] **执行异常**：{detail}",
+                        ok=False, notify=notify)
+        raise
 
 
 async def run_due(repo_root: str, now: datetime, *, run_session=None, notify=None) -> List[str]:
-    """跑当前所有到点的作业（各自隔离），返回跑了的作业名。单个出错不拖垮其它。"""
+    """跑当前所有到点的作业（各自隔离），返回**跑成功**的作业名。单个出错不拖垮其它。
+
+    这里吞异常只是为了别让一个坏作业停掉整轮调度——失败在 `run_job` 里已经落了
+    决策台账 + 通知台账，不是静默丢。
+    """
     ran: List[str] = []
     for job in due_jobs(repo_root, now):
         try:

@@ -318,3 +318,195 @@ async def test_scheduler_loop_wires_notify_to_cron_and_heartbeat(tmp_path, monke
     assert captured.get("hb_notify") is not None            # heartbeat 收到了投递路径
     texts = [n["text"] for n in tm.load_notices(str(tmp_path))]
     assert any("cron" in t for t in texts) and any("心跳" in t for t in texts)   # 真落了台账，没静默丢
+
+
+# ------------------------------------------- B6-5 run lane：例行产出只进 Journal / 台账，不进会话
+def _cron_job(name="nightly", *, announce="im", prompt="干活", command=""):
+    return cron.CronJob(name=name, schedule=cron.parse_schedule("every 1h"),
+                        prompt=prompt, command=command, announce=announce)
+
+
+def _seed_human_session(tmp_path):
+    """造一个真人会话（落盘的 sid 会话），返回它当前的 (transcript, history) 快照。"""
+    from src.web.session_store import load_session, save_session
+    transcript = [{"role": "user", "text": "帮我看看登录 bug"},
+                  {"role": "assistant", "text": "看了，是 token 过期"}]
+    history = [{"role": "user", "content": "帮我看看登录 bug"},
+               {"role": "assistant", "content": "看了，是 token 过期"}]
+    assert save_session(str(tmp_path), "sid-alice", transcript, history, None) is True
+    got = load_session(str(tmp_path), "sid-alice")
+    return got["transcript"], got["history"]
+
+
+def _cron_runs(tmp_path):
+    from src.gateway.runs import RunLedger
+    return [r for r in RunLedger(str(tmp_path)).list() if r.kind == "cron"]
+
+
+@pytest.mark.asyncio
+async def test_cron_output_goes_to_journal_not_human_session_history(tmp_path):
+    """例行产出进 Journal（run lane），**人类会话历史长度一字不变**。"""
+    from src.gateway.journal import build_daily_journal
+    from src.web.session_store import load_session
+
+    transcript, history = _seed_human_session(tmp_path)
+    _write_cron_yaml(tmp_path, """
+jobs:
+  - name: nightly
+    schedule: "at 02:00"
+    prompt: 跑夜跑
+""")
+
+    async def fake_session(repo_root, prompt, **k):
+        return "夜跑完成，全绿"
+
+    ran = await cron.run_due(str(tmp_path), datetime(2026, 7, 3, 2, 0), run_session=fake_session)
+    assert ran == ["nightly"]
+
+    after = load_session(str(tmp_path), "sid-alice")
+    assert len(after["history"]) == len(history)         # 会话历史长度不变
+    assert after["history"] == history and after["transcript"] == transcript
+    # 也没偷偷新开一个会话文件
+    assert sorted(p.name for p in (tmp_path / ".vortocode" / "web_sessions").glob("*.json")) == ["alice.json"]
+
+    runs = _cron_runs(tmp_path)
+    assert len(runs) == 1 and runs[0].status == "done" and runs[0].code == 0
+    assert "夜跑完成" in runs[0].output
+    timeline = build_daily_journal(str(tmp_path))["timeline"]
+    assert any(item["kind"] == "run" and item["title"] == "cron · done" for item in timeline)
+
+
+@pytest.mark.asyncio
+async def test_failed_command_job_reaches_decision_queue_and_notice_ledger(tmp_path, monkeypatch):
+    """红线：作业失败 → 决策队列（有东西要你拍板）+ 通知台账，announce=silent 也压不住。"""
+    from src.gateway.decisions import DecisionStore, build_decision_queue
+    from src.gateway.notices import load_notices
+    from src.gateway.runs import RunLedger
+
+    async def fake_command(repo_root, job):
+        return 1, "评测回归 2 例", {"backend": "seatbelt", "isolated": True}
+    monkeypatch.setattr(cron, "run_command_job", fake_command)
+
+    job = _cron_job("evals", announce="silent", prompt="", command="python -m evals")
+    out = await cron.run_job(str(tmp_path), job, now=datetime(2026, 7, 3, 2, 0))
+    assert "失败" in out and "退出码 1" in out
+
+    runs = _cron_runs(tmp_path)
+    assert len(runs) == 1 and runs[0].status == "failed" and runs[0].code == 1
+    assert runs[0].sandbox.get("backend") == "seatbelt"      # 沙箱证据可审计
+
+    queue = build_decision_queue(runs=RunLedger(str(tmp_path)).list(),
+                                 dismissed=DecisionStore(str(tmp_path)).dismissed())
+    item = next(i for i in queue if i["kind"] == "run")
+    assert item["title"] == "例行作业失败" and "evals" in item["detail"] and item["action"] == "open_run"
+
+    texts = [n["text"] for n in load_notices(str(tmp_path))]
+    assert any("evals" in t and "失败" in t for t in texts)   # silent 压不住失败
+
+
+@pytest.mark.asyncio
+async def test_job_exception_is_recorded_not_swallowed(tmp_path):
+    """作业炸了（沙箱 fail-closed / 模型不可用 / 脚本抛）：照样留痕 + 通报，且记为已跑不刷屏。"""
+    from src.gateway.decisions import build_decision_queue
+    from src.gateway.runs import RunLedger
+    from src.web.session_store import load_session
+
+    _seed_human_session(tmp_path)
+    _write_cron_yaml(tmp_path, """
+jobs:
+  - name: broken
+    schedule: "at 02:00"
+    prompt: 干活
+    announce: silent
+""")
+    announced = []
+
+    async def boom_session(repo_root, prompt, **k):
+        raise RuntimeError("沙箱不可用，拒绝裸跑")
+
+    async def notify(text):
+        announced.append(text)
+
+    now = datetime(2026, 7, 3, 2, 0)
+    assert await cron.run_due(str(tmp_path), now, run_session=boom_session, notify=notify) == []
+    assert any("broken" in a and "执行异常" in a for a in announced)   # 没静默吞
+    assert cron.CronState(str(tmp_path)).last_run("broken") == now      # 失败也记：不每分钟重跑刷屏
+
+    runs = _cron_runs(tmp_path)
+    assert len(runs) == 1 and runs[0].status == "failed"
+    assert "沙箱不可用" in runs[0].error
+    assert any(i["kind"] == "run" and i["title"] == "例行作业失败"
+               for i in build_decision_queue(runs=RunLedger(str(tmp_path)).list()))
+    assert len(load_session(str(tmp_path), "sid-alice")["history"]) == 2   # 失败也不进会话历史
+
+
+@pytest.mark.asyncio
+async def test_silent_success_stays_out_of_notice_ledger_but_is_journaled(tmp_path):
+    """announce=silent 只压成功产出：台账不响，但 Journal 仍有账可查（例行日志不刷人）。"""
+    from src.gateway.notices import load_notices
+
+    async def fake_session(repo_root, prompt, **k):
+        return "没什么事"
+    announced = []
+
+    async def notify(text):
+        announced.append(text)
+
+    await cron.run_job(str(tmp_path), _cron_job("quiet", announce="silent"),
+                       run_session=fake_session, notify=notify)
+    assert announced == [] and load_notices(str(tmp_path)) == []
+    runs = _cron_runs(tmp_path)
+    assert len(runs) == 1 and runs[0].status == "done"
+
+
+@pytest.mark.asyncio
+async def test_announce_falls_back_to_notice_ledger_when_push_dies(tmp_path):
+    """推送这一路挂了 → 兜底落通知台账（去处永远是台账，不是谁的聊天记录）。"""
+    from src.gateway.notices import load_notices
+
+    async def fake_session(repo_root, prompt, **k):
+        return "跑完了"
+
+    async def broken_notify(text):
+        raise RuntimeError("WS 断了")
+
+    await cron.run_job(str(tmp_path), _cron_job("nightly"),
+                       run_session=fake_session, notify=broken_notify)
+    got = load_notices(str(tmp_path))
+    assert len(got) == 1 and "nightly" in got[0]["text"] and got[0]["source"] == "cron:nightly"
+
+
+@pytest.mark.asyncio
+async def test_run_lane_writes_nothing_outside_the_lane(tmp_path):
+    """整条 cron 路径（成功 + 失败）只动 run lane 的落点，别的一个字节都不碰。
+
+    比"会话历史长度不变"更硬：任何把例行产出塞进会话/记忆/交接文件的改法都会让这条红。
+    """
+    root = tmp_path / ".vortocode"
+
+    def snapshot():
+        return {str(p.relative_to(root)): p.read_bytes()
+                for p in root.rglob("*") if p.is_file()}
+
+    _seed_human_session(tmp_path)
+    (root / "memory").mkdir(parents=True, exist_ok=True)
+    (root / "memory" / "repo.md").write_text("仓库经验\n", encoding="utf-8")
+    before = snapshot()
+
+    async def fake_session(repo_root, prompt, **k):
+        return "结果"
+
+    async def boom_session(repo_root, prompt, **k):
+        raise RuntimeError("炸了")
+
+    now = datetime(2026, 7, 3, 2, 0)
+    await cron.run_job(str(tmp_path), _cron_job("nightly"), run_session=fake_session, now=now)
+    with pytest.raises(RuntimeError):
+        await cron.run_job(str(tmp_path), _cron_job("broken"), run_session=boom_session, now=now)
+
+    after = snapshot()
+    touched = {name for name in after if before.get(name) != after[name]}
+    assert touched, "run lane 一条记录都没落，那才是真丢了"
+    allowed = {"runs", "logs", "cron_state.json", ".gitignore"}
+    assert {name.split("/", 1)[0] for name in touched} <= allowed
+    assert set(before) <= set(after)                       # 只增不删，人的东西一样没少
