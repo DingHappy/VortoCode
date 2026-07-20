@@ -45,7 +45,8 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
                   on_tool=None, on_tool_event=None, on_plan=None, llm=None, max_steps=None,
                   capability_profile=None, auto_approve: bool = False,
                   can_ask_human: bool = False, on_decision=None, on_diff=None,
-                  workspace_scope: str = "project", on_workspace_required=None):
+                  workspace_scope: str = "project", on_workspace_required=None,
+                  untrusted_input: bool = False):
     """装配一个主 agent（三端同一骨架）。
 
     kind ∈ {web, cli, im} 决定差异位（with_artifacts / hooks）；confirm/on_progress 由调用端提供。
@@ -54,6 +55,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
     `can_ask_human`（这个端问得到人吗）与 `auto_approve`（是否已授权自动放行，如 CLI 的 --yes）。
     「要不要问、能不能免」由内核统一判定，污点回合下一切自动放行失效。
     此前这是"语义由调用方注入"，结果污点检查只写在 TUI 里、CLI/Web 完全不查——每加一个端就漏一处。
+
+    `untrusted_input`：这个端的**用户输入本身**是否不可信外部内容（IM 入站消息即是）。置位后
+    每个回合从污点态起步。**kind="im" 由工厂强制置位**，不看调用方传没传——端忘了申报也漏不掉，
+    与 `can_ask_human` 默认最严是同一条纪律。
     """
     if kind not in _KINDS:
         raise ValueError(f"未知装配端 kind={kind!r}（可选 {_KINDS}）")
@@ -129,7 +134,9 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
                   # General 的 app-data cwd 只是持久化实现细节，不能伪装成用户工作区注入模型。
                   env_context=workspace_scope != GENERAL,
                   native=native_default(),             # 三端统一 native 开关
-                  capabilities=capabilities)
+                  capabilities=capabilities,
+                  # IM 入站一律不可信：工厂强制，不依赖端记得申报（OPENCLAW_INTEGRATION 第 2 条）
+                  untrusted_input=bool(untrusted_input) or kind == "im")
     parts = [
         "【工作区范围】当前是 General 无目录会话。你可以对话、规划、联网检索和制作制品，"
         "但不能读取文件、运行命令或使用 Git。只有任务确实需要文件时才调用 request_workspace；"

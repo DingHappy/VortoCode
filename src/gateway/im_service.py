@@ -40,7 +40,11 @@ def build_adapter(channel: str) -> Tuple[object, str]:
                 "  ① 找 @BotFather 建 bot 拿 token；② 给 bot 发一条消息，再从 "
                 "https://api.telegram.org/bot<token>/getUpdates 读你自己的数字 chat id。")
         from src.im.telegram import TelegramAdapter
-        return TelegramAdapter(token, owner), owner
+        # bot_username 是**可选**的（群提及门用；不设则首次群消息时 getMe 惰性解析），
+        # 刻意不进上面的 fail-closed 必填项——它缺失只会让群消息更不响应，不影响私聊凭证路径。
+        return TelegramAdapter(
+            token, owner,
+            bot_username=os.getenv("VORTOCODE_TG_BOT_USERNAME", "").strip() or None), owner
     if channel == "dingtalk":
         cid = os.getenv("VORTOCODE_DD_CLIENT_ID", "").strip()
         secret = os.getenv("VORTOCODE_DD_CLIENT_SECRET", "").strip()
@@ -56,6 +60,25 @@ def build_adapter(channel: str) -> Tuple[object, str]:
     raise IMConfigError(f"未知 IM 通道 {channel!r}（可选 telegram / dingtalk）")
 
 
+def load_allow_from(channel: str):
+    """读入站白名单配置，返回 None（未配置 → 由 bridge 回落到"只放 owner"）或一个 id 集合。
+
+    通道专属 `VORTOCODE_TG_ALLOW_FROM` / `VORTOCODE_DD_ALLOW_FROM` 优先于通用
+    `VORTOCODE_IM_ALLOW_FROM`；逗号/空白分隔。
+
+    **"未设置"与"设成空"是两回事**（fail-closed 的关键）：环境变量不存在 = 沿用配对制只放 owner；
+    存在但解析为空（`VORTOCODE_IM_ALLOW_FROM=` 或 `","`）= **显式空白名单 = 全拒**，连 owner
+    也进不来。绝不把"空"读成"不限制"。凭证读取（build_adapter）完全不受本函数影响。
+    """
+    from src.im.bridge import parse_allow_from
+    channel_key = {"telegram": "VORTOCODE_TG_ALLOW_FROM",
+                   "dingtalk": "VORTOCODE_DD_ALLOW_FROM"}.get((channel or "").strip().lower())
+    for key in (channel_key, "VORTOCODE_IM_ALLOW_FROM"):
+        if key and key in os.environ:
+            return parse_allow_from(os.environ[key])
+    return None
+
+
 def start_embedded(channel: str, repo_root: str, *, mode: str = "plan",
                    adapter=None, owner: Optional[str] = None, runner=None):
     """在 serve 进程内起 bridge：构造（或注入，测试用）adapter → 建 bridge（共享 runner）→
@@ -67,7 +90,8 @@ def start_embedded(channel: str, repo_root: str, *, mode: str = "plan",
     if runner is None:
         from src.web.routers.tasks import get_runner
         runner = get_runner()
-    bridge = IMBridge(repo_root, adapter, str(owner), channel=channel, mode=mode, runner=runner)
+    bridge = IMBridge(repo_root, adapter, str(owner), channel=channel, mode=mode, runner=runner,
+                      allow_from=load_allow_from(channel))
     from src.web.routers import tasks as tasks_router
     tasks_router.register_im_worker(bridge._task_worker)   # kind="im-dev" 分发回 bridge worker
     # IM 也收任务进度/终态（与 WS 同一订阅集）；unsubscribe 必须留着——stop 时不退订的话，

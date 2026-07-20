@@ -12,30 +12,57 @@ import re
 import time
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 from .channel import ChannelAdapter
 
 _MARKUP = re.compile(r"\[/?[a-zA-Z][^\]]*\]")     # 去 Rich 标记（say 里的 [b]…[/b] 等）
 _CONFIRM_TIMEOUT = 600                             # 按钮确认等待上限（秒）；超时=拒绝（安全不放行）
+_SPLIT = re.compile(r"[,\s;]+")                    # allowFrom 的分隔符（逗号/空白/分号都收）
 
 
 def _strip(text: str) -> str:
     return _MARKUP.sub("", str(text or "")).strip()
 
 
+def parse_allow_from(raw: Optional[str]) -> Optional[frozenset]:
+    """把一条 allowFrom 配置字符串解析成白名单集合。
+
+    **返回值三态，别把后两种混为一谈**（B6-6 硬化最容易写反的地方）：
+
+    - ``None``（配置项**根本没设**）→ 交回调用方走默认（配对制：只放 owner 一人）；
+    - ``frozenset()``（配置项**设了但是空的**，如 ``VORTOCODE_IM_ALLOW_FROM=""`` 或 ``","``）
+      → **显式空白名单 = 全拒**，连 owner 也拒。这是 fail-closed 的正确读法：很多 IM 桥把
+      "空 = 不限制"当默认，结果任何陌生人都能驱动 agent（OPENCLAW_INTEGRATION 反面教材第 4 条）。
+    """
+    if raw is None:
+        return None
+    return frozenset(p for p in _SPLIT.split(str(raw).strip()) if p)
+
+
+def normalize_allow_from(allow_from: Optional[Iterable], owner_id: str) -> frozenset:
+    """算出最终生效的白名单：没配 → 只放 owner（向后兼容现有配对制部署）；配了 → 照配的来（空即全拒）。"""
+    if allow_from is None:
+        return frozenset({str(owner_id)}) if str(owner_id) else frozenset()
+    return frozenset(str(x).strip() for x in allow_from if str(x).strip())
+
+
 class IMBridge:
     def __init__(self, repo_root: str, adapter: ChannelAdapter, owner_id: str, *,
-                 channel: str = "im", mode: str = "plan", llm=None, runner=None):
+                 channel: str = "im", mode: str = "plan", llm=None, runner=None,
+                 allow_from: Optional[Iterable] = None):
         self.repo_root = str(repo_root)
         self.adapter = adapter
         self.owner_id = str(owner_id)
+        # 入站白名单：没配 → 只放 owner（配对制原样）；配了空 → 全拒。判定见 normalize_allow_from。
+        self.allow_from = normalize_allow_from(allow_from, self.owner_id)
         self.mode = mode if mode in ("plan", "build") else "plan"
         self._llm = llm
         self._sid = f"sid-{channel}-{self.owner_id}"     # session_store 要求 sid- 前缀
         self._pending: dict = {}                         # cid -> Future（确认）
         self._turn_task: Optional[asyncio.Task] = None
-        self._ignored = 0                                # 非主人消息计数（配对制）
+        self._ignored = 0                                # 白名单外的入站计数
+        self._ignored_no_mention = 0                     # 群聊里没 @ 到本机器人的入站计数
         self._confirm_holder = {"fn": None}
         self._progress_holder = {"fn": None}
         # 不支持编辑的通道（钉钉）进度只能发新消息 → 放慢节流免刷屏
@@ -65,8 +92,12 @@ class IMBridge:
 
         # IM 有配对的主人在手机那头（send_confirm 按钮/文本应答）→ 问得到人；无自动放行。
         # 显式声明：内核 gate 默认最严格（问不到人），忘了声明只会更严、不会更松。
+        # untrusted_input=True：IM 入站是彻头彻尾的外部不可信内容（转发的网页、群里别人贴的文本、
+        # 冒充运维的指令），**每个回合一开始就打污点**——污点态下一切免确认授权失效，
+        # 记忆写入也降级（指令性文本不进长期记忆）。这条对 IM 无例外，见 OPENCLAW_INTEGRATION 第 2 条。
         agent = build_session(self.repo_root, kind="im", confirm=_confirm,
-                              on_progress=_progress, llm=self._llm, can_ask_human=True)
+                              on_progress=_progress, llm=self._llm, can_ask_human=True,
+                              untrusted_input=True)
         self._restore_session(agent)
         return agent
 
@@ -91,9 +122,14 @@ class IMBridge:
 
     # ------------------------------------------------------------ 主循环
     async def run(self) -> None:
-        await self._safe_send(
-            f"🤖 VortoCode 已就绪（{self.mode} 模式）· 仓库 {Path(self.repo_root).name}。"
-            f"发任务给我跑隔离流水线；/help 看用法。")
+        hello = (f"🤖 VortoCode 已就绪（{self.mode} 模式）· 仓库 {Path(self.repo_root).name}。"
+                 f"发任务给我跑隔离流水线；/help 看用法。")
+        if not self.allow_from:
+            # 空白名单是合法的 fail-closed 配置，但必须**说出来**——否则表现为"机器人装死"，
+            # 排查成本极高。开机就讲清楚：不是坏了，是白名单空 = 全拒。
+            hello += ("\n⚠ 入站白名单（allowFrom）为空 → 当前**拒绝一切入站消息**，包括你自己。"
+                      "清掉 VORTOCODE_IM_ALLOW_FROM（回到只放 owner）或把要放行的 id 填进去。")
+        await self._safe_send(hello)
         async for ev in self.adapter.poll():
             try:
                 await self._on_event(ev)
@@ -101,10 +137,29 @@ class IMBridge:
                 await self._safe_send(f"（处理消息出错：{e}）")
 
     async def _on_event(self, ev) -> None:
-        if str(ev.sender_id) != self.owner_id:      # 配对制：只服务主人，其它静默忽略并计数
+        """**IM 侧唯一的入站闸**（三道，全是默认拒绝方向；通道适配器一律不自己判定）。
+
+        ① 白名单：sender 不在 allow_from 里 → 丢。空白名单 = 谁都不行（含 owner）。
+        ② 群提及门：群聊里没显式 @ 到本机器人 → 当没看见。陌生群/被拉进的群不再能驱动 agent。
+        ③ 审批仍只认 owner：白名单可以放同事进来聊天，但**批准/拒绝确认是特权动作**，
+           只有配对的主人能点——白名单变宽绝不能顺带把审批权变宽。
+
+        回复路由（钉钉 sessionWebhook 等）也只跟**过了闸**的事件走：commit_reply_target 在
+        ①② 之后才调——被丢掉的消息若能改写回复目标，陌生人发一条废话就能把 agent 的后续
+        产出（进度/结果/确认提问）劫到自己的会话里。
+        """
+        sender = str(ev.sender_id)
+        if sender not in self.allow_from:           # ① 白名单外：静默忽略并计数
             self._ignored += 1
             return
+        if getattr(ev, "is_group", False) and not getattr(ev, "mentioned", False):
+            self._ignored_no_mention += 1           # ② 群里没 @ 到 → 当没看见
+            return
+        self.adapter.commit_reply_target(ev)        # 过了闸，才采纳本条的回复路由
         if ev.kind == "callback":                   # 按钮点击 → 解开对应确认 Future
+            if sender != self.owner_id:             # ③ 审批只认主人
+                self._ignored += 1
+                return
             fut = self._pending.get(ev.callback_id)
             if fut is not None and not fut.done():
                 fut.set_result(bool(ev.approved))
@@ -131,7 +186,8 @@ class IMBridge:
         elif cmd == "/status":
             busy = self._turn_task is not None and not self._turn_task.done()
             msg = (f"仓库 {Path(self.repo_root).name} · 模式 {self.mode} · "
-                   f"{'运行中' if busy else '空闲'} · 已忽略非主人消息 {self._ignored} 条")
+                   f"{'运行中' if busy else '空闲'} · 白名单 {len(self.allow_from)} 人 · "
+                   f"已忽略白名单外 {self._ignored} 条、群里没 @ 我 {self._ignored_no_mention} 条")
             recent = self._recent_plan()                 # 最近的 dev_auto 计划进度（可 dev_resume 续跑）
             if recent:
                 msg += f"\n最近计划：{recent}"
