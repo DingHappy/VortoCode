@@ -5,27 +5,20 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowLeft,
   ArrowUp,
-  BrainCircuit,
   ChevronDown,
   CircleAlert,
   CircleCheck,
   FileText,
-  FileSearch,
   FolderPlus,
   Inbox,
-  LoaderCircle,
   PanelRight,
   PencilLine,
   Plus,
-  Search,
   Settings2,
-  SquareTerminal,
   Trash2,
-  Wrench,
   X,
 } from "lucide-react";
 import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ReactNode } from "react";
 
 import "./App.css";
 import {
@@ -81,7 +74,6 @@ import type {
   SessionSummary,
   TaskItem,
   TaskBranchReviewDiff,
-  TaskBranchReviewState,
   TaskBranchReviewSnapshot,
   TurnActivity,
   WorkspaceFileContent,
@@ -90,6 +82,34 @@ import type {
   WorktreeWorkspaceSnapshot,
   WeeklyJournalSnapshot,
 } from "./types";
+import { DiffViewer } from "./components/DiffViewer";
+import { MarkdownMessage } from "./components/MarkdownMessage";
+import { TestResultTree } from "./components/TestResultTree";
+import { TurnTimeline } from "./components/TurnTimeline";
+import {
+  compactAuditData,
+  compactSessionCwd,
+  contextWindowSourceLabel,
+  decisionKindLabel,
+  extensionKindLabel,
+  extensionStatusLabel,
+  fileGlyph,
+  formatBytes,
+  formatFileSize,
+  formatRelativeTime,
+  formatTokenCount,
+  hookCapabilityLabel,
+  runKindLabel,
+  sessionContextPresentation,
+  sessionContextTone,
+  sessionStatusLabel,
+  statusLabel,
+  taskReviewGateReason,
+  verifierKindLabel,
+} from "./lib/labels";
+import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey, STORAGE_KEYS } from "./lib/storage";
+import { normalizeEditorText, serializeEditorText } from "./lib/text";
+import { finishRunningActivities, hydrateActivities, protocolActivity, upsertActivity } from "./protocol/activities";
 
 const MonacoEditor = lazy(() => import("./MonacoEditor").then((module) => ({ default: module.MonacoEditor })));
 const TerminalPane = lazy(() => import("./TerminalPane").then((module) => ({ default: module.TerminalPane })));
@@ -133,12 +153,6 @@ const EMPTY_PROCESS: GatewayProcessStatus = {
   running: false,
   message: "本地引擎尚未启动",
 };
-const NOTIFIED_DECISIONS_KEY = "vortocode.desktop.notifiedDecisions";
-const PROJECT_SESSION_PREFIX = "vortocode.desktop.projectSid:";
-
-function projectSessionKey(projectId: string): string {
-  return `${PROJECT_SESSION_PREFIX}${projectId}`;
-}
 
 function secureArtifactDocument(content: string): string {
   const parsed = new DOMParser().parseFromString(content, "text/html");
@@ -178,149 +192,6 @@ function normalizePromptQueueItem(value: unknown, fallbackPosition = 0): PromptQ
   };
 }
 
-function formatRelativeTime(epochSeconds?: number): string {
-  if (!epochSeconds) return "";
-  const elapsed = Math.max(0, Date.now() - epochSeconds * 1000);
-  if (elapsed < 60_000) return "刚刚";
-  if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)} 分钟前`;
-  if (elapsed < 86_400_000) return `${Math.floor(elapsed / 3_600_000)} 小时前`;
-  return new Date(epochSeconds * 1000).toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
-}
-
-function formatBytes(bytes?: number): string {
-  const value = Math.max(0, Number(bytes ?? 0));
-  if (value < 1024) return `${value} B`;
-  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KiB`;
-  return `${(value / (1024 * 1024)).toFixed(1)} MiB`;
-}
-
-function statusLabel(status: string): string {
-  return (
-    {
-      queued: "排队",
-      running: "执行中",
-      cancelling: "停止中",
-      done: "完成",
-      failed: "失败",
-      cancelled: "已取消",
-      interrupted: "已中断",
-      paused: "已暂停",
-      pending: "待处理",
-      in_progress: "进行中",
-      completed: "完成",
-      draft: "草稿",
-      active: "推进中",
-      blocked: "阻塞",
-      achieved: "已达成",
-    }[status] ?? status
-  );
-}
-
-function extensionKindLabel(kind: ExtensionInspectKind): string {
-  return ({ rules: "规则", skill: "Skills", hook: "Hooks", mcp: "MCP" })[kind];
-}
-
-function extensionStatusLabel(status: string): string {
-  return ({
-    active: "已加载",
-    available: "可用",
-    disabled: "已关闭",
-    needs_trust: "待信任",
-    blocked: "已阻止",
-    error: "配置错误",
-  })[status] ?? status;
-}
-
-function taskReviewGateReason(review?: TaskBranchReviewState | null): string {
-  if (!review) return "";
-  if (review.verification_stale) return "先重新验证审查后的分支";
-  if (review.policy?.error) return `团队审查策略无效：${review.policy.error}`;
-  if (review.policy?.require_all_hunks_decided && !review.coverage?.complete) {
-    if (!review.coverage?.known) return `无法确认全部 hunk 已完成决策${review.coverage?.error ? `：${review.coverage.error}` : ""}`;
-    return `团队策略要求先处理剩余 ${review.coverage.pending_hunks} 个 hunk`;
-  }
-  return "";
-}
-
-function sessionStatusLabel(session: SessionSummary, active: boolean, locallyBusy: boolean): string {
-  const status = active && locallyBusy && session.status !== "needs_input" ? "working" : session.status;
-  switch (status) {
-    case "needs_input":
-      return (session.pending_input_count ?? 0) > 1
-        ? `等待你的确认 · ${session.pending_input_count} 项`
-        : "等待你的确认";
-    case "working":
-      return session.activity
-        || ((session.background_tasks?.active ?? 0) > 0
-          ? `${session.background_tasks?.active} 个后台任务执行中`
-          : session.mode === "build" ? "Agent 正在执行" : "Agent 正在分析");
-    case "queued":
-      return `${session.queue_count ?? 0} 条待运行 · 已暂停`;
-    case "idle":
-      return active ? "当前工作项 · 空闲" : `空闲 · ${formatRelativeTime(session.updated)}`;
-    case "completed":
-      return `已完成 · ${formatRelativeTime(session.updated)}`;
-    case "failed":
-      if ((session.background_tasks?.attention ?? 0) > 0 && (session.hook_issues?.count ?? 0) > 0) {
-        return `${session.background_tasks?.attention} 个后台 · ${session.hook_issues?.count} 个 Hook 待处理`;
-      }
-      if ((session.background_tasks?.attention ?? 0) > 0) {
-        return `${session.background_tasks?.attention} 个后台任务需要处理`;
-      }
-      if ((session.hook_issues?.count ?? 0) > 0) {
-        return `${session.hook_issues?.count} 个 Hook 需要处理`;
-      }
-      return `需要处理 · ${formatRelativeTime(session.updated)}`;
-    case "inactive":
-    default:
-      return active ? "当前工作项" : `${session.messages} 条消息 · ${formatRelativeTime(session.updated)}`;
-  }
-}
-
-function compactSessionCwd(value?: string): string {
-  const parts = String(value ?? "").split(/[\\/]+/).filter(Boolean);
-  return parts.slice(-2).join("/") || "";
-}
-
-function sessionContextTone(pct?: number): string {
-  if ((pct ?? 0) >= 90) return "danger";
-  if ((pct ?? 0) >= 70) return "warning";
-  return "normal";
-}
-
-function formatTokenCount(value?: number): string {
-  const tokens = Math.max(0, Number(value ?? 0));
-  if (tokens >= 1_000_000) return `${Number((tokens / 1_000_000).toFixed(tokens % 1_000_000 ? 1 : 0))}M`;
-  if (tokens >= 1_000) return `${Number((tokens / 1_000).toFixed(tokens % 1_000 ? 1 : 0))}K`;
-  return tokens.toLocaleString("zh-CN");
-}
-
-function contextWindowSourceLabel(source?: string): string {
-  return ({ service: "服务端检测", catalog: "官方模型目录", configured: "配置覆盖", unknown: "窗口未知" } as Record<string, string>)[source ?? "unknown"] ?? "模型能力";
-}
-
-function sessionContextPresentation(context: SessionSummary["context"]): { label: string; pct: number; title: string } {
-  if (!context) return { label: "", pct: 0, title: "" };
-  if ((context.context_window_tokens ?? 0) > 0) {
-    const windowPct = Math.max(0, Number(context.context_window_pct ?? 0));
-    const pctLabel = windowPct > 0 && windowPct < 0.1 ? "<0.1" : windowPct.toFixed(windowPct < 10 ? 1 : 0).replace(/\.0$/, "");
-    return {
-      label: `上下文 ${pctLabel}%`,
-      pct: windowPct,
-      title: `${context.used_tokens.toLocaleString()} / ${context.context_window_tokens!.toLocaleString()} tokens · ${contextWindowSourceLabel(context.context_window_source)} · 历史管理预算 ${context.max_tokens.toLocaleString()}`,
-    };
-  }
-  return {
-    label: `历史预算 ${context.pct}%`,
-    pct: context.pct,
-    title: `${context.used_tokens.toLocaleString()} / ${context.max_tokens.toLocaleString()} tokens · 模型窗口未知 · ${context.policy}`,
-  };
-}
-
-function runKindLabel(kind: CommandRunKind): string {
-  return { terminal: "命令", test: "测试", preview: "预览" }[kind];
-}
-
 function inspectorTabLabel(tab: InspectorTab): string {
   return {
     inbox: "收件箱",
@@ -332,30 +203,6 @@ function inspectorTabLabel(tab: InspectorTab): string {
     decisions: "待处理",
     project: "上下文",
   }[tab];
-}
-
-function fileGlyph(path: string): string {
-  const extension = path.split(".").pop()?.toLowerCase();
-  if (["ts", "tsx", "js", "jsx"].includes(extension ?? "")) return "TS";
-  if (extension === "py") return "PY";
-  if (extension === "rs") return "RS";
-  if (["md", "mdx", "rst"].includes(extension ?? "")) return "MD";
-  if (["json", "yaml", "yml", "toml"].includes(extension ?? "")) return "{}";
-  if (["css", "scss", "less"].includes(extension ?? "")) return "#";
-  return "·";
-}
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} KiB`;
-}
-
-function normalizeEditorText(value: string): string {
-  return value.replace(/\r\n/g, "\n");
-}
-
-function serializeEditorText(value: string, eol: "\n" | "\r\n"): string {
-  return eol === "\r\n" ? value.replace(/\n/g, "\r\n") : value;
 }
 
 function contextItemKey(item: ContextItem): string {
@@ -394,19 +241,6 @@ function previousDay(value: string): string {
   return `${selected.getFullYear()}-${month}-${day}`;
 }
 
-function loadNotifiedDecisionIds(): Set<string> {
-  try {
-    const payload = JSON.parse(localStorage.getItem(NOTIFIED_DECISIONS_KEY) ?? "[]");
-    return new Set(Array.isArray(payload) ? payload.filter((item): item is string => typeof item === "string").slice(-200) : []);
-  } catch {
-    return new Set();
-  }
-}
-
-function persistNotifiedDecisionIds(ids: Set<string>): void {
-  localStorage.setItem(NOTIFIED_DECISIONS_KEY, JSON.stringify(Array.from(ids).slice(-200)));
-}
-
 function criterionVerifierDraft(criterion: GoalCriterion): GoalVerifierDraft {
   const verifier = criterion.verifier;
   return {
@@ -415,374 +249,6 @@ function criterionVerifierDraft(criterion: GoalCriterion): GoalVerifierDraft {
     contains: verifier?.contains ?? "",
     timeout: String(verifier?.timeout ?? 300),
   };
-}
-
-function verifierKindLabel(kind: GoalVerifierKind): string {
-  return { test: "测试", build: "构建", lint: "Lint", file: "文件" }[kind];
-}
-
-function decisionKindLabel(kind: DecisionItem["kind"]): string {
-  return {
-    confirmation: "确认",
-    goal: "目标",
-    task: "任务",
-    run: "运行",
-    pr_check: "CI",
-    pr_review: "Review",
-    hook: "Hook",
-  }[kind];
-}
-
-function hookCapabilityLabel(capability: string): string {
-  return {
-    observe_event: "观察事件",
-    emit_annotation: "输出注释",
-    block_tool: "阻止工具",
-    run_command: "运行命令",
-    send_http: "发送 HTTP",
-    request_model: "调用模型",
-  }[capability] ?? capability;
-}
-
-function compactAuditData(value?: Record<string, unknown>): string {
-  if (!value || Object.keys(value).length === 0) return "";
-  try {
-    const serialized = JSON.stringify(value);
-    return serialized.length > 260 ? `${serialized.slice(0, 260)}…` : serialized;
-  } catch {
-    return "";
-  }
-}
-
-function formatActivityDuration(durationMs?: number): string {
-  if (durationMs == null) return "";
-  if (durationMs < 1000) return "不到 1 秒";
-  if (durationMs < 10_000) return `${(durationMs / 1000).toFixed(1)} 秒`;
-  if (durationMs < 60_000) return `${Math.round(durationMs / 1000)} 秒`;
-  const minutes = Math.floor(durationMs / 60_000);
-  const seconds = Math.round((durationMs % 60_000) / 1000);
-  return seconds ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分钟`;
-}
-
-function protocolActivity(event: ProtocolEvent): TurnActivity | null {
-  if (!event.id) return null;
-  if (event.type === "agent_phase") {
-    return {
-      id: event.id,
-      rid: event.rid,
-      kind: "phase",
-      status: String(event.status ?? "running"),
-      label: String(event.label ?? "正在工作"),
-      phase: String(event.phase ?? "working"),
-      durationMs: typeof event.duration_ms === "number" ? event.duration_ms : undefined,
-    };
-  }
-  if (event.type === "agent_tool") {
-    return {
-      id: event.id,
-      rid: event.rid,
-      kind: "tool",
-      status: String(event.status ?? "running"),
-      label: String(event.summary ?? event.name ?? "工具调用"),
-      name: String(event.name ?? "tool"),
-      args: event.args,
-      result: event.result == null ? undefined : String(event.result),
-      durationMs: typeof event.duration_ms === "number" ? event.duration_ms : undefined,
-    };
-  }
-  if (event.type === "agent_hook") {
-    return {
-      id: event.id,
-      rid: event.rid,
-      kind: "hook",
-      status: String(event.status ?? "running"),
-      label: String(event.summary ?? event.name ?? "Hook"),
-      name: String(event.name ?? "hook"),
-      event: event.event == null ? undefined : String(event.event),
-      tool: event.tool == null ? undefined : String(event.tool),
-      result: event.message == null ? undefined : String(event.message),
-      error: event.error == null ? undefined : String(event.error),
-      durationMs: typeof event.duration_ms === "number" ? event.duration_ms : undefined,
-    };
-  }
-  return null;
-}
-
-function upsertActivity(previous: TurnActivity[], activity: TurnActivity): TurnActivity[] {
-  const index = previous.findIndex((item) => item.id === activity.id);
-  if (index < 0) return [...previous.slice(-299), activity];
-  const next = [...previous];
-  next[index] = { ...previous[index], ...activity };
-  return next;
-}
-
-function hydrateActivities(items: unknown[]): TurnActivity[] {
-  return items.reduce<TurnActivity[]>((previous, item) => {
-    const activity = protocolActivity((item ?? {}) as ProtocolEvent);
-    return activity ? upsertActivity(previous, activity) : previous;
-  }, []);
-}
-
-function finishRunningActivities(
-  previous: TurnActivity[],
-  rid: string | undefined,
-  status: "completed" | "failed" | "cancelled",
-): TurnActivity[] {
-  return previous.map((activity) => {
-    if (activity.status !== "running" || (rid && activity.rid !== rid)) return activity;
-    const label = status === "completed"
-      ? activity.label.replace(/^正在/, "已")
-      : status === "cancelled"
-        ? `${activity.kind === "tool" ? "工具调用" : activity.kind === "hook" ? "Hook" : "任务"}已取消`
-        : `${activity.kind === "tool" ? "工具调用" : activity.kind === "hook" ? "Hook" : "任务"}失败`;
-    return { ...activity, status, label };
-  });
-}
-
-function safeLink(value: string): string | null {
-  const url = value.trim();
-  return /^(https?:|mailto:)/i.test(url) ? url : null;
-}
-
-function inlineMarkdown(text: string, key: string): ReactNode[] {
-  const pattern = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*\n]+\*|\[[^\]]+\]\([^\s)]+\))/g;
-  const output: ReactNode[] = [];
-  let cursor = 0;
-  for (const match of text.matchAll(pattern)) {
-    const start = match.index ?? 0;
-    if (start > cursor) output.push(text.slice(cursor, start));
-    const token = match[0];
-    const tokenKey = `${key}-${start}`;
-    if (token.startsWith("`")) {
-      output.push(<code key={tokenKey}>{token.slice(1, -1)}</code>);
-    } else if (token.startsWith("**")) {
-      output.push(<strong key={tokenKey}>{token.slice(2, -2)}</strong>);
-    } else if (token.startsWith("*")) {
-      output.push(<em key={tokenKey}>{token.slice(1, -1)}</em>);
-    } else {
-      const link = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-      const href = link ? safeLink(link[2]) : null;
-      output.push(href ? (
-        <a
-          href={href}
-          key={tokenKey}
-          rel="noopener noreferrer"
-          onClick={(event) => {
-            event.preventDefault();
-            void openUrl(href);
-          }}
-        >
-          {link?.[1]}
-        </a>
-      ) : token);
-    }
-    cursor = start + token.length;
-  }
-  if (cursor < text.length) output.push(text.slice(cursor));
-  return output;
-}
-
-function MarkdownMessage({ text }: { text: string }) {
-  const lines = String(text).replace(/\u0000/g, "").split("\n");
-  const blocks: ReactNode[] = [];
-  let index = 0;
-  while (index < lines.length) {
-    const line = lines[index];
-    if (!line.trim()) {
-      index += 1;
-      continue;
-    }
-    const fence = line.match(/^```\s*([\w+-]*)\s*$/);
-    if (fence) {
-      const code: string[] = [];
-      index += 1;
-      while (index < lines.length && !/^```\s*$/.test(lines[index])) code.push(lines[index++]);
-      if (index < lines.length) index += 1;
-      blocks.push(<pre key={`code-${index}`}><code data-language={fence[1] || undefined}>{code.join("\n")}</code></pre>);
-      continue;
-    }
-    const heading = line.match(/^(#{1,6})\s+(.*)$/);
-    if (heading) {
-      blocks.push(<h3 className={`md-heading md-h${heading[1].length}`} key={`heading-${index}`}>{inlineMarkdown(heading[2], `h-${index}`)}</h3>);
-      index += 1;
-      continue;
-    }
-    if (/^\s*([-*_])(\s*\1){2,}\s*$/.test(line)) {
-      blocks.push(<hr key={`rule-${index}`} />);
-      index += 1;
-      continue;
-    }
-    if (/^\s*>\s?/.test(line)) {
-      const quote: string[] = [];
-      while (index < lines.length && /^\s*>\s?/.test(lines[index])) quote.push(lines[index++].replace(/^\s*>\s?/, ""));
-      blocks.push(<blockquote key={`quote-${index}`}>{quote.map((value, quoteIndex) => <p key={quoteIndex}>{inlineMarkdown(value, `q-${index}-${quoteIndex}`)}</p>)}</blockquote>);
-      continue;
-    }
-    if (/^\s*[-*+]\s+/.test(line)) {
-      const items: string[] = [];
-      while (index < lines.length && /^\s*[-*+]\s+/.test(lines[index])) items.push(lines[index++].replace(/^\s*[-*+]\s+/, ""));
-      blocks.push(<ul key={`ul-${index}`}>{items.map((value, itemIndex) => <li key={itemIndex}>{inlineMarkdown(value, `ul-${index}-${itemIndex}`)}</li>)}</ul>);
-      continue;
-    }
-    if (/^\s*\d+[.)]\s+/.test(line)) {
-      const items: string[] = [];
-      while (index < lines.length && /^\s*\d+[.)]\s+/.test(lines[index])) items.push(lines[index++].replace(/^\s*\d+[.)]\s+/, ""));
-      blocks.push(<ol key={`ol-${index}`}>{items.map((value, itemIndex) => <li key={itemIndex}>{inlineMarkdown(value, `ol-${index}-${itemIndex}`)}</li>)}</ol>);
-      continue;
-    }
-    const paragraph: string[] = [];
-    while (index < lines.length && lines[index].trim()
-      && !/^(#{1,6})\s+/.test(lines[index])
-      && !/^```/.test(lines[index])
-      && !/^\s*(?:>|[-*+]\s+|\d+[.)]\s+)/.test(lines[index])) {
-      paragraph.push(lines[index++]);
-    }
-    blocks.push(
-      <p key={`p-${index}`}>
-        {paragraph.map((value, paragraphIndex) => (
-          <span key={paragraphIndex}>{inlineMarkdown(value, `p-${index}-${paragraphIndex}`)}{paragraphIndex < paragraph.length - 1 && <br />}</span>
-        ))}
-      </p>,
-    );
-  }
-  return <div className="markdown-body">{blocks}</div>;
-}
-
-function activityIcon(activity: TurnActivity): ReactNode {
-  if (["failed", "blocked", "cancelled", "timed_out"].includes(activity.status)) return <CircleAlert size={15} />;
-  if (activity.status === "running") return <LoaderCircle className="activity-spinner" size={15} />;
-  if (activity.kind === "phase") return activity.phase === "thinking" ? <BrainCircuit size={15} /> : <CircleCheck size={15} />;
-  if (activity.name === "run_command") return <SquareTerminal size={15} />;
-  if (activity.name === "read_file" || activity.name === "list_files") return <FileSearch size={15} />;
-  if (activity.name?.includes("search") || activity.name === "grep") return <Search size={15} />;
-  return <Wrench size={15} />;
-}
-
-function activityDetails(activity: TurnActivity): string {
-  const sections: string[] = [];
-  if (activity.kind === "hook") {
-    sections.push(`事件：${activity.event ?? "unknown"}${activity.tool ? `\n工具：${activity.tool}` : ""}`);
-  }
-  if (activity.args && Object.keys(activity.args).length > 0) sections.push(JSON.stringify(activity.args, null, 2));
-  if (activity.result) sections.push(activity.result);
-  if (activity.error) sections.push(`错误：${activity.error}`);
-  return sections.join("\n\n");
-}
-
-function TurnTimeline({ items, active }: { items: TurnActivity[]; active: boolean }) {
-  if (items.length === 0) return null;
-  const phaseDuration = items
-    .filter((item) => item.kind === "phase")
-    .reduce((total, item) => total + (item.durationMs ?? 0), 0);
-  const tools = items.filter((item) => item.kind === "tool");
-  const hooks = items.filter((item) => item.kind === "hook");
-  return (
-    <section className={`turn-timeline ${active ? "active" : ""}`} aria-label="Agent 执行过程" aria-live={active ? "polite" : "off"}>
-      <div className="timeline-heading">
-        <span>{active ? "正在工作" : phaseDuration > 0 ? `已工作 ${formatActivityDuration(phaseDuration)}` : "执行过程"}</span>
-        {(tools.length > 0 || hooks.length > 0) && <small>{tools.length > 0 ? `${tools.length} 个工具` : ""}{tools.length > 0 && hooks.length > 0 ? " · " : ""}{hooks.length > 0 ? `${hooks.length} 个 Hook` : ""}</small>}
-      </div>
-      <div className="timeline-list">
-        {items.map((activity) => {
-          const details = activityDetails(activity);
-          const row = (
-            <>
-              <span className={`timeline-icon ${activity.status}`}>{activityIcon(activity)}</span>
-              <span className="timeline-label">{activity.label}</span>
-              {activity.durationMs != null && <time>{formatActivityDuration(activity.durationMs)}</time>}
-            </>
-          );
-          return (activity.kind === "tool" || activity.kind === "hook") && details ? (
-            <details className={`timeline-row ${activity.kind} ${activity.status}`} key={activity.id}>
-              <summary>{row}<ChevronDown className="timeline-chevron" size={14} /></summary>
-              <pre>{details}</pre>
-            </details>
-          ) : (
-            <div className={`timeline-row ${activity.kind} ${activity.status}`} key={activity.id}>{row}</div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
-function DiffViewer({ payload }: { payload: DiffPayload | null }) {
-  if (!payload?.diff) {
-    return (
-      <div className="panel-empty">
-        <span className="panel-empty-icon">±</span>
-        <strong>等待改动</strong>
-        <p>dev 流水线请求确认前，结构化 diff 会出现在这里。</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="diff-view">
-      <div className="diff-title">{payload.title || "待审查改动"}</div>
-      <pre>
-        {payload.diff.split("\n").map((line, index) => {
-          const kind = line.startsWith("+++") || line.startsWith("---")
-            ? "meta"
-            : line.startsWith("+")
-              ? "add"
-              : line.startsWith("-")
-                ? "remove"
-                : line.startsWith("@@")
-                  ? "hunk"
-                  : "context";
-          return (
-            <span className={`diff-line ${kind}`} key={`${index}-${line.slice(0, 12)}`}>
-              <span className="diff-number">{index + 1}</span>
-              <span>{line || " "}</span>
-            </span>
-          );
-        })}
-      </pre>
-    </div>
-  );
-}
-
-function TestResultTree({ run }: { run: CommandRunItem }) {
-  const results = run.test_results;
-  if (!results || results.summary.total === 0) return null;
-  const groups = new Map<string, typeof results.cases>();
-  for (const testCase of results.cases) {
-    const key = testCase.path || "测试用例";
-    groups.set(key, [...(groups.get(key) ?? []), testCase]);
-  }
-  const hasFailure = results.summary.failed + results.summary.errors > 0;
-  return (
-    <div className={`test-results ${hasFailure ? "failed" : "passed"}`}>
-      <div className="test-results-head">
-        <div><strong>{results.framework}</strong><span>{results.summary.total} 项结果</span></div>
-        <div className="test-result-counts">
-          <span className="passed">✓ {results.summary.passed}</span>
-          {results.summary.failed > 0 && <span className="failed">× {results.summary.failed}</span>}
-          {results.summary.errors > 0 && <span className="error">! {results.summary.errors}</span>}
-          {results.summary.skipped > 0 && <span className="skipped">– {results.summary.skipped}</span>}
-        </div>
-      </div>
-      {Array.from(groups.entries()).map(([path, cases]) => (
-        <details className="test-result-group" key={path} open={cases.some((item) => ["failed", "error"].includes(item.status))}>
-          <summary><span>{path}</span><small>{cases.length}</small></summary>
-          {cases.map((testCase, index) => (
-            <div className={`test-result-case ${testCase.status}`} key={`${testCase.name}-${index}`}>
-              <i>{testCase.status === "passed" ? "✓" : testCase.status === "skipped" ? "–" : "×"}</i>
-              <div><strong>{testCase.name}</strong>{testCase.detail && <small>{testCase.detail}</small>}</div>
-              {testCase.duration && <time>{testCase.duration}</time>}
-            </div>
-          ))}
-        </details>
-      ))}
-      {!results.complete && (
-        <p className="test-results-note">
-          当前 reporter 只命名了 {results.cases.length} 项；汇总计数仍来自测试器最终报告。
-        </p>
-      )}
-      {results.truncated && <p className="test-results-note">用例树仅保留前 500 项。</p>}
-    </div>
-  );
 }
 
 function App() {
@@ -806,10 +272,10 @@ function App() {
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(true);
   const activeTurnRidRef = useRef<string | null>(null);
-  const [baseUrl, setBaseUrl] = useState(() => localStorage.getItem("vortocode.desktop.baseUrl") ?? "http://127.0.0.1:8080");
+  const [baseUrl, setBaseUrl] = useState(() => localStorage.getItem(STORAGE_KEYS.baseUrl) ?? "http://127.0.0.1:8080");
   const [repoRoot, setRepoRoot] = useState("");
   const [token, setToken] = useState("");
-  const [activeSid, setActiveSid] = useState(() => localStorage.getItem("vortocode.desktop.sid") ?? createSessionId());
+  const [activeSid, setActiveSid] = useState(() => localStorage.getItem(STORAGE_KEYS.sid) ?? createSessionId());
   const [connection, setConnection] = useState<ConnectionState>("disconnected");
   const [connectionNote, setConnectionNote] = useState("随时可以打开项目或开始一个任务");
   const [protocolVersion, setProtocolVersion] = useState<number | null>(null);
@@ -917,7 +383,7 @@ function App() {
   const [artifactHtml, setArtifactHtml] = useState("");
   const [artifactPreviewLoading, setArtifactPreviewLoading] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(
-    () => localStorage.getItem("vortocode.desktop.notificationsEnabled") === "true",
+    () => localStorage.getItem(STORAGE_KEYS.notificationsEnabled) === "true",
   );
   const [notificationSyncVersion, setNotificationSyncVersion] = useState(0);
   const [backgroundPrompt, setBackgroundPrompt] = useState("");
@@ -1557,7 +1023,7 @@ function App() {
           if (snapshot.scope === "project" && snapshot.workdir) {
             if (snapshot.workdir !== repoRoot.trim()) {
               setRepoRoot(snapshot.workdir);
-              localStorage.setItem("vortocode.desktop.repoRoot", snapshot.workdir);
+              localStorage.setItem(STORAGE_KEYS.repoRoot, snapshot.workdir);
             }
             if (snapshot.workdir !== workspaceRootRef.current) {
               void refreshWorkspaceFiles(snapshot.workdir);
@@ -1584,7 +1050,7 @@ function App() {
             if (snapshot.scope === "project" && snapshot.workdir) {
               if (snapshot.workdir !== repoRoot.trim()) {
                 setRepoRoot(snapshot.workdir);
-                localStorage.setItem("vortocode.desktop.repoRoot", snapshot.workdir);
+                localStorage.setItem(STORAGE_KEYS.repoRoot, snapshot.workdir);
               }
               if (snapshot.workdir !== workspaceRootRef.current) {
                 void refreshWorkspaceFiles(snapshot.workdir);
@@ -1875,9 +1341,9 @@ function App() {
       setConnectionNote("正在建立安全协议连接…");
       try {
         const normalized = normalizeLocalBaseUrl(requestedBaseUrl);
-        localStorage.setItem("vortocode.desktop.baseUrl", normalized);
-        if (requestedRepoRoot.trim()) localStorage.setItem("vortocode.desktop.repoRoot", requestedRepoRoot.trim());
-        localStorage.setItem("vortocode.desktop.sid", sid);
+        localStorage.setItem(STORAGE_KEYS.baseUrl, normalized);
+        if (requestedRepoRoot.trim()) localStorage.setItem(STORAGE_KEYS.repoRoot, requestedRepoRoot.trim());
+        localStorage.setItem(STORAGE_KEYS.sid, sid);
         await clientRef.current?.disconnect().catch(() => undefined);
         const client = new GatewayClient({ baseUrl: normalized, token: requestedToken });
         clientRef.current = client;
@@ -1889,7 +1355,7 @@ function App() {
             const profile = await rememberProject(requestedRepoRoot.trim(), normalized);
             setRepoRoot(profile.repoRoot);
             setBaseUrl(profile.baseUrl);
-            localStorage.setItem("vortocode.desktop.repoRoot", profile.repoRoot);
+            localStorage.setItem(STORAGE_KEYS.repoRoot, profile.repoRoot);
             localStorage.setItem(projectSessionKey(profile.id), sid);
           } catch (error) {
             setBanner(`runtime 已连接，但项目记录未保存：${error instanceof Error ? error.message : String(error)}`);
@@ -1960,9 +1426,9 @@ function App() {
       setRecoveryRecord(await invoke<GatewayRecoveryRecord | null>("get_gateway_recovery", { runtimeId: status.runtimeId ?? null }).catch(() => null));
       setRuntimeRecoveries(await invoke<GatewayRecoveryRecord[]>("list_gateway_recoveries").catch(() => []));
       setBaseUrl(actualUrl);
-      if (scope === "project") localStorage.setItem("vortocode.desktop.repoRoot", root);
-      else localStorage.removeItem("vortocode.desktop.repoRoot");
-      localStorage.setItem("vortocode.desktop.baseUrl", actualUrl);
+      if (scope === "project") localStorage.setItem(STORAGE_KEYS.repoRoot, root);
+      else localStorage.removeItem(STORAGE_KEYS.repoRoot);
+      localStorage.setItem(STORAGE_KEYS.baseUrl, actualUrl);
       const probe = new GatewayClient({ baseUrl: actualUrl, token: options.token ?? "" });
       await probe.waitUntilReady(300, 250);
       const connected = await connectToRuntime(options.sid, {
@@ -2010,10 +1476,10 @@ function App() {
         setRecoveryRecord(record);
         setRuntimeRecoveries(recoveries);
 
-        const sid = localStorage.getItem("vortocode.desktop.generalSid") ?? activeSid;
-        localStorage.setItem("vortocode.desktop.generalSid", sid);
-        localStorage.setItem("vortocode.desktop.sid", sid);
-        localStorage.removeItem("vortocode.desktop.repoRoot");
+        const sid = localStorage.getItem(STORAGE_KEYS.generalSid) ?? activeSid;
+        localStorage.setItem(STORAGE_KEYS.generalSid, sid);
+        localStorage.setItem(STORAGE_KEYS.sid, sid);
+        localStorage.removeItem(STORAGE_KEYS.repoRoot);
         setActiveSid(sid);
         setRepoRoot("");
         setSettingsOpen(false);
@@ -2206,7 +1672,7 @@ function App() {
     void (async () => {
       try {
         if (!await isPermissionGranted()) {
-          localStorage.setItem("vortocode.desktop.notificationsEnabled", "false");
+          localStorage.setItem(STORAGE_KEYS.notificationsEnabled, "false");
           setNotificationsEnabled(false);
           setBanner("系统通知权限已关闭；应用内决策队列不受影响");
           return;
@@ -2300,7 +1766,7 @@ function App() {
     if (projectSwitchingRef.current) return false;
     if (project.repoRoot === repoRoot.trim()) {
       setBaseUrl(project.baseUrl);
-      localStorage.setItem("vortocode.desktop.baseUrl", project.baseUrl);
+      localStorage.setItem(STORAGE_KEYS.baseUrl, project.baseUrl);
       if (connection !== "connected") {
         const sid = localStorage.getItem(projectSessionKey(project.id)) ?? activeSid;
         return startWorkspace({ repoRoot: project.repoRoot, baseUrl: project.baseUrl, sid, token: "" });
@@ -2332,9 +1798,9 @@ function App() {
       setActiveSid(sid);
       setRepoRoot(project.repoRoot);
       setBaseUrl(project.baseUrl);
-      localStorage.setItem("vortocode.desktop.sid", sid);
-      localStorage.setItem("vortocode.desktop.repoRoot", project.repoRoot);
-      localStorage.setItem("vortocode.desktop.baseUrl", project.baseUrl);
+      localStorage.setItem(STORAGE_KEYS.sid, sid);
+      localStorage.setItem(STORAGE_KEYS.repoRoot, project.repoRoot);
+      localStorage.setItem(STORAGE_KEYS.baseUrl, project.baseUrl);
       await refreshWorkspaceFiles(project.repoRoot);
       openInspector("files");
       setSettingsOpen(false);
@@ -2404,14 +1870,14 @@ function App() {
       await disconnect();
       clearProjectView();
       const sid = scope === "general"
-        ? localStorage.getItem("vortocode.desktop.generalSid") ?? createSessionId()
+        ? localStorage.getItem(STORAGE_KEYS.generalSid) ?? createSessionId()
         : managedRuntime?.workspaceId ?? createSessionId();
-      if (scope === "general") localStorage.setItem("vortocode.desktop.generalSid", sid);
-      else localStorage.setItem("vortocode.desktop.scratchSid", sid);
+      if (scope === "general") localStorage.setItem(STORAGE_KEYS.generalSid, sid);
+      else localStorage.setItem(STORAGE_KEYS.scratchSid, sid);
       setActiveSid(sid);
       setRepoRoot("");
-      localStorage.setItem("vortocode.desktop.sid", sid);
-      localStorage.removeItem("vortocode.desktop.repoRoot");
+      localStorage.setItem(STORAGE_KEYS.sid, sid);
+      localStorage.removeItem(STORAGE_KEYS.repoRoot);
       if (scope === "scratch") openInspector("files");
       else {
         setInspectorTabState("project");
@@ -2796,7 +2262,7 @@ function App() {
 
   const toggleSystemNotifications = async () => {
     if (notificationsEnabled) {
-      localStorage.setItem("vortocode.desktop.notificationsEnabled", "false");
+      localStorage.setItem(STORAGE_KEYS.notificationsEnabled, "false");
       decisionNotificationReadyRef.current = false;
       setNotificationsEnabled(false);
       setBanner("系统通知已关闭；应用内决策队列仍会保留");
@@ -2813,7 +2279,7 @@ function App() {
       currentIds.forEach((id) => notifiedDecisionIdsRef.current.add(id));
       persistNotifiedDecisionIds(notifiedDecisionIdsRef.current);
       decisionNotificationReadyRef.current = true;
-      localStorage.setItem("vortocode.desktop.notificationsEnabled", "true");
+      localStorage.setItem(STORAGE_KEYS.notificationsEnabled, "true");
       setNotificationsEnabled(true);
       setBanner("系统通知已开启；现有事项只建立基线，之后仅提醒新增高优先级决策");
     } catch (error) {
@@ -2962,9 +2428,9 @@ function App() {
       setActiveSid(sid);
       setRepoRoot(record.repoRoot);
       setBaseUrl(record.baseUrl);
-      localStorage.setItem("vortocode.desktop.sid", sid);
-      localStorage.setItem("vortocode.desktop.repoRoot", record.repoRoot);
-      localStorage.setItem("vortocode.desktop.baseUrl", record.baseUrl);
+      localStorage.setItem(STORAGE_KEYS.sid, sid);
+      localStorage.setItem(STORAGE_KEYS.repoRoot, record.repoRoot);
+      localStorage.setItem(STORAGE_KEYS.baseUrl, record.baseUrl);
       await refreshWorkspaceFiles(record.repoRoot);
       openInspector("files");
       setSettingsOpen(false);
