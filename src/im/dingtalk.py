@@ -122,7 +122,13 @@ class DingTalkAdapter(ChannelAdapter):
         # 文本式确认：pending 且是主人回的 y/n → 翻成 callback（bridge 据此解开确认 Future）。
         # **群聊标记必须一起带过去**：钉钉的"按钮"其实是一条普通群消息，若这里把 is_group 抹平，
         # 群里任何人一句 "y" 就能替主人批准——群提及门必须照样管得住这条伪 callback。
-        if self._awaiting_confirm and sender == self.owner_id:
+        #
+        # 群里还要**先过提及判断再消费** `_awaiting_confirm`（顺序不能反）：没 @ 的那条 y 反正会被
+        # bridge 的群提及门丢掉，若在此之前就把待确认态清掉，这次确认就再没有第二次机会——主人明明
+        # 回了 y，却只能干等 600s 超时=拒绝，且不知道自己漏了个 @。保留待确认态，主人补一条
+        # "@机器人 y" 仍然生效。放行口径没有变宽：没 @ 的 y 依旧不批准任何东西。
+        # （钉钉群回调的 text.content 已剔除 "@机器人" 前缀、只余正文，故补 @ 后仍匹配得上 y/n。）
+        if self._awaiting_confirm and sender == self.owner_id and (mentioned or not is_group):
             low = text.strip().lower()
             if low in _APPROVE or low in _DENY:
                 cid = self._awaiting_confirm

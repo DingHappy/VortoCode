@@ -14,9 +14,11 @@ def _ping(mid, opaque):
                        "data": json.dumps({"opaque": opaque})})
 
 
-def _bot(mid, sender, content, webhook="https://wh"):
+def _bot(mid, sender, content, webhook="https://wh", conv="1", at=False):
+    """一帧机器人消息（conv "1"=单聊 / "2"=群聊；at=群里是否 @ 到机器人，即 isInAtList）。"""
     return json.dumps({"type": "CALLBACK", "headers": {"messageId": mid, "topic": BOT_TOPIC},
                        "data": json.dumps({"senderStaffId": sender, "sessionWebhook": webhook,
+                                           "conversationType": conv, "isInAtList": at,
                                            "text": {"content": content}})})
 
 
@@ -187,6 +189,57 @@ async def test_dingtalk_text_confirm_through_bridge(tmp_path):
         except asyncio.CancelledError:
             pass
     assert (tmp_path / ".vortocode" / "skills" / "greet" / "SKILL.md").exists()   # 批准 → 真写了
+
+
+@pytest.mark.asyncio
+async def test_group_confirm_survives_a_reply_without_mention(tmp_path):
+    """群里端到端（B6-7）：主人回的 y 漏了 @ → 被群提及门丢掉是对的，但**待确认态不能被吃掉**。
+
+    回归的是：漏 @ 的那句 y 先在适配器里被翻成 callback（顺带清空 _awaiting_confirm）、
+    再被 bridge 的提及门丢弃 → 这次确认从此没人能解，只能干等 600s 超时=拒绝。
+    修好后：漏 @ 的 y 不批准任何东西（口径没放宽），补一条 "@机器人 y" 仍然生效。
+    """
+    ws = QueueWS()
+
+    async def connect():
+        return ws
+
+    async def reply(wh, payload):
+        pass
+    adapter = DingTalkAdapter("c", "s", "owner-1", connect_fn=connect, reply_fn=reply)
+    llm = ScriptedLLM(
+        '{"tool":"save_skill","args":{"name":"greet","description":"打招呼","instructions":"说你好"}}',
+        "技能已保存。")
+    bridge = IMBridge(str(tmp_path), adapter, "owner-1", channel="dingtalk", mode="build", llm=llm)
+    skill = tmp_path / ".vortocode" / "skills" / "greet" / "SKILL.md"
+
+    run_task = asyncio.create_task(bridge.run())
+    try:
+        ws.push(_bot("m1", "owner-1", "把打招呼存成技能", conv="2", at=True))   # 群里 @ 我发任务
+        for _ in range(4000):
+            if adapter._awaiting_confirm:
+                break
+            await asyncio.sleep(0)
+        cid = adapter._awaiting_confirm
+        assert cid is not None                                # 确认提示已发到群里
+
+        ws.push(_bot("m2", "owner-1", "y", conv="2", at=False))    # 主人回 y，但**忘了 @**
+        for _ in range(200):
+            await asyncio.sleep(0)
+        assert bridge._ignored_no_mention == 1                # 提及门照丢（口径没放宽）
+        assert not skill.exists()                             # 没 @ 的 y 批不动任何东西
+        assert adapter._awaiting_confirm == cid               # 关键：待确认态还在，没被静默吃掉
+        assert not bridge._turn_task.done()                   # 回合仍挂在确认上，没被判死
+
+        ws.push(_bot("m3", "owner-1", "y", conv="2", at=True))     # 补一条带 @ 的 y → 生效
+        await asyncio.wait_for(_until(lambda: bridge._turn_task.done()), timeout=5)
+    finally:
+        run_task.cancel()
+        try:
+            await run_task
+        except asyncio.CancelledError:
+            pass
+    assert skill.exists()                                     # 主人的批准最终落地（没被超时吞掉）
 
 
 async def _until(cond, interval=0):
