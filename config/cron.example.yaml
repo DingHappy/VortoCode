@@ -19,6 +19,17 @@
 # announce: im（推到 IM）| silent（只落台账）
 
 jobs:
+  # 中转站运营值班（B8-① 试点一，OPC 第一条职责）——确定性巡检，零 LLM：
+  # 免鉴权查存活/价目 + 重启检测；配了 VORTOCODE_RELAY_SK / VORTOCODE_RELAY_ADMIN_TOKEN /
+  # VORTOCODE_RELAY_DAILY_QUOTA_LIMIT 再加查计费链路/渠道冷却/当日消耗（未配的跳过，跳过≠通过）。
+  # 全绿 → 退出码 0，静默只落 Journal 台账；异常 → 非零退出码 → 决策队列出条 + 通报（announce: im）。
+  - name: relay_duty
+    schedule: "at 02:00"
+    command: "python -m src.gateway.relay_duty"
+    timeout: 120
+    announce: im
+    enabled: false             # 默认关；真机接线时改 true 并确认 VORTOCODE_CRON=1
+
   # 夜跑评测（B3 常态化）——确定性作业：跑真机评测、与**最新的同模型同协议基线**对比。
   # 有回归（诚实率/落地率下降）→ 非零退出码 → 通报标红；全绿 → 把水位线抬到本次（新基线）。
   # 让 LLM 去 ls 基线目录、跑命令、解读退出码既费 token 又可能读错，故这里用 command。
