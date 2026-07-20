@@ -1162,22 +1162,49 @@ class VortoCodeTUI(App):
     _COMMON_MODELS = ["mimo-v2.5", "mimo-v2.5-pro", "mimo-v2-pro", "mimo-v2-omni",
                       "mimo-v2.5-asr", "mimo-v2.5-tts"]
 
+    async def _fetch_available_models(self):
+        """服务端可用模型列表（OpenAI 兼容 GET /models）；拿不到返回 None → 回落静态常用表。
+
+        没配 API key 且服务不在本机时**不发请求**直接回落：离线/未配 key 的环境（含全部测试）
+        保持零网络——列表发现是锦上添花，绝不能变成打开选择器的网络依赖。
+        """
+        from src.llm.client import LLMClient
+
+        client = LLMClient()
+        base = client.config.base_url or ""
+        local = "127.0.0.1" in base or "localhost" in base
+        if not client.config.api_key and not local:
+            return None
+        try:
+            return (await asyncio.wait_for(client.list_models(), timeout=6.0)) or None
+        except Exception:  # noqa: BLE001 —— 列表拿不到就回落，不打断交互
+            return None
+
+    async def _open_model_picker(self, cur: str) -> None:
+        fetched = await self._fetch_available_models()
+        models = list(fetched) if fetched else list(self._COMMON_MODELS)
+        if cur and cur not in models:
+            models.insert(0, cur)
+        items = [(m, f"{m}{'  ← 当前' if m == cur else ''}") for m in models]
+        source = "服务端实际可用" if fetched else "常用列表"
+
+        def _done(m) -> None:
+            if m and m != cur:
+                self._cmd_model(m)          # 复用带参路径（就地改客户端 + 状态栏同步）
+
+        self.push_screen(ListPicker(f"选择模型（{source}）· 本会话生效（重启回 .env 的 DEFAULT_MODEL）",
+                                    items, initial=cur), _done)
+
     def _cmd_model(self, arg: str) -> None:
-        """/model：无参弹 opencode 式模型选择器（回车切换，本会话生效）；带参直接切。"""
+        """/model：无参弹 opencode 式模型选择器（回车切换，本会话生效）；带参直接切。
+
+        选择器候选优先取服务端 `GET /models` 的实际可用列表（中转站是 OpenAI 兼容协议，
+        报出来的才是真开通的），失败/离线回落到静态 _COMMON_MODELS——标题标注来源。
+        """
         arg = (arg or "").strip()
         cur = self._sb.get("model", "?")
         if not arg:
-            models = list(self._COMMON_MODELS)
-            if cur and cur not in models:
-                models.insert(0, cur)
-            items = [(m, f"{m}{'  ← 当前' if m == cur else ''}") for m in models]
-
-            def _done(m) -> None:
-                if m and m != cur:
-                    self._cmd_model(m)      # 复用带参路径（就地改客户端 + 状态栏同步）
-
-            self.push_screen(ListPicker("选择模型 · 本会话生效（重启回 .env 的 DEFAULT_MODEL）",
-                                        items, initial=cur), _done)
+            self.run_worker(self._open_model_picker(cur), exclusive=True, group="model-picker")
             return
         self._model_override = arg          # agent 未建时，_build_main_agent 会读它应用
         if self.agent is not None:

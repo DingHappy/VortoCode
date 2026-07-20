@@ -635,6 +635,35 @@ class LLMClient:
                 continue
         raise last_err or Exception("LLM request failed: 重试已用尽")
 
+    async def list_models(self) -> List[str]:
+        """列出服务端当前可用的模型（OpenAI 兼容 `GET {base_url}/models`）。
+
+        供交互式选择器（TUI /model）用：单次请求、短超时、不重试——列表拿不到就抛，
+        由调用方决定回落到静态常用表。返回按服务端顺序去重的模型 id；响应是 200 但
+        结构不认识时返回空列表（空列表 ≠ 出错，表示服务端就是没报任何模型）。
+        """
+        import aiohttp
+
+        url = f"{self.config.base_url}/models"
+        headers = {}
+        if self.config.api_key:
+            headers["Authorization"] = f"Bearer {self.config.api_key}"
+        timeout = aiohttp.ClientTimeout(total=min(self.config.timeout, 10.0))
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(url, headers=headers) as response:
+                if response.status != 200:
+                    raise Exception(f"获取模型列表失败：HTTP {response.status}")
+                payload = await response.json()
+        items = payload.get("data") if isinstance(payload, dict) else None
+        models: List[str] = []
+        for item in items if isinstance(items, list) else []:
+            if not isinstance(item, dict):
+                continue
+            model_id = item.get("id") or item.get("model") or item.get("name")
+            if isinstance(model_id, str) and model_id and model_id not in models:
+                models.append(model_id)
+        return models
+
     async def tts(self, text: str, voice: Optional[str] = None,
                   model: Optional[str] = None) -> bytes:
         """文本转语音：返回 WAV 字节。
