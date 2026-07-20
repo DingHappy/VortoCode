@@ -84,7 +84,7 @@ import type {
 } from "./types";
 import { DiffViewer } from "./components/DiffViewer";
 import { MarkdownMessage } from "./components/MarkdownMessage";
-import { TestResultTree } from "./components/TestResultTree";
+import { RunsPanel } from "./components/RunsPanel";
 import { TurnTimeline } from "./components/TurnTimeline";
 import {
   compactAuditData,
@@ -99,7 +99,6 @@ import {
   formatRelativeTime,
   formatTokenCount,
   hookCapabilityLabel,
-  runKindLabel,
   sessionContextPresentation,
   sessionContextTone,
   sessionStatusLabel,
@@ -112,7 +111,6 @@ import { normalizeEditorText, serializeEditorText } from "./lib/text";
 import { finishRunningActivities, hydrateActivities, protocolActivity, upsertActivity } from "./protocol/activities";
 
 const MonacoEditor = lazy(() => import("./MonacoEditor").then((module) => ({ default: module.MonacoEditor })));
-const TerminalPane = lazy(() => import("./TerminalPane").then((module) => ({ default: module.TerminalPane })));
 
 type InspectorTab = "inbox" | "files" | "diff" | "runs" | "goals" | "tasks" | "decisions" | "project";
 type AuditFilter = "all" | "tool" | "decision" | "event";
@@ -387,14 +385,6 @@ function App() {
   );
   const [notificationSyncVersion, setNotificationSyncVersion] = useState(0);
   const [backgroundPrompt, setBackgroundPrompt] = useState("");
-  const [runCommand, setRunCommand] = useState("");
-  const [runKind, setRunKind] = useState<CommandRunKind>("terminal");
-  const [runPreviewUrl, setRunPreviewUrl] = useState("");
-  const [runSubmitting, setRunSubmitting] = useState(false);
-  const [runSurface, setRunSurface] = useState<"terminal" | "preview" | "tasks">("terminal");
-  const [selectedPreviewId, setSelectedPreviewId] = useState("");
-  const [previewReload, setPreviewReload] = useState(0);
-  const [runEvidenceTargets, setRunEvidenceTargets] = useState<Record<string, string>>({});
   const [goalObjective, setGoalObjective] = useState("");
   const [goalCriteria, setGoalCriteria] = useState("");
   const [goalConstraints, setGoalConstraints] = useState("");
@@ -536,11 +526,6 @@ function App() {
     () => runs.filter((run) => ["queued", "running", "cancelling", "failed"].includes(run.status)),
     [runs],
   );
-  const previewRuns = useMemo(
-    () => runs.filter((run) => run.kind === "preview" && Boolean(run.preview_url)),
-    [runs],
-  );
-  const selectedPreviewRun = previewRuns.find((run) => run.id === selectedPreviewId) ?? previewRuns[0] ?? null;
   const taskContextCount = decisionItems.length + activeTasks.length + activeGoals.length + activeRuns.length
     + (gitReview?.files.length ?? 0);
   const defaultInspectorTab: InspectorTab = activeScope === "general"
@@ -2911,13 +2896,12 @@ function App() {
   };
 
   const startWorkspaceRun = async (
-    command = runCommand,
-    kind = runKind,
-    previewUrl = runPreviewUrl,
-  ) => {
+    command: string,
+    kind: CommandRunKind,
+    previewUrl: string,
+  ): Promise<boolean> => {
     const text = command.trim();
-    if (!text || !clientRef.current) return;
-    setRunSubmitting(true);
+    if (!text || !clientRef.current) return false;
     try {
       const run = await clientRef.current.startRun(
         text,
@@ -2925,14 +2909,12 @@ function App() {
         kind === "preview" ? previewUrl.trim() : "",
       );
       setRuns((previous) => [run, ...previous.filter((item) => item.id !== run.id)]);
-      setRunCommand("");
-      if (kind !== "preview") setRunPreviewUrl("");
       openInspector("runs");
       setBanner(kind === "test" ? "测试已开始，退出码会形成结构化结果" : kind === "preview" ? "预览进程已开始" : "命令已开始");
+      return true;
     } catch (error) {
       setBanner(error instanceof Error ? error.message : "命令启动失败");
-    } finally {
-      setRunSubmitting(false);
+      return false;
     }
   };
 
@@ -2946,8 +2928,7 @@ function App() {
     }
   };
 
-  const adoptRunEvidence = async (run: CommandRunItem) => {
-    const target = runEvidenceTargets[run.id] ?? "";
+  const adoptRunEvidence = async (run: CommandRunItem, target: string) => {
     const separator = target.indexOf("|");
     if (!clientRef.current || separator < 1 || run.code == null) {
       setBanner("请选择要验收的目标标准");
@@ -4291,176 +4272,16 @@ function App() {
               </div>
             )}
             {inspectorTab === "runs" && (
-              <div className="runs-panel">
-                <div className="run-surface-switch">
-                  <button className={runSurface === "terminal" ? "active" : ""} onClick={() => setRunSurface("terminal")}>终端</button>
-                  <button className={runSurface === "preview" ? "active" : ""} onClick={() => setRunSurface("preview")}>预览<small>{previewRuns.length}</small></button>
-                  <button className={runSurface === "tasks" ? "active" : ""} onClick={() => setRunSurface("tasks")}>任务运行<small>{runs.length}</small></button>
-                </div>
-                {runSurface === "terminal" ? (
-                  <Suspense fallback={<div className="panel-empty compact"><strong>正在加载终端…</strong><p>首次打开会加载本地终端渲染器。</p></div>}>
-                  <TerminalPane
-                    client={clientRef.current}
-                    connected={connection === "connected"}
-                    onNotice={(message) => setBanner(message)}
-                  />
-                  </Suspense>
-                ) : runSurface === "preview" ? (
-                  <section className="preview-workbench">
-                    {selectedPreviewRun ? (
-                      <>
-                        <div className="preview-toolbar">
-                          <select
-                            value={selectedPreviewRun.id}
-                            onChange={(event) => setSelectedPreviewId(event.target.value)}
-                            aria-label="选择预览进程"
-                          >
-                            {previewRuns.map((run) => (
-                              <option value={run.id} key={run.id}>{run.command}</option>
-                            ))}
-                          </select>
-                          <div className="preview-address"><i className={selectedPreviewRun.status} />{selectedPreviewRun.preview_url}</div>
-                          <button title="刷新预览" onClick={() => setPreviewReload((value) => value + 1)}>↻</button>
-                          <button title="在默认浏览器打开" onClick={() => void openUrl(selectedPreviewRun.preview_url!)}>↗</button>
-                          {["queued", "running", "cancelling"].includes(selectedPreviewRun.status) && (
-                            <button className="danger" onClick={() => void cancelWorkspaceRun(selectedPreviewRun)}>停止</button>
-                          )}
-                        </div>
-                        <iframe
-                          key={`${selectedPreviewRun.id}-${previewReload}`}
-                          src={selectedPreviewRun.preview_url}
-                          title={`预览 ${selectedPreviewRun.command}`}
-                          sandbox="allow-forms allow-modals allow-scripts allow-same-origin"
-                        />
-                        <details className="preview-logs">
-                          <summary>进程日志 · {statusLabel(selectedPreviewRun.status)}{selectedPreviewRun.code != null ? ` · 退出码 ${selectedPreviewRun.code}` : ""}</summary>
-                          <pre>{selectedPreviewRun.output || "等待预览进程输出…"}</pre>
-                        </details>
-                      </>
-                    ) : (
-                      <div className="panel-empty">
-                        <span className="panel-empty-icon">▶</span>
-                        <strong>还没有本地预览</strong>
-                        <p>在任务运行中启动 dev server；识别到 localhost 地址后会自动出现在这里。</p>
-                        <button onClick={() => { setRunSurface("tasks"); setRunKind("preview"); }}>配置预览命令</button>
-                      </div>
-                    )}
-                  </section>
-                ) : (
-                <>
-                <div className="run-form">
-                  <div className="run-form-heading">
-                    <strong>项目运行控制台</strong>
-                    <span>明确点击后，经共享沙箱策略运行</span>
-                  </div>
-                  <div className="run-kind-switch">
-                    {(["terminal", "test", "preview"] as CommandRunKind[]).map((kind) => (
-                      <button
-                        className={runKind === kind ? "active" : ""}
-                        key={kind}
-                        onClick={() => setRunKind(kind)}
-                      >{runKindLabel(kind)}</button>
-                    ))}
-                  </div>
-                  <textarea
-                    value={runCommand}
-                    onChange={(event) => setRunCommand(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
-                        event.preventDefault();
-                        void startWorkspaceRun();
-                      }
-                    }}
-                    placeholder={runKind === "test" ? "pytest -q" : runKind === "preview" ? "npm run dev" : "输入项目命令…"}
-                    spellCheck={false}
-                  />
-                  {runKind === "preview" && (
-                    <input
-                      value={runPreviewUrl}
-                      onChange={(event) => setRunPreviewUrl(event.target.value)}
-                      placeholder="可选：http://localhost:5173（也会从输出自动识别）"
-                    />
-                  )}
-                  <div className="run-presets">
-                    <button onClick={() => { setRunKind("test"); setRunCommand("pytest -q"); }}>Pytest</button>
-                    <button onClick={() => { setRunKind("test"); setRunCommand("npm --prefix desktop run build"); }}>Desktop Build</button>
-                    <button onClick={() => { setRunKind("preview"); setRunCommand("npm --prefix desktop run dev -- --host 127.0.0.1"); setRunPreviewUrl("http://127.0.0.1:1420"); }}>Desktop Preview</button>
-                  </div>
-                  <div className="run-submit-row">
-                    <span>⌘/Ctrl+Enter 运行 · 输出和退出码会持久化</span>
-                    <button
-                      className="primary"
-                      disabled={!runCommand.trim() || runSubmitting || connection !== "connected"}
-                      onClick={() => void startWorkspaceRun()}
-                    >{runSubmitting ? "启动中…" : "运行"}</button>
-                  </div>
-                </div>
-
-                {runs.length === 0 && <div className="panel-empty compact"><strong>还没有运行记录</strong><p>运行测试、构建或本地预览；结果不会混进聊天文本。</p></div>}
-                {runs.map((run) => {
-                  const active = ["queued", "running", "cancelling"].includes(run.status);
-                  const evidenceOptions = goals.flatMap((goal) => (
-                    goal.status === "draft" || goal.status === "achieved"
-                      ? []
-                      : goal.acceptance_criteria.map((criterion) => ({
-                          value: `${goal.id}|${criterion.id}`,
-                          label: `${goal.objective} · ${criterion.text}`,
-                        }))
-                  ));
-                  return (
-                    <section className={`run-card ${run.status}`} key={run.id}>
-                      <div className="run-card-head">
-                        <div>
-                          <span className={`task-status ${run.status}`}>{statusLabel(run.status)}</span>
-                          <b>{runKindLabel(run.kind)}</b>
-                        </div>
-                        <small>{run.updated ? new Date(run.updated).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : run.id.slice(-6)}</small>
-                      </div>
-                      <code className="run-command">$ {run.command}</code>
-                      <div className="run-meta">
-                        {run.pid && <span>PID {run.pid}</span>}
-                        {run.code != null && <span>退出码 {run.code}</span>}
-                        <span>{run.sandbox?.isolated ? `沙箱 · ${String(run.sandbox.backend || "on")}` : "宿主机交互运行"}</span>
-                        {run.goal_id && <span>Goal 自动验收 · {run.evidence_kind || "test"}</span>}
-                      </div>
-                      {run.warning && <div className="run-warning">{run.warning}</div>}
-                      {run.error && <div className="task-error">{run.error}</div>}
-                      {run.kind === "test" && <TestResultTree run={run} />}
-                      {run.output && (
-                        <pre className="run-output">{run.output}{run.dropped ? `\n[较早的 ${run.dropped} 行已被缓冲区丢弃]` : ""}</pre>
-                      )}
-                      {run.kind === "preview" && run.preview_url && (
-                        <div className="run-preview">
-                          <div>
-                            <span>{run.preview_url}</span>
-                            <button onClick={() => void openUrl(run.preview_url!)}>浏览器打开 ↗</button>
-                          </div>
-                          <iframe src={run.preview_url} title={`预览 ${run.command}`} sandbox="allow-forms allow-modals allow-scripts allow-same-origin" />
-                        </div>
-                      )}
-                      {run.kind === "test" && !run.goal_id && ["done", "failed"].includes(run.status) && run.code != null && evidenceOptions.length > 0 && (
-                        <div className="run-evidence">
-                          <select
-                            value={runEvidenceTargets[run.id] ?? ""}
-                            onChange={(event) => setRunEvidenceTargets((previous) => ({ ...previous, [run.id]: event.target.value }))}
-                          >
-                            <option value="">选择 Goal 验收标准…</option>
-                            {evidenceOptions.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
-                          </select>
-                          <button onClick={() => void adoptRunEvidence(run)}>{run.code === 0 ? "采纳通过证据" : "记录失败证据"}</button>
-                        </div>
-                      )}
-                      <div className="run-actions">
-                        {active
-                          ? <button className="danger" onClick={() => void cancelWorkspaceRun(run)}>停止</button>
-                          : <button onClick={() => void startWorkspaceRun(run.command, run.kind, run.preview_url ?? "")}>重跑</button>}
-                      </div>
-                    </section>
-                  );
-                })}
-                </>
-                )}
-              </div>
+              <RunsPanel
+                runs={runs}
+                goals={goals}
+                connection={connection}
+                client={clientRef.current}
+                onNotice={setBanner}
+                startWorkspaceRun={startWorkspaceRun}
+                cancelWorkspaceRun={cancelWorkspaceRun}
+                adoptRunEvidence={adoptRunEvidence}
+              />
             )}
             {inspectorTab === "goals" && (
               <div className="goals-panel">
