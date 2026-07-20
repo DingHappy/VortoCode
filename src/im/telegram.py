@@ -6,12 +6,21 @@ HTTP 层可注入（`request_fn`）：默认用 aiohttp（硬依赖）；测试�
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import AsyncIterator, Awaitable, Callable, Optional
 
 from .channel import ChannelAdapter, ChannelEvent
 
 # 注入式 HTTP：async (method, payload) -> Telegram 返回的 result（ok=False 时应抛异常）
 RequestFn = Callable[[str, dict], Awaitable[object]]
+
+_ME_RETRY_BASE = 5.0        # getMe 失败后首次重试的最短间隔（秒）
+_ME_RETRY_MAX = 300.0       # 退避上限：持续失败时最多 5 分钟试一次（别把群消息变成 getMe 洪水）
+
+
+def _now() -> float:
+    """单调钟（getMe 退避用）。独立函数是为了测试能注入假时钟，不去动 stdlib 的 time。"""
+    return time.monotonic()
 
 
 class TelegramError(Exception):
@@ -32,6 +41,8 @@ class TelegramAdapter(ChannelAdapter):
         self._bot_username = (bot_username or "").strip().lstrip("@").lower() or None
         self._bot_id: Optional[str] = None
         self._me_resolved = self._bot_username is not None
+        self._me_retry_at = 0.0        # 下次允许重试 getMe 的单调时刻（退避窗口内不再打 API）
+        self._me_backoff = 0.0         # 当前退避长度（秒），成功即作废
 
     # ------------------------------------------------------------ HTTP（默认 aiohttp，可注入替换）
     async def _default_request(self, method: str, payload: dict):
@@ -71,17 +82,39 @@ class TelegramAdapter(ChannelAdapter):
                     yield ev
 
     async def _resolve_me(self) -> None:
-        """惰性取自己的 username/id（群提及门要用）。失败**不重试到死**也不抛：认不出自己就等于
-        群里永远判不出被 @ → 群消息全被 bridge 丢掉，这正是 fail-closed 想要的方向。"""
+        """惰性取自己的 username/id（群提及门要用），**失败退避重试、绝不永久放弃**。
+
+        两个方向要同时守住：
+
+        - **fail-closed**：解析不出来的期间认不出自己 → 判不出群里有没有被 @ → 那些群消息照样
+          被 bridge 丢掉。不为了"能用"改成放行。
+        - **不永久群聋**：一次网络抖动/限流让 getMe 失败，若就此把 `_me_resolved` 永久置位，
+          此后**整个进程生命周期**里的群消息全成哑弹（重启才恢复）——那是可用性事故，不是安全。
+          故失败只记退避（指数、上限 `_ME_RETRY_MAX`），下一条过了退避窗口的群消息会再试。
+
+        退避是必须的：群消息可能很密，无节制重试就是拿群聊流量打自己的 getMe（还会撞限流）。
+        """
         if self._me_resolved:
             return
-        self._me_resolved = True
+        now = _now()
+        if now < self._me_retry_at:        # 退避窗口内：不重试；本条群消息照样判不出 @ → 被丢
+            return
         try:
-            me = await self._api("getMe") or {}
-            self._bot_username = str(me.get("username", "")).lstrip("@").lower() or None
-            self._bot_id = str(me.get("id", "")) or None
+            me = await self._api("getMe")
         except Exception:  # noqa: BLE001
-            self._bot_username, self._bot_id = None, None
+            me = None
+        if not isinstance(me, dict):       # 失败/返回体不是对象 → 按认不出自己处理，绝不往外抛：
+            me = {}                        # 本函数在 poll 的 for 循环里被 await，抛出去会掀翻长轮询
+        username = str(me.get("username", "")).lstrip("@").lower() or None
+        bot_id = str(me.get("id", "")) or None
+        if username is None and bot_id is None:
+            # 失败、或返回体里既没 username 也没 id（认不出自己 = 和失败等价）→ 退避后再来一次
+            self._me_backoff = min(max(self._me_backoff * 2, _ME_RETRY_BASE), _ME_RETRY_MAX)
+            self._me_retry_at = now + self._me_backoff
+            return
+        self._bot_username, self._bot_id = username, bot_id
+        self._me_resolved = True
+        self._me_backoff, self._me_retry_at = 0.0, 0.0
 
     async def send_text(self, text: str) -> str:
         res = await self._api("sendMessage", chat_id=self.owner_id, text=_clip(text),
