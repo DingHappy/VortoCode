@@ -960,6 +960,13 @@ export interface ContextItem {
   endLine?: number;
 }
 
+// 源码预览里「点行号选段」的锚定状态（anchor 为落点，start/end 为闭区间边界）。
+export interface SourceSelection {
+  anchor: number;
+  start: number;
+  end: number;
+}
+
 export interface OpenWorkspaceFileResult {
   launcher: string;
   lineAware: boolean;
