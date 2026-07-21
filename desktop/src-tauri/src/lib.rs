@@ -1023,18 +1023,109 @@ fn forget_project_at(path: &Path, project_id: &str) -> Result<Vec<DesktopProject
     Ok(registry.projects)
 }
 
+/// 注册前置门：把入参目录解析到 Git 根，并回答「这个根是否已在注册表里」。
+/// 只有**新根**需要用户确认——已注册项目的重连续期不改变可读边界，零打扰。
+fn project_registration_gate(path: &Path, repo_root: &str) -> Result<(PathBuf, bool), String> {
+    let selected = canonical_repo_root(repo_root)?;
+    let root = git_workspace_root(&selected)?;
+    let id = project_id(&root);
+    let known = load_project_registry(path)?
+        .projects
+        .iter()
+        .any(|project| project.id == id);
+    Ok((root, known))
+}
+
+fn remember_project_flow(
+    path: &Path,
+    repo_root: &str,
+    base_url: &str,
+    known: bool,
+    confirmed: bool,
+) -> Result<DesktopProjectProfile, String> {
+    // 注册即扩权：项目根会并入 Desktop 文件读取围栏（workspace_fence_roots）。
+    // 新根未获用户确认一律拒绝，且不能留下任何注册表痕迹。
+    if !known && !confirmed {
+        return Err("新项目目录注册未获用户确认，已取消".into());
+    }
+    remember_project_at(path, repo_root, base_url)
+}
+
+async fn confirm_project_registration(app: &AppHandle, root: &Path) -> Result<bool, String> {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    // 与 confirm_llm_profile_change 同理：原生对话框在 webview 进程之外，被注入的
+    // 页面脚本无法替用户点「确认」，静默把任意 Git 仓库并入读取围栏因此不生效。
+    let message = format!(
+        "网页层请求把以下目录注册为受信项目（Desktop 将允许读取其中的文件）：\n\n{}\n\n仅当这是你刚在界面上输入/选择的目录时才确认。",
+        root.display()
+    );
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .message(message)
+            .title("确认注册项目目录")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "确认注册".into(),
+                "取消".into(),
+            ))
+            .blocking_show()
+    })
+    .await
+    .map_err(|error| format!("项目注册确认对话框失败：{error}"))
+}
+
 #[tauri::command]
 fn list_desktop_projects(app: AppHandle) -> Result<Vec<DesktopProjectProfile>, String> {
     Ok(load_project_registry(&project_registry_path(&app)?)?.projects)
 }
 
 #[tauri::command]
-fn remember_desktop_project(
+async fn remember_desktop_project(
     app: AppHandle,
     repo_root: String,
     base_url: String,
 ) -> Result<DesktopProjectProfile, String> {
-    remember_project_at(&project_registry_path(&app)?, &repo_root, &base_url)
+    let path = project_registry_path(&app)?;
+    let (root, known) = project_registration_gate(&path, &repo_root)?;
+    let confirmed = if known {
+        false // 已注册：不弹窗，flow 靠 known 放行
+    } else {
+        confirm_project_registration(&app, &root).await?
+    };
+    remember_project_flow(&path, &repo_root, &base_url, known, confirmed)
+}
+
+#[tauri::command]
+async fn pick_desktop_project(
+    app: AppHandle,
+    base_url: String,
+) -> Result<Option<DesktopProjectProfile>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    // 目录选择整体收在后端：webview 只能「请求弹出选择器」，没有命名任意路径的通道；
+    // 人在 OS 对话框里点选目录本身就是授权，无需再弹一次确认。
+    let picker = app.clone();
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        picker
+            .dialog()
+            .file()
+            .set_title("选择 Git 项目目录")
+            .blocking_pick_folder()
+    })
+    .await
+    .map_err(|error| format!("目录选择对话框失败：{error}"))?;
+    let Some(choice) = picked else {
+        return Ok(None);
+    };
+    let folder = choice
+        .into_path()
+        .map_err(|error| format!("所选目录不可用：{error}"))?;
+    remember_project_at(
+        &project_registry_path(&app)?,
+        &folder.to_string_lossy(),
+        &base_url,
+    )
+    .map(Some)
 }
 
 #[tauri::command]
@@ -2046,6 +2137,7 @@ pub fn run() {
             clear_llm_profile,
             list_desktop_projects,
             remember_desktop_project,
+            pick_desktop_project,
             forget_desktop_project,
             get_gateway_recovery,
             list_gateway_recoveries,
@@ -2374,6 +2466,88 @@ mod tests {
             "http://127.0.0.1:8080",
         )
         .is_ok());
+
+        remove_dir_all(root).expect("remove temp workspace");
+    }
+
+    #[test]
+    fn project_registration_gate_flags_only_new_roots() {
+        let root = temp_workspace("registry-gate");
+        init_git(&root);
+        create_dir_all(root.join("nested")).expect("create nested directory");
+        let registry_path = root.join("config/projects.json");
+
+        let (resolved, known) = project_registration_gate(&registry_path, &root.to_string_lossy())
+            .expect("gate new root");
+        assert_eq!(resolved, root.canonicalize().expect("canonical root"));
+        assert!(!known);
+
+        remember_project_at(
+            &registry_path,
+            &root.to_string_lossy(),
+            "http://127.0.0.1:8080",
+        )
+        .expect("register root");
+        let (_, known) =
+            project_registration_gate(&registry_path, &root.join("nested").to_string_lossy())
+                .expect("gate nested path");
+        assert!(known, "子目录应归一化到已注册的 Git 根，不再当作新根");
+
+        remove_dir_all(root).expect("remove temp workspace");
+    }
+
+    #[test]
+    fn unconfirmed_new_project_registration_leaves_no_trace() {
+        let root = temp_workspace("registry-unconfirmed");
+        init_git(&root);
+        let registry_path = root.join("projects.json");
+
+        let error = remember_project_flow(
+            &registry_path,
+            &root.to_string_lossy(),
+            "http://127.0.0.1:8080",
+            false,
+            false,
+        )
+        .err()
+        .expect("must reject unconfirmed new root");
+        assert!(error.contains("未获用户确认"));
+        assert!(!registry_path.exists(), "拒绝路径不得留下注册表文件");
+
+        remember_project_flow(
+            &registry_path,
+            &root.to_string_lossy(),
+            "http://127.0.0.1:8080",
+            false,
+            true,
+        )
+        .expect("confirmed new root registers");
+        assert!(registry_path.exists());
+
+        remove_dir_all(root).expect("remove temp workspace");
+    }
+
+    #[test]
+    fn known_project_reregistration_skips_confirmation() {
+        let root = temp_workspace("registry-known");
+        init_git(&root);
+        let registry_path = root.join("projects.json");
+        remember_project_at(
+            &registry_path,
+            &root.to_string_lossy(),
+            "http://127.0.0.1:8080",
+        )
+        .expect("seed registry");
+
+        let profile = remember_project_flow(
+            &registry_path,
+            &root.to_string_lossy(),
+            "http://127.0.0.1:9090",
+            true,
+            false,
+        )
+        .expect("known root re-registers without confirmation");
+        assert_eq!(profile.base_url, "http://127.0.0.1:9090");
 
         remove_dir_all(root).expect("remove temp workspace");
     }

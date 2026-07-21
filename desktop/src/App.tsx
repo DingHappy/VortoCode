@@ -1,5 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import { open } from "@tauri-apps/plugin-dialog";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
@@ -2364,17 +2363,18 @@ function App() {
   };
 
   const chooseRepo = async () => {
-    const selected = await open({ directory: true, multiple: false, title: "选择 Git 项目目录" });
-    if (typeof selected === "string") {
-      try {
-        const profile = await rememberProject(selected, normalizeLocalBaseUrl(baseUrl));
-        return switchProject(profile);
-      } catch (error) {
-        setBanner(error instanceof Error ? error.message : "项目目录不可用");
-        return false;
-      }
+    // 目录选择与注册都在后端（pick_desktop_project）：webview 拿不到命名任意路径的通道
+    try {
+      const profile = await invoke<DesktopProjectProfile | null>("pick_desktop_project", {
+        baseUrl: normalizeLocalBaseUrl(baseUrl),
+      });
+      if (!profile) return false;
+      setProjects((previous) => [profile, ...previous.filter((item) => item.id !== profile.id)]);
+      return switchProject(profile);
+    } catch (error) {
+      setBanner(error instanceof Error ? error.message : "项目目录不可用");
+      return false;
     }
-    return false;
   };
 
   const acceptWorkspaceRequest = async () => {
