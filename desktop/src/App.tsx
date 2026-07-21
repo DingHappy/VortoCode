@@ -52,10 +52,7 @@ import type {
   GoalItem,
   GoalVerifierKind,
   HookConfigStatus,
-  JournalDaySummary,
-  JournalContinuation,
   JournalNextAction,
-  JournalSnapshot,
   NoticeItem,
   OpenWorkspaceFileResult,
   PendingConfirmation,
@@ -78,7 +75,6 @@ import type {
   WorkspaceFileList,
   WorkspaceScope,
   WorktreeWorkspaceSnapshot,
-  WeeklyJournalSnapshot,
 } from "./types";
 import { DecisionsPanel } from "./components/DecisionsPanel";
 import { DiffViewer } from "./components/DiffViewer";
@@ -89,6 +85,7 @@ import { MarkdownMessage } from "./components/MarkdownMessage";
 import { ProjectAssetsPanel } from "./components/ProjectAssetsPanel";
 import { RunsPanel } from "./components/RunsPanel";
 import { TurnTimeline } from "./components/TurnTimeline";
+import { useJournal } from "./hooks/useJournal";
 import {
   compactSessionCwd,
   contextWindowSourceLabel,
@@ -103,6 +100,7 @@ import {
 } from "./lib/labels";
 import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey, STORAGE_KEYS } from "./lib/storage";
 import { normalizeEditorText, serializeEditorText } from "./lib/text";
+import { localDay } from "./lib/time";
 import { finishRunningActivities, hydrateActivities, protocolActivity, upsertActivity } from "./protocol/activities";
 
 type InspectorTab = "inbox" | "files" | "diff" | "runs" | "goals" | "tasks" | "decisions" | "project";
@@ -212,21 +210,6 @@ function goalFormLines(value: string): string[] {
 
 function goalEvidenceKey(goalId: string, criterionId: string): string {
   return `${goalId}:${criterionId}`;
-}
-
-function localDay(): string {
-  const now = new Date();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${now.getFullYear()}-${month}-${day}`;
-}
-
-function previousDay(value: string): string {
-  const selected = new Date(`${value}T12:00:00`);
-  selected.setDate(selected.getDate() - 1);
-  const month = String(selected.getMonth() + 1).padStart(2, "0");
-  const day = String(selected.getDate()).padStart(2, "0");
-  return `${selected.getFullYear()}-${month}-${day}`;
 }
 
 function criterionVerifierDraft(criterion: GoalCriterion): GoalVerifierDraft {
@@ -351,14 +334,8 @@ function App() {
   const [decisions, setDecisions] = useState<DecisionItem[]>([]);
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
   // auditFilter（审计类别筛选）是纯本地 UI 态，已下移到 <DecisionsPanel> 自持。
-  const [journal, setJournal] = useState<JournalSnapshot | null>(null);
-  const [journalDays, setJournalDays] = useState<JournalDaySummary[]>([]);
-  const [weeklyJournal, setWeeklyJournal] = useState<WeeklyJournalSnapshot | null>(null);
-  const [journalContinuation, setJournalContinuation] = useState<JournalContinuation | null>(null);
-  const [journalView, setJournalView] = useState<"day" | "week">("day");
-  const [journalDate, setJournalDate] = useState(localDay);
-  const [journalNote, setJournalNote] = useState("");
-  const [journalBusy, setJournalBusy] = useState(false);
+  // journal 域 8 个 state + 全部读写回调已收进 useJournal（hook 试点，hooks/useJournal.ts）；
+  // 实例在 banner 声明之后挂载——保存快照/添加记录的结果提示要注入 setBanner。
   const [projectAssetView, setProjectAssetView] = useState<"memory" | "artifacts">("memory");
   const [repoMemory, setRepoMemory] = useState<RepoMemorySnapshot | null>(null);
   const [repoMemoryDraft, setRepoMemoryDraft] = useState("");
@@ -384,6 +361,26 @@ function App() {
   const [editingGoalId, setEditingGoalId] = useState<string | null>(null);
   const [goalSubmitting, setGoalSubmitting] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
+  const {
+    journal,
+    journalDays,
+    weeklyJournal,
+    journalContinuation,
+    journalView,
+    journalDate,
+    journalNote,
+    journalBusy,
+    setJournalView,
+    setJournalNote,
+    refreshJournal,
+    refreshWeeklyJournal,
+    snapshotTodayJournal,
+    selectJournalDay,
+    continueFromYesterday,
+    saveJournalSnapshot,
+    addJournalNote,
+    resetJournal,
+  } = useJournal(clientRef, setBanner);
   const [workspaceFiles, setWorkspaceFiles] = useState<string[]>([]);
   const [workspaceRoot, setWorkspaceRoot] = useState("");
   const [workspaceTruncated, setWorkspaceTruncated] = useState(false);
@@ -786,48 +783,7 @@ function App() {
     }
   }, []);
 
-  const refreshJournalDays = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
-    try {
-      setJournalDays(await client.listJournalDays());
-    } catch {
-      // 旧 runtime 没有 Journal 时保持空历史。
-    }
-  }, []);
-
-  const refreshJournal = useCallback(async (date = journalDate) => {
-    const client = clientRef.current;
-    if (!client) return;
-    try {
-      setJournal(await client.getJournal(date));
-    } catch {
-      // Journal 是增量能力，不阻断对话与决策中心。
-    }
-  }, [journalDate]);
-
-  const refreshWeeklyJournal = useCallback(async (end = journalDate) => {
-    const client = clientRef.current;
-    if (!client) return;
-    try {
-      setWeeklyJournal(await client.getWeeklyJournal(end));
-    } catch {
-      // 周报是 Journal 的聚合视图，不阻断日报恢复。
-    }
-  }, [journalDate]);
-
-  const refreshJournalContinuation = useCallback(async (date: string) => {
-    const client = clientRef.current;
-    if (!client || date >= localDay()) {
-      setJournalContinuation(null);
-      return;
-    }
-    try {
-      setJournalContinuation(await client.getJournalContinuation(date));
-    } catch {
-      setJournalContinuation(null);
-    }
-  }, []);
+  // refreshJournal* 四件已随 journal 域收进 useJournal（S6b）。
 
   const refreshProjectAssets = useCallback(async (includeMemory = true) => {
     const client = clientRef.current;
@@ -891,20 +847,7 @@ function App() {
     }
   }, []);
 
-  const snapshotTodayJournal = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
-    try {
-      const snapshot = await client.snapshotJournal(localDay());
-      if (journalDate === snapshot.date) setJournal(snapshot);
-      setJournalDays(await client.listJournalDays());
-      if (weeklyJournal?.end_date === snapshot.date) {
-        setWeeklyJournal(await client.getWeeklyJournal(snapshot.date));
-      }
-    } catch {
-      // 自动快照 best-effort；手工保存会显示具体错误。
-    }
-  }, [journalDate, weeklyJournal?.end_date]);
+  // snapshotTodayJournal 已随 journal 域收进 useJournal（S6b）；总线与 connect 照旧调用。
 
   const refreshWorkspaceFiles = useCallback(async (root: string) => {
     if (!root.trim()) return;
@@ -1691,12 +1634,7 @@ function App() {
     setNotices([]);
     setDecisions([]);
     setAuditEntries([]);
-    setJournal(null);
-    setJournalDays([]);
-    setWeeklyJournal(null);
-    setJournalContinuation(null);
-    setJournalDate(localDay());
-    setJournalNote("");
+    resetJournal();
     setProjectAssetView("memory");
     setRepoMemory(null);
     setRepoMemoryDraft("");
@@ -2195,25 +2133,7 @@ function App() {
     await answerConfirmationById(pendingConfirm.id, ok);
   };
 
-  const selectJournalDay = async (date: string) => {
-    setJournalDate(date);
-    setJournalBusy(true);
-    try {
-      await Promise.all([
-        refreshJournal(date),
-        refreshWeeklyJournal(date),
-        refreshJournalContinuation(date),
-      ]);
-    } finally {
-      setJournalBusy(false);
-    }
-  };
-
-  const continueFromYesterday = async () => {
-    const yesterday = previousDay(localDay());
-    setJournalView("day");
-    await selectJournalDay(yesterday);
-  };
+  // selectJournalDay / continueFromYesterday 已随 journal 域收进 useJournal（S6b）。
 
   const toggleSystemNotifications = async () => {
     if (notificationsEnabled) {
@@ -2260,37 +2180,7 @@ function App() {
     }
   };
 
-  const saveJournalSnapshot = async () => {
-    if (!clientRef.current || journalDate !== localDay()) return;
-    setJournalBusy(true);
-    try {
-      const snapshot = await clientRef.current.snapshotJournal(journalDate);
-      setJournal(snapshot);
-      await refreshJournalDays();
-      await refreshWeeklyJournal(journalDate);
-      setBanner("今日 Journal 快照已保存；内容未变化时不会重复写盘");
-    } catch (error) {
-      setBanner(error instanceof Error ? error.message : "Journal 快照保存失败");
-    } finally {
-      setJournalBusy(false);
-    }
-  };
-
-  const addJournalNote = async () => {
-    const text = journalNote.trim();
-    if (!clientRef.current || !text || journalDate !== localDay()) return;
-    setJournalBusy(true);
-    try {
-      setJournal(await clientRef.current.addJournalNote(journalDate, text));
-      setJournalNote("");
-      await Promise.all([refreshJournalDays(), refreshWeeklyJournal(journalDate)]);
-      setBanner("工作记录已加入今日 Journal；凭据样式内容会自动脱敏");
-    } catch (error) {
-      setBanner(error instanceof Error ? error.message : "添加 Journal 记录失败");
-    } finally {
-      setJournalBusy(false);
-    }
-  };
+  // saveJournalSnapshot / addJournalNote 已随 journal 域收进 useJournal（S6b，banner 经注入回调）。
 
   const addRepoMemoryFact = async () => {
     const content = repoMemoryDraft.trim();
