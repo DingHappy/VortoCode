@@ -18,6 +18,10 @@
 #     prompt:   隔离 LLM 会话（需要自主判断的活）
 # announce: im（推到 IM）| silent（只落台账）
 #
+# ⚠ command 里的解释器写**绝对路径**（如 /opt/anaconda3/bin/python3、/opt/vortocode/venv/bin/python）：
+#   server 由 launchd/systemd 常驻时 PATH 是极简的，裸 `python` 必 127 "command not found"
+#   （2026-07-20 真机逮到）。下面样例用 python3 只为可移植，接线时请替换成你机器的绝对路径。
+#
 # 无人值守硬化（B8-②）：
 #     budget: N          prompt 作业的 token 预算上限；不写吃 env VORTOCODE_CRON_TOKEN_BUDGET，
 #                        都没有 = 不封顶。超限即停本次作业并按失败升级（发起下一次调用前拦截）。
@@ -33,7 +37,7 @@ jobs:
   # 全绿 → 退出码 0，静默只落 Journal 台账；异常 → 非零退出码 → 决策队列出条 + 通报（announce: im）。
   - name: relay_duty
     schedule: "at 02:00"
-    command: "python -m src.gateway.relay_duty"
+    command: "python3 -m src.gateway.relay_duty"   # ← 常驻环境请换绝对路径解释器（见文件头 ⚠）
     timeout: 120
     announce: im
     enabled: false             # 默认关；真机接线时改 true 并确认 VORTOCODE_CRON=1
@@ -43,7 +47,7 @@ jobs:
   # 让 LLM 去 ls 基线目录、跑命令、解读退出码既费 token 又可能读错，故这里用 command。
   - name: nightly_evals
     schedule: "at 02:30"
-    command: "python -m evals --compare-latest --baseline-on-green"
+    command: "python3 -m evals --compare-latest --baseline-on-green"
     timeout: 5400              # 真机跑全部场景要一会儿；超时按失败处理
     announce: im
     enabled: false             # 默认关，确认要夜跑再改 true
