@@ -2,7 +2,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
-  ArrowLeft,
   ArrowUp,
   ChevronDown,
   CircleAlert,
@@ -17,7 +16,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { Fragment, lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import "./App.css";
 import {
@@ -39,7 +38,6 @@ import type {
   DesktopProjectProfile,
   DesktopLlmProfileStatus,
   DiffPayload,
-  ExtensionInspectKind,
   ExtensionsInspectSnapshot,
   GatewayProcessStatus,
   GatewayRecoveryRecord,
@@ -71,6 +69,7 @@ import type {
   RuntimeSnapshot,
   RuntimeInboxSnapshot,
   SessionSummary,
+  SourceSelection,
   TaskItem,
   TaskBranchReviewDiff,
   TaskBranchReviewSnapshot,
@@ -82,7 +81,10 @@ import type {
   WeeklyJournalSnapshot,
 } from "./types";
 import { DiffViewer } from "./components/DiffViewer";
+import { ExtensionsInspector } from "./components/ExtensionsInspector";
+import { FilesPanel } from "./components/FilesPanel";
 import { MarkdownMessage } from "./components/MarkdownMessage";
+import { ProjectAssetsPanel } from "./components/ProjectAssetsPanel";
 import { RunsPanel } from "./components/RunsPanel";
 import { TurnTimeline } from "./components/TurnTimeline";
 import {
@@ -90,14 +92,8 @@ import {
   compactSessionCwd,
   contextWindowSourceLabel,
   decisionKindLabel,
-  extensionKindLabel,
-  extensionStatusLabel,
-  fileGlyph,
-  formatBytes,
-  formatFileSize,
   formatRelativeTime,
   formatTokenCount,
-  hookCapabilityLabel,
   sessionContextPresentation,
   sessionContextTone,
   sessionStatusLabel,
@@ -109,12 +105,8 @@ import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey,
 import { normalizeEditorText, serializeEditorText } from "./lib/text";
 import { finishRunningActivities, hydrateActivities, protocolActivity, upsertActivity } from "./protocol/activities";
 
-const MonacoEditor = lazy(() => import("./MonacoEditor").then((module) => ({ default: module.MonacoEditor })));
-
 type InspectorTab = "inbox" | "files" | "diff" | "runs" | "goals" | "tasks" | "decisions" | "project";
 type AuditFilter = "all" | "tool" | "decision" | "event";
-type ExtensionInspectFilter = "all" | ExtensionInspectKind;
-type SourceSelection = { anchor: number; start: number; end: number };
 type PendingWorkspaceSave = { rid: string; path: string; content: string; buffer: string };
 type PendingGitComment = {
   path: string;
@@ -356,7 +348,7 @@ function App() {
   const [hookTrustBusy, setHookTrustBusy] = useState(false);
   const [extensionsInspect, setExtensionsInspect] = useState<ExtensionsInspectSnapshot | null>(null);
   const [extensionsInspectBusy, setExtensionsInspectBusy] = useState(false);
-  const [extensionsInspectFilter, setExtensionsInspectFilter] = useState<ExtensionInspectFilter>("all");
+  // extensionsInspectFilter（类型筛选 tab）是纯本地 UI 态，已下移到 <ExtensionsInspector> 自持。
   const [decisions, setDecisions] = useState<DecisionItem[]>([]);
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
   const [auditFilter, setAuditFilter] = useState<AuditFilter>("all");
@@ -427,11 +419,8 @@ function App() {
     const userFiles = workspaceFiles.filter((path) => path !== ".vortocode" && !path.startsWith(".vortocode/"));
     return query ? userFiles.filter((path) => path.toLowerCase().includes(query)) : userFiles;
   }, [fileQuery, workspaceFiles]);
-  const visibleWorkspaceFiles = filteredWorkspaceFiles.slice(0, 500);
-  const previewLines = useMemo(() => filePreview?.content.split("\n").slice(0, 5_000) ?? [], [filePreview]);
-  const previewWasClipped = Boolean(filePreview && filePreview.content.split("\n").length > previewLines.length);
+  // 派生的可见文件切片 / 预览行 / 行数 / 裁剪标记只服务 <FilesPanel>，已随面板搬入组件内计算。
   const editorDirty = Boolean(filePreview && editorContent !== normalizeEditorText(filePreview.content));
-  const editorLineCount = useMemo(() => editorContent.split("\n").length, [editorContent]);
   const workspaceMatchesRuntime = Boolean(
     runtime.workdir && workspaceRoot && runtime.workdir === workspaceRoot,
   );
@@ -2179,16 +2168,7 @@ function App() {
     setWorkspaceError("");
   };
 
-  useEffect(() => {
-    if (!editorMode) return;
-    const saveFromKeyboard = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "s") return;
-      event.preventDefault();
-      void saveWorkspaceFile();
-    };
-    window.addEventListener("keydown", saveFromKeyboard);
-    return () => window.removeEventListener("keydown", saveFromKeyboard);
-  }, [editorMode, saveWorkspaceFile]);
+  // Cmd/Ctrl+S 保存快捷键 effect 随 <FilesPanel> 搬入组件内（调用注入的 onSave）。
 
   const cancelTurn = async () => {
     await clientRef.current?.send({ type: "agent_cancel" }).catch(() => undefined);
@@ -3822,127 +3802,42 @@ function App() {
               </div>
             )}
             {inspectorTab === "files" && (
-              <div className="files-panel">
-                {selectedFile ? (
-                  <>
-                    <div className="file-preview-head">
-                      <button className="file-back" aria-label="返回文件列表" onClick={closeWorkspaceFile}><ArrowLeft size={15} /></button>
-                      <div className="file-preview-title">
-                        <strong title={selectedFile}>{selectedFile.split("/").slice(-1)[0]}{editorDirty ? " •" : ""}</strong>
-                        <span title={selectedFile}>{selectedFile}</span>
-                      </div>
-                      {filePreview && previewContextItem && (
-                        <div className="file-preview-actions">
-                          <button
-                            onClick={() => setEditorMode((current) => !current)}
-                            disabled={savingFile || (!editorMode && editorLineCount > 50_000)}
-                            title={editorLineCount > 50_000 ? "超过 50,000 行的文件请使用外部编辑器" : "切换内嵌编辑"}
-                          >{editorMode ? "只读预览" : "编辑"}</button>
-                          {editorMode ? (
-                            <>
-                              <button onClick={discardEditorChanges} disabled={savingFile}>放弃</button>
-                              <button className="primary" onClick={() => void saveWorkspaceFile()} disabled={!editorDirty || savingFile || busy || connection !== "connected"}>
-                                {savingFile ? "等待确认…" : "保存"}
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <button onClick={() => void launchExternalEditor()} title={`在外部编辑器打开第 ${sourceSelection?.start ?? 1} 行`}>
-                                ↗ 外部
-                              </button>
-                              <button
-                                className={`primary ${previewContextAttached ? "attached" : ""}`}
-                                onClick={() => addFileToContext(previewContextItem)}
-                                disabled={connection !== "connected" || !workspaceMatchesRuntime}
-                                title={workspaceMatchesRuntime ? "经共享 read_file 权限门加入下一轮" : "请先连接这个项目的 runtime"}
-                              >
-                                {previewContextAttached ? "已加入" : sourceSelection ? `加入 L${sourceSelection.start}–${sourceSelection.end}` : "加入文件"}
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                    {workspaceLoading && <div className="file-loading">正在读取源码…</div>}
-                    {workspaceError && <div className="file-error"><strong>无法预览</strong><p>{workspaceError}</p></div>}
-                    {filePreview && !workspaceLoading && (
-                      <>
-                        <div className="file-preview-meta">
-                          <span>{formatFileSize(filePreview.size)}</span>
-                          <span>{filePreview.content.split("\n").length.toLocaleString("zh-CN")} 行</span>
-                          <span>UTF-8 · {editorEol === "\r\n" ? "CRLF" : "LF"} · {editorMode ? editorDirty ? "未保存" : "编辑缓冲区" : "只读"}</span>
-                          <span>{editorMode ? "Monaco · ⌘/Ctrl+S 保存 · 未保存内容不会注入 Agent" : "点行号选择，Shift 扩展（最多 500 行）"}</span>
-                          {!editorMode && sourceSelection && (
-                            <button onClick={() => setSourceSelection(null)}>L{sourceSelection.start}–L{sourceSelection.end} ×</button>
-                          )}
-                        </div>
-                        {editorMode ? (
-                          <div className={`monaco-editor-shell ${editorDirty ? "dirty" : ""}`}>
-                            <Suspense fallback={<div className="file-loading">正在加载代码编辑器…</div>}>
-                            <MonacoEditor
-                              path={filePreview.path}
-                              value={editorContent}
-                              onChange={setEditorContent}
-                            />
-                            </Suspense>
-                          </div>
-                        ) : (
-                          <>
-                            <pre className="source-preview">
-                              {previewLines.map((line, index) => {
-                                const lineNumber = index + 1;
-                                const selected = Boolean(sourceSelection && lineNumber >= sourceSelection.start && lineNumber <= sourceSelection.end);
-                                return (
-                                  <span className={`source-line ${selected ? "selected" : ""}`} key={`${index}-${line.slice(0, 12)}`}>
-                                    <button
-                                      aria-label={`选择第 ${lineNumber} 行`}
-                                      onClick={(event) => selectSourceLine(lineNumber, event.shiftKey)}
-                                    >{lineNumber}</button>
-                                    <code>{line || " "}</code>
-                                  </span>
-                                );
-                              })}
-                            </pre>
-                            {previewWasClipped && <div className="file-clipped">仅展示前 5,000 行；Agent 上下文仍受单轮大小限制。</div>}
-                          </>
-                        )}
-                      </>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <div className="file-toolbar">
-                      <input value={fileQuery} onChange={(event) => setFileQuery(event.target.value)} placeholder="搜索文件路径…" />
-                      <button
-                        title="刷新文件"
-                        onClick={() => void refreshWorkspaceFiles(repoRoot.trim() || runtime.workdir || "")}
-                        disabled={!repoRoot.trim() && !runtime.workdir}
-                      >↻</button>
-                    </div>
-                    <div className="file-list-meta">
-                      <span>{filteredWorkspaceFiles.length.toLocaleString("zh-CN")} 个文件</span>
-                      <span>{activeScope === "scratch" ? "Scratch 文件" : "Git 项目"}{workspaceTruncated ? " · 已截断" : ""}</span>
-                    </div>
-                    {workspaceLoading && <div className="file-loading">正在扫描项目…</div>}
-                    {workspaceError && <div className="file-error"><strong>无法读取源码工作区</strong><p>{workspaceError}</p></div>}
-                    {!workspaceLoading && !workspaceError && workspaceFiles.length === 0 && (
-                      <div className="panel-empty compact"><strong>尚未加载项目文件</strong><p>在工作区设置中选择一个 Git 项目。</p></div>
-                    )}
-                    <div className="file-list">
-                      {visibleWorkspaceFiles.map((path) => (
-                        <button key={path} onClick={() => void openWorkspaceFile(path)} title={path}>
-                          <span>{fileGlyph(path)}</span>
-                          <span>{path}</span>
-                          {contextItems.some((item) => item.path === path) && <b>已选</b>}
-                        </button>
-                      ))}
-                    </div>
-                    {filteredWorkspaceFiles.length > visibleWorkspaceFiles.length && (
-                      <div className="file-list-limit">继续输入路径以缩小结果；当前最多渲染 500 项。</div>
-                    )}
-                  </>
-                )}
-              </div>
+              <FilesPanel
+                selectedFile={selectedFile}
+                filePreview={filePreview}
+                editorMode={editorMode}
+                editorContent={editorContent}
+                editorEol={editorEol}
+                editorDirty={editorDirty}
+                savingFile={savingFile}
+                sourceSelection={sourceSelection}
+                workspaceLoading={workspaceLoading}
+                workspaceError={workspaceError}
+                fileQuery={fileQuery}
+                filteredWorkspaceFiles={filteredWorkspaceFiles}
+                totalFileCount={workspaceFiles.length}
+                workspaceTruncated={workspaceTruncated}
+                contextItems={contextItems}
+                previewContextItem={previewContextItem}
+                previewContextAttached={previewContextAttached}
+                connection={connection}
+                busy={busy}
+                activeScope={activeScope}
+                workspaceMatchesRuntime={workspaceMatchesRuntime}
+                canRefresh={Boolean(repoRoot.trim() || runtime.workdir)}
+                onOpenFile={openWorkspaceFile}
+                onCloseFile={closeWorkspaceFile}
+                onToggleEditorMode={() => setEditorMode((current) => !current)}
+                onEditorContentChange={setEditorContent}
+                onDiscard={discardEditorChanges}
+                onSave={saveWorkspaceFile}
+                onLaunchExternal={launchExternalEditor}
+                onAddContext={addFileToContext}
+                onSelectSourceLine={selectSourceLine}
+                onClearSourceSelection={() => setSourceSelection(null)}
+                onFileQueryChange={setFileQuery}
+                onRefresh={() => void refreshWorkspaceFiles(repoRoot.trim() || runtime.workdir || "")}
+              />
             )}
             {inspectorTab === "diff" && (
               <div className="git-review-panel">
@@ -4611,134 +4506,32 @@ function App() {
               </div>
             )}
             {inspectorTab === "project" && (
-              <div className="project-assets-panel">
-                <div className="project-assets-head">
-                  <div>
-                    <span>{activeScope === "general" ? "General Assets" : "Project Assets"}</span>
-                    <strong>{activeScope === "general" ? "不依赖目录的会话制品" : "跟着当前工作区的长期资产"}</strong>
-                  </div>
-                  <button
-                    onClick={() => void refreshProjectAssets(activeScope !== "general").then(() => {
-                      if (selectedArtifactId) void loadArtifactPreview(selectedArtifactId);
-                    })}
-                    disabled={projectAssetsLoading || connection !== "connected"}
-                  >{projectAssetsLoading ? "同步中" : "刷新"}</button>
-                </div>
-                <div className="project-assets-toggle">
-                  {activeScope !== "general" && <button className={projectAssetView === "memory" ? "active" : ""} onClick={() => setProjectAssetView("memory")}>仓库记忆 · {repoMemory?.total_entries ?? 0}</button>}
-                  <button className={projectAssetView === "artifacts" ? "active" : ""} onClick={() => setProjectAssetView("artifacts")}>制品 · {artifacts.length}</button>
-                </div>
-
-                {projectAssetsError && <div className="project-assets-error">{projectAssetsError}</div>}
-
-                {activeScope !== "general" && projectAssetView === "memory" && (
-                  <div className="repo-memory-view">
-                    <section className="repo-memory-summary">
-                      <div>
-                        <span>自动注入</span>
-                        <strong>{repoMemory?.injected_entries ?? repoMemory?.total_entries ?? 0} 条</strong>
-                      </div>
-                      <div>
-                        <span>注入预算</span>
-                        <strong>{repoMemory?.max_chars ?? 2_000} 字</strong>
-                      </div>
-                      <code>{repoMemory?.path ?? ".vortocode/memory/repo.md"}</code>
-                    </section>
-                    {repoMemory?.redacted && <div className="asset-warning">检测到疑似凭据，Desktop 投影已脱敏。</div>}
-                    {repoMemory?.truncated && (
-                      <div className="asset-warning">
-                        记忆已超过注入上限；更早的 {Math.max(0, repoMemory.dropped_entries)} 条不会进入新会话。
-                      </div>
-                    )}
-                    <div className="repo-memory-list">
-                      {!repoMemory || (!repoMemory.entries.length && !repoMemory.content) ? (
-                        <div className="panel-empty compact"><strong>暂无仓库记忆</strong><p>适合保存真实测试命令、目录约定和已知坑。</p></div>
-                      ) : repoMemory.entries.length > 0 ? (
-                        repoMemory.entries.map((entry, index) => (
-                          <div className="repo-memory-entry" key={`${index}-${entry.slice(0, 40)}`}>
-                            <span>{index + 1}</span><p>{entry}</p>
-                          </div>
-                        ))
-                      ) : (
-                        <pre>{repoMemory.content}</pre>
-                      )}
-                    </div>
-                    <section className="repo-memory-composer">
-                      <div><strong>追加可信仓库事实</strong><span>保存后从下个新会话开始生效</span></div>
-                      <textarea
-                        value={repoMemoryDraft}
-                        onChange={(event) => setRepoMemoryDraft(event.target.value)}
-                        maxLength={4_000}
-                        placeholder="例如：完整测试必须运行 npm run test:integration"
-                      />
-                      <div>
-                        <small>{repoMemoryDraft.length}/4000</small>
-                        <button
-                          className="primary"
-                          onClick={() => void addRepoMemoryFact()}
-                          disabled={!repoMemoryDraft.trim() || projectAssetsLoading || connection !== "connected"}
-                        >确认后追加</button>
-                      </div>
-                    </section>
-                  </div>
-                )}
-
-                {projectAssetView === "artifacts" && (
-                  <div className="artifacts-workbench">
-                    {artifacts.length === 0 ? (
-                      <div className="panel-empty"><strong>暂无制品</strong><p>在 Build 模式让 Agent“把结果做成可交互页面”，发布后会出现在这里。</p></div>
-                    ) : (
-                      <>
-                        <div className="artifact-list">
-                          {artifacts.map((artifact) => (
-                            <button
-                              className={artifact.id === selectedArtifactId ? "active" : ""}
-                              key={artifact.id}
-                              onClick={() => setSelectedArtifactId(artifact.id)}
-                            >
-                              <span>{artifact.kind === "markdown" ? "MD" : "HTML"}</span>
-                              <div><strong>{artifact.title}</strong><small>v{artifact.version} · {formatBytes(artifact.bytes)} · {artifact.updated_at}</small></div>
-                            </button>
-                          ))}
-                        </div>
-                        {selectedArtifact && (
-                          <section className="artifact-preview-card">
-                            <div className="artifact-preview-head">
-                              <div><strong>{selectedArtifact.title}</strong><span>{selectedArtifact.id}</span></div>
-                              <select
-                                aria-label="制品版本"
-                                value={artifactVersion ?? ""}
-                                onChange={(event) => void loadArtifactPreview(selectedArtifact.id, Number(event.target.value))}
-                              >
-                                {(artifactVersions?.versions ?? []).slice().reverse().map((version) => (
-                                  <option value={version.v} key={version.v}>
-                                    v{version.v}{version.v === artifactVersions?.pinned ? " · 默认" : ""}{version.v === artifactVersions?.current ? " · 最新" : ""}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                            <div className="artifact-preview-actions">
-                              <button className="primary" onClick={attachSelectedArtifact}>交给 Agent 迭代</button>
-                              <button onClick={() => void openSelectedArtifact()}>外部打开</button>
-                            </div>
-                            <div className="artifact-sandbox">
-                              {artifactPreviewLoading && <span>正在载入隔离预览…</span>}
-                              {!artifactPreviewLoading && securedArtifactHtml && (
-                                <iframe
-                                  sandbox=""
-                                  srcDoc={securedArtifactHtml}
-                                  title={`${selectedArtifact.title} 制品预览`}
-                                />
-                              )}
-                            </div>
-                            <p className="artifact-security-note">Desktop 内置预览禁用脚本、交互与外联；完整交互请在无 token 的本机查看页打开。</p>
-                          </section>
-                        )}
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
+              <ProjectAssetsPanel
+                activeScope={activeScope}
+                projectAssetView={projectAssetView}
+                projectAssetsLoading={projectAssetsLoading}
+                projectAssetsError={projectAssetsError}
+                connection={connection}
+                repoMemory={repoMemory}
+                repoMemoryDraft={repoMemoryDraft}
+                artifacts={artifacts}
+                selectedArtifactId={selectedArtifactId}
+                selectedArtifact={selectedArtifact}
+                artifactVersion={artifactVersion}
+                artifactVersions={artifactVersions}
+                artifactPreviewLoading={artifactPreviewLoading}
+                securedArtifactHtml={securedArtifactHtml}
+                onRefresh={() => void refreshProjectAssets(activeScope !== "general").then(() => {
+                  if (selectedArtifactId) void loadArtifactPreview(selectedArtifactId);
+                })}
+                onSelectView={setProjectAssetView}
+                onRepoMemoryDraftChange={setRepoMemoryDraft}
+                onAddRepoMemoryFact={addRepoMemoryFact}
+                onSelectArtifact={setSelectedArtifactId}
+                onSelectVersion={loadArtifactPreview}
+                onAttachArtifact={attachSelectedArtifact}
+                onOpenArtifact={openSelectedArtifact}
+              />
             )}
             {inspectorTab === "decisions" && (
               <div className="decisions-panel">
@@ -5140,97 +4933,15 @@ function App() {
             )}
 
             {activeScope === "project" && (
-              <section className="extensions-inspect-card">
-                <div className="extensions-inspect-heading">
-                  <div>
-                    <span>Extensions</span>
-                    <strong>当前项目加载面</strong>
-                  </div>
-                  <button
-                    onClick={() => void Promise.all([refreshExtensionsInspect(), refreshHookStatus()])}
-                    disabled={connection !== "connected" || extensionsInspectBusy || hookTrustBusy}
-                  >{extensionsInspectBusy ? "读取中…" : "重新检查"}</button>
-                </div>
-                <p>只显示生效来源与安全状态；不会执行扩展，也不会展示规则正文、MCP 地址、命令或凭据。</p>
-                {extensionsInspect && (
-                  <div className="extensions-inspect-summary">
-                    <span><b>{extensionsInspect.summary.active}</b> 已加载</span>
-                    <span><b>{extensionsInspect.summary.total}</b> 总计</span>
-                    <span className={extensionsInspect.summary.attention > 0 ? "attention" : ""}><b>{extensionsInspect.summary.attention}</b> 需注意</span>
-                  </div>
-                )}
-                <div className="extensions-inspect-tabs" role="tablist" aria-label="扩展类型">
-                  {(["all", "rules", "skill", "hook", "mcp"] as ExtensionInspectFilter[]).map((kind) => {
-                    const count = kind === "all"
-                      ? extensionsInspect?.items.length ?? 0
-                      : extensionsInspect?.items.filter((item) => item.kind === kind).length ?? 0;
-                    return (
-                      <button
-                        key={kind}
-                        className={extensionsInspectFilter === kind ? "active" : ""}
-                        onClick={() => setExtensionsInspectFilter(kind)}
-                        role="tab"
-                        aria-selected={extensionsInspectFilter === kind}
-                      >{kind === "all" ? "全部" : extensionKindLabel(kind)} <i>{count}</i></button>
-                    );
-                  })}
-                </div>
-
-                {(extensionsInspectFilter === "all" || extensionsInspectFilter === "hook") && hookStatus?.configured && (
-                  <div className={`extensions-hook-trust ${hookStatus.trusted ? "trusted" : "untrusted"}`}>
-                    <div>
-                      <strong>{hookStatus.trusted ? "项目 Hook 已信任" : "项目 Hook 等待信任"}</strong>
-                      <span>{hookStatus.config_path} · {hookStatus.config_sha256}</span>
-                    </div>
-                    <button
-                      className={hookStatus.trusted ? "danger" : "primary"}
-                      onClick={() => void toggleHookTrust()}
-                      disabled={hookTrustBusy || Boolean(hookStatus.error)}
-                    >{hookTrustBusy ? "更新中…" : hookStatus.trusted ? "撤销信任" : "检查后信任"}</button>
-                    <p>{hookStatus.error
-                      ? `配置无法加载：${hookStatus.error}`
-                      : hookStatus.trusted
-                        ? "当前会话已热加载；只有明确的 PreToolUse 拒绝可以阻止工具。"
-                        : "仓库 Hook 可能执行本机命令或发送 HTTP 请求，默认不会运行。"}</p>
-                  </div>
-                )}
-
-                {connection !== "connected" ? (
-                  <div className="extensions-inspect-empty">本地引擎连接后显示当前项目扩展。</div>
-                ) : extensionsInspectBusy && !extensionsInspect ? (
-                  <div className="extensions-inspect-empty">正在读取项目扩展…</div>
-                ) : (
-                  <div className="extensions-inspect-list">
-                    {(extensionsInspect?.items ?? [])
-                      .filter((item) => extensionsInspectFilter === "all" || item.kind === extensionsInspectFilter)
-                      .map((item) => (
-                        <div className={`extensions-inspect-item ${item.status}`} key={item.id}>
-                          <div className="extensions-inspect-item-head">
-                            <span>{extensionKindLabel(item.kind)}</span>
-                            <strong title={item.name}>{item.name}</strong>
-                            <i>{extensionStatusLabel(item.status)}</i>
-                          </div>
-                          <code title={item.source}>{item.source}</code>
-                          {item.description && <p>{item.description}</p>}
-                          {item.capabilities.length > 0 && (
-                            <small title={item.capabilities.join(", ")}>能力：{item.capabilities.map(hookCapabilityLabel).join(" / ")}</small>
-                          )}
-                          {item.detail && <small>{item.detail}</small>}
-                          {item.issue && <em>{item.issue}</em>}
-                        </div>
-                      ))}
-                    {(extensionsInspect?.items ?? []).filter((item) => extensionsInspectFilter === "all" || item.kind === extensionsInspectFilter).length === 0 && (
-                      <div className="extensions-inspect-empty">当前类型没有发现扩展。</div>
-                    )}
-                  </div>
-                )}
-                {(extensionsInspect?.issues.length ?? 0) > 0 && (
-                  <details className="extensions-inspect-issues">
-                    <summary>{extensionsInspect?.issues.length} 项安全提示</summary>
-                    {extensionsInspect?.issues.map((issue, index) => <p key={`${issue}-${index}`}>{issue}</p>)}
-                  </details>
-                )}
-              </section>
+              <ExtensionsInspector
+                extensionsInspect={extensionsInspect}
+                extensionsInspectBusy={extensionsInspectBusy}
+                hookStatus={hookStatus}
+                hookTrustBusy={hookTrustBusy}
+                connection={connection}
+                onRefresh={() => void Promise.all([refreshExtensionsInspect(), refreshHookStatus()])}
+                onToggleHookTrust={toggleHookTrust}
+              />
             )}
 
             <details className="advanced-settings">
