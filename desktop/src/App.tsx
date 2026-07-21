@@ -50,7 +50,6 @@ import type {
   GitReviewSnapshot,
   GoalCriterion,
   GoalItem,
-  GoalVerifierKind,
   HookConfigStatus,
   JournalNextAction,
   NoticeItem,
@@ -80,6 +79,7 @@ import { DecisionsPanel } from "./components/DecisionsPanel";
 import { DiffViewer } from "./components/DiffViewer";
 import { ExtensionsInspector } from "./components/ExtensionsInspector";
 import { FilesPanel } from "./components/FilesPanel";
+import { GoalsPanel } from "./components/GoalsPanel";
 import { JournalCard } from "./components/JournalCard";
 import { MarkdownMessage } from "./components/MarkdownMessage";
 import { ProjectAssetsPanel } from "./components/ProjectAssetsPanel";
@@ -95,8 +95,9 @@ import {
   sessionStatusLabel,
   statusLabel,
   taskReviewGateReason,
-  verifierKindLabel,
 } from "./lib/labels";
+import { criterionVerifierDraft, goalEvidenceKey, goalFormLines } from "./lib/goals";
+import type { GoalVerifierDraft } from "./lib/goals";
 import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey, STORAGE_KEYS } from "./lib/storage";
 import { normalizeEditorText, serializeEditorText } from "./lib/text";
 import { localDay } from "./lib/time";
@@ -127,13 +128,6 @@ type DesktopRuntimeInbox = {
   error: string;
   checkedAt: number;
 };
-type GoalVerifierDraft = {
-  kind: GoalVerifierKind | "manual";
-  value: string;
-  contains: string;
-  timeout: string;
-};
-
 const EMPTY_PROCESS: GatewayProcessStatus = {
   running: false,
   message: "本地引擎尚未启动",
@@ -198,27 +192,6 @@ function contextItemLabel(item: ContextItem): string {
   return item.startLine && item.endLine
     ? `${item.path}:L${item.startLine}–L${item.endLine}`
     : item.path;
-}
-
-function goalFormLines(value: string): string[] {
-  return value
-    .split("\n")
-    .map((line) => line.trim().replace(/^[-*]\s*/, ""))
-    .filter(Boolean);
-}
-
-function goalEvidenceKey(goalId: string, criterionId: string): string {
-  return `${goalId}:${criterionId}`;
-}
-
-function criterionVerifierDraft(criterion: GoalCriterion): GoalVerifierDraft {
-  const verifier = criterion.verifier;
-  return {
-    kind: verifier?.kind ?? "manual",
-    value: verifier?.kind === "file" ? verifier.path ?? "" : verifier?.command ?? "",
-    contains: verifier?.contains ?? "",
-    timeout: String(verifier?.timeout ?? 300),
-  };
 }
 
 function App() {
@@ -4059,196 +4032,34 @@ function App() {
               />
             )}
             {inspectorTab === "goals" && (
-              <div className="goals-panel">
-                <div className="goal-form">
-                  <div className="goal-form-heading">
-                    <strong>{editingGoalId ? "编辑目标草稿" : "新建目标合同"}</strong>
-                    <span>验收有证据才算达成</span>
-                  </div>
-                  <label>
-                    <span>目标</span>
-                    <textarea value={goalObjective} onChange={(event) => setGoalObjective(event.target.value)} placeholder="要交付的可验证结果，而不是笼统动作…" />
-                  </label>
-                  <label>
-                    <span>验收标准 <em>每行一条</em></span>
-                    <textarea value={goalCriteria} onChange={(event) => setGoalCriteria(event.target.value)} placeholder={"测试与构建通过\nDesktop 可以创建并逐项验收目标"} />
-                  </label>
-                  <details className="goal-contract-options">
-                    <summary>约束与非目标</summary>
-                    <label>
-                      <span>约束 <em>每行一条</em></span>
-                      <textarea value={goalConstraints} onChange={(event) => setGoalConstraints(event.target.value)} placeholder="复用现有 TaskRunner" />
-                    </label>
-                    <label>
-                      <span>非目标 <em>每行一条</em></span>
-                      <textarea value={goalNonGoals} onChange={(event) => setGoalNonGoals(event.target.value)} placeholder="不恢复无限自治循环" />
-                    </label>
-                  </details>
-                  <div className="goal-form-actions">
-                    {editingGoalId && <button onClick={resetGoalForm}>取消编辑</button>}
-                    <button className="goal-start" disabled={goalSubmitting || connection !== "connected" || !goalObjective.trim() || goalFormLines(goalCriteria).length === 0} onClick={() => void saveGoalDraft()}>
-                      {editingGoalId ? "保存草稿修改" : "保存目标草稿"}
-                    </button>
-                  </div>
-                </div>
-
-                {goals.length === 0 && <div className="panel-empty compact"><strong>还没有开发目标</strong><p>目标会把执行计划、分支和逐项验收证据串在一起。</p></div>}
-                {goals.map((goal) => {
-                  const activeTask = tasks.some((task) => task.goal_id === goal.id && ["queued", "running"].includes(task.status));
-                  const activeVerifier = runs.some((run) => run.goal_id === goal.id && ["queued", "running", "cancelling"].includes(run.status));
-                  const hasVerifiers = goal.acceptance_criteria.some((criterion) => Boolean(criterion.verifier));
-                  const progress = goal.progress ?? {
-                    passed: goal.acceptance_criteria.filter((criterion) => criterion.status === "passed").length,
-                    failed: goal.acceptance_criteria.filter((criterion) => criterion.status === "failed").length,
-                    total: goal.acceptance_criteria.length,
-                  };
-                  const automaticEvidence = [...goal.evidence].reverse().find((evidence) => (
-                    !evidence.criterion_id && evidence.passed && ["test", "review"].includes(evidence.kind)
-                  ));
-                  return (
-                    <section className={`goal-card ${goal.status}`} key={goal.id}>
-                      <div className="goal-card-head">
-                        <span className={`task-status ${goal.status}`}>{statusLabel(goal.status)}</span>
-                        <small>{progress.passed}/{progress.total} 已验收</small>
-                      </div>
-                      <h3>{goal.objective}</h3>
-                      <div className="goal-progress"><i style={{ width: `${progress.total ? (progress.passed / progress.total) * 100 : 0}%` }} /></div>
-                      {(goal.constraints.length > 0 || goal.non_goals.length > 0) && (
-                        <details className="goal-contract-summary" open={goal.status === "draft"}>
-                          <summary>合同边界</summary>
-                          {goal.constraints.length > 0 && (
-                            <div><strong>约束</strong>{goal.constraints.map((item, index) => <p key={`constraint-${index}-${item}`}>• {item}</p>)}</div>
-                          )}
-                          {goal.non_goals.length > 0 && (
-                            <div><strong>非目标</strong>{goal.non_goals.map((item, index) => <p key={`non-goal-${index}-${item}`}>• {item}</p>)}</div>
-                          )}
-                        </details>
-                      )}
-                      {goal.blocker && <div className="goal-blocker"><strong>阻塞</strong>{goal.blocker}</div>}
-                      <div className="goal-criteria">
-                        {goal.acceptance_criteria.map((criterion) => {
-                          const key = goalEvidenceKey(goal.id, criterion.id);
-                          const verifierDraft = goalVerifierDrafts[key] ?? criterionVerifierDraft(criterion);
-                          return (
-                            <div className={`goal-criterion ${criterion.status}`} key={criterion.id}>
-                              <div className="goal-criterion-title">
-                                <span>{criterion.status === "passed" ? "✓" : criterion.status === "failed" ? "!" : "○"}</span>
-                                <p>{criterion.text}</p>
-                                {criterion.verifier && <em>{verifierKindLabel(criterion.verifier.kind)}</em>}
-                              </div>
-                              {goal.status === "draft" && (
-                                <div className="goal-verifier-editor">
-                                  <select
-                                    aria-label={`${criterion.text} 验收方式`}
-                                    value={verifierDraft.kind}
-                                    onChange={(event) => setGoalVerifierDrafts((previous) => ({
-                                      ...previous,
-                                      [key]: { ...verifierDraft, kind: event.target.value as GoalVerifierKind | "manual" },
-                                    }))}
-                                  >
-                                    <option value="manual">人工验收</option>
-                                    <option value="test">测试命令</option>
-                                    <option value="build">构建命令</option>
-                                    <option value="lint">Lint 命令</option>
-                                    <option value="file">文件检查</option>
-                                  </select>
-                                  {verifierDraft.kind !== "manual" && (
-                                    <input
-                                      value={verifierDraft.value}
-                                      onChange={(event) => setGoalVerifierDrafts((previous) => ({
-                                        ...previous,
-                                        [key]: { ...verifierDraft, value: event.target.value },
-                                      }))}
-                                      placeholder={verifierDraft.kind === "file" ? "仓库内相对路径，如 dist/index.html" : "命令，如 npm test"}
-                                    />
-                                  )}
-                                  {verifierDraft.kind === "file" && (
-                                    <input
-                                      className="goal-verifier-contains"
-                                      value={verifierDraft.contains}
-                                      onChange={(event) => setGoalVerifierDrafts((previous) => ({
-                                        ...previous,
-                                        [key]: { ...verifierDraft, contains: event.target.value },
-                                      }))}
-                                      placeholder="可选：文件必须包含的文本"
-                                    />
-                                  )}
-                                  {verifierDraft.kind !== "manual" && verifierDraft.kind !== "file" && (
-                                    <input
-                                      className="goal-verifier-timeout"
-                                      type="number"
-                                      min="1"
-                                      max="900"
-                                      value={verifierDraft.timeout}
-                                      onChange={(event) => setGoalVerifierDrafts((previous) => ({
-                                        ...previous,
-                                        [key]: { ...verifierDraft, timeout: event.target.value },
-                                      }))}
-                                      title="超时秒数"
-                                    />
-                                  )}
-                                  <button
-                                    disabled={goalSubmitting || (verifierDraft.kind !== "manual" && !verifierDraft.value.trim())}
-                                    onClick={() => void saveGoalVerifier(goal, criterion)}
-                                  >保存验收器</button>
-                                </div>
-                              )}
-                              {goal.status !== "draft" && (
-                                <div className="goal-evidence-entry">
-                                  <input
-                                    value={goalEvidenceDrafts[key] ?? ""}
-                                    onChange={(event) => setGoalEvidenceDrafts((previous) => ({ ...previous, [key]: event.target.value }))}
-                                    placeholder="测试命令、截图或人工复核结论…"
-                                  />
-                                  <button className="fail" title="记录未通过" onClick={() => void recordGoalEvidence(goal, criterion, false)}>未过</button>
-                                  <button className="pass" title="记录通过" onClick={() => void recordGoalEvidence(goal, criterion, true)}>通过</button>
-                                  {automaticEvidence && criterion.status !== "passed" && (
-                                    <button
-                                      className="use-evidence"
-                                      title={automaticEvidence.summary}
-                                      onClick={() => void recordGoalEvidence(goal, criterion, true, {
-                                        kind: automaticEvidence.kind,
-                                        summary: `采用自动${automaticEvidence.kind === "test" ? "测试" : "审查"}证据：${automaticEvidence.summary}`,
-                                      })}
-                                    >采用自动证据</button>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                      {goal.evidence.length > 0 && (
-                        <details className="goal-evidence-log">
-                          <summary>{goal.evidence.length} 条证据</summary>
-                          {goal.evidence.slice(-4).reverse().map((evidence) => (
-                            <p className={evidence.passed ? "passed" : "failed"} key={evidence.id}>
-                              <b>{evidence.passed ? "通过" : "未过"}</b>{evidence.summary}
-                            </p>
-                          ))}
-                        </details>
-                      )}
-                      {goal.branch && <code>{goal.branch}</code>}
-                      {goal.plan_id && <code className="goal-plan-id">plan · {goal.plan_id}</code>}
-                      {goal.next_action && <p className="goal-next">下一步：{goal.next_action}</p>}
-                      <div className="goal-actions">
-                        {activeTask && <span>后台任务执行中…</span>}
-                        {!activeTask && activeVerifier && <span>自动验收执行中…</span>}
-                        {goal.status === "draft" && (
-                          <>
-                            <button onClick={() => editGoalDraft(goal)} disabled={goalSubmitting}>编辑</button>
-                            <button onClick={() => void deleteGoalDraft(goal)} disabled={goalSubmitting}>删除</button>
-                            <button className="primary" onClick={() => void runGoal(goal, false)} disabled={goalSubmitting}>确认并开始执行</button>
-                          </>
-                        )}
-                        {goal.status !== "draft" && !activeTask && goal.status !== "achieved" && <button onClick={() => void runGoal(goal, false)} disabled={goalSubmitting}>新一轮执行</button>}
-                        {goal.status !== "draft" && !activeTask && goal.status !== "achieved" && hasVerifiers && <button className="primary" onClick={() => void runGoalVerifiers(goal)} disabled={goalSubmitting || activeVerifier}>运行自动验收</button>}
-                        {goal.status !== "draft" && !activeTask && goal.status === "blocked" && goal.plan_id && <button className="primary" onClick={() => void runGoal(goal, true)} disabled={goalSubmitting}>断点续跑</button>}
-                      </div>
-                    </section>
-                  );
-                })}
-              </div>
+              <GoalsPanel
+                goals={goals}
+                tasks={tasks}
+                runs={runs}
+                connection={connection}
+                editingGoalId={editingGoalId}
+                goalObjective={goalObjective}
+                goalCriteria={goalCriteria}
+                goalConstraints={goalConstraints}
+                goalNonGoals={goalNonGoals}
+                goalSubmitting={goalSubmitting}
+                goalEvidenceDrafts={goalEvidenceDrafts}
+                goalVerifierDrafts={goalVerifierDrafts}
+                onObjectiveChange={setGoalObjective}
+                onCriteriaChange={setGoalCriteria}
+                onConstraintsChange={setGoalConstraints}
+                onNonGoalsChange={setGoalNonGoals}
+                onEvidenceDraftsChange={setGoalEvidenceDrafts}
+                onVerifierDraftsChange={setGoalVerifierDrafts}
+                onResetForm={resetGoalForm}
+                onSaveDraft={saveGoalDraft}
+                onEditDraft={editGoalDraft}
+                onDeleteDraft={deleteGoalDraft}
+                onRunGoal={runGoal}
+                onRunVerifiers={runGoalVerifiers}
+                onSaveVerifier={saveGoalVerifier}
+                onRecordEvidence={recordGoalEvidence}
+              />
             )}
             {inspectorTab === "tasks" && (
               <div className="tasks-panel">
