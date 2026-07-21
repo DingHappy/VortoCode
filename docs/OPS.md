@@ -16,6 +16,35 @@
 
 不想常驻时手动起也一样：`vortocode server --port 8080`。
 
+## 一之二、Linux 服务器部署（systemd）与远程访问
+
+把 server 跑在局域网服务器上、任何设备浏览器远程观察/发任务——Web 与 CLI 天生支持，
+不需要改代码。模板：`examples/systemd/vortocode-server.service.example`（内含安装三步）。
+
+**服务器侧（一次性）：**
+
+1. Python 3.11+ 建 venv，仓库根 `pip install -e '.[all]'`；
+2. `apt install bubblewrap`——Linux 的命令沙箱后端（macOS 是 seatbelt）。缺它时需隔离的
+   命令 fail-closed 拒跑，不会裸执行，但等于废掉 shell 类作业；
+3. `/etc/vortocode/env`（600 权限）写 `VORTOCODE_API_TOKEN` 与中转站 key——**非 127.0.0.1
+   监听必须设 token**，设了则全部 `/api/*` 与 `/ws` 强制鉴权；
+4. 装 systemd 单元并 `enable --now`。cron/heartbeat 开关与 macOS 完全同一套 env（第二节）。
+
+**客户端侧（哪都行）：**
+
+- 浏览器开 `http://<服务器>:8080/agent`——对话、决策队列、Journal、runs、审计全在；
+- 终端 `vc tui --attach http://<服务器>:8080` 远程附着，或 SSH 上去原生跑；
+- IM 桥接照常可内嵌（`--im telegram`），重要决策主动推手机，Web 用来深看——推拉互补。
+
+**安全边界（务必读）：**
+
+- token 是**全权凭据**（单用户契约，见第四节）且传输是 HTTP 明文：`--host 0.0.0.0`
+  只在可信内网可接受；**出内网一律走 Tailscale**（或 SSH 隧道
+  `ssh -L 8080:127.0.0.1:8080 user@服务器`，此时 server 保持默认只听 127.0.0.1）。
+  裸挂公网禁止，反代加 TLS 也只算及格线，不如 Tailscale 省心。
+- Desktop 客户端刻意只连 127.0.0.1（文件区直读本机磁盘的 local-first 设计）；
+  「Desktop 连远端工作区」是独立立项（B9-③），未落地前远程入口就是浏览器 + attach。
+
 ## 二、开关矩阵（都是 opt-in，默认全关 = 零自主消耗）
 
 | 开关 | 效果 | 开销 |
