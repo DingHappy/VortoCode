@@ -660,6 +660,16 @@ export interface GitReviewFile {
   conflicted: boolean;
 }
 
+// 行级评论的锚定状态（B8-④c S8 从 App.tsx 上收，App 状态与 <GitReviewPanel> 共用）。
+export interface PendingGitComment {
+  path: string;
+  scope: GitReviewScope;
+  hunkId: string;
+  hunkSha256: string;
+  line: number;
+  side: "new" | "old";
+}
+
 export interface GitReviewSnapshot {
   ok: boolean;
   root: string;
