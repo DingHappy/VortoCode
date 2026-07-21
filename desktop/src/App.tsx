@@ -1195,6 +1195,23 @@ function App() {
     pendingWorkspaceSaveRef.current = null;
   }, []);
 
+  // 连接域编排注册表（B8-④c S10）：连接成功后的全量数据装填收敛到这一处。
+  // 各域 refresh 按「通用 / 工作区专属」两档显式注册——hook 化的域把归还的回调挂到
+  // 这里即可（journal 的 snapshotTodayJournal/refreshWeeklyJournal 已是 useJournal 归还），
+  // connect 本体不再罗列域细节。allSettled：任一域拉取失败不阻断连接（各域自行降级）。
+  const refreshAllForScope = useCallback(async (scope: WorkspaceScope, sid: string) => {
+    const common = [
+      refreshSessions(), refreshNotices(), refreshDecisions(sid), refreshAudit(),
+      snapshotTodayJournal(), refreshWeeklyJournal(localDay()),
+      refreshProjectAssets(scope !== "general"),
+    ];
+    const workspace = scope === "general" ? [] : [
+      refreshTasks(), refreshWorktrees(), refreshRuns(), refreshGoals(),
+      refreshGitReview(), refreshPrDelivery(), refreshHookStatus(), refreshExtensionsInspect(),
+    ];
+    await Promise.allSettled([...common, ...workspace]);
+  }, [refreshSessions, refreshNotices, refreshDecisions, refreshAudit, snapshotTodayJournal, refreshWeeklyJournal, refreshProjectAssets, refreshTasks, refreshWorktrees, refreshRuns, refreshGoals, refreshGitReview, refreshPrDelivery, refreshHookStatus, refreshExtensionsInspect]);
+
   const connectToRuntime = useCallback(
     async (sid = activeSid, options: RuntimeConnectionOptions = {}): Promise<boolean> => {
       const requestedBaseUrl = options.baseUrl ?? baseUrl;
@@ -1230,16 +1247,7 @@ function App() {
           }
         }
         await client.send({ type: "task_list" });
-        const commonRefreshes = [
-          refreshSessions(), refreshNotices(), refreshDecisions(sid), refreshAudit(),
-          snapshotTodayJournal(), refreshWeeklyJournal(localDay()),
-          refreshProjectAssets(requestedScope !== "general"),
-        ];
-        const workspaceRefreshes = requestedScope === "general" ? [] : [
-          refreshTasks(), refreshWorktrees(), refreshRuns(), refreshGoals(),
-          refreshGitReview(), refreshPrDelivery(), refreshHookStatus(), refreshExtensionsInspect(),
-        ];
-        await Promise.allSettled([...commonRefreshes, ...workspaceRefreshes]);
+        await refreshAllForScope(requestedScope, sid);
         decisionNotificationSyncingRef.current = false;
         setNotificationSyncVersion((value) => value + 1);
         setSettingsOpen(false);
@@ -1252,7 +1260,7 @@ function App() {
         setConnectionNote(error instanceof Error ? error.message : "连接失败");
         return false;
       }
-    }, [activeSid, baseUrl, handleProtocolEvent, refreshAudit, refreshDecisions, refreshExtensionsInspect, refreshGitReview, refreshGoals, refreshHookStatus, refreshNotices, refreshPrDelivery, refreshProjectAssets, refreshRuns, refreshSessions, refreshTasks, refreshWeeklyJournal, refreshWorkspaceFiles, refreshWorktrees, rememberProject, repoRoot, runtime.scope, snapshotTodayJournal, token],
+    }, [activeSid, baseUrl, handleProtocolEvent, refreshAllForScope, rememberProject, repoRoot, runtime.scope, token],
   );
 
   const startWorkspace = useCallback(async (options: StartWorkspaceOptions): Promise<boolean> => {
