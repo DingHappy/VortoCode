@@ -80,18 +80,18 @@ import type {
   WorktreeWorkspaceSnapshot,
   WeeklyJournalSnapshot,
 } from "./types";
+import { DecisionsPanel } from "./components/DecisionsPanel";
 import { DiffViewer } from "./components/DiffViewer";
 import { ExtensionsInspector } from "./components/ExtensionsInspector";
 import { FilesPanel } from "./components/FilesPanel";
+import { JournalCard } from "./components/JournalCard";
 import { MarkdownMessage } from "./components/MarkdownMessage";
 import { ProjectAssetsPanel } from "./components/ProjectAssetsPanel";
 import { RunsPanel } from "./components/RunsPanel";
 import { TurnTimeline } from "./components/TurnTimeline";
 import {
-  compactAuditData,
   compactSessionCwd,
   contextWindowSourceLabel,
-  decisionKindLabel,
   formatRelativeTime,
   formatTokenCount,
   sessionContextPresentation,
@@ -106,7 +106,6 @@ import { normalizeEditorText, serializeEditorText } from "./lib/text";
 import { finishRunningActivities, hydrateActivities, protocolActivity, upsertActivity } from "./protocol/activities";
 
 type InspectorTab = "inbox" | "files" | "diff" | "runs" | "goals" | "tasks" | "decisions" | "project";
-type AuditFilter = "all" | "tool" | "decision" | "event";
 type PendingWorkspaceSave = { rid: string; path: string; content: string; buffer: string };
 type PendingGitComment = {
   path: string;
@@ -351,7 +350,7 @@ function App() {
   // extensionsInspectFilter（类型筛选 tab）是纯本地 UI 态，已下移到 <ExtensionsInspector> 自持。
   const [decisions, setDecisions] = useState<DecisionItem[]>([]);
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
-  const [auditFilter, setAuditFilter] = useState<AuditFilter>("all");
+  // auditFilter（审计类别筛选）是纯本地 UI 态，已下移到 <DecisionsPanel> 自持。
   const [journal, setJournal] = useState<JournalSnapshot | null>(null);
   const [journalDays, setJournalDays] = useState<JournalDaySummary[]>([]);
   const [weeklyJournal, setWeeklyJournal] = useState<WeeklyJournalSnapshot | null>(null);
@@ -493,15 +492,7 @@ function App() {
     }
     return [...decisions, ...remote];
   }, [decisions, prDelivery, sessions]);
-  const filteredAuditEntries = useMemo(
-    () => auditFilter === "all" ? auditEntries : auditEntries.filter((entry) => entry.category === auditFilter),
-    [auditEntries, auditFilter],
-  );
-  const journalActions = journalDate === localDay()
-    ? journal?.next_actions ?? []
-    : journalContinuation?.from_date === journalDate
-      ? journalContinuation.actions
-      : [];
+  // 审计筛选派生随 <DecisionsPanel> 搬入；journalActions 派生随 <JournalCard> 搬入（均只服务各自组件）。
   const activeTasks = useMemo(
     () => tasks.filter((task) => ["queued", "running", "paused", "failed", "interrupted"].includes(task.status)),
     [tasks],
@@ -4535,285 +4526,39 @@ function App() {
             )}
             {inspectorTab === "decisions" && (
               <div className="decisions-panel">
-                <section className="journal-card">
-                  <div className="journal-head">
-                    <div>
-                      <span>Project Journal</span>
-                      <strong>{journalView === "week" ? "7 天项目周报" : journalDate === localDay() ? "今日工作摘要" : `${journalDate} 工作快照`}</strong>
-                    </div>
-                    <div>
-                      <div className="journal-range-toggle">
-                        <button className={journalView === "day" ? "active" : ""} onClick={() => setJournalView("day")}>日报</button>
-                        <button className={journalView === "week" ? "active" : ""} onClick={() => { setJournalView("week"); void refreshWeeklyJournal(journalDate); }}>7 天</button>
-                      </div>
-                      <input
-                        type="date"
-                        max={localDay()}
-                        value={journalDate}
-                        onChange={(event) => void selectJournalDay(event.target.value)}
-                      />
-                      {journalDays.length > 0 && (
-                        <select
-                          aria-label="已保存 Journal"
-                          value={journalDays.some((item) => item.date === journalDate) ? journalDate : ""}
-                          onChange={(event) => { if (event.target.value) void selectJournalDay(event.target.value); }}
-                        >
-                          <option value="">历史快照</option>
-                          {journalDays.map((item) => <option value={item.date} key={item.date}>{item.date}</option>)}
-                        </select>
-                      )}
-                      <button disabled={journalBusy} onClick={() => void continueFromYesterday()}>继续昨天</button>
-                      <button disabled={journalBusy} onClick={() => void (journalView === "week" ? refreshWeeklyJournal(journalDate) : refreshJournal(journalDate))}>刷新</button>
-                      {journalView === "day" && (
-                        <button className="primary" disabled={journalBusy || journalDate !== localDay()} onClick={() => void saveJournalSnapshot()}>
-                          {journalBusy ? "保存中…" : "保存快照"}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  {journalView === "week" && weeklyJournal ? (
-                    <>
-                      <p className="journal-headline">{weeklyJournal.headline}</p>
-                      <div className="journal-meta">
-                        <span>{weeklyJournal.start_date} — {weeklyJournal.end_date}</span>
-                        <span>历史按冻结快照，今天按实时台账</span>
-                      </div>
-                      <div className="journal-metrics">
-                        <div><b>{weeklyJournal.summary.tasks_done}</b><span>完成任务</span></div>
-                        <div><b>{weeklyJournal.summary.goals_achieved}</b><span>达成目标</span></div>
-                        <div><b>{weeklyJournal.summary.evidence_passed}</b><span>通过证据</span></div>
-                        <div className={weeklyJournal.summary.runs_failed ? "warn" : ""}><b>{weeklyJournal.summary.runs_failed}</b><span>失败运行</span></div>
-                        <div><b>{weeklyJournal.summary.tools}</b><span>工具调用</span></div>
-                        <div className={weeklyJournal.summary.decisions_denied ? "warn" : ""}><b>{weeklyJournal.summary.decisions_denied}</b><span>拒绝操作</span></div>
-                      </div>
-                      {weeklyJournal.carryovers.length > 0 && (
-                        <div className="journal-next-actions">
-                          <strong>周报结束时仍需继续</strong>
-                          {weeklyJournal.carryovers.slice(0, 6).map((action) => (
-                            <div key={`weekly-${action.kind}-${action.target_id}`}>
-                              <span>{action.kind === "goal" ? "目标" : action.kind === "task" ? "任务" : "运行"}</span>
-                              <p><b>{action.title}</b><small>{action.detail}</small></p>
-                              <button onClick={() => void openJournalAction(action)}>{action.action === "resume_task" ? "恢复" : "打开"}</button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      <div className="journal-week-days">
-                        {weeklyJournal.days.map((day) => (
-                          <button onClick={() => { setJournalView("day"); void selectJournalDay(day.date); }} key={day.date}>
-                            <span>{day.date.slice(5)}</span>
-                            <b>{day.summary.tasks_done}</b>
-                            <small>任务</small>
-                            <i className={day.summary.runs_failed || day.summary.tasks_failed ? "warn" : ""} />
-                          </button>
-                        ))}
-                      </div>
-                      {weeklyJournal.highlights.length > 0 && (
-                        <div className="journal-details">
-                          <details>
-                            <summary>本周重点 · {weeklyJournal.highlights.length}</summary>
-                            {weeklyJournal.highlights.map((item) => (
-                              <div className={`journal-event ${item.status || ""}`} key={`weekly-${item.date}-${item.id}`}>
-                                <i />
-                                <p><b>{item.title}</b>{item.detail && <span>{item.detail}</span>}</p>
-                                <time>{item.date.slice(5)}</time>
-                              </div>
-                            ))}
-                          </details>
-                        </div>
-                      )}
-                    </>
-                  ) : journalView === "day" && journal ? (
-                    <>
-                      <p className="journal-headline">{journal.headline}</p>
-                      <div className="journal-meta">
-                        <span>{journal.frozen ? "历史冻结快照" : "从持久台账实时生成"}</span>
-                        <span>{journal.stored_at ? `已保存 ${new Date(journal.stored_at).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })}` : "尚未保存快照"}</span>
-                      </div>
-                      <div className="journal-metrics">
-                        <div><b>{journal.summary.tasks_done}</b><span>完成任务</span></div>
-                        <div><b>{journal.summary.goals_achieved}</b><span>达成目标</span></div>
-                        <div><b>{journal.summary.evidence_passed}</b><span>通过证据</span></div>
-                        <div className={journal.summary.runs_failed ? "warn" : ""}><b>{journal.summary.runs_failed}</b><span>失败运行</span></div>
-                        <div><b>{journal.summary.tools}</b><span>工具调用</span></div>
-                        <div className={journal.summary.decisions_denied ? "warn" : ""}><b>{journal.summary.decisions_denied}</b><span>拒绝操作</span></div>
-                      </div>
-
-                      {journalDate < localDay() && journalContinuation && (
-                        <div className="journal-continuation-meta">
-                          <span>{journalContinuation.source_stored ? "已从冻结快照对账" : "已从历史台账重建"}</span>
-                          <p>{journalContinuation.headline}</p>
-                        </div>
-                      )}
-
-                      {journalActions.length > 0 && (
-                        <div className="journal-next-actions">
-                          <strong>{journalDate === localDay() ? "下一步" : "当前仍可继续"}</strong>
-                          {journalActions.slice(0, 6).map((action) => (
-                            <div key={`${action.kind}-${action.target_id}`}>
-                              <span>{action.kind === "goal" ? "目标" : action.kind === "task" ? "任务" : "运行"}</span>
-                              <p><b>{action.title}</b><small>{action.detail}</small></p>
-                              <button onClick={() => void openJournalAction(action)}>{action.action === "resume_task" ? "恢复" : "打开"}</button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {journalDate === localDay() && (
-                        <div className="journal-note-form">
-                          <input
-                            value={journalNote}
-                            onChange={(event) => setJournalNote(event.target.value)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void addJournalNote();
-                            }}
-                            placeholder="记录决定、交接背景或明天要继续的事项…"
-                          />
-                          <button disabled={journalBusy || !journalNote.trim()} onClick={() => void addJournalNote()}>记录</button>
-                        </div>
-                      )}
-
-                      <div className="journal-details">
-                        <details open={journal.highlights.length > 0}>
-                          <summary>{journalDate === localDay() ? "今日重点" : "当日重点"} · {journal.highlights.length}</summary>
-                          {journal.highlights.map((item) => (
-                            <div className={`journal-event ${item.status || ""}`} key={item.id}>
-                              <i />
-                              <p><b>{item.title}</b>{item.detail && <span>{item.detail}</span>}</p>
-                              <time>{item.ts ? new Date(item.ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : ""}</time>
-                            </div>
-                          ))}
-                        </details>
-                        {journal.handoffs.length > 0 && (
-                          <details>
-                            <summary>任务交接 · {journal.handoffs.length}</summary>
-                            {journal.handoffs.map((handoff) => (
-                              <div className="journal-handoff" key={handoff.task_id}>
-                                <div><b>{handoff.title}</b><span>{statusLabel(handoff.status)}</span></div>
-                                <p>{handoff.next_action}</p>
-                                {handoff.remaining.length > 0 && <small>待处理：{handoff.remaining.join("；")}</small>}
-                              </div>
-                            ))}
-                          </details>
-                        )}
-                        {journal.evidence.length > 0 && (
-                          <details>
-                            <summary>Goal 验收证据 · {journal.evidence.length}</summary>
-                            {journal.evidence.map((evidence) => (
-                              <div className={`journal-evidence ${evidence.passed ? "passed" : "failed"}`} key={evidence.id}>
-                                <span>{evidence.passed ? "✓" : "!"}</span>
-                                <p><b>{evidence.criterion}</b><small>{evidence.summary}</small></p>
-                              </div>
-                            ))}
-                          </details>
-                        )}
-                        <details>
-                          <summary>完整时间线 · {journal.timeline.length}</summary>
-                          {journal.timeline.map((item) => (
-                            <div className="journal-event compact" key={`timeline-${item.id}`}>
-                              <i />
-                              <p><b>{item.title}</b>{item.detail && <span>{item.detail}</span>}</p>
-                              <time>{item.ts ? new Date(item.ts).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" }) : ""}</time>
-                            </div>
-                          ))}
-                        </details>
-                      </div>
-                    </>
-                  ) : (
-                    <div className="panel-empty compact"><strong>正在生成工作摘要</strong><p>Journal 会从审计、Goal、任务和运行台账恢复。</p></div>
-                  )}
-                </section>
-                <div className="decision-section-head">
-                  <div><strong>待决策队列</strong><span>确认、阻塞目标、失败任务与 PR 反馈</span></div>
-                  <div className="decision-toolbar">
-                    <button className={notificationsEnabled ? "active" : ""} onClick={() => void toggleSystemNotifications()}>
-                      {notificationsEnabled ? "系统通知 已开" : "开启系统通知"}
-                    </button>
-                    <button onClick={() => { void refreshDecisions(); void refreshAudit(); void refreshPrDelivery(); }}>刷新</button>
-                  </div>
-                </div>
-                {decisionItems.length === 0 && (
-                  <div className="panel-empty compact"><strong>没有待决策事项</strong><p>运行失败、人工确认和 PR 反馈会在这里集中出现。</p></div>
-                )}
-                {decisionItems.map((decision) => (
-                  <section className={`decision-card ${decision.severity} ${decision.tainted ? "tainted" : ""}`} key={decision.id}>
-                    <div className="decision-card-head">
-                      <span>{decisionKindLabel(decision.kind)} · {decision.severity === "critical" ? "关键" : decision.severity === "high" ? "高" : "中"}</span>
-                      <time>{decision.created ? new Date(decision.created).toLocaleString("zh-CN") : "当前"}</time>
-                    </div>
-                    <strong>{decision.title}</strong>
-                    <p>{decision.detail}</p>
-                    {decision.tainted && <div className="decision-warning">外部内容已进入本回合，自动授权失效，必须由你核对。</div>}
-                    <div className="decision-actions">
-                      {decision.kind === "confirmation" ? (
-                        <>
-                          <button className="danger" onClick={() => void answerConfirmationById(decision.target_id, false)}>拒绝</button>
-                          <button className="primary" onClick={() => void answerConfirmationById(decision.target_id, true)}>允许一次</button>
-                        </>
-                      ) : (
-                        <>
-                          <button className="primary" onClick={() => void openDecision(decision)}>
-                            {decision.action === "resume_task" ? "恢复任务" : decision.kind === "pr_check" ? "查看失败日志" : decision.kind === "hook" ? "定位会话" : "打开详情"}
-                          </button>
-                          {decision.kind === "pr_check" && (
-                            <button onClick={() => {
-                              const check = prDelivery?.failing_checks.find((item) => item.id === decision.target_id);
-                              if (check) void sendPrFeedbackToAgent(check);
-                            }}>交给 Agent</button>
-                          )}
-                          {decision.kind === "pr_review" && <button onClick={() => void sendPrFeedbackToAgent()}>交给 Agent</button>}
-                          {decision.can_dismiss && <button onClick={() => void dismissDecision(decision)}>{decision.kind === "hook" ? "已查看" : "忽略"}</button>}
-                        </>
-                      )}
-                    </div>
-                  </section>
-                ))}
-
-                <div className="decision-section-head audit-heading">
-                  <div><strong>工具与权限审计</strong><span>只记录脱敏参数、结果长度和明确决定</span></div>
-                </div>
-                <div className="audit-filters">
-                  {(["all", "tool", "decision", "event"] as AuditFilter[]).map((filter) => (
-                    <button className={auditFilter === filter ? "active" : ""} onClick={() => setAuditFilter(filter)} key={filter}>
-                      {{ all: "全部", tool: "工具", decision: "权限", event: "事件" }[filter]}
-                    </button>
-                  ))}
-                </div>
-                {filteredAuditEntries.length === 0 && <div className="audit-empty">还没有审计记录。</div>}
-                <div className="audit-timeline">
-                  {filteredAuditEntries.map((entry) => {
-                    const details = entry.category === "tool"
-                      ? compactAuditData(entry.args)
-                      : entry.category === "decision"
-                        ? entry.operation || "操作确认"
-                        : compactAuditData(entry.data);
-                    return (
-                      <section className={`audit-entry ${entry.category} ${entry.decision || ""}`} key={entry.id}>
-                        <i />
-                        <div>
-                          <div>
-                            <strong>{entry.category === "tool" ? entry.tool : entry.category === "decision" ? `权限${entry.decision === "allowed" ? "允许" : "拒绝"}` : entry.event || "事件"}</strong>
-                            <time>{entry.ts ? new Date(entry.ts).toLocaleString("zh-CN") : ""}</time>
-                          </div>
-                          {details && <code>{details}</code>}
-                          <span>{entry.mode || "runtime"}{entry.tainted ? " · 外部内容回合" : ""}{entry.result_len != null ? ` · ${entry.result_len} 字符结果` : ""}</span>
-                        </div>
-                      </section>
-                    );
-                  })}
-                </div>
-
-                {notices.length > 0 && (
-                  <>
-                    <div className="decision-section-head notice-heading"><div><strong>后台通知</strong><span>cron、heartbeat 与常驻任务</span></div></div>
-                    {notices.map((notice, index) => (
-                      <section className="notice-card" key={`${notice.ts}-${index}`}>
-                        <div><span>{notice.source || "Runtime"}</span><time>{notice.ts ? new Date(notice.ts).toLocaleString("zh-CN") : "刚刚"}</time></div>
-                        <p>{notice.text}</p>
-                      </section>
-                    ))}
-                  </>
-                )}
+                <JournalCard
+                  journal={journal}
+                  journalDays={journalDays}
+                  weeklyJournal={weeklyJournal}
+                  journalContinuation={journalContinuation}
+                  journalView={journalView}
+                  journalDate={journalDate}
+                  journalNote={journalNote}
+                  journalBusy={journalBusy}
+                  today={localDay()}
+                  onSetView={setJournalView}
+                  onSelectDay={selectJournalDay}
+                  onRefreshDay={refreshJournal}
+                  onRefreshWeekly={refreshWeeklyJournal}
+                  onContinueYesterday={continueFromYesterday}
+                  onSaveSnapshot={saveJournalSnapshot}
+                  onOpenAction={openJournalAction}
+                  onNoteChange={setJournalNote}
+                  onAddNote={addJournalNote}
+                />
+                <DecisionsPanel
+                  decisionItems={decisionItems}
+                  auditEntries={auditEntries}
+                  notices={notices}
+                  prDelivery={prDelivery}
+                  notificationsEnabled={notificationsEnabled}
+                  onToggleNotifications={toggleSystemNotifications}
+                  onRefresh={() => { void refreshDecisions(); void refreshAudit(); void refreshPrDelivery(); }}
+                  onAnswerConfirmation={answerConfirmationById}
+                  onOpenDecision={openDecision}
+                  onSendPrFeedback={sendPrFeedbackToAgent}
+                  onDismissDecision={dismissDecision}
+                />
               </div>
             )}
           </div>
