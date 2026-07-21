@@ -55,6 +55,7 @@ import type {
   NoticeItem,
   OpenWorkspaceFileResult,
   PendingConfirmation,
+  PendingGitComment,
   PlanItem,
   PromptQueueItem,
   ProtocolEvent,
@@ -76,9 +77,9 @@ import type {
   WorktreeWorkspaceSnapshot,
 } from "./types";
 import { DecisionsPanel } from "./components/DecisionsPanel";
-import { DiffViewer } from "./components/DiffViewer";
 import { ExtensionsInspector } from "./components/ExtensionsInspector";
 import { FilesPanel } from "./components/FilesPanel";
+import { GitReviewPanel } from "./components/GitReviewPanel";
 import { GoalsPanel } from "./components/GoalsPanel";
 import { JournalCard } from "./components/JournalCard";
 import { MarkdownMessage } from "./components/MarkdownMessage";
@@ -105,14 +106,6 @@ import { finishRunningActivities, hydrateActivities, protocolActivity, upsertAct
 
 type InspectorTab = "inbox" | "files" | "diff" | "runs" | "goals" | "tasks" | "decisions" | "project";
 type PendingWorkspaceSave = { rid: string; path: string; content: string; buffer: string };
-type PendingGitComment = {
-  path: string;
-  scope: GitReviewScope;
-  hunkId: string;
-  hunkSha256: string;
-  line: number;
-  side: "new" | "old";
-};
 type RuntimeConnectionOptions = { baseUrl?: string; repoRoot?: string; token?: string; scope?: WorkspaceScope };
 type StartWorkspaceOptions = RuntimeConnectionOptions & { baseUrl: string; sid: string; announce?: boolean; workspaceId?: string };
 type WorkspaceRequest = { scope: Exclude<WorkspaceScope, "general">; reason: string; task: string };
@@ -400,11 +393,7 @@ function App() {
   const previewContextAttached = Boolean(
     previewContextItem && contextItems.some((item) => contextItemKey(item) === contextItemKey(previewContextItem)),
   );
-  const selectedGitFile = gitReview?.files.find((file) => file.path === gitSelectedPath) ?? null;
-  const displayedGitReview = taskBranchReview ?? gitReview;
-  const displayedGitPath = taskBranchReview ? taskBranchSelectedPath : gitSelectedPath;
-  const displayedGitFile = displayedGitReview?.files.find((file) => file.path === displayedGitPath) ?? null;
-  const displayedGitDiff = taskBranchReview ? taskBranchDiff : gitReviewDiff;
+  // selectedGitFile 与 displayedGit* 族派生只服务「变更」面板，已随 <GitReviewPanel> 搬入组件内计算。
   const openGitComments = useMemo(
     () => gitComments.filter((comment) => comment.status === "open"),
     [gitComments],
@@ -3693,331 +3682,60 @@ function App() {
               />
             )}
             {inspectorTab === "diff" && (
-              <div className="git-review-panel">
-                <div className="git-review-head">
-                  <div>
-                    <strong>{displayedGitReview?.branch || "Git Review"}</strong>
-                    <span>{taskBranchReview
-                      ? `任务 ${taskBranchReview.task_id.slice(0, 10)} · → ${taskBranchReview.base} · HEAD ${taskBranchReview.head}`
-                      : displayedGitReview?.head ? `HEAD ${displayedGitReview.head}` : "逐文件、逐块审查本地改动"}</span>
-                    {!taskBranchReview && gitReviewRevision && (
-                      <span className="git-review-live">实时同步 · {gitReviewRevision.files} 个改动文件 · {new Date(gitReviewRevision.receivedAt).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
-                    )}
-                  </div>
-                  <div>
-                    {taskBranchReview && <button onClick={() => void closeTaskBranchReview()}>返回工作区</button>}
-                    <button onClick={() => taskReviewTask ? void openTaskBranchReview(taskReviewTask, taskBranchSelectedPath) : void refreshGitReview()} disabled={gitReviewLoading}>↻</button>
-                  </div>
-                </div>
-                {gitReviewError && <div className="git-review-error">{gitReviewError}</div>}
-                {taskBranchReview && (taskBranchReview.review.policy?.error || taskBranchReview.review.policy?.require_all_hunks_decided) && (
-                  <div className={`task-review-policy ${taskBranchReview.review.policy?.error ? "failed" : taskBranchReview.review.coverage?.complete ? "passed" : "pending"}`}>
-                    <div>
-                      <strong>{taskBranchReview.review.policy?.error ? "团队审查策略配置无效" : taskBranchReview.review.coverage?.complete ? "✓ 全部 hunk 已完成决策" : "团队策略 · 全部 hunk 必须完成决策"}</strong>
-                      <span>{taskBranchReview.review.policy?.error
-                        || (taskBranchReview.review.coverage?.known
-                          ? `已接受 ${taskBranchReview.review.coverage.accepted_hunks}/${taskBranchReview.review.coverage.total_hunks} · 待处理 ${taskBranchReview.review.coverage.pending_hunks}`
-                          : taskBranchReview.review.coverage?.error || "正在确认当前分支覆盖率")}</span>
-                    </div>
-                    <code>{taskBranchReview.review.policy?.config_path}</code>
-                  </div>
-                )}
-                {taskBranchReview?.review.verification_stale && (
-                  <div className="task-review-warning">
-                    <div><strong>审查提交使旧测试证据失效</strong><span>重新验证通过前，Draft PR 交付闸门保持关闭。</span></div>
-                    <button className="primary" disabled={taskReviewVerifying} onClick={() => void verifyReviewedTaskBranch()}>{taskReviewVerifying ? "验证中…" : "在隔离 worktree 重验"}</button>
-                  </div>
-                )}
-                {taskBranchReview?.review.verification && (
-                  <div className={`task-review-verification ${taskBranchReview.review.verification.ok ? "passed" : "failed"}`}>
-                    <div>
-                      <strong>{taskBranchReview.review.verification.ok ? "✓ 审查后验证通过" : "验证未通过"}</strong>
-                      <span>{taskBranchReview.review.verification.cmd} · {taskBranchReview.review.verification.head.slice(0, 12)}</span>
-                    </div>
-                    {taskBranchReview.review.verification.output && (
-                      <details>
-                        <summary>查看验证证据</summary>
-                        <pre>{taskBranchReview.review.verification.output}</pre>
-                      </details>
-                    )}
-                  </div>
-                )}
-                {gitReviewLoading && !displayedGitReview && <div className="file-loading">正在读取 Git 改动…</div>}
-                {displayedGitReview && displayedGitReview.files.length === 0 && (
-                  <div className="panel-empty compact"><strong>{taskBranchReview ? "任务分支没有剩余改动" : "工作区干净"}</strong><p>{taskBranchReview ? "所有 Agent 改动均已撤销，分支仍保留审查提交。" : "Agent 产生修改后会在这里按文件和 hunk 审查。"}</p></div>
-                )}
-                {displayedGitReview && displayedGitReview.files.length > 0 && (
-                  <>
-                    <div className="git-file-list">
-                      {displayedGitReview.files.map((file) => (
-                        <button
-                          className={displayedGitPath === file.path ? "active" : ""}
-                          key={file.path}
-                          title={file.path}
-                          onClick={() => taskReviewTask ? void loadTaskBranchReviewDiff(taskReviewTask, file.path) : void openGitReviewFile(file)}
-                        >
-                          <b>{file.status}</b>
-                          <span>{file.path}</span>
-                          <i>{taskBranchReview ? "任务分支" : file.conflicted ? "冲突" : file.untracked ? "未跟踪" : file.staged && file.unstaged ? "双区" : file.staged ? "已暂存" : "工作区"}</i>
-                        </button>
-                      ))}
-                    </div>
-                    {displayedGitReview.truncated && <div className="file-list-limit">改动文件超过 2,000 项，列表已截断。</div>}
-                  </>
-                )}
-
-                {displayedGitFile && (
-                  <>
-                    <div className="git-file-toolbar">
-                      {taskBranchReview ? (
-                        <div className="task-review-scope">
-                          <span>{taskBranchReview.review.policy?.require_all_hunks_decided && taskBranchReview.review.coverage?.known
-                            ? `任务分支改动 · 已接受 ${taskBranchReview.review.coverage.accepted_hunks}/${taskBranchReview.review.coverage.total_hunks}`
-                            : `任务分支改动 · ${taskBranchReview.review.accepted_hunks} 个 hunk 已接受`}</span>
-                          {!taskBranchReview.mutable && <b>{taskBranchReview.mutation_reason}</b>}
-                        </div>
-                      ) : (
-                        <>
-                          <div className="git-scope-switch">
-                            <button
-                              className={gitReviewScope === "working" ? "active" : ""}
-                              disabled={!selectedGitFile?.unstaged}
-                              onClick={() => selectedGitFile && void openGitReviewFile(selectedGitFile, "working")}
-                            >工作区</button>
-                            <button
-                              className={gitReviewScope === "staged" ? "active" : ""}
-                              disabled={!selectedGitFile?.staged}
-                              onClick={() => selectedGitFile && void openGitReviewFile(selectedGitFile, "staged")}
-                            >已暂存</button>
-                          </div>
-                          <div className="git-file-actions">
-                            {gitReviewScope === "working" ? (
-                              <>
-                                {!selectedGitFile?.untracked && <button className="danger" disabled={gitActionBusy} onClick={() => selectedGitFile && void applyGitAction("revert", selectedGitFile.path)}>撤销文件</button>}
-                                <button className="primary" disabled={gitActionBusy} onClick={() => selectedGitFile && void applyGitAction("stage", selectedGitFile.path)}>暂存文件</button>
-                              </>
-                            ) : (
-                              <button disabled={gitActionBusy} onClick={() => selectedGitFile && void applyGitAction("unstage", selectedGitFile.path)}>取消暂存</button>
-                            )}
-                          </div>
-                        </>
-                      )}
-                    </div>
-                    <div className="git-selected-path" title={displayedGitFile.path}>{displayedGitFile.path}</div>
-                  </>
-                )}
-
-                {gitReviewLoading && displayedGitReview && <div className="file-loading">正在刷新 diff…</div>}
-                {!gitReviewLoading && displayedGitDiff?.binary && (
-                  <div className="panel-empty compact"><strong>二进制改动</strong><p>{taskBranchReview ? "任务分支二进制文件暂时只读，请使用外部 Git 工具审查。" : "可整文件暂存或取消暂存，不能进行行级审查。"}</p></div>
-                )}
-                {!gitReviewLoading && displayedGitDiff && !displayedGitDiff.binary && displayedGitDiff.hunks.length === 0 && displayedGitFile && (
-                  <div className="panel-empty compact"><strong>这个区域没有 diff</strong><p>{taskBranchReview ? "刷新任务分支查看最新审查结果。" : "切换“工作区/已暂存”查看另一侧改动。"}</p></div>
-                )}
-                {!gitReviewLoading && displayedGitDiff?.hunks.map((hunk) => (
-                  <section className={`git-hunk ${hunk.accepted ? "accepted" : ""}`} key={`${displayedGitDiff.scope}-${hunk.id}-${hunk.sha256}`}>
-                    <div className="git-hunk-head">
-                      <div>
-                        <b title={`稳定变更标识 ${hunk.id}`}>{hunk.id.slice(0, 10)}</b>
-                        <em className={`git-source ${hunk.source}`} title={hunk.source_at ? `${hunk.source_tool || "edit"} · ${hunk.source_at}` : "未发现 VortoCode 记录"}>
-                          {hunk.source === "agent" ? "Agent" : hunk.source === "user" ? "你修改" : hunk.source === "hook" ? "Hook" : hunk.source === "mixed" ? "混合修改" : "外部修改"}
-                        </em>
-                        <span>{hunk.header}</span>
-                      </div>
-                      <div>
-                        {taskBranchReview ? (
-                          <>
-                            {!taskBranchReview.mutable ? (
-                              <span className="hunk-readonly">只读</span>
-                            ) : (
-                              <>
-                                {hunk.accepted ? <span className="hunk-accepted">✓ 已接受</span> : <button className="primary" disabled={gitActionBusy} onClick={() => void applyTaskBranchAction("accept", hunk)}>接受</button>}
-                                <button className="danger" disabled={gitActionBusy} onClick={() => void applyTaskBranchAction("reject", hunk)}>撤销</button>
-                              </>
-                            )}
-                          </>
-                        ) : displayedGitDiff.scope === "working" ? (
-                          <>
-                            {!selectedGitFile?.untracked && <button className="danger" disabled={gitActionBusy} onClick={() => void applyGitAction("revert", displayedGitDiff.path, hunk)}>撤销</button>}
-                            <button className="primary" disabled={gitActionBusy} onClick={() => void applyGitAction("stage", displayedGitDiff.path, hunk)}>暂存</button>
-                          </>
-                        ) : (
-                          <button disabled={gitActionBusy} onClick={() => void applyGitAction("unstage", displayedGitDiff.path, hunk)}>取消暂存</button>
-                        )}
-                      </div>
-                    </div>
-                    <div className="git-hunk-lines">
-                      {hunk.lines.map((line, index) => {
-                        const lineNumber = line.new_line ?? line.old_line;
-                        const side: "new" | "old" = line.new_line != null ? "new" : "old";
-                        const commentable = lineNumber != null && line.kind !== "header" && line.kind !== "meta";
-                        const selected = Boolean(
-                          !taskBranchReview
-                          && gitReviewDiff
-                          && pendingGitComment
-                          && pendingGitComment.path === gitReviewDiff.path
-                          && pendingGitComment.hunkId === hunk.id
-                          && pendingGitComment.line === lineNumber
-                          && pendingGitComment.side === side,
-                        );
-                        return (
-                          <div className={`git-review-line ${line.kind} ${selected ? "selected" : ""}`} key={`${index}-${line.text.slice(0, 16)}`}>
-                            <span>{line.old_line ?? ""}</span>
-                            <span>{line.new_line ?? ""}</span>
-                            <code>{line.text || " "}</code>
-                            {!taskBranchReview && gitReviewDiff && commentable && (
-                              <button title="添加行级评论" onClick={() => startGitComment(gitReviewDiff.path, hunk, lineNumber!, side)}>＋</button>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                    {!taskBranchReview && gitReviewDiff && pendingGitComment?.path === gitReviewDiff.path && pendingGitComment.hunkId === hunk.id && (
-                      <div className="git-comment-composer">
-                        <span>{pendingGitComment.side === "new" ? "+" : "-"}{pendingGitComment.line}</span>
-                        <textarea value={gitCommentDraft} onChange={(event) => setGitCommentDraft(event.target.value)} placeholder="说明需要怎样修改，以及原因…" autoFocus />
-                        <div>
-                          <button onClick={() => { setPendingGitComment(null); setGitCommentDraft(""); }}>取消</button>
-                          <button className="primary" disabled={!gitCommentDraft.trim() || gitCommentSaving} onClick={() => void addGitComment()}>{gitCommentSaving ? "保存中…" : "加入审查"}</button>
-                        </div>
-                      </div>
-                    )}
-                  </section>
-                ))}
-
-                {!taskBranchReview && gitComments.length > 0 && (
-                  <div className="git-review-comments">
-                    <div className="git-review-comments-head">
-                      <strong>{openGitComments.length} 条待发送{sentGitComments.length > 0 ? ` · ${sentGitComments.length} 条待确认` : ""}</strong>
-                      <button className="primary" disabled={busy || connection !== "connected" || openGitComments.length === 0} onClick={() => void sendGitCommentsToAgent()}>交给 Agent 修复</button>
-                    </div>
-                    {gitComments.map((comment) => (
-                      <div className={`git-review-comment ${comment.status}`} key={comment.id}>
-                        <div className="git-review-comment-meta">
-                          <span>{comment.path}:{comment.line} · {comment.scope === "staged" ? "已暂存" : "工作区"} · {comment.hunkId.slice(0, 10)}</span>
-                          <em>{comment.status === "open" ? "待发送" : comment.status === "sent" ? "待确认" : "已解决"}</em>
-                        </div>
-                        <p>{comment.body}</p>
-                        <div className="git-review-comment-actions">
-                          {comment.status === "sent" && <button disabled={gitCommentSaving} onClick={() => void updateGitCommentStatus(comment, "resolved")}>标记解决</button>}
-                          {comment.status !== "open" && <button disabled={gitCommentSaving} onClick={() => void updateGitCommentStatus(comment, "open")}>重新打开</button>}
-                          <button title="删除评论" disabled={gitCommentSaving} onClick={() => void deleteGitComment(comment)}>删除</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {!taskBranchReview && prDelivery && (
-                  <div className={`pr-delivery-card ${prDelivery.ok ? "ready" : "unavailable"}`}>
-                    <div className="pr-delivery-head">
-                      <div>
-                        <strong>{prDelivery.ok ? `PR #${prDelivery.pr} · ${prDelivery.title || prDelivery.branch}` : "PR / CI"}</strong>
-                        {prDelivery.ok && <span>{prDelivery.draft ? "Draft" : prDelivery.state || "OPEN"} · → {prDelivery.base || "base"}</span>}
-                      </div>
-                      <div>
-                        {prDelivery.url && <button onClick={() => void openUrl(prDelivery.url!)}>GitHub ↗</button>}
-                        <button onClick={() => void refreshPrDelivery()} disabled={prDeliveryLoading}>{prDeliveryLoading ? "读取中…" : "刷新"}</button>
-                      </div>
-                    </div>
-                    {!prDelivery.ok ? (
-                      <p className="pr-delivery-empty">{prDelivery.error || "当前分支还没有关联 PR"}</p>
-                    ) : (
-                      <>
-                        <div className="pr-delivery-summary">
-                          <span className={prDelivery.summary.failed ? "failed" : "passed"}>{prDelivery.summary.failed} 失败</span>
-                          <span className={prDelivery.summary.pending ? "pending" : "muted"}>{prDelivery.summary.pending} 运行中</span>
-                          <span className="passed">{prDelivery.summary.passed} 通过</span>
-                          {prDelivery.review_decision && <span className={prDelivery.review_decision === "APPROVED" ? "passed" : "pending"}>Review · {prDelivery.review_decision}</span>}
-                          {prDelivery.merge_state && <span className="muted">Merge · {prDelivery.merge_state}</span>}
-                        </div>
-                        {prDelivery.comments.length > 0 && (
-                          <div className="pr-review-feedback">
-                            <div><strong>{prDelivery.comments.length} 条未解决 Review</strong><button disabled={busy} onClick={() => void sendPrFeedbackToAgent()}>交给 Agent</button></div>
-                            {prDelivery.comments.slice(0, 8).map((comment, index) => (
-                              <p key={`${comment.author}-${comment.path}-${comment.line}-${index}`}>
-                                <span>{comment.path ? `${comment.path}${comment.line ? `:${comment.line}` : ""}` : `@${comment.author}`}</span>
-                                {comment.body}
-                              </p>
-                            ))}
-                          </div>
-                        )}
-                        <div className="pr-checks">
-                          {prDelivery.checks.length === 0 && <p>GitHub 尚未返回 CI checks。</p>}
-                          {prDelivery.checks.map((check) => {
-                            const checkLog = prCheckLogs[check.id];
-                            const checkState = check.failing ? "failed" : check.pending ? "pending" : "passed";
-                            return (
-                              <div className={`pr-check ${checkState}`} key={check.id}>
-                                <div className="pr-check-title">
-                                  <i>{check.failing ? "!" : check.pending ? "…" : "✓"}</i>
-                                  <div><strong>{check.name}</strong>{check.workflow && <span>{check.workflow}</span>}</div>
-                                  <span>{check.conclusion || check.state || check.status || "UNKNOWN"}</span>
-                                </div>
-                                {check.failing && (
-                                  <div className="pr-check-actions">
-                                    {check.link && <button onClick={() => void openUrl(check.link!)}>详情 ↗</button>}
-                                    <button onClick={() => void loadPrCheckLog(check)}>失败日志</button>
-                                    <button className="primary" disabled={busy} onClick={() => void sendPrFeedbackToAgent(check)}>交给 Agent 修复</button>
-                                  </div>
-                                )}
-                                {checkLog && (
-                                  <div className="pr-check-log">
-                                    {checkLog.log?.job_name && <strong>{checkLog.log.job_name}{checkLog.log.step_name ? ` › ${checkLog.log.step_name}` : ""}</strong>}
-                                    {checkLog.log?.excerpt ? <pre>{checkLog.log.excerpt}</pre> : <p>{checkLog.log?.error || checkLog.error || "没有可用失败日志"}</p>}
-                                  </div>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                )}
-
-                {!taskBranchReview && gitReview && (
-                  <div className="git-delivery-card">
-                    <div className="git-delivery-heading">
-                      <strong>提交与交付</strong>
-                      <span>{gitReview.files.filter((file) => file.staged).length} 个文件含已暂存改动</span>
-                    </div>
-                    <div className="git-commit-form">
-                      <input
-                        value={gitCommitMessage}
-                        onChange={(event) => setGitCommitMessage(event.target.value)}
-                        placeholder="提交说明（只提交已暂存范围）"
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void commitGitReview();
-                        }}
-                      />
-                      <button
-                        className="primary"
-                        disabled={gitReview.files.every((file) => !file.staged) || !gitCommitMessage.trim() || gitDeliveryBusy}
-                        onClick={() => void commitGitReview()}
-                      >提交</button>
-                    </div>
-                    <div className="git-pr-form">
-                      <input value={gitPrTitle} onChange={(event) => setGitPrTitle(event.target.value)} placeholder="Draft PR 标题" />
-                      <input className="git-base-input" value={gitPrBase} onChange={(event) => setGitPrBase(event.target.value)} aria-label="PR base 分支" />
-                      <button
-                        disabled={!gitPrTitle.trim() || !gitPrBase.trim() || gitDeliveryBusy || ["main", "master", "develop", "development"].includes(gitReview.branch.toLowerCase())}
-                        onClick={() => void openGitReviewPr()}
-                      >开 Draft PR</button>
-                    </div>
-                    {["main", "master", "develop", "development"].includes(gitReview.branch.toLowerCase()) && (
-                      <p>受保护分支不能直接创建 PR；先让任务落到功能分支或 Worktree。</p>
-                    )}
-                  </div>
-                )}
-
-                {diffPayload?.diff && (
-                  <details className="agent-diff-proposal">
-                    <summary>Agent 最近一次提案 Diff</summary>
-                    <DiffViewer payload={diffPayload} />
-                  </details>
-                )}
-              </div>
+              <GitReviewPanel
+                connection={connection}
+                busy={busy}
+                diffPayload={diffPayload}
+                gitReview={gitReview}
+                gitReviewDiff={gitReviewDiff}
+                gitReviewScope={gitReviewScope}
+                gitReviewLoading={gitReviewLoading}
+                gitReviewError={gitReviewError}
+                gitReviewRevision={gitReviewRevision}
+                gitSelectedPath={gitSelectedPath}
+                gitActionBusy={gitActionBusy}
+                gitComments={gitComments}
+                openGitComments={openGitComments}
+                sentGitComments={sentGitComments}
+                pendingGitComment={pendingGitComment}
+                gitCommentDraft={gitCommentDraft}
+                gitCommentSaving={gitCommentSaving}
+                gitCommitMessage={gitCommitMessage}
+                gitPrTitle={gitPrTitle}
+                gitPrBase={gitPrBase}
+                gitDeliveryBusy={gitDeliveryBusy}
+                prDelivery={prDelivery}
+                prDeliveryLoading={prDeliveryLoading}
+                prCheckLogs={prCheckLogs}
+                taskReviewTask={taskReviewTask}
+                taskBranchReview={taskBranchReview}
+                taskBranchDiff={taskBranchDiff}
+                taskBranchSelectedPath={taskBranchSelectedPath}
+                taskReviewVerifying={taskReviewVerifying}
+                onCloseTaskBranchReview={closeTaskBranchReview}
+                onOpenTaskBranchReview={openTaskBranchReview}
+                onRefreshGitReview={refreshGitReview}
+                onLoadTaskBranchDiff={loadTaskBranchReviewDiff}
+                onOpenGitReviewFile={openGitReviewFile}
+                onApplyGitAction={applyGitAction}
+                onApplyTaskBranchAction={applyTaskBranchAction}
+                onVerifyReviewedBranch={() => void verifyReviewedTaskBranch()}
+                onStartGitComment={startGitComment}
+                onCommentDraftChange={setGitCommentDraft}
+                onCancelComment={() => { setPendingGitComment(null); setGitCommentDraft(""); }}
+                onAddGitComment={addGitComment}
+                onSendGitComments={sendGitCommentsToAgent}
+                onUpdateCommentStatus={updateGitCommentStatus}
+                onDeleteGitComment={deleteGitComment}
+                onRefreshPrDelivery={refreshPrDelivery}
+                onSendPrFeedback={sendPrFeedbackToAgent}
+                onLoadPrCheckLog={loadPrCheckLog}
+                onCommitMessageChange={setGitCommitMessage}
+                onCommitGitReview={commitGitReview}
+                onPrTitleChange={setGitPrTitle}
+                onPrBaseChange={setGitPrBase}
+                onOpenGitReviewPr={openGitReviewPr}
+              />
             )}
             {inspectorTab === "runs" && (
               <RunsPanel
