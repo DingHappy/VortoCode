@@ -853,7 +853,7 @@ async function loadCron() {
 
 function renderCron(data) {
   const box = $("#cron");
-  box.innerHTML = "";
+  box.replaceChildren();          // 清空用 replaceChildren：不新增 innerHTML 面（仓库安全契约，见 test_web_agent_html）
   const head = document.createElement("div");
   head.style.cssText = "padding:8px 10px;font-size:12px;color:" + (data.enabled ? "#7ec699" : "#e0a35c");
   head.textContent = data.enabled
