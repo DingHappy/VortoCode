@@ -1,0 +1,38 @@
+# VortoCode 常驻服务 —— Linux systemd 版（macOS 用 launchd，见 docs/OPS.md 第一节）。
+#
+# 安装三步（假设代码在 /opt/vortocode/VortoCode、venv 在 /opt/vortocode/venv）：
+#   1. sudo cp examples/systemd/vortocode-server.service.example /etc/systemd/system/vortocode-server.service
+#      （按实际路径改 User / WorkingDirectory / ExecStart）
+#   2. sudo install -m 600 -D /dev/null /etc/vortocode/env && sudo $EDITOR /etc/vortocode/env
+#   3. sudo systemctl daemon-reload && sudo systemctl enable --now vortocode-server
+#
+# /etc/vortocode/env 至少要有（600 权限，别进 git）：
+#   VORTOCODE_API_TOKEN=<强随机串>    # 非 127.0.0.1 监听的硬前提；全部 /api/* 与 /ws 强制鉴权
+#   OPENAI_API_KEY=<中转站 key>
+#   VORTOCODE_CRON=1                  # 可选：开定时作业（默认关，开关矩阵见 OPS 第二节）
+#
+# 与 launchd 版同样的两个坑：
+#   - systemd 不继承 shell 环境：代理出网的机器把 HTTP(S)_PROXY 也写进 env 文件；
+#   - ExecStart 用解释器**绝对路径**（极简 PATH 下裸 `python` 必 127，真机逮到过）。
+
+[Unit]
+Description=VortoCode server（Web 控制台 + agent runtime）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 建议专用低权用户：sudo useradd -r -m -d /opt/vortocode vortocode
+User=vortocode
+WorkingDirectory=/opt/vortocode/VortoCode
+EnvironmentFile=/etc/vortocode/env
+# --host 0.0.0.0 仅限内网/Tailscale 网段；禁止裸挂公网（token 是全权凭据且 HTTP 明文）。
+# 只本机用（配合 SSH 隧道/Tailscale serve）就删掉 --host，回到默认 127.0.0.1。
+ExecStart=/opt/vortocode/venv/bin/python -m src.cli server --host 0.0.0.0 --port 8080
+Restart=on-failure
+RestartSec=10
+# 命令执行沙箱：Linux 依赖 bubblewrap（apt install bubblewrap）。
+# 缺 bwrap 时需要隔离的命令会 fail-closed 拒跑，不会裸执行。
+
+[Install]
+WantedBy=multi-user.target
