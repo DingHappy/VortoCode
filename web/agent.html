@@ -193,6 +193,7 @@
       <div class="cs-tab active" id="tab-tasks">后台任务</div>
       <div class="cs-tab" id="tab-notices">通知<span class="badge hide" id="nbadge"></span></div>
       <div class="cs-tab" id="tab-cron">定时</div>
+      <div class="cs-tab" id="tab-board">看板</div>
     </div>
     <div id="tasknew">
       <textarea id="taskinp" placeholder="描述一个开发任务，隔离流水线后台跑（worktree 实现 → 自测 → 落 vorto/* 分支，不碰 main）"></textarea>
@@ -201,6 +202,7 @@
     <div class="cs-body" id="tasks"></div>
     <div class="cs-body" id="notices" style="display:none"></div>
     <div class="cs-body" id="cron" style="display:none"></div>
+    <div class="cs-body" id="board" style="display:none"></div>
   </aside>
 <script>
 const $ = (s) => document.querySelector(s);
@@ -830,16 +832,152 @@ function showConsoleTab(name) {
   $("#tab-tasks").classList.toggle("active", name === "tasks");
   $("#tab-notices").classList.toggle("active", name === "notices");
   $("#tab-cron").classList.toggle("active", name === "cron");
+  $("#tab-board").classList.toggle("active", name === "board");
   $("#tasknew").style.display = name === "tasks" ? "flex" : "none";
   tasksEl.style.display = name === "tasks" ? "" : "none";
   noticesEl.style.display = name === "notices" ? "" : "none";
   $("#cron").style.display = name === "cron" ? "" : "none";
+  $("#board").style.display = name === "board" ? "" : "none";
   if (name === "notices") { noticeUnread = 0; updateBadges(); loadNotices(); }
   if (name === "cron") loadCron();
+  if (name === "board") loadBoard();
 }
 $("#tab-tasks").onclick = () => showConsoleTab("tasks");
 $("#tab-notices").onclick = () => showConsoleTab("notices");
 $("#tab-cron").onclick = () => showConsoleTab("cron");
+$("#tab-board").onclick = () => showConsoleTab("board");
+
+// ---- 员工看板（B9-①）：各 agent 在干什么 + 运行中 + 定时摘要，一屏聚合 ----
+// 纯前端聚合既有 API（sessions 端点本就是状态优先级排序的 dashboard 快照），不加新路由。
+const _BOARD_STATUS = {
+  needs_input: ["待你输入", "#e0645c"], failed: ["需处理", "#e0645c"],
+  working: ["工作中", "#7ec699"], queued: ["有排队输入", "#e0a35c"],
+  idle: ["空闲", "#7f8896"], inactive: ["历史会话", "#5b6270"], completed: ["已完成", "#5b6270"],
+};
+
+async function loadBoard() {
+  if (consoleTab !== "board" || $("#console").classList.contains("hidden")) return;
+  const box = $("#board");
+  try {
+    const [sessR, runsR, cronR] = await Promise.all([
+      fetch(apiUrl("/api/agent/sessions"), { cache: "no-store" }),
+      fetch(apiUrl("/api/runs"), { cache: "no-store" }),
+      fetch(apiUrl("/api/cron"), { cache: "no-store" }),
+    ]);
+    // 非 2xx 不许画成"全空=健康"的假盘面（对抗审查 F8）：失败的路点名置顶
+    const problems = [];
+    if (!sessR.ok) problems.push("会话 HTTP " + sessR.status);
+    if (!runsR.ok) problems.push("运行 HTTP " + runsR.status);
+    if (!cronR.ok) problems.push("定时 HTTP " + cronR.status);
+    renderBoard(
+      sessR.ok ? (await sessR.json()).sessions || [] : [],
+      runsR.ok ? (await runsR.json()).runs || [] : [],
+      cronR.ok ? await cronR.json() : { enabled: false, jobs: [] },
+      problems,
+    );
+  } catch (e) { box.textContent = "看板读取失败：" + e; }
+}
+setInterval(loadBoard, 5000);              // 看板可见时 5s 一刷；不可见时函数首行直接返回
+
+function _boardHead(text) {
+  const el = document.createElement("div");
+  el.style.cssText = "padding:8px 10px 2px;font-size:12px;color:#7f8896;letter-spacing:.5px";
+  el.textContent = text;
+  return el;
+}
+
+function renderBoard(sessions, runs, cron, problems = []) {
+  const box = $("#board");
+  box.replaceChildren();          // 同 cron tab：不新增 innerHTML 面（仓库安全契约）
+  if (problems.length) {
+    const warn = document.createElement("div");
+    warn.style.cssText = "margin:6px 8px;padding:6px 10px;border:1px solid #b4433a;border-radius:8px;color:#e0645c;font-size:12px";
+    warn.textContent = "部分数据读取失败（下方对应区不可信）：" + problems.join("，");
+    box.appendChild(warn);
+  }
+  // ① 会话：谁在干什么（API 已按 需处理>工作中>排队>空闲 排序，历史会话折进计数）
+  box.appendChild(_boardHead("会话"));
+  const live = sessions.filter((s) => s.status !== "inactive" && s.status !== "completed");
+  if (!live.length) {
+    const empty = document.createElement("div");
+    empty.style.cssText = "padding:4px 10px;color:#7f8896;font-size:13px";
+    empty.textContent = "没有活跃会话";
+    box.appendChild(empty);
+  }
+  for (const s of live) {
+    const [label, color] = _BOARD_STATUS[s.status] || [s.status, "#7f8896"];
+    const row = document.createElement("div");
+    row.style.cssText = "margin:4px 8px;padding:7px 10px;border:1px solid #2a2e37;border-radius:8px;cursor:pointer";
+    const top = document.createElement("div");
+    top.style.cssText = "display:flex;gap:7px;align-items:center;font-size:13px";
+    const dot = document.createElement("span");
+    dot.style.cssText = "width:8px;height:8px;border-radius:50%;flex:none;background:" + color;
+    const title = document.createElement("b");
+    title.style.cssText = "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1";
+    title.textContent = s.title || s.sid;
+    const st = document.createElement("span");
+    st.style.cssText = "font-size:11px;color:" + color;
+    st.textContent = label + (s.pending_input_count ? " ×" + s.pending_input_count : "");
+    top.append(dot, title, st);
+    row.appendChild(top);
+    const doing = s.activity || s.running_prompt
+      || (s.background_tasks && s.background_tasks.active ? s.background_tasks.latest_prompt : "");
+    if (doing) {
+      const act = document.createElement("div");
+      act.style.cssText = "margin-top:3px;font-size:12px;color:#a6adbb;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+      act.textContent = doing;
+      act.title = doing;
+      row.appendChild(act);
+    }
+    const bits = [];
+    if (s.queue_count) bits.push("排队输入 " + s.queue_count);
+    if (s.background_tasks && s.background_tasks.active) bits.push("后台任务 " + s.background_tasks.active + " 跑着");
+    if (s.background_tasks && s.background_tasks.attention) bits.push("任务待处理 " + s.background_tasks.attention);
+    if (s.hook_issues && s.hook_issues.count) bits.push("Hook 提示 " + s.hook_issues.count);
+    if (bits.length) {
+      const meta = document.createElement("div");
+      meta.style.cssText = "margin-top:2px;font-size:12px;color:#7f8896";
+      meta.textContent = bits.join(" · ");
+      row.appendChild(meta);
+    }
+    row.onclick = () => switchSession(s.sid);
+    box.appendChild(row);
+  }
+  const rest = sessions.length - live.length;
+  if (rest > 0) {
+    const more = document.createElement("div");
+    more.style.cssText = "padding:2px 10px 6px;color:#5b6270;font-size:12px";
+    more.textContent = "另有 " + rest + " 个历史会话（左侧列表可切换）";
+    box.appendChild(more);
+  }
+  // ② 运行：命令/测试/预览 run 的活跃与待处理失败
+  const activeRuns = runs.filter((r) => ["queued", "running", "cancelling"].includes(r.status));
+  const failedRuns = runs.filter((r) => r.status === "failed" && !r.dismissed);
+  box.appendChild(_boardHead("运行"));
+  const runLine = document.createElement("div");
+  runLine.style.cssText = "padding:2px 10px 6px;font-size:13px;color:" + (failedRuns.length ? "#e0645c" : "#a6adbb");
+  runLine.textContent = activeRuns.length + " 个在跑 · " + failedRuns.length + " 个失败待处理";
+  box.appendChild(runLine);
+  for (const r of activeRuns.slice(0, 5)) {
+    const line = document.createElement("div");
+    line.style.cssText = "padding:1px 10px;font-size:12px;color:#a6adbb;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+    line.textContent = "▸ " + (r.command || r.kind || r.id);
+    line.title = r.command || "";
+    box.appendChild(line);
+  }
+  // ③ 定时：总开关 + 最近的下次应跑 + 连败点名（详情在「定时」tab）
+  box.appendChild(_boardHead("定时"));
+  const dueTimes = cron.jobs.filter((j) => j.next_due).map((j) => j.next_due).sort();
+  const sick = cron.jobs.filter((j) => j.failures > 0);
+  const cronLine = document.createElement("div");
+  cronLine.style.cssText = "padding:2px 10px 8px;font-size:13px;color:" + (sick.length ? "#e0645c" : "#a6adbb") + ";cursor:pointer";
+  const cronBits = [cron.enabled ? "调度已开" : "调度未开"];
+  if (dueTimes.length) cronBits.push("最近应跑 " + dueTimes[0].replace("T", " "));
+  if (sick.length) cronBits.push("连败：" + sick.map((j) => j.name + "×" + j.failures).join("，"));
+  cronLine.textContent = cronBits.join(" · ");
+  cronLine.onclick = () => showConsoleTab("cron");
+  box.appendChild(cronLine);
+}
 
 // ---- 定时作业观察面（B9-②，只读 + 手动触发；数据源 GET /api/cron）----
 async function loadCron() {
