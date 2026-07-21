@@ -867,10 +867,10 @@ function renderCron(data) {
     box.appendChild(empty);
     return;
   }
-  for (const job of data.jobs) box.appendChild(cronCard(job));
+  for (const job of data.jobs) box.appendChild(cronCard(job, data.next_due_horizon_days || 62));
 }
 
-function cronCard(job) {
+function cronCard(job, horizonDays) {
   const card = document.createElement("div");
   card.style.cssText = "margin:6px 8px;padding:8px 10px;border:1px solid #2a2e37;border-radius:8px;"
     + (job.enabled ? "" : "opacity:.55");
@@ -884,24 +884,28 @@ function cronCard(job) {
   sched.style.cssText = "color:#7f8896;font-size:12px";
   sched.textContent = job.schedule + (job.enabled ? "" : " · 已停用");
   const sp = document.createElement("span"); sp.style.flex = "1";
-  const go = document.createElement("button");
-  go.textContent = "触发"; go.title = "立即手动跑一次（结果进通知/运行台账）";
-  go.style.cssText = "background:#222732;color:#d7dae0;border:1px solid #3a4150;border-radius:6px;padding:2px 10px;cursor:pointer";
-  go.onclick = async () => {
-    go.disabled = true;
-    try {
-      const r = await fetch(apiUrl("/api/cron/" + encodeURIComponent(job.name) + "/run"), { method: "POST" });
-      if (r.ok) addNotice({ ts: new Date().toISOString(), source: "cron", text: "已手动触发 [" + job.name + "]，结果看通知/运行台账" });
-      else add("err", "触发失败：HTTP " + r.status);
-    } catch (e) { add("err", "触发失败：" + e); }
-    go.disabled = false;
-  };
-  row.append(name, kind, sched, sp, go);
+  row.append(name, kind, sched, sp);
+  if (job.enabled) {                       // 停用作业不给触发入口（服务端同样 409 兜底）
+    const go = document.createElement("button");
+    go.textContent = "触发"; go.title = "立即手动跑一次（结果进通知/运行台账）";
+    go.style.cssText = "background:#222732;color:#d7dae0;border:1px solid #3a4150;border-radius:6px;padding:2px 10px;cursor:pointer";
+    go.onclick = async () => {
+      go.disabled = true;
+      try {
+        const r = await fetch(apiUrl("/api/cron/" + encodeURIComponent(job.name) + "/run"), { method: "POST" });
+        if (r.ok) addNotice({ ts: new Date().toISOString(), source: "cron", text: "已手动触发 [" + job.name + "]，结果看通知/运行台账" });
+        else add("err", "触发失败：HTTP " + r.status + " " + (await r.text()).slice(0, 200));
+      } catch (e) { add("err", "触发失败：" + e); }
+      go.disabled = false;
+    };
+    row.append(go);
+  }
   const meta = document.createElement("div");
   meta.style.cssText = "margin-top:4px;font-size:12px;color:#7f8896";
   const bits = [];
   bits.push(job.last_run ? "上次 " + job.last_run.replace("T", " ") : "从未跑过");
   if (job.next_due) bits.push("下次应跑 " + job.next_due.replace("T", " "));
+  else if (job.enabled) bits.push(horizonDays + " 天内无排期");
   if (job.budget) bits.push("预算 " + job.budget + " tokens");
   meta.textContent = bits.join(" · ");
   const detail = document.createElement("div");
