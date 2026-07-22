@@ -159,8 +159,9 @@ class SelfImprovementLoop:
         tmp = tmp_dir / f"test__l2tmp_{uuid.uuid4().hex[:8]}.py"
         tmp.write_text(content, encoding="utf-8")
         try:
-            import os
-            env = {**os.environ, "PYTHONPATH": str(self.root), "OPENAI_API_KEY": ""}
+            from src.agents.sandbox import child_env
+            # 跑的是模型生成的测试内容——同 shell 工具走统一的操作密钥围栏（切断外带链）
+            env = {**child_env(), "PYTHONPATH": str(self.root)}
             proc = await asyncio.create_subprocess_exec(
                 sys.executable, "-m", "pytest", str(tmp), "-q", "-p", "no:cacheprovider",
                 cwd=str(self.root), env=env,

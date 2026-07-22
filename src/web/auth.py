@@ -7,6 +7,7 @@
 - 危险的宿主机命令执行端点默认禁用，需显式 VORTOCODE_ENABLE_SHELL=1。
 """
 
+import hmac
 from pathlib import Path
 from typing import Optional
 
@@ -55,16 +56,28 @@ _EXEMPT_EXACT = {"/", "/agent", "/artifacts",
                  "/api/auth/login", "/api/auth/logout", "/api/auth/status"}
 
 
+def _ct_eq(candidate: str, token: str) -> bool:
+    """常时比较（防时序侧信道）——token 校验点专用。
+
+    encode 成 bytes 兜底：candidate 是攻击者可控输入，裸 hmac.compare_digest(str, str)
+    遇非 ASCII 会抛 TypeError → 500。surrogatepass 一并兜住孤代理（如 U+D800）——虽经
+    Starlette 的 latin-1 头/Cookie 解码不可达，但不留「任何输入都不抛」的破绽。长度不同
+    亦安全（长度本非机密）。仅当本机对外暴露（99 服务器）时侧信道才有网络路径，故收紧。
+    """
+    return hmac.compare_digest(candidate.encode("utf-8", "surrogatepass"),
+                               token.encode("utf-8", "surrogatepass"))
+
+
 def _token_ok(request) -> bool:
     token = get_api_token()
     if not token:
         return True  # 未配置 token：本地开发放行
     auth = request.headers.get("authorization", "")
-    if auth.startswith("Bearer ") and auth[7:].strip() == token:   # 程序化客户端：Authorization 头
+    if auth.startswith("Bearer ") and _ct_eq(auth[7:].strip(), token):   # 程序化客户端：Authorization 头
         return True
-    if request.headers.get("x-api-token", "").strip() == token:
+    if _ct_eq(request.headers.get("x-api-token", "").strip(), token):
         return True
-    return request.cookies.get(SESSION_COOKIE, "").strip() == token  # 浏览器：登录后 httpOnly Cookie
+    return _ct_eq(request.cookies.get(SESSION_COOKIE, "").strip(), token)  # 浏览器：登录后 httpOnly Cookie
 
 
 def is_authed(request) -> bool:
@@ -151,6 +164,6 @@ def ws_token_ok(websocket) -> bool:
     if not token:
         return True
     auth = websocket.headers.get("authorization", "")
-    if auth.startswith("Bearer ") and auth[7:].strip() == token:
+    if auth.startswith("Bearer ") and _ct_eq(auth[7:].strip(), token):
         return True
-    return websocket.cookies.get(SESSION_COOKIE, "").strip() == token
+    return _ct_eq(websocket.cookies.get(SESSION_COOKIE, "").strip(), token)
