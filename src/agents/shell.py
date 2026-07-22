@@ -260,7 +260,7 @@ def run_command_background(repo_root, cmd: str, *, require_isolation: bool = Fal
     危险拦截由调用方（工具层）先过；沙箱与前台 run_command 同源。返回 {ok, id, pid} 或 {ok:False, error}。
     """
     import subprocess
-    from src.agents.sandbox import resolve_sandbox, sandboxed_argv
+    from src.agents.sandbox import child_env, resolve_sandbox, sandboxed_argv
     decision = resolve_sandbox(require_isolation=require_isolation)
     evidence = decision.to_dict()
     if not decision.allowed:
@@ -278,11 +278,11 @@ def run_command_background(repo_root, cmd: str, *, require_isolation: bool = Fal
     try:
         if decision.isolated:
             popen = subprocess.Popen(sandboxed_argv(repo_root, cmd, backend=decision.backend),
-                                     cwd=str(repo_root),
+                                     cwd=str(repo_root), env=child_env(),
                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      text=True, bufsize=1, start_new_session=True)
         else:
-            popen = subprocess.Popen(cmd, shell=True, cwd=str(repo_root),
+            popen = subprocess.Popen(cmd, shell=True, cwd=str(repo_root), env=child_env(),
                                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      text=True, bufsize=1, start_new_session=True)
     except Exception as e:  # noqa: BLE001
@@ -347,7 +347,7 @@ def run_command(repo_root, cmd: str, timeout: float = 300, *,
     结果始终携带 ``sandbox`` 决策证据。无人值守调用方传
     ``require_isolation=True``；只有显式 ``VORTOCODE_SANDBOX=off`` 才可在宿主机执行。
     """
-    from src.agents.sandbox import resolve_sandbox, sandboxed_argv
+    from src.agents.sandbox import child_env, resolve_sandbox, sandboxed_argv
     decision = resolve_sandbox(require_isolation=require_isolation)
     evidence = decision.to_dict()
     if not decision.allowed:
@@ -356,10 +356,10 @@ def run_command(repo_root, cmd: str, timeout: float = 300, *,
     try:
         if decision.isolated:
             r = subprocess.run(sandboxed_argv(repo_root, cmd, backend=decision.backend),
-                               cwd=str(repo_root),
+                               cwd=str(repo_root), env=child_env(),
                                capture_output=True, text=True, timeout=timeout)
         else:
-            r = subprocess.run(cmd, shell=True, cwd=str(repo_root),
+            r = subprocess.run(cmd, shell=True, cwd=str(repo_root), env=child_env(),
                                capture_output=True, text=True, timeout=timeout)
         return {"ok": r.returncode == 0, "code": r.returncode,
                 "output": (r.stdout + r.stderr)[-8000:], "sandbox": evidence,
