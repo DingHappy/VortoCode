@@ -195,3 +195,44 @@ def sandboxed_exec_argv(repo_root: str, argv: Sequence[str], *, backend: str = "
 def sandboxed_argv(repo_root: str, cmd: str, *, backend: str = "") -> list[str]:
     """Wrap a shell command string in the selected OS sandbox."""
     return sandboxed_exec_argv(repo_root, ["/bin/sh", "-c", cmd], backend=backend)
+
+
+# ── 子进程凭据隔离（信任地基）───────────────────────────────────────────────
+# 起子进程默认继承主进程整套 env，而本沙箱放行出站网络（reads/network 不变，见模块头）——
+# 两半合起来，一条投毒的 package.json script / Makefile target 就能把中转站 key 外带。
+# 剥掉「VortoCode 自己用的操作密钥」即切断这条链：任何被起的子命令都不需要它们。
+#
+# 精确名单，刻意不用 *KEY*/*TOKEN* 通配符——本仓 env 里就有会被误伤的假阳性：
+# VORTOCODE_CRON_TOKEN_BUDGET（数字预算）、VORTOCODE_MAX_CONTEXT_TOKENS、
+# TEXTUAL_DISABLE_KITTY_KEY（UI 开关）。GITHUB_TOKEN 是「任务令牌」（gh 子命令要用），
+# 故不在此列——它的穿透由下方 allowlist 决定。
+_STRIPPED_ENV_KEYS = frozenset({
+    "OPENAI_API_KEY",                                    # LLM 中转站钥匙
+    "VORTOCODE_API_TOKEN", "AUTODEV_API_TOKEN",          # Web 永久 admin 主钥（含旧名）
+    "VORTOCODE_RELAY_ADMIN_TOKEN",                       # 中转站 admin
+    "VORTOCODE_DD_CLIENT_SECRET", "VORTOCODE_TG_TOKEN",  # IM 桥接凭据
+})
+
+
+def _env_passthrough_allowlist() -> frozenset[str]:
+    """主人显式放行、准许穿透到子进程的变量名（逗号分隔）。
+
+    走环境变量 VORTOCODE_ENV_PASSTHROUGH 而非 .vortocode/ 文件：能设主进程 env 的才是
+    主人；若放仓库里，凡能写仓库的（含被投毒的生成代码）就能把密钥重新放行，等于多开
+    一个投毒面。典型用途：目标项目自身用 OPENAI_API_KEY、其测试子进程需要它。
+    变量名大小写敏感（Unix env 语义）：须与真实变量名一字不差，写错则 fail-closed（仍剥）。
+    """
+    raw = os.getenv("VORTOCODE_ENV_PASSTHROUGH", "")
+    return frozenset(name.strip() for name in raw.split(",") if name.strip())
+
+
+def child_env() -> dict[str, str]:
+    """构造子进程环境：主进程 env 去掉操作密钥，但保留 allowlist 放行项。
+
+    所有起子进程处（run_command / run_command_background / run_tests）都必须用它——沙箱
+    与非沙箱路径同样适用，VORTOCODE_SANDBOX=off 的宿主机 escape hatch 不能变成密钥泄漏
+    口。PATH/HOME/代理/语言环境等一律保留，故 sandbox-exec/bwrap wrapper 与工具链不受影响。
+    """
+    allow = _env_passthrough_allowlist()
+    return {k: v for k, v in os.environ.items()
+            if k not in _STRIPPED_ENV_KEYS or k in allow}
