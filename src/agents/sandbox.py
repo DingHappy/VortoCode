@@ -220,6 +220,7 @@ def _env_passthrough_allowlist() -> frozenset[str]:
     走环境变量 VORTOCODE_ENV_PASSTHROUGH 而非 .vortocode/ 文件：能设主进程 env 的才是
     主人；若放仓库里，凡能写仓库的（含被投毒的生成代码）就能把密钥重新放行，等于多开
     一个投毒面。典型用途：目标项目自身用 OPENAI_API_KEY、其测试子进程需要它。
+    变量名大小写敏感（Unix env 语义）：须与真实变量名一字不差，写错则 fail-closed（仍剥）。
     """
     raw = os.getenv("VORTOCODE_ENV_PASSTHROUGH", "")
     return frozenset(name.strip() for name in raw.split(",") if name.strip())

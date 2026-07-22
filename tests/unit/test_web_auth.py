@@ -25,6 +25,8 @@ def test_ct_eq_non_ascii_input_does_not_raise():
     """攻击者可发含非 ASCII 的 header——必须只是「比较失败」，不得抛异常。"""
     assert _ct_eq("naïve-\U0001f511", "ascii-token") is False   # naïve-🔑
     assert _ct_eq("　￿", "ascii-token") is False            # 全角空格 + U+FFFF
+    # 孤代理：surrogatepass 兜住不抛。运行时 chr 构造，避免源码字面量污染模块
+    assert _ct_eq(chr(0xD800) + "x", "ascii-token") is False
 
 
 # ── _token_ok / ws_token_ok：行为不变 ────────────────────────────────

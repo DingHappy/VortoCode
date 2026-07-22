@@ -11,7 +11,6 @@ findings 来自 self_analysis 的 LLM 深审层（category=bug/code-smell，带�
 
 import asyncio
 import logging
-import os
 import subprocess
 import sys
 import uuid
@@ -241,8 +240,9 @@ class CodeFixLoop:
             path.write_text(snapshot, encoding="utf-8")
 
     async def _default_gate(self) -> Tuple[bool, str]:
-        env = {**os.environ, "PYTHONPATH": str(self.root),
-               "OPENAI_API_KEY": "", "VORTOCODE_API_TOKEN": "", "AUTODEV_API_TOKEN": ""}
+        from src.agents.sandbox import child_env
+        # 门控跑的 tests/ 会 import 被模型改过的模块——走统一的操作密钥围栏（切断外带链）
+        env = {**child_env(), "PYTHONPATH": str(self.root)}
         try:
             proc = await asyncio.create_subprocess_exec(
                 sys.executable, "-m", "pytest", "tests/", "-q", "-p", "no:cacheprovider",
