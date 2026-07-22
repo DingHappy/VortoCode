@@ -132,10 +132,14 @@ class Skill(ABC):
         """执行命令 hook"""
         import asyncio
         try:
+            from src.agents.sandbox import child_env
+            # skill 的 pre_execute 命令源自 .vortocode/skills（gitignored，无 trust 门）：
+            # 同样剥操作密钥，不让 skill 生命周期钩子成为绕过 child_env 的外带口。
             process = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                stderr=asyncio.subprocess.PIPE,
+                env=child_env(),
             )
             stdout, stderr = await process.communicate()
             if process.returncode != 0:

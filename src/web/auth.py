@@ -60,10 +60,12 @@ def _ct_eq(candidate: str, token: str) -> bool:
     """常时比较（防时序侧信道）——token 校验点专用。
 
     encode 成 bytes 兜底：candidate 是攻击者可控输入，裸 hmac.compare_digest(str, str)
-    遇非 ASCII 会抛 TypeError → 500；编码后任何输入都只是「比较失败」。长度不同亦安全
-    （长度本非机密）。仅当本机对外暴露（99 服务器）时侧信道才有网络路径，故收紧。
+    遇非 ASCII 会抛 TypeError → 500。surrogatepass 一并兜住孤代理（如 U+D800）——虽经
+    Starlette 的 latin-1 头/Cookie 解码不可达，但不留「任何输入都不抛」的破绽。长度不同
+    亦安全（长度本非机密）。仅当本机对外暴露（99 服务器）时侧信道才有网络路径，故收紧。
     """
-    return hmac.compare_digest(candidate.encode("utf-8"), token.encode("utf-8"))
+    return hmac.compare_digest(candidate.encode("utf-8", "surrogatepass"),
+                               token.encode("utf-8", "surrogatepass"))
 
 
 def _token_ok(request) -> bool:

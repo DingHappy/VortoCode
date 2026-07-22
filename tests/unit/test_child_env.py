@@ -7,6 +7,8 @@
 
 全部离线确定性：非沙箱路径起 echo 子进程，不依赖 sandbox-exec/bwrap 可用。
 """
+import pytest
+
 from src.agents.sandbox import _STRIPPED_ENV_KEYS, child_env
 
 
@@ -78,3 +80,19 @@ def test_subprocess_sees_passthrough(monkeypatch, tmp_path):
     r = run_command(str(tmp_path), "echo KEY=[$OPENAI_API_KEY]")
     assert r["ok"], r["output"]
     assert "KEY=[sk-allowed]" in r["output"], r["output"]
+
+
+def test_subprocess_cannot_read_secret_through_sandbox(monkeypatch, tmp_path):
+    """沙箱路径（seatbelt/bwrap）同样剥密钥——现有 off 路径之外补一条真沙箱钉，
+    防将来重构 sandboxed_argv 时从别处重注父 env 而无测试变红（对抗审查 F6）。"""
+    from src.agents.sandbox import resolve_sandbox
+    from src.agents.shell import run_command
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-sandbox-leak")
+    monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)          # 走 auto → 有则用沙箱
+    monkeypatch.delenv("VORTOCODE_ENV_PASSTHROUGH", raising=False)
+    if not resolve_sandbox().isolated:
+        pytest.skip("本机无可用 OS 沙箱（seatbelt/bwrap），跳过沙箱路径断言")
+    r = run_command(str(tmp_path), "echo KEY=[$OPENAI_API_KEY]")
+    assert r["ok"], r["output"]
+    assert "KEY=[]" in r["output"], r["output"]
