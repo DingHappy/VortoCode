@@ -234,6 +234,18 @@
   ]
  },
  {
+  "path": "/api/cron",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/cron/{name}/run",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
   "path": "/api/decisions",
   "methods": [
    "GET"

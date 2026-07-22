@@ -192,6 +192,7 @@
     <div class="cs-tabs">
       <div class="cs-tab active" id="tab-tasks">后台任务</div>
       <div class="cs-tab" id="tab-notices">通知<span class="badge hide" id="nbadge"></span></div>
+      <div class="cs-tab" id="tab-cron">定时</div>
     </div>
     <div id="tasknew">
       <textarea id="taskinp" placeholder="描述一个开发任务，隔离流水线后台跑（worktree 实现 → 自测 → 落 vorto/* 分支，不碰 main）"></textarea>
@@ -199,6 +200,7 @@
     </div>
     <div class="cs-body" id="tasks"></div>
     <div class="cs-body" id="notices" style="display:none"></div>
+    <div class="cs-body" id="cron" style="display:none"></div>
   </aside>
 <script>
 const $ = (s) => document.querySelector(s);
@@ -827,13 +829,98 @@ function showConsoleTab(name) {
   consoleTab = name;
   $("#tab-tasks").classList.toggle("active", name === "tasks");
   $("#tab-notices").classList.toggle("active", name === "notices");
+  $("#tab-cron").classList.toggle("active", name === "cron");
   $("#tasknew").style.display = name === "tasks" ? "flex" : "none";
   tasksEl.style.display = name === "tasks" ? "" : "none";
   noticesEl.style.display = name === "notices" ? "" : "none";
+  $("#cron").style.display = name === "cron" ? "" : "none";
   if (name === "notices") { noticeUnread = 0; updateBadges(); loadNotices(); }
+  if (name === "cron") loadCron();
 }
 $("#tab-tasks").onclick = () => showConsoleTab("tasks");
 $("#tab-notices").onclick = () => showConsoleTab("notices");
+$("#tab-cron").onclick = () => showConsoleTab("cron");
+
+// ---- 定时作业观察面（B9-②，只读 + 手动触发；数据源 GET /api/cron）----
+async function loadCron() {
+  const box = $("#cron");
+  try {
+    const r = await fetch(apiUrl("/api/cron"), { cache: "no-store" });
+    if (!r.ok) { box.textContent = "读取定时作业失败：HTTP " + r.status; return; }
+    renderCron(await r.json());
+  } catch (e) { box.textContent = "读取定时作业失败：" + e; }
+}
+
+function renderCron(data) {
+  const box = $("#cron");
+  box.replaceChildren();          // 清空用 replaceChildren：不新增 innerHTML 面（仓库安全契约，见 test_web_agent_html）
+  const head = document.createElement("div");
+  head.style.cssText = "padding:8px 10px;font-size:12px;color:" + (data.enabled ? "#7ec699" : "#e0a35c");
+  head.textContent = data.enabled
+    ? "调度循环已开（VORTOCODE_CRON=1）"
+    : "调度循环未开——下面的作业不会自动跑，手动触发不受影响";
+  box.appendChild(head);
+  if (!data.jobs.length) {
+    const empty = document.createElement("div");
+    empty.style.cssText = "padding:10px;color:#7f8896;font-size:13px";
+    empty.textContent = "没有定时作业。样例：config/cron.example.yaml → .vortocode/cron.yaml";
+    box.appendChild(empty);
+    return;
+  }
+  for (const job of data.jobs) box.appendChild(cronCard(job, data.next_due_horizon_days || 62));
+}
+
+function cronCard(job, horizonDays) {
+  const card = document.createElement("div");
+  card.style.cssText = "margin:6px 8px;padding:8px 10px;border:1px solid #2a2e37;border-radius:8px;"
+    + (job.enabled ? "" : "opacity:.55");
+  const row = document.createElement("div");
+  row.style.cssText = "display:flex;gap:8px;align-items:center;font-size:13px";
+  const name = document.createElement("b"); name.textContent = job.name;
+  const kind = document.createElement("span");
+  kind.style.cssText = "font-size:11px;color:#7f8896;border:1px solid #3a4150;border-radius:4px;padding:0 5px";
+  kind.textContent = job.kind === "command" ? "命令" : "LLM";
+  const sched = document.createElement("span");
+  sched.style.cssText = "color:#7f8896;font-size:12px";
+  sched.textContent = job.schedule + (job.enabled ? "" : " · 已停用");
+  const sp = document.createElement("span"); sp.style.flex = "1";
+  row.append(name, kind, sched, sp);
+  if (job.enabled) {                       // 停用作业不给触发入口（服务端同样 409 兜底）
+    const go = document.createElement("button");
+    go.textContent = "触发"; go.title = "立即手动跑一次（结果进通知/运行台账）";
+    go.style.cssText = "background:#222732;color:#d7dae0;border:1px solid #3a4150;border-radius:6px;padding:2px 10px;cursor:pointer";
+    go.onclick = async () => {
+      go.disabled = true;
+      try {
+        const r = await fetch(apiUrl("/api/cron/" + encodeURIComponent(job.name) + "/run"), { method: "POST" });
+        if (r.ok) addNotice({ ts: new Date().toISOString(), source: "cron", text: "已手动触发 [" + job.name + "]，结果看通知/运行台账" });
+        else add("err", "触发失败：HTTP " + r.status + " " + (await r.text()).slice(0, 200));
+      } catch (e) { add("err", "触发失败：" + e); }
+      go.disabled = false;
+    };
+    row.append(go);
+  }
+  const meta = document.createElement("div");
+  meta.style.cssText = "margin-top:4px;font-size:12px;color:#7f8896";
+  const bits = [];
+  bits.push(job.last_run ? "上次 " + job.last_run.replace("T", " ") : "从未跑过");
+  if (job.next_due) bits.push("下次应跑 " + job.next_due.replace("T", " "));
+  else if (job.enabled) bits.push(horizonDays + " 天内无排期");
+  if (job.budget) bits.push("预算 " + job.budget + " tokens");
+  meta.textContent = bits.join(" · ");
+  const detail = document.createElement("div");
+  detail.style.cssText = "margin-top:4px;font-size:12px;color:#a6adbb;white-space:pre-wrap;word-break:break-all";
+  detail.textContent = (job.detail || "").slice(0, 200) + ((job.detail || "").length > 200 ? "…" : "");
+  detail.title = job.detail || "";
+  card.append(row, meta, detail);
+  if (job.failures > 0) {
+    const warn = document.createElement("div");
+    warn.style.cssText = "margin-top:4px;font-size:12px;color:#e0645c";
+    warn.textContent = "已连续失败 " + job.failures + " 次";
+    card.appendChild(warn);
+  }
+  return card;
+}
 $("#taskgo").onclick = submitBgTask;
 $("#taskinp").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); submitBgTask(); }
