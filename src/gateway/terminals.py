@@ -223,7 +223,11 @@ class _TerminalProcess:
             except subprocess.TimeoutExpired:
                 try:
                     os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
-                except (OSError, ProcessLookupError):
+                    # SIGKILL 后仍须回收：否则紧接着的 snapshot() poll() 会竞态读到 None
+                    # 报 status="running"（CI Linux 容器踩过），且留僵尸进程。SIGKILL 不可
+                    # 忽略，wait 必在极短时间内返回；再兜一层 TimeoutExpired 纯防御。
+                    self.process.wait(timeout=timeout)
+                except (OSError, ProcessLookupError, subprocess.TimeoutExpired):
                     pass
             except (OSError, ProcessLookupError):
                 pass
