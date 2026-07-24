@@ -82,6 +82,12 @@ class _TerminalProcess:
 
         master_fd, slave_fd = pty.openpty()
         fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
+        # 刻意保留整套 env（含操作密钥），不套 child_env——这是**操作者本人的交互 shell**，非 agent
+        # 执行面：只有人在 Desktop UI 里经 POST /api/terminals/{id}/input 敲字（无任何 agent 工具驱动
+        # 它、过 require_shell 闸、单用户契约=操作者即信任根），语义等同 Terminal.app。剥密钥会误伤操作
+        # 者自己跑 vc/测试的正当用途，且投毒脚本在其真 Terminal.app 里一样能外带——只围栏这一个集成终端
+        # 是安全表演。故与 run_command/MCP/hook/skill/LSP/sandbox-runner 那类「agent 跑可能不可信代码」
+        # 的执行面相区别，此处不剥。2026-07-24 F-6 复审标 PLAUSIBLE、主人裁定 won't-fix——勿"修"。
         env = dict(os.environ)
         env.update({"TERM": "xterm-256color", "COLORTERM": "truecolor"})
         sandbox = resolve_sandbox()

@@ -173,33 +173,6 @@ class DiffApplier:
             lines[old_start:old_end] = new_lines
         
         return ''.join(lines)
-    
-    @staticmethod
-    def apply_patch(content: str, patch: str) -> str:
-        """应用 patch"""
-        import subprocess
-        import tempfile
-        
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.patch', delete=False) as f:
-            f.write(patch)
-            patch_file = f.name
-        
-        try:
-            result = subprocess.run(
-                ['patch', '-p0'],
-                input=content,
-                capture_output=True,
-                text=True
-            )
-            
-            if result.returncode == 0:
-                return result.stdout
-            else:
-                logger.error(f"Patch failed: {result.stderr}")
-                return content
-        
-        finally:
-            Path(patch_file).unlink(missing_ok=True)
 
 
 class LineEditor:
