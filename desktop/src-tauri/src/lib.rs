@@ -1262,6 +1262,26 @@ fn remote_project_id(normalized_url: &str, remote_repo_root: &str) -> String {
         .to_string()
 }
 
+/// 远程 token 字符集闸：只收可见 ASCII（0x21..=0x7e）。
+/// 从网页/文档复制 token 时常混入 BOM(U+FEFF)、NBSP、全角、智能引号——这些字节
+/// `HeaderValue::from_str` 会接受、但 `to_str()` 会拒，于是握手期报错、错误串里带上头值原文。
+/// 在**注册期**就拦住，既避免"能注册却连不上"的静默坏配置，也不给泄漏留触发条件。
+/// （注意 str::trim 吃得掉首尾 NBSP，却吃不掉 BOM 与串中间的污染字符。）
+fn normalize_remote_token(token: &str) -> Result<String, String> {
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        return Err("远程工作区需要访问 token（服务器已设 VORTOCODE_API_TOKEN）".into());
+    }
+    if !trimmed.bytes().all(|byte| (0x21..=0x7e).contains(&byte)) {
+        return Err(
+            "远程 token 含不可见或非 ASCII 字符（从网页复制时常混入 BOM／全角／智能引号），\
+             请重新粘贴纯 ASCII token"
+                .into(),
+        );
+    }
+    Ok(trimmed.to_string())
+}
+
 fn remote_project_name(name: &str, remote_repo_root: &str, normalized_url: &str) -> String {
     let trimmed = name.trim();
     if !trimmed.is_empty() {
@@ -1345,9 +1365,7 @@ async fn remember_remote_project(
 ) -> Result<DesktopProjectProfile, String> {
     let path = project_registry_path(&app)?;
     let normalized = validate_remote_server_url(&server_url)?;
-    if token.trim().is_empty() {
-        return Err("远程工作区需要访问 token（服务器已设 VORTOCODE_API_TOKEN）".into());
-    }
+    let token = normalize_remote_token(&token)?;
     let id = remote_project_id(&normalized, remote_repo_root.trim());
     let known = load_project_registry(&path)?
         .projects
@@ -1539,6 +1557,277 @@ async fn remote_http_request(
         ok: status.is_success(),
         body: String::from_utf8_lossy(&body).into_owned(),
     })
+}
+
+// ── 远程 WS 桥接（R3a-2b）────────────────────────────────────────────────────
+// 为什么必须自建、不能用 tauri-plugin-websocket：那个插件的 connect(url, {headers}) 由 JS 传
+// headers → token 必须先进 webview，直接违背 spec「webview 拿不到 token 原文」；且它的
+// capability 无 URL scope，被注入的页面脚本能连任意 host。自建桥接后：**URL 由注册表决定、
+// token 由 Rust 从 Keychain 取并注入握手头**，webview 只见 conn_id 与帧内容，与 HTTP 代理同构。
+
+/// 会话 id 闸：sid 会进 WS 查询串，只收保守字符集（同 normalize_workspace_id 口径）。
+fn normalize_ws_sid(value: &str) -> Result<String, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > 80
+        || !trimmed
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err("远程会话标识无效".into());
+    }
+    Ok(trimmed.into())
+}
+
+/// 由**已注册的** base_url 推导 WS 地址：https→wss、http→ws，路径固定 /ws。
+/// 手工拼 authority 而不用 Url::set_scheme，避开该 API 在 special scheme 间切换的边界行为。
+fn remote_ws_url(base: &str, sid: &str) -> Result<Url, String> {
+    let sid = normalize_ws_sid(sid)?;
+    let parsed = Url::parse(base).map_err(|error| format!("已注册的服务器地址无法解析：{error}"))?;
+    let scheme = match parsed.scheme() {
+        "https" => "wss",
+        "http" => "ws",
+        other => return Err(format!("不支持的服务器协议：{other}")),
+    };
+    let host = parsed.host_str().ok_or("已注册的服务器地址缺少主机名")?;
+    let mut authority = host.to_string();
+    if let Some(port) = parsed.port() {
+        authority.push_str(&format!(":{port}"));
+    }
+    Url::parse(&format!("{scheme}://{authority}/ws?sid={sid}"))
+        .map_err(|error| format!("远程 WebSocket 地址无法构造：{error}"))
+}
+
+const MAX_REMOTE_WS_CONNECTIONS: usize = 8;
+const REMOTE_WS_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+const REMOTE_WS_SEND_QUEUE: usize = 256;
+// 与本地路径（gateway.ts 显式设的 16/32 MiB）及 HTTP 侧 32MB 封顶同口径——
+// tungstenite 默认 64 MiB 比两者都松，不能就这么用。
+const MAX_REMOTE_WS_MESSAGE_BYTES: usize = 32 * 1024 * 1024;
+const MAX_REMOTE_WS_FRAME_BYTES: usize = 16 * 1024 * 1024;
+
+struct RemoteWsHandle {
+    sender: tokio::sync::mpsc::Sender<String>,
+    // 读侧必须留 abort 句柄：stream.split() 的两半共用 BiLock，**只 drop 写半边不会释放
+    // socket**；对端不回 Close 也不 EOF 时读任务永久挂起，没句柄就再也拆不掉它。
+    reader: Option<tauri::async_runtime::JoinHandle<()>>,
+}
+
+#[derive(Default)]
+struct RemoteWsRegistry {
+    connections: Mutex<HashMap<String, RemoteWsHandle>>,
+    counter: Mutex<u64>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteWsFrame {
+    conn_id: String,
+    data: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteWsClosed {
+    conn_id: String,
+    reason: String,
+}
+
+/// 底层握手错误**不能原样回给 webview**：tungstenite 会把请求头值的 Debug 写进错误串，
+/// token 就这么泄出去（F-6 实测可 100% 还原）。这里只回粗粒度原因，明细进应用日志。
+fn remote_ws_failure_reason(error: &tokio_tungstenite::tungstenite::Error) -> String {
+    use tokio_tungstenite::tungstenite::Error;
+    match error {
+        Error::Http(response) => {
+            format!("远程 WebSocket 连接失败：服务器返回 HTTP {}", response.status())
+        }
+        Error::Io(_) => "远程 WebSocket 连接失败：网络不可达或被拒绝".into(),
+        Error::Url(_) => "远程 WebSocket 连接失败：地址无效".into(),
+        Error::Protocol(_) => "远程 WebSocket 连接失败：协议握手失败".into(),
+        _ => "远程 WebSocket 连接失败（详情见应用日志）".into(),
+    }
+}
+
+/// 收尾：摘表 + 通报，**恰好一次**——谁先摘掉表项谁负责发事件，避免重复通报或漏报。
+/// 返回被摘下的句柄交调用方决定是否 abort（读任务自己收尾时不该 abort 自己）。
+fn finish_remote_ws(app: &AppHandle, conn_id: &str, reason: &str) -> Option<RemoteWsHandle> {
+    use tauri::Emitter;
+    let removed = app.try_state::<RemoteWsRegistry>().and_then(|state| {
+        state
+            .connections
+            .lock()
+            .ok()
+            .and_then(|mut connections| connections.remove(conn_id))
+    });
+    if removed.is_some() {
+        let _ = app.emit(
+            "remote-ws-closed",
+            RemoteWsClosed {
+                conn_id: conn_id.to_string(),
+                reason: reason.to_string(),
+            },
+        );
+    }
+    removed
+}
+
+#[tauri::command]
+async fn remote_ws_connect(
+    app: AppHandle,
+    registry: State<'_, RemoteWsRegistry>,
+    project_id: String,
+    sid: String,
+) -> Result<String, String> {
+    use futures_util::{SinkExt, StreamExt};
+    use tauri::Emitter;
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    use tokio_tungstenite::tungstenite::http::HeaderValue;
+    use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
+    use tokio_tungstenite::tungstenite::Message;
+
+    // 连接配额：webview 一个循环就能把 fd/内存耗尽，闸要设在建连之前。
+    {
+        let connections = registry
+            .connections
+            .lock()
+            .map_err(|_| "远程连接注册表已中毒".to_string())?;
+        if connections.len() >= MAX_REMOTE_WS_CONNECTIONS {
+            return Err(format!(
+                "远程连接数已达上限（{MAX_REMOTE_WS_CONNECTIONS}），请先关闭不用的连接"
+            ));
+        }
+    }
+
+    // 与 HTTP 代理同一条锁链：已注册 + remote 条目 + 重过网段校验 + id↔base_url 绑定回验。
+    let base = resolve_remote_base(&project_registry_path(&app)?, &project_id)?;
+    let url = remote_ws_url(&base, &sid)?;
+    let token = remote_token_keychain::read(&project_id)?
+        .filter(|value| !value.trim().is_empty())
+        .ok_or("未找到该远程工作区的访问 token，请重新注册")?;
+
+    let mut request = url
+        .as_str()
+        .into_client_request()
+        .map_err(|_| "远程 WebSocket 请求无法构造".to_string())?;
+    let mut auth = HeaderValue::from_str(&format!("Bearer {token}"))
+        .map_err(|_| "远程 token 含非法字符，无法作为请求头".to_string())?;
+    // **必须置敏**：否则头值的 Debug 会被 tungstenite 写进握手错误串并回到 webview。
+    auth.set_sensitive(true);
+    request.headers_mut().insert("authorization", auth);
+
+    let config = WebSocketConfig::default()
+        .max_message_size(Some(MAX_REMOTE_WS_MESSAGE_BYTES))
+        .max_frame_size(Some(MAX_REMOTE_WS_FRAME_BYTES));
+    let connected = tokio::time::timeout(
+        REMOTE_WS_CONNECT_TIMEOUT,
+        tokio_tungstenite::connect_async_with_config(request, Some(config), false),
+    )
+    .await
+    .map_err(|_| "远程 WebSocket 连接超时".to_string())?;
+    let (stream, _response) = connected.map_err(|error| {
+        eprintln!("[remote-ws] connect failed: {error}");
+        remote_ws_failure_reason(&error)
+    })?;
+    let (mut sink, mut source) = stream.split();
+
+    let conn_id = {
+        let mut counter = registry
+            .counter
+            .lock()
+            .map_err(|_| "远程连接注册表已中毒".to_string())?;
+        *counter += 1;
+        format!("{project_id}-{counter}")
+    };
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(REMOTE_WS_SEND_QUEUE);
+    // 先登记再起读任务：否则读侧可能在登记前就自行收尾，留下永不清理的僵尸表项。
+    registry
+        .connections
+        .lock()
+        .map_err(|_| "远程连接注册表已中毒".to_string())?
+        .insert(
+            conn_id.clone(),
+            RemoteWsHandle {
+                sender: tx,
+                reader: None,
+            },
+        );
+
+    tauri::async_runtime::spawn(async move {
+        while let Some(text) = rx.recv().await {
+            if sink.send(Message::Text(text.into())).await.is_err() {
+                break;
+            }
+        }
+        let _ = sink.close().await;
+    });
+
+    let reader_app = app.clone();
+    let reader_id = conn_id.clone();
+    let reader = tauri::async_runtime::spawn(async move {
+        let mut reason = "closed";
+        while let Some(message) = source.next().await {
+            match message {
+                Ok(Message::Text(text)) => {
+                    let _ = reader_app.emit(
+                        "remote-ws-message",
+                        RemoteWsFrame {
+                            conn_id: reader_id.clone(),
+                            data: text.to_string(),
+                        },
+                    );
+                }
+                Ok(Message::Close(_)) => break,
+                Ok(_) => {} // 二进制/ping/pong：gateway 协议是文本 JSON，忽略
+                Err(_) => {
+                    // 不外泄底层 error 串——它可能带帧载荷原文。
+                    reason = "error";
+                    break;
+                }
+            }
+        }
+        finish_remote_ws(&reader_app, &reader_id, reason);
+    });
+
+    // 把读句柄补进表项；若读侧已自行收尾摘表，则直接 abort 这个（已结束的）句柄。
+    match registry.connections.lock() {
+        Ok(mut connections) => match connections.get_mut(&conn_id) {
+            Some(entry) => entry.reader = Some(reader),
+            None => reader.abort(),
+        },
+        Err(_) => reader.abort(),
+    }
+    Ok(conn_id)
+}
+
+#[tauri::command]
+fn remote_ws_send(
+    registry: State<'_, RemoteWsRegistry>,
+    conn_id: String,
+    data: String,
+) -> Result<(), String> {
+    use tokio::sync::mpsc::error::TrySendError;
+    let connections = registry
+        .connections
+        .lock()
+        .map_err(|_| "远程连接注册表已中毒".to_string())?;
+    let handle = connections
+        .get(&conn_id)
+        .ok_or("该远程连接不存在或已关闭")?;
+    handle.sender.try_send(data).map_err(|error| match error {
+        TrySendError::Full(_) => "远程连接发送队列已满，请稍后重试".to_string(),
+        TrySendError::Closed(_) => "远程连接已关闭，发送失败".to_string(),
+    })
+}
+
+#[tauri::command]
+fn remote_ws_close(app: AppHandle, conn_id: String) -> Result<(), String> {
+    // 摘表并通报；**abort 读任务**才真正释放 socket（只摘 sender 拆不掉，见 RemoteWsHandle 注释）。
+    if let Some(handle) = finish_remote_ws(&app, &conn_id, "closed-by-client") {
+        if let Some(reader) = handle.reader {
+            reader.abort();
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -2534,6 +2823,7 @@ pub fn run() {
         })
         .manage(GatewayProcess::default())
         .manage(DesktopLlmProfileStore::default())
+        .manage(RemoteWsRegistry::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_notification::init())
@@ -2548,6 +2838,9 @@ pub fn run() {
             remember_desktop_project,
             remember_remote_project,
             remote_http_request,
+            remote_ws_connect,
+            remote_ws_send,
+            remote_ws_close,
             pick_desktop_project,
             forget_desktop_project,
             get_gateway_recovery,
@@ -3197,6 +3490,84 @@ mod tests {
         for bad in ["CONNECT", "TRACE", "", "GET /x HTTP/1.1"] {
             assert!(normalize_http_method(bad).is_err(), "{bad:?} 应被拒");
         }
+    }
+
+    // ── R3a-2b WS 桥接：sid 闸 / WS 地址推导 ──────────────────────────────────
+
+    #[test]
+    fn normalize_ws_sid_rejects_query_injection_shapes() {
+        assert_eq!(normalize_ws_sid(" sess-1_A ").unwrap(), "sess-1_A");
+        for bad in [
+            "",                 // 空
+            "a&admin=1",        // 追加查询参数
+            "a#frag",           // 片段
+            "a?b",              // 再开查询
+            "a/../x",           // 路径穿越形状
+            "a b",              // 空格
+            "会话",             // 非 ASCII
+            &"x".repeat(81),    // 超长
+        ] {
+            assert!(normalize_ws_sid(bad).is_err(), "{bad:?} 应被拒");
+        }
+    }
+
+    #[test]
+    fn remote_ws_url_derives_scheme_and_keeps_registered_authority() {
+        // https→wss、http→ws；authority（host+非默认端口）原样保留；路径固定 /ws。
+        assert_eq!(
+            remote_ws_url("https://srv.ts.net", "s1").unwrap().as_str(),
+            "wss://srv.ts.net/ws?sid=s1"
+        );
+        assert_eq!(
+            remote_ws_url("https://srv.ts.net:8443", "s1")
+                .unwrap()
+                .as_str(),
+            "wss://srv.ts.net:8443/ws?sid=s1"
+        );
+        assert_eq!(
+            remote_ws_url("http://192.168.1.10:8080", "s1")
+                .unwrap()
+                .as_str(),
+            "ws://192.168.1.10:8080/ws?sid=s1"
+        );
+        // sid 闸拦在构造之前——注入形状不会进查询串。
+        assert!(remote_ws_url("https://srv.ts.net", "a&admin=1").is_err());
+        // 非 http/https 的 base 不接受。
+        assert!(remote_ws_url("ftp://srv.ts.net", "s1").is_err());
+    }
+
+    #[test]
+    fn normalize_remote_token_rejects_non_visible_ascii() {
+        assert_eq!(normalize_remote_token("  sk-abc123  ").unwrap(), "sk-abc123");
+        for bad in [
+            "",
+            "   ",
+            "sk-\u{feff}abc",  // BOM（trim 吃不掉）
+            "sk-abc\u{a0}def", // NBSP 夹在串中间
+            "sk-\u{2019}abc",  // 智能引号
+            "sk-秘密",         // 非 ASCII
+            "sk-abc\u{7f}",    // DEL
+            "sk abc",          // 空格
+        ] {
+            assert!(normalize_remote_token(bad).is_err(), "{bad:?} 应被拒");
+        }
+    }
+
+    #[test]
+    fn remote_ws_failure_reason_never_leaks_underlying_detail() {
+        use tokio_tungstenite::tungstenite::Error;
+        // 底层 error 可能带头值原文（tungstenite 握手失败会把 HeaderValue 的 Debug 写进去），
+        // 回给 webview 的串必须只剩粗粒度原因。
+        let leaky = Error::Io(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Bearer sk-must-not-leak-0123456789",
+        ));
+        let reason = remote_ws_failure_reason(&leaky);
+        assert!(
+            !reason.contains("sk-must-not-leak"),
+            "错误串泄漏了 token：{reason}"
+        );
+        assert!(reason.contains("网络不可达"));
     }
 
     #[test]
