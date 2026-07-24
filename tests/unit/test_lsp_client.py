@@ -121,3 +121,41 @@ def test_dispatch_through_public_lsp(tmp_path):
                                    encoding="utf-8")
     assert "a.ts:1" in find_definition(str(tmp_path), "greet")   # 公开 API 自动派发到 LSP
     assert "greet" in document_symbols(str(tmp_path), "a.ts")
+
+
+# ---- 子进程凭据隔离：语言服务器 env 必须过 child_env（B9-④ 最后一个执行点）----
+class _PopenAborted(Exception):
+    """哨兵：捕获传入 Popen 的 env 后即中止构造，不真的起进程/起读线程（确定性、离线）。"""
+
+
+def _capture_lsp_env(monkeypatch):
+    """替身 Popen 记下 env 后抛哨兵；返回被捕获的 env（LspClient 起子进程用的那份）。"""
+    captured: dict = {}
+
+    def _fake_popen(cmd, **kwargs):
+        captured["env"] = kwargs.get("env")
+        raise _PopenAborted
+
+    monkeypatch.setattr(lc.subprocess, "Popen", _fake_popen)
+    with pytest.raises(_PopenAborted):
+        lc.LspClient(["typescript-language-server", "--stdio"], os.getcwd())
+    return captured["env"]
+
+
+def test_lsp_server_env_strips_operating_secret(monkeypatch):
+    """语言服务器子进程 env 必须显式传（非继承父进程整套）且剥掉操作密钥。"""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-must-not-leak")
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.delenv("VORTOCODE_ENV_PASSTHROUGH", raising=False)
+    env = _capture_lsp_env(monkeypatch)
+    assert env is not None, "必须显式传 env（env=None 即继承父进程整套 = 密钥泄漏）"
+    assert "OPENAI_API_KEY" not in env, "操作密钥必须被 child_env 剥出语言服务器 env"
+    assert env.get("PATH") == "/usr/bin", "非密钥项须保留，否则第三方 server 找不到程序"
+
+
+def test_lsp_server_env_honors_passthrough(monkeypatch):
+    """走的确实是 child_env——allowlist 逃生口能把显式放行的密钥放回（证明非临时黑名单）。"""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-allowed")
+    monkeypatch.setenv("VORTOCODE_ENV_PASSTHROUGH", "OPENAI_API_KEY")
+    env = _capture_lsp_env(monkeypatch)
+    assert env.get("OPENAI_API_KEY") == "sk-allowed"
