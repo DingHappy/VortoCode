@@ -438,10 +438,13 @@ mod llm_keychain {
 }
 
 // 远程连接 token：与 LLM key 分开的 Keychain 服务，按项目 id 作 account 以支持多远端。
-// R3a-1 只用 write/delete（注册/注销）；连接时的 read 在 R3a-2 接入。
+// read 只在 Rust 侧的远程代理里用——token 原文不进 webview（spec §连接层安全 2）。
 mod remote_token_keychain {
     use super::platform_keychain;
     const SERVICE: &[u8] = b"com.vortocode.desktop.remote";
+    pub fn read(account: &str) -> Result<Option<String>, String> {
+        platform_keychain::read(SERVICE, account.as_bytes())
+    }
     pub fn write(account: &str, token: &str) -> Result<(), String> {
         platform_keychain::write(SERVICE, account.as_bytes(), token)
     }
@@ -1375,6 +1378,167 @@ async fn remember_remote_project(
         let _ = remote_token_keychain::delete(&id);
     }
     result
+}
+
+// ── 远程传输层（R3a-2a）：HTTP 代理 ──────────────────────────────────────────
+// 方案 A 的落点：**webview 从不提供目标 URL**，只给注册过的 project_id——由 Rust 查注册表取
+// base_url、从 Keychain 取 token 并代注 Authorization。于是「只连注册过的 server_url」不再是
+// 一道可被绕过的校验，而是结构上不可能（没有 URL 入参可供伪造）；token 原文也不进 webview。
+
+const MAX_REMOTE_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoteHttpResponse {
+    status: u16,
+    ok: bool,
+    body: String,
+}
+
+/// 远程请求路径闸：只收远端 gateway HTTP 面所在的 `/api/` 前缀。
+/// 前缀白名单同时压缩「混淆代理人」可达面——webview 侧一旦被注入内容驱动，能借这条通道
+/// 触达的远端路由被限死在 /api/ 内（副作用路由的确认门归 R3a-2c 接线时设计）。
+fn sanitize_remote_path(path: &str) -> Result<String, String> {
+    let trimmed = path.trim();
+    if !trimmed.starts_with('/') {
+        return Err("远程请求路径必须以 / 开头".into());
+    }
+    if trimmed.chars().any(|ch| ch.is_control() || ch == ' ') {
+        return Err("远程请求路径不能包含空白或控制字符".into());
+    }
+    // 只在查询串之前查协议：`?next=https://…` 是合法查询值，整串 contains 会误杀。
+    let before_query = trimmed.split('?').next().unwrap_or(trimmed);
+    if before_query.contains("://") {
+        return Err("远程请求路径不能包含协议".into());
+    }
+    if !trimmed.starts_with("/api/") {
+        return Err("远程请求路径必须在 /api/ 下".into());
+    }
+    Ok(trimmed.to_string())
+}
+
+/// 两个 URL 是否同源（scheme/host/port 逐项相等）。
+/// **单独抽出来是为了能被直接测**——它是 build_remote_url 的兜底防线，在当前路径闸下不可达，
+/// 若只在 build_remote_url 里内联，任何针对它的测试都会先被路径闸拦下而成为安慰剂
+/// （F-6 mutation 实测：删掉内联版判断，原测试全绿）。
+fn same_remote_origin(target: &Url, registered: &Url) -> bool {
+    target.scheme() == registered.scheme()
+        && target.host_str() == registered.host_str()
+        && target.port_or_known_default() == registered.port_or_known_default()
+}
+
+/// 拼远程 URL。终局不变量：拼出来的 scheme/host/port 必须与注册的服务器逐项相等。
+/// 诚实说明：在当前路径闸（强制 `/api/` 前缀）下这条不变量**是不可达兜底**，留着是为了
+/// 将来放宽路径闸或改用 `Url::join` 时仍有最后一道锁，不是当下的主防线。
+fn build_remote_url(base: &str, path: &str) -> Result<Url, String> {
+    let sanitized = sanitize_remote_path(path)?;
+    let target = Url::parse(&format!("{base}{sanitized}"))
+        .map_err(|error| format!("远程请求地址无法解析：{error}"))?;
+    let registered =
+        Url::parse(base).map_err(|error| format!("已注册的服务器地址无法解析：{error}"))?;
+    // 归一化之后再查协议相对形状：`\` 在 WHATWG special scheme 下等价 `/`，故
+    // `/api/\evil.com` 原始串不含 `//`、归一化后的 path 却是 `//evil.com`——改用
+    // Url::join 时那就是换 host 的真洞。对归一化结果断言才真正钉住它。
+    if target.path().starts_with("//") {
+        return Err("远程请求路径归一化后成了协议相对地址，已拒绝".into());
+    }
+    if !same_remote_origin(&target, &registered) {
+        return Err("远程请求目标与已注册服务器不一致，已拒绝".into());
+    }
+    Ok(target)
+}
+
+/// 按 project_id 解析出远程 base_url：必须已注册、必须是 remote 条目，且 base_url **每次都重新
+/// 过网段校验**——projects.json 是磁盘文件可能被改，出网一律以当下校验为准（fail-closed）。
+fn resolve_remote_base(registry_path: &Path, project_id: &str) -> Result<String, String> {
+    let registry = load_project_registry(registry_path)?;
+    let project = registry
+        .projects
+        .iter()
+        .find(|item| item.id == project_id)
+        .ok_or("该项目未在 Desktop 注册，已拒绝远程请求")?;
+    if project.kind != PROJECT_KIND_REMOTE {
+        return Err("该项目不是远程工作区，已拒绝远程请求".into());
+    }
+    let base = validate_remote_server_url(&project.base_url)?;
+    // id ↔ (base_url, repo_root) 绑定回验。id 就是这两者的哈希，故改了 base_url 必然改 id。
+    // 堵的是：能写 projects.json 的本地进程把已注册条目的 base_url 换成 https://attacker.tld
+    // 而**保持 id 不变**，让 Keychain 里那把（按 id 取的）真 token 被发给攻击者——原生确认门
+    // 只守注册路径，这里是运行期的第二道锁。注意 validate 对 https 放行任意 host，单靠它挡不住。
+    if remote_project_id(&base, &project.repo_root) != project.id {
+        return Err("远程工作区注册信息与其标识不一致（注册表可能被篡改），已拒绝".into());
+    }
+    Ok(base)
+}
+
+fn normalize_http_method(method: &str) -> Result<reqwest::Method, String> {
+    match method.trim().to_ascii_uppercase().as_str() {
+        "GET" => Ok(reqwest::Method::GET),
+        "POST" => Ok(reqwest::Method::POST),
+        "PUT" => Ok(reqwest::Method::PUT),
+        "PATCH" => Ok(reqwest::Method::PATCH),
+        "DELETE" => Ok(reqwest::Method::DELETE),
+        other => Err(format!("远程请求不支持的方法：{other}")),
+    }
+}
+
+#[tauri::command]
+async fn remote_http_request(
+    app: AppHandle,
+    project_id: String,
+    method: String,
+    path: String,
+    body: Option<String>,
+) -> Result<RemoteHttpResponse, String> {
+    let base = resolve_remote_base(&project_registry_path(&app)?, &project_id)?;
+    let url = build_remote_url(&base, &path)?;
+    let verb = normalize_http_method(&method)?;
+    let token = remote_token_keychain::read(&project_id)?
+        .filter(|value| !value.trim().is_empty())
+        .ok_or("未找到该远程工作区的访问 token，请重新注册")?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        // 禁跟随重定向：一次 302 就能把带着 Authorization 的请求引去第三方 host。
+        .redirect(reqwest::redirect::Policy::none())
+        // **禁环境变量代理**：reqwest 默认 auto_sys_proxy，即便关了 system-proxy feature，
+        // 底层仍会读 HTTP_PROXY/HTTPS_PROXY/ALL_PROXY——那样真实 TCP 目的地由 connector 决定，
+        // 上面所有 URL 层校验（含终局 host 不变量）全部形同虚设；且 http 目标走 forward 代理时，
+        // 带 Authorization 的完整请求会**明文**交给代理主机。与本仓 child_env「不信任环境变量」同口径。
+        .no_proxy()
+        .build()
+        .map_err(|error| format!("无法创建远程请求客户端：{error}"))?;
+    let mut request = client.request(verb, url).bearer_auth(&token);
+    if let Some(payload) = body {
+        request = request
+            .header("content-type", "application/json")
+            .body(payload);
+    }
+    let mut response = request
+        .send()
+        .await
+        .map_err(|error| format!("远程请求失败：{error}"))?;
+    let status = response.status();
+    // 响应体封顶：只有 30s 总 deadline 兜着的话，内网千兆下一个被攻陷/发疯的已注册 server
+    // 就能把数 GB 灌进内存（再经 IPC 序列化成 JSON 还要放大几倍）→ 单请求打爆 Desktop。
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| format!("远程响应读取失败：{error}"))?
+    {
+        if body.len() + chunk.len() > MAX_REMOTE_RESPONSE_BYTES {
+            return Err(format!(
+                "远程响应超过 {} MB 上限，已中止",
+                MAX_REMOTE_RESPONSE_BYTES / (1024 * 1024)
+            ));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(RemoteHttpResponse {
+        status: status.as_u16(),
+        ok: status.is_success(),
+        body: String::from_utf8_lossy(&body).into_owned(),
+    })
 }
 
 #[tauri::command]
@@ -2383,6 +2547,7 @@ pub fn run() {
             list_desktop_projects,
             remember_desktop_project,
             remember_remote_project,
+            remote_http_request,
             pick_desktop_project,
             forget_desktop_project,
             get_gateway_recovery,
@@ -2868,6 +3033,170 @@ mod tests {
         assert!(kinds.contains(&PROJECT_KIND_LOCAL));
         assert!(kinds.contains(&PROJECT_KIND_REMOTE));
         remove_dir_all(root).expect("remove temp workspace");
+    }
+
+    // ── R3a-2a 远程传输层：路径闸 / URL 终局不变量 / 目标解析 ────────────────────
+
+    #[test]
+    fn sanitize_remote_path_enforces_api_prefix_and_rejects_escapes() {
+        assert_eq!(sanitize_remote_path("/api/runs").unwrap(), "/api/runs");
+        assert_eq!(
+            sanitize_remote_path("/api/x?limit=10&q=a").unwrap(),
+            "/api/x?limit=10&q=a"
+        );
+        // 查询串里的 https:// 是合法值，不该误杀（整串 contains("://") 会）。
+        assert_eq!(
+            sanitize_remote_path("/api/x?next=https://ok.example").unwrap(),
+            "/api/x?next=https://ok.example"
+        );
+        for bad in [
+            "api/runs",               // 不以 / 开头
+            "//evil.com/x",           // 协议相对地址
+            "https://evil.com/x",     // 带协议
+            "/api/x y",               // 含空格
+            "/api/x\nHost: evil.com", // 控制字符（请求走私形状）
+            "/ws",                    // 非 /api/ 前缀：收窄混淆代理人可达面
+            "/健康",                  // 同上
+        ] {
+            assert!(sanitize_remote_path(bad).is_err(), "{bad:?} 应被拒");
+        }
+    }
+
+    #[test]
+    fn build_remote_url_keeps_backslash_paths_on_registered_host() {
+        let url = build_remote_url("https://srv.ts.net:8443", "/api/runs").unwrap();
+        assert_eq!(url.as_str(), "https://srv.ts.net:8443/api/runs");
+        assert_eq!(url.host_str(), Some("srv.ts.net"));
+        // 真正会换 host 的协议相对形状（`//…` 与首字符后紧跟 `\`，后者在 WHATWG special
+        // scheme 下等价 `//`）被 /api/ 前缀闸挡在门外。
+        for bad in ["//evil.com/x", "/\\evil.com/x"] {
+            assert!(
+                build_remote_url("https://srv.ts.net", bad).is_err(),
+                "{bad:?} 应被拒"
+            );
+        }
+        // 而 `/api/` **之后**的反斜杠只是被归一成 `/`（path 变 `/api//evil.com/x`），host 不变
+        // ——它不是换目的地的形状，放行且安全。钉住真实行为，不写成假的"已拦下"。
+        let normalized = build_remote_url("https://srv.ts.net", "/api/\\evil.com/x").unwrap();
+        assert_eq!(normalized.host_str(), Some("srv.ts.net"));
+        assert_eq!(normalized.path(), "/api//evil.com/x");
+    }
+
+    #[test]
+    fn same_remote_origin_compares_scheme_host_port() {
+        // 直接测兜底防线本身——它在当前路径闸下不可达，内联进 build_remote_url 的话
+        // 任何测试都会先被路径闸拦下，判断删掉也全绿（F-6 mutation 实测过的安慰剂形状）。
+        let registered = Url::parse("https://srv.ts.net:8443").unwrap();
+        assert!(same_remote_origin(
+            &Url::parse("https://srv.ts.net:8443/api/x").unwrap(),
+            &registered
+        ));
+        for other in [
+            "http://srv.ts.net:8443/api/x",  // scheme 不同
+            "https://evil.com:8443/api/x",   // host 不同
+            "https://srv.ts.net:9999/api/x", // port 不同
+        ] {
+            assert!(
+                !same_remote_origin(&Url::parse(other).unwrap(), &registered),
+                "{other} 应判为异源"
+            );
+        }
+        // 默认端口等价：https 显式 443 与省略应同源。
+        assert!(same_remote_origin(
+            &Url::parse("https://a.example:443/api/x").unwrap(),
+            &Url::parse("https://a.example").unwrap()
+        ));
+    }
+
+    #[test]
+    fn resolve_remote_base_requires_registered_remote_entry() {
+        let root = temp_workspace("resolve-remote");
+        let registry_path = root.join("projects.json");
+        let rid = remote_project_id("https://srv.ts.net", "/work/repo");
+        remember_remote_at(&registry_path, "https://srv.ts.net", "/work/repo", "r", &rid)
+            .expect("remote entry");
+
+        // 已注册的 remote → 放行并回归一化 base。
+        assert_eq!(
+            resolve_remote_base(&registry_path, &rid).unwrap(),
+            "https://srv.ts.net"
+        );
+        // 未注册 id → 拒（webview 编个 id 也拿不到出网）。
+        assert!(resolve_remote_base(&registry_path, "not-registered").is_err());
+
+        // local 条目的 id → 拒（远程通道不给本地项目用）。
+        init_git(&root);
+        let local = remember_project_at(&registry_path, &root.to_string_lossy(), "http://127.0.0.1:8080")
+            .expect("local entry");
+        assert!(resolve_remote_base(&registry_path, &local.id).is_err());
+
+        remove_dir_all(root).expect("remove temp workspace");
+    }
+
+    #[test]
+    fn resolve_remote_base_revalidates_tampered_registry_url() {
+        // projects.json 是磁盘文件，可能被改成公网 http；每次出网都重新过网段校验 → 拒。
+        let root = temp_workspace("resolve-tampered");
+        let registry_path = root.join("projects.json");
+        let registry = DesktopProjectRegistry {
+            projects: vec![DesktopProjectProfile {
+                id: "tampered".into(),
+                name: "t".into(),
+                repo_root: "/work/repo".into(),
+                base_url: "http://8.8.8.8:8080".into(), // 篡改成公网 http
+                last_opened_at: 1,
+                kind: PROJECT_KIND_REMOTE.into(),
+            }],
+        };
+        save_project_registry(&registry_path, &registry).expect("save");
+        assert!(resolve_remote_base(&registry_path, "tampered").is_err());
+        remove_dir_all(root).expect("remove temp workspace");
+    }
+
+    #[test]
+    fn resolve_remote_base_rejects_id_base_url_mismatch() {
+        // 真正的篡改场景：把 base_url 换成攻击者的 **https** 域名（网段校验放行任意 https，
+        // 单靠它挡不住）而**保持 id 不变**，好让 Keychain 里按 id 存的真 token 被发去攻击者。
+        // id↔(base_url, repo_root) 绑定回验必须拦下它。
+        let root = temp_workspace("resolve-rebind");
+        let registry_path = root.join("projects.json");
+        let original_id = remote_project_id("https://srv.ts.net", "/work/repo");
+        let registry = DesktopProjectRegistry {
+            projects: vec![DesktopProjectProfile {
+                id: original_id.clone(), // id 保持原样
+                name: "t".into(),
+                repo_root: "/work/repo".into(),
+                base_url: "https://attacker.tld".into(), // 目的地被换
+                last_opened_at: 1,
+                kind: PROJECT_KIND_REMOTE.into(),
+            }],
+        };
+        save_project_registry(&registry_path, &registry).expect("save");
+        let result = resolve_remote_base(&registry_path, &original_id);
+        assert!(result.is_err(), "改了 base_url 却保持 id 的条目必须被拒");
+        assert!(result.unwrap_err().contains("篡改"));
+
+        // 对照：未篡改的条目照常放行。
+        let clean_root = temp_workspace("resolve-rebind-ok");
+        let clean_path = clean_root.join("projects.json");
+        remember_remote_at(&clean_path, "https://srv.ts.net", "/work/repo", "t", &original_id)
+            .expect("clean entry");
+        assert_eq!(
+            resolve_remote_base(&clean_path, &original_id).unwrap(),
+            "https://srv.ts.net"
+        );
+
+        remove_dir_all(root).expect("remove temp workspace");
+        remove_dir_all(clean_root).expect("remove temp workspace");
+    }
+
+    #[test]
+    fn normalize_http_method_allows_only_known_verbs() {
+        assert_eq!(normalize_http_method("get").unwrap(), reqwest::Method::GET);
+        assert_eq!(normalize_http_method(" POST ").unwrap(), reqwest::Method::POST);
+        for bad in ["CONNECT", "TRACE", "", "GET /x HTTP/1.1"] {
+            assert!(normalize_http_method(bad).is_err(), "{bad:?} 应被拒");
+        }
     }
 
     #[test]
