@@ -117,9 +117,15 @@ class LspClient:
     """最小同步 LSP 客户端：起子进程、读写帧、按 id 取响应。用作上下文管理器自动关停。"""
 
     def __init__(self, cmd: list[str], root_path: str, timeout: float = 20.0):
+        # 第三方语言服务器二进制（typescript-language-server 等）过 child_env 起：剥掉
+        # VortoCode 自己的操作密钥再交给它——语言服务器只需 PATH/HOME/locale/NODE_OPTIONS
+        # （child_env 全保留），对那 6 个密钥零合法需求。否则密钥就明文躺在第三方进程 env 里。
+        # 与 shell/mcp/hook/skill/worktree/self-improve/code-fix 同口径，收口 agent runtime
+        # 一线 spawn 点里的 LSP 这一个。（沙箱 runner、集成终端 PTY 等另有执行面，另行评估收口。）
+        from src.agents.sandbox import child_env
         self._proc = subprocess.Popen(
             cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, bufsize=0)
+            stderr=subprocess.DEVNULL, bufsize=0, env=child_env())
         self._root = os.path.realpath(root_path)
         self._timeout = timeout
         self._id = 0
