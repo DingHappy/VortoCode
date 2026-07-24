@@ -32,3 +32,9 @@ sha2 = "0.10"
 libc = "0.2"
 url = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# 远程 WS 桥接（R3a-2b）：必须由 Rust 侧发起握手并注入 token——tauri-plugin-websocket 的
+# headers 来自 JS，token 会先进 webview，违背 spec「webview 拿不到 token 原文」。
+# 版本/TLS 栈与 lock 中既有（经 tauri-plugin-websocket 传递）的一致，离线可复用缓存。
+tokio = { version = "1", features = ["sync", "time"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink"] }
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
