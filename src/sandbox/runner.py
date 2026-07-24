@@ -153,9 +153,14 @@ async def run_pytest(workspace: str, timeout: int = 120) -> RunResult:
 
 async def _exec_argv(argv, timeout: int, runtime: str, isolated: bool,
                      cwd: Optional[str] = None) -> RunResult:
+    # 过 child_env 剥操作密钥：OS-沙箱/host 分支跑的是仓库可控的 pytest（任意 conftest/测试
+    # 代码），密钥留在 env + 回退路径网络开放 = 可外带。Docker 分支的 docker CLI 本不需要这些
+    # 密钥、容器又拿镜像 env 非宿主 env，补上纯无害纵深。与 shell.py 的 run_command 同口径。
+    from src.agents.sandbox import child_env
     try:
         proc = await asyncio.create_subprocess_exec(
-            *argv, cwd=cwd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+            *argv, cwd=cwd, env=child_env(),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
         )
         out, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         return RunResult(success=proc.returncode == 0, stdout=out.decode(errors="replace"),
@@ -177,9 +182,14 @@ def _code_argv(code: str, language: str) -> list[str]:
 
 async def _run_code_argv(argv: list[str], timeout: int, *, runtime: str,
                          isolated: bool, cwd: str) -> RunResult:
+    # 过 child_env 剥操作密钥：这里跑的正是 `python3 -c / node -e / bash -c` 生成代码（可投毒），
+    # OS-沙箱回退路径网络开放，密钥留在 env 即等于把中转站 key 递到不可信代码手里可外带。
+    # 目标项目自身若需某密钥，走 VORTOCODE_ENV_PASSTHROUGH 显式放行。与 shell.py 同口径。
+    from src.agents.sandbox import child_env
     try:
         proc = await asyncio.create_subprocess_exec(
-            *argv, cwd=cwd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            *argv, cwd=cwd, env=child_env(),
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         )
         out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         return RunResult(
