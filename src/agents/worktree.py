@@ -265,8 +265,11 @@ async def run_isolated_task(repo_root, wid: str, description: str,
                 description, mode=mode, emit=lambda _t: None
             )  # 锁外，真并发
         diff = await _git_op(collect_diff, path)           # 先收 diff，再跑测试
+        # 空 diff 没有可验证之物："绿测试 + 空 diff"永远不构成成功（上层要求 diff 非空才算绿），
+        # 跑全量测试纯烧时间（本仓一轮 ~4 分钟）——短路跳过，让上层直接走 no-op/通道故障分类。
         # pytest 慢且阻塞：丢线程跑（锁外），既不冻 UI、并行时多个测试也能真并发（各自独立 worktree）
-        verification = (await asyncio.to_thread(run_tests, path, test_cmd)) if test_cmd else None
+        verification = (await asyncio.to_thread(run_tests, path, test_cmd)) \
+            if (test_cmd and diff.strip()) else None
         return diff, conclusion, verification
     finally:
         await _git_op(remove_worktree, repo_root, path)
@@ -297,10 +300,18 @@ async def run_dependent_on_branch(repo_root, wid: str, branch: str, description:
     try:
         agent = build_agent(str(path))
         from src.agents.taint import merge_nested_taint
-        with merge_nested_taint():
-            conclusion = await agent.run_turn(
-                description, mode="build", emit=lambda _t: None
-            )  # 锁外
+        try:
+            with merge_nested_taint():
+                conclusion = await agent.run_turn(
+                    description, mode="build", emit=lambda _t: None
+                )  # 锁外
+        except Exception as e:  # noqa: BLE001 —— 通道故障（LLM 502/超时）：如实报因，branch 不动
+            return {"ok": False, "conclusion": "",
+                    "output": "LLM 通道故障: " + (str(e) or repr(e))[:300]}
+        # 子 agent 没改任何文件：不必烧一轮全量测试，直接如实报"无改动"（与 commit 判定同义提前）
+        st = await _git_op(_git, path, "status", "--porcelain", check=False)
+        if not (st.stdout or "").strip():
+            return {"ok": False, "conclusion": conclusion, "output": "无改动（子 agent 未修改任何文件）"}
         ver = (await asyncio.to_thread(run_tests, path, test_cmd)) if test_cmd else {"ok": True, "output": ""}
         if not ver["ok"]:                                  # 自测没过：不提交，branch 保持原样
             return {"ok": False, "conclusion": conclusion, "output": ver["output"][-1500:]}
