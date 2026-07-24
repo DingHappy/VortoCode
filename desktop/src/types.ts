@@ -907,6 +907,9 @@ export interface GatewayRecoveryRecord {
 export interface DesktopProjectProfile {
   id: string;
   name: string;
+  // local：本机 Git 工作区（repoRoot 为本机路径）；remote：连服务器上的 runtime
+  // （repoRoot 为服务器侧路径、baseUrl 为远端 server_url）。旧注册表条目缺此字段时后端默认 local。
+  kind: "local" | "remote";
   repoRoot: string;
   baseUrl: string;
   lastOpenedAt: number;
