@@ -203,3 +203,57 @@ async def test_run_pytest_uses_available_os_sandbox(monkeypatch, tmp_path):
     r = await runner.run_pytest(str(tmp_path), timeout=5)
     assert r.success and r.runtime == "bubblewrap" and r.isolated
     assert captured["argv"][0] == "bwrap" and captured["cwd"] == str(tmp_path)
+
+
+# ── 子进程凭据隔离：生成代码/测试子进程 env 必须过 child_env ──────────────────
+# runner 跑的是任意生成代码（python3 -c / node -e / bash -c）与仓库可控 pytest，且 OS-沙箱
+# 回退路径网络开放——密钥留在 env 即等于把中转站 key 递到不可信代码手里可外带。与 /api/runs
+# （shell.py 走 child_env）同信任层，必须同口径。
+
+@pytest.mark.asyncio
+async def test_run_code_host_strips_operating_secret(monkeypatch):
+    """host escape hatch 路径起的生成代码读不到操作密钥（真子进程，端到端）。"""
+    monkeypatch.setattr(runner, "docker_available", lambda: False)
+    monkeypatch.setenv("VORTOCODE_SANDBOX", "off")          # 确定性走 host 分支（不依赖本机沙箱）
+    monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-must-not-leak")
+    monkeypatch.delenv("VORTOCODE_ENV_PASSTHROUGH", raising=False)
+    r = await runner.run_code(
+        "import os; print('KEY=[' + os.environ.get('OPENAI_API_KEY', '') + ']')", "python")
+    assert r.success, r.error or r.stdout
+    assert "KEY=[]" in r.stdout, r.stdout                   # 密钥被剥，生成代码读到空
+
+
+@pytest.mark.asyncio
+async def test_run_code_host_honors_env_passthrough(monkeypatch):
+    """allowlist 逃生口放行的密钥能被生成代码读到——钉住 child_env 的 allowlist 分支生效
+    （区别于会连放行项也一并剥掉的硬编码黑名单）。注意：撤掉补丁本测仍绿（env 继承同值），
+    故它不承载「剥密钥」这条安全属性——那由上面两条 placebo-proof 测试钉住。"""
+    monkeypatch.setattr(runner, "docker_available", lambda: False)
+    monkeypatch.setenv("VORTOCODE_SANDBOX", "off")
+    monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-allowed")
+    monkeypatch.setenv("VORTOCODE_ENV_PASSTHROUGH", "OPENAI_API_KEY")
+    r = await runner.run_code(
+        "import os; print('KEY=[' + os.environ.get('OPENAI_API_KEY', '') + ']')", "python")
+    assert r.success, r.error
+    assert "KEY=[sk-allowed]" in r.stdout, r.stdout
+
+
+@pytest.mark.asyncio
+async def test_exec_argv_passes_child_env(monkeypatch):
+    """_exec_argv（run_pytest 用的执行助手）给子进程显式传过 child_env 的 env——剥密钥、保 PATH。"""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-must-not-leak")
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.delenv("VORTOCODE_ENV_PASSTHROUGH", raising=False)
+    captured = {}
+
+    async def _fake_exec(*argv, **kwargs):
+        captured["env"] = kwargs.get("env")
+        raise RuntimeError("_stop_after_capture")          # 捕获后即止，不真起进程
+
+    monkeypatch.setattr(runner.asyncio, "create_subprocess_exec", _fake_exec)
+    await runner._exec_argv(["true"], timeout=5, runtime="host", isolated=False)
+    assert captured["env"] is not None, "必须显式传 env（env=None=继承整套=泄漏）"
+    assert "OPENAI_API_KEY" not in captured["env"], "操作密钥必须被 child_env 剥出"
+    assert captured["env"].get("PATH") == "/usr/bin", "非密钥项须保留"
