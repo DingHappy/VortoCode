@@ -4,14 +4,14 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::{create_dir_all, read, read_to_string, remove_file, rename, OpenOptions};
 use std::io::{ErrorKind, Write};
-use std::net::{Ipv4Addr, TcpListener};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, TcpListener};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{webview::PageLoadEvent, AppHandle, Manager, State};
 use tauri_plugin_shell::ShellExt;
-use url::Url;
+use url::{Host, Url};
 
 const MAX_WORKSPACE_FILES: usize = 6_000;
 const MAX_PREVIEW_BYTES: u64 = 1024 * 1024;
@@ -254,13 +254,13 @@ fn llm_provider(base_url: &str) -> &'static str {
     }
 }
 
+// 系统 Keychain 底层：按 (service, account) 存取一条 generic password。LLM key 与远程连接
+// token 都走它——共享一次 Security framework FFI，不各写一遍 unsafe。
 #[cfg(target_os = "macos")]
-mod llm_keychain {
+mod platform_keychain {
     use std::ffi::c_void;
     use std::ptr::{null, null_mut};
 
-    const SERVICE: &[u8] = b"com.vortocode.desktop.llm";
-    const ACCOUNT: &[u8] = b"default";
     const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 
     #[link(name = "Security", kind = "framework")]
@@ -304,14 +304,14 @@ mod llm_keychain {
         format!("macOS Keychain {operation}失败（OSStatus {status}）")
     }
 
-    unsafe fn find_item() -> Result<Option<*mut c_void>, String> {
+    unsafe fn find_item(service: &[u8], account: &[u8]) -> Result<Option<*mut c_void>, String> {
         let mut item = null_mut();
         let status = SecKeychainFindGenericPassword(
             null(),
-            SERVICE.len() as u32,
-            SERVICE.as_ptr().cast(),
-            ACCOUNT.len() as u32,
-            ACCOUNT.as_ptr().cast(),
+            service.len() as u32,
+            service.as_ptr().cast(),
+            account.len() as u32,
+            account.as_ptr().cast(),
             null_mut(),
             null_mut(),
             &mut item,
@@ -325,17 +325,17 @@ mod llm_keychain {
         Ok(Some(item))
     }
 
-    pub fn read() -> Result<Option<String>, String> {
+    pub fn read(service: &[u8], account: &[u8]) -> Result<Option<String>, String> {
         unsafe {
             let mut password_length = 0_u32;
             let mut password_data = null_mut();
             let mut item = null_mut();
             let status = SecKeychainFindGenericPassword(
                 null(),
-                SERVICE.len() as u32,
-                SERVICE.as_ptr().cast(),
-                ACCOUNT.len() as u32,
-                ACCOUNT.as_ptr().cast(),
+                service.len() as u32,
+                service.as_ptr().cast(),
+                account.len() as u32,
+                account.as_ptr().cast(),
                 &mut password_length,
                 &mut password_data,
                 &mut item,
@@ -355,13 +355,13 @@ mod llm_keychain {
             }
             String::from_utf8(payload)
                 .map(Some)
-                .map_err(|_| "macOS Keychain 中的模型配置不是有效 UTF-8".to_string())
+                .map_err(|_| "macOS Keychain 中的数据不是有效 UTF-8".to_string())
         }
     }
 
-    pub fn write(payload: &str) -> Result<(), String> {
+    pub fn write(service: &[u8], account: &[u8], payload: &str) -> Result<(), String> {
         unsafe {
-            if let Some(item) = find_item()? {
+            if let Some(item) = find_item(service, account)? {
                 let status = SecKeychainItemModifyAttributesAndData(
                     item,
                     null(),
@@ -377,10 +377,10 @@ mod llm_keychain {
             }
             let status = SecKeychainAddGenericPassword(
                 null_mut(),
-                SERVICE.len() as u32,
-                SERVICE.as_ptr().cast(),
-                ACCOUNT.len() as u32,
-                ACCOUNT.as_ptr().cast(),
+                service.len() as u32,
+                service.as_ptr().cast(),
+                account.len() as u32,
+                account.as_ptr().cast(),
                 payload.len() as u32,
                 payload.as_ptr().cast(),
                 null_mut(),
@@ -393,9 +393,9 @@ mod llm_keychain {
         }
     }
 
-    pub fn delete() -> Result<(), String> {
+    pub fn delete(service: &[u8], account: &[u8]) -> Result<(), String> {
         unsafe {
-            let Some(item) = find_item()? else {
+            let Some(item) = find_item(service, account)? else {
                 return Ok(());
             };
             let status = SecKeychainItemDelete(item);
@@ -410,15 +410,43 @@ mod llm_keychain {
 }
 
 #[cfg(not(target_os = "macos"))]
-mod llm_keychain {
-    pub fn read() -> Result<Option<String>, String> {
+mod platform_keychain {
+    pub fn read(_service: &[u8], _account: &[u8]) -> Result<Option<String>, String> {
         Ok(None)
     }
-    pub fn write(_payload: &str) -> Result<(), String> {
+    pub fn write(_service: &[u8], _account: &[u8], _payload: &str) -> Result<(), String> {
         Err("当前预览仅在 macOS 提供系统 Keychain".into())
     }
-    pub fn delete() -> Result<(), String> {
+    pub fn delete(_service: &[u8], _account: &[u8]) -> Result<(), String> {
         Ok(())
+    }
+}
+
+mod llm_keychain {
+    use super::platform_keychain;
+    const SERVICE: &[u8] = b"com.vortocode.desktop.llm";
+    const ACCOUNT: &[u8] = b"default";
+    pub fn read() -> Result<Option<String>, String> {
+        platform_keychain::read(SERVICE, ACCOUNT)
+    }
+    pub fn write(payload: &str) -> Result<(), String> {
+        platform_keychain::write(SERVICE, ACCOUNT, payload)
+    }
+    pub fn delete() -> Result<(), String> {
+        platform_keychain::delete(SERVICE, ACCOUNT)
+    }
+}
+
+// 远程连接 token：与 LLM key 分开的 Keychain 服务，按项目 id 作 account 以支持多远端。
+// R3a-1 只用 write/delete（注册/注销）；连接时的 read 在 R3a-2 接入。
+mod remote_token_keychain {
+    use super::platform_keychain;
+    const SERVICE: &[u8] = b"com.vortocode.desktop.remote";
+    pub fn write(account: &str, token: &str) -> Result<(), String> {
+        platform_keychain::write(SERVICE, account.as_bytes(), token)
+    }
+    pub fn delete(account: &str) -> Result<(), String> {
+        platform_keychain::delete(SERVICE, account.as_bytes())
     }
 }
 
@@ -607,6 +635,16 @@ struct GatewayProcessStatus {
     message: String,
 }
 
+// 项目模式：local=本机 Git 工作区（现状）；remote=连服务器上的 runtime，repo_root 是
+// 服务器侧路径、base_url 是远端 server_url。旧 projects.json 无 kind 字段 → serde 默认 local，
+// 向后兼容。local 注册流（remember_project_at）强不变量一点不动，remote 走独立显式校验旁路。
+const PROJECT_KIND_LOCAL: &str = "local";
+const PROJECT_KIND_REMOTE: &str = "remote";
+
+fn default_project_kind() -> String {
+    PROJECT_KIND_LOCAL.into()
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DesktopProjectProfile {
@@ -615,6 +653,8 @@ struct DesktopProjectProfile {
     repo_root: String,
     base_url: String,
     last_opened_at: u64,
+    #[serde(default = "default_project_kind")]
+    kind: String,
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -776,6 +816,66 @@ fn normalize_local_base_url(base_url: &str) -> Result<String, String> {
         return Err("runtime 端口必须在 1–65535 之间".into());
     }
     Ok(normalized.to_string())
+}
+
+// CGNAT / Tailscale IPv4 段：100.64.0.0/10（Tailscale 的 100.x 落在此）。
+fn is_cgnat_ipv4(ip: Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    octets[0] == 100 && (64..=127).contains(&octets[1])
+}
+
+// Unique Local IPv6：fc00::/7——覆盖 Tailscale 的 fd7a:… ULA 地址。
+fn is_unique_local_ipv6(ip: Ipv6Addr) -> bool {
+    (ip.segments()[0] & 0xfe00) == 0xfc00
+}
+
+// 「可信内网/Tailscale」地址：RFC1918 私网、loopback、CGNAT/Tailscale 段。
+fn is_trusted_private_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_private() || v4.is_loopback() || is_cgnat_ipv4(v4),
+        IpAddr::V6(v6) => v6.is_loopback() || is_unique_local_ipv6(v6),
+    }
+}
+
+// 远程 server_url 网段校验（spec §连接层安全 3）：Desktop 不自实现 TLS 信任管理，故
+// **非 https 且非 RFC1918/CGNAT/Tailscale 网段的地址一律拒绝注册**（fail-closed）。
+// - https：假定传输层由 Tailscale/反代兜底，任意 host 放行；
+// - http：只收字面私网/Tailscale IP——http+域名需 DNS 解析才能判段，存在 TOCTOU，直接拒
+//   （话术指去装 Tailscale 或改用 https）。
+// 归一化返回 `scheme://host[:port]`（去 path/query/fragment，供 gateway 拼 `${base}${path}`）。
+fn validate_remote_server_url(raw: &str) -> Result<String, String> {
+    let trimmed = raw.trim().trim_end_matches('/');
+    let parsed = Url::parse(trimmed).map_err(|error| format!("服务器地址无法解析：{error}"))?;
+    let scheme = parsed.scheme();
+    if scheme != "http" && scheme != "https" {
+        return Err(format!("服务器地址必须以 http:// 或 https:// 开头，收到 {scheme}://"));
+    }
+    if !parsed.path().is_empty() && parsed.path() != "/" {
+        return Err("服务器地址不能包含路径（只填到主机与端口，如 https://host:8080）".into());
+    }
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err("服务器地址不能包含查询参数或片段".into());
+    }
+    let host = parsed.host().ok_or("服务器地址缺少主机名")?;
+    let allowed = scheme == "https"
+        || match host {
+            Host::Ipv4(v4) => is_trusted_private_ip(IpAddr::V4(v4)),
+            Host::Ipv6(v6) => is_trusted_private_ip(IpAddr::V6(v6)),
+            Host::Domain(_) => false, // http+域名：DNS 判段有 TOCTOU，fail-closed
+        };
+    if !allowed {
+        return Err(
+            "非 https 地址只接受 RFC1918 内网或 100.64/10（Tailscale/CGNAT）IP；\
+             公网请用 https，或经 Tailscale 内网访问"
+                .into(),
+        );
+    }
+    let host_str = parsed.host_str().ok_or("服务器地址缺少主机名")?;
+    let mut base = format!("{scheme}://{host_str}");
+    if let Some(port) = parsed.port() {
+        base.push_str(&format!(":{port}"));
+    }
+    Ok(base)
 }
 
 fn project_registry_path(app: &AppHandle) -> Result<PathBuf, String> {
@@ -1009,6 +1109,7 @@ fn remember_project_at(
         repo_root: root.to_string_lossy().to_string(),
         base_url: normalized_url,
         last_opened_at: now_epoch_seconds()?,
+        kind: PROJECT_KIND_LOCAL.into(),
     };
     let mut registry = load_project_registry(path)?;
     let profile = upsert_project(&mut registry, profile);
@@ -1133,7 +1234,147 @@ fn forget_desktop_project(
     app: AppHandle,
     project_id: String,
 ) -> Result<Vec<DesktopProjectProfile>, String> {
-    forget_project_at(&project_registry_path(&app)?, &project_id)
+    let path = project_registry_path(&app)?;
+    // 若被遗忘的是远程项目，一并清掉它在 Keychain 里的连接 token——不留凭据残迹。
+    let registry = load_project_registry(&path)?;
+    if let Some(project) = registry.projects.iter().find(|item| item.id == project_id) {
+        if project.kind == PROJECT_KIND_REMOTE {
+            remote_token_keychain::delete(&project_id)?;
+        }
+    }
+    forget_project_at(&path, &project_id)
+}
+
+// ── 远程工作区注册（R3a）──────────────────────────────────────────────────────
+// 与本地注册（remember_project_at）完全分开：local 流的强不变量（Git 根 + 本机 URL）一点
+// 不动；remote 是独立、显式校验（validate_remote_server_url）的旁路。repo_root 存服务器侧
+// 路径原样、base_url 存归一化后的远端 server_url、token 入独立 Keychain 服务（按 id 作 account）。
+
+// 远程项目 id：以「remote\0url\0服务器侧根」哈希——与本地 id（哈希本机路径）不同源、不碰撞。
+fn remote_project_id(normalized_url: &str, remote_repo_root: &str) -> String {
+    format!(
+        "{:x}",
+        Sha256::digest(format!("remote\0{normalized_url}\0{remote_repo_root}").as_bytes())
+    )[..20]
+        .to_string()
+}
+
+fn remote_project_name(name: &str, remote_repo_root: &str, normalized_url: &str) -> String {
+    let trimmed = name.trim();
+    if !trimmed.is_empty() {
+        return trimmed.to_string();
+    }
+    remote_repo_root
+        .trim_end_matches('/')
+        .rsplit('/')
+        .find(|segment| !segment.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| normalized_url.to_string())
+}
+
+fn remember_remote_at(
+    path: &Path,
+    normalized_url: &str,
+    remote_repo_root: &str,
+    name: &str,
+    id: &str,
+) -> Result<DesktopProjectProfile, String> {
+    let profile = DesktopProjectProfile {
+        id: id.to_string(),
+        name: remote_project_name(name, remote_repo_root, normalized_url),
+        repo_root: remote_repo_root.trim().to_string(),
+        base_url: normalized_url.to_string(),
+        last_opened_at: now_epoch_seconds()?,
+        kind: PROJECT_KIND_REMOTE.into(),
+    };
+    let mut registry = load_project_registry(path)?;
+    let profile = upsert_project(&mut registry, profile);
+    save_project_registry(path, &registry)?;
+    Ok(profile)
+}
+
+fn remember_remote_flow(
+    path: &Path,
+    normalized_url: &str,
+    remote_repo_root: &str,
+    name: &str,
+    id: &str,
+    known: bool,
+    confirmed: bool,
+) -> Result<DesktopProjectProfile, String> {
+    // 与本地同理：新远端未获用户确认一律拒绝，且不留任何注册表痕迹（fail-closed）。
+    if !known && !confirmed {
+        return Err("新远程工作区注册未获用户确认，已取消".into());
+    }
+    remember_remote_at(path, normalized_url, remote_repo_root, name, id)
+}
+
+async fn confirm_remote_registration(app: &AppHandle, server_url: &str) -> Result<bool, String> {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    // 原生对话框在 webview 进程之外：被注入的页面脚本无法替用户点确认，静默把 token 发往
+    // 攻击者的 server_url 因此不生效。明示「token 将随每次请求发往该地址」。
+    let message = format!(
+        "网页层请求注册一个远程工作区：\n\n{server_url}\n\n注册后你的访问 token 将随每次请求发往该地址（存入系统 Keychain）。仅当这是你信任、且刚在界面上输入的服务器时才确认。",
+    );
+    let app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .message(message)
+            .title("确认注册远程工作区")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "确认注册".into(),
+                "取消".into(),
+            ))
+            .blocking_show()
+    })
+    .await
+    .map_err(|error| format!("远程注册确认对话框失败：{error}"))
+}
+
+#[tauri::command]
+async fn remember_remote_project(
+    app: AppHandle,
+    server_url: String,
+    token: String,
+    remote_repo_root: String,
+    name: String,
+) -> Result<DesktopProjectProfile, String> {
+    let path = project_registry_path(&app)?;
+    let normalized = validate_remote_server_url(&server_url)?;
+    if token.trim().is_empty() {
+        return Err("远程工作区需要访问 token（服务器已设 VORTOCODE_API_TOKEN）".into());
+    }
+    let id = remote_project_id(&normalized, remote_repo_root.trim());
+    let known = load_project_registry(&path)?
+        .projects
+        .iter()
+        .any(|project| project.id == id);
+    let confirmed = if known {
+        false // 已注册：不弹窗，flow 靠 known 放行
+    } else {
+        confirm_remote_registration(&app, &normalized).await?
+    };
+    // 放行才写 token：未确认的新远端不留 Keychain 痕迹（与注册表 fail-closed 同口径）。
+    if !known && !confirmed {
+        return Err("新远程工作区注册未获用户确认，已取消".into());
+    }
+    remote_token_keychain::write(&id, token.trim())?;
+    let result = remember_remote_flow(
+        &path,
+        &normalized,
+        remote_repo_root.trim(),
+        &name,
+        &id,
+        known,
+        confirmed,
+    );
+    // 新远端落库失败 → 清掉刚写的 token，不留孤儿凭据。已注册的重注册不清（那条 token
+    // 是刚更新的、且旧注册表条目仍在，删了会让在用条目失去凭据）。
+    if result.is_err() && !known {
+        let _ = remote_token_keychain::delete(&id);
+    }
+    result
 }
 
 #[tauri::command]
@@ -1283,6 +1524,10 @@ fn workspace_fence_roots(
         registry
             .projects
             .iter()
+            // 只并入 local 条目：remote 的 repo_root 是**服务器侧**路径（webview 传入、未经本地
+            // 校验），绝不能当本机受信根喂进本地文件读取围栏——否则 repo_root="/" 之类会把本地读
+            // 面撑到整个文件系统（远程文件走 R3a-2 的 server API，不经本地围栏）。
+            .filter(|project| project.kind != PROJECT_KIND_REMOTE)
             .map(|project| PathBuf::from(&project.repo_root)),
     );
     roots.extend(managed_base);
@@ -2137,6 +2382,7 @@ pub fn run() {
             clear_llm_profile,
             list_desktop_projects,
             remember_desktop_project,
+            remember_remote_project,
             pick_desktop_project,
             forget_desktop_project,
             get_gateway_recovery,
@@ -2470,6 +2716,160 @@ mod tests {
         remove_dir_all(root).expect("remove temp workspace");
     }
 
+    // ── R3a 远程工作区：网段校验 + 注册流 + 向后兼容 ────────────────────────────
+
+    #[test]
+    fn validate_remote_server_url_accepts_https_and_private_http() {
+        // https：任意 host 放行（传输层假定 Tailscale/反代兜底），归一化去尾斜杠。
+        assert_eq!(
+            validate_remote_server_url("https://vorto.example.com/").unwrap(),
+            "https://vorto.example.com"
+        );
+        assert_eq!(
+            validate_remote_server_url("https://100.107.1.2:8443").unwrap(),
+            "https://100.107.1.2:8443"
+        );
+        // http + 私网/CGNAT/Tailscale IP：放行。
+        for url in [
+            "http://192.168.1.10:8080",
+            "http://10.0.0.5:8080",
+            "http://172.16.3.4:8080",
+            "http://127.0.0.1:8080",
+            "http://100.64.0.1:8080", // CGNAT/Tailscale 100.64/10 下沿
+            "http://100.127.9.9:8080",
+        ] {
+            assert!(validate_remote_server_url(url).is_ok(), "{url} 应放行");
+        }
+    }
+
+    #[test]
+    fn validate_remote_server_url_rejects_public_http_domains_and_paths() {
+        for url in [
+            "http://8.8.8.8:8080",           // 公网 IP
+            "http://93.184.216.34",          // 公网 IP
+            "http://vorto.example.com:8080", // http+域名：DNS 判段有 TOCTOU，拒
+            "http://100.128.0.1",            // 100.128 已超出 100.64/10
+            "http://172.32.0.1",             // 172.32 超出 172.16/12
+            "ftp://192.168.1.10",            // 非 http/https
+            "https://host:8080/api",         // 带路径
+            "https://host:8080?x=1",         // 带查询
+            "not a url",
+        ] {
+            assert!(validate_remote_server_url(url).is_err(), "{url} 应被拒");
+        }
+    }
+
+    #[test]
+    fn validate_remote_server_url_normalizes_default_ports() {
+        assert_eq!(
+            validate_remote_server_url("https://host/").unwrap(),
+            "https://host"
+        );
+        assert_eq!(
+            validate_remote_server_url("https://host:443").unwrap(),
+            "https://host" // https 默认端口省略
+        );
+        assert_eq!(
+            validate_remote_server_url("http://192.168.0.1:80").unwrap(),
+            "http://192.168.0.1" // http 默认端口省略
+        );
+        assert_eq!(
+            validate_remote_server_url("https://host:9000").unwrap(),
+            "https://host:9000"
+        );
+    }
+
+    #[test]
+    fn remote_project_id_stable_and_distinct_from_local() {
+        let a = remote_project_id("https://s.example", "/srv/repo");
+        assert_eq!(a, remote_project_id("https://s.example", "/srv/repo")); // 确定性
+        assert_ne!(a, remote_project_id("https://s.example", "/srv/other")); // 换根
+        assert_ne!(a, remote_project_id("https://t.example", "/srv/repo")); // 换 url
+        assert_ne!(a, project_id(Path::new("/srv/repo"))); // 与本地 id 不同源
+        assert_eq!(a.len(), 20);
+    }
+
+    #[test]
+    fn remember_remote_at_writes_remote_entry_and_forget_removes() {
+        let root = temp_workspace("remote-registry");
+        let registry_path = root.join("projects.json");
+        let id = remote_project_id("https://srv.ts.net:8080", "/work/vortocode");
+        let profile = remember_remote_at(
+            &registry_path,
+            "https://srv.ts.net:8080",
+            "/work/vortocode",
+            "", // 空名 → 从 repo_root 末段派生
+            &id,
+        )
+        .expect("remote entry");
+        assert_eq!(profile.kind, PROJECT_KIND_REMOTE);
+        assert_eq!(profile.base_url, "https://srv.ts.net:8080");
+        assert_eq!(profile.repo_root, "/work/vortocode"); // 服务器侧路径原样，未 canonicalize
+        assert_eq!(profile.name, "vortocode");
+        assert_eq!(profile.id, id);
+        let loaded = load_project_registry(&registry_path).unwrap();
+        assert_eq!(loaded.projects.len(), 1);
+        assert_eq!(loaded.projects[0].kind, PROJECT_KIND_REMOTE);
+        let remaining = forget_project_at(&registry_path, &id).unwrap();
+        assert!(remaining.is_empty());
+        remove_dir_all(root).expect("remove temp workspace");
+    }
+
+    #[test]
+    fn remember_remote_flow_rejects_unconfirmed_new_leaves_no_trace() {
+        let root = temp_workspace("remote-flow");
+        let registry_path = root.join("projects.json");
+        let id = remote_project_id("https://srv", "/r");
+        // 新 + 未确认 → 拒绝，且注册表零痕迹（fail-closed）。
+        assert!(
+            remember_remote_flow(&registry_path, "https://srv", "/r", "n", &id, false, false)
+                .is_err()
+        );
+        assert!(load_project_registry(&registry_path)
+            .unwrap()
+            .projects
+            .is_empty());
+        // 新 + 已确认 → 落库。
+        assert!(
+            remember_remote_flow(&registry_path, "https://srv", "/r", "n", &id, false, true).is_ok()
+        );
+        assert_eq!(
+            load_project_registry(&registry_path).unwrap().projects.len(),
+            1
+        );
+        // 已注册（known）→ 无需再确认也放行（续期）。
+        assert!(
+            remember_remote_flow(&registry_path, "https://srv", "/r", "n", &id, true, false).is_ok()
+        );
+        remove_dir_all(root).expect("remove temp workspace");
+    }
+
+    #[test]
+    fn project_profile_without_kind_field_deserializes_as_local() {
+        // 旧 projects.json 无 kind 字段 → serde 默认 local（向后兼容）。
+        let json = r#"{"id":"x","name":"n","repoRoot":"/tmp/x","baseUrl":"http://127.0.0.1:8080","lastOpenedAt":1}"#;
+        let profile: DesktopProjectProfile =
+            serde_json::from_str(json).expect("deserialize legacy");
+        assert_eq!(profile.kind, PROJECT_KIND_LOCAL);
+    }
+
+    #[test]
+    fn local_and_remote_entries_coexist_in_registry() {
+        let root = temp_workspace("coexist");
+        init_git(&root);
+        let registry_path = root.join("projects.json");
+        remember_project_at(&registry_path, &root.to_string_lossy(), "http://127.0.0.1:8080")
+            .expect("local");
+        let rid = remote_project_id("https://srv", "/r");
+        remember_remote_at(&registry_path, "https://srv", "/r", "remote-one", &rid).expect("remote");
+        let loaded = load_project_registry(&registry_path).unwrap();
+        assert_eq!(loaded.projects.len(), 2);
+        let kinds: Vec<&str> = loaded.projects.iter().map(|item| item.kind.as_str()).collect();
+        assert!(kinds.contains(&PROJECT_KIND_LOCAL));
+        assert!(kinds.contains(&PROJECT_KIND_REMOTE));
+        remove_dir_all(root).expect("remove temp workspace");
+    }
+
     #[test]
     fn project_registration_gate_flags_only_new_roots() {
         let root = temp_workspace("registry-gate");
@@ -2578,6 +2978,7 @@ mod tests {
                     repo_root: "/tmp/one".into(),
                     base_url: "http://127.0.0.1:8080".into(),
                     last_opened_at: 2,
+                    kind: PROJECT_KIND_LOCAL.into(),
                 },
                 DesktopProjectProfile {
                     id: "two".into(),
@@ -2585,6 +2986,7 @@ mod tests {
                     repo_root: "/tmp/two".into(),
                     base_url: "http://127.0.0.1:8081".into(),
                     last_opened_at: 1,
+                    kind: PROJECT_KIND_LOCAL.into(),
                 },
             ],
         };
@@ -2609,6 +3011,7 @@ mod tests {
                     repo_root: format!("/tmp/project-{index}"),
                     base_url: "http://127.0.0.1:8080".into(),
                     last_opened_at: index as u64,
+                    kind: PROJECT_KIND_LOCAL.into(),
                 },
             );
         }
@@ -3135,6 +3538,7 @@ mod tests {
                 repo_root: "/tmp/fence-registry".into(),
                 base_url: "http://127.0.0.1:8080".into(),
                 last_opened_at: 1,
+                kind: PROJECT_KIND_LOCAL.into(),
             }],
         };
         let recoveries = GatewayRecoveryRegistry {
@@ -3184,6 +3588,45 @@ mod tests {
                 "fence roots missing {expected}"
             );
         }
+    }
+
+    #[test]
+    fn workspace_fence_roots_exclude_remote_entries() {
+        // remote 条目的 repo_root 是服务器侧路径（webview 传入、未校验）——绝不能进本地读围栏，
+        // 否则 repo_root="/" 之类会把本地读面撑到整个文件系统。回归钉死 F-6 查实的 HIGH 洞。
+        let registry = DesktopProjectRegistry {
+            projects: vec![
+                DesktopProjectProfile {
+                    id: "local".into(),
+                    name: "local".into(),
+                    repo_root: "/tmp/fence-local".into(),
+                    base_url: "http://127.0.0.1:8080".into(),
+                    last_opened_at: 2,
+                    kind: PROJECT_KIND_LOCAL.into(),
+                },
+                DesktopProjectProfile {
+                    id: "remote".into(),
+                    name: "remote".into(),
+                    repo_root: "/".into(), // 恶意/巧合的服务器侧路径
+                    base_url: "https://srv.ts.net".into(),
+                    last_opened_at: 1,
+                    kind: PROJECT_KIND_REMOTE.into(),
+                },
+            ],
+        };
+        let roots = workspace_fence_roots(
+            &registry,
+            &GatewayRecoveryRegistry::default(),
+            None,
+            &GatewaySupervisorInner::default(),
+        );
+        assert!(roots.contains(&PathBuf::from("/tmp/fence-local")));
+        assert!(
+            !roots.contains(&PathBuf::from("/")),
+            "remote 条目的 repo_root 不得进本地读围栏"
+        );
+        // 端到端：即便围栏只含 local 根，请求 remote 的 "/" 也不获授权。
+        assert!(fence_workspace_root(&roots, "/").is_err());
     }
 
     fn local_http_server(
