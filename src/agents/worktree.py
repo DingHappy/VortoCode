@@ -227,8 +227,14 @@ def run_tests(worktree, cmd: Optional[list] = None, timeout: int = 600, *,
                 "sandbox": evidence, "warning": ""}
     exec_cmd = (sandboxed_exec_argv(worktree, cmd, backend=decision.backend)
                 if decision.isolated else cmd)
+    env = child_env()
+    if decision.isolated:
+        # 让被测代码看得见"我在沙箱里"。沙箱按设计禁掉 fork PTY / 起子进程等能力，
+        # 依赖这些能力的用例在这里必红——那是环境限制，不是候选改动的问题。
+        # 没有这个标记，流水线的验证关会对**任何**改动一律判红（真机复盘：护城河曾因此全堵）。
+        env = {**env, "VORTOCODE_IN_SANDBOX": "1"}
     try:
-        r = subprocess.run(exec_cmd, cwd=str(worktree), env=child_env(),
+        r = subprocess.run(exec_cmd, cwd=str(worktree), env=env,
                            capture_output=True, text=True, timeout=timeout)
         warning = decision.reason if not decision.isolated else ""
         combined = r.stdout + r.stderr + (("\n" + warning) if warning else "")

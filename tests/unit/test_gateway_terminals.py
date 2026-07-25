@@ -8,7 +8,14 @@ import pytest
 from src.gateway.terminals import TerminalManager
 
 
-pytestmark = pytest.mark.skipif(os.name != "posix", reason="PTY is POSIX-only")
+pytestmark = [
+    pytest.mark.skipif(os.name != "posix", reason="PTY is POSIX-only"),
+    # OS 沙箱（seatbelt/bubblewrap）按设计禁掉 fork PTY，这几条在沙箱里必红。
+    # 隔离 dev 流水线的验证关就在沙箱里跑全量测试——不跳过的话，**任何**候选改动都会被
+    # 判红，护城河直接堵死（真机复盘 2026-07-25）。宿主机门禁 ci-local.sh 照跑，覆盖不丢。
+    pytest.mark.skipif(os.environ.get("VORTOCODE_IN_SANDBOX") == "1",
+                       reason="OS 沙箱禁 fork PTY；宿主机门禁覆盖此用例"),
+]
 
 
 def test_terminal_accepts_input_streams_output_and_resizes(tmp_path):

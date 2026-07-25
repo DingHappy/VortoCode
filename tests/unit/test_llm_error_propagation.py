@@ -7,6 +7,7 @@
 2. `run_isolated_task` 空 diff 短路：不再为"绿测试 + 空 diff"这种永不成功的组合烧全量测试。
 3. 死因透传：dev_isolated / 依赖接力把"LLM 通道故障"如实报出，而不是笼统的"无改动/出错"。
 """
+import os
 import subprocess
 
 import pytest
@@ -200,3 +201,53 @@ async def test_im_chat_surfaces_error_instead_of_empty(tmp_path):
     body = "\n".join(sent)
     assert "502" in body, f"死因没透出来：{sent}"
     assert "（无输出）" not in body
+
+
+# ---------------------------------------------------------------- 沙箱标记（护城河可通行性）
+
+def test_run_tests_marks_sandbox_env(tmp_path, monkeypatch):
+    """流水线在沙箱里跑验证时必须注入 VORTOCODE_IN_SANDBOX=1。
+
+    真机复盘 2026-07-25：沙箱按设计禁 fork PTY，4 条 terminal 用例在里面必红 →
+    验证关对**任何**候选改动一律判红，隔离 dev 流水线 100% 堵死。用例靠这个标记
+    如实跳过（宿主机门禁仍覆盖），标记丢了护城河就再次堵死，所以钉死它。
+    """
+    import subprocess as _sp
+    from src.agents import worktree as wt
+
+    seen: dict = {}
+
+    class _Decision:
+        allowed = True
+        isolated = True
+        backend = "seatbelt"
+        reason = ""
+
+        def to_dict(self):
+            return {"backend": "seatbelt", "isolated": True}
+
+    monkeypatch.setattr(wt, "_git", lambda *a, **k: None, raising=False)
+    monkeypatch.setattr("src.agents.sandbox.resolve_sandbox", lambda **k: _Decision())
+    monkeypatch.setattr("src.agents.sandbox.sandboxed_exec_argv",
+                        lambda w, c, backend=None: list(c))
+    monkeypatch.setattr("src.agents.sandbox.child_env", lambda: {"PATH": "/usr/bin"})
+
+    def _fake_run(cmd, **kw):
+        seen["env"] = kw.get("env") or {}
+        return _sp.CompletedProcess(cmd, 0, "ok", "")
+    monkeypatch.setattr(wt.subprocess, "run", _fake_run)
+
+    wt.run_tests(str(tmp_path), ["true"])
+    assert seen["env"].get("VORTOCODE_IN_SANDBOX") == "1"
+
+
+def test_sandboxed_terminal_tests_skip_themselves():
+    """反向钉死：标记置位时，terminal 用例必须跳过而不是失败。"""
+    import subprocess
+    import sys
+    r = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "tests/unit/test_gateway_terminals.py",
+         "--collect-only", "-q"],
+        capture_output=True, text=True,
+        env={**os.environ, "VORTOCODE_IN_SANDBOX": "1"})
+    assert r.returncode == 0, r.stdout + r.stderr
