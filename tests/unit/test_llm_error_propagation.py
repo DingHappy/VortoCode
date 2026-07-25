@@ -151,3 +151,52 @@ async def test_dependent_branch_skips_tests_when_no_changes(tmp_path, monkeypatc
         lambda p: NoopAgent(), "msg", test_cmd=["python3", "-c", "print(1)"])
     assert res["ok"] is False
     assert "无改动" in res["output"]
+
+
+# ---------------------------------------------------------------- IM 交互路径的死因兜底
+
+async def test_im_chat_surfaces_error_instead_of_empty(tmp_path):
+    """真机症状：LLM 502 时 IM 只回一句"（无输出）"——emit 里的死因被丢掉了。
+
+    现在：返回值为空且 emit 有内容时，把 emit 的错误原文交出去。
+    """
+    from src.im.bridge import IMBridge
+
+    class _Adapter:
+        edits_supported = False
+
+        async def poll(self):                      # pragma: no cover
+            return
+            yield
+
+        async def send_text(self, text):
+            sent.append(text)
+            return ""
+
+        async def edit_text(self, mid, text):
+            sent.append(text)
+
+        async def send_confirm(self, text, cid):   # pragma: no cover
+            sent.append(text)
+
+        async def ack_callback(self, ev):          # pragma: no cover
+            return
+
+        async def close(self):                     # pragma: no cover
+            return
+
+    sent: list = []
+    bridge = IMBridge(str(tmp_path), _Adapter(), "owner-1", channel="dingtalk")
+
+    class _FailingAgent:
+        async def run_turn(self, text, mode="plan", say=None, emit=None, **kw):
+            if emit:
+                emit("对话出错: APIStatusError: 502 Bad Gateway（多为中转站/网络/额度问题）")
+            return ""                              # 老代码就是在这里把死因丢了
+
+    bridge.agent = _FailingAgent()
+    await bridge._run_turn("随便问点什么")
+
+    body = "\n".join(sent)
+    assert "502" in body, f"死因没透出来：{sent}"
+    assert "（无输出）" not in body
