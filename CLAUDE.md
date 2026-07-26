@@ -15,7 +15,7 @@ python -m pytest tests/unit/test_taint.py -q        # 单文件
 python -m pytest tests/unit/test_taint.py::test_x -q   # 单条用例
 # asyncio_mode=auto：async 测试无需显式 @pytest.mark.asyncio
 
-# 合并前门禁（**CI 已停用，见下**）——ruff + mypy + pytest + desktop 四道关，强制离线环境
+# 合并前门禁——ruff + mypy + pytest + desktop 四道关，强制离线环境（CI 也在跑，见下）
 ./scripts/ci-local.sh            # 全量（unit+basic+integration+live + desktop）
 ./scripts/ci-local.sh quick      # 只跑 unit+basic，快一半（不含 desktop）
 SKIP_DESKTOP=1 ./scripts/ci-local.sh   # 逃生口：跳过 desktop 段
@@ -32,7 +32,9 @@ vc agent -b "任务描述"            # 无头跑一次开发任务（走隔离 
 vc --help                        # 全部子命令：tui/server/agent/self-*/im/cron/heartbeat/doctor…
 ```
 
-**CI 状态**：`.github/workflows/ci.yml` 自 2026-07 因私有仓库额度耗尽已 `gh workflow disable`。**合并到 main 前必须本地跑 `./scripts/ci-local.sh`** 作为等价门禁。它刻意清空 `OPENAI_API_KEY/VORTOCODE_API_TOKEN/VORTOCODE_ENABLE_SHELL/ENABLE_BROWSER`，保证测试离线、确定性——别依赖你 `.env` 里的 key 让本地变绿。
+**CI 状态（2026-07-26 更新）**：`.github/workflows/ci.yml` **已恢复运行**，跑在自建 runner 上（`CI_RUNNER=self-hosted`，私有仓库不计费；早前"额度耗尽故停用"的说法已过时）。但**合并到 main 前仍要本地跑 `./scripts/ci-local.sh`**：它刻意清空 `OPENAI_API_KEY/VORTOCODE_API_TOKEN/VORTOCODE_ENABLE_SHELL/ENABLE_BROWSER`，保证测试离线、确定性——别依赖你 `.env` 里的 key 让本地变绿。
+
+> ⚠️ **CI 全红先看是不是 runner 宿主机断网**，别急着怀疑代码：自建 runner 在家里那台机器上，出海走本机 mihomo 代理。代理的节点一死（真机事故 2026-07-25：节点选择被手动钉在一个已下线的节点上），**每个 job 都会在 "Set up job" 阶段挂掉**——报错是下载 `actions/checkout` 时 SSL 失败，与你的改动毫无关系。排查见 `docs/OPS.md` 第六节。
 
 **desktop 段只跑离线子集**（tsc + `cargo test --lib` + `cargo check`，约 22s），**刻意不跑 `npm run check`**：那条链里 `sidecar:build` 会 `curl` 一个 python-build-standalone 包，把网络依赖塞进本该离线的门禁。打包正确性（vite build / sidecar / bundle 冒烟）属发布前检查，仍走 `cd desktop && npm run check`；同口径的单命令版是 `npm run check:ci`。缺 node/node_modules/cargo 或 crate 冷缓存时**跳过并计入收尾的「跳过清单」**，且此时结论不会说「全部通过」——跳过 ≠ 通过。
 
