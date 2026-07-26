@@ -135,6 +135,35 @@ class TelegramAdapter(ChannelAdapter):
         ]]}
         await self._api("sendMessage", chat_id=self.owner_id, text=_clip(text), reply_markup=kb)
 
+    async def _send_media(self, method: str, field: str, path: str, caption: str) -> bool:
+        """Telegram 的媒体接口要 multipart，走不了 _api 的 JSON 通道，所以自己发一次。
+
+        注入了假 request_fn 的测试环境不该真联网——此时直接报"不支持"退回文本。
+        """
+        import aiohttp
+        import os
+        if self._request_fn is not self._default_request:   # 测试注入态：不真发
+            return False
+        if self._session is None:
+            self._session = aiohttp.ClientSession()
+        form = aiohttp.FormData()
+        form.add_field("chat_id", str(self.owner_id))
+        if caption:
+            form.add_field("caption", _clip(caption))
+        with open(path, "rb") as fh:
+            form.add_field(field, fh.read(), filename=os.path.basename(path))
+        url = f"https://api.telegram.org/bot{self._token}/{method}"
+        async with self._session.post(url, data=form) as r:
+            if r.status != 200:
+                raise RuntimeError(f"{method} 失败 HTTP {r.status}: {(await r.text())[:160]}")
+        return True
+
+    async def send_image(self, path: str, caption: str = "") -> bool:
+        return await self._send_media("sendPhoto", "photo", path, caption)
+
+    async def send_file(self, path: str, caption: str = "") -> bool:
+        return await self._send_media("sendDocument", "document", path, caption)
+
     async def ack_callback(self, event: ChannelEvent) -> None:
         if not event.ack:
             return

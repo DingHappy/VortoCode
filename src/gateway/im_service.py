@@ -100,6 +100,11 @@ def start_embedded(channel: str, repo_root: str, *, mode: str = "plan",
     _ACTIVE["bridge"] = bridge
     from src.gateway import im_runtime
     im_runtime.set_owner_notifier(bridge._safe_send)
+
+    async def _send_media(path: str, caption: str, kind: str) -> bool:
+        fn = adapter.send_file if kind == "file" else adapter.send_image
+        return bool(await fn(path, caption))
+    im_runtime.set_owner_media_sender(_send_media)
     return bridge, adapter
 
 
@@ -108,6 +113,7 @@ def stop_embedded() -> None:
     _ACTIVE["bridge"] = None
     from src.gateway import im_runtime
     im_runtime.set_owner_notifier(None)
+    im_runtime.set_owner_media_sender(None)
     unsub = _ACTIVE.pop("unsubscribe", None)
     _ACTIVE["unsubscribe"] = None
     if unsub is not None:

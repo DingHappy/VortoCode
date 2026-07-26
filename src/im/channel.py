@@ -57,6 +57,21 @@ class ChannelAdapter:
         """发一条带 [✅ 批准 | ❌ 拒绝] 内联按钮的消息；按钮回传 callback_id（bridge 据此匹配 Future）。"""
         raise NotImplementedError
 
+    async def send_image(self, path: str, caption: str = "") -> bool:
+        """发一张图片。返回 True=已发出；False=本通道不支持（调用方据此降级成文本，别当失败）。
+
+        为什么需要它：agent 已经能无头截网页、把 Word/PPT 转成图（2026-07-26 在 VM 里验通），
+        但**送不到人手机上**——能力做出来了、交付通道是断的。审批一段长 diff 时，一张渲染好的
+        图远比一大段文本可读。
+
+        默认"不支持"而不是抛异常：新通道不实现也不会把 bridge 打挂，只是退回文本。
+        """
+        return False
+
+    async def send_file(self, path: str, caption: str = "") -> bool:
+        """发一个文件（同 send_image 的约定：False = 本通道不支持，不是失败）。"""
+        return False
+
     async def ack_callback(self, event: ChannelEvent) -> None:
         """回执一次按钮点击（如 Telegram answerCallbackQuery，消掉客户端转圈）。best-effort。"""
         raise NotImplementedError
