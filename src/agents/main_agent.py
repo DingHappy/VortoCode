@@ -428,6 +428,44 @@ def _clip_middle(text: str, limit: int) -> str:
     return f"{text[:head]}\n…(中间省略 {omitted} 字)…\n{text[-tail:]}"
 
 
+def preflight_dev(repo_root: str, *, want_pr: bool = False) -> list[str]:
+    """跑流水线**之前**验环境，返回阻塞性问题清单（空 = 可以开跑）。
+
+    为什么要有这一步：真机 2026-07-26，新机器上没配 git 提交身份，任务照常分解、实现、自测全绿，
+    最后一步 commit 才挂——**烧掉几十秒 LLM 和一整轮工作，才撞上一条 `git config` 就能解决的事**。
+    而 `vc doctor` 当时是绿的：它验了"git 在不在、这儿是不是仓库"，没验"提交得了吗"——
+    检查了必要条件，漏了充分条件。
+
+    纪律：只查**流水线必然依赖、缺了必然失败**的东西，每条都给可直接粘贴的修复命令。
+    可有可无的一律不进来——预检一旦变成噪音就会被无视。
+    """
+    import shutil
+    import subprocess
+
+    problems: list[str] = []
+
+    def _git_cfg(key: str) -> str:
+        try:
+            r = subprocess.run(["git", "-C", repo_root, "config", "--get", key],
+                               capture_output=True, text=True, timeout=5)
+            return (r.stdout or "").strip()
+        except Exception:  # noqa: BLE001
+            return ""
+
+    if not (_git_cfg("user.name") and _git_cfg("user.email")):
+        problems.append(
+            "git 提交身份未配置——落分支时 commit 必然失败（Author identity unknown）。修：\n"
+            '    git config --global user.name "你的名字"\n'
+            '    git config --global user.email "你的邮箱"')
+
+    if want_pr and not shutil.which("gh"):
+        problems.append(
+            "要开 PR 但 gh CLI 不在 PATH——分支能落、PR 开不了。装 gh 并 `gh auth login`；"
+            "若确认已装，检查**服务进程**的 PATH（systemd/launchd 给的 PATH 比登录 shell 窄）。")
+
+    return problems
+
+
 def land_note(msg: str, applied_msgs, failed_errs: dict) -> tuple[str, str]:
     """一个块落分支之后该记什么状态与原因 → (status, note)。
 
@@ -3024,6 +3062,12 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         if not task:
             return "dev_auto 需要 task（要自动分解并实现的大任务）。"
         want_pr = _truthy(args.get("open_pr") or args.get("pr") or False)
+        # 预检放在**分解之前**：环境不合格就别烧 LLM。真机 2026-07-26 的教训是
+        # "实现绿、自测绿、最后 commit 挂在一条 git config 上"——那一整轮工作全白做。
+        if (blockers := preflight_dev(repo_root, want_pr=want_pr)):
+            return ("❌ 环境预检未过，未开跑（省下白做一轮的时间）：\n\n"
+                    + "\n\n".join(f"· {b}" for b in blockers)
+                    + "\n\n修好后重发这条任务即可。")
         # 调用方（如后台任务 worker）可**指定 plan_id**——这样它能在 dev_auto 返回后按这个确定的 id
         # load_plan 拿到本次的 branch，不必靠"全局最新 plan"猜（并发多任务时会串单，见 #128 评审）。
         pinned_pid = str(args.get("plan_id") or "").strip() or None
