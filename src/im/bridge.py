@@ -21,6 +21,24 @@ _CONFIRM_TIMEOUT = 600                             # 按钮确认等待上限（
 _SPLIT = re.compile(r"[,\s;]+")                    # allowFrom 的分隔符（逗号/空白/分号都收）
 
 
+def _heartbeat_interval() -> float:
+    """后台任务"还活着"心跳的间隔（秒）。0/负数 = 关闭。env VORTOCODE_IM_HEARTBEAT_EVERY 调。
+
+    真机 2026-07-26：集成验证一跑就是 4 分钟，加上自测和审查，IM 端能安静七八分钟——
+    人看着就是死机，会去 kill 掉一个其实正常的任务。默认 150s 兼顾"有活气"与"不刷屏"。
+    """
+    import os
+    try:
+        return float(os.getenv("VORTOCODE_IM_HEARTBEAT_EVERY") or 150.0)
+    except ValueError:
+        return 150.0
+
+
+def _fmt_elapsed(seconds: float) -> str:
+    m, s = divmod(int(max(0.0, seconds)), 60)
+    return f"{m} 分 {s} 秒" if m else f"{s} 秒"
+
+
 def _strip(text: str) -> str:
     return _MARKUP.sub("", str(text or "")).strip()
 
@@ -73,6 +91,15 @@ class IMBridge:
         self._runner = runner
         self._shared_runner = runner is not None
         self._task_prog: dict = {}                       # tid -> 上次进度推送时间（节流）
+        # 心跳：后台任务的阶段之间可以很久没有新日志（真机 2026-07-26：集成验证一跑 4 分钟，
+        # IM 端安静七八分钟，人看着就是死机）。这里按任务记「首次见到/上次播报」，由 _on_task_update
+        # 顺带驱动——不另起定时器，避免多一条要管生命周期的后台协程。
+        self._task_started: dict = {}                    # tid -> 开跑时刻（算已用时）
+        # 两个概念别混：_heartbeat_every 是**多久看一眼**（tick），_heartbeat_quiet 是**安静多久才
+        # 准开口**。刚播过真进度就该让位，否则心跳和阶段播报会叠着刷屏。
+        self._heartbeat_every = _heartbeat_interval()
+        self._heartbeat_quiet = self._heartbeat_every
+        self._heartbeat_task: Optional[asyncio.Task] = None
         self.agent = self._build_agent()
 
     # ------------------------------------------------------------ 建 agent（第四端：走 gateway 单一工厂）
@@ -149,11 +176,49 @@ class IMBridge:
         if warn:
             hello += "\n" + warn
         await self._safe_send(hello)
-        async for ev in self.adapter.poll():
+        if self._heartbeat_every > 0 and self._heartbeat_task is None:
+            self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        try:
+            async for ev in self.adapter.poll():
+                try:
+                    await self._on_event(ev)
+                except Exception as e:  # noqa: BLE001 —— 单条事件出错不拖垮长轮询
+                    await self._safe_send(f"（处理消息出错：{e}）")
+        finally:
+            t, self._heartbeat_task = self._heartbeat_task, None
+            if t is not None:
+                t.cancel()                                # 桥停了心跳也得停，别留孤儿协程
+
+    async def _heartbeat_loop(self) -> None:
+        """后台任务安静太久时报个平安：阶段 + 已用时。**只在真有任务在跑时说话**。
+
+        为什么不复用 _on_task_update：安静期恰恰是因为没有 update 事件，事件驱动在这里必哑。
+        """
+        while True:
             try:
-                await self._on_event(ev)
-            except Exception as e:  # noqa: BLE001 —— 单条事件出错不拖垮长轮询
-                await self._safe_send(f"（处理消息出错：{e}）")
+                await asyncio.sleep(self._heartbeat_every)
+                runner = self._runner
+                if runner is None:
+                    continue
+                now = time.monotonic()
+                for task in list(runner.list() or []):
+                    if getattr(task, "status", "") != "running":
+                        self._task_started.pop(getattr(task, "id", ""), None)
+                        continue
+                    tid = task.id
+                    self._task_started.setdefault(tid, now)
+                    last = self._task_prog.get(tid, 0.0)
+                    if now - last < self._heartbeat_quiet:      # 刚播过真进度就别插嘴
+                        continue
+                    self._task_prog[tid] = now
+                    stage = _strip((task.log or ["（准备中）"])[-1])[:60]
+                    await self._safe_send(
+                        f"⏳ {tid} 仍在跑 · {stage} · 已用 "
+                        f"{_fmt_elapsed(now - self._task_started[tid])}")
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 —— 心跳是附加品，绝不能拖垮桥
+                continue
 
     async def _on_event(self, ev) -> None:
         """**IM 侧唯一的入站闸**（三道，全是默认拒绝方向；通道适配器一律不自己判定）。
