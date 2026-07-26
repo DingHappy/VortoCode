@@ -13,6 +13,20 @@
   不继承 shell 环境，漏了就是"聊天超时但终端里明明能通"。
 - 内嵌 IM：ProgramArguments 追加 `--im` 与 `telegram`（或 `dingtalk`）两个 string；凭证 env
   （`VORTOCODE_TG_TOKEN`/`VORTOCODE_TG_OWNER_ID`）也写进 plist。缺凭证会**拒启**（fail-closed）。
+- ⚠️ **`launchctl setenv` 设过的全局变量优先级高于 `.env`**——`load_dotenv` 默认不覆盖已存在的
+  环境变量。真机踩过一整天的坑（2026-07-25）：`OPENAI_API_BASE` 被 `launchctl setenv` 钉在早已
+  废弃的旧中转站上（该域名返回 502），`.env` 里改成什么都没用，症状是**每个后台任务都失败**而
+  日志只说「无改动/出错」。查配置**先看进程实际在用什么**，别信配置文件：
+
+  ```bash
+  launchctl getenv OPENAI_API_BASE        # 有值就说明 .env 被它压住了
+  ps eww -p $(pgrep -f 'src.cli server') | tr ' ' '\n' | grep '^OPENAI_'
+  launchctl unsetenv OPENAI_API_BASE      # 让 .env 成为唯一真相源，然后重载 LaunchAgent
+  ```
+
+- `NO_PROXY` 只认**精确主机名/IP**，写网段（`192.168.10.0/24`）无效——httpx 不做 CIDR 匹配，
+  内网地址要一个个列。漏了的地址会被塞进代理，而远端节点连不到你的私网 IP，回给你一个
+  **502**（页面上的 nginx 版本是代理服务商的，不是你自己的机器，别顺着查错方向）。
 
 不想常驻时手动起也一样：`vortocode server --port 8080`。
 
@@ -98,6 +112,9 @@ vortocode agent --attach "问题/任务"    # 一次性问答/脚本化；-c 续
 
 ## 四、出问题先查什么
 
+0. **每个后台任务都失败、日志只说「无改动/出错」**：先怀疑环境而不是模型。按上面「常驻」段的
+   `launchctl getenv` / `ps eww` 两条命令确认**进程实际在用的** `OPENAI_API_BASE`——`doctor` 查
+   的是 `.env` 里那个，被 `launchctl setenv` 压住时它会显示绿而任务照挂。
 1. `vortocode doctor`——七项自检，硬伤退出码 1。常见：中转站不可达（代理没进 launchd env）、
    serve 未起（attach 自动回退，不算硬伤）、permissions.yaml 写坏（**运行时会静默降级成空权限**，
    只有 doctor 会告诉你）。
@@ -138,13 +155,14 @@ relay.dinghappy.com 已 502 弃用。`VORTOCODE_RELAY_URL` 可换目标）：
    回归退出码非零）；观察通知三路。
 3. 觉得稳了再开 `VORTOCODE_HEARTBEAT=1`，让它自己从 BACKLOG 领活——从此摩擦清单自己消化自己。
 
-## 六、CI 现状与自建 runner（2026-07-12）
+## 六、CI 现状与自建 runner（2026-07-12 起；2026-07-26 更新）
 
-**CI 已暂停**（`gh workflow disable CI`）。原因：本仓库是**私有**仓库，GitHub Actions 每月只有
-2000 分钟免费额度；额度耗尽后 job 根本不启动（报 *"payments have failed or your spending limit
-needs to be increased"*，表现为 3 秒内全红），不是测试挂了。
+**CI 已恢复运行**，跑在自建 runner 上（4 个 runner 挂在家里那台 Linux 机器，`CI_RUNNER=self-hosted`，
+私有仓库不计费）。历史背景：早前因私有仓库 2000 分钟免费额度耗尽而 `gh workflow disable`
+（额度耗尽的表现是 job 根本不启动、3 秒内全红，报 *"payments have failed or your spending
+limit needs to be increased"*）——自建 runner 上线后该问题不复存在。
 
-**停用期间的门禁**：合并前在本地跑
+**本地门禁照旧要跑**（CI 绿不代替它，它清空了 key 保证离线确定性）：
 
 ```bash
 ./scripts/ci-local.sh          # ruff + mypy + 全量测试（和 CI 跑的是同三道关）
@@ -170,3 +188,30 @@ runner 免费无限，正好也不需要自建了。
 
 同一台机器还可兼做**夜跑机器**（cron 评测 / heartbeat 值班），但那是**另一个风险等级**：
 CI 只跑离线测试、不需要任何 key；夜跑要 API key、会自主写代码。分阶段上线，别一步到位。
+
+### CI 全红时先查 runner 宿主机的出海能力（真机事故 2026-07-25）
+
+自建 runner 的机器在国内，拉 `actions/checkout` 要出海。**代理一断，每个 job 都死在
+"Set up job" 阶段**，报错长这样：
+
+```
+Failed to download archive 'https://codeload.github.com/actions/checkout/...' after 3 attempts.
+The SSL connection could not be established
+```
+
+这与你的改动**毫无关系**——job 还没开始跑任何代码。事故当天的具体原因：mihomo 的
+`🚀 节点选择` 被**手动钉死在某个具体节点**上，而那个节点下线了；同订阅里另外 38 个节点都活着，
+但选择器不会自己换。三行排查：
+
+```bash
+# 1. 宿主机能不能出海（国内站通、GitHub 不通 = 代理节点问题，不是网络断了）
+ssh <runner-host> 'curl -s -m 8 -o /dev/null -w "%{http_code}\n" https://www.baidu.com; \
+                   curl -s -m 8 -o /dev/null -w "%{http_code}\n" https://codeload.github.com'
+# 2. 看当前选中的节点是不是死的（secret 在 /etc/mihomo/config.yaml，就地取用别打印）
+#    GET /proxies/<group> → now 字段；GET /providers/proxies → 各节点 alive
+# 3. 切回自动选择（URLTest 会 5 分钟重测、节点死了自动换，不会再单点全断）
+#    PUT /proxies/<group>  body: {"name":"♻️ 自动选择"}
+```
+
+**教训**：选择器别钉死在单个节点上——钉死等于把 CI 绑在一个会静默下线的单点上。
+另外当天观察：死掉的节点几乎清一色是 Hysteria2 协议，Vless/Tuic 的基本都活着。

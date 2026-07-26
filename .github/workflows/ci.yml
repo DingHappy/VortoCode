@@ -3,9 +3,12 @@
 #   self-hosted  → 自建 runner（**不计费**，私有仓库首选；装机见 docs/OPS.md）
 # 换 runner 不用改这个文件——设个变量就行。
 #
-# 2026-07-12：免费额度耗尽（job 直接不启动、3 秒全红），工作流已 `gh workflow disable CI` 暂停。
-# 自建 runner 就绪后：设 CI_RUNNER=self-hosted → `gh workflow enable CI` → 手动 workflow_dispatch 验一次。
-# 停用期间的等价门禁：本地跑 `./scripts/ci-local.sh`（同样是 ruff + mypy + 全量测试）。
+# 2026-07-12：免费额度耗尽（job 直接不启动、3 秒全红）→ 一度 `gh workflow disable CI`。
+# 现已恢复：CI_RUNNER=self-hosted，跑在自建 runner 上（不计费）。**本地门禁照旧要跑**
+# （`./scripts/ci-local.sh`——它清空 key 保证离线确定性，CI 绿不代替它）。
+#
+# ⚠ 全部 job 都挂在 "Set up job"（报下载 actions/checkout 时 SSL 失败）= runner 宿主机出不了海，
+#   与改动无关。先查宿主机代理，别怀疑代码；排查步骤见 docs/OPS.md 第六节。
 name: CI
 
 on:
