@@ -13,6 +13,20 @@
   不继承 shell 环境，漏了就是"聊天超时但终端里明明能通"。
 - 内嵌 IM：ProgramArguments 追加 `--im` 与 `telegram`（或 `dingtalk`）两个 string；凭证 env
   （`VORTOCODE_TG_TOKEN`/`VORTOCODE_TG_OWNER_ID`）也写进 plist。缺凭证会**拒启**（fail-closed）。
+- ⚠️ **`launchctl setenv` 设过的全局变量优先级高于 `.env`**——`load_dotenv` 默认不覆盖已存在的
+  环境变量。真机踩过一整天的坑（2026-07-25）：`OPENAI_API_BASE` 被 `launchctl setenv` 钉在早已
+  废弃的旧中转站上（该域名返回 502），`.env` 里改成什么都没用，症状是**每个后台任务都失败**而
+  日志只说「无改动/出错」。查配置**先看进程实际在用什么**，别信配置文件：
+
+  ```bash
+  launchctl getenv OPENAI_API_BASE        # 有值就说明 .env 被它压住了
+  ps eww -p $(pgrep -f 'src.cli server') | tr ' ' '\n' | grep '^OPENAI_'
+  launchctl unsetenv OPENAI_API_BASE      # 让 .env 成为唯一真相源，然后重载 LaunchAgent
+  ```
+
+- `NO_PROXY` 只认**精确主机名/IP**，写网段（`192.168.10.0/24`）无效——httpx 不做 CIDR 匹配，
+  内网地址要一个个列。漏了的地址会被塞进代理，而远端节点连不到你的私网 IP，回给你一个
+  **502**（页面上的 nginx 版本是代理服务商的，不是你自己的机器，别顺着查错方向）。
 
 不想常驻时手动起也一样：`vortocode server --port 8080`。
 
@@ -98,6 +112,9 @@ vortocode agent --attach "问题/任务"    # 一次性问答/脚本化；-c 续
 
 ## 四、出问题先查什么
 
+0. **每个后台任务都失败、日志只说「无改动/出错」**：先怀疑环境而不是模型。按上面「常驻」段的
+   `launchctl getenv` / `ps eww` 两条命令确认**进程实际在用的** `OPENAI_API_BASE`——`doctor` 查
+   的是 `.env` 里那个，被 `launchctl setenv` 压住时它会显示绿而任务照挂。
 1. `vortocode doctor`——七项自检，硬伤退出码 1。常见：中转站不可达（代理没进 launchd env）、
    serve 未起（attach 自动回退，不算硬伤）、permissions.yaml 写坏（**运行时会静默降级成空权限**，
    只有 doctor 会告诉你）。
