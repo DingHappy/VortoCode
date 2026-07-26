@@ -548,6 +548,7 @@ class MainAgent:
         env_context: bool = False,
         capabilities: Optional[Any] = None,
         untrusted_input: bool = False,
+        raise_llm_errors: bool = False,
     ) -> None:
         import os
         # 复用既有 src/hooks 的 HookSystem：把工具生命周期事件（pre/post/error）接进 agent loop
@@ -559,6 +560,10 @@ class MainAgent:
         # 置位后每个回合在 reset_taint() 之后立刻重新打污点（见 run_turn），
         # 因为污点是回合作用域的——在 run_turn 外面调 mark_tainted() 会被回合开头的 reset 抹掉。
         self._untrusted_input = bool(untrusted_input)
+        # 无人值守/流水线档：LLM 通道瞬时故障必须**抛异常**，而不是"emit 提示 + 返回空串"——
+        # emit 那套语义是说给盯屏的人听的；后台没有人，空串会被上游误判成"子 agent 没干活"
+        # （no-op），把通道外伤记成 agent 内科病（真机复盘：三任务六轮全被 502 吞成"无改动/出错"）。
+        self._raise_llm_errors = bool(raise_llm_errors)
         self.max_steps = _env_int("VORTOCODE_MAX_STEPS", max_steps)   # 可全局调高 build/普通预算
         # build 是真实开发模式，固定 max_steps 只作为"单段预算"；到段尾会自动续跑若干段。
         # 这个安全阈值只防模型无限循环，不应成为正常开发的停止点。
@@ -1603,6 +1608,8 @@ class MainAgent:
                         self._native = False
                         resp = None
                     else:
+                        if self._raise_llm_errors:     # 流水线档：如实上抛，别装成"空结论"
+                            raise
                         detail = " ".join((str(e) or repr(e)).split())[:200]
                         emit(f"模型服务暂时无响应：{detail}（未重复发送本次请求，请稍后重试）")
                         return ""
@@ -1666,6 +1673,8 @@ class MainAgent:
                 content = (await self._complete(
                     messages, stream_cb, reasoning_cb, stream_shown)).strip()
             except Exception as e:  # noqa: BLE001
+                if self._raise_llm_errors:             # 流水线档：如实上抛，别装成"空结论"
+                    raise
                 # 有些异常 str 为空（如 5xx），给类型+折行截断的 detail 才可诊断（如 502 Bad Gateway）
                 detail = " ".join((str(e) or repr(e)).split())[:200]
                 hint = "（多为中转站/网络/额度问题，稍后重试或检查 OPENAI_API_BASE/KEY）" \
@@ -2517,6 +2526,10 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         attempts = last.get("attempts", 1)
         fixed = f"（自修复 {attempts - 1} 次后）" if attempts > 1 else ""
         if not diff.strip():
+            err = str(last.get("err") or "").strip()
+            if err:
+                return (f"❌ 隔离实现失败：LLM 通道故障（{err[:160]}），试了 {attempts} 次。"
+                        f"多为中转站/网络抖动——确认中转站健康后重试即可，不必改任务描述。")
             return (f"❌ 隔离实现未产生任何改动（试了 {attempts} 次，子 agent 始终没真正修改文件）。"
                     f"请把任务描述写得更具体、可执行（明确要改哪个文件、加什么）后再调 dev_isolated。")
         nlines = diff.count("\n")
@@ -2546,7 +2559,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     build_read_tools(wt) + build_write_tools(wt) + [build_test_tool(wt, test_cmd)],
                     max_steps=16,
                     extra_system=extra,
-                    capabilities=capabilities)
+                    capabilities=capabilities,
+                    raise_llm_errors=True)   # 后台无人盯屏：通道故障要炸响，不许静默空结论
             return _b
         return _mk
 
@@ -2556,6 +2570,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         返回 {desc, diff, ver, attempts}。绿（ver.ok 且有 diff）即提前收口；都没绿则返回最后一次。
         每次都是干净 worktree + 全新子 agent（不背着上次的半成品），只把失败输出当线索喂进去。
         """
+        import asyncio
         import uuid
         from src.agents.worktree import run_isolated_task
         mk = _make_writer(test_cmd)
@@ -2563,7 +2578,13 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         last = {"desc": desc, "diff": "", "ver": None, "attempts": 0}
         for attempt in range(1, _dev_attempts() + 1):
             if attempt > 1:
-                _progress(f"↻ 「{desc[:32]}」上次未达标（红/无改动），第 {attempt} 次换全新 worktree 重试…")
+                if last.get("err"):
+                    # 通道故障（LLM 502/超时）≠ agent 没干活：如实播报死因，并给瞬时故障一点恢复窗口
+                    _progress(f"↻ 「{desc[:32]}」上次 LLM 通道故障（{str(last['err'])[:80]}），"
+                              f"第 {attempt} 次重试…")
+                    await asyncio.sleep(min(10.0, 3.0 * (attempt - 1)))
+                else:
+                    _progress(f"↻ 「{desc[:32]}」上次未达标（红/无改动），第 {attempt} 次换全新 worktree 重试…")
             wid = "wt-" + uuid.uuid4().hex[:8]
             try:
                 diff, _c, ver = await run_isolated_task(repo_root, wid, cur, mk(cur), test_cmd=test_cmd)
@@ -2606,6 +2627,9 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             if green:
                 lines.append(f"· {r['desc']}：✅ 通过" + (f"（修复 {att - 1} 次后）" if att > 1 else ""))
                 greens.append(r)
+            elif r.get("err"):
+                lines.append(f"· {r['desc']}：❌ LLM 通道故障（{str(r['err'])[:80]}）"
+                             + (f"（试了 {att} 次）" if att > 1 else ""))
             elif not (r.get("diff") or "").strip():
                 lines.append(f"· {r['desc']}：无改动/出错" + (f"（试了 {att} 次）" if att > 1 else ""))
             else:
@@ -2824,7 +2848,12 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                         items.append((r["diff"], f"dev_auto[{b.id}]: {b.desc}"))
                     else:
                         b.status = "failed"
-                        b.note = "无改动/出错" if not (r.get("diff") or "").strip() else "自测未过"
+                        if r.get("err"):               # 死因透传进台账：外伤（通道）别记成内科（no-op）
+                            b.note = f"LLM 通道故障: {str(r['err'])[:120]}"
+                        elif not (r.get("diff") or "").strip():
+                            b.note = "无改动/出错"
+                        else:
+                            b.note = "自测未过"
                 _save()                                      # 落地前先记下哪些没绿
                 apply_res = await asyncio.to_thread(apply_diffs_to_branch, repo_root, branch, items, None)
                 # 只以 applied 为**白名单**判 landed——绝不靠"不在 failed 就是 landed"反推：

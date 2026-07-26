@@ -312,10 +312,17 @@ class IMBridge:
         def _say(m: str) -> None:
             q.put_nowait(("progress", _strip(m)))
 
+        # run_turn 用 emit 报告"对话出错: …502…"这类死因，正文则由返回值给出。丢掉 emit 的话，
+        # 通道故障就退化成一句"（无输出）"——人看不出是网络挂了还是模型没话说（真机复盘）。
+        # 只在返回值为空时拿 emit 兜底，正常回复不受影响（否则最终回复会重复发一遍）。
+        emitted: list = []
+
         async def _inner():
             try:
                 reply = await self.agent.run_turn(text, mode=self.mode, say=_say,
-                                                  emit=lambda _t: None)
+                                                  emit=lambda t: emitted.append(str(t)))
+                if not str(reply or "").strip() and emitted:
+                    reply = emitted[-1]                  # 死因兜底：把 emit 的错误原文交出去
                 q.put_nowait(("final", reply))
             except asyncio.CancelledError:
                 q.put_nowait(("final", "（已取消）"))
