@@ -10,8 +10,22 @@ from src.gateway import doctor  # noqa: E402
 def test_check_git_in_repo(tmp_path):
     import subprocess
     subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True)
+    # 光有仓库不够——**提交得了吗**才是流水线真正依赖的（2026-07-26 真机：没配身份，
+    # doctor 显示绿，任务却在最后一步 commit 挂掉）。所以 ok 的前提是身份也配了。
+    for k, v in (("user.name", "t"), ("user.email", "t@t")):
+        subprocess.run(["git", "-C", str(tmp_path), "config", k, v], check=True)
     assert doctor._check_git(str(tmp_path)).level == "ok"
     assert doctor._check_git(str(tmp_path / "nowhere")).level in ("warn", "fail")
+
+
+def test_check_git_flags_missing_commit_identity(tmp_path, monkeypatch):
+    """有仓库但没配提交身份 → 必须报出来，不能显示绿。"""
+    import subprocess
+    subprocess.run(["git", "-C", str(tmp_path), "init", "-q"], check=True)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")   # 屏蔽开发机的全局身份
+    c = doctor._check_git(str(tmp_path))
+    assert c.level == "fail"
+    assert "user.email" in c.detail
 
 
 def test_check_api_key(monkeypatch):

@@ -127,6 +127,7 @@ async def test_no_pr_when_confirm_denied(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_no_pr_without_confirm_gate(tmp_path, monkeypatch):
+    _init_repo_on_branch(tmp_path, "dev")   # 预检要求真仓库 + 提交身份（2026-07-26）
     _patch_pipeline(monkeypatch, integration_ok=True)
     out = await _dev_auto(tmp_path, confirm=None).handler({"task": "x", "open_pr": True})
     assert "未接确认门" in out                              # 没接确认门 → 不开、给提示
@@ -134,6 +135,7 @@ async def test_no_pr_without_confirm_gate(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_no_pr_when_integration_red(tmp_path, monkeypatch):
+    _init_repo_on_branch(tmp_path, "dev")   # 预检要求真仓库 + 提交身份（2026-07-26）
     _patch_pipeline(monkeypatch, integration_ok=False)
     import src.agents.vcs as vcs
     called = {"n": 0}
@@ -193,6 +195,7 @@ async def test_review_gate_skipped_when_no_pr(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_backward_compat_no_open_pr_arg(tmp_path, monkeypatch):
+    _init_repo_on_branch(tmp_path, "dev")   # 预检要求真仓库 + 提交身份（2026-07-26）
     _patch_pipeline(monkeypatch, integration_ok=True)
     import src.agents.vcs as vcs
     called = {"n": 0}
