@@ -243,3 +243,48 @@ async def test_heartbeat_yields_to_real_progress(tmp_path):
     task.cancel()
 
     assert sent == []
+
+
+# ---------------------------------------------------------------- 落分支失败的真实死因
+
+def test_land_note_reports_real_git_error_not_guessed_conflict():
+    """落分支失败必须报**真实 git 报错**，不许一律硬写成「与其它块文本冲突」。
+
+    真机 2026-07-26：新机器没配 git user.name/email，`commit 失败: Author identity unknown`
+    被报成「自测绿但与其它块文本冲突」——当时只有一个块，何来"与其它块冲突"？这句话把人
+    引向完全错的排查方向（去找冲突），而真因是一条 git config。同一病根：**死因被改写**。
+    """
+    from src.agents.main_agent import land_note
+
+    msg = "dev_auto[ind-0]: 在 README 加一行"
+    status, note = land_note(msg, set(), {msg: "commit 失败: Author identity unknown"})
+    assert status == "failed"
+    assert "Author identity unknown" in note
+    assert "文本冲突" not in note
+
+
+def test_land_note_marks_landed_only_when_really_applied():
+    from src.agents.main_agent import land_note
+
+    msg = "dev_auto[ind-0]: x"
+    assert land_note(msg, {msg}, {}) == ("landed", "")
+
+
+def test_land_note_falls_back_to_guess_only_without_error_text():
+    """拿不到真错误时才退回猜测，且措辞必须标明是猜的。"""
+    from src.agents.main_agent import land_note
+
+    msg = "dev_auto[ind-0]: x"
+    status, note = land_note(msg, set(), {msg: ""})
+    assert status == "failed"
+    assert "疑" in note                      # 不能把猜测说成结论
+
+
+def test_land_note_handles_whole_apply_failure():
+    """块既没落地也没单独失败记录 → 整体落分支失败，仍要带上能拿到的原因。"""
+    from src.agents.main_agent import land_note
+
+    status, note = land_note("dev_auto[ind-0]: x", set(),
+                             {"其它块": "worktree add 失败: 磁盘满"})
+    assert status == "failed"
+    assert "整体失败" in note and "磁盘满" in note
