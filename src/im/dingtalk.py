@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import AsyncIterator, Awaitable, Callable, Optional
 
 from .channel import ChannelAdapter, ChannelEvent
@@ -51,6 +52,11 @@ class DingTalkAdapter(ChannelAdapter):
         self._webhook: Optional[str] = None       # 回复目标：最近一条**过了入站闸**的消息的
                                                   # sessionWebhook（只在 commit_reply_target 更新）
         self._awaiting_confirm: Optional[str] = None   # 文本式确认：待回 y/n 的 callback_id
+        # 发媒体要主动调 API（sessionWebhook 只吃 text/markdown，发不了图和文件），而主动调用
+        # 需要 access_token。钉钉这里有**两套**：新接口（发消息）与老接口（媒体上传）各一个，
+        # 有效期都是 7200s。缓存 + 提前 5 分钟刷新——每次现取会被限流。
+        self._tok_new: tuple = ("", 0.0)              # (token, 过期时刻 monotonic)
+        self._tok_old: tuple = ("", 0.0)
 
     # ------------------------------------------------------------ ChannelAdapter
     async def poll(self) -> AsyncIterator[ChannelEvent]:
@@ -150,6 +156,82 @@ class DingTalkAdapter(ChannelAdapter):
     async def send_confirm(self, text: str, callback_id: str) -> None:
         self._awaiting_confirm = callback_id
         await self.send_text(text + "\n\n请回复 **y**（批准）或 **n**（拒绝）。")
+
+    # ------------------------------------------------------------ 媒体（图片/文件）
+    async def _token(self, *, legacy: bool) -> str:
+        """取 access_token，带缓存与提前刷新。legacy=True 是媒体上传用的老接口那套。"""
+        import aiohttp
+        cached, exp = self._tok_old if legacy else self._tok_new
+        if cached and time.monotonic() < exp:
+            return cached
+        if self._session is None:
+            self._session = aiohttp.ClientSession()
+        if legacy:
+            async with self._session.get("https://oapi.dingtalk.com/gettoken",
+                                         params={"appkey": self._cid, "appsecret": self._secret}) as r:
+                d = await r.json(content_type=None)
+            tok, ttl = d.get("access_token", ""), int(d.get("expires_in") or 7200)
+        else:
+            async with self._session.post("https://api.dingtalk.com/v1.0/oauth2/accessToken",
+                                          json={"appKey": self._cid, "appSecret": self._secret}) as r:
+                d = await r.json(content_type=None)
+            tok, ttl = d.get("accessToken", ""), int(d.get("expireIn") or 7200)
+        if not tok:
+            raise RuntimeError(f"取 access_token 失败: {str(d)[:160]}")
+        slot = (tok, time.monotonic() + max(60, ttl - 300))   # 提前 5 分钟过期，避开边界
+        if legacy:
+            self._tok_old = slot
+        else:
+            self._tok_new = slot
+        return tok
+
+    async def _upload_media(self, path: str, kind: str) -> str:
+        """上传媒体拿 media_id（只有老接口提供）。kind ∈ image/file。"""
+        import os
+
+        import aiohttp
+        tok = await self._token(legacy=True)
+        form = aiohttp.FormData()
+        with open(path, "rb") as fh:
+            form.add_field("media", fh.read(), filename=os.path.basename(path),
+                           content_type="application/octet-stream")
+        async with self._session.post("https://oapi.dingtalk.com/media/upload",
+                                      params={"access_token": tok, "type": kind},
+                                      data=form) as r:
+            d = await r.json(content_type=None)
+        mid = d.get("media_id")
+        if not mid:
+            raise RuntimeError(f"上传媒体失败: {str(d)[:160]}")
+        return mid
+
+    async def _send_msg(self, msg_key: str, msg_param: dict) -> None:
+        """主动给**已配对 owner** 发一条消息。收件人恒为 owner，不受入站消息影响——
+        目标固定是这条通道能作为出站面的前提（对比 web_fetch：URL 由模型决定，那才是真外传）。"""
+        tok = await self._token(legacy=False)
+        async with self._session.post(
+                "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend",
+                json={"robotCode": self._cid, "userIds": [self.owner_id],
+                      "msgKey": msg_key, "msgParam": json.dumps(msg_param, ensure_ascii=False)},
+                headers={"x-acs-dingtalk-access-token": tok}) as r:
+            if r.status != 200:
+                raise RuntimeError(f"发消息失败 HTTP {r.status}: {(await r.text())[:160]}")
+
+    async def send_image(self, path: str, caption: str = "") -> bool:
+        mid = await self._upload_media(path, "image")
+        await self._send_msg("sampleImageMsg", {"photoURL": mid})
+        if caption:
+            await self.send_text(caption)         # 图片消息体不带说明文字，附注单独发
+        return True
+
+    async def send_file(self, path: str, caption: str = "") -> bool:
+        import os
+        mid = await self._upload_media(path, "file")
+        name = os.path.basename(path)
+        await self._send_msg("sampleFile", {"mediaId": mid, "fileName": name,
+                                            "fileType": (name.rsplit(".", 1) + ["bin"])[1][:8]})
+        if caption:
+            await self.send_text(caption)
+        return True
 
     async def ack_callback(self, event: ChannelEvent) -> None:
         return                                    # 文本式确认无需回执
