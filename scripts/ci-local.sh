@@ -50,6 +50,11 @@ export OPENAI_API_KEY=""
 export VORTOCODE_API_TOKEN=""
 export VORTOCODE_ENABLE_SHELL=""
 export VORTOCODE_ENABLE_BROWSER=""
+# 同理屏蔽**全局 git 身份**：开发机上 user.name/email 是配好的，CI runner 上没有。
+# 依赖这份"环境自带身份"的测试在本地永远绿、一上 CI 全红——2026-07-26 就这么被咬了一次
+# （新加的流水线预检打挂 8 条存量测试，本地门禁却全绿）。测试要自带身份，不许蹭环境的。
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_SYSTEM=/dev/null
 
 if [ "$MODE" = "quick" ]; then
   run_gate "pytest（unit + tui）" python3 -m pytest tests/unit tests/test_basic.py -q

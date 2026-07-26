@@ -652,6 +652,10 @@ async def test_verify_branch_runs_tests_and_cleans_up(tmp_path):
 @pytest.mark.asyncio
 async def test_dev_auto_independent_then_dependent_topo_then_verify(monkeypatch, tmp_path):
     # dev_auto 端到端编排：独立批并行 → 依赖批按拓扑序接力(B→C) → 最终集成验证 → 如实汇报
+    import subprocess as _sp                      # 预检要求真仓库 + 提交身份（2026-07-26）
+    _sp.run(["git", "-C", str(tmp_path), "init", "-q"], check=True, capture_output=True)
+    _sp.run(["git", "-C", str(tmp_path), "config", "user.name", "t"], check=True, capture_output=True)
+    _sp.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t"], check=True, capture_output=True)
     import src.agents.worktree as wt
     import src.agents.decompose as dec
     from src.agents.main_agent import build_dev_tools
@@ -689,6 +693,10 @@ async def test_dev_auto_independent_then_dependent_topo_then_verify(monkeypatch,
 
 @pytest.mark.asyncio
 async def test_dev_auto_reports_final_integration_failure(monkeypatch, tmp_path):
+    import subprocess as _sp                      # 预检要求真仓库 + 提交身份（2026-07-26）
+    _sp.run(["git", "-C", str(tmp_path), "init", "-q"], check=True, capture_output=True)
+    _sp.run(["git", "-C", str(tmp_path), "config", "user.name", "t"], check=True, capture_output=True)
+    _sp.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t"], check=True, capture_output=True)
     import src.agents.worktree as wt
     import src.agents.decompose as dec
     from src.agents.main_agent import build_dev_tools
@@ -820,6 +828,10 @@ async def test_dev_isolated_all_noop_reports_clearly(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_dev_auto_dependent_self_repairs(monkeypatch, tmp_path):
     # dev_auto 依赖接力：某依赖子任务第一次红 → 带失败反馈自修复重试 → 第二次绿
+    import subprocess as _sp                      # 预检要求真仓库 + 提交身份（2026-07-26）
+    _sp.run(["git", "-C", str(tmp_path), "init", "-q"], check=True, capture_output=True)
+    _sp.run(["git", "-C", str(tmp_path), "config", "user.name", "t"], check=True, capture_output=True)
+    _sp.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t"], check=True, capture_output=True)
     import src.agents.worktree as wt
     import src.agents.decompose as dec
     from src.agents.main_agent import build_dev_tools
@@ -879,6 +891,10 @@ async def test_dev_parallel_emits_progress(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_dev_auto_emits_progress_through_phases(monkeypatch, tmp_path):
+    import subprocess as _sp                      # 预检要求真仓库 + 提交身份（2026-07-26）
+    _sp.run(["git", "-C", str(tmp_path), "init", "-q"], check=True, capture_output=True)
+    _sp.run(["git", "-C", str(tmp_path), "config", "user.name", "t"], check=True, capture_output=True)
+    _sp.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t"], check=True, capture_output=True)
     import src.agents.worktree as wt
     import src.agents.decompose as dec
     from src.agents.main_agent import build_dev_tools
