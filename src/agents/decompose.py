@@ -14,7 +14,13 @@ def describe_subtask(s: Any) -> str:
     independent 与 deferred（依赖接力）共用，确保两路实现指令同构。"""
     title = (getattr(s, "title", "") or "").strip()
     desc = (getattr(s, "description", "") or "").strip()
-    d = f"{title}：{desc}" if (title and desc) else (title or desc)
+    # 分解器对单句任务常把 title 与 description 设成同一句，直接拼就成了"X：X"——既污染给
+    # 子 agent 的提示词，也让终报和 IM 推送里的每一行都翻倍（真机 2026-07-26 实测）。
+    # 一方是另一方的前缀时只留信息更全的那个。
+    if title and desc and (desc.startswith(title) or title.startswith(desc)):
+        d = desc if len(desc) >= len(title) else title
+    else:
+        d = f"{title}：{desc}" if (title and desc) else (title or desc)
     ac = getattr(s, "acceptance_criteria", None) or []
     if ac:
         d += "。验收标准：" + "；".join(str(x) for x in ac)
