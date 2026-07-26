@@ -9,6 +9,11 @@
 #
 # ⚠ 全部 job 都挂在 "Set up job"（报下载 actions/checkout 时 SSL 失败）= runner 宿主机出不了海，
 #   与改动无关。先查宿主机代理，别怀疑代码；排查步骤见 docs/OPS.md 第六节。
+# **为什么每个 job 都建独占 venv 而不是直接 pip install**：自建 runner 上
+# actions/setup-python 给的是 /opt/hostedtoolcache 里的解释器，**全机共享**。多个 job 并发
+# `pip install -e .` 时，pip 会先卸载已装的 vortocode——卸到一半另一个 job 正要用 `vc`，
+# 就报 `No such file or directory: .../bin/vc` 挂在安装步（2026-07-26 真机随机咬）。
+# venv 建在各自 workspace 里，天然隔离；托管 runner 上多花几秒，代价可忽略。
 name: CI
 
 on:
@@ -42,10 +47,13 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - name: Install ruff
-        run: python -m pip install --upgrade pip && pip install ruff
+      - name: Install ruff（装进本 job 独占的 venv，见文件头「为什么用 venv」）
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/pip install ruff
       - name: Ruff (real-error gate — 见 pyproject [tool.ruff.lint])
-        run: ruff check src tests
+        run: .venv/bin/ruff check src tests
 
   typecheck:
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
@@ -59,10 +67,11 @@ jobs:
           cache: pip
       - name: Install mypy + 运行时依赖（要拿到真类型，不能只装 mypy）
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[llm,dev]"
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/pip install -e ".[llm,dev]"
       - name: Mypy (范围见 pyproject [tool.mypy] 的 files；圈外存量问题不阻塞)
-        run: python -m mypy
+        run: .venv/bin/python -m mypy
 
   test:
     runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
@@ -84,8 +93,9 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[llm,dev,tui]"
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/pip install -e ".[llm,dev,tui]"
 
       - name: Run tests (offline, deterministic)
         # 刻意不提供任何 API key / token：
@@ -102,17 +112,17 @@ jobs:
           set -euxo pipefail
           case "$SUITE" in
             unit-core)
-              python -m pytest tests/unit tests/test_basic.py \
+              .venv/bin/python -m pytest tests/unit tests/test_basic.py \
                 --ignore=tests/unit/test_tui.py \
                 --ignore=tests/unit/test_tui_attach.py \
                 -vv --tb=short --durations=30
               ;;
             tui)
-              python -m pytest tests/unit/test_tui.py tests/unit/test_tui_attach.py \
+              .venv/bin/python -m pytest tests/unit/test_tui.py tests/unit/test_tui_attach.py \
                 -vv --tb=short --durations=30
               ;;
             integration-live)
-              python -m pytest tests/integration tests/live \
+              .venv/bin/python -m pytest tests/integration tests/live \
                 -vv --tb=short --durations=30
               ;;
             *)
