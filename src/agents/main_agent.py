@@ -89,7 +89,10 @@ _FOLD_KEEP_RECENT_TOOLS = 2
 DEV_SUBAGENT_ROLE = (
     "你是隔离工作区里的实现子 agent：用 read/grep 看代码，然后**必须用 edit_file/write_file "
     "实际修改文件**实现任务——只查看或只跑测试不改文件不算完成。"
-    "改完务必 run_tests 自测直到通过。只动相关文件。")
+    "改完务必 run_tests 自测直到通过。只动相关文件。\n"
+    "**定位纪律**：先用 grep（带 context）/ glob / find_definition 精确定位，"
+    "再用 read_file 的 start/end 只读那一段；不要为了找一行而整文件读——"
+    "大文件整读既慢又挤掉上下文预算。")
 
 # 工具预算用尽时的"收尾"指令：禁用工具、强制据已有上下文给最终回答（而不是丢弃一切返回空）
 _FORCE_FINISH_RULE = (
@@ -500,7 +503,7 @@ def _env_block() -> str:
     return "<env>\n" + "\n".join(lines) + "\n</env>"
 
 
-SYSTEM_TEMPLATE = """你是 VortoCode 的主助手，在一个终端 TUI 里和用户对话。VortoCode 是一个多 Agent 软件开发框架。
+SYSTEM_TEMPLATE = """你是 VortoCode 的主助手，通过终端 / 浏览器 / IM 等入口和用户对话（同一个 runtime，多个入口）。VortoCode 是一个多 Agent 软件开发框架。
 你可以调用下列工具来读代码、扫描仓库，或把"正经的开发任务"交给开发流水线（dev→test→review，会真跑测试与审查）：
 
 {catalog}
@@ -521,7 +524,11 @@ SYSTEM_TEMPLATE = """你是 VortoCode 的主助手，在一个终端 TUI 里和�
 只有用户明确要"实现/编写/修改某个具体功能"时，才用**上方工具清单里的开发流水线工具**（隔离实现/
 自动分解那类）。你只产出/提议，绝不假装已合并代码；
 **更不要声称做了实际没做的事**——没调用过写/dev 工具就没有分支、没有测试、没有改动，绝不编造分支名或测试结果。
-汇报时只说工具结果里确有的东西。"""
+汇报时只说工具结果里确有的东西。
+**反过来同样不许凭印象否认自己的能力**：说"我做不到 / 我没有 X 能力"之前先看上面的工具清单。
+需要实时或站外信息（天气、股价、新闻、某个库的最新用法…）就用 web_search / web_fetch 真去查一次，
+别拿训练先验当答案、也别把用户推给别的 App。确实没有对应工具时，明说缺的是哪一类工具，
+而不是笼统地说"我不具备这个能力"。"""
 
 
 class MainAgent:
@@ -2537,10 +2544,13 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             slug = re.sub(r"[^a-z0-9]+", "-", desc.lower()).strip("-")[:28] or "iso"
             branch = f"vorto/{slug}-{uuid.uuid4().hex[:8]}"
             res = await asyncio.to_thread(apply_diff_to_branch, repo_root, branch, diff, f"dev_isolated: {desc}")
+            # 文档档位跳过了测试：结论里必须写明，不能和"测试通过"混为一谈（跳过 ≠ 通过）
+            verdict = ("已隔离实现（**纯文档改动，已跳过测试——跳过≠通过**）"
+                       if ver.get("skipped") else "已隔离实现且测试通过")
             if res["ok"]:
-                return (f"✅ 已隔离实现且测试通过{fixed}，落到新分支 {branch}（{nlines} 行，"
+                return (f"✅ {verdict}{fixed}，落到新分支 {branch}（{nlines} 行，"
                         f"git checkout {branch} 查看，未碰 main）。" + _test_delta_note(diff))
-            return f"✅ 实现且测试通过{fixed}，但落分支失败：{res['error']}。diff {nlines} 行。"
+            return f"✅ {verdict}{fixed}，但落分支失败：{res['error']}。diff {nlines} 行。"
         tail = (ver or {}).get("output", "")[-1000:]
         return (f"❌ 隔离实现完成但测试未过（试了 {attempts} 次）。失败输出尾部：\n{tail}\n"
                 f"据此修正后重试（再调 dev_isolated）。diff {nlines} 行，未落地。")
@@ -2845,6 +2855,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     b.attempts = r.get("attempts", 1)
                     green = r.get("ver") and r["ver"]["ok"] and (r.get("diff") or "").strip()
                     if green:
+                        if r["ver"].get("skipped"):   # 文档档位：绿是"没跑测试"的绿，台账要记
+                            b.note = "跳过测试（纯文档改动，跳过≠通过）"
                         items.append((r["diff"], f"dev_auto[{b.id}]: {b.desc}"))
                     else:
                         b.status = "failed"
@@ -2890,7 +2902,9 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             out.append(f"\n【独立批】{landed_n}/{len(ind)} 落到分支：")
             for b in ind:
                 if b.landed:
-                    out.append(f"  · {b.desc}：✅")
+                    skipped = (b.note or "").startswith("跳过测试")
+                    out.append(f"  · {b.desc}：✅" + ("（**已跳过测试：纯文档，跳过≠通过**）"
+                                                     if skipped else ""))
                 elif "文本冲突" in (b.note or ""):           # 自测绿但落分支冲突被跳过 → 如实点名（#123 诚实性）
                     out.append(f"  · {b.desc}：⚠️ {b.note}")
                 else:

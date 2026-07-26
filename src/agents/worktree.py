@@ -88,6 +88,51 @@ _DIFF_ARTIFACT_IGNORES = (
 )
 
 
+# 只碰这些后缀的改动，跑 Python 测试套件是**零信号的表演**（本仓已核实：没有任何测试断言
+# 仓库真实 README/docs 的内容）。白名单从严：出现任何不在表里的路径 → 一律按代码改动走全量。
+_DOC_ONLY_SUFFIXES = (".md", ".markdown", ".rst", ".txt")
+
+_TIER_DOCS = "docs"
+_TIER_FULL = "full"
+
+
+def diff_paths(diff: str) -> list[str]:
+    """从 unified diff 里抽出被改动的路径（含新增/删除/改名的两侧）。"""
+    paths: list[str] = []
+    for line in (diff or "").splitlines():
+        if not line.startswith("diff --git "):
+            continue
+        # `diff --git a/x b/y`——两侧都取（改名时 a≠b，任一侧是代码就得走全量）
+        parts = line.split()
+        for token in parts[2:4]:
+            p = token[2:] if token[:2] in ("a/", "b/") else token
+            if p and p != "/dev/null":
+                paths.append(p)
+    return paths
+
+
+def verify_tier(diff: str) -> str:
+    """按改动面判定验证档位：docs（纯文档，测试无信号）/ full（其余一律全量）。
+
+    真机实测（2026-07-26）：README 改一行也要跑两遍全量测试（自测 + 集成，各约 4 分钟），
+    13 分钟的任务里 8 分钟花在零信号的测试上。分档只砍这种表演，**不放松任何代码路径**：
+    空 diff、无法解析、出现任何非文档后缀 → 全部落回 full。
+    """
+    paths = diff_paths(diff)
+    if not paths:
+        return _TIER_FULL
+    return _TIER_DOCS if all(p.lower().endswith(_DOC_ONLY_SUFFIXES) for p in paths) else _TIER_FULL
+
+
+def _skipped_verification(paths_hint: str = "") -> dict:
+    """文档档位的验证结果：**如实标注跳过**（本仓铁律：跳过 ≠ 通过），别谎报"全绿"。"""
+    return {"ok": True, "skipped": True, "tier": _TIER_DOCS,
+            "output": "纯文档改动（" + (paths_hint or "仅 .md/.txt 等") + "）："
+                      "已跳过测试套件——对文档改动它不产生任何信号。**跳过 ≠ 通过**："
+                      "本次未获得任何测试证据。",
+            "cmd": "(skipped: docs-only)"}
+
+
 def collect_diff(worktree) -> str:
     """worktree 内相对 HEAD 的全部改动（含新增文件）的 unified diff。
 
@@ -189,7 +234,11 @@ def apply_diffs_to_branch(repo_root, branch: str, items: list,
             applied.append(msg)
         # 集成后验证：在合并了全部绿块的分支上再跑一遍测试（worktree 还没拆，正好就地测）
         if applied and test_cmd:
-            integration = run_tests(path, test_cmd)
+            merged = "\n".join(d for d, _m in items if (d or "").strip())
+            if verify_tier(merged) == _TIER_DOCS:      # 整批都是文档：同样如实跳过，别演一遍
+                integration = _skipped_verification(", ".join(diff_paths(merged))[:120])
+            else:
+                integration = run_tests(path, test_cmd)
         return {"ok": bool(applied), "branch": branch, "applied": applied,
                 "failed": failed, "integration": integration}
     finally:
@@ -273,9 +322,12 @@ async def run_isolated_task(repo_root, wid: str, description: str,
         diff = await _git_op(collect_diff, path)           # 先收 diff，再跑测试
         # 空 diff 没有可验证之物："绿测试 + 空 diff"永远不构成成功（上层要求 diff 非空才算绿），
         # 跑全量测试纯烧时间（本仓一轮 ~4 分钟）——短路跳过，让上层直接走 no-op/通道故障分类。
+        if not (test_cmd and diff.strip()):
+            return diff, conclusion, None
+        if verify_tier(diff) == _TIER_DOCS:            # 纯文档：测试给不出任何信号，如实跳过
+            return diff, conclusion, _skipped_verification(", ".join(diff_paths(diff))[:120])
         # pytest 慢且阻塞：丢线程跑（锁外），既不冻 UI、并行时多个测试也能真并发（各自独立 worktree）
-        verification = (await asyncio.to_thread(run_tests, path, test_cmd)) \
-            if (test_cmd and diff.strip()) else None
+        verification = await asyncio.to_thread(run_tests, path, test_cmd)
         return diff, conclusion, verification
     finally:
         await _git_op(remove_worktree, repo_root, path)

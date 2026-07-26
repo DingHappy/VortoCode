@@ -920,3 +920,41 @@ async def test_attach_client_confirm_fallback_fails_closed():
 
     assert await ProtocolClient._dispatch_confirm(
         {"text": "x"}, always_raises) is False
+
+
+@pytest.mark.parametrize("kind", ["web", "cli", "im"])
+async def test_interactive_ends_keep_outbound_web_tools(kind, tmp_path):
+    """**上一条的对称另一半**：交互端**必须**有联网工具。
+
+    真机 2026-07-26：钉钉里问天气，agent 回「我没有查询实时天气的能力，建议你看天气 App」——
+    可它手里正握着 web_search/web_fetch/research_parallel。上一条只钉死了「无人值守不许出网」，
+    没人钉「交互端必须能出网」，于是这类能力一旦被误删就静默消失、只表现为 agent 嘴上说做不到。
+
+    注意这**不与 D0 冲突**：交互端有真人可问、污点态下预授权失效，出网风险由确认门承担；
+    无人值守没有真人，才必须整个砍掉出网面（见上一条）。
+    """
+    from src.gateway.agent_session import build_session
+
+    built = build_session(str(tmp_path), kind=kind)
+    agent = built[0] if isinstance(built, (tuple, list)) else built
+    tools = getattr(agent, "_tool_list", None) or list(getattr(agent, "tools", {}).values())
+    names = {t.name for t in tools}
+
+    assert "web_search" in names, f"{kind} 端丢了 web_search——agent 会开始谎称自己查不了外部信息"
+    assert "web_fetch" in names, f"{kind} 端丢了 web_fetch"
+
+
+def test_system_prompt_states_the_no_false_denial_rule():
+    """**提示词内容契约（注意：不是行为证明）**。
+
+    真机 2026-07-26：钉钉里问天气，agent 答「我没有查询实时天气的能力」——而 web_search /
+    web_fetch 就在它的工具清单里，清单也确实印在系统提示中。所以「工具在不在提示里」这类断言
+    **拦不住这个回归**（当时它就是绿的）。真正的修法是提示里明写"不许凭印象否认能力"。
+
+    本测试只保证那条规则**没有在后续重构中被悄悄删掉**；它**不能**证明模型会遵守——
+    那个只能靠真机验证。别把这条的绿当成"agent 不会再谎称做不到"的保证。
+    """
+    from src.agents.main_agent import MainAgent, build_read_tools
+
+    prompt = MainAgent(build_read_tools("."))._system("build")
+    assert "否认自己的能力" in prompt, "系统提示丢了「不许凭印象否认能力」这条规则"
