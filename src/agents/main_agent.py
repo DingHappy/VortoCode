@@ -428,6 +428,26 @@ def _clip_middle(text: str, limit: int) -> str:
     return f"{text[:head]}\n…(中间省略 {omitted} 字)…\n{text[-tail:]}"
 
 
+def land_note(msg: str, applied_msgs, failed_errs: dict) -> tuple[str, str]:
+    """一个块落分支之后该记什么状态与原因 → (status, note)。
+
+    抽成纯函数是为了让这条契约可测：**落分支失败必须报真实 git 报错**。此前这里把
+    `failed[].error` 丢掉、一律硬写"与其它块文本冲突"——真机 2026-07-26 撞到的其实是
+    `commit 失败: Author identity unknown`（新机器没配 git user.name/email），而且当时
+    只有一个块，"与其它块冲突"这句话把人引向完全错的排查方向。
+    """
+    if msg in applied_msgs:
+        return "landed", ""                       # 真在 applied 里才算落地
+    if msg in failed_errs:
+        why = (failed_errs.get(msg) or "").strip()
+        if why:
+            return "failed", f"自测绿但落分支失败：{why[:160]}"
+        # 拿不到真错误才退回最常见的猜测，且措辞标明是猜的
+        return "failed", "自测绿但未能干净落分支（疑与其它块文本冲突）"
+    all_err = "；".join(v for v in failed_errs.values() if v)[:160]
+    return "failed", f"落分支整体失败（未落地）：{all_err or '见日志'}"
+
+
 def _repair_prompt(base: str, failure_tail: str) -> str:
     """把上一次的测试失败输出拼回子任务描述，引导下一个全新隔离子 agent 定向修复。"""
     return (f"{base}\n\n【上一次尝试失败】测试未过，失败输出尾部：\n{failure_tail}\n"
@@ -2699,8 +2719,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         dropped = res.get("failed") or []
         dropped_note = ""
         if dropped:
-            dropped_note = (f"\n⚠️ {len(dropped)} 块虽自测绿但与其它块**文本冲突、未能干净落分支**（已跳过，"
-                            f"仅落地/验证实际应用的部分）：\n"
+            dropped_note = (f"\n⚠️ {len(dropped)} 块虽自测绿但**未能干净落分支**（已跳过，"
+                            f"仅落地/验证实际应用的部分）；逐条原因如下：\n"
                             + "\n".join(f"  · {d.get('msg', '?')}：{(d.get('error') or '')[:120]}"
                                         for d in dropped))
         integ = res.get("integration")
@@ -2873,18 +2893,16 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 # 此时绿块 msg 既不在 applied 也不在 failed，反推法会把它们全误标 landed → 污染计划、
                 # dev_resume 跳过实际没落地的块（违反 write-ahead/不超前标记）。
                 applied_msgs = set(apply_res.get("applied", []))
-                conflict_msgs = {f.get("msg") for f in apply_res.get("failed", [])}
-                apply_err = "；".join(str(f.get("error") or "") for f in apply_res.get("failed", []))[:160]
+                # 逐块留下**真实原因**。此前这里只留 msg 集合、把 error 丢了，于是任何落分支失败
+                # 都被硬写成"文本冲突"——真机 2026-07-26 撞到的其实是 `commit 失败: Author identity
+                # unknown`（新机器没配 git user.name/email），报成文本冲突把人引向完全错的方向。
+                failed_errs = {f.get("msg"): str(f.get("error") or "").strip()
+                               for f in apply_res.get("failed", [])}
                 for b, r in results:
                     if b.status == "failed":
                         continue
-                    msg = f"dev_auto[{b.id}]: {b.desc}"
-                    if msg in applied_msgs:
-                        b.status, b.note = "landed", ""       # 真在 applied 里才算落地
-                    elif msg in conflict_msgs:
-                        b.status, b.note = "failed", "自测绿但与其它块文本冲突、未能干净落分支"
-                    else:                                    # 既没落地也没单独冲突 → 整体落分支失败
-                        b.status, b.note = "failed", f"落分支整体失败（未落地）：{apply_err or '见日志'}"
+                    b.status, b.note = land_note(f"dev_auto[{b.id}]: {b.desc}",
+                                                 applied_msgs, failed_errs)
                 _save()                                      # 真提交后才标 landed（不超前）
             else:
                 for b in todo_ind:                           # resume：分支已存在，逐个在其上补跑
@@ -2905,7 +2923,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     skipped = (b.note or "").startswith("跳过测试")
                     out.append(f"  · {b.desc}：✅" + ("（**已跳过测试：纯文档，跳过≠通过**）"
                                                      if skipped else ""))
-                elif "文本冲突" in (b.note or ""):           # 自测绿但落分支冲突被跳过 → 如实点名（#123 诚实性）
+                elif (b.note or "").startswith("自测绿但"):  # 自测绿但没落成 → 如实点名带原因（#123 诚实性）
                     out.append(f"  · {b.desc}：⚠️ {b.note}")
                 else:
                     out.append(f"  · {b.desc}：❌ {b.note or '未过'}")

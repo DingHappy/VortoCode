@@ -527,7 +527,10 @@ async def test_dev_auto_reports_independent_block_dropped_on_apply(monkeypatch, 
 
     tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_auto"]
     out = await tool.handler({"task": "做两件相互冲突的事"})
-    assert "未能干净落分支" in out                          # 如实报告被丢的块
+    # 如实报告被丢的块，且带上**真实 git 报错**——2026-07-26 起不再一律硬写"文本冲突"：
+    # 真机上撞到的是 `commit 失败: Author identity unknown`，猜成冲突会把人引向错的排查方向。
+    assert "落分支失败" in out                              # 如实报告被丢的块
+    assert "patch does not apply" in out                    # 且给出真因，不是猜的分类
     assert "1 独立" in out                                  # 计数按实际落地（1）而非自测绿（2）
     assert "块乙" in out or "dev_auto: 块乙" in out          # 点名是哪块被丢
 
