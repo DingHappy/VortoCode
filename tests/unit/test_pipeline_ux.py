@@ -288,3 +288,54 @@ def test_land_note_handles_whole_apply_failure():
                              {"其它块": "worktree add 失败: 磁盘满"})
     assert status == "failed"
     assert "整体失败" in note and "磁盘满" in note
+
+
+# ---------------------------------------------------------------- 开跑前的环境预检
+
+def test_preflight_flags_missing_git_identity(tmp_path, monkeypatch):
+    """没配 git 提交身份 → 预检必须拦住，并给出可直接粘贴的修复命令。
+
+    真机 2026-07-26：新机器没配身份，任务照常分解、实现、自测**全绿**，最后一步 commit 才挂
+    （Author identity unknown）——烧掉几十秒 LLM 和一整轮工作，撞上的却是一条 git config。
+    """
+    import subprocess
+    from src.agents.main_agent import preflight_dev
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")   # 屏蔽全局身份，模拟新机器
+
+    problems = preflight_dev(str(tmp_path))
+    assert problems, "没配身份却放行了"
+    joined = "\n".join(problems)
+    assert "git config" in joined and "user.email" in joined   # 给命令，不是只说"有问题"
+
+
+def test_preflight_passes_with_identity(tmp_path):
+    import subprocess
+    from src.agents.main_agent import preflight_dev
+
+    def git(*a):
+        subprocess.run(["git", "-C", str(tmp_path), *a], check=True, capture_output=True)
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
+    git("config", "user.name", "t")
+    git("config", "user.email", "t@t")
+
+    assert preflight_dev(str(tmp_path)) == []
+
+
+async def test_dev_auto_refuses_to_start_without_identity(tmp_path, monkeypatch):
+    """预检不过时 dev_auto 必须**在分解之前**返回——一次 LLM 都不许调。"""
+    import subprocess
+    from src.agents import decompose as dc
+    from src.agents.main_agent import build_dev_tools
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+
+    async def _boom(*a, **k):
+        raise AssertionError("预检没过却开始分解了——白烧 token")
+    monkeypatch.setattr(dc, "decompose_for_parallel", _boom)
+
+    tools = {t.name: t for t in build_dev_tools(str(tmp_path))}
+    out = await tools["dev_auto"].handler({"task": "随便干点啥"})
+    assert "预检未过" in out and "git config" in out

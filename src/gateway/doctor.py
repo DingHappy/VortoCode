@@ -37,7 +37,17 @@ def _check_git(cwd: str) -> Check:
                        capture_output=True, text=True)
     if r.returncode != 0:
         return Check("git", "warn", "当前目录不是 git 仓库（dev 流水线需要仓库）")
-    return Check("git", "ok", "git 可用，当前目录在仓库内")
+    # 光有 git 和仓库还不够——**提交得了吗**才是流水线真正依赖的。真机 2026-07-26：新机器
+    # 没配身份，doctor 显示绿，任务却在最后一步 commit 挂掉（Author identity unknown）。
+    def _cfg(key: str) -> str:
+        rr = subprocess.run(["git", "-C", cwd, "config", "--get", key],
+                            capture_output=True, text=True)
+        return (rr.stdout or "").strip()
+    if not (_cfg("user.name") and _cfg("user.email")):
+        return Check("git", "fail",
+                     "git 提交身份未配置——落分支必然失败。"
+                     'git config --global user.name "…" && git config --global user.email "…"')
+    return Check("git", "ok", "git 可用、当前目录在仓库内、提交身份已配")
 
 
 def _check_api_key() -> Check:
