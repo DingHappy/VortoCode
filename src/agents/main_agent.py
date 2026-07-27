@@ -3940,6 +3940,7 @@ def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable
                       with_artifacts: bool = False, draft_pr: bool = False,
                       memory_source: str = "agent", memory_session_id=None,
                       capabilities: Any = None, with_web: bool = True,
+                      with_dev: bool = True,
                       on_diff: Optional[Callable[[str, str], None]] = None) -> list[Tool]:
     """标准主 agent 工具集（headless CLI 与 Web /agent 共用，保证二者"同源"、不漂移）。
 
@@ -3990,7 +3991,20 @@ def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable
                                       confirm_delete=_art_delete)
     if with_web:                                   # 与出网同档：无人值守没有真人可问，出站面一律砍掉
         tools += build_im_media_tools(repo_root, confirm)
-    tools += (build_dev_tools(repo_root, on_progress=on_progress, confirm=confirm, draft_pr=draft_pr,
-                              capabilities=capabilities, on_diff=on_diff)
-              + build_command_tool(repo_root, confirm) + build_pr_tool(repo_root, confirm))
+    if with_dev:
+        tools += (build_dev_tools(repo_root, on_progress=on_progress, confirm=confirm,
+                                  draft_pr=draft_pr, capabilities=capabilities, on_diff=on_diff)
+                  + build_pr_tool(repo_root, confirm))
+    else:
+        # 没有 dev 流水线的档（研究员）**必须另给写路径**：serve 侧刻意没有直写工具，
+        # 写操作一律走隔离流水线——把流水线砍掉却不补，就等于连写个抓取脚本都做不到，
+        # 那句"可以写代码来更好地帮助收集资料"就成了空话。
+        # build_write_tools 是**根限定**的（`..` 越界拦死），而这一档的 repo_root 就是它自己的
+        # 沙盒工作区，不是主项目——所以"在自己家里随便写"是安全的，无需逐次确认
+        #（与一次性 worktree 里的子 agent 同一个道理：改动只落在自己的地盘）。
+        tools += build_write_tools(repo_root)
+    # run_command 与 dev 分开：研究员**要**能跑自己写的抓取/清洗脚本（沙箱内），
+    # 但不该有改主项目代码、落分支、开 PR 的能力。把两者绑在一起会逼人二选一：
+    # 要么给全套（权限过大），要么连脚本都跑不了（等于废了"写代码辅助收集资料"）。
+    tools += build_command_tool(repo_root, confirm)
     return tools

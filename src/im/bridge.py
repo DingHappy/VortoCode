@@ -21,6 +21,20 @@ _CONFIRM_TIMEOUT = 600                             # 按钮确认等待上限（
 _SPLIT = re.compile(r"[,\s;]+")                    # allowFrom 的分隔符（逗号/空白/分号都收）
 
 
+def _persona_path_for(repo_root: str):
+    from pathlib import Path
+    return Path(repo_root) / ".vortocode" / "persona.md"
+
+
+def read_persona(repo_root: str) -> str:
+    """从工作区读人设。**模块级函数**而不是实例方法——_build_agent 会被契约测试用桩对象
+    调用（SimpleNamespace 没有实例方法），把装配路径绑死在实例上会让那层契约失效。"""
+    try:
+        return _persona_path_for(repo_root).read_text(encoding="utf-8").strip()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _heartbeat_interval() -> float:
     """后台任务"还活着"心跳的间隔（秒）。0/负数 = 关闭。env VORTOCODE_IM_HEARTBEAT_EVERY 调。
 
@@ -68,6 +82,7 @@ def normalize_allow_from(allow_from: Optional[Iterable], owner_id: str) -> froze
 class IMBridge:
     def __init__(self, repo_root: str, adapter: ChannelAdapter, owner_id: str, *,
                  channel: str = "im", mode: str = "plan", llm=None, runner=None,
+                 with_dev: bool = True, persona: str = "",
                  allow_from: Optional[Iterable] = None):
         self.repo_root = str(repo_root)
         self.adapter = adapter
@@ -93,6 +108,10 @@ class IMBridge:
         self._progress_interval = 2.0 if self._edits else 10.0
         # 后台任务运行时：serve 内嵌模式注入共享 runner（单一并发池/台账/订阅集，kind="im-dev"
         # 分发回本 bridge 的 worker，见 gateway/im_service）；standalone 懒建自己的（向后兼容）
+        # 研究员助手（给同事用）：不给改主项目代码/落分支/开 PR 的工具面
+        self._with_dev = bool(with_dev)
+        # 人设：由本人首次对话时自述，落在自己的状态目录里（见 _persona_path）
+        self._persona = str(persona or "")
         self._runner = runner
         self._shared_runner = runner is not None
         self._task_prog: dict = {}                       # tid -> 上次进度推送时间（节流）
@@ -106,6 +125,28 @@ class IMBridge:
         self._heartbeat_quiet = self._heartbeat_every
         self._heartbeat_task: Optional[asyncio.Task] = None
         self.agent = self._build_agent()
+
+    # ------------------------------------------------------------ 人设（本人自述，不由管理员代填）
+    def _persona_path(self):
+        return _persona_path_for(self.repo_root)
+
+    def _load_persona(self) -> str:
+        """读本助手的人设。**每个助手一个独立工作区**，所以人设天然按人隔离。"""
+        return self._persona or read_persona(self.repo_root)
+
+    def _save_persona(self, text: str) -> None:
+        p = self._persona_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text.strip() + "\n", encoding="utf-8")
+        self._persona = text.strip()
+
+    def persona_prompt(self) -> str:
+        """没设人设时的引导语。让**本人自己说**，比管理员替他想准得多。"""
+        return ("👋 我是你的专属助手。第一次见面，先让我了解你——直接回一段话就行：\n"
+                "  · 我该怎么称呼你？\n"
+                "  · 你主要做什么工作？关注哪些领域？\n"
+                "  · 希望我帮你做什么？（查资料 / 盯竞品 / 整理文档…）\n\n"
+                "之后随时用 /persona 看或改。")
 
     # ------------------------------------------------------------ 建 agent（第四端：走 gateway 单一工厂）
     def _build_agent(self):
@@ -127,7 +168,10 @@ class IMBridge:
         # untrusted_input=True：IM 入站是彻头彻尾的外部不可信内容（转发的网页、群里别人贴的文本、
         # 冒充运维的指令），**每个回合一开始就打污点**——污点态下一切免确认授权失效，
         # 记忆写入也降级（指令性文本不进长期记忆）。这条对 IM 无例外，见 OPENCLAW_INTEGRATION 第 2 条。
+        persona = getattr(self, "_persona", "") or read_persona(self.repo_root)
         agent = build_session(self.repo_root, kind="im", confirm=_confirm,
+                              with_dev=getattr(self, "_with_dev", True),
+                              extra_system=(f"【服务对象】{persona}" if persona else None),
                               on_progress=_progress, llm=self._llm, can_ask_human=True,
                               untrusted_input=True)
         self._restore_session(agent)
@@ -267,6 +311,16 @@ class IMBridge:
             if text.startswith("/"):
                 await self._handle_command(text)
                 return
+            # 研究员助手第一次见面：先请本人自述人设，再开始干活。
+            # **不由管理员代填**——本人两句话胜过旁人揣摩三段。
+            if not self._with_dev and not self._load_persona():
+                if len(text) >= 8:                       # 够长就当作自述收下
+                    self._save_persona(text)
+                    await self._safe_send(
+                        "✅ 记住了，我按这个来。之后 /persona 可随时看或改。\n\n现在说说要我做什么？")
+                else:
+                    await self._safe_send(self.persona_prompt())
+                return
             if self._turn_task is not None and not self._turn_task.done():
                 if len(self._pending_msgs) >= self._queue_cap:
                     await self._safe_send(
@@ -322,6 +376,15 @@ class IMBridge:
             await self._submit_task(text[len("/task"):].strip())
         elif cmd == "/tasks":
             await self._list_tasks()
+        elif cmd == "/persona":
+            arg = text[len("/persona"):].strip()
+            if arg:
+                self._save_persona(arg)
+                await self._safe_send("✅ 人设已更新：\n" + arg[:300])
+            else:
+                cur = self._load_persona()
+                await self._safe_send(("当前人设：\n" + cur) if cur
+                                      else "还没设人设。\n" + self.persona_prompt())
         elif cmd == "/stop":
             t = self._turn_task
             n = len(self._pending_msgs)

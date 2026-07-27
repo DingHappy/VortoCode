@@ -46,7 +46,8 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
                   capability_profile=None, auto_approve: bool = False,
                   can_ask_human: bool = False, on_decision=None, on_diff=None,
                   workspace_scope: str = "project", on_workspace_required=None,
-                  untrusted_input: bool = False):
+                  untrusted_input: bool = False, with_dev: bool = True,
+                  extra_system: str | None = None):
     """装配一个主 agent（三端同一骨架）。
 
     kind ∈ {web, cli, im} 决定差异位（with_artifacts / hooks）；confirm/on_progress 由调用端提供。
@@ -127,6 +128,7 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         tools = build_agent_tools(repo_root, confirm=gated_confirm, on_progress=on_progress,
                                   with_artifacts=(kind == "web"),   # 制品查看页只有 Web 有
                                   memory_source=kind, capabilities=capabilities,
+                                  with_dev=with_dev,   # 研究员档：不给改主项目代码/落分支/开 PR 的工具
                                   on_diff=on_diff)   # 确认前的结构化 diff 推送（AGENT_DIFF，端可不接）
         if workspace_scope == SCRATCH:
             tools.append(workspace_tool)  # Scratch 仍可声明需要用户真实项目，而不是猜路径
@@ -161,6 +163,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         if agents_cat:
             parts.append("【可用子 agent】(用 task/research_parallel 的 agent 参数按名委派；"
                          "dev 型角色经隔离流水线写代码、需确认)\n" + agents_cat)
+    if extra_system:
+        # 调用方注入的**静态**片段（如"服务对象是谁"的人设）。必须静态：system prompt 要在
+        # 同一会话内字节级稳定，否则破坏上游前缀缓存命中（见 MainAgent._system 的说明）。
+        parts.append(str(extra_system))
     if parts:
         kwargs["extra_system"] = "\n\n".join(parts)
     if on_tool is not None:
