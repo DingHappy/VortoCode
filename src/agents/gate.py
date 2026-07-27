@@ -126,7 +126,10 @@ def make_confirm_gate(
         if verdict == DENY or ask_human is None:   # 问不到人（或端没给问法）→ 拒
             _tell(operation, False, tainted)
             return False
-        prompt = (TAINT_WARNING + operation) if tainted else operation
+        # 走 taint_prefix() 而不是直接拼 TAINT_WARNING：措辞按污点**来源**分档的逻辑只此一份。
+        # （真机 2026-07-27：分档函数改好了，可这里绕过它自己拼常量，于是 IM 每次确认照旧顶着
+        #  "模型读过被投毒的网页"那句重话——**改了定义、漏了唯一的调用点**。）
+        prompt = taint_prefix() + operation
         ok = bool(await ask_human(prompt))
         _tell(operation, ok, tainted)
         return ok
