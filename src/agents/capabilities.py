@@ -20,6 +20,10 @@ EXTERNAL_CONTENT = "external_content"
 LOCAL_PROFILE = "local"
 EXTERNAL_PROFILE = "external"
 UNATTENDED_PROFILE = "unattended"
+# 研究员：给同事用的资料助手——查资料、整理、可在**自己的沙盒工作区**里写脚本辅助收集，
+# 但不碰主项目代码、不外发。凭据维度与 external 同样严（碰不到主机进程/认证远端/敏感文件），
+# 单独命名是为了**审计能一眼看出这是谁的会话**——与 unattended 单独命名同一个理由。
+RESEARCHER_PROFILE = "researcher"
 
 _CREDENTIAL_CAPABILITIES = frozenset(
     {HOST_PROCESS, AUTHENTICATED_OUTBOUND, SENSITIVE_FILES}
@@ -36,6 +40,10 @@ _PROFILE_CAPABILITIES = {
     # Cron/heartbeat is deliberately named separately for audit evidence even
     # though its current capability set is as restrictive as external.
     UNATTENDED_PROFILE: frozenset({EXTERNAL_CONTENT}),
+    # Researcher assistants ingest a lot of Web content by design but must never
+    # reach host credentials or secret-bearing files: same capability set as
+    # external, named separately so audit trails identify whose session it was.
+    RESEARCHER_PROFILE: frozenset({EXTERNAL_CONTENT}),
 }
 
 _SAFE_ENV_TEMPLATES = {
