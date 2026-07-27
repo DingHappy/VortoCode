@@ -57,7 +57,8 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
                  prompt_queue: Optional[List[dict]] = None,
                  context_usage: Optional[Dict[str, Any]] = None,
                  tool_names: Optional[List[str]] = None,
-                 behavior_fp: Optional[str] = None) -> bool:
+                 behavior_fp: Optional[str] = None,
+                 mode: Optional[str] = None) -> bool:
     """把一个 sid 会话存盘。返回是否真的写了（非 sid 会话/出错 → False）。
 
     title：显式标题（重命名用）。不传则**保留磁盘上已有标题**，避免每回合存盘把用户改的名冲掉。
@@ -72,7 +73,7 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
     p = _path(repo_root, sid)
     existing: Dict[str, Any] = {}
     if (title is None or context_usage is None or tool_names is None
-            or behavior_fp is None) and p.is_file():
+            or behavior_fp is None or mode is None) and p.is_file():
         try:
             loaded = json.loads(p.read_text(encoding="utf-8"))
             existing = loaded if isinstance(loaded, dict) else {}
@@ -86,6 +87,8 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
         tool_names = existing.get("tool_names")
     if behavior_fp is None:
         behavior_fp = existing.get("behavior_fp")
+    if mode is None:                                # 同上：不带该参数的调用方不许把模式抹回默认
+        mode = existing.get("mode")
     data = {
         "transcript": list(transcript or [])[-_MAX_TRANSCRIPT:],
         "history": list(history or [])[-_MAX_HISTORY:],
@@ -99,6 +102,8 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
         data["tool_names"] = sorted(str(t) for t in tool_names)
     if behavior_fp is not None:
         data["behavior_fp"] = str(behavior_fp)
+    if mode in ("plan", "build"):                   # 只认这两个值，别把脏数据带进下次装配
+        data["mode"] = mode
     try:
         from src.agents.dev_plan import ensure_state_gitignore
         ensure_state_gitignore(repo_root)    # 会话持久化也是 .vortocode 生成态写入点（自忽略，防足迹）
@@ -136,6 +141,7 @@ def load_session(repo_root: str, key: str) -> Optional[Dict[str, Any]]:
         # 刻意不 `or []`：None=老档从没记录过清单（复原时退化为通用能力提醒），[]≠None。
         "tool_names": data.get("tool_names"),
         "behavior_fp": data.get("behavior_fp"),
+        "mode": data.get("mode"),
     }
 
 
