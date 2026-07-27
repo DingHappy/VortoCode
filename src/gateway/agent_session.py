@@ -129,6 +129,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
                                   with_artifacts=(kind == "web"),   # 制品查看页只有 Web 有
                                   memory_source=kind, capabilities=capabilities,
                                   with_dev=with_dev,   # 研究员档：不给改主项目代码/落分支/开 PR 的工具
+                                  # 排班面与 dev 面同档开关：两者都是**主人的运维面**，研究员
+                                  # （给同事用的资料助理）两样都不该有。将来若出现"要 dev 不要
+                                  # cron"的档，把这里拆成独立参数即可——工厂那侧本就是两个参数。
+                                  with_cron=with_dev,
                                   on_diff=on_diff)   # 确认前的结构化 diff 推送（AGENT_DIFF，端可不接）
         if workspace_scope == SCRATCH:
             tools.append(workspace_tool)  # Scratch 仍可声明需要用户真实项目，而不是猜路径

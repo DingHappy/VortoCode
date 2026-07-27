@@ -141,8 +141,12 @@ def test_trigger_command_job_requires_shell_gate(tmp_path, monkeypatch):
 
 
 def test_trigger_rejects_concurrent_same_job(tmp_path, monkeypatch):
-    """同名作业在跑即 409：调度器造不出同名并发，手动面也不许造（对抗审查 F4）。"""
-    from src.web.routers.cron import _TRIGGER_INFLIGHT
+    """同名作业在跑即 409：调度器造不出同名并发，手动面也不许造（对抗审查 F4）。
+
+    在跑表 2026-07-27 上收到 `src.gateway.cron`——agent 的 cron_run 工具走同一份守卫，
+    两份判定各写一遍必然漂移（而漂移方向永远是"新那份更松"）。
+    """
+    from src.gateway.cron import _TRIGGER_INFLIGHT
 
     _write_cron_yaml(tmp_path)
     monkeypatch.chdir(tmp_path)

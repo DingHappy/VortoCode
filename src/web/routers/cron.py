@@ -11,10 +11,9 @@ from src.web.deps import *  # noqa: F401,F403
 
 router = APIRouter()
 
-# 手动触发的在跑任务表（name → task，兼作强引用防 GC）：同名作业跑完前拒绝再触发——
-# 调度器（串行 run_due + 同分钟去重）永远造不出同名并发，手动面也不许造（对抗审查 F4）。
-# 结果一律走 cron 既有投递面（runs 台账 / 通知台账 / announce），绝不进 HTTP 响应。
-_TRIGGER_INFLIGHT: Dict[str, Any] = {}
+# 触发守卫（F2–F5）与在跑表已上收到 `src.gateway.cron`：agent 的 cron_run 工具走同一份判定，
+# 各写一份必然漂移、且漂移方向永远是"新那份更松"。这里只负责把拒绝原因映射成 HTTP 状态。
+_REASON_STATUS = {"not_found": 404, "disabled": 409, "shell_disabled": 403, "busy": 409}
 
 # next_due 探测视界：月度作业（含 31 日与跳月）都落在视界内；更远的如实报
 # 「视界内无排期」（null），不再与死表达式混为一谈（对抗审查 F1）。
@@ -109,26 +108,16 @@ async def trigger_cron_job(name: str):
     结果异步落 runs 台账与通知台账（cron run lane），HTTP 只应答「已开跑」——
     LLM/夜跑类作业可长达小时级，不能挂在请求上。
     """
-    from src.gateway.cron import load_jobs
+    from src.gateway.cron import check_trigger, track_trigger
 
     cwd = os.getcwd()
-    job = next((item for item in load_jobs(cwd) if item.name == name), None)
-    if job is None:
-        raise HTTPException(status_code=404, detail=f"无此 cron 作业 {name}")
-    if not job.enabled:
-        raise HTTPException(status_code=409,
-                            detail=f"作业 {name} 已停用（enabled: false）；先在 cron.yaml 启用再触发")
-    if job.kind == "command":
-        require_shell()
-    running = _TRIGGER_INFLIGHT.get(name)
-    if running is not None and not running.done():
-        raise HTTPException(status_code=409, detail=f"作业 {name} 正在运行；等它结束再触发")
+    reason, code, job = check_trigger(cwd, name)
+    if reason is not None:
+        # command 作业的 403 仍由 require_shell() 出——它带的是"怎么开"的完整指引，
+        # 且是全仓统一的宿主机执行闸门文案，不在这里另写一份。
+        if code == "shell_disabled":
+            require_shell()
+        raise HTTPException(status_code=_REASON_STATUS.get(code, 409), detail=reason)
     task = asyncio.get_running_loop().create_task(_run_named_job(cwd, name))
-    _TRIGGER_INFLIGHT[name] = task
-
-    def _forget(finished, key=name):
-        if _TRIGGER_INFLIGHT.get(key) is finished:
-            _TRIGGER_INFLIGHT.pop(key, None)
-
-    task.add_done_callback(_forget)
+    track_trigger(name, task)
     return {"started": True, "name": job.name, "kind": job.kind}
