@@ -50,6 +50,10 @@ class SessionTable:
                 agent.history = list(saved.get("history") or [])
                 if saved.get("plan"):
                     agent.plan = list(saved["plan"])
+                # 升级后复原旧会话：工具清单有变要告诉模型，否则历史里过期的「我做不到」
+                # 会被当真话复读（真机 2026-07-27，screenshot_page）。内核判定，端只调用。
+                from src.gateway.agent_session import inject_capability_note
+                inject_capability_note(agent, saved)
             from src.llm.client import new_usage
             now = time.time()
             sess = {
@@ -82,6 +86,7 @@ class SessionTable:
             return
         try:
             from src.web.session_store import save_session
+            from src.gateway.agent_session import session_tool_names
             from src.gateway.dashboard import agent_context_summary
             agent = sess.get("agent")
             mode = getattr(agent, "_context_mode", "plan")
@@ -89,6 +94,7 @@ class SessionTable:
                          getattr(agent, "history", []) or [], getattr(agent, "plan", None),
                          activities=sess.get("activities") or [],
                          prompt_queue=sess.get("prompt_queue") or [],
-                         context_usage=agent_context_summary(agent, mode))
+                         context_usage=agent_context_summary(agent, mode),
+                         tool_names=session_tool_names(agent))
         except Exception:  # noqa: BLE001
             pass
