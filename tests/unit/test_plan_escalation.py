@@ -97,6 +97,37 @@ def test_each_end_declares_its_own_switch_method(tmp_path, kind, hint):
     assert hint in _agent(tmp_path, kind, _Asked())._system("plan")
 
 
+async def test_direct_write_tool_in_plan_mode_asks_instead_of_lecturing(tmp_path):
+    """真机 17:14：模型**直接**调 cron_add（连 request_build 都没绕），plan 门却回了一句
+    「如需执行请切到 build 模式（Tab）」——第三处写死的 Tab，藏在工具拦截文案里。
+    有授权通道时这里就该**问人**，而不是讲课。"""
+    asked = _Asked(True)
+    agent = _agent(tmp_path, "im", asked)
+    out = await agent._run_tool("cron_add", {"name": "daily-tech-news", "schedule": "at 09:00",
+                                             "prompt": "搜科技新闻"}, "plan", lambda *_a: None)
+    assert asked, "plan 模式下直接调写工具，没有向用户请求授权"
+    assert "cron_add" in asked[0] and "授权" in asked[0]
+    assert "Tab" not in str(out)
+
+
+async def test_declined_write_tool_says_declined_not_go_flip_a_switch(tmp_path):
+    """用户刚点了拒绝，就别再劝他去开权限——那是两回事，原文却混成同一句。"""
+    agent = _agent(tmp_path, "im", _Asked(False))
+    out = str(await agent._run_tool("cron_add", {"name": "x", "schedule": "at 09:00",
+                                                 "prompt": "p"}, "plan", lambda *_a: None))
+    assert "拒绝" in out and "Tab" not in out
+    assert "/mode build" not in out, "被拒后不该继续劝他改模式"
+
+
+async def test_no_escalation_channel_names_this_ends_own_method(tmp_path):
+    """真没有授权通道时才说怎么切——而且说的必须是**本端**的方式。"""
+    from src.agents.main_agent import MainAgent, build_read_tools
+
+    agent = MainAgent(build_read_tools(str(tmp_path)), mode_switch_hint="回复 `/mode build`")
+    out = str(await agent._request_build({"reason": "r", "next_action": "n"}))
+    assert "/mode build" in out and "Tab" not in out
+
+
 def test_prompt_points_at_request_build_as_the_path(tmp_path):
     prompt = _agent(tmp_path, "im", _Asked())._system("plan")
     assert "request_build" in prompt and "主动请求授权" in prompt
@@ -107,6 +138,25 @@ def test_build_mode_rule_carries_no_escalation_coaching(tmp_path):
     prompt = _agent(tmp_path, "im", _Asked())._system("build")
     assert "主动请求授权" not in prompt and "/mode build" not in prompt
     assert "build 模式下所有工具可用" in prompt
+
+
+def test_no_tui_key_leaks_anywhere_in_the_agent_facing_surface(tmp_path):
+    """**全局扫描**，不是逐点打地鼠。
+
+    "Tab" 这个键前后从三个不同地方漏出来：系统提示的 mode_rule、`request_build` 的无通道
+    兜底、plan 门的工具拦截文案。逐条修完还会有第四处——因为凡是"回给模型的文本"都可能被
+    它原样转述给用户。所以这里扫**整个面**：系统提示（plan+build）+ 全部工具描述。
+    """
+    leaked = []
+    for kind in KINDS:
+        agent = _agent(tmp_path, kind, _Asked())
+        surfaces = {f"system({m})": agent._system(m) for m in ("plan", "build")}
+        for t in agent.tools.values():
+            surfaces[f"tool:{t.name}"] = t.description + " " + " ".join(t.args.values())
+        for where, text in surfaces.items():
+            if "Tab" in str(text):
+                leaked.append(f"{kind}/{where}")
+    assert not leaked, f"TUI 的按键漏进了非 TUI 端能看到的文本：{leaked}"
 
 
 # ---------------------------------------------------------------- 3. 授权走内核门（污点/fail-closed）

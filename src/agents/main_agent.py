@@ -865,7 +865,9 @@ class MainAgent:
         reason = str(args.get("reason") or "").strip()
         next_action = str(args.get("next_action") or "").strip()
         if self._on_escalate is None:
-            return "当前入口没有 build 切换确认通道；请让用户手动切到 build 后再继续。"
+            how = (f"请{self._mode_switch_hint}" if self._mode_switch_hint
+                   else "请让用户切到 build 模式")
+            return f"当前入口没有授权通道，{how}后再继续。"
         ok = False
         try:
             ok = await self._on_escalate("request_build", {
@@ -1439,11 +1441,16 @@ class MainAgent:
                 except Exception:  # noqa: BLE001
                     ok = False
             if not ok:
-                return finish(
-                    "blocked",
-                    f"工具 {name} 在 plan 模式下不可用（只读/提案）。"
-                    f"如需执行请切到 build 模式（Tab）。",
-                )
+                # 两种情况**别说成同一句话**（真机 2026-07-27）：原文一律是"请切到 build 模式（Tab）"，
+                # 于是①钉钉用户被指去按一个不存在的键；②用户明明刚点了"拒绝"，却又被劝去开权限。
+                # 模型只会照着工具结果转述，所以这句话说错了，用户看到的就是错的。
+                if self._on_escalate is None:
+                    how = (f"请{self._mode_switch_hint}" if self._mode_switch_hint
+                           else "请让用户切到 build 模式")
+                    detail = f"当前入口没有授权通道，{how}后再试。"
+                else:
+                    detail = "用户拒绝了本次授权——保持只读，给方案即可，别再重复请求。"
+                return finish("blocked", f"工具 {name} 在 plan 模式下不可用（只读/提案）。{detail}")
             self._escalated = True
         if self._hook_system is not None:       # PRE_TOOL_USE：钩子可阻止该工具（should_stop）
             block = await self._fire_hook("pre_tool_use", {"tool": name, "args": args}, stoppable=True)
