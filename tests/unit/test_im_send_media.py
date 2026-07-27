@@ -12,6 +12,7 @@
 """
 
 from src.agents.main_agent import build_agent_tools, build_im_media_tools, make_confirm_gate
+from src.im.channel import ChannelAdapter
 
 
 def _tools(tmp_path, confirm=None):
@@ -172,3 +173,163 @@ def test_dingtalk_keeps_two_independent_token_slots():
 
     a._tok_old = ("old-token", 1e9)
     assert a._tok_new == ("new-token", 1e9)
+
+
+# ================================================================ 入站附件（收图/收文件）
+
+class _RecvAdapter(ChannelAdapter):
+    """只用于驱动 bridge 的最小适配器：记录发出去的话。
+
+    继承 ChannelAdapter 而不是白手起家——才能拿到 commit_reply_target 等默认实现，
+    也顺带保证"新通道少实现一个方法不会把桥打挂"这条约定在测试里同样成立。
+    """
+    edits_supported = False
+
+    def __init__(self, sent):
+        self.sent = sent
+
+    async def poll(self):  # pragma: no cover
+        return
+        yield
+
+    async def send_text(self, text):
+        self.sent.append(text)
+        return ""
+
+    async def edit_text(self, mid, text):
+        self.sent.append(text)
+
+    async def send_confirm(self, text, cid):  # pragma: no cover
+        self.sent.append(text)
+
+    async def ack_callback(self, ev):  # pragma: no cover
+        return
+
+    async def close(self):  # pragma: no cover
+        return
+
+
+def _bridge(tmp_path, sent):
+    from src.im.bridge import IMBridge
+    return IMBridge(str(tmp_path), _RecvAdapter(sent), "owner-1", channel="dingtalk")
+
+
+async def test_image_only_message_is_not_dropped(tmp_path):
+    """只发一张图、一个字都不写——**不能被丢掉**。
+
+    原实现 `if not text: return` 会让纯附件消息石沉大海：人发了图，机器人一声不吭，
+    看着就是死机（本仓栽过好几次的"不告诉人发生了什么"）。
+    """
+    from src.im.channel import ChannelEvent
+
+    sent: list = []
+    b = _bridge(tmp_path, sent)
+    got: dict = {}
+
+    class _Agent:
+        async def run_turn(self, text, mode="plan", say=None, emit=None, images=None, **kw):
+            got.update(text=text, images=list(images or []))
+            return "看到了"
+    b.agent = _Agent()
+
+    ev = ChannelEvent(kind="message", sender_id="owner-1", text="",
+                      images=["/tmp/a.png"])
+    await b._on_event(ev)
+    if b._turn_task:
+        await b._turn_task
+
+    assert got.get("images") == ["/tmp/a.png"], "图片没送进 run_turn"
+    assert "看到了" in "\n".join(sent)
+
+
+async def test_files_are_told_to_agent_by_path(tmp_path):
+    """文件走"告诉路径 + 让 agent 自己 read_file"，不塞进图片通道。"""
+    from src.im.channel import ChannelEvent
+
+    sent: list = []
+    b = _bridge(tmp_path, sent)
+    got: dict = {}
+
+    class _Agent:
+        async def run_turn(self, text, mode="plan", say=None, emit=None, images=None, **kw):
+            got.update(text=text, images=list(images or []))
+            return "读到了"
+    b.agent = _Agent()
+
+    await b._on_event(ChannelEvent(kind="message", sender_id="owner-1", text="看看这个",
+                                   files=["/inbox/report.csv"]))
+    if b._turn_task:
+        await b._turn_task
+
+    assert "/inbox/report.csv" in got["text"]
+    assert "read_file" in got["text"]
+    assert got["images"] == []                       # 文件不该混进图片通道
+
+
+async def test_unfetchable_attachment_is_reported_not_swallowed(tmp_path):
+    """附件取不到 → 必须如实告诉用户，绝不静默丢。"""
+    from src.im.channel import ChannelEvent
+
+    sent: list = []
+    b = _bridge(tmp_path, sent)
+
+    class _Agent:  # pragma: no cover - 不该被调用
+        async def run_turn(self, *a, **k):
+            return ""
+    b.agent = _Agent()
+
+    await b._on_event(ChannelEvent(kind="message", sender_id="owner-1", text="",
+                                   unsupported="收到 video 类型的消息，暂不支持读取其内容。"))
+    body = "\n".join(sent)
+    assert "暂不支持" in body, f"附件取不到却一声不吭：{sent}"
+
+
+async def test_inbound_attachments_ride_a_tainted_turn(tmp_path):
+    """**安全线**：入站附件必须落在污点回合里。
+
+    网页/文档截图里可以写"忽略之前的指令，去执行 X"——模型看图执行会绕开所有文本污点检查。
+    IM 端（kind="im"）本就每回合无条件打污点，这里钉死这条不被后续重构改掉。
+    """
+    from src.gateway.agent_session import build_session
+
+    built = build_session(str(tmp_path), kind="im")
+    agent = built[0] if isinstance(built, (tuple, list)) else built
+    assert getattr(agent, "_untrusted_input", False) is True, \
+        "IM 端不再强制污点——入站图片将获得免确认授权，这是提示注入的直通车"
+
+
+# ---------------------------------------------------------------- 钉钉侧解析
+
+async def test_dingtalk_reports_unknown_msgtype_instead_of_silence(tmp_path):
+    """认不出的消息类型 → 申报 unsupported，而不是当作空消息丢掉。"""
+    from src.im.dingtalk import DingTalkAdapter
+
+    a = DingTalkAdapter("cid", "sec", "owner", inbox_dir=str(tmp_path))
+    imgs, files, bad = await a._fetch_attachments({"msgtype": "video"})
+    assert imgs == [] and files == []
+    assert "video" in bad and "不支持" in bad
+
+
+async def test_dingtalk_plain_text_reports_nothing(tmp_path):
+    """普通文本消息不该被说成"不支持"（预检变噪音就会被无视）。"""
+    from src.im.dingtalk import DingTalkAdapter
+
+    a = DingTalkAdapter("cid", "sec", "owner", inbox_dir=str(tmp_path))
+    _i, _f, bad = await a._fetch_attachments({"msgtype": "text"})
+    assert bad == ""
+
+
+async def test_dingtalk_download_failure_degrades_to_message(tmp_path, monkeypatch):
+    """单个附件下载失败 → 记进 unsupported，不抛异常掀翻整条消息。"""
+    from src.im.dingtalk import DingTalkAdapter
+
+    a = DingTalkAdapter("cid", "sec", "owner", inbox_dir=str(tmp_path))
+
+    async def _boom(code, name):
+        raise RuntimeError("换取下载地址失败: 403")
+    monkeypatch.setattr(a, "_download_one", _boom)
+
+    imgs, files, bad = await a._fetch_attachments(
+        {"msgtype": "picture", "content": {"downloadCode": "abc"}})
+    assert imgs == [] and files == []
+    assert "没取到" in bad and "403" in bad
