@@ -80,6 +80,30 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
     gated_confirm = make_confirm_gate(confirm, auto_approve=auto_approve,
                                       can_ask_human=(can_ask_human and confirm is not None),
                                       on_decision=on_decision)
+    # plan 模式下模型请求动手 → 当场问用户要授权（真机 2026-07-27：此前 on_escalate **只有 TUI
+    # 接了**，Web/CLI/IM 一律 None，于是 request_build 返回"请让用户手动切"，模型照着转述成
+    # "请按 Tab 键"——钉钉聊天窗口里根本没有 Tab 键）。
+    #
+    # 走 `gated_confirm` 而不是裸 confirm，是因为这条**恰恰是最需要污点保护的一条**：展示给人的
+    # reason/next_action 是**模型给的**，而模型可能刚读过攻击者的网页。内核门会带上 D0 防注入
+    # 横幅、并让污点回合下的一切免确认授权失效。fail-closed 同样由内核保证（问不到人就是拒）。
+    #
+    # 刻意**只升本回合**（MainAgent 每轮重置 `_escalated`），不把端的 mode 永久改成 build：
+    # 用户要的是"每次动手前问我一句"，而不是一次点头换来长期写权限。
+    async def _escalate(name: str, args: dict) -> bool:
+        reason = str(args.get("reason") or "").strip()
+        nxt = str(args.get("next_action") or "").strip()
+        if name == "request_build":
+            parts = ["plan 阶段分析已完成，需要你授权才能动手。"]
+        else:
+            parts = [f"这一步要用写/重型工具「{name}」，plan(只读)模式下不可用。"]
+        if reason:
+            parts.append(f"原因：{reason}")
+        if nxt:
+            parts.append(f"下一步：{nxt}")
+        parts.append("授权执行本回合的后续操作？（仅本回合，不改变你的默认模式）")
+        return bool(await gated_confirm("\n".join(parts)))
+
     async def _request_workspace(args: dict) -> str:
         requested = normalize_workspace_scope(args.get("scope"), default=PROJECT)
         if requested == GENERAL:
@@ -136,7 +160,12 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
                                   on_diff=on_diff)   # 确认前的结构化 diff 推送（AGENT_DIFF，端可不接）
         if workspace_scope == SCRATCH:
             tools.append(workspace_tool)  # Scratch 仍可声明需要用户真实项目，而不是猜路径
+    # 各端**永久**切 build 的真实方式。别让内核去猜，也别在系统提示里写死某一个端的键。
+    _SWITCH_HINT = {"im": "回复 `/mode build`", "web": "点界面上的 plan/build 开关",
+                    "cli": "重跑时加 `-b` 参数"}
     kwargs = dict(plan_tool=True, permissions=load_permissions(repo_root),
+                  on_escalate=_escalate,          # plan→build 授权：三端同一份内核判定
+                  mode_switch_hint=_SWITCH_HINT.get(kind, ""),
                   # General 的 app-data cwd 只是持久化实现细节，不能伪装成用户工作区注入模型。
                   env_context=workspace_scope != GENERAL,
                   native=native_default(),             # 三端统一 native 开关

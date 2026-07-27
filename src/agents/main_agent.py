@@ -613,6 +613,10 @@ class MainAgent:
         on_tool: Optional[Callable[[str, dict, str], None]] = None,
         on_tool_event: Optional[Callable[[str, dict], None]] = None,
         on_escalate: Optional[Callable[[str, dict], Awaitable[bool]]] = None,
+        # 本端**永久**切 build 的方式（"回复 /mode build"…）。默认空 = 不告诉模型任何切法。
+        # 别在系统提示里写死某一个端的操作（真机 2026-07-27：钉钉用户被告知"请按 Tab 键"——
+        # 那是 TUI 的键，聊天窗口里根本不存在）。模型并不知道用户坐在哪个端。
+        mode_switch_hint: str = "",
         on_plan: Optional[Callable[[list], None]] = None,
         plan_tool: bool = False,
         hook_system: Optional[Any] = None,
@@ -657,10 +661,12 @@ class MainAgent:
                 self._update_plan, read_only=True))
             self._tool_list.append(Tool(
                 "request_build",
-                "当 plan 阶段已经分析清楚、时机成熟且下一步确实需要写文件/跑 dev 流水线时，"
-                "主动请求用户切到 build 模式。只有用户同意后，后续写/重型工具才会执行。",
-                {"reason": "为什么现在需要切到 build（基于已完成的分析/计划）",
-                 "next_action": "切到 build 后准备执行的具体下一步"},
+                "当 plan 阶段已经分析清楚、时机成熟且下一步确实需要动手（写文件/建定时作业/跑 dev "
+                "流水线）时，**主动向用户请求授权**。用户会当场收到确认；同意后本回合的写/重型工具"
+                "即可执行（仅本回合，不改变他的默认模式）。别把计划晾着等用户开口，也别让用户自己"
+                "去切模式。",
+                {"reason": "为什么现在需要动手（基于已完成的分析/计划）",
+                 "next_action": "获得授权后准备执行的具体下一步"},
                 self._request_build, read_only=True))
         self.tools = {t.name: t for t in self._tool_list}
         # 上下文预算：主要按 **token** 裁剪/压缩（真正决定是否撑爆窗口的是 token，不是消息条数——
@@ -682,6 +688,7 @@ class MainAgent:
         self.set_hook_system(hook_system)
         # plan 模式想用写/重型工具时回调：返回 True=用户同意切 build 并继续，False=拒绝
         self._on_escalate = on_escalate
+        self._mode_switch_hint = str(mode_switch_hint or "")
         self._escalated = False                # 本轮是否已升级到 build（经 on_escalate 同意）
         self._pending_images: list = []        # 工具带回的图片旁路队列（_flush_pending_images 注入）
         self.history: list[dict] = []          # 跨轮对话历史（不含 system）
@@ -785,11 +792,16 @@ class MainAgent:
         压缩纪要作为历史前部消息（_trimmed_history）。"""
         mode_desc = "只读/提案" if mode == "plan" else "可写分支"
         mode_rule = (
-            "plan 模式下写/重型工具（如 edit_file / write_file 及各类开发流水线工具）不可用；"
-            "若用户想开发，请提示他按 Tab 切到 build 模式。 "
-            "当你已完成必要分析/计划、判断时机成熟且下一步必须动手修改或跑 dev 流水线时，"
-            "可以调用 request_build(reason,next_action) 主动请求用户切到 build；不要过早请求。 "
-            "plan 可以充分使用只读工具完成分析，但要目标明确、信息够用就停止并总结；"
+            "plan 模式下写/重型工具（如 edit_file / write_file 及各类开发流水线工具）不可用。 "
+            "当你已完成必要分析/计划、判断时机成熟且下一步必须动手时，**调用 "
+            "request_build(reason,next_action) 主动请求授权**——用户会当场收到一个确认，"
+            "同意后本回合即可继续动手。这是你要走的路：**不要把计划晾在那里等用户开口**，"
+            "也不要让用户自己去切模式。不要过早请求（分析没做完就请求会被拒）。 "
+            + (f"用户若想永久切换，本端的方式是：{self._mode_switch_hint}。 "
+               if self._mode_switch_hint else
+               "**不要指导用户按某个键或改某个设置来切模式**——各端方式不同，"
+               "而你并不知道用户在哪个端；直接用 request_build 请求授权即可。 ")
+            + "plan 可以充分使用只读工具完成分析，但要目标明确、信息够用就停止并总结；"
             "不要默认启动大量子 agent。"
             if mode == "plan"
             else "build 模式下所有工具可用。"
@@ -853,7 +865,9 @@ class MainAgent:
         reason = str(args.get("reason") or "").strip()
         next_action = str(args.get("next_action") or "").strip()
         if self._on_escalate is None:
-            return "当前入口没有 build 切换确认通道；请让用户手动切到 build 后再继续。"
+            how = (f"请{self._mode_switch_hint}" if self._mode_switch_hint
+                   else "请让用户切到 build 模式")
+            return f"当前入口没有授权通道，{how}后再继续。"
         ok = False
         try:
             ok = await self._on_escalate("request_build", {
@@ -1427,11 +1441,16 @@ class MainAgent:
                 except Exception:  # noqa: BLE001
                     ok = False
             if not ok:
-                return finish(
-                    "blocked",
-                    f"工具 {name} 在 plan 模式下不可用（只读/提案）。"
-                    f"如需执行请切到 build 模式（Tab）。",
-                )
+                # 两种情况**别说成同一句话**（真机 2026-07-27）：原文一律是"请切到 build 模式（Tab）"，
+                # 于是①钉钉用户被指去按一个不存在的键；②用户明明刚点了"拒绝"，却又被劝去开权限。
+                # 模型只会照着工具结果转述，所以这句话说错了，用户看到的就是错的。
+                if self._on_escalate is None:
+                    how = (f"请{self._mode_switch_hint}" if self._mode_switch_hint
+                           else "请让用户切到 build 模式")
+                    detail = f"当前入口没有授权通道，{how}后再试。"
+                else:
+                    detail = "用户拒绝了本次授权——保持只读，给方案即可，别再重复请求。"
+                return finish("blocked", f"工具 {name} 在 plan 模式下不可用（只读/提案）。{detail}")
             self._escalated = True
         if self._hook_system is not None:       # PRE_TOOL_USE：钩子可阻止该工具（should_stop）
             block = await self._fire_hook("pre_tool_use", {"tool": name, "args": args}, stoppable=True)
