@@ -583,6 +583,8 @@ SYSTEM_TEMPLATE = """你是 VortoCode 的主助手，通过终端 / 浏览器 / 
 自动分解那类）。你只产出/提议，绝不假装已合并代码；
 **更不要声称做了实际没做的事**——没调用过写/dev 工具就没有分支、没有测试、没有改动，绝不编造分支名或测试结果。
 汇报时只说工具结果里确有的东西。
+**也不要提议自己做不到的事**：说"需要我帮你 X 吗？"之前先确认你真有做 X 的工具——刚被拦下的
+能力，不会因为用户说"是的"就变得可用。先问后拒等于白白耗掉用户一轮，比一开始就说清楚更糟。
 **反过来同样不许凭印象否认自己的能力**：说"我做不到 / 我没有 X 能力"之前先看上面的工具清单。
 需要实时或站外信息（天气、股价、新闻、某个库的最新用法…）就用 web_search / web_fetch 真去查一次，
 别拿训练先验当答案、也别把用户推给别的 App。确实没有对应工具时，明说缺的是哪一类工具，
@@ -3670,6 +3672,29 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
         except (OSError, ValueError) as e:
             return f"未改动：写 cron.yaml 失败 {type(e).__name__}: {e}"
 
+    async def _set_web(args: dict) -> str:
+        from src.gateway.cron import CronEditError, load_jobs, set_job_web
+
+        name = str(args.get("name") or "").strip()
+        want = _truthy(args.get("allow_web", True))
+        job = next((j for j in load_jobs(repo_root) if j.name == name), None)
+        if job is None:
+            return f"未改动：无此作业 {name}。用 cron_list 看现有作业。"
+        if job.allow_web is want:
+            return f"作业 {name} 的出网许可本来就是 {str(want).lower()}，无需改动。"
+        if want and not await _ask(
+                f"给已有作业「{name}」**出网许可**（web_search / web_fetch / 截图）？\n"
+                f"它在**无人盯屏**时按 {job.schedule.raw} 运行，出网请求的 URL 本身就是一条数据"
+                f"外带通道——若这台机器上的文件被人做过手脚、诱导它去访问某个地址，没有人会拦。\n"
+                f"该作业到点会做的事：{' '.join((job.command or job.prompt).split())[:200]}"):
+            return f"未改动 {name}（你拒绝了出网许可）。"
+        try:
+            return "✅ " + set_job_web(repo_root, name, want)
+        except CronEditError as e:
+            return f"未改动：{e}"
+        except (OSError, ValueError) as e:
+            return f"未改动：写 cron.yaml 失败 {type(e).__name__}: {e}"
+
     async def _run(args: dict) -> str:
         import asyncio as _aio
 
@@ -3710,6 +3735,11 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
              {"name": "作业名", "enabled": "true=启用 / false=停用"}, _toggle, read_only=False),
         # read_only=False 三处都必须显式写：Tool 的默认是 True，漏了就等于让 plan 模式改得动
         # cron.yaml、跑得动作业——绕过 plan/build 门。这是自测逮到的真洞，不是形式主义。
+        Tool("cron_set_web", "给一个**已有**作业开/关联网许可（web_search/web_fetch/截图）。"
+             "开时会单独向主人要一次授权。只改这一个开关——作业的 prompt/命令/排期都不会被动，"
+             "要换内容请另建一个作业。需确认",
+             {"name": "作业名", "allow_web": "true=给出网许可 / false=收回"},
+             _set_web, read_only=False),
         Tool("cron_run", "立刻手动跑一次某个已有定时作业（不占用它的正常排期）。已停用的作业拒绝"
              "触发、同名作业在跑时拒绝重复触发。结果走通知台账，不在这里返回。需确认",
              {"name": "作业名"}, _run, read_only=False),

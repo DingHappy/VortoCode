@@ -464,14 +464,18 @@ def job_block(repo_root: str, name: str) -> str:
     return render_job_block(data)
 
 
-def set_job_enabled(repo_root: str, name: str, enabled: bool) -> str:
-    """启用/停用一个已有作业（单行改，不碰其它内容）。返回一句结果描述。"""
+def _set_bool_field(repo_root: str, name: str, field: str, value: bool) -> None:
+    """改一个已有作业的某个布尔字段——**单行改**，其余内容（含主人的注释）一个字节不动。
+
+    刻意只支持布尔开关：schedule/prompt/command 是作业的"内容"，原地重写多行块最容易把相邻
+    作业和注释搞坏，收益也不值得（要换内容就另建一个）。开关类字段则是单行、可精确定位、
+    改完还能用真解析回验，风险面小得多。
+    """
     name = str(name or "").strip()
     existing = {j.name: j.schedule.raw for j in load_jobs(repo_root)}
     if name not in existing:
         raise CronEditError(f"无此作业 {name}（现有：{', '.join(sorted(existing)) or '空'}）")
-    p = cron_path(repo_root)
-    lines = p.read_text(encoding="utf-8").splitlines(True)
+    lines = cron_path(repo_root).read_text(encoding="utf-8").splitlines(True)
 
     head = re.compile(r"^(\s*)-\s+name\s*:\s*['\"]?" + re.escape(name) + r"['\"]?\s*$")
     start = next((i for i, ln in enumerate(lines) if head.match(ln.rstrip("\n"))), None)
@@ -486,19 +490,39 @@ def set_job_enabled(repo_root: str, name: str, enabled: bool) -> str:
         if re.match(r"^" + re.escape(indent) + r"-\s", ln) or not ln[:1].isspace():
             stop = i
             break
-    body_indent = f"{indent}  "
+    literal = str(bool(value)).lower()
     hit = next((i for i in range(start + 1, stop)
-                if re.match(r"^\s*enabled\s*:", lines[i])), None)
+                if re.match(r"^\s*" + re.escape(field) + r"\s*:", lines[i])), None)
     if hit is None:
-        lines.insert(start + 1, f"{body_indent}enabled: {str(bool(enabled)).lower()}\n")
+        lines.insert(start + 1, f"{indent}  {field}: {literal}\n")
     else:
         lead = re.match(r"^(\s*)", lines[hit]).group(1)
-        lines[hit] = f"{lead}enabled: {str(bool(enabled)).lower()}\n"
+        lines[hit] = f"{lead}{field}: {literal}\n"
 
     new_text = "".join(lines)
-    _verify(new_text, name, expect_enabled=bool(enabled), others=existing)
+    got = _verify(new_text, name, expect_enabled=None, others=existing)
+    if bool(getattr(got, field)) is not bool(value):
+        raise CronEditError(f"自检未通过：{name} 的 {field} 没有改成 {value}（已放弃写入，文件未动）")
     _write(repo_root, new_text)
+
+
+def set_job_enabled(repo_root: str, name: str, enabled: bool) -> str:
+    """启用/停用一个已有作业（单行改，不碰其它内容）。返回一句结果描述。"""
+    _set_bool_field(repo_root, name, "enabled", enabled)
     return f"作业 {name} 已{'启用' if enabled else '停用'}"
+
+
+def set_job_web(repo_root: str, name: str, allow_web: bool) -> str:
+    """给/收回一个已有作业的出网许可（单行改）。
+
+    为什么允许改已有作业（2026-07-27 修正我自己的设计）：起初 cron_add 只新增不改已有，
+    理由是"不给 agent 提权路径"。但这条**没有真正限制任何东西**——agent 本来就能用
+    cron_add 建一个 `allow_web: true` 的新作业（同样过确认门），端状态完全一样。
+    禁止修改只是把人逼去手工编辑，安全上一分钱没买到。真正该守的是"**内容**不可改"：
+    不许改 prompt/command/schedule，所以劫持不了 relay_duty 这类已被信任的作业去干别的。
+    """
+    _set_bool_field(repo_root, name, "allow_web", allow_web)
+    return f"作业 {name} {'已获得' if allow_web else '已收回'}出网许可"
 
 
 # --------------------------------------------------------------------- 手动触发守卫（REST 与工具同源）
