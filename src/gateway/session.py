@@ -35,6 +35,11 @@ async def run_isolated_session(repo_root: str, prompt: str, *, mode: str = "buil
         # （repo.md / BACKLOG.md / HEARTBEAT.md）污染——一旦模型被诱导去 fetch 攻击者的 URL，
         # 就是**零人工介入的静默外传**。而无人值守本来也不需要出网（领 BACKLOG 干活、跑评测都不用）。
         with_web=False,
+        # **无人值守不给排班工具**（同一条道理的时间版）：cron 作业能创建 cron 作业 = 自我复制
+        # 驻留。出网是空间上的外传通道，排班是**时间上的**——让一个没人盯着的回合给自己排下一班，
+        # 等于 agent 可以自授"周期性无人值守执行"。而且这里 confirm 恒拒（问不到人），
+        # 给了也只会是一堆必然失败的调用。
+        with_cron=False,
     )
     parts = []
     if not light:                                    # 非轻上下文才带项目指令 + 技能目录

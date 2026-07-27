@@ -524,6 +524,7 @@ class IMBridge:
         pid: Optional[str] = None          # 进度消息 id（滚动编辑，防刷屏）
         lines: list = []
         last_edit = 0.0
+        sent = 0                           # 已推送到第几行（不支持编辑的通道据此只发增量）
         try:
             while True:
                 kind, payload = await q.get()
@@ -531,7 +532,7 @@ class IMBridge:
                     break
                 if kind == "progress":
                     lines.append(str(payload))
-                    pid, last_edit = await self._push_progress(pid, lines, last_edit)
+                    pid, last_edit, sent = await self._push_progress(pid, lines, last_edit, sent)
                 elif kind == "confirm":
                     message, cid = payload
                     await self.adapter.send_confirm(message, cid)
@@ -548,15 +549,28 @@ class IMBridge:
                 pass
             self._persist()
 
-    async def _push_progress(self, pid, lines, last_edit):
-        text = "🏃 " + "\n".join(lines[-12:])
+    async def _push_progress(self, pid, lines, last_edit, sent=0):
+        """推一次进度。返回 (进度消息 id, 上次推送时刻, 已推送到第几行)。
+
+        两种通道语义不同，**不能共用一份文本**（真机 2026-07-27 逮到）：
+        - 支持编辑（Telegram）：原地改同一条消息 → 发**累计窗口**，滚动展示最近 12 行。
+        - 不支持编辑（钉钉）：`edit_text` 内部是发新消息 → 发累计窗口就是**把说过的话再说一遍**，
+          第 N 次推送重复前 N-1 次的全部内容，工具越多重复越长。所以只发**这次的增量**。
+        节流被跳过的那几行不会丢：`sent` 没动，下次一并发出去。
+        """
         now = time.monotonic()
         if pid is None:
-            return await self.adapter.send_text(text), now
-        if now - last_edit >= self._progress_interval:   # 节流（支持编辑=2s，不支持=10s 防刷屏）
-            await self.adapter.edit_text(pid, text)       # 不支持编辑的通道 edit_text 内部发新消息
-            return pid, now
-        return pid, last_edit
+            return await self.adapter.send_text("🏃 " + "\n".join(lines[-12:])), now, len(lines)
+        if now - last_edit < self._progress_interval:    # 节流（支持编辑=2s，不支持=10s 防刷屏）
+            return pid, last_edit, sent
+        if self._edits:
+            await self.adapter.edit_text(pid, "🏃 " + "\n".join(lines[-12:]))
+            return pid, now, len(lines)
+        fresh = lines[sent:]
+        if not fresh:
+            return pid, last_edit, sent                  # 没有新东西就别发一条空进度
+        await self.adapter.edit_text(pid, "🏃 " + "\n".join(fresh[-12:]))
+        return pid, now, len(lines)
 
     def _make_confirm(self, q: asyncio.Queue):
         loop = asyncio.get_event_loop()

@@ -5396,15 +5396,16 @@ class VortoCodeTUI(App):
         # 只读工具：plan 也能用；也是子 agent 的工具集（无 task/写工具 → 不嵌套、不改文件）。
         # 直接复用 build_read_tools——TUI 至此与 web/CLI 同源，白拿 read_file 行段 / 全仓库 grep /
         # find_definition·find_references·document_symbols（jedi 语义导航）/ git_status·show_diff·list_branches。
-        from src.agents.main_agent import (build_im_media_tools, build_memory_tools,
-                                            build_read_tools, build_screenshot_tool,
-                                            build_web_tools)
+        from src.agents.main_agent import (build_cron_tools, build_im_media_tools,
+                                            build_memory_tools, build_read_tools,
+                                            build_screenshot_tool, build_web_tools)
         read_tools = build_read_tools(self.repo_root) + build_web_tools()   # +web_fetch（查文档/issue/报错页）
         # 把图/文件推到主人 IM。**直接复用工厂函数**而不是 TUI 再手写一份——三端同源契约要求
         # 工具集一致（tests/unit/test_three_end_parity.py 的两个漂移集合当前都是空的），
         # 手写第二份就是"加一端漏一端"的老路。确认走 TUI 自己的写确认（有真人在屏幕前）。
         read_tools += build_im_media_tools(self.repo_root, self._confirm_write)
         read_tools += build_screenshot_tool(self.repo_root)   # 同上：复用工厂，别手写第二份
+        read_tools += build_cron_tools(self.repo_root, self._confirm_write)   # 定时作业观察+排班
 
         async def _spawn_research(desc: str, agent_name: str = "") -> tuple[str, bool]:
             """起一个隔离子 agent，返回结论。task 与 research_parallel 共用。

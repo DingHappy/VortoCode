@@ -1,0 +1,302 @@
+"""定时作业的观察 + 排班面（agent 侧）。
+
+真机 2026-07-27：用户问"能不能设置定时任务"，agent 答"我目前没有设置定时任务的能力"，
+接着推荐 crontab / GitHub Actions / **IFTTT、Zapier**——而 VortoCode 自己的 cron 子系统
+当时就跑在那台机器上（`VORTOCODE_CRON=1`，relay_duty 每天 02:00）。就工具而言它没说谎
+（确实一个 cron 工具都没有），但把主人推去用外部服务是实打实的错。
+
+本文件钉四件事，每件都是"改坏了不会自己喊疼"的那种：
+1. **无人值守不给排班工具** —— cron 作业能建 cron 作业 = 自我复制驻留。
+2. **写面必须过确认门** —— 拒绝就是不生效，且落盘的是不会跑的停用态（fail-closed 方向）。
+3. **不毁主人的文件** —— cron.yaml 里全是手写注释与别的作业，编辑只准追加/改单行。
+4. **触发守卫与 REST 同源** —— 停用的不许触发、command 作业过宿主机执行闸。
+"""
+
+import pytest
+
+from src.gateway.cron import (CronEditError, add_job, check_trigger, load_jobs, parse_jobs_text,
+                              set_job_enabled)
+
+# 一份"像真的"的作业表：带主人手写注释 + 一个已有作业。编辑面不许把这些弄丢。
+SEED = """\
+# VortoCode cron 作业表——主人手写的经验都在注释里，别给我抹了。
+jobs:
+  # 中转站巡检：确定性作业，零 LLM。绝对路径解释器是踩过坑才写死的（PATH 极简）。
+  - name: relay_duty
+    schedule: "at 02:00"
+    command: "/opt/venv/bin/python -m src.gateway.relay_duty"
+    timeout: 120
+    announce: im
+    enabled: true
+"""
+
+
+def _seed(tmp_path):
+    d = tmp_path / ".vortocode"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "cron.yaml").write_text(SEED, encoding="utf-8")
+    return tmp_path
+
+
+def _text(tmp_path):
+    return (tmp_path / ".vortocode" / "cron.yaml").read_text(encoding="utf-8")
+
+
+def _tools(tmp_path, confirm=None):
+    from src.agents.main_agent import build_cron_tools
+    return {t.name: t for t in build_cron_tools(str(tmp_path), confirm)}
+
+
+def _yes():
+    async def f(_m):
+        return True
+    return f
+
+
+def _no():
+    async def f(_m):
+        return False
+    return f
+
+
+# ---------------------------------------------------------------- 1. 无人值守不给排班（自我复制闸）
+async def test_unattended_session_cannot_schedule_itself(tmp_path):
+    """cron 作业能创建 cron 作业 = 自我复制驻留。这条红了说明闸被拆了。"""
+    from src.gateway.session import run_isolated_session
+
+    captured = {}
+
+    def _spy(*a, **kw):
+        captured.update(kw)
+        return []
+
+    import src.agents.main_agent as ma
+    real = ma.build_agent_tools
+    ma.build_agent_tools = _spy
+    try:
+        await run_isolated_session(str(tmp_path), "随便干点啥")
+    except Exception:  # noqa: BLE001 —— 空工具集下后续装配/跑动怎么炸都无所谓，只看入参
+        pass
+    finally:
+        ma.build_agent_tools = real
+    assert captured.get("with_cron") is False, "无人值守拿到了排班工具——自我复制闸被拆了"
+    assert captured.get("with_web") is False, "顺带守住出网闸（同一条道理的空间版）"
+
+
+def test_researcher_has_no_cron_tools(tmp_path):
+    """研究员是给同事用的资料助理，排班属主人运维面。"""
+    from src.gateway.agent_session import build_session
+
+    names = set(build_session(str(tmp_path), kind="im", confirm=None, with_dev=False).tools)
+    assert not [n for n in names if n.startswith("cron_")], names
+
+
+def test_owner_ends_do_have_cron_tools(tmp_path):
+    from src.gateway.agent_session import build_session
+
+    names = set(build_session(str(tmp_path), kind="im", confirm=None).tools)
+    assert {"cron_list", "cron_add", "cron_toggle", "cron_run"} <= names
+
+
+# ---------------------------------------------------------------- 2. 写面过确认门
+async def test_add_lands_disabled_when_owner_declines(tmp_path):
+    """拒绝启用 → 作业留在表里但**不会跑**。fail-closed 的方向是"不跑"，不是"不写"。"""
+    _seed(tmp_path)
+    out = await _tools(tmp_path, _no())["cron_add"].handler(
+        {"name": "daily_news", "schedule": "at 09:00", "prompt": "搜今天的新闻给我"})
+    job = {j.name: j for j in load_jobs(tmp_path)}["daily_news"]
+    assert job.enabled is False and "停用" in out
+
+
+async def test_add_enables_only_after_approval(tmp_path):
+    _seed(tmp_path)
+    out = await _tools(tmp_path, _yes())["cron_add"].handler(
+        {"name": "daily_news", "schedule": "at 09:00", "prompt": "搜今天的新闻给我"})
+    job = {j.name: j for j in load_jobs(tmp_path)}["daily_news"]
+    assert job.enabled is True and job.kind == "prompt" and "✅" in out
+
+
+async def test_no_confirm_callback_means_never_enabled(tmp_path):
+    """端没接确认回调（fail-closed）→ 绝不该有作业自己变成启用态。"""
+    _seed(tmp_path)
+    await _tools(tmp_path, None)["cron_add"].handler(
+        {"name": "x", "schedule": "every 5m", "prompt": "干活"})
+    assert {j.name: j for j in load_jobs(tmp_path)}["x"].enabled is False
+
+
+async def test_toggle_enable_asks_but_disable_does_not(tmp_path):
+    """启用要问（扩大自动执行面）；停用不问——让人更容易关掉一个正在捣乱的作业。"""
+    _seed(tmp_path)
+    t = _tools(tmp_path, _no())["cron_toggle"]
+    assert "未启用" in await t.handler({"name": "relay_duty", "enabled": True})
+    assert load_jobs(tmp_path)[0].enabled is True                  # 拒绝 → 原样
+
+    assert "✅" in await t.handler({"name": "relay_duty", "enabled": False})
+    assert load_jobs(tmp_path)[0].enabled is False                 # 停用不需要点头
+
+
+# ---------------------------------------------------------------- 3. 不毁主人的文件
+def test_add_preserves_comments_and_siblings(tmp_path):
+    _seed(tmp_path)
+    add_job(tmp_path, name="newjob", schedule="every 6h", prompt="看看有什么要做的")
+    text = _text(tmp_path)
+    assert "主人手写的经验都在注释里" in text, "整表重写把顶部注释抹了"
+    assert "绝对路径解释器是踩过坑才写死的" in text, "把作业内注释抹了"
+    names = {j.name for j in load_jobs(tmp_path)}
+    assert names == {"relay_duty", "newjob"}
+    assert {j.name: j for j in load_jobs(tmp_path)}["relay_duty"].command.endswith("relay_duty")
+
+
+def test_toggle_only_touches_one_line(tmp_path):
+    _seed(tmp_path)
+    before = _text(tmp_path).splitlines()
+    set_job_enabled(tmp_path, "relay_duty", False)
+    after = _text(tmp_path).splitlines()
+    diff = [(a, b) for a, b in zip(before, after) if a != b]
+    assert len(before) == len(after) and len(diff) == 1, f"改动溢出到别的行：{diff}"
+    assert "enabled" in diff[0][0]
+
+
+def test_multiline_prompt_survives_round_trip(tmp_path):
+    """prompt 带换行/引号/冒号是常态——手拼字符串必出转义洞，这里钉住必须走 yaml 转义。"""
+    _seed(tmp_path)
+    nasty = '第一行: 有冒号\n第二行 "有引号"\n- 还有个横杠开头'
+    add_job(tmp_path, name="tricky", schedule="every 1h", prompt=nasty)
+    got = {j.name: j for j in load_jobs(tmp_path)}
+    assert got["tricky"].prompt == nasty
+    assert "relay_duty" in got, "转义没做好，把别的作业挤坏了"
+
+
+def test_prompt_cannot_inject_extra_yaml_keys(tmp_path):
+    """把 command: 藏进 prompt 文本里，不该变成一个真的 command 作业（那就绕过了只建 prompt 的边界）。"""
+    _seed(tmp_path)
+    add_job(tmp_path, name="inj", schedule="every 1h",
+            prompt='正常内容\n  command: "rm -rf /"\n  enabled: true')
+    job = {j.name: j for j in load_jobs(tmp_path)}["inj"]
+    assert job.kind == "prompt" and job.command == ""
+
+
+def test_creates_file_when_absent(tmp_path):
+    add_job(tmp_path, name="first", schedule="at 08:00", prompt="早报")
+    assert {j.name for j in load_jobs(tmp_path)} == {"first"}
+
+
+# ---------------------------------------------------------------- 入参校验（先校验再烦人）
+@pytest.mark.parametrize("kw, needle", [
+    ({"name": "bad name", "schedule": "at 09:00", "prompt": "x"}, "作业名非法"),
+    ({"name": "../escape", "schedule": "at 09:00", "prompt": "x"}, "作业名非法"),
+    ({"name": "ok", "schedule": "每天早上", "prompt": "x"}, "schedule 非法"),
+    ({"name": "ok", "schedule": "at 99:99", "prompt": "x"}, "schedule 非法"),
+    ({"name": "ok", "schedule": "at 09:00", "prompt": "  "}, "prompt 不能为空"),
+    ({"name": "relay_duty", "schedule": "at 09:00", "prompt": "x"}, "已存在"),
+])
+def test_rejects_bad_input_without_touching_the_file(tmp_path, kw, needle):
+    _seed(tmp_path)
+    with pytest.raises(CronEditError) as e:
+        add_job(tmp_path, **kw)
+    assert needle in str(e.value)
+    assert _text(tmp_path) == SEED, "被拒的请求不该动文件"
+
+
+def test_add_refuses_to_write_a_command_job(tmp_path):
+    """只建 prompt 作业——command 是无人值守的周期性任意 shell，人在确认框里也难看清后果。"""
+    from src.agents.main_agent import build_cron_tools
+    args = {t.name: set(t.args) for t in build_cron_tools(str(tmp_path))}
+    assert "command" not in args["cron_add"], "cron_add 暴露了 command 参数"
+
+
+def test_no_delete_tool_exists(tmp_path):
+    """刻意不给删除：停用可逆可见，误删主人的巡检作业不可逆。"""
+    names = set(_tools(tmp_path))
+    assert not any(k in n for n in names for k in ("delete", "remove", "rm")), names
+
+
+# ---------------------------------------------------------------- 4. 触发守卫（与 REST 同源）
+def test_disabled_job_cannot_be_triggered(tmp_path):
+    _seed(tmp_path)
+    set_job_enabled(tmp_path, "relay_duty", False)
+    reason, code, _ = check_trigger(str(tmp_path), "relay_duty")
+    assert code == "disabled" and "已停用" in reason
+
+
+def test_unknown_job_is_not_found(tmp_path):
+    _seed(tmp_path)
+    assert check_trigger(str(tmp_path), "nope")[1] == "not_found"
+
+
+def test_command_job_needs_the_host_execution_switch(tmp_path, monkeypatch):
+    _seed(tmp_path)
+    monkeypatch.delenv("VORTOCODE_ENABLE_SHELL", raising=False)
+    assert check_trigger(str(tmp_path), "relay_duty")[1] == "shell_disabled"
+    monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
+    assert check_trigger(str(tmp_path), "relay_duty")[1] is None
+
+
+def test_same_job_cannot_be_triggered_concurrently(tmp_path, monkeypatch):
+    _seed(tmp_path)
+    monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
+    from src.gateway.cron import track_trigger
+
+    class _Running:
+        def done(self):
+            return False
+
+        def add_done_callback(self, _cb):
+            pass
+
+    track_trigger("relay_duty", _Running())
+    try:
+        assert check_trigger(str(tmp_path), "relay_duty")[1] == "busy"
+    finally:
+        from src.gateway.cron import _TRIGGER_INFLIGHT
+        _TRIGGER_INFLIGHT.pop("relay_duty", None)
+
+
+async def test_run_declined_does_not_start_anything(tmp_path, monkeypatch):
+    _seed(tmp_path)
+    monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
+    started = []
+    import src.gateway.cron as cron
+    monkeypatch.setattr(cron, "run_job_by_name", lambda *a, **k: started.append(1))
+    out = await _tools(tmp_path, _no())["cron_run"].handler({"name": "relay_duty"})
+    assert "未触发" in out and not started
+
+
+# ---------------------------------------------------------------- 观察面
+async def test_list_reports_schedule_switch_and_content(tmp_path, monkeypatch):
+    _seed(tmp_path)
+    monkeypatch.setenv("VORTOCODE_CRON", "1")
+    out = await _tools(tmp_path)["cron_list"].handler({})
+    assert "relay_duty" in out and "at 02:00" in out and "✅ 开" in out
+
+    monkeypatch.setenv("VORTOCODE_CRON", "0")
+    out = await _tools(tmp_path)["cron_list"].handler({})
+    assert "关" in out, "调度器没开却不说，用户会以为作业在跑"
+
+
+async def test_list_on_empty_table_points_at_the_switch(tmp_path):
+    out = await _tools(tmp_path)["cron_list"].handler({})
+    assert "还没有任何作业" in out and "VORTOCODE_CRON=1" in out
+
+
+def test_cron_list_is_read_only(tmp_path):
+    assert _tools(tmp_path)["cron_list"].read_only is True
+    for name in ("cron_add", "cron_toggle", "cron_run"):
+        assert _tools(tmp_path)[name].read_only is False, f"{name} 被标成只读会绕开 plan/build 门"
+
+
+# ---------------------------------------------------------------- 落盘前自检
+def test_verification_uses_the_real_parser(tmp_path):
+    """自检必须用真解析（parse_jobs_text），而不是另写一套"应该也一样"的校验。"""
+    _seed(tmp_path)
+    add_job(tmp_path, name="probe", schedule="every 2h", prompt="p")
+    assert {j.name for j in parse_jobs_text(_text(tmp_path))} == {"relay_duty", "probe"}
+
+
+def test_toggle_on_missing_job_leaves_file_untouched(tmp_path):
+    _seed(tmp_path)
+    with pytest.raises(CronEditError):
+        set_job_enabled(tmp_path, "ghost", True)
+    assert _text(tmp_path) == SEED
+
+
