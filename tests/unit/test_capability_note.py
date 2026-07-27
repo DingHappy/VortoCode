@@ -96,8 +96,25 @@ def test_im_restore_announces_new_tool(tmp_path):
 
 
 def test_im_restore_unchanged_list_stays_byte_identical(tmp_path):
-    names = sorted(_bridge(tmp_path).agent.tools)
-    save_session(str(tmp_path), SID, [], list(STALE_DENIAL), None, tool_names=names)
+    """什么都没变就一个字都别加——通告冒多了，人就学会忽略它了。
+
+    存盘必须连指纹一起写（真实的 `_persist` 就是这么做的）：只写 tool_names 会落进
+    "存档早于指纹机制"那条规则，那是**另一个**场景。
+    """
+    from src.gateway.agent_session import session_behavior_fp
+
+    agent = _bridge(tmp_path).agent
+    save_session(str(tmp_path), SID, [], list(STALE_DENIAL), None,
+                 tool_names=sorted(agent.tools), behavior_fp=session_behavior_fp(agent))
+    assert _notes(_bridge(tmp_path).agent.history) == []
+
+
+def test_persist_records_the_fingerprint_so_the_next_restore_is_quiet(tmp_path):
+    """端到端：真实存盘路径必须带上指纹，否则每次重启都会被当成"升级过"而通告。"""
+    b = _bridge(tmp_path)
+    b.agent.history = list(STALE_DENIAL)
+    b._persist()
+    assert load_session(str(tmp_path), SID)["behavior_fp"], "_persist 没写指纹"
     assert _notes(_bridge(tmp_path).agent.history) == []
 
 
@@ -188,10 +205,19 @@ def test_tool_and_behavior_change_are_reported_together(tmp_path):
     assert "新增：b" in note and "行为规则亦有更新" in note
 
 
-def test_missing_fingerprints_fall_back_to_tool_diff_only(tmp_path):
-    """老档没指纹 → 别把"没记录"当成"变了"，否则每次重启都通告一遍（噪音会让人学会忽略它）。"""
-    assert capability_update_note(["a"], ["a"], None, "fp-new") is None
+def test_archive_predating_fingerprints_is_treated_as_upgraded(tmp_path):
+    """存档缺少我们现在会记录的字段 = **确实升级过**（那个字段是被某次升级加进来的），不是猜测。
+
+    真机 2026-07-27：#248 给会话加了指纹，可当时那个中毒会话的存档只有 tool_names、清单又
+    恰好没变 → 通告静默通过，历史里三条"请按 Tab"继续毒着。只触发一次（下次存盘就带指纹了）。
+    """
+    assert capability_update_note(["a"], ["a"], None, "fp-new") is not None
+
+
+def test_agent_without_fingerprint_support_never_triggers_noise(tmp_path):
+    """反向：当前算不出指纹（协议桩/降级装配）时别乱报——那不是"变了"的证据。"""
     assert capability_update_note(["a"], ["a"], "fp-old", None) is None
+    assert capability_update_note(["a"], ["a"], None, None) is None
 
 
 def test_fingerprint_tracks_tool_descriptions_not_just_names(tmp_path):

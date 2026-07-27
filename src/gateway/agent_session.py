@@ -248,7 +248,13 @@ def capability_update_note(saved_tools, current_tools, saved_fp=None, current_fp
     old = {str(t) for t in saved_tools}
     added = sorted(set(cur) - old)
     removed = sorted(old - set(cur))
-    behavior_changed = bool(saved_fp and current_fp and saved_fp != current_fp)
+    # 存档**缺少一个我们现在会记录的字段**，本身就是"升级过"的证据，不是猜测：那个字段是被
+    # 某次升级加进来的，老档没有它只能说明它存于那次升级之前。所以这里判"行为变了"。
+    # （真机 2026-07-27：#248 给会话加了指纹，可当时那个中毒会话的存档只有 tool_names、
+    #   清单又恰好没变，于是通告静默通过——历史里三条"请按 Tab"继续毒着。）
+    # 只会触发一次：下次存盘就带上指纹了，之后走正常比对。
+    behavior_changed = (bool(saved_fp and current_fp and saved_fp != current_fp)
+                        or (saved_fp is None and current_fp is not None))
     if not added and not removed:
         # 工具清单没动，但**行为契约变了**也要通告（真机 2026-07-27：#247 只改规则与工具描述，
         # 清单一个没动，于是这里静默通过，而历史里三条旧回复还在教用户"按 Tab"，被模型照抄）。
