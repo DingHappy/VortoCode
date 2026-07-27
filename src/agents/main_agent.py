@@ -806,6 +806,7 @@ class MainAgent:
             if mode == "plan"
             else "build 模式下所有工具可用。"
         )
+        self._last_mode_rule = mode_rule       # 行为指纹取样用（见 behavior_fingerprint）
         prompt = SYSTEM_TEMPLATE.format(
             catalog=_tool_catalog(self._tool_list),
             mode=mode, mode_desc=mode_desc, mode_rule=mode_rule,
@@ -859,6 +860,26 @@ class MainAgent:
                 pass
         done = sum(1 for p in self.plan if p["status"] == "completed")
         return f"计划已更新（{done}/{len(self.plan)} 完成）：\n{render_plan(self.plan)}"
+
+    def behavior_fingerprint(self) -> str:
+        """「这个 agent 声称自己能做什么、该怎么做」的指纹——会话复原时用来发现契约变了。
+
+        为什么不只看工具名（真机 2026-07-27）：#247 只改了系统规则与工具描述、**工具清单一个没动**，
+        于是 `capability_update_note` 静默通过，而历史里三条旧回复还写着"请按 Tab 切换到 build
+        模式"——模型照抄自己说过的话，修好的规则被旧上下文压过去了。**行为变了也会让旧结论过期，
+        不只是工具增删。**
+
+        取样范围刻意限定为"能力契约"：工具目录（名/描述/参数）+ 静态规则模板 + plan 档模式规则。
+        **不含**仓库记忆、项目指令、人设——那些变了不代表 agent 的能力边界变了，混进来只会让
+        通告天天冒（噪音会让人学会忽略它，那比没有更糟）。
+        """
+        import hashlib
+
+        if not getattr(self, "_last_mode_rule", ""):
+            self._system("plan")                        # 取一次样，填充 _last_mode_rule
+        material = "\n".join((_tool_catalog(self._tool_list), SYSTEM_TEMPLATE,
+                              str(getattr(self, "_last_mode_rule", ""))))
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
 
     async def _request_build(self, args: dict) -> str:
         """plan 阶段主动请求切 build：只负责过人闸；同意后本回合升级，后续写/重型工具可继续。"""
@@ -3605,7 +3626,13 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
             set_job_enabled(repo_root, name, True)
         except Exception as e:  # noqa: BLE001
             return f"作业 {name} 已写入但启用失败：{type(e).__name__}: {e}（现为停用态）"
-        return f"✅ 定时作业 {name} 已创建并启用（{schedule}）。\n{block}"
+        # 回执必须反映**最终**状态：`block` 是落盘那一刻生成的（enabled: false，因为要先停用再问），
+        # 直接贴出来就会出现"已启用"和 `enabled: false` 同框——工具自己跟自己矛盾。真机
+        # 2026-07-27 模型信了更具体的那半，回报"已创建但默认停用"，用户于是又说一次"启用"。
+        # 别让人去分辨工具话里哪半是真的。
+        from src.gateway.cron import job_block
+        return (f"✅ 定时作业 {name} 已创建并**已启用**（{schedule}）。无需再启用一次。\n"
+                + (job_block(repo_root, name) or block))
 
     async def _toggle(args: dict) -> str:
         from src.gateway.cron import CronEditError, set_job_enabled

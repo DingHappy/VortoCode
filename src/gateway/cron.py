@@ -433,6 +433,28 @@ def add_job(repo_root: str, *, name: str, schedule: str, prompt: str,
     return block
 
 
+def job_block(repo_root: str, name: str) -> str:
+    """按**磁盘当前状态**渲染一个作业的 yaml 块（回执展示用）。
+
+    别拿写入时那份缓存的块当回执：`add_job` 是"先停用落盘 → 问人 → 再启用"，那份块里
+    永远写着 `enabled: false`。贴出来就会和"已启用"同框，工具自己跟自己矛盾（真机
+    2026-07-27：模型信了块里那半，回报"已创建但默认停用"）。要展示就展示真相。
+    """
+    job = next((j for j in load_jobs(repo_root) if j.name == name), None)
+    if job is None:
+        return ""
+    data: Dict[str, object] = {"name": job.name, "schedule": job.schedule.raw}
+    if job.prompt:
+        data["prompt"] = job.prompt
+    if job.command:
+        data["command"] = job.command
+    if job.model:
+        data["model"] = job.model
+    data["announce"] = job.announce
+    data["enabled"] = job.enabled
+    return render_job_block(data)
+
+
 def set_job_enabled(repo_root: str, name: str, enabled: bool) -> str:
     """启用/停用一个已有作业（单行改，不碰其它内容）。返回一句结果描述。"""
     name = str(name or "").strip()
