@@ -507,3 +507,65 @@ def test_cron_tools_still_expose_no_content_editing(tmp_path):
     for name in ("cron_toggle", "cron_set_web", "cron_run"):
         args = set(tools[name].args)
         assert not (args & {"prompt", "command", "schedule"}), f"{name} 开了改内容的口子：{args}"
+
+
+# ---------------------------------------------------------------- 7. 跑完要真的推到人手机上
+#
+# 真机 2026-07-27：主人从钉钉手动触发，作业跑成功了（台账里有完整新闻摘要），**但他什么都没收到**。
+# 根因：`cron_run` 工具调 run_job_by_name 时没传 notify，于是 `_announce` 走 record_notice 兜底——
+# 只写盘。而调度循环传了、REST 触发路由也传了，唯独我新加的这个工具漏了。
+# 证据留在台账的 source 字段里：`scheduler`=走了三路投递（人收到了），`cron:<name>`=只落了盘。
+#
+# 这一组断的是「**人真的收到了**」，不是「某个函数被调了」——今天已经在"验了个不在链路上的
+# 东西"上栽过一次（#252）。
+
+async def test_manual_trigger_pushes_to_the_owner(tmp_path, monkeypatch):
+    """从聊天里手动触发 → IM 那一路必须真的被推到。"""
+    _seed(tmp_path)
+    add_job(tmp_path, name="news", schedule="at 09:00", prompt="搜新闻")
+
+    pushed = []
+    import src.gateway.im_runtime as im_rt
+    monkeypatch.setattr(im_rt, "notify_owner", lambda t: pushed.append(str(t)) or _noop())
+
+    import src.gateway.cron as cron
+    async def _fake_session(root, prompt, **kw):
+        return "📰 今日科技新闻摘要：…"
+    monkeypatch.setattr(cron, "run_isolated_session", _fake_session, raising=False)
+
+    tool = _tools(tmp_path, _yes())["cron_run"]
+    monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
+    await tool.handler({"name": "news"})
+    task = cron._TRIGGER_INFLIGHT.get("news")
+    if task is not None:
+        await task
+    assert pushed, "作业跑完了，人手机上什么都没收到（notify 没传）"
+    assert "news" in pushed[0]
+
+
+async def _noop():
+    return None
+
+
+def test_notifier_is_a_single_source(tmp_path):
+    """三路投递器只此一份：web 路由的入口必须委派到 gateway，别各写一份（第三个调用方总会漏）。"""
+    from src.gateway.notices import make_notifier as gw
+    from src.web.routers.tasks import make_notifier as web
+
+    a, b = gw(str(tmp_path)), web(str(tmp_path))
+    assert callable(a) and callable(b)
+    assert a.__qualname__ == b.__qualname__, "web 侧又自己实现了一份投递器"
+
+
+async def test_notifier_writes_the_ledger_even_when_im_is_down(tmp_path, monkeypatch):
+    """台账是唯一有持久保证的一路：IM 挂了也不能把结果丢了。"""
+    from src.gateway.notices import load_notices, make_notifier
+
+    import src.gateway.im_runtime as im_rt
+
+    async def _boom(_t):
+        raise RuntimeError("钉钉长连断了")
+
+    monkeypatch.setattr(im_rt, "notify_owner", _boom)
+    await make_notifier(str(tmp_path))("作业跑完了")
+    assert any("作业跑完了" in n.get("text", "") for n in load_notices(str(tmp_path)))

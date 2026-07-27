@@ -3708,8 +3708,11 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
         if not await _ask(f"立刻手动跑一次定时作业「{name}」（{job.kind}）？"):
             return f"未触发 {name}（你拒绝了）。"
         # 后台跑：夜跑评测这类作业可长达小时级，挂在回合上会把对话卡死。
-        # 结果走 cron 既有投递面（runs 台账 + 通知台账 + announce 推 IM），不从这里返回。
-        task = _aio.get_running_loop().create_task(run_job_by_name(repo_root, name))
+        # **必须传 notify**：不传的话 `_announce` 只会 record_notice 写盘，人手机上收不到任何东西——
+        # 真机 2026-07-27 就是这样，主人在钉钉等了半天，而这里的注释当时还写着"announce 推 IM"。
+        from src.gateway.notices import make_notifier
+        task = _aio.get_running_loop().create_task(
+            run_job_by_name(repo_root, name, notify=make_notifier(repo_root)))
         track_trigger(name, task)
         return (f"✅ 已在后台触发 {name}。结果会按它的 announce 设置推给你，"
                 f"也会落进 runs 台账；手动触发不占用它的正常排期。")

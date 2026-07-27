@@ -272,19 +272,12 @@ async def get_notices(limit: int = 50):
 def make_notifier(cwd: str):
     """造调度通知投递器（三路，**绝不静默丢**——codex 审 #129）：
     ①持久台账（GET /api/notices 可查）②WS 广播 ③IM 推 owner（serve 内嵌 bridge 时，PR-5 收口）。
-    每路 best-effort：一路挂不拖另两路。"""
-    async def _notify(text):
-        record_notice(cwd, text)                   # ① 持久台账
-        try:
-            task_events.broadcast_notice(str(text))  # ② WS 广播给连着的客户端
-        except Exception:  # noqa: BLE001
-            pass
-        try:
-            from src.gateway.im_runtime import notify_owner
-            await notify_owner(f"🔔 {text}")       # ③ IM 推已配对 owner（没内嵌 bridge 即 no-op）
-        except Exception:  # noqa: BLE001
-            pass
-    return _notify
+
+    实现已上移到 `src.gateway.notices`（agents 层的 cron 工具也要用它，不该为推一条通知
+    导入 FastAPI 层）。这里保留同名再导出，旧调用方不变。
+    """
+    from src.gateway.notices import make_notifier as _make
+    return _make(cwd)
 
 
 async def scheduler_loop(stop_event):
