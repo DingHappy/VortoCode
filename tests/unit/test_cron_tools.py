@@ -414,3 +414,96 @@ async def test_job_carries_allow_web_into_the_run(tmp_path):
 
     await run_job(str(tmp_path), job, run_session=_fake_session)
     assert got.get("allow_web") is True
+
+
+# ---------------------------------------------------------------- 6. 给已有作业开/关出网（设计修正）
+#
+# 起初 cron_add "只新增不改已有"，理由是"不给 agent 提权路径"。真机 2026-07-27 撞到：主人说
+# 「给 daily-tech-news 加上联网权限」，agent 只能让他去手工编辑 yaml。
+# 复盘发现**那条限制没有真正限制任何东西**——agent 本来就能用 cron_add 建一个 allow_web: true
+# 的新作业（同样过确认门），可达的端状态完全一样。禁止修改只是把人逼去手工编辑，安全上一分
+# 钱没买到。真正该守的是「**内容**不可改」：prompt/command/schedule 一律不许动，所以劫持不了
+# relay_duty 这类已被信任的作业去干别的。
+
+async def test_can_grant_web_to_an_existing_job(tmp_path):
+    _seed(tmp_path)
+    add_job(tmp_path, name="news", schedule="at 09:00", prompt="搜新闻")
+    out = await _tools(tmp_path, _yes())["cron_set_web"].handler({"name": "news", "allow_web": True})
+    assert "✅" in out and {j.name: j for j in load_jobs(tmp_path)}["news"].allow_web is True
+
+
+async def test_granting_web_requires_explicit_consent(tmp_path):
+    _seed(tmp_path)
+    add_job(tmp_path, name="news", schedule="at 09:00", prompt="搜新闻")
+    asked = []
+
+    async def _spy(msg):
+        asked.append(str(msg))
+        return False
+
+    out = await _tools(tmp_path, _spy)["cron_set_web"].handler({"name": "news", "allow_web": True})
+    assert "拒绝" in out and asked and "外带通道" in asked[0], "没讲清风险就问了"
+    assert "搜新闻" in asked[0], "没告诉主人这作业到点会干什么"
+    assert {j.name: j for j in load_jobs(tmp_path)}["news"].allow_web is False
+
+
+async def test_revoking_web_needs_no_consent(tmp_path):
+    """收权是缩小面——别为了仪式感拦着人关掉一个正在联网的作业。"""
+    _seed(tmp_path)
+    add_job(tmp_path, name="news", schedule="at 09:00", prompt="搜新闻", allow_web=True)
+    out = await _tools(tmp_path, _no())["cron_set_web"].handler({"name": "news", "allow_web": False})
+    assert "✅" in out and {j.name: j for j in load_jobs(tmp_path)}["news"].allow_web is False
+
+
+async def test_no_op_when_already_in_that_state(tmp_path):
+    """已经是目标状态就别问——多余的安全问句会训练人闭眼点同意。"""
+    _seed(tmp_path)
+    add_job(tmp_path, name="news", schedule="at 09:00", prompt="搜新闻", allow_web=True)
+    asked = []
+
+    async def _spy(msg):
+        asked.append(str(msg))
+        return True
+
+    out = await _tools(tmp_path, _spy)["cron_set_web"].handler({"name": "news", "allow_web": True})
+    assert "无需改动" in out and not asked
+
+
+async def test_unknown_job_is_reported_not_created(tmp_path):
+    _seed(tmp_path)
+    before = {j.name for j in load_jobs(tmp_path)}
+    out = await _tools(tmp_path, _yes())["cron_set_web"].handler({"name": "ghost", "allow_web": True})
+    assert "无此作业" in out
+    assert {j.name for j in load_jobs(tmp_path)} == before, "改不存在的作业不该凭空造一个出来"
+
+
+def test_web_toggle_never_touches_job_content(tmp_path):
+    """守的是这条：不许改 prompt/command/schedule，所以劫持不了已被信任的作业。"""
+    from src.gateway.cron import set_job_web
+
+    _seed(tmp_path)
+    before = {j.name: (j.schedule.raw, j.prompt, j.command) for j in load_jobs(tmp_path)}
+    set_job_web(tmp_path, "relay_duty", True)
+    after = {j.name: (j.schedule.raw, j.prompt, j.command) for j in load_jobs(tmp_path)}
+    assert before == after, "改出网许可动到了作业内容"
+    assert "主人手写的经验都在注释里" in _text(tmp_path)
+    assert "绝对路径解释器是踩过坑才写死的" in _text(tmp_path)
+
+
+def test_web_toggle_is_a_single_line_change(tmp_path):
+    from src.gateway.cron import set_job_web
+
+    _seed(tmp_path)
+    before = _text(tmp_path).splitlines()
+    set_job_web(tmp_path, "relay_duty", True)
+    after = _text(tmp_path).splitlines()
+    assert len(after) == len(before) + 1, "不是单行插入"
+    assert "allow_web: true" in after[before.index("  - name: relay_duty") + 1]
+
+
+def test_cron_tools_still_expose_no_content_editing(tmp_path):
+    """能改开关，但**不能改内容**——没有任何工具接受 prompt/command/schedule 去改已有作业。"""
+    tools = _tools(tmp_path)
+    for name in ("cron_toggle", "cron_set_web", "cron_run"):
+        args = set(tools[name].args)
+        assert not (args & {"prompt", "command", "schedule"}), f"{name} 开了改内容的口子：{args}"
