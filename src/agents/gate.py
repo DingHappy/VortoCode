@@ -22,6 +22,10 @@ DENY = "deny"            # 拒绝：问不到人，且没有（或已失效的�
 
 TAINT_WARNING = ("⚠ 本回合已摄入外部内容（网页/搜索/MCP）。下面这个操作是模型在读过外部内容之后"
                  "提出的——请人工核对是否确是你的本意（防提示注入）：\n")
+# 端入口不可信（IM 消息）但本回合并没真去读网页时的措辞。**判定完全相同**，只是别把
+# 「你自己打了句话」说成「模型读过被投毒的网页」——那句狼来了每回合都喊，喊到第一百次时，
+# 真正那一次和前面九十九次长得一模一样（真机 2026-07-27）。
+CHANNEL_TAINT_NOTE = "（经 IM 入口，需你确认）"
 
 # 污点否决掉自动放行时给用户的**统一说法**。此前 CLI 的 attach 与 headless 各写了一份几乎相同的
 # 文案，改一处漏一处——正是这套收敛要根除的抄贴漂移。
@@ -32,11 +36,18 @@ TAINT_REFUSED_REASON = "本回合摄入过外部内容，--yes 不放行（防�
 def taint_prefix() -> str:
     """污点态下给确认文案加的警示前缀（D0 防提示注入）；未污点返回空串。
 
+    **按来源分措辞**：真摄入过 web/搜索/MCP 才喊那句重话；只是"入口不可信"（IM 消息）时给
+    一句轻提示。判定不受影响（`decide()` 只看 `is_tainted()`），变的只是跟人怎么说——
+    永远亮着的红灯等于没有红灯。
+
     注：前缀只是"让人看见"。**真正的拦截是 `decide()`**——只加前缀拦不住自动放行
     （`--yes` 压根不看 message 内容长什么样）。
     """
-    from src.agents.taint import is_tainted
-    return TAINT_WARNING if is_tainted() else ""
+    from src.agents.taint import taint_source
+    src = taint_source()
+    if src == "external":
+        return TAINT_WARNING
+    return f"{CHANNEL_TAINT_NOTE} " if src else ""
 
 
 def decide(*, tainted: bool, pre_authorized: bool, can_ask_human: bool) -> str:

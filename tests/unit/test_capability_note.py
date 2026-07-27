@@ -269,3 +269,28 @@ def test_im_restore_announces_behavior_change(tmp_path):
                  tool_names=names, behavior_fp="stale-fingerprint")
     notes = _notes(_bridge(tmp_path).agent.history)
     assert len(notes) == 1 and "行为规则" in notes[0]["content"]
+
+
+# ---------------------------------------------------------------- 模式跟着会话走
+#
+# 真机 2026-07-27：一天重启七八次，主人每次动手都被要求重新授权，问「每次都要这样吗」。
+# `/mode build` 是他的一次**显式决定**，不该被一次服务重启抹回 plan。
+
+def test_mode_survives_a_restart(tmp_path):
+    b = _bridge(tmp_path)
+    assert b.mode == "plan"
+    b.mode = "build"
+    b._persist()
+    assert _bridge(tmp_path).mode == "build", "重启把主人切好的模式抹回去了"
+
+
+def test_save_without_mode_keeps_the_recorded_one(tmp_path):
+    save_session(str(tmp_path), SID, [], [], None, mode="build")
+    save_session(str(tmp_path), SID, [], [{"role": "user", "content": "x"}], None)
+    assert load_session(str(tmp_path), SID)["mode"] == "build"
+
+
+def test_garbage_mode_is_not_persisted(tmp_path):
+    save_session(str(tmp_path), SID, [], [], None, mode="../../etc/passwd")
+    assert load_session(str(tmp_path), SID)["mode"] is None
+    assert _bridge(tmp_path).mode == "plan", "脏数据把装配带偏了"

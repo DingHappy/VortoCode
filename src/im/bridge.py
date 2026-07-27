@@ -187,6 +187,10 @@ class IMBridge:
             agent.history = saved.get("history") or []
             if saved.get("plan"):
                 agent.plan = saved["plan"]
+            # 模式跟着会话走：`/mode build` 是主人的一次显式决定，不该被一次服务重启抹回 plan
+            # （真机 2026-07-27：一天重启七八次，主人每次动手都要重新授权一遍，问"每次都要这样吗"）。
+            if saved.get("mode") in ("plan", "build"):
+                self.mode = saved["mode"]
             # 升级后复原旧会话：工具清单有变要告诉模型，否则历史里过期的「我做不到」会被
             # 当真话复读（真机 2026-07-27：#243 部署后钉钉里要截图仍被拒，模型把升级前那句
             # 否认逐字复读，连推荐的第三方工具名都一样）。判定在内核，端只调用。
@@ -200,7 +204,8 @@ class IMBridge:
             save_session(self.repo_root, self._sid, transcript=[],
                          history=self.agent.history, plan=getattr(self.agent, "plan", None),
                          tool_names=session_tool_names(self.agent),
-                         behavior_fp=session_behavior_fp(self.agent))
+                         behavior_fp=session_behavior_fp(self.agent),
+                         mode=self.mode)
         except Exception:  # noqa: BLE001
             pass
 
