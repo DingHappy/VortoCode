@@ -15,7 +15,7 @@ import asyncio
 import pytest
 
 from src.agents import taint
-from src.agents.gate import TAINT_WARNING
+from src.agents.gate import CHANNEL_TAINT_NOTE, TAINT_WARNING
 from src.im.bridge import IMBridge, normalize_allow_from, parse_allow_from
 from src.im.channel import ChannelEvent
 from tests.unit.test_im_bridge import (FakeAdapter, ScriptedLLM, _drive_no_turn,
@@ -202,10 +202,14 @@ def test_dingtalk_reports_group_and_mention_facts():
 
 @pytest.mark.asyncio
 async def test_inbound_message_taints_the_turn(tmp_path):
-    """IM 回合**从污点态起步**：一条普通入站消息触发的写操作，确认文案必须带污点警示。
+    """IM 回合**从污点态起步**：一条普通入站消息触发的写操作，确认文案必须带污点前缀。
 
     这是行为断言而非源码断言：污点标记若丢失（或被 run_turn 开头的 reset 抹掉），
-    内核 gate 就不会加这段前缀，本条立刻红。
+    内核 gate 就一个前缀都不加，本条立刻红。
+
+    2026-07-27 起断的是 **channel 档**前缀而非那句重话：普通入站消息并没有让模型读任何网页，
+    把它说成"模型读过被投毒的网页"是假话，且逢确认必现会让人学会忽略红灯（见 #251）。
+    拦截强度没变——channel 与 external 一样算污点、一样否掉自动放行（test_taint_wording 钉住）。
     """
     adapter = FakeAdapter(auto_approve=True)
     llm = ScriptedLLM('{"tool":"save_skill","args":{"name":"greet","description":"打招呼",'
@@ -215,7 +219,10 @@ async def test_inbound_message_taints_the_turn(tmp_path):
 
     confirms = [p for k, p in adapter.sent if k == "confirm"]
     assert confirms, "没发出确认——本条要断的是确认文案，前提是确实问了人"
-    assert TAINT_WARNING in confirms[0][0], "IM 入站没进污点：确认文案缺少污点警示前缀"
+    assert CHANNEL_TAINT_NOTE in confirms[0][0], "IM 入站没进污点：确认文案缺少污点前缀"
+    # 干净回合是**一个前缀都没有**的，所以"带了前缀"本身就证明污点确实打上了
+    assert not confirms[0][0].startswith("把打招呼"), "确认文案裸奔 = 污点没生效"
+    assert TAINT_WARNING not in confirms[0][0], "没读过网页却喊了重话（狼来了）"
 
 
 @pytest.mark.asyncio
@@ -232,7 +239,7 @@ async def test_taint_survives_every_turn_not_just_the_first(tmp_path):
 
     confirms = [p for k, p in adapter.sent if k == "confirm"]
     assert len(confirms) >= 2
-    assert all(TAINT_WARNING in c[0] for c in confirms), "后续回合掉了污点"
+    assert all(CHANNEL_TAINT_NOTE in c[0] for c in confirms), "后续回合掉了污点"
 
 
 @pytest.mark.asyncio
