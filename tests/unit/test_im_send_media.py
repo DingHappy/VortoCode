@@ -333,3 +333,102 @@ async def test_dingtalk_download_failure_degrades_to_message(tmp_path, monkeypat
         {"msgtype": "picture", "content": {"downloadCode": "abc"}})
     assert imgs == [] and files == []
     assert "没取到" in bad and "403" in bad
+
+
+# ================================================================ 忙时排队 / 中断
+
+async def test_message_while_busy_is_queued_not_dropped(tmp_path):
+    """上一回合在跑时，后来的消息**进队列**——原实现直接拒掉，用户的话就丢了、还得重打。
+
+    外包看图（#241）会多一次 LLM 往返，"忙"的窗口被拉长，撞上的概率更高（真机 2026-07-27）。
+    """
+    import asyncio
+
+    from src.im.channel import ChannelEvent
+
+    sent: list = []
+    b = _bridge(tmp_path, sent)
+    seen: list = []
+    gate = asyncio.Event()
+
+    class _Agent:
+        async def run_turn(self, text, mode="plan", say=None, emit=None, images=None, **kw):
+            seen.append(text)
+            if len(seen) == 1:
+                await gate.wait()          # 第一回合卡住，制造"忙"
+            return f"答:{text}"
+    b.agent = _Agent()
+
+    await b._on_event(ChannelEvent(kind="message", sender_id="owner-1", text="第一条"))
+    await asyncio.sleep(0)
+    await b._on_event(ChannelEvent(kind="message", sender_id="owner-1", text="第二条"))
+
+    assert any("已排队" in m for m in sent), f"第二条被拒而不是排队：{sent}"
+    gate.set()
+    for _ in range(20):                    # 等队列自己前进
+        await asyncio.sleep(0.01)
+        if "第二条" in seen:
+            break
+    assert seen == ["第一条", "第二条"], f"排队的消息没被接着处理：{seen}"
+
+
+async def test_queue_is_bounded_and_says_so(tmp_path):
+    """队列有界：满了如实说没收下，而不是无声堆积。"""
+    import asyncio
+
+    from src.im.channel import ChannelEvent
+
+    sent: list = []
+    b = _bridge(tmp_path, sent)
+    b._queue_cap = 1
+    gate = asyncio.Event()
+
+    class _Agent:
+        async def run_turn(self, *a, **k):
+            await gate.wait()
+            return "x"
+    b.agent = _Agent()
+
+    for t in ("一", "二", "三"):
+        await b._on_event(ChannelEvent(kind="message", sender_id="owner-1", text=t))
+        await asyncio.sleep(0)
+
+    assert any("没收下" in m for m in sent), f"队列满了却没说：{sent}"
+    assert len(b._pending_msgs) == 1
+    gate.set()
+
+
+async def test_stop_cancels_running_turn_and_clears_queue(tmp_path):
+    """/stop 中断当前任务，并**连排队的一起清**——否则"停"了还会继续冒出来。"""
+    import asyncio
+
+    from src.im.channel import ChannelEvent
+
+    sent: list = []
+    b = _bridge(tmp_path, sent)
+    started = asyncio.Event()
+
+    class _Agent:
+        async def run_turn(self, *a, **k):
+            started.set()
+            await asyncio.sleep(30)        # 长任务
+            return "不该跑完"
+    b.agent = _Agent()
+
+    await b._on_event(ChannelEvent(kind="message", sender_id="owner-1", text="长任务"))
+    await asyncio.wait_for(started.wait(), timeout=2)
+    await b._on_event(ChannelEvent(kind="message", sender_id="owner-1", text="排队的"))
+    assert b._pending_msgs
+
+    await b._on_event(ChannelEvent(kind="message", sender_id="owner-1", text="/stop"))
+    assert b._pending_msgs == [], "中断了却没清队列——停完还会继续冒"
+    assert any("已中断" in m for m in sent)
+
+
+async def test_help_mentions_stop(tmp_path):
+    from src.im.channel import ChannelEvent
+
+    sent: list = []
+    b = _bridge(tmp_path, sent)
+    await b._on_event(ChannelEvent(kind="message", sender_id="owner-1", text="/help"))
+    assert "/stop" in "\n".join(sent)

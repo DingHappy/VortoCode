@@ -79,6 +79,11 @@ class IMBridge:
         self._sid = f"sid-{channel}-{self.owner_id}"     # session_store 要求 sid- 前缀
         self._pending: dict = {}                         # cid -> Future（确认）
         self._turn_task: Optional[asyncio.Task] = None
+        # 上一回合还在跑时后来的消息**进队列**而不是被拒。原实现直接 return，用户的话就丢了、
+        # 还得重打一遍——尤其外包看图会多一次 LLM 往返，"忙"的窗口被拉长，撞上的概率更高
+        # （真机 2026-07-27）。有界是为了防刷屏堆积：满了才如实说满了。
+        self._pending_msgs: list = []
+        self._queue_cap = 3
         self._ignored = 0                                # 白名单外的入站计数
         self._ignored_no_mention = 0                     # 群聊里没 @ 到本机器人的入站计数
         self._confirm_holder = {"fn": None}
@@ -263,9 +268,31 @@ class IMBridge:
                 await self._handle_command(text)
                 return
             if self._turn_task is not None and not self._turn_task.done():
-                await self._safe_send("⏳ 上一个任务还在跑，等它完成再发新的（/status 看状态）。")
+                if len(self._pending_msgs) >= self._queue_cap:
+                    await self._safe_send(
+                        f"⏳ 前面还有 {len(self._pending_msgs)} 条排着，这条没收下——"
+                        f"先等等，或 /stop 中断当前任务。")
+                    return
+                self._pending_msgs.append((text, imgs, atts))
+                await self._safe_send(
+                    f"📥 已排队（前面 {len(self._pending_msgs) - 1} 条 + 1 个在跑）"
+                    f"，跑完自动接着处理。/stop 可中断当前任务。")
                 return
-            self._turn_task = asyncio.create_task(self._run_turn(text, images=imgs, files=atts))
+            self._start_turn(text, imgs, atts)
+
+    def _start_turn(self, text: str, images: list, files: list) -> None:
+        """起一个回合，收尾时自动取下一条排队消息——队列在这里前进，不靠外部驱动。"""
+        async def _runner():
+            try:
+                await self._run_turn(text, images=images, files=files)
+            finally:
+                if self._pending_msgs:
+                    nxt_text, nxt_imgs, nxt_files = self._pending_msgs.pop(0)
+                    left = len(self._pending_msgs)
+                    await self._safe_send(f"▶️ 接着处理排队的消息"
+                                          + (f"（还剩 {left} 条）" if left else "") + "：")
+                    self._start_turn(nxt_text, nxt_imgs, nxt_files)
+        self._turn_task = asyncio.create_task(_runner())
 
     async def _handle_command(self, text: str) -> None:
         cmd = text.split()[0].lower()
@@ -295,11 +322,21 @@ class IMBridge:
             await self._submit_task(text[len("/task"):].strip())
         elif cmd == "/tasks":
             await self._list_tasks()
+        elif cmd == "/stop":
+            t = self._turn_task
+            n = len(self._pending_msgs)
+            self._pending_msgs.clear()             # 中断=连排队的一起清，否则"停"了还会继续冒
+            if t is not None and not t.done():
+                t.cancel()
+                await self._safe_send(f"⏹ 已中断当前任务"
+                                      + (f"，并清掉 {n} 条排队消息。" if n else "。"))
+            else:
+                await self._safe_send("当前没有在跑的任务。" + (f"（清掉了 {n} 条排队）" if n else ""))
         elif cmd == "/help":
             await self._safe_send(
                 "直接发任务 → 我跑隔离流水线（分解/实现/自测/落 vorto 分支）。\n"
                 "/task <描述> 后台跑（不占当前会话，进度自动推、完成发开 PR 按钮）· /tasks 看后台任务。\n"
-                "/mode plan|build 切模式 · /status 看状态 · /new 清空会话。\n"
+                "/mode plan|build 切模式 · /status 看状态 · /stop 中断当前任务 · /new 清空会话。\n"
                 "写文件/跑命令/开 PR 会发按钮让你确认（人在关口）。")
         else:
             await self._safe_send(f"未知命令 {cmd}。/help 看用法。")
