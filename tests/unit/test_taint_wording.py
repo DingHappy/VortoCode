@@ -106,3 +106,52 @@ def test_nested_does_not_leak_child_taint_into_a_clean_parent():
         taint.mark_channel_untrusted()
     assert state.child_tainted is True
     assert taint.is_tainted() is True, "子回合的污点必须并回父回合（单调合并）"
+
+
+# ---------------------------------------------------------------- 端到端：确认门真正发出的文案 ⭐
+#
+# 上面那些测的是 taint_prefix() 这个**函数**。真机 2026-07-27 部署后发现重话照旧出现——
+# 因为 make_confirm_gate 里绕过了它、自己拼 TAINT_WARNING 常量：**定义改好了，唯一的调用点漏了**。
+# 所以这一组不测函数，测**用户真正收到的那句话**。
+
+async def test_gate_message_uses_the_quiet_note_for_channel_taint():
+    from src.agents.gate import make_confirm_gate
+
+    box = []
+
+    async def _ask(msg):
+        box.append(str(msg))
+        return True
+
+    taint.mark_channel_untrusted()
+    await make_confirm_gate(_ask, can_ask_human=True)("跑一次 daily-tech-news？")
+    assert "网页/搜索/MCP" not in box[0], "确认门仍在把「你自己打了句话」说成「读过被投毒的网页」"
+    assert CHANNEL_TAINT_NOTE in box[0]
+    assert "跑一次 daily-tech-news？" in box[0], "操作原文被吃掉了"
+
+
+async def test_gate_message_still_shouts_after_real_ingestion():
+    from src.agents.gate import make_confirm_gate
+
+    box = []
+
+    async def _ask(msg):
+        box.append(str(msg))
+        return True
+
+    taint.mark_tainted()
+    await make_confirm_gate(_ask, can_ask_human=True)("开 PR？")
+    assert box[0].startswith(TAINT_WARNING), "真摄入过外部内容却没喊重话——D0 横幅丢了"
+
+
+async def test_gate_message_is_bare_on_a_clean_round():
+    from src.agents.gate import make_confirm_gate
+
+    box = []
+
+    async def _ask(msg):
+        box.append(str(msg))
+        return True
+
+    await make_confirm_gate(_ask, can_ask_human=True)("写文件？")
+    assert box[0] == "写文件？", "干净回合不该有任何前缀"
