@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from pathlib import Path
 from typing import AsyncIterator, Awaitable, Callable, Optional
 
 from .channel import ChannelAdapter, ChannelEvent
@@ -42,7 +43,8 @@ class DingTalkAdapter(ChannelAdapter):
     edits_supported = False        # 钉钉不支持编辑历史消息 → 进度发新消息（bridge 放慢节流）
 
     def __init__(self, client_id: str, client_secret: str, owner_id: str, *,
-                 connect_fn: Optional[ConnectFn] = None, reply_fn: Optional[ReplyFn] = None):
+                 connect_fn: Optional[ConnectFn] = None, reply_fn: Optional[ReplyFn] = None,
+                 inbox_dir: Optional[str] = None):
         self._cid = client_id
         self._secret = client_secret
         self.owner_id = str(owner_id)
@@ -57,6 +59,8 @@ class DingTalkAdapter(ChannelAdapter):
         # 有效期都是 7200s。缓存 + 提前 5 分钟刷新——每次现取会被限流。
         self._tok_new: tuple = ("", 0.0)              # (token, 过期时刻 monotonic)
         self._tok_old: tuple = ("", 0.0)
+        # 入站附件的落点：刻意**不在仓库工作区里**——用户发来的文件不该被当成代码改动收进 diff
+        self._inbox_dir = str(Path(inbox_dir or Path.home() / ".vortocode" / "im_inbox"))
 
     # ------------------------------------------------------------ ChannelAdapter
     async def poll(self) -> AsyncIterator[ChannelEvent]:
@@ -107,8 +111,15 @@ class DingTalkAdapter(ChannelAdapter):
             data = _loads(frame.get("data"))
             sender = str(data.get("senderStaffId", ""))
             text = ((data.get("text") or {}).get("content") or "").strip()
+            # 附件（图片/文件）：钉钉不在帧里带内容，只给 downloadCode，要再换一次临时 URL 去取。
+            # 仍是**纯出站请求**，不破坏"零入站暴露"。取不到就如实申报 unsupported——
+            # 静默丢附件等于让人对着石沉大海干等（本仓栽过好几次的老毛病）。
+            imgs, files, bad = await self._fetch_attachments(data)
             ev = self._to_event(sender, text, is_group=_is_group(data),
-                                mentioned=bool(data.get("isInAtList")))
+                                mentioned=bool(data.get("isInAtList")),
+                                has_attachment=bool(imgs or files or bad))
+            if ev is not None and ev.kind == "message":
+                ev.images, ev.files, ev.unsupported = imgs, files, bad
             if ev is not None:
                 # 回复路由**不在收帧阶段采纳**：sessionWebhook 只随事件申报（reply_to），
                 # 过了 bridge 三道闸才由 commit_reply_target 落成回复目标——否则白名单外的
@@ -122,8 +133,8 @@ class DingTalkAdapter(ChannelAdapter):
             self._webhook = event.reply_to
 
     def _to_event(self, sender: str, text: str, *, is_group: bool = False,
-                  mentioned: bool = False) -> Optional[ChannelEvent]:
-        if not text:
+                  mentioned: bool = False, has_attachment: bool = False) -> Optional[ChannelEvent]:
+        if not text and not has_attachment:       # 纯附件消息也要成事件，否则发图=石沉大海
             return None
         # 文本式确认：pending 且是主人回的 y/n → 翻成 callback（bridge 据此解开确认 Future）。
         # **群聊标记必须一起带过去**：钉钉的"按钮"其实是一条普通群消息，若这里把 is_group 抹平，
@@ -156,6 +167,81 @@ class DingTalkAdapter(ChannelAdapter):
     async def send_confirm(self, text: str, callback_id: str) -> None:
         self._awaiting_confirm = callback_id
         await self.send_text(text + "\n\n请回复 **y**（批准）或 **n**（拒绝）。")
+
+    # ------------------------------------------------------------ 入站附件（图片/文件）
+    async def _fetch_attachments(self, data: dict) -> tuple[list, list, str]:
+        """把消息里的附件下载到本地，返回 (图片路径, 文件路径, 取不到的说明)。
+
+        钉钉帧里**不带内容**，只给 downloadCode，要拿它再换一次临时 URL 才能下载
+        （仍是纯出站请求，"零入站暴露"不受影响）。
+
+        失败一律降级成 `unsupported` 文本，**绝不静默丢**：附件石沉大海是最差的体验，
+        人会以为机器人死了（2026-07-26 这类"不告诉人发生了什么"的毛病栽过好几次）。
+        """
+        items: list = []
+        mt = str(data.get("msgtype") or "").lower()
+        if mt == "picture":
+            c = ((data.get("content") or {}).get("downloadCode")
+                 or (data.get("picture") or {}).get("downloadCode"))
+            if c:
+                items.append(("image", c, "image.jpg"))
+        elif mt in ("file", "audio", "video"):
+            blk = data.get("content") or data.get(mt) or {}
+            c = blk.get("downloadCode")
+            if c:
+                items.append(("file", c, str(blk.get("fileName") or f"{mt}.bin")))
+        elif mt == "richText":                     # 图文混排：正文里可能夹若干张图
+            for it in (data.get("content") or {}).get("richText") or []:
+                if isinstance(it, dict) and it.get("downloadCode"):
+                    items.append(("image", it["downloadCode"], "image.jpg"))
+        if not items:
+            # 认不出的类型：只有在**确实不是纯文本**时才报（避免把普通消息也说成不支持）
+            return [], [], (f"收到 {mt} 类型的消息，暂不支持读取其内容。"
+                            if mt and mt not in ("text", "") else "")
+
+        imgs: list = []
+        files: list = []
+        bad: list = []
+        for kind, code, name in items:
+            try:
+                path = await self._download_one(code, name)
+            except Exception as e:  # noqa: BLE001 —— 单个附件失败不拖垮整条消息
+                bad.append(f"{name}（{str(e)[:60]}）")
+                continue
+            (imgs if kind == "image" else files).append(path)
+        note = ("有 %d 个附件没取到：%s" % (len(bad), "；".join(bad))) if bad else ""
+        return imgs, files, note
+
+    async def _download_one(self, code: str, name: str) -> str:
+        """downloadCode → 临时 URL → 落盘，返回本地路径。"""
+        import os
+        import time as _t
+        import uuid as _u
+
+        import aiohttp
+        tok = await self._token(legacy=False)
+        if self._session is None:
+            self._session = aiohttp.ClientSession()
+        async with self._session.post(
+                "https://api.dingtalk.com/v1.0/robot/messageFiles/download",
+                json={"downloadCode": code, "robotCode": self._cid},
+                headers={"x-acs-dingtalk-access-token": tok}) as r:
+            d = await r.json(content_type=None)
+        url = d.get("downloadUrl")
+        if not url:
+            raise RuntimeError(f"换取下载地址失败: {str(d)[:120]}")
+        # 落在收件目录：**不进仓库工作区**，避免用户发来的文件被误当成代码改动收进 diff
+        base = os.path.join(self._inbox_dir, _t.strftime("%Y%m%d"))
+        os.makedirs(base, exist_ok=True)
+        safe = os.path.basename(name).replace("/", "_")[:80] or "file.bin"
+        path = os.path.join(base, f"{_t.strftime('%H%M%S')}-{_u.uuid4().hex[:6]}-{safe}")
+        async with self._session.get(url) as r:
+            if r.status != 200:
+                raise RuntimeError(f"下载失败 HTTP {r.status}")
+            with open(path, "wb") as fh:
+                while chunk := await r.content.read(65536):
+                    fh.write(chunk)
+        return path
 
     # ------------------------------------------------------------ 媒体（图片/文件）
     async def _token(self, *, legacy: bool) -> str:

@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import AsyncIterator
 
 
@@ -31,6 +31,10 @@ class ChannelEvent:
     mentioned: bool = False       # 群聊里本条是否**显式 @ 了本机器人**（私聊无意义）
     reply_to: object = None       # 本条消息的通道侧回复路由令牌（如钉钉 sessionWebhook）——只申报，
                                   # 采纳与否由 bridge 过闸后调 commit_reply_target 决定
+    images: list = field(default_factory=list)   # 随消息带来的**图片**本地路径（已下载落盘）
+    files: list = field(default_factory=list)    # 随消息带来的**文件**本地路径
+    unsupported: str = ""         # 通道认出了附件但取不到（下载失败/类型不支持）→ 如实告知用户，
+                                  # 绝不静默丢弃（"发过去石沉大海"是最差的体验，2026-07-26 的老毛病）
 
 
 class ChannelAdapter:

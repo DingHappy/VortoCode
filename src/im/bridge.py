@@ -251,7 +251,13 @@ class IMBridge:
             return
         if ev.kind == "message":
             text = (ev.text or "").strip()
-            if not text:
+            imgs = list(getattr(ev, "images", []) or [])
+            atts = list(getattr(ev, "files", []) or [])
+            bad = str(getattr(ev, "unsupported", "") or "").strip()
+            if bad:
+                # 附件取不到就**如实说**——静默丢弃等于让人对着石沉大海干等
+                await self._safe_send(f"⚠️ {bad}")
+            if not text and not imgs and not atts:
                 return
             if text.startswith("/"):
                 await self._handle_command(text)
@@ -259,7 +265,7 @@ class IMBridge:
             if self._turn_task is not None and not self._turn_task.done():
                 await self._safe_send("⏳ 上一个任务还在跑，等它完成再发新的（/status 看状态）。")
                 return
-            self._turn_task = asyncio.create_task(self._run_turn(text))
+            self._turn_task = asyncio.create_task(self._run_turn(text, images=imgs, files=atts))
 
     async def _handle_command(self, text: str) -> None:
         cmd = text.split()[0].lower()
@@ -369,7 +375,8 @@ class IMBridge:
         await self._safe_send("后台任务：\n" + "\n".join(lines))
 
     # ------------------------------------------------------------ 一个回合（queue+drain+Future）
-    async def _run_turn(self, text: str) -> None:
+    async def _run_turn(self, text: str, images: Optional[list] = None,
+                        files: Optional[list] = None) -> None:
         q: asyncio.Queue = asyncio.Queue()
         self._confirm_holder["fn"] = self._make_confirm(q)
         self._progress_holder["fn"] = lambda msg: q.put_nowait(("progress", str(msg)))
@@ -384,7 +391,16 @@ class IMBridge:
 
         async def _inner():
             try:
-                reply = await self.agent.run_turn(text, mode=self.mode, say=_say,
+                # 文件走文本告知路径（agent 用 read_file 自己读）；图片走 run_turn 的
+                # images 通道（#186 的多模态入口）。**两者都在污点回合内**——kind="im" 的
+                # 会话每回合无条件打污点，图里写的指令因此拿不到任何免确认授权。
+                prompt = text
+                if files:
+                    prompt = ((prompt + "\n\n") if prompt else "") + \
+                        "（用户随消息发来文件，已存到：\n" + \
+                        "\n".join(f"  {f}" for f in files) + "\n用 read_file 读取。）"
+                reply = await self.agent.run_turn(prompt, mode=self.mode, say=_say,
+                                                  images=list(images or []) or None,
                                                   emit=lambda t: emitted.append(str(t)))
                 if not str(reply or "").strip() and emitted:
                     reply = emitted[-1]                  # 死因兜底：把 emit 的错误原文交出去
