@@ -174,6 +174,10 @@ class CronJob:
 _CMD_OUTPUT_TAIL = 2_000
 
 
+def cron_path(repo_root: str) -> Path:
+    return Path(repo_root) / ".vortocode" / "cron.yaml"
+
+
 def load_jobs(repo_root: str) -> List[CronJob]:
     """读 `.vortocode/cron.yaml`。文件不存在 → 空。非法 schedule 的项跳过（best-effort，不炸整表）。
 
@@ -182,12 +186,22 @@ def load_jobs(repo_root: str) -> List[CronJob]:
     - `command:` → **确定性** shell 作业，退出码即红绿（评测夜跑、依赖扫描这类不需要 LLM 的活）。
       让 LLM 去跑一条固定命令再解读退出码，既费 token 又可能读错——这类活就该确定性地跑。
     """
-    p = Path(repo_root) / ".vortocode" / "cron.yaml"
+    p = cron_path(repo_root)
     if not p.is_file():
         return []
     try:
+        return parse_jobs_text(p.read_text(encoding="utf-8"))
+    except OSError:
+        return []
+
+
+def parse_jobs_text(text: str) -> List[CronJob]:
+    """从 yaml 文本解析作业表。**与 load_jobs 同一份解析**——编辑面据此在落盘前自检，
+    验的必须是真正生效的那套语义，而不是另写一遍"应该也一样"的校验（那种校验迟早撒谎）。
+    """
+    try:
         import yaml
-        data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+        data = yaml.safe_load(text) or {}
     except Exception:  # noqa: BLE001
         return []
     raw_jobs = data.get("jobs") if isinstance(data, dict) else data
@@ -285,6 +299,217 @@ class CronState:
             tmp.replace(self._path)
         except (OSError, TypeError, ValueError):
             pass
+
+
+# --------------------------------------------------------------------- 编辑面（B10：agent 可排班）
+#
+# 三条纪律，都是"别把主人的文件搞坏 / 别偷偷扩权"：
+# 1. **保留注释**：cron.yaml 里全是主人手写的经验（例：relay_duty 那条绝对路径解释器的由来）。
+#    `yaml.safe_load` → `safe_dump` 往返会把注释全部抹掉，所以一律走**文本追加/单行改**，
+#    绝不整表重写。
+# 2. **落盘前用真解析自检**：改完的文本先过 parse_jobs_text，确认目标作业确实按预期出现/变更、
+#    且**其它作业一条不少**；对不上就原样不写并如实报错。防"写坏了还说成功"。
+# 3. **只准建 prompt 作业**：`command:` 作业是无人值守的周期性任意 shell，人在确认框里也难
+#    一眼看清后果；prompt 作业跑在 UNATTENDED 档（fail-closed 确认 + 不给出网工具），内容还是
+#    自然语言、人能真读懂。要排 shell 就写成 prompt 让无人值守 agent 去跑，边界不变而可审。
+_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+_SCAFFOLD = ("# VortoCode cron 作业表。schedule: 'at HH:MM' / 'every Nm|Nh|Nd' / 5 段 cron。\n"
+             "# 调度循环默认关；起服务时带 VORTOCODE_CRON=1 才跑。\n\njobs:\n")
+
+
+class CronEditError(ValueError):
+    """作业表编辑被拒（非法入参 / 自检没过 / 重名）。消息直接给人看。"""
+
+
+def render_job_block(job: dict) -> str:
+    """把一个作业 dict 渲染成可追加进 jobs: 列表的 yaml 文本块（2 空格缩进）。
+
+    用 `yaml.safe_dump` 而不是手拼字符串——prompt 里带换行/引号/冒号是常态，手拼必出转义洞
+    （轻则文件坏，重则被 prompt 内容注出额外的 yaml 键）。
+    """
+    import yaml
+    text = yaml.safe_dump([job], allow_unicode=True, sort_keys=False, default_flow_style=False)
+    return "".join(("  " + line if line.strip() else line) for line in text.splitlines(True))
+
+
+def _jobs_insert_at(lines: List[str]) -> Optional[int]:
+    """找 `jobs:` 列表末尾的插入位置；没有 jobs: 键 → None。"""
+    start = next((i for i, ln in enumerate(lines)
+                  if re.match(r"^jobs\s*:\s*$", ln.rstrip("\n"))), None)
+    if start is None:
+        return None
+    end = start + 1
+    for i in range(start + 1, len(lines)):
+        stripped = lines[i].strip()
+        if not stripped:
+            continue                                  # 空行可能在块中间，先跳过再看后面
+        if not lines[i][:1].isspace():
+            break                                     # 顶格 → 下一个顶层键，jobs 块到此为止
+        end = i + 1
+    return end
+
+
+def _verify(text: str, name: str, *, expect_enabled: Optional[bool],
+            others: Dict[str, str]) -> CronJob:
+    """用真解析核对改动结果：目标作业在、其它作业一条不少且 schedule 没被动。"""
+    jobs = {j.name: j for j in parse_jobs_text(text)}
+    got = jobs.get(name)
+    if got is None:
+        raise CronEditError(f"自检未通过：改完后解析不到作业 {name}（已放弃写入，文件未动）")
+    if expect_enabled is not None and got.enabled != expect_enabled:
+        raise CronEditError(f"自检未通过：{name} 的 enabled 应为 {expect_enabled}、实为 {got.enabled}"
+                            "（已放弃写入，文件未动）")
+    for other, sched in others.items():
+        if other not in jobs:
+            raise CronEditError(f"自检未通过：改动把已有作业 {other} 弄丢了（已放弃写入，文件未动）")
+        if jobs[other].schedule.raw != sched:
+            raise CronEditError(f"自检未通过：改动动到了别的作业 {other} 的 schedule"
+                                "（已放弃写入，文件未动）")
+    return got
+
+
+def _write(repo_root: str, text: str) -> None:
+    from src.agents.dev_plan import ensure_state_gitignore
+    ensure_state_gitignore(repo_root)
+    p = cron_path(repo_root)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_suffix(".yaml.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(p)                                    # 原子替换：别让并发的调度器读到半截表
+
+
+def add_job(repo_root: str, *, name: str, schedule: str, prompt: str,
+            announce: str = "im", enabled: bool = True, model: str = "",
+            budget: int = 0) -> str:
+    """在 cron.yaml 末尾追加一个 **prompt** 作业；返回追加进去的 yaml 块（供确认/回执展示）。
+
+    **只新增不改已有**：重名直接拒。原地重写一个已有作业的多行块，是最容易把主人注释和相邻
+    作业搞坏的操作，收益却只是省一次改名——不值得。改已有作业请人工编辑，或停用后另建。
+    """
+    name = str(name or "").strip()
+    if not _NAME_RE.match(name):
+        raise CronEditError(f"作业名非法：{name!r}（只允许字母/数字/下划线/连字符，≤64 字符）")
+    prompt = str(prompt or "").strip()
+    if not prompt:
+        raise CronEditError("prompt 不能为空——本工具只建 prompt 作业；要跑 shell 就把命令写进 "
+                            "prompt 交给无人值守 agent 执行。")
+    try:
+        parse_schedule(str(schedule or ""))
+    except ScheduleError as e:
+        raise CronEditError(f"schedule 非法：{e}") from e
+    announce = str(announce or "im").strip().lower()
+    if announce not in ("im", "silent"):
+        raise CronEditError(f"announce 只能是 im 或 silent，收到 {announce!r}")
+
+    existing = {j.name: j.schedule.raw for j in load_jobs(repo_root)}
+    if name in existing:
+        raise CronEditError(f"作业 {name} 已存在。改它请人工编辑 .vortocode/cron.yaml；"
+                            "或用 cron_toggle 停用后另建一个新名字的。")
+
+    job: Dict[str, object] = {"name": name, "schedule": str(schedule).strip(), "prompt": prompt}
+    if model.strip():
+        job["model"] = model.strip()
+    job["announce"] = announce
+    job["enabled"] = bool(enabled)
+    if budget > 0:
+        job["budget"] = int(budget)
+    block = render_job_block(job)
+
+    p = cron_path(repo_root)
+    text = p.read_text(encoding="utf-8") if p.is_file() else _SCAFFOLD
+    lines = text.splitlines(True)
+    at = _jobs_insert_at(lines)
+    if at is None:                                    # 没有 jobs: 键（空文件/只有注释）→ 补一个
+        if text and not text.endswith("\n"):
+            text += "\n"
+        new_text = f"{text}\njobs:\n{block}"
+    else:
+        if at > 0 and lines[at - 1:at] and not lines[at - 1].endswith("\n"):
+            lines[at - 1] += "\n"
+        new_text = "".join(lines[:at]) + block + "".join(lines[at:])
+
+    _verify(new_text, name, expect_enabled=bool(enabled), others=existing)
+    _write(repo_root, new_text)
+    return block
+
+
+def set_job_enabled(repo_root: str, name: str, enabled: bool) -> str:
+    """启用/停用一个已有作业（单行改，不碰其它内容）。返回一句结果描述。"""
+    name = str(name or "").strip()
+    existing = {j.name: j.schedule.raw for j in load_jobs(repo_root)}
+    if name not in existing:
+        raise CronEditError(f"无此作业 {name}（现有：{', '.join(sorted(existing)) or '空'}）")
+    p = cron_path(repo_root)
+    lines = p.read_text(encoding="utf-8").splitlines(True)
+
+    head = re.compile(r"^(\s*)-\s+name\s*:\s*['\"]?" + re.escape(name) + r"['\"]?\s*$")
+    start = next((i for i, ln in enumerate(lines) if head.match(ln.rstrip("\n"))), None)
+    if start is None:
+        raise CronEditError(f"作业 {name} 在文件里找不到起始行（可能写成了行内/流式 yaml）；请人工编辑")
+    indent = head.match(lines[start].rstrip("\n")).group(1)
+    stop = len(lines)
+    for i in range(start + 1, len(lines)):            # 块止于下一个同级 `- ` 或任一顶格行
+        ln = lines[i].rstrip("\n")
+        if not ln.strip():
+            continue
+        if re.match(r"^" + re.escape(indent) + r"-\s", ln) or not ln[:1].isspace():
+            stop = i
+            break
+    body_indent = f"{indent}  "
+    hit = next((i for i in range(start + 1, stop)
+                if re.match(r"^\s*enabled\s*:", lines[i])), None)
+    if hit is None:
+        lines.insert(start + 1, f"{body_indent}enabled: {str(bool(enabled)).lower()}\n")
+    else:
+        lead = re.match(r"^(\s*)", lines[hit]).group(1)
+        lines[hit] = f"{lead}enabled: {str(bool(enabled)).lower()}\n"
+
+    new_text = "".join(lines)
+    _verify(new_text, name, expect_enabled=bool(enabled), others=existing)
+    _write(repo_root, new_text)
+    return f"作业 {name} 已{'启用' if enabled else '停用'}"
+
+
+# --------------------------------------------------------------------- 手动触发守卫（REST 与工具同源）
+#
+# 触发面在 B9-② 就定过四条守卫（router docstring 的对抗审查 F2–F5）。工具面**不许另写一份**：
+# 各写一份必然漂移，而漂移的方向永远是"新那份更松"。
+_TRIGGER_INFLIGHT: Dict[str, object] = {}
+
+
+def check_trigger(repo_root: str, name: str) -> tuple[Optional[str], Optional[str], Optional[CronJob]]:
+    """触发前守卫。返回 (拒绝原因, 原因码, 作业)；原因码供 REST 映射 HTTP 状态。
+
+    - 查不到 → not_found
+    - 已停用 → disabled（主人显式下线的活，调度器不跑，手动面也不越线）
+    - command 作业 → 需要宿主机执行开关（与 /api/runs 同闸，fail-closed）
+    - 同名在跑 → busy（调度器造不出同名并发，手动面也不许造）
+    """
+    job = next((j for j in load_jobs(repo_root) if j.name == name), None)
+    if job is None:
+        return f"无此 cron 作业 {name}", "not_found", None
+    if not job.enabled:
+        return (f"作业 {name} 已停用（enabled: false）；先启用再触发", "disabled", job)
+    if job.kind == "command":
+        from src.web.auth import shell_enabled
+        if not shell_enabled():
+            return ("宿主机命令执行已默认禁用（VORTOCODE_ENABLE_SHELL=1 才开）；"
+                    f"{name} 是 command 作业，拒绝触发", "shell_disabled", job)
+    running = _TRIGGER_INFLIGHT.get(name)
+    if running is not None and not getattr(running, "done", lambda: True)():
+        return f"作业 {name} 正在运行；等它结束再触发", "busy", job
+    return None, None, job
+
+
+def track_trigger(name: str, task) -> None:
+    """登记在跑的手动触发（兼作强引用防 GC），结束自动摘除。"""
+    _TRIGGER_INFLIGHT[name] = task
+
+    def _forget(finished, key=name):
+        if _TRIGGER_INFLIGHT.get(key) is finished:
+            _TRIGGER_INFLIGHT.pop(key, None)
+
+    task.add_done_callback(_forget)
 
 
 def due_jobs(repo_root: str, now: datetime) -> List[CronJob]:
