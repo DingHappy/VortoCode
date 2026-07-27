@@ -1626,12 +1626,13 @@ class MainAgent:
         _fire_hook 立即返回、零开销（子 agent 默认无 hook_system，故不会刷状态）。
         reasoning_cb：可选——推理型模型的思维链（reasoning_content）走它做"思考呈现"，与正文分开。
         """
-        from src.agents.taint import mark_tainted, reset_taint
+        from src.agents.taint import mark_channel_untrusted, mark_tainted, reset_taint
         reset_taint()                       # 回合作用域污点：每回合从"未摄入外部内容"开始（D0）
         # 端级不可信入口（IM）：用户输入自身就是外部内容，**每回合无条件重新打污点**。
         # 必须在这里、reset 之后打——装配时打一次会被下一个回合的 reset 抹掉（污点是回合作用域的）。
+        # 用 channel 档而非 external：拦截强度完全一样，但别把"你自己打了句话"说成"读过网页"。
         if getattr(self, "_untrusted_input", False):
-            mark_tainted()
+            mark_channel_untrusted()
         # TUI 自动召回在 agent 外拼接；attach 后 serve 也只能看到文本。显式数据边界让两条路径
         # 都能在 reset 之后重新标污点。用户伪造该标记只会触发更保守的确认，不会获得权限。
         if "<vortocode_untrusted_memory>" in str(user_text):
