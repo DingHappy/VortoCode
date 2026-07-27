@@ -1,6 +1,6 @@
 """IM 桥核心测试——FakeAdapter（不触网）+ ScriptedLLM（不触模型），钉住并发编排与安全语义。
 
-覆盖：配对制（非主人忽略）/ 文本消息驱动整回合 / 串行拒并发 / 按钮确认往返（批准写、拒绝不写）/
+覆盖：配对制（非主人忽略）/ 文本消息驱动整回合 / 串行不并发（后来的消息排队）/ 按钮确认往返（批准写、拒绝不写）/
 命令（/mode /status /new /help）/ 会话跨实例持久化。
 """
 
@@ -120,9 +120,9 @@ async def test_owner_message_runs_turn_and_replies(tmp_path):
     assert "你好，我是 VortoCode。" in adapter.texts()
 
 
-# ------------------------------------------------------------ 串行拒并发
+# ------------------------------------------------------------ 串行不并发（后来的消息排队）
 @pytest.mark.asyncio
-async def test_serial_rejects_concurrent(tmp_path):
+async def test_serial_queues_concurrent(tmp_path):
     adapter = FakeAdapter()
     # 用一个能卡住的 LLM：第一回合 await 一个我们控制的 event
     gate = asyncio.Event()
@@ -137,12 +137,15 @@ async def test_serial_rejects_concurrent(tmp_path):
     adapter.push(_msg("任务一"))
     while bridge._turn_task is None:                        # 等第一回合开跑（卡在 gate）
         await asyncio.sleep(0)
-    adapter.push(_msg("任务二"))                             # 回合进行中又发 → 应被拒
+    adapter.push(_msg("任务二"))                             # 回合进行中又发
     for _ in range(200):
-        if any("还在跑" in t for t in adapter.texts()):
+        if any("已排队" in t for t in adapter.texts()):
             break
         await asyncio.sleep(0)
-    assert any("还在跑" in t for t in adapter.texts())       # 明确回"上一个还在跑"
+    # 2026-07-27 起改为**排队**而不是拒绝：原先直接 return 会把用户的话丢掉、还得重打一遍。
+    # 不变量没变——始终只有一个回合在跑（排队 ≠ 并发）；变的只是"后来的消息不再丢"。
+    assert any("已排队" in t for t in adapter.texts())
+    assert bridge._pending_msgs, "说了排队却没真存下来"
     gate.set()                                             # 放行第一回合
     await asyncio.wait_for(bridge._turn_task, timeout=5)
     adapter.stop()
