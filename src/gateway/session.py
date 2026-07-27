@@ -10,11 +10,19 @@ from typing import Optional
 
 async def run_isolated_session(repo_root: str, prompt: str, *, mode: str = "build",
                                model: Optional[str] = None, light: bool = False,
-                               extra_system: Optional[str] = None, llm=None) -> str:
+                               extra_system: Optional[str] = None, llm=None,
+                               allow_web: bool = False) -> str:
     """在一个全新的、隔离的 MainAgent 会话里跑一回合，返回最终文本。
 
     light=True：只带 prompt 里给的上下文，不注入项目指令/技能目录（心跳"值班"用，省 token）。
     model：指定便宜模型跑（None 用默认）。绝不落任何会话历史、绝不碰主会话。
+
+    allow_web：**逐个作业**由主人在创建时显式授权的出网许可（cron.yaml 的 `allow_web: true`）。
+    默认 False —— 无人值守下 `web_fetch` 是 read_only、不过确认门，而 GET 的 query string 就是
+    一条外传通道；系统提示又可能被本地文件（repo.md / BACKLOG.md / HEARTBEAT.md）污染，
+    一旦模型被诱导去 fetch 攻击者的 URL 就是零人工介入的静默外传。
+    但"每天搜新闻"这类作业确实需要出网，整档一刀切等于这类活儿做不了——所以把边界从**档级**
+    细化到**作业级**：谁要出网谁单独申报，且申报那一刻有真人点头（2026-07-27 主人拍板）。
     """
     from src.agents.main_agent import (MainAgent, build_agent_tools, make_confirm_gate,
                                        native_default, skill_catalog)
@@ -33,8 +41,12 @@ async def run_isolated_session(repo_root: str, prompt: str, *, mode: str = "buil
         # **无人值守不给出网工具**（自审逮到的真洞）：web_fetch 是 read_only、不过确认门，
         # 而 GET 的 query string 就是一条外传通道。无人值守下系统提示可能被本地文件
         # （repo.md / BACKLOG.md / HEARTBEAT.md）污染——一旦模型被诱导去 fetch 攻击者的 URL，
-        # 就是**零人工介入的静默外传**。而无人值守本来也不需要出网（领 BACKLOG 干活、跑评测都不用）。
-        with_web=False,
+        # 就是**零人工介入的静默外传**。默认关；只有主人在创建作业时逐条授权过的才开（见 docstring）。
+        with_web=bool(allow_web),
+        # 出站投递面**始终不给**，与 allow_web 无关：send_image/send_file 要过确认门，而这里
+        # 问不到人 → 必拒。给了只会让模型反复撞一堵必然拒绝的墙，还误导它以为送得出去。
+        # 作业产出本来就走 announce 通道推给主人，不需要它自己发。
+        with_im_media=False,
         # **无人值守不给排班工具**（同一条道理的时间版）：cron 作业能创建 cron 作业 = 自我复制
         # 驻留。出网是空间上的外传通道，排班是**时间上的**——让一个没人盯着的回合给自己排下一班，
         # 等于 agent 可以自授"周期性无人值守执行"。而且这里 confirm 恒拒（问不到人），

@@ -165,3 +165,81 @@ def test_save_without_tool_names_preserves_recorded_list(tmp_path):
 def test_legacy_file_loads_tool_names_as_none_not_empty(tmp_path):
     save_session(str(tmp_path), SID, [], [], None)
     assert load_session(str(tmp_path), SID)["tool_names"] is None
+
+
+# ---------------------------------------------------------------- 行为契约变化（工具清单未变）
+#
+# 真机 2026-07-27 二次翻车：#247 只改了系统规则与工具描述、**工具清单一个没动**，于是上面那套
+# 通告静默通过；而历史里三条旧回复还写着"请按 Tab 切换到 build 模式"，模型照抄自己说过的话。
+# 线上系统提示当时已无 Tab、工具结果里也没有——**修好的规则被旧上下文压过去了**。
+# 结论：行为变了也会让旧结论过期，不只是工具增删。
+
+def test_behavior_change_alone_still_announces(tmp_path):
+    note = capability_update_note(["a"], ["a"], "fp-old", "fp-new")
+    assert note and "行为规则" in note and "工具清单未变" in note
+
+
+def test_nothing_changed_stays_silent(tmp_path):
+    assert capability_update_note(["a"], ["a"], "same", "same") is None
+
+
+def test_tool_and_behavior_change_are_reported_together(tmp_path):
+    note = capability_update_note(["a"], ["a", "b"], "fp-old", "fp-new")
+    assert "新增：b" in note and "行为规则亦有更新" in note
+
+
+def test_missing_fingerprints_fall_back_to_tool_diff_only(tmp_path):
+    """老档没指纹 → 别把"没记录"当成"变了"，否则每次重启都通告一遍（噪音会让人学会忽略它）。"""
+    assert capability_update_note(["a"], ["a"], None, "fp-new") is None
+    assert capability_update_note(["a"], ["a"], "fp-old", None) is None
+
+
+def test_fingerprint_tracks_tool_descriptions_not_just_names(tmp_path):
+    """#247 改的正是工具描述与规则文案——名字没动，指纹必须动。"""
+    from src.agents.main_agent import MainAgent, build_read_tools
+
+    tools = build_read_tools(str(tmp_path))
+    base = MainAgent(tools).behavior_fingerprint()
+    assert base == MainAgent(build_read_tools(str(tmp_path))).behavior_fingerprint(), "同样装配指纹应稳定"
+
+    tools[0].description += "（改了描述）"
+    assert MainAgent(tools).behavior_fingerprint() != base
+
+
+def test_fingerprint_tracks_mode_switch_hint(tmp_path):
+    """端申报的切换方式属能力契约的一部分（#247 就是靠它从空变成 /mode build）。"""
+    from src.agents.main_agent import MainAgent, build_read_tools
+
+    a = MainAgent(build_read_tools(str(tmp_path))).behavior_fingerprint()
+    b = MainAgent(build_read_tools(str(tmp_path)),
+                  mode_switch_hint="回复 `/mode build`").behavior_fingerprint()
+    assert a != b
+
+
+def test_fingerprint_ignores_repo_content(tmp_path):
+    """仓库记忆/项目指令变了不代表能力边界变了——混进去会让通告天天冒。"""
+    from src.agents.main_agent import MainAgent, build_read_tools
+
+    tools = build_read_tools(str(tmp_path))
+    assert (MainAgent(tools, extra_system="项目约定 A").behavior_fingerprint()
+            == MainAgent(tools, extra_system="完全不同的项目约定 B").behavior_fingerprint())
+
+
+def test_fingerprint_survives_round_trip_to_disk(tmp_path):
+    from src.agents.main_agent import MainAgent, build_read_tools
+
+    fp = MainAgent(build_read_tools(str(tmp_path))).behavior_fingerprint()
+    save_session(str(tmp_path), SID, [], [], None, tool_names=["a"], behavior_fp=fp)
+    assert load_session(str(tmp_path), SID)["behavior_fp"] == fp
+
+    save_session(str(tmp_path), SID, [], [{"role": "user", "content": "x"}], None)
+    assert load_session(str(tmp_path), SID)["behavior_fp"] == fp, "不带指纹的调用方把已记录的抹了"
+
+
+def test_im_restore_announces_behavior_change(tmp_path):
+    """端到端：存档工具清单一致、仅指纹不同 → 复原时仍要注入通告。"""
+    names = sorted(_bridge(tmp_path).agent.tools)
+    save_session(str(tmp_path), SID, [], list(STALE_DENIAL), None,
+                 tool_names=names, behavior_fp="stale-fingerprint")
+    notes = _notes(_bridge(tmp_path).agent.history)
+    assert len(notes) == 1 and "行为规则" in notes[0]["content"]
