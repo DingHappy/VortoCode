@@ -591,6 +591,9 @@ SYSTEM_TEMPLATE = """你是 VortoCode 的主助手，通过终端 / 浏览器 / 
 这类**带重复周期**的要求时，他要的是让这件事**将来自动反复发生**，不是你立刻跑一遍就完事。
 有 cron_add 就用它建一个定时作业（把要做的事写进 prompt），没有就如实说这一档缺什么。
 反过来，"现在帮我搜一下"是一次性的，别去建作业。分不清就问一句。
+**建作业时先想清楚它到点要不要联网**：定时作业跑在无人值守档下，默认**不给**联网工具——
+查新闻/行情/天气/任何站外信息的作业，必须传 `allow_web: true`（会单独向用户要一次授权）；
+漏传的话作业到点只会报"我没有 web_search"，白跑一趟。纯本地的活儿则不要传。
 **而且"我没这个工具"不等于"这事在 VortoCode 里做不了"**：你运行在 VortoCode 里，它有一整套
 你未必都接成了工具的子系统（定时作业 `.vortocode/cron.yaml`、技能、钩子、权限、隔离流水线、
 Web 控制台…）。缺工具时先在仓库里查一眼有没有现成机制（grep/read_file 就能查），
@@ -3591,7 +3594,8 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
             nxt = _next_due(j.schedule, last, now) if j.enabled else None
             fails = state.failures(j.name)
             lines.append(
-                f"- {j.name}（{j.kind}）{'' if j.enabled else ' ⛔已停用'}\n"
+                f"- {j.name}（{j.kind}）{'' if j.enabled else ' ⛔已停用'}"
+                f"{' 🌐可联网' if j.allow_web else ''}\n"
                 f"    排期 {j.schedule.raw}"
                 f" · 下次 {nxt.strftime('%m-%d %H:%M') if nxt else '—'}"
                 f" · 上次 {last.strftime('%m-%d %H:%M') if last else '从未'}"
@@ -3606,9 +3610,21 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
         schedule = str(args.get("schedule") or "").strip()
         prompt = str(args.get("prompt") or "").strip()
         announce = str(args.get("announce") or "im").strip().lower()
+        want_web = _truthy(args.get("allow_web", False))
+        # 出网许可**单独问一次**，不许混在"要不要启用"里一起蒙过去：这两件事的风险不是一个量级，
+        # 合成一句话就等于让人在不知情下顺手交出无人值守的外传通道。先问许可、再问启用；
+        # 许可被拒就按不出网建（作业仍然有用，只是这一档能力没有），而不是整个作业不建。
+        allow_web = False
+        if want_web:
+            allow_web = await _ask(
+                f"作业「{name}」申请**出网许可**（web_search / web_fetch / 截图）。\n"
+                f"注意：它在**无人盯屏**时运行，出网请求的 URL 本身就是一条数据外带通道——"
+                f"若这台机器上的文件被人做过手脚、诱导它去访问某个地址，没有人会拦。\n"
+                f"仅在你确实需要它联网（如查新闻/行情）时批准。要给吗？")
         try:                                       # 先校验再问人：别拿一个注定失败的操作烦主人
             block = add_job(repo_root, name=name, schedule=schedule, prompt=prompt,
                             announce=announce, enabled=False, model=str(args.get("model") or ""),
+                            allow_web=allow_web,
                             budget=int(args.get("budget") or 0) if str(args.get("budget") or "").strip().isdigit() else 0)
         except CronEditError as e:
             return f"未创建：{e}"
@@ -3616,7 +3632,8 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
             return f"未创建：写 cron.yaml 失败 {type(e).__name__}: {e}"
         # 先以**停用**态落盘，再问要不要启用：确认被拒时留下的是一条不会跑的记录，
         # 而不是一个已经在排期里的作业。fail-closed 的方向永远是"不跑"。
-        ok = await _ask(f"新建定时作业「{name}」并**启用**？它会在无人盯屏时按 {schedule} 自动跑：\n"
+        net = "可联网" if allow_web else "**不能联网**"
+        ok = await _ask(f"新建定时作业「{name}」并**启用**？它会在无人盯屏时按 {schedule} 自动跑（{net}）：\n"
                         f"{' '.join(prompt.split())[:300]}")
         if not ok:
             return (f"已写入作业 {name}，但保持**停用**（你拒绝了启用）。"
@@ -3631,8 +3648,13 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
         # 2026-07-27 模型信了更具体的那半，回报"已创建但默认停用"，用户于是又说一次"启用"。
         # 别让人去分辨工具话里哪半是真的。
         from src.gateway.cron import job_block
+        note = ("" if allow_web else
+                ("\n⚠️ 你拒绝了出网许可，该作业**不能联网**——若它的内容需要搜索/抓网页，"
+                 "到点会如实报告缺工具。要改请人工编辑 cron.yaml 加 `allow_web: true`。"
+                 if want_web else
+                 "\n提示：该作业**不能联网**（无人值守默认不出网）。需要联网请在创建时申报 allow_web。"))
         return (f"✅ 定时作业 {name} 已创建并**已启用**（{schedule}）。无需再启用一次。\n"
-                + (job_block(repo_root, name) or block))
+                + (job_block(repo_root, name) or block) + note)
 
     async def _toggle(args: dict) -> str:
         from src.gateway.cron import CronEditError, set_job_enabled
@@ -3678,6 +3700,9 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
               "schedule": "排期：'at HH:MM' 每天该时刻 / 'every 30m'|'every 2h' 固定间隔 / 5 段 cron 'm h dom mon dow'",
               "prompt": "到点要做的事（自然语言，交给一个全新的无人值守 agent 执行）",
               "announce": "可选：im=结果推给主人（默认）/ silent=只落台账",
+              "allow_web": "可选，默认 false。作业到点时要联网（搜索/抓网页/截图）才传 true——"
+                           "会**单独**向主人要一次授权；查新闻、查行情这类必须传，"
+                           "纯本地活儿（跑测试、整理文件）不要传",
               "model": "可选：指定模型", "budget": "可选：本作业 token 预算上限"},
              _add, read_only=False),
         Tool("cron_toggle", "启用或停用一个已有定时作业（停用后调度器不跑它，可随时再启用）。"
@@ -4128,6 +4153,10 @@ def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable
                       with_artifacts: bool = False, draft_pr: bool = False,
                       memory_source: str = "agent", memory_session_id=None,
                       capabilities: Any = None, with_web: bool = True,
+                      # 出站投递面（send_image/send_file）。默认跟随 with_web 保持既有行为；
+                      # 单独可控是因为它们与"读外网"是**两件事**：那两个要过确认门，无人值守
+                      # 问不到人必拒——给了只会让模型反复撞一堵必然拒绝的墙。
+                      with_im_media: Optional[bool] = None,
                       with_dev: bool = True, with_cron: bool = True,
                       on_diff: Optional[Callable[[str, str], None]] = None) -> list[Tool]:
     """标准主 agent 工具集（headless CLI 与 Web /agent 共用，保证二者"同源"、不漂移）。
@@ -4177,7 +4206,7 @@ def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable
 
         tools += build_artifact_tools(repo_root, confirm=_art_publish,
                                       confirm_delete=_art_delete)
-    if with_web:                                   # 与出网同档：无人值守没有真人可问，出站面一律砍掉
+    if with_web if with_im_media is None else with_im_media:
         tools += build_im_media_tools(repo_root, confirm)
     if with_cron:
         # **无人值守必须传 False**：cron 作业能创建 cron 作业 = 自我复制驻留，等于 agent 可以

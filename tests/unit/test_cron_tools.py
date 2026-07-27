@@ -300,3 +300,117 @@ def test_toggle_on_missing_job_leaves_file_untouched(tmp_path):
     assert _text(tmp_path) == SEED
 
 
+
+
+# ---------------------------------------------------------------- 5. 作业级出网许可（2026-07-27 主人拍板）
+#
+# 无人值守整档不出网，是因为 web_fetch 是 read_only、不过确认门，而 GET 的 query string 就是
+# 一条外传通道。但"每天搜新闻"这类作业确实要出网——真机首跑就如实报告了"我没有 web_search"。
+# 于是把边界从**档级**细化到**作业级**：谁要出网谁单独申报，且申报那一刻有真人点头。
+
+async def test_web_permission_is_asked_separately_from_enabling(tmp_path):
+    """两件事的风险不是一个量级，合成一句话 = 让人在不知情下顺手交出无人值守的外传通道。"""
+    _seed(tmp_path)
+    asked = []
+
+    async def _spy(msg):
+        asked.append(str(msg))
+        return True
+
+    await _tools(tmp_path, _spy)["cron_add"].handler(
+        {"name": "news", "schedule": "at 09:00", "prompt": "搜新闻", "allow_web": True})
+    assert len(asked) == 2, f"出网许可没有单独问：{asked}"
+    assert "出网许可" in asked[0] and "外带通道" in asked[0], "许可问句没讲清风险"
+    assert "启用" in asked[1]
+
+
+async def test_declining_web_still_creates_the_job_without_web(tmp_path):
+    """许可被拒 → 按不出网建（作业仍有用），而不是整个作业不建。"""
+    _seed(tmp_path)
+    answers = iter([False, True])                  # 拒绝出网、同意启用
+
+    async def _mixed(_msg):
+        return next(answers)
+
+    out = await _tools(tmp_path, _mixed)["cron_add"].handler(
+        {"name": "news", "schedule": "at 09:00", "prompt": "搜新闻", "allow_web": True})
+    job = {j.name: j for j in load_jobs(tmp_path)}["news"]
+    assert job.enabled is True and job.allow_web is False
+    assert "不能联网" in out, "没告诉用户这作业上不了网，到点才发现就晚了"
+
+
+async def test_web_permission_not_asked_when_not_requested(tmp_path):
+    """没申报就别问——多余的安全问句会训练用户闭眼点同意。"""
+    _seed(tmp_path)
+    asked = []
+
+    async def _spy(msg):
+        asked.append(str(msg))
+        return True
+
+    await _tools(tmp_path, _spy)["cron_add"].handler(
+        {"name": "local", "schedule": "at 09:00", "prompt": "跑测试"})
+    assert len(asked) == 1 and "出网许可" not in asked[0]
+    assert {j.name: j for j in load_jobs(tmp_path)}["local"].allow_web is False
+
+
+async def test_granted_web_lands_in_yaml_and_shows_in_list(tmp_path):
+    _seed(tmp_path)
+    await _tools(tmp_path, _yes())["cron_add"].handler(
+        {"name": "news", "schedule": "at 09:00", "prompt": "搜新闻", "allow_web": True})
+    assert {j.name: j for j in load_jobs(tmp_path)}["news"].allow_web is True
+    assert "allow_web: true" in _text(tmp_path)
+
+    listing = await _tools(tmp_path)["cron_list"].handler({})
+    assert "🌐可联网" in listing, "清单看不出哪个作业能出网，主人无法审计"
+    assert "relay_duty" in listing and listing.count("🌐") == 1, "把不能出网的也标了"
+
+
+def test_existing_jobs_default_to_no_web(tmp_path):
+    """老作业表没有这个字段——默认必须是不出网，不能因为新增字段就悄悄放开。"""
+    _seed(tmp_path)
+    assert all(j.allow_web is False for j in load_jobs(tmp_path))
+
+
+async def test_unattended_session_web_follows_the_job_flag(tmp_path):
+    """真正决定出不出网的是 run_isolated_session 的入参，不是文案。"""
+    import src.agents.main_agent as ma
+    from src.gateway.session import run_isolated_session
+
+    seen = {}
+
+    def _spy(*a, **kw):
+        seen.update(kw)
+        return []
+
+    real = ma.build_agent_tools
+    ma.build_agent_tools = _spy
+    try:
+        for flag in (False, True):
+            seen.clear()
+            try:
+                await run_isolated_session(str(tmp_path), "干活", allow_web=flag)
+            except Exception:  # noqa: BLE001 —— 空工具集后续怎么炸无所谓，只看入参
+                pass
+            assert seen.get("with_web") is flag
+            assert seen.get("with_im_media") is False, "出站投递面不该随出网许可放开"
+    finally:
+        ma.build_agent_tools = real
+
+
+async def test_job_carries_allow_web_into_the_run(tmp_path):
+    """cron.run_job 必须把作业的 allow_web 透传给隔离会话，否则 yaml 里写了也白写。"""
+    from src.gateway.cron import load_jobs as _lj
+    from src.gateway.cron import run_job
+
+    _seed(tmp_path)
+    add_job(tmp_path, name="news", schedule="at 09:00", prompt="搜新闻", allow_web=True)
+    job = {j.name: j for j in _lj(tmp_path)}["news"]
+    got = {}
+
+    async def _fake_session(root, prompt, **kw):
+        got.update(kw)
+        return "ok"
+
+    await run_job(str(tmp_path), job, run_session=_fake_session)
+    assert got.get("allow_web") is True
