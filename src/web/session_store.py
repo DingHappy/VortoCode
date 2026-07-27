@@ -56,7 +56,8 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
                  activities: Optional[List[dict]] = None,
                  prompt_queue: Optional[List[dict]] = None,
                  context_usage: Optional[Dict[str, Any]] = None,
-                 tool_names: Optional[List[str]] = None) -> bool:
+                 tool_names: Optional[List[str]] = None,
+                 behavior_fp: Optional[str] = None) -> bool:
     """把一个 sid 会话存盘。返回是否真的写了（非 sid 会话/出错 → False）。
 
     title：显式标题（重命名用）。不传则**保留磁盘上已有标题**，避免每回合存盘把用户改的名冲掉。
@@ -70,7 +71,8 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
         return False
     p = _path(repo_root, sid)
     existing: Dict[str, Any] = {}
-    if (title is None or context_usage is None or tool_names is None) and p.is_file():
+    if (title is None or context_usage is None or tool_names is None
+            or behavior_fp is None) and p.is_file():
         try:
             loaded = json.loads(p.read_text(encoding="utf-8"))
             existing = loaded if isinstance(loaded, dict) else {}
@@ -82,6 +84,8 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
         context_usage = existing.get("context_usage") or {}
     if tool_names is None:                          # 同上：读不到清单的调用方不许抹掉已记录的
         tool_names = existing.get("tool_names")
+    if behavior_fp is None:
+        behavior_fp = existing.get("behavior_fp")
     data = {
         "transcript": list(transcript or [])[-_MAX_TRANSCRIPT:],
         "history": list(history or [])[-_MAX_HISTORY:],
@@ -93,6 +97,8 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
     }
     if tool_names is not None:                      # 老档没有就保持没有（None=早于记录，是证据不是缺陷）
         data["tool_names"] = sorted(str(t) for t in tool_names)
+    if behavior_fp is not None:
+        data["behavior_fp"] = str(behavior_fp)
     try:
         from src.agents.dev_plan import ensure_state_gitignore
         ensure_state_gitignore(repo_root)    # 会话持久化也是 .vortocode 生成态写入点（自忽略，防足迹）
@@ -129,6 +135,7 @@ def load_session(repo_root: str, key: str) -> Optional[Dict[str, Any]]:
         "title": data.get("title"),
         # 刻意不 `or []`：None=老档从没记录过清单（复原时退化为通用能力提醒），[]≠None。
         "tool_names": data.get("tool_names"),
+        "behavior_fp": data.get("behavior_fp"),
     }
 
 

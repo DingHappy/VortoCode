@@ -223,7 +223,7 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
     return agent
 
 
-def capability_update_note(saved_tools, current_tools) -> str | None:
+def capability_update_note(saved_tools, current_tools, saved_fp=None, current_fp=None) -> str | None:
     """比对「存盘时的工具清单」与「本次装配的清单」，有出入就生成一条能力更新通告。
 
     为什么要有（真机 2026-07-27）：#243 把 screenshot_page 接上并部署后，钉钉里再要截图
@@ -248,14 +248,20 @@ def capability_update_note(saved_tools, current_tools) -> str | None:
     old = {str(t) for t in saved_tools}
     added = sorted(set(cur) - old)
     removed = sorted(old - set(cur))
+    behavior_changed = bool(saved_fp and current_fp and saved_fp != current_fp)
     if not added and not removed:
-        return None
+        # 工具清单没动，但**行为契约变了**也要通告（真机 2026-07-27：#247 只改规则与工具描述，
+        # 清单一个没动，于是这里静默通过，而历史里三条旧回复还在教用户"按 Tab"，被模型照抄）。
+        if not behavior_changed:
+            return None
+        return f"[能力更新] 服务已升级，行为规则/工具说明有变（工具清单未变）。{tail}"
 
     def _fmt(names: list) -> str:
         return "、".join(names[:8]) + (f" 等{len(names)}个" if len(names) > 8 else "")
 
     parts = ([f"新增：{_fmt(added)}"] if added else []) + \
-            ([f"移除：{_fmt(removed)}"] if removed else [])
+            ([f"移除：{_fmt(removed)}"] if removed else []) + \
+            (["行为规则亦有更新"] if behavior_changed else [])
     return f"[能力更新] 服务已升级，工具清单有变——{'；'.join(parts)}。{tail}"
 
 
@@ -271,7 +277,10 @@ def inject_capability_note(agent, saved) -> bool:
         tools = getattr(agent, "tools", None)
         if not history or not isinstance(tools, dict) or not tools:
             return False
-        note = capability_update_note((saved or {}).get("tool_names"), tools.keys())
+        fp = getattr(agent, "behavior_fingerprint", None)
+        note = capability_update_note((saved or {}).get("tool_names"), tools.keys(),
+                                      (saved or {}).get("behavior_fp"),
+                                      fp() if callable(fp) else None)
         if not note:
             return False
         history.append({"role": "user", "content": note})
@@ -284,3 +293,14 @@ def session_tool_names(agent) -> list | None:
     """存盘用：agent 的工具名清单；读不到就 None（**别报空清单**——None 与 [] 是两种事实）。"""
     tools = getattr(agent, "tools", None)
     return sorted(tools) if isinstance(tools, dict) and tools else None
+
+
+def session_behavior_fp(agent) -> str | None:
+    """存盘用：行为契约指纹；agent 不支持（协议桩/降级装配）就 None。"""
+    fp = getattr(agent, "behavior_fingerprint", None)
+    if not callable(fp):
+        return None
+    try:
+        return str(fp())
+    except Exception:  # noqa: BLE001 —— 指纹是旁路，算不出来不该影响存盘
+        return None

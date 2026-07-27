@@ -195,11 +195,12 @@ class IMBridge:
 
     def _persist(self) -> None:
         try:
-            from src.gateway.agent_session import session_tool_names
+            from src.gateway.agent_session import session_behavior_fp, session_tool_names
             from src.web.session_store import save_session
             save_session(self.repo_root, self._sid, transcript=[],
                          history=self.agent.history, plan=getattr(self.agent, "plan", None),
-                         tool_names=session_tool_names(self.agent))
+                         tool_names=session_tool_names(self.agent),
+                         behavior_fp=session_behavior_fp(self.agent))
         except Exception:  # noqa: BLE001
             pass
 

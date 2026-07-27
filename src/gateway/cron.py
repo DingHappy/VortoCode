@@ -164,6 +164,10 @@ class CronJob:
     enabled: bool = True
     timeout: int = 3600                          # command 作业的超时（秒）
     budget: int = 0                              # prompt 作业的 token 预算上限（0 = 用 env 默认/不封顶）
+    # 逐个作业的出网许可（默认关）。无人值守整档不出网是因为 GET query 就是外传通道；
+    # 但"每天搜新闻"这类活确实要出网，所以把边界从档级细化到作业级——谁要谁单独申报，
+    # 且申报那一刻有真人点头（cron_add 会为此单独问一次，见 main_agent.build_cron_tools）。
+    allow_web: bool = False
 
     @property
     def kind(self) -> str:
@@ -233,7 +237,8 @@ def parse_jobs_text(text: str) -> List[CronJob]:
             name=name, schedule=schedule, prompt=prompt, command=command,
             model=(str(item["model"]).strip() if item.get("model") else None),
             announce=str(item.get("announce") or "im").strip().lower(),
-            enabled=bool(item.get("enabled", True)), timeout=timeout, budget=budget))
+            enabled=bool(item.get("enabled", True)), timeout=timeout, budget=budget,
+            allow_web=bool(item.get("allow_web", False))))
     return jobs
 
 
@@ -380,7 +385,7 @@ def _write(repo_root: str, text: str) -> None:
 
 def add_job(repo_root: str, *, name: str, schedule: str, prompt: str,
             announce: str = "im", enabled: bool = True, model: str = "",
-            budget: int = 0) -> str:
+            budget: int = 0, allow_web: bool = False) -> str:
     """在 cron.yaml 末尾追加一个 **prompt** 作业；返回追加进去的 yaml 块（供确认/回执展示）。
 
     **只新增不改已有**：重名直接拒。原地重写一个已有作业的多行块，是最容易把主人注释和相邻
@@ -413,6 +418,8 @@ def add_job(repo_root: str, *, name: str, schedule: str, prompt: str,
     job["enabled"] = bool(enabled)
     if budget > 0:
         job["budget"] = int(budget)
+    if allow_web:                    # 只在真开时落这一行——默认关就别在文件里留一堆 false 噪音
+        job["allow_web"] = True
     block = render_job_block(job)
 
     p = cron_path(repo_root)
@@ -431,6 +438,30 @@ def add_job(repo_root: str, *, name: str, schedule: str, prompt: str,
     _verify(new_text, name, expect_enabled=bool(enabled), others=existing)
     _write(repo_root, new_text)
     return block
+
+
+def job_block(repo_root: str, name: str) -> str:
+    """按**磁盘当前状态**渲染一个作业的 yaml 块（回执展示用）。
+
+    别拿写入时那份缓存的块当回执：`add_job` 是"先停用落盘 → 问人 → 再启用"，那份块里
+    永远写着 `enabled: false`。贴出来就会和"已启用"同框，工具自己跟自己矛盾（真机
+    2026-07-27：模型信了块里那半，回报"已创建但默认停用"）。要展示就展示真相。
+    """
+    job = next((j for j in load_jobs(repo_root) if j.name == name), None)
+    if job is None:
+        return ""
+    data: Dict[str, object] = {"name": job.name, "schedule": job.schedule.raw}
+    if job.prompt:
+        data["prompt"] = job.prompt
+    if job.command:
+        data["command"] = job.command
+    if job.model:
+        data["model"] = job.model
+    data["announce"] = job.announce
+    data["enabled"] = job.enabled
+    if job.allow_web:
+        data["allow_web"] = True
+    return render_job_block(data)
 
 
 def set_job_enabled(repo_root: str, name: str, enabled: bool) -> str:
@@ -676,6 +707,8 @@ async def run_job(repo_root: str, job: CronJob, *, run_session=None, notify=None
             from src.llm.budget import BudgetedLLM
             guard = BudgetedLLM(budget_tokens=budget)
             extra_kwargs["llm"] = guard
+        if job.allow_web:                          # 作业级出网许可（默认关，见 CronJob.allow_web）
+            extra_kwargs["allow_web"] = True
         result = await run_session(repo_root, job.prompt, mode="build", model=job.model,
                                    **extra_kwargs)
         if guard is not None and guard.tripped:
