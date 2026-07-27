@@ -187,12 +187,19 @@ class IMBridge:
             agent.history = saved.get("history") or []
             if saved.get("plan"):
                 agent.plan = saved["plan"]
+            # 升级后复原旧会话：工具清单有变要告诉模型，否则历史里过期的「我做不到」会被
+            # 当真话复读（真机 2026-07-27：#243 部署后钉钉里要截图仍被拒，模型把升级前那句
+            # 否认逐字复读，连推荐的第三方工具名都一样）。判定在内核，端只调用。
+            from src.gateway.agent_session import inject_capability_note
+            inject_capability_note(agent, saved)
 
     def _persist(self) -> None:
         try:
+            from src.gateway.agent_session import session_tool_names
             from src.web.session_store import save_session
             save_session(self.repo_root, self._sid, transcript=[],
-                         history=self.agent.history, plan=getattr(self.agent, "plan", None))
+                         history=self.agent.history, plan=getattr(self.agent, "plan", None),
+                         tool_names=session_tool_names(self.agent))
         except Exception:  # noqa: BLE001
             pass
 
