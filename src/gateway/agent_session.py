@@ -188,3 +188,66 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
     # 只暴露已经过 make_confirm_gate 包装的实例，端不能传裸 yes/no 回调绕过污点规则。
     agent._confirm_gate = gated_confirm
     return agent
+
+
+def capability_update_note(saved_tools, current_tools) -> str | None:
+    """比对「存盘时的工具清单」与「本次装配的清单」，有出入就生成一条能力更新通告。
+
+    为什么要有（真机 2026-07-27）：#243 把 screenshot_page 接上并部署后，钉钉里再要截图
+    **仍被拒**——会话历史跨重启持久化，里面躺着升级前那句（当时如实的）「我没有浏览器截图
+    功能」，模型对自己说过话的一致性压过了系统提示与工具清单，把过期否认逐字复读（连推荐的
+    第三方工具名都一样）。提示词治不了：#233 的「不许凭印象否认」就在系统提示里，照样输给
+    上下文先例。修法是把「清单变了」**作为事实注入历史**，让新旧两句话在上下文里正面相遇。
+
+    镜像方向同样要防：研究员档复原一份满配旧会话时，历史里它「跑过 dev_auto」，不提示「移除」
+    它就会许诺自己已经没有的能力。
+
+    saved_tools 为 None = 老会话早于清单记录机制，给不出具体 diff → 退化为通用提醒。
+    返回 None = 清单没变，什么都不用注。
+    """
+    cur = sorted({str(t) for t in (current_tools or [])})
+    if not cur:
+        return None                                   # 连当前清单都拿不到就别装懂
+    tail = ("本会话此前关于「能做什么 / 做不到什么」的说法——包括你自己说过的「做不到」——"
+            "可能已过时；回答能力问题前，以当前工具清单为准。")
+    if saved_tools is None:
+        return f"[能力更新] 服务已升级（本会话存档早于工具清单记录，列不出具体差异）。{tail}"
+    old = {str(t) for t in saved_tools}
+    added = sorted(set(cur) - old)
+    removed = sorted(old - set(cur))
+    if not added and not removed:
+        return None
+
+    def _fmt(names: list) -> str:
+        return "、".join(names[:8]) + (f" 等{len(names)}个" if len(names) > 8 else "")
+
+    parts = ([f"新增：{_fmt(added)}"] if added else []) + \
+            ([f"移除：{_fmt(removed)}"] if removed else [])
+    return f"[能力更新] 服务已升级，工具清单有变——{'；'.join(parts)}。{tail}"
+
+
+def inject_capability_note(agent, saved) -> bool:
+    """会话从磁盘复原**之后**调用：清单有变 → 把通告追加进 history，返回是否注了。
+
+    只会注一次：通告随会话正常持久化，且下次存盘会带上新清单，重启后 diff 为空；
+    注入后一直没跑过回合（没存盘）也收敛——同一份磁盘档每次重启生成同一条通告。
+    空历史不注（没有旧话可过期）。任何异常吞掉——通告是尽力而为，不许影响会话可用性。
+    """
+    try:
+        history = getattr(agent, "history", None)
+        tools = getattr(agent, "tools", None)
+        if not history or not isinstance(tools, dict) or not tools:
+            return False
+        note = capability_update_note((saved or {}).get("tool_names"), tools.keys())
+        if not note:
+            return False
+        history.append({"role": "user", "content": note})
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def session_tool_names(agent) -> list | None:
+    """存盘用：agent 的工具名清单；读不到就 None（**别报空清单**——None 与 [] 是两种事实）。"""
+    tools = getattr(agent, "tools", None)
+    return sorted(tools) if isinstance(tools, dict) and tools else None
