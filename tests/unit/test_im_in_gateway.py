@@ -154,15 +154,56 @@ async def test_notifier_without_bridge_still_two_ways(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_notify_owner_im_failure_swallowed(tmp_path):
-    """IM 发送炸了：不抛、不拖垮调度循环（bridge._safe_send 本身 best-effort，双层兜底）。"""
+    """IM 发送炸了：不抛、不拖垮调度循环——但必须返回 **False**。
+
+    以前注册的是 `_safe_send`（吞异常），发送失败被吞在半路，notify_owner 报 True——
+    "台账说投了、手机没响、查无痕迹"（真机 2026-07-28 早上）。现在注册不吞异常的
+    `notify_send`，失败如实变成 False，投递器才落得下"未送达"的账。
+    """
     class BoomAdapter(FakeAdapter):
         async def send_text(self, text):
             raise RuntimeError("网断了")
 
     im_service.start_embedded("telegram", str(tmp_path),
                               adapter=BoomAdapter(), owner="42", runner=FakeRunner())
-    assert isinstance(await im_service.notify_owner("hi"), bool)   # 不抛即可（消息丢但台账/WS 已有）
-    assert await im_service.notify_owner("hi2") is not None
+    assert await im_service.notify_owner("hi") is False    # 不抛，但绝不谎报送达
+
+
+@pytest.mark.asyncio
+async def test_notifier_records_undelivered_marker(tmp_path, monkeypatch):
+    """IM 那路没送到 → 台账必须多一条"未送达"标记（source=delivery）。
+
+    三路里只有台账有持久保证，而"送到了"和"没送到"在台账上曾长得一模一样——
+    2026-07-28 早上排查时唯一的证据是"手机没响"这个否定事实本身。
+    """
+    import src.web.task_events as task_events
+    from src.gateway import im_runtime
+    from src.web.routers import tasks as tr
+
+    monkeypatch.setattr(task_events, "broadcast_notice", lambda _t: None)
+    im_runtime.set_owner_notifier(None)                    # 明确无桥（不受前面测试注册的影响）
+    await tr.make_notifier(str(tmp_path))("早报内容")
+    entries = tr.load_notices(str(tmp_path), 10)
+    marker = [n for n in entries if n.get("source") == "delivery"]
+    assert marker and "未能推到 IM" in marker[0]["text"] and "早报内容" in marker[0]["text"]
+    assert any("早报内容" in n.get("text", "") and n.get("source") != "delivery"
+               for n in entries), "正文那条也要照常落账"
+
+
+@pytest.mark.asyncio
+async def test_notifier_no_marker_when_delivered(tmp_path, monkeypatch):
+    """反向对照：真送到了就不许有标记——狼来了三次，标记就没人看了。"""
+    import src.web.task_events as task_events
+    from src.web.routers import tasks as tr
+
+    monkeypatch.setattr(task_events, "broadcast_notice", lambda _t: None)
+    adapter = FakeAdapter()
+    im_service.start_embedded("telegram", str(tmp_path),
+                              adapter=adapter, owner="42", runner=FakeRunner())
+    await tr.make_notifier(str(tmp_path))("顺利送达的通知")
+    assert adapter.sent and "顺利送达" in adapter.sent[-1]
+    assert not [n for n in tr.load_notices(str(tmp_path), 10)
+                if n.get("source") == "delivery"]
 
 
 # ------------------------------------------------------------ 凭证 fail-closed
