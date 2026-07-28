@@ -134,6 +134,20 @@ def current_bridge():
     return _ACTIVE["bridge"]
 
 
+def bridge_liveness() -> dict:
+    """内嵌桥的活性快照，供 `GET /api/im/status` 与 doctor 用。没内嵌桥 → `{"bridge": false}`。
+
+    **不含任何凭证或会话标识**（见 ChannelAdapter.liveness）——这份快照会经 API 吐出去。
+    """
+    bridge = _ACTIVE.get("bridge")
+    if bridge is None:
+        return {"bridge": False}
+    try:
+        return {"bridge": True, **bridge.liveness()}
+    except Exception as e:  # noqa: BLE001 —— 运维面绝不能因为取状态失败而挂
+        return {"bridge": True, "error": f"{type(e).__name__}: {e}"}
+
+
 async def notify_owner(text: str) -> bool:
     """把一条后台通知推给已配对 owner（serve 内嵌了 bridge 才有；没有/失败返回 False，不抛）。
 

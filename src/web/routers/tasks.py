@@ -269,6 +269,21 @@ async def get_notices(limit: int = 50):
     return {"notices": load_notices(os.getcwd(), max(1, min(int(limit), _MAX_NOTICES)))}
 
 
+@router.get("/api/im/status")
+async def get_im_status():
+    """内嵌 IM 桥的活性快照（连着没 / 多久没收到帧 / 重连过几次 / 有几条通知没补发出去）。
+
+    为什么需要它：2026-07-28 的事故是"**发不出去**"，它的镜像盲区是"**连接死了收不到**"——
+    长连断掉后 poll 循环自己退避重连（对的），但此前没有任何面能看出来，表现又是"机器人装死"。
+    `vc doctor` 读这个端点。
+
+    **走正常鉴权**（不像 /api/health/quick 那样免鉴权）：虽然快照里刻意不含凭证与会话标识，
+    但"桥在不在、忙不忙"属于运维内情，不该挂在匿名面上。
+    """
+    from src.gateway.im_service import bridge_liveness
+    return bridge_liveness()
+
+
 def make_notifier(cwd: str):
     """造调度通知投递器（三路，**绝不静默丢**——codex 审 #129）：
     ①持久台账（GET /api/notices 可查）②WS 广播 ③IM 推 owner（serve 内嵌 bridge 时，PR-5 收口）。
