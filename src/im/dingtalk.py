@@ -75,23 +75,27 @@ class DingTalkAdapter(ChannelAdapter):
         while True:
             try:
                 ws = await self._connect_fn()
-            except Exception:  # noqa: BLE001 —— 建连失败退避重试
+            except Exception as e:  # noqa: BLE001 —— 建连失败退避重试
+                self.note_disconnected(f"建连失败: {type(e).__name__}: {e}")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30.0)
                 continue
             backoff = 1.0
+            self.note_connected()
             try:
                 while True:
                     raw = await ws.recv()
                     if raw is None:               # 连接关闭
                         break
+                    self.note_frame()             # 任何一帧（含 ping）都是"线还活着"的证据
                     for ev in await self._handle_frame(ws, raw):
                         yield ev
             except _Disconnect:
-                pass
-            except Exception:  # noqa: BLE001 —— 收帧异常：断开重连
-                pass
+                self.note_disconnected("服务端要求断开（正常轮转）")
+            except Exception as e:  # noqa: BLE001 —— 收帧异常：断开重连
+                self.note_disconnected(f"收帧异常: {type(e).__name__}: {e}")
             finally:
+                self.note_disconnected()
                 try:
                     await ws.close()
                 except Exception:  # noqa: BLE001

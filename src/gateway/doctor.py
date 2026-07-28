@@ -161,6 +161,94 @@ def _check_im() -> Check:
     return Check("im", "warn", "IM 凭证未配（可选）——配了才能把 agent 搬上手机")
 
 
+# 长连多久没收到任何帧（含心跳 ping）就该报警。钉钉 Stream 的 ping 是分钟级，
+# 十分钟一帧没有基本等于线断了但重连也没成。
+_STALE_FRAME_SECONDS = 600
+
+
+async def _check_im_liveness() -> Check:
+    """内嵌桥**活着吗**——不是"凭证配了吗"（那是 _check_im，查的是必要条件）。
+
+    2026-07-28 的事故是"发不出去"；它的镜像盲区是"连接死了收不到"：长连断掉后 poll 循环
+    自己退避重连（对的），但此前没有任何面能看出来，表现同样是"机器人装死"。
+    读 serve 的 `/api/im/status`（走鉴权，token 从环境取；没设 token 的部署直接放行）。
+    """
+    import aiohttp
+    url = (os.getenv("VORTOCODE_SERVE_URL") or "http://127.0.0.1:8080").rstrip("/")
+    token = os.getenv("VORTOCODE_API_TOKEN", "").strip()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        # 同 _check_serve：本地检查不吃代理环境，否则 127.0.0.1 会被误路由成"不可达"
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"{url}/api/im/status", headers=headers,
+                             timeout=aiohttp.ClientTimeout(total=_TIMEOUT)) as r:
+                if r.status in (401, 403):
+                    return Check("im-live", "warn",
+                                 "serve 要鉴权而 VORTOCODE_API_TOKEN 没配到本地环境——"
+                                 "查不了桥活性（配上同一个 token 再跑）")
+                if r.status != 200:
+                    return Check("im-live", "warn", f"取桥活性失败（HTTP {r.status}）")
+                data = await r.json()
+    except Exception:  # noqa: BLE001 —— serve 没起时 _check_serve 已经报过了，这里不重复报硬伤
+        return Check("im-live", "warn", f"serve 不可达，查不了桥活性：{url}")
+
+    if not data.get("bridge"):
+        return Check("im-live", "warn", "serve 没有内嵌 IM 桥（`vc server --im dingtalk` 才有）")
+    if data.get("error"):
+        return Check("im-live", "warn", f"桥状态取用出错：{data['error']}")
+
+    age = data.get("last_frame_age")
+    undelivered = int(data.get("undelivered") or 0)
+    tail = f"；{undelivered} 条通知待补发" if undelivered else ""
+    if age is None:
+        return Check("im-live", "warn",
+                     f"桥在，但**一帧都没收到过**——长连可能从未建成（重连 "
+                     f"{data.get('reconnects', 0)} 次）{tail}")
+    if age > _STALE_FRAME_SECONDS:
+        return Check("im-live", "fail",
+                     f"桥 {int(age // 60)} 分钟没收到任何帧（含心跳）——长连多半已死，"
+                     f"手机上的表现是「机器人装死」。重连 {data.get('reconnects', 0)} 次；"
+                     f"最近错误：{data.get('last_error') or '（无）'}{tail}")
+    return Check("im-live", "ok",
+                 f"桥活着（{int(age)}s 前收到帧，重连 {data.get('reconnects', 0)} 次）{tail}")
+
+
+def _check_schedule_timezone(cwd: str) -> Check:
+    """定时作业**会在几点跑**——查的是充分条件，不是"服务活着"这个必要条件。
+
+    真机 2026-07-27：VM 时区是 Etc/UTC，`at 09:00` 于是在北京时间 17:00 触发。
+    服务 active、作业 enabled、doctor 全绿，而人等了一早上——所有检查都只验了
+    "跑不跑得起来"，没有一个验"**几点**跑"。这条把它补上：直接把每个 `at` 作业的
+    本地触发时刻算给你看，对不上一眼就知道。下一台新机器必然重踩，所以钉进 doctor。
+    """
+    import time as _time
+    from datetime import datetime
+    try:
+        from src.gateway.cron import load_jobs
+        jobs = [j for j in load_jobs(cwd) if j.enabled]
+    except Exception as e:  # noqa: BLE001
+        return Check("schedule-tz", "warn", f"读 cron.yaml 失败：{type(e).__name__}: {e}")
+    if not jobs:
+        return Check("schedule-tz", "ok", "没有启用的定时作业")
+
+    local = datetime.now().astimezone()
+    tzname = local.tzname() or _time.tzname[0]
+    offset_h = (local.utcoffset().total_seconds() / 3600) if local.utcoffset() else 0.0
+    at_jobs = [j for j in jobs if getattr(j.schedule, "kind", "") == "at"]
+    detail = f"本机时区 {tzname}（UTC{offset_h:+g}）· {len(jobs)} 个启用作业"
+
+    if at_jobs:
+        shown = "、".join(f"{j.name}（{j.schedule.raw}）" for j in at_jobs[:3])
+        detail += f"；按本机时区触发：{shown}"
+    # UTC 上跑 `at HH:MM` 几乎总是配错——人写 09:00 想的是自己的早上九点
+    if at_jobs and abs(offset_h) < 0.01:
+        return Check("schedule-tz", "warn",
+                     f"{detail}。⚠ 本机是 UTC，`at HH:MM` 会按 UTC 触发——"
+                     f"你写的 09:00 在北京时间是 17:00。"
+                     f"修：sudo timedatectl set-timezone Asia/Shanghai 后重启服务")
+    return Check("schedule-tz", "ok", detail)
+
+
 async def run_checks(cwd: str) -> List[Check]:
     """跑全部自检，顺序稳定（供人读与测试断言）；单项意外炸 → 记 fail，不拖全体。"""
     import inspect
@@ -173,6 +261,8 @@ async def run_checks(cwd: str) -> List[Check]:
         ("permissions", lambda: _check_permissions(cwd)),
         ("gh", _check_gh),
         ("im", _check_im),
+        ("im-live", _check_im_liveness),
+        ("schedule-tz", lambda: _check_schedule_timezone(cwd)),
     ]
     out: List[Check] = []
     for name, fn in plan:
