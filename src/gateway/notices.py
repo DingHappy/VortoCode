@@ -60,11 +60,19 @@ def make_notifier(repo_root: str):
             task_events.broadcast_notice(str(text))    # ② WS 广播给连着的客户端
         except Exception:  # noqa: BLE001
             pass
+        delivered = False
         try:
             from src.gateway.im_runtime import notify_owner
-            await notify_owner(f"🔔 {text}")           # ③ IM 推已配对 owner（没内嵌 bridge 即 no-op）
+            delivered = bool(await notify_owner(f"🔔 {text}"))   # ③ IM 推已配对 owner
         except Exception:  # noqa: BLE001
             pass
+        if not delivered:
+            # IM 那路没送到就把账记明白。三路里只有台账有持久保证，而"送到了"和"没送到"
+            # 在台账上曾长得一模一样——2026-07-28 早上排查时，唯一的证据是"手机没响"这个
+            # 否定事实本身，journal/台账全是干净的。从此不许再有这种查无痕迹的失败。
+            record_notice(repo_root,
+                          f"⚠ 该通知未能推到 IM（无桥或发送失败），内容已在台账：{str(text)[:60]}",
+                          source="delivery")
     return _notify
 
 

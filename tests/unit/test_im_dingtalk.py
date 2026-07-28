@@ -92,21 +92,90 @@ def test_text_confirm_translation():
 # ------------------------------------------------------------ 发送
 @pytest.mark.asyncio
 async def test_send_text_and_confirm_use_webhook():
-    calls = []
+    calls, oto = [], []
 
     async def reply(wh, payload):
         calls.append((wh, payload))
     a = DingTalkAdapter("c", "s", "o", reply_fn=reply)
 
-    await a.send_text("hi")
-    assert calls == []                                   # 还没 webhook → 不发（钉钉反应式）
+    async def fake_send_msg(key, param):
+        oto.append((key, param))
+    a._send_msg = fake_send_msg
+
     a._webhook = "https://wh"
     await a.send_text("hi")
     assert calls[-1][0] == "https://wh" and calls[-1][1]["text"]["content"] == "hi"
+    assert oto == []                     # webhook 活着就不动主动通道——回话留在原会话里
 
     await a.send_confirm("要跑命令吗？", "cid9")
     assert a._awaiting_confirm == "cid9"
     assert "y" in calls[-1][1]["text"]["content"] and "n" in calls[-1][1]["text"]["content"]
+
+
+@pytest.mark.asyncio
+async def test_send_text_cold_start_falls_back_to_proactive():
+    """没有 webhook（服务刚重启 / 主人一夜没说话）→ 必须走 oToMessages 主动推，不许静默丢。
+
+    真机 2026-07-28：01:32 重启清掉内存 webhook，早 9 点新闻、02:00 值班通报、"已就绪"横幅
+    全部无声蒸发——旧实现 `if self._webhook: 发` 在这个分支里什么都不做还返回成功，
+    而且本文件曾有一条测试把它当特性钉着（"还没 webhook → 不发（钉钉反应式）"）。
+    这一条就是那条安慰剂的反转。
+    """
+    oto = []
+
+    async def reply(wh, payload):
+        raise AssertionError("没有 webhook 不该走 reply_fn")
+    a = DingTalkAdapter("c", "s", "owner-1", reply_fn=reply)
+
+    async def fake_send_msg(key, param):
+        oto.append((key, param))
+    a._send_msg = fake_send_msg
+
+    await a.send_text("📰 早报")
+    assert oto == [("sampleText", {"content": "📰 早报"})]
+
+
+@pytest.mark.asyncio
+async def test_send_text_stale_webhook_falls_back_and_drops_it():
+    """webhook 失效（过期/网络错）→ 回退主动通道，并把失效目标丢掉（下条过闸入站会重新提交）。"""
+    oto = []
+
+    async def reply(wh, payload):
+        raise RuntimeError("sessionWebhook errcode 310000: session expired")
+    a = DingTalkAdapter("c", "s", "o", reply_fn=reply)
+    a._webhook = "https://stale"
+
+    async def fake_send_msg(key, param):
+        oto.append((key, param))
+    a._send_msg = fake_send_msg
+
+    await a.send_text("hi")
+    assert oto == [("sampleText", {"content": "hi"})]
+    assert a._webhook is None
+
+
+@pytest.mark.asyncio
+async def test_send_text_total_failure_raises():
+    """两条通道都失败必须抛——上层 notify_owner 靠它返回 False、投递器才能落"未送达"的账。
+    绝不许回到"什么都没发还报成功"。"""
+    a = DingTalkAdapter("c", "s", "o")
+
+    async def boom(key, param):
+        raise RuntimeError("batchSend HTTP 403")
+    a._send_msg = boom
+
+    with pytest.raises(RuntimeError):
+        await a.send_text("hi")
+
+
+def test_webhook_reply_problem_detects_expired_and_http_errors():
+    """webhook 过期时钉钉回 HTTP 200 + 非零 errcode——旧实现连响应都不看，过期后每条都"成功"地消失。"""
+    from src.im.dingtalk import _webhook_reply_problem
+    assert _webhook_reply_problem(200, b'{"errcode":0,"errmsg":"ok"}') == ""
+    assert _webhook_reply_problem(200, b"") == ""
+    assert _webhook_reply_problem(200, b"not json") == ""        # 非 JSON 当成功，别误杀
+    assert "310000" in _webhook_reply_problem(200, b'{"errcode":310000,"errmsg":"expired"}')
+    assert "HTTP 500" in _webhook_reply_problem(500, b"x")
 
 
 @pytest.mark.asyncio

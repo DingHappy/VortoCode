@@ -19,11 +19,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from pathlib import Path
 from typing import AsyncIterator, Awaitable, Callable, Optional
 
 from .channel import ChannelAdapter, ChannelEvent
+
+_log = logging.getLogger("vortocode.im.dingtalk")
 
 BOT_TOPIC = "/v1.0/im/bot/messages/get"
 _APPROVE = {"y", "yes", "批准", "同意", "确认", "ok", "好"}
@@ -157,9 +160,31 @@ class DingTalkAdapter(ChannelAdapter):
                             mentioned=mentioned)
 
     async def send_text(self, text: str) -> str:
+        """发文本给 owner——两条通道，**绝不静默丢**（真机 2026-07-28 早上的事故就是这里）。
+
+        ① 有 sessionWebhook（主人最近说过话）→ 回到那个会话里；
+        ② 没有（服务刚重启、主人一夜没发消息）或 webhook 已失效 → 走**主动通道**
+           `oToMessages/batchSend` 推到 owner 单聊（`_send_msg`，发图/发文件早就在用它，
+           唯独纯文本一直没接）。
+
+        旧实现是 `if self._webhook: 发`——没有 webhook 时**什么都不发、然后返回成功**：
+        01:32 改时区重启清掉内存里的 webhook，主人睡着没再说话，于是凌晨值班通报、
+        早 9 点新闻、重启后的"已就绪"横幅全部无声蒸发；连异常都没有，台账/日志零痕迹。
+        还有一条单测把这个行为当特性钉着（"还没 webhook → 不发（钉钉反应式）"）。
+
+        两条通道都失败 → **抛异常**。上层 `notify_owner` 据此返回 False，
+        投递器才有机会往台账落一条"未送达"（见 gateway/notices.py）。
+        """
+        payload = {"msgtype": "text", "text": {"content": _clip(text)}}
         if self._webhook:
-            await self._reply_fn(self._webhook, {"msgtype": "text", "text": {"content": _clip(text)}})
-        return ""                                 # 钉钉无 message_id 供编辑
+            try:
+                await self._reply_fn(self._webhook, payload)
+                return ""                         # 钉钉无 message_id 供编辑
+            except Exception as e:  # noqa: BLE001 —— webhook 失效（过期/网络）→ 丢弃它，走主动通道
+                _log.warning("sessionWebhook 回复失败（%s）——回退主动推送通道", str(e)[:120])
+                self._webhook = None              # 失效目标别留着挨个撞；下条过闸的入站会重新提交
+        await self._send_msg("sampleText", {"content": _clip(text)})
+        return ""
 
     async def edit_text(self, message_id: str, text: str) -> None:
         await self.send_text(text)                # 不支持编辑 → 发新消息（bridge 已放慢节流）
@@ -352,7 +377,12 @@ class DingTalkAdapter(ChannelAdapter):
         if self._session is None:
             self._session = aiohttp.ClientSession()
         async with self._session.post(webhook, json=payload) as resp:
-            await resp.read()
+            body = await resp.read()
+            # 失败必须抛（send_text 靠它决定要不要回退主动通道）。旧实现连响应都不看：
+            # webhook 过期后钉钉照样回 HTTP 200 + 非零 errcode，每条回复都"成功"地消失。
+            problem = _webhook_reply_problem(resp.status, body)
+            if problem:
+                raise RuntimeError(problem)
 
 
 class _AioWS:
@@ -399,6 +429,26 @@ def _loads(s) -> dict:
         return json.loads(s) if s else {}
     except Exception:  # noqa: BLE001
         return {}
+
+
+def _webhook_reply_problem(status: int, body: bytes) -> str:
+    """sessionWebhook 回复的失败判定；正常返回空串。抽成纯函数是为了可测。
+
+    这个接口的失败有两种长相，都要认：非 200；以及 **HTTP 200 但 body 带非零 errcode**
+    （webhook 过期就长这样）。非 JSON 响应当成功——别把好消息误杀。
+    """
+    if status != 200:
+        return f"sessionWebhook 回复失败 HTTP {status}"
+    try:
+        d = json.loads(body or b"{}")
+    except (ValueError, TypeError):
+        return ""
+    if not isinstance(d, dict):
+        return ""
+    code = d.get("errcode")
+    if code not in (None, 0, "0"):
+        return f"sessionWebhook errcode {code}: {str(d.get('errmsg') or '')[:80]}"
+    return ""
 
 
 def _clip(text: str, limit: int = 4000) -> str:

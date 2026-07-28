@@ -99,7 +99,9 @@ def start_embedded(channel: str, repo_root: str, *, mode: str = "plan",
     _ACTIVE["unsubscribe"] = runner.subscribe(bridge._on_task_update)
     _ACTIVE["bridge"] = bridge
     from src.gateway import im_runtime
-    im_runtime.set_owner_notifier(bridge._safe_send)
+    # 注册**不吞异常**的 notify_send，而不是 _safe_send：通知投递路径必须让失败冒出来，
+    # notify_owner 才能返回 False、投递器才能落"未送达"的账（2026-07-28 早上的教训）。
+    im_runtime.set_owner_notifier(bridge.notify_send)
 
     async def _send_media(path: str, caption: str, kind: str) -> bool:
         fn = adapter.send_file if kind == "file" else adapter.send_image
