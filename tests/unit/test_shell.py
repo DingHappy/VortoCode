@@ -69,7 +69,13 @@ def test_background_command_lifecycle(tmp_path):
     assert start["sandbox"]["policy"] == "off"
     bid = start["id"]
     assert any(p["id"] == bid for p in list_background())   # 列得出来
-    time.sleep(0.6)                                         # 让它打几行
+    # 轮询等三行都打完，别赌固定 sleep：门禁满载时 spawn+echo+读线程可以慢过任何猜出来的数
+    # （2026-07-28 #257 门禁上同款赌局 0.4s 赌输，全套 11 分钟只挂那一条）。
+    # 轮询必须走 tail 模式——它不动读游标，后面 r1/r2 的增量语义才成立。
+    for _ in range(200):                                    # 上限 10s；正常几十 ms 就到
+        if "line3" in read_background(bid, tail=5)["output"]:
+            break
+        time.sleep(0.05)
     r1 = read_background(bid)
     assert r1["ok"] is True and "line1" in r1["output"] and r1["status"] == "running"
     r2 = read_background(bid)                               # 增量：已读过的不再返回
@@ -103,8 +109,14 @@ def test_background_stop_kills_child_processes(tmp_path):
     stop_all_background()
     # `sleep 30 &` 让 sleep 成为 shell 的后台子进程；只 kill shell 会漏掉它
     start = run_command_background(tmp_path, "sleep 30 & echo CHILD=$!; wait")
-    time.sleep(0.4)
-    out = read_background(start["id"], tail=10)["output"]
+    # 轮询等 CHILD= 出现（tail 不动游标）。固定 0.4s 在门禁满载时赌输过：
+    # 2026-07-28 #257 门禁，全套 11 分钟唯一的红就是这里拿到空串。
+    out = ""
+    for _ in range(200):                                    # 上限 10s；正常几十 ms 就到
+        out = read_background(start["id"], tail=10)["output"]
+        if "CHILD=" in out:
+            break
+        time.sleep(0.05)
     m = re.search(r"CHILD=(\d+)", out)
     assert m, f"没拿到子进程 pid：{out!r}"
     child = int(m.group(1))
@@ -123,8 +135,13 @@ def test_background_output_survives_and_reports_exit(tmp_path):
     from src.agents.shell import read_background, run_command_background, stop_all_background
     stop_all_background()
     start = run_command_background(tmp_path, "echo done && exit 7")
-    time.sleep(0.4)
-    r = read_background(start["id"])
+    # 轮询等进程退出（tail 模式给最近几行 + 终态），同文件另两处的同款赌局一并治了
+    r = read_background(start["id"], tail=5)
+    for _ in range(200):                                    # 上限 10s；正常几十 ms 就到
+        if r["status"] == "exited":
+            break
+        time.sleep(0.05)
+        r = read_background(start["id"], tail=5)
     assert "done" in r["output"] and r["status"] == "exited" and r["code"] == 7
     stop_all_background()
 
