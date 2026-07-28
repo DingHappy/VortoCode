@@ -604,8 +604,19 @@ class IMBridge:
             return None
         return plans[0]["summary"] if plans else None
 
+    async def notify_send(self, text: str) -> None:
+        """给 owner 推通知——**不吞异常**版（专供 im_runtime.set_owner_notifier 注册）。
+
+        `_safe_send` 吞异常是对的（交互路径上发送失败不该炸回合），但通知投递恰恰相反：
+        投递器需要知道"没送到"才能往台账落"未送达"标记。此前注册的是 `_safe_send`，
+        发送失败被吞在半路，`notify_owner` 永远报成功——2026-07-28 早上"台账说投了、
+        手机没响、查无痕迹"的后半截就是它。
+        """
+        await self.adapter.send_text(text)
+
     async def _safe_send(self, text: str) -> None:
         try:
             await self.adapter.send_text(text)
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001 —— 交互路径：发送失败不炸回合，但要留日志痕迹
+            import logging
+            logging.getLogger("vortocode.im").warning("IM 发送失败：%s", str(e)[:160])

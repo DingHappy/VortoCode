@@ -266,3 +266,22 @@ async def test_tasks_list_command(tmp_path, monkeypatch):
     await bridge._submit_task("干点啥")
     await _drive_no_turn(bridge, adapter, _msg("/tasks"))
     assert any("后台任务：" in t for t in adapter.texts())
+
+
+@pytest.mark.asyncio
+async def test_notify_send_propagates_failure_but_safe_send_swallows(tmp_path):
+    """同一次发送失败，两条路径的正确行为相反，缺一不可：
+
+    - `_safe_send`（交互路径）：吞掉——回合不该因为一条提示发不出去而炸；
+    - `notify_send`（通知投递路径）：**抛出来**——投递器靠它知道"没送到"，落"未送达"的账。
+    2026-07-28 早上的事故里，投递路径注册的是吞异常的那个，失败查无痕迹。
+    """
+    class BoomAdapter(FakeAdapter):
+        async def send_text(self, text):
+            raise RuntimeError("下游挂了")
+
+    bridge = IMBridge(str(tmp_path), BoomAdapter(), OWNER, channel="test",
+                      llm=ScriptedLLM("x"))
+    await bridge._safe_send("hi")                     # 不抛
+    with pytest.raises(RuntimeError):
+        await bridge.notify_send("hi")                # 必须抛
