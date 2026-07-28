@@ -59,6 +59,52 @@
 - Desktop 客户端刻意只连 127.0.0.1（文件区直读本机磁盘的 local-first 设计）；
   「Desktop 连远端工作区」是独立立项（B9-③），未落地前远程入口就是浏览器 + attach。
 
+## 一之三、多助手：给每个人一个专属小蜜
+
+一个人一个助手时不需要这节（`vc server --im dingtalk` 内嵌一条桥就够）。**三个人起**才需要：
+每人要有自己的工作区（人设 / 会话历史 / 记忆按人隔离）、自己的机器人凭证、自己的服务实例。
+
+模板：`examples/systemd/vortocode-assistant@.service.example`（模板单元，实例名 = 助手名）。
+
+**每加一个人（三步）：**
+
+```bash
+# ① 工作区（这个助手的全部状态所有权：.vortocode/persona.md、会话、记忆都落这里）
+sudo mkdir -p /opt/vortocode/assistants/alice && sudo chown vortocode: $_
+
+# ② 凭证（600，别进 git）。模板只给键名，不含任何值：
+vc roster template dingtalk | sudo tee /etc/vortocode/assistants/alice.env >/dev/null
+sudo chmod 600 /etc/vortocode/assistants/alice.env && sudo $EDITOR $_
+
+# ③ 起服务
+sudo systemctl enable --now vortocode-assistant@alice
+```
+
+**名册（`.vortocode/assistants.yaml`）** 登记谁有助手，**只放路径、不放凭证**：
+
+```yaml
+assistants:
+  - name: alice                                  # 也是 systemd 实例名，只许 [a-z0-9_-]
+    channel: dingtalk
+    workspace: /opt/vortocode/assistants/alice
+    env_file: /etc/vortocode/assistants/alice.env
+    role: researcher                             # researcher=不给改代码/开 PR 的工具面；owner=全量
+    mode: plan
+```
+
+**起服务前先体检**——`vc roster check`。多助手配错的表现**全都是同一个样子：机器人装死**，
+而"装死"是这套系统里最贵的故障（人的第一反应是"坏了/连不上"，能排查一整晚）。体检把它翻译成人话：
+
+| 查什么 | 为什么值得查 |
+|---|---|
+| **两个助手共用同一个机器人凭证** | 复制 env 改个名字、CLIENT_ID 忘了换 → 两条桥抢同一条长连接，消息**随机**落到其中一个。不报错，只是时灵时不灵——最难查的那种。**每个人必须在开放平台各建一个应用。** |
+| 两个助手共用工作区 | 人设、会话历史、记忆全串在一起 |
+| 白名单配了却漏了 owner 本人 | 他自己的消息和审批（y/n、按钮）全被丢掉，表现为「机器人不理人 + 确认永远超时」 |
+| env 文件权限过松 | 里面是 bot 的全权凭据，group/other 可读等于摊开给同机所有用户 |
+| 缺哪个凭证键 | 桥 fail-closed 拒启，直接点名缺哪个 |
+
+体检**从不打印凭证值**，只报键名和"有没有撞车"——报告本身经常会被贴进聊天/工单。
+
 ## 二、开关矩阵（都是 opt-in，默认全关 = 零自主消耗）
 
 | 开关 | 效果 | 开销 |

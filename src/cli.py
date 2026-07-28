@@ -125,8 +125,17 @@ def main():
 
     sub.add_parser("doctor", help="一键自检：git/凭证/中转站/serve/权限文件/gh/IM——常驻化后'用不了'大多是管道问题")
 
-    sub.add_parser("canary", help="端到端交付验收：一句话进来→确认→结果送到出站面，五条链路逐条验"
+    sub.add_parser("canary", help="端到端交付验收：一句话进来→确认→结果送到出站面，六条链路逐条验"
                                   "（不触网/不烧 token/不碰真工作区；部署后的强制关卡）")
+
+    p = sub.add_parser("roster", help="多助手名册（每人一个专属小蜜）：list 看名单 / check 体检 / "
+                                      "template 出 env 模板——起服务前先查出配错的地方")
+    p.add_argument("action", choices=["list", "check", "template"],
+                   help="list 列出名册 / check 体检（凭证复用、白名单漏人、权限过松…）/ "
+                        "template <通道> 打印 env 模板")
+    p.add_argument("arg", nargs="?", help="template 时的通道名（dingtalk / telegram）")
+    p.add_argument("--file", dest="roster_file", default="",
+                   help="名册路径（默认 .vortocode/assistants.yaml）")
 
     args = parser.parse_args()
 
@@ -213,6 +222,9 @@ def main():
     elif args.command == "canary":
         sys.exit(asyncio.run(run_canary_cli()))
 
+    elif args.command == "roster":
+        sys.exit(run_roster_cli(args.action, args.arg or "", args.roster_file))
+
 
 async def run_doctor() -> int:
     """一键自检：逐项查管道（git/凭证/中转站/serve/权限/gh/IM），返回退出码（硬伤=1）。"""
@@ -232,6 +244,41 @@ async def run_canary_cli() -> int:
     for ln in lanes:
         print(f"{ln.glyph} {ln.name:<12} {ln.detail}")
     ok, text = summarize(lanes)
+    print(f"\n{'✅' if ok else '⛔'} {text}")
+    return 0 if ok else 1
+
+
+def run_roster_cli(action: str, arg: str, roster_file: str) -> int:
+    """多助手名册：看名单 / 体检 / 出 env 模板。**从不打印凭证值**，只报键名与"有没有撞车"。"""
+    from src.gateway.roster import (check_roster, env_template, load_roster, roster_path,
+                                    summarize, systemd_hint)
+    cwd = str(Path.cwd())
+
+    if action == "template":
+        print(env_template(arg or "dingtalk"), end="")
+        return 0
+
+    roster = load_roster(cwd, roster_file)
+    if action == "list":
+        if not roster.assistants and not roster.errors:
+            print(f"名册还是空的（{roster_path(cwd, roster_file)}）。\n"
+                  "样例见 examples/systemd/vortocode-assistant@.service.example 顶部的安装三步；"
+                  "env 模板：vc roster template dingtalk")
+            return 0
+        for a in roster.assistants:
+            print(f"· {a.name}  {a.channel} · {a.mode} · {a.role}")
+            print("  " + systemd_hint(a).replace("\n", "\n  "))
+        for e in roster.errors:
+            print(f"⛔ {e}")
+        return 1 if roster.errors else 0
+
+    findings = check_roster(roster)
+    if not findings:
+        print(f"名册是空的（{roster_path(cwd, roster_file)}）——没什么可查的。")
+        return 0
+    for f in findings:
+        print(f"{f.glyph} {f.who:<16} {f.detail}")
+    ok, text = summarize(findings)
     print(f"\n{'✅' if ok else '⛔'} {text}")
     return 0 if ok else 1
 
