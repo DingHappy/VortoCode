@@ -23,6 +23,24 @@ from tests.unit.test_im_bridge import (FakeAdapter, ScriptedLLM, _drive_no_turn,
 
 OWNER = "owner-1"
 
+import pytest as _pytest
+
+
+@_pytest.fixture(autouse=True)
+def _forbid_network(monkeypatch):
+    """断网闸（与 test_im_dingtalk 同款）：任何路径真触网 → 确定性炸。
+
+    #254 的主动推送通道曾让本文件的部分测试悄悄真连 api.dingtalk.com（详见
+    test_im_dingtalk 的同名夹具）；这道闸让"忘了注入 transport"当场现形。
+    """
+    import aiohttp
+
+    def _boom(*_a, **_k):
+        raise AssertionError("测试不许触网：给 DingTalkAdapter 注入 connect_fn/reply_fn/oto_fn")
+
+    monkeypatch.setattr(aiohttp, "ClientSession", _boom)
+
+
 
 @pytest.fixture(autouse=True)
 def _clean_taint():

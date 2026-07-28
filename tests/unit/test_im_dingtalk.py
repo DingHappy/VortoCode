@@ -9,6 +9,23 @@ from src.im.bridge import IMBridge
 from src.im.dingtalk import BOT_TOPIC, DingTalkAdapter
 
 
+@pytest.fixture(autouse=True)
+def _forbid_network(monkeypatch):
+    """断网闸：本文件任何路径真触网 → 确定性炸，而不是看网络脸色红绿。
+
+    #254 启用主动推送通道（batchSend）后，注入了 connect_fn/reply_fn 的存量测试悄悄开始
+    真连 api.dingtalk.com——那条通道当时没有注入口。网络快时全绿（#254 自己的门禁就这么
+    侥幸过的），慢时偶红（2026-07-28 canary 门禁上现形，红的还是群聊确认这条无关测试）。
+    有了这道闸，"忘了注入第三条 transport"当场炸出人话，不再是天气问题。
+    """
+    import aiohttp
+
+    def _boom(*_a, **_k):
+        raise AssertionError("测试不许触网：给 DingTalkAdapter 注入 connect_fn/reply_fn/oto_fn")
+
+    monkeypatch.setattr(aiohttp, "ClientSession", _boom)
+
+
 def _ping(mid, opaque):
     return json.dumps({"type": "SYSTEM", "headers": {"messageId": mid, "topic": "ping"},
                        "data": json.dumps({"opaque": opaque})})
@@ -96,12 +113,9 @@ async def test_send_text_and_confirm_use_webhook():
 
     async def reply(wh, payload):
         calls.append((wh, payload))
-    a = DingTalkAdapter("c", "s", "o", reply_fn=reply)
-
-    async def fake_send_msg(key, param):
+    async def fake_oto(key, param):
         oto.append((key, param))
-    a._send_msg = fake_send_msg
-
+    a = DingTalkAdapter("c", "s", "o", reply_fn=reply, oto_fn=fake_oto)
     a._webhook = "https://wh"
     await a.send_text("hi")
     assert calls[-1][0] == "https://wh" and calls[-1][1]["text"]["content"] == "hi"
@@ -125,11 +139,9 @@ async def test_send_text_cold_start_falls_back_to_proactive():
 
     async def reply(wh, payload):
         raise AssertionError("没有 webhook 不该走 reply_fn")
-    a = DingTalkAdapter("c", "s", "owner-1", reply_fn=reply)
-
-    async def fake_send_msg(key, param):
+    async def fake_oto(key, param):
         oto.append((key, param))
-    a._send_msg = fake_send_msg
+    a = DingTalkAdapter("c", "s", "owner-1", reply_fn=reply, oto_fn=fake_oto)
 
     await a.send_text("📰 早报")
     assert oto == [("sampleText", {"content": "📰 早报"})]
@@ -142,12 +154,10 @@ async def test_send_text_stale_webhook_falls_back_and_drops_it():
 
     async def reply(wh, payload):
         raise RuntimeError("sessionWebhook errcode 310000: session expired")
-    a = DingTalkAdapter("c", "s", "o", reply_fn=reply)
-    a._webhook = "https://stale"
-
-    async def fake_send_msg(key, param):
+    async def fake_oto(key, param):
         oto.append((key, param))
-    a._send_msg = fake_send_msg
+    a = DingTalkAdapter("c", "s", "o", reply_fn=reply, oto_fn=fake_oto)
+    a._webhook = "https://stale"
 
     await a.send_text("hi")
     assert oto == [("sampleText", {"content": "hi"})]
@@ -158,11 +168,9 @@ async def test_send_text_stale_webhook_falls_back_and_drops_it():
 async def test_send_text_total_failure_raises():
     """两条通道都失败必须抛——上层 notify_owner 靠它返回 False、投递器才能落"未送达"的账。
     绝不许回到"什么都没发还报成功"。"""
-    a = DingTalkAdapter("c", "s", "o")
-
     async def boom(key, param):
         raise RuntimeError("batchSend HTTP 403")
-    a._send_msg = boom
+    a = DingTalkAdapter("c", "s", "o", oto_fn=boom)
 
     with pytest.raises(RuntimeError):
         await a.send_text("hi")
@@ -235,7 +243,13 @@ async def test_dingtalk_text_confirm_through_bridge(tmp_path):
 
     async def reply(wh, payload):
         pass
-    adapter = DingTalkAdapter("c", "s", "owner-1", connect_fn=connect, reply_fn=reply)
+    oto_box: list = []
+
+    async def _oto(key, param):
+        oto_box.append((key, param))            # 冷发送（如"已就绪"横幅）的去处
+
+    adapter = DingTalkAdapter("c", "s", "owner-1", connect_fn=connect, reply_fn=reply,
+                              oto_fn=_oto)
     llm = ScriptedLLM(
         '{"tool":"save_skill","args":{"name":"greet","description":"打招呼","instructions":"说你好"}}',
         "技能已保存。")
@@ -275,7 +289,13 @@ async def test_group_confirm_survives_a_reply_without_mention(tmp_path):
 
     async def reply(wh, payload):
         pass
-    adapter = DingTalkAdapter("c", "s", "owner-1", connect_fn=connect, reply_fn=reply)
+    oto_box: list = []
+
+    async def _oto(key, param):
+        oto_box.append((key, param))            # 冷发送（如"已就绪"横幅）的去处
+
+    adapter = DingTalkAdapter("c", "s", "owner-1", connect_fn=connect, reply_fn=reply,
+                              oto_fn=_oto)
     llm = ScriptedLLM(
         '{"tool":"save_skill","args":{"name":"greet","description":"打招呼","instructions":"说你好"}}',
         "技能已保存。")
