@@ -428,8 +428,9 @@ def _clip_middle(text: str, limit: int) -> str:
     return f"{text[:head]}\n…(中间省略 {omitted} 字)…\n{text[-tail:]}"
 
 
-def preflight_dev(repo_root: str, *, want_pr: bool = False) -> list[str]:
-    """跑流水线**之前**验环境，返回阻塞性问题清单（空 = 可以开跑）。
+def preflight_dev(repo_root: str, *, want_pr: bool = False, heal: bool = True,
+                  on_heal: Optional[Callable[[str], None]] = None) -> list[str]:
+    """跑流水线**之前**验环境，返回**仍然阻塞**的问题清单（空 = 可以开跑）。
 
     为什么要有这一步：真机 2026-07-26，新机器上没配 git 提交身份，任务照常分解、实现、自测全绿，
     最后一步 commit 才挂——**烧掉几十秒 LLM 和一整轮工作，才撞上一条 `git config` 就能解决的事**。
@@ -438,6 +439,13 @@ def preflight_dev(repo_root: str, *, want_pr: bool = False) -> list[str]:
 
     纪律：只查**流水线必然依赖、缺了必然失败**的东西，每条都给可直接粘贴的修复命令。
     可有可无的一律不进来——预检一旦变成噪音就会被无视。
+
+    `heal=True`（默认）：白名单内**能安全自动处置**的问题（见 gateway/remediation.py）就地修好，
+    修成了就不再算阻塞——"检查出来只会拦住你"和"检查出来顺手修好"差的正是"离不离得开作者"。
+    自动处置的作用域一律限本仓库、可逆、幂等；碰全局配置/要装东西/要联网的一律不自动做。
+
+    `on_heal`：修好了要**说出来**。静默自愈比不自愈更可怕——人会以为环境一直是好的，
+    而它其实是被悄悄补过的（下次换台机器又原形毕露，却没人知道上次发生过什么）。
     """
     import shutil
     import subprocess
@@ -463,7 +471,22 @@ def preflight_dev(repo_root: str, *, want_pr: bool = False) -> list[str]:
             "要开 PR 但 gh CLI 不在 PATH——分支能落、PR 开不了。装 gh 并 `gh auth login`；"
             "若确认已装，检查**服务进程**的 PATH（systemd/launchd 给的 PATH 比登录 shell 窄）。")
 
-    return problems
+    if not heal or not problems:
+        return problems
+
+    from src.gateway.remediation import remediate
+    remaining: list[str] = []
+    for problem in problems:
+        outcome = remediate(repo_root, problem, source="preflight_dev")
+        if outcome.healed:
+            if on_heal is not None:
+                try:
+                    on_heal(f"🔧 环境预检自愈：{outcome.detail}")
+                except Exception:  # noqa: BLE001 —— 播报失败不该把已经修好的判成没修好
+                    pass
+            continue
+        remaining.append(problem)
+    return remaining
 
 
 def land_note(msg: str, applied_msgs, failed_errs: dict) -> tuple[str, str]:
@@ -3119,7 +3142,9 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         want_pr = _truthy(args.get("open_pr") or args.get("pr") or False)
         # 预检放在**分解之前**：环境不合格就别烧 LLM。真机 2026-07-26 的教训是
         # "实现绿、自测绿、最后 commit 挂在一条 git config 上"——那一整轮工作全白做。
-        if (blockers := preflight_dev(repo_root, want_pr=want_pr)):
+        # heal=True：白名单内能自动处置的（如没配 git 提交身份）就地修好，别为一条
+        # `git config` 拦住整条流水线。修了什么会经 _progress 如实说出来，不静默。
+        if (blockers := preflight_dev(repo_root, want_pr=want_pr, on_heal=_progress)):
             return ("❌ 环境预检未过，未开跑（省下白做一轮的时间）：\n\n"
                     + "\n\n".join(f"· {b}" for b in blockers)
                     + "\n\n修好后重发这条任务即可。")
