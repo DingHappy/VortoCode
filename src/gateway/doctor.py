@@ -199,11 +199,24 @@ async def _check_im_liveness() -> Check:
 
     age = data.get("last_frame_age")
     undelivered = int(data.get("undelivered") or 0)
+    reconnects = data.get("reconnects", 0)
     tail = f"；{undelivered} 条通知待补发" if undelivered else ""
+
+    if not data.get("connected"):
+        return Check("im-live", "fail",
+                     f"桥在但**长连是断的**（重连 {reconnects} 次）——手机上的表现是"
+                     f"「机器人装死」。最近错误：{data.get('last_error') or '（无）'}{tail}")
     if age is None:
+        # 刚建连还没收到第一帧是**正常的**：钉钉 Stream 的心跳是分钟级，重启后几十秒内
+        # 一帧未到完全合理。真机 2026-07-28 部署验收时这里误报过一次——而"误报三次这个
+        # 信号就没人看了"正是我自己写在活性判据里的话。只有连上很久仍一帧没有才可疑。
+        conn_age = data.get("connected_age")
+        if conn_age is not None and conn_age <= _STALE_FRAME_SECONDS:
+            return Check("im-live", "ok",
+                         f"桥已连上 {int(conn_age)}s，等首帧心跳（钉钉心跳分钟级，属正常）{tail}")
         return Check("im-live", "warn",
-                     f"桥在，但**一帧都没收到过**——长连可能从未建成（重连 "
-                     f"{data.get('reconnects', 0)} 次）{tail}")
+                     f"桥连着但**一帧都没收到过**（已连 {int(conn_age or 0)}s，"
+                     f"重连 {reconnects} 次）——订阅可能没生效{tail}")
     if age > _STALE_FRAME_SECONDS:
         return Check("im-live", "fail",
                      f"桥 {int(age // 60)} 分钟没收到任何帧（含心跳）——长连多半已死，"
