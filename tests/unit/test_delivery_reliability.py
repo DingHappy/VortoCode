@@ -320,3 +320,83 @@ async def test_legacy_notifier_without_kwargs_still_delivers(tmp_path):
 
     await C.run_job(str(tmp_path), job, run_session=_ok, notify=_legacy)
     assert got and "产出" in got[0]
+
+
+# --------------------------------------------------------------- 1b. 活性判据的噪音闸
+def _live_check(**data):
+    """用给定的 /api/im/status 返回值跑一次 im-live 判定（不触网）。"""
+    import asyncio
+    from unittest.mock import patch
+
+    from src.gateway import doctor
+
+    class _Resp:
+        status = 200
+
+        async def json(self):
+            return {"bridge": True, **data}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _Sess:
+        def get(self, *a, **k):
+            return _Resp()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    with patch("aiohttp.ClientSession", lambda *a, **k: _Sess()):
+        return asyncio.run(doctor._check_im_liveness())
+
+
+def test_fresh_bridge_awaiting_first_ping_is_not_an_alarm():
+    """刚建连还没收到第一帧是**正常的**——钉钉心跳分钟级，重启后几十秒一帧未到完全合理。
+
+    真机 2026-07-28 部署验收时这里误报过一次（connected=true、connected_age=27.7s、
+    last_frame_age=null → 报 warn）。而"误报三次这个信号就没人看了"正是我自己写在
+    活性判据里的话。这条把那次误报钉死。
+    """
+    c = _live_check(connected=True, connected_age=27.7, last_frame_age=None, reconnects=0)
+    assert c.level == "ok", c.detail
+
+
+def test_connected_with_no_frames_ever_is_never_a_failure():
+    """**一帧都没收到过 ≠ 连接有问题**——这条是真机实测逼出来的。
+
+    2026-07-28 20:32 部署后实测：钉钉 Stream 连上 4 分钟仍零帧。而 aiohttp 默认
+    autoping=True 会在 receive() 里把 WS 层 PING/PONG `continue` 掉、不交给上层——
+    健康连接在这个通道上本来就可能观测不到任何帧。
+
+    把"观测不到"当成"坏了"，600s 后会把一条好桥报成硬伤，人会去重启一个没坏的服务——
+    比误报 warn 恶劣得多。连着就是连着，只报事实。
+    """
+    for conn_age in (30, 3600, 86400):
+        c = _live_check(connected=True, connected_age=conn_age,
+                        last_frame_age=None, reconnects=0)
+        assert c.level == "ok", f"连着 {conn_age}s 无帧被判成了 {c.level}：{c.detail}"
+
+
+def test_disconnected_bridge_is_a_hard_fail():
+    """长连断着 = 手机上「机器人装死」——这是硬伤，不是提示。"""
+    c = _live_check(connected=False, connected_age=None, last_frame_age=None,
+                    reconnects=7, last_error="收帧异常: RuntimeError: 断了")
+    assert c.level == "fail" and "长连是断的" in c.detail and "重连 7 次" in c.detail
+
+
+def test_zombie_connection_is_a_hard_fail():
+    """连着但很久没帧 = 僵尸连接，同样是装死。"""
+    c = _live_check(connected=True, connected_age=9999, last_frame_age=1200, reconnects=1)
+    assert c.level == "fail" and "分钟没收到任何帧" in c.detail
+
+
+def test_healthy_bridge_reports_ok_with_undelivered_tail():
+    c = _live_check(connected=True, connected_age=600, last_frame_age=12,
+                    reconnects=2, undelivered=3)
+    assert c.level == "ok" and "3 条通知待补发" in c.detail
