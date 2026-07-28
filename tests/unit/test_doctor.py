@@ -105,7 +105,11 @@ def test_summarize_exit_codes():
 
 @pytest.mark.asyncio
 async def test_run_checks_order_stable_and_isolated(tmp_path, monkeypatch):
-    """八项齐、顺序稳定；单项炸不拖全体（gh 检查抛异常 → 记 fail、其余照常）。"""
+    """全项齐、顺序稳定；单项炸不拖全体（gh 检查抛异常 → 记 fail、其余照常）。
+
+    新增检查项必须同步这里——这条契约钉的就是"清单与顺序"，加项漏改会红是**设计如此**
+    （2026-07-28 加 im-live/schedule-tz 时如约红了一次）。
+    """
     monkeypatch.setenv("VORTOCODE_SERVE_URL", "http://127.0.0.1:9")
     monkeypatch.setenv("OPENAI_API_BASE", "http://127.0.0.1:9/v1")   # 中转站也指向死端口（离线）
 
@@ -115,7 +119,8 @@ async def test_run_checks_order_stable_and_isolated(tmp_path, monkeypatch):
     monkeypatch.setattr(doctor, "_check_gh", _boom)
     checks = await doctor.run_checks(str(tmp_path))
     assert [c.name for c in checks] == ["git", "api-key", "relay", "serve",
-                                        "sandbox", "permissions", "gh", "im"]
+                                        "sandbox", "permissions", "gh", "im",
+                                        "im-live", "schedule-tz"]
     gh = next(c for c in checks if c.name == "gh")
     assert gh.level == "fail" and "检查本身出错" in gh.detail          # 炸的那项记 fail
-    assert checks[-1].name == "im"                                    # 后续项没被拖死
+    assert checks[-1].name == "schedule-tz"                           # 后续项没被拖死
