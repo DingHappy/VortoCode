@@ -36,6 +36,8 @@ _DENY = {"n", "no", "拒绝", "否", "取消", "不"}
 ConnectFn = Callable[[], Awaitable[object]]
 # reply_fn: async (sessionWebhook, payload_dict) -> None
 ReplyFn = Callable[[str, dict], Awaitable[None]]
+# oto_fn: async (msg_key, msg_param_dict) -> None —— 主动推送（oToMessages/batchSend）transport
+OtoFn = Callable[[str, dict], Awaitable[None]]
 
 
 class _Disconnect(Exception):
@@ -47,12 +49,14 @@ class DingTalkAdapter(ChannelAdapter):
 
     def __init__(self, client_id: str, client_secret: str, owner_id: str, *,
                  connect_fn: Optional[ConnectFn] = None, reply_fn: Optional[ReplyFn] = None,
+                 oto_fn: Optional[OtoFn] = None,
                  inbox_dir: Optional[str] = None):
         self._cid = client_id
         self._secret = client_secret
         self.owner_id = str(owner_id)
         self._connect_fn = connect_fn or self._default_connect
         self._reply_fn = reply_fn or self._default_reply
+        self._oto_fn = oto_fn                     # None = 真实 batchSend（见 _send_msg）
         self._session = None
         self._webhook: Optional[str] = None       # 回复目标：最近一条**过了入站闸**的消息的
                                                   # sessionWebhook（只在 commit_reply_target 更新）
@@ -317,7 +321,16 @@ class DingTalkAdapter(ChannelAdapter):
 
     async def _send_msg(self, msg_key: str, msg_param: dict) -> None:
         """主动给**已配对 owner** 发一条消息。收件人恒为 owner，不受入站消息影响——
-        目标固定是这条通道能作为出站面的前提（对比 web_fetch：URL 由模型决定，那才是真外传）。"""
+        目标固定是这条通道能作为出站面的前提（对比 web_fetch：URL 由模型决定，那才是真外传）。
+
+        transport 可注入（`oto_fn`），与 connect_fn/reply_fn 同款：三条真实通道（长连收帧、
+        会话回复、主动推送）**每条**都要有注入口，测试才可能真离线。#254 启用本通道时漏了
+        这个口，注入了前两条 transport 的十几条存量测试开始悄悄真连 api.dingtalk.com——
+        网络快就绿、慢就红（2026-07-28 在 canary 门禁上第一次现形，红的还是别人家的群聊测试）。
+        """
+        if self._oto_fn is not None:
+            await self._oto_fn(msg_key, msg_param)
+            return
         tok = await self._token(legacy=False)
         async with self._session.post(
                 "https://api.dingtalk.com/v1.0/robot/oToMessages/batchSend",

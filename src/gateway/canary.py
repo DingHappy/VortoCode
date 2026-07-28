@@ -434,12 +434,12 @@ async def lane_cold_push(root: str) -> Lane:
     async def _never_reply(_wh, _payload):
         raise AssertionError("冷启动没有 webhook，不该走会话回复通道")
 
-    adapter = DingTalkAdapter("canary-cid", "canary-secret", OWNER, reply_fn=_never_reply)
-
     async def _record(msg_key, msg_param):
         sent.append((msg_key, msg_param))
 
-    adapter._send_msg = _record          # type: ignore[method-assign] —— 拦在 batchSend 面，不触网
+    # oto_fn 注入：拦在 batchSend 面，不触网（三条 transport 的注入口之一，与真实装配同构）
+    adapter = DingTalkAdapter("canary-cid", "canary-secret", OWNER,
+                              reply_fn=_never_reply, oto_fn=_record)
 
     async def _notify_send(text: str) -> None:
         await adapter.send_text(text)
