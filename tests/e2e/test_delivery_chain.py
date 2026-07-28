@@ -15,8 +15,8 @@ import pytest
 
 from src.gateway import canary
 from src.gateway.canary import (FakeChannel, Lane, ScriptedLLM, _bridge, _sandbox,
-                                lane_confirm, lane_cron_delivery, lane_inbound, lane_notify,
-                                lane_venue, run_canary, summarize)
+                                lane_cold_push, lane_confirm, lane_cron_delivery, lane_inbound,
+                                lane_notify, lane_venue, run_canary, summarize)
 
 
 @pytest.fixture
@@ -28,7 +28,7 @@ def box():
 
 # --------------------------------------------------------------- 主验收：五条通路
 @pytest.mark.parametrize("lane_fn", [lane_inbound, lane_confirm, lane_venue,
-                                     lane_notify, lane_cron_delivery])
+                                     lane_notify, lane_cron_delivery, lane_cold_push])
 async def test_lane_green(box, lane_fn):
     """每条交付通路单独跑——分开跑是为了红的时候一眼知道断在哪一截。"""
     lane = await lane_fn(box.root)
@@ -125,6 +125,31 @@ async def test_cron_detector_catches_missing_notify(box, monkeypatch):
     broken = await lane_cron_delivery(box.root)
     assert not broken.ok, "cron_run 没把结果推给任何人，canary 却是绿的——探测面取错了"
     assert "没推给任何人" in broken.detail
+
+
+async def test_cold_push_detector_catches_silent_drop(box, monkeypatch):
+    """阳性对照——载荷就是 2026-07-28 事故前的原实现，逐字放回去：
+
+        if self._webhook: 发；否则什么都不做、返回成功。
+
+    当时 lane_notify 是绿的（FakeChannel 永远发成功），静默丢发生在真适配器的通道选择里，
+    整套 canary 拦不住那次事故。这条钉死：那段代码再回来，冷启动通路必须立刻红。
+    """
+    lane = await lane_cold_push(box.root)
+    assert lane.ok, f"基线本身就是红的，先修基线：{lane.detail}"
+
+    from src.im.dingtalk import DingTalkAdapter, _clip
+
+    async def _old_broken(self, text):
+        if self._webhook:
+            await self._reply_fn(self._webhook,
+                                 {"msgtype": "text", "text": {"content": _clip(text)}})
+        return ""                # ← 没 webhook：静默不发，还报成功（事故原样）
+
+    monkeypatch.setattr(DingTalkAdapter, "send_text", _old_broken)
+    broken = await lane_cold_push(box.root)
+    assert not broken.ok, "事故原代码放回去了，冷启动通路却还是绿的——canary 没看住这条"
+    assert "无声蒸发" in broken.detail
 
 
 async def test_confirm_detector_catches_open_gate(box, monkeypatch):

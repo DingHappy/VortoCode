@@ -412,7 +412,55 @@ async def lane_cron_delivery(root: str) -> Lane:
     return Lane("cron 结果投递", True, "手动触发 → 作业产出 → 推到出站面")
 
 
-_LANES = (lane_inbound, lane_confirm, lane_venue, lane_notify, lane_cron_delivery)
+async def lane_cold_push(root: str) -> Lane:
+    """⑥ 冷启动投递：服务刚重启、主人一夜没说话——通知照样要能到出站面。
+
+    2026-07-28 真机事故的确切复现：01:32 重启清掉内存里的 sessionWebhook 后，钉钉适配器的
+    `send_text` 什么都不发还返回成功——早 9 点新闻、凌晨值班通报、"已就绪"横幅全部无声蒸发，
+    而各段单测照常全绿。本 canary 当时的 lane_notify 也拦不住它：FakeChannel 的 send_text
+    永远成功，静默丢发生在**真适配器**的通道选择里。
+
+    所以这条用真 `DingTalkAdapter`（假 transport，不触网）：从 make_notifier 一路走到
+    主动推送通道（batchSend 面），任何一环把"没 webhook"静默吞掉都会在这里现形。
+    lane 内联的投递口与 im_service 注册的 `bridge.notify_send` 同构（一行透传，不吞异常）；
+    那一行的等价性由 tests/unit/test_im_bridge.py 钉着。
+    """
+    from src.gateway import im_runtime
+    from src.gateway.notices import make_notifier
+    from src.im.dingtalk import DingTalkAdapter
+
+    sent: list = []
+
+    async def _never_reply(_wh, _payload):
+        raise AssertionError("冷启动没有 webhook，不该走会话回复通道")
+
+    adapter = DingTalkAdapter("canary-cid", "canary-secret", OWNER, reply_fn=_never_reply)
+
+    async def _record(msg_key, msg_param):
+        sent.append((msg_key, msg_param))
+
+    adapter._send_msg = _record          # type: ignore[method-assign] —— 拦在 batchSend 面，不触网
+
+    async def _notify_send(text: str) -> None:
+        await adapter.send_text(text)
+
+    im_runtime.set_owner_notifier(_notify_send)
+    try:
+        await make_notifier(root)("冷启动投递探针")
+    finally:
+        im_runtime.set_owner_notifier(None)
+
+    if not sent:
+        return Lane("冷启动投递", False,
+                    "重启后（无 sessionWebhook）通知没走到主动推送通道——夜里/清晨的定时产出"
+                    "会无声蒸发（2026-07-28 原病），而台账照常显示'已投递'")
+    if "冷启动投递探针" not in str(sent[0]):
+        return Lane("冷启动投递", False, f"主动通道被走到了，但正文不对：{sent[:1]}")
+    return Lane("冷启动投递", True, "无 webhook → 主动通道（batchSend 面）送达")
+
+
+_LANES = (lane_inbound, lane_confirm, lane_venue, lane_notify, lane_cron_delivery,
+          lane_cold_push)
 
 
 async def run_canary() -> List[Lane]:
