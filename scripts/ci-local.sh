@@ -63,6 +63,12 @@ else
     python3 -m pytest tests/unit tests/test_basic.py tests/integration tests/live -q
 fi
 
+# e2e 交付链路（canary）——**quick 也跑**，只要十几秒。
+# 单测证明每一段对，这一段证明接缝没断：2026-07-27 一天里五个真机 bug 全是"每段单测都绿、
+# 东西没送到人手机上"（cron_run 漏传 notify、确认门绕过分档函数、三处硬编码教钉钉用户按 Tab）。
+# 那类缺陷对"断函数返回值"的测试天然免疫——返回值确实是对的。
+run_gate "pytest（e2e 交付链路 canary）" python3 -m pytest tests/e2e -q
+
 # ─────────────────────────────────────────────────────────────
 # desktop 段（B6-2）——**刻意只跑 `npm run check` 的离线子集**
 #

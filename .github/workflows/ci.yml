@@ -122,7 +122,9 @@ jobs:
                 -vv --tb=short --durations=30
               ;;
             integration-live)
-              .venv/bin/python -m pytest tests/integration tests/live \
+              # tests/e2e = 交付链路 canary：单测证明每段对，它证明**接缝**没断
+              # （2026-07-27 的五个真机 bug 全是"每段单测都绿、东西没送到人手机上"）。
+              .venv/bin/python -m pytest tests/integration tests/live tests/e2e \
                 -vv --tb=short --durations=30
               ;;
             *)
