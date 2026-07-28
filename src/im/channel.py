@@ -6,8 +6,9 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
-from typing import AsyncIterator
+from typing import AsyncIterator, Optional
 
 
 @dataclass
@@ -43,6 +44,66 @@ class ChannelAdapter:
     # 通道是否支持"编辑已发消息"（Telegram 支持 → 进度原地滚动；钉钉不支持 → 进度只能发新消息，
     # bridge 据此放慢进度节流、收尾不再多刷一条）。
     edits_supported: bool = True
+
+    # ------------------------------------------------------------ 活性（谁都别自己发明一套）
+    #
+    # 2026-07-28 的事故是"**发不出去**"，它的镜像盲区是"**连接死了收不到**"：长连一旦彻底断掉，
+    # poll 循环自己退避重连（这是对的），但**没有任何面能看出来**——表现又是"机器人装死"，
+    # 而这套系统里"装死"是最贵的故障。所以活性计数上收到基类一份，两个通道只管在
+    # 收到帧/重连时打点，怎么判"多久算死"由读的人决定。
+    #
+    # 用 monotonic 记时刻：墙钟会被改（昨晚刚给 VM 改过时区），拿它算"多久没动静"会算出负数。
+
+    def _lv(self) -> dict:
+        """活性状态（惰性建，适配器不必在 __init__ 里 super()）。"""
+        st = getattr(self, "_lv_state", None)
+        if st is None:
+            st = {"connected": False, "reconnects": 0, "last_frame": None,
+                  "connected_since": None, "last_error": ""}
+            self._lv_state = st
+        return st
+
+    def note_connected(self) -> None:
+        """建连成功。第二次及以后计入 reconnects（首连不算重连）。"""
+        st = self._lv()
+        if st["connected_since"] is not None or st["reconnects"] or st["last_frame"] is not None:
+            st["reconnects"] += 1
+        st["connected"] = True
+        st["connected_since"] = time.monotonic()
+
+    def note_frame(self) -> None:
+        """**收到任何一帧**（含心跳 ping / 空的长轮询返回）——这才是"线还活着"的证据。
+
+        刻意不是"收到用户消息"：主人一夜不说话是常态，拿它当活性会天天误报。
+        """
+        st = self._lv()
+        st["last_frame"] = time.monotonic()
+        st["connected"] = True
+
+    def note_disconnected(self, why: str = "") -> None:
+        st = self._lv()
+        st["connected"] = False
+        st["connected_since"] = None
+        if why:
+            st["last_error"] = str(why)[:200]
+
+    def liveness(self) -> dict:
+        """活性快照（**不含任何凭证/会话标识**，可以安全经 API 吐给运维面）。
+
+        `*_age` 是秒龄，None = 从没发生过。判"多久算死"交给调用方（doctor / 决策队列），
+        这里只如实报事实。
+        """
+        st = self._lv()
+        now = time.monotonic()
+
+        def _age(t: Optional[float]) -> Optional[float]:
+            return None if t is None else round(max(0.0, now - t), 1)
+
+        return {"connected": bool(st["connected"]),
+                "reconnects": int(st["reconnects"]),
+                "last_frame_age": _age(st["last_frame"]),
+                "connected_age": _age(st["connected_since"]),
+                "last_error": st["last_error"]}
 
     async def poll(self) -> AsyncIterator[ChannelEvent]:
         """长轮询/长连接，持续 yield 归一化事件（纯出站）。断线自行退避重连，不抛给 bridge。"""

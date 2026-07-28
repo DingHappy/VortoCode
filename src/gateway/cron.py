@@ -629,7 +629,20 @@ def record_outcome(repo_root: str, name: str, *, ok: bool, summary: str, command
         return ""
 
 
-async def _announce(repo_root: str, job: CronJob, text: str, *, ok: bool, notify=None) -> None:
+def _accepts_attribution(notify) -> bool:
+    """投递器吃不吃 source/trigger 关键字（**kwargs 也算）。探测一次，不靠异常试探。"""
+    import inspect
+    try:
+        params = inspect.signature(notify).parameters
+    except (TypeError, ValueError):
+        return False
+    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()):
+        return True
+    return "source" in params
+
+
+async def _announce(repo_root: str, job: CronJob, text: str, *, ok: bool, notify=None,
+                    trigger: str = "scheduler") -> None:
     """通知投递。`announce=silent` 只压**成功**产出；**失败一律通报**（红线：别静默吞掉）。
 
     有 notify（调度循环给的三路投递器：通知台账 + WS 广播 + IM 推 owner）就走它；没有
@@ -641,12 +654,23 @@ async def _announce(repo_root: str, job: CronJob, text: str, *, ok: bool, notify
     body = str(text or "")[:_ANNOUNCE_CAP]
     if notify is not None:
         try:
-            await notify(body)
+            # **作业名必须随通知走**（source=cron:<name>）：收口投递器时我把它统一写成了
+            # "scheduler"，等于把"这条是哪个作业出的"这条线索抹掉——而 2026-07-27 排查漏推
+            # 靠的正是它。谁按的（scheduler/manual）另记 trigger，两件事不许混成一件。
+            #
+            # 用**签名探测**而不是 try/except TypeError 兜老式投递器，两个理由：
+            #  · TypeError 也可能来自投递器内部，那样会把它调第二次——用户收到两条通知；
+            #  · 降级调用若写在 except 里，它自己抛的异常就绕过了下面的台账兜底
+            #    （存量测试 test_announce_falls_back_to_notice_ledger_when_push_dies 逮到过）。
+            if _accepts_attribution(notify):
+                await notify(body, source=f"cron:{job.name}", trigger=trigger)
+            else:
+                await notify(body)
             return
         except Exception:  # noqa: BLE001 —— 推送挂了不算送到，落台账兜底
             pass
     from src.gateway.notices import record_notice
-    record_notice(repo_root, body, source=f"cron:{job.name}")
+    record_notice(repo_root, body, source=f"cron:{job.name}", trigger=trigger)
 
 
 def _env_int(name: str, default: int) -> int:
@@ -685,7 +709,7 @@ def _mark_ran(repo_root: str, job: CronJob, now: Optional[datetime]) -> None:
 
 
 async def run_job(repo_root: str, job: CronJob, *, run_session=None, notify=None,
-                  now: Optional[datetime] = None) -> str:
+                  now: Optional[datetime] = None, trigger: str = "scheduler") -> str:
     """跑一个作业；给了 now 则记为上次运行（防重复触发）。
 
     产出**只**走 run lane：一条 `CommandRun(kind="cron")` 进 Journal/决策台账 + 按 announce
@@ -716,7 +740,7 @@ async def run_job(repo_root: str, job: CronJob, *, run_session=None, notify=None
                            code=code, sandbox=sandbox,
                            error="" if ok else
                            f"cron [{job.name}] 命令退出码 {code}{'；' + escalation if escalation else ''}：{out[-400:]}")
-            await _announce(repo_root, job, result, ok=ok, notify=notify)
+            await _announce(repo_root, job, result, ok=ok, notify=notify, trigger=trigger)
             return result
         if run_session is None:
             from src.gateway.session import run_isolated_session
@@ -753,7 +777,7 @@ async def run_job(repo_root: str, job: CronJob, *, run_session=None, notify=None
         body = f"⏰ cron [{job.name}] 跑完：\n{text[:800]}"
         if hint is not None:
             body += f"\n\n🩺 诊断：{hint.what}\n👉 需要你：{hint.human_fix}"
-        await _announce(repo_root, job, body, ok=True, notify=notify)
+        await _announce(repo_root, job, body, ok=True, notify=notify, trigger=trigger)
         return result
     except Exception as error:  # noqa: BLE001 —— 例行作业炸了是红线：必须留痕，绝不静默吞
         detail = f"{type(error).__name__}: {error}"[:600]
@@ -774,7 +798,7 @@ async def run_job(repo_root: str, job: CronJob, *, run_session=None, notify=None
         record_outcome(repo_root, job.name, ok=False, summary=detail, command=job.command,
                        code=-1, error=f"cron [{job.name}] 执行异常：{detail}")
         await _announce(repo_root, job, f"🔴 cron [{job.name}] **执行异常**：{detail}",
-                        ok=False, notify=notify)
+                        ok=False, notify=notify, trigger=trigger)
         raise
 
 
@@ -787,7 +811,8 @@ async def run_due(repo_root: str, now: datetime, *, run_session=None, notify=Non
     ran: List[str] = []
     for job in due_jobs(repo_root, now):
         try:
-            await run_job(repo_root, job, run_session=run_session, notify=notify, now=now)
+            await run_job(repo_root, job, run_session=run_session, notify=notify, now=now,
+                          trigger="scheduler")
             ran.append(job.name)
         except Exception:  # noqa: BLE001
             pass
@@ -795,9 +820,11 @@ async def run_due(repo_root: str, now: datetime, *, run_session=None, notify=Non
 
 
 async def run_job_by_name(repo_root: str, name: str, *, run_session=None, notify=None,
-                          now: Optional[datetime] = None) -> Optional[str]:
+                          now: Optional[datetime] = None,
+                          trigger: str = "manual") -> Optional[str]:
     """手动触发一个具名作业（vc cron run <name>）；找不到 → None。"""
     for job in load_jobs(repo_root):
         if job.name == name:
-            return await run_job(repo_root, job, run_session=run_session, notify=notify, now=now)
+            return await run_job(repo_root, job, run_session=run_session, notify=notify,
+                                 now=now, trigger=trigger)
     return None

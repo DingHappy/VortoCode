@@ -124,6 +124,7 @@ class IMBridge:
         self._heartbeat_every = _heartbeat_interval()
         self._heartbeat_quiet = self._heartbeat_every
         self._heartbeat_task: Optional[asyncio.Task] = None
+        self._seen_reconnects = 0                        # 心跳里比对通道重连计数 → 触发补发
         self.agent = self._build_agent()
 
     # ------------------------------------------------------------ 人设（本人自述，不由管理员代填）
@@ -238,6 +239,7 @@ class IMBridge:
         if warn:
             hello += "\n" + warn
         await self._safe_send(hello)
+        await self.flush_pending_notices()      # 上次断连/下线期间攒下的通知，开机就补
         if self._heartbeat_every > 0 and self._heartbeat_task is None:
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         try:
@@ -251,6 +253,36 @@ class IMBridge:
             if t is not None:
                 t.cancel()                                # 桥停了心跳也得停，别留孤儿协程
 
+    # ------------------------------------------------------------ 活性 / 未送达补发
+    def liveness(self) -> dict:
+        """本桥的活性快照（转发通道的计数 + 桥自身状态）。**不含任何凭证/会话标识**。"""
+        lv = {}
+        try:
+            lv = dict(self.adapter.liveness())
+        except Exception:  # noqa: BLE001 —— 自定义 adapter 没实现就给空，别让运维面挂掉
+            lv = {}
+        lv["channel"] = self._sid.split("-")[1] if "-" in self._sid else "im"
+        lv["busy"] = self._turn_task is not None and not self._turn_task.done()
+        lv["queued"] = len(self._pending_msgs)
+        try:
+            from src.gateway.notices import pending_undelivered_count
+            lv["undelivered"] = pending_undelivered_count(self.repo_root)
+        except Exception:  # noqa: BLE001
+            lv["undelivered"] = 0
+        return lv
+
+    async def flush_pending_notices(self) -> dict:
+        """把断连期间没送到的通知补推一条汇总给主人。
+
+        触发点有两个：桥启动（run 的开头）、心跳循环发现通道重连过。恢复了却要人自己去翻台账，
+        等于"补发"永远是人手动干的活——2026-07-28 早上那次补发就是我手动跑脚本干的。
+        """
+        try:
+            from src.gateway.notices import flush_undelivered
+            return await flush_undelivered(self.repo_root, self.notify_send)
+        except Exception:  # noqa: BLE001 —— 补发是旁路，绝不能拖垮开机/心跳
+            return {"sent": 0, "dropped": 0, "kept": 0}
+
     async def _heartbeat_loop(self) -> None:
         """后台任务安静太久时报个平安：阶段 + 已用时。**只在真有任务在跑时说话**。
 
@@ -259,6 +291,12 @@ class IMBridge:
         while True:
             try:
                 await asyncio.sleep(self._heartbeat_every)
+                # 通道重连过 → 之前多半有通知没送出去，补一次。放在 runner 判空**之前**：
+                # 没有后台任务时这个循环会 continue 掉，补发跟着一起哑掉（差点写成那样）。
+                reconnects = int(self.liveness().get("reconnects") or 0)
+                if reconnects != self._seen_reconnects:
+                    self._seen_reconnects = reconnects
+                    await self.flush_pending_notices()
                 runner = self._runner
                 if runner is None:
                     continue

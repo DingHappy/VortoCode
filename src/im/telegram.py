@@ -69,7 +69,13 @@ class TelegramAdapter(ChannelAdapter):
                                           timeout=self._poll_timeout,
                                           allowed_updates=["message", "callback_query"])
                 backoff = 1.0
-            except Exception:  # noqa: BLE001 —— 网络抖动/超时：退避重连，绝不把桥拖垮
+                # 长轮询正常返回（哪怕是空的）就是"线还活着"——不是"收到用户消息"，
+                # 主人一夜不说话是常态，拿消息当活性会天天误报。
+                if not self._lv()["connected"]:
+                    self.note_connected()
+                self.note_frame()
+            except Exception as e:  # noqa: BLE001 —— 网络抖动/超时：退避重连，绝不把桥拖垮
+                self.note_disconnected(f"长轮询失败: {type(e).__name__}: {e}")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30.0)
                 continue
