@@ -744,11 +744,28 @@ async def run_job(repo_root: str, job: CronJob, *, run_session=None, notify=None
         CronState(repo_root).record_result(job.name, True)
         _mark_ran(repo_root, job, now)
         record_outcome(repo_root, job.name, ok=True, summary=text, code=0)
-        await _announce(repo_root, job, f"⏰ cron [{job.name}] 跑完：\n{text[:800]}",
-                        ok=True, notify=notify)
+        # 「跑成功了但产出没用」也要诊断（真机 2026-07-27 09:47：作业没 allow_web，模型回了
+        # 一大段"我没有联网工具"——退出码是成功的，人看到的却是一句道歉）。
+        # **这里只 diagnose、绝不 remediate**：这段文本是模型生成的，让它能触发处置动作
+        # 等于把提示注入面直接接到执行器上。模型输出只准产生建议，不准产生动作。
+        from src.gateway.remediation import diagnose
+        hint = diagnose(text)
+        body = f"⏰ cron [{job.name}] 跑完：\n{text[:800]}"
+        if hint is not None:
+            body += f"\n\n🩺 诊断：{hint.what}\n👉 需要你：{hint.human_fix}"
+        await _announce(repo_root, job, body, ok=True, notify=notify)
         return result
     except Exception as error:  # noqa: BLE001 —— 例行作业炸了是红线：必须留痕，绝不静默吞
         detail = f"{type(error).__name__}: {error}"[:600]
+        # 自愈层：白名单内的已知故障能自己修的就地修好，修不了的把"这是什么、你要做什么"说清楚。
+        # 无人值守正是最需要它的场景——报完错没人管，主人第二天看到一句原始报错还得自己猜。
+        # 诊断面是**我们自己抛的异常文本**，不是模型输出，所以这里允许触发处置动作。
+        from src.gateway.remediation import remediate
+        outcome = remediate(repo_root, f"{type(error).__name__}: {error}",
+                            source=f"cron:{job.name}")
+        heal_note = outcome.note()
+        if heal_note:
+            detail = f"{detail}\n{heal_note}"
         streak = CronState(repo_root).record_result(job.name, False)
         escalation = _escalate_streak(repo_root, job, streak)
         if escalation:

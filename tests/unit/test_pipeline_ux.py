@@ -304,10 +304,33 @@ def test_preflight_flags_missing_git_identity(tmp_path, monkeypatch):
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")   # 屏蔽全局身份，模拟新机器
 
-    problems = preflight_dev(str(tmp_path))
+    # heal=False 验的是**检测**契约（本条测试的原意）。自愈层上线后默认会就地把它修好，
+    # 所以这里显式关掉自愈才测得到检测本身——两件事分开钉，别混成一条。
+    problems = preflight_dev(str(tmp_path), heal=False)
     assert problems, "没配身份却放行了"
     joined = "\n".join(problems)
     assert "git config" in joined and "user.email" in joined   # 给命令，不是只说"有问题"
+
+
+async def test_preflight_heals_missing_identity_instead_of_blocking(tmp_path, monkeypatch):
+    """**行为变更（自愈层）**：没配身份不再是死路——就地配一个仓库级机器人身份并放行。
+
+    原来的契约是"拦住 + 给你命令"，那已经比"跑到最后才挂"好得多，但仍然要人。
+    现在的契约是"能自己修的就自己修"，且必须**说出来**（静默自愈会让人误以为环境一直是好的）。
+    修的作用域限本仓库、不覆盖已有身份——那几条在 tests/unit/test_self_healing.py 里钉着。
+    """
+    import subprocess
+
+    from src.agents.main_agent import preflight_dev
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
+    empty = tmp_path / "empty-gitconfig"
+    empty.write_text("", encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty))
+
+    said: list = []
+    assert preflight_dev(str(tmp_path), on_heal=said.append) == [], "自愈后仍被拦住"
+    assert said and "自愈" in said[0], "修好了却没说出来"
 
 
 def test_preflight_passes_with_identity(tmp_path):
@@ -324,13 +347,19 @@ def test_preflight_passes_with_identity(tmp_path):
 
 
 async def test_dev_auto_refuses_to_start_without_identity(tmp_path, monkeypatch):
-    """预检不过时 dev_auto 必须**在分解之前**返回——一次 LLM 都不许调。"""
+    """预检不过时 dev_auto 必须**在分解之前**返回——一次 LLM 都不许调。
+
+    自愈层上线后这条要在**自愈关掉**（VORTOCODE_SELF_HEAL=0）时验：不变量本身没变——
+    "环境不合格就别烧 token"——只是现在多了一条更好的出路（能修就修好，见下一条测试）。
+    修不了的东西照旧必须拦住，那才是这条测试真正守着的东西。
+    """
     import subprocess
     from src.agents import decompose as dc
     from src.agents.main_agent import build_dev_tools
 
     subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", "/dev/null")
+    monkeypatch.setenv("VORTOCODE_SELF_HEAL", "0")
 
     async def _boom(*a, **k):
         raise AssertionError("预检没过却开始分解了——白烧 token")
@@ -339,3 +368,31 @@ async def test_dev_auto_refuses_to_start_without_identity(tmp_path, monkeypatch)
     tools = {t.name: t for t in build_dev_tools(str(tmp_path))}
     out = await tools["dev_auto"].handler({"task": "随便干点啥"})
     assert "预检未过" in out and "git config" in out
+
+
+async def test_dev_auto_proceeds_after_healing_the_environment(tmp_path, monkeypatch):
+    """自愈之后 dev_auto 不再被拦——环境被修好了，本来就不该再拦。
+
+    断言方式：把分解函数换成一个会抛的哨兵。**抛出来说明走过了预检**（原来那条测试
+    正是靠"没抛"来证明被拦住的），一正一反把这条边界钉死。
+    """
+    import subprocess
+
+    from src.agents import decompose as dc
+    from src.agents.main_agent import build_dev_tools
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, capture_output=True)
+    empty = tmp_path / "empty-gitconfig"
+    empty.write_text("", encoding="utf-8")
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(empty))
+
+    reached: list = []
+
+    async def _sentinel(*a, **k):
+        reached.append(True)
+        raise RuntimeError("走到分解了")
+    monkeypatch.setattr(dc, "decompose_for_parallel", _sentinel)
+
+    tools = {t.name: t for t in build_dev_tools(str(tmp_path))}
+    out = await tools["dev_auto"].handler({"task": "随便干点啥"})
+    assert reached, f"自愈后仍被预检拦住：{out[:200]}"
