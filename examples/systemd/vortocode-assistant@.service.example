@@ -1,0 +1,49 @@
+# VortoCode 专属助手 —— 每人一个实例（systemd 模板单元）。
+#
+# 一个人一个助手时不需要它（`vc server --im dingtalk` 内嵌一条桥就够）。三个人起就需要：
+# 每人要有**自己的工作区**（人设 / 会话历史 / 记忆按人隔离）、**自己的机器人凭证**、
+# 自己的服务实例。模板单元把这三件事按实例名 %i 一次配好。
+#
+# 装（每加一个人只做 2、3 两步）：
+#   1. sudo cp examples/systemd/vortocode-assistant@.service.example \
+#             /etc/systemd/system/vortocode-assistant@.service
+#      （按实际路径改 User / WorkingDirectory / ExecStart）
+#   2. 给这个人建工作区与凭证：
+#        sudo mkdir -p /opt/vortocode/assistants/alice
+#        sudo chown vortocode: /opt/vortocode/assistants/alice
+#        sudo install -m 600 -D /dev/null /etc/vortocode/assistants/alice.env
+#        sudo $EDITOR /etc/vortocode/assistants/alice.env      # 模板：vc roster template dingtalk
+#   3. sudo systemctl daemon-reload && sudo systemctl enable --now vortocode-assistant@alice
+#
+# 起之前先体检：`vc roster check`（照着 .vortocode/assistants.yaml 查凭证/工作区/白名单）。
+#
+# ⚠ 最容易踩的坑：**每个助手必须在钉钉/Telegram 开放平台各建一个应用**。
+#   复制一份 env 改个名字、CLIENT_ID 忘了换 → 两条桥抢同一个机器人，消息随机落到其中一个，
+#   表现是"时灵时不灵"，最难查的那种。`vc roster check` 专门查这条。
+#
+# 与 server 单元同样的两个坑：
+#   - systemd 不继承 shell 环境：代理出网的机器把 HTTP(S)_PROXY 也写进 env 文件；
+#   - ExecStart 用解释器**绝对路径**（极简 PATH 下裸 `python` 必 127，真机逮到过）。
+
+[Unit]
+Description=VortoCode 专属助手（%i）
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vortocode
+# 工作区 = 这个助手的全部状态所有权（.vortocode/persona.md、会话、记忆都落这里）。
+# **每人一个目录**：共用会让人设和会话历史串在一起。
+WorkingDirectory=/opt/vortocode/assistants/%i
+# 每人一份凭证（600）。名册里只放这个路径，绝不放凭证本身。
+EnvironmentFile=/etc/vortocode/assistants/%i.env
+# 默认 plan（只读）；要让某个人的助手能直接动手，在他自己的 env 里加 VORTOCODE_IM_MODE=build，
+# 或把这行改成 --mode build。给同事用的研究员助手**建议保持 plan**。
+ExecStart=/opt/vortocode/venv/bin/python -m src.cli im dingtalk --mode plan
+Restart=on-failure
+RestartSec=10
+# 长连接断线由 adapter 自己退避重连，这里只兜进程级异常退出。
+
+[Install]
+WantedBy=multi-user.target
