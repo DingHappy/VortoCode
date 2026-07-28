@@ -367,10 +367,20 @@ def test_fresh_bridge_awaiting_first_ping_is_not_an_alarm():
     assert c.level == "ok", c.detail
 
 
-def test_connected_but_silent_for_long_is_suspicious():
-    """连上很久仍一帧没有 → 订阅多半没生效，该报。"""
-    c = _live_check(connected=True, connected_age=3600, last_frame_age=None, reconnects=0)
-    assert c.level == "warn" and "一帧都没收到过" in c.detail
+def test_connected_with_no_frames_ever_is_never_a_failure():
+    """**一帧都没收到过 ≠ 连接有问题**——这条是真机实测逼出来的。
+
+    2026-07-28 20:32 部署后实测：钉钉 Stream 连上 4 分钟仍零帧。而 aiohttp 默认
+    autoping=True 会在 receive() 里把 WS 层 PING/PONG `continue` 掉、不交给上层——
+    健康连接在这个通道上本来就可能观测不到任何帧。
+
+    把"观测不到"当成"坏了"，600s 后会把一条好桥报成硬伤，人会去重启一个没坏的服务——
+    比误报 warn 恶劣得多。连着就是连着，只报事实。
+    """
+    for conn_age in (30, 3600, 86400):
+        c = _live_check(connected=True, connected_age=conn_age,
+                        last_frame_age=None, reconnects=0)
+        assert c.level == "ok", f"连着 {conn_age}s 无帧被判成了 {c.level}：{c.detail}"
 
 
 def test_disconnected_bridge_is_a_hard_fail():
