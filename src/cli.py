@@ -125,6 +125,9 @@ def main():
 
     sub.add_parser("doctor", help="一键自检：git/凭证/中转站/serve/权限文件/gh/IM——常驻化后'用不了'大多是管道问题")
 
+    sub.add_parser("canary", help="端到端交付验收：一句话进来→确认→结果送到出站面，五条链路逐条验"
+                                  "（不触网/不烧 token/不碰真工作区；部署后的强制关卡）")
+
     args = parser.parse_args()
 
     # 无命令：给友好总览，而不是报错
@@ -207,6 +210,9 @@ def main():
     elif args.command == "doctor":
         sys.exit(asyncio.run(run_doctor()))
 
+    elif args.command == "canary":
+        sys.exit(asyncio.run(run_canary_cli()))
+
 
 async def run_doctor() -> int:
     """一键自检：逐项查管道（git/凭证/中转站/serve/权限/gh/IM），返回退出码（硬伤=1）。"""
@@ -216,6 +222,18 @@ async def run_doctor() -> int:
     text, code = summarize(checks)
     print(text)
     return code
+
+
+async def run_canary_cli() -> int:
+    """端到端交付验收：逐条报告哪条交付链路通、哪条断。有断的返回 1（部署脚本据此拦住上线）。"""
+    from src.gateway.canary import run_canary, summarize
+    print("VortoCode canary · 端到端交付验收（假通道 + 脚本模型，不触网）…\n", file=sys.stderr)
+    lanes = await run_canary()
+    for ln in lanes:
+        print(f"{ln.glyph} {ln.name:<12} {ln.detail}")
+    ok, text = summarize(lanes)
+    print(f"\n{'✅' if ok else '⛔'} {text}")
+    return 0 if ok else 1
 
 
 async def run_im(channel: str, *, mode: str = "plan"):
