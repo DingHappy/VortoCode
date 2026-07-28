@@ -207,16 +207,19 @@ async def _check_im_liveness() -> Check:
                      f"桥在但**长连是断的**（重连 {reconnects} 次）——手机上的表现是"
                      f"「机器人装死」。最近错误：{data.get('last_error') or '（无）'}{tail}")
     if age is None:
-        # 刚建连还没收到第一帧是**正常的**：钉钉 Stream 的心跳是分钟级，重启后几十秒内
-        # 一帧未到完全合理。真机 2026-07-28 部署验收时这里误报过一次——而"误报三次这个
-        # 信号就没人看了"正是我自己写在活性判据里的话。只有连上很久仍一帧没有才可疑。
+        # **一帧都没收到过 ≠ 连接有问题**，这条是真机实测逼出来的（2026-07-28 20:32 部署后）：
+        # 钉钉 Stream 的连接连上 4 分钟仍零帧，而 aiohttp 默认 autoping=True 会把 WebSocket
+        # 层的 PING/PONG 在 receive() 里 `continue` 掉、根本不交给上层——也就是说**健康连接
+        # 在这个通道上本来就可能观测不到任何帧**。
+        #
+        # 所以这里只报事实、不判死刑：连着就是连着。把"观测不到"当成"坏了"，600s 后会把
+        # 一条好桥报成硬伤——那比误报 warn 恶劣得多（人会去重启一个没坏的服务）。
+        # 让活性信号真正可观测要动 transport（autoping=False 自己回 pong），风险另算，
+        # 不在健康检查里赌。
         conn_age = data.get("connected_age")
-        if conn_age is not None and conn_age <= _STALE_FRAME_SECONDS:
-            return Check("im-live", "ok",
-                         f"桥已连上 {int(conn_age)}s，等首帧心跳（钉钉心跳分钟级，属正常）{tail}")
-        return Check("im-live", "warn",
-                     f"桥连着但**一帧都没收到过**（已连 {int(conn_age or 0)}s，"
-                     f"重连 {reconnects} 次）——订阅可能没生效{tail}")
+        return Check("im-live", "ok",
+                     f"桥连着（已连 {int(conn_age or 0)}s，重连 {reconnects} 次）；"
+                     f"本通道未观测到帧——WS 层心跳被 aiohttp 吞掉是正常现象，不据此判死{tail}")
     if age > _STALE_FRAME_SECONDS:
         return Check("im-live", "fail",
                      f"桥 {int(age // 60)} 分钟没收到任何帧（含心跳）——长连多半已死，"
