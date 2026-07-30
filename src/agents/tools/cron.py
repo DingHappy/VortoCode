@@ -130,6 +130,42 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
         except (OSError, ValueError) as e:
             return f"未改动：写 cron.yaml 失败 {type(e).__name__}: {e}"
 
+    async def _set_prompt(args: dict) -> str:
+        from src.gateway.cron import CronEditError, job_block, load_jobs, set_job_prompt
+
+        name = str(args.get("name") or "").strip()
+        new = str(args.get("prompt") or "").strip()
+        job = next((j for j in load_jobs(repo_root) if j.name == name), None)
+        if job is None:
+            return f"未改动：无此作业 {name}。用 cron_list 看现有作业。"
+        if not new:
+            return "未改动：prompt 不能为空。"
+        if job.kind == "command":
+            return (f"未改动：{name} 是 command 作业（跑确定性命令），本工具只改 prompt 作业的内容。"
+                    f"改命令是另一个风险类别，只能人工编辑 .vortocode/cron.yaml。")
+        if " ".join(new.split()) == " ".join((job.prompt or "").split()):
+            return f"作业 {name} 的内容与你给的完全一致，无需改动。"
+
+        # **改前改后都摆出来**：改一个已被信任的作业，社工面比新建高得多——人对
+        # "改一下 daily-tech-news" 的警惕远低于"新建一个陌生作业"。唯一的补偿就是让他
+        # 看见具体差异，而不是只看见一个熟悉的名字。启用态也要说明白：改完下次到点就生效。
+        state = (f"⚠️ 它当前是**启用**的（{job.schedule.raw}），改完下次到点就按新内容跑"
+                 if job.enabled else f"它当前是停用的（{job.schedule.raw}）")
+        if not await _ask(
+                f"改定时作业「{name}」的内容？\n{state}\n\n"
+                f"── 改前 ──\n{' '.join((job.prompt or '').split())[:400]}\n\n"
+                f"── 改后 ──\n{' '.join(new.split())[:400]}"):
+            return f"未改动 {name}（你拒绝了）。"
+        try:
+            note = set_job_prompt(repo_root, name, new)
+        except CronEditError as e:
+            return f"未改动：{e}"
+        except (OSError, ValueError) as e:
+            return f"未改动：写 cron.yaml 失败 {type(e).__name__}: {e}"
+        # 回执按**盘上实际内容**重新渲染，不复述我以为写进去的东西
+        # （2026-07-27 的教训：cron_add 的回执自相矛盾，模型信了更具体的那半边）。
+        return f"✅ {note}。当前该作业在 cron.yaml 里是：\n{job_block(repo_root, name)}"
+
     async def _set_web(args: dict) -> str:
         from src.gateway.cron import CronEditError, load_jobs, set_job_web
 
@@ -201,6 +237,11 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
              "要换内容请另建一个作业。需确认",
              {"name": "作业名", "allow_web": "true=给出网许可 / false=收回"},
              _set_web, read_only=False),
+        Tool("cron_set_prompt",
+             "改一个**已有 prompt 作业**要做的事（整块替换它的 prompt，排期/开关/出网许可都不动）。"
+             "确认时会把改前改后摆给你看。command 作业（跑确定性命令的）拒绝修改。需确认",
+             {"name": "作业名", "prompt": "这个作业到点要做的事（完整新内容，不是补丁）"},
+             _set_prompt, read_only=False),
         Tool("cron_run", "立刻手动跑一次某个已有定时作业（不占用它的正常排期）。已停用的作业拒绝"
              "触发、同名作业在跑时拒绝重复触发。结果走通知台账，不在这里返回。需确认",
              {"name": "作业名"}, _run, read_only=False),
