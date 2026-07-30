@@ -49,7 +49,7 @@ class DingTalkAdapter(ChannelAdapter):
 
     def __init__(self, client_id: str, client_secret: str, owner_id: str, *,
                  connect_fn: Optional[ConnectFn] = None, reply_fn: Optional[ReplyFn] = None,
-                 oto_fn: Optional[OtoFn] = None,
+                 oto_fn: Optional[OtoFn] = None, card_sender=None,
                  inbox_dir: Optional[str] = None):
         self._cid = client_id
         self._secret = client_secret
@@ -57,6 +57,13 @@ class DingTalkAdapter(ChannelAdapter):
         self._connect_fn = connect_fn or self._default_connect
         self._reply_fn = reply_fn or self._default_reply
         self._oto_fn = oto_fn                     # None = 真实 batchSend（见 _send_msg）
+        # 互动卡片确认（配了模板才启用；没配则**建连 payload 与不加本功能时逐字节相同**）。
+        # card_sender 可注入，测试不触网。
+        from src.im.dingtalk_card import CardSender, card_template_id
+        tpl = card_template_id()
+        self._card = card_sender if card_sender is not None else (
+            CardSender(tpl, self.owner_id, token_fn=self._token,
+                       session_fn=self._ensure_session) if tpl else None)
         self._session = None
         self._webhook: Optional[str] = None       # 回复目标：最近一条**过了入站闸**的消息的
                                                   # sessionWebhook（只在 commit_reply_target 更新）
@@ -117,6 +124,21 @@ class DingTalkAdapter(ChannelAdapter):
             elif topic == "disconnect":           # 服务端要求断开 → 重连
                 raise _Disconnect()
             return []
+        from src.im.dingtalk_card import CARD_CALLBACK_TOPIC, parse_card_callback
+        if topic == CARD_CALLBACK_TOPIC:
+            await ws.send(_resp(mid, {"response": None}))
+            parsed = parse_card_callback(_loads(frame.get("data")))
+            if parsed is None:
+                return []                      # 认不出的卡片交互 → 当没看见（绝不当成"批准"）
+            track, approved, sender = parsed
+            if self._awaiting_confirm == track:
+                self._awaiting_confirm = None
+            if self._card is not None:
+                await self._card.settle(track, approved)
+            # 仍然产出普通 callback 事件：**bridge 的三道入站闸一条都不能少**
+            # （白名单 / 群提及 / 审批只认主人）。换个入口就绕过闸是最典型的漏法。
+            return [ChannelEvent(kind="callback", sender_id=sender or self.owner_id,
+                                 callback_id=track, approved=approved)]
         if topic == BOT_TOPIC:
             await ws.send(_resp(mid, {"response": None}))   # ACK（回 echo messageId）
             data = _loads(frame.get("data"))
@@ -198,7 +220,19 @@ class DingTalkAdapter(ChannelAdapter):
         await self.send_text(text)                # 不支持编辑 → 发新消息（bridge 已放慢节流）
 
     async def send_confirm(self, text: str, callback_id: str) -> None:
+        """发一次确认：配了卡片模板走**真按钮**，否则（或卡片挂了）退回文本 y/n。
+
+        **文本待确认态照样置位**：即便卡片发成功了，主人仍可以直接回一句 y——他不一定
+        想去点按钮，而且卡片万一在他手机上渲染不出来，打字必须始终是可用的兜底。
+        确认能力本身一秒都不能丢（2026-07-28 刚被"投递静默失败"教育过）。
+        """
         self._awaiting_confirm = callback_id
+        if self._card is not None:
+            try:
+                await self._card.send(text, callback_id)
+                return
+            except Exception as e:  # noqa: BLE001 —— 卡片是体验优化，挂了就退回文本
+                _log.warning("互动卡片发送失败，退回文本确认：%s", str(e)[:160])
         await self.send_text(text + "\n\n请回复 **y**（批准）或 **n**（拒绝）。")
 
     # ------------------------------------------------------------ 入站附件（图片/文件）
@@ -277,6 +311,12 @@ class DingTalkAdapter(ChannelAdapter):
         return path
 
     # ------------------------------------------------------------ 媒体（图片/文件）
+    async def _ensure_session(self):
+        import aiohttp
+        if self._session is None:
+            self._session = aiohttp.ClientSession()
+        return self._session
+
     async def _token(self, *, legacy: bool) -> str:
         """取 access_token，带缓存与提前刷新。legacy=True 是媒体上传用的老接口那套。"""
         import aiohttp
@@ -380,7 +420,7 @@ class DingTalkAdapter(ChannelAdapter):
         async with self._session.post(
                 "https://api.dingtalk.com/v1.0/gateway/connections/open",
                 json={"clientId": self._cid, "clientSecret": self._secret,
-                      "subscriptions": [{"type": "CALLBACK", "topic": BOT_TOPIC}],
+                      "subscriptions": self._subscriptions(),
                       "ua": "vortocode-im/1.0"}) as resp:
             data = await resp.json()
         endpoint = str(data["endpoint"]).rstrip("/")
@@ -388,6 +428,16 @@ class DingTalkAdapter(ChannelAdapter):
         base = endpoint if endpoint.endswith("/connect") else endpoint + "/connect"
         ws = await self._session.ws_connect(f"{base}?ticket={ticket}")
         return _AioWS(ws)
+
+    def _subscriptions(self) -> list:
+        """建连要订阅的主题。**没配卡片模板时与不加本功能时逐字节相同**——多订阅一个未知
+        主题万一被钉钉拒绝，长连就建不起来，那是 bot 直接死。这个风险本地验不了，
+        所以锁在"配了才有"的门后面。"""
+        subs = [{"type": "CALLBACK", "topic": BOT_TOPIC}]
+        if self._card is not None:
+            from src.im.dingtalk_card import CARD_CALLBACK_TOPIC
+            subs.append({"type": "CALLBACK", "topic": CARD_CALLBACK_TOPIC})
+        return subs
 
     async def _default_reply(self, webhook: str, payload: dict) -> None:
         import aiohttp

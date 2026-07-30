@@ -512,6 +512,116 @@ def set_job_enabled(repo_root: str, name: str, enabled: bool) -> str:
     return f"作业 {name} 已{'启用' if enabled else '停用'}"
 
 
+def _snapshot(jobs: List[CronJob]) -> Dict[str, tuple]:
+    """把全部作业压成可比对的快照——改多行块的回验靠它，比逐字段查稳得多。"""
+    return {j.name: (j.schedule.raw, j.enabled, j.kind, j.prompt, j.command,
+                     j.allow_web, j.announce, j.model, j.budget, j.timeout) for j in jobs}
+
+
+def set_job_prompt(repo_root: str, name: str, prompt: str) -> str:
+    """改一个**prompt 作业**的提示内容（整块替换，其余一个字节不动）。
+
+    为什么现在允许改（2026-07-30 二次修正我自己的设计）：起初连 prompt 也不许改，理由写在
+    `set_job_web` 的注释里——"不许改内容，所以劫持不了 relay_duty 这类已被信任的作业"。
+    这条**对 command 作业成立、对 prompt 作业不成立**：
+
+    - `cron_add` 本来就只造 prompt 作业，且能带任意 prompt（同样过确认门）。所以"改 prompt"
+      与"建个新的 + 停掉旧的"终态完全相同——锁它买不到任何安全，只把人逼去手工编辑 yaml
+      （真机 2026-07-30：主人想给新闻作业加一句"附上来源链接"，被顶回来手改文件）。
+    - command 作业则相反：它只可能由人手写 yaml 产生，agent 从来造不出。改它的命令是**另一个
+      风险类别**，继续锁死——`relay_duty` 的保护一分不减。
+
+    社工面（"改一下 relay_duty" 比 "新建陌生作业" 更容易骗到点头）由工具层补偿：确认时
+    必须把**改前改后**摆给人看，且启用态要说明白。见 tools/cron.py 的 _set_prompt。
+    """
+    name = str(name or "").strip()
+    prompt = str(prompt or "").strip()
+    if not prompt:
+        raise CronEditError("新的 prompt 不能为空")
+
+    before = _snapshot(load_jobs(repo_root))
+    if name not in before:
+        raise CronEditError(f"无此作业 {name}（现有：{', '.join(sorted(before)) or '空'}）")
+    if before[name][2] == "command":
+        raise CronEditError(
+            f"{name} 是 command 作业（跑确定性命令），本工具不改它——改命令是另一个风险类别，"
+            f"只能人工编辑 .vortocode/cron.yaml")
+
+    lines = cron_path(repo_root).read_text(encoding="utf-8").splitlines(True)
+    head = re.compile(r"^(\s*)-\s+name\s*:\s*['\"]?" + re.escape(name) + r"['\"]?\s*$")
+    start = next((i for i, ln in enumerate(lines) if head.match(ln.rstrip("\n"))), None)
+    if start is None:
+        raise CronEditError(f"作业 {name} 在文件里找不到起始行（可能写成了行内/流式 yaml）；请人工编辑")
+    indent = head.match(lines[start].rstrip("\n")).group(1)
+
+    stop = len(lines)                                  # 块止于下一个同级 `- ` 或任一顶格行
+    for i in range(start + 1, len(lines)):
+        ln = lines[i].rstrip("\n")
+        if not ln.strip():
+            continue
+        if re.match(r"^" + re.escape(indent) + r"-\s", ln) or not ln[:1].isspace():
+            stop = i
+            break
+
+    key = next((i for i in range(start + 1, stop)
+                if re.match(r"^\s*prompt\s*:", lines[i])), None)
+    if key is None:
+        raise CronEditError(f"作业 {name} 里找不到 prompt 字段；请人工编辑")
+
+    # prompt 的值可能是行内、也可能是块标量（`|` 后跟若干更深缩进行）。按 yaml 的缩进规则
+    # 吃到"缩进不深于 prompt 键"的第一行为止——少吃会留下孤儿行，多吃会吞掉兄弟键。
+    key_indent = len(re.match(r"^(\s*)", lines[key]).group(1))
+    end = key + 1
+    while end < stop:
+        raw = lines[end].rstrip("\n")
+        if raw.strip() and len(re.match(r"^(\s*)", raw).group(1)) <= key_indent:
+            break
+        end += 1
+
+    import yaml
+    # 多行内容用**字面块**（`prompt: |`）而不是引号折行——这个文件主人是要手改的，
+    # 引号式把每行之间塞进空行、可读性很差。仍然走 yaml 序列化（不手拼字符串：prompt 里
+    # 带引号/冒号/缩进是常态，手拼必出转义洞），只是换个 style；写完照样全量回验。
+    dumper = yaml.SafeDumper
+    if "\n" in prompt:
+        class _Literal(str):
+            pass
+
+        dumper = type("_BlockDumper", (yaml.SafeDumper,), {})
+        dumper.add_representer(
+            _Literal,
+            lambda d, data: d.represent_scalar("tag:yaml.org,2002:str", data, style="|"))
+        payload = {"prompt": _Literal(prompt)}
+    else:
+        payload = {"prompt": prompt}
+    dumped = yaml.dump(payload, Dumper=dumper, allow_unicode=True, sort_keys=False,
+                       default_flow_style=False)
+    pad = " " * key_indent
+    block = "".join((pad + ln if ln.strip() else ln) for ln in dumped.splitlines(True))
+    new_text = "".join(lines[:key]) + block + "".join(lines[end:])
+
+    # 快照回验：除目标作业的 prompt 外，**其它一个字节都不许变**。
+    # 多行块原地重写最容易伤到相邻作业和注释（我在 _set_bool_field 里就是为此才只做单行改），
+    # 所以这里不逐字段查，直接全量比对。
+    after = _snapshot(parse_jobs_text(new_text))
+    if set(after) != set(before):
+        raise CronEditError("自检未通过：改动增减了作业（已放弃写入，文件未动）")
+    for other, snap in before.items():
+        if other == name:
+            continue
+        if after[other] != snap:
+            raise CronEditError(f"自检未通过：改动动到了别的作业 {other}（已放弃写入，文件未动）")
+    mine_before, mine_after = list(before[name]), list(after[name])
+    if mine_after[3] != prompt:
+        raise CronEditError("自检未通过：prompt 没写成预期内容（已放弃写入，文件未动）")
+    mine_before[3] = mine_after[3] = prompt            # 只允许 prompt 这一项不同
+    if mine_before != mine_after:
+        raise CronEditError(f"自检未通过：改 prompt 顺带动了 {name} 的其它字段（已放弃写入）")
+
+    _write(repo_root, new_text)
+    return f"作业 {name} 的内容已更新"
+
+
 def set_job_web(repo_root: str, name: str, allow_web: bool) -> str:
     """给/收回一个已有作业的出网许可（单行改）。
 
