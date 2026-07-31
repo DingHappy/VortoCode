@@ -158,6 +158,8 @@ def test_parse_deny():
     {"outTrackId": "cid", "cardActionData": {"params": {"action": "whatever"}}},
     {"cardActionData": {"params": {"action": "approve"}}},    # 没有 outTrackId
     {"outTrackId": "cid", "cardActionData": "不是 json"},
+    # 没有发送者身份——绝不能翻成"是主人"，否则 bridge 的白名单闸和审批闸全被架空
+    {"outTrackId": "cid", "cardActionData": {"params": {"action": "approve"}}, "userId": ""},
     None,
 ])
 def test_unrecognized_callback_is_never_an_approval(data):
@@ -184,8 +186,14 @@ async def test_card_click_becomes_a_normal_callback_event():
     assert len(evs) == 1
     ev = evs[0]
     assert ev.kind == "callback" and ev.callback_id == "cid3" and ev.approved is True
-    assert a._awaiting_confirm is None                       # 待确认态被消费
-    assert card.settled == [("cid3", True)]                  # 卡片刷成终态
+    assert ev.sender_id == "owner-1" and ev.ack == "card"    # 身份如实申报，不缺省成主人
+    # 帧处理阶段**零状态变更**——这帧还没过闸。过闸前就动状态，陌生帧就能吃掉
+    # 主人的文本 y/n 兜底、把卡片刷成"已批准"的假象。
+    assert a._awaiting_confirm == "cid3"
+    assert card.settled == []
+    await a.ack_callback(ev)                                 # bridge 过闸后的唯一动作
+    assert a._awaiting_confirm is None                       # 此刻才消费待确认态
+    assert card.settled == [("cid3", True)]                  # 此刻才刷终态
 
 
 @pytest.mark.asyncio
@@ -193,12 +201,15 @@ async def test_stranger_card_click_is_still_gated_by_the_bridge(tmp_path):
     """陌生人点按钮 → 事件照常产出，但**由 bridge 丢掉**（审批只认主人）。
 
     这条走真 bridge，不是断言适配器自己判定——安全判定归 bridge 一处，
-    适配器只如实申报事实（channel.py 的分工）。
+    适配器只如实申报事实（channel.py 的分工）。被丢掉的点击**什么都不许改**：
+    卡片不许刷成"已批准"的假象，主人的文本 y/n 兜底也不许被吃掉。
     """
     from src.im.bridge import IMBridge
     from tests.unit.test_im_bridge import ScriptedLLM
 
-    a = DingTalkAdapter("c", "s", "owner-1", card_sender=_FakeCard())
+    card = _FakeCard()
+    a = DingTalkAdapter("c", "s", "owner-1", card_sender=card)
+    a._awaiting_confirm = "cid4"
     bridge = IMBridge(str(tmp_path), a, "owner-1", channel="test", llm=ScriptedLLM("x"))
 
     import asyncio
@@ -207,12 +218,50 @@ async def test_stranger_card_click_is_still_gated_by_the_bridge(tmp_path):
 
     from src.im.channel import ChannelEvent
     await bridge._on_event(ChannelEvent(kind="callback", sender_id="stranger-9",
-                                        callback_id="cid4", approved=True))
+                                        callback_id="cid4", approved=True, ack="card"))
     assert not fut.done(), "陌生人的按钮点击批准了一次确认——审批闸被绕过"
+    assert card.settled == []                    # 卡片没被刷成"已批准"的假象
+    assert a._awaiting_confirm == "cid4"         # 主人的文本兜底还在
 
     await bridge._on_event(ChannelEvent(kind="callback", sender_id="owner-1",
-                                        callback_id="cid4", approved=True))
+                                        callback_id="cid4", approved=True, ack="card"))
     assert fut.done() and fut.result() is True               # 主人点才算数
+    assert card.settled == [("cid4", True)]      # 过了闸，卡片才刷终态
+    assert a._awaiting_confirm is None
+
+
+@pytest.mark.asyncio
+async def test_callback_frame_without_sender_is_dropped():
+    """回调帧里没有发送者身份 → **整帧丢弃**，绝不冒充主人。
+
+    旧实现写的是 ``sender_id=sender or owner_id``——把"认不出是谁"翻成"是主人"，
+    bridge 的白名单闸和审批闸全部形同虚设。fail-closed 的方向：宁可按钮失效
+    （文本 y/n 兜底还在），也不把一次无名交互记到主人头上。
+    """
+    card = _FakeCard()
+    a = DingTalkAdapter("c", "s", "owner-1", card_sender=card)
+    a._awaiting_confirm = "cid9"
+    frame = json.dumps({
+        "type": "CALLBACK",
+        "headers": {"messageId": "m9", "topic": C.CARD_CALLBACK_TOPIC},
+        "data": json.dumps({"outTrackId": "cid9",
+                            "cardActionData": {"params": {"action": "approve"}}})})
+    evs = await a._handle_frame(_WS(), frame)
+    assert evs == []                             # 没有事件 → bridge 连见都见不到
+    assert a._awaiting_confirm == "cid9"         # 文本兜底不被吃掉
+    assert card.settled == []                    # 卡片不被刷成任何终态
+
+
+def test_split_title_survives_empty_text():
+    """空/全空白文案不许炸。
+
+    旧实现在这里抛 StopIteration（协程里变 RuntimeError）——虽被 send_confirm 的
+    降级兜住不丢确认，但按钮会**静默**消失。
+    """
+    assert C._split_title("") == ("需要你确认", "需要你确认")
+    assert C._split_title("  \n\t ") == ("需要你确认", "需要你确认")
+    payload = C.build_card_payload("T", "o", "cid", "")      # 整条拼装链也不许炸
+    assert payload["cardData"]["cardParamMap"]["title"] == "需要你确认"
 
 
 @pytest.mark.asyncio
