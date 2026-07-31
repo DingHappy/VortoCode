@@ -129,16 +129,14 @@ class DingTalkAdapter(ChannelAdapter):
             await ws.send(_resp(mid, {"response": None}))
             parsed = parse_card_callback(_loads(frame.get("data")))
             if parsed is None:
-                return []                      # 认不出的卡片交互 → 当没看见（绝不当成"批准"）
+                return []                      # 认不出（含无发送者）→ 当没看见，绝不当成"批准"
             track, approved, sender = parsed
-            if self._awaiting_confirm == track:
-                self._awaiting_confirm = None
-            if self._card is not None:
-                await self._card.settle(track, approved)
-            # 仍然产出普通 callback 事件：**bridge 的三道入站闸一条都不能少**
-            # （白名单 / 群提及 / 审批只认主人）。换个入口就绕过闸是最典型的漏法。
-            return [ChannelEvent(kind="callback", sender_id=sender or self.owner_id,
-                                 callback_id=track, approved=approved)]
+            # 帧处理阶段**不做任何状态变更**：不清文本待确认态、不刷卡片终态——这帧还没过
+            # bridge 的三道入站闸（白名单 / 群提及 / 审批只认主人）。过了闸 bridge 才回调
+            # ack_callback，状态在那里才动；否则陌生帧既能吃掉主人的文本 y/n 兜底，
+            # 又能把卡片刷成"已批准"的假象。sender 也如实申报，绝不缺省成主人。
+            return [ChannelEvent(kind="callback", sender_id=sender, callback_id=track,
+                                 approved=approved, ack="card")]
         if topic == BOT_TOPIC:
             await ws.send(_resp(mid, {"response": None}))   # ACK（回 echo messageId）
             data = _loads(frame.get("data"))
@@ -402,7 +400,14 @@ class DingTalkAdapter(ChannelAdapter):
         return True
 
     async def ack_callback(self, event: ChannelEvent) -> None:
-        return                                    # 文本式确认无需回执
+        if getattr(event, "ack", None) != "card":
+            return                            # 文本式确认无需回执
+        # 只有**过了 bridge 三道闸**的按钮点击才走到这里（bridge 是唯一调用点）。
+        # 此刻才消费文本待确认态、把卡片刷成终态——settle 失败只记日志（确认已生效）。
+        if self._awaiting_confirm == event.callback_id:
+            self._awaiting_confirm = None
+        if self._card is not None:
+            await self._card.settle(event.callback_id, bool(event.approved))
 
     async def close(self) -> None:
         if self._session is not None:
