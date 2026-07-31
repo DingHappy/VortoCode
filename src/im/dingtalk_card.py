@@ -35,7 +35,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import time
 from typing import Optional
 
 _log = logging.getLogger("vortocode.im.dingtalk.card")
@@ -95,9 +94,12 @@ def _split_title(text: str) -> tuple:
     污点警示（"⚠️ 本回合摄入过外部内容…"）就在首行——它必须留在**标题**里，
     那是卡片上最显眼的位置。把安全提示挤到正文末尾等于没提示。
     """
-    lines = [ln for ln in str(text or "").splitlines()]
-    head = next((ln.strip() for ln in lines if ln.strip()), "需要你确认")
-    rest = "\n".join(lines[lines.index(next(ln for ln in lines if ln.strip())) + 1:]).strip()
+    lines = str(text or "").splitlines()
+    idx = next((i for i, ln in enumerate(lines) if ln.strip()), None)
+    if idx is None:                            # 空文案也不许炸：炸了卡片就静默降级回文本
+        return "需要你确认", "需要你确认"
+    head = lines[idx].strip()
+    rest = "\n".join(lines[idx + 1:]).strip()
     return head[:120], (rest or head)[:2000]
 
 
@@ -112,7 +114,9 @@ def parse_card_callback(data: dict) -> Optional[tuple]:
         return None
     track = str(data.get("outTrackId") or data.get("cardInstanceId") or "").strip()
     sender = str(data.get("userId") or data.get("senderStaffId") or "").strip()
-    if not track:
+    if not track or not sender:
+        # 没有发送者身份的点击同样算"认不出"：宁可按钮失效（文本 y/n 兜底还在），
+        # 也绝不让下游把一次无名交互记到任何人头上——那会把 bridge 的闸架空。
         return None
 
     blob: dict = {}
@@ -185,7 +189,3 @@ class CardSender:
             await self._post(_UPDATE, build_update_payload(callback_id, approved))
         except Exception as e:  # noqa: BLE001
             _log.warning("卡片终态更新失败（确认已生效，不影响）：%s", str(e)[:160])
-
-
-def _now() -> float:
-    return time.monotonic()
