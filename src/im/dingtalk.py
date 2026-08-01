@@ -132,6 +132,9 @@ class DingTalkAdapter(ChannelAdapter):
             if parsed is None:
                 return []                      # 认不出（含无发送者）→ 当没看见，绝不当成"批准"
             track, approved, sender = parsed
+            # 成功路径也要留痕：真机排查"点了没反应"时，日志里**只有失败**等于抓瞎——
+            # 分不清"回调没到"和"到了但没效果"，而这两者的修法完全不同（2026-08-01 卡在这）。
+            _log.info("卡片回调：%s → %s", track, "同意" if approved else "拒绝")
             # 帧处理阶段**不做任何状态变更**：不清文本待确认态、不刷卡片终态——这帧还没过
             # bridge 的三道入站闸（白名单 / 群提及 / 审批只认主人）。过了闸 bridge 才回调
             # ack_callback，状态在那里才动；否则陌生帧既能吃掉主人的文本 y/n 兜底，
