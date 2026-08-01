@@ -161,6 +161,23 @@ def parse_card_callback(data: dict) -> Optional[tuple]:
     return None
 
 
+def describe_card_error(exc: BaseException) -> str:
+    """把卡片失败翻成一句**主人看得懂、且知道去哪修**的话。
+
+    为什么需要这个：卡片发不出去会自动退回文本 y/n——功能不受影响，但主人**完全无声地**
+    永远收不到按钮，也不知道为什么。配了模板却没开权限正是最容易撞上的一种
+    （2026-08-01 真机首配就撞了）。"降级了但不告诉人"是本仓反复栽过的老毛病。
+    """
+    s = str(exc)
+    if "Card.Instance.Write" in s or "AccessTokenPermissionDenied" in s:
+        return "应用没开通 Card.Instance.Write 权限（去开发者后台「权限管理」申请）"
+    if "cardTemplateId" in s or "template" in s.lower():
+        return "模板 ID 不对或模板没发布"
+    if "403" in s:
+        return "钉钉拒绝了请求（权限或模板归属应用不对）"
+    return s[:120]
+
+
 class CardSender:
     """卡片的出站面。transport 可注入（同 connect_fn/reply_fn/oto_fn 的约定，测试不触网）。
 
@@ -185,7 +202,9 @@ class CardSender:
                                 headers={"x-acs-dingtalk-access-token": token}) as r:
             body = await r.text()
             if r.status != 200:
-                raise RuntimeError(f"卡片接口 HTTP {r.status}: {body[:200]}")
+                # 截到 600 不是 200：钉钉的报错里会带一条"点这里申请权限"的直链，
+                # 200 正好把链接切掉（2026-08-01 真机上就是这么丢了唯一可操作的信息）。
+                raise RuntimeError(f"卡片接口 HTTP {r.status}: {body[:600]}")
             try:
                 return json.loads(body or "{}")
             except ValueError:
