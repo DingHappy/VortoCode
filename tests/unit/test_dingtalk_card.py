@@ -133,6 +133,47 @@ async def test_text_reply_still_works_when_card_sent():
     assert ev.kind == "callback" and ev.callback_id == "cid5" and ev.approved is True
 
 
+@pytest.mark.asyncio
+async def test_card_failure_tells_the_owner_why_once():
+    """卡片挂了要**说一声**，但只说第一次。
+
+    真机首配撞的就是这个：模板配好了、权限没开，卡片每次都发不出去，主人收到的永远是
+    文本 y/n，**没有任何线索**说明按钮为什么没出现。降级不告知 = 静默失败（#254 同款）。
+    只说一次是因为：真坏了的话每条确认都挂一段报错就成了另一种噪音。
+    """
+    sent: list = []
+
+    async def oto(key, param):
+        sent.append(param["content"])
+
+    class _PermDenied:
+        async def send(self, text, cid):
+            raise RuntimeError('卡片接口 HTTP 403: {"code":"Forbidden.AccessDenied.'
+                               'AccessTokenPermissionDenied","message":"应用尚未开通所需的权限：'
+                               '[Card.Instance.Write]"}')
+
+        async def settle(self, cid, ok):
+            pass
+
+    a = DingTalkAdapter("c", "s", "o", oto_fn=oto, card_sender=_PermDenied())
+    await a.send_confirm("要跑吗？", "cid1")
+    assert "**y**" in sent[0], "降级后确认能力必须还在"
+    assert "Card.Instance.Write" in sent[0], "主人得知道去开哪个权限"
+
+    await a.send_confirm("再来一次？", "cid2")
+    assert "**y**" in sent[1] and "Card.Instance.Write" not in sent[1], "只该提示第一次"
+
+
+@pytest.mark.parametrize("blob,want", [
+    ('HTTP 403: {"code":"...AccessTokenPermissionDenied"...[Card.Instance.Write]',
+     "Card.Instance.Write"),
+    ("HTTP 400: invalid cardTemplateId", "模板"),
+])
+def test_error_description_points_at_the_fix(blob, want):
+    """报错要指向**怎么修**，不是把原始 JSON 糊人一脸。"""
+    assert want in C.describe_card_error(RuntimeError(blob))
+
+
 # --------------------------------------------------------------- 3. 回调解析（fail-closed）
 @pytest.mark.parametrize("blob", [
     {"cardActionData": {"cardPrivateData": {"params": {"action": "approve"}}}},
