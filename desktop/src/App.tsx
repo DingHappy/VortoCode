@@ -3,7 +3,6 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowUp,
-  ChevronDown,
   CircleAlert,
   CircleCheck,
   FileText,
@@ -87,7 +86,13 @@ import { ProjectAssetsPanel } from "./components/ProjectAssetsPanel";
 import { RunsPanel } from "./components/RunsPanel";
 import { SettingsModal } from "./components/SettingsModal";
 import { TurnTimeline } from "./components/TurnTimeline";
+import { WelcomeGuide } from "./components/WelcomeGuide";
 import { useJournal } from "./hooks/useJournal";
+import {
+  FIRST_DELIVERY_PROMPT,
+  PROJECT_BRIEF_PROMPT,
+  isPlanExecutionConfirmation,
+} from "./lib/onboarding";
 import {
   compactSessionCwd,
   formatRelativeTime,
@@ -3371,13 +3376,21 @@ function App() {
             }}
           >
             {messages.length === 0 && !streaming && (
-              <div className="welcome">
-                <h1>{activeScope === "scratch" ? "在 Scratch 中构建" : "开始构建"}</h1>
-                <button className="welcome-scope" onClick={() => setSettingsOpen(true)}>
-                  {activeScope === "project" ? (repoRoot.split("/").filter(Boolean).slice(-1)[0] || "项目工作区") : activeScope === "scratch" ? "隔离 Scratch" : "通用任务"}
-                  <ChevronDown size={14} />
-                </button>
-              </div>
+              <WelcomeGuide
+                activeScope={activeScope}
+                projectName={repoRoot.split("/").filter(Boolean).slice(-1)[0] || ""}
+                connection={connection}
+                // llmProfile 为 null = 还在读 Keychain（"检查中"），不是"没配"——
+                // 这两态必须分开，否则冷启动瞬间会误报"请先配置模型"。
+                modelLoaded={llmProfile !== null}
+                modelConfigured={Boolean(llmProfile?.configured)}
+                runtimeStarting={runtimeStarting}
+                projectSwitching={projectSwitching}
+                onOpenSettings={() => setSettingsOpen(true)}
+                onChooseProject={() => setSettingsOpen(true)}
+                onDraftFirstDelivery={() => setPrompt(FIRST_DELIVERY_PROMPT)}
+                onDraftProjectBrief={() => setPrompt(PROJECT_BRIEF_PROMPT)}
+              />
             )}
 
             {plan.length > 0 && (
@@ -3417,13 +3430,24 @@ function App() {
 
             {pendingConfirm && (
               <section className={`confirm-card ${pendingConfirm.tainted ? "tainted" : ""}`}>
-                <div className="confirm-icon">!</div>
+                {/* plan 阶段结束请求动手，与"删文件/跑命令"那类确认不是一回事：前者是本次任务
+                    继续往下走的一次性授权，后者是单个危险动作。文案分开，人才知道自己在批什么。
+                    **污点提示优先级最高**——那是安全提示，任何时候都不能被别的文案盖掉。 */}
+                <div className="confirm-icon">{!pendingConfirm.tainted && isPlanExecutionConfirmation(pendingConfirm.text) ? "▶" : "!"}</div>
                 <div className="confirm-copy">
-                  <strong>{pendingConfirm.tainted ? "外部内容回合需要人工确认" : "Runtime 请求确认"}</strong>
+                  <strong>
+                    {pendingConfirm.tainted
+                      ? "外部内容回合需要人工确认"
+                      : isPlanExecutionConfirmation(pendingConfirm.text)
+                        ? "计划已就绪，授权后在隔离工作区继续"
+                        : "Runtime 请求确认"}
+                  </strong>
                   <p>{pendingConfirm.text}</p>
                   <div>
                     <button className="deny" onClick={() => void answerConfirmation(false)}>拒绝</button>
-                    <button className="allow" onClick={() => void answerConfirmation(true)}>允许一次</button>
+                    <button className="allow" onClick={() => void answerConfirmation(true)}>
+                      {!pendingConfirm.tainted && isPlanExecutionConfirmation(pendingConfirm.text) ? "授权继续" : "允许一次"}
+                    </button>
                   </div>
                 </div>
               </section>
