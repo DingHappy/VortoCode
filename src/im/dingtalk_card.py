@@ -82,16 +82,27 @@ def build_card_payload(template_id: str, owner_id: str, callback_id: str, text: 
     }
 
 
-def build_update_payload(callback_id: str, approved: bool) -> dict:
+def build_update_payload(template_id: str, callback_id: str, approved: bool) -> dict:
     """点完之后把卡片刷成终态。
 
     为什么必须刷：按钮留在那儿还能点，人第二天翻记录会以为这条还等着自己——而实际上
     确认早就被消费掉了（Future 已 resolve）。卡片必须自己说清"这条已经批过/拒过"。
+
+    三个字段都是真机逼出来的（2026-08-01 首次真机联调）：
+
+    - ``cardTemplateId``：更新接口也要带，漏了是 400 ``MissingcardTemplateId``。
+      当初照着"更新只需 outTrackId"的想当然写的，真机一点按钮就露馅。
+    - ``status`` 的值必须是 ``agree`` / ``reject`` 这两个**裸词**，不能是"✅ 已批准"这种话：
+      官方审批模板用 status 做按钮的显示条件（``status == "agree"`` 时把两个按钮换成灰色的
+      「已同意」），值对不上则条件不成立，卡片纹丝不动。
+    - ``updateCardDataByKey``：**按 key 合并**而不是整包替换。不带这个，只传 status
+      会把 title/body 一起冲掉——卡片当场变空白。
     """
-    mark = "✅ 已批准" if approved else "❌ 已拒绝"
     return {
+        "cardTemplateId": template_id,
         "outTrackId": callback_id,
-        "cardData": {"cardParamMap": {"status": mark}},
+        "cardData": {"cardParamMap": {"status": "agree" if approved else "reject"}},
+        "cardUpdateOptions": {"updateCardDataByKey": True},
         "userIdType": 1,
     }
 
@@ -161,6 +172,23 @@ def parse_card_callback(data: dict) -> Optional[tuple]:
     return None
 
 
+def describe_card_error(exc: BaseException) -> str:
+    """把卡片失败翻成一句**主人看得懂、且知道去哪修**的话。
+
+    为什么需要这个：卡片发不出去会自动退回文本 y/n——功能不受影响，但主人**完全无声地**
+    永远收不到按钮，也不知道为什么。配了模板却没开权限正是最容易撞上的一种
+    （2026-08-01 真机首配就撞了）。"降级了但不告诉人"是本仓反复栽过的老毛病。
+    """
+    s = str(exc)
+    if "Card.Instance.Write" in s or "AccessTokenPermissionDenied" in s:
+        return "应用没开通 Card.Instance.Write 权限（去开发者后台「权限管理」申请）"
+    if "cardTemplateId" in s or "template" in s.lower():
+        return "模板 ID 不对或模板没发布"
+    if "403" in s:
+        return "钉钉拒绝了请求（权限或模板归属应用不对）"
+    return s[:120]
+
+
 class CardSender:
     """卡片的出站面。transport 可注入（同 connect_fn/reply_fn/oto_fn 的约定，测试不触网）。
 
@@ -185,7 +213,9 @@ class CardSender:
                                 headers={"x-acs-dingtalk-access-token": token}) as r:
             body = await r.text()
             if r.status != 200:
-                raise RuntimeError(f"卡片接口 HTTP {r.status}: {body[:200]}")
+                # 截到 600 不是 200：钉钉的报错里会带一条"点这里申请权限"的直链，
+                # 200 正好把链接切掉（2026-08-01 真机上就是这么丢了唯一可操作的信息）。
+                raise RuntimeError(f"卡片接口 HTTP {r.status}: {body[:600]}")
             try:
                 return json.loads(body or "{}")
             except ValueError:
@@ -198,6 +228,7 @@ class CardSender:
     async def settle(self, callback_id: str, approved: bool) -> None:
         """点完刷终态。**失败只记日志不抛**——确认本身已经生效，不能因为刷不动卡片而翻车。"""
         try:
-            await self._post(_UPDATE, build_update_payload(callback_id, approved))
+            await self._post(_UPDATE,
+                             build_update_payload(self.template_id, callback_id, approved))
         except Exception as e:  # noqa: BLE001
             _log.warning("卡片终态更新失败（确认已生效，不影响）：%s", str(e)[:160])

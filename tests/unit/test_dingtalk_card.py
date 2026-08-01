@@ -133,6 +133,47 @@ async def test_text_reply_still_works_when_card_sent():
     assert ev.kind == "callback" and ev.callback_id == "cid5" and ev.approved is True
 
 
+@pytest.mark.asyncio
+async def test_card_failure_tells_the_owner_why_once():
+    """卡片挂了要**说一声**，但只说第一次。
+
+    真机首配撞的就是这个：模板配好了、权限没开，卡片每次都发不出去，主人收到的永远是
+    文本 y/n，**没有任何线索**说明按钮为什么没出现。降级不告知 = 静默失败（#254 同款）。
+    只说一次是因为：真坏了的话每条确认都挂一段报错就成了另一种噪音。
+    """
+    sent: list = []
+
+    async def oto(key, param):
+        sent.append(param["content"])
+
+    class _PermDenied:
+        async def send(self, text, cid):
+            raise RuntimeError('卡片接口 HTTP 403: {"code":"Forbidden.AccessDenied.'
+                               'AccessTokenPermissionDenied","message":"应用尚未开通所需的权限：'
+                               '[Card.Instance.Write]"}')
+
+        async def settle(self, cid, ok):
+            pass
+
+    a = DingTalkAdapter("c", "s", "o", oto_fn=oto, card_sender=_PermDenied())
+    await a.send_confirm("要跑吗？", "cid1")
+    assert "**y**" in sent[0], "降级后确认能力必须还在"
+    assert "Card.Instance.Write" in sent[0], "主人得知道去开哪个权限"
+
+    await a.send_confirm("再来一次？", "cid2")
+    assert "**y**" in sent[1] and "Card.Instance.Write" not in sent[1], "只该提示第一次"
+
+
+@pytest.mark.parametrize("blob,want", [
+    ('HTTP 403: {"code":"...AccessTokenPermissionDenied"...[Card.Instance.Write]',
+     "Card.Instance.Write"),
+    ("HTTP 400: invalid cardTemplateId", "模板"),
+])
+def test_error_description_points_at_the_fix(blob, want):
+    """报错要指向**怎么修**，不是把原始 JSON 糊人一脸。"""
+    assert want in C.describe_card_error(RuntimeError(blob))
+
+
 # --------------------------------------------------------------- 3. 回调解析（fail-closed）
 @pytest.mark.parametrize("blob", [
     {"cardActionData": {"cardPrivateData": {"params": {"action": "approve"}}}},
@@ -339,9 +380,37 @@ def test_taint_warning_lands_in_the_title():
 
 
 def test_update_payload_marks_the_decision():
-    """点完要把卡片刷成终态——按钮留着还能点，人会以为这条还等着自己。"""
-    assert "已批准" in C.build_update_payload("c", True)["cardData"]["cardParamMap"]["status"]
-    assert "已拒绝" in C.build_update_payload("c", False)["cardData"]["cardParamMap"]["status"]
+    """点完要把卡片刷成终态——按钮留着还能点，人会以为这条还等着自己。
+
+    三条断言都是 2026-08-01 真机联调逼出来的，各对应一种"点了没反应"：
+    """
+    ok = C.build_update_payload("TPL", "cid", True)
+    no = C.build_update_payload("TPL", "cid", False)
+
+    # ① 漏 cardTemplateId → 真机 400 MissingcardTemplateId，卡片纹丝不动
+    assert ok["cardTemplateId"] == "TPL"
+    assert ok["outTrackId"] == "cid"
+
+    # ② status 必须是裸词 agree/reject：官方审批模板拿它做按钮显示条件，
+    #    传"✅ 已批准"这种话条件不成立，按钮不会变灰
+    assert ok["cardData"]["cardParamMap"]["status"] == "agree"
+    assert no["cardData"]["cardParamMap"]["status"] == "reject"
+
+    # ③ 必须按 key 合并：整包替换会把 title/body 冲掉，卡片当场变空白
+    assert ok["cardUpdateOptions"]["updateCardDataByKey"] is True
+
+
+@pytest.mark.asyncio
+async def test_settle_sends_the_template_id():
+    """settle 要把模板 ID 带上——这是真机上"点了没反应"的根因，得从出站面钉住。"""
+    seen: list = []
+
+    async def _capture(url, payload, token):
+        seen.append((url, payload))
+        return {}
+
+    await C.CardSender("TPL-9", "owner", post_fn=_capture).settle("cid", True)
+    assert seen and seen[0][1]["cardTemplateId"] == "TPL-9"
 
 
 @pytest.mark.asyncio
