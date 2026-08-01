@@ -106,9 +106,13 @@ def _split_title(text: str) -> tuple:
 def parse_card_callback(data: dict) -> Optional[tuple]:
     """把一帧卡片回调解析成 ``(callback_id, approved, sender_id)``；不是按钮点击 → None。
 
-    钉钉在不同版本里把按钮值放在几个不同的地方（cardActionData / actionData / params），
+    钉钉在不同版本里把按钮值放在几个不同的地方（cardActionData / actionData / content / params），
     这里逐个试——**认不出就返回 None**（宁可当没看见，也不要把一次未知交互当成"批准"）。
     fail-closed 的方向永远是"不放行"。
+
+    真实形状已对照官方 Go SDK 的 ``card.CardRequest`` 核过（open-dingtalk/dingtalk-stream-sdk-go）：
+    顶层 ``outTrackId`` / ``userId``，按钮参数在 ``cardActionData.cardPrivateData.params``，
+    参数名由模板自定（官方示例用 ``action``）。本函数的多形状扫描覆盖这条真实路径。
     """
     if not isinstance(data, dict):
         return None
