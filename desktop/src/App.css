@@ -7997,3 +7997,158 @@ input::placeholder {
   font-size: 11.5px;
   line-height: 1.65;
 }
+
+/* ── dev 计划依赖图（DevPlanDag）────────────────────────────────────────
+   一律主题变量（深色基底 + 浅色覆盖两遍结构，写死色值会瞎掉一套）。 */
+
+.devplan-dag {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: 9px;
+}
+
+.devplan-dag-facts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11.5px;
+}
+
+.devplan-dag-facts code {
+  color: var(--muted);
+}
+
+.devplan-dag-facts a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.dag-plan-status {
+  padding: 1px 7px;
+  border-radius: 20px;
+  color: var(--muted);
+  background: var(--surface-3);
+}
+
+.dag-plan-status.done { color: var(--green); }
+.dag-plan-status.integration_failed,
+.dag-plan-status.failed { color: var(--red); }
+
+.dag-integration.ok { color: var(--green); }
+.dag-integration.bad { color: var(--red); }
+
+.dag-cycle-warn { color: var(--amber); }
+
+.devplan-dag-canvas {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 34px;
+  padding: 11px 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: var(--surface-1);
+  overflow-x: auto;               /* 长计划横向滚，绝不撑破任务卡 */
+}
+
+.devplan-dag-edges {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.devplan-dag-edges path {
+  fill: none;
+  stroke: var(--line);
+  stroke-width: 1.5;
+}
+
+.devplan-dag-edges path.failed {
+  stroke: var(--red);
+  stroke-dasharray: 4 3;
+}
+
+.devplan-dag-layer {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 1;                     /* 卡片盖在边上面 */
+}
+
+.devplan-dag-node {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 210px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--accent);
+  background: var(--surface-2);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.devplan-dag-node b {
+  overflow: hidden;
+  font-weight: 540;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.devplan-dag-node small {
+  flex: none;
+  color: var(--quiet);
+  font-size: 10.5px;
+}
+
+.devplan-dag-node .dag-glyph { flex: none; }
+
+.devplan-dag-node.landed .dag-glyph { color: var(--green); }
+.devplan-dag-node.landed { color: var(--muted); }
+.devplan-dag-node.running { border-color: var(--accent); }
+.devplan-dag-node.running .dag-glyph { color: var(--accent); }
+.devplan-dag-node.failed { border-color: var(--red); }
+.devplan-dag-node.failed .dag-glyph { color: var(--red); }
+.devplan-dag-node.cyclic { border-style: dashed; border-color: var(--red); }
+.devplan-dag-node.open { background: var(--surface-3); }
+
+.devplan-dag-detail {
+  padding: 9px 11px;
+  border: 1px solid var(--line-soft);
+  border-radius: 9px;
+  background: var(--surface-1);
+  font-size: 12px;
+}
+
+.devplan-dag-detail p {
+  margin: 4px 0;
+  color: var(--muted);
+}
+
+.devplan-dag-detail pre {
+  max-height: 140px;
+  margin: 6px 0 0;
+  padding: 7px 9px;
+  border-radius: 7px;
+  color: var(--red);
+  background: var(--surface-2);
+  font-size: 11px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.devplan-dag-loading,
+.devplan-dag-error {
+  padding: 8px 0;
+  color: var(--quiet);
+  font-size: 12px;
+}
+
+.devplan-dag-error { color: var(--red); }

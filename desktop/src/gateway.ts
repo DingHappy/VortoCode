@@ -10,6 +10,7 @@ import type {
   ConnectionSettings,
   CreateGoalInput,
   DecisionItem,
+  DevPlanGraph,
   ExtensionsInspectSnapshot,
   GoalItem,
   GoalVerifierKind,
@@ -259,6 +260,10 @@ export class GatewayClient {
   async listTasks(): Promise<TaskItem[]> {
     const payload = await this.request<{ tasks?: TaskItem[] }>("/api/tasks");
     return payload.tasks ?? [];
+  }
+
+  async devPlanGraph(planId: string): Promise<DevPlanGraph> {
+    return this.request(`/api/dev-plans/${encodeURIComponent(planId)}/graph`);
   }
 
   async getTaskBranchReview(taskId: string): Promise<TaskBranchReviewSnapshot> {
