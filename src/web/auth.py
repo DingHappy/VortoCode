@@ -51,7 +51,12 @@ def shell_enabled() -> bool:
 # 登录/状态端点（必须能在鉴权前访问，否则没法登录）。
 # 路线 A 下线遗留页后只剩主线页 /、/agent、/artifacts（含制品分享链接）。
 _EXEMPT_PREFIXES = ("/docs", "/redoc", "/openapi.json", "/static")
+# PWA 静态件必须豁免，而且不豁免就没法用：<link rel="manifest"> 的 fetch 默认 **anonymous
+# 不带 Cookie**（除非 crossorigin="use-credentials"），Android 的可安装性检查同样匿名取
+# manifest/sw——设了 token 的真机上这四条 401，「加到主屏幕」就退化成普通书签
+# （2026-08-02 部署后 curl 当场撞到）。内容全部公开无敏感：名字、图标、三行空监听的 sw。
 _EXEMPT_EXACT = {"/", "/agent", "/artifacts",
+                 "/manifest.webmanifest", "/pwa-icon.svg", "/pwa-icon.png", "/sw.js",
                  "/api/health", "/api/health/quick",
                  "/api/auth/login", "/api/auth/logout", "/api/auth/status"}
 
