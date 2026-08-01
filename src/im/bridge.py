@@ -8,6 +8,8 @@ poll 循环收到按钮点击时 set_result 解开——confirm 挂起期间照�
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import re
 import time
 import uuid
@@ -231,14 +233,56 @@ class IMBridge:
                     f"VORTOCODE_IM_ALLOW_FROM（或通道专属的 *_ALLOW_FROM）。")
         return None
 
+    # ------------------------------------------------------------ 开机横幅（去重）
+    def _hello_stamp_path(self) -> Path:
+        return Path(self.repo_root) / ".vortocode" / "logs" / "im_hello.json"
+
+    def _should_say_hello(self) -> bool:
+        """这次重启值不值得跟主人说一声。
+
+        为什么要判：横幅挂在**每次进程启动**上，而部署就是重启。2026-08-01 一晚部署八次，
+        主人的对话里就插了八条一模一样的"已就绪"，把真正的卡片和结果冲散了。
+        横幅本身有用（久宕后恢复、白名单配错），坏在**routine 重启也照说不误**。
+
+        判据：距上次说过不足 ``VORTOCODE_IM_HELLO_QUIET_MIN`` 分钟（默认 30）就闭嘴。
+        连着部署几次只会看见第一条；真宕了几小时再回来照样报平安。
+        设成 0 = 每次都说（今天的行为，留给想要它的人）。
+
+        **有警告时不走这条**（调用方保证）：白名单配错的表现是"机器人装死"，
+        那句提醒漏一次就可能让人排查一整晚。
+        """
+        try:
+            quiet_min = float(os.getenv("VORTOCODE_IM_HELLO_QUIET_MIN", "30") or 30)
+        except ValueError:
+            quiet_min = 30.0
+        if quiet_min <= 0:
+            return True
+        try:
+            last = float(json.loads(
+                self._hello_stamp_path().read_text(encoding="utf-8")).get("at") or 0)
+        except Exception:  # noqa: BLE001 —— 没有/坏了都当"没说过"，宁可多说一句
+            return True
+        return (time.time() - last) >= quiet_min * 60
+
+    def _mark_hello_said(self) -> None:
+        p = self._hello_stamp_path()
+        try:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(json.dumps({"at": time.time()}), encoding="utf-8")
+        except Exception:  # noqa: BLE001 —— 写不下就当没去重，绝不因此拦住启动
+            pass
+
     # ------------------------------------------------------------ 主循环
     async def run(self) -> None:
-        hello = (f"🤖 VortoCode 已就绪（{self.mode} 模式）· 仓库 {Path(self.repo_root).name}。"
-                 f"发任务给我跑隔离流水线；/help 看用法。")
+        # 时间戳用 time.time()（墙钟）不用 monotonic：要跨进程重启比较，monotonic 重启即归零。
         warn = self.allow_from_warning()
-        if warn:
-            hello += "\n" + warn
-        await self._safe_send(hello)
+        if warn or self._should_say_hello():
+            hello = (f"🤖 VortoCode 已就绪（{self.mode} 模式）· 仓库 {Path(self.repo_root).name}。"
+                     f"发任务给我跑隔离流水线；/help 看用法。")
+            if warn:
+                hello += "\n" + warn
+            await self._safe_send(hello)
+            self._mark_hello_said()
         await self.flush_pending_notices()      # 上次断连/下线期间攒下的通知，开机就补
         if self._heartbeat_every > 0 and self._heartbeat_task is None:
             self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())

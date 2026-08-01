@@ -55,6 +55,8 @@ dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "pytest-cov>=4.0.0",
+    # 门禁并行（ci-local.sh 用 -n auto --dist loadfile）。没装也能跑，脚本会自动退回串行。
+    "pytest-xdist>=3.5.0",
     "black>=23.0.0",
     "ruff>=0.1.0",
     "mypy>=1.8",
