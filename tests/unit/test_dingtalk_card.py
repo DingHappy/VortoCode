@@ -414,6 +414,45 @@ async def test_settle_sends_the_template_id():
 
 
 @pytest.mark.asyncio
+async def test_outcome_is_visible_without_relying_on_the_template():
+    """结论要写进**标题**，不能只押在"模板配了显示条件"上。
+
+    真机首配的模板就没配那个条件：钉钉返回成功、日志写着"已刷成终态"，
+    而人看到的是**纹丝不动的卡片**，跟没点一样。反馈不该依赖模板配得对。
+    """
+    seen: list = []
+
+    async def _capture(url, payload, token):
+        seen.append(payload)
+        return {}
+
+    s = C.CardSender("TPL", "owner", post_fn=_capture)
+    await s.send("要跑 rm -rf 吗\n正文细节", "cid1")
+    await s.settle("cid1", True)
+
+    params = seen[-1]["cardData"]["cardParamMap"]
+    assert params["title"] == "✅ 已批准 · 要跑 rm -rf 吗"    # 原标题要留着，不能只剩个勾
+    assert params["status"] == "agree"                      # 模板条件那条路照样走
+    assert seen[-1]["cardUpdateOptions"]["updateCardDataByKey"] is True
+
+    await s.settle("cid1", False)                           # 已消费过 → 退回只写 status
+    assert "title" not in seen[-1]["cardData"]["cardParamMap"]
+
+
+@pytest.mark.asyncio
+async def test_title_cache_is_bounded():
+    """常驻进程里这个缓存**不许无限长**——确认是低频动作，64 条足够覆盖在途的。"""
+    async def _ok(url, payload, token):
+        return {}
+
+    s = C.CardSender("TPL", "owner", post_fn=_ok)
+    for i in range(200):
+        await s.send(f"第 {i} 次\n正文", f"cid{i}")
+    assert len(s._titles) <= 64
+    assert "cid199" in s._titles and "cid0" not in s._titles   # 丢的是最旧的
+
+
+@pytest.mark.asyncio
 async def test_settle_failure_never_raises():
     """刷终态失败只记日志——确认已经生效，不能因为刷不动卡片而翻车。"""
     async def _boom(url, payload, token):
