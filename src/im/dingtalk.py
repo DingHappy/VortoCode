@@ -68,6 +68,7 @@ class DingTalkAdapter(ChannelAdapter):
         self._webhook: Optional[str] = None       # 回复目标：最近一条**过了入站闸**的消息的
                                                   # sessionWebhook（只在 commit_reply_target 更新）
         self._awaiting_confirm: Optional[str] = None   # 文本式确认：待回 y/n 的 callback_id
+        self._card_warned = False                 # 卡片降级只告知一次（见 send_confirm）
         # 发媒体要主动调 API（sessionWebhook 只吃 text/markdown，发不了图和文件），而主动调用
         # 需要 access_token。钉钉这里有**两套**：新接口（发消息）与老接口（媒体上传）各一个，
         # 有效期都是 7200s。缓存 + 提前 5 分钟刷新——每次现取会被限流。
@@ -225,13 +226,21 @@ class DingTalkAdapter(ChannelAdapter):
         确认能力本身一秒都不能丢（2026-07-28 刚被"投递静默失败"教育过）。
         """
         self._awaiting_confirm = callback_id
+        hint = ""
         if self._card is not None:
             try:
                 await self._card.send(text, callback_id)
                 return
             except Exception as e:  # noqa: BLE001 —— 卡片是体验优化，挂了就退回文本
-                _log.warning("互动卡片发送失败，退回文本确认：%s", str(e)[:160])
-        await self.send_text(text + "\n\n请回复 **y**（批准）或 **n**（拒绝）。")
+                _log.warning("互动卡片发送失败，退回文本确认：%s", str(e)[:400])
+                # 降级要**说一声**，否则主人配了模板却永远收不到按钮、也不知道为什么
+                # （2026-08-01 首配就撞上"没开 Card.Instance.Write 权限"，全程无声）。
+                # 只说**第一次**：真坏了的话每条确认都挂个报错，那是另一种噪音。
+                if not self._card_warned:
+                    self._card_warned = True
+                    from src.im.dingtalk_card import describe_card_error
+                    hint = f"\n\n（互动卡片没发出去，已退回文本确认——{describe_card_error(e)}）"
+        await self.send_text(text + "\n\n请回复 **y**（批准）或 **n**（拒绝）。" + hint)
 
     # ------------------------------------------------------------ 入站附件（图片/文件）
     async def _fetch_attachments(self, data: dict) -> tuple[list, list, str]:
