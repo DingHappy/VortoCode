@@ -82,17 +82,23 @@ def build_card_payload(template_id: str, owner_id: str, callback_id: str, text: 
     }
 
 
-def build_update_payload(template_id: str, callback_id: str, approved: bool,
-                         title: str = "") -> dict:
+def build_update_payload(callback_id: str, approved: bool, title: str = "") -> dict:
     """点完之后把卡片刷成终态。
 
     为什么必须刷：按钮留在那儿还能点，人第二天翻记录会以为这条还等着自己——而实际上
     确认早就被消费掉了（Future 已 resolve）。卡片必须自己说清"这条已经批过/拒过"。
 
-    三个字段都是真机逼出来的（2026-08-01 首次真机联调）：
+    形状对照官方 SDK 的 ``CardReplier.put_card_data``（dingtalk-stream-sdk-python）：
+    ``{outTrackId, cardData:{cardParamMap}, cardUpdateOptions, userIdType}``，
+    **不含 cardTemplateId**——它是"创建卡片实例"那个接口的必填项，不是更新的。
 
-    - ``cardTemplateId``：更新接口也要带，漏了是 400 ``MissingcardTemplateId``。
-      当初照着"更新只需 outTrackId"的想当然写的，真机一点按钮就露馅。
+    这里有过一次教训值得记：更新一度错发到 ``POST /v1.0/card/instances``（那是**创建**接口），
+    钉钉回 400 ``MissingcardTemplateId``；我照着报错把 cardTemplateId 补上，于是**创建**调用
+    合法了、返回 200、悄悄造出一个没人看得见的孤儿实例，而真正那张卡纹丝不动。
+    **报错告诉你缺什么，不等于你敲对了门**——那个 400 其实是在说"你走错接口了"。
+
+    其余两个字段也是真机逼出来的：
+
     - ``status`` 的值必须是 ``agree`` / ``reject`` 这两个**裸词**，不能是"✅ 已批准"这种话：
       官方审批模板用 status 做按钮的显示条件（``status == "agree"`` 时把两个按钮换成灰色的
       「已同意」），值对不上则条件不成立，卡片纹丝不动。
@@ -109,7 +115,6 @@ def build_update_payload(template_id: str, callback_id: str, approved: bool,
     if title:
         params["title"] = f"{mark} · {title}"[:120]
     return {
-        "cardTemplateId": template_id,
         "outTrackId": callback_id,
         "cardData": {"cardParamMap": params},
         "cardUpdateOptions": {"updateCardDataByKey": True},
@@ -217,13 +222,19 @@ class CardSender:
         # 有界：确认是低频动作，64 条足够覆盖任何在途的；满了丢最旧的，绝不无限长。
         self._titles: dict = {}
 
-    async def _post(self, url: str, payload: dict) -> dict:
+    async def _call(self, url: str, payload: dict, *, method: str = "POST") -> dict:
+        """发一次卡片接口调用。
+
+        ``method`` 不是可有可无的装饰：``POST /v1.0/card/instances`` 是**创建**实例，
+        ``PUT`` 才是**更新**。用错的那个会成功返回 200 并造出一个没人看得见的孤儿实例，
+        而目标卡片毫无变化——2026-08-01 真机上追了一整轮才发现（见 build_update_payload）。
+        """
         if self._post_fn is not None:
-            return await self._post_fn(url, payload, "")
+            return await self._post_fn(url, payload, "", method=method)
         token = await self._token_fn(legacy=False)
         session = await self._session_fn()
-        async with session.post(url, json=payload,
-                                headers={"x-acs-dingtalk-access-token": token}) as r:
+        async with session.request(method, url, json=payload,
+                                   headers={"x-acs-dingtalk-access-token": token}) as r:
             body = await r.text()
             if r.status != 200:
                 # 截到 600 不是 200：钉钉的报错里会带一条"点这里申请权限"的直链，
@@ -235,7 +246,7 @@ class CardSender:
                 return {}
 
     async def send(self, text: str, callback_id: str) -> None:
-        await self._post(_CREATE_AND_DELIVER,
+        await self._call(_CREATE_AND_DELIVER,
                          build_card_payload(self.template_id, self.owner_id, callback_id, text))
         while len(self._titles) >= 64:                     # 先腾位再放，字典不会越界长
             self._titles.pop(next(iter(self._titles)))
@@ -244,9 +255,10 @@ class CardSender:
     async def settle(self, callback_id: str, approved: bool) -> None:
         """点完刷终态。**失败只记日志不抛**——确认本身已经生效，不能因为刷不动卡片而翻车。"""
         try:
-            await self._post(_UPDATE,
-                             build_update_payload(self.template_id, callback_id, approved,
-                                                  self._titles.pop(callback_id, "")))
+            await self._call(_UPDATE,
+                             build_update_payload(callback_id, approved,
+                                                  self._titles.pop(callback_id, "")),
+                             method="PUT")          # PUT=更新；POST 是创建，见 _call 的 docstring
             # 成功也记一笔：只记失败的话，"卡片没变化"就分不清是没调、调了没生效、还是模板
             # 自己没把 status 用起来——三种病因修法完全不同（2026-08-01 真机排查卡在这）。
             _log.info("卡片已刷成终态：%s → %s", callback_id, "agree" if approved else "reject")
