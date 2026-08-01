@@ -43,6 +43,26 @@ def test_query_token_rejected(client, monkeypatch):
     assert client.get("/api/status", params={"token": "secret"}).status_code == 401
 
 
+def test_pwa_assets_exempt_but_api_stays_locked(client, monkeypatch):
+    """设了 token 时 PWA 静态件必须放行——浏览器取 manifest 是 **anonymous 不带 Cookie** 的，
+    Android 可安装检查同样匿名，拦了「加到主屏幕」就退化成普通书签
+    （2026-08-02 真机部署后 curl 当场撞到 401，本地门禁清空 token 所以测不出）。
+
+    同一条测试里必须钉住反面：豁免只有这四条**具体文件**，/api/* 照锁——
+    别让"放静态件"悄悄放宽成"放路径前缀"。
+    """
+    monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
+    for path, ctype in (("/manifest.webmanifest", "application/manifest+json"),
+                        ("/pwa-icon.svg", "image/svg+xml"),
+                        ("/pwa-icon.png", "image/png"),
+                        ("/sw.js", "text/javascript")):
+        r = client.get(path)
+        assert r.status_code == 200, f"{path} 被鉴权拦了——手机装不上 PWA"
+        assert ctype in r.headers.get("content-type", ""), path
+    assert client.get("/api/status").status_code == 401, "API 面绝不能跟着静态件一起放"
+    assert client.get("/api/dev-plans").status_code == 401
+
+
 def test_login_sets_httponly_cookie_and_authorizes(client, monkeypatch):
     monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
     assert client.get("/api/status").status_code == 401          # 未登录
