@@ -878,6 +878,12 @@
   ]
  },
  {
+  "path": "/manifest.webmanifest",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
   "path": "/openapi.json",
   "methods": [
    "GET",
@@ -885,10 +891,28 @@
   ]
  },
  {
+  "path": "/pwa-icon.png",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/pwa-icon.svg",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
   "path": "/redoc",
   "methods": [
    "GET",
    "HEAD"
+  ]
+ },
+ {
+  "path": "/sw.js",
+  "methods": [
+   "GET"
   ]
  },
  {
