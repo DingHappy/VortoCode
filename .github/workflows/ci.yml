@@ -112,9 +112,13 @@ jobs:
           set -euxo pipefail
           case "$SUITE" in
             unit-core)
+              # -n auto --dist loadfile：与本地门禁同款并行（ci-local.sh 实测 243s→82s）。
+              # loadfile = 同一文件的用例锁在同一 worker，文件级 fixture/模块状态假设照旧成立。
+              # 只并行这个最重的 suite；tui/integration-live 本来就小，串行少一个风险面。
               .venv/bin/python -m pytest tests/unit tests/test_basic.py \
                 --ignore=tests/unit/test_tui.py \
                 --ignore=tests/unit/test_tui_attach.py \
+                -n auto --dist loadfile \
                 -vv --tb=short --durations=30
               ;;
             tui)
