@@ -146,6 +146,29 @@ def test_parse_approve_across_payload_shapes(blob):
     assert got == ("cid1", True, "u1")
 
 
+@pytest.mark.parametrize("word,expected", [
+    ("approve", True), ("agree", True), ("accept", True), ("yes", True), ("y", True),
+    ("deny", False), ("reject", False), ("refuse", False), ("no", False), ("n", False),
+    ("AGREE", True), ("  Reject  ", False),          # 大小写/空白不该让按钮变哑巴
+])
+def test_button_vocabulary_covers_official_template_wording(word, expected):
+    """官方审批模板用的是 agree/reject，本仓文档写的是 approve/deny——两套都得认。
+
+    只认一套的后果是：照着官方模板配完，按钮**一声不响地什么都不做**，
+    而这类"没有任何报错的失败"最难自查（本仓的老毛病，见 #254 静默投递）。
+    """
+    got = C.parse_card_callback({"outTrackId": "cid", "userId": "u",
+                                 "cardActionData": {"params": {"action": word}}})
+    assert got == ("cid", expected, "u")
+
+
+@pytest.mark.parametrize("word", ["maybe", "cancel", "approve_later", "", "确认", "1"])
+def test_vocabulary_stays_fail_closed(word):
+    """词表放宽了，**方向没变**：不明确表态的一律不放行。"""
+    assert C.parse_card_callback({"outTrackId": "cid", "userId": "u",
+                                  "cardActionData": {"params": {"action": word}}}) is None
+
+
 def test_parse_official_sdk_shape():
     """官方 SDK 里那条**真实**形状——这是唯一有出处的一条，别让重构把它顺手改没了。
 
