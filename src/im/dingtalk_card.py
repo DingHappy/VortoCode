@@ -82,7 +82,8 @@ def build_card_payload(template_id: str, owner_id: str, callback_id: str, text: 
     }
 
 
-def build_update_payload(template_id: str, callback_id: str, approved: bool) -> dict:
+def build_update_payload(template_id: str, callback_id: str, approved: bool,
+                         title: str = "") -> dict:
     """点完之后把卡片刷成终态。
 
     为什么必须刷：按钮留在那儿还能点，人第二天翻记录会以为这条还等着自己——而实际上
@@ -97,11 +98,20 @@ def build_update_payload(template_id: str, callback_id: str, approved: bool) -> 
       「已同意」），值对不上则条件不成立，卡片纹丝不动。
     - ``updateCardDataByKey``：**按 key 合并**而不是整包替换。不带这个，只传 status
       会把 title/body 一起冲掉——卡片当场变空白。
+
+    **同时改写 title**（带上原标题）：只写 status 的话，反馈就完全押在"模板配了显示条件"
+    上——真机首配的模板就没配，于是钉钉明明返回成功、人看到的却是纹丝不动的卡片，
+    跟没点一样。把结论写进标题，任何模板都至少看得见一句话。配了条件的模板不受影响
+    （按钮照样变灰），这里只是多一层不依赖模板的兜底。
     """
+    mark = "✅ 已批准" if approved else "❌ 已拒绝"
+    params = {"status": "agree" if approved else "reject"}
+    if title:
+        params["title"] = f"{mark} · {title}"[:120]
     return {
         "cardTemplateId": template_id,
         "outTrackId": callback_id,
-        "cardData": {"cardParamMap": {"status": "agree" if approved else "reject"}},
+        "cardData": {"cardParamMap": params},
         "cardUpdateOptions": {"updateCardDataByKey": True},
         "userIdType": 1,
     }
@@ -203,6 +213,9 @@ class CardSender:
         self._token_fn = token_fn
         self._session_fn = session_fn
         self._post_fn = post_fn            # async (url, payload, token) -> dict；None = 真 HTTP
+        # 记住每张卡的标题，刷终态时好带上原文（见 build_update_payload）。
+        # 有界：确认是低频动作，64 条足够覆盖任何在途的；满了丢最旧的，绝不无限长。
+        self._titles: dict = {}
 
     async def _post(self, url: str, payload: dict) -> dict:
         if self._post_fn is not None:
@@ -224,12 +237,16 @@ class CardSender:
     async def send(self, text: str, callback_id: str) -> None:
         await self._post(_CREATE_AND_DELIVER,
                          build_card_payload(self.template_id, self.owner_id, callback_id, text))
+        while len(self._titles) >= 64:                     # 先腾位再放，字典不会越界长
+            self._titles.pop(next(iter(self._titles)))
+        self._titles[callback_id] = _split_title(text)[0]
 
     async def settle(self, callback_id: str, approved: bool) -> None:
         """点完刷终态。**失败只记日志不抛**——确认本身已经生效，不能因为刷不动卡片而翻车。"""
         try:
             await self._post(_UPDATE,
-                             build_update_payload(self.template_id, callback_id, approved))
+                             build_update_payload(self.template_id, callback_id, approved,
+                                                  self._titles.pop(callback_id, "")))
             # 成功也记一笔：只记失败的话，"卡片没变化"就分不清是没调、调了没生效、还是模板
             # 自己没把 status 用起来——三种病因修法完全不同（2026-08-01 真机排查卡在这）。
             _log.info("卡片已刷成终态：%s → %s", callback_id, "agree" if approved else "reject")
