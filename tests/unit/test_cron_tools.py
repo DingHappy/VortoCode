@@ -31,6 +31,18 @@ jobs:
 """
 
 
+class _StopAfterSpy(Exception):
+    """探针抓到入参后立刻中止会话装配。
+
+    为什么必须停：这几条只断言 ``build_agent_tools`` 收到了什么，装配之后那段是**真的把
+    agent 跑起来**——离线环境下会一路走到 LLM 调用的重试退避里。
+    2026-08-01 实测：``test_unattended_session_cannot_schedule_itself`` 一条 69.5 秒，
+    占全套 2241 条测试总时长（349 秒）的 **20%**，而那 69 秒没有验证任何东西。
+
+    抓完就抛，调用方照旧吞掉——断言口径一个字没变，只是不再空跑。
+    """
+
+
 def _seed(tmp_path):
     d = tmp_path / ".vortocode"
     d.mkdir(parents=True, exist_ok=True)
@@ -68,14 +80,14 @@ async def test_unattended_session_cannot_schedule_itself(tmp_path):
 
     def _spy(*a, **kw):
         captured.update(kw)
-        return []
+        raise _StopAfterSpy()          # 拿到入参就地停，别让它真跑起来（见 _StopAfterSpy）
 
     import src.agents.main_agent as ma
     real = ma.build_agent_tools
     ma.build_agent_tools = _spy
     try:
         await run_isolated_session(str(tmp_path), "随便干点啥")
-    except Exception:  # noqa: BLE001 —— 空工具集下后续装配/跑动怎么炸都无所谓，只看入参
+    except Exception:  # noqa: BLE001 —— 只看入参；装配之后怎么炸都与本条无关
         pass
     finally:
         ma.build_agent_tools = real
@@ -381,7 +393,7 @@ async def test_unattended_session_web_follows_the_job_flag(tmp_path):
 
     def _spy(*a, **kw):
         seen.update(kw)
-        return []
+        raise _StopAfterSpy()          # 同上：抓到入参就停，别真跑
 
     real = ma.build_agent_tools
     ma.build_agent_tools = _spy
@@ -390,7 +402,7 @@ async def test_unattended_session_web_follows_the_job_flag(tmp_path):
             seen.clear()
             try:
                 await run_isolated_session(str(tmp_path), "干活", allow_web=flag)
-            except Exception:  # noqa: BLE001 —— 空工具集后续怎么炸无所谓，只看入参
+            except Exception:  # noqa: BLE001 —— 只看入参；装配之后怎么炸都与本条无关
                 pass
             assert seen.get("with_web") is flag
             assert seen.get("with_im_media") is False, "出站投递面不该随出网许可放开"
@@ -529,9 +541,16 @@ async def test_manual_trigger_pushes_to_the_owner(tmp_path, monkeypatch):
     monkeypatch.setattr(im_rt, "notify_owner", lambda t: pushed.append(str(t)) or _noop())
 
     import src.gateway.cron as cron
+
     async def _fake_session(root, prompt, **kw):
-        return "📰 今日科技新闻摘要：…"
-    monkeypatch.setattr(cron, "run_isolated_session", _fake_session, raising=False)
+        return "📰 今日科技新闻摘要：假会话的产出"
+
+    # 打在**源模块**上：cron.py 是在函数体里 `from src.gateway.session import
+    # run_isolated_session`，模块上并没有这个名字。原来打在 cron 上还带 raising=False，
+    # 于是凭空造了个没人读的属性、真实现照跑——测试照样绿，只是每次白烧 15 秒真跑 agent
+    # （2026-08-01 查门禁耗时时发现）。**不带 raising=False**：将来改名就该当场炸。
+    import src.gateway.session as gw_session
+    monkeypatch.setattr(gw_session, "run_isolated_session", _fake_session)
 
     tool = _tools(tmp_path, _yes())["cron_run"]
     monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
@@ -541,6 +560,9 @@ async def test_manual_trigger_pushes_to_the_owner(tmp_path, monkeypatch):
         await task
     assert pushed, "作业跑完了，人手机上什么都没收到（notify 没传）"
     assert "news" in pushed[0]
+    # 让这条**自证 stub 真的生效**：假会话的产出必须出现在推送里。
+    # 少了这句，桩失效时测试依旧全绿——它就是这么瞒了过去的。
+    assert "假会话的产出" in pushed[0], "推送内容不是假会话产出——桩没生效，跑的是真会话"
 
 
 async def _noop():

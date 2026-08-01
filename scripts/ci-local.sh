@@ -56,11 +56,28 @@ export VORTOCODE_ENABLE_BROWSER=""
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_SYSTEM=/dev/null
 
+# 并行跑测试（装了 pytest-xdist 才开；没装就照旧串行，不因此判失败）。
+#
+# 实测 2026-08-01（本机 10 核）：串行 260s → 并行 82s。
+#   --dist loadfile：**同一个文件的用例始终落在同一个 worker**。文件级的 fixture 与
+#   模块状态假设因此照旧成立——按用例散开（默认 load）才是把隐藏耦合变成随机红的那种改法。
+#   0 = 显式关掉（VORTOCODE_GATE_JOBS=0），排查疑似并行相关的怪现象时用。
+#
+# 注意先后：**先把那条 69 秒的空跑测试修掉再谈并行**。并行只是把墙钟摊开，
+# 单条 69 秒的用例照样卡住它所在的 worker——那条占了全套 349s 里的 20%（见 #T3）。
+PYTEST_PAR=()
+JOBS="${VORTOCODE_GATE_JOBS:-auto}"
+if [ "$JOBS" != "0" ] && python3 -c "import xdist" 2>/dev/null; then
+  PYTEST_PAR=(-n "$JOBS" --dist loadfile)
+fi
+
 if [ "$MODE" = "quick" ]; then
-  run_gate "pytest（unit + tui）" python3 -m pytest tests/unit tests/test_basic.py -q
+  run_gate "pytest（unit + tui）" \
+    python3 -m pytest tests/unit tests/test_basic.py -q "${PYTEST_PAR[@]}"
 else
   run_gate "pytest（全量，同 CI 的三个 suite）" \
-    python3 -m pytest tests/unit tests/test_basic.py tests/integration tests/live -q
+    python3 -m pytest tests/unit tests/test_basic.py tests/integration tests/live -q \
+      "${PYTEST_PAR[@]}"
 fi
 
 # e2e 交付链路（canary）——**quick 也跑**，只要十几秒。
