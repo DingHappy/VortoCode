@@ -29,3 +29,43 @@ async def agent_view():
     if html_path.exists():
         return FileResponse(html_path, media_type="text/html")
     return {"message": "Agent page not found"}
+
+
+# ── PWA 静态件（P3）：manifest / icon / service worker ─────────────────────────
+# 逐条显式路由而不是挂 StaticFiles：本服务的路由集合被契约测试冻结（server_routes_baseline），
+# 一个目录挂载等于开一扇"往 web/ 丢文件就自动可访问"的门，契约就看不住了。
+# sw.js 必须从根路径服务——SW 的作用域由其 URL 路径决定，挂深了管不到 /agent。
+
+_PWA_FILES = {
+    "manifest.webmanifest": "application/manifest+json",
+    "pwa-icon.svg": "image/svg+xml",
+    "pwa-icon.png": "image/png",
+    "sw.js": "text/javascript",
+}
+
+
+def _pwa_file(name: str):
+    path = _WEB_DIR / name
+    if path.exists():
+        return FileResponse(path, media_type=_PWA_FILES[name])
+    raise HTTPException(status_code=404, detail=f"{name} 缺失")
+
+
+@router.get("/manifest.webmanifest")
+async def pwa_manifest():
+    return _pwa_file("manifest.webmanifest")
+
+
+@router.get("/pwa-icon.svg")
+async def pwa_icon_svg():
+    return _pwa_file("pwa-icon.svg")
+
+
+@router.get("/pwa-icon.png")
+async def pwa_icon_png():
+    return _pwa_file("pwa-icon.png")
+
+
+@router.get("/sw.js")
+async def pwa_service_worker():
+    return _pwa_file("sw.js")
