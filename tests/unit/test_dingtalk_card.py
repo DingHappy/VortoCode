@@ -380,9 +380,37 @@ def test_taint_warning_lands_in_the_title():
 
 
 def test_update_payload_marks_the_decision():
-    """点完要把卡片刷成终态——按钮留着还能点，人会以为这条还等着自己。"""
-    assert "已批准" in C.build_update_payload("c", True)["cardData"]["cardParamMap"]["status"]
-    assert "已拒绝" in C.build_update_payload("c", False)["cardData"]["cardParamMap"]["status"]
+    """点完要把卡片刷成终态——按钮留着还能点，人会以为这条还等着自己。
+
+    三条断言都是 2026-08-01 真机联调逼出来的，各对应一种"点了没反应"：
+    """
+    ok = C.build_update_payload("TPL", "cid", True)
+    no = C.build_update_payload("TPL", "cid", False)
+
+    # ① 漏 cardTemplateId → 真机 400 MissingcardTemplateId，卡片纹丝不动
+    assert ok["cardTemplateId"] == "TPL"
+    assert ok["outTrackId"] == "cid"
+
+    # ② status 必须是裸词 agree/reject：官方审批模板拿它做按钮显示条件，
+    #    传"✅ 已批准"这种话条件不成立，按钮不会变灰
+    assert ok["cardData"]["cardParamMap"]["status"] == "agree"
+    assert no["cardData"]["cardParamMap"]["status"] == "reject"
+
+    # ③ 必须按 key 合并：整包替换会把 title/body 冲掉，卡片当场变空白
+    assert ok["cardUpdateOptions"]["updateCardDataByKey"] is True
+
+
+@pytest.mark.asyncio
+async def test_settle_sends_the_template_id():
+    """settle 要把模板 ID 带上——这是真机上"点了没反应"的根因，得从出站面钉住。"""
+    seen: list = []
+
+    async def _capture(url, payload, token):
+        seen.append((url, payload))
+        return {}
+
+    await C.CardSender("TPL-9", "owner", post_fn=_capture).settle("cid", True)
+    assert seen and seen[0][1]["cardTemplateId"] == "TPL-9"
 
 
 @pytest.mark.asyncio
