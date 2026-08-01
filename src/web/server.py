@@ -132,6 +132,7 @@ from src.web.routers.journal import router as journal_router
 from src.web.routers.hooks import router as hooks_router
 from src.web.routers.extensions import router as extensions_router
 from src.web.routers.cron import router as cron_router
+from src.web.routers.dev_plans import router as dev_plans_router
 
 for _router in (
     pages_router, git_router, context_router,
@@ -139,7 +140,7 @@ for _router in (
     projects_router, editor_router, sandbox_router,
     browser_router, github_router, ops_router, generators_router, realtime_router,
     artifacts_router, auth_router, tasks_router, goals_router, runs_router, terminals_router, decisions_router,
-    journal_router, hooks_router, extensions_router, cron_router,
+    journal_router, hooks_router, extensions_router, cron_router, dev_plans_router,
 ):
     app.include_router(_router)
 
