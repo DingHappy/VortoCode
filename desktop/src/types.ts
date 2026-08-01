@@ -176,6 +176,36 @@ export interface SessionSummary {
   context?: SessionContextUsage;
 }
 
+// dev 计划的 DAG 投影（GET /api/dev-plans/{id}/graph）。layers 由服务端拓扑分层算好，
+// 前端不做图算法——Desktop 与未来移动 PWA 共用同一形状。
+export interface DevPlanGraphNode {
+  id: string;
+  title: string;
+  desc: string;
+  kind: "independent" | "dependent" | string;
+  status: "pending" | "running" | "landed" | "failed" | string;
+  attempts: number;
+  note: string;
+  deps: string[];
+}
+
+export interface DevPlanGraph {
+  plan_id: string;
+  task: string;
+  status: string;
+  branch: string;
+  base: string;
+  created: string;
+  updated: string;
+  integration: { ok?: boolean; output?: string; cmd?: string } | null;
+  review: { note?: string; blocked?: boolean } | null;
+  pr: { url?: string; error?: string } | null;
+  nodes: DevPlanGraphNode[];
+  layers: string[][];
+  cycle: boolean;
+  cyclic_ids: string[];
+}
+
 export interface TaskItem {
   id: string;
   prompt?: string;

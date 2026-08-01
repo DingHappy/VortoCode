@@ -76,6 +76,7 @@ import type {
   WorktreeWorkspaceSnapshot,
 } from "./types";
 import { DecisionsPanel } from "./components/DecisionsPanel";
+import { DevPlanDagLoader } from "./components/DevPlanDag";
 import { ExtensionsInspector } from "./components/ExtensionsInspector";
 import { FilesPanel } from "./components/FilesPanel";
 import { GitReviewPanel } from "./components/GitReviewPanel";
@@ -3912,16 +3913,15 @@ function App() {
                           <small>{task.plan.status}</small>
                         </div>
                         <div className="task-plan-bar"><i style={{ width: `${task.plan.progress.total ? (task.plan.progress.landed / task.plan.progress.total) * 100 : 0}%` }} /></div>
-                        {task.plan.blocks.length > 0 && (
+                        {task.plan.blocks.length > 0 && task.plan_id && (
                           <details>
-                            <summary>查看 {task.plan.blocks.length} 个计划块</summary>
-                            {task.plan.blocks.map((block) => (
-                              <p className={block.status} key={block.id}>
-                                <span>{block.status === "landed" ? "✓" : block.status === "failed" ? "!" : "○"}</span>
-                                <b>{block.title}</b>
-                                {block.attempts > 0 && <small>{block.attempts} 次尝试</small>}
-                              </p>
-                            ))}
+                            <summary>依赖图 · {task.plan.blocks.length} 个计划块</summary>
+                            {/* refreshKey 由进度计数派生：块状态一变（listTasks 周期带回）就重取图。
+                                展开才加载——列表里几十张任务卡同时拉图会白打一排请求。 */}
+                            <DevPlanDagLoader
+                              load={() => clientRef.current!.devPlanGraph(task.plan_id!)}
+                              refreshKey={`${task.plan_id}:${task.plan.progress.landed}:${task.plan.progress.failed}:${task.plan.progress.running}`}
+                            />
                           </details>
                         )}
                       </div>
