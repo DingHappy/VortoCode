@@ -2,8 +2,17 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>VortoCode · 主 Agent</title>
+<!-- PWA（P3）：加到主屏后全屏运行。访问路径见 docs/OPS.md「手机访问」——走 Tailscale，
+     不暴露公网；鉴权仍是 VORTOCODE_API_TOKEN 那套，PWA 不引入新的信任面。 -->
+<meta name="theme-color" content="#14161b">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/pwa-icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/pwa-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="VortoCode">
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -158,6 +167,17 @@
   /* 窄屏：侧栏/控制台改浮层，不挤压聊天区 */
   @media (max-width: 1100px) { #console { position: fixed; right: 0; top: 0; z-index: 50; box-shadow: -8px 0 24px rgba(0,0,0,.5); } }
   @media (max-width: 700px)  { #sidebar { position: fixed; left: 0; top: 0; z-index: 50; box-shadow: 8px 0 24px rgba(0,0,0,.5); } }
+  /* ── 手机适配（P3）。改的都是"能不能用手指用"，桌面观感一处不动 ── */
+  @media (max-width: 700px) {
+    body, #main, #sidebar, #console { height: 100dvh; }  /* 100vh 在手机上被地址栏吃掉一截 */
+    #inp { font-size: 16px; }               /* iOS：<16px 聚焦会强制放大整页 */
+    #send { min-height: 44px; }             /* 触控目标下限（HIG 44pt） */
+    #attach, #rec { min-height: 44px; min-width: 44px; }
+    .confirm button { min-height: 44px; padding: 8px 18px; }   /* 确认按钮是手机上最常点的 */
+    footer { padding-bottom: calc(10px + env(safe-area-inset-bottom)); }  /* 刘海屏手势条 */
+    #console { width: min(320px, 92vw); }
+    .hint { display: none; }                /* 快捷键提示在手机上全不适用 */
+  }
 </style>
 </head>
 <body>
@@ -1074,6 +1094,13 @@ if (localStorage.getItem("vorto_console") === "1" ||
     (localStorage.getItem("vorto_console") == null && window.innerWidth >= 1100)) {
   $("#console").classList.remove("hidden");
 }
+// 手机（P3）：会话侧栏是 fixed 覆盖层，默认展开会把对话整个盖死——窄屏首帧就收起。
+// 只做首帧判断、不监听 resize：旋转屏时替人开关面板比不动更烦。
+if (window.innerWidth < 700) $("#sidebar").classList.add("hidden");
+
+// PWA（P3）：注册 service worker——它只为"可安装"存在，不缓存任何东西（见 sw.js 的说明）。
+// 失败静默：http 明文 / 老浏览器没有 serviceWorker，页面功能一概不受影响。
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
 // ---- 登录门（审计 P0#4）：设了 token 且未登录 → 弹框收 token → POST 种 httpOnly Cookie → 再连 ----
 function showLogin() {

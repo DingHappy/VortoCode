@@ -1,0 +1,14 @@
+{
+  "name": "VortoCode",
+  "short_name": "VortoCode",
+  "description": "VortoCode 主 Agent 控制台（手机入口：确认、发任务、看结果）",
+  "start_url": "/agent",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#14161b",
+  "theme_color": "#14161b",
+  "icons": [
+    { "src": "/pwa-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/pwa-icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any" }
+  ]
+}
