@@ -230,5 +230,8 @@ class CardSender:
         try:
             await self._post(_UPDATE,
                              build_update_payload(self.template_id, callback_id, approved))
+            # 成功也记一笔：只记失败的话，"卡片没变化"就分不清是没调、调了没生效、还是模板
+            # 自己没把 status 用起来——三种病因修法完全不同（2026-08-01 真机排查卡在这）。
+            _log.info("卡片已刷成终态：%s → %s", callback_id, "agree" if approved else "reject")
         except Exception as e:  # noqa: BLE001
-            _log.warning("卡片终态更新失败（确认已生效，不影响）：%s", str(e)[:160])
+            _log.warning("卡片终态更新失败（确认已生效，不影响）：%s", str(e)[:400])
