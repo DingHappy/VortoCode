@@ -384,12 +384,14 @@ def test_update_payload_marks_the_decision():
 
     三条断言都是 2026-08-01 真机联调逼出来的，各对应一种"点了没反应"：
     """
-    ok = C.build_update_payload("TPL", "cid", True)
-    no = C.build_update_payload("TPL", "cid", False)
+    ok = C.build_update_payload("cid", True)
+    no = C.build_update_payload("cid", False)
 
-    # ① 漏 cardTemplateId → 真机 400 MissingcardTemplateId，卡片纹丝不动
-    assert ok["cardTemplateId"] == "TPL"
+    # ① 形状照官方 SDK 的 put_card_data：靠 outTrackId 认卡，**不带 cardTemplateId**
+    #    （那是"创建实例"接口的必填项。当初照着 400 MissingcardTemplateId 把它补上，
+    #     等于把发错的"创建"调用修得合法了——返回 200，造出个孤儿实例，真卡纹丝不动）
     assert ok["outTrackId"] == "cid"
+    assert "cardTemplateId" not in ok
 
     # ② status 必须是裸词 agree/reject：官方审批模板拿它做按钮显示条件，
     #    传"✅ 已批准"这种话条件不成立，按钮不会变灰
@@ -401,16 +403,25 @@ def test_update_payload_marks_the_decision():
 
 
 @pytest.mark.asyncio
-async def test_settle_sends_the_template_id():
-    """settle 要把模板 ID 带上——这是真机上"点了没反应"的根因，得从出站面钉住。"""
+async def test_update_uses_put_not_post():
+    """**更新必须走 PUT**——同一个 URL 上 POST 是"创建卡片实例"。
+
+    这是真机上"点了没反应"追了一整轮才找到的根因：POST 过去会**成功返回 200**，
+    造出一个没人看得见的孤儿实例，而目标卡片毫无变化。日志写着"已刷成终态"，
+    人看到的是纹丝不动的卡——最难查的那种成功。
+    """
     seen: list = []
 
-    async def _capture(url, payload, token):
-        seen.append((url, payload))
+    async def _capture(url, payload, token, *, method="POST"):
+        seen.append((method, url))
         return {}
 
-    await C.CardSender("TPL-9", "owner", post_fn=_capture).settle("cid", True)
-    assert seen and seen[0][1]["cardTemplateId"] == "TPL-9"
+    s = C.CardSender("TPL-9", "owner", post_fn=_capture)
+    await s.send("标题\n正文", "cid")
+    await s.settle("cid", True)
+
+    assert seen[0][0] == "POST" and seen[0][1].endswith("/card/instances/createAndDeliver")
+    assert seen[1][0] == "PUT" and seen[1][1].endswith("/card/instances")
 
 
 @pytest.mark.asyncio
@@ -422,7 +433,7 @@ async def test_outcome_is_visible_without_relying_on_the_template():
     """
     seen: list = []
 
-    async def _capture(url, payload, token):
+    async def _capture(url, payload, token, *, method="POST"):
         seen.append(payload)
         return {}
 
@@ -442,7 +453,7 @@ async def test_outcome_is_visible_without_relying_on_the_template():
 @pytest.mark.asyncio
 async def test_title_cache_is_bounded():
     """常驻进程里这个缓存**不许无限长**——确认是低频动作，64 条足够覆盖在途的。"""
-    async def _ok(url, payload, token):
+    async def _ok(url, payload, token, *, method="POST"):
         return {}
 
     s = C.CardSender("TPL", "owner", post_fn=_ok)
@@ -455,7 +466,7 @@ async def test_title_cache_is_bounded():
 @pytest.mark.asyncio
 async def test_settle_failure_never_raises():
     """刷终态失败只记日志——确认已经生效，不能因为刷不动卡片而翻车。"""
-    async def _boom(url, payload, token):
+    async def _boom(url, payload, token, *, method="POST"):
         raise RuntimeError("HTTP 500")
 
     sender = C.CardSender("T", "o", post_fn=_boom)
@@ -466,7 +477,7 @@ async def test_settle_failure_never_raises():
 async def test_sender_posts_to_create_and_deliver():
     calls: list = []
 
-    async def _post(url, payload, token):
+    async def _post(url, payload, token, *, method="POST"):
         calls.append((url, payload))
         return {}
 
