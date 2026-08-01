@@ -53,6 +53,33 @@ def test_warning_only_when_asked():
     assert "WARNING-出来了" in err
 
 
+_WIRED = (
+    "import sys, logging;"
+    "sys.path.insert(0, {root!r});"
+    "sys.argv = ['vc', 'cron', 'list'];"
+    "from src.cli import main;"
+    "exec('try:\\n main()\\nexcept SystemExit:\\n pass');"
+    "print('ROOT_LEVEL=%d' % logging.getLogger().level, file=sys.stderr)"
+)
+
+
+def test_main_actually_wires_the_setup_up():
+    """**接线本身**要有网兜住：函数写对了但 main() 里没调，等于白写。
+
+    第一版测试就漏了这条——把 ``_setup_logging()`` 那行从 main() 删掉，测试照样全绿
+    （因为都在直接调函数）。这里跑真正的 main()，再回头看根 logger 的级别：
+    接上了是 INFO(20)，没接上是 Python 默认的 WARNING(30)。
+
+    用 ``cron list``：离线、只读、半秒。
+    """
+    err = subprocess.run(
+        [sys.executable, "-c", _WIRED.format(root=os.getcwd())],
+        capture_output=True, text=True, timeout=120,
+        env={**os.environ, "LOG_LEVEL": "INFO"},
+    ).stderr
+    assert "ROOT_LEVEL=20" in err, f"main() 没把日志配置接上（应为 INFO=20）：{err[-300:]}"
+
+
 @pytest.mark.parametrize("value,expected", [
     ("INFO", logging.INFO), ("debug", logging.DEBUG), ("  Warning  ", logging.WARNING),
     ("ERROR", logging.ERROR), ("CRITICAL", logging.CRITICAL),
