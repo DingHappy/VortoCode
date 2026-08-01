@@ -146,6 +146,24 @@ def test_parse_approve_across_payload_shapes(blob):
     assert got == ("cid1", True, "u1")
 
 
+def test_parse_official_sdk_shape():
+    """官方 SDK 里那条**真实**形状——这是唯一有出处的一条，别让重构把它顺手改没了。
+
+    对照 open-dingtalk/dingtalk-stream-sdk-go 的 ``card.CardRequest``：顶层 outTrackId/userId，
+    按钮参数在 cardActionData.cardPrivateData.params，参数名由模板自定（官方示例用 action）。
+    上面那组多形状用例是防御性的猜测，这一条不是。
+    """
+    frame = {
+        "outTrackId": "cid-real", "userId": "u-real", "corpId": "c1",
+        "spaceType": "IM_ROBOT", "userIdType": 1,
+        "cardActionData": {"cardPrivateData": {"actionIds": ["btn_ok"],
+                                               "params": {"action": "approve"}}},
+    }
+    assert C.parse_card_callback(frame) == ("cid-real", True, "u-real")
+    frame["cardActionData"]["cardPrivateData"]["params"]["action"] = "deny"
+    assert C.parse_card_callback(frame) == ("cid-real", False, "u-real")
+
+
 def test_parse_deny():
     got = C.parse_card_callback({"outTrackId": "cid2", "userId": "u1",
                                  "cardActionData": {"params": {"action": "deny"}}})
