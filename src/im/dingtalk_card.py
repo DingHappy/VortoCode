@@ -18,14 +18,15 @@
 
 ## 主人要做什么（一次性）
 
-在钉钉开放平台「卡片平台」建一个互动卡片模板，放两个按钮，回调类型选 **Stream**，
-然后把模板 ID 配进 env：
+在**卡片搭建平台** <https://open-dev.dingtalk.com/fe/card> 建一个互动卡片模板（注意是开发者后台，
+**不在 open.dingtalk.com 的菜单里**），回调类型选 **Stream**，然后把模板 ID 配进 env：
 
-    VORTOCODE_DD_CARD_TEMPLATE_ID=<模板ID>
+    VORTOCODE_DD_CARD_TEMPLATE_ID=<模板ID>      # 形如 xxxxxxxx-....schema，含 .schema 后缀
 
 模板变量约定（卡片正文里引用这几个）：
     ``title`` 标题 · ``body`` 正文（要批准的操作）· ``status`` 结果（点完后回填）
-两个按钮的 **key/value** 分别填 ``approve`` 与 ``deny``。
+两个按钮的事件类型选「回传请求」，回传参数 ``action`` 的值分别填 ``approve`` 与 ``deny``
+（官方审批模板用的 ``agree``/``reject`` 也认得出，见下面的词表）。
 
 没配 → 一切照旧走文本 y/n，不影响任何现有行为。
 """
@@ -47,6 +48,13 @@ _UPDATE = "https://api.dingtalk.com/v1.0/card/instances"
 
 APPROVE_KEY = "approve"
 DENY_KEY = "deny"
+
+# 按钮回传值的**认得出的词表**。为什么不止一个词：官方审批模板示例用的是 agree/reject
+# （open-dingtalk/dingtalk-card-examples 的「审批模板」），而本仓文档写的是 approve/deny——
+# 照着官方模板配完，按钮会**一声不响地什么都不做**，这是最难自查的一类失败。
+# 收得住的前提没变：**只认这几个明确表态的词**，其余一律 None（fail-closed 方向不变）。
+_APPROVE_WORDS = frozenset({APPROVE_KEY, "agree", "accept", "yes", "y", "ok"})
+_DENY_WORDS = frozenset({DENY_KEY, "reject", "refuse", "no", "n"})
 
 
 def card_template_id() -> str:
@@ -146,9 +154,9 @@ def parse_card_callback(data: dict) -> Optional[tuple]:
             params = holder.get("params") if isinstance(holder.get("params"), dict) else holder
             for field in ("action", "value", "key", "buttonKey"):
                 val = str(params.get(field) or "").strip().lower()
-                if val == APPROVE_KEY:
+                if val in _APPROVE_WORDS:
                     return track, True, sender
-                if val == DENY_KEY:
+                if val in _DENY_WORDS:
                     return track, False, sender
     return None
 
