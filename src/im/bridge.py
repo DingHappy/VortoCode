@@ -542,13 +542,23 @@ class IMBridge:
         except RuntimeError:
             return
         if task.status in ("done", "failed", "cancelled", "interrupted"):
-            tail = (task.result or task.error or "").strip()[-500:]
-            loop.create_task(self._safe_send(f"后台任务 {task.id} · {task.status}\n{tail}"))
+            loop.create_task(self._safe_send(self._task_final_text(task)))
         elif task.status == "running" and task.log:
             now = time.monotonic()
             if now - self._task_prog.get(task.id, 0.0) >= self._progress_interval:
                 self._task_prog[task.id] = now
                 loop.create_task(self._safe_send(f"🏃 {task.id}: {_strip(task.log[-1])}"))
+
+    def _task_final_text(self, task) -> str:
+        """终态通知文案。抽出来是为了可测：深链（P4）配没配、有没有真的附上，得测得到。
+
+        深链只挂在**终态**和**开跑**两处：这是人最想跳去富界面的两个时刻
+        （看 diff/依赖图、盯进度）。进度心跳/普通回复不挂——每条都带就成噪音了。
+        """
+        from src.gateway.public_url import agent_link
+
+        tail = (task.result or task.error or "").strip()[-500:]
+        return f"后台任务 {task.id} · {task.status}\n{tail}{agent_link()}"
 
     async def _submit_task(self, prompt: str) -> None:
         if not prompt:
@@ -557,9 +567,10 @@ class IMBridge:
         # 共享 runner（serve 内嵌）：kind="im-dev" 让分发路由回本 bridge 的 worker（保住在跑中的
         # 按钮确认 UX）；standalone 自己的 runner worker 就是 _task_worker，kind 只是标注。
         kind = "im-dev" if self._shared_runner else "dev"
+        from src.gateway.public_url import agent_link
         task = await self._get_runner().submit(prompt, kind=kind)
         await self._safe_send(f"✅ 已在后台开跑 {task.id}（不占当前会话；进度会自动推、完成发开 PR 按钮）。"
-                              f"\n/tasks 看全部后台任务。")
+                              f"\n/tasks 看全部后台任务。{agent_link()}")
 
     async def _list_tasks(self) -> None:
         tasks = self._get_runner().list()
