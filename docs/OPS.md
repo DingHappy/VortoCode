@@ -58,6 +58,10 @@
   裸挂公网禁止，反代加 TLS 也只算及格线，不如 Tailscale 省心。
 - Desktop 客户端刻意只连 127.0.0.1（文件区直读本机磁盘的 local-first 设计）；
   「Desktop 连远端工作区」是独立立项（B9-③），未落地前远程入口就是浏览器 + attach。
+- **日志轮转必装**：单元用 `StandardOutput=append:` 无限追加，LOG_LEVEL=INFO 后增速
+  上了台阶，不轮转就是"哪天磁盘满了最难查"的定时炸弹。
+  `sudo cp examples/logrotate/vortocode-serve /etc/logrotate.d/`（路径按家目录改；
+  copytruncate 不需重启服务，为什么见文件内注释）。agent 专用 VM 已于 2026-08-02 装好。
 
 ## 一之三、多助手：给每个人一个专属小蜜
 
