@@ -1,0 +1,18 @@
+# VortoCode 常驻服务日志轮转（装到 /etc/logrotate.d/vortocode-serve，路径按实际家目录改）。
+#
+# 为什么必须有：systemd 单元用 StandardOutput=append: 无限追加，而 LOG_LEVEL=INFO 之后
+# 增速上了台阶（2026-08-02 起 INFO 真的会产出了——此前全仓日志配置缺失，见 src/cli.py
+# _setup_logging 的 docstring）。不轮转就是"哪天 VM 磁盘满了最难查"的定时炸弹。
+#
+# copytruncate 是关键：append: 的文件描述符在服务进程里一直开着，普通 rotate（改名+新建）
+# 后进程还往旧 fd 写，新文件永远是空的。copytruncate 原地截断，不用重启服务。
+# 代价是截断瞬间可能丢最后几行——对这份日志可接受，换服务重启才不可接受。
+/home/happyding/.local/share/vortocode-serve.log {
+    size 20M
+    rotate 3
+    copytruncate
+    compress
+    delaycompress
+    missingok
+    notifempty
+}

@@ -58,6 +58,10 @@
   裸挂公网禁止，反代加 TLS 也只算及格线，不如 Tailscale 省心。
 - Desktop 客户端刻意只连 127.0.0.1（文件区直读本机磁盘的 local-first 设计）；
   「Desktop 连远端工作区」是独立立项（B9-③），未落地前远程入口就是浏览器 + attach。
+- **日志轮转必装**：单元用 `StandardOutput=append:` 无限追加，LOG_LEVEL=INFO 后增速
+  上了台阶，不轮转就是"哪天磁盘满了最难查"的定时炸弹。
+  `sudo cp examples/logrotate/vortocode-serve /etc/logrotate.d/`（路径按家目录改；
+  copytruncate 不需重启服务，为什么见文件内注释）。agent 专用 VM 已于 2026-08-02 装好。
 
 ## 一之三、多助手：给每个人一个专属小蜜
 
@@ -166,6 +170,11 @@ Web 推送不在本阶段（iOS 要求已安装 PWA + 推送订阅链路，属 P
 排查：手机连不上先看 Tailscale 两端在不在线；能开页面但登录循环 → token 没配对；
 「添加到主屏幕」后开出来是浏览器而不是全屏 → manifest 没被读到，
 `curl http://…:8080/manifest.webmanifest` 应返回 JSON。
+
+**深链（可选）**：env 配 `VORTOCODE_PUBLIC_BASE_URL=<手机能打开的地址>`（家用局域网
+`http://192.168.x.x:8080`，出门用 Tailscale 主机名）并重启服务后，钉钉的**任务开跑/终态**
+通知末尾会附一行 `📱 …/agent`，点开直达控制台。只挂这两个时刻（想看 diff/依赖图、想盯
+进度的时候），进度心跳不挂——每条都带就成噪音了。不配 = 一切与今天逐字节相同。
 
 ## 二、开关矩阵（都是 opt-in，默认全关 = 零自主消耗）
 
