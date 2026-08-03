@@ -186,6 +186,20 @@ Web 推送不在本阶段（iOS 要求已安装 PWA + 推送订阅链路，属 P
 | `VORTOCODE_HEARTBEAT_EVERY=30m` | 心跳间隔 | — |
 | `VORTOCODE_HEARTBEAT_CHECKLIST=` | 换掉默认检查单文件（默认 `.vortocode/HEARTBEAT.md`），路径必须在工作目录内 | — |
 | `--im telegram\|dingtalk` | IM 内嵌（手机收通知/发任务/按钮确认） | 忽略不计 |
+| `VORTOCODE_DD_CARD_TEMPLATE_ID=` | 钉钉确认变互动卡片真按钮（见一之四） | 忽略不计 |
+| `VORTOCODE_PUBLIC_BASE_URL=` | 钉钉通知附 PWA 深链（见一之五） | 忽略不计 |
+| `VORTOCODE_IM_HELLO_QUIET_MIN=30` | 开机横幅静默窗口（连续部署只播报一次；0=每次都播） | — |
+| `VORTOCODE_DD_WS_HEARTBEAT=30` | 钉钉长连开 WS 层心跳（见下），**默认关** | 忽略不计 |
+| `LOG_LEVEL=INFO` | 日志级别（**不设=WARNING**，与加配置前的实际行为一致） | — |
+
+**关于 `VORTOCODE_DD_WS_HEARTBEAT`**：钉钉**不发应用层 ping**（2026-08-03 真机两个独立窗口
+578s/374s 实测，`last_frame_age` 全程 null），所以 doctor 的「桥连着」目前只是弱信号——
+协议层 PING/PONG 被 aiohttp 的 autoping 吃在内部。开这个开关让 aiohttp **主动发 ping、
+收不到 pong 就关连接**，于是「连接还开着」成为对端在回应的硬证据，死连接转成一次可见的重连。
+
+刻意默认关：万一钉钉对客户端 ping 反应不佳，最坏是反复重连——比 bot 死好，但仍是活的生产 bot。
+**建议你在场时开**，开完看几分钟 `vc doctor` 的 `im-live` 与 `reconnects`；不对就删掉这行重启。
+（没选 `autoping=False` 那条路：那要我们自己收 PING 回 PONG，写错一次服务端就断连 = bot 直接死。）
 
 配置模板（复制到目标仓库 `.vortocode/` 去掉 `.example`）：
 `examples/cron.yaml.example` · `examples/HEARTBEAT.md.example` · `examples/BACKLOG.md.example`。

@@ -42,16 +42,18 @@ vc --help                        # 全部子命令：tui/server/agent/self-*/im/
 
 **入口**：`vc`/`vortocode` → `src/cli.py:main`（`main.py` 是薄壳）。包采用**扁平布局**：包名就是 `src`，一律 `from src.xxx import ...`。
 
-**一个 runtime，多个前端（"三端同源"）**：TUI / Web `/agent` / 无头 CLI / IM 桥接都通过 `src/gateway/agent_session.py` 的 `build_session(kind=...)` 工厂装配同一个 `MainAgent`（`src/agents/main_agent.py`）。无人值守（cron/heartbeat）走 `src/gateway/session.py` 的 `run_isolated_session`（全新隔离上下文，不读写主会话）。跨进程 attach 走 `src/gateway/protocol.py` + `client.py` 的 WS 协议。**TUI 是刻意的例外**：它用富 UI 版工具（着色 diff + ConfirmScreen）自行装配，不走 `build_agent_tools`。
+**一个 runtime，多个前端（"三端同源"）**：TUI / Web `/agent` / 无头 CLI / IM 桥接都通过 `src/gateway/agent_session.py` 的 `build_session(kind=...)` 工厂装配同一个 `MainAgent`（**`src/agents/agent_loop.py`**；`main_agent.py` 再导出，存量 `from src.agents.main_agent import MainAgent` 照常可用）。无人值守（cron/heartbeat）走 `src/gateway/session.py` 的 `run_isolated_session`（全新隔离上下文，不读写主会话）。跨进程 attach 走 `src/gateway/protocol.py` + `client.py` 的 WS 协议。**TUI 是刻意的例外**：它用富 UI 版工具（着色 diff + ConfirmScreen）自行装配，不走 `build_agent_tools`。
 
 **安全内核（改动前必读——最容易踩的地方）**：安全规则**上收到内核一处**，别在每个端各写一遍（那正是"加一端漏一端"的历史病根，`tests/unit/test_three_end_contract.py` 是钉死它的能力矩阵契约表）。
-- **确认门** `make_confirm_gate`（main_agent.py）：唯一的确认/放行判定。各端只声明能力（`auto_approve` 是否 headless、`can_ask_human` 是否有真人），**由内核决定问不问、能不能免**。别再往 `build_agent_tools` 塞裸 confirm。
+- **确认门** `make_confirm_gate`（**`src/agents/gate.py`**，main_agent 仅再导出）：唯一的确认/放行判定。各端只声明能力（`auto_approve` 是否 headless、`can_ask_human` 是否有真人），**由内核决定问不问、能不能免**。别再往 `build_agent_tools` 塞裸 confirm。
 - **污点追踪** `src/agents/taint.py`（`contextvars.ContextVar`，多会话并发互不串扰）：本回合摄入过 web/search/MCP 外部内容即"污点"，**污点态下一切免确认授权失效**（防提示注入 D0）。
 - **能力档案** `src/agents/capabilities.py`：local/external/unattended 三档。`UNATTENDED_PROFILE`（cron/heartbeat）**fail-closed 且不给出网工具**（`with_web=False`）——因为无人值守下系统提示可能被本地文件污染，而 web_fetch 的 GET query 就是外传通道。
 - **记忆写入策略** `src/memory/write_policy.py`：durable/proposal/quarantine/reject 四级；污点回合的指令性文本与疑似凭据不进长期记忆。
 - **前缀缓存稳定**：system prompt 在**同一会话内必须字节级稳定**（静态注入，装配时读一次），否则破坏 relay 侧前缀缓存命中。仓库记忆（`src/agents/repo_memory.py`）等静态注入项都遵守这条。
 
-**隔离 dev 流水线（护城河）**：`dev_auto` → `decompose` 拆无依赖并行批 → 每件在一次性 git **worktree**（`src/agents/worktree.py`）里 implement+自测 → 逐件+集成验证（`verify_profiles.py`/`subagent_verifier.py`）→ 落 `vorto/*` 分支 → 开 PR。**全程不碰 main / 主工作区**，委派需人工确认。`.vortocode/` 是 gitignored（本地经验：`memory/repo.md`、`agents/*.md` 自定义角色、`artifacts/` 制品）。
+**模块分层（2026-08-03 拆分后）**：`main_agent.py`（工具工厂：dev/research/subagent）→ `agent_loop.py`（`MainAgent` 与协议解析/上下文预算）→ `tools/*`（无状态工具）。**方向单一不成环**——工具工厂要用 MainAgent 起子 agent，所以 MainAgent 必须在下游。TUI 同理：`tui/app.py`（界面）→ `tui/commands.py`（38 个斜杠命令的 mixin）。
+
+**隔离 dev 流水线（护城河）**：`dev_auto` → `decompose` 拆无依赖并行批 → 每件在一次性 git **worktree**（`src/agents/worktree.py`）里 implement+自测 → 逐件+集成验证（`verify_profiles.py`/`subagent_verifier.py`）→ 落 `vorto/*` 分支 → 开 PR。计划落 `.vortocode/dev_plans/<id>.json`（write-ahead，可 `dev_resume` 续跑），并由 `src/gateway/dev_graph.py` 投影成 DAG 供 `GET /api/dev-plans/{id}/graph` 与 Desktop 依赖图视图消费（**纯投影零新状态**）。各阶段 token 用量经 `src/llm/client.py` 的 `usage_scope()` 分段计量，记 INFO 日志（模型分层的数据地基）。**全程不碰 main / 主工作区**，委派需人工确认。`.vortocode/` 是 gitignored（本地经验：`memory/repo.md`、`agents/*.md` 自定义角色、`artifacts/` 制品）。
 
 **LLM 网关**：所有模型调用走自建 One API 中转（OpenAI 兼容），`src/llm/`。默认走**原生 function-calling**，模型不支持则**自动回退提示式协议**；`VORTOCODE_NATIVE_TOOLS=0` 强制提示式。
 
