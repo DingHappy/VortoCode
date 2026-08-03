@@ -291,6 +291,44 @@ def reset_usage() -> None:
             u[k] = 0
 
 
+class usage_scope:  # noqa: N801 —— 当上下文管理器用，小写读着像 with 语句的一部分
+    """临时把用量计到一个**独立计数器**上，退出时恢复原来的绑定。
+
+        with usage_scope() as u:
+            await 某个阶段(...)
+        print(u["total_tokens"], u["by_model"])
+
+    ## 为什么能覆盖并行子任务
+
+    绑定的是**可变 dict**，不是每次写入都替换的值。`asyncio.create_task` / `gather`
+    会把当前 context **拷贝**给子任务，子任务拿到的是同一个 dict 引用，`add_usage`
+    原地累加 → 父作用域看得见。（反过来"子任务里 set() 新值父任务看不见"那条陷阱
+    在这里不成立，因为我们从不在子任务里 set。）
+
+    ## 为什么需要它
+
+    "规划用旗舰、执行用中档"这类模型分层，**得先知道钱花在哪个阶段**。
+    进程级累计答不了这个问题，会话级也答不了——要的是 decompose / implement /
+    verify 各自的占比。先量后动，别照着直觉调模型（2026-08-03 门禁提速那轮
+    刚验证过：不量就动手会把力气使在错的地方）。
+    """
+
+    def __init__(self) -> None:
+        self.scope: Dict[str, Any] = new_usage()
+        self._token: Optional[Any] = None
+
+    def __enter__(self) -> Dict[str, Any]:
+        self._token = _usage_ctx.set(self.scope)
+        return self.scope
+
+    def __exit__(self, *exc) -> None:
+        # 返回 None 而不是 False：给 __exit__ 标 bool 会让类型检查器认为它**可能吞异常**。
+        # 阶段里抛错必须原样冒上去（dev 流水线靠它判失败），这里只负责还原绑定。
+        if self._token is not None:
+            _usage_ctx.reset(self._token)   # 恢复原绑定，绝不把上层的计量搞丢
+            self._token = None
+
+
 def _account(messages: List[Dict[str, str]], content: Optional[str], usage: Any = None,
              model: str = "") -> None:
     """记一次调用用量：有 API 精确 usage 就用，否则按文本估算。
