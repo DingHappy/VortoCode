@@ -267,6 +267,31 @@ def _noop_retry_prompt(base: str) -> str:
 
 
 
+def _log_stage_usage(stage: str, usage: dict) -> None:
+    """把一个 dev 阶段的 token 用量记进日志（INFO）。
+
+    为什么落日志而不是新开一张表：这一步的目的是**攒真实数据**，好回答"分解 vs 执行
+    各占多少、分别用了哪些模型"。有了几次真跑的数字，才谈得上模型分层——
+    没数据就调模型是照直觉使力气（2026-08-03 门禁提速那轮刚验证过先量后动的价值）。
+    等数据说话了，再决定要不要把它升级成结构化台账。
+
+    日志本身直到 2026-08-02 才真的会产出（此前全仓无 logging 配置，60 处 .info() 全是哑的）。
+    """
+    import logging
+
+    total = int(usage.get("total_tokens") or 0)
+    if total <= 0:
+        return
+    # by_model 的桶里**只有** prompt/completion，没有 total_tokens——现场相加。
+    # （第一版直接读 v["total_tokens"]，冒烟一跑全是 0：日志能打出来不等于打对了。）
+    by_model = ", ".join(
+        f"{m}={int(v.get('prompt_tokens') or 0) + int(v.get('completion_tokens') or 0)}"
+        for m, v in sorted((usage.get("by_model") or {}).items()))
+    logging.getLogger("vortocode.dev.usage").info(
+        "阶段用量 %s: %d tokens（%d 次调用）%s",
+        stage, total, int(usage.get("calls") or 0), f" · {by_model}" if by_model else "")
+
+
 def _detect_base_branch(repo_root: str) -> str:
     """dev_auto 开 PR 时的 base：取当前 HEAD 所在分支（PR 合回你出发的地方）；分离头/出错回退 main。"""
     import subprocess
@@ -880,10 +905,15 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         from src.agents.test_detect import detect_test_cmd
         test_cmd = detect_test_cmd(repo_root, sel)          # 按仓库类型探测（pytest/npm/go/cargo/make）
         _progress("🧩 自动分解任务中…")
+        # 阶段计量：分解与执行分开记，才答得了"钱花在哪个阶段"——那是模型分层
+        # （规划用旗舰、执行用中档）唯一靠谱的依据。先量后动。
+        from src.llm.client import usage_scope
         try:
-            plan = await decompose_for_parallel(task)
+            with usage_scope() as decompose_usage:
+                plan = await decompose_for_parallel(task)
         except Exception as e:  # noqa: BLE001
             return f"(任务分解出错: {e}；可改用 dev_parallel 手动给独立子任务)"
+        _log_stage_usage("decompose", decompose_usage)
         descs, deferred = plan["descriptions"], plan["deferred"]
         if not descs and not deferred:
             return f"分解出 {plan['total']} 个子任务，但没拿到可实现的描述；建议用 dev_isolated 逐个做。"
@@ -904,7 +934,10 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
 
         out = [f"已把任务分解为 {plan['total']} 个子任务：{len(descs)} 个独立(并行) + {len(deferred)} 个有依赖(接力)。",
                f"（计划已存盘 plan_id={dp.plan_id}；中断后可 dev_resume 续跑）"]
-        return await _execute_plan(dp, test_cmd, out)
+        with usage_scope() as execute_usage:
+            result = await _execute_plan(dp, test_cmd, out)
+        _log_stage_usage("execute", execute_usage)
+        return result
 
     async def _pr_fix(args: dict) -> str:
         """读一个 PR 的 review 评论 + CI 状态 → 在其分支上逐条修（自测）→ 绿则 push（确认门）。
