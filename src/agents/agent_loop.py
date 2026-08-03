@@ -237,11 +237,48 @@ def _to_native_messages(messages: list) -> list:
 _NUDGE = ("（上一步没有给出有效回答，也没有正确调用工具。请二选一：要么直接用自然语言给出最终回答；"
           "要么严格按协议只输出工具调用 JSON。不要输出残缺的 JSON 或空内容。）")
 
+# 对症版：模型用了别家的工具语法时，泛泛说"没给出有效回答"帮不上它——它以为自己调了工具。
+# 得指名道姓说清"那次调用等于没发生"，否则它会照原样再试一遍（真机 2026-08-03 就是这样，
+# 两轮都在吐 <tool_call> XML，各烧 5k token 交白卷）。
+_FOREIGN_NUDGE = (
+    '（你上一步输出的是 <tool_call> / <function=…> 这类**其它系统**的工具调用格式，'
+    '本系统识别不了，那次调用等于没发生——你以为读到的文件其实一个字都没读到。\n'
+    '本系统只认两种：① 原生 function-calling（结构化 tool_calls 字段，优先用这个）；'
+    '② 提示式协议——只输出一个 JSON 对象 {"tool": "工具名", "args": {…}}，'
+    '不要包在标签或代码围栏里。\n'
+    '请用上面任一种**重新发起**这次工具调用。）')
+
+
+# 别家模型的工具调用语法。它们**不是本仓协议**，但模型会照训练习惯把它们当正文吐出来——
+# 此时内容看着像最终回答，实则是一次没被识别的工具调用。
+# 真机 2026-08-03：dev_auto 的两个子块各烧 5k token 交白卷，note 里是
+# `<tool_call><function=read_file><parameter=path>…` 整段纯文本。**我们把它当最终回答收下了。**
+_FOREIGN_TOOL_SYNTAX = (
+    "<tool_call>",          # Qwen / Hermes
+    "<function=",           # 同上（有时不带外层 tool_call）
+    "<|tool▁call",          # DeepSeek
+    "<invoke name=",        # Anthropic 风格 XML
+    "<function_calls>",
+)
+
+
+def _looks_like_foreign_tool_call(content: str) -> bool:
+    """内容里带着**别家**的工具调用语法 → 这不是回答，是一次没被识别的工具调用。"""
+    c = (content or "").strip()
+    return any(mark in c for mark in _FOREIGN_TOOL_SYNTAX)
+
 
 def _is_weak_final(content: str) -> bool:
-    """疑似"没收好尾"：空内容，或看着像想调工具却没解析成（残缺 JSON/围栏）→ 值得纠偏重试一次。"""
+    """疑似"没收好尾"：空内容，或看着像想调工具却没解析成 → 值得纠偏重试一次。
+
+    三类：空 / 残缺 JSON 或围栏（本仓协议没写完）/ **别家模型的工具语法**（见上）。
+    第三类此前认不出来，于是被当成最终回答静默收下——子 agent 交白卷，
+    人只看到"无改动"，而它其实一直在努力调工具（2026-08-03 真机）。
+    """
     c = (content or "").strip()
     if not c:
+        return True
+    if _looks_like_foreign_tool_call(c):
         return True
     return c.startswith("{") or c.startswith("[") or c.startswith("```")
 
@@ -1591,7 +1628,8 @@ class MainAgent:
                     if not calls:                  # 最终回复
                         if not nudged and _is_weak_final(content):   # 空收尾 → 纠偏重试一次
                             nudged = True
-                            self.history.append({"role": "user", "content": _NUDGE})
+                            self.history.append({"role": "user", "content": (
+                                _FOREIGN_NUDGE if _looks_like_foreign_tool_call(content) else _NUDGE)})
                             continue
                         if _is_weak_final(content):  # 第二次仍空：交给无工具强制收尾，不展示「(无回复)」
                             break
@@ -1642,7 +1680,8 @@ class MainAgent:
                 if not nudged and _is_weak_final(content):   # 空/残缺工具 JSON 当结论 → 纠偏重试一次
                     nudged = True
                     self.history.append({"role": "assistant", "content": content or ""})
-                    self.history.append({"role": "user", "content": _NUDGE})
+                    self.history.append({"role": "user", "content": (
+                        _FOREIGN_NUDGE if _looks_like_foreign_tool_call(content) else _NUDGE)})
                     continue
                 if _is_weak_final(content):        # 第二次仍空：转无工具强制收尾，绝不展示「(无回复)」
                     break
