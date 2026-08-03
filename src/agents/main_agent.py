@@ -1296,6 +1296,20 @@ from src.agents.agent_loop import (  # noqa: F401,E402
     MainAgent,
     SYSTEM_TEMPLATE,
     DEV_SUBAGENT_ROLE,
+    # 模块级常量也要一并再导出：测试直接 import 它们来断上下文预算/折叠策略
+    # （漏了两个当场被 test_main_agent.py 的 ImportError 抓住）。这里是**照
+    # agent_loop 的模块级名字全量对齐**补的，不是逐个撞红了再加。
+    _CONTEXT_POLICY_PROFILES,
+    _CONTEXT_WINDOW_FRACTION,
+    _CONTEXT_MIN_WINDOW_TO_SCALE,
+    _CONTEXT_BUDGET_HARD_CAP,
+    _TRIM_LOW_WATERMARK,
+    _MAX_COMPACT_FOCUS,
+    _FOLD_MARK,
+    _FOLD_KEEP_RECENT_TOOLS,
+    _FORCE_FINISH_RULE,
+    _SUMMARY_SYSTEM,
+    _NUDGE,
     parse_tool_call,
     parse_tool_calls,
     native_default,
