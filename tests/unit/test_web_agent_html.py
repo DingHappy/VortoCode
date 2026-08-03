@@ -10,11 +10,20 @@ from pathlib import Path
 
 import pytest
 
-AGENT_HTML = Path(__file__).resolve().parents[2] / "web" / "agent.html"
+_WEB = Path(__file__).resolve().parents[2] / "web"
+AGENT_HTML = _WEB / "agent.html"
+AGENT_CSS = _WEB / "agent.css"
+AGENT_JS = _WEB / "agent.js"
 
 
 def _src() -> str:
-    return AGENT_HTML.read_text(encoding="utf-8")
+    """前端源码合并视图（2026-08 拆分后：骨架 + 样式 + 逻辑）。
+
+    这里的断言钉的是「整个前端面」的契约（某个函数存在、innerHTML 只有一处、
+    某选择器有样式），拆成三个文件后契约不变——所以合并起来查，而不是挨个改断言。
+    node harness 抽函数跑行为时只读 agent.js（函数全在那）。
+    """
+    return "\n".join(p.read_text(encoding="utf-8") for p in (AGENT_HTML, AGENT_CSS, AGENT_JS))
 
 
 def test_emit_renders_markdown_not_plaintext():
@@ -94,7 +103,7 @@ process.exit(bad ? 1 : 0);
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node 不可用，跳过行为测试")
 def test_renderer_behavior_via_node():
-    harness = _NODE_HARNESS.replace("__PATH__", str(AGENT_HTML))
+    harness = _NODE_HARNESS.replace("__PATH__", str(AGENT_JS))
     r = subprocess.run(["node", "--input-type=module"], input=harness,
                        capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, (r.stdout + r.stderr)
@@ -153,7 +162,7 @@ process.exit(bad ? 1 : 0);
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node 不可用，跳过行为测试")
 def test_tool_activity_grouping_via_node():
-    harness = _GROUP_HARNESS.replace("__PATH__", str(AGENT_HTML))
+    harness = _GROUP_HARNESS.replace("__PATH__", str(AGENT_JS))
     r = subprocess.run(["node", "--input-type=module"], input=harness,
                        capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, (r.stdout + r.stderr)
@@ -221,7 +230,7 @@ process.exit(bad ? 1 : 0);
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node 不可用，跳过行为测试")
 def test_media_helpers_via_node():
-    harness = _IMG_HARNESS.replace("__PATH__", str(AGENT_HTML))
+    harness = _IMG_HARNESS.replace("__PATH__", str(AGENT_JS))
     r = subprocess.run(["node", "--input-type=module"], input=harness,
                        capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, (r.stdout + r.stderr)
@@ -267,7 +276,7 @@ process.exit(bad ? 1 : 0);
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node 不可用，跳过行为测试")
 def test_wav_encoder_via_node():
-    harness = _WAV_HARNESS.replace("__PATH__", str(AGENT_HTML))
+    harness = _WAV_HARNESS.replace("__PATH__", str(AGENT_JS))
     r = subprocess.run(["node", "--input-type=module"], input=harness,
                        capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, (r.stdout + r.stderr)
@@ -307,7 +316,7 @@ process.exit(bad ? 1 : 0);
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node 不可用，跳过行为测试")
 def test_backoff_curve_via_node():
-    harness = _BACKOFF_HARNESS.replace("__PATH__", str(AGENT_HTML))
+    harness = _BACKOFF_HARNESS.replace("__PATH__", str(AGENT_JS))
     r = subprocess.run(["node", "--input-type=module"], input=harness,
                        capture_output=True, text=True, timeout=30)
     assert r.returncode == 0, (r.stdout + r.stderr)
@@ -357,3 +366,52 @@ def test_interrupt_wiring():
     # 回车忙时不发送；Esc 在忙时中断
     assert "if (!busy) sendMsg()" in s
     assert 'e.key === "Escape" && busy' in s
+
+
+# ---- 流水线视图（dev 计划 DAG，2026-08）----
+
+def test_pipes_view_wiring():
+    """流水线 tab：dev_auto 台账的只读投影终于到了手机/浏览器上——之前只有 Desktop 有。"""
+    s = _src()
+    # tab + 容器 + 三层渲染函数齐全
+    assert 'id="tab-pipes"' in s and 'id="pipes"' in s
+    for fn in ("function loadPipes(", "function renderPipes(", "function pipeCard(",
+               "async function loadPipeGraph(", "function renderPipeGraph(", "function dagNode("):
+        assert fn in s, fn
+    # 后端契约：列表 + 单计划图（层次由服务端算好）
+    assert 'apiUrl("/api/dev-plans")' in s
+    assert '"/api/dev-plans/" + encodeURIComponent(' in s
+    # 失败原因就地可读（本视图存在的头号理由），且全部 textContent、不新增 innerHTML 面
+    assert 'n.status === "failed" && n.note' in s
+    assert s.count(".innerHTML") == 1
+    # 依赖环必须摆出来，不许画个残图装正常
+    assert "cyclic_ids" in s
+    # 哈希深链：IM 通知里的「看进度」链接直达并自动展开最新计划
+    assert '"pipes"' in s and "_autoOpenLatestPipe" in s and "location.hash" in s
+
+
+_TOKENS_HARNESS = r"""
+import { readFileSync } from "node:fs";
+const src = readFileSync("__PATH__", "utf8");
+const m = src.match(/function fmtTokens[\s\S]*?\n\}/);
+if (!m) { console.error("fmtTokens not found"); process.exit(2); }
+const fmtTokens = eval("(" + m[0].replace(/^function fmtTokens/, "function") + ")");
+let bad = 0;
+const ok = (n, c, g) => { if (!c) { bad++; console.error("FAIL " + n + " :: " + JSON.stringify(g)); } };
+ok("zero", fmtTokens(0) === "0", fmtTokens(0));
+ok("small", fmtTokens(999) === "999", fmtTokens(999));
+ok("1k", fmtTokens(1000) === "1.0k", fmtTokens(1000));
+ok("real-block", fmtTokens(61379) === "61.4k", fmtTokens(61379));        // 真账单里的 ind-0
+ok("hundred-k", fmtTokens(206197) === "206k", fmtTokens(206197));        // 真账单里的 subtask-5
+ok("plan-total", fmtTokens(423429) === "423k", fmtTokens(423429));
+ok("garbage-safe", fmtTokens(undefined) === "0" && fmtTokens("x") === "0", "nan");
+process.exit(bad ? 1 : 0);
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node 不可用，跳过行为测试")
+def test_fmt_tokens_via_node():
+    harness = _TOKENS_HARNESS.replace("__PATH__", str(AGENT_JS))
+    r = subprocess.run(["node", "--input-type=module"], input=harness,
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, (r.stdout + r.stderr)

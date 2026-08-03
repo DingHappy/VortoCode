@@ -63,6 +63,21 @@ def test_pwa_assets_exempt_but_api_stays_locked(client, monkeypatch):
     assert client.get("/api/dev-plans").status_code == 401
 
 
+def test_agent_assets_exempt_but_api_stays_locked(client, monkeypatch):
+    """设了 token 时对话台的样式/逻辑（2026-08 拆分件）必须放行——/agent 页本身免鉴权，
+    它 <link>/<script> 引的静态件被 401 的话，登录门连样式都渲染不出来（白屏收 token）。
+    反面照钉：豁免只有这两条具体文件，/api/* 照锁。
+    """
+    monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
+    for path, ctype in (("/agent.css", "text/css"),
+                        ("/agent.js", "text/javascript")):
+        r = client.get(path)
+        assert r.status_code == 200, f"{path} 被鉴权拦了——登录门自己都渲染不出来"
+        assert ctype in r.headers.get("content-type", ""), path
+    assert client.get("/api/status").status_code == 401
+    assert client.get("/api/dev-plans").status_code == 401
+
+
 def test_login_sets_httponly_cookie_and_authorizes(client, monkeypatch):
     monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
     assert client.get("/api/status").status_code == 401          # 未登录
