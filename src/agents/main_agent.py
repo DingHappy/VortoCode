@@ -267,6 +267,22 @@ def _noop_retry_prompt(base: str) -> str:
 
 
 
+def _noop_note(conclusion) -> str:
+    """子 agent 没产出任何改动时给人的说明。
+
+    只写「无改动/出错」等于把唯一的线索扔了：子 agent 通常**说过**为什么没动手
+    （找不到目标段落 / 认为已经满足 / 把任务理解成了别的事）。真机代价——2026-07-24/25
+    同一个「给 README 补一行」的任务在 14 小时里重试 8 次，全走这条路，
+    而人每次拿到的都是那五个字，于是只能盲改提示词再试。
+
+    带上原话，人一眼就知道该把指令改成什么样（那两次最终成功的，正是把指令写具体了）。
+    """
+    text = str(conclusion or "").strip()
+    if not text:
+        return "无改动/出错（子 agent 也没说明原因）"
+    return f"无改动——子 agent 说：{text[:300]}"
+
+
 def _log_stage_usage(stage: str, usage: dict) -> None:
     """把一个 dev 阶段的 token 用量记进日志（INFO）。
 
@@ -482,11 +498,18 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     _progress(f"↻ 「{desc[:32]}」上次未达标（红/无改动），第 {attempt} 次换全新 worktree 重试…")
             wid = "wt-" + uuid.uuid4().hex[:8]
             try:
-                diff, _c, ver = await run_isolated_task(repo_root, wid, cur, mk(cur), test_cmd=test_cmd)
+                diff, conclusion, ver = await run_isolated_task(
+                    repo_root, wid, cur, mk(cur), test_cmd=test_cmd)
             except Exception as e:  # noqa: BLE001
                 last = {"desc": desc, "diff": "", "ver": None, "attempts": attempt, "err": str(e)}
                 continue
-            last = {"desc": desc, "diff": diff, "ver": ver, "attempts": attempt}
+            # **留住子 agent 的结论**。此前它被丢进 `_c` 直接扔掉，于是"没产出任何改动"
+            # 只剩五个字「无改动/出错」——人拿不到任何可行动的线索。
+            # 真机代价：2026-07-24/25 同一个"给 README 补一行"的任务在 14 小时里重试了 8 次，
+            # 每次都是这条路；子 agent 大概率每次都说了原因（比如找不到那个段落），全被扔了。
+            # 这与本仓反复栽的"降级了但不告诉人"是同一个病。
+            last = {"desc": desc, "diff": diff, "ver": ver, "attempts": attempt,
+                    "conclusion": _clip_middle(str(conclusion or "").strip(), 600)}
             if ver and ver["ok"] and (diff or "").strip():
                 _progress(f"✅ 「{desc[:32]}」实现并自测通过" + (f"（修复 {attempt - 1} 次后）" if attempt > 1 else ""))
                 return last                                  # 绿了就收
@@ -533,7 +556,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 lines.append(f"· {r['desc']}：❌ LLM 通道故障（{str(r['err'])[:80]}）"
                              + (f"（试了 {att} 次）" if att > 1 else ""))
             elif not (r.get("diff") or "").strip():
-                lines.append(f"· {r['desc']}：无改动/出错" + (f"（试了 {att} 次）" if att > 1 else ""))
+                lines.append(f"· {r['desc']}：{_noop_note(r.get('conclusion'))}"
+                             + (f"（试了 {att} 次）" if att > 1 else ""))
             else:
                 lines.append(f"· {r['desc']}：❌ 未过（试了 {att} 次）")
         return greens, lines
@@ -762,7 +786,9 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                         if r.get("err"):               # 死因透传进台账：外伤（通道）别记成内科（no-op）
                             b.note = f"LLM 通道故障: {str(r['err'])[:120]}"
                         elif not (r.get("diff") or "").strip():
-                            b.note = "无改动/出错"
+                            # 把子 agent 自己说的原因带出来——那通常就是"为什么没动手"的答案
+                            # （找不到目标段落 / 认为已经满足 / 理解成了别的任务）。
+                            b.note = _noop_note(r.get("conclusion"))
                         else:
                             b.note = "自测未过"
                 _save()                                      # 落地前先记下哪些没绿
