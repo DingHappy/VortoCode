@@ -545,3 +545,44 @@ def test_fail_note_is_bounded():
     from src.agents.main_agent import _fail_note
 
     assert len(_fail_note({"output": "x" * 5000})) <= 400
+
+
+# ---------------------------------------------------------------- 异常类型不能丢
+@pytest.mark.parametrize("exc,want", [
+    (KeyError("descriptions"), "KeyError"),
+    (TimeoutError(), "TimeoutError"),          # str(e) 是空串——只写 {e} 等于什么都没说
+    (ValueError("坏 JSON"), "ValueError"),
+    (RuntimeError("502 Bad Gateway"), "502"),
+])
+def test_exc_text_keeps_the_type(exc, want):
+    """用户可见的失败文案必须带**异常类型**——断的是生产函数，不是在测试里重算一遍。
+
+    KeyError 的 str(e) 只是 `'descriptions'`，TimeoutError 的干脆是空串。只写 {e} 的话，
+    人看到的是「(任务分解出错: 'descriptions')」甚至「(出错: )」，无从下手。
+    """
+    from src.agents.main_agent import _exc_text
+
+    text = _exc_text(exc)
+    assert want in text
+    assert text and not text.endswith(":"), f"渲染出空壳: {text!r}"
+
+
+@pytest.mark.asyncio
+async def test_dev_auto_surfaces_the_exception_type_to_the_user(tmp_path, monkeypatch):
+    """钉住**接线**，而且断的是真行为：让分解器真抛 KeyError，看 dev_auto 返回的文案。
+
+    我在这条上连栽两次：第一版把格式化表达式抄进测试重算了一遍；第二版用
+    inspect.getsource 数 `_exc_text(` 的出现次数——**两种都对生产代码退化免疫**
+    （CLAUDE.md 明令禁止的安慰剂）。真行为测试是：制造失败，读用户拿到的字。
+    """
+    _init_repo(tmp_path)
+    import src.agents.decompose as dec
+
+    async def boom(_task):
+        raise KeyError("descriptions")           # str(e) 只是 'descriptions'，没类型就等于没说
+
+    monkeypatch.setattr(dec, "decompose_for_parallel", boom)
+    out = await _dev_tools(tmp_path)["dev_auto"].handler({"task": "随便什么"})
+
+    assert "KeyError" in out, f"异常类型没传到用户面前: {out!r}"
+    assert "任务分解出错" in out
