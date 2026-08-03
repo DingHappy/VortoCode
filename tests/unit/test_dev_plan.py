@@ -503,4 +503,45 @@ async def test_dependent_failure_preserves_conclusion_in_note(tmp_path, monkeypa
     assert d1 is not None and d1.status == "failed"
     assert "Foo 没有 bar 方法" in d1.note, (
         f"接力块失败时 note 应带 conclusion，实际 note={d1.note!r}")
-    assert "raw stderr" not in d1.note, "note 不应只是 output 尾巴"
+    # 【人工修正 2026-08-03】本条原为 `assert "raw stderr" not in d1.note`（agent 写的）。
+    # 那个假设是"output 是垃圾、conclusion 才有信息"，但真实出口里反过来：测试红时
+    # output 是 1500 字的失败尾部（哪个测试红、为什么），是**机器真相**；conclusion 是
+    # 子 agent 的说法。两者各有各的用，所以 _fail_note 两个都带——改断言为"都在"。
+    assert "raw stderr" in d1.note, "output 是真死因（哪个测试红），不能扔"
+
+
+# ---------------------------------------------------------------- 失败原因要按真实死因分流
+def test_fail_note_routes_by_actual_cause():
+    """接力块失败时**按真实死因分流**，别一律说成「无改动」。
+
+    run_dependent_on_branch 有五个失败出口，只有一个是无改动。2026-08-03 我让 agent
+    修「接力块丢原因」，它把所有失败都改成 _noop_note(conclusion)——测试红时那 1500 字
+    失败尾部被换成一句错误的「无改动」，**比原来还糟**（原来至少留了 output 尾巴）。
+    我当时合得太快。这条钉住分流。
+    """
+    from src.agents.main_agent import _fail_note
+
+    # 测试红：要的是测试输出，不是"无改动"
+    note = _fail_note({"ok": False, "conclusion": "我改完了",
+                       "output": "FAILED tests/unit/test_x.py::test_y\nAssertionError: 期望 3 实际 2"})
+    assert "test_y" in note, "测试失败尾部被扔了——那是唯一能定位问题的东西"
+    assert "无改动" not in note, "有改动却被标成无改动，把人引向错误方向"
+
+    # 真的无改动：带子 agent 的原因
+    note = _fail_note({"ok": False, "conclusion": "README 里没有那个段落",
+                       "output": "无改动（子 agent 未修改任何文件）"})
+    assert "README 里没有那个段落" in note
+
+    # 通道故障：带 output（那是真死因）
+    note = _fail_note({"ok": False, "conclusion": "", "output": "LLM 通道故障: 502 Bad Gateway"})
+    assert "502" in note
+
+    # 什么都没有：如实说，别装作知道
+    assert "没说明原因" in _fail_note({"ok": False, "conclusion": "", "output": ""})
+
+
+def test_fail_note_is_bounded():
+    """一次失败不该把台账撑爆。"""
+    from src.agents.main_agent import _fail_note
+
+    assert len(_fail_note({"output": "x" * 5000})) <= 400

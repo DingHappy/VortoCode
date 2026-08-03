@@ -267,6 +267,31 @@ def _noop_retry_prompt(base: str) -> str:
 
 
 
+def _fail_note(result: dict) -> str:
+    """接力块失败时给人的说明——**按真实死因分流，且两种线索都带**。
+
+    run_dependent_on_branch 有五个失败出口（worktree add 挂 / LLM 通道故障 / 真的无改动 /
+    测试红 / 提交失败），只有一个是"无改动"：
+
+    - **真无改动** → output 只有一句「无改动（…）」没信息量，要的是子 agent 说的**为什么没动手**
+    - **其余** → output 才是机器真相（哪个测试红了、通道怎么挂的），是首要线索；
+      子 agent 的话作为补充——它有时会说"我改了，但 X 测试红是因为 Y"，那句很值钱
+
+    两次教训叠出来的设计：① 2026-08-03 我让 agent 修这处，它把**所有**失败都写成
+    `_noop_note(conclusion)`，于是测试红时那 1500 字失败尾部被换成一句错误的"无改动"，
+    比原来还糟——我合得太快，还在 PR 里夸它比我准。② 我改成一律用 output 后，
+    它写的那条测试红了——它假设 conclusion 有诊断信息。**双方各对一半，所以两个都带。**
+    """
+    output = str(result.get("output") or "").strip()
+    said = str(result.get("conclusion") or "").strip()
+    if not output or output.startswith("无改动（"):     # 唯一确实是 no-op 的出口
+        return _noop_note(said)
+    note = output[-320:]
+    if said:                                            # 补上子 agent 的读法（次要线索）
+        note += f"\n（子 agent 说：{said[:120]}）"
+    return note
+
+
 def _noop_note(conclusion) -> str:
     """子 agent 没产出任何改动时给人的说明。
 
@@ -818,7 +843,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     if r["ok"]:
                         b.status, b.note = "landed", ""
                     else:
-                        b.status, b.note = "failed", _noop_note(r.get("conclusion"))
+                        b.status, b.note = "failed", _fail_note(r)
                     _save()
 
         ind = dp.independent()
@@ -857,7 +882,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     out.append(f"  · {disp}：✅ 已接力提交"
                                + (f"（修复 {b.attempts - 1} 次后）" if b.attempts > 1 else ""))
                 else:
-                    b.status, b.note = "failed", _noop_note(r.get("conclusion"))
+                    b.status, b.note = "failed", _fail_note(r)
                     out.append(f"  · {disp}：❌ 试了 {b.attempts} 次仍未过：{b.note}")
                 _save()
 
