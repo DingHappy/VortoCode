@@ -260,3 +260,56 @@ async def test_on_diff_failure_does_not_block_pr(tmp_path, monkeypatch):
                                                   on_diff=boom)}["dev_auto"]
     out = await tool.handler({"task": "x", "open_pr": True})
     assert "已开 PR" in out
+
+
+# ---------------------------------------------------------------- base 必须在远端存在
+def _mk_repo_with_remote(tmp_path, remote_branches):
+    """造一个带真远端的仓库：remote_branches 里的分支会真的存在于 origin。"""
+    import subprocess
+
+    def git(cwd, *a):
+        return subprocess.run(["git", "-C", str(cwd), *a], capture_output=True, text=True)
+
+    bare = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    work = tmp_path / "work"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(work)], check=True)
+    git(work, "config", "user.email", "x@x"); git(work, "config", "user.name", "x")
+    (work / "a.txt").write_text("1\n")
+    git(work, "add", "-A"); git(work, "commit", "-qm", "init")
+    git(work, "remote", "add", "origin", str(bare))
+    for b in remote_branches:
+        if b != "main":
+            git(work, "checkout", "-q", "-b", b)
+        git(work, "push", "-q", "origin", b)
+    git(work, "checkout", "-q", "main")
+    return work
+
+
+def test_base_falls_back_when_current_branch_is_local_only(tmp_path):
+    """当前分支只在本地 → base 回退到远端默认分支。
+
+    真机 2026-08-03：在本地建的 vorto/idle-7 上跑 dev_auto，集成全绿、分支也 push 了，
+    开 PR 却挂在「Base ref must be a branch / No commits between …」——
+    **整条流水线唯一的产出口被堵死**，而人只看到一句 GraphQL 报错。
+    """
+    import subprocess
+
+    from src.agents.main_agent import _detect_base_branch
+
+    work = _mk_repo_with_remote(tmp_path, ["main"])
+    subprocess.run(["git", "-C", str(work), "checkout", "-q", "-b", "只在本地的分支"], check=True)
+
+    assert _detect_base_branch(str(work)) == "main", "本地分支被当成了 PR base"
+
+
+def test_base_keeps_current_branch_when_it_exists_on_remote(tmp_path):
+    """反面：当前分支远端有 → 照旧用它（PR 合回你出发的地方，这个语义不能丢）。"""
+    import subprocess
+
+    from src.agents.main_agent import _detect_base_branch
+
+    work = _mk_repo_with_remote(tmp_path, ["main", "feature-x"])
+    subprocess.run(["git", "-C", str(work), "checkout", "-q", "feature-x"], check=True)
+
+    assert _detect_base_branch(str(work)) == "feature-x", "远端有的分支不该被回退掉"

@@ -267,15 +267,7 @@ def _noop_retry_prompt(base: str) -> str:
 
 
 
-def _exc_text(e: BaseException) -> str:
-    """把异常渲染成**人能据以定位**的一行。
-
-    裸 `str(e)` 会丢掉最关键的类型：`KeyError('descriptions')` 只剩 `'descriptions'`，
-    `TimeoutError()` 干脆是空串。于是用户看到「(任务分解出错: 'descriptions')」甚至
-    「(出错: )」——无从下手。类型是定位的第一线索，永远带上。
-    """
-    detail = str(e).strip()
-    return f"{type(e).__name__}: {detail}" if detail else type(e).__name__
+from src.utils.exc_utils import _exc_text  # noqa: F401 — re-exported so existing "from src.agents.main_agent import _exc_text" keeps working
 
 
 def _fail_note(result: dict) -> str:
@@ -344,16 +336,69 @@ def _log_stage_usage(stage: str, usage: dict) -> None:
         stage, total, int(usage.get("calls") or 0), f" · {by_model}" if by_model else "")
 
 
+def _remote_has_branch(repo_root: str, branch: str, remote: str = "origin") -> bool:
+    """远端存不存在这个分支。空/出错一律 False（宁可回退到默认分支，也不要开不出 PR）。"""
+    import subprocess
+    if not branch:
+        return False
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(repo_root), "ls-remote", "--heads", remote, branch],
+            capture_output=True, text=True, timeout=20)
+        return r.returncode == 0 and bool((r.stdout or "").strip())
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _detect_base_branch(repo_root: str) -> str:
-    """dev_auto 开 PR 时的 base：取当前 HEAD 所在分支（PR 合回你出发的地方）；分离头/出错回退 main。"""
+    """dev_auto 开 PR 时的 base：取当前 HEAD 所在分支（PR 合回你出发的地方）。
+
+    **但 base 必须在远端存在**——本地分支 GitHub 看不见。真机 2026-08-03：我在
+    `vorto/idle-7`（本地建的、从没推过）上跑 dev_auto，集成全绿、分支也 push 了，
+    开 PR 却挂在 `Base ref must be a branch / No commits between …`。
+    整条流水线唯一的产出口就这么堵死了，而人只看到一句 GraphQL 报错。
+
+    远端没有就回退到远端默认分支（origin/HEAD，通常是 main）——那才是 PR 真正该合回去的地方。
+    """
     import subprocess
     try:
         r = subprocess.run(["git", "-C", str(repo_root), "rev-parse", "--abbrev-ref", "HEAD"],
                            capture_output=True, text=True)
         b = (r.stdout or "").strip()
-        return b if b and b != "HEAD" else "main"
     except Exception:  # noqa: BLE001
-        return "main"
+        b = ""
+    if not b or b == "HEAD":
+        return _remote_default_branch(repo_root)
+    # **只在"有远端、但远端没有这个分支"时才回退**——那才是真坏的场景。
+    # 压根没配远端时开不了 PR，base 取什么都无所谓，保持"合回你出发的地方"的原语义。
+    if not _has_remote(repo_root) or _remote_has_branch(repo_root, b):
+        return b
+    return _remote_default_branch(repo_root)
+
+
+def _has_remote(repo_root: str, remote: str = "origin") -> bool:
+    import subprocess
+    try:
+        r = subprocess.run(["git", "-C", str(repo_root), "remote", "get-url", remote],
+                           capture_output=True, text=True, timeout=10)
+        return r.returncode == 0 and bool((r.stdout or "").strip())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _remote_default_branch(repo_root: str, remote: str = "origin") -> str:
+    """远端默认分支（origin/HEAD 指向谁）；问不出来回退 "main"。"""
+    import subprocess
+    try:
+        r = subprocess.run(
+            ["git", "-C", str(repo_root), "symbolic-ref", "--short", f"refs/remotes/{remote}/HEAD"],
+            capture_output=True, text=True, timeout=20)
+        name = (r.stdout or "").strip()
+        if name.startswith(f"{remote}/"):
+            return name[len(remote) + 1:] or "main"
+    except Exception:  # noqa: BLE001
+        pass
+    return "main"
 
 
 def _is_test_path(path: str) -> bool:
@@ -1019,6 +1064,11 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
 
         out = [f"已把任务分解为 {plan['total']} 个子任务：{len(descs)} 个独立(并行) + {len(deferred)} 个有依赖(接力)。",
                f"（计划已存盘 plan_id={dp.plan_id}；中断后可 dev_resume 续跑）"]
+        if plan.get("dropped_verify_only"):
+            # 滤掉了就**说一声**——悄悄吞掉是今天一整天在修的那个毛病，别自己犯。
+            out.append(f"（已滤掉 {len(plan['dropped_verify_only'])} 个「只跑验证不改文件」的子任务："
+                       + "、".join(plan["dropped_verify_only"][:3])
+                       + "；流水线跑完所有块后本来就会做集成验证）")
         with usage_scope() as execute_usage:
             result = await _execute_plan(dp, test_cmd, out)
         _log_stage_usage("execute", execute_usage)

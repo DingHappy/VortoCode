@@ -6,7 +6,37 @@ agent loop）：分析复杂度 → 分解成 SubTask（带依赖图）。这里
 互不可见，依赖链不能简单并行。UI 无关、可注入假分解器测试。
 """
 
+import re
 from typing import Any, Dict, List, Optional
+
+
+_VERIFY_ONLY = re.compile(
+    r"(集成验证|最终确认|运行测试|跑一遍测试|执行测试|验证(改动|结果|是否)|"
+    r"检查(是否生效|结果)|回归验证|确认无误|"
+    r"^(run|execute)\s+(the\s+)?tests?$|^verify\b|^validate\b|^final\s+(check|verification))",
+    re.I)
+
+
+def is_verify_only(sub: Any) -> bool:
+    """这个子任务是不是"只跑验证、不改文件"。
+
+    流水线在**所有子任务完成后本来就会跑一遍集成验证**，分解器再规划一个就是重复劳动——
+    而且它没有 diff，会被判 failed。真机 2026-08-03：一个「集成验证与最终确认」子任务
+    烧掉 20 万 token（占全次 42 万的近一半），最后标成 failed，
+    而它自己的结论写着「全部验证完成 ✅」。
+
+    提示词里已经明令禁止（task_analyzer 的分解提示），这里是**兜底闸**：
+    提示是软约束，模型不听时得有硬的。判据只看标题——描述里出现"验证"很正常
+    （"改完要能通过测试"是合理的验收标准），标题就叫"运行测试"才是那种块。
+
+    补测试的子任务**不算**（它产生新文件），只有"跑一遍看看"才算。
+    """
+    title = str(getattr(sub, "title", "") or "").strip()
+    if not title:
+        return False
+    if re.search(r"(补|新增|添加|写|加)\s*(单元)?测试|add\s+tests?|write\s+tests?", title, re.I):
+        return False                                   # 补测试是真活，有 diff
+    return bool(_VERIFY_ONLY.search(title))
 
 
 def describe_subtask(s: Any) -> str:
@@ -69,8 +99,13 @@ async def decompose_for_parallel(task: str, *, analyzer: Optional[Any] = None,
     analysis = await analyzer.analyze(task)
     subs = await decomposer.decompose(task, analysis)
 
+    # 兜底闸：滤掉"只跑验证不改文件"的子任务（见 is_verify_only）。放进去必然 failed，
+    # 且真机上单个能烧掉 20 万 token。滤掉的记进返回值，让上层能如实说一句而不是悄悄吞掉。
+    dropped = [s for s in subs if is_verify_only(s)]
+    subs = [s for s in subs if s not in dropped]
     independent = [s for s in subs if not getattr(s, "dependencies", None)]
     deferred = [s for s in subs if getattr(s, "dependencies", None)]
     descriptions: List[str] = [d for s in independent[:max_parallel] if (d := describe_subtask(s))]
     return {"descriptions": descriptions, "independent": independent,
-            "deferred": deferred, "total": len(subs)}
+            "deferred": deferred, "total": len(subs),
+            "dropped_verify_only": [str(getattr(s, "title", "") or "") for s in dropped]}
