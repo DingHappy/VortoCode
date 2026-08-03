@@ -75,15 +75,43 @@ def _package_parts(module_name: str, is_init: bool) -> List[str]:
     return parts if is_init else parts[:-1]
 
 
-def _candidates(text: str, module_name: str, is_init: bool) -> List[str]:
-    """从源码 ast 中抽取所有 import 目标的点路径候选（未解析到具体模块前）。"""
+def _import_nodes(tree: ast.AST, *, import_time_only: bool) -> List[ast.AST]:
+    """收集 import 节点。
+
+    ``import_time_only=True`` 时**不下钻进函数体**——只留模块导入时真正会执行的那些。
+    判据是"在不在函数里"，不是"在不在最外层"：模块级的 ``try/except ImportError`` 与
+    ``if TYPE_CHECKING`` 分支照样在导入时执行，属于真边；而函数体里的导入要到调用时才解析，
+    正是本仓打破环的**标准手法**（`_find_cycles` 自己的建议里就写着"改为函数内延迟导入"）。
+    """
+    out: List[ast.AST] = []
+
+    def walk(node: ast.AST) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, (ast.Import, ast.ImportFrom)):
+                out.append(child)
+            if import_time_only and isinstance(
+                    child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                continue                       # 函数体：调用时才执行，不是导入期的边
+            walk(child)
+
+    walk(tree)
+    return out
+
+
+def _candidates(text: str, module_name: str, is_init: bool,
+                *, import_time_only: bool = False) -> List[str]:
+    """从源码 ast 中抽取所有 import 目标的点路径候选（未解析到具体模块前）。
+
+    ``import_time_only``：只要模块导入时会执行的 import（供循环依赖检测用）。
+    默认 False —— 孤儿检测需要算上函数内导入，否则"只在函数里被用到"的模块会被误判成孤儿。
+    """
     try:
         tree = ast.parse(text)
     except SyntaxError:
         return []
     pkg = _package_parts(module_name, is_init)
     out: List[str] = []
-    for node in ast.walk(tree):
+    for node in _import_nodes(tree, import_time_only=import_time_only):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 out.append(alias.name)
@@ -116,13 +144,19 @@ def _resolve(cand: str, known: Set[str]) -> Optional[str]:
 
 
 def _build_graph(texts: Dict[Path, str], module_of: Dict[Path, str],
-                 root: Path) -> Dict[str, Set[str]]:
+                 root: Path, *, import_time_only: bool = False) -> Dict[str, Set[str]]:
+    """建模块依赖图。
+
+    ``import_time_only=True`` 只收模块导入期真正执行的边——**循环依赖检测必须用这张**。
+    用全量边会把"函数内延迟导入"也算成环，而那恰恰是打破环的手法，于是工具反过来
+    指控解法本身（2026-08-03：本仓 4 条 medium 全是这种假警报，逐条查完无一可动）。
+    """
     known = set(module_of.values())
     graph: Dict[str, Set[str]] = defaultdict(set)
     for path, text in texts.items():
         m = module_of[path]
         is_init = path.name == "__init__.py"
-        for cand in _candidates(text, m, is_init):
+        for cand in _candidates(text, m, is_init, import_time_only=import_time_only):
             tgt = _resolve(cand, known)
             if tgt and tgt != m:
                 graph[m].add(tgt)
@@ -412,7 +446,8 @@ async def analyze_self(root: str = ".", llm_paths: Optional[List[str]] = None,
     orphans = _find_orphans(src_modules, importers, module_path, root, corpus)
     orphan_names = {f.title.split()[1] for f in orphans}  # "模块 X 没有..." -> X
     test_gaps = _find_test_gaps(src_modules, reachable_from_tests, orphan_names, module_path, root)
-    cycles = _find_cycles(graph)
+    # 环检测单独用"导入期边"那张图：全量边会把函数内延迟导入算成环，而那正是打破环的手法。
+    cycles = _find_cycles(_build_graph(texts, module_of, root, import_time_only=True))
     undeclared = _find_undeclared_deps(root, src_files, texts)
 
     findings = orphans + cycles + undeclared + test_gaps

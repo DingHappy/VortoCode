@@ -129,3 +129,77 @@ async def test_clean_repo_has_no_structural_findings(tmp_path):
     assert "orphan-module" not in cats
     assert "circular-dependency" not in cats
     assert "test-gap" not in cats     # util 被 test_util 导入
+
+
+@pytest.mark.asyncio
+async def test_deferred_import_cycle_is_not_reported(tmp_path):
+    """**函数内延迟导入不算环**——那正是打破环的标准手法。
+
+    2026-08-03：本仓 4 条 circular-dependency 全是这种假警报（逐条查完无一可动），
+    工具反过来在指控解法本身。一个会喊狼来了的检测比没有检测更糟：
+    真问题会被淹在长期噪音里。
+    """
+    src = tmp_path / "src"
+    tests = tmp_path / "tests"
+    src.mkdir()
+    tests.mkdir()
+    (src / "__init__.py").write_text("")
+    # a 在**模块级**导入 b；b 只在**函数体内**导入 a → 导入期无环
+    (src / "a.py").write_text("from .b import b_fn\n\n\ndef a_fn():\n    return b_fn()\n")
+    (src / "b.py").write_text(
+        "def b_fn():\n"
+        "    from .a import a_fn      # 延迟导入：调用时才解析，不构成导入期的环\n"
+        "    return 1\n"
+    )
+    (tests / "__init__.py").write_text("")
+    (tests / "test_a.py").write_text("from src.a import a_fn\n\n\ndef test_a():\n    assert a_fn() == 1\n")
+
+    report = await analyze_self(str(tmp_path))
+    cycles = [f for f in report.findings if f.category == "circular-dependency"]
+    assert not cycles, f"延迟导入被误报成环: {[f.title for f in cycles]}"
+
+
+@pytest.mark.asyncio
+async def test_module_level_cycle_is_still_reported(tmp_path):
+    """反面：**真环仍要报**。
+
+    没有这一条，上面那个修复就可能是"把检测关掉"而不是"让它更准"——
+    两者在报告上都表现为 0 条问题。
+    """
+    src = tmp_path / "src"
+    tests = tmp_path / "tests"
+    src.mkdir()
+    tests.mkdir()
+    (src / "__init__.py").write_text("")
+    (src / "x.py").write_text("from .y import y_fn\n\n\ndef x_fn():\n    return 1\n")
+    (src / "y.py").write_text("from .x import x_fn\n\n\ndef y_fn():\n    return 2\n")
+    (tests / "__init__.py").write_text("")
+    (tests / "test_x.py").write_text("from src.x import x_fn\n\n\ndef test_x():\n    assert x_fn() == 1\n")
+
+    report = await analyze_self(str(tmp_path))
+    cycles = [f for f in report.findings if f.category == "circular-dependency"]
+    assert cycles, "模块级真环没报出来——检测被关掉了，不是变准了"
+
+
+@pytest.mark.asyncio
+async def test_module_level_try_import_still_counts_as_a_real_edge(tmp_path):
+    """模块级 try/except ImportError 里的导入**照样在导入期执行**，是真边。
+
+    判据是"在不在函数里"，不是"在不在最外层"——写成后者会漏掉这类常见写法。
+    """
+    src = tmp_path / "src"
+    tests = tmp_path / "tests"
+    src.mkdir()
+    tests.mkdir()
+    (src / "__init__.py").write_text("")
+    (src / "p.py").write_text(
+        "try:\n    from .q import q_fn\nexcept ImportError:\n    q_fn = None\n\n\n"
+        "def p_fn():\n    return 1\n"
+    )
+    (src / "q.py").write_text("from .p import p_fn\n\n\ndef q_fn():\n    return 2\n")
+    (tests / "__init__.py").write_text("")
+    (tests / "test_p.py").write_text("from src.p import p_fn\n\n\ndef test_p():\n    assert p_fn() == 1\n")
+
+    report = await analyze_self(str(tmp_path))
+    cycles = [f for f in report.findings if f.category == "circular-dependency"]
+    assert cycles, "模块级 try-import 的环被漏掉了"
