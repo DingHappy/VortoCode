@@ -1064,6 +1064,11 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
 
         out = [f"已把任务分解为 {plan['total']} 个子任务：{len(descs)} 个独立(并行) + {len(deferred)} 个有依赖(接力)。",
                f"（计划已存盘 plan_id={dp.plan_id}；中断后可 dev_resume 续跑）"]
+        if plan.get("dropped_verify_only"):
+            # 滤掉了就**说一声**——悄悄吞掉是今天一整天在修的那个毛病，别自己犯。
+            out.append(f"（已滤掉 {len(plan['dropped_verify_only'])} 个「只跑验证不改文件」的子任务："
+                       + "、".join(plan["dropped_verify_only"][:3])
+                       + "；流水线跑完所有块后本来就会做集成验证）")
         with usage_scope() as execute_usage:
             result = await _execute_plan(dp, test_cmd, out)
         _log_stage_usage("execute", execute_usage)
