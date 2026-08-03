@@ -267,6 +267,17 @@ def _noop_retry_prompt(base: str) -> str:
 
 
 
+def _exc_text(e: BaseException) -> str:
+    """把异常渲染成**人能据以定位**的一行。
+
+    裸 `str(e)` 会丢掉最关键的类型：`KeyError('descriptions')` 只剩 `'descriptions'`，
+    `TimeoutError()` 干脆是空串。于是用户看到「(任务分解出错: 'descriptions')」甚至
+    「(出错: )」——无从下手。类型是定位的第一线索，永远带上。
+    """
+    detail = str(e).strip()
+    return f"{type(e).__name__}: {detail}" if detail else type(e).__name__
+
+
 def _fail_note(result: dict) -> str:
     """接力块失败时给人的说明——**按真实死因分流，且两种线索都带**。
 
@@ -453,7 +464,9 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             # 最多 _dev_attempts() 次。这样单次 dev_isolated 调用就不易交白卷，不必指望主 agent 再调一次。
             last = await _implement_with_repair(desc, test_cmd)
         except Exception as e:  # noqa: BLE001
-            return f"(隔离实现出错: {e})"
+            # 带上**异常类型**：KeyError 的 str(e) 只是 'descriptions'，
+            # 光看 "(隔离实现出错: 'descriptions')" 无从下手。类型才是定位的第一线索。
+            return f"(隔离实现出错: {_exc_text(e)})"
         diff = (last.get("diff") or "")
         ver = last.get("ver")
         attempts = last.get("attempts", 1)
@@ -526,7 +539,10 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 diff, conclusion, ver = await run_isolated_task(
                     repo_root, wid, cur, mk(cur), test_cmd=test_cmd)
             except Exception as e:  # noqa: BLE001
-                last = {"desc": desc, "diff": "", "ver": None, "attempts": attempt, "err": str(e)}
+                # 带类型：真机上这条会直接进台账（"LLM 通道故障: …"）。裸 str(e) 遇上
+                # KeyError/TimeoutError 这类只剩一个键名或空串，人拿到等于没拿到。
+                last = {"desc": desc, "diff": "", "ver": None, "attempts": attempt,
+                        "err": _exc_text(e)}
                 continue
             # **留住子 agent 的结论**。此前它被丢进 `_c` 直接扔掉，于是"没产出任何改动"
             # 只剩五个字「无改动/出错」——人拿不到任何可行动的线索。
@@ -981,7 +997,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             with usage_scope() as decompose_usage:
                 plan = await decompose_for_parallel(task)
         except Exception as e:  # noqa: BLE001
-            return f"(任务分解出错: {e}；可改用 dev_parallel 手动给独立子任务)"
+            return f"(任务分解出错: {_exc_text(e)}；可改用 dev_parallel 手动给独立子任务)"
         _log_stage_usage("decompose", decompose_usage)
         descs, deferred = plan["descriptions"], plan["deferred"]
         if not descs and not deferred:
