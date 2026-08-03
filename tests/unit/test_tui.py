@@ -26,28 +26,49 @@ async def _submit(app, pilot, text):
     await pilot.pause()
 
 
-async def _wait_for(app, pilot, needle, tries=60):
+# 轮询等待的预算。**这是失败判定线，不是延迟**——条件一满足立刻返回，
+# happy path 一毫秒都不多花；调大只影响"多久才判定失败"。
+# 原值 60×0.05=3 秒：十路并发跑 Textual app + git 子进程时，一步超 3 秒完全正常，
+# 于是门禁里出现过随机红（2026-08-03，隔离/半量都复现不出）。
+# 而随机红比失败更毒——它训练人重跑而不是排查。
+_WAIT_TRIES = 240          # 12 秒
+_WAIT_STEP = 0.05
+
+
+async def _wait_for(app, pilot, needle, tries=_WAIT_TRIES):
+    """等 transcript 里出现 needle；超时**带上现场证据**抛错。
+
+    此前超时只返回 False，调用方 `assert await _wait_for(...)` 于是变成一句光秃秃的
+    `assert False`——看不出是"差一点"还是"内容根本不对"。同一个病：失败了不说为什么。
+    """
     for _ in range(tries):
         if any(needle in t for t in app.transcript):
             return True
-        await pilot.pause(0.05)
-    return False
+        await pilot.pause(_WAIT_STEP)
+    tail = " | ".join(str(t)[:70] for t in list(app.transcript)[-6:])
+    raise AssertionError(
+        f"等了 {tries * _WAIT_STEP:.1f}s 仍没出现 {needle!r}。"
+        f"transcript 共 {len(app.transcript)} 条，末尾：{tail or '(空)'}")
 
 
-async def _wait_modal(app, pilot, tries=60):
+async def _wait_modal(app, pilot, tries=_WAIT_TRIES):
     for _ in range(tries):
         if len(app.screen_stack) > 1:
             return True
-        await pilot.pause(0.05)
-    return False
+        await pilot.pause(_WAIT_STEP)
+    raise AssertionError(
+        f"等了 {tries * _WAIT_STEP:.1f}s 仍没弹出模态框（screen_stack 深度 "
+        f"{len(app.screen_stack)}）")
 
 
-async def _wait_inline_confirm(app, pilot, tries=60):
+async def _wait_inline_confirm(app, pilot, tries=_WAIT_TRIES):
     for _ in range(tries):
         if app._inline_confirm_active():
             return True
-        await pilot.pause(0.05)
-    return False
+        await pilot.pause(_WAIT_STEP)
+    tail = " | ".join(str(t)[:70] for t in list(app.transcript)[-6:])
+    raise AssertionError(
+        f"等了 {tries * _WAIT_STEP:.1f}s 仍没出现内联确认。transcript 末尾：{tail or '(空)'}")
 
 
 class _FakeKey:
