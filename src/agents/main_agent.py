@@ -818,7 +818,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     if r["ok"]:
                         b.status, b.note = "landed", ""
                     else:
-                        b.status, b.note = "failed", (r.get("output") or "")[-140:]
+                        b.status, b.note = "failed", _noop_note(r.get("conclusion"))
                     _save()
 
         ind = dp.independent()
@@ -857,7 +857,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     out.append(f"  · {disp}：✅ 已接力提交"
                                + (f"（修复 {b.attempts - 1} 次后）" if b.attempts > 1 else ""))
                 else:
-                    b.status, b.note = "failed", (r.get("output") or "")[-140:]
+                    b.status, b.note = "failed", _noop_note(r.get("conclusion"))
                     out.append(f"  · {disp}：❌ 试了 {b.attempts} 次仍未过：{b.note}")
                 _save()
 

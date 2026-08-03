@@ -687,7 +687,17 @@ class MainAgent:
         return hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
 
     async def _request_build(self, args: dict) -> str:
-        """plan 阶段主动请求切 build：只负责过人闸；同意后本回合升级，后续写/重型工具可继续。"""
+        """plan 阶段主动请求切 build：只负责过人闸；同意后本回合升级，后续写/重型工具可继续。
+
+        **已经在 build 就直接放行，不去撞那道用不着的闸**。这个工具在任何模式下都会被提供
+        （装配时按 plan_tool 加，与模式无关），而它的说明写的是"plan 阶段…请求授权"——
+        模型在 build 下也照着调。真机代价（2026-08-03）：`vc agent -b` 非 TTY 且无 --yes 时，
+        这一下被自动拒 → 模型以为没被授权 → 退回只写文案，还告诉人"切到 build 我就执行"，
+        **而它本来就在 build**。人会去反复检查模式，而问题根本不在那儿。
+        """
+        if str(args.get("_mode") or "plan") == "build" or self._escalated:
+            return ("已经在 build 模式，无需授权——直接调用写/重型工具动手即可"
+                    "（不要因为本次调用而停下来等人）。")
         reason = str(args.get("reason") or "").strip()
         next_action = str(args.get("next_action") or "").strip()
         if self._on_escalate is None:
@@ -1258,6 +1268,8 @@ class MainAgent:
                 say(f"🔧 [b]{name}[/b][dim] —— 被权限规则拦下[/dim]")
                 return finish("blocked", f"[权限拦截] {reason}")
         effective = "build" if self._escalated else mode
+        if name == "request_build":                 # 它要知道当前模式才能判断"用不用得着问"
+            args = {**args, "_mode": effective}
         if effective == "plan" and not tool.read_only:
             # plan 想用写/重型工具：有 on_escalate 就问用户"切 build 并继续？"；同意则升级执行。
             ok = False

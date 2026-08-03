@@ -2165,3 +2165,46 @@ def test_injection_limits_stay_conservative_and_are_read_lazily(monkeypatch):
     assert _max_tool_result() == 4_000                  # 坏值 → 默认
     monkeypatch.setenv("VORTOCODE_MAX_TOOL_RESULT", "-5")
     assert _max_tool_result() == 4_000                  # 非正 → 默认（绝不 clamp 成 1）
+
+
+# ---------------------------------------------------------------- request_build 不该在 build 下拦人
+@pytest.mark.asyncio
+async def test_request_build_is_a_noop_in_build_mode():
+    """已经在 build 模式时，request_build 直接放行——**不去撞那道用不着的闸**。
+
+    真机代价（2026-08-03）：`vc agent -b` 非 TTY 且无 --yes 时，模型在 build 下仍调了
+    request_build（这个工具与模式无关地总被提供，说明写的是"plan 阶段…请求授权"），
+    确认被自动拒 → 模型以为没被授权 → 退回只写文案，还告诉人"切到 build 我就执行"，
+    **而它本来就在 build**。人会去反复检查模式，问题根本不在那儿。
+    """
+    from src.agents.agent_loop import MainAgent
+
+    asked = []
+
+    async def _escalate(name, args):
+        asked.append(name)
+        return False                      # 模拟非 TTY 自动拒绝
+
+    agent = MainAgent([], llm=None, plan_tool=True, on_escalate=_escalate)
+    out = await agent._request_build({"reason": "要动手", "next_action": "改文件", "_mode": "build"})
+
+    assert "已经在 build" in out
+    assert not asked, "build 模式下不该再去问人——那正是把 agent 拦死的那一下"
+
+
+@pytest.mark.asyncio
+async def test_request_build_still_asks_in_plan_mode():
+    """反面：plan 模式下照旧走人闸。没有这条，上面的修复可能是"把闸拆了"。"""
+    from src.agents.agent_loop import MainAgent
+
+    asked = []
+
+    async def _escalate(name, args):
+        asked.append(name)
+        return False
+
+    agent = MainAgent([], llm=None, plan_tool=True, on_escalate=_escalate)
+    out = await agent._request_build({"reason": "要动手", "next_action": "改文件", "_mode": "plan"})
+
+    assert asked == ["request_build"], "plan 模式下必须问人"
+    assert "拒绝" in out

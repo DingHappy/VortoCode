@@ -475,3 +475,32 @@ def test_noop_note_is_bounded():
     from src.agents.main_agent import _noop_note
 
     assert len(_noop_note("很长的解释" * 500)) < 400
+
+
+@pytest.mark.asyncio
+async def test_dependent_failure_preserves_conclusion_in_note(tmp_path, monkeypatch):
+    """接力块失败时 note 应带子 agent 的 conclusion（回归：曾丢掉原因只留 output 尾巴）。"""
+    _init_repo(tmp_path)
+    import src.agents.worktree as wt
+
+    plan = dp.DevPlan.new("大任务", "vorto/auto-note", "main")
+    plan.blocks = [
+        dp.Block(id="ind-0", kind="independent", desc="甲", status="landed", note="ok"),
+        dp.Block(id="d1", kind="dependent", desc="乙", deps=["ind-0"]),
+    ]
+    plan.satisfied_ids = ["ind-0"]
+    dp.save_plan(str(tmp_path), plan)
+
+    async def fail_dep(repo, wid, branch_, desc, build, msg, test_cmd=None):
+        return {"ok": False, "conclusion": "类型不兼容：Foo 没有 bar 方法", "output": "raw stderr..."}
+    monkeypatch.setattr(wt, "run_dependent_on_branch", fail_dep)
+    monkeypatch.setattr(wt, "apply_diffs_to_branch", lambda *a, **k: "")
+
+    await _dev_tools(tmp_path)["dev_resume"].handler({"plan_id": plan.plan_id})
+
+    loaded = dp.load_plan(str(tmp_path), plan.plan_id)
+    d1 = loaded.block("d1")
+    assert d1 is not None and d1.status == "failed"
+    assert "Foo 没有 bar 方法" in d1.note, (
+        f"接力块失败时 note 应带 conclusion，实际 note={d1.note!r}")
+    assert "raw stderr" not in d1.note, "note 不应只是 output 尾巴"
