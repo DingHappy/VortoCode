@@ -512,7 +512,14 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
 
         async def _bounded(t):
             async with sem:
-                return await _implement_with_repair(t, test_cmd)
+                # 每块单独计量：并行子任务的用量也算得进来（usage_scope 绑的是可变 dict，
+                # create_task 拷贝 context 时子任务拿到同一引用）。这是"哪块贵"的数据来源。
+                from src.llm.client import usage_scope
+                with usage_scope() as used:
+                    r = await _implement_with_repair(t, test_cmd)
+                if isinstance(r, dict):
+                    r["tokens"] = int(used.get("total_tokens") or 0)
+                return r
 
         results = await asyncio.gather(*[_bounded(t) for t in descs])
         lines, greens = [], []
@@ -691,6 +698,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         绝不超前标 landed；resume 据此跳过已 landed、只重跑未完成。out 累积展示文本，返回最终展示串。
         """
         import asyncio
+
+        from src.llm.client import usage_scope
         import types
         import uuid
         from src.agents import dev_plan as _dp
@@ -732,12 +741,17 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
 
                 async def _impl(b):
                     async with sem:
-                        return b, await _implement_with_repair(b.desc, test_cmd)
+                        # 每块单独计量（含全部重试与子 agent）：usage_scope 绑的是可变 dict，
+                        # create_task 拷贝 context 时子任务拿到同一引用，并行也算得进来。
+                        with usage_scope() as used:
+                            r = await _implement_with_repair(b.desc, test_cmd)
+                        return b, r, int(used.get("total_tokens") or 0)
 
                 results = await asyncio.gather(*[_impl(b) for b in todo_ind])
                 items = []
-                for b, r in results:
+                for b, r, spent in results:
                     b.attempts = r.get("attempts", 1)
+                    b.tokens = spent
                     green = r.get("ver") and r["ver"]["ok"] and (r.get("diff") or "").strip()
                     if green:
                         if r["ver"].get("skipped"):   # 文档档位：绿是"没跑测试"的绿，台账要记
@@ -763,7 +777,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 # unknown`（新机器没配 git user.name/email），报成文本冲突把人引向完全错的方向。
                 failed_errs = {f.get("msg"): str(f.get("error") or "").strip()
                                for f in apply_res.get("failed", [])}
-                for b, r in results:
+                for b, r, _spent in results:                 # results 是三元组（见上面 _impl）
                     if b.status == "failed":
                         continue
                     b.status, b.note = land_note(f"dev_auto[{b.id}]: {b.desc}",
@@ -771,8 +785,10 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 _save()                                      # 真提交后才标 landed（不超前）
             else:
                 for b in todo_ind:                           # resume：分支已存在，逐个在其上补跑
-                    r = await _dependent_with_repair(branch, b.desc, b.title or b.id, test_cmd)
+                    with usage_scope() as used:              # 续跑同样烧钱，同样要计量
+                        r = await _dependent_with_repair(branch, b.desc, b.title or b.id, test_cmd)
                     b.attempts = r.get("attempts", 1)
+                    b.tokens = (b.tokens or 0) + int(used.get("total_tokens") or 0)
                     if r["ok"]:
                         b.status, b.note = "landed", ""
                     else:
@@ -806,8 +822,10 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 disp = b.title or b.desc[:40] or b.id
                 b.status = "running"
                 _save()                                      # write-ahead
-                r = await _dependent_with_repair(branch, b.desc, disp, test_cmd)
+                with usage_scope() as used:                  # 接力块同样按块计量
+                    r = await _dependent_with_repair(branch, b.desc, disp, test_cmd)
                 b.attempts = r.get("attempts", 1)
+                b.tokens = int(used.get("total_tokens") or 0)
                 if r["ok"]:
                     b.status, b.note = "landed", ""
                     out.append(f"  · {disp}：✅ 已接力提交"

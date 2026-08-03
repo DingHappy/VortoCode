@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { ALL_FIXTURES, empty, layeredWithJoin, withCycle, withFailure } from "./DevPlanDag.fixtures";
-import { dagColumns, edgesOf } from "./DevPlanDag";
+import { dagColumns, edgesOf, fmtTokens } from "./DevPlanDag";
 
 /**
  * 只测**纯派生**（图 → 列 / 图 → 边）。组件本体要量真实坐标画贝塞尔，那部分靠 harness 用眼睛看
@@ -57,8 +57,33 @@ describe("样本图自身的自洽性", () => {
     }
   });
 
+  it("图级 tokens 必须等于节点求和——服务端就是这么算的，样本不能描述后端产不出的状态", () => {
+    for (const { name, graph } of ALL_FIXTURES) {
+      const sum = graph.nodes.reduce((s, n) => s + (n.tokens || 0), 0);
+      expect(graph.tokens, `${name}: 图级合计与节点对不上`).toBe(sum);
+    }
+  });
+
   it("失败样本带得有失败输出——那是排查'这块为什么红'的第一手证据", () => {
     const failed = withFailure.nodes.find((n) => n.status === "failed");
     expect(failed?.note).toBeTruthy();
+  });
+});
+
+describe("fmtTokens", () => {
+  it.each([
+    [0, "0"], [1, "1"], [999, "999"],
+    [1000, "1.0k"], [1500, "1.5k"],
+    // 这两个是把输出真打出来看一眼才发现的边界
+    [9999, "10k"],          // 曾是 "10.0k"：toFixed 进位后仍走了小数分支
+    [1234567, "1.2M"],      // 曾是 "1235k"：百万级没有单位
+    [18400, "18k"], [96200, "96k"],
+  ])("%i → %s", (input, want) => {
+    expect(fmtTokens(input)).toBe(want);
+  });
+
+  it("负数与小数不产出怪东西——数据来自累加，别让脏值把卡片撑坏", () => {
+    expect(fmtTokens(-5)).toBe("0");
+    expect(fmtTokens(1234.7)).toBe("1.2k");
   });
 });

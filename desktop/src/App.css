@@ -8155,3 +8155,10 @@ input::placeholder {
 }
 
 .devplan-dag-error { color: var(--red); }
+
+.dag-tokens { color: var(--quiet); }
+
+/* 花费用等宽数字：并排的节点数字不会左右跳动 */
+.dag-node-tokens {
+  font-variant-numeric: tabular-nums;
+}

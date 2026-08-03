@@ -53,6 +53,11 @@ class Block:
     attempts: int = 0
     note: str = ""                               # 最近一次失败尾部 / 备注
     title: str = ""                              # 展示名（子任务标题）；空则展示时回退到 desc
+    # 本块实现期烧掉的 token（含全部重试与子 agent）。0 = 没测到/旧计划文件。
+    # 为什么落盘而不只记日志：图已经画出了"哪块卡住了"，但"哪块贵"同样是决策依据——
+    # 模型分层（规划用旗舰、执行用中档）要的正是这个粒度。日志答不了这个问题，
+    # 因为看图的人不会去翻服务器日志（借 homerail 把 token 摆在节点旁边的做法）。
+    tokens: int = 0
 
     @property
     def landed(self) -> bool:

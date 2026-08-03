@@ -187,6 +187,8 @@ export interface DevPlanGraphNode {
   attempts: number;
   note: string;
   deps: string[];
+  /** 本块烧掉的 token（0 = 旧计划文件或没测到）。 */
+  tokens: number;
 }
 
 export interface DevPlanGraph {
@@ -201,6 +203,8 @@ export interface DevPlanGraph {
   review: { note?: string; blocked?: boolean } | null;
   pr: { url?: string; error?: string } | null;
   nodes: DevPlanGraphNode[];
+  /** 全图合计 token —— 一次 dev run 的总花费。 */
+  tokens: number;
   layers: string[][];
   cycle: boolean;
   cyclic_ids: string[];
