@@ -49,12 +49,18 @@ def graph_of(plan: DevPlan) -> Dict[str, Any]:
             "status": b.status,
             "attempts": b.attempts,
             "note": b.note,
+            # 本块烧掉的 token（0 = 旧计划文件或没测到）。图回答了"哪块卡住了"，
+            # 这个字段让它同时回答"哪块贵"——模型分层要的正是这个粒度。
+            "tokens": int(getattr(b, "tokens", 0) or 0),
             # 悬空依赖（指向被人手删的块）直接丢弃：留着会让前端画出指向虚空的边。
             # 拓扑里同样按"已满足"处理——被删的块挡不住后继，这与 resume 的语义一致。
             "deps": [d for d in b.deps if d in known],
         })
     layers, cyclic = _layered({n["id"]: n["deps"] for n in nodes})
+    total_tokens = sum(n["tokens"] for n in nodes)
     return {
+        # 全图合计：一次 dev run 到底花了多少，看图的人不必自己加
+        "tokens": total_tokens,
         "plan_id": plan.plan_id,
         "task": plan.task,
         "status": plan.status,

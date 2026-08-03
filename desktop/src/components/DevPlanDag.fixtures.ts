@@ -22,12 +22,20 @@ function node(
     attempts: 0,
     note: "",
     deps: [],
+    tokens: 0,
     ...over,
   };
 }
 
+/**
+ * 图级 `tokens` **由节点求和派生**，不手写——服务端 (`dev_graph.graph_of`) 就是这么算的。
+ * 手写会让样本描述出一个后端产不出来的状态（第一次用 harness 就撞到：节点有花费、
+ * 合计却是空的），那样本就白搭了。
+ */
 function graph(over: Partial<DevPlanGraph>): DevPlanGraph {
+  const nodes = over.nodes ?? [];
   return {
+    tokens: nodes.reduce((sum, n) => sum + (n.tokens || 0), 0),
     plan_id: "plan-fixture",
     task: "样本任务",
     status: "running",
@@ -48,7 +56,7 @@ function graph(over: Partial<DevPlanGraph>): DevPlanGraph {
 
 /** 单节点：最常见的真实情形（真机上那份计划就是 1 个块）。别让空图/单点画崩。 */
 export const singleNode = graph({
-  nodes: [node("ind-0", { status: "landed" })],
+  nodes: [node("ind-0", { status: "landed", tokens: 18400 })],
   layers: [["ind-0"]],
   status: "done",
   pr: { url: "https://example.com/pr/1" },
@@ -76,9 +84,9 @@ export const layeredWithJoin = graph({
 /** 失败块：红色节点 + 虚线入边 + 展开看失败输出尾部。 */
 export const withFailure = graph({
   nodes: [
-    node("a", { status: "landed" }),
+    node("a", { status: "landed", tokens: 7300 }),
     node("b", {
-      deps: ["a"], status: "failed", attempts: 3,
+      deps: ["a"], status: "failed", attempts: 3, tokens: 96200,
       note: "FAILED tests/unit/test_x.py::test_y\nAssertionError: 期望 3 实际 2\n（重试 3 次仍未过）",
     }),
     node("c", { deps: ["b"] }),

@@ -111,3 +111,38 @@ async def test_routes_serve_graph_and_404(tmp_path, monkeypatch):
     with pytest.raises(HTTPException) as e:
         await dev_plan_graph("nope")
     assert e.value.status_code == 404
+
+
+# ---------------------------------------------------------------- 5. 块级 token 归因
+def test_block_tokens_survive_the_roundtrip(tmp_path):
+    """块级花费必须**落盘并投影出来**——只记日志的话，看图的人永远看不到"哪块贵"。
+
+    这条链有四段（计量 → 写进 Block → 存盘 → 投影），断哪一段界面上都只是"没显示花费"，
+    不会报错。所以从落盘那头往回验。
+    """
+    p = _plan([_b("a", status="landed"), _b("b", deps=["a"], status="failed")])
+    p.blocks[0].tokens = 7300
+    p.blocks[1].tokens = 96200
+    assert save_plan(str(tmp_path), p)
+
+    g = plan_graph(str(tmp_path), p.plan_id)
+    assert [n["tokens"] for n in g["nodes"]] == [7300, 96200]
+    assert g["tokens"] == 103500, "图级合计要等于各块之和（前端直接显示这个数）"
+
+
+def test_old_plan_files_without_tokens_project_as_zero(tmp_path):
+    """今天之前的计划文件没有 tokens 字段——**读得出来且记 0**，不是崩掉。
+
+    dev_plan.from_dict 过滤未知字段 + dataclass 默认值，双向兼容；这里从行为端钉住。
+    """
+    import json
+    p = _plan([_b("a", status="landed")])
+    save_plan(str(tmp_path), p)
+    path = tmp_path / ".vortocode" / "dev_plans" / f"{p.plan_id}.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    for blk in data["blocks"]:
+        blk.pop("tokens", None)                  # 模拟旧文件
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    g = plan_graph(str(tmp_path), p.plan_id)
+    assert g is not None and g["nodes"][0]["tokens"] == 0 and g["tokens"] == 0
