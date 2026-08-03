@@ -2208,3 +2208,54 @@ async def test_request_build_still_asks_in_plan_mode():
 
     assert asked == ["request_build"], "plan 模式下必须问人"
     assert "拒绝" in out
+
+
+# ---------------------------------------------------------------- 别家工具语法不能被当成回答
+@pytest.mark.parametrize("content", [
+    # 真机 2026-08-03 原样：子 agent 连试两轮都吐这个，各烧 5k token 交白卷
+    "<tool_call>\n<function=read_file>\n<parameter=path>src/im/bridge.py</parameter>\n</function>\n</tool_call>",
+    "<function=grep>\n<parameter=pattern>exc_text</parameter>\n</function>",
+    "<|tool▁call▁begin|>read_file",
+    "<invoke name=\"read_file\">",
+    "<function_calls>",
+])
+def test_foreign_tool_syntax_is_not_a_final_answer(content):
+    """别家模型的工具语法**不是回答**，是一次没被识别的工具调用。
+
+    此前 _is_weak_final 只查开头是不是 {/[/```，认不出这些 XML 形状，于是被当成最终回答
+    静默收下——子 agent 交白卷，人只看到「无改动」，而它其实一直在努力调工具。
+    """
+    from src.agents.agent_loop import _is_weak_final, _looks_like_foreign_tool_call
+
+    assert _looks_like_foreign_tool_call(content)
+    assert _is_weak_final(content), "被当成有效最终回答了"
+
+
+@pytest.mark.parametrize("content", [
+    "我已经把 _exc_text 抽到了 src/utils/exc_utils.py，并补了两条测试。",
+    "这个函数用 read_file 读文件，再 grep 一下就能定位。",     # 正常讨论工具，不是调用
+    "改动如下：\n- a.py 加了类型注解\n- b.py 修了空指针",
+    "<div>这是一段 HTML 说明</div>",                          # 有尖括号但不是工具语法
+])
+def test_normal_answers_are_not_flagged(content):
+    """反面：正常回答（哪怕提到工具名或带尖括号）不许被误判。
+
+    没有这条，上面那个检测可能宽到把真回答也当成'没收好尾'，白白多跑一轮。
+    """
+    from src.agents.agent_loop import _is_weak_final, _looks_like_foreign_tool_call
+
+    assert not _looks_like_foreign_tool_call(content)
+    assert not _is_weak_final(content)
+
+
+def test_foreign_nudge_names_the_actual_problem():
+    """纠偏文案要**指名道姓**：泛泛说'没给出有效回答'帮不上它——它以为自己调了工具。
+
+    真机上它连试两轮都吐同样的 XML，正是因为没人告诉它'那次调用等于没发生'。
+    """
+    from src.agents.agent_loop import _FOREIGN_NUDGE, _NUDGE
+
+    assert "tool_call" in _FOREIGN_NUDGE, "没点明它用错了哪种格式"
+    assert "等于没发生" in _FOREIGN_NUDGE, "没说清后果，它会照原样再试"
+    assert '{"tool"' in _FOREIGN_NUDGE, "没给出正确格式的样子"
+    assert _FOREIGN_NUDGE != _NUDGE
