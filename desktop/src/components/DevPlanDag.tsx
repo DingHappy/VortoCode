@@ -50,10 +50,23 @@ const STATUS_GLYPH: Record<string, string> = {
   landed: "✓", running: "●", failed: "!", pending: "○",
 };
 
-function edgesOf(graph: DevPlanGraph): Edge[] {
+/** 图 → 边列表。导出是为了能脱离 DOM 测（组件本体要量真实坐标，测不了）。 */
+export function edgesOf(graph: DevPlanGraph): Edge[] {
   const edges: Edge[] = [];
   for (const node of graph.nodes) for (const dep of node.deps) edges.push({ from: dep, to: node.id });
   return edges;
+}
+
+/**
+ * 图 → 要渲染的列。
+ *
+ * 环里的块进不了服务端算的 `layers`，但**必须可见**——追加成末尾一列（标红），
+ * 绝不静默吞掉：计划文件允许手改，改出环是要摆给人看的事实。
+ */
+export function dagColumns(graph: DevPlanGraph): string[][] {
+  return graph.cycle && graph.cyclic_ids.length > 0
+    ? [...graph.layers, graph.cyclic_ids]
+    : graph.layers;
 }
 
 export function DevPlanDag({ graph }: { graph: DevPlanGraph }) {
@@ -62,10 +75,7 @@ export function DevPlanDag({ graph }: { graph: DevPlanGraph }) {
   const [openNode, setOpenNode] = useState("");
 
   const byId = new Map<string, DevPlanGraphNode>(graph.nodes.map((node) => [node.id, node]));
-  // 环里的块进不了 layers，但必须可见——追加成末尾一列（标红），绝不静默吞掉。
-  const columns: string[][] = graph.cycle && graph.cyclic_ids.length > 0
-    ? [...graph.layers, graph.cyclic_ids]
-    : graph.layers;
+  const columns = dagColumns(graph);
 
   useLayoutEffect(() => {
     const container = containerRef.current;

@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DevPlanDag harness</title>
+  </head>
+  <body>
+    <!--
+      依赖图的独立开发页：`npm run dev` 后开 http://localhost:5173/dag-harness.html
+
+      为什么要有它：这个视图上线时唯一的观看方式是真跑一次 dev_auto（烧 token、几分钟），
+      于是它是「没被人眼看过就发出去的界面」。这里用样本图把各种画得出问题的情形一次摆齐。
+
+      **不进生产包**：vite build 只以 index.html 为入口，本文件不在其中。
+    -->
+    <div id="root"></div>
+    <script type="module" src="/src/dag-harness.tsx"></script>
+  </body>
+</html>
