@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from .channel import ChannelAdapter
+from src.utils.exc_utils import _exc_text
 
 _MARKUP = re.compile(r"\[/?[a-zA-Z][^\]]*\]")     # 去 Rich 标记（say 里的 [b]…[/b] 等）
 _CONFIRM_TIMEOUT = 600                             # 按钮确认等待上限（秒）；超时=拒绝（安全不放行）
@@ -291,7 +292,7 @@ class IMBridge:
                 try:
                     await self._on_event(ev)
                 except Exception as e:  # noqa: BLE001 —— 单条事件出错不拖垮长轮询
-                    await self._safe_send(f"（处理消息出错：{e}）")
+                    await self._safe_send(f"（处理消息出错：{_exc_text(e)}）")
         finally:
             t, self._heartbeat_task = self._heartbeat_task, None
             if t is not None:
