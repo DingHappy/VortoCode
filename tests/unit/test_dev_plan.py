@@ -444,3 +444,34 @@ async def test_apply_whole_failure_never_marks_landed(tmp_path, monkeypatch):
     assert plan.status == "failed"                               # 无任何落地 → 计划整体失败
     assert verified["n"] == 0                                    # 没落地就不该跑集成验证
     assert "没有任何子任务落地" in out
+
+
+# ---------------------------------------------------------------- 无改动时要说清为什么
+def test_noop_note_carries_the_subagent_reason():
+    """子 agent 没动手时，把**它自己说的原因**带给人。
+
+    真机代价（2026-07-24/25）：同一个「给 README 补一行」的任务在 14 小时里重试了 8 次，
+    每次拿到的都只有「无改动/出错」五个字。子 agent 大概率每次都说了原因，全被扔在
+    `diff, _c, ver = ...` 那个下划线里。人只能盲改提示词再试——最终成功的两次，
+    正是把指令改得极其具体之后。
+    """
+    from src.agents.main_agent import _noop_note
+
+    note = _noop_note("README.md 里没有找到叫「核心特性清单」的段落，无法定位插入位置。")
+    assert "核心特性清单" in note, "原因没带出来，人还是拿不到线索"
+    assert "无改动" in note
+
+
+def test_noop_note_says_so_when_there_is_no_reason():
+    """连结论都没有时**如实说**——别让人以为原因被吞了。"""
+    from src.agents.main_agent import _noop_note
+
+    for empty in (None, "", "   "):
+        assert "没说明原因" in _noop_note(empty)
+
+
+def test_noop_note_is_bounded():
+    """子 agent 可能长篇大论；台账里的 note 不该被一次失败撑爆。"""
+    from src.agents.main_agent import _noop_note
+
+    assert len(_noop_note("很长的解释" * 500)) < 400
