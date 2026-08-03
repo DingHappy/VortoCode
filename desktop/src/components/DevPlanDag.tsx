@@ -50,6 +50,25 @@ const STATUS_GLYPH: Record<string, string> = {
   landed: "✓", running: "●", failed: "!", pending: "○",
 };
 
+/**
+ * token 数缩写——节点卡片放不下完整数字。
+ *
+ * 两个边界是把输出真打出来看一眼才发现的：`9999` 曾显示成 `10.0k`（该是 `10k`，
+ * toFixed 进位后仍走了小数分支），百万级曾显示成 `1235k`（该是 `1.2M`）。
+ */
+export function fmtTokens(n: number): string {
+  const abs = Math.max(0, Math.round(n));
+  if (abs < 1000) return String(abs);
+  for (const [unit, size] of [["M", 1e6], ["k", 1e3]] as const) {
+    if (abs >= size) {
+      const v = abs / size;
+      // 先按一位小数定形，再判断要不要小数：9.99k → "10k" 而不是 "10.0k"
+      return `${Number(v.toFixed(1)) >= 10 ? Math.round(v) : v.toFixed(1)}${unit}`;
+    }
+  }
+  return String(abs);
+}
+
 /** 图 → 边列表。导出是为了能脱离 DOM 测（组件本体要量真实坐标，测不了）。 */
 export function edgesOf(graph: DevPlanGraph): Edge[] {
   const edges: Edge[] = [];
@@ -122,6 +141,7 @@ export function DevPlanDag({ graph }: { graph: DevPlanGraph }) {
         {graph.pr?.url && (
           <a href={graph.pr.url} target="_blank" rel="noreferrer">PR ↗</a>
         )}
+        {graph.tokens > 0 && <span className="dag-tokens">{fmtTokens(graph.tokens)} tokens</span>}
         {graph.cycle && <span className="dag-cycle-warn">⚠ 计划被改出了依赖环</span>}
       </div>
       <div className="devplan-dag-canvas" ref={containerRef}>
@@ -146,6 +166,9 @@ export function DevPlanDag({ graph }: { graph: DevPlanGraph }) {
                 >
                   <span className="dag-glyph">{cyclic ? "⟳" : STATUS_GLYPH[node.status] ?? "○"}</span>
                   <b>{node.title}</b>
+                  {/* 花费摆在节点旁边（学 homerail 把 token 放在节点信息里）：图本来只回答
+                      "哪块卡住了"，加上这个才同时回答"哪块贵"——那是模型分层的决策粒度。 */}
+                  {node.tokens > 0 && <small className="dag-node-tokens">{fmtTokens(node.tokens)}</small>}
                   {node.attempts > 1 && <small>{node.attempts} 次尝试</small>}
                 </button>
               );
