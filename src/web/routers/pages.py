@@ -31,6 +31,33 @@ async def agent_view():
     return {"message": "Agent page not found"}
 
 
+# ── 对话台静态件（2026-08 重设计拆分）：样式与逻辑从 agent.html 拆出 ────────────
+# 与 PWA 件同款做法：逐条显式路由（路由集合被契约测试冻结），并进 auth 豁免清单——
+# 页面本身免鉴权，它的静态件也必须免，否则登录门连样式都加载不出来。
+
+_AGENT_ASSETS = {
+    "agent.css": "text/css",
+    "agent.js": "text/javascript",
+}
+
+
+def _agent_asset(name: str):
+    path = _WEB_DIR / name
+    if path.exists():
+        return FileResponse(path, media_type=_AGENT_ASSETS[name])
+    raise HTTPException(status_code=404, detail=f"{name} 缺失")
+
+
+@router.get("/agent.css")
+async def agent_css():
+    return _agent_asset("agent.css")
+
+
+@router.get("/agent.js")
+async def agent_js():
+    return _agent_asset("agent.js")
+
+
 # ── PWA 静态件（P3）：manifest / icon / service worker ─────────────────────────
 # 逐条显式路由而不是挂 StaticFiles：本服务的路由集合被契约测试冻结（server_routes_baseline），
 # 一个目录挂载等于开一扇"往 web/ 丢文件就自动可访问"的门，契约就看不住了。

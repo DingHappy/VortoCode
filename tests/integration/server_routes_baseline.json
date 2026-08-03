@@ -12,6 +12,18 @@
   ]
  },
  {
+  "path": "/agent.css",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/agent.js",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
   "path": "/api/agent/sessions",
   "methods": [
    "GET"
