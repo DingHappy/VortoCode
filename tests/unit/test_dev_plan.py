@@ -586,3 +586,57 @@ async def test_dev_auto_surfaces_the_exception_type_to_the_user(tmp_path, monkey
 
     assert "KeyError" in out, f"异常类型没传到用户面前: {out!r}"
     assert "任务分解出错" in out
+
+
+# ---------------------------------------------------------------- 纯验证子任务要被滤掉
+@pytest.mark.parametrize("title,dropped", [
+    ("集成验证与最终确认", True),
+    ("运行测试", True),
+    ("验证改动是否生效", True),
+    ("Final verification", True),
+    ("给 exc_utils 补单元测试", False),      # 补测试是真活，有 diff
+    ("添加回归测试", False),
+    ("修改 realtime.py 并添加回归测试", False),
+    ("重构 _detect_base_branch", False),
+])
+def test_verify_only_subtasks_are_filtered(title, dropped):
+    """「只跑验证不改文件」的子任务必须滤掉。
+
+    流水线在所有块跑完后**本来就会做集成验证**，分解器再规划一个就是重复劳动——
+    而且它没有 diff，必然被判 failed。真机 2026-08-03：一个「集成验证与最终确认」
+    烧掉 20 万 token（占全次 42 万的近一半），最后标成 failed，
+    而它自己的结论写着「全部验证完成 ✅」。
+
+    **补测试不算**——那产生新文件，是真活。
+    """
+    from types import SimpleNamespace
+
+    from src.agents.decompose import is_verify_only
+
+    assert is_verify_only(SimpleNamespace(title=title)) is dropped
+
+
+@pytest.mark.asyncio
+async def test_dropped_verify_only_is_reported_not_swallowed(monkeypatch):
+    """滤掉了要**说一声**——悄悄吞掉是本仓反复栽的那个毛病。"""
+    from types import SimpleNamespace
+
+    from src.agents.decompose import decompose_for_parallel
+
+    subs = [SimpleNamespace(id="t1", title="改 a.py", description="d", dependencies=[],
+                            acceptance_criteria=[]),
+            SimpleNamespace(id="t2", title="集成验证与最终确认", description="d",
+                            dependencies=["t1"], acceptance_criteria=[])]
+
+    class _A:
+        async def analyze(self, _t):
+            return SimpleNamespace(complexity=SimpleNamespace(value="x"),
+                                   required_capabilities=[])
+
+    class _D:
+        async def decompose(self, _t, _a):
+            return subs
+
+    plan = await decompose_for_parallel("随便", analyzer=_A(), decomposer=_D())
+    assert plan["total"] == 1, "纯验证块没被滤掉"
+    assert plan["dropped_verify_only"] == ["集成验证与最终确认"], "滤掉了却没如实报出来"

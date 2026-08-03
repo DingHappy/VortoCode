@@ -11,6 +11,7 @@ from fastapi import Request
 
 from src.gateway import protocol as P
 from src.gateway.sessions import SessionTable
+from src.utils.exc_utils import _exc_text
 from src.web.deps import *  # noqa: F401,F403
 
 router = APIRouter()
@@ -531,7 +532,7 @@ async def _ensure_mcp(agent, say) -> None:
             agent._mcp_mgr = mgr
             say(f"🔌 接入 {len(mcp_tools)} 个 MCP 工具")
     except Exception as e:  # noqa: BLE001
-        say(f"🔌 MCP 连接失败: {e}")
+        say(f"🔌 MCP 连接失败: {_exc_text(e)}")
 
 
 def _shutdown_mcp_async(agent) -> None:

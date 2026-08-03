@@ -567,6 +567,36 @@ async def test_web_ensure_mcp_default_off_never_connects(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_web_ensure_mcp_failure_surfaces_exception_type(monkeypatch):
+    """回归：MCP 连接失败时用户看到的文案必须带异常类型名（如 TimeoutError）。
+
+    只写 `{e}` 的话，TimeoutError 的 str(e) 是空串，用户只看到「🔌 MCP 连接失败: 」——无从下手。
+    此测试用真实异常对象驱动代码路径，断言类型名出现在 say 的消息中。
+    """
+    import src.agents.mcp_tools as mt
+    from src.agents.main_agent import MainAgent
+    from src.web.routers import realtime
+
+    async def boom_connect(repo, **_kw):
+        raise TimeoutError()  # str(e) == ''，裸 {e} 会丢信息
+
+    monkeypatch.setattr(mt, "connect_mcp", boom_connect)
+    monkeypatch.setenv("VORTOCODE_WEB_MCP", "1")
+
+    agent = MainAgent([])
+    agent._mcp_tried = False  # 重置，确保会走连接逻辑
+    says: list[str] = []
+    await realtime._ensure_mcp(agent, says.append)
+
+    assert agent._mcp_mgr is None  # 连接确实失败了
+    assert says, "_ensure_mcp 没有 say 任何消息"
+    failure_msg = next(m for m in says if "MCP" in m and "失败" in m)
+    assert "TimeoutError" in failure_msg, (
+        f"异常类型名丢失——只写 {{e}} 的回归: {failure_msg!r}"
+    )
+
+
+@pytest.mark.asyncio
 async def test_web_shutdown_mcp_async_runs_and_safe_without_mgr():
     import asyncio
     from src.agents.main_agent import MainAgent
