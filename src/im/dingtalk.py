@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import AsyncIterator, Awaitable, Callable, Optional
@@ -31,6 +32,36 @@ _log = logging.getLogger("vortocode.im.dingtalk")
 BOT_TOPIC = "/v1.0/im/bot/messages/get"
 _APPROVE = {"y", "yes", "批准", "同意", "确认", "ok", "好"}
 _DENY = {"n", "no", "拒绝", "否", "取消", "不"}
+
+
+def _ws_heartbeat_kw() -> dict:
+    """WS 层心跳（可选，**默认关 = 与今天逐字节相同**）。
+
+    ## 背景：为什么"桥连着"目前是个弱信号
+
+    钉钉**不发应用层 ping**——2026-08-03 真机两个独立窗口（578s / 374s）实测
+    ``last_frame_age`` 全程为 null，一帧都没有。唯一的存活证据在 WS 协议层，
+    而 aiohttp 的 ``autoping=True`` 会在内部把 PING/PONG 吃掉，``receive()`` 永远看不到。
+    结果就是 doctor 只能说"连着，但本通道观测不到帧"——半瞎。
+
+    ## 为什么用 heartbeat 而不是 autoping=False
+
+    ``autoping=False`` 要我们自己收 PING 回 PONG，写错一次服务端就断连 = bot 直接死。
+    ``heartbeat=N`` 相反：由 aiohttp **主动发 ping 并在收不到 pong 时关闭连接**，
+    我们什么都不用写。连接还开着本身就成了"对端在回应"的证明，
+    死连接会转成一次正常的重连（``note_disconnected`` → 重连计数可见）。
+
+    ## 仍然默认关
+
+    真机上万一钉钉对客户端 ping 反应不佳，最坏情况是反复重连——比 bot 死好，但仍是活的
+    生产 bot。所以锁在配置门后（同卡片模板/深链的老规矩）：
+    ``VORTOCODE_DD_WS_HEARTBEAT=30`` 开启，不设则一切照旧。
+    """
+    try:
+        seconds = float(os.getenv("VORTOCODE_DD_WS_HEARTBEAT", "") or 0)
+    except ValueError:
+        return {}
+    return {"heartbeat": seconds} if seconds > 0 else {}
 
 # connect_fn: async () -> ws-like（有 async recv()->str|None / async send(str) / async close()）
 ConnectFn = Callable[[], Awaitable[object]]
@@ -443,7 +474,7 @@ class DingTalkAdapter(ChannelAdapter):
         endpoint = str(data["endpoint"]).rstrip("/")
         ticket = data["ticket"]
         base = endpoint if endpoint.endswith("/connect") else endpoint + "/connect"
-        ws = await self._session.ws_connect(f"{base}?ticket={ticket}")
+        ws = await self._session.ws_connect(f"{base}?ticket={ticket}", **_ws_heartbeat_kw())
         return _AioWS(ws)
 
     def _subscriptions(self) -> list:
