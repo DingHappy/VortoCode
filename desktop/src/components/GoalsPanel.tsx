@@ -51,7 +51,7 @@ type GoalsPanelProps = {
     goal: GoalItem,
     criterion: GoalCriterion,
     passed: boolean,
-    adopted?: { kind: string; summary: string },
+    adopted?: { kind: string; summary: string; evidence_id: string },
   ) => void;
 };
 
@@ -128,7 +128,7 @@ export function GoalsPanel({
           total: goal.acceptance_criteria.length,
         };
         const automaticEvidence = [...goal.evidence].reverse().find((evidence) => (
-          !evidence.criterion_id && evidence.passed && ["test", "review"].includes(evidence.kind)
+          !evidence.criterion_id && evidence.passed && !evidence.stale_reason && ["test", "review"].includes(evidence.kind)
         ));
         return (
           <section className={`goal-card ${goal.status}`} key={goal.id}>
@@ -233,6 +233,7 @@ export function GoalsPanel({
                             title={automaticEvidence.summary}
                             onClick={() => void onRecordEvidence(goal, criterion, true, {
                               kind: automaticEvidence.kind,
+                              evidence_id: automaticEvidence.id,
                               summary: `采用自动${automaticEvidence.kind === "test" ? "测试" : "审查"}证据：${automaticEvidence.summary}`,
                             })}
                           >采用自动证据</button>
@@ -247,8 +248,10 @@ export function GoalsPanel({
               <details className="goal-evidence-log">
                 <summary>{goal.evidence.length} 条证据</summary>
                 {goal.evidence.slice(-4).reverse().map((evidence) => (
-                  <p className={evidence.passed ? "passed" : "failed"} key={evidence.id}>
-                    <b>{evidence.passed ? "通过" : "未过"}</b>{evidence.summary}
+                  <p className={evidence.passed && !evidence.stale_reason ? "passed" : "failed"} key={evidence.id}>
+                    <b>{evidence.stale_reason ? "待重新验收" : evidence.passed ? "通过" : "未过"}</b>{evidence.summary}
+                    {evidence.verified_commit && <span> · commit {evidence.verified_commit.slice(0, 8)}</span>}
+                    {evidence.stale_reason && <span> · {evidence.stale_reason}</span>}
                   </p>
                 ))}
               </details>

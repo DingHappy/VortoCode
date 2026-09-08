@@ -426,6 +426,8 @@ export interface GoalEvidence {
   passed: boolean;
   source?: string;
   created?: string;
+  verified_commit?: string;
+  stale_reason?: string;
 }
 
 export interface GoalItem {

@@ -2477,7 +2477,7 @@ function App() {
     goal: GoalItem,
     criterion: GoalCriterion,
     passed: boolean,
-    adopted?: { kind: string; summary: string },
+    adopted?: { kind: string; summary: string; evidence_id: string },
   ) => {
     if (!clientRef.current) return;
     const key = goalEvidenceKey(goal.id, criterion.id);
@@ -2491,10 +2491,12 @@ function App() {
         passed,
         summary,
         kind: adopted?.kind || "manual",
+        evidence_id: adopted?.evidence_id,
       });
       setGoals((previous) => [updated, ...previous.filter((item) => item.id !== goal.id)]);
       setGoalEvidenceDrafts((previous) => ({ ...previous, [key]: "" }));
-      setBanner(updated.status === "achieved" ? "所有验收标准均有通过证据，目标已达成" : passed ? "通过证据已记录" : "失败证据已记录，目标进入阻塞状态");
+      const accepted = updated.acceptance_criteria.find((item) => item.id === criterion.id)?.status;
+      setBanner(updated.status === "achieved" ? "所有验收标准均有通过证据，目标已达成" : accepted === "pending" ? "证据未对应当前目标版本，请重新验收" : passed ? "通过证据已记录" : "失败证据已记录，目标进入阻塞状态");
     } catch (error) {
       setBanner(error instanceof Error ? error.message : "记录验收证据失败");
     }
@@ -2779,9 +2781,11 @@ function App() {
         passed: run.code === 0,
         kind: "test",
         summary: `Desktop 测试：${run.command}（退出码 ${run.code}）`,
+        run_id: run.id,
       });
       setGoals((previous) => [updated, ...previous.filter((item) => item.id !== goalId)]);
-      setBanner(run.code === 0 ? "测试通过结果已采纳为 Goal 证据" : "测试失败结果已记录，目标进入阻塞状态");
+      const accepted = updated.acceptance_criteria.find((item) => item.id === criterionId)?.status;
+      setBanner(accepted === "pending" ? "测试证据未对应当前目标版本，请重新运行验收" : run.code === 0 ? "测试通过结果已采纳为 Goal 证据" : "测试失败结果已记录，目标进入阻塞状态");
     } catch (error) {
       setBanner(error instanceof Error ? error.message : "采纳测试证据失败");
     }

@@ -205,6 +205,8 @@ class CommandRun:
     goal_id: str = ""
     criterion_id: str = ""
     evidence_kind: str = ""
+    verified_commit: str = ""
+    verification_error: str = ""
     require_isolation: bool = False
     timeout_seconds: int = 0
     test_results: Dict[str, Any] = field(default_factory=dict)
@@ -448,23 +450,39 @@ class RunManager:
         except Exception:  # noqa: BLE001 - UI notification must not break the process
             pass
 
+    def _evidence_revision_for(self, goal_id: str) -> tuple:
+        """取目标分支的版本快照。**阻塞**（git 子进程）——从 async 路径调用务必过 to_thread。"""
+        from src.gateway.goals import GoalLedger, evidence_revision
+
+        goal = GoalLedger(self.repo_root).load(goal_id) if goal_id else None
+        return evidence_revision(self.repo_root, goal.branch if goal else "")
+
     def _sync_goal_evidence(self, run: CommandRun) -> None:
         """Attach a terminal verifier result to its acceptance criterion."""
+        from src.gateway.goals import GoalLedger
+
+        if run.status in _VERIFIER_RESULT_STATES and (run.kind == "test" or run.goal_id):
+            commit, error = self._evidence_revision_for(run.goal_id)
+            if commit != run.verified_commit:
+                error = "验收期间代码版本已变化，请重新验收"
+            if error and not run.verification_error:
+                run.verification_error = error
+                self.ledger.save(run)
         if not run.goal_id or not run.criterion_id or run.status not in _VERIFIER_RESULT_STATES:
             return
         output = _ANSI_ESCAPE.sub("", run.output).strip()
         detail = output[-1200:] if output else (run.error or "命令没有输出")
         summary = f"{run.command}（退出码 {run.code}）\n{detail}"
         try:
-            from src.gateway.goals import GoalLedger
-
             GoalLedger(self.repo_root).record_evidence(
                 run.goal_id,
                 run.criterion_id,
                 kind=run.evidence_kind or "test",
                 summary=summary,
-                passed=run.code == 0,
+                passed=run.status == "done" and run.code == 0,
                 source=f"run:{run.id}",
+                verified_commit=run.verified_commit,
+                verification_error=run.verification_error,
             )
         except (KeyError, OSError, ValueError):
             # Run history remains authoritative even if a goal was removed/corrupted.
@@ -520,6 +538,10 @@ class RunManager:
             require_isolation=bool(require_isolation),
             timeout_seconds=timeout_seconds,
         )
+        if run.kind == "test" or (run.goal_id and run.criterion_id):
+            run.verified_commit, run.verification_error = await asyncio.to_thread(
+                self._evidence_revision_for, run.goal_id)
+            self.ledger.save(run)
         self._notify(run)
         started = await asyncio.to_thread(
             run_command_background,
@@ -533,7 +555,7 @@ class RunManager:
             run.error = str(started.get("error") or "无法启动命令")[-1000:]
             run.sandbox = dict(started.get("sandbox") or {})
             self.ledger.save(run)
-            self._sync_goal_evidence(run)
+            await asyncio.to_thread(self._sync_goal_evidence, run)
             self._notify(run)
             return run
 
@@ -563,7 +585,7 @@ class RunManager:
                     run.status = "failed"
                     run.error = str(result.get("error") or "读取命令输出失败")[-1000:]
                     self.ledger.save(run)
-                    self._sync_goal_evidence(run)
+                    await asyncio.to_thread(self._sync_goal_evidence, run)
                     self._notify(run)
                     return
 
@@ -586,7 +608,7 @@ class RunManager:
                     if run.kind == "test":
                         run.test_results = parse_test_results(run.command, run.output)
                     self.ledger.save(run)
-                    self._sync_goal_evidence(run)
+                    await asyncio.to_thread(self._sync_goal_evidence, run)
                     self._notify(run)
                     return
                 if run.timeout_seconds and time.monotonic() - started_at >= run.timeout_seconds:
@@ -599,7 +621,7 @@ class RunManager:
                     if run.kind == "test":
                         run.test_results = parse_test_results(run.command, run.output)
                     self.ledger.save(run)
-                    self._sync_goal_evidence(run)
+                    await asyncio.to_thread(self._sync_goal_evidence, run)
                     self._notify(run)
                     return
                 if changed:
