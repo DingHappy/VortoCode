@@ -11,7 +11,7 @@ from typing import Any, List
 
 from fastapi import APIRouter, HTTPException
 
-from src.gateway.goals import Goal, GoalLedger, evaluate_file_verifier
+from src.gateway.goals import Goal, GoalLedger, evaluate_file_verifier, evidence_revision
 
 router = APIRouter()
 
@@ -207,6 +207,7 @@ async def verify_goal(goal_id: str):
             skipped_active += 1
             continue
         if verifier.kind == "file":
+            commit, verification_error = evidence_revision(os.getcwd(), goal.branch)
             passed, summary = evaluate_file_verifier(os.getcwd(), verifier)
             _ledger().record_evidence(
                 goal.id,
@@ -215,6 +216,8 @@ async def verify_goal(goal_id: str):
                 summary=summary,
                 passed=passed,
                 source=f"verifier:file:{criterion.id}",
+                verified_commit=commit,
+                verification_error=verification_error,
             )
             continue
         try:
@@ -253,6 +256,34 @@ async def verify_goal(goal_id: str):
 @router.post("/api/goals/{goal_id}/criteria/{criterion_id}/evidence")
 async def record_goal_evidence(goal_id: str, criterion_id: str, body: dict):
     payload = body or {}
+    # Adopt stored evidence by identity, never stamp an old copied summary with
+    # the current commit. Manual observations still bind at recording time.
+    adopted = {}
+    if payload.get("run_id") and payload.get("evidence_id"):
+        raise HTTPException(status_code=400, detail="只能选择一种证据来源")
+    if payload.get("run_id"):
+        from src.gateway.runs import RunLedger
+
+        run = RunLedger(os.getcwd()).load(str(payload["run_id"]))
+        if run is None or run.kind != "test" or run.status not in {"done", "failed"}:
+            raise HTTPException(status_code=409, detail="测试记录不存在或尚未完成")
+        payload = {
+            "passed": run.status == "done" and run.code == 0,
+            "kind": run.evidence_kind or "test",
+            "summary": f"{run.command}（退出码 {run.code}）\n{run.output[-1200:]}",
+            "source": f"run:{run.id}",
+        }
+        adopted = {"verified_commit": run.verified_commit, "verification_error": run.verification_error}
+    elif payload.get("evidence_id"):
+        goal = _require_goal(goal_id)
+        evidence = next((item for item in goal.evidence if item.id == str(payload["evidence_id"])), None)
+        if evidence is None:
+            raise HTTPException(status_code=404, detail="证据不存在")
+        payload = {
+            "passed": evidence.passed, "kind": evidence.kind,
+            "summary": evidence.summary, "source": f"evidence:{evidence.id}",
+        }
+        adopted = {"verified_commit": evidence.verified_commit, "verification_error": evidence.stale_reason}
     passed = payload.get("passed")
     if not isinstance(passed, bool):
         raise HTTPException(status_code=400, detail="passed 必须是 boolean")
@@ -267,6 +298,7 @@ async def record_goal_evidence(goal_id: str, criterion_id: str, body: dict):
             summary=summary,
             passed=passed,
             source=str(payload.get("source") or "desktop"),
+            **adopted,
         )
     except KeyError:
         raise HTTPException(status_code=404, detail=f"无此目标 {goal_id}") from None

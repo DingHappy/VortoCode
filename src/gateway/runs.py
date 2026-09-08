@@ -205,6 +205,8 @@ class CommandRun:
     goal_id: str = ""
     criterion_id: str = ""
     evidence_kind: str = ""
+    verified_commit: str = ""
+    verification_error: str = ""
     require_isolation: bool = False
     timeout_seconds: int = 0
     test_results: Dict[str, Any] = field(default_factory=dict)
@@ -450,21 +452,31 @@ class RunManager:
 
     def _sync_goal_evidence(self, run: CommandRun) -> None:
         """Attach a terminal verifier result to its acceptance criterion."""
+        from src.gateway.goals import GoalLedger, evidence_revision
+
+        if run.status in _VERIFIER_RESULT_STATES and (run.kind == "test" or run.goal_id):
+            goal = GoalLedger(self.repo_root).load(run.goal_id) if run.goal_id else None
+            commit, error = evidence_revision(self.repo_root, goal.branch if goal else "")
+            if commit != run.verified_commit:
+                error = "验收期间代码版本已变化，请重新验收"
+            if error and not run.verification_error:
+                run.verification_error = error
+                self.ledger.save(run)
         if not run.goal_id or not run.criterion_id or run.status not in _VERIFIER_RESULT_STATES:
             return
         output = _ANSI_ESCAPE.sub("", run.output).strip()
         detail = output[-1200:] if output else (run.error or "命令没有输出")
         summary = f"{run.command}（退出码 {run.code}）\n{detail}"
         try:
-            from src.gateway.goals import GoalLedger
-
             GoalLedger(self.repo_root).record_evidence(
                 run.goal_id,
                 run.criterion_id,
                 kind=run.evidence_kind or "test",
                 summary=summary,
-                passed=run.code == 0,
+                passed=run.status == "done" and run.code == 0,
                 source=f"run:{run.id}",
+                verified_commit=run.verified_commit,
+                verification_error=run.verification_error,
             )
         except (KeyError, OSError, ValueError):
             # Run history remains authoritative even if a goal was removed/corrupted.
@@ -520,6 +532,13 @@ class RunManager:
             require_isolation=bool(require_isolation),
             timeout_seconds=timeout_seconds,
         )
+        if run.kind == "test" or (run.goal_id and run.criterion_id):
+            from src.gateway.goals import GoalLedger, evidence_revision
+
+            goal = GoalLedger(self.repo_root).load(run.goal_id)
+            run.verified_commit, run.verification_error = evidence_revision(
+                self.repo_root, goal.branch if goal else "")
+            self.ledger.save(run)
         self._notify(run)
         started = await asyncio.to_thread(
             run_command_background,
