@@ -267,6 +267,62 @@ async def test_rereview_outage_preserves_unresolved_findings(tmp_path, partial):
 
 
 @pytest.mark.asyncio
+async def test_rereview_outage_of_unrelated_lens_does_not_block(tmp_path):
+    """复审时**没报过问题**的那个视角挂了：拦不住 PR——它本来也没看过这条问题。
+
+    反面就是上一条（报出者自己挂了 → 拦）。这条钉住的是"任一视角抖动就堵死产出口"不再发生。
+    """
+    ra, ca = _reviewer([_P0], [])          # correctness 报出问题，复审干净
+    calls = 0
+
+    async def flaky(*a, **k):              # security 首审干净、复审起就一直挂
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return []
+        raise RuntimeError("relay 挂了")
+
+    repair, got = _repair_recorder()
+    note, blocked = await review.run_gate(
+        str(tmp_path), "vorto/x", "main", repair=repair,
+        reviewers={"correctness": ra, "security": flaky})
+    assert not blocked and "已自修复并复审通过" in note
+    assert "security" in note and "未影响判定" in note      # 没跑成这件事仍然如实说出来
+    assert got["n"] == 1 and ca["n"] == 2
+    assert calls == 3                                       # 首审 1 + 复审 1 + 重试 1
+
+
+@pytest.mark.asyncio
+async def test_failed_lens_is_retried_once_before_it_counts(tmp_path):
+    """一次抖动不算数：出错的视角重试一次，成功了就当没事发生。"""
+    calls = 0
+
+    async def flaky(*a, **k):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("relay 抖了一下")
+        return []
+
+    note, blocked = await review.run_gate(
+        str(tmp_path), "vorto/x", "main", repair=(lambda *_a: None), reviewer=flaky)
+    assert not blocked and "审查通过" in note and "未能完成" not in note
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_incomplete_review_is_reported_to_caller(tmp_path):
+    """没跑成的视角要交给调用方留痕（进计划台账），不能只活在进度文案里。"""
+    async def _boom(*a, **k):
+        raise RuntimeError("relay 挂了")
+    seen: dict = {}
+    note, blocked = await review.run_gate(
+        str(tmp_path), "vorto/x", "main", repair=(lambda *_a: None),
+        reviewer=_boom, on_incomplete=seen.update)
+    assert not blocked and seen == {"review": {"": "relay 挂了"}}
+
+
+@pytest.mark.asyncio
 async def test_malformed_rereview_does_not_clear_findings(tmp_path):
     calls = 0
 

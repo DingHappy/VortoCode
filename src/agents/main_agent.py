@@ -737,7 +737,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             return f"\n（已 push {branch}，但开 PR 失败：{res.get('error')}。可手动 gh pr create。）"
         return f"\n（开 PR 失败：{res.get('error')}；分支 {branch} 保留。）"
 
-    async def _run_review_gate(branch: str, base: str, test_cmd) -> tuple:
+    async def _run_review_gate(branch: str, base: str, test_cmd, on_incomplete=None) -> tuple:
         """薄封装：把"依赖接力修复"作为 repair 注入 review.run_gate（挑刺→修→重审），返回 (note, blocked)。
 
         reviewer 按 review.PERSPECTIVES 造多份（同一套工具+证据铁律，各配一只聚焦镜头）并行
@@ -794,7 +794,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         reviewers = {name: _make_reviewer(_review.PERSPECTIVES[name])
                      for name in _review.dev_review_perspectives()}
         return await _review.run_gate(repo_root, branch, base, test_cmd=test_cmd,
-                                      repair=_repair, reviewers=reviewers, progress=_progress)
+                                      repair=_repair, reviewers=reviewers, progress=_progress,
+                                      on_incomplete=on_incomplete)
 
     def _branch_exists(branch: str) -> bool:
         import subprocess
@@ -976,8 +977,11 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             out.append(done)
             # PR 前对抗审查段：**仅在真要开 PR 时**跑（名副其实的"PR 前"，codex 审 #120 P1）。
             if dp.want_pr and _dev_review_enabled():
-                note, blocked = await _run_review_gate(branch, dp.base, test_cmd)
-                dp.review = {"note": note, "blocked": bool(blocked)}
+                # "哪个视角没看成"要落进台账，别只活在进度文案里——没跑成的审查最容易被当成跑过了。
+                incomplete: dict = {}
+                note, blocked = await _run_review_gate(branch, dp.base, test_cmd,
+                                                       on_incomplete=incomplete.update)
+                dp.review = {"note": note, "blocked": bool(blocked), "incomplete": incomplete}
                 _save()
                 out.append(note)
                 if blocked:
