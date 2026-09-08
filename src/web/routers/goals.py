@@ -6,6 +6,7 @@ passing evidence for every acceptance criterion.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Any, List
 
@@ -195,6 +196,9 @@ async def verify_goal(goal_id: str):
         for run in manager.list()
         if run.status in {"queued", "running", "cancelling"}
     }
+    # 一次请求取一次版本快照：逐个 criterion 各跑一遍 git 既慢又没有意义（同一时刻同一份代码），
+    # 而且 evidence_revision 是阻塞的 git 子进程，不能直接压在事件循环上。
+    revision = await asyncio.to_thread(evidence_revision, os.getcwd(), goal.branch)
     scheduled = []
     skipped_manual = 0
     skipped_active = 0
@@ -207,7 +211,7 @@ async def verify_goal(goal_id: str):
             skipped_active += 1
             continue
         if verifier.kind == "file":
-            commit, verification_error = evidence_revision(os.getcwd(), goal.branch)
+            commit, verification_error = revision
             passed, summary = evaluate_file_verifier(os.getcwd(), verifier)
             _ledger().record_evidence(
                 goal.id,

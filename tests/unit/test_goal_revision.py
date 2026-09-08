@@ -60,13 +60,30 @@ def test_new_commit_invalidates_old_acceptance_and_reverification_recovers(repo)
 
 @pytest.mark.parametrize("dirty_path", ["code.txt", "untracked.txt"])
 def test_dirty_worktree_cannot_claim_commit_acceptance(repo, dirty_path):
+    """脏工作区**不能记录**新的通过证据——它没有一个能指认"跑的是这份代码"的 commit。"""
     ledger, goal = active_goal(repo)
     record(ledger, goal)
     (repo / dirty_path).write_text("uncommitted changes")
-    assert ledger.load(goal.id).status == "active"
     updated = record(ledger, goal)
     assert updated.status == "active"
     assert "未提交" in updated.evidence[-1].stale_reason
+
+
+@pytest.mark.parametrize("dirty_path", ["code.txt", "untracked.txt"])
+def test_dirty_worktree_does_not_invalidate_stored_acceptance(repo, dirty_path):
+    """但**查看**时不看脏不脏：开发中工作区几乎总是脏的。
+
+    让它作废每一条已存的验收，等于把面板变成一盏永远亮着的红灯——那和没有红灯是一回事。
+    代码真的换了 commit 才失效（上一条测试钉的就是那种情况）。
+    """
+    ledger, goal = active_goal(repo)
+    accepted = record(ledger, goal)
+    assert accepted.status == "achieved"
+    (repo / dirty_path).write_text("uncommitted changes")
+    still = ledger.load(goal.id)
+    assert still.status == "achieved"
+    assert not still.evidence[-1].stale_reason
+    assert ledger.list()[0].status == "achieved"
 
 
 def test_old_unbound_evidence_is_kept_but_not_accepted_in_git_repo(repo):
@@ -76,7 +93,9 @@ def test_old_unbound_evidence_is_kept_but_not_accepted_in_git_repo(repo):
     ledger.save(goal)
     loaded = ledger.load(goal.id)
     assert loaded.status == "active" and len(loaded.evidence) == 1
-    assert loaded.evidence[0].stale_reason
+    # 失效原因要说清是"升级带来的"而不是"代码变了"——两者要人做的事不一样。
+    assert "未绑定代码版本" in loaded.evidence[0].stale_reason
+    assert "代码版本已变化" not in loaded.evidence[0].stale_reason
 
 
 def test_verification_targets_goal_branch_not_unrelated_current_branch(repo):
