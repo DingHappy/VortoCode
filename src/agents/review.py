@@ -59,17 +59,17 @@ def load_review_guidelines(repo_root: str) -> str:
 
 # --------------------------------------------------------------- findings 解析 / 过滤（纯函数）
 def parse_findings(text: str) -> List[dict]:
-    """从 reviewer 回复里宽容地抽出 JSON 数组的 findings；解析不出就当无发现（[]，fail-open）。"""
+    """解析 findings；只有合法数组才表示审查完成，无发现须显式返回 []。"""
     if not text:
-        return []
+        raise ValueError("审查未返回 findings 数组")
     for cand in _json_array_candidates(text):
         try:
             data = json.loads(cand)
         except Exception:  # noqa: BLE001
             continue
-        if isinstance(data, list):
-            return [d for d in data if isinstance(d, dict)]
-    return []
+        if isinstance(data, list) and all(isinstance(d, dict) for d in data):
+            return data
+    raise ValueError("审查 findings 格式无效")
 
 
 def _json_array_candidates(text: str) -> List[str]:
@@ -110,10 +110,10 @@ def format_findings(findings: List[dict]) -> str:
 def _branch_diff(repo_root: str, base: str, branch: str, limit: int = 8000) -> str:
     try:
         r = subprocess.run(["git", "-C", str(repo_root), "diff", f"{base}...{branch}"],
-                           capture_output=True, text=True, timeout=30)
+                           capture_output=True, text=True, timeout=30, check=True)
         d = r.stdout or ""
     except Exception as e:  # noqa: BLE001
-        return f"(取 diff 失败: {e})"
+        raise RuntimeError("无法读取待审查分支 diff") from e
     return d[:limit] + ("\n…(diff 已截断)" if len(d) > limit else "")
 
 
@@ -150,21 +150,16 @@ def dev_review_perspectives() -> List[str]:
 async def review_branch(repo_root: str, branch: str, base: str, *, llm=None,
                         test_cmd: Optional[list] = None, guidelines: str = "",
                         max_steps: int = 8) -> List[dict]:
-    """默认 fail-open reviewer。
-
-    生产路径由 main_agent 注入真正 reviewer；这里保留占位，保证直接调用 run_gate 时仍是顾问级
-    fail-open 行为，不因为缺少 agent 装配层而拦 PR。
-    """
-    return []
+    """生产路径由 main_agent 注入 reviewer；缺少装配时明确报告未完成审查。"""
+    raise RuntimeError("未装配 reviewer")
 
 
 # --------------------------------------------------------------- 审查关（orchestration，可注入以便测试）
 async def _review_round(reviewers: dict, repo_root: str, branch: str, base: str, *,
-                        test_cmd, guidelines: str, log) -> List[dict]:
+                        test_cmd, guidelines: str, log) -> tuple:
     """一轮（可能多视角的）审查：并行跑全部 reviewer，findings 打视角标后去重合并。
 
-    fail-open 的粒度细到视角：单视角异常只丢该视角（log 后其余照常算数）；**全部**视角异常才
-    抛出，让 run_gate 走整体 fail-open。去重键 (file, issue)——不同镜头措辞常不同，重复未去尽
+    保留每个视角的错误，由调用方区分首审和复审策略。去重键 (file, issue)——不同镜头措辞常不同，重复未去尽
     也无害（只是修复描述里多一行）。
     """
     names = list(reviewers)
@@ -180,17 +175,16 @@ async def _review_round(reviewers: dict, repo_root: str, branch: str, base: str,
             errors.append(f"{name or 'reviewer'}: {res}")
             log(f"（视角 {name or 'reviewer'} 审查出错：{res}；已跳过该视角）")
             continue
-        for f in res or []:
-            if not isinstance(f, dict):
-                continue
+        if not isinstance(res, list) or any(not isinstance(f, dict) for f in res):
+            errors.append(f"{name or 'reviewer'}: findings 格式无效")
+            continue
+        for f in res:
             key = (str(f.get("file", "")), str(f.get("issue", "")).strip())
             if key in seen:
                 continue
             seen.add(key)
             merged.append({**f, "perspective": name} if name else dict(f))
-    if errors and len(errors) == len(names):
-        raise RuntimeError("；".join(errors))
-    return merged
+    return merged, errors
 
 
 async def run_gate(repo_root: str, branch: str, base: str, *, test_cmd=None, repair,
@@ -201,7 +195,7 @@ async def run_gate(repo_root: str, branch: str, base: str, *, test_cmd=None, rep
     传 reviewers（dict 视角名 → reviewer）则升级为**多视角对抗审查**：各视角并行独立挑刺，
     合并去重后走同一条 confirmed→修复→重审路径（见 _review_round）。不传则退回单 reviewer，
     旧注入面不变。
-    **fail-open**：审查/重审出错不拦（人在合并口兜底）；只有"确实还有 confirmed"或"修复出错"才 blocked。
+    首审未完成时交由人工审核；发现 confirmed 后，修复失败或任一复审未完成都阻塞 PR。
     """
     if not reviewers:
         reviewers = {"": reviewer or review_branch}
@@ -211,13 +205,15 @@ async def run_gate(repo_root: str, branch: str, base: str, *, test_cmd=None, rep
 
     log(f"🔍 PR 前对抗审查{lens}：reviewer 子 agent 挑刺中…")
     try:
-        findings = await _review_round(reviewers, repo_root, branch, base,
+        findings, errors = await _review_round(reviewers, repo_root, branch, base,
                                        test_cmd=test_cmd, guidelines=guidelines, log=log)
     except Exception as e:  # noqa: BLE001
         return (f"\n（审查未能完成：{e}；未拦截，以人工 PR 审核为准。）", False)
     confirmed = confirmed_findings(findings)
     if not confirmed:
-        return (f"\n🔍 PR 前审查通过{lens}：无 P0/P1。", False)
+        if errors:
+            return (f"\n（审查未能完成{lens}：{'；'.join(errors)}；未拦截，以人工 PR 审核为准。）", False)
+        return (f"\n🔍 PR 前审查通过{lens}：无已确认的 P0/P1。", False)
 
     log(f"🔧 审查发现 {len(confirmed)} 条 P0/P1，喂回一轮自修复…")
     fix_desc = ("修复以下审查发现的严重问题（P0/P1），改完务必自测通过；只动相关文件：\n"
@@ -230,11 +226,16 @@ async def run_gate(repo_root: str, branch: str, base: str, *, test_cmd=None, rep
 
     log("🔍 重审修复后的分支…")
     try:
-        confirmed2 = confirmed_findings(
-            await _review_round(reviewers, repo_root, branch, base,
-                                test_cmd=test_cmd, guidelines=guidelines, log=log))
-    except Exception:  # noqa: BLE001
-        confirmed2 = []
+        findings2, errors = await _review_round(
+            reviewers, repo_root, branch, base,
+            test_cmd=test_cmd, guidelines=guidelines, log=log)
+    except Exception as e:  # noqa: BLE001
+        findings2, errors = [], [str(e)]
+    if errors:
+        return (f"\n⚠️ 已尝试修复，但复审未能完成：{'；'.join(errors)}；"
+                f"无法确认原有 {len(confirmed)} 条 P0/P1 已解决。**未开 PR**，分支 {branch} 保留待人工处理：\n"
+                + format_findings(confirmed) + format_findings(confirmed_findings(findings2)), True)
+    confirmed2 = confirmed_findings(findings2)
     if not confirmed2:
         return (f"\n🔍 PR 前审查发现 {len(confirmed)} 条 P0/P1，已自修复并复审通过{lens}。", False)
     return (f"\n⚠️ 审查仍有 {len(confirmed2)} 条 P0/P1 未修掉，**未开 PR**，分支保留待人工处理：\n"

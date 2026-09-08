@@ -760,9 +760,9 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 path.parent.mkdir(parents=True, exist_ok=True)
                 if path.exists():
                     remove_worktree(_repo_root, path)
-                add = _git(_repo_root, "worktree", "add", str(path), _branch, check=False)
+                add = _git(_repo_root, "worktree", "add", "--detach", str(path), _branch, check=False)
                 if add.returncode != 0:
-                    return []
+                    raise RuntimeError("无法创建审查 worktree")
                 try:
                     diff = _review._branch_diff(_repo_root, _base, _branch)
                     if not diff.strip():
@@ -772,15 +772,12 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                              + (f"\n\n{lens}" if lens else "")
                              + (f"\n\n【本仓库审查规范】\n{guidelines}" if guidelines else ""))
                     agent = MainAgent(tools, llm=llm, max_steps=max_steps, extra_system=extra,
-                                      capabilities=capabilities)
+                                      capabilities=capabilities, raise_llm_errors=True)
                     prompt = (f"审查分支 {_branch}（相对 {_base}）的以下改动。只报 P0/P1、每条带验证证据、"
                               f"用 run_tests 复现你怀疑的问题，最后只输出 JSON 数组：\n\n```diff\n{diff}\n```")
-                    try:
-                        from src.agents.taint import merge_nested_taint
-                        with merge_nested_taint():
-                            reply = await agent.run_turn(prompt, mode="build")
-                    except Exception:  # noqa: BLE001
-                        return []
+                    from src.agents.taint import merge_nested_taint
+                    with merge_nested_taint():
+                        reply = await agent.run_turn(prompt, mode="build")
                     return _review.parse_findings(reply)
                 finally:
                     remove_worktree(_repo_root, path)
@@ -788,8 +785,11 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             return _review_branch
 
         async def _repair(fix_desc: str) -> None:
-            await run_dependent_on_branch(repo_root, "wt-" + uuid.uuid4().hex[:8], branch,
-                                          fix_desc, mk(None), "dev_auto(review-fix)", test_cmd)
+            result = await run_dependent_on_branch(
+                repo_root, "wt-" + uuid.uuid4().hex[:8], branch,
+                fix_desc, mk(None), "dev_auto(review-fix)", test_cmd)
+            if not result.get("ok"):
+                raise RuntimeError(result.get("output") or "审查修复未成功落地")
 
         reviewers = {name: _make_reviewer(_review.PERSPECTIVES[name])
                      for name in _review.dev_review_perspectives()}
