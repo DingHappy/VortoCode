@@ -33,8 +33,14 @@ def test_agent_page_declares_the_pwa_head():
 
 
 def test_mobile_css_keeps_ios_from_zooming_the_composer():
-    """iOS 上输入框字号 <16px 聚焦会强制放大整页——这条丢了手机端就没法打字。"""
+    """iOS 上输入框字号 <16px 聚焦会强制放大整页——这条丢了手机端就没法打字。
+
+    2026-08 起样式拆到 agent.css（页面 <link> 引入），断言跟着搬家、契约不变。
+    """
+    css = (_WEB / "agent.css").read_text(encoding="utf-8")
+    assert "font-size: 16px" in css
+    assert "safe-area-inset-bottom" in css
+    assert "100dvh" in css, "100vh 在手机上会被地址栏吃掉一截，composer 沉到屏幕外"
+    # 页面确实引入了这份样式（拆而不接等于白拆）
     html = (_WEB / "agent.html").read_text(encoding="utf-8")
-    assert "font-size: 16px" in html
-    assert "safe-area-inset-bottom" in html
-    assert "100dvh" in html, "100vh 在手机上会被地址栏吃掉一截，composer 沉到屏幕外"
+    assert '"/agent.css"' in html.replace("'", '"')
