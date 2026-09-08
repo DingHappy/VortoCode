@@ -17,7 +17,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 _SEVERITIES = ("P0", "P1")
 
@@ -159,7 +159,8 @@ async def _review_round(reviewers: dict, repo_root: str, branch: str, base: str,
                         test_cmd, guidelines: str, log) -> tuple:
     """一轮（可能多视角的）审查：并行跑全部 reviewer，findings 打视角标后去重合并。
 
-    保留每个视角的错误，由调用方区分首审和复审策略。去重键 (file, issue)——不同镜头措辞常不同，重复未去尽
+    错误**按视角名归档**返回（不是拼好的字符串），调用方才能回答"是哪个视角没看成"——复审的
+    阻塞判定要的正是这个。去重键 (file, issue)——不同镜头措辞常不同，重复未去尽
     也无害（只是修复描述里多一行）。
     """
     names = list(reviewers)
@@ -167,16 +168,16 @@ async def _review_round(reviewers: dict, repo_root: str, branch: str, base: str,
         *(reviewers[n](repo_root, branch, base, test_cmd=test_cmd, guidelines=guidelines)
           for n in names),
         return_exceptions=True)
-    errors: List[str] = []
+    errors: Dict[str, str] = {}
     merged: List[dict] = []
     seen: set = set()
     for name, res in zip(names, results):
         if isinstance(res, BaseException):
-            errors.append(f"{name or 'reviewer'}: {res}")
+            errors[name] = str(res)
             log(f"（视角 {name or 'reviewer'} 审查出错：{res}；已跳过该视角）")
             continue
         if not isinstance(res, list) or any(not isinstance(f, dict) for f in res):
-            errors.append(f"{name or 'reviewer'}: findings 格式无效")
+            errors[name] = "findings 格式无效"
             continue
         for f in res:
             key = (str(f.get("file", "")), str(f.get("issue", "")).strip())
@@ -187,15 +188,46 @@ async def _review_round(reviewers: dict, repo_root: str, branch: str, base: str,
     return merged, errors
 
 
+def _error_text(errors: Dict[str, str]) -> str:
+    return "；".join(f"{name or 'reviewer'}: {msg}" for name, msg in errors.items())
+
+
+def _names_text(names) -> str:
+    return "、".join(name or "reviewer" for name in names)
+
+
+async def _review_round_retrying(reviewers: dict, repo_root: str, branch: str, base: str, *,
+                                 test_cmd, guidelines: str, log) -> tuple:
+    """跑一轮审查，**只把出错的视角重试一次**。
+
+    单个视角的一次抖动（模型回散文、relay 502）不该决定整条流水线的出口；重试只重跑失败的那几只，
+    成本是"失败视角数"而不是"视角数"。
+    """
+    merged, errors = await _review_round(reviewers, repo_root, branch, base,
+                                         test_cmd=test_cmd, guidelines=guidelines, log=log)
+    if not errors:
+        return merged, errors
+    log(f"（{_names_text(errors)} 视角出错，重试一次）")
+    again, errors = await _review_round({n: reviewers[n] for n in errors}, repo_root, branch, base,
+                                        test_cmd=test_cmd, guidelines=guidelines, log=log)
+    seen = {(str(f.get("file", "")), str(f.get("issue", "")).strip()) for f in merged}
+    merged.extend(f for f in again
+                  if (str(f.get("file", "")), str(f.get("issue", "")).strip()) not in seen)
+    return merged, errors
+
+
 async def run_gate(repo_root: str, branch: str, base: str, *, test_cmd=None, repair,
-                   reviewer=None, reviewers=None, progress=None) -> tuple:
+                   reviewer=None, reviewers=None, progress=None, on_incomplete=None) -> tuple:
     """审查 → confirmed 喂一轮修复（repair(fix_desc)）→ 重审一次。返回 (note, blocked)。
 
     reviewer/repair 都可注入（测试用假的，生产由 dev_auto 注入真 review_branch + 依赖接力修复）。
     传 reviewers（dict 视角名 → reviewer）则升级为**多视角对抗审查**：各视角并行独立挑刺，
     合并去重后走同一条 confirmed→修复→重审路径（见 _review_round）。不传则退回单 reviewer，
     旧注入面不变。
-    首审未完成时交由人工审核；发现 confirmed 后，修复失败或任一复审未完成都阻塞 PR。
+
+    **阻塞粒度**：首审未完成 → 交人工审核（不拦绿集成）。发现 confirmed 之后，修复失败一定拦；
+    复审则只在「**报出该问题的那个视角**自己没复审成功」时拦——别的视角抖动拦不住 PR，因为它本来
+    也没看过这条问题。任一未完成的视角都经 on_incomplete 交给调用方留痕（进计划台账/PR 正文）。
     """
     if not reviewers:
         reviewers = {"": reviewer or review_branch}
@@ -203,16 +235,23 @@ async def run_gate(repo_root: str, branch: str, base: str, *, test_cmd=None, rep
     guidelines = load_review_guidelines(repo_root)
     lens = f"（{len(reviewers)} 视角）" if len(reviewers) > 1 else ""
 
+    def _report(stage: str, errors: Dict[str, str]) -> None:
+        if errors and on_incomplete:
+            on_incomplete({stage: dict(errors)})
+
     log(f"🔍 PR 前对抗审查{lens}：reviewer 子 agent 挑刺中…")
     try:
-        findings, errors = await _review_round(reviewers, repo_root, branch, base,
-                                       test_cmd=test_cmd, guidelines=guidelines, log=log)
+        findings, errors = await _review_round_retrying(
+            reviewers, repo_root, branch, base,
+            test_cmd=test_cmd, guidelines=guidelines, log=log)
     except Exception as e:  # noqa: BLE001
+        _report("review", {"": str(e)})
         return (f"\n（审查未能完成：{e}；未拦截，以人工 PR 审核为准。）", False)
+    _report("review", errors)
     confirmed = confirmed_findings(findings)
     if not confirmed:
         if errors:
-            return (f"\n（审查未能完成{lens}：{'；'.join(errors)}；未拦截，以人工 PR 审核为准。）", False)
+            return (f"\n（审查未能完成{lens}：{_error_text(errors)}；未拦截，以人工 PR 审核为准。）", False)
         return (f"\n🔍 PR 前审查通过{lens}：无已确认的 P0/P1。", False)
 
     log(f"🔧 审查发现 {len(confirmed)} 条 P0/P1，喂回一轮自修复…")
@@ -226,17 +265,24 @@ async def run_gate(repo_root: str, branch: str, base: str, *, test_cmd=None, rep
 
     log("🔍 重审修复后的分支…")
     try:
-        findings2, errors = await _review_round(
+        findings2, errors = await _review_round_retrying(
             reviewers, repo_root, branch, base,
             test_cmd=test_cmd, guidelines=guidelines, log=log)
     except Exception as e:  # noqa: BLE001
-        findings2, errors = [], [str(e)]
-    if errors:
-        return (f"\n⚠️ 已尝试修复，但复审未能完成：{'；'.join(errors)}；"
-                f"无法确认原有 {len(confirmed)} 条 P0/P1 已解决。**未开 PR**，分支 {branch} 保留待人工处理：\n"
-                + format_findings(confirmed) + format_findings(confirmed_findings(findings2)), True)
+        findings2, errors = [], {name: str(e) for name in reviewers}
+    _report("rereview", errors)
     confirmed2 = confirmed_findings(findings2)
+    # 谁报出的问题，谁负责确认修好了。报出者自己没复审成功 → 拦；其余视角挂了不影响判定。
+    unverified = [name for name in {str(f.get("perspective", "")) for f in confirmed}
+                  if name in errors]
+    if unverified:
+        return (f"\n⚠️ 已尝试修复，但复审未能完成（{_names_text(unverified)}）：{_error_text(errors)}；"
+                f"无法确认原有 {len(confirmed)} 条 P0/P1 已解决。**未开 PR**，分支 {branch} 保留待人工处理：\n"
+                + format_findings(confirmed) + format_findings(confirmed2), True)
     if not confirmed2:
-        return (f"\n🔍 PR 前审查发现 {len(confirmed)} 条 P0/P1，已自修复并复审通过{lens}。", False)
+        note = f"\n🔍 PR 前审查发现 {len(confirmed)} 条 P0/P1，已自修复并复审通过{lens}。"
+        if errors:
+            note += f"（{_names_text(errors)} 视角复审未能完成，但问题不是它报的，未影响判定。）"
+        return (note, False)
     return (f"\n⚠️ 审查仍有 {len(confirmed2)} 条 P0/P1 未修掉，**未开 PR**，分支保留待人工处理：\n"
             + format_findings(confirmed2), True)

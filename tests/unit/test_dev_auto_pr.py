@@ -109,7 +109,10 @@ async def test_real_review_workers_and_pr_gate(tmp_path, monkeypatch, outcome):
         return True
 
     out = await _dev_auto(tmp_path, yes).handler({"task": "x", "open_pr": True})
-    assert len(calls) == (4 if outcome == "rereview_failed" else 2)
+    # 2 视角 × 每轮；出错的视角额外重试一次（且只重跑失败的那几只）：
+    # clean/repair_failed 只跑首审 = 2；malformed 首审两只都解析失败 = 2 + 重试 2；
+    # rereview_failed 首审 2 + 复审 2 + 复审重试 2。
+    assert len(calls) == {"clean": 2, "repair_failed": 2, "malformed": 4, "rereview_failed": 6}[outcome]
     if outcome in {"repair_failed", "rereview_failed"}:
         assert not pushed and "未开 PR" in out and "复审通过" not in out
     elif outcome == "malformed":
