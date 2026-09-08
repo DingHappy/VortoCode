@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -32,6 +33,47 @@ def _clean_id(value: str) -> Optional[str]:
         return None
     cleaned = _BAD.sub("_", str(value)).strip("_")
     return cleaned or None
+
+
+def evidence_revision(repo_root: str, branch: str = "", *, require_checkout: bool = True) -> tuple[str, str]:
+    """Return the commit and any reason it cannot support acceptance evidence.
+
+    Non-Git workspaces retain unversioned acceptance.
+
+    ``require_checkout`` separates the two moments this is asked at, and they must not
+    share one standard:
+
+    * **Recording** evidence (True) is strict: the target must be checked out and the tree
+      clean, because a dirty tree has no commit that names the code that was actually run.
+    * **Viewing** a goal (False) only compares commits. A dirty tree is the normal state of
+      a working day; letting it invalidate every stored acceptance turns the whole panel
+      into a red light that is always on, which is the same as no red light at all.
+    """
+    root = Path(repo_root).resolve()
+
+    def git(*args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(root), *args], check=True, capture_output=True,
+            text=True, timeout=5,
+        ).stdout.strip()
+
+    try:
+        git("rev-parse", "--is-inside-work-tree")
+    except (OSError, subprocess.SubprocessError):
+        if any((parent / ".git").exists() for parent in (root, *root.parents)):
+            return "", "无法读取 Git 状态，请恢复仓库后重新验收"
+        return "", ""
+    try:
+        commit = git("rev-parse", "--verify", "--end-of-options", f"{branch or 'HEAD'}^{{commit}}")
+        head = git("rev-parse", "--verify", "HEAD")
+        if require_checkout:
+            if head != commit:
+                return commit, "当前工作区不是目标分支版本，请在目标版本上重新验收"
+            if git("status", "--porcelain", "--untracked-files=normal"):
+                return commit, "工作区有未提交改动，请提交后重新验收"
+        return commit, ""
+    except (OSError, subprocess.SubprocessError):
+        return "", "无法确认目标 commit，请恢复目标分支后重新验收"
 
 
 @dataclass
@@ -61,6 +103,8 @@ class GoalEvidence:
     passed: bool
     source: str = "manual"
     created: str = ""
+    verified_commit: str = ""
+    stale_reason: str = ""
 
 
 @dataclass
@@ -145,6 +189,8 @@ class Goal:
         summary: str,
         passed: bool,
         source: str = "manual",
+        verified_commit: str = "",
+        stale_reason: str = "",
     ) -> GoalEvidence:
         criterion = self.criterion(criterion_id) if criterion_id else None
         if criterion_id and criterion is None:
@@ -161,6 +207,8 @@ class Goal:
             and item.summary == clean_summary
             and item.passed is bool(passed)
             and item.source == clean_source
+            and item.verified_commit == verified_commit
+            and item.stale_reason == stale_reason
         ), None)
         evidence = existing or GoalEvidence(
             id="evidence-" + uuid.uuid4().hex[:10],
@@ -170,17 +218,27 @@ class Goal:
             passed=bool(passed),
             source=clean_source,
             created=_now(),
+            verified_commit=verified_commit,
+            stale_reason=stale_reason,
         )
         if existing is None:
             self.evidence.append(evidence)
         if criterion is not None:
-            if evidence.id not in criterion.evidence_ids:
-                criterion.evidence_ids.append(evidence.id)
-            criterion.status = "passed" if passed else "failed"
+            # Reusing an earlier observation must still make it the latest decision.
+            criterion.evidence_ids = [eid for eid in criterion.evidence_ids if eid != evidence.id]
+            criterion.evidence_ids.append(evidence.id)
+            criterion.status = "pending" if stale_reason else ("passed" if passed else "failed")
         return evidence
 
     def evaluate(self, *, default_active: bool = True) -> str:
         """Apply the completion gate and return the resulting status."""
+        by_id = {item.id: item for item in self.evidence}
+        for criterion in self.acceptance_criteria:
+            evidence = by_id.get(criterion.evidence_ids[-1]) if criterion.evidence_ids else None
+            if evidence is None or evidence.criterion_id != criterion.id or evidence.stale_reason:
+                criterion.status = "pending"
+            else:
+                criterion.status = "passed" if evidence.passed else "failed"
         if self.acceptance_criteria and all(
             item.status == "passed" and item.evidence_ids for item in self.acceptance_criteria
         ):
@@ -287,7 +345,7 @@ class GoalLedger:
         except (OSError, TypeError, ValueError):
             return False
 
-    def load(self, goal_id: str) -> Optional[Goal]:
+    def load(self, goal_id: str, *, _revision_cache: Optional[dict] = None) -> Optional[Goal]:
         clean = _clean_id(goal_id)
         if clean is None:
             return None
@@ -296,17 +354,54 @@ class GoalLedger:
             return None
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-            return Goal.from_dict(data) if isinstance(data, dict) else None
+            if not isinstance(data, dict):
+                return None
+            goal = Goal.from_dict(data)
+            self.refresh_evidence(goal, revision_cache=_revision_cache)
+            if goal.status == "achieved":
+                goal.evaluate()
+            return goal
         except (OSError, TypeError, ValueError):
             return None
+
+    def refresh_evidence(self, goal: Goal, *, revision_cache: Optional[dict] = None) -> None:
+        """Invalidate stale criterion decisions without deleting historical observations."""
+        if not any(item.criterion_id and item.passed for item in goal.evidence):
+            return
+        # A single list/inbox refresh shares a Git snapshot per target branch.
+        # Never cache across requests: editing code must invalidate the next view.
+        if revision_cache is None:
+            revision_cache = {}
+        if goal.branch not in revision_cache:
+            revision_cache[goal.branch] = evidence_revision(
+                self.repo_root, goal.branch, require_checkout=False)
+        commit, reason = revision_cache[goal.branch]
+        changed = False
+        for evidence in goal.evidence:
+            if not evidence.criterion_id or not evidence.passed:
+                continue
+            # 两个成因对人要做的事不同，别合成一句话：老证据是本次升级带来的（代码可能压根没动），
+            # 版本不符才是真的"代码变了"。
+            stale = reason
+            if not stale and evidence.verified_commit != commit:
+                stale = ("本条证据记录于版本绑定上线前，未绑定代码版本，请重新验收一次"
+                         if not evidence.verified_commit else "代码版本已变化，请重新验收")
+            if stale and not evidence.stale_reason:
+                evidence.stale_reason = stale
+                changed = True
+        if changed:
+            goal.evaluate()
+            if goal.status == "active":
+                goal.next_action = "验收证据已失效，请在当前目标版本上重新验收"
 
     def list(self) -> List[Goal]:
         directory = self._dir()
         if not directory.is_dir():
             return []
         goals: List[tuple[float, Goal]] = []
+        revision_cache: dict = {}
         for path in directory.glob("*.json"):
-            goal = self.load(path.stem)
+            goal = self.load(path.stem, _revision_cache=revision_cache)
             if goal is None:
                 continue
             try:
@@ -424,16 +519,25 @@ class GoalLedger:
         summary: str,
         passed: bool,
         source: str = "manual",
+        verified_commit: Optional[str] = None,
+        verification_error: str = "",
     ) -> Goal:
         goal = self.load(goal_id)
         if goal is None:
             raise KeyError(goal_id)
+        commit, reason = evidence_revision(self.repo_root, goal.branch)
+        if verified_commit is None:
+            verified_commit = commit
+        elif verified_commit != commit:
+            reason = "验收期间代码版本已变化，请重新验收"
         goal.add_evidence(
             criterion_id=criterion_id,
             kind=kind,
             summary=summary,
             passed=passed,
             source=source,
+            verified_commit=verified_commit,
+            stale_reason=(verification_error or reason) if passed else "",
         )
         goal.evaluate(default_active=True)
         self.save(goal)
