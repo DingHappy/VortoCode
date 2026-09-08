@@ -31,6 +31,25 @@ on:
 permissions:
   contents: read
 
+# ── 出海面收敛（2026-09-08）─────────────────────────────────────────────────
+# 自建 runner 在国内，出海链路**每天抖 4–6 次**（实测：09-07 16/19 点，09-08 03/06/07/14 点，
+# 四个 runner 每次同时中招 = 共因在宿主机那条通道）。抖动期间 runner 与 GitHub 失联，正在跑的
+# job 被直接判 **Abandoned**——09-08 14:05 那次一口气带走 typecheck + 两个 3.12 suite。
+# job 一旦开跑就全程依赖那条长连接，这点改不了；能改的是**缩短每个 job 的时间窗**，
+# 降低与抖动窗口重叠的概率。实测各步耗时（run 34180541821）：
+#   Install dependencies 56–64s ·  Set up Python(cache:pip) 25–27s ·  Post Set up Python 最高 46s
+#   Run tests 33–188s（离线，不出海）
+# 所以两件事：换国内 pip 源 + 用 runner 本地持久 pip 缓存，并**去掉 cache: pip**（见各 job 处注释）。
+#
+# 两个都是**变量驱动**，与 CI_RUNNER 同一套路数——将来换回 GitHub 托管 runner（转公开时必须换）
+# 只要删掉仓库变量，本文件一个字不用动，默认值就是官方源。
+env:
+  PIP_INDEX_URL: ${{ vars.PIP_INDEX_URL || 'https://pypi.org/simple' }}
+  PIP_CACHE_DIR: ${{ vars.PIP_CACHE_DIR || '/tmp/vortocode-pip-cache' }}
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"   # 每次 pip 调用少一次"查有没有新版"的出海请求
+  PIP_RETRIES: "5"                     # 抖动是常态，别一次失败就判死
+  PIP_TIMEOUT: "30"
+
 # 取消同分支上仍在跑的旧 CI，省额度
 concurrency:
   group: ci-${{ github.ref }}
@@ -46,7 +65,10 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: pip
+          # 刻意**不开 cache: pip**：它把 pip 的 wheel 缓存存进 GitHub 的 Actions Cache 服务，
+          # 在自建 runner 上那是一次纯粹的出海往返——实测 restore 最高 27s、save 最高 46s，
+          # 比装包本身（56–64s）还占时间窗。改用 PIP_CACHE_DIR 指向 runner 本地持久目录：
+          # 同样有缓存，但读写都在本机磁盘上，一个包都不用问 GitHub 要。
       - name: Install ruff（装进本 job 独占的 venv，见文件头「为什么用 venv」）
         run: |
           python -m venv .venv
@@ -64,7 +86,10 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          cache: pip
+          # 刻意**不开 cache: pip**：它把 pip 的 wheel 缓存存进 GitHub 的 Actions Cache 服务，
+          # 在自建 runner 上那是一次纯粹的出海往返——实测 restore 最高 27s、save 最高 46s，
+          # 比装包本身（56–64s）还占时间窗。改用 PIP_CACHE_DIR 指向 runner 本地持久目录：
+          # 同样有缓存，但读写都在本机磁盘上，一个包都不用问 GitHub 要。
       - name: Install mypy + 运行时依赖（要拿到真类型，不能只装 mypy）
         run: |
           python -m venv .venv
@@ -89,7 +114,7 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
-          cache: pip
+          # 同上：不开 cache: pip，改用 PIP_CACHE_DIR 的本地持久缓存（理由见文件头与 lint 处注释）。
 
       - name: Install dependencies
         run: |
