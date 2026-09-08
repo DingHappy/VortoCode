@@ -501,7 +501,7 @@ export class GatewayClient {
   async recordGoalEvidence(
     goalId: string,
     criterionId: string,
-    input: { passed: boolean; summary: string; kind?: string },
+    input: { passed: boolean; summary: string; kind?: string; run_id?: string; evidence_id?: string },
   ): Promise<GoalItem> {
     return this.request(
       `/api/goals/${encodeURIComponent(goalId)}/criteria/${encodeURIComponent(criterionId)}/evidence`,
