@@ -450,13 +450,19 @@ class RunManager:
         except Exception:  # noqa: BLE001 - UI notification must not break the process
             pass
 
-    def _sync_goal_evidence(self, run: CommandRun) -> None:
-        """Attach a terminal verifier result to its acceptance criterion."""
+    def _evidence_revision_for(self, goal_id: str) -> tuple:
+        """取目标分支的版本快照。**阻塞**（git 子进程）——从 async 路径调用务必过 to_thread。"""
         from src.gateway.goals import GoalLedger, evidence_revision
 
+        goal = GoalLedger(self.repo_root).load(goal_id) if goal_id else None
+        return evidence_revision(self.repo_root, goal.branch if goal else "")
+
+    def _sync_goal_evidence(self, run: CommandRun) -> None:
+        """Attach a terminal verifier result to its acceptance criterion."""
+        from src.gateway.goals import GoalLedger
+
         if run.status in _VERIFIER_RESULT_STATES and (run.kind == "test" or run.goal_id):
-            goal = GoalLedger(self.repo_root).load(run.goal_id) if run.goal_id else None
-            commit, error = evidence_revision(self.repo_root, goal.branch if goal else "")
+            commit, error = self._evidence_revision_for(run.goal_id)
             if commit != run.verified_commit:
                 error = "验收期间代码版本已变化，请重新验收"
             if error and not run.verification_error:
@@ -533,11 +539,8 @@ class RunManager:
             timeout_seconds=timeout_seconds,
         )
         if run.kind == "test" or (run.goal_id and run.criterion_id):
-            from src.gateway.goals import GoalLedger, evidence_revision
-
-            goal = GoalLedger(self.repo_root).load(run.goal_id)
-            run.verified_commit, run.verification_error = evidence_revision(
-                self.repo_root, goal.branch if goal else "")
+            run.verified_commit, run.verification_error = await asyncio.to_thread(
+                self._evidence_revision_for, run.goal_id)
             self.ledger.save(run)
         self._notify(run)
         started = await asyncio.to_thread(
@@ -552,7 +555,7 @@ class RunManager:
             run.error = str(started.get("error") or "无法启动命令")[-1000:]
             run.sandbox = dict(started.get("sandbox") or {})
             self.ledger.save(run)
-            self._sync_goal_evidence(run)
+            await asyncio.to_thread(self._sync_goal_evidence, run)
             self._notify(run)
             return run
 
@@ -582,7 +585,7 @@ class RunManager:
                     run.status = "failed"
                     run.error = str(result.get("error") or "读取命令输出失败")[-1000:]
                     self.ledger.save(run)
-                    self._sync_goal_evidence(run)
+                    await asyncio.to_thread(self._sync_goal_evidence, run)
                     self._notify(run)
                     return
 
@@ -605,7 +608,7 @@ class RunManager:
                     if run.kind == "test":
                         run.test_results = parse_test_results(run.command, run.output)
                     self.ledger.save(run)
-                    self._sync_goal_evidence(run)
+                    await asyncio.to_thread(self._sync_goal_evidence, run)
                     self._notify(run)
                     return
                 if run.timeout_seconds and time.monotonic() - started_at >= run.timeout_seconds:
@@ -618,7 +621,7 @@ class RunManager:
                     if run.kind == "test":
                         run.test_results = parse_test_results(run.command, run.output)
                     self.ledger.save(run)
-                    self._sync_goal_evidence(run)
+                    await asyncio.to_thread(self._sync_goal_evidence, run)
                     self._notify(run)
                     return
                 if changed:

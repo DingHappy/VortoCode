@@ -38,9 +38,16 @@ def _clean_id(value: str) -> Optional[str]:
 def evidence_revision(repo_root: str, branch: str = "", *, require_checkout: bool = True) -> tuple[str, str]:
     """Return the commit and any reason it cannot support acceptance evidence.
 
-    Non-Git workspaces retain unversioned acceptance. Git goals require a clean
-    checkout of their target for verification; viewing a goal on another branch
-    can still validate evidence against its unchanged target commit.
+    Non-Git workspaces retain unversioned acceptance.
+
+    ``require_checkout`` separates the two moments this is asked at, and they must not
+    share one standard:
+
+    * **Recording** evidence (True) is strict: the target must be checked out and the tree
+      clean, because a dirty tree has no commit that names the code that was actually run.
+    * **Viewing** a goal (False) only compares commits. A dirty tree is the normal state of
+      a working day; letting it invalidate every stored acceptance turns the whole panel
+      into a red light that is always on, which is the same as no red light at all.
     """
     root = Path(repo_root).resolve()
 
@@ -59,10 +66,11 @@ def evidence_revision(repo_root: str, branch: str = "", *, require_checkout: boo
     try:
         commit = git("rev-parse", "--verify", "--end-of-options", f"{branch or 'HEAD'}^{{commit}}")
         head = git("rev-parse", "--verify", "HEAD")
-        if require_checkout and head != commit:
-            return commit, "当前工作区不是目标分支版本，请在目标版本上重新验收"
-        if head == commit and git("status", "--porcelain", "--untracked-files=normal"):
-            return commit, "工作区有未提交改动，请提交后重新验收"
+        if require_checkout:
+            if head != commit:
+                return commit, "当前工作区不是目标分支版本，请在目标版本上重新验收"
+            if git("status", "--porcelain", "--untracked-files=normal"):
+                return commit, "工作区有未提交改动，请提交后重新验收"
         return commit, ""
     except (OSError, subprocess.SubprocessError):
         return "", "无法确认目标 commit，请恢复目标分支后重新验收"
@@ -372,9 +380,12 @@ class GoalLedger:
         for evidence in goal.evidence:
             if not evidence.criterion_id or not evidence.passed:
                 continue
+            # 两个成因对人要做的事不同，别合成一句话：老证据是本次升级带来的（代码可能压根没动），
+            # 版本不符才是真的"代码变了"。
             stale = reason
             if not stale and evidence.verified_commit != commit:
-                stale = "代码版本已变化或历史证据未绑定 commit，请重新验收"
+                stale = ("本条证据记录于版本绑定上线前，未绑定代码版本，请重新验收一次"
+                         if not evidence.verified_commit else "代码版本已变化，请重新验收")
             if stale and not evidence.stale_reason:
                 evidence.stale_reason = stale
                 changed = True
