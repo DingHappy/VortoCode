@@ -41,8 +41,21 @@ skip_gate() {
   SKIPPED+=("$name —— $reason")
 }
 
-run_gate "ruff（真错误门禁）" python3 -m ruff check src tests
-run_gate "mypy（范围见 pyproject [tool.mypy]）" python3 -m mypy
+# python 工具没装 ≠ 检查没通过。`python3 -m ruff` 缺模块时退 1，跟"发现真错误"长得一模一样，
+# 于是一台没装 dev 依赖的机器会收到一排假红灯——2026-09-08 实测就是这样：mypy 没装，门禁
+# 报"mypy 失败"，装上再跑 8 个源文件零问题。这跟下面 node_modules / cargo 缺失是同一类，
+# 那两处早就降级成跳过了，python 侧一直没跟上。
+run_python_gate() {
+  local name="$1" module="$2"; shift 2
+  if ! python3 -c "import $module" 2>/dev/null; then
+    skip_gate "$name" "没装 $module——先 pip install -e '.[dev]'"
+    return
+  fi
+  run_gate "$name" "$@"
+}
+
+run_python_gate "ruff（真错误门禁）" ruff python3 -m ruff check src tests
+run_python_gate "mypy（范围见 pyproject [tool.mypy]）" mypy python3 -m mypy
 
 # CI 刻意不给 API key / shell / browser：保证测试离线、确定性。这里保持一致，
 # 否则本地"绿"可能只是因为你的 .env 里有 key，而 CI 上根本不是这个环境。
@@ -72,10 +85,10 @@ if [ "$JOBS" != "0" ] && python3 -c "import xdist" 2>/dev/null; then
 fi
 
 if [ "$MODE" = "quick" ]; then
-  run_gate "pytest（unit + tui）" \
+  run_python_gate "pytest（unit + tui）" pytest \
     python3 -m pytest tests/unit tests/test_basic.py -q "${PYTEST_PAR[@]}"
 else
-  run_gate "pytest（全量，同 CI 的三个 suite）" \
+  run_python_gate "pytest（全量，同 CI 的三个 suite）" pytest \
     python3 -m pytest tests/unit tests/test_basic.py tests/integration tests/live -q \
       "${PYTEST_PAR[@]}"
 fi
@@ -84,7 +97,7 @@ fi
 # 单测证明每一段对，这一段证明接缝没断：2026-07-27 一天里五个真机 bug 全是"每段单测都绿、
 # 东西没送到人手机上"（cron_run 漏传 notify、确认门绕过分档函数、三处硬编码教钉钉用户按 Tab）。
 # 那类缺陷对"断函数返回值"的测试天然免疫——返回值确实是对的。
-run_gate "pytest（e2e 交付链路 canary）" python3 -m pytest tests/e2e -q
+run_python_gate "pytest（e2e 交付链路 canary）" pytest python3 -m pytest tests/e2e -q
 
 # ─────────────────────────────────────────────────────────────
 # desktop 段（B6-2）——**刻意只跑 `npm run check` 的离线子集**
@@ -133,12 +146,25 @@ desktop_rust_gate() {
 #   resources   → resources/THIRD_PARTY_NOTICES.txt
 # 缺任何一个 cargo 段都编不过。返回缺失项的说明，全齐则返回空串。
 # glob 无匹配时原样留下字面量、[ -f ] 自然为假，不需要 shopt/compgen（bash 3.2 也能跑）。
+#
+# **必须按本机 target triple 找**：build script 校验的是 `binaries/vortocode-runtime-<本机 triple>`，
+# 别的架构那份不算数。原来只要 glob 到任意一份就放行——2026-09-08 实测踩到：机器上留着一份
+# 7 月建的 x86_64 产物，而本机是 aarch64，于是检查放行、cargo 在编译期炸出
+# "resource path binaries/vortocode-runtime-aarch64-apple-darwin doesn't exist"。
+# 又是一个假红灯，正是上面注释里说"第一次没防住自己"的同一个坑的第二种形态。
 _desktop_build_inputs_missing() {
-  local candidate found=""
-  for candidate in desktop/src-tauri/binaries/vortocode-runtime-*; do
-    [ -f "$candidate" ] && found="yes"
-  done
-  [ -z "$found" ] && { echo "binaries/vortocode-runtime-<triple>"; return; }
+  local triple candidate found=""
+  triple="$(rustc -vV 2>/dev/null | sed -n 's/^host: //p')"
+  if [ -n "$triple" ]; then
+    [ -f "desktop/src-tauri/binaries/vortocode-runtime-$triple" ] \
+      || { echo "binaries/vortocode-runtime-$triple"; return; }
+  else
+    # 没有 rustc 就问不出 triple；退回旧的"有任意一份即可"，后面 cargo 缺失那条会接住。
+    for candidate in desktop/src-tauri/binaries/vortocode-runtime-*; do
+      [ -f "$candidate" ] && found="yes"
+    done
+    [ -z "$found" ] && { echo "binaries/vortocode-runtime-<triple>"; return; }
+  fi
   [ -f desktop/src-tauri/resources/THIRD_PARTY_NOTICES.txt ] \
     || { echo "resources/THIRD_PARTY_NOTICES.txt"; return; }
   echo ""
