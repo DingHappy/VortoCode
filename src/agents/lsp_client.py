@@ -20,8 +20,6 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
-from urllib.parse import urljoin
-from urllib.request import pathname2url
 
 _SKIP_DIRS = {".git", "node_modules", ".vortocode", "dist", "build", ".next",
               "__pycache__", ".venv", "venv", "coverage", ".mypy_cache"}
@@ -84,8 +82,14 @@ def decode_frames(buf: bytes) -> tuple[list[dict], bytes]:
 
 
 def path_to_uri(path: str) -> str:
-    """本地路径 → file:// URI（跨平台）。"""
-    return urljoin("file:", pathname2url(os.path.realpath(path)))
+    """本地路径 → file:// URI（跨平台）。
+
+    用 `Path.as_uri()` 而不是 `urljoin("file:", pathname2url(...))`：Python 3.14 起
+    `pathname2url` 会自带空 authority（`///private/tmp/a.ts`），urljoin 再拼就把它塌成
+    `file:/private/tmp/a.ts`——少了两个斜杠，LSP server 认不出这个 URI。`as_uri()` 在各版本
+    和各平台上都给 `file:///…`（Windows 下是 `file:///C:/…`），并且照样做百分号转义。
+    """
+    return Path(os.path.realpath(path)).as_uri()
 
 
 def uri_to_path(uri: str) -> str:

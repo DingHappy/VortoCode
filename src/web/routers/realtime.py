@@ -12,6 +12,7 @@ from fastapi import Request
 from src.gateway import protocol as P
 from src.gateway.sessions import SessionTable
 from src.utils.exc_utils import _exc_text
+from src.utils.rich_markup import strip_rich_markup
 from src.web.deps import *  # noqa: F401,F403
 
 router = APIRouter()
@@ -1454,11 +1455,7 @@ async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list
         audit_holder.update(session=_session_key(websocket), mode=mode)
 
     def agent_say(m):
-        try:                                  # 剥掉 Rich 标记，Web 端不显示 [b]/[dim] 等原文
-            from rich.text import Text as _Rt
-            m = _Rt.from_markup(str(m)).plain
-        except Exception:  # noqa: BLE001
-            pass
+        m = strip_rich_markup(m)              # 剥掉 Rich 标记，Web 端不显示 [b]/[dim] 等原文
         start_working()
         q.put_nowait(P.make_event(P.AGENT_SAY, text=m))
 
