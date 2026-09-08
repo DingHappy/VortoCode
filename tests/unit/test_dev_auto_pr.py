@@ -64,6 +64,64 @@ def _dev_auto(tmp_path, confirm=None):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["clean", "repair_failed", "rereview_failed", "malformed"])
+async def test_real_review_workers_and_pr_gate(tmp_path, monkeypatch, outcome):
+    """真实 Git 审查 worktree + 假模型：覆盖装配、并行审查和 PR 出口。"""
+    import asyncio
+    from src.agents import review, vcs, worktree
+
+    _init_repo_on_branch(tmp_path, "dev")
+    _patch_pipeline(monkeypatch)
+    monkeypatch.setenv("VORTOCODE_DEV_REVIEW", "1")
+    monkeypatch.setenv("VORTOCODE_DEV_REVIEW_PERSPECTIVES", "correctness,security")
+    calls = []
+    pushed = []
+    repair_calls = []
+
+    def apply(repo_root, branch, items, test_cmd=None):
+        subprocess.run(["git", "-C", repo_root, "branch", branch], check=True, capture_output=True)
+        return {"ok": True, "applied": [m for _, m in items], "failed": [], "integration": None}
+
+    monkeypatch.setattr(worktree, "apply_diffs_to_branch", apply)
+    monkeypatch.setattr(review, "_branch_diff", lambda *a, **k: "+ changed code")
+
+    async def run_turn(self, *a, **k):
+        calls.append(self)
+        await asyncio.sleep(0.01)  # 两只 reviewer 同时持有真实 worktree
+        if repair_calls and outcome == "rereview_failed":
+            raise RuntimeError("review service unavailable")
+        if outcome == "malformed":
+            return "invalid response"
+        if outcome == "clean":
+            return "[]"
+        return '[{"severity":"P1","file":"f.txt","issue":"bug","evidence":"reproduced"}]'
+
+    async def repair(*a, **k):
+        repair_calls.append(1)
+        return {"ok": outcome != "repair_failed", "output": "repair failed"}
+
+    monkeypatch.setattr(ma.MainAgent, "run_turn", run_turn)
+    monkeypatch.setattr(worktree, "run_dependent_on_branch", repair)
+    monkeypatch.setattr(vcs, "push_and_open_pr", lambda *a, **k:
+                        pushed.append(1) or {"ok": True, "url": "https://example.test/pr/1"})
+
+    async def yes(_msg):
+        return True
+
+    out = await _dev_auto(tmp_path, yes).handler({"task": "x", "open_pr": True})
+    assert len(calls) == (4 if outcome == "rereview_failed" else 2)
+    if outcome in {"repair_failed", "rereview_failed"}:
+        assert not pushed and "未开 PR" in out and "复审通过" not in out
+    elif outcome == "malformed":
+        assert pushed and "未能完成" in out and "审查通过" not in out
+    else:
+        assert pushed and "审查通过" in out
+    worktrees = subprocess.run(["git", "-C", str(tmp_path), "worktree", "list", "--porcelain"],
+                              check=True, capture_output=True, text=True).stdout
+    assert worktrees.count("worktree ") == 1
+
+
+@pytest.mark.asyncio
 async def test_open_pr_when_green_and_confirmed(tmp_path, monkeypatch):
     root = _init_repo_on_branch(tmp_path, "dev")
     _patch_pipeline(monkeypatch, integration_ok=True)
