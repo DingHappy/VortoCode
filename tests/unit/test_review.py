@@ -31,9 +31,14 @@ def test_parse_findings_with_prose_and_codefence():
     assert review.parse_findings(txt) == [{"severity": "P1", "evidence": "e"}]
 
 
-def test_parse_findings_garbage_is_empty():
-    assert review.parse_findings("没有发现，一切正常。") == []
-    assert review.parse_findings("") == []
+@pytest.mark.parametrize("text", ["没有发现，一切正常。", "", "[null]", '[{"severity":"P1"}, 3]'])
+def test_parse_findings_invalid_is_incomplete(text):
+    with pytest.raises(ValueError):
+        review.parse_findings(text)
+
+
+def test_parse_findings_explicit_empty_is_valid():
+    assert review.parse_findings("[]") == []
 
 
 def test_confirmed_requires_severity_and_evidence():
@@ -178,7 +183,7 @@ async def test_gate_multi_dedupes_same_finding(tmp_path):
 
 @pytest.mark.asyncio
 async def test_gate_multi_partial_failure_still_reviews(tmp_path):
-    """单视角挂掉只丢该视角（fail-open 粒度到视角），其余视角照常出结论。"""
+    """首审单视角失败仍交人工审核，但不能宣称整个审查通过。"""
     async def _boom(*a, **k):
         raise RuntimeError("relay 挂了")
     rb, cb = _reviewer([])
@@ -186,7 +191,8 @@ async def test_gate_multi_partial_failure_still_reviews(tmp_path):
     note, blocked = await review.run_gate(
         str(tmp_path), "vorto/x", "main", repair=repair,
         reviewers={"correctness": _boom, "security": rb})
-    assert not blocked and "审查通过" in note and "2 视角" in note
+    assert not blocked and "未能完成" in note and "2 视角" in note
+    assert "审查通过" not in note and "correctness" in note
     assert got["n"] == 0 and cb["n"] == 1
 
 
@@ -234,3 +240,103 @@ def test_dev_review_enabled_default_on(monkeypatch):
         assert _dev_review_enabled() is False
     monkeypatch.setenv("VORTOCODE_DEV_REVIEW", "1")
     assert _dev_review_enabled() is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("partial", [False, True])
+async def test_rereview_outage_preserves_unresolved_findings(tmp_path, partial):
+    calls = 0
+
+    async def failing_reviewer(*a, **k):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return [_P0]
+        raise RuntimeError("review service unavailable")
+
+    reviewers = {"correctness": failing_reviewer}
+    if partial:
+        reviewers["security"], _ = _reviewer([])
+    repair, got = _repair_recorder()
+    note, blocked = await review.run_gate(
+        str(tmp_path), "vorto/x", "main", repair=repair, reviewers=reviewers)
+    assert blocked and got["n"] == 1
+    assert "复审未能完成" in note and "未开 PR" in note
+    assert "越界" in note and "vorto/x" in note
+    assert "复审通过" not in note
+
+
+@pytest.mark.asyncio
+async def test_rereview_outage_of_unrelated_lens_does_not_block(tmp_path):
+    """复审时**没报过问题**的那个视角挂了：拦不住 PR——它本来也没看过这条问题。
+
+    反面就是上一条（报出者自己挂了 → 拦）。这条钉住的是"任一视角抖动就堵死产出口"不再发生。
+    """
+    ra, ca = _reviewer([_P0], [])          # correctness 报出问题，复审干净
+    calls = 0
+
+    async def flaky(*a, **k):              # security 首审干净、复审起就一直挂
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return []
+        raise RuntimeError("relay 挂了")
+
+    repair, got = _repair_recorder()
+    note, blocked = await review.run_gate(
+        str(tmp_path), "vorto/x", "main", repair=repair,
+        reviewers={"correctness": ra, "security": flaky})
+    assert not blocked and "已自修复并复审通过" in note
+    assert "security" in note and "未影响判定" in note      # 没跑成这件事仍然如实说出来
+    assert got["n"] == 1 and ca["n"] == 2
+    assert calls == 3                                       # 首审 1 + 复审 1 + 重试 1
+
+
+@pytest.mark.asyncio
+async def test_failed_lens_is_retried_once_before_it_counts(tmp_path):
+    """一次抖动不算数：出错的视角重试一次，成功了就当没事发生。"""
+    calls = 0
+
+    async def flaky(*a, **k):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("relay 抖了一下")
+        return []
+
+    note, blocked = await review.run_gate(
+        str(tmp_path), "vorto/x", "main", repair=(lambda *_a: None), reviewer=flaky)
+    assert not blocked and "审查通过" in note and "未能完成" not in note
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_incomplete_review_is_reported_to_caller(tmp_path):
+    """没跑成的视角要交给调用方留痕（进计划台账），不能只活在进度文案里。"""
+    async def _boom(*a, **k):
+        raise RuntimeError("relay 挂了")
+    seen: dict = {}
+    note, blocked = await review.run_gate(
+        str(tmp_path), "vorto/x", "main", repair=(lambda *_a: None),
+        reviewer=_boom, on_incomplete=seen.update)
+    assert not blocked and seen == {"review": {"": "relay 挂了"}}
+
+
+@pytest.mark.asyncio
+async def test_malformed_rereview_does_not_clear_findings(tmp_path):
+    calls = 0
+
+    async def reviewer(*a, **k):
+        nonlocal calls
+        calls += 1
+        return [_P0] if calls == 1 else review.parse_findings("not JSON")
+
+    repair, _ = _repair_recorder()
+    note, blocked = await review.run_gate(
+        str(tmp_path), "vorto/x", "main", repair=repair, reviewer=reviewer)
+    assert blocked and "复审未能完成" in note
+
+
+def test_diff_failure_is_not_an_empty_review(tmp_path):
+    with pytest.raises(RuntimeError, match="diff"):
+        review._branch_diff(str(tmp_path), "missing", "branch")
