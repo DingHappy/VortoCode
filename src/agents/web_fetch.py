@@ -19,9 +19,14 @@ import urllib.request
 from urllib.parse import urljoin, urlparse
 
 # 代理的 **fake-IP** 段——不是真实目的地，是给代理做路由的号码牌（见 _is_fake_ip）。
+# 只收**本来就会被拦的保留段**：198.18.0.0/15 是 RFC 2544 基准测试段（Python 判 is_private），
+# 也是 Clash/mihomo 的默认 fake-ip-range。
+# ⚠ 别往这里加真实可路由的公网段。第一版补丁里写过一个 28.0.0.0/8（凭印象当成某工具的默认），
+#   那是**真实公网地址**，结果是"正常解析到 28.x 的网站在没配代理时反而被拦" ——
+#   本该只放松的豁免被写成了双向。下面的 _blocked() 判据现在从结构上堵死了这种可能，
+#   但这条注释留着：这类清单只该收保留段。
 _FAKE_IP_NETS = (
     ipaddress.ip_network("198.18.0.0/15"),      # Clash / mihomo 默认 fake-ip-range
-    ipaddress.ip_network("28.0.0.0/8"),         # sing-box 默认
 )
 
 _MAX_BYTES = 2_000_000          # 下载上限（防超大页面）
@@ -55,6 +60,12 @@ def _proxy_in_effect(host: str) -> bool:
         return not urllib.request.proxy_bypass(host)
     except Exception:  # noqa: BLE001
         return False
+
+
+def _blocked(addr) -> bool:
+    """这个地址本身该不该拦（私网/环回/链路本地/保留/多播/未指定）。"""
+    return bool(addr.is_private or addr.is_loopback or addr.is_link_local
+                or addr.is_reserved or addr.is_multicast or addr.is_unspecified)
 
 
 def _is_fake_ip(addr) -> bool:
@@ -130,15 +141,16 @@ def _host_is_safe(host: str) -> bool:
             addr = ipaddress.ip_address(info[4][0])
         except ValueError:
             return False
-        if (addr.is_private or addr.is_loopback or addr.is_link_local
-                or addr.is_reserved or addr.is_multicast or addr.is_unspecified):
-            if not _is_fake_ip(addr):
-                return False                              # 真实内网地址：拦（原逻辑不变）
+        if _blocked(addr) and not _is_fake_ip(addr):
+            return False                                  # 真实内网地址：拦（原逻辑不变）
         resolved.append(addr)
-    # **all 而不是 any**：只要有一个真实地址就用真实地址判（上面的循环已经判过了）。
-    # 只有全部都是占位符、这次解析等于什么真实信息都没给出时，才认定它无效。
-    # any 会让一个混进来的 fake-IP 把真实内网地址的判定绕过去——那才是开后门。
-    if resolved and all(_is_fake_ip(a) for a in resolved):
+    # 这条豁免**只能放松、不能收紧**：判据里带上 _blocked，于是任何一个正常公网地址都会让
+    # all() 不成立，直接落到 return True——与改动前完全一致。（第一版补丁漏了 _blocked，
+    # 结果把解析到某个公网段的站点在无代理时拦掉了，那是凭空造出来的新拦截。）
+    #
+    # **all 而不是 any**：只要有一个真实地址就用真实地址判。any 会让一个混进来的 fake-IP
+    # 把真实内网地址的判定绕过去——那才是开后门。
+    if resolved and all(_blocked(a) and _is_fake_ip(a) for a in resolved):
         return _proxy_in_effect(host)
     return True
 

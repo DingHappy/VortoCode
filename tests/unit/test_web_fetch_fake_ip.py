@@ -15,7 +15,7 @@ import pytest
 from src.agents import web_fetch
 
 FAKE = "198.18.0.10"          # Clash/mihomo 默认 fake-ip-range
-FAKE_SINGBOX = "28.0.0.7"     # sing-box 默认
+PUBLIC_LOOKALIKE = "28.0.0.7"  # 真实可路由的公网地址（第一版补丁误当成 fake-IP 段收了进去）
 REAL_INTERNAL = "10.0.0.5"
 PUBLIC = "93.184.216.34"
 
@@ -30,10 +30,9 @@ def _proxy(monkeypatch, on: bool):
 
 
 # ------------------------------------------------------------------ 该放的放
-@pytest.mark.parametrize("ip", [FAKE, FAKE_SINGBOX])
-def test_fake_ip_with_proxy_is_allowed(monkeypatch, ip):
+def test_fake_ip_with_proxy_is_allowed(monkeypatch):
     """fake-IP 不是目的地，是给代理做路由的号码牌——这次解析等同于"没给出真实地址"。"""
-    _resolves_to(monkeypatch, ip)
+    _resolves_to(monkeypatch, FAKE)
     _proxy(monkeypatch, True)
     assert web_fetch._host_is_safe("html.duckduckgo.com") is True
 
@@ -94,6 +93,25 @@ def test_fake_ip_predicate_covers_the_declared_ranges():
         assert web_fetch._is_fake_ip(ipaddress.ip_address(net[1]))
     assert not web_fetch._is_fake_ip(ipaddress.ip_address(PUBLIC))
     assert not web_fetch._is_fake_ip(ipaddress.ip_address(REAL_INTERNAL))
+
+
+@pytest.mark.parametrize("proxy_on", [True, False])
+def test_the_exemption_can_only_relax_never_tighten(monkeypatch, proxy_on):
+    """**改之前放行的，改之后一定还放行。**
+
+    第一版补丁把一个真实可路由的公网段（28.0.0.0/8）当成 fake-IP 收进了清单，判据又漏了
+    "本来就该拦"这个前提——结果是"正常解析到该段的网站在没配代理时反而被拦"，
+    一条本该只放松的豁免被写成了双向，凭空造出新拦截。
+    现在判据是 `_blocked(a) and _is_fake_ip(a)`：任何一个正常公网地址都让 all() 不成立，
+    直接落回原来的放行路径。
+    """
+    _resolves_to(monkeypatch, PUBLIC_LOOKALIKE)
+    _proxy(monkeypatch, proxy_on)
+    assert web_fetch._host_is_safe("normal-site.example") is True
+
+    # 清单里只该有"本来就会被拦的保留段"——收了公网段就会重演上面那个回归
+    for net in web_fetch._FAKE_IP_NETS:
+        assert web_fetch._blocked(ipaddress.ip_address(net[1])), f"{net} 不是保留段，不该进清单"
 
 
 # ------------------------------------------------------------------ 报错要说真话
