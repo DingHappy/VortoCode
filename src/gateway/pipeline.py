@@ -41,6 +41,10 @@ STAGE_STATUS = ("pending", "running", "awaiting_review", "done", "failed")
 # 运行状态：running → awaiting_review（卡在某道闸门）→ done / failed / abandoned
 RUN_STATUS = ("running", "awaiting_review", "done", "failed", "abandoned")
 VERDICTS = ("approve", "reject", "defer")
+# 一道工序最多试几次。**failed 不是终态**——outbound 被 fail-closed 拒一次（你没带授权来）、
+# relay 抖一下，都不该让整轮死掉；下次 advance 应该能接着试。但也不能无限重试：一个持续
+# 失败的工序在 cron 上每天烧一遍 token，那是"永远亮着的红灯"的花钱版本。超过上限就停下等人。
+MAX_STAGE_ATTEMPTS = 3
 
 
 def _now() -> str:
@@ -290,12 +294,18 @@ def resolve_inputs(store: ProductStore, run: PipelineRun, stage_def: StageDef,
 
 
 def next_stage(definition: PipelineDef, run: PipelineRun) -> Optional[StageRun]:
-    """下一道可跑的工序：第一个非终态的；前面还有没做完的就返回 None（严格顺序）。"""
+    """下一道可跑的工序：第一个非终态的；前面还有没做完的就返回 None（严格顺序）。
+
+    **失败的工序在没用完重试次数前仍然可跑**——见 MAX_STAGE_ATTEMPTS 那条注释。
+    等人批则一律停下：那是人的决定，不是可以重试的东西。
+    """
     for stage_run in run.stages:
         if stage_run.status in {"done", "skipped"}:
             continue
-        if stage_run.status in {"awaiting_review", "failed"}:
-            return None                      # 卡住了，得先有人处理
+        if stage_run.status == "awaiting_review":
+            return None                      # 等人拍板，重试多少次也没用
+        if stage_run.status == "failed" and stage_run.attempts >= MAX_STAGE_ATTEMPTS:
+            return None                      # 试到头了，得有人处理
         return stage_run
     return None
 
@@ -321,7 +331,9 @@ async def advance(
     run = store.load(run_id)
     if run is None:
         return AdvanceResult(run_id=run_id, status="missing", reason="无此运行")
-    if run.status in {"done", "failed", "abandoned"}:
+    # 只有 done/abandoned 是真终态。failed 可以再试（带上授权回来、或等 relay 恢复），
+    # 试满 MAX_STAGE_ATTEMPTS 由 next_stage 挡住，那时才真的停下等人。
+    if run.status in {"done", "abandoned"}:
         return AdvanceResult(run_id=run.run_id, status=run.status, reason="已是终态，无需推进")
 
     definition = definition or load_definition(repo_root, run.pipeline)
@@ -333,19 +345,7 @@ async def advance(
     for _ in range(max(1, int(max_stages))):
         stage_run = next_stage(definition, run)
         if stage_run is None:
-            waiting = run.awaiting()
-            if waiting is not None:
-                run.status = "awaiting_review"
-                store.save(run)
-                return AdvanceResult(run.run_id, run.status, ran, waiting.id, "等人批")
-            broken = next((s for s in run.stages if s.status == "failed"), None)
-            if broken is not None:
-                run.status = "failed"
-                store.save(run)
-                return AdvanceResult(run.run_id, run.status, ran, broken.id, broken.note or "工序失败")
-            run.status = "done"
-            store.save(run)
-            return AdvanceResult(run.run_id, run.status, ran, reason="全部工序完成")
+            return _settle(store, run, ran)
 
         stage_def = definition.stage(stage_run.id)
         if stage_def is None:                       # 定义被改过、少了这道工序：如实停下，别猜
@@ -396,8 +396,30 @@ async def advance(
         if stage_def.review:
             return AdvanceResult(run.run_id, run.status, ran, stage_run.id, "等人批")
 
+    # 收尾再判一次：刚跑完的可能正是最后一道工序，别让它挂在 running 等下一次 advance 才转终态。
+    if next_stage(definition, run) is None:
+        return _settle(store, run, ran)
     store.save(run)
     return AdvanceResult(run.run_id, run.status, ran, reason="已推进到本次上限")
+
+
+def _settle(store: "PipelineStore", run: PipelineRun, ran: List[str]) -> AdvanceResult:
+    """没有可跑工序了——判定这一轮停在哪个态并落盘。"""
+    waiting = run.awaiting()
+    if waiting is not None:
+        run.status = "awaiting_review"
+        store.save(run)
+        return AdvanceResult(run.run_id, run.status, ran, waiting.id, "等人批")
+    broken = next((s for s in run.stages if s.status == "failed"), None)
+    if broken is not None:
+        run.status = "failed"
+        store.save(run)
+        return AdvanceResult(
+            run.run_id, run.status, ran, broken.id,
+            f"已试 {broken.attempts} 次仍未过，需人工处理：{broken.note or '工序失败'}")
+    run.status = "done"
+    store.save(run)
+    return AdvanceResult(run.run_id, run.status, ran, reason="全部工序完成")
 
 
 # ---------------------------------------------------------------- 人批（三档）
