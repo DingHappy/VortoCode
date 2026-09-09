@@ -295,3 +295,51 @@ def test_runs_dir_is_gitignored_but_definitions_are_not(started, repo):
     ignore = (repo / ".vortocode" / ".gitignore").read_text(encoding="utf-8")
     assert "pipeline_runs/" in ignore
     assert "pipelines/" not in ignore.replace("pipeline_runs/", "")
+
+
+@pytest.mark.asyncio
+async def test_failed_stage_is_retryable_until_the_cap(started):
+    """**failed 不是终态**：outbound 被 fail-closed 拒一次（你没带授权来）、relay 抖一下，
+    都不该让整轮死掉。但也不能无限重试——一个持续失败的工序在 cron 上每天烧一遍 token，
+    那是"永远亮着的红灯"的花钱版本。
+    """
+    from src.gateway.pipeline import MAX_STAGE_ATTEMPTS
+    store, run = started
+    calls = {"n": 0}
+
+    async def flaky(stage_def, inputs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("relay 502")
+        return {"payload": {"ok": 1}, "summary": "好了"}
+
+    first = await advance(store.repo_root, run.run_id, execute=flaky)
+    assert first.status == "failed"
+    again = await advance(store.repo_root, run.run_id, execute=flaky)   # 还能再试
+    assert again.ran == ["scout"] and again.status == "awaiting_review"
+    assert store.load(run.run_id).stage("scout").attempts == 2
+
+    # 反面：一直失败就要停下等人，不能每次 cron 都白烧一轮
+    _, dead = started[0], store.start(load_definition(store.repo_root, "content-ops"))
+
+    async def always_boom(stage_def, inputs):
+        raise RuntimeError("一直挂")
+
+    for _ in range(MAX_STAGE_ATTEMPTS + 2):
+        await advance(store.repo_root, dead.run_id, execute=always_boom)
+    final = store.load(dead.run_id)
+    assert final.status == "failed"
+    assert final.stage("scout").attempts == MAX_STAGE_ATTEMPTS       # 到顶就不再试
+
+
+@pytest.mark.asyncio
+async def test_last_stage_settles_the_run_without_another_call(started):
+    """跑完最后一道工序当场转终态，别挂在 running 等下一次 advance——list 上会一直显示"进行中"。"""
+    store, run = started
+    execute, _ = _exec()
+    for stage in ("scout", "write"):
+        await advance(store.repo_root, run.run_id, execute=execute)
+        review(store.repo_root, run.run_id, verdict="approve")
+    await advance(store.repo_root, run.run_id, execute=execute)      # publish
+    result = await advance(store.repo_root, run.run_id, execute=execute)  # measure = 最后一道
+    assert result.ran == ["measure"] and result.status == "done"
