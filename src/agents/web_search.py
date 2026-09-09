@@ -82,8 +82,9 @@ def _parse_ddg_html(raw: str, limit: int) -> list[dict]:
 def _fetch_html(url: str) -> tuple[str | None, str | None]:
     """请求一个搜索端点，返回 (raw_html, None) 或 (None, 错误说明串)。"""
     host = urllib.parse.urlparse(url).hostname or ""
-    if not web_fetch._host_is_safe(host):          # 复用 SSRF 校验（DNS 污染到保留段在此被拒）
-        return None, f"拒绝：搜索域名解析异常 {host}"
+    reason = web_fetch.refusal_reason(host)        # 复用 SSRF 校验；被拒时给真实原因而非笼统措辞
+    if reason:
+        return None, f"拒绝：{reason}"
     req = urllib.request.Request(url, headers={"User-Agent": _UA})
     try:
         resp = web_fetch._urlopen(req, _TIMEOUT)
