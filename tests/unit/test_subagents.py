@@ -194,11 +194,18 @@ def test_build_session_injects_agent_catalog(tmp_path, monkeypatch):
 
 
 def test_examples_parse_with_real_parser():
-    """公司架构四件套示例必须能被真解析器吃下（模板漂移即红，与 ops 模板守门同族）。"""
+    """**每一个**角色示例都必须能被真解析器吃下（模板漂移即红，与 ops 模板守门同族）。
+
+    刻意不硬编码模板个数——这条守的是"模板别写坏"，不是"永远只有这几个"；
+    加一个新角色示例不该让它变红。四件套按名逐个断言，少了谁照样红。
+    """
     from pathlib import Path
     d = Path(__file__).resolve().parents[2] / "examples" / "agents"
-    specs = [_parse_agent_md(p) for p in sorted(d.glob("*.md.example"))]
-    assert len(specs) == 4 and all(s is not None for s in specs)
+    files = sorted(d.glob("*.md.example"))
+    specs = [_parse_agent_md(p) for p in files]
+    broken = [f.name for f, s in zip(files, specs) if s is None]
+    assert files and not broken, f"这些角色模板解析不动：{broken}"
     by_name = {s.name: s for s in specs}
     assert by_name["product-manager"].tools == "read" and by_name["qa"].tools == "read"
     assert by_name["backend-dev"].tools == "dev" and by_name["frontend-dev"].tools == "dev"
+    assert by_name["scout"].tools == "read"        # 选材员只读：它不写文章、更不发布
