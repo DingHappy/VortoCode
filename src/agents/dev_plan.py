@@ -155,6 +155,8 @@ _STATE_ENTRIES = [
     "tasks/",
     "goals/",
     "runs/",
+    "products/",
+    "pipeline_runs/",
     "web_sessions/",
     "session_events/",
     "artifacts/",
