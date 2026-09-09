@@ -74,6 +74,13 @@ class StageDef:
     produces: str = ""                               # 产出的 kind
     review: bool = False                             # 产出后是否要人批准，下游才能消费
     outbound: bool = False                           # 是否有对外动作（发布）——执行器据此过确认门
+    # 本工序要不要联网。**逐工序申报**，照抄 cron 作业的 allow_web 口径（#248/#250）：
+    # 默认不给，因为出网既是信息入口也是外传通道（web_fetch 的 GET query 就能带走东西）。
+    # 申报了才有 web_search/web_fetch——而用了它们就会打污点，污点又沿产出物血缘一路传到发布口。
+    # ⚠ 无人值守档（cron/heartbeat）另有一层：UNATTENDED_PROFILE 本身就 with_web=False，
+    #    所以 cron 驱动的工序即使申报了也拿不到网——那是刻意的，不是 bug。要么由人触发，
+    #    要么让上游用确定性采集作业把信息抓好、工序只负责解读。
+    web: bool = False
     # 产出解析口径：json（默认，要求工序输出一个 JSON 对象）| text（整段回复存成 {"text": ...}）。
     # **显式声明而不是解析失败就退化成 text**——那种静默降级正是"审查解析不出就当没问题"的同款病。
     output: str = "json"
@@ -115,6 +122,7 @@ class PipelineDef:
                 produces=str(item.get("produces") or "").strip(),
                 review=bool(item.get("review")),
                 outbound=bool(item.get("outbound")),
+                web=bool(item.get("web") or item.get("allow_web")),
                 output=str(item.get("output") or "json").strip().lower(),
                 note=str(item.get("note") or "").strip(),
             ))
