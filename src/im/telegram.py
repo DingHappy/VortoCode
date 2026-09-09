@@ -6,16 +6,28 @@ HTTP 层可注入（`request_fn`）：默认用 aiohttp（硬依赖）；测试�
 from __future__ import annotations
 
 import asyncio
+import os
 import time
+import uuid as _uuid
+from pathlib import Path
 from typing import AsyncIterator, Awaitable, Callable, Optional
 
 from .channel import ChannelAdapter, ChannelEvent
 
 # 注入式 HTTP：async (method, payload) -> Telegram 返回的 result（ok=False 时应抛异常）
 RequestFn = Callable[[str, dict], Awaitable[object]]
+# 注入式下载：async (file_path) -> 文件字节。与 RequestFn 分开，因为附件走的是另一个 host 路径
+# （/file/bot<token>/<file_path>）而不是 JSON API，测试也要能单独假掉它。
+DownloadFn = Callable[[str], Awaitable[bytes]]
 
 _ME_RETRY_BASE = 5.0        # getMe 失败后首次重试的最短间隔（秒）
 _ME_RETRY_MAX = 300.0       # 退避上限：持续失败时最多 5 分钟试一次（别把群消息变成 getMe 洪水）
+# Bot API 的 getFile 只服务 ≤20MB 的文件（官方硬限制）。超了**提前如实说**，
+# 而不是发一次注定失败的请求再把 API 的英文报错甩给用户。
+_MAX_FILE_BYTES = 20 * 1024 * 1024
+# 按 Telegram 的消息字段分两类：能当图看的进 images（agent 读图路径），其余进 files。
+_IMAGE_FIELDS = ("photo", "sticker")
+_FILE_FIELDS = ("document", "video", "audio", "voice", "video_note", "animation")
 
 
 def _now() -> float:
@@ -29,13 +41,19 @@ class TelegramError(Exception):
 
 class TelegramAdapter(ChannelAdapter):
     def __init__(self, token: str, owner_id: str, *, request_fn: Optional[RequestFn] = None,
-                 poll_timeout: int = 25, bot_username: Optional[str] = None):
+                 poll_timeout: int = 25, bot_username: Optional[str] = None,
+                 inbox_dir: Optional[str] = None,
+                 download_fn: Optional[DownloadFn] = None):
         self._token = token
         self.owner_id = str(owner_id)
         self._poll_timeout = poll_timeout
         self._offset = 0
         self._session = None
         self._request_fn = request_fn or self._default_request
+        self._download_fn = download_fn or self._default_download
+        # 收件落盘目录：**不进仓库工作区**，免得用户发来的文件被当成代码改动收进 diff。
+        # 与钉钉同一处（~/.vortocode/im_inbox），两个通道的收件箱不分家。
+        self._inbox_dir = str(Path(inbox_dir or Path.home() / ".vortocode" / "im_inbox"))
         # 群提及门要判"@ 的是不是**我**"，就得知道自己叫什么。可显式配置（省一次 API 调用），
         # 否则**遇到第一条群消息时**才惰性 getMe——私聊-only 的部署因此一次额外请求都不发。
         self._bot_username = (bot_username or "").strip().lstrip("@").lower() or None
@@ -56,6 +74,21 @@ class TelegramAdapter(ChannelAdapter):
         if not data.get("ok"):
             raise TelegramError(str(data.get("description", "unknown")))
         return data.get("result")
+
+    async def _default_download(self, file_path: str) -> bytes:
+        """按 getFile 给的 file_path 取字节。走的是 /file/bot<token>/ 前缀，与 JSON API 不同 host 路径。
+
+        整读进内存而不流式：Bot API 本身封顶 20MB（见 _MAX_FILE_BYTES），为这点体积引入流式
+        只会让注入测试变复杂。
+        """
+        import aiohttp
+        if self._session is None:
+            self._session = aiohttp.ClientSession()
+        url = f"https://api.telegram.org/file/bot{self._token}/{file_path}"
+        async with self._session.get(url) as resp:
+            if resp.status != 200:
+                raise TelegramError(f"下载失败 HTTP {resp.status}")
+            return await resp.read()
 
     async def _api(self, method: str, **payload):
         return await self._request_fn(method, payload)
@@ -84,8 +117,63 @@ class TelegramAdapter(ChannelAdapter):
                 if _is_group_update(up):
                     await self._resolve_me()          # 只有群消息才需要知道自己的 @ 名
                 ev = _to_event(up, self._bot_username, self._bot_id)
-                if ev is not None:
-                    yield ev
+                if ev is None:
+                    continue
+                refs = _attachment_refs(up.get("message") or {})
+                if refs:
+                    # 下载放在 poll 而不是 _to_event：后者是纯函数（好测），发请求的活归适配器。
+                    ev.images, ev.files, ev.unsupported = await self._fetch_attachments(refs)
+                yield ev
+
+    async def _fetch_attachments(self, refs: list) -> tuple:
+        """把附件下载到本地，返回 (图片路径, 文件路径, 取不到的说明)。与钉钉同形状同契约。
+
+        两跳：`getFile(file_id)` 换到 file_path，再按 /file/bot<token>/<file_path> 取字节
+        （仍是纯出站请求，"零入站暴露"不受影响）。
+
+        失败一律降级成说明文本，**绝不静默丢**——附件石沉大海是最差的体验，人会以为机器人死了。
+        单个附件失败也不拖垮整条消息：其余照常交付，坏的那个如实点名。
+        """
+        imgs: list = []
+        files: list = []
+        bad: list = []
+        for kind, file_id, name, size in refs:
+            if size and size > _MAX_FILE_BYTES:
+                bad.append(f"{name}（{size // 1024 // 1024}MB 超过 Bot API 的 20MB 上限）")
+                continue
+            try:
+                info = await self._api("getFile", file_id=file_id)
+                file_path = str((info or {}).get("file_path") or "")
+                if not file_path:
+                    raise TelegramError("getFile 没给 file_path")
+                blob = await self._download_fn(file_path)
+                if not blob:
+                    raise TelegramError("下载到 0 字节")
+                # 用远端 file_path 的后缀补名字：Telegram 对 photo 不给文件名，
+                # 而下游读图要靠后缀判类型。
+                ext = os.path.splitext(file_path)[1]
+                if ext and not os.path.splitext(name)[1]:
+                    name = name + ext
+                imgs.append(self._save_inbox(name, blob)) if kind == "image" \
+                    else files.append(self._save_inbox(name, blob))
+            except Exception as e:  # noqa: BLE001 —— 单个附件失败不拖垮整条消息
+                bad.append(f"{name}（{type(e).__name__}: {str(e)[:60]}）")
+        note = ("有 %d 个附件没取到：%s" % (len(bad), "；".join(bad))) if bad else ""
+        return imgs, files, note
+
+    def _save_inbox(self, name: str, blob: bytes) -> str:
+        """落到收件目录（按天分目录），返回本地路径。
+
+        文件名过 basename + 去斜杠 + 截断：**用户发来的文件名是外部输入**，直接拼进路径
+        就是路径穿越（`../../.ssh/authorized_keys`）。前缀加时间与随机串，避免同名互相覆盖。
+        """
+        base = os.path.join(self._inbox_dir, time.strftime("%Y%m%d"))
+        os.makedirs(base, exist_ok=True)
+        safe = os.path.basename(str(name)).replace("/", "_").replace("\\", "_")[:80] or "file.bin"
+        path = os.path.join(base, f"{time.strftime('%H%M%S')}-{_uuid.uuid4().hex[:6]}-{safe}")
+        with open(path, "wb") as fh:
+            fh.write(blob)
+        return path
 
     async def _resolve_me(self) -> None:
         """惰性取自己的 username/id（群提及门要用），**失败退避重试、绝不永久放弃**。
@@ -212,6 +300,34 @@ def _slice_utf16(text: str, offset: int, length: int) -> str:
     return raw[2 * offset: 2 * (offset + length)].decode("utf-16-le", "ignore")
 
 
+def _attachment_refs(msg: dict) -> list:
+    """从一条消息里认出附件，返回 [(kind, file_id, 文件名, 字节数)]。**纯函数，不发请求。**
+
+    Telegram 的附件按**字段名**区分类型，不像钉钉塞在 msgtype 里：
+      · photo —— 同一张图的多档分辨率数组，取**最后一个**（最大档）；
+      · document/video/audio/... —— 各自一个对象，带 file_id。
+    file_size 是 Bot API 给的，可能缺；缺就当 0 放行，让后面的下载去发现真实大小。
+    """
+    refs: list = []
+    if not isinstance(msg, dict):
+        return refs
+    for field in _IMAGE_FIELDS + _FILE_FIELDS:
+        blk = msg.get(field)
+        if field == "photo":
+            sizes = [x for x in (blk or []) if isinstance(x, dict) and x.get("file_id")]
+            if sizes:
+                big = sizes[-1]                       # Bot API 按尺寸升序给，最后一个最大
+                refs.append(("image", str(big["file_id"]), "photo.jpg",
+                             int(big.get("file_size") or 0)))
+            continue
+        if not isinstance(blk, dict) or not blk.get("file_id"):
+            continue
+        kind = "image" if field in _IMAGE_FIELDS else "file"
+        name = str(blk.get("file_name") or f"{field}.bin")
+        refs.append((kind, str(blk["file_id"]), name, int(blk.get("file_size") or 0)))
+    return refs
+
+
 def _mentions_bot(msg: dict, username: Optional[str], bot_id: Optional[str]) -> bool:
     """本条消息是否**显式 @ 了本机器人**。
 
@@ -219,9 +335,11 @@ def _mentions_bot(msg: dict, username: Optional[str], bot_id: Optional[str]) -> 
     误判成召唤。三种命中：`mention`（@username）、`bot_command`（/status@username）、
     `text_mention`（无 username 用户按 id 挂）。认不出自己（username/id 都没解析到）→ 一律 False。
     """
-    text = msg.get("text") or ""
+    # 带附件时正文与 entities 都在 caption 侧——不一并看的话，群里"发图 @我"会被提及门丢掉，
+    # 而提及门是从严的（申报了 is_group 却没申报 mentioned 就丢事件）。
+    text = msg.get("text") or msg.get("caption") or ""
     at = f"@{username}" if username else None
-    for ent in msg.get("entities") or []:
+    for ent in (msg.get("entities") or []) + (msg.get("caption_entities") or []):
         if not isinstance(ent, dict):
             continue
         etype = str(ent.get("type") or "")
@@ -240,11 +358,19 @@ def _mentions_bot(msg: dict, username: Optional[str], bot_id: Optional[str]) -> 
 def _to_event(up: dict, bot_username: Optional[str] = None,
               bot_id: Optional[str] = None) -> Optional[ChannelEvent]:
     msg = up.get("message")
-    if isinstance(msg, dict) and isinstance(msg.get("text"), str):
-        is_group = _chat_is_group(msg.get("chat"))
-        return ChannelEvent(kind="message", sender_id=str((msg.get("from") or {}).get("id", "")),
-                            text=msg["text"], is_group=is_group,
-                            mentioned=is_group and _mentions_bot(msg, bot_username, bot_id))
+    if isinstance(msg, dict):
+        # 带附件的消息正文在 caption 而不是 text——只认 text 的话，"图 + 一句说明"会被整条丢掉。
+        body = msg.get("text")
+        if not isinstance(body, str):
+            body = msg.get("caption") if isinstance(msg.get("caption"), str) else ""
+        refs = _attachment_refs(msg)
+        # 既没文字也没附件（入群通知之类的服务消息）→ 照旧不产生事件。
+        if body or refs:
+            is_group = _chat_is_group(msg.get("chat"))
+            return ChannelEvent(kind="message",
+                                sender_id=str((msg.get("from") or {}).get("id", "")),
+                                text=body, is_group=is_group,
+                                mentioned=is_group and _mentions_bot(msg, bot_username, bot_id))
     cq = up.get("callback_query")
     if isinstance(cq, dict):
         data = str(cq.get("data", ""))
