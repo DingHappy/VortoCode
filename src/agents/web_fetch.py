@@ -18,6 +18,12 @@ import urllib.error
 import urllib.request
 from urllib.parse import urljoin, urlparse
 
+# 代理的 **fake-IP** 段——不是真实目的地，是给代理做路由的号码牌（见 _is_fake_ip）。
+_FAKE_IP_NETS = (
+    ipaddress.ip_network("198.18.0.0/15"),      # Clash / mihomo 默认 fake-ip-range
+    ipaddress.ip_network("28.0.0.0/8"),         # sing-box 默认
+)
+
 _MAX_BYTES = 2_000_000          # 下载上限（防超大页面）
 _MAX_TEXT = 6000                # 回灌给模型的正文上限
 _TIMEOUT = 10                   # 单次请求超时（秒）
@@ -51,6 +57,46 @@ def _proxy_in_effect(host: str) -> bool:
         return False
 
 
+def _is_fake_ip(addr) -> bool:
+    """这个地址是不是代理的 **fake-IP 占位符**（而不是真实目的地）。
+
+    Clash/mihomo 的 TUN/fake-ip 模式下，本地 DNS 对**所有**域名都返回 fake-ip-range 里的
+    地址；它只是给代理做路由的号码牌，连接实际由代理远端解析。Python 认为 198.18.0.0/15
+    （RFC 2544 基准测试段）`is_private=True`，于是下面的 SSRF 校验会把每一个外网域名都判成
+    内网、一律拒绝——真机现象是 web_search/web_fetch 全废。
+
+    2026-09-09 实测（同一进程、同一代理）：
+        _host_is_safe('html.duckduckgo.com') = False   ← 闸门拒绝
+        实际发请求                            = HTTP 202, 0.77s  ← 网络好得很
+    也就是说，闸门是**按一个不会被使用的 IP 做判断，然后拒绝了自己**，报的还是"解析异常"。
+    """
+    return any(addr in net for net in _FAKE_IP_NETS)
+
+
+def refusal_reason(host: str) -> str:
+    """host 被拒的**真实原因**（一句人话）；没被拒返回空串。
+
+    原来所有拒绝都统一说"域名解析异常"——而 fake-IP 那种情形解析明明好好的，这句话把人
+    往"是不是网断了"上带（真机排查时确实被带偏过一次）。判定一个字不改，只让人看得懂。
+    与 taint.py"来源分档、判定不分档"是同一手法。
+    """
+    if _host_is_safe(host):
+        return ""
+    if not host:
+        return "缺少主机名"
+    try:
+        ipaddress.ip_address(host.strip("[]"))
+        return f"{host} 是内网/保留地址的 IP 字面量"
+    except ValueError:
+        pass
+    try:
+        socket.getaddrinfo(host, None)
+    except Exception:  # noqa: BLE001
+        return f"{host} 本地解析不了，且未配置代理（配了代理会放行，由代理远端解析）"
+    return (f"{host} 解析到内网/保留地址；若你在用 Clash/mihomo 的 fake-ip 模式，"
+            f"请确认代理环境变量（HTTP_PROXY/HTTPS_PROXY）对本进程可见")
+
+
 def _host_is_safe(host: str) -> bool:
     """SSRF 校验：内网/保留地址一律拒，公网放行。
 
@@ -59,6 +105,11 @@ def _host_is_safe(host: str) -> bool:
     - 域名且本地解析失败：**配了代理则放行**（DNS 由代理远端解析，本地失败是代理环境常态，
       真机 dogfood 抓的：代理机上本地 DNS 全挂，这里一票否决把 web_search/web_fetch 全拦死）；
       无代理维持拒绝（反正连接也会失败，且防解析异常当后门）。
+    - 域名且**解析结果全是 fake-IP**：这次解析没给出任何真实目的地，语义上等同于"解析失败"，
+      走同一条代理放行分支。这与上一条是同一个坑的两半——那次修的是"解析不出"，
+      这次是"解析出了个假的"，而 fake-IP 模式比本地 DNS 全挂常见得多。
+
+    四道防线一条没动：IP 字面量照拦、无代理照拦、解析出真实内网 IP 照拦、逐跳重定向照校验。
     """
     if not host:
         return False
@@ -73,6 +124,7 @@ def _host_is_safe(host: str) -> bool:
         infos = socket.getaddrinfo(host, None)
     except Exception:  # noqa: BLE001
         return _proxy_in_effect(host)                     # 解析不了：代理环境放行，否则拒
+    resolved = []
     for info in infos:
         try:
             addr = ipaddress.ip_address(info[4][0])
@@ -80,7 +132,14 @@ def _host_is_safe(host: str) -> bool:
             return False
         if (addr.is_private or addr.is_loopback or addr.is_link_local
                 or addr.is_reserved or addr.is_multicast or addr.is_unspecified):
-            return False
+            if not _is_fake_ip(addr):
+                return False                              # 真实内网地址：拦（原逻辑不变）
+        resolved.append(addr)
+    # **all 而不是 any**：只要有一个真实地址就用真实地址判（上面的循环已经判过了）。
+    # 只有全部都是占位符、这次解析等于什么真实信息都没给出时，才认定它无效。
+    # any 会让一个混进来的 fake-IP 把真实内网地址的判定绕过去——那才是开后门。
+    if resolved and all(_is_fake_ip(a) for a in resolved):
+        return _proxy_in_effect(host)
     return True
 
 
