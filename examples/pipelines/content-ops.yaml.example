@@ -37,6 +37,11 @@ stages:
     inputs: [metrics]
     produces: topic_pool
     review: true          # 选题代表你的判断，必须你拍板
+    web: true             # 逐工序申报出网（同 cron 作业的 allow_web）。用了 web 就会打污点，
+                          # 污点沿产出物血缘一路传到发布口——这正是发布必须人批的来由。
+                          # ⚠ 无人值守档（cron/heartbeat）本身 with_web=False，即使申报也拿不到网。
+                          #   那是刻意的（web_fetch 的 GET query 是外传通道）。所以 scout 要么由人
+                          #   触发，要么改成消费一个确定性采集作业抓好的信息，工序只负责解读。
     note: >
       产出 3-5 个候选选题。每个都要给出：为什么现在值得写（热度/时效的**具体证据**，
       不是"最近很火"这种话）、目标读者、以及一句话的差异化角度。
