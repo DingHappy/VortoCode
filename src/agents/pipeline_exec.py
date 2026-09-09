@@ -122,9 +122,14 @@ def build_stage_executor(
 
         if spec is not None:
             sub = build_subagent(repo_root, spec, llm=llm, confirm=confirm,
-                                 on_progress=on_progress, capabilities=capabilities)
+                                 on_progress=on_progress, capabilities=capabilities,
+                                 with_web=stage_def.web)
         else:
-            sub = MainAgent(build_read_tools(repo_root), llm=llm, max_steps=max_steps,
+            base = build_read_tools(repo_root)
+            if stage_def.web:
+                from src.agents.tools.web import build_web_tools
+                base = base + build_web_tools()
+            sub = MainAgent(base, llm=llm, max_steps=max_steps,
                             extra_system="你是流水线工序执行者，按要求产出，不做职责外的事。",
                             capabilities=capabilities)
 

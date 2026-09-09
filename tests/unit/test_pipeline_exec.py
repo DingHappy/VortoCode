@@ -186,3 +186,26 @@ async def test_stage_tokens_are_metered(repo, monkeypatch):
     monkeypatch.setattr(agent_loop.MainAgent, "run_turn", run_turn)
     out = await build_stage_executor(repo)(StageDef(id="scout"), [])
     assert out["tokens"] == 1234
+
+
+@pytest.mark.asyncio
+async def test_stage_gets_no_web_tools_unless_it_declares_them(repo, monkeypatch):
+    """出网**逐工序申报**，照抄 cron 作业的 allow_web 口径。
+
+    默认不给，因为出网既是信息入口也是外传通道（web_fetch 的 GET query 就能带走东西）。
+    不申报却想查资料的工序，会如实卡在"我没有 web_search"，而不是凭记忆编一份看着像样的选题池。
+    """
+    from src.agents import agent_loop
+    seen = {}
+
+    async def run_turn(self, prompt, mode="plan"):
+        seen["tools"] = set(self.tools)
+        return "{}"
+
+    monkeypatch.setattr(agent_loop.MainAgent, "run_turn", run_turn)
+
+    await build_stage_executor(repo)(StageDef(id="scout"), [])
+    assert "web_search" not in seen["tools"] and "web_fetch" not in seen["tools"]
+
+    await build_stage_executor(repo)(StageDef(id="scout", web=True), [])
+    assert {"web_search", "web_fetch"} <= seen["tools"]

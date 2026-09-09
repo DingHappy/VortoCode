@@ -41,6 +41,10 @@ STAGE_STATUS = ("pending", "running", "awaiting_review", "done", "failed")
 # 运行状态：running → awaiting_review（卡在某道闸门）→ done / failed / abandoned
 RUN_STATUS = ("running", "awaiting_review", "done", "failed", "abandoned")
 VERDICTS = ("approve", "reject", "defer")
+# 一道工序最多试几次。**failed 不是终态**——outbound 被 fail-closed 拒一次（你没带授权来）、
+# relay 抖一下，都不该让整轮死掉；下次 advance 应该能接着试。但也不能无限重试：一个持续
+# 失败的工序在 cron 上每天烧一遍 token，那是"永远亮着的红灯"的花钱版本。超过上限就停下等人。
+MAX_STAGE_ATTEMPTS = 3
 
 
 def _now() -> str:
@@ -70,6 +74,13 @@ class StageDef:
     produces: str = ""                               # 产出的 kind
     review: bool = False                             # 产出后是否要人批准，下游才能消费
     outbound: bool = False                           # 是否有对外动作（发布）——执行器据此过确认门
+    # 本工序要不要联网。**逐工序申报**，照抄 cron 作业的 allow_web 口径（#248/#250）：
+    # 默认不给，因为出网既是信息入口也是外传通道（web_fetch 的 GET query 就能带走东西）。
+    # 申报了才有 web_search/web_fetch——而用了它们就会打污点，污点又沿产出物血缘一路传到发布口。
+    # ⚠ 无人值守档（cron/heartbeat）另有一层：UNATTENDED_PROFILE 本身就 with_web=False，
+    #    所以 cron 驱动的工序即使申报了也拿不到网——那是刻意的，不是 bug。要么由人触发，
+    #    要么让上游用确定性采集作业把信息抓好、工序只负责解读。
+    web: bool = False
     # 产出解析口径：json（默认，要求工序输出一个 JSON 对象）| text（整段回复存成 {"text": ...}）。
     # **显式声明而不是解析失败就退化成 text**——那种静默降级正是"审查解析不出就当没问题"的同款病。
     output: str = "json"
@@ -111,6 +122,7 @@ class PipelineDef:
                 produces=str(item.get("produces") or "").strip(),
                 review=bool(item.get("review")),
                 outbound=bool(item.get("outbound")),
+                web=bool(item.get("web") or item.get("allow_web")),
                 output=str(item.get("output") or "json").strip().lower(),
                 note=str(item.get("note") or "").strip(),
             ))
@@ -290,12 +302,18 @@ def resolve_inputs(store: ProductStore, run: PipelineRun, stage_def: StageDef,
 
 
 def next_stage(definition: PipelineDef, run: PipelineRun) -> Optional[StageRun]:
-    """下一道可跑的工序：第一个非终态的；前面还有没做完的就返回 None（严格顺序）。"""
+    """下一道可跑的工序：第一个非终态的；前面还有没做完的就返回 None（严格顺序）。
+
+    **失败的工序在没用完重试次数前仍然可跑**——见 MAX_STAGE_ATTEMPTS 那条注释。
+    等人批则一律停下：那是人的决定，不是可以重试的东西。
+    """
     for stage_run in run.stages:
         if stage_run.status in {"done", "skipped"}:
             continue
-        if stage_run.status in {"awaiting_review", "failed"}:
-            return None                      # 卡住了，得先有人处理
+        if stage_run.status == "awaiting_review":
+            return None                      # 等人拍板，重试多少次也没用
+        if stage_run.status == "failed" and stage_run.attempts >= MAX_STAGE_ATTEMPTS:
+            return None                      # 试到头了，得有人处理
         return stage_run
     return None
 
@@ -321,7 +339,9 @@ async def advance(
     run = store.load(run_id)
     if run is None:
         return AdvanceResult(run_id=run_id, status="missing", reason="无此运行")
-    if run.status in {"done", "failed", "abandoned"}:
+    # 只有 done/abandoned 是真终态。failed 可以再试（带上授权回来、或等 relay 恢复），
+    # 试满 MAX_STAGE_ATTEMPTS 由 next_stage 挡住，那时才真的停下等人。
+    if run.status in {"done", "abandoned"}:
         return AdvanceResult(run_id=run.run_id, status=run.status, reason="已是终态，无需推进")
 
     definition = definition or load_definition(repo_root, run.pipeline)
@@ -333,19 +353,7 @@ async def advance(
     for _ in range(max(1, int(max_stages))):
         stage_run = next_stage(definition, run)
         if stage_run is None:
-            waiting = run.awaiting()
-            if waiting is not None:
-                run.status = "awaiting_review"
-                store.save(run)
-                return AdvanceResult(run.run_id, run.status, ran, waiting.id, "等人批")
-            broken = next((s for s in run.stages if s.status == "failed"), None)
-            if broken is not None:
-                run.status = "failed"
-                store.save(run)
-                return AdvanceResult(run.run_id, run.status, ran, broken.id, broken.note or "工序失败")
-            run.status = "done"
-            store.save(run)
-            return AdvanceResult(run.run_id, run.status, ran, reason="全部工序完成")
+            return _settle(store, run, ran)
 
         stage_def = definition.stage(stage_run.id)
         if stage_def is None:                       # 定义被改过、少了这道工序：如实停下，别猜
@@ -396,8 +404,30 @@ async def advance(
         if stage_def.review:
             return AdvanceResult(run.run_id, run.status, ran, stage_run.id, "等人批")
 
+    # 收尾再判一次：刚跑完的可能正是最后一道工序，别让它挂在 running 等下一次 advance 才转终态。
+    if next_stage(definition, run) is None:
+        return _settle(store, run, ran)
     store.save(run)
     return AdvanceResult(run.run_id, run.status, ran, reason="已推进到本次上限")
+
+
+def _settle(store: "PipelineStore", run: PipelineRun, ran: List[str]) -> AdvanceResult:
+    """没有可跑工序了——判定这一轮停在哪个态并落盘。"""
+    waiting = run.awaiting()
+    if waiting is not None:
+        run.status = "awaiting_review"
+        store.save(run)
+        return AdvanceResult(run.run_id, run.status, ran, waiting.id, "等人批")
+    broken = next((s for s in run.stages if s.status == "failed"), None)
+    if broken is not None:
+        run.status = "failed"
+        store.save(run)
+        return AdvanceResult(
+            run.run_id, run.status, ran, broken.id,
+            f"已试 {broken.attempts} 次仍未过，需人工处理：{broken.note or '工序失败'}")
+    run.status = "done"
+    store.save(run)
+    return AdvanceResult(run.run_id, run.status, ran, reason="全部工序完成")
 
 
 # ---------------------------------------------------------------- 人批（三档）

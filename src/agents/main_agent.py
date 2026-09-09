@@ -1330,7 +1330,7 @@ _DEV_RULES = ("你可以用 dev_isolated/dev_parallel 真正实现代码——�
 
 def build_subagent(repo_root: str, spec: Any, *, llm: Any = None,
                    confirm: Any = None, on_progress: Any = None,
-                   capabilities: Any = None) -> MainAgent:
+                   capabilities: Any = None, with_web: bool = False) -> MainAgent:
     """按自定义角色定义装配一个子 agent。
 
     `src.agents.subagents` 只保留注册表/规格解析，避免反向导入 MainAgent 形成循环依赖。
@@ -1338,6 +1338,11 @@ def build_subagent(repo_root: str, spec: Any, *, llm: Any = None,
     from src.agents.permissions import load_permissions
 
     tools = build_read_tools(repo_root)
+    if with_web:
+        # 出网**由调用方逐次申报**（流水线工序的 web: true / cron 作业的 allow_web），
+        # 不写进角色文件——同一个角色在有人看着时能查资料、在无人值守档下不该能出网。
+        from src.agents.tools.web import build_web_tools
+        tools = tools + build_web_tools()
     extra = spec.system_prompt + _SUB_RULES
     if spec.tools == "dev":
         dev = [t for t in build_dev_tools(repo_root, on_progress=on_progress, confirm=confirm,
