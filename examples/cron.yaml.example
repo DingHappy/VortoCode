@@ -39,3 +39,14 @@ jobs:
     prompt: "看看 requirements.txt / pyproject 有没有明显该升级的依赖，列个清单（先别动手）。"
     announce: im
     enabled: false
+
+  # 运营流水线定时推进——**确定性作业，零 LLM**（LLM 只在工序内部上场）。
+  # `tick` 扫一遍所有活着的运行各推一道工序，状态有变化才通报：挂三天的等批只说一次，
+  # 不会每半小时刷你一条。对外工序（发布）它连试都不试——无人值守没有确认通道，
+  # 试三次只会把重试次数烧光把自己废掉；它会推一条"这一步要你带授权来"。
+  # 退出码恒 0 是**故意的**：该说的话已经从通知通道说过了，再让 cron 报一次红就是重复通报。
+  - name: pipeline_tick
+    schedule: "every 2h"
+    command: "vc pipeline tick"
+    announce: silent           # 通报由 tick 自己按状态变化发，别再叠一层"作业跑完了"
+    enabled: false             # 默认关，配好 .vortocode/pipelines/*.yaml 再改 true

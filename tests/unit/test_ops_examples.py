@@ -4,6 +4,7 @@
 用户照抄就直接坏。这里用真 loader 加载，漂移即红。
 """
 
+import re
 import shutil
 from pathlib import Path
 
@@ -17,9 +18,15 @@ def test_cron_example_parses_with_real_loader(tmp_path):
     d.mkdir()
     shutil.copy(_EXAMPLES / "cron.yaml.example", d / "cron.yaml")
     jobs = _cron.load_jobs(str(tmp_path))
-    # loader 对非法 schedule 是"跳过不炸"——示例里任何一条写坏都会让数量掉下去（这才是真守门）
-    assert {j.name for j in jobs} == {"nightly_evals", "ci_red_autofix", "dep_check"}, \
-        f"示例作业没全被解析（写坏的会被静默跳过）：{[j.name for j in jobs]}"
+    # loader 对非法 schedule 是"跳过不炸"——写坏的那条会被静默吞掉。所以断的是**文件里声明的
+    # 每一条都被解析出来了**，而不是一份写死的名单：写死名单的话，加一条新示例就红一次，
+    # 而它本该守的"某条写坏了"反倒和"多了一条"长得一模一样（scout.md.example 那次的同款教训）。
+    declared = re.findall(r"^\s*-\s*name:\s*(\S+)", (_EXAMPLES / "cron.yaml.example")
+                          .read_text(encoding="utf-8"), re.M)
+    assert declared, "示例里一条作业都没有？"
+    missing = set(declared) - {j.name for j in jobs}
+    assert not missing, f"示例作业没全被解析（写坏的会被静默跳过）：{sorted(missing)}"
+    assert {"nightly_evals", "ci_red_autofix", "dep_check"} <= set(declared)   # 老三样别被删掉
     for j in jobs:
         assert isinstance(j.schedule, _cron.Schedule)             # 已由 loader 解析
         assert j.enabled is False, f"示例作业必须默认关（{j.name}）——模板不许开箱即烧 token"
