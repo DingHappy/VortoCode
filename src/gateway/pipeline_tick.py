@@ -95,7 +95,14 @@ def _message(repo_root: str, run, outcome: TickOutcome) -> str:
                 f"（终端：vc pipeline advance {run.run_id} --yes）")
     if outcome.status == "failed":
         return f"⛔ {head}\n卡在工序「{outcome.blocked_on}」：{outcome.reason or '工序失败'}"
-    return f"✅ {head}\n全部工序完成" + (f"（本轮跑了 {'、'.join(outcome.ran)}）" if outcome.ran else "")
+    if outcome.status == "done":
+        return f"✅ {head}\n全部工序完成" + (f"（本轮跑了 {'、'.join(outcome.ran)}）" if outcome.ran else "")
+    # 兜底必须**对每个状态都说真话**。原先这里直接落"全部工序完成"——tick 自己不会拿
+    # running 来调它（_signature 对 running 返回空、不通报），所以一直没露馅；但 bridge 的
+    # /go 跑完就是 running，复用时会把"还有工序没跑完"说成"全部完成"。
+    # 兜底分支正是最容易在换个调用方之后开始撒谎的地方。
+    return (f"▶️ {head}\n" + (f"跑了 {'、'.join(outcome.ran)}，" if outcome.ran else "")
+            + "还有工序没跑完" + (f"：{outcome.reason}" if outcome.reason else ""))
 
 
 def _signature(outcome: TickOutcome, run) -> str:
