@@ -168,6 +168,9 @@ class PipelineRun:
     stages: List[StageRun] = field(default_factory=list)
     created: str = ""
     updated: str = ""
+    # 上一次已经通报给人的状态签名（见 pipeline_tick._signature）。放在运行自己身上而不是
+    # 另起一个"已通报"清单文件：两份状态迟早会对不上，而这条信息本来就只属于这一个运行。
+    notified: str = ""
 
     def stage(self, stage_id: str) -> Optional[StageRun]:
         return next((s for s in self.stages if s.id == stage_id), None)

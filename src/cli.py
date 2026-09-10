@@ -171,10 +171,12 @@ def main():
     p.add_argument("name", nargs="?", help="run 时的作业名")
 
     p = sub.add_parser("pipeline", help="作业流水线（.vortocode/pipelines/*.yaml）：非代码流程的工序 + 人批闸门")
-    p.add_argument("action", choices=["list", "show", "start", "advance", "review"],
+    p.add_argument("action", choices=["list", "show", "start", "advance", "review", "tick"],
                    help="list 看全部 / show <run> 看细节 / start <名字> 开一轮 / "
-                        "advance <run> 推一道工序 / review <run> 给人批回执")
-    p.add_argument("name", nargs="?", default="", help="run id（show/advance/review）或流水线名（start）")
+                        "advance <run> 推一道工序 / review <run> 给人批回执 / "
+                        "tick 无人值守扫一遍（给 cron 用，状态有变化才通报）")
+    p.add_argument("name", nargs="?", default="",
+                   help="run id（show/advance/review）、流水线名（start，或 tick 时只扫这一条）")
     p.add_argument("--approve", dest="verdict", action="store_const", const="approve",
                    help="review：放行，下次 advance 继续")
     p.add_argument("--reject", dest="verdict", action="store_const", const="reject",
