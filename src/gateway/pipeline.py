@@ -292,13 +292,19 @@ def resolve_inputs(store: ProductStore, run: PipelineRun, stage_def: StageDef,
                    stage_run: StageRun) -> List[Product]:
     """按 kind 取输入产出物。
 
-    先在**本次运行内**找该 kind 的最新一条；本轮没有再退到**同流水线全局**的最新一条——
-    后者正是数据回流闭环成立的地方（scout 读上一轮的 metrics，不用每次从零抓）。
+    三级回退：**本次运行内** → **同流水线全局** → **不属于任何流水线的全局**。
+
+    第二级正是数据回流闭环成立的地方（scout 读上一轮的 metrics，不用每次从零抓）。
+    第三级给的是**采集器那类产出**：`vc collect` 抓来的 signals 不属于任何一条流水线，
+    多条流水线都该能读同一份——把它硬塞进某条流水线的名下，第二条流水线就读不到了。
+
     显式挂上来的 extra_inputs（驳回意见等）永远附加在后面。
     """
     picked: List[Product] = []
     for kind in stage_def.inputs:
-        found = store.latest(kind, run_id=run.run_id) or store.latest(kind, pipeline=run.pipeline)
+        found = (store.latest(kind, run_id=run.run_id)
+                 or store.latest(kind, pipeline=run.pipeline)
+                 or store.latest(kind))
         if found is not None:
             picked.append(found)
     for pid in stage_run.extra_inputs:
