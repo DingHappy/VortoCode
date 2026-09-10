@@ -40,6 +40,18 @@ jobs:
     announce: im
     enabled: false
 
+  # 信号采集——**确定性作业、零 LLM**。抓 HN / GitHub 新仓库 / 官方博客 RSS / V2EX，
+  # 算分数与 star 的**增量**（50k star 的仓库不是新闻，这周涨 2k 的才是）、跨天去重，
+  # 落成一条 signals 产出物给 scout 读。
+  # 它必须排在 pipeline_tick **前面**跑：scout 读的是最新那条 signals。
+  # 退出码：0=采到了（个别源失败也算）；1=一条都没采到。个别源挂掉不报红——
+  # 那会让台账里全是红的、人反而不看了；失败的源名会进产出物，scout 据此知道自己看到的是一部分。
+  - name: signal_collect
+    schedule: "at 08:30"
+    command: "vc collect --quiet"
+    announce: silent
+    enabled: false             # 默认关，确认要采再改 true
+
   # 运营流水线定时推进——**确定性作业，零 LLM**（LLM 只在工序内部上场）。
   # `tick` 扫一遍所有活着的运行各推一道工序，状态有变化才通报：挂三天的等批只说一次，
   # 不会每半小时刷你一条。对外工序（发布）它连试都不试——无人值守没有确认通道，
