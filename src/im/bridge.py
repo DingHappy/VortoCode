@@ -684,6 +684,32 @@ class IMBridge:
             return                                   # 有活在跑：等它跑完，下一次 tick 会接上
         self._turn_task = asyncio.create_task(self._run_pipeline_advance(run_id))
 
+    def _advance_report(self, run_id: str, result) -> str:
+        """推进跑完之后对人说的那句话。
+
+        **和 tick 推的通知走同一个措辞生成器**：同一件事在两个入口说成两样，人得自己去对——
+        真机第一次跑 /go 就撞上了：跑完只回一句"awaiting_review · 跑了 scout · 卡在 scout"，
+        既没说产出是什么，也没说下一步该敲什么，而 tick 的通知里这两样都有。
+        `advance` 的原始字段留在末尾一行，排查时还看得见。
+        """
+        from src.gateway.pipeline import PipelineStore
+        from src.gateway.pipeline_tick import TickOutcome, _message
+
+        raw = (f"{result.status}"
+               + (f" · 跑了 {'、'.join(result.ran)}" if result.ran else "")
+               + (f" · 卡在 {result.blocked_on}" if result.blocked_on else "")
+               + (f" · {result.reason}" if result.reason else ""))
+        run = PipelineStore(self.repo_root).load(run_id)
+        if run is None:
+            return raw
+        outcome = TickOutcome(run_id=run_id, pipeline=run.pipeline, status=result.status,
+                              ran=list(result.ran), blocked_on=result.blocked_on,
+                              reason=result.reason)
+        try:
+            return _message(self.repo_root, run, outcome) + f"\n\n（{raw}）"
+        except Exception:  # noqa: BLE001 —— 措辞出问题不该把跑完这件事本身也吞掉
+            return raw
+
     async def _run_pipeline_advance(self, run_id: str) -> None:
         """推进一道工序，进度/确认按钮/终态都走与 agent 回合同一套事件流泵（`_drain`）。
 
@@ -704,10 +730,7 @@ class IMBridge:
                     self.repo_root, confirm=confirm,
                     on_progress=lambda m: q.put_nowait(("progress", _strip(str(m)))))
                 result = await advance(self.repo_root, run_id, execute=execute)
-                q.put_nowait(("final", f"{result.status}"
-                              + (f" · 跑了 {'、'.join(result.ran)}" if result.ran else "")
-                              + (f" · 卡在 {result.blocked_on}" if result.blocked_on else "")
-                              + (f" · {result.reason}" if result.reason else "")))
+                q.put_nowait(("final", self._advance_report(run_id, result)))
             except asyncio.CancelledError:
                 q.put_nowait(("final", "（已取消）"))
                 raise
