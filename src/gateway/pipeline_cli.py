@@ -23,7 +23,7 @@ from pathlib import Path
 from src.gateway.pipeline import (
     PipelineStore, advance, load_definition, review,
 )
-from src.gateway.products import ProductStore
+from src.gateway.products import ProductStore, render_payload
 
 
 def _repo() -> str:
@@ -31,6 +31,8 @@ def _repo() -> str:
 
 
 def _print_run(run, *, verbose: bool = False) -> None:
+    """终端里的细节视图。等人批那一道摊开内容，与 IM 的 `/pipe <run>` 同一份渲染——
+    同一件事在两个入口长得不一样，人就得两边都看一遍。"""
     print(run.summary())
     if not verbose:
         return
@@ -47,6 +49,13 @@ def _print_run(run, *, verbose: bool = False) -> None:
             if product is not None:
                 mark = " ⚠外部来源" if product.tainted else ""
                 print(f"{'':>18}  ↳ {product.kind} {product.id}{mark}：{product.summary}")
+                if stage.status == "awaiting_review":
+                    body = render_payload(product.payload)
+                    if body:
+                        print()
+                        for ln in body.splitlines():
+                            print(f"{'':>20}{ln}")
+                        print()
         if stage.note:
             print(f"{'':>18}  ↳ {stage.note}")
 
