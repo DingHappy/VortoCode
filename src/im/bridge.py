@@ -25,6 +25,19 @@ _SPLIT = re.compile(r"[,\s;]+")                    # allowFrom 的分隔符（�
 
 # 流水线的人批入口。**中英两套拼写指同一件事**：ASCII 那套能被 Telegram 的命令补全认出来，
 # 中文那套手上快——手机上批东西，少打一个字都是真的省。
+# 手机输入法会往命令里塞看不见的东西：全角斜杠（／，中文输入法常见）、零宽字符（复制粘贴
+# 带出来的）、句末的中文句号。这些在屏幕上**和你打的一模一样**，字典查找却必然落空——
+# 于是回一句"未知命令 /no"，你看着自己打的明明是 /no。归一化放在分发之前，一次解决一类。
+_ZERO_WIDTH = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff"))
+
+
+def _norm_cmd(token: str) -> str:
+    """把命令词归一成可比较的形式：NFKC（全角→半角）+ 去零宽 + 去句末标点 + 小写。"""
+    import unicodedata
+    t = unicodedata.normalize("NFKC", str(token or "")).translate(_ZERO_WIDTH)
+    return t.strip().rstrip("。.，,！!？?").lower()
+
+
 _PIPE_LIST = {"/pipe", "/流水线"}
 _PIPE_GO = {"/go", "/推"}
 _PIPE_VERDICTS = {"/ok": "approve", "/批": "approve",
@@ -428,7 +441,10 @@ class IMBridge:
                 await self._safe_send(f"⚠️ {bad}")
             if not text and not imgs and not atts:
                 return
-            if text.startswith("/"):
+            # 归一化之后再判是不是命令：全角斜杠（／，中文输入法默认出这个）走 startswith("/")
+            # 是 False，于是 `／ok` 不会被当命令，而是**当成一句任务丢给 agent 去跑**——
+            # 比回一句"未知命令"糟得多。这道门和下面的分发用同一把尺子。
+            if _norm_cmd(text.split()[0] if text.split() else "").startswith("/"):
                 await self._handle_command(text)
                 return
             # 研究员助手第一次见面：先请本人自述人设，再开始干活。
@@ -469,7 +485,8 @@ class IMBridge:
         self._turn_task = asyncio.create_task(_runner())
 
     async def _handle_command(self, text: str) -> None:
-        cmd = text.split()[0].lower()
+        raw_cmd = text.split()[0]
+        cmd = _norm_cmd(raw_cmd)
         if cmd == "/mode":
             arg = text[len("/mode"):].strip()
             self.mode = arg if arg in ("plan", "build") else ("build" if self.mode == "plan" else "plan")
@@ -534,7 +551,12 @@ class IMBridge:
                 "/go 推一道（对外工序会弹按钮）。中文别名 /批 /驳 /挂 /推。\n"
                 "写文件/跑命令/开 PR 会发按钮让你确认（人在关口）。")
         else:
-            await self._safe_send(f"未知命令 {cmd}。/help 看用法。")
+            # 认不出时**把看不见的东西显出来**。"未知命令 /no"配上你明明打了 /no，
+            # 是最难查的一类报错——真相往往是中间混了个零宽字符或全角斜杠。
+            hint = ""
+            if raw_cmd != cmd:
+                hint = f"（我收到的是 {raw_cmd!r}，归一化后 {cmd!r}）"
+            await self._safe_send(f"未知命令 {cmd}。/help 看用法。{hint}")
 
     # ------------------------------------------------------------ 流水线（在手机上批）
     def _live_runs(self) -> list:
