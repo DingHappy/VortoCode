@@ -48,6 +48,37 @@ def build_im_media_tools(repo_root: str, confirm: Optional[Callable] = None) -> 
         return (f"✅ 已发送 {p.name} 到 IM。" if sent
                 else "未发送：当前没有已连接的 IM 桥，或该通道不支持发媒体（内容仍在原路径）。")
 
+    async def _send_document(args: dict) -> str:
+        """把一段**内容**落成文件再发出去。
+
+        存在的理由：手上只有 send_file 的角色（`tools: deliver`）**没有写文件的能力**，
+        而它要交付的东西（成文、脚本）是上游产出物里的文本，不是磁盘上已有的文件——
+        那条链是断的。给它通用 write_file 又太宽：交付者不该能改仓库里任何一个文件。
+        所以这里只开一个针对性的口子：**只能写进 `.vortocode/artifacts/`**（已 gitignore），
+        文件名经 basename 清洗，发送仍然过同一道确认门。
+        """
+        import re as _re
+        from datetime import datetime
+
+        title = str(args.get("title") or "").strip()
+        content = str(args.get("content") or "")
+        caption = str(args.get("caption") or args.get("note") or "").strip()
+        if not title or not content.strip():
+            return "send_document 需要 title（文件名）和 content（正文内容）。"
+        # 文件名是模型给的，等同外部输入：去路径分隔、去奇怪字符、限长。
+        stem = _re.sub(r"[^\w\u4e00-\u9fff.\- ]+", "_", title.replace("/", "_"))[:60].strip() or "doc"
+        if not stem.lower().endswith((".md", ".txt")):
+            stem += ".md"
+        out = base / ".vortocode" / "artifacts"
+        try:
+            out.mkdir(parents=True, exist_ok=True)
+            target = out / f"{datetime.now().strftime('%Y%m%d-%H%M%S')}-{stem}"
+            target.write_text(content, encoding="utf-8")
+        except OSError as e:
+            return f"落盘失败：{e}"
+        result = await _send({"path": str(target.relative_to(base)), "caption": caption}, "file")
+        return f"{result}（已落盘 {target.relative_to(base)}）"
+
     return [
         Tool("send_image", "把一张图片发到主人的 IM（钉钉/Telegram）。用于把截图、渲染好的 diff、"
                            "文档页面图直接送到手机上——比让人去服务器上翻文件强得多。",
@@ -56,4 +87,10 @@ def build_im_media_tools(repo_root: str, confirm: Optional[Callable] = None) -> 
         Tool("send_file", "把一个文件发到主人的 IM（钉钉/Telegram）。适合日志、报告、导出的数据。",
              {"path": "仓库内的文件路径", "caption": "可选：随文件附一句说明"},
              lambda a: _send(a, "file")),
+        Tool("send_document", "把一段内容写成文件并发到主人的 IM。适合交付成文/脚本/报告——"
+                              "内容在你手上、磁盘上还没有对应文件时用这个。"
+                              "只能写进 .vortocode/artifacts/。",
+             {"title": "文件名（会自动加时间戳前缀，缺后缀按 .md）",
+              "content": "文件正文", "caption": "可选：随文件附一句说明"},
+             _send_document),
     ]

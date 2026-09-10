@@ -3,6 +3,8 @@
 不打真模型：monkeypatch `MainAgent.run_turn`，测的是**接线**——今天已经反复验证过，
 "每段单测都绿、接缝没接上"才是这类系统真正的失败模式。
 """
+import pathlib
+
 import pytest
 
 from src.agents.pipeline_exec import build_stage_executor
@@ -31,6 +33,21 @@ def _reply(monkeypatch, text, spy=None):
 
 async def yes(_msg):
     return True
+
+
+def _outbound_stage(repo, **kw):
+    """造一道**真有出口**的对外工序（角色 tools: deliver）。
+
+    对外动作有两道闸，顺序是"先看做不做得到、再问要不要做"。本文件测的是**第二道**
+    （确认门），所以这里必须把第一道满足掉——否则测出来的是"角色没配对"，
+    而那条另有 test_outbound_is_real.py 专门钉。
+    """
+    d = pathlib.Path(repo) / ".vortocode" / "agents"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "courier.md").write_text(
+        "---\nname: courier\ndescription: 交付\ntools: deliver\n---\n你是交付者。\n",
+        encoding="utf-8")
+    return StageDef(id="publish", role="courier", outbound=True, **kw)
 
 
 # ------------------------------------------------------------------ 污点接线（首要命题）
@@ -87,7 +104,7 @@ async def test_outbound_stage_without_a_confirm_channel_is_refused(repo, monkeyp
     _reply(monkeypatch, "{}")
     execute = build_stage_executor(repo, confirm=None)
     with pytest.raises(RuntimeError, match="fail-closed"):
-        await execute(StageDef(id="publish", outbound=True), [])
+        await execute(_outbound_stage(repo), [])
 
 
 @pytest.mark.asyncio
@@ -100,8 +117,7 @@ async def test_outbound_stage_asks_and_respects_a_no(repo, monkeypatch):
         return False
 
     with pytest.raises(RuntimeError, match="未放行"):
-        await build_stage_executor(repo, confirm=deny)(
-            StageDef(id="publish", outbound=True), [])
+        await build_stage_executor(repo, confirm=deny)(_outbound_stage(repo), [])
     assert asked and "对外动作" in asked[0]
 
 
@@ -119,9 +135,9 @@ async def test_outbound_confirm_names_the_external_source_only_when_there_is_one
         return True
 
     execute = build_stage_executor(repo, confirm=watch)
-    await execute(StageDef(id="publish", outbound=True, produces="publication"), [dirty])
+    await execute(_outbound_stage(repo, produces="publication"), [dirty])
     assert "web_search" in asked[0]
-    await execute(StageDef(id="publish", outbound=True, produces="publication"), [clean])
+    await execute(_outbound_stage(repo, produces="publication"), [clean])
     assert "⚠" not in asked[1]
 
 

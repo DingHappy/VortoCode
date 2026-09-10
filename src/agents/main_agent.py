@@ -1344,6 +1344,11 @@ def build_subagent(repo_root: str, spec: Any, *, llm: Any = None,
         from src.agents.tools.web import build_web_tools
         tools = tools + build_web_tools()
     extra = spec.system_prompt + _SUB_RULES
+    if spec.tools == "deliver":
+        # 目前唯一的真出口：收件人恒为已配对 owner（模型指定不了目标），每次过确认门。
+        # 与 web_fetch 的本质区别在这儿——后者 URL 由模型决定，是真外传通道。
+        from src.agents.tools.media import build_im_media_tools
+        tools = tools + build_im_media_tools(repo_root, confirm=confirm)
     if spec.tools == "dev":
         dev = [t for t in build_dev_tools(repo_root, on_progress=on_progress, confirm=confirm,
                                           capabilities=capabilities)
