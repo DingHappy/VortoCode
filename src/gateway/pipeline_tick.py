@@ -68,12 +68,15 @@ def _message(repo_root: str, run, outcome: TickOutcome) -> str:
     if outcome.status == "awaiting_review":
         stage = run.stage(outcome.blocked_on)
         detail = _product_line(repo_root, stage.product_id if stage else "")
+        # IM 回法放前面、终端命令放后面：这条通知最常见的读者是**手机上的你**，
+        # 让人抄一串 prun-hex 到终端才能批，等于把闸门修在人够不着的地方。
         return (f"📋 {head}\n工序「{outcome.blocked_on}」已产出，等你批：{detail}\n"
-                f"批：vc pipeline review {run.run_id} --approve\n"
-                f"驳回：vc pipeline review {run.run_id} --reject -m \"意见\"")
+                f"回 /ok 批 · /no <意见> 驳回 · /later 挂起\n"
+                f"（终端：vc pipeline review {run.run_id} --approve）")
     if outcome.status == "needs_auth":
         return (f"🔒 {head}\n工序「{outcome.blocked_on}」是对外动作，无人值守不会替你发。\n"
-                f"带授权推进：vc pipeline advance {run.run_id} --yes")
+                f"回 /go 推进（对外那一步会弹按钮让你点）\n"
+                f"（终端：vc pipeline advance {run.run_id} --yes）")
     if outcome.status == "failed":
         return f"⛔ {head}\n卡在工序「{outcome.blocked_on}」：{outcome.reason or '工序失败'}"
     return f"✅ {head}\n全部工序完成" + (f"（本轮跑了 {'、'.join(outcome.ran)}）" if outcome.ran else "")
