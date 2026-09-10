@@ -337,3 +337,33 @@ async def test_an_empty_queue_costs_one_small_read_and_says_nothing(repo):
     await asyncio.sleep(0.08)
     task.cancel()
     assert adapter.texts() == []
+
+
+# ------------------------------------------------------------------ 跑完那句话要有用
+@pytest.mark.asyncio
+async def test_the_finish_message_says_what_came_out_and_what_to_do_next(repo, monkeypatch):
+    """真机第一次跑 /go 就撞上了：跑完只回一句
+
+        awaiting_review · 跑了 scout · 卡在 scout · 等人批
+
+    既没说产出是什么，也没说下一步该敲什么——而 tick 推的通知里这两样都有。
+    **同一件事在两个入口说成两样，人得自己去对。** 现在共用同一个措辞生成器。
+    """
+    from src.agents import pipeline_exec
+
+    def builder(repo_root, *, confirm=None, on_progress=None, **kw):
+        async def execute(stage_def, inputs):
+            return {"payload": {"topics": [1, 2, 3]}, "summary": "5 个候选选题",
+                    "tainted": True, "taint_reason": "来自 web_search"}
+        return execute
+
+    monkeypatch.setattr(pipeline_exec, "build_stage_executor", builder)
+    run = PipelineStore(str(repo)).start(load_definition(str(repo), "content-ops"))
+    bridge, adapter = _bridge(repo)
+    await _drive_with_advance(bridge, adapter, _msg(f"/go {run.run_id}"))
+
+    final = adapter.texts()[-1]
+    assert "5 个候选选题" in final          # 产出是什么
+    assert "⚠外部来源" in final              # 来源标记（批之前该看见的）
+    assert "/ok" in final and "/no" in final  # 下一步敲什么
+    assert "awaiting_review" in final        # advance 的原始字段仍留着，排查看得见

@@ -300,3 +300,24 @@ async def test_the_executor_carries_the_unattended_profile(repo, monkeypatch):
     _start(repo)
     await tick(repo, notify=Recorder())
     assert seen["capabilities"].profile == UNATTENDED_PROFILE
+
+
+# ------------------------------------------------------------------ 措辞对每个状态都要说真话
+@pytest.mark.parametrize("status, ran, expect, forbid", [
+    ("running", ["write"], "还有工序没跑完", "全部工序完成"),
+    ("done", ["measure"], "全部工序完成", "还有工序没跑完"),
+])
+def test_the_message_never_claims_more_than_happened(repo, status, ran, expect, forbid):
+    """兜底分支是**最容易在换个调用方之后开始撒谎**的地方。
+
+    原先 `_message` 的兜底直接落"全部工序完成"。tick 自己不会拿 running 来调它
+    （_signature 对 running 返回空、不通报），所以一直没露馅；但 bridge 的 /go 跑完
+    就是 running——复用的那一刻，"还有工序没跑完"就会被说成"全部完成"。
+    """
+    from src.gateway.pipeline_tick import TickOutcome, _message
+
+    run_id = _start(repo)
+    run = PipelineStore(repo).load(run_id)
+    msg = _message(repo, run, TickOutcome(run_id=run_id, pipeline=run.pipeline,
+                                          status=status, ran=ran))
+    assert expect in msg and forbid not in msg
