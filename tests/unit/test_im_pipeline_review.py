@@ -367,3 +367,41 @@ async def test_the_finish_message_says_what_came_out_and_what_to_do_next(repo, m
     assert "⚠外部来源" in final              # 来源标记（批之前该看见的）
     assert "/ok" in final and "/no" in final  # 下一步敲什么
     assert "awaiting_review" in final        # advance 的原始字段仍留着，排查看得见
+
+
+# ------------------------------------------------------------------ 批之前看得见内容
+@pytest.mark.asyncio
+async def test_pipe_detail_opens_up_the_stage_you_are_asked_to_approve(repo):
+    """真机反馈"我没看到文本"——他说得对：只给一句 summary 就让人点头，他批的是自己没看过的东西。"""
+    run = _waiting_run(repo)
+    store = PipelineStore(str(repo))
+    products = ProductStore(str(repo))
+    product = products.load(store.load(run.run_id).stage("scout").product_id)
+    product.payload = {"topics": [{"topic": "MCP 生态爆发", "why_now": "社区实现井喷"}]}
+    products.save(product)
+
+    bridge, adapter = _bridge(repo)
+    await _drive_no_turn(bridge, adapter, _msg(f"/pipe {run.run_id}"))
+    out = adapter.texts()[-1]
+    assert "MCP 生态爆发" in out and "社区实现井喷" in out
+
+
+@pytest.mark.asyncio
+async def test_finished_stages_stay_summarised(repo):
+    """只摊开等你批的那一道。全摊开的话，一屏刷满历史产出，真正要看的反而被埋掉。"""
+    run = _waiting_run(repo)
+    store = PipelineStore(str(repo))
+    live = store.load(run.run_id)
+    products = ProductStore(str(repo))
+    done = products.create("topic_pool", payload={"topics": [{"topic": "上一版的旧选题"}]},
+                           summary="旧的", pipeline=live.pipeline, run_id=live.run_id,
+                           stage="publish")
+    live.stage("publish").status = "done"
+    live.stage("publish").product_id = done.id
+    store.save(live)
+
+    bridge, adapter = _bridge(repo)
+    await _drive_no_turn(bridge, adapter, _msg(f"/pipe {run.run_id}"))
+    out = adapter.texts()[-1]
+    assert "旧的" in out                        # 摘要还在
+    assert "上一版的旧选题" not in out            # 但内容不摊开
