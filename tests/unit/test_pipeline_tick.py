@@ -84,7 +84,8 @@ async def test_notification_carries_the_next_step(repo):
     await tick(repo, execute=_ok, notify=notify)
     text, source = notify.sent[0]
     assert "3 个候选选题" in text and run_id in text
-    assert "--approve" in text and "--reject" in text
+    assert "/ok" in text and "/no" in text          # 手机上能直接回的
+    assert "--approve" in text                     # 终端那条也留着（台账的读者在终端）
     assert source == "pipeline:content-ops"          # 台账上"哪条流水线出的"要一眼看得出
 
 
@@ -118,7 +119,8 @@ async def test_outbound_is_not_attempted_without_a_confirm_channel(repo):
     assert outcomes[0].status == "needs_auth" and outcomes[0].blocked_on == "publish"
     assert PipelineStore(repo).load(run_id).stage("publish").attempts == 0   # 一次都没烧
     assert sum("🔒" in t for t, _ in notify.sent) == 1                        # 也只说一次
-    assert "--yes" in next(t for t, _ in notify.sent if "🔒" in t)
+    stuck = next(t for t, _ in notify.sent if "🔒" in t)
+    assert "/go" in stuck and "--yes" in stuck
 
 
 @pytest.mark.asyncio

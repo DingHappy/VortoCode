@@ -23,6 +23,14 @@ _MARKUP = re.compile(r"\[/?[a-zA-Z][^\]]*\]")     # 去 Rich 标记（say 里的
 _CONFIRM_TIMEOUT = 600                             # 按钮确认等待上限（秒）；超时=拒绝（安全不放行）
 _SPLIT = re.compile(r"[,\s;]+")                    # allowFrom 的分隔符（逗号/空白/分号都收）
 
+# 流水线的人批入口。**中英两套拼写指同一件事**：ASCII 那套能被 Telegram 的命令补全认出来，
+# 中文那套手上快——手机上批东西，少打一个字都是真的省。
+_PIPE_LIST = {"/pipe", "/流水线"}
+_PIPE_GO = {"/go", "/推"}
+_PIPE_VERDICTS = {"/ok": "approve", "/批": "approve",
+                  "/no": "reject", "/驳": "reject",
+                  "/later": "defer", "/挂": "defer"}
+
 
 def _persona_path_for(repo_root: str):
     from pathlib import Path
@@ -491,14 +499,208 @@ class IMBridge:
                                       + (f"，并清掉 {n} 条排队消息。" if n else "。"))
             else:
                 await self._safe_send("当前没有在跑的任务。" + (f"（清掉了 {n} 条排队）" if n else ""))
+        elif cmd in _PIPE_LIST:
+            await self._pipe_list(text.split(maxsplit=1)[1].strip()
+                                  if len(text.split(maxsplit=1)) > 1 else "")
+        elif cmd in _PIPE_GO:
+            await self._pipe_go(text.split(maxsplit=1)[1].strip()
+                                if len(text.split(maxsplit=1)) > 1 else "")
+        elif cmd in _PIPE_VERDICTS:
+            await self._pipe_review(_PIPE_VERDICTS[cmd],
+                                    text.split(maxsplit=1)[1].strip()
+                                    if len(text.split(maxsplit=1)) > 1 else "")
         elif cmd == "/help":
             await self._safe_send(
                 "直接发任务 → 我跑隔离流水线（分解/实现/自测/落 vorto 分支）。\n"
                 "/task <描述> 后台跑（不占当前会话，进度自动推、完成发开 PR 按钮）· /tasks 看后台任务。\n"
                 "/mode plan|build 切模式 · /status 看状态 · /stop 中断当前任务 · /new 清空会话。\n"
+                "/pipe 看流水线 · /ok 批（批完自动往下推）· /no <意见> 驳回 · /later 挂起 · "
+                "/go 推一道（对外工序会弹按钮）。中文别名 /批 /驳 /挂 /推。\n"
                 "写文件/跑命令/开 PR 会发按钮让你确认（人在关口）。")
         else:
             await self._safe_send(f"未知命令 {cmd}。/help 看用法。")
+
+    # ------------------------------------------------------------ 流水线（在手机上批）
+    def _live_runs(self) -> list:
+        """还没走完的流水线运行，等人批的排最前——手机上第一屏就该是"该你管的"。"""
+        from src.gateway.pipeline import PipelineStore
+        runs = [r for r in PipelineStore(self.repo_root).list()
+                if r.status not in {"done", "abandoned"}]
+        return sorted(runs, key=lambda r: (r.status != "awaiting_review", r.created), reverse=False)
+
+    def _resolve_run(self, token: str):
+        """把用户随手打的一小截认成某个运行。返回 (run, 错误话术)。
+
+        **run id 可以整个省掉**：只有一条在等你批时，`/ok` 就是批它——手机上让人抄
+        `prun-content-ops-ed3c577a` 是折磨。多于一条就把候选列出来让人指定，绝不替他挑一个。
+        """
+        runs = self._live_runs()
+        if not runs:
+            return None, "现在没有在跑的流水线。"
+        if token:
+            hit = [r for r in runs if r.run_id.startswith(token) or token in r.run_id]
+            if len(hit) == 1:
+                return hit[0], ""
+            if not hit:
+                return None, f"没找到匹配「{token}」的运行。/pipe 看全部。"
+            ids = "\n".join(f"· {r.run_id}" for r in hit[:6])
+            return None, f"「{token}」匹配到 {len(hit)} 条，说清楚是哪条：\n{ids}"
+        waiting = [r for r in runs if r.status == "awaiting_review"]
+        if len(waiting) == 1:
+            return waiting[0], ""
+        if not waiting:
+            return None, "现在没有等你批的工序。/pipe 看流水线状态。"
+        ids = "\n".join(f"· {r.run_id} 等批：{(r.awaiting().id if r.awaiting() else '?')}"
+                         for r in waiting[:6])
+        return None, f"有 {len(waiting)} 条在等你批，说清楚是哪条：\n{ids}"
+
+    async def _pipe_list(self, token: str) -> None:
+        if token:
+            run, err = self._resolve_run(token)
+            if run is None:
+                await self._safe_send(err)
+                return
+            await self._safe_send(self._pipe_detail(run))
+            return
+        runs = self._live_runs()
+        if not runs:
+            await self._safe_send("现在没有在跑的流水线。")
+            return
+        lines = []
+        for r in runs[:8]:
+            mark = "📋" if r.status == "awaiting_review" else ("⛔" if r.status == "failed" else "▶️")
+            tail = f" 等批：{r.awaiting().id}" if r.awaiting() is not None else ""
+            lines.append(f"{mark} {r.pipeline} · {r.run_id}\n   {r.status}{tail}")
+        await self._safe_send("\n".join(lines))
+
+    def _pipe_detail(self, run) -> str:
+        """一条运行的细节。带上产出物摘要与外部来源标记——批之前该看见的就在这一屏。"""
+        from src.gateway.products import ProductStore
+        store = ProductStore(self.repo_root)
+        lines = [f"{run.pipeline} · {run.run_id} · {run.status}"]
+        for stage in run.stages:
+            line = f"  {stage.status} · {stage.id}"
+            if stage.attempts > 1:
+                line += f"（第 {stage.attempts} 次）"
+            lines.append(line)
+            if stage.product_id:
+                product = store.load(stage.product_id)
+                if product is None:
+                    lines.append(f"     ↳ 产出物 {stage.product_id} 读不到")
+                else:
+                    mark = " ⚠外部来源" if product.tainted else ""
+                    lines.append(f"     ↳ {product.summary or product.kind}{mark}")
+            if stage.note:
+                lines.append(f"     ↳ {stage.note}")
+        return "\n".join(lines)
+
+    async def _pipe_go(self, token: str) -> None:
+        """手动推一道工序。
+
+        存在的理由是**无人值守推不动的那一类**：对外工序在 cron 里连试都不试（没有确认通道），
+        通知会说"这一步要你带授权来"——那句话在手机上得有个落点，否则人只能爬去终端。
+        这里人就在关口，对外动作会弹按钮问你。
+        """
+        runs = self._live_runs()
+        if token:
+            run, err = self._resolve_run(token)
+        elif len(runs) == 1:
+            run, err = runs[0], ""
+        else:
+            run, err = None, ("现在没有在跑的流水线。" if not runs else
+                              "有多条在跑，说清楚是哪条：\n"
+                              + "\n".join(f"· {r.run_id}" for r in runs[:6]))
+        if run is None:
+            await self._safe_send(err)
+            return
+        if run.awaiting() is not None:
+            await self._safe_send(f"{run.run_id} 停在「{run.awaiting().id}」等你批，"
+                                  f"先 /ok 或 /no <意见>。")
+            return
+        if self._turn_task is not None and not self._turn_task.done():
+            await self._safe_send("有活在跑，先等它跑完或 /stop。")
+            return
+        await self._safe_send(f"▶️ 推进 {run.run_id}…")
+        self._start_pipeline_advance(run.run_id)
+
+    async def _pipe_review(self, verdict: str, rest: str) -> None:
+        """人批三档。**判定全在这里确定性地做，不经过模型**——批不批是人的意思，
+        让模型去理解一句话再决定，等于把人闸换成一次概率事件。
+        """
+        from src.gateway.pipeline import review as _review
+
+        token, comment = "", rest.strip()
+        first = comment.split(maxsplit=1)[0] if comment else ""
+        if first:
+            candidate, err = self._resolve_run(first)
+            # 第一个词只有**真能认出某条运行**时才当 run id，否则整句都是意见：
+            # `/no 角度太窄` 里的"角度太窄"不该被当成 id 去查。
+            # 但**长得像 run id 就一律当 run id**（哪怕认不出/认出多条）：否则
+            # `/ok prun-content`（匹配到两条）会被当成一句意见，转头去批那条唯一在等的——
+            # 用户明明指了名，系统却批了另一个，这比报错难查得多。
+            if (candidate is not None and not err) or first.startswith("prun"):
+                token = first
+                comment = comment[len(first):].strip()
+
+        run, err = self._resolve_run(token)
+        if run is None:
+            await self._safe_send(err)
+            return
+        if verdict == "reject" and not comment:
+            await self._safe_send("驳回要写一句为什么——不说理由，重跑出来还是原样。\n"
+                                  "例：/no 角度太窄，换个切入点")
+            return
+
+        result = _review(self.repo_root, run.run_id, verdict=verdict,
+                         comment=comment, reviewer="im")
+        head = {"approve": "✅ 已批", "reject": "↩️ 已驳回", "defer": "⏸ 已挂起"}[verdict]
+        await self._safe_send(f"{head} {run.run_id} · {result.reason}")
+        if verdict in {"approve", "reject"} and result.status in {"running", "done"}:
+            self._start_pipeline_advance(run.run_id)
+
+    def _start_pipeline_advance(self, run_id: str) -> None:
+        """批完立刻往下推一道。
+
+        不推的话，你在手机上点了"批"，然后要等下一次 cron（可能两小时）才有动静——
+        那不叫联动，那叫留言板。占用与 agent 回合同一个任务位，所以 /stop 一样能停它。
+        """
+        if self._turn_task is not None and not self._turn_task.done():
+            return                                   # 有活在跑：等它跑完，下一次 tick 会接上
+        self._turn_task = asyncio.create_task(self._run_pipeline_advance(run_id))
+
+    async def _run_pipeline_advance(self, run_id: str) -> None:
+        """推进一道工序，进度/确认按钮/终态都走与 agent 回合同一套事件流泵（`_drain`）。
+
+        这里**给了确认通道**：对外工序会在你手机上弹按钮，而不是像无人值守那样直接拒绝。
+        人就在关口——这正是把它接到 IM 上的意义。
+        """
+        from src.agents.pipeline_exec import build_stage_executor
+        from src.gateway.pipeline import advance
+
+        q: asyncio.Queue = asyncio.Queue()
+        confirm = self._make_confirm(q)
+        self._confirm_holder["fn"] = confirm
+        self._progress_holder["fn"] = lambda m: q.put_nowait(("progress", _strip(str(m))))
+
+        async def _inner():
+            try:
+                execute = build_stage_executor(
+                    self.repo_root, confirm=confirm,
+                    on_progress=lambda m: q.put_nowait(("progress", _strip(str(m)))))
+                result = await advance(self.repo_root, run_id, execute=execute)
+                q.put_nowait(("final", f"{result.status}"
+                              + (f" · 跑了 {'、'.join(result.ran)}" if result.ran else "")
+                              + (f" · 卡在 {result.blocked_on}" if result.blocked_on else "")
+                              + (f" · {result.reason}" if result.reason else "")))
+            except asyncio.CancelledError:
+                q.put_nowait(("final", "（已取消）"))
+                raise
+            except Exception as e:  # noqa: BLE001
+                q.put_nowait(("final", f"（推进出错：{e}）"))
+            finally:
+                q.put_nowait(("__done__", None))
+
+        await self._drain(q, asyncio.create_task(_inner()))
 
     # ------------------------------------------------------------ 后台任务（不占回合）
     def _get_runner(self):
@@ -620,7 +822,16 @@ class IMBridge:
             finally:
                 q.put_nowait(("__done__", None))
 
-        inner = asyncio.create_task(_inner())
+        await self._drain(q, asyncio.create_task(_inner()))
+
+    async def _drain(self, q: asyncio.Queue, inner) -> None:
+        """把一次长任务的 (progress / confirm / final) 事件流推到通道上，收尾清干净。
+
+        抽出来是因为**不止 agent 回合一种长任务**：流水线推进同样要滚动进度、同样可能在
+        对外工序上弹确认按钮、同样得在结束时把进度条刷成终态。上面那套节流/增量/编辑的
+        通道差异（真机 2026-07-27 逮到的那条）只该有一份实现——复制第二份的下场是
+        改了一处、另一处照旧刷屏。
+        """
         pid: Optional[str] = None          # 进度消息 id（滚动编辑，防刷屏）
         lines: list = []
         last_edit = 0.0
