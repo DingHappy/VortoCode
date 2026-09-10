@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 from typing import AsyncIterator, Awaitable, Callable, Optional
 
-from .channel import ChannelAdapter, ChannelEvent
+from .channel import ChannelAdapter, ChannelEvent, chunk_text
 from src.utils.http import outbound_session
 
 _log = logging.getLogger("vortocode.im.dingtalk")
@@ -239,15 +239,18 @@ class DingTalkAdapter(ChannelAdapter):
         两条通道都失败 → **抛异常**。上层 `notify_owner` 据此返回 False，
         投递器才有机会往台账落一条"未送达"（见 gateway/notices.py）。
         """
-        payload = {"msgtype": "text", "text": {"content": _clip(text)}}
-        if self._webhook:
-            try:
-                await self._reply_fn(self._webhook, payload)
-                return ""                         # 钉钉无 message_id 供编辑
-            except Exception as e:  # noqa: BLE001 —— webhook 失效（过期/网络）→ 丢弃它，走主动通道
-                _log.warning("sessionWebhook 回复失败（%s）——回退主动推送通道", str(e)[:120])
-                self._webhook = None              # 失效目标别留着挨个撞；下条过闸的入站会重新提交
-        await self._send_msg("sampleText", {"content": _clip(text)})
+        # **超长要拆，不能丢**。原先是 _clip 截断 + 一句"已截断"——人知道被截了，但后半截
+        # 再也拿不到（真机 2026-09-10 用户反馈，且正好发生在产出物预览上：批之前要看的内容看不全）。
+        for part in chunk_text(text, _TEXT_LIMIT) or ["（空）"]:
+            payload = {"msgtype": "text", "text": {"content": part}}
+            if self._webhook:
+                try:
+                    await self._reply_fn(self._webhook, payload)
+                    continue                      # 钉钉无 message_id 供编辑
+                except Exception as e:  # noqa: BLE001 —— webhook 失效 → 丢弃它，走主动通道
+                    _log.warning("sessionWebhook 回复失败（%s）——回退主动推送通道", str(e)[:120])
+                    self._webhook = None          # 失效目标别留着挨个撞；下条过闸的入站会重新提交
+            await self._send_msg("sampleText", {"content": part})
         return ""
 
     async def edit_text(self, message_id: str, text: str) -> None:
@@ -560,6 +563,9 @@ def _webhook_reply_problem(status: int, body: bytes) -> str:
     if code not in (None, 0, "0"):
         return f"sessionWebhook errcode {code}: {str(d.get('errmsg') or '')[:80]}"
     return ""
+
+
+_TEXT_LIMIT = 4000                # 单条文本上限（钉钉本身更宽松，这里取保守值防手机端折叠）
 
 
 def _clip(text: str, limit: int = 4000) -> str:
