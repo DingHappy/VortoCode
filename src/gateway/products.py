@@ -265,3 +265,64 @@ class ProductStore:
                 tainted = True
                 reasons.append(parent.taint_reason or f"继承自 {pid}")
         return tainted, reasons
+
+
+# ---------------------------------------------------------------- 给人看的渲染
+MAX_PREVIEW_CHARS = 1800          # 单次预览上限（IM 一屏能读完的量；超了说清还剩多少）
+_MAX_ITEMS = 6                    # 列表最多列几条
+_MAX_FIELD = 160                  # 单个字段值的字符上限
+_MAX_DEPTH = 3
+
+
+def _short(value: Any, limit: int = _MAX_FIELD) -> str:
+    text = str(value).replace("\n", " ").strip()
+    return text if len(text) <= limit else text[:limit] + "…"
+
+
+def _render(value: Any, depth: int, lines: List[str], prefix: str = "") -> None:
+    """按 **JSON 结构**渲染，不认识任何具体字段名。
+
+    **刻意不写死 schema**：工序定义（`.vortocode/pipelines/*.yaml`）和角色提示词都是用户可改的，
+    产出物长什么样跟着它们走。在这里写死 `topics`/`article` 这类字段，用户改一次流水线，
+    预览就开始漏内容——而漏的那部分恰恰是他要据以拍板的东西。宁可通用一点、少几分漂亮。
+    """
+    if depth > _MAX_DEPTH:
+        lines.append(f"{prefix}…（层级过深，略）")
+        return
+    pad = "  " * depth
+    if isinstance(value, dict):
+        for key, val in value.items():
+            if isinstance(val, (dict, list)):
+                lines.append(f"{pad}{key}:")
+                _render(val, depth + 1, lines)
+            else:
+                lines.append(f"{pad}{key}: {_short(val)}")
+    elif isinstance(value, list):
+        for i, item in enumerate(value[:_MAX_ITEMS], 1):
+            if isinstance(item, dict):
+                lines.append(f"{pad}{i}.")
+                _render(item, depth + 1, lines)
+            else:
+                lines.append(f"{pad}{i}. {_short(item)}")
+        if len(value) > _MAX_ITEMS:
+            lines.append(f"{pad}…还有 {len(value) - _MAX_ITEMS} 条")
+    else:
+        lines.append(f"{pad}{_short(value)}")
+
+
+def render_payload(payload: Any, *, limit: int = MAX_PREVIEW_CHARS) -> str:
+    """把产出物内容渲染成给人看的几行；空内容返回空串。
+
+    **批之前看得见内容，是人批这件事成立的前提。** 只给一句 summary 就让人点头，
+    那个"批"字没有意义——他批的是自己没看过的东西。
+    """
+    if not payload:
+        return ""
+    lines: List[str] = []
+    _render(payload, 0, lines)
+    text = "\n".join(lines)
+    if len(text) <= limit:
+        return text
+    clipped = text[:limit].rsplit("\n", 1)[0]
+    left = len(text) - len(clipped)
+    return clipped + f"\n…（还有约 {left} 字，完整内容见 .vortocode/products/）"

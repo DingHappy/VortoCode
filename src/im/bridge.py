@@ -590,8 +590,11 @@ class IMBridge:
         await self._safe_send("\n".join(lines))
 
     def _pipe_detail(self, run) -> str:
-        """一条运行的细节。带上产出物摘要与外部来源标记——批之前该看见的就在这一屏。"""
-        from src.gateway.products import ProductStore
+        """一条运行的细节。**等你批的那一道要把内容摊开**——只给一句 summary 就让人点头，
+        那个"批"字没有意义：他批的是自己没看过的东西（真机反馈："我没看到文本"）。
+        其余工序仍只给摘要，否则一屏刷满历史产出，真正要看的反而被埋掉。
+        """
+        from src.gateway.products import ProductStore, render_payload
         store = ProductStore(self.repo_root)
         lines = [f"{run.pipeline} · {run.run_id} · {run.status}"]
         for stage in run.stages:
@@ -606,6 +609,12 @@ class IMBridge:
                 else:
                     mark = " ⚠外部来源" if product.tainted else ""
                     lines.append(f"     ↳ {product.summary or product.kind}{mark}")
+                    if stage.status == "awaiting_review":
+                        body = render_payload(product.payload)
+                        if body:
+                            lines.append("")
+                            lines.append(body)
+                            lines.append("")
             if stage.note:
                 lines.append(f"     ↳ {stage.note}")
         return "\n".join(lines)
