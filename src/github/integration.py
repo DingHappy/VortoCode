@@ -83,8 +83,8 @@ class GitHubClient:
     async def _get_session(self):
         """获取 HTTP 会话"""
         if not self._session:
-            import aiohttp
-            self._session = aiohttp.ClientSession(
+            from src.utils.http import outbound_session
+            self._session = outbound_session(
                 headers={
                     "Authorization": f"token {self.token}",
                     "Accept": "application/vnd.github.v3+json",

@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import AsyncIterator, Awaitable, Callable, Optional
 
 from .channel import ChannelAdapter, ChannelEvent
+from src.utils.http import outbound_session
 
 _log = logging.getLogger("vortocode.im.dingtalk")
 
@@ -326,10 +327,9 @@ class DingTalkAdapter(ChannelAdapter):
         import time as _t
         import uuid as _u
 
-        import aiohttp
         tok = await self._token(legacy=False)
         if self._session is None:
-            self._session = aiohttp.ClientSession()
+            self._session = outbound_session()
         async with self._session.post(
                 "https://api.dingtalk.com/v1.0/robot/messageFiles/download",
                 json={"downloadCode": code, "robotCode": self._cid},
@@ -353,19 +353,17 @@ class DingTalkAdapter(ChannelAdapter):
 
     # ------------------------------------------------------------ 媒体（图片/文件）
     async def _ensure_session(self):
-        import aiohttp
         if self._session is None:
-            self._session = aiohttp.ClientSession()
+            self._session = outbound_session()
         return self._session
 
     async def _token(self, *, legacy: bool) -> str:
         """取 access_token，带缓存与提前刷新。legacy=True 是媒体上传用的老接口那套。"""
-        import aiohttp
         cached, exp = self._tok_old if legacy else self._tok_new
         if cached and time.monotonic() < exp:
             return cached
         if self._session is None:
-            self._session = aiohttp.ClientSession()
+            self._session = outbound_session()
         if legacy:
             async with self._session.get("https://oapi.dingtalk.com/gettoken",
                                          params={"appkey": self._cid, "appsecret": self._secret}) as r:
@@ -462,9 +460,8 @@ class DingTalkAdapter(ChannelAdapter):
 
     # ------------------------------------------------------------ 真实 transport（需钉钉 app 验证）
     async def _default_connect(self):
-        import aiohttp
         if self._session is None:
-            self._session = aiohttp.ClientSession()
+            self._session = outbound_session()
         async with self._session.post(
                 "https://api.dingtalk.com/v1.0/gateway/connections/open",
                 json={"clientId": self._cid, "clientSecret": self._secret,
@@ -488,9 +485,8 @@ class DingTalkAdapter(ChannelAdapter):
         return subs
 
     async def _default_reply(self, webhook: str, payload: dict) -> None:
-        import aiohttp
         if self._session is None:
-            self._session = aiohttp.ClientSession()
+            self._session = outbound_session()
         async with self._session.post(webhook, json=payload) as resp:
             body = await resp.read()
             # 失败必须抛（send_text 靠它决定要不要回退主动通道）。旧实现连响应都不看：
