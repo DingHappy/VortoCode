@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
+from src.utils.http import local_session, outbound_session
+
 _TIMEOUT = 5.0
 
 
@@ -68,9 +70,9 @@ async def _check_relay() -> Check:
     if not key:
         return Check("relay", "warn", f"跳过（无 key）：{base}")
     try:
-        # trust_env=True：吃 HTTP(S)_PROXY——用户经代理出网时（LLM SDK/httpx 默认吃），
-        # aiohttp 默认直连会误报"LLM 接口不可达"（真机 doctor 首跑就踩了这个）。
-        async with aiohttp.ClientSession(trust_env=True) as s:
+        # 与 llm/client.py 真正发请求的那条走**同一个工厂**：口径分岔的后果是体检说"可达"、
+        # 真调用却直连失败——报告和事实说的不是一回事（这正是本次要根除的那类问题）。
+        async with outbound_session() as s:
             async with s.get(f"{base}/models", headers={"Authorization": f"Bearer {key}"},
                              timeout=aiohttp.ClientTimeout(total=_TIMEOUT)) as r:
                 if r.status == 200:
@@ -87,9 +89,9 @@ async def _check_serve() -> Check:
     import aiohttp
     url = (os.getenv("VORTOCODE_SERVE_URL") or "http://127.0.0.1:8080").rstrip("/")
     try:
-        # 本地检查**刻意不吃代理环境**（默认 trust_env=False）：NO_PROXY 没配时，
-        # 127.0.0.1 走代理会被误路由、把在跑的 serve 误报成不可达。
-        async with aiohttp.ClientSession() as s:
+        # 本地检查**刻意不吃代理环境**：NO_PROXY 没配时，127.0.0.1 走代理会被误路由、
+        # 把在跑的 serve 误报成不可达。local_session 让这个选择在调用点写明白。
+        async with local_session() as s:
             async with s.get(f"{url}/api/health/quick",
                              timeout=aiohttp.ClientTimeout(total=_TIMEOUT)) as r:
                 body = {}
@@ -179,7 +181,7 @@ async def _check_im_liveness() -> Check:
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
         # 同 _check_serve：本地检查不吃代理环境，否则 127.0.0.1 会被误路由成"不可达"
-        async with aiohttp.ClientSession() as s:
+        async with local_session() as s:
             async with s.get(f"{url}/api/im/status", headers=headers,
                              timeout=aiohttp.ClientTimeout(total=_TIMEOUT)) as r:
                 if r.status in (401, 403):

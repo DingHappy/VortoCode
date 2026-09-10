@@ -8,6 +8,8 @@ from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from src.utils.http import outbound_session
+
 logger = logging.getLogger(__name__)
 
 # 加载 .env 文件
@@ -755,7 +757,7 @@ class LLMClient:
             if attempt:                                  # 重试前指数退避（首次 attempt=0 不睡）
                 await asyncio.sleep(self.config.retry_base_delay * (2 ** (attempt - 1)))
             try:
-                async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with outbound_session(timeout=timeout) as session:
                     async with session.post(url, json=payload, headers=headers) as response:
                         if response.status == 200:
                             data = await response.json()
@@ -793,7 +795,7 @@ class LLMClient:
         if self.config.api_key:
             headers["Authorization"] = f"Bearer {self.config.api_key}"
         timeout = aiohttp.ClientTimeout(total=min(self.config.timeout, 10.0))
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with outbound_session(timeout=timeout) as session:
             async with session.get(url, headers=headers) as response:
                 if response.status != 200:
                     raise Exception(f"获取模型列表失败：HTTP {response.status}")
@@ -832,7 +834,7 @@ class LLMClient:
         headers = {"Content-Type": "application/json",
                    "Authorization": f"Bearer {self.config.api_key}"}
         timeout = aiohttp.ClientTimeout(total=self.config.timeout)
-        async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with outbound_session(timeout=timeout) as session:
             async with session.post(url, json=payload, headers=headers) as resp:
                 if resp.status != 200:
                     raise Exception(f"TTS 请求失败: {resp.status} - {(await resp.text())[:300]}")

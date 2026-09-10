@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import AsyncIterator, Awaitable, Callable, Optional
 
 from .channel import ChannelAdapter, ChannelEvent
+from src.utils.http import outbound_session
 
 # 注入式 HTTP：async (method, payload) -> Telegram 返回的 result（ok=False 时应抛异常）
 RequestFn = Callable[[str, dict], Awaitable[object]]
@@ -66,7 +67,7 @@ class TelegramAdapter(ChannelAdapter):
     async def _default_request(self, method: str, payload: dict):
         import aiohttp
         if self._session is None:
-            self._session = aiohttp.ClientSession()
+            self._session = outbound_session()
         url = f"https://api.telegram.org/bot{self._token}/{method}"
         timeout = aiohttp.ClientTimeout(total=self._poll_timeout + 15)
         async with self._session.post(url, json=payload, timeout=timeout) as resp:
@@ -81,9 +82,8 @@ class TelegramAdapter(ChannelAdapter):
         整读进内存而不流式：Bot API 本身封顶 20MB（见 _MAX_FILE_BYTES），为这点体积引入流式
         只会让注入测试变复杂。
         """
-        import aiohttp
         if self._session is None:
-            self._session = aiohttp.ClientSession()
+            self._session = outbound_session()
         url = f"https://api.telegram.org/file/bot{self._token}/{file_path}"
         async with self._session.get(url) as resp:
             if resp.status != 200:
@@ -239,7 +239,7 @@ class TelegramAdapter(ChannelAdapter):
         if self._request_fn is not self._default_request:   # 测试注入态：不真发
             return False
         if self._session is None:
-            self._session = aiohttp.ClientSession()
+            self._session = outbound_session()
         form = aiohttp.FormData()
         form.add_field("chat_id", str(self.owner_id))
         if caption:
