@@ -6,7 +6,7 @@ system prompt。主 agent 的 `task`/`research_parallel` 工具用 `agent` 参�
     ---
     name: backend-dev
     description: 后端开发：负责 src/api 与数据层的实现
-    tools: dev            # read（默认：只读研究/评审型）| dev（可用隔离 dev 流水线真写代码）
+    tools: dev            # read（默认：只读）| dev（隔离流水线写代码）| deliver（把成品交到主人手上）
     model: mimo-v2.5      # 可选：该角色用哪个模型（缺省随主 agent）
     max_steps: 12         # 可选：单回合工具预算
     ---
@@ -16,6 +16,10 @@ system prompt。主 agent 的 `task`/`research_parallel` 工具用 `agent` 参�
 - `tools: read`（默认）：只读工具面，绝不改文件——产品经理/代码评审/QA 分析型角色。
 - `tools: dev`：额外给 dev_isolated/dev_parallel——**写入只经隔离流水线落 vorto/* 分支**，
   绝不碰主工作区；push/开 PR 不在子 agent 工具面里（收口仍在主 agent 的确认门）。
+- `tools: deliver`：额外给 send_image/send_file——**收件人恒为已配对 owner，模型指定不了目标**，
+  且每次都过确认门。这是目前**唯一一个能真的把东西送出去**的工具面。
+  它存在的理由见 pipeline_exec：一道 `outbound: true` 的工序，若角色手上没有任何真出口，
+  它交出来的"回执"只能是编的——而确认按钮在请人批准一件不会发生的事。
 - 子 agent 永远没有 `task`（不递归）、没有裸写工具/shell。
 解析失败/字段缺失都安全跳过（坏文件不拖垮 agent）；与 SkillRegistry 同一套渐进披露：
 只有 name+description 进主 agent 系统提示（catalog），正文按需加载。
@@ -27,7 +31,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-_TOOL_FACES = ("read", "dev")
+_TOOL_FACES = ("read", "dev", "deliver")
+
+# 哪些工具面**真的能把东西送出去**。`outbound: true` 的工序按这个判：手上没有真出口的角色
+# 只能编回执，那正是"系统报的和实际发生的不一样"最要命的一种形态。
+OUTBOUND_FACES = frozenset({"deliver"})
 
 
 @dataclass
@@ -35,7 +43,7 @@ class SubagentSpec:
     name: str
     description: str
     system_prompt: str
-    tools: str = "read"                    # read | dev
+    tools: str = "read"                    # read | dev | deliver
     model: Optional[str] = None
     max_steps: int = 12
 
