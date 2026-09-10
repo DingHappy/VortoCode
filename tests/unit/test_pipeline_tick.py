@@ -235,3 +235,68 @@ async def test_tick_exits_zero_even_when_a_human_is_needed(repo, monkeypatch, ca
     monkeypatch.setattr(pipeline_tick, "tick", fake_tick)
     assert await pipeline_cli.run_pipeline_cli("tick") == 0
     assert "已通报" in capsys.readouterr().out
+
+
+# ------------------------------------------------------------------ 无人值守就要真的是那一档
+@pytest.mark.asyncio
+async def test_a_web_stage_is_not_run_unattended(repo):
+    """`pipeline.py` 的 StageDef.web 注释一直写着"cron 驱动的工序即使申报了也拿不到网"。
+
+    第一版 tick 传 capabilities=None 且照传 with_web——**那句话对这条路径是假的**。
+    出网既是信息入口也是外传通道（web_fetch 的 GET query 就能带走东西），无人值守下尤其如此。
+    """
+    from src.gateway.pipeline import load_definition
+
+    d = repo + "/.vortocode/pipelines/web-ops.yaml"
+    with open(d, "w", encoding="utf-8") as fh:
+        yaml.safe_dump({"name": "web-ops", "stages": [
+            {"id": "scout", "produces": "topic_pool", "web": True}]}, fh, allow_unicode=True)
+    PipelineStore(repo).start(load_definition(repo, "web-ops"))
+
+    notify = Recorder()
+    outcomes = await tick(repo, execute=_ok, notify=notify, pipeline="web-ops")
+    assert outcomes[0].status == "needs_human" and outcomes[0].skipped
+    assert PipelineStore(repo).list(pipeline="web-ops")[0].stage("scout").attempts == 0
+    text = notify.sent[0][0]
+    assert "要出网" in text and "/go" in text
+
+
+@pytest.mark.asyncio
+async def test_a_web_stage_runs_when_a_human_is_at_the_gate(repo):
+    """有人在就照跑——"不给网"针对的是没人看着那一档，不是把出网工序永久禁掉。"""
+    from src.gateway.pipeline import load_definition
+
+    with open(repo + "/.vortocode/pipelines/web-ops.yaml", "w", encoding="utf-8") as fh:
+        yaml.safe_dump({"name": "web-ops", "stages": [
+            {"id": "scout", "produces": "topic_pool", "web": True}]}, fh, allow_unicode=True)
+    PipelineStore(repo).start(load_definition(repo, "web-ops"))
+
+    async def yes(_m):
+        return True
+
+    outcomes = await tick(repo, execute=_ok, notify=Recorder(), confirm=yes, pipeline="web-ops")
+    assert outcomes[0].status == "done" and outcomes[0].ran == ["scout"]
+
+
+@pytest.mark.asyncio
+async def test_the_executor_carries_the_unattended_profile(repo, monkeypatch):
+    """档名本身是审计证据——挂 external 的名跑 cron，事后翻台账看不出这一轮没人看着。
+
+    （能力集与 external 恰好相同，所以这里断的不是"拦住了什么"，而是**署名是否属实**。）
+    """
+    from src.agents import pipeline_exec
+    from src.agents.capabilities import UNATTENDED_PROFILE
+
+    seen = {}
+
+    def spy(repo_root, **kw):
+        seen.update(kw)
+
+        async def execute(stage_def, inputs):
+            return {"payload": {}, "summary": "x"}
+        return execute
+
+    monkeypatch.setattr(pipeline_exec, "build_stage_executor", spy)
+    _start(repo)
+    await tick(repo, notify=Recorder())
+    assert seen["capabilities"].profile == UNATTENDED_PROFILE

@@ -14,6 +14,17 @@
 （`awaiting_review:scout:<产出物>` / `failed:publish:3` / `done`…），签名没变就不再吭声。
 签名认的是**产出物**不是工序名：驳回重做后再次等批，那是新的一次等批，该说。
 
+## 无人值守就要真的是无人值守那一档
+
+tick 是**按构造**无人值守的（cron 驱动，没人在旁边）。所以它必须：
+
+* 用 `UNATTENDED_PROFILE` 起工序——能力集虽然与 external 相同，但**档名本身是审计证据**
+  （capabilities.py 的注释写明了单独命名就是为了这个）。挂 external 的名跑 cron，
+  事后翻台账根本看不出这一轮没人看着。
+* **不给出网**。`pipeline.py` 的 StageDef.web 注释一直写着"cron 驱动的工序即使申报了也拿不到网"，
+  但第一版 tick 传 `capabilities=None` 且照传 `with_web`，那句话对这条路径是**假的**。
+  出网既是信息入口也是外传通道（web_fetch 的 GET query 就能带走东西），无人值守下尤其如此。
+
 ## 对外工序：不试，也不烧重试次数
 
 无人值守没有确认通道，outbound 工序必然 fail-closed 失败。要是照常调 `advance`，三个夜里就把
@@ -73,6 +84,11 @@ def _message(repo_root: str, run, outcome: TickOutcome) -> str:
         return (f"📋 {head}\n工序「{outcome.blocked_on}」已产出，等你批：{detail}\n"
                 f"回 /ok 批 · /no <意见> 驳回 · /later 挂起\n"
                 f"（终端：vc pipeline review {run.run_id} --approve）")
+    if outcome.status == "needs_human":
+        return (f"🌐 {head}\n工序「{outcome.blocked_on}」要出网，无人值守这一档不给网"
+                f"（出网也是外传通道）。\n"
+                f"回 /go 推进（IM 这条路有你在，能出网）\n"
+                f"（终端：vc pipeline advance {run.run_id}）")
     if outcome.status == "needs_auth":
         return (f"🔒 {head}\n工序「{outcome.blocked_on}」是对外动作，无人值守不会替你发。\n"
                 f"回 /go 推进（对外那一步会弹按钮让你点）\n"
@@ -91,8 +107,8 @@ def _signature(outcome: TickOutcome, run) -> str:
         # pending→awaiting_review 一步走完，那个中间态根本没有哪次 tick 看得见，
         # 于是重做完的第二次等批被当成旧消息吞了——人不知道该回来看。）
         return f"awaiting_review:{outcome.blocked_on}:{stage.product_id if stage else ''}"
-    if outcome.status == "needs_auth":
-        return f"needs_auth:{outcome.blocked_on}"
+    if outcome.status in {"needs_auth", "needs_human"}:
+        return f"{outcome.status}:{outcome.blocked_on}"
     if outcome.status == "failed":
         stage = run.stage(outcome.blocked_on)
         # 带上第几次：试了一次没过和试满三次停下，是两条不同的消息。
@@ -135,8 +151,12 @@ async def tick(
     outcomes: List[TickOutcome] = []
 
     if execute is None:
+        from src.agents.capabilities import UNATTENDED_PROFILE, SessionCapabilities
         from src.agents.pipeline_exec import build_stage_executor
-        execute = build_stage_executor(repo_root, confirm=confirm)
+        # 档名是审计证据：事后翻台账要看得出这一轮没人看着（见模块头）。
+        execute = build_stage_executor(
+            repo_root, confirm=confirm,
+            capabilities=SessionCapabilities.for_profile(UNATTENDED_PROFILE, repo_root))
 
     for index, listed in enumerate(live):
         run = store.load(listed.run_id) or listed
@@ -153,8 +173,11 @@ async def tick(
         pending = next_stage(definition, run) if definition is not None else None
         stage_def = definition.stage(pending.id) if (definition and pending) else None
 
-        if stage_def is not None and stage_def.outbound and confirm is None:
-            outcome.status, outcome.blocked_on = "needs_auth", pending.id
+        if stage_def is not None and confirm is None and (stage_def.outbound or stage_def.web):
+            # 两者同源：都是"这一步得有人在"。分开报，是因为人要做的事不一样——
+            # 一个是点头放行，一个是换个有网的入口来推。
+            outcome.status = "needs_auth" if stage_def.outbound else "needs_human"
+            outcome.blocked_on = pending.id
             outcome.skipped = True
         else:
             result = await advance(repo_root, run.run_id, execute=execute,
