@@ -11,11 +11,16 @@ main_agent 注入 reviewer 同一理由，避免反向依赖成环）。本模�
 选题池，今天被读进来写文章时，这个回合看起来干干净净，免确认授权照常有效。那正是提示注入 D0
 的口子换了个时间维度重开。这根线接在这里，因为只有执行侧同时看得见"输入是什么"和"回合是谁"。
 
-## 二、outbound 工序过确认门
+## 二、outbound 工序过确认门（以及：得先有真出口）
 
 发布是对外动作。`confirm is None`（无确认通道，如无人值守）→ **拒绝，fail-closed**，与
 `_spawn` 对 dev 型角色的处置同一哲学。污点态下确认文案带上来源说明——但**只在真有污点时带**，
 不常亮（taint.py 的既定教训：把狼来了喊成日常就是拆防线）。
+
+还有一道在确认门**之前**：角色手上得真有出口。工具面只有 read/dev 的角色一件东西也送不出去，
+它交出来的"回执"只能是编的——而确认按钮在请人批准一件不会发生的事。真机 2026-09-10 就是
+这个状态：publisher 角色 `tools: read`，四道工序里的发布那道是个会撒谎的壳子。
+现在这种配置在跑之前就被拒绝，并说清缺什么、怎么改。
 
 ## 三、产出解析：解析不出就是没做完
 
@@ -97,8 +102,28 @@ def build_stage_executor(
         inherited = [p for p in inputs if p.tainted]
         reasons = "；".join(dict.fromkeys(p.taint_reason for p in inherited if p.taint_reason))
 
+        spec = registry_for(repo_root).get(stage_def.role) if stage_def.role else None
+        if stage_def.role and spec is None:
+            raise RuntimeError(f"工序「{stage_def.id}」声明的角色 {stage_def.role!r} 不存在"
+                               f"（在 .vortocode/agents/{stage_def.role}.md 定义它）")
+
         if stage_def.outbound:
-            # 对外动作必须过人闸。没有确认通道就拒绝——无人值守下"没人能说不"不等于"可以做"。
+            # ① 先看**做不做得到**，再问要不要做。顺序反了就是：问你"要发吗"、你点了同意、
+            #    然后才说"其实我发不了"——那次点头等于白按，而且按的是一件不会发生的事。
+            #    手上没有真出口的角色只能输出一段"我发布了"的 JSON，回执说发了、实际没发，
+            #    是"系统报的和实际发生的不一样"里最要命的一种。
+            from src.agents.subagents import OUTBOUND_FACES
+            face = spec.tools if spec is not None else "read"
+            if face not in OUTBOUND_FACES:
+                raise RuntimeError(
+                    f"工序「{stage_def.id}」声明了对外动作（outbound: true），但"
+                    + (f"角色 {stage_def.role!r} 的工具面是 {face!r}"
+                       if spec is not None else "本工序没有声明角色")
+                    + f"——手上没有任何能真的把东西送出去的工具，交出来的回执只能是编的。\n"
+                    f"  改法二选一：给角色配 `tools: deliver`（把成品交付到主人 IM，"
+                    f"收件人恒为 owner、每次过确认门）；或者去掉 outbound: true，"
+                    f"让这道工序只产出待发布包、由人手动发。")
+            # ② 做得到，才谈要不要做。没有确认通道就拒绝——无人值守下"没人能说不"不等于"可以做"。
             if confirm is None:
                 raise RuntimeError(
                     f"工序「{stage_def.id}」有对外动作，当前入口没有确认通道——已拒绝"
@@ -107,11 +132,6 @@ def build_stage_executor(
             if not await confirm(f"流水线「{stage_def.id}」要执行对外动作"
                                  f"（产出 {stage_def.produces or '未声明'}）。{warning}"):
                 raise RuntimeError(f"已取消：用户未放行工序「{stage_def.id}」的对外动作。")
-
-        spec = registry_for(repo_root).get(stage_def.role) if stage_def.role else None
-        if stage_def.role and spec is None:
-            raise RuntimeError(f"工序「{stage_def.id}」声明的角色 {stage_def.role!r} 不存在"
-                               f"（在 .vortocode/agents/{stage_def.role}.md 定义它）")
 
         shape = ("最终**只输出一个 JSON 对象**作为本工序的产出（可含 summary 字段作一句话摘要）；"
                  "不要输出解释性文字。" if stage_def.output != "text"
