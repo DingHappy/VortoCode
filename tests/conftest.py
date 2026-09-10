@@ -38,3 +38,26 @@ def _explicit_test_sandbox_off(monkeypatch):
     tests should not depend on the CI runner having bubblewrap installed.
     """
     monkeypatch.setenv("VORTOCODE_SANDBOX", "off")
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_ambient_credentials(monkeypatch):
+    """把套件与**机器自带的凭据/开关**隔开：`.env` 里有什么都不该改变测试结论。
+
+    `scripts/ci-local.sh` 与 CI 都把这四个设成空串，这本身是对的。但**保护来自调用方**，
+    而 CLAUDE.md 教人敲的是裸命令 `python -m pytest tests/ -q`——在 `.env` 里配了
+    `VORTOCODE_API_TOKEN` 的机器上（生产机 192.168.10.97 就是），那条命令会红 55 条，
+    报错还长得像代码坏了（`KeyError: 'artifacts'`——其实是 401 的响应体里没有那个键）。
+
+    **空串而不是 delenv，这个区别是要命的**：`load_dotenv(override=False)` 的判据是
+    "键在不在 `os.environ` 里"，空串也算在。所以
+        `VORTOCODE_API_TOKEN=""`  → dotenv 不覆盖 → 真的空
+        `env -u VORTOCODE_API_TOKEN` → 键没了 → dotenv 从 `.env` 读回来 → 反而有值
+    两种"清掉"的写法效果完全相反。2026-09-10 我就是用后者去验生产机，把 55 条环境失败
+    误判成回归，查了半天。
+
+    真要这些值的用例自行 `monkeypatch.setenv(...)` 覆盖——与本文件其他夹具同一约定。
+    """
+    for name in ("OPENAI_API_KEY", "VORTOCODE_API_TOKEN",
+                 "VORTOCODE_ENABLE_SHELL", "VORTOCODE_ENABLE_BROWSER"):
+        monkeypatch.setenv(name, "")
