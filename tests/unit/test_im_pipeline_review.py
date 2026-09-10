@@ -405,3 +405,39 @@ async def test_finished_stages_stay_summarised(repo):
     out = adapter.texts()[-1]
     assert "旧的" in out                        # 摘要还在
     assert "上一版的旧选题" not in out            # 但内容不摊开
+
+# ------------------------------------------------------------------ 手机输入法塞进来的东西
+@pytest.mark.parametrize("typed", [
+    "/no 角度太窄",           # 正常
+    "／no 角度太窄",           # 全角斜杠——中文输入法默认出这个
+    "/no​ 角度太窄",      # 零宽空格（复制粘贴带出来的）
+    "/No 角度太窄",           # 大小写
+    "/no。",                  # 句末中文句号
+])
+@pytest.mark.asyncio
+async def test_commands_survive_what_a_phone_keyboard_adds(repo, monkeypatch, typed):
+    """**这些在屏幕上和你打的一模一样，字典查找却必然落空。**
+
+    真机 2026-09-10：钉钉里回 `/no`，得到"未知命令 /no。"——你看着自己打的明明就是 /no，
+    最难查的一类报错。全角斜杠还更糟：`startswith("/")` 是 False，那条消息**不会**被当命令，
+    而是当成一句任务丢给 agent 去跑。
+    """
+    run = _waiting_run(repo)
+    _no_real_advance(monkeypatch)
+    bridge, adapter = _bridge(repo)
+    await _drive_with_advance(bridge, adapter, _msg(typed))
+    store = PipelineStore(str(repo))
+    if typed.endswith("。"):                      # 没带意见 → 应拒绝并说明为什么
+        assert "为什么" in adapter.texts()[-1]
+        assert store.load(run.run_id).status == "awaiting_review"
+    else:
+        assert store.load(run.run_id).stage("scout").status == "pending", f"{typed!r} 没被当成驳回"
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_command_shows_what_was_actually_received(repo):
+    """认不出时把看不见的东西显出来——否则"未知命令 /xx"和你打的长得一样，无从查起。"""
+    bridge, adapter = _bridge(repo)
+    await _drive_no_turn(bridge, adapter, _msg("/n​ope"))
+    out = adapter.texts()[-1]
+    assert "未知命令" in out and "我收到的是" in out and "u200b" in out.replace("\\u200b", "u200b")
