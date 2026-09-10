@@ -12,7 +12,7 @@ import uuid as _uuid
 from pathlib import Path
 from typing import AsyncIterator, Awaitable, Callable, Optional
 
-from .channel import ChannelAdapter, ChannelEvent
+from .channel import ChannelAdapter, ChannelEvent, chunk_text
 from src.utils.http import outbound_session
 
 # 注入式 HTTP：async (method, payload) -> Telegram 返回的 result（ok=False 时应抛异常）
@@ -25,6 +25,7 @@ _ME_RETRY_BASE = 5.0        # getMe 失败后首次重试的最短间隔（秒�
 _ME_RETRY_MAX = 300.0       # 退避上限：持续失败时最多 5 分钟试一次（别把群消息变成 getMe 洪水）
 # Bot API 的 getFile 只服务 ≤20MB 的文件（官方硬限制）。超了**提前如实说**，
 # 而不是发一次注定失败的请求再把 API 的英文报错甩给用户。
+_TEXT_LIMIT = 4000                # Bot API 单条文本硬限制 4096，留点余量
 _MAX_FILE_BYTES = 20 * 1024 * 1024
 # 按 Telegram 的消息字段分两类：能当图看的进 images（agent 读图路径），其余进 files。
 _IMAGE_FIELDS = ("photo", "sticker")
@@ -211,9 +212,17 @@ class TelegramAdapter(ChannelAdapter):
         self._me_backoff, self._me_retry_at = 0.0, 0.0
 
     async def send_text(self, text: str) -> str:
-        res = await self._api("sendMessage", chat_id=self.owner_id, text=_clip(text),
-                              disable_web_page_preview=True)
-        return str((res or {}).get("message_id", ""))
+        """超长**拆成多条**而不是截断丢弃（4096 是 Bot API 的硬限制）。
+
+        返回**最后一条**的 message_id：进度条的滚动编辑要接着往下改，指向第一条会把
+        后面几条晾在那儿。
+        """
+        mid = ""
+        for part in chunk_text(text, _TEXT_LIMIT) or ["（空）"]:
+            res = await self._api("sendMessage", chat_id=self.owner_id, text=part,
+                                  disable_web_page_preview=True)
+            mid = str((res or {}).get("message_id", "")) or mid
+        return mid
 
     async def edit_text(self, message_id: str, text: str) -> None:
         try:
