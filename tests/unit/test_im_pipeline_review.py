@@ -292,3 +292,48 @@ async def test_go_never_picks_among_several_running(repo, monkeypatch):
     await _drive_with_advance(bridge, adapter, _msg("/go"))
     out = adapter.texts()[-1]
     assert a.run_id in out and b.run_id in out and not called
+
+
+# ------------------------------------------------------------------ 别的进程排进来的通知
+@pytest.mark.asyncio
+async def test_queued_notices_are_flushed_even_without_a_reconnect(repo, monkeypatch):
+    """**这条钉的是"作业配好了却是哑的"那个真机故障。**
+
+    `notify_owner` 是进程内的（`_OWNER_NOTIFIER` 是 serve 进程的模块全局），而 cron 的
+    `command:` 作业跑在子进程里——`vc pipeline tick` 在那里发现"该你批了"，推不到 IM，
+    只能落台账 + 排进补发队列。
+
+    补发原先只在"通道重连过"时触发。桥连着好几天不断，那条就一直躺着，12 小时后按
+    STALE_HOURS 当过期丢掉——于是"卡住了叫人"从来叫不到人。
+    """
+    from src.gateway import notices
+
+    notices.queue_undelivered(str(repo), "🌐 该你推一下了", source="pipeline:content-ops")
+    assert notices.pending_undelivered_count(str(repo)) == 1
+
+    bridge, adapter = _bridge(repo)
+    bridge._heartbeat_every = 0.01
+    bridge._seen_reconnects = int(bridge.liveness().get("reconnects") or 0)   # 没有重连发生
+
+    task = asyncio.create_task(bridge._heartbeat_loop())
+    for _ in range(200):
+        if notices.pending_undelivered_count(str(repo)) == 0:
+            break
+        await asyncio.sleep(0.01)
+    task.cancel()
+
+    assert notices.pending_undelivered_count(str(repo)) == 0, "队列没被排空——补发仍只认重连"
+    assert any("该你推一下了" in t for t in adapter.texts())
+
+
+@pytest.mark.asyncio
+async def test_an_empty_queue_costs_one_small_read_and_says_nothing(repo):
+    """队列空时不该冒出任何消息——补发不能变成新的刷屏源。"""
+    bridge, adapter = _bridge(repo)
+    bridge._heartbeat_every = 0.01
+    bridge._seen_reconnects = int(bridge.liveness().get("reconnects") or 0)
+
+    task = asyncio.create_task(bridge._heartbeat_loop())
+    await asyncio.sleep(0.08)
+    task.cancel()
+    assert adapter.texts() == []
