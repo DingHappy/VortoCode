@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, List, Optional
 
 
 @dataclass
@@ -152,3 +152,48 @@ class ChannelAdapter:
     async def close(self) -> None:
         """释放资源（关 http session 等）。"""
         raise NotImplementedError
+
+
+# ---------------------------------------------------------------- 长消息分片
+MAX_CHUNKS = 6                    # 一条消息最多拆几片（再多就是刷屏，人不会读）
+
+
+def chunk_text(text: str, limit: int, *, max_chunks: int = MAX_CHUNKS) -> list[str]:
+    """把一段文本拆成通道发得下的若干片。**拆，不是丢。**
+
+    两个通道原先都是"超长就截断 + 加一句「已截断」"。截断的问题不在于人不知道被截了，
+    而在于**剩下的内容再也拿不到了**：台账记着"已发送"，手机上只有前半截，后半截既不在
+    聊天里也不在别处。真机 2026-09-10 用户发现的就是这个（"钉钉消息过长会截断"），
+    而那正好发生在刚加的产出物预览上——批之前该看见的内容，看不全。
+
+    尽量在**空行 → 换行 → 硬切**这个顺序上找断点，别把一句话劈两半。
+    超过 max_chunks 的部分如实说明还剩多少，不假装发完了。
+    """
+    body = str(text or "")
+    if len(body) <= limit:
+        return [body] if body else []
+
+    chunks: List[str] = []
+    rest = body
+    tag_room = 12                                  # 给「（1/3）」这类标记留位置
+    room = max(limit - tag_room, 1)
+    while rest and len(chunks) < max_chunks:
+        if len(rest) <= room:
+            chunks.append(rest)
+            rest = ""
+            break
+        window = rest[:room]
+        cut = window.rfind("\n\n")
+        if cut < room // 3:                        # 断点太靠前就别用，宁可退一档
+            cut = window.rfind("\n")
+        if cut < room // 3:
+            cut = room                             # 实在没有换行：硬切
+        chunks.append(rest[:cut].rstrip())
+        rest = rest[cut:].lstrip("\n")
+
+    total = len(chunks)
+    out = [f"{c}\n（{i}/{total}）" for i, c in enumerate(chunks, 1)]
+    if rest:
+        # 没发完就**说清还剩多少**——"发完了"和"发了一部分"必须能区分开。
+        out[-1] += f"\n⚠ 还有约 {len(rest)} 字没发（超过 {max_chunks} 条上限）"
+    return out
