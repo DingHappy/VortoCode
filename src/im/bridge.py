@@ -324,6 +324,14 @@ class IMBridge:
             lv["undelivered"] = 0
         return lv
 
+    def _pending_undelivered(self) -> int:
+        """补发队列里还剩几条。读不到当 0——补发是旁路，绝不能反过来拖垮心跳。"""
+        try:
+            from src.gateway.notices import pending_undelivered_count
+            return int(pending_undelivered_count(self.repo_root) or 0)
+        except Exception:  # noqa: BLE001
+            return 0
+
     async def flush_pending_notices(self) -> dict:
         """把断连期间没送到的通知补推一条汇总给主人。
 
@@ -344,10 +352,18 @@ class IMBridge:
         while True:
             try:
                 await asyncio.sleep(self._heartbeat_every)
-                # 通道重连过 → 之前多半有通知没送出去，补一次。放在 runner 判空**之前**：
-                # 没有后台任务时这个循环会 continue 掉，补发跟着一起哑掉（差点写成那样）。
+                # 补发的触发条件有两个，**第二个比第一个重要**：
+                #   ① 通道重连过——之前多半有通知没送出去；
+                #   ② 队列里就是有东西——不管为什么进去的。
+                # 只认①的话，**别的进程排进来的通知永远等不到**：`notify_owner` 是进程内的
+                # （_OWNER_NOTIFIER 是 serve 进程的模块全局），而 cron 的 command: 作业是
+                # 子进程——`vc pipeline tick` 在那里发现"该你批了"，只能落台账 + 排队。
+                # 桥要是连着好几天不断，那条就一直躺着，12 小时后按 STALE_HOURS 当过期丢掉。
+                # 结果是"卡住了叫人"从来叫不到人（2026-09-10 真机逮到：作业配好了却是哑的）。
+                # 队列为空时 pending_undelivered_count 只读一个小文件，不值得为它省。
                 reconnects = int(self.liveness().get("reconnects") or 0)
-                if reconnects != self._seen_reconnects:
+                queued = self._pending_undelivered()
+                if reconnects != self._seen_reconnects or queued:
                     self._seen_reconnects = reconnects
                     await self.flush_pending_notices()
                 runner = self._runner
