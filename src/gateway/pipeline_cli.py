@@ -11,6 +11,9 @@
 
 **退出码**是给 cron 与脚本看的：0=推进了或本来就没事干，1=需要人处理（等人批/失败/配置有问题）。
 "半夜推不动"和"半夜炸了"必须能被区分——否则台账里全是绿的，人永远不知道该去看哪一条。
+
+`tick` 是**例外，且是故意的**：它等人批也返回 0，因为该说的话它已经从通知通道说过了
+（见 `pipeline_tick` 模块头）。cron 再按非零退出码报一次红，人会收到两条同一件事的消息。
 """
 from __future__ import annotations
 
@@ -110,6 +113,25 @@ async def run_pipeline_cli(
               + (f" · 卡在 {result.blocked_on}" if result.blocked_on else "")
               + (f" · {result.reason}" if result.reason else ""))
         return 0 if result.status in {"running", "done"} else 1
+
+    if action == "tick":
+        # 无人值守入口：扫一遍活着的运行各推一道，状态有变化就走三路投递器通报。
+        # 这里**不给 confirm**——半夜没人看着，对外动作一律不做（连试都不试，见 pipeline_tick）。
+        from src.gateway.notices import make_notifier
+        from src.gateway.pipeline_tick import tick
+
+        outcomes = await tick(repo, notify=make_notifier(repo, trigger="scheduler"),
+                              max_stages=max_stages, pipeline=name)
+        if not outcomes:
+            print("（没有活着的流水线运行。）")
+            return 0
+        for item in outcomes:
+            print(f"{item.run_id} · {item.status}"
+                  + (f" · 跑了 {'、'.join(item.ran)}" if item.ran else "")
+                  + (f" · 卡在 {item.blocked_on}" if item.blocked_on else "")
+                  + ("  → 已通报" if item.announced else "")
+                  + (f" · {item.reason}" if item.reason else ""))
+        return 0
 
     if action == "review":
         if verdict not in {"approve", "reject", "defer"}:
