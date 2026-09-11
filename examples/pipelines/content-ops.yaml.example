@@ -86,18 +86,19 @@ stages:
   # ④ 数据回流。必须等数据攒够——这是物理约束，不是能力约束。
   #    产出的 metrics 会成为下一轮 scout 的输入，闭环在这里合上。
   #
-  #    ⚠ `needs: [data]` 是这道工序**最要紧的一行**。它职责写着"拉取各渠道的表现数据"，
-  #      而 tools: read 的角色手上全是读代码的工具——**模型没有能力时不会说"我做不到"，
-  #      它会编一份看起来像数据的 JSON**。而 metrics 会回流给下一轮 scout：
-  #      假数据进了闭环会自我强化，比 publish 编回执更糟（那个至少停在出口）。
-  #      申报了 needs，pipeline_exec 会在跑之前核对角色手上有没有对应工具，对不上就拒绝。
+  #    **只解读，不取数**——与 scout 读 signals 完全同构。取数的活交给确定性作业
+  #    （`vc stats`：把 /url 登记过的发布链接查一遍），这道工序只负责把数字读成判断。
+  #
+  #    所以这里**不申报 needs: [data]**：它不再声称自己会取数，那道闸也就没有对象。
+  #    （第一版让 analyst 自己"拉取各渠道数据"而手上只有读代码的工具——模型没有能力时
+  #      不会说"我做不到"，它会编一份看起来像数据的 JSON，而 metrics 会回流给下一轮 scout，
+  #      假数据进闭环会自我强化。解法不是给它取数工具，是把取数搬出工序。）
   - id: measure
     role: analyst
-    inputs: [publication, channel_stats]
+    inputs: [channel_stats, publication]
     produces: metrics
-    needs: [data]
     note: >
-      读 channel_stats（由确定性查询作业抓来的真实渠道数据）与 publication 回执，给出：
+      读 channel_stats（确定性查询作业抓来的真实数据）与 publication 回执，给出：
       哪类选题/角度跑得好、哪类没人看、下一轮建议避开什么。
       **查不到数据的渠道会在 channel_stats 里标出来——那和"0 次阅读"是两件事**，
       别把查不到当成表现差。样本太小就说样本太小，别硬总结出一条不存在的规律。
