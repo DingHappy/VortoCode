@@ -38,6 +38,7 @@ def _norm_cmd(token: str) -> str:
     return t.strip().rstrip("。.，,！!？?").lower()
 
 
+_STALE_TURNS = 12                 # 会话攒到这么多轮就在 /status 里提醒清——旧上下文不会自己说话
 _PIPE_LIST = {"/pipe", "/流水线"}
 _PIPE_GO = {"/go", "/推"}
 _PIPE_VERDICTS = {"/ok": "approve", "/批": "approve",
@@ -496,6 +497,10 @@ class IMBridge:
             msg = (f"仓库 {Path(self.repo_root).name} · 模式 {self.mode} · "
                    f"{'运行中' if busy else '空闲'} · 白名单 {len(self.allow_from)} 人 · "
                    f"已忽略白名单外 {self._ignored} 条、群里没 @ 我 {self._ignored_no_mention} 条")
+            msg += "\n" + self._session_age_line()
+            pipe = self._pipeline_status_line()
+            if pipe:
+                msg += "\n" + pipe
             recent = self._recent_plan()                 # 最近的 dev_auto 计划进度（可 dev_resume 续跑）
             if recent:
                 msg += f"\n最近计划：{recent}"
@@ -557,6 +562,68 @@ class IMBridge:
             if raw_cmd != cmd:
                 hint = f"（我收到的是 {raw_cmd!r}，归一化后 {cmd!r}）"
             await self._safe_send(f"未知命令 {cmd}。/help 看用法。{hint}")
+
+    def _session_age_line(self) -> str:
+        """会话攒了多少轮——**长了要提醒清**。
+
+        真机 2026-09-10：会话里躺着 40 条关于"非科技行业财报"的历史，用户毫不知情地在同一个
+        窗口里聊流水线，于是得到一份财报。**没有任何迹象提醒他该 /new 了**——旧上下文不会
+        自己说话，它只会安静地把新问题拽回旧话题。
+        """
+        try:
+            turns = len([m for m in (getattr(self.agent, "history", None) or [])
+                         if isinstance(m, dict) and m.get("role") == "user"])
+        except Exception:  # noqa: BLE001
+            return "会话：读不到历史"
+        if turns >= _STALE_TURNS:
+            return (f"会话：已 {turns} 轮**未清**——旧话题会把新问题拽回去"
+                    f"（今天就撞过一次）。想换个话题先 /new。")
+        return f"会话：{turns} 轮" + ("（还很新）" if turns <= 2 else "")
+
+    def _pipeline_status_line(self) -> str:
+        """/status 里的流水线一行。两个世界各报各的，人才看得出自己在哪个里面。"""
+        try:
+            runs = self._live_runs()
+        except Exception:  # noqa: BLE001
+            return ""
+        if not runs:
+            return "流水线：没有在跑的"
+        waiting = [r for r in runs if r.status == "awaiting_review"]
+        if waiting:
+            first = waiting[0]
+            what = first.awaiting().id if first.awaiting() is not None else "?"
+            return (f"流水线：{len(runs)} 条在跑，**{len(waiting)} 条等你批**"
+                    f"（{first.run_id} 停在「{what}」）· /pipe 看 · /ok 批")
+        return f"流水线：{len(runs)} 条在跑，暂无需要你批的 · /pipe 看"
+
+    def _pipeline_pointer(self) -> str:
+        """给主 agent 的回合加一行**指针**：现在有没有流水线在等人。
+
+        真机 2026-09-10：用户打了一句"我没看到文本"，收到的是一份非科技行业财报。
+        那个窗口里其实有**两个世界**——`/` 开头的命令由桥确定性处理、不经过模型；其他任何话
+        丢给主 agent，而**主 agent 的上下文里根本没有流水线这回事**。它拿着几十条旧对话历史，
+        把那句话理解成"你上次发的财报我没收到"，于是重发了一遍。从它的角度完全合理。
+
+        **只给指针不给内容**，两个理由：
+        - 产出物是带污点的，把内容注进每个回合等于把污点扩散到整个会话；
+        - 系统提示在会话内必须字节级稳定（前缀缓存），动态状态只能进回合消息。
+        """
+        try:
+            runs = self._live_runs()
+        except Exception:  # noqa: BLE001 —— 指针是附加品，读不到就不加
+            return ""
+        if not runs:
+            return ""
+        waiting = [r for r in runs if r.status == "awaiting_review"]
+        if waiting:
+            first = waiting[0]
+            what = first.awaiting().id if first.awaiting() is not None else "?"
+            tail = f"（还有 {len(waiting) - 1} 条也在等）" if len(waiting) > 1 else ""
+            return (f"\n\n（流水线状态：{first.run_id} 停在工序「{what}」等用户批{tail}。"
+                    f"用户要看内容/批准请让他用 /pipe、/ok、/no <意见>——**这些是桥的命令，"
+                    f"不经过你**，你不要代为执行或转述产出物内容。）")
+        return (f"\n\n（流水线状态：{len(runs)} 条在跑，暂无需要用户批的。"
+                f"用户可用 /pipe 查看。）")
 
     # ------------------------------------------------------------ 流水线（在手机上批）
     def _live_runs(self) -> list:
@@ -873,7 +940,7 @@ class IMBridge:
                 # 文件走文本告知路径（agent 用 read_file 自己读）；图片走 run_turn 的
                 # images 通道（#186 的多模态入口）。**两者都在污点回合内**——kind="im" 的
                 # 会话每回合无条件打污点，图里写的指令因此拿不到任何免确认授权。
-                prompt = text
+                prompt = text + self._pipeline_pointer()
                 if files:
                     prompt = ((prompt + "\n\n") if prompt else "") + \
                         "（用户随消息发来文件，已存到：\n" + \
