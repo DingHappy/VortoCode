@@ -164,12 +164,23 @@ def _github_new_repos(fetch: Callable[[str], bytes]) -> List[Signal]:
     return out
 
 
+# V2EX 上**明确不是技术信号**的节点。真机 2026-09-11 抓到的热门里，"推广"节点那条是
+# 「注册就送 $11」的广告。这是denylist 不是 allowlist：allowlist 会把"还没见过但其实相关"
+# 的节点也挡掉，而漏挡一条广告的代价远小于漏掉一条真信号。
+#
+# ⚠ 即使过滤掉这些，V2EX 热门整体仍然偏闲聊（充值 ChatGPT、换手机推荐）——它反映的是
+#   "中文开发者在聊什么"，不是"发生了什么"。当成氛围参考，别当成选题来源。
+_V2EX_SKIP_NODES = {"推广", "广告", "二手交易", "酷工作", "全球工单系统", "宽带症候群"}
+
+
 def _v2ex_hot(fetch: Callable[[str], bytes]) -> List[Signal]:
     """中文开发者在关心什么。官方接口、免 key。"""
     out: List[Signal] = []
     for t in (_json(fetch, "https://www.v2ex.com/api/topics/hot.json") or []):
         tid = t.get("id")
         if not tid or not t.get("title"):
+            continue
+        if str(((t.get("node") or {}).get("title") or "")).strip() in _V2EX_SKIP_NODES:
             continue
         out.append(Signal(
             id=f"v2ex:{tid}", source="v2ex", title=str(t["title"]),
@@ -299,11 +310,41 @@ def collect(repo_root: str, *, fetch: Optional[Callable[[str], bytes]] = None,
             state[sig.id]["reported"] = stamp.isoformat(timespec="seconds")
             result.signals.append(sig)
 
-    # 热的排前面：**有增量的按增量排，没有的按绝对值**——首次见到的条目不该因为
-    # delta 为空就沉底，它可能正是今天刚冒出来的那个。
-    result.signals.sort(key=lambda s: (s.delta if s.delta is not None else s.score), reverse=True)
+    result.signals = _interleave(result.signals)
     _save_state(repo_root, state)
     return result
+
+
+def _interleave(signals: List[Signal]) -> List[Signal]:
+    """跨源排序：**先在各源内部排热度，再轮流取**。
+
+    不能跨源直接比分数——量纲根本不同。真机 2026-09-11 的早报当场暴露了这点：
+
+        【v2ex】 129 如何充值 chatgpt？救救孩子吧        ← 129 是**回帖数**
+        【hackernews】 18 Thelio Mira AI Workstation   ← 18 是**投票分**
+
+    129 > 18 纯粹因为数字大，结果 v2ex 的闲聊把 HN 的真信号挤下去了。这不只影响早报好不好看：
+    scout 拿到的也是这个顺序，payload 一旦触到体积上限，被截掉的就是排在后面的那些。
+
+    **源内比较是有意义的**（同一把尺子），跨源则轮流取——每个源都有机会被看见，
+    而每个源内部最热的先出。
+    """
+    by_source: Dict[str, List[Signal]] = {}
+    for sig in signals:
+        by_source.setdefault(sig.source, []).append(sig)
+    for items in by_source.values():
+        # 有增量的按增量，没有的按绝对值——首次见到的条目不该因为 delta 为空就沉底，
+        # 它可能正是今天刚冒出来的那个。
+        items.sort(key=lambda s: (s.delta if s.delta is not None else s.score), reverse=True)
+    out: List[Signal] = []
+    queues = list(by_source.values())
+    while queues:
+        for items in list(queues):
+            if not items:
+                queues.remove(items)
+                continue
+            out.append(items.pop(0))
+    return out
 
 
 def _within(iso: str, now: datetime, days: int) -> bool:

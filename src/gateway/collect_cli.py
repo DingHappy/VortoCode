@@ -72,3 +72,77 @@ def run_stats_cli(*, quiet: bool = False) -> int:
             else:
                 print(f"  [{s.channel}] 查不到：{s.reason[:60]}")
     return 0
+
+
+def run_digest_cli(*, limit: int = 12) -> int:
+    """`vc digest` —— 把最新一份 signals 渲染成给人读的早报。**零 LLM。**
+
+    原来这活是个 `prompt:` 作业：让模型 `web_search` 搜"今日科技新闻"这类泛关键词，再挑 5 条
+    写摘要。那正是 scout 今天治好的毛病——搜索返回的是**摘要**不是**事件**，泛关键词搜出来
+    大量是内容农场的 SEO 文，模型分不清哪条是真的新。
+
+    而 signals 里已经带着分数、增量、标题、链接。**按分数挑是确定性的**：比让模型转述一遍更准、
+    零 token、而且编不了。LLM 该留给真正需要判断的地方（scout 选题、analyst 读数据），
+    不是格式化。
+
+    退出码：0=出了早报；1=还没有 signals（采集没跑过）。cron 据此知道该不该报红。
+    """
+    from src.gateway.products import ProductStore
+
+    repo = str(Path.cwd())
+    product = ProductStore(repo).latest("signals")
+    if product is None:
+        print("还没有 signals 产出物（先跑 vc collect）", file=sys.stderr)
+        return 1
+    print(render_digest(product, limit=limit))
+    return 0
+
+
+def render_digest(product, *, limit: int = 12) -> str:
+    """把 signals 产出物渲染成早报。**按来源分组，组内按热度排。**
+
+    热度口径与采集器一致：有增量的用增量（50k star 的仓库不是新闻，这周涨 2k 的才是），
+    没有增量的用绝对值（首次见到的可能正是今天刚冒出来的）。
+    """
+    rows = list((product.payload or {}).get("signals") or [])
+    failed = list((product.payload or {}).get("sources_failed") or [])
+    if not rows:
+        return "📰 今天没有新信号。" + (f"\n⚠ {len(failed)} 个源失败" if failed else "")
+
+    by_source: dict = {}
+    for row in rows:
+        by_source.setdefault(str(row.get("source") or "?"), []).append(row)
+
+    def heat(row):
+        delta = row.get("delta")
+        return delta if delta is not None else int(row.get("score") or 0)
+
+    # **每个源公平分配名额**，不按分数排序抢位。真机 2026-09-11 的第一版早报：
+    #     【v2ex】129 如何充值 chatgpt？救救孩子吧     ← 129 是回帖数
+    #     【hackernews】18 Thelio Mira AI Workstation  ← 18 是投票分
+    # 129 > 18 纯粹因为数字大、量纲不同，结果 v2ex 的闲聊吃掉了 10 个位置里的 5 个。
+    # 源内比热度是有意义的（同一把尺子），跨源只能均分。
+    lines = [f"📰 今日信号（{len(rows)} 条）"]
+    share = max(1, limit // max(1, len(by_source)))
+    budget = limit
+    for source in sorted(by_source):
+        if budget <= 0:
+            break
+        items = sorted(by_source[source], key=heat, reverse=True)[:min(share, budget)]
+        if not items:
+            continue
+        lines.append(f"\n【{source}】")
+        for row in items:
+            budget -= 1
+            delta = row.get("delta")
+            # **增量和绝对值要能分辨**：+320 和 320 在"值不值得看"上是两回事。
+            heat_text = f"+{delta}" if delta else str(row.get("score") or "")
+            title = str(row.get("title") or "")[:78]
+            lines.append(f"· {heat_text} {title}")
+            url = str(row.get("url") or "")
+            if url:
+                lines.append(f"  {url}")
+    if failed:
+        # **失败的源要说出来**：少了一块而不说，人会以为今天就这么点事。
+        lines.append(f"\n⚠ {len(failed)} 个源没取到：" + "；".join(f[:40] for f in failed[:3]))
+    return "\n".join(lines)
