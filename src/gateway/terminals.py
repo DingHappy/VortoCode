@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import codecs
 import os
-import re
 import shutil
 import signal
 import struct
@@ -18,6 +17,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+from src.utils.ids import typed_id
 
 _MAX_ACTIVE_TERMINALS = 6
 _MAX_BUFFER_CHARS = 500_000
@@ -254,8 +254,12 @@ class TerminalManager:
 
     @staticmethod
     def _clean_id(terminal_id: str) -> str:
-        value = str(terminal_id or "")
-        return value if re.fullmatch(r"term-[A-Za-z0-9_-]+", value) else ""
+        """校验型：不合法直接拒绝，**不做任何转换**（见 src/utils/ids）。
+
+        与清洗型的关键区别：`term-x/../y` 不会被洗成 `term-x_.._y`，它被直接拒绝——
+        调用方据此知道"这个 id 我不认识"，而不是拿着一个被悄悄改过的 id 往下走。
+        """
+        return typed_id(terminal_id, "term")
 
     def create(self, *, cols: int = 100, rows: int = 28) -> Dict[str, Any]:
         with self._lock:

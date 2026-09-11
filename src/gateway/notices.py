@@ -43,7 +43,7 @@ def record_notice(repo_root: str, text: str, *, source: str = "scheduler",
     """
     p = _path(repo_root)
     try:
-        from src.agents.dev_plan import ensure_state_gitignore
+        from src.utils.state_dir import ensure_state_gitignore
         ensure_state_gitignore(repo_root)
         p.parent.mkdir(parents=True, exist_ok=True)
         payload: Dict[str, Any] = {

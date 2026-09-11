@@ -296,7 +296,7 @@ class CronState:
 
     def _persist(self) -> None:
         try:
-            from src.agents.dev_plan import ensure_state_gitignore
+            from src.utils.state_dir import ensure_state_gitignore
             ensure_state_gitignore(self._repo_root)      # .vortocode/ 自忽略：cron 状态不污染目标仓库 git status
             self._path.parent.mkdir(parents=True, exist_ok=True)
             tmp = self._path.with_suffix(".json.tmp")
@@ -374,7 +374,7 @@ def _verify(text: str, name: str, *, expect_enabled: Optional[bool],
 
 
 def _write(repo_root: str, text: str) -> None:
-    from src.agents.dev_plan import ensure_state_gitignore
+    from src.utils.state_dir import ensure_state_gitignore
     ensure_state_gitignore(repo_root)
     p = cron_path(repo_root)
     p.parent.mkdir(parents=True, exist_ok=True)

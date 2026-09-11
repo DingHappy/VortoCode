@@ -9,16 +9,15 @@ introducing a second autonomous executor.
 from __future__ import annotations
 
 import json
-import re
 import subprocess
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from src.utils.ids import safe_id
 
 _DIRNAME = "goals"
-_BAD = re.compile(r"[^A-Za-z0-9_-]")
 _GOAL_STATUSES = {"draft", "active", "blocked", "achieved", "failed"}
 _CRITERION_STATUSES = {"pending", "passed", "failed"}
 _VERIFIER_KINDS = {"test", "build", "lint", "file"}
@@ -29,10 +28,7 @@ def _now() -> str:
 
 
 def _clean_id(value: str) -> Optional[str]:
-    if not value:
-        return None
-    cleaned = _BAD.sub("_", str(value)).strip("_")
-    return cleaned or None
+    return safe_id(value)
 
 
 def evidence_revision(repo_root: str, branch: str = "", *, require_checkout: bool = True) -> tuple[str, str]:
@@ -334,7 +330,7 @@ class GoalLedger:
         goal.updated = _now()
         path = self._path(goal_id)
         try:
-            from src.agents.dev_plan import ensure_state_gitignore
+            from src.utils.state_dir import ensure_state_gitignore
 
             ensure_state_gitignore(self.repo_root)
             path.parent.mkdir(parents=True, exist_ok=True)

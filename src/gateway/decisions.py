@@ -51,7 +51,7 @@ class DecisionStore:
         dismissed[decision_id] = _now()
         dismissed = dict(list(dismissed.items())[-_MAX_DISMISSED:])
         try:
-            from src.agents.dev_plan import ensure_state_gitignore
+            from src.utils.state_dir import ensure_state_gitignore
 
             ensure_state_gitignore(self.repo_root)
             self.path.parent.mkdir(parents=True, exist_ok=True)

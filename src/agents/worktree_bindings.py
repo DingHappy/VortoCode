@@ -67,7 +67,7 @@ def _read_unlocked(repo_root: str) -> dict[str, dict[str, str]]:
 
 
 def _write_unlocked(repo_root: str, bindings: Mapping[str, Mapping[str, str]]) -> None:
-    from src.agents.dev_plan import ensure_state_gitignore
+    from src.utils.state_dir import ensure_state_gitignore
 
     ensure_state_gitignore(repo_root)
     target = _path(repo_root)

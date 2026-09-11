@@ -252,7 +252,7 @@ def _load_state(repo_root: str) -> Dict[str, Any]:
 def _save_state(repo_root: str, state: Dict[str, Any]) -> None:
     path = _state_path(repo_root)
     try:
-        from src.agents.dev_plan import ensure_state_gitignore
+        from src.utils.state_dir import ensure_state_gitignore
         ensure_state_gitignore(repo_root)
         path.parent.mkdir(parents=True, exist_ok=True)
         # 只留最近的：快照会随时间无限涨，而老条目对 delta 和去重都没用了。

@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlsplit, urlunsplit
+from src.utils.ids import typed_id
 
 _DIRNAME = "runs"
 _VALID_KINDS = frozenset({"terminal", "test", "preview"})
@@ -267,8 +268,12 @@ class RunLedger:
 
     @staticmethod
     def _clean_id(run_id: str) -> str:
-        value = str(run_id or "")
-        return value if re.fullmatch(r"run-[A-Za-z0-9_-]+", value) else ""
+        """校验型：不合法直接拒绝，**不做任何转换**（见 src/utils/ids）。
+
+        与清洗型的关键区别：`run-x/../y` 不会被洗成 `run-x_.._y`，它被直接拒绝——
+        调用方据此知道"这个 id 我不认识"，而不是拿着一个被悄悄改过的 id 往下走。
+        """
+        return typed_id(run_id, "run")
 
     def create(
         self,
@@ -308,7 +313,7 @@ class RunLedger:
         # 而 cron 的例行班次是直接 save 一条全新记录（不走 create），所以钩子必须在 save 里。
         is_new = not path.exists()
         try:
-            from src.agents.dev_plan import ensure_state_gitignore
+            from src.utils.state_dir import ensure_state_gitignore
 
             ensure_state_gitignore(self.repo_root)
             path.parent.mkdir(parents=True, exist_ok=True)
