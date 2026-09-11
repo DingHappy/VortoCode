@@ -169,3 +169,22 @@ def test_subdomains_match_the_parent_entry(url):
     一句"没有对应的查询适配器"——听起来像**还没做**，其实是**根本查不到**。"""
     s = fetch_one(url, _bili_ok)
     assert s.supported is False and "没有对应的查询适配器" not in s.reason
+
+
+def test_empty_ledger_is_not_a_failure(tmp_path, monkeypatch, capsys):
+    """台账空 → 退出码 0。**"没事可做"不该占用告警通道。**
+
+    真机 2026-09-11 20:05：cron 每天早晚各推一条「🔴 cron [channel_stats] 失败（退出码 1）」，
+    原因只是还没人用 /url 登记过链接。这条会一直响到你登记第一条为止——等真出故障那天，
+    这个渠道已经被训练成可以忽略了。
+
+    同模块的 docstring 早写过这个判据（"报红会让台账里全是红的、人反而不看了"），只是当时
+    只想到"查到了但查不出数"，没想到"一条都还没有"。两者是同一类。
+    """
+    from src.gateway.collect_cli import run_stats_cli
+
+    monkeypatch.chdir(tmp_path)
+    assert run_stats_cli(quiet=False) == 0
+    out = capsys.readouterr()
+    assert "/url" in out.out          # 提示走 stdout，不是 stderr
+    assert out.err == ""
