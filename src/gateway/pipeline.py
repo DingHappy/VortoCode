@@ -85,6 +85,16 @@ class StageDef:
     #     run_isolated_session 那条路径，对 tick 并不成立。文档与代码分岔比没有文档更坏，
     #     所以改成 tick 真正做的事。）
     web: bool = False
+    # 本工序**需要什么能力**才谈得上做成。执行前核对角色的工具面对不对得上，对不上就在跑之前
+    # 拒绝并说清缺什么——否则模型只能"假装做了"，交出一段看起来像回执/像数据的 JSON。
+    #
+    # 这条是从 outbound 那道闸**推广**出来的通则。真机 2026-09-10：publish 工序声明了
+    # outbound 却配了个 tools: read 的角色，只能编回执；同一天发现 measure 更糟——
+    # 它职责写着"拉取各渠道的表现数据"，手上全是读代码的工具，编出来的 metrics 还会**回流给
+    # 下一轮 scout**，假数据进了闭环会自我强化。outbound 那道闸管不到它，因为它不是 outbound。
+    #
+    # 可申报：deliver（真能把东西送出去）| data（真能取到外部数据）。留空 = 不需要特殊能力。
+    needs: List[str] = field(default_factory=list)
     # 产出解析口径：json（默认，要求工序输出一个 JSON 对象）| text（整段回复存成 {"text": ...}）。
     # **显式声明而不是解析失败就退化成 text**——那种静默降级正是"审查解析不出就当没问题"的同款病。
     output: str = "json"
@@ -127,10 +137,37 @@ class PipelineDef:
                 review=bool(item.get("review")),
                 outbound=bool(item.get("outbound")),
                 web=bool(item.get("web") or item.get("allow_web")),
+                needs=_needs_of(item, name, sid),
                 output=str(item.get("output") or "json").strip().lower(),
                 note=str(item.get("note") or "").strip(),
             ))
         return PipelineDef(name=name, stages=stages)
+
+
+KNOWN_NEEDS = ("deliver", "data")
+
+
+def _needs_of(item: Dict[str, Any], pipeline: str, sid: str) -> List[str]:
+    """解析工序申报的能力。**不认识的名字要炸**，不能静默忽略。
+
+    静默忽略的后果是：你写了 `needs: [datta]`（打错一个字母），系统照跑，
+    而那道闸**看起来生效了其实没有**——比没有闸更糟。
+    """
+    raw = item.get("needs") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        raise ValueError(f"流水线 {pipeline} 工序 {sid} 的 needs 必须是列表")
+    out = []
+    for value in raw:
+        key = str(value).strip().lower()
+        if not key:
+            continue
+        if key not in KNOWN_NEEDS:
+            raise ValueError(f"流水线 {pipeline} 工序 {sid} 申报了不认识的能力 {key!r}"
+                             f"（可选：{'、'.join(KNOWN_NEEDS)}）")
+        out.append(key)
+    return out
 
 
 def load_definition(repo_root: str, name: str) -> Optional[PipelineDef]:
