@@ -174,6 +174,9 @@ def main():
                                       "（确定性、零 LLM，给 cron 的 command: 档用）")
     p.add_argument("-q", "--quiet", action="store_true", help="只报结果，不列条目")
 
+    p = sub.add_parser("stats", help="渠道数据查询：把已登记的发布链接查一遍，落一条 channel_stats")
+    p.add_argument("-q", "--quiet", action="store_true", help="只报结果，不列条目")
+
     p = sub.add_parser("pipeline", help="作业流水线（.vortocode/pipelines/*.yaml）：非代码流程的工序 + 人批闸门")
     p.add_argument("action", choices=["list", "show", "start", "advance", "review", "tick"],
                    help="list 看全部 / show <run> 看细节 / start <名字> 开一轮 / "
@@ -295,6 +298,10 @@ def main():
     elif args.command == "collect":
         from src.gateway.collect_cli import run_collect_cli
         sys.exit(run_collect_cli(quiet=args.quiet))
+
+    elif args.command == "stats":
+        from src.gateway.collect_cli import run_stats_cli
+        sys.exit(run_stats_cli(quiet=args.quiet))
 
     elif args.command == "pipeline":
         from src.gateway.pipeline_cli import run_pipeline_cli
