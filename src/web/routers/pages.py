@@ -22,6 +22,19 @@ async def root():
     return {"message": "VortoCode API", "version": "0.1.0"}
 
 
+@router.get("/review")
+def review_console():
+    """审批台：审阅流水线产出、给回执。
+
+    IM 只负责"叫人"（状态变化推一条通知），审阅在这里做——一屏几十行的选题池在手机上
+    读不了，人需要能横向对比、能展开原文。两条路共用同一份状态，不是两套。
+    """
+    html_path = _WEB_DIR / "review.html"
+    if html_path.is_file():
+        return FileResponse(html_path, media_type="text/html")
+    return HTMLResponse("<h1>审批台页面缺失</h1>", status_code=404)
+
+
 @router.get("/agent")
 async def agent_view():
     """返回主 agent 网页对话台（WebSocket 流式，复用 TUI 的主 agent loop）"""

@@ -7,6 +7,8 @@
 * 同一道工序被驳回重做后再次等批，那是新的一次，必须再说；
 * 对外工序在无人值守下永远做不成——那就别去试，更别把重试次数烧光把自己废掉。
 """
+import asyncio
+
 import pytest
 import yaml
 
@@ -84,8 +86,7 @@ async def test_notification_carries_the_next_step(repo):
     await tick(repo, execute=_ok, notify=notify)
     text, source = notify.sent[0]
     assert "3 个候选选题" in text and run_id in text
-    assert "/ok" in text and "/no" in text          # 手机上能直接回的
-    assert "--approve" in text                     # 终端那条也留着（台账的读者在终端）
+    assert "/ok" in text and "/no" in text          # 手机上能直接回的快捷路径
     assert source == "pipeline:content-ops"          # 台账上"哪条流水线出的"要一眼看得出
 
 
@@ -119,8 +120,7 @@ async def test_outbound_is_not_attempted_without_a_confirm_channel(repo):
     assert outcomes[0].status == "needs_auth" and outcomes[0].blocked_on == "publish"
     assert PipelineStore(repo).load(run_id).stage("publish").attempts == 0   # 一次都没烧
     assert sum("🔒" in t for t, _ in notify.sent) == 1                        # 也只说一次
-    stuck = next(t for t, _ in notify.sent if "🔒" in t)
-    assert "/go" in stuck and "--yes" in stuck
+    assert "/go" in next(t for t, _ in notify.sent if "🔒" in t)
 
 
 @pytest.mark.asyncio
@@ -321,3 +321,38 @@ def test_the_message_never_claims_more_than_happened(repo, status, ran, expect, 
     msg = _message(repo, run, TickOutcome(run_id=run_id, pipeline=run.pipeline,
                                           status=status, ran=ran))
     assert expect in msg and forbid not in msg
+
+
+# ------------------------------------------------------------------ 通知是简报 + 指路
+def test_the_notification_points_at_the_review_console(repo, monkeypatch):
+    """**IM 只负责叫人，审阅在审批台做。**
+
+    一屏几十行的选题池在手机上读不了，把全文塞进推送人反而更不会读。所以通知给的是
+    指路，不是内容——但手机上直接回 /ok 的快捷路径仍然留着（有时你就是想一眼看完直接批）。
+    """
+    monkeypatch.setenv("VORTOCODE_PUBLIC_BASE_URL", "http://192.168.10.97:8080")
+    _start(repo)
+    notify = Recorder()
+    asyncio.run(tick(repo, execute=_ok, notify=notify))
+    text = notify.sent[0][0]
+    assert "/review" in text and "192.168.10.97:8080" in text
+    assert "/ok" in text                                   # 快捷路径没被拿掉
+
+
+def test_no_link_when_the_console_address_is_not_configured(repo, monkeypatch):
+    """没配公共地址就**一个字都不加**——配错了世界也不该变坏（与卡片模板同一条纪律）。"""
+    monkeypatch.delenv("VORTOCODE_PUBLIC_BASE_URL", raising=False)
+    _start(repo)
+    notify = Recorder()
+    asyncio.run(tick(repo, execute=_ok, notify=notify))
+    assert "/review" not in notify.sent[0][0]
+
+
+@pytest.mark.parametrize("bad", ["javascript:alert(1)", "file:///etc/passwd", "ftp://x"])
+def test_a_non_http_console_address_is_refused(repo, monkeypatch, bad):
+    """钉钉消息里的链接会被点。`javascript:` 这类 scheme 从配置渗进消息就是埋雷。"""
+    monkeypatch.setenv("VORTOCODE_PUBLIC_BASE_URL", bad)
+    _start(repo)
+    notify = Recorder()
+    asyncio.run(tick(repo, execute=_ok, notify=notify))
+    assert bad.split(":")[0] not in notify.sent[0][0]
