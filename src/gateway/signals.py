@@ -33,6 +33,8 @@ from __future__ import annotations
 
 import json
 import re
+import time
+import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -40,6 +42,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 _TIMEOUT = 15
+_RETRIES = 3                      # 传输层抖动的重试次数（不含 HTTP 错误码）
+_RETRY_BACKOFF = 1.5              # 退避基数（秒）；第 n 次等 n * BACKOFF
 _MAX_BYTES = 3_000_000
 _UA = "VortoCode-signals/1.0"
 
@@ -74,16 +78,36 @@ class CollectResult:
 
 # ---------------------------------------------------------------- 取数（可注入）
 def _fetch(url: str) -> bytes:
-    """GET 一个 URL。走 urllib，**默认吃 HTTP(S)_PROXY**（build_opener 自带 ProxyHandler）。"""
-    from src.agents.web_fetch import _host_is_safe, refusal_reason
+    """GET 一个 URL。走 urllib，**默认吃 HTTP(S)_PROXY**（build_opener 自带 ProxyHandler）。
+
+    **抖一次要重试。** 真机 2026-09-10：同一轮里 4 个源同时 `SSL handshake timed out`，
+    十分钟前它们还都是好的——出海链路本身就是间歇性的（那台代理机的节点在劣化，
+    CI runner 同期也被同一件事判了 Abandoned）。单次尝试的后果是**整个源今天没了**，
+    而 scout 看到的"什么在热"就少了一整块，它还不知道自己少看了什么。
+
+    只重试**传输层的抖动**（超时/连接错）。HTTP 4xx/5xx 不重试——那是对方明确回答了，
+    重试三次得到的还是同一个答案，纯属浪费一次窗口。
+    """
     from urllib.parse import urlparse
+
+    from src.agents.web_fetch import _host_is_safe, refusal_reason
 
     host = urlparse(url).hostname or ""
     if not _host_is_safe(host):
         raise RuntimeError(f"拒绝抓取：{refusal_reason(host) or host}")
     req = urllib.request.Request(url, headers={"User-Agent": _UA, "Accept": "*/*"})
-    with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:   # noqa: S310 —— 已过 SSRF 闸
-        return resp.read(_MAX_BYTES)
+    last: Exception = RuntimeError("未尝试")
+    for attempt in range(_RETRIES):
+        try:
+            with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:  # noqa: S310 —— 已过 SSRF 闸
+                return resp.read(_MAX_BYTES)
+        except urllib.error.HTTPError:
+            raise                                   # 对方明确答了：别重试
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            last = e
+            if attempt + 1 < _RETRIES:
+                time.sleep(_RETRY_BACKOFF * (attempt + 1))
+    raise last
 
 
 def _json(fetch: Callable[[str], bytes], url: str) -> Any:
