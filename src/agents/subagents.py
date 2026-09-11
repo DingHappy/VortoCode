@@ -33,9 +33,24 @@ from typing import Optional
 
 _TOOL_FACES = ("read", "dev", "deliver")
 
-# 哪些工具面**真的能把东西送出去**。`outbound: true` 的工序按这个判：手上没有真出口的角色
-# 只能编回执，那正是"系统报的和实际发生的不一样"最要命的一种形态。
-OUTBOUND_FACES = frozenset({"deliver"})
+# 每个工具面**真的具备**哪些能力。工序用 `needs:` 申报要什么，执行前按这张表核对——
+# 对不上就在跑之前拒绝，而不是让模型交出一段"看起来像回执/像数据"的 JSON。
+#
+# 这张表是判据本身：**加新工具面时忘了在这里登记，那个面就什么能力都没有**（fail-closed），
+# 而不是悄悄被当成什么都能做。
+FACE_CAPABILITIES = {
+    "read": frozenset(),
+    "dev": frozenset(),
+    "deliver": frozenset({"deliver"}),
+}
+
+# 兼容旧口径：`outbound: true` 等价于 `needs: [deliver]`。
+OUTBOUND_FACES = frozenset(f for f, caps in FACE_CAPABILITIES.items() if "deliver" in caps)
+
+
+def face_capabilities(face: str) -> frozenset:
+    """某个工具面具备的能力；不认识的面**当成什么都不会**（fail-closed）。"""
+    return FACE_CAPABILITIES.get(str(face or "").strip().lower(), frozenset())
 
 
 @dataclass

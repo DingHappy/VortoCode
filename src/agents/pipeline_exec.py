@@ -77,6 +77,41 @@ def _parse_output(reply: str, stage_def: StageDef) -> Dict[str, Any]:
                      "请在流水线定义里写 output: text）")
 
 
+def _require_capabilities(stage_def: StageDef, spec: Any) -> None:
+    """工序申报的能力，角色手上得真有。对不上就在跑之前拒绝并说清缺什么。
+
+    **模型没有能力时不会说"我做不到"，它会交出一段看起来对的 JSON。** 真机 2026-09-10 两例：
+    - publish 声明 outbound、角色 `tools: read` → 只能编一段"已发布到 X 渠道"的回执；
+    - measure 职责写着"拉取各渠道的表现数据"、手上全是读代码的工具 → 编出来的 metrics
+      还会**回流给下一轮 scout**，假数据进了闭环会自我强化。
+
+    第二例尤其说明问题：outbound 那道闸管不到它（它不是 outbound），所以这道闸必须是**通则**，
+    按 `needs:` 申报来核对，而不是绑在某一个布尔字段上。
+    """
+    from src.agents.subagents import face_capabilities
+
+    wanted = set(stage_def.needs)
+    if stage_def.outbound:
+        wanted.add("deliver")             # 旧口径：outbound: true 等价于 needs: [deliver]
+    if not wanted:
+        return
+    face = spec.tools if spec is not None else "read"
+    missing = sorted(wanted - set(face_capabilities(face)))
+    if not missing:
+        return
+    where = (f"角色 {spec.name!r} 的工具面是 {face!r}" if spec is not None
+             else "本工序没有声明角色（拿的是只读工具面）")
+    hint = {
+        "deliver": "给角色配 `tools: deliver`（把成品交付到主人 IM，收件人恒为 owner、"
+                   "每次过确认门），或者去掉 outbound: true 让它只产出待发布包、由人手动发",
+        "data": "让上游用确定性采集作业把数据抓好、本工序只负责解读（同 scout 读 signals 那样）",
+    }
+    raise RuntimeError(
+        f"工序「{stage_def.id}」申报需要 {'、'.join(missing)} 能力，但{where}"
+        f"——手上没有对应的工具，它交出来的东西只能是编的。\n  "
+        + "；\n  ".join(hint.get(m, f"给角色配上能提供 {m} 的工具面") for m in missing))
+
+
 def build_stage_executor(
     repo_root: str,
     *,
@@ -107,22 +142,11 @@ def build_stage_executor(
             raise RuntimeError(f"工序「{stage_def.id}」声明的角色 {stage_def.role!r} 不存在"
                                f"（在 .vortocode/agents/{stage_def.role}.md 定义它）")
 
+        # ① 先看**做不做得到**，再问要不要做。对 outbound 来说顺序反了就是：问你"要发吗"、
+        #    你点了同意、然后才说"其实我发不了"——那次点头等于白按。
+        _require_capabilities(stage_def, spec)
+
         if stage_def.outbound:
-            # ① 先看**做不做得到**，再问要不要做。顺序反了就是：问你"要发吗"、你点了同意、
-            #    然后才说"其实我发不了"——那次点头等于白按，而且按的是一件不会发生的事。
-            #    手上没有真出口的角色只能输出一段"我发布了"的 JSON，回执说发了、实际没发，
-            #    是"系统报的和实际发生的不一样"里最要命的一种。
-            from src.agents.subagents import OUTBOUND_FACES
-            face = spec.tools if spec is not None else "read"
-            if face not in OUTBOUND_FACES:
-                raise RuntimeError(
-                    f"工序「{stage_def.id}」声明了对外动作（outbound: true），但"
-                    + (f"角色 {stage_def.role!r} 的工具面是 {face!r}"
-                       if spec is not None else "本工序没有声明角色")
-                    + f"——手上没有任何能真的把东西送出去的工具，交出来的回执只能是编的。\n"
-                    f"  改法二选一：给角色配 `tools: deliver`（把成品交付到主人 IM，"
-                    f"收件人恒为 owner、每次过确认门）；或者去掉 outbound: true，"
-                    f"让这道工序只产出待发布包、由人手动发。")
             # ② 做得到，才谈要不要做。没有确认通道就拒绝——无人值守下"没人能说不"不等于"可以做"。
             if confirm is None:
                 raise RuntimeError(
