@@ -116,3 +116,10 @@ def test_a_single_source_still_fills_the_page():
     """只有一个源时不该因为"均分"而只显示一条。"""
     out = render_digest(_product([_sig(title=f"第{i}条", score=i) for i in range(10)]), limit=6)
     assert sum(1 for ln in out.splitlines() if ln.startswith("· ")) >= 5
+
+
+def test_a_source_without_scores_shows_no_number_rather_than_zero():
+    """RSS 源（lobsters / 官方博客）没有热度字段。**显示 0 会被读成"没人看"**，
+    而真相是"这个源根本没有热度这个概念"——留空位比编一个 0 诚实。"""
+    out = render_digest(_product([_sig(source="blog", title="一篇博文", score=0, delta=None)]))
+    assert "· 一篇博文" in out and "0 一篇博文" not in out
