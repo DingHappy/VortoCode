@@ -33,6 +33,16 @@ jobs:
     announce: im
     enabled: false             # 默认关（避免意外自动改动），确认要开再改 true
 
+  # 每日早报——**零 LLM**。把最新一份 signals 渲染成一屏给人读的。
+  # 原来这活是个 prompt 作业（让模型 web_search 搜"今日科技新闻"再挑 5 条），那正是 scout
+  # 治好过的毛病：搜索返回的是摘要不是事件，泛关键词搜出来大量是内容农场的 SEO 文。
+  # signals 里已经带着分数/增量/标题/链接，**按分数挑是确定性的**——更准、零 token、编不了。
+  - name: daily_digest
+    schedule: "at 09:00"
+    command: "vc digest"
+    announce: im              # 命令输出即早报，cron 推给你
+    enabled: false
+
   # 依赖升级检查——每周一早上看看有没有依赖要升。
   - name: dep_check
     schedule: "0 9 * * 1"

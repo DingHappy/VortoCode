@@ -288,3 +288,40 @@ def test_hacker_news_stops_instead_of_eating_the_whole_round(monkeypatch):
 
     out = sg._hacker_news(fetch)
     assert 0 < len(out) < 15                     # 拿到多少算多少，没跑完 15 条
+
+
+# ------------------------------------------------------------------ 跨源不比分数
+def test_sources_are_interleaved_not_ranked_against_each_other(tmp_path):
+    """**量纲不同的分数不能直接比。** v2ex 的 129 是回帖数、hn 的 18 是投票分——
+    129 > 18 纯粹因为数字大，结果闲聊把真信号挤下去。
+
+    这不只影响早报好不好看：scout 拿到的也是这个顺序，payload 触到体积上限时，
+    被截掉的就是排在后面的那些。
+    """
+    chatty = [Signal(id=f"v{i}", source="v2ex", title=f"闲聊{i}", score=130 - i) for i in range(6)]
+    real = [Signal(id=f"h{i}", source="hn", title=f"真信号{i}", score=20 - i) for i in range(3)]
+    r = collect(str(tmp_path), fetch=lambda u: b"",
+                sources={"a": lambda _f: chatty + real}, now=NOW)
+    top = [s.source for s in r.signals[:4]]
+    assert "hn" in top, "hn 被大数字挤出了前四"
+
+
+def test_within_a_source_the_hottest_still_comes_first(tmp_path):
+    items = [Signal(id="a", source="hn", title="冷", score=5),
+             Signal(id="b", source="hn", title="热", score=900)]
+    r = collect(str(tmp_path), fetch=lambda u: b"", sources={"s": lambda _f: items}, now=NOW)
+    assert [s.title for s in r.signals] == ["热", "冷"]
+
+
+def test_v2ex_ad_nodes_are_dropped():
+    """真机抓到的热门里，"推广"节点那条是「注册就送 $11」的广告。"""
+    import json as _json
+
+    from src.gateway.signals import _v2ex_hot
+
+    body = [
+        {"id": 1, "title": "一条广告", "replies": 99, "node": {"title": "推广"}},
+        {"id": 2, "title": "一条正常帖", "replies": 5, "node": {"title": "程序员"}},
+    ]
+    out = _v2ex_hot(lambda u: _json.dumps(body).encode())
+    assert [s.title for s in out] == ["一条正常帖"]
