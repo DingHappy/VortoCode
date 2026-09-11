@@ -40,6 +40,7 @@ def _norm_cmd(token: str) -> str:
 
 _PIPE_LIST = {"/pipe", "/流水线"}
 _PIPE_GO = {"/go", "/推"}
+_PIPE_URL = {"/url", "/链接"}
 _PIPE_VERDICTS = {"/ok": "approve", "/批": "approve",
                   "/no": "reject", "/驳": "reject",
                   "/later": "defer", "/挂": "defer"}
@@ -538,6 +539,9 @@ class IMBridge:
         elif cmd in _PIPE_GO:
             await self._pipe_go(text.split(maxsplit=1)[1].strip()
                                 if len(text.split(maxsplit=1)) > 1 else "")
+        elif cmd in _PIPE_URL:
+            await self._pipe_url(text.split(maxsplit=1)[1].strip()
+                                 if len(text.split(maxsplit=1)) > 1 else "")
         elif cmd in _PIPE_VERDICTS:
             await self._pipe_review(_PIPE_VERDICTS[cmd],
                                     text.split(maxsplit=1)[1].strip()
@@ -548,7 +552,8 @@ class IMBridge:
                 "/task <描述> 后台跑（不占当前会话，进度自动推、完成发开 PR 按钮）· /tasks 看后台任务。\n"
                 "/mode plan|build 切模式 · /status 看状态 · /stop 中断当前任务 · /new 清空会话。\n"
                 "/pipe 看流水线 · /ok 批（批完自动往下推）· /no <意见> 驳回 · /later 挂起 · "
-                "/go 推一道（对外工序会弹按钮）。中文别名 /批 /驳 /挂 /推。\n"
+                "/go 推一道（对外工序会弹按钮）· /url <链接> 登记已发布的链接（之后数据自动查）。\n"
+                "中文别名 /批 /驳 /挂 /推 /链接。\n"
                 "写文件/跑命令/开 PR 会发按钮让你确认（人在关口）。")
         else:
             # 认不出时**把看不见的东西显出来**。"未知命令 /no"配上你明明打了 /no，
@@ -640,6 +645,34 @@ class IMBridge:
             if stage.note:
                 lines.append(f"     ↳ {stage.note}")
         return "\n".join(lines)
+
+    async def _pipe_url(self, rest: str) -> None:
+        """登记一条已发布的链接。**你只需要给一次链接**，数字之后由 `vc stats` 定期去查。
+
+        为什么不是让你报数字：手填能用，但每轮要人记得去查、去算、去打字，这种事第三天就
+        没人做了。发完文章顺手发一句链接，成本接近于零。
+        """
+        from src.gateway.channel_stats import _known_unsupported, register_url
+
+        url = rest.split()[0] if rest.split() else ""
+        if not url.lower().startswith(("http://", "https://")):
+            await self._safe_send("用法：/url <已发布的链接>\n例：/url https://www.bilibili.com/video/BV1xx")
+            return
+        runs = self._live_runs()
+        run_id = runs[0].run_id if runs else ""
+        if not register_url(self.repo_root, url, run_id=run_id):
+            await self._safe_send("登记失败（写不进台账）。")
+            return
+        msg = f"✅ 已登记{('（归到 ' + run_id + '）') if run_id else ''}：{url}"
+        # **当场告诉你这个渠道到底查不查得到**（只查本地那张表，不联网）——等到出数据那天
+        # 才发现是空的，那一轮就白等了。
+        known = _known_unsupported(url)
+        if known is not None:
+            # 查不到就现在说。等到 measure 那天才发现是空的，那一轮的数据就白等了。
+            msg += f"\n⚠ 但这个渠道**查不到数据**：{known.reason}\n数据回流那一步会跳过它。"
+        else:
+            msg += "\n数据由定时作业自动查，不用你报数字。"
+        await self._safe_send(msg)
 
     async def _pipe_go(self, token: str) -> None:
         """手动推一道工序。
