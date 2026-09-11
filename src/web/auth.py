@@ -55,7 +55,7 @@ _EXEMPT_PREFIXES = ("/docs", "/redoc", "/openapi.json", "/static")
 # 不带 Cookie**（除非 crossorigin="use-credentials"），Android 的可安装性检查同样匿名取
 # manifest/sw——设了 token 的真机上这四条 401，「加到主屏幕」就退化成普通书签
 # （2026-08-02 部署后 curl 当场撞到）。内容全部公开无敏感：名字、图标、三行空监听的 sw。
-_EXEMPT_EXACT = {"/", "/agent", "/artifacts",
+_EXEMPT_EXACT = {"/", "/agent", "/artifacts", "/review",
                  "/agent.css", "/agent.js",   # 对话台的样式/逻辑（拆分件）：登录门本身要靠它们渲染
                  "/manifest.webmanifest", "/pwa-icon.svg", "/pwa-icon.png", "/sw.js",
                  "/api/health", "/api/health/quick",

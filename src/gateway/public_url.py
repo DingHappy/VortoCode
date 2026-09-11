@@ -24,3 +24,15 @@ def agent_link() -> str:
     """控制台深链的展示行；未配置 → 空串（调用方直接拼接，无需判空再加换行）。"""
     base = public_base_url()
     return f"\n📱 {base}/agent" if base else ""
+
+
+def review_link(run_id: str = "") -> str:
+    """审批台深链；未配置 → 空串。
+
+    IM 只负责**叫人**，审阅在审批台做：一屏几十行的选题池在手机上读不了，人需要能横向对比、
+    能展开原文。所以通知里给的是**指路**，不是内容——把全文塞进推送，人反而更不会读。
+    """
+    base = public_base_url()
+    if not base:
+        return ""
+    return f"\n📱 {base}/review" + (f"（{run_id}）" if run_id else "")

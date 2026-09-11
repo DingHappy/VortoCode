@@ -558,6 +558,36 @@
   ]
  },
  {
+  "path": "/api/pipelines",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/pipelines/{run_id}",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/pipelines/{run_id}/lineage/{product_id}",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/pipelines/{run_id}/products/{product_id}/raw",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/pipelines/{run_id}/review",
+  "methods": [
+   "POST"
+  ]
+ },
+ {
   "path": "/api/projects",
   "methods": [
    "GET"
@@ -919,6 +949,12 @@
   "methods": [
    "GET",
    "HEAD"
+  ]
+ },
+ {
+  "path": "/review",
+  "methods": [
+   "GET"
   ]
  },
  {
