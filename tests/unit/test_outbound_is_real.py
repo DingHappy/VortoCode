@@ -36,7 +36,7 @@ async def test_a_role_with_no_real_outlet_is_refused_before_it_can_invent_a_rece
     stage = StageDef(id="publish", role="publisher", produces="publication", outbound=True)
     with pytest.raises(RuntimeError) as e:
         await execute(stage, [])
-    assert "回执只能是编的" in str(e.value)
+    assert "只能是编的" in str(e.value)
     assert "tools: deliver" in str(e.value)          # 说清怎么改，不只是说不行
 
 
@@ -46,7 +46,7 @@ async def test_an_outbound_stage_without_any_role_is_refused_too(repo):
     execute = build_stage_executor(str(repo), confirm=_yes)
     with pytest.raises(RuntimeError) as e:
         await execute(StageDef(id="publish", produces="publication", outbound=True), [])
-    assert "回执只能是编的" in str(e.value)
+    assert "只能是编的" in str(e.value)
 
 
 @pytest.mark.asyncio
@@ -89,3 +89,58 @@ async def test_the_deliver_face_actually_carries_sending_tools(repo):
     names = set(sub.tools)                    # MainAgent.tools 是 name -> tool 的字典
     assert {"send_file", "send_image", "send_document"} <= names
     assert "write_file" not in names          # 交付者不该能改仓库里任何一个文件
+
+
+# ------------------------------------------------------------------ 从特例推广成通则
+@pytest.mark.asyncio
+async def test_a_stage_that_needs_data_but_cannot_fetch_any_is_refused(repo):
+    """**这条比 outbound 那条更要紧。**
+
+    measure 的职责写着"拉取各渠道的表现数据"，而 tools: read 的角色手上全是读代码的工具。
+    模型没有能力时**不会说"我做不到"，它会编一份看起来像数据的 JSON**——而 metrics 会
+    回流给下一轮 scout：假数据进了闭环会自我强化，比 publish 编回执更糟（那个至少停在出口）。
+
+    outbound 那道闸管不到它（它不是 outbound），所以闸必须按 needs 申报来判，而不是
+    绑在某一个布尔字段上。
+    """
+    _role(repo, "analyst", "read")
+    execute = build_stage_executor(str(repo), confirm=_yes)
+    stage = StageDef(id="measure", role="analyst", produces="metrics", needs=["data"])
+    with pytest.raises(RuntimeError) as e:
+        await execute(stage, [])
+    assert "data" in str(e.value) and "只能是编的" in str(e.value)
+    assert "确定性采集作业" in str(e.value)          # 说清该怎么办
+
+
+@pytest.mark.asyncio
+async def test_a_stage_that_needs_nothing_special_runs(repo, monkeypatch):
+    """没申报 needs 的工序不受影响——这道闸只管"申报了却做不到"。"""
+    from src.agents import agent_loop
+
+    async def run_turn(self, prompt, mode="plan"):
+        return '{"summary": "ok"}'
+
+    monkeypatch.setattr(agent_loop.MainAgent, "run_turn", run_turn)
+    _role(repo, "writer", "read")
+    execute = build_stage_executor(str(repo))
+    out = await execute(StageDef(id="write", role="writer", produces="content_pack"), [])
+    assert out["summary"] == "ok"
+
+
+def test_an_unknown_capability_in_the_yaml_is_a_loud_error():
+    """**打错一个字母不能静默忽略。** `needs: [datta]` 照跑的话，那道闸看起来生效了其实没有
+    ——比没有闸更糟。"""
+    from src.gateway.pipeline import PipelineDef
+
+    with pytest.raises(ValueError, match="不认识的能力"):
+        PipelineDef.from_dict({"name": "t", "stages": [{"id": "a", "needs": ["datta"]}]})
+
+
+def test_a_face_not_listed_in_the_table_can_do_nothing():
+    """能力表是判据本身：**加新工具面时忘了登记，那个面什么都不会**（fail-closed），
+    而不是悄悄被当成什么都能做。"""
+    from src.agents.subagents import face_capabilities
+
+    assert face_capabilities("还没定义的面") == frozenset()
+    assert face_capabilities("read") == frozenset()
+    assert "deliver" in face_capabilities("deliver")
