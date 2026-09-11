@@ -50,6 +50,11 @@ def run_stats_cli(*, quiet: bool = False) -> int:
     **退出码 0 即使有查不到的**：微信公众号那类是公网确实查不到，不是故障；报红会让台账里
     全是红的、人反而不看了。查不到的条目会进产出物的 unqueryable，measure 据此知道
     "这条没数据"而不是"这条表现差"。
+
+    **台账空同理，也是 0**——没人 /url 登记过链接，是"没事可做"，不是"干砸了"。这条本来
+    写成 return 1，于是 cron 每天早晚各推一条 🔴 失败（真机 2026-09-11 20:05 撞到）：在你
+    登记第一条链接之前它会一直响，等真出故障那天，这个渠道已经被训练成可以忽略了。
+    上面那段话讲的就是这件事，只是当时只想到"查不到"、没想到"一条都没有"。
     """
     from src.gateway.channel_stats import collect_stats, summarize, to_payload
     from src.gateway.products import ProductStore
@@ -58,8 +63,8 @@ def run_stats_cli(*, quiet: bool = False) -> int:
     stats = collect_stats(repo)
     line = summarize(stats)
     if not stats:
-        print(line, file=sys.stderr)
-        return 1
+        print(line)            # stdout + 0：没事可做，不该占用告警通道
+        return 0
 
     product = ProductStore(repo).create(
         "channel_stats", payload=to_payload(stats), summary=line,
