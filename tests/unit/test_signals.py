@@ -237,3 +237,54 @@ def test_giving_up_reports_the_last_transport_error(monkeypatch):
 
     with pytest.raises(urllib.error.URLError, match="connection reset"):
         sg._fetch("https://e.example/x")
+
+
+# ------------------------------------------------------------------ 时间预算
+def test_sources_beyond_the_budget_are_named_not_silently_dropped(tmp_path, monkeypatch):
+    """真机 2026-09-10：一轮跑了十几分钟（失败源各重试 3×15s + HN 的 31 次往返）。
+
+    **采集是定时作业，不能无限拖。** 但超预算时必须**点名**说哪些源没跑到——静默少一块，
+    scout 会拿残缺的数据当全景去判断"什么在热"。
+    """
+    from src.gateway import signals as sg
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr(sg.time, "monotonic", lambda: clock["t"])
+
+    def slow(_f):
+        clock["t"] += 200.0                      # 一个源就吃光预算
+        return [_sig("a", 10)]
+
+    r = collect(str(tmp_path), fetch=lambda u: b"",
+                sources={"first": slow, "second": _src(_sig("b", 20))},
+                now=NOW, budget=180)
+    assert [s.id for s in r.signals] == ["a"]
+    assert r.failures and "second" in r.failures[0] and "时间预算" in r.failures[0]
+
+
+def test_a_fast_round_touches_every_source(tmp_path):
+    r = collect(str(tmp_path), fetch=lambda u: b"",
+                sources={"a": _src(_sig("x", 1)), "b": _src(_sig("y", 2))}, now=NOW, budget=180)
+    assert len(r.signals) == 2 and not r.failures
+
+
+def test_hacker_news_stops_instead_of_eating_the_whole_round(monkeypatch):
+    """一个源最多吃掉半个预算——31 次往返卡在第 5 次时，该停下把位置让给别的源。"""
+    import json as _json
+
+    from src.gateway import signals as sg
+
+    clock = {"t": 0.0}
+    monkeypatch.setattr(sg.time, "monotonic", lambda: clock["t"])
+
+    pages = {"https://hacker-news.firebaseio.com/v0/topstories.json": list(range(1, 16))}
+
+    def fetch(url):
+        if url in pages:
+            return _json.dumps(pages[url]).encode()
+        clock["t"] += 40.0                       # 每条详情都很慢
+        hid = url.rsplit("/", 1)[-1].split(".")[0]
+        return _json.dumps({"type": "story", "title": f"t{hid}", "score": 1}).encode()
+
+    out = sg._hacker_news(fetch)
+    assert 0 < len(out) < 15                     # 拿到多少算多少，没跑完 15 条
