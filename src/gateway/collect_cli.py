@@ -136,9 +136,11 @@ def render_digest(product, *, limit: int = 12) -> str:
             budget -= 1
             delta = row.get("delta")
             # **增量和绝对值要能分辨**：+320 和 320 在"值不值得看"上是两回事。
-            heat_text = f"+{delta}" if delta else str(row.get("score") or "")
+            # RSS 源没有分数字段（lobsters/博客），那就**不显示**——留一个空位比显示 "0" 好：
+            # 0 会被读成"没人看"，而真相是"这个源根本没有热度这个概念"。
+            heat_text = f"+{delta}" if delta else (str(row.get("score")) if row.get("score") else "")
             title = str(row.get("title") or "")[:78]
-            lines.append(f"· {heat_text} {title}")
+            lines.append(f"· {heat_text} {title}".replace("·  ", "· "))
             url = str(row.get("url") or "")
             if url:
                 lines.append(f"  {url}")
