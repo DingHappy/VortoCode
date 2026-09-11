@@ -41,7 +41,7 @@ def loopback_url_error(url: str, *, websocket: bool = False) -> str:
 
 def safe_evidence_path(repo_root: str | Path, run_id: str, profile_name: str) -> Path:
     """Build a collision-resistant screenshot path without raw user path segments."""
-    from src.agents.dev_plan import ensure_state_gitignore
+    from src.utils.state_dir import ensure_state_gitignore
 
     root = Path(repo_root).resolve()
     ensure_state_gitignore(str(root))

@@ -22,7 +22,6 @@ cron（定时）、heartbeat（常驻）和你手点（Desktop/钉钉）三个�
 from __future__ import annotations
 
 import json
-import re
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -30,10 +29,10 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from src.gateway.products import Product, ProductStore
+from src.utils.ids import safe_id
 
 _RUNS_DIRNAME = "pipeline_runs"
 _DEFS_DIRNAME = "pipelines"
-_BAD = re.compile(r"[^A-Za-z0-9_-]")
 
 # 工序状态：pending（没跑过）→ running（正在跑，崩溃留在此态，续跑视同未完成重来）
 #           → awaiting_review（跑完了，等人批）→ done / failed
@@ -52,10 +51,7 @@ def _now() -> str:
 
 
 def _clean_id(value: str) -> Optional[str]:
-    if not value:
-        return None
-    cleaned = _BAD.sub("_", str(value)).strip("_")
-    return cleaned or None
+    return safe_id(value)
 
 
 # ---------------------------------------------------------------- 流水线定义（配置，不是代码）
@@ -277,7 +273,7 @@ class PipelineStore:
         run.updated = _now()
         path = self._path(rid)
         try:
-            from src.agents.dev_plan import ensure_state_gitignore
+            from src.utils.state_dir import ensure_state_gitignore
 
             ensure_state_gitignore(self.repo_root)
             path.parent.mkdir(parents=True, exist_ok=True)

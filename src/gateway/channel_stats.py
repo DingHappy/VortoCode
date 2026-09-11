@@ -171,7 +171,7 @@ def register_url(repo_root: str, url: str, *, run_id: str = "", note: str = "") 
                   "at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
     path = _registry_path(repo_root)
     try:
-        from src.agents.dev_plan import ensure_state_gitignore
+        from src.utils.state_dir import ensure_state_gitignore
         ensure_state_gitignore(repo_root)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".json.tmp")

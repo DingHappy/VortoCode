@@ -15,16 +15,15 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import re
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
+from src.utils.ids import safe_id
 
 _DIRNAME = "tasks"
-_BAD = re.compile(r"[^A-Za-z0-9_-]")
 _MAX_LOG = 200                                    # 进度日志只留尾部 N 行
 _PROGRESS_SAVE_INTERVAL = 2.0                     # 进度写盘节流（秒）；终态/状态转换不受节流、必写
 
@@ -46,10 +45,7 @@ def bg_concurrency() -> int:
 
 
 def _clean_id(tid: str) -> Optional[str]:
-    if not tid:
-        return None
-    s = _BAD.sub("_", str(tid)).strip("_")
-    return s or None
+    return safe_id(tid)
 
 
 @dataclass
@@ -137,7 +133,7 @@ class TaskLedger:
         task.log = task.log[-_MAX_LOG:]
         p = self._path(tid)
         try:
-            from src.agents.dev_plan import ensure_state_gitignore
+            from src.utils.state_dir import ensure_state_gitignore
             ensure_state_gitignore(self.repo_root)       # .vortocode/ 自忽略：台账不污染目标仓库 git status
             p.parent.mkdir(parents=True, exist_ok=True)
             tmp = p.with_suffix(".json.tmp")

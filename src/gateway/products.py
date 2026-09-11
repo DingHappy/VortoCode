@@ -25,16 +25,14 @@ Product 跨回合、跨会话、跨天存在：一个 `topic_pool` 若来自 web
 from __future__ import annotations
 
 import json
-import re
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from src.utils.ids import safe_id
 
 _DIRNAME = "products"
-_BAD = re.compile(r"[^A-Za-z0-9_-]")
-# payload 体积上限：产出物是给下一道工序读的结构化数据，不是文件仓库。
 # 超限即拒绝而不是静默截断——截断过的选题池看起来一切正常，那是最坏的一种坏。
 MAX_PAYLOAD_BYTES = 1024 * 1024
 
@@ -53,10 +51,7 @@ def _now() -> str:
 
 def _clean_id(value: str) -> Optional[str]:
     """清洗成文件名安全字符（挡 ../）；空/非法 → None。与 goals/dev_plan 同口径。"""
-    if not value:
-        return None
-    cleaned = _BAD.sub("_", str(value)).strip("_")
-    return cleaned or None
+    return safe_id(value)
 
 
 @dataclass
@@ -162,7 +157,7 @@ class ProductStore:
         product.id = pid
         path = self._path(pid)
         try:
-            from src.agents.dev_plan import ensure_state_gitignore
+            from src.utils.state_dir import ensure_state_gitignore
 
             ensure_state_gitignore(self.repo_root)     # 先保证 .vortocode/ 自忽略，别污染目标仓库
             path.parent.mkdir(parents=True, exist_ok=True)

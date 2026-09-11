@@ -471,7 +471,7 @@ class VortoCodeTUI(TUICommandsMixin, App):
         self.transcript: list[str] = []     # 完整记录，便于回看与测试
         # 会话持久化（SQLite）：对话落盘，可 /sessions 列出、/resume 恢复。
         # TUI 启动即写 .vortocode 生成态（sessions.db/tui_history）→ 先放自忽略 .gitignore（防足迹）。
-        from src.agents.dev_plan import ensure_state_gitignore
+        from src.utils.state_dir import ensure_state_gitignore
         ensure_state_gitignore(repo_root)
         self.sessions = SessionManager(str(Path(repo_root) / ".vortocode" / "sessions.db"))
         self.session_id: str | None = None

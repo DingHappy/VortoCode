@@ -78,7 +78,7 @@ def append_audit(repo_root: str, record: Dict[str, Any]) -> bool:
     payload.setdefault("ts", _now())
     path = Path(repo_root) / ".vortocode" / "audit.log"
     try:
-        from src.agents.dev_plan import ensure_state_gitignore
+        from src.utils.state_dir import ensure_state_gitignore
 
         ensure_state_gitignore(str(repo_root))
         path.parent.mkdir(parents=True, exist_ok=True)

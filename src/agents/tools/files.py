@@ -41,17 +41,11 @@ def _resolve_within(base: Any, rel: Any) -> Optional["Path"]:
     用 resolve() 后 relative_to(base) 判定：绝对路径会被 `base / "/x"` 语义丢掉 base
     → 落到根 → relative_to 抛 ValueError；`..` 与软链在 resolve() 后同样落到 base 外被拒。
     """
-    from pathlib import Path
-    rel = str(rel or "").strip().lstrip("@")
-    if not rel:
-        return None
-    try:
-        root = Path(base).resolve()
-        p = (root / rel).resolve()
-        p.relative_to(root)
-    except (ValueError, OSError):
-        return None
-    return p
+    from src.utils.paths import resolve_within
+
+    # `@src/x.py` 是 **agents 层的书写约定**，剥离留在这里做——它不属于围栏本身，
+    # 塞进围栏就等于让 web/memory 也悄悄接受 `@` 前缀。围栏只管边界。
+    return resolve_within(base, str(rel or "").strip().lstrip("@"))
 
 
 def build_read_tools(repo_root: str) -> list[Tool]:
