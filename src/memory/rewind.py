@@ -24,18 +24,15 @@ from typing import Any, Dict, List, Optional
 
 
 def _resolve_within(base: str, rel: str) -> Optional[Path]:
-    """把 rel 安全解析到 base 内；越界（绝对路径/..）返回 None。
+    """把 rel 安全解析到 base 内；越界返回 None。**实现在 src/utils/paths，全仓唯一一份。**
 
-    契约与 src/web/auth.resolve_within 相同（组件级 relative_to 判断，防 startswith 前缀绕过）；
-    memory 层不 import web 层，故此处独立一份同契约实现。
+    这里原先是"独立一份同契约实现"，注释还写着"契约与 src/web/auth.resolve_within 相同"——
+    **那句话是假的**：它捕了 OSError 而 web 那份没捕。两份各自演化，谁也不知道自己和另一份
+    已经不一样了。安全规则上收到内核一处，正是为了不出现这种事。
     """
-    base_p = Path(base).resolve()
-    try:
-        target = (base_p / str(rel)).resolve()
-        target.relative_to(base_p)
-    except (ValueError, OSError):
-        return None
-    return target
+    from src.utils.paths import resolve_within
+
+    return resolve_within(base, rel)
 
 
 def _meta(edit: Dict[str, Any]) -> Dict[str, Any]:

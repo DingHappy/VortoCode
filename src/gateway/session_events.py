@@ -8,11 +8,10 @@ in memory and disappear with the process.
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 from typing import Any, Dict, Optional
+from src.utils.ids import safe_id
 
-_BAD = re.compile(r"[^A-Za-z0-9_-]")
 _MAX_SEGMENT_BYTES = 2 * 1024 * 1024
 _MAX_SEGMENTS = 4
 _MAX_EVENT_BYTES = 1024 * 1024
@@ -22,8 +21,7 @@ _MAX_LOAD_EVENTS = 2000
 def _safe_sid(key: str) -> Optional[str]:
     if not key.startswith("sid-"):
         return None
-    sid = _BAD.sub("_", key[len("sid-"):]).strip("_")
-    return sid or None
+    return safe_id(key[len("sid-"):])          # 前缀校验 + 清洗，两步都不省
 
 
 class SessionEventJournal:
@@ -81,7 +79,7 @@ class SessionEventJournal:
         if len(encoded) > _MAX_EVENT_BYTES:
             return False
         try:
-            from src.agents.dev_plan import ensure_state_gitignore
+            from src.utils.state_dir import ensure_state_gitignore
 
             ensure_state_gitignore(self.repo_root)
             self.directory.mkdir(parents=True, exist_ok=True)

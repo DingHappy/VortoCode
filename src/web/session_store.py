@@ -9,24 +9,22 @@
 """
 
 import json
-import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from src.utils.ids import safe_id
 
 _DIRNAME = "web_sessions"
 _MAX_HISTORY = 40         # agent 历史只存尾部 N 条（与 TUI 持久化一致）
 _MAX_TRANSCRIPT = 200
 _MAX_ACTIVITIES = 300     # 生命周期事件含 start/finish 更新；留足最近若干回合且有硬上限
 _MAX_PROMPT_QUEUE = 20
-_BAD = re.compile(r"[^A-Za-z0-9_-]")
 
 
 def _sid_of(key: str) -> Optional[str]:
     """从会话键取出可落盘的 sid：只认 `sid-` 前缀、清洗成文件名安全字符；否则 None（不持久化）。"""
     if not key or not key.startswith("sid-"):
         return None
-    sid = _BAD.sub("_", key[len("sid-"):]).strip("_")
-    return sid or None
+    return safe_id(key[len("sid-"):])          # 前缀校验 + 清洗，两步都不省
 
 
 def _path(repo_root: str, sid: str) -> Path:
@@ -34,11 +32,12 @@ def _path(repo_root: str, sid: str) -> Path:
 
 
 def _clean_sid(sid: str) -> Optional[str]:
-    """把前端传来的原始 sid 清洗成文件名安全字符（挡 ../ 等）；空/非法 → None。"""
-    if not sid:
-        return None
-    s = _BAD.sub("_", str(sid)).strip("_")
-    return s or None
+    """把前端传来的原始 sid 清洗成文件名安全字符（挡 ../ 等）；空/非法 → None。
+
+    实现在 src/utils/ids——**id 直接进路径，一个没清洗的 id 就是一次路径穿越**，
+    这条规则全仓只该有一份（2026-09-11 收口前它有 8 处实现、5 种变体）。
+    """
+    return safe_id(sid)
 
 
 def title_from_transcript(transcript: List[dict]) -> str:
@@ -105,7 +104,7 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
     if mode in ("plan", "build"):                   # 只认这两个值，别把脏数据带进下次装配
         data["mode"] = mode
     try:
-        from src.agents.dev_plan import ensure_state_gitignore
+        from src.utils.state_dir import ensure_state_gitignore
         ensure_state_gitignore(repo_root)    # 会话持久化也是 .vortocode 生成态写入点（自忽略，防足迹）
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = p.with_suffix(".json.tmp")

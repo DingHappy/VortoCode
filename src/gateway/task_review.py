@@ -18,7 +18,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from src.agents.dev_plan import ensure_state_gitignore, load_plan
+from src.agents.dev_plan import load_plan
+from src.utils.state_dir import ensure_state_gitignore
 from src.agents.git_workflow import _parse_hunks
 from src.gateway.change_sources import stable_hunk_id
 from src.gateway.git_review import _line_items, normalize_git_path
