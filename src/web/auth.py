@@ -60,7 +60,7 @@ _EXEMPT_EXACT = {"/", "/agent", "/artifacts", "/review",
                  "/api/auth/login", "/api/auth/logout", "/api/auth/status"}
 
 
-def _ct_eq(candidate: str, token: str) -> bool:
+def ct_eq(candidate: str, token: str) -> bool:
     """常时比较（防时序侧信道）——token 校验点专用。
 
     encode 成 bytes 兜底：candidate 是攻击者可控输入，裸 hmac.compare_digest(str, str)
@@ -77,11 +77,11 @@ def _token_ok(request) -> bool:
     if not token:
         return True  # 未配置 token：本地开发放行
     auth = request.headers.get("authorization", "")
-    if auth.startswith("Bearer ") and _ct_eq(auth[7:].strip(), token):   # 程序化客户端：Authorization 头
+    if auth.startswith("Bearer ") and ct_eq(auth[7:].strip(), token):   # 程序化客户端：Authorization 头
         return True
-    if _ct_eq(request.headers.get("x-api-token", "").strip(), token):
+    if ct_eq(request.headers.get("x-api-token", "").strip(), token):
         return True
-    return _ct_eq(request.cookies.get(SESSION_COOKIE, "").strip(), token)  # 浏览器：登录后 httpOnly Cookie
+    return ct_eq(request.cookies.get(SESSION_COOKIE, "").strip(), token)  # 浏览器：登录后 httpOnly Cookie
 
 
 def is_authed(request) -> bool:
@@ -168,6 +168,6 @@ def ws_token_ok(websocket) -> bool:
     if not token:
         return True
     auth = websocket.headers.get("authorization", "")
-    if auth.startswith("Bearer ") and _ct_eq(auth[7:].strip(), token):
+    if auth.startswith("Bearer ") and ct_eq(auth[7:].strip(), token):
         return True
-    return _ct_eq(websocket.cookies.get(SESSION_COOKIE, "").strip(), token)
+    return ct_eq(websocket.cookies.get(SESSION_COOKIE, "").strip(), token)
