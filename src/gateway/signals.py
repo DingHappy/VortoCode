@@ -47,7 +47,13 @@ _RETRY_BACKOFF = 1.5              # 退避基数（秒）；第 n 次等 n * BAC
 _MAX_BYTES = 3_000_000
 _UA = "VortoCode-signals/1.0"
 
-HN_TOP = 30                       # HN 取前 N 条（每条一次请求，别把额度花在长尾上）
+HN_TOP = 15                       # HN 取前 N 条。**每条一条请求**——30 条就是 31 次往返，
+                                  # 在抖动的链路上（× 重试 × 超时）能把一轮拖到十几分钟。
+                                  # 前 15 条已经覆盖了首屏，长尾对"什么在热"没有贡献。
+MAX_SECONDS = 180                 # 整轮时间预算。采集是定时作业，**不能无限拖**：
+                                  # 真机 2026-09-10 一轮跑了十几分钟（失败源各重试 3×15s，
+                                  # 加 HN 的 31 次往返）。超预算就停下并如实说停在哪，
+                                  # 而不是把后面的源静默丢掉——scout 得知道自己看到的是一部分。
 GITHUB_MIN_STARS = 200            # 新仓库的最低 star 门槛
 GITHUB_WINDOW_DAYS = 14           # "新"的定义
 MAX_PER_SOURCE = 15               # 单源交付上限
@@ -119,7 +125,10 @@ def _hacker_news(fetch: Callable[[str], bytes]) -> List[Signal]:
     """开发者当下在讨论什么。score 就是热度，官方 Firebase 接口、免 key。"""
     ids = _json(fetch, "https://hacker-news.firebaseio.com/v0/topstories.json")[:HN_TOP]
     out: List[Signal] = []
+    deadline = time.monotonic() + MAX_SECONDS / 2      # 单个源最多吃掉半个预算
     for hid in ids:
+        if time.monotonic() > deadline:
+            break                                       # 拿到多少算多少，别把整轮耗在一个源上
         try:
             item = _json(fetch, f"https://hacker-news.firebaseio.com/v0/item/{hid}.json") or {}
         except Exception:  # noqa: BLE001 —— 单条挂了跳过，别让一条坏数据废掉整个源
@@ -257,7 +266,8 @@ def _save_state(repo_root: str, state: Dict[str, Any]) -> None:
 
 def collect(repo_root: str, *, fetch: Optional[Callable[[str], bytes]] = None,
             sources: Optional[Dict[str, Callable]] = None,
-            now: Optional[datetime] = None) -> CollectResult:
+            now: Optional[datetime] = None,
+            budget: float = MAX_SECONDS) -> CollectResult:
     """跑一轮采集：逐源抓 → 算增量 → 去掉报过的 → 落快照。**不产出 Product**（那是调用方的事）。"""
     get = fetch or _fetch
     table = sources if sources is not None else SOURCES
@@ -265,7 +275,12 @@ def collect(repo_root: str, *, fetch: Optional[Callable[[str], bytes]] = None,
     state = _load_state(repo_root)
     result = CollectResult()
 
+    started = time.monotonic()
     for name, source in table.items():
+        if time.monotonic() - started > budget:
+            # 没跑到的源**点名说出来**，别静默少一块。
+            result.failures.append(f"{name}：跳过（本轮已用满 {budget:.0f}s 时间预算）")
+            continue
         try:
             items = source(get)
         except Exception as e:  # noqa: BLE001 —— 一个源挂了不拖垮整轮，但要点名
