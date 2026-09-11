@@ -210,3 +210,56 @@ def test_editor_out_of_bounds_write_blocked(client):
         "file": "../../evil.py", "line": 1, "end_line": 1, "content": "x = 1",
     })
     assert r.json().get("success") is False
+
+
+# ---------------------------------- 鉴权豁免页面：能开 ≠ 能用
+
+def test_exempt_pages_load_but_their_data_apis_do_not(client, monkeypatch):
+    """页面外壳豁免鉴权，它读的数据 API **不豁免**——这是设计，也是陷阱。
+
+    真机 2026-09-11：钉钉通知里的 `/review` 链接点开是 200，但 `/api/pipelines` 401，
+    页面上只剩一行"读不到：Unauthorized"。而那条链接是整条运营链**唯一的人工入口**。
+
+    豁免清单容易让人读成"这页不用登录"，实际含义只是"外壳不用登录，否则没法渲染登录框"。
+    这条把两半都钉住：外壳 200、数据 401。任何新加进豁免清单的页面都要自带登录门。
+    """
+    monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
+    for page in ("/review", "/agent", "/"):
+        assert client.get(page).status_code == 200, page
+    assert client.get("/api/pipelines").status_code == 401
+
+
+def test_login_is_exempt_from_middleware_but_still_checks_the_token(client, monkeypatch):
+    """`/api/auth/login` 必须免中间件（否则没法登录），但**免中间件不等于免校验**。
+
+    它因此是全站唯一一个免鉴权、可被任意次数敲打的 token 校验点——校验本身一步都不能省。
+    （常时比较是统计侧信道，单测断不了；这里断的是语义：错的进不来、对的能进来。）
+    """
+    monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
+    assert client.post("/api/auth/login", json={"token": "wrong"}).status_code == 401
+    assert client.post("/api/auth/login", json={"token": "secre"}).status_code == 401   # 前缀
+    assert client.post("/api/auth/login", json={"token": "秘密"}).status_code == 401     # 非 ASCII 不炸
+    assert client.post("/api/auth/login", json={"token": "secret"}).status_code == 200
+
+
+def test_every_exempt_html_page_carries_a_login_gate():
+    """豁免清单里的每个页面都要自带登录门。
+
+    **这条是对静态资源的子串检查**，本仓一般禁止（契约测试断行为不断源码）。这里破例的理由：
+    登录门是浏览器里的 JS，离线测不到它的行为；而它缺席的后果不是报错，是**一片空白**——
+    没有任何服务端行为可断。能断的只有"这页引没引导登录流程"。
+
+    真正在漂移的是豁免清单本身：往里加一行很容易，配套的门很容易忘。这条让加清单的人被迫
+    路过这里。
+    """
+    from pathlib import Path
+
+    from src.web.auth import _EXEMPT_EXACT
+
+    pages = {"/review": "review.html", "/agent": "agent.js"}   # 外壳 + 它的脚本
+    web = Path(__file__).resolve().parents[2] / "web"
+    for route, asset in pages.items():
+        assert route in _EXEMPT_EXACT, f"{route} 不在豁免清单里了，这条测试该更新"
+        text = (web / asset).read_text(encoding="utf-8")
+        assert "/api/auth/status" in text and "/api/auth/login" in text, \
+            f"{asset} 没有登录门：设了 token 的机器上这页会是空白的"

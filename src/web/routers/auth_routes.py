@@ -9,7 +9,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from src.web.auth import SESSION_COOKIE, get_api_token, is_authed
+from src.web.auth import SESSION_COOKIE, ct_eq, get_api_token, is_authed
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -25,7 +25,10 @@ async def login(body: LoginBody, request: Request, response: Response):
     expected = get_api_token()
     if not expected:
         return {"ok": True, "auth_required": False}     # 未配置 token：本地开发无需登录
-    if (body.token or "").strip() != expected:
+    # 常时比较。**这里是全站唯一免鉴权、可以随便打的 token 校验点**——中间件放行它，
+    # 否则没法登录。auth.py 的 ct_eq 写着"仅当本机对外暴露时侧信道才有网络路径，故收紧"，
+    # 而 97 正是 0.0.0.0 暴露的；那边收紧了，这条登录路径当时用的还是 !=。
+    if not ct_eq((body.token or "").strip(), expected):
         return JSONResponse({"ok": False, "detail": "token 不正确"}, status_code=401)
     response.set_cookie(
         SESSION_COOKIE, expected,

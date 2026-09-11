@@ -72,8 +72,11 @@ function toast(msg) {
   setTimeout(() => t.remove(), 4200);
 }
 
-async function api(path, opts) {
+async function api(path, opts, _retried) {
   const r = await fetch(path, Object.assign({ headers: { "Content-Type": "application/json" } }, opts || {}));
+  // 401 = 会话 Cookie 过期（30 天）。不弹门的话，页面就退回启动时那个空白状态——**同一个 bug
+  // 换个时间点重演一次**。弹门、重试一次；再 401 才当真错。
+  if (r.status === 401 && !_retried) { await showLogin(); return api(path, opts, true); }
   const body = await r.json().catch(() => ({}));
   // 失败要把**服务端给的原因**原样交出来，别换成一句"操作失败"——审批台上最怕的就是
   // 点了没反应又不知道为什么。
@@ -166,8 +169,55 @@ async function send(verdict) {
 }
 
 $("#refresh").onclick = () => cur ? loadDetail(cur.run_id) : loadList();
-loadList();
-setInterval(() => { if (!document.hidden && !cur) loadList(); }, 30000);
+
+// ── 登录门 ────────────────────────────────────────────────────────────────
+// 页面外壳在鉴权豁免清单里（否则没法登录），但它读的 /api/pipelines 不豁免。设了
+// VORTOCODE_API_TOKEN 的机器上，直接 loadList() 的下场是整页只剩一行"读不到：
+// Unauthorized"——真机 2026-09-11：钉钉通知里的 /review 链接点开就是这个样子，而那条
+// 链接是整条运营链唯一的人工入口。
+//
+// 豁免清单会让人以为"页面能开 = 页面能用"，这两件事之间差的就是这个门。/agent 有，
+// 这里当时漏了；凡是进豁免清单的页面都得自带它。
+function showLogin() {
+  return new Promise(resolve => {
+    const ov = document.createElement("div");
+    ov.style.cssText = "position:fixed;inset:0;background:var(--bg);display:flex;"
+      + "align-items:center;justify-content:center;z-index:9999";
+    ov.innerHTML = '<div style="background:var(--panel);border:1px solid var(--line);'
+      + 'border-radius:12px;padding:24px;width:320px;max-width:88vw">'
+      + '<div style="font-weight:600;margin-bottom:12px">🔒 需要访问令牌</div>'
+      + '<input id="lg-t" type="password" placeholder="API Token" style="width:100%;'
+      + 'box-sizing:border-box;padding:9px;background:var(--bg);border:1px solid var(--line);'
+      + 'border-radius:8px;color:var(--fg);margin-bottom:10px">'
+      + '<div id="lg-e" style="color:var(--bad);font-size:12px;height:16px;margin-bottom:8px"></div>'
+      + '<button id="lg-b" style="width:100%;padding:9px;background:var(--blue);color:#fff;'
+      + 'border:0;border-radius:8px;cursor:pointer;font-weight:600">登录</button></div>';
+    document.body.appendChild(ov);
+    const inp = ov.querySelector("#lg-t"), err = ov.querySelector("#lg-e");
+    inp.focus();
+    async function submit() {
+      err.textContent = "";
+      try {
+        const r = await fetch("/api/auth/login", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: inp.value }) });
+        if (r.ok) { ov.remove(); resolve(); } else { err.textContent = "令牌不正确"; inp.select(); }
+      } catch { err.textContent = "登录失败，请重试"; }
+    }
+    ov.querySelector("#lg-b").onclick = submit;
+    inp.addEventListener("keydown", e => { if (e.key === "Enter") submit(); });
+  });
+}
+
+async function boot() {
+  try {
+    const st = await (await fetch("/api/auth/status", { cache: "no-store" })).json();
+    if (st.auth_required && !st.authed) await showLogin();
+  } catch { /* 状态查不到：按无鉴权处理，照常往下走 */ }
+  loadList();
+  setInterval(() => { if (!document.hidden && !cur) loadList(); }, 30000);
+}
+boot();
 </script>
 </body>
 </html>
