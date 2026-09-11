@@ -85,7 +85,7 @@ def _load_state(repo_root: str) -> dict:
 
 def _save_state(repo_root: str, state: dict) -> None:
     try:
-        from src.agents.dev_plan import ensure_state_gitignore
+        from src.utils.state_dir import ensure_state_gitignore
 
         ensure_state_gitignore(repo_root)
         path = Path(repo_root) / _STATE_REL

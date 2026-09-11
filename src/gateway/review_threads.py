@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from src.gateway.git_review import normalize_git_path, review_diff
+from src.utils.ids import typed_id
 
 _VALID_SCOPES = frozenset({"working", "staged"})
 _VALID_SIDES = frozenset({"new", "old"})
@@ -32,8 +33,12 @@ class ReviewThreadStore:
 
     @staticmethod
     def _clean_id(thread_id: str) -> str:
-        value = str(thread_id or "")
-        return value if re.fullmatch(r"review-[A-Za-z0-9_-]+", value) else ""
+        """校验型：不合法直接拒绝，**不做任何转换**（见 src/utils/ids）。
+
+        与清洗型的关键区别：`review-x/../y` 不会被洗成 `review-x_.._y`，它被直接拒绝——
+        调用方据此知道"这个 id 我不认识"，而不是拿着一个被悄悄改过的 id 往下走。
+        """
+        return typed_id(thread_id, "review")
 
     def _load(self) -> list[Dict[str, Any]]:
         if not self.path.is_file():
@@ -48,7 +53,7 @@ class ReviewThreadStore:
             return []
 
     def _save(self, items: list[Dict[str, Any]]) -> None:
-        from src.agents.dev_plan import ensure_state_gitignore
+        from src.utils.state_dir import ensure_state_gitignore
 
         ensure_state_gitignore(self.repo_root)
         self.path.parent.mkdir(parents=True, exist_ok=True)

@@ -16,18 +16,16 @@ from fastapi.responses import JSONResponse
 
 
 def resolve_within(base, rel) -> Optional[Path]:
-    """把 rel 安全解析到 base 目录内；越界（绝对路径 / ..）返回 None。
+    """把 rel 安全解析到 base 目录内；越界返回 None。**实现在 src/utils/paths，全仓唯一一份。**
 
-    用 Path.relative_to 做组件级判断，根治 startswith 字符串前缀绕过
-    （如 /x/proj 误判 /x/proj-secrets 在内）。
+    这里保留同名函数只为不动存量调用点。原先本模块有一份独立实现，与 agents/memory 那两份
+    **漂移过**：空串返回 base 本身（调用方写的是 `is None` 判拒，于是空串过了闸）、
+    且不捕 OSError（软链环时异常穿出围栏，安全判定函数抛异常是 fail-open 的形状）。
+    现在统一到最严的那套。
     """
-    base_p = Path(base).resolve()
-    target = (base_p / str(rel)).resolve()
-    try:
-        target.relative_to(base_p)
-    except ValueError:
-        return None
-    return target
+    from src.utils.paths import resolve_within as _fence
+
+    return _fence(base, rel)
 
 
 def get_api_token() -> str:
