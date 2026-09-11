@@ -158,3 +158,82 @@ def test_summary_names_failures_instead_of_hiding_them(tmp_path):
 def test_state_file_lands_outside_git(tmp_path):
     collect(str(tmp_path), fetch=lambda u: b"", sources={"t": _src(_sig("a", 1))}, now=NOW)
     assert (tmp_path / ".vortocode" / "signals_state.json").is_file()
+
+
+# ------------------------------------------------------------------ 抖一次要重试
+def test_a_transient_failure_is_retried(monkeypatch):
+    """真机 2026-09-10：同一轮里 4 个源同时 SSL handshake timed out，十分钟前还都是好的。
+
+    **单次尝试的后果是整个源今天没了**——而 scout 看到的"什么在热"就少了一整块，
+    它还不知道自己少看了什么。
+    """
+    import urllib.error
+
+    from src.gateway import signals as sg
+
+    calls = []
+
+    class _Resp:
+        def read(self, n):
+            return b"ok"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def flaky(req, timeout=0):
+        calls.append(1)
+        if len(calls) < 3:
+            raise urllib.error.URLError("handshake timed out")
+        return _Resp()
+
+    monkeypatch.setattr(sg.urllib.request, "urlopen", flaky)
+    monkeypatch.setattr(sg.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(sg, "_host_is_safe", lambda h: True, raising=False)
+    from src.agents import web_fetch
+    monkeypatch.setattr(web_fetch, "_host_is_safe", lambda h: True)
+
+    assert sg._fetch("https://e.example/x") == b"ok"
+    assert len(calls) == 3
+
+
+def test_an_http_error_is_not_retried(monkeypatch):
+    """对方明确答了 404/500 就别重试——重试三次得到的还是同一个答案，纯属浪费一次窗口。"""
+    import urllib.error
+
+    from src.agents import web_fetch
+    from src.gateway import signals as sg
+
+    calls = []
+
+    def refuse(req, timeout=0):
+        calls.append(1)
+        raise urllib.error.HTTPError("u", 404, "Not Found", {}, None)
+
+    monkeypatch.setattr(sg.urllib.request, "urlopen", refuse)
+    monkeypatch.setattr(sg.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(web_fetch, "_host_is_safe", lambda h: True)
+
+    with pytest.raises(urllib.error.HTTPError):
+        sg._fetch("https://e.example/x")
+    assert len(calls) == 1
+
+
+def test_giving_up_reports_the_last_transport_error(monkeypatch):
+    """重试用尽要把**最后一次的真实死因**抛出去，别换成一个笼统的"失败"。"""
+    import urllib.error
+
+    from src.agents import web_fetch
+    from src.gateway import signals as sg
+
+    def always(req, timeout=0):
+        raise urllib.error.URLError("connection reset")
+
+    monkeypatch.setattr(sg.urllib.request, "urlopen", always)
+    monkeypatch.setattr(sg.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(web_fetch, "_host_is_safe", lambda h: True)
+
+    with pytest.raises(urllib.error.URLError, match="connection reset"):
+        sg._fetch("https://e.example/x")
