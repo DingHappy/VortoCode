@@ -60,6 +60,15 @@ jobs:
     announce: silent
     enabled: false
 
+  # 渠道数据查询——确定性、零 LLM。把 /url 登记过的发布链接查一遍，落成 channel_stats。
+  # **查不到的会如实标出来**（微信公众号/知乎/掘金要登录态，公网确实查不到），
+  # measure 据此知道"这条没数据"而不是"这条表现差"——0 次阅读和查不到是两件事。
+  - name: channel_stats
+    schedule: "5 8,20 * * *"   # 采集之后、开轮之前
+    command: "vc stats --quiet"
+    announce: silent
+    enabled: false
+
   # 运营流水线定时推进——**确定性作业，零 LLM**（LLM 只在工序内部上场）。
   # `tick` 扫一遍所有活着的运行各推一道工序，状态有变化才通报：挂三天的等批只说一次，
   # 不会每半小时刷你一条。对外工序（发布）它连试都不试——无人值守没有确认通道，

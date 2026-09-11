@@ -441,3 +441,34 @@ async def test_an_unknown_command_shows_what_was_actually_received(repo):
     await _drive_no_turn(bridge, adapter, _msg("/n​ope"))
     out = adapter.texts()[-1]
     assert "未知命令" in out and "我收到的是" in out and "u200b" in out.replace("\\u200b", "u200b")
+
+
+# ------------------------------------------------------------------ /url 登记发布链接
+@pytest.mark.asyncio
+async def test_url_registers_a_published_link_against_the_live_run(repo):
+    """**你只需要给一次链接**，数字之后自动查——手填数字的活第三天就没人做了。"""
+    from src.gateway.channel_stats import load_urls
+
+    run = _waiting_run(repo)
+    bridge, adapter = _bridge(repo)
+    await _drive_no_turn(bridge, adapter, _msg("/url https://www.bilibili.com/video/BV1GJ411x7h7"))
+    items = load_urls(str(repo))
+    assert items and items[0]["run_id"] == run.run_id
+    assert "已登记" in adapter.texts()[-1] and "不用你报数字" in adapter.texts()[-1]
+
+
+@pytest.mark.asyncio
+async def test_url_says_right_away_when_a_channel_cannot_be_queried(repo):
+    """**查不到就现在说。** 等到数据回流那天才发现是空的，那一轮就白等了。"""
+    _waiting_run(repo)
+    bridge, adapter = _bridge(repo)
+    await _drive_no_turn(bridge, adapter, _msg("/url https://mp.weixin.qq.com/s/abc"))
+    out = adapter.texts()[-1]
+    assert "已登记" in out and "查不到数据" in out and "微信客户端" in out
+
+
+@pytest.mark.asyncio
+async def test_url_without_a_link_shows_usage(repo):
+    bridge, adapter = _bridge(repo)
+    await _drive_no_turn(bridge, adapter, _msg("/url"))
+    assert "用法" in adapter.texts()[-1]
