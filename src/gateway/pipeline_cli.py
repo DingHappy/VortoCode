@@ -69,6 +69,7 @@ async def run_pipeline_cli(
     rollback_to: str = "",
     max_stages: int = 1,
     yes: bool = False,
+    if_idle: bool = False,
 ) -> int:
     repo = _repo()
     store = PipelineStore(repo)
@@ -96,6 +97,13 @@ async def run_pipeline_cli(
         if definition is None:
             print(f"读不到流水线定义 .vortocode/pipelines/{name}.yaml", file=sys.stderr)
             return 1
+        if if_idle:
+            # 定时开新一轮必须挡住堆积：昨天那轮还等你批，今天又开一轮，两轮抢同一个人的注意力，
+            # 而 signals 去重会让第二轮拿到的素材更差。**有活着的就不开**，等你把上一轮处理完。
+            live = [r for r in store.list(pipeline=name) if r.status not in {"done", "abandoned"}]
+            if live:
+                print(f"已有 {len(live)} 轮在跑（{live[0].run_id} · {live[0].status}），本次不开新的。")
+                return 0
         run = store.start(definition)
         print(f"已开一轮：{run.run_id}（{len(run.stages)} 道工序）")
         print("下一步：vc pipeline advance " + run.run_id)
