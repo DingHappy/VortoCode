@@ -177,3 +177,44 @@ async def test_show_marks_external_provenance(repo, monkeypatch, capsys):
 @pytest.mark.asyncio
 async def test_unknown_action_is_a_usage_error(repo):
     assert await run_pipeline_cli("绝不存在的动作") == 2
+
+
+# ------------------------------------------------------------------ 定时开轮防堆积
+@pytest.mark.asyncio
+async def test_if_idle_does_not_pile_up_on_a_run_that_is_still_waiting(repo, capsys):
+    """**昨天那轮还等你批，今天又开一轮**——两轮抢同一个人的注意力，而 signals 去重会让
+    第二轮拿到的素材更差。定时开轮必须挡住这个。
+    """
+    assert await run_pipeline_cli("start", "content-ops") == 0
+    before = len(PipelineStore(str(repo)).list())
+
+    assert await run_pipeline_cli("start", "content-ops", if_idle=True) == 0   # 静静走开
+    assert len(PipelineStore(str(repo)).list()) == before
+    assert "本次不开新的" in capsys.readouterr().out
+
+
+@pytest.mark.asyncio
+async def test_if_idle_starts_when_nothing_is_live(repo):
+    assert await run_pipeline_cli("start", "content-ops", if_idle=True) == 0
+    assert len(PipelineStore(str(repo)).list()) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_finished_round_does_not_block_the_next_one(repo):
+    """终态的运行不算"在跑"——否则跑完一轮之后就再也开不出新的了。"""
+    await run_pipeline_cli("start", "content-ops", if_idle=True)
+    store = PipelineStore(str(repo))
+    run = store.list()[0]
+    run.status = "done"
+    store.save(run)
+
+    assert await run_pipeline_cli("start", "content-ops", if_idle=True) == 0
+    assert len(store.list()) == 2
+
+
+@pytest.mark.asyncio
+async def test_without_the_flag_start_still_always_starts(repo):
+    """人手动敲 start 就是要开一轮——别让防堆积把显式意图也挡了。"""
+    await run_pipeline_cli("start", "content-ops")
+    await run_pipeline_cli("start", "content-ops")
+    assert len(PipelineStore(str(repo)).list()) == 2

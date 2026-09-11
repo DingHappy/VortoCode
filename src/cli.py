@@ -194,6 +194,8 @@ def main():
                    help="一次最多推几道工序（默认 1——每道都是一次真 LLM 回合）")
     p.add_argument("--yes", action="store_true",
                    help="给 outbound 工序放行。不给这个标志时对外动作一律 fail-closed 拒绝")
+    p.add_argument("--if-idle", action="store_true",
+                   help="start 时：已有未完成的运行就不开新的（定时开轮必备，防堆积）")
 
     p = sub.add_parser("heartbeat", help="心跳值班一次（读 .vortocode/HEARTBEAT.md + 领 BACKLOG.md）")
     p.add_argument("action", choices=["run"], help="run：立刻值班一次（隔离会话、便宜模型）")
@@ -298,7 +300,8 @@ def main():
         from src.gateway.pipeline_cli import run_pipeline_cli
         sys.exit(asyncio.run(run_pipeline_cli(
             args.action, args.name, verdict=args.verdict or "", comment=args.comment,
-            rollback_to=args.rollback_to, max_stages=args.max_stages, yes=args.yes)))
+            rollback_to=args.rollback_to, max_stages=args.max_stages, yes=args.yes,
+            if_idle=args.if_idle)))
 
     elif args.command == "heartbeat":
         asyncio.run(run_heartbeat_cli())
