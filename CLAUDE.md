@@ -32,9 +32,9 @@ vc agent -b "任务描述"            # 无头跑一次开发任务（走隔离 
 vc --help                        # 全部子命令：tui/server/agent/self-*/im/cron/heartbeat/doctor…
 ```
 
-**CI 状态（2026-07-26 更新）**：`.github/workflows/ci.yml` **已恢复运行**，跑在自建 runner 上（`CI_RUNNER=self-hosted`，私有仓库不计费；早前"额度耗尽故停用"的说法已过时）。但**合并到 main 前仍要本地跑 `./scripts/ci-local.sh`**：它刻意清空 `OPENAI_API_KEY/VORTOCODE_API_TOKEN/VORTOCODE_ENABLE_SHELL/ENABLE_BROWSER`，保证测试离线、确定性——别依赖你 `.env` 里的 key 让本地变绿。
+**CI 状态**：私有仓库可通过 `CI_RUNNER` 使用受信任的自托管 runner；仓库公开后，工作流会强制改用 GitHub 托管 runner。**合并到 main 前仍要本地跑 `./scripts/ci-local.sh`**：它刻意清空 `OPENAI_API_KEY/VORTOCODE_API_TOKEN/VORTOCODE_ENABLE_SHELL/ENABLE_BROWSER`，保证测试离线、确定性——别依赖你 `.env` 里的 key 让本地变绿。
 
-> ⚠️ **CI 全红先看是不是 runner 宿主机断网**，别急着怀疑代码：自建 runner 在家里那台机器上，出海走本机 mihomo 代理。代理的节点一死（真机事故 2026-07-25：节点选择被手动钉在一个已下线的节点上），**每个 job 都会在 "Set up job" 阶段挂掉**——报错是下载 `actions/checkout` 时 SSL 失败，与你的改动毫无关系。排查见 `docs/OPS.md` 第六节。
+> ⚠️ **CI 全红先区分基础设施故障与代码故障**：如果所有 job 都在 "Set up job" 阶段因下载 action 或 TLS 失败，先检查 runner 到 GitHub 的网络；job 尚未执行项目代码。通用排查见 `docs/OPS.md` 第六节。
 
 **desktop 段只跑离线子集**（tsc + `cargo test --lib` + `cargo check`，约 22s），**刻意不跑 `npm run check`**：那条链里 `sidecar:build` 会 `curl` 一个 python-build-standalone 包，把网络依赖塞进本该离线的门禁。打包正确性（vite build / sidecar / bundle 冒烟）属发布前检查，仍走 `cd desktop && npm run check`；同口径的单命令版是 `npm run check:ci`。缺 node/node_modules/cargo 或 crate 冷缓存时**跳过并计入收尾的「跳过清单」**，且此时结论不会说「全部通过」——跳过 ≠ 通过。
 

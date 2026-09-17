@@ -108,7 +108,7 @@ async def test_remember_repo_refuses_credential_like_content(tmp_path):
         return True
 
     out = await _repo_tool(tmp_path, _confirm).handler(
-        {"content": "部署用 key sk-proj-abcdefghijklmnop1234"})
+        {"content": "部署用 key " + "sk-" + "proj-abcdefghijklmnop1234"})
 
     assert "拒绝写入仓库记忆" in out and "凭据" in out
     assert asked == []                                        # 压根没走到确认
