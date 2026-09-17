@@ -3,8 +3,7 @@
 > 上游：<https://github.com/openclaw/openclaw>（MIT，TypeScript/Node monorepo，~383k star）
 > 本轮核对基线：2026-07-19 的公开 `main` 与 <https://docs.openclaw.ai/>。上游 7 万+ commit、
 > 版本按 `vYYYY.M.D` 滚动，**任何直接复制发生时必须在该变更内固定具体 commit 与文件路径**。
-> 服务对象：OPC 战略（见 my-knowledge `projects/vortocode/direction-opc-2026-07.md`）的
-> P1 试点（中转站值班 + IM 审批闭环）与 P3 远程形态。
+> 服务对象：VortoCode 的 P1 试点（中转站值班 + IM 审批闭环）与 P3 远程形态。
 
 OpenClaw 是目前"常驻自主"范式的事实标杆（Gateway 守护进程 + 20+ 消息渠道 + heartbeat/cron），
 恰好覆盖 VortoCode OPC 主轴里我们最薄弱、它最成熟的三块：**heartbeat 值班惯例、IM 渠道安全、

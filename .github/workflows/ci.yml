@@ -1,14 +1,6 @@
-# runner 由仓库变量 CI_RUNNER 决定（Settings → Secrets and variables → Actions → Variables）：
-#   未设置       → ubuntu-latest（GitHub 托管；**私有仓库每月仅 2000 分钟免费额度**）
-#   self-hosted  → 自建 runner（**不计费**，私有仓库首选；装机见 docs/OPS.md）
-# 换 runner 不用改这个文件——设个变量就行。
-#
-# 2026-07-12：免费额度耗尽（job 直接不启动、3 秒全红）→ 一度 `gh workflow disable CI`。
-# 现已恢复：CI_RUNNER=self-hosted，跑在自建 runner 上（不计费）。**本地门禁照旧要跑**
-# （`./scripts/ci-local.sh`——它清空 key 保证离线确定性，CI 绿不代替它）。
-#
-# ⚠ 全部 job 都挂在 "Set up job"（报下载 actions/checkout 时 SSL 失败）= runner 宿主机出不了海，
-#   与改动无关。先查宿主机代理，别怀疑代码；排查步骤见 docs/OPS.md 第六节。
+# 私有仓库可用 CI_RUNNER 选择受信任的 runner；公开仓库强制使用 GitHub 托管 runner。
+# 这条边界不能只依赖仓库变量：可见性改变后，外部 PR 不得接触私有网络或本机凭据。
+# 本地门禁照旧要跑（`./scripts/ci-local.sh` 会清空 key，保证离线确定性）。
 # **为什么每个 job 都建独占 venv 而不是直接 pip install**：自建 runner 上
 # actions/setup-python 给的是 /opt/hostedtoolcache 里的解释器，**全机共享**。多个 job 并发
 # `pip install -e .` 时，pip 会先卸载已装的 vortocode——卸到一半另一个 job 正要用 `vc`，
@@ -31,21 +23,11 @@ on:
 permissions:
   contents: read
 
-# ── 出海面收敛（2026-09-08）─────────────────────────────────────────────────
-# 自建 runner 在国内，出海链路**每天抖 4–6 次**（实测：09-07 16/19 点，09-08 03/06/07/14 点，
-# 四个 runner 每次同时中招 = 共因在宿主机那条通道）。抖动期间 runner 与 GitHub 失联，正在跑的
-# job 被直接判 **Abandoned**——09-08 14:05 那次一口气带走 typecheck + 两个 3.12 suite。
-# job 一旦开跑就全程依赖那条长连接，这点改不了；能改的是**缩短每个 job 的时间窗**，
-# 降低与抖动窗口重叠的概率。实测各步耗时（run 34180541821）：
-#   Install dependencies 56–64s ·  Set up Python(cache:pip) 25–27s ·  Post Set up Python 最高 46s
-#   Run tests 33–188s（离线，不出海）
-# 所以两件事：换国内 pip 源 + 用 runner 本地持久 pip 缓存，并**去掉 cache: pip**（见各 job 处注释）。
-#
-# 两个都是**变量驱动**，与 CI_RUNNER 同一套路数——将来换回 GitHub 托管 runner（转公开时必须换）
-# 只要删掉仓库变量，本文件一个字不用动，默认值就是官方源。
+# 私有 runner 可用仓库变量选择镜像与持久缓存；公开仓库一律回到公共默认值，避免
+# 私有镜像地址或宿主机路径进入公开日志。
 env:
-  PIP_INDEX_URL: ${{ vars.PIP_INDEX_URL || 'https://pypi.org/simple' }}
-  PIP_CACHE_DIR: ${{ vars.PIP_CACHE_DIR || '/tmp/vortocode-pip-cache' }}
+  PIP_INDEX_URL: ${{ github.event.repository.private && vars.PIP_INDEX_URL || 'https://pypi.org/simple' }}
+  PIP_CACHE_DIR: ${{ github.event.repository.private && vars.PIP_CACHE_DIR || '/tmp/vortocode-pip-cache' }}
   PIP_DISABLE_PIP_VERSION_CHECK: "1"   # 每次 pip 调用少一次"查有没有新版"的出海请求
   PIP_RETRIES: "5"                     # 抖动是常态，别一次失败就判死
   PIP_TIMEOUT: "30"
@@ -57,7 +39,7 @@ concurrency:
 
 jobs:
   lint:
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.repository.private && vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
@@ -78,7 +60,7 @@ jobs:
         run: .venv/bin/ruff check src tests
 
   typecheck:
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.repository.private && vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
@@ -99,7 +81,7 @@ jobs:
         run: .venv/bin/python -m mypy
 
   test:
-    runs-on: ${{ vars.CI_RUNNER || 'ubuntu-latest' }}
+    runs-on: ${{ github.event.repository.private && vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
       fail-fast: false

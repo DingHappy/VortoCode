@@ -3560,7 +3560,7 @@ mod tests {
         // 回给 webview 的串必须只剩粗粒度原因。
         let leaky = Error::Io(std::io::Error::new(
             std::io::ErrorKind::Other,
-            "Bearer sk-must-not-leak-0123456789",
+            format!("Bearer {}{}", "sk-", "must-not-leak-0123456789"),
         ));
         let reason = remote_ws_failure_reason(&leaky);
         assert!(

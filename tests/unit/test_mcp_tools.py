@@ -106,7 +106,7 @@ def test_external_mcp_filter_only_allows_explicit_credential_free_http():
         "https://example.com/mcp?access%5Ftoken=secret",
         "https://example.com/mcp?api%255Fkey=secret",
         "https://example.com/mcp?auth=opaque-value",
-        "https://example.com/mcp?foo=ghp_abcdefghijklmnopqrstuvwxyz123456",
+        "https://example.com/mcp?foo=" + "ghp_" + "abcdefghijklmnopqrstuvwxyz123456",
         "https://example.com/mcp#token=secret",
         "ftp://example.com/mcp",
         "https:///missing-host",

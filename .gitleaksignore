@@ -1,0 +1,6 @@
+# Historical test fixtures: synthetic OpenAI-shaped strings used only to verify redaction.
+# Keep exceptions pinned to an exact commit, path, rule and line; never suppress a whole rule.
+be1c467d69b8ba07bb9107273eb4a3ce49b6fb4c:tests/unit/test_web_context_memory.py:generic-api-key:59
+a60a1527db293e45c08237fc04609faf76660d79:tests/unit/test_tui.py:generic-api-key:1097
+a60a1527db293e45c08237fc04609faf76660d79:tests/unit/test_web_context_memory.py:generic-api-key:33
+a60a1527db293e45c08237fc04609faf76660d79:tests/unit/test_memory_write_policy.py:generic-api-key:102
