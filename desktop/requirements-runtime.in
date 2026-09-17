@@ -3,6 +3,9 @@
 # Update these intentionally, then refresh requirements-runtime.lock in a clean
 # sidecar environment. Optional model, browser, MCP, TUI, and vector-memory
 # dependencies stay outside the built-in runtime.
+#
+# Security floors: aiohttp>=3.14.3, Markdown>=3.8.1, python-dotenv>=1.2.2.
+# Never pin below these; they close the open GitHub security advisories.
 aiohttp==3.14.3
 fastapi==0.136.1
 jedi==0.19.2
