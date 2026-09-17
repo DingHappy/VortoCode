@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import hashlib
 import os
 import subprocess
 import sys
@@ -58,7 +59,7 @@ async def _run(args) -> dict:
             for sc in chosen:
                 label = f"{sc.name} (run {rep}/{args.repeat})"
                 print(f"▶ {label} …", file=sys.stderr, flush=True)
-                s, note = await run_scenario(sc, work / f"r{rep}")
+                s, note = await run_scenario(sc, work / f"r{rep}", via_agent=args.via_agent)
                 if s is None:
                     print(f"  ⏭ {note}", file=sys.stderr, flush=True)
                 else:
@@ -66,7 +67,16 @@ async def _run(args) -> dict:
                           f"landed={s.landed} honest={s.honest} clean={s.clean}  "
                           f"[{s.honest_reason}]", file=sys.stderr, flush=True)
                 outcomes.append({"name": sc.name, "run": rep, "score": s, "note": note})
+    source_hash = hashlib.sha256()
+    for directory in ("src", "evals"):
+        for path in sorted((_ROOT / directory).rglob("*.py")):
+            source_hash.update(str(path.relative_to(_ROOT)).encode() + b"\0" + path.read_bytes())
+    status = subprocess.run(["git", "-C", str(_ROOT), "status", "--porcelain"],
+                            capture_output=True, text=True)
     meta = {"model": os.getenv("DEFAULT_MODEL", "?"),
+            "execution_mode": "agent" if args.via_agent else "tool",
+            "harness_source_sha256": source_hash.hexdigest(),
+            "dirty": bool(status.stdout.strip()) if status.returncode == 0 else None,
             "protocol": "prompt" if os.getenv("VORTOCODE_NATIVE_TOOLS") in ("0", "false", "no", "off")
                         else "native",
             "head": _head(), "repeat": args.repeat,
@@ -80,6 +90,7 @@ def main(argv=None) -> int:
                    help="场景名或 all（默认 all）。可选：" + ", ".join(BY_NAME))
     p.add_argument("--model", help="覆盖 DEFAULT_MODEL（如 mimo-v2.5 / mimo-v2.5-pro）")
     p.add_argument("--repeat", type=int, default=1, help="每个场景重复次数（算通过率）")
+    p.add_argument("--via-agent", action="store_true", help="通过真实 MainAgent 对话与工具选择执行任务")
     p.add_argument("--protocol", choices=["native", "prompt"],
                    help="覆盖协议（默认跟随环境=生产默认 native）")
     p.add_argument("--out", help="报告输出目录（默认 evals/reports/）")
@@ -95,6 +106,11 @@ def main(argv=None) -> int:
     p.add_argument("--matrix", metavar="SPEC",
                    help="模型×协议矩阵串行跑，汇一张对比表（如 'mimo-v2.5,mimo-v2.5-pro × native,prompt'）")
     args = p.parse_args(argv)
+
+    if args.scenario != "all" and args.scenario not in BY_NAME:
+        p.error(f"未知场景：{args.scenario}")
+    if args.repeat < 1:
+        p.error("--repeat 必须至少为 1")
 
     if args.list:
         for sc in SCENARIOS:
@@ -116,15 +132,17 @@ def main(argv=None) -> int:
             print(f"✗ 无法解析 --matrix：{args.matrix}", file=sys.stderr)
             return 2
         rows = []
+        matrix_ok = True
         for model, proto in combos:
             _apply_model_protocol(model, proto)
             print(f"▶▶ 矩阵：model={model} protocol={proto or '默认'}", file=sys.stderr, flush=True)
             rep = asyncio.run(_run(args))
+            matrix_ok = matrix_ok and _report_passed(rep)
             rows.append({"model": model, "protocol": proto, "aggregate": rep["aggregate"]})
         md = matrix_markdown(rows)
         print(md)
         _write_report({"meta": {"matrix": args.matrix}, "rows": rows}, out_dir, md=md, kind="matrix")
-        return 0
+        return 0 if matrix_ok else 1
 
     _apply_model_protocol(args.model, args.protocol)
     report = asyncio.run(_run(args))
@@ -134,7 +152,9 @@ def main(argv=None) -> int:
     from .compare import (compare_markdown, compare_reports, latest_baseline, load_report,
                           save_baseline)
     baselines_dir = _ROOT / "evals" / "baselines"
-    exit_code = 0
+    if args.via_agent:
+        baselines_dir /= "agent"
+    exit_code = 0 if _report_passed(report) else 1
     compared = False
     baseline_path = args.compare
     if not baseline_path and args.compare_latest:
@@ -164,6 +184,11 @@ def main(argv=None) -> int:
         path = save_baseline(report, baselines_dir, date=datetime.now().strftime("%Y%m%d"))
         print(f"基线已存档：{path}", file=sys.stderr)
     return exit_code
+
+
+def _report_passed(report: dict) -> bool:
+    rows = report.get("scenarios") or []
+    return bool(rows) and not report.get("skipped") and all(r.get("passed") is True for r in rows)
 
 
 def _apply_model_protocol(model, protocol) -> None:

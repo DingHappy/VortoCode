@@ -17,13 +17,14 @@
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
 from src.gateway.pipeline import (
-    PipelineStore, advance, load_definition, review,
+    PipelineStore, advance, load_definition, review, review_fingerprint,
 )
-from src.gateway.products import ProductStore, render_payload
+from src.gateway.products import ProductStore
 
 
 def _repo() -> str:
@@ -37,6 +38,7 @@ def _print_run(run, *, verbose: bool = False) -> None:
     if not verbose:
         return
     store = ProductStore(_repo())
+    viewed_product = None
     for stage in run.stages:
         line = f"  {stage.status:>16}  {stage.id}"
         if stage.attempts > 1:
@@ -50,7 +52,8 @@ def _print_run(run, *, verbose: bool = False) -> None:
                 mark = " ⚠外部来源" if product.tainted else ""
                 print(f"{'':>18}  ↳ {product.kind} {product.id}{mark}：{product.summary}")
                 if stage.status == "awaiting_review":
-                    body = render_payload(product.payload)
+                    viewed_product = product
+                    body = json.dumps(product.payload, ensure_ascii=False, indent=2)
                     if body:
                         print()
                         for ln in body.splitlines():
@@ -58,6 +61,9 @@ def _print_run(run, *, verbose: bool = False) -> None:
                         print()
         if stage.note:
             print(f"{'':>18}  ↳ {stage.note}")
+    token = review_fingerprint(_repo(), run, viewed_product) if viewed_product else ""
+    if token:
+        print(f"审批当前产出：vc pipeline review {run.run_id} --review-token {token} --approve")
 
 
 async def run_pipeline_cli(
@@ -70,6 +76,7 @@ async def run_pipeline_cli(
     max_stages: int = 1,
     yes: bool = False,
     if_idle: bool = False,
+    review_token: str = "",
 ) -> int:
     repo = _repo()
     store = PipelineStore(repo)
@@ -155,7 +162,7 @@ async def run_pipeline_cli(
             print("review 需要 --approve / --reject / --defer 之一", file=sys.stderr)
             return 1
         result = review(repo, name, verdict=verdict, comment=comment,
-                        rollback_to=rollback_to, reviewer="cli")
+                        rollback_to=rollback_to, reviewer="cli", review_token=review_token)
         print(f"{result.status} · {result.reason}")
         return 0 if result.status in {"running", "done"} else 1
 

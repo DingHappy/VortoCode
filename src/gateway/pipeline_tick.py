@@ -88,7 +88,7 @@ def _message(repo_root: str, run, outcome: TickOutcome) -> str:
         detail = _product_line(repo_root, stage.product_id if stage else "")
         return (f"📋 {head}\n工序「{outcome.blocked_on}」已产出，等你批：{detail}"
                 + review_link(run.run_id)
-                + f"\n手机上也能直接回：/ok 批 · /no <意见> 驳回 · /later 挂起")
+                + f"\n手机上先 /pipe {run.run_id} 查看完整产出，再回 /ok 批 · /no <意见> 驳回 · /later 挂起")
     if outcome.status == "needs_human":
         return (f"🌐 {head}\n工序「{outcome.blocked_on}」要出网，无人值守这一档不给网"
                 f"（出网也是外传通道）。"
@@ -98,7 +98,7 @@ def _message(repo_root: str, run, outcome: TickOutcome) -> str:
         return (f"🔒 {head}\n工序「{outcome.blocked_on}」是对外动作，无人值守不会替你发。"
                 + review_link(run.run_id)
                 + f"\n手机上回 /go 推进（对外那一步会弹按钮让你点）")
-    if outcome.status == "failed":
+    if outcome.status in {"failed", "needs_reconciliation", "storage_error"}:
         return (f"⛔ {head}\n卡在工序「{outcome.blocked_on}」：{outcome.reason or '工序失败'}"
                 + review_link(run.run_id))
     if outcome.status == "done":
@@ -122,10 +122,10 @@ def _signature(outcome: TickOutcome, run) -> str:
         return f"awaiting_review:{outcome.blocked_on}:{stage.product_id if stage else ''}"
     if outcome.status in {"needs_auth", "needs_human"}:
         return f"{outcome.status}:{outcome.blocked_on}"
-    if outcome.status == "failed":
+    if outcome.status in {"failed", "needs_reconciliation", "storage_error"}:
         stage = run.stage(outcome.blocked_on)
         # 带上第几次：试了一次没过和试满三次停下，是两条不同的消息。
-        return f"failed:{outcome.blocked_on}:{stage.attempts if stage else 0}"
+        return f"{outcome.status}:{outcome.blocked_on}:{stage.attempts if stage else 0}"
     if outcome.status == "done":
         return "done"
     return ""                        # running / 无事可说：不占签名
@@ -212,8 +212,12 @@ async def tick(
                 else:
                     await notify(text)
                 outcome.announced = True
-            run.notified = signature
-            store.save(run)
+            # notify 会 await；回来后不能把旧 run 快照覆盖到新工序/审批结果上。
+            current = store.load(run.run_id)
+            if current is not None and current.revision == run.revision:
+                current.notified = signature
+                if not store.save(current):
+                    outcome.reason = "通知状态保存失败，下次可能再次提醒"
         outcomes.append(outcome)
 
     return outcomes

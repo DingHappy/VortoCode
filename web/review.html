@@ -80,12 +80,17 @@ async function api(path, opts, _retried) {
   const body = await r.json().catch(() => ({}));
   // 失败要把**服务端给的原因**原样交出来，别换成一句"操作失败"——审批台上最怕的就是
   // 点了没反应又不知道为什么。
-  if (!r.ok) throw new Error(body.detail || (r.status + " " + r.statusText));
+  if (!r.ok) {
+    const error = new Error(body.detail || (r.status + " " + r.statusText));
+    error.status = r.status;
+    throw error;
+  }
   return body;
 }
 
 const badge = s => s === "awaiting_review" ? '<span class="badge wait">等你批</span>'
   : s === "failed" ? '<span class="badge fail">失败</span>'
+  : s === "needs_reconciliation" ? '<span class="badge fail">待核对执行结果</span>'
   : s === "done" ? '<span class="badge">已完成</span>'
   : '<span class="badge run">' + s + "</span>";
 
@@ -138,7 +143,7 @@ async function loadDetail(id) {
     ${waiting ? `
       <div class="stage"><div class="hd"><span class="name">给「${waiting}」一个回执</span></div>
       <div class="bd">
-        <textarea id="cm" placeholder="驳回必须写一句为什么——不说理由，重跑出来还是原样。"></textarea>
+        <textarea id="cm" aria-label="审批意见" placeholder="驳回必须写一句为什么——不说理由，重跑出来还是原样。"></textarea>
         <div class="acts">
           <button class="ok" id="b-ok">批准</button>
           <button class="no" id="b-no">驳回重做</button>
@@ -155,15 +160,17 @@ async function loadDetail(id) {
 }
 
 async function send(verdict) {
+  const viewed = cur;
   const comment = ($("#cm") || {}).value || "";
   document.querySelectorAll(".acts button").forEach(b => b.disabled = true);
   try {
-    const r = await api("/api/pipelines/" + encodeURIComponent(cur.run_id) + "/review",
-      { method: "POST", body: JSON.stringify({ verdict, comment }) });
+    const r = await api("/api/pipelines/" + encodeURIComponent(viewed.run_id) + "/review",
+      { method: "POST", body: JSON.stringify({ verdict, comment, review_token: viewed.review_token }) });
     toast(r.reason || r.status);
-    await loadDetail(cur.run_id);
+    if (cur.run_id === viewed.run_id) await loadDetail(viewed.run_id);
   } catch (e) {
     toast(e.message);            // 服务端说的原因原样显示（例如"驳回要写一句为什么"）
+    if (e.status === 409 && cur.run_id === viewed.run_id) await loadDetail(viewed.run_id);
     document.querySelectorAll(".acts button").forEach(b => b.disabled = false);
   }
 }

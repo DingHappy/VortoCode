@@ -67,6 +67,9 @@ def _base_result(config: dict, elapsed: float = 0.0) -> dict:
         "final_url": "",
         "title": "",
         "screenshot_path": "",
+        "trace_path": "",
+        "verification_kind": "workflow" if config.get("steps") else "page_health",
+        "steps": [],
         "console_errors": [],
         "transient_console_errors": [],
         "page_errors": [],
@@ -141,6 +144,9 @@ def _run_with_playwright(playwright, config: dict, screenshot_path: Path,
     result = _base_result(config)
     browser = context = page = None
     nav_error = response_error = final_url_error = screenshot_error = ""
+    workflow_error = trace_error = ""
+    tracing = False
+    trace_path = screenshot_path.with_suffix(".trace.zip")
     navigated = False
     console_errors: list[str] = result["console_errors"]
     transient_console_errors: list[str] = result["transient_console_errors"]
@@ -150,6 +156,9 @@ def _run_with_playwright(playwright, config: dict, screenshot_path: Path,
         browser = playwright.chromium.launch(headless=True)
         context = browser.new_context(service_workers="block")
         _install_network_boundary(context, blocked)
+        if config.get("steps"):
+            context.tracing.start(screenshots=True, snapshots=True, sources=False)
+            tracing = True
         page = context.new_page()
         _install_page_listeners(page, console_errors, page_errors)
         page.set_default_timeout(max(1, int(timeout_seconds)) * 1000)
@@ -194,6 +203,10 @@ def _run_with_playwright(playwright, config: dict, screenshot_path: Path,
         if not navigated and not response_error and not nav_error:
             nav_error = f"页面在 {max(1, int(timeout_seconds))} 秒内未完成加载"
 
+        if navigated and config.get("steps"):
+            from src.browser.workflow import run_steps
+            workflow_error = run_steps(page, config["steps"], deadline, result["steps"])
+
         if page is not None:
             result["final_url"] = str(getattr(page, "url", "") or "")
             if navigated:
@@ -216,6 +229,16 @@ def _run_with_playwright(playwright, config: dict, screenshot_path: Path,
             except Exception as exc:  # noqa: BLE001
                 screenshot_error = str(exc)
     finally:
+        if tracing and context is not None:
+            try:
+                trace_path.parent.mkdir(parents=True, exist_ok=True)
+                context.tracing.stop(path=str(trace_path))
+                if trace_path.is_file() and trace_path.stat().st_size > 0:
+                    result["trace_path"] = str(trace_path)
+                else:
+                    trace_error = "浏览器 trace 文件为空"
+            except Exception as exc:  # noqa: BLE001
+                trace_error = f"浏览器 trace 保存失败: {exc}"
         for item in (page, context, browser):
             if item is None:
                 continue
@@ -236,6 +259,8 @@ def _run_with_playwright(playwright, config: dict, screenshot_path: Path,
         and not page_errors
         and not console_red
         and not screenshot_error
+        and not workflow_error
+        and not trace_error
     )
     result["elapsed_seconds"] = round(max(0.0, time.monotonic() - started), 3)
     result["screenshot_path"] = (
@@ -251,6 +276,11 @@ def _run_with_playwright(playwright, config: dict, screenshot_path: Path,
         final_url_error=final_url_error,
         response_error=response_error,
     )
+    if workflow_error or trace_error:
+        result["output"] = "；".join(s for s in (workflow_error, trace_error,
+            result["output"] if result["output"] != "browser verify passed" else "") if s)
+    elif result["ok"] and config.get("steps"):
+        result["output"] = f"browser workflow passed ({len(result['steps'])} steps)"
     return result
 
 
@@ -265,6 +295,14 @@ def run_browser_probe(config: dict, screenshot_path: str | Path,
     """Run one Chromium probe and always return a JSON-serializable result."""
     path = Path(screenshot_path)
     started = time.monotonic()
+    from src.browser.workflow import normalize_steps
+    try:
+        steps = normalize_steps(config.get("steps"))
+        config = {**config, **({"steps": steps} if steps else {})}
+    except ValueError as exc:
+        result = _base_result(config, time.monotonic() - started)
+        result["output"] = str(exc)
+        return result
     url_error = loopback_url_error(str(config.get("url") or ""))
     if url_error:
         result = _base_result(config, time.monotonic() - started)

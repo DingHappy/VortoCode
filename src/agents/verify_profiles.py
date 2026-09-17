@@ -79,6 +79,8 @@ def _normalize_browser(name: str, value) -> dict | None:
     raw_ignore = value.get("console_error_ignore") or []
     if not isinstance(raw_ignore, list) or any(not isinstance(item, str) for item in raw_ignore):
         raise ValueError(f"profile {name} 的 browser.console_error_ignore 应为字符串列表")
+    from src.browser.workflow import normalize_steps
+    steps = normalize_steps(value.get("steps"))
     return {
         "url": url,
         "wait_until": wait_until,
@@ -90,6 +92,7 @@ def _normalize_browser(name: str, value) -> dict | None:
             default=True,
         ),
         "console_error_ignore": [item for item in raw_ignore if item],
+        **({"steps": steps} if steps else {}),
     }
 
 
