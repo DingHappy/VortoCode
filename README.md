@@ -341,7 +341,7 @@ Desktop 预览包已内置只暴露本机 Gateway 的 Python sidecar，不要求
 
 ## 贡献指南
 
-欢迎贡献！请阅读 [贡献指南](CONTRIBUTING.md) 了解如何参与项目开发。
+欢迎贡献！请阅读 [贡献指南](CONTRIBUTING.md) 了解如何参与项目开发，并遵守 [行为准则](CODE_OF_CONDUCT.md)。
 
 ## 许可证
 
