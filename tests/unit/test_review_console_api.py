@@ -105,9 +105,35 @@ def test_lineage_answers_where_this_came_from(client, repo):
 
 
 # ------------------------------------------------------------------ 写
+def test_missing_or_stale_review_token_returns_conflict(client, repo):
+    run = _waiting(repo)
+    url = f"/api/pipelines/{run.run_id}"
+    assert client.post(url + "/review", json={"verdict": "approve"}).status_code == 409
+    viewed = client.get(url).json()["review_token"]
+    store = PipelineStore(str(repo))
+    current = store.load(run.run_id)
+    current.stage("scout").attempts += 1
+    assert store.save(current)
+    for verdict in ("approve", "reject", "defer"):
+        response = client.post(url + "/review", json={"verdict": verdict, "comment": "redo",
+                                                      "review_token": viewed})
+        assert response.status_code == 409
+    assert store.load(run.run_id).status == "awaiting_review"
+
+
+def test_failed_review_persistence_returns_service_error(client, repo, monkeypatch):
+    run = _waiting(repo)
+    url = f"/api/pipelines/{run.run_id}"
+    viewed = client.get(url).json()["review_token"]
+    monkeypatch.setattr(PipelineStore, "save", lambda *args: False)
+    response = client.post(url + "/review", json={"verdict": "approve", "review_token": viewed})
+    assert response.status_code == 503
+    assert PipelineStore(str(repo)).load(run.run_id).status == "awaiting_review"
+
+
 def test_approve_moves_the_run_forward(client, repo):
     run = _waiting(repo)
-    r = client.post(f"/api/pipelines/{run.run_id}/review", json={"verdict": "approve"})
+    r = client.post(f"/api/pipelines/{run.run_id}/review", json={"verdict": "approve", "review_token": client.get(f"/api/pipelines/{run.run_id}").json()["review_token"]})
     assert r.status_code == 200
     assert PipelineStore(str(repo)).load(run.run_id).stage("scout").status == "done"
 
@@ -125,7 +151,7 @@ def test_reject_records_the_comment_into_lineage(client, repo):
     """意见落成 review_note 进血缘——三个月后还答得出"这版为什么改成这样"。"""
     run = _waiting(repo)
     client.post(f"/api/pipelines/{run.run_id}/review",
-                json={"verdict": "reject", "comment": "角度太窄"})
+                json={"verdict": "reject", "comment": "角度太窄", "review_token": client.get(f"/api/pipelines/{run.run_id}").json()["review_token"]})
     note = ProductStore(str(repo)).latest("review_note")
     assert note.payload["comment"] == "角度太窄" and note.payload["reviewer"] == "web"
 
@@ -153,6 +179,6 @@ def test_the_web_verdict_is_what_the_cli_sees(client, repo):
     """web 上批完，CLI 看到的必须是同一件事——两条路共用同一份状态，不是两套。"""
     run = _waiting(repo)
     client.post(f"/api/pipelines/{run.run_id}/review",
-                json={"verdict": "defer", "comment": "这周先不发"})
+                json={"verdict": "defer", "comment": "这周先不发", "review_token": client.get(f"/api/pipelines/{run.run_id}").json()["review_token"]})
     reloaded = PipelineStore(str(repo)).load(run.run_id)
     assert reloaded.status == "awaiting_review" and reloaded.stage("scout").note == "这周先不发"

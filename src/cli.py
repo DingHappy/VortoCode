@@ -194,6 +194,7 @@ def main():
     p.add_argument("--defer", dest="verdict", action="store_const", const="defer",
                    help="review：挂起——不推进也不失败")
     p.add_argument("-m", "--comment", default="", help="人批意见（驳回时会进血缘）")
+    p.add_argument("--review-token", default="", help="show 显示的产出版本凭据，review 时必须提供")
     p.add_argument("--rollback-to", default="",
                    help="驳回时退回哪道工序（默认退回当前这道）；退回点由你指定，不让模型猜")
     p.add_argument("--max-stages", type=int, default=1,
@@ -315,7 +316,7 @@ def main():
         sys.exit(asyncio.run(run_pipeline_cli(
             args.action, args.name, verdict=args.verdict or "", comment=args.comment,
             rollback_to=args.rollback_to, max_stages=args.max_stages, yes=args.yes,
-            if_idle=args.if_idle)))
+            if_idle=args.if_idle, review_token=args.review_token)))
 
     elif args.command == "heartbeat":
         asyncio.run(run_heartbeat_cli())

@@ -480,8 +480,22 @@ def run_runtime_check(worktree, profile: dict, timeout: int = 180, *,
                 from src.browser.verify import run_browser_probe, safe_evidence_path
                 root = Path(repo_root or worktree)
                 evidence = safe_evidence_path(root, run_id or f"manual-{time.time_ns()}", name)
+                source = _git(worktree, "rev-parse", "HEAD", check=False)
+                source_status = _git(worktree, "status", "--porcelain", check=False)
                 browser_result = run_browser_probe(
                     browser_config, evidence, timeout_seconds=ready_timeout)
+                browser_result["evidence_context"] = {
+                    "run_id": run_id, "profile": name,
+                    "source_commit": source.stdout.strip() if source.returncode == 0 else "",
+                    "source_dirty": bool(source_status.stdout.strip()) if source_status.returncode == 0 else None,
+                    "environment": "local-loopback",
+                }
+                if source.returncode == 0 and (
+                    _git(worktree, "rev-parse", "HEAD", check=False).stdout != source.stdout
+                    or _git(worktree, "status", "--porcelain", check=False).stdout != source_status.stdout
+                ):
+                    browser_result["ok"] = False
+                    browser_result["output"] = "浏览器验收期间源码状态发生变化，请在固定版本重新验收"
                 # Any early serve exit means the browser probed a stale/other
                 # process, not this branch's serve — fail regardless of code,
                 # matching the check path's "exited → failure" semantics.

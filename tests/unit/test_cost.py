@@ -11,7 +11,7 @@ from src.agents.roles import DeveloperAgent
 def test_cost_for_known_and_unknown():
     # mimo-v2.5 定价：0.001/1k 输入，0.002/1k 输出
     assert abs(cost_for("mimo-v2.5", 1000, 1000) - 0.003) < 1e-9
-    assert cost_for("nonexistent-model", 1000, 1000) == 0.0
+    assert cost_for("nonexistent-model", 1000, 1000) is None
 
 
 def test_track_usage_accumulates_cost():
@@ -51,11 +51,59 @@ def test_add_usage_feeds_cost_tracker():
     assert abs(cost_tracker.entries[-1]["cost"] - 0.003) < 1e-9
 
 
-def test_add_usage_unknown_model_tracks_zero_cost():
+def test_add_usage_unknown_model_preserves_unpriced_tokens():
     from src.llm.client import add_usage
     cost_tracker.entries.clear()
-    add_usage(1000, 1000, model="nonexistent-model")   # 未登记定价 → 记账但费用 0
-    assert cost_tracker.entries[-1]["cost"] == 0.0
+    add_usage(1000, 1000, model="nonexistent-model")
+    assert cost_tracker.entries[-1]["cost"] is None
+    report = cost_tracker.get_report("all")
+    assert report["total_cost"] is None and not report["pricing_complete"]
+    assert report["unpriced_calls"] == 1 and report["unpriced_tokens"] == 2000
+    assert report["total_input_tokens"] == report["total_output_tokens"] == 1000
+
+
+def test_mixed_pricing_keeps_known_subtotal_without_claiming_complete_cost(monkeypatch):
+    from src.models.router import CostTracker
+    from src.models import cost as cost_mod
+    tracker = CostTracker()
+    monkeypatch.setattr(cost_mod, "cost_tracker", tracker)
+    monkeypatch.setenv("VORTOCODE_COST_BUDGET", "0.001")
+    tracker.set_budget("dev", 0.001)
+    cost_mod.track_usage("unknown", 1000, 500, agent="dev")
+    cost_mod.track_usage("mimo-v2.5", 1000, 1000, agent="dev")
+    report = tracker.get_report("all")
+    assert report["total_cost"] is None
+    assert report["known_cost"] == pytest.approx(0.003)
+    assert report["by_agent"]["dev"]["cost"] is None
+    assert report["by_model"]["unknown"]["unpriced_tokens"] == 1500
+    assert report["by_model"]["mimo-v2.5"]["cost"] == pytest.approx(0.003)
+    assert {a["type"] for a in tracker.alerts} == {"budget_exceeded", "total_budget_exceeded"}
+    tracker.get_optimization_suggestions()  # 未知费用不应让报告生成崩溃
+
+
+def test_explicit_free_pricing_is_distinct_from_missing_pricing(monkeypatch):
+    from src.models import cost as cost_mod
+    from src.models.router import ModelConfig, ModelTier
+    base = dict(id="local", name="local", provider="local", tier=ModelTier.ECONOMY)
+    monkeypatch.setitem(cost_mod._router.models, "local", ModelConfig(**base))
+    assert cost_for("local", 100, 50) is None
+    monkeypatch.setitem(cost_mod._router.models, "local", ModelConfig(
+        **base, cost_per_1k_input=0, cost_per_1k_output=0))
+    assert cost_for("local", 100, 50) == 0
+
+
+def test_tui_shows_unknown_total_and_preserves_known_subtotal():
+    from types import SimpleNamespace
+    from src.llm.client import usage_scope, add_usage
+    from src.tui.commands import TUICommandsMixin
+    output = []
+    view = SimpleNamespace(_emit=output.append, _context_usage_label=lambda: "")
+    with usage_scope():
+        add_usage(1000, 1000, model="mimo-v2.5")
+        add_usage(100, 100, model="unpriced")
+        TUICommandsMixin._cmd_usage(view, "")
+    assert "费用未知（未配置单价）" in output[0]
+    assert "费用合计未知" in output[0] and "$0.0030" in output[0]
 
 
 def test_add_usage_without_model_skips_tracker():

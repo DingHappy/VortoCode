@@ -74,6 +74,7 @@ class Product:
     summary: str = ""                                    # 一行人读摘要（给日报/决策队列用）
     payload: Dict[str, Any] = field(default_factory=dict)
     created: str = ""
+    execution: Dict[str, Any] = field(default_factory=dict)  # 执行回执：attempt、用量；不混入模型 payload
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -113,6 +114,8 @@ class ProductStore:
         tainted: bool = False,
         taint_reason: str = "",
         schema_version: int = 1,
+        product_id: str = "",
+        execution: Optional[Dict[str, Any]] = None,
     ) -> Product:
         """产出一条 Product。**污点按血缘自动继承**，调用方给的 tainted 只能加不能减。
 
@@ -122,6 +125,8 @@ class ProductStore:
         clean_kind = str(kind or "").strip()
         if not clean_kind:
             raise ValueError("Product 必须有 kind")
+        if product_id and (not _clean_id(product_id) or self._path(product_id).exists()):
+            raise ValueError("产出物 id 无效或已经存在，不能覆盖原产出")
         body = dict(payload or {})
         size = len(json.dumps(body, ensure_ascii=False).encode("utf-8"))
         if size > MAX_PAYLOAD_BYTES:
@@ -133,7 +138,7 @@ class ProductStore:
             reasons.insert(0, str(taint_reason).strip())
 
         product = Product(
-            id=f"prod-{_clean_id(clean_kind) or 'x'}-{uuid.uuid4().hex[:10]}",
+            id=product_id or f"prod-{_clean_id(clean_kind) or 'x'}-{uuid.uuid4().hex[:10]}",
             kind=clean_kind,
             pipeline=str(pipeline or "").strip(),
             run_id=str(run_id or "").strip(),
@@ -145,6 +150,7 @@ class ProductStore:
             summary=str(summary or "").strip(),
             payload=body,
             created=_now(),
+            execution=dict(execution or {}),
         )
         if not self.save(product):
             raise OSError(f"产出物落盘失败：{product.id}")
@@ -161,10 +167,8 @@ class ProductStore:
 
             ensure_state_gitignore(self.repo_root)     # 先保证 .vortocode/ 自忽略，别污染目标仓库
             path.parent.mkdir(parents=True, exist_ok=True)
-            temp = path.with_suffix(".json.tmp")
-            temp.write_text(json.dumps(product.to_dict(), ensure_ascii=False, indent=2),
-                            encoding="utf-8")
-            temp.replace(path)
+            from src.gateway.pipeline_storage import write_json
+            write_json(path, product.to_dict())
             return True
         except (OSError, TypeError, ValueError):
             return False
@@ -214,6 +218,10 @@ class ProductStore:
         """某个 kind 的最新一条——`scout` 读上一轮 metrics 就靠它。"""
         items = self.list(kind=kind, pipeline=pipeline, run_id=run_id, limit=1)
         return items[0] if items else None
+
+    def latest_global(self, kind: str) -> Optional[Product]:
+        """公共采集产物。空筛选参数原意是不限范围，不能拿它表示公共范围。"""
+        return next((p for p in self.list(kind=kind, limit=0) if not p.pipeline), None)
 
     # ---------------------------------------------------------------- 血缘
     def lineage(self, product_id: str, *, max_depth: int = 20) -> List[Product]:

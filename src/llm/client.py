@@ -1,6 +1,7 @@
 """LLM 客户端 - OpenAI 兼容接口 / One API 网关"""
 
 import asyncio
+from contextlib import contextmanager
 import logging
 import os
 from pathlib import Path
@@ -188,6 +189,7 @@ _USAGE: Dict[str, Any] = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0
 import contextvars
 
 _usage_ctx: "contextvars.ContextVar" = contextvars.ContextVar("vc_usage", default=None)
+_usage_meters: "contextvars.ContextVar" = contextvars.ContextVar("vc_usage_meters", default=())
 
 
 def _cur_usage() -> Dict[str, Any]:
@@ -253,6 +255,21 @@ def estimate_tokens(text: str) -> int:
 def add_usage(prompt_tokens: int, completion_tokens: int, cached_tokens: int = 0,
               model: str = "") -> None:
     u = _cur_usage()
+    _accumulate_usage(u, prompt_tokens, completion_tokens, cached_tokens, model)
+    for meter in _usage_meters.get():
+        if meter is not u:
+            _accumulate_usage(meter, prompt_tokens, completion_tokens, cached_tokens, model)
+    if model:
+        # 一个调用只进成本账一次；阶段与任务可同时计量，但不能重复收费。
+        try:
+            from src.models.cost import track_usage
+            track_usage(str(model), int(prompt_tokens or 0), int(completion_tokens or 0))
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _accumulate_usage(u: Dict[str, Any], prompt_tokens: int, completion_tokens: int,
+                      cached_tokens: int, model: str) -> None:
     u["calls"] += 1
     u["prompt_tokens"] += int(prompt_tokens or 0)
     u["completion_tokens"] += int(completion_tokens or 0)
@@ -266,15 +283,21 @@ def add_usage(prompt_tokens: int, completion_tokens: int, cached_tokens: int = 0
         m["prompt_tokens"] += int(prompt_tokens or 0)
         m["completion_tokens"] += int(completion_tokens or 0)
         m["cached_tokens"] += int(cached_tokens or 0)
-        # 主线计量与成本系统在此汇合：cost_tracker 是 /api/cost/report 与预算告警的数据源，
-        # 此前只有遗留 BaseAgent 调 track_usage——主 agent 走 LLMClient 直连，花费从不进账
-        # （07-11 复核 🟥"表都建了没接主 agent"）。挂在唯一计量口上，主/子 agent、dev 流水线、
-        # reviewer 全部 LLM 调用自动记账。成本记账绝不反噬 LLM 调用（失败静默）。
-        try:
-            from src.models.cost import track_usage
-            track_usage(str(model), int(prompt_tokens or 0), int(completion_tokens or 0))
-        except Exception:  # noqa: BLE001
-            pass
+
+
+@contextmanager
+def usage_meter(meter: Dict[str, Any]):
+    """额外累计本任务及其子任务用量，不改变会话/阶段绑定；嵌套同一计数器不重复记账。
+
+    与 usage_scope 不同，内层阶段的重新绑定或 reset 不会清零任务预算。
+    ContextVar 随子任务传播，但不会把外部并发任务计入当前任务。
+    """
+    meters = _usage_meters.get()
+    token = _usage_meters.set(meters if any(m is meter for m in meters) else (*meters, meter))
+    try:
+        yield meter
+    finally:
+        _usage_meters.reset(token)
 
 
 def get_usage() -> Dict[str, Any]:

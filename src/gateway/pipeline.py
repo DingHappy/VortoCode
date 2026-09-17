@@ -21,7 +21,9 @@ cron（定时）、heartbeat（常驻）和你手点（Desktop/钉钉）三个�
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
@@ -29,16 +31,17 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from src.gateway.products import Product, ProductStore
+from src.gateway.pipeline_storage import PipelineBusy, pipeline_lock, write_json
 from src.utils.ids import safe_id
 
 _RUNS_DIRNAME = "pipeline_runs"
 _DEFS_DIRNAME = "pipelines"
 
-# 工序状态：pending（没跑过）→ running（正在跑，崩溃留在此态，续跑视同未完成重来）
+# 工序状态：pending → running（崩溃后先恢复回执；对外结果未知则 needs_reconciliation）
 #           → awaiting_review（跑完了，等人批）→ done / failed
-STAGE_STATUS = ("pending", "running", "awaiting_review", "done", "failed")
+STAGE_STATUS = ("pending", "running", "awaiting_review", "done", "failed", "needs_reconciliation")
 # 运行状态：running → awaiting_review（卡在某道闸门）→ done / failed / abandoned
-RUN_STATUS = ("running", "awaiting_review", "done", "failed", "abandoned")
+RUN_STATUS = ("running", "awaiting_review", "done", "failed", "abandoned", "needs_reconciliation")
 VERDICTS = ("approve", "reject", "defer")
 # 一道工序最多试几次。**failed 不是终态**——outbound 被 fail-closed 拒一次（你没带授权来）、
 # relay 抖一下，都不该让整轮死掉；下次 advance 应该能接着试。但也不能无限重试：一个持续
@@ -195,6 +198,11 @@ class StageRun:
     note: str = ""
     tokens: int = 0
     updated: str = ""
+    attempt_id: str = ""
+    attempt_product_id: str = ""
+    attempt_outbound: bool = False
+    attempt_review: bool = False
+    owner_pid: int = 0  # 仅供诊断；执行权以 OS 文件锁为准
 
 
 @dataclass
@@ -208,6 +216,8 @@ class PipelineRun:
     # 上一次已经通报给人的状态签名（见 pipeline_tick._signature）。放在运行自己身上而不是
     # 另起一个"已通报"清单文件：两份状态迟早会对不上，而这条信息本来就只属于这一个运行。
     notified: str = ""
+    revision: int = 0
+    reviews: List[Dict[str, Any]] = field(default_factory=list)
 
     def stage(self, stage_id: str) -> Optional[StageRun]:
         return next((s for s in self.stages if s.id == stage_id), None)
@@ -270,19 +280,25 @@ class PipelineStore:
         if rid is None:
             return False
         run.run_id = rid
-        run.updated = _now()
         path = self._path(rid)
         try:
-            from src.utils.state_dir import ensure_state_gitignore
-
-            ensure_state_gitignore(self.repo_root)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            temp = path.with_suffix(".json.tmp")
-            temp.write_text(json.dumps(run.to_dict(), ensure_ascii=False, indent=2),
-                            encoding="utf-8")
-            temp.replace(path)
+            with pipeline_lock(self.repo_root, rid, kind="state"):
+                current = self.load(rid)
+                if path.exists() and current is None:
+                    return False  # 损坏文件不能被当成新记录覆盖
+                if current is not None and current.revision != run.revision:
+                    return False  # 过期快照不能覆盖正在执行/审批的新状态
+                data = run.to_dict()
+                ignored = {"revision", "updated", "notified"}
+                before = ({k: v for k, v in current.to_dict().items() if k not in ignored}
+                          if current is not None else None)
+                after = {k: v for k, v in data.items() if k not in ignored}
+                revision = run.revision + int(before != after)
+                data.update(revision=revision, updated=_now())
+                write_json(path, data)
+                run.revision, run.updated = revision, data["updated"]
             return True
-        except (OSError, TypeError, ValueError):
+        except (OSError, TypeError, ValueError, PipelineBusy):
             return False
 
     def load(self, run_id: str) -> Optional[PipelineRun]:
@@ -321,6 +337,61 @@ class AdvanceResult:
     reason: str = ""
 
 
+class StageNotStarted(RuntimeError):
+    """能力/授权预检失败，执行器尚未开始工作，可以安全地重新尝试。"""
+
+
+def _save_run(store: PipelineStore, run: PipelineRun) -> None:
+    if not store.save(run):
+        raise OSError("流水线状态保存失败或版本已变化；请刷新对账，未确认完成")
+
+
+def review_fingerprint(repo_root: str, run: PipelineRun, product: Optional[Product] = None) -> str:
+    """绑定用户看到的工序、产出正文和状态版本；缺失产出不能获得批准凭据。"""
+    waiting = run.awaiting()
+    if waiting is None:
+        return ""
+    product = product or ProductStore(repo_root).load(waiting.product_id)
+    if product is None or (product.id, product.run_id, product.stage) != (
+        waiting.product_id, run.run_id, waiting.id
+    ):
+        return ""
+    body = {"run_id": run.run_id, "revision": run.revision,
+            "stage": asdict(waiting), "product": product.to_dict()}
+    return hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+async def advance(repo_root: str, run_id: str, *, execute: Callable,
+                  definition: Optional[PipelineDef] = None, max_stages: int = 1) -> AdvanceResult:
+    if not _clean_id(run_id):
+        return AdvanceResult(run_id, "missing", reason="无此运行")
+    try:
+        # 包住 load → await execute → checkpoint，另一个入口不会把正在跑误判成已崩溃。
+        with pipeline_lock(repo_root, run_id):
+            return await _advance_locked(repo_root, run_id, execute=execute,
+                                         definition=definition, max_stages=max_stages)
+    except PipelineBusy as error:
+        return AdvanceResult(run_id, "busy", reason=str(error))
+    except OSError as error:
+        return AdvanceResult(run_id, "storage_error", reason=str(error))
+
+
+def review(repo_root: str, run_id: str, *, verdict: str, review_token: str = "",
+           comment: str = "", rollback_to: str = "", reviewer: str = "human") -> AdvanceResult:
+    if verdict not in VERDICTS:
+        raise ValueError(f"verdict 必须是 {VERDICTS} 之一")
+    if not _clean_id(run_id):
+        return AdvanceResult(run_id, "missing", reason="无此运行")
+    try:
+        with pipeline_lock(repo_root, run_id):
+            return _review_locked(repo_root, run_id, verdict=verdict, review_token=review_token,
+                                  comment=comment, rollback_to=rollback_to, reviewer=reviewer)
+    except PipelineBusy as error:
+        return AdvanceResult(run_id, "busy", reason=str(error))
+    except OSError as error:
+        return AdvanceResult(run_id, "storage_error", reason=str(error))
+
+
 def resolve_inputs(store: ProductStore, run: PipelineRun, stage_def: StageDef,
                    stage_run: StageRun) -> List[Product]:
     """按 kind 取输入产出物。
@@ -337,7 +408,7 @@ def resolve_inputs(store: ProductStore, run: PipelineRun, stage_def: StageDef,
     for kind in stage_def.inputs:
         found = (store.latest(kind, run_id=run.run_id)
                  or store.latest(kind, pipeline=run.pipeline)
-                 or store.latest(kind))
+                 or store.latest_global(kind))
         if found is not None:
             picked.append(found)
     for pid in stage_run.extra_inputs:
@@ -356,7 +427,7 @@ def next_stage(definition: PipelineDef, run: PipelineRun) -> Optional[StageRun]:
     for stage_run in run.stages:
         if stage_run.status in {"done", "skipped"}:
             continue
-        if stage_run.status == "awaiting_review":
+        if stage_run.status in {"awaiting_review", "needs_reconciliation"}:
             return None                      # 等人拍板，重试多少次也没用
         if stage_run.status == "failed" and stage_run.attempts >= MAX_STAGE_ATTEMPTS:
             return None                      # 试到头了，得有人处理
@@ -364,7 +435,7 @@ def next_stage(definition: PipelineDef, run: PipelineRun) -> Optional[StageRun]:
     return None
 
 
-async def advance(
+async def _advance_locked(
     repo_root: str,
     run_id: str,
     *,
@@ -406,26 +477,55 @@ async def advance(
             stage_run.status = "failed"
             stage_run.note = f"流水线定义里已无工序 {stage_run.id}"
             run.status = "failed"
-            store.save(run)
+            _save_run(store, run)
             return AdvanceResult(run.run_id, run.status, ran, stage_run.id, stage_run.note)
 
-        # write-ahead：先标 running 再干活。崩在半路时文件如实反映"跑过但没跑完"，
-        # 续跑视同未完成重来，绝不超前标 done。
+        if stage_run.status == "running":
+            # 只有拿到 operation 锁后才可恢复：旧执行者已释放执行权。
+            receipt = products.load(stage_run.attempt_product_id)
+            if receipt is not None and (
+                receipt.run_id == run.run_id and receipt.stage == stage_run.id
+                and receipt.execution.get("attempt_id") == stage_run.attempt_id
+            ):
+                _finish_stage(stage_run, receipt)
+                run.status = "awaiting_review" if stage_run.attempt_review else "running"
+                _save_run(store, run)
+                ran.append(stage_run.id)
+                if stage_run.status == "awaiting_review":
+                    return AdvanceResult(run.run_id, run.status, ran, stage_run.id, "已恢复执行回执，等人批")
+                continue
+            if stage_run.attempt_outbound or stage_def.outbound:
+                stage_run.status = run.status = "needs_reconciliation"
+                stage_run.note = "上次对外执行未留下完整回执，需人工核对结果；不会自动重发"
+                _save_run(store, run)
+                return AdvanceResult(run.run_id, run.status, ran, stage_run.id, stage_run.note)
+            if stage_run.attempts >= MAX_STAGE_ATTEMPTS:
+                stage_run.status = "failed"
+                stage_run.note = "中断重试次数已用尽，需人工处理"
+                return _settle(store, run, ran)
+
+        # write-ahead：持久化 attempt 与预留回执 id 后才执行，恢复时据此判断结果。
         stage_run.status = "running"
         stage_run.attempts += 1
+        stage_run.attempt_id = uuid.uuid4().hex
+        stage_run.attempt_product_id = f"prod-attempt-{stage_run.attempt_id}"
+        stage_run.attempt_outbound = stage_def.outbound
+        stage_run.attempt_review = stage_def.review
+        stage_run.owner_pid = os.getpid()
         stage_run.updated = _now()
         run.status = "running"
-        store.save(run)
+        _save_run(store, run)
 
         inputs = resolve_inputs(products, run, stage_def, stage_run)
         try:
             outcome = await execute(stage_def, inputs) or {}
         except Exception as error:  # noqa: BLE001
-            stage_run.status = "failed"
+            stage_run.status = ("needs_reconciliation" if stage_def.outbound
+                                and not isinstance(error, StageNotStarted) else "failed")
             stage_run.note = f"{type(error).__name__}: {error}"[:1000]
             stage_run.updated = _now()
-            run.status = "failed"
-            store.save(run)
+            run.status = stage_run.status
+            _save_run(store, run)
             return AdvanceResult(run.run_id, run.status, ran, stage_run.id, stage_run.note)
 
         product = products.create(
@@ -438,23 +538,31 @@ async def advance(
             inputs=[p.id for p in inputs],
             tainted=bool(outcome.get("tainted")),
             taint_reason=str(outcome.get("taint_reason") or ""),
+            product_id=stage_run.attempt_product_id,
+            execution={"attempt_id": stage_run.attempt_id,
+                       "tokens": int(outcome.get("tokens") or 0)},
         )
-        stage_run.product_id = product.id
-        stage_run.tokens += int(outcome.get("tokens") or 0)
-        stage_run.status = "awaiting_review" if stage_def.review else "done"
-        stage_run.note = ""
-        stage_run.updated = _now()
+        _finish_stage(stage_run, product)
         ran.append(stage_run.id)
         run.status = "awaiting_review" if stage_def.review else "running"
-        store.save(run)
+        _save_run(store, run)
         if stage_def.review:
             return AdvanceResult(run.run_id, run.status, ran, stage_run.id, "等人批")
 
     # 收尾再判一次：刚跑完的可能正是最后一道工序，别让它挂在 running 等下一次 advance 才转终态。
     if next_stage(definition, run) is None:
         return _settle(store, run, ran)
-    store.save(run)
+    _save_run(store, run)
     return AdvanceResult(run.run_id, run.status, ran, reason="已推进到本次上限")
+
+
+def _finish_stage(stage: StageRun, product: Product) -> None:
+    stage.product_id = product.id
+    stage.tokens += int(product.execution.get("tokens") or 0)
+    stage.status = "awaiting_review" if stage.attempt_review else "done"
+    stage.note = ""
+    stage.updated = _now()
+    stage.owner_pid = 0
 
 
 def _settle(store: "PipelineStore", run: PipelineRun, ran: List[str]) -> AdvanceResult:
@@ -462,26 +570,32 @@ def _settle(store: "PipelineStore", run: PipelineRun, ran: List[str]) -> Advance
     waiting = run.awaiting()
     if waiting is not None:
         run.status = "awaiting_review"
-        store.save(run)
+        _save_run(store, run)
         return AdvanceResult(run.run_id, run.status, ran, waiting.id, "等人批")
+    unresolved = next((s for s in run.stages if s.status == "needs_reconciliation"), None)
+    if unresolved is not None:
+        run.status = "needs_reconciliation"
+        _save_run(store, run)
+        return AdvanceResult(run.run_id, run.status, ran, unresolved.id, unresolved.note)
     broken = next((s for s in run.stages if s.status == "failed"), None)
     if broken is not None:
         run.status = "failed"
-        store.save(run)
+        _save_run(store, run)
         return AdvanceResult(
             run.run_id, run.status, ran, broken.id,
             f"已试 {broken.attempts} 次仍未过，需人工处理：{broken.note or '工序失败'}")
     run.status = "done"
-    store.save(run)
+    _save_run(store, run)
     return AdvanceResult(run.run_id, run.status, ran, reason="全部工序完成")
 
 
 # ---------------------------------------------------------------- 人批（三档）
-def review(
+def _review_locked(
     repo_root: str,
     run_id: str,
     *,
     verdict: str,
+    review_token: str,
     comment: str = "",
     rollback_to: str = "",
     reviewer: str = "human",
@@ -504,13 +618,28 @@ def review(
         return AdvanceResult(run_id=run_id, status="missing", reason="无此运行")
     waiting = run.awaiting()
     if waiting is None:
-        return AdvanceResult(run.run_id, run.status, reason="当前没有等待人批的工序")
+        return AdvanceResult(run.run_id, "conflict", reason="当前没有等待人批的工序，请刷新后审阅")
+    expected = review_fingerprint(repo_root, run)
+    if not review_token or not expected or review_token != expected:
+        return AdvanceResult(run.run_id, "conflict", reason="审批内容已变化或尚未审阅，请刷新后重新确认")
+    target = waiting
+    if verdict == "reject":
+        requested = run.stage(str(rollback_to).strip() or waiting.id)
+        if requested is None:
+            return AdvanceResult(run.run_id, "conflict", reason=f"退回目标 {rollback_to} 不是本流水线的工序")
+        target = requested
+        if run.stages.index(target) > run.stages.index(waiting):
+            return AdvanceResult(run.run_id, "conflict", reason="退回目标必须是当前或之前的工序")
+    run.reviews.append({"verdict": verdict, "stage_id": waiting.id,
+                        "product_id": waiting.product_id, "review_token": review_token,
+                        "revision": run.revision, "reviewer": str(reviewer),
+                        "comment": str(comment).strip()[:1000], "created": _now()})
 
     if verdict == "defer":
         waiting.note = (str(comment).strip() or "暂不处理")[:1000]
         waiting.updated = _now()
         run.status = "awaiting_review"
-        store.save(run)
+        _save_run(store, run)
         return AdvanceResult(run.run_id, run.status, blocked_on=waiting.id, reason="已挂起")
 
     if verdict == "approve":
@@ -518,7 +647,7 @@ def review(
         waiting.note = str(comment).strip()[:1000]
         waiting.updated = _now()
         run.status = "running"
-        store.save(run)
+        _save_run(store, run)
         return AdvanceResult(run.run_id, run.status, reason=f"{waiting.id} 已放行")
 
     # reject —— 意见先落成产出物，再决定退回哪一步
@@ -533,12 +662,6 @@ def review(
         stage=waiting.id,
         inputs=[waiting.product_id] if waiting.product_id else [],
     )
-    target_id = str(rollback_to).strip() or waiting.id
-    target = run.stage(target_id)
-    if target is None:
-        return AdvanceResult(run.run_id, run.status, blocked_on=waiting.id,
-                             reason=f"退回目标 {target_id} 不是本流水线的工序")
-
     start = run.stages.index(target)
     for stage_run in run.stages[start:]:
         stage_run.status = "pending"
@@ -548,6 +671,6 @@ def review(
         target.extra_inputs.append(note_product.id)
     target.note = f"驳回重做：{str(comment).strip()[:200]}"
     run.status = "running"
-    store.save(run)
+    _save_run(store, run)
     return AdvanceResult(run.run_id, run.status, blocked_on="",
-                         reason=f"已驳回，退回 {target_id} 重做")
+                         reason=f"已驳回，退回 {target.id} 重做")

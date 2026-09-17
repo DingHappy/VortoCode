@@ -7,7 +7,7 @@ import pytest
 import yaml
 
 from src.gateway.pipeline import (
-    PipelineDef, PipelineStore, advance, load_definition, review,
+    PipelineDef, PipelineStore, advance, load_definition, review, review_fingerprint,
 )
 from src.gateway.products import ProductStore
 
@@ -38,6 +38,10 @@ def repo(tmp_path):
 def started(repo):
     store = PipelineStore(str(repo))
     return store, store.start(load_definition(str(repo), "content-ops"))
+
+
+def _token(store, run):
+    return review_fingerprint(store.repo_root, store.load(run.run_id))
 
 
 def _exec(payload=None, **extra):
@@ -107,7 +111,7 @@ async def test_stage_output_becomes_the_next_stage_input(started):
     store, run = started
     execute, seen = _exec()
     await advance(store.repo_root, run.run_id, execute=execute)
-    review(store.repo_root, run.run_id, verdict="approve")
+    review(store.repo_root, run.run_id, review_token=_token(store, run), verdict="approve")
     await advance(store.repo_root, run.run_id, execute=execute)
     assert seen[1] == ("write", ["topic_pool"])        # write 拿到了 scout 的产出
 
@@ -125,7 +129,7 @@ async def test_run_completes_and_then_refuses_further_work(started):
         await advance(store.repo_root, run.run_id, execute=execute)
         current = store.load(run.run_id)
         if current.status == "awaiting_review":
-            review(store.repo_root, run.run_id, verdict="approve")
+            review(store.repo_root, run.run_id, review_token=_token(store, run), verdict="approve")
     done = store.load(run.run_id)
     assert done.status == "done"
     assert [s.status for s in done.stages] == ["done"] * 4
@@ -139,9 +143,9 @@ async def test_max_stages_lets_the_caller_drain(started):
     store, run = started
     execute, seen = _exec()
     await advance(store.repo_root, run.run_id, execute=execute)
-    review(store.repo_root, run.run_id, verdict="approve")
+    review(store.repo_root, run.run_id, review_token=_token(store, run), verdict="approve")
     await advance(store.repo_root, run.run_id, execute=execute)
-    review(store.repo_root, run.run_id, verdict="approve")
+    review(store.repo_root, run.run_id, review_token=_token(store, run), verdict="approve")
     result = await advance(store.repo_root, run.run_id, execute=execute, max_stages=5)
     assert result.ran == ["publish", "measure"] and result.status == "done"
 
@@ -192,7 +196,7 @@ async def test_defer_holds_without_advancing_or_failing(started):
     store, run = started
     execute, seen = _exec()
     await advance(store.repo_root, run.run_id, execute=execute)
-    result = review(store.repo_root, run.run_id, verdict="defer", comment="这周先不发")
+    result = review(store.repo_root, run.run_id, review_token=_token(store, run), verdict="defer", comment="这周先不发")
     assert result.status == "awaiting_review" and result.blocked_on == "scout"
     await advance(store.repo_root, run.run_id, execute=execute)
     assert len(seen) == 1                              # 依然没往前走
@@ -205,12 +209,12 @@ async def test_reject_records_the_comment_as_a_product_in_the_lineage(started):
     store, run = started
     execute, _ = _exec()
     await advance(store.repo_root, run.run_id, execute=execute)
-    review(store.repo_root, run.run_id, verdict="approve")
+    review(store.repo_root, run.run_id, review_token=_token(store, run), verdict="approve")
     await advance(store.repo_root, run.run_id, execute=execute)   # write 产出，等批
 
     products = ProductStore(store.repo_root)
     v1 = products.latest("content_pack")
-    review(store.repo_root, run.run_id, verdict="reject", comment="开头太软")
+    review(store.repo_root, run.run_id, review_token=_token(store, run), verdict="reject", comment="开头太软")
 
     note = products.latest("review_note")
     assert note.payload["comment"] == "开头太软" and note.inputs == [v1.id]
@@ -226,12 +230,12 @@ async def test_reject_produces_a_new_version_and_keeps_the_old(started):
     store, run = started
     execute, seen = _exec()
     await advance(store.repo_root, run.run_id, execute=execute)
-    review(store.repo_root, run.run_id, verdict="approve")
+    review(store.repo_root, run.run_id, review_token=_token(store, run), verdict="approve")
     await advance(store.repo_root, run.run_id, execute=execute)
 
     products = ProductStore(store.repo_root)
     v1 = products.latest("content_pack")
-    review(store.repo_root, run.run_id, verdict="reject", comment="开头太软")
+    review(store.repo_root, run.run_id, review_token=_token(store, run), verdict="reject", comment="开头太软")
     await advance(store.repo_root, run.run_id, execute=execute)   # 重跑 write
 
     packs = products.list(kind="content_pack")
@@ -246,10 +250,10 @@ async def test_rollback_target_is_chosen_by_the_caller_not_guessed(started):
     store, run = started
     execute, _ = _exec()
     await advance(store.repo_root, run.run_id, execute=execute)
-    review(store.repo_root, run.run_id, verdict="approve")
+    review(store.repo_root, run.run_id, review_token=_token(store, run), verdict="approve")
     await advance(store.repo_root, run.run_id, execute=execute)
 
-    result = review(store.repo_root, run.run_id, verdict="reject",
+    result = review(store.repo_root, run.run_id, review_token=_token(store, run), verdict="reject",
                     comment="选题就不对", rollback_to="scout")
     assert "退回 scout" in result.reason
     after = store.load(run.run_id)
@@ -263,20 +267,20 @@ async def test_unknown_rollback_target_changes_nothing(started):
     store, run = started
     execute, _ = _exec()
     await advance(store.repo_root, run.run_id, execute=execute)
-    result = review(store.repo_root, run.run_id, verdict="reject", rollback_to="不存在")
+    result = review(store.repo_root, run.run_id, review_token=_token(store, run), verdict="reject", rollback_to="不存在")
     assert "不是本流水线的工序" in result.reason
     assert store.load(run.run_id).stage("scout").status == "awaiting_review"
 
 
 def test_review_without_a_pending_gate_is_a_no_op(started):
     store, run = started
-    assert "没有等待人批" in review(store.repo_root, run.run_id, verdict="approve").reason
+    assert "没有等待人批" in review(store.repo_root, run.run_id, review_token=_token(store, run), verdict="approve").reason
 
 
 def test_unknown_verdict_is_rejected(started):
     store, run = started
     with pytest.raises(ValueError, match="verdict"):
-        review(store.repo_root, run.run_id, verdict="maybe")
+        review(store.repo_root, run.run_id, review_token=_token(store, run), verdict="maybe")
 
 
 # ------------------------------------------------------------------ 存储硬约束
@@ -339,7 +343,7 @@ async def test_last_stage_settles_the_run_without_another_call(started):
     execute, _ = _exec()
     for stage in ("scout", "write"):
         await advance(store.repo_root, run.run_id, execute=execute)
-        review(store.repo_root, run.run_id, verdict="approve")
+        review(store.repo_root, run.run_id, review_token=_token(store, run), verdict="approve")
     await advance(store.repo_root, run.run_id, execute=execute)      # publish
     result = await advance(store.repo_root, run.run_id, execute=execute)  # measure = 最后一道
     assert result.ran == ["measure"] and result.status == "done"

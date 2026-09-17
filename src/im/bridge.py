@@ -119,6 +119,7 @@ class IMBridge:
         self._llm = llm
         self._sid = f"sid-{channel}-{self.owner_id}"     # session_store 要求 sid- 前缀
         self._pending: dict = {}                         # cid -> Future（确认）
+        self._pipeline_previews: dict[str, str] = {}       # 已成功展示的产出版本，审批后消费
         self._turn_task: Optional[asyncio.Task] = None
         # 上一回合还在跑时后来的消息**进队列**而不是被拒。原实现直接 return，用户的话就丢了、
         # 还得重打一遍——尤其外包看图会多一次 LLM 往返，"忙"的窗口被拉长，撞上的概率更高
@@ -670,7 +671,18 @@ class IMBridge:
             if run is None:
                 await self._safe_send(err)
                 return
-            await self._safe_send(self._pipe_detail(run))
+            from src.gateway.pipeline import review_fingerprint
+            from src.gateway.products import MAX_PREVIEW_CHARS, ProductStore
+            store = ProductStore(self.repo_root)
+            products = {s.product_id: store.load(s.product_id) for s in run.stages if s.product_id}
+            waiting = run.awaiting()
+            product = products.get(waiting.product_id) if waiting is not None else None
+            fingerprint = review_fingerprint(self.repo_root, run, product) if product else ""
+            if product and len(json.dumps(product.payload, ensure_ascii=False, indent=2)) > MAX_PREVIEW_CHARS:
+                fingerprint = ""  # 截断摘要不能获得完整产出的审批凭据
+            self._pipeline_previews.pop(run.run_id, None)
+            if await self._safe_send(self._pipe_detail(run, products=products)) and fingerprint:
+                self._pipeline_previews[run.run_id] = fingerprint
             return
         runs = self._live_runs()
         if not runs:
@@ -683,12 +695,12 @@ class IMBridge:
             lines.append(f"{mark} {r.pipeline} · {r.run_id}\n   {r.status}{tail}")
         await self._safe_send("\n".join(lines))
 
-    def _pipe_detail(self, run) -> str:
+    def _pipe_detail(self, run, *, products=None) -> str:
         """一条运行的细节。**等你批的那一道要把内容摊开**——只给一句 summary 就让人点头，
         那个"批"字没有意义：他批的是自己没看过的东西（真机反馈："我没看到文本"）。
         其余工序仍只给摘要，否则一屏刷满历史产出，真正要看的反而被埋掉。
         """
-        from src.gateway.products import ProductStore, render_payload
+        from src.gateway.products import MAX_PREVIEW_CHARS, ProductStore, render_payload
         store = ProductStore(self.repo_root)
         lines = [f"{run.pipeline} · {run.run_id} · {run.status}"]
         for stage in run.stages:
@@ -697,14 +709,20 @@ class IMBridge:
                 line += f"（第 {stage.attempts} 次）"
             lines.append(line)
             if stage.product_id:
-                product = store.load(stage.product_id)
+                product = (products.get(stage.product_id) if products is not None
+                           else store.load(stage.product_id))
                 if product is None:
                     lines.append(f"     ↳ 产出物 {stage.product_id} 读不到")
                 else:
                     mark = " ⚠外部来源" if product.tainted else ""
                     lines.append(f"     ↳ {product.summary or product.kind}{mark}")
                     if stage.status == "awaiting_review":
-                        body = render_payload(product.payload)
+                        body = json.dumps(product.payload, ensure_ascii=False, indent=2)
+                        if len(body) > MAX_PREVIEW_CHARS:
+                            from src.gateway.public_url import review_link
+                            body = (render_payload(product.payload)
+                                    + "\n内容较长，请打开审批台审阅完整产出；此摘要不能直接批准。"
+                                    + review_link(run.run_id))
                         if body:
                             lines.append("")
                             lines.append(body)
@@ -798,8 +816,17 @@ class IMBridge:
                                   "例：/no 角度太窄，换个切入点")
             return
 
+        fingerprint = self._pipeline_previews.pop(run.run_id, "")
+        if not fingerprint:
+            from src.gateway.public_url import review_link
+            await self._safe_send(f"请先 /pipe {run.run_id} 查看完整产出，再回复 /ok、/no <意见> 或 /later。"
+                                  + "长内容请在审批台审阅并处理。" + review_link(run.run_id))
+            return
         result = _review(self.repo_root, run.run_id, verdict=verdict,
-                         comment=comment, reviewer="im")
+                         comment=comment, reviewer="im", review_token=fingerprint)
+        if result.status in {"conflict", "busy", "storage_error", "missing"}:
+            await self._safe_send(f"未完成审批：{result.reason}。请 /pipe {run.run_id} 重新查看。")
+            return
         head = {"approve": "✅ 已批", "reject": "↩️ 已驳回", "defer": "⏸ 已挂起"}[verdict]
         await self._safe_send(f"{head} {run.run_id} · {result.reason}")
         if verdict in {"approve", "reject"} and result.status in {"running", "done"}:
@@ -1089,9 +1116,11 @@ class IMBridge:
         """
         await self.adapter.send_text(text)
 
-    async def _safe_send(self, text: str) -> None:
+    async def _safe_send(self, text: str) -> bool:
         try:
             await self.adapter.send_text(text)
+            return True
         except Exception as e:  # noqa: BLE001 —— 交互路径：发送失败不炸回合，但要留日志痕迹
             import logging
             logging.getLogger("vortocode.im").warning("IM 发送失败：%s", str(e)[:160])
+            return False
