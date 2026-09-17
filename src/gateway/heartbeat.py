@@ -6,7 +6,7 @@
 
 领活铁律：一次最多领一条、领了在条目上标在跑、产出只到 draft PR 为止、**永不自动合并**。
 
-值班惯例（B6-4，语义来源 `docs/OPENCLAW_INTEGRATION.md` 映射表第 1 行）：
+值班惯例（公开合同见 `docs/OPS.md` 的“开关矩阵”）：
 - **检查单文件注入**：一个检查单文件（默认 `.vortocode/HEARTBEAT.md`，可用 `checklist=` 参数或
   env `VORTOCODE_HEARTBEAT_CHECKLIST` 换）就是值班职责本身，作为本回合的任务清单注入。
 - **检查单按不可信输入处理**：它是本地文件，但无人值守下本地文件同样可能被污染（这正是
