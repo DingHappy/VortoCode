@@ -392,8 +392,9 @@ class IMBridge:
                         continue
                     tid = task.id
                     self._task_started.setdefault(tid, now)
-                    last = self._task_prog.get(tid, 0.0)
-                    if now - last < self._heartbeat_quiet:      # 刚播过真进度就别插嘴
+                    last = self._task_prog.get(tid)
+                    if last is not None and now - last < self._heartbeat_quiet:
+                        # 只有真的播过进度才进入静默窗；缺省值不能依赖宿主机 uptime。
                         continue
                     self._task_prog[tid] = now
                     stage = _strip((task.log or ["（准备中）"])[-1])[:60]
