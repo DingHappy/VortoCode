@@ -1,0 +1,59 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly / 功能异常或行为不符合预期
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! **Do not report security vulnerabilities here** — use
+        [private vulnerability reporting](https://github.com/DingHappy/VortoCode/security/advisories/new) instead (see `SECURITY.md`).
+        Remove API keys, tokens, private hostnames and internal IPs from anything you paste.
+        安全漏洞请走私下报告；粘贴日志前请去掉密钥、令牌、私有域名和内网地址。
+  - type: dropdown
+    id: entry
+    attributes:
+      label: Entry point / 入口
+      options:
+        - Desktop
+        - TUI (vc tui)
+        - Web console (vc server)
+        - Headless CLI (vc agent)
+        - IM bridge
+        - Cron / heartbeat
+        - Other / 其他
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened? / 发生了什么
+      description: What you expected vs. what actually happened.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce / 复现步骤
+      placeholder: |
+        1. Run `vc ...`
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or error output / 日志或报错
+      description: Redact secrets before pasting.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: Commit or version / 提交或版本
+      placeholder: output of `git rev-parse --short HEAD`
+    validations:
+      required: true
+  - type: input
+    id: env
+    attributes:
+      label: Environment / 环境
+      placeholder: macOS 15 / Ubuntu 24.04, Python 3.12, model name
