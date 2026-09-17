@@ -1,0 +1,41 @@
+name: Feature request
+description: Suggest an improvement or new capability / 建议改进或新能力
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Large architecture changes, permission-model changes, auto-execution policies and
+        long-term memory policies need an issue first — please describe the motivation and
+        the security boundary below.
+        大型架构、权限模型、自动执行策略、长期记忆策略的改动请先在这里说明动机和安全边界。
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / 要解决的问题
+      description: What are you trying to do, and what gets in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution / 建议方案
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security impact / 安全影响
+      description: |
+        Does this touch confirmation gates, taint tracking, unattended runs, shell/file access,
+        network egress or credentials? If so, how should it stay safe?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered / 考虑过的替代方案
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution / 参与意愿
+      options:
+        - label: I'd be willing to open a PR for this / 我愿意为此提交 PR
