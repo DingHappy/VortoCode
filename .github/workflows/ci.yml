@@ -15,10 +15,8 @@ on:
       - "**/*.md"
       - "docs/**"
   pull_request:
-    paths-ignore:
-      - "**/*.md"
-      - "docs/**"
-  workflow_dispatch:        # 手动触发：验证自建 runner 通没通，不用先造一个 push
+    # Every PR must emit the required checks, including documentation-only PRs.
+  workflow_dispatch:        # 手动触发：无需先造一个 push 即可复验完整 CI
 
 permissions:
   contents: read
