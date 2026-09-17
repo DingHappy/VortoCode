@@ -48,7 +48,7 @@ Desktop 是 VortoCode 当前默认产品与首要分发面；CLI 是高级/自�
 - <https://justaskmarvis.com/>
 - <https://github.com/xai-org/grok-build>
 
-具体的模块映射、实施顺序与 Apache-2.0 复制边界见 [grok-build 融合计划](./GROK_BUILD_INTEGRATION.md)。
+第三方项目只用于公开能力对照；任何源码复用都必须在对应变更中固定来源版本、核对许可证，并登记到第三方 notices。
 
 ## 信息架构
 

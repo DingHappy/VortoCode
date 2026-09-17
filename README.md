@@ -138,18 +138,16 @@ VortoCode 后续会按同一 agent runtime 拆成三种入口，而不是分裂�
 - [架构设计](docs/ARCHITECTURE.md)
 - [Agent 角色定义](docs/AGENTS.md)
 - [开发路线图](docs/ROADMAP.md)
-- [grok-build 融合计划](docs/GROK_BUILD_INTEGRATION.md)
 - [关键技术决策](docs/DECISIONS.md)
+- [常驻运维指南](docs/OPS.md)
+- [公开发布检查清单](docs/PUBLIC_RELEASE_CHECKLIST.md)
 
-### 改进计划文档
+### 技术参考
 
-- [改进计划总览](docs/IMPROVEMENT_PLAN.md) —— ⚠️历史设计，其中的自我编排引擎已随路线 A 退役删除
-- [自我编排引擎设计](docs/SELF_ORCHESTRATION_ENGINE.md) —— ⚠️历史设计（子系统已退役删除，仅存档参考）
 - [MCP 工具集成层设计](docs/MCP_INTEGRATION_LAYER.md)
 - [记忆系统设计](docs/MEMORY_SYSTEM.md)
 - [技能系统设计](docs/SKILL_SYSTEM.md)
 - [Hooks 系统设计](docs/HOOKS_SYSTEM.md)
-- [实现路线图](docs/IMPLEMENTATION_ROADMAP.md)
 
 ## 目录结构
 
@@ -339,7 +337,7 @@ Desktop 预览包已内置只暴露本机 Gateway 的 Python sidecar，不要求
 - **Phase 4**: 技能与子代理系统 — 技能/Hooks 可用；子代理（SubAgentManager）尚未接入主链路
 - **Phase 5**: 高级特性与优化 — 监控/安全/沙箱可用；实时补全、内联编辑、多模型协商等仍为规划项
 
-详细规划见 [实现路线图](docs/IMPLEMENTATION_ROADMAP.md)；当前真实能力以本 README 上文「核心特性」为准（DEVELOPMENT_SUMMARY 为历史记录、部分已过时）。
+当前方向与后续阶段以 [开发路线图](docs/ROADMAP.md) 和本 README 上文「核心特性」为准；`DEVELOPMENT_SUMMARY` 仅保留历史演进记录，部分内容可能已经过时。
 
 ## 贡献指南
 

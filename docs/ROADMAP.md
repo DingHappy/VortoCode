@@ -60,7 +60,7 @@ Project Control Center 第二阶段的 Runtime Supervisor 已落地：Tauri 原�
 - [x] Desktop 可审计供应链第一阶段：双架构固定 standalone CPython 来源/哈希/运行时树、独立锁定环境、实际冻结组件与 CPython runtime notices、产物哈希及 preview/release 证据闸门
 
 - Runtime Supervisor 后续：后台 CPU/并发资源预算、逐项目模型配置覆盖与跨项目暂停/恢复控制
-- grok-build 融合主线后续：多 runtime 常驻与跨项目 Inbox 已落地；下一步做资源调度和后台任务优先级。Hook capability 收敛、可选“全部 hunk 已决策”团队策略、失败聚合、Git baseline 实时推送、Dashboard 上下文与任务分支审查均已落地，详见 [融合计划](./GROK_BUILD_INTEGRATION.md)
+- Runtime 与 Desktop 主线后续：多 runtime 常驻与跨项目 Inbox 已落地；下一步做资源调度和后台任务优先级。Hook capability 收敛、可选“全部 hunk 已决策”团队策略、失败聚合、Git baseline 实时推送、Dashboard 上下文与任务分支审查均已落地。
 - 正式分发：notices 人工复核、Developer ID 签名、公证、升级通道，以及 Apple Silicon 原生 arm64 与后续 Windows/Linux 平台产物验收
 - 项目资产的跨项目聚合、带 token 的安全浏览器交互预览与更完整的后台通知中心
 - 本机工作区和用户权限仍是边界，不默认上传代码
