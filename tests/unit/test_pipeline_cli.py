@@ -6,7 +6,7 @@
 import pytest
 import yaml
 
-from src.gateway.pipeline import PipelineStore
+from src.gateway.pipeline import PipelineStore, review_fingerprint
 from src.gateway.pipeline_cli import run_pipeline_cli
 from src.gateway.products import ProductStore
 
@@ -92,7 +92,7 @@ async def test_outbound_needs_an_explicit_yes(repo, monkeypatch, capsys):
     await run_pipeline_cli("start", "content-ops")
     run_id = PipelineStore(str(repo)).list()[0].run_id
     await run_pipeline_cli("advance", run_id)
-    await run_pipeline_cli("review", run_id, verdict="approve")
+    await run_pipeline_cli("review", run_id, verdict="approve", review_token=review_fingerprint(str(repo), PipelineStore(str(repo)).load(run_id)))
 
     assert await run_pipeline_cli("advance", run_id) == 1
     assert "fail-closed" in capsys.readouterr().out
@@ -102,13 +102,30 @@ async def test_outbound_needs_an_explicit_yes(repo, monkeypatch, capsys):
 
 
 # ------------------------------------------------------------------ 人批三档
+async def test_cli_requires_the_version_shown_before_approval(repo, monkeypatch, capsys):
+    _reply(monkeypatch)
+    await run_pipeline_cli("start", "content-ops")
+    store = PipelineStore(str(repo))
+    run_id = store.list()[0].run_id
+    await run_pipeline_cli("advance", run_id)
+    assert await run_pipeline_cli("review", run_id, verdict="approve") == 1
+    await run_pipeline_cli("show", run_id)
+    expected = review_fingerprint(str(repo), store.load(run_id))
+    assert f"--review-token {expected}" in capsys.readouterr().out
+    current = store.load(run_id)
+    current.stages[0].attempts += 1
+    assert store.save(current)
+    assert await run_pipeline_cli("review", run_id, verdict="approve", review_token=expected) == 1
+    assert store.load(run_id).status == "awaiting_review"
+
+
 @pytest.mark.asyncio
 async def test_defer_keeps_it_waiting(repo, monkeypatch):
     _reply(monkeypatch)
     await run_pipeline_cli("start", "content-ops")
     run_id = PipelineStore(str(repo)).list()[0].run_id
     await run_pipeline_cli("advance", run_id)
-    assert await run_pipeline_cli("review", run_id, verdict="defer", comment="这周先不发") == 1
+    assert await run_pipeline_cli("review", run_id, verdict="defer", comment="这周先不发", review_token=review_fingerprint(str(repo), PipelineStore(str(repo)).load(run_id))) == 1
     assert PipelineStore(str(repo)).load(run_id).status == "awaiting_review"
 
 
@@ -118,7 +135,7 @@ async def test_reject_records_the_comment_and_reruns(repo, monkeypatch):
     await run_pipeline_cli("start", "content-ops")
     run_id = PipelineStore(str(repo)).list()[0].run_id
     await run_pipeline_cli("advance", run_id)
-    assert await run_pipeline_cli("review", run_id, verdict="reject", comment="角度太窄") == 0
+    assert await run_pipeline_cli("review", run_id, verdict="reject", comment="角度太窄", review_token=review_fingerprint(str(repo), PipelineStore(str(repo)).load(run_id))) == 0
 
     note = ProductStore(str(repo)).latest("review_note")
     assert note.payload["comment"] == "角度太窄" and note.payload["reviewer"] == "cli"

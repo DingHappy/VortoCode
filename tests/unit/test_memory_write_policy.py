@@ -99,7 +99,7 @@ def test_pending_proposal_can_be_rejected(tmp_path):
 
 def test_secret_is_redacted_quarantined_and_never_promotable(tmp_path):
     store, writer = _writer(tmp_path)
-    raw_secret = "sk-proj-abcdefghijklmnopqrstuvwxyz123456"
+    raw_secret = "sk-" + "proj-" + "abcdefghijklmnopqrstuvwxyz123456"
     result = writer.write(
         _request(f"部署 api_key={raw_secret}"),
         confirmed=True,

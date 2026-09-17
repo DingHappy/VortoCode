@@ -27,8 +27,7 @@ from typing import Callable, List, Optional, Tuple
 from urllib import error as _urlerror
 from urllib import request as _urlrequest
 
-# 生产真身（2026-07-20 实测）：token.vortotech.com /api/status=200；relay 仓库文档里的
-# relay.dinghappy.com 已 502（旧域名，后端 frp 链路断）。别照旧文档改回去。
+# 项目维护的默认 relay；部署者可用 VORTOCODE_RELAY_URL 指向自己的兼容服务。
 DEFAULT_RELAY_URL = "https://token.vortotech.com"
 _TIMEOUT = 10.0
 _STATE_REL = Path(".vortocode") / "duty" / "relay-state.json"

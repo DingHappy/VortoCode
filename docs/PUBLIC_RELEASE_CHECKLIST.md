@@ -12,13 +12,22 @@ external traffic.
   OpenAI-compatible service and still requires the user's own API key.
 - No real API keys, webhook URLs with secrets, bot tokens, or private hostnames
   are present in tracked files.
+- Ignored local files such as `.env`, build directories and credential stores
+  were scanned separately without copying their contents into reports.
+- Full reachable Git history was scanned, not only the current checkout.
+- Known scanner exceptions identify an exact historical commit, file and rule;
+  never suppress a whole path or secret rule.
 
 Suggested local checks:
 
 ```bash
 git ls-files | rg '(^|/)\.env($|\.)' | rg -v '(^|/)\.env\.example$'
 git grep -n -I -E 'sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-|BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY'
+gitleaks detect --source . --log-opts='--all' --redact
 ```
+
+If a real credential ever appears in a commit, revoke or rotate it first. Git
+history rewriting does not make a still-valid credential safe.
 
 ## Runtime Safety
 
@@ -34,6 +43,23 @@ git grep -n -I -E 'sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-
 - Live/LLM tests are opt-in and skipped by default.
 - Public pull requests should not run on trusted self-hosted runners with local
   credentials, private network access, or deployment keys.
+- The workflow forces public repositories onto `ubuntu-latest` and ignores
+  private runner, package-index and cache-path variables.
+- Before changing visibility, unregister repository self-hosted runners and
+  remove private-only Actions variables.
+- Audit retained Actions logs and artifacts: they become visible when a private
+  repository is made public.
+
+## Repository History And Metadata
+
+- Remove generated profiles, logs, databases, archives and build products from
+  Git; keep matching ignore rules so they do not return.
+- Review all branches, including merged automation branches, before publishing.
+- Decide explicitly whether historical commit author names and email addresses
+  are acceptable public metadata. Rewriting them is destructive and requires a
+  coordinated force-push, so it is not part of routine cleanup.
+- Confirm every bundled image, font, sample and third-party source has a public
+  redistribution license and attribution where required.
 
 ## Desktop Distribution
 
@@ -70,3 +96,12 @@ git grep -n -I -E 'sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-
 - README "core features" reflects current behavior.
 - Historical design docs are clearly marked as historical.
 - Roadmap/planned features are not described as production-ready.
+- Internal hostnames, home-directory paths, incident details and links to
+  private knowledge bases have been removed or generalized.
+
+## GitHub Settings After Visibility Change
+
+- Enable branch protection/rulesets and required CI checks on the public repo.
+- Enable private vulnerability reporting and dependency/security alerts.
+- Re-run the full secret scan against the final public head and confirm the
+  published Actions run used GitHub-hosted infrastructure.

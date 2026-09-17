@@ -4,10 +4,10 @@
 `TokenBudgetExceeded`（**发起前拦，不是花完再说**；单次调用的 max_tokens 是天然的
 超冲上限）。cron 的 prompt 作业把它经 `run_isolated_session(llm=...)` 注入隔离会话。
 
-计量口取 `src.llm.client.get_usage()` 的进程级累计（#188 之后它是**唯一**计量口，
-所有 chat/stream 路径都过它）——以构造时的读数为基线算增量。代价是：同进程里并发的
-主会话用量也会被算进这个作业头上，**只会更早停、绝不会更晚停**（fail-closed 方向；
-夜间例行班次与人同时高强度用主会话的重叠面很小，先裸跑，有真实数据再谈精确归因）。
+计量由 add_usage 的任务计数器记录，scope() 覆盖任务及其子任务，内层 usage_scope 不会
+漏掉用量，也不受会话清零或其他并发任务影响。单独调用代理也会自动绑定计数器。
+同一代理的调用串行检查，避免两个并发请求同时花掉剩余预算；不同任务互不阻塞。
+这是调用间预算闸：已发出的单次请求仍可能超出剩余总 token，不能据此承诺精确硬封顶。
 
 代理靠 `__getattr__` 透传其余一切（`config`/`set_model` 等），MainAgent 无感知。
 `tripped` 标志给调用方兜底：即使 agent 内部把异常吞成一句报错文本，cron 侧看
@@ -15,6 +15,8 @@
 """
 from __future__ import annotations
 
+import asyncio
+from contextlib import contextmanager
 from typing import Any
 
 
@@ -30,18 +32,23 @@ class BudgetedLLM:
             inner = LLMClient()
         self._inner = inner
         self._budget = max(0, int(budget_tokens))
-        self._baseline = self._total_now()
+        from src.llm.client import new_usage
+        self._usage = new_usage()
+        self._lock = asyncio.Lock()
         self.tripped = False
 
-    @staticmethod
-    def _total_now() -> int:
-        from src.llm.client import get_usage
-
-        usage = get_usage()
-        return int(usage.get("prompt_tokens") or 0) + int(usage.get("completion_tokens") or 0)
+    @contextmanager
+    def scope(self):
+        from src.llm.client import usage_meter
+        try:
+            with usage_meter(self._usage):
+                yield
+        finally:
+            if self._budget > 0 and self.spent() > self._budget:
+                self.tripped = True
 
     def spent(self) -> int:
-        return max(0, self._total_now() - self._baseline)
+        return int(self._usage["total_tokens"])
 
     def _check(self) -> None:
         if self._budget <= 0:
@@ -54,12 +61,29 @@ class BudgetedLLM:
             )
 
     async def chat(self, *args: Any, **kwargs: Any):
-        self._check()
-        return await self._inner.chat(*args, **kwargs)
+        async with self._lock:
+            self._check()
+            with self.scope():
+                return await self._inner.chat(*args, **kwargs)
 
-    def stream(self, *args: Any, **kwargs: Any):
-        self._check()
-        return self._inner.stream(*args, **kwargs)
+    async def stream(self, *args: Any, **kwargs: Any):
+        async with self._lock:
+            self._check()
+            stream = self._inner.stream(*args, **kwargs)
+            try:
+                while True:
+                    # 不跨 yield 保留 ContextVar token：调用者可在另一任务关闭流。
+                    with self.scope():
+                        try:
+                            chunk = await anext(stream)
+                        except StopAsyncIteration:
+                            break
+                    yield chunk
+            finally:
+                close = getattr(stream, "aclose", None)
+                if close is not None:
+                    with self.scope():
+                        await close()
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)

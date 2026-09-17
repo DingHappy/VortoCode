@@ -124,12 +124,29 @@ harness 极简主义（借鉴 Anthropic）：下面每一项都是"对当前模�
 - **反幻觉系统提示**（"工具结果≠用户消息"）：假设模型会把工具结果误当用户消息（#114）。
 - **`_test_delta_note` 诚实提示**：假设"测试通过"信号不区分"既有绿"与"新代码被覆盖"（#113）。
 
-## 当前覆盖边界（不静默）
+## 当前覆盖边界
 
 - v1 **直接驱动 dev 工具 handler**（省 token、可控），覆盖的是**工具级**诚实性（#113/#117/no-op）。
-- **未覆盖**：#114/#116 那类**顶层 agent + 协议**幻觉（模型把工具结果误当用户消息、凭空编造），
-  需经真实顶层 MainAgent 驱动——列为 v2（`--via-agent`）。当前 `--protocol` 对直接驱动影响有限
-  （实现子 agent 恒提示式），主要为 v2 预留。
+- `--via-agent` 已接入 MainAgent 对话、工具选择和最终报告；工具仍为真实隔离开发工具，并限制在临时仓库本地交付。真实模型运行需要有效模型配置，普通离线测试不会调用付费模型。
+- 两种执行层分开记录和比较。Agent 基线存于 `evals/baselines/agent/`；工具层旧基线保留。跨执行层的显式比较会报不兼容，不能据此宣称质量提升。
+
+### 2026-09-12：10 个场景与交付证据
+
+新增 `pagination_boundary`（Python 分页边界和失败测试修复）、`config_isolation`（跨文件配置污染）、`typescript_empty_total`（TypeScript 空集合求和），与原 7 个场景组成 10 项固定任务集。TypeScript 场景要求本机 Node 支持原生 type stripping，缺失时明确跳过。
+
+三个新场景另有 harness 管理的独立业务断言，在交付分支的新 worktree 中执行；不能靠删除仓库内失败测试获得通过。任务来自维护问题的受控最小复现，不代表大规模真实项目的生产成功率。
+
+```bash
+python -m evals --list
+python -m evals --via-agent --scenario pagination_boundary --repeat 3
+python -m evals --via-agent --repeat 3 --baseline-on-green
+```
+
+JSON 报告保存：基准与交付 commit、实际输入、完整回复、工具轨迹、自动确认记录、逐模型 tokens、已知费用与定价完整性、独立验收输出。总耗时包含独立复验，另保留执行耗时；固定 fixture 初始化时间使相同输入生成稳定基准 commit。报告同时记录 harness HEAD、工作区是否有未提交改动和 Python 源码指纹，未提交版本不能冒充已发布版本。
+
+通过 MainAgent 的报告中 `human_interventions=0` 表示临时仓库按本地自动确认策略运行，自动确认次数另行记录，不代表真实工作中无需人工介入。费用使用项目单价目录估算，未知价格保留为 null，尚未校准供应商账单。
+
+单次、矩阵或对比运行只要有失败或跳过，就以非零退出；零结果也不能报绿。`--baseline-on-green` 不会把失败结果存成新基线。
 
 ## 基线对比 + 模型/协议矩阵（B3）
 

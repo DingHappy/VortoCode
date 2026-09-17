@@ -1519,20 +1519,28 @@ class TUICommandsMixin:
         if by_model:                            # 按模型分项 + 估算成本（内置单价表，未登记的模型不计价）
             from src.models.cost import cost_for
             total_cost = 0.0
+            unpriced = False
             rows = []
             for name in sorted(by_model):
                 m = by_model[name]
                 c = cost_for(name, int(m.get("prompt_tokens", 0)), int(m.get("completion_tokens", 0)))
-                total_cost += c
+                if c is None:
+                    unpriced = True
+                else:
+                    total_cost += c
                 row = (f"  {name}: 调用 {m.get('calls', 0)} · 输入 ~{m.get('prompt_tokens', 0)} · "
                        f"输出 ~{m.get('completion_tokens', 0)}")
                 if m.get("cached_tokens"):
                     row += f" · 缓存命中 ~{m.get('cached_tokens', 0)}"
-                if c > 0:
+                if c is None:
+                    row += " · 费用未知（未配置单价）"
+                else:
                     row += f" · ≈${c:.4f}"
                 rows.append(row)
             msg += "\n按模型:\n" + "\n".join(rows)
-            if total_cost > 0:
+            if unpriced:
+                msg += f"\n费用合计未知；已知部分估算: ≈${total_cost:.4f}（仍有未计价用量）"
+            else:
                 msg += f"\n估算成本合计: ≈${total_cost:.4f}"
         ctx = self._context_usage_label()
         if ctx:
@@ -1661,4 +1669,3 @@ class TUICommandsMixin:
         self.theme = name                   # Textual 响应式：立刻重绘 chrome（边框/面板/底色）
         self._persist_theme(name)
         self._chrome(f"[green]→ 主题切到 {name}（已记住）[/green]")
-

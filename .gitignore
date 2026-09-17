@@ -67,6 +67,7 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 coverage.xml
+*.profraw
 
 # ─────────────────────────────────────────────────────────────
 # 前端（web/ 若引入 Node）

@@ -3,7 +3,7 @@
 import logging
 import time
 from enum import Enum
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -318,7 +318,7 @@ class CostTracker:
         model: str,
         input_tokens: int,
         output_tokens: int,
-        cost: float,
+        cost: Optional[float],
         task: str = "",
         agent: str = ""
     ):
@@ -329,6 +329,7 @@ class CostTracker:
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "cost": cost,
+            "pricing_known": cost is not None,
             "task": task,
             "agent": agent
         }
@@ -341,10 +342,11 @@ class CostTracker:
         """设置预算"""
         self.budgets[agent] = budget
     
-    def _check_budget(self, agent: str, cost: float):
+    def _check_budget(self, agent: str, cost: Optional[float]):
         """检查预算"""
         if agent in self.budgets:
-            total_cost = sum(e["cost"] for e in self.entries if e["agent"] == agent)
+            total_cost = sum(e["cost"] for e in self.entries
+                             if e["agent"] == agent and e["cost"] is not None)
             if total_cost > self.budgets[agent]:
                 self.alerts.append({
                     "type": "budget_exceeded",
@@ -367,7 +369,7 @@ class CostTracker:
         
         period_entries = [e for e in self.entries if e["timestamp"] > cutoff]
         
-        total_cost = sum(e["cost"] for e in period_entries)
+        totals = self._cost_summary(period_entries)
         total_input = sum(e["input_tokens"] for e in period_entries)
         total_output = sum(e["output_tokens"] for e in period_entries)
         
@@ -376,29 +378,40 @@ class CostTracker:
         for entry in period_entries:
             model = entry["model"]
             if model not in by_model:
-                by_model[model] = {"cost": 0, "calls": 0}
-            by_model[model]["cost"] += entry["cost"]
-            by_model[model]["calls"] += 1
+                by_model[model] = []
+            by_model[model].append(entry)
         
         # 按 Agent 分组
         by_agent = {}
         for entry in period_entries:
             agent = entry.get("agent", "unknown")
             if agent not in by_agent:
-                by_agent[agent] = {"cost": 0, "calls": 0}
-            by_agent[agent]["cost"] += entry["cost"]
-            by_agent[agent]["calls"] += 1
+                by_agent[agent] = []
+            by_agent[agent].append(entry)
         
         return {
             "period": period,
-            "total_cost": total_cost,
+            "total_cost": totals["cost"],
+            "known_cost": totals["known_cost"],
+            "pricing_complete": totals["pricing_complete"],
+            "unpriced_calls": totals["unpriced_calls"],
+            "unpriced_tokens": totals["unpriced_tokens"],
             "total_input_tokens": total_input,
             "total_output_tokens": total_output,
             "total_calls": len(period_entries),
-            "by_model": by_model,
-            "by_agent": by_agent,
+            "by_model": {key: self._cost_summary(entries) for key, entries in by_model.items()},
+            "by_agent": {key: self._cost_summary(entries) for key, entries in by_agent.items()},
             "alerts": self.alerts[-10:]
         }
+
+    @staticmethod
+    def _cost_summary(entries: List[Dict[str, Any]]) -> Dict[str, Any]:
+        unpriced = [e for e in entries if e["cost"] is None]
+        known = sum(e["cost"] for e in entries if e["cost"] is not None)
+        return {"cost": None if unpriced else known, "known_cost": known,
+                "pricing_complete": not unpriced, "calls": len(entries),
+                "unpriced_calls": len(unpriced),
+                "unpriced_tokens": sum(e["input_tokens"] + e["output_tokens"] for e in unpriced)}
     
     def get_optimization_suggestions(self) -> List[str]:
         """获取优化建议"""
@@ -410,7 +423,7 @@ class CostTracker:
             model = entry["model"]
             if model not in model_usage:
                 model_usage[model] = {"cost": 0, "calls": 0, "tasks": set()}
-            model_usage[model]["cost"] += entry["cost"]
+            model_usage[model]["cost"] += entry["cost"] or 0
             model_usage[model]["calls"] += 1
             model_usage[model]["tasks"].add(entry.get("task", ""))
         

@@ -15,7 +15,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from src.gateway.pipeline import PipelineStore, load_definition, review
+from src.gateway.pipeline import PipelineStore, load_definition, review, review_fingerprint
 from src.gateway.products import ProductStore
 
 router = APIRouter()
@@ -27,10 +27,9 @@ def _repo() -> str:
     return os.getcwd()
 
 
-def _product_view(store: ProductStore, product_id: str) -> Optional[Dict[str, Any]]:
+def _product_view(product_id: str, product) -> Optional[Dict[str, Any]]:
     if not product_id:
         return None
-    product = store.load(product_id)
     if product is None:
         # 读不到要**说出来**，不能当成"没有产出物"——那两件事在审批时含义完全不同：
         # 一个是还没跑，一个是台账坏了。
@@ -56,8 +55,12 @@ def _run_view(run, *, detail: bool = False) -> Dict[str, Any]:
     }
     if detail:
         store = ProductStore(_repo())
+        view["review_token"] = ""
         for stage in view["stages"]:
-            stage["product"] = _product_view(store, stage["product_id"])
+            product = store.load(stage["product_id"])
+            stage["product"] = _product_view(stage["product_id"], product)
+            if waiting is not None and waiting.id == stage["id"] and product is not None:
+                view["review_token"] = review_fingerprint(_repo(), run, product)
         definition = load_definition(_repo(), run.pipeline)
         if definition is not None:
             for stage in view["stages"]:
@@ -104,6 +107,7 @@ class ReviewBody(BaseModel):
     verdict: str
     comment: str = ""
     rollback_to: str = ""
+    review_token: str = ""
 
 
 @router.post("/api/pipelines/{run_id}/review")
@@ -114,9 +118,13 @@ async def post_review(run_id: str, body: ReviewBody) -> dict:
     if body.verdict == "reject" and not body.comment.strip():
         raise HTTPException(status_code=400, detail="驳回要写一句为什么——不说理由，重跑出来还是原样")
     result = review(_repo(), run_id, verdict=body.verdict, comment=body.comment,
-                    rollback_to=body.rollback_to, reviewer="web")
+                    rollback_to=body.rollback_to, reviewer="web", review_token=body.review_token)
     if result.status == "missing":
         raise HTTPException(status_code=404, detail=result.reason)
+    if result.status in {"conflict", "busy"}:
+        raise HTTPException(status_code=409, detail=result.reason)
+    if result.status == "storage_error":
+        raise HTTPException(status_code=503, detail=result.reason)
     return {"status": result.status, "reason": result.reason, "blocked_on": result.blocked_on}
 
 

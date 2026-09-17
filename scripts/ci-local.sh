@@ -48,7 +48,7 @@ skip_gate() {
 run_python_gate() {
   local name="$1" module="$2"; shift 2
   if ! python3 -c "import $module" 2>/dev/null; then
-    skip_gate "$name" "没装 $module——先 pip install -e '.[dev]'"
+    skip_gate "$name" "没装 ${module}——先 pip install -e '.[dev]'"
     return
   fi
   run_gate "$name" "$@"
