@@ -200,6 +200,7 @@ async def test_heartbeat_reports_running_task_with_elapsed(tmp_path, monkeypatch
     runner = _Runner([_Task("task-1", "running", ["🔍 集成验证中…"])])
     bridge = IMBridge(str(tmp_path), _Adapter(sent), "owner", channel="dingtalk", runner=runner)
     bridge._heartbeat_every = 0.01
+    bridge._heartbeat_quiet = float("inf")  # 没有历史进度时，首次心跳不受宿主机 uptime 影响
 
     task = asyncio.create_task(bridge._heartbeat_loop())
     await asyncio.sleep(0.05)
