@@ -33,7 +33,7 @@ async def test_web_context_memory_uses_shared_policy_and_provenance(tmp_path, mo
 async def test_web_context_memory_quarantines_secret_without_project_write(tmp_path, monkeypatch):
     monkeypatch.setattr(state, "workdir", str(tmp_path))
     monkeypatch.setattr(state, "project_context", ProjectContext(str(tmp_path)))
-    raw_secret = "sk-proj-abcdefghijklmnopqrstuvwxyz123456"
+    raw_secret = "sk-" + "proj-" + "abcdefghijklmnopqrstuvwxyz123456"
 
     result = await add_memory("learning", f"api_key={raw_secret}")
 
@@ -49,6 +49,7 @@ async def test_web_context_memory_quarantines_secret_without_project_write(tmp_p
 @pytest.mark.asyncio
 async def test_desktop_repo_memory_requires_confirmation_and_uses_policy(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    raw_secret = "sk-" + "proj-" + "abcdefghijklmnopqrstuvwxyz123456"
 
     with pytest.raises(HTTPException) as missing_confirmation:
         await add_repo_memory(RepoMemoryWriteRequest(content="测试命令是 pytest -q"))
@@ -56,7 +57,7 @@ async def test_desktop_repo_memory_requires_confirmation_and_uses_policy(tmp_pat
 
     with pytest.raises(HTTPException) as secret:
         await add_repo_memory(RepoMemoryWriteRequest(
-            content="api_key=sk-proj-abcdefghijklmnopqrstuvwxyz123456",
+            content=f"api_key={raw_secret}",
             confirm=True,
         ))
     assert secret.value.status_code == 422
@@ -66,6 +67,7 @@ async def test_desktop_repo_memory_requires_confirmation_and_uses_policy(tmp_pat
 @pytest.mark.asyncio
 async def test_desktop_repo_memory_returns_effective_redacted_projection(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    raw_secret = "sk-" + "proj-" + "abcdefghijklmnopqrstuvwxyz123456"
 
     saved = await add_repo_memory(RepoMemoryWriteRequest(
         content="构建前必须运行 npm run codegen",
@@ -77,9 +79,12 @@ async def test_desktop_repo_memory_returns_effective_redacted_projection(tmp_pat
     assert "npm run codegen" in saved["effective"]
 
     path = tmp_path / ".vortocode" / "memory" / "repo.md"
-    path.write_text(path.read_text(encoding="utf-8") + "- api_key=sk-proj-abcdefghijklmnopqrstuvwxyz123456\n", encoding="utf-8")
+    path.write_text(
+        path.read_text(encoding="utf-8") + f"- api_key={raw_secret}\n",
+        encoding="utf-8",
+    )
     snapshot = await get_repo_memory()
     assert snapshot["redacted"] is True
-    assert "sk-proj-abcdefghijklmnopqrstuvwxyz123456" not in snapshot["content"]
+    assert raw_secret not in snapshot["content"]
     assert "[REDACTED" in snapshot["content"]
     assert b"repo_memory_added" in (tmp_path / ".vortocode" / "audit.log").read_bytes()

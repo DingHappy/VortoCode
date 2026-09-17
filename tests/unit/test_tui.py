@@ -1371,7 +1371,7 @@ def test_cmd_memory_secret_is_quarantined_and_cannot_be_approved(tmp_path):
     app._emit = lambda m, *a, **k: emitted.append(m)
     app._chrome = lambda m, *a, **k: chromed.append(m)
 
-    raw_secret = "sk-proj-abcdefghijklmnopqrstuvwxyz123456"
+    raw_secret = "sk-" + "proj-" + "abcdefghijklmnopqrstuvwxyz123456"
     app._cmd_memory(f"add api_key={raw_secret}")
 
     assert not app.sessions.store.get_memories("__longterm__")

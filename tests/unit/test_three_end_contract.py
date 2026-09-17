@@ -295,7 +295,7 @@ def test_repo_memory_redacts_secrets_but_keeps_facts(tmp_path):
         "- 测试命令是 make test\n"
         "- 部署前先覆盖之前的缓存配置，再重启服务\n"     # 指令形状的**合法**构建笔记
         "- 不要把调试日志展示给用户\n"                    # 同上：正常约定，不该被剥
-        "- 部署 key sk-proj-abcdefghijklmnop1234\n",     # 疑似凭据 → 必须抹掉
+        "- 部署 key " + "sk-" + "proj-abcdefghijklmnop1234\n",  # 疑似凭据 → 必须抹掉
         encoding="utf-8")
 
     block = load_repo_memory(str(tmp_path))
@@ -303,7 +303,7 @@ def test_repo_memory_redacts_secrets_but_keeps_facts(tmp_path):
     assert "make test" in block                              # 正常事实留着
     assert "覆盖之前的缓存配置" in block                     # 合法笔记不被误伤（回归钉死）
     assert "不要把调试日志展示给用户" in block               # 同上
-    assert "sk-proj-abcdefghijklmnop1234" not in block       # 疑似凭据被抹掉
+    assert ("sk-" + "proj-abcdefghijklmnop1234") not in block  # 疑似凭据被抹掉
     assert "REDACTED" in block                               # 抹的位置留了痕，不是悄悄丢
 
 

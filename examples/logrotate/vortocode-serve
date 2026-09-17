@@ -7,7 +7,7 @@
 # copytruncate 是关键：append: 的文件描述符在服务进程里一直开着，普通 rotate（改名+新建）
 # 后进程还往旧 fd 写，新文件永远是空的。copytruncate 原地截断，不用重启服务。
 # 代价是截断瞬间可能丢最后几行——对这份日志可接受，换服务重启才不可接受。
-/home/happyding/.local/share/vortocode-serve.log {
+/home/vortocode/.local/share/vortocode-serve.log {
     size 20M
     rotate 3
     copytruncate

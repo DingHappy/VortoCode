@@ -867,8 +867,10 @@ async def run_job(repo_root: str, job: CronJob, *, run_session=None, notify=None
             extra_kwargs["llm"] = guard
         if job.allow_web:                          # 作业级出网许可（默认关，见 CronJob.allow_web）
             extra_kwargs["allow_web"] = True
-        result = await run_session(repo_root, job.prompt, mode="build", model=job.model,
-                                   **extra_kwargs)
+        from contextlib import nullcontext
+        with guard.scope() if guard is not None else nullcontext():
+            result = await run_session(repo_root, job.prompt, mode="build", model=job.model,
+                                       **extra_kwargs)
         if guard is not None and guard.tripped:
             # 兜底：即使 agent 内部把预算异常吞成一句普通报错文本，这次作业也必须按失败处理——
             # 预算超限绝不能被静默洗成"跑完了"（那样封顶就成了摆设）。

@@ -34,7 +34,7 @@ import json
 import re
 from typing import Any, Callable, Dict, List, Optional
 
-from src.gateway.pipeline import StageDef
+from src.gateway.pipeline import StageDef, StageNotStarted
 from src.gateway.products import Product
 
 _MAX_INPUT_CHARS = 12000          # 单条输入产出物喂进提示词的上限（超了截断并明说截断过）
@@ -106,7 +106,7 @@ def _require_capabilities(stage_def: StageDef, spec: Any) -> None:
                    "每次过确认门），或者去掉 outbound: true 让它只产出待发布包、由人手动发",
         "data": "让上游用确定性采集作业把数据抓好、本工序只负责解读（同 scout 读 signals 那样）",
     }
-    raise RuntimeError(
+    raise StageNotStarted(
         f"工序「{stage_def.id}」申报需要 {'、'.join(missing)} 能力，但{where}"
         f"——手上没有对应的工具，它交出来的东西只能是编的。\n  "
         + "；\n  ".join(hint.get(m, f"给角色配上能提供 {m} 的工具面") for m in missing))
@@ -139,7 +139,7 @@ def build_stage_executor(
 
         spec = registry_for(repo_root).get(stage_def.role) if stage_def.role else None
         if stage_def.role and spec is None:
-            raise RuntimeError(f"工序「{stage_def.id}」声明的角色 {stage_def.role!r} 不存在"
+            raise StageNotStarted(f"工序「{stage_def.id}」声明的角色 {stage_def.role!r} 不存在"
                                f"（在 .vortocode/agents/{stage_def.role}.md 定义它）")
 
         # ① 先看**做不做得到**，再问要不要做。对 outbound 来说顺序反了就是：问你"要发吗"、
@@ -149,13 +149,13 @@ def build_stage_executor(
         if stage_def.outbound:
             # ② 做得到，才谈要不要做。没有确认通道就拒绝——无人值守下"没人能说不"不等于"可以做"。
             if confirm is None:
-                raise RuntimeError(
+                raise StageNotStarted(
                     f"工序「{stage_def.id}」有对外动作，当前入口没有确认通道——已拒绝"
                     f"（fail-closed）。请在带确认的入口（TUI/Web/IM/--yes）推进。")
             warning = f"\n⚠ 本工序的输入含外部摄入内容（{reasons or '来源见产出物血缘'}）" if inherited else ""
             if not await confirm(f"流水线「{stage_def.id}」要执行对外动作"
                                  f"（产出 {stage_def.produces or '未声明'}）。{warning}"):
-                raise RuntimeError(f"已取消：用户未放行工序「{stage_def.id}」的对外动作。")
+                raise StageNotStarted(f"已取消：用户未放行工序「{stage_def.id}」的对外动作。")
 
         shape = ("最终**只输出一个 JSON 对象**作为本工序的产出（可含 summary 字段作一句话摘要）；"
                  "不要输出解释性文字。" if stage_def.output != "text"

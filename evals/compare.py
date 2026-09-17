@@ -74,6 +74,9 @@ def compare_reports(baseline: dict, current: dict) -> dict:
     b_scn, c_scn = pass_rate_by_scenario(baseline), pass_rate_by_scenario(current)
     per_scenario = []
     regressions = []
+    if (baseline.get("meta", {}).get("execution_mode", "tool")
+            != current.get("meta", {}).get("execution_mode", "tool")):
+        regressions.append("execution_mode 不同，工具层与 Agent 层成绩不能混比")
     for name in sorted(set(b_scn) | set(c_scn)):
         b = b_scn.get(name)
         c = c_scn.get(name)

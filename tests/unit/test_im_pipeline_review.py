@@ -107,12 +107,69 @@ async def test_detail_shows_the_product_and_its_provenance(repo):
 
 
 # ------------------------------------------------------------------ 批
+async def test_approval_without_preview_cannot_approve_unseen_output(repo, monkeypatch):
+    run = _waiting_run(repo)
+    called = _no_real_advance(monkeypatch)
+    bridge, adapter = _bridge(repo)
+    await _drive_with_advance(bridge, adapter, _msg("/ok"))
+    assert not called
+    assert "请先 /pipe" in adapter.texts()[-1]
+    assert PipelineStore(str(repo)).load(run.run_id).status == "awaiting_review"
+
+
+async def test_old_im_preview_cannot_approve_a_replacement(repo, monkeypatch):
+    run = _waiting_run(repo)
+    called = _no_real_advance(monkeypatch)
+    bridge, adapter = _bridge(repo)
+    await bridge._pipe_list(run.run_id)
+    store = PipelineStore(str(repo))
+    current = store.load(run.run_id)
+    replacement = ProductStore(str(repo)).create("topic_pool", payload={"new": True},
+        pipeline=run.pipeline, run_id=run.run_id, stage="scout")
+    current.stage("scout").product_id = replacement.id
+    assert store.save(current)
+    await _drive_with_advance(bridge, adapter, _msg("/ok"))
+    assert "未完成审批" in adapter.texts()[-1]
+    assert not called and store.load(run.run_id).status == "awaiting_review"
+
+
+async def test_failed_preview_delivery_does_not_authorize_review(repo, monkeypatch):
+    run = _waiting_run(repo)
+    bridge, adapter = _bridge(repo)
+    original = adapter.send_text
+
+    async def fail(text):
+        raise OSError("offline")
+
+    monkeypatch.setattr(adapter, "send_text", fail)
+    await bridge._pipe_list(run.run_id)
+    monkeypatch.setattr(adapter, "send_text", original)
+    await _drive_with_advance(bridge, adapter, _msg("/ok"))
+    assert "请先 /pipe" in adapter.texts()[-1]
+    assert PipelineStore(str(repo)).load(run.run_id).status == "awaiting_review"
+
+
+async def test_truncated_im_preview_does_not_authorize_full_output(repo):
+    run = _waiting_run(repo)
+    store = PipelineStore(str(repo))
+    products = ProductStore(str(repo))
+    product = products.load(store.load(run.run_id).stage("scout").product_id)
+    product.payload = {"article": "long text " * 500}
+    assert products.save(product)
+    bridge, adapter = _bridge(repo)
+    await bridge._pipe_list(run.run_id)
+    assert "此摘要不能直接批准" in adapter.texts()[-1]
+    await _drive_with_advance(bridge, adapter, _msg("/ok"))
+    assert store.load(run.run_id).status == "awaiting_review"
+
+
 @pytest.mark.asyncio
 async def test_approve_needs_no_run_id_when_only_one_waits(repo, monkeypatch):
     """**手机上让人抄 prun-content-ops-ed3c577a 是折磨。** 只有一条在等就是它。"""
     run = _waiting_run(repo)
     called = _no_real_advance(monkeypatch)
     bridge, adapter = _bridge(repo)
+    await bridge._pipe_list(run.run_id)  # 先展示目标版本，再批准/驳回
     await _drive_with_advance(bridge, adapter, _msg("/ok"))
     assert PipelineStore(str(repo)).load(run.run_id).stage("scout").status == "done"
     assert called and called[0][0] == run.run_id       # 批完立刻往下推，不等 cron
@@ -149,6 +206,7 @@ async def test_chinese_alias_does_the_same_thing(repo, monkeypatch):
     run = _waiting_run(repo)
     _no_real_advance(monkeypatch)
     bridge, adapter = _bridge(repo)
+    await bridge._pipe_list(run.run_id)  # 先展示目标版本，再批准/驳回
     await _drive_with_advance(bridge, adapter, _msg("/批"))
     assert PipelineStore(str(repo)).load(run.run_id).stage("scout").status == "done"
 
@@ -170,6 +228,7 @@ async def test_the_comment_is_not_mistaken_for_a_run_id(repo, monkeypatch):
     run = _waiting_run(repo)
     _no_real_advance(monkeypatch)
     bridge, adapter = _bridge(repo)
+    await bridge._pipe_list(run.run_id)  # 先展示目标版本，再批准/驳回
     await _drive_with_advance(bridge, adapter, _msg("/no 角度太窄，换个切入点"))
     note = ProductStore(str(repo)).latest("review_note")
     assert note.payload["comment"] == "角度太窄，换个切入点"
@@ -183,6 +242,7 @@ async def test_defer_leaves_it_waiting_and_does_not_advance(repo, monkeypatch):
     run = _waiting_run(repo)
     called = _no_real_advance(monkeypatch)
     bridge, adapter = _bridge(repo)
+    await bridge._pipe_list(run.run_id)  # 先展示目标版本，再批准/驳回
     await _drive_with_advance(bridge, adapter, _msg("/later 这周先不发"))
     assert PipelineStore(str(repo)).load(run.run_id).status == "awaiting_review"
     assert not called
@@ -213,6 +273,7 @@ async def test_approving_while_busy_does_not_steal_the_task_slot(repo, monkeypat
     run = _waiting_run(repo)
     called = _no_real_advance(monkeypatch)
     bridge, adapter = _bridge(repo)
+    await bridge._pipe_list(run.run_id)  # 先展示目标版本，再批准/驳回
 
     async def _busy():
         await asyncio.sleep(0.2)
@@ -244,6 +305,7 @@ async def test_outbound_stage_asks_on_your_phone_instead_of_refusing(repo, monke
 
     monkeypatch.setattr(pipeline_exec, "build_stage_executor", fake_builder)
     bridge, adapter = _bridge(repo, FakeAdapter(auto_approve=True))   # 模拟主人点了"批准"
+    await bridge._pipe_list(run.run_id)  # 先展示目标版本，再批准/驳回
     await _drive_with_advance(bridge, adapter, _msg("/ok"))
 
     assert stages == ["publish"]
@@ -425,6 +487,7 @@ async def test_commands_survive_what_a_phone_keyboard_adds(repo, monkeypatch, ty
     run = _waiting_run(repo)
     _no_real_advance(monkeypatch)
     bridge, adapter = _bridge(repo)
+    await bridge._pipe_list(run.run_id)  # 先展示目标版本，再批准/驳回
     await _drive_with_advance(bridge, adapter, _msg(typed))
     store = PipelineStore(str(repo))
     if typed.endswith("。"):                      # 没带意见 → 应拒绝并说明为什么

@@ -259,8 +259,8 @@ vortocode agent --attach "问题/任务"    # 一次性问答/脚本化；-c 续
 ## 四又二分之一、运营部值班：中转站巡检（B8-① 试点一）
 
 第一条 OPC 职责：cron 每夜跑 `python -m src.gateway.relay_duty`（确定性、零 LLM），
-巡检 `https://token.vortotech.com`（生产真身，2026-07-20 实测；relay 仓库文档写的
-relay.dinghappy.com 已 502 弃用。`VORTOCODE_RELAY_URL` 可换目标）：
+默认巡检项目维护的 `https://token.vortotech.com`；部署者可用 `VORTOCODE_RELAY_URL`
+替换为自己的兼容服务：
 
 - 免鉴权：`/api/status` 存活 + **重启检测**（start_time 快照比对，正常发布重启也会报一夜、次夜自动转绿）、
   `/api/pricing` 非空（DB 读路径）。
@@ -286,12 +286,10 @@ relay.dinghappy.com 已 502 弃用。`VORTOCODE_RELAY_URL` 可换目标）：
    回归退出码非零）；观察通知三路。
 3. 觉得稳了再开 `VORTOCODE_HEARTBEAT=1`，让它自己从 BACKLOG 领活——从此摩擦清单自己消化自己。
 
-## 六、CI 现状与自建 runner（2026-07-12 起；2026-07-26 更新）
+## 六、CI 与自建 runner
 
-**CI 已恢复运行**，跑在自建 runner 上（4 个 runner 挂在家里那台 Linux 机器，`CI_RUNNER=self-hosted`，
-私有仓库不计费）。历史背景：早前因私有仓库 2000 分钟免费额度耗尽而 `gh workflow disable`
-（额度耗尽的表现是 job 根本不启动、3 秒内全红，报 *"payments have failed or your spending
-limit needs to be increased"*）——自建 runner 上线后该问题不复存在。
+私有仓库可通过 `CI_RUNNER` 使用受信任的 Linux 自建 runner；公开仓库的工作流会忽略该变量，
+强制使用 GitHub 托管 runner。不要让来自外部 fork 的代码接触私有网络、本机凭据或部署密钥。
 
 **本地门禁照旧要跑**（CI 绿不代替它，它清空了 key 保证离线确定性）：
 
@@ -303,46 +301,37 @@ limit needs to be increased"*）——自建 runner 上线后该问题不复存�
 > 关掉 CI 而不给替代品 = 没有门禁。这个脚本刻意把 `OPENAI_API_KEY` 等清空，
 > 和 CI 一样保证测试离线、确定性——否则本地"绿"可能只是因为你的 `.env` 里有 key。
 
-**恢复 CI（自建 runner 免费、私有仓库不计费）**：
+**为私有仓库配置自建 runner**：
 
-1. 装一台 Linux（**必须 Linux**：Windows 无 OS 沙箱后端，无人值守路径会 fail-closed）。
-   装机步骤 / 发行版选择 / bubblewrap 验证见共享知识库
-   `my-knowledge/docs/projects/vortocode/ops-runner-nightly-machine.md`。
+1. 准备一台隔离的 Linux 主机（Windows 无 OS 沙箱后端，无人值守路径会 fail-closed），
+   并验证 bubblewrap 与最小权限配置。
 2. 仓库 Settings → Actions → Runners → New self-hosted runner，注册并装成服务。
 3. 设仓库变量 **`CI_RUNNER=self-hosted`**（Settings → Secrets and variables → Actions → Variables）
    —— `ci.yml` 的 `runs-on` 是变量驱动的，**不用改代码**。
 4. `gh workflow enable CI`，再手动 `workflow_dispatch` 验一次。
 
-⚠️ self-hosted runner 之所以安全，前提是仓库**私有**（公开仓库任何人都能提 fork PR 在你机器上跑
-任意代码）。**将来转公开预览时，必须把 `CI_RUNNER` 变量删掉切回托管 runner**——公开仓库托管
-runner 免费无限，正好也不需要自建了。
+⚠️ 自建 runner 只用于受信任的私有仓库。转公开前仍应注销仓库绑定的自建 runner，并删除
+`CI_RUNNER`、私有镜像和本地缓存路径变量；工作流里的可见性条件是第二道保护，不代替注销。
 
 同一台机器还可兼做**夜跑机器**（cron 评测 / heartbeat 值班），但那是**另一个风险等级**：
 CI 只跑离线测试、不需要任何 key；夜跑要 API key、会自主写代码。分阶段上线，别一步到位。
 
-### CI 全红时先查 runner 宿主机的出海能力（真机事故 2026-07-25）
+### CI 全红时先查 runner 到 GitHub 的连通性
 
-自建 runner 的机器在国内，拉 `actions/checkout` 要出海。**代理一断，每个 job 都死在
-"Set up job" 阶段**，报错长这样：
+如果自建 runner 无法访问 GitHub，**每个 job 都可能死在 "Set up job" 阶段**，报错类似：
 
 ```
 Failed to download archive 'https://codeload.github.com/actions/checkout/...' after 3 attempts.
 The SSL connection could not be established
 ```
 
-这与你的改动**毫无关系**——job 还没开始跑任何代码。事故当天的具体原因：mihomo 的
-`🚀 节点选择` 被**手动钉死在某个具体节点**上，而那个节点下线了；同订阅里另外 38 个节点都活着，
-但选择器不会自己换。三行排查：
+此时 job 还没开始跑项目代码。排查顺序：
 
 ```bash
-# 1. 宿主机能不能出海（国内站通、GitHub 不通 = 代理节点问题，不是网络断了）
-ssh <runner-host> 'curl -s -m 8 -o /dev/null -w "%{http_code}\n" https://www.baidu.com; \
-                   curl -s -m 8 -o /dev/null -w "%{http_code}\n" https://codeload.github.com'
-# 2. 看当前选中的节点是不是死的（secret 在 /etc/mihomo/config.yaml，就地取用别打印）
-#    GET /proxies/<group> → now 字段；GET /providers/proxies → 各节点 alive
-# 3. 切回自动选择（URLTest 会 5 分钟重测、节点死了自动换，不会再单点全断）
-#    PUT /proxies/<group>  body: {"name":"♻️ 自动选择"}
+# 1. 从 runner 主机验证 GitHub 下载端点
+ssh <runner-host> 'curl -sS -m 8 -o /dev/null -w "%{http_code}\n" https://codeload.github.com'
+# 2. 检查 DNS、TLS、代理和防火墙；任何代理凭据只在主机上读取，禁止打印到 CI 日志
+# 3. 恢复连通性后，用 workflow_dispatch 重新验证
 ```
 
-**教训**：选择器别钉死在单个节点上——钉死等于把 CI 绑在一个会静默下线的单点上。
-另外当天观察：死掉的节点几乎清一色是 Hysteria2 协议，Vless/Tuic 的基本都活着。
+不要把 CI 绑定在单个不可观测的网络出口上；连接失败需要监控、自动恢复和明确告警。

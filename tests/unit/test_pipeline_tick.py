@@ -12,7 +12,7 @@ import asyncio
 import pytest
 import yaml
 
-from src.gateway.pipeline import MAX_STAGE_ATTEMPTS, PipelineStore, review
+from src.gateway.pipeline import MAX_STAGE_ATTEMPTS, PipelineStore, review, review_fingerprint
 from src.gateway.pipeline_tick import MAX_RUNS_PER_TICK, tick
 
 DEF = {
@@ -67,13 +67,27 @@ async def test_the_same_waiting_state_is_announced_once(repo):
     assert "等你批" in notify.sent[0][0]
 
 
+async def test_notification_await_cannot_overwrite_a_new_approval(repo):
+    run_id = _start(repo)
+
+    async def notify(text, **kwargs):
+        store = PipelineStore(repo)
+        current = store.load(run_id)
+        result = review(repo, run_id, verdict="approve",
+                        review_token=review_fingerprint(repo, current))
+        assert result.status == "running"
+
+    await tick(repo, execute=_ok, notify=notify)
+    assert PipelineStore(repo).load(run_id).stage("scout").status == "done"
+
+
 @pytest.mark.asyncio
 async def test_a_second_round_of_waiting_is_announced_again(repo):
     """驳回重做后再次等批是**新的一次**等批。签名清空的意义就在这儿——漏了它人就不知道该回来看。"""
     run_id = _start(repo)
     notify = Recorder()
     await tick(repo, execute=_ok, notify=notify)
-    review(repo, run_id, verdict="reject", comment="角度太窄", reviewer="test")
+    review(repo, run_id, review_token=review_fingerprint(repo, PipelineStore(repo).load(run_id)), verdict="reject", comment="角度太窄", reviewer="test")
     await tick(repo, execute=_ok, notify=notify)
     assert len(notify.sent) == 2
 
@@ -112,7 +126,7 @@ async def test_outbound_is_not_attempted_without_a_confirm_channel(repo):
     run_id = _start(repo)
     notify = Recorder()
     await tick(repo, execute=_ok, notify=notify)
-    review(repo, run_id, verdict="approve", reviewer="test")
+    review(repo, run_id, review_token=review_fingerprint(repo, PipelineStore(repo).load(run_id)), verdict="approve", reviewer="test")
 
     for _ in range(MAX_STAGE_ATTEMPTS + 2):
         outcomes = await tick(repo, execute=_ok, notify=notify)
@@ -133,7 +147,7 @@ async def test_outbound_runs_when_a_confirm_channel_exists(repo):
         return True
 
     await tick(repo, execute=_ok, notify=notify)
-    review(repo, run_id, verdict="approve", reviewer="test")
+    review(repo, run_id, review_token=review_fingerprint(repo, PipelineStore(repo).load(run_id)), verdict="approve", reviewer="test")
     outcomes = await tick(repo, execute=_ok, notify=notify, confirm=yes)
     assert outcomes[0].status == "done"
     assert "✅" in notify.sent[-1][0]

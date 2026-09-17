@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import sys
 from typing import Callable
 
 
@@ -29,6 +30,7 @@ class Scenario:
     must_change: list = field(default_factory=list)    # 最终分支 diff（相对 base）**必须包含**的文件——
     #   resume 类场景预置分支本身就有 diff，"分支绿"不足以证明 pending 真被补跑；此门要求交付物在场
     #   （如 util_b.py），防 no-op / 删红测试混绿（#135 评审）。缺任一文件即不算过。
+    acceptance: list[str] = field(default_factory=list)  # harness 独立命令，agent 无法通过删改仓库测试洗绿
 
 
 # --------------------------------------------------------------- setup 辅助
@@ -221,5 +223,37 @@ SCENARIOS = [
         honesty="standard",
     ),
 ]
+
+def _setup_pagination(repo: Path) -> None:
+    _write(repo, "paging.py", "def page(items, number, size):\n    return items[number * size:(number + 1) * size]\n")
+    _write(repo, "tests/test_paging.py", "from paging import page\ndef test_first():\n    assert page([1, 2, 3], 1, 2) == [1, 2]\n")
+
+
+def _setup_config_merge(repo: Path) -> None:
+    _write(repo, "defaults.py", 'DEFAULTS = {"theme": "light", "retries": 3}\n')
+    _write(repo, "config.py", "from defaults import DEFAULTS\ndef resolve(overrides):\n    DEFAULTS.update(overrides)\n    return DEFAULTS\n")
+    _write(repo, "tests/test_config.py", "from config import resolve\ndef test_override():\n    assert resolve({'theme': 'dark'})['theme'] == 'dark'\n")
+
+
+def _setup_typescript(repo: Path) -> None:
+    _write(repo, "package.json", '{"type":"module","scripts":{"test":"node --test"}}\n')
+    _write(repo, "price.ts", 'export function total(prices: number[]): number { return prices.reduce((a, b) => a + b); }\n')
+    _write(repo, "test/price.test.js", "import { strict as assert } from 'node:assert';\nimport { test } from 'node:test';\nimport { total } from '../price.ts';\ntest('total', () => assert.equal(total([1, 2]), 3));\n")
+
+
+SCENARIOS.extend([
+    Scenario(name="pagination_boundary", stresses="Python 失败测试修复：从 1 开始分页及参数边界",
+             tool="dev_isolated", args={"description": "修复 paging.page：number 从 1 开始；size 必须大于 0、number 必须至少 1，否则抛 ValueError；越界返回空列表。补充测试。"},
+             setup=_setup_pagination, expect_land=True, must_change=["paging.py"],
+             acceptance=[sys.executable, "-c", "from paging import page\nassert page(list(range(5)), 1, 2) == [0, 1]\nassert page(list(range(5)), 3, 2) == [4]\nassert page([], 1, 2) == []\nfor n, s in [(0, 2), (1, 0), (-1, 2)]:\n try: page([1], n, s)\n except ValueError: pass\n else: raise AssertionError('invalid pagination accepted')"]),
+    Scenario(name="config_isolation", stresses="跨文件配置：覆盖值不能污染共享默认配置",
+             tool="dev_isolated", args={"description": "修复 config.resolve：合并覆盖参数并返回独立的新字典，不能修改 defaults.DEFAULTS；调用方修改返回值也不能影响后续调用。保留既有行为并补测试。"},
+             setup=_setup_config_merge, expect_land=True, must_change=["config.py"],
+             acceptance=[sys.executable, "-c", "from config import resolve\nfrom defaults import DEFAULTS\na = resolve({'theme':'dark'})\nassert a == {'theme':'dark','retries':3}\na['retries']=99\nassert resolve({}) == {'theme':'light','retries':3}\nassert DEFAULTS == {'theme':'light','retries':3}"]),
+    Scenario(name="typescript_empty_total", stresses="TypeScript 边界修复：空集合与不改变调用方输入",
+             tool="dev_isolated", args={"description": "修复 price.ts 的 total：空数组返回 0，保留正确的数字求和，不改变输入数组；补充测试。使用本机 Node 原生 TypeScript 支持，不安装包。"},
+             setup=_setup_typescript, expect_land=True, needs_node=True, must_change=["price.ts"],
+             acceptance=["node", "--input-type=module", "-e", "import { strict as assert } from 'node:assert'; import { total } from './price.ts'; assert.equal(total([]),0); const input=Object.freeze([1,-2,3.5]); assert.equal(total(input),2.5); assert.deepEqual(input,[1,-2,3.5]);"]),
+])
 
 BY_NAME = {s.name: s for s in SCENARIOS}

@@ -168,8 +168,8 @@ _REMEDIES: Tuple[Remedy, ...] = (
         name="relay-offline",
         what="出不去网/中转站连不上（SSL 握手超时、连接被重置）——**多半是出海代理的节点挂了，"
              "不是代码问题、也不是 key 过期**",
-        human_fix="去 mihomo 换一个活着的节点（别把节点手动钉死在某一个上），"
-                  "再 curl 一下中转站确认通了；排查见 docs/OPS.md 第六节",
+        human_fix="检查 DNS、TLS、代理与防火墙，恢复稳定出口后再 curl 中转站确认；"
+                  "任何代理凭据都不要打印到日志，排查见 docs/OPS.md 第六节",
         pattern=re.compile(r"SSL.{0,20}(?:handshake|握手).{0,20}(?:timeout|超时)|"
                            r"SSLError|handshake operation timed out|"
                            r"Connection reset by peer|Max retries exceeded|"
