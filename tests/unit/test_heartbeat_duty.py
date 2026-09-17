@@ -1,6 +1,6 @@
 """B6-4 · heartbeat 值班惯例——检查单文件注入 + 无事静默。
 
-语义来源：`docs/OPENCLAW_INTEGRATION.md` 映射表第 1 行（值班职责=检查单文件；补"无事静默"约定）。
+公开合同：`docs/OPS.md` 的“开关矩阵”（值班职责=检查单文件；无事静默）。
 
 四态覆盖：
   ① 有检查单   → 正文注入本回合提示，且包在 `<vortocode_untrusted_memory>` 数据边界里
