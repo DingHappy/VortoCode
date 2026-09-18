@@ -28,6 +28,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Header, Input, RichLog, Static, TextArea
 from textual.worker import WorkerState
 
+from src.agents.notice import strip_marker
 from src.memory.session_store import SessionManager
 # 斜杠命令实现（38 个 _cmd_*，约 1580 行）搬到同目录 commands.py：
 # 它们回答的是「用户敲了命令做什么」，与「怎么把界面画出来」是两件事。
@@ -599,7 +600,13 @@ class VortoCodeTUI(TUICommandsMixin, App):
     # ---- 回合内工具活动：主结果流里少量预览，收尾折叠成一行摘要 ----
     def _turn_say(self, markup: str) -> None:
         """回合内 say 路由：🔧 工具行进入当前 turn timeline 的轻量预览，长回合只计数；
-        其余提示（里程碑/警告/压缩说明等）照旧进对话 log。"""
+        其余提示（里程碑/警告/压缩说明等）照旧进对话 log。
+
+        管家标记（`src.agents.notice`）在这里就剥掉：终端**要**看这些运行细节，被挡在
+        图形端时间线外的只是桌面/Web。标记是零宽字符，不剥的话 `startswith("🔧")`
+        会静默失配——工具行就不再进 timeline 预览了，而且没有任何报错。
+        """
+        markup = strip_marker(markup)
         try:
             plain = Text.from_markup(str(markup)).plain
         except Exception:  # noqa: BLE001 —— 非法标记按原文处理

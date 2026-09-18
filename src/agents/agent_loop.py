@@ -28,6 +28,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 from src.agents.tool import Tool
 from src.agents.gate import make_confirm_gate  # noqa: F401
+from src.agents.notice import housekeeping
 # 工具结果截断上限：MainAgent 落工具结果时用。这是本模块唯一往 tools/ 的依赖，
 # 方向正确（agent_loop → tools/*，无状态工具在最底层），不成环。
 from src.agents.tools._common import _max_tool_result
@@ -1011,8 +1012,8 @@ class MainAgent:
                 self._trim_start = 0           # 内容已改写 → 粘性切点按新体量重算（预算变松了）
                 self._env_sent = ""            # 强制下轮重附 <env>：切点重算后载体是否还在窗口内不好断言，
                 self._env_idx = None           # 宁可多附一次（几十 token），也不能让 env 悄悄消失
-                say(f"[dim]🗜️ 已折叠 {len(chosen)} 条更早回合的工具结果"
-                    f"（对话原文全部保留，未做摘要）。[/dim]")
+                say(housekeeping(f"[dim]🗜️ 已折叠 {len(chosen)} 条更早回合的工具结果"
+                                 f"（对话原文全部保留，未做摘要）。[/dim]"))
                 return
             # 折了也不够 → 一条都不折，把老段**原文**交给摘要器（保住纪要质量）
 
@@ -1025,7 +1026,7 @@ class MainAgent:
         self._env_sent = ""                    # env 载体可能被压掉 → 下轮重新附（否则 env 一去不返）
         self._env_idx = None
         self._turn_user_idx = None             # 下标随历史重写失效，由 run_turn 重新设
-        say(f"[dim]🗜️ 已把 {len(older)} 条更早的对话压成纪要（保留原始目标与关键决策）。[/dim]")
+        say(housekeeping(f"[dim]🗜️ 已把 {len(older)} 条更早的对话压成纪要（保留原始目标与关键决策）。[/dim]"))
 
     def compact_preview(self, mode: str = "plan") -> dict:
         """预估手动压缩会压掉哪一段，不调用 LLM、不改 history。"""
@@ -1298,12 +1299,12 @@ class MainAgent:
                 external_content=tool.external_content,
             )
             if reason:
-                say(f"🔧 [b]{name}[/b][dim] —— 被会话能力边界拦下[/dim]")
+                say(housekeeping(f"🔧 [b]{name}[/b][dim] —— 被会话能力边界拦下[/dim]"))
                 return finish("blocked", f"[能力拦截] {reason}")
         if self._permissions is not None:           # .vortocode/permissions.yaml deny：硬拦（不分模式、最优先）
             reason = self._permissions.denied(name, args)
             if reason:
-                say(f"🔧 [b]{name}[/b][dim] —— 被权限规则拦下[/dim]")
+                say(housekeeping(f"🔧 [b]{name}[/b][dim] —— 被权限规则拦下[/dim]"))
                 return finish("blocked", f"[权限拦截] {reason}")
         effective = "build" if self._escalated else mode
         if name == "request_build":                 # 它要知道当前模式才能判断"用不用得着问"
@@ -1331,9 +1332,9 @@ class MainAgent:
         if self._hook_system is not None:       # PRE_TOOL_USE：钩子可阻止该工具（should_stop）
             block = await self._fire_hook("pre_tool_use", {"tool": name, "args": args}, stoppable=True)
             if block is not None:
-                say(f"🔧 [b]{name}[/b][dim] —— 被 hook 阻止[/dim]")
+                say(housekeeping(f"🔧 [b]{name}[/b][dim] —— 被 hook 阻止[/dim]"))
                 return finish("blocked", block)
-        say(f"🔧 [b]{name}[/b][dim] {_fmt_args(args)}[/dim]")
+        say(housekeeping(f"🔧 [b]{name}[/b][dim] {_fmt_args(args)}[/dim]"))
         status = "succeeded"
         try:
             result = self._absorb_tool_media(await tool.handler(args))
@@ -1705,7 +1706,8 @@ class MainAgent:
         # 用尽工具预算：不白跑——强制一次"无工具"收尾，把已收集的信息综合成最终回答
         # （子 agent 尤其受益：读了一堆文件也能交回结论，而不是返回空丢弃全部上下文）。
         if self._should_auto_continue_build(mode, auto_continues):
-            say(f"[dim]↻ build 单段预算已用完，自动继续当前任务（{auto_continues + 1}/{self.build_auto_continues}）[/dim]")
+            say(housekeeping("[dim]↻ build 单段预算已用完，自动继续当前任务"
+                             f"（{auto_continues + 1}/{self.build_auto_continues}）[/dim]"))
             return await self._run_turn_body(
                 "继续上一轮任务。刚才只是到达 build 的单段执行预算，不代表任务完成；"
                 "请基于已有上下文继续推进，优先完成当前计划，不要重新从头摸底。",

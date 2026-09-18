@@ -157,8 +157,10 @@ async def test_ws_agent_handler_invokes_read_tool(monkeypatch):
     ws = _FakeWS()
     await handle_agent_message(ws, {"type": "agent", "text": "列一下文件", "mode": "plan"})
     await _drain(ws)
-    types = [m["type"] for m in ws.sent]
-    assert "agent_say" in types                                    # 工具调用提示
+    # 工具调用由结构化的 agent_tool 事件表达（带状态/耗时/可展开的参数），
+    # 逐个工具的 `🔧 name args` 回显只留给终端——见 tests/unit/test_timeline_noise.py。
+    says = [m["text"] for m in ws.sent if m["type"] == "agent_say"]
+    assert not any("list_files" in text for text in says), says
     tool_events = [m for m in ws.sent if m["type"] == "agent_tool"]
     assert [item["status"] for item in tool_events] == ["running", "succeeded"]
     assert tool_events[0]["id"] == tool_events[1]["id"]
@@ -180,10 +182,12 @@ async def test_ws_agent_no_key_degrades(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ws_agent_say_strips_rich_markup(monkeypatch):
-    # 工具提示行在主 agent 里带 Rich 标记（🔧 [b]name[/b][dim]…[/dim]）；Web 端必须剥成纯文本，
-    # 否则 agent.html 会原样显示 [b]/[dim] 标签。
+    # 真会露到界面上的 say 是 dev 流水线的进度行（"⚙️ 隔离实现…"）。它们经 _web_progress_holder
+    # 走同一条 agent_say，必须剥成纯文本，否则 agent.html / Desktop 会原样显示 [b]/[dim] 标签。
     import src.llm.client as llmmod
-    from src.web.routers.realtime import handle_agent_message
+    from src.web.routers.realtime import _ws_agent, handle_agent_message
+
+    ws = _FakeWS()
 
     class FakeLLM:
         def __init__(self, *a, **k):
@@ -191,19 +195,18 @@ async def test_ws_agent_say_strips_rich_markup(monkeypatch):
 
         async def chat(self, messages, **k):
             self.n += 1
-            if self.n == 1:
-                return {"content": '{"tool":"list_files","args":{}}'}
+            if self.n == 1:                     # 回合已开始 → 进度回调已绑到本回合的队列
+                _ws_agent(ws)._web_progress_holder["fn"]("⚙️ [b]隔离实现[/b][dim] 第 1 件[/dim]")
             return {"content": "好了。"}
 
     monkeypatch.setattr(llmmod, "LLMClient", FakeLLM)
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
 
-    ws = _FakeWS()
     await handle_agent_message(ws, {"type": "agent", "text": "列文件", "mode": "plan"})
     await _drain(ws)
     says = [m["text"] for m in ws.sent if m["type"] == "agent_say"]
-    assert says and any("list_files" in s for s in says)       # 工具名还在
-    assert all("[b]" not in s and "[dim]" not in s and "[/" not in s for s in says)  # 但 Rich 标记没了
+    assert any("隔离实现" in text for text in says), says            # 进度行到得了前端
+    assert all("[b]" not in t and "[dim]" not in t and "[/" not in t for t in says), says
     _cleanup(ws)
 
 
