@@ -352,7 +352,9 @@ def test_reviewed_commit_contains_only_staged_hunks(tmp_path):
         hunk_id=first["id"], expected_sha256=first["sha256"],
     )
 
-    committed = commit_reviewed(str(tmp_path), "reviewed first hunk")
+    # 这条测的是"只提交已暂存的 hunk"，夹具仓库恰好在 main 上；受保护分支的二次确认
+    # 另有 tests/unit/test_protected_branch_commit.py 覆盖，这里直接给确认。
+    committed = commit_reviewed(str(tmp_path), "reviewed first hunk", confirm_protected=True)
     assert committed["ok"] is True and committed["sha"]
     head_content = _git(tmp_path, "show", "HEAD:sample.txt").stdout
     assert "first changed" in head_content and "second changed" not in head_content

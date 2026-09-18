@@ -379,10 +379,10 @@ export class GatewayClient {
     });
   }
 
-  async commitGitReview(message: string): Promise<GitReviewCommitResult> {
+  async commitGitReview(message: string, confirmProtected = false): Promise<GitReviewCommitResult> {
     return this.request("/api/git/review/commit", {
       method: "POST",
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, confirm_protected: confirmProtected }),
     });
   }
 
