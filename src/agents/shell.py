@@ -161,6 +161,65 @@ def is_dangerous(cmd: str) -> str:
     return ""
 
 
+# ---------------------------------------------------------------- 只读判定
+# `is_dangerous` 回答"这条会不会闯祸"，下面这个回答另一个问题：**这条只是在看东西吗**。
+# 两者独立：授权档位 READS 说的是"只读操作别老问我"，而 run_command 此前一律按执行面申报，
+# 于是 `cat src/x.py` 在 READS 档下照样弹确认——那个档对命令面等于不存在（真机诊断 2026-09-17）。
+#
+# 这里**一律 fail-closed**：判不出来就当成执行面（多问一次），绝不反过来。判据有三层：
+#   1. 整段不含重定向 / 命令替换 / 变量展开——`cat a > b` 会写盘，`$(...)` 能跑任何东西；
+#   2. 每个管道段的可执行名都在白名单里——白名单只收"没有写形态"的命令；
+#   3. 少数命令另有写形态（`find -delete`、`git branch -D`），逐个加参数护栏。
+#
+# 白名单刻意收得很紧：漏判只是多一次确认，误判是把写操作当读操作放行。`sed`/`awk` 因此
+# **不在**列内（`sed -i` 原地改文件、awk 的 `print > "f"` 能写盘），要读文件用 cat/head/grep。
+_READ_ONLY_EXES = frozenset({
+    "cat", "head", "tail", "less", "more", "nl", "wc", "ls", "pwd", "tree",
+    "echo", "printf", "basename", "dirname", "realpath", "readlink",
+    "grep", "egrep", "fgrep", "rg", "ag", "ack",
+    "sort", "uniq", "cut", "tr", "column", "jq",
+    "file", "stat", "du", "df", "date", "whoami", "hostname", "uname",
+    "printenv", "which", "type", "diff", "cmp", "md5sum", "shasum", "sha256sum",
+})
+
+# `git` 的只读子命令。只收**所有形态都只读**的那些：branch/tag/remote/config/stash/worktree/
+# reflog 都有写形态（`git branch -D`、`git config --global x y`），一律不收。
+_READ_ONLY_GIT = frozenset({
+    "status", "log", "diff", "show", "blame", "shortlog", "whatchanged",
+    "ls-files", "ls-tree", "rev-parse", "rev-list", "describe", "cat-file",
+    "show-ref", "for-each-ref", "grep", "merge-base", "name-rev", "count-objects",
+})
+
+# `find` 的写/执行形态
+_FIND_WRITES = ("-delete", "-exec", "-execdir", "-ok", "-okdir",
+                "-fprint", "-fprint0", "-fprintf", "-fls")
+
+# 重定向、命令替换、变量展开——任何一个出现就不算只读
+_NOT_READ_ONLY_CHARS = ("<", ">", "$", "`")
+
+
+def _segment_is_read_only(seg: str) -> bool:
+    base, args = _exe_and_args(_tokens(seg))
+    if not base:
+        return False
+    if base == "git":
+        sub = next((a for a in args if not a.startswith("-")), "")
+        return sub in _READ_ONLY_GIT
+    if base == "find":
+        return not any(a.startswith(w) for a in args for w in _FIND_WRITES)
+    return base in _READ_ONLY_EXES
+
+
+def is_read_only(cmd: str) -> bool:
+    """这条命令只是在看东西吗。判不出来一律 False（多问一次，绝不少问）。"""
+    norm = _normalize(cmd).strip()
+    if not norm or any(ch in norm for ch in _NOT_READ_ONLY_CHARS):
+        return False
+    segments = [seg.strip() for seg in _SHELL_SPLIT.split(norm)]
+    segments = [seg for seg in segments if seg]
+    return bool(segments) and all(_segment_is_read_only(seg) for seg in segments)
+
+
 # ---------------------------------------------------------------- 后台/长驻命令
 # run_command 阻塞到结束，起不了 dev server / watcher / tail -f 再继续对话。这里加**后台**执行：
 # Popen 起进程 → 后台线程把输出汇进环形缓冲 → agent 用 read_output 取增量、stop_command 收摊。
