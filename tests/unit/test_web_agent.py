@@ -638,6 +638,31 @@ async def test_ws_confirm_round_trip_allow_and_deny():
 
 
 @pytest.mark.asyncio
+async def test_ws_confirm_cancel_is_reported_as_cancelled():
+    """回归（2026-09-18 真机冒烟）：点「停止」时前端收到的是 reason=answered。
+
+    原因是 `asyncio.CancelledError` 继承 BaseException 而不是 Exception，被 `except Exception`
+    漏掉，reason 停在初值。行为本身一直是对的（命令没跑、回合解开），错的是这条事件在说谎。
+    """
+    from src.web.routers import realtime
+
+    ws = _FakeWS()
+    q = asyncio.Queue()
+    task = asyncio.create_task(realtime._make_ws_confirm(ws, q)("跑命令？"))
+    evt = await asyncio.wait_for(q.get(), 2)
+    assert evt["type"] == "agent_confirm"
+
+    task.cancel()                                   # = 用户点「停止」，回合整体被取消
+    with pytest.raises(asyncio.CancelledError):
+        await task                                  # 取消要照常往外传，别被吞掉
+
+    closed = await asyncio.wait_for(q.get(), 2)
+    assert closed["type"] == "agent_confirm_closed"
+    assert closed["id"] == evt["id"] and closed["reason"] == "cancelled"
+    assert evt["id"] not in realtime._PENDING_CONFIRMS
+
+
+@pytest.mark.asyncio
 async def test_ws_confirm_timeout_tells_the_client_it_stopped_waiting(monkeypatch):
     """回归（2026-09-17 真机诊断）：确认超时按拒绝往下走，但前端那张卡片一直挂着、按钮还能点。
 

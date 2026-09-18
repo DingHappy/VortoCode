@@ -173,7 +173,13 @@ def _make_ws_confirm(websocket, q):
         except asyncio.TimeoutError:              # 超时 → 拒绝（安全），并**告诉前端**
             reason = "timeout"
             return False
-        except Exception:  # noqa: BLE001  # 取消/出错 → 同样拒绝
+        except asyncio.CancelledError:            # 用户点了「停止」：回合整体被取消
+            # 必须**单列**：CancelledError 继承 BaseException 而不是 Exception，被下面那条
+            # `except Exception` 漏掉，于是 reason 还停在初值 "answered"——真机冒烟里取消一次
+            # 确认，前端收到的是 reason=answered（2026-09-18）。往外重抛，让回合照常解开。
+            reason = "cancelled"
+            raise
+        except Exception:  # noqa: BLE001  # 其它异常 → 同样按拒绝收场
             reason = "cancelled"
             return False
         finally:
