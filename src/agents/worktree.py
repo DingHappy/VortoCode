@@ -265,9 +265,9 @@ def run_tests(worktree, cmd: Optional[list] = None, timeout: int = 600, *,
     ``VORTOCODE_SANDBOX=off`` 是可信环境的显式宿主机 escape hatch。结果携带
     ``sandbox`` 决策证据，避免 autonomous 路径静默降级。
     """
-    import sys
     from src.agents.sandbox import child_env, resolve_sandbox, sandboxed_exec_argv
-    cmd = list(cmd) if cmd else [sys.executable, "-m", "pytest", "-q"]
+    from src.utils.python_exe import pytest_argv
+    cmd = list(cmd) if cmd else pytest_argv("-q")
     decision = resolve_sandbox(require_isolation=require_isolation)
     evidence = decision.to_dict()
     shown = " ".join(cmd)
