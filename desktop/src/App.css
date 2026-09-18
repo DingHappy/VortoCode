@@ -8247,3 +8247,178 @@ input::placeholder {
   max-height: 168px;
   overflow-y: auto;
 }
+
+/* 设置弹窗补齐浅色主题。
+ *
+ * 真机冒烟（2026-09-18）：整个 app 是浅色，设置弹窗却还是旧的深色壳（#151922），而里面两张
+ * 后加的卡片——模型服务 .llm-profile-card 和授权级别 .trust-card——写的是浅色。于是一个深色
+ * 盒子里嵌着两张白卡，割裂得很明显。
+ *
+ * 更要命的是 `.settings-actions button.primary`：`color: #17191d` 压在 `var(--accent)` 上，
+ * 而浅色主题把 --accent 覆写成了 #20201e——近黑压近黑，「选择 Git 项目」这个主按钮的文字
+ * 在真机上完全看不见。
+ *
+ * 按本文件既有的架构走：不改上面的深色基线，在这里补覆盖。 */
+.modal-backdrop {
+  background: rgba(36, 36, 33, 0.28);
+}
+
+.settings-modal {
+  border-color: var(--line);
+  background: var(--surface-2);
+  box-shadow: 0 24px 64px rgba(36, 36, 33, 0.16);
+}
+
+.settings-heading h2 {
+  color: #242421;
+}
+
+.settings-heading button {
+  color: var(--quiet);
+}
+
+.settings-heading button:hover {
+  color: #242421;
+  background: var(--surface-3);
+}
+
+.settings-intro {
+  color: var(--muted);
+}
+
+.settings-modal label > span {
+  color: var(--muted);
+}
+
+.settings-modal label em {
+  color: var(--quiet);
+}
+
+.settings-modal input {
+  border-color: var(--line);
+  color: #343431;
+  background: #ffffff;
+}
+
+.settings-modal input:focus {
+  border-color: #bdbdb7;
+}
+
+.field-row button,
+.settings-actions button,
+.recovery-actions button {
+  border-color: var(--line);
+  color: #656560;
+  background: #ffffff;
+}
+
+.settings-actions button.primary,
+.recovery-actions button.primary {
+  color: #ffffff;                 /* 别再用 --accent 当底：浅色主题里它是近黑 */
+  border-color: #252523;
+  background: #252523;
+}
+
+.settings-actions button.danger {
+  color: var(--red);
+  border-color: rgba(184, 73, 73, 0.28);
+  background: rgba(184, 73, 73, 0.07);
+}
+
+.process-card {
+  border-color: var(--line);
+  background: var(--surface-1);
+}
+
+.process-card strong {
+  color: #343431;
+}
+
+.process-card p {
+  color: var(--muted);
+}
+
+.recovery-card {
+  border-color: rgba(163, 103, 22, 0.24);
+  background: rgba(163, 103, 22, 0.05);
+}
+
+.recovery-card.crashed {
+  border-color: rgba(184, 73, 73, 0.24);
+  background: rgba(184, 73, 73, 0.045);
+}
+
+.recovery-heading strong {
+  color: var(--amber);
+}
+
+.recovery-card.crashed .recovery-heading strong {
+  color: var(--red);
+}
+
+.recovery-card p {
+  color: var(--muted);
+}
+
+.recovery-card code {
+  color: #55554f;
+}
+
+.hook-trust-card {
+  border-color: rgba(163, 103, 22, 0.24);
+  background: rgba(163, 103, 22, 0.05);
+}
+
+.hook-trust-card.trusted {
+  border-color: rgba(39, 131, 90, 0.22);
+  background: rgba(39, 131, 90, 0.04);
+}
+
+.hook-trust-card.trusted .hook-trust-heading strong {
+  color: var(--green);
+}
+
+.hook-trust-card > p {
+  color: var(--muted);
+}
+
+.hook-trust-card .hook-trust-error {
+  color: var(--red);
+}
+
+.settings-note {
+  border-left-color: var(--line);
+  color: var(--muted);
+  background: var(--surface-1);
+}
+
+.advanced-settings {
+  border-color: var(--line);
+  background: var(--surface-1);
+}
+
+.advanced-settings summary {
+  color: var(--muted);
+}
+
+.advanced-settings[open] summary {
+  color: #343431;
+}
+
+.advanced-settings > p {
+  color: var(--quiet);
+}
+
+.git-scope-switch {
+  background: var(--surface-1);
+}
+
+.git-scope-switch button.active {
+  color: #272725;
+  border-color: #bdbdb7;
+  background: #ffffff;
+}
+
+.git-scope-switch button:disabled {
+  color: var(--quiet);
+}
