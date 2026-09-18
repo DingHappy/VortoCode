@@ -132,14 +132,14 @@ async def run_pytest(workspace: str, timeout: int = 120) -> RunResult:
         }
         return result
 
-    import sys
     from src.agents.sandbox import resolve_sandbox, sandboxed_exec_argv
+    from src.utils.python_exe import pytest_argv
     decision = resolve_sandbox(require_isolation=True)
     evidence = decision.to_dict()
     if not decision.allowed:
         return RunResult(success=False, runtime="none", isolated=False,
                          error=decision.reason, sandbox=evidence)
-    command = [sys.executable, "-m", "pytest", "-q"]
+    command = pytest_argv("-q")
     if decision.isolated:
         command = sandboxed_exec_argv(ws, command, backend=decision.backend)
     result = await _exec_argv(

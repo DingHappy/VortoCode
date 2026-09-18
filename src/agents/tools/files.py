@@ -582,14 +582,14 @@ def build_test_tool(root: str, default_cmd: Optional[list] = None) -> "Tool":
     """
     async def _handler(args: dict) -> str:
         import asyncio
-        import sys
         from src.agents.test_detect import detect_test_cmd, is_pytest_cmd
         from src.agents.worktree import run_tests
+        from src.utils.python_exe import pytest_argv
         base = default_cmd or detect_test_cmd(root)
         sel = str(args.get("test") or "").strip()
         # selector 只对 pytest 有意义（文件级 narrow）；非 pytest 命令忽略 selector、跑整套
         if sel and is_pytest_cmd(base):
-            cmd = [sys.executable, "-m", "pytest", "-q", sel]
+            cmd = pytest_argv("-q", sel)
         else:
             cmd = list(base)
         res = await asyncio.to_thread(run_tests, root, cmd)

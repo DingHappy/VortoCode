@@ -10,13 +10,13 @@ selector：仅对 pytest 有意义（文件级 narrow）；其它语言多不支
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 from typing import List, Optional
+from src.utils.python_exe import pytest_argv
 
 
 def _pytest_cmd(selector: Optional[str]) -> List[str]:
-    return [sys.executable, "-m", "pytest", "-q", selector or "tests/"]
+    return pytest_argv("-q", selector or "tests/")
 
 
 def is_pytest_cmd(cmd) -> bool:
