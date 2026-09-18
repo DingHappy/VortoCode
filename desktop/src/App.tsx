@@ -3159,7 +3159,7 @@ function App() {
 
   return (
     <main className="app-shell">
-      <header className="topbar">
+      <header className="topbar" data-tauri-drag-region="deep">
         <div className="brand-mark">V</div>
         <div className="brand-copy">
           <strong>VortoCode</strong>
