@@ -346,3 +346,16 @@ describe("会话 id", () => {
     expect(createSessionId()).toMatch(/^desktop-\d+-[a-z0-9]+$/);
   });
 });
+
+// ─────────────────────── ⑤ 确认关闭（v10）───────────────────────
+describe("确认关闭事件", () => {
+  it("agent_confirm_closed 原样分发给客户端", async () => {
+    const { harness, received } = await connectClient();
+    harness.json({ type: "agent_confirm", id: "c1", text: "跑命令？", tainted: false });
+    harness.json({ type: "agent_confirm_closed", id: "c1", reason: "timeout" });
+    expect(received.map((e) => e.type)).toContain("agent_confirm_closed");
+    const closed = received.find((e) => e.type === "agent_confirm_closed");
+    expect(closed?.id).toBe("c1");
+    expect(closed?.reason).toBe("timeout");
+  });
+});
