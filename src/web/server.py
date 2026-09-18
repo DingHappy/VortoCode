@@ -26,12 +26,18 @@ async def _lifespan(_app):
     import asyncio
     import os as _os
     sched_task = None
+    watchdog_task = None
     stop_event = asyncio.Event()
     im_task = None
     im_adapter = None
     run_manager = None
     terminal_manager = None
     try:
+        # 监护进程看门狗：Desktop 被强杀/崩溃时不留下孤儿 runtime（只在申报了监护 pid 时启动）。
+        from src.gateway.supervisor_watchdog import start_watchdog
+        watchdog_task = start_watchdog()
+        if watchdog_task is not None:
+            print("  🐕 看门狗已启动：监护进程退出后 runtime 自动退出")
         from src.web.routers.tasks import get_runner, scheduler_loop
         recovered = get_runner().recover()
         if recovered:
@@ -60,6 +66,8 @@ async def _lifespan(_app):
         yield
     finally:
         stop_event.set()
+        if watchdog_task is not None:
+            watchdog_task.cancel()
         if sched_task is not None:
             sched_task.cancel()
         if im_task is not None:
