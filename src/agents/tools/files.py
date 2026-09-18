@@ -601,3 +601,104 @@ def build_test_tool(root: str, default_cmd: Optional[list] = None) -> "Tool":
                 "省略/非 pytest 跑整套）；实现后务必自测，没过就改完再测，直到通过",
                 {"test": "可选，pytest 文件级选择器，如 tests/unit/test_x.py（仅 pytest 生效）"},
                 _handler, read_only=True, required_capabilities=("host_process",))
+
+
+def build_confirmed_write_tools(root: str, confirm, on_diff=None) -> list["Tool"]:
+    """主工作区里的直接编辑（edit_file/write_file）：**每次写盘前过确认门，并先给 diff**。
+
+    为什么要有这一档（2026-09-17 真机诊断）：Desktop/Web/CLI 共用的工具集此前**没有任何直写
+    工具**，写只能走隔离 dev 流水线。于是"给 TodoList 加个 3 行方法"这种改动也要开 worktree +
+    自测，跑一趟几分钟；流水线一旦受挫，模型就退而求其次去 `run_command` 里 `sed -i`/`python -c`
+    拼脚本改文件——既难看懂，也更容易改坏（真机上 macOS 的 `sed -i` 语法不同，静默改了个寂寞）。
+
+    与 `build_write_tools`（无确认）的分工：那一档只给**一次性 worktree 里的子 agent**，
+    改动落在临时工作树、最后整体出 diff；这一档直接改用户的工作区，所以逐次确认，
+    且确认文案里带 unified diff——人要看见改什么，而不是只看见一个文件名。
+
+    确认门申报 ``kind=write``：授权档位为"完全信任"时免确认（见 agents/trust.py），
+    但污点回合一律回到真人拍板——这条在内核 `decide()` 里，这里绕不过去。
+    """
+    import difflib
+    from pathlib import Path
+
+    from src.agents.gate import request
+    from src.agents.trust import WRITE
+
+    base = Path(root).resolve()
+    _MAX_DIFF_LINES = 200
+
+    def _safe(rel) -> Optional[Path]:
+        return _resolve_within(base, rel)
+
+    def _diff(rel: str, before: str, after: str) -> str:
+        lines = list(difflib.unified_diff(before.splitlines(), after.splitlines(),
+                                          fromfile=f"a/{rel}", tofile=f"b/{rel}", lineterm=""))
+        if len(lines) > _MAX_DIFF_LINES:
+            omitted = len(lines) - _MAX_DIFF_LINES
+            lines = lines[:_MAX_DIFF_LINES] + [f"… 还有 {omitted} 行未显示"]
+        return "\n".join(lines)
+
+    async def _approve(rel: str, before: str, after: str, verb: str) -> tuple[bool, str]:
+        diff = _diff(rel, before, after)
+        if on_diff is not None:
+            try:
+                on_diff(rel, diff)                 # 端可以把 diff 渲染到界面（TUI 着色 / Desktop 面板）
+            except Exception:  # noqa: BLE001 —— 展示失败不该影响判定
+                pass
+        ok = await request(confirm, f"{verb} {rel}？\n{diff}", WRITE)
+        return ok, diff
+
+    async def _edit_file(args: dict) -> str:
+        rel = str(args.get("path", "")).strip()
+        old, new = str(args.get("old", "")), str(args.get("new", ""))
+        all_ = _truthy(args.get("replace_all", args.get("all")))
+        p = _safe(rel)
+        if p is None:
+            return f"路径越界或非法: {rel}"
+        if not old:
+            return "edit_file 需要 old（要替换的原文）。"
+        if not p.is_file():
+            return f"文件不存在: {rel}"
+        text = p.read_text(encoding="utf-8")
+        cnt = text.count(old)
+        if cnt == 0:
+            return f"在 {rel} 中找不到要替换的原文（old）。"
+        if cnt > 1 and not all_:
+            return (f"原文在 {rel} 中出现 {cnt} 次、不唯一；请给更长、唯一的 old，"
+                    f"或传 replace_all=true 一次替换全部 {cnt} 处。")
+        n = cnt if all_ else 1
+        after = text.replace(old, new, n)
+        if after == text:
+            return f"{rel} 内容没有变化，未写盘。"
+        ok, _ = await _approve(rel, text, after, "修改")
+        if not ok:
+            return f"用户取消了对 {rel} 的修改；未写盘。"
+        p.write_text(after, encoding="utf-8")
+        return f"已修改 {rel}（替换 {n} 处）。"
+
+    async def _write_file(args: dict) -> str:
+        rel = str(args.get("path", "")).strip()
+        content = str(args.get("content", ""))
+        p = _safe(rel)
+        if p is None or p.is_dir():
+            return f"路径越界或非法: {rel}"
+        exists = p.is_file()
+        before = p.read_text(encoding="utf-8") if exists else ""
+        if exists and before == content:
+            return f"{rel} 内容没有变化，未写盘。"
+        ok, _ = await _approve(rel, before, content, "覆盖" if exists else "新建")
+        if not ok:
+            return f"用户取消了对 {rel} 的写入；未写盘。"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content, encoding="utf-8")
+        return f"已{'覆盖' if exists else '新建'} {rel}（{len(content)} 字符）。"
+
+    return [
+        Tool("edit_file", "精确字符串替换（默认 old 须唯一；多处传 replace_all=true）。"
+             "直接改当前工作区的文件，写盘前会把 diff 交给人确认",
+             {"path": "相对路径", "old": "要替换的原文", "new": "替换为",
+              "replace_all": "可选，true=替换全部出现处（默认仅在唯一时替 1 处）"},
+             _edit_file, read_only=False),
+        Tool("write_file", "新建或覆盖当前工作区的文件；写盘前会把 diff 交给人确认",
+             {"path": "相对路径", "content": "文件全部内容"}, _write_file, read_only=False),
+    ]

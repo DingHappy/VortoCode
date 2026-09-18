@@ -149,3 +149,24 @@ def make_confirm_gate(
         return ok
 
     return gated
+
+
+async def request(confirm: Optional[Callable[..., Awaitable[bool]]],
+                  message: str, kind: Optional[str] = None) -> bool:
+    """调用确认门并申报操作类别，同时容得下"只收一个参数"的老式 confirm。
+
+    工具侧不该关心对面是内核 gate（``(message, kind)``）还是端自己传的裸回调（``(message)``，
+    如 TUI 的 ConfirmScreen、测试里的 ``async def _yes(m)``）。这里用签名判定而不是
+    try/except TypeError——后者会把**处理函数内部**抛出的 TypeError 误当成"签名不匹配"
+    而悄悄重试一次，等于把一次真实失败变成两次执行。
+    """
+    import inspect
+
+    if confirm is None:
+        return False
+    take_kind = True
+    try:
+        inspect.signature(confirm).bind("message", "kind")
+    except (TypeError, ValueError):
+        take_kind = False
+    return bool(await (confirm(message, kind) if take_kind else confirm(message)))
