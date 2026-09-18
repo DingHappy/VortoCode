@@ -29,6 +29,7 @@ from typing import Any, Awaitable, Callable, Optional
 from src.agents.tool import Tool
 from src.agents.gate import make_confirm_gate  # noqa: F401
 from src.agents.notice import housekeeping
+from src.agents.wait_clock import minus_wait, start_turn, waited
 # 工具结果截断上限：MainAgent 落工具结果时用。这是本模块唯一往 tools/ 的依赖，
 # 方向正确（agent_loop → tools/*，无状态工具在最底层），不成环。
 from src.agents.tools._common import _max_tool_result
@@ -1272,6 +1273,7 @@ class MainAgent:
         name = tool.name
         call_id = "tool-" + uuid.uuid4().hex[:16]
         started = time.monotonic()
+        waited_before = waited()          # 确认框停在这个工具上的时间不算它的耗时
         self._emit_tool_event("start", {
             "id": call_id,
             "name": name,
@@ -1287,7 +1289,7 @@ class MainAgent:
                 "mode": mode,
                 "status": status,
                 "result": str(result),
-                "duration_ms": max(0, int((time.monotonic() - started) * 1000)),
+                "duration_ms": int(minus_wait(time.monotonic() - started, waited_before) * 1000),
             })
             return result
 
@@ -1498,6 +1500,7 @@ class MainAgent:
         _fire_hook 立即返回、零开销（子 agent 默认无 hook_system，故不会刷状态）。
         reasoning_cb：可选——推理型模型的思维链（reasoning_content）走它做"思考呈现"，与正文分开。
         """
+        start_turn()                  # 本回合的人类等待清零（见 wait_clock）
         from src.agents.taint import mark_channel_untrusted, mark_tainted, reset_taint
         reset_taint()                       # 回合作用域污点：每回合从"未摄入外部内容"开始（D0）
         # 端级不可信入口（IM）：用户输入自身就是外部内容，**每回合无条件重新打污点**。

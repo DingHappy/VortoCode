@@ -14,6 +14,7 @@ from src.gateway import protocol as P
 from src.gateway.sessions import SessionTable
 from src.utils.exc_utils import _exc_text
 from src.agents.notice import timeline_text
+from src.agents.wait_clock import minus_wait, waited
 from src.utils.rich_markup import strip_rich_markup
 from src.web.deps import *  # noqa: F401,F403
 
@@ -1501,10 +1502,15 @@ async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list
     phase_started: Dict[str, float] = {}
     phase_done: set[str] = set()
 
+    # 阶段耗时同样要扣掉"等人点确认"的时间：不然时间线顶上那句「已工作 14 秒」会把用户
+    # 自己犹豫的两分钟算成 agent 在干活（见 src/agents/wait_clock.py）。
+    phase_waited: Dict[str, float] = {}
+
     def start_phase(phase: str, label: str) -> None:
         if phase in phase_started or phase in phase_done:
             return
         phase_started[phase] = time.monotonic()
+        phase_waited[phase] = waited()
         q.put_nowait(P.make_event(
             P.AGENT_PHASE, id=f"{turn_key}:{phase}", phase=phase,
             status="running", label=label,
@@ -1515,10 +1521,11 @@ async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list
         if started is None or phase in phase_done:
             return
         phase_done.add(phase)
+        working = minus_wait(time.monotonic() - started, phase_waited.pop(phase, 0.0))
         q.put_nowait(P.make_event(
             P.AGENT_PHASE, id=f"{turn_key}:{phase}", phase=phase,
             status=status, label=label,
-            duration_ms=max(0, int((time.monotonic() - started) * 1000)),
+            duration_ms=int(working * 1000),
         ))
 
     def start_working() -> None:

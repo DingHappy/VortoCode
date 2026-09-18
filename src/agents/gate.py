@@ -114,6 +114,7 @@ def make_confirm_gate(
     """
     from src.agents.taint import is_tainted
     from src.agents.trust import FULL, pre_authorized, resolve
+    from src.agents.wait_clock import waiting
 
     # 能力档案的上限**只夹新的用户档位**。``auto_approve`` 是端自己申报的既有授权
     # （CLI `--yes`、TUI allow 规则），语义不变——否则 headless --yes 会在 web/im 装配下
@@ -148,7 +149,10 @@ def make_confirm_gate(
         # （真机 2026-07-27：分档函数改好了，可这里绕过它自己拼常量，于是 IM 每次确认照旧顶着
         #  "模型读过被投毒的网页"那句重话——**改了定义、漏了唯一的调用点**。）
         prompt = taint_prefix() + operation
-        ok = bool(await ask_human(prompt))
+        # 这里是全仓唯一一处"真的停下来等人"的 await。计进等待时钟，好让报耗时的地方把它扣掉
+        # ——否则「运行 xxx · 2 分 13 秒」里那两分钟其实是用户在倒水（见 agents/wait_clock.py）。
+        async with waiting():
+            ok = bool(await ask_human(prompt))
         _tell(operation, ok, tainted)
         return ok
 
