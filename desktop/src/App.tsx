@@ -111,6 +111,7 @@ import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey,
 import { normalizeEditorText, serializeEditorText } from "./lib/text";
 import { localDay } from "./lib/time";
 import { finishRunningActivities, hydrateActivities, protocolActivity, upsertActivity } from "./protocol/activities";
+import { isProtectedBranch } from "./lib/branches";
 import { errorText } from "./lib/errorText";
 import { runtimeInboxSubtitle, summarizeRuntimeInboxes } from "./lib/runtimeInbox";
 
@@ -3089,9 +3090,15 @@ function App() {
   const commitGitReview = async () => {
     const message = gitCommitMessage.trim();
     if (!clientRef.current || !message || gitDeliveryBusy) return;
+    // 受保护分支上多问一次：提交到 main 之后就不能从 main 开 PR 了（后端也拦，这里只是
+    // 早一步把原因说清楚，而不是等请求失败再弹一条报错）。
+    const onProtected = isProtectedBranch(gitReview?.branch);
+    if (onProtected && !window.confirm(
+      `当前在受保护分支 ${gitReview?.branch} 上。\n\n直接提交到这里之后就不能从它开 PR 了`
+      + `（需要先切到功能分支）。确认要直接提交到 ${gitReview?.branch} 吗？`)) return;
     setGitDeliveryBusy(true);
     try {
-      const result = await clientRef.current.commitGitReview(message);
+      const result = await clientRef.current.commitGitReview(message, onProtected);
       setGitReview(result.snapshot);
       setGitCommitMessage("");
       if (!gitPrTitle.trim()) setGitPrTitle(message);

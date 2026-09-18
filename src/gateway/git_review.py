@@ -367,14 +367,27 @@ def apply_review_action(
     return {"ok": True, "snapshot": review_snapshot(root)}
 
 
-def commit_reviewed(repo_root: str, message: str) -> dict:
-    """Commit only the index that the user assembled in the review UI."""
+def commit_reviewed(repo_root: str, message: str, *, confirm_protected: bool = False) -> dict:
+    """Commit only the index that the user assembled in the review UI.
+
+    在受保护分支（main/master/develop）上提交要多问一次。此前这里是**单向**的：
+    `open_reviewed_pr` 拒绝"直接从受保护分支创建 PR，请先切到功能分支"，而通往那个状态的
+    提交本身却一路畅通——于是界面先让你把改动落在 main 上，再告诉你 main 上不能开 PR。
+    真机诊断（2026-09-17）撞到的就是这条。
+
+    只拦一次、不硬拒：单人仓库直接往 main 提交是正当用法，硬拒会把 Web/TUI 一起废掉。
+    """
     root = _repo_root(repo_root)
     message = str(message or "").strip()
     if not message:
         raise ValueError("提交说明不能为空")
     if len(message) > 500 or "\x00" in message:
         raise ValueError("提交说明超过 500 字符或包含无效字符")
+    branch = (_git(root, "branch", "--show-current").stdout or "").strip()
+    if branch.lower() in _PROTECTED_BRANCHES and not confirm_protected:
+        raise ValueError(
+            f"当前在受保护分支 {branch} 上。直接提交到这里之后就不能从它开 PR 了"
+            f"（需要先切到功能分支）。确认要直接提交到 {branch} 吗？")
     staged = _git(root, "diff", "--cached", "--quiet")
     if staged.returncode == 0:
         raise ValueError("没有已暂存改动；请先在 Diff 面板暂存文件或 hunk")

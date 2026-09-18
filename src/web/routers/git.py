@@ -156,6 +156,7 @@ async def git_review_commit(body: dict):
     try:
         result = await asyncio.to_thread(
             commit_reviewed, os.getcwd(), str((body or {}).get("message") or ""),
+            confirm_protected=bool((body or {}).get("confirm_protected")),
         )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error

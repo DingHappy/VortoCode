@@ -10,6 +10,7 @@
 // 一律留 App。搬进来的只有五个仅本面板消费的派生（selectedGitFile 与 displayedGit* 族）。
 import { openUrl } from "@tauri-apps/plugin-opener";
 
+import { isProtectedBranch } from "../lib/branches";
 import { DiffViewer } from "./DiffViewer";
 import type {
   ConnectionState,
@@ -144,6 +145,14 @@ export function GitReviewPanel({
   const displayedGitPath = taskBranchReview ? taskBranchSelectedPath : gitSelectedPath;
   const displayedGitFile = displayedGitReview?.files.find((file) => file.path === displayedGitPath) ?? null;
   const displayedGitDiff = taskBranchReview ? taskBranchDiff : gitReviewDiff;
+  // 按钮为什么点不动，要当场说出来。此前只有"在受保护分支上"这一种会给提示，
+  // 缺标题 / 缺 base 时按钮就那么灰着（真机诊断 2026-09-17）。
+  const prButtonHint = !gitReview ? ""
+    : isProtectedBranch(gitReview.branch)
+      ? `当前在受保护分支 ${gitReview.branch} 上，不能直接开 PR；先切到功能分支或 Worktree。`
+      : !gitPrTitle.trim() ? "先填 PR 标题"
+        : !gitPrBase.trim() ? "先填 base 分支"
+          : "";
 
   return (
     <div className="git-review-panel">
@@ -454,13 +463,12 @@ export function GitReviewPanel({
             <input value={gitPrTitle} onChange={(event) => onPrTitleChange(event.target.value)} placeholder="Draft PR 标题" />
             <input className="git-base-input" value={gitPrBase} onChange={(event) => onPrBaseChange(event.target.value)} aria-label="PR base 分支" />
             <button
-              disabled={!gitPrTitle.trim() || !gitPrBase.trim() || gitDeliveryBusy || ["main", "master", "develop", "development"].includes(gitReview.branch.toLowerCase())}
+              disabled={!gitPrTitle.trim() || !gitPrBase.trim() || gitDeliveryBusy || isProtectedBranch(gitReview.branch)}
+              title={prButtonHint}
               onClick={() => void onOpenGitReviewPr()}
             >开 Draft PR</button>
           </div>
-          {["main", "master", "develop", "development"].includes(gitReview.branch.toLowerCase()) && (
-            <p>受保护分支不能直接创建 PR；先让任务落到功能分支或 Worktree。</p>
-          )}
+          {gitReview && isProtectedBranch(gitReview.branch) && <p>{prButtonHint}</p>}
         </div>
       )}
 
