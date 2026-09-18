@@ -1021,3 +1021,15 @@ export interface OpenWorkspaceFileResult {
   lineAware: boolean;
   message: string;
 }
+
+/** 授权档位（后端 src/agents/trust.py）。level=用户选的，effective=被能力档案夹过后真正生效的。 */
+export type TrustLevel = "ask" | "reads" | "full";
+
+export type TrustStatus = {
+  level: TrustLevel;
+  effective: TrustLevel;
+  ceiling: TrustLevel;
+  levels: TrustLevel[];
+  capability_profile: string;
+  workspace_scope: string;
+};

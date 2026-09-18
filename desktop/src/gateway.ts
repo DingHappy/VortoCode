@@ -38,6 +38,8 @@ import type {
   TaskBranchReviewState,
   TaskBranchReviewSnapshot,
   TerminalSession,
+  TrustLevel,
+  TrustStatus,
   WorktreeWorkspaceSnapshot,
 } from "./types";
 
@@ -518,6 +520,17 @@ export class GatewayClient {
 
   async getHookStatus(): Promise<HookConfigStatus> {
     return this.request("/api/hooks");
+  }
+
+  async getTrust(): Promise<TrustStatus> {
+    return this.request("/api/trust");
+  }
+
+  async setTrust(level: TrustLevel): Promise<TrustStatus> {
+    return this.request("/api/trust", {
+      method: "PUT",
+      body: JSON.stringify({ level }),
+    });
   }
 
   async setHookTrust(trusted: boolean): Promise<HookConfigStatus> {

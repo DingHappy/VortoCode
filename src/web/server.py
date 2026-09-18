@@ -134,6 +134,7 @@ from src.web.routers.extensions import router as extensions_router
 from src.web.routers.cron import router as cron_router
 from src.web.routers.dev_plans import router as dev_plans_router
 from src.web.routers.pipelines import router as pipelines_router
+from src.web.routers.trust import router as trust_router
 
 for _router in (
     pages_router, git_router, context_router,
@@ -142,7 +143,7 @@ for _router in (
     browser_router, github_router, ops_router, generators_router, realtime_router,
     artifacts_router, auth_router, tasks_router, goals_router, runs_router, terminals_router, decisions_router,
     journal_router, hooks_router, extensions_router, cron_router, dev_plans_router,
-    pipelines_router,
+    pipelines_router, trust_router,
 ):
     app.include_router(_router)
 

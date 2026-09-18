@@ -86,7 +86,7 @@ def make_confirm_gate(
     auto_approve: bool = False,
     can_ask_human: bool = False,
     on_decision: Optional[Callable[[str, bool, bool], Any]] = None,
-    trust_level: Optional[str] = None,
+    trust_level: Any = None,
     capability_profile: Optional[str] = None,
 ) -> Callable[..., Awaitable[bool]]:
     """把 `decide()` 包成工具直接可用的 ``async (message) -> bool`` 确认门。
@@ -119,7 +119,11 @@ def make_confirm_gate(
     # （CLI `--yes`、TUI allow 规则），语义不变——否则 headless --yes 会在 web/im 装配下
     # 突然不放行，破坏 tests/unit/test_three_end_contract.py 钉住的三端契约。
     # 两者的共同天花板仍是污点规则：`decide()` 里污点一票否决，与档位无关。
-    level = FULL if auto_approve else resolve(trust_level, capability_profile)
+    def _level() -> str:
+        # trust_level 可以是"当前档位"的**读取函数**：用户在 Desktop 里改了档位，正在跑的会话
+        # 下一次判定就按新档位走，不必重建 agent（重建会丢对话历史）。
+        raw = trust_level() if callable(trust_level) else trust_level
+        return FULL if auto_approve else resolve(raw, capability_profile)
 
     def _tell(operation: str, decision: bool, tainted: bool) -> None:
         if on_decision is None:
@@ -132,7 +136,7 @@ def make_confirm_gate(
     async def gated(message: str, kind: Optional[str] = None) -> bool:
         operation = str(message)                   # 原始操作文案（端展示"拒了什么"用这个）
         tainted = is_tainted()
-        verdict = decide(tainted=tainted, pre_authorized=pre_authorized(level, kind),
+        verdict = decide(tainted=tainted, pre_authorized=pre_authorized(_level(), kind),
                          can_ask_human=can_ask_human)
         if verdict == ALLOW:
             _tell(operation, True, tainted)        # 自动放行也要留痕，不能静默
