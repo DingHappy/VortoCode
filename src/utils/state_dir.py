@@ -45,6 +45,21 @@ _STATE_ENTRIES = [
     "trust.json",
     "worktree_bindings.json",
     "task_reviews/",
+    # 2026-09-18 补：这几处生成态一直没进托管区，于是在**没有 gitignore .vortocode/ 的目标仓库**里
+    # 原样冒进 git status——真机诊断时桌面端的改动列表里就混着 `.vortocode/journal`。
+    # 判据只有一条：**谁写的**。工具写的进这里；用户手改的（permissions.yaml / hooks.yaml /
+    # cron.yaml / pipelines/ / skills/ / commands/ / agents/ / AGENTS.md / BACKLOG.md /
+    # HEARTBEAT.md / verify.yaml / review-policy.yaml / persona.md / instructions.md）不进。
+    "journal/",
+    "duty/",
+    "workspaces/",
+    "shots/",
+    "shadow.git/",
+    "decisions.json",
+    "published_urls.json",
+    "signals_state.json",
+    "settings.json",
+    "memory.md",
 ]
 
 _MANAGED_BEGIN = "# >>> vortocode managed —— 自动维护区，勿手改（升级会重写本区）；自定义规则请写在区外 >>>"
