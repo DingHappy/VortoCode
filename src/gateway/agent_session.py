@@ -47,7 +47,7 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
                   can_ask_human: bool = False, on_decision=None, on_diff=None,
                   workspace_scope: str = "project", on_workspace_required=None,
                   untrusted_input: bool = False, with_dev: bool = True,
-                  extra_system: str | None = None):
+                  extra_system: str | None = None, trust_level: str | None = None):
     """装配一个主 agent（三端同一骨架）。
 
     kind ∈ {web, cli, im} 决定差异位（with_artifacts / hooks）；confirm/on_progress 由调用端提供。
@@ -77,9 +77,12 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
     # confirm 缺省 → **fail-closed**：`can_ask_human` 随之为 False，gate 的 decide() 直接判 DENY，
     # 既不会去问、也不会把 None 塞给工具让它在调用时 TypeError。
     # 无论如何都过内核 gate：这样"污点回合一切自动放行失效"这条规矩没有任何旁路。
+    # trust_level：用户为这个会话选的授权档位（见 agents/trust.py）。内核按能力档案再夹一次，
+    # 所以无人值守拿不到免确认、外部会话拿不到写/执行的空白支票；污点回合则一律作废。
     gated_confirm = make_confirm_gate(confirm, auto_approve=auto_approve,
                                       can_ask_human=(can_ask_human and confirm is not None),
-                                      on_decision=on_decision)
+                                      on_decision=on_decision, trust_level=trust_level,
+                                      capability_profile=profile)
     # plan 模式下模型请求动手 → 当场问用户要授权（真机 2026-07-27：此前 on_escalate **只有 TUI
     # 接了**，Web/CLI/IM 一律 None，于是 request_build 返回"请让用户手动切"，模型照着转述成
     # "请按 Tab 键"——钉钉聊天窗口里根本没有 Tab 键）。

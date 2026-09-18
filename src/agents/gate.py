@@ -86,7 +86,9 @@ def make_confirm_gate(
     auto_approve: bool = False,
     can_ask_human: bool = False,
     on_decision: Optional[Callable[[str, bool, bool], Any]] = None,
-) -> Callable[[str], Awaitable[bool]]:
+    trust_level: Optional[str] = None,
+    capability_profile: Optional[str] = None,
+) -> Callable[..., Awaitable[bool]]:
     """把 `decide()` 包成工具直接可用的 ``async (message) -> bool`` 确认门。
 
     端申报两件事（**默认都是最严的**）：``can_ask_human``（问得到人吗）与 ``auto_approve``
@@ -104,8 +106,20 @@ def make_confirm_gate(
 
     （历史：这里曾靠一个 ``deny_all`` 哨兵"兜底"，可它的函数体**永远执行不到**——gate 早就返回了，
     docstring 却宣称它是 fail-closed 的兜底。那是个绕着安全机制的维护陷阱，已随本次抽取删除。）
+
+    ``trust_level`` / ``capability_profile``：用户选的授权档位与会话的能力档案（见 trust.py）。
+    档位只影响 ``pre_authorized`` 这一维，且**先被能力档案夹一次**（无人值守永远 ASK、外部会话
+    最高 READS）。``auto_approve=True``（CLI 的 ``--yes``）等价于 FULL，行为与此前完全一致。
+    工具用 ``gate(message, kind=...)`` 申报操作类别；不申报按最重的"写"算。
     """
     from src.agents.taint import is_tainted
+    from src.agents.trust import FULL, pre_authorized, resolve
+
+    # 能力档案的上限**只夹新的用户档位**。``auto_approve`` 是端自己申报的既有授权
+    # （CLI `--yes`、TUI allow 规则），语义不变——否则 headless --yes 会在 web/im 装配下
+    # 突然不放行，破坏 tests/unit/test_three_end_contract.py 钉住的三端契约。
+    # 两者的共同天花板仍是污点规则：`decide()` 里污点一票否决，与档位无关。
+    level = FULL if auto_approve else resolve(trust_level, capability_profile)
 
     def _tell(operation: str, decision: bool, tainted: bool) -> None:
         if on_decision is None:
@@ -115,10 +129,10 @@ def make_confirm_gate(
         except Exception:  # noqa: BLE001 —— 交代/审计失败不该影响决定本身
             pass
 
-    async def gated(message: str) -> bool:
+    async def gated(message: str, kind: Optional[str] = None) -> bool:
         operation = str(message)                   # 原始操作文案（端展示"拒了什么"用这个）
         tainted = is_tainted()
-        verdict = decide(tainted=tainted, pre_authorized=auto_approve,
+        verdict = decide(tainted=tainted, pre_authorized=pre_authorized(level, kind),
                          can_ask_human=can_ask_human)
         if verdict == ALLOW:
             _tell(operation, True, tainted)        # 自动放行也要留痕，不能静默
