@@ -1104,6 +1104,12 @@ function App() {
             void refreshSessions();
           }
           break;
+        case "agent_confirm_closed":
+          // 后端不再等这条确认了（超时按拒绝、回合取消、或别的客户端已应答）。
+          // 没有这一支时，卡片会一直挂着且按钮可点，但点了什么都不会发生。
+          setPendingConfirm((current) => (current && current.id === event.id ? null : current));
+          if (event.reason === "timeout") setBanner("确认已超时，本次操作按拒绝处理");
+          break;
         case "workspace_required": {
           const requested = event.scope === "scratch" ? "scratch" : "project";
           setWorkspaceRequest({
@@ -3472,6 +3478,11 @@ function App() {
               </article>
             )}
 
+          </div>
+
+          <div className="composer-wrap">
+            {/* 确认卡片钉在输入框上方、不随对话流滚动：真机诊断里它渲染在滚动区内，
+                长回合一滚就看不见，用户只看到转圈，以为还在跑（2026-09-17）。 */}
             {pendingConfirm && (
               <section className={`confirm-card ${pendingConfirm.tainted ? "tainted" : ""}`}>
                 {/* plan 阶段结束请求动手，与"删文件/跑命令"那类确认不是一回事：前者是本次任务
@@ -3511,9 +3522,7 @@ function App() {
                 </div>
               </section>
             )}
-          </div>
 
-          <div className="composer-wrap">
             {promptQueue.length > 0 && (
               <section className="prompt-queue" aria-label="待运行任务">
                 <div className="prompt-queue-head">

@@ -43,12 +43,28 @@ def test_outbound_registry_frozen():
         "agent_reasoning",      # PR-4 加：思维链增量（仅 want_reasoning 的客户端收，TUI attach 用）
         "agent_diff",           # 富 UI 协议化第一步：确认前的结构化 diff 推送（attach TUI/桌面端渲染）
         "agent_error", "agent_done", "agent_cancelled", "agent_confirm",
+        "agent_confirm_closed",  # v10 加：这条确认不再等待（超时/取消/已应答），客户端据此收起卡片
         "agent_queue", "agent_events",
         "agent_tts_audio", "agent_tts_error",
         "workspace_edit_result",
         "task_update", "task_snapshot", "task_handoff", "notice", "workspace_required",
         "git_review_changed",
     ])
+
+
+def test_agent_confirm_closed_event_shape():
+    """agent_confirm_closed：id 必填、reason 可选；未登记字段即红。
+
+    回归（2026-09-17 真机诊断）：确认超时后后端按拒绝往下走，却从不告知前端，界面上那张卡片
+    一直挂着、按钮还能点——点了也没有任何效果。
+    """
+    e = P.make_event(P.AGENT_CONFIRM_CLOSED, id="c1", reason="timeout")
+    assert e["type"] == "agent_confirm_closed" and e["id"] == "c1" and e["reason"] == "timeout"
+    assert P.make_event(P.AGENT_CONFIRM_CLOSED, id="c1")["id"] == "c1"
+    with pytest.raises(P.ProtocolError):
+        P.make_event(P.AGENT_CONFIRM_CLOSED, reason="timeout")        # 缺 id
+    with pytest.raises(P.ProtocolError):
+        P.make_event(P.AGENT_CONFIRM_CLOSED, id="c1", text="未登记字段")
 
 
 def test_agent_diff_event_shape():
@@ -62,7 +78,7 @@ def test_agent_diff_event_shape():
 
 
 def test_protocol_version_carried_by_init():
-    assert P.PROTOCOL_VERSION == 9
+    assert P.PROTOCOL_VERSION == 10
     assert "v" in P.OUTBOUND[P.INIT][0]            # init 必带版本号
 
 
@@ -363,7 +379,7 @@ def test_make_event_valid_and_drops_none():
 
 
 def test_protocol_v9_sequences_replays_and_routes_task_handoffs():
-    assert P.PROTOCOL_VERSION == 9
+    assert P.PROTOCOL_VERSION == 10
     sequenced = P.sequence_event(P.make_event(P.AGENT_SAY, text="hi", rid="r1"), 7)
     assert sequenced == {"type": "agent_say", "text": "hi", "rid": "r1", "seq": 7}
     with pytest.raises(P.ProtocolError):

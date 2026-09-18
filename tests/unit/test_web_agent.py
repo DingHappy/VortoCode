@@ -629,6 +629,53 @@ async def test_ws_confirm_round_trip_allow_and_deny():
             ws, {"type": "agent_confirm_response", "id": evt["id"], "ok": ok})
         assert await asyncio.wait_for(task, 2) is ok    # 前端应答 → confirm 返回对应布尔
         assert evt["id"] not in realtime._PENDING_CONFIRMS   # 清理
+        closed = await asyncio.wait_for(q.get(), 2)          # 应答后也要告知：多端附着时同步收卡片
+        assert closed["type"] == "agent_confirm_closed"
+        assert closed["id"] == evt["id"] and closed["reason"] == "answered"
+
+
+@pytest.mark.asyncio
+async def test_ws_confirm_timeout_tells_the_client_it_stopped_waiting(monkeypatch):
+    """回归（2026-09-17 真机诊断）：确认超时按拒绝往下走，但前端那张卡片一直挂着、按钮还能点。
+
+    超时窗口 monkeypatch 成 0，避免测试真的等 300 秒。
+    """
+    import asyncio as _asyncio
+
+    from src.web.routers import realtime
+
+    real_wait_for = _asyncio.wait_for
+
+    async def _instant_timeout(awaitable, timeout):
+        return await real_wait_for(awaitable, 0.01 if timeout == 300 else timeout)
+
+    monkeypatch.setattr(realtime.asyncio, "wait_for", _instant_timeout)
+
+    ws = _FakeWS()
+    q = asyncio.Queue()
+    decided = await realtime._make_ws_confirm(ws, q)("跑命令？")
+
+    assert decided is False                                   # 超时 = 拒绝（安全）
+    evt = await real_wait_for(q.get(), 2)
+    closed = await real_wait_for(q.get(), 2)
+    assert evt["type"] == "agent_confirm"
+    assert closed["type"] == "agent_confirm_closed"
+    assert closed["id"] == evt["id"] and closed["reason"] == "timeout"
+    assert evt["id"] not in realtime._PENDING_CONFIRMS
+
+
+@pytest.mark.asyncio
+async def test_ws_confirm_accepts_the_kernel_kind_argument():
+    """内核确认门会带上操作类别（kind）；端不消费它，但不能因此炸。"""
+    from src.web.routers import realtime
+
+    ws = _FakeWS()
+    q = asyncio.Queue()
+    task = asyncio.create_task(realtime._make_ws_confirm(ws, q)("写文件？", "write"))
+    evt = await asyncio.wait_for(q.get(), 2)
+    await realtime.handle_websocket_message(
+        ws, {"type": "agent_confirm_response", "id": evt["id"], "ok": True})
+    assert await asyncio.wait_for(task, 2) is True
 
 
 # ---- 会话持久化：同 sid 跨重连复用 agent + 回放对话 ----
@@ -750,7 +797,9 @@ async def test_get_status_hydrate_replays_version_history_and_plan():
     try:
         await realtime.handle_websocket_message(ws, {"type": "get_status", "hydrate": True})
         assert [event["type"] for event in ws.sent] == ["status", "agent_history", "agent_plan", "agent_queue"]
-        assert ws.sent[0]["v"] == 9 and ws.sent[0]["cursor"] == 0
+        from src.gateway.protocol import PROTOCOL_VERSION
+        # 跟着协议常量走：写死数字会让每次版本上调都红在一个与本用例无关的断言上。
+        assert ws.sent[0]["v"] == PROTOCOL_VERSION and ws.sent[0]["cursor"] == 0
         assert ws.sent[1]["items"] == session["transcript"]
         assert ws.sent[2]["items"] == session["agent"].plan
     finally:

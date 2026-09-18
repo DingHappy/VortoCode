@@ -8235,3 +8235,15 @@ input::placeholder {
   font-size: 9px;
   line-height: 1.5;
 }
+
+/* 确认卡片钉在输入框上方后：与队列/输入框留出间距，并给超长命令文本封顶，
+   避免一段几十行的脚本把输入框挤出屏幕（真机诊断 2026-09-17）。 */
+.composer-wrap > .confirm-card {
+  margin-bottom: 8px;
+}
+
+.composer-wrap > .confirm-card .confirm-copy p,
+.composer-wrap > .confirm-card .confirm-copy code {
+  max-height: 168px;
+  overflow-y: auto;
+}

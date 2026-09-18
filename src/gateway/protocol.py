@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Tuple
 
-PROTOCOL_VERSION = 9
+PROTOCOL_VERSION = 10
 
 # --------------------------------------------------------------- 入站（客户端 → gateway）
 PING = "ping"
@@ -57,6 +57,10 @@ AGENT_DONE = "agent_done"                    # 回合收尾
 AGENT_CANCELLED = "agent_cancelled"          # 回合被中断
 AGENT_QUEUE = "agent_queue"                  # 服务端权威输入队列快照（items + 可选 running）
 AGENT_CONFIRM = "agent_confirm"              # 请求前端确认（id + text，应答走 agent_confirm_response）
+AGENT_CONFIRM_CLOSED = "agent_confirm_closed"  # 某个 agent_confirm 已不再等待（超时/回合取消/
+#                                              已被别处应答）。没有它，客户端只能把卡片一直挂着：
+#                                              真机上超时按拒绝处理了，界面却还显示着可点的按钮
+#                                              （2026-09-17 诊断）。reason: timeout|cancelled|answered
 AGENT_DIFF = "agent_diff"                    # 结构化 diff 推送（富 UI 协议化第一步）：dev 流水线在请求
 #                                              确认前把改动 diff 推给客户端——attach TUI 着色渲染、
 #                                              未来桌面端消费同一事件；不动 AGENT_CONFIRM 的冻结面
@@ -113,6 +117,7 @@ OUTBOUND: Dict[str, _Spec] = {
     # 就是 fail-open：serve 换个版本/改个措辞，客户端的 --yes 又会在污点回合放行。
     # 可选字段（老客户端忽略即可，不破冻结协议）；**客户端读不到它时必须按"可能有污点"处理**。
     AGENT_CONFIRM: (("id", "text"), ("tainted",)),
+    AGENT_CONFIRM_CLOSED: (("id",), ("reason",)),
     AGENT_DIFF: (("diff",), ("title",)),     # diff=unified diff 文本（serve 侧已截断）；title=一句话语境
     AGENT_TTS_AUDIO: (("id", "data"), ()),
     AGENT_TTS_ERROR: (("id", "text"), ()),
