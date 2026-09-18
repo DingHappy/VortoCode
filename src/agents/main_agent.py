@@ -1452,6 +1452,11 @@ def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable
         # 自授「周期性无人值守执行」这项权限。研究员档同样不给（那是运维面，不是资料助理的活）。
         tools += build_cron_tools(repo_root, confirm)
     if with_dev:
+        # 直写工具（逐次确认 + 先给 diff）与隔离流水线**并存、各管一段**：小改动当场改、
+        # 当场看 diff；大任务仍走 worktree 实现+自测+落 vorto 分支。此前只有后者，于是三行的
+        # 改动也要跑几分钟流水线，流水线一受挫模型就绕去 run_command 里拼 sed/python 改文件
+        # （2026-09-17 真机诊断）。写盘判定仍由内核确认门说了算：污点回合一律回到真人拍板。
+        tools += build_confirmed_write_tools(repo_root, confirm, on_diff=on_diff)
         tools += (build_dev_tools(repo_root, on_progress=on_progress, confirm=confirm,
                                   draft_pr=draft_pr, capabilities=capabilities, on_diff=on_diff)
                   + build_pr_tool(repo_root, confirm))
@@ -1532,9 +1537,10 @@ from src.agents.tools._common import (  # noqa: F401,E402
 from src.agents.tools.files import (  # noqa: F401,E402
     _glob_to_regex,
     _resolve_within,
+    build_confirmed_write_tools,
     build_read_tools,
-    build_write_tools,
     build_test_tool,
+    build_write_tools,
 )
 from src.agents.tools.web import (  # noqa: F401,E402
     build_web_tools,

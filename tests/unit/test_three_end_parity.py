@@ -49,10 +49,13 @@ def _names(agent):
 # Web 相对 CLI 多出的制品工具（with_artifacts=True）——有意，已由 test_agent_factory 覆盖 CLI⊆Web。
 WEB_ONLY_ARTIFACTS = {"publish_artifact", "list_artifacts", "delete_artifact"}
 
-# TUI 独有、**有意设计**：富 UI 直写工具。工厂（CLI/Web）刻意不给这些——它们的写操作只走隔离
-# dev 流水线（落 vorto/* 分支、绝不碰 main），TUI 则允许"着色 diff + ConfirmScreen"下的交互直写。
-# 依据：build_agent_tools docstring（main_agent.py:1939）。
-INTENTIONAL_TUI_ONLY = {"edit_file", "write_file", "rename_symbol"}
+# TUI 独有、**有意设计**：富 UI 版的符号级重构（着色 diff + ConfirmScreen）。
+#
+# edit_file / write_file 已于 2026-09-17 补进工厂（build_confirmed_write_tools）：三端都能直接
+# 改工作区，写盘前过内核确认门并先给 unified diff。此前只有 TUI 有，Desktop/Web/CLI 的写只能走
+# 隔离 dev 流水线——真机诊断里，三行的小改动因此要跑几分钟流水线，模型受挫后还会绕去
+# run_command 拼 sed/python 改文件。TUI 仍用自己那份富 UI 直写工具（同名、不同实现）。
+INTENTIONAL_TUI_ONLY = {"rename_symbol"}
 
 # 曾登记的"存疑漂移"已全部清零（三端漂移清理 PR）：save_memory/recall_memory/use_skill/save_skill
 # 已抽 UI 无关版补进工厂（build_memory_tools/build_skill_tools，CLI/Web 同步获得）；dev_auto 已补进
