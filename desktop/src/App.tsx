@@ -100,6 +100,7 @@ import {
   compactSessionCwd,
   formatRelativeTime,
   sessionContextPresentation,
+  shouldShowContextChip,
   sessionContextTone,
   sessionStatusLabel,
   statusLabel,
@@ -3302,8 +3303,10 @@ function App() {
               const liveStatus = active && busy && session.status !== "needs_input" ? "working" : session.status ?? "inactive";
               const cwdLabel = compactSessionCwd(session.cwd);
               const backgroundCount = (session.background_tasks?.active ?? 0) + (session.background_tasks?.attention ?? 0);
+              const showsContext = Boolean(session.context)
+                && shouldShowContextChip(sessionContextPresentation(session.context).pct);
               const hasMetadata = Boolean(cwdLabel || session.branch || session.worktree?.owned_count
-                || backgroundCount || session.hook_issues?.count || session.context);
+                || backgroundCount || session.hook_issues?.count || showsContext);
               const rowTitle = [
                 session.running_prompt || session.activity || session.title,
                 session.cwd ? `目录：${session.cwd}` : "",
@@ -3352,6 +3355,8 @@ function App() {
                         )}
                         {session.context && (() => {
                           const presentation = sessionContextPresentation(session.context);
+                          // 低占比不出 chip：`上下文 0.2%` 占一格，却不构成任何决定。
+                          if (!shouldShowContextChip(presentation.pct)) return null;
                           return <em className={`context ${sessionContextTone(presentation.pct)}`} title={presentation.title}>{presentation.label}</em>;
                         })()}
                       </div>

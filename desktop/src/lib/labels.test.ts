@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  CONTEXT_CHIP_MIN_PCT,
   compactAuditData,
   compactSessionCwd,
   decisionKindLabel,
@@ -18,6 +19,7 @@ import {
   hookCapabilityLabel,
   runKindLabel,
   sessionContextTone,
+  shouldShowContextChip,
   statusLabel,
 } from "./labels";
 
@@ -127,5 +129,34 @@ describe("compactAuditData", () => {
     const big = compactAuditData({ blob: "x".repeat(400) });
     expect(big.endsWith("…")).toBe(true);
     expect(big.length).toBe(261);
+  });
+});
+
+describe("侧边栏 chip 的降噪", () => {
+  it("托管工作区不出目录 chip", () => {
+    // 真机冒烟：General 会话每一行都挂着 `workspaces/general`，同一句话说 N 遍，
+    // 而且那是 Desktop 自己的脚手架路径，用户既没选过也管不着。
+    const base = "/Users/x/Library/Application Support/com.vorto.vortocode/workspaces";
+    expect(compactSessionCwd(`${base}/general`)).toBe("");
+    expect(compactSessionCwd(`${base}/scratch/ab12`)).toBe("");
+    expect(compactSessionCwd("C:\\Users\\x\\AppData\\vortocode\\workspaces\\general")).toBe("");
+  });
+
+  it("用户自己的项目目录照常显示——那时候它才真的在区分这一行在哪儿跑", () => {
+    expect(compactSessionCwd("/Users/x/code/VortoCode")).toBe("code/VortoCode");
+    expect(compactSessionCwd("/Users/x/my-workspaces/general-ledger")).toBe("my-workspaces/general-ledger");
+  });
+
+  it("空值不报错", () => {
+    expect(compactSessionCwd(undefined)).toBe("");
+    expect(compactSessionCwd("")).toBe("");
+  });
+
+  it("上下文占比低到不用管就不出 chip", () => {
+    expect(shouldShowContextChip(0.2)).toBe(false);
+    expect(shouldShowContextChip(24.9)).toBe(false);
+    expect(shouldShowContextChip(CONTEXT_CHIP_MIN_PCT)).toBe(true);
+    expect(shouldShowContextChip(91)).toBe(true);
+    expect(shouldShowContextChip(undefined)).toBe(false);
   });
 });

@@ -108,9 +108,26 @@ export function sessionStatusLabel(session: SessionSummary, active: boolean, loc
   }
 }
 
+/** Desktop 自己托管的工作区（General / Scratch），不是用户选的目录。 */
+export function isManagedWorkspace(value?: string): boolean {
+  const path = String(value ?? "").replace(/\\/g, "/");
+  return /\/workspaces\/(general|scratch)(\/|$)/.test(path);
+}
+
 export function compactSessionCwd(value?: string): string {
+  // 托管工作区不出 chip：General 会话每一行都是 `workspaces/general`，同一句话说 N 遍，
+  // 而且那是我们自己的脚手架路径，用户既没选过也管不着（真机冒烟 2026-09-18）。
+  // 真正的项目目录仍然显示——那时候它才真的在区分"这一行在哪儿跑"。
+  if (isManagedWorkspace(value)) return "";
   const parts = String(value ?? "").split(/[\\/]+/).filter(Boolean);
   return parts.slice(-2).join("/") || "";
+}
+
+/** 上下文占比低到这个数以下就不出 chip：`上下文 0.2%` 占一格，却不构成任何决定。 */
+export const CONTEXT_CHIP_MIN_PCT = 25;
+
+export function shouldShowContextChip(pct?: number): boolean {
+  return Number(pct ?? 0) >= CONTEXT_CHIP_MIN_PCT;
 }
 
 export function sessionContextTone(pct?: number): string {
