@@ -16,6 +16,7 @@ import { useCallback, useState } from "react";
 import type { RefObject } from "react";
 
 import type { GatewayClient } from "../gateway";
+import { errorText } from "../lib/errorText";
 import { localDay, previousDay } from "../lib/time";
 import type {
   JournalContinuation,
@@ -125,7 +126,7 @@ export function useJournal(
       await refreshWeeklyJournal(journalDate);
       onBanner("今日 Journal 快照已保存；内容未变化时不会重复写盘");
     } catch (error) {
-      onBanner(error instanceof Error ? error.message : "Journal 快照保存失败");
+      onBanner(errorText(error, "Journal 快照保存失败"));
     } finally {
       setJournalBusy(false);
     }
@@ -141,7 +142,7 @@ export function useJournal(
       await Promise.all([refreshJournalDays(), refreshWeeklyJournal(journalDate)]);
       onBanner("工作记录已加入今日 Journal；凭据样式内容会自动脱敏");
     } catch (error) {
-      onBanner(error instanceof Error ? error.message : "添加 Journal 记录失败");
+      onBanner(errorText(error, "添加 Journal 记录失败"));
     } finally {
       setJournalBusy(false);
     }
