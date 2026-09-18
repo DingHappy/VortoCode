@@ -112,6 +112,7 @@ import { normalizeEditorText, serializeEditorText } from "./lib/text";
 import { localDay } from "./lib/time";
 import { finishRunningActivities, hydrateActivities, protocolActivity, upsertActivity } from "./protocol/activities";
 import { errorText } from "./lib/errorText";
+import { runtimeInboxSubtitle, summarizeRuntimeInboxes } from "./lib/runtimeInbox";
 
 type InspectorTab = "inbox" | "files" | "diff" | "runs" | "goals" | "tasks" | "decisions" | "project";
 type PendingWorkspaceSave = { rid: string; path: string; content: string; buffer: string };
@@ -235,6 +236,8 @@ function App() {
   const [runtimeProcesses, setRuntimeProcesses] = useState<GatewayProcessStatus[]>([]);
   const [runtimeRecoveries, setRuntimeRecoveries] = useState<GatewayRecoveryRecord[]>([]);
   const [runtimeInboxes, setRuntimeInboxes] = useState<DesktopRuntimeInbox[]>([]);
+  const runtimeFirstSeenRef = useRef<Map<string, number>>(new Map());
+  const runtimeEverReachableRef = useRef<Set<string>>(new Set());
   const [recoveryRecord, setRecoveryRecord] = useState<GatewayRecoveryRecord | null>(null);
   const [runtimeStarting, setRuntimeStarting] = useState(false);
   const [projects, setProjects] = useState<DesktopProjectProfile[]>([]);
@@ -511,25 +514,12 @@ function App() {
     [runtimeInboxSources],
   );
   const runtimeInboxSummary = useMemo(() => {
-    const summary = {
-      runtimes: runtimeInboxes.length,
-      unreachable: 0,
-      actionable: 0,
-      working: 0,
-      queued: 0,
-      goals: 0,
-      tasks: 0,
-    };
-    runtimeInboxes.forEach((item) => {
-      if (item.error) summary.unreachable += 1;
-      const counts = item.snapshot?.counts;
-      if (!counts) return;
-      summary.actionable += counts.decisions + counts.hook_issues + counts.goals_blocked + counts.tasks_attention;
-      summary.working += counts.sessions_working;
-      summary.queued += counts.sessions_queued;
-      summary.goals += counts.goals_active + counts.goals_blocked;
-      summary.tasks += counts.tasks_active + counts.tasks_attention;
-    });
+    const summary = summarizeRuntimeInboxes(runtimeInboxes.map((item) => ({
+      error: item.error,
+      firstSeenAt: runtimeFirstSeenRef.current.get(item.runtimeId) ?? item.checkedAt,
+      everReachable: runtimeEverReachableRef.current.has(item.runtimeId),
+      counts: item.snapshot?.counts ?? null,
+    })), Date.now());
     summary.actionable += decisionItems.filter((item) => item.kind === "pr_check" || item.kind === "pr_review").length;
     return summary;
   }, [decisionItems, runtimeInboxes]);
@@ -1445,18 +1435,21 @@ function App() {
       return;
     }
     const checkedAt = Date.now();
+    // 首见时间 + 连上过没有：用来把"还在启动"和"连上过又断了"分开（见 lib/runtimeInbox.ts）。
+    sources.forEach((source) => {
+      if (!runtimeFirstSeenRef.current.has(source.runtimeId)) {
+        runtimeFirstSeenRef.current.set(source.runtimeId, checkedAt);
+      }
+    });
     const results = await Promise.all(sources.map(async (source): Promise<DesktopRuntimeInbox> => {
       try {
         const client = new GatewayClient({
           baseUrl: source.baseUrl,
           token: runtimeTokensRef.current.get(source.runtimeId) ?? "",
         });
-        return {
-          ...source,
-          snapshot: await client.getRuntimeInbox(),
-          error: "",
-          checkedAt,
-        };
+        const snapshot = await client.getRuntimeInbox();
+        runtimeEverReachableRef.current.add(source.runtimeId);
+        return { ...source, snapshot, error: "", checkedAt };
       } catch (error) {
         return {
           ...source,
@@ -3285,9 +3278,7 @@ function App() {
                 <strong>跨项目收件箱</strong>
                 <small>{runtimeInboxSummary.runtimes === 0
                   ? "正在发现本地工作…"
-                  : runtimeInboxSummary.unreachable > 0
-                    ? `${runtimeInboxSummary.runtimes} 个工作区 · ${runtimeInboxSummary.unreachable} 个失联`
-                    : `${runtimeInboxSummary.runtimes} 个工作区 · ${runtimeInboxSummary.working} 个执行中`}</small>
+                  : runtimeInboxSubtitle(runtimeInboxSummary)}</small>
               </span>
               {runtimeInboxSummary.actionable > 0 && <b>{runtimeInboxSummary.actionable}</b>}
             </button>
