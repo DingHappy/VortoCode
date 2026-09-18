@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { GatewayClient } from "./gateway";
 import type { TerminalSession } from "./types";
+import { errorText } from "./lib/errorText";
 
 type TerminalPaneProps = {
   client: GatewayClient | null;
@@ -51,7 +52,7 @@ export function TerminalPane({ client, connected, onNotice }: TerminalPaneProps)
       .catch(() => undefined)
       .then(() => currentClient.writeTerminal(terminalId, data))
       .then(mergeSession)
-      .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "终端输入失败"));
+      .catch((reason: unknown) => setError(errorText(reason, "终端输入失败")));
   }, [mergeSession]);
 
   useEffect(() => {
@@ -151,7 +152,7 @@ export function TerminalPane({ client, connected, onNotice }: TerminalPaneProps)
         offsetRef.current = snapshot.offset ?? offsetRef.current;
         mergeSession(snapshot);
       } catch (reason) {
-        setError(reason instanceof Error ? reason.message : "读取终端失败");
+        setError(errorText(reason, "读取终端失败"));
       } finally {
         pollBusyRef.current = false;
       }
@@ -174,7 +175,7 @@ export function TerminalPane({ client, connected, onNotice }: TerminalPaneProps)
       window.setTimeout(() => terminalRef.current?.focus(), 40);
       onNotice("已创建隔离的本地 PTY；结构化测试仍在“任务运行”中记录");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "创建终端失败");
+      setError(errorText(reason, "创建终端失败"));
     } finally {
       setCreating(false);
     }
@@ -185,7 +186,7 @@ export function TerminalPane({ client, connected, onNotice }: TerminalPaneProps)
     try {
       mergeSession(await client.stopTerminal(activeSession.id));
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "停止终端失败");
+      setError(errorText(reason, "停止终端失败"));
     }
   };
 

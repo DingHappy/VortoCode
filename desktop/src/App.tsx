@@ -109,6 +109,7 @@ import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey,
 import { normalizeEditorText, serializeEditorText } from "./lib/text";
 import { localDay } from "./lib/time";
 import { finishRunningActivities, hydrateActivities, protocolActivity, upsertActivity } from "./protocol/activities";
+import { errorText } from "./lib/errorText";
 
 type InspectorTab = "inbox" | "files" | "diff" | "runs" | "goals" | "tasks" | "decisions" | "project";
 type PendingWorkspaceSave = { rid: string; path: string; content: string; buffer: string };
@@ -540,7 +541,7 @@ function App() {
     try {
       setSessions(await client.listSessions());
     } catch (error) {
-      setConnectionNote(error instanceof Error ? error.message : "读取会话失败");
+      setConnectionNote(errorText(error, "读取会话失败"));
     }
   }, []);
 
@@ -611,7 +612,7 @@ function App() {
     } catch (error) {
       if (generation === gitReviewRefreshGenerationRef.current) {
         setGitReviewDiff(null);
-        setGitReviewError(error instanceof Error ? error.message : "读取 Git diff 失败");
+        setGitReviewError(errorText(error, "读取 Git diff 失败"));
       }
     } finally {
       if (generation === gitReviewRefreshGenerationRef.current) setGitReviewLoading(false);
@@ -655,7 +656,7 @@ function App() {
       setGitReviewDiff(diff);
     } catch (error) {
       if (generation === gitReviewRefreshGenerationRef.current) {
-        setGitReviewError(error instanceof Error ? error.message : "读取 Git 审查状态失败");
+        setGitReviewError(errorText(error, "读取 Git 审查状态失败"));
       }
     } finally {
       if (generation === gitReviewRefreshGenerationRef.current) setGitReviewLoading(false);
@@ -680,7 +681,7 @@ function App() {
         checks: [],
         failing_checks: [],
         summary: { total: 0, failed: 0, pending: 0, passed: 0 },
-        error: error instanceof Error ? error.message : "读取 PR/CI 状态失败",
+        error: errorText(error, "读取 PR/CI 状态失败"),
       });
     } finally {
       setPrDeliveryLoading(false);
@@ -768,7 +769,7 @@ function App() {
     } else if (memoryResult.status === "fulfilled") {
       if (memoryResult.value) setRepoMemory(memoryResult.value);
     } else {
-      failures.push(memoryResult.reason instanceof Error ? memoryResult.reason.message : "读取仓库记忆失败");
+      failures.push(errorText(memoryResult.reason, "读取仓库记忆失败"));
     }
     if (artifactsResult.status === "fulfilled") {
       const items = artifactsResult.value;
@@ -782,7 +783,7 @@ function App() {
         setArtifactHtml("");
       }
     } else {
-      failures.push(artifactsResult.reason instanceof Error ? artifactsResult.reason.message : "读取制品失败");
+      failures.push(errorText(artifactsResult.reason, "读取制品失败"));
     }
     setProjectAssetsError(failures.join("；"));
     setProjectAssetsLoading(false);
@@ -808,7 +809,7 @@ function App() {
       setArtifactVersions(null);
       setArtifactVersion(null);
       setArtifactHtml("");
-      setProjectAssetsError(error instanceof Error ? error.message : "读取制品预览失败");
+      setProjectAssetsError(errorText(error, "读取制品预览失败"));
     } finally {
       if (generation === artifactPreviewGenerationRef.current) setArtifactPreviewLoading(false);
     }
@@ -1263,7 +1264,7 @@ function App() {
         setNotificationSyncVersion((value) => value + 1);
         clientRef.current = null;
         setConnection("error");
-        setConnectionNote(error instanceof Error ? error.message : "连接失败");
+        setConnectionNote(errorText(error, "连接失败"));
         return false;
       }
     }, [activeSid, baseUrl, handleProtocolEvent, refreshAllForScope, rememberProject, repoRoot, runtime.scope, token],
@@ -1328,8 +1329,8 @@ function App() {
     } catch (error) {
       supervisionGenerationRef.current += 1;
       setConnection("error");
-      setConnectionNote(error instanceof Error ? error.message : "工作区启动失败");
-      setBanner(error instanceof Error ? error.message : "工作区启动失败");
+      setConnectionNote(errorText(error, "工作区启动失败"));
+      setBanner(errorText(error, "工作区启动失败"));
       setProcessStatus(await invoke<GatewayProcessStatus>("gateway_process_status", { runtimeId: processStatus.runtimeId ?? null }).catch(() => EMPTY_PROCESS));
       setRecoveryRecord(await invoke<GatewayRecoveryRecord | null>("get_gateway_recovery").catch(() => null));
       return false;
@@ -1375,7 +1376,7 @@ function App() {
       } catch (error) {
         setConnection("error");
         setConnectionNote("通用会话未能启动");
-        setBanner(error instanceof Error ? error.message : "无法启动通用会话");
+        setBanner(errorText(error, "无法启动通用会话"));
       }
     })();
   }, [activeSid, baseUrl, refreshProjectRegistry, startWorkspace]);
@@ -1444,7 +1445,7 @@ function App() {
         return {
           ...source,
           snapshot: null,
-          error: error instanceof Error ? error.message : "runtime 暂时无法访问",
+          error: errorText(error, "runtime 暂时无法访问"),
           checkedAt,
         };
       }
@@ -1717,7 +1718,7 @@ function App() {
         token: "",
       });
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "切换项目失败");
+      setBanner(errorText(error, "切换项目失败"));
       return false;
     } finally {
       supervisionGenerationRef.current += 1;
@@ -1769,7 +1770,7 @@ function App() {
         token: "",
       });
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "切换工作区范围失败");
+      setBanner(errorText(error, "切换工作区范围失败"));
       return false;
     } finally {
       supervisionGenerationRef.current += 1;
@@ -1798,7 +1799,7 @@ function App() {
       setProjects(await invoke<DesktopProjectProfile[]>("forget_desktop_project", { projectId: project.id }));
       localStorage.removeItem(projectSessionKey(project.id));
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "移除最近项目失败");
+      setBanner(errorText(error, "移除最近项目失败"));
     }
   };
 
@@ -1872,7 +1873,7 @@ function App() {
       await clientRef.current.renameSession(session.sid, title);
       await refreshSessions();
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "重命名失败");
+      setBanner(errorText(error, "重命名失败"));
     }
   };
 
@@ -1883,7 +1884,7 @@ function App() {
       if (session.sid === activeSid) await newSession();
       else await refreshSessions();
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "删除失败");
+      setBanner(errorText(error, "删除失败"));
     }
   };
 
@@ -1962,7 +1963,7 @@ function App() {
       }
       setPrompt(text);
       setContextItems(selectedContext);
-      setBanner(error instanceof Error ? error.message : "发送失败");
+      setBanner(errorText(error, "发送失败"));
       return false;
     }
   };
@@ -2047,7 +2048,7 @@ function App() {
     } catch (error) {
       pendingWorkspaceSaveRef.current = null;
       setSavingFile(false);
-      setBanner(error instanceof Error ? error.message : "源码保存请求发送失败");
+      setBanner(errorText(error, "源码保存请求发送失败"));
     }
   };
 
@@ -2080,13 +2081,13 @@ function App() {
 
   const removeQueuedPrompt = async (id: string) => {
     await clientRef.current?.send({ type: "agent_queue_remove", id }).catch((error) => {
-      setBanner(error instanceof Error ? error.message : "删除排队任务失败");
+      setBanner(errorText(error, "删除排队任务失败"));
     });
   };
 
   const sendQueuedPromptNow = async (id: string) => {
     await clientRef.current?.send({ type: "agent_queue_send_now", id }).catch((error) => {
-      setBanner(error instanceof Error ? error.message : "切换排队任务失败");
+      setBanner(errorText(error, "切换排队任务失败"));
     });
   };
 
@@ -2133,7 +2134,7 @@ function App() {
       setNotificationsEnabled(true);
       setBanner("系统通知已开启；现有事项只建立基线，之后仅提醒新增高优先级决策");
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "当前环境无法启用系统通知");
+      setBanner(errorText(error, "当前环境无法启用系统通知"));
     }
   };
 
@@ -2149,7 +2150,7 @@ function App() {
         ? `已信任并启用 ${next.hooks.length} 个项目 Hook；当前会话已热重载`
         : "已撤销项目 Hook 信任；当前会话已停止执行仓库 Hook");
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "Hook 信任状态更新失败");
+      setBanner(errorText(error, "Hook 信任状态更新失败"));
     } finally {
       setHookTrustBusy(false);
     }
@@ -2172,7 +2173,7 @@ function App() {
       setBanner(snapshot.message ?? "仓库记忆已保存");
       await refreshAudit();
     } catch (error) {
-      setProjectAssetsError(error instanceof Error ? error.message : "仓库记忆写入失败");
+      setProjectAssetsError(errorText(error, "仓库记忆写入失败"));
     } finally {
       setProjectAssetsLoading(false);
     }
@@ -2194,7 +2195,7 @@ function App() {
     try {
       await openUrl(selectedArtifact.url);
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "无法打开制品页面");
+      setBanner(errorText(error, "无法打开制品页面"));
     }
   };
 
@@ -2208,7 +2209,7 @@ function App() {
       setProjects((previous) => [profile, ...previous.filter((item) => item.id !== profile.id)]);
       return switchProject(profile);
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "项目目录不可用");
+      setBanner(errorText(error, "项目目录不可用"));
       return false;
     }
   };
@@ -2269,7 +2270,7 @@ function App() {
         });
       }
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "载入 runtime 恢复配置失败");
+      setBanner(errorText(error, "载入 runtime 恢复配置失败"));
     }
   };
 
@@ -2279,7 +2280,7 @@ function App() {
       setRecoveryRecord(null);
       setBanner("已忽略上次 runtime 恢复记录");
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "清除 runtime 恢复记录失败");
+      setBanner(errorText(error, "清除 runtime 恢复记录失败"));
     }
   };
 
@@ -2304,7 +2305,7 @@ function App() {
       setRuntimeRecoveries(await invoke<GatewayRecoveryRecord[]>("list_gateway_recoveries").catch(() => []));
       setRecoveryRecord(null);
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "停止本地引擎失败");
+      setBanner(errorText(error, "停止本地引擎失败"));
     } finally {
       supervisionGenerationRef.current += 1;
     }
@@ -2340,7 +2341,7 @@ function App() {
         announce: false,
       });
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "模型配置已保存，但当前 runtime 重启失败");
+      setBanner(errorText(error, "模型配置已保存，但当前 runtime 重启失败"));
       return false;
     } finally {
       supervisionGenerationRef.current += 1;
@@ -2361,7 +2362,7 @@ function App() {
       const restarted = await restartCurrentRuntimeForLlmProfile();
       if (restarted) setBanner(`${profile.provider === "vortocode" ? "VortoCode Relay" : profile.provider === "local" ? "本机模型服务" : "自定义模型服务"}已保存到 macOS Keychain，当前 runtime 已重启`);
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "保存模型服务失败");
+      setBanner(errorText(error, "保存模型服务失败"));
     } finally {
       setLlmProfileBusy(false);
     }
@@ -2379,7 +2380,7 @@ function App() {
       const restarted = await restartCurrentRuntimeForLlmProfile();
       if (restarted) setBanner("模型服务配置已清除；需要对话时可随时重新设置");
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "清除模型服务失败");
+      setBanner(errorText(error, "清除模型服务失败"));
     } finally {
       setLlmProfileBusy(false);
     }
@@ -2394,7 +2395,7 @@ function App() {
       openInspector("tasks");
       await refreshTasks();
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "后台任务提交失败");
+      setBanner(errorText(error, "后台任务提交失败"));
     }
   };
 
@@ -2431,7 +2432,7 @@ function App() {
       setBanner(editingGoalId ? "目标合同草稿已更新，请确认后开始执行" : "目标合同已保存为草稿，请检查后确认执行");
       await refreshGoals();
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "目标草稿保存失败");
+      setBanner(errorText(error, "目标草稿保存失败"));
     } finally {
       setGoalSubmitting(false);
     }
@@ -2454,7 +2455,7 @@ function App() {
       if (editingGoalId === goal.id) resetGoalForm();
       setBanner("目标草稿已删除");
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "目标草稿删除失败");
+      setBanner(errorText(error, "目标草稿删除失败"));
     }
   };
 
@@ -2467,7 +2468,7 @@ function App() {
       setTasks((previous) => [result.task, ...previous.filter((item) => item.id !== result.task.id)]);
       setBanner(resume ? "已从持久计划断点续跑" : goal.status === "draft" ? "目标合同已确认，隔离开发任务开始执行" : "已按目标合同开始新一轮执行");
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "目标执行失败");
+      setBanner(errorText(error, "目标执行失败"));
     } finally {
       setGoalSubmitting(false);
     }
@@ -2498,7 +2499,7 @@ function App() {
       const accepted = updated.acceptance_criteria.find((item) => item.id === criterion.id)?.status;
       setBanner(updated.status === "achieved" ? "所有验收标准均有通过证据，目标已达成" : accepted === "pending" ? "证据未对应当前目标版本，请重新验收" : passed ? "通过证据已记录" : "失败证据已记录，目标进入阻塞状态");
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "记录验收证据失败");
+      setBanner(errorText(error, "记录验收证据失败"));
     }
   };
 
@@ -2527,7 +2528,7 @@ function App() {
       }));
       setBanner(draft.kind === "manual" ? "该标准已改为人工验收" : "自动验收器已保存到目标合同");
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "保存自动验收器失败");
+      setBanner(errorText(error, "保存自动验收器失败"));
     } finally {
       setGoalSubmitting(false);
     }
@@ -2552,7 +2553,7 @@ function App() {
         setBanner(result.skipped_active ? "自动验收已在执行中" : "没有可运行的自动验收器；其余标准需要人工确认");
       }
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "运行自动验收失败");
+      setBanner(errorText(error, "运行自动验收失败"));
     } finally {
       setGoalSubmitting(false);
     }
@@ -2561,7 +2562,7 @@ function App() {
   const cancelTask = async (id: string) => {
     if (!clientRef.current) return;
     await clientRef.current.cancelTask(id).catch((error) => {
-      setBanner(error instanceof Error ? error.message : "取消失败");
+      setBanner(errorText(error, "取消失败"));
     });
     await refreshTasks();
     await refreshWorktrees();
@@ -2575,7 +2576,7 @@ function App() {
       setBanner("任务已暂停；当前一次性 worktree 已清理，持久计划可随时恢复");
       await refreshWorktrees();
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "暂停任务失败");
+      setBanner(errorText(error, "暂停任务失败"));
     }
   };
 
@@ -2587,7 +2588,7 @@ function App() {
       setBanner(`已从 ${task.plan_id} 恢复；已落地的计划块不会重做`);
       await refreshWorktrees();
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "恢复任务失败");
+      setBanner(errorText(error, "恢复任务失败"));
     }
   };
 
@@ -2618,7 +2619,7 @@ function App() {
       setTaskBranchDiff(await client.getTaskBranchReviewDiff(task.id, path));
     } catch (error) {
       setTaskBranchDiff(null);
-      setGitReviewError(error instanceof Error ? error.message : "读取任务分支 diff 失败");
+      setGitReviewError(errorText(error, "读取任务分支 diff 失败"));
     } finally {
       setGitReviewLoading(false);
     }
@@ -2647,7 +2648,7 @@ function App() {
       setTaskBranchSelectedPath(selected.path);
       setTaskBranchDiff(await client.getTaskBranchReviewDiff(task.id, selected.path));
     } catch (error) {
-      setGitReviewError(error instanceof Error ? error.message : "读取任务分支审查失败");
+      setGitReviewError(errorText(error, "读取任务分支审查失败"));
     } finally {
       setGitReviewLoading(false);
     }
@@ -2696,7 +2697,7 @@ function App() {
         ? "已记录稳定 hunk 接受证据"
         : "已在任务分支创建撤销提交；重新验证通过前不能开 PR");
     } catch (error) {
-      setGitReviewError(error instanceof Error ? error.message : "任务分支审查操作失败");
+      setGitReviewError(errorText(error, "任务分支审查操作失败"));
     } finally {
       setGitActionBusy(false);
     }
@@ -2715,7 +2716,7 @@ function App() {
       await refreshWorktrees();
       setBanner(result.ok ? "任务分支已在隔离 worktree 重新验证通过，可以继续交付" : "重新验证未通过，PR 闸门保持关闭");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "任务分支重新验证失败";
+      const message = errorText(error, "任务分支重新验证失败");
       setGitReviewError(message);
       setBanner(message);
     } finally {
@@ -2729,7 +2730,7 @@ function App() {
       const result = await clientRef.current.openTaskPr(id);
       setBanner(result.ok ? `Draft PR 已创建：${result.url ?? ""}` : result.error || "开 PR 失败");
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "开 PR 失败");
+      setBanner(errorText(error, "开 PR 失败"));
     }
   };
 
@@ -2751,7 +2752,7 @@ function App() {
       setBanner(kind === "test" ? "测试已开始，退出码会形成结构化结果" : kind === "preview" ? "预览进程已开始" : "命令已开始");
       return true;
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "命令启动失败");
+      setBanner(errorText(error, "命令启动失败"));
       return false;
     }
   };
@@ -2762,7 +2763,7 @@ function App() {
       const updated = await clientRef.current.cancelRun(run.id);
       setRuns((previous) => [updated, ...previous.filter((item) => item.id !== run.id)]);
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "停止命令失败");
+      setBanner(errorText(error, "停止命令失败"));
     }
   };
 
@@ -2787,7 +2788,7 @@ function App() {
       const accepted = updated.acceptance_criteria.find((item) => item.id === criterionId)?.status;
       setBanner(accepted === "pending" ? "测试证据未对应当前目标版本，请重新运行验收" : run.code === 0 ? "测试通过结果已采纳为 Goal 证据" : "测试失败结果已记录，目标进入阻塞状态");
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "采纳测试证据失败");
+      setBanner(errorText(error, "采纳测试证据失败"));
     }
   };
 
@@ -2828,7 +2829,7 @@ function App() {
       await refreshGitReview(path, preferredScope);
       setBanner(action === "stage" ? "Git 改动已暂存" : action === "unstage" ? "Git 改动已取消暂存" : "本地改动已撤销");
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "Git 操作失败");
+      setBanner(errorText(error, "Git 操作失败"));
       await refreshGitReview(path, gitReviewScope);
     } finally {
       setGitActionBusy(false);
@@ -2866,7 +2867,7 @@ function App() {
       setPendingGitComment(null);
       setGitCommentDraft("");
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "保存行级评论失败");
+      setBanner(errorText(error, "保存行级评论失败"));
       await refreshGitReview(pendingGitComment.path, pendingGitComment.scope);
     } finally {
       setGitCommentSaving(false);
@@ -2921,7 +2922,7 @@ function App() {
       const updated = await client.updateGitReviewComment(comment.id, status);
       setGitComments((previous) => previous.map((item) => item.id === updated.id ? updated : item));
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "更新审查评论失败");
+      setBanner(errorText(error, "更新审查评论失败"));
     } finally {
       setGitCommentSaving(false);
     }
@@ -2935,7 +2936,7 @@ function App() {
       await client.deleteGitReviewComment(comment.id);
       setGitComments((previous) => previous.filter((item) => item.id !== comment.id));
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "删除审查评论失败");
+      setBanner(errorText(error, "删除审查评论失败"));
     } finally {
       setGitCommentSaving(false);
     }
@@ -2948,7 +2949,7 @@ function App() {
       setPrCheckLogs((previous) => ({ ...previous, [check.id]: result }));
       return result;
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "读取 CI 失败日志失败");
+      setBanner(errorText(error, "读取 CI 失败日志失败"));
       return null;
     }
   };
@@ -3044,7 +3045,7 @@ function App() {
       await clientRef.current.dismissDecision(decision.id);
       setDecisions((previous) => previous.filter((item) => item.id !== decision.id));
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "忽略待决策事项失败");
+      setBanner(errorText(error, "忽略待决策事项失败"));
     }
   };
 
@@ -3060,7 +3061,7 @@ function App() {
       await refreshGitReview();
       setBanner(`已提交审查范围 · ${result.sha}`);
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "Git 提交失败");
+      setBanner(errorText(error, "Git 提交失败"));
     } finally {
       setGitDeliveryBusy(false);
     }
@@ -3083,7 +3084,7 @@ function App() {
       await refreshPrDelivery();
       if (result.url) await openUrl(result.url);
     } catch (error) {
-      setBanner(error instanceof Error ? error.message : "创建 Draft PR 失败");
+      setBanner(errorText(error, "创建 Draft PR 失败"));
     } finally {
       setGitDeliveryBusy(false);
     }
