@@ -2449,6 +2449,10 @@ fn configure_gateway_command(
     command.arg(port.to_string());
     command.current_dir(repo_root);
     command.env("VORTOCODE_WORKSPACE_SCOPE", scope);
+    // 监护进程 pid：runtime 据此在我们被强杀/崩溃时自己退出。正常退出走 RunEvent::Exit 的
+    // terminate_gateway_child；强杀时那条回调根本不会执行，于是 runtime 会继续占着端口、
+    // 持着一个能调模型的 agent，而界面上再无入口（2026-09-17 真机诊断留下两对孤儿进程）。
+    command.env("VORTOCODE_SUPERVISOR_PID", std::process::id().to_string());
     if token.is_empty() {
         command.env_remove("VORTOCODE_API_TOKEN");
         command.env_remove("AUTODEV_API_TOKEN");
@@ -3917,6 +3921,25 @@ mod tests {
         assert!(command.get_envs().any(|(key, value)| {
             key == OsStr::new("VORTOCODE_WORKSPACE_SCOPE")
                 && value == Some(OsStr::new(PROJECT_SCOPE))
+        }));
+    }
+
+    #[test]
+    fn gateway_command_declares_this_process_as_the_supervisor() {
+        // runtime 的看门狗据此在我们被强杀时自行退出；不申报就会留下孤儿 runtime
+        // （2026-09-17 真机诊断：两对 runtime 在 Desktop 被强杀后继续跑，占着端口）。
+        let command = configure_gateway_command(
+            Command::new("vc"),
+            false,
+            Path::new("/tmp/vortocode"),
+            8765,
+            "",
+            PROJECT_SCOPE,
+        );
+        let expected = std::process::id().to_string();
+        assert!(command.get_envs().any(|(key, value)| {
+            key == OsStr::new("VORTOCODE_SUPERVISOR_PID")
+                && value == Some(OsStr::new(expected.as_str()))
         }));
     }
 
