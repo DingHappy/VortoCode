@@ -12,6 +12,7 @@
 import type { ReactNode } from "react";
 
 import { contextWindowSourceLabel, formatTokenCount } from "../lib/labels";
+import { trustCard } from "../lib/trustCard";
 import type {
   ConnectionState,
   DesktopLlmProfileStatus,
@@ -60,14 +61,6 @@ type SettingsModalProps = {
   onTrustChange: (level: TrustLevel) => void;
 };
 
-const TRUST_ORDER: Record<TrustLevel, number> = { ask: 0, reads: 1, full: 2 };
-
-const TRUST_LABELS: Record<TrustLevel, { title: string; hint: string }> = {
-  ask: { title: "每次确认", hint: "写文件、执行命令都问你" },
-  reads: { title: "只读免确认", hint: "读文件不问，写和执行仍要你点头" },
-  full: { title: "完全信任", hint: "不再逐次确认；污点回合除外" },
-};
-
 export function SettingsModal({
   activeScope,
   connection,
@@ -105,6 +98,7 @@ export function SettingsModal({
   trustBusy,
   onTrustChange,
 }: SettingsModalProps) {
+  const trustView = trustCard(trust);
   const llmInputIsLocal = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/i.test(llmBaseInput.trim());
 
   return (
@@ -185,36 +179,31 @@ export function SettingsModal({
           </div>
         </section>
 
-        <section className="trust-card" aria-label="授权级别">
-          <div className="trust-head">
-            <div>
-              <span>授权级别</span>
-              <strong>{TRUST_LABELS[trust?.effective ?? "ask"].title}</strong>
+        {trustView && (
+          <section className="trust-card" aria-label="授权级别">
+            <div className="trust-head">
+              <div>
+                <span>授权级别</span>
+                <strong>{trustView.title}</strong>
+              </div>
+              <i>{trustView.hint}</i>
             </div>
-            <i>{TRUST_LABELS[trust?.effective ?? "ask"].hint}</i>
-          </div>
-          <div className="trust-options" role="radiogroup" aria-label="授权级别">
-            {(trust?.levels ?? (["ask", "reads", "full"] as TrustLevel[])).map((level) => {
-              const blocked = trust ? TRUST_ORDER[level] > TRUST_ORDER[trust.ceiling] : level !== "ask";
-              return (
+            <div className="trust-options" role="radiogroup" aria-label="授权级别">
+              {trustView.options.map((option) => (
                 <button
-                  key={level}
+                  key={option.level}
                   role="radio"
-                  aria-checked={trust?.level === level}
-                  className={trust?.level === level ? "active" : ""}
-                  disabled={trustBusy || blocked}
-                  title={blocked ? `当前会话（${trust?.capability_profile}）最高只能到「${TRUST_LABELS[trust!.ceiling].title}」` : undefined}
-                  onClick={() => onTrustChange(level)}
-                >{TRUST_LABELS[level].title}</button>
-              );
-            })}
-          </div>
-          <p className="trust-note">
-            {trust && trust.level !== trust.effective
-              ? `已选「${TRUST_LABELS[trust.level].title}」，但这个会话最高只到「${TRUST_LABELS[trust.effective].title}」，按后者执行。`
-              : "读过网页、搜索或 MCP 内容的那一轮，无论哪一档都会重新向你确认（防提示注入）。"}
-          </p>
-        </section>
+                  aria-checked={option.active}
+                  className={option.active ? "active" : ""}
+                  disabled={trustBusy || option.blocked}
+                  title={option.blockedReason}
+                  onClick={() => onTrustChange(option.level)}
+                >{option.title}</button>
+              ))}
+            </div>
+            <p className="trust-note">{trustView.note}</p>
+          </section>
+        )}
 
         <label>
           <span>{activeScope === "project" ? "Git 项目" : "可选项目"}</span>
