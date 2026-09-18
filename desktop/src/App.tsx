@@ -74,6 +74,8 @@ import type {
   WorkspaceFileList,
   WorkspaceScope,
   WorktreeWorkspaceSnapshot,
+  TrustLevel,
+  TrustStatus,
 } from "./types";
 import { DecisionsPanel } from "./components/DecisionsPanel";
 import { DevPlanDagLoader } from "./components/DevPlanDag";
@@ -194,6 +196,12 @@ function contextItemLabel(item: ContextItem): string {
     : item.path;
 }
 
+const TRUST_LEVEL_TEXT: Record<TrustLevel, string> = {
+  ask: "每次确认",
+  reads: "只读免确认",
+  full: "完全信任",
+};
+
 function App() {
   const clientRef = useRef<GatewayClient | null>(null);
   const workspaceRootRef = useRef("");
@@ -237,6 +245,8 @@ function App() {
   const [llmModelInput, setLlmModelInput] = useState("mimo-v2.5");
   const [llmKeyInput, setLlmKeyInput] = useState("");
   const [llmProfileBusy, setLlmProfileBusy] = useState(false);
+  const [trust, setTrust] = useState<TrustStatus | null>(null);
+  const [trustBusy, setTrustBusy] = useState(false);
 
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
@@ -1518,6 +1528,17 @@ function App() {
     void refreshExtensionsInspect();
   }, [activeScope, connection, refreshExtensionsInspect, refreshHookStatus, settingsOpen]);
 
+  // 授权档位跟着工作区走（后端存在 .vortocode/trust.json），所以换项目/重连都要重新拉。
+  useEffect(() => {
+    if (connection !== "connected") {
+      setTrust(null);
+      return;
+    }
+    void clientRef.current?.getTrust()
+      .then(setTrust)
+      .catch(() => setTrust(null));   // 旧 runtime 没有这个接口时静默降级：不显示档位卡
+  }, [connection, repoRoot, settingsOpen]);
+
   useEffect(() => {
     if (!settingsOpen) return;
     void invoke<DesktopLlmProfileStatus>("get_llm_profile")
@@ -2345,6 +2366,23 @@ function App() {
       return false;
     } finally {
       supervisionGenerationRef.current += 1;
+    }
+  };
+
+  const changeTrustLevel = async (level: TrustLevel) => {
+    const client = clientRef.current;
+    if (!client || trustBusy || trust?.level === level) return;
+    setTrustBusy(true);
+    try {
+      const next = await client.setTrust(level);
+      setTrust(next);
+      setBanner(next.level === next.effective
+        ? `授权级别已设为「${TRUST_LEVEL_TEXT[next.level]}」`
+        : `已选「${TRUST_LEVEL_TEXT[next.level]}」，当前会话最高到「${TRUST_LEVEL_TEXT[next.effective]}」`);
+    } catch (error) {
+      setBanner(errorText(error, "授权级别保存失败"));
+    } finally {
+      setTrustBusy(false);
     }
   };
 
@@ -4039,6 +4077,9 @@ function App() {
           repoRoot={repoRoot}
           baseUrl={baseUrl}
           token={token}
+          trust={trust}
+          trustBusy={trustBusy}
+          onTrustChange={changeTrustLevel}
           onClose={() => setSettingsOpen(false)}
           onLlmBaseChange={setLlmBaseInput}
           onLlmModelChange={setLlmModelInput}

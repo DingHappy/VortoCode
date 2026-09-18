@@ -479,6 +479,7 @@ def _new_agent():
 
     # Web 有人在前端看着 → 问得到人（can_ask_human=True）；没有任何自动放行（auto_approve=False）。
     # 这两个必须**显式声明**：内核 gate 的默认值是最严格的（问不到人），新端忘了声明只会更严、不会更松。
+    from src.gateway.trust_setting import get_trust_level
     from src.gateway.workspace_scope import GENERAL, current_workspace_scope
     workspace_scope = current_workspace_scope()
     # 只有 Desktop 托管且明确进入 Scratch/Project 的进程才拿本机能力。普通 Web 入口保持
@@ -489,6 +490,9 @@ def _new_agent():
                           on_tool_event=_tool_event,
                           on_decision=_audit_decision,
                           capability_profile="local" if desktop_trusted else None,
+                          # 传读取函数而不是值：用户在设置里改档位，正在跑的会话下一次判定
+                          # 就按新档生效，不必重建 agent（重建会把对话历史丢掉）。
+                          trust_level=lambda: get_trust_level(repo_root),
                           workspace_scope=workspace_scope,
                           on_workspace_required=_workspace_required)
     agent._web_confirm_holder = confirm_holder     # _run_agent_turn 每回合把它指向当前 ws

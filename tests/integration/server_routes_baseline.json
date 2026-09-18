@@ -882,6 +882,18 @@
   ]
  },
  {
+  "path": "/api/trust",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/trust",
+  "methods": [
+   "PUT"
+  ]
+ },
+ {
   "path": "/api/worktrees",
   "methods": [
    "GET"

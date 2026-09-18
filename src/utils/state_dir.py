@@ -42,6 +42,7 @@ _STATE_ENTRIES = [
     "web_advanced_agents.json",
     "notices.jsonl",
     "review_threads.json",
+    "trust.json",
     "worktree_bindings.json",
     "task_reviews/",
 ]

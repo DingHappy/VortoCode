@@ -17,6 +17,8 @@ import type {
   DesktopLlmProfileStatus,
   GatewayProcessStatus,
   GatewayRecoveryRecord,
+  TrustLevel,
+  TrustStatus,
   WorkspaceScope,
 } from "../types";
 
@@ -53,6 +55,17 @@ type SettingsModalProps = {
   onConnectExisting: () => void;
   onStartRuntime: () => void;
   onSwitchScope: (scope: "general" | "scratch") => void;
+  trust: TrustStatus | null;
+  trustBusy: boolean;
+  onTrustChange: (level: TrustLevel) => void;
+};
+
+const TRUST_ORDER: Record<TrustLevel, number> = { ask: 0, reads: 1, full: 2 };
+
+const TRUST_LABELS: Record<TrustLevel, { title: string; hint: string }> = {
+  ask: { title: "每次确认", hint: "写文件、执行命令都问你" },
+  reads: { title: "只读免确认", hint: "读文件不问，写和执行仍要你点头" },
+  full: { title: "完全信任", hint: "不再逐次确认；污点回合除外" },
 };
 
 export function SettingsModal({
@@ -88,6 +101,9 @@ export function SettingsModal({
   onConnectExisting,
   onStartRuntime,
   onSwitchScope,
+  trust,
+  trustBusy,
+  onTrustChange,
 }: SettingsModalProps) {
   const llmInputIsLocal = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/i.test(llmBaseInput.trim());
 
@@ -167,6 +183,37 @@ export function SettingsModal({
               disabled={llmProfileBusy || !llmBaseInput.trim() || !llmModelInput.trim() || (!llmInputIsLocal && !llmKeyInput.trim())}
             >{llmProfileBusy ? "正在应用…" : "保存并重启当前引擎"}</button>
           </div>
+        </section>
+
+        <section className="trust-card" aria-label="授权级别">
+          <div className="trust-head">
+            <div>
+              <span>授权级别</span>
+              <strong>{TRUST_LABELS[trust?.effective ?? "ask"].title}</strong>
+            </div>
+            <i>{TRUST_LABELS[trust?.effective ?? "ask"].hint}</i>
+          </div>
+          <div className="trust-options" role="radiogroup" aria-label="授权级别">
+            {(trust?.levels ?? (["ask", "reads", "full"] as TrustLevel[])).map((level) => {
+              const blocked = trust ? TRUST_ORDER[level] > TRUST_ORDER[trust.ceiling] : level !== "ask";
+              return (
+                <button
+                  key={level}
+                  role="radio"
+                  aria-checked={trust?.level === level}
+                  className={trust?.level === level ? "active" : ""}
+                  disabled={trustBusy || blocked}
+                  title={blocked ? `当前会话（${trust?.capability_profile}）最高只能到「${TRUST_LABELS[trust!.ceiling].title}」` : undefined}
+                  onClick={() => onTrustChange(level)}
+                >{TRUST_LABELS[level].title}</button>
+              );
+            })}
+          </div>
+          <p className="trust-note">
+            {trust && trust.level !== trust.effective
+              ? `已选「${TRUST_LABELS[trust.level].title}」，但这个会话最高只到「${TRUST_LABELS[trust.effective].title}」，按后者执行。`
+              : "读过网页、搜索或 MCP 内容的那一轮，无论哪一档都会重新向你确认（防提示注入）。"}
+          </p>
         </section>
 
         <label>
