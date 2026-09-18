@@ -145,7 +145,9 @@ def _make_ws_confirm(websocket, q):
     事件经 q 走（与其它事件同序、由 drain 循环发出）；接收循环并发处理应答（#29 起回合不阻塞收消息）。
     超时/出错/取消都安全返回 False（不放行）。
     """
-    async def _confirm(message: str) -> bool:
+    async def _confirm(message: str, kind: str | None = None) -> bool:
+        # kind：内核确认门申报的操作类别（read/write/execute/deliver，见 agents/trust.py）。
+        # 这里不消费它——判定已在 gate 内完成，走到这一步就是"要问人"。
         import uuid
         from datetime import datetime, timezone
 
@@ -163,12 +165,20 @@ def _make_ws_confirm(websocket, q):
             "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
         q.put_nowait(P.make_event(P.AGENT_CONFIRM, id=cid, text=str(message), tainted=tainted))
+        reason = "answered"
         try:
             return bool(await asyncio.wait_for(fut, timeout=300))
-        except Exception:  # noqa: BLE001  # 超时/取消 → 拒绝（安全）
+        except asyncio.TimeoutError:              # 超时 → 拒绝（安全），并**告诉前端**
+            reason = "timeout"
+            return False
+        except Exception:  # noqa: BLE001  # 取消/出错 → 同样拒绝
+            reason = "cancelled"
             return False
         finally:
             _PENDING_CONFIRMS.pop(cid, None)
+            # 没有这一条，超时后前端那张卡片会一直挂着、按钮还能点，而后端早已按拒绝往下走了
+            # （2026-09-17 真机诊断）。答过的也发：多客户端附着时另一端要同步收起卡片。
+            q.put_nowait(P.make_event(P.AGENT_CONFIRM_CLOSED, id=cid, reason=reason))
     return _confirm
 
 

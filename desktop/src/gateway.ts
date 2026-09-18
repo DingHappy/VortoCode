@@ -43,7 +43,7 @@ import type {
   WorktreeWorkspaceSnapshot,
 } from "./types";
 
-export const DESKTOP_PROTOCOL_VERSION = 9;
+export const DESKTOP_PROTOCOL_VERSION = 10;
 const EVENT_CURSOR_PREFIX = "vortocode.desktop.eventCursor:";
 
 export function createSessionId(): string {
