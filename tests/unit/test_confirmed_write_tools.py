@@ -147,3 +147,29 @@ async def test_legacy_single_argument_confirm_still_works(tmp_path):
     tools = _tools(tmp_path, old_style)
     out = await tools["edit_file"].handler({"path": "todo.py", "old": "a", "new": "b"})
     assert "已修改" in out and len(seen) == 1
+
+
+@pytest.mark.asyncio
+async def test_edit_miss_says_how_to_recover(tmp_path):
+    """old 没匹配上时要给能据以恢复的线索。
+
+    真机 2026-09-17（打包版冒烟）：第二次 edit_file 只收到"找不到要替换的原文"，
+    agent 既不知道是缩进差了还是改错了文件，直接放弃了整个任务。
+    """
+    (tmp_path / "todo.py").write_text('class TodoList:\n    def add(self, title):\n        pass\n',
+                                      encoding="utf-8")
+    confirm, _ = _recorder(True)
+    tools = _tools(tmp_path, confirm)
+
+    # ① 行存在、但缩进/上下文对不上 → 指出它在第几行、提示 old 要逐字匹配
+    out = await tools["edit_file"].handler(
+        {"path": "todo.py", "old": "def add(self, title):\n    return None", "new": "x"})
+    assert "第 2 行" in out and "逐字" in out
+
+    # ② 整段在文件里根本不存在 → 提示可能改错了文件
+    out2 = await tools["edit_file"].handler(
+        {"path": "todo.py", "old": "def remove(self, index):", "new": "x"})
+    assert "改错了文件" in out2
+
+    # 两种情况都要指回 read_file（内容可能已被上一次编辑改过）
+    assert "read_file" in out and "read_file" in out2
