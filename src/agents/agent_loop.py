@@ -585,6 +585,8 @@ class MainAgent:
         self._env_context = env_context        # 仿 CC 注入 <env>（cwd/git/日期/目录）；仅顶层交互 agent 开，子 agent 不开省开销
         self._env = ""                         # 最近一次环境快照（run_turn 开始时刷新；随 user 消息注入，不进 system）
         self._env_sent = ""                    # 已注入过消息流的环境快照：没变化就不重复附，省 token
+        # 本回合里"同一只读工具 + 同一参数 + 同一结果"出现过几次（见 _repeat_call_note）。
+        self._repeat_calls: dict[str, int] = {}
         self._env_idx: Optional[int] = None    # 载体消息下标：被裁出窗口/压缩掉 → 即使 env 没变也要重新附
         # 粘性裁剪切点：history 里第一条进窗口的消息下标。同预算下只单调前进、压缩/历史重写时归零，
         # 预算变大（如 plan→build，_context_limit 随 mode 变）时允许回退重算——mode 切换会换 system，
@@ -1383,6 +1385,8 @@ class MainAgent:
             result = f"工具 {name} 执行出错: {e}"
             await self._fire_hook("tool_error", {"tool": name, "args": args, "error": str(e)})
         result = _clip_middle(result, _max_tool_result())  # 超长保头+尾：别把末尾的报错/失败摘要截没了
+        if status == "succeeded":                          # 只对成功结果算重复；失败重试是正当的
+            result = self._repeat_call_note(tool, args, result)
         # POST_TOOL_USE 是被动贡献事件：Hook 可做已信任的格式化/通知并进入活动时间线，
         # 但返回文案不能写回模型将看到的工具结果或接管主循环。
         await self._fire_hook("post_tool_use", {"tool": name, "args": args, "result": result})
@@ -1392,6 +1396,39 @@ class MainAgent:
             except Exception:  # noqa: BLE001
                 pass
         return finish(status, result)
+
+    # 同一只读工具、同一参数、同一结果连着第几次才开始提醒 / 才不再重放正文。
+    _REPEAT_CALL_NOTE_AT = 2
+    _REPEAT_CALL_ELIDE_AT = 3
+
+    def _repeat_call_note(self, tool: Tool, args: dict, result: str) -> str:
+        """同一只读工具被反复原样调用时，把"你已经拿到过它"说给模型听。
+
+        真机（2026-09-19/20，打包版冒烟两轮）：一个 339 字节的 todo.py 被 read_file 连读 4 次、
+        7 次，每次结果**逐字节相同**，中间是完整的模型往返——154 秒的任务里有约 78 秒耗在这上面。
+        工具结果喂回本身是对的（native 下是 assistant.tool_calls + role=tool，转换无误），是模型
+        自己在原地打转；但历史里连着几条一模一样的内容，恰恰最容易让它接着照抄下一次。
+
+        所以第 2 次起在结果后面点一句，第 3 次起连正文都不再重放——**正文一字未丢**，它就在上面
+        几条里，这里只留指针。只对 read_only 工具生效：写/执行类的重复调用可能是真的要再做一次。
+        """
+        if not tool.read_only:
+            return result
+        import hashlib
+        key = hashlib.sha1(
+            f"{tool.name}\x00{json.dumps(args or {}, ensure_ascii=False, sort_keys=True)}"
+            f"\x00{result}".encode()).hexdigest()
+        n = self._repeat_calls.get(key, 0) + 1
+        self._repeat_calls[key] = n
+        if n < self._REPEAT_CALL_NOTE_AT:
+            return result
+        if n < self._REPEAT_CALL_ELIDE_AT:
+            return (f"{result}\n\n（注：本回合你已经用同样的参数调过 {n} 次 {tool.name}，"
+                    f"结果与上次完全一致。别再重复调用了，就用这份内容继续下一步。）")
+        return (f"（本回合第 {n} 次用同样的参数调 {tool.name}，结果与前几次逐字节相同，"
+                f"这里不再重复贴出——内容就在上面几条工具结果里，直接用。"
+                f"你已经掌握了需要的信息，请立刻做实际动作（修改文件 / 调用实现类工具），"
+                f"或者直接给出最终回答。）")
 
     _MAX_TURN_TOOL_IMAGES = 4      # 单次注入的图片上限：图按 ~1000 token 计，堆多了挤掉正文预算
 
@@ -1541,6 +1578,7 @@ class MainAgent:
         reasoning_cb：可选——推理型模型的思维链（reasoning_content）走它做"思考呈现"，与正文分开。
         """
         start_turn()                  # 本回合的人类等待清零（见 wait_clock）
+        self._repeat_calls.clear()    # 重复调用计数是回合作用域：新问题重读同一个文件是正当的
         from src.agents.taint import mark_channel_untrusted, mark_tainted, reset_taint
         reset_taint()                       # 回合作用域污点：每回合从"未摄入外部内容"开始（D0）
         # 端级不可信入口（IM）：用户输入自身就是外部内容，**每回合无条件重新打污点**。
