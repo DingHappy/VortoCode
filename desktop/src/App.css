@@ -795,6 +795,8 @@ textarea:focus-visible,
   min-height: 100%;
   padding: 30px 0 80px;
   text-align: center;
+  /* 窗口矮时让它滚，而不是把清单最后一行裁掉一半（真机 2026-09-17）。 */
+  overflow-y: auto;
 }
 
 .welcome-orbit {
@@ -1329,6 +1331,18 @@ input::placeholder {
   background: transparent;
   font-size: 9px;
   cursor: pointer;
+}
+
+/* 有新动静但用户没在看这一页：右上角一个小点。只提示，不抢焦点（见 autoOpenInspector）。 */
+.inspector-tabs button.attention::after {
+  content: "";
+  position: absolute;
+  top: 7px;
+  right: 6px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
 }
 
 .inspector-tabs button small {
