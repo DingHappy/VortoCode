@@ -1339,7 +1339,13 @@ class MainAgent:
         say(housekeeping(f"🔧 [b]{name}[/b][dim] {_fmt_args(args)}[/dim]"))
         status = "succeeded"
         try:
-            result = self._absorb_tool_media(await tool.handler(args))
+            raw = await tool.handler(args)
+            # 工具可以**正常返回**却表示失败（隔离实现没过、预检不通过…）。没有这条，台账把
+            # 一条以 ❌ 开头的结果记成 succeeded，UI 上一片绿、人得逐条读正文才知道哪步真挂了
+            # （真机 2026-09-17：dev_isolated 三轮全败，工具事件却都是 succeeded）。
+            if isinstance(raw, dict) and raw.get("ok") is False:
+                status = "failed"
+            result = self._absorb_tool_media(raw)
         except Exception as e:  # noqa: BLE001
             status = "failed"
             result = f"工具 {name} 执行出错: {e}"
@@ -1358,7 +1364,8 @@ class MainAgent:
     _MAX_TURN_TOOL_IMAGES = 4      # 单次注入的图片上限：图按 ~1000 token 计，堆多了挤掉正文预算
 
     def _absorb_tool_media(self, raw: Any) -> str:
-        """工具 handler 可返回 {"text", "images"}：text 走既有字符串管线（截断/审计/hook 全按文本），
+        """工具 handler 可返回 {"text", "images", "ok"}：text 走既有字符串管线（截断/审计/hook 全按文本），
+        ok=False 由调用方翻成 failed 状态（本方法只取文本）；
         images 进旁路队列、由回合循环 _flush_pending_images 注成独立消息——base64 绝不能混进
         文本结果，_clip_middle 的"保头尾"截断会把它拦腰截坏。其余返回值一律按旧约定 str 化。"""
         if not (isinstance(raw, dict) and "text" in raw):

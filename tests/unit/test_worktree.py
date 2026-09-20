@@ -822,7 +822,8 @@ async def test_dev_isolated_all_noop_reports_clearly(monkeypatch, tmp_path):
     tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_isolated"]
     out = await tool.handler({"description": "做点啥"})
     assert state["n"] == 2                                       # 默认尝试 2 次后放弃
-    assert "未产生任何改动" in out and "更具体" in out
+    assert out["ok"] is False                                    # 结构化失败：工具事件记 failed
+    assert "未产生任何改动" in out["text"] and "更具体" in out["text"]
 
 
 @pytest.mark.asyncio
