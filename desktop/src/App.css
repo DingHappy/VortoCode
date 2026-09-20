@@ -2948,11 +2948,17 @@ input::placeholder {
 }
 
 .git-delivery-card {
+  /* 吸底：diff 一长，"提交/开 PR" 会沉到几千像素以下，人得一路滚过整份 diff 才够得着
+     （真机 2026-09-17：面板里这两个控件在 y≈7900px 处）。审查在上、交付在手边。 */
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
   margin-top: 10px;
   padding: 9px;
   border: 1px solid #2d3541;
   border-radius: 7px;
   background: #131820;
+  box-shadow: 0 -6px 16px rgba(0, 0, 0, 0.35);
 }
 
 .git-delivery-heading {
