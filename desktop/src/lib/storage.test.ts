@@ -9,6 +9,7 @@ import {
   loadNotifiedDecisionIds,
   persistNotifiedDecisionIds,
   projectSessionKey,
+  projectToRestore,
   STORAGE_KEYS,
 } from "./storage";
 
@@ -35,7 +36,7 @@ afterEach(() => {
 });
 
 describe("STORAGE_KEYS", () => {
-  it("固定住全部 8 个 key 字面量（防拼写漂移）", () => {
+  it("固定住全部 9 个 key 字面量（防拼写漂移）", () => {
     expect(STORAGE_KEYS).toEqual({
       baseUrl: "vortocode.desktop.baseUrl",
       sid: "vortocode.desktop.sid",
@@ -45,6 +46,7 @@ describe("STORAGE_KEYS", () => {
       notificationsEnabled: "vortocode.desktop.notificationsEnabled",
       notifiedDecisions: "vortocode.desktop.notifiedDecisions",
       projectSessionPrefix: "vortocode.desktop.projectSid:",
+      lastProjectId: "vortocode.desktop.lastProjectId",
     });
   });
 });
@@ -96,5 +98,26 @@ describe("persistNotifiedDecisionIds", () => {
   it("与 load 往返一致", () => {
     persistNotifiedDecisionIds(new Set(["x", "y"]));
     expect([...loadNotifiedDecisionIds()].sort()).toEqual(["x", "y"]);
+  });
+});
+
+describe("projectToRestore", () => {
+  const projects = [
+    { id: "a1", name: "demo" },
+    { id: "b2", name: "vortocode" },
+  ];
+
+  it("回到上次停的项目（真机 2026-09-17：重启后永远落回通用会话）", () => {
+    expect(projectToRestore(projects, "b2")).toEqual({ id: "b2", name: "vortocode" });
+  });
+
+  it("没记过就留在通用会话", () => {
+    expect(projectToRestore(projects, null)).toBeNull();
+    expect(projectToRestore(projects, "   ")).toBeNull();
+  });
+
+  it("项目已从注册表移除时不硬拽回去", () => {
+    expect(projectToRestore(projects, "removed-id")).toBeNull();
+    expect(projectToRestore([], "b2")).toBeNull();
   });
 });
