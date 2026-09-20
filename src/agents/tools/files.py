@@ -33,6 +33,26 @@ def _glob_to_regex(pattern: str) -> "re.Pattern":
     return re.compile("(?s:" + "".join(out) + r")\Z")
 
 
+def _edit_miss_hint(rel: str, text: str, old: str) -> str:
+    """old 没匹配上时，给一条**能据以恢复**的提示，而不是一句"找不到"。
+
+    真机 2026-09-17（打包版冒烟）：agent 改完第一处后第二次 edit_file 没匹配上，只收到
+    "在 todo.py 中找不到要替换的原文（old）"——既不知道是缩进差了、还是文件已被自己改过、
+    还是路径给错了，于是它直接放弃了整个任务。
+    """
+    first = next((line for line in old.splitlines() if line.strip()), "").strip()
+    where = ""
+    if first:
+        for number, line in enumerate(text.splitlines(), 1):
+            if first in line:
+                where = (f" 文件里能找到 `{first[:60]}`（第 {number} 行），"
+                         f"多半是缩进/空行/上下文对不上——old 必须**逐字**匹配（含前导空格）。")
+                break
+        else:
+            where = f" 文件里也没有 `{first[:60]}` 这一行，先确认是不是改错了文件。"
+    return (f"在 {rel} 中找不到要替换的原文（old）。{where}"
+            f" 请先 read_file 看当前内容（可能已被上一次编辑改过），再用真实存在的片段重试。")
+
 def _resolve_within(base: Any, rel: Any) -> Optional["Path"]:
     """把相对路径解析进 base 并做边界校验：`..` 越界、绝对路径、软链逃逸都返回 None。
 
@@ -544,7 +564,7 @@ def build_write_tools(root: str) -> list[Tool]:
         text = p.read_text(encoding="utf-8")
         cnt = text.count(old)
         if cnt == 0:
-            return f"在 {rel} 中找不到要替换的原文（old）。"
+            return _edit_miss_hint(rel, text, old)
         if cnt > 1 and not all_:
             return (f"原文在 {rel} 中出现 {cnt} 次、不唯一；请给更长、唯一的 old，"
                     f"或传 replace_all=true 一次替换全部 {cnt} 处。")
@@ -662,7 +682,7 @@ def build_confirmed_write_tools(root: str, confirm, on_diff=None) -> list["Tool"
         text = p.read_text(encoding="utf-8")
         cnt = text.count(old)
         if cnt == 0:
-            return f"在 {rel} 中找不到要替换的原文（old）。"
+            return _edit_miss_hint(rel, text, old)
         if cnt > 1 and not all_:
             return (f"原文在 {rel} 中出现 {cnt} 次、不唯一；请给更长、唯一的 old，"
                     f"或传 replace_all=true 一次替换全部 {cnt} 处。")
