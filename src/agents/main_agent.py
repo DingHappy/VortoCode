@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, Callable, Optional
 
 from src.agents.tool import Tool
@@ -245,6 +246,13 @@ def _noop_retry_prompt(base: str) -> str:
             f"只跑测试而不改文件不算完成。")
 
 
+def _missing_tests_retry_prompt(base: str) -> str:
+    """实现绿了、但任务要求补的测试文件一个没动 → 下一次把"必须落到测试文件里"说死。"""
+    return (f"{base}\n\n【上一次尝试只改了源码、没有补测试】既有测试仍然绿，但任务要求的测试**没写**。"
+            f"这次必须新建或修改测试文件（tests/ 下，或 test_*.py / *_test.py / *.test.* / *.spec.*），"
+            f"写出真正覆盖新行为的用例，再用 run_tests 自测通过——只改源码不算完成。")
+
+
 
 
 
@@ -416,6 +424,22 @@ def _count_test_files(diff: str) -> int:
     return sum(1 for p in _re.findall(r"^\+\+\+ b/(.+)$", diff or "", _re.M) if _is_test_path(p))
 
 
+_WANTS_TESTS_RE = re.compile(
+    r"(补|加上|加一|加个|加几|新增|添加|增加|写)[^。；;\n]{0,12}?(测试|用例|test)"
+    r"|\b(add|adding|writ(e|ing))\b[^.;\n]{0,24}?\b(test|tests|spec|specs)\b"
+    r"|(测试|用例)[^。；;\n]{0,8}?(补上|补一|写一|写个|加上)",
+    re.I)
+
+
+def _wants_new_tests(desc: str) -> bool:
+    """任务描述里是否**明确要求新写测试**（而不只是"让测试变绿"）。
+
+    刻意保守：必须出现"补/加/新增/写 … 测试/用例"这类**创建**意图才算数。像"修好 X，让现有
+    测试通过""修复 test_foo 的报错"都不该命中——误判的代价是白烧一轮子 agent。
+    """
+    return bool(_WANTS_TESTS_RE.search(desc or ""))
+
+
 def _branch_changed_files(repo_root: str, base: str, branch: str) -> Optional[list[str]]:
     """branch 相对 base 的改动文件路径（三点差：branch 分出后的全部改动）。
 
@@ -574,6 +598,9 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         mk = _make_writer(test_cmd)
         cur = desc
         last = {"desc": desc, "diff": "", "ver": None, "attempts": 0}
+        # 绿但"没补要求的测试"时会继续重试，而后面几轮可能更差（红/无改动）——把第一份绿的留住，
+        # 免得为了追测试反而把已经能用的实现丢了。
+        best_green: Optional[dict] = None
         for attempt in range(1, _dev_attempts() + 1):
             if attempt > 1:
                 if last.get("err"):
@@ -611,6 +638,16 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             last = {"desc": desc, "diff": diff, "ver": ver, "attempts": attempt,
                     "conclusion": _clip_middle(str(conclusion or "").strip(), 600)}
             if ver and ver["ok"] and (diff or "").strip():
+                # 任务明确要求补测试、改动里却一个测试文件都没有 → 还没做完。在**本次调用内**再试一轮，
+                # 别把半成品落成 vorto/* 分支、指望主 agent 看见那句 ⚠ 警告自己再调一次 dev_isolated
+                # （真机 2026-09-19 打包版冒烟就是这么走的：两次调用、两条分支，第一条是死的）。
+                if best_green is None:
+                    best_green = last
+                if (_wants_new_tests(desc) and _count_test_files(diff) == 0
+                        and attempt < _dev_attempts()):
+                    _progress(f"↻ 「{desc[:32]}」实现绿了但没补要求的测试，第 {attempt + 1} 次补测试…")
+                    cur = _missing_tests_retry_prompt(desc)
+                    continue
                 _progress(f"✅ 「{desc[:32]}」实现并自测通过" + (f"（修复 {attempt - 1} 次后）" if attempt > 1 else ""))
                 return last                                  # 绿了就收
             # 准备下一次的反馈：no-op（没改文件）和测试红是两码事，提示也不同
@@ -618,6 +655,10 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 cur = _noop_retry_prompt(desc)               # 没改动：用更命令式提示逼它真动手
             else:
                 cur = _repair_prompt(desc, (ver or {}).get("output", "")[-1500:])   # 红：带失败反馈再试
+        if best_green is not None:
+            # 为补测试多试的那几轮都没成，但先前那份绿的实现照样有效——交它，并保留 ⚠ 测试增量提示。
+            _progress(f"✅ 「{desc[:32]}」实现并自测通过（未补上要求的测试）")
+            return best_green
         _progress(f"❌ 「{desc[:32]}」试了 {_dev_attempts()} 次仍未过")
         return last
 
