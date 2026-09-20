@@ -108,6 +108,7 @@ import {
 } from "./lib/labels";
 import { criterionVerifierDraft, goalEvidenceKey, goalFormLines } from "./lib/goals";
 import type { GoalVerifierDraft } from "./lib/goals";
+import { autoFocusDecision, type InspectorTab } from "./lib/inspector";
 import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey, projectToRestore,
   STORAGE_KEYS } from "./lib/storage";
 import { normalizeEditorText, serializeEditorText } from "./lib/text";
@@ -117,7 +118,7 @@ import { isProtectedBranch } from "./lib/branches";
 import { errorText } from "./lib/errorText";
 import { runtimeInboxSubtitle, summarizeRuntimeInboxes } from "./lib/runtimeInbox";
 
-type InspectorTab = "inbox" | "files" | "diff" | "runs" | "goals" | "tasks" | "decisions" | "project";
+
 type PendingWorkspaceSave = { rid: string; path: string; content: string; buffer: string };
 type RuntimeConnectionOptions = { baseUrl?: string; repoRoot?: string; token?: string; scope?: WorkspaceScope };
 type StartWorkspaceOptions = RuntimeConnectionOptions & { baseUrl: string; sid: string; announce?: boolean; workspaceId?: string };
@@ -275,10 +276,48 @@ function App() {
 
   const [inspectorTab, setInspectorTabState] = useState<InspectorTab>("project");
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [tabsNeedingAttention, setTabsNeedingAttention] = useState<ReadonlySet<InspectorTab>>(
+    () => new Set());
   const openInspector = useCallback((tab: InspectorTab) => {
     setInspectorTabState(tab);
     setInspectorOpen(true);
+    setTabsNeedingAttention((previous) => {
+      if (!previous.has(tab)) return previous;
+      const next = new Set(previous);
+      next.delete(tab);
+      return next;
+    });
   }, []);
+  // Agent 那边发生的事（新 diff、保存结果…）**不许抢走你正在看的标签**：面板没开就照常打开，
+  // 开着且你在看别的，就只在目标标签上点一个提示点，由你决定什么时候过去。
+  // 真机 2026-09-17：正在看「代码」，面板自己跳到了「收件箱」。
+  const inspectorOpenRef = useRef(inspectorOpen);
+  const inspectorTabRef = useRef<InspectorTab>("inbox");
+  const autoOpenInspector = useCallback((tab: InspectorTab) => {
+    const decision = autoFocusDecision({
+      open: inspectorOpenRef.current,
+      current: inspectorTabRef.current,
+      target: tab,
+    });
+    if (decision === "open") {
+      openInspector(tab);
+      return;
+    }
+    if (decision === "ignore") return;
+    setTabsNeedingAttention((previous) => {
+      if (previous.has(tab)) return previous;
+      const next = new Set(previous);
+      next.add(tab);
+      return next;
+    });
+  }, [openInspector]);
+  useEffect(() => { inspectorOpenRef.current = inspectorOpen; }, [inspectorOpen]);
+  useEffect(() => { inspectorTabRef.current = inspectorTab; }, [inspectorTab]);
+  // 标签样式：当前页 = active；有新动静但你没看 = attention（一个小点，不抢焦点）。
+  const tabClass = useCallback((tab: InspectorTab) => [
+    inspectorTab === tab ? "active" : "",
+    tabsNeedingAttention.has(tab) ? "attention" : "",
+  ].filter(Boolean).join(" "), [inspectorTab, tabsNeedingAttention]);
   const [diffPayload, setDiffPayload] = useState<DiffPayload | null>(null);
   const [gitReview, setGitReview] = useState<GitReviewSnapshot | null>(null);
   const [gitReviewDiff, setGitReviewDiff] = useState<GitReviewDiff | null>(null);
@@ -1115,7 +1154,7 @@ function App() {
         }
         case "agent_diff":
           setDiffPayload({ title: String(event.title ?? "待审查改动"), diff: String(event.diff ?? "") });
-          openInspector("diff");
+          autoOpenInspector("diff");
           break;
         case "git_review_changed":
           setGitReviewRevision({
@@ -1132,7 +1171,7 @@ function App() {
           pendingWorkspaceSaveRef.current = null;
           setSavingFile(false);
           setPendingConfirm(null);
-          if (pending) openInspector("files");
+          if (pending) autoOpenInspector("files");
           if (event.ok && pending && event.path === pending.path && event.sha256) {
             const savedSize = new TextEncoder().encode(pending.content).byteLength;
             setFilePreview((previous) => previous?.path === pending.path
@@ -3620,10 +3659,10 @@ function App() {
             <button aria-label="关闭工作台" onClick={() => setInspectorOpen(false)}><X size={16} /></button>
           </div>
           <div className="inspector-tabs">
-            <button className={inspectorTab === "inbox" ? "active" : ""} onClick={() => openInspector("inbox")}>收件箱<small>{runtimeInboxSummary.actionable}</small></button>
-            {activeScope !== "general" && <button className={inspectorTab === "files" ? "active" : ""} onClick={() => openInspector("files")}>代码<small>{filteredWorkspaceFiles.length}</small></button>}
-            {activeScope !== "general" && <button className={inspectorTab === "diff" ? "active" : ""} onClick={() => { setTaskReviewTask(null); setTaskBranchReview(null); setTaskBranchDiff(null); setTaskBranchSelectedPath(""); openInspector("diff"); void refreshGitReview(); void refreshPrDelivery(); }}>变更<small>{gitReview?.files.length ?? 0}</small></button>}
-            {activeScope !== "general" && <button className={inspectorTab === "runs" ? "active" : ""} onClick={() => openInspector("runs")}>运行<small>{activeRuns.length}</small></button>}
+            <button className={tabClass("inbox")} onClick={() => openInspector("inbox")}>收件箱<small>{runtimeInboxSummary.actionable}</small></button>
+            {activeScope !== "general" && <button className={tabClass("files")} onClick={() => openInspector("files")}>代码<small>{filteredWorkspaceFiles.length}</small></button>}
+            {activeScope !== "general" && <button className={tabClass("diff")} onClick={() => { setTaskReviewTask(null); setTaskBranchReview(null); setTaskBranchDiff(null); setTaskBranchSelectedPath(""); openInspector("diff"); void refreshGitReview(); void refreshPrDelivery(); }}>变更<small>{gitReview?.files.length ?? 0}</small></button>}
+            {activeScope !== "general" && <button className={tabClass("runs")} onClick={() => openInspector("runs")}>运行<small>{activeRuns.length}</small></button>}
             {(inspectorTab === "goals" || activeGoals.length > 0) && <button className={inspectorTab === "goals" ? "active" : ""} onClick={() => openInspector("goals")}>完成<small>{activeGoals.length}</small></button>}
             {(inspectorTab === "tasks" || activeTasks.length > 0) && <button className={inspectorTab === "tasks" ? "active" : ""} onClick={() => openInspector("tasks")}>后台<small>{activeTasks.length}</small></button>}
             {(inspectorTab === "decisions" || decisionItems.length > 0) && <button className={inspectorTab === "decisions" ? "active" : ""} onClick={() => { openInspector("decisions"); void refreshDecisions(); void refreshAudit(); }}>待处理<small>{decisionItems.length}</small></button>}

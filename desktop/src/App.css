@@ -1333,6 +1333,18 @@ input::placeholder {
   cursor: pointer;
 }
 
+/* 有新动静但用户没在看这一页：右上角一个小点。只提示，不抢焦点（见 autoOpenInspector）。 */
+.inspector-tabs button.attention::after {
+  content: "";
+  position: absolute;
+  top: 7px;
+  right: 6px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
 .inspector-tabs button small {
   min-width: 15px;
   padding: 1px 4px;
