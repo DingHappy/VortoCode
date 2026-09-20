@@ -587,6 +587,9 @@ class MainAgent:
         self._env_sent = ""                    # 已注入过消息流的环境快照：没变化就不重复附，省 token
         # 本回合里"同一只读工具 + 同一参数 + 同一结果"出现过几次（见 _repeat_call_note）。
         self._repeat_calls: dict[str, int] = {}
+        # 本回合直接改过的文件 / 是否跑过任何命令（见 _unverified_writes_note）。
+        self._turn_writes: set[str] = set()
+        self._turn_verified = False
         self._env_idx: Optional[int] = None    # 载体消息下标：被裁出窗口/压缩掉 → 即使 env 没变也要重新附
         # 粘性裁剪切点：history 里第一条进窗口的消息下标。同预算下只单调前进、压缩/历史重写时归零，
         # 预算变大（如 plan→build，_context_limit 随 mode 变）时允许回退重算——mode 切换会换 system，
@@ -1387,6 +1390,11 @@ class MainAgent:
         result = _clip_middle(result, _max_tool_result())  # 超长保头+尾：别把末尾的报错/失败摘要截没了
         if status == "succeeded":                          # 只对成功结果算重复；失败重试是正当的
             result = self._repeat_call_note(tool, args, result)
+            if name in self._DIRECT_WRITE_TOOLS and str(result).startswith("已"):
+                # "已修改/已新建/已覆盖" 才算真落盘——被闸拦下或用户取消的都不算
+                self._turn_writes.add(str((args or {}).get("path") or "?"))
+            elif name in self._VERIFY_TOOLS:
+                self._turn_verified = True
         # POST_TOOL_USE 是被动贡献事件：Hook 可做已信任的格式化/通知并进入活动时间线，
         # 但返回文案不能写回模型将看到的工具结果或接管主循环。
         await self._fire_hook("post_tool_use", {"tool": name, "args": args, "result": result})
@@ -1396,6 +1404,25 @@ class MainAgent:
             except Exception:  # noqa: BLE001
                 pass
         return finish(status, result)
+
+    # 直接改主工作区的工具 / 任何"真的跑了点什么"的工具（见 _unverified_writes_note）。
+    _DIRECT_WRITE_TOOLS = ("edit_file", "write_file")
+    _VERIFY_TOOLS = ("run_tests", "run_command", "shell", "bash", "dev_isolated", "dev_parallel",
+                     "dev_auto")
+
+    def _unverified_writes_note(self) -> str:
+        """本回合直接改了文件、却一个命令都没跑过 → 一句给**人**看的话。
+
+        真机（2026-09-20，打包版冒烟）：主 agent 用 edit_file 把 todo.py 改出语法错误就收工了。
+        隔离流水线改完必自测，直接改工作区这条路却什么都不做——人看到的只是"已修改 todo.py"，
+        完全不知道这份改动从没被验证过。这不拦任何事，只是不让"没验证"悄悄溜过去。
+        """
+        files = getattr(self, "_turn_writes", None)
+        if not files or getattr(self, "_turn_verified", False):
+            return ""
+        shown = "、".join(sorted(files)[:3]) + ("…" if len(files) > 3 else "")
+        return (f"⚠ 本回合直接改了 {len(files)} 个文件（{shown}），但**没有跑过任何测试/命令**"
+                f"——这些改动尚未被验证。")
 
     # 同一只读工具、同一参数、同一结果连着第几次才开始提醒 / 才不再重放正文。
     _REPEAT_CALL_NOTE_AT = 2
@@ -1579,6 +1606,8 @@ class MainAgent:
         """
         start_turn()                  # 本回合的人类等待清零（见 wait_clock）
         self._repeat_calls.clear()    # 重复调用计数是回合作用域：新问题重读同一个文件是正当的
+        self._turn_writes.clear()
+        self._turn_verified = False
         from src.agents.taint import mark_channel_untrusted, mark_tainted, reset_taint
         reset_taint()                       # 回合作用域污点：每回合从"未摄入外部内容"开始（D0）
         # 端级不可信入口（IM）：用户输入自身就是外部内容，**每回合无条件重新打污点**。
@@ -1596,6 +1625,13 @@ class MainAgent:
                 user_text, mode=mode, say=say, emit=emit,
                 stream_cb=stream_cb, images=images, audio=audio, reasoning_cb=reasoning_cb)
         finally:
+            if say is not None:
+                note = self._unverified_writes_note()
+                if note:
+                    try:
+                        say(housekeeping(note))
+                    except Exception:  # noqa: BLE001 —— 提示失败不该影响本回合结果
+                        pass
             await self._fire_hook("agent_end", {"mode": mode})
 
     async def _run_turn_body(

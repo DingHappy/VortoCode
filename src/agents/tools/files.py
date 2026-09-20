@@ -33,6 +33,50 @@ def _glob_to_regex(pattern: str) -> "re.Pattern":
     return re.compile("(?s:" + "".join(out) + r")\Z")
 
 
+def _parse_error(rel: str, text: str) -> Optional[str]:
+    """按扩展名做一次**廉价的**可解析性检查。能解析 / 不认识这个类型 → None。
+
+    只认最常见也最容易被改坏的两种：Python 源码与 JSON。刻意不引入任何解析依赖。
+    """
+    low = rel.lower()
+    if low.endswith(".py"):
+        try:
+            compile(text, rel, "exec")
+        except SyntaxError as e:
+            return f"{e.__class__.__name__}: {e.msg}（第 {e.lineno} 行）"
+        except ValueError as e:                    # 源码里有空字节等
+            return f"无法解析：{e}"
+        return None
+    if low.endswith(".json"):
+        import json as _json
+        try:
+            _json.loads(text)
+        except ValueError as e:
+            return f"JSON 解析失败：{str(e)[:120]}"
+        return None
+    return None
+
+
+def _syntax_break(rel: str, before: str, after: str) -> str:
+    """这次改动把一个**本来能解析**的文件改坏了 → 返回要说的话；否则空串。
+
+    真机 2026-09-20（打包版冒烟，主 agent 换成 qwen3-coder-plus 那轮）：它用 edit_file 把
+    `remove()` 插进了列表推导式中间，留下 `SyntaxError` 就收工了。隔离流水线有自测闸、有重试、
+    有删测试检查——**主 agent 直接改工作区这条路一样都没有**，坏文件就那么留在了那儿。
+
+    只在"改之前能解析、改之后不能"时拦：本来就坏的文件不该因此改不动（那反而堵死了修复路径）。
+    拦下时**不写盘**，把解析错误如实还给模型——它据此能自己改对，而不是收一句"失败"。
+    """
+    if _parse_error(rel, before) is not None:      # 本来就坏：不拦，让它修
+        return ""
+    err = _parse_error(rel, after)
+    if err is None:
+        return ""
+    return (f"这次改动会让 {rel} 无法解析（{err}），**已拒绝写盘、文件保持原样**。\n"
+            f"多半是替换位置错了——比如把新代码插进了某个表达式/括号中间。"
+            f"先用 read_file 看清楚要插在哪两行之间，再重新给 old/new。")
+
+
 def _edit_miss_hint(rel: str, text: str, old: str) -> str:
     """old 没匹配上时，给一条**能据以恢复**的提示，而不是一句"找不到"。
 
@@ -569,7 +613,11 @@ def build_write_tools(root: str) -> list[Tool]:
             return (f"原文在 {rel} 中出现 {cnt} 次、不唯一；请给更长、唯一的 old，"
                     f"或传 replace_all=true 一次替换全部 {cnt} 处。")
         n = cnt if all_ else 1
-        p.write_text(text.replace(old, new, n), encoding="utf-8")
+        after = text.replace(old, new, n)
+        broke = _syntax_break(rel, text, after)
+        if broke:
+            return broke
+        p.write_text(after, encoding="utf-8")
         return f"已修改 {rel}（替换 {n} 处）。"
 
     async def _write_file(args: dict) -> str:
@@ -579,6 +627,10 @@ def build_write_tools(root: str) -> list[Tool]:
         if p is None or p.is_dir():
             return f"路径越界或非法: {rel}"
         verb = "覆盖" if p.is_file() else "新建"
+        before = p.read_text(encoding="utf-8") if p.is_file() else ""
+        broke = _syntax_break(rel, before, content)
+        if broke:
+            return broke
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
         return f"已{verb} {rel}（{len(content)} 字符）。"
@@ -690,6 +742,9 @@ def build_confirmed_write_tools(root: str, confirm, on_diff=None) -> list["Tool"
         after = text.replace(old, new, n)
         if after == text:
             return f"{rel} 内容没有变化，未写盘。"
+        broke = _syntax_break(rel, text, after)     # 在**问人之前**拦：别拿一个明显改坏的 diff 去打扰人
+        if broke:
+            return broke
         ok, _ = await _approve(rel, text, after, "修改")
         if not ok:
             return f"用户取消了对 {rel} 的修改；未写盘。"
@@ -706,6 +761,9 @@ def build_confirmed_write_tools(root: str, confirm, on_diff=None) -> list["Tool"
         before = p.read_text(encoding="utf-8") if exists else ""
         if exists and before == content:
             return f"{rel} 内容没有变化，未写盘。"
+        broke = _syntax_break(rel, before, content)
+        if broke:
+            return broke
         ok, _ = await _approve(rel, before, content, "覆盖" if exists else "新建")
         if not ok:
             return f"用户取消了对 {rel} 的写入；未写盘。"
