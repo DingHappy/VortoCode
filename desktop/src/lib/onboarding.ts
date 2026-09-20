@@ -44,3 +44,8 @@ export function firstDeliveryReadiness(input: {
     canDraft: model === "ready" && project === "ready" && runtime === "ready",
   };
 }
+
+/** 首次交付清单只在还没准备好时出现：三步全绿后它就是常驻噪音（真机 2026-09-17）。 */
+export function shouldShowOnboardingChecklist(readiness: FirstDeliveryReadiness): boolean {
+  return !readiness.canDraft;
+}

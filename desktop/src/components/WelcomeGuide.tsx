@@ -7,7 +7,7 @@ import {
   Sparkles,
 } from "lucide-react";
 
-import { firstDeliveryReadiness } from "../lib/onboarding";
+import { firstDeliveryReadiness, shouldShowOnboardingChecklist } from "../lib/onboarding";
 import type { ConnectionState, WorkspaceScope } from "../types";
 
 type WelcomeGuideProps = {
@@ -61,6 +61,7 @@ export function WelcomeGuide({
         <ChevronDown size={14} />
       </button>
 
+      {shouldShowOnboardingChecklist(readiness) && (
       <section className="first-delivery-guide" aria-label="首次交付引导">
         <div className={`first-delivery-step ${readiness.model}`}>
           {readiness.model === "ready" ? <CircleCheck size={17} /> : readiness.model === "checking" ? <CircleDashed size={17} /> : <KeyRound size={17} />}
@@ -88,6 +89,7 @@ export function WelcomeGuide({
           </div>
         </div>
       </section>
+      )}
 
       <div className="first-delivery-actions">
         <button className="secondary" onClick={onDraftProjectBrief} disabled={!readiness.canDraft}>
@@ -98,8 +100,10 @@ export function WelcomeGuide({
         </button>
       </div>
       <small className="first-delivery-note">
-        按钮只会把任务草稿放入输入框；发送前仍可修改。计划准备好后会在原位置请求确认，
-        同意后同一任务继续隔离实现，写入和外发仍经过现有确认门。
+        {!shouldShowOnboardingChecklist(readiness)
+          ? "按钮只把任务草稿放进输入框，发送前仍可改。"
+          : "按钮只会把任务草稿放入输入框；发送前仍可修改。计划准备好后会在原位置请求确认，"
+            + "同意后同一任务继续隔离实现，写入和外发仍经过现有确认门。"}
       </small>
     </div>
   );

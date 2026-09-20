@@ -5,6 +5,7 @@ import {
   PROJECT_BRIEF_PROMPT,
   firstDeliveryReadiness,
   isPlanExecutionConfirmation,
+  shouldShowOnboardingChecklist,
 } from "./onboarding";
 
 describe("firstDeliveryReadiness", () => {
@@ -70,5 +71,28 @@ describe("isPlanExecutionConfirmation", () => {
       "plan 阶段分析已完成，需要你授权才能动手。\n原因：计划已就绪",
     )).toBe(true);
     expect(isPlanExecutionConfirmation("删除文件？此操作不可逆。")).toBe(false);
+  });
+});
+
+describe("shouldShowOnboardingChecklist", () => {
+  const ready = firstDeliveryReadiness({
+    modelLoaded: true, modelConfigured: true, hasProject: true, runtimeConnected: true,
+  });
+
+  it("三步全绿后收起清单（否则它就是常驻噪音）", () => {
+    expect(ready.canDraft).toBe(true);
+    expect(shouldShowOnboardingChecklist(ready)).toBe(false);
+  });
+
+  it("还没配模型 / 没选项目 / runtime 没就绪时仍然显示", () => {
+    const cases = [
+      { modelLoaded: true, modelConfigured: false, hasProject: true, runtimeConnected: true },
+      { modelLoaded: true, modelConfigured: true, hasProject: false, runtimeConnected: true },
+      { modelLoaded: true, modelConfigured: true, hasProject: true, runtimeConnected: false },
+      { modelLoaded: false, modelConfigured: true, hasProject: true, runtimeConnected: true },
+    ];
+    for (const input of cases) {
+      expect(shouldShowOnboardingChecklist(firstDeliveryReadiness(input))).toBe(true);
+    }
   });
 });
