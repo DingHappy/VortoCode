@@ -253,6 +253,15 @@ def _missing_tests_retry_prompt(base: str) -> str:
             f"写出真正覆盖新行为的用例，再用 run_tests 自测通过——只改源码不算完成。")
 
 
+def _dropped_tests_retry_prompt(base: str, gone: list[str]) -> str:
+    """上一次把既有测试删了 → 说死：新测试是**加**上去的，旧的一个都不许动。"""
+    names = "、".join(gone[:5]) + ("…" if len(gone) > 5 else "")
+    return (f"{base}\n\n【上一次尝试删掉了既有测试】被删的是：{names}。没有人要求删它们——"
+            f"删掉测试让套件变绿是**最严重的作弊**。这次必须保留原有的每一个测试函数一字不动，"
+            f"新的用例是**另外加**上去的（在文件末尾追加，别改已有的函数名/函数体），"
+            f"再用 run_tests 自测通过。")
+
+
 
 
 
@@ -431,6 +440,67 @@ _WANTS_TESTS_RE = re.compile(
     re.I)
 
 
+_REMOVED_TEST_RE = re.compile(r"^-\s*(?:async\s+)?def\s+(test_\w+)", re.M)
+_ADDED_TEST_RE = re.compile(r"^\+\s*(?:async\s+)?def\s+(test_\w+)", re.M)
+# 描述本身就要求动既有测试（删旧的/改名/重写）——这时"测试没了"是人要的，不该当成事故。
+# 动词必须**紧挨着**测试才算数：任务里的 `remove(index)` 说的是给类加个方法，不是要删测试，
+# 光看见 remove 就放行会让这道信号在最该响的那次哑掉（本次真机 diff 就是这么被放过的）。
+_DROP_VERB = "删|移除|去掉|重写|改名|重命名|替换|合并"
+_MAY_DROP_TESTS_RE = re.compile(
+    rf"({_DROP_VERB})[^。；;\n]{{0,12}}?(测试|用例|test)"
+    rf"|(测试|用例|test\w*)[^。；;\n]{{0,12}}?({_DROP_VERB})"
+    r"|\b(remove|delete|drop|rewrite|rename|replace)\s+(?:the\s+|an?\s+)?(?:\w+\s+){0,2}"
+    r"(test|tests|spec|specs)\b", re.I)
+
+
+def _removed_test_funcs(diff: str) -> list[str]:
+    """diff 里从**测试文件**中删掉的测试函数名（去掉同一次又加回来的，那是改名/移动）。
+
+    真机（2026-09-20，打包版冒烟）：任务是"加 remove(index) 并补 test_remove"，子 agent 把既有的
+    `test_add_and_pending` 直接删掉、原地改成 `test_remove`。于是测试绿（1 passed）、测试增量提示
+    报"含 1 个测试文件"、分支看着完全正常——**既有覆盖被抹掉了，没有任何信号报警**。
+
+    只数测试文件里的，且排除"删了又加"的同名函数（那多半是原地重写，不是丢覆盖）。
+    """
+    removed: list[str] = []
+    cur_is_test = False
+    chunk: list[str] = []
+    for line in (diff or "").splitlines():
+        if line.startswith("+++ b/"):
+            if cur_is_test:
+                removed.extend(_dropped_in_chunk("\n".join(chunk)))
+            cur_is_test = _is_test_path(line[6:].strip())
+            chunk = []
+            continue
+        if cur_is_test:
+            chunk.append(line)
+    if cur_is_test:
+        removed.extend(_dropped_in_chunk("\n".join(chunk)))
+    return removed
+
+
+def _dropped_in_chunk(chunk: str) -> list[str]:
+    added = set(_ADDED_TEST_RE.findall(chunk))
+    return [n for n in dict.fromkeys(_REMOVED_TEST_RE.findall(chunk)) if n not in added]
+
+
+def _dropped_tests(desc: str, diff: str) -> list[str]:
+    """本次改动里**没人要求却被删掉**的既有测试函数名。描述本就要求动测试时返回空。"""
+    if _MAY_DROP_TESTS_RE.search(desc or ""):
+        return []
+    return _removed_test_funcs(diff)
+
+
+def _dropped_tests_note(diff: str, desc: str) -> str:
+    """删掉了既有测试却没人要求删 → 在结论里说死。任务本就要求动测试时不报（那是人要的）。"""
+    gone = _dropped_tests(desc, diff)
+    if not gone:
+        return ""
+    names = "、".join(gone[:5]) + ("…" if len(gone) > 5 else "")
+    return (f"（⚠ 本次改动**删除了既有测试** {names}——没有人要求删它们，"
+            f"“测试通过”很可能只是因为覆盖被移除了。落分支前请核对这是不是你要的。）")
+
+
 def _wants_new_tests(desc: str) -> bool:
     """任务描述里是否**明确要求新写测试**（而不只是"让测试变绿"）。
 
@@ -560,7 +630,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                        if ver.get("skipped") else "已隔离实现且测试通过")
             if res["ok"]:
                 return (f"✅ {verdict}{fixed}，落到新分支 {branch}（{nlines} 行，"
-                        f"git checkout {branch} 查看，未碰 main）。" + _test_delta_note(diff))
+                        f"git checkout {branch} 查看，未碰 main）。"
+                        + _test_delta_note(diff) + _dropped_tests_note(diff, desc))
             return f"✅ {verdict}{fixed}，但落分支失败：{res['error']}。diff {nlines} 行。"
         tail = (ver or {}).get("output", "")[-1000:]
         return {"ok": False, "text": (
@@ -601,6 +672,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         # 绿但"没补要求的测试"时会继续重试，而后面几轮可能更差（红/无改动）——把第一份绿的留住，
         # 免得为了追测试反而把已经能用的实现丢了。
         best_green: Optional[dict] = None
+        best_green_clean = False       # 留住的那份是不是"既没删测试也没漏测试"的干净绿
         for attempt in range(1, _dev_attempts() + 1):
             if attempt > 1:
                 if last.get("err"):
@@ -641,15 +713,26 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 # 任务明确要求补测试、改动里却一个测试文件都没有 → 还没做完。在**本次调用内**再试一轮，
                 # 别把半成品落成 vorto/* 分支、指望主 agent 看见那句 ⚠ 警告自己再调一次 dev_isolated
                 # （真机 2026-09-19 打包版冒烟就是这么走的：两次调用、两条分支，第一条是死的）。
-                if best_green is None:
-                    best_green = last
-                if (_wants_new_tests(desc) and _count_test_files(diff) == 0
-                        and attempt < _dev_attempts()):
+                # 删掉既有测试让套件变绿，是比"没补测试"更坏的一种——所有信号都会说绿
+                # （真机 2026-09-20：子 agent 把 test_add_and_pending 删了原地改成 test_remove，
+                # 测试 1 passed、测试增量提示还报"含 1 个测试文件"，没有任何东西报警）。
+                dropped = _dropped_tests(desc, diff)
+                needs_tests = _wants_new_tests(desc) and _count_test_files(diff) == 0
+                clean = not dropped and not needs_tests
+                if best_green is None or (clean and not best_green_clean):
+                    best_green, best_green_clean = last, clean
+                if clean or attempt >= _dev_attempts():
+                    _progress(f"✅ 「{desc[:32]}」实现并自测通过"
+                              + (f"（修复 {attempt - 1} 次后）" if attempt > 1 else ""))
+                    return last                              # 绿且干净就收（或已用完次数）
+                if dropped:
+                    _progress(f"↻ 「{desc[:32]}」删掉了既有测试（{'、'.join(dropped[:2])}），"
+                              f"第 {attempt + 1} 次重做…")
+                    cur = _dropped_tests_retry_prompt(desc, dropped)
+                else:
                     _progress(f"↻ 「{desc[:32]}」实现绿了但没补要求的测试，第 {attempt + 1} 次补测试…")
                     cur = _missing_tests_retry_prompt(desc)
-                    continue
-                _progress(f"✅ 「{desc[:32]}」实现并自测通过" + (f"（修复 {attempt - 1} 次后）" if attempt > 1 else ""))
-                return last                                  # 绿了就收
+                continue
             # 准备下一次的反馈：no-op（没改文件）和测试红是两码事，提示也不同
             if not (diff or "").strip():
                 cur = _noop_retry_prompt(desc)               # 没改动：用更命令式提示逼它真动手
