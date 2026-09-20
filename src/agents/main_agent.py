@@ -646,10 +646,14 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         from src.agents.repo_memory import dev_subagent_system
         extra = dev_subagent_system(repo_root, DEV_SUBAGENT_ROLE)
 
+        from src.llm.providers import client_for_role
+        impl_llm = client_for_role("implement")   # 没配 = None = 沿用默认，行为与从前一致
+
         def _mk(_desc):
             def _b(wt):
                 return MainAgent(
                     build_read_tools(wt) + build_write_tools(wt) + [build_test_tool(wt, test_cmd)],
+                    llm=impl_llm,
                     max_steps=16,
                     extra_system=extra,
                     capabilities=capabilities,
@@ -909,7 +913,12 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     extra = (_review._REVIEWER_SYSTEM
                              + (f"\n\n{lens}" if lens else "")
                              + (f"\n\n【本仓库审查规范】\n{guidelines}" if guidelines else ""))
-                    agent = MainAgent(tools, llm=llm, max_steps=max_steps, extra_system=extra,
+                    # 审查段是**异厂商最有价值**的地方，理由是独立性不是强弱：同一个模型自己审
+                    # 自己写的实现，会系统性漏掉自己的盲区（实现时认为对的，审时还是认为对）。
+                    # 显式注入的 llm（测试/调用方）优先，其次才看角色表。
+                    from src.llm.providers import client_for_role
+                    agent = MainAgent(tools, llm=llm or client_for_role("review"),
+                                      max_steps=max_steps, extra_system=extra,
                                       capabilities=capabilities, raise_llm_errors=True)
                     prompt = (f"审查分支 {_branch}（相对 {_base}）的以下改动。只报 P0/P1、每条带验证证据、"
                               f"用 run_tests 复现你怀疑的问题，最后只输出 JSON 数组：\n\n```diff\n{diff}\n```")
@@ -1374,7 +1383,9 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
     def _sub_for(agent_name: str):
         """按角色名装配子 agent；无角色名给默认只读研究员。返回 (sub, err)。"""
         if not agent_name:
-            return MainAgent(build_read_tools(repo_root), llm=llm, max_steps=max_steps,
+            from src.llm.providers import client_for_role
+            return MainAgent(build_read_tools(repo_root),
+                             llm=llm or client_for_role("research"), max_steps=max_steps,
                              extra_system=(
                                  "你是只读研究子 agent：只用工具调研代码/仓库并返回**简洁结论**，绝不修改任何东西。"
                                  "读够信息就尽快收口，别把预算耗在重复读取上。"),
@@ -1493,10 +1504,19 @@ def build_subagent(repo_root: str, spec: Any, *, llm: Any = None,
                if t.name in ("dev_isolated", "dev_parallel")]
         tools = tools + dev
         extra += _DEV_RULES
-    # 项目级权限硬拦（.vortocode/permissions.yaml deny）必须继承，避免角色文件绕过项目规则。
-    sub = MainAgent(tools, llm=llm, max_steps=spec.max_steps, extra_system=extra,
-                    permissions=load_permissions(repo_root), capabilities=capabilities)
+    # 角色文件里的 `model:` 也支持 `provider:model`——写成后者就整个换端点（直连别家），
+    # 只写模型名则沿用当前端点（中转站里换个模型）。端点不可用会回落，不借别家的 key。
+    routed = None
     if spec.model:
+        try:
+            from src.llm.providers import client_for_spec
+            routed = client_for_spec(spec.model)
+        except Exception:  # noqa: BLE001
+            routed = None
+    # 项目级权限硬拦（.vortocode/permissions.yaml deny）必须继承，避免角色文件绕过项目规则。
+    sub = MainAgent(tools, llm=routed or llm, max_steps=spec.max_steps, extra_system=extra,
+                    permissions=load_permissions(repo_root), capabilities=capabilities)
+    if spec.model and routed is None:
         try:
             sub.set_model(spec.model)
         except Exception:  # noqa: BLE001
