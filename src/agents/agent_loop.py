@@ -264,10 +264,31 @@ _FOREIGN_TOOL_SYNTAX = (
 )
 
 
+# 模型也会**自创**行内工具语法，比如 `[tool: read_file({"path": "todo.py"})]`。它不属于任何
+# 已知协议，于是既没被解析成工具调用、也没被认成"没收好尾"——直接当最终回答摆到用户面前
+# （真机 2026-09-17：桌面端最后一条回复就是两行这个）。
+_INLINE_TOOL_RE = re.compile(r"^\s*\[\s*(?:tool|tool_call|function|调用工具)\s*[:：]\s*[\w.-]+\s*[({].*$",
+                             re.IGNORECASE | re.MULTILINE)
+
+
 def _looks_like_foreign_tool_call(content: str) -> bool:
-    """内容里带着**别家**的工具调用语法 → 这不是回答，是一次没被识别的工具调用。"""
+    """内容里带着**别家/自创**的工具调用语法 → 这不是回答，是一次没被识别的工具调用。"""
     c = (content or "").strip()
-    return any(mark in c for mark in _FOREIGN_TOOL_SYNTAX)
+    if any(mark in c for mark in _FOREIGN_TOOL_SYNTAX):
+        return True
+    return bool(_INLINE_TOOL_RE.search(c))
+
+
+def _strip_inline_tool_noise(content: str) -> str:
+    """把自创的行内工具调用行从**要展示的回答**里摘掉。
+
+    纠偏重试之后模型仍可能夹带一两行，那是协议噪音，不是给人看的内容——它对用户没有意义，
+    还会让人以为"agent 说要读文件却没读"。整条都是噪音时返回空串，由上层走强制收尾。
+    """
+    if not content:
+        return ""
+    kept = [line for line in content.splitlines() if not _INLINE_TOOL_RE.match(line)]
+    return "\n".join(kept).strip()
 
 
 def _is_weak_final(content: str) -> bool:
@@ -1708,9 +1729,12 @@ class MainAgent:
                     continue
                 if _is_weak_final(content):        # 第二次仍空：转无工具强制收尾，绝不展示「(无回复)」
                     break
-                self.history.append({"role": "assistant", "content": content})
-                emit(content or "(无回复)")
-                return content
+                shown = _strip_inline_tool_noise(content)
+                if not shown:                      # 整条都是协议噪音 → 交给强制收尾重写一条
+                    break
+                self.history.append({"role": "assistant", "content": shown})
+                emit(shown)
+                return shown
             calls, tool_calls_used, budget_exhausted = self._limit_tool_calls(
                 calls, mode, tool_calls_used, say)
             if not calls:
@@ -1761,6 +1785,8 @@ class MainAgent:
             return ""
         if parse_tool_call(content) is not None:    # 模型仍想调工具：放弃，给降级提示
             content = ""
+        # 收尾这一轮也可能夹带自创的行内工具语法；它是协议噪音，不该出现在人看到的回答里。
+        content = _strip_inline_tool_noise(content)
         if not content and await self._try_budget_escalation(mode):
             return await self._run_turn_body(
                 "继续上一轮任务。plan 阶段单段执行预算已到，用户已同意切到 build；"
