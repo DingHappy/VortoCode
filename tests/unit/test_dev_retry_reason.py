@@ -44,7 +44,9 @@ async def test_channel_failure_is_reported_as_such(tmp_path, monkeypatch):
     finally:
         restore()
     assert "通道故障" in "".join(_retry_lines(progress))
-    assert "通道故障" in result
+    # 结构化失败：工具事件据此记 failed，而不是"succeeded 但正文是 ❌"。
+    assert result["ok"] is False
+    assert "通道故障" in result["text"]
 
 
 @pytest.mark.asyncio
@@ -74,3 +76,42 @@ async def test_failing_verification_says_red(tmp_path, monkeypatch):
     finally:
         restore()
     assert "自测未过" in "".join(_retry_lines(progress))
+
+
+@pytest.mark.asyncio
+async def test_failed_tool_is_recorded_as_failed_not_succeeded(tmp_path, monkeypatch):
+    """回归（真机 2026-09-17）：dev_isolated 三轮全败，工具事件却一律 succeeded。
+
+    台账/UI 只看 status，于是界面一片绿，人得逐条读正文才发现哪步真挂了。
+    """
+    from src.agents.main_agent import MainAgent
+
+    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "1")
+    progress: list[str] = []
+    from src.agents.capabilities import SessionCapabilities
+
+    tool, restore = _dev_tool(tmp_path, [("", "什么都没改", None)], progress)
+    events: list[tuple[str, str]] = []
+    try:
+        agent = MainAgent([tool], capabilities=SessionCapabilities.for_profile("local", str(tmp_path)),
+                          on_tool_event=lambda _stage, payload: events.append(
+                              (payload.get("name"), payload.get("status"))))
+        await agent._run_tool("dev_isolated", {"description": "加个 remove 方法"}, "build",
+                              lambda _m: None)
+    finally:
+        restore()
+    assert ("dev_isolated", "failed") in events, events
+
+
+@pytest.mark.asyncio
+async def test_successful_tool_stays_succeeded(tmp_path):
+    from src.agents.main_agent import MainAgent, Tool
+
+    async def handler(_args):
+        return "✅ 好了"
+
+    events: list[tuple[str, str]] = []
+    agent = MainAgent([Tool("noop", "d", {}, handler, read_only=True)],
+                      on_tool_event=lambda _stage, payload: events.append((payload.get("name"), payload.get("status"))))
+    await agent._run_tool("noop", {}, "build", lambda _m: None)
+    assert ("noop", "succeeded") in events, events

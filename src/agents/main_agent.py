@@ -519,10 +519,13 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         if not diff.strip():
             err = str(last.get("err") or "").strip()
             if err:
-                return (f"❌ 隔离实现失败：LLM 通道故障（{err[:160]}），试了 {attempts} 次。"
-                        f"多为中转站/网络抖动——确认中转站健康后重试即可，不必改任务描述。")
-            return (f"❌ 隔离实现未产生任何改动（试了 {attempts} 次，子 agent 始终没真正修改文件）。"
-                    f"请把任务描述写得更具体、可执行（明确要改哪个文件、加什么）后再调 dev_isolated。")
+                # ok=False：台账/UI 据此记 failed。没有它，一条以 ❌ 开头的结果会被记成 succeeded。
+                return {"ok": False, "text": (
+                    f"❌ 隔离实现失败：LLM 通道故障（{err[:160]}），试了 {attempts} 次。"
+                    f"多为中转站/网络抖动——确认中转站健康后重试即可，不必改任务描述。")}
+            return {"ok": False, "text": (
+                f"❌ 隔离实现未产生任何改动（试了 {attempts} 次，子 agent 始终没真正修改文件）。"
+                f"请把任务描述写得更具体、可执行（明确要改哪个文件、加什么）后再调 dev_isolated。")}
         nlines = diff.count("\n")
         if ver and ver["ok"]:
             slug = re.sub(r"[^a-z0-9]+", "-", desc.lower()).strip("-")[:28] or "iso"
@@ -536,8 +539,9 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                         f"git checkout {branch} 查看，未碰 main）。" + _test_delta_note(diff))
             return f"✅ {verdict}{fixed}，但落分支失败：{res['error']}。diff {nlines} 行。"
         tail = (ver or {}).get("output", "")[-1000:]
-        return (f"❌ 隔离实现完成但测试未过（试了 {attempts} 次）。失败输出尾部：\n{tail}\n"
-                f"据此修正后重试（再调 dev_isolated）。diff {nlines} 行，未落地。")
+        return {"ok": False, "text": (
+            f"❌ 隔离实现完成但测试未过（试了 {attempts} 次）。失败输出尾部：\n{tail}\n"
+            f"据此修正后重试（再调 dev_isolated）。diff {nlines} 行，未落地。")}
 
     def _make_writer(test_cmd):
         """造一个'隔离实现子 agent'工厂：worktree 里 read+write+run_tests、自测到通过再交。"""

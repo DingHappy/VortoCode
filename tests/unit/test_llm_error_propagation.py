@@ -115,9 +115,10 @@ async def test_dev_isolated_reports_channel_error(tmp_path, monkeypatch):
 
     tools = {t.name: t for t in build_dev_tools(str(tmp_path))}
     out = await tools["dev_isolated"].handler({"description": "在 README 加一行"})
-    assert "LLM 通道故障" in out
-    assert "mock 502" in out
-    assert "没真正修改文件" not in out       # 别再把通道外伤记成 agent 偷懒
+    assert out["ok"] is False                # 结构化失败：工具事件记 failed，不是 succeeded
+    assert "LLM 通道故障" in out["text"]
+    assert "mock 502" in out["text"]
+    assert "没真正修改文件" not in out["text"]   # 别再把通道外伤记成 agent 偷懒
 
 
 async def test_dependent_branch_reports_channel_error(tmp_path):
