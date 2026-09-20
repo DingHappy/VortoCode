@@ -2259,3 +2259,51 @@ def test_foreign_nudge_names_the_actual_problem():
     assert "等于没发生" in _FOREIGN_NUDGE, "没说清后果，它会照原样再试"
     assert '{"tool"' in _FOREIGN_NUDGE, "没给出正确格式的样子"
     assert _FOREIGN_NUDGE != _NUDGE
+
+
+@pytest.mark.asyncio
+async def test_build_gets_a_wider_default_segment_than_plan():
+    """真机 2026-09-17：build 每轮读完两三个文件就播"单段预算已用完"，三段烧完仍交白卷。
+
+    plan 只读摸底，六步够；build 要读→改→跑测试→看输出→再改，六步连热身都不够。
+    """
+    agent = MainAgent([])
+    assert agent._step_budget("plan") == 6
+    assert agent._step_budget("build") >= 16
+
+
+@pytest.mark.asyncio
+async def test_explicit_max_steps_still_caps_build():
+    """子 agent / 测试刻意收紧的封顶不该被放宽的默认档顶开。"""
+    agent = MainAgent([], max_steps=3)
+    assert agent._step_budget("plan") == agent._step_budget("build") == 3
+
+
+@pytest.mark.asyncio
+async def test_build_segment_budget_is_env_tunable(monkeypatch):
+    monkeypatch.setenv("VORTOCODE_BUILD_MAX_STEPS", "24")
+    assert MainAgent([])._step_budget("build") == 24
+
+
+@pytest.mark.asyncio
+async def test_build_runs_more_steps_before_announcing_the_segment_end():
+    """行为断言：同一个"只会返回工具调用"的模型，build 段跑的步数明显多于 plan 段。"""
+    async def handler(args):
+        return "again"
+
+    tool = Tool("read_file", "读", {"path": "p"}, handler, read_only=True)
+    script = '{"tool":"read_file","args":{"path":"a"}}'
+
+    plan_agent = MainAgent([tool], llm=ScriptedLLM(script))
+    out, say, emit = _capture()
+    await plan_agent.run_turn("循环", mode="plan", say=say, emit=emit)
+    plan_steps = len([s for s in out["say"] if "read_file" in s])
+
+    build_agent = MainAgent([tool], llm=ScriptedLLM(script))
+    build_agent.build_auto_continues = 0          # 只看单段，不看续跑
+    out2, say2, emit2 = _capture()
+    await build_agent.run_turn("循环", mode="build", say=say2, emit=emit2)
+    build_steps = len([s for s in out2["say"] if "read_file" in s])
+
+    assert plan_steps == 6
+    assert build_steps >= 16, f"build 单段只跑了 {build_steps} 步"
