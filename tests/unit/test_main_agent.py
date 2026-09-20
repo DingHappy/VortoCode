@@ -2307,3 +2307,40 @@ async def test_build_runs_more_steps_before_announcing_the_segment_end():
 
     assert plan_steps == 6
     assert build_steps >= 16, f"build 单段只跑了 {build_steps} 步"
+
+
+def test_invented_inline_tool_syntax_is_recognised_as_a_weak_final():
+    """真机 2026-09-17：最终回复是两行 `[tool: read_file({...})]`，被当成答案摆给了用户。"""
+    from src.agents.agent_loop import _is_weak_final, _looks_like_foreign_tool_call
+
+    leaked = '[tool: read_file({"path": "todo.py"})]\n[tool: read_file({"path": "tests/test_todo.py"})]'
+    assert _looks_like_foreign_tool_call(leaked)
+    assert _is_weak_final(leaked)
+
+
+def test_real_answers_are_not_mistaken_for_protocol_noise():
+    from src.agents.agent_loop import _looks_like_foreign_tool_call, _strip_inline_tool_noise
+
+    answer = "我读了 todo.py，建议加一个 remove(index)。\n参考实现：\n    self.items.pop(index)"
+    assert not _looks_like_foreign_tool_call(answer)
+    assert _strip_inline_tool_noise(answer) == answer
+
+
+def test_protocol_noise_is_stripped_from_what_the_user_sees():
+    from src.agents.agent_loop import _strip_inline_tool_noise
+
+    mixed = ('先读一下当前实现，然后给出改法。\n'
+             '[tool: read_file({"path": "todo.py"})]\n'
+             '改法是加一个 remove(index)。')
+    assert _strip_inline_tool_noise(mixed) == "先读一下当前实现，然后给出改法。\n改法是加一个 remove(index)。"
+    assert _strip_inline_tool_noise('[tool: read_file({"path": "a"})]') == ""
+
+
+@pytest.mark.asyncio
+async def test_leaked_tool_syntax_never_reaches_the_user():
+    """端到端：模型两次都吐自创语法 → 用户看到的是强制收尾的话，不是协议原文。"""
+    agent = MainAgent([], llm=ScriptedLLM('[tool: read_file({"path": "todo.py"})]'))
+    out, say, emit = _capture()
+    await agent.run_turn("看看这个文件", mode="plan", say=say, emit=emit)
+    shown = "\n".join(out["emit"])
+    assert "[tool:" not in shown, shown
