@@ -578,7 +578,17 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                               f"第 {attempt} 次重试…")
                     await asyncio.sleep(min(10.0, 3.0 * (attempt - 1)))
                 else:
-                    _progress(f"↻ 「{desc[:32]}」上次未达标（红/无改动），第 {attempt} 次换全新 worktree 重试…")
+                    # 死因按**证据**分三种，别一律说成"红/无改动"：真机 2026-09-17 的那轮里，
+                    # 每次失败都被播成"未达标（红/无改动）"，而账本最后给出的死因是 TimeoutError
+                    # ——人照着"未达标"去改任务描述，改一晚上也没用，因为根本不是任务的问题。
+                    prev_ver = last.get("ver")
+                    if prev_ver and not prev_ver.get("ok"):
+                        why = "自测未过（红）"
+                    elif not str(last.get("diff") or "").strip():
+                        why = "没有产出任何改动"
+                    else:
+                        why = "未达标"
+                    _progress(f"↻ 「{desc[:32]}」上次{why}，第 {attempt} 次换全新 worktree 重试…")
             wid = "wt-" + uuid.uuid4().hex[:8]
             try:
                 diff, conclusion, ver = await run_isolated_task(
