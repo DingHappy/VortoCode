@@ -20,8 +20,12 @@ def _resolve_llm(use_llm, llm_client):
     if use_llm is False:
         return False, None
     try:
-        from ..llm import get_llm_client
-        client = get_llm_client("balanced")
+        # 拆解只跑一次、token 最少，拆错了后面全白干——这道工序最值得单独指一个强模型。
+        from ..llm.providers import client_for_role
+        client = client_for_role("decompose")
+        if client is None:
+            from ..llm import get_llm_client
+            client = get_llm_client("balanced")
     except Exception as e:  # 没装 LLM 依赖等
         logger.warning(f"LLM client unavailable, using rule-based: {e}")
         return False, None
