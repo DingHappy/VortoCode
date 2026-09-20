@@ -163,6 +163,34 @@ def _stream_usage_enabled(base_url: str) -> bool:
         return False
 
 
+def _aiohttp_timeout(config: "LLMConfig"):
+    """按空闲时间算的 aiohttp 超时：持续有分片就不掐，真卡住才超时。
+
+    `total` 是整次请求（含模型生成全程）的上限，拿它当"读超时"用，等于给长生成判了死刑。
+    真正对应"多久没动静"的是 `sock_read`。
+    """
+    import aiohttp
+
+    return aiohttp.ClientTimeout(
+        total=max(config.request_timeout, config.timeout),
+        sock_connect=min(config.timeout, 15.0),
+        sock_read=config.timeout,
+    )
+
+
+def _sdk_timeout(config: "LLMConfig"):
+    """OpenAI SDK（httpx）侧的同一语义：read/write 按空闲算，连接单独短一点。
+
+    httpx 没有"整次请求上限"这一维，其 read 本来就是每次读的空闲超时——正是我们要的。
+    httpx 不可用时退回单个浮点数（SDK 会把它当作所有阶段的超时），行为与此前一致。
+    """
+    try:
+        import httpx
+    except ImportError:
+        return config.timeout
+    return httpx.Timeout(config.timeout, connect=min(config.timeout, 15.0))
+
+
 def _int_env(name: str, default: int) -> int:
     """读整型环境变量；缺省/坏值都回退到 default。"""
     try:
@@ -441,8 +469,14 @@ class LLMConfig(BaseModel):
     vision_model: str = Field(default_factory=lambda: os.getenv("VORTOCODE_VISION_MODEL", "mimo-v2.5"))
     temperature: float = 0.7
     max_tokens: int = 4096
-    # Desktop 交互不能无提示卡两分钟。30 秒是单次请求的读超时；流式响应持续有分片时不会误杀。
+    # **空闲**超时：多久没收到任何字节才判定这次请求卡死。Desktop 交互不能无提示卡两分钟，
+    # 但它衡量的必须是"没动静"，不是"总共花了多久"——写代码的一轮本来就要跑几十秒到几分钟。
+    # （真机 2026-09-17：这里曾被当成 aiohttp 的 `total`，于是隔离 dev 流水线里的子 agent 一律
+    #  在 30 秒被掐断，报 TimeoutError，改动明明写出来了却判红丢弃。）
     timeout: float = Field(default_factory=lambda: _env_float("OPENAI_TIMEOUT", 30.0))
+    # 整次请求的硬上限——只防"一直滴水、永远不完"的病态连接，正常长生成不该撞到它。
+    request_timeout: float = Field(
+        default_factory=lambda: _env_float("OPENAI_REQUEST_TIMEOUT", 900.0))
     # 默认不自动重试：超时请求可能已到上游，静默重发会把一次等待翻倍并产生重复计费。
     # 5xx 会立即呈现给用户，由明确的“重试”动作发起下一次请求；高级用户仍可经 env 开启。
     max_retries: int = Field(default_factory=lambda: _int_env("OPENAI_MAX_RETRIES", 0))
@@ -480,7 +514,7 @@ class LLMClient:
                 self._client = AsyncOpenAI(
                     base_url=self.config.base_url,
                     api_key=self.config.api_key,
-                    timeout=self.config.timeout,
+                    timeout=_sdk_timeout(self.config),
                     max_retries=self.config.max_retries,   # 暂时性错误的内建退避重试（原先用 SDK 默认 2、不可调）
                 )
             except ImportError:
@@ -774,7 +808,7 @@ class LLMClient:
             "max_tokens": max_tokens or self.config.max_tokens,
         }
 
-        timeout = aiohttp.ClientTimeout(total=self.config.timeout)
+        timeout = _aiohttp_timeout(self.config)
         last_err: Optional[Exception] = None
         for attempt in range(self.config.max_retries + 1):
             if attempt:                                  # 重试前指数退避（首次 attempt=0 不睡）
@@ -843,7 +877,6 @@ class LLMClient:
         """
         import base64
 
-        import aiohttp
         text = (text or "").strip()
         if not text:
             raise ValueError("TTS 需要非空文本。")
@@ -856,7 +889,7 @@ class LLMClient:
         url = f"{self.config.base_url}/chat/completions"
         headers = {"Content-Type": "application/json",
                    "Authorization": f"Bearer {self.config.api_key}"}
-        timeout = aiohttp.ClientTimeout(total=self.config.timeout)
+        timeout = _aiohttp_timeout(self.config)
         async with outbound_session(timeout=timeout) as session:
             async with session.post(url, json=payload, headers=headers) as resp:
                 if resp.status != 200:
