@@ -108,7 +108,8 @@ import {
 } from "./lib/labels";
 import { criterionVerifierDraft, goalEvidenceKey, goalFormLines } from "./lib/goals";
 import type { GoalVerifierDraft } from "./lib/goals";
-import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey, STORAGE_KEYS } from "./lib/storage";
+import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey, projectToRestore,
+  STORAGE_KEYS } from "./lib/storage";
 import { normalizeEditorText, serializeEditorText } from "./lib/text";
 import { localDay } from "./lib/time";
 import { finishRunningActivities, hydrateActivities, protocolActivity, upsertActivity } from "./protocol/activities";
@@ -216,6 +217,7 @@ function App() {
   const managedProcessRunningRef = useRef(false);
   const runtimeStartingRef = useRef(false);
   const initializationStartedRef = useRef(false);
+  const projectRestoreDoneRef = useRef(false);
   const supervisionGenerationRef = useRef(0);
   const runtimeInboxGenerationRef = useRef(0);
   const runtimeTokensRef = useRef<Map<string, string>>(new Map());
@@ -1667,6 +1669,7 @@ function App() {
     if (project.repoRoot === repoRoot.trim()) {
       setBaseUrl(project.baseUrl);
       localStorage.setItem(STORAGE_KEYS.baseUrl, project.baseUrl);
+      localStorage.setItem(STORAGE_KEYS.lastProjectId, project.id);
       if (connection !== "connected") {
         const sid = localStorage.getItem(projectSessionKey(project.id)) ?? activeSid;
         return startWorkspace({ repoRoot: project.repoRoot, baseUrl: project.baseUrl, sid, token: "" });
@@ -1701,6 +1704,7 @@ function App() {
       localStorage.setItem(STORAGE_KEYS.sid, sid);
       localStorage.setItem(STORAGE_KEYS.repoRoot, project.repoRoot);
       localStorage.setItem(STORAGE_KEYS.baseUrl, project.baseUrl);
+      localStorage.setItem(STORAGE_KEYS.lastProjectId, project.id);
       await refreshWorkspaceFiles(project.repoRoot);
       openInspector("files");
       setSettingsOpen(false);
@@ -1749,6 +1753,21 @@ function App() {
     }
   };
 
+  // 重启后回到上次停的项目：通用会话先起来（快、且是失败时的落点），连上后再切回去。
+  // 真机 2026-09-17：关掉再开永远落在通用会话，用户得自己重新点一次项目。
+  // 只认注册表里还在的项目；人主动切回通用/Scratch 时那条记录会被清掉，不会硬把人拽回去。
+  useEffect(() => {
+    if (projectRestoreDoneRef.current) return;
+    if (connection !== "connected" || activeScope !== "general") return;
+    const target = projectToRestore(projects, localStorage.getItem(STORAGE_KEYS.lastProjectId));
+    if (!target) return;
+    projectRestoreDoneRef.current = true;
+    void (async () => {
+      const restored = await switchProject(target).catch(() => false);
+      if (!restored) setBanner(`未能回到上次的项目「${target.name}」，已留在通用会话`);
+    })();
+  }, [connection, activeScope, projects, runtimeRecoveries, switchProject]);
+
   const switchManagedScope = async (
     scope: "general" | "scratch",
     managedRuntime?: GatewayProcessStatus,
@@ -1778,6 +1797,7 @@ function App() {
       setRepoRoot("");
       localStorage.setItem(STORAGE_KEYS.sid, sid);
       localStorage.removeItem(STORAGE_KEYS.repoRoot);
+      localStorage.removeItem(STORAGE_KEYS.lastProjectId);   // 人主动离开项目 → 下次别再自动回去
       if (scope === "scratch") openInspector("files");
       else {
         setInspectorTabState("project");

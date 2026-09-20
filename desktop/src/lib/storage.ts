@@ -11,6 +11,8 @@ export const STORAGE_KEYS = {
   notificationsEnabled: "vortocode.desktop.notificationsEnabled",
   notifiedDecisions: "vortocode.desktop.notifiedDecisions",
   projectSessionPrefix: "vortocode.desktop.projectSid:",
+  // 上次停在哪个项目：重启后回到那里，而不是一律丢回通用会话（真机 2026-09-17）。
+  lastProjectId: "vortocode.desktop.lastProjectId",
 } as const;
 
 // 每个项目一个会话 id，key 由项目 id 拼出前缀。
@@ -32,4 +34,14 @@ export function loadNotifiedDecisionIds(): Set<string> {
 
 export function persistNotifiedDecisionIds(ids: Set<string>): void {
   localStorage.setItem(STORAGE_KEYS.notifiedDecisions, JSON.stringify(Array.from(ids).slice(-NOTIFIED_DECISIONS_LIMIT)));
+}
+
+/** 启动时该恢复哪个项目：记过 id 且该项目仍在注册表里才恢复，否则回通用会话（返回 null）。 */
+export function projectToRestore<T extends { id: string }>(
+  projects: readonly T[],
+  lastProjectId: string | null,
+): T | null {
+  const wanted = (lastProjectId ?? "").trim();
+  if (!wanted) return null;
+  return projects.find((project) => project.id === wanted) ?? null;
 }
