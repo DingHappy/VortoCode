@@ -246,3 +246,39 @@ async def test_build_command_tool_rechecks_isolation_after_confirmation(tmp_path
     monkeypatch.setattr(sb, "sandbox_backend", lambda: "")
     await tool.handler({"command": "echo confirmed-fallback"})
     assert captured[-1] is False         # 只有本次确认过的 auto fallback 才允许 host
+
+
+def test_exited_background_read_waits_for_the_drain_thread():
+    """回归（CI 2026-09-20）：status 已是 exited、output 却是空——最后几行还在收行线程里。
+
+    调用方据此认定"这条命令没有输出"，短命令的输出就这么整段丢掉。真机上收行只慢几毫秒，
+    本地跑不出来，所以这里用"进程立刻退出、但 stdout 慢一拍才吐行"的假进程确定性复现。
+    """
+    import time
+
+    from src.agents.shell import _BgProc
+
+    class _SlowStdout:
+        def __init__(self):
+            self.closed = False
+
+        def __iter__(self):
+            time.sleep(0.3)          # 进程早已退出，行还没进缓冲
+            yield "done\n"
+
+        def close(self):
+            self.closed = True
+
+    class _ExitedPopen:
+        pid = 4242
+
+        def __init__(self):
+            self.stdout = _SlowStdout()
+
+        def poll(self):
+            return 7                 # 一开始就是终态
+
+    proc = _BgProc("bg-test", "echo done && exit 7", _ExitedPopen(), {})
+    result = proc.read(tail=5)
+    assert result["status"] == "exited" and result["code"] == 7
+    assert result["output"].strip() == "done", f"终态下不能交空输出：{result}"

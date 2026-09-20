@@ -232,6 +232,8 @@ _BG_LOCK = threading.Lock()
 _BG_PROCS: "dict[str, _BgProc]" = {}
 _BG_COUNTER = itertools.count(1)
 _BG_MAX_LINES = 4000          # 每个后台进程最多留最近这么多行（环形缓冲，防长跑 OOM）
+# 进程已退出后，给收行线程收尾的宽限（秒）。见 _BgProc.read。
+_BG_DRAIN_GRACE = 2.0
 _BG_MAX_PROCS = 10            # 并发后台进程上限，防失控
 
 
@@ -269,7 +271,15 @@ class _BgProc:
         return ("running", None) if code is None else ("exited", code)
 
     def read(self, tail: Optional[int] = None) -> dict:
-        """取输出。tail=None → 上次读之后的**增量**；tail=N → 最近 N 行（不动读游标）。"""
+        """取输出。tail=None → 上次读之后的**增量**；tail=N → 最近 N 行（不动读游标）。
+
+        进程已退出时先等收行线程收尾：`poll()` 只说进程没了，**不说它写的行都已经进缓冲**。
+        不等就会出现"status=exited 但 output 为空"——调用方据此认定命令没有输出，于是短命令
+        （`echo done && exit 7` 这种）的输出被整段丢掉。CI 上真实复现过（2026-09-20）。
+        管道在进程退出时关闭，收行线程随即结束，所以这里的等待正常是零成本。
+        """
+        if self.popen.poll() is not None:
+            self._reader.join(timeout=_BG_DRAIN_GRACE)
         with self._lock:
             first_idx = self.total - len(self.lines)    # 缓冲里第一行的绝对行号
             if tail is not None:
