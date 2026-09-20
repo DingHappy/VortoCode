@@ -449,7 +449,7 @@ class MainAgent:
         self,
         tools: list[Tool],
         llm: Any = None,
-        max_steps: int = 6,
+        max_steps: Optional[int] = None,   # None = 用默认档（plan 6 / build 16）
         max_history: int = 24,
         max_context_tokens: int = 8000,
         extra_system: Optional[str] = None,
@@ -486,7 +486,14 @@ class MainAgent:
         # emit 那套语义是说给盯屏的人听的；后台没有人，空串会被上游误判成"子 agent 没干活"
         # （no-op），把通道外伤记成 agent 内科病（真机复盘：三任务六轮全被 502 吞成"无改动/出错"）。
         self._raise_llm_errors = bool(raise_llm_errors)
-        self.max_steps = _env_int("VORTOCODE_MAX_STEPS", max_steps)   # 可全局调高 build/普通预算
+        self.max_steps = _env_int("VORTOCODE_MAX_STEPS", 6 if max_steps is None else max_steps)
+        # build 单段默认给得比 plan 宽：plan 只读摸底，build 要读文件→改→跑测试→看输出→再改，
+        # 六步连"读两个文件再动手"都不够。真机 2026-09-17：一个三行的改动，每一轮都在读完
+        # 两三个文件后播"单段预算已用完，自动继续（n/3）"，三段烧完还是交白卷。
+        # 续跑不是免费的：每段都要重放一遍历史，段切得越碎越贵。
+        # **调用方显式传了 max_steps 就照它办**（子 agent、测试刻意收紧的封顶不该被这里放开）。
+        _build_default = self.max_steps if max_steps is not None else max(16, self.max_steps)
+        self.build_max_steps = _env_int("VORTOCODE_BUILD_MAX_STEPS", _build_default)
         # build 是真实开发模式，固定 max_steps 只作为"单段预算"；到段尾会自动续跑若干段。
         # 这个安全阈值只防模型无限循环，不应成为正常开发的停止点。
         self.build_auto_continues = _env_int("VORTOCODE_BUILD_AUTO_CONTINUES", 3, minimum=0)
@@ -1482,7 +1489,8 @@ class MainAgent:
         return None
 
     def _step_budget(self, mode: str) -> int:
-        return self.max_steps
+        """单段可以跑多少步。build 比 plan 宽——见 build_max_steps 处的注释。"""
+        return self.build_max_steps if mode == "build" else self.max_steps
 
     def _limit_tool_calls(self, calls: list, mode: str, used: int,
                           say: Callable[[str], None]) -> tuple[list, int, bool]:
