@@ -33,12 +33,16 @@ def build_adapter(channel: str) -> Tuple[object, str]:
     if channel == "telegram":
         token = os.getenv("VORTOCODE_TG_TOKEN", "").strip()
         owner = os.getenv("VORTOCODE_TG_OWNER_ID", "").strip()
+        if token and not owner:
+            from src.im.telegram_pairing import PairingError, load_paired_owner
+            try:
+                owner = load_paired_owner(token)
+            except PairingError as exc:
+                raise IMConfigError(str(exc)) from exc
         if not token or not owner:
             raise IMConfigError(
                 "Telegram 桥需要环境变量 VORTOCODE_TG_TOKEN 和 VORTOCODE_TG_OWNER_ID"
-                "（配对制，fail-closed）。\n"
-                "  ① 找 @BotFather 建 bot 拿 token；② 给 bot 发一条消息，再从 "
-                "https://api.telegram.org/bot<token>/getUpdates 读你自己的数字 chat id。")
+                "（或先运行 vc im-pair telegram 私聊配对；缺失时 fail-closed）。")
         from src.im.telegram import TelegramAdapter
         # bot_username 是**可选**的（群提及门用；不设则首次群消息时 getMe 惰性解析），
         # 刻意不进上面的 fail-closed 必填项——它缺失只会让群消息更不响应，不影响私聊凭证路径。
