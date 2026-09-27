@@ -10,12 +10,18 @@ selector：仅对 pytest 有意义（文件级 narrow）；其它语言多不支
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import List, Optional
 from src.utils.python_exe import pytest_argv
 
 
-def _pytest_cmd(selector: Optional[str]) -> List[str]:
+def _pytest_cmd(repo_root, selector: Optional[str]) -> List[str]:
+    # Models often pass a test function name instead of a pytest file/node path.
+    # Pytest interprets a bare name as a missing file and never runs any tests.
+    if selector and re.fullmatch(r"test_[A-Za-z0-9_]+", selector) \
+            and not (Path(repo_root) / selector).exists():
+        return pytest_argv("-q", "tests/", "-k", selector)
     return pytest_argv("-q", selector or "tests/")
 
 
@@ -55,7 +61,7 @@ def detect_test_cmd(repo_root, selector: Optional[str] = None) -> List[str]:
     # Python：任一强信号
     py_markers = ("pyproject.toml", "setup.py", "setup.cfg", "pytest.ini", "tox.ini", "conftest.py")
     if any((root / m).exists() for m in py_markers) or (root / "tests").is_dir():
-        return _pytest_cmd(selector)
+        return _pytest_cmd(root, selector)
 
     # Makefile 里有 `test:` 目标
     mk = root / "Makefile"
@@ -66,4 +72,4 @@ def detect_test_cmd(repo_root, selector: Optional[str] = None) -> List[str]:
         except Exception:  # noqa: BLE001
             pass
 
-    return _pytest_cmd(selector)                            # 兜底：pytest（VortoCode 自身就是 Python）
+    return _pytest_cmd(root, selector)                      # 兜底：pytest（VortoCode 自身就是 Python）

@@ -681,6 +681,32 @@ export interface DiffPayload {
   diff: string;
 }
 
+export interface IsolatedDelivery {
+  id: string;
+  branch: string;
+  base_oid: string;
+  head_oid: string;
+  current_head: string;
+  unchanged: boolean;
+  description: string;
+  created_at: string;
+  attempts: number;
+  verification: { ok: boolean; skipped: boolean; cmd: string; output: string };
+}
+
+export interface IsolatedDeliverySnapshot extends IsolatedDelivery {
+  files: Array<{ path: string; original_path: string; status: string }>;
+  truncated: boolean;
+}
+
+export interface IsolatedDeliveryDiff {
+  ok: boolean;
+  path: string;
+  diff: string;
+  head: string;
+  unchanged: boolean;
+}
+
 export type GitReviewScope = "working" | "staged";
 export type GitReviewAction = "stage" | "unstage" | "revert";
 

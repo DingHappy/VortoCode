@@ -6,7 +6,7 @@
 
 import pytest
 
-from src.agents.main_agent import (MainAgent, SkillRegistry, Tool, _to_native_messages,
+from src.agents.main_agent import (MainAgent, SkillRegistry, Tool, _diff_change_counts, _to_native_messages,
                                    parse_tool_call)
 
 
@@ -32,6 +32,19 @@ def test_parse_tool_call_variants():
     # 无 tool 键 / 坏 JSON → None（当最终回复，不会误当工具）
     assert parse_tool_call('{"foo": 1}') is None
     assert parse_tool_call("坏 json {不是") is None
+
+
+def test_diff_change_counts_ignores_patch_metadata():
+    diff = "\n".join([
+        "diff --git a/pricing.py b/pricing.py",
+        "index 123..456 100644",
+        "--- a/pricing.py",
+        "+++ b/pricing.py",
+        "@@ -1 +1 @@",
+        "-return sum(price for price, quantity in items)",
+        "+return sum(price * quantity for price, quantity in items)",
+    ])
+    assert _diff_change_counts(diff) == (1, 1)
 
 
 def test_native_tool_history_preserves_reasoning_content():

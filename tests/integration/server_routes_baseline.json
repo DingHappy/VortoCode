@@ -336,6 +336,24 @@
   ]
  },
  {
+  "path": "/api/git/isolated-deliveries",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/git/isolated-deliveries/{delivery_id}",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
+  "path": "/api/git/isolated-deliveries/{delivery_id}/diff",
+  "methods": [
+   "GET"
+  ]
+ },
+ {
   "path": "/api/git/log",
   "methods": [
    "GET"

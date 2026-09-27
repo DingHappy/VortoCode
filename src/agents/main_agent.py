@@ -546,6 +546,14 @@ def _test_delta_note(diff: str) -> str:
     return _test_delta_msg(_count_test_files(diff))
 
 
+def _diff_change_counts(diff: str) -> tuple[int, int]:
+    """只计 hunk 中的新增/删除行，避免把 diff 元数据误报成代码改动。"""
+    lines = diff.splitlines()
+    additions = sum(line.startswith("+") and not line.startswith("+++ ") for line in lines)
+    deletions = sum(line.startswith("-") and not line.startswith("--- ") for line in lines)
+    return additions, deletions
+
+
 def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]] = None,
                     confirm: Optional[Callable] = None, draft_pr: bool = False,
                     capabilities: Any = None,
@@ -620,8 +628,14 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             return {"ok": False, "text": (
                 f"❌ 隔离实现未产生任何改动（试了 {attempts} 次，子 agent 始终没真正修改文件）。"
                 f"请把任务描述写得更具体、可执行（明确要改哪个文件、加什么）后再调 dev_isolated。")}
-        nlines = diff.count("\n")
+        additions, deletions = _diff_change_counts(diff)
+        change_size = f"+{additions}/-{deletions} 行"
         if ver and ver["ok"]:
+            import subprocess
+            base_result = await asyncio.to_thread(
+                subprocess.run, ["git", "-C", repo_root, "rev-parse", "HEAD"],
+                capture_output=True, text=True, timeout=20)
+            base_oid = base_result.stdout.strip() if base_result.returncode == 0 else ""
             slug = re.sub(r"[^a-z0-9]+", "-", desc.lower()).strip("-")[:28] or "iso"
             branch = f"vorto/{slug}-{uuid.uuid4().hex[:8]}"
             res = await asyncio.to_thread(apply_diff_to_branch, repo_root, branch, diff, f"dev_isolated: {desc}")
@@ -629,14 +643,22 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             verdict = ("已隔离实现（**纯文档改动，已跳过测试——跳过≠通过**）"
                        if ver.get("skipped") else "已隔离实现且测试通过")
             if res["ok"]:
-                return (f"✅ {verdict}{fixed}，落到新分支 {branch}（{nlines} 行，"
+                delivery_note = ""
+                try:
+                    from src.gateway.isolated_deliveries import record_isolated_delivery
+                    await asyncio.to_thread(
+                        record_isolated_delivery, repo_root, branch=branch, description=desc,
+                        base_oid=base_oid, verification=ver, attempts=attempts)
+                except Exception as error:  # noqa: BLE001
+                    delivery_note = f"（Desktop 交付记录未保存：{_exc_text(error)}；分支仍可用）"
+                return (f"✅ {verdict}{fixed}，落到新分支 {branch}（{change_size}，"
                         f"git checkout {branch} 查看，未碰 main）。"
-                        + _test_delta_note(diff) + _dropped_tests_note(diff, desc))
-            return f"✅ {verdict}{fixed}，但落分支失败：{res['error']}。diff {nlines} 行。"
+                        + _test_delta_note(diff) + _dropped_tests_note(diff, desc) + delivery_note)
+            return f"✅ {verdict}{fixed}，但落分支失败：{res['error']}。diff {change_size}。"
         tail = (ver or {}).get("output", "")[-1000:]
         return {"ok": False, "text": (
             f"❌ 隔离实现完成但测试未过（试了 {attempts} 次）。失败输出尾部：\n{tail}\n"
-            f"据此修正后重试（再调 dev_isolated）。diff {nlines} 行，未落地。")}
+            f"据此修正后重试（再调 dev_isolated）。diff {change_size}，未落地。")}
 
     def _make_writer(test_cmd):
         """造一个'隔离实现子 agent'工厂：worktree 里 read+write+run_tests、自测到通过再交。"""
@@ -1329,14 +1351,14 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
              "在隔离 git worktree 里实现一个独立子任务 + 自测 + 跑测试验证；✅通过就自动落到一个"
              "vorto/<id> 新分支（绝不碰 main/工作区），❌带失败输出供修正。仅 build",
              {"description": "要在隔离工作区实现的子任务",
-              "test": "可选，pytest 选择器，省略则跑全量 tests/"},
+              "test": "可选，pytest 文件/节点路径或 test_函数名；省略则跑全量 tests/"},
              _dev_isolated, read_only=False, required_capabilities=("host_process",)),
         Tool("dev_parallel",
              "并行实现：多个**相互独立**的子任务各起隔离 worktree 同时实现+自测+验证（互不冲突，"
              "红了带失败反馈自修复重试），绿块一并落到一个 vorto/parallel 新分支（不碰 main），"
              "**落分支后再跑一遍集成测试**抓'单独绿合起来红'，汇报各自 ✅/❌ 及集成结果。最多 5（仅 build）",
              {"tasks": "相互独立的子任务字符串列表",
-              "test": "可选，pytest 选择器，省略则各自跑全量 tests/"},
+              "test": "可选，pytest 文件/节点路径或 test_函数名；省略则各自跑全量 tests/"},
              _dev_parallel, read_only=False, required_capabilities=("host_process",)),
         Tool("dev_auto",
              "把一个大任务**端到端**做完：自动分解→无依赖子任务并行隔离实现→**有依赖的按拓扑序"
