@@ -24,6 +24,9 @@ import type {
   GitReviewSnapshot,
   JournalDaySummary,
   JournalContinuation,
+  IsolatedDelivery,
+  IsolatedDeliverySnapshot,
+  IsolatedDeliveryDiff,
   JournalSnapshot,
   NoticeItem,
   WeeklyJournalSnapshot,
@@ -314,6 +317,20 @@ export class GatewayClient {
 
   async getGitReview(): Promise<GitReviewSnapshot> {
     return this.request("/api/git/review");
+  }
+
+  async listIsolatedDeliveries(): Promise<IsolatedDelivery[]> {
+    const payload = await this.request<{ deliveries: IsolatedDelivery[] }>("/api/git/isolated-deliveries");
+    return payload.deliveries;
+  }
+
+  async getIsolatedDelivery(id: string): Promise<IsolatedDeliverySnapshot> {
+    return this.request(`/api/git/isolated-deliveries/${encodeURIComponent(id)}`);
+  }
+
+  async getIsolatedDeliveryDiff(id: string, path: string): Promise<IsolatedDeliveryDiff> {
+    const params = new URLSearchParams({ path });
+    return this.request(`/api/git/isolated-deliveries/${encodeURIComponent(id)}/diff?${params.toString()}`);
   }
 
   async getPrDelivery(): Promise<PrDeliverySnapshot> {

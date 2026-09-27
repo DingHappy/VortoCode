@@ -631,6 +631,11 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         additions, deletions = _diff_change_counts(diff)
         change_size = f"+{additions}/-{deletions} 行"
         if ver and ver["ok"]:
+            import subprocess
+            base_result = await asyncio.to_thread(
+                subprocess.run, ["git", "-C", repo_root, "rev-parse", "HEAD"],
+                capture_output=True, text=True, timeout=20)
+            base_oid = base_result.stdout.strip() if base_result.returncode == 0 else ""
             slug = re.sub(r"[^a-z0-9]+", "-", desc.lower()).strip("-")[:28] or "iso"
             branch = f"vorto/{slug}-{uuid.uuid4().hex[:8]}"
             res = await asyncio.to_thread(apply_diff_to_branch, repo_root, branch, diff, f"dev_isolated: {desc}")
@@ -638,9 +643,17 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             verdict = ("已隔离实现（**纯文档改动，已跳过测试——跳过≠通过**）"
                        if ver.get("skipped") else "已隔离实现且测试通过")
             if res["ok"]:
+                delivery_note = ""
+                try:
+                    from src.gateway.isolated_deliveries import record_isolated_delivery
+                    await asyncio.to_thread(
+                        record_isolated_delivery, repo_root, branch=branch, description=desc,
+                        base_oid=base_oid, verification=ver, attempts=attempts)
+                except Exception as error:  # noqa: BLE001
+                    delivery_note = f"（Desktop 交付记录未保存：{_exc_text(error)}；分支仍可用）"
                 return (f"✅ {verdict}{fixed}，落到新分支 {branch}（{change_size}，"
                         f"git checkout {branch} 查看，未碰 main）。"
-                        + _test_delta_note(diff) + _dropped_tests_note(diff, desc))
+                        + _test_delta_note(diff) + _dropped_tests_note(diff, desc) + delivery_note)
             return f"✅ {verdict}{fixed}，但落分支失败：{res['error']}。diff {change_size}。"
         tail = (ver or {}).get("output", "")[-1000:]
         return {"ok": False, "text": (

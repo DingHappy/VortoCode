@@ -59,6 +59,36 @@ async def git_review_snapshot():
         raise HTTPException(status_code=400, detail=str(error)) from error
 
 
+@router.get("/api/git/isolated-deliveries")
+async def git_isolated_deliveries():
+    from src.gateway.isolated_deliveries import list_isolated_deliveries
+
+    try:
+        return {"deliveries": await asyncio.to_thread(list_isolated_deliveries, os.getcwd())}
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@router.get("/api/git/isolated-deliveries/{delivery_id}")
+async def git_isolated_delivery(delivery_id: str):
+    from src.gateway.isolated_deliveries import isolated_delivery_snapshot
+
+    try:
+        return await asyncio.to_thread(isolated_delivery_snapshot, os.getcwd(), delivery_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.get("/api/git/isolated-deliveries/{delivery_id}/diff")
+async def git_isolated_delivery_diff(delivery_id: str, path: str):
+    from src.gateway.isolated_deliveries import isolated_delivery_diff
+
+    try:
+        return await asyncio.to_thread(isolated_delivery_diff, os.getcwd(), delivery_id, path)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
 @router.get("/api/git/review/diff")
 async def git_review_diff(path: str, scope: str = "working"):
     from src.gateway.git_review import review_diff

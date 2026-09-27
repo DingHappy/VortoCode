@@ -51,6 +51,9 @@ import type {
   GoalItem,
   HookConfigStatus,
   JournalNextAction,
+  IsolatedDelivery,
+  IsolatedDeliverySnapshot,
+  IsolatedDeliveryDiff,
   NoticeItem,
   OpenWorkspaceFileResult,
   PendingConfirmation,
@@ -320,6 +323,13 @@ function App() {
     tabsNeedingAttention.has(tab) ? "attention" : "",
   ].filter(Boolean).join(" "), [inspectorTab, tabsNeedingAttention]);
   const [diffPayload, setDiffPayload] = useState<DiffPayload | null>(null);
+  const [isolatedDeliveries, setIsolatedDeliveries] = useState<IsolatedDelivery[]>([]);
+  const [isolatedDelivery, setIsolatedDelivery] = useState<IsolatedDeliverySnapshot | null>(null);
+  const [isolatedDeliveryDiff, setIsolatedDeliveryDiff] = useState<IsolatedDeliveryDiff | null>(null);
+  const [isolatedDeliveryPath, setIsolatedDeliveryPath] = useState("");
+  const [isolatedDeliveryError, setIsolatedDeliveryError] = useState("");
+  const [isolatedDeliveryLoading, setIsolatedDeliveryLoading] = useState(false);
+  const isolatedDeliveryRequestRef = useRef(0);
   const [gitReview, setGitReview] = useState<GitReviewSnapshot | null>(null);
   const [gitReviewDiff, setGitReviewDiff] = useState<GitReviewDiff | null>(null);
   const [gitSelectedPath, setGitSelectedPath] = useState("");
@@ -707,6 +717,69 @@ function App() {
     }
   }, [gitReviewScope, gitSelectedPath]);
 
+  const refreshIsolatedDeliveries = useCallback(async () => {
+    const client = clientRef.current;
+    if (!client) return;
+    const generation = ++isolatedDeliveryRequestRef.current;
+    setIsolatedDelivery(null);
+    setIsolatedDeliveryDiff(null);
+    setIsolatedDeliveryPath("");
+    setIsolatedDeliveries([]);
+    setIsolatedDeliveryLoading(true);
+    try {
+      const deliveries = await client.listIsolatedDeliveries();
+      if (generation === isolatedDeliveryRequestRef.current && clientRef.current === client) {
+        setIsolatedDeliveries(deliveries);
+        setIsolatedDeliveryError("");
+      }
+    } catch (error) {
+      if (generation === isolatedDeliveryRequestRef.current && clientRef.current === client) {
+        setIsolatedDeliveryError(errorText(error, "读取隔离交付失败"));
+      }
+    } finally {
+      if (generation === isolatedDeliveryRequestRef.current) setIsolatedDeliveryLoading(false);
+    }
+  }, []);
+
+  const openIsolatedDelivery = async (id: string, preferredPath = "") => {
+    const client = clientRef.current;
+    if (!client) return;
+    const generation = ++isolatedDeliveryRequestRef.current;
+    setIsolatedDeliveryError("");
+    setIsolatedDelivery(null);
+    setIsolatedDeliveryDiff(null);
+    try {
+      const snapshot = await client.getIsolatedDelivery(id);
+      if (generation !== isolatedDeliveryRequestRef.current) return;
+      setIsolatedDelivery(snapshot);
+      const path = snapshot.files.find((file) => file.path === preferredPath)?.path ?? snapshot.files[0]?.path ?? "";
+      setIsolatedDeliveryPath(path);
+      if (path) {
+        const diff = await client.getIsolatedDeliveryDiff(id, path);
+        if (generation === isolatedDeliveryRequestRef.current) setIsolatedDeliveryDiff(diff);
+      }
+    } catch (error) {
+      if (generation === isolatedDeliveryRequestRef.current) setIsolatedDeliveryError(errorText(error, "读取隔离交付失败"));
+    }
+  };
+
+  const loadIsolatedDeliveryDiff = async (path: string) => {
+    const client = clientRef.current;
+    if (!client || !isolatedDelivery) return;
+    const generation = ++isolatedDeliveryRequestRef.current;
+    setIsolatedDeliveryPath(path);
+    setIsolatedDeliveryDiff(null);
+    try {
+      const diff = await client.getIsolatedDeliveryDiff(isolatedDelivery.id, path);
+      if (generation === isolatedDeliveryRequestRef.current) {
+        setIsolatedDeliveryDiff(diff);
+        setIsolatedDeliveryError("");
+      }
+    } catch (error) {
+      if (generation === isolatedDeliveryRequestRef.current) setIsolatedDeliveryError(errorText(error, "读取隔离分支 diff 失败"));
+    }
+  };
+
   const refreshPrDelivery = useCallback(async () => {
     const client = clientRef.current;
     if (!client) return;
@@ -1035,6 +1108,10 @@ function App() {
         case "agent_hook": {
           const activity = protocolActivity(event);
           if (activity) setActivities((previous) => upsertActivity(previous, activity));
+          if (event.type === "agent_tool" && event.name === "dev_isolated" && event.status === "succeeded") {
+            autoOpenInspector("diff");
+            void refreshIsolatedDeliveries();
+          }
           if (event.type === "agent_hook" && ["failed", "timed_out", "blocked"].includes(String(event.status ?? ""))) {
             void refreshSessions();
             void refreshDecisions();
@@ -1237,7 +1314,7 @@ function App() {
           break;
       }
     },
-    [activeScope, activeSid, notificationsEnabled, openInspector, refreshAudit, refreshDecisions, refreshGitReview, refreshGoals, refreshPrDelivery, refreshSessions, refreshWorkspaceFiles, refreshWorktrees, repoRoot, snapshotTodayJournal, updateActiveTurnRid],
+    [activeScope, activeSid, notificationsEnabled, openInspector, refreshAudit, refreshDecisions, refreshGitReview, refreshGoals, refreshIsolatedDeliveries, refreshPrDelivery, refreshSessions, refreshWorkspaceFiles, refreshWorktrees, repoRoot, snapshotTodayJournal, updateActiveTurnRid],
   );
 
   const disconnect = useCallback(async () => {
@@ -1245,6 +1322,12 @@ function App() {
     clientRef.current = null;
     decisionNotificationSyncingRef.current = false;
     await client?.disconnect().catch(() => undefined);
+    ++isolatedDeliveryRequestRef.current;
+    setIsolatedDeliveries([]);
+    setIsolatedDelivery(null);
+    setIsolatedDeliveryDiff(null);
+    setIsolatedDeliveryPath("");
+    setIsolatedDeliveryLoading(false);
     setConnection("disconnected");
     setConnectionNote("已离开工作区；后台 runtime 与任务继续运行");
     setBusy(false);
@@ -1264,10 +1347,10 @@ function App() {
     ];
     const workspace = scope === "general" ? [] : [
       refreshTasks(), refreshWorktrees(), refreshRuns(), refreshGoals(),
-      refreshGitReview(), refreshPrDelivery(), refreshHookStatus(), refreshExtensionsInspect(),
+      refreshGitReview(), refreshIsolatedDeliveries(), refreshPrDelivery(), refreshHookStatus(), refreshExtensionsInspect(),
     ];
     await Promise.allSettled([...common, ...workspace]);
-  }, [refreshSessions, refreshNotices, refreshDecisions, refreshAudit, snapshotTodayJournal, refreshWeeklyJournal, refreshProjectAssets, refreshTasks, refreshWorktrees, refreshRuns, refreshGoals, refreshGitReview, refreshPrDelivery, refreshHookStatus, refreshExtensionsInspect]);
+  }, [refreshSessions, refreshNotices, refreshDecisions, refreshAudit, snapshotTodayJournal, refreshWeeklyJournal, refreshProjectAssets, refreshTasks, refreshWorktrees, refreshRuns, refreshGoals, refreshGitReview, refreshIsolatedDeliveries, refreshPrDelivery, refreshHookStatus, refreshExtensionsInspect]);
 
   const connectToRuntime = useCallback(
     async (sid = activeSid, options: RuntimeConnectionOptions = {}): Promise<boolean> => {
@@ -3664,7 +3747,7 @@ function App() {
           <div className="inspector-tabs">
             <button className={tabClass("inbox")} onClick={() => openInspector("inbox")}>收件箱<small>{runtimeInboxSummary.actionable}</small></button>
             {activeScope !== "general" && <button className={tabClass("files")} onClick={() => openInspector("files")}>代码<small>{filteredWorkspaceFiles.length}</small></button>}
-            {activeScope !== "general" && <button className={tabClass("diff")} onClick={() => { setTaskReviewTask(null); setTaskBranchReview(null); setTaskBranchDiff(null); setTaskBranchSelectedPath(""); openInspector("diff"); void refreshGitReview(); void refreshPrDelivery(); }}>变更<small>{gitReview?.files.length ?? 0}</small></button>}
+            {activeScope !== "general" && <button className={tabClass("diff")} onClick={() => { setTaskReviewTask(null); setTaskBranchReview(null); setTaskBranchDiff(null); setTaskBranchSelectedPath(""); openInspector("diff"); void refreshGitReview(); void refreshPrDelivery(); void refreshIsolatedDeliveries(); }}>变更<small>{(gitReview?.files.length ?? 0) + isolatedDeliveries.length}</small></button>}
             {activeScope !== "general" && <button className={tabClass("runs")} onClick={() => openInspector("runs")}>运行<small>{activeRuns.length}</small></button>}
             {(inspectorTab === "goals" || activeGoals.length > 0) && <button className={inspectorTab === "goals" ? "active" : ""} onClick={() => openInspector("goals")}>完成<small>{activeGoals.length}</small></button>}
             {(inspectorTab === "tasks" || activeTasks.length > 0) && <button className={inspectorTab === "tasks" ? "active" : ""} onClick={() => openInspector("tasks")}>后台<small>{activeTasks.length}</small></button>}
@@ -3836,6 +3919,15 @@ function App() {
                 connection={connection}
                 busy={busy}
                 diffPayload={diffPayload}
+                isolatedDeliveries={isolatedDeliveries}
+                isolatedDelivery={isolatedDelivery}
+                isolatedDeliveryDiff={isolatedDeliveryDiff}
+                isolatedDeliveryPath={isolatedDeliveryPath}
+                isolatedDeliveryError={isolatedDeliveryError}
+                isolatedDeliveryLoading={isolatedDeliveryLoading}
+                onRefreshIsolatedDeliveries={refreshIsolatedDeliveries}
+                onOpenIsolatedDelivery={openIsolatedDelivery}
+                onLoadIsolatedDeliveryDiff={loadIsolatedDeliveryDiff}
                 gitReview={gitReview}
                 gitReviewDiff={gitReviewDiff}
                 gitReviewScope={gitReviewScope}
