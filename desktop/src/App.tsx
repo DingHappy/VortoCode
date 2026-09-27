@@ -95,6 +95,7 @@ import {
   FIRST_DELIVERY_PROMPT,
   PROJECT_BRIEF_PROMPT,
   isPlanExecutionConfirmation,
+  isPlanBudgetConfirmation,
 } from "./lib/onboarding";
 import {
   compactSessionCwd,
@@ -3556,7 +3557,9 @@ function App() {
                     {pendingConfirm.tainted
                       ? "外部内容回合需要人工确认"
                       : isPlanExecutionConfirmation(pendingConfirm.text)
-                        ? "计划已就绪，授权后在隔离工作区继续"
+                        ? isPlanBudgetConfirmation(pendingConfirm.text)
+                          ? "规划未完成，授权后继续当前任务"
+                          : "计划已就绪，授权后在隔离工作区继续"
                         : "Runtime 请求确认"}
                   </strong>
                   <p>{pendingConfirm.text}</p>

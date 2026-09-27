@@ -1,6 +1,6 @@
 # VortoCode
 
-通用多 Agent 软件开发框架，目标：**全栈 Web 项目自动化开发，人工只在"需求确认"和"最终合并"两个环节介入**。
+VortoCode 是面向开发者的本地优先 Agent 工作台：从目标与约束出发，在隔离工作区实现、验证、审查代码，由人确认关键操作和最终合并。Desktop 是默认入口，CLI 服务自动化，Web 服务版面向后续团队使用。
 
 > Public preview / dogfooding project：项目仍在快速迭代，接口、命令和工作流可能调整。欢迎试用、反馈问题和提交小步 PR；生产环境暴露、可信凭证和自托管 runner 请按 [SECURITY.md](SECURITY.md) 的安全约定处理。
 

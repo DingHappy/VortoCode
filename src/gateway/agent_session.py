@@ -97,7 +97,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         reason = str(args.get("reason") or "").strip()
         nxt = str(args.get("next_action") or "").strip()
         if name == "request_build":
-            parts = ["plan 阶段分析已完成，需要你授权才能动手。"]
+            if reason.startswith("plan 阶段单段执行预算已到"):
+                parts = ["plan 阶段预算已到，尚未形成可审阅计划；继续需要授权。"]
+            else:
+                parts = ["plan 阶段分析已完成，需要你授权才能动手。"]
         else:
             parts = [f"这一步要用写/重型工具「{name}」，plan(只读)模式下不可用。"]
         if reason:
