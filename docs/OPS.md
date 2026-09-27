@@ -19,6 +19,16 @@ For Linux, start from `examples/systemd/vortocode-server.service.example`. Run t
 
 Do not commit service environment files. Do not place API keys, bot credentials, proxy credentials, or access tokens directly in unit files that may be copied into tickets or logs.
 
+### Telegram 主人配对
+
+Telegram Bot token 先放在运行 `vc` 的私密环境中，不要作为命令参数或提交到仓库。首次启用时：
+
+1. 在部署机交互式终端运行 `vc im-pair telegram`，终端显示一次性配对码，有效期 10 分钟。
+2. 用管理员自己的 Telegram 账号**私聊**机器人，发送终端给出的 `/bind <配对码>`。群聊和未持有码的人不能绑定。
+3. 成功后，在相同的系统用户下启动 `vc im telegram`，或为尚未启用其他 IM 的 Gateway 启动 `vc server --im telegram`。启动时自动读取 `~/.vortocode/im-pairings/telegram-<bot-id>.json` 中的 owner ID。配对记录须为 `600`，目录须为 `700`。
+
+同一个 Bot 只能有一个 `getUpdates` 消费者；配对时先停用该 Bot 的其他轮询实例。现有 `vc server` 只内嵌一个 IM 通道；已有钉钉服务不要直接切成 Telegram。Telegram 当前是单主人会话，即便额外配置 `VORTOCODE_TG_ALLOW_FROM`，其他用户也会被拒绝，以防消息进入主人的会话或回复被送到主人。管理员邀请其他用户的设计与上线门槛见 [Telegram 接入与邀请](./TELEGRAM_ACCESS.md)。
+
 ## 二、开关矩阵（都是 opt-in，默认全关 = 零自主消耗）
 
 Background capabilities are disabled unless the operator enables them explicitly:

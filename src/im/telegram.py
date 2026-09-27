@@ -71,8 +71,11 @@ class TelegramAdapter(ChannelAdapter):
             self._session = outbound_session()
         url = f"https://api.telegram.org/bot{self._token}/{method}"
         timeout = aiohttp.ClientTimeout(total=self._poll_timeout + 15)
-        async with self._session.post(url, json=payload, timeout=timeout) as resp:
-            data = await resp.json()
+        try:
+            async with self._session.post(url, json=payload, timeout=timeout) as resp:
+                data = await resp.json()
+        except Exception as exc:  # noqa: BLE001 - aiohttp URL contains the Bot token
+            raise TelegramError(f"{method} 请求失败（{type(exc).__name__}）") from None
         if not data.get("ok"):
             raise TelegramError(str(data.get("description", "unknown")))
         return data.get("result")
@@ -86,10 +89,15 @@ class TelegramAdapter(ChannelAdapter):
         if self._session is None:
             self._session = outbound_session()
         url = f"https://api.telegram.org/file/bot{self._token}/{file_path}"
-        async with self._session.get(url) as resp:
-            if resp.status != 200:
-                raise TelegramError(f"下载失败 HTTP {resp.status}")
-            return await resp.read()
+        try:
+            async with self._session.get(url) as resp:
+                if resp.status != 200:
+                    raise TelegramError(f"下载失败 HTTP {resp.status}")
+                return await resp.read()
+        except TelegramError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - aiohttp URL contains the Bot token
+            raise TelegramError(f"下载失败（{type(exc).__name__}）") from None
 
     async def _api(self, method: str, **payload):
         return await self._request_fn(method, payload)
@@ -109,7 +117,7 @@ class TelegramAdapter(ChannelAdapter):
                     self.note_connected()
                 self.note_frame()
             except Exception as e:  # noqa: BLE001 —— 网络抖动/超时：退避重连，绝不把桥拖垮
-                self.note_disconnected(f"长轮询失败: {type(e).__name__}: {e}")
+                self.note_disconnected(f"长轮询失败: {type(e).__name__}")
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30.0)
                 continue
@@ -121,7 +129,10 @@ class TelegramAdapter(ChannelAdapter):
                 if ev is None:
                     continue
                 refs = _attachment_refs(up.get("message") or {})
-                if refs:
+                # Bridge owns the admission decision, but fetching attachments
+                # happens before it sees this event. Never download unapproved
+                # senders' files (or unmentioned group traffic) into our inbox.
+                if refs and ev.sender_id == self.owner_id and (not ev.is_group or ev.mentioned):
                     # 下载放在 poll 而不是 _to_event：后者是纯函数（好测），发请求的活归适配器。
                     ev.images, ev.files, ev.unsupported = await self._fetch_attachments(refs)
                 yield ev
@@ -158,7 +169,8 @@ class TelegramAdapter(ChannelAdapter):
                 imgs.append(self._save_inbox(name, blob)) if kind == "image" \
                     else files.append(self._save_inbox(name, blob))
             except Exception as e:  # noqa: BLE001 —— 单个附件失败不拖垮整条消息
-                bad.append(f"{name}（{type(e).__name__}: {str(e)[:60]}）")
+                detail = str(e).replace(self._token, "[redacted]")[:60]
+                bad.append(f"{name}（{type(e).__name__}: {detail}）")
         note = ("有 %d 个附件没取到：%s" % (len(bad), "；".join(bad))) if bad else ""
         return imgs, files, note
 
