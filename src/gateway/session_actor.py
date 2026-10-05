@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
+from src.utils.async_ops import request_cancel
+
 MAX_PROMPT_QUEUE = 20
 Prompt = dict[str, Any]
 logger = logging.getLogger(__name__)
@@ -273,7 +275,7 @@ class SessionActors:
                 self.stop_reasons[key] = reason
             if task.done() or self._operation_kind.get(key, "").endswith("_cleanup"):
                 return True  # Cleanup owns the slot; let it apply the latest stop reason.
-            task.cancel()
+            request_cancel(task)
             return True
         return False
 

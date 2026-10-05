@@ -23,6 +23,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
+from src.utils.async_ops import cancel_requested, request_cancel
 from src.utils.ids import safe_id
 
 _DIRNAME = "tasks"
@@ -521,8 +522,8 @@ class TaskRunner:
     def cancel(self, tid: str) -> bool:
         t = self._running.get(tid)
         if t is not None and not t.done():
-            if not t.cancelling():
-                t.cancel()
+            if not cancel_requested(t):
+                request_cancel(t)
             return True
         return False
 
@@ -532,7 +533,7 @@ class TaskRunner:
         if running is None or running.done():
             return None
         self._pause_requested.add(tid)
-        running.cancel()
+        request_cancel(running)
         try:
             try:
                 await running

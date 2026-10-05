@@ -5,7 +5,6 @@ ledger and the shared TaskRunner pool; this is not multi-tenant authentication.
 """
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import logging
@@ -15,6 +14,7 @@ from typing import Awaitable, Callable
 
 from src.gateway.collaboration import CollaborationConflict, CollaborationService
 from src.gateway.tasks import BackgroundTask, TaskRunner, TASK_STATE_LOCK
+from src.utils.async_ops import run_with_timeout
 from src.utils.ids import typed_id
 
 _LOCK = TASK_STATE_LOCK
@@ -219,8 +219,7 @@ class DispatchService:
             self.validate_agent(current.collaboration["assignee"])
             timeout = current.collaboration["dispatch"]["timeout_seconds"]
             try:
-                async with asyncio.timeout(timeout):
-                    await self.execute(current, service)
+                await run_with_timeout(self.execute(current, service), timeout)
             finally:
                 # Release the slot only after the injected executor has unwound.
                 latest = service.get(task.id)

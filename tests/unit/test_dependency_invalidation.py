@@ -11,6 +11,7 @@ from src.gateway.handoffs import CompletionInbox, revision
 from src.gateway.task_chain_budget import budget_view
 from src.gateway.task_dependencies import dependency_view, validate_consumed
 from src.gateway.tasks import TaskLedger, TaskRunner
+from src.utils.async_ops import cancel_requested
 
 
 async def setup(root, execute=None):
@@ -194,7 +195,7 @@ async def test_storage_failure_does_not_request_stop_or_claim_invalidation(tmp_p
     with pytest.raises(OSError):
         service.reconcile_dependencies("owner", child.id, 1)
     assert runner.get(child.id).dependencies["resolution"] == "consumed"
-    assert runner._running[child.id].cancelling() == 0
+    assert not cancel_requested(runner._running[child.id])
     monkeypatch.setattr(TaskLedger, "save", original_save)
     assert service.reconcile_dependencies("owner", child.id, 1)[1:]==(True, True)
     await runner.join(child.id)

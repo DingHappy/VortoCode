@@ -14,6 +14,7 @@ from src.gateway.continuations import ContinuationService
 from src.gateway.handoffs import CompletionInbox
 from src.gateway.session_actor import ActorContext, SessionActors
 from src.llm.hard_budget import CheckLimits, check_budget_support
+from src.utils.async_ops import cancel_requested
 
 
 class ContinuationChecks:
@@ -32,7 +33,7 @@ class ContinuationChecks:
     def _ensure_active(self, key: str) -> None:
         current = asyncio.current_task()
         if (self.eligible() is not True or self.actors.stop_reasons.get(key)
-                or (current is not None and current.cancelling())):
+                or cancel_requested(current)):
             raise asyncio.CancelledError
 
     async def _deliver(self, key: str, task_id: str, rev: str, authorization_id: str,

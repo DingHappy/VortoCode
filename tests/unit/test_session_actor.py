@@ -4,6 +4,7 @@ import asyncio
 import pytest
 
 from src.gateway.session_actor import ActorContext, SessionActors, new_prompt_item
+from src.utils.async_ops import cancel_requested
 
 
 def prompt(name):
@@ -191,7 +192,7 @@ async def test_cleanup_is_reserved_and_repeated_stop_does_not_cancel_notificatio
     await actors.advance(context, reason=None)  # stale completion cannot clear current state.
     assert actors.running["owner"]["id"] == "first" and "owner" in actors.priority
     assert actors.cancel("owner", reason="stop")
-    assert not cleanup.cancelling()
+    assert not cancel_requested(cleanup)
     release.set()
     await drain(actors)
     assert not seen and session["prompt_queue"][0]["id"] == "first"

@@ -9,13 +9,14 @@ import pytest
 from src.agents import worktree
 from src.agents.tools.files import build_test_tool
 from src.gateway.tasks import TaskRunner
-from src.utils.async_ops import await_thread
+from src.utils.async_ops import await_thread, cancel_requested, request_cancel, run_with_timeout
 
 
 async def wait_started(event):
-    async with asyncio.timeout(2):
+    async def poll():
         while not event.is_set():
             await asyncio.sleep(.001)
+    await run_with_timeout(poll(), 2)
 
 
 @pytest.mark.asyncio
@@ -234,3 +235,36 @@ async def test_task_pause_keeps_slot_until_thread_has_stopped(tmp_path):
             result = await paused
             assert result.status == "paused"
     assert stopped.is_set() and runner.active_count == 0 and next_steps == []
+
+
+# ---- 3.10 兼容垫片：asyncio.timeout / Task.cancelling 是 3.11+，两个版本都得给出同一语义。
+@pytest.mark.asyncio
+async def test_run_with_timeout_returns_result_and_raises_builtin_timeout():
+    async def value():
+        return 7
+
+    assert await run_with_timeout(value(), 1) == 7
+    with pytest.raises(TimeoutError):   # 3.10 的 asyncio.TimeoutError 也要统一成内置类
+        await run_with_timeout(asyncio.Event().wait(), 0.01)
+
+
+@pytest.mark.asyncio
+async def test_cancel_request_stays_visible_after_cancellation_is_swallowed():
+    swallowed, release = asyncio.Event(), asyncio.Event()
+
+    async def stubborn():
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            swallowed.set()
+        await release.wait()
+
+    assert not cancel_requested(None)
+    task = asyncio.create_task(stubborn())
+    await asyncio.sleep(0)
+    assert not cancel_requested(task)
+    request_cancel(task)
+    await swallowed.wait()
+    assert cancel_requested(task)   # 被吞掉的取消仍算"已请求"，调用方据此不重复取消
+    release.set()
+    await task
