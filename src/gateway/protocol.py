@@ -107,7 +107,7 @@ OUTBOUND: Dict[str, _Spec] = {
                  ("tool", "message", "error", "duration_ms", "stop_execution")),
     AGENT_STREAM: (("text",), ()),
     AGENT_REASONING: (("text",), ()),
-    AGENT_EMIT: (("text",), ()),
+    AGENT_EMIT: (("text",), ("tainted", "check_report")),  # Additive persisted check-report provenance.
     AGENT_ERROR: (("text",), ()),
     AGENT_DONE: ((), ()),
     AGENT_CANCELLED: (("text",), ()),
