@@ -76,12 +76,15 @@ import type {
   WorkspaceFileContent,
   WorkspaceFileList,
   WorkspaceScope,
-  WorktreeWorkspaceSnapshot,
   TrustLevel,
   TrustStatus,
 } from "./types";
 import { DecisionsPanel } from "./components/DecisionsPanel";
-import { DevPlanDagLoader } from "./components/DevPlanDag";
+import { SessionConnection } from "./connection/sessionConnection";
+import { TasksPanel } from "./tasks/TasksPanel";
+import { useTasks } from "./hooks/useTasks";
+import { useTaskDispatch } from "./hooks/useTaskDispatch";
+import { taskCollaborationDraft, type CollaborationAction } from "./lib/taskCollaboration";
 import { ExtensionsInspector } from "./components/ExtensionsInspector";
 import { FilesPanel } from "./components/FilesPanel";
 import { GitReviewPanel } from "./components/GitReviewPanel";
@@ -108,7 +111,6 @@ import {
   sessionContextTone,
   sessionStatusLabel,
   statusLabel,
-  taskReviewGateReason,
 } from "./lib/labels";
 import { criterionVerifierDraft, goalEvidenceKey, goalFormLines } from "./lib/goals";
 import type { GoalVerifierDraft } from "./lib/goals";
@@ -213,6 +215,8 @@ const TRUST_LEVEL_TEXT: Record<TrustLevel, string> = {
 
 function App() {
   const clientRef = useRef<GatewayClient | null>(null);
+  const sessionConnectionRef = useRef<SessionConnection<GatewayClient> | null>(null);
+  if (!sessionConnectionRef.current) sessionConnectionRef.current = new SessionConnection(clientRef);
   const workspaceRootRef = useRef("");
   const goalRunSyncRef = useRef("");
   const pendingWorkspaceSaveRef = useRef<PendingWorkspaceSave | null>(null);
@@ -360,9 +364,6 @@ function App() {
   const [prDeliveryLoading, setPrDeliveryLoading] = useState(false);
   const [prCheckLogs, setPrCheckLogs] = useState<Record<string, PrDeliveryCheckLog>>({});
   const [runs, setRuns] = useState<CommandRunItem[]>([]);
-  const [tasks, setTasks] = useState<TaskItem[]>([]);
-  const [focusedTaskId, setFocusedTaskId] = useState("");
-  const [worktreeWorkspace, setWorktreeWorkspace] = useState<WorktreeWorkspaceSnapshot>({ worktrees: [], plans: [] });
   const [goals, setGoals] = useState<GoalItem[]>([]);
   const [notices, setNotices] = useState<NoticeItem[]>([]);
   const [hookStatus, setHookStatus] = useState<HookConfigStatus | null>(null);
@@ -400,6 +401,9 @@ function App() {
   const [editingGoalId, setEditingGoalId] = useState<string | null>(null);
   const [goalSubmitting, setGoalSubmitting] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
+  const { tasks, focusedTaskId, worktreeWorkspace, setFocusedTaskId, refreshTasks,
+    refreshWorktrees, resetTasks, upsertTask, acceptTaskEvent, captureTaskScope, cancelTask, pauseTask,
+    resumeTask } = useTasks(clientRef, setBanner);
   const {
     journal,
     journalDays,
@@ -526,7 +530,8 @@ function App() {
   }, [decisions, prDelivery, sessions]);
   // 审计筛选派生随 <DecisionsPanel> 搬入；journalActions 派生随 <JournalCard> 搬入（均只服务各自组件）。
   const activeTasks = useMemo(
-    () => tasks.filter((task) => ["queued", "running", "paused", "failed", "interrupted"].includes(task.status)),
+    () => tasks.filter((task) => ["queued", "running", "blocked", "paused", "failed", "interrupted"].includes(task.status)
+      || (task.kind === "delegation" && ["pending", "rework_requested"].includes(task.collaboration?.review ?? ""))),
     [tasks],
   );
   const activeGoals = useMemo(
@@ -599,25 +604,18 @@ function App() {
     }
   }, []);
 
-  const refreshTasks = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
-    try {
-      setTasks(await client.listTasks());
-    } catch {
-      // WS task_snapshot 仍可提供降级数据。
-    }
-  }, []);
-
-  const refreshWorktrees = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
-    try {
-      setWorktreeWorkspace(await client.getWorktreeWorkspace());
-    } catch {
-      // 旧 runtime 没有 Worktree 会话 API 时保留空态。
-    }
-  }, []);
+  const taskDispatch = useTaskDispatch({
+    tasks,
+    value: backgroundPrompt, onChange: setBackgroundPrompt,
+    getClient: () => clientRef.current,
+    scopeKey: `${processStatus.runtimeId || baseUrl}:${activeSid}`,
+    session: activeSid, enabled: connection === "connected" && activeScope !== "general",
+    onSubmitted: (id) => {
+      setFocusedTaskId(id);
+      setBanner("任务已下派，可在任务列表查看进度与结果。");
+      void refreshTasks();
+    },
+  });
 
   const focusTask = useCallback((taskId: string) => {
     if (!taskId) return;
@@ -1264,20 +1262,21 @@ function App() {
           break;
         }
         case "task_snapshot":
-          setTasks(Array.isArray(event.data) ? (event.data as TaskItem[]) : []);
+          if (!acceptTaskEvent(event, clientRef.current)) break;
           void refreshSessions();
           void refreshWorktrees();
           break;
         case "task_update": {
           const task = event.data as TaskItem;
           if (!task?.id) break;
-          setTasks((previous) => [task, ...previous.filter((item) => item.id !== task.id)]);
+          if (!acceptTaskEvent(event, clientRef.current)) break;
           void refreshSessions();
           void refreshWorktrees();
           if (task.goal_id && ["done", "failed", "cancelled", "interrupted", "paused"].includes(task.status)) {
             void refreshGoals();
           }
-          if (["failed", "cancelled", "interrupted", "paused", "done"].includes(task.status)) {
+          if (["failed", "cancelled", "interrupted", "paused", "done", "blocked"].includes(task.status)
+              || (task.collaboration?.questions?.length ?? 0) > 0) {
             void refreshDecisions();
             void snapshotTodayJournal();
           }
@@ -1286,7 +1285,7 @@ function App() {
         case "task_handoff": {
           const task = event.data as TaskItem;
           if (!task?.id) break;
-          setTasks((previous) => [task, ...previous.filter((item) => item.id !== task.id)]);
+          if (!acceptTaskEvent(event, clientRef.current)) break;
           const handoffId = `task-handoff-${task.id}-${task.status}`;
           const label = task.status === "done" ? "后台任务已完成" : `后台任务已${task.status}`;
           const detail = task.handoff?.next_action || task.error || "打开工作台查看交接详情";
@@ -1314,14 +1313,12 @@ function App() {
           break;
       }
     },
-    [activeScope, activeSid, notificationsEnabled, openInspector, refreshAudit, refreshDecisions, refreshGitReview, refreshGoals, refreshIsolatedDeliveries, refreshPrDelivery, refreshSessions, refreshWorkspaceFiles, refreshWorktrees, repoRoot, snapshotTodayJournal, updateActiveTurnRid],
+    [acceptTaskEvent, activeScope, activeSid, notificationsEnabled, openInspector, refreshAudit, refreshDecisions, refreshGitReview, refreshGoals, refreshIsolatedDeliveries, refreshPrDelivery, refreshSessions, refreshWorkspaceFiles, refreshWorktrees, repoRoot, snapshotTodayJournal, updateActiveTurnRid],
   );
 
   const disconnect = useCallback(async () => {
-    const client = clientRef.current;
-    clientRef.current = null;
     decisionNotificationSyncingRef.current = false;
-    await client?.disconnect().catch(() => undefined);
+    if (!await sessionConnectionRef.current!.disconnect()) return;
     ++isolatedDeliveryRequestRef.current;
     setIsolatedDeliveries([]);
     setIsolatedDelivery(null);
@@ -1354,6 +1351,7 @@ function App() {
 
   const connectToRuntime = useCallback(
     async (sid = activeSid, options: RuntimeConnectionOptions = {}): Promise<boolean> => {
+      const attempt = sessionConnectionRef.current!.begin();
       const requestedBaseUrl = options.baseUrl ?? baseUrl;
       const requestedRepoRoot = options.repoRoot ?? repoRoot;
       const requestedToken = options.token ?? token;
@@ -1369,30 +1367,35 @@ function App() {
         localStorage.setItem(STORAGE_KEYS.baseUrl, normalized);
         if (requestedRepoRoot.trim()) localStorage.setItem(STORAGE_KEYS.repoRoot, requestedRepoRoot.trim());
         localStorage.setItem(STORAGE_KEYS.sid, sid);
-        await clientRef.current?.disconnect().catch(() => undefined);
-        const client = new GatewayClient({ baseUrl: normalized, token: requestedToken });
-        clientRef.current = client;
-        await client.connect(sid, handleProtocolEvent);
+        const client = await attempt.attach(
+          () => new GatewayClient({ baseUrl: normalized, token: requestedToken }), sid, handleProtocolEvent,
+        );
+        if (!client) return false;
         setConnection("connected");
         setConnectionNote(requestedScope === "general" ? "通用会话已就绪" : requestedScope === "scratch" ? "隔离 Scratch 已就绪" : "项目工作区已就绪");
         if (requestedScope === "project" && requestedRepoRoot.trim()) {
           try {
             const profile = await rememberProject(requestedRepoRoot.trim(), normalized);
+            if (!attempt.current()) return false;
             setRepoRoot(profile.repoRoot);
             setBaseUrl(profile.baseUrl);
             localStorage.setItem(STORAGE_KEYS.repoRoot, profile.repoRoot);
             localStorage.setItem(projectSessionKey(profile.id), sid);
           } catch (error) {
+            if (!attempt.current()) return false;
             setBanner(`runtime 已连接，但项目记录未保存：${error instanceof Error ? error.message : String(error)}`);
           }
         }
         await client.send({ type: "task_list" });
+        if (!attempt.current()) return false;
         await refreshAllForScope(requestedScope, sid);
+        if (!attempt.current()) return false;
         decisionNotificationSyncingRef.current = false;
         setNotificationSyncVersion((value) => value + 1);
         setSettingsOpen(false);
         return true;
       } catch (error) {
+        if (!attempt.current()) return false;
         decisionNotificationSyncingRef.current = false;
         setNotificationSyncVersion((value) => value + 1);
         clientRef.current = null;
@@ -1618,17 +1621,6 @@ function App() {
   }, [connection, refreshSessions]);
 
   useEffect(() => {
-    if (!focusedTaskId || !inspectorOpen || inspectorTab !== "tasks") return undefined;
-    const frame = window.requestAnimationFrame(() => {
-      document.getElementById(`task-card-${focusedTaskId}`)?.scrollIntoView({
-        behavior: "smooth",
-        block: "nearest",
-      });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, [focusedTaskId, inspectorOpen, inspectorTab, tasks]);
-
-  useEffect(() => {
     if (connection !== "connected" || !selectedArtifactId) return;
     void loadArtifactPreview(selectedArtifactId);
   }, [connection, loadArtifactPreview, selectedArtifactId]);
@@ -1751,8 +1743,7 @@ function App() {
     setPrDelivery(null);
     setPrCheckLogs({});
     setRuns([]);
-    setTasks([]);
-    setWorktreeWorkspace({ worktrees: [], plans: [] });
+    resetTasks();
     setGoals([]);
     setNotices([]);
     setDecisions([]);
@@ -1969,14 +1960,14 @@ function App() {
   };
 
   const switchSession = async (sid: string) => {
-    if (sid === activeSid) return;
+    if (sid === activeSid) return connection === "connected";
     if (savingFile) {
       setBanner("请先完成或拒绝当前源码保存确认");
-      return;
+      return false;
     }
     clearSessionView();
     setActiveSid(sid);
-    await connectToRuntime(sid);
+    return connectToRuntime(sid);
   };
 
   const activateRuntimeInbox = async (runtimeInbox: DesktopRuntimeInbox): Promise<boolean> => {
@@ -2568,19 +2559,6 @@ function App() {
     }
   };
 
-  const submitBackgroundTask = async () => {
-    const text = backgroundPrompt.trim();
-    if (!text || !clientRef.current) return;
-    try {
-      await clientRef.current.submitTask(text);
-      setBackgroundPrompt("");
-      openInspector("tasks");
-      await refreshTasks();
-    } catch (error) {
-      setBanner(errorText(error, "后台任务提交失败"));
-    }
-  };
-
   const resetGoalForm = () => {
     setEditingGoalId(null);
     setGoalObjective("");
@@ -2642,12 +2620,14 @@ function App() {
   };
 
   const runGoal = async (goal: GoalItem, resume = false) => {
-    if (!clientRef.current) return;
+    const client = clientRef.current;
+    if (!client) return;
+    const taskScope = captureTaskScope();
     setGoalSubmitting(true);
     try {
-      const result = await clientRef.current.runGoal(goal.id, resume);
+      const result = await client.runGoal(goal.id, resume);
       setGoals((previous) => [result.goal, ...previous.filter((item) => item.id !== goal.id)]);
-      setTasks((previous) => [result.task, ...previous.filter((item) => item.id !== result.task.id)]);
+      if (taskScope.current()) upsertTask(result.task, client);
       setBanner(resume ? "已从持久计划断点续跑" : goal.status === "draft" ? "目标合同已确认，隔离开发任务开始执行" : "已按目标合同开始新一轮执行");
     } catch (error) {
       setBanner(errorText(error, "目标执行失败"));
@@ -2741,37 +2721,17 @@ function App() {
     }
   };
 
-  const cancelTask = async (id: string) => {
-    if (!clientRef.current) return;
-    await clientRef.current.cancelTask(id).catch((error) => {
-      setBanner(errorText(error, "取消失败"));
-    });
-    await refreshTasks();
-    await refreshWorktrees();
-  };
-
-  const pauseTask = async (id: string) => {
-    if (!clientRef.current) return;
-    try {
-      const paused = await clientRef.current.pauseTask(id);
-      setTasks((previous) => [paused, ...previous.filter((item) => item.id !== id)]);
-      setBanner("任务已暂停；当前一次性 worktree 已清理，持久计划可随时恢复");
-      await refreshWorktrees();
-    } catch (error) {
-      setBanner(errorText(error, "暂停任务失败"));
+  const draftTaskCollaboration = async (task: TaskItem, action: CollaborationAction) => {
+    const draft = taskCollaborationDraft(task, action);
+    if (!draft) return;
+    if (savingFile || prompt.trim()) {
+      setBanner("请先处理当前保存确认或输入框中的草稿，再准备任务交互。");
+      return;
     }
-  };
-
-  const resumeTask = async (task: TaskItem) => {
-    if (!clientRef.current) return;
-    try {
-      const resumed = await clientRef.current.resumeTask(task.id);
-      setTasks((previous) => [resumed, ...previous]);
-      setBanner(`已从 ${task.plan_id} 恢复；已落地的计划块不会重做`);
-      await refreshWorktrees();
-    } catch (error) {
-      setBanner(errorText(error, "恢复任务失败"));
-    }
+    const generation = supervisionGenerationRef.current;
+    if (!await switchSession(draft.sid) || generation !== supervisionGenerationRef.current) return;
+    setPrompt(draft.text);
+    setBanner("任务交互已放入发起会话输入框；补充要求后发送。");
   };
 
   const copyTaskHandoff = async (task: TaskItem) => {
@@ -3800,7 +3760,7 @@ function App() {
                       .filter((goal) => goal.status !== "achieved")
                       .slice(0, 4);
                     const importantTasks = (snapshot?.tasks ?? [])
-                      .filter((task) => ["queued", "running", "cancelling", "failed", "paused", "interrupted"].includes(task.status))
+                      .filter((task) => ["queued", "running", "cancelling", "blocked", "failed", "paused", "interrupted"].includes(task.status))
                       .slice(0, 4);
                     return (
                       <section className={`runtime-inbox-card ${runtimeInbox.runtimeId === processStatus.runtimeId ? "current" : ""} ${runtimeInbox.error ? "degraded" : ""}`} key={runtimeInbox.runtimeId}>
@@ -4022,138 +3982,18 @@ function App() {
               />
             )}
             {inspectorTab === "tasks" && (
-              <div className="tasks-panel">
-                <div className="background-task-form">
-                  <textarea value={backgroundPrompt} onChange={(event) => setBackgroundPrompt(event.target.value)} placeholder="交给隔离 worktree 后台执行…" />
-                  <button disabled={!backgroundPrompt.trim() || connection !== "connected"} onClick={() => void submitBackgroundTask()}>后台运行</button>
-                </div>
-                {(worktreeWorkspace.worktrees.length > 0 || worktreeWorkspace.plans.length > 0) && (
-                  <section className="worktree-workspace">
-                    <div className="worktree-workspace-head">
-                      <strong>Worktree 会话</strong>
-                      <span>{worktreeWorkspace.worktrees.length} 个实时 · {worktreeWorkspace.plans.length} 个持久计划</span>
-                    </div>
-                    {worktreeWorkspace.worktrees.map((worktree) => (
-                      <button
-                        className="worktree-live"
-                        disabled={!worktree.task_id}
-                        key={worktree.id}
-                        onClick={() => focusTask(worktree.task_id ?? "")}
-                        title={worktree.task_id ? `定位任务 ${worktree.task_id}` : "未绑定到后台任务的临时 worktree"}
-                      >
-                        <i />
-                        <div>
-                          <b>{worktree.id}</b>
-                          <small>{worktree.branch || "detached"} · {worktree.head}</small>
-                          {worktree.task_id && <small>task {worktree.task_id.slice(0, 10)} · {worktree.plan_id || "计划生成中"}</small>}
-                        </div>
-                        <span>{worktree.changed_files} 文件改动</span>
-                      </button>
-                    ))}
-                    {worktreeWorkspace.plans.length > 0 && (
-                      <details className="worktree-plans">
-                        <summary>持久计划与恢复点</summary>
-                        {worktreeWorkspace.plans.slice(0, 8).map((planSession) => {
-                          const progress = planSession.progress;
-                          return (
-                            <div
-                              className={`worktree-plan-row ${tasks.some((task) => task.plan_id === planSession.plan_id) ? "linked" : ""}`}
-                              key={planSession.plan_id}
-                              onClick={() => focusTask(tasks.find((task) => task.plan_id === planSession.plan_id)?.id ?? "")}
-                              role={tasks.some((task) => task.plan_id === planSession.plan_id) ? "button" : undefined}
-                            >
-                              <div><b>{planSession.task}</b><small>{planSession.plan_id} · {planSession.status}</small></div>
-                              <span>{progress.landed}/{progress.total}</span>
-                            </div>
-                          );
-                        })}
-                      </details>
-                    )}
-                  </section>
-                )}
-                {tasks.length === 0 && <div className="panel-empty compact"><strong>暂无后台任务</strong><p>任务会落分支，不直接碰 main。</p></div>}
-                {tasks.map((task) => (
-                  <section
-                    className={`task-card ${focusedTaskId === task.id ? "focused" : ""}`}
-                    id={`task-card-${task.id}`}
-                    key={task.id}
-                  >
-                    <div className="task-card-head">
-                      <span className={`task-status ${task.status}`}>{statusLabel(task.status)}</span>
-                      <small>{task.id.slice(0, 8)}</small>
-                    </div>
-                    <p>{task.prompt || "后台开发任务"}</p>
-                    <div className="task-linkage" title={`${task.id} → ${task.plan_id || "计划生成中"} → ${task.branch || task.plan?.branch || "分支生成中"}`}>
-                      <span>Task {task.id.slice(0, 8)}</span>
-                      <b>→</b>
-                      <span>Plan {task.plan_id ? task.plan_id.slice(0, 14) : "生成中"}</span>
-                      <b>→</b>
-                      <span>{task.branch || task.plan?.branch || "分支生成中"}</span>
-                    </div>
-                    {(task.worktrees?.length ?? 0) > 0 && (
-                      <div className="task-live-worktrees">
-                        <i />
-                        <span>{task.worktrees?.length} 个隔离 worktree 正在执行</span>
-                        <small>{task.worktrees?.map((worktree) => worktree.id).join(" · ")}</small>
-                      </div>
-                    )}
-                    {task.branch_review && (task.branch_review.accepted_hunks > 0 || task.branch_review.verification_stale || task.branch_review.policy?.require_all_hunks_decided || task.branch_review.policy?.error) && (
-                      <div className={`task-review-state ${taskReviewGateReason(task.branch_review) ? "stale" : "ready"}`}>
-                        <span>{task.branch_review.policy?.require_all_hunks_decided && task.branch_review.coverage?.known
-                          ? `已接受 ${task.branch_review.coverage.accepted_hunks}/${task.branch_review.coverage.total_hunks}`
-                          : `${task.branch_review.accepted_hunks} 个 hunk 已接受`}</span>
-                        <b>{task.branch_review.verification_stale
-                          ? "审查后待重验"
-                          : task.branch_review.policy?.error
-                            ? "团队策略无效"
-                            : task.branch_review.policy?.require_all_hunks_decided && !task.branch_review.coverage?.complete
-                              ? `${task.branch_review.coverage?.pending_hunks ?? "?"} 个待决策`
-                              : task.branch_review.policy?.require_all_hunks_decided
-                                ? "策略已满足"
-                                : "审查证据已保存"}</b>
-                      </div>
-                    )}
-                    {task.branch && <code>{task.branch}</code>}
-                    {task.parent_task_id && <code>接续自 · {task.parent_task_id}</code>}
-                    {task.plan && (
-                      <div className="task-plan-progress">
-                        <div>
-                          <span>计划 {task.plan.progress.landed}/{task.plan.progress.total}</span>
-                          <small>{task.plan.status}</small>
-                        </div>
-                        <div className="task-plan-bar"><i style={{ width: `${task.plan.progress.total ? (task.plan.progress.landed / task.plan.progress.total) * 100 : 0}%` }} /></div>
-                        {task.plan.blocks.length > 0 && task.plan_id && (
-                          <details>
-                            <summary>依赖图 · {task.plan.blocks.length} 个计划块</summary>
-                            {/* refreshKey 由进度计数派生：块状态一变（listTasks 周期带回）就重取图。
-                                展开才加载——列表里几十张任务卡同时拉图会白打一排请求。 */}
-                            <DevPlanDagLoader
-                              load={() => clientRef.current!.devPlanGraph(task.plan_id!)}
-                              refreshKey={`${task.plan_id}:${task.plan.progress.landed}:${task.plan.progress.failed}:${task.plan.progress.running}`}
-                            />
-                          </details>
-                        )}
-                      </div>
-                    )}
-                    {task.error && <div className="task-error">{task.error}</div>}
-                    {task.handoff?.text && (
-                      <details className="task-handoff">
-                        <summary>任务交接摘要</summary>
-                        <pre>{task.handoff.text}</pre>
-                      </details>
-                    )}
-                    <div className="task-actions">
-                      {task.can_pause && <button className="primary" onClick={() => void pauseTask(task.id)}>暂停</button>}
-                      {["running", "queued"].includes(task.status) && <button onClick={() => void cancelTask(task.id)}>取消</button>}
-                      {task.can_resume && <button className="primary" onClick={() => void resumeTask(task)}>恢复</button>}
-                      {task.handoff?.text && <button onClick={() => void copyTaskHandoff(task)}>复制交接</button>}
-                      {(task.branch || task.plan?.branch) && <button onClick={() => void openTaskBranchReview(task)}>审查改动</button>}
-                      {task.status === "done" && task.branch_review?.verification_stale && <button className="primary" disabled={taskReviewVerifying} onClick={() => void verifyReviewedTaskBranch(task)}>重新验证</button>}
-                      {task.status === "done" && task.branch && <button className="primary" disabled={Boolean(taskReviewGateReason(task.branch_review))} title={taskReviewGateReason(task.branch_review) || "创建 Draft PR"} onClick={() => void openTaskPr(task.id)}>开 Draft PR</button>}
-                    </div>
-                  </section>
-                ))}
-              </div>
+              <TasksPanel tasks={tasks} focusedTaskId={focusedTaskId} worktreeWorkspace={worktreeWorkspace}
+                dispatchForm={{ dispatch: taskDispatch, value: backgroundPrompt, onChange: setBackgroundPrompt,
+                  enabled: connection === "connected" && activeScope !== "general" }}
+                onFocusTask={focusTask}
+                cardActions={{ taskReviewVerifying,
+                  loadPlanGraph: (id) => clientRef.current!.devPlanGraph(id),
+                  onPause: (item) => pauseTask(item.id), onCancel: (item) => cancelTask(item.id),
+                  onResume: resumeTask, onCopy: copyTaskHandoff, onReviewBranch: openTaskBranchReview,
+                  onVerify: verifyReviewedTaskBranch, onOpenPr: (item) => openTaskPr(item.id),
+                  onCollaboration: draftTaskCollaboration, getClient: () => clientRef.current,
+                  onDispatchUpdated: () => void refreshTasks() }}
+              />
             )}
             {inspectorTab === "project" && (
               <ProjectAssetsPanel

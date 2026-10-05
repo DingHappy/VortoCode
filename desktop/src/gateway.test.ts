@@ -132,6 +132,83 @@ describe("协议版本校验", () => {
   });
 });
 
+describe("task dispatch HTTP contracts", () => {
+  beforeEach(() => {
+    vi.mocked(tauriFetch).mockResolvedValue({ ok: true, json: async () => ({ id: "task-dispatch-test" }) } as Response);
+  });
+
+  it("preserves the caller's retry ID and explicit owner session", async () => {
+    const client = new GatewayClient(SETTINGS);
+    const input = { request_id: "req-stable", prompt: "分析", agent: "reader", acceptance: ["证据"], max_steps: 4, timeout_seconds: 300 };
+    await client.submitDelegation(input, "owner-session");
+    await client.submitDelegation(input, "owner-session");
+    const calls = vi.mocked(tauriFetch).mock.calls;
+    expect(calls[0][0]).toBe(`${SETTINGS.baseUrl}/api/delegations`);
+    expect(JSON.parse(calls[0][1]?.body as string)).toEqual({ ...input, session: "owner-session" });
+    expect(calls[1][1]?.body).toBe(calls[0][1]?.body);
+  });
+
+  it("sends the exact round, owner and review/followup/cancel payloads", async () => {
+    const client = new GatewayClient(SETTINGS);
+    await client.reviewDelegation("task-dispatch-test", "owner", 2, "rework", "缺少证据");
+    await client.followupDelegation("task-dispatch-test", "owner", 2, "补充证据");
+    await client.cancelDelegation("task-dispatch-test", "owner", 3);
+    const calls = vi.mocked(tauriFetch).mock.calls;
+    expect(calls.map(([url]) => url)).toEqual(["review", "followup", "cancel"].map((action) => `${SETTINGS.baseUrl}/api/delegations/task-dispatch-test/${action}`));
+    expect(calls.map(([, init]) => JSON.parse(init?.body as string))).toEqual([
+      { session: "owner", round: 2, verdict: "rework", note: "缺少证据" },
+      { session: "owner", round: 2, message: "补充证据" }, { session: "owner", round: 3 },
+    ]);
+  });
+
+  it("submits requirements and releases only the original owner and round", async () => {
+    const client = new GatewayClient(SETTINGS);
+    const input = { request_id: "dep-request", prompt: "迁移分析", agent: "", acceptance: [], max_steps: 4,
+      timeout_seconds: 30, depends_on: [{ task_id: "task-source", round: 1 }] };
+    await client.submitDelegation(input, "owner");
+    await client.releaseTaskDependencies("task-dependent", "owner", 1);
+    await client.reconcileTaskDependencies("task-dependent", "owner", 1);
+    const calls = vi.mocked(tauriFetch).mock.calls;
+    expect(JSON.parse(calls[0][1]?.body as string)).toEqual({ ...input, session: "owner" });
+    expect(calls[1][0]).toBe(`${SETTINGS.baseUrl}/api/delegations/task-dependent/release`);
+    expect(JSON.parse(calls[1][1]?.body as string)).toEqual({ session: "owner", round: 1 });
+    expect(calls[2][0]).toBe(`${SETTINGS.baseUrl}/api/delegations/task-dependent/reconcile`);
+    expect(JSON.parse(calls[2][1]?.body as string)).toEqual({ session: "owner", round: 1 });
+  });
+
+  it("acknowledges the task owner's exact result without using the current conversation", async () => {
+    const client = new GatewayClient({ ...SETTINGS, token: "inbox-test-token" });
+    const revision = "a".repeat(64);
+    const receipt = { task_id: "task-result", revision, handled: true };
+    vi.mocked(tauriFetch).mockResolvedValueOnce(new Response(JSON.stringify(receipt), { status: 200 }));
+    expect(await client.acknowledgeTaskHandoff("task-result", "owner", revision, "已核对")).toEqual(receipt);
+    const [url, init] = vi.mocked(tauriFetch).mock.calls[0];
+    expect(url).toBe(`${SETTINGS.baseUrl}/api/task-inbox/task-result/acknowledge`);
+    expect(init?.method).toBe("POST");
+    expect(init?.headers).toMatchObject({ Authorization: "Bearer inbox-test-token" });
+    expect(JSON.parse(init?.body as string)).toEqual({ session: "owner", revision, note: "已核对" });
+    await client.acknowledgeTaskHandoff("task-bad/path", "owner", revision, "已核对");
+    expect(vi.mocked(tauriFetch).mock.calls[1][0]).toContain("task-bad%2Fpath/acknowledge");
+  });
+
+  it("answers only the selected question and original round for the task owner", async () => {
+    const client = new GatewayClient(SETTINGS);
+    await client.answerTaskQuestion("task-research", "owner", 1, "question-first", "测试环境");
+    const [url, init] = vi.mocked(tauriFetch).mock.calls[0];
+    expect(url).toBe(`${SETTINGS.baseUrl}/api/delegations/task-research/answer`);
+    expect(init?.method).toBe("POST");
+    expect(JSON.parse(init?.body as string)).toEqual({ session: "owner", round: 1, question_id: "question-first", answer: "测试环境" });
+  });
+
+  it("uses the development answer endpoint without sending permission changes", async () => {
+    const client = new GatewayClient(SETTINGS);
+    await client.answerTaskQuestion("task-dev", "owner", 1, "question-first", "测试环境", true);
+    const [url, init] = vi.mocked(tauriFetch).mock.calls[0];
+    expect(url).toBe(`${SETTINGS.baseUrl}/api/tasks/task-dev/answer`);
+    expect(JSON.parse(init?.body as string)).toEqual({ session: "owner", round: 1, question_id: "question-first", answer: "测试环境" });
+  });
+});
+
 // ─────────────────────────── ② 事件分发 ───────────────────────────
 
 describe("事件分发", () => {
@@ -357,5 +434,39 @@ describe("确认关闭事件", () => {
     const closed = received.find((e) => e.type === "agent_confirm_closed");
     expect(closed?.id).toBe("c1");
     expect(closed?.reason).toBe("timeout");
+  });
+});
+
+describe("coverage archive export", () => {
+  it("preserves raw JSON integers beyond JavaScript safe precision for independent verification", async () => {
+    const raw = '{"evidence":{"identity":[1791112345678901234,1791112345678901235]}}';
+    const json = vi.fn(async () => JSON.parse(raw));
+    vi.mocked(tauriFetch).mockResolvedValue({ ok: true, status: 200, text: async () => raw, json } as unknown as Response);
+    const client = new GatewayClient(SETTINGS);
+    const archive = { archive_id: "archive-local", source_round: 1 } as import("./types").TaskCoverageArchive;
+    expect(await client.exportTaskCoverage("task-source", "sid-owner", archive)).toBe(raw);
+    expect(json).not.toHaveBeenCalled();
+  });
+
+  it("posts the exact file JSON with fixed expected archive and raw file digests", async () => {
+    const raw = '{"evidence":{"identity":[1791112345678901234,1791112345678901235]}}';
+    vi.mocked(tauriFetch).mockResolvedValue({ ok: true, status: 200, json: async () => ({ verified: true }) } as Response);
+    const archive = { archive_id: "archive-local", source_round: 1, archive_digest: "a".repeat(64) } as import("./types").TaskCoverageArchive;
+    await new GatewayClient(SETTINGS).verifyTaskCoverageFile("task-source", "sid-owner", archive, raw, "b".repeat(64));
+    const calls = vi.mocked(tauriFetch).mock.calls;
+    const [url, options] = calls[calls.length - 1];
+    expect(String(url)).toContain("/verify-file?");
+    expect(new URL(String(url)).searchParams.get("file_digest")).toBe("b".repeat(64));
+    expect(options?.body).toBe(raw);
+  });
+
+  it("wraps archive and preservation JSON as original strings without Number reencoding", async () => {
+    const raw = '{"integer":1791112345678901234}', saved = '{"directory_inode":"1791112345678901235"}';
+    vi.mocked(tauriFetch).mockResolvedValue({ ok: true, status: 200, json: async () => ({ verified: true }) } as Response);
+    const a = { archive_id: "archive-local", source_round: 1, archive_digest: "a".repeat(64) } as import("./types").TaskCoverageArchive;
+    await new GatewayClient(SETTINGS).verifyTaskCoveragePreservation("task-source", "sid-owner", a, raw, "b".repeat(64), saved, "c".repeat(64));
+    const calls = vi.mocked(tauriFetch).mock.calls, [url, options] = calls[calls.length - 1];
+    expect(new URL(String(url)).searchParams.get("receipt_file_digest")).toBe("c".repeat(64));
+    expect(JSON.parse(String(options?.body))).toEqual({ artifact_text: raw, receipt_text: saved });
   });
 });

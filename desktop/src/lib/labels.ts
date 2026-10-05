@@ -29,6 +29,7 @@ export function statusLabel(status: string): string {
   return (
     {
       queued: "排队",
+      waiting: "等待依赖",
       running: "执行中",
       cancelling: "停止中",
       done: "完成",
