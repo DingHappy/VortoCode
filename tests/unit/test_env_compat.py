@@ -54,6 +54,8 @@ def test_security_vars_honor_new_prefix(monkeypatch, key):
     assert server._insecure_bind_reason("0.0.0.0") == ""
 
 
+# 告警本身已由 test_falls_back_to_old_with_deprecation_warning 断言；这里只验回落值，别让预期告警漏进汇总。
+@pytest.mark.filterwarnings("ignore:环境变量 AUTODEV_API_TOKEN 已弃用:DeprecationWarning")
 def test_old_prefix_still_works_end_to_end(monkeypatch):
     """兼容期：只设旧前缀 AUTODEV_ 仍生效（回落）。"""
     from src.web import auth
