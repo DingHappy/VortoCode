@@ -11,7 +11,7 @@ from typing import Any, Iterable
 
 _SESSION_STATUSES = {"needs_input", "failed", "working", "queued", "idle", "inactive", "completed"}
 _GOAL_STATUSES = {"draft", "active", "blocked", "failed", "achieved"}
-_TASK_STATUSES = {"queued", "running", "cancelling", "failed", "paused", "interrupted", "done", "cancelled"}
+_TASK_STATUSES = {"waiting", "queued", "running", "cancelling", "blocked", "failed", "paused", "interrupted", "done", "cancelled"}
 _DECISION_KINDS = {"confirmation", "goal", "task", "run", "pr_check", "pr_review", "hook"}
 _DECISION_SEVERITIES = {"critical", "high", "medium", "low"}
 _DECISION_ACTIONS = {"confirm", "open_goal", "resume_task", "open_task", "open_run", "open_diff", "open_session"}
@@ -119,11 +119,19 @@ def _task_view(item: Any) -> dict[str, Any] | None:
     status = _text(_get(item, "status"), 24)
     if not task_id or status not in _TASK_STATUSES:
         return None
+    detail = _get(item, "error") or _get(item, "result")
+    if status == "waiting":
+        detail = "等待前置结果验收，核对后显式推进"
+    if status == "blocked":
+        collaboration = _get(item, "development" if _get(item, "kind") in {"dev", "dev-resume"} else "collaboration", {})
+        questions = collaboration.get("questions", []) if isinstance(collaboration, dict) else []
+        if isinstance(questions, list) and questions and isinstance(questions[-1], dict):
+            detail = questions[-1].get("question") or detail
     return {
         "id": task_id,
         "status": status,
         "prompt": _text(_get(item, "prompt"), 240),
-        "detail": _text(_get(item, "error") or _get(item, "result"), 500),
+        "detail": _text(detail, 500),
         "owner_session": _text(_get(item, "owner_session"), 180),
         "goal_id": _text(_get(item, "goal_id"), 180),
         "plan_id": _text(_get(item, "plan_id"), 180),
@@ -144,7 +152,10 @@ def build_runtime_inbox(
     session_views = [view for item in list(sessions)[:100] if (view := _session_view(item))]
     decision_views = [view for item in list(decisions)[:100] if (view := _decision_view(item))]
     goal_views = [view for item in list(goals)[:200] if (view := _goal_view(item))]
-    task_views = [view for item in list(tasks)[:200] if (view := _task_view(item))]
+    tasks = list(tasks)[:200]
+    from src.gateway.task_recovery import recovery_links
+    resumed_sources = recovery_links(tasks)
+    task_views = [view for item in tasks if (view := _task_view(item))]
     return {
         "version": 1,
         "scope": _text(scope, 24),
@@ -162,6 +173,6 @@ def build_runtime_inbox(
             "goals_active": sum(item["status"] in {"draft", "active"} for item in goal_views),
             "goals_blocked": sum(item["status"] in {"blocked", "failed"} for item in goal_views),
             "tasks_active": sum(item["status"] in {"queued", "running", "cancelling"} for item in task_views),
-            "tasks_attention": sum(item["status"] in {"failed", "paused", "interrupted"} for item in task_views),
+            "tasks_attention": sum(item["id"] not in resumed_sources and item["status"] in {"waiting", "blocked", "failed", "paused", "interrupted"} for item in task_views),
         },
     }

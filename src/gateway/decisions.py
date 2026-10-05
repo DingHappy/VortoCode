@@ -105,6 +105,9 @@ def build_decision_queue(
     """Normalize local state into stable, actionable queue items."""
     hidden = dismissed or set()
     output: list[dict[str, Any]] = []
+    tasks = list(tasks)
+    from src.gateway.task_recovery import recovery_links
+    resumed_sources = recovery_links(tasks)
     for confirmation in confirmations:
         confirmation_id = _text(confirmation.get("id"), 120)
         if not confirmation_id:
@@ -133,7 +136,42 @@ def build_decision_queue(
         ))
 
     for task in tasks:
+        if task.id in resumed_sources:
+            continue
         status = getattr(task, "status", "")
+        collaboration = getattr(task, "collaboration", {}) or {}
+        review = collaboration.get("review")
+        if status == "waiting" and getattr(task, "dependencies", {}):
+            decision_id = f"task:{task.id}:dependencies"
+            if decision_id not in hidden:
+                output.append(_item(decision_id, "task", "medium", "任务等待前置结果验收",
+                                    "核对前置任务的结果和验收后，显式推进；等待不占执行槽",
+                                    created=getattr(task, "updated", ""), target_id=task.id, action="open_task"))
+            continue
+        if getattr(task, "kind", "") in {"delegation", "dev", "dev-resume"} and status == "blocked":
+            from src.gateway.task_questions import question_views
+            questions = question_views(task)
+            question = questions[-1] if questions else {}
+            decision_id = f"task:{task.id}:question:{question.get('id', 'unknown')}"
+            if decision_id not in hidden:
+                output.append(_item(
+                    decision_id, "task", "medium", "子 Agent 等待回答",
+                    question.get("question") or "查看任务所需的补充信息",
+                    created=getattr(task, "updated", ""), target_id=task.id, action="open_task",
+                    tainted=(task.development if task.kind in {"dev", "dev-resume"} else collaboration).get("tainted", False),
+                ))
+            continue
+        if getattr(task, "kind", "") == "delegation" and status == "done" and review in {"pending", "rework_requested"}:
+            decision_id = f"task:{task.id}:{collaboration.get('round', 0)}:{review}"
+            if decision_id not in hidden:
+                output.append(_item(
+                    decision_id, "task", "medium",
+                    "委派任务待验收" if review == "pending" else "委派任务等待返工",
+                    getattr(task, "prompt", "") or "回到发起会话检查结果并继续处理",
+                    created=getattr(task, "updated", "") or getattr(task, "created", ""),
+                    target_id=task.id, action="open_task", tainted=collaboration.get("tainted", False),
+                ))
+            continue
         if status not in {"failed", "interrupted", "paused"}:
             continue
         decision_id = f"task:{task.id}"

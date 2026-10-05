@@ -121,7 +121,17 @@ def task_session_view(
     worktrees: List[Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
     """Project one durable task into the shared Desktop/Journal handoff shape."""
+    from src.gateway.task_dependencies import dependency_view, has_dependencies
+    from src.gateway.tasks import TaskLedger
     data = task.to_dict()
+    from src.gateway.task_chain_budget import budget_view
+    data["chain_budget"] = budget_view(task, TaskLedger(repo_root))
+    if has_dependencies(task):
+        data["dependencies"] = dependency_view(task, TaskLedger(repo_root))
+    if task.kind in {"dev", "dev-resume"} and task.development:
+        from src.gateway.task_questions import question_views
+        data["development"]["questions"] = question_views(task)
+        data.update(questions=question_views(task), session=task.owner_session, round=task.development.get("round"))
     data["log"] = data.get("log", [])[-30:]
     plan = load_plan(repo_root, task.plan_id) if task.plan_id else None
     counts = plan.counts() if plan is not None else {}
@@ -135,11 +145,29 @@ def task_session_view(
         "total": len(plan.blocks) if plan else 0,
     }
     can_resume = bool(
-        task.plan_id
+        task.kind in {"dev", "dev-resume"}
+        and task.plan_id
         and plan is not None
+        and plan.status != "done"
         and task.status in {"paused", "interrupted", "failed", "cancelled"}
     )
+    resumed = None
+    recovery_error = ""
+    if task.kind in {"dev", "dev-resume"}:
+        from src.gateway.task_recovery import RecoveryConflict, resumed_task
+        from src.gateway.tasks import TaskLedger
+        try:
+            resumed = resumed_task(TaskLedger(repo_root), task)
+        except RecoveryConflict as error:
+            recovery_error = str(error)
+        if resumed is not None or recovery_error:
+            can_resume = False
+    data["resumed_task_id"] = resumed.id if resumed else ""
     next_action = (
+        recovery_error
+        if recovery_error else
+        f"查看恢复任务 {resumed.id}（{resumed.status}）；后续恢复从该任务发起"
+        if resumed is not None else
         "从持久计划恢复剩余任务"
         if can_resume else
         "等待当前 worktree 步骤完成"
@@ -148,6 +176,28 @@ def task_session_view(
         if task.status == "done" else
         "检查错误和最近日志"
     )
+    collaboration = getattr(task, "collaboration", {}) or {}
+    if task.kind in {"dev", "dev-resume"} and task.status == "blocked":
+        next_action = "回答当前计划块的问题后继续开发；未提交改动已清理，回答不扩大权限"
+    if task.kind == "delegation":
+        from src.gateway.task_questions import question_views
+        if "questions" in collaboration:
+            data["collaboration"]["questions"] = question_views(task)
+        next_action = (
+            data["dependencies"]["next_action"]
+            if task.status == "waiting" and has_dependencies(task) else
+            "回答任务卡中的问题后继续；回答会使用下一轮执行预算"
+            if task.status == "blocked" else
+            "委派任务已验收，可以汇总结果"
+            if collaboration.get("review") == "accepted" else
+            "发起 Agent 检查结果并验收；需要修改时补充返工要求"
+            if task.status == "done" else
+            "等待当前子 Agent 返回结果"
+            if task.status in {"queued", "running"} else
+            "回到发起会话补充信息或重试任务"
+        )
+    if data.get("dependencies", {}).get("result_valid") is False:
+        next_action = data["dependencies"]["next_action"]
     handoff_lines = [
         f"任务交接：{task.prompt}",
         f"状态：{task.status}",
@@ -185,7 +235,7 @@ def task_session_view(
         ],
         "integration": plan.integration,
     } if plan is not None else None
-    data["can_pause"] = task.status in {"queued", "running"}
+    data["can_pause"] = task.kind in {"dev", "dev-resume", "im-dev"} and task.status in {"queued", "running"}
     data["can_resume"] = can_resume
     live_worktrees = worktrees if worktrees is not None else list_worktree_sessions(repo_root)
     data["worktrees"] = [
@@ -198,7 +248,10 @@ def task_session_view(
         data["branch_review"] = task_review_summary(repo_root, task)
     except Exception:  # noqa: BLE001 - review evidence must not break task hydration
         data["branch_review"] = None
+    from src.gateway.handoffs import completion_state
+
     data["handoff"] = {
+        "handling": completion_state(task),
         "completed": completed[:12],
         "remaining": remaining[:12],
         "next_action": next_action,

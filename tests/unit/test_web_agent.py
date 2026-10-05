@@ -327,6 +327,41 @@ async def test_prompt_queue_stop_pauses_and_remove_is_authoritative(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_stop_before_execution_keeps_durable_input_and_notifies_original_request(monkeypatch, tmp_path):
+    from src.web.routers import realtime
+    from src.web.session_store import load_session
+    monkeypatch.chdir(tmp_path)
+    ws = _FakeWS(sid="unstarted-stop")
+    agent = _QueueAgent()
+    _inject_session(ws, agent)
+
+    async def immediate_publish(websocket):
+        pass
+
+    # Keep the initial reservation before the first executor timeslice.
+    monkeypatch.setattr(realtime, "_send_prompt_queue", immediate_publish)
+    try:
+        item = realtime._new_prompt_item(text="a", mode="plan", images=[], audio=[],
+                                        rid="unstarted-rid", want_reasoning=False, context_items=[])
+        assert await realtime._start_prompt_item(ws, item)
+        assert realtime._cancel_agent_turn(ws)
+        for _ in range(20):
+            task = realtime._WS_AGENT_TASKS.get(_key(ws))
+            if task is None:
+                break
+            await asyncio.gather(task, return_exceptions=True)
+            await asyncio.sleep(0)
+        assert not agent.seen and not realtime._ACTORS.busy(_key(ws))
+        stored = load_session(str(tmp_path), _key(ws))
+        assert stored["prompt_queue"][0]["id"] == "unstarted-rid"
+        cancelled = [event for event in ws.sent if event["type"] == "agent_cancelled"]
+        assert len(cancelled) == 1 and cancelled[0]["rid"] == "unstarted-rid"
+        assert "输入已保留" in cancelled[0]["text"]
+    finally:
+        _cleanup(ws)
+
+
+@pytest.mark.asyncio
 async def test_cancel_with_no_running_turn_is_noop():
     from src.web.routers import realtime
     ws = _FakeWS()
@@ -1430,10 +1465,11 @@ async def test_ping_pong_and_init_version():
     assert evt["v"] == P.PROTOCOL_VERSION
 
 
-def test_sessions_evict_oldest_over_cap(monkeypatch):
+def test_sessions_evict_oldest_over_cap(monkeypatch, tmp_path):
     from src.web.routers import realtime
     monkeypatch.setattr(realtime, "_MAX_SESSIONS", 3)
     monkeypatch.setattr(realtime, "_new_agent", lambda: object())   # 不建真 agent，纯测淘汰
+    monkeypatch.chdir(tmp_path)
     saved = dict(realtime._SESSIONS)
     realtime._SESSIONS.clear()
     try:
