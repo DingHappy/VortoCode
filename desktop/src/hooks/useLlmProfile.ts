@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useState } from "react";
 
 import { errorText } from "../lib/errorText";
+import { confirmAction } from "../lib/confirm";
 import type { DesktopLlmProfileStatus } from "../types";
 
 export function useLlmProfile(
@@ -52,7 +53,7 @@ export function useLlmProfile(
   };
 
   const clearLlmProfile = async () => {
-    if (llmProfileBusy || !window.confirm("清除 macOS Keychain 中的模型服务配置？当前 runtime 会重启。")) return;
+    if (llmProfileBusy || !await confirmAction("清除 macOS Keychain 中的模型服务配置？当前 runtime 会重启。")) return;
     setLlmProfileBusy(true);
     try {
       const profile = await invoke<DesktopLlmProfileStatus>("clear_llm_profile");

@@ -1179,6 +1179,38 @@ async fn confirm_project_registration(app: &AppHandle, root: &Path) -> Result<bo
     .map_err(|error| format!("项目注册确认对话框失败：{error}"))
 }
 
+const MAX_CONFIRM_MESSAGE_CHARS: usize = 2000;
+
+fn confirm_action_message(message: &str) -> String {
+    let mut chars = message.chars();
+    let mut text: String = chars.by_ref().take(MAX_CONFIRM_MESSAGE_CHARS).collect();
+    if chars.next().is_some() {
+        text.push('…');
+    }
+    text
+}
+
+/// 前端破坏性操作的确认框（撤销修改、删除、push 等）。
+///
+/// 不能用 window.confirm：dialog 插件把它改写成调用已不存在的 `confirm` 命令的 async 函数，
+/// 同步调用方拿到的 Promise 恒为真值，确认形同虚设。这里阻塞到用户点选为止。
+/// 它是给真人的确认，不是对抗页面脚本的安全边界——那类敏感动作仍由各自命令在 Rust 侧弹框。
+#[tauri::command]
+async fn confirm_action(app: AppHandle, message: String) -> Result<bool, String> {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    let message = confirm_action_message(&message);
+    tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .message(message)
+            .title("VortoCode")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom("确认".into(), "取消".into()))
+            .blocking_show()
+    })
+    .await
+    .map_err(|error| format!("确认对话框失败：{error}"))
+}
+
 #[tauri::command]
 fn list_desktop_projects(app: AppHandle) -> Result<Vec<DesktopProjectProfile>, String> {
     Ok(load_project_registry(&project_registry_path(&app)?)?.projects)
@@ -2838,6 +2870,7 @@ pub fn run() {
             get_llm_profile,
             set_llm_profile,
             clear_llm_profile,
+            confirm_action,
             list_desktop_projects,
             remember_desktop_project,
             remember_remote_project,
@@ -4498,5 +4531,15 @@ mod tests {
         assert_eq!(saved.context_window_source.as_deref(), Some("service"));
         assert_eq!(persisted.load(Ordering::SeqCst), 1);
         assert_eq!(probe_hits.load(Ordering::SeqCst), 1);
+    }
+    #[test]
+    fn confirm_action_message_keeps_short_text_and_caps_long_text() {
+        assert_eq!(confirm_action_message("删除目标草稿“x”？"), "删除目标草稿“x”？");
+        let exact = "确".repeat(MAX_CONFIRM_MESSAGE_CHARS);
+        assert_eq!(confirm_action_message(&exact), exact);
+        let long = "确".repeat(MAX_CONFIRM_MESSAGE_CHARS + 5);
+        let capped = confirm_action_message(&long);
+        assert_eq!(capped.chars().count(), MAX_CONFIRM_MESSAGE_CHARS + 1);
+        assert!(capped.ends_with('…'));
     }
 }

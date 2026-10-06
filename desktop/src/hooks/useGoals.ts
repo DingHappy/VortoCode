@@ -17,6 +17,7 @@ import type { GatewayClient } from "../gateway";
 import { errorText } from "../lib/errorText";
 import { criterionVerifierDraft, goalEvidenceKey, goalFormLines } from "../lib/goals";
 import type { GoalVerifierDraft } from "../lib/goals";
+import { confirmAction } from "../lib/confirm";
 import type { GoalCriterion, GoalItem } from "../types";
 
 export function useGoals(
@@ -93,7 +94,7 @@ export function useGoals(
   };
 
   const deleteGoalDraft = async (goal: GoalItem) => {
-    if (!clientRef.current || !window.confirm(`删除目标草稿“${goal.objective}”？`)) return;
+    if (!clientRef.current || !await confirmAction(`删除目标草稿“${goal.objective}”？`)) return;
     try {
       await clientRef.current.deleteGoal(goal.id);
       setGoals((previous) => previous.filter((item) => item.id !== goal.id));
