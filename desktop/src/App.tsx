@@ -331,8 +331,8 @@ function App() {
   // 授权档位与模型服务配置已收进 useTrustLevel / useLlmProfile；重启 runtime 经注入回调。
   const { trust, trustBusy, changeTrustLevel } = useTrustLevel(clientRef, connection, repoRoot, settingsOpen, setBanner);
   const {
-    llmProfile, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput, llmKeyInput, setLlmKeyInput,
-    llmProfileBusy, saveLlmProfile, clearLlmProfile,
+    llmProfile, llmProfileChecked, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput,
+    llmKeyInput, setLlmKeyInput, llmProfileBusy, saveLlmProfile, clearLlmProfile,
   } = useLlmProfile(settingsOpen, setBanner, () => restartCurrentRuntimeForLlmProfile());
   // 「变更」面板域（Git 审查 / 任务分支审查 / 评论 / PR 交付）已收进 useChangeReview；
   // 发给 Agent 的两个回调与协议事件对 setGitReviewRevision 的写入留在 App。
@@ -2683,9 +2683,9 @@ function App() {
                 activeScope={activeScope}
                 projectName={repoRoot.split("/").filter(Boolean).slice(-1)[0] || ""}
                 connection={connection}
-                // llmProfile 为 null = 还在读 Keychain（"检查中"），不是"没配"——
-                // 这两态必须分开，否则冷启动瞬间会误报"请先配置模型"。
-                modelLoaded={llmProfile !== null}
+                // 还没读完 Keychain = "检查中"，不是"没配"——两态必须分开，否则冷启动瞬间会
+                // 误报"请先配置模型"。读失败也算读完（显示待配置），不能永远停在检查中。
+                modelLoaded={llmProfileChecked}
                 modelConfigured={Boolean(llmProfile?.configured)}
                 runtimeStarting={runtimeStarting}
                 projectSwitching={projectSwitching}
