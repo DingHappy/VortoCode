@@ -64,6 +64,12 @@ npm run release:verify -- --mode preview
 
 ### macOS 稳定开发签名
 
+**优先用 Apple 签发、带 Team ID 的证书**（`Developer ID Application: …`）。模型配置存在登录钥匙串里，
+macOS 除了受信任应用列表，还会校验条目的分区列表（partition list）：Apple 签发的证书匹配稳定的
+`teamid:<Team ID>`，点过一次“始终允许”后重新打包安装也不再询问；自签名证书没有 Team ID，只能按每个
+构建的 `cdhash:` 记入分区列表，**每装一个新构建就会再弹一次授权**（2026-10-06 实测，条目里已积累十几个
+cdhash）。`tauri dev` 的 ad-hoc 二进制同理，每次重编都会再问一次。
+
 不要用普通 `bundle:app` 生成的 unsigned 包反复覆盖 `/Applications/VortoCode.app`：macOS
 Keychain 会把二进制内容变化视为新的调用方，已经选择的“始终允许”无法稳定复用。使用一次性 setup
 在临时目录生成长期有效的 `VortoCode Development` 代码签名证书并导入登录钥匙串；导入完成后临时
@@ -79,14 +85,16 @@ npm run verify:installed
 ```
 
 `signing:setup` 默认使用 `VortoCode Development`；若需要自定义名称，可在 setup 和后续命令中统一
-设置 `VORTOCODE_CODESIGN_IDENTITY`。`signing:doctor` 要求 Keychain 中存在有效的非 ad-hoc 身份；
-只有一个有效身份时可以自动选择，多个身份时必须显式指定。签名构建会先冻结并 smoke sidecar，再让 Tauri 使用同一身份签名嵌套 runtime 和主
+设置 `VORTOCODE_CODESIGN_IDENTITY`。`signing:doctor` 要求 Keychain 中存在有效的非 ad-hoc 身份。
+未显式指定时按以下顺序自动选择：恰好一张 `Developer ID Application` 证书时用它；否则用
+`VortoCode Development`；只有一个有效身份时用它；仍有多个则必须显式指定。签名构建会先冻结并 smoke sidecar，再让 Tauri 使用同一身份签名嵌套 runtime 和主
 app，最后验证 bundle identifier、严格签名和 designated requirement。上一次签名证据或已安装 app
 的 designated requirement 不一致时安装会 fail closed；只有证书有计划轮换时才可临时设置
 `VORTOCODE_ALLOW_SIGNING_IDENTITY_CHANGE=1`。
 
-从旧 unsigned 包第一次切换到稳定签名包时，读取既有模型配置仍可能要求最后一次授权。之后同一证书、
-`com.vorto.vortocode` identifier 和 Keychain service 必须保持稳定。Desktop 原生层在单次进程生命周期
+切换签名身份（例如从 unsigned 或自签名换到 Developer ID）后，第一次读取既有模型配置会再要求一次授权，
+点“始终允许”。之后只要用的是同一 Team ID 的证书，`com.vorto.vortocode` identifier 和 Keychain service
+保持不变，重新打包安装都不会再问；用自签名证书则每次重装仍会问一次（见上文）。Desktop 原生层在单次进程生命周期
 只读取一次模型配置；General、Project、设置页和并发 runtime 复用同一内存缓存，保存/清除成功后同步
 更新缓存，授权失败不会被缓存。
 
