@@ -41,6 +41,12 @@ def test_explicit_model_must_be_configured(tiers):
     assert resolve_turn_model(None, "x", mode="build") is None
 
 
+def test_models_listed_by_the_default_service_can_be_picked(monkeypatch, tiers):
+    monkeypatch.setenv("VORTOCODE_MODEL_CHOICES", "mimo-v2.6-flash, deepseek-chat,")
+    assert resolve_turn_model("deepseek-chat", "x", mode="build").model == "deepseek-chat"
+    assert resolve_turn_model("not-listed", "x", mode="build") is None
+
+
 def test_clean_model_request_shape():
     assert clean_model_request(" auto ") == AUTO
     assert clean_model_request("mimo-v2.6-pro") == "mimo-v2.6-pro"

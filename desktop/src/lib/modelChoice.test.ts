@@ -20,6 +20,14 @@ describe("modelChoices", () => {
   });
 });
 
+describe("default service model list", () => {
+  it("lists the service's chat models under 全部模型 and skips speech/embedding models", () => {
+    const choices = modelChoices(profile({ models: ["main", "fast-chat", "mimo-v2.5-tts", "text-embedding-3", "whisper-1"] }));
+    expect(choices.map((choice) => choice.value)).toEqual(["main", "fast-chat"]);
+    expect(choices[1].group).toBe("全部模型");
+  });
+});
+
 describe("custom providers", () => {
   it("lists their models as provider:model in their own group", () => {
     const choices = modelChoices(profile({
