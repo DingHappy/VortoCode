@@ -3001,7 +3001,26 @@ struct LlmConnectionTest {
     status: Option<u16>,
     model_count: Option<usize>,
     model_available: Option<bool>,
+    /// 服务返回的模型 id（最多 MAX_LISTED_MODELS 个），供设置页给模型名做候选。
+    models: Vec<String>,
     message: String,
+}
+
+const MAX_LISTED_MODELS: usize = 200;
+
+fn model_ids(payload: &serde_json::Value) -> Vec<String> {
+    payload
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("id").or_else(|| item.get("model")).and_then(serde_json::Value::as_str))
+                .take(MAX_LISTED_MODELS)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn summarize_models_payload(payload: &serde_json::Value, model: &str) -> (usize, Option<bool>) {
@@ -3062,6 +3081,7 @@ async fn test_llm_connection(
                 status: None,
                 model_count: None,
                 model_available: None,
+                models: Vec::new(),
                 message: if error.is_timeout() { "连接超时".into() } else { "无法连接到该地址".into() },
             })
         }
@@ -3078,6 +3098,7 @@ async fn test_llm_connection(
             status: Some(status.as_u16()),
             model_count: None,
             model_available: None,
+            models: Vec::new(),
             message,
         });
     }
@@ -3093,6 +3114,7 @@ async fn test_llm_connection(
         status: Some(status.as_u16()),
         model_count: Some(count),
         model_available: available,
+        models: model_ids(&payload),
         message,
     })
 }
@@ -4967,6 +4989,7 @@ mod tests {
         assert_eq!(summarize_models_payload(&payload, "missing"), (2, Some(false)));
         assert_eq!(summarize_models_payload(&payload, ""), (2, None));
         assert_eq!(summarize_models_payload(&serde_json::json!({}), "x"), (0, None));
+        assert_eq!(model_ids(&payload), vec!["mimo-v2.5".to_string(), "gpt-4o".to_string()]);
     }
 
     #[test]

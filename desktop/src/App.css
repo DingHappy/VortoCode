@@ -8975,3 +8975,177 @@ input::placeholder {
   padding: 8px;
   border-top: 1px solid var(--line-soft);
 }
+
+/* ── 设置第 2 期：使用情况 / 个性化 / 配置 / 测试连接（只用主题变量） ── */
+.settings-modal .llm-profile-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.settings-modal .llm-profile-presets button {
+  flex: 0 0 auto;
+  padding: 6px 12px;
+  border-radius: 8px;
+}
+
+.settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.settings-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.settings-card-head,
+.settings-card-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-card-head strong {
+  color: var(--n13);
+  font-size: 14px;
+}
+
+.settings-card-foot span,
+.settings-card-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.settings-card-note.danger,
+.llm-connection-result.danger {
+  color: var(--red);
+}
+
+.settings-card button,
+.llm-connection-check button {
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--n12);
+  background: var(--surface-2);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.settings-card button.primary {
+  border-color: var(--accent);
+  color: var(--n0);
+  background: var(--accent);
+}
+
+.settings-card button:disabled,
+.llm-connection-check button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.usage-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.usage-metrics > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--n4);
+}
+
+.usage-metrics span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.usage-metrics strong {
+  color: var(--n13);
+  font-size: 18px;
+  font-weight: 650;
+}
+
+.settings-textarea {
+  width: 100%;
+  min-height: 220px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--n13);
+  background: var(--surface-1);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.config-file-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 4px 0 12px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.config-file-row:last-of-type {
+  border-bottom: 0;
+}
+
+.config-file-row > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.config-file-row strong {
+  color: var(--n13);
+  font-size: 13.5px;
+}
+
+.config-file-row span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.config-file-row code {
+  color: var(--n11);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.config-file-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.llm-connection-check {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.llm-connection-result {
+  color: var(--green);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}

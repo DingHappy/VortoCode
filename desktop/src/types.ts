@@ -1156,6 +1156,33 @@ export interface DesktopLlmProfileStatus {
   configPath?: string;
 }
 
+/** 设置页「测试连接」：只验证不保存。 */
+export interface LlmConnectionTest {
+  ok: boolean;
+  status?: number | null;
+  modelCount?: number | null;
+  modelAvailable?: boolean | null;
+  models: string[];
+  message: string;
+}
+
+/** 模型服务额度（OpenAI 兼容的 billing 接口；Key 只在原生层使用）。 */
+export interface LlmUsageSummary {
+  available: boolean;
+  unlimited: boolean;
+  hardLimitUsd?: number | null;
+  usedUsd?: number | null;
+  periodDays: number;
+  message: string;
+}
+
+/** 用户级全局指令（~/.vortocode/AGENTS.md）。 */
+export interface UserInstructions {
+  path: string;
+  content: string;
+  exists: boolean;
+}
+
 export interface GatewayRecoveryRecord {
   runtimeId: string;
   projectId?: string;
