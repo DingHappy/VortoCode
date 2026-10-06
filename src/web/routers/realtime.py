@@ -655,6 +655,12 @@ def _tool_summary(name: str, args: Dict[str, Any]) -> str:
         "web_search": f"搜索网页：{query[:100]}" if query else "搜索网页",
         "web_fetch": "读取网页",
         "screenshot_page": "给网页截图",
+        # —— 浏览器操控（输入内容可能敏感，只显示元素编号，不进标题）——
+        "browser_open": _with("浏览器打开", str(args.get("url") or "").strip(), 80),
+        "browser_snapshot": "读取浏览器页面",
+        "browser_screenshot": "给浏览器页面截图",
+        "browser_click": _with("浏览器点击元素", str(args.get("ref") or "").strip()),
+        "browser_type": _with("浏览器输入到元素", str(args.get("ref") or "").strip()),
         "research_parallel": _with("并行调研：", task, 50),
         "task_status": _with("查看任务：", str(args.get("task_id") or ""), 50),
         "task_inbox": "读取后台任务交接",
