@@ -6,8 +6,10 @@ import {
   FileText,
   FolderPlus,
   Inbox,
+  Music,
   Package,
   PanelRight,
+  Paperclip,
   PencilLine,
   Plus,
   Settings2,
@@ -105,6 +107,10 @@ import { finishRunningActivities, hydrateActivities, protocolActivity, upsertAct
 import { errorText } from "./lib/errorText";
 import { runtimeInboxSubtitle, summarizeRuntimeInboxes } from "./lib/runtimeInbox";
 import { confirmAction } from "./lib/confirm";
+import { composeMessageText, mediaPayload } from "./lib/attachments";
+import { useAttachments } from "./hooks/useAttachments";
+import { latestTurnSteps, previewReferences, publishedArtifactId, type PreviewView } from "./lib/preview";
+import { PreviewPanel } from "./components/PreviewPanel";
 
 
 type PendingWorkspaceSave = { rid: string; path: string; content: string; buffer: string };
@@ -138,6 +144,7 @@ function normalizePromptQueueItem(value: unknown, fallbackPosition = 0): PromptQ
 function inspectorTabLabel(tab: InspectorTab): string {
   return {
     inbox: "收件箱",
+    preview: "预览",
     files: "代码",
     diff: "变更",
     runs: "运行",
@@ -204,6 +211,11 @@ function App() {
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [plan, setPlan] = useState<PlanItem[]>([]);
   const [activities, setActivities] = useState<TurnActivity[]>([]);
+  const [previewView, setPreviewView] = useState<PreviewView>("plan");
+  // 刚发布的制品：协议回调里只记下来，由 effect 带着当前作用域去刷新并定位（避免回调闭包里的旧 scope）。
+  const [publishedArtifact, setPublishedArtifact] = useState<{ id: string; seq: number } | null>(null);
+  const previewReferenceItems = useMemo(() => previewReferences(activities), [activities]);
+  const previewSteps = useMemo(() => latestTurnSteps(activities), [activities]);
   const [streaming, setStreaming] = useState("");
   const [streamingRid, setStreamingRid] = useState<string | undefined>();
   const [activeTurnRid, setActiveTurnRid] = useState<string | null>(null);
@@ -288,6 +300,9 @@ function App() {
   const [notificationSyncVersion, setNotificationSyncVersion] = useState(0);
   const [backgroundPrompt, setBackgroundPrompt] = useState("");
   const [banner, setBanner] = useState<string | null>(null);
+  const { attachments, setAttachments, addFiles, removeAttachment } = useAttachments(setBanner);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
   const { tasks, focusedTaskId, worktreeWorkspace, setFocusedTaskId, refreshTasks,
     refreshWorktrees, resetTasks, upsertTask, acceptTaskEvent, captureTaskScope, cancelTask, pauseTask,
     resumeTask } = useTasks(clientRef, setBanner);
@@ -769,6 +784,12 @@ function App() {
         case "agent_hook": {
           const activity = protocolActivity(event);
           if (activity) setActivities((previous) => upsertActivity(previous, activity));
+          const publishedId = event.type === "agent_tool" ? publishedArtifactId(event) : null;
+          if (publishedId) {
+            setPreviewView("artifacts");
+            setPublishedArtifact((previous) => ({ id: publishedId, seq: (previous?.seq ?? 0) + 1 }));
+            autoOpenInspector("preview");
+          }
           if (event.type === "agent_tool" && event.name === "dev_isolated" && event.status === "succeeded") {
             autoOpenInspector("diff");
             void refreshIsolatedDeliveries();
@@ -1278,6 +1299,18 @@ function App() {
     return () => window.clearInterval(timer);
   }, [connection, refreshSessions]);
 
+  const handledPublishRef = useRef(0);
+  useEffect(() => {
+    if (!publishedArtifact || connection !== "connected" || publishedArtifact.seq === handledPublishRef.current) return;
+    handledPublishRef.current = publishedArtifact.seq;
+    const { id } = publishedArtifact;
+    void refreshProjectAssets(activeScope !== "general").then(() => {
+      setSelectedArtifactId(id);
+      // 同一 id 的新版本不会改变 selectedArtifactId，这里显式重载预览到最新版。
+      void loadArtifactPreview(id);
+    });
+  }, [activeScope, connection, loadArtifactPreview, publishedArtifact, refreshProjectAssets, setSelectedArtifactId]);
+
   useEffect(() => {
     if (connection !== "connected" || !selectedArtifactId) return;
     void loadArtifactPreview(selectedArtifactId);
@@ -1665,7 +1698,9 @@ function App() {
   ): Promise<boolean> => {
     const text = (override ?? prompt).trim();
     const selectedContext = [...(requestedContext ?? contextItems)].slice(0, 8);
-    if ((!text && selectedContext.length === 0) || savingFile) return false;
+    // 附件只跟随输入框发送；面板一键派发（override）不夹带输入框里的附件。
+    const selectedAttachments = override === undefined ? attachments : [];
+    if ((!text && selectedContext.length === 0 && selectedAttachments.length === 0) || savingFile) return false;
 
     if (connection !== "connected" || !clientRef.current) {
       if (runtimeStartingRef.current || projectSwitchingRef.current) {
@@ -1686,10 +1721,15 @@ function App() {
 
     const client = clientRef.current;
     const willQueue = busy;
-    const displayText = text || "请分析我选择的本地文件。";
+    const displayText = text || (selectedAttachments.length > 0 ? "请查看我添加的附件。" : "请分析我选择的本地文件。");
     const rid = createSessionId().slice(0, 64);
+    const attachmentNote = [
+      ...selectedContext.map(contextItemLabel),
+      ...selectedAttachments.map((item) => item.name),
+    ];
     setPrompt("");
     setContextItems([]);
+    if (selectedAttachments.length > 0) setAttachments([]);
     autoScrollRef.current = true;
     if (!willQueue) {
       setBusy(true);
@@ -1705,14 +1745,15 @@ function App() {
       setMessages((previous) => [...previous, {
         id: messageId("user"),
         role: "user",
-        text: selectedContext.length > 0 ? `${displayText}\n\n📎 ${selectedContext.map(contextItemLabel).join(" · ")}` : displayText,
+        text: attachmentNote.length > 0 ? `${displayText}\n\n📎 ${attachmentNote.join(" · ")}` : displayText,
         rid,
       }]);
     }
     try {
       await client.send({
         type: "agent",
-        text: displayText,
+        text: composeMessageText(displayText, selectedAttachments),
+        ...mediaPayload(selectedAttachments),
         mode: requestedMode,
         context_files: selectedContext.filter((item) => !item.startLine).map((item) => item.path),
         context_selections: selectedContext
@@ -1733,6 +1774,7 @@ function App() {
       }
       setPrompt(text);
       setContextItems(selectedContext);
+      if (selectedAttachments.length > 0) setAttachments(selectedAttachments);
       setBanner(errorText(error, "发送失败"));
       return false;
     }
@@ -2809,7 +2851,36 @@ function App() {
                 </div>
               </section>
             )}
-            <div className={`composer ${runtimeStarting || projectSwitching ? "preparing" : ""}`}>
+            <div
+              className={`composer ${runtimeStarting || projectSwitching ? "preparing" : ""} ${dragOver ? "drag-over" : ""}`}
+              onDragOver={(event) => {
+                if (!event.dataTransfer.types.includes("Files")) return;
+                event.preventDefault();
+                setDragOver(true);
+              }}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOver(false);
+              }}
+              onDrop={(event) => {
+                if (!event.dataTransfer.files.length) return;
+                event.preventDefault();
+                setDragOver(false);
+                void addFiles(event.dataTransfer.files);
+              }}
+            >
+              {attachments.length > 0 && (
+                <div className="attachment-chips">
+                  {attachments.map((item) => (
+                    <span key={item.id} className={`attachment-chip ${item.kind}`} title={item.name}>
+                      {item.kind === "image"
+                        ? <img src={item.data} alt="" />
+                        : item.kind === "audio" ? <Music size={13} /> : <FileText size={13} />}
+                      <em>{item.name}</em>
+                      <button aria-label={`移除附件 ${item.name}`} onClick={() => removeAttachment(item.id)}><X size={12} /></button>
+                    </span>
+                  ))}
+                </div>
+              )}
               {contextItems.length > 0 && (
                 <div className="context-chips">
                   {contextItems.map((item) => (
@@ -2826,6 +2897,12 @@ function App() {
               <textarea
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
+                onPaste={(event) => {
+                  const files = Array.from(event.clipboardData.files);
+                  if (files.length === 0) return;
+                  event.preventDefault();
+                  void addFiles(files);
+                }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
@@ -2842,13 +2919,29 @@ function App() {
                     title="添加项目或文件上下文"
                     onClick={() => activeScope === "general" ? void chooseRepo() : openInspector("files")}
                   ><Plus size={17} /></button>
+                  <button
+                    className="composer-attach"
+                    aria-label="添加附件"
+                    title="添加附件：图片、音频或文本文件，也可以直接拖入或粘贴"
+                    onClick={() => attachmentInputRef.current?.click()}
+                  ><Paperclip size={16} /></button>
+                  <input
+                    ref={attachmentInputRef}
+                    type="file"
+                    multiple
+                    hidden
+                    onChange={(event) => {
+                      if (event.target.files?.length) void addFiles(event.target.files);
+                      event.target.value = "";
+                    }}
+                  />
                   <span>{activeScope === "general"
                     ? busy ? "Enter 加入队列 · 不访问本机文件" : "不访问本机文件"
                     : contextItems.length > 0
                       ? `${contextItems.length} 个源码引用`
                       : busy ? "Enter 加入队列 · Shift+Enter 换行" : mode === "build" ? "可修改 · 变更需审查" : "只读规划"}</span>
                 </div>
-                <button className={`composer-send ${busy ? "queueing" : ""}`} aria-label={busy ? "加入待运行队列" : "发送"} title={busy ? "加入待运行队列" : "发送"} onClick={() => void sendPrompt()} disabled={(!prompt.trim() && contextItems.length === 0) || savingFile || runtimeStarting || projectSwitching}><ArrowUp size={17} /></button>
+                <button className={`composer-send ${busy ? "queueing" : ""}`} aria-label={busy ? "加入待运行队列" : "发送"} title={busy ? "加入待运行队列" : "发送"} onClick={() => void sendPrompt()} disabled={(!prompt.trim() && contextItems.length === 0 && attachments.length === 0) || savingFile || runtimeStarting || projectSwitching}><ArrowUp size={17} /></button>
               </div>
             </div>
           </div>
@@ -2862,6 +2955,7 @@ function App() {
           </div>
           <div className="inspector-tabs">
             <button className={tabClass("inbox")} onClick={() => openInspector("inbox")}>收件箱<small>{runtimeInboxSummary.actionable}</small></button>
+            <button className={tabClass("preview")} onClick={() => openInspector("preview")}>预览<small>{artifacts.length + previewReferenceItems.length}</small></button>
             {activeScope !== "general" && <button className={tabClass("files")} onClick={() => openInspector("files")}>代码<small>{filteredWorkspaceFiles.length}</small></button>}
             {activeScope !== "general" && <button className={tabClass("diff")} onClick={() => { setTaskReviewTask(null); setTaskBranchReview(null); setTaskBranchDiff(null); setTaskBranchSelectedPath(""); openInspector("diff"); void refreshGitReview(); void refreshPrDelivery(); void refreshIsolatedDeliveries(); }}>变更<small>{(gitReview?.files.length ?? 0) + isolatedDeliveries.length}</small></button>}
             {activeScope !== "general" && <button className={tabClass("runs")} onClick={() => openInspector("runs")}>运行<small>{activeRuns.length}</small></button>}
@@ -3039,6 +3133,29 @@ function App() {
                   onVerify: verifyReviewedTaskBranch, onOpenPr: (item) => openTaskPr(item.id),
                   onCollaboration: draftTaskCollaboration, getClient: () => clientRef.current,
                   onDispatchUpdated: () => void refreshTasks() }}
+              />
+            )}
+            {inspectorTab === "preview" && (
+              <PreviewPanel
+                view={previewView}
+                onSelectView={(view) => {
+                  setPreviewView(view);
+                  if (view === "artifacts" && artifacts.length === 0) void refreshProjectAssets(activeScope !== "general");
+                }}
+                plan={plan}
+                steps={previewSteps}
+                busy={busy}
+                artifacts={artifacts}
+                selectedArtifact={selectedArtifact}
+                artifactVersion={artifactVersion}
+                artifactVersions={artifactVersions}
+                artifactPreviewLoading={artifactPreviewLoading}
+                securedArtifactHtml={securedArtifactHtml}
+                onSelectArtifact={setSelectedArtifactId}
+                onSelectVersion={(id, version) => void loadArtifactPreview(id, version)}
+                onOpenArtifact={openSelectedArtifact}
+                references={previewReferenceItems}
+                onOpenReference={(url) => void openUrl(url).catch((error) => setBanner(errorText(error, "打开链接失败")))}
               />
             )}
             {inspectorTab === "project" && (
