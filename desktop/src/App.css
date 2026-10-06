@@ -8894,3 +8894,84 @@ input::placeholder {
     border-bottom: 1px solid var(--line-soft);
   }
 }
+
+/* ── 侧栏：品牌 + 主导航（新建任务 / 收件箱 / 产物）+ 底部设置（参照 MiMo Desktop 布局，独立实现） ── */
+.sidebar-brand {
+  padding: 18px 18px 10px;
+}
+
+.sidebar-brand strong {
+  color: var(--n13);
+  font-size: 17px;
+  font-weight: 680;
+  letter-spacing: -0.01em;
+}
+
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 8px 6px;
+}
+
+.sidebar-nav button,
+.sidebar-footer button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 9px;
+  color: var(--n12);
+  background: transparent;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebar-nav button:hover:not(:disabled),
+.sidebar-footer button:hover {
+  background: var(--n4);
+}
+
+.sidebar-nav button.active {
+  color: var(--n13);
+  background: var(--n4);
+  font-weight: 600;
+}
+
+.sidebar-nav button:disabled {
+  color: var(--quiet);
+  cursor: default;
+}
+
+.sidebar-nav button svg,
+.sidebar-footer button svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
+.sidebar-nav button span {
+  flex: 1;
+}
+
+.sidebar-nav button b {
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 9px;
+  color: var(--n0);
+  background: var(--red);
+  font-size: 11px;
+  font-weight: 650;
+  text-align: center;
+}
+
+.sidebar .sidebar-nav + .sidebar-first-section {
+  padding-top: 14px;
+}
+
+.sidebar-footer {
+  padding: 8px;
+  border-top: 1px solid var(--line-soft);
+}
