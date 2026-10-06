@@ -6,10 +6,12 @@ import {
   FileText,
   FolderPlus,
   Inbox,
+  Package,
   PanelRight,
   PencilLine,
   Plus,
   Settings2,
+  SquarePen,
   Trash2,
   X,
 } from "lucide-react";
@@ -2411,12 +2413,6 @@ function App() {
   return (
     <main className="app-shell">
       <header className="topbar" data-tauri-drag-region="deep">
-        <div className="brand-mark">V</div>
-        <div className="brand-copy">
-          <strong>VortoCode</strong>
-          <span>Desktop · V1 preview</span>
-        </div>
-        <div className="topbar-divider" />
         <div className="runtime-path" title={runtime.workdir || repoRoot || "General 无目录会话"}>
           <span className="path-dot" />
           {activeScope === "general" ? "通用会话 · 无目录" : activeScope === "scratch" ? "Scratch · 隔离临时工作区" : runtime.workdir || repoRoot || "项目工作区"}
@@ -2430,7 +2426,6 @@ function App() {
           <span>{runtime.model || "—"}</span>
           <span>协议 {protocolVersion ?? "—"}</span>
         </div>
-        <button className="workspace-switcher" aria-label="切换工作区与连接" onClick={() => setSettingsOpen(true)}><Settings2 size={15} />工作区</button>
       </header>
 
       <div className="banner-slot">
@@ -2444,6 +2439,28 @@ function App() {
 
       <div className={`workbench ${inspectorOpen ? "inspector-open" : "inspector-closed"} ${inspectorOpen && ["inbox", "files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
         <aside className="sidebar">
+          <div className="sidebar-brand">
+            <strong>VortoCode</strong>
+          </div>
+          <nav className="sidebar-nav" aria-label="主导航">
+            <button onClick={() => void newSession()} disabled={connection !== "connected"}>
+              <SquarePen size={16} /><span>新建任务</span>
+            </button>
+            <button
+              className={inspectorOpen && inspectorTab === "inbox" ? "active" : ""}
+              title={runtimeInboxSummary.runtimes === 0 ? "正在发现本地工作…" : runtimeInboxSubtitle(runtimeInboxSummary)}
+              onClick={() => openInspector("inbox")}
+            >
+              <Inbox size={16} /><span>收件箱</span>
+              {runtimeInboxSummary.actionable > 0 && <b>{runtimeInboxSummary.actionable}</b>}
+            </button>
+            <button
+              className={inspectorOpen && inspectorTab === "project" ? "active" : ""}
+              onClick={() => { openInspector("project"); void refreshProjectAssets(activeScope !== "general"); }}
+            >
+              <Package size={16} /><span>产物</span>
+            </button>
+          </nav>
           <div className="sidebar-section-title project-section-title sidebar-first-section">
             <span>项目</span>
             <button aria-label="添加 Git 项目" title="添加 Git 项目" onClick={() => void chooseRepo()} disabled={projectSwitching}><FolderPlus size={15} /></button>
@@ -2529,21 +2546,8 @@ function App() {
             })}
           </div>
 
-          <div className="global-inbox-slot">
-            <button className={inspectorOpen && inspectorTab === "inbox" ? "global-inbox-launch active" : "global-inbox-launch"} onClick={() => openInspector("inbox")}>
-              <span className="global-inbox-icon"><Inbox size={16} /></span>
-              <span className="global-inbox-copy">
-                <strong>跨项目收件箱</strong>
-                <small>{runtimeInboxSummary.runtimes === 0
-                  ? "正在发现本地工作…"
-                  : runtimeInboxSubtitle(runtimeInboxSummary)}</small>
-              </span>
-              {runtimeInboxSummary.actionable > 0 && <b>{runtimeInboxSummary.actionable}</b>}
-            </button>
-          </div>
-
           <div className="sidebar-section-title work-items-heading">
-            <span>任务</span>
+            <span>最近</span>
             <button aria-label="新建任务" title="新建任务" onClick={() => void newSession()} disabled={connection !== "connected"}><Plus size={15} /></button>
           </div>
           <div className="session-list">
@@ -2645,6 +2649,11 @@ function App() {
                 ))}
               </div>
             )}
+          </div>
+          <div className="sidebar-footer">
+            <button aria-label="设置" title="设置" onClick={() => setSettingsOpen(true)}>
+              <Settings2 size={16} /><span>设置</span>
+            </button>
           </div>
         </aside>
 

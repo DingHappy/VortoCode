@@ -9,9 +9,20 @@
 // ExtensionsInspector 卡经 children 槽位透传：它的 7 个 props 已在 App 接好，
 // 不经本组件二次穿透（弹窗对卡内容保持无知）。
 // 搬进来的唯一派生是 llmInputIsLocal（只服务本弹窗的三处 JSX）。
+//
+// 布局：左侧分组导航 + 搜索，右侧显示当前分页（参照 MiMo Desktop 的设置交互，独立实现）。
+// 当前分页、搜索词和外观选择是纯本地 UI 态，留在组件内。
+import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
 import { contextWindowSourceLabel, formatTokenCount } from "../lib/labels";
+import {
+  THEME_OPTIONS,
+  applyThemePreference,
+  readThemePreference,
+  saveThemePreference,
+  type ThemePreference,
+} from "../lib/theme";
 import { trustCard } from "../lib/trustCard";
 import type {
   ConnectionState,
@@ -22,6 +33,21 @@ import type {
   TrustStatus,
   WorkspaceScope,
 } from "../types";
+
+type SettingsSection = "general" | "model" | "appearance" | "trust" | "extensions";
+
+const SETTINGS_NAV: Array<{ group: string; items: Array<{ id: SettingsSection; label: string; keywords: string }> }> = [
+  {
+    group: "个人",
+    items: [
+      { id: "general", label: "常规", keywords: "工作区 项目 引擎 runtime 连接 恢复 scratch gateway token 高级" },
+      { id: "model", label: "模型", keywords: "模型服务 api key relay openai 本机 上下文 配置文件" },
+      { id: "appearance", label: "外观", keywords: "主题 深色 浅色 跟随系统 theme dark light" },
+    ],
+  },
+  { group: "安全", items: [{ id: "trust", label: "授权级别", keywords: "权限 确认 只读 完全信任 trust" }] },
+  { group: "集成", items: [{ id: "extensions", label: "扩展", keywords: "hook 规则 skills mcp 插件 扩展" }] },
+];
 
 type SettingsModalProps = {
   activeScope: WorkspaceScope;
@@ -100,17 +126,60 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const trustView = trustCard(trust);
   const llmInputIsLocal = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/i.test(llmBaseInput.trim());
+  const [section, setSection] = useState<SettingsSection>(llmProfile && !llmProfile.configured ? "model" : "general");
+  const [query, setQuery] = useState("");
+  const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference);
+  const visibleNav = useMemo(() => {
+    const keyword = query.trim().toLowerCase();
+    if (!keyword) return SETTINGS_NAV;
+    return SETTINGS_NAV
+      .map((group) => ({
+        ...group,
+        items: group.items.filter((item) => `${item.label} ${item.keywords}`.toLowerCase().includes(keyword)),
+      }))
+      .filter((group) => group.items.length > 0);
+  }, [query]);
+  const sectionTitle = SETTINGS_NAV.flatMap((group) => group.items).find((item) => item.id === section)?.label ?? "";
+  const changeTheme = (preference: ThemePreference) => {
+    setThemePreference(preference);
+    saveThemePreference(preference);
+    applyThemePreference(preference);
+  };
 
   return (
     <div className="modal-backdrop">
-      <section className="settings-modal">
+      <section className="settings-modal settings-layout" aria-label="设置">
+        <nav className="settings-nav" aria-label="设置分类">
+          <h2>设置</h2>
+          <input
+            className="settings-search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索设置"
+            aria-label="搜索设置"
+          />
+          {visibleNav.map((group) => (
+            <div className="settings-nav-group" key={group.group}>
+              <span>{group.group}</span>
+              {group.items.map((item) => (
+                <button
+                  key={item.id}
+                  className={section === item.id ? "active" : ""}
+                  aria-current={section === item.id ? "page" : undefined}
+                  onClick={() => setSection(item.id)}
+                >{item.label}</button>
+              ))}
+            </div>
+          ))}
+          {visibleNav.length === 0 && <p className="settings-nav-empty">没有匹配的设置</p>}
+        </nav>
+        <div className="settings-pane">
         <div className="settings-heading">
-          <div>
-            <span>VortoCode Desktop</span>
-            <h2>工作区与连接</h2>
-          </div>
-          <button onClick={onClose}>×</button>
+          <h2>{sectionTitle}</h2>
+          <button onClick={onClose} aria-label="关闭设置">×</button>
         </div>
+        {section === "general" && (
+        <>
         <p className="settings-intro">
           {activeScope === "project"
             ? "VortoCode 会自动管理这个项目的本地引擎；通常不需要配置地址或手动连接。"
@@ -118,7 +187,10 @@ export function SettingsModal({
               ? "Scratch 是应用管理的隔离 Git 工作区，适合生成、运行和测试临时代码。"
               : "普通任务直接在 General 中运行，不读取本机目录；需要文件时再创建 Scratch 或选择项目。"}
         </p>
+        </>
+        )}
 
+        {section === "model" && (
         <section className={`llm-profile-card ${llmProfile?.configured ? "configured" : "unconfigured"}`}>
           <div className="llm-profile-head">
             <div>
@@ -181,8 +253,34 @@ export function SettingsModal({
             >{llmProfileBusy ? "正在应用…" : "保存并重启当前引擎"}</button>
           </div>
         </section>
+        )}
 
-        {trustView && (
+        {section === "appearance" && (
+          <section className="appearance-card" aria-label="外观">
+            <div className="appearance-row">
+              <div>
+                <strong>主题</strong>
+                <span>界面配色；跟随系统时随 macOS 的浅色/深色自动切换</span>
+              </div>
+              <div className="segmented" role="radiogroup" aria-label="主题">
+                {THEME_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    role="radio"
+                    aria-checked={themePreference === option.value}
+                    className={themePreference === option.value ? "active" : ""}
+                    onClick={() => changeTheme(option.value)}
+                  >{option.label}</button>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {section === "trust" && !trustView && (
+          <p className="settings-intro">授权级别按项目保存；打开 Git 项目后可以在这里设置。</p>
+        )}
+        {section === "trust" && trustView && (
           <section className="trust-card" aria-label="授权级别">
             <div className="trust-head">
               <div>
@@ -208,6 +306,8 @@ export function SettingsModal({
           </section>
         )}
 
+        {section === "general" && (
+        <>
         <label>
           <span>{activeScope === "project" ? "Git 项目" : "可选项目"}</span>
           <div className="field-row">
@@ -241,8 +341,15 @@ export function SettingsModal({
           </div>
         )}
 
-        {children}
+        </>
+        )}
 
+        {section === "extensions" && (children || (
+          <p className="settings-intro">打开 Git 项目后，这里会显示该项目加载的规则、Skills、Hooks 与 MCP。</p>
+        ))}
+
+        {section === "general" && (
+        <>
         <details className="advanced-settings">
           <summary>高级连接设置</summary>
           <p>仅在连接手动启动的 `vc server` 或排查本地引擎时使用。</p>
@@ -276,6 +383,9 @@ export function SettingsModal({
               {connection === "connected" && <button onClick={onClose}>完成</button>}
             </>
           )}
+        </div>
+        </>
+        )}
         </div>
       </section>
     </div>
