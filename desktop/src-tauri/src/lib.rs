@@ -485,7 +485,9 @@ fn desktop_llm_profile_status(profile: Option<&DesktopLlmProfile>) -> DesktopLlm
     }
 }
 
-#[tauri::command]
+// 读写 Keychain 的命令不能跑在主线程：授权弹窗等待期间主线程被占住，整个窗口白屏
+// （2026-10-06 真机复现）。`async` 让 Tauri 在后台线程执行这些同步命令。
+#[tauri::command(async)]
 fn get_llm_profile(
     store: State<'_, DesktopLlmProfileStore>,
 ) -> Result<DesktopLlmProfileStatus, String> {
@@ -576,7 +578,8 @@ async fn set_llm_profile(
     Ok(desktop_llm_profile_status(Some(&profile)))
 }
 
-#[tauri::command]
+// 读写 Keychain：移出主线程，原因见 get_llm_profile。
+#[tauri::command(async)]
 fn clear_llm_profile(
     store: State<'_, DesktopLlmProfileStore>,
 ) -> Result<DesktopLlmProfileStatus, String> {
@@ -1273,7 +1276,8 @@ async fn pick_desktop_project(
     .map(Some)
 }
 
-#[tauri::command]
+// 读写 Keychain：移出主线程，原因见 get_llm_profile。
+#[tauri::command(async)]
 fn forget_desktop_project(
     app: AppHandle,
     project_id: String,
@@ -2611,7 +2615,8 @@ fn list_gateway_processes(
     Ok(statuses)
 }
 
-#[tauri::command]
+// 读写 Keychain：移出主线程，原因见 get_llm_profile。
+#[tauri::command(async)]
 fn start_gateway(
     app: AppHandle,
     repo_root: Option<String>,
@@ -2656,6 +2661,11 @@ fn start_gateway(
     let runtime_id = runtime_id_for(scope, &root);
     let runtime_project_id = project_root.as_ref().map(|root| project_id(root));
 
+    // 先读模型配置、再拿 runtime 锁：首次读取可能卡在 Keychain 授权弹窗上，持锁等待会让
+    // gateway_process_status 等命令一起排队。结果先留着，失败到原位置再报，保持"已在运行
+    // 就直接返回"的语义不变。
+    let llm_profile = cached_desktop_llm_profile(&llm_profile_store);
+
     let mut supervisor = state
         .0
         .lock()
@@ -2689,7 +2699,7 @@ fn start_gateway(
         .open(&log_path)
         .map_err(|error| format!("无法打开 runtime 日志：{error}"))?;
     let token = token.unwrap_or_default().trim().to_string();
-    let llm_profile = cached_desktop_llm_profile(&llm_profile_store)?;
+    let llm_profile = llm_profile?;
 
     let mut candidates = Vec::new();
     let mut sidecar_setup_error = None;
