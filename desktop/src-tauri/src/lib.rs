@@ -1547,6 +1547,100 @@ fn list_desktop_projects(app: AppHandle) -> Result<Vec<DesktopProjectListing>, S
         .collect())
 }
 
+const PROJECT_SESSIONS_PER_PROJECT: usize = 3;
+const MAX_SESSION_FILE_BYTES: u64 = 8 * 1024 * 1024;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectSessionSummary {
+    project_id: String,
+    sid: String,
+    title: String,
+    updated_at: u64,
+}
+
+/// 与 runtime 的 title_from_transcript 同口径：显式标题优先，否则取首条用户消息（单行、40 字截断）。
+fn session_title(payload: &serde_json::Value) -> Option<String> {
+    if let Some(title) = payload.get("title").and_then(serde_json::Value::as_str) {
+        if !title.trim().is_empty() {
+            return Some(title.trim().to_string());
+        }
+    }
+    let first = payload
+        .get("transcript")?
+        .as_array()?
+        .iter()
+        .find(|item| item.get("role").and_then(serde_json::Value::as_str) == Some("user"))?
+        .get("text")?
+        .as_str()?
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if first.is_empty() {
+        return None;
+    }
+    let mut title: String = first.chars().take(40).collect();
+    if first.chars().count() > 40 {
+        title.push('…');
+    }
+    Some(title)
+}
+
+/// 一个项目最近的几个会话（只读磁盘上的会话档，不碰 runtime）。空会话不会落盘，所以都有内容。
+fn recent_project_sessions(project: &DesktopProjectProfile) -> Vec<ProjectSessionSummary> {
+    let directory = Path::new(&project.repo_root).join(".vortocode").join("web_sessions");
+    let Ok(entries) = std::fs::read_dir(&directory) else {
+        return Vec::new();
+    };
+    let mut files = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            let sid = path.file_stem()?.to_str()?.to_string();
+            let valid = path.extension().and_then(|ext| ext.to_str()) == Some("json")
+                && !sid.is_empty()
+                && sid.len() <= 64
+                && sid.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+            let metadata = entry.metadata().ok()?;
+            if !valid || !metadata.is_file() || metadata.len() > MAX_SESSION_FILE_BYTES {
+                return None;
+            }
+            let modified = metadata
+                .modified()
+                .ok()?
+                .duration_since(UNIX_EPOCH)
+                .ok()?
+                .as_secs();
+            Some((modified, sid, path))
+        })
+        .collect::<Vec<_>>();
+    files.sort_by(|left, right| right.0.cmp(&left.0));
+    files
+        .into_iter()
+        .filter_map(|(updated_at, sid, path)| {
+            let payload: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+            Some(ProjectSessionSummary {
+                project_id: project.id.clone(),
+                sid,
+                title: session_title(&payload)?,
+                updated_at,
+            })
+        })
+        .take(PROJECT_SESSIONS_PER_PROJECT)
+        .collect()
+}
+
+/// 侧边栏「项目」下直接列出各项目最近的会话：只看已登记、目录还在的本机项目。
+#[tauri::command(async)]
+fn list_project_sessions(app: AppHandle) -> Result<Vec<ProjectSessionSummary>, String> {
+    Ok(load_project_registry(&project_registry_path(&app)?)?
+        .projects
+        .iter()
+        .filter(|project| project.kind != "remote" && Path::new(&project.repo_root).is_dir())
+        .flat_map(recent_project_sessions)
+        .collect())
+}
+
 /// 列表里额外带上「本机目录还在不在」：被清理的临时目录、移走的仓库不该在启动时被反复恢复。
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -3253,6 +3347,7 @@ pub fn run() {
             relay_logout,
             reveal_desktop_config,
             list_desktop_projects,
+            list_project_sessions,
             remember_desktop_project,
             remember_remote_project,
             remote_http_request,
@@ -4445,6 +4540,38 @@ mod tests {
         assert!(command
             .get_envs()
             .any(|(key, value)| key == OsStr::new("VORTOCODE_MODEL_CHOICES") && value.is_none()));
+    }
+
+    #[test]
+    fn project_sessions_use_title_or_first_user_message() {
+        assert_eq!(session_title(&serde_json::json!({"title": " 改名后 ", "transcript": []})).as_deref(), Some("改名后"));
+        let long = "一".repeat(45);
+        let title = session_title(&serde_json::json!({"transcript": [
+            {"role": "assistant", "text": "hi"}, {"role": "user", "text": format!("  {long}\n ")}
+        ]}))
+        .unwrap();
+        assert_eq!(title.chars().count(), 41);
+        assert!(title.ends_with('…'));
+        assert_eq!(session_title(&serde_json::json!({"transcript": []})), None);
+
+        let root = std::env::temp_dir().join(format!("vc-sessions-{}", std::process::id()));
+        let sessions = root.join(".vortocode").join("web_sessions");
+        create_dir_all(&sessions).unwrap();
+        std::fs::write(sessions.join("abc-1.json"), r#"{"transcript":[{"role":"user","text":"你好"}]}"#).unwrap();
+        std::fs::write(sessions.join("../escape.json"), "{}").unwrap();
+        std::fs::write(sessions.join("bad name.json"), r#"{"title":"x"}"#).unwrap();
+        let project = DesktopProjectProfile {
+            id: "p1".into(),
+            name: "demo".into(),
+            repo_root: root.display().to_string(),
+            base_url: String::new(),
+            last_opened_at: 0,
+            kind: "local".into(),
+        };
+        let found = recent_project_sessions(&project);
+        assert_eq!(found.len(), 1);
+        assert_eq!((found[0].sid.as_str(), found[0].title.as_str()), ("abc-1", "你好"));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
