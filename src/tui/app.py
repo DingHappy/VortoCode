@@ -4009,9 +4009,12 @@ class VortoCodeTUI(TUICommandsMixin, App):
                                       on_published=_artifact_published,
                                       confirm_delete=_artifact_confirm_delete)
         tools += self._mcp_tools             # 已接入的外部 MCP 工具（build 门控）
-        from src.agents.project import load_project_instructions
+        from src.agents.project import load_project_instructions, load_user_instructions
         catalog = registry.catalog()
         extra_parts = []
+        user_instructions = load_user_instructions()          # ~/.vortocode/AGENTS.md 全局指令
+        if user_instructions:
+            extra_parts.append(user_instructions)
         proj = load_project_instructions(self.repo_root)     # AGENTS.md/CLAUDE.md 项目约定进系统提示
         if proj:
             extra_parts.append(proj)

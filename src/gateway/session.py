@@ -55,7 +55,10 @@ async def run_isolated_session(repo_root: str, prompt: str, *, mode: str = "buil
     )
     parts = []
     if not light:                                    # 非轻上下文才带项目指令 + 技能目录
-        from src.agents.project import load_project_instructions
+        from src.agents.project import load_project_instructions, load_user_instructions
+        user_instructions = load_user_instructions()
+        if user_instructions:
+            parts.append(user_instructions)
         proj = load_project_instructions(repo_root)
         if proj:
             parts.append(proj)

@@ -192,6 +192,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         "【工作区范围】当前是 Scratch 隔离临时工作区。只在这里创建和运行临时代码；"
         "需要修改用户已有项目时调用 request_workspace(scope=project)，不要搜索或猜测其他目录。"
     ] if workspace_scope == SCRATCH else []
+    from src.agents.project import load_user_instructions
+    user_instructions = load_user_instructions()          # ~/.vortocode/AGENTS.md：所有范围都带
+    if user_instructions:
+        parts.append(user_instructions)
     if workspace_scope != GENERAL:
         proj = load_project_instructions(repo_root)        # AGENTS.md/CLAUDE.md 项目约定进系统提示
         if proj:
