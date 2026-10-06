@@ -5,6 +5,7 @@ import {
   ArrowUp,
   ChevronDown,
   Cpu,
+  Search,
   ShieldCheck,
   Folder,
   FileText,
@@ -64,6 +65,7 @@ import type {
   WorkspaceScope,
   TrustLevel,
   DesktopLlmProfileStatus,
+  ProjectSessionSummary,
 } from "./types";
 import { DecisionsPanel } from "./components/DecisionsPanel";
 import { SessionConnection } from "./connection/sessionConnection";
@@ -223,6 +225,14 @@ function App() {
   const [mainView, setMainView] = useState<"chat" | "plugins" | "artifacts">("chat");
   const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined);
   const [projectsOpen, setProjectsOpen] = useState(true);
+  const [projectSessions, setProjectSessions] = useState<ProjectSessionSummary[]>([]);
+  const [sidebarSearchOpen, setSidebarSearchOpen] = useState(false);
+  const [sidebarQuery, setSidebarQuery] = useState("");
+  // 当前工作区的会话有变化（新开、发了消息）时，顺带刷新各项目下列出的最近会话。
+  const sessionsSignature = sessions.map((item) => `${item.sid}:${item.messages}`).join("|");
+  useEffect(() => {
+    void invoke<ProjectSessionSummary[]>("list_project_sessions").then(setProjectSessions).catch(() => undefined);
+  }, [sessionsSignature]);
   const [recentOpen, setRecentOpen] = useState(true);
   // 刚发布的制品：协议回调里只记下来，由 effect 带着当前作用域去刷新并定位（避免回调闭包里的旧 scope）。
   const [publishedArtifact, setPublishedArtifact] = useState<{ id: string; seq: number } | null>(null);
@@ -661,6 +671,7 @@ function App() {
   const refreshProjectRegistry = useCallback(async () => {
     const registered = await invoke<DesktopProjectProfile[]>("list_desktop_projects");
     setProjects(registered);
+    void invoke<ProjectSessionSummary[]>("list_project_sessions").then(setProjectSessions).catch(() => undefined);
     return registered;
   }, []);
 
@@ -1458,7 +1469,7 @@ function App() {
     decisionNotificationSyncingRef.current = false;
   };
 
-  const switchProject = async (project: DesktopProjectProfile, options: { fresh?: boolean } = {}): Promise<boolean> => {
+  const switchProject = async (project: DesktopProjectProfile, options: { fresh?: boolean; sid?: string } = {}): Promise<boolean> => {
     if (projectSwitchingRef.current) return false;
     if (project.repoRoot === repoRoot.trim()) {
       setBaseUrl(project.baseUrl);
@@ -1492,7 +1503,9 @@ function App() {
       await disconnect();
       clearProjectView();
       // fresh：启动时回到项目也从新对话开始（上次的会话仍在「最近」里）。
-      const sid = (options.fresh ? null : localStorage.getItem(projectSessionKey(project.id))) ?? createSessionId();
+      const sid = options.sid
+        ?? (options.fresh ? null : localStorage.getItem(projectSessionKey(project.id)))
+        ?? createSessionId();
       setActiveSid(sid);
       setRepoRoot(project.repoRoot);
       setBaseUrl(project.baseUrl);
@@ -2525,7 +2538,25 @@ function App() {
         <aside className="sidebar">
           <div className="sidebar-brand">
             <strong>VortoCode</strong>
+            <button
+              className={sidebarSearchOpen ? "active" : ""}
+              aria-label="搜索会话和项目"
+              title="搜索会话和项目"
+              onClick={() => { setSidebarSearchOpen(!sidebarSearchOpen); setSidebarQuery(""); }}
+            ><Search size={15} /></button>
           </div>
+          {sidebarSearchOpen && (
+            <label className="sidebar-search">
+              <Search size={14} />
+              <input
+                autoFocus
+                value={sidebarQuery}
+                placeholder="搜索会话和项目"
+                onChange={(event) => setSidebarQuery(event.target.value)}
+                onKeyDown={(event) => { if (event.key === "Escape") { setSidebarSearchOpen(false); setSidebarQuery(""); } }}
+              />
+            </label>
+          )}
           <nav className="sidebar-nav" aria-label="主导航">
             <button onClick={() => { setMainView("chat"); void newSession(); }} disabled={connection !== "connected"}>
               <SquarePen size={16} /><span>新建任务</span>
@@ -2583,6 +2614,12 @@ function App() {
               ))}
             {projects.length === 0 && <div className="project-empty">还没有项目；在输入框下方「进入项目工作」里添加。</div>}
             {projects.slice(0, 8).map((project) => {
+              const keyword = sidebarQuery.trim().toLowerCase();
+              const nameMatches = !keyword || project.name.toLowerCase().includes(keyword);
+              const nested = projectSessions
+                .filter((item) => item.projectId === project.id)
+                .filter((item) => nameMatches || item.title.toLowerCase().includes(keyword));
+              if (!nameMatches && nested.length === 0) return null;
               const active = project.repoRoot === repoRoot.trim();
               const managedRuntime = runtimeProcesses.find((item) => item.projectId === project.id || item.repoRoot === project.repoRoot);
               const managedRunning = Boolean(managedRuntime?.running);
@@ -2590,9 +2627,9 @@ function App() {
               const connected = active && connection === "connected";
               const health = project.missing ? "目录已不存在 · 可移除" : managedRunning && !active ? "后台运行中" : managedRunning ? "本地引擎运行中" : connected ? "工作区就绪" : recovery?.status === "crashed" ? "上次异常退出 · 点击恢复" : recovery?.status === "running" ? "可重新附着" : active ? connectionText : "未启动";
               return (
+                <Fragment key={project.id}>
                 <div
                   className={`project-row ${active ? "active" : ""} ${managedRunning || connected ? "healthy" : ""} ${!managedRunning && recovery?.status === "crashed" ? "attention" : ""} ${project.missing ? "missing" : ""}`}
-                  key={project.id}
                   onClick={() => project.missing
                     ? setBanner(`项目目录已不存在：${project.repoRoot}。可以点右侧 × 把它从列表移除`)
                     : void switchProject(project)}
@@ -2617,6 +2654,16 @@ function App() {
                     ><X size={14} /></button>
                   )}
                 </div>
+                {/* 项目下直接列出它最近的会话（MiMo 式）：点一下切到该项目并打开那条会话。 */}
+                {!project.missing && nested.map((item) => (
+                  <button
+                    key={item.sid}
+                    className={`project-session ${active && item.sid === activeSid ? "active" : ""}`}
+                    title={item.title}
+                    onClick={() => void (active ? switchSession(item.sid) : switchProject(project, { sid: item.sid }))}
+                  >{item.title}</button>
+                ))}
+                </Fragment>
               );
             })}
           </div>
@@ -2631,7 +2678,8 @@ function App() {
           {recentOpen && (
           <div className="session-list">
             {sessions.length === 0 && <div className="session-empty">描述一个目标后，任务线程会出现在这里。</div>}
-            {sessions.map((session) => {
+            {sessions.filter((session) => !sidebarQuery.trim()
+              || (session.title || "新任务").toLowerCase().includes(sidebarQuery.trim().toLowerCase())).map((session) => {
               const active = session.sid === activeSid;
               const liveStatus = active && busy && session.status !== "needs_input" ? "working" : session.status ?? "inactive";
               const backgroundCount = (session.background_tasks?.active ?? 0) + (session.background_tasks?.attention ?? 0);

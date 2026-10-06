@@ -1249,6 +1249,14 @@ export interface DesktopProjectProfile {
   missing?: boolean;
 }
 
+/** 侧边栏「项目」下列出的最近会话（Desktop 原生层从项目的会话档读出）。 */
+export interface ProjectSessionSummary {
+  projectId: string;
+  sid: string;
+  title: string;
+  updatedAt: number;
+}
+
 export interface RepoMemorySnapshot {
   path: string;
   content: string;

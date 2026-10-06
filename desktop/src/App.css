@@ -10094,3 +10094,76 @@ input::placeholder {
   height: 38px;
   border-bottom: 0;
 }
+
+/* 侧边栏：品牌行搜索 + 项目下的会话 */
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.sidebar-brand button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--n10);
+  background: transparent;
+  cursor: pointer;
+}
+
+.sidebar-brand button:hover,
+.sidebar-brand button.active {
+  color: var(--n13);
+  background: var(--n4);
+}
+
+.sidebar-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--n6);
+  border-radius: 9px;
+  color: var(--n9);
+  background: var(--n0);
+}
+
+.sidebar-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  color: var(--n12);
+  background: transparent;
+  font-size: 13px;
+  outline: none;
+}
+
+.project-session {
+  display: block;
+  width: 100%;
+  padding: 6px 10px 6px 36px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 8px;
+  color: var(--n10);
+  background: transparent;
+  font-size: 12.5px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.project-session:hover {
+  color: var(--n12);
+  background: var(--n4);
+}
+
+.project-session.active {
+  color: var(--n13);
+  background: var(--n5);
+}
