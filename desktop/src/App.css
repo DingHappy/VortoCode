@@ -9783,3 +9783,24 @@ input::placeholder {
   color: var(--n13);
   text-decoration: underline;
 }
+
+.llm-account-note {
+  margin: 10px 0 0;
+  padding: 9px 11px;
+  border-radius: 9px;
+  color: var(--n11);
+  background: var(--n3);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.llm-account-note button {
+  margin: 0 2px;
+  padding: 0;
+  border: 0;
+  color: var(--n13);
+  background: none;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
