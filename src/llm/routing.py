@@ -51,6 +51,15 @@ def routing_tiers() -> Dict[str, str]:
     return {tier: model for tier, model in tiers.items() if model}
 
 
+def model_choices() -> set:
+    """默认服务上允许点名的模型（Desktop 从该服务的 /models 拉取后经 VORTOCODE_MODEL_CHOICES 注入）。
+
+    只是**同一个默认端点、同一把 Key** 下的模型名清单：点名其中任何一个都不会换地址、不会动别家的 Key。
+    """
+    raw = os.getenv("VORTOCODE_MODEL_CHOICES") or ""
+    return {item.strip() for item in raw.split(",") if item.strip()}
+
+
 def clean_model_request(raw: object) -> Optional[str]:
     """协议字段 ``model`` 的形状校验：``auto`` 或一个形如模型 id 的短串；其余一律当没传。"""
     if not isinstance(raw, str):
@@ -91,7 +100,7 @@ def resolve_turn_model(requested: Optional[str], text: str, *, mode: str,
         return None
     if requested == AUTO:
         return route_model(text, mode=mode, has_media=has_media, context_count=context_count)
-    if requested in routing_tiers().values():
+    if requested in routing_tiers().values() or requested in model_choices():
         return TurnModel(model=requested, tier="manual", reason="手动指定")
     from src.llm.providers import chat_target
     if chat_target(requested) is not None:

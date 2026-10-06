@@ -47,6 +47,9 @@ struct DesktopLlmProfile {
     /// 已退出登录：默认服务没有 Key、不注入 runtime，但保留自定义供应商。
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     signed_out: bool,
+    /// 默认服务 /models 返回的模型清单：输入框据此列出可选模型，runtime 据此放行点名。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    models: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -101,6 +104,7 @@ struct DesktopLlmProfileStatus {
     providers: Vec<DesktopLlmProviderStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     account: Option<DesktopAccount>,
+    models: Vec<String>,
     /// 本机配置文件位置；设置页显示它，方便用户直接编辑。
     #[serde(skip_serializing_if = "Option::is_none")]
     config_path: Option<String>,
@@ -173,6 +177,7 @@ fn default_llm_profile() -> DesktopLlmProfile {
         providers: Vec::new(),
         account: None,
         signed_out: false,
+        models: Vec::new(),
     }
 }
 
@@ -698,6 +703,7 @@ fn desktop_llm_profile_status(profile: Option<&DesktopLlmProfile>) -> DesktopLlm
             })
             .collect(),
         account: profile.account.clone(),
+        models: profile.models.clone(),
         config_path: None,
     }
 }
@@ -806,6 +812,12 @@ async fn set_llm_profile(
         .as_ref()
         .filter(|saved| saved.base_url == wanted_base && saved.api_key == api_key)
         .and_then(|saved| saved.account.clone());
+    // 同一个服务地址：模型清单沿用（换地址后由界面重新拉取）。
+    let models = saved
+        .as_ref()
+        .filter(|saved| saved.base_url == wanted_base)
+        .map(|saved| saved.models.clone())
+        .unwrap_or_default();
     let profile = normalize_llm_profile(DesktopLlmProfile {
         base_url,
         api_key,
@@ -818,9 +830,11 @@ async fn set_llm_profile(
         providers: saved.map(|saved| saved.providers).unwrap_or_default(),
         account,
         signed_out: false,
+        models,
     })?;
     let path = llm_profile_path(&app)?;
     let confirmed = confirm_llm_profile_change(&app, &profile).await?;
+    let profile = if confirmed { with_model_list(profile).await } else { profile };
     let profile = save_llm_profile_flow(profile, confirmed, LLM_PROBE_TIMEOUT, |profile| {
         save_llm_profile_file(&path, profile)
     })
@@ -863,6 +877,12 @@ fn configure_llm_profile(command: &mut Command, profile: Option<&DesktopLlmProfi
         },
     );
     command.env("DEFAULT_MODEL", &profile.model);
+    // 默认服务上可点名的模型清单（同一端点、同一把 Key）。
+    if profile.models.is_empty() {
+        command.env_remove("VORTOCODE_MODEL_CHOICES");
+    } else {
+        command.env("VORTOCODE_MODEL_CHOICES", profile.models.join(","));
+    }
     // 调度三档：均衡档就是主模型；快速 / 强力没配时显式清掉，免得继承到父进程环境里的旧值。
     command.env("LLM_MODEL_BALANCED", &profile.model);
     match &profile.fast_model {
@@ -3380,6 +3400,7 @@ fn normalize_llm_provider(mut provider: DesktopLlmProvider) -> Result<DesktopLlm
         providers: Vec::new(),
         account: None,
         signed_out: false,
+        models: Vec::new(),
     })?;
     provider.base_url = checked.base_url;
     provider.api_key = checked.api_key;
@@ -3404,6 +3425,39 @@ async fn fetch_provider_models(provider: &DesktopLlmProvider) -> Option<Vec<Stri
     }
     let payload = response.json::<serde_json::Value>().await.ok()?;
     Some(model_ids(&payload))
+}
+
+/// 配置里还没有模型清单时，用它自己的地址和 Key 拉一份（只访问这个默认服务）。
+async fn with_model_list(mut profile: DesktopLlmProfile) -> DesktopLlmProfile {
+    if profile.models.is_empty() && !profile.signed_out && !profile.api_key.is_empty() {
+        let main = DesktopLlmProvider {
+            id: "default".into(),
+            name: String::new(),
+            base_url: profile.base_url.clone(),
+            api_key: profile.api_key.clone(),
+            models: Vec::new(),
+        };
+        if let Some(models) = fetch_provider_models(&main).await {
+            profile.models = clean_model_list(models);
+        }
+    }
+    profile
+}
+
+fn clean_model_list(models: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    models
+        .into_iter()
+        .map(|model| model.trim().to_string())
+        .filter(|model| {
+            !model.is_empty()
+                && model.len() <= 160
+                && !model.contains(',')
+                && !model.chars().any(char::is_control)
+        })
+        .filter(|model| seen.insert(model.clone()))
+        .take(MAX_LISTED_MODELS)
+        .collect()
 }
 
 fn saved_profile_for_providers(
@@ -3501,13 +3555,25 @@ fn remove_llm_provider(
     persist_profile(&app, &store, profile)
 }
 
-/// 重新拉取各供应商的模型列表；拉取失败的保留原列表。
+/// 重新拉取默认服务和各供应商的模型列表；拉取失败的保留原列表。
 #[tauri::command]
 async fn refresh_llm_providers(
     app: AppHandle,
     store: State<'_, DesktopLlmProfileStore>,
 ) -> Result<DesktopLlmProfileStatus, String> {
     let mut profile = saved_profile_for_providers(&app, &store)?;
+    if !profile.signed_out && !profile.api_key.is_empty() {
+        let main = DesktopLlmProvider {
+            id: "default".into(),
+            name: String::new(),
+            base_url: profile.base_url.clone(),
+            api_key: profile.api_key.clone(),
+            models: Vec::new(),
+        };
+        if let Some(models) = fetch_provider_models(&main).await {
+            profile.models = clean_model_list(models);
+        }
+    }
     for provider in profile.providers.iter_mut() {
         if let Some(models) = fetch_provider_models(provider).await {
             provider.models = models;
@@ -3706,6 +3772,7 @@ async fn relay_login(
         context_window_source: None,
         fast_model: saved.as_ref().filter(|_| same_base).and_then(|saved| saved.fast_model.clone()),
         strong_model: saved.as_ref().filter(|_| same_base).and_then(|saved| saved.strong_model.clone()),
+        models: saved.as_ref().filter(|_| same_base).map(|saved| saved.models.clone()).unwrap_or_default(),
         providers: saved.map(|saved| saved.providers).unwrap_or_default(),
         account: Some(DesktopAccount {
             username: user
@@ -3724,6 +3791,7 @@ async fn relay_login(
         }),
         signed_out: false,
     })?;
+    let profile = with_model_list(profile).await;
     let profile = save_llm_profile_flow(profile, true, LLM_PROBE_TIMEOUT, |profile| {
         save_llm_profile_file(&llm_profile_path(&app)?, profile)
     })
@@ -3791,6 +3859,7 @@ async fn test_llm_connection(
         providers: Vec::new(),
         account: None,
         signed_out: false,
+        models: Vec::new(),
     })?;
     let mut request = probe_client()?.get(format!("{}/models", profile.base_url));
     if !profile.api_key.is_empty() {
@@ -4075,6 +4144,7 @@ mod tests {
             providers: Vec::new(),
             account: None,
             signed_out: false,
+            models: Vec::new(),
         })
         .expect("relay profile");
         assert_eq!(relay.base_url, DEFAULT_LLM_BASE_URL);
@@ -4093,6 +4163,7 @@ mod tests {
             providers: Vec::new(),
             account: None,
             signed_out: false,
+            models: Vec::new(),
         })
         .expect("local profile");
         assert_eq!(llm_provider(&local.base_url), "local");
@@ -4108,6 +4179,7 @@ mod tests {
             providers: Vec::new(),
             account: None,
             signed_out: false,
+            models: Vec::new(),
         })
         .is_err());
         assert!(normalize_llm_profile(DesktopLlmProfile {
@@ -4121,6 +4193,7 @@ mod tests {
             providers: Vec::new(),
             account: None,
             signed_out: false,
+            models: Vec::new(),
         })
         .is_err());
     }
@@ -4138,6 +4211,7 @@ mod tests {
             providers: Vec::new(),
             account: None,
             signed_out: false,
+            models: Vec::new(),
         };
         let mut command = Command::new("vc");
         configure_llm_profile(&mut command, Some(&profile));
@@ -4180,6 +4254,7 @@ mod tests {
             providers: Vec::new(),
             account: None,
             signed_out: false,
+            models: Vec::new(),
             ..profile
         };
         let mut command = Command::new("vc");
@@ -4263,6 +4338,7 @@ mod tests {
             providers: vec![normalize_llm_provider(sample_provider("deepseek")).unwrap()],
             account: None,
             signed_out: false,
+            models: Vec::new(),
         };
         let mut command = Command::new("vc");
         configure_llm_profile(&mut command, Some(&profile));
@@ -4319,6 +4395,7 @@ mod tests {
             providers: vec![normalize_llm_provider(sample_provider("deepseek")).unwrap()],
             account: None,
             signed_out: true,
+            models: Vec::new(),
         })
         .expect("signed-out profiles are allowed without a key");
         assert!(!desktop_llm_profile_status(Some(&profile)).configured);
@@ -4330,6 +4407,44 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(names.contains(&"VORTOCODE_PROVIDER_DEEPSEEK_KEY".to_string()));
         assert!(!names.contains(&"OPENAI_API_KEY".to_string()));
+    }
+
+    #[test]
+    fn default_service_models_are_cleaned_and_injected() {
+        assert_eq!(
+            clean_model_list(vec![" a ".into(), "a".into(), "b,c".into(), "".into(), "d".into()]),
+            vec!["a".to_string(), "d".to_string()]
+        );
+        let mut profile = normalize_llm_profile(DesktopLlmProfile {
+            base_url: "https://models.example.com/v1".into(),
+            api_key: "k".into(),
+            model: "main".into(),
+            context_window: None,
+            context_window_source: None,
+            fast_model: None,
+            strong_model: None,
+            providers: Vec::new(),
+            account: None,
+            signed_out: false,
+            models: vec!["main".into(), "other".into()],
+        })
+        .unwrap();
+        let mut command = Command::new("vc");
+        configure_llm_profile(&mut command, Some(&profile));
+        let env = command
+            .get_envs()
+            .map(|(key, value)| (key.to_owned(), value.map(OsStr::to_owned)))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            env.get(OsStr::new("VORTOCODE_MODEL_CHOICES")).and_then(Option::as_deref),
+            Some(OsStr::new("main,other"))
+        );
+        profile.models.clear();
+        let mut command = Command::new("vc");
+        configure_llm_profile(&mut command, Some(&profile));
+        assert!(command
+            .get_envs()
+            .any(|(key, value)| key == OsStr::new("VORTOCODE_MODEL_CHOICES") && value.is_none()));
     }
 
     #[test]
@@ -4345,6 +4460,7 @@ mod tests {
             providers: Vec::new(),
             account: None,
             signed_out: false,
+            models: Vec::new(),
         })
         .unwrap();
         assert_eq!(profile.fast_model.as_deref(), Some("fast"));
@@ -4354,6 +4470,7 @@ mod tests {
             providers: Vec::new(),
             account: None,
             signed_out: false,
+            models: Vec::new(),
             ..profile
         })
         .is_err());
@@ -4404,6 +4521,7 @@ mod tests {
                 providers: Vec::new(),
                 account: None,
                 signed_out: false,
+                models: Vec::new(),
             }))
         };
 
@@ -4468,6 +4586,7 @@ mod tests {
             providers: Vec::new(),
             account: None,
             signed_out: false,
+            models: Vec::new(),
         };
 
         store.replace(Some(profile)).expect("save cache");
@@ -5758,6 +5877,7 @@ mod tests {
             providers: Vec::new(),
             account: None,
             signed_out: false,
+            models: Vec::new(),
         }
     }
 
@@ -5895,6 +6015,7 @@ mod tests {
             providers: Vec::new(),
             account: None,
             signed_out: false,
+            models: Vec::new(),
         }
     }
 

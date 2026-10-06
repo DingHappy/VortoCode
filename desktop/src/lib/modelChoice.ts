@@ -13,6 +13,16 @@ export interface ModelChoice {
   group?: string;
 }
 
+export const ALL_MODELS_GROUP = "全部模型";
+
+const NON_CHAT_MARKERS = ["tts", "asr", "whisper", "embedding", "embed", "rerank", "dall-e", "image", "voice", "audio", "moderation"];
+
+/** 粗略判断一个模型能不能拿来对话：名字里带语音/向量/生图标记的不列进选择器。 */
+export function isChatModel(model: string): boolean {
+  const name = model.toLowerCase();
+  return !NON_CHAT_MARKERS.some((marker) => name.includes(marker));
+}
+
 export function modelChoices(profile: DesktopLlmProfileStatus | null): ModelChoice[] {
   if (!profile?.model) return [];
   const tiers: Array<[string | undefined, string]> = [
@@ -29,13 +39,17 @@ export function modelChoices(profile: DesktopLlmProfileStatus | null): ModelChoi
     else seen.set(name, { value: name, label: name, hint });
   }
   const own = [...seen.values()];
+  // 默认服务上的其他模型：放在「全部模型」组里；语音合成/识别、向量、生图这类不能对话的不列。
+  const listed = (profile.models ?? [])
+    .filter((model) => !seen.has(model) && isChatModel(model))
+    .map((model) => ({ value: model, label: model, hint: "全部模型", group: ALL_MODELS_GROUP }));
   // 自定义供应商的模型以 `ID:模型` 发给 runtime，由它换到对应端点和 Key。
   const custom = (profile.providers ?? []).flatMap((provider) => provider.hasKey || provider.models.length
     ? provider.models.map((model) => ({ value: `${provider.id}:${model}`, label: model, hint: provider.name, group: provider.name }))
     : []);
   // 「自动」只在默认服务的几档之间调度；只有一个默认模型时它没有可选的，不提供。
   const auto = own.length > 1 ? [{ value: AUTO_MODEL, label: "自动", hint: "按任务选择快速或强力模型" }] : [];
-  return [...auto, ...own, ...custom];
+  return [...auto, ...own, ...listed, ...custom];
 }
 
 /** 已存的选择仍然有效就用它，否则回到「自动」（或唯一的模型）。 */

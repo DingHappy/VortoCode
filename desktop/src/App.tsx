@@ -63,6 +63,7 @@ import type {
   WorkspaceFileList,
   WorkspaceScope,
   TrustLevel,
+  DesktopLlmProfileStatus,
 } from "./types";
 import { DecisionsPanel } from "./components/DecisionsPanel";
 import { SessionConnection } from "./connection/sessionConnection";
@@ -1193,6 +1194,17 @@ function App() {
         setRecoveryRecord(record);
         setRuntimeRecoveries(recoveries);
 
+        // 老配置里还没有默认服务的模型清单：在启动引擎**之前**补拉一次，引擎一起来就认识这些模型。
+        // 不能等连上后再拉再重启——刚启动就重启会和启动流程撞车（真机 2026-10-06：引擎没能重新拉起）。
+        try {
+          const profile = await invoke<DesktopLlmProfileStatus>("get_llm_profile");
+          if (profile.configured && (profile.models?.length ?? 0) === 0) {
+            applyLlmProfile(await invoke<DesktopLlmProfileStatus>("refresh_llm_providers"));
+          }
+        } catch {
+          // 拉不到清单不影响启动：输入框只列已配置的模型。
+        }
+
         // 每次打开都从一个新对话开始；之前的会话都在左侧「最近」里，点一下就能回去。
         // 空会话不会落盘，所以不会在列表里越积越多。
         const sid = createSessionId();
@@ -1724,6 +1736,7 @@ function App() {
     }
   };
 
+
   const sendPrompt = async (
     override?: string,
     requestedMode: "plan" | "build" = mode,
@@ -2194,6 +2207,7 @@ function App() {
       supervisionGenerationRef.current += 1;
     }
   };
+
 
   const runGoal = async (goal: GoalItem, resume = false) => {
     const client = clientRef.current;

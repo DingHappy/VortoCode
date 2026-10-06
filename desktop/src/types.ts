@@ -1155,6 +1155,8 @@ export interface DesktopLlmProfileStatus {
   /** 模型调度的快速档 / 强力档；没配则「自动」只用主模型。 */
   fastModel?: string;
   strongModel?: string;
+  /** 默认服务 /models 返回的模型清单（输入框据此列出可选模型）。 */
+  models?: string[];
   /** 经账号登录时的账号信息（不含密码和会话）。 */
   account?: DesktopAccount;
   /** 用户自己添加的其他供应商（不含 Key）。 */
