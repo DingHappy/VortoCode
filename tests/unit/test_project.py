@@ -47,3 +47,36 @@ def test_local_vortocode_agents(tmp_path):
     d.mkdir()
     (d / "AGENTS.md").write_text("本地私有约定", encoding="utf-8")
     assert "本地私有约定" in load_project_instructions(str(tmp_path))
+
+
+# ---- 用户级全局指令（~/.vortocode/AGENTS.md）
+from src.agents import project as project_module
+from src.agents.project import load_user_instructions
+
+
+def test_user_instructions_missing_or_blank_is_empty(tmp_path):
+    assert load_user_instructions(tmp_path / "AGENTS.md") == ""
+    (tmp_path / "AGENTS.md").write_text("  \n", encoding="utf-8")
+    assert load_user_instructions(tmp_path / "AGENTS.md") == ""
+
+
+def test_user_instructions_are_labelled_and_truncated(tmp_path):
+    path = tmp_path / "AGENTS.md"
+    path.write_text("回答用中文", encoding="utf-8")
+    text = load_user_instructions(path)
+    assert text.startswith("【全局指令】") and "回答用中文" in text
+    path.write_text("x" * 9000, encoding="utf-8")
+    assert load_user_instructions(path).endswith("…(全局指令过长已截断)")
+
+
+def test_user_instructions_reach_every_workspace_scope(tmp_path, monkeypatch):
+    from src.gateway.agent_session import build_session
+    instructions = tmp_path / "home" / "AGENTS.md"
+    instructions.parent.mkdir()
+    instructions.write_text("所有回答结尾加一句总结", encoding="utf-8")
+    monkeypatch.setattr(project_module, "USER_INSTRUCTIONS_PATH", instructions)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    for scope in ("general", "scratch", "project"):
+        agent = build_session(str(repo), kind="web", workspace_scope=scope)
+        assert "所有回答结尾加一句总结" in (agent.extra_system or ""), scope

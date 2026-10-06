@@ -16,6 +16,11 @@ import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
 import { contextWindowSourceLabel, formatTokenCount } from "../lib/labels";
+import { PROVIDER_PRESETS, presetForBaseUrl } from "../lib/providers";
+import { ConfigPane } from "./settings/ConfigPane";
+import { LlmConnectionCheck } from "./settings/LlmConnectionCheck";
+import { PersonalizePane } from "./settings/PersonalizePane";
+import { UsagePane } from "./settings/UsagePane";
 import {
   THEME_OPTIONS,
   applyThemePreference,
@@ -34,15 +39,18 @@ import type {
   WorkspaceScope,
 } from "../types";
 
-type SettingsSection = "general" | "model" | "appearance" | "trust" | "extensions";
+type SettingsSection = "general" | "usage" | "model" | "personalize" | "appearance" | "config" | "trust" | "extensions";
 
 const SETTINGS_NAV: Array<{ group: string; items: Array<{ id: SettingsSection; label: string; keywords: string }> }> = [
   {
     group: "个人",
     items: [
       { id: "general", label: "常规", keywords: "工作区 项目 引擎 runtime 连接 恢复 scratch gateway token 高级" },
-      { id: "model", label: "模型", keywords: "模型服务 api key relay openai 本机 上下文 配置文件" },
+      { id: "usage", label: "使用情况", keywords: "用量 额度 剩余 计费 费用 quota usage billing" },
+      { id: "model", label: "模型", keywords: "模型服务 供应商 api key relay openai deepseek kimi glm 千问 minimax 本机 测试连接 上下文" },
+      { id: "personalize", label: "个性化", keywords: "全局指令 自定义指令 agents.md instructions" },
       { id: "appearance", label: "外观", keywords: "主题 深色 浅色 跟随系统 theme dark light" },
+      { id: "config", label: "配置", keywords: "配置文件 路径 finder llm-profile agents.md" },
     ],
   },
   { group: "安全", items: [{ id: "trust", label: "授权级别", keywords: "权限 确认 只读 完全信任 trust" }] },
@@ -129,6 +137,8 @@ export function SettingsModal({
   const [section, setSection] = useState<SettingsSection>(llmProfile && !llmProfile.configured ? "model" : "general");
   const [query, setQuery] = useState("");
   const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference);
+  const [modelOptions, setModelOptions] = useState<string[]>([]);
+  const activePreset = presetForBaseUrl(llmBaseInput);
   const visibleNav = useMemo(() => {
     const keyword = query.trim().toLowerCase();
     if (!keyword) return SETTINGS_NAV;
@@ -202,18 +212,14 @@ export function SettingsModal({
             <i>{llmProfile?.configured ? "本机配置" : "需要设置"}</i>
           </div>
           <div className="llm-profile-presets" aria-label="模型服务快捷设置">
-            <button
-              className={llmBaseInput.trim() === "https://token.vortotech.com/v1" ? "active" : ""}
-              onClick={() => { onLlmBaseChange("https://token.vortotech.com/v1"); onLlmModelChange("mimo-v2.5"); onLlmKeyChange(""); }}
-            >VortoCode Relay</button>
-            <button
-              className={llmBaseInput.trim() === "https://api.openai.com/v1" ? "active" : ""}
-              onClick={() => { onLlmBaseChange("https://api.openai.com/v1"); onLlmModelChange(""); onLlmKeyChange(""); }}
-            >OpenAI 兼容</button>
-            <button
-              className={llmInputIsLocal ? "active" : ""}
-              onClick={() => { onLlmBaseChange("http://127.0.0.1:11434/v1"); onLlmModelChange(""); onLlmKeyChange(""); }}
-            >本机模型</button>
+            {PROVIDER_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                className={activePreset?.id === preset.id ? "active" : ""}
+                onClick={() => { onLlmBaseChange(preset.baseUrl); onLlmModelChange(preset.model); onLlmKeyChange(""); setModelOptions([]); }}
+              >{preset.label}</button>
+            ))}
+            <button className={!activePreset && llmBaseInput.trim() ? "active" : ""} onClick={() => { onLlmBaseChange(""); onLlmModelChange(""); onLlmKeyChange(""); setModelOptions([]); }}>自定义</button>
           </div>
           <div className="llm-profile-fields">
             <label>
@@ -222,7 +228,15 @@ export function SettingsModal({
             </label>
             <label>
               <span>模型名</span>
-              <input value={llmModelInput} onChange={(event) => onLlmModelChange(event.target.value)} placeholder="服务中实际可用的模型名" />
+              <input
+                value={llmModelInput}
+                onChange={(event) => onLlmModelChange(event.target.value)}
+                placeholder="服务中实际可用的模型名；可先「测试连接」查看"
+                list="llm-model-options"
+              />
+              <datalist id="llm-model-options">
+                {modelOptions.map((model) => <option key={model} value={model} />)}
+              </datalist>
             </label>
             <label>
               <span>API Key <em>{llmInputIsLocal ? "本机服务可留空" : "保存在本机配置文件，仅你的账户可读"}</em></span>
@@ -245,6 +259,7 @@ export function SettingsModal({
             <p className="llm-profile-note">配置文件：<code>{llmProfile.configPath}</code>（也可直接编辑，重启 Desktop 后生效）</p>
           )}
           <div className="llm-profile-actions">
+            <LlmConnectionCheck baseUrl={llmBaseInput} apiKey={llmKeyInput} model={llmModelInput} onModels={setModelOptions} />
             {llmProfile?.configured && <button onClick={() => void onClearLlmProfile()} disabled={llmProfileBusy}>清除配置</button>}
             <button
               className="primary"
@@ -254,6 +269,10 @@ export function SettingsModal({
           </div>
         </section>
         )}
+
+        {section === "usage" && <UsagePane />}
+        {section === "personalize" && <PersonalizePane />}
+        {section === "config" && <ConfigPane llmProfilePath={llmProfile?.configPath} />}
 
         {section === "appearance" && (
           <section className="appearance-card" aria-label="外观">

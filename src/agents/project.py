@@ -49,3 +49,27 @@ def load_project_instructions(repo_root: str) -> str:
         truncated = "\n…(项目指令过长已截断)"
     return (f"【项目指令】(来自 {p.name}，请遵循其中的约定/风格/注意事项)\n"
             f"{text}{truncated}")
+
+
+# 用户级全局指令：作用于所有会话（包括不绑定目录的通用会话），位置与用户级 skills 同处。
+# Desktop「设置 → 个性化」编辑的就是它；也可以直接手改，新会话生效。
+USER_INSTRUCTIONS_PATH = Path.home() / ".vortocode" / "AGENTS.md"
+
+
+def load_user_instructions(path: Optional[Path] = None) -> str:
+    """读用户级全局指令、拼成可追加到系统提示的一段；没有或为空则空串。
+
+    与项目指令同样在装配时读一次（系统提示在会话内保持字节稳定），超长截断并标注。
+    """
+    p = path or USER_INSTRUCTIONS_PATH
+    try:
+        text = p.read_text(encoding="utf-8", errors="ignore").strip() if p.is_file() else ""
+    except OSError:
+        return ""
+    if not text:
+        return ""
+    truncated = ""
+    if len(text) > _MAX_CHARS:
+        text = text[:_MAX_CHARS]
+        truncated = "\n…(全局指令过长已截断)"
+    return f"【全局指令】(来自用户的 ~/.vortocode/AGENTS.md，对所有对话和任务生效)\n{text}{truncated}"
