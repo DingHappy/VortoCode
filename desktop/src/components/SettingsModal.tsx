@@ -19,6 +19,7 @@ import { contextWindowSourceLabel, formatTokenCount } from "../lib/labels";
 import { PROVIDER_PRESETS, presetForBaseUrl, sameLlmBase } from "../lib/providers";
 import { ConfigPane } from "./settings/ConfigPane";
 import { LlmConnectionCheck } from "./settings/LlmConnectionCheck";
+import { AccountPane } from "./settings/AccountPane";
 import { BrowserPane } from "./settings/BrowserPane";
 import { CustomProviders } from "./settings/CustomProviders";
 import { PersonalizePane } from "./settings/PersonalizePane";
@@ -41,12 +42,13 @@ import type {
   WorkspaceScope,
 } from "../types";
 
-export type SettingsSection = "general" | "usage" | "model" | "personalize" | "appearance" | "config" | "trust" | "browser" | "extensions";
+export type SettingsSection = "account" | "general" | "usage" | "model" | "personalize" | "appearance" | "config" | "trust" | "browser" | "extensions";
 
 const SETTINGS_NAV: Array<{ group: string; items: Array<{ id: SettingsSection; label: string; keywords: string }> }> = [
   {
     group: "个人",
     items: [
+      { id: "account", label: "账号", keywords: "登录 账号 退出 套餐 token plan 注册 vortocode" },
       { id: "general", label: "常规", keywords: "工作区 项目 引擎 runtime 连接 恢复 scratch gateway token 高级" },
       { id: "usage", label: "使用情况", keywords: "用量 额度 剩余 计费 费用 quota usage billing" },
       { id: "model", label: "模型", keywords: "模型服务 供应商 api key relay openai deepseek kimi glm 千问 minimax 本机 测试连接 上下文" },
@@ -157,7 +159,7 @@ export function SettingsModal({
   const trustView = trustCard(trust);
   const llmInputIsLocal = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/i.test(llmBaseInput.trim());
   const [section, setSection] = useState<SettingsSection>(
-    initialSection ?? (llmProfile && !llmProfile.configured ? "model" : "general"));
+    initialSection ?? (llmProfile && !llmProfile.configured ? "account" : "general"));
   const [query, setQuery] = useState("");
   const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference);
   const [modelOptions, setModelOptions] = useState<string[]>([]);
@@ -305,6 +307,14 @@ export function SettingsModal({
         </section>
         )}
 
+        {section === "account" && (
+          <AccountPane
+            profile={llmProfile}
+            onProfile={onLlmProfileChange}
+            onRestartRuntime={onRestartRuntime}
+            onOpenModelSettings={() => setSection("model")}
+          />
+        )}
         {section === "usage" && <UsagePane />}
         {section === "personalize" && <PersonalizePane />}
         {section === "config" && <ConfigPane llmProfilePath={llmProfile?.configPath} />}

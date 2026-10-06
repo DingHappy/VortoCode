@@ -1155,10 +1155,27 @@ export interface DesktopLlmProfileStatus {
   /** 模型调度的快速档 / 强力档；没配则「自动」只用主模型。 */
   fastModel?: string;
   strongModel?: string;
+  /** 经账号登录时的账号信息（不含密码和会话）。 */
+  account?: DesktopAccount;
   /** 用户自己添加的其他供应商（不含 Key）。 */
   providers?: DesktopLlmProviderStatus[];
   /** 本机配置文件路径（llm-profile.json，权限 600）；可直接编辑，下次启动生效。 */
   configPath?: string;
+}
+
+export interface DesktopAccount {
+  username: string;
+  displayName: string;
+  keySource: "token_plan" | "pay_as_you_go" | string;
+  planName?: string | null;
+  planExpiry?: number | null;
+}
+
+export interface RelayLoginOutcome {
+  status: DesktopLlmProfileStatus | null;
+  needsPlan: boolean;
+  planUrl: string;
+  message: string;
 }
 
 export interface DesktopLlmProviderStatus {

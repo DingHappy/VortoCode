@@ -16,6 +16,7 @@ import {
   Settings2,
   SquarePen,
   Trash2,
+  UserRound,
   X,
 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -354,7 +355,7 @@ function App() {
   // 授权档位与模型服务配置已收进 useTrustLevel / useLlmProfile；重启 runtime 经注入回调。
   const { trust, trustBusy, changeTrustLevel } = useTrustLevel(clientRef, connection, repoRoot, settingsOpen, setBanner);
   const {
-    llmProfile, setLlmProfile, llmProfileChecked, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput,
+    llmProfile, applyLlmProfile, llmProfileChecked, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput,
     llmFastInput, setLlmFastInput, llmStrongInput, setLlmStrongInput,
     llmKeyInput, setLlmKeyInput, llmProfileBusy, saveLlmProfile, clearLlmProfile,
   } = useLlmProfile(settingsOpen, setBanner, () => restartCurrentRuntimeForLlmProfile());
@@ -2706,6 +2707,14 @@ function App() {
             )}
           </div>
           <div className="sidebar-footer">
+            <button
+              className="sidebar-account"
+              title={llmProfile?.account ? `已登录 ${llmProfile.account.username}` : "登录 VortoCode 账号"}
+              onClick={() => { setSettingsSection("account"); setSettingsOpen(true); }}
+            >
+              <span className="sidebar-avatar">{llmProfile?.account ? (llmProfile.account.displayName || llmProfile.account.username).slice(0, 1).toUpperCase() : <UserRound size={14} />}</span>
+              <span>{llmProfile?.account ? (llmProfile.account.displayName || llmProfile.account.username) : "登录"}</span>
+            </button>
             <button aria-label="设置" title="设置" onClick={() => setSettingsOpen(true)}>
               <Settings2 size={16} /><span>设置</span>
             </button>
@@ -2774,7 +2783,7 @@ function App() {
               <div className="home-greeting">
                 <h1>有什么可以帮你？</h1>
                 {llmProfileChecked && !llmProfile?.configured && (
-                  <p>还没有配置模型服务。<button onClick={() => setSettingsOpen(true)}>去设置</button></p>
+                  <p>还没有配置模型服务。<button onClick={() => { setSettingsSection("account"); setSettingsOpen(true); }}>登录或填写 Key</button></p>
                 )}
               </div>
             )}
@@ -3316,7 +3325,7 @@ function App() {
           onLlmFastChange={setLlmFastInput}
           onLlmStrongChange={setLlmStrongInput}
           onRestartRuntime={restartCurrentRuntimeForLlmProfile}
-          onLlmProfileChange={setLlmProfile}
+          onLlmProfileChange={applyLlmProfile}
           initialSection={settingsSection}
           onLlmKeyChange={setLlmKeyInput}
           onSaveLlmProfile={saveLlmProfile}

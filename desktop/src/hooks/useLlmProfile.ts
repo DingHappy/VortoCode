@@ -29,6 +29,16 @@ export function useLlmProfile(
   const [llmProfileChecked, setLlmProfileChecked] = useState(false);
   const loadedOnceRef = useRef(false);
 
+  /** 原生层返回了新的配置（登录、供应商变化）：同步状态和表单，免得表单拿旧地址覆盖回去。 */
+  const applyLlmProfile = (profile: DesktopLlmProfileStatus) => {
+    setLlmProfile(profile);
+    setLlmBaseInput(profile.baseUrl);
+    setLlmModelInput(profile.model);
+    setLlmFastInput(profile.fastModel ?? "");
+    setLlmStrongInput(profile.strongModel ?? "");
+    setLlmKeyInput("");
+  };
+
   useEffect(() => {
     if (!settingsOpen && loadedOnceRef.current) return;
     loadedOnceRef.current = true;
@@ -88,7 +98,7 @@ export function useLlmProfile(
   };
 
   return {
-    llmProfile, setLlmProfile, llmProfileChecked, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput,
+    llmProfile, applyLlmProfile, llmProfileChecked, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput,
     llmKeyInput, setLlmKeyInput, llmFastInput, setLlmFastInput, llmStrongInput, setLlmStrongInput,
     llmProfileBusy, saveLlmProfile, clearLlmProfile,
   };

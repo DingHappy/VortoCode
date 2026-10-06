@@ -9649,3 +9649,137 @@ input::placeholder {
   color: var(--n9);
   font-size: 11.5px;
 }
+
+/* 账号：侧边栏左下角 + 设置 → 账号 */
+.sidebar-footer {
+  display: grid;
+  gap: 2px;
+}
+
+.sidebar-avatar,
+.account-avatar {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  color: var(--n11);
+  background: var(--n4);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.sidebar-footer .sidebar-account span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-identity {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.account-avatar {
+  width: 38px;
+  height: 38px;
+  font-size: 16px;
+}
+
+.account-identity > span:last-child {
+  display: grid;
+  gap: 2px;
+}
+
+.account-identity small {
+  color: var(--n9);
+  font-size: 12px;
+}
+
+.account-facts {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.account-facts div {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 12px;
+  font-size: 12.5px;
+}
+
+.account-facts dt {
+  color: var(--n9);
+}
+
+.account-facts dd {
+  margin: 0;
+  color: var(--n12);
+}
+
+.account-form {
+  display: grid;
+  gap: 10px;
+}
+
+.account-form label {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  align-items: center;
+  gap: 12px;
+  color: var(--n11);
+  font-size: 12.5px;
+}
+
+.account-form input {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--n6);
+  border-radius: 8px;
+  color: var(--n12);
+  background: var(--n0);
+  font-size: 13px;
+}
+
+.account-form .settings-card-foot span {
+  flex: 1;
+}
+
+.account-plan-choice {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--amber-line);
+  border-radius: 10px;
+  background: var(--amber-bg);
+}
+
+.account-plan-choice p {
+  margin: 0;
+  color: var(--n12);
+  font-size: 12.5px;
+  line-height: 19px;
+}
+
+.account-plan-choice div {
+  display: flex;
+  gap: 8px;
+}
+
+.account-alt {
+  justify-self: start;
+  padding: 0;
+  border: 0;
+  color: var(--n10);
+  background: none;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.account-alt:hover {
+  color: var(--n13);
+  text-decoration: underline;
+}
