@@ -3055,20 +3055,24 @@ async fn test_llm_connection(
     app: AppHandle,
     store: State<'_, DesktopLlmProfileStore>,
 ) -> Result<LlmConnectionTest, String> {
-    let mut profile = normalize_llm_profile(DesktopLlmProfile {
+    // Key 留空时先借用已保存的 Key（仅限同一地址），再做完整校验——否则远程服务会因为
+    // "需要 API Key" 在借用之前就被拦下。地址按 normalize_llm_profile 的同一规则比较。
+    let mut api_key = api_key.trim().to_string();
+    if api_key.is_empty() {
+        let wanted = base_url.trim().trim_end_matches('/');
+        if let Some(saved) = cached_desktop_llm_profile(&app, &store)? {
+            if saved.base_url == wanted {
+                api_key = saved.api_key;
+            }
+        }
+    }
+    let profile = normalize_llm_profile(DesktopLlmProfile {
         base_url,
         api_key,
         model: if model.trim().is_empty() { "-".into() } else { model },
         context_window: None,
         context_window_source: None,
     })?;
-    if profile.api_key.is_empty() {
-        if let Some(saved) = cached_desktop_llm_profile(&app, &store)? {
-            if saved.base_url == profile.base_url {
-                profile.api_key = saved.api_key;
-            }
-        }
-    }
     let mut request = probe_client()?.get(format!("{}/models", profile.base_url));
     if !profile.api_key.is_empty() {
         request = request.bearer_auth(&profile.api_key);
