@@ -1300,7 +1300,7 @@ input::placeholder {
 .project-assets-panel {
   min-height: 100%;
   padding: 12px;
-  background: #0f1218;
+  background: var(--n1);
 }
 
 .project-assets-head,
@@ -1338,7 +1338,7 @@ input::placeholder {
 .artifact-preview-head strong,
 .repo-memory-composer strong {
   overflow: hidden;
-  color: #e1e5eb;
+  color: var(--n12);
   font-size: 12px;
   line-height: 17px;
   text-overflow: ellipsis;
@@ -1352,10 +1352,10 @@ input::placeholder {
 .artifact-preview-head select {
   min-height: 29px;
   padding: 0 9px;
-  border: 1px solid #303745;
+  border: 1px solid var(--n6);
   border-radius: 7px;
-  color: #aeb6c3;
-  background: #181d26;
+  color: var(--n10);
+  background: var(--n1);
   font-size: 9px;
   cursor: pointer;
 }
@@ -1371,7 +1371,7 @@ input::placeholder {
   margin-bottom: 12px;
   padding: 3px;
   border-radius: 8px;
-  background: #151922;
+  background: var(--n1);
 }
 
 .project-assets-toggle button {
@@ -1381,19 +1381,19 @@ input::placeholder {
 }
 
 .project-assets-toggle button.active {
-  color: #f2f4f7;
-  border-color: #343c49;
-  background: #202631;
+  color: var(--n13);
+  border-color: var(--n6);
+  background: var(--n2);
 }
 
 .project-assets-error,
 .asset-warning {
   margin-bottom: 9px;
   padding: 8px 9px;
-  border: 1px solid rgba(255, 151, 92, 0.25);
+  border: 1px solid rgba(var(--amber-rgb), 0.25);
   border-radius: 7px;
-  color: #efb497;
-  background: rgba(92, 49, 29, 0.24);
+  color: var(--red-text);
+  background: rgba(var(--red-rgb), 0.24);
   font-size: 9px;
   line-height: 15px;
   overflow-wrap: anywhere;
@@ -1412,7 +1412,7 @@ input::placeholder {
   padding: 9px;
   border: 1px solid var(--line-soft);
   border-radius: 8px;
-  background: #151922;
+  background: var(--n1);
 }
 
 .repo-memory-summary span {
@@ -1422,13 +1422,13 @@ input::placeholder {
 
 .repo-memory-summary strong {
   margin-top: 2px;
-  color: #e2e6ec;
+  color: var(--n12);
   font-size: 14px;
 }
 
 .repo-memory-summary code {
   grid-column: 1 / -1;
-  color: #748197;
+  color: var(--n9);
   font-size: 8px;
 }
 
@@ -1441,10 +1441,10 @@ input::placeholder {
 .repo-memory-list > pre {
   margin: 0;
   padding: 10px;
-  color: #aeb7c5;
+  color: var(--n10);
   border: 1px solid var(--line-soft);
   border-radius: 8px;
-  background: #12161e;
+  background: var(--n1);
   font-size: 9px;
   line-height: 15px;
   white-space: pre-wrap;
@@ -1458,7 +1458,7 @@ input::placeholder {
   padding: 8px;
   border: 1px solid var(--line-soft);
   border-radius: 8px;
-  background: #151922;
+  background: var(--n1);
 }
 
 .repo-memory-entry > span {
@@ -1466,7 +1466,7 @@ input::placeholder {
   width: 20px;
   height: 20px;
   place-items: center;
-  color: #f1a27b;
+  color: var(--red-text);
   border-radius: 6px;
   background: var(--accent-soft);
   font-size: 8px;
@@ -1474,7 +1474,7 @@ input::placeholder {
 
 .repo-memory-entry p {
   margin: 0;
-  color: #b9c0cb;
+  color: var(--n11);
   font-size: 10px;
   line-height: 16px;
   overflow-wrap: anywhere;
@@ -1482,9 +1482,9 @@ input::placeholder {
 
 .repo-memory-composer {
   padding: 10px;
-  border: 1px solid #2a313d;
+  border: 1px solid var(--n5);
   border-radius: 9px;
-  background: #151922;
+  background: var(--n1);
 }
 
 .repo-memory-composer textarea {
@@ -1494,15 +1494,15 @@ input::placeholder {
   padding: 8px;
   resize: vertical;
   outline: 0;
-  color: #d9dee6;
-  border: 1px solid #2d3542;
+  color: var(--n12);
+  border: 1px solid var(--n6);
   border-radius: 7px;
-  background: #10141b;
+  background: var(--n1);
   font: 10px/16px "DM Mono", monospace;
 }
 
 .repo-memory-composer textarea:focus {
-  border-color: #4a5566;
+  border-color: var(--n8);
 }
 
 .repo-memory-composer small,
@@ -1513,9 +1513,9 @@ input::placeholder {
 
 .repo-memory-composer button.primary,
 .artifact-preview-actions button.primary {
-  color: #171a20;
-  border-color: #ec754f;
-  background: var(--accent);
+  color: var(--n0);
+  border-color: var(--n13);
+  background: var(--n13);
 }
 
 .artifact-list {
@@ -1535,14 +1535,14 @@ input::placeholder {
   text-align: left;
   border: 1px solid var(--line-soft);
   border-radius: 8px;
-  color: #b6bdc8;
-  background: #151922;
+  color: var(--n11);
+  background: var(--n1);
   cursor: pointer;
 }
 
 .artifact-list > button.active {
-  border-color: rgba(255, 124, 79, 0.48);
-  background: rgba(54, 36, 31, 0.75);
+  border-color: rgba(var(--red-rgb), 0.48);
+  background: rgba(var(--ink-rgb), 0.75);
 }
 
 .artifact-list > button > span {
@@ -1550,9 +1550,9 @@ input::placeholder {
   width: 31px;
   height: 31px;
   place-items: center;
-  color: #8ea0bb;
+  color: var(--n10);
   border-radius: 7px;
-  background: #202631;
+  background: var(--n2);
   font-size: 7px;
 }
 
@@ -1570,7 +1570,7 @@ input::placeholder {
 }
 
 .artifact-list strong {
-  color: #dce1e8;
+  color: var(--n12);
   font-size: 9px;
 }
 
@@ -1582,9 +1582,9 @@ input::placeholder {
 
 .artifact-preview-card {
   padding: 9px;
-  border: 1px solid #2a313d;
+  border: 1px solid var(--n5);
   border-radius: 9px;
-  background: #151922;
+  background: var(--n1);
 }
 
 .artifact-preview-actions {
@@ -1598,7 +1598,7 @@ input::placeholder {
   min-height: 360px;
   place-items: center;
   overflow: hidden;
-  border: 1px solid #303744;
+  border: 1px solid var(--n6);
   border-radius: 8px;
   color: var(--muted);
   background: #fff;
@@ -9476,4 +9476,176 @@ input::placeholder {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+
+/* 侧边栏打开的主区域页面：插件 / 产物中心 */
+.main-page {
+  min-width: 0;
+  min-height: 0;
+  padding: 44px max(32px, calc((100% - 820px) / 2)) 40px;
+  overflow-y: auto;
+  background: var(--n1);
+}
+
+.main-page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.main-page-head h1 {
+  margin: 0;
+  color: var(--n13);
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.main-page-head p {
+  margin: 6px 0 0;
+  color: var(--n9);
+  font-size: 13px;
+}
+
+.main-page-head > button,
+.main-page-empty button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--n6);
+  border-radius: 8px;
+  color: var(--n12);
+  background: var(--n0);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.main-page-error {
+  margin: 0 0 14px;
+  color: var(--red-text);
+  font-size: 12px;
+}
+
+.main-page-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 48px 20px;
+  border: 1px dashed var(--n6);
+  border-radius: 14px;
+  color: var(--n10);
+  text-align: center;
+}
+
+.main-page-empty strong {
+  color: var(--n12);
+  font-size: 14px;
+}
+
+.main-page-empty p {
+  margin: 0 0 6px;
+  font-size: 12.5px;
+}
+
+.plugin-builtins {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+  margin-bottom: 24px;
+}
+
+.plugin-builtins button {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--n5);
+  border-radius: 12px;
+  color: var(--n11);
+  background: var(--n0);
+  text-align: left;
+  cursor: pointer;
+}
+
+.plugin-builtins button:hover,
+.artifact-grid button:hover {
+  border-color: var(--n7);
+}
+
+.plugin-builtins span {
+  display: grid;
+  gap: 4px;
+}
+
+.plugin-builtins strong {
+  color: var(--n13);
+  font-size: 13.5px;
+}
+
+.plugin-builtins small {
+  color: var(--n9);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.plugin-project h2 {
+  margin: 0 0 12px;
+  color: var(--n12);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.artifact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.artifact-grid button {
+  display: grid;
+  width: 100%;
+  gap: 4px;
+  padding: 14px;
+  border: 1px solid var(--n5);
+  border-radius: 12px;
+  color: var(--n11);
+  background: var(--n0);
+  text-align: left;
+  cursor: pointer;
+}
+
+.artifact-grid button.active {
+  border-color: var(--n13);
+}
+
+.artifact-grid-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 6px;
+  border-radius: 9px;
+  color: var(--n11);
+  background: var(--n3);
+}
+
+.artifact-grid strong {
+  overflow: hidden;
+  color: var(--n13);
+  font-size: 13.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-grid small {
+  color: var(--n9);
+  font-size: 11.5px;
 }

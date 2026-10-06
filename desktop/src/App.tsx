@@ -6,10 +6,10 @@ import {
   Cpu,
   FileText,
   FolderPlus,
-  Inbox,
   Music,
   Package,
   PanelRight,
+  Puzzle,
   Paperclip,
   PencilLine,
   Plus,
@@ -73,7 +73,9 @@ import { MarkdownMessage } from "./components/MarkdownMessage";
 import { ProjectAssetsPanel } from "./components/ProjectAssetsPanel";
 import { RunsPanel } from "./components/RunsPanel";
 import { RuntimeInboxPanel } from "./components/RuntimeInboxPanel";
-import { SettingsModal } from "./components/SettingsModal";
+import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
+import { ArtifactCenter } from "./components/ArtifactCenter";
+import { PluginsPage } from "./components/PluginsPage";
 import { TurnTimeline } from "./components/TurnTimeline";
 import { useChangeReview } from "./hooks/useChangeReview";
 import { useExtensionsStatus } from "./hooks/useExtensionsStatus";
@@ -103,7 +105,7 @@ import { normalizeEditorText, serializeEditorText } from "./lib/text";
 import { localDay } from "./lib/time";
 import { finishRunningActivities, hydrateActivities, protocolActivity, upsertActivity } from "./protocol/activities";
 import { errorText } from "./lib/errorText";
-import { runtimeInboxSubtitle, summarizeRuntimeInboxes } from "./lib/runtimeInbox";
+import { summarizeRuntimeInboxes } from "./lib/runtimeInbox";
 import { confirmAction } from "./lib/confirm";
 import { composeMessageText, mediaPayload } from "./lib/attachments";
 import { useAttachments } from "./hooks/useAttachments";
@@ -211,6 +213,9 @@ function App() {
   const [plan, setPlan] = useState<PlanItem[]>([]);
   const [activities, setActivities] = useState<TurnActivity[]>([]);
   const [previewView, setPreviewView] = useState<PreviewView>("plan");
+  // 主区域：对话，或侧边栏打开的「插件」「产物中心」页面。切换会话时回到对话。
+  const [mainView, setMainView] = useState<"chat" | "plugins" | "artifacts">("chat");
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined);
   // 刚发布的制品：协议回调里只记下来，由 effect 带着当前作用域去刷新并定位（避免回调闭包里的旧 scope）。
   const [publishedArtifact, setPublishedArtifact] = useState<{ id: string; seq: number } | null>(null);
   const previewReferenceItems = useMemo(() => previewReferences(activities), [activities]);
@@ -391,6 +396,8 @@ function App() {
 
   const currentSession = sessions.find((session) => session.sid === activeSid);
   const activeScope: WorkspaceScope = runtime.scope ?? processStatus.scope ?? (repoRoot.trim() ? "project" : "general");
+  // 切换会话或工作区时回到对话视图。
+  useEffect(() => { setMainView("chat"); }, [activeSid, activeScope]);
   // llmInputIsLocal 派生只服务设置弹窗，已随 <SettingsModal> 搬入组件内计算。
   const connectionText = {
     disconnected: "未启动",
@@ -2490,22 +2497,23 @@ function App() {
             <strong>VortoCode</strong>
           </div>
           <nav className="sidebar-nav" aria-label="主导航">
-            <button onClick={() => void newSession()} disabled={connection !== "connected"}>
+            <button onClick={() => { setMainView("chat"); void newSession(); }} disabled={connection !== "connected"}>
               <SquarePen size={16} /><span>新建任务</span>
             </button>
             <button
-              className={inspectorOpen && inspectorTab === "inbox" ? "active" : ""}
-              title={runtimeInboxSummary.runtimes === 0 ? "正在发现本地工作…" : runtimeInboxSubtitle(runtimeInboxSummary)}
-              onClick={() => openInspector("inbox")}
+              className={mainView === "plugins" ? "active" : ""}
+              onClick={() => {
+                setMainView("plugins");
+                if (activeScope === "project") void Promise.all([refreshExtensionsInspect(), refreshHookStatus()]);
+              }}
             >
-              <Inbox size={16} /><span>收件箱</span>
-              {runtimeInboxSummary.actionable > 0 && <b>{runtimeInboxSummary.actionable}</b>}
+              <Puzzle size={16} /><span>插件</span>
             </button>
             <button
-              className={inspectorOpen && inspectorTab === "project" ? "active" : ""}
-              onClick={() => { openInspector("project"); void refreshProjectAssets(activeScope !== "general"); }}
+              className={mainView === "artifacts" ? "active" : ""}
+              onClick={() => { setMainView("artifacts"); void refreshProjectAssets(activeScope !== "general"); }}
             >
-              <Package size={16} /><span>产物</span>
+              <Package size={16} /><span>产物中心</span>
             </button>
           </nav>
           <div className="sidebar-section-title project-section-title sidebar-first-section">
@@ -2704,6 +2712,39 @@ function App() {
           </div>
         </aside>
 
+        {mainView === "plugins" ? (
+          <PluginsPage
+            activeScope={activeScope}
+            projectName={repoRoot.split("/").filter(Boolean).slice(-1)[0] || ""}
+            inspector={(
+              <ExtensionsInspector
+                extensionsInspect={extensionsInspect}
+                extensionsInspectBusy={extensionsInspectBusy}
+                hookStatus={hookStatus}
+                hookTrustBusy={hookTrustBusy}
+                connection={connection}
+                onRefresh={() => void Promise.all([refreshExtensionsInspect(), refreshHookStatus()])}
+                onToggleHookTrust={toggleHookTrust}
+              />
+            )}
+            onChooseProject={() => void chooseRepo()}
+            onOpenBrowserSettings={() => { setSettingsSection("browser"); setSettingsOpen(true); }}
+          />
+        ) : mainView === "artifacts" ? (
+          <ArtifactCenter
+            artifacts={artifacts}
+            loading={projectAssetsLoading}
+            error={projectAssetsError}
+            selectedId={selectedArtifactId}
+            onRefresh={() => void refreshProjectAssets(activeScope !== "general")}
+            onOpen={(id) => {
+              setSelectedArtifactId(id);
+              void loadArtifactPreview(id);
+              setPreviewView("artifacts");
+              openInspector("preview");
+            }}
+          />
+        ) : (
         <section className={`conversation ${messages.length === 0 && !streaming ? "empty-state" : ""}`}>
           <div className="conversation-header">
             <div>
@@ -2963,6 +3004,7 @@ function App() {
             </div>
           </div>
         </section>
+        )}
 
         {inspectorOpen && (
         <aside className="inspector">
@@ -3268,13 +3310,14 @@ function App() {
           trust={trust}
           trustBusy={trustBusy}
           onTrustChange={changeTrustLevel}
-          onClose={() => setSettingsOpen(false)}
+          onClose={() => { setSettingsOpen(false); setSettingsSection(undefined); }}
           onLlmBaseChange={setLlmBaseInput}
           onLlmModelChange={setLlmModelInput}
           onLlmFastChange={setLlmFastInput}
           onLlmStrongChange={setLlmStrongInput}
           onRestartRuntime={restartCurrentRuntimeForLlmProfile}
           onLlmProfileChange={setLlmProfile}
+          initialSection={settingsSection}
           onLlmKeyChange={setLlmKeyInput}
           onSaveLlmProfile={saveLlmProfile}
           onClearLlmProfile={clearLlmProfile}
