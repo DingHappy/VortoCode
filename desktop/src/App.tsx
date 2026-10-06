@@ -3,7 +3,10 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowUp,
+  ChevronDown,
   Cpu,
+  ShieldCheck,
+  Folder,
   FileText,
   FolderPlus,
   LoaderCircle,
@@ -59,6 +62,7 @@ import type {
   WorkspaceFileContent,
   WorkspaceFileList,
   WorkspaceScope,
+  TrustLevel,
 } from "./types";
 import { DecisionsPanel } from "./components/DecisionsPanel";
 import { SessionConnection } from "./connection/sessionConnection";
@@ -78,6 +82,7 @@ import { RuntimeInboxPanel } from "./components/RuntimeInboxPanel";
 import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
 import { ArtifactCenter } from "./components/ArtifactCenter";
 import { PluginsPage } from "./components/PluginsPage";
+import { ProjectPicker } from "./components/ProjectPicker";
 import { TurnTimeline } from "./components/TurnTimeline";
 import { useChangeReview } from "./hooks/useChangeReview";
 import { useExtensionsStatus } from "./hooks/useExtensionsStatus";
@@ -91,15 +96,7 @@ import {
   isPlanExecutionConfirmation,
   isPlanBudgetConfirmation,
 } from "./lib/onboarding";
-import {
-  compactSessionCwd,
-  formatRelativeTime,
-  sessionContextPresentation,
-  shouldShowContextChip,
-  sessionContextTone,
-  sessionStatusLabel,
-  statusLabel,
-} from "./lib/labels";
+import { sessionStatusLabel, statusLabel } from "./lib/labels";
 import { autoFocusDecision, type InspectorTab } from "./lib/inspector";
 import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey, projectToRestore,
   STORAGE_KEYS } from "./lib/storage";
@@ -143,6 +140,12 @@ function normalizePromptQueueItem(value: unknown, fallbackPosition = 0): PromptQ
     context_count: Number.isFinite(item.context_count) ? Number(item.context_count) : 0,
   };
 }
+
+const TRUST_CHIP_LABEL: Record<TrustLevel, string> = {
+  ask: "每次都问我",
+  reads: "只读自动",
+  full: "完全信任",
+};
 
 function inspectorTabLabel(tab: InspectorTab): string {
   return {
@@ -218,6 +221,8 @@ function App() {
   // 主区域：对话，或侧边栏打开的「插件」「产物中心」页面。切换会话时回到对话。
   const [mainView, setMainView] = useState<"chat" | "plugins" | "artifacts">("chat");
   const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined);
+  const [projectsOpen, setProjectsOpen] = useState(true);
+  const [recentOpen, setRecentOpen] = useState(true);
   // 刚发布的制品：协议回调里只记下来，由 effect 带着当前作用域去刷新并定位（避免回调闭包里的旧 scope）。
   const [publishedArtifact, setPublishedArtifact] = useState<{ id: string; seq: number } | null>(null);
   const previewReferenceItems = useMemo(() => previewReferences(activities), [activities]);
@@ -2483,19 +2488,14 @@ function App() {
   return (
     <main className="app-shell">
       <header className="topbar" data-tauri-drag-region="deep">
-        <div className="runtime-path" title={runtime.workdir || repoRoot || "General 无目录会话"}>
-          <span className="path-dot" />
-          {activeScope === "general" ? "通用会话 · 无目录" : activeScope === "scratch" ? "Scratch · 隔离临时工作区" : runtime.workdir || repoRoot || "项目工作区"}
-        </div>
         <div className="topbar-spacer" />
-        <div className={`connection-pill ${connection}`}>
-          <span className="connection-dot" />
-          {connectionText}
-        </div>
-        <div className="runtime-meta">
-          <span>{runtime.model || "—"}</span>
-          <span>协议 {protocolVersion ?? "—"}</span>
-        </div>
+        {/* 平时不摆状态字（MiMo 式干净顶栏）；只有没连上时才露出连接状态。 */}
+        {connection !== "connected" && (
+          <div className={`connection-pill ${connection}`} title={`${runtime.workdir || repoRoot || "通用会话"} · 协议 ${protocolVersion ?? "—"}`}>
+            <span className="connection-dot" />
+            {connectionText}
+          </div>
+        )}
       </header>
 
       <div className="banner-slot">
@@ -2533,26 +2533,13 @@ function App() {
             </button>
           </nav>
           <div className="sidebar-section-title project-section-title sidebar-first-section">
-            <span>项目</span>
+            <button className="sidebar-fold" aria-expanded={projectsOpen} onClick={() => setProjectsOpen(!projectsOpen)}>
+              项目<ChevronDown size={13} className={projectsOpen ? "" : "folded"} />
+            </button>
             <button aria-label="添加 Git 项目" title="添加 Git 项目" onClick={() => void chooseRepo()} disabled={projectSwitching}><FolderPlus size={15} /></button>
           </div>
+          {projectsOpen && (
           <div className="project-list">
-            {(() => {
-              const generalRunning = runtimeProcesses.some((item) => item.runtimeId === "general" && item.running);
-              return (
-            <div
-              className={`project-row ${activeScope === "general" ? "active" : ""} ${generalRunning || activeScope === "general" && connection === "connected" ? "healthy" : ""}`}
-              onClick={() => void switchManagedScope("general")}
-              onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") void switchManagedScope("general"); }}
-              role="button"
-              tabIndex={0}
-              title="不绑定目录的对话、研究、规划与制品会话"
-            >
-              <span className="project-status" />
-              <div className="project-row-copy"><strong>通用会话</strong><span>{activeScope === "general" && connection === "connected" ? "通用会话已就绪" : generalRunning ? "后台 runtime 运行中" : "对话与研究 · 不访问本机目录"}</span></div>
-            </div>
-              );
-            })()}
             {activeScope === "scratch" && (
               <div className="project-row active healthy">
                 <span className="project-status" />
@@ -2580,7 +2567,7 @@ function App() {
                   </div>
                 </div>
               ))}
-            {projects.length === 0 && <div className="project-empty">项目会在任务需要代码上下文时出现在这里。</div>}
+            {projects.length === 0 && <div className="project-empty">还没有项目；在输入框下方「进入项目工作」里添加。</div>}
             {projects.slice(0, 8).map((project) => {
               const active = project.repoRoot === repoRoot.trim();
               const managedRuntime = runtimeProcesses.find((item) => item.projectId === project.id || item.repoRoot === project.repoRoot);
@@ -2602,10 +2589,11 @@ function App() {
                   tabIndex={0}
                   title={project.repoRoot}
                 >
-                  <span className="project-status" />
+                  <Folder size={15} className="project-folder" />
                   <div className="project-row-copy">
                     <strong>{project.name}</strong>
-                    <span>{health}{!active && !managedRunning ? ` · ${formatRelativeTime(project.lastOpenedAt)}` : ""}</span>
+                    {/* 只在需要注意时显示状态；平时一行只有名字。 */}
+                    {(project.missing || managedRunning || recovery?.status) && <span>{health}</span>}
                   </div>
                   {!active && (
                     <button
@@ -2618,22 +2606,24 @@ function App() {
               );
             })}
           </div>
+          )}
 
           <div className="sidebar-section-title work-items-heading">
-            <span>最近</span>
+            <button className="sidebar-fold" aria-expanded={recentOpen} onClick={() => setRecentOpen(!recentOpen)}>
+              最近<ChevronDown size={13} className={recentOpen ? "" : "folded"} />
+            </button>
             <button aria-label="新建任务" title="新建任务" onClick={() => void newSession()} disabled={connection !== "connected"}><Plus size={15} /></button>
           </div>
+          {recentOpen && (
           <div className="session-list">
             {sessions.length === 0 && <div className="session-empty">描述一个目标后，任务线程会出现在这里。</div>}
             {sessions.map((session) => {
               const active = session.sid === activeSid;
               const liveStatus = active && busy && session.status !== "needs_input" ? "working" : session.status ?? "inactive";
-              const cwdLabel = compactSessionCwd(session.cwd);
               const backgroundCount = (session.background_tasks?.active ?? 0) + (session.background_tasks?.attention ?? 0);
-              const showsContext = Boolean(session.context)
-                && shouldShowContextChip(sessionContextPresentation(session.context).pct);
-              const hasMetadata = Boolean(cwdLabel || session.branch || session.worktree?.owned_count
-                || backgroundCount || session.hook_issues?.count || showsContext);
+              // 列表只留标题；元信息只保留需要人动手的（后台任务、待处理、Hook 问题）。
+              const hasMetadata = Boolean(backgroundCount || session.hook_issues?.count);
+              const showsStatus = ["working", "needs_input", "failed", "queued"].includes(liveStatus);
               const rowTitle = [
                 session.running_prompt || session.activity || session.title,
                 session.cwd ? `目录：${session.cwd}` : "",
@@ -2653,12 +2643,9 @@ function App() {
                   <span className="session-status" />
                   <div className="session-copy">
                     <strong>{session.title || "新任务"}</strong>
-                    <span>{sessionStatusLabel(session, active, busy)}</span>
+                    {showsStatus && <span>{sessionStatusLabel(session, active, busy)}</span>}
                     {hasMetadata && (
                       <div className="session-meta" aria-label="会话运行上下文">
-                        {cwdLabel && <em className="session-meta-cwd" title={session.cwd}>{cwdLabel}</em>}
-                        {session.branch && <em title={`Git 分支 ${session.branch}`}>{session.branch}</em>}
-                        {(session.worktree?.owned_count ?? 0) > 0 && <em title="VortoCode 隔离 worktree">{session.worktree?.owned_count} WT</em>}
                         {(session.background_tasks?.active ?? 0) > 0 && (
                           <button
                             className="active"
@@ -2680,12 +2667,6 @@ function App() {
                             onClick={(event) => { event.stopPropagation(); openInspector("decisions"); void switchSession(session.sid); }}
                           >{session.hook_issues?.count} Hook</button>
                         )}
-                        {session.context && (() => {
-                          const presentation = sessionContextPresentation(session.context);
-                          // 低占比不出 chip：`上下文 0.2%` 占一格，却不构成任何决定。
-                          if (!shouldShowContextChip(presentation.pct)) return null;
-                          return <em className={`context ${sessionContextTone(presentation.pct)}`} title={presentation.title}>{presentation.label}</em>;
-                        })()}
                       </div>
                     )}
                   </div>
@@ -2723,6 +2704,7 @@ function App() {
               </div>
             )}
           </div>
+          )}
           <div className="sidebar-footer">
             <button
               className="sidebar-account"
@@ -2732,8 +2714,8 @@ function App() {
               <span className="sidebar-avatar">{llmProfile?.account ? (llmProfile.account.displayName || llmProfile.account.username).slice(0, 1).toUpperCase() : <UserRound size={14} />}</span>
               <span>{llmProfile?.account ? (llmProfile.account.displayName || llmProfile.account.username) : "登录"}</span>
             </button>
-            <button aria-label="设置" title="设置" onClick={() => setSettingsOpen(true)}>
-              <Settings2 size={16} /><span>设置</span>
+            <button className="sidebar-gear" aria-label="设置" title="设置" onClick={() => setSettingsOpen(true)}>
+              <Settings2 size={16} />
             </button>
           </div>
         </aside>
@@ -2780,9 +2762,11 @@ function App() {
               <button
                 className={`context-toggle ${inspectorOpen ? "active" : ""}`}
                 aria-expanded={inspectorOpen}
+                aria-label="工作台"
+                title="工作台：预览、代码、变更等"
                 onClick={() => inspectorOpen ? setInspectorOpen(false) : openInspector(defaultInspectorTab)}
               >
-                <PanelRight size={14} />工作台{taskContextCount > 0 && <b>{taskContextCount}</b>}
+                <PanelRight size={16} />{taskContextCount > 0 && <b>{taskContextCount}</b>}
               </button>
               {busy && <button className="stop-button" onClick={() => void cancelTurn()}>停止</button>}
             </div>
@@ -2798,6 +2782,7 @@ function App() {
           >
             {messages.length === 0 && !streaming && (
               <div className="home-greeting">
+                <span className="home-mark" aria-hidden="true">V</span>
                 {/* 冷启动要等本地引擎起来（约数秒）；这期间别摆出一个看着能用、其实还没连上的首页，
                     连上后再切到上次的会话也就不显得突兀（真机 2026-10-06）。 */}
                 {connection !== "connected" && (runtimeStarting || connection === "connecting")
@@ -2997,13 +2982,29 @@ function App() {
                       event.target.value = "";
                     }}
                   />
-                  <span>{activeScope === "general"
-                    ? busy ? "Enter 加入队列 · 不访问本机文件" : "不访问本机文件"
-                    : contextItems.length > 0
-                      ? `${contextItems.length} 个源码引用`
-                      : busy ? "Enter 加入队列 · Shift+Enter 换行" : "改动前会先问你"}</span>
+                  {trust && trust.levels.length > 1 && (
+                    <label className="composer-chip" title="授权方式：Agent 动手前要不要先问你">
+                      <ShieldCheck size={14} />
+                      <select
+                        aria-label="授权方式"
+                        value={trust.level}
+                        disabled={trustBusy}
+                        onChange={(event) => void changeTrustLevel(event.target.value as TrustLevel)}
+                      >
+                        {trust.levels.map((level) => <option key={level} value={level}>{TRUST_CHIP_LABEL[level]}</option>)}
+                      </select>
+                    </label>
+                  )}
+                  {(busy || contextItems.length > 0) && (
+                    <span>{contextItems.length > 0 ? `${contextItems.length} 个源码引用` : "Enter 加入队列"}</span>
+                  )}
                 </div>
                 <div className="composer-actions">
+                {composerModelChoices.length === 1 && (
+                  <span className="composer-model single" title="当前模型；在「设置 → 模型」里可以添加更多">
+                    <Cpu size={13} />{composerModelChoices[0].label}
+                  </span>
+                )}
                 {composerModelChoices.length > 1 && (
                   <label className="composer-model" title={composerModelChoices.find((choice) => choice.value === modelChoice)?.hint}>
                     <Cpu size={13} />
@@ -3032,6 +3033,16 @@ function App() {
                 </div>
               </div>
             </div>
+            {messages.length === 0 && !streaming && (
+              <ProjectPicker
+                projects={projects}
+                activeProjectName={activeScope === "project" ? (repoRoot.split("/").filter(Boolean).slice(-1)[0] || "项目") : null}
+                disabled={projectSwitching || runtimeStarting}
+                onPick={(project) => void switchProject(project)}
+                onAddProject={() => void chooseRepo()}
+                onLeaveProject={() => void switchManagedScope("general")}
+              />
+            )}
           </div>
         </section>
         )}

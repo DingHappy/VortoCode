@@ -9817,3 +9817,280 @@ input::placeholder {
   font-size: 18px;
   font-weight: 500;
 }
+
+/* ── 对标 MiMo：侧边栏 / 顶栏 / 首页输入区精简 ───────────────────────── */
+.sidebar-section-title .sidebar-fold {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  width: auto;
+  height: 24px;
+  padding: 0 6px 0 2px;
+  border: 0;
+  color: var(--n9);
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.sidebar-fold svg {
+  transition: transform 0.15s ease;
+}
+
+.sidebar-fold svg.folded {
+  transform: rotate(-90deg);
+}
+
+.project-row {
+  grid-template-columns: 18px minmax(0, 1fr) 26px;
+  gap: 8px;
+  min-height: 36px;
+  padding: 6px 8px 6px 10px;
+}
+
+.project-folder {
+  color: var(--n10);
+}
+
+.project-row-copy strong,
+.session-copy strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.project-row > button {
+  opacity: 0;
+}
+
+.project-row:hover > button,
+.project-row.missing > button {
+  opacity: 1;
+}
+
+.session-row {
+  grid-template-columns: 0 minmax(0, 1fr) auto;
+  min-height: 34px;
+  padding: 6px 10px;
+}
+
+.session-row .session-status {
+  visibility: hidden;
+}
+
+.session-row.status-working,
+.session-row.status-needs_input,
+.session-row.status-failed,
+.session-row.status-queued {
+  grid-template-columns: 7px minmax(0, 1fr) auto;
+}
+
+.session-row.status-working .session-status,
+.session-row.status-needs_input .session-status,
+.session-row.status-failed .session-status,
+.session-row.status-queued .session-status {
+  visibility: visible;
+}
+
+.session-row.with-meta {
+  min-height: 50px;
+}
+
+.sidebar-footer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.sidebar-footer .sidebar-account {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar-footer .sidebar-gear {
+  flex: none;
+  width: 34px;
+  justify-content: center;
+  padding: 8px 0;
+}
+
+.context-toggle {
+  width: 32px;
+  justify-content: center;
+  padding: 0;
+}
+
+/* 首页：标识 + 问候 */
+.home-mark {
+  display: grid;
+  place-items: center;
+  width: 54px;
+  height: 54px;
+  margin-bottom: 18px;
+  border: 1.5px solid var(--n12);
+  border-radius: 14px;
+  color: var(--n13);
+  background: var(--n0);
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  box-shadow: 0 6px 18px rgba(var(--ink-rgb), 0.06);
+}
+
+/* 输入框底部的胶囊：授权方式、单一模型 */
+.composer-chip,
+.composer-model.single {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 8px 0 9px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--n11);
+  font-size: 12.5px;
+}
+
+.composer-chip:hover {
+  border-color: var(--n5);
+  background: var(--n2);
+}
+
+.composer-chip select {
+  padding: 0 2px 0 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font-size: 12.5px;
+  outline: none;
+  cursor: pointer;
+}
+
+.composer-model.single {
+  border-color: var(--n5);
+  color: var(--n10);
+}
+
+/* 输入框下方：进入项目工作 */
+.project-picker {
+  position: relative;
+  width: 100%;
+  max-width: 730px;
+  margin: 0 auto;
+  padding: 10px 0 0;
+}
+
+.project-picker-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--n10);
+  background: transparent;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.project-picker-trigger:hover:not(:disabled) {
+  color: var(--n13);
+  background: var(--n3);
+}
+
+.project-picker-menu {
+  position: absolute;
+  z-index: 30;
+  top: 44px;
+  left: 0;
+  width: 320px;
+  padding: 6px;
+  border: 1px solid var(--n5);
+  border-radius: 14px;
+  background: var(--n0);
+  box-shadow: 0 16px 40px rgba(var(--ink-rgb), 0.12);
+}
+
+.project-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--n4);
+  color: var(--n9);
+}
+
+.project-picker-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  color: var(--n12);
+  background: transparent;
+  font-size: 13px;
+  outline: none;
+}
+
+.project-picker-list,
+.project-picker-actions {
+  display: grid;
+  gap: 2px;
+  padding: 6px 0;
+}
+
+.project-picker-actions {
+  border-top: 1px solid var(--n4);
+}
+
+.project-picker-menu button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--n12);
+  background: transparent;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.project-picker-menu button:hover {
+  background: var(--n3);
+}
+
+.project-picker-menu button svg {
+  flex: none;
+  color: var(--n10);
+}
+
+.project-picker-menu button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-picker-list p {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--n9);
+  font-size: 12.5px;
+}
+
+.project-picker-menu .project-picker-more {
+  color: var(--n10);
+  font-size: 12.5px;
+}
+
+/* 顶栏只剩窗口按钮和拖拽区：压到刚好容纳红绿灯的高度，把空间还给内容。 */
+.app-shell {
+  grid-template-rows: 38px auto minmax(0, 1fr);
+}
+
+.topbar {
+  min-height: 0;
+  height: 38px;
+  border-bottom: 0;
+}
