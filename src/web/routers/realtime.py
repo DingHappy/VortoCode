@@ -6,12 +6,16 @@ P.make_event 构造/P.parse_event 校验，新事件类型必须先在 protocol 
 import asyncio
 import os
 import re
-import weakref
 
 from fastapi import Request
 
 from src.gateway import protocol as P
-from src.gateway.sessions import SessionTable
+from src.gateway.sessions import SessionTable, SessionCapacityError
+from src.gateway.session_event_stream import SessionEventStream
+from src.gateway.session_actor import (
+    ActorContext, SessionActors, MAX_PROMPT_QUEUE as _MAX_PROMPT_QUEUE,
+    clean_prompt_item, new_prompt_item as _new_prompt_item,
+)
 from src.utils.exc_utils import _exc_text
 from src.agents.notice import timeline_text
 from src.agents.wait_clock import minus_wait, waited
@@ -29,11 +33,11 @@ async def websocket_endpoint(websocket: WebSocket):
         await websocket.close(code=1008)  # policy violation
         return
     await manager.connect(websocket)
-    _get_session(websocket)                  # 先绑定 repo_root，随后才能恢复该 sid 的持久事件 journal
-    session_key = _session_key(websocket)
-    replay_cursor = await _session_event_cursor(session_key)
     
     try:
+        _get_session(websocket)              # 先绑定 repo_root，随后才能恢复持久事件 journal
+        session_key = _session_key(websocket)
+        replay_cursor = await _session_event_cursor(session_key)
         # 发送当前状态（v=协议版本随握手下发）
         await websocket.send_json(P.make_event(P.INIT, v=P.PROTOCOL_VERSION, data=state.to_dict()))
         await _replay_history(websocket)        # 重连/刷新：回放该会话之前的对话
@@ -49,12 +53,20 @@ async def websocket_endpoint(websocket: WebSocket):
             # 处理客户端消息
             await handle_websocket_message(websocket, message)
     
+    except SessionCapacityError as error:
+        try:
+            try:
+                await websocket.send_json(P.make_event(P.AGENT_ERROR, text=str(error)))
+            finally:
+                await websocket.close(code=1013)
+        except Exception:  # noqa: BLE001 - rejection may race the client's disconnect.
+            logger.debug("WebSocket closed during session capacity rejection", exc_info=True)
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
-        await _detach_session_subscriber(websocket)
+        pass
         # 回合属于 session actor，不属于某条 WebSocket：刷新/关窗不取消，重连后按 sid 续接。
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
+    finally:
         manager.disconnect(websocket)
         await _detach_session_subscriber(websocket)
 
@@ -195,24 +207,28 @@ def _make_ws_confirm(websocket, q):
 # 以前 agent 按 id(websocket) 存活、断开即丢，刷新就重来。现在按 sid（前端 sessionStorage，
 # 刷新仍在）存活，重连后回放对话。生命周期管理在 gateway.SessionTable（上限淘汰/磁盘复原/持久），
 # 这里只持有表 + WS 侧的键规范；_SESSIONS 是表底层 dict 的别名（回放/删除/测试直接操作同一对象）。
-_TABLE = SessionTable(on_evict=lambda sess: _shutdown_mcp_async(sess.get("agent")))
+_TABLE = SessionTable(on_evict=lambda sess: _shutdown_mcp_async(sess.get("agent")),
+                      is_protected=lambda key: _ACTORS.busy(key) or key in _ACTORS.priority
+                      or bool(pending_confirmations(key)))
 _SESSIONS: Dict[str, Dict[str, Any]] = _TABLE.data
 _MAX_SESSIONS = 50
 _MAX_TRANSCRIPT = 200
 
-# 会话事件扇出：执行归 session，WebSocket 只是可附着/离开的 subscriber。短事件日志弥合
-# “先取 hydrate 快照、后注册 subscriber”之间的竞态；跨进程持久 journal 留给下一阶段。
-_SESSION_SUBSCRIBERS: Dict[str, set] = {}
-_SESSION_EVENT_LOGS: Dict[str, list[tuple[int, Dict[str, Any]]]] = {}
-_SESSION_EVENT_SEQS: Dict[str, int] = {}
-_SESSION_EVENT_LOCKS: Dict[str, asyncio.Lock] = {}
-_SESSION_EVENT_LOADED: set[str] = set()
-_SESSION_EVENT_ROOTS: Dict[str, str] = {}       # 无在线 Session actor 时也能把后台交接持久化到正确工作区
-_MAX_SESSION_EVENTS = 500
-_NON_RECOVERABLE_EVENTS = {
-    P.AGENT_CONFIRM, P.AGENT_REASONING, P.WORKSPACE_REQUIRED, P.GIT_REVIEW_CHANGED,
-}
-_DETACHED_WEBSOCKETS = weakref.WeakSet()
+# Storage/root selection remains an adapter concern; event state lives in the stream.
+_SESSION_EVENT_ROOTS: Dict[str, str] = {}
+_EVENT_STREAM = SessionEventStream(
+    journal_for=lambda key: _session_event_journal(key),
+    send=lambda recipient, event: recipient.send_json(event),
+    on_persist_failure=lambda key, seq: logger.warning(
+        "会话事件未能持久化: session=%s seq=%s", key, seq),
+)
+# Existing embedded callers/tests inspect these aliases; keep one shared state.
+_SESSION_SUBSCRIBERS = _EVENT_STREAM.subscribers
+_SESSION_EVENT_LOGS = _EVENT_STREAM.logs
+_SESSION_EVENT_SEQS = _EVENT_STREAM.seqs
+_SESSION_EVENT_LOCKS = _EVENT_STREAM.locks
+_SESSION_EVENT_LOADED = _EVENT_STREAM.loaded
+_DETACHED_WEBSOCKETS = _EVENT_STREAM.detached
 _GIT_REVIEW_WATCHERS: Dict[str, asyncio.Task] = {}
 _GIT_REVIEW_WATCH_STATES: Dict[str, Dict[str, Any]] = {}
 _GIT_REVIEW_WATCH_INTERVAL = 1.0
@@ -227,14 +243,6 @@ def _session_key(websocket) -> str:
     return f"sid-{sid}" if sid else f"ws-{id(websocket)}"
 
 
-def _session_event_lock(key: str) -> asyncio.Lock:
-    lock = _SESSION_EVENT_LOCKS.get(key)
-    if lock is None:
-        lock = asyncio.Lock()
-        _SESSION_EVENT_LOCKS[key] = lock
-    return lock
-
-
 def _session_event_journal(key: str):
     sess = _SESSIONS.get(key)
     if sess and sess.get("persist_events") is False:
@@ -246,57 +254,17 @@ def _session_event_journal(key: str):
     return SessionEventJournal(repo_root, key)
 
 
-def _load_session_event_state(key: str) -> None:
-    """首次访问时从分段 JSONL 恢复尾部和最大序号；调用方必须持有 session lock。"""
-    if key in _SESSION_EVENT_LOADED:
-        return
-    journal = _session_event_journal(key)
-    recovered = journal.load(limit=_MAX_SESSION_EVENTS) if journal is not None else []
-    valid = []
-    for seq, event in recovered:
-        if event.get("type") in _NON_RECOVERABLE_EVENTS or event.get("cursor_only") is True:
-            continue
-        try:
-            valid.append((seq, P.sequence_event(event, seq)))
-        except P.ProtocolError:
-            continue
-    _SESSION_EVENT_LOGS[key] = valid
-    _SESSION_EVENT_SEQS[key] = max((seq for seq, _event in recovered), default=0)
-    _SESSION_EVENT_LOADED.add(key)
-
-
 async def _session_event_cursor(key: str) -> int:
-    """取得 hydrate 起点；后续 attach 会补发该序号之后的竞态窗口事件。"""
-    async with _session_event_lock(key):
-        _load_session_event_state(key)
-        return _SESSION_EVENT_SEQS.get(key, 0)
+    return await _EVENT_STREAM.cursor(key)
 
 
 async def _attach_session_subscriber(websocket, after_seq: int) -> None:
-    """补齐 hydrate 期间的事件后原子附着，避免快照与实时流之间出现空洞。"""
-    key = _session_key(websocket)
-    async with _session_event_lock(key):
-        _load_session_event_state(key)
-        for seq, event in _SESSION_EVENT_LOGS.get(key, []):
-            if seq > after_seq:
-                await websocket.send_json(event)
-        _SESSION_SUBSCRIBERS.setdefault(key, set()).add(websocket)
-        _DETACHED_WEBSOCKETS.discard(websocket)
+    await _EVENT_STREAM.attach(_session_key(websocket), websocket, after_seq)
 
 
 async def _detach_session_subscriber(websocket) -> None:
-    """只移除观察端；不改变 session actor、当前回合或持久 Prompt Queue。"""
     key = _session_key(websocket)
-    async with _session_event_lock(key):
-        subscribers = _SESSION_SUBSCRIBERS.get(key)
-        if subscribers is not None:
-            subscribers.discard(websocket)
-            if not subscribers:
-                _SESSION_SUBSCRIBERS.pop(key, None)
-        try:
-            _DETACHED_WEBSOCKETS.add(websocket)
-        except TypeError:  # 极窄测试替身若不可 weakref，不影响真实 WebSocket 语义
-            pass
+    await _EVENT_STREAM.detach(key, websocket)
     if not _SESSION_SUBSCRIBERS.get(key):
         watcher = _GIT_REVIEW_WATCHERS.pop(key, None)
         if watcher is not None and watcher is not asyncio.current_task():
@@ -367,38 +335,7 @@ def _start_git_review_watcher(websocket) -> None:
 
 
 async def _publish_session_event(key: str, event: Dict[str, Any], *, fallback=None) -> None:
-    """按会话串行记录并扇出协议事件；坏连接不会反向终止 Agent 回合。"""
-    async with _session_event_lock(key):
-        _load_session_event_state(key)
-        seq = _SESSION_EVENT_SEQS.get(key, 0) + 1
-        sequenced = P.sequence_event(event, seq)
-        journal = _session_event_journal(key)
-        durable_event = ({"cursor_only": True}
-                         if event.get("type") in _NON_RECOVERABLE_EVENTS else sequenced)
-        if journal is not None and not journal.append(seq, durable_event):
-            logger.warning("会话事件未能持久化: session=%s seq=%s", key, seq)
-        _SESSION_EVENT_SEQS[key] = seq
-        log = _SESSION_EVENT_LOGS.setdefault(key, [])
-        log.append((seq, sequenced))
-        if len(log) > _MAX_SESSION_EVENTS:
-            del log[:-_MAX_SESSION_EVENTS]
-
-        recipients = set(_SESSION_SUBSCRIBERS.get(key, set()))
-        # 单元调用/旧嵌入方可能直接驱动 handler 而未走 websocket_endpoint；保留兼容回传。
-        if not recipients and fallback is not None and fallback not in _DETACHED_WEBSOCKETS:
-            recipients.add(fallback)
-        failed = set()
-        for subscriber in recipients:
-            try:
-                await subscriber.send_json(sequenced)
-            except Exception:  # noqa: BLE001
-                failed.add(subscriber)
-        if failed:
-            active = _SESSION_SUBSCRIBERS.get(key)
-            if active is not None:
-                active.difference_update(failed)
-                if not active:
-                    _SESSION_SUBSCRIBERS.pop(key, None)
+    await _EVENT_STREAM.publish(key, event, fallback=fallback)
 
 
 async def _publish_task_session_event(key: str, event: Dict[str, Any]) -> None:
@@ -414,31 +351,7 @@ _task_events.set_session_event_publisher(_publish_task_session_event)
 
 
 async def _send_session_event_replay(websocket, raw_after_seq: Any, raw_limit: Any = None) -> None:
-    """按公开 cursor 返回有界批次；不把 replay envelope 再写回 journal。"""
-    try:
-        after_seq = max(0, int(raw_after_seq))
-    except (TypeError, ValueError):
-        after_seq = 0
-    try:
-        limit = max(1, min(int(raw_limit or _MAX_SESSION_EVENTS), _MAX_SESSION_EVENTS))
-    except (TypeError, ValueError):
-        limit = _MAX_SESSION_EVENTS
-    key = _session_key(websocket)
-    async with _session_event_lock(key):
-        _load_session_event_state(key)
-        log = _SESSION_EVENT_LOGS.get(key, [])
-        earliest = log[0][0] if log else _SESSION_EVENT_SEQS.get(key, 0)
-        latest = _SESSION_EVENT_SEQS.get(key, 0)
-        selected = [event for seq, event in log if seq > after_seq][:limit]
-        cursor = int(selected[-1].get("seq") or after_seq) if selected else latest
-        await websocket.send_json(P.make_event(
-            P.AGENT_EVENTS,
-            items=selected,
-            cursor=cursor,
-            earliest_seq=earliest,
-            latest_seq=latest,
-            truncated=bool(log and after_seq < earliest - 1),
-        ))
+    await _EVENT_STREAM.replay(_session_key(websocket), websocket, raw_after_seq, raw_limit)
 
 
 def _new_agent():
@@ -453,6 +366,24 @@ def _new_agent():
     tool_event_holder = {"fn": None}               # 结构化工具 start/finish → agent_tool
     audit_holder = {"session": "web", "mode": "plan"}
     repo_root = os.getcwd()
+
+    def _task_update(task) -> None:
+        from src.gateway.worktree_sessions import task_session_view
+        _task_events.broadcast_task_update(task_session_view(repo_root, task))
+        from src.web.task_dispatch import observe_dependency_change
+        observe_dependency_change(repo_root, task)
+
+    def _answer_task_question(owner, task_id, round_number, question_id, answer):
+        from src.web.task_dispatch import answer_task_question
+        return answer_task_question(repo_root, owner, task_id, round_number, question_id, answer)
+
+    def _release_task_dependencies(owner, task_id, round_number):
+        from src.web.task_dispatch import get_dispatch_service
+        return get_dispatch_service(repo_root).release(owner, task_id, round_number)
+
+    def _reconcile_task_dependencies(owner, task_id, round_number):
+        from src.web.task_dispatch import get_dispatch_service
+        return get_dispatch_service(repo_root).reconcile_dependencies(owner, task_id, round_number)
 
     async def _confirm(message: str) -> bool:
         fn = confirm_holder["fn"]
@@ -508,6 +439,11 @@ def _new_agent():
                           can_ask_human=True, on_diff=_diff, on_tool=_audit_tool,
                           on_tool_event=_tool_event,
                           on_decision=_audit_decision,
+                          task_owner=lambda: audit_holder["session"],
+                          on_task_update=_task_update,
+                          answer_task_question=_answer_task_question,
+                          release_task_dependencies=_release_task_dependencies,
+                          reconcile_task_dependencies=_reconcile_task_dependencies,
                           capability_profile="local" if desktop_trusted else None,
                           # 传读取函数而不是值：用户在设置里改档位，正在跑的会话下一次判定
                           # 就按新档生效，不必重建 agent（重建会把对话历史丢掉）。
@@ -584,6 +520,28 @@ def _persist_session(websocket) -> None:
     """把当前会话存盘（跨重启用）。失败安全吞掉，绝不影响对话。"""
     import os
     _TABLE.persist(_session_key(websocket), os.getcwd())
+
+
+async def _persist_check_report(key: str, payload: dict):
+    """Check bridge writer: disk before notification, replay through agent_history.
+
+    No completion-triggered model scheduling is registered by this adapter.
+    """
+    from src.gateway.check_reports import CheckReportWriter
+    session = _TABLE.peek(key)
+    if session is None or not session.get("repo_root"):
+        raise ValueError("所属会话已关闭，不能保存检查汇报")
+    receipt = CheckReportWriter(_TABLE, session["repo_root"], key).persist(payload)
+    message = next(item for item in session["transcript"] if item.get("rid") == receipt.report_id)
+    try:
+        await _publish_session_event(key, P.make_event(
+            P.AGENT_EMIT, text=message["text"], rid=receipt.report_id,
+            tainted=True, check_report=message["check_report"]))
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 - the transcript is already recoverable.
+        logger.warning("Stored check report could not be broadcast: %s", receipt.report_id)
+    return receipt
 
 
 def _ws_agent(websocket):
@@ -698,6 +656,14 @@ def _tool_summary(name: str, args: Dict[str, Any]) -> str:
         "web_fetch": "读取网页",
         "screenshot_page": "给网页截图",
         "research_parallel": _with("并行调研：", task, 50),
+        "task_status": _with("查看任务：", str(args.get("task_id") or ""), 50),
+        "task_inbox": "读取后台任务交接",
+        "task_acknowledge": _with("记录交接处理：", str(args.get("task_id") or ""), 50),
+        "task_review": _with("验收子任务：", str(args.get("task_id") or ""), 50),
+        "task_followup": _with("继续子任务：", str(args.get("task_id") or ""), 50),
+        "task_answer": _with("回答子任务：", str(args.get("task_id") or ""), 50),
+        "task_release": _with("推进依赖任务：", str(args.get("task_id") or ""), 50),
+        "task_reconcile": _with("核对依赖失效：", str(args.get("task_id") or ""), 50),
         "task": _with("交给子 agent：", task, 50),
         # —— 定时任务 ——
         "cron_add": _with("新建定时任务", title),
@@ -826,8 +792,7 @@ def _session_dashboard_snapshot(repo_root: str) -> list[Dict[str, Any]]:
         transcript = sess.get("transcript") if isinstance(sess.get("transcript"), list) else []
         queue = sess.get("prompt_queue") if isinstance(sess.get("prompt_queue"), list) else []
         queue_count = sum(1 for item in queue if isinstance(item, dict) and item.get("id"))
-        task = _WS_AGENT_TASKS.get(key)
-        working = task is not None and not task.done()
+        working = _ACTORS.busy(key)
         pending = pending_confirmations(key)
         running = _WS_AGENT_RUNNING.get(key)
         tasks = {**empty_tasks, **task_groups.get(sid, {})}
@@ -880,16 +845,13 @@ async def agent_sessions_delete(sid: str):
     import os
     from src.web.session_store import delete_session
     key = f"sid-{sid}"
-    task = _WS_AGENT_TASKS.get(key)
-    if task is not None and not task.done():
+    if not _ACTORS.forget(key):
         raise HTTPException(status_code=409, detail="会话仍在运行；请先停止回合再删除")
     on_disk = delete_session(os.getcwd(), sid)
     sess = _SESSIONS.pop(key, None)
     if sess:
         _shutdown_mcp_async(sess.get("agent"))
-    _SESSION_EVENT_LOGS.pop(key, None)
-    _SESSION_EVENT_SEQS.pop(key, None)
-    _SESSION_EVENT_LOADED.discard(key)
+    _EVENT_STREAM.forget_cached(key)
     _SESSION_EVENT_ROOTS.pop(key, None)
     watcher = _GIT_REVIEW_WATCHERS.pop(key, None)
     if watcher is not None:
@@ -964,197 +926,75 @@ async def _replay_history(websocket) -> None:
     await websocket.send_json(_prompt_queue_event(websocket))
 
 
-# 每个会话同时只跑一个回合；记下任务，供「停止」(agent_cancel)与断开时取消
-_WS_AGENT_TASKS: Dict[str, Any] = {}
-_WS_AGENT_RUNNING: Dict[str, Dict[str, Any]] = {}
-_WS_AGENT_PRIORITY: Dict[str, Dict[str, Any]] = {}
-_WS_AGENT_STOP_REASONS: Dict[str, str] = {}
-_MAX_PROMPT_QUEUE = 20
+# Compatibility aliases: session dashboards and workspace edits share this registry.
+_ACTORS = SessionActors(clean_item=lambda raw: _clean_prompt_item(raw))
+_WS_AGENT_TASKS = _ACTORS.tasks
+_WS_AGENT_RUNNING = _ACTORS.running
+_WS_AGENT_PRIORITY = _ACTORS.priority
+_WS_AGENT_STOP_REASONS = _ACTORS.stop_reasons
 
 
 def _clean_prompt_item(raw: Any) -> Optional[Dict[str, Any]]:
-    """把内存/磁盘输入收窄为可执行队列项；坏的持久化数据不会进入 Agent。"""
-    if not isinstance(raw, dict):
-        return None
-    text = str(raw.get("text") or "").strip()
-    images = _sanitize_images(raw.get("images"))
-    audio = _sanitize_audio(raw.get("audio"))
-    raw_context = raw.get("context_items") if isinstance(raw.get("context_items"), list) else []
-    files = [item.get("path") for item in raw_context
-             if isinstance(item, dict) and "start" not in item]
-    selections = [item for item in raw_context
-                  if isinstance(item, dict) and "start" in item]
-    context_items = _sanitize_context_items({
-        "context_files": files,
-        "context_selections": selections,
-    })
-    if not text and not images and not audio and not context_items:
-        return None
-    item_id = str(raw.get("id") or "")[:64]
-    if not item_id:
-        return None
-    version = raw.get("version")
-    return {
-        "id": item_id,
-        "rid": str(raw.get("rid"))[:64] if raw.get("rid") is not None else None,
-        "version": max(0, int(version)) if isinstance(version, int) and not isinstance(version, bool) else 0,
-        "text": text,
-        "mode": "build" if raw.get("mode") == "build" else "plan",
-        "created_at": str(raw.get("created_at") or "")[:80],
-        "images": images,
-        "audio": audio,
-        "context_items": context_items,
-        "want_reasoning": bool(raw.get("want_reasoning")),
-    }
+    return clean_prompt_item(
+        raw, sanitize_images=_sanitize_images, sanitize_audio=_sanitize_audio,
+        sanitize_context=_sanitize_context_items,
+    )
+
+
+def _actor_context(websocket) -> ActorContext:
+    return ActorContext(
+        key=_session_key(websocket),
+        get_session=lambda: _get_session(websocket),
+        touch=lambda: _touch_session(_get_session(websocket)),
+        persist=lambda: _persist_session(websocket),
+        publish=lambda: _send_prompt_queue(websocket),
+        execute=lambda item: _run_agent_turn(
+            websocket, item["text"], item["mode"], item.get("images"), item.get("audio"),
+            rid=item.get("rid"), want_reasoning=bool(item.get("want_reasoning")),
+            context_items=item.get("context_items") or [],
+        ),
+        cancel_unstarted=lambda item, reason: _publish_session_event(
+            _session_key(websocket), P.make_event(
+                P.AGENT_CANCELLED, text="此回合尚未执行，输入已保留在队列。", rid=item.get("rid") or item["id"]),
+            fallback=websocket),
+    )
 
 
 def _prompt_queue(websocket) -> list[Dict[str, Any]]:
-    sess = _get_session(websocket)
-    raw = sess.get("prompt_queue")
-    cleaned = []
-    if isinstance(raw, list):
-        for value in raw[:_MAX_PROMPT_QUEUE]:
-            item = _clean_prompt_item(value)
-            if item is not None and all(existing["id"] != item["id"] for existing in cleaned):
-                cleaned.append(item)
-    sess["prompt_queue"] = cleaned
-    return cleaned
-
-
-def _public_prompt_item(item: Dict[str, Any], position: int = 0) -> Dict[str, Any]:
-    return {
-        "id": item["id"],
-        "version": int(item.get("version") or 0),
-        "text": str(item.get("text") or ""),
-        "mode": "build" if item.get("mode") == "build" else "plan",
-        "position": position,
-        "created_at": str(item.get("created_at") or ""),
-        "context_count": len(item.get("context_items") or []),
-    }
+    return _ACTORS.queue(_actor_context(websocket))
 
 
 async def _send_prompt_queue(websocket) -> None:
-    """向当前会话的所有观察端发送服务端权威队列快照。"""
     await _publish_session_event(
         _session_key(websocket), _prompt_queue_event(websocket), fallback=websocket)
 
 
 def _prompt_queue_event(websocket) -> Dict[str, Any]:
-    """构造队列快照；hydrate 可只发给新客户端，状态变更则交给会话事件泵广播。"""
-    key = _session_key(websocket)
-    items = [_public_prompt_item(item, index) for index, item in enumerate(_prompt_queue(websocket))]
-    running = _WS_AGENT_RUNNING.get(key)
-    return P.make_event(
-        P.AGENT_QUEUE,
-        items=items,
-        running=_public_prompt_item(running) if running else None,
-    )
-
-
-def _new_prompt_item(*, text: str, mode: str, images: list, audio: list, rid: Optional[str],
-                     want_reasoning: bool, context_items: list) -> Dict[str, Any]:
-    import uuid
-    from datetime import datetime, timezone
-
-    return {
-        "id": rid or ("turn-" + uuid.uuid4().hex[:24]),
-        "rid": rid,
-        "version": 0,
-        "text": text,
-        "mode": "build" if mode == "build" else "plan",
-        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "images": images,
-        "audio": audio,
-        "context_items": context_items,
-        "want_reasoning": bool(want_reasoning),
-    }
+    return P.make_event(P.AGENT_QUEUE, **_ACTORS.snapshot(_actor_context(websocket)))
 
 
 async def _start_prompt_item(websocket, item: Dict[str, Any]) -> bool:
-    """注册唯一前台回合，并先广播 running，避免客户端靠本地猜测执行状态。"""
-    key = _session_key(websocket)
-    current = _WS_AGENT_TASKS.get(key)
-    if current is not None and not current.done():
-        return False
-    _WS_AGENT_RUNNING[key] = item
-    _touch_session(_get_session(websocket))
-    _persist_session(websocket)
-    await _send_prompt_queue(websocket)
-    _WS_AGENT_TASKS[key] = asyncio.create_task(_run_agent_turn(
-        websocket,
-        item["text"], item["mode"], item.get("images"), item.get("audio"),
-        rid=item.get("rid"), want_reasoning=bool(item.get("want_reasoning")),
-        context_items=item.get("context_items") or [],
-    ))
-    return True
+    return await _ACTORS.start(_actor_context(websocket), item)
 
 
 async def _advance_prompt_queue(websocket, *, reason: Optional[str]) -> None:
-    """当前回合收尾后的唯一推进点：完成时 FIFO；send-now 时优先项先行。"""
-    key = _session_key(websocket)
-    _WS_AGENT_RUNNING.pop(key, None)
-    if reason in ("stop", "disconnect"):
-        _persist_session(websocket)
-        await _send_prompt_queue(websocket)
-        return
-    item = _WS_AGENT_PRIORITY.pop(key, None)
-    queue = _prompt_queue(websocket)
-    if item is None and queue:
-        item = queue.pop(0)
-    _persist_session(websocket)
-    if item is None or not await _start_prompt_item(websocket, item):
-        await _send_prompt_queue(websocket)
+    await _ACTORS.advance(_actor_context(websocket), reason=reason)
 
 
 async def _resume_prompt_queue(websocket) -> None:
-    """仅连接建立时恢复持久队列；hydrate 重放本身不会重复启动。"""
-    key = _session_key(websocket)
-    task = _WS_AGENT_TASKS.get(key)
-    # _replay_history 已向新 subscriber 发送过一次权威队列快照。空队列
-    # 不再广播一份完全相同的事件；只有确有持久输入时才进入推进器。
-    if (task is None or task.done()) and (_WS_AGENT_PRIORITY.get(key) or _prompt_queue(websocket)):
-        await _advance_prompt_queue(websocket, reason=None)
+    await _ACTORS.resume(_actor_context(websocket))
 
 
 async def _remove_queued_prompt(websocket, item_id: str) -> None:
-    queue = _prompt_queue(websocket)
-    queue[:] = [item for item in queue if item["id"] != item_id]
-    _touch_session(_get_session(websocket))
-    _persist_session(websocket)
-    await _send_prompt_queue(websocket)
+    await _ACTORS.remove(_actor_context(websocket), item_id)
 
 
 async def _send_queued_prompt_now(websocket, item_id: str) -> None:
-    key = _session_key(websocket)
-    queue = _prompt_queue(websocket)
-    selected = next((item for item in queue if item["id"] == item_id), None)
-    if selected is None:
-        await _send_prompt_queue(websocket)
-        return
-    queue.remove(selected)
-    previous = _WS_AGENT_PRIORITY.get(key)
-    if previous is not None:
-        queue.insert(0, previous)              # 连点“立即执行”也不丢上一条提升项
-    _WS_AGENT_PRIORITY[key] = selected
-    _touch_session(_get_session(websocket))
-    _persist_session(websocket)
-    if not _cancel_agent_turn(websocket, reason="send_now"):
-        _WS_AGENT_PRIORITY.pop(key, None)
-        await _start_prompt_item(websocket, selected)
-    else:
-        await _send_prompt_queue(websocket)
+    await _ACTORS.send_now(_actor_context(websocket), item_id)
 
 
 def _cancel_agent_turn(websocket, *, reason: str = "stop") -> bool:
-    """取消该会话正在跑的回合（若有）。返回是否真的发起了取消。"""
-    key = _session_key(websocket)
-    task = _WS_AGENT_TASKS.get(key)
-    if task is not None and not task.done():
-        if key in _WS_AGENT_RUNNING:            # workspace_edit 也复用任务表，但不属于 prompt 队列
-            _WS_AGENT_STOP_REASONS[key] = reason
-        task.cancel()
-        return True
-    return False
+    return _ACTORS.cancel(_session_key(websocket), reason=reason)
 
 
 async def handle_agent_message(websocket, message: Dict[str, Any]):
@@ -1173,7 +1013,6 @@ async def handle_agent_message(websocket, message: Dict[str, Any]):
         await websocket.send_json(P.make_event(P.AGENT_ERROR, text="空输入", rid=rid))
         return
     key = _session_key(websocket)
-    existing = _WS_AGENT_TASKS.get(key)
     if not text and (images or audio or context_items):    # 纯附件轮：给个温和的默认指令
         if context_items and not images and not audio:
             text = "请分析我选择的这些本地文件。"
@@ -1184,21 +1023,11 @@ async def handle_agent_message(websocket, message: Dict[str, Any]):
         text=text, mode=mode, images=images, audio=audio, rid=rid,
         want_reasoning=bool(message.get("want_reasoning")), context_items=context_items,
     )
-    if existing is not None and not existing.done():       # 运行中继续输入：进入服务端权威 FIFO
-        queue = _prompt_queue(websocket)
-        if len(queue) >= _MAX_PROMPT_QUEUE:
+    if _ACTORS.busy(key):       # 包含检查/取消清理；前台输入进入服务端权威 FIFO
+        outcome = await _ACTORS.enqueue(_actor_context(websocket), item)
+        if outcome == "full":
             await websocket.send_json(P.make_event(
                 P.AGENT_ERROR, text=f"待运行队列已满（最多 {_MAX_PROMPT_QUEUE} 条）", rid=rid))
-            return
-        known_ids = {queued["id"] for queued in queue}
-        running = _WS_AGENT_RUNNING.get(key)
-        if item["id"] in known_ids or (running and running["id"] == item["id"]):
-            await _send_prompt_queue(websocket)         # rid 是幂等键；重发不复制任务
-            return
-        queue.append(item)
-        _touch_session(_get_session(websocket))
-        _persist_session(websocket)
-        await _send_prompt_queue(websocket)
         return
     if not os.getenv("OPENAI_API_KEY"):
         await websocket.send_json(P.make_event(
@@ -1293,8 +1122,7 @@ async def handle_workspace_edit_message(websocket, message: Dict[str, Any]):
         return
 
     key = _session_key(websocket)
-    existing = _WS_AGENT_TASKS.get(key)
-    if existing is not None and not existing.done():
+    if _ACTORS.busy(key):
         await websocket.send_json(P.make_event(
             P.WORKSPACE_EDIT_RESULT, ok=False, path=path,
             message="当前会话还有操作在执行，请完成或停止后再保存", rid=rid))
@@ -1684,6 +1512,13 @@ async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list
                     + "\n\n".join(chunks)
                     + "\n</selected_local_context>"
                 )
+            from src.web.task_dispatch import task_turn_hint, audit_dependencies_for_turn
+            session = _get_session(websocket)
+            task_repo_root = session.get("repo_root") or os.getcwd()
+            hint = task_turn_hint(task_repo_root, _session_key(websocket), getattr(agent, "tools", {}),
+                                  dependency_audit=lambda owner: audit_dependencies_for_turn(task_repo_root, owner))
+            if hint:
+                turn_text += "\n\n" + hint
             await agent.run_turn(turn_text, mode=mode, say=agent_say, emit=agent_emit,
                                  stream_cb=agent_stream, images=images, audio=audio,
                                  **extra_cbs)
@@ -1740,9 +1575,7 @@ async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list
         # 故意吞掉 CancelledError：这是一次性后台任务，优雅收尾即可
     finally:
         key = _session_key(websocket)
-        if _WS_AGENT_TASKS.get(key) is asyncio.current_task():
-            _WS_AGENT_TASKS.pop(key, None)
-        stop_reason = _WS_AGENT_STOP_REASONS.pop(key, None)
+        stop_reason = _ACTORS.release(key, asyncio.current_task())
         if th is not None:
             th["fn"] = None
         _persist_session(websocket)           # 回合收尾存盘（含中断）：跨服务器重启不丢对话

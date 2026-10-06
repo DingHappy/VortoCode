@@ -106,52 +106,14 @@ try {
   if (!page.ok || !html.includes("VortoCode · 主 Agent")) {
     throw new Error(`sidecar did not serve bundled Web assets (${page.status})`);
   }
-  if (process.platform !== "win32") {
-    const terminalResponse = await fetch(`http://127.0.0.1:${port}/api/terminals`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ cols: 90, rows: 24 }),
-      signal: AbortSignal.timeout(5_000),
-    });
-    const terminal = await terminalResponse.json();
-    if (!terminalResponse.ok || !terminal.id) {
-      throw new Error(`sidecar PTY creation failed (${terminalResponse.status}): ${JSON.stringify(terminal)}`);
-    }
-    const marker = "__VORTOCODE_PACKAGED_PTY_OK__";
-    const inputResponse = await fetch(
-      `http://127.0.0.1:${port}/api/terminals/${encodeURIComponent(terminal.id)}/input`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ data: `printf '${marker}\\n'\n` }),
-        signal: AbortSignal.timeout(5_000),
-      },
-    );
-    if (!inputResponse.ok) {
-      throw new Error(`sidecar PTY input failed (${inputResponse.status}): ${await inputResponse.text()}`);
-    }
-    let terminalOutput = "";
-    let offset = Number(terminal.offset || 0);
-    while (Date.now() < deadline && !terminalOutput.includes(marker)) {
-      const readResponse = await fetch(
-        `http://127.0.0.1:${port}/api/terminals/${encodeURIComponent(terminal.id)}/output?offset=${offset}`,
-        { signal: AbortSignal.timeout(5_000) },
-      );
-      const snapshot = await readResponse.json();
-      if (!readResponse.ok) {
-        throw new Error(`sidecar PTY output failed (${readResponse.status}): ${JSON.stringify(snapshot)}`);
-      }
-      terminalOutput += String(snapshot.output || "");
-      offset = Number(snapshot.offset || offset);
-      if (!terminalOutput.includes(marker)) await sleep(50);
-    }
-    await fetch(
-      `http://127.0.0.1:${port}/api/terminals/${encodeURIComponent(terminal.id)}/stop`,
-      { method: "POST", signal: AbortSignal.timeout(5_000) },
-    );
-    if (!terminalOutput.includes(marker)) {
-      throw new Error(`sidecar packaged PTY produced no marker; output=${terminalOutput.slice(-2_000)}`);
-    }
+  const terminalResponse = await fetch(`http://127.0.0.1:${port}/api/terminals`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ cols: 90, rows: 24 }),
+    signal: AbortSignal.timeout(5_000),
+  });
+  if (terminalResponse.status !== 403) {
+    throw new Error(`sidecar allowed host terminal while shell is disabled (${terminalResponse.status})`);
   }
   console.log(`Desktop runtime sidecar smoke passed in ${Date.now() - startedAt} ms (${runtime})`);
 } finally {

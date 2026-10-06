@@ -8,6 +8,7 @@
 import asyncio
 import os
 import re
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.web.deps import *  # noqa: F401,F403
 from src.web import task_events
@@ -43,28 +44,53 @@ async def _dev_worker(task, on_progress):
     async def _deny(_m):                       # 后台无人值守：外向操作默认拒绝（push 交给人点 open_pr）
         return False
 
+    questions, question_factory = None, None
+    answered_round = bool(task.development.get("execution_revision"))
+    if task.kind in {"dev", "dev-resume"} and task.owner_session:
+        from src.web.task_dispatch import get_development_questions
+        from src.agents.task_questions import bind_development_question
+        questions = get_development_questions()
+        questions.begin(task)
+
+        def question_factory(plan, block):
+            task.plan_id, task.branch = plan.plan_id, plan.branch
+            questions.validate_execution(task)
+            return bind_development_question(questions, task, plan, block)
+
     tools = {t.name: t for t in build_dev_tools(os.getcwd(), on_progress=on_progress,
-                                                confirm=_deny, draft_pr=True)}
+                                                confirm=_deny, draft_pr=True, question_factory=question_factory)}
     # 用 **task-scoped plan_id** 钉住本次计划——绝不靠 list_plans()[0]（全局最新）猜：并发跑多任务时
     # 那会拿到别的任务刚生成的 plan/branch，导致 open_pr 给错任务推错分支（#128 评审）。
-    if task.kind == "dev-resume" and task.plan_id:
-        pid = task.plan_id
-        with bind_worktree_owner(
-            task_id=task.id, owner_session=task.owner_session, plan_id=pid,
-        ):
-            result = await tools["dev_resume"].handler({"plan_id": pid})
-    else:
-        pid = task.plan_id or f"bg-{task.id}"
-        task.plan_id = pid
-        on_progress(f"已绑定持久计划 {pid}")
-        with bind_worktree_owner(
-            task_id=task.id, owner_session=task.owner_session, plan_id=pid,
-        ):
-            result = await tools["dev_auto"].handler({"task": task.prompt, "plan_id": pid})
+    from src.agents.tool import ToolTurnYield
+    try:
+        if (task.kind == "dev-resume" or answered_round) and task.plan_id:
+            from src.gateway.task_recovery import validate_recovery_plan
+            if not answered_round:
+                validate_recovery_plan(task, load_plan(os.getcwd(), task.plan_id))
+            pid = task.plan_id
+            with bind_worktree_owner(task_id=task.id, owner_session=task.owner_session, plan_id=pid):
+                result = await tools["dev_resume"].handler({"plan_id": pid})
+        else:
+            pid = task.plan_id or f"bg-{task.id}"
+            task.plan_id = pid
+            on_progress(f"已绑定持久计划 {pid}")
+            with bind_worktree_owner(task_id=task.id, owner_session=task.owner_session, plan_id=pid):
+                result = await tools["dev_auto"].handler({"task": task.prompt, "plan_id": pid})
+    except ToolTurnYield:
+        from src.gateway.tasks import TaskBlocked
+        if questions is None or not questions.awaiting(task):
+            raise RuntimeError("开发提问未能持久保存") from None
+        raise TaskBlocked() from None
     plan = load_plan(os.getcwd(), pid)         # 按确定 id 精确取回本次 C1 计划（可 dev_resume 续跑）
     if plan is not None:
         task.plan_id = plan.plan_id
         task.branch = plan.branch
+    if (plan is None or plan.status not in {"integrated", "done"}
+            or any(not block.landed for block in plan.blocks)
+            or isinstance(plan.review, dict) and plan.review.get("blocked")):
+        task.result = str(result or "")[-4000:]
+        reason = "开发任务未提交完整持久计划" if plan is None else "开发计划仍未完成：" + plan.summary()
+        raise RuntimeError(reason + "\n" + task.result[-800:])
     return result
 
 
@@ -86,6 +112,8 @@ def get_runner():
             task_events.broadcast_task_update(view)
             if task.owner_session and task.status in _HANDOFF_STATUSES:
                 task_events.publish_task_handoff(task.owner_session, view)
+            from src.web.task_dispatch import observe_dependency_change
+            observe_dependency_change(os.getcwd(), task)
 
         _RUNNER = TaskRunner(os.getcwd(), _dev_worker, on_update=_on_update)
     return _RUNNER
@@ -123,7 +151,10 @@ async def submit_task(body: dict):
     prompt = str((body or {}).get("prompt") or (body or {}).get("task") or "").strip()
     if not prompt:
         raise HTTPException(status_code=400, detail="缺少 prompt（要后台跑的任务）")
-    task = await get_runner().submit(prompt, kind="dev", owner_session=_owner_session(body or {}))
+    try:
+        task = await get_runner().submit(prompt, kind="dev", owner_session=_owner_session(body or {}))
+    except OSError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
     return {"id": task.id, "status": task.status}
 
 
@@ -210,8 +241,36 @@ async def verify_task_branch_review(tid: str):
 
 @router.post("/api/tasks/{tid}/cancel")
 async def cancel_task_bg(tid: str):
+    from src.web.task_dispatch import get_development_questions
+    try:
+        if get_development_questions().cancel_waiting(tid):
+            return {"ok": True, "cancelled": True}
+    except OSError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
     ok = get_runner().cancel(tid)
     return {"ok": ok, "cancelled": ok}
+
+
+class DevelopmentAnswer(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    session: str = Field(min_length=1, max_length=124)
+    round: int = Field(ge=1, le=2)
+    question_id: str = Field(min_length=1, max_length=80, pattern=r"^question-[A-Za-z0-9_-]+$")
+    answer: str = Field(min_length=1, max_length=2000)
+
+
+@router.post("/api/tasks/{tid}/answer", status_code=202)
+async def answer_development_question(tid: str, body: DevelopmentAnswer):
+    from src.web.task_dispatch import get_development_questions
+    from src.gateway.collaboration import CollaborationConflict
+    from src.gateway.dispatch import DispatchBusy
+    try:
+        task, replayed = get_development_questions().answer(
+            body.session, tid, body.round, body.question_id, body.answer)
+        return {**_task_view(task), "replayed": replayed, "answered_question_id": body.question_id}
+    except (ValueError, OSError) as error:
+        status = 429 if isinstance(error, DispatchBusy) else 409 if isinstance(error, CollaborationConflict) else 503 if isinstance(error, OSError) else 400
+        raise HTTPException(status_code=status, detail=str(error)) from error
 
 
 @router.post("/api/tasks/{tid}/pause")
@@ -219,7 +278,10 @@ async def pause_task_bg(tid: str):
     runner = get_runner()
     if runner.get(tid) is None:
         raise HTTPException(status_code=404, detail=f"无此任务 {tid}")
-    task = await runner.pause(tid)
+    try:
+        task = await runner.pause(tid)
+    except OSError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
     if task is None:
         raise HTTPException(status_code=409, detail="任务当前不在运行，无法暂停")
     return _task_view(task)
@@ -231,28 +293,18 @@ async def resume_task_bg(tid: str):
     previous = runner.get(tid)
     if previous is None:
         raise HTTPException(status_code=404, detail=f"无此任务 {tid}")
-    if previous.status not in {"paused", "interrupted", "failed", "cancelled"}:
-        raise HTTPException(status_code=409, detail=f"任务状态 {previous.status} 不允许恢复")
-    if not previous.plan_id:
-        raise HTTPException(status_code=409, detail="任务还没有持久 plan_id，无法恢复")
     from src.agents.dev_plan import load_plan
-
-    if load_plan(os.getcwd(), previous.plan_id) is None:
-        raise HTTPException(status_code=409, detail="持久计划不存在或不可读取")
-    if any(
-        item.plan_id == previous.plan_id and runner.is_active(item.id)
-        for item in runner.list()
-    ):
-        raise HTTPException(status_code=409, detail="该计划已有恢复任务在执行")
-    task = await runner.submit(
-        previous.prompt,
-        kind="dev-resume",
-        goal_id=previous.goal_id,
-        plan_id=previous.plan_id,
-        parent_task_id=previous.id,
-        owner_session=previous.owner_session,
-    )
-    return _task_view(task)
+    from src.gateway.task_recovery import RecoveryConflict, TaskRecovery
+    try:
+        recovery = TaskRecovery(
+            runner, read_plan=lambda pid: load_plan(os.getcwd(), pid),
+            on_update=lambda task: task_events.broadcast_task_update(_task_view(task)))
+        task, replayed = recovery.resume(tid)
+        return {**_task_view(task), "replayed": replayed}
+    except RecoveryConflict as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except OSError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
 
 
 # ---- 通知台账：daemon 路径（scheduler 里的 cron/heartbeat）的投递终点，绝不静默丢 ----

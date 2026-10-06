@@ -22,6 +22,9 @@ import type {
   GitReviewHunk,
   GitReviewScope,
   GitReviewSnapshot,
+  IsolatedDelivery,
+  IsolatedDeliverySnapshot,
+  IsolatedDeliveryDiff,
   PendingGitComment,
   PrDeliveryCheck,
   PrDeliveryCheckLog,
@@ -35,6 +38,15 @@ type GitReviewPanelProps = {
   connection: ConnectionState;
   busy: boolean;
   diffPayload: DiffPayload | null;
+  isolatedDeliveries: IsolatedDelivery[];
+  isolatedDelivery: IsolatedDeliverySnapshot | null;
+  isolatedDeliveryDiff: IsolatedDeliveryDiff | null;
+  isolatedDeliveryPath: string;
+  isolatedDeliveryError: string;
+  isolatedDeliveryLoading: boolean;
+  onRefreshIsolatedDeliveries: () => void;
+  onOpenIsolatedDelivery: (id: string, preferredPath?: string) => void;
+  onLoadIsolatedDeliveryDiff: (path: string) => void;
   gitReview: GitReviewSnapshot | null;
   gitReviewDiff: GitReviewDiff | null;
   gitReviewScope: GitReviewScope;
@@ -90,6 +102,15 @@ export function GitReviewPanel({
   connection,
   busy,
   diffPayload,
+  isolatedDeliveries,
+  isolatedDelivery,
+  isolatedDeliveryDiff,
+  isolatedDeliveryPath,
+  isolatedDeliveryError,
+  isolatedDeliveryLoading,
+  onRefreshIsolatedDeliveries,
+  onOpenIsolatedDelivery,
+  onLoadIsolatedDeliveryDiff,
   gitReview,
   gitReviewDiff,
   gitReviewScope,
@@ -156,6 +177,49 @@ export function GitReviewPanel({
 
   return (
     <div className="git-review-panel">
+      <section className="isolated-delivery-card">
+        <div className="git-delivery-heading">
+          <strong>隔离任务交付</strong>
+          <button onClick={() => void onRefreshIsolatedDeliveries()}>刷新</button>
+        </div>
+        {isolatedDeliveryError && <div className="git-review-error">{isolatedDeliveryError}</div>}
+        {isolatedDeliveryLoading && <p>正在读取隔离交付…</p>}
+        {!isolatedDeliveryLoading && isolatedDeliveries.length === 0 && !isolatedDeliveryError && <p>当前仓库还没有可审查的对话式隔离交付。</p>}
+        {isolatedDeliveries.length > 0 && (
+          <div className="isolated-delivery-list">
+            {isolatedDeliveries.map((item) => (
+              <button className={isolatedDelivery?.id === item.id ? "active" : ""} key={item.id}
+                onClick={() => void onOpenIsolatedDelivery(item.id)}>
+                <strong>{item.description}</strong>
+                <span>{item.branch} · {item.verification.skipped ? "测试已跳过" : item.verification.ok ? "隔离实现测试通过" : "验证未通过"}{!item.current_head ? " · 分支已删除" : item.unchanged ? "" : " · 分支已变化"}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {isolatedDelivery && (
+          <div className="isolated-delivery-detail">
+            <strong>{isolatedDelivery.branch}</strong>
+            <span>基线 {isolatedDelivery.base_oid.slice(0, 12)} · 交付 {isolatedDelivery.head_oid.slice(0, 12)} · {isolatedDelivery.attempts} 次尝试</span>
+            {!isolatedDelivery.unchanged && <p className="git-review-error">分支 HEAD 已变化，下方显示当前分支改动；原测试结果仅对应交付时的提交，需要重新验证。</p>}
+            <div className="task-review-verification">
+              <strong>{isolatedDelivery.verification.skipped ? "测试已跳过" : isolatedDelivery.verification.ok ? "✓ 隔离实现测试通过" : "隔离实现验证未通过"}</strong>
+              <span>{isolatedDelivery.verification.cmd || "未记录测试命令"}</span>
+              {isolatedDelivery.verification.output && <details><summary>查看测试输出</summary><pre>{isolatedDelivery.verification.output}</pre></details>}
+            </div>
+            <div className="git-file-list">
+              {isolatedDelivery.files.map((file) => (
+                <button className={isolatedDeliveryPath === file.path ? "active" : ""} key={file.path}
+                  onClick={() => void onLoadIsolatedDeliveryDiff(file.path)}>
+                  <b>{file.status}</b><span>{file.path}</span><i>隔离分支</i>
+                </button>
+              ))}
+            </div>
+            {isolatedDelivery.truncated && <div className="file-list-limit">改动文件超过 2,000 项，列表已截断。</div>}
+            {isolatedDeliveryDiff && <DiffViewer payload={{ title: isolatedDeliveryDiff.path, diff: isolatedDeliveryDiff.diff }} />}
+            <p>审查后可在终端运行 <code>git switch {isolatedDelivery.branch}</code> 继续修改；主工作区可能有未提交改动，切换前先检查 Git 状态。</p>
+          </div>
+        )}
+      </section>
       <div className="git-review-head">
         <div>
           <strong>{displayedGitReview?.branch || "Git Review"}</strong>

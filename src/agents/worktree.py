@@ -14,6 +14,8 @@ import subprocess
 import tempfile
 from pathlib import Path
 from typing import Awaitable, Callable, Optional
+from src.utils.async_ops import await_thread
+from src.agents.tool import ToolTurnYield
 
 
 def _git(cwd, *args: str, check: bool = True) -> subprocess.CompletedProcess:
@@ -32,7 +34,7 @@ _GIT_LOCK = asyncio.Lock()
 async def _git_op(fn: Callable, *args, **kwargs):
     """把一个会碰共享 repo 的同步 git 操作丢线程执行并全局串行化（不冻事件循环、不竞争 .git）。"""
     async with _GIT_LOCK:
-        return await asyncio.to_thread(fn, *args, **kwargs)
+        return await await_thread(fn, *args, **kwargs)
 
 
 def _worktrees_dir(repo_root) -> Path:
@@ -250,8 +252,9 @@ def apply_diffs_to_branch(repo_root, branch: str, items: list,
 async def in_worktree(repo_root, wid: str,
                       work: Callable[[Path], Awaitable]) -> tuple[str, object]:
     """在隔离 worktree 里 await work(path)，返回 (diff, work 的返回值)；无论成败都清理 worktree。"""
-    path = await _git_op(add_worktree, repo_root, wid)     # git 操作丢线程 + 全局串行（不冻循环/不竞争）
+    path = _worktrees_dir(repo_root) / wid
     try:
+        path = await _git_op(add_worktree, repo_root, wid)
         result = await work(path)                          # work（子 agent）在锁外 → 并行时真并发
         return await _git_op(collect_diff, path), result
     finally:
@@ -311,8 +314,9 @@ async def run_isolated_task(repo_root, wid: str, description: str,
     diff 在跑测试**之前**收集，避免测试产物混入（虽然 __pycache__/.pytest_cache 已 gitignore）。
     build_agent(worktree_path) -> 有 run_turn 的 agent（注入便于测试、也避免本模块依赖 MainAgent）。
     """
-    path = await _git_op(add_worktree, repo_root, wid)     # git 操作丢线程 + 全局串行（不冻循环/不竞争）
+    path = _worktrees_dir(repo_root) / wid
     try:
+        path = await _git_op(add_worktree, repo_root, wid)
         agent = build_agent(str(path))
         from src.agents.taint import merge_nested_taint
         with merge_nested_taint():
@@ -327,7 +331,7 @@ async def run_isolated_task(repo_root, wid: str, description: str,
         if verify_tier(diff) == _TIER_DOCS:            # 纯文档：测试给不出任何信号，如实跳过
             return diff, conclusion, _skipped_verification(", ".join(diff_paths(diff))[:120])
         # pytest 慢且阻塞：丢线程跑（锁外），既不冻 UI、并行时多个测试也能真并发（各自独立 worktree）
-        verification = await asyncio.to_thread(run_tests, path, test_cmd)
+        verification = await await_thread(run_tests, path, test_cmd)
         return diff, conclusion, verification
     finally:
         await _git_op(remove_worktree, repo_root, path)
@@ -352,10 +356,10 @@ async def run_dependent_on_branch(repo_root, wid: str, branch: str, description:
     if path.exists():
         await _git_op(remove_worktree, repo_root, path)
     # 检出 branch（非 detached）——git 操作丢线程 + 全局串行（不冻循环/不竞争共享 .git）
-    add = await _git_op(_git, repo_root, "worktree", "add", str(path), branch, check=False)
-    if add.returncode != 0:
-        return {"ok": False, "conclusion": "", "output": "worktree add 失败: " + (add.stderr or "").strip()[:200]}
     try:
+        add = await _git_op(_git, repo_root, "worktree", "add", str(path), branch, check=False)
+        if add.returncode != 0:
+            return {"ok": False, "conclusion": "", "output": "worktree add 失败: " + (add.stderr or "").strip()[:200]}
         agent = build_agent(str(path))
         from src.agents.taint import merge_nested_taint
         try:
@@ -363,6 +367,8 @@ async def run_dependent_on_branch(repo_root, wid: str, branch: str, description:
                 conclusion = await agent.run_turn(
                     description, mode="build", emit=lambda _t: None
                 )  # 锁外
+        except ToolTurnYield:
+            raise
         except Exception as e:  # noqa: BLE001 —— 通道故障（LLM 502/超时）：如实报因，branch 不动
             return {"ok": False, "conclusion": "",
                     "output": "LLM 通道故障: " + (str(e) or repr(e))[:300]}
@@ -370,7 +376,7 @@ async def run_dependent_on_branch(repo_root, wid: str, branch: str, description:
         st = await _git_op(_git, path, "status", "--porcelain", check=False)
         if not (st.stdout or "").strip():
             return {"ok": False, "conclusion": conclusion, "output": "无改动（子 agent 未修改任何文件）"}
-        ver = (await asyncio.to_thread(run_tests, path, test_cmd)) if test_cmd else {"ok": True, "output": ""}
+        ver = (await await_thread(run_tests, path, test_cmd)) if test_cmd else {"ok": True, "output": ""}
         if not ver["ok"]:                                  # 自测没过：不提交，branch 保持原样
             return {"ok": False, "conclusion": conclusion, "output": ver["output"][-1500:]}
         await _git_op(_git, path, "add", "-A", check=False)

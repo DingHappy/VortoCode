@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from src.utils.http import outbound_session
+from src.llm.streaming import StreamInterrupted, close_stream
 
 logger = logging.getLogger(__name__)
 
@@ -669,25 +670,30 @@ class LLMClient:
         resp = await client.chat.completions.create(**create)
         parts: List[str] = []
         exact = None
-        async for chunk in resp:
-            u = getattr(chunk, "usage", None)
-            if u is not None:
-                exact = u                       # include_usage 的尾 chunk
-            choices = getattr(chunk, "choices", None)
-            if not choices:
-                continue
-            delta = getattr(choices[0], "delta", None)
-            if delta is not None and on_reasoning is not None:   # 推理增量走侧信道（不混进正文）
-                rc = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
-                if rc:
-                    try:
-                        on_reasoning(rc)
-                    except Exception:  # noqa: BLE001 —— 展示回调不该影响生成
-                        pass
-            content = getattr(delta, "content", None) if delta else None
-            if content:
-                parts.append(content)
-                yield content
+        try:
+            async for chunk in resp:
+                u = getattr(chunk, "usage", None)
+                if u is not None:
+                    exact = u                       # include_usage 的尾 chunk
+                choices = getattr(chunk, "choices", None)
+                if not choices:
+                    continue
+                delta = getattr(choices[0], "delta", None)
+                if delta is not None and on_reasoning is not None:   # 推理增量走侧信道（不混进正文）
+                    rc = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+                    if rc:
+                        try:
+                            on_reasoning(rc)
+                        except StreamInterrupted:
+                            raise
+                        except Exception:  # noqa: BLE001 —— 展示回调不该影响生成
+                            pass
+                content = getattr(delta, "content", None) if delta else None
+                if content:
+                    parts.append(content)
+                    yield content
+        finally:
+            await close_stream(resp)
         _account(messages, "".join(parts), exact, model=create["model"])   # 有精确 usage 用精确，否则估算
 
     async def stream_chat(
@@ -729,43 +735,50 @@ class LLMClient:
         reasoning_parts: List[str] = []
         tc_acc: Dict[int, Dict[str, str]] = {}    # index -> {id,name,arguments}（分片累积）
         exact = None
-        async for chunk in resp:
-            u = getattr(chunk, "usage", None)
-            if u is not None:
-                exact = u                          # include_usage 的尾 chunk
-            choices = getattr(chunk, "choices", None)
-            if not choices:
-                continue
-            delta = getattr(choices[0], "delta", None)
-            if delta is None:
-                continue
-            rc = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
-            if rc:
-                reasoning_parts.append(str(rc))
-                if on_reasoning is not None:       # 推理增量走侧信道（不混进正文）
-                    try:
-                        on_reasoning(rc)
-                    except Exception:  # noqa: BLE001 —— 展示回调不该影响生成
-                        pass
-            for tc in (getattr(delta, "tool_calls", None) or []):   # 组装 tool_calls
-                idx = getattr(tc, "index", 0) or 0
-                slot = tc_acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
-                if getattr(tc, "id", None):
-                    slot["id"] = tc.id
-                fn = getattr(tc, "function", None)
-                if fn is not None:
-                    if getattr(fn, "name", None):
-                        slot["name"] += fn.name
-                    if getattr(fn, "arguments", None):
-                        slot["arguments"] += fn.arguments
-            content = getattr(delta, "content", None)
-            if content:
-                parts.append(content)
-                if on_content is not None and not tc_acc:   # 出现工具调用后不再回显正文
-                    try:
-                        on_content(content)
-                    except Exception:  # noqa: BLE001
-                        pass
+        try:
+            async for chunk in resp:
+                u = getattr(chunk, "usage", None)
+                if u is not None:
+                    exact = u                          # include_usage 的尾 chunk
+                choices = getattr(chunk, "choices", None)
+                if not choices:
+                    continue
+                delta = getattr(choices[0], "delta", None)
+                if delta is None:
+                    continue
+                rc = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+                if rc:
+                    reasoning_parts.append(str(rc))
+                    if on_reasoning is not None:       # 推理增量走侧信道（不混进正文）
+                        try:
+                            on_reasoning(rc)
+                        except StreamInterrupted:
+                            raise
+                        except Exception:  # noqa: BLE001 —— 展示回调不该影响生成
+                            pass
+                for tc in (getattr(delta, "tool_calls", None) or []):   # 组装 tool_calls
+                    idx = getattr(tc, "index", 0) or 0
+                    slot = tc_acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                    if getattr(tc, "id", None):
+                        slot["id"] = tc.id
+                    fn = getattr(tc, "function", None)
+                    if fn is not None:
+                        if getattr(fn, "name", None):
+                            slot["name"] += fn.name
+                        if getattr(fn, "arguments", None):
+                            slot["arguments"] += fn.arguments
+                content = getattr(delta, "content", None)
+                if content:
+                    parts.append(content)
+                    if on_content is not None and not tc_acc:   # 出现工具调用后不再回显正文
+                        try:
+                            on_content(content)
+                        except StreamInterrupted:
+                            raise
+                        except Exception:  # noqa: BLE001
+                            pass
+        finally:
+            await close_stream(resp)
         full = "".join(parts)
         _account(messages, full, exact, model=create["model"])   # 有精确 usage 用精确，否则估算
         tool_calls = None

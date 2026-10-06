@@ -3045,6 +3045,49 @@ input::placeholder {
   line-height: 13px;
 }
 
+.isolated-delivery-card {
+  margin-bottom: 18px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.isolated-delivery-list {
+  display: grid;
+  gap: 6px;
+  margin: 10px 0;
+  max-height: 180px;
+  overflow: auto;
+}
+
+.isolated-delivery-list button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 8px;
+  text-align: left;
+}
+
+.isolated-delivery-list button.active {
+  border-color: var(--accent);
+}
+
+.isolated-delivery-list span,
+.isolated-delivery-detail > span {
+  font-size: 12px;
+  opacity: .72;
+}
+
+.isolated-delivery-detail {
+  display: grid;
+  gap: 10px;
+}
+
+.isolated-delivery-detail > p {
+  margin: 0;
+}
+
 .agent-diff-proposal {
   margin-top: 10px;
   color: #778294;
@@ -5012,6 +5055,95 @@ input::placeholder {
   cursor: default;
 }
 
+.task-dispatch-form {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  color: #d6dbe3;
+}
+
+.task-dispatch-form small {
+  color: #8992a3;
+}
+
+.task-dispatch-form label,
+.task-handoff-actions label,
+.task-question-actions label,
+.dispatch-task-actions label {
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.task-dispatch-form select,
+.task-handoff-actions textarea,
+.task-question-actions textarea,
+.dispatch-task-actions textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #181c24;
+  color: #d6dbe3;
+  font: inherit;
+}
+
+.dispatch-task-actions,
+.task-question-actions form,
+.task-handoff-actions form {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.dispatch-task-actions textarea,
+.task-question-actions textarea,
+.task-handoff-actions textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.task-handoff-actions {
+  margin-top: 12px;
+  font-size: 12px;
+}
+
+.task-handoff-actions summary { cursor: pointer; }
+.task-handoff-actions p { color: #a4adbb; font-size: 12px; }
+
+.task-question-actions {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #78643c;
+  border-radius: 8px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.task-card .task-question-actions small { color: #b9ac8c; font-size: 11px; line-height: 1.5; }
+.task-card .task-status.blocked { color: #e3c887; background: #514325; }
+.task-question-actions .task-actions button { max-width: 100%; white-space: normal; }
+
+.task-dependency-actions {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.task-dependency-actions p { line-height: 1.5; }
+.task-dependency-options { margin: 8px 0; font-size: 12px; }
+.task-dependency-options label { display: flex; align-items: flex-start; gap: 6px; margin: 8px 0; }
+.task-dependency-options input { flex: 0 0 auto; }
+.task-chain-budget { margin-top: 10px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; font-size: 12px; }
+.task-chain-budget p { margin: 6px 0; overflow-wrap: anywhere; }
+.task-chain-budget-options { padding: 8px 10px; font-size: 12px; }
+.task-chain-budget-options label { display: flex; align-items: flex-start; gap: 6px; }
+.task-chain-budget-options input { flex: 0 0 auto; }
+.task-chain-budget-options small { display: block; line-height: 1.6; margin-top: 6px; }
+
 .worktree-workspace {
   margin-bottom: 10px;
   padding: 9px;
@@ -5133,6 +5265,10 @@ button.worktree-live:not(:disabled):hover {
 .task-card.focused {
   border-color: rgba(255, 115, 71, 0.72);
   box-shadow: 0 0 0 2px rgba(255, 115, 71, 0.12);
+}
+
+.task-card {
+  color: #d6dbe3;
 }
 
 .task-linkage {
@@ -5347,7 +5483,8 @@ button.worktree-live:not(:disabled):hover {
   font-size: 8px;
 }
 
-.task-handoff pre {
+.task-handoff pre,
+.task-collaboration pre {
   max-height: 150px;
   margin: 6px 0 0;
   padding: 7px;
@@ -5359,6 +5496,17 @@ button.worktree-live:not(:disabled):hover {
   font-size: 7px;
   line-height: 12px;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.task-collaboration {
+  margin-top: 8px;
+  color: #aeb6c2;
+  font-size: 10px;
+}
+
+.task-collaboration details {
+  margin-top: 7px;
 }
 
 .task-actions {

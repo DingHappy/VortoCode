@@ -179,7 +179,7 @@ def save_plan(repo_root: str, plan: DevPlan) -> bool:
 def load_plan(repo_root: str, plan_id: str) -> Optional[DevPlan]:
     """按 plan_id 读回计划；不存在/坏文件/非法 id → None。"""
     pid = _clean_id(plan_id)
-    if pid is None:
+    if pid is None or not isinstance(plan_id, str) or pid != plan_id:
         return None
     p = _path(repo_root, pid)
     if not p.is_file():
@@ -188,12 +188,18 @@ def load_plan(repo_root: str, plan_id: str) -> Optional[DevPlan]:
         data = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) or data.get("plan_id") != pid:
         return None
     try:
         return DevPlan.from_dict(data)
     except (TypeError, ValueError):
         return None
+
+
+def save_checkpoint(repo_root: str, plan: DevPlan) -> None:
+    """Execution requires a durable checkpoint; callers must not continue on False."""
+    if not save_plan(repo_root, plan):
+        raise OSError("开发计划检查点未能持久化；未继续执行")
 
 
 def list_plans(repo_root: str) -> List[Dict[str, Any]]:
@@ -203,16 +209,12 @@ def list_plans(repo_root: str) -> List[Dict[str, Any]]:
         return []
     out: List[Dict[str, Any]] = []
     for p in sorted(d.glob("*.json")):
+        plan = load_plan(repo_root, p.stem)
+        if plan is None:
+            continue
         try:
-            data = json.loads(p.read_text(encoding="utf-8"))
             mtime = p.stat().st_mtime
-        except (OSError, ValueError):
-            continue
-        if not isinstance(data, dict):
-            continue
-        try:
-            plan = DevPlan.from_dict(data)
-        except (TypeError, ValueError):
+        except OSError:
             continue
         out.append({"plan_id": plan.plan_id, "task": plan.task, "status": plan.status,
                     "branch": plan.branch, "summary": plan.summary(), "updated": mtime})

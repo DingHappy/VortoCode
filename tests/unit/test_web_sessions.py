@@ -113,6 +113,41 @@ def test_api_rename_requires_title(client):
     assert c.patch("/api/agent/sessions/s3", json={"title": "  "}).json()["ok"] is False
 
 
+def test_websocket_capacity_rejects_without_losing_queued_session(client, monkeypatch):
+    from starlette.websockets import WebSocketDisconnect
+    from src.web.routers import realtime
+    from src.web.state import ConnectionManager
+
+    c, root = client
+    monkeypatch.setattr(realtime, "_MAX_SESSIONS", 1)
+    manager = ConnectionManager()
+    monkeypatch.setattr(realtime, "manager", manager)
+    protected = {"last": 0, "prompt_queue": [{"id": "pending", "text": "待处理输入"}],
+                 "repo_root": str(root)}
+    realtime._SESSIONS["sid-existing"] = protected
+    with c.websocket_connect("/ws?sid=new") as ws:
+        message = ws.receive_json()
+        assert message["type"] == "agent_error" and "会话容量已满" in message["text"]
+        with pytest.raises(WebSocketDisconnect) as closed:
+            ws.receive_json()
+        assert closed.value.code == 1013
+    assert realtime._SESSIONS == {"sid-existing": protected}
+    assert not manager.active_connections
+
+
+def test_api_delete_forgets_stopped_priority_state(client):
+    from src.web.routers import realtime
+
+    c, root = client
+    _mk(root, "paused", [{"role": "user", "text": "已停止"}])
+    key = "sid-paused"
+    realtime._ACTORS.priority[key] = {"id": "stale-priority", "text": "不应再执行"}
+    realtime._ACTORS.auto_stopped.add(key)
+    assert c.delete("/api/agent/sessions/paused").json()["deleted"] is True
+    assert key not in realtime._ACTORS.priority and key not in realtime._ACTORS.auto_stopped
+    assert ss.load_session(str(root), key) is None
+
+
 def test_api_session_dashboard_merges_live_status_and_prioritizes_action(client):
     c, root = client
     from src.web.routers import realtime

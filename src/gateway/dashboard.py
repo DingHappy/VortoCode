@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 _ACTIVE_TASKS = frozenset({"queued", "running", "cancelling"})
-_ATTENTION_TASKS = frozenset({"failed", "paused", "interrupted"})
+_ATTENTION_TASKS = frozenset({"waiting", "blocked", "failed", "paused", "interrupted"})
 
 
 def _git(repo_root: str, *args: str) -> subprocess.CompletedProcess:
@@ -112,6 +112,8 @@ def background_tasks_by_session(repo_root: str) -> Dict[str, Dict[str, Any]]:
         if task_id:
             worktree_counts[task_id] = worktree_counts.get(task_id, 0) + 1
     grouped: Dict[str, list[Any]] = {}
+    from src.gateway.task_recovery import recovery_links
+    resumed_sources = recovery_links(tasks)
     for task in tasks:
         owner = str(getattr(task, "owner_session", "") or "").strip()
         if owner.startswith("sid-"):
@@ -129,7 +131,8 @@ def background_tasks_by_session(repo_root: str) -> Dict[str, Dict[str, Any]]:
             None,
         )
         attention_task = next(
-            (task for task in owned if str(getattr(task, "status", "") or "") in _ATTENTION_TASKS),
+            (task for task in owned if task.id not in resumed_sources
+             and str(getattr(task, "status", "") or "") in _ATTENTION_TASKS),
             None,
         )
         latest_branch = next(
@@ -140,7 +143,7 @@ def background_tasks_by_session(repo_root: str) -> Dict[str, Dict[str, Any]]:
         output[sid] = {
             "total": len(owned),
             "active": sum(status in _ACTIVE_TASKS for status in statuses),
-            "attention": sum(status in _ATTENTION_TASKS for status in statuses),
+            "attention": sum(task.id not in resumed_sources and task.status in _ATTENTION_TASKS for task in owned),
             "completed": sum(status == "done" for status in statuses),
             "latest_status": str(getattr(latest, "status", "") or "")[:32],
             "latest_prompt": str(getattr(latest, "prompt", "") or "")[:160],
