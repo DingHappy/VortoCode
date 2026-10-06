@@ -493,6 +493,18 @@ fn get_llm_profile(
     Ok(desktop_llm_profile_status(profile.as_ref()))
 }
 
+/// 原生确认框必须挂到主窗口上（弹成 sheet）。rfd 在 macOS 上的无父窗口消息框会建出窗口却
+/// 从不显示，`blocking_show` 因此永远挂起——2026-10-06 真机复现：确认框不出现、命令不返回。
+fn with_main_window_parent(
+    app: &AppHandle,
+    dialog: tauri_plugin_dialog::MessageDialogBuilder<tauri::Wry>,
+) -> tauri_plugin_dialog::MessageDialogBuilder<tauri::Wry> {
+    match app.get_webview_window("main") {
+        Some(window) => dialog.parent(&window),
+        None => dialog,
+    }
+}
+
 async fn confirm_llm_profile_change(
     app: &AppHandle,
     profile: &DesktopLlmProfile,
@@ -506,8 +518,7 @@ async fn confirm_llm_profile_change(
     );
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        app.dialog()
-            .message(message)
+        with_main_window_parent(&app, app.dialog().message(message))
             .title("确认修改模型服务")
             .kind(MessageDialogKind::Warning)
             .buttons(MessageDialogButtons::OkCancelCustom(
@@ -1165,8 +1176,7 @@ async fn confirm_project_registration(app: &AppHandle, root: &Path) -> Result<bo
     );
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        app.dialog()
-            .message(message)
+        with_main_window_parent(&app, app.dialog().message(message))
             .title("确认注册项目目录")
             .kind(MessageDialogKind::Warning)
             .buttons(MessageDialogButtons::OkCancelCustom(
@@ -1200,8 +1210,7 @@ async fn confirm_action(app: AppHandle, message: String) -> Result<bool, String>
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
     let message = confirm_action_message(&message);
     tauri::async_runtime::spawn_blocking(move || {
-        app.dialog()
-            .message(message)
+        with_main_window_parent(&app, app.dialog().message(message))
             .title("VortoCode")
             .kind(MessageDialogKind::Warning)
             .buttons(MessageDialogButtons::OkCancelCustom("确认".into(), "取消".into()))
@@ -1373,8 +1382,7 @@ async fn confirm_remote_registration(app: &AppHandle, server_url: &str) -> Resul
     );
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        app.dialog()
-            .message(message)
+        with_main_window_parent(&app, app.dialog().message(message))
             .title("确认注册远程工作区")
             .kind(MessageDialogKind::Warning)
             .buttons(MessageDialogButtons::OkCancelCustom(
