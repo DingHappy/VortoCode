@@ -41,7 +41,7 @@ import type {
   WorkspaceScope,
 } from "../types";
 
-type SettingsSection = "general" | "usage" | "model" | "personalize" | "appearance" | "config" | "trust" | "browser" | "extensions";
+export type SettingsSection = "general" | "usage" | "model" | "personalize" | "appearance" | "config" | "trust" | "browser" | "extensions";
 
 const SETTINGS_NAV: Array<{ group: string; items: Array<{ id: SettingsSection; label: string; keywords: string }> }> = [
   {
@@ -92,6 +92,7 @@ type SettingsModalProps = {
   onLlmStrongChange: (value: string) => void;
   onRestartRuntime: () => Promise<boolean>;
   onLlmProfileChange: (profile: DesktopLlmProfileStatus) => void;
+  initialSection?: SettingsSection;
   onLlmKeyChange: (value: string) => void;
   onSaveLlmProfile: () => void;
   onClearLlmProfile: () => void;
@@ -136,6 +137,7 @@ export function SettingsModal({
   onLlmStrongChange,
   onRestartRuntime,
   onLlmProfileChange,
+  initialSection,
   onLlmKeyChange,
   onSaveLlmProfile,
   onClearLlmProfile,
@@ -154,7 +156,8 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const trustView = trustCard(trust);
   const llmInputIsLocal = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/i.test(llmBaseInput.trim());
-  const [section, setSection] = useState<SettingsSection>(llmProfile && !llmProfile.configured ? "model" : "general");
+  const [section, setSection] = useState<SettingsSection>(
+    initialSection ?? (llmProfile && !llmProfile.configured ? "model" : "general"));
   const [query, setQuery] = useState("");
   const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference);
   const [modelOptions, setModelOptions] = useState<string[]>([]);
