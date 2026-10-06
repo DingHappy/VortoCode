@@ -82,7 +82,7 @@ INBOUND: Dict[str, _Spec] = {
     PING: ((), ()),
     GET_STATUS: ((), ("hydrate",)),
     AGENT: ((), ("text", "mode", "images", "audio", "context_files", "context_selections",
-                    "rid", "want_reasoning")),
+                    "rid", "want_reasoning", "model")),
     AGENT_CANCEL: ((), ()),
     AGENT_QUEUE_REMOVE: (("id",), ()),
     AGENT_QUEUE_SEND_NOW: (("id",), ()),

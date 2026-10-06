@@ -951,7 +951,7 @@ def _actor_context(websocket) -> ActorContext:
         execute=lambda item: _run_agent_turn(
             websocket, item["text"], item["mode"], item.get("images"), item.get("audio"),
             rid=item.get("rid"), want_reasoning=bool(item.get("want_reasoning")),
-            context_items=item.get("context_items") or [],
+            context_items=item.get("context_items") or [], model=item.get("model"),
         ),
         cancel_unstarted=lambda item, reason: _publish_session_event(
             _session_key(websocket), P.make_event(
@@ -1022,6 +1022,7 @@ async def handle_agent_message(websocket, message: Dict[str, Any]):
     item = _new_prompt_item(
         text=text, mode=mode, images=images, audio=audio, rid=rid,
         want_reasoning=bool(message.get("want_reasoning")), context_items=context_items,
+        model=message.get("model"),
     )
     if _ACTORS.busy(key):       # 包含检查/取消清理；前台输入进入服务端权威 FIFO
         outcome = await _ACTORS.enqueue(_actor_context(websocket), item)
@@ -1307,7 +1308,8 @@ async def handle_tts_message(websocket, message: Dict[str, Any]):
 async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list] = None,
                           audio: Optional[list] = None, rid: Optional[str] = None,
                           want_reasoning: bool = False,
-                          context_items: Optional[list] = None):
+                          context_items: Optional[list] = None,
+                          model: Optional[str] = None):
     """实际跑一个回合：run_turn 产出的事件经队列串行发回前端；整个任务可被取消（中断）。
 
     事件类型：agent_say(工具提示) / agent_stream(增量) / agent_emit(成段输出) /
@@ -1365,6 +1367,19 @@ async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list
         finish_phase("working", "已执行任务")
         start_phase("responding", "正在整理回复")
 
+    # 模型调度：客户端选了「自动」或点名了已配置的模型，就在本回合开始前切过去，并把选择
+    # 作为一条已完成的阶段写进时间线（用户能看到这轮用的是谁、为什么）。没传则不动。
+    from src.llm.routing import clean_model_request, resolve_turn_model
+    choice = resolve_turn_model(
+        clean_model_request(model), text, mode=mode, has_media=bool(images or audio),
+        context_count=len(context_items or []))
+    if choice is not None and hasattr(agent, "set_model"):
+        agent.set_model(choice.model)
+        q.put_nowait(P.make_event(
+            P.AGENT_PHASE, id=f"{turn_key}:routing", phase="routing", status="completed",
+            label=f"使用 {choice.model}" + ("" if choice.tier == "manual" else f" · {choice.reason}"),
+            detail=choice.tier,
+        ))
     start_phase("thinking", "正在分析任务")
 
     def agent_plan(plan):

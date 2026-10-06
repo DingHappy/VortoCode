@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
+from src.llm.routing import clean_model_request
 from src.utils.async_ops import request_cancel
 
 MAX_PROMPT_QUEUE = 20
@@ -45,6 +46,7 @@ def clean_prompt_item(raw: Any, *, sanitize_images: Callable, sanitize_audio: Ca
         "created_at": str(raw.get("created_at") or "")[:80],
         "images": images, "audio": audio, "context_items": context_items,
         "want_reasoning": bool(raw.get("want_reasoning")),
+        "model": clean_model_request(raw.get("model")),
     }
 
 
@@ -56,13 +58,14 @@ def public_prompt_item(item: Prompt, position: int = 0) -> Prompt:
 
 
 def new_prompt_item(*, text: str, mode: str, images: list, audio: list, rid: str | None,
-                    want_reasoning: bool, context_items: list) -> Prompt:
+                    want_reasoning: bool, context_items: list, model: str | None = None) -> Prompt:
     return {
         "id": rid or ("turn-" + uuid.uuid4().hex[:24]), "rid": rid, "version": 0,
         "text": text, "mode": "build" if mode == "build" else "plan",
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "images": images, "audio": audio, "context_items": context_items,
         "want_reasoning": bool(want_reasoning),
+        "model": clean_model_request(model),
     }
 
 

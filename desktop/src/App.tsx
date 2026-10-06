@@ -3,6 +3,7 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowUp,
+  Cpu,
   FileText,
   FolderPlus,
   Inbox,
@@ -111,6 +112,7 @@ import { composeMessageText, mediaPayload } from "./lib/attachments";
 import { useAttachments } from "./hooks/useAttachments";
 import { latestTurnSteps, previewReferences, publishedArtifactId, type PreviewView } from "./lib/preview";
 import { PreviewPanel } from "./components/PreviewPanel";
+import { loadModelChoice, modelChoices, persistModelChoice, resolveModelChoice } from "./lib/modelChoice";
 
 
 type PendingWorkspaceSave = { rid: string; path: string; content: string; buffer: string };
@@ -349,8 +351,12 @@ function App() {
   const { trust, trustBusy, changeTrustLevel } = useTrustLevel(clientRef, connection, repoRoot, settingsOpen, setBanner);
   const {
     llmProfile, llmProfileChecked, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput,
+    llmFastInput, setLlmFastInput, llmStrongInput, setLlmStrongInput,
     llmKeyInput, setLlmKeyInput, llmProfileBusy, saveLlmProfile, clearLlmProfile,
   } = useLlmProfile(settingsOpen, setBanner, () => restartCurrentRuntimeForLlmProfile());
+  const [savedModelChoice, setSavedModelChoice] = useState<string | null>(() => loadModelChoice());
+  const composerModelChoices = useMemo(() => modelChoices(llmProfile), [llmProfile]);
+  const modelChoice = resolveModelChoice(savedModelChoice, composerModelChoices);
   // 「变更」面板域（Git 审查 / 任务分支审查 / 评论 / PR 交付）已收进 useChangeReview；
   // 发给 Agent 的两个回调与协议事件对 setGitReviewRevision 的写入留在 App。
   const {
@@ -1761,6 +1767,8 @@ function App() {
           .map((item) => ({ path: item.path, start: item.startLine, end: item.endLine })),
         rid,
         want_reasoning: false,
+        // 只在本机模型配置已读到时才带：服务端只接受已配置的模型，「自动」由它按任务调度。
+        ...(modelChoice ? { model: modelChoice } : {}),
       });
       return true;
     } catch (error) {
@@ -2941,7 +2949,26 @@ function App() {
                       ? `${contextItems.length} 个源码引用`
                       : busy ? "Enter 加入队列 · Shift+Enter 换行" : mode === "build" ? "可修改 · 变更需审查" : "只读规划"}</span>
                 </div>
+                <div className="composer-actions">
+                {composerModelChoices.length > 1 && (
+                  <label className="composer-model" title={composerModelChoices.find((choice) => choice.value === modelChoice)?.hint}>
+                    <Cpu size={13} />
+                    <select
+                      aria-label="选择模型"
+                      value={modelChoice}
+                      onChange={(event) => {
+                        setSavedModelChoice(event.target.value);
+                        persistModelChoice(event.target.value);
+                      }}
+                    >
+                      {composerModelChoices.map((choice) => (
+                        <option key={choice.value} value={choice.value}>{choice.label}{choice.value === "auto" ? "" : ` · ${choice.hint}`}</option>
+                      ))}
+                    </select>
+                  </label>
+                )}
                 <button className={`composer-send ${busy ? "queueing" : ""}`} aria-label={busy ? "加入待运行队列" : "发送"} title={busy ? "加入待运行队列" : "发送"} onClick={() => void sendPrompt()} disabled={(!prompt.trim() && contextItems.length === 0 && attachments.length === 0) || savingFile || runtimeStarting || projectSwitching}><ArrowUp size={17} /></button>
+                </div>
               </div>
             </div>
           </div>
@@ -3242,6 +3269,8 @@ function App() {
           llmBaseInput={llmBaseInput}
           llmModelInput={llmModelInput}
           llmKeyInput={llmKeyInput}
+          llmFastInput={llmFastInput}
+          llmStrongInput={llmStrongInput}
           llmProfileBusy={llmProfileBusy}
           repoRoot={repoRoot}
           baseUrl={baseUrl}
@@ -3252,6 +3281,8 @@ function App() {
           onClose={() => setSettingsOpen(false)}
           onLlmBaseChange={setLlmBaseInput}
           onLlmModelChange={setLlmModelInput}
+          onLlmFastChange={setLlmFastInput}
+          onLlmStrongChange={setLlmStrongInput}
           onLlmKeyChange={setLlmKeyInput}
           onSaveLlmProfile={saveLlmProfile}
           onClearLlmProfile={clearLlmProfile}

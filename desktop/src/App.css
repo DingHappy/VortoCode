@@ -6336,12 +6336,14 @@ button.worktree-live:not(:disabled):hover {
   grid-column: 1 / -1;
 }
 
-.llm-profile-fields label {
+.llm-profile-fields label,
+.llm-routing-fields label {
   display: grid;
   gap: 4px;
 }
 
-.llm-profile-fields label > span {
+.llm-profile-fields label > span,
+.llm-routing-fields label > span {
   color: var(--n10);
   font-size: 9px;
 }
@@ -6351,7 +6353,8 @@ button.worktree-live:not(:disabled):hover {
   font-style: normal;
 }
 
-.llm-profile-fields input {
+.llm-profile-fields input,
+.llm-routing-fields input {
   min-width: 0;
   height: 34px;
   padding: 0 10px;
@@ -6362,7 +6365,8 @@ button.worktree-live:not(:disabled):hover {
   font-size: 10px;
 }
 
-.llm-profile-fields input:focus {
+.llm-profile-fields input:focus,
+.llm-routing-fields input:focus {
   outline: 2px solid rgba(var(--ink-rgb), 0.08);
   border-color: var(--n8);
 }
@@ -9452,4 +9456,64 @@ input::placeholder {
 
 .preview-references li.failed {
   opacity: 0.7;
+}
+
+/* 输入框的模型选择（自动 / 已配置模型） */
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.composer-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 4px 0 9px;
+  border: 1px solid var(--n5);
+  border-radius: 999px;
+  color: var(--n10);
+  background: var(--n1);
+  font-size: 12px;
+}
+
+.composer-model:hover {
+  border-color: var(--n7);
+  color: var(--n12);
+}
+
+.composer-model select {
+  max-width: 180px;
+  padding: 0 4px 0 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font-size: 12px;
+  outline: none;
+  cursor: pointer;
+}
+
+.llm-routing-fields {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.llm-routing-fields > p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--n12);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.llm-routing-fields > p em {
+  display: block;
+  margin-top: 3px;
+  color: var(--n9);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 400;
 }

@@ -15,6 +15,8 @@ export const STORAGE_KEYS = {
   lastProjectId: "vortocode.desktop.lastProjectId",
   // 外观：跟随系统 / 浅色 / 深色。只影响本机显示，属于每台机器自己的偏好。
   theme: "vortocode.desktop.theme",
+  // 输入框的模型选择：「自动」或某个已配置的模型。
+  modelChoice: "vortocode.desktop.modelChoice",
 } as const;
 
 // 每个项目一个会话 id，key 由项目 id 拼出前缀。

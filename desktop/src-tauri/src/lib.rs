@@ -33,6 +33,11 @@ struct DesktopLlmProfile {
     context_window: Option<u64>,
     #[serde(default)]
     context_window_source: Option<String>,
+    /// 模型调度的快速档 / 强力档（可选）。没配时「自动」只在主模型上运行。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fast_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    strong_model: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -45,6 +50,10 @@ struct DesktopLlmProfileStatus {
     requires_key: bool,
     context_window: Option<u64>,
     context_window_source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fast_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    strong_model: Option<String>,
     /// 本机配置文件位置；设置页显示它，方便用户直接编辑。
     #[serde(skip_serializing_if = "Option::is_none")]
     config_path: Option<String>,
@@ -111,6 +120,8 @@ fn default_llm_profile() -> DesktopLlmProfile {
         model: DEFAULT_LLM_MODEL.into(),
         context_window: Some(1_000_000),
         context_window_source: Some("catalog".into()),
+        fast_model: None,
+        strong_model: None,
     }
 }
 
@@ -118,6 +129,19 @@ fn normalize_llm_profile(mut profile: DesktopLlmProfile) -> Result<DesktopLlmPro
     profile.base_url = profile.base_url.trim().trim_end_matches('/').to_string();
     profile.api_key = profile.api_key.trim().to_string();
     profile.model = profile.model.trim().to_string();
+    for tier in [&mut profile.fast_model, &mut profile.strong_model] {
+        *tier = tier
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string);
+        if tier
+            .as_deref()
+            .is_some_and(|name| name.len() > 160 || name.chars().any(char::is_control))
+        {
+            return Err("调度模型名无效".into());
+        }
+    }
     if profile.base_url.len() > 512 || profile.model.is_empty() || profile.model.len() > 160 {
         return Err("模型服务地址或模型名无效".into());
     }
@@ -505,6 +529,8 @@ fn desktop_llm_profile_status(profile: Option<&DesktopLlmProfile>) -> DesktopLlm
             .context_window_source
             .clone()
             .unwrap_or_else(|| "unknown".into()),
+        fast_model: profile.fast_model.clone(),
+        strong_model: profile.strong_model.clone(),
         config_path: None,
     }
 }
@@ -539,9 +565,17 @@ async fn confirm_llm_profile_change(
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
     // 改档是敏感动作：base_url+Key 会落 Keychain 并注入后续 runtime 环境。原生对话框在
     // webview 进程之外，被注入的页面脚本无法替用户点「确认」，静默改档因此不生效。
+    let tiers = match (&profile.fast_model, &profile.strong_model) {
+        (None, None) => String::new(),
+        (fast, strong) => format!(
+            "\n快速模型：{}\n强力模型：{}",
+            fast.as_deref().unwrap_or("（同主模型）"),
+            strong.as_deref().unwrap_or("（同主模型）")
+        ),
+    };
     let message = format!(
-        "网页层请求把模型服务改为：\n\n服务地址：{}\n模型：{}\n\n仅当这是你刚在设置页保存的配置时才确认。",
-        profile.base_url, profile.model
+        "网页层请求把模型服务改为：\n\n服务地址：{}\n模型：{}{}\n\n仅当这是你刚在设置页保存的配置时才确认。",
+        profile.base_url, profile.model, tiers
     );
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -583,14 +617,29 @@ async fn set_llm_profile(
     base_url: String,
     api_key: String,
     model: String,
+    fast_model: Option<String>,
+    strong_model: Option<String>,
     store: State<'_, DesktopLlmProfileStore>,
 ) -> Result<DesktopLlmProfileStatus, String> {
+    // 只改模型名 / 调度档时不必重输 Key：留空则沿用已保存的 Key，规则同 test_llm_connection
+    // （仅限同一地址，Key 绝不借给别的服务）。
+    let mut api_key = api_key.trim().to_string();
+    if api_key.is_empty() {
+        let wanted = base_url.trim().trim_end_matches('/');
+        if let Some(saved) = cached_desktop_llm_profile(&app, &store)? {
+            if saved.base_url == wanted {
+                api_key = saved.api_key;
+            }
+        }
+    }
     let profile = normalize_llm_profile(DesktopLlmProfile {
         base_url,
         api_key,
         model,
         context_window: None,
         context_window_source: None,
+        fast_model,
+        strong_model,
     })?;
     let path = llm_profile_path(&app)?;
     let confirmed = confirm_llm_profile_change(&app, &profile).await?;
@@ -627,6 +676,16 @@ fn configure_llm_profile(command: &mut Command, profile: Option<&DesktopLlmProfi
         },
     );
     command.env("DEFAULT_MODEL", &profile.model);
+    // 调度三档：均衡档就是主模型；快速 / 强力没配时显式清掉，免得继承到父进程环境里的旧值。
+    command.env("LLM_MODEL_BALANCED", &profile.model);
+    match &profile.fast_model {
+        Some(model) => command.env("LLM_MODEL_CHEAP", model),
+        None => command.env_remove("LLM_MODEL_CHEAP"),
+    };
+    match &profile.strong_model {
+        Some(model) => command.env("LLM_MODEL_POWERFUL", model),
+        None => command.env_remove("LLM_MODEL_POWERFUL"),
+    };
     if let Some(window) = profile.context_window {
         command.env("VORTOCODE_MODEL_CONTEXT_WINDOW", window.to_string());
         command.env(
@@ -3072,6 +3131,8 @@ async fn test_llm_connection(
         model: if model.trim().is_empty() { "-".into() } else { model },
         context_window: None,
         context_window_source: None,
+        fast_model: None,
+        strong_model: None,
     })?;
     let mut request = probe_client()?.get(format!("{}/models", profile.base_url));
     if !profile.api_key.is_empty() {
@@ -3351,6 +3412,8 @@ mod tests {
             model: "mimo-v2.5".into(),
             context_window: None,
             context_window_source: None,
+            fast_model: None,
+            strong_model: None,
         })
         .expect("relay profile");
         assert_eq!(relay.base_url, DEFAULT_LLM_BASE_URL);
@@ -3364,6 +3427,8 @@ mod tests {
             model: "local-model".into(),
             context_window: None,
             context_window_source: None,
+            fast_model: None,
+            strong_model: None,
         })
         .expect("local profile");
         assert_eq!(llm_provider(&local.base_url), "local");
@@ -3374,6 +3439,8 @@ mod tests {
             model: "model".into(),
             context_window: None,
             context_window_source: None,
+            fast_model: None,
+            strong_model: None,
         })
         .is_err());
         assert!(normalize_llm_profile(DesktopLlmProfile {
@@ -3382,6 +3449,8 @@ mod tests {
             model: "model".into(),
             context_window: None,
             context_window_source: None,
+            fast_model: None,
+            strong_model: None,
         })
         .is_err());
     }
@@ -3394,6 +3463,8 @@ mod tests {
             model: "model-1".into(),
             context_window: Some(65_536),
             context_window_source: Some("service".into()),
+            fast_model: None,
+            strong_model: None,
         };
         let mut command = Command::new("vc");
         configure_llm_profile(&mut command, Some(&profile));
@@ -3421,6 +3492,57 @@ mod tests {
                 .and_then(Option::as_deref),
             Some(OsStr::new("65536"))
         );
+        // 没配调度档时显式移除（值为 None），不继承父进程里的旧值。
+        assert_eq!(env.get(OsStr::new("LLM_MODEL_CHEAP")), Some(&None));
+        assert_eq!(env.get(OsStr::new("LLM_MODEL_POWERFUL")), Some(&None));
+        assert_eq!(
+            env.get(OsStr::new("LLM_MODEL_BALANCED"))
+                .and_then(Option::as_deref),
+            Some(OsStr::new("model-1"))
+        );
+
+        let routed = DesktopLlmProfile {
+            fast_model: Some("model-fast".into()),
+            strong_model: Some("model-strong".into()),
+            ..profile
+        };
+        let mut command = Command::new("vc");
+        configure_llm_profile(&mut command, Some(&routed));
+        let env = command
+            .get_envs()
+            .map(|(key, value)| (key.to_owned(), value.map(OsStr::to_owned)))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            env.get(OsStr::new("LLM_MODEL_CHEAP"))
+                .and_then(Option::as_deref),
+            Some(OsStr::new("model-fast"))
+        );
+        assert_eq!(
+            env.get(OsStr::new("LLM_MODEL_POWERFUL"))
+                .and_then(Option::as_deref),
+            Some(OsStr::new("model-strong"))
+        );
+    }
+
+    #[test]
+    fn routing_tier_names_are_trimmed_and_blank_means_unset() {
+        let profile = normalize_llm_profile(DesktopLlmProfile {
+            base_url: "https://models.example.com/v1".into(),
+            api_key: "k".into(),
+            model: "main".into(),
+            context_window: None,
+            context_window_source: None,
+            fast_model: Some("  fast  ".into()),
+            strong_model: Some("   ".into()),
+        })
+        .unwrap();
+        assert_eq!(profile.fast_model.as_deref(), Some("fast"));
+        assert_eq!(profile.strong_model, None);
+        assert!(normalize_llm_profile(DesktopLlmProfile {
+            strong_model: Some("bad\u{7}".into()),
+            ..profile
+        })
+        .is_err());
     }
 
     #[test]
@@ -3463,6 +3585,8 @@ mod tests {
                 model: "model-1".into(),
                 context_window: Some(65_536),
                 context_window_source: Some("configured".into()),
+                fast_model: None,
+                strong_model: None,
             }))
         };
 
@@ -3522,6 +3646,8 @@ mod tests {
             model: "model-2".into(),
             context_window: Some(128_000),
             context_window_source: Some("configured".into()),
+            fast_model: None,
+            strong_model: None,
         };
 
         store.replace(Some(profile)).expect("save cache");
@@ -4807,6 +4933,8 @@ mod tests {
             model: "mimo-v2.5".into(),
             context_window: None,
             context_window_source: None,
+            fast_model: None,
+            strong_model: None,
         }
     }
 
@@ -4939,6 +5067,8 @@ mod tests {
             model: "model-1".into(),
             context_window: Some(65_536),
             context_window_source: Some("configured".into()),
+            fast_model: None,
+            strong_model: None,
         }
     }
 
