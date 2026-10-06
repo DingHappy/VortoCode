@@ -2931,6 +2931,11 @@ pub fn run() {
             set_llm_profile,
             clear_llm_profile,
             confirm_action,
+            test_llm_connection,
+            get_llm_usage,
+            get_user_instructions,
+            set_user_instructions,
+            reveal_desktop_config,
             list_desktop_projects,
             remember_desktop_project,
             remember_remote_project,
@@ -2983,6 +2988,304 @@ pub fn run() {
             };
         }
     });
+}
+
+// ── 设置页补齐：测试连接 / 额度查询 / 全局指令 / 配置文件定位 ─────────────────────────────
+// 出网请求与 discover_model_context_window_with 同口径：只打配置声明的 base_url 本身，限时、
+// 不跟随重定向；Key 不外借——留空时只有与已保存配置同一地址才借用已保存的 Key。
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LlmConnectionTest {
+    ok: bool,
+    status: Option<u16>,
+    model_count: Option<usize>,
+    model_available: Option<bool>,
+    message: String,
+}
+
+fn summarize_models_payload(payload: &serde_json::Value, model: &str) -> (usize, Option<bool>) {
+    let Some(models) = payload.get("data").and_then(serde_json::Value::as_array) else {
+        return (0, None);
+    };
+    let wanted = model.trim();
+    let available = (!wanted.is_empty()).then(|| {
+        models.iter().any(|item| {
+            item.get("id")
+                .or_else(|| item.get("model"))
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|id| id.eq_ignore_ascii_case(wanted))
+        })
+    });
+    (models.len(), available)
+}
+
+fn probe_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(LLM_PROBE_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| format!("无法创建网络客户端：{error}"))
+}
+
+#[tauri::command]
+async fn test_llm_connection(
+    base_url: String,
+    api_key: String,
+    model: String,
+    app: AppHandle,
+    store: State<'_, DesktopLlmProfileStore>,
+) -> Result<LlmConnectionTest, String> {
+    let mut profile = normalize_llm_profile(DesktopLlmProfile {
+        base_url,
+        api_key,
+        model: if model.trim().is_empty() { "-".into() } else { model },
+        context_window: None,
+        context_window_source: None,
+    })?;
+    if profile.api_key.is_empty() {
+        if let Some(saved) = cached_desktop_llm_profile(&app, &store)? {
+            if saved.base_url == profile.base_url {
+                profile.api_key = saved.api_key;
+            }
+        }
+    }
+    let mut request = probe_client()?.get(format!("{}/models", profile.base_url));
+    if !profile.api_key.is_empty() {
+        request = request.bearer_auth(&profile.api_key);
+    }
+    let response = match request.send().await {
+        Ok(response) => response,
+        Err(error) => {
+            return Ok(LlmConnectionTest {
+                ok: false,
+                status: None,
+                model_count: None,
+                model_available: None,
+                message: if error.is_timeout() { "连接超时".into() } else { "无法连接到该地址".into() },
+            })
+        }
+    };
+    let status = response.status();
+    if !status.is_success() {
+        let message = match status.as_u16() {
+            401 | 403 => "API Key 无效或没有权限".to_string(),
+            404 => "该地址不是 OpenAI 兼容接口（/models 不存在）".to_string(),
+            code => format!("服务返回 HTTP {code}"),
+        };
+        return Ok(LlmConnectionTest {
+            ok: false,
+            status: Some(status.as_u16()),
+            model_count: None,
+            model_available: None,
+            message,
+        });
+    }
+    let payload = response.json::<serde_json::Value>().await.unwrap_or_default();
+    let wanted = if profile.model == "-" { "" } else { profile.model.as_str() };
+    let (count, available) = summarize_models_payload(&payload, wanted);
+    let message = match available {
+        Some(false) => format!("连接成功，但服务的 {count} 个模型里没有 {wanted}"),
+        _ => format!("连接成功，服务提供 {count} 个模型"),
+    };
+    Ok(LlmConnectionTest {
+        ok: available != Some(false),
+        status: Some(status.as_u16()),
+        model_count: Some(count),
+        model_available: available,
+        message,
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LlmUsageSummary {
+    available: bool,
+    unlimited: bool,
+    hard_limit_usd: Option<f64>,
+    used_usd: Option<f64>,
+    period_days: u32,
+    message: String,
+}
+
+const USAGE_PERIOD_DAYS: i64 = 7;
+// One API 对"不限额度"的令牌返回一个极大的上限（实测 1e8 美元）。
+const UNLIMITED_QUOTA_USD: f64 = 10_000_000.0;
+
+/// 自 1970-01-01 起的天数 → (年, 月, 日)。公历，Howard Hinnant 的 civil_from_days。
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    (year, month, day)
+}
+
+fn iso_date(days: i64) -> String {
+    let (year, month, day) = civil_from_days(days);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+fn usage_from_billing(subscription: &serde_json::Value, usage: Option<&serde_json::Value>) -> LlmUsageSummary {
+    let hard_limit = subscription
+        .get("hard_limit_usd")
+        .or_else(|| subscription.get("system_hard_limit_usd"))
+        .and_then(serde_json::Value::as_f64);
+    // OpenAI 兼容的 total_usage 单位是美分。
+    let used = usage
+        .and_then(|value| value.get("total_usage"))
+        .and_then(serde_json::Value::as_f64)
+        .map(|cents| cents / 100.0);
+    let unlimited = hard_limit.is_some_and(|limit| limit >= UNLIMITED_QUOTA_USD);
+    LlmUsageSummary {
+        available: hard_limit.is_some() || used.is_some(),
+        unlimited,
+        hard_limit_usd: hard_limit.filter(|_| !unlimited),
+        used_usd: used,
+        period_days: USAGE_PERIOD_DAYS as u32,
+        message: String::new(),
+    }
+}
+
+#[tauri::command]
+async fn get_llm_usage(
+    app: AppHandle,
+    store: State<'_, DesktopLlmProfileStore>,
+) -> Result<LlmUsageSummary, String> {
+    let unavailable = |message: &str| LlmUsageSummary {
+        available: false,
+        unlimited: false,
+        hard_limit_usd: None,
+        used_usd: None,
+        period_days: USAGE_PERIOD_DAYS as u32,
+        message: message.into(),
+    };
+    let Some(profile) = cached_desktop_llm_profile(&app, &store)? else {
+        return Ok(unavailable("还没有配置模型服务"));
+    };
+    if profile.api_key.is_empty() {
+        return Ok(unavailable("当前模型服务未使用 API Key，没有额度信息"));
+    }
+    let client = probe_client()?;
+    let fetch = |path: String| {
+        client
+            .get(format!("{}{}", profile.base_url, path))
+            .bearer_auth(&profile.api_key)
+            .send()
+    };
+    let subscription = match fetch("/dashboard/billing/subscription".into()).await {
+        Ok(response) if response.status().is_success() => {
+            response.json::<serde_json::Value>().await.unwrap_or_default()
+        }
+        Ok(_) => return Ok(unavailable("该服务不提供额度查询")),
+        Err(_) => return Ok(unavailable("暂时无法连接模型服务")),
+    };
+    let today = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("系统时间不可用：{error}"))?
+        .as_secs() as i64
+        / 86_400;
+    let usage = match fetch(format!(
+        "/dashboard/billing/usage?start_date={}&end_date={}",
+        iso_date(today - USAGE_PERIOD_DAYS + 1),
+        iso_date(today + 1)
+    ))
+    .await
+    {
+        Ok(response) if response.status().is_success() => response.json::<serde_json::Value>().await.ok(),
+        _ => None,
+    };
+    let mut summary = usage_from_billing(&subscription, usage.as_ref());
+    if !summary.available {
+        summary.message = "该服务没有返回额度信息".into();
+    }
+    Ok(summary)
+}
+
+const MAX_USER_INSTRUCTIONS_CHARS: usize = 20_000;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UserInstructions {
+    path: String,
+    content: String,
+    exists: bool,
+}
+
+fn user_instructions_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .home_dir()
+        .map(|home| home.join(".vortocode").join("AGENTS.md"))
+        .map_err(|error| format!("无法定位用户目录：{error}"))
+}
+
+// 读写本地文件：移出主线程，原因见 get_llm_profile。
+#[tauri::command(async)]
+fn get_user_instructions(app: AppHandle) -> Result<UserInstructions, String> {
+    let path = user_instructions_path(&app)?;
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => Some(content),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(format!("无法读取全局指令 {}：{error}", path.display())),
+    };
+    Ok(UserInstructions {
+        path: path.display().to_string(),
+        exists: content.is_some(),
+        content: content.unwrap_or_default(),
+    })
+}
+
+#[tauri::command]
+async fn set_user_instructions(app: AppHandle, content: String) -> Result<UserInstructions, String> {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    if content.chars().count() > MAX_USER_INSTRUCTIONS_CHARS {
+        return Err(format!("全局指令过长（上限 {MAX_USER_INSTRUCTIONS_CHARS} 字）"));
+    }
+    let path = user_instructions_path(&app)?;
+    // 全局指令会进之后所有新会话的系统提示，与改模型服务同等敏感：原生确认在 webview 之外。
+    let dialog_app = app.clone();
+    let confirmed = tauri::async_runtime::spawn_blocking(move || {
+        with_main_window_parent(&dialog_app, dialog_app.dialog().message(
+            "保存后，这段全局指令会附加到之后所有新会话（含通用会话与自动化任务）的系统提示里。确认保存？",
+        ))
+        .title("确认保存全局指令")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom("确认保存".into(), "取消".into()))
+        .blocking_show()
+    })
+    .await
+    .map_err(|error| format!("全局指令确认对话框失败：{error}"))?;
+    if !confirmed {
+        return Err("全局指令修改未获确认，已取消".into());
+    }
+    let parent = path.parent().ok_or_else(|| "全局指令路径缺少父目录".to_string())?;
+    create_dir_all(parent).map_err(|error| format!("无法创建 {}：{error}", parent.display()))?;
+    let temporary = parent.join(format!(".AGENTS.md-{}.tmp", std::process::id()));
+    std::fs::write(&temporary, content.as_bytes())
+        .and_then(|_| rename(&temporary, &path))
+        .map_err(|error| format!("无法保存全局指令：{error}"))?;
+    Ok(UserInstructions {
+        path: path.display().to_string(),
+        exists: true,
+        content,
+    })
+}
+
+// 只允许在 Finder 中显示这两个固定文件，不接受任意路径。
+#[tauri::command(async)]
+fn reveal_desktop_config(app: AppHandle, kind: String) -> Result<(), String> {
+    let path = match kind.as_str() {
+        "llmProfile" => llm_profile_path(&app)?,
+        "userInstructions" => user_instructions_path(&app)?,
+        _ => return Err("未知的配置文件".into()),
+    };
+    let target = if path.exists() { path } else { path.parent().map(Path::to_path_buf).unwrap_or(path) };
+    tauri_plugin_opener::reveal_item_in_dir(&target).map_err(|error| format!("无法在 Finder 中显示：{error}"))
 }
 
 #[cfg(test)]
@@ -4655,5 +4958,37 @@ mod tests {
         let error = read_llm_profile_file(&path).err().expect("corrupt file must fail");
         assert!(error.contains("格式有误") && error.contains(LLM_PROFILE_FILE), "{error}");
         let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn models_payload_summary_counts_and_matches_case_insensitively() {
+        let payload = serde_json::json!({"data": [{"id": "mimo-v2.5"}, {"id": "gpt-4o"}]});
+        assert_eq!(summarize_models_payload(&payload, "MiMo-V2.5"), (2, Some(true)));
+        assert_eq!(summarize_models_payload(&payload, "missing"), (2, Some(false)));
+        assert_eq!(summarize_models_payload(&payload, ""), (2, None));
+        assert_eq!(summarize_models_payload(&serde_json::json!({}), "x"), (0, None));
+    }
+
+    #[test]
+    fn civil_dates_match_known_days() {
+        assert_eq!(iso_date(0), "1970-01-01");
+        assert_eq!(iso_date(19_723), "2024-01-01");
+        assert_eq!(iso_date(20_517), "2026-03-05");
+        assert_eq!(iso_date(-1), "1969-12-31");
+    }
+
+    #[test]
+    fn billing_treats_huge_quota_as_unlimited_and_cents_as_dollars() {
+        let unlimited = usage_from_billing(
+            &serde_json::json!({"hard_limit_usd": 100_000_000.0}),
+            Some(&serde_json::json!({"total_usage": 1234.0})),
+        );
+        assert!(unlimited.available && unlimited.unlimited && unlimited.hard_limit_usd.is_none());
+        assert_eq!(unlimited.used_usd, Some(12.34));
+        let limited = usage_from_billing(&serde_json::json!({"hard_limit_usd": 50.0}), None);
+        assert!(limited.available && !limited.unlimited);
+        assert_eq!(limited.hard_limit_usd, Some(50.0));
+        assert_eq!(limited.used_usd, None);
+        assert!(!usage_from_billing(&serde_json::json!({}), None).available);
     }
 }
