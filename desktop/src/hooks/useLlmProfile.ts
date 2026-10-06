@@ -1,9 +1,13 @@
 // 模型服务配置（macOS Keychain；沿用 useJournal 的 hook 模式与三条红线）。
 //
 // 保存/清除后要重启当前 runtime——那是 runtime 域的事，经注入的 onRestartRuntime 调用
-// （返回是否真的重启了，决定提示文案）。打开设置时读一次 Keychain，effect 依赖与迁移前一致。
+// （返回是否真的重启了，决定提示文案）。
+//
+// 启动时读一次，供引导卡显示真实状态；之后每次打开设置再读，刷新表单。只在打开设置时读的话，
+// 没开过设置的引导卡会一直停在"正在检查 Keychain…"。原生层对模型配置有进程内缓存，
+// 启动 runtime 时也读同一份，所以这里不会多出 Keychain 授权。
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { errorText } from "../lib/errorText";
 import { confirmAction } from "../lib/confirm";
@@ -19,9 +23,13 @@ export function useLlmProfile(
   const [llmModelInput, setLlmModelInput] = useState("mimo-v2.5");
   const [llmKeyInput, setLlmKeyInput] = useState("");
   const [llmProfileBusy, setLlmProfileBusy] = useState(false);
+  // 读过一次（成功或失败）。失败时不能让引导卡永远停在"检查中"：显示为待配置，点进设置会重读。
+  const [llmProfileChecked, setLlmProfileChecked] = useState(false);
+  const loadedOnceRef = useRef(false);
 
   useEffect(() => {
-    if (!settingsOpen) return;
+    if (!settingsOpen && loadedOnceRef.current) return;
+    loadedOnceRef.current = true;
     void invoke<DesktopLlmProfileStatus>("get_llm_profile")
       .then((profile) => {
         setLlmProfile(profile);
@@ -29,7 +37,8 @@ export function useLlmProfile(
         setLlmModelInput(profile.model);
         setLlmKeyInput("");
       })
-      .catch((error) => onBanner(error instanceof Error ? error.message : String(error)));
+      .catch((error) => onBanner(error instanceof Error ? error.message : String(error)))
+      .finally(() => setLlmProfileChecked(true));
   }, [onBanner, settingsOpen]);
 
   const saveLlmProfile = async () => {
@@ -71,7 +80,7 @@ export function useLlmProfile(
   };
 
   return {
-    llmProfile, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput, llmKeyInput, setLlmKeyInput,
-    llmProfileBusy, saveLlmProfile, clearLlmProfile,
+    llmProfile, llmProfileChecked, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput,
+    llmKeyInput, setLlmKeyInput, llmProfileBusy, saveLlmProfile, clearLlmProfile,
   };
 }
