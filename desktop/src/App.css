@@ -9149,3 +9149,66 @@ input::placeholder {
   font-size: 12px;
   overflow-wrap: anywhere;
 }
+
+/* 输入框附件：拖入 / 粘贴 / 选择的图片、音频、文本文件 */
+.composer.drag-over {
+  border-color: var(--n9);
+  border-style: dashed;
+  background: var(--n2);
+}
+
+.attachment-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 12px 0;
+}
+
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 220px;
+  height: 36px;
+  padding: 0 6px 0 4px;
+  border: 1px solid var(--n6);
+  border-radius: 9px;
+  color: var(--n11);
+  background: var(--n3);
+  font-size: 12px;
+}
+
+.attachment-chip:not(.image) {
+  padding-left: 10px;
+}
+
+.attachment-chip img {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.attachment-chip em {
+  overflow: hidden;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-chip button {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--n9);
+  background: transparent;
+}
+
+.attachment-chip button:hover {
+  color: var(--n12);
+  background: var(--n5);
+}

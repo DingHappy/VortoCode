@@ -6,8 +6,10 @@ import {
   FileText,
   FolderPlus,
   Inbox,
+  Music,
   Package,
   PanelRight,
+  Paperclip,
   PencilLine,
   Plus,
   Settings2,
@@ -105,6 +107,8 @@ import { finishRunningActivities, hydrateActivities, protocolActivity, upsertAct
 import { errorText } from "./lib/errorText";
 import { runtimeInboxSubtitle, summarizeRuntimeInboxes } from "./lib/runtimeInbox";
 import { confirmAction } from "./lib/confirm";
+import { composeMessageText, mediaPayload } from "./lib/attachments";
+import { useAttachments } from "./hooks/useAttachments";
 
 
 type PendingWorkspaceSave = { rid: string; path: string; content: string; buffer: string };
@@ -288,6 +292,9 @@ function App() {
   const [notificationSyncVersion, setNotificationSyncVersion] = useState(0);
   const [backgroundPrompt, setBackgroundPrompt] = useState("");
   const [banner, setBanner] = useState<string | null>(null);
+  const { attachments, setAttachments, addFiles, removeAttachment } = useAttachments(setBanner);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
   const { tasks, focusedTaskId, worktreeWorkspace, setFocusedTaskId, refreshTasks,
     refreshWorktrees, resetTasks, upsertTask, acceptTaskEvent, captureTaskScope, cancelTask, pauseTask,
     resumeTask } = useTasks(clientRef, setBanner);
@@ -1665,7 +1672,9 @@ function App() {
   ): Promise<boolean> => {
     const text = (override ?? prompt).trim();
     const selectedContext = [...(requestedContext ?? contextItems)].slice(0, 8);
-    if ((!text && selectedContext.length === 0) || savingFile) return false;
+    // 附件只跟随输入框发送；面板一键派发（override）不夹带输入框里的附件。
+    const selectedAttachments = override === undefined ? attachments : [];
+    if ((!text && selectedContext.length === 0 && selectedAttachments.length === 0) || savingFile) return false;
 
     if (connection !== "connected" || !clientRef.current) {
       if (runtimeStartingRef.current || projectSwitchingRef.current) {
@@ -1686,10 +1695,15 @@ function App() {
 
     const client = clientRef.current;
     const willQueue = busy;
-    const displayText = text || "请分析我选择的本地文件。";
+    const displayText = text || (selectedAttachments.length > 0 ? "请查看我添加的附件。" : "请分析我选择的本地文件。");
     const rid = createSessionId().slice(0, 64);
+    const attachmentNote = [
+      ...selectedContext.map(contextItemLabel),
+      ...selectedAttachments.map((item) => item.name),
+    ];
     setPrompt("");
     setContextItems([]);
+    if (selectedAttachments.length > 0) setAttachments([]);
     autoScrollRef.current = true;
     if (!willQueue) {
       setBusy(true);
@@ -1705,14 +1719,15 @@ function App() {
       setMessages((previous) => [...previous, {
         id: messageId("user"),
         role: "user",
-        text: selectedContext.length > 0 ? `${displayText}\n\n📎 ${selectedContext.map(contextItemLabel).join(" · ")}` : displayText,
+        text: attachmentNote.length > 0 ? `${displayText}\n\n📎 ${attachmentNote.join(" · ")}` : displayText,
         rid,
       }]);
     }
     try {
       await client.send({
         type: "agent",
-        text: displayText,
+        text: composeMessageText(displayText, selectedAttachments),
+        ...mediaPayload(selectedAttachments),
         mode: requestedMode,
         context_files: selectedContext.filter((item) => !item.startLine).map((item) => item.path),
         context_selections: selectedContext
@@ -1733,6 +1748,7 @@ function App() {
       }
       setPrompt(text);
       setContextItems(selectedContext);
+      if (selectedAttachments.length > 0) setAttachments(selectedAttachments);
       setBanner(errorText(error, "发送失败"));
       return false;
     }
@@ -2809,7 +2825,36 @@ function App() {
                 </div>
               </section>
             )}
-            <div className={`composer ${runtimeStarting || projectSwitching ? "preparing" : ""}`}>
+            <div
+              className={`composer ${runtimeStarting || projectSwitching ? "preparing" : ""} ${dragOver ? "drag-over" : ""}`}
+              onDragOver={(event) => {
+                if (!event.dataTransfer.types.includes("Files")) return;
+                event.preventDefault();
+                setDragOver(true);
+              }}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOver(false);
+              }}
+              onDrop={(event) => {
+                if (!event.dataTransfer.files.length) return;
+                event.preventDefault();
+                setDragOver(false);
+                void addFiles(event.dataTransfer.files);
+              }}
+            >
+              {attachments.length > 0 && (
+                <div className="attachment-chips">
+                  {attachments.map((item) => (
+                    <span key={item.id} className={`attachment-chip ${item.kind}`} title={item.name}>
+                      {item.kind === "image"
+                        ? <img src={item.data} alt="" />
+                        : item.kind === "audio" ? <Music size={13} /> : <FileText size={13} />}
+                      <em>{item.name}</em>
+                      <button aria-label={`移除附件 ${item.name}`} onClick={() => removeAttachment(item.id)}><X size={12} /></button>
+                    </span>
+                  ))}
+                </div>
+              )}
               {contextItems.length > 0 && (
                 <div className="context-chips">
                   {contextItems.map((item) => (
@@ -2826,6 +2871,12 @@ function App() {
               <textarea
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
+                onPaste={(event) => {
+                  const files = Array.from(event.clipboardData.files);
+                  if (files.length === 0) return;
+                  event.preventDefault();
+                  void addFiles(files);
+                }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
@@ -2842,13 +2893,29 @@ function App() {
                     title="添加项目或文件上下文"
                     onClick={() => activeScope === "general" ? void chooseRepo() : openInspector("files")}
                   ><Plus size={17} /></button>
+                  <button
+                    className="composer-attach"
+                    aria-label="添加附件"
+                    title="添加附件：图片、音频或文本文件，也可以直接拖入或粘贴"
+                    onClick={() => attachmentInputRef.current?.click()}
+                  ><Paperclip size={16} /></button>
+                  <input
+                    ref={attachmentInputRef}
+                    type="file"
+                    multiple
+                    hidden
+                    onChange={(event) => {
+                      if (event.target.files?.length) void addFiles(event.target.files);
+                      event.target.value = "";
+                    }}
+                  />
                   <span>{activeScope === "general"
                     ? busy ? "Enter 加入队列 · 不访问本机文件" : "不访问本机文件"
                     : contextItems.length > 0
                       ? `${contextItems.length} 个源码引用`
                       : busy ? "Enter 加入队列 · Shift+Enter 换行" : mode === "build" ? "可修改 · 变更需审查" : "只读规划"}</span>
                 </div>
-                <button className={`composer-send ${busy ? "queueing" : ""}`} aria-label={busy ? "加入待运行队列" : "发送"} title={busy ? "加入待运行队列" : "发送"} onClick={() => void sendPrompt()} disabled={(!prompt.trim() && contextItems.length === 0) || savingFile || runtimeStarting || projectSwitching}><ArrowUp size={17} /></button>
+                <button className={`composer-send ${busy ? "queueing" : ""}`} aria-label={busy ? "加入待运行队列" : "发送"} title={busy ? "加入待运行队列" : "发送"} onClick={() => void sendPrompt()} disabled={(!prompt.trim() && contextItems.length === 0 && attachments.length === 0) || savingFile || runtimeStarting || projectSwitching}><ArrowUp size={17} /></button>
               </div>
             </div>
           </div>
