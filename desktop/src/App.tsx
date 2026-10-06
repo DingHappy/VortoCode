@@ -33,7 +33,6 @@ import type {
   ConversationMessage,
   DecisionItem,
   DesktopProjectProfile,
-  DesktopLlmProfileStatus,
   DiffPayload,
   GatewayProcessStatus,
   GatewayRecoveryRecord,
@@ -67,8 +66,6 @@ import type {
   WorkspaceFileContent,
   WorkspaceFileList,
   WorkspaceScope,
-  TrustLevel,
-  TrustStatus,
 } from "./types";
 import { DecisionsPanel } from "./components/DecisionsPanel";
 import { SessionConnection } from "./connection/sessionConnection";
@@ -91,7 +88,9 @@ import { useExtensionsStatus } from "./hooks/useExtensionsStatus";
 import { useGoals } from "./hooks/useGoals";
 import { useIsolatedDeliveries } from "./hooks/useIsolatedDeliveries";
 import { useProjectAssets } from "./hooks/useProjectAssets";
+import { useTrustLevel } from "./hooks/useTrustLevel";
 import { useJournal } from "./hooks/useJournal";
+import { useLlmProfile } from "./hooks/useLlmProfile";
 import {
   FIRST_DELIVERY_PROMPT,
   PROJECT_BRIEF_PROMPT,
@@ -181,12 +180,6 @@ function contextItemLabel(item: ContextItem): string {
     : item.path;
 }
 
-const TRUST_LEVEL_TEXT: Record<TrustLevel, string> = {
-  ask: "每次确认",
-  reads: "只读免确认",
-  full: "完全信任",
-};
-
 function App() {
   const clientRef = useRef<GatewayClient | null>(null);
   const sessionConnectionRef = useRef<SessionConnection<GatewayClient> | null>(null);
@@ -229,13 +222,6 @@ function App() {
   const [projects, setProjects] = useState<DesktopProjectProfile[]>([]);
   const [projectSwitching, setProjectSwitching] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [llmProfile, setLlmProfile] = useState<DesktopLlmProfileStatus | null>(null);
-  const [llmBaseInput, setLlmBaseInput] = useState("https://token.vortotech.com/v1");
-  const [llmModelInput, setLlmModelInput] = useState("mimo-v2.5");
-  const [llmKeyInput, setLlmKeyInput] = useState("");
-  const [llmProfileBusy, setLlmProfileBusy] = useState(false);
-  const [trust, setTrust] = useState<TrustStatus | null>(null);
-  const [trustBusy, setTrustBusy] = useState(false);
 
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
@@ -396,6 +382,12 @@ function App() {
     artifactVersions, artifactVersion, artifactPreviewLoading, securedArtifactHtml,
     refreshProjectAssets, loadArtifactPreview, resetProjectAssets,
   } = useProjectAssets(clientRef);
+  // 授权档位与模型服务配置已收进 useTrustLevel / useLlmProfile；重启 runtime 经注入回调。
+  const { trust, trustBusy, changeTrustLevel } = useTrustLevel(clientRef, connection, repoRoot, settingsOpen, setBanner);
+  const {
+    llmProfile, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput, llmKeyInput, setLlmKeyInput,
+    llmProfileBusy, saveLlmProfile, clearLlmProfile,
+  } = useLlmProfile(settingsOpen, setBanner, () => restartCurrentRuntimeForLlmProfile());
   const [workspaceFiles, setWorkspaceFiles] = useState<string[]>([]);
   const [workspaceRoot, setWorkspaceRoot] = useState("");
   const [workspaceTruncated, setWorkspaceTruncated] = useState(false);
@@ -1450,29 +1442,6 @@ function App() {
     void refreshExtensionsInspect();
   }, [activeScope, connection, refreshExtensionsInspect, refreshHookStatus, settingsOpen]);
 
-  // 授权档位跟着工作区走（后端存在 .vortocode/trust.json），所以换项目/重连都要重新拉。
-  useEffect(() => {
-    if (connection !== "connected") {
-      setTrust(null);
-      return;
-    }
-    void clientRef.current?.getTrust()
-      .then(setTrust)
-      .catch(() => setTrust(null));   // 旧 runtime 没有这个接口时静默降级：不显示档位卡
-  }, [connection, repoRoot, settingsOpen]);
-
-  useEffect(() => {
-    if (!settingsOpen) return;
-    void invoke<DesktopLlmProfileStatus>("get_llm_profile")
-      .then((profile) => {
-        setLlmProfile(profile);
-        setLlmBaseInput(profile.baseUrl);
-        setLlmModelInput(profile.model);
-        setLlmKeyInput("");
-      })
-      .catch((error) => setBanner(error instanceof Error ? error.message : String(error)));
-  }, [settingsOpen]);
-
   useEffect(() => {
     if (connection !== "connected") return undefined;
     const timer = window.setInterval(() => void snapshotTodayJournal(), 30_000);
@@ -2294,61 +2263,6 @@ function App() {
       return false;
     } finally {
       supervisionGenerationRef.current += 1;
-    }
-  };
-
-  const changeTrustLevel = async (level: TrustLevel) => {
-    const client = clientRef.current;
-    if (!client || trustBusy || trust?.level === level) return;
-    setTrustBusy(true);
-    try {
-      const next = await client.setTrust(level);
-      setTrust(next);
-      setBanner(next.level === next.effective
-        ? `授权级别已设为「${TRUST_LEVEL_TEXT[next.level]}」`
-        : `已选「${TRUST_LEVEL_TEXT[next.level]}」，当前会话最高到「${TRUST_LEVEL_TEXT[next.effective]}」`);
-    } catch (error) {
-      setBanner(errorText(error, "授权级别保存失败"));
-    } finally {
-      setTrustBusy(false);
-    }
-  };
-
-  const saveLlmProfile = async () => {
-    if (llmProfileBusy || !llmBaseInput.trim() || !llmModelInput.trim()) return;
-    setLlmProfileBusy(true);
-    try {
-      const profile = await invoke<DesktopLlmProfileStatus>("set_llm_profile", {
-        baseUrl: llmBaseInput.trim(),
-        apiKey: llmKeyInput.trim(),
-        model: llmModelInput.trim(),
-      });
-      setLlmProfile(profile);
-      setLlmKeyInput("");
-      const restarted = await restartCurrentRuntimeForLlmProfile();
-      if (restarted) setBanner(`${profile.provider === "vortocode" ? "VortoCode Relay" : profile.provider === "local" ? "本机模型服务" : "自定义模型服务"}已保存到 macOS Keychain，当前 runtime 已重启`);
-    } catch (error) {
-      setBanner(errorText(error, "保存模型服务失败"));
-    } finally {
-      setLlmProfileBusy(false);
-    }
-  };
-
-  const clearLlmProfile = async () => {
-    if (llmProfileBusy || !window.confirm("清除 macOS Keychain 中的模型服务配置？当前 runtime 会重启。")) return;
-    setLlmProfileBusy(true);
-    try {
-      const profile = await invoke<DesktopLlmProfileStatus>("clear_llm_profile");
-      setLlmProfile(profile);
-      setLlmBaseInput(profile.baseUrl);
-      setLlmModelInput(profile.model);
-      setLlmKeyInput("");
-      const restarted = await restartCurrentRuntimeForLlmProfile();
-      if (restarted) setBanner("模型服务配置已清除；需要对话时可随时重新设置");
-    } catch (error) {
-      setBanner(errorText(error, "清除模型服务失败"));
-    } finally {
-      setLlmProfileBusy(false);
     }
   };
 
