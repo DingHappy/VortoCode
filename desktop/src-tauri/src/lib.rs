@@ -41,6 +41,25 @@ struct DesktopLlmProfile {
     /// 用户自己添加的其他供应商（各带各的 Key）；聊天里以 `id:模型` 选用。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     providers: Vec<DesktopLlmProvider>,
+    /// 经账号登录得到的中转站 Key 时，记下是谁、Key 从哪来（不含密码/会话）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    account: Option<DesktopAccount>,
+    /// 已退出登录：默认服务没有 Key、不注入 runtime，但保留自定义供应商。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    signed_out: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopAccount {
+    username: String,
+    display_name: String,
+    /// "token_plan" = 账号的 Token Plan Key；"pay_as_you_go" = 桌面端建的按量 Key。
+    key_source: String,
+    #[serde(default)]
+    plan_name: Option<String>,
+    #[serde(default)]
+    plan_expiry: Option<i64>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -80,6 +99,8 @@ struct DesktopLlmProfileStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     strong_model: Option<String>,
     providers: Vec<DesktopLlmProviderStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    account: Option<DesktopAccount>,
     /// 本机配置文件位置；设置页显示它，方便用户直接编辑。
     #[serde(skip_serializing_if = "Option::is_none")]
     config_path: Option<String>,
@@ -149,6 +170,8 @@ fn default_llm_profile() -> DesktopLlmProfile {
         fast_model: None,
         strong_model: None,
         providers: Vec::new(),
+        account: None,
+        signed_out: false,
     }
 }
 
@@ -212,7 +235,7 @@ fn normalize_llm_profile(mut profile: DesktopLlmProfile) -> Result<DesktopLlmPro
     if parsed.scheme() != "https" && !(parsed.scheme() == "http" && local) {
         return Err("远程模型服务必须使用 HTTPS；HTTP 仅允许 127.0.0.1 / localhost".into());
     }
-    if !local && profile.api_key.is_empty() {
+    if !local && profile.api_key.is_empty() && !profile.signed_out {
         return Err("远程模型服务需要 API Key".into());
     }
     Ok(profile)
@@ -649,7 +672,8 @@ fn desktop_llm_profile_status(profile: Option<&DesktopLlmProfile>) -> DesktopLlm
     let fallback = default_llm_profile();
     let profile = profile.unwrap_or(&fallback);
     DesktopLlmProfileStatus {
-        configured: profile.api_key.len() > 0 || llm_provider(&profile.base_url) == "local",
+        configured: !profile.signed_out
+            && (profile.api_key.len() > 0 || llm_provider(&profile.base_url) == "local"),
         base_url: profile.base_url.clone(),
         model: profile.model.clone(),
         provider: llm_provider(&profile.base_url).into(),
@@ -672,6 +696,7 @@ fn desktop_llm_profile_status(profile: Option<&DesktopLlmProfile>) -> DesktopLlm
                 has_key: !provider.api_key.is_empty(),
             })
             .collect(),
+        account: profile.account.clone(),
         config_path: None,
     }
 }
@@ -784,6 +809,8 @@ async fn set_llm_profile(
         strong_model,
         // 改默认模型服务时保留已添加的其他供应商（它们各带各的 Key，与默认服务无关）。
         providers: saved.map(|saved| saved.providers).unwrap_or_default(),
+        account: None,
+        signed_out: false,
     })?;
     let path = llm_profile_path(&app)?;
     let confirmed = confirm_llm_profile_change(&app, &profile).await?;
@@ -810,6 +837,15 @@ fn configure_llm_profile(command: &mut Command, profile: Option<&DesktopLlmProfi
     let Some(profile) = profile else {
         return;
     };
+    if profile.signed_out {
+        // 退出登录后默认服务不可用；自定义供应商仍各用各的 Key。
+        for provider in &profile.providers {
+            let id = provider.id.to_uppercase();
+            command.env(format!("VORTOCODE_PROVIDER_{id}_BASE"), &provider.base_url);
+            command.env(format!("VORTOCODE_PROVIDER_{id}_KEY"), &provider.api_key);
+        }
+        return;
+    }
     command.env("OPENAI_API_BASE", &profile.base_url);
     command.env(
         "OPENAI_API_KEY",
@@ -3153,6 +3189,8 @@ pub fn run() {
             save_llm_provider,
             remove_llm_provider,
             refresh_llm_providers,
+            relay_login,
+            relay_logout,
             reveal_desktop_config,
             list_desktop_projects,
             remember_desktop_project,
@@ -3300,6 +3338,8 @@ fn normalize_llm_provider(mut provider: DesktopLlmProvider) -> Result<DesktopLlm
         fast_model: None,
         strong_model: None,
         providers: Vec::new(),
+        account: None,
+        signed_out: false,
     })?;
     provider.base_url = checked.base_url;
     provider.api_key = checked.api_key;
@@ -3436,6 +3476,251 @@ async fn refresh_llm_providers(
     persist_profile(&app, &store, profile)
 }
 
+const RELAY_ORIGIN: &str = "https://token.vortotech.com";
+const RELAY_PLAN_URL: &str = "https://token.vortotech.com/panel/plan";
+const DESKTOP_TOKEN_NAME: &str = "VortoCode Desktop";
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RelayLoginOutcome {
+    /// 登录并保存成功后的模型配置；需要先选套餐时为 None。
+    status: Option<DesktopLlmProfileStatus>,
+    /// 账号还没有 Token Plan：界面让用户去购买，或明确选择改用按量 Key。
+    needs_plan: bool,
+    plan_url: String,
+    message: String,
+}
+
+/// 只认 One API 的 `{success, message, data}` 外壳；success=false 时把服务端原话带回去。
+fn relay_data(payload: serde_json::Value, failure: &str) -> Result<serde_json::Value, String> {
+    if payload.get("success").and_then(serde_json::Value::as_bool) == Some(true) {
+        return Ok(payload.get("data").cloned().unwrap_or(serde_json::Value::Null));
+    }
+    let message = payload
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .filter(|message| !message.trim().is_empty())
+        .unwrap_or(failure);
+    Err(message.chars().take(200).collect())
+}
+
+/// 从 Token Plan Key 列表里挑一把启用中的（托管的那把排在最前）。
+fn pick_plan_key(data: &serde_json::Value) -> Option<String> {
+    data.as_array()?
+        .iter()
+        .find(|item| item.get("status").and_then(serde_json::Value::as_i64) == Some(1))
+        .and_then(|item| item.get("key").and_then(serde_json::Value::as_str))
+        .filter(|key| !key.trim().is_empty())
+        .map(str::to_string)
+}
+
+/// 在令牌搜索结果里找桌面端自己建的那把按量 Key（同名、启用、非套餐）。
+fn pick_desktop_token(data: &serde_json::Value) -> Option<String> {
+    data.as_array()?
+        .iter()
+        .find(|item| {
+            item.get("name").and_then(serde_json::Value::as_str) == Some(DESKTOP_TOKEN_NAME)
+                && item.get("status").and_then(serde_json::Value::as_i64) == Some(1)
+                && item.get("billing_type").and_then(serde_json::Value::as_str) != Some("token_plan")
+        })
+        .and_then(|item| item.get("key").and_then(serde_json::Value::as_str))
+        .filter(|key| !key.trim().is_empty())
+        .map(str::to_string)
+}
+
+fn with_sk_prefix(key: &str) -> String {
+    if key.starts_with("sk-") {
+        key.to_string()
+    } else {
+        format!("sk-{key}")
+    }
+}
+
+/// 用 VortoCode 中转站账号登录，取用账号的 Token Plan Key（Desktop 套餐即 Token Plan）。
+/// 没有套餐时默认不建 Key，交给用户决定；`allow_pay_as_you_go` 为真才建/复用一把按量 Key。
+/// 只连固定的中转站地址；密码和登录会话只在本次调用里用，结束即登出，不落盘。
+#[tauri::command]
+async fn relay_login(
+    app: AppHandle,
+    username: String,
+    password: String,
+    allow_pay_as_you_go: bool,
+    store: State<'_, DesktopLlmProfileStore>,
+) -> Result<RelayLoginOutcome, String> {
+    let username = username.trim().to_string();
+    if username.is_empty() || password.is_empty() || username.len() > 64 || password.len() > 256 {
+        return Err("请输入用户名和密码".into());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| format!("无法创建网络客户端：{error}"))?;
+    let unreachable = |error: reqwest::Error| {
+        if error.is_timeout() { "连接中转站超时".to_string() } else { "无法连接中转站".to_string() }
+    };
+    let login = client
+        .post(format!("{RELAY_ORIGIN}/api/user/login"))
+        .json(&serde_json::json!({ "username": username, "password": password }))
+        .send()
+        .await
+        .map_err(unreachable)?;
+    let cookie = login
+        .headers()
+        .get_all(reqwest::header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .filter_map(|value| value.split(';').next())
+        .map(str::trim)
+        .filter(|pair| pair.contains('='))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let user = relay_data(login.json().await.unwrap_or_default(), "登录失败")?;
+    if cookie.is_empty() {
+        return Err("中转站没有返回登录会话".into());
+    }
+    let get = |path: &str| {
+        client
+            .get(format!("{RELAY_ORIGIN}{path}"))
+            .header(reqwest::header::COOKIE, cookie.clone())
+    };
+
+    let plan_keys = relay_data(
+        get("/api/subscription/key").send().await.map_err(unreachable)?.json().await.unwrap_or_default(),
+        "读取套餐 Key 失败",
+    )?;
+    let (key, key_source) = match pick_plan_key(&plan_keys) {
+        Some(key) => (key, "token_plan"),
+        None if !allow_pay_as_you_go => {
+            let _ = get("/api/user/logout").send().await;
+            return Ok(RelayLoginOutcome {
+                status: None,
+                needs_plan: true,
+                plan_url: RELAY_PLAN_URL.into(),
+                message: "这个账号还没有 Token Plan（Desktop 套餐）".into(),
+            });
+        }
+        None => {
+            let found = relay_data(
+                get(&format!("/api/token/search?keyword={}", DESKTOP_TOKEN_NAME.replace(' ', "%20")))
+                    .send()
+                    .await
+                    .map_err(unreachable)?
+                    .json()
+                    .await
+                    .unwrap_or_default(),
+                "读取令牌失败",
+            )?;
+            let key = match pick_desktop_token(&found) {
+                Some(key) => key,
+                None => {
+                    let created = relay_data(
+                        client
+                            .post(format!("{RELAY_ORIGIN}/api/token/"))
+                            .header(reqwest::header::COOKIE, cookie.clone())
+                            .json(&serde_json::json!({
+                                "name": DESKTOP_TOKEN_NAME,
+                                "expired_time": -1,
+                                "unlimited_quota": true,
+                                "remain_quota": 0,
+                            }))
+                            .send()
+                            .await
+                            .map_err(unreachable)?
+                            .json()
+                            .await
+                            .unwrap_or_default(),
+                        "创建按量 Key 失败",
+                    )?;
+                    created
+                        .get("key")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                        .ok_or_else(|| "中转站没有返回新 Key".to_string())?
+                }
+            };
+            (key, "pay_as_you_go")
+        }
+    };
+
+    // 套餐名称和到期时间只用于展示；读不到不影响登录。
+    let subscription = match get("/api/subscription/self").send().await {
+        Ok(response) => response.json::<serde_json::Value>().await.unwrap_or_default(),
+        Err(_) => serde_json::Value::Null,
+    };
+    let active = subscription.get("data").and_then(|data| data.get("active")).cloned().unwrap_or_default();
+    let _ = get("/api/user/logout").send().await;
+
+    let saved = cached_desktop_llm_profile(&app, &store)?;
+    let base_url = format!("{RELAY_ORIGIN}/v1");
+    let same_base = saved.as_ref().is_some_and(|saved| saved.base_url == base_url);
+    let profile = normalize_llm_profile(DesktopLlmProfile {
+        base_url,
+        api_key: with_sk_prefix(&key),
+        model: saved
+            .as_ref()
+            .filter(|_| same_base)
+            .map(|saved| saved.model.clone())
+            .unwrap_or_else(|| DEFAULT_LLM_MODEL.into()),
+        context_window: None,
+        context_window_source: None,
+        fast_model: saved.as_ref().filter(|_| same_base).and_then(|saved| saved.fast_model.clone()),
+        strong_model: saved.as_ref().filter(|_| same_base).and_then(|saved| saved.strong_model.clone()),
+        providers: saved.map(|saved| saved.providers).unwrap_or_default(),
+        account: Some(DesktopAccount {
+            username: user
+                .get("username")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(&username)
+                .to_string(),
+            display_name: user
+                .get("display_name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            key_source: key_source.into(),
+            plan_name: active.get("plan_name").and_then(serde_json::Value::as_str).map(str::to_string),
+            plan_expiry: active.get("expiry_time").and_then(serde_json::Value::as_i64),
+        }),
+        signed_out: false,
+    })?;
+    let profile = save_llm_profile_flow(profile, true, LLM_PROBE_TIMEOUT, |profile| {
+        save_llm_profile_file(&llm_profile_path(&app)?, profile)
+    })
+    .await?;
+    store.replace(Some(profile.clone()))?;
+    Ok(RelayLoginOutcome {
+        status: Some(with_config_path(desktop_llm_profile_status(Some(&profile)), &app)),
+        needs_plan: false,
+        plan_url: RELAY_PLAN_URL.into(),
+        message: if key_source == "token_plan" {
+            "已登录，正在使用 Token Plan".into()
+        } else {
+            "已登录，正在使用按量 Key".into()
+        },
+    })
+}
+
+/// 退出登录：删掉本机保存的中转站 Key 和账号信息，保留自定义供应商。
+#[tauri::command(async)]
+fn relay_logout(
+    app: AppHandle,
+    store: State<'_, DesktopLlmProfileStore>,
+) -> Result<DesktopLlmProfileStatus, String> {
+    let Some(mut profile) = cached_desktop_llm_profile(&app, &store)? else {
+        return Ok(with_config_path(desktop_llm_profile_status(None), &app));
+    };
+    if profile.providers.is_empty() {
+        delete_llm_profile_file(&llm_profile_path(&app)?)?;
+        store.replace(None)?;
+        return Ok(with_config_path(desktop_llm_profile_status(None), &app));
+    }
+    profile.api_key.clear();
+    profile.account = None;
+    profile.signed_out = true;
+    persist_profile(&app, &store, profile)
+}
+
 #[tauri::command]
 async fn test_llm_connection(
     base_url: String,
@@ -3464,6 +3749,8 @@ async fn test_llm_connection(
         fast_model: None,
         strong_model: None,
         providers: Vec::new(),
+        account: None,
+        signed_out: false,
     })?;
     let mut request = probe_client()?.get(format!("{}/models", profile.base_url));
     if !profile.api_key.is_empty() {
@@ -3746,6 +4033,8 @@ mod tests {
             fast_model: None,
             strong_model: None,
             providers: Vec::new(),
+            account: None,
+            signed_out: false,
         })
         .expect("relay profile");
         assert_eq!(relay.base_url, DEFAULT_LLM_BASE_URL);
@@ -3762,6 +4051,8 @@ mod tests {
             fast_model: None,
             strong_model: None,
             providers: Vec::new(),
+            account: None,
+            signed_out: false,
         })
         .expect("local profile");
         assert_eq!(llm_provider(&local.base_url), "local");
@@ -3775,6 +4066,8 @@ mod tests {
             fast_model: None,
             strong_model: None,
             providers: Vec::new(),
+            account: None,
+            signed_out: false,
         })
         .is_err());
         assert!(normalize_llm_profile(DesktopLlmProfile {
@@ -3786,6 +4079,8 @@ mod tests {
             fast_model: None,
             strong_model: None,
             providers: Vec::new(),
+            account: None,
+            signed_out: false,
         })
         .is_err());
     }
@@ -3801,6 +4096,8 @@ mod tests {
             fast_model: None,
             strong_model: None,
             providers: Vec::new(),
+            account: None,
+            signed_out: false,
         };
         let mut command = Command::new("vc");
         configure_llm_profile(&mut command, Some(&profile));
@@ -3841,6 +4138,8 @@ mod tests {
             fast_model: Some("model-fast".into()),
             strong_model: Some("model-strong".into()),
             providers: Vec::new(),
+            account: None,
+            signed_out: false,
             ..profile
         };
         let mut command = Command::new("vc");
@@ -3922,6 +4221,8 @@ mod tests {
             fast_model: None,
             strong_model: None,
             providers: vec![normalize_llm_provider(sample_provider("deepseek")).unwrap()],
+            account: None,
+            signed_out: false,
         };
         let mut command = Command::new("vc");
         configure_llm_profile(&mut command, Some(&profile));
@@ -3942,6 +4243,56 @@ mod tests {
     }
 
     #[test]
+    fn relay_login_helpers_pick_the_right_keys() {
+        let plan = serde_json::json!([
+            {"key": "paused", "status": 2},
+            {"key": "plan-key", "status": 1, "managed": true}
+        ]);
+        assert_eq!(pick_plan_key(&plan).as_deref(), Some("plan-key"));
+        assert_eq!(pick_plan_key(&serde_json::json!([])), None);
+        let tokens = serde_json::json!([
+            {"name": "VortoCode Desktop", "key": "plan", "status": 1, "billing_type": "token_plan"},
+            {"name": "VortoCode Desktop", "key": "off", "status": 2, "billing_type": "pay_as_you_go"},
+            {"name": "VortoCode Desktop 2", "key": "other", "status": 1, "billing_type": "pay_as_you_go"},
+            {"name": "VortoCode Desktop", "key": "mine", "status": 1, "billing_type": "pay_as_you_go"}
+        ]);
+        assert_eq!(pick_desktop_token(&tokens).as_deref(), Some("mine"));
+        assert_eq!(with_sk_prefix("abc"), "sk-abc");
+        assert_eq!(with_sk_prefix("sk-abc"), "sk-abc");
+        assert_eq!(
+            relay_data(serde_json::json!({"success": false, "message": "用户名或密码错误"}), "登录失败"),
+            Err("用户名或密码错误".to_string())
+        );
+        assert_eq!(relay_data(serde_json::json!({"success": true, "data": 1}), "x"), Ok(serde_json::json!(1)));
+    }
+
+    #[test]
+    fn signed_out_profile_keeps_providers_but_drops_the_default_key() {
+        let profile = normalize_llm_profile(DesktopLlmProfile {
+            base_url: "https://token.vortotech.com/v1".into(),
+            api_key: String::new(),
+            model: "mimo".into(),
+            context_window: None,
+            context_window_source: None,
+            fast_model: None,
+            strong_model: None,
+            providers: vec![normalize_llm_provider(sample_provider("deepseek")).unwrap()],
+            account: None,
+            signed_out: true,
+        })
+        .expect("signed-out profiles are allowed without a key");
+        assert!(!desktop_llm_profile_status(Some(&profile)).configured);
+        let mut command = Command::new("vc");
+        configure_llm_profile(&mut command, Some(&profile));
+        let names = command
+            .get_envs()
+            .map(|(key, _)| key.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"VORTOCODE_PROVIDER_DEEPSEEK_KEY".to_string()));
+        assert!(!names.contains(&"OPENAI_API_KEY".to_string()));
+    }
+
+    #[test]
     fn routing_tier_names_are_trimmed_and_blank_means_unset() {
         let profile = normalize_llm_profile(DesktopLlmProfile {
             base_url: "https://models.example.com/v1".into(),
@@ -3952,6 +4303,8 @@ mod tests {
             fast_model: Some("  fast  ".into()),
             strong_model: Some("   ".into()),
             providers: Vec::new(),
+            account: None,
+            signed_out: false,
         })
         .unwrap();
         assert_eq!(profile.fast_model.as_deref(), Some("fast"));
@@ -3959,6 +4312,8 @@ mod tests {
         assert!(normalize_llm_profile(DesktopLlmProfile {
             strong_model: Some("bad\u{7}".into()),
             providers: Vec::new(),
+            account: None,
+            signed_out: false,
             ..profile
         })
         .is_err());
@@ -4007,6 +4362,8 @@ mod tests {
                 fast_model: None,
                 strong_model: None,
                 providers: Vec::new(),
+                account: None,
+                signed_out: false,
             }))
         };
 
@@ -4069,6 +4426,8 @@ mod tests {
             fast_model: None,
             strong_model: None,
             providers: Vec::new(),
+            account: None,
+            signed_out: false,
         };
 
         store.replace(Some(profile)).expect("save cache");
@@ -5357,6 +5716,8 @@ mod tests {
             fast_model: None,
             strong_model: None,
             providers: Vec::new(),
+            account: None,
+            signed_out: false,
         }
     }
 
@@ -5492,6 +5853,8 @@ mod tests {
             fast_model: None,
             strong_model: None,
             providers: Vec::new(),
+            account: None,
+            signed_out: false,
         }
     }
 
