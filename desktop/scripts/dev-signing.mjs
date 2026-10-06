@@ -109,6 +109,12 @@ function selectIdentity() {
     }
     return match;
   }
+  // Prefer a single Developer ID Application identity over the local self-signed default.
+  // Keychain partition lists only match a stable "teamid:" for Apple-issued certificates;
+  // a self-signed certificate has no Team ID, so each rebuild gets a new cdhash partition
+  // and macOS asks for Keychain access again after every reinstall.
+  const developerIds = identities.filter((identity) => identity.name.startsWith("Developer ID Application:"));
+  if (developerIds.length === 1) return developerIds[0];
   const localDefault = identityNamed(defaultDevelopmentIdentity);
   if (localDefault) return localDefault;
   if (identities.length === 1) return identities[0];

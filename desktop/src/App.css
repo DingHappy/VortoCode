@@ -6249,7 +6249,7 @@ button.worktree-live:not(:disabled):hover {
   }
 }
 
-/* Native model-service profile stored in macOS Keychain. */
+/* Native model-service profile stored in the local llm-profile.json. */
 .llm-profile-card {
   display: grid;
   gap: 11px;

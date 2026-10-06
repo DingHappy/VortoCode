@@ -127,7 +127,7 @@ export function SettingsModal({
                 ? llmProfile.provider === "vortocode" ? "VortoCode Relay 已配置" : llmProfile.provider === "local" ? "本机模型已配置" : "自定义服务已配置"
                 : "先配置模型，才能开始对话"}</strong>
             </div>
-            <i>{llmProfile?.configured ? "Keychain" : "需要设置"}</i>
+            <i>{llmProfile?.configured ? "本机配置" : "需要设置"}</i>
           </div>
           <div className="llm-profile-presets" aria-label="模型服务快捷设置">
             <button
@@ -153,7 +153,7 @@ export function SettingsModal({
               <input value={llmModelInput} onChange={(event) => onLlmModelChange(event.target.value)} placeholder="服务中实际可用的模型名" />
             </label>
             <label>
-              <span>API Key <em>{llmInputIsLocal ? "本机服务可留空" : "只写入 macOS Keychain"}</em></span>
+              <span>API Key <em>{llmInputIsLocal ? "本机服务可留空" : "保存在本机配置文件，仅你的账户可读"}</em></span>
               <input
                 type="password"
                 value={llmKeyInput}
@@ -169,6 +169,9 @@ export function SettingsModal({
             <em>{contextWindowSourceLabel(llmProfile?.contextWindowSource)}</em>
           </div>
           <p className="llm-profile-note">远程服务必须使用 HTTPS；本机 HTTP 仅允许 127.0.0.1 / localhost。保存后只重启当前 runtime，其他后台项目在下次启动时采用新配置。</p>
+          {llmProfile?.configPath && (
+            <p className="llm-profile-note">配置文件：<code>{llmProfile.configPath}</code>（也可直接编辑，重启 Desktop 后生效）</p>
+          )}
           <div className="llm-profile-actions">
             {llmProfile?.configured && <button onClick={() => void onClearLlmProfile()} disabled={llmProfileBusy}>清除配置</button>}
             <button

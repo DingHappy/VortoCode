@@ -27,7 +27,7 @@ Desktop 是 VortoCode 当前默认产品与首要分发面；CLI 是高级/自�
 7. **Desktop 是控制面**：项目切走不等于任务停止；跨项目 Inbox 只聚合各 Gateway 的权威有界快照，
    不在 React 里重新推导业务状态，也不把项目 token 持久化到浏览器存储。
 8. **模型服务可替换**：VortoCode Relay 是快捷默认值而不是产品锁定；用户可在 Desktop 内切换任意
-   OpenAI 兼容 HTTPS 网关或本机回环服务。LLM Key 只进入 macOS Keychain 与子 runtime 环境。
+   OpenAI 兼容 HTTPS 网关或本机回环服务。LLM Key 只进入本机配置文件 `llm-profile.json`（权限 600）与子 runtime 环境。
 
 ## 竞品借鉴矩阵
 
@@ -104,7 +104,7 @@ Desktop 是 VortoCode 当前默认产品与首要分发面；CLI 是高级/自�
 | Worktree 任务 | REST：任务暂停/恢复、worktree/plan 快照 | 展示计划块、任务血缘与交接摘要 |
 | 决策与审计 | REST：`/api/decisions`、`/api/audit` | WS 确认仍走冻结协议；工具参数默认脱敏，不持久化结果正文 |
 | 跨项目 Inbox | REST：每个本机 Gateway 的 `/api/runtime-inbox` | Desktop 每 4 秒并行读取一次有界快照；失联按 runtime 降级，点击后切到权威项目/会话处理 |
-| 模型服务配置 | Tauri 原生命令 + macOS Keychain | Relay/自定义/本机预设；保存时校验 URL/模型/Key，并只重启当前 runtime 注入环境 |
+| 模型服务配置 | Tauri 原生命令 + 本机 `llm-profile.json` | Relay/自定义/本机预设；保存时校验 URL/模型/Key，并只重启当前 runtime 注入环境 |
 | Journal | REST：读取、快照、历史日期、7 天聚合、恢复对账和手工记录 | 从审计、Goal 证据、任务交接与运行台账确定性生成；历史快照冻结，旧动作必须与当前决策队列对账 |
 | 通知 | REST + Tauri notification plugin | `notice`；系统投递仅在用户显式授权后开启，正文只使用通用计数提示 |
 | 项目资产 | REST：`/api/repo-memory`、`/api/artifacts`、版本与 raw | 仓库记忆读取投影先脱敏，追加必须显式确认并过 `MemoryWritePolicy`；Artifact 内置预览禁脚本/交互/外联，迭代通过 `@artifact:<id>` 回到 Agent |

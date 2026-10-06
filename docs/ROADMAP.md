@@ -80,7 +80,7 @@ Project Control Center 第二阶段的 Runtime Supervisor 已落地：Tauri 原�
 - [x] Project Control Center 第一阶段：原生最近项目、按项目会话、Git 工作区校验与安全切换
 - [x] Runtime Supervisor 第一阶段：多项目/多 Scratch 常驻、精确启动复用与停止、项目级恢复/日志、后台状态和切回续接
 - [x] Desktop 跨项目 Inbox：Gateway 权威有界快照、失败隔离、内存凭据、全局通知去重与项目/会话/Goal/任务跳转
-- [x] Desktop 模型服务快捷配置：VortoCode Relay、自定义 OpenAI 兼容与本机服务预设，macOS Keychain 保存，当前 runtime 安全重启生效
+- [x] Desktop 模型服务快捷配置：VortoCode Relay、自定义 OpenAI 兼容与本机服务预设，本机配置文件保存（2026-10-06 起由 macOS Keychain 改为 `llm-profile.json`，避免重装后反复授权），当前 runtime 安全重启生效
 - [x] General / Scratch / Project 会话范围：默认无目录、结构化升级请求、隔离临时目录与 Agent/REST 双层权限边界
 - [x] 项目资产工作台第一阶段：仓库记忆安全投影/确认写入、Artifact 列表、版本选择、静态隔离预览与 Agent 迭代入口
 - [x] 多 runtime 崩溃恢复、macOS `.app`/`.dmg` 开发者预览打包与真实 bundle GUI smoke

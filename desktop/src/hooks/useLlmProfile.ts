@@ -1,11 +1,11 @@
-// 模型服务配置（macOS Keychain；沿用 useJournal 的 hook 模式与三条红线）。
+// 模型服务配置（本机配置文件 llm-profile.json；沿用 useJournal 的 hook 模式与三条红线）。
 //
 // 保存/清除后要重启当前 runtime——那是 runtime 域的事，经注入的 onRestartRuntime 调用
 // （返回是否真的重启了，决定提示文案）。
 //
 // 启动时读一次，供引导卡显示真实状态；之后每次打开设置再读，刷新表单。只在打开设置时读的话，
-// 没开过设置的引导卡会一直停在"正在检查 Keychain…"。原生层对模型配置有进程内缓存，
-// 启动 runtime 时也读同一份，所以这里不会多出 Keychain 授权。
+// 没开过设置的引导卡会一直停在"检查中"。原生层对模型配置有进程内缓存，启动 runtime 时也读
+// 同一份，所以这里不会多读一次文件。
 import { invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState } from "react";
 
@@ -53,7 +53,7 @@ export function useLlmProfile(
       setLlmProfile(profile);
       setLlmKeyInput("");
       const restarted = await onRestartRuntime();
-      if (restarted) onBanner(`${profile.provider === "vortocode" ? "VortoCode Relay" : profile.provider === "local" ? "本机模型服务" : "自定义模型服务"}已保存到 macOS Keychain，当前 runtime 已重启`);
+      if (restarted) onBanner(`${profile.provider === "vortocode" ? "VortoCode Relay" : profile.provider === "local" ? "本机模型服务" : "自定义模型服务"}已保存到本机配置文件，当前 runtime 已重启`);
     } catch (error) {
       onBanner(errorText(error, "保存模型服务失败"));
     } finally {
@@ -62,7 +62,7 @@ export function useLlmProfile(
   };
 
   const clearLlmProfile = async () => {
-    if (llmProfileBusy || !await confirmAction("清除 macOS Keychain 中的模型服务配置？当前 runtime 会重启。")) return;
+    if (llmProfileBusy || !await confirmAction("清除本机保存的模型服务配置？当前 runtime 会重启。")) return;
     setLlmProfileBusy(true);
     try {
       const profile = await invoke<DesktopLlmProfileStatus>("clear_llm_profile");
