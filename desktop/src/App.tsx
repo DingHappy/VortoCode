@@ -3283,6 +3283,7 @@ function App() {
           onLlmModelChange={setLlmModelInput}
           onLlmFastChange={setLlmFastInput}
           onLlmStrongChange={setLlmStrongInput}
+          onRestartRuntime={restartCurrentRuntimeForLlmProfile}
           onLlmKeyChange={setLlmKeyInput}
           onSaveLlmProfile={saveLlmProfile}
           onClearLlmProfile={clearLlmProfile}
