@@ -1519,8 +1519,27 @@ async fn confirm_action(app: AppHandle, message: String) -> Result<bool, String>
 }
 
 #[tauri::command]
-fn list_desktop_projects(app: AppHandle) -> Result<Vec<DesktopProjectProfile>, String> {
-    Ok(load_project_registry(&project_registry_path(&app)?)?.projects)
+fn list_desktop_projects(app: AppHandle) -> Result<Vec<DesktopProjectListing>, String> {
+    Ok(load_project_registry(&project_registry_path(&app)?)?
+        .projects
+        .into_iter()
+        .map(project_listing)
+        .collect())
+}
+
+/// 列表里额外带上「本机目录还在不在」：被清理的临时目录、移走的仓库不该在启动时被反复恢复。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopProjectListing {
+    #[serde(flatten)]
+    profile: DesktopProjectProfile,
+    missing: bool,
+}
+
+fn project_listing(profile: DesktopProjectProfile) -> DesktopProjectListing {
+    // 远端项目的路径在服务器上，本机检查不了，一律当作在。
+    let missing = profile.kind != "remote" && !Path::new(&profile.repo_root).is_dir();
+    DesktopProjectListing { profile, missing }
 }
 
 #[tauri::command]
@@ -3172,6 +3191,20 @@ pub fn run() {
             if webview.label() == "main" && matches!(payload.event(), PageLoadEvent::Finished) {
                 present_main_window(webview.app_handle());
             }
+        })
+        // 窗口在配置里默认隐藏，等页面加载完才显示（否则启动时先闪一下白窗口，真机 2026-10-06）。
+        // 兜底：页面万一没加载成功，几秒后也把窗口显示出来，绝不能让 App 看起来没打开。
+        .setup(|app| {
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(4)).await;
+                if let Some(window) = handle.get_webview_window("main") {
+                    if !window.is_visible().unwrap_or(true) {
+                        present_main_window(&handle);
+                    }
+                }
+            });
+            Ok(())
         })
         .manage(GatewayProcess::default())
         .manage(DesktopLlmProfileStore::default())

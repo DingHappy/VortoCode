@@ -1243,6 +1243,8 @@ export interface DesktopProjectProfile {
   repoRoot: string;
   baseUrl: string;
   lastOpenedAt: number;
+  /** 本机目录已不存在（被删除或移走）；只在列表里出现，远端项目恒为 false。 */
+  missing?: boolean;
 }
 
 export interface RepoMemorySnapshot {

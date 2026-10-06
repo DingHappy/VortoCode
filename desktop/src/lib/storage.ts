@@ -41,11 +41,13 @@ export function persistNotifiedDecisionIds(ids: Set<string>): void {
 }
 
 /** 启动时该恢复哪个项目：记过 id 且该项目仍在注册表里才恢复，否则回通用会话（返回 null）。 */
-export function projectToRestore<T extends { id: string }>(
+export function projectToRestore<T extends { id: string; missing?: boolean }>(
   projects: readonly T[],
   lastProjectId: string | null,
 ): T | null {
   const wanted = (lastProjectId ?? "").trim();
   if (!wanted) return null;
-  return projects.find((project) => project.id === wanted) ?? null;
+  const project = projects.find((candidate) => candidate.id === wanted);
+  // 目录已不存在的项目不去恢复：每次启动都失败一遍、再弹一次提示，只会拖慢启动。
+  return project && !project.missing ? project : null;
 }

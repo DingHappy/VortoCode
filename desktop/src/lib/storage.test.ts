@@ -118,6 +118,10 @@ describe("projectToRestore", () => {
     expect(projectToRestore(projects, "   ")).toBeNull();
   });
 
+  it("项目目录已不存在时不去恢复（真机 2026-10-06：临时目录被清理后每次启动都失败一遍）", () => {
+    expect(projectToRestore([{ id: "b2", name: "gone", missing: true }], "b2")).toBeNull();
+  });
+
   it("项目已从注册表移除时不硬拽回去", () => {
     expect(projectToRestore(projects, "removed-id")).toBeNull();
     expect(projectToRestore([], "b2")).toBeNull();

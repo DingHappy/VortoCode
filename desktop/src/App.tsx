@@ -6,6 +6,7 @@ import {
   Cpu,
   FileText,
   FolderPlus,
+  LoaderCircle,
   Music,
   Package,
   PanelRight,
@@ -1533,12 +1534,23 @@ function App() {
   useEffect(() => {
     if (projectRestoreDoneRef.current) return;
     if (connection !== "connected" || activeScope !== "general") return;
-    const target = projectToRestore(projects, localStorage.getItem(STORAGE_KEYS.lastProjectId));
-    if (!target) return;
+    const lastProjectId = localStorage.getItem(STORAGE_KEYS.lastProjectId);
+    const target = projectToRestore(projects, lastProjectId);
+    if (!target) {
+      // 记着的项目目录已不存在：清掉这条记录，以后启动不再白白尝试。
+      if (lastProjectId && projects.some((project) => project.id === lastProjectId && project.missing)) {
+        try { localStorage.removeItem(STORAGE_KEYS.lastProjectId); } catch { /* 存储不可用时下次再清 */ }
+      }
+      return;
+    }
     projectRestoreDoneRef.current = true;
     void (async () => {
       const restored = await switchProject(target).catch(() => false);
-      if (!restored) setBanner(`未能回到上次的项目「${target.name}」，已留在通用会话`);
+      if (!restored) {
+        // 只提示一次：恢复失败就不再记着它，下次启动直接留在通用会话。
+        try { localStorage.removeItem(STORAGE_KEYS.lastProjectId); } catch { /* 同上 */ }
+        setBanner(`未能回到上次的项目「${target.name}」，已留在通用会话`);
+      }
     })();
   }, [connection, activeScope, projects, runtimeRecoveries, switchProject]);
 
@@ -2572,12 +2584,14 @@ function App() {
               const managedRunning = Boolean(managedRuntime?.running);
               const recovery = runtimeRecoveries.find((item) => item.projectId === project.id);
               const connected = active && connection === "connected";
-              const health = managedRunning && !active ? "后台运行中" : managedRunning ? "本地引擎运行中" : connected ? "工作区就绪" : recovery?.status === "crashed" ? "上次异常退出 · 点击恢复" : recovery?.status === "running" ? "可重新附着" : active ? connectionText : "未启动";
+              const health = project.missing ? "目录已不存在 · 可移除" : managedRunning && !active ? "后台运行中" : managedRunning ? "本地引擎运行中" : connected ? "工作区就绪" : recovery?.status === "crashed" ? "上次异常退出 · 点击恢复" : recovery?.status === "running" ? "可重新附着" : active ? connectionText : "未启动";
               return (
                 <div
-                  className={`project-row ${active ? "active" : ""} ${managedRunning || connected ? "healthy" : ""} ${!managedRunning && recovery?.status === "crashed" ? "attention" : ""}`}
+                  className={`project-row ${active ? "active" : ""} ${managedRunning || connected ? "healthy" : ""} ${!managedRunning && recovery?.status === "crashed" ? "attention" : ""} ${project.missing ? "missing" : ""}`}
                   key={project.id}
-                  onClick={() => void switchProject(project)}
+                  onClick={() => project.missing
+                    ? setBanner(`项目目录已不存在：${project.repoRoot}。可以点右侧 × 把它从列表移除`)
+                    : void switchProject(project)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") void switchProject(project);
                   }}
@@ -2781,7 +2795,11 @@ function App() {
           >
             {messages.length === 0 && !streaming && (
               <div className="home-greeting">
-                <h1>有什么可以帮你？</h1>
+                {/* 冷启动要等本地引擎起来（约数秒）；这期间别摆出一个看着能用、其实还没连上的首页，
+                    连上后再切到上次的会话也就不显得突兀（真机 2026-10-06）。 */}
+                {connection !== "connected" && (runtimeStarting || connection === "connecting")
+                  ? <h1 className="home-starting"><LoaderCircle className="activity-spinner" size={20} />正在启动本地引擎…</h1>
+                  : <h1>有什么可以帮你？</h1>}
                 {llmProfileChecked && !llmProfile?.configured && (
                   <p>还没有配置模型服务。<button onClick={() => { setSettingsSection("account"); setSettingsOpen(true); }}>登录或填写 Key</button></p>
                 )}
