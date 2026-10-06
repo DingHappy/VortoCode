@@ -224,7 +224,7 @@ Relay 控制台：<https://token.vortotech.com>；API Base 使用下方的 `/v1`
 ```bash
 # 默认使用 VortoCode Relay，提供国产大模型基础；只需要填你的 relay key
 OPENAI_API_BASE=https://token.vortotech.com/v1
-DEFAULT_MODEL=mimo-v2.5
+DEFAULT_MODEL=mimo-v2.6-pro
 OPENAI_API_KEY=your-vortocode-relay-key
 
 # 如果使用 OpenAI 官方接口，可改成：

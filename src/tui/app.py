@@ -130,7 +130,7 @@ def _model_name() -> str:
         return LLMConfig().model
     except Exception:  # noqa: BLE001 —— 兜底：拿不到就退回 env 取法
         import os
-        return os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "mimo-v2.5"
+        return os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "mimo-v2.6-pro"
 
 # 终端转义/控制序列清洗。为支持中文输入关掉了 kitty 协议后，修饰键（如 Shift+Enter）的
 # CSI 序列会漏进输入框：既弄脏显示，其中的 ESC 控制符发到中转站还会让 API 因"非法字符"报错
@@ -1170,7 +1170,7 @@ class VortoCodeTUI(TUICommandsMixin, App):
         self._sb["pr"], self._sb["pr_branch"] = pr, branch
         self.call_from_thread(self._render_statusbar)
 
-    _COMMON_MODELS = ["mimo-v2.5", "mimo-v2.5-pro", "mimo-v2-pro", "mimo-v2-omni",
+    _COMMON_MODELS = ["mimo-v2.6-pro", "mimo-v2.5", "mimo-v2.5-pro", "mimo-v2-pro", "mimo-v2-omni",
                       "mimo-v2.5-asr", "mimo-v2.5-tts"]
 
     async def _fetch_available_models(self):

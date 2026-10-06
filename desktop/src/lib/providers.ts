@@ -9,7 +9,7 @@ export interface ProviderPreset {
 }
 
 export const PROVIDER_PRESETS: ProviderPreset[] = [
-  { id: "vortocode", label: "VortoCode Relay", baseUrl: "https://token.vortotech.com/v1", model: "mimo-v2.5", requiresKey: true },
+  { id: "vortocode", label: "VortoCode Relay", baseUrl: "https://token.vortotech.com/v1", model: "mimo-v2.6-pro", requiresKey: true },
   { id: "openai", label: "OpenAI", baseUrl: "https://api.openai.com/v1", model: "", requiresKey: true },
   { id: "deepseek", label: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat", requiresKey: true },
   { id: "kimi", label: "Kimi", baseUrl: "https://api.moonshot.cn/v1", model: "", requiresKey: true },

@@ -21,7 +21,7 @@ const GENERAL_SCOPE: &str = "general";
 const SCRATCH_SCOPE: &str = "scratch";
 const PROJECT_SCOPE: &str = "project";
 const DEFAULT_LLM_BASE_URL: &str = "https://token.vortotech.com/v1";
-const DEFAULT_LLM_MODEL: &str = "mimo-v2.5";
+const DEFAULT_LLM_MODEL: &str = "mimo-v2.6-pro";
 
 #[derive(Clone, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -165,8 +165,9 @@ fn default_llm_profile() -> DesktopLlmProfile {
         base_url: DEFAULT_LLM_BASE_URL.into(),
         api_key: String::new(),
         model: DEFAULT_LLM_MODEL.into(),
-        context_window: Some(1_000_000),
-        context_window_source: Some("catalog".into()),
+        // 默认模型的窗口只在官方资料有把握时填；没有就留空，保存时向服务探测。
+        context_window: official_model_context_window(DEFAULT_LLM_MODEL),
+        context_window_source: official_model_context_window(DEFAULT_LLM_MODEL).map(|_| "catalog".into()),
         fast_model: None,
         strong_model: None,
         providers: Vec::new(),

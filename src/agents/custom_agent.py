@@ -68,7 +68,7 @@ class CustomAgentConfig(BaseModel):
     system_prompt: str = ""
     capabilities: List[AgentCapability] = Field(default_factory=list)
     tools: List[ToolPermission] = Field(default_factory=list)
-    model: str = "mimo-v2.5"
+    model: str = "mimo-v2.6-pro"
     temperature: float = 0.7
     max_tokens: int = 4096
     created_at: datetime = Field(default_factory=datetime.now)
@@ -284,7 +284,7 @@ class CustomAgentManager:
         system_prompt: str = "",
         capabilities: List[AgentCapability] = None,
         tools: List[str] = None,
-        model: str = "mimo-v2.5"
+        model: str = "mimo-v2.6-pro"
     ) -> CustomAgentConfig:
         """创建自定义 Agent"""
         # 创建工具权限

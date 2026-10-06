@@ -26,7 +26,7 @@ except ImportError:
 
 
 # 模型分级配置（可通过环境变量覆盖）
-_DEFAULT_CHAT_MODEL = os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "mimo-v2.5"
+_DEFAULT_CHAT_MODEL = os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "mimo-v2.6-pro"
 MODELS: Dict[str, Dict[str, str]] = {
     "cheap": {
         "model": os.getenv("LLM_MODEL_CHEAP", _DEFAULT_CHAT_MODEL),
@@ -463,7 +463,7 @@ class LLMConfig(BaseModel):
     base_url: str = Field(default_factory=lambda: os.getenv("OPENAI_API_BASE", DEFAULT_LLM_BASE_URL))
     api_key: str = ""
     # 默认模型读 .env 的 DEFAULT_MODEL/OPENAI_MODEL；没有配置时走 VortoCode Relay 的默认国产模型。
-    model: str = Field(default_factory=lambda: os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "mimo-v2.5")
+    model: str = Field(default_factory=lambda: os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "mimo-v2.6-pro")
     # 主模型不支持图片时，把"看图"外包给它。空 = 关闭外包（撞到图片直接如实报错）。
     # 真机 2026-07-27：mimo-v2.5-pro 无视觉（404 No endpoints found that support image input），
     # 而 mimo-v2.5 能准确读图——同一中转站里就有互补的能力，没有理由让整条链路因此瘫掉。
