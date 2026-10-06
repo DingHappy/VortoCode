@@ -13,6 +13,8 @@ export const STORAGE_KEYS = {
   projectSessionPrefix: "vortocode.desktop.projectSid:",
   // 上次停在哪个项目：重启后回到那里，而不是一律丢回通用会话（真机 2026-09-17）。
   lastProjectId: "vortocode.desktop.lastProjectId",
+  // 外观：跟随系统 / 浅色 / 深色。只影响本机显示，属于每台机器自己的偏好。
+  theme: "vortocode.desktop.theme",
 } as const;
 
 // 每个项目一个会话 id，key 由项目 id 拼出前缀。

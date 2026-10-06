@@ -47,6 +47,7 @@ describe("STORAGE_KEYS", () => {
       notifiedDecisions: "vortocode.desktop.notifiedDecisions",
       projectSessionPrefix: "vortocode.desktop.projectSid:",
       lastProjectId: "vortocode.desktop.lastProjectId",
+      theme: "vortocode.desktop.theme",
     });
   });
 });
