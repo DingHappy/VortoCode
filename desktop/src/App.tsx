@@ -1188,7 +1188,9 @@ function App() {
         setRecoveryRecord(record);
         setRuntimeRecoveries(recoveries);
 
-        const sid = localStorage.getItem(STORAGE_KEYS.generalSid) ?? activeSid;
+        // 每次打开都从一个新对话开始；之前的会话都在左侧「最近」里，点一下就能回去。
+        // 空会话不会落盘，所以不会在列表里越积越多。
+        const sid = createSessionId();
         localStorage.setItem(STORAGE_KEYS.generalSid, sid);
         localStorage.setItem(STORAGE_KEYS.sid, sid);
         localStorage.removeItem(STORAGE_KEYS.repoRoot);
@@ -1439,7 +1441,7 @@ function App() {
     decisionNotificationSyncingRef.current = false;
   };
 
-  const switchProject = async (project: DesktopProjectProfile): Promise<boolean> => {
+  const switchProject = async (project: DesktopProjectProfile, options: { fresh?: boolean } = {}): Promise<boolean> => {
     if (projectSwitchingRef.current) return false;
     if (project.repoRoot === repoRoot.trim()) {
       setBaseUrl(project.baseUrl);
@@ -1472,7 +1474,8 @@ function App() {
     try {
       await disconnect();
       clearProjectView();
-      const sid = localStorage.getItem(projectSessionKey(project.id)) ?? createSessionId();
+      // fresh：启动时回到项目也从新对话开始（上次的会话仍在「最近」里）。
+      const sid = (options.fresh ? null : localStorage.getItem(projectSessionKey(project.id))) ?? createSessionId();
       setActiveSid(sid);
       setRepoRoot(project.repoRoot);
       setBaseUrl(project.baseUrl);
@@ -1545,7 +1548,7 @@ function App() {
     }
     projectRestoreDoneRef.current = true;
     void (async () => {
-      const restored = await switchProject(target).catch(() => false);
+      const restored = await switchProject(target, { fresh: true }).catch(() => false);
       if (!restored) {
         // 只提示一次：恢复失败就不再记着它，下次启动直接留在通用会话。
         try { localStorage.removeItem(STORAGE_KEYS.lastProjectId); } catch { /* 同上 */ }
