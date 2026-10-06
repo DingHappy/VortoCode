@@ -57,6 +57,7 @@ dev = [
     "pytest-cov>=4.0.0",
     # 门禁并行（ci-local.sh 用 -n auto --dist loadfile）。没装也能跑，脚本会自动退回串行。
     "pytest-xdist>=3.5.0",
+    "httpx>=0.27",         # FastAPI TestClient 与任务协作 HTTP 契约测试直接用；不声明则 CI 的 unit-core 缺包
     "black>=23.0.0",
     "ruff>=0.1.0",
     "mypy>=1.8",
