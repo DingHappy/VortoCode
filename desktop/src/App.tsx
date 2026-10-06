@@ -109,6 +109,8 @@ import { runtimeInboxSubtitle, summarizeRuntimeInboxes } from "./lib/runtimeInbo
 import { confirmAction } from "./lib/confirm";
 import { composeMessageText, mediaPayload } from "./lib/attachments";
 import { useAttachments } from "./hooks/useAttachments";
+import { latestTurnSteps, previewReferences, publishedArtifactId, type PreviewView } from "./lib/preview";
+import { PreviewPanel } from "./components/PreviewPanel";
 
 
 type PendingWorkspaceSave = { rid: string; path: string; content: string; buffer: string };
@@ -142,6 +144,7 @@ function normalizePromptQueueItem(value: unknown, fallbackPosition = 0): PromptQ
 function inspectorTabLabel(tab: InspectorTab): string {
   return {
     inbox: "收件箱",
+    preview: "预览",
     files: "代码",
     diff: "变更",
     runs: "运行",
@@ -208,6 +211,11 @@ function App() {
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [plan, setPlan] = useState<PlanItem[]>([]);
   const [activities, setActivities] = useState<TurnActivity[]>([]);
+  const [previewView, setPreviewView] = useState<PreviewView>("plan");
+  // 刚发布的制品：协议回调里只记下来，由 effect 带着当前作用域去刷新并定位（避免回调闭包里的旧 scope）。
+  const [publishedArtifact, setPublishedArtifact] = useState<{ id: string; seq: number } | null>(null);
+  const previewReferenceItems = useMemo(() => previewReferences(activities), [activities]);
+  const previewSteps = useMemo(() => latestTurnSteps(activities), [activities]);
   const [streaming, setStreaming] = useState("");
   const [streamingRid, setStreamingRid] = useState<string | undefined>();
   const [activeTurnRid, setActiveTurnRid] = useState<string | null>(null);
@@ -776,6 +784,12 @@ function App() {
         case "agent_hook": {
           const activity = protocolActivity(event);
           if (activity) setActivities((previous) => upsertActivity(previous, activity));
+          const publishedId = event.type === "agent_tool" ? publishedArtifactId(event) : null;
+          if (publishedId) {
+            setPreviewView("artifacts");
+            setPublishedArtifact((previous) => ({ id: publishedId, seq: (previous?.seq ?? 0) + 1 }));
+            autoOpenInspector("preview");
+          }
           if (event.type === "agent_tool" && event.name === "dev_isolated" && event.status === "succeeded") {
             autoOpenInspector("diff");
             void refreshIsolatedDeliveries();
@@ -1284,6 +1298,18 @@ function App() {
     const timer = window.setInterval(() => void refreshSessions(), 2_500);
     return () => window.clearInterval(timer);
   }, [connection, refreshSessions]);
+
+  const handledPublishRef = useRef(0);
+  useEffect(() => {
+    if (!publishedArtifact || connection !== "connected" || publishedArtifact.seq === handledPublishRef.current) return;
+    handledPublishRef.current = publishedArtifact.seq;
+    const { id } = publishedArtifact;
+    void refreshProjectAssets(activeScope !== "general").then(() => {
+      setSelectedArtifactId(id);
+      // 同一 id 的新版本不会改变 selectedArtifactId，这里显式重载预览到最新版。
+      void loadArtifactPreview(id);
+    });
+  }, [activeScope, connection, loadArtifactPreview, publishedArtifact, refreshProjectAssets, setSelectedArtifactId]);
 
   useEffect(() => {
     if (connection !== "connected" || !selectedArtifactId) return;
@@ -2929,6 +2955,7 @@ function App() {
           </div>
           <div className="inspector-tabs">
             <button className={tabClass("inbox")} onClick={() => openInspector("inbox")}>收件箱<small>{runtimeInboxSummary.actionable}</small></button>
+            <button className={tabClass("preview")} onClick={() => openInspector("preview")}>预览<small>{artifacts.length + previewReferenceItems.length}</small></button>
             {activeScope !== "general" && <button className={tabClass("files")} onClick={() => openInspector("files")}>代码<small>{filteredWorkspaceFiles.length}</small></button>}
             {activeScope !== "general" && <button className={tabClass("diff")} onClick={() => { setTaskReviewTask(null); setTaskBranchReview(null); setTaskBranchDiff(null); setTaskBranchSelectedPath(""); openInspector("diff"); void refreshGitReview(); void refreshPrDelivery(); void refreshIsolatedDeliveries(); }}>变更<small>{(gitReview?.files.length ?? 0) + isolatedDeliveries.length}</small></button>}
             {activeScope !== "general" && <button className={tabClass("runs")} onClick={() => openInspector("runs")}>运行<small>{activeRuns.length}</small></button>}
@@ -3106,6 +3133,29 @@ function App() {
                   onVerify: verifyReviewedTaskBranch, onOpenPr: (item) => openTaskPr(item.id),
                   onCollaboration: draftTaskCollaboration, getClient: () => clientRef.current,
                   onDispatchUpdated: () => void refreshTasks() }}
+              />
+            )}
+            {inspectorTab === "preview" && (
+              <PreviewPanel
+                view={previewView}
+                onSelectView={(view) => {
+                  setPreviewView(view);
+                  if (view === "artifacts" && artifacts.length === 0) void refreshProjectAssets(activeScope !== "general");
+                }}
+                plan={plan}
+                steps={previewSteps}
+                busy={busy}
+                artifacts={artifacts}
+                selectedArtifact={selectedArtifact}
+                artifactVersion={artifactVersion}
+                artifactVersions={artifactVersions}
+                artifactPreviewLoading={artifactPreviewLoading}
+                securedArtifactHtml={securedArtifactHtml}
+                onSelectArtifact={setSelectedArtifactId}
+                onSelectVersion={(id, version) => void loadArtifactPreview(id, version)}
+                onOpenArtifact={openSelectedArtifact}
+                references={previewReferenceItems}
+                onOpenReference={(url) => void openUrl(url).catch((error) => setBanner(errorText(error, "打开链接失败")))}
               />
             )}
             {inspectorTab === "project" && (

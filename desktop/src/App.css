@@ -9212,3 +9212,244 @@ input::placeholder {
   color: var(--n12);
   background: var(--n5);
 }
+
+/* 右侧「预览」：任务清单 / 产物 / 参考 */
+.preview-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 100%;
+}
+
+.preview-switch {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2px;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--n3);
+}
+
+.preview-switch button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--n10);
+  background: transparent;
+  font-size: 12px;
+}
+
+.preview-switch button small {
+  color: var(--n9);
+  font-size: 10px;
+}
+
+.preview-switch button.active {
+  color: var(--n13);
+  background: var(--n0);
+  box-shadow: 0 1px 2px rgba(var(--ink-rgb), 0.08);
+}
+
+.preview-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.preview-section > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--n12);
+  font-size: 13px;
+}
+
+.preview-section > header span {
+  color: var(--n9);
+  font-size: 12px;
+}
+
+.preview-progress {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--n4);
+}
+
+.preview-progress i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--n11);
+  transition: width 0.25s ease;
+}
+
+.preview-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.preview-steps li {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  color: var(--n11);
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
+.preview-steps li svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--n8);
+}
+
+.preview-steps li span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.preview-steps li.in_progress,
+.preview-steps li.running {
+  color: var(--n13);
+  background: var(--n3);
+}
+
+.preview-steps li.in_progress svg,
+.preview-steps li.running svg {
+  color: var(--n12);
+}
+
+.preview-steps li.completed,
+.preview-steps li.succeeded {
+  color: var(--n9);
+}
+
+.preview-steps li.completed svg,
+.preview-steps li.succeeded svg {
+  color: var(--green-text);
+}
+
+.preview-steps li.failed svg,
+.preview-steps li.blocked svg {
+  color: var(--red-text);
+}
+
+.preview-artifact {
+  flex: 1;
+}
+
+.preview-artifact > header select {
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--n6);
+  border-radius: 7px;
+  color: var(--n12);
+  background: var(--n0);
+  font-size: 12px;
+}
+
+.preview-artifact > header select:first-child {
+  flex: 1;
+}
+
+.preview-artifact > header button {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--n6);
+  border-radius: 7px;
+  color: var(--n10);
+  background: var(--n0);
+}
+
+.preview-frame {
+  display: grid;
+  flex: 1;
+  min-height: 360px;
+  overflow: hidden;
+  place-items: center;
+  border: 1px solid var(--n5);
+  border-radius: 12px;
+  color: var(--n9);
+  background: #fff;
+  font-size: 12px;
+}
+
+.preview-frame iframe {
+  width: 100%;
+  height: 100%;
+  min-height: 360px;
+  border: 0;
+}
+
+.preview-references {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.preview-references li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--n5);
+  border-radius: 9px;
+  color: var(--n11);
+  background: var(--n1);
+  font-size: 12px;
+}
+
+.preview-references li svg {
+  flex: none;
+  color: var(--n9);
+}
+
+.preview-references li button,
+.preview-references li span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: none;
+  font-size: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.preview-references li button:hover {
+  color: var(--n13);
+  text-decoration: underline;
+}
+
+.preview-references li small {
+  flex: none;
+  color: var(--red-text);
+  font-size: 10px;
+}
+
+.preview-references li.failed {
+  opacity: 0.7;
+}
