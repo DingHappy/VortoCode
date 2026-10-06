@@ -799,6 +799,12 @@ async fn set_llm_profile(
             }
         }
     }
+    // 地址和 Key 都没变（只改了模型名 / 调度档）时保留登录信息；换了 Key 或地址就不再是账号给的那把了。
+    let wanted_base = base_url.trim().trim_end_matches('/').to_string();
+    let account = saved
+        .as_ref()
+        .filter(|saved| saved.base_url == wanted_base && saved.api_key == api_key)
+        .and_then(|saved| saved.account.clone());
     let profile = normalize_llm_profile(DesktopLlmProfile {
         base_url,
         api_key,
@@ -809,7 +815,7 @@ async fn set_llm_profile(
         strong_model,
         // 改默认模型服务时保留已添加的其他供应商（它们各带各的 Key，与默认服务无关）。
         providers: saved.map(|saved| saved.providers).unwrap_or_default(),
-        account: None,
+        account,
         signed_out: false,
     })?;
     let path = llm_profile_path(&app)?;

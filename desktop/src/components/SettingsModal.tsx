@@ -234,8 +234,14 @@ export function SettingsModal({
                 ? llmProfile.provider === "vortocode" ? "VortoCode Relay 已配置" : llmProfile.provider === "local" ? "本机模型已配置" : "自定义服务已配置"
                 : "先配置模型，才能开始对话"}</strong>
             </div>
-            <i>{llmProfile?.configured ? "本机配置" : "需要设置"}</i>
+            <i>{llmProfile?.account ? "账号登录" : llmProfile?.configured ? "本机配置" : "需要设置"}</i>
           </div>
+          {llmProfile?.account && (
+            <p className="llm-account-note">
+              当前通过账号 {llmProfile.account.displayName || llmProfile.account.username} 登录，使用{llmProfile.account.keySource === "token_plan" ? " Token Plan" : "按量 Key"}。
+              在下面改服务地址或填新 Key 会替换掉它；要换账号请到<button onClick={() => setSection("account")}>账号</button>。
+            </p>
+          )}
           <div className="llm-profile-presets" aria-label="模型服务快捷设置">
             {PROVIDER_PRESETS.map((preset) => (
               <button
@@ -315,7 +321,7 @@ export function SettingsModal({
             onOpenModelSettings={() => setSection("model")}
           />
         )}
-        {section === "usage" && <UsagePane />}
+        {section === "usage" && <UsagePane account={llmProfile?.account} />}
         {section === "personalize" && <PersonalizePane />}
         {section === "config" && <ConfigPane llmProfilePath={llmProfile?.configPath} />}
 
