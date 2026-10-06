@@ -35,7 +35,6 @@ import type {
   DesktopProjectProfile,
   DesktopLlmProfileStatus,
   DiffPayload,
-  ExtensionsInspectSnapshot,
   GatewayProcessStatus,
   GatewayRecoveryRecord,
   GitReviewAction,
@@ -46,11 +45,7 @@ import type {
   GitReviewScope,
   GitReviewSnapshot,
   GoalItem,
-  HookConfigStatus,
   JournalNextAction,
-  IsolatedDelivery,
-  IsolatedDeliverySnapshot,
-  IsolatedDeliveryDiff,
   NoticeItem,
   OpenWorkspaceFileResult,
   PendingConfirmation,
@@ -92,7 +87,9 @@ import { RunsPanel } from "./components/RunsPanel";
 import { SettingsModal } from "./components/SettingsModal";
 import { TurnTimeline } from "./components/TurnTimeline";
 import { WelcomeGuide } from "./components/WelcomeGuide";
+import { useExtensionsStatus } from "./hooks/useExtensionsStatus";
 import { useGoals } from "./hooks/useGoals";
+import { useIsolatedDeliveries } from "./hooks/useIsolatedDeliveries";
 import { useProjectAssets } from "./hooks/useProjectAssets";
 import { useJournal } from "./hooks/useJournal";
 import {
@@ -303,13 +300,12 @@ function App() {
     tabsNeedingAttention.has(tab) ? "attention" : "",
   ].filter(Boolean).join(" "), [inspectorTab, tabsNeedingAttention]);
   const [diffPayload, setDiffPayload] = useState<DiffPayload | null>(null);
-  const [isolatedDeliveries, setIsolatedDeliveries] = useState<IsolatedDelivery[]>([]);
-  const [isolatedDelivery, setIsolatedDelivery] = useState<IsolatedDeliverySnapshot | null>(null);
-  const [isolatedDeliveryDiff, setIsolatedDeliveryDiff] = useState<IsolatedDeliveryDiff | null>(null);
-  const [isolatedDeliveryPath, setIsolatedDeliveryPath] = useState("");
-  const [isolatedDeliveryError, setIsolatedDeliveryError] = useState("");
-  const [isolatedDeliveryLoading, setIsolatedDeliveryLoading] = useState(false);
-  const isolatedDeliveryRequestRef = useRef(0);
+  // 对话式隔离交付的审查视图已收进 useIsolatedDeliveries（hooks/useIsolatedDeliveries.ts）。
+  const {
+    isolatedDeliveries, isolatedDelivery, isolatedDeliveryDiff, isolatedDeliveryPath,
+    isolatedDeliveryError, isolatedDeliveryLoading,
+    refreshIsolatedDeliveries, openIsolatedDelivery, loadIsolatedDeliveryDiff, resetIsolatedDeliveries,
+  } = useIsolatedDeliveries(clientRef);
   const [gitReview, setGitReview] = useState<GitReviewSnapshot | null>(null);
   const [gitReviewDiff, setGitReviewDiff] = useState<GitReviewDiff | null>(null);
   const [gitSelectedPath, setGitSelectedPath] = useState("");
@@ -341,11 +337,12 @@ function App() {
   const [prCheckLogs, setPrCheckLogs] = useState<Record<string, PrDeliveryCheckLog>>({});
   const [runs, setRuns] = useState<CommandRunItem[]>([]);
   const [notices, setNotices] = useState<NoticeItem[]>([]);
-  const [hookStatus, setHookStatus] = useState<HookConfigStatus | null>(null);
-  const [hookTrustBusy, setHookTrustBusy] = useState(false);
-  const [extensionsInspect, setExtensionsInspect] = useState<ExtensionsInspectSnapshot | null>(null);
-  const [extensionsInspectBusy, setExtensionsInspectBusy] = useState(false);
-  // extensionsInspectFilter（类型筛选 tab）是纯本地 UI 态，已下移到 <ExtensionsInspector> 自持。
+  // Hook 信任 + 扩展清单已收进 useExtensionsStatus；跨域的 toggleHookTrust 留在 App。
+  const {
+    hookStatus, setHookStatus, hookTrustBusy, setHookTrustBusy,
+    extensionsInspect, extensionsInspectBusy,
+    refreshHookStatus, refreshExtensionsInspect,
+  } = useExtensionsStatus(clientRef);
   const [decisions, setDecisions] = useState<DecisionItem[]>([]);
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
   // auditFilter（审计类别筛选）是纯本地 UI 态，已下移到 <DecisionsPanel> 自持。
@@ -685,69 +682,6 @@ function App() {
     }
   }, [gitReviewScope, gitSelectedPath]);
 
-  const refreshIsolatedDeliveries = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
-    const generation = ++isolatedDeliveryRequestRef.current;
-    setIsolatedDelivery(null);
-    setIsolatedDeliveryDiff(null);
-    setIsolatedDeliveryPath("");
-    setIsolatedDeliveries([]);
-    setIsolatedDeliveryLoading(true);
-    try {
-      const deliveries = await client.listIsolatedDeliveries();
-      if (generation === isolatedDeliveryRequestRef.current && clientRef.current === client) {
-        setIsolatedDeliveries(deliveries);
-        setIsolatedDeliveryError("");
-      }
-    } catch (error) {
-      if (generation === isolatedDeliveryRequestRef.current && clientRef.current === client) {
-        setIsolatedDeliveryError(errorText(error, "读取隔离交付失败"));
-      }
-    } finally {
-      if (generation === isolatedDeliveryRequestRef.current) setIsolatedDeliveryLoading(false);
-    }
-  }, []);
-
-  const openIsolatedDelivery = async (id: string, preferredPath = "") => {
-    const client = clientRef.current;
-    if (!client) return;
-    const generation = ++isolatedDeliveryRequestRef.current;
-    setIsolatedDeliveryError("");
-    setIsolatedDelivery(null);
-    setIsolatedDeliveryDiff(null);
-    try {
-      const snapshot = await client.getIsolatedDelivery(id);
-      if (generation !== isolatedDeliveryRequestRef.current) return;
-      setIsolatedDelivery(snapshot);
-      const path = snapshot.files.find((file) => file.path === preferredPath)?.path ?? snapshot.files[0]?.path ?? "";
-      setIsolatedDeliveryPath(path);
-      if (path) {
-        const diff = await client.getIsolatedDeliveryDiff(id, path);
-        if (generation === isolatedDeliveryRequestRef.current) setIsolatedDeliveryDiff(diff);
-      }
-    } catch (error) {
-      if (generation === isolatedDeliveryRequestRef.current) setIsolatedDeliveryError(errorText(error, "读取隔离交付失败"));
-    }
-  };
-
-  const loadIsolatedDeliveryDiff = async (path: string) => {
-    const client = clientRef.current;
-    if (!client || !isolatedDelivery) return;
-    const generation = ++isolatedDeliveryRequestRef.current;
-    setIsolatedDeliveryPath(path);
-    setIsolatedDeliveryDiff(null);
-    try {
-      const diff = await client.getIsolatedDeliveryDiff(isolatedDelivery.id, path);
-      if (generation === isolatedDeliveryRequestRef.current) {
-        setIsolatedDeliveryDiff(diff);
-        setIsolatedDeliveryError("");
-      }
-    } catch (error) {
-      if (generation === isolatedDeliveryRequestRef.current) setIsolatedDeliveryError(errorText(error, "读取隔离分支 diff 失败"));
-    }
-  };
-
   const refreshPrDelivery = useCallback(async () => {
     const client = clientRef.current;
     if (!client) return;
@@ -780,29 +714,6 @@ function App() {
       setNotices(await client.listNotices());
     } catch {
       // 通知不是对话主链路，失败不阻断连接。
-    }
-  }, []);
-
-  const refreshHookStatus = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
-    try {
-      setHookStatus(await client.getHookStatus());
-    } catch {
-      setHookStatus(null);
-    }
-  }, []);
-
-  const refreshExtensionsInspect = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
-    setExtensionsInspectBusy(true);
-    try {
-      setExtensionsInspect(await client.getExtensionsInspect());
-    } catch {
-      setExtensionsInspect(null);
-    } finally {
-      setExtensionsInspectBusy(false);
     }
   }, []);
 
@@ -1217,18 +1128,13 @@ function App() {
   const disconnect = useCallback(async () => {
     decisionNotificationSyncingRef.current = false;
     if (!await sessionConnectionRef.current!.disconnect()) return;
-    ++isolatedDeliveryRequestRef.current;
-    setIsolatedDeliveries([]);
-    setIsolatedDelivery(null);
-    setIsolatedDeliveryDiff(null);
-    setIsolatedDeliveryPath("");
-    setIsolatedDeliveryLoading(false);
+    resetIsolatedDeliveries();
     setConnection("disconnected");
     setConnectionNote("已离开工作区；后台 runtime 与任务继续运行");
     setBusy(false);
     setSavingFile(false);
     pendingWorkspaceSaveRef.current = null;
-  }, []);
+  }, [resetIsolatedDeliveries]);
 
   // 连接域编排注册表（B8-④c S10）：连接成功后的全量数据装填收敛到这一处。
   // 各域 refresh 按「通用 / 工作区专属」两档显式注册——hook 化的域把归还的回调挂到
