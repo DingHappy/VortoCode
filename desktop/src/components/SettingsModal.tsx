@@ -278,7 +278,7 @@ export function SettingsModal({
         )}
 
         {section === "trust" && !trustView && (
-          <p className="settings-intro">连接到工作区后可以设置授权级别。</p>
+          <p className="settings-intro">授权级别按项目保存；打开 Git 项目后可以在这里设置。</p>
         )}
         {section === "trust" && trustView && (
           <section className="trust-card" aria-label="授权级别">
@@ -344,7 +344,9 @@ export function SettingsModal({
         </>
         )}
 
-        {section === "extensions" && children}
+        {section === "extensions" && (children || (
+          <p className="settings-intro">打开 Git 项目后，这里会显示该项目加载的规则、Skills、Hooks 与 MCP。</p>
+        ))}
 
         {section === "general" && (
         <>

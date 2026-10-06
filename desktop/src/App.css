@@ -6254,14 +6254,14 @@ button.worktree-live:not(:disabled):hover {
   display: grid;
   gap: 11px;
   padding: 13px;
-  border: 1px solid #deded9;
+  border: 1px solid var(--n6);
   border-radius: 12px;
-  background: #fafaf8;
+  background: var(--n1);
 }
 
 .llm-profile-card.configured {
-  border-color: rgba(39, 131, 90, 0.28);
-  background: #fbfdfb;
+  border-color: rgba(var(--green-rgb), 0.28);
+  background: var(--n0);
 }
 
 .llm-profile-head,
@@ -6278,27 +6278,27 @@ button.worktree-live:not(:disabled):hover {
 }
 
 .llm-profile-head span {
-  color: #8a8a85;
+  color: var(--n9);
   font-size: 9px;
 }
 
 .llm-profile-head strong {
-  color: #343431;
+  color: var(--n12);
   font-size: 12px;
 }
 
 .llm-profile-head i {
   padding: 4px 7px;
   border-radius: 10px;
-  color: #858580;
-  background: #e9e9e5;
+  color: var(--n9);
+  background: var(--n4);
   font-size: 8px;
   font-style: normal;
 }
 
 .llm-profile-card.configured .llm-profile-head i {
-  color: #277554;
-  background: rgba(39, 131, 90, 0.1);
+  color: var(--green-text);
+  background: rgba(var(--green-rgb), 0.1);
 }
 
 .llm-profile-presets {
@@ -6310,19 +6310,19 @@ button.worktree-live:not(:disabled):hover {
 .llm-profile-presets button {
   min-width: 0;
   padding: 7px 8px;
-  border: 1px solid #deded9;
+  border: 1px solid var(--n6);
   border-radius: 8px;
-  color: #70706b;
-  background: #ffffff;
+  color: var(--n10);
+  background: var(--n0);
   font-size: 9px;
   cursor: pointer;
 }
 
 .llm-profile-presets button:hover,
 .llm-profile-presets button.active {
-  color: #272725;
-  border-color: #bdbdb7;
-  background: #f1f1ee;
+  color: var(--n13);
+  border-color: var(--n8);
+  background: var(--n3);
 }
 
 .llm-profile-fields {
@@ -6342,12 +6342,12 @@ button.worktree-live:not(:disabled):hover {
 }
 
 .llm-profile-fields label > span {
-  color: #747470;
+  color: var(--n10);
   font-size: 9px;
 }
 
 .llm-profile-fields label em {
-  color: #9a9a95;
+  color: var(--n9);
   font-style: normal;
 }
 
@@ -6355,16 +6355,16 @@ button.worktree-live:not(:disabled):hover {
   min-width: 0;
   height: 34px;
   padding: 0 10px;
-  border: 1px solid #deded9;
+  border: 1px solid var(--n6);
   border-radius: 8px;
-  color: #343431;
-  background: #ffffff;
+  color: var(--n12);
+  background: var(--n0);
   font-size: 10px;
 }
 
 .llm-profile-fields input:focus {
-  outline: 2px solid rgba(32, 32, 30, 0.08);
-  border-color: #bdbdb7;
+  outline: 2px solid rgba(var(--ink-rgb), 0.08);
+  border-color: var(--n8);
 }
 
 .llm-model-capability {
@@ -6373,31 +6373,31 @@ button.worktree-live:not(:disabled):hover {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  border: 1px solid #e4e4df;
+  border: 1px solid var(--n5);
   border-radius: 8px;
-  color: #7d7d77;
-  background: #f5f5f2;
+  color: var(--n10);
+  background: var(--n3);
   font-size: 9px;
 }
 
 .llm-model-capability strong {
-  color: #3f3f3b;
+  color: var(--n12);
   font-size: 10px;
 }
 
 .llm-model-capability em {
-  color: #8e8e88;
+  color: var(--n9);
   font-style: normal;
 }
 
 .llm-model-capability.known {
-  border-color: rgba(39, 131, 90, 0.18);
-  background: rgba(39, 131, 90, 0.05);
+  border-color: rgba(var(--green-rgb), 0.18);
+  background: rgba(var(--green-rgb), 0.05);
 }
 
 .llm-profile-note {
   margin: 0;
-  color: #858580;
+  color: var(--n9);
   font-size: 9px;
   line-height: 1.5;
 }
@@ -6408,18 +6408,18 @@ button.worktree-live:not(:disabled):hover {
 
 .llm-profile-actions button {
   padding: 7px 10px;
-  border: 1px solid #d5d5cf;
+  border: 1px solid var(--n7);
   border-radius: 8px;
-  color: #656560;
-  background: #ffffff;
+  color: var(--n11);
+  background: var(--n0);
   font-size: 9px;
   cursor: pointer;
 }
 
 .llm-profile-actions button.primary {
-  color: #ffffff;
-  border-color: #252523;
-  background: #252523;
+  color: var(--n0);
+  border-color: var(--n13);
+  background: var(--n13);
 }
 
 .llm-profile-actions button:disabled {
