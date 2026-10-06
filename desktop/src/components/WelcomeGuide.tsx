@@ -67,7 +67,7 @@ export function WelcomeGuide({
           {readiness.model === "ready" ? <CircleCheck size={17} /> : readiness.model === "checking" ? <CircleDashed size={17} /> : <KeyRound size={17} />}
           <div>
             <strong>1. 模型服务</strong>
-            <span>{readiness.model === "ready" ? "已安全配置" : readiness.model === "checking" ? "正在检查 Keychain…" : "配置 Relay 或兼容服务"}</span>
+            <span>{readiness.model === "ready" ? "已安全配置" : readiness.model === "checking" ? "正在读取模型配置…" : "配置 Relay 或兼容服务"}</span>
           </div>
           {readiness.model !== "ready" && <button onClick={onOpenSettings} disabled={readiness.model === "checking"}>配置</button>}
         </div>

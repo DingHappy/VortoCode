@@ -1152,6 +1152,8 @@ export interface DesktopLlmProfileStatus {
   requiresKey: boolean;
   contextWindow?: number;
   contextWindowSource?: "service" | "catalog" | "configured" | "unknown" | string;
+  /** 本机配置文件路径（llm-profile.json，权限 600）；可直接编辑，下次启动生效。 */
+  configPath?: string;
 }
 
 export interface GatewayRecoveryRecord {

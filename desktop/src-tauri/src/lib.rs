@@ -45,6 +45,9 @@ struct DesktopLlmProfileStatus {
     requires_key: bool,
     context_window: Option<u64>,
     context_window_source: String,
+    /// 本机配置文件位置；设置页显示它，方便用户直接编辑。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    config_path: Option<String>,
 }
 
 #[derive(Default)]
@@ -422,21 +425,6 @@ mod platform_keychain {
     }
 }
 
-mod llm_keychain {
-    use super::platform_keychain;
-    const SERVICE: &[u8] = b"com.vortocode.desktop.llm";
-    const ACCOUNT: &[u8] = b"default";
-    pub fn read() -> Result<Option<String>, String> {
-        platform_keychain::read(SERVICE, ACCOUNT)
-    }
-    pub fn write(payload: &str) -> Result<(), String> {
-        platform_keychain::write(SERVICE, ACCOUNT, payload)
-    }
-    pub fn delete() -> Result<(), String> {
-        platform_keychain::delete(SERVICE, ACCOUNT)
-    }
-}
-
 // 远程连接 token：与 LLM key 分开的 Keychain 服务，按项目 id 作 account 以支持多远端。
 // read 只在 Rust 侧的远程代理里用——token 原文不进 webview（spec §连接层安全 2）。
 mod remote_token_keychain {
@@ -453,19 +441,54 @@ mod remote_token_keychain {
     }
 }
 
-fn read_desktop_llm_profile() -> Result<Option<DesktopLlmProfile>, String> {
-    let Some(payload) = llm_keychain::read()? else {
-        return Ok(None);
+// 模型服务配置存在 Desktop 配置目录下的 JSON 文件里（与 projects.json 同目录，权限 600），
+// 不再放 macOS Keychain：自签名/开发构建每换一次二进制，Keychain 就要求重新授权一次。
+// 文件可直接手动编辑，下次启动生效；格式与设置页保存的一致（camelCase）。
+const LLM_PROFILE_FILE: &str = "llm-profile.json";
+
+fn llm_profile_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|directory| directory.join(LLM_PROFILE_FILE))
+        .map_err(|error| format!("无法定位 Desktop 配置目录：{error}"))
+}
+
+fn read_llm_profile_file(path: &Path) -> Result<Option<DesktopLlmProfile>, String> {
+    let payload = match std::fs::read_to_string(path) {
+        Ok(payload) => payload,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("无法读取模型配置文件 {}：{error}", path.display())),
     };
-    let profile: DesktopLlmProfile = serde_json::from_str(&payload)
-        .map_err(|_| "macOS Keychain 中的模型配置已损坏，请在 Desktop 中重新保存".to_string())?;
+    let profile: DesktopLlmProfile = serde_json::from_str(&payload).map_err(|_| {
+        format!("模型配置文件格式有误：{}；请在 Desktop 设置中重新保存", path.display())
+    })?;
     normalize_llm_profile(profile).map(Some)
 }
 
+fn save_llm_profile_file(path: &Path, profile: &DesktopLlmProfile) -> Result<(), String> {
+    // 含 API Key：只允许当前账户读写。
+    save_json_atomic_with_mode(path, "llm-profile", profile, Some(0o600))
+}
+
+fn delete_llm_profile_file(path: &Path) -> Result<(), String> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("无法删除模型配置文件 {}：{error}", path.display())),
+    }
+}
+
 fn cached_desktop_llm_profile(
+    app: &AppHandle,
     store: &DesktopLlmProfileStore,
 ) -> Result<Option<DesktopLlmProfile>, String> {
-    store.get_or_try_init(read_desktop_llm_profile)
+    let path = llm_profile_path(app)?;
+    store.get_or_try_init(|| read_llm_profile_file(&path))
+}
+
+fn with_config_path(mut status: DesktopLlmProfileStatus, app: &AppHandle) -> DesktopLlmProfileStatus {
+    status.config_path = llm_profile_path(app).ok().map(|path| path.display().to_string());
+    status
 }
 
 fn desktop_llm_profile_status(profile: Option<&DesktopLlmProfile>) -> DesktopLlmProfileStatus {
@@ -482,17 +505,19 @@ fn desktop_llm_profile_status(profile: Option<&DesktopLlmProfile>) -> DesktopLlm
             .context_window_source
             .clone()
             .unwrap_or_else(|| "unknown".into()),
+        config_path: None,
     }
 }
 
-// 读写 Keychain 的命令不能跑在主线程：授权弹窗等待期间主线程被占住，整个窗口白屏
-// （2026-10-06 真机复现）。`async` 让 Tauri 在后台线程执行这些同步命令。
+// 会做磁盘 / 进程 / Keychain 等可能阻塞操作的命令不能跑在主线程：阻塞期间整个窗口白屏
+// （2026-10-06 真机复现：Keychain 授权弹窗等待期间白屏）。`async` 让 Tauri 在后台线程执行。
 #[tauri::command(async)]
 fn get_llm_profile(
+    app: AppHandle,
     store: State<'_, DesktopLlmProfileStore>,
 ) -> Result<DesktopLlmProfileStatus, String> {
-    let profile = cached_desktop_llm_profile(&store)?;
-    Ok(desktop_llm_profile_status(profile.as_ref()))
+    let profile = cached_desktop_llm_profile(&app, &store)?;
+    Ok(with_config_path(desktop_llm_profile_status(profile.as_ref()), &app))
 }
 
 /// 原生确认框必须挂到主窗口上（弹成 sheet）。rfd 在 macOS 上的无父窗口消息框会建出窗口却
@@ -567,25 +592,25 @@ async fn set_llm_profile(
         context_window: None,
         context_window_source: None,
     })?;
+    let path = llm_profile_path(&app)?;
     let confirmed = confirm_llm_profile_change(&app, &profile).await?;
     let profile = save_llm_profile_flow(profile, confirmed, LLM_PROBE_TIMEOUT, |profile| {
-        let payload =
-            serde_json::to_string(profile).map_err(|_| "无法序列化模型配置".to_string())?;
-        llm_keychain::write(&payload)
+        save_llm_profile_file(&path, profile)
     })
     .await?;
     store.replace(Some(profile.clone()))?;
-    Ok(desktop_llm_profile_status(Some(&profile)))
+    Ok(with_config_path(desktop_llm_profile_status(Some(&profile)), &app))
 }
 
-// 读写 Keychain：移出主线程，原因见 get_llm_profile。
+// 可能阻塞：移出主线程，原因见 get_llm_profile。
 #[tauri::command(async)]
 fn clear_llm_profile(
+    app: AppHandle,
     store: State<'_, DesktopLlmProfileStore>,
 ) -> Result<DesktopLlmProfileStatus, String> {
-    llm_keychain::delete()?;
+    delete_llm_profile_file(&llm_profile_path(&app)?)?;
     store.replace(None)?;
-    Ok(desktop_llm_profile_status(None))
+    Ok(with_config_path(desktop_llm_profile_status(None), &app))
 }
 
 fn configure_llm_profile(command: &mut Command, profile: Option<&DesktopLlmProfile>) {
@@ -919,6 +944,17 @@ fn load_project_registry(path: &Path) -> Result<DesktopProjectRegistry, String> 
 }
 
 fn save_json_atomic<T: Serialize>(path: &Path, prefix: &str, value: &T) -> Result<(), String> {
+    save_json_atomic_with_mode(path, prefix, value, None)
+}
+
+/// 原子写 JSON：先写同目录临时文件再 rename。`mode` 给出时临时文件按该权限创建（rename
+/// 保留权限），用于含凭据的文件。
+fn save_json_atomic_with_mode<T: Serialize>(
+    path: &Path,
+    prefix: &str,
+    value: &T,
+    mode: Option<u32>,
+) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| "Desktop 状态路径缺少父目录".to_string())?;
@@ -930,9 +966,16 @@ fn save_json_atomic<T: Serialize>(path: &Path, prefix: &str, value: &T) -> Resul
     let temporary = parent.join(format!(".{prefix}-{}-{nonce}.tmp", std::process::id()));
     let payload = serde_json::to_vec_pretty(value)
         .map_err(|error| format!("无法序列化 Desktop 状态：{error}"))?;
-    let mut file = OpenOptions::new()
-        .create_new(true)
-        .write(true)
+    let mut options = OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    if let Some(mode) = mode {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(mode);
+    }
+    #[cfg(not(unix))]
+    let _ = mode;
+    let mut file = options
         .open(&temporary)
         .map_err(|error| format!("无法创建 Desktop 状态临时文件：{error}"))?;
     file.write_all(&payload)
@@ -1276,7 +1319,7 @@ async fn pick_desktop_project(
     .map(Some)
 }
 
-// 读写 Keychain：移出主线程，原因见 get_llm_profile。
+// 可能阻塞：移出主线程，原因见 get_llm_profile。
 #[tauri::command(async)]
 fn forget_desktop_project(
     app: AppHandle,
@@ -2615,7 +2658,7 @@ fn list_gateway_processes(
     Ok(statuses)
 }
 
-// 读写 Keychain：移出主线程，原因见 get_llm_profile。
+// 可能阻塞：移出主线程，原因见 get_llm_profile。
 #[tauri::command(async)]
 fn start_gateway(
     app: AppHandle,
@@ -2661,10 +2704,9 @@ fn start_gateway(
     let runtime_id = runtime_id_for(scope, &root);
     let runtime_project_id = project_root.as_ref().map(|root| project_id(root));
 
-    // 先读模型配置、再拿 runtime 锁：首次读取可能卡在 Keychain 授权弹窗上，持锁等待会让
-    // gateway_process_status 等命令一起排队。结果先留着，失败到原位置再报，保持"已在运行
-    // 就直接返回"的语义不变。
-    let llm_profile = cached_desktop_llm_profile(&llm_profile_store);
+    // 先读模型配置、再拿 runtime 锁：读配置是 I/O，持锁期间做会让 gateway_process_status
+    // 等命令一起排队。结果先留着，失败到原位置再报，保持"已在运行就直接返回"的语义不变。
+    let llm_profile = cached_desktop_llm_profile(&app, &llm_profile_store);
 
     let mut supervisor = state
         .0
@@ -3081,7 +3123,7 @@ mod tests {
     }
 
     #[test]
-    fn llm_profile_store_loads_keychain_at_most_once_per_process() {
+    fn llm_profile_store_loads_profile_at_most_once_per_process() {
         let store = DesktopLlmProfileStore::default();
         let reads = AtomicUsize::new(0);
         let load = || {
@@ -4559,5 +4601,59 @@ mod tests {
         let capped = confirm_action_message(&long);
         assert_eq!(capped.chars().count(), MAX_CONFIRM_MESSAGE_CHARS + 1);
         assert!(capped.ends_with('…'));
+    }
+
+    fn sample_llm_profile() -> DesktopLlmProfile {
+        DesktopLlmProfile {
+            base_url: "https://models.example.com/v1".into(),
+            api_key: "sk-file-test".into(),
+            model: "model-1".into(),
+            context_window: Some(65_536),
+            context_window_source: Some("configured".into()),
+        }
+    }
+
+    #[test]
+    fn llm_profile_file_missing_means_not_configured() {
+        let root = temp_workspace("llm-missing");
+        let path = root.join(LLM_PROFILE_FILE);
+        assert!(read_llm_profile_file(&path).expect("missing file is not an error").is_none());
+        delete_llm_profile_file(&path).expect("deleting a missing file is a no-op");
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn llm_profile_file_round_trips_and_is_owner_only() {
+        let root = temp_workspace("llm-roundtrip");
+        let path = root.join(LLM_PROFILE_FILE);
+        // 先放一个权限更宽的旧文件：保存后必须收紧到 600。
+        write(&path, "{}").expect("seed old file");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+        }
+        save_llm_profile_file(&path, &sample_llm_profile()).expect("save profile");
+        let loaded = read_llm_profile_file(&path).expect("read").expect("profile present");
+        assert!(loaded == sample_llm_profile());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).expect("metadata").permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "profile file holds the API key and must be owner-only");
+        }
+        delete_llm_profile_file(&path).expect("delete");
+        assert!(read_llm_profile_file(&path).expect("read after delete").is_none());
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn llm_profile_file_with_bad_json_reports_a_readable_error() {
+        let root = temp_workspace("llm-corrupt");
+        let path = root.join(LLM_PROFILE_FILE);
+        write(&path, "{not json").expect("seed corrupt file");
+        let error = read_llm_profile_file(&path).err().expect("corrupt file must fail");
+        assert!(error.contains("格式有误") && error.contains(LLM_PROFILE_FILE), "{error}");
+        let _ = remove_dir_all(root);
     }
 }

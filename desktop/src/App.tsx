@@ -2683,7 +2683,7 @@ function App() {
                 activeScope={activeScope}
                 projectName={repoRoot.split("/").filter(Boolean).slice(-1)[0] || ""}
                 connection={connection}
-                // 还没读完 Keychain = "检查中"，不是"没配"——两态必须分开，否则冷启动瞬间会
+                // 还没读完模型配置 = "检查中"，不是"没配"——两态必须分开，否则冷启动瞬间会
                 // 误报"请先配置模型"。读失败也算读完（显示待配置），不能永远停在检查中。
                 modelLoaded={llmProfileChecked}
                 modelConfigured={Boolean(llmProfile?.configured)}
