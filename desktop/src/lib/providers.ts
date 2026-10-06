@@ -32,3 +32,9 @@ export function presetForBaseUrl(baseUrl: string): ProviderPreset | null {
   }
   return PROVIDER_PRESETS.find((preset) => normalizeBase(preset.baseUrl) === base) ?? null;
 }
+
+/** 与原生层同一规则比较服务地址（去空白和末尾斜杠）：同一地址才允许留空 Key 沿用已保存的。 */
+export function sameLlmBase(left: string, right: string): boolean {
+  const normalize = (value: string) => value.trim().replace(/\/+$/, "");
+  return normalize(left) !== "" && normalize(left) === normalize(right);
+}

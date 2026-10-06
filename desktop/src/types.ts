@@ -1152,6 +1152,9 @@ export interface DesktopLlmProfileStatus {
   requiresKey: boolean;
   contextWindow?: number;
   contextWindowSource?: "service" | "catalog" | "configured" | "unknown" | string;
+  /** 模型调度的快速档 / 强力档；没配则「自动」只用主模型。 */
+  fastModel?: string;
+  strongModel?: string;
   /** 本机配置文件路径（llm-profile.json，权限 600）；可直接编辑，下次启动生效。 */
   configPath?: string;
 }

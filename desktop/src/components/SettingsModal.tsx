@@ -16,7 +16,7 @@ import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
 import { contextWindowSourceLabel, formatTokenCount } from "../lib/labels";
-import { PROVIDER_PRESETS, presetForBaseUrl } from "../lib/providers";
+import { PROVIDER_PRESETS, presetForBaseUrl, sameLlmBase } from "../lib/providers";
 import { ConfigPane } from "./settings/ConfigPane";
 import { LlmConnectionCheck } from "./settings/LlmConnectionCheck";
 import { PersonalizePane } from "./settings/PersonalizePane";
@@ -70,6 +70,8 @@ type SettingsModalProps = {
   llmBaseInput: string;
   llmModelInput: string;
   llmKeyInput: string;
+  llmFastInput: string;
+  llmStrongInput: string;
   llmProfileBusy: boolean;
   repoRoot: string;
   baseUrl: string;
@@ -78,6 +80,8 @@ type SettingsModalProps = {
   onClose: () => void;
   onLlmBaseChange: (value: string) => void;
   onLlmModelChange: (value: string) => void;
+  onLlmFastChange: (value: string) => void;
+  onLlmStrongChange: (value: string) => void;
   onLlmKeyChange: (value: string) => void;
   onSaveLlmProfile: () => void;
   onClearLlmProfile: () => void;
@@ -108,6 +112,8 @@ export function SettingsModal({
   llmBaseInput,
   llmModelInput,
   llmKeyInput,
+  llmFastInput,
+  llmStrongInput,
   llmProfileBusy,
   repoRoot,
   baseUrl,
@@ -116,6 +122,8 @@ export function SettingsModal({
   onClose,
   onLlmBaseChange,
   onLlmModelChange,
+  onLlmFastChange,
+  onLlmStrongChange,
   onLlmKeyChange,
   onSaveLlmProfile,
   onClearLlmProfile,
@@ -249,6 +257,17 @@ export function SettingsModal({
               />
             </label>
           </div>
+          <div className="llm-routing-fields">
+            <p>智能调度 <em>输入框选「自动」时，简短问答走快速模型，Build、带图或复杂任务走强力模型；留空则都用主模型。</em></p>
+            <label>
+              <span>快速模型</span>
+              <input value={llmFastInput} onChange={(event) => onLlmFastChange(event.target.value)} placeholder="可选，例如响应更快的小模型" list="llm-model-options" />
+            </label>
+            <label>
+              <span>强力模型</span>
+              <input value={llmStrongInput} onChange={(event) => onLlmStrongChange(event.target.value)} placeholder="可选，例如推理更强的大模型" list="llm-model-options" />
+            </label>
+          </div>
           <div className={`llm-model-capability ${(llmProfile?.contextWindow ?? 0) > 0 ? "known" : "unknown"}`}>
             <span>模型上下文</span>
             <strong>{(llmProfile?.contextWindow ?? 0) > 0 ? `${formatTokenCount(llmProfile?.contextWindow)} tokens` : "保存时自动检测"}</strong>
@@ -264,7 +283,7 @@ export function SettingsModal({
             <button
               className="primary"
               onClick={() => void onSaveLlmProfile()}
-              disabled={llmProfileBusy || !llmBaseInput.trim() || !llmModelInput.trim() || (!llmInputIsLocal && !llmKeyInput.trim())}
+              disabled={llmProfileBusy || !llmBaseInput.trim() || !llmModelInput.trim() || (!llmInputIsLocal && !llmKeyInput.trim() && !(llmProfile?.configured && sameLlmBase(llmProfile.baseUrl, llmBaseInput)))}
             >{llmProfileBusy ? "正在应用…" : "保存并重启当前引擎"}</button>
           </div>
         </section>

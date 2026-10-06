@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { PROVIDER_PRESETS, presetForBaseUrl } from "./providers";
+import { PROVIDER_PRESETS, presetForBaseUrl, sameLlmBase } from "./providers";
 
 describe("provider presets", () => {
   it("match known base URLs regardless of trailing slash or case", () => {
@@ -19,5 +19,13 @@ describe("provider presets", () => {
       expect(preset.requiresKey).toBe(preset.id !== "local");
       if (preset.id !== "local") expect(preset.baseUrl.startsWith("https://")).toBe(true);
     }
+  });
+});
+
+describe("sameLlmBase", () => {
+  it("ignores surrounding space and trailing slashes but nothing else", () => {
+    expect(sameLlmBase("https://a.example/v1", " https://a.example/v1/ ")).toBe(true);
+    expect(sameLlmBase("https://a.example/v1", "https://b.example/v1")).toBe(false);
+    expect(sameLlmBase("", "")).toBe(false);
   });
 });

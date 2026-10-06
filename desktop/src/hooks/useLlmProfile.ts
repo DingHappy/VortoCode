@@ -22,6 +22,8 @@ export function useLlmProfile(
   const [llmBaseInput, setLlmBaseInput] = useState("https://token.vortotech.com/v1");
   const [llmModelInput, setLlmModelInput] = useState("mimo-v2.5");
   const [llmKeyInput, setLlmKeyInput] = useState("");
+  const [llmFastInput, setLlmFastInput] = useState("");
+  const [llmStrongInput, setLlmStrongInput] = useState("");
   const [llmProfileBusy, setLlmProfileBusy] = useState(false);
   // 读过一次（成功或失败）。失败时不能让引导卡永远停在"检查中"：显示为待配置，点进设置会重读。
   const [llmProfileChecked, setLlmProfileChecked] = useState(false);
@@ -35,6 +37,8 @@ export function useLlmProfile(
         setLlmProfile(profile);
         setLlmBaseInput(profile.baseUrl);
         setLlmModelInput(profile.model);
+        setLlmFastInput(profile.fastModel ?? "");
+        setLlmStrongInput(profile.strongModel ?? "");
         setLlmKeyInput("");
       })
       .catch((error) => onBanner(error instanceof Error ? error.message : String(error)))
@@ -49,6 +53,8 @@ export function useLlmProfile(
         baseUrl: llmBaseInput.trim(),
         apiKey: llmKeyInput.trim(),
         model: llmModelInput.trim(),
+        fastModel: llmFastInput.trim() || null,
+        strongModel: llmStrongInput.trim() || null,
       });
       setLlmProfile(profile);
       setLlmKeyInput("");
@@ -69,6 +75,8 @@ export function useLlmProfile(
       setLlmProfile(profile);
       setLlmBaseInput(profile.baseUrl);
       setLlmModelInput(profile.model);
+      setLlmFastInput("");
+      setLlmStrongInput("");
       setLlmKeyInput("");
       const restarted = await onRestartRuntime();
       if (restarted) onBanner("模型服务配置已清除；需要对话时可随时重新设置");
@@ -81,6 +89,7 @@ export function useLlmProfile(
 
   return {
     llmProfile, llmProfileChecked, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput,
-    llmKeyInput, setLlmKeyInput, llmProfileBusy, saveLlmProfile, clearLlmProfile,
+    llmKeyInput, setLlmKeyInput, llmFastInput, setLlmFastInput, llmStrongInput, setLlmStrongInput,
+    llmProfileBusy, saveLlmProfile, clearLlmProfile,
   };
 }
