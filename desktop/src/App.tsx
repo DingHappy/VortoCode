@@ -3,8 +3,6 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowUp,
-  CircleAlert,
-  CircleCheck,
   FileText,
   FolderPlus,
   Inbox,
@@ -25,8 +23,6 @@ import {
   normalizeLocalBaseUrl,
 } from "./gateway";
 import type {
-  ArtifactMeta,
-  ArtifactVersionSnapshot,
   AuditEntry,
   CommandRunItem,
   CommandRunKind,
@@ -35,49 +31,27 @@ import type {
   ConversationMessage,
   DecisionItem,
   DesktopProjectProfile,
-  DesktopLlmProfileStatus,
   DiffPayload,
-  ExtensionsInspectSnapshot,
   GatewayProcessStatus,
   GatewayRecoveryRecord,
-  GitReviewAction,
-  GitReviewComment,
-  GitReviewDiff,
-  GitReviewFile,
-  GitReviewHunk,
-  GitReviewScope,
-  GitReviewSnapshot,
-  GoalCriterion,
   GoalItem,
-  HookConfigStatus,
   JournalNextAction,
-  IsolatedDelivery,
-  IsolatedDeliverySnapshot,
-  IsolatedDeliveryDiff,
   NoticeItem,
   OpenWorkspaceFileResult,
   PendingConfirmation,
-  PendingGitComment,
   PlanItem,
   PromptQueueItem,
   ProtocolEvent,
   PrDeliveryCheck,
-  PrDeliveryCheckLog,
-  PrDeliverySnapshot,
-  RepoMemorySnapshot,
   RuntimeSnapshot,
-  RuntimeInboxSnapshot,
+  DesktopRuntimeInbox,
   SessionSummary,
   SourceSelection,
   TaskItem,
-  TaskBranchReviewDiff,
-  TaskBranchReviewSnapshot,
   TurnActivity,
   WorkspaceFileContent,
   WorkspaceFileList,
   WorkspaceScope,
-  TrustLevel,
-  TrustStatus,
 } from "./types";
 import { DecisionsPanel } from "./components/DecisionsPanel";
 import { SessionConnection } from "./connection/sessionConnection";
@@ -93,10 +67,18 @@ import { JournalCard } from "./components/JournalCard";
 import { MarkdownMessage } from "./components/MarkdownMessage";
 import { ProjectAssetsPanel } from "./components/ProjectAssetsPanel";
 import { RunsPanel } from "./components/RunsPanel";
+import { RuntimeInboxPanel } from "./components/RuntimeInboxPanel";
 import { SettingsModal } from "./components/SettingsModal";
 import { TurnTimeline } from "./components/TurnTimeline";
 import { WelcomeGuide } from "./components/WelcomeGuide";
+import { useChangeReview } from "./hooks/useChangeReview";
+import { useExtensionsStatus } from "./hooks/useExtensionsStatus";
+import { useGoals } from "./hooks/useGoals";
+import { useIsolatedDeliveries } from "./hooks/useIsolatedDeliveries";
+import { useProjectAssets } from "./hooks/useProjectAssets";
+import { useTrustLevel } from "./hooks/useTrustLevel";
 import { useJournal } from "./hooks/useJournal";
+import { useLlmProfile } from "./hooks/useLlmProfile";
 import {
   FIRST_DELIVERY_PROMPT,
   PROJECT_BRIEF_PROMPT,
@@ -112,15 +94,12 @@ import {
   sessionStatusLabel,
   statusLabel,
 } from "./lib/labels";
-import { criterionVerifierDraft, goalEvidenceKey, goalFormLines } from "./lib/goals";
-import type { GoalVerifierDraft } from "./lib/goals";
 import { autoFocusDecision, type InspectorTab } from "./lib/inspector";
 import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey, projectToRestore,
   STORAGE_KEYS } from "./lib/storage";
 import { normalizeEditorText, serializeEditorText } from "./lib/text";
 import { localDay } from "./lib/time";
 import { finishRunningActivities, hydrateActivities, protocolActivity, upsertActivity } from "./protocol/activities";
-import { isProtectedBranch } from "./lib/branches";
 import { errorText } from "./lib/errorText";
 import { runtimeInboxSubtitle, summarizeRuntimeInboxes } from "./lib/runtimeInbox";
 
@@ -129,41 +108,10 @@ type PendingWorkspaceSave = { rid: string; path: string; content: string; buffer
 type RuntimeConnectionOptions = { baseUrl?: string; repoRoot?: string; token?: string; scope?: WorkspaceScope };
 type StartWorkspaceOptions = RuntimeConnectionOptions & { baseUrl: string; sid: string; announce?: boolean; workspaceId?: string };
 type WorkspaceRequest = { scope: Exclude<WorkspaceScope, "general">; reason: string; task: string };
-type DesktopRuntimeInbox = {
-  runtimeId: string;
-  projectId?: string;
-  workspaceId?: string;
-  scope: WorkspaceScope;
-  label: string;
-  repoRoot?: string;
-  baseUrl: string;
-  snapshot: RuntimeInboxSnapshot | null;
-  error: string;
-  checkedAt: number;
-};
 const EMPTY_PROCESS: GatewayProcessStatus = {
   running: false,
   message: "本地引擎尚未启动",
 };
-
-function secureArtifactDocument(content: string): string {
-  const parsed = new DOMParser().parseFromString(content, "text/html");
-  parsed.querySelectorAll('meta[http-equiv="refresh"], base').forEach((node) => node.remove());
-  const policy = parsed.createElement("meta");
-  policy.httpEquiv = "Content-Security-Policy";
-  policy.content = [
-    "default-src 'none'",
-    "img-src data: blob:",
-    "media-src data: blob:",
-    "style-src 'unsafe-inline'",
-    "script-src 'none'",
-    "font-src data:",
-    "form-action 'none'",
-    "base-uri 'none'",
-  ].join("; ");
-  parsed.head.prepend(policy);
-  return `<!doctype html>${parsed.documentElement.outerHTML}`;
-}
 
 function messageId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -207,12 +155,6 @@ function contextItemLabel(item: ContextItem): string {
     : item.path;
 }
 
-const TRUST_LEVEL_TEXT: Record<TrustLevel, string> = {
-  ask: "每次确认",
-  reads: "只读免确认",
-  full: "完全信任",
-};
-
 function App() {
   const clientRef = useRef<GatewayClient | null>(null);
   const sessionConnectionRef = useRef<SessionConnection<GatewayClient> | null>(null);
@@ -232,8 +174,6 @@ function App() {
   const runtimeTokensRef = useRef<Map<string, string>>(new Map());
   const runtimeInboxSourcesRef = useRef<Array<Omit<DesktopRuntimeInbox, "snapshot" | "error" | "checkedAt">>>([]);
   const projectSwitchingRef = useRef(false);
-  const artifactPreviewGenerationRef = useRef(0);
-  const gitReviewRefreshGenerationRef = useRef(0);
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(true);
   const activeTurnRidRef = useRef<string | null>(null);
@@ -256,13 +196,6 @@ function App() {
   const [projects, setProjects] = useState<DesktopProjectProfile[]>([]);
   const [projectSwitching, setProjectSwitching] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [llmProfile, setLlmProfile] = useState<DesktopLlmProfileStatus | null>(null);
-  const [llmBaseInput, setLlmBaseInput] = useState("https://token.vortotech.com/v1");
-  const [llmModelInput, setLlmModelInput] = useState("mimo-v2.5");
-  const [llmKeyInput, setLlmKeyInput] = useState("");
-  const [llmProfileBusy, setLlmProfileBusy] = useState(false);
-  const [trust, setTrust] = useState<TrustStatus | null>(null);
-  const [trustBusy, setTrustBusy] = useState(false);
 
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
@@ -327,79 +260,30 @@ function App() {
     tabsNeedingAttention.has(tab) ? "attention" : "",
   ].filter(Boolean).join(" "), [inspectorTab, tabsNeedingAttention]);
   const [diffPayload, setDiffPayload] = useState<DiffPayload | null>(null);
-  const [isolatedDeliveries, setIsolatedDeliveries] = useState<IsolatedDelivery[]>([]);
-  const [isolatedDelivery, setIsolatedDelivery] = useState<IsolatedDeliverySnapshot | null>(null);
-  const [isolatedDeliveryDiff, setIsolatedDeliveryDiff] = useState<IsolatedDeliveryDiff | null>(null);
-  const [isolatedDeliveryPath, setIsolatedDeliveryPath] = useState("");
-  const [isolatedDeliveryError, setIsolatedDeliveryError] = useState("");
-  const [isolatedDeliveryLoading, setIsolatedDeliveryLoading] = useState(false);
-  const isolatedDeliveryRequestRef = useRef(0);
-  const [gitReview, setGitReview] = useState<GitReviewSnapshot | null>(null);
-  const [gitReviewDiff, setGitReviewDiff] = useState<GitReviewDiff | null>(null);
-  const [gitSelectedPath, setGitSelectedPath] = useState("");
-  const [gitReviewScope, setGitReviewScope] = useState<GitReviewScope>("working");
-  const [gitReviewLoading, setGitReviewLoading] = useState(false);
-  const [gitReviewError, setGitReviewError] = useState("");
-  const [gitReviewRevision, setGitReviewRevision] = useState<{
-    baseline: string;
-    files: number;
-    reason: string;
-    receivedAt: number;
-  } | null>(null);
-  const [gitActionBusy, setGitActionBusy] = useState(false);
-  const [taskReviewTask, setTaskReviewTask] = useState<TaskItem | null>(null);
-  const [taskBranchReview, setTaskBranchReview] = useState<TaskBranchReviewSnapshot | null>(null);
-  const [taskBranchDiff, setTaskBranchDiff] = useState<TaskBranchReviewDiff | null>(null);
-  const [taskBranchSelectedPath, setTaskBranchSelectedPath] = useState("");
-  const [taskReviewVerifying, setTaskReviewVerifying] = useState(false);
-  const [gitComments, setGitComments] = useState<GitReviewComment[]>([]);
-  const [pendingGitComment, setPendingGitComment] = useState<PendingGitComment | null>(null);
-  const [gitCommentDraft, setGitCommentDraft] = useState("");
-  const [gitCommentSaving, setGitCommentSaving] = useState(false);
-  const [gitCommitMessage, setGitCommitMessage] = useState("");
-  const [gitPrTitle, setGitPrTitle] = useState("");
-  const [gitPrBase, setGitPrBase] = useState("main");
-  const [gitDeliveryBusy, setGitDeliveryBusy] = useState(false);
-  const [prDelivery, setPrDelivery] = useState<PrDeliverySnapshot | null>(null);
-  const [prDeliveryLoading, setPrDeliveryLoading] = useState(false);
-  const [prCheckLogs, setPrCheckLogs] = useState<Record<string, PrDeliveryCheckLog>>({});
+  // 对话式隔离交付的审查视图已收进 useIsolatedDeliveries（hooks/useIsolatedDeliveries.ts）。
+  const {
+    isolatedDeliveries, isolatedDelivery, isolatedDeliveryDiff, isolatedDeliveryPath,
+    isolatedDeliveryError, isolatedDeliveryLoading,
+    refreshIsolatedDeliveries, openIsolatedDelivery, loadIsolatedDeliveryDiff, resetIsolatedDeliveries,
+  } = useIsolatedDeliveries(clientRef);
   const [runs, setRuns] = useState<CommandRunItem[]>([]);
-  const [goals, setGoals] = useState<GoalItem[]>([]);
   const [notices, setNotices] = useState<NoticeItem[]>([]);
-  const [hookStatus, setHookStatus] = useState<HookConfigStatus | null>(null);
-  const [hookTrustBusy, setHookTrustBusy] = useState(false);
-  const [extensionsInspect, setExtensionsInspect] = useState<ExtensionsInspectSnapshot | null>(null);
-  const [extensionsInspectBusy, setExtensionsInspectBusy] = useState(false);
-  // extensionsInspectFilter（类型筛选 tab）是纯本地 UI 态，已下移到 <ExtensionsInspector> 自持。
+  // Hook 信任 + 扩展清单已收进 useExtensionsStatus；跨域的 toggleHookTrust 留在 App。
+  const {
+    hookStatus, setHookStatus, hookTrustBusy, setHookTrustBusy,
+    extensionsInspect, extensionsInspectBusy,
+    refreshHookStatus, refreshExtensionsInspect,
+  } = useExtensionsStatus(clientRef);
   const [decisions, setDecisions] = useState<DecisionItem[]>([]);
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
   // auditFilter（审计类别筛选）是纯本地 UI 态，已下移到 <DecisionsPanel> 自持。
   // journal 域 8 个 state + 全部读写回调已收进 useJournal（hook 试点，hooks/useJournal.ts）；
   // 实例在 banner 声明之后挂载——保存快照/添加记录的结果提示要注入 setBanner。
-  const [projectAssetView, setProjectAssetView] = useState<"memory" | "artifacts">("memory");
-  const [repoMemory, setRepoMemory] = useState<RepoMemorySnapshot | null>(null);
-  const [repoMemoryDraft, setRepoMemoryDraft] = useState("");
-  const [projectAssetsLoading, setProjectAssetsLoading] = useState(false);
-  const [projectAssetsError, setProjectAssetsError] = useState("");
-  const [artifacts, setArtifacts] = useState<ArtifactMeta[]>([]);
-  const [selectedArtifactId, setSelectedArtifactId] = useState("");
-  const [artifactVersions, setArtifactVersions] = useState<ArtifactVersionSnapshot | null>(null);
-  const [artifactVersion, setArtifactVersion] = useState<number | null>(null);
-  const [artifactHtml, setArtifactHtml] = useState("");
-  const [artifactPreviewLoading, setArtifactPreviewLoading] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(
     () => localStorage.getItem(STORAGE_KEYS.notificationsEnabled) === "true",
   );
   const [notificationSyncVersion, setNotificationSyncVersion] = useState(0);
   const [backgroundPrompt, setBackgroundPrompt] = useState("");
-  const [goalObjective, setGoalObjective] = useState("");
-  const [goalCriteria, setGoalCriteria] = useState("");
-  const [goalConstraints, setGoalConstraints] = useState("");
-  const [goalNonGoals, setGoalNonGoals] = useState("");
-  const [goalEvidenceDrafts, setGoalEvidenceDrafts] = useState<Record<string, string>>({});
-  const [goalVerifierDrafts, setGoalVerifierDrafts] = useState<Record<string, GoalVerifierDraft>>({});
-  const [editingGoalId, setEditingGoalId] = useState<string | null>(null);
-  const [goalSubmitting, setGoalSubmitting] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
   const { tasks, focusedTaskId, worktreeWorkspace, setFocusedTaskId, refreshTasks,
     refreshWorktrees, resetTasks, upsertTask, acceptTaskEvent, captureTaskScope, cancelTask, pauseTask,
@@ -424,6 +308,49 @@ function App() {
     addJournalNote,
     resetJournal,
   } = useJournal(clientRef, setBanner);
+  // goal 域状态与只写自身的回调已收进 useGoals（hooks/useGoals.ts）；跨域的 runGoal /
+  // runGoalVerifiers / adoptRunEvidence 留在 App。
+  const {
+    goals, setGoals, refreshGoals,
+    goalObjective, setGoalObjective, goalCriteria, setGoalCriteria,
+    goalConstraints, setGoalConstraints, goalNonGoals, setGoalNonGoals,
+    goalEvidenceDrafts, setGoalEvidenceDrafts, goalVerifierDrafts, setGoalVerifierDrafts,
+    editingGoalId, goalSubmitting, setGoalSubmitting,
+    resetGoalForm, saveGoalDraft, editGoalDraft, deleteGoalDraft, recordGoalEvidence, saveGoalVerifier,
+  } = useGoals(clientRef, setBanner, () => openInspector("goals"));
+  // 仓库记忆 + 制品预览已收进 useProjectAssets；跨域的 addRepoMemoryFact /
+  // attachSelectedArtifact / openSelectedArtifact 与按连接加载预览的 effect 留在 App。
+  const {
+    projectAssetView, setProjectAssetView, repoMemory, setRepoMemory, repoMemoryDraft, setRepoMemoryDraft,
+    projectAssetsLoading, setProjectAssetsLoading, projectAssetsError, setProjectAssetsError,
+    artifacts, selectedArtifactId, setSelectedArtifactId, selectedArtifact,
+    artifactVersions, artifactVersion, artifactPreviewLoading, securedArtifactHtml,
+    refreshProjectAssets, loadArtifactPreview, resetProjectAssets,
+  } = useProjectAssets(clientRef);
+  // 授权档位与模型服务配置已收进 useTrustLevel / useLlmProfile；重启 runtime 经注入回调。
+  const { trust, trustBusy, changeTrustLevel } = useTrustLevel(clientRef, connection, repoRoot, settingsOpen, setBanner);
+  const {
+    llmProfile, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput, llmKeyInput, setLlmKeyInput,
+    llmProfileBusy, saveLlmProfile, clearLlmProfile,
+  } = useLlmProfile(settingsOpen, setBanner, () => restartCurrentRuntimeForLlmProfile());
+  // 「变更」面板域（Git 审查 / 任务分支审查 / 评论 / PR 交付）已收进 useChangeReview；
+  // 发给 Agent 的两个回调与协议事件对 setGitReviewRevision 的写入留在 App。
+  const {
+    gitReview, gitReviewDiff, gitSelectedPath, gitReviewScope, gitReviewLoading, gitReviewError,
+    gitReviewRevision, setGitReviewRevision, gitActionBusy, taskReviewTask, setTaskReviewTask,
+    taskBranchReview, setTaskBranchReview, taskBranchDiff, setTaskBranchDiff,
+    taskBranchSelectedPath, setTaskBranchSelectedPath, taskReviewVerifying, gitComments,
+    setGitComments, pendingGitComment, setPendingGitComment, gitCommentDraft, setGitCommentDraft,
+    gitCommentSaving, gitCommitMessage, setGitCommitMessage, gitPrTitle, setGitPrTitle, gitPrBase,
+    setGitPrBase, gitDeliveryBusy, prDelivery, prDeliveryLoading, prCheckLogs, openGitComments,
+    sentGitComments, refreshGitReview, refreshPrDelivery, loadTaskBranchReviewDiff,
+    openTaskBranchReview, closeTaskBranchReview, applyTaskBranchAction, verifyReviewedTaskBranch,
+    openGitReviewFile, applyGitAction, startGitComment, addGitComment, updateGitCommentStatus,
+    deleteGitComment, loadPrCheckLog, commitGitReview, openGitReviewPr, resetChangeReview,
+  } = useChangeReview(clientRef, setBanner, () => openInspector("diff"), async () => {
+    await refreshTasks();
+    await refreshWorktrees();
+  });
   const [workspaceFiles, setWorkspaceFiles] = useState<string[]>([]);
   const [workspaceRoot, setWorkspaceRoot] = useState("");
   const [workspaceTruncated, setWorkspaceTruncated] = useState(false);
@@ -440,11 +367,6 @@ function App() {
   const [savingFile, setSavingFile] = useState(false);
 
   const currentSession = sessions.find((session) => session.sid === activeSid);
-  const selectedArtifact = artifacts.find((artifact) => artifact.id === selectedArtifactId) ?? null;
-  const securedArtifactHtml = useMemo(
-    () => artifactHtml ? secureArtifactDocument(artifactHtml) : "",
-    [artifactHtml],
-  );
   const activeScope: WorkspaceScope = runtime.scope ?? processStatus.scope ?? (repoRoot.trim() ? "project" : "general");
   // llmInputIsLocal 派生只服务设置弹窗，已随 <SettingsModal> 搬入组件内计算。
   const connectionText = {
@@ -472,14 +394,6 @@ function App() {
     previewContextItem && contextItems.some((item) => contextItemKey(item) === contextItemKey(previewContextItem)),
   );
   // selectedGitFile 与 displayedGit* 族派生只服务「变更」面板，已随 <GitReviewPanel> 搬入组件内计算。
-  const openGitComments = useMemo(
-    () => gitComments.filter((comment) => comment.status === "open"),
-    [gitComments],
-  );
-  const sentGitComments = useMemo(
-    () => gitComments.filter((comment) => comment.status === "sent"),
-    [gitComments],
-  );
   const decisionItems = useMemo<DecisionItem[]>(() => {
     const remote: DecisionItem[] = [];
     for (const session of sessions) {
@@ -644,175 +558,6 @@ function App() {
     }
   }, []);
 
-  const loadGitReviewDiff = useCallback(async (path: string, scope: GitReviewScope) => {
-    const client = clientRef.current;
-    if (!client || !path) {
-      setGitReviewDiff(null);
-      return;
-    }
-    const generation = ++gitReviewRefreshGenerationRef.current;
-    setGitReviewLoading(true);
-    setGitReviewError("");
-    setTaskReviewTask(null);
-    setTaskBranchReview(null);
-    setTaskBranchDiff(null);
-    setTaskBranchSelectedPath("");
-    setTaskReviewVerifying(false);
-    try {
-      const diff = await client.getGitReviewDiff(path, scope);
-      if (generation === gitReviewRefreshGenerationRef.current) setGitReviewDiff(diff);
-    } catch (error) {
-      if (generation === gitReviewRefreshGenerationRef.current) {
-        setGitReviewDiff(null);
-        setGitReviewError(errorText(error, "读取 Git diff 失败"));
-      }
-    } finally {
-      if (generation === gitReviewRefreshGenerationRef.current) setGitReviewLoading(false);
-    }
-  }, []);
-
-  const refreshGitReview = useCallback(async (
-    preferredPath = gitSelectedPath,
-    preferredScope = gitReviewScope,
-  ) => {
-    const client = clientRef.current;
-    if (!client) return;
-    const generation = ++gitReviewRefreshGenerationRef.current;
-    setGitReviewLoading(true);
-    setGitReviewError("");
-    try {
-      const [snapshot, comments] = await Promise.all([
-        client.getGitReview(),
-        client.listGitReviewComments().catch(() => []),
-      ]);
-      if (generation !== gitReviewRefreshGenerationRef.current) return;
-      const selected = snapshot.files.find((file) => file.path === preferredPath) ?? snapshot.files[0];
-      if (!selected) {
-        setGitReview(snapshot);
-        setGitComments(comments);
-        setGitSelectedPath("");
-        setGitReviewDiff(null);
-        return;
-      }
-      const scope = preferredScope === "staged" && selected.staged
-        ? "staged"
-        : preferredScope === "working" && selected.unstaged
-          ? "working"
-          : selected.unstaged ? "working" : "staged";
-      const diff = await client.getGitReviewDiff(selected.path, scope);
-      if (generation !== gitReviewRefreshGenerationRef.current) return;
-      setGitReview(snapshot);
-      setGitComments(comments);
-      setGitSelectedPath(selected.path);
-      setGitReviewScope(scope);
-      setGitReviewDiff(diff);
-    } catch (error) {
-      if (generation === gitReviewRefreshGenerationRef.current) {
-        setGitReviewError(errorText(error, "读取 Git 审查状态失败"));
-      }
-    } finally {
-      if (generation === gitReviewRefreshGenerationRef.current) setGitReviewLoading(false);
-    }
-  }, [gitReviewScope, gitSelectedPath]);
-
-  const refreshIsolatedDeliveries = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
-    const generation = ++isolatedDeliveryRequestRef.current;
-    setIsolatedDelivery(null);
-    setIsolatedDeliveryDiff(null);
-    setIsolatedDeliveryPath("");
-    setIsolatedDeliveries([]);
-    setIsolatedDeliveryLoading(true);
-    try {
-      const deliveries = await client.listIsolatedDeliveries();
-      if (generation === isolatedDeliveryRequestRef.current && clientRef.current === client) {
-        setIsolatedDeliveries(deliveries);
-        setIsolatedDeliveryError("");
-      }
-    } catch (error) {
-      if (generation === isolatedDeliveryRequestRef.current && clientRef.current === client) {
-        setIsolatedDeliveryError(errorText(error, "读取隔离交付失败"));
-      }
-    } finally {
-      if (generation === isolatedDeliveryRequestRef.current) setIsolatedDeliveryLoading(false);
-    }
-  }, []);
-
-  const openIsolatedDelivery = async (id: string, preferredPath = "") => {
-    const client = clientRef.current;
-    if (!client) return;
-    const generation = ++isolatedDeliveryRequestRef.current;
-    setIsolatedDeliveryError("");
-    setIsolatedDelivery(null);
-    setIsolatedDeliveryDiff(null);
-    try {
-      const snapshot = await client.getIsolatedDelivery(id);
-      if (generation !== isolatedDeliveryRequestRef.current) return;
-      setIsolatedDelivery(snapshot);
-      const path = snapshot.files.find((file) => file.path === preferredPath)?.path ?? snapshot.files[0]?.path ?? "";
-      setIsolatedDeliveryPath(path);
-      if (path) {
-        const diff = await client.getIsolatedDeliveryDiff(id, path);
-        if (generation === isolatedDeliveryRequestRef.current) setIsolatedDeliveryDiff(diff);
-      }
-    } catch (error) {
-      if (generation === isolatedDeliveryRequestRef.current) setIsolatedDeliveryError(errorText(error, "读取隔离交付失败"));
-    }
-  };
-
-  const loadIsolatedDeliveryDiff = async (path: string) => {
-    const client = clientRef.current;
-    if (!client || !isolatedDelivery) return;
-    const generation = ++isolatedDeliveryRequestRef.current;
-    setIsolatedDeliveryPath(path);
-    setIsolatedDeliveryDiff(null);
-    try {
-      const diff = await client.getIsolatedDeliveryDiff(isolatedDelivery.id, path);
-      if (generation === isolatedDeliveryRequestRef.current) {
-        setIsolatedDeliveryDiff(diff);
-        setIsolatedDeliveryError("");
-      }
-    } catch (error) {
-      if (generation === isolatedDeliveryRequestRef.current) setIsolatedDeliveryError(errorText(error, "读取隔离分支 diff 失败"));
-    }
-  };
-
-  const refreshPrDelivery = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
-    setPrDeliveryLoading(true);
-    try {
-      const snapshot = await client.getPrDelivery();
-      setPrDelivery(snapshot);
-      setPrCheckLogs((previous) => Object.fromEntries(
-        Object.entries(previous).filter(([checkId]) => snapshot.failing_checks.some((check) => check.id === checkId)),
-      ));
-    } catch (error) {
-      setPrDelivery({
-        ok: false,
-        branch: "",
-        comments: [],
-        checks: [],
-        failing_checks: [],
-        summary: { total: 0, failed: 0, pending: 0, passed: 0 },
-        error: errorText(error, "读取 PR/CI 状态失败"),
-      });
-    } finally {
-      setPrDeliveryLoading(false);
-    }
-  }, []);
-
-  const refreshGoals = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
-    try {
-      setGoals(await client.listGoals());
-    } catch {
-      // Goal 面板不是连接握手的硬依赖；旧 runtime 可继续使用会话与任务面。
-    }
-  }, []);
-
   const refreshNotices = useCallback(async () => {
     const client = clientRef.current;
     if (!client) return;
@@ -820,29 +565,6 @@ function App() {
       setNotices(await client.listNotices());
     } catch {
       // 通知不是对话主链路，失败不阻断连接。
-    }
-  }, []);
-
-  const refreshHookStatus = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
-    try {
-      setHookStatus(await client.getHookStatus());
-    } catch {
-      setHookStatus(null);
-    }
-  }, []);
-
-  const refreshExtensionsInspect = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
-    setExtensionsInspectBusy(true);
-    try {
-      setExtensionsInspect(await client.getExtensionsInspect());
-    } catch {
-      setExtensionsInspect(null);
-    } finally {
-      setExtensionsInspectBusy(false);
     }
   }, []);
 
@@ -867,68 +589,6 @@ function App() {
   }, []);
 
   // refreshJournal* 四件已随 journal 域收进 useJournal（S6b）。
-
-  const refreshProjectAssets = useCallback(async (includeMemory = true) => {
-    const client = clientRef.current;
-    if (!client) return;
-    setProjectAssetsLoading(true);
-    setProjectAssetsError("");
-    const [memoryResult, artifactsResult] = await Promise.allSettled([
-      includeMemory ? client.getRepoMemory() : Promise.resolve(null),
-      client.listArtifacts(),
-    ]);
-    const failures: string[] = [];
-    if (!includeMemory) {
-      setRepoMemory(null);
-      setProjectAssetView("artifacts");
-    } else if (memoryResult.status === "fulfilled") {
-      if (memoryResult.value) setRepoMemory(memoryResult.value);
-    } else {
-      failures.push(errorText(memoryResult.reason, "读取仓库记忆失败"));
-    }
-    if (artifactsResult.status === "fulfilled") {
-      const items = artifactsResult.value;
-      setArtifacts(items);
-      setSelectedArtifactId((current) => (
-        current && items.some((item) => item.id === current) ? current : items[0]?.id ?? ""
-      ));
-      if (items.length === 0) {
-        setArtifactVersions(null);
-        setArtifactVersion(null);
-        setArtifactHtml("");
-      }
-    } else {
-      failures.push(errorText(artifactsResult.reason, "读取制品失败"));
-    }
-    setProjectAssetsError(failures.join("；"));
-    setProjectAssetsLoading(false);
-  }, []);
-
-  const loadArtifactPreview = useCallback(async (artifactId: string, requestedVersion?: number) => {
-    const client = clientRef.current;
-    if (!client || !artifactId) return;
-    const generation = artifactPreviewGenerationRef.current + 1;
-    artifactPreviewGenerationRef.current = generation;
-    setArtifactPreviewLoading(true);
-    setProjectAssetsError("");
-    try {
-      const versions = await client.getArtifactVersions(artifactId);
-      const version = requestedVersion ?? versions.pinned ?? versions.current;
-      const html = await client.getArtifactHtml(artifactId, version);
-      if (generation !== artifactPreviewGenerationRef.current) return;
-      setArtifactVersions(versions);
-      setArtifactVersion(version);
-      setArtifactHtml(html);
-    } catch (error) {
-      if (generation !== artifactPreviewGenerationRef.current) return;
-      setArtifactVersions(null);
-      setArtifactVersion(null);
-      setArtifactHtml("");
-      setProjectAssetsError(errorText(error, "读取制品预览失败"));
-    } finally {
-      if (generation === artifactPreviewGenerationRef.current) setArtifactPreviewLoading(false);
-    }
-  }, []);
 
   // snapshotTodayJournal 已随 journal 域收进 useJournal（S6b）；总线与 connect 照旧调用。
 
@@ -1319,18 +979,13 @@ function App() {
   const disconnect = useCallback(async () => {
     decisionNotificationSyncingRef.current = false;
     if (!await sessionConnectionRef.current!.disconnect()) return;
-    ++isolatedDeliveryRequestRef.current;
-    setIsolatedDeliveries([]);
-    setIsolatedDelivery(null);
-    setIsolatedDeliveryDiff(null);
-    setIsolatedDeliveryPath("");
-    setIsolatedDeliveryLoading(false);
+    resetIsolatedDeliveries();
     setConnection("disconnected");
     setConnectionNote("已离开工作区；后台 runtime 与任务继续运行");
     setBusy(false);
     setSavingFile(false);
     pendingWorkspaceSaveRef.current = null;
-  }, []);
+  }, [resetIsolatedDeliveries]);
 
   // 连接域编排注册表（B8-④c S10）：连接成功后的全量数据装填收敛到这一处。
   // 各域 refresh 按「通用 / 工作区专属」两档显式注册——hook 化的域把归还的回调挂到
@@ -1646,29 +1301,6 @@ function App() {
     void refreshExtensionsInspect();
   }, [activeScope, connection, refreshExtensionsInspect, refreshHookStatus, settingsOpen]);
 
-  // 授权档位跟着工作区走（后端存在 .vortocode/trust.json），所以换项目/重连都要重新拉。
-  useEffect(() => {
-    if (connection !== "connected") {
-      setTrust(null);
-      return;
-    }
-    void clientRef.current?.getTrust()
-      .then(setTrust)
-      .catch(() => setTrust(null));   // 旧 runtime 没有这个接口时静默降级：不显示档位卡
-  }, [connection, repoRoot, settingsOpen]);
-
-  useEffect(() => {
-    if (!settingsOpen) return;
-    void invoke<DesktopLlmProfileStatus>("get_llm_profile")
-      .then((profile) => {
-        setLlmProfile(profile);
-        setLlmBaseInput(profile.baseUrl);
-        setLlmModelInput(profile.model);
-        setLlmKeyInput("");
-      })
-      .catch((error) => setBanner(error instanceof Error ? error.message : String(error)));
-  }, [settingsOpen]);
-
   useEffect(() => {
     if (connection !== "connected") return undefined;
     const timer = window.setInterval(() => void snapshotTodayJournal(), 30_000);
@@ -1727,21 +1359,11 @@ function App() {
   };
 
   const clearProjectView = () => {
-    gitReviewRefreshGenerationRef.current += 1;
     clearSessionView();
     setSessions([]);
     setProtocolVersion(null);
     setRuntime({});
-    setGitReview(null);
-    setGitReviewDiff(null);
-    setGitSelectedPath("");
-    setGitReviewError("");
-    setGitReviewRevision(null);
-    setGitComments([]);
-    setPendingGitComment(null);
-    setGitCommentDraft("");
-    setPrDelivery(null);
-    setPrCheckLogs({});
+    resetChangeReview();
     setRuns([]);
     resetTasks();
     setGoals([]);
@@ -1749,18 +1371,7 @@ function App() {
     setDecisions([]);
     setAuditEntries([]);
     resetJournal();
-    setProjectAssetView("memory");
-    setRepoMemory(null);
-    setRepoMemoryDraft("");
-    setProjectAssetsLoading(false);
-    setProjectAssetsError("");
-    setArtifacts([]);
-    setSelectedArtifactId("");
-    setArtifactVersions(null);
-    setArtifactVersion(null);
-    setArtifactHtml("");
-    setArtifactPreviewLoading(false);
-    artifactPreviewGenerationRef.current += 1;
+    resetProjectAssets();
     workspaceRootRef.current = "";
     setWorkspaceFiles([]);
     setWorkspaceRoot("");
@@ -2504,121 +2115,6 @@ function App() {
     }
   };
 
-  const changeTrustLevel = async (level: TrustLevel) => {
-    const client = clientRef.current;
-    if (!client || trustBusy || trust?.level === level) return;
-    setTrustBusy(true);
-    try {
-      const next = await client.setTrust(level);
-      setTrust(next);
-      setBanner(next.level === next.effective
-        ? `授权级别已设为「${TRUST_LEVEL_TEXT[next.level]}」`
-        : `已选「${TRUST_LEVEL_TEXT[next.level]}」，当前会话最高到「${TRUST_LEVEL_TEXT[next.effective]}」`);
-    } catch (error) {
-      setBanner(errorText(error, "授权级别保存失败"));
-    } finally {
-      setTrustBusy(false);
-    }
-  };
-
-  const saveLlmProfile = async () => {
-    if (llmProfileBusy || !llmBaseInput.trim() || !llmModelInput.trim()) return;
-    setLlmProfileBusy(true);
-    try {
-      const profile = await invoke<DesktopLlmProfileStatus>("set_llm_profile", {
-        baseUrl: llmBaseInput.trim(),
-        apiKey: llmKeyInput.trim(),
-        model: llmModelInput.trim(),
-      });
-      setLlmProfile(profile);
-      setLlmKeyInput("");
-      const restarted = await restartCurrentRuntimeForLlmProfile();
-      if (restarted) setBanner(`${profile.provider === "vortocode" ? "VortoCode Relay" : profile.provider === "local" ? "本机模型服务" : "自定义模型服务"}已保存到 macOS Keychain，当前 runtime 已重启`);
-    } catch (error) {
-      setBanner(errorText(error, "保存模型服务失败"));
-    } finally {
-      setLlmProfileBusy(false);
-    }
-  };
-
-  const clearLlmProfile = async () => {
-    if (llmProfileBusy || !window.confirm("清除 macOS Keychain 中的模型服务配置？当前 runtime 会重启。")) return;
-    setLlmProfileBusy(true);
-    try {
-      const profile = await invoke<DesktopLlmProfileStatus>("clear_llm_profile");
-      setLlmProfile(profile);
-      setLlmBaseInput(profile.baseUrl);
-      setLlmModelInput(profile.model);
-      setLlmKeyInput("");
-      const restarted = await restartCurrentRuntimeForLlmProfile();
-      if (restarted) setBanner("模型服务配置已清除；需要对话时可随时重新设置");
-    } catch (error) {
-      setBanner(errorText(error, "清除模型服务失败"));
-    } finally {
-      setLlmProfileBusy(false);
-    }
-  };
-
-  const resetGoalForm = () => {
-    setEditingGoalId(null);
-    setGoalObjective("");
-    setGoalCriteria("");
-    setGoalConstraints("");
-    setGoalNonGoals("");
-  };
-
-  const saveGoalDraft = async () => {
-    const objective = goalObjective.trim();
-    const acceptanceCriteria = goalFormLines(goalCriteria);
-    if (!objective || acceptanceCriteria.length === 0 || !clientRef.current) {
-      setBanner("创建目标需要目标描述和至少一条验收标准");
-      return;
-    }
-    setGoalSubmitting(true);
-    try {
-      const input = {
-        objective,
-        acceptance_criteria: acceptanceCriteria,
-        constraints: goalFormLines(goalConstraints),
-        non_goals: goalFormLines(goalNonGoals),
-        start: false,
-      };
-      const saved = editingGoalId
-        ? await clientRef.current.updateGoal(editingGoalId, input)
-        : await clientRef.current.createGoal(input);
-      setGoals((previous) => [saved, ...previous.filter((goal) => goal.id !== saved.id)]);
-      resetGoalForm();
-      openInspector("goals");
-      setBanner(editingGoalId ? "目标合同草稿已更新，请确认后开始执行" : "目标合同已保存为草稿，请检查后确认执行");
-      await refreshGoals();
-    } catch (error) {
-      setBanner(errorText(error, "目标草稿保存失败"));
-    } finally {
-      setGoalSubmitting(false);
-    }
-  };
-
-  const editGoalDraft = (goal: GoalItem) => {
-    setEditingGoalId(goal.id);
-    setGoalObjective(goal.objective);
-    setGoalCriteria(goal.acceptance_criteria.map((criterion) => criterion.text).join("\n"));
-    setGoalConstraints((goal.constraints ?? []).join("\n"));
-    setGoalNonGoals((goal.non_goals ?? []).join("\n"));
-    openInspector("goals");
-  };
-
-  const deleteGoalDraft = async (goal: GoalItem) => {
-    if (!clientRef.current || !window.confirm(`删除目标草稿“${goal.objective}”？`)) return;
-    try {
-      await clientRef.current.deleteGoal(goal.id);
-      setGoals((previous) => previous.filter((item) => item.id !== goal.id));
-      if (editingGoalId === goal.id) resetGoalForm();
-      setBanner("目标草稿已删除");
-    } catch (error) {
-      setBanner(errorText(error, "目标草稿删除失败"));
-    }
-  };
-
   const runGoal = async (goal: GoalItem, resume = false) => {
     const client = clientRef.current;
     if (!client) return;
@@ -2631,66 +2127,6 @@ function App() {
       setBanner(resume ? "已从持久计划断点续跑" : goal.status === "draft" ? "目标合同已确认，隔离开发任务开始执行" : "已按目标合同开始新一轮执行");
     } catch (error) {
       setBanner(errorText(error, "目标执行失败"));
-    } finally {
-      setGoalSubmitting(false);
-    }
-  };
-
-  const recordGoalEvidence = async (
-    goal: GoalItem,
-    criterion: GoalCriterion,
-    passed: boolean,
-    adopted?: { kind: string; summary: string; evidence_id: string },
-  ) => {
-    if (!clientRef.current) return;
-    const key = goalEvidenceKey(goal.id, criterion.id);
-    const summary = adopted?.summary.trim() || (goalEvidenceDrafts[key] ?? "").trim();
-    if (!summary) {
-      setBanner("请先为这条验收标准填写可复核的证据摘要");
-      return;
-    }
-    try {
-      const updated = await clientRef.current.recordGoalEvidence(goal.id, criterion.id, {
-        passed,
-        summary,
-        kind: adopted?.kind || "manual",
-        evidence_id: adopted?.evidence_id,
-      });
-      setGoals((previous) => [updated, ...previous.filter((item) => item.id !== goal.id)]);
-      setGoalEvidenceDrafts((previous) => ({ ...previous, [key]: "" }));
-      const accepted = updated.acceptance_criteria.find((item) => item.id === criterion.id)?.status;
-      setBanner(updated.status === "achieved" ? "所有验收标准均有通过证据，目标已达成" : accepted === "pending" ? "证据未对应当前目标版本，请重新验收" : passed ? "通过证据已记录" : "失败证据已记录，目标进入阻塞状态");
-    } catch (error) {
-      setBanner(errorText(error, "记录验收证据失败"));
-    }
-  };
-
-  const saveGoalVerifier = async (goal: GoalItem, criterion: GoalCriterion) => {
-    if (!clientRef.current) return;
-    const key = goalEvidenceKey(goal.id, criterion.id);
-    const draft = goalVerifierDrafts[key] ?? criterionVerifierDraft(criterion);
-    setGoalSubmitting(true);
-    try {
-      const timeout = Number.parseInt(draft.timeout || "300", 10);
-      const updated = await clientRef.current.configureGoalVerifier(
-        goal.id,
-        criterion.id,
-        draft.kind === "manual"
-          ? { kind: "manual" }
-          : draft.kind === "file"
-            ? { kind: "file", path: draft.value.trim(), contains: draft.contains, timeout }
-            : { kind: draft.kind, command: draft.value.trim(), timeout },
-      );
-      setGoals((previous) => [updated, ...previous.filter((item) => item.id !== goal.id)]);
-      setGoalVerifierDrafts((previous) => ({
-        ...previous,
-        [key]: criterionVerifierDraft(
-          updated.acceptance_criteria.find((item) => item.id === criterion.id) ?? criterion,
-        ),
-      }));
-      setBanner(draft.kind === "manual" ? "该标准已改为人工验收" : "自动验收器已保存到目标合同");
-    } catch (error) {
-      setBanner(errorText(error, "保存自动验收器失败"));
     } finally {
       setGoalSubmitting(false);
     }
@@ -2745,124 +2181,6 @@ function App() {
       setBanner("任务交接摘要已复制");
     } catch {
       setBanner("系统剪贴板不可用；可展开交接摘要后手动复制");
-    }
-  };
-
-  const loadTaskBranchReviewDiff = async (task: TaskItem, path: string) => {
-    const client = clientRef.current;
-    if (!client || !path) {
-      setTaskBranchDiff(null);
-      return;
-    }
-    setGitReviewLoading(true);
-    setGitReviewError("");
-    try {
-      setTaskBranchSelectedPath(path);
-      setTaskBranchDiff(await client.getTaskBranchReviewDiff(task.id, path));
-    } catch (error) {
-      setTaskBranchDiff(null);
-      setGitReviewError(errorText(error, "读取任务分支 diff 失败"));
-    } finally {
-      setGitReviewLoading(false);
-    }
-  };
-
-  const openTaskBranchReview = async (task: TaskItem, preferredPath = "") => {
-    const client = clientRef.current;
-    if (!client || (!task.branch && !task.plan?.branch)) {
-      setBanner("这个任务还没有可审查的分支");
-      return;
-    }
-    setTaskReviewTask(task);
-    setTaskBranchReview(null);
-    setTaskBranchDiff(null);
-    setGitReviewError("");
-    openInspector("diff");
-    setGitReviewLoading(true);
-    try {
-      const snapshot = await client.getTaskBranchReview(task.id);
-      setTaskBranchReview(snapshot);
-      const selected = snapshot.files.find((file) => file.path === preferredPath) ?? snapshot.files[0];
-      if (!selected) {
-        setTaskBranchSelectedPath("");
-        return;
-      }
-      setTaskBranchSelectedPath(selected.path);
-      setTaskBranchDiff(await client.getTaskBranchReviewDiff(task.id, selected.path));
-    } catch (error) {
-      setGitReviewError(errorText(error, "读取任务分支审查失败"));
-    } finally {
-      setGitReviewLoading(false);
-    }
-  };
-
-  const closeTaskBranchReview = async () => {
-    setTaskReviewTask(null);
-    setTaskBranchReview(null);
-    setTaskBranchDiff(null);
-    setTaskBranchSelectedPath("");
-    await refreshGitReview();
-  };
-
-  const applyTaskBranchAction = async (
-    action: "accept" | "reject",
-    hunk: GitReviewHunk,
-  ) => {
-    const client = clientRef.current;
-    if (!client || !taskReviewTask || !taskBranchReview || !taskBranchDiff) return;
-    if (action === "reject" && !window.confirm(
-      `确定撤销任务分支 ${taskBranchReview.branch} 中 ${taskBranchDiff.path} 的这个改动块吗？\n\n将创建一条审查提交，旧测试证据会立即失效。`,
-    )) return;
-    setGitActionBusy(true);
-    setGitReviewError("");
-    try {
-      const result = await client.applyTaskBranchReviewAction(taskReviewTask.id, {
-        action,
-        path: taskBranchDiff.path,
-        hunk_id: hunk.id,
-        expected_sha256: hunk.sha256,
-        confirm: action === "reject",
-      });
-      setTaskBranchReview(result.snapshot);
-      const selected = result.snapshot.files.find((file) => file.path === taskBranchDiff.path)
-        ?? result.snapshot.files[0];
-      if (selected) {
-        setTaskBranchSelectedPath(selected.path);
-        setTaskBranchDiff(await client.getTaskBranchReviewDiff(taskReviewTask.id, selected.path));
-      } else {
-        setTaskBranchSelectedPath("");
-        setTaskBranchDiff(null);
-      }
-      await refreshTasks();
-      await refreshWorktrees();
-      setBanner(action === "accept"
-        ? "已记录稳定 hunk 接受证据"
-        : "已在任务分支创建撤销提交；重新验证通过前不能开 PR");
-    } catch (error) {
-      setGitReviewError(errorText(error, "任务分支审查操作失败"));
-    } finally {
-      setGitActionBusy(false);
-    }
-  };
-
-  const verifyReviewedTaskBranch = async (targetTask: TaskItem | null = taskReviewTask) => {
-    const client = clientRef.current;
-    if (!client || !targetTask) return;
-    setTaskReviewTask(targetTask);
-    setTaskReviewVerifying(true);
-    setGitReviewError("");
-    try {
-      const result = await client.verifyTaskBranchReview(targetTask.id);
-      setTaskBranchReview(result.snapshot);
-      await refreshTasks();
-      await refreshWorktrees();
-      setBanner(result.ok ? "任务分支已在隔离 worktree 重新验证通过，可以继续交付" : "重新验证未通过，PR 闸门保持关闭");
-    } catch (error) {
-      const message = errorText(error, "任务分支重新验证失败");
-      setGitReviewError(message);
-      setBanner(message);
-    } finally {
-      setTaskReviewVerifying(false);
     }
   };
 
@@ -2934,88 +2252,6 @@ function App() {
     }
   };
 
-  const openGitReviewFile = async (file: GitReviewFile, scope?: GitReviewScope) => {
-    const nextScope = scope ?? (file.unstaged ? "working" : "staged");
-    setGitSelectedPath(file.path);
-    setGitReviewScope(nextScope);
-    setPendingGitComment(null);
-    setGitCommentDraft("");
-    await loadGitReviewDiff(file.path, nextScope);
-  };
-
-  const applyGitAction = async (
-    action: GitReviewAction,
-    path: string,
-    hunk?: GitReviewHunk,
-  ) => {
-    if (!clientRef.current || gitActionBusy) return;
-    const destructive = action === "revert";
-    if (destructive) {
-      const target = hunk ? `${path} 的 ${hunk.id}` : path;
-      if (!window.confirm(`撤销 ${target} 的本地修改？这会丢弃对应内容，且不可从 VortoCode 恢复。`)) return;
-    }
-    setGitActionBusy(true);
-    try {
-      const result = await clientRef.current.applyGitReviewAction({
-        action,
-        path,
-        scope: action === "unstage" ? "staged" : "working",
-        hunk_id: hunk?.id,
-        expected_sha256: hunk?.sha256,
-        confirm: destructive,
-      });
-      setGitReview(result.snapshot);
-      setPendingGitComment(null);
-      setGitCommentDraft("");
-      const preferredScope: GitReviewScope = action === "unstage" ? "staged" : "working";
-      await refreshGitReview(path, preferredScope);
-      setBanner(action === "stage" ? "Git 改动已暂存" : action === "unstage" ? "Git 改动已取消暂存" : "本地改动已撤销");
-    } catch (error) {
-      setBanner(errorText(error, "Git 操作失败"));
-      await refreshGitReview(path, gitReviewScope);
-    } finally {
-      setGitActionBusy(false);
-    }
-  };
-
-  const startGitComment = (path: string, hunk: GitReviewHunk, line: number, side: "new" | "old") => {
-    setPendingGitComment({
-      path,
-      scope: gitReviewDiff?.scope ?? gitReviewScope,
-      hunkId: hunk.id,
-      hunkSha256: hunk.sha256,
-      line,
-      side,
-    });
-    setGitCommentDraft("");
-  };
-
-  const addGitComment = async () => {
-    const body = gitCommentDraft.trim();
-    const client = clientRef.current;
-    if (!client || !pendingGitComment || !body || gitCommentSaving) return;
-    setGitCommentSaving(true);
-    try {
-      const created = await client.createGitReviewComment({
-        path: pendingGitComment.path,
-        scope: pendingGitComment.scope,
-        hunk_id: pendingGitComment.hunkId,
-        expected_sha256: pendingGitComment.hunkSha256,
-        line: pendingGitComment.line,
-        side: pendingGitComment.side,
-        body,
-      });
-      setGitComments((previous) => [created, ...previous]);
-      setPendingGitComment(null);
-      setGitCommentDraft("");
-    } catch (error) {
-      setBanner(errorText(error, "保存行级评论失败"));
-      await refreshGitReview(pendingGitComment.path, pendingGitComment.scope);
-    } finally {
-      setGitCommentSaving(false);
-    }
-  };
-
   const sendGitCommentsToAgent = async () => {
     const client = clientRef.current;
     if (!client || openGitComments.length === 0) return;
@@ -3050,49 +2286,6 @@ function App() {
         setBanner(`评论已交给 Agent，但状态保存失败：${error instanceof Error ? error.message : String(error)}`);
         setGitComments(await client.listGitReviewComments().catch(() => gitComments));
       }
-    }
-  };
-
-  const updateGitCommentStatus = async (
-    comment: GitReviewComment,
-    status: GitReviewComment["status"],
-  ) => {
-    const client = clientRef.current;
-    if (!client || gitCommentSaving) return;
-    setGitCommentSaving(true);
-    try {
-      const updated = await client.updateGitReviewComment(comment.id, status);
-      setGitComments((previous) => previous.map((item) => item.id === updated.id ? updated : item));
-    } catch (error) {
-      setBanner(errorText(error, "更新审查评论失败"));
-    } finally {
-      setGitCommentSaving(false);
-    }
-  };
-
-  const deleteGitComment = async (comment: GitReviewComment) => {
-    const client = clientRef.current;
-    if (!client || gitCommentSaving) return;
-    setGitCommentSaving(true);
-    try {
-      await client.deleteGitReviewComment(comment.id);
-      setGitComments((previous) => previous.filter((item) => item.id !== comment.id));
-    } catch (error) {
-      setBanner(errorText(error, "删除审查评论失败"));
-    } finally {
-      setGitCommentSaving(false);
-    }
-  };
-
-  const loadPrCheckLog = async (check: PrDeliveryCheck): Promise<PrDeliveryCheckLog | null> => {
-    if (!clientRef.current) return null;
-    try {
-      const result = await clientRef.current.getPrCheckLog(check.id);
-      setPrCheckLogs((previous) => ({ ...previous, [check.id]: result }));
-      return result;
-    } catch (error) {
-      setBanner(errorText(error, "读取 CI 失败日志失败"));
-      return null;
     }
   };
 
@@ -3188,53 +2381,6 @@ function App() {
       setDecisions((previous) => previous.filter((item) => item.id !== decision.id));
     } catch (error) {
       setBanner(errorText(error, "忽略待决策事项失败"));
-    }
-  };
-
-  const commitGitReview = async () => {
-    const message = gitCommitMessage.trim();
-    if (!clientRef.current || !message || gitDeliveryBusy) return;
-    // 受保护分支上多问一次：提交到 main 之后就不能从 main 开 PR 了（后端也拦，这里只是
-    // 早一步把原因说清楚，而不是等请求失败再弹一条报错）。
-    const onProtected = isProtectedBranch(gitReview?.branch);
-    if (onProtected && !window.confirm(
-      `当前在受保护分支 ${gitReview?.branch} 上。\n\n直接提交到这里之后就不能从它开 PR 了`
-      + `（需要先切到功能分支）。确认要直接提交到 ${gitReview?.branch} 吗？`)) return;
-    setGitDeliveryBusy(true);
-    try {
-      const result = await clientRef.current.commitGitReview(message, onProtected);
-      setGitReview(result.snapshot);
-      setGitCommitMessage("");
-      if (!gitPrTitle.trim()) setGitPrTitle(message);
-      await refreshGitReview();
-      setBanner(`已提交审查范围 · ${result.sha}`);
-    } catch (error) {
-      setBanner(errorText(error, "Git 提交失败"));
-    } finally {
-      setGitDeliveryBusy(false);
-    }
-  };
-
-  const openGitReviewPr = async () => {
-    const title = gitPrTitle.trim();
-    const base = gitPrBase.trim();
-    if (!clientRef.current || !title || !base || gitDeliveryBusy) return;
-    if (!window.confirm(`把当前分支 ${gitReview?.branch || "(unknown)"} push 到 origin，并向 ${base} 创建 Draft PR？`)) return;
-    setGitDeliveryBusy(true);
-    try {
-      const result = await clientRef.current.openGitReviewPr({
-        title,
-        body: `由 VortoCode Desktop 在逐文件、逐 hunk 审查后创建。`,
-        base,
-        confirm: true,
-      });
-      setBanner(`Draft PR 已创建：${result.url}`);
-      await refreshPrDelivery();
-      if (result.url) await openUrl(result.url);
-    } catch (error) {
-      setBanner(errorText(error, "创建 Draft PR 失败"));
-    } finally {
-      setGitDeliveryBusy(false);
     }
   };
 
@@ -3716,125 +2862,15 @@ function App() {
           </div>
           <div className="inspector-body">
             {inspectorTab === "inbox" && (
-              <div className="runtime-inbox-panel">
-                <div className="runtime-inbox-hero">
-                  <div>
-                    <span>DESKTOP CONTROL PLANE</span>
-                    <h2>所有工作，一处处理</h2>
-                    <p>后台项目继续运行；这里只汇总需要你关注、正在执行和可以继续的工作。</p>
-                  </div>
-                  <button onClick={() => void refreshRuntimeInboxes()} title="立即刷新所有本地 runtime">刷新</button>
-                </div>
-                <div className="runtime-inbox-metrics">
-                  <div className={runtimeInboxSummary.actionable > 0 ? "attention" : ""}><strong>{runtimeInboxSummary.actionable}</strong><span>需要处理</span></div>
-                  <div><strong>{runtimeInboxSummary.working}</strong><span>Agent 执行中</span></div>
-                  <div><strong>{runtimeInboxSummary.tasks}</strong><span>后台工作</span></div>
-                  <div><strong>{runtimeInboxSummary.goals}</strong><span>活跃目标</span></div>
-                </div>
-
-                <div className="runtime-inbox-list">
-                  {runtimeInboxes.length === 0 && (
-                    <div className="panel-empty">
-                      <Inbox size={22} />
-                      <strong>还没有可汇总的本地工作</strong>
-                      <span>打开通用会话或项目后，Desktop 会自动在这里发现它。</span>
-                    </div>
-                  )}
-                  {[...runtimeInboxes].sort((left, right) => {
-                    const leftCounts = left.snapshot?.counts;
-                    const rightCounts = right.snapshot?.counts;
-                    const leftScore = (leftCounts?.decisions ?? 0) + (leftCounts?.hook_issues ?? 0)
-                      + (leftCounts?.goals_blocked ?? 0) + (leftCounts?.tasks_attention ?? 0);
-                    const rightScore = (rightCounts?.decisions ?? 0) + (rightCounts?.hook_issues ?? 0)
-                      + (rightCounts?.goals_blocked ?? 0) + (rightCounts?.tasks_attention ?? 0);
-                    return rightScore - leftScore || left.label.localeCompare(right.label, "zh-CN");
-                  }).map((runtimeInbox) => {
-                    const snapshot = runtimeInbox.snapshot;
-                    const counts = snapshot?.counts;
-                    const actionable = (counts?.decisions ?? 0) + (counts?.hook_issues ?? 0)
-                      + (counts?.goals_blocked ?? 0) + (counts?.tasks_attention ?? 0);
-                    const importantSessions = (snapshot?.sessions ?? [])
-                      .filter((session) => ["needs_input", "failed", "working", "queued"].includes(session.status))
-                      .slice(0, 5);
-                    const importantGoals = (snapshot?.goals ?? [])
-                      .filter((goal) => goal.status !== "achieved")
-                      .slice(0, 4);
-                    const importantTasks = (snapshot?.tasks ?? [])
-                      .filter((task) => ["queued", "running", "cancelling", "blocked", "failed", "paused", "interrupted"].includes(task.status))
-                      .slice(0, 4);
-                    return (
-                      <section className={`runtime-inbox-card ${runtimeInbox.runtimeId === processStatus.runtimeId ? "current" : ""} ${runtimeInbox.error ? "degraded" : ""}`} key={runtimeInbox.runtimeId}>
-                        <button className="runtime-inbox-card-head" onClick={() => void activateRuntimeInbox(runtimeInbox)}>
-                          <span className={`runtime-inbox-runtime-dot ${runtimeInbox.error ? "error" : actionable > 0 ? "attention" : (counts?.sessions_working ?? 0) > 0 ? "working" : "healthy"}`} />
-                          <span className="runtime-inbox-title">
-                            <strong>{runtimeInbox.label}</strong>
-                            <small>{runtimeInbox.scope === "general" ? "通用" : runtimeInbox.scope === "scratch" ? "Scratch" : runtimeInbox.repoRoot || "项目"}</small>
-                          </span>
-                          <span className="runtime-inbox-card-meta">
-                            {actionable > 0 && <b>{actionable} 待处理</b>}
-                            {(counts?.sessions_working ?? 0) > 0 && <em>{counts?.sessions_working} 执行中</em>}
-                            <small>{runtimeInbox.checkedAt ? formatRelativeTime(runtimeInbox.checkedAt / 1000) : ""}</small>
-                          </span>
-                        </button>
-
-                        {runtimeInbox.error && (
-                          <div className="runtime-inbox-error">
-                            <CircleAlert size={14} />
-                            <span><strong>暂时无法刷新</strong><small>{runtimeInbox.error}</small></span>
-                          </div>
-                        )}
-
-                        {(snapshot?.decisions ?? []).slice(0, 5).map((decision) => {
-                          const targetTab = decision.kind === "goal" ? "goals"
-                            : decision.kind === "task" ? "tasks"
-                              : decision.kind === "run" ? "runs" : "decisions";
-                          return (
-                            <button className="runtime-inbox-item decision" key={`decision:${decision.id}`} onClick={() => void openRuntimeInboxPanel(runtimeInbox, targetTab, decision.session_id)}>
-                              <span className={`runtime-inbox-item-dot severity-${decision.severity}`} />
-                              <span><strong>{decision.title}</strong><small>{decision.detail || "等待你的处理"}</small></span>
-                              <em>处理</em>
-                            </button>
-                          );
-                        })}
-
-                        {importantSessions.map((session) => (
-                          <button className="runtime-inbox-item" key={`session:${session.sid}`} onClick={() => void openRuntimeInboxSession(runtimeInbox, session.sid, session.status === "needs_input" || session.status === "failed")}>
-                            <span className={`runtime-inbox-item-dot status-${session.status}`} />
-                            <span>
-                              <strong>{session.title || "新任务"}</strong>
-                              <small>{session.status === "needs_input"
-                                ? `${session.pending_input_count || 1} 项等待确认`
-                                : session.status === "failed" ? "任务需要处理"
-                                  : session.activity || session.running_prompt || statusLabel(session.status)}</small>
-                            </span>
-                            <em>{session.branch || statusLabel(session.status)}</em>
-                          </button>
-                        ))}
-
-                        {importantGoals.map((goal) => (
-                          <button className="runtime-inbox-item" key={`goal:${goal.id}`} onClick={() => void openRuntimeInboxPanel(runtimeInbox, "goals")}>
-                            <span className={`runtime-inbox-item-dot status-${goal.status}`} />
-                            <span><strong>{goal.objective || "未命名目标"}</strong><small>{goal.blocker || goal.next_action || `${goal.progress.passed}/${goal.progress.total} 条完成标准`}</small></span>
-                            <em>{statusLabel(goal.status)}</em>
-                          </button>
-                        ))}
-
-                        {importantTasks.map((task) => (
-                          <button className="runtime-inbox-item" key={`task:${task.id}`} onClick={() => void openRuntimeInboxPanel(runtimeInbox, "tasks", task.owner_session, task.id)}>
-                            <span className={`runtime-inbox-item-dot status-${task.status}`} />
-                            <span><strong>{task.prompt || "后台工作"}</strong><small>{task.detail || task.branch || task.id}</small></span>
-                            <em>{statusLabel(task.status)}</em>
-                          </button>
-                        ))}
-
-                        {snapshot && actionable === 0 && importantSessions.length === 0 && importantGoals.length === 0 && importantTasks.length === 0 && (
-                          <div className="runtime-inbox-clear"><CircleCheck size={15} />当前没有需要关注的工作</div>
-                        )}
-                      </section>
-                    );
-                  })}
-                </div>
-              </div>
+              <RuntimeInboxPanel
+                runtimeInboxes={runtimeInboxes}
+                summary={runtimeInboxSummary}
+                currentRuntimeId={processStatus.runtimeId}
+                onRefresh={() => void refreshRuntimeInboxes()}
+                onActivate={(runtimeInbox) => void activateRuntimeInbox(runtimeInbox)}
+                onOpenSession={(runtimeInbox, sid, needsInput) => void openRuntimeInboxSession(runtimeInbox, sid, needsInput)}
+                onOpenPanel={(runtimeInbox, tab, sid, taskId) => void openRuntimeInboxPanel(runtimeInbox, tab, sid, taskId)}
+              />
             )}
             {inspectorTab === "files" && (
               <FilesPanel
