@@ -20,7 +20,7 @@ export function useLlmProfile(
 ) {
   const [llmProfile, setLlmProfile] = useState<DesktopLlmProfileStatus | null>(null);
   const [llmBaseInput, setLlmBaseInput] = useState("https://token.vortotech.com/v1");
-  const [llmModelInput, setLlmModelInput] = useState("mimo-v2.5");
+  const [llmModelInput, setLlmModelInput] = useState("mimo-v2.6-pro");
   const [llmKeyInput, setLlmKeyInput] = useState("");
   const [llmFastInput, setLlmFastInput] = useState("");
   const [llmStrongInput, setLlmStrongInput] = useState("");

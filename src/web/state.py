@@ -65,7 +65,7 @@ class AppState:
         # /ws init 握手，前端从不读。
         self.workdir = str(Path.cwd())  # 默认工作目录：进程当前目录（总是存在）。
         # 旧默认 ~/personal_project 在多数环境不存在，会让 terminal/文件等端点失败。
-        self.model = "mimo-v2.5"  # 默认模型
+        self.model = "mimo-v2.6-pro"  # 默认模型
         self.logs: List[Dict[str, Any]] = []
 
         # 项目管理器
