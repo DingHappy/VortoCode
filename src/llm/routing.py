@@ -4,7 +4,10 @@
 以便测试与运行时注入都生效）：
 - ``LLM_MODEL_CHEAP``    快速档，短小的只读问答；
 - ``LLM_MODEL_BALANCED`` 均衡档，默认；
-- ``LLM_MODEL_POWERFUL`` 强力档，Build 模式、长任务、带图或明显的复杂工程任务。
+- ``LLM_MODEL_POWERFUL`` 强力档，长任务、带图或明显的复杂工程任务。
+
+不看 plan/build 模式：Desktop 已不再区分两者（每轮都按 build 发），拿模式当信号会让
+「自动」永远落到强力档。
 任一档没配就回落到 ``DEFAULT_MODEL``。
 
 客户端点名的模型**只接受三档里已配置的**：WS 客户端不能借这个字段把请求打到任意模型上
@@ -67,9 +70,7 @@ def route_model(text: str, *, mode: str, has_media: bool = False, context_count:
         return None
     body = (text or "").strip()
     lowered = body.lower()
-    if mode == "build":
-        tier, reason = "powerful", "Build 模式会改代码"
-    elif has_media:
+    if has_media:
         tier, reason = "powerful", "包含图片或音频"
     elif len(body) >= _LONG_TEXT or context_count >= 3:
         tier, reason = "powerful", "任务描述较长或引用了多个文件"

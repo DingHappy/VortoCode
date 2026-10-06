@@ -69,7 +69,7 @@ export function PreviewPanel(props: PreviewPanelProps) {
 
       {view === "artifacts" && (
         artifacts.length === 0 ? (
-          <div className="panel-empty"><strong>暂无产物</strong><p>在 Build 模式让 Agent“把结果做成页面”，发布后会自动在这里预览。</p></div>
+          <div className="panel-empty"><strong>暂无产物</strong><p>让 Agent“把结果做成页面”，发布后会自动在这里预览。</p></div>
         ) : (
           <section className="preview-section preview-artifact">
             <header>

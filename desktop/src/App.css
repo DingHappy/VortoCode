@@ -742,16 +742,7 @@ textarea:focus-visible,
   text-align: center;
 }
 
-.mode-switch {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  background: #10131a;
-}
 
-.mode-switch button,
 .stop-button {
   height: 25px;
   padding: 0 9px;
@@ -763,16 +754,7 @@ textarea:focus-visible,
   cursor: pointer;
 }
 
-.mode-switch button.active {
-  color: #d9dee6;
-  background: #252b36;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
-}
 
-.mode-switch button.active.build {
-  color: #ffd3c6;
-  background: rgba(255, 115, 71, 0.18);
-}
 
 .stop-button {
   color: #f7b7b7;
@@ -787,74 +769,13 @@ textarea:focus-visible,
   scrollbar-gutter: stable;
 }
 
-.welcome {
-  display: flex;
-  align-items: center;
-  flex-direction: column;
-  justify-content: center;
-  min-height: 100%;
-  padding: 30px 0 80px;
-  text-align: center;
-  /* 窗口矮时让它滚，而不是把清单最后一行裁掉一半（真机 2026-09-17）。 */
-  overflow-y: auto;
-}
 
-.welcome-orbit {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 62px;
-  height: 62px;
-  margin-bottom: 19px;
-  border: 1px solid #303746;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #2b2023, #12151b 67%);
-  box-shadow: 0 0 45px rgba(255, 115, 71, 0.08);
-}
 
-.welcome-orbit::before,
-.welcome-orbit::after {
-  position: absolute;
-  border: 1px solid rgba(255, 115, 71, 0.23);
-  border-radius: 50%;
-  content: "";
-}
 
-.welcome-orbit::before {
-  width: 76px;
-  height: 33px;
-  transform: rotate(-18deg);
-}
 
-.welcome-orbit::after {
-  width: 6px;
-  height: 6px;
-  background: var(--accent);
-  transform: translate(36px, -11px);
-  box-shadow: 0 0 10px var(--accent);
-}
 
-.welcome-orbit span {
-  color: #ff8a60;
-  font-size: 19px;
-  font-weight: 800;
-}
 
-.welcome h1 {
-  margin: 0 0 8px;
-  color: #eff1f5;
-  font-size: 20px;
-  font-weight: 650;
-  letter-spacing: -0.02em;
-}
 
-.welcome > p {
-  max-width: 470px;
-  margin: 0;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 20px;
-}
 
 .suggestions {
   display: flex;
@@ -7662,13 +7583,7 @@ textarea:focus-visible,
   background: var(--n5);
 }
 
-.mode-switch {
-  border: 0;
-  border-radius: 9px;
-  background: var(--n4);
-}
 
-.mode-switch button,
 .stop-button {
   height: 27px;
   border-radius: 7px;
@@ -7676,20 +7591,45 @@ textarea:focus-visible,
   font-size: 11px;
 }
 
-.mode-switch button.active,
-.mode-switch button.active.build {
-  color: var(--n13);
-  background: var(--n0);
-  box-shadow: 0 1px 2px rgba(var(--ink-rgb), 0.08);
-}
 
 .conversation-scroll {
   padding: 30px max(32px, calc((100% - 730px) / 2));
 }
 
-.welcome {
-  justify-content: flex-start;
-  padding: clamp(110px, 20vh, 210px) 0 90px;
+
+.home-greeting {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
+  padding: 0 0 28px;
+  text-align: center;
+}
+
+.home-greeting h1 {
+  margin: 0;
+  color: var(--n13);
+  font-size: clamp(26px, 2.4vw, 32px);
+  font-weight: 590;
+  letter-spacing: -0.03em;
+}
+
+.home-greeting p {
+  margin: 12px 0 0;
+  color: var(--n10);
+  font-size: 13px;
+}
+
+.home-greeting p button {
+  margin-left: 6px;
+  padding: 0;
+  border: 0;
+  color: var(--n13);
+  background: none;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 .empty-state .conversation-scroll {
@@ -7698,39 +7638,9 @@ textarea:focus-visible,
   overflow: visible;
 }
 
-.empty-state .welcome {
-  min-height: 0;
-  height: 100%;
-  justify-content: flex-end;
-  padding: 0 0 32px;
-}
 
-.welcome h1 {
-  margin-bottom: 13px;
-  color: var(--n13);
-  font-size: clamp(27px, 2.6vw, 35px);
-  font-weight: 590;
-  letter-spacing: -0.035em;
-}
 
-.welcome-scope {
-  display: flex;
-  align-items: center;
-  height: 32px;
-  gap: 7px;
-  padding: 0 10px 0 12px;
-  border: 0;
-  border-radius: 8px;
-  color: var(--n10);
-  background: var(--n4);
-  font-size: 12px;
-  cursor: pointer;
-}
 
-.welcome-scope:hover {
-  color: var(--n12);
-  background: var(--n5);
-}
 
 .plan-card,
 .activity-card,
@@ -8147,170 +8057,8 @@ input::placeholder {
   }
 }
 
-/* ── 首次交付引导（WelcomeGuide）─────────────────────────────────────────
-   一律用主题变量，不写死颜色——**理由不是"有两套主题"**（2026-08-03 实测：全仓
-   prefers-color-scheme 与 [data-theme] 各 0 处，第 6949 行的顶层 :root 无条件重声明了
-   全部设计变量，走变量的样式只有浅色一套）。用变量是为了跟设计系统同源：
-   将来调色只改那一处，写死的色值会被落下。 */
-
-.welcome-kicker {
-  margin-bottom: 10px;
-  color: var(--quiet);
-  font-size: 11px;
-  font-weight: 560;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.welcome-promise {
-  max-width: 430px;
-  margin: 0 0 20px;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.first-delivery-guide {
-  display: flex;
-  flex-direction: column;
-  width: min(430px, 100%);
-  margin-top: 26px;
-  gap: 1px;
-  border: 1px solid var(--line);
-  border-radius: 11px;
-  background: var(--line-soft);
-  overflow: hidden;
-  text-align: left;
-}
-
-.first-delivery-step {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  padding: 13px 14px;
-  background: var(--surface-2);
-}
-
-.first-delivery-step > svg {
-  flex: none;
-  color: var(--quiet);
-}
-
-.first-delivery-step > div {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.first-delivery-step strong {
-  color: var(--accent);
-  font-size: 13px;
-  font-weight: 560;
-}
-
-.first-delivery-step span {
-  color: var(--muted);
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.first-delivery-step button {
-  flex: none;
-  height: 27px;
-  padding: 0 11px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  color: var(--accent);
-  background: var(--surface-1);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.first-delivery-step button:hover:not(:disabled) {
-  background: var(--surface-3);
-}
-
-.first-delivery-step button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-/* 已就绪的一步收敛成安静的绿勾——引导要把注意力留给"还没做的那一步" */
-.first-delivery-step.ready > svg {
-  color: var(--green);
-}
-
-.first-delivery-step.ready strong {
-  color: var(--muted);
-  font-weight: 500;
-}
-
-/* 检查中/等待中：不是错误，别用告警色，压低即可 */
-.first-delivery-step.checking > svg,
-.first-delivery-step.waiting > svg {
-  opacity: 0.55;
-}
-
-.first-delivery-actions {
-  display: flex;
-  justify-content: center;
-  gap: 9px;
-  margin-top: 20px;
-}
-
-.first-delivery-actions button {
-  display: inline-flex;
-  align-items: center;
-  height: 34px;
-  gap: 7px;
-  padding: 0 15px;
-  border-radius: 9px;
-  font-size: 13px;
-  font-weight: 530;
-  cursor: pointer;
-}
-
-.first-delivery-actions .secondary {
-  border: 1px solid var(--line);
-  color: var(--accent);
-  background: var(--surface-2);
-}
-
-.first-delivery-actions .secondary:hover:not(:disabled) {
-  background: var(--surface-3);
-}
-
-.first-delivery-actions .primary {
-  border: 1px solid transparent;
-  color: var(--surface-2);
-  background: var(--accent);
-}
-
-.first-delivery-actions .primary:hover:not(:disabled) {
-  opacity: 0.88;
-}
-
-.first-delivery-actions button:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.first-delivery-note {
-  display: block;
-  max-width: 430px;
-  margin-top: 15px;
-  color: var(--quiet);
-  font-size: 11.5px;
-  line-height: 1.65;
-}
-
 /* ── dev 计划依赖图（DevPlanDag）────────────────────────────────────────
-   一律主题变量：与设计系统同源，将来调色只改 :root 一处（见上面 WelcomeGuide 段
-   关于"其实只有一套主题"的实测说明）。 */
+   一律主题变量：与设计系统同源，将来调色只改 :root 一处。 */
 
 .devplan-dag {
   display: flex;
