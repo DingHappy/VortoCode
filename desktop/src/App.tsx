@@ -25,8 +25,6 @@ import {
   normalizeLocalBaseUrl,
 } from "./gateway";
 import type {
-  ArtifactMeta,
-  ArtifactVersionSnapshot,
   AuditEntry,
   CommandRunItem,
   CommandRunKind,
@@ -47,7 +45,6 @@ import type {
   GitReviewHunk,
   GitReviewScope,
   GitReviewSnapshot,
-  GoalCriterion,
   GoalItem,
   HookConfigStatus,
   JournalNextAction,
@@ -64,7 +61,6 @@ import type {
   PrDeliveryCheck,
   PrDeliveryCheckLog,
   PrDeliverySnapshot,
-  RepoMemorySnapshot,
   RuntimeSnapshot,
   RuntimeInboxSnapshot,
   SessionSummary,
@@ -96,6 +92,8 @@ import { RunsPanel } from "./components/RunsPanel";
 import { SettingsModal } from "./components/SettingsModal";
 import { TurnTimeline } from "./components/TurnTimeline";
 import { WelcomeGuide } from "./components/WelcomeGuide";
+import { useGoals } from "./hooks/useGoals";
+import { useProjectAssets } from "./hooks/useProjectAssets";
 import { useJournal } from "./hooks/useJournal";
 import {
   FIRST_DELIVERY_PROMPT,
@@ -112,8 +110,6 @@ import {
   sessionStatusLabel,
   statusLabel,
 } from "./lib/labels";
-import { criterionVerifierDraft, goalEvidenceKey, goalFormLines } from "./lib/goals";
-import type { GoalVerifierDraft } from "./lib/goals";
 import { autoFocusDecision, type InspectorTab } from "./lib/inspector";
 import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey, projectToRestore,
   STORAGE_KEYS } from "./lib/storage";
@@ -145,25 +141,6 @@ const EMPTY_PROCESS: GatewayProcessStatus = {
   running: false,
   message: "本地引擎尚未启动",
 };
-
-function secureArtifactDocument(content: string): string {
-  const parsed = new DOMParser().parseFromString(content, "text/html");
-  parsed.querySelectorAll('meta[http-equiv="refresh"], base').forEach((node) => node.remove());
-  const policy = parsed.createElement("meta");
-  policy.httpEquiv = "Content-Security-Policy";
-  policy.content = [
-    "default-src 'none'",
-    "img-src data: blob:",
-    "media-src data: blob:",
-    "style-src 'unsafe-inline'",
-    "script-src 'none'",
-    "font-src data:",
-    "form-action 'none'",
-    "base-uri 'none'",
-  ].join("; ");
-  parsed.head.prepend(policy);
-  return `<!doctype html>${parsed.documentElement.outerHTML}`;
-}
 
 function messageId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -232,7 +209,6 @@ function App() {
   const runtimeTokensRef = useRef<Map<string, string>>(new Map());
   const runtimeInboxSourcesRef = useRef<Array<Omit<DesktopRuntimeInbox, "snapshot" | "error" | "checkedAt">>>([]);
   const projectSwitchingRef = useRef(false);
-  const artifactPreviewGenerationRef = useRef(0);
   const gitReviewRefreshGenerationRef = useRef(0);
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(true);
@@ -364,7 +340,6 @@ function App() {
   const [prDeliveryLoading, setPrDeliveryLoading] = useState(false);
   const [prCheckLogs, setPrCheckLogs] = useState<Record<string, PrDeliveryCheckLog>>({});
   const [runs, setRuns] = useState<CommandRunItem[]>([]);
-  const [goals, setGoals] = useState<GoalItem[]>([]);
   const [notices, setNotices] = useState<NoticeItem[]>([]);
   const [hookStatus, setHookStatus] = useState<HookConfigStatus | null>(null);
   const [hookTrustBusy, setHookTrustBusy] = useState(false);
@@ -376,30 +351,11 @@ function App() {
   // auditFilter（审计类别筛选）是纯本地 UI 态，已下移到 <DecisionsPanel> 自持。
   // journal 域 8 个 state + 全部读写回调已收进 useJournal（hook 试点，hooks/useJournal.ts）；
   // 实例在 banner 声明之后挂载——保存快照/添加记录的结果提示要注入 setBanner。
-  const [projectAssetView, setProjectAssetView] = useState<"memory" | "artifacts">("memory");
-  const [repoMemory, setRepoMemory] = useState<RepoMemorySnapshot | null>(null);
-  const [repoMemoryDraft, setRepoMemoryDraft] = useState("");
-  const [projectAssetsLoading, setProjectAssetsLoading] = useState(false);
-  const [projectAssetsError, setProjectAssetsError] = useState("");
-  const [artifacts, setArtifacts] = useState<ArtifactMeta[]>([]);
-  const [selectedArtifactId, setSelectedArtifactId] = useState("");
-  const [artifactVersions, setArtifactVersions] = useState<ArtifactVersionSnapshot | null>(null);
-  const [artifactVersion, setArtifactVersion] = useState<number | null>(null);
-  const [artifactHtml, setArtifactHtml] = useState("");
-  const [artifactPreviewLoading, setArtifactPreviewLoading] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(
     () => localStorage.getItem(STORAGE_KEYS.notificationsEnabled) === "true",
   );
   const [notificationSyncVersion, setNotificationSyncVersion] = useState(0);
   const [backgroundPrompt, setBackgroundPrompt] = useState("");
-  const [goalObjective, setGoalObjective] = useState("");
-  const [goalCriteria, setGoalCriteria] = useState("");
-  const [goalConstraints, setGoalConstraints] = useState("");
-  const [goalNonGoals, setGoalNonGoals] = useState("");
-  const [goalEvidenceDrafts, setGoalEvidenceDrafts] = useState<Record<string, string>>({});
-  const [goalVerifierDrafts, setGoalVerifierDrafts] = useState<Record<string, GoalVerifierDraft>>({});
-  const [editingGoalId, setEditingGoalId] = useState<string | null>(null);
-  const [goalSubmitting, setGoalSubmitting] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
   const { tasks, focusedTaskId, worktreeWorkspace, setFocusedTaskId, refreshTasks,
     refreshWorktrees, resetTasks, upsertTask, acceptTaskEvent, captureTaskScope, cancelTask, pauseTask,
@@ -424,6 +380,25 @@ function App() {
     addJournalNote,
     resetJournal,
   } = useJournal(clientRef, setBanner);
+  // goal 域状态与只写自身的回调已收进 useGoals（hooks/useGoals.ts）；跨域的 runGoal /
+  // runGoalVerifiers / adoptRunEvidence 留在 App。
+  const {
+    goals, setGoals, refreshGoals,
+    goalObjective, setGoalObjective, goalCriteria, setGoalCriteria,
+    goalConstraints, setGoalConstraints, goalNonGoals, setGoalNonGoals,
+    goalEvidenceDrafts, setGoalEvidenceDrafts, goalVerifierDrafts, setGoalVerifierDrafts,
+    editingGoalId, goalSubmitting, setGoalSubmitting,
+    resetGoalForm, saveGoalDraft, editGoalDraft, deleteGoalDraft, recordGoalEvidence, saveGoalVerifier,
+  } = useGoals(clientRef, setBanner, () => openInspector("goals"));
+  // 仓库记忆 + 制品预览已收进 useProjectAssets；跨域的 addRepoMemoryFact /
+  // attachSelectedArtifact / openSelectedArtifact 与按连接加载预览的 effect 留在 App。
+  const {
+    projectAssetView, setProjectAssetView, repoMemory, setRepoMemory, repoMemoryDraft, setRepoMemoryDraft,
+    projectAssetsLoading, setProjectAssetsLoading, projectAssetsError, setProjectAssetsError,
+    artifacts, selectedArtifactId, setSelectedArtifactId, selectedArtifact,
+    artifactVersions, artifactVersion, artifactPreviewLoading, securedArtifactHtml,
+    refreshProjectAssets, loadArtifactPreview, resetProjectAssets,
+  } = useProjectAssets(clientRef);
   const [workspaceFiles, setWorkspaceFiles] = useState<string[]>([]);
   const [workspaceRoot, setWorkspaceRoot] = useState("");
   const [workspaceTruncated, setWorkspaceTruncated] = useState(false);
@@ -440,11 +415,6 @@ function App() {
   const [savingFile, setSavingFile] = useState(false);
 
   const currentSession = sessions.find((session) => session.sid === activeSid);
-  const selectedArtifact = artifacts.find((artifact) => artifact.id === selectedArtifactId) ?? null;
-  const securedArtifactHtml = useMemo(
-    () => artifactHtml ? secureArtifactDocument(artifactHtml) : "",
-    [artifactHtml],
-  );
   const activeScope: WorkspaceScope = runtime.scope ?? processStatus.scope ?? (repoRoot.trim() ? "project" : "general");
   // llmInputIsLocal 派生只服务设置弹窗，已随 <SettingsModal> 搬入组件内计算。
   const connectionText = {
@@ -803,16 +773,6 @@ function App() {
     }
   }, []);
 
-  const refreshGoals = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
-    try {
-      setGoals(await client.listGoals());
-    } catch {
-      // Goal 面板不是连接握手的硬依赖；旧 runtime 可继续使用会话与任务面。
-    }
-  }, []);
-
   const refreshNotices = useCallback(async () => {
     const client = clientRef.current;
     if (!client) return;
@@ -867,68 +827,6 @@ function App() {
   }, []);
 
   // refreshJournal* 四件已随 journal 域收进 useJournal（S6b）。
-
-  const refreshProjectAssets = useCallback(async (includeMemory = true) => {
-    const client = clientRef.current;
-    if (!client) return;
-    setProjectAssetsLoading(true);
-    setProjectAssetsError("");
-    const [memoryResult, artifactsResult] = await Promise.allSettled([
-      includeMemory ? client.getRepoMemory() : Promise.resolve(null),
-      client.listArtifacts(),
-    ]);
-    const failures: string[] = [];
-    if (!includeMemory) {
-      setRepoMemory(null);
-      setProjectAssetView("artifacts");
-    } else if (memoryResult.status === "fulfilled") {
-      if (memoryResult.value) setRepoMemory(memoryResult.value);
-    } else {
-      failures.push(errorText(memoryResult.reason, "读取仓库记忆失败"));
-    }
-    if (artifactsResult.status === "fulfilled") {
-      const items = artifactsResult.value;
-      setArtifacts(items);
-      setSelectedArtifactId((current) => (
-        current && items.some((item) => item.id === current) ? current : items[0]?.id ?? ""
-      ));
-      if (items.length === 0) {
-        setArtifactVersions(null);
-        setArtifactVersion(null);
-        setArtifactHtml("");
-      }
-    } else {
-      failures.push(errorText(artifactsResult.reason, "读取制品失败"));
-    }
-    setProjectAssetsError(failures.join("；"));
-    setProjectAssetsLoading(false);
-  }, []);
-
-  const loadArtifactPreview = useCallback(async (artifactId: string, requestedVersion?: number) => {
-    const client = clientRef.current;
-    if (!client || !artifactId) return;
-    const generation = artifactPreviewGenerationRef.current + 1;
-    artifactPreviewGenerationRef.current = generation;
-    setArtifactPreviewLoading(true);
-    setProjectAssetsError("");
-    try {
-      const versions = await client.getArtifactVersions(artifactId);
-      const version = requestedVersion ?? versions.pinned ?? versions.current;
-      const html = await client.getArtifactHtml(artifactId, version);
-      if (generation !== artifactPreviewGenerationRef.current) return;
-      setArtifactVersions(versions);
-      setArtifactVersion(version);
-      setArtifactHtml(html);
-    } catch (error) {
-      if (generation !== artifactPreviewGenerationRef.current) return;
-      setArtifactVersions(null);
-      setArtifactVersion(null);
-      setArtifactHtml("");
-      setProjectAssetsError(errorText(error, "读取制品预览失败"));
-    } finally {
-      if (generation === artifactPreviewGenerationRef.current) setArtifactPreviewLoading(false);
-    }
-  }, []);
 
   // snapshotTodayJournal 已随 journal 域收进 useJournal（S6b）；总线与 connect 照旧调用。
 
@@ -1749,18 +1647,7 @@ function App() {
     setDecisions([]);
     setAuditEntries([]);
     resetJournal();
-    setProjectAssetView("memory");
-    setRepoMemory(null);
-    setRepoMemoryDraft("");
-    setProjectAssetsLoading(false);
-    setProjectAssetsError("");
-    setArtifacts([]);
-    setSelectedArtifactId("");
-    setArtifactVersions(null);
-    setArtifactVersion(null);
-    setArtifactHtml("");
-    setArtifactPreviewLoading(false);
-    artifactPreviewGenerationRef.current += 1;
+    resetProjectAssets();
     workspaceRootRef.current = "";
     setWorkspaceFiles([]);
     setWorkspaceRoot("");
@@ -2559,66 +2446,6 @@ function App() {
     }
   };
 
-  const resetGoalForm = () => {
-    setEditingGoalId(null);
-    setGoalObjective("");
-    setGoalCriteria("");
-    setGoalConstraints("");
-    setGoalNonGoals("");
-  };
-
-  const saveGoalDraft = async () => {
-    const objective = goalObjective.trim();
-    const acceptanceCriteria = goalFormLines(goalCriteria);
-    if (!objective || acceptanceCriteria.length === 0 || !clientRef.current) {
-      setBanner("创建目标需要目标描述和至少一条验收标准");
-      return;
-    }
-    setGoalSubmitting(true);
-    try {
-      const input = {
-        objective,
-        acceptance_criteria: acceptanceCriteria,
-        constraints: goalFormLines(goalConstraints),
-        non_goals: goalFormLines(goalNonGoals),
-        start: false,
-      };
-      const saved = editingGoalId
-        ? await clientRef.current.updateGoal(editingGoalId, input)
-        : await clientRef.current.createGoal(input);
-      setGoals((previous) => [saved, ...previous.filter((goal) => goal.id !== saved.id)]);
-      resetGoalForm();
-      openInspector("goals");
-      setBanner(editingGoalId ? "目标合同草稿已更新，请确认后开始执行" : "目标合同已保存为草稿，请检查后确认执行");
-      await refreshGoals();
-    } catch (error) {
-      setBanner(errorText(error, "目标草稿保存失败"));
-    } finally {
-      setGoalSubmitting(false);
-    }
-  };
-
-  const editGoalDraft = (goal: GoalItem) => {
-    setEditingGoalId(goal.id);
-    setGoalObjective(goal.objective);
-    setGoalCriteria(goal.acceptance_criteria.map((criterion) => criterion.text).join("\n"));
-    setGoalConstraints((goal.constraints ?? []).join("\n"));
-    setGoalNonGoals((goal.non_goals ?? []).join("\n"));
-    openInspector("goals");
-  };
-
-  const deleteGoalDraft = async (goal: GoalItem) => {
-    if (!clientRef.current || !window.confirm(`删除目标草稿“${goal.objective}”？`)) return;
-    try {
-      await clientRef.current.deleteGoal(goal.id);
-      setGoals((previous) => previous.filter((item) => item.id !== goal.id));
-      if (editingGoalId === goal.id) resetGoalForm();
-      setBanner("目标草稿已删除");
-    } catch (error) {
-      setBanner(errorText(error, "目标草稿删除失败"));
-    }
-  };
-
   const runGoal = async (goal: GoalItem, resume = false) => {
     const client = clientRef.current;
     if (!client) return;
@@ -2631,66 +2458,6 @@ function App() {
       setBanner(resume ? "已从持久计划断点续跑" : goal.status === "draft" ? "目标合同已确认，隔离开发任务开始执行" : "已按目标合同开始新一轮执行");
     } catch (error) {
       setBanner(errorText(error, "目标执行失败"));
-    } finally {
-      setGoalSubmitting(false);
-    }
-  };
-
-  const recordGoalEvidence = async (
-    goal: GoalItem,
-    criterion: GoalCriterion,
-    passed: boolean,
-    adopted?: { kind: string; summary: string; evidence_id: string },
-  ) => {
-    if (!clientRef.current) return;
-    const key = goalEvidenceKey(goal.id, criterion.id);
-    const summary = adopted?.summary.trim() || (goalEvidenceDrafts[key] ?? "").trim();
-    if (!summary) {
-      setBanner("请先为这条验收标准填写可复核的证据摘要");
-      return;
-    }
-    try {
-      const updated = await clientRef.current.recordGoalEvidence(goal.id, criterion.id, {
-        passed,
-        summary,
-        kind: adopted?.kind || "manual",
-        evidence_id: adopted?.evidence_id,
-      });
-      setGoals((previous) => [updated, ...previous.filter((item) => item.id !== goal.id)]);
-      setGoalEvidenceDrafts((previous) => ({ ...previous, [key]: "" }));
-      const accepted = updated.acceptance_criteria.find((item) => item.id === criterion.id)?.status;
-      setBanner(updated.status === "achieved" ? "所有验收标准均有通过证据，目标已达成" : accepted === "pending" ? "证据未对应当前目标版本，请重新验收" : passed ? "通过证据已记录" : "失败证据已记录，目标进入阻塞状态");
-    } catch (error) {
-      setBanner(errorText(error, "记录验收证据失败"));
-    }
-  };
-
-  const saveGoalVerifier = async (goal: GoalItem, criterion: GoalCriterion) => {
-    if (!clientRef.current) return;
-    const key = goalEvidenceKey(goal.id, criterion.id);
-    const draft = goalVerifierDrafts[key] ?? criterionVerifierDraft(criterion);
-    setGoalSubmitting(true);
-    try {
-      const timeout = Number.parseInt(draft.timeout || "300", 10);
-      const updated = await clientRef.current.configureGoalVerifier(
-        goal.id,
-        criterion.id,
-        draft.kind === "manual"
-          ? { kind: "manual" }
-          : draft.kind === "file"
-            ? { kind: "file", path: draft.value.trim(), contains: draft.contains, timeout }
-            : { kind: draft.kind, command: draft.value.trim(), timeout },
-      );
-      setGoals((previous) => [updated, ...previous.filter((item) => item.id !== goal.id)]);
-      setGoalVerifierDrafts((previous) => ({
-        ...previous,
-        [key]: criterionVerifierDraft(
-          updated.acceptance_criteria.find((item) => item.id === criterion.id) ?? criterion,
-        ),
-      }));
-      setBanner(draft.kind === "manual" ? "该标准已改为人工验收" : "自动验收器已保存到目标合同");
-    } catch (error) {
-      setBanner(errorText(error, "保存自动验收器失败"));
     } finally {
       setGoalSubmitting(false);
     }
