@@ -1262,3 +1262,17 @@ export type TrustStatus = {
   capability_profile: string;
   workspace_scope: string;
 };
+
+/** Desktop 收件箱里的一个本地 runtime（Desktop 侧的发现结果 + 最近一次快照）。 */
+export type DesktopRuntimeInbox = {
+  runtimeId: string;
+  projectId?: string;
+  workspaceId?: string;
+  scope: WorkspaceScope;
+  label: string;
+  repoRoot?: string;
+  baseUrl: string;
+  snapshot: RuntimeInboxSnapshot | null;
+  error: string;
+  checkedAt: number;
+};
