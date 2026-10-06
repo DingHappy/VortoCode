@@ -88,7 +88,7 @@ export function useLlmProfile(
   };
 
   return {
-    llmProfile, llmProfileChecked, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput,
+    llmProfile, setLlmProfile, llmProfileChecked, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput,
     llmKeyInput, setLlmKeyInput, llmFastInput, setLlmFastInput, llmStrongInput, setLlmStrongInput,
     llmProfileBusy, saveLlmProfile, clearLlmProfile,
   };

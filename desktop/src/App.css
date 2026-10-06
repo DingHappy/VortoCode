@@ -9275,3 +9275,205 @@ input::placeholder {
   font-size: 12.5px;
   line-height: 19px;
 }
+
+/* 设置 → 模型 → 自定义供应商 */
+.custom-providers {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--n5);
+}
+
+.custom-providers-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.custom-providers-head strong {
+  color: var(--n13);
+  font-size: 13px;
+}
+
+.custom-providers-head p,
+.custom-providers-note {
+  margin: 4px 0 0;
+  color: var(--n9);
+  font-size: 11.5px;
+  line-height: 17px;
+}
+
+.custom-providers-note.danger {
+  color: var(--red-text);
+}
+
+.custom-providers-toolbar {
+  display: flex;
+  flex: none;
+  gap: 6px;
+}
+
+.custom-providers button,
+.provider-presets button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--n6);
+  border-radius: 8px;
+  color: var(--n12);
+  background: var(--n0);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.custom-providers button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.custom-providers button.primary {
+  border-color: var(--n13);
+  color: var(--n0);
+  background: var(--n13);
+}
+
+.custom-provider-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.custom-provider-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px 9px 12px;
+  border: 1px solid var(--n5);
+  border-radius: 10px;
+  background: var(--n1);
+}
+
+.custom-provider-list li > div {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 2px;
+}
+
+.custom-provider-list strong {
+  color: var(--n12);
+  font-size: 12.5px;
+}
+
+.custom-provider-list span {
+  overflow: hidden;
+  color: var(--n9);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.custom-provider-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.provider-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.provider-presets button {
+  height: 32px;
+  border-radius: 10px;
+}
+
+.provider-presets button.active {
+  border-color: var(--n13);
+  box-shadow: 0 0 0 1px var(--n13) inset;
+}
+
+.custom-provider-form {
+  display: grid;
+  border: 1px solid var(--n5);
+  border-radius: 12px;
+  background: var(--n0);
+}
+
+.custom-provider-form > label,
+.custom-provider-test {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--n4);
+}
+
+.custom-provider-test {
+  border-bottom: 0;
+}
+
+.custom-provider-form > label > span:first-child,
+.custom-provider-test > span {
+  color: var(--n12);
+  font-size: 12.5px;
+}
+
+.custom-provider-form input,
+.custom-provider-form select {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--n6);
+  border-radius: 8px;
+  color: var(--n12);
+  background: var(--n0);
+  font-size: 12px;
+}
+
+.custom-provider-form input:disabled,
+.custom-provider-form select:disabled {
+  color: var(--n10);
+  background: var(--n2);
+}
+
+.custom-provider-key {
+  position: relative;
+  display: block;
+}
+
+.custom-provider-key input {
+  padding-right: 36px;
+}
+
+.custom-providers .custom-provider-key button {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  height: 26px;
+  padding: 0 6px;
+  border: 0;
+  color: var(--n9);
+  background: transparent;
+}
+
+.custom-provider-test .llm-connection-check {
+  justify-self: end;
+}
+
+.custom-provider-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

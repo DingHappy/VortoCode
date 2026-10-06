@@ -500,9 +500,41 @@ class LLMClient:
 
         self._client: Optional[Any] = None  # 懒加载 AsyncOpenAI 单例
         self._client_lock = asyncio.Lock()
+        # use_endpoint 切走前的原端点；None = 从没切过（reset_endpoint 因此是空操作）。
+        self._home_endpoint: Optional[tuple] = None
+        self._stale_clients: list = []
+
+    def use_endpoint(self, base_url: str, api_key: str) -> None:
+        """换到另一个端点（另一家供应商）。旧连接池在下次取客户端时关闭。
+
+        记住第一次切走前的端点，`reset_endpoint` 据此切回——不去猜"默认"是什么，
+        这样由角色/委派传进来的专属客户端也能原样恢复。
+        """
+        if (base_url, api_key) == (self.config.base_url, self.config.api_key):
+            return
+        if self._home_endpoint is None:
+            self._home_endpoint = (self.config.base_url, self.config.api_key)
+        self.config.base_url, self.config.api_key = base_url, api_key
+        if self._client is not None:
+            self._stale_clients.append(self._client)
+            self._client = None
+
+    def reset_endpoint(self) -> None:
+        """切回 use_endpoint 之前的端点；没切过就什么都不做。"""
+        if self._home_endpoint is None:
+            return
+        home, self._home_endpoint = self._home_endpoint, None
+        self.use_endpoint(*home)
+        self._home_endpoint = None
 
     async def _get_client(self) -> Any:
         """获取或创建 AsyncOpenAI 单例（连接池复用）"""
+        while self._stale_clients:
+            stale = self._stale_clients.pop()
+            try:
+                await stale.close()
+            except Exception:  # noqa: BLE001 —— 关旧连接池失败不影响新请求
+                pass
         if self._client is not None:
             return self._client
         async with self._client_lock:

@@ -20,6 +20,7 @@ import { PROVIDER_PRESETS, presetForBaseUrl, sameLlmBase } from "../lib/provider
 import { ConfigPane } from "./settings/ConfigPane";
 import { LlmConnectionCheck } from "./settings/LlmConnectionCheck";
 import { BrowserPane } from "./settings/BrowserPane";
+import { CustomProviders } from "./settings/CustomProviders";
 import { PersonalizePane } from "./settings/PersonalizePane";
 import { UsagePane } from "./settings/UsagePane";
 import {
@@ -90,6 +91,7 @@ type SettingsModalProps = {
   onLlmFastChange: (value: string) => void;
   onLlmStrongChange: (value: string) => void;
   onRestartRuntime: () => Promise<boolean>;
+  onLlmProfileChange: (profile: DesktopLlmProfileStatus) => void;
   onLlmKeyChange: (value: string) => void;
   onSaveLlmProfile: () => void;
   onClearLlmProfile: () => void;
@@ -133,6 +135,7 @@ export function SettingsModal({
   onLlmFastChange,
   onLlmStrongChange,
   onRestartRuntime,
+  onLlmProfileChange,
   onLlmKeyChange,
   onSaveLlmProfile,
   onClearLlmProfile,
@@ -295,6 +298,7 @@ export function SettingsModal({
               disabled={llmProfileBusy || !llmBaseInput.trim() || !llmModelInput.trim() || (!llmInputIsLocal && !llmKeyInput.trim() && !(llmProfile?.configured && sameLlmBase(llmProfile.baseUrl, llmBaseInput)))}
             >{llmProfileBusy ? "正在应用…" : "保存并重启当前引擎"}</button>
           </div>
+          <CustomProviders profile={llmProfile} onProfile={onLlmProfileChange} onRestartRuntime={onRestartRuntime} />
         </section>
         )}
 
