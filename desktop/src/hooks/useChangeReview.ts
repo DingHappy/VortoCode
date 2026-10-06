@@ -18,6 +18,7 @@ import type { RefObject } from "react";
 import type { GatewayClient } from "../gateway";
 import { isProtectedBranch } from "../lib/branches";
 import { errorText } from "../lib/errorText";
+import { confirmAction } from "../lib/confirm";
 import type {
   GitReviewAction,
   GitReviewComment,
@@ -238,7 +239,7 @@ export function useChangeReview(
   ) => {
     const client = clientRef.current;
     if (!client || !taskReviewTask || !taskBranchReview || !taskBranchDiff) return;
-    if (action === "reject" && !window.confirm(
+    if (action === "reject" && !await confirmAction(
       `确定撤销任务分支 ${taskBranchReview.branch} 中 ${taskBranchDiff.path} 的这个改动块吗？\n\n将创建一条审查提交，旧测试证据会立即失效。`,
     )) return;
     setGitActionBusy(true);
@@ -310,7 +311,7 @@ export function useChangeReview(
     const destructive = action === "revert";
     if (destructive) {
       const target = hunk ? `${path} 的 ${hunk.id}` : path;
-      if (!window.confirm(`撤销 ${target} 的本地修改？这会丢弃对应内容，且不可从 VortoCode 恢复。`)) return;
+      if (!await confirmAction(`撤销 ${target} 的本地修改？这会丢弃对应内容，且不可从 VortoCode 恢复。`)) return;
     }
     setGitActionBusy(true);
     try {
@@ -423,7 +424,7 @@ export function useChangeReview(
     // 受保护分支上多问一次：提交到 main 之后就不能从 main 开 PR 了（后端也拦，这里只是
     // 早一步把原因说清楚，而不是等请求失败再弹一条报错）。
     const onProtected = isProtectedBranch(gitReview?.branch);
-    if (onProtected && !window.confirm(
+    if (onProtected && !await confirmAction(
       `当前在受保护分支 ${gitReview?.branch} 上。\n\n直接提交到这里之后就不能从它开 PR 了`
       + `（需要先切到功能分支）。确认要直接提交到 ${gitReview?.branch} 吗？`)) return;
     setGitDeliveryBusy(true);
@@ -445,7 +446,7 @@ export function useChangeReview(
     const title = gitPrTitle.trim();
     const base = gitPrBase.trim();
     if (!clientRef.current || !title || !base || gitDeliveryBusy) return;
-    if (!window.confirm(`把当前分支 ${gitReview?.branch || "(unknown)"} push 到 origin，并向 ${base} 创建 Draft PR？`)) return;
+    if (!await confirmAction(`把当前分支 ${gitReview?.branch || "(unknown)"} push 到 origin，并向 ${base} 创建 Draft PR？`)) return;
     setGitDeliveryBusy(true);
     try {
       const result = await clientRef.current.openGitReviewPr({

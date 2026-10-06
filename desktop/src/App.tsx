@@ -102,6 +102,7 @@ import { localDay } from "./lib/time";
 import { finishRunningActivities, hydrateActivities, protocolActivity, upsertActivity } from "./protocol/activities";
 import { errorText } from "./lib/errorText";
 import { runtimeInboxSubtitle, summarizeRuntimeInboxes } from "./lib/runtimeInbox";
+import { confirmAction } from "./lib/confirm";
 
 
 type PendingWorkspaceSave = { rid: string; path: string; content: string; buffer: string };
@@ -636,7 +637,7 @@ function App() {
   }, []);
 
   const openWorkspaceFile = useCallback(async (path: string) => {
-    if (editorDirty && path !== selectedFile && !window.confirm("当前文件有未保存修改，确定放弃并打开其他文件吗？")) {
+    if (editorDirty && path !== selectedFile && !await confirmAction("当前文件有未保存修改，确定放弃并打开其他文件吗？")) {
       return;
     }
     const root = workspaceRoot || repoRoot.trim() || runtime.workdir || "";
@@ -1413,7 +1414,7 @@ function App() {
       setBanner("runtime 正在连接，请等待连接完成后再切换项目");
       return false;
     }
-    if (editorDirty && !window.confirm("当前文件有未保存修改，切换项目会放弃这些修改。确定继续吗？")) {
+    if (editorDirty && !await confirmAction("当前文件有未保存修改，切换项目会放弃这些修改。确定继续吗？")) {
       return false;
     }
     projectSwitchingRef.current = true;
@@ -1504,7 +1505,7 @@ function App() {
       setBanner("请先完成或拒绝当前源码保存确认，再切换工作区范围");
       return false;
     }
-    if (editorDirty && !window.confirm("当前文件有未保存修改，切换范围会放弃这些修改。确定继续吗？")) {
+    if (editorDirty && !await confirmAction("当前文件有未保存修改，切换范围会放弃这些修改。确定继续吗？")) {
       return false;
     }
     projectSwitchingRef.current = true;
@@ -1556,7 +1557,7 @@ function App() {
     const effect = managedRuntime
       ? "该项目仍在后台运行；移除会同时停止它，但不会删除项目文件。"
       : "项目文件不会被删除。";
-    if (!window.confirm(`从最近项目中移除“${project.name}”？${effect}`)) return;
+    if (!await confirmAction(`从最近项目中移除“${project.name}”？${effect}`)) return;
     try {
       if (managedRuntime?.runtimeId) {
         await invoke<GatewayProcessStatus>("stop_gateway", { runtimeId: managedRuntime.runtimeId });
@@ -1645,7 +1646,7 @@ function App() {
   };
 
   const deleteSession = async (session: SessionSummary) => {
-    if (!window.confirm(`删除会话“${session.title}”？此操作不可撤销。`) || !clientRef.current) return;
+    if (!await confirmAction(`删除会话“${session.title}”？此操作不可撤销。`) || !clientRef.current) return;
     try {
       await clientRef.current.deleteSession(session.sid);
       if (session.sid === activeSid) await newSession();
@@ -1819,19 +1820,19 @@ function App() {
     }
   };
 
-  const discardEditorChanges = () => {
+  const discardEditorChanges = async () => {
     if (!filePreview) return;
-    if (editorDirty && !window.confirm("放弃当前文件的未保存修改？")) return;
+    if (editorDirty && !await confirmAction("放弃当前文件的未保存修改？")) return;
     setEditorContent(normalizeEditorText(filePreview.content));
     setEditorMode(false);
   };
 
-  const closeWorkspaceFile = () => {
+  const closeWorkspaceFile = async () => {
     if (savingFile) {
       setBanner("请先完成或拒绝当前源码保存确认");
       return;
     }
-    if (editorDirty && !window.confirm("当前文件有未保存修改，确定关闭吗？")) return;
+    if (editorDirty && !await confirmAction("当前文件有未保存修改，确定关闭吗？")) return;
     setSelectedFile("");
     setFilePreview(null);
     setEditorContent("");
@@ -1928,7 +1929,7 @@ function App() {
   const addRepoMemoryFact = async () => {
     const content = repoMemoryDraft.trim();
     if (!clientRef.current || !content) return;
-    if (!window.confirm(
+    if (!await confirmAction(
       `把这条事实写入仓库记忆？\n\n${content.slice(0, 280)}\n\n下个新会话及其子 Agent 会自动带上它。`,
     )) return;
     setProjectAssetsLoading(true);
@@ -2004,7 +2005,7 @@ function App() {
       setBanner("当前仍有操作进行中，暂时不能切换到恢复配置");
       return;
     }
-    if (editorDirty && !window.confirm("当前文件有未保存修改，载入上次 runtime 配置会放弃这些修改。确定继续吗？")) {
+    if (editorDirty && !await confirmAction("当前文件有未保存修改，载入上次 runtime 配置会放弃这些修改。确定继续吗？")) {
       return;
     }
     try {
