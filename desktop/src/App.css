@@ -9804,3 +9804,16 @@ input::placeholder {
   text-decoration: underline;
   cursor: pointer;
 }
+
+.project-row.missing .project-row-copy {
+  opacity: 0.55;
+}
+
+.home-greeting h1.home-starting {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--n10);
+  font-size: 18px;
+  font-weight: 500;
+}
