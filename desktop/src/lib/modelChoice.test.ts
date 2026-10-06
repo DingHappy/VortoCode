@@ -20,6 +20,16 @@ describe("modelChoices", () => {
   });
 });
 
+describe("custom providers", () => {
+  it("lists their models as provider:model in their own group", () => {
+    const choices = modelChoices(profile({
+      providers: [{ id: "deepseek", name: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", models: ["deepseek-chat"], hasKey: true }],
+    }));
+    expect(choices.map((choice) => choice.value)).toEqual(["main", "deepseek:deepseek-chat"]);
+    expect(choices[1]).toMatchObject({ label: "deepseek-chat", group: "DeepSeek" });
+  });
+});
+
 describe("resolveModelChoice", () => {
   it("keeps a still-valid saved choice and falls back otherwise", () => {
     const choices = modelChoices(profile({ strongModel: "strong" }));

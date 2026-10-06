@@ -93,4 +93,8 @@ def resolve_turn_model(requested: Optional[str], text: str, *, mode: str,
         return route_model(text, mode=mode, has_media=has_media, context_count=context_count)
     if requested in routing_tiers().values():
         return TurnModel(model=requested, tier="manual", reason="手动指定")
+    from src.llm.providers import chat_target
+    if chat_target(requested) is not None:
+        # 用户自己登记的供应商（带自己的 key）：可以点名它的任意模型。
+        return TurnModel(model=requested, tier="manual", reason="手动指定")
     return None

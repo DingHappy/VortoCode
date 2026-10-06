@@ -38,6 +38,31 @@ struct DesktopLlmProfile {
     fast_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     strong_model: Option<String>,
+    /// 用户自己添加的其他供应商（各带各的 Key）；聊天里以 `id:模型` 选用。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    providers: Vec<DesktopLlmProvider>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopLlmProvider {
+    id: String,
+    name: String,
+    base_url: String,
+    api_key: String,
+    #[serde(default)]
+    models: Vec<String>,
+}
+
+/// 给网页层看的供应商信息：**不含 Key**。
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopLlmProviderStatus {
+    id: String,
+    name: String,
+    base_url: String,
+    models: Vec<String>,
+    has_key: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -54,6 +79,7 @@ struct DesktopLlmProfileStatus {
     fast_model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     strong_model: Option<String>,
+    providers: Vec<DesktopLlmProviderStatus>,
     /// 本机配置文件位置；设置页显示它，方便用户直接编辑。
     #[serde(skip_serializing_if = "Option::is_none")]
     config_path: Option<String>,
@@ -122,6 +148,7 @@ fn default_llm_profile() -> DesktopLlmProfile {
         context_window_source: Some("catalog".into()),
         fast_model: None,
         strong_model: None,
+        providers: Vec::new(),
     }
 }
 
@@ -634,6 +661,17 @@ fn desktop_llm_profile_status(profile: Option<&DesktopLlmProfile>) -> DesktopLlm
             .unwrap_or_else(|| "unknown".into()),
         fast_model: profile.fast_model.clone(),
         strong_model: profile.strong_model.clone(),
+        providers: profile
+            .providers
+            .iter()
+            .map(|provider| DesktopLlmProviderStatus {
+                id: provider.id.clone(),
+                name: provider.name.clone(),
+                base_url: provider.base_url.clone(),
+                models: provider.models.clone(),
+                has_key: !provider.api_key.is_empty(),
+            })
+            .collect(),
         config_path: None,
     }
 }
@@ -726,12 +764,13 @@ async fn set_llm_profile(
 ) -> Result<DesktopLlmProfileStatus, String> {
     // 只改模型名 / 调度档时不必重输 Key：留空则沿用已保存的 Key，规则同 test_llm_connection
     // （仅限同一地址，Key 绝不借给别的服务）。
+    let saved = cached_desktop_llm_profile(&app, &store)?;
     let mut api_key = api_key.trim().to_string();
     if api_key.is_empty() {
         let wanted = base_url.trim().trim_end_matches('/');
-        if let Some(saved) = cached_desktop_llm_profile(&app, &store)? {
+        if let Some(saved) = saved.as_ref() {
             if saved.base_url == wanted {
-                api_key = saved.api_key;
+                api_key = saved.api_key.clone();
             }
         }
     }
@@ -743,6 +782,8 @@ async fn set_llm_profile(
         context_window_source: None,
         fast_model,
         strong_model,
+        // 改默认模型服务时保留已添加的其他供应商（它们各带各的 Key，与默认服务无关）。
+        providers: saved.map(|saved| saved.providers).unwrap_or_default(),
     })?;
     let path = llm_profile_path(&app)?;
     let confirmed = confirm_llm_profile_change(&app, &profile).await?;
@@ -789,6 +830,12 @@ fn configure_llm_profile(command: &mut Command, profile: Option<&DesktopLlmProfi
         Some(model) => command.env("LLM_MODEL_POWERFUL", model),
         None => command.env_remove("LLM_MODEL_POWERFUL"),
     };
+    // 自定义供应商：runtime 的 src/llm/providers.py 按这对变量登记端点，key 只随自己的端点走。
+    for provider in &profile.providers {
+        let id = provider.id.to_uppercase();
+        command.env(format!("VORTOCODE_PROVIDER_{id}_BASE"), &provider.base_url);
+        command.env(format!("VORTOCODE_PROVIDER_{id}_KEY"), &provider.api_key);
+    }
     if let Some(window) = profile.context_window {
         command.env("VORTOCODE_MODEL_CONTEXT_WINDOW", window.to_string());
         command.env(
@@ -3103,6 +3150,9 @@ pub fn run() {
             set_user_instructions,
             get_browser_control,
             set_browser_control,
+            save_llm_provider,
+            remove_llm_provider,
+            refresh_llm_providers,
             reveal_desktop_config,
             list_desktop_projects,
             remember_desktop_project,
@@ -3215,6 +3265,177 @@ fn probe_client() -> Result<reqwest::Client, String> {
         .map_err(|error| format!("无法创建网络客户端：{error}"))
 }
 
+const MAX_CUSTOM_PROVIDERS: usize = 12;
+const RESERVED_PROVIDER_IDS: [&str; 2] = ["default", "anthropic"];
+
+/// 校验一个自定义供应商：ID 只能是小写字母开头的 `[a-z0-9_]`（会拼进环境变量名），
+/// 地址与 Key 沿用主模型服务的同一套规则（远程必须 HTTPS 且带 Key）。
+fn normalize_llm_provider(mut provider: DesktopLlmProvider) -> Result<DesktopLlmProvider, String> {
+    provider.id = provider.id.trim().to_lowercase();
+    let id_ok = provider.id.len() <= 24
+        && provider.id.chars().next().is_some_and(|c| c.is_ascii_lowercase())
+        && provider
+            .id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+    if !id_ok {
+        return Err("供应商 ID 只能用小写字母、数字和下划线，并以字母开头（最长 24 位）".into());
+    }
+    if RESERVED_PROVIDER_IDS.contains(&provider.id.as_str()) {
+        return Err(format!("供应商 ID 不能用 {}", provider.id));
+    }
+    provider.name = provider.name.trim().to_string();
+    if provider.name.is_empty() {
+        provider.name = provider.id.clone();
+    }
+    if provider.name.chars().count() > 40 || provider.name.chars().any(char::is_control) {
+        return Err("供应商名称无效".into());
+    }
+    let checked = normalize_llm_profile(DesktopLlmProfile {
+        base_url: provider.base_url.clone(),
+        api_key: provider.api_key.clone(),
+        model: "-".into(),
+        context_window: None,
+        context_window_source: None,
+        fast_model: None,
+        strong_model: None,
+        providers: Vec::new(),
+    })?;
+    provider.base_url = checked.base_url;
+    provider.api_key = checked.api_key;
+    provider.models = provider
+        .models
+        .into_iter()
+        .map(|model| model.trim().to_string())
+        .filter(|model| !model.is_empty() && model.len() <= 160 && !model.chars().any(char::is_control))
+        .take(MAX_LISTED_MODELS)
+        .collect();
+    Ok(provider)
+}
+
+async fn fetch_provider_models(provider: &DesktopLlmProvider) -> Option<Vec<String>> {
+    let mut request = probe_client().ok()?.get(format!("{}/models", provider.base_url));
+    if !provider.api_key.is_empty() {
+        request = request.bearer_auth(&provider.api_key);
+    }
+    let response = request.send().await.ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let payload = response.json::<serde_json::Value>().await.ok()?;
+    Some(model_ids(&payload))
+}
+
+fn saved_profile_for_providers(
+    app: &AppHandle,
+    store: &State<'_, DesktopLlmProfileStore>,
+) -> Result<DesktopLlmProfile, String> {
+    cached_desktop_llm_profile(app, store)?
+        .ok_or_else(|| "请先在上方配置并保存默认模型服务，再添加其他供应商".to_string())
+}
+
+fn persist_profile(
+    app: &AppHandle,
+    store: &State<'_, DesktopLlmProfileStore>,
+    profile: DesktopLlmProfile,
+) -> Result<DesktopLlmProfileStatus, String> {
+    save_llm_profile_file(&llm_profile_path(app)?, &profile)?;
+    store.replace(Some(profile.clone()))?;
+    Ok(with_config_path(desktop_llm_profile_status(Some(&profile)), app))
+}
+
+/// 添加或更新一个自定义供应商。Key 留空 = 沿用同一 ID、同一地址下已保存的 Key。
+#[tauri::command]
+async fn save_llm_provider(
+    app: AppHandle,
+    id: String,
+    name: String,
+    base_url: String,
+    api_key: String,
+    store: State<'_, DesktopLlmProfileStore>,
+) -> Result<DesktopLlmProfileStatus, String> {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    let mut profile = saved_profile_for_providers(&app, &store)?;
+    let wanted_id = id.trim().to_lowercase();
+    let wanted_base = base_url.trim().trim_end_matches('/').to_string();
+    let mut api_key = api_key.trim().to_string();
+    if api_key.is_empty() {
+        if let Some(existing) = profile
+            .providers
+            .iter()
+            .find(|provider| provider.id == wanted_id && provider.base_url == wanted_base)
+        {
+            api_key = existing.api_key.clone();
+        }
+    }
+    let mut provider = normalize_llm_provider(DesktopLlmProvider {
+        id,
+        name,
+        base_url,
+        api_key,
+        models: Vec::new(),
+    })?;
+    let replacing = profile.providers.iter().any(|existing| existing.id == provider.id);
+    if !replacing && profile.providers.len() >= MAX_CUSTOM_PROVIDERS {
+        return Err(format!("最多添加 {MAX_CUSTOM_PROVIDERS} 个供应商"));
+    }
+    // 原生确认在 webview 之外：页面脚本不能悄悄把请求和 Key 指向别的地址。
+    let message = format!(
+        "{}模型供应商：\n\n名称：{}\nID：{}\n接口地址：{}\n\n在聊天里选用它的模型时，请求会带着你填写的 Key 发到这个地址。",
+        if replacing { "更新" } else { "添加" },
+        provider.name,
+        provider.id,
+        provider.base_url
+    );
+    let dialog_app = app.clone();
+    let confirmed = tauri::async_runtime::spawn_blocking(move || {
+        with_main_window_parent(&dialog_app, dialog_app.dialog().message(message))
+            .title("确认模型供应商")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom("确认".into(), "取消".into()))
+            .blocking_show()
+    })
+    .await
+    .map_err(|error| format!("供应商确认对话框失败：{error}"))?;
+    if !confirmed {
+        return Err("未确认，供应商没有保存".into());
+    }
+    provider.models = fetch_provider_models(&provider).await.unwrap_or_default();
+    profile.providers.retain(|existing| existing.id != provider.id);
+    profile.providers.push(provider);
+    persist_profile(&app, &store, profile)
+}
+
+#[tauri::command(async)]
+fn remove_llm_provider(
+    app: AppHandle,
+    id: String,
+    store: State<'_, DesktopLlmProfileStore>,
+) -> Result<DesktopLlmProfileStatus, String> {
+    let mut profile = saved_profile_for_providers(&app, &store)?;
+    let before = profile.providers.len();
+    profile.providers.retain(|provider| provider.id != id);
+    if profile.providers.len() == before {
+        return Err("没有这个供应商".into());
+    }
+    persist_profile(&app, &store, profile)
+}
+
+/// 重新拉取各供应商的模型列表；拉取失败的保留原列表。
+#[tauri::command]
+async fn refresh_llm_providers(
+    app: AppHandle,
+    store: State<'_, DesktopLlmProfileStore>,
+) -> Result<DesktopLlmProfileStatus, String> {
+    let mut profile = saved_profile_for_providers(&app, &store)?;
+    for provider in profile.providers.iter_mut() {
+        if let Some(models) = fetch_provider_models(provider).await {
+            provider.models = models;
+        }
+    }
+    persist_profile(&app, &store, profile)
+}
+
 #[tauri::command]
 async fn test_llm_connection(
     base_url: String,
@@ -3242,6 +3463,7 @@ async fn test_llm_connection(
         context_window_source: None,
         fast_model: None,
         strong_model: None,
+        providers: Vec::new(),
     })?;
     let mut request = probe_client()?.get(format!("{}/models", profile.base_url));
     if !profile.api_key.is_empty() {
@@ -3523,6 +3745,7 @@ mod tests {
             context_window_source: None,
             fast_model: None,
             strong_model: None,
+            providers: Vec::new(),
         })
         .expect("relay profile");
         assert_eq!(relay.base_url, DEFAULT_LLM_BASE_URL);
@@ -3538,6 +3761,7 @@ mod tests {
             context_window_source: None,
             fast_model: None,
             strong_model: None,
+            providers: Vec::new(),
         })
         .expect("local profile");
         assert_eq!(llm_provider(&local.base_url), "local");
@@ -3550,6 +3774,7 @@ mod tests {
             context_window_source: None,
             fast_model: None,
             strong_model: None,
+            providers: Vec::new(),
         })
         .is_err());
         assert!(normalize_llm_profile(DesktopLlmProfile {
@@ -3560,6 +3785,7 @@ mod tests {
             context_window_source: None,
             fast_model: None,
             strong_model: None,
+            providers: Vec::new(),
         })
         .is_err());
     }
@@ -3574,6 +3800,7 @@ mod tests {
             context_window_source: Some("service".into()),
             fast_model: None,
             strong_model: None,
+            providers: Vec::new(),
         };
         let mut command = Command::new("vc");
         configure_llm_profile(&mut command, Some(&profile));
@@ -3613,6 +3840,7 @@ mod tests {
         let routed = DesktopLlmProfile {
             fast_model: Some("model-fast".into()),
             strong_model: Some("model-strong".into()),
+            providers: Vec::new(),
             ..profile
         };
         let mut command = Command::new("vc");
@@ -3654,6 +3882,65 @@ mod tests {
         assert_eq!(env.get(OsStr::new("VORTOCODE_ENABLE_BROWSER_CONTROL")), Some(&None));
     }
 
+    fn sample_provider(id: &str) -> DesktopLlmProvider {
+        DesktopLlmProvider {
+            id: id.into(),
+            name: String::new(),
+            base_url: "https://api.example.com/v1/".into(),
+            api_key: " key ".into(),
+            models: vec!["m1".into(), "  ".into(), "bad\u{7}".into()],
+        }
+    }
+
+    #[test]
+    fn custom_provider_ids_and_endpoints_are_validated() {
+        let provider = normalize_llm_provider(sample_provider("DeepSeek_2")).unwrap();
+        assert_eq!(provider.id, "deepseek_2");
+        assert_eq!(provider.name, "deepseek_2");
+        assert_eq!(provider.base_url, "https://api.example.com/v1");
+        assert_eq!(provider.api_key, "key");
+        assert_eq!(provider.models, vec!["m1".to_string()]);
+        for bad in ["my-provider", "1abc", "", "default", "anthropic", "a b"] {
+            assert!(normalize_llm_provider(sample_provider(bad)).is_err(), "{bad}");
+        }
+        let mut insecure = sample_provider("plain");
+        insecure.base_url = "http://api.example.com/v1".into();
+        assert!(normalize_llm_provider(insecure).is_err());
+        let mut keyless = sample_provider("keyless");
+        keyless.api_key = String::new();
+        assert!(normalize_llm_provider(keyless).is_err());
+    }
+
+    #[test]
+    fn custom_providers_reach_the_runtime_env_but_not_the_status() {
+        let profile = DesktopLlmProfile {
+            base_url: "https://models.example.com/v1".into(),
+            api_key: "main-key".into(),
+            model: "main".into(),
+            context_window: None,
+            context_window_source: None,
+            fast_model: None,
+            strong_model: None,
+            providers: vec![normalize_llm_provider(sample_provider("deepseek")).unwrap()],
+        };
+        let mut command = Command::new("vc");
+        configure_llm_profile(&mut command, Some(&profile));
+        let env = command
+            .get_envs()
+            .map(|(key, value)| (key.to_owned(), value.map(OsStr::to_owned)))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            env.get(OsStr::new("VORTOCODE_PROVIDER_DEEPSEEK_BASE")).and_then(Option::as_deref),
+            Some(OsStr::new("https://api.example.com/v1"))
+        );
+        assert_eq!(
+            env.get(OsStr::new("VORTOCODE_PROVIDER_DEEPSEEK_KEY")).and_then(Option::as_deref),
+            Some(OsStr::new("key"))
+        );
+        let status = serde_json::to_string(&desktop_llm_profile_status(Some(&profile))).unwrap();
+        assert!(status.contains("\"hasKey\":true") && !status.contains("main-key") && !status.contains("\"key\""));
+    }
+
     #[test]
     fn routing_tier_names_are_trimmed_and_blank_means_unset() {
         let profile = normalize_llm_profile(DesktopLlmProfile {
@@ -3664,12 +3951,14 @@ mod tests {
             context_window_source: None,
             fast_model: Some("  fast  ".into()),
             strong_model: Some("   ".into()),
+            providers: Vec::new(),
         })
         .unwrap();
         assert_eq!(profile.fast_model.as_deref(), Some("fast"));
         assert_eq!(profile.strong_model, None);
         assert!(normalize_llm_profile(DesktopLlmProfile {
             strong_model: Some("bad\u{7}".into()),
+            providers: Vec::new(),
             ..profile
         })
         .is_err());
@@ -3717,6 +4006,7 @@ mod tests {
                 context_window_source: Some("configured".into()),
                 fast_model: None,
                 strong_model: None,
+                providers: Vec::new(),
             }))
         };
 
@@ -3778,6 +4068,7 @@ mod tests {
             context_window_source: Some("configured".into()),
             fast_model: None,
             strong_model: None,
+            providers: Vec::new(),
         };
 
         store.replace(Some(profile)).expect("save cache");
@@ -5065,6 +5356,7 @@ mod tests {
             context_window_source: None,
             fast_model: None,
             strong_model: None,
+            providers: Vec::new(),
         }
     }
 
@@ -5199,6 +5491,7 @@ mod tests {
             context_window_source: Some("configured".into()),
             fast_model: None,
             strong_model: None,
+            providers: Vec::new(),
         }
     }
 

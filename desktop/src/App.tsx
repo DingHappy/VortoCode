@@ -349,7 +349,7 @@ function App() {
   // 授权档位与模型服务配置已收进 useTrustLevel / useLlmProfile；重启 runtime 经注入回调。
   const { trust, trustBusy, changeTrustLevel } = useTrustLevel(clientRef, connection, repoRoot, settingsOpen, setBanner);
   const {
-    llmProfile, llmProfileChecked, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput,
+    llmProfile, setLlmProfile, llmProfileChecked, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput,
     llmFastInput, setLlmFastInput, llmStrongInput, setLlmStrongInput,
     llmKeyInput, setLlmKeyInput, llmProfileBusy, saveLlmProfile, clearLlmProfile,
   } = useLlmProfile(settingsOpen, setBanner, () => restartCurrentRuntimeForLlmProfile());
@@ -2944,8 +2944,15 @@ function App() {
                         persistModelChoice(event.target.value);
                       }}
                     >
-                      {composerModelChoices.map((choice) => (
+                      {composerModelChoices.filter((choice) => !choice.group).map((choice) => (
                         <option key={choice.value} value={choice.value}>{choice.label}{choice.value === "auto" ? "" : ` · ${choice.hint}`}</option>
+                      ))}
+                      {[...new Set(composerModelChoices.flatMap((choice) => choice.group ? [choice.group] : []))].map((group) => (
+                        <optgroup key={group} label={group}>
+                          {composerModelChoices.filter((choice) => choice.group === group).map((choice) => (
+                            <option key={choice.value} value={choice.value}>{choice.label}</option>
+                          ))}
+                        </optgroup>
                       ))}
                     </select>
                   </label>
@@ -3267,6 +3274,7 @@ function App() {
           onLlmFastChange={setLlmFastInput}
           onLlmStrongChange={setLlmStrongInput}
           onRestartRuntime={restartCurrentRuntimeForLlmProfile}
+          onLlmProfileChange={setLlmProfile}
           onLlmKeyChange={setLlmKeyInput}
           onSaveLlmProfile={saveLlmProfile}
           onClearLlmProfile={clearLlmProfile}
