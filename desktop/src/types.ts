@@ -1159,6 +1159,12 @@ export interface DesktopLlmProfileStatus {
   configPath?: string;
 }
 
+/** 设置 → 浏览器操控。 */
+export interface BrowserControlStatus {
+  enabled: boolean;
+  browserPath?: string | null;
+}
+
 /** 设置页「测试连接」：只验证不保存。 */
 export interface LlmConnectionTest {
   ok: boolean;

@@ -40,6 +40,7 @@ READ = "read"          # read_file / grep / git 只读 / 只读命令
 WRITE = "write"        # 写盘、改文件、落分支
 EXECUTE = "execute"    # run_command 等执行面
 DELIVER = "deliver"    # 外发：开 PR、发图/发文件、发布制品
+INTERACT = "interact"  # 在浏览器里替用户点击/输入：**任何档位都不免确认**（不在下表任何一档里）
 
 # 每档免确认覆盖哪些类别。
 _AUTHORIZED = {
@@ -90,6 +91,6 @@ def pre_authorized(level: Optional[str], kind: Optional[str] = None) -> bool:
     `kind` 缺省（或不认识）时按 WRITE 算——最重的那一类：工具忘了申报类别时，宁可多问一次。
     """
     category = (kind or "").strip().lower()
-    if category not in (READ, WRITE, EXECUTE, DELIVER):
+    if category not in (READ, WRITE, EXECUTE, DELIVER, INTERACT):
         category = WRITE
     return category in _AUTHORIZED[normalize(level)]

@@ -19,6 +19,7 @@ import { contextWindowSourceLabel, formatTokenCount } from "../lib/labels";
 import { PROVIDER_PRESETS, presetForBaseUrl, sameLlmBase } from "../lib/providers";
 import { ConfigPane } from "./settings/ConfigPane";
 import { LlmConnectionCheck } from "./settings/LlmConnectionCheck";
+import { BrowserPane } from "./settings/BrowserPane";
 import { PersonalizePane } from "./settings/PersonalizePane";
 import { UsagePane } from "./settings/UsagePane";
 import {
@@ -39,7 +40,7 @@ import type {
   WorkspaceScope,
 } from "../types";
 
-type SettingsSection = "general" | "usage" | "model" | "personalize" | "appearance" | "config" | "trust" | "extensions";
+type SettingsSection = "general" | "usage" | "model" | "personalize" | "appearance" | "config" | "trust" | "browser" | "extensions";
 
 const SETTINGS_NAV: Array<{ group: string; items: Array<{ id: SettingsSection; label: string; keywords: string }> }> = [
   {
@@ -54,7 +55,13 @@ const SETTINGS_NAV: Array<{ group: string; items: Array<{ id: SettingsSection; l
     ],
   },
   { group: "安全", items: [{ id: "trust", label: "授权级别", keywords: "权限 确认 只读 完全信任 trust" }] },
-  { group: "集成", items: [{ id: "extensions", label: "扩展", keywords: "hook 规则 skills mcp 插件 扩展" }] },
+  {
+    group: "集成",
+    items: [
+      { id: "browser", label: "浏览器操控", keywords: "浏览器 chrome 网页 点击 截图 browser" },
+      { id: "extensions", label: "扩展", keywords: "hook 规则 skills mcp 插件 扩展" },
+    ],
+  },
 ];
 
 type SettingsModalProps = {
@@ -82,6 +89,7 @@ type SettingsModalProps = {
   onLlmModelChange: (value: string) => void;
   onLlmFastChange: (value: string) => void;
   onLlmStrongChange: (value: string) => void;
+  onRestartRuntime: () => Promise<boolean>;
   onLlmKeyChange: (value: string) => void;
   onSaveLlmProfile: () => void;
   onClearLlmProfile: () => void;
@@ -124,6 +132,7 @@ export function SettingsModal({
   onLlmModelChange,
   onLlmFastChange,
   onLlmStrongChange,
+  onRestartRuntime,
   onLlmKeyChange,
   onSaveLlmProfile,
   onClearLlmProfile,
@@ -382,6 +391,7 @@ export function SettingsModal({
         </>
         )}
 
+        {section === "browser" && <BrowserPane onRestartRuntime={onRestartRuntime} />}
         {section === "extensions" && (children || (
           <p className="settings-intro">打开 Git 项目后，这里会显示该项目加载的规则、Skills、Hooks 与 MCP。</p>
         ))}

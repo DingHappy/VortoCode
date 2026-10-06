@@ -9517,3 +9517,13 @@ input::placeholder {
   font-style: normal;
   font-weight: 400;
 }
+
+.settings-card-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--n11);
+  font-size: 12.5px;
+  line-height: 19px;
+}

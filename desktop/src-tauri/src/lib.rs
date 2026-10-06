@@ -470,6 +470,109 @@ mod remote_token_keychain {
 // 文件可直接手动编辑，下次启动生效；格式与设置页保存的一致（camelCase）。
 const LLM_PROFILE_FILE: &str = "llm-profile.json";
 
+const DESKTOP_PREFERENCES_FILE: &str = "desktop-preferences.json";
+const BROWSER_CANDIDATES: [&str; 4] = [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+];
+
+/// 本机偏好（不含任何凭据）。缺字段一律按最保守的默认值：浏览器操控关闭。
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopPreferences {
+    #[serde(default)]
+    browser_control: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserControlStatus {
+    enabled: bool,
+    /// 找到的 Chromium 系浏览器；没有则无法启用。
+    browser_path: Option<String>,
+}
+
+fn desktop_preferences_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|directory| directory.join(DESKTOP_PREFERENCES_FILE))
+        .map_err(|error| format!("无法定位 Desktop 配置目录：{error}"))
+}
+
+fn read_desktop_preferences(path: &Path) -> DesktopPreferences {
+    // 读不到或格式坏了都按默认（关闭）：偏好文件损坏不该让任何能力意外打开。
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|payload| serde_json::from_str(&payload).ok())
+        .unwrap_or_default()
+}
+
+fn find_local_browser() -> Option<String> {
+    BROWSER_CANDIDATES
+        .iter()
+        .find(|path| Path::new(path).is_file())
+        .map(|path| path.to_string())
+}
+
+fn configure_browser_control(command: &mut Command, preferences: &DesktopPreferences) {
+    match (preferences.browser_control, find_local_browser()) {
+        (true, Some(browser)) => {
+            command.env("VORTOCODE_ENABLE_BROWSER_CONTROL", "1");
+            command.env("VORTOCODE_BROWSER_PATH", browser);
+        }
+        _ => {
+            command.env_remove("VORTOCODE_ENABLE_BROWSER_CONTROL");
+            command.env_remove("VORTOCODE_BROWSER_PATH");
+        }
+    }
+}
+
+#[tauri::command(async)]
+fn get_browser_control(app: AppHandle) -> Result<BrowserControlStatus, String> {
+    let preferences = read_desktop_preferences(&desktop_preferences_path(&app)?);
+    Ok(BrowserControlStatus {
+        enabled: preferences.browser_control,
+        browser_path: find_local_browser(),
+    })
+}
+
+#[tauri::command]
+async fn set_browser_control(app: AppHandle, enabled: bool) -> Result<BrowserControlStatus, String> {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    let browser_path = find_local_browser();
+    if enabled && browser_path.is_none() {
+        return Err("没有找到 Chrome / Edge / Chromium / Brave，无法启用浏览器操控".into());
+    }
+    if enabled {
+        // 打开是放权：原生确认在 webview 之外，页面脚本无法替用户点「启用」。关闭是收权，不必问。
+        let dialog_app = app.clone();
+        let confirmed = tauri::async_runtime::spawn_blocking(move || {
+            with_main_window_parent(&dialog_app, dialog_app.dialog().message(
+                "启用后，Agent 可以在一个独立的浏览器窗口里打开网页、读取内容和截图；每次点击或输入都会先问你。\n\n这个窗口不含你日常浏览器的登录信息；支付、银行、邮箱、账号和云控制台等站点会被拦截。",
+            ))
+            .title("启用浏览器操控")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom("启用".into(), "取消".into()))
+            .blocking_show()
+        })
+        .await
+        .map_err(|error| format!("浏览器操控确认对话框失败：{error}"))?;
+        if !confirmed {
+            return Err("浏览器操控未获确认，保持关闭".into());
+        }
+    }
+    let path = desktop_preferences_path(&app)?;
+    let mut preferences = read_desktop_preferences(&path);
+    preferences.browser_control = enabled;
+    save_json_atomic_with_mode(&path, "desktop-preferences", &preferences, Some(0o600))?;
+    Ok(BrowserControlStatus {
+        enabled,
+        browser_path,
+    })
+}
+
 fn llm_profile_path(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_config_dir()
@@ -2766,6 +2869,9 @@ fn start_gateway(
     // 先读模型配置、再拿 runtime 锁：读配置是 I/O，持锁期间做会让 gateway_process_status
     // 等命令一起排队。结果先留着，失败到原位置再报，保持"已在运行就直接返回"的语义不变。
     let llm_profile = cached_desktop_llm_profile(&app, &llm_profile_store);
+    let preferences = desktop_preferences_path(&app)
+        .map(|path| read_desktop_preferences(&path))
+        .unwrap_or_default();
 
     let mut supervisor = state
         .0
@@ -2825,6 +2931,7 @@ fn start_gateway(
     let mut last_not_found = None;
     for (mut command, label) in candidates {
         configure_llm_profile(&mut command, llm_profile.as_ref());
+        configure_browser_control(&mut command, &preferences);
         prepare_gateway_process(&mut command);
         command
             .stdout(Stdio::from(log.try_clone().map_err(|error| {
@@ -2994,6 +3101,8 @@ pub fn run() {
             get_llm_usage,
             get_user_instructions,
             set_user_instructions,
+            get_browser_control,
+            set_browser_control,
             reveal_desktop_config,
             list_desktop_projects,
             remember_desktop_project,
@@ -3522,6 +3631,27 @@ mod tests {
                 .and_then(Option::as_deref),
             Some(OsStr::new("model-strong"))
         );
+    }
+
+    #[test]
+    fn browser_control_defaults_off_and_is_removed_from_child_env_when_off() {
+        let directory = std::env::temp_dir().join(format!("vc-prefs-{}", std::process::id()));
+        let path = directory.join(DESKTOP_PREFERENCES_FILE);
+        assert!(!read_desktop_preferences(&path).browser_control);
+        create_dir_all(&directory).unwrap();
+        std::fs::write(&path, "{not json").unwrap();
+        assert!(!read_desktop_preferences(&path).browser_control);
+        std::fs::write(&path, r#"{"browserControl": true}"#).unwrap();
+        assert!(read_desktop_preferences(&path).browser_control);
+        let _ = std::fs::remove_dir_all(&directory);
+
+        let mut command = Command::new("vc");
+        configure_browser_control(&mut command, &DesktopPreferences::default());
+        let env = command
+            .get_envs()
+            .map(|(key, value)| (key.to_owned(), value.map(OsStr::to_owned)))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(env.get(OsStr::new("VORTOCODE_ENABLE_BROWSER_CONTROL")), Some(&None));
     }
 
     #[test]
