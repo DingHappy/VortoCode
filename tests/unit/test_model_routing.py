@@ -18,7 +18,8 @@ def test_auto_routes_by_task_shape(tiers):
     assert route_model("你好", mode="plan").model == "fast-model"
     assert route_model("帮我看看这个函数的命名是否合适，顺便给点改进建议，主要关注可读性和一致性方面的问题。" * 2,
                        mode="plan").model == "base-model"
-    assert route_model("改个错别字", mode="build").model == "strong-model"
+    # 模式不是信号：Desktop 每轮都按 build 发，简短问答仍走快速档。
+    assert route_model("改个错别字", mode="build").model == "fast-model"
     assert route_model("这是什么", mode="plan", has_media=True).model == "strong-model"
     assert route_model("帮我排查一下这个内存泄漏", mode="plan").model == "strong-model"
     assert route_model("看看", mode="plan", context_count=3).model == "strong-model"
@@ -80,6 +81,7 @@ async def _run(message):
 async def test_turn_applies_auto_choice_and_reports_it(monkeypatch, tiers):
     monkeypatch.setenv("OPENAI_API_KEY", "x")
     models, routing = await _run({"text": "实现一个新的登录流程", "mode": "build", "rid": "r1", "model": "auto"})
+    # 「实现」命中复杂任务提示词，走强力档（与 mode 无关）
     assert models == ["strong-model"]
     assert routing and routing[0]["label"].startswith("使用 strong-model") and routing[0]["detail"] == "powerful"
 

@@ -75,7 +75,6 @@ import { RunsPanel } from "./components/RunsPanel";
 import { RuntimeInboxPanel } from "./components/RuntimeInboxPanel";
 import { SettingsModal } from "./components/SettingsModal";
 import { TurnTimeline } from "./components/TurnTimeline";
-import { WelcomeGuide } from "./components/WelcomeGuide";
 import { useChangeReview } from "./hooks/useChangeReview";
 import { useExtensionsStatus } from "./hooks/useExtensionsStatus";
 import { useGoals } from "./hooks/useGoals";
@@ -85,8 +84,6 @@ import { useTrustLevel } from "./hooks/useTrustLevel";
 import { useJournal } from "./hooks/useJournal";
 import { useLlmProfile } from "./hooks/useLlmProfile";
 import {
-  FIRST_DELIVERY_PROMPT,
-  PROJECT_BRIEF_PROMPT,
   isPlanExecutionConfirmation,
   isPlanBudgetConfirmation,
 } from "./lib/onboarding";
@@ -227,7 +224,9 @@ function App() {
   }, []);
   const [busy, setBusy] = useState(false);
   const [promptQueue, setPromptQueue] = useState<PromptQueueItem[]>([]);
-  const [mode, setMode] = useState<"plan" | "build">("plan");
+  // 不再区分 Plan / Build：每轮都按可修改的模式运行，写盘、执行、外发照旧逐次过确认门
+  //（授权档位决定问不问，污点回合一律问人）。只读规划交给模型自己判断，不再让用户先选模式。
+  const mode = "build" as const;
   const [prompt, setPrompt] = useState("");
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmation | null>(null);
   const [workspaceRequest, setWorkspaceRequest] = useState<WorkspaceRequest | null>(null);
@@ -2323,7 +2322,6 @@ function App() {
       if (!contexts.some((candidate) => contextItemKey(candidate) === contextItemKey(item))) contexts.push(item);
       if (contexts.length >= 8) break;
     }
-    setMode("build");
     const sent = await sendPrompt(promptText, "build", contexts);
     if (sent) {
       setPendingGitComment(null);
@@ -2370,7 +2368,6 @@ function App() {
       if (!contexts.some((candidate) => contextItemKey(candidate) === contextItemKey(item))) contexts.push(item);
       if (contexts.length >= 8) break;
     }
-    setMode("build");
     const sent = await sendPrompt(promptText, "build", contexts);
     if (sent) setBanner(check ? "CI 失败证据已交给 Agent 修复" : "PR Review 已交给 Agent 修复");
   };
@@ -2711,7 +2708,6 @@ function App() {
           <div className="conversation-header">
             <div>
               <strong>{currentSession?.title || "新任务"}</strong>
-              <span>{mode === "build" ? "Build · 允许在确认后修改" : "Plan · 只读与提案"}</span>
             </div>
             <div className="conversation-actions">
               <button
@@ -2721,10 +2717,6 @@ function App() {
               >
                 <PanelRight size={14} />工作台{taskContextCount > 0 && <b>{taskContextCount}</b>}
               </button>
-              <div className="mode-switch">
-                <button className={mode === "plan" ? "active" : ""} onClick={() => setMode("plan")}>Plan</button>
-                <button className={mode === "build" ? "active build" : ""} onClick={() => setMode("build")}>Build</button>
-              </div>
               {busy && <button className="stop-button" onClick={() => void cancelTurn()}>停止</button>}
             </div>
           </div>
@@ -2738,21 +2730,12 @@ function App() {
             }}
           >
             {messages.length === 0 && !streaming && (
-              <WelcomeGuide
-                activeScope={activeScope}
-                projectName={repoRoot.split("/").filter(Boolean).slice(-1)[0] || ""}
-                connection={connection}
-                // 还没读完模型配置 = "检查中"，不是"没配"——两态必须分开，否则冷启动瞬间会
-                // 误报"请先配置模型"。读失败也算读完（显示待配置），不能永远停在检查中。
-                modelLoaded={llmProfileChecked}
-                modelConfigured={Boolean(llmProfile?.configured)}
-                runtimeStarting={runtimeStarting}
-                projectSwitching={projectSwitching}
-                onOpenSettings={() => setSettingsOpen(true)}
-                onChooseProject={() => setSettingsOpen(true)}
-                onDraftFirstDelivery={() => setPrompt(FIRST_DELIVERY_PROMPT)}
-                onDraftProjectBrief={() => setPrompt(PROJECT_BRIEF_PROMPT)}
-              />
+              <div className="home-greeting">
+                <h1>有什么可以帮你？</h1>
+                {llmProfileChecked && !llmProfile?.configured && (
+                  <p>还没有配置模型服务。<button onClick={() => setSettingsOpen(true)}>去设置</button></p>
+                )}
+              </div>
             )}
 
             {plan.length > 0 && (
@@ -2849,7 +2832,7 @@ function App() {
                       <span className="prompt-queue-index">{index + 1}</span>
                       <span className="prompt-queue-copy" title={item.text}>
                         <strong>{item.text}</strong>
-                        <small>{item.mode === "build" ? "Build" : "Plan"}{item.context_count > 0 ? ` · ${item.context_count} 个引用` : ""}</small>
+                        {item.context_count > 0 && <small>{item.context_count} 个引用</small>}
                       </span>
                       <button className="prompt-queue-now" onClick={() => void sendQueuedPromptNow(item.id)}>现在执行</button>
                       <button className="prompt-queue-remove" aria-label={`删除排队任务 ${index + 1}`} onClick={() => void removeQueuedPrompt(item.id)}><X size={13} /></button>
@@ -2947,7 +2930,7 @@ function App() {
                     ? busy ? "Enter 加入队列 · 不访问本机文件" : "不访问本机文件"
                     : contextItems.length > 0
                       ? `${contextItems.length} 个源码引用`
-                      : busy ? "Enter 加入队列 · Shift+Enter 换行" : mode === "build" ? "可修改 · 变更需审查" : "只读规划"}</span>
+                      : busy ? "Enter 加入队列 · Shift+Enter 换行" : "改动前会先问你"}</span>
                 </div>
                 <div className="composer-actions">
                 {composerModelChoices.length > 1 && (

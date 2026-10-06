@@ -142,7 +142,7 @@ export function ProjectAssetsPanel({
       {projectAssetView === "artifacts" && (
         <div className="artifacts-workbench">
           {artifacts.length === 0 ? (
-            <div className="panel-empty"><strong>暂无制品</strong><p>在 Build 模式让 Agent“把结果做成可交互页面”，发布后会出现在这里。</p></div>
+            <div className="panel-empty"><strong>暂无制品</strong><p>让 Agent“把结果做成可交互页面”，发布后会出现在这里。</p></div>
           ) : (
             <>
               <div className="artifact-list">
