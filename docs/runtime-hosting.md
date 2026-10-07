@@ -61,6 +61,25 @@ accidentally reactivate a resident service. Connect Desktop to an explicitly reg
 shared tasks and notifications. Independent Desktop children currently have no
 cross-host notification relay to that service.
 
+Set `VORTOCODE_IM_ROLE=notify` on a resident service to use IM only for notifications.
+This mode does not construct an IM agent or register an IM task worker; incoming
+messages and approval callbacks cannot submit tasks or authorize operations.
+Telegram discards inbound updates before fetching attachments. It sends terminal
+task results and blocked-task reminders, while ordinary task progress stays in
+Desktop. Polling still checks connectivity and the heartbeat retries queued notices.
+The default `interactive` role retains the existing IM control flow.
+
+In Desktop, choose **Connect remote workspace** from the project picker or sidebar.
+Register the resident service address, its actual project directory and API token.
+The native layer validates the destination and stores the token in Keychain;
+HTTP and WebSocket requests resolve that registered identity without sending the
+credential back to the frontend. Desktop verifies the remote project and protocol
+before allowing control. Existing task, queue, confirmation and change views use
+that remote Runtime. Registered remote workspaces also appear in the cross-runtime
+inbox while another workspace is active. Disconnecting Desktop does not stop the
+service or its background tasks. Remote source browsing does not read local files
+with the same path; inspect task changes through the server-backed change views.
+
 This change does not install a local daemon, deploy a service, configure real
 credentials, or prove receipt on a phone. A future local daemon can use the same
 Runtime lifecycle after its explicit start/stop and reconnect UX is defined.

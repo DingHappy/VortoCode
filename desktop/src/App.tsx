@@ -86,6 +86,7 @@ import { SettingsModal, type SettingsSection } from "./components/SettingsModal"
 import { ArtifactCenter } from "./components/ArtifactCenter";
 import { PluginsPage } from "./components/PluginsPage";
 import { ProjectPicker } from "./components/ProjectPicker";
+import { RemoteProjectDialog } from "./components/RemoteProjectDialog";
 import { TurnTimeline } from "./components/TurnTimeline";
 import { useChangeReview } from "./hooks/useChangeReview";
 import { useExtensionsStatus } from "./hooks/useExtensionsStatus";
@@ -118,7 +119,7 @@ import { loadModelChoice, loadModelPicks, modelChoices, persistModelChoice, pers
 
 
 type PendingWorkspaceSave = { rid: string; path: string; content: string; buffer: string };
-type RuntimeConnectionOptions = { baseUrl?: string; repoRoot?: string; token?: string; scope?: WorkspaceScope };
+type RuntimeConnectionOptions = { baseUrl?: string; repoRoot?: string; token?: string; scope?: WorkspaceScope; remoteProjectId?: string };
 type StartWorkspaceOptions = RuntimeConnectionOptions & { baseUrl: string; sid: string; announce?: boolean; workspaceId?: string };
 type WorkspaceRequest = { scope: Exclude<WorkspaceScope, "general">; reason: string; task: string };
 const EMPTY_PROCESS: GatewayProcessStatus = {
@@ -194,6 +195,8 @@ function App() {
   const runtimeTokensRef = useRef<Map<string, string>>(new Map());
   const runtimeInboxSourcesRef = useRef<Array<Omit<DesktopRuntimeInbox, "snapshot" | "error" | "checkedAt">>>([]);
   const projectSwitchingRef = useRef(false);
+  const remoteProjectRef = useRef<string | null>(null);
+  const [remoteDialogOpen, setRemoteDialogOpen] = useState(false);
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(true);
   const activeTurnRidRef = useRef<string | null>(null);
@@ -538,7 +541,11 @@ function App() {
         repoRoot: item.repoRoot,
         baseUrl: item.baseUrl as string,
       };
-    }), [projects, runtimeProcesses]);
+    }).concat(projects.filter((item) => item.kind === "remote").map((item) => ({
+      runtimeId: `remote:${item.id}`, projectId: item.id, workspaceId: undefined,
+      scope: "project" as WorkspaceScope, label: `远端 · ${item.name}`,
+      repoRoot: item.repoRoot, baseUrl: item.baseUrl,
+    }))), [projects, runtimeProcesses]);
   runtimeInboxSourcesRef.current = runtimeInboxSources;
   const runtimeInboxSourceKey = useMemo(
     () => runtimeInboxSources.map((item) => `${item.runtimeId}:${item.baseUrl}:${item.label}`).sort().join("|"),
@@ -651,6 +658,13 @@ function App() {
   // snapshotTodayJournal 已随 journal 域收进 useJournal（S6b）；总线与 connect 照旧调用。
 
   const refreshWorkspaceFiles = useCallback(async (root: string) => {
+    if (remoteProjectRef.current) {
+      workspaceRootRef.current = "";
+      setWorkspaceRoot("");
+      setWorkspaceFiles([]);
+      setWorkspaceError("远端工作区的结果、日志和变更请在任务与变更面板查看；这里不会读取本机同名目录。");
+      return;
+    }
     if (!root.trim()) return;
     workspaceRootRef.current = root.trim();
     setWorkspaceLoading(true);
@@ -695,6 +709,10 @@ function App() {
   }, []);
 
   const openWorkspaceFile = useCallback(async (path: string) => {
+    if (remoteProjectRef.current) {
+      setBanner("远端源码请通过任务变更查看；不会打开本机同名文件。");
+      return;
+    }
     if (editorDirty && path !== selectedFile && !await confirmAction("当前文件有未保存修改，确定放弃并打开其他文件吗？")) {
       return;
     }
@@ -724,6 +742,11 @@ function App() {
   const handleProtocolEvent = useCallback(
     (event: ProtocolEvent) => {
       switch (event.type) {
+        case "runtime_disconnected":
+          setConnection("error");
+          setConnectionNote("远端连接已断开；服务器任务继续运行，点击项目可重新连接");
+          setBusy(false);
+          break;
         case "init": {
           const version = typeof event.v === "number" ? event.v : null;
           const snapshot = (event.data ?? {}) as RuntimeSnapshot;
@@ -1083,17 +1106,20 @@ function App() {
       setConnection("connecting");
       setConnectionNote("正在建立安全协议连接…");
       try {
-        const normalized = normalizeLocalBaseUrl(requestedBaseUrl);
-        localStorage.setItem(STORAGE_KEYS.baseUrl, normalized);
+        const remoteId = options.remoteProjectId ?? remoteProjectRef.current ?? undefined;
+        const normalized = remoteId ? requestedBaseUrl : normalizeLocalBaseUrl(requestedBaseUrl);
+        remoteProjectRef.current = remoteId ?? null;
+        if (!remoteId) localStorage.setItem(STORAGE_KEYS.baseUrl, normalized);
         if (requestedRepoRoot.trim()) localStorage.setItem(STORAGE_KEYS.repoRoot, requestedRepoRoot.trim());
         localStorage.setItem(STORAGE_KEYS.sid, sid);
         const client = await attempt.attach(
-          () => new GatewayClient({ baseUrl: normalized, token: requestedToken }), sid, handleProtocolEvent,
+          () => new GatewayClient({ baseUrl: normalized, token: remoteId ? "" : requestedToken, remoteProjectId: remoteId, expectedWorkdir: remoteId ? requestedRepoRoot : undefined }), sid, handleProtocolEvent,
         );
         if (!client) return false;
         setConnection("connected");
-        setConnectionNote(requestedScope === "general" ? "通用会话已就绪" : requestedScope === "scratch" ? "隔离 Scratch 已就绪" : "项目工作区已就绪");
-        if (requestedScope === "project" && requestedRepoRoot.trim()) {
+        setConnectionNote(remoteId ? "远端工作区已连接；离开 Desktop 后服务器任务继续运行" : requestedScope === "general" ? "通用会话已就绪" : requestedScope === "scratch" ? "隔离 Scratch 已就绪" : "项目工作区已就绪");
+        if (remoteId) localStorage.setItem(projectSessionKey(remoteId), sid);
+        if (!remoteId && requestedScope === "project" && requestedRepoRoot.trim()) {
           try {
             const profile = await rememberProject(requestedRepoRoot.trim(), normalized);
             if (!attempt.current()) return false;
@@ -1142,7 +1168,8 @@ function App() {
     if (options.announce !== false) setBanner(scope === "general" ? "正在准备通用会话…" : scope === "scratch" ? "正在准备隔离 Scratch…" : "正在准备项目工作区；首次启动可能需要约 20 秒…");
     supervisionGenerationRef.current += 1;
     try {
-      const preferredUrl = normalizeLocalBaseUrl(options.baseUrl);
+      const preferredUrl = normalizeLocalBaseUrl(remoteProjectRef.current ? "http://127.0.0.1:8080" : options.baseUrl);
+      remoteProjectRef.current = null;
       const parsed = new URL(preferredUrl);
       const preferredPort = Number(parsed.port || "8080");
       const status = await invoke<GatewayProcessStatus>("start_gateway", {
@@ -1271,7 +1298,7 @@ function App() {
         }
         setRuntimeProcesses(statuses);
         setRuntimeRecoveries(recoveries);
-        if (!runtimeId) return;
+        if (!runtimeId || runtimeId.startsWith("remote:")) return;
         const status = statuses.find((item) => item.runtimeId === runtimeId) ?? {
           ...EMPTY_PROCESS,
           runtimeId,
@@ -1315,6 +1342,7 @@ function App() {
         const client = new GatewayClient({
           baseUrl: source.baseUrl,
           token: runtimeTokensRef.current.get(source.runtimeId) ?? "",
+          remoteProjectId: source.runtimeId.startsWith("remote:") ? source.projectId : undefined,
         });
         const snapshot = await client.getRuntimeInbox();
         runtimeEverReachableRef.current.add(source.runtimeId);
@@ -1487,7 +1515,7 @@ function App() {
 
   const switchProject = async (project: DesktopProjectProfile, options: { fresh?: boolean; sid?: string } = {}): Promise<boolean> => {
     if (projectSwitchingRef.current) return false;
-    if (project.repoRoot === repoRoot.trim()) {
+    if (project.kind !== "remote" && !remoteProjectRef.current && project.repoRoot === repoRoot.trim()) {
       setBaseUrl(project.baseUrl);
       localStorage.setItem(STORAGE_KEYS.baseUrl, project.baseUrl);
       localStorage.setItem(STORAGE_KEYS.lastProjectId, project.id);
@@ -1525,6 +1553,20 @@ function App() {
       setActiveSid(sid);
       setRepoRoot(project.repoRoot);
       setBaseUrl(project.baseUrl);
+      if (project.kind === "remote") {
+        remoteProjectRef.current = project.id;
+        managedProcessRunningRef.current = false;
+        setProcessStatus({ ...EMPTY_PROCESS, runtimeId: `remote:${project.id}`, projectId: project.id,
+          scope: "project", repoRoot: project.repoRoot, baseUrl: project.baseUrl,
+          message: "远端常驻服务由服务器管理" });
+        setRecoveryRecord(null);
+        localStorage.setItem(STORAGE_KEYS.lastProjectId, project.id);
+        await refreshWorkspaceFiles(project.repoRoot);
+        openInspector("inbox");
+        return await connectToRuntime(sid, { baseUrl: project.baseUrl, repoRoot: project.repoRoot,
+          scope: "project", remoteProjectId: project.id, token: "" });
+      }
+      remoteProjectRef.current = null;
       localStorage.setItem(STORAGE_KEYS.sid, sid);
       localStorage.setItem(STORAGE_KEYS.repoRoot, project.repoRoot);
       localStorage.setItem(STORAGE_KEYS.baseUrl, project.baseUrl);
@@ -1658,7 +1700,7 @@ function App() {
 
   const forgetProject = async (project: DesktopProjectProfile) => {
     if (projectSwitchingRef.current) return;
-    if (project.repoRoot === repoRoot.trim()) {
+    if (project.kind === "remote" ? remoteProjectRef.current === project.id : !remoteProjectRef.current && project.repoRoot === repoRoot.trim()) {
       setBanner("当前项目不能从最近项目中移除，请先切换到其他项目");
       return;
     }
@@ -2092,7 +2134,7 @@ function App() {
     // 目录选择与注册都在后端（pick_desktop_project）：webview 拿不到命名任意路径的通道
     try {
       const profile = await invoke<DesktopProjectProfile | null>("pick_desktop_project", {
-        baseUrl: normalizeLocalBaseUrl(baseUrl),
+        baseUrl: normalizeLocalBaseUrl(remoteProjectRef.current ? "http://127.0.0.1:8080" : baseUrl),
       });
       if (!profile) return false;
       setProjects((previous) => [profile, ...previous.filter((item) => item.id !== profile.id)]);
@@ -2174,6 +2216,10 @@ function App() {
   };
 
   const startRuntime = async () => {
+    if (remoteProjectRef.current) {
+      await connectToRuntime(activeSid);
+      return;
+    }
     await startWorkspace({
       repoRoot: repoRoot.trim(),
       baseUrl,
@@ -2183,6 +2229,11 @@ function App() {
   };
 
   const stopRuntime = async () => {
+    if (remoteProjectRef.current) {
+      await disconnect();
+      setBanner("已断开远端连接；服务器和后台任务继续运行");
+      return;
+    }
     const runtimeId = processStatus.runtimeId;
     supervisionGenerationRef.current += 1;
     await disconnect();
@@ -2597,6 +2648,7 @@ function App() {
             <button className="sidebar-fold" aria-expanded={projectsOpen} onClick={() => setProjectsOpen(!projectsOpen)}>
               项目<ChevronDown size={13} className={projectsOpen ? "" : "folded"} />
             </button>
+            <button aria-label="连接远端工作区" title="连接远端工作区" onClick={() => setRemoteDialogOpen(true)} disabled={projectSwitching}>远端</button>
             <button aria-label="添加 Git 项目" title="添加 Git 项目" onClick={() => void chooseRepo()} disabled={projectSwitching}><FolderPlus size={15} /></button>
           </div>
           {projectsOpen && (
@@ -2636,12 +2688,12 @@ function App() {
                 .filter((item) => item.projectId === project.id)
                 .filter((item) => nameMatches || item.title.toLowerCase().includes(keyword));
               if (!nameMatches && nested.length === 0) return null;
-              const active = project.repoRoot === repoRoot.trim();
-              const managedRuntime = runtimeProcesses.find((item) => item.projectId === project.id || item.repoRoot === project.repoRoot);
+              const active = project.kind === "remote" ? remoteProjectRef.current === project.id : !remoteProjectRef.current && project.repoRoot === repoRoot.trim();
+              const managedRuntime = project.kind === "remote" ? undefined : runtimeProcesses.find((item) => item.projectId === project.id || item.repoRoot === project.repoRoot);
               const managedRunning = Boolean(managedRuntime?.running);
               const recovery = runtimeRecoveries.find((item) => item.projectId === project.id);
               const connected = active && connection === "connected";
-              const health = project.missing ? "目录已不存在 · 可移除" : managedRunning && !active ? "后台运行中" : managedRunning ? "本地引擎运行中" : connected ? "工作区就绪" : recovery?.status === "crashed" ? "上次异常退出 · 点击恢复" : recovery?.status === "running" ? "可重新附着" : active ? connectionText : "未启动";
+              const health = project.kind === "remote" ? connected ? "远端已连接" : "远端 · 点击连接" : project.missing ? "目录已不存在 · 可移除" : managedRunning && !active ? "后台运行中" : managedRunning ? "本地引擎运行中" : connected ? "工作区就绪" : recovery?.status === "crashed" ? "上次异常退出 · 点击恢复" : recovery?.status === "running" ? "可重新附着" : active ? connectionText : "未启动";
               return (
                 <Fragment key={project.id}>
                 <div
@@ -2658,7 +2710,7 @@ function App() {
                 >
                   <Folder size={15} className="project-folder" />
                   <div className="project-row-copy">
-                    <strong>{project.name}</strong>
+                    <strong>{project.kind === "remote" ? `远端 · ${project.name}` : project.name}</strong>
                     {/* 只在需要注意时显示状态；平时一行只有名字。 */}
                     {(project.missing || managedRunning || recovery?.status) && <span>{health}</span>}
                   </div>
@@ -3120,6 +3172,7 @@ function App() {
                 disabled={projectSwitching || runtimeStarting}
                 onPick={(project) => void switchProject(project)}
                 onAddProject={() => void chooseRepo()}
+                onAddRemote={() => setRemoteDialogOpen(true)}
                 onLeaveProject={() => void switchManagedScope("general")}
               />
             )}
@@ -3408,6 +3461,11 @@ function App() {
         )}
       </div>
 
+      {remoteDialogOpen && <RemoteProjectDialog onClose={() => setRemoteDialogOpen(false)} onRegistered={async (profile) => {
+        setProjects((previous) => [profile, ...previous.filter((item) => item.id !== profile.id)]);
+        setRemoteDialogOpen(false);
+        await switchProject(profile);
+      }} />}
       {settingsOpen && (
         <SettingsModal
           activeScope={activeScope}

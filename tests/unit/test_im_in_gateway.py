@@ -65,6 +65,37 @@ def _clean_registry():
 
 # ------------------------------------------------------------ 内嵌装配：共享 runner + kind 分发
 @pytest.mark.asyncio
+async def test_notification_role_blocks_commands_and_approvals_without_agent(tmp_path, monkeypatch):
+    from src.im.bridge import IMBridge
+    from src.im.channel import ChannelEvent
+    from src.gateway.tasks import BackgroundTask
+
+    monkeypatch.setenv("VORTOCODE_IM_ROLE", "notify")
+    monkeypatch.setattr(IMBridge, "_build_agent", lambda self: pytest.fail("notification sink built an agent"))
+    adapter, runner = FakeAdapter(), FakeRunner()
+    bridge, _ = im_service.start_embedded("telegram", str(tmp_path), adapter=adapter,
+                                        owner="42", runner=runner, register_worker=register_im_worker)
+    assert get_services().im_worker is None
+    assert bridge.liveness()["role"] == "notify"
+    pending = asyncio.get_running_loop().create_future()
+    bridge._pending["confirmation"] = pending
+    for text in ("/task change code", "/mode build", "change code"):
+        await bridge._on_event(ChannelEvent(kind="message", sender_id="42", text=text))
+    await bridge._on_event(ChannelEvent(kind="callback", sender_id="42", callback_id="confirmation", approved=True))
+    assert not runner.submitted and not pending.done() and not adapter.sent
+    task = BackgroundTask(id="notify-test", kind="dev", prompt="test", status="running", log=["progress"])
+    bridge._on_task_update(task)
+    await asyncio.sleep(0)
+    assert not adapter.sent
+    for status in ("done", "failed", "blocked"):
+        task.status = status
+        bridge._on_task_update(task)
+        await asyncio.sleep(0)
+    assert any("notify-test" in text for text in adapter.sent)
+    assert len(adapter.sent) == 3
+    im_service.stop_embedded()
+
+@pytest.mark.asyncio
 async def test_start_embedded_shares_runner_and_registers_dispatch(tmp_path, monkeypatch):
     adapter, runner = FakeAdapter(), FakeRunner()
     bridge, _ = im_service.start_embedded("telegram", str(tmp_path),

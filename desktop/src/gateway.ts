@@ -1,4 +1,6 @@
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import WebSocket, { type Message as WebSocketMessage } from "@tauri-apps/plugin-websocket";
 
 import type {
@@ -8,6 +10,7 @@ import type {
   CommandRunItem,
   CommandRunKind,
   ConnectionSettings,
+  RuntimeSnapshot,
   CreateGoalInput,
   DecisionItem,
   DevPlanGraph,
@@ -112,23 +115,41 @@ export class GatewayClient {
   private socket: WebSocket | null = null;
   private removeListener: (() => void) | null = null;
   private sessionId = "";
+  private remoteConnection: string | null = null;
+  private remoteUnlisten: Array<() => void> = [];
 
   constructor(private readonly settings: ConnectionSettings) {}
 
   async connect(sid: string, onEvent: (event: ProtocolEvent) => void): Promise<void> {
     await this.disconnect();
     this.sessionId = sid;
-    const cursorKey = `${EVENT_CURSOR_PREFIX}${sid}`;
+    const cursorKey = `${EVENT_CURSOR_PREFIX}${this.settings.remoteProjectId ? `${this.settings.remoteProjectId}:` : ""}${sid}`;
     const storedCursor = Number.parseInt(localStorage.getItem(cursorKey) ?? "", 10);
     const resumeCursor = Number.isSafeInteger(storedCursor) && storedCursor >= 0 ? storedCursor : null;
     let deliveredCursor = resumeCursor ?? 0;
     const seenSequences = new Set<number>();
+    let identityResolve: (() => void) | undefined;
+    let identityReject: ((error: Error) => void) | undefined;
+    let identityChecked = !this.settings.expectedWorkdir;
+    const identity = this.settings.remoteProjectId && this.settings.expectedWorkdir
+      ? new Promise<void>((resolve, reject) => { identityResolve = resolve; identityReject = reject; }) : null;
+    const identityTimeout = identity ? setTimeout(() => identityReject?.(new Error("远端未返回工作区身份，连接已拒绝")), 10_000) : null;
     const persistCursor = (value: number, force = false) => {
       if (!Number.isSafeInteger(value) || (!force && value < deliveredCursor)) return;
       deliveredCursor = value;
       localStorage.setItem(cursorKey, String(value));
     };
     const deliver = (event: ProtocolEvent, replay = false) => {
+      if (identity && !identityChecked) {
+        if (event.type !== "init") return;
+        const snapshot = event.data as RuntimeSnapshot | undefined;
+        if (snapshot?.scope !== "project" || snapshot.workdir?.replace(/\/$/, "") !== this.settings.expectedWorkdir?.replace(/\/$/, "") || event.v !== DESKTOP_PROTOCOL_VERSION) {
+          identityReject?.(new Error("远端实际工作区或协议与登记信息不一致，请检查服务地址和项目目录"));
+          return;
+        }
+        identityChecked = true;
+        identityResolve?.();
+      }
       if (event.type === "agent_events") {
         const latest = Number.isSafeInteger(event.latest_seq) ? Number(event.latest_seq) : null;
         const reset = resumeCursor !== null && latest !== null && latest < resumeCursor;
@@ -164,6 +185,37 @@ export class GatewayClient {
       }
       onEvent(event);
     };
+    if (this.settings.remoteProjectId) {
+      const early: Array<{ connId: string; data?: string; reason?: string }> = [];
+      let attaching = true;
+      const receive = (frame: { connId: string; data?: string; reason?: string }) => {
+        if (attaching) { if (early.length < 100) early.push(frame); return; }
+        if (frame.connId !== this.remoteConnection) return;
+        if (frame.reason) {
+          this.remoteConnection = null;
+          identityReject?.(new Error("远端连接已关闭"));
+          onEvent({ type: "runtime_disconnected", reason: frame.reason });
+          return;
+        }
+        try {
+          const event = JSON.parse(frame.data || "") as ProtocolEvent;
+          if (typeof event.type === "string") deliver(event);
+        } catch { /* Invalid frames never drive the client. */ }
+      };
+      try {
+        this.remoteUnlisten.push(await listen<{ connId: string; data: string }>("remote-ws-message", (event) => receive(event.payload)));
+        this.remoteUnlisten.push(await listen<{ connId: string; reason: string }>("remote-ws-closed", (event) => receive(event.payload)));
+        this.remoteConnection = await invoke<string>("remote_ws_connect", { projectId: this.settings.remoteProjectId, sid });
+        attaching = false;
+        early.forEach(receive);
+        if (identity) await identity;
+      } catch (error) {
+        await this.disconnect();
+        throw error;
+      } finally {
+        if (identityTimeout) clearTimeout(identityTimeout);
+      }
+    } else {
     const headers = authHeaders(this.settings);
     this.socket = await WebSocket.connect(websocketUrl(this.settings.baseUrl, sid), {
       headers,
@@ -179,6 +231,7 @@ export class GatewayClient {
         // Gateway 的协议是 JSON；坏帧不应让 Desktop 崩溃。
       }
     });
+    }
     // Tauri 原生插件在 connect() 返回后才能注册 JS listener。先取完整快照；已有 cursor 时再
     // 补收上次关闭之后的持久事件。Gateway 的 seq 与本地去重保证两条流重叠也不会重复执行。
     await this.send({ type: "get_status", hydrate: true });
@@ -188,6 +241,10 @@ export class GatewayClient {
   }
 
   async disconnect(): Promise<void> {
+    this.remoteUnlisten.splice(0).forEach((remove) => remove());
+    const remote = this.remoteConnection;
+    this.remoteConnection = null;
+    if (remote) await invoke("remote_ws_close", { connId: remote }).catch(() => undefined);
     this.removeListener?.();
     this.removeListener = null;
     if (this.socket) {
@@ -198,11 +255,17 @@ export class GatewayClient {
   }
 
   async send(event: Record<string, unknown>): Promise<void> {
+    if (this.settings.remoteProjectId) {
+      if (!this.remoteConnection) throw new Error("远端 runtime 尚未连接或已断开");
+      await invoke("remote_ws_send", { connId: this.remoteConnection, data: JSON.stringify(event) });
+      return;
+    }
     if (!this.socket) throw new Error("尚未连接 runtime");
     await this.socket.send(JSON.stringify(event));
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    if (this.settings.remoteProjectId) return JSON.parse(await this.remoteRequest(path, init)) as T;
     const base = normalizeLocalBaseUrl(this.settings.baseUrl);
     const headers = {
       ...authHeaders(this.settings, Boolean(init.body)),
@@ -217,6 +280,7 @@ export class GatewayClient {
   }
 
   private async requestText(path: string, init: RequestInit = {}): Promise<string> {
+    if (this.settings.remoteProjectId) return this.remoteRequest(path, init);
     const base = normalizeLocalBaseUrl(this.settings.baseUrl);
     const headers = {
       ...authHeaders(this.settings, Boolean(init.body)),
@@ -228,6 +292,16 @@ export class GatewayClient {
       throw runtimeError(detail, response.status);
     }
     return response.text();
+  }
+
+  private async remoteRequest(path: string, init: RequestInit): Promise<string> {
+    const result = await invoke<{ status: number; body: string }>("remote_http_request", {
+      projectId: this.settings.remoteProjectId,
+      method: init.method || "GET", path,
+      body: typeof init.body === "string" ? init.body : null,
+    });
+    if (result.status < 200 || result.status >= 300) throw runtimeError(result.body, result.status);
+    return result.body;
   }
 
   async waitUntilReady(attempts = 24, intervalMs = 250): Promise<void> {

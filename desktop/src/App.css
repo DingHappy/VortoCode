@@ -5490,6 +5490,12 @@ button.worktree-live:not(:disabled):hover {
   justify-content: space-between;
 }
 
+.remote-project-dialog { display: grid; gap: 14px; }
+.remote-project-dialog h2, .remote-project-dialog p { margin: 0; }
+.remote-project-dialog p { color: var(--quiet); line-height: 1.6; }
+.remote-project-dialog label { display: grid; gap: 6px; }
+.remote-project-dialog [role="alert"] { color: var(--danger, #c44545); }
+
 .settings-heading span {
   color: var(--accent);
   font-size: 9px;

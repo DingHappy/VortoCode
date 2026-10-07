@@ -13,6 +13,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import WebSocketPlugin from "@tauri-apps/plugin-websocket";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 
 import {
   DESKTOP_PROTOCOL_VERSION,
@@ -27,10 +29,67 @@ declare const __RUNTIME_PROTOCOL_VERSION__: number;
 
 vi.mock("@tauri-apps/plugin-http", () => ({ fetch: vi.fn() }));
 vi.mock("@tauri-apps/plugin-websocket", () => ({ default: { connect: vi.fn() } }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn() }));
 
 const SID = "sid-1";
 const CURSOR_KEY = `vortocode.desktop.eventCursor:${SID}`;
 const SETTINGS = { baseUrl: "http://127.0.0.1:8080", token: "" };
+
+describe("registered remote transport", () => {
+  it("uses native registration identity for HTTP, without passing URL or credentials", async () => {
+    vi.mocked(invoke).mockResolvedValueOnce({ status: 200, body: JSON.stringify({ sessions: [] }) });
+    const client = new GatewayClient({ baseUrl: "http://192.168.1.2:8080", token: "must-not-leave-js", remoteProjectId: "registered" });
+    expect(await client.listSessions()).toEqual([]);
+    expect(invoke).toHaveBeenLastCalledWith("remote_http_request", { projectId: "registered", method: "GET", path: "/api/agent/sessions", body: null });
+    expect(tauriFetch).not.toHaveBeenCalled();
+  });
+
+  it("receives early native frames, ignores other connections and releases listeners", async () => {
+    vi.stubGlobal("localStorage", memoryStorage());
+    const handlers = new Map<string, (event: { payload: unknown }) => void>();
+    const unlisten = vi.fn();
+    vi.mocked(listen).mockImplementation(async (name, handler) => {
+      handlers.set(name, handler as (event: { payload: unknown }) => void); return unlisten;
+    });
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "remote_ws_connect") {
+        handlers.get("remote-ws-message")!({ payload: { connId: "native-1", data: JSON.stringify({ type: "status" }) } });
+        return "native-1";
+      }
+      return undefined;
+    });
+    const client = new GatewayClient({ baseUrl: "http://192.168.1.2:8080", token: "", remoteProjectId: "registered" });
+    const events: ProtocolEvent[] = [];
+    await client.connect("sid-remote", (event) => events.push(event));
+    expect(events.map((event) => event.type)).toEqual(["status"]);
+    handlers.get("remote-ws-message")!({ payload: { connId: "other", data: JSON.stringify({ type: "agent_start" }) } });
+    expect(events).toHaveLength(1);
+    await client.send({ type: "task_list" });
+    expect(invoke).toHaveBeenLastCalledWith("remote_ws_send", { connId: "native-1", data: '{"type":"task_list"}' });
+    await client.disconnect();
+    expect(invoke).toHaveBeenLastCalledWith("remote_ws_close", { connId: "native-1" });
+    expect(unlisten).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses a mismatched remote workspace before sending any task", async () => {
+    const handlers = new Map<string, (event: { payload: unknown }) => void>();
+    vi.mocked(listen).mockImplementation(async (name, handler) => {
+      handlers.set(name, handler as (event: { payload: unknown }) => void); return () => undefined;
+    });
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "remote_ws_connect") {
+        handlers.get("remote-ws-message")!({ payload: { connId: "wrong", data: JSON.stringify({ type: "init", v: DESKTOP_PROTOCOL_VERSION, data: { scope: "project", workdir: "/other-project" } }) } });
+        return "wrong";
+      }
+      return undefined;
+    });
+    const client = new GatewayClient({ baseUrl: "http://192.168.1.2:8080", token: "", remoteProjectId: "registered", expectedWorkdir: "/wanted-project" });
+    await expect(client.connect("sid-remote", vi.fn())).rejects.toThrow("实际工作区");
+    expect(invoke).toHaveBeenLastCalledWith("remote_ws_close", { connId: "wrong" });
+    expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "remote_ws_send")).toBe(false);
+  });
+});
 
 interface Frame {
   type: string;

@@ -109,13 +109,15 @@ class IMBridge:
     def __init__(self, repo_root: str, adapter: ChannelAdapter, owner_id: str, *,
                  channel: str = "im", mode: str = "plan", llm=None, runner=None,
                  with_dev: bool = True, persona: str = "",
-                 allow_from: Optional[Iterable] = None, workspace_scope=None):
+                 allow_from: Optional[Iterable] = None, workspace_scope=None,
+                 notification_only: bool = False):
         from src.gateway.workspace_scope import current_workspace_scope, normalize_workspace_scope
         self.workspace_scope = (current_workspace_scope() if workspace_scope is None
                                 else normalize_workspace_scope(workspace_scope, default="general"))
         self.repo_root = str(repo_root)
         self.adapter = adapter
         self.channel = channel
+        self.notification_only = bool(notification_only)
         self.owner_id = str(owner_id)
         # 入站白名单：没配 → 只放 owner（配对制原样）；配了空 → 全拒。判定见 normalize_allow_from。
         self.allow_from = normalize_allow_from(allow_from, self.owner_id)
@@ -156,7 +158,7 @@ class IMBridge:
         self._heartbeat_quiet = self._heartbeat_every
         self._heartbeat_task: Optional[asyncio.Task] = None
         self._seen_reconnects = 0                        # 心跳里比对通道重连计数 → 触发补发
-        self.agent = self._build_agent()
+        self.agent = None if self.notification_only else self._build_agent()
 
     # ------------------------------------------------------------ 人设（本人自述，不由管理员代填）
     def _persona_path(self):
@@ -310,10 +312,12 @@ class IMBridge:
         if claim is not None:
             claim()
         # 时间戳用 time.time()（墙钟）不用 monotonic：要跨进程重启比较，monotonic 重启即归零。
-        warn = self.allow_from_warning()
+        warn = None if self.notification_only else self.allow_from_warning()
         if warn or self._should_say_hello():
             hello = (f"🤖 VortoCode 已就绪（{self.mode} 模式）· 仓库 {Path(self.repo_root).name}。"
                      f"发任务给我跑隔离流水线；/help 看用法。")
+            if self.notification_only:
+                hello = "🔔 VortoCode 通知已就绪；任务完成、失败或需要确认时提醒你，请在 Desktop 处理任务与确认。"
             if warn:
                 hello += "\n" + warn
             await self._safe_send(hello)
@@ -342,6 +346,7 @@ class IMBridge:
             lv = {}
         lv["channel"] = self._sid.split("-")[1] if "-" in self._sid else "im"
         lv["busy"] = self._turn_task is not None and not self._turn_task.done()
+        lv["role"] = "notify" if self.notification_only else "interactive"
         lv["queued"] = len(self._pending_msgs)
         try:
             from src.gateway.notices import pending_undelivered_count
@@ -392,6 +397,8 @@ class IMBridge:
                 if reconnects != self._seen_reconnects or queued:
                     self._seen_reconnects = reconnects
                     await self.flush_pending_notices()
+                if self.notification_only:
+                    continue
                 runner = self._runner
                 if runner is None:
                     continue
@@ -430,6 +437,9 @@ class IMBridge:
         产出（进度/结果/确认提问）劫到自己的会话里。
         """
         sender = str(ev.sender_id)
+        if self.notification_only:
+            self._ignored += 1
+            return
         # Telegram 当前 transport 固定把回复发给 owner，且整桥只保留一个会话。
         # 仅放宽 allowFrom 会把别人的输入/结果串进主人的私聊与历史；在真正的逐人
         # 会话和回复路由落地前，必须在此 fail-closed，不允许配置绕过。
@@ -973,7 +983,7 @@ class IMBridge:
         elif task.status == "blocked":
             loop.create_task(self._safe_send(
                 f"⚠ 后台任务 {task.id} 等待你的回答；请回到发起任务的客户端处理。"))
-        elif task.status == "running" and task.log:
+        elif not self.notification_only and task.status == "running" and task.log:
             now = time.monotonic()
             if now - self._task_prog.get(task.id, 0.0) >= self._progress_interval:
                 self._task_prog[task.id] = now

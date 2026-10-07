@@ -89,21 +89,27 @@ def start_embedded(channel: str, repo_root: str, *, mode: str = "plan",
     登记单例 + kind 分发 → 返回 (bridge, adapter)。调用方负责 asyncio.create_task(bridge.run())。
     """
     from src.im.bridge import IMBridge
+    role = os.getenv("VORTOCODE_IM_ROLE", "interactive").strip().lower()
+    if role not in {"interactive", "notify"}:
+        raise IMConfigError("VORTOCODE_IM_ROLE must be interactive or notify")
     if _ACTIVE["bridge"] is not None:
         raise IMConfigError("An IM bridge already owns this Runtime")
     if runner is None or register_worker is None:
         raise IMConfigError("Embedded IM requires an injected Runtime runner and worker registrar")
     if adapter is None:
         adapter, owner = build_adapter(channel)
+    if role == "notify" and channel == "telegram":
+        adapter.notification_only = True
     bridge = IMBridge(repo_root, adapter, str(owner), channel=channel, mode=mode, runner=runner,
-                      allow_from=load_allow_from(channel))
+                      allow_from=load_allow_from(channel), notification_only=role == "notify")
     claim = getattr(adapter, "claim_polling", None)
     if claim is not None:
         claim()
     # IM 也收任务进度/终态（与 WS 同一订阅集）；unsubscribe 必须留着——stop 时不退订的话，
     # lifespan 重启/动态启停会把更新继续投给已停的 bridge/adapter（评审抓的订阅泄漏）
     try:
-        register_worker(bridge._task_worker)
+        if role != "notify":
+            register_worker(bridge._task_worker)
         _ACTIVE["unsubscribe"] = runner.subscribe(bridge._on_task_update)
     except Exception:
         register_worker(None)

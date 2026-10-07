@@ -12,10 +12,11 @@ type Props = {
   disabled: boolean;
   onPick: (project: DesktopProjectProfile) => void;
   onAddProject: () => void;
+  onAddRemote: () => void;
   onLeaveProject: () => void;
 };
 
-export function ProjectPicker({ projects, activeProjectName, disabled, onPick, onAddProject, onLeaveProject }: Props) {
+export function ProjectPicker({ projects, activeProjectName, disabled, onPick, onAddProject, onAddRemote, onLeaveProject }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState(false);
@@ -63,7 +64,7 @@ export function ProjectPicker({ projects, activeProjectName, disabled, onPick, o
           <div className="project-picker-list">
             {shown.map((project) => (
               <button key={project.id} role="menuitem" title={project.repoRoot} onClick={() => choose(() => onPick(project))}>
-                <Folder size={15} /><span>{project.name}</span>
+                <Folder size={15} /><span>{project.kind === "remote" ? `远端 · ${project.name}` : project.name}</span>
               </button>
             ))}
             {shown.length === 0 && <p>{keyword ? "没有匹配的项目" : "还没有项目"}</p>}
@@ -73,6 +74,7 @@ export function ProjectPicker({ projects, activeProjectName, disabled, onPick, o
           </div>
           <div className="project-picker-actions">
             <button role="menuitem" onClick={() => choose(onAddProject)}><Plus size={15} /><span>添加新项目</span></button>
+            <button role="menuitem" onClick={() => choose(onAddRemote)}><Plus size={15} /><span>连接远端工作区</span></button>
             {activeProjectName && (
               <button role="menuitem" onClick={() => choose(onLeaveProject)}><X size={15} /><span>不使用项目</span></button>
             )}

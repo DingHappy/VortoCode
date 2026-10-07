@@ -1,8 +1,27 @@
 """Telegram 适配器测试——注入假 request_fn，不触网跑全逻辑。"""
 
 import pytest
+import asyncio
 
 from src.im.telegram import TelegramAdapter, _to_event
+
+
+@pytest.mark.asyncio
+async def test_notification_poll_discards_messages_and_files(monkeypatch):
+    calls = 0
+    async def request(method, payload):
+        nonlocal calls
+        calls += 1
+        if calls > 1:
+            raise asyncio.CancelledError
+        return [{"update_id": 15, "message": {"from": {"id": 99}, "document": {"file_id": "file", "file_name": "test.txt"}}}]
+    adapter = TelegramAdapter("notification-test-token", "99", request_fn=request)
+    adapter.notification_only = True
+    monkeypatch.setattr(adapter, "claim_polling", lambda: None)
+    monkeypatch.setattr(adapter, "_download_fn", lambda path: pytest.fail("notification channel downloaded incoming data"))
+    with pytest.raises(asyncio.CancelledError):
+        await anext(adapter.poll())
+    assert adapter._offset == 16 and adapter.liveness()["connected"]
 
 
 def _recorder(results=None):

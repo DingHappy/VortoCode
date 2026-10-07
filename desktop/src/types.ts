@@ -4,6 +4,9 @@ export type WorkspaceScope = "general" | "scratch" | "project";
 export interface ConnectionSettings {
   baseUrl: string;
   token: string;
+  /** Registered native remote workspace; credentials stay in Keychain. */
+  remoteProjectId?: string;
+  expectedWorkdir?: string;
 }
 
 export interface RuntimeSnapshot {

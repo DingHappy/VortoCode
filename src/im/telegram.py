@@ -47,6 +47,7 @@ class TelegramAdapter(ChannelAdapter):
                  inbox_dir: Optional[str] = None,
                  download_fn: Optional[DownloadFn] = None):
         self._polling_lease = None
+        self.notification_only = False
         self._token = token
         self.owner_id = str(owner_id)
         self._poll_timeout = poll_timeout
@@ -132,6 +133,8 @@ class TelegramAdapter(ChannelAdapter):
                 continue
             for up in updates or []:
                 self._offset = max(self._offset, int(up.get("update_id", 0)) + 1)
+                if self.notification_only:
+                    continue
                 if _is_group_update(up):
                     await self._resolve_me()          # 只有群消息才需要知道自己的 @ 名
                 ev = _to_event(up, self._bot_username, self._bot_id)
