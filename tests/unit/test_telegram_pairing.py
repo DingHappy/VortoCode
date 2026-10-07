@@ -201,3 +201,24 @@ async def test_attachment_error_does_not_echo_bot_token(tmp_path):
         [("file", "x", "x.txt", 10)])
     assert "123:secret" not in note
     assert "[redacted]" in note
+
+
+@pytest.mark.asyncio
+async def test_owner_notification_uses_telegram_owner_chat(tmp_path, monkeypatch):
+    from src.gateway import im_runtime
+
+    calls = []
+
+    async def request(method, payload):
+        calls.append((method, payload))
+        return {"message_id": 1}
+
+    adapter = TelegramAdapter("123:x", "42", request_fn=request)
+    bridge = IMBridge(str(tmp_path), adapter, "42", channel="telegram",
+                      llm=ScriptedLLM("must not run"))
+    monkeypatch.setattr(im_runtime, "_OWNER_NOTIFIER", bridge.notify_send)
+    assert await im_runtime.notify_owner("任务完成")
+    assert len(calls) == 1
+    method, payload = calls[0]
+    assert method == "sendMessage"
+    assert payload["chat_id"] == "42" and payload["text"] == "任务完成"
