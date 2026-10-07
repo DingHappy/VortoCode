@@ -36,15 +36,31 @@ def _owner_path(token: str, state_dir: Path | None = None) -> Path:
     return _pairing_dir(state_dir) / f"telegram-{_bot_id(token)}.json"
 
 
+def _validate_pairing_directory(directory: Path) -> None:
+    """Reject directories where another account could replace the owner file."""
+    if directory.is_symlink() or not directory.is_dir():
+        raise PairingError("Telegram 配对目录不是普通目录")
+    info = directory.stat()
+    if stat.S_IMODE(info.st_mode) & 0o077:
+        raise PairingError("Telegram 配对目录权限过宽；请改为 700")
+    if hasattr(os, "geteuid") and info.st_uid != os.geteuid():
+        raise PairingError("Telegram 配对目录不属于当前系统用户")
+
+
 def load_paired_owner(token: str, state_dir: Path | None = None) -> str:
     """Return the paired ID, or empty string when unpaired; reject bad state."""
     path = _owner_path(token, state_dir)
+    if path.parent.exists() or path.parent.is_symlink():
+        _validate_pairing_directory(path.parent)
     if not path.exists() and not path.is_symlink():
         return ""
     if path.is_symlink() or not path.is_file():
         raise PairingError("Telegram 配对记录不是普通文件")
-    if stat.S_IMODE(path.stat().st_mode) & 0o077:
+    info = path.stat()
+    if stat.S_IMODE(info.st_mode) & 0o077:
         raise PairingError("Telegram 配对记录权限过宽；请改为 600")
+    if hasattr(os, "geteuid") and info.st_uid != os.geteuid():
+        raise PairingError("Telegram 配对记录不属于当前系统用户")
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
         owner = str(data["owner_id"])
@@ -60,8 +76,7 @@ def _save_owner(token: str, owner_id: str, state_dir: Path | None = None) -> Non
     path = _owner_path(token, state_dir)
     directory = path.parent
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if stat.S_IMODE(directory.stat().st_mode) & 0o077:
-        raise PairingError("Telegram 配对目录权限过宽；请改为 700")
+    _validate_pairing_directory(directory)
     payload = json.dumps({"version": 1, "bot_id": _bot_id(token), "owner_id": owner_id}) + "\n"
     try:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -113,7 +128,8 @@ async def pair_telegram(token: str, *, state_dir: Path | None = None,
                 if not words or words[0] != "/bind":
                     continue
                 attempts += 1
-                if len(words) == 2 and secrets.compare_digest(words[1], code):
+                if (len(words) == 2 and words[1].isascii()
+                        and secrets.compare_digest(words[1], code)):
                     if time.monotonic() >= deadline:
                         break
                     _save_owner(token, sender_id, state_dir)

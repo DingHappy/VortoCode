@@ -2,6 +2,7 @@
 
 import re
 import stat
+import os
 
 import pytest
 
@@ -104,6 +105,60 @@ def test_build_adapter_loads_paired_owner(monkeypatch, tmp_path):
     monkeypatch.delenv("VORTOCODE_TG_OWNER_ID", raising=False)
     adapter, owner = build_adapter("telegram")
     assert owner == "42" and adapter.owner_id == "42"
+
+
+@pytest.mark.parametrize("mode", [0o755, 0o770, 0o777])
+def test_owner_load_rejects_unsafe_directory_even_with_private_file(tmp_path, mode):
+    import src.im.telegram_pairing as pairing
+
+    pairing._save_owner("123:x", "42", tmp_path)
+    tmp_path.chmod(mode)
+    try:
+        with pytest.raises(PairingError, match="目录权限过宽"):
+            load_paired_owner("123:x", tmp_path)
+    finally:
+        tmp_path.chmod(0o700)
+
+
+def test_owner_load_rejects_symlink_directory(tmp_path):
+    import src.im.telegram_pairing as pairing
+
+    directory = tmp_path / "real"
+    pairing._save_owner("123:x", "42", directory)
+    link = tmp_path / "link"
+    link.symlink_to(directory, target_is_directory=True)
+    with pytest.raises(PairingError, match="普通目录"):
+        load_paired_owner("123:x", link)
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid"), reason="POSIX file ownership")
+def test_owner_load_rejects_directory_owned_by_another_account(tmp_path, monkeypatch):
+    import src.im.telegram_pairing as pairing
+
+    pairing._save_owner("123:x", "42", tmp_path)
+    monkeypatch.setattr(os, "geteuid", lambda: tmp_path.stat().st_uid + 1)
+    with pytest.raises(PairingError, match="当前系统用户"):
+        load_paired_owner("123:x", tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_unicode_wrong_code_does_not_abort_valid_pairing(tmp_path):
+    batches = []
+
+    async def request(method, payload):
+        if method == "getMe":
+            return {"id": 123}
+        if method == "getUpdates":
+            return batches.pop(0) if batches else []
+        return {}
+
+    def show(message):
+        code = re.search(r"/bind (\S+)", message).group(1)
+        batches.append([_message(1, 77, "/bind 错误码"),
+                        _message(2, 42, f"/bind {code}")])
+
+    assert await pair_telegram("123:x", state_dir=tmp_path, request_fn=request,
+                               show_code=show) == "42"
 
 
 @pytest.mark.asyncio
