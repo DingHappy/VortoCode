@@ -1,6 +1,6 @@
 # VortoCode
 
-通用多 Agent 软件开发框架，目标：**全栈 Web 项目自动化开发，人工只在"需求确认"和"最终合并"两个环节介入**。
+VortoCode 是面向开发者的本地优先 Agent 工作台：从目标与约束出发，在隔离工作区实现、验证、审查代码，由人确认关键操作和最终合并。Desktop 是默认入口，CLI 服务自动化，Web 服务版面向后续团队使用。
 
 > Public preview / dogfooding project：项目仍在快速迭代，接口、命令和工作流可能调整。欢迎试用、反馈问题和提交小步 PR；生产环境暴露、可信凭证和自托管 runner 请按 [SECURITY.md](SECURITY.md) 的安全约定处理。
 
@@ -164,11 +164,10 @@ vortocode/
 │   ├── hooks/           生命周期 Hook
 │   ├── tools/           MCP 工具集成（动态发现 / 权限管理）
 │   ├── core/            核心设施（monitoring 指标 / cache / tracing；self_healing、task_queue 已退役删除）
-│   ├── context/         上下文管理（智能压缩 / 优先级管理）
-│   ├── editor/          代码编辑（surgical 精确编辑 / diff；内联补全引擎已退役删除）
+│   ├── editor/          surgical 精确编辑原语（`vc fix` / TUI 用；旧 CodeEditor 随 /api/editor 删除）
 │   ├── sandbox/         Docker 沙箱（cloud_sandbox 为非隔离简化执行，默认关闭）
-│   ├── security/        权限 / 审批模型
-│   └── projects/ browser/ github/ templates/ …（workspaces 已随路线 A 退役删除）
+│   └── browser/ gateway/ im/ tui/ …（2026-10 删除无前端调用的旧 Web 接口及其模块：
+│                         context/ security/ projects/ github/ templates/ testing/ documentation/ 自定义 agent 管理器）
 ├── web/                 控制台前端（原生 HTML/CSS/JS，无构建步骤）
 ├── desktop/             Tauri 2 + React 本机工作台（复用 gateway 协议与 Python runtime）
 ├── examples/            使用示例（iterative_dev / llm_analysis / pet_state 桌宠钩子 …）
@@ -224,7 +223,7 @@ Relay 控制台：<https://token.vortotech.com>；API Base 使用下方的 `/v1`
 ```bash
 # 默认使用 VortoCode Relay，提供国产大模型基础；只需要填你的 relay key
 OPENAI_API_BASE=https://token.vortotech.com/v1
-DEFAULT_MODEL=mimo-v2.5
+DEFAULT_MODEL=mimo-v2.6-pro
 OPENAI_API_KEY=your-vortocode-relay-key
 
 # 如果使用 OpenAI 官方接口，可改成：

@@ -6,6 +6,7 @@ import {
   ChevronDown,
   CircleAlert,
   CircleCheck,
+  Cpu,
   FileSearch,
   LoaderCircle,
   Search,
@@ -20,6 +21,7 @@ import type { TurnActivity } from "../types";
 function activityIcon(activity: TurnActivity): ReactNode {
   if (["failed", "blocked", "cancelled", "timed_out"].includes(activity.status)) return <CircleAlert size={15} />;
   if (activity.status === "running") return <LoaderCircle className="activity-spinner" size={15} />;
+  if (activity.kind === "phase" && activity.phase === "routing") return <Cpu size={15} />;
   if (activity.kind === "phase") return activity.phase === "thinking" ? <BrainCircuit size={15} /> : <CircleCheck size={15} />;
   if (activity.name === "run_command") return <SquareTerminal size={15} />;
   if (activity.name === "read_file" || activity.name === "list_files") return <FileSearch size={15} />;

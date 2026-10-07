@@ -10,6 +10,7 @@ from typing import Any, Callable, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 from src.utils.http import outbound_session
+from src.llm.streaming import StreamInterrupted, close_stream
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ except ImportError:
 
 
 # 模型分级配置（可通过环境变量覆盖）
-_DEFAULT_CHAT_MODEL = os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "mimo-v2.5"
+_DEFAULT_CHAT_MODEL = os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "mimo-v2.6-pro"
 MODELS: Dict[str, Dict[str, str]] = {
     "cheap": {
         "model": os.getenv("LLM_MODEL_CHEAP", _DEFAULT_CHAT_MODEL),
@@ -462,7 +463,7 @@ class LLMConfig(BaseModel):
     base_url: str = Field(default_factory=lambda: os.getenv("OPENAI_API_BASE", DEFAULT_LLM_BASE_URL))
     api_key: str = ""
     # 默认模型读 .env 的 DEFAULT_MODEL/OPENAI_MODEL；没有配置时走 VortoCode Relay 的默认国产模型。
-    model: str = Field(default_factory=lambda: os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "mimo-v2.5")
+    model: str = Field(default_factory=lambda: os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "mimo-v2.6-pro")
     # 主模型不支持图片时，把"看图"外包给它。空 = 关闭外包（撞到图片直接如实报错）。
     # 真机 2026-07-27：mimo-v2.5-pro 无视觉（404 No endpoints found that support image input），
     # 而 mimo-v2.5 能准确读图——同一中转站里就有互补的能力，没有理由让整条链路因此瘫掉。
@@ -499,9 +500,41 @@ class LLMClient:
 
         self._client: Optional[Any] = None  # 懒加载 AsyncOpenAI 单例
         self._client_lock = asyncio.Lock()
+        # use_endpoint 切走前的原端点；None = 从没切过（reset_endpoint 因此是空操作）。
+        self._home_endpoint: Optional[tuple] = None
+        self._stale_clients: list = []
+
+    def use_endpoint(self, base_url: str, api_key: str) -> None:
+        """换到另一个端点（另一家供应商）。旧连接池在下次取客户端时关闭。
+
+        记住第一次切走前的端点，`reset_endpoint` 据此切回——不去猜"默认"是什么，
+        这样由角色/委派传进来的专属客户端也能原样恢复。
+        """
+        if (base_url, api_key) == (self.config.base_url, self.config.api_key):
+            return
+        if self._home_endpoint is None:
+            self._home_endpoint = (self.config.base_url, self.config.api_key)
+        self.config.base_url, self.config.api_key = base_url, api_key
+        if self._client is not None:
+            self._stale_clients.append(self._client)
+            self._client = None
+
+    def reset_endpoint(self) -> None:
+        """切回 use_endpoint 之前的端点；没切过就什么都不做。"""
+        if self._home_endpoint is None:
+            return
+        home, self._home_endpoint = self._home_endpoint, None
+        self.use_endpoint(*home)
+        self._home_endpoint = None
 
     async def _get_client(self) -> Any:
         """获取或创建 AsyncOpenAI 单例（连接池复用）"""
+        while self._stale_clients:
+            stale = self._stale_clients.pop()
+            try:
+                await stale.close()
+            except Exception:  # noqa: BLE001 —— 关旧连接池失败不影响新请求
+                pass
         if self._client is not None:
             return self._client
         async with self._client_lock:
@@ -669,25 +702,30 @@ class LLMClient:
         resp = await client.chat.completions.create(**create)
         parts: List[str] = []
         exact = None
-        async for chunk in resp:
-            u = getattr(chunk, "usage", None)
-            if u is not None:
-                exact = u                       # include_usage 的尾 chunk
-            choices = getattr(chunk, "choices", None)
-            if not choices:
-                continue
-            delta = getattr(choices[0], "delta", None)
-            if delta is not None and on_reasoning is not None:   # 推理增量走侧信道（不混进正文）
-                rc = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
-                if rc:
-                    try:
-                        on_reasoning(rc)
-                    except Exception:  # noqa: BLE001 —— 展示回调不该影响生成
-                        pass
-            content = getattr(delta, "content", None) if delta else None
-            if content:
-                parts.append(content)
-                yield content
+        try:
+            async for chunk in resp:
+                u = getattr(chunk, "usage", None)
+                if u is not None:
+                    exact = u                       # include_usage 的尾 chunk
+                choices = getattr(chunk, "choices", None)
+                if not choices:
+                    continue
+                delta = getattr(choices[0], "delta", None)
+                if delta is not None and on_reasoning is not None:   # 推理增量走侧信道（不混进正文）
+                    rc = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+                    if rc:
+                        try:
+                            on_reasoning(rc)
+                        except StreamInterrupted:
+                            raise
+                        except Exception:  # noqa: BLE001 —— 展示回调不该影响生成
+                            pass
+                content = getattr(delta, "content", None) if delta else None
+                if content:
+                    parts.append(content)
+                    yield content
+        finally:
+            await close_stream(resp)
         _account(messages, "".join(parts), exact, model=create["model"])   # 有精确 usage 用精确，否则估算
 
     async def stream_chat(
@@ -729,43 +767,50 @@ class LLMClient:
         reasoning_parts: List[str] = []
         tc_acc: Dict[int, Dict[str, str]] = {}    # index -> {id,name,arguments}（分片累积）
         exact = None
-        async for chunk in resp:
-            u = getattr(chunk, "usage", None)
-            if u is not None:
-                exact = u                          # include_usage 的尾 chunk
-            choices = getattr(chunk, "choices", None)
-            if not choices:
-                continue
-            delta = getattr(choices[0], "delta", None)
-            if delta is None:
-                continue
-            rc = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
-            if rc:
-                reasoning_parts.append(str(rc))
-                if on_reasoning is not None:       # 推理增量走侧信道（不混进正文）
-                    try:
-                        on_reasoning(rc)
-                    except Exception:  # noqa: BLE001 —— 展示回调不该影响生成
-                        pass
-            for tc in (getattr(delta, "tool_calls", None) or []):   # 组装 tool_calls
-                idx = getattr(tc, "index", 0) or 0
-                slot = tc_acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
-                if getattr(tc, "id", None):
-                    slot["id"] = tc.id
-                fn = getattr(tc, "function", None)
-                if fn is not None:
-                    if getattr(fn, "name", None):
-                        slot["name"] += fn.name
-                    if getattr(fn, "arguments", None):
-                        slot["arguments"] += fn.arguments
-            content = getattr(delta, "content", None)
-            if content:
-                parts.append(content)
-                if on_content is not None and not tc_acc:   # 出现工具调用后不再回显正文
-                    try:
-                        on_content(content)
-                    except Exception:  # noqa: BLE001
-                        pass
+        try:
+            async for chunk in resp:
+                u = getattr(chunk, "usage", None)
+                if u is not None:
+                    exact = u                          # include_usage 的尾 chunk
+                choices = getattr(chunk, "choices", None)
+                if not choices:
+                    continue
+                delta = getattr(choices[0], "delta", None)
+                if delta is None:
+                    continue
+                rc = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
+                if rc:
+                    reasoning_parts.append(str(rc))
+                    if on_reasoning is not None:       # 推理增量走侧信道（不混进正文）
+                        try:
+                            on_reasoning(rc)
+                        except StreamInterrupted:
+                            raise
+                        except Exception:  # noqa: BLE001 —— 展示回调不该影响生成
+                            pass
+                for tc in (getattr(delta, "tool_calls", None) or []):   # 组装 tool_calls
+                    idx = getattr(tc, "index", 0) or 0
+                    slot = tc_acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                    if getattr(tc, "id", None):
+                        slot["id"] = tc.id
+                    fn = getattr(tc, "function", None)
+                    if fn is not None:
+                        if getattr(fn, "name", None):
+                            slot["name"] += fn.name
+                        if getattr(fn, "arguments", None):
+                            slot["arguments"] += fn.arguments
+                content = getattr(delta, "content", None)
+                if content:
+                    parts.append(content)
+                    if on_content is not None and not tc_acc:   # 出现工具调用后不再回显正文
+                        try:
+                            on_content(content)
+                        except StreamInterrupted:
+                            raise
+                        except Exception:  # noqa: BLE001
+                            pass
+        finally:
+            await close_stream(resp)
         full = "".join(parts)
         _account(messages, full, exact, model=create["model"])   # 有精确 usage 用精确，否则估算
         tool_calls = None

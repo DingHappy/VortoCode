@@ -61,3 +61,15 @@ def _hermetic_ambient_credentials(monkeypatch):
     for name in ("OPENAI_API_KEY", "VORTOCODE_API_TOKEN",
                  "VORTOCODE_ENABLE_SHELL", "VORTOCODE_ENABLE_BROWSER"):
         monkeypatch.setenv(name, "")
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_user_instructions(monkeypatch, tmp_path_factory):
+    """不让机器上真实的 `~/.vortocode/AGENTS.md` 混进被测的系统提示。
+
+    全局指令对所有会话生效，开发者本机若写过它，断言系统提示内容的测试就会随机器变。默认指向
+    一个不存在的路径；测它本身的用例自行 `monkeypatch.setattr(project, "USER_INSTRUCTIONS_PATH", …)`。
+    """
+    from src.agents import project
+    monkeypatch.setattr(project, "USER_INSTRUCTIONS_PATH",
+                        tmp_path_factory.mktemp("no-user-instructions") / "AGENTS.md")

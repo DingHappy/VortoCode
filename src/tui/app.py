@@ -130,7 +130,7 @@ def _model_name() -> str:
         return LLMConfig().model
     except Exception:  # noqa: BLE001 —— 兜底：拿不到就退回 env 取法
         import os
-        return os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "mimo-v2.5"
+        return os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "mimo-v2.6-pro"
 
 # 终端转义/控制序列清洗。为支持中文输入关掉了 kitty 协议后，修饰键（如 Shift+Enter）的
 # CSI 序列会漏进输入框：既弄脏显示，其中的 ESC 控制符发到中转站还会让 API 因"非法字符"报错
@@ -1170,7 +1170,7 @@ class VortoCodeTUI(TUICommandsMixin, App):
         self._sb["pr"], self._sb["pr_branch"] = pr, branch
         self.call_from_thread(self._render_statusbar)
 
-    _COMMON_MODELS = ["mimo-v2.5", "mimo-v2.5-pro", "mimo-v2-pro", "mimo-v2-omni",
+    _COMMON_MODELS = ["mimo-v2.6-pro", "mimo-v2.5", "mimo-v2.5-pro", "mimo-v2-pro", "mimo-v2-omni",
                       "mimo-v2.5-asr", "mimo-v2.5-tts"]
 
     async def _fetch_available_models(self):
@@ -3832,93 +3832,43 @@ class VortoCodeTUI(TUICommandsMixin, App):
         read_tools += build_screenshot_tool(self.repo_root)   # 同上：复用工厂，别手写第二份
         read_tools += build_cron_tools(self.repo_root, self._confirm_write)   # 定时作业观察+排班
 
-        async def _spawn_research(desc: str, agent_name: str = "") -> tuple[str, bool]:
-            """起一个隔离子 agent，返回结论。task 与 research_parallel 共用。
+        # Share task lifecycle and role assembly with Desktop/Web/CLI; only render here.
+        import uuid
+        from src.agents.main_agent import build_research_tools, research_parallel_cap
+        from src.gateway.collaboration import CollaborationService
 
-            agent_name 非空 → 按 .vortocode/agents/<名>.md 装配自定义角色（与工厂版同一注册表/
-            同一安全面）；dev 型角色过 _confirm_write 人闸（headless 之外 TUI 有真人在）。"""
-            from src.agents.taint import is_tainted, merge_nested_taint
-            if agent_name:
-                from src.agents.main_agent import build_subagent
-                from src.agents.subagents import registry_for
-                reg = registry_for(self.repo_root)
-                spec = reg.get(agent_name)
-                if spec is None:
-                    avail = "、".join(reg.specs) or "（无——在 .vortocode/agents/ 放 <名>.md 定义角色）"
-                    return f"没有名为 {agent_name!r} 的子 agent。可用：{avail}", is_tainted()
-                # 子 agent 的**内部**工具确认也不可铸权：dev 型角色拿到的是 dev_isolated/dev_parallel
-                # （自主 worktree 流水线）。若沿用 _confirm_write（scope=writes），它会 ① 吃掉父会话
-                # 那句"始终允许写"的豁免、静默跑流水线；② 一旦弹确认，用户按 [a] 就**从一条 dev
-                # 流水线提示上**铸出全仓写权限——正是本批次要根除的捆绑。
-                async def _sub_confirm(message: str) -> bool:
-                    return await self._confirm_always(message, scope="delegate")
+        async def _sub_confirm(message: str) -> bool:
+            return await self._confirm_always(message, scope="delegate")
 
-                sub = build_subagent(self.repo_root, spec, confirm=_sub_confirm,
-                                     on_progress=lambda m: self._chrome(f"[dim]{m}[/dim]"),
-                                     capabilities=self._capabilities)
-                if spec.tools == "dev" and not await self._confirm_always(
-                        f"委派角色「{agent_name}」用隔离 dev 流水线实现：{desc[:120]}\n"
-                        f"（产出落 vorto/* 分支，不碰主工作区）",
-                        scope="delegate"):   # 派出自主子 agent ≠ 写一个文件
-                    return f"已取消：未放行 dev 型角色 {agent_name} 的委派。", is_tainted()
-                sub._on_tool = self._audit_tool
-                mode = "build" if spec.tools == "dev" else "plan"
-            else:
-                child_steps = 4 if self.mode == "plan" else 12
-                sub = MainAgent(read_tools, max_steps=child_steps, on_tool=self._audit_tool, extra_system=(
-                    "你是只读研究子 agent：只用工具调研代码/仓库并返回简洁结论，绝不修改任何东西。"
-                    "读够信息就尽快收口，别把预算耗在重复读取上。"),
-                    capabilities=self._capabilities)
-                mode = self.mode
-            with merge_nested_taint() as nested:
-                try:
-                    result = (await sub.run_turn(
-                        desc, mode=mode, say=self._chrome, emit=lambda _t: None
-                    )) or "(无结论)"
-                except Exception as e:  # noqa: BLE001
-                    result = f"(子任务出错: {e})"
-            return result, nested.child_tainted
+        if not getattr(self, "_collaboration_owner", None):
+            self._collaboration_owner = f"agent-{uuid.uuid4().hex}"
+        collaboration = CollaborationService(
+            self.repo_root, lambda: f"sid-tui-{self.session_id}" if self.session_id else self._collaboration_owner)
+        delegation_tools = build_research_tools(
+            self.repo_root, confirm=_sub_confirm, capabilities=self._capabilities,
+            on_progress=lambda m: self._chrome(f"[dim]{m}[/dim]"),
+            collaboration=collaboration, on_child_tool=self._audit_tool)
 
-        def _preview(s: str, n: int = 200) -> str:
-            s = s.replace("\n", " ")
-            return s[:n] + ("…" if len(s) > n else "")
+        def _render_delegation(tool):
+            original = tool.handler
 
-        async def _t_task(args: dict) -> str:
-            desc = str(args.get("description") or args.get("task") or "").strip()
-            if not desc:
-                return "task 需要 description（要委派给子 agent 的研究任务）。"
-            agent_name = str(args.get("agent") or "").strip()
-            self._chrome(f"[magenta]🤖 子 agent{f'「{agent_name}」' if agent_name else ''} 处理：{desc}[/magenta]")
-            from src.agents.taint import mark_tainted
-            result, child_tainted = await _spawn_research(desc, agent_name)
-            if child_tainted:
-                mark_tainted()
-            self._chrome(f"[dim]  ↳ 结论：{_preview(result)}[/dim]")   # 子 agent 结论可见
-            return result
+            async def handler(args):
+                if tool.name == "research_parallel":
+                    items = args.get("tasks") or args.get("descriptions") or []
+                    if isinstance(items, str):
+                        items = [items]
+                    count = min(len([t for t in items if str(t).strip()]), research_parallel_cap(args))
+                    self._chrome(f"[magenta]🤖 并行子 agent（{count}）研究中…[/magenta]")
+                elif tool.name in {"task", "task_followup"}:
+                    self._chrome("[magenta]🤖 子 agent 任务处理中…[/magenta]")
+                result = await original(args)
+                self._chrome(f"[dim]  ↳ 结论：{result[:2000]}[/dim]")
+                return result
 
-        async def _t_research_parallel(args: dict) -> str:
-            tasks = args.get("tasks") or args.get("descriptions") or []
-            if isinstance(tasks, str):
-                tasks = [tasks]
-            if self.mode == "plan":
-                from src.agents.main_agent import research_parallel_cap
-                max_tasks = research_parallel_cap(args, default=2, maximum=5)
-            else:
-                max_tasks = 5
-            tasks = [str(t).strip() for t in tasks if str(t).strip()][:max_tasks]
-            if not tasks:
-                return "research_parallel 需要 tasks（字符串列表，每项一个独立子问题）。"
-            import asyncio
-            agent_name = str(args.get("agent") or "").strip()
-            self._chrome(f"[magenta]🤖 并行子 agent（{len(tasks)}）研究中…[/magenta]")
-            spawned = await asyncio.gather(*[_spawn_research(t, agent_name) for t in tasks])
-            if any(child_tainted for _, child_tainted in spawned):
-                from src.agents.taint import mark_tainted
-                mark_tainted()
-            results = [result for result, _child_tainted in spawned]
-            for t, r in zip(tasks, results):     # 各路结论都可见
-                self._chrome(f"[dim]  ↳ [{_preview(t, 30)}] {_preview(r, 160)}[/dim]")
-            return "\n\n".join(f"【{t}】\n{r}" for t, r in zip(tasks, results))
+            tool.handler = handler
+            return tool
+
+        delegation_tools = [_render_delegation(tool) for tool in delegation_tools]
 
         # SKILL.md 技能：按需加载（progressive disclosure），复用 src.skills 的解析器
         registry = self._skill_registry()
@@ -3964,19 +3914,7 @@ class VortoCodeTUI(TUICommandsMixin, App):
             session_id=lambda: self.session_id,
         )
 
-        tools = read_tools + [
-            Tool("task", "把一个独立的研究/调研子任务委派给只读子 agent（隔离上下文），返回它的结论",
-                 {"description": "要委派的子任务",
-                  "agent": "可选：自定义角色名（.vortocode/agents/ 里定义；缺省=只读研究员）"},
-                 _t_task, read_only=True),
-        ] + memory_tools + [
-            Tool("research_parallel", "并行委派多个只读子 agent 同时研究不同子问题，汇总各自结论。"
-                 "plan 默认最多 2 个；用户明确要求全面/多角度/深挖时，可传 max_parallel 和 reason 放宽到 5。",
-                 {"tasks": "子问题字符串列表",
-                  "max_parallel": "可选，并行子 agent 数；plan 默认 2，需配合 reason 才能超过默认，硬上限 5",
-                  "reason": "可选；说明为什么需要超过默认并行度，如用户明确要求全面审查/多角度分析",
-                  "agent": "可选：自定义角色名（应用到本组全部子任务）"},
-                 _t_research_parallel, read_only=True),
+        tools = read_tools + delegation_tools + memory_tools + [
             Tool("use_skill", "加载某个技能(SKILL.md)的完整指令到上下文，然后据此执行",
                  {"name": "技能名"}, _t_use_skill, read_only=True),
             Tool("save_skill", "把一套可复用流程保存成新技能(SKILL.md)到用户技能目录；写操作，需确认，仅 build",
@@ -4071,9 +4009,12 @@ class VortoCodeTUI(TUICommandsMixin, App):
                                       on_published=_artifact_published,
                                       confirm_delete=_artifact_confirm_delete)
         tools += self._mcp_tools             # 已接入的外部 MCP 工具（build 门控）
-        from src.agents.project import load_project_instructions
+        from src.agents.project import load_project_instructions, load_user_instructions
         catalog = registry.catalog()
         extra_parts = []
+        user_instructions = load_user_instructions()          # ~/.vortocode/AGENTS.md 全局指令
+        if user_instructions:
+            extra_parts.append(user_instructions)
         proj = load_project_instructions(self.repo_root)     # AGENTS.md/CLAUDE.md 项目约定进系统提示
         if proj:
             extra_parts.append(proj)

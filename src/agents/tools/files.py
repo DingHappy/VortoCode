@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from src.agents.tool import Tool
+from src.utils.async_ops import await_thread
 from src.agents.tools._common import (_image_exts, _max_image_bytes, _max_read_file,
                                       _truthy)
 
@@ -653,7 +654,6 @@ def build_test_tool(root: str, default_cmd: Optional[list] = None) -> "Tool":
     命令按仓库类型自动探测（pytest/npm/go/cargo/make），不再写死 pytest；autonomous 也只跑测试、不乱执行。
     """
     async def _handler(args: dict) -> str:
-        import asyncio
         from src.agents.test_detect import detect_test_cmd, is_pytest_cmd
         from src.agents.worktree import run_tests
         from src.utils.python_exe import pytest_argv
@@ -664,7 +664,7 @@ def build_test_tool(root: str, default_cmd: Optional[list] = None) -> "Tool":
             cmd = pytest_argv("-q", sel)
         else:
             cmd = list(base)
-        res = await asyncio.to_thread(run_tests, root, cmd)
+        res = await await_thread(run_tests, root, cmd)
         tag = "通过 ✓" if res["ok"] else "未过 ✗"
         return f"测试{tag}（{res['cmd']}）。输出尾部：\n{res['output'][-2500:]}"
 

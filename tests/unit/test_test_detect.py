@@ -48,6 +48,13 @@ def test_python_tests_dir_only(tmp_path):
     assert detect_test_cmd(str(tmp_path))[:3] == [sys.executable, "-m", "pytest"]
 
 
+def test_bare_pytest_function_name_uses_keyword_selector(tmp_path):
+    (tmp_path / "tests").mkdir()
+    assert detect_test_cmd(str(tmp_path), "test_total_uses_quantities") == [
+        sys.executable, "-m", "pytest", "-q", "tests/", "-k", "test_total_uses_quantities",
+    ]
+
+
 def test_makefile_test_target(tmp_path):
     (tmp_path / "Makefile").write_text("build:\n\tgcc x.c\ntest:\n\t./run_tests\n", encoding="utf-8")
     assert detect_test_cmd(str(tmp_path)) == ["make", "test"]

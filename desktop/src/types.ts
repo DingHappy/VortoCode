@@ -212,6 +212,7 @@ export interface DevPlanGraph {
 
 export interface TaskItem {
   id: string;
+  kind?: string;
   prompt?: string;
   status: string;
   owner_session?: string;
@@ -221,20 +222,222 @@ export interface TaskItem {
   parent_task_id?: string;
   result?: string;
   error?: string;
+  collaboration?: {
+    assignee: string;
+    round: number;
+    review: "not_submitted" | "pending" | "accepted" | "rework_requested";
+    acceptance: string[];
+    tainted: boolean;
+    questions?: TaskQuestion[];
+    dispatch?: { source: "api"; fingerprint?: string; max_steps: number; timeout_seconds: number };
+    messages: Array<{ id: string; kind: string; sender: string; round: number; body: string; created: string }>;
+  };
+  development?: { version: 1; round: number; owner_session: string; plan_id: string; root_task_id: string; questions: TaskQuestion[] };
+  dependencies?: TaskDependencies;
+  chain_budget?: TaskChainBudget;
   log?: string[];
   created_at?: string;
   updated_at?: string;
   can_pause?: boolean;
   can_resume?: boolean;
+  resumed_task_id?: string;
+  replayed?: boolean;
   worktrees?: WorktreeSession[];
   branch_review?: TaskBranchReviewState | null;
   plan?: DevPlanSession | null;
   handoff?: {
+    handling?: { revision: string; handled: boolean; handled_at: string } | null;
     completed: string[];
     remaining: string[];
     next_action: string;
     text: string;
   };
+}
+
+export interface TaskDependencies {
+  version?: 1;
+  task_id?: string;
+  owner_session?: string;
+  requires?: Array<{ task_id: string; round: number }>;
+  inputs?: Array<{ task_id: string; round: number; revision: string; prompt: string; result: string; truncated: boolean; tainted: boolean }>;
+  resolution?: "waiting" | "consumed" | "failed" | "invalidated";
+  released_round?: number;
+  ready?: boolean;
+  failure?: string;
+  next_action?: string;
+  result_valid?: boolean;
+  invalidated?: boolean;
+  can_reconcile?: boolean;
+  stop_pending?: boolean;
+  invalidation?: { task_id: string; owner_session: string; round: number; reason: string; at: string };
+}
+
+export interface TaskCoverageReport {
+  scan_id: string; request_id: string; source_task_id: string; source_round: number;
+  mode: "discover" | "reconcile"; page_size: number; sequence: number;
+  phase: "records" | "process" | "finished";
+  complete: boolean; page_complete: boolean; replayed: boolean;
+  snapshot_valid: boolean; next_cursor: string | null; observed_at: string;
+  snapshot_id: string; evidence_digest: string; receipt_count: number;
+  order: "filename_utf8_bytes_ascending"; validity: "observed_namespace_and_lstat";
+  coverage: { state: "complete" | "incomplete" | "unknown"; entries_total: number; entries_read: number;
+    record_bytes: number; skipped: number; damaged: number; graph_complete: boolean; edge_visits: number;
+    selected: number; processed: number; reconciled: number; failures: number; reasons: string[];
+    record_range: [number, number]; task_range: [number, number]; covered_digest: string };
+  tasks: Array<{ task_id: string; round: number; status: string; resolution: string;
+    invalidation_recorded?: boolean; stop_requested?: boolean }>;
+  errors: Array<{ task_id: string; error: string }>;
+}
+
+export interface TaskCoverageArchive {
+  archive_id: string; archive_digest: string; checkpoint_digest: string; workspace_id: string;
+  scan_id: string; owner_session: string; source_task_id: string; source_round: number;
+  request_id: string; archived_at: string; historical: true; current_coverage: false; resumable: false;
+  verified: true; integrity: "sha256_and_receipt_chain"; replayed: boolean; report: TaskCoverageReport;
+  released?: true;
+  retirement?: TaskCoverageRetirementStatus;
+}
+export interface TaskCoverageRetirement {
+  state: "retired"; retirement_id: string; retirement_digest: string; workspace_id: string;
+  owner_session: string; source_task_id: string; source_round: number; scan_id: string; scan_request_id: string;
+  mode: "discover" | "reconcile"; page_size: number; archive_id: string; archive_digest: string; checkpoint_digest: string;
+  archived_at: string; retired_at: string; reason: "explicit_active_checkpoint_release" | "explicit_legacy_identity_retirement";
+  coverage: { snapshot_id: string; evidence_digest: string; sequence: number; receipt_count: number;
+    observed_at: string; state: "complete" | "incomplete" | "unknown"; snapshot_valid: boolean; complete: boolean; reasons: string[] };
+  historical: true; current_coverage: false; resumable: false; verified: true; integrity: "sha256_and_identity_binding";
+  history_capacity_released: false; durable_copy_confirmed: false;
+  artifact: { kind: "task_coverage_retirement"; version: 1; retirement_id: string; sha256: string;
+    evidence: { workspace_id: string; scope: [string, string, number, string, "discover" | "reconcile", number]; scan_id: string;
+      archive_id: string; archive_digest: string; checkpoint_digest: string; archived_at: string; retired_at: string;
+      reason: TaskCoverageRetirement["reason"]; coverage: TaskCoverageRetirement["coverage"] } };
+}
+export type TaskCoverageRetirementStatus = TaskCoverageRetirement | { state: "not_recorded" | "unknown" };
+export interface TaskCoverageRecords {
+  owner_session: string; source_task_id: string; workspace_id: string;
+  capacity: { active_used: number; active_limit: number; archives_used: number; archives_limit: number; unreadable_active: number;
+    retired_used: number; retired_limit: number; unreadable_retired: number };
+  active: Array<{ checkpoint_digest: string; report: TaskCoverageReport; owner_session: string; historical: false;
+    retirement?: TaskCoverageRetirementStatus }>;
+  archives: Array<TaskCoverageArchive | { archive_id: string; historical: true; current_coverage: false; verified: false; state: "unknown" }>;
+  offset: number; next_offset: number | null; archive_count: number;
+  retirements: TaskCoverageRetirement[]; retirement_offset: number; next_retirement_offset: number | null; retirement_count: number;
+}
+
+export interface TaskCoverageFileVerification extends TaskCoverageArchive {
+  file_digest: string; file_bytes: number; verified_at: string; verification: "uploaded_or_read_bytes";
+  expected_binding_checked: string[]; durable_copy_confirmed: false; capacity_released: false; imported: false;
+}
+
+export interface TaskCoveragePreservationVerification extends TaskCoverageFileVerification {
+  preservation: { receipt_id: string; receipt_digest: string; receipt_file_digest: string; preserved_at: string;
+    state: "receipt_and_uploaded_bytes_consistent"; storage_observed_now: false; independent_failure_domain_confirmed: false;
+    storage: { directory: string; artifact_name: string; directory_device: string; directory_inode: string;
+      artifact_inode: string; method: "local_file_fsync_directory_fsync_read_back" } };
+}
+
+export interface TaskCoverageObservationRef {
+  scan_id: string; round: number; checkpoint_digest: string; snapshot_id: string; sequence: number;
+}
+export interface TaskCoverageObservation {
+  request_id: string; owner_session: string; source_task_id: string; workspace_id: string; observed_at: string;
+  requested: number; observed: number; unobserved: number; observation_state: "observed" | "partial" | "unknown";
+  task_graph_reconciled: false; pages_advanced: 0; checkpoint_bytes_read: number;
+  namespace: { stable: boolean; before_digest: string | null; after_digest: string | null; reason: string };
+  limits: { checkpoints: 4; checkpoint_bytes: 16777216; inventory_entries: 8192 };
+  results: Array<{ reference: TaskCoverageObservationRef; state: "observed"; persisted: true; reason: "";
+    checkpoint_digest: string; report: TaskCoverageReport }
+    | { reference: TaskCoverageObservationRef; state: "not_observed"; persisted: false; reason: string }>;
+}
+
+export interface TaskQuestion {
+  id: string;
+  task_id: string;
+  round: number;
+  status: "open" | "answered" | "cancelled" | "expired";
+  question: string;
+  options: string[];
+  context: string;
+  asked_by: string;
+  answerer: "owner";
+  created: string;
+  expires_at: string;
+  answer: string;
+  answered_at: string;
+  resumed_round?: number;
+  plan_id?: string;
+  block_id?: string;
+  plan_revision?: string;
+  branch?: string;
+}
+
+export interface TaskQuestionAnswerResult {
+  id: string;
+  status: string;
+  replayed?: boolean;
+  session: string;
+  answered_question_id: string;
+  questions: TaskQuestion[];
+}
+
+export interface TaskHandoffReceipt {
+  task_id: string;
+  revision: string;
+  handled: true;
+}
+
+export type ChainLimits = { tasks: number; rounds: number; steps: number; timeout_seconds: number };
+
+export interface TaskChainBudget {
+  available?: boolean;
+  mode?: "execution_allowance";
+  root_task_id?: string;
+  limits?: ChainLimits;
+  used?: ChainLimits;
+  remaining?: ChainLimits;
+  reserved_rounds?: number[];
+  token_cost_hard_limit?: false;
+  error?: string;
+}
+
+export interface DispatchCapabilities {
+  version: number;
+  mode: "read";
+  agents: Array<{ name: string; description: string }>;
+  limits: { max_steps: number; timeout_seconds: number; max_rounds: number; active_tasks: number };
+  dependencies?: { available: boolean; mode: "explicit_release"; max_dependencies: number; automatic_release: boolean;
+    reverse_discovery?: boolean; event_reconcile?: boolean; startup_audit?: boolean; turn_audit?: boolean;
+    reverse_limits?: { scan_entries: number; record_bytes: number; dependents: number; depth: number; edge_visits: number };
+    paged_coverage?: { available: boolean; order: "filename_utf8_bytes_ascending";
+      inventory_entries: number; page_entries: number; record_bytes: number; page_bytes: number; total_bytes: number;
+      page_dependents: number; graph_nodes: number; graph_edges: number; depth: number; pages: number;
+      checkpoints: number; checkpoint_bytes: number;
+      retention?: { available: boolean; archives: number; archive_bytes: number; archive_page_size: number;
+        explicit_release: boolean; historical_current_coverage: false } } };
+  chain_budget?: { available: boolean; mode: "execution_allowance"; defaults: ChainLimits; max_limits: ChainLimits; token_cost_hard_limit: false };
+}
+
+export interface DispatchSubmission {
+  request_id: string;
+  prompt: string;
+  agent: string;
+  acceptance: string[];
+  max_steps: number;
+  timeout_seconds: number;
+  depends_on?: Array<{ task_id: string; round: number }>;
+  chain_limits?: ChainLimits;
+}
+
+export interface DispatchResult {
+  id: string;
+  status: string;
+  round: number;
+  review: string;
+  result: string;
+  error: string;
+  replayed?: boolean;
+  session?: string;
+  dependencies?: TaskDependencies;
+  chain_budget?: TaskChainBudget;
 }
 
 export interface HookConfigStatus {
@@ -681,6 +884,32 @@ export interface DiffPayload {
   diff: string;
 }
 
+export interface IsolatedDelivery {
+  id: string;
+  branch: string;
+  base_oid: string;
+  head_oid: string;
+  current_head: string;
+  unchanged: boolean;
+  description: string;
+  created_at: string;
+  attempts: number;
+  verification: { ok: boolean; skipped: boolean; cmd: string; output: string };
+}
+
+export interface IsolatedDeliverySnapshot extends IsolatedDelivery {
+  files: Array<{ path: string; original_path: string; status: string }>;
+  truncated: boolean;
+}
+
+export interface IsolatedDeliveryDiff {
+  ok: boolean;
+  path: string;
+  diff: string;
+  head: string;
+  unchanged: boolean;
+}
+
 export type GitReviewScope = "working" | "staged";
 export type GitReviewAction = "stage" | "unstage" | "revert";
 
@@ -923,6 +1152,89 @@ export interface DesktopLlmProfileStatus {
   requiresKey: boolean;
   contextWindow?: number;
   contextWindowSource?: "service" | "catalog" | "configured" | "unknown" | string;
+  /** 模型调度的快速档 / 强力档；没配则「自动」只用主模型。 */
+  fastModel?: string;
+  strongModel?: string;
+  /** 默认服务 /models 返回的模型清单（输入框据此列出可选模型）。 */
+  models?: string[];
+  /** 同一份清单的分类 / 能力 / 推荐档位；服务端没给分类（别家服务、旧配置）时只有 id。 */
+  modelInfo?: ModelInfo[];
+  /** 经账号登录时的账号信息（不含密码和会话）。 */
+  account?: DesktopAccount;
+  /** 用户自己添加的其他供应商（不含 Key）。 */
+  providers?: DesktopLlmProviderStatus[];
+  /** 本机配置文件路径（llm-profile.json，权限 600）；可直接编辑，下次启动生效。 */
+  configPath?: string;
+}
+
+/** /models 里一个模型的描述（relay 提供；别家 OpenAI 兼容服务只有 id）。 */
+export interface ModelInfo {
+  id: string;
+  /** chat / multimodal / omni 能对话；其余（ocr、translation、image、tts……）不能跑 Agent。 */
+  category?: string;
+  /** tools / reasoning / vision / audio_input */
+  capabilities?: string[];
+  /** 服务端推荐档位：coding（编程主力）/ fast（快速）。 */
+  tier?: string;
+  /** 带日期的快照版对应的基础型号。 */
+  snapshotOf?: string;
+  contextWindow?: number;
+}
+
+export interface DesktopAccount {
+  username: string;
+  displayName: string;
+  keySource: "token_plan" | "pay_as_you_go" | string;
+  planName?: string | null;
+  planExpiry?: number | null;
+}
+
+export interface RelayLoginOutcome {
+  status: DesktopLlmProfileStatus | null;
+  needsPlan: boolean;
+  planUrl: string;
+  message: string;
+}
+
+export interface DesktopLlmProviderStatus {
+  id: string;
+  name: string;
+  baseUrl: string;
+  models: string[];
+  hasKey: boolean;
+}
+
+/** 设置 → 浏览器操控。 */
+export interface BrowserControlStatus {
+  enabled: boolean;
+  browserPath?: string | null;
+}
+
+/** 设置页「测试连接」：只验证不保存。 */
+export interface LlmConnectionTest {
+  ok: boolean;
+  status?: number | null;
+  modelCount?: number | null;
+  modelAvailable?: boolean | null;
+  models: string[];
+  message: string;
+}
+
+/** 模型服务额度（OpenAI 兼容的 billing 接口；Key 只在原生层使用）。 */
+export interface LlmUsageSummary {
+  available: boolean;
+  unlimited: boolean;
+  hardLimitUsd?: number | null;
+  usedUsd?: number | null;
+  periodDays: number;
+  message: string;
+}
+
+/** 用户级全局指令（~/.vortocode/AGENTS.md）。 */
+export interface UserInstructions {
+  path: string;
+  content: string;
+  exists: boolean;
 }
 
 export interface GatewayRecoveryRecord {
@@ -949,6 +1261,16 @@ export interface DesktopProjectProfile {
   repoRoot: string;
   baseUrl: string;
   lastOpenedAt: number;
+  /** 本机目录已不存在（被删除或移走）；只在列表里出现，远端项目恒为 false。 */
+  missing?: boolean;
+}
+
+/** 侧边栏「项目」下列出的最近会话（Desktop 原生层从项目的会话档读出）。 */
+export interface ProjectSessionSummary {
+  projectId: string;
+  sid: string;
+  title: string;
+  updatedAt: number;
 }
 
 export interface RepoMemorySnapshot {
@@ -1032,4 +1354,18 @@ export type TrustStatus = {
   levels: TrustLevel[];
   capability_profile: string;
   workspace_scope: string;
+};
+
+/** Desktop 收件箱里的一个本地 runtime（Desktop 侧的发现结果 + 最近一次快照）。 */
+export type DesktopRuntimeInbox = {
+  runtimeId: string;
+  projectId?: string;
+  workspaceId?: string;
+  scope: WorkspaceScope;
+  label: string;
+  repoRoot?: string;
+  baseUrl: string;
+  snapshot: RuntimeInboxSnapshot | null;
+  error: string;
+  checkedAt: number;
 };

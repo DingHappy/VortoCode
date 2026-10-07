@@ -36,7 +36,7 @@ afterEach(() => {
 });
 
 describe("STORAGE_KEYS", () => {
-  it("固定住全部 9 个 key 字面量（防拼写漂移）", () => {
+  it("固定住全部 12 个 key 字面量（防拼写漂移）", () => {
     expect(STORAGE_KEYS).toEqual({
       baseUrl: "vortocode.desktop.baseUrl",
       sid: "vortocode.desktop.sid",
@@ -47,6 +47,9 @@ describe("STORAGE_KEYS", () => {
       notifiedDecisions: "vortocode.desktop.notifiedDecisions",
       projectSessionPrefix: "vortocode.desktop.projectSid:",
       lastProjectId: "vortocode.desktop.lastProjectId",
+      theme: "vortocode.desktop.theme",
+      modelChoice: "vortocode.desktop.modelChoice",
+      modelPicks: "vortocode.desktop.modelPicks",
     });
   });
 });
@@ -114,6 +117,10 @@ describe("projectToRestore", () => {
   it("没记过就留在通用会话", () => {
     expect(projectToRestore(projects, null)).toBeNull();
     expect(projectToRestore(projects, "   ")).toBeNull();
+  });
+
+  it("项目目录已不存在时不去恢复（真机 2026-10-06：临时目录被清理后每次启动都失败一遍）", () => {
+    expect(projectToRestore([{ id: "b2", name: "gone", missing: true }], "b2")).toBeNull();
   });
 
   it("项目已从注册表移除时不硬拽回去", () => {

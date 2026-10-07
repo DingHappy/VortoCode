@@ -1,5 +1,5 @@
 export type InspectorTab =
-  | "inbox" | "files" | "diff" | "runs" | "goals" | "tasks" | "decisions" | "project";
+  | "inbox" | "preview" | "files" | "diff" | "runs" | "goals" | "tasks" | "decisions" | "project";
 
 /**
  * Agent 那边发生的事要不要切走你正在看的标签。

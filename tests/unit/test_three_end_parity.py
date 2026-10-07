@@ -5,7 +5,7 @@ test_cmd → 集成校验静默退化成假绿）。本文件枚举三端（head
 agent 暴露的工具集与关键参数，任何**未登记**的新漂移都会让 CI 红，逼人做"有意决策"。
 
 三端装配现状（2026-07 核实，见 exec-plan-2026-07 PR-1）：
-- CLI 与 Web 都走共享工厂 build_agent_tools（main_agent.py），唯一差异 = Web 多制品工具。
+- CLI 与 Web 都走共享工厂 build_agent_tools；Web 多制品工具和有共享服务接线的 task_answer。
 - TUI **刻意不走工厂**（build_agent_tools docstring, main_agent.py:1939）：它用富 UI 版写/dev/
   command 工具（着色 diff + ConfirmScreen），故直接暴露 edit_file/write_file/rename_symbol。
 
@@ -49,6 +49,10 @@ def _names(agent):
 # Web 相对 CLI 多出的制品工具（with_artifacts=True）——有意，已由 test_agent_factory 覆盖 CLI⊆Web。
 WEB_ONLY_ARTIFACTS = {"publish_artifact", "list_artifacts", "delete_artifact"}
 
+# task_answer 必须复用 Web runtime 的共享 TaskRunner；独立 CLI/IM/TUI 没有该服务接线，
+# 不为凑齐工具面建立另一并发池。工厂仅在显式注入公共答复操作时提供该工具。
+INTENTIONAL_WEB_SERVICE_ONLY = {"task_answer", "task_release", "task_reconcile"}
+
 # TUI 独有、**有意设计**：富 UI 版的符号级重构（着色 diff + ConfirmScreen）。
 #
 # edit_file / write_file 已于 2026-09-17 补进工厂（build_confirmed_write_tools）：三端都能直接
@@ -66,12 +70,12 @@ KNOWN_DRIFT_FACTORY_ONLY = set()
 
 
 # ------------------------------------------------------------ 契约 A：工具集冻结
-def test_contract_A_cli_subset_of_web_only_artifacts(monkeypatch, tmp_path):
-    """CLI ⊂ Web，且唯一差异 = 制品工具（with_artifacts）。"""
+def test_contract_A_cli_subset_of_web_registered_differences(monkeypatch, tmp_path):
+    """CLI ⊂ Web，差异精确为制品工具及已接线的共享服务回答。"""
     monkeypatch.chdir(tmp_path)
     cli, web = _names(_cli_agent(tmp_path)), _names(_web_agent())
     assert cli <= web, f"CLI 有 Web 没有的工具（不该）：{cli - web}"
-    assert web - cli == WEB_ONLY_ARTIFACTS, f"CLI/Web 差异漂移：{web - cli}"
+    assert web - cli == WEB_ONLY_ARTIFACTS | INTENTIONAL_WEB_SERVICE_ONLY, f"CLI/Web 差异漂移：{web - cli}"
 
 
 def test_contract_A_tui_vs_web_is_fully_registered(monkeypatch, tmp_path):
@@ -88,8 +92,8 @@ def test_contract_A_tui_vs_web_is_fully_registered(monkeypatch, tmp_path):
         f"TUI 独有工具集变了（新漂移或已修复未登记）：多出 "
         f"{tui_only - (INTENTIONAL_TUI_ONLY | KNOWN_DRIFT_TUI_ONLY)}，"
         f"少了 {(INTENTIONAL_TUI_ONLY | KNOWN_DRIFT_TUI_ONLY) - tui_only}")
-    assert web_only == KNOWN_DRIFT_FACTORY_ONLY, (
-        f"工厂独有工具集变了：{web_only}（对照登记 {KNOWN_DRIFT_FACTORY_ONLY}）")
+    assert web_only == INTENTIONAL_WEB_SERVICE_ONLY | KNOWN_DRIFT_FACTORY_ONLY, (
+        f"Web 独有工具集变了：{web_only}（对照登记 {INTENTIONAL_WEB_SERVICE_ONLY | KNOWN_DRIFT_FACTORY_ONLY}）")
 
 
 # ------------------------------------------------------------ 契约 B：test_cmd 按仓库探测（非写死 pytest）

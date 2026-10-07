@@ -26,10 +26,11 @@ import os
 import re
 from typing import Any, Awaitable, Callable, Optional
 
-from src.agents.tool import Tool
+from src.agents.tool import Tool, ToolTurnYield
 from src.agents.gate import make_confirm_gate  # noqa: F401
 from src.agents.notice import housekeeping
 from src.agents.wait_clock import minus_wait, start_turn, waited
+from src.llm.streaming import StreamInterrupted, checked_callback, close_stream
 # 工具结果截断上限：MainAgent 落工具结果时用。这是本模块唯一往 tools/ 的依赖，
 # 方向正确（agent_loop → tools/*，无状态工具在最底层），不成环。
 from src.agents.tools._common import _max_tool_result
@@ -496,6 +497,7 @@ class MainAgent:
         capabilities: Optional[Any] = None,
         untrusted_input: bool = False,
         raise_llm_errors: bool = False,
+        execution_check: Optional[Callable[[], None]] = None,
     ) -> None:
         import os
         # 复用既有 src/hooks 的 HookSystem：把工具生命周期事件（pre/post/error）接进 agent loop
@@ -511,6 +513,7 @@ class MainAgent:
         # emit 那套语义是说给盯屏的人听的；后台没有人，空串会被上游误判成"子 agent 没干活"
         # （no-op），把通道外伤记成 agent 内科病（真机复盘：三任务六轮全被 502 吞成"无改动/出错"）。
         self._raise_llm_errors = bool(raise_llm_errors)
+        self._execution_check = execution_check
         self.max_steps = _env_int("VORTOCODE_MAX_STEPS", 6 if max_steps is None else max_steps)
         # build 单段默认给得比 plan 宽：plan 只读摸底，build 要读文件→改→跑测试→看输出→再改，
         # 六步连"读两个文件再动手"都不够。真机 2026-09-17：一个三行的改动，每一轮都在读完
@@ -650,8 +653,22 @@ class MainAgent:
         return self._llm
 
     def set_model(self, model: str) -> None:
-        """切换本 agent 后续调用使用的模型：就地改客户端 config.model（惰性客户端先建再改）。"""
-        self._client().config.model = str(model)
+        """切换本 agent 后续调用使用的模型：就地改客户端 config.model（惰性客户端先建再改）。
+
+        `供应商:模型`（供应商须经 VORTOCODE_PROVIDER_<ID>_BASE/_KEY 登记）连同端点和 key 一起换；
+        普通模型名则切回原端点。key 只跟着自己的端点走，绝不借给别家（见 llm/providers.py）。
+        """
+        from src.llm.providers import chat_target
+        client = self._client()
+        target = chat_target(str(model))
+        if target is not None and hasattr(client, "use_endpoint"):
+            provider, name = target
+            client.use_endpoint(provider.base_url, provider.api_key)
+            client.config.model = name
+            return
+        if hasattr(client, "reset_endpoint"):
+            client.reset_endpoint()
+        client.config.model = str(model)
 
     def current_model(self) -> str:
         """当前 agent 实际会用的模型名（读客户端 config）。拿不到返回空串。"""
@@ -1129,8 +1146,12 @@ class MainAgent:
             **preview,
         }
 
+    def _check_execution(self) -> None:
+        if self._execution_check is not None:
+            self._execution_check()
+
     async def _summarize(self, msgs: list[dict], focus: str = "") -> str:
-        """把一段历史消息（+ 已有纪要）交给 LLM 压成更新后的纪要；任何异常都返回空串（让上游降级）。
+        """把历史压成纪要；模型失败返回空串降级，执行检查失败继续上抛。
 
         focus：用户给的"重点保留什么"（`/compact <说明>`）。只进**摘要子调用的 user 消息**，
         既不进主对话 system（保前缀稳定），也不改压缩器的系统提示（防用户文本改写压缩器行为）；
@@ -1148,10 +1169,13 @@ class MainAgent:
         user += "请输出更新后的完整纪要。"
         prompt = [{"role": "system", "content": _SUMMARY_SYSTEM},
                   {"role": "user", "content": user}]
+        self._check_execution()
         try:
             resp = await self._client().chat(prompt, temperature=0.2)
         except Exception:  # noqa: BLE001
+            self._check_execution()
             return ""
+        self._check_execution()
         from src.memory.write_policy import sanitize_persistent_summary
         digest, _reasons = sanitize_persistent_summary(resp.get("content") or "", limit=2000)
         return digest                        # 纪要本身也设上限，且落盘/注入前做确定性过滤
@@ -1167,9 +1191,11 @@ class MainAgent:
         stream_shown：本回合**已回显**的正文分段（回合级累加器）。stream_cb 收到的必须是**整回合**
         的累计文本（三端契约、CLI 按累计长度算增量）；本步回显在其前缀之后追加，回合内单调不回退。
         """
+        self._check_execution()
         client = self._client()
         if stream_cb is None or not hasattr(client, "stream"):
             resp = await client.chat(messages, temperature=0.3)
+            self._check_execution()
             if reasoning_cb is not None and resp.get("reasoning"):   # 非流式：整段思维链一次性给
                 try:
                     reasoning_cb(str(resp["reasoning"]))
@@ -1180,17 +1206,25 @@ class MainAgent:
         buf: list[str] = []
         show: Optional[bool] = None        # None=未定；True=显示；False=抑制(疑似工具调用)
         try:
-            gen = client.stream(messages, temperature=0.3, on_reasoning=reasoning_cb)
+            gen = client.stream(messages, temperature=0.3,
+                                on_reasoning=checked_callback(reasoning_cb, self._execution_check))
         except TypeError:                  # 老客户端/假 LLM 不认 on_reasoning：退回不带它
             gen = client.stream(messages, temperature=0.3)
-        async for tok in gen:
-            buf.append(tok)
-            if show is None:
-                head = "".join(buf).lstrip()
-                if head:
-                    show = not (head.startswith("{") or head.startswith("```"))
-            if show:
-                stream_cb(prefix + "".join(buf))     # 前缀 + 本步 → 整回合累计
+        try:
+            async for tok in gen:
+                self._check_execution()
+                buf.append(tok)
+                if show is None:
+                    head = "".join(buf).lstrip()
+                    if head:
+                        show = not (head.startswith("{") or head.startswith("```"))
+                if show:
+                    stream_cb(prefix + "".join(buf))     # 前缀 + 本步 → 整回合累计
+        except StreamInterrupted as error:
+            raise error.reason from None
+        finally:
+            await close_stream(gen)
+        self._check_execution()
         if show and stream_shown is not None:        # 本步确有回显 → 并入回合累加器
             stream_shown.append("".join(buf))
         return "".join(buf)
@@ -1207,6 +1241,7 @@ class MainAgent:
         兼容模型若先流出一段前言再给 tool_call，那段前言会被回显——此时它作为前缀留在 stream_shown 里，
         最终回复接在其后，宁可多显示一句前言，也不让最终回复在 CLI 上被吞。否则退回一次性 chat（也便于
         测试的假 LLM）。streamed=True 时思维链已过 on_reasoning 增量给出，调用方别再整段重放。"""
+        self._check_execution()
         client = self._client()
         if stream_cb is not None and hasattr(client, "stream_chat"):
             prefix = "".join(stream_shown)            # 本回合已回显前缀
@@ -1234,9 +1269,14 @@ class MainAgent:
                     visible_len = len(safe)
                     stream_cb(prefix + safe)             # 前缀 + 本步安全正文 → 整回合累计（单调）
 
-            resp = await client.stream_chat(
-                native_msgs, temperature=0.3, tools=schema,
-                on_content=_on_content, on_reasoning=reasoning_cb)
+            try:
+                resp = await client.stream_chat(
+                    native_msgs, temperature=0.3, tools=schema,
+                    on_content=checked_callback(_on_content, self._execution_check),
+                    on_reasoning=checked_callback(reasoning_cb, self._execution_check))
+            except StreamInterrupted as error:
+                raise error.reason from None
+            self._check_execution()
             content = str(resp.get("content") or "")
             suppress_buffer = (bool(resp.get("tool_calls")) or bool(parse_tool_calls(content))
                                or _is_weak_final(content))
@@ -1248,13 +1288,16 @@ class MainAgent:
                 # 工具步只保存 guard 前的自然语言前言；最终步保存完整正文。
                 stream_shown.append(content[:visible_len])
             return resp, True
-        return await client.chat(native_msgs, temperature=0.3, tools=schema), False
+        resp = await client.chat(native_msgs, temperature=0.3, tools=schema)
+        self._check_execution()
+        return resp, False
 
     def _tools_schema(self) -> list[dict]:
         """把工具表转成 OpenAI function-calling 的 schema（原生工具模式用）。"""
         schema = []
         for t in self._tool_list:
-            props = {k: {"type": "string", "description": v} for k, v in t.args.items()}
+            props = {k: {"type": "string", "description": v, **t.argument_schema.get(k, {})}
+                     for k, v in t.args.items()}
             schema.append({
                 "type": "function",
                 "function": {
@@ -1306,7 +1349,10 @@ class MainAgent:
         """执行已绑定的可信工具实例，让显式客户端动作复用同一能力/权限/hook/审计内核。"""
         import time
         import uuid
+        from src.llm.hard_budget import claim_check_tool
 
+        self._check_execution()
+        claim_check_tool(tool)
         name = tool.name
         call_id = "tool-" + uuid.uuid4().hex[:16]
         started = time.monotonic()
@@ -1375,6 +1421,8 @@ class MainAgent:
                 return finish("blocked", block)
         say(housekeeping(f"🔧 [b]{name}[/b][dim] {_fmt_args(args)}[/dim]"))
         status = "succeeded"
+        yielded = None
+        self._check_execution()
         try:
             raw = await tool.handler(args)
             # 工具可以**正常返回**却表示失败（隔离实现没过、预检不通过…）。没有这条，台账把
@@ -1383,10 +1431,13 @@ class MainAgent:
             if isinstance(raw, dict) and raw.get("ok") is False:
                 status = "failed"
             result = self._absorb_tool_media(raw)
+        except ToolTurnYield as control:
+            status, result, yielded = "blocked", str(control), control
         except Exception as e:  # noqa: BLE001
             status = "failed"
             result = f"工具 {name} 执行出错: {e}"
             await self._fire_hook("tool_error", {"tool": name, "args": args, "error": str(e)})
+        self._check_execution()
         result = _clip_middle(result, _max_tool_result())  # 超长保头+尾：别把末尾的报错/失败摘要截没了
         if status == "succeeded":                          # 只对成功结果算重复；失败重试是正当的
             result = self._repeat_call_note(tool, args, result)
@@ -1403,7 +1454,10 @@ class MainAgent:
                 self._on_tool(name, args, result)
             except Exception:  # noqa: BLE001
                 pass
-        return finish(status, result)
+        result = finish(status, result)
+        if yielded is not None:
+            raise yielded
+        return result
 
     # 直接改主工作区的工具 / 任何"真的跑了点什么"的工具（见 _unverified_writes_note）。
     _DIRECT_WRITE_TOOLS = ("edit_file", "write_file")
@@ -1542,7 +1596,8 @@ class MainAgent:
             r = [(n, await self._run_tool(n, a, mode, say))]
             _mark_taint(calls)
             return r
-        all_ro = all(self.tools.get(n) is not None and self.tools[n].read_only for n, _ in calls)
+        all_ro = all(self.tools.get(n) is not None and self.tools[n].read_only
+                     and not self.tools[n].yields_turn for n, _ in calls)
         if all_ro:                                  # 全只读 → 并发（CC 式并行读）
             rs = await asyncio.gather(*[self._run_tool(n, a, mode, say) for n, a in calls],
                                       return_exceptions=True)
@@ -1896,5 +1951,3 @@ class MainAgent:
             self._escalated = True
             return True
         return False
-
-

@@ -13,6 +13,12 @@ export const STORAGE_KEYS = {
   projectSessionPrefix: "vortocode.desktop.projectSid:",
   // 上次停在哪个项目：重启后回到那里，而不是一律丢回通用会话（真机 2026-09-17）。
   lastProjectId: "vortocode.desktop.lastProjectId",
+  // 外观：跟随系统 / 浅色 / 深色。只影响本机显示，属于每台机器自己的偏好。
+  theme: "vortocode.desktop.theme",
+  // 输入框的模型选择：「自动」或某个已配置的模型。
+  modelChoice: "vortocode.desktop.modelChoice",
+  // 输入框里的常用模型短名单（有序）；没存过就跟随服务端推荐。
+  modelPicks: "vortocode.desktop.modelPicks",
 } as const;
 
 // 每个项目一个会话 id，key 由项目 id 拼出前缀。
@@ -37,11 +43,13 @@ export function persistNotifiedDecisionIds(ids: Set<string>): void {
 }
 
 /** 启动时该恢复哪个项目：记过 id 且该项目仍在注册表里才恢复，否则回通用会话（返回 null）。 */
-export function projectToRestore<T extends { id: string }>(
+export function projectToRestore<T extends { id: string; missing?: boolean }>(
   projects: readonly T[],
   lastProjectId: string | null,
 ): T | null {
   const wanted = (lastProjectId ?? "").trim();
   if (!wanted) return null;
-  return projects.find((project) => project.id === wanted) ?? null;
+  const project = projects.find((candidate) => candidate.id === wanted);
+  // 目录已不存在的项目不去恢复：每次启动都失败一遍、再弹一次提示，只会拖慢启动。
+  return project && !project.missing ? project : null;
 }

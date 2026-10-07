@@ -46,6 +46,8 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
                   capability_profile=None, auto_approve: bool = False,
                   can_ask_human: bool = False, on_decision=None, on_diff=None,
                   workspace_scope: str = "project", on_workspace_required=None,
+                  task_owner=None, on_task_update=None, answer_task_question=None, release_task_dependencies=None,
+                  reconcile_task_dependencies=None,
                   untrusted_input: bool = False, with_dev: bool = True,
                   extra_system: str | None = None, trust_level: str | None = None):
     """装配一个主 agent（三端同一骨架）。
@@ -97,7 +99,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         reason = str(args.get("reason") or "").strip()
         nxt = str(args.get("next_action") or "").strip()
         if name == "request_build":
-            parts = ["plan 阶段分析已完成，需要你授权才能动手。"]
+            if reason.startswith("plan 阶段单段执行预算已到"):
+                parts = ["plan 阶段预算已到，尚未形成可审阅计划；继续需要授权。"]
+            else:
+                parts = ["plan 阶段分析已完成，需要你授权才能动手。"]
         else:
             parts = [f"这一步要用写/重型工具「{name}」，plan(只读)模式下不可用。"]
         if reason:
@@ -155,6 +160,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         tools = build_agent_tools(repo_root, confirm=gated_confirm, on_progress=on_progress,
                                   with_artifacts=(kind == "web"),   # 制品查看页只有 Web 有
                                   memory_source=kind, capabilities=capabilities,
+                                  task_owner=task_owner, on_task_update=on_task_update,
+                                  answer_task_question=answer_task_question,
+                                  release_task_dependencies=release_task_dependencies,
+                                  reconcile_task_dependencies=reconcile_task_dependencies,
                                   with_dev=with_dev,   # 研究员档：不给改主项目代码/落分支/开 PR 的工具
                                   # 排班面与 dev 面同档开关：两者都是**主人的运维面**，研究员
                                   # （给同事用的资料助理）两样都不该有。将来若出现"要 dev 不要
@@ -163,6 +172,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
                                   on_diff=on_diff)   # 确认前的结构化 diff 推送（AGENT_DIFF，端可不接）
         if workspace_scope == SCRATCH:
             tools.append(workspace_tool)  # Scratch 仍可声明需要用户真实项目，而不是猜路径
+    from src.agents.tools.browser import browser_control_enabled, build_browser_tools
+    if browser_control_enabled(kind):
+        # 浏览器操控：Desktop 设置里显式打开才有；点击/输入在任何授权档位下都过人（interact 类）。
+        tools += build_browser_tools(repo_root, gated_confirm)
     # 各端**永久**切 build 的真实方式。别让内核去猜，也别在系统提示里写死某一个端的键。
     _SWITCH_HINT = {"im": "回复 `/mode build`", "web": "点界面上的 plan/build 开关",
                     "cli": "重跑时加 `-b` 参数"}
@@ -183,6 +196,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         "【工作区范围】当前是 Scratch 隔离临时工作区。只在这里创建和运行临时代码；"
         "需要修改用户已有项目时调用 request_workspace(scope=project)，不要搜索或猜测其他目录。"
     ] if workspace_scope == SCRATCH else []
+    from src.agents.project import load_user_instructions
+    user_instructions = load_user_instructions()          # ~/.vortocode/AGENTS.md：所有范围都带
+    if user_instructions:
+        parts.append(user_instructions)
     if workspace_scope != GENERAL:
         proj = load_project_instructions(repo_root)        # AGENTS.md/CLAUDE.md 项目约定进系统提示
         if proj:

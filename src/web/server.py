@@ -41,7 +41,11 @@ async def _lifespan(_app):
         from src.web.routers.tasks import get_runner, scheduler_loop
         recovered = get_runner().recover()
         if recovered:
-            print(f"  ↻ 恢复 {len(recovered)} 个中断的后台任务（标 interrupted，可 dev_resume 续跑）")
+            print(f"  ↻ 对账 {len(recovered)} 条后台任务/检查中断记录（不自动重试）")
+        from src.web.task_dispatch import get_dispatch_service
+        dependency_audit = get_dispatch_service().audit_dependencies()
+        if dependency_audit and not dependency_audit["complete"]:
+            print("  （依赖启动核对未覆盖全部记录，请核对扫描上限或损坏/存储错误；不自动执行）")
         # cron / heartbeat 调度循环：**opt-in**（任一开关开才起，默认全关——不擅自跑自主 LLM 作业）
         if any(_os.getenv(k, "").strip().lower() in ("1", "true", "yes", "on")
                for k in ("VORTOCODE_CRON", "VORTOCODE_HEARTBEAT")):
@@ -119,19 +123,13 @@ async def workspace_scope_middleware(request, call_next):
 from src.web.routers.pages import router as pages_router
 from src.web.routers.git import router as git_router
 from src.web.routers.context import router as context_router
-from src.web.routers.agents import router as agents_router
-from src.web.routers.skills import router as skills_router
-from src.web.routers.projects import router as projects_router
-from src.web.routers.editor import router as editor_router
-from src.web.routers.sandbox import router as sandbox_router
-from src.web.routers.browser import router as browser_router
-from src.web.routers.github import router as github_router
 from src.web.routers.ops import router as ops_router
-from src.web.routers.generators import router as generators_router
 from src.web.routers.realtime import router as realtime_router
 from src.web.routers.artifacts import router as artifacts_router
 from src.web.routers.auth_routes import router as auth_router
 from src.web.routers.tasks import router as tasks_router
+from src.web.routers.delegations import router as delegations_router
+from src.web.routers.task_inbox import router as task_inbox_router
 from src.web.routers.goals import router as goals_router
 from src.web.routers.runs import router as runs_router
 from src.web.routers.terminals import router as terminals_router
@@ -146,10 +144,8 @@ from src.web.routers.trust import router as trust_router
 
 for _router in (
     pages_router, git_router, context_router,
-    agents_router, skills_router,
-    projects_router, editor_router, sandbox_router,
-    browser_router, github_router, ops_router, generators_router, realtime_router,
-    artifacts_router, auth_router, tasks_router, goals_router, runs_router, terminals_router, decisions_router,
+    ops_router, realtime_router,
+    artifacts_router, auth_router, tasks_router, delegations_router, task_inbox_router, goals_router, runs_router, terminals_router, decisions_router,
     journal_router, hooks_router, extensions_router, cron_router, dev_plans_router,
     pipelines_router, trust_router,
 ):

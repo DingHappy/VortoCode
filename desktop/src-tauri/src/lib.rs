@@ -10,7 +10,6 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{webview::PageLoadEvent, AppHandle, Manager, State};
-use tauri_plugin_shell::ShellExt;
 use url::{Host, Url};
 
 const MAX_WORKSPACE_FILES: usize = 6_000;
@@ -21,7 +20,9 @@ const GENERAL_SCOPE: &str = "general";
 const SCRATCH_SCOPE: &str = "scratch";
 const PROJECT_SCOPE: &str = "project";
 const DEFAULT_LLM_BASE_URL: &str = "https://token.vortotech.com/v1";
-const DEFAULT_LLM_MODEL: &str = "mimo-v2.5";
+const DEFAULT_LLM_MODEL: &str = "mimo-v2.6-pro";
+/// 前端默认的本机 runtime 端口（被占用时 select_gateway_port 自动换一个空闲端口）。
+const DEFAULT_GATEWAY_PORT: u16 = 8080;
 
 #[derive(Clone, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,6 +34,90 @@ struct DesktopLlmProfile {
     context_window: Option<u64>,
     #[serde(default)]
     context_window_source: Option<String>,
+    /// 模型调度的快速档 / 强力档（可选）。没配时「自动」只在主模型上运行。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fast_model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    strong_model: Option<String>,
+    /// 用户自己添加的其他供应商（各带各的 Key）；聊天里以 `id:模型` 选用。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    providers: Vec<DesktopLlmProvider>,
+    /// 经账号登录得到的中转站 Key 时，记下是谁、Key 从哪来（不含密码/会话）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    account: Option<DesktopAccount>,
+    /// 已退出登录：默认服务没有 Key、不注入 runtime，但保留自定义供应商。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    signed_out: bool,
+    /// 默认服务 /models 返回的模型清单：输入框据此列出可选模型，runtime 据此放行点名。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    models: Vec<String>,
+    /// 同一份清单带上服务端给的分类 / 能力 / 推荐档位（relay 2026-10-07 起提供，别家服务只有 id）。
+    /// 旧配置没有这个字段：界面在启动引擎前补拉一次。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    model_info: Vec<ModelInfo>,
+}
+
+/// /models 里一个模型的描述。除 id 外都是可选的：OpenAI 兼容的别家服务不返回这些字段。
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelInfo {
+    id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    category: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    capabilities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tier: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    snapshot_of: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context_window: Option<u64>,
+}
+
+/// 能对话的三类：纯文本 / 图片视频输入 / 全模态。其余（OCR、翻译、生图、语音……）不能跑 Agent。
+const CHAT_MODEL_CATEGORIES: [&str; 3] = ["chat", "multimodal", "omni"];
+
+impl ModelInfo {
+    /// 能拿来跑 Agent：能对话，且支持工具调用。
+    fn agent_ready(&self) -> bool {
+        self.category.as_deref().is_some_and(|category| CHAT_MODEL_CATEGORIES.contains(&category))
+            && self.capabilities.iter().any(|capability| capability == "tools")
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopAccount {
+    username: String,
+    display_name: String,
+    /// "token_plan" = 账号的 Token Plan Key；"pay_as_you_go" = 桌面端建的按量 Key。
+    key_source: String,
+    #[serde(default)]
+    plan_name: Option<String>,
+    #[serde(default)]
+    plan_expiry: Option<i64>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopLlmProvider {
+    id: String,
+    name: String,
+    base_url: String,
+    api_key: String,
+    #[serde(default)]
+    models: Vec<String>,
+}
+
+/// 给网页层看的供应商信息：**不含 Key**。
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopLlmProviderStatus {
+    id: String,
+    name: String,
+    base_url: String,
+    models: Vec<String>,
+    has_key: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -45,6 +130,18 @@ struct DesktopLlmProfileStatus {
     requires_key: bool,
     context_window: Option<u64>,
     context_window_source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fast_model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    strong_model: Option<String>,
+    providers: Vec<DesktopLlmProviderStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    account: Option<DesktopAccount>,
+    models: Vec<String>,
+    model_info: Vec<ModelInfo>,
+    /// 本机配置文件位置；设置页显示它，方便用户直接编辑。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    config_path: Option<String>,
 }
 
 #[derive(Default)]
@@ -106,8 +203,16 @@ fn default_llm_profile() -> DesktopLlmProfile {
         base_url: DEFAULT_LLM_BASE_URL.into(),
         api_key: String::new(),
         model: DEFAULT_LLM_MODEL.into(),
-        context_window: Some(1_000_000),
-        context_window_source: Some("catalog".into()),
+        // 默认模型的窗口只在官方资料有把握时填；没有就留空，保存时向服务探测。
+        context_window: official_model_context_window(DEFAULT_LLM_MODEL),
+        context_window_source: official_model_context_window(DEFAULT_LLM_MODEL).map(|_| "catalog".into()),
+        fast_model: None,
+        strong_model: None,
+        providers: Vec::new(),
+        account: None,
+        signed_out: false,
+        model_info: Vec::new(),
+        models: Vec::new(),
     }
 }
 
@@ -115,6 +220,19 @@ fn normalize_llm_profile(mut profile: DesktopLlmProfile) -> Result<DesktopLlmPro
     profile.base_url = profile.base_url.trim().trim_end_matches('/').to_string();
     profile.api_key = profile.api_key.trim().to_string();
     profile.model = profile.model.trim().to_string();
+    for tier in [&mut profile.fast_model, &mut profile.strong_model] {
+        *tier = tier
+            .as_deref()
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+            .map(str::to_string);
+        if tier
+            .as_deref()
+            .is_some_and(|name| name.len() > 160 || name.chars().any(char::is_control))
+        {
+            return Err("调度模型名无效".into());
+        }
+    }
     if profile.base_url.len() > 512 || profile.model.is_empty() || profile.model.len() > 160 {
         return Err("模型服务地址或模型名无效".into());
     }
@@ -158,9 +276,12 @@ fn normalize_llm_profile(mut profile: DesktopLlmProfile) -> Result<DesktopLlmPro
     if parsed.scheme() != "https" && !(parsed.scheme() == "http" && local) {
         return Err("远程模型服务必须使用 HTTPS；HTTP 仅允许 127.0.0.1 / localhost".into());
     }
-    if !local && profile.api_key.is_empty() {
+    if !local && profile.api_key.is_empty() && !profile.signed_out {
         return Err("远程模型服务需要 API Key".into());
     }
+    // 配置文件可以手改：清单会拼进环境变量，读回来也要清洗一遍。
+    profile.models = clean_model_list(std::mem::take(&mut profile.models));
+    profile.model_info = clean_model_infos(std::mem::take(&mut profile.model_info));
     Ok(profile)
 }
 
@@ -422,21 +543,6 @@ mod platform_keychain {
     }
 }
 
-mod llm_keychain {
-    use super::platform_keychain;
-    const SERVICE: &[u8] = b"com.vortocode.desktop.llm";
-    const ACCOUNT: &[u8] = b"default";
-    pub fn read() -> Result<Option<String>, String> {
-        platform_keychain::read(SERVICE, ACCOUNT)
-    }
-    pub fn write(payload: &str) -> Result<(), String> {
-        platform_keychain::write(SERVICE, ACCOUNT, payload)
-    }
-    pub fn delete() -> Result<(), String> {
-        platform_keychain::delete(SERVICE, ACCOUNT)
-    }
-}
-
 // 远程连接 token：与 LLM key 分开的 Keychain 服务，按项目 id 作 account 以支持多远端。
 // read 只在 Rust 侧的远程代理里用——token 原文不进 webview（spec §连接层安全 2）。
 mod remote_token_keychain {
@@ -453,26 +559,165 @@ mod remote_token_keychain {
     }
 }
 
-fn read_desktop_llm_profile() -> Result<Option<DesktopLlmProfile>, String> {
-    let Some(payload) = llm_keychain::read()? else {
-        return Ok(None);
+// 模型服务配置存在 Desktop 配置目录下的 JSON 文件里（与 projects.json 同目录，权限 600），
+// 不再放 macOS Keychain：自签名/开发构建每换一次二进制，Keychain 就要求重新授权一次。
+// 文件可直接手动编辑，下次启动生效；格式与设置页保存的一致（camelCase）。
+const LLM_PROFILE_FILE: &str = "llm-profile.json";
+
+const DESKTOP_PREFERENCES_FILE: &str = "desktop-preferences.json";
+const BROWSER_CANDIDATES: [&str; 4] = [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+    "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+];
+
+/// 本机偏好（不含任何凭据）。缺字段一律按最保守的默认值：浏览器操控关闭。
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopPreferences {
+    #[serde(default)]
+    browser_control: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserControlStatus {
+    enabled: bool,
+    /// 找到的 Chromium 系浏览器；没有则无法启用。
+    browser_path: Option<String>,
+}
+
+fn desktop_preferences_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|directory| directory.join(DESKTOP_PREFERENCES_FILE))
+        .map_err(|error| format!("无法定位 Desktop 配置目录：{error}"))
+}
+
+fn read_desktop_preferences(path: &Path) -> DesktopPreferences {
+    // 读不到或格式坏了都按默认（关闭）：偏好文件损坏不该让任何能力意外打开。
+    std::fs::read_to_string(path)
+        .ok()
+        .and_then(|payload| serde_json::from_str(&payload).ok())
+        .unwrap_or_default()
+}
+
+fn find_local_browser() -> Option<String> {
+    BROWSER_CANDIDATES
+        .iter()
+        .find(|path| Path::new(path).is_file())
+        .map(|path| path.to_string())
+}
+
+fn configure_browser_control(command: &mut Command, preferences: &DesktopPreferences) {
+    match (preferences.browser_control, find_local_browser()) {
+        (true, Some(browser)) => {
+            command.env("VORTOCODE_ENABLE_BROWSER_CONTROL", "1");
+            command.env("VORTOCODE_BROWSER_PATH", browser);
+        }
+        _ => {
+            command.env_remove("VORTOCODE_ENABLE_BROWSER_CONTROL");
+            command.env_remove("VORTOCODE_BROWSER_PATH");
+        }
+    }
+}
+
+#[tauri::command(async)]
+fn get_browser_control(app: AppHandle) -> Result<BrowserControlStatus, String> {
+    let preferences = read_desktop_preferences(&desktop_preferences_path(&app)?);
+    Ok(BrowserControlStatus {
+        enabled: preferences.browser_control,
+        browser_path: find_local_browser(),
+    })
+}
+
+#[tauri::command]
+async fn set_browser_control(app: AppHandle, enabled: bool) -> Result<BrowserControlStatus, String> {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    let browser_path = find_local_browser();
+    if enabled && browser_path.is_none() {
+        return Err("没有找到 Chrome / Edge / Chromium / Brave，无法启用浏览器操控".into());
+    }
+    if enabled {
+        // 打开是放权：原生确认在 webview 之外，页面脚本无法替用户点「启用」。关闭是收权，不必问。
+        let dialog_app = app.clone();
+        let confirmed = tauri::async_runtime::spawn_blocking(move || {
+            with_main_window_parent(&dialog_app, dialog_app.dialog().message(
+                "启用后，Agent 可以在一个独立的浏览器窗口里打开网页、读取内容和截图；每次点击或输入都会先问你。\n\n这个窗口不含你日常浏览器的登录信息；支付、银行、邮箱、账号和云控制台等站点会被拦截。",
+            ))
+            .title("启用浏览器操控")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom("启用".into(), "取消".into()))
+            .blocking_show()
+        })
+        .await
+        .map_err(|error| format!("浏览器操控确认对话框失败：{error}"))?;
+        if !confirmed {
+            return Err("浏览器操控未获确认，保持关闭".into());
+        }
+    }
+    let path = desktop_preferences_path(&app)?;
+    let mut preferences = read_desktop_preferences(&path);
+    preferences.browser_control = enabled;
+    save_json_atomic_with_mode(&path, "desktop-preferences", &preferences, Some(0o600))?;
+    Ok(BrowserControlStatus {
+        enabled,
+        browser_path,
+    })
+}
+
+fn llm_profile_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_config_dir()
+        .map(|directory| directory.join(LLM_PROFILE_FILE))
+        .map_err(|error| format!("无法定位 Desktop 配置目录：{error}"))
+}
+
+fn read_llm_profile_file(path: &Path) -> Result<Option<DesktopLlmProfile>, String> {
+    let payload = match std::fs::read_to_string(path) {
+        Ok(payload) => payload,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("无法读取模型配置文件 {}：{error}", path.display())),
     };
-    let profile: DesktopLlmProfile = serde_json::from_str(&payload)
-        .map_err(|_| "macOS Keychain 中的模型配置已损坏，请在 Desktop 中重新保存".to_string())?;
+    let profile: DesktopLlmProfile = serde_json::from_str(&payload).map_err(|_| {
+        format!("模型配置文件格式有误：{}；请在 Desktop 设置中重新保存", path.display())
+    })?;
     normalize_llm_profile(profile).map(Some)
 }
 
+fn save_llm_profile_file(path: &Path, profile: &DesktopLlmProfile) -> Result<(), String> {
+    // 含 API Key：只允许当前账户读写。
+    save_json_atomic_with_mode(path, "llm-profile", profile, Some(0o600))
+}
+
+fn delete_llm_profile_file(path: &Path) -> Result<(), String> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("无法删除模型配置文件 {}：{error}", path.display())),
+    }
+}
+
 fn cached_desktop_llm_profile(
+    app: &AppHandle,
     store: &DesktopLlmProfileStore,
 ) -> Result<Option<DesktopLlmProfile>, String> {
-    store.get_or_try_init(read_desktop_llm_profile)
+    let path = llm_profile_path(app)?;
+    store.get_or_try_init(|| read_llm_profile_file(&path))
+}
+
+fn with_config_path(mut status: DesktopLlmProfileStatus, app: &AppHandle) -> DesktopLlmProfileStatus {
+    status.config_path = llm_profile_path(app).ok().map(|path| path.display().to_string());
+    status
 }
 
 fn desktop_llm_profile_status(profile: Option<&DesktopLlmProfile>) -> DesktopLlmProfileStatus {
     let fallback = default_llm_profile();
     let profile = profile.unwrap_or(&fallback);
     DesktopLlmProfileStatus {
-        configured: profile.api_key.len() > 0 || llm_provider(&profile.base_url) == "local",
+        configured: !profile.signed_out
+            && (profile.api_key.len() > 0 || llm_provider(&profile.base_url) == "local"),
         base_url: profile.base_url.clone(),
         model: profile.model.clone(),
         provider: llm_provider(&profile.base_url).into(),
@@ -482,15 +727,47 @@ fn desktop_llm_profile_status(profile: Option<&DesktopLlmProfile>) -> DesktopLlm
             .context_window_source
             .clone()
             .unwrap_or_else(|| "unknown".into()),
+        fast_model: profile.fast_model.clone(),
+        strong_model: profile.strong_model.clone(),
+        providers: profile
+            .providers
+            .iter()
+            .map(|provider| DesktopLlmProviderStatus {
+                id: provider.id.clone(),
+                name: provider.name.clone(),
+                base_url: provider.base_url.clone(),
+                models: provider.models.clone(),
+                has_key: !provider.api_key.is_empty(),
+            })
+            .collect(),
+        account: profile.account.clone(),
+        models: profile.models.clone(),
+        model_info: profile.model_info.clone(),
+        config_path: None,
     }
 }
 
-#[tauri::command]
+// 会做磁盘 / 进程 / Keychain 等可能阻塞操作的命令不能跑在主线程：阻塞期间整个窗口白屏
+// （2026-10-06 真机复现：Keychain 授权弹窗等待期间白屏）。`async` 让 Tauri 在后台线程执行。
+#[tauri::command(async)]
 fn get_llm_profile(
+    app: AppHandle,
     store: State<'_, DesktopLlmProfileStore>,
 ) -> Result<DesktopLlmProfileStatus, String> {
-    let profile = cached_desktop_llm_profile(&store)?;
-    Ok(desktop_llm_profile_status(profile.as_ref()))
+    let profile = cached_desktop_llm_profile(&app, &store)?;
+    Ok(with_config_path(desktop_llm_profile_status(profile.as_ref()), &app))
+}
+
+/// 原生确认框必须挂到主窗口上（弹成 sheet）。rfd 在 macOS 上的无父窗口消息框会建出窗口却
+/// 从不显示，`blocking_show` 因此永远挂起——2026-10-06 真机复现：确认框不出现、命令不返回。
+fn with_main_window_parent(
+    app: &AppHandle,
+    dialog: tauri_plugin_dialog::MessageDialogBuilder<tauri::Wry>,
+) -> tauri_plugin_dialog::MessageDialogBuilder<tauri::Wry> {
+    match app.get_webview_window("main") {
+        Some(window) => dialog.parent(&window),
+        None => dialog,
+    }
 }
 
 async fn confirm_llm_profile_change(
@@ -500,14 +777,21 @@ async fn confirm_llm_profile_change(
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
     // 改档是敏感动作：base_url+Key 会落 Keychain 并注入后续 runtime 环境。原生对话框在
     // webview 进程之外，被注入的页面脚本无法替用户点「确认」，静默改档因此不生效。
+    let tiers = match (&profile.fast_model, &profile.strong_model) {
+        (None, None) => String::new(),
+        (fast, strong) => format!(
+            "\n快速模型：{}\n强力模型：{}",
+            fast.as_deref().unwrap_or("（同主模型）"),
+            strong.as_deref().unwrap_or("（同主模型）")
+        ),
+    };
     let message = format!(
-        "网页层请求把模型服务改为：\n\n服务地址：{}\n模型：{}\n\n仅当这是你刚在设置页保存的配置时才确认。",
-        profile.base_url, profile.model
+        "网页层请求把模型服务改为：\n\n服务地址：{}\n模型：{}{}\n\n仅当这是你刚在设置页保存的配置时才确认。",
+        profile.base_url, profile.model, tiers
     );
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        app.dialog()
-            .message(message)
+        with_main_window_parent(&app, app.dialog().message(message))
             .title("确认修改模型服务")
             .kind(MessageDialogKind::Warning)
             .buttons(MessageDialogButtons::OkCancelCustom(
@@ -545,39 +829,84 @@ async fn set_llm_profile(
     base_url: String,
     api_key: String,
     model: String,
+    fast_model: Option<String>,
+    strong_model: Option<String>,
     store: State<'_, DesktopLlmProfileStore>,
 ) -> Result<DesktopLlmProfileStatus, String> {
+    // 只改模型名 / 调度档时不必重输 Key：留空则沿用已保存的 Key，规则同 test_llm_connection
+    // （仅限同一地址，Key 绝不借给别的服务）。
+    let saved = cached_desktop_llm_profile(&app, &store)?;
+    let mut api_key = api_key.trim().to_string();
+    if api_key.is_empty() {
+        let wanted = base_url.trim().trim_end_matches('/');
+        if let Some(saved) = saved.as_ref() {
+            if saved.base_url == wanted {
+                api_key = saved.api_key.clone();
+            }
+        }
+    }
+    // 地址和 Key 都没变（只改了模型名 / 调度档）时保留登录信息；换了 Key 或地址就不再是账号给的那把了。
+    let wanted_base = base_url.trim().trim_end_matches('/').to_string();
+    let account = saved
+        .as_ref()
+        .filter(|saved| saved.base_url == wanted_base && saved.api_key == api_key)
+        .and_then(|saved| saved.account.clone());
+    // 同一个服务地址：模型清单沿用（换地址后由界面重新拉取）。
+    let (models, model_info) = saved
+        .as_ref()
+        .filter(|saved| saved.base_url == wanted_base)
+        .map(|saved| (saved.models.clone(), saved.model_info.clone()))
+        .unwrap_or_default();
     let profile = normalize_llm_profile(DesktopLlmProfile {
         base_url,
         api_key,
         model,
         context_window: None,
         context_window_source: None,
+        fast_model,
+        strong_model,
+        // 改默认模型服务时保留已添加的其他供应商（它们各带各的 Key，与默认服务无关）。
+        providers: saved.map(|saved| saved.providers).unwrap_or_default(),
+        account,
+        signed_out: false,
+        models,
+        model_info,
     })?;
+    let path = llm_profile_path(&app)?;
     let confirmed = confirm_llm_profile_change(&app, &profile).await?;
+    let profile = if confirmed { with_model_list(profile).await } else { profile };
     let profile = save_llm_profile_flow(profile, confirmed, LLM_PROBE_TIMEOUT, |profile| {
-        let payload =
-            serde_json::to_string(profile).map_err(|_| "无法序列化模型配置".to_string())?;
-        llm_keychain::write(&payload)
+        save_llm_profile_file(&path, profile)
     })
     .await?;
     store.replace(Some(profile.clone()))?;
-    Ok(desktop_llm_profile_status(Some(&profile)))
+    Ok(with_config_path(desktop_llm_profile_status(Some(&profile)), &app))
 }
 
-#[tauri::command]
+// 可能阻塞：移出主线程，原因见 get_llm_profile。
+#[tauri::command(async)]
 fn clear_llm_profile(
+    app: AppHandle,
     store: State<'_, DesktopLlmProfileStore>,
 ) -> Result<DesktopLlmProfileStatus, String> {
-    llm_keychain::delete()?;
+    delete_llm_profile_file(&llm_profile_path(&app)?)?;
     store.replace(None)?;
-    Ok(desktop_llm_profile_status(None))
+    Ok(with_config_path(desktop_llm_profile_status(None), &app))
 }
 
 fn configure_llm_profile(command: &mut Command, profile: Option<&DesktopLlmProfile>) {
     let Some(profile) = profile else {
         return;
     };
+    if profile.signed_out {
+        // 退出登录后默认服务不可用；自定义供应商仍各用各的 Key。
+        for provider in &profile.providers {
+            let id = provider.id.to_uppercase();
+            command.env(format!("VORTOCODE_PROVIDER_{id}_BASE"), &provider.base_url);
+            command.env(format!("VORTOCODE_PROVIDER_{id}_KEY"), &provider.api_key);
+        }
+        return;
+    }
     command.env("OPENAI_API_BASE", &profile.base_url);
     command.env(
         "OPENAI_API_KEY",
@@ -588,6 +917,29 @@ fn configure_llm_profile(command: &mut Command, profile: Option<&DesktopLlmProfi
         },
     );
     command.env("DEFAULT_MODEL", &profile.model);
+    // 默认服务上可点名的模型清单（同一端点、同一把 Key）。
+    let choices = model_choice_ids(profile);
+    if choices.is_empty() {
+        command.env_remove("VORTOCODE_MODEL_CHOICES");
+    } else {
+        command.env("VORTOCODE_MODEL_CHOICES", choices.join(","));
+    }
+    // 调度三档：均衡档就是主模型；快速 / 强力没配时显式清掉，免得继承到父进程环境里的旧值。
+    command.env("LLM_MODEL_BALANCED", &profile.model);
+    match &profile.fast_model {
+        Some(model) => command.env("LLM_MODEL_CHEAP", model),
+        None => command.env_remove("LLM_MODEL_CHEAP"),
+    };
+    match &profile.strong_model {
+        Some(model) => command.env("LLM_MODEL_POWERFUL", model),
+        None => command.env_remove("LLM_MODEL_POWERFUL"),
+    };
+    // 自定义供应商：runtime 的 src/llm/providers.py 按这对变量登记端点，key 只随自己的端点走。
+    for provider in &profile.providers {
+        let id = provider.id.to_uppercase();
+        command.env(format!("VORTOCODE_PROVIDER_{id}_BASE"), &provider.base_url);
+        command.env(format!("VORTOCODE_PROVIDER_{id}_KEY"), &provider.api_key);
+    }
     if let Some(window) = profile.context_window {
         command.env("VORTOCODE_MODEL_CONTEXT_WINDOW", window.to_string());
         command.env(
@@ -905,6 +1257,17 @@ fn load_project_registry(path: &Path) -> Result<DesktopProjectRegistry, String> 
 }
 
 fn save_json_atomic<T: Serialize>(path: &Path, prefix: &str, value: &T) -> Result<(), String> {
+    save_json_atomic_with_mode(path, prefix, value, None)
+}
+
+/// 原子写 JSON：先写同目录临时文件再 rename。`mode` 给出时临时文件按该权限创建（rename
+/// 保留权限），用于含凭据的文件。
+fn save_json_atomic_with_mode<T: Serialize>(
+    path: &Path,
+    prefix: &str,
+    value: &T,
+    mode: Option<u32>,
+) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| "Desktop 状态路径缺少父目录".to_string())?;
@@ -916,9 +1279,16 @@ fn save_json_atomic<T: Serialize>(path: &Path, prefix: &str, value: &T) -> Resul
     let temporary = parent.join(format!(".{prefix}-{}-{nonce}.tmp", std::process::id()));
     let payload = serde_json::to_vec_pretty(value)
         .map_err(|error| format!("无法序列化 Desktop 状态：{error}"))?;
-    let mut file = OpenOptions::new()
-        .create_new(true)
-        .write(true)
+    let mut options = OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    if let Some(mode) = mode {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(mode);
+    }
+    #[cfg(not(unix))]
+    let _ = mode;
+    let mut file = options
         .open(&temporary)
         .map_err(|error| format!("无法创建 Desktop 状态临时文件：{error}"))?;
     file.write_all(&payload)
@@ -1165,8 +1535,7 @@ async fn confirm_project_registration(app: &AppHandle, root: &Path) -> Result<bo
     );
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        app.dialog()
-            .message(message)
+        with_main_window_parent(&app, app.dialog().message(message))
             .title("确认注册项目目录")
             .kind(MessageDialogKind::Warning)
             .buttons(MessageDialogButtons::OkCancelCustom(
@@ -1179,9 +1548,153 @@ async fn confirm_project_registration(app: &AppHandle, root: &Path) -> Result<bo
     .map_err(|error| format!("项目注册确认对话框失败：{error}"))
 }
 
+const MAX_CONFIRM_MESSAGE_CHARS: usize = 2000;
+
+fn confirm_action_message(message: &str) -> String {
+    let mut chars = message.chars();
+    let mut text: String = chars.by_ref().take(MAX_CONFIRM_MESSAGE_CHARS).collect();
+    if chars.next().is_some() {
+        text.push('…');
+    }
+    text
+}
+
+/// 前端破坏性操作的确认框（撤销修改、删除、push 等）。
+///
+/// 不能用 window.confirm：dialog 插件把它改写成调用已不存在的 `confirm` 命令的 async 函数，
+/// 同步调用方拿到的 Promise 恒为真值，确认形同虚设。这里阻塞到用户点选为止。
+/// 它是给真人的确认，不是对抗页面脚本的安全边界——那类敏感动作仍由各自命令在 Rust 侧弹框。
 #[tauri::command]
-fn list_desktop_projects(app: AppHandle) -> Result<Vec<DesktopProjectProfile>, String> {
-    Ok(load_project_registry(&project_registry_path(&app)?)?.projects)
+async fn confirm_action(app: AppHandle, message: String) -> Result<bool, String> {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    let message = confirm_action_message(&message);
+    tauri::async_runtime::spawn_blocking(move || {
+        with_main_window_parent(&app, app.dialog().message(message))
+            .title("VortoCode")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom("确认".into(), "取消".into()))
+            .blocking_show()
+    })
+    .await
+    .map_err(|error| format!("确认对话框失败：{error}"))
+}
+
+#[tauri::command]
+fn list_desktop_projects(app: AppHandle) -> Result<Vec<DesktopProjectListing>, String> {
+    Ok(load_project_registry(&project_registry_path(&app)?)?
+        .projects
+        .into_iter()
+        .map(project_listing)
+        .collect())
+}
+
+const PROJECT_SESSIONS_PER_PROJECT: usize = 3;
+const MAX_SESSION_FILE_BYTES: u64 = 8 * 1024 * 1024;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProjectSessionSummary {
+    project_id: String,
+    sid: String,
+    title: String,
+    updated_at: u64,
+}
+
+/// 与 runtime 的 title_from_transcript 同口径：显式标题优先，否则取首条用户消息（单行、40 字截断）。
+fn session_title(payload: &serde_json::Value) -> Option<String> {
+    if let Some(title) = payload.get("title").and_then(serde_json::Value::as_str) {
+        if !title.trim().is_empty() {
+            return Some(title.trim().to_string());
+        }
+    }
+    let first = payload
+        .get("transcript")?
+        .as_array()?
+        .iter()
+        .find(|item| item.get("role").and_then(serde_json::Value::as_str) == Some("user"))?
+        .get("text")?
+        .as_str()?
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if first.is_empty() {
+        return None;
+    }
+    let mut title: String = first.chars().take(40).collect();
+    if first.chars().count() > 40 {
+        title.push('…');
+    }
+    Some(title)
+}
+
+/// 一个项目最近的几个会话（只读磁盘上的会话档，不碰 runtime）。空会话不会落盘，所以都有内容。
+fn recent_project_sessions(project: &DesktopProjectProfile) -> Vec<ProjectSessionSummary> {
+    let directory = Path::new(&project.repo_root).join(".vortocode").join("web_sessions");
+    let Ok(entries) = std::fs::read_dir(&directory) else {
+        return Vec::new();
+    };
+    let mut files = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let path = entry.path();
+            let sid = path.file_stem()?.to_str()?.to_string();
+            let valid = path.extension().and_then(|ext| ext.to_str()) == Some("json")
+                && !sid.is_empty()
+                && sid.len() <= 64
+                && sid.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+            let metadata = entry.metadata().ok()?;
+            if !valid || !metadata.is_file() || metadata.len() > MAX_SESSION_FILE_BYTES {
+                return None;
+            }
+            let modified = metadata
+                .modified()
+                .ok()?
+                .duration_since(UNIX_EPOCH)
+                .ok()?
+                .as_secs();
+            Some((modified, sid, path))
+        })
+        .collect::<Vec<_>>();
+    files.sort_by(|left, right| right.0.cmp(&left.0));
+    files
+        .into_iter()
+        .filter_map(|(updated_at, sid, path)| {
+            let payload: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+            Some(ProjectSessionSummary {
+                project_id: project.id.clone(),
+                sid,
+                title: session_title(&payload)?,
+                updated_at,
+            })
+        })
+        .take(PROJECT_SESSIONS_PER_PROJECT)
+        .collect()
+}
+
+/// 侧边栏「项目」下直接列出各项目最近的会话：只看已登记、目录还在的本机项目。
+#[tauri::command(async)]
+fn list_project_sessions(app: AppHandle) -> Result<Vec<ProjectSessionSummary>, String> {
+    Ok(load_project_registry(&project_registry_path(&app)?)?
+        .projects
+        .iter()
+        .filter(|project| project.kind != "remote" && Path::new(&project.repo_root).is_dir())
+        .flat_map(recent_project_sessions)
+        .collect())
+}
+
+/// 列表里额外带上「本机目录还在不在」：被清理的临时目录、移走的仓库不该在启动时被反复恢复。
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopProjectListing {
+    #[serde(flatten)]
+    profile: DesktopProjectProfile,
+    missing: bool,
+}
+
+fn project_listing(profile: DesktopProjectProfile) -> DesktopProjectListing {
+    // 远端项目的路径在服务器上，本机检查不了，一律当作在。
+    let missing = profile.kind != "remote" && !Path::new(&profile.repo_root).is_dir();
+    DesktopProjectListing { profile, missing }
 }
 
 #[tauri::command]
@@ -1232,7 +1745,8 @@ async fn pick_desktop_project(
     .map(Some)
 }
 
-#[tauri::command]
+// 可能阻塞：移出主线程，原因见 get_llm_profile。
+#[tauri::command(async)]
 fn forget_desktop_project(
     app: AppHandle,
     project_id: String,
@@ -1341,8 +1855,7 @@ async fn confirm_remote_registration(app: &AppHandle, server_url: &str) -> Resul
     );
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        app.dialog()
-            .message(message)
+        with_main_window_parent(&app, app.dialog().message(message))
             .title("确认注册远程工作区")
             .kind(MessageDialogKind::Warning)
             .buttons(MessageDialogButtons::OkCancelCustom(
@@ -1880,11 +2393,8 @@ fn desktop_smoke_ready(app: AppHandle) -> Result<bool, String> {
     let Some(path) = smoke_marker_path()? else {
         return Ok(false);
     };
-    let sidecar = app
-        .shell()
-        .sidecar("vortocode-runtime")
-        .map_err(|error| format!("GUI smoke 无法定位内置 runtime：{error}"))?;
-    let mut sidecar_command: Command = sidecar.into();
+    let sidecar = bundled_runtime_path(&app).map_err(|error| format!("GUI smoke {error}"))?;
+    let mut sidecar_command = Command::new(sidecar);
     let sidecar_output = sidecar_command
         .arg("--version")
         .output()
@@ -2362,8 +2872,8 @@ fn select_gateway_port(preferred: u16) -> Result<u16, String> {
 }
 
 fn prepare_gateway_process(command: &mut Command) {
-    // PyInstaller one-file runtime 会再派生真正的 Python server。只杀直接 Child 会留下仍在
-    // 监听的孙进程；独立进程组让 Desktop 能把整个托管 runtime 作为一个生命周期单元回收。
+    // runtime 可能再派生子进程（旧版 PyInstaller one-file 的 bootloader、server 起的工具进程）。
+    // 只杀直接 Child 会留下仍在监听的孙进程；独立进程组让 Desktop 能把整个托管 runtime 作为一个生命周期单元回收。
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -2462,6 +2972,26 @@ fn configure_gateway_command(
     command
 }
 
+/// 内置 runtime 是 PyInstaller onedir 目录（可执行文件 + _internal/），随 App 放在 resources/runtime/。
+/// 不用 one-file sidecar：它每次启动都要把整个 Python 环境解压到临时目录，多花 3–4 秒。
+fn bundled_runtime_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let resources = app
+        .path()
+        .resource_dir()
+        .map_err(|error| format!("无法定位 Desktop 内置 runtime：{error}"))?;
+    let path = bundled_runtime_in(&resources);
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(format!("无法定位 Desktop 内置 runtime：{} 不存在", path.display()))
+    }
+}
+
+fn bundled_runtime_in(resources: &Path) -> PathBuf {
+    let name = if cfg!(windows) { "vortocode-runtime.exe" } else { "vortocode-runtime" };
+    resources.join("runtime").join(name)
+}
+
 fn build_bundled_runtime_command(
     app: &AppHandle,
     repo_root: &Path,
@@ -2469,12 +2999,8 @@ fn build_bundled_runtime_command(
     token: &str,
     scope: &str,
 ) -> Result<Command, String> {
-    let sidecar = app
-        .shell()
-        .sidecar("vortocode-runtime")
-        .map_err(|error| format!("无法定位 Desktop 内置 runtime：{error}"))?;
     Ok(configure_gateway_command(
-        sidecar.into(),
+        Command::new(bundled_runtime_path(app)?),
         false,
         repo_root,
         port,
@@ -2571,7 +3097,8 @@ fn list_gateway_processes(
     Ok(statuses)
 }
 
-#[tauri::command]
+// 可能阻塞：移出主线程，原因见 get_llm_profile。
+#[tauri::command(async)]
 fn start_gateway(
     app: AppHandle,
     repo_root: Option<String>,
@@ -2616,6 +3143,13 @@ fn start_gateway(
     let runtime_id = runtime_id_for(scope, &root);
     let runtime_project_id = project_root.as_ref().map(|root| project_id(root));
 
+    // 先读模型配置、再拿 runtime 锁：读配置是 I/O，持锁期间做会让 gateway_process_status
+    // 等命令一起排队。结果先留着，失败到原位置再报，保持"已在运行就直接返回"的语义不变。
+    let llm_profile = cached_desktop_llm_profile(&app, &llm_profile_store);
+    let preferences = desktop_preferences_path(&app)
+        .map(|path| read_desktop_preferences(&path))
+        .unwrap_or_default();
+
     let mut supervisor = state
         .0
         .lock()
@@ -2649,7 +3183,7 @@ fn start_gateway(
         .open(&log_path)
         .map_err(|error| format!("无法打开 runtime 日志：{error}"))?;
     let token = token.unwrap_or_default().trim().to_string();
-    let llm_profile = cached_desktop_llm_profile(&llm_profile_store)?;
+    let llm_profile = llm_profile?;
 
     let mut candidates = Vec::new();
     let mut sidecar_setup_error = None;
@@ -2674,6 +3208,7 @@ fn start_gateway(
     let mut last_not_found = None;
     for (mut command, label) in candidates {
         configure_llm_profile(&mut command, llm_profile.as_ref());
+        configure_browser_control(&mut command, &preferences);
         prepare_gateway_process(&mut command);
         command
             .stdout(Stdio::from(log.try_clone().map_err(|error| {
@@ -2825,6 +3360,38 @@ pub fn run() {
                 present_main_window(webview.app_handle());
             }
         })
+        // 窗口在配置里默认隐藏，等页面加载完才显示（否则启动时先闪一下白窗口，真机 2026-10-06）。
+        // 兜底：页面万一没加载成功，几秒后也把窗口显示出来，绝不能让 App 看起来没打开。
+        .setup(|app| {
+            // 冷启动时页面加载、读配置要一秒多，前端之后才会调 start_gateway。这段时间里先把
+            // 通用会话的 runtime 拉起来：前端每次打开都从通用会话开始，到时 start_gateway 直接复用
+            //（同一 runtime_id 已在运行就返回，监督锁保证不会起两份）。GUI smoke 不起 runtime。
+            if !matches!(smoke_marker_path(), Ok(Some(_))) {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    let _ = start_gateway(
+                        handle.clone(),
+                        None,
+                        GENERAL_SCOPE.into(),
+                        None,
+                        DEFAULT_GATEWAY_PORT,
+                        None,
+                        handle.state(),
+                        handle.state(),
+                    );
+                });
+            }
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_secs(4)).await;
+                if let Some(window) = handle.get_webview_window("main") {
+                    if !window.is_visible().unwrap_or(true) {
+                        present_main_window(&handle);
+                    }
+                }
+            });
+            Ok(())
+        })
         .manage(GatewayProcess::default())
         .manage(DesktopLlmProfileStore::default())
         .manage(RemoteWsRegistry::default())
@@ -2838,7 +3405,21 @@ pub fn run() {
             get_llm_profile,
             set_llm_profile,
             clear_llm_profile,
+            confirm_action,
+            test_llm_connection,
+            get_llm_usage,
+            get_user_instructions,
+            set_user_instructions,
+            get_browser_control,
+            set_browser_control,
+            save_llm_provider,
+            remove_llm_provider,
+            refresh_llm_providers,
+            relay_login,
+            relay_logout,
+            reveal_desktop_config,
             list_desktop_projects,
+            list_project_sessions,
             remember_desktop_project,
             remember_remote_project,
             remote_http_request,
@@ -2892,6 +3473,886 @@ pub fn run() {
     });
 }
 
+// ── 设置页补齐：测试连接 / 额度查询 / 全局指令 / 配置文件定位 ─────────────────────────────
+// 出网请求与 discover_model_context_window_with 同口径：只打配置声明的 base_url 本身，限时、
+// 不跟随重定向；Key 不外借——留空时只有与已保存配置同一地址才借用已保存的 Key。
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LlmConnectionTest {
+    ok: bool,
+    status: Option<u16>,
+    model_count: Option<usize>,
+    model_available: Option<bool>,
+    /// 服务返回的模型 id（最多 MAX_LISTED_MODELS 个），供设置页给模型名做候选。
+    models: Vec<String>,
+    message: String,
+}
+
+const MAX_LISTED_MODELS: usize = 200;
+
+fn model_ids(payload: &serde_json::Value) -> Vec<String> {
+    payload
+        .get("data")
+        .and_then(serde_json::Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.get("id").or_else(|| item.get("model")).and_then(serde_json::Value::as_str))
+                .take(MAX_LISTED_MODELS)
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// 模型描述里的短标签（类别 / 能力 / 档位）：小写、限长、不含控制字符，否则当没给。
+fn model_label(value: Option<&serde_json::Value>) -> Option<String> {
+    let label = value?.as_str()?.trim().to_ascii_lowercase();
+    (!label.is_empty() && label.len() <= 40 && !label.chars().any(char::is_control)).then_some(label)
+}
+
+/// 解析 /models 的完整描述。只要服务给任何一个模型标了 category，就按它的分类走：
+/// 不能跑 Agent 的（专用模型、非对话模型、没有 tools 的）**先**剔掉再截断，免得被挤出上限。
+fn model_infos(payload: &serde_json::Value) -> Vec<ModelInfo> {
+    let Some(items) = payload.get("data").and_then(serde_json::Value::as_array) else {
+        return Vec::new();
+    };
+    let infos = items.iter().filter_map(|item| {
+        let id = item.get("id").or_else(|| item.get("model")).and_then(serde_json::Value::as_str)?;
+        Some(ModelInfo {
+            id: id.to_string(),
+            category: model_label(item.get("category")),
+            capabilities: item
+                .get("capabilities")
+                .and_then(serde_json::Value::as_array)
+                .map(|values| values.iter().filter_map(|value| model_label(Some(value))).take(16).collect())
+                .unwrap_or_default(),
+            tier: model_label(item.get("tier")),
+            snapshot_of: item
+                .get("snapshot_of")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|base| !base.is_empty() && base.len() <= 160 && !base.chars().any(char::is_control))
+                .map(str::to_string),
+            context_window: item
+                .get("context_window")
+                .and_then(serde_json::Value::as_u64)
+                .filter(|window| (MIN_MODEL_CONTEXT_WINDOW..=MAX_MODEL_CONTEXT_WINDOW).contains(window)),
+        })
+    });
+    let infos: Vec<ModelInfo> = infos.collect();
+    let classified = infos.iter().any(|info| info.category.is_some());
+    clean_model_infos(infos.into_iter().filter(|info| !classified || info.agent_ready()).collect())
+}
+
+/// 同 clean_model_list 的口径清洗 id 并去重。
+fn clean_model_infos(infos: Vec<ModelInfo>) -> Vec<ModelInfo> {
+    let mut seen = std::collections::HashSet::new();
+    infos
+        .into_iter()
+        .map(|mut info| {
+            info.id = info.id.trim().to_string();
+            info
+        })
+        .filter(|info| {
+            !info.id.is_empty()
+                && info.id.len() <= 160
+                && !info.id.contains(',')
+                && !info.id.chars().any(char::is_control)
+        })
+        .filter(|info| seen.insert(info.id.clone()))
+        .take(MAX_LISTED_MODELS)
+        .collect()
+}
+
+/// runtime 允许点名的模型：服务给了分类就只放能跑 Agent 的；没给分类（别家服务、旧配置）沿用整份清单。
+fn model_choice_ids(profile: &DesktopLlmProfile) -> Vec<String> {
+    if profile.model_info.iter().any(|info| info.category.is_some()) {
+        return profile
+            .model_info
+            .iter()
+            .filter(|info| info.agent_ready())
+            .map(|info| info.id.clone())
+            .collect();
+    }
+    profile.models.clone()
+}
+
+fn set_model_list(profile: &mut DesktopLlmProfile, infos: Vec<ModelInfo>) {
+    profile.models = infos.iter().map(|info| info.id.clone()).collect();
+    profile.model_info = infos;
+}
+
+fn summarize_models_payload(payload: &serde_json::Value, model: &str) -> (usize, Option<bool>) {
+    let Some(models) = payload.get("data").and_then(serde_json::Value::as_array) else {
+        return (0, None);
+    };
+    let wanted = model.trim();
+    let available = (!wanted.is_empty()).then(|| {
+        models.iter().any(|item| {
+            item.get("id")
+                .or_else(|| item.get("model"))
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|id| id.eq_ignore_ascii_case(wanted))
+        })
+    });
+    (models.len(), available)
+}
+
+fn probe_client() -> Result<reqwest::Client, String> {
+    reqwest::Client::builder()
+        .timeout(LLM_PROBE_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| format!("无法创建网络客户端：{error}"))
+}
+
+const MAX_CUSTOM_PROVIDERS: usize = 12;
+const RESERVED_PROVIDER_IDS: [&str; 2] = ["default", "anthropic"];
+
+/// 校验一个自定义供应商：ID 只能是小写字母开头的 `[a-z0-9_]`（会拼进环境变量名），
+/// 地址与 Key 沿用主模型服务的同一套规则（远程必须 HTTPS 且带 Key）。
+fn normalize_llm_provider(mut provider: DesktopLlmProvider) -> Result<DesktopLlmProvider, String> {
+    provider.id = provider.id.trim().to_lowercase();
+    let id_ok = provider.id.len() <= 24
+        && provider.id.chars().next().is_some_and(|c| c.is_ascii_lowercase())
+        && provider
+            .id
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+    if !id_ok {
+        return Err("供应商 ID 只能用小写字母、数字和下划线，并以字母开头（最长 24 位）".into());
+    }
+    if RESERVED_PROVIDER_IDS.contains(&provider.id.as_str()) {
+        return Err(format!("供应商 ID 不能用 {}", provider.id));
+    }
+    provider.name = provider.name.trim().to_string();
+    if provider.name.is_empty() {
+        provider.name = provider.id.clone();
+    }
+    if provider.name.chars().count() > 40 || provider.name.chars().any(char::is_control) {
+        return Err("供应商名称无效".into());
+    }
+    let checked = normalize_llm_profile(DesktopLlmProfile {
+        base_url: provider.base_url.clone(),
+        api_key: provider.api_key.clone(),
+        model: "-".into(),
+        context_window: None,
+        context_window_source: None,
+        fast_model: None,
+        strong_model: None,
+        providers: Vec::new(),
+        account: None,
+        signed_out: false,
+        model_info: Vec::new(),
+        models: Vec::new(),
+    })?;
+    provider.base_url = checked.base_url;
+    provider.api_key = checked.api_key;
+    provider.models = provider
+        .models
+        .into_iter()
+        .map(|model| model.trim().to_string())
+        .filter(|model| !model.is_empty() && model.len() <= 160 && !model.chars().any(char::is_control))
+        .take(MAX_LISTED_MODELS)
+        .collect();
+    Ok(provider)
+}
+
+async fn fetch_provider_models(provider: &DesktopLlmProvider) -> Option<Vec<ModelInfo>> {
+    let mut request = probe_client().ok()?.get(format!("{}/models", provider.base_url));
+    if !provider.api_key.is_empty() {
+        request = request.bearer_auth(&provider.api_key);
+    }
+    let response = request.send().await.ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let payload = response.json::<serde_json::Value>().await.ok()?;
+    Some(model_infos(&payload))
+}
+
+/// 配置里还没有模型清单（或只有旧版的纯模型名）时，用它自己的地址和 Key 拉一份（只访问这个默认服务）。
+async fn with_model_list(mut profile: DesktopLlmProfile) -> DesktopLlmProfile {
+    if profile.model_info.is_empty() && !profile.signed_out && !profile.api_key.is_empty() {
+        let main = DesktopLlmProvider {
+            id: "default".into(),
+            name: String::new(),
+            base_url: profile.base_url.clone(),
+            api_key: profile.api_key.clone(),
+            models: Vec::new(),
+        };
+        if let Some(models) = fetch_provider_models(&main).await {
+            set_model_list(&mut profile, models);
+        }
+    }
+    profile
+}
+
+fn clean_model_list(models: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    models
+        .into_iter()
+        .map(|model| model.trim().to_string())
+        .filter(|model| {
+            !model.is_empty()
+                && model.len() <= 160
+                && !model.contains(',')
+                && !model.chars().any(char::is_control)
+        })
+        .filter(|model| seen.insert(model.clone()))
+        .take(MAX_LISTED_MODELS)
+        .collect()
+}
+
+fn saved_profile_for_providers(
+    app: &AppHandle,
+    store: &State<'_, DesktopLlmProfileStore>,
+) -> Result<DesktopLlmProfile, String> {
+    cached_desktop_llm_profile(app, store)?
+        .ok_or_else(|| "请先在上方配置并保存默认模型服务，再添加其他供应商".to_string())
+}
+
+fn persist_profile(
+    app: &AppHandle,
+    store: &State<'_, DesktopLlmProfileStore>,
+    profile: DesktopLlmProfile,
+) -> Result<DesktopLlmProfileStatus, String> {
+    save_llm_profile_file(&llm_profile_path(app)?, &profile)?;
+    store.replace(Some(profile.clone()))?;
+    Ok(with_config_path(desktop_llm_profile_status(Some(&profile)), app))
+}
+
+/// 添加或更新一个自定义供应商。Key 留空 = 沿用同一 ID、同一地址下已保存的 Key。
+#[tauri::command]
+async fn save_llm_provider(
+    app: AppHandle,
+    id: String,
+    name: String,
+    base_url: String,
+    api_key: String,
+    store: State<'_, DesktopLlmProfileStore>,
+) -> Result<DesktopLlmProfileStatus, String> {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    let mut profile = saved_profile_for_providers(&app, &store)?;
+    let wanted_id = id.trim().to_lowercase();
+    let wanted_base = base_url.trim().trim_end_matches('/').to_string();
+    let mut api_key = api_key.trim().to_string();
+    if api_key.is_empty() {
+        if let Some(existing) = profile
+            .providers
+            .iter()
+            .find(|provider| provider.id == wanted_id && provider.base_url == wanted_base)
+        {
+            api_key = existing.api_key.clone();
+        }
+    }
+    let mut provider = normalize_llm_provider(DesktopLlmProvider {
+        id,
+        name,
+        base_url,
+        api_key,
+        models: Vec::new(),
+    })?;
+    let replacing = profile.providers.iter().any(|existing| existing.id == provider.id);
+    if !replacing && profile.providers.len() >= MAX_CUSTOM_PROVIDERS {
+        return Err(format!("最多添加 {MAX_CUSTOM_PROVIDERS} 个供应商"));
+    }
+    // 原生确认在 webview 之外：页面脚本不能悄悄把请求和 Key 指向别的地址。
+    let message = format!(
+        "{}模型供应商：\n\n名称：{}\nID：{}\n接口地址：{}\n\n在聊天里选用它的模型时，请求会带着你填写的 Key 发到这个地址。",
+        if replacing { "更新" } else { "添加" },
+        provider.name,
+        provider.id,
+        provider.base_url
+    );
+    let dialog_app = app.clone();
+    let confirmed = tauri::async_runtime::spawn_blocking(move || {
+        with_main_window_parent(&dialog_app, dialog_app.dialog().message(message))
+            .title("确认模型供应商")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom("确认".into(), "取消".into()))
+            .blocking_show()
+    })
+    .await
+    .map_err(|error| format!("供应商确认对话框失败：{error}"))?;
+    if !confirmed {
+        return Err("未确认，供应商没有保存".into());
+    }
+    provider.models = fetch_provider_models(&provider)
+        .await
+        .map(|infos| infos.into_iter().map(|info| info.id).collect())
+        .unwrap_or_default();
+    profile.providers.retain(|existing| existing.id != provider.id);
+    profile.providers.push(provider);
+    persist_profile(&app, &store, profile)
+}
+
+#[tauri::command(async)]
+fn remove_llm_provider(
+    app: AppHandle,
+    id: String,
+    store: State<'_, DesktopLlmProfileStore>,
+) -> Result<DesktopLlmProfileStatus, String> {
+    let mut profile = saved_profile_for_providers(&app, &store)?;
+    let before = profile.providers.len();
+    profile.providers.retain(|provider| provider.id != id);
+    if profile.providers.len() == before {
+        return Err("没有这个供应商".into());
+    }
+    persist_profile(&app, &store, profile)
+}
+
+/// 重新拉取默认服务和各供应商的模型列表；拉取失败的保留原列表。
+#[tauri::command]
+async fn refresh_llm_providers(
+    app: AppHandle,
+    store: State<'_, DesktopLlmProfileStore>,
+) -> Result<DesktopLlmProfileStatus, String> {
+    let mut profile = saved_profile_for_providers(&app, &store)?;
+    if !profile.signed_out && !profile.api_key.is_empty() {
+        let main = DesktopLlmProvider {
+            id: "default".into(),
+            name: String::new(),
+            base_url: profile.base_url.clone(),
+            api_key: profile.api_key.clone(),
+            models: Vec::new(),
+        };
+        if let Some(models) = fetch_provider_models(&main).await {
+            set_model_list(&mut profile, models);
+        }
+    }
+    for provider in profile.providers.iter_mut() {
+        if let Some(models) = fetch_provider_models(provider).await {
+            provider.models = models.into_iter().map(|info| info.id).collect();
+        }
+    }
+    persist_profile(&app, &store, profile)
+}
+
+const RELAY_ORIGIN: &str = "https://token.vortotech.com";
+const RELAY_PLAN_URL: &str = "https://token.vortotech.com/panel/plan";
+const DESKTOP_TOKEN_NAME: &str = "VortoCode Desktop";
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RelayLoginOutcome {
+    /// 登录并保存成功后的模型配置；需要先选套餐时为 None。
+    status: Option<DesktopLlmProfileStatus>,
+    /// 账号还没有 Token Plan：界面让用户去购买，或明确选择改用按量 Key。
+    needs_plan: bool,
+    plan_url: String,
+    message: String,
+}
+
+/// 只认 One API 的 `{success, message, data}` 外壳；success=false 时把服务端原话带回去。
+fn relay_data(payload: serde_json::Value, failure: &str) -> Result<serde_json::Value, String> {
+    if payload.get("success").and_then(serde_json::Value::as_bool) == Some(true) {
+        return Ok(payload.get("data").cloned().unwrap_or(serde_json::Value::Null));
+    }
+    let message = payload
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .filter(|message| !message.trim().is_empty())
+        .unwrap_or(failure);
+    Err(message.chars().take(200).collect())
+}
+
+/// 从 Token Plan Key 列表里挑一把启用中的（托管的那把排在最前）。
+fn pick_plan_key(data: &serde_json::Value) -> Option<String> {
+    data.as_array()?
+        .iter()
+        .find(|item| item.get("status").and_then(serde_json::Value::as_i64) == Some(1))
+        .and_then(|item| item.get("key").and_then(serde_json::Value::as_str))
+        .filter(|key| !key.trim().is_empty())
+        .map(str::to_string)
+}
+
+/// 在令牌搜索结果里找桌面端自己建的那把按量 Key（同名、启用、非套餐）。
+fn pick_desktop_token(data: &serde_json::Value) -> Option<String> {
+    data.as_array()?
+        .iter()
+        .find(|item| {
+            item.get("name").and_then(serde_json::Value::as_str) == Some(DESKTOP_TOKEN_NAME)
+                && item.get("status").and_then(serde_json::Value::as_i64) == Some(1)
+                && item.get("billing_type").and_then(serde_json::Value::as_str) != Some("token_plan")
+        })
+        .and_then(|item| item.get("key").and_then(serde_json::Value::as_str))
+        .filter(|key| !key.trim().is_empty())
+        .map(str::to_string)
+}
+
+fn with_sk_prefix(key: &str) -> String {
+    if key.starts_with("sk-") {
+        key.to_string()
+    } else {
+        format!("sk-{key}")
+    }
+}
+
+/// 用 VortoCode 中转站账号登录，取用账号的 Token Plan Key（Desktop 套餐即 Token Plan）。
+/// 没有套餐时默认不建 Key，交给用户决定；`allow_pay_as_you_go` 为真才建/复用一把按量 Key。
+/// 只连固定的中转站地址；密码和登录会话只在本次调用里用，结束即登出，不落盘。
+#[tauri::command]
+async fn relay_login(
+    app: AppHandle,
+    username: String,
+    password: String,
+    allow_pay_as_you_go: bool,
+    store: State<'_, DesktopLlmProfileStore>,
+) -> Result<RelayLoginOutcome, String> {
+    let username = username.trim().to_string();
+    if username.is_empty() || password.is_empty() || username.len() > 64 || password.len() > 256 {
+        return Err("请输入用户名和密码".into());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|error| format!("无法创建网络客户端：{error}"))?;
+    let unreachable = |error: reqwest::Error| {
+        if error.is_timeout() { "连接中转站超时".to_string() } else { "无法连接中转站".to_string() }
+    };
+    let login = client
+        .post(format!("{RELAY_ORIGIN}/api/user/login"))
+        .json(&serde_json::json!({ "username": username, "password": password }))
+        .send()
+        .await
+        .map_err(unreachable)?;
+    let cookie = login
+        .headers()
+        .get_all(reqwest::header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .filter_map(|value| value.split(';').next())
+        .map(str::trim)
+        .filter(|pair| pair.contains('='))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let user = relay_data(login.json().await.unwrap_or_default(), "登录失败")?;
+    if cookie.is_empty() {
+        return Err("中转站没有返回登录会话".into());
+    }
+    let get = |path: &str| {
+        client
+            .get(format!("{RELAY_ORIGIN}{path}"))
+            .header(reqwest::header::COOKIE, cookie.clone())
+    };
+
+    let plan_keys = relay_data(
+        get("/api/subscription/key").send().await.map_err(unreachable)?.json().await.unwrap_or_default(),
+        "读取套餐 Key 失败",
+    )?;
+    let (key, key_source) = match pick_plan_key(&plan_keys) {
+        Some(key) => (key, "token_plan"),
+        None if !allow_pay_as_you_go => {
+            let _ = get("/api/user/logout").send().await;
+            return Ok(RelayLoginOutcome {
+                status: None,
+                needs_plan: true,
+                plan_url: RELAY_PLAN_URL.into(),
+                message: "这个账号还没有 Token Plan（Desktop 套餐）".into(),
+            });
+        }
+        None => {
+            let found = relay_data(
+                get(&format!("/api/token/search?keyword={}", DESKTOP_TOKEN_NAME.replace(' ', "%20")))
+                    .send()
+                    .await
+                    .map_err(unreachable)?
+                    .json()
+                    .await
+                    .unwrap_or_default(),
+                "读取令牌失败",
+            )?;
+            let key = match pick_desktop_token(&found) {
+                Some(key) => key,
+                None => {
+                    let created = relay_data(
+                        client
+                            .post(format!("{RELAY_ORIGIN}/api/token/"))
+                            .header(reqwest::header::COOKIE, cookie.clone())
+                            .json(&serde_json::json!({
+                                "name": DESKTOP_TOKEN_NAME,
+                                "expired_time": -1,
+                                "unlimited_quota": true,
+                                "remain_quota": 0,
+                            }))
+                            .send()
+                            .await
+                            .map_err(unreachable)?
+                            .json()
+                            .await
+                            .unwrap_or_default(),
+                        "创建按量 Key 失败",
+                    )?;
+                    created
+                        .get("key")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string)
+                        .ok_or_else(|| "中转站没有返回新 Key".to_string())?
+                }
+            };
+            (key, "pay_as_you_go")
+        }
+    };
+
+    // 套餐名称和到期时间只用于展示；读不到不影响登录。
+    let subscription = match get("/api/subscription/self").send().await {
+        Ok(response) => response.json::<serde_json::Value>().await.unwrap_or_default(),
+        Err(_) => serde_json::Value::Null,
+    };
+    let active = subscription.get("data").and_then(|data| data.get("active")).cloned().unwrap_or_default();
+    let _ = get("/api/user/logout").send().await;
+
+    let saved = cached_desktop_llm_profile(&app, &store)?;
+    let base_url = format!("{RELAY_ORIGIN}/v1");
+    let same_base = saved.as_ref().is_some_and(|saved| saved.base_url == base_url);
+    let profile = normalize_llm_profile(DesktopLlmProfile {
+        base_url,
+        api_key: with_sk_prefix(&key),
+        model: saved
+            .as_ref()
+            .filter(|_| same_base)
+            .map(|saved| saved.model.clone())
+            .unwrap_or_else(|| DEFAULT_LLM_MODEL.into()),
+        context_window: None,
+        context_window_source: None,
+        fast_model: saved.as_ref().filter(|_| same_base).and_then(|saved| saved.fast_model.clone()),
+        strong_model: saved.as_ref().filter(|_| same_base).and_then(|saved| saved.strong_model.clone()),
+        models: saved.as_ref().filter(|_| same_base).map(|saved| saved.models.clone()).unwrap_or_default(),
+        model_info: saved.as_ref().filter(|_| same_base).map(|saved| saved.model_info.clone()).unwrap_or_default(),
+        providers: saved.map(|saved| saved.providers).unwrap_or_default(),
+        account: Some(DesktopAccount {
+            username: user
+                .get("username")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or(&username)
+                .to_string(),
+            display_name: user
+                .get("display_name")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            key_source: key_source.into(),
+            plan_name: active.get("plan_name").and_then(serde_json::Value::as_str).map(str::to_string),
+            plan_expiry: active.get("expiry_time").and_then(serde_json::Value::as_i64),
+        }),
+        signed_out: false,
+    })?;
+    let profile = with_model_list(profile).await;
+    let profile = save_llm_profile_flow(profile, true, LLM_PROBE_TIMEOUT, |profile| {
+        save_llm_profile_file(&llm_profile_path(&app)?, profile)
+    })
+    .await?;
+    store.replace(Some(profile.clone()))?;
+    Ok(RelayLoginOutcome {
+        status: Some(with_config_path(desktop_llm_profile_status(Some(&profile)), &app)),
+        needs_plan: false,
+        plan_url: RELAY_PLAN_URL.into(),
+        message: if key_source == "token_plan" {
+            "已登录，正在使用 Token Plan".into()
+        } else {
+            "已登录，正在使用按量 Key".into()
+        },
+    })
+}
+
+/// 退出登录：删掉本机保存的中转站 Key 和账号信息，保留自定义供应商。
+#[tauri::command(async)]
+fn relay_logout(
+    app: AppHandle,
+    store: State<'_, DesktopLlmProfileStore>,
+) -> Result<DesktopLlmProfileStatus, String> {
+    let Some(mut profile) = cached_desktop_llm_profile(&app, &store)? else {
+        return Ok(with_config_path(desktop_llm_profile_status(None), &app));
+    };
+    if profile.providers.is_empty() {
+        delete_llm_profile_file(&llm_profile_path(&app)?)?;
+        store.replace(None)?;
+        return Ok(with_config_path(desktop_llm_profile_status(None), &app));
+    }
+    profile.api_key.clear();
+    profile.account = None;
+    profile.signed_out = true;
+    persist_profile(&app, &store, profile)
+}
+
+#[tauri::command]
+async fn test_llm_connection(
+    base_url: String,
+    api_key: String,
+    model: String,
+    app: AppHandle,
+    store: State<'_, DesktopLlmProfileStore>,
+) -> Result<LlmConnectionTest, String> {
+    // Key 留空时先借用已保存的 Key（仅限同一地址），再做完整校验——否则远程服务会因为
+    // "需要 API Key" 在借用之前就被拦下。地址按 normalize_llm_profile 的同一规则比较。
+    let mut api_key = api_key.trim().to_string();
+    if api_key.is_empty() {
+        let wanted = base_url.trim().trim_end_matches('/');
+        if let Some(saved) = cached_desktop_llm_profile(&app, &store)? {
+            if saved.base_url == wanted {
+                api_key = saved.api_key;
+            }
+        }
+    }
+    let profile = normalize_llm_profile(DesktopLlmProfile {
+        base_url,
+        api_key,
+        model: if model.trim().is_empty() { "-".into() } else { model },
+        context_window: None,
+        context_window_source: None,
+        fast_model: None,
+        strong_model: None,
+        providers: Vec::new(),
+        account: None,
+        signed_out: false,
+        model_info: Vec::new(),
+        models: Vec::new(),
+    })?;
+    let mut request = probe_client()?.get(format!("{}/models", profile.base_url));
+    if !profile.api_key.is_empty() {
+        request = request.bearer_auth(&profile.api_key);
+    }
+    let response = match request.send().await {
+        Ok(response) => response,
+        Err(error) => {
+            return Ok(LlmConnectionTest {
+                ok: false,
+                status: None,
+                model_count: None,
+                model_available: None,
+                models: Vec::new(),
+                message: if error.is_timeout() { "连接超时".into() } else { "无法连接到该地址".into() },
+            })
+        }
+    };
+    let status = response.status();
+    if !status.is_success() {
+        let message = match status.as_u16() {
+            401 | 403 => "API Key 无效或没有权限".to_string(),
+            404 => "该地址不是 OpenAI 兼容接口（/models 不存在）".to_string(),
+            code => format!("服务返回 HTTP {code}"),
+        };
+        return Ok(LlmConnectionTest {
+            ok: false,
+            status: Some(status.as_u16()),
+            model_count: None,
+            model_available: None,
+            models: Vec::new(),
+            message,
+        });
+    }
+    let payload = response.json::<serde_json::Value>().await.unwrap_or_default();
+    let wanted = if profile.model == "-" { "" } else { profile.model.as_str() };
+    let (count, available) = summarize_models_payload(&payload, wanted);
+    let message = match available {
+        Some(false) => format!("连接成功，但服务的 {count} 个模型里没有 {wanted}"),
+        _ => format!("连接成功，服务提供 {count} 个模型"),
+    };
+    Ok(LlmConnectionTest {
+        ok: available != Some(false),
+        status: Some(status.as_u16()),
+        model_count: Some(count),
+        model_available: available,
+        models: model_ids(&payload),
+        message,
+    })
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LlmUsageSummary {
+    available: bool,
+    unlimited: bool,
+    hard_limit_usd: Option<f64>,
+    used_usd: Option<f64>,
+    period_days: u32,
+    message: String,
+}
+
+const USAGE_PERIOD_DAYS: i64 = 7;
+// One API 对"不限额度"的令牌返回一个极大的上限（实测 1e8 美元）。
+const UNLIMITED_QUOTA_USD: f64 = 10_000_000.0;
+
+/// 自 1970-01-01 起的天数 → (年, 月, 日)。公历，Howard Hinnant 的 civil_from_days。
+fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    (year, month, day)
+}
+
+fn iso_date(days: i64) -> String {
+    let (year, month, day) = civil_from_days(days);
+    format!("{year:04}-{month:02}-{day:02}")
+}
+
+fn usage_from_billing(subscription: &serde_json::Value, usage: Option<&serde_json::Value>) -> LlmUsageSummary {
+    let hard_limit = subscription
+        .get("hard_limit_usd")
+        .or_else(|| subscription.get("system_hard_limit_usd"))
+        .and_then(serde_json::Value::as_f64);
+    // OpenAI 兼容的 total_usage 单位是美分。
+    let used = usage
+        .and_then(|value| value.get("total_usage"))
+        .and_then(serde_json::Value::as_f64)
+        .map(|cents| cents / 100.0);
+    let unlimited = hard_limit.is_some_and(|limit| limit >= UNLIMITED_QUOTA_USD);
+    LlmUsageSummary {
+        available: hard_limit.is_some() || used.is_some(),
+        unlimited,
+        hard_limit_usd: hard_limit.filter(|_| !unlimited),
+        used_usd: used,
+        period_days: USAGE_PERIOD_DAYS as u32,
+        message: String::new(),
+    }
+}
+
+#[tauri::command]
+async fn get_llm_usage(
+    app: AppHandle,
+    store: State<'_, DesktopLlmProfileStore>,
+) -> Result<LlmUsageSummary, String> {
+    let unavailable = |message: &str| LlmUsageSummary {
+        available: false,
+        unlimited: false,
+        hard_limit_usd: None,
+        used_usd: None,
+        period_days: USAGE_PERIOD_DAYS as u32,
+        message: message.into(),
+    };
+    let Some(profile) = cached_desktop_llm_profile(&app, &store)? else {
+        return Ok(unavailable("还没有配置模型服务"));
+    };
+    if profile.api_key.is_empty() {
+        return Ok(unavailable("当前模型服务未使用 API Key，没有额度信息"));
+    }
+    let client = probe_client()?;
+    let fetch = |path: String| {
+        client
+            .get(format!("{}{}", profile.base_url, path))
+            .bearer_auth(&profile.api_key)
+            .send()
+    };
+    let subscription = match fetch("/dashboard/billing/subscription".into()).await {
+        Ok(response) if response.status().is_success() => {
+            response.json::<serde_json::Value>().await.unwrap_or_default()
+        }
+        Ok(_) => return Ok(unavailable("该服务不提供额度查询")),
+        Err(_) => return Ok(unavailable("暂时无法连接模型服务")),
+    };
+    let today = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("系统时间不可用：{error}"))?
+        .as_secs() as i64
+        / 86_400;
+    let usage = match fetch(format!(
+        "/dashboard/billing/usage?start_date={}&end_date={}",
+        iso_date(today - USAGE_PERIOD_DAYS + 1),
+        iso_date(today + 1)
+    ))
+    .await
+    {
+        Ok(response) if response.status().is_success() => response.json::<serde_json::Value>().await.ok(),
+        _ => None,
+    };
+    let mut summary = usage_from_billing(&subscription, usage.as_ref());
+    if !summary.available {
+        summary.message = "该服务没有返回额度信息".into();
+    }
+    Ok(summary)
+}
+
+const MAX_USER_INSTRUCTIONS_CHARS: usize = 20_000;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UserInstructions {
+    path: String,
+    content: String,
+    exists: bool,
+}
+
+fn user_instructions_path(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .home_dir()
+        .map(|home| home.join(".vortocode").join("AGENTS.md"))
+        .map_err(|error| format!("无法定位用户目录：{error}"))
+}
+
+// 读写本地文件：移出主线程，原因见 get_llm_profile。
+#[tauri::command(async)]
+fn get_user_instructions(app: AppHandle) -> Result<UserInstructions, String> {
+    let path = user_instructions_path(&app)?;
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => Some(content),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(format!("无法读取全局指令 {}：{error}", path.display())),
+    };
+    Ok(UserInstructions {
+        path: path.display().to_string(),
+        exists: content.is_some(),
+        content: content.unwrap_or_default(),
+    })
+}
+
+#[tauri::command]
+async fn set_user_instructions(app: AppHandle, content: String) -> Result<UserInstructions, String> {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    if content.chars().count() > MAX_USER_INSTRUCTIONS_CHARS {
+        return Err(format!("全局指令过长（上限 {MAX_USER_INSTRUCTIONS_CHARS} 字）"));
+    }
+    let path = user_instructions_path(&app)?;
+    // 全局指令会进之后所有新会话的系统提示，与改模型服务同等敏感：原生确认在 webview 之外。
+    let dialog_app = app.clone();
+    let confirmed = tauri::async_runtime::spawn_blocking(move || {
+        with_main_window_parent(&dialog_app, dialog_app.dialog().message(
+            "保存后，这段全局指令会附加到之后所有新会话（含通用会话与自动化任务）的系统提示里。确认保存？",
+        ))
+        .title("确认保存全局指令")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom("确认保存".into(), "取消".into()))
+        .blocking_show()
+    })
+    .await
+    .map_err(|error| format!("全局指令确认对话框失败：{error}"))?;
+    if !confirmed {
+        return Err("全局指令修改未获确认，已取消".into());
+    }
+    let parent = path.parent().ok_or_else(|| "全局指令路径缺少父目录".to_string())?;
+    create_dir_all(parent).map_err(|error| format!("无法创建 {}：{error}", parent.display()))?;
+    let temporary = parent.join(format!(".AGENTS.md-{}.tmp", std::process::id()));
+    std::fs::write(&temporary, content.as_bytes())
+        .and_then(|_| rename(&temporary, &path))
+        .map_err(|error| format!("无法保存全局指令：{error}"))?;
+    Ok(UserInstructions {
+        path: path.display().to_string(),
+        exists: true,
+        content,
+    })
+}
+
+// 只允许在 Finder 中显示这两个固定文件，不接受任意路径。
+#[tauri::command(async)]
+fn reveal_desktop_config(app: AppHandle, kind: String) -> Result<(), String> {
+    let path = match kind.as_str() {
+        "llmProfile" => llm_profile_path(&app)?,
+        "userInstructions" => user_instructions_path(&app)?,
+        _ => return Err("未知的配置文件".into()),
+    };
+    let target = if path.exists() { path } else { path.parent().map(Path::to_path_buf).unwrap_or(path) };
+    tauri_plugin_opener::reveal_item_in_dir(&target).map_err(|error| format!("无法在 Finder 中显示：{error}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2929,6 +4390,13 @@ mod tests {
             model: "mimo-v2.5".into(),
             context_window: None,
             context_window_source: None,
+            fast_model: None,
+            strong_model: None,
+            providers: Vec::new(),
+            account: None,
+            signed_out: false,
+            model_info: Vec::new(),
+            models: Vec::new(),
         })
         .expect("relay profile");
         assert_eq!(relay.base_url, DEFAULT_LLM_BASE_URL);
@@ -2942,6 +4410,13 @@ mod tests {
             model: "local-model".into(),
             context_window: None,
             context_window_source: None,
+            fast_model: None,
+            strong_model: None,
+            providers: Vec::new(),
+            account: None,
+            signed_out: false,
+            model_info: Vec::new(),
+            models: Vec::new(),
         })
         .expect("local profile");
         assert_eq!(llm_provider(&local.base_url), "local");
@@ -2952,6 +4427,13 @@ mod tests {
             model: "model".into(),
             context_window: None,
             context_window_source: None,
+            fast_model: None,
+            strong_model: None,
+            providers: Vec::new(),
+            account: None,
+            signed_out: false,
+            model_info: Vec::new(),
+            models: Vec::new(),
         })
         .is_err());
         assert!(normalize_llm_profile(DesktopLlmProfile {
@@ -2960,6 +4442,13 @@ mod tests {
             model: "model".into(),
             context_window: None,
             context_window_source: None,
+            fast_model: None,
+            strong_model: None,
+            providers: Vec::new(),
+            account: None,
+            signed_out: false,
+            model_info: Vec::new(),
+            models: Vec::new(),
         })
         .is_err());
     }
@@ -2972,6 +4461,13 @@ mod tests {
             model: "model-1".into(),
             context_window: Some(65_536),
             context_window_source: Some("service".into()),
+            fast_model: None,
+            strong_model: None,
+            providers: Vec::new(),
+            account: None,
+            signed_out: false,
+            model_info: Vec::new(),
+            models: Vec::new(),
         };
         let mut command = Command::new("vc");
         configure_llm_profile(&mut command, Some(&profile));
@@ -2999,6 +4495,361 @@ mod tests {
                 .and_then(Option::as_deref),
             Some(OsStr::new("65536"))
         );
+        // 没配调度档时显式移除（值为 None），不继承父进程里的旧值。
+        assert_eq!(env.get(OsStr::new("LLM_MODEL_CHEAP")), Some(&None));
+        assert_eq!(env.get(OsStr::new("LLM_MODEL_POWERFUL")), Some(&None));
+        assert_eq!(
+            env.get(OsStr::new("LLM_MODEL_BALANCED"))
+                .and_then(Option::as_deref),
+            Some(OsStr::new("model-1"))
+        );
+
+        let routed = DesktopLlmProfile {
+            fast_model: Some("model-fast".into()),
+            strong_model: Some("model-strong".into()),
+            providers: Vec::new(),
+            account: None,
+            signed_out: false,
+            model_info: Vec::new(),
+            models: Vec::new(),
+            ..profile
+        };
+        let mut command = Command::new("vc");
+        configure_llm_profile(&mut command, Some(&routed));
+        let env = command
+            .get_envs()
+            .map(|(key, value)| (key.to_owned(), value.map(OsStr::to_owned)))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            env.get(OsStr::new("LLM_MODEL_CHEAP"))
+                .and_then(Option::as_deref),
+            Some(OsStr::new("model-fast"))
+        );
+        assert_eq!(
+            env.get(OsStr::new("LLM_MODEL_POWERFUL"))
+                .and_then(Option::as_deref),
+            Some(OsStr::new("model-strong"))
+        );
+    }
+
+    #[test]
+    fn browser_control_defaults_off_and_is_removed_from_child_env_when_off() {
+        let directory = std::env::temp_dir().join(format!("vc-prefs-{}", std::process::id()));
+        let path = directory.join(DESKTOP_PREFERENCES_FILE);
+        assert!(!read_desktop_preferences(&path).browser_control);
+        create_dir_all(&directory).unwrap();
+        std::fs::write(&path, "{not json").unwrap();
+        assert!(!read_desktop_preferences(&path).browser_control);
+        std::fs::write(&path, r#"{"browserControl": true}"#).unwrap();
+        assert!(read_desktop_preferences(&path).browser_control);
+        let _ = std::fs::remove_dir_all(&directory);
+
+        let mut command = Command::new("vc");
+        configure_browser_control(&mut command, &DesktopPreferences::default());
+        let env = command
+            .get_envs()
+            .map(|(key, value)| (key.to_owned(), value.map(OsStr::to_owned)))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(env.get(OsStr::new("VORTOCODE_ENABLE_BROWSER_CONTROL")), Some(&None));
+    }
+
+    fn sample_provider(id: &str) -> DesktopLlmProvider {
+        DesktopLlmProvider {
+            id: id.into(),
+            name: String::new(),
+            base_url: "https://api.example.com/v1/".into(),
+            api_key: " key ".into(),
+            models: vec!["m1".into(), "  ".into(), "bad\u{7}".into()],
+        }
+    }
+
+    #[test]
+    fn custom_provider_ids_and_endpoints_are_validated() {
+        let provider = normalize_llm_provider(sample_provider("DeepSeek_2")).unwrap();
+        assert_eq!(provider.id, "deepseek_2");
+        assert_eq!(provider.name, "deepseek_2");
+        assert_eq!(provider.base_url, "https://api.example.com/v1");
+        assert_eq!(provider.api_key, "key");
+        assert_eq!(provider.models, vec!["m1".to_string()]);
+        for bad in ["my-provider", "1abc", "", "default", "anthropic", "a b"] {
+            assert!(normalize_llm_provider(sample_provider(bad)).is_err(), "{bad}");
+        }
+        let mut insecure = sample_provider("plain");
+        insecure.base_url = "http://api.example.com/v1".into();
+        assert!(normalize_llm_provider(insecure).is_err());
+        let mut keyless = sample_provider("keyless");
+        keyless.api_key = String::new();
+        assert!(normalize_llm_provider(keyless).is_err());
+    }
+
+    #[test]
+    fn custom_providers_reach_the_runtime_env_but_not_the_status() {
+        let profile = DesktopLlmProfile {
+            base_url: "https://models.example.com/v1".into(),
+            api_key: "main-key".into(),
+            model: "main".into(),
+            context_window: None,
+            context_window_source: None,
+            fast_model: None,
+            strong_model: None,
+            providers: vec![normalize_llm_provider(sample_provider("deepseek")).unwrap()],
+            account: None,
+            signed_out: false,
+            model_info: Vec::new(),
+            models: Vec::new(),
+        };
+        let mut command = Command::new("vc");
+        configure_llm_profile(&mut command, Some(&profile));
+        let env = command
+            .get_envs()
+            .map(|(key, value)| (key.to_owned(), value.map(OsStr::to_owned)))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            env.get(OsStr::new("VORTOCODE_PROVIDER_DEEPSEEK_BASE")).and_then(Option::as_deref),
+            Some(OsStr::new("https://api.example.com/v1"))
+        );
+        assert_eq!(
+            env.get(OsStr::new("VORTOCODE_PROVIDER_DEEPSEEK_KEY")).and_then(Option::as_deref),
+            Some(OsStr::new("key"))
+        );
+        let status = serde_json::to_string(&desktop_llm_profile_status(Some(&profile))).unwrap();
+        assert!(status.contains("\"hasKey\":true") && !status.contains("main-key") && !status.contains("\"key\""));
+    }
+
+    #[test]
+    fn relay_login_helpers_pick_the_right_keys() {
+        let plan = serde_json::json!([
+            {"key": "paused", "status": 2},
+            {"key": "plan-key", "status": 1, "managed": true}
+        ]);
+        assert_eq!(pick_plan_key(&plan).as_deref(), Some("plan-key"));
+        assert_eq!(pick_plan_key(&serde_json::json!([])), None);
+        let tokens = serde_json::json!([
+            {"name": "VortoCode Desktop", "key": "plan", "status": 1, "billing_type": "token_plan"},
+            {"name": "VortoCode Desktop", "key": "off", "status": 2, "billing_type": "pay_as_you_go"},
+            {"name": "VortoCode Desktop 2", "key": "other", "status": 1, "billing_type": "pay_as_you_go"},
+            {"name": "VortoCode Desktop", "key": "mine", "status": 1, "billing_type": "pay_as_you_go"}
+        ]);
+        assert_eq!(pick_desktop_token(&tokens).as_deref(), Some("mine"));
+        assert_eq!(with_sk_prefix("abc"), "sk-abc");
+        assert_eq!(with_sk_prefix("sk-abc"), "sk-abc");
+        assert_eq!(
+            relay_data(serde_json::json!({"success": false, "message": "用户名或密码错误"}), "登录失败"),
+            Err("用户名或密码错误".to_string())
+        );
+        assert_eq!(relay_data(serde_json::json!({"success": true, "data": 1}), "x"), Ok(serde_json::json!(1)));
+    }
+
+    #[test]
+    fn signed_out_profile_keeps_providers_but_drops_the_default_key() {
+        let profile = normalize_llm_profile(DesktopLlmProfile {
+            base_url: "https://token.vortotech.com/v1".into(),
+            api_key: String::new(),
+            model: "mimo".into(),
+            context_window: None,
+            context_window_source: None,
+            fast_model: None,
+            strong_model: None,
+            providers: vec![normalize_llm_provider(sample_provider("deepseek")).unwrap()],
+            account: None,
+            signed_out: true,
+            model_info: Vec::new(),
+            models: Vec::new(),
+        })
+        .expect("signed-out profiles are allowed without a key");
+        assert!(!desktop_llm_profile_status(Some(&profile)).configured);
+        let mut command = Command::new("vc");
+        configure_llm_profile(&mut command, Some(&profile));
+        let names = command
+            .get_envs()
+            .map(|(key, _)| key.to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"VORTOCODE_PROVIDER_DEEPSEEK_KEY".to_string()));
+        assert!(!names.contains(&"OPENAI_API_KEY".to_string()));
+    }
+
+    #[test]
+    fn default_service_models_are_cleaned_and_injected() {
+        assert_eq!(
+            clean_model_list(vec![" a ".into(), "a".into(), "b,c".into(), "".into(), "d".into()]),
+            vec!["a".to_string(), "d".to_string()]
+        );
+        let mut profile = normalize_llm_profile(DesktopLlmProfile {
+            base_url: "https://models.example.com/v1".into(),
+            api_key: "k".into(),
+            model: "main".into(),
+            context_window: None,
+            context_window_source: None,
+            fast_model: None,
+            strong_model: None,
+            providers: Vec::new(),
+            account: None,
+            signed_out: false,
+            model_info: Vec::new(),
+            models: vec!["main".into(), "other".into()],
+        })
+        .unwrap();
+        let mut command = Command::new("vc");
+        configure_llm_profile(&mut command, Some(&profile));
+        let env = command
+            .get_envs()
+            .map(|(key, value)| (key.to_owned(), value.map(OsStr::to_owned)))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(
+            env.get(OsStr::new("VORTOCODE_MODEL_CHOICES")).and_then(Option::as_deref),
+            Some(OsStr::new("main,other"))
+        );
+        profile.models.clear();
+        let mut command = Command::new("vc");
+        configure_llm_profile(&mut command, Some(&profile));
+        assert!(command
+            .get_envs()
+            .any(|(key, value)| key == OsStr::new("VORTOCODE_MODEL_CHOICES") && value.is_none()));
+    }
+
+    #[test]
+    fn classified_model_list_keeps_only_agent_ready_models() {
+        let payload = serde_json::json!({"data": [
+            {"id": "mimo-v2.6-pro", "category": "omni", "capabilities": ["vision", "audio_input", "tools", "reasoning"],
+             "context_window": 1048576, "tier": "coding"},
+            {"id": "qwen3.7-max-2026-05-17", "category": "chat", "capabilities": ["tools"], "snapshot_of": "qwen3.7-max"},
+            {"id": "qwen-mt-plus", "category": "translation", "capabilities": ["tools"]},
+            {"id": "wan2.7-t2v", "category": "video"},
+            {"id": "no-tools-chat", "category": "chat", "capabilities": ["reasoning"]},
+            {"id": "unlabelled"},
+            {"id": "bad,name", "category": "chat", "capabilities": ["tools"]},
+            {"id": "mimo-v2.6-pro", "category": "omni", "capabilities": ["tools"]}
+        ]});
+        let infos = model_infos(&payload);
+        assert_eq!(
+            infos.iter().map(|info| info.id.as_str()).collect::<Vec<_>>(),
+            vec!["mimo-v2.6-pro", "qwen3.7-max-2026-05-17"]
+        );
+        assert_eq!(infos[0].tier.as_deref(), Some("coding"));
+        assert_eq!(infos[0].context_window, Some(1_048_576));
+        assert_eq!(infos[1].snapshot_of.as_deref(), Some("qwen3.7-max"));
+
+        // 别家服务不带分类：整份清单原样保留（只做 id 清洗）。
+        let plain = model_infos(&serde_json::json!({"data": [{"id": "gpt-4o"}, {"id": "whisper-1"}]}));
+        assert_eq!(plain.iter().map(|info| info.id.as_str()).collect::<Vec<_>>(), vec!["gpt-4o", "whisper-1"]);
+        assert!(plain.iter().all(|info| info.category.is_none() && info.capabilities.is_empty()));
+    }
+
+    #[test]
+    fn model_choices_env_only_names_agent_ready_models() {
+        let info = |id: &str, category: Option<&str>, tools: bool| ModelInfo {
+            id: id.into(),
+            category: category.map(str::to_string),
+            capabilities: if tools { vec!["tools".into()] } else { Vec::new() },
+            ..ModelInfo::default()
+        };
+        let mut profile = normalize_llm_profile(DesktopLlmProfile {
+            base_url: "https://models.example.com/v1".into(),
+            api_key: "k".into(),
+            model: "main".into(),
+            context_window: None,
+            context_window_source: None,
+            fast_model: None,
+            strong_model: None,
+            providers: Vec::new(),
+            account: None,
+            signed_out: false,
+            models: vec!["main".into(), "ocr".into(), "no-tools".into()],
+            // 配置文件可以手改：即便存了不能跑 Agent 的条目，也不会被放行点名。
+            model_info: vec![
+                info("main", Some("chat"), true),
+                info("ocr", Some("ocr"), true),
+                info("no-tools", Some("multimodal"), false),
+            ],
+        })
+        .unwrap();
+        let choices = |profile: &DesktopLlmProfile| {
+            let mut command = Command::new("vc");
+            configure_llm_profile(&mut command, Some(profile));
+            command
+                .get_envs()
+                .find(|(key, _)| *key == OsStr::new("VORTOCODE_MODEL_CHOICES"))
+                .and_then(|(_, value)| value.map(OsStr::to_owned))
+        };
+        assert_eq!(choices(&profile).as_deref(), Some(OsStr::new("main")));
+        // 没有分类（旧配置 / 别家服务）：沿用整份模型名清单。
+        profile.model_info = vec![info("main", None, false), info("ocr", None, false)];
+        assert_eq!(choices(&profile).as_deref(), Some(OsStr::new("main,ocr,no-tools")));
+        profile.model_info.clear();
+        assert_eq!(choices(&profile).as_deref(), Some(OsStr::new("main,ocr,no-tools")));
+    }
+
+    #[test]
+    fn legacy_profile_without_model_info_still_loads() {
+        let payload = r#"{"baseUrl":"https://models.example.com/v1","apiKey":"k","model":"main","models":["main","other"]}"#;
+        let profile: DesktopLlmProfile = serde_json::from_str(payload).unwrap();
+        assert_eq!(profile.models, vec!["main".to_string(), "other".to_string()]);
+        assert!(profile.model_info.is_empty());
+        let saved = serde_json::to_value(&profile).unwrap();
+        assert!(saved.get("modelInfo").is_none());
+    }
+
+    #[test]
+    fn project_sessions_use_title_or_first_user_message() {
+        assert_eq!(session_title(&serde_json::json!({"title": " 改名后 ", "transcript": []})).as_deref(), Some("改名后"));
+        let long = "一".repeat(45);
+        let title = session_title(&serde_json::json!({"transcript": [
+            {"role": "assistant", "text": "hi"}, {"role": "user", "text": format!("  {long}\n ")}
+        ]}))
+        .unwrap();
+        assert_eq!(title.chars().count(), 41);
+        assert!(title.ends_with('…'));
+        assert_eq!(session_title(&serde_json::json!({"transcript": []})), None);
+
+        let root = std::env::temp_dir().join(format!("vc-sessions-{}", std::process::id()));
+        let sessions = root.join(".vortocode").join("web_sessions");
+        create_dir_all(&sessions).unwrap();
+        std::fs::write(sessions.join("abc-1.json"), r#"{"transcript":[{"role":"user","text":"你好"}]}"#).unwrap();
+        std::fs::write(sessions.join("../escape.json"), "{}").unwrap();
+        std::fs::write(sessions.join("bad name.json"), r#"{"title":"x"}"#).unwrap();
+        let project = DesktopProjectProfile {
+            id: "p1".into(),
+            name: "demo".into(),
+            repo_root: root.display().to_string(),
+            base_url: String::new(),
+            last_opened_at: 0,
+            kind: "local".into(),
+        };
+        let found = recent_project_sessions(&project);
+        assert_eq!(found.len(), 1);
+        assert_eq!((found[0].sid.as_str(), found[0].title.as_str()), ("abc-1", "你好"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn routing_tier_names_are_trimmed_and_blank_means_unset() {
+        let profile = normalize_llm_profile(DesktopLlmProfile {
+            base_url: "https://models.example.com/v1".into(),
+            api_key: "k".into(),
+            model: "main".into(),
+            context_window: None,
+            context_window_source: None,
+            fast_model: Some("  fast  ".into()),
+            strong_model: Some("   ".into()),
+            providers: Vec::new(),
+            account: None,
+            signed_out: false,
+            model_info: Vec::new(),
+            models: Vec::new(),
+        })
+        .unwrap();
+        assert_eq!(profile.fast_model.as_deref(), Some("fast"));
+        assert_eq!(profile.strong_model, None);
+        assert!(normalize_llm_profile(DesktopLlmProfile {
+            strong_model: Some("bad\u{7}".into()),
+            providers: Vec::new(),
+            account: None,
+            signed_out: false,
+            model_info: Vec::new(),
+            models: Vec::new(),
+            ..profile
+        })
+        .is_err());
     }
 
     #[test]
@@ -3030,7 +4881,7 @@ mod tests {
     }
 
     #[test]
-    fn llm_profile_store_loads_keychain_at_most_once_per_process() {
+    fn llm_profile_store_loads_profile_at_most_once_per_process() {
         let store = DesktopLlmProfileStore::default();
         let reads = AtomicUsize::new(0);
         let load = || {
@@ -3041,6 +4892,13 @@ mod tests {
                 model: "model-1".into(),
                 context_window: Some(65_536),
                 context_window_source: Some("configured".into()),
+                fast_model: None,
+                strong_model: None,
+                providers: Vec::new(),
+                account: None,
+                signed_out: false,
+                model_info: Vec::new(),
+                models: Vec::new(),
             }))
         };
 
@@ -3100,6 +4958,13 @@ mod tests {
             model: "model-2".into(),
             context_window: Some(128_000),
             context_window_source: Some("configured".into()),
+            fast_model: None,
+            strong_model: None,
+            providers: Vec::new(),
+            account: None,
+            signed_out: false,
+            model_info: Vec::new(),
+            models: Vec::new(),
         };
 
         store.replace(Some(profile)).expect("save cache");
@@ -3944,6 +5809,15 @@ mod tests {
     }
 
     #[test]
+    fn bundled_runtime_lives_in_the_resources_runtime_directory() {
+        let expected = if cfg!(windows) { "vortocode-runtime.exe" } else { "vortocode-runtime" };
+        assert_eq!(
+            bundled_runtime_in(Path::new("/App/Contents/Resources")),
+            Path::new("/App/Contents/Resources/runtime").join(expected)
+        );
+    }
+
+    #[test]
     fn bundled_runtime_uses_only_the_fixed_gateway_command() {
         let command = configure_gateway_command(
             Command::new("/bundle/vortocode-runtime"),
@@ -4385,6 +6259,13 @@ mod tests {
             model: "mimo-v2.5".into(),
             context_window: None,
             context_window_source: None,
+            fast_model: None,
+            strong_model: None,
+            providers: Vec::new(),
+            account: None,
+            signed_out: false,
+            model_info: Vec::new(),
+            models: Vec::new(),
         }
     }
 
@@ -4498,5 +6379,109 @@ mod tests {
         assert_eq!(saved.context_window_source.as_deref(), Some("service"));
         assert_eq!(persisted.load(Ordering::SeqCst), 1);
         assert_eq!(probe_hits.load(Ordering::SeqCst), 1);
+    }
+    #[test]
+    fn confirm_action_message_keeps_short_text_and_caps_long_text() {
+        assert_eq!(confirm_action_message("删除目标草稿“x”？"), "删除目标草稿“x”？");
+        let exact = "确".repeat(MAX_CONFIRM_MESSAGE_CHARS);
+        assert_eq!(confirm_action_message(&exact), exact);
+        let long = "确".repeat(MAX_CONFIRM_MESSAGE_CHARS + 5);
+        let capped = confirm_action_message(&long);
+        assert_eq!(capped.chars().count(), MAX_CONFIRM_MESSAGE_CHARS + 1);
+        assert!(capped.ends_with('…'));
+    }
+
+    fn sample_llm_profile() -> DesktopLlmProfile {
+        DesktopLlmProfile {
+            base_url: "https://models.example.com/v1".into(),
+            api_key: "sk-file-test".into(),
+            model: "model-1".into(),
+            context_window: Some(65_536),
+            context_window_source: Some("configured".into()),
+            fast_model: None,
+            strong_model: None,
+            providers: Vec::new(),
+            account: None,
+            signed_out: false,
+            model_info: Vec::new(),
+            models: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn llm_profile_file_missing_means_not_configured() {
+        let root = temp_workspace("llm-missing");
+        let path = root.join(LLM_PROFILE_FILE);
+        assert!(read_llm_profile_file(&path).expect("missing file is not an error").is_none());
+        delete_llm_profile_file(&path).expect("deleting a missing file is a no-op");
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn llm_profile_file_round_trips_and_is_owner_only() {
+        let root = temp_workspace("llm-roundtrip");
+        let path = root.join(LLM_PROFILE_FILE);
+        // 先放一个权限更宽的旧文件：保存后必须收紧到 600。
+        write(&path, "{}").expect("seed old file");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+        }
+        save_llm_profile_file(&path, &sample_llm_profile()).expect("save profile");
+        let loaded = read_llm_profile_file(&path).expect("read").expect("profile present");
+        assert!(loaded == sample_llm_profile());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).expect("metadata").permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "profile file holds the API key and must be owner-only");
+        }
+        delete_llm_profile_file(&path).expect("delete");
+        assert!(read_llm_profile_file(&path).expect("read after delete").is_none());
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn llm_profile_file_with_bad_json_reports_a_readable_error() {
+        let root = temp_workspace("llm-corrupt");
+        let path = root.join(LLM_PROFILE_FILE);
+        write(&path, "{not json").expect("seed corrupt file");
+        let error = read_llm_profile_file(&path).err().expect("corrupt file must fail");
+        assert!(error.contains("格式有误") && error.contains(LLM_PROFILE_FILE), "{error}");
+        let _ = remove_dir_all(root);
+    }
+
+    #[test]
+    fn models_payload_summary_counts_and_matches_case_insensitively() {
+        let payload = serde_json::json!({"data": [{"id": "mimo-v2.5"}, {"id": "gpt-4o"}]});
+        assert_eq!(summarize_models_payload(&payload, "MiMo-V2.5"), (2, Some(true)));
+        assert_eq!(summarize_models_payload(&payload, "missing"), (2, Some(false)));
+        assert_eq!(summarize_models_payload(&payload, ""), (2, None));
+        assert_eq!(summarize_models_payload(&serde_json::json!({}), "x"), (0, None));
+        assert_eq!(model_ids(&payload), vec!["mimo-v2.5".to_string(), "gpt-4o".to_string()]);
+    }
+
+    #[test]
+    fn civil_dates_match_known_days() {
+        assert_eq!(iso_date(0), "1970-01-01");
+        assert_eq!(iso_date(19_723), "2024-01-01");
+        assert_eq!(iso_date(20_517), "2026-03-05");
+        assert_eq!(iso_date(-1), "1969-12-31");
+    }
+
+    #[test]
+    fn billing_treats_huge_quota_as_unlimited_and_cents_as_dollars() {
+        let unlimited = usage_from_billing(
+            &serde_json::json!({"hard_limit_usd": 100_000_000.0}),
+            Some(&serde_json::json!({"total_usage": 1234.0})),
+        );
+        assert!(unlimited.available && unlimited.unlimited && unlimited.hard_limit_usd.is_none());
+        assert_eq!(unlimited.used_usd, Some(12.34));
+        let limited = usage_from_billing(&serde_json::json!({"hard_limit_usd": 50.0}), None);
+        assert!(limited.available && !limited.unlimited);
+        assert_eq!(limited.hard_limit_usd, Some(50.0));
+        assert_eq!(limited.used_usd, None);
+        assert!(!usage_from_billing(&serde_json::json!({}), None).available);
     }
 }

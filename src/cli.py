@@ -224,12 +224,47 @@ def main():
     p.add_argument("--file", dest="roster_file", default="",
                    help="名册路径（默认 .vortocode/assistants.yaml）")
 
+    for command, help_text in (
+            ("coverage-verify", "离线只读核验历史 JSON；不导入、不释放容量"),
+            ("coverage-preserve", "显式同步/回读原文到既有本地目录；不释放历史"),
+            ("coverage-preservation-verify", "只读回验明确目录内的保存凭据和原文"),
+            ("coverage-retirement-verify", "只读核验扫描退役 JSON；不导入或释放历史")):
+        p = sub.add_parser(command, help=help_text)
+        p.add_argument("file", help="导出 JSON 路径；preservation-verify 时为保存凭据路径")
+        if command in {"coverage-preserve", "coverage-preservation-verify"}:
+            p.add_argument("--directory", required=True, help="明确选择的既有本地专用目录")
+        fields = ("archive-id", "archive-digest", "workspace-id", "owner-session", "source-task-id")
+        fields += ("scan-id", "retirement-digest") if command == "coverage-retirement-verify" else ("file-digest",)
+        for field in fields:
+            p.add_argument("--" + field, help="固定期望值；不提供时仅核验文件内部一致性")
+        p.add_argument("--source-round", type=int, choices=(1, 2, 3), help="固定原轮次")
+
     args = parser.parse_args()
 
     # 无命令：给友好总览，而不是报错
     if not args.command:
         parser.print_help()
         sys.exit(0)
+
+    if args.command in {"coverage-verify", "coverage-preserve", "coverage-preservation-verify", "coverage-retirement-verify"}:
+        import json
+        from src.gateway.task_scan import verify_file_path, preserve_file_path, verify_preservation_path, verify_retirement_path
+        fields = ("archive_id", "archive_digest", "workspace_id", "owner_session", "source_task_id", "source_round",
+                  "file_digest", "scan_id", "retirement_digest")
+        try:
+            expected = {key: getattr(args, key) for key in fields if getattr(args, key, None) is not None}
+            if args.command in {"coverage-verify", "coverage-retirement-verify"}:
+                action = verify_file_path if args.command == "coverage-verify" else verify_retirement_path
+                report = action(args.file, expected=expected)
+            else:
+                action = preserve_file_path if args.command == "coverage-preserve" else verify_preservation_path
+                report = action(args.file, args.directory, expected=expected)
+        except (ValueError, OSError) as error:
+            print(json.dumps({"verified": False, "state": "unknown", "error": str(error), "durable_copy_confirmed": False,
+                              "capacity_released": False, "imported": False}, ensure_ascii=True))
+            sys.exit(1)
+        print(json.dumps(report, ensure_ascii=True))
+        sys.exit(0)  # Deliberately before env/log/provider setup, including configured log-file writes.
 
     # 结构化日志（opt-in）：VORTOCODE_JSON_LOGS=1 控制台 JSON；VORTOCODE_LOG_FILE=路径 落盘（ELK-ready）
     from src.env_compat import env_compat

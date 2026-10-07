@@ -62,6 +62,63 @@ def test_ledger_roundtrip_and_list_sorted(tmp_path):
     assert BackgroundTask.from_dict({"id": "x", "kind": "dev", "prompt": "p", "extra": 1}).id == "x"
 
 
+@pytest.mark.parametrize("corrupt_id", [None, 42, "task-other", "../outside"])
+def test_ledger_rejects_record_identity_mismatching_filename(tmp_path, corrupt_id):
+    import json
+    led = TaskLedger(str(tmp_path))
+    task = led.create("dev", "损坏记录")
+    path = tmp_path / ".vortocode" / "tasks" / f"{task.id}.json"
+    payload = task.to_dict() | {"id": corrupt_id, "status": "running"}
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    before = path.read_bytes()
+    assert led.load(task.id) is None and led.list() == []
+    assert led.recover_interrupted() == []
+    assert path.read_bytes() == before
+    assert len(list(path.parent.glob("*.json"))) == 1
+
+
+def test_misnamed_record_cannot_duplicate_inbox_or_redirect_state_changes(tmp_path):
+    import json
+    from src.gateway.continuations import ContinuationConflict, ContinuationService
+    from src.gateway.handoffs import CompletionInbox, HandoffConflict, revision
+
+    led = TaskLedger(str(tmp_path))
+    first = led.create("dev", "真实任务", owner_session="sid-owner")
+    first.status, first.result = "done", "真实交付"
+    led.save(first)
+    second = led.create("dev", "文件身份不一致", owner_session="sid-owner")
+    root = tmp_path / ".vortocode" / "tasks"
+    first_path, second_path = root / f"{first.id}.json", root / f"{second.id}.json"
+    second_path.write_text(json.dumps(first.to_dict()), encoding="utf-8")
+    before = {path: path.read_bytes() for path in (first_path, second_path)}
+    inbox = CompletionInbox(str(tmp_path), "sid-owner")
+    assert [item["task_id"] for item in inbox.pending()] == [first.id]
+    with pytest.raises(HandoffConflict):
+        inbox.acknowledge(second.id, revision(first), "不应改写另一个任务")
+    with pytest.raises(ContinuationConflict):
+        ContinuationService(str(tmp_path), "sid-owner").authorize(second.id, revision(first))
+    assert {path: path.read_bytes() for path in before} == before
+
+
+def test_task_filename_alias_cannot_redirect_an_exact_id_lookup(tmp_path):
+    from src.gateway.continuations import ContinuationConflict, ContinuationService
+    from src.gateway.handoffs import CompletionInbox, HandoffConflict, revision
+
+    ledger = TaskLedger(str(tmp_path))
+    task = ledger.create("dev", "精确任务身份", owner_session="sid-owner")
+    task.status, task.result = "done", "交付"
+    ledger.save(task)
+    path = tmp_path / ".vortocode" / "tasks" / f"{task.id}.json"
+    before = path.read_bytes()
+    for alias in (task.id + "_", "_" + task.id, task.id + "."):
+        assert ledger.load(alias) is None
+        with pytest.raises(HandoffConflict):
+            CompletionInbox(str(tmp_path), "sid-owner").acknowledge(alias, revision(task), "不应清洗到另一个 ID")
+        with pytest.raises(ContinuationConflict):
+            ContinuationService(str(tmp_path), "sid-owner").authorize(alias, revision(task))
+    assert path.read_bytes() == before
+
+
 def test_task_ledger_persists_goal_and_owner_links(tmp_path):
     task = TaskLedger(str(tmp_path)).create(
         "dev", "实现", goal_id="goal-1", plan_id="plan-1", owner_session="sid-desktop-1",
@@ -188,7 +245,8 @@ async def test_dev_worker_pins_plan_no_cross_attribution(tmp_path, monkeypatch):
         def __init__(self, name, handler):
             self.name, self.handler = name, handler
 
-    def fake_build(root, on_progress=None, confirm=None, draft_pr=False):
+    def fake_build(root, on_progress=None, confirm=None, draft_pr=False, question_factory=None):
+        assert question_factory is None  # 无所属会话的旧任务不注入问答。
         async def dev_auto(args):
             pid = args["plan_id"]                        # 用调用方钉的 id 落计划，分支由 id 派生
             plan = _dp.DevPlan.new(args["task"], f"vorto/auto-{pid}", "main", plan_id=pid)

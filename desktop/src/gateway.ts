@@ -24,6 +24,9 @@ import type {
   GitReviewSnapshot,
   JournalDaySummary,
   JournalContinuation,
+  IsolatedDelivery,
+  IsolatedDeliverySnapshot,
+  IsolatedDeliveryDiff,
   JournalSnapshot,
   NoticeItem,
   WeeklyJournalSnapshot,
@@ -34,6 +37,11 @@ import type {
   RuntimeInboxSnapshot,
   SessionSummary,
   TaskItem,
+  TaskHandoffReceipt,
+  TaskQuestionAnswerResult,
+  DispatchCapabilities,
+  DispatchSubmission,
+  DispatchResult,
   TaskBranchReviewDiff,
   TaskBranchReviewState,
   TaskBranchReviewSnapshot,
@@ -316,6 +324,20 @@ export class GatewayClient {
     return this.request("/api/git/review");
   }
 
+  async listIsolatedDeliveries(): Promise<IsolatedDelivery[]> {
+    const payload = await this.request<{ deliveries: IsolatedDelivery[] }>("/api/git/isolated-deliveries");
+    return payload.deliveries;
+  }
+
+  async getIsolatedDelivery(id: string): Promise<IsolatedDeliverySnapshot> {
+    return this.request(`/api/git/isolated-deliveries/${encodeURIComponent(id)}`);
+  }
+
+  async getIsolatedDeliveryDiff(id: string, path: string): Promise<IsolatedDeliveryDiff> {
+    const params = new URLSearchParams({ path });
+    return this.request(`/api/git/isolated-deliveries/${encodeURIComponent(id)}/diff?${params.toString()}`);
+  }
+
   async getPrDelivery(): Promise<PrDeliverySnapshot> {
     return this.request("/api/git/delivery");
   }
@@ -515,6 +537,127 @@ export class GatewayClient {
     return this.request("/api/tasks", {
       method: "POST",
       body: JSON.stringify({ prompt, session: this.sessionId }),
+    });
+  }
+
+  async dispatchCapabilities(): Promise<DispatchCapabilities> {
+    return this.request("/api/delegations/capabilities");
+  }
+
+  async acknowledgeTaskHandoff(id: string, session: string, revision: string, note: string): Promise<TaskHandoffReceipt> {
+    return this.request(`/api/task-inbox/${encodeURIComponent(id)}/acknowledge`, {
+      method: "POST", body: JSON.stringify({ session, revision, note }),
+    });
+  }
+
+  async submitDelegation(input: DispatchSubmission, session: string): Promise<DispatchResult> {
+    return this.request("/api/delegations", { method: "POST", body: JSON.stringify({ ...input, session }) });
+  }
+
+  async reviewDelegation(id: string, session: string, round: number, verdict: "accept" | "rework", note: string): Promise<DispatchResult> {
+    return this.request(`/api/delegations/${encodeURIComponent(id)}/review`, {
+      method: "POST", body: JSON.stringify({ session, round, verdict, note }),
+    });
+  }
+
+  async followupDelegation(id: string, session: string, round: number, message: string): Promise<DispatchResult> {
+    return this.request(`/api/delegations/${encodeURIComponent(id)}/followup`, {
+      method: "POST", body: JSON.stringify({ session, round, message }),
+    });
+  }
+
+  async cancelDelegation(id: string, session: string, round: number): Promise<DispatchResult> {
+    return this.request(`/api/delegations/${encodeURIComponent(id)}/cancel`, {
+      method: "POST", body: JSON.stringify({ session, round }),
+    });
+  }
+
+  async releaseTaskDependencies(id: string, session: string, round: number): Promise<DispatchResult> {
+    return this.request(`/api/delegations/${encodeURIComponent(id)}/release`, {
+      method: "POST", body: JSON.stringify({ session, round }),
+    });
+  }
+
+  async reconcileTaskDependencies(id: string, session: string, round: number): Promise<DispatchResult> {
+    return this.request(`/api/delegations/${encodeURIComponent(id)}/reconcile`, {
+      method: "POST", body: JSON.stringify({ session, round }),
+    });
+  }
+
+  async scanTaskDependencies(id: string, session: string, round: number, requestId: string,
+    cursor: string | null = null, pageSize = 512): Promise<import("./types").TaskCoverageReport> {
+    return this.request(`/api/delegations/${encodeURIComponent(id)}/dependency-scans`, {
+      method: "POST", body: JSON.stringify({ session, round, request_id: requestId, cursor, page_size: pageSize, mode: "reconcile" }),
+    });
+  }
+
+  async taskDependencyScanStatus(id: string, session: string, round: number,
+    scanId?: string): Promise<import("./types").TaskCoverageReport | null> {
+    return this.request(`/api/delegations/${encodeURIComponent(id)}/dependency-scans${scanId ? `/${encodeURIComponent(scanId)}` : ""}`
+      + `?session=${encodeURIComponent(session)}&round=${round}`);
+  }
+
+  async taskCoverageRecords(id: string, session: string, offset = 0, retirementOffset = 0): Promise<import("./types").TaskCoverageRecords> {
+    return this.request(`/api/delegations/${encodeURIComponent(id)}/coverage-records?session=${encodeURIComponent(session)}&offset=${offset}&retirement_offset=${retirementOffset}`);
+  }
+
+  async observeTaskCoverage(id: string, session: string, workspace: string, requestId: string,
+    checkpoints: import("./types").TaskCoverageObservationRef[]): Promise<import("./types").TaskCoverageObservation> {
+    return this.request(`/api/delegations/${encodeURIComponent(id)}/coverage-observations`, {
+      method: "POST", body: JSON.stringify({ session, workspace, request_id: requestId, checkpoints }),
+    });
+  }
+
+  async archiveTaskCoverage(id: string, session: string, round: number, scanId: string,
+    requestId: string, checkpointDigest: string): Promise<import("./types").TaskCoverageArchive> {
+    return this.request(`/api/delegations/${encodeURIComponent(id)}/dependency-scans/${encodeURIComponent(scanId)}/archive`, {
+      method: "POST", body: JSON.stringify({ session, round, request_id: requestId, checkpoint_digest: checkpointDigest }),
+    });
+  }
+
+  async releaseTaskCoverage(id: string, session: string, archive: import("./types").TaskCoverageArchive): Promise<import("./types").TaskCoverageArchive> {
+    return this.request(`/api/delegations/${encodeURIComponent(id)}/dependency-scans/${encodeURIComponent(archive.scan_id)}/release`, {
+      method: "POST", body: JSON.stringify({ session, round: archive.source_round, archive_id: archive.archive_id,
+        archive_digest: archive.archive_digest, checkpoint_digest: archive.checkpoint_digest }),
+    });
+  }
+
+  async exportTaskCoverage(id: string, session: string, archive: import("./types").TaskCoverageArchive): Promise<string> {
+    // Keep exact JSON integers (lstat nanosecond timestamps exceed Number.MAX_SAFE_INTEGER).
+    return this.requestText(`/api/delegations/${encodeURIComponent(id)}/coverage-archives/${encodeURIComponent(archive.archive_id)}/export`
+      + `?session=${encodeURIComponent(session)}&round=${archive.source_round}`);
+  }
+
+  async taskCoverageRetirement(id: string, session: string, archive: Pick<import("./types").TaskCoverageArchive, "scan_id" | "source_round">): Promise<import("./types").TaskCoverageRetirement> {
+    return this.request(`/api/delegations/${encodeURIComponent(id)}/dependency-scans/${encodeURIComponent(archive.scan_id)}/retirement`
+      + `?session=${encodeURIComponent(session)}&round=${archive.source_round}`);
+  }
+
+  async verifyTaskCoverage(id: string, session: string, archive: import("./types").TaskCoverageArchive): Promise<import("./types").TaskCoverageArchive> {
+    return this.request(`/api/delegations/${encodeURIComponent(id)}/coverage-archives/${encodeURIComponent(archive.archive_id)}/verify`
+      + `?session=${encodeURIComponent(session)}&round=${archive.source_round}`);
+  }
+
+  async verifyTaskCoverageFile(id: string, session: string, archive: import("./types").TaskCoverageArchive,
+    raw: string, fileDigest: string): Promise<import("./types").TaskCoverageFileVerification> {
+    const params = new URLSearchParams({ session, round: String(archive.source_round), archive_digest: archive.archive_digest, file_digest: fileDigest });
+    return this.request(`/api/delegations/${encodeURIComponent(id)}/coverage-archives/${encodeURIComponent(archive.archive_id)}/verify-file?${params}`, {
+      method: "POST", body: raw,
+    });
+  }
+
+  async verifyTaskCoveragePreservation(id: string, session: string, archive: import("./types").TaskCoverageArchive,
+    raw: string, fileDigest: string, receiptRaw: string, receiptFileDigest: string): Promise<import("./types").TaskCoveragePreservationVerification> {
+    const params = new URLSearchParams({ session, round: String(archive.source_round), archive_digest: archive.archive_digest,
+      file_digest: fileDigest, receipt_file_digest: receiptFileDigest });
+    return this.request(`/api/delegations/${encodeURIComponent(id)}/coverage-archives/${encodeURIComponent(archive.archive_id)}/verify-preservation?${params}`, {
+      method: "POST", body: JSON.stringify({ artifact_text: raw, receipt_text: receiptRaw }),
+    });
+  }
+
+  async answerTaskQuestion(id: string, session: string, round: number, questionId: string, answer: string, development = false): Promise<TaskQuestionAnswerResult> {
+    return this.request(`/api/${development ? "tasks" : "delegations"}/${encodeURIComponent(id)}/answer`, {
+      method: "POST", body: JSON.stringify({ session, round, question_id: questionId, answer }),
     });
   }
 

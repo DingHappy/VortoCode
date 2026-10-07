@@ -82,7 +82,7 @@ INBOUND: Dict[str, _Spec] = {
     PING: ((), ()),
     GET_STATUS: ((), ("hydrate",)),
     AGENT: ((), ("text", "mode", "images", "audio", "context_files", "context_selections",
-                    "rid", "want_reasoning")),
+                    "rid", "want_reasoning", "model")),
     AGENT_CANCEL: ((), ()),
     AGENT_QUEUE_REMOVE: (("id",), ()),
     AGENT_QUEUE_SEND_NOW: (("id",), ()),
@@ -107,7 +107,7 @@ OUTBOUND: Dict[str, _Spec] = {
                  ("tool", "message", "error", "duration_ms", "stop_execution")),
     AGENT_STREAM: (("text",), ()),
     AGENT_REASONING: (("text",), ()),
-    AGENT_EMIT: (("text",), ()),
+    AGENT_EMIT: (("text",), ("tainted", "check_report")),  # Additive persisted check-report provenance.
     AGENT_ERROR: (("text",), ()),
     AGENT_DONE: ((), ()),
     AGENT_CANCELLED: (("text",), ()),

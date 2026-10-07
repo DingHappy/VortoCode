@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0b0d11" />
     <title>VortoCode Desktop</title>
+    <!-- 首帧底色与主题一致：脚本和样式加载完之前也不露白（真机 2026-10-06 启动白屏）。 -->
+    <style>
+      html, body { margin: 0; background: #fafaf8; }
+      @media (prefers-color-scheme: dark) { html, body { background: #1f1f1f; } }
+    </style>
   </head>
 
   <body>

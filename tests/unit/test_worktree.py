@@ -438,6 +438,10 @@ async def test_build_dev_tools_lands_green_on_branch(monkeypatch, tmp_path):
                               capture_output=True, text=True).stdout
     assert "vorto/" in branches                                 # 分支建出来了
     assert not (tmp_path / "feat.py").exists()                  # 主工作区没被碰
+    from src.gateway.isolated_deliveries import isolated_delivery_snapshot, list_isolated_deliveries
+    deliveries = list_isolated_deliveries(str(tmp_path))
+    assert len(deliveries) == 1 and deliveries[0]["verification"]["ok"]
+    assert isolated_delivery_snapshot(str(tmp_path), deliveries[0]["id"])["files"][0]["path"] == "feat.py"
 
 
 @pytest.mark.asyncio

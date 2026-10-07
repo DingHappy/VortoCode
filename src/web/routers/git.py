@@ -3,26 +3,8 @@ import asyncio
 import os
 
 from fastapi import APIRouter, HTTPException
-from src.web.state import state
 
 router = APIRouter()
-
-# Git 相关 API
-@router.get("/api/git/status")
-async def get_git_status():
-    """获取 Git 状态"""
-    return await state.git.get_status()
-
-@router.get("/api/git/diff")
-async def get_git_diff(staged: bool = False):
-    """获取差异"""
-    return await state.git.get_diff(staged)
-
-@router.get("/api/git/log")
-async def get_git_log(count: int = 10):
-    """获取提交日志"""
-    return await state.git.get_log(count)
-
 
 @router.get("/api/git/delivery")
 async def git_delivery_snapshot():
@@ -43,12 +25,6 @@ async def git_delivery_check_log(check_id: str):
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
 
-@router.post("/api/git/commit")
-async def git_commit(message: str):
-    """提交更改"""
-    return await state.git.commit(message)
-
-
 @router.get("/api/git/review")
 async def git_review_snapshot():
     from src.gateway.git_review import review_snapshot
@@ -57,6 +33,36 @@ async def git_review_snapshot():
         return await asyncio.to_thread(review_snapshot, os.getcwd())
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@router.get("/api/git/isolated-deliveries")
+async def git_isolated_deliveries():
+    from src.gateway.isolated_deliveries import list_isolated_deliveries
+
+    try:
+        return {"deliveries": await asyncio.to_thread(list_isolated_deliveries, os.getcwd())}
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@router.get("/api/git/isolated-deliveries/{delivery_id}")
+async def git_isolated_delivery(delivery_id: str):
+    from src.gateway.isolated_deliveries import isolated_delivery_snapshot
+
+    try:
+        return await asyncio.to_thread(isolated_delivery_snapshot, os.getcwd(), delivery_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.get("/api/git/isolated-deliveries/{delivery_id}/diff")
+async def git_isolated_delivery_diff(delivery_id: str, path: str):
+    from src.gateway.isolated_deliveries import isolated_delivery_diff
+
+    try:
+        return await asyncio.to_thread(isolated_delivery_diff, os.getcwd(), delivery_id, path)
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 @router.get("/api/git/review/diff")

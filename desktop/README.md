@@ -17,7 +17,7 @@ VortoCode Desktop 是当前默认产品与首要分发入口，也是现有 Gate
 - 可选团队 hunk 策略：项目可要求全部当前文本 hunk 完成精确接受；任务卡展示 accepted/total/pending，Draft PR 由服务端在交付时实时重验
 - 多项目/多 Scratch runtime 常驻、按项目会话、后台继续执行、精确监督与异常恢复
 - 跨项目 Inbox：统一聚合每个本机 runtime 的待确认、Hook、执行中会话、Goal 与后台任务；单项目失联独立降级，并可直接切到对应项目/会话处理
-- 模型服务快捷设置：VortoCode Relay、自定义 OpenAI 兼容网关与本机回环模型服务；Base URL、模型名和 Key 由原生层管理，Key 只存 macOS Keychain，保存后重启当前 runtime 生效
+- 模型服务快捷设置：VortoCode Relay、自定义 OpenAI 兼容网关与本机回环模型服务；Base URL、模型名和 Key 由原生层管理，保存在本机 `llm-profile.json`（权限 600，可直接编辑），保存后重启当前 runtime 生效
 - 项目记忆安全投影/确认写入，以及版本化 Artifact 沙箱预览和 Agent 迭代
 - runtime 状态、决策中心、共享审计、Project Journal 与显式授权系统通知
 - Hook 失败、超时与阻止事项汇总到 Dashboard/决策中心，可定位会话并安全标记已查看
@@ -64,6 +64,13 @@ npm run release:verify -- --mode preview
 
 ### macOS 稳定开发签名
 
+**优先用 Apple 签发、带 Team ID 的证书**（`Developer ID Application: …`）。模型服务配置已改存本机
+`llm-profile.json`，不再经过钥匙串；登录钥匙串目前只保存远程工作区 token。macOS 除了受信任应用列表，
+还会校验钥匙串条目的分区列表（partition list）：Apple 签发的证书匹配稳定的 `teamid:<Team ID>`，点过一次
+“始终允许”后重新打包安装也不再询问；自签名证书没有 Team ID，只能按每个构建的 `cdhash:` 记入分区列表，
+**每装一个新构建就会再弹一次授权**（2026-10-06 实测，模型配置条目里积累了十几个 cdhash——这也是模型配置
+改存文件的原因）。`tauri dev` 的 ad-hoc 二进制同理，每次重编都会再问一次。
+
 不要用普通 `bundle:app` 生成的 unsigned 包反复覆盖 `/Applications/VortoCode.app`：macOS
 Keychain 会把二进制内容变化视为新的调用方，已经选择的“始终允许”无法稳定复用。使用一次性 setup
 在临时目录生成长期有效的 `VortoCode Development` 代码签名证书并导入登录钥匙串；导入完成后临时
@@ -79,16 +86,25 @@ npm run verify:installed
 ```
 
 `signing:setup` 默认使用 `VortoCode Development`；若需要自定义名称，可在 setup 和后续命令中统一
-设置 `VORTOCODE_CODESIGN_IDENTITY`。`signing:doctor` 要求 Keychain 中存在有效的非 ad-hoc 身份；
-只有一个有效身份时可以自动选择，多个身份时必须显式指定。签名构建会先冻结并 smoke sidecar，再让 Tauri 使用同一身份签名嵌套 runtime 和主
-app，最后验证 bundle identifier、严格签名和 designated requirement。上一次签名证据或已安装 app
+设置 `VORTOCODE_CODESIGN_IDENTITY`。`signing:doctor` 要求 Keychain 中存在有效的非 ad-hoc 身份。
+未显式指定时按以下顺序自动选择：恰好一张 `Developer ID Application` 证书时用它；否则用
+`VortoCode Development`；只有一个有效身份时用它；仍有多个则必须显式指定。签名构建会先冻结并 smoke sidecar，再让 Tauri 使用同一身份签名主 app；内置 runtime 是放在
+`Contents/Resources/runtime/` 的 onedir 目录（Tauri 不签 resources），由脚本逐个签名其中的 Mach-O 后重新封装 app，最后验证 bundle identifier、严格签名和 designated requirement。上一次签名证据或已安装 app
 的 designated requirement 不一致时安装会 fail closed；只有证书有计划轮换时才可临时设置
 `VORTOCODE_ALLOW_SIGNING_IDENTITY_CHANGE=1`。
 
-从旧 unsigned 包第一次切换到稳定签名包时，读取既有模型配置仍可能要求最后一次授权。之后同一证书、
-`com.vorto.vortocode` identifier 和 Keychain service 必须保持稳定。Desktop 原生层在单次进程生命周期
-只读取一次模型配置；General、Project、设置页和并发 runtime 复用同一内存缓存，保存/清除成功后同步
-更新缓存，授权失败不会被缓存。
+需要通过 Gatekeeper（发给别人安装、或验证公证）时用 `npm run install:notarized`：签名完成后用 `xcrun notarytool`
+提交 Apple 公证、等待结果并装订票据，最后用 `spctl` 复核。它读取钥匙串里的 notarytool profile（默认
+`vortocode-notary`，可用 `VORTOCODE_NOTARY_PROFILE` 覆盖），先用
+`xcrun notarytool store-credentials vortocode-notary --apple-id <Apple ID> --team-id <Team ID>` 在终端里存一次
+（App 专用密码由终端交互输入，不进命令行参数）。公证要求安全时间戳，Developer ID 身份重签时会自动加 `--timestamp`。
+日常开发安装（`install:dev-signed`）不提交公证，免去每次几分钟的等待。
+
+切换签名身份（例如从 unsigned 或自签名换到 Developer ID）后，第一次读取已保存的远程工作区 token 会再要求一次
+钥匙串授权，点“始终允许”。之后只要用的是同一 Team ID 的证书、`com.vorto.vortocode` identifier 不变，重新打包
+安装都不会再问；用自签名证书则每次重装仍会问一次（见上文）。Desktop 原生层在单次进程生命周期只读取一次模型
+配置文件；General、Project、设置页和并发 runtime 复用同一内存缓存，保存/清除成功后同步更新缓存，读取失败不会
+被缓存。
 
 本机自签名证书只用于开发体验，不能替代公开分发所需的 Developer ID Application 签名与公证。
 
@@ -110,7 +126,7 @@ macOS 产物位于 `src-tauri/target/release/bundle/macos/VortoCode.app` 和
 
 - V0 只接受 `127.0.0.1` 和 `localhost`。
 - API Token 只保存在 Desktop 进程内，不写入 localStorage。
-- LLM API Key 不写入 localStorage、项目 `.env` 或 runtime 恢复注册表；Desktop 用 macOS Keychain 保存完整模型服务配置，在单次 app 进程中只读取一次并只把它注入新启动的子 runtime 环境。远程 Base URL 强制 HTTPS，本机 HTTP 只接受 `127.0.0.1` / `localhost`。
+- LLM API Key 不写入 localStorage、项目 `.env` 或 runtime 恢复注册表；Desktop 把完整模型服务配置保存在 Desktop 配置目录下的 `llm-profile.json`（权限 600），在单次 app 进程中只读取一次并只把它注入新启动的子 runtime 环境。这是明文文件：同一账户下的进程都能读到，安全性低于钥匙串；选择它是为了避免每次重装后的钥匙串授权弹窗（见“macOS 稳定开发签名”）。远程 Base URL 强制 HTTPS，本机 HTTP 只接受 `127.0.0.1` / `localhost`。
 - Desktop 只能以固定参数启动内置 Gateway 或 `vc server`；内置 sidecar 只接受 `server`、回环 host 和 1024–65535 端口，首选端口不可用时由系统分配空闲回环端口。项目路径必须归一化为真实 Git 顶层目录，只有 VortoCode 自身开发 checkout 允许固定的 `python -m src.cli` 回退。
 - General 的 Agent 工具面和 REST 面同时 fail closed：联网检索、会话、决策、Journal 与 Artifact 可用；文件/命令/任务 API 返回结构化 `workspace_required`。不能用最近项目、HOME 或应用数据目录作为隐式项目。
 - Scratch 位于 Desktop app-data 下的 `workspaces/scratch/<session-id>` 并独立初始化 Git；General 的内部持久化目录不会在状态快照中作为 workdir 暴露。
@@ -120,4 +136,4 @@ macOS 产物位于 `src-tauri/target/release/bundle/macos/VortoCode.app` 和
   双重 SHA-256 冲突检测与同目录原子替换，Tauri WebView 没有任意写文件命令。
 - Gateway stdout/stderr 按 runtime 写入 Desktop 应用配置目录下的 `logs/runtime-<runtime-id>.log`，不因启动 General 而污染用户目录。
 - runtime 恢复注册表按稳定 runtime id 保存 scope、项目/Scratch 身份、工作区位置、本机地址、时间和进程线索，不保存 token；旧单记录会自动迁移，异常重启不会根据旧 PID 自动杀进程或执行任务。
-- 切换项目只断开当前 WebSocket 观察端，不停止原 runtime 或其 session actor；最多同时托管 12 个 runtime。正常退出 Desktop 时会终止它启动的所有 runtime 进程组（包括 PyInstaller one-file 派生的 Python server）；连接到外部已有 runtime 时不会接管其生命周期。停止失败时保留对应恢复记录，避免把仍在运行的进程遗忘。
+- 切换项目只断开当前 WebSocket 观察端，不停止原 runtime 或其 session actor；最多同时托管 12 个 runtime。正常退出 Desktop 时会终止它启动的所有 runtime 进程组（包括 runtime 派生的子进程）；连接到外部已有 runtime 时不会接管其生命周期。停止失败时保留对应恢复记录，避免把仍在运行的进程遗忘。
