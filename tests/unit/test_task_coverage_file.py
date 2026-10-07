@@ -78,7 +78,13 @@ def test_damaged_or_ambiguous_files_never_claim_verified(tmp_path, damage):
         raw = json.dumps(artifact).encode()
     if damage == "rounded":
         entry = artifact["evidence"]["checkpoint"]["entries"][0][1]
-        entry[4] = int(float(entry[4]))
+        original = entry[4]
+        entry[4] = int(float(original))
+        # Some real timestamps are exactly representable as floats. Ensure the
+        # corruption fixture actually changes the evidence on every platform.
+        if entry[4] == original:
+            entry[4] += 1
+        assert entry[4] != original
         raw = json.dumps(artifact).encode()
     if damage == "chain":
         state = artifact["evidence"]["checkpoint"]
