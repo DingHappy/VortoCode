@@ -164,11 +164,10 @@ vortocode/
 │   ├── hooks/           生命周期 Hook
 │   ├── tools/           MCP 工具集成（动态发现 / 权限管理）
 │   ├── core/            核心设施（monitoring 指标 / cache / tracing；self_healing、task_queue 已退役删除）
-│   ├── context/         上下文管理（智能压缩 / 优先级管理）
-│   ├── editor/          代码编辑（surgical 精确编辑 / diff；内联补全引擎已退役删除）
+│   ├── editor/          surgical 精确编辑原语（`vc fix` / TUI 用；旧 CodeEditor 随 /api/editor 删除）
 │   ├── sandbox/         Docker 沙箱（cloud_sandbox 为非隔离简化执行，默认关闭）
-│   ├── security/        权限 / 审批模型
-│   └── projects/ browser/ github/ templates/ …（workspaces 已随路线 A 退役删除）
+│   └── browser/ gateway/ im/ tui/ …（2026-10 删除无前端调用的旧 Web 接口及其模块：
+│                         context/ security/ projects/ github/ templates/ testing/ documentation/ 自定义 agent 管理器）
 ├── web/                 控制台前端（原生 HTML/CSS/JS，无构建步骤）
 ├── desktop/             Tauri 2 + React 本机工作台（复用 gateway 协议与 Python runtime）
 ├── examples/            使用示例（iterative_dev / llm_analysis / pet_state 桌宠钩子 …）

@@ -59,6 +59,7 @@ vc --help                        # 全部子命令：tui/server/agent/self-*/im/
 
 ## 约定与坑
 
+- **开发侧重（2026-10-07 定）：内核通用、产品聚焦。** 新能力只往内核（`agents/` loop·确认门·污点·能力档案、`tools/`、`llm/`、`memory/`、隔离 dev 流水线）里加，对外入口只做 Desktop + 无头 CLI（+ 钉钉远程派活）。**TUI 与 Web 控制台冻结：只修 bug、不加功能、不再要求与 Desktop 对齐**。新增 API 路由前先确认有前端会调用它——2026-10 已删掉一批「没有任何前端调用」的旧接口（61 条）。
 - **改 Web/安全/Agent 前后必跑测试**。`tests/integration/` 是**路由契约安全网**：冻结 API 路由集合 + WS + 鉴权/执行闸/路径穿越。新增 API 路由要同步更新 `tests/integration/server_routes_baseline.json` 基线，否则契约测试红。
 - 修 bug 尽量补回归测试（见 `tests/unit/test_bugfix_regressions.py`）。
 - **测试必须离线、确定性**：live/联网/烧 token 的测试默认跳过；不要引入真实 API 依赖。

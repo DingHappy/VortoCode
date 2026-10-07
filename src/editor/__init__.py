@@ -1,37 +1,8 @@
-"""代码编辑器模块"""
+"""精确编辑原语（agent 驱动的 surgical edit）。
 
-from .code_editor import (
-    CodeEditor,
-    DiffGenerator,
-    DiffApplier,
-    LineEditor,
-    MultiFileEditor,
-    UndoRedoManager,
-    EditType,
-    EditOperation,
-    DiffHunk,
-    DiffResult
-)
-# 注：completion_engine（内联补全引擎）已于 2026-07 第四批退役——唯一消费者是
-# 路线 A 的 /api/completion（sessions 路由）；主线无内联补全面（agent 对话式交互）。
+旧的 CodeEditor / DiffGenerator 等只服务于已删除的 /api/editor 路由，2026-10 随无人调用的接口一起删除；
+这里只保留 `vc fix` 与 TUI 经 orchestrator.code_fix 使用的 surgical。
+"""
 from .surgical import Edit, EditApplyResult, apply_edits, render_diff
 
-__all__ = [
-    # Code editor
-    "CodeEditor",
-    "DiffGenerator",
-    "DiffApplier",
-    "LineEditor",
-    "MultiFileEditor",
-    "UndoRedoManager",
-    "EditType",
-    "EditOperation",
-    "DiffHunk",
-    "DiffResult",
-    
-    # Surgical edit (agent 驱动的精确编辑原语)
-    "Edit",
-    "EditApplyResult",
-    "apply_edits",
-    "render_diff",
-]
+__all__ = ["Edit", "EditApplyResult", "apply_edits", "render_diff"]
