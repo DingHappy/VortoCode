@@ -50,6 +50,38 @@ struct DesktopLlmProfile {
     /// 默认服务 /models 返回的模型清单：输入框据此列出可选模型，runtime 据此放行点名。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     models: Vec<String>,
+    /// 同一份清单带上服务端给的分类 / 能力 / 推荐档位（relay 2026-10-07 起提供，别家服务只有 id）。
+    /// 旧配置没有这个字段：界面在启动引擎前补拉一次。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    model_info: Vec<ModelInfo>,
+}
+
+/// /models 里一个模型的描述。除 id 外都是可选的：OpenAI 兼容的别家服务不返回这些字段。
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ModelInfo {
+    id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    category: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    capabilities: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tier: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    snapshot_of: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context_window: Option<u64>,
+}
+
+/// 能对话的三类：纯文本 / 图片视频输入 / 全模态。其余（OCR、翻译、生图、语音……）不能跑 Agent。
+const CHAT_MODEL_CATEGORIES: [&str; 3] = ["chat", "multimodal", "omni"];
+
+impl ModelInfo {
+    /// 能拿来跑 Agent：能对话，且支持工具调用。
+    fn agent_ready(&self) -> bool {
+        self.category.as_deref().is_some_and(|category| CHAT_MODEL_CATEGORIES.contains(&category))
+            && self.capabilities.iter().any(|capability| capability == "tools")
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -105,6 +137,7 @@ struct DesktopLlmProfileStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     account: Option<DesktopAccount>,
     models: Vec<String>,
+    model_info: Vec<ModelInfo>,
     /// 本机配置文件位置；设置页显示它，方便用户直接编辑。
     #[serde(skip_serializing_if = "Option::is_none")]
     config_path: Option<String>,
@@ -177,6 +210,7 @@ fn default_llm_profile() -> DesktopLlmProfile {
         providers: Vec::new(),
         account: None,
         signed_out: false,
+        model_info: Vec::new(),
         models: Vec::new(),
     }
 }
@@ -244,6 +278,9 @@ fn normalize_llm_profile(mut profile: DesktopLlmProfile) -> Result<DesktopLlmPro
     if !local && profile.api_key.is_empty() && !profile.signed_out {
         return Err("远程模型服务需要 API Key".into());
     }
+    // 配置文件可以手改：清单会拼进环境变量，读回来也要清洗一遍。
+    profile.models = clean_model_list(std::mem::take(&mut profile.models));
+    profile.model_info = clean_model_infos(std::mem::take(&mut profile.model_info));
     Ok(profile)
 }
 
@@ -704,6 +741,7 @@ fn desktop_llm_profile_status(profile: Option<&DesktopLlmProfile>) -> DesktopLlm
             .collect(),
         account: profile.account.clone(),
         models: profile.models.clone(),
+        model_info: profile.model_info.clone(),
         config_path: None,
     }
 }
@@ -813,10 +851,10 @@ async fn set_llm_profile(
         .filter(|saved| saved.base_url == wanted_base && saved.api_key == api_key)
         .and_then(|saved| saved.account.clone());
     // 同一个服务地址：模型清单沿用（换地址后由界面重新拉取）。
-    let models = saved
+    let (models, model_info) = saved
         .as_ref()
         .filter(|saved| saved.base_url == wanted_base)
-        .map(|saved| saved.models.clone())
+        .map(|saved| (saved.models.clone(), saved.model_info.clone()))
         .unwrap_or_default();
     let profile = normalize_llm_profile(DesktopLlmProfile {
         base_url,
@@ -831,6 +869,7 @@ async fn set_llm_profile(
         account,
         signed_out: false,
         models,
+        model_info,
     })?;
     let path = llm_profile_path(&app)?;
     let confirmed = confirm_llm_profile_change(&app, &profile).await?;
@@ -878,10 +917,11 @@ fn configure_llm_profile(command: &mut Command, profile: Option<&DesktopLlmProfi
     );
     command.env("DEFAULT_MODEL", &profile.model);
     // 默认服务上可点名的模型清单（同一端点、同一把 Key）。
-    if profile.models.is_empty() {
+    let choices = model_choice_ids(profile);
+    if choices.is_empty() {
         command.env_remove("VORTOCODE_MODEL_CHOICES");
     } else {
-        command.env("VORTOCODE_MODEL_CHOICES", profile.models.join(","));
+        command.env("VORTOCODE_MODEL_CHOICES", choices.join(","));
     }
     // 调度三档：均衡档就是主模型；快速 / 强力没配时显式清掉，免得继承到父进程环境里的旧值。
     command.env("LLM_MODEL_BALANCED", &profile.model);
@@ -3434,6 +3474,84 @@ fn model_ids(payload: &serde_json::Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// 模型描述里的短标签（类别 / 能力 / 档位）：小写、限长、不含控制字符，否则当没给。
+fn model_label(value: Option<&serde_json::Value>) -> Option<String> {
+    let label = value?.as_str()?.trim().to_ascii_lowercase();
+    (!label.is_empty() && label.len() <= 40 && !label.chars().any(char::is_control)).then_some(label)
+}
+
+/// 解析 /models 的完整描述。只要服务给任何一个模型标了 category，就按它的分类走：
+/// 不能跑 Agent 的（专用模型、非对话模型、没有 tools 的）**先**剔掉再截断，免得被挤出上限。
+fn model_infos(payload: &serde_json::Value) -> Vec<ModelInfo> {
+    let Some(items) = payload.get("data").and_then(serde_json::Value::as_array) else {
+        return Vec::new();
+    };
+    let infos = items.iter().filter_map(|item| {
+        let id = item.get("id").or_else(|| item.get("model")).and_then(serde_json::Value::as_str)?;
+        Some(ModelInfo {
+            id: id.to_string(),
+            category: model_label(item.get("category")),
+            capabilities: item
+                .get("capabilities")
+                .and_then(serde_json::Value::as_array)
+                .map(|values| values.iter().filter_map(|value| model_label(Some(value))).take(16).collect())
+                .unwrap_or_default(),
+            tier: model_label(item.get("tier")),
+            snapshot_of: item
+                .get("snapshot_of")
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|base| !base.is_empty() && base.len() <= 160 && !base.chars().any(char::is_control))
+                .map(str::to_string),
+            context_window: item
+                .get("context_window")
+                .and_then(serde_json::Value::as_u64)
+                .filter(|window| (MIN_MODEL_CONTEXT_WINDOW..=MAX_MODEL_CONTEXT_WINDOW).contains(window)),
+        })
+    });
+    let infos: Vec<ModelInfo> = infos.collect();
+    let classified = infos.iter().any(|info| info.category.is_some());
+    clean_model_infos(infos.into_iter().filter(|info| !classified || info.agent_ready()).collect())
+}
+
+/// 同 clean_model_list 的口径清洗 id 并去重。
+fn clean_model_infos(infos: Vec<ModelInfo>) -> Vec<ModelInfo> {
+    let mut seen = std::collections::HashSet::new();
+    infos
+        .into_iter()
+        .map(|mut info| {
+            info.id = info.id.trim().to_string();
+            info
+        })
+        .filter(|info| {
+            !info.id.is_empty()
+                && info.id.len() <= 160
+                && !info.id.contains(',')
+                && !info.id.chars().any(char::is_control)
+        })
+        .filter(|info| seen.insert(info.id.clone()))
+        .take(MAX_LISTED_MODELS)
+        .collect()
+}
+
+/// runtime 允许点名的模型：服务给了分类就只放能跑 Agent 的；没给分类（别家服务、旧配置）沿用整份清单。
+fn model_choice_ids(profile: &DesktopLlmProfile) -> Vec<String> {
+    if profile.model_info.iter().any(|info| info.category.is_some()) {
+        return profile
+            .model_info
+            .iter()
+            .filter(|info| info.agent_ready())
+            .map(|info| info.id.clone())
+            .collect();
+    }
+    profile.models.clone()
+}
+
+fn set_model_list(profile: &mut DesktopLlmProfile, infos: Vec<ModelInfo>) {
+    profile.models = infos.iter().map(|info| info.id.clone()).collect();
+    profile.model_info = infos;
+}
+
 fn summarize_models_payload(payload: &serde_json::Value, model: &str) -> (usize, Option<bool>) {
     let Some(models) = payload.get("data").and_then(serde_json::Value::as_array) else {
         return (0, None);
@@ -3495,6 +3613,7 @@ fn normalize_llm_provider(mut provider: DesktopLlmProvider) -> Result<DesktopLlm
         providers: Vec::new(),
         account: None,
         signed_out: false,
+        model_info: Vec::new(),
         models: Vec::new(),
     })?;
     provider.base_url = checked.base_url;
@@ -3509,7 +3628,7 @@ fn normalize_llm_provider(mut provider: DesktopLlmProvider) -> Result<DesktopLlm
     Ok(provider)
 }
 
-async fn fetch_provider_models(provider: &DesktopLlmProvider) -> Option<Vec<String>> {
+async fn fetch_provider_models(provider: &DesktopLlmProvider) -> Option<Vec<ModelInfo>> {
     let mut request = probe_client().ok()?.get(format!("{}/models", provider.base_url));
     if !provider.api_key.is_empty() {
         request = request.bearer_auth(&provider.api_key);
@@ -3519,12 +3638,12 @@ async fn fetch_provider_models(provider: &DesktopLlmProvider) -> Option<Vec<Stri
         return None;
     }
     let payload = response.json::<serde_json::Value>().await.ok()?;
-    Some(model_ids(&payload))
+    Some(model_infos(&payload))
 }
 
-/// 配置里还没有模型清单时，用它自己的地址和 Key 拉一份（只访问这个默认服务）。
+/// 配置里还没有模型清单（或只有旧版的纯模型名）时，用它自己的地址和 Key 拉一份（只访问这个默认服务）。
 async fn with_model_list(mut profile: DesktopLlmProfile) -> DesktopLlmProfile {
-    if profile.models.is_empty() && !profile.signed_out && !profile.api_key.is_empty() {
+    if profile.model_info.is_empty() && !profile.signed_out && !profile.api_key.is_empty() {
         let main = DesktopLlmProvider {
             id: "default".into(),
             name: String::new(),
@@ -3533,7 +3652,7 @@ async fn with_model_list(mut profile: DesktopLlmProfile) -> DesktopLlmProfile {
             models: Vec::new(),
         };
         if let Some(models) = fetch_provider_models(&main).await {
-            profile.models = clean_model_list(models);
+            set_model_list(&mut profile, models);
         }
     }
     profile
@@ -3629,7 +3748,10 @@ async fn save_llm_provider(
     if !confirmed {
         return Err("未确认，供应商没有保存".into());
     }
-    provider.models = fetch_provider_models(&provider).await.unwrap_or_default();
+    provider.models = fetch_provider_models(&provider)
+        .await
+        .map(|infos| infos.into_iter().map(|info| info.id).collect())
+        .unwrap_or_default();
     profile.providers.retain(|existing| existing.id != provider.id);
     profile.providers.push(provider);
     persist_profile(&app, &store, profile)
@@ -3666,12 +3788,12 @@ async fn refresh_llm_providers(
             models: Vec::new(),
         };
         if let Some(models) = fetch_provider_models(&main).await {
-            profile.models = clean_model_list(models);
+            set_model_list(&mut profile, models);
         }
     }
     for provider in profile.providers.iter_mut() {
         if let Some(models) = fetch_provider_models(provider).await {
-            provider.models = models;
+            provider.models = models.into_iter().map(|info| info.id).collect();
         }
     }
     persist_profile(&app, &store, profile)
@@ -3868,6 +3990,7 @@ async fn relay_login(
         fast_model: saved.as_ref().filter(|_| same_base).and_then(|saved| saved.fast_model.clone()),
         strong_model: saved.as_ref().filter(|_| same_base).and_then(|saved| saved.strong_model.clone()),
         models: saved.as_ref().filter(|_| same_base).map(|saved| saved.models.clone()).unwrap_or_default(),
+        model_info: saved.as_ref().filter(|_| same_base).map(|saved| saved.model_info.clone()).unwrap_or_default(),
         providers: saved.map(|saved| saved.providers).unwrap_or_default(),
         account: Some(DesktopAccount {
             username: user
@@ -3954,6 +4077,7 @@ async fn test_llm_connection(
         providers: Vec::new(),
         account: None,
         signed_out: false,
+        model_info: Vec::new(),
         models: Vec::new(),
     })?;
     let mut request = probe_client()?.get(format!("{}/models", profile.base_url));
@@ -4239,6 +4363,7 @@ mod tests {
             providers: Vec::new(),
             account: None,
             signed_out: false,
+            model_info: Vec::new(),
             models: Vec::new(),
         })
         .expect("relay profile");
@@ -4258,6 +4383,7 @@ mod tests {
             providers: Vec::new(),
             account: None,
             signed_out: false,
+            model_info: Vec::new(),
             models: Vec::new(),
         })
         .expect("local profile");
@@ -4274,6 +4400,7 @@ mod tests {
             providers: Vec::new(),
             account: None,
             signed_out: false,
+            model_info: Vec::new(),
             models: Vec::new(),
         })
         .is_err());
@@ -4288,6 +4415,7 @@ mod tests {
             providers: Vec::new(),
             account: None,
             signed_out: false,
+            model_info: Vec::new(),
             models: Vec::new(),
         })
         .is_err());
@@ -4306,6 +4434,7 @@ mod tests {
             providers: Vec::new(),
             account: None,
             signed_out: false,
+            model_info: Vec::new(),
             models: Vec::new(),
         };
         let mut command = Command::new("vc");
@@ -4349,6 +4478,7 @@ mod tests {
             providers: Vec::new(),
             account: None,
             signed_out: false,
+            model_info: Vec::new(),
             models: Vec::new(),
             ..profile
         };
@@ -4433,6 +4563,7 @@ mod tests {
             providers: vec![normalize_llm_provider(sample_provider("deepseek")).unwrap()],
             account: None,
             signed_out: false,
+            model_info: Vec::new(),
             models: Vec::new(),
         };
         let mut command = Command::new("vc");
@@ -4490,6 +4621,7 @@ mod tests {
             providers: vec![normalize_llm_provider(sample_provider("deepseek")).unwrap()],
             account: None,
             signed_out: true,
+            model_info: Vec::new(),
             models: Vec::new(),
         })
         .expect("signed-out profiles are allowed without a key");
@@ -4521,6 +4653,7 @@ mod tests {
             providers: Vec::new(),
             account: None,
             signed_out: false,
+            model_info: Vec::new(),
             models: vec!["main".into(), "other".into()],
         })
         .unwrap();
@@ -4540,6 +4673,88 @@ mod tests {
         assert!(command
             .get_envs()
             .any(|(key, value)| key == OsStr::new("VORTOCODE_MODEL_CHOICES") && value.is_none()));
+    }
+
+    #[test]
+    fn classified_model_list_keeps_only_agent_ready_models() {
+        let payload = serde_json::json!({"data": [
+            {"id": "mimo-v2.6-pro", "category": "omni", "capabilities": ["vision", "audio_input", "tools", "reasoning"],
+             "context_window": 1048576, "tier": "coding"},
+            {"id": "qwen3.7-max-2026-05-17", "category": "chat", "capabilities": ["tools"], "snapshot_of": "qwen3.7-max"},
+            {"id": "qwen-mt-plus", "category": "translation", "capabilities": ["tools"]},
+            {"id": "wan2.7-t2v", "category": "video"},
+            {"id": "no-tools-chat", "category": "chat", "capabilities": ["reasoning"]},
+            {"id": "unlabelled"},
+            {"id": "bad,name", "category": "chat", "capabilities": ["tools"]},
+            {"id": "mimo-v2.6-pro", "category": "omni", "capabilities": ["tools"]}
+        ]});
+        let infos = model_infos(&payload);
+        assert_eq!(
+            infos.iter().map(|info| info.id.as_str()).collect::<Vec<_>>(),
+            vec!["mimo-v2.6-pro", "qwen3.7-max-2026-05-17"]
+        );
+        assert_eq!(infos[0].tier.as_deref(), Some("coding"));
+        assert_eq!(infos[0].context_window, Some(1_048_576));
+        assert_eq!(infos[1].snapshot_of.as_deref(), Some("qwen3.7-max"));
+
+        // 别家服务不带分类：整份清单原样保留（只做 id 清洗）。
+        let plain = model_infos(&serde_json::json!({"data": [{"id": "gpt-4o"}, {"id": "whisper-1"}]}));
+        assert_eq!(plain.iter().map(|info| info.id.as_str()).collect::<Vec<_>>(), vec!["gpt-4o", "whisper-1"]);
+        assert!(plain.iter().all(|info| info.category.is_none() && info.capabilities.is_empty()));
+    }
+
+    #[test]
+    fn model_choices_env_only_names_agent_ready_models() {
+        let info = |id: &str, category: Option<&str>, tools: bool| ModelInfo {
+            id: id.into(),
+            category: category.map(str::to_string),
+            capabilities: if tools { vec!["tools".into()] } else { Vec::new() },
+            ..ModelInfo::default()
+        };
+        let mut profile = normalize_llm_profile(DesktopLlmProfile {
+            base_url: "https://models.example.com/v1".into(),
+            api_key: "k".into(),
+            model: "main".into(),
+            context_window: None,
+            context_window_source: None,
+            fast_model: None,
+            strong_model: None,
+            providers: Vec::new(),
+            account: None,
+            signed_out: false,
+            models: vec!["main".into(), "ocr".into(), "no-tools".into()],
+            // 配置文件可以手改：即便存了不能跑 Agent 的条目，也不会被放行点名。
+            model_info: vec![
+                info("main", Some("chat"), true),
+                info("ocr", Some("ocr"), true),
+                info("no-tools", Some("multimodal"), false),
+            ],
+        })
+        .unwrap();
+        let choices = |profile: &DesktopLlmProfile| {
+            let mut command = Command::new("vc");
+            configure_llm_profile(&mut command, Some(profile));
+            command
+                .get_envs()
+                .find(|(key, _)| *key == OsStr::new("VORTOCODE_MODEL_CHOICES"))
+                .and_then(|(_, value)| value.map(OsStr::to_owned))
+        };
+        assert_eq!(choices(&profile).as_deref(), Some(OsStr::new("main")));
+        // 没有分类（旧配置 / 别家服务）：沿用整份模型名清单。
+        profile.model_info = vec![info("main", None, false), info("ocr", None, false)];
+        assert_eq!(choices(&profile).as_deref(), Some(OsStr::new("main,ocr,no-tools")));
+        profile.model_info.clear();
+        assert_eq!(choices(&profile).as_deref(), Some(OsStr::new("main,ocr,no-tools")));
+    }
+
+    #[test]
+    fn legacy_profile_without_model_info_still_loads() {
+        let payload = r#"{"baseUrl":"https://models.example.com/v1","apiKey":"k","model":"main","models":["main","other"]}"#;
+        let profile: DesktopLlmProfile = serde_json::from_str(payload).unwrap();
+        assert_eq!(profile.models, vec!["main".to_string(), "other".to_string()]);
+        assert!(profile.model_info.is_empty());
+        let saved = serde_json::to_value(&profile).unwrap();
+        assert!(saved.get("modelInfo").is_none());
     }
 
     #[test]
@@ -4587,6 +4802,7 @@ mod tests {
             providers: Vec::new(),
             account: None,
             signed_out: false,
+            model_info: Vec::new(),
             models: Vec::new(),
         })
         .unwrap();
@@ -4597,6 +4813,7 @@ mod tests {
             providers: Vec::new(),
             account: None,
             signed_out: false,
+            model_info: Vec::new(),
             models: Vec::new(),
             ..profile
         })
@@ -4648,6 +4865,7 @@ mod tests {
                 providers: Vec::new(),
                 account: None,
                 signed_out: false,
+                model_info: Vec::new(),
                 models: Vec::new(),
             }))
         };
@@ -4713,6 +4931,7 @@ mod tests {
             providers: Vec::new(),
             account: None,
             signed_out: false,
+            model_info: Vec::new(),
             models: Vec::new(),
         };
 
@@ -6004,6 +6223,7 @@ mod tests {
             providers: Vec::new(),
             account: None,
             signed_out: false,
+            model_info: Vec::new(),
             models: Vec::new(),
         }
     }
@@ -6142,6 +6362,7 @@ mod tests {
             providers: Vec::new(),
             account: None,
             signed_out: false,
+            model_info: Vec::new(),
             models: Vec::new(),
         }
     }
