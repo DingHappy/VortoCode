@@ -1209,7 +1209,8 @@ function App() {
         // 不能等连上后再拉再重启——刚启动就重启会和启动流程撞车（真机 2026-10-06：引擎没能重新拉起）。
         try {
           const profile = await invoke<DesktopLlmProfileStatus>("get_llm_profile");
-          if (profile.configured && (profile.models?.length ?? 0) === 0) {
+          // 只有模型名、没有分类信息的旧清单也补一次，选择器才能按服务端分类分组。
+          if (profile.configured && (profile.modelInfo?.length ?? 0) === 0) {
             applyLlmProfile(await invoke<DesktopLlmProfileStatus>("refresh_llm_providers"));
           }
         } catch {
@@ -3079,12 +3080,12 @@ function App() {
                       }}
                     >
                       {composerModelChoices.filter((choice) => !choice.group).map((choice) => (
-                        <option key={choice.value} value={choice.value}>{choice.label}{choice.value === "auto" ? "" : ` · ${choice.hint}`}</option>
+                        <option key={choice.value} value={choice.value}>{choice.label}{choice.value === "auto" ? "" : ` · ${[choice.hint, ...(choice.badges ?? [])].join(" · ")}`}</option>
                       ))}
                       {[...new Set(composerModelChoices.flatMap((choice) => choice.group ? [choice.group] : []))].map((group) => (
                         <optgroup key={group} label={group}>
                           {composerModelChoices.filter((choice) => choice.group === group).map((choice) => (
-                            <option key={choice.value} value={choice.value}>{choice.label}</option>
+                            <option key={choice.value} value={choice.value}>{choice.label}{choice.badges?.length ? ` · ${choice.badges.join(" · ")}` : ""}</option>
                           ))}
                         </optgroup>
                       ))}

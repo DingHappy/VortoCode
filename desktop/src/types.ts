@@ -1157,12 +1157,28 @@ export interface DesktopLlmProfileStatus {
   strongModel?: string;
   /** 默认服务 /models 返回的模型清单（输入框据此列出可选模型）。 */
   models?: string[];
+  /** 同一份清单的分类 / 能力 / 推荐档位；服务端没给分类（别家服务、旧配置）时只有 id。 */
+  modelInfo?: ModelInfo[];
   /** 经账号登录时的账号信息（不含密码和会话）。 */
   account?: DesktopAccount;
   /** 用户自己添加的其他供应商（不含 Key）。 */
   providers?: DesktopLlmProviderStatus[];
   /** 本机配置文件路径（llm-profile.json，权限 600）；可直接编辑，下次启动生效。 */
   configPath?: string;
+}
+
+/** /models 里一个模型的描述（relay 提供；别家 OpenAI 兼容服务只有 id）。 */
+export interface ModelInfo {
+  id: string;
+  /** chat / multimodal / omni 能对话；其余（ocr、translation、image、tts……）不能跑 Agent。 */
+  category?: string;
+  /** tools / reasoning / vision / audio_input */
+  capabilities?: string[];
+  /** 服务端推荐档位：coding（编程主力）/ fast（快速）。 */
+  tier?: string;
+  /** 带日期的快照版对应的基础型号。 */
+  snapshotOf?: string;
+  contextWindow?: number;
 }
 
 export interface DesktopAccount {
