@@ -10,7 +10,6 @@ use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{webview::PageLoadEvent, AppHandle, Manager, State};
-use tauri_plugin_shell::ShellExt;
 use url::{Host, Url};
 
 const MAX_WORKSPACE_FILES: usize = 6_000;
@@ -22,6 +21,8 @@ const SCRATCH_SCOPE: &str = "scratch";
 const PROJECT_SCOPE: &str = "project";
 const DEFAULT_LLM_BASE_URL: &str = "https://token.vortotech.com/v1";
 const DEFAULT_LLM_MODEL: &str = "mimo-v2.6-pro";
+/// 前端默认的本机 runtime 端口（被占用时 select_gateway_port 自动换一个空闲端口）。
+const DEFAULT_GATEWAY_PORT: u16 = 8080;
 
 #[derive(Clone, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -2392,11 +2393,8 @@ fn desktop_smoke_ready(app: AppHandle) -> Result<bool, String> {
     let Some(path) = smoke_marker_path()? else {
         return Ok(false);
     };
-    let sidecar = app
-        .shell()
-        .sidecar("vortocode-runtime")
-        .map_err(|error| format!("GUI smoke 无法定位内置 runtime：{error}"))?;
-    let mut sidecar_command: Command = sidecar.into();
+    let sidecar = bundled_runtime_path(&app).map_err(|error| format!("GUI smoke {error}"))?;
+    let mut sidecar_command = Command::new(sidecar);
     let sidecar_output = sidecar_command
         .arg("--version")
         .output()
@@ -2874,8 +2872,8 @@ fn select_gateway_port(preferred: u16) -> Result<u16, String> {
 }
 
 fn prepare_gateway_process(command: &mut Command) {
-    // PyInstaller one-file runtime 会再派生真正的 Python server。只杀直接 Child 会留下仍在
-    // 监听的孙进程；独立进程组让 Desktop 能把整个托管 runtime 作为一个生命周期单元回收。
+    // runtime 可能再派生子进程（旧版 PyInstaller one-file 的 bootloader、server 起的工具进程）。
+    // 只杀直接 Child 会留下仍在监听的孙进程；独立进程组让 Desktop 能把整个托管 runtime 作为一个生命周期单元回收。
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -2974,6 +2972,26 @@ fn configure_gateway_command(
     command
 }
 
+/// 内置 runtime 是 PyInstaller onedir 目录（可执行文件 + _internal/），随 App 放在 resources/runtime/。
+/// 不用 one-file sidecar：它每次启动都要把整个 Python 环境解压到临时目录，多花 3–4 秒。
+fn bundled_runtime_path(app: &AppHandle) -> Result<PathBuf, String> {
+    let resources = app
+        .path()
+        .resource_dir()
+        .map_err(|error| format!("无法定位 Desktop 内置 runtime：{error}"))?;
+    let path = bundled_runtime_in(&resources);
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(format!("无法定位 Desktop 内置 runtime：{} 不存在", path.display()))
+    }
+}
+
+fn bundled_runtime_in(resources: &Path) -> PathBuf {
+    let name = if cfg!(windows) { "vortocode-runtime.exe" } else { "vortocode-runtime" };
+    resources.join("runtime").join(name)
+}
+
 fn build_bundled_runtime_command(
     app: &AppHandle,
     repo_root: &Path,
@@ -2981,12 +2999,8 @@ fn build_bundled_runtime_command(
     token: &str,
     scope: &str,
 ) -> Result<Command, String> {
-    let sidecar = app
-        .shell()
-        .sidecar("vortocode-runtime")
-        .map_err(|error| format!("无法定位 Desktop 内置 runtime：{error}"))?;
     Ok(configure_gateway_command(
-        sidecar.into(),
+        Command::new(bundled_runtime_path(app)?),
         false,
         repo_root,
         port,
@@ -3349,6 +3363,24 @@ pub fn run() {
         // 窗口在配置里默认隐藏，等页面加载完才显示（否则启动时先闪一下白窗口，真机 2026-10-06）。
         // 兜底：页面万一没加载成功，几秒后也把窗口显示出来，绝不能让 App 看起来没打开。
         .setup(|app| {
+            // 冷启动时页面加载、读配置要一秒多，前端之后才会调 start_gateway。这段时间里先把
+            // 通用会话的 runtime 拉起来：前端每次打开都从通用会话开始，到时 start_gateway 直接复用
+            //（同一 runtime_id 已在运行就返回，监督锁保证不会起两份）。GUI smoke 不起 runtime。
+            if !matches!(smoke_marker_path(), Ok(Some(_))) {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    let _ = start_gateway(
+                        handle.clone(),
+                        None,
+                        GENERAL_SCOPE.into(),
+                        None,
+                        DEFAULT_GATEWAY_PORT,
+                        None,
+                        handle.state(),
+                        handle.state(),
+                    );
+                });
+            }
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(Duration::from_secs(4)).await;
@@ -5774,6 +5806,15 @@ mod tests {
             key == OsStr::new("VORTOCODE_SUPERVISOR_PID")
                 && value == Some(OsStr::new(expected.as_str()))
         }));
+    }
+
+    #[test]
+    fn bundled_runtime_lives_in_the_resources_runtime_directory() {
+        let expected = if cfg!(windows) { "vortocode-runtime.exe" } else { "vortocode-runtime" };
+        assert_eq!(
+            bundled_runtime_in(Path::new("/App/Contents/Resources")),
+            Path::new("/App/Contents/Resources/runtime").join(expected)
+        );
     }
 
     #[test]

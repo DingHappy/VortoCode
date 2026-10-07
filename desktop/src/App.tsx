@@ -113,6 +113,7 @@ import { composeMessageText, mediaPayload } from "./lib/attachments";
 import { useAttachments } from "./hooks/useAttachments";
 import { latestTurnSteps, previewReferences, publishedArtifactId, type PreviewView } from "./lib/preview";
 import { PreviewPanel } from "./components/PreviewPanel";
+import { useDelayedFlag } from "./hooks/useDelayedFlag";
 import { loadModelChoice, loadModelPicks, modelChoices, persistModelChoice, persistModelPicks, resolveModelChoice } from "./lib/modelChoice";
 
 
@@ -212,6 +213,10 @@ function App() {
   const runtimeEverReachableRef = useRef<Set<string>>(new Set());
   const [recoveryRecord, setRecoveryRecord] = useState<GatewayRecoveryRecord | null>(null);
   const [runtimeStarting, setRuntimeStarting] = useState(false);
+  // 冷启动的初始化流程还没走完：这期间首页按「正在启动」处理，不先闪一下「有什么可以帮你？」。
+  const [booting, setBooting] = useState(true);
+  const homeStarting = connection !== "connected" && (booting || runtimeStarting || connection === "connecting");
+  const showHomeStarting = useDelayedFlag(homeStarting, 400);
   const [projects, setProjects] = useState<DesktopProjectProfile[]>([]);
   const [projectSwitching, setProjectSwitching] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -1164,7 +1169,7 @@ function App() {
       else localStorage.removeItem(STORAGE_KEYS.repoRoot);
       localStorage.setItem(STORAGE_KEYS.baseUrl, actualUrl);
       const probe = new GatewayClient({ baseUrl: actualUrl, token: options.token ?? "" });
-      await probe.waitUntilReady(300, 250);
+      await probe.waitUntilReady(750, 100);
       const connected = await connectToRuntime(options.sid, {
         baseUrl: actualUrl,
         repoRoot: scope === "project" ? root : "",
@@ -1196,7 +1201,10 @@ function App() {
     initializationStartedRef.current = true;
     void (async () => {
       const smokeMode = await invoke<boolean>("desktop_smoke_ready").catch(() => false);
-      if (smokeMode) return;
+      if (smokeMode) {
+        setBooting(false);
+        return;
+      }
 
       try {
         const [status, record, recoveries] = await Promise.all([
@@ -1242,6 +1250,8 @@ function App() {
         setConnection("error");
         setConnectionNote("通用会话未能启动");
         setBanner(errorText(error, "无法启动通用会话"));
+      } finally {
+        setBooting(false);
       }
     })();
   }, [activeSid, baseUrl, refreshProjectRegistry, startWorkspace]);
@@ -2853,8 +2863,10 @@ function App() {
                 <span className="home-mark" aria-hidden="true">V</span>
                 {/* 冷启动要等本地引擎起来（约数秒）；这期间别摆出一个看着能用、其实还没连上的首页，
                     连上后再切到上次的会话也就不显得突兀（真机 2026-10-06）。 */}
-                {connection !== "connected" && (runtimeStarting || connection === "connecting")
-                  ? <h1 className="home-starting"><LoaderCircle className="activity-spinner" size={20} />正在启动本地引擎…</h1>
+                {/* 引擎通常一秒内就连上（Desktop 一启动就预先拉起 runtime）：提示延后 400ms 才显示，
+                    连得快就不闪；占位保持同样高度，避免布局跳动。 */}
+                {homeStarting
+                  ? <h1 className={`home-starting ${showHomeStarting ? "" : "pending"}`} aria-hidden={!showHomeStarting}><LoaderCircle className="activity-spinner" size={20} />正在启动本地引擎…</h1>
                   : <h1>有什么可以帮你？</h1>}
                 {llmProfileChecked && !llmProfile?.configured && (
                   <p>还没有配置模型服务。<button onClick={() => { setSettingsSection("account"); setSettingsOpen(true); }}>登录或填写 Key</button></p>

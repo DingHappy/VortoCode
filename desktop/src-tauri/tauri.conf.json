@@ -34,12 +34,10 @@
     "category": "DeveloperTool",
     "shortDescription": "Local-first agent development workspace",
     "longDescription": "VortoCode Desktop brings goals, sessions, reviewed edits, Git delivery, runtime evidence and project memory into one local-first agent workspace.",
-    "externalBin": [
-      "binaries/vortocode-runtime"
-    ],
-    "resources": [
-      "resources/THIRD_PARTY_NOTICES.txt"
-    ],
+    "resources": {
+      "resources/THIRD_PARTY_NOTICES.txt": "resources/THIRD_PARTY_NOTICES.txt",
+      "binaries/runtime/": "runtime/"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -88,10 +88,17 @@ npm run verify:installed
 `signing:setup` 默认使用 `VortoCode Development`；若需要自定义名称，可在 setup 和后续命令中统一
 设置 `VORTOCODE_CODESIGN_IDENTITY`。`signing:doctor` 要求 Keychain 中存在有效的非 ad-hoc 身份。
 未显式指定时按以下顺序自动选择：恰好一张 `Developer ID Application` 证书时用它；否则用
-`VortoCode Development`；只有一个有效身份时用它；仍有多个则必须显式指定。签名构建会先冻结并 smoke sidecar，再让 Tauri 使用同一身份签名嵌套 runtime 和主
-app，最后验证 bundle identifier、严格签名和 designated requirement。上一次签名证据或已安装 app
+`VortoCode Development`；只有一个有效身份时用它；仍有多个则必须显式指定。签名构建会先冻结并 smoke sidecar，再让 Tauri 使用同一身份签名主 app；内置 runtime 是放在
+`Contents/Resources/runtime/` 的 onedir 目录（Tauri 不签 resources），由脚本逐个签名其中的 Mach-O 后重新封装 app，最后验证 bundle identifier、严格签名和 designated requirement。上一次签名证据或已安装 app
 的 designated requirement 不一致时安装会 fail closed；只有证书有计划轮换时才可临时设置
 `VORTOCODE_ALLOW_SIGNING_IDENTITY_CHANGE=1`。
+
+需要通过 Gatekeeper（发给别人安装、或验证公证）时用 `npm run install:notarized`：签名完成后用 `xcrun notarytool`
+提交 Apple 公证、等待结果并装订票据，最后用 `spctl` 复核。它读取钥匙串里的 notarytool profile（默认
+`vortocode-notary`，可用 `VORTOCODE_NOTARY_PROFILE` 覆盖），先用
+`xcrun notarytool store-credentials vortocode-notary --apple-id <Apple ID> --team-id <Team ID>` 在终端里存一次
+（App 专用密码由终端交互输入，不进命令行参数）。公证要求安全时间戳，Developer ID 身份重签时会自动加 `--timestamp`。
+日常开发安装（`install:dev-signed`）不提交公证，免去每次几分钟的等待。
 
 切换签名身份（例如从 unsigned 或自签名换到 Developer ID）后，第一次读取已保存的远程工作区 token 会再要求一次
 钥匙串授权，点“始终允许”。之后只要用的是同一 Team ID 的证书、`com.vorto.vortocode` identifier 不变，重新打包
@@ -129,4 +136,4 @@ macOS 产物位于 `src-tauri/target/release/bundle/macos/VortoCode.app` 和
   双重 SHA-256 冲突检测与同目录原子替换，Tauri WebView 没有任意写文件命令。
 - Gateway stdout/stderr 按 runtime 写入 Desktop 应用配置目录下的 `logs/runtime-<runtime-id>.log`，不因启动 General 而污染用户目录。
 - runtime 恢复注册表按稳定 runtime id 保存 scope、项目/Scratch 身份、工作区位置、本机地址、时间和进程线索，不保存 token；旧单记录会自动迁移，异常重启不会根据旧 PID 自动杀进程或执行任务。
-- 切换项目只断开当前 WebSocket 观察端，不停止原 runtime 或其 session actor；最多同时托管 12 个 runtime。正常退出 Desktop 时会终止它启动的所有 runtime 进程组（包括 PyInstaller one-file 派生的 Python server）；连接到外部已有 runtime 时不会接管其生命周期。停止失败时保留对应恢复记录，避免把仍在运行的进程遗忘。
+- 切换项目只断开当前 WebSocket 观察端，不停止原 runtime 或其 session actor；最多同时托管 12 个 runtime。正常退出 Desktop 时会终止它启动的所有 runtime 进程组（包括 runtime 派生的子进程）；连接到外部已有 runtime 时不会接管其生命周期。停止失败时保留对应恢复记录，避免把仍在运行的进程遗忘。
