@@ -65,7 +65,7 @@ class AgentConfig(BaseModel):
     tools: List[str] = Field(default_factory=list)
     
     # 模型配置
-    model: str = "mimo-v2.5"
+    model: str = "mimo-v2.6-pro"
     temperature: float = 0.7
     max_tokens: int = 4096
     
@@ -389,7 +389,7 @@ class AgentManager:
         capabilities: List[AgentCapability] = None,
         tools: List[str] = None,
         system_prompt: str = "",
-        model: str = "mimo-v2.5"
+        model: str = "mimo-v2.6-pro"
     ) -> AgentInstance:
         """创建 Agent"""
         config = AgentConfig(

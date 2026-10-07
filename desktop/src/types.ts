@@ -1152,6 +1152,89 @@ export interface DesktopLlmProfileStatus {
   requiresKey: boolean;
   contextWindow?: number;
   contextWindowSource?: "service" | "catalog" | "configured" | "unknown" | string;
+  /** 模型调度的快速档 / 强力档；没配则「自动」只用主模型。 */
+  fastModel?: string;
+  strongModel?: string;
+  /** 默认服务 /models 返回的模型清单（输入框据此列出可选模型）。 */
+  models?: string[];
+  /** 同一份清单的分类 / 能力 / 推荐档位；服务端没给分类（别家服务、旧配置）时只有 id。 */
+  modelInfo?: ModelInfo[];
+  /** 经账号登录时的账号信息（不含密码和会话）。 */
+  account?: DesktopAccount;
+  /** 用户自己添加的其他供应商（不含 Key）。 */
+  providers?: DesktopLlmProviderStatus[];
+  /** 本机配置文件路径（llm-profile.json，权限 600）；可直接编辑，下次启动生效。 */
+  configPath?: string;
+}
+
+/** /models 里一个模型的描述（relay 提供；别家 OpenAI 兼容服务只有 id）。 */
+export interface ModelInfo {
+  id: string;
+  /** chat / multimodal / omni 能对话；其余（ocr、translation、image、tts……）不能跑 Agent。 */
+  category?: string;
+  /** tools / reasoning / vision / audio_input */
+  capabilities?: string[];
+  /** 服务端推荐档位：coding（编程主力）/ fast（快速）。 */
+  tier?: string;
+  /** 带日期的快照版对应的基础型号。 */
+  snapshotOf?: string;
+  contextWindow?: number;
+}
+
+export interface DesktopAccount {
+  username: string;
+  displayName: string;
+  keySource: "token_plan" | "pay_as_you_go" | string;
+  planName?: string | null;
+  planExpiry?: number | null;
+}
+
+export interface RelayLoginOutcome {
+  status: DesktopLlmProfileStatus | null;
+  needsPlan: boolean;
+  planUrl: string;
+  message: string;
+}
+
+export interface DesktopLlmProviderStatus {
+  id: string;
+  name: string;
+  baseUrl: string;
+  models: string[];
+  hasKey: boolean;
+}
+
+/** 设置 → 浏览器操控。 */
+export interface BrowserControlStatus {
+  enabled: boolean;
+  browserPath?: string | null;
+}
+
+/** 设置页「测试连接」：只验证不保存。 */
+export interface LlmConnectionTest {
+  ok: boolean;
+  status?: number | null;
+  modelCount?: number | null;
+  modelAvailable?: boolean | null;
+  models: string[];
+  message: string;
+}
+
+/** 模型服务额度（OpenAI 兼容的 billing 接口；Key 只在原生层使用）。 */
+export interface LlmUsageSummary {
+  available: boolean;
+  unlimited: boolean;
+  hardLimitUsd?: number | null;
+  usedUsd?: number | null;
+  periodDays: number;
+  message: string;
+}
+
+/** 用户级全局指令（~/.vortocode/AGENTS.md）。 */
+export interface UserInstructions {
+  path: string;
+  content: string;
+  exists: boolean;
 }
 
 export interface GatewayRecoveryRecord {
@@ -1178,6 +1261,16 @@ export interface DesktopProjectProfile {
   repoRoot: string;
   baseUrl: string;
   lastOpenedAt: number;
+  /** 本机目录已不存在（被删除或移走）；只在列表里出现，远端项目恒为 false。 */
+  missing?: boolean;
+}
+
+/** 侧边栏「项目」下列出的最近会话（Desktop 原生层从项目的会话档读出）。 */
+export interface ProjectSessionSummary {
+  projectId: string;
+  sid: string;
+  title: string;
+  updatedAt: number;
 }
 
 export interface RepoMemorySnapshot {
@@ -1261,4 +1354,18 @@ export type TrustStatus = {
   levels: TrustLevel[];
   capability_profile: string;
   workspace_scope: string;
+};
+
+/** Desktop 收件箱里的一个本地 runtime（Desktop 侧的发现结果 + 最近一次快照）。 */
+export type DesktopRuntimeInbox = {
+  runtimeId: string;
+  projectId?: string;
+  workspaceId?: string;
+  scope: WorkspaceScope;
+  label: string;
+  repoRoot?: string;
+  baseUrl: string;
+  snapshot: RuntimeInboxSnapshot | null;
+  error: string;
+  checkedAt: number;
 };

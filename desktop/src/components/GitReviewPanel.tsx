@@ -6,7 +6,7 @@
 // setGitReviewRevision），且 tab 按钮会跨域清 F 域 4 个 state、prDelivery 与决策中心
 // 共享、diffPayload 由总线 agent_diff 写入——hook 模式前提不成立，本面板走纯展示件
 // 契约（同 S3–S7）：E/F/prDelivery 全部 state 留 App 经 props 下传，写路径（触碰
-// client/审计/banner/window.confirm）经回调注入。评论/提交/PR 表单草稿切 tab 不丢，
+// client/审计/banner/confirmAction）经回调注入。评论/提交/PR 表单草稿切 tab 不丢，
 // 一律留 App。搬进来的只有五个仅本面板消费的派生（selectedGitFile 与 displayedGit* 族）。
 import { openUrl } from "@tauri-apps/plugin-opener";
 

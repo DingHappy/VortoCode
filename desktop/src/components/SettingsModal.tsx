@@ -9,9 +9,29 @@
 // ExtensionsInspector 卡经 children 槽位透传：它的 7 个 props 已在 App 接好，
 // 不经本组件二次穿透（弹窗对卡内容保持无知）。
 // 搬进来的唯一派生是 llmInputIsLocal（只服务本弹窗的三处 JSX）。
+//
+// 布局：左侧分组导航 + 搜索，右侧显示当前分页（参照 MiMo Desktop 的设置交互，独立实现）。
+// 当前分页、搜索词和外观选择是纯本地 UI 态，留在组件内。
+import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
 
 import { contextWindowSourceLabel, formatTokenCount } from "../lib/labels";
+import { PROVIDER_PRESETS, presetForBaseUrl, sameLlmBase } from "../lib/providers";
+import { ConfigPane } from "./settings/ConfigPane";
+import { LlmConnectionCheck } from "./settings/LlmConnectionCheck";
+import { AccountPane } from "./settings/AccountPane";
+import { BrowserPane } from "./settings/BrowserPane";
+import { CustomProviders } from "./settings/CustomProviders";
+import { ModelPicks } from "./settings/ModelPicks";
+import { PersonalizePane } from "./settings/PersonalizePane";
+import { UsagePane } from "./settings/UsagePane";
+import {
+  THEME_OPTIONS,
+  applyThemePreference,
+  readThemePreference,
+  saveThemePreference,
+  type ThemePreference,
+} from "../lib/theme";
 import { trustCard } from "../lib/trustCard";
 import type {
   ConnectionState,
@@ -22,6 +42,31 @@ import type {
   TrustStatus,
   WorkspaceScope,
 } from "../types";
+
+export type SettingsSection = "account" | "general" | "usage" | "model" | "personalize" | "appearance" | "config" | "trust" | "browser" | "extensions";
+
+const SETTINGS_NAV: Array<{ group: string; items: Array<{ id: SettingsSection; label: string; keywords: string }> }> = [
+  {
+    group: "个人",
+    items: [
+      { id: "account", label: "账号", keywords: "登录 账号 退出 套餐 token plan 注册 vortocode" },
+      { id: "general", label: "常规", keywords: "工作区 项目 引擎 runtime 连接 恢复 scratch gateway token 高级" },
+      { id: "usage", label: "使用情况", keywords: "用量 额度 剩余 计费 费用 quota usage billing" },
+      { id: "model", label: "模型", keywords: "模型服务 供应商 api key relay openai deepseek kimi glm 千问 minimax 本机 测试连接 上下文 常用模型 推荐 排序 输入框" },
+      { id: "personalize", label: "个性化", keywords: "全局指令 自定义指令 agents.md instructions" },
+      { id: "appearance", label: "外观", keywords: "主题 深色 浅色 跟随系统 theme dark light" },
+      { id: "config", label: "配置", keywords: "配置文件 路径 finder llm-profile agents.md" },
+    ],
+  },
+  { group: "安全", items: [{ id: "trust", label: "授权级别", keywords: "权限 确认 只读 完全信任 trust" }] },
+  {
+    group: "集成",
+    items: [
+      { id: "browser", label: "浏览器操控", keywords: "浏览器 chrome 网页 点击 截图 browser" },
+      { id: "extensions", label: "扩展", keywords: "hook 规则 skills mcp 插件 扩展" },
+    ],
+  },
+];
 
 type SettingsModalProps = {
   activeScope: WorkspaceScope;
@@ -36,6 +81,8 @@ type SettingsModalProps = {
   llmBaseInput: string;
   llmModelInput: string;
   llmKeyInput: string;
+  llmFastInput: string;
+  llmStrongInput: string;
   llmProfileBusy: boolean;
   repoRoot: string;
   baseUrl: string;
@@ -44,6 +91,14 @@ type SettingsModalProps = {
   onClose: () => void;
   onLlmBaseChange: (value: string) => void;
   onLlmModelChange: (value: string) => void;
+  onLlmFastChange: (value: string) => void;
+  onLlmStrongChange: (value: string) => void;
+  onRestartRuntime: () => Promise<boolean>;
+  onLlmProfileChange: (profile: DesktopLlmProfileStatus) => void;
+  /** 输入框里的常用模型短名单；null = 跟随服务端推荐。 */
+  modelPicks: string[] | null;
+  onModelPicksChange: (picks: string[] | null) => void;
+  initialSection?: SettingsSection;
   onLlmKeyChange: (value: string) => void;
   onSaveLlmProfile: () => void;
   onClearLlmProfile: () => void;
@@ -74,6 +129,8 @@ export function SettingsModal({
   llmBaseInput,
   llmModelInput,
   llmKeyInput,
+  llmFastInput,
+  llmStrongInput,
   llmProfileBusy,
   repoRoot,
   baseUrl,
@@ -82,6 +139,13 @@ export function SettingsModal({
   onClose,
   onLlmBaseChange,
   onLlmModelChange,
+  onLlmFastChange,
+  onLlmStrongChange,
+  onRestartRuntime,
+  onLlmProfileChange,
+  modelPicks,
+  onModelPicksChange,
+  initialSection,
   onLlmKeyChange,
   onSaveLlmProfile,
   onClearLlmProfile,
@@ -100,17 +164,63 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const trustView = trustCard(trust);
   const llmInputIsLocal = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/i.test(llmBaseInput.trim());
+  const [section, setSection] = useState<SettingsSection>(
+    initialSection ?? (llmProfile && !llmProfile.configured ? "account" : "general"));
+  const [query, setQuery] = useState("");
+  const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference);
+  const [modelOptions, setModelOptions] = useState<string[]>([]);
+  const activePreset = presetForBaseUrl(llmBaseInput);
+  const visibleNav = useMemo(() => {
+    const keyword = query.trim().toLowerCase();
+    if (!keyword) return SETTINGS_NAV;
+    return SETTINGS_NAV
+      .map((group) => ({
+        ...group,
+        items: group.items.filter((item) => `${item.label} ${item.keywords}`.toLowerCase().includes(keyword)),
+      }))
+      .filter((group) => group.items.length > 0);
+  }, [query]);
+  const sectionTitle = SETTINGS_NAV.flatMap((group) => group.items).find((item) => item.id === section)?.label ?? "";
+  const changeTheme = (preference: ThemePreference) => {
+    setThemePreference(preference);
+    saveThemePreference(preference);
+    applyThemePreference(preference);
+  };
 
   return (
     <div className="modal-backdrop">
-      <section className="settings-modal">
+      <section className="settings-modal settings-layout" aria-label="设置">
+        <nav className="settings-nav" aria-label="设置分类">
+          <h2>设置</h2>
+          <input
+            className="settings-search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索设置"
+            aria-label="搜索设置"
+          />
+          {visibleNav.map((group) => (
+            <div className="settings-nav-group" key={group.group}>
+              <span>{group.group}</span>
+              {group.items.map((item) => (
+                <button
+                  key={item.id}
+                  className={section === item.id ? "active" : ""}
+                  aria-current={section === item.id ? "page" : undefined}
+                  onClick={() => setSection(item.id)}
+                >{item.label}</button>
+              ))}
+            </div>
+          ))}
+          {visibleNav.length === 0 && <p className="settings-nav-empty">没有匹配的设置</p>}
+        </nav>
+        <div className="settings-pane">
         <div className="settings-heading">
-          <div>
-            <span>VortoCode Desktop</span>
-            <h2>工作区与连接</h2>
-          </div>
-          <button onClick={onClose}>×</button>
+          <h2>{sectionTitle}</h2>
+          <button onClick={onClose} aria-label="关闭设置">×</button>
         </div>
+        {section === "general" && (
+        <>
         <p className="settings-intro">
           {activeScope === "project"
             ? "VortoCode 会自动管理这个项目的本地引擎；通常不需要配置地址或手动连接。"
@@ -118,7 +228,10 @@ export function SettingsModal({
               ? "Scratch 是应用管理的隔离 Git 工作区，适合生成、运行和测试临时代码。"
               : "普通任务直接在 General 中运行，不读取本机目录；需要文件时再创建 Scratch 或选择项目。"}
         </p>
+        </>
+        )}
 
+        {section === "model" && (
         <section className={`llm-profile-card ${llmProfile?.configured ? "configured" : "unconfigured"}`}>
           <div className="llm-profile-head">
             <div>
@@ -127,21 +240,23 @@ export function SettingsModal({
                 ? llmProfile.provider === "vortocode" ? "VortoCode Relay 已配置" : llmProfile.provider === "local" ? "本机模型已配置" : "自定义服务已配置"
                 : "先配置模型，才能开始对话"}</strong>
             </div>
-            <i>{llmProfile?.configured ? "Keychain" : "需要设置"}</i>
+            <i>{llmProfile?.account ? "账号登录" : llmProfile?.configured ? "本机配置" : "需要设置"}</i>
           </div>
+          {llmProfile?.account && (
+            <p className="llm-account-note">
+              当前通过账号 {llmProfile.account.displayName || llmProfile.account.username} 登录，使用{llmProfile.account.keySource === "token_plan" ? " Token Plan" : "按量 Key"}。
+              在下面改服务地址或填新 Key 会替换掉它；要换账号请到<button onClick={() => setSection("account")}>账号</button>。
+            </p>
+          )}
           <div className="llm-profile-presets" aria-label="模型服务快捷设置">
-            <button
-              className={llmBaseInput.trim() === "https://token.vortotech.com/v1" ? "active" : ""}
-              onClick={() => { onLlmBaseChange("https://token.vortotech.com/v1"); onLlmModelChange("mimo-v2.5"); onLlmKeyChange(""); }}
-            >VortoCode Relay</button>
-            <button
-              className={llmBaseInput.trim() === "https://api.openai.com/v1" ? "active" : ""}
-              onClick={() => { onLlmBaseChange("https://api.openai.com/v1"); onLlmModelChange(""); onLlmKeyChange(""); }}
-            >OpenAI 兼容</button>
-            <button
-              className={llmInputIsLocal ? "active" : ""}
-              onClick={() => { onLlmBaseChange("http://127.0.0.1:11434/v1"); onLlmModelChange(""); onLlmKeyChange(""); }}
-            >本机模型</button>
+            {PROVIDER_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                className={activePreset?.id === preset.id ? "active" : ""}
+                onClick={() => { onLlmBaseChange(preset.baseUrl); onLlmModelChange(preset.model); onLlmKeyChange(""); setModelOptions([]); }}
+              >{preset.label}</button>
+            ))}
+            <button className={!activePreset && llmBaseInput.trim() ? "active" : ""} onClick={() => { onLlmBaseChange(""); onLlmModelChange(""); onLlmKeyChange(""); setModelOptions([]); }}>自定义</button>
           </div>
           <div className="llm-profile-fields">
             <label>
@@ -150,10 +265,18 @@ export function SettingsModal({
             </label>
             <label>
               <span>模型名</span>
-              <input value={llmModelInput} onChange={(event) => onLlmModelChange(event.target.value)} placeholder="服务中实际可用的模型名" />
+              <input
+                value={llmModelInput}
+                onChange={(event) => onLlmModelChange(event.target.value)}
+                placeholder="服务中实际可用的模型名；可先「测试连接」查看"
+                list="llm-model-options"
+              />
+              <datalist id="llm-model-options">
+                {modelOptions.map((model) => <option key={model} value={model} />)}
+              </datalist>
             </label>
             <label>
-              <span>API Key <em>{llmInputIsLocal ? "本机服务可留空" : "只写入 macOS Keychain"}</em></span>
+              <span>API Key <em>{llmInputIsLocal ? "本机服务可留空" : "保存在本机配置文件，仅你的账户可读"}</em></span>
               <input
                 type="password"
                 value={llmKeyInput}
@@ -163,23 +286,78 @@ export function SettingsModal({
               />
             </label>
           </div>
+          <div className="llm-routing-fields">
+            <p>智能调度 <em>输入框选「自动」时，简短问答走快速模型，Build、带图或复杂任务走强力模型；留空则都用主模型。</em></p>
+            <label>
+              <span>快速模型</span>
+              <input value={llmFastInput} onChange={(event) => onLlmFastChange(event.target.value)} placeholder="可选，例如响应更快的小模型" list="llm-model-options" />
+            </label>
+            <label>
+              <span>强力模型</span>
+              <input value={llmStrongInput} onChange={(event) => onLlmStrongChange(event.target.value)} placeholder="可选，例如推理更强的大模型" list="llm-model-options" />
+            </label>
+          </div>
           <div className={`llm-model-capability ${(llmProfile?.contextWindow ?? 0) > 0 ? "known" : "unknown"}`}>
             <span>模型上下文</span>
             <strong>{(llmProfile?.contextWindow ?? 0) > 0 ? `${formatTokenCount(llmProfile?.contextWindow)} tokens` : "保存时自动检测"}</strong>
             <em>{contextWindowSourceLabel(llmProfile?.contextWindowSource)}</em>
           </div>
           <p className="llm-profile-note">远程服务必须使用 HTTPS；本机 HTTP 仅允许 127.0.0.1 / localhost。保存后只重启当前 runtime，其他后台项目在下次启动时采用新配置。</p>
+          {llmProfile?.configPath && (
+            <p className="llm-profile-note">配置文件：<code>{llmProfile.configPath}</code>（也可直接编辑，重启 Desktop 后生效）</p>
+          )}
           <div className="llm-profile-actions">
+            <LlmConnectionCheck baseUrl={llmBaseInput} apiKey={llmKeyInput} model={llmModelInput} onModels={setModelOptions} />
             {llmProfile?.configured && <button onClick={() => void onClearLlmProfile()} disabled={llmProfileBusy}>清除配置</button>}
             <button
               className="primary"
               onClick={() => void onSaveLlmProfile()}
-              disabled={llmProfileBusy || !llmBaseInput.trim() || !llmModelInput.trim() || (!llmInputIsLocal && !llmKeyInput.trim())}
+              disabled={llmProfileBusy || !llmBaseInput.trim() || !llmModelInput.trim() || (!llmInputIsLocal && !llmKeyInput.trim() && !(llmProfile?.configured && sameLlmBase(llmProfile.baseUrl, llmBaseInput)))}
             >{llmProfileBusy ? "正在应用…" : "保存并重启当前引擎"}</button>
           </div>
+          <ModelPicks profile={llmProfile} picks={modelPicks} onChange={onModelPicksChange} />
+          <CustomProviders profile={llmProfile} onProfile={onLlmProfileChange} onRestartRuntime={onRestartRuntime} />
         </section>
+        )}
 
-        {trustView && (
+        {section === "account" && (
+          <AccountPane
+            profile={llmProfile}
+            onProfile={onLlmProfileChange}
+            onRestartRuntime={onRestartRuntime}
+            onOpenModelSettings={() => setSection("model")}
+          />
+        )}
+        {section === "usage" && <UsagePane account={llmProfile?.account} />}
+        {section === "personalize" && <PersonalizePane />}
+        {section === "config" && <ConfigPane llmProfilePath={llmProfile?.configPath} />}
+
+        {section === "appearance" && (
+          <section className="appearance-card" aria-label="外观">
+            <div className="appearance-row">
+              <div>
+                <strong>主题</strong>
+                <span>界面配色；跟随系统时随 macOS 的浅色/深色自动切换</span>
+              </div>
+              <div className="segmented" role="radiogroup" aria-label="主题">
+                {THEME_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    role="radio"
+                    aria-checked={themePreference === option.value}
+                    className={themePreference === option.value ? "active" : ""}
+                    onClick={() => changeTheme(option.value)}
+                  >{option.label}</button>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {section === "trust" && !trustView && (
+          <p className="settings-intro">授权级别按项目保存；打开 Git 项目后可以在这里设置。</p>
+        )}
+        {section === "trust" && trustView && (
           <section className="trust-card" aria-label="授权级别">
             <div className="trust-head">
               <div>
@@ -205,6 +383,8 @@ export function SettingsModal({
           </section>
         )}
 
+        {section === "general" && (
+        <>
         <label>
           <span>{activeScope === "project" ? "Git 项目" : "可选项目"}</span>
           <div className="field-row">
@@ -238,8 +418,16 @@ export function SettingsModal({
           </div>
         )}
 
-        {children}
+        </>
+        )}
 
+        {section === "browser" && <BrowserPane onRestartRuntime={onRestartRuntime} />}
+        {section === "extensions" && (children || (
+          <p className="settings-intro">打开 Git 项目后，这里会显示该项目加载的规则、Skills、Hooks 与 MCP。</p>
+        ))}
+
+        {section === "general" && (
+        <>
         <details className="advanced-settings">
           <summary>高级连接设置</summary>
           <p>仅在连接手动启动的 `vc server` 或排查本地引擎时使用。</p>
@@ -273,6 +461,9 @@ export function SettingsModal({
               {connection === "connected" && <button onClick={onClose}>完成</button>}
             </>
           )}
+        </div>
+        </>
+        )}
         </div>
       </section>
     </div>

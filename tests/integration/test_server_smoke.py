@@ -66,16 +66,6 @@ CORE_OK = [
     "/api/health",
     "/api/health/quick",
     "/api/extensions/inspect",
-    "/api/skills",
-    "/api/agents/templates",
-    "/api/agents/custom",
-    "/api/agents/advanced",
-    "/api/context",
-    "/api/projects",
-    "/api/templates",
-    "/api/monitoring/metrics",
-    "/api/cache/stats",
-    "/api/cost/report",
 ]
 
 
@@ -90,6 +80,16 @@ def test_retired_execution_endpoints_gone(client):
     for path in ("/api/goal", "/api/start", "/api/reset", "/api/permissions", "/api/approvals"):
         r = client.post(path) if path in ("/api/goal", "/api/start", "/api/reset") else client.get(path)
         assert r.status_code in (404, 405), f"{path} 应已退役，实为 {r.status_code}"
+
+
+def test_unused_legacy_endpoints_gone(client):
+    """2026-10 聚焦内核：没有任何前端调用的旧端点已删除——必须 404（不是 500/退役桩）。"""
+    for path in ("/api/skills", "/api/agents/custom", "/api/agents/advanced", "/api/projects",
+                 "/api/templates", "/api/context", "/api/sandbox/list", "/api/cost/report",
+                 "/api/monitoring/metrics", "/api/cache/stats", "/api/git/status"):
+        assert client.get(path).status_code == 404, f"{path} 应已删除"
+    for path in ("/api/browser/navigate", "/api/editor/edit", "/api/testing/generate", "/api/git/commit"):
+        assert client.post(path).status_code == 404, f"{path} 应已删除"
 
 
 def test_root_serves_main_agent_console(client):

@@ -10,7 +10,7 @@ class CreateAgentRequest(BaseModel):
     system_prompt: str = ""
     capabilities: List[str] = []
     tools: List[str] = []
-    model: str = "mimo-v2.5"
+    model: str = "mimo-v2.6-pro"
 
 class ExecuteSkillRequest(BaseModel):
     skill_name: str
@@ -40,7 +40,7 @@ class CreateAdvancedAgentRequest(BaseModel):
     capabilities: List[str] = []
     tools: List[str] = []
     system_prompt: str = ""
-    model: str = "mimo-v2.5"
+    model: str = "mimo-v2.6-pro"
 
 # 代码编辑 API
 class EditRequest(BaseModel):

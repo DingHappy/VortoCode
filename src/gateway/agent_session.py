@@ -172,6 +172,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
                                   on_diff=on_diff)   # 确认前的结构化 diff 推送（AGENT_DIFF，端可不接）
         if workspace_scope == SCRATCH:
             tools.append(workspace_tool)  # Scratch 仍可声明需要用户真实项目，而不是猜路径
+    from src.agents.tools.browser import browser_control_enabled, build_browser_tools
+    if browser_control_enabled(kind):
+        # 浏览器操控：Desktop 设置里显式打开才有；点击/输入在任何授权档位下都过人（interact 类）。
+        tools += build_browser_tools(repo_root, gated_confirm)
     # 各端**永久**切 build 的真实方式。别让内核去猜，也别在系统提示里写死某一个端的键。
     _SWITCH_HINT = {"im": "回复 `/mode build`", "web": "点界面上的 plan/build 开关",
                     "cli": "重跑时加 `-b` 参数"}
@@ -192,6 +196,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         "【工作区范围】当前是 Scratch 隔离临时工作区。只在这里创建和运行临时代码；"
         "需要修改用户已有项目时调用 request_workspace(scope=project)，不要搜索或猜测其他目录。"
     ] if workspace_scope == SCRATCH else []
+    from src.agents.project import load_user_instructions
+    user_instructions = load_user_instructions()          # ~/.vortocode/AGENTS.md：所有范围都带
+    if user_instructions:
+        parts.append(user_instructions)
     if workspace_scope != GENERAL:
         proj = load_project_instructions(repo_root)        # AGENTS.md/CLAUDE.md 项目约定进系统提示
         if proj:

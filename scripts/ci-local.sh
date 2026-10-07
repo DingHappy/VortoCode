@@ -141,30 +141,18 @@ desktop_rust_gate() {
   return $status
 }
 
-# tauri.conf.json 声明了两个 gitignored 的构建产物，build script 在编译期都要校验存在：
-#   externalBin → binaries/vortocode-runtime-<triple>
-#   resources   → resources/THIRD_PARTY_NOTICES.txt
+# tauri.conf.json 的 resources 声明了两个 gitignored 的构建产物，build script 在编译期都要校验存在：
+#   binaries/runtime/                → 内置 runtime（PyInstaller onedir 目录）
+#   resources/THIRD_PARTY_NOTICES.txt
 # 缺任何一个 cargo 段都编不过。返回缺失项的说明，全齐则返回空串。
-# glob 无匹配时原样留下字面量、[ -f ] 自然为假，不需要 shopt/compgen（bash 3.2 也能跑）。
 #
-# **必须按本机 target triple 找**：build script 校验的是 `binaries/vortocode-runtime-<本机 triple>`，
-# 别的架构那份不算数。原来只要 glob 到任意一份就放行——2026-09-08 实测踩到：机器上留着一份
-# 7 月建的 x86_64 产物，而本机是 aarch64，于是检查放行、cargo 在编译期炸出
-# "resource path binaries/vortocode-runtime-aarch64-apple-darwin doesn't exist"。
-# 又是一个假红灯，正是上面注释里说"第一次没防住自己"的同一个坑的第二种形态。
+# 2026-10-07 起 runtime 从按 target triple 命名的 one-file（externalBin）换成固定目录：
+# 编译期只校验目录存在，不再有"留着别的架构那份就误放行"的坑（2026-09-08 踩过）；
+# 目录是不是本机架构由 sidecar:build 的清单比对负责。
 _desktop_build_inputs_missing() {
-  local triple candidate found=""
-  triple="$(rustc -vV 2>/dev/null | sed -n 's/^host: //p')"
-  if [ -n "$triple" ]; then
-    [ -f "desktop/src-tauri/binaries/vortocode-runtime-$triple" ] \
-      || { echo "binaries/vortocode-runtime-$triple"; return; }
-  else
-    # 没有 rustc 就问不出 triple；退回旧的"有任意一份即可"，后面 cargo 缺失那条会接住。
-    for candidate in desktop/src-tauri/binaries/vortocode-runtime-*; do
-      [ -f "$candidate" ] && found="yes"
-    done
-    [ -z "$found" ] && { echo "binaries/vortocode-runtime-<triple>"; return; }
-  fi
+  [ -f desktop/src-tauri/binaries/runtime/vortocode-runtime ] \
+    || [ -f desktop/src-tauri/binaries/runtime/vortocode-runtime.exe ] \
+    || { echo "binaries/runtime/vortocode-runtime"; return; }
   [ -f desktop/src-tauri/resources/THIRD_PARTY_NOTICES.txt ] \
     || { echo "resources/THIRD_PARTY_NOTICES.txt"; return; }
   echo ""
@@ -194,8 +182,8 @@ run_desktop_section() {
     run_gate "desktop · vitest（gateway 纯逻辑单测）" desktop_vitest_gate
   fi
 
-  # Tauri 的 build script 在**编译期**校验 tauri.conf.json 声明的 externalBin
-  # （binaries/vortocode-runtime-<triple>）真实存在，而 binaries/* 是 gitignored 的构建产物
+  # Tauri 的 build script 在**编译期**校验 tauri.conf.json 声明的 resources
+  # （binaries/runtime/ 内置 runtime 目录）真实存在，而 binaries/* 是 gitignored 的构建产物
   # ——只有 `npm run sidecar:build` 会生成它，那一步要联网拉 managed Python。
   # 所以任何全新 clone / git worktree 上 cargo 段都编不过。这是环境没备好，不是代码坏了，
   # 跟 node_modules 缺失同一类：**降级为跳过**，别报一个骗人的红灯。

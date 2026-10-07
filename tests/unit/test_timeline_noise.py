@@ -90,6 +90,20 @@ def test_every_builtin_tool_has_a_human_label(monkeypatch, tmp_path):
     assert not missing, f"这些内建工具还在用内部标识符当标题：{sorted(missing)}"
 
 
+def test_browser_tools_have_human_labels_when_enabled(monkeypatch, tmp_path):
+    """浏览器操控默认不装配，上一条契约扫不到它们；打开开关再过一遍。"""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VORTOCODE_DESKTOP_SIDECAR", "1")
+    monkeypatch.setenv("VORTOCODE_ENABLE_BROWSER_CONTROL", "1")
+    from src.web.routers.realtime import _new_agent
+
+    browser = [name for name in _new_agent().tools if name.startswith("browser_")]
+    assert len(browser) == 5, browser
+    assert all("_" not in _summary(name) for name in browser)
+    assert _summary("browser_open", {"url": "https://example.com/"}) == "浏览器打开 https://example.com/"
+    assert "secret" not in _summary("browser_type", {"ref": 3, "text": "secret"})
+
+
 def test_labels_carry_the_actual_target():
     assert _summary("read_file", {"path": "src/a.py"}) == "读取 src/a.py"
     assert _summary("run_command", {"command": "pytest -q"}) == "运行 pytest -q"

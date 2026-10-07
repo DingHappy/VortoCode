@@ -6,12 +6,15 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { RUNTIME_DIR_NAME, machOFiles, runtimeExecutableName, sha256Tree } from "./runtime-tree.mjs";
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tauriRoot = join(desktopRoot, "src-tauri");
@@ -29,6 +32,17 @@ const evidencePath = join(tauriRoot, "target", "release", "dev-signing-evidence.
 const sidecarEntitlementsPath = join(tauriRoot, "SidecarEntitlements.plist");
 const allowIdentityChange = process.env.VORTOCODE_ALLOW_SIGNING_IDENTITY_CHANGE === "1";
 const defaultDevelopmentIdentity = "VortoCode Development";
+// 设置后在签名完成后提交 Apple 公证并装订票据（xcrun notarytool store-credentials 存的 profile 名）。
+const notaryProfile = (process.env.VORTOCODE_NOTARY_PROFILE || "").trim();
+
+// 内置 runtime 是 onedir 目录，随 resources 放在 Contents/Resources/runtime/。
+function runtimeDirIn(app) {
+  return join(app, "Contents", "Resources", RUNTIME_DIR_NAME);
+}
+
+function runtimeExecutableIn(app) {
+  return join(runtimeDirIn(app), runtimeExecutableName());
+}
 
 function execute(command, args, options = {}) {
   const result = spawnSync(command, args, {
@@ -109,6 +123,12 @@ function selectIdentity() {
     }
     return match;
   }
+  // Prefer a single Developer ID Application identity over the local self-signed default.
+  // Keychain partition lists only match a stable "teamid:" for Apple-issued certificates;
+  // a self-signed certificate has no Team ID, so each rebuild gets a new cdhash partition
+  // and macOS asks for Keychain access again after every reinstall.
+  const developerIds = identities.filter((identity) => identity.name.startsWith("Developer ID Application:"));
+  if (developerIds.length === 1) return developerIds[0];
   const localDefault = identityNamed(defaultDevelopmentIdentity);
   if (localDefault) return localDefault;
   if (identities.length === 1) return identities[0];
@@ -198,12 +218,14 @@ function setupIdentity() {
 function signatureDetails(path) {
   if (!existsSync(path)) throw new Error(`App bundle is missing: ${path}`);
   const executable = join(path, "Contents", "MacOS", "vortocode-desktop");
-  const sidecar = join(path, "Contents", "MacOS", "vortocode-runtime");
+  const sidecar = runtimeExecutableIn(path);
   if (!existsSync(executable) || !existsSync(sidecar)) {
     throw new Error(`Signed bundle is missing the main executable or runtime sidecar: ${path}`);
   }
 
-  required("codesign", ["--verify", "--strict", "--verbose=2", sidecar]);
+  for (const binary of machOFiles(runtimeDirIn(path))) {
+    required("codesign", ["--verify", "--strict", "--verbose=2", binary]);
+  }
   required("codesign", ["--verify", "--deep", "--strict", "--verbose=2", path]);
   const appDetails = required("codesign", ["-dv", "--verbose=4", path]);
   const sidecarDetails = required("codesign", ["-dv", "--verbose=4", sidecar]);
@@ -233,30 +255,76 @@ function signatureDetails(path) {
     designatedRequirement,
     identifier,
     sidecarEntitlements: ["com.apple.security.cs.disable-library-validation"],
-    sidecarSha256: sha256(sidecar),
+    sidecarSha256: sha256Tree(runtimeDirIn(path)),
   };
 }
 
 function resignPyInstallerBundle(path, identity) {
-  const sidecar = join(path, "Contents", "MacOS", "vortocode-runtime");
+  const sidecar = runtimeExecutableIn(path);
   if (!existsSync(sidecarEntitlementsPath)) {
     throw new Error(`Sidecar entitlements file is missing: ${sidecarEntitlementsPath}`);
   }
-  // Tauri signs externalBin with Hardened Runtime, but a PyInstaller one-file
-  // executable later maps its extracted, pinned libpython dylib. Apply the one
-  // narrow exception to that executable, then reseal the outer bundle without
-  // broadening the WebView host's entitlements.
+  // Tauri copies resources without signing them. Sign every Mach-O in the
+  // onedir runtime (libpython, extension modules) with Hardened Runtime, give
+  // the runtime executable its one narrow library-validation exception, then
+  // reseal the outer bundle without broadening the WebView host's entitlements.
+  // 公证要求安全时间戳；只有 Apple 签发的证书能拿到，本地自签身份不加。
+  const timestamp = identity.name.startsWith("Developer ID Application:") ? ["--timestamp"] : [];
+  for (const binary of machOFiles(runtimeDirIn(path)).filter((binary) => binary !== sidecar)) {
+    required("codesign", ["--force", "--options", "runtime", ...timestamp, "--sign", identity.name, binary]);
+  }
   required("codesign", [
-    "--force", "--options", "runtime",
+    "--force", "--options", "runtime", ...timestamp,
     "--entitlements", sidecarEntitlementsPath,
     "--sign", identity.name,
     sidecar,
   ]);
   required("codesign", [
-    "--force", "--options", "runtime",
+    "--force", "--options", "runtime", ...timestamp,
     "--sign", identity.name,
     path,
   ]);
+}
+
+// Tauri 自己的公证发生在我们重签之前，重签后就失效了；所以在全部签名完成后再提交。
+function notarize(path, identity) {
+  if (!identity.name.startsWith("Developer ID Application:")) {
+    throw new Error("Notarization requires a Developer ID Application identity");
+  }
+  const work = mkdtempSync(join(tmpdir(), "vortocode-notary-"));
+  const archive = join(work, "VortoCode.zip");
+  try {
+    required("ditto", ["-c", "-k", "--keepParent", path, archive]);
+    console.log(`Submitting ${path} for notarization (profile ${notaryProfile}); this usually takes a few minutes...`);
+    const submitted = execute("xcrun", [
+      "notarytool", "submit", archive,
+      "--keychain-profile", notaryProfile,
+      "--wait", "--output-format", "json",
+    ]);
+    let result = {};
+    try {
+      result = JSON.parse(submitted.stdout || "{}");
+    } catch {
+      // 非 JSON 输出（例如网络错误）落到下面的失败分支。
+    }
+    if (result.status !== "Accepted") {
+      const log = result.id
+        ? execute("xcrun", ["notarytool", "log", result.id, "--keychain-profile", notaryProfile]).stdout
+        : "";
+      throw new Error([
+        `Notarization failed: ${result.status || "no result"}${result.id ? ` (submission ${result.id})` : ""}`,
+        `${submitted.stdout || ""}${submitted.stderr || ""}`.trim(),
+        log.trim(),
+      ].filter(Boolean).join("\n"));
+    }
+    console.log(`Notarization accepted (submission ${result.id})`);
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+  required("xcrun", ["stapler", "staple", path]);
+  required("xcrun", ["stapler", "validate", path]);
+  required("spctl", ["--assess", "--type", "execute", "--verbose=4", path]);
+  console.log("Stapled notarization ticket; Gatekeeper accepts the app");
 }
 
 function existingSignatureDetails(path) {
@@ -330,6 +398,7 @@ function buildSigned() {
   });
   resignPyInstallerBundle(appPath, identity);
   const signature = signatureDetails(appPath);
+  if (notaryProfile) notarize(appPath, identity);
   if (baseline?.identity?.hash && baseline.identity.hash !== identity.hash && !allowIdentityChange) {
     throw new Error("The selected signing certificate differs from the previous signed development build");
   }
@@ -343,7 +412,13 @@ function buildSigned() {
 
 function installSigned() {
   const signature = buildSigned();
-  required("ditto", [appPath, installedAppPath], { stdio: "inherit" });
+  // ditto 会把新包**合并**进已有目录，旧版留下的文件（例如 one-file 时代的
+  // Contents/MacOS/vortocode-runtime）会破坏签名封装。先复制到同卷的临时位置，再整体替换。
+  const staging = `${installedAppPath}.installing-${process.pid}`;
+  rmSync(staging, { recursive: true, force: true });
+  required("ditto", [appPath, staging], { stdio: "inherit" });
+  rmSync(installedAppPath, { recursive: true, force: true });
+  renameSync(staging, installedAppPath);
   const installed = signatureDetails(installedAppPath);
   assertStableRequirement(signature, installed, "Installed application");
   if (signature.appSha256 !== installed.appSha256 || signature.sidecarSha256 !== installed.sidecarSha256) {
@@ -352,7 +427,7 @@ function installSigned() {
   required("npm", ["run", "sidecar:smoke"], {
     env: {
       ...process.env,
-      VORTOCODE_RUNTIME_BIN: join(installedAppPath, "Contents", "MacOS", "vortocode-runtime"),
+      VORTOCODE_RUNTIME_BIN: runtimeExecutableIn(installedAppPath),
     },
     stdio: "inherit",
   });

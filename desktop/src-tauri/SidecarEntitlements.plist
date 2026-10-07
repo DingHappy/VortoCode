@@ -2,8 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <!-- PyInstaller one-file extracts its pinned CPython dylib before launch. Keep
-       this runtime exception on the sidecar only; the WebView host does not need it. -->
+  <!-- The onedir runtime loads its pinned CPython dylib and extension modules from
+       Resources/runtime/_internal. A local self-signed identity has no Team ID, so
+       library validation would reject them. Keep this exception on the runtime
+       executable only; the WebView host does not need it. -->
   <key>com.apple.security.cs.disable-library-validation</key>
   <true/>
 </dict>

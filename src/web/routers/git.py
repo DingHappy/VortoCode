@@ -3,26 +3,8 @@ import asyncio
 import os
 
 from fastapi import APIRouter, HTTPException
-from src.web.state import state
 
 router = APIRouter()
-
-# Git 相关 API
-@router.get("/api/git/status")
-async def get_git_status():
-    """获取 Git 状态"""
-    return await state.git.get_status()
-
-@router.get("/api/git/diff")
-async def get_git_diff(staged: bool = False):
-    """获取差异"""
-    return await state.git.get_diff(staged)
-
-@router.get("/api/git/log")
-async def get_git_log(count: int = 10):
-    """获取提交日志"""
-    return await state.git.get_log(count)
-
 
 @router.get("/api/git/delivery")
 async def git_delivery_snapshot():
@@ -42,12 +24,6 @@ async def git_delivery_check_log(check_id: str):
         return await asyncio.to_thread(current_failed_check_log, os.getcwd(), check_id)
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-
-@router.post("/api/git/commit")
-async def git_commit(message: str):
-    """提交更改"""
-    return await state.git.commit(message)
-
 
 @router.get("/api/git/review")
 async def git_review_snapshot():

@@ -3,16 +3,25 @@ import { isPermissionGranted, requestPermission, sendNotification } from "@tauri
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowUp,
-  CircleAlert,
-  CircleCheck,
+  ChevronDown,
+  Cpu,
+  Search,
+  ShieldCheck,
+  Folder,
   FileText,
   FolderPlus,
-  Inbox,
+  LoaderCircle,
+  Music,
+  Package,
   PanelRight,
+  Puzzle,
+  Paperclip,
   PencilLine,
   Plus,
   Settings2,
+  SquarePen,
   Trash2,
+  UserRound,
   X,
 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -25,8 +34,6 @@ import {
   normalizeLocalBaseUrl,
 } from "./gateway";
 import type {
-  ArtifactMeta,
-  ArtifactVersionSnapshot,
   AuditEntry,
   CommandRunItem,
   CommandRunKind,
@@ -35,49 +42,30 @@ import type {
   ConversationMessage,
   DecisionItem,
   DesktopProjectProfile,
-  DesktopLlmProfileStatus,
   DiffPayload,
-  ExtensionsInspectSnapshot,
   GatewayProcessStatus,
   GatewayRecoveryRecord,
-  GitReviewAction,
-  GitReviewComment,
-  GitReviewDiff,
-  GitReviewFile,
-  GitReviewHunk,
-  GitReviewScope,
-  GitReviewSnapshot,
-  GoalCriterion,
   GoalItem,
-  HookConfigStatus,
   JournalNextAction,
-  IsolatedDelivery,
-  IsolatedDeliverySnapshot,
-  IsolatedDeliveryDiff,
   NoticeItem,
   OpenWorkspaceFileResult,
   PendingConfirmation,
-  PendingGitComment,
   PlanItem,
   PromptQueueItem,
   ProtocolEvent,
   PrDeliveryCheck,
-  PrDeliveryCheckLog,
-  PrDeliverySnapshot,
-  RepoMemorySnapshot,
   RuntimeSnapshot,
-  RuntimeInboxSnapshot,
+  DesktopRuntimeInbox,
   SessionSummary,
   SourceSelection,
   TaskItem,
-  TaskBranchReviewDiff,
-  TaskBranchReviewSnapshot,
   TurnActivity,
   WorkspaceFileContent,
   WorkspaceFileList,
   WorkspaceScope,
   TrustLevel,
-  TrustStatus,
+  DesktopLlmProfileStatus,
+  ProjectSessionSummary,
 } from "./types";
 import { DecisionsPanel } from "./components/DecisionsPanel";
 import { SessionConnection } from "./connection/sessionConnection";
@@ -93,77 +81,50 @@ import { JournalCard } from "./components/JournalCard";
 import { MarkdownMessage } from "./components/MarkdownMessage";
 import { ProjectAssetsPanel } from "./components/ProjectAssetsPanel";
 import { RunsPanel } from "./components/RunsPanel";
-import { SettingsModal } from "./components/SettingsModal";
+import { RuntimeInboxPanel } from "./components/RuntimeInboxPanel";
+import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
+import { ArtifactCenter } from "./components/ArtifactCenter";
+import { PluginsPage } from "./components/PluginsPage";
+import { ProjectPicker } from "./components/ProjectPicker";
 import { TurnTimeline } from "./components/TurnTimeline";
-import { WelcomeGuide } from "./components/WelcomeGuide";
+import { useChangeReview } from "./hooks/useChangeReview";
+import { useExtensionsStatus } from "./hooks/useExtensionsStatus";
+import { useGoals } from "./hooks/useGoals";
+import { useIsolatedDeliveries } from "./hooks/useIsolatedDeliveries";
+import { useProjectAssets } from "./hooks/useProjectAssets";
+import { useTrustLevel } from "./hooks/useTrustLevel";
 import { useJournal } from "./hooks/useJournal";
+import { useLlmProfile } from "./hooks/useLlmProfile";
 import {
-  FIRST_DELIVERY_PROMPT,
-  PROJECT_BRIEF_PROMPT,
   isPlanExecutionConfirmation,
   isPlanBudgetConfirmation,
 } from "./lib/onboarding";
-import {
-  compactSessionCwd,
-  formatRelativeTime,
-  sessionContextPresentation,
-  shouldShowContextChip,
-  sessionContextTone,
-  sessionStatusLabel,
-  statusLabel,
-} from "./lib/labels";
-import { criterionVerifierDraft, goalEvidenceKey, goalFormLines } from "./lib/goals";
-import type { GoalVerifierDraft } from "./lib/goals";
+import { sessionStatusLabel, statusLabel } from "./lib/labels";
 import { autoFocusDecision, type InspectorTab } from "./lib/inspector";
 import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey, projectToRestore,
   STORAGE_KEYS } from "./lib/storage";
 import { normalizeEditorText, serializeEditorText } from "./lib/text";
 import { localDay } from "./lib/time";
 import { finishRunningActivities, hydrateActivities, protocolActivity, upsertActivity } from "./protocol/activities";
-import { isProtectedBranch } from "./lib/branches";
 import { errorText } from "./lib/errorText";
-import { runtimeInboxSubtitle, summarizeRuntimeInboxes } from "./lib/runtimeInbox";
+import { summarizeRuntimeInboxes } from "./lib/runtimeInbox";
+import { confirmAction } from "./lib/confirm";
+import { composeMessageText, mediaPayload } from "./lib/attachments";
+import { useAttachments } from "./hooks/useAttachments";
+import { latestTurnSteps, previewReferences, publishedArtifactId, type PreviewView } from "./lib/preview";
+import { PreviewPanel } from "./components/PreviewPanel";
+import { useDelayedFlag } from "./hooks/useDelayedFlag";
+import { loadModelChoice, loadModelPicks, modelChoices, persistModelChoice, persistModelPicks, resolveModelChoice } from "./lib/modelChoice";
 
 
 type PendingWorkspaceSave = { rid: string; path: string; content: string; buffer: string };
 type RuntimeConnectionOptions = { baseUrl?: string; repoRoot?: string; token?: string; scope?: WorkspaceScope };
 type StartWorkspaceOptions = RuntimeConnectionOptions & { baseUrl: string; sid: string; announce?: boolean; workspaceId?: string };
 type WorkspaceRequest = { scope: Exclude<WorkspaceScope, "general">; reason: string; task: string };
-type DesktopRuntimeInbox = {
-  runtimeId: string;
-  projectId?: string;
-  workspaceId?: string;
-  scope: WorkspaceScope;
-  label: string;
-  repoRoot?: string;
-  baseUrl: string;
-  snapshot: RuntimeInboxSnapshot | null;
-  error: string;
-  checkedAt: number;
-};
 const EMPTY_PROCESS: GatewayProcessStatus = {
   running: false,
   message: "本地引擎尚未启动",
 };
-
-function secureArtifactDocument(content: string): string {
-  const parsed = new DOMParser().parseFromString(content, "text/html");
-  parsed.querySelectorAll('meta[http-equiv="refresh"], base').forEach((node) => node.remove());
-  const policy = parsed.createElement("meta");
-  policy.httpEquiv = "Content-Security-Policy";
-  policy.content = [
-    "default-src 'none'",
-    "img-src data: blob:",
-    "media-src data: blob:",
-    "style-src 'unsafe-inline'",
-    "script-src 'none'",
-    "font-src data:",
-    "form-action 'none'",
-    "base-uri 'none'",
-  ].join("; ");
-  parsed.head.prepend(policy);
-  return `<!doctype html>${parsed.documentElement.outerHTML}`;
-}
 
 function messageId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -184,9 +145,16 @@ function normalizePromptQueueItem(value: unknown, fallbackPosition = 0): PromptQ
   };
 }
 
+const TRUST_CHIP_LABEL: Record<TrustLevel, string> = {
+  ask: "每次都问我",
+  reads: "只读自动",
+  full: "完全信任",
+};
+
 function inspectorTabLabel(tab: InspectorTab): string {
   return {
     inbox: "收件箱",
+    preview: "预览",
     files: "代码",
     diff: "变更",
     runs: "运行",
@@ -207,12 +175,6 @@ function contextItemLabel(item: ContextItem): string {
     : item.path;
 }
 
-const TRUST_LEVEL_TEXT: Record<TrustLevel, string> = {
-  ask: "每次确认",
-  reads: "只读免确认",
-  full: "完全信任",
-};
-
 function App() {
   const clientRef = useRef<GatewayClient | null>(null);
   const sessionConnectionRef = useRef<SessionConnection<GatewayClient> | null>(null);
@@ -232,8 +194,6 @@ function App() {
   const runtimeTokensRef = useRef<Map<string, string>>(new Map());
   const runtimeInboxSourcesRef = useRef<Array<Omit<DesktopRuntimeInbox, "snapshot" | "error" | "checkedAt">>>([]);
   const projectSwitchingRef = useRef(false);
-  const artifactPreviewGenerationRef = useRef(0);
-  const gitReviewRefreshGenerationRef = useRef(0);
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(true);
   const activeTurnRidRef = useRef<string | null>(null);
@@ -253,21 +213,36 @@ function App() {
   const runtimeEverReachableRef = useRef<Set<string>>(new Set());
   const [recoveryRecord, setRecoveryRecord] = useState<GatewayRecoveryRecord | null>(null);
   const [runtimeStarting, setRuntimeStarting] = useState(false);
+  // 冷启动的初始化流程还没走完：这期间首页按「正在启动」处理，不先闪一下「有什么可以帮你？」。
+  const [booting, setBooting] = useState(true);
+  const homeStarting = connection !== "connected" && (booting || runtimeStarting || connection === "connecting");
+  const showHomeStarting = useDelayedFlag(homeStarting, 400);
   const [projects, setProjects] = useState<DesktopProjectProfile[]>([]);
   const [projectSwitching, setProjectSwitching] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [llmProfile, setLlmProfile] = useState<DesktopLlmProfileStatus | null>(null);
-  const [llmBaseInput, setLlmBaseInput] = useState("https://token.vortotech.com/v1");
-  const [llmModelInput, setLlmModelInput] = useState("mimo-v2.5");
-  const [llmKeyInput, setLlmKeyInput] = useState("");
-  const [llmProfileBusy, setLlmProfileBusy] = useState(false);
-  const [trust, setTrust] = useState<TrustStatus | null>(null);
-  const [trustBusy, setTrustBusy] = useState(false);
 
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [plan, setPlan] = useState<PlanItem[]>([]);
   const [activities, setActivities] = useState<TurnActivity[]>([]);
+  const [previewView, setPreviewView] = useState<PreviewView>("plan");
+  // 主区域：对话，或侧边栏打开的「插件」「产物中心」页面。切换会话时回到对话。
+  const [mainView, setMainView] = useState<"chat" | "plugins" | "artifacts">("chat");
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined);
+  const [projectsOpen, setProjectsOpen] = useState(true);
+  const [projectSessions, setProjectSessions] = useState<ProjectSessionSummary[]>([]);
+  const [sidebarSearchOpen, setSidebarSearchOpen] = useState(false);
+  const [sidebarQuery, setSidebarQuery] = useState("");
+  // 当前工作区的会话有变化（新开、发了消息）时，顺带刷新各项目下列出的最近会话。
+  const sessionsSignature = sessions.map((item) => `${item.sid}:${item.messages}`).join("|");
+  useEffect(() => {
+    void invoke<ProjectSessionSummary[]>("list_project_sessions").then(setProjectSessions).catch(() => undefined);
+  }, [sessionsSignature]);
+  const [recentOpen, setRecentOpen] = useState(true);
+  // 刚发布的制品：协议回调里只记下来，由 effect 带着当前作用域去刷新并定位（避免回调闭包里的旧 scope）。
+  const [publishedArtifact, setPublishedArtifact] = useState<{ id: string; seq: number } | null>(null);
+  const previewReferenceItems = useMemo(() => previewReferences(activities), [activities]);
+  const previewSteps = useMemo(() => latestTurnSteps(activities), [activities]);
   const [streaming, setStreaming] = useState("");
   const [streamingRid, setStreamingRid] = useState<string | undefined>();
   const [activeTurnRid, setActiveTurnRid] = useState<string | null>(null);
@@ -277,7 +252,9 @@ function App() {
   }, []);
   const [busy, setBusy] = useState(false);
   const [promptQueue, setPromptQueue] = useState<PromptQueueItem[]>([]);
-  const [mode, setMode] = useState<"plan" | "build">("plan");
+  // 不再区分 Plan / Build：每轮都按可修改的模式运行，写盘、执行、外发照旧逐次过确认门
+  //（授权档位决定问不问，污点回合一律问人）。只读规划交给模型自己判断，不再让用户先选模式。
+  const mode = "build" as const;
   const [prompt, setPrompt] = useState("");
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmation | null>(null);
   const [workspaceRequest, setWorkspaceRequest] = useState<WorkspaceRequest | null>(null);
@@ -327,80 +304,34 @@ function App() {
     tabsNeedingAttention.has(tab) ? "attention" : "",
   ].filter(Boolean).join(" "), [inspectorTab, tabsNeedingAttention]);
   const [diffPayload, setDiffPayload] = useState<DiffPayload | null>(null);
-  const [isolatedDeliveries, setIsolatedDeliveries] = useState<IsolatedDelivery[]>([]);
-  const [isolatedDelivery, setIsolatedDelivery] = useState<IsolatedDeliverySnapshot | null>(null);
-  const [isolatedDeliveryDiff, setIsolatedDeliveryDiff] = useState<IsolatedDeliveryDiff | null>(null);
-  const [isolatedDeliveryPath, setIsolatedDeliveryPath] = useState("");
-  const [isolatedDeliveryError, setIsolatedDeliveryError] = useState("");
-  const [isolatedDeliveryLoading, setIsolatedDeliveryLoading] = useState(false);
-  const isolatedDeliveryRequestRef = useRef(0);
-  const [gitReview, setGitReview] = useState<GitReviewSnapshot | null>(null);
-  const [gitReviewDiff, setGitReviewDiff] = useState<GitReviewDiff | null>(null);
-  const [gitSelectedPath, setGitSelectedPath] = useState("");
-  const [gitReviewScope, setGitReviewScope] = useState<GitReviewScope>("working");
-  const [gitReviewLoading, setGitReviewLoading] = useState(false);
-  const [gitReviewError, setGitReviewError] = useState("");
-  const [gitReviewRevision, setGitReviewRevision] = useState<{
-    baseline: string;
-    files: number;
-    reason: string;
-    receivedAt: number;
-  } | null>(null);
-  const [gitActionBusy, setGitActionBusy] = useState(false);
-  const [taskReviewTask, setTaskReviewTask] = useState<TaskItem | null>(null);
-  const [taskBranchReview, setTaskBranchReview] = useState<TaskBranchReviewSnapshot | null>(null);
-  const [taskBranchDiff, setTaskBranchDiff] = useState<TaskBranchReviewDiff | null>(null);
-  const [taskBranchSelectedPath, setTaskBranchSelectedPath] = useState("");
-  const [taskReviewVerifying, setTaskReviewVerifying] = useState(false);
-  const [gitComments, setGitComments] = useState<GitReviewComment[]>([]);
-  const [pendingGitComment, setPendingGitComment] = useState<PendingGitComment | null>(null);
-  const [gitCommentDraft, setGitCommentDraft] = useState("");
-  const [gitCommentSaving, setGitCommentSaving] = useState(false);
-  const [gitCommitMessage, setGitCommitMessage] = useState("");
-  const [gitPrTitle, setGitPrTitle] = useState("");
-  const [gitPrBase, setGitPrBase] = useState("main");
-  const [gitDeliveryBusy, setGitDeliveryBusy] = useState(false);
-  const [prDelivery, setPrDelivery] = useState<PrDeliverySnapshot | null>(null);
-  const [prDeliveryLoading, setPrDeliveryLoading] = useState(false);
-  const [prCheckLogs, setPrCheckLogs] = useState<Record<string, PrDeliveryCheckLog>>({});
+  // 对话式隔离交付的审查视图已收进 useIsolatedDeliveries（hooks/useIsolatedDeliveries.ts）。
+  const {
+    isolatedDeliveries, isolatedDelivery, isolatedDeliveryDiff, isolatedDeliveryPath,
+    isolatedDeliveryError, isolatedDeliveryLoading,
+    refreshIsolatedDeliveries, openIsolatedDelivery, loadIsolatedDeliveryDiff, resetIsolatedDeliveries,
+  } = useIsolatedDeliveries(clientRef);
   const [runs, setRuns] = useState<CommandRunItem[]>([]);
-  const [goals, setGoals] = useState<GoalItem[]>([]);
   const [notices, setNotices] = useState<NoticeItem[]>([]);
-  const [hookStatus, setHookStatus] = useState<HookConfigStatus | null>(null);
-  const [hookTrustBusy, setHookTrustBusy] = useState(false);
-  const [extensionsInspect, setExtensionsInspect] = useState<ExtensionsInspectSnapshot | null>(null);
-  const [extensionsInspectBusy, setExtensionsInspectBusy] = useState(false);
-  // extensionsInspectFilter（类型筛选 tab）是纯本地 UI 态，已下移到 <ExtensionsInspector> 自持。
+  // Hook 信任 + 扩展清单已收进 useExtensionsStatus；跨域的 toggleHookTrust 留在 App。
+  const {
+    hookStatus, setHookStatus, hookTrustBusy, setHookTrustBusy,
+    extensionsInspect, extensionsInspectBusy,
+    refreshHookStatus, refreshExtensionsInspect,
+  } = useExtensionsStatus(clientRef);
   const [decisions, setDecisions] = useState<DecisionItem[]>([]);
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
   // auditFilter（审计类别筛选）是纯本地 UI 态，已下移到 <DecisionsPanel> 自持。
   // journal 域 8 个 state + 全部读写回调已收进 useJournal（hook 试点，hooks/useJournal.ts）；
   // 实例在 banner 声明之后挂载——保存快照/添加记录的结果提示要注入 setBanner。
-  const [projectAssetView, setProjectAssetView] = useState<"memory" | "artifacts">("memory");
-  const [repoMemory, setRepoMemory] = useState<RepoMemorySnapshot | null>(null);
-  const [repoMemoryDraft, setRepoMemoryDraft] = useState("");
-  const [projectAssetsLoading, setProjectAssetsLoading] = useState(false);
-  const [projectAssetsError, setProjectAssetsError] = useState("");
-  const [artifacts, setArtifacts] = useState<ArtifactMeta[]>([]);
-  const [selectedArtifactId, setSelectedArtifactId] = useState("");
-  const [artifactVersions, setArtifactVersions] = useState<ArtifactVersionSnapshot | null>(null);
-  const [artifactVersion, setArtifactVersion] = useState<number | null>(null);
-  const [artifactHtml, setArtifactHtml] = useState("");
-  const [artifactPreviewLoading, setArtifactPreviewLoading] = useState(false);
   const [notificationsEnabled, setNotificationsEnabled] = useState(
     () => localStorage.getItem(STORAGE_KEYS.notificationsEnabled) === "true",
   );
   const [notificationSyncVersion, setNotificationSyncVersion] = useState(0);
   const [backgroundPrompt, setBackgroundPrompt] = useState("");
-  const [goalObjective, setGoalObjective] = useState("");
-  const [goalCriteria, setGoalCriteria] = useState("");
-  const [goalConstraints, setGoalConstraints] = useState("");
-  const [goalNonGoals, setGoalNonGoals] = useState("");
-  const [goalEvidenceDrafts, setGoalEvidenceDrafts] = useState<Record<string, string>>({});
-  const [goalVerifierDrafts, setGoalVerifierDrafts] = useState<Record<string, GoalVerifierDraft>>({});
-  const [editingGoalId, setEditingGoalId] = useState<string | null>(null);
-  const [goalSubmitting, setGoalSubmitting] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
+  const { attachments, setAttachments, addFiles, removeAttachment } = useAttachments(setBanner);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
   const { tasks, focusedTaskId, worktreeWorkspace, setFocusedTaskId, refreshTasks,
     refreshWorktrees, resetTasks, upsertTask, acceptTaskEvent, captureTaskScope, cancelTask, pauseTask,
     resumeTask } = useTasks(clientRef, setBanner);
@@ -424,6 +355,58 @@ function App() {
     addJournalNote,
     resetJournal,
   } = useJournal(clientRef, setBanner);
+  // goal 域状态与只写自身的回调已收进 useGoals（hooks/useGoals.ts）；跨域的 runGoal /
+  // runGoalVerifiers / adoptRunEvidence 留在 App。
+  const {
+    goals, setGoals, refreshGoals,
+    goalObjective, setGoalObjective, goalCriteria, setGoalCriteria,
+    goalConstraints, setGoalConstraints, goalNonGoals, setGoalNonGoals,
+    goalEvidenceDrafts, setGoalEvidenceDrafts, goalVerifierDrafts, setGoalVerifierDrafts,
+    editingGoalId, goalSubmitting, setGoalSubmitting,
+    resetGoalForm, saveGoalDraft, editGoalDraft, deleteGoalDraft, recordGoalEvidence, saveGoalVerifier,
+  } = useGoals(clientRef, setBanner, () => openInspector("goals"));
+  // 仓库记忆 + 制品预览已收进 useProjectAssets；跨域的 addRepoMemoryFact /
+  // attachSelectedArtifact / openSelectedArtifact 与按连接加载预览的 effect 留在 App。
+  const {
+    projectAssetView, setProjectAssetView, repoMemory, setRepoMemory, repoMemoryDraft, setRepoMemoryDraft,
+    projectAssetsLoading, setProjectAssetsLoading, projectAssetsError, setProjectAssetsError,
+    artifacts, selectedArtifactId, setSelectedArtifactId, selectedArtifact,
+    artifactVersions, artifactVersion, artifactPreviewLoading, securedArtifactHtml,
+    refreshProjectAssets, loadArtifactPreview, resetProjectAssets,
+  } = useProjectAssets(clientRef);
+  // 授权档位与模型服务配置已收进 useTrustLevel / useLlmProfile；重启 runtime 经注入回调。
+  const { trust, trustBusy, changeTrustLevel } = useTrustLevel(clientRef, connection, repoRoot, settingsOpen, setBanner);
+  const {
+    llmProfile, applyLlmProfile, llmProfileChecked, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput,
+    llmFastInput, setLlmFastInput, llmStrongInput, setLlmStrongInput,
+    llmKeyInput, setLlmKeyInput, llmProfileBusy, saveLlmProfile, clearLlmProfile,
+  } = useLlmProfile(settingsOpen, setBanner, () => restartCurrentRuntimeForLlmProfile());
+  const [savedModelChoice, setSavedModelChoice] = useState<string | null>(() => loadModelChoice());
+  const [modelPicks, setModelPicks] = useState<string[] | null>(() => loadModelPicks());
+  const changeModelPicks = useCallback((picks: string[] | null) => {
+    setModelPicks(picks);
+    persistModelPicks(picks);
+  }, []);
+  const composerModelChoices = useMemo(() => modelChoices(llmProfile, modelPicks), [llmProfile, modelPicks]);
+  const modelChoice = resolveModelChoice(savedModelChoice, composerModelChoices);
+  // 「变更」面板域（Git 审查 / 任务分支审查 / 评论 / PR 交付）已收进 useChangeReview；
+  // 发给 Agent 的两个回调与协议事件对 setGitReviewRevision 的写入留在 App。
+  const {
+    gitReview, gitReviewDiff, gitSelectedPath, gitReviewScope, gitReviewLoading, gitReviewError,
+    gitReviewRevision, setGitReviewRevision, gitActionBusy, taskReviewTask, setTaskReviewTask,
+    taskBranchReview, setTaskBranchReview, taskBranchDiff, setTaskBranchDiff,
+    taskBranchSelectedPath, setTaskBranchSelectedPath, taskReviewVerifying, gitComments,
+    setGitComments, pendingGitComment, setPendingGitComment, gitCommentDraft, setGitCommentDraft,
+    gitCommentSaving, gitCommitMessage, setGitCommitMessage, gitPrTitle, setGitPrTitle, gitPrBase,
+    setGitPrBase, gitDeliveryBusy, prDelivery, prDeliveryLoading, prCheckLogs, openGitComments,
+    sentGitComments, refreshGitReview, refreshPrDelivery, loadTaskBranchReviewDiff,
+    openTaskBranchReview, closeTaskBranchReview, applyTaskBranchAction, verifyReviewedTaskBranch,
+    openGitReviewFile, applyGitAction, startGitComment, addGitComment, updateGitCommentStatus,
+    deleteGitComment, loadPrCheckLog, commitGitReview, openGitReviewPr, resetChangeReview,
+  } = useChangeReview(clientRef, setBanner, () => openInspector("diff"), async () => {
+    await refreshTasks();
+    await refreshWorktrees();
+  });
   const [workspaceFiles, setWorkspaceFiles] = useState<string[]>([]);
   const [workspaceRoot, setWorkspaceRoot] = useState("");
   const [workspaceTruncated, setWorkspaceTruncated] = useState(false);
@@ -440,12 +423,9 @@ function App() {
   const [savingFile, setSavingFile] = useState(false);
 
   const currentSession = sessions.find((session) => session.sid === activeSid);
-  const selectedArtifact = artifacts.find((artifact) => artifact.id === selectedArtifactId) ?? null;
-  const securedArtifactHtml = useMemo(
-    () => artifactHtml ? secureArtifactDocument(artifactHtml) : "",
-    [artifactHtml],
-  );
   const activeScope: WorkspaceScope = runtime.scope ?? processStatus.scope ?? (repoRoot.trim() ? "project" : "general");
+  // 切换会话或工作区时回到对话视图。
+  useEffect(() => { setMainView("chat"); }, [activeSid, activeScope]);
   // llmInputIsLocal 派生只服务设置弹窗，已随 <SettingsModal> 搬入组件内计算。
   const connectionText = {
     disconnected: "未启动",
@@ -472,14 +452,6 @@ function App() {
     previewContextItem && contextItems.some((item) => contextItemKey(item) === contextItemKey(previewContextItem)),
   );
   // selectedGitFile 与 displayedGit* 族派生只服务「变更」面板，已随 <GitReviewPanel> 搬入组件内计算。
-  const openGitComments = useMemo(
-    () => gitComments.filter((comment) => comment.status === "open"),
-    [gitComments],
-  );
-  const sentGitComments = useMemo(
-    () => gitComments.filter((comment) => comment.status === "sent"),
-    [gitComments],
-  );
   const decisionItems = useMemo<DecisionItem[]>(() => {
     const remote: DecisionItem[] = [];
     for (const session of sessions) {
@@ -644,175 +616,6 @@ function App() {
     }
   }, []);
 
-  const loadGitReviewDiff = useCallback(async (path: string, scope: GitReviewScope) => {
-    const client = clientRef.current;
-    if (!client || !path) {
-      setGitReviewDiff(null);
-      return;
-    }
-    const generation = ++gitReviewRefreshGenerationRef.current;
-    setGitReviewLoading(true);
-    setGitReviewError("");
-    setTaskReviewTask(null);
-    setTaskBranchReview(null);
-    setTaskBranchDiff(null);
-    setTaskBranchSelectedPath("");
-    setTaskReviewVerifying(false);
-    try {
-      const diff = await client.getGitReviewDiff(path, scope);
-      if (generation === gitReviewRefreshGenerationRef.current) setGitReviewDiff(diff);
-    } catch (error) {
-      if (generation === gitReviewRefreshGenerationRef.current) {
-        setGitReviewDiff(null);
-        setGitReviewError(errorText(error, "读取 Git diff 失败"));
-      }
-    } finally {
-      if (generation === gitReviewRefreshGenerationRef.current) setGitReviewLoading(false);
-    }
-  }, []);
-
-  const refreshGitReview = useCallback(async (
-    preferredPath = gitSelectedPath,
-    preferredScope = gitReviewScope,
-  ) => {
-    const client = clientRef.current;
-    if (!client) return;
-    const generation = ++gitReviewRefreshGenerationRef.current;
-    setGitReviewLoading(true);
-    setGitReviewError("");
-    try {
-      const [snapshot, comments] = await Promise.all([
-        client.getGitReview(),
-        client.listGitReviewComments().catch(() => []),
-      ]);
-      if (generation !== gitReviewRefreshGenerationRef.current) return;
-      const selected = snapshot.files.find((file) => file.path === preferredPath) ?? snapshot.files[0];
-      if (!selected) {
-        setGitReview(snapshot);
-        setGitComments(comments);
-        setGitSelectedPath("");
-        setGitReviewDiff(null);
-        return;
-      }
-      const scope = preferredScope === "staged" && selected.staged
-        ? "staged"
-        : preferredScope === "working" && selected.unstaged
-          ? "working"
-          : selected.unstaged ? "working" : "staged";
-      const diff = await client.getGitReviewDiff(selected.path, scope);
-      if (generation !== gitReviewRefreshGenerationRef.current) return;
-      setGitReview(snapshot);
-      setGitComments(comments);
-      setGitSelectedPath(selected.path);
-      setGitReviewScope(scope);
-      setGitReviewDiff(diff);
-    } catch (error) {
-      if (generation === gitReviewRefreshGenerationRef.current) {
-        setGitReviewError(errorText(error, "读取 Git 审查状态失败"));
-      }
-    } finally {
-      if (generation === gitReviewRefreshGenerationRef.current) setGitReviewLoading(false);
-    }
-  }, [gitReviewScope, gitSelectedPath]);
-
-  const refreshIsolatedDeliveries = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
-    const generation = ++isolatedDeliveryRequestRef.current;
-    setIsolatedDelivery(null);
-    setIsolatedDeliveryDiff(null);
-    setIsolatedDeliveryPath("");
-    setIsolatedDeliveries([]);
-    setIsolatedDeliveryLoading(true);
-    try {
-      const deliveries = await client.listIsolatedDeliveries();
-      if (generation === isolatedDeliveryRequestRef.current && clientRef.current === client) {
-        setIsolatedDeliveries(deliveries);
-        setIsolatedDeliveryError("");
-      }
-    } catch (error) {
-      if (generation === isolatedDeliveryRequestRef.current && clientRef.current === client) {
-        setIsolatedDeliveryError(errorText(error, "读取隔离交付失败"));
-      }
-    } finally {
-      if (generation === isolatedDeliveryRequestRef.current) setIsolatedDeliveryLoading(false);
-    }
-  }, []);
-
-  const openIsolatedDelivery = async (id: string, preferredPath = "") => {
-    const client = clientRef.current;
-    if (!client) return;
-    const generation = ++isolatedDeliveryRequestRef.current;
-    setIsolatedDeliveryError("");
-    setIsolatedDelivery(null);
-    setIsolatedDeliveryDiff(null);
-    try {
-      const snapshot = await client.getIsolatedDelivery(id);
-      if (generation !== isolatedDeliveryRequestRef.current) return;
-      setIsolatedDelivery(snapshot);
-      const path = snapshot.files.find((file) => file.path === preferredPath)?.path ?? snapshot.files[0]?.path ?? "";
-      setIsolatedDeliveryPath(path);
-      if (path) {
-        const diff = await client.getIsolatedDeliveryDiff(id, path);
-        if (generation === isolatedDeliveryRequestRef.current) setIsolatedDeliveryDiff(diff);
-      }
-    } catch (error) {
-      if (generation === isolatedDeliveryRequestRef.current) setIsolatedDeliveryError(errorText(error, "读取隔离交付失败"));
-    }
-  };
-
-  const loadIsolatedDeliveryDiff = async (path: string) => {
-    const client = clientRef.current;
-    if (!client || !isolatedDelivery) return;
-    const generation = ++isolatedDeliveryRequestRef.current;
-    setIsolatedDeliveryPath(path);
-    setIsolatedDeliveryDiff(null);
-    try {
-      const diff = await client.getIsolatedDeliveryDiff(isolatedDelivery.id, path);
-      if (generation === isolatedDeliveryRequestRef.current) {
-        setIsolatedDeliveryDiff(diff);
-        setIsolatedDeliveryError("");
-      }
-    } catch (error) {
-      if (generation === isolatedDeliveryRequestRef.current) setIsolatedDeliveryError(errorText(error, "读取隔离分支 diff 失败"));
-    }
-  };
-
-  const refreshPrDelivery = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
-    setPrDeliveryLoading(true);
-    try {
-      const snapshot = await client.getPrDelivery();
-      setPrDelivery(snapshot);
-      setPrCheckLogs((previous) => Object.fromEntries(
-        Object.entries(previous).filter(([checkId]) => snapshot.failing_checks.some((check) => check.id === checkId)),
-      ));
-    } catch (error) {
-      setPrDelivery({
-        ok: false,
-        branch: "",
-        comments: [],
-        checks: [],
-        failing_checks: [],
-        summary: { total: 0, failed: 0, pending: 0, passed: 0 },
-        error: errorText(error, "读取 PR/CI 状态失败"),
-      });
-    } finally {
-      setPrDeliveryLoading(false);
-    }
-  }, []);
-
-  const refreshGoals = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
-    try {
-      setGoals(await client.listGoals());
-    } catch {
-      // Goal 面板不是连接握手的硬依赖；旧 runtime 可继续使用会话与任务面。
-    }
-  }, []);
-
   const refreshNotices = useCallback(async () => {
     const client = clientRef.current;
     if (!client) return;
@@ -820,29 +623,6 @@ function App() {
       setNotices(await client.listNotices());
     } catch {
       // 通知不是对话主链路，失败不阻断连接。
-    }
-  }, []);
-
-  const refreshHookStatus = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
-    try {
-      setHookStatus(await client.getHookStatus());
-    } catch {
-      setHookStatus(null);
-    }
-  }, []);
-
-  const refreshExtensionsInspect = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
-    setExtensionsInspectBusy(true);
-    try {
-      setExtensionsInspect(await client.getExtensionsInspect());
-    } catch {
-      setExtensionsInspect(null);
-    } finally {
-      setExtensionsInspectBusy(false);
     }
   }, []);
 
@@ -867,68 +647,6 @@ function App() {
   }, []);
 
   // refreshJournal* 四件已随 journal 域收进 useJournal（S6b）。
-
-  const refreshProjectAssets = useCallback(async (includeMemory = true) => {
-    const client = clientRef.current;
-    if (!client) return;
-    setProjectAssetsLoading(true);
-    setProjectAssetsError("");
-    const [memoryResult, artifactsResult] = await Promise.allSettled([
-      includeMemory ? client.getRepoMemory() : Promise.resolve(null),
-      client.listArtifacts(),
-    ]);
-    const failures: string[] = [];
-    if (!includeMemory) {
-      setRepoMemory(null);
-      setProjectAssetView("artifacts");
-    } else if (memoryResult.status === "fulfilled") {
-      if (memoryResult.value) setRepoMemory(memoryResult.value);
-    } else {
-      failures.push(errorText(memoryResult.reason, "读取仓库记忆失败"));
-    }
-    if (artifactsResult.status === "fulfilled") {
-      const items = artifactsResult.value;
-      setArtifacts(items);
-      setSelectedArtifactId((current) => (
-        current && items.some((item) => item.id === current) ? current : items[0]?.id ?? ""
-      ));
-      if (items.length === 0) {
-        setArtifactVersions(null);
-        setArtifactVersion(null);
-        setArtifactHtml("");
-      }
-    } else {
-      failures.push(errorText(artifactsResult.reason, "读取制品失败"));
-    }
-    setProjectAssetsError(failures.join("；"));
-    setProjectAssetsLoading(false);
-  }, []);
-
-  const loadArtifactPreview = useCallback(async (artifactId: string, requestedVersion?: number) => {
-    const client = clientRef.current;
-    if (!client || !artifactId) return;
-    const generation = artifactPreviewGenerationRef.current + 1;
-    artifactPreviewGenerationRef.current = generation;
-    setArtifactPreviewLoading(true);
-    setProjectAssetsError("");
-    try {
-      const versions = await client.getArtifactVersions(artifactId);
-      const version = requestedVersion ?? versions.pinned ?? versions.current;
-      const html = await client.getArtifactHtml(artifactId, version);
-      if (generation !== artifactPreviewGenerationRef.current) return;
-      setArtifactVersions(versions);
-      setArtifactVersion(version);
-      setArtifactHtml(html);
-    } catch (error) {
-      if (generation !== artifactPreviewGenerationRef.current) return;
-      setArtifactVersions(null);
-      setArtifactVersion(null);
-      setArtifactHtml("");
-      setProjectAssetsError(errorText(error, "读取制品预览失败"));
-    } finally {
-      if (generation === artifactPreviewGenerationRef.current) setArtifactPreviewLoading(false);
-    }
-  }, []);
 
   // snapshotTodayJournal 已随 journal 域收进 useJournal（S6b）；总线与 connect 照旧调用。
 
@@ -963,6 +681,7 @@ function App() {
   const refreshProjectRegistry = useCallback(async () => {
     const registered = await invoke<DesktopProjectProfile[]>("list_desktop_projects");
     setProjects(registered);
+    void invoke<ProjectSessionSummary[]>("list_project_sessions").then(setProjectSessions).catch(() => undefined);
     return registered;
   }, []);
 
@@ -976,7 +695,7 @@ function App() {
   }, []);
 
   const openWorkspaceFile = useCallback(async (path: string) => {
-    if (editorDirty && path !== selectedFile && !window.confirm("当前文件有未保存修改，确定放弃并打开其他文件吗？")) {
+    if (editorDirty && path !== selectedFile && !await confirmAction("当前文件有未保存修改，确定放弃并打开其他文件吗？")) {
       return;
     }
     const root = workspaceRoot || repoRoot.trim() || runtime.workdir || "";
@@ -1106,6 +825,12 @@ function App() {
         case "agent_hook": {
           const activity = protocolActivity(event);
           if (activity) setActivities((previous) => upsertActivity(previous, activity));
+          const publishedId = event.type === "agent_tool" ? publishedArtifactId(event) : null;
+          if (publishedId) {
+            setPreviewView("artifacts");
+            setPublishedArtifact((previous) => ({ id: publishedId, seq: (previous?.seq ?? 0) + 1 }));
+            autoOpenInspector("preview");
+          }
           if (event.type === "agent_tool" && event.name === "dev_isolated" && event.status === "succeeded") {
             autoOpenInspector("diff");
             void refreshIsolatedDeliveries();
@@ -1319,18 +1044,13 @@ function App() {
   const disconnect = useCallback(async () => {
     decisionNotificationSyncingRef.current = false;
     if (!await sessionConnectionRef.current!.disconnect()) return;
-    ++isolatedDeliveryRequestRef.current;
-    setIsolatedDeliveries([]);
-    setIsolatedDelivery(null);
-    setIsolatedDeliveryDiff(null);
-    setIsolatedDeliveryPath("");
-    setIsolatedDeliveryLoading(false);
+    resetIsolatedDeliveries();
     setConnection("disconnected");
     setConnectionNote("已离开工作区；后台 runtime 与任务继续运行");
     setBusy(false);
     setSavingFile(false);
     pendingWorkspaceSaveRef.current = null;
-  }, []);
+  }, [resetIsolatedDeliveries]);
 
   // 连接域编排注册表（B8-④c S10）：连接成功后的全量数据装填收敛到这一处。
   // 各域 refresh 按「通用 / 工作区专属」两档显式注册——hook 化的域把归还的回调挂到
@@ -1449,7 +1169,7 @@ function App() {
       else localStorage.removeItem(STORAGE_KEYS.repoRoot);
       localStorage.setItem(STORAGE_KEYS.baseUrl, actualUrl);
       const probe = new GatewayClient({ baseUrl: actualUrl, token: options.token ?? "" });
-      await probe.waitUntilReady(300, 250);
+      await probe.waitUntilReady(750, 100);
       const connected = await connectToRuntime(options.sid, {
         baseUrl: actualUrl,
         repoRoot: scope === "project" ? root : "",
@@ -1481,7 +1201,10 @@ function App() {
     initializationStartedRef.current = true;
     void (async () => {
       const smokeMode = await invoke<boolean>("desktop_smoke_ready").catch(() => false);
-      if (smokeMode) return;
+      if (smokeMode) {
+        setBooting(false);
+        return;
+      }
 
       try {
         const [status, record, recoveries] = await Promise.all([
@@ -1495,7 +1218,21 @@ function App() {
         setRecoveryRecord(record);
         setRuntimeRecoveries(recoveries);
 
-        const sid = localStorage.getItem(STORAGE_KEYS.generalSid) ?? activeSid;
+        // 老配置里还没有默认服务的模型清单：在启动引擎**之前**补拉一次，引擎一起来就认识这些模型。
+        // 不能等连上后再拉再重启——刚启动就重启会和启动流程撞车（真机 2026-10-06：引擎没能重新拉起）。
+        try {
+          const profile = await invoke<DesktopLlmProfileStatus>("get_llm_profile");
+          // 只有模型名、没有分类信息的旧清单也补一次，选择器才能按服务端分类分组。
+          if (profile.configured && (profile.modelInfo?.length ?? 0) === 0) {
+            applyLlmProfile(await invoke<DesktopLlmProfileStatus>("refresh_llm_providers"));
+          }
+        } catch {
+          // 拉不到清单不影响启动：输入框只列已配置的模型。
+        }
+
+        // 每次打开都从一个新对话开始；之前的会话都在左侧「最近」里，点一下就能回去。
+        // 空会话不会落盘，所以不会在列表里越积越多。
+        const sid = createSessionId();
         localStorage.setItem(STORAGE_KEYS.generalSid, sid);
         localStorage.setItem(STORAGE_KEYS.sid, sid);
         localStorage.removeItem(STORAGE_KEYS.repoRoot);
@@ -1513,6 +1250,8 @@ function App() {
         setConnection("error");
         setConnectionNote("通用会话未能启动");
         setBanner(errorText(error, "无法启动通用会话"));
+      } finally {
+        setBooting(false);
       }
     })();
   }, [activeSid, baseUrl, refreshProjectRegistry, startWorkspace]);
@@ -1620,6 +1359,18 @@ function App() {
     return () => window.clearInterval(timer);
   }, [connection, refreshSessions]);
 
+  const handledPublishRef = useRef(0);
+  useEffect(() => {
+    if (!publishedArtifact || connection !== "connected" || publishedArtifact.seq === handledPublishRef.current) return;
+    handledPublishRef.current = publishedArtifact.seq;
+    const { id } = publishedArtifact;
+    void refreshProjectAssets(activeScope !== "general").then(() => {
+      setSelectedArtifactId(id);
+      // 同一 id 的新版本不会改变 selectedArtifactId，这里显式重载预览到最新版。
+      void loadArtifactPreview(id);
+    });
+  }, [activeScope, connection, loadArtifactPreview, publishedArtifact, refreshProjectAssets, setSelectedArtifactId]);
+
   useEffect(() => {
     if (connection !== "connected" || !selectedArtifactId) return;
     void loadArtifactPreview(selectedArtifactId);
@@ -1645,29 +1396,6 @@ function App() {
     void refreshHookStatus();
     void refreshExtensionsInspect();
   }, [activeScope, connection, refreshExtensionsInspect, refreshHookStatus, settingsOpen]);
-
-  // 授权档位跟着工作区走（后端存在 .vortocode/trust.json），所以换项目/重连都要重新拉。
-  useEffect(() => {
-    if (connection !== "connected") {
-      setTrust(null);
-      return;
-    }
-    void clientRef.current?.getTrust()
-      .then(setTrust)
-      .catch(() => setTrust(null));   // 旧 runtime 没有这个接口时静默降级：不显示档位卡
-  }, [connection, repoRoot, settingsOpen]);
-
-  useEffect(() => {
-    if (!settingsOpen) return;
-    void invoke<DesktopLlmProfileStatus>("get_llm_profile")
-      .then((profile) => {
-        setLlmProfile(profile);
-        setLlmBaseInput(profile.baseUrl);
-        setLlmModelInput(profile.model);
-        setLlmKeyInput("");
-      })
-      .catch((error) => setBanner(error instanceof Error ? error.message : String(error)));
-  }, [settingsOpen]);
 
   useEffect(() => {
     if (connection !== "connected") return undefined;
@@ -1727,21 +1455,11 @@ function App() {
   };
 
   const clearProjectView = () => {
-    gitReviewRefreshGenerationRef.current += 1;
     clearSessionView();
     setSessions([]);
     setProtocolVersion(null);
     setRuntime({});
-    setGitReview(null);
-    setGitReviewDiff(null);
-    setGitSelectedPath("");
-    setGitReviewError("");
-    setGitReviewRevision(null);
-    setGitComments([]);
-    setPendingGitComment(null);
-    setGitCommentDraft("");
-    setPrDelivery(null);
-    setPrCheckLogs({});
+    resetChangeReview();
     setRuns([]);
     resetTasks();
     setGoals([]);
@@ -1749,18 +1467,7 @@ function App() {
     setDecisions([]);
     setAuditEntries([]);
     resetJournal();
-    setProjectAssetView("memory");
-    setRepoMemory(null);
-    setRepoMemoryDraft("");
-    setProjectAssetsLoading(false);
-    setProjectAssetsError("");
-    setArtifacts([]);
-    setSelectedArtifactId("");
-    setArtifactVersions(null);
-    setArtifactVersion(null);
-    setArtifactHtml("");
-    setArtifactPreviewLoading(false);
-    artifactPreviewGenerationRef.current += 1;
+    resetProjectAssets();
     workspaceRootRef.current = "";
     setWorkspaceFiles([]);
     setWorkspaceRoot("");
@@ -1778,7 +1485,7 @@ function App() {
     decisionNotificationSyncingRef.current = false;
   };
 
-  const switchProject = async (project: DesktopProjectProfile): Promise<boolean> => {
+  const switchProject = async (project: DesktopProjectProfile, options: { fresh?: boolean; sid?: string } = {}): Promise<boolean> => {
     if (projectSwitchingRef.current) return false;
     if (project.repoRoot === repoRoot.trim()) {
       setBaseUrl(project.baseUrl);
@@ -1802,7 +1509,7 @@ function App() {
       setBanner("runtime 正在连接，请等待连接完成后再切换项目");
       return false;
     }
-    if (editorDirty && !window.confirm("当前文件有未保存修改，切换项目会放弃这些修改。确定继续吗？")) {
+    if (editorDirty && !await confirmAction("当前文件有未保存修改，切换项目会放弃这些修改。确定继续吗？")) {
       return false;
     }
     projectSwitchingRef.current = true;
@@ -1811,7 +1518,10 @@ function App() {
     try {
       await disconnect();
       clearProjectView();
-      const sid = localStorage.getItem(projectSessionKey(project.id)) ?? createSessionId();
+      // fresh：启动时回到项目也从新对话开始（上次的会话仍在「最近」里）。
+      const sid = options.sid
+        ?? (options.fresh ? null : localStorage.getItem(projectSessionKey(project.id)))
+        ?? createSessionId();
       setActiveSid(sid);
       setRepoRoot(project.repoRoot);
       setBaseUrl(project.baseUrl);
@@ -1873,12 +1583,23 @@ function App() {
   useEffect(() => {
     if (projectRestoreDoneRef.current) return;
     if (connection !== "connected" || activeScope !== "general") return;
-    const target = projectToRestore(projects, localStorage.getItem(STORAGE_KEYS.lastProjectId));
-    if (!target) return;
+    const lastProjectId = localStorage.getItem(STORAGE_KEYS.lastProjectId);
+    const target = projectToRestore(projects, lastProjectId);
+    if (!target) {
+      // 记着的项目目录已不存在：清掉这条记录，以后启动不再白白尝试。
+      if (lastProjectId && projects.some((project) => project.id === lastProjectId && project.missing)) {
+        try { localStorage.removeItem(STORAGE_KEYS.lastProjectId); } catch { /* 存储不可用时下次再清 */ }
+      }
+      return;
+    }
     projectRestoreDoneRef.current = true;
     void (async () => {
-      const restored = await switchProject(target).catch(() => false);
-      if (!restored) setBanner(`未能回到上次的项目「${target.name}」，已留在通用会话`);
+      const restored = await switchProject(target, { fresh: true }).catch(() => false);
+      if (!restored) {
+        // 只提示一次：恢复失败就不再记着它，下次启动直接留在通用会话。
+        try { localStorage.removeItem(STORAGE_KEYS.lastProjectId); } catch { /* 同上 */ }
+        setBanner(`未能回到上次的项目「${target.name}」，已留在通用会话`);
+      }
     })();
   }, [connection, activeScope, projects, runtimeRecoveries, switchProject]);
 
@@ -1893,7 +1614,7 @@ function App() {
       setBanner("请先完成或拒绝当前源码保存确认，再切换工作区范围");
       return false;
     }
-    if (editorDirty && !window.confirm("当前文件有未保存修改，切换范围会放弃这些修改。确定继续吗？")) {
+    if (editorDirty && !await confirmAction("当前文件有未保存修改，切换范围会放弃这些修改。确定继续吗？")) {
       return false;
     }
     projectSwitchingRef.current = true;
@@ -1945,7 +1666,7 @@ function App() {
     const effect = managedRuntime
       ? "该项目仍在后台运行；移除会同时停止它，但不会删除项目文件。"
       : "项目文件不会被删除。";
-    if (!window.confirm(`从最近项目中移除“${project.name}”？${effect}`)) return;
+    if (!await confirmAction(`从最近项目中移除“${project.name}”？${effect}`)) return;
     try {
       if (managedRuntime?.runtimeId) {
         await invoke<GatewayProcessStatus>("stop_gateway", { runtimeId: managedRuntime.runtimeId });
@@ -2034,7 +1755,7 @@ function App() {
   };
 
   const deleteSession = async (session: SessionSummary) => {
-    if (!window.confirm(`删除会话“${session.title}”？此操作不可撤销。`) || !clientRef.current) return;
+    if (!await confirmAction(`删除会话“${session.title}”？此操作不可撤销。`) || !clientRef.current) return;
     try {
       await clientRef.current.deleteSession(session.sid);
       if (session.sid === activeSid) await newSession();
@@ -2044,6 +1765,7 @@ function App() {
     }
   };
 
+
   const sendPrompt = async (
     override?: string,
     requestedMode: "plan" | "build" = mode,
@@ -2051,7 +1773,9 @@ function App() {
   ): Promise<boolean> => {
     const text = (override ?? prompt).trim();
     const selectedContext = [...(requestedContext ?? contextItems)].slice(0, 8);
-    if ((!text && selectedContext.length === 0) || savingFile) return false;
+    // 附件只跟随输入框发送；面板一键派发（override）不夹带输入框里的附件。
+    const selectedAttachments = override === undefined ? attachments : [];
+    if ((!text && selectedContext.length === 0 && selectedAttachments.length === 0) || savingFile) return false;
 
     if (connection !== "connected" || !clientRef.current) {
       if (runtimeStartingRef.current || projectSwitchingRef.current) {
@@ -2072,10 +1796,15 @@ function App() {
 
     const client = clientRef.current;
     const willQueue = busy;
-    const displayText = text || "请分析我选择的本地文件。";
+    const displayText = text || (selectedAttachments.length > 0 ? "请查看我添加的附件。" : "请分析我选择的本地文件。");
     const rid = createSessionId().slice(0, 64);
+    const attachmentNote = [
+      ...selectedContext.map(contextItemLabel),
+      ...selectedAttachments.map((item) => item.name),
+    ];
     setPrompt("");
     setContextItems([]);
+    if (selectedAttachments.length > 0) setAttachments([]);
     autoScrollRef.current = true;
     if (!willQueue) {
       setBusy(true);
@@ -2091,14 +1820,15 @@ function App() {
       setMessages((previous) => [...previous, {
         id: messageId("user"),
         role: "user",
-        text: selectedContext.length > 0 ? `${displayText}\n\n📎 ${selectedContext.map(contextItemLabel).join(" · ")}` : displayText,
+        text: attachmentNote.length > 0 ? `${displayText}\n\n📎 ${attachmentNote.join(" · ")}` : displayText,
         rid,
       }]);
     }
     try {
       await client.send({
         type: "agent",
-        text: displayText,
+        text: composeMessageText(displayText, selectedAttachments),
+        ...mediaPayload(selectedAttachments),
         mode: requestedMode,
         context_files: selectedContext.filter((item) => !item.startLine).map((item) => item.path),
         context_selections: selectedContext
@@ -2106,6 +1836,8 @@ function App() {
           .map((item) => ({ path: item.path, start: item.startLine, end: item.endLine })),
         rid,
         want_reasoning: false,
+        // 只在本机模型配置已读到时才带：服务端只接受已配置的模型，「自动」由它按任务调度。
+        ...(modelChoice ? { model: modelChoice } : {}),
       });
       return true;
     } catch (error) {
@@ -2119,6 +1851,7 @@ function App() {
       }
       setPrompt(text);
       setContextItems(selectedContext);
+      if (selectedAttachments.length > 0) setAttachments(selectedAttachments);
       setBanner(errorText(error, "发送失败"));
       return false;
     }
@@ -2208,19 +1941,19 @@ function App() {
     }
   };
 
-  const discardEditorChanges = () => {
+  const discardEditorChanges = async () => {
     if (!filePreview) return;
-    if (editorDirty && !window.confirm("放弃当前文件的未保存修改？")) return;
+    if (editorDirty && !await confirmAction("放弃当前文件的未保存修改？")) return;
     setEditorContent(normalizeEditorText(filePreview.content));
     setEditorMode(false);
   };
 
-  const closeWorkspaceFile = () => {
+  const closeWorkspaceFile = async () => {
     if (savingFile) {
       setBanner("请先完成或拒绝当前源码保存确认");
       return;
     }
-    if (editorDirty && !window.confirm("当前文件有未保存修改，确定关闭吗？")) return;
+    if (editorDirty && !await confirmAction("当前文件有未保存修改，确定关闭吗？")) return;
     setSelectedFile("");
     setFilePreview(null);
     setEditorContent("");
@@ -2317,7 +2050,7 @@ function App() {
   const addRepoMemoryFact = async () => {
     const content = repoMemoryDraft.trim();
     if (!clientRef.current || !content) return;
-    if (!window.confirm(
+    if (!await confirmAction(
       `把这条事实写入仓库记忆？\n\n${content.slice(0, 280)}\n\n下个新会话及其子 Agent 会自动带上它。`,
     )) return;
     setProjectAssetsLoading(true);
@@ -2393,7 +2126,7 @@ function App() {
       setBanner("当前仍有操作进行中，暂时不能切换到恢复配置");
       return;
     }
-    if (editorDirty && !window.confirm("当前文件有未保存修改，载入上次 runtime 配置会放弃这些修改。确定继续吗？")) {
+    if (editorDirty && !await confirmAction("当前文件有未保存修改，载入上次 runtime 配置会放弃这些修改。确定继续吗？")) {
       return;
     }
     try {
@@ -2504,120 +2237,6 @@ function App() {
     }
   };
 
-  const changeTrustLevel = async (level: TrustLevel) => {
-    const client = clientRef.current;
-    if (!client || trustBusy || trust?.level === level) return;
-    setTrustBusy(true);
-    try {
-      const next = await client.setTrust(level);
-      setTrust(next);
-      setBanner(next.level === next.effective
-        ? `授权级别已设为「${TRUST_LEVEL_TEXT[next.level]}」`
-        : `已选「${TRUST_LEVEL_TEXT[next.level]}」，当前会话最高到「${TRUST_LEVEL_TEXT[next.effective]}」`);
-    } catch (error) {
-      setBanner(errorText(error, "授权级别保存失败"));
-    } finally {
-      setTrustBusy(false);
-    }
-  };
-
-  const saveLlmProfile = async () => {
-    if (llmProfileBusy || !llmBaseInput.trim() || !llmModelInput.trim()) return;
-    setLlmProfileBusy(true);
-    try {
-      const profile = await invoke<DesktopLlmProfileStatus>("set_llm_profile", {
-        baseUrl: llmBaseInput.trim(),
-        apiKey: llmKeyInput.trim(),
-        model: llmModelInput.trim(),
-      });
-      setLlmProfile(profile);
-      setLlmKeyInput("");
-      const restarted = await restartCurrentRuntimeForLlmProfile();
-      if (restarted) setBanner(`${profile.provider === "vortocode" ? "VortoCode Relay" : profile.provider === "local" ? "本机模型服务" : "自定义模型服务"}已保存到 macOS Keychain，当前 runtime 已重启`);
-    } catch (error) {
-      setBanner(errorText(error, "保存模型服务失败"));
-    } finally {
-      setLlmProfileBusy(false);
-    }
-  };
-
-  const clearLlmProfile = async () => {
-    if (llmProfileBusy || !window.confirm("清除 macOS Keychain 中的模型服务配置？当前 runtime 会重启。")) return;
-    setLlmProfileBusy(true);
-    try {
-      const profile = await invoke<DesktopLlmProfileStatus>("clear_llm_profile");
-      setLlmProfile(profile);
-      setLlmBaseInput(profile.baseUrl);
-      setLlmModelInput(profile.model);
-      setLlmKeyInput("");
-      const restarted = await restartCurrentRuntimeForLlmProfile();
-      if (restarted) setBanner("模型服务配置已清除；需要对话时可随时重新设置");
-    } catch (error) {
-      setBanner(errorText(error, "清除模型服务失败"));
-    } finally {
-      setLlmProfileBusy(false);
-    }
-  };
-
-  const resetGoalForm = () => {
-    setEditingGoalId(null);
-    setGoalObjective("");
-    setGoalCriteria("");
-    setGoalConstraints("");
-    setGoalNonGoals("");
-  };
-
-  const saveGoalDraft = async () => {
-    const objective = goalObjective.trim();
-    const acceptanceCriteria = goalFormLines(goalCriteria);
-    if (!objective || acceptanceCriteria.length === 0 || !clientRef.current) {
-      setBanner("创建目标需要目标描述和至少一条验收标准");
-      return;
-    }
-    setGoalSubmitting(true);
-    try {
-      const input = {
-        objective,
-        acceptance_criteria: acceptanceCriteria,
-        constraints: goalFormLines(goalConstraints),
-        non_goals: goalFormLines(goalNonGoals),
-        start: false,
-      };
-      const saved = editingGoalId
-        ? await clientRef.current.updateGoal(editingGoalId, input)
-        : await clientRef.current.createGoal(input);
-      setGoals((previous) => [saved, ...previous.filter((goal) => goal.id !== saved.id)]);
-      resetGoalForm();
-      openInspector("goals");
-      setBanner(editingGoalId ? "目标合同草稿已更新，请确认后开始执行" : "目标合同已保存为草稿，请检查后确认执行");
-      await refreshGoals();
-    } catch (error) {
-      setBanner(errorText(error, "目标草稿保存失败"));
-    } finally {
-      setGoalSubmitting(false);
-    }
-  };
-
-  const editGoalDraft = (goal: GoalItem) => {
-    setEditingGoalId(goal.id);
-    setGoalObjective(goal.objective);
-    setGoalCriteria(goal.acceptance_criteria.map((criterion) => criterion.text).join("\n"));
-    setGoalConstraints((goal.constraints ?? []).join("\n"));
-    setGoalNonGoals((goal.non_goals ?? []).join("\n"));
-    openInspector("goals");
-  };
-
-  const deleteGoalDraft = async (goal: GoalItem) => {
-    if (!clientRef.current || !window.confirm(`删除目标草稿“${goal.objective}”？`)) return;
-    try {
-      await clientRef.current.deleteGoal(goal.id);
-      setGoals((previous) => previous.filter((item) => item.id !== goal.id));
-      if (editingGoalId === goal.id) resetGoalForm();
-      setBanner("目标草稿已删除");
-    } catch (error) {
-      setBanner(errorText(error, "目标草稿删除失败"));
-    }
-  };
 
   const runGoal = async (goal: GoalItem, resume = false) => {
     const client = clientRef.current;
@@ -2631,66 +2250,6 @@ function App() {
       setBanner(resume ? "已从持久计划断点续跑" : goal.status === "draft" ? "目标合同已确认，隔离开发任务开始执行" : "已按目标合同开始新一轮执行");
     } catch (error) {
       setBanner(errorText(error, "目标执行失败"));
-    } finally {
-      setGoalSubmitting(false);
-    }
-  };
-
-  const recordGoalEvidence = async (
-    goal: GoalItem,
-    criterion: GoalCriterion,
-    passed: boolean,
-    adopted?: { kind: string; summary: string; evidence_id: string },
-  ) => {
-    if (!clientRef.current) return;
-    const key = goalEvidenceKey(goal.id, criterion.id);
-    const summary = adopted?.summary.trim() || (goalEvidenceDrafts[key] ?? "").trim();
-    if (!summary) {
-      setBanner("请先为这条验收标准填写可复核的证据摘要");
-      return;
-    }
-    try {
-      const updated = await clientRef.current.recordGoalEvidence(goal.id, criterion.id, {
-        passed,
-        summary,
-        kind: adopted?.kind || "manual",
-        evidence_id: adopted?.evidence_id,
-      });
-      setGoals((previous) => [updated, ...previous.filter((item) => item.id !== goal.id)]);
-      setGoalEvidenceDrafts((previous) => ({ ...previous, [key]: "" }));
-      const accepted = updated.acceptance_criteria.find((item) => item.id === criterion.id)?.status;
-      setBanner(updated.status === "achieved" ? "所有验收标准均有通过证据，目标已达成" : accepted === "pending" ? "证据未对应当前目标版本，请重新验收" : passed ? "通过证据已记录" : "失败证据已记录，目标进入阻塞状态");
-    } catch (error) {
-      setBanner(errorText(error, "记录验收证据失败"));
-    }
-  };
-
-  const saveGoalVerifier = async (goal: GoalItem, criterion: GoalCriterion) => {
-    if (!clientRef.current) return;
-    const key = goalEvidenceKey(goal.id, criterion.id);
-    const draft = goalVerifierDrafts[key] ?? criterionVerifierDraft(criterion);
-    setGoalSubmitting(true);
-    try {
-      const timeout = Number.parseInt(draft.timeout || "300", 10);
-      const updated = await clientRef.current.configureGoalVerifier(
-        goal.id,
-        criterion.id,
-        draft.kind === "manual"
-          ? { kind: "manual" }
-          : draft.kind === "file"
-            ? { kind: "file", path: draft.value.trim(), contains: draft.contains, timeout }
-            : { kind: draft.kind, command: draft.value.trim(), timeout },
-      );
-      setGoals((previous) => [updated, ...previous.filter((item) => item.id !== goal.id)]);
-      setGoalVerifierDrafts((previous) => ({
-        ...previous,
-        [key]: criterionVerifierDraft(
-          updated.acceptance_criteria.find((item) => item.id === criterion.id) ?? criterion,
-        ),
-      }));
-      setBanner(draft.kind === "manual" ? "该标准已改为人工验收" : "自动验收器已保存到目标合同");
-    } catch (error) {
-      setBanner(errorText(error, "保存自动验收器失败"));
     } finally {
       setGoalSubmitting(false);
     }
@@ -2745,124 +2304,6 @@ function App() {
       setBanner("任务交接摘要已复制");
     } catch {
       setBanner("系统剪贴板不可用；可展开交接摘要后手动复制");
-    }
-  };
-
-  const loadTaskBranchReviewDiff = async (task: TaskItem, path: string) => {
-    const client = clientRef.current;
-    if (!client || !path) {
-      setTaskBranchDiff(null);
-      return;
-    }
-    setGitReviewLoading(true);
-    setGitReviewError("");
-    try {
-      setTaskBranchSelectedPath(path);
-      setTaskBranchDiff(await client.getTaskBranchReviewDiff(task.id, path));
-    } catch (error) {
-      setTaskBranchDiff(null);
-      setGitReviewError(errorText(error, "读取任务分支 diff 失败"));
-    } finally {
-      setGitReviewLoading(false);
-    }
-  };
-
-  const openTaskBranchReview = async (task: TaskItem, preferredPath = "") => {
-    const client = clientRef.current;
-    if (!client || (!task.branch && !task.plan?.branch)) {
-      setBanner("这个任务还没有可审查的分支");
-      return;
-    }
-    setTaskReviewTask(task);
-    setTaskBranchReview(null);
-    setTaskBranchDiff(null);
-    setGitReviewError("");
-    openInspector("diff");
-    setGitReviewLoading(true);
-    try {
-      const snapshot = await client.getTaskBranchReview(task.id);
-      setTaskBranchReview(snapshot);
-      const selected = snapshot.files.find((file) => file.path === preferredPath) ?? snapshot.files[0];
-      if (!selected) {
-        setTaskBranchSelectedPath("");
-        return;
-      }
-      setTaskBranchSelectedPath(selected.path);
-      setTaskBranchDiff(await client.getTaskBranchReviewDiff(task.id, selected.path));
-    } catch (error) {
-      setGitReviewError(errorText(error, "读取任务分支审查失败"));
-    } finally {
-      setGitReviewLoading(false);
-    }
-  };
-
-  const closeTaskBranchReview = async () => {
-    setTaskReviewTask(null);
-    setTaskBranchReview(null);
-    setTaskBranchDiff(null);
-    setTaskBranchSelectedPath("");
-    await refreshGitReview();
-  };
-
-  const applyTaskBranchAction = async (
-    action: "accept" | "reject",
-    hunk: GitReviewHunk,
-  ) => {
-    const client = clientRef.current;
-    if (!client || !taskReviewTask || !taskBranchReview || !taskBranchDiff) return;
-    if (action === "reject" && !window.confirm(
-      `确定撤销任务分支 ${taskBranchReview.branch} 中 ${taskBranchDiff.path} 的这个改动块吗？\n\n将创建一条审查提交，旧测试证据会立即失效。`,
-    )) return;
-    setGitActionBusy(true);
-    setGitReviewError("");
-    try {
-      const result = await client.applyTaskBranchReviewAction(taskReviewTask.id, {
-        action,
-        path: taskBranchDiff.path,
-        hunk_id: hunk.id,
-        expected_sha256: hunk.sha256,
-        confirm: action === "reject",
-      });
-      setTaskBranchReview(result.snapshot);
-      const selected = result.snapshot.files.find((file) => file.path === taskBranchDiff.path)
-        ?? result.snapshot.files[0];
-      if (selected) {
-        setTaskBranchSelectedPath(selected.path);
-        setTaskBranchDiff(await client.getTaskBranchReviewDiff(taskReviewTask.id, selected.path));
-      } else {
-        setTaskBranchSelectedPath("");
-        setTaskBranchDiff(null);
-      }
-      await refreshTasks();
-      await refreshWorktrees();
-      setBanner(action === "accept"
-        ? "已记录稳定 hunk 接受证据"
-        : "已在任务分支创建撤销提交；重新验证通过前不能开 PR");
-    } catch (error) {
-      setGitReviewError(errorText(error, "任务分支审查操作失败"));
-    } finally {
-      setGitActionBusy(false);
-    }
-  };
-
-  const verifyReviewedTaskBranch = async (targetTask: TaskItem | null = taskReviewTask) => {
-    const client = clientRef.current;
-    if (!client || !targetTask) return;
-    setTaskReviewTask(targetTask);
-    setTaskReviewVerifying(true);
-    setGitReviewError("");
-    try {
-      const result = await client.verifyTaskBranchReview(targetTask.id);
-      setTaskBranchReview(result.snapshot);
-      await refreshTasks();
-      await refreshWorktrees();
-      setBanner(result.ok ? "任务分支已在隔离 worktree 重新验证通过，可以继续交付" : "重新验证未通过，PR 闸门保持关闭");
-    } catch (error) {
-      const message = errorText(error, "任务分支重新验证失败");
-      setGitReviewError(message);
-      setBanner(message);
-    } finally {
-      setTaskReviewVerifying(false);
     }
   };
 
@@ -2934,88 +2375,6 @@ function App() {
     }
   };
 
-  const openGitReviewFile = async (file: GitReviewFile, scope?: GitReviewScope) => {
-    const nextScope = scope ?? (file.unstaged ? "working" : "staged");
-    setGitSelectedPath(file.path);
-    setGitReviewScope(nextScope);
-    setPendingGitComment(null);
-    setGitCommentDraft("");
-    await loadGitReviewDiff(file.path, nextScope);
-  };
-
-  const applyGitAction = async (
-    action: GitReviewAction,
-    path: string,
-    hunk?: GitReviewHunk,
-  ) => {
-    if (!clientRef.current || gitActionBusy) return;
-    const destructive = action === "revert";
-    if (destructive) {
-      const target = hunk ? `${path} 的 ${hunk.id}` : path;
-      if (!window.confirm(`撤销 ${target} 的本地修改？这会丢弃对应内容，且不可从 VortoCode 恢复。`)) return;
-    }
-    setGitActionBusy(true);
-    try {
-      const result = await clientRef.current.applyGitReviewAction({
-        action,
-        path,
-        scope: action === "unstage" ? "staged" : "working",
-        hunk_id: hunk?.id,
-        expected_sha256: hunk?.sha256,
-        confirm: destructive,
-      });
-      setGitReview(result.snapshot);
-      setPendingGitComment(null);
-      setGitCommentDraft("");
-      const preferredScope: GitReviewScope = action === "unstage" ? "staged" : "working";
-      await refreshGitReview(path, preferredScope);
-      setBanner(action === "stage" ? "Git 改动已暂存" : action === "unstage" ? "Git 改动已取消暂存" : "本地改动已撤销");
-    } catch (error) {
-      setBanner(errorText(error, "Git 操作失败"));
-      await refreshGitReview(path, gitReviewScope);
-    } finally {
-      setGitActionBusy(false);
-    }
-  };
-
-  const startGitComment = (path: string, hunk: GitReviewHunk, line: number, side: "new" | "old") => {
-    setPendingGitComment({
-      path,
-      scope: gitReviewDiff?.scope ?? gitReviewScope,
-      hunkId: hunk.id,
-      hunkSha256: hunk.sha256,
-      line,
-      side,
-    });
-    setGitCommentDraft("");
-  };
-
-  const addGitComment = async () => {
-    const body = gitCommentDraft.trim();
-    const client = clientRef.current;
-    if (!client || !pendingGitComment || !body || gitCommentSaving) return;
-    setGitCommentSaving(true);
-    try {
-      const created = await client.createGitReviewComment({
-        path: pendingGitComment.path,
-        scope: pendingGitComment.scope,
-        hunk_id: pendingGitComment.hunkId,
-        expected_sha256: pendingGitComment.hunkSha256,
-        line: pendingGitComment.line,
-        side: pendingGitComment.side,
-        body,
-      });
-      setGitComments((previous) => [created, ...previous]);
-      setPendingGitComment(null);
-      setGitCommentDraft("");
-    } catch (error) {
-      setBanner(errorText(error, "保存行级评论失败"));
-      await refreshGitReview(pendingGitComment.path, pendingGitComment.scope);
-    } finally {
-      setGitCommentSaving(false);
-    }
-  };
-
   const sendGitCommentsToAgent = async () => {
     const client = clientRef.current;
     if (!client || openGitComments.length === 0) return;
@@ -3034,7 +2393,6 @@ function App() {
       if (!contexts.some((candidate) => contextItemKey(candidate) === contextItemKey(item))) contexts.push(item);
       if (contexts.length >= 8) break;
     }
-    setMode("build");
     const sent = await sendPrompt(promptText, "build", contexts);
     if (sent) {
       setPendingGitComment(null);
@@ -3050,49 +2408,6 @@ function App() {
         setBanner(`评论已交给 Agent，但状态保存失败：${error instanceof Error ? error.message : String(error)}`);
         setGitComments(await client.listGitReviewComments().catch(() => gitComments));
       }
-    }
-  };
-
-  const updateGitCommentStatus = async (
-    comment: GitReviewComment,
-    status: GitReviewComment["status"],
-  ) => {
-    const client = clientRef.current;
-    if (!client || gitCommentSaving) return;
-    setGitCommentSaving(true);
-    try {
-      const updated = await client.updateGitReviewComment(comment.id, status);
-      setGitComments((previous) => previous.map((item) => item.id === updated.id ? updated : item));
-    } catch (error) {
-      setBanner(errorText(error, "更新审查评论失败"));
-    } finally {
-      setGitCommentSaving(false);
-    }
-  };
-
-  const deleteGitComment = async (comment: GitReviewComment) => {
-    const client = clientRef.current;
-    if (!client || gitCommentSaving) return;
-    setGitCommentSaving(true);
-    try {
-      await client.deleteGitReviewComment(comment.id);
-      setGitComments((previous) => previous.filter((item) => item.id !== comment.id));
-    } catch (error) {
-      setBanner(errorText(error, "删除审查评论失败"));
-    } finally {
-      setGitCommentSaving(false);
-    }
-  };
-
-  const loadPrCheckLog = async (check: PrDeliveryCheck): Promise<PrDeliveryCheckLog | null> => {
-    if (!clientRef.current) return null;
-    try {
-      const result = await clientRef.current.getPrCheckLog(check.id);
-      setPrCheckLogs((previous) => ({ ...previous, [check.id]: result }));
-      return result;
-    } catch (error) {
-      setBanner(errorText(error, "读取 CI 失败日志失败"));
-      return null;
     }
   };
 
@@ -3124,7 +2439,6 @@ function App() {
       if (!contexts.some((candidate) => contextItemKey(candidate) === contextItemKey(item))) contexts.push(item);
       if (contexts.length >= 8) break;
     }
-    setMode("build");
     const sent = await sendPrompt(promptText, "build", contexts);
     if (sent) setBanner(check ? "CI 失败证据已交给 Agent 修复" : "PR Review 已交给 Agent 修复");
   };
@@ -3191,53 +2505,6 @@ function App() {
     }
   };
 
-  const commitGitReview = async () => {
-    const message = gitCommitMessage.trim();
-    if (!clientRef.current || !message || gitDeliveryBusy) return;
-    // 受保护分支上多问一次：提交到 main 之后就不能从 main 开 PR 了（后端也拦，这里只是
-    // 早一步把原因说清楚，而不是等请求失败再弹一条报错）。
-    const onProtected = isProtectedBranch(gitReview?.branch);
-    if (onProtected && !window.confirm(
-      `当前在受保护分支 ${gitReview?.branch} 上。\n\n直接提交到这里之后就不能从它开 PR 了`
-      + `（需要先切到功能分支）。确认要直接提交到 ${gitReview?.branch} 吗？`)) return;
-    setGitDeliveryBusy(true);
-    try {
-      const result = await clientRef.current.commitGitReview(message, onProtected);
-      setGitReview(result.snapshot);
-      setGitCommitMessage("");
-      if (!gitPrTitle.trim()) setGitPrTitle(message);
-      await refreshGitReview();
-      setBanner(`已提交审查范围 · ${result.sha}`);
-    } catch (error) {
-      setBanner(errorText(error, "Git 提交失败"));
-    } finally {
-      setGitDeliveryBusy(false);
-    }
-  };
-
-  const openGitReviewPr = async () => {
-    const title = gitPrTitle.trim();
-    const base = gitPrBase.trim();
-    if (!clientRef.current || !title || !base || gitDeliveryBusy) return;
-    if (!window.confirm(`把当前分支 ${gitReview?.branch || "(unknown)"} push 到 origin，并向 ${base} 创建 Draft PR？`)) return;
-    setGitDeliveryBusy(true);
-    try {
-      const result = await clientRef.current.openGitReviewPr({
-        title,
-        body: `由 VortoCode Desktop 在逐文件、逐 hunk 审查后创建。`,
-        base,
-        confirm: true,
-      });
-      setBanner(`Draft PR 已创建：${result.url}`);
-      await refreshPrDelivery();
-      if (result.url) await openUrl(result.url);
-    } catch (error) {
-      setBanner(errorText(error, "创建 Draft PR 失败"));
-    } finally {
-      setGitDeliveryBusy(false);
-    }
-  };
-
   const { activityGroups, orphanActivities } = useMemo(() => {
     const groups = new Map<string, TurnActivity[]>();
     const orphans: TurnActivity[] = [];
@@ -3264,26 +2531,14 @@ function App() {
   return (
     <main className="app-shell">
       <header className="topbar" data-tauri-drag-region="deep">
-        <div className="brand-mark">V</div>
-        <div className="brand-copy">
-          <strong>VortoCode</strong>
-          <span>Desktop · V1 preview</span>
-        </div>
-        <div className="topbar-divider" />
-        <div className="runtime-path" title={runtime.workdir || repoRoot || "General 无目录会话"}>
-          <span className="path-dot" />
-          {activeScope === "general" ? "通用会话 · 无目录" : activeScope === "scratch" ? "Scratch · 隔离临时工作区" : runtime.workdir || repoRoot || "项目工作区"}
-        </div>
         <div className="topbar-spacer" />
-        <div className={`connection-pill ${connection}`}>
-          <span className="connection-dot" />
-          {connectionText}
-        </div>
-        <div className="runtime-meta">
-          <span>{runtime.model || "—"}</span>
-          <span>协议 {protocolVersion ?? "—"}</span>
-        </div>
-        <button className="workspace-switcher" aria-label="切换工作区与连接" onClick={() => setSettingsOpen(true)}><Settings2 size={15} />工作区</button>
+        {/* 平时不摆状态字（MiMo 式干净顶栏）；只有没连上时才露出连接状态。 */}
+        {connection !== "connected" && (
+          <div className={`connection-pill ${connection}`} title={`${runtime.workdir || repoRoot || "通用会话"} · 协议 ${protocolVersion ?? "—"}`}>
+            <span className="connection-dot" />
+            {connectionText}
+          </div>
+        )}
       </header>
 
       <div className="banner-slot">
@@ -3297,27 +2552,55 @@ function App() {
 
       <div className={`workbench ${inspectorOpen ? "inspector-open" : "inspector-closed"} ${inspectorOpen && ["inbox", "files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
         <aside className="sidebar">
+          <div className="sidebar-brand">
+            <strong>VortoCode</strong>
+            <button
+              className={sidebarSearchOpen ? "active" : ""}
+              aria-label="搜索会话和项目"
+              title="搜索会话和项目"
+              onClick={() => { setSidebarSearchOpen(!sidebarSearchOpen); setSidebarQuery(""); }}
+            ><Search size={15} /></button>
+          </div>
+          {sidebarSearchOpen && (
+            <label className="sidebar-search">
+              <Search size={14} />
+              <input
+                autoFocus
+                value={sidebarQuery}
+                placeholder="搜索会话和项目"
+                onChange={(event) => setSidebarQuery(event.target.value)}
+                onKeyDown={(event) => { if (event.key === "Escape") { setSidebarSearchOpen(false); setSidebarQuery(""); } }}
+              />
+            </label>
+          )}
+          <nav className="sidebar-nav" aria-label="主导航">
+            <button onClick={() => { setMainView("chat"); void newSession(); }} disabled={connection !== "connected"}>
+              <SquarePen size={16} /><span>新建任务</span>
+            </button>
+            <button
+              className={mainView === "plugins" ? "active" : ""}
+              onClick={() => {
+                setMainView("plugins");
+                if (activeScope === "project") void Promise.all([refreshExtensionsInspect(), refreshHookStatus()]);
+              }}
+            >
+              <Puzzle size={16} /><span>插件</span>
+            </button>
+            <button
+              className={mainView === "artifacts" ? "active" : ""}
+              onClick={() => { setMainView("artifacts"); void refreshProjectAssets(activeScope !== "general"); }}
+            >
+              <Package size={16} /><span>产物中心</span>
+            </button>
+          </nav>
           <div className="sidebar-section-title project-section-title sidebar-first-section">
-            <span>项目</span>
+            <button className="sidebar-fold" aria-expanded={projectsOpen} onClick={() => setProjectsOpen(!projectsOpen)}>
+              项目<ChevronDown size={13} className={projectsOpen ? "" : "folded"} />
+            </button>
             <button aria-label="添加 Git 项目" title="添加 Git 项目" onClick={() => void chooseRepo()} disabled={projectSwitching}><FolderPlus size={15} /></button>
           </div>
+          {projectsOpen && (
           <div className="project-list">
-            {(() => {
-              const generalRunning = runtimeProcesses.some((item) => item.runtimeId === "general" && item.running);
-              return (
-            <div
-              className={`project-row ${activeScope === "general" ? "active" : ""} ${generalRunning || activeScope === "general" && connection === "connected" ? "healthy" : ""}`}
-              onClick={() => void switchManagedScope("general")}
-              onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") void switchManagedScope("general"); }}
-              role="button"
-              tabIndex={0}
-              title="不绑定目录的对话、研究、规划与制品会话"
-            >
-              <span className="project-status" />
-              <div className="project-row-copy"><strong>通用会话</strong><span>{activeScope === "general" && connection === "connected" ? "通用会话已就绪" : generalRunning ? "后台 runtime 运行中" : "对话与研究 · 不访问本机目录"}</span></div>
-            </div>
-              );
-            })()}
             {activeScope === "scratch" && (
               <div className="project-row active healthy">
                 <span className="project-status" />
@@ -3345,19 +2628,27 @@ function App() {
                   </div>
                 </div>
               ))}
-            {projects.length === 0 && <div className="project-empty">项目会在任务需要代码上下文时出现在这里。</div>}
+            {projects.length === 0 && <div className="project-empty">还没有项目；在输入框下方「进入项目工作」里添加。</div>}
             {projects.slice(0, 8).map((project) => {
+              const keyword = sidebarQuery.trim().toLowerCase();
+              const nameMatches = !keyword || project.name.toLowerCase().includes(keyword);
+              const nested = projectSessions
+                .filter((item) => item.projectId === project.id)
+                .filter((item) => nameMatches || item.title.toLowerCase().includes(keyword));
+              if (!nameMatches && nested.length === 0) return null;
               const active = project.repoRoot === repoRoot.trim();
               const managedRuntime = runtimeProcesses.find((item) => item.projectId === project.id || item.repoRoot === project.repoRoot);
               const managedRunning = Boolean(managedRuntime?.running);
               const recovery = runtimeRecoveries.find((item) => item.projectId === project.id);
               const connected = active && connection === "connected";
-              const health = managedRunning && !active ? "后台运行中" : managedRunning ? "本地引擎运行中" : connected ? "工作区就绪" : recovery?.status === "crashed" ? "上次异常退出 · 点击恢复" : recovery?.status === "running" ? "可重新附着" : active ? connectionText : "未启动";
+              const health = project.missing ? "目录已不存在 · 可移除" : managedRunning && !active ? "后台运行中" : managedRunning ? "本地引擎运行中" : connected ? "工作区就绪" : recovery?.status === "crashed" ? "上次异常退出 · 点击恢复" : recovery?.status === "running" ? "可重新附着" : active ? connectionText : "未启动";
               return (
+                <Fragment key={project.id}>
                 <div
-                  className={`project-row ${active ? "active" : ""} ${managedRunning || connected ? "healthy" : ""} ${!managedRunning && recovery?.status === "crashed" ? "attention" : ""}`}
-                  key={project.id}
-                  onClick={() => void switchProject(project)}
+                  className={`project-row ${active ? "active" : ""} ${managedRunning || connected ? "healthy" : ""} ${!managedRunning && recovery?.status === "crashed" ? "attention" : ""} ${project.missing ? "missing" : ""}`}
+                  onClick={() => project.missing
+                    ? setBanner(`项目目录已不存在：${project.repoRoot}。可以点右侧 × 把它从列表移除`)
+                    : void switchProject(project)}
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") void switchProject(project);
                   }}
@@ -3365,10 +2656,11 @@ function App() {
                   tabIndex={0}
                   title={project.repoRoot}
                 >
-                  <span className="project-status" />
+                  <Folder size={15} className="project-folder" />
                   <div className="project-row-copy">
                     <strong>{project.name}</strong>
-                    <span>{health}{!active && !managedRunning ? ` · ${formatRelativeTime(project.lastOpenedAt)}` : ""}</span>
+                    {/* 只在需要注意时显示状态；平时一行只有名字。 */}
+                    {(project.missing || managedRunning || recovery?.status) && <span>{health}</span>}
                   </div>
                   {!active && (
                     <button
@@ -3378,38 +2670,38 @@ function App() {
                     ><X size={14} /></button>
                   )}
                 </div>
+                {/* 项目下直接列出它最近的会话（MiMo 式）：点一下切到该项目并打开那条会话。 */}
+                {!project.missing && nested.map((item) => (
+                  <button
+                    key={item.sid}
+                    className={`project-session ${active && item.sid === activeSid ? "active" : ""}`}
+                    title={item.title}
+                    onClick={() => void (active ? switchSession(item.sid) : switchProject(project, { sid: item.sid }))}
+                  >{item.title}</button>
+                ))}
+                </Fragment>
               );
             })}
           </div>
-
-          <div className="global-inbox-slot">
-            <button className={inspectorOpen && inspectorTab === "inbox" ? "global-inbox-launch active" : "global-inbox-launch"} onClick={() => openInspector("inbox")}>
-              <span className="global-inbox-icon"><Inbox size={16} /></span>
-              <span className="global-inbox-copy">
-                <strong>跨项目收件箱</strong>
-                <small>{runtimeInboxSummary.runtimes === 0
-                  ? "正在发现本地工作…"
-                  : runtimeInboxSubtitle(runtimeInboxSummary)}</small>
-              </span>
-              {runtimeInboxSummary.actionable > 0 && <b>{runtimeInboxSummary.actionable}</b>}
-            </button>
-          </div>
+          )}
 
           <div className="sidebar-section-title work-items-heading">
-            <span>任务</span>
+            <button className="sidebar-fold" aria-expanded={recentOpen} onClick={() => setRecentOpen(!recentOpen)}>
+              最近<ChevronDown size={13} className={recentOpen ? "" : "folded"} />
+            </button>
             <button aria-label="新建任务" title="新建任务" onClick={() => void newSession()} disabled={connection !== "connected"}><Plus size={15} /></button>
           </div>
+          {recentOpen && (
           <div className="session-list">
             {sessions.length === 0 && <div className="session-empty">描述一个目标后，任务线程会出现在这里。</div>}
-            {sessions.map((session) => {
+            {sessions.filter((session) => !sidebarQuery.trim()
+              || (session.title || "新任务").toLowerCase().includes(sidebarQuery.trim().toLowerCase())).map((session) => {
               const active = session.sid === activeSid;
               const liveStatus = active && busy && session.status !== "needs_input" ? "working" : session.status ?? "inactive";
-              const cwdLabel = compactSessionCwd(session.cwd);
               const backgroundCount = (session.background_tasks?.active ?? 0) + (session.background_tasks?.attention ?? 0);
-              const showsContext = Boolean(session.context)
-                && shouldShowContextChip(sessionContextPresentation(session.context).pct);
-              const hasMetadata = Boolean(cwdLabel || session.branch || session.worktree?.owned_count
-                || backgroundCount || session.hook_issues?.count || showsContext);
+              // 列表只留标题；元信息只保留需要人动手的（后台任务、待处理、Hook 问题）。
+              const hasMetadata = Boolean(backgroundCount || session.hook_issues?.count);
+              const showsStatus = ["working", "needs_input", "failed", "queued"].includes(liveStatus);
               const rowTitle = [
                 session.running_prompt || session.activity || session.title,
                 session.cwd ? `目录：${session.cwd}` : "",
@@ -3429,12 +2721,9 @@ function App() {
                   <span className="session-status" />
                   <div className="session-copy">
                     <strong>{session.title || "新任务"}</strong>
-                    <span>{sessionStatusLabel(session, active, busy)}</span>
+                    {showsStatus && <span>{sessionStatusLabel(session, active, busy)}</span>}
                     {hasMetadata && (
                       <div className="session-meta" aria-label="会话运行上下文">
-                        {cwdLabel && <em className="session-meta-cwd" title={session.cwd}>{cwdLabel}</em>}
-                        {session.branch && <em title={`Git 分支 ${session.branch}`}>{session.branch}</em>}
-                        {(session.worktree?.owned_count ?? 0) > 0 && <em title="VortoCode 隔离 worktree">{session.worktree?.owned_count} WT</em>}
                         {(session.background_tasks?.active ?? 0) > 0 && (
                           <button
                             className="active"
@@ -3456,12 +2745,6 @@ function App() {
                             onClick={(event) => { event.stopPropagation(); openInspector("decisions"); void switchSession(session.sid); }}
                           >{session.hook_issues?.count} Hook</button>
                         )}
-                        {session.context && (() => {
-                          const presentation = sessionContextPresentation(session.context);
-                          // 低占比不出 chip：`上下文 0.2%` 占一格，却不构成任何决定。
-                          if (!shouldShowContextChip(presentation.pct)) return null;
-                          return <em className={`context ${sessionContextTone(presentation.pct)}`} title={presentation.title}>{presentation.label}</em>;
-                        })()}
                       </div>
                     )}
                   </div>
@@ -3499,26 +2782,70 @@ function App() {
               </div>
             )}
           </div>
+          )}
+          <div className="sidebar-footer">
+            <button
+              className="sidebar-account"
+              title={llmProfile?.account ? `已登录 ${llmProfile.account.username}` : "登录 VortoCode 账号"}
+              onClick={() => { setSettingsSection("account"); setSettingsOpen(true); }}
+            >
+              <span className="sidebar-avatar">{llmProfile?.account ? (llmProfile.account.displayName || llmProfile.account.username).slice(0, 1).toUpperCase() : <UserRound size={14} />}</span>
+              <span>{llmProfile?.account ? (llmProfile.account.displayName || llmProfile.account.username) : "登录"}</span>
+            </button>
+            <button className="sidebar-gear" aria-label="设置" title="设置" onClick={() => setSettingsOpen(true)}>
+              <Settings2 size={16} />
+            </button>
+          </div>
         </aside>
 
+        {mainView === "plugins" ? (
+          <PluginsPage
+            activeScope={activeScope}
+            projectName={repoRoot.split("/").filter(Boolean).slice(-1)[0] || ""}
+            inspector={(
+              <ExtensionsInspector
+                extensionsInspect={extensionsInspect}
+                extensionsInspectBusy={extensionsInspectBusy}
+                hookStatus={hookStatus}
+                hookTrustBusy={hookTrustBusy}
+                connection={connection}
+                onRefresh={() => void Promise.all([refreshExtensionsInspect(), refreshHookStatus()])}
+                onToggleHookTrust={toggleHookTrust}
+              />
+            )}
+            onChooseProject={() => void chooseRepo()}
+            onOpenBrowserSettings={() => { setSettingsSection("browser"); setSettingsOpen(true); }}
+          />
+        ) : mainView === "artifacts" ? (
+          <ArtifactCenter
+            artifacts={artifacts}
+            loading={projectAssetsLoading}
+            error={projectAssetsError}
+            selectedId={selectedArtifactId}
+            onRefresh={() => void refreshProjectAssets(activeScope !== "general")}
+            onOpen={(id) => {
+              setSelectedArtifactId(id);
+              void loadArtifactPreview(id);
+              setPreviewView("artifacts");
+              openInspector("preview");
+            }}
+          />
+        ) : (
         <section className={`conversation ${messages.length === 0 && !streaming ? "empty-state" : ""}`}>
           <div className="conversation-header">
             <div>
               <strong>{currentSession?.title || "新任务"}</strong>
-              <span>{mode === "build" ? "Build · 允许在确认后修改" : "Plan · 只读与提案"}</span>
             </div>
             <div className="conversation-actions">
               <button
                 className={`context-toggle ${inspectorOpen ? "active" : ""}`}
                 aria-expanded={inspectorOpen}
+                aria-label="工作台"
+                title="工作台：预览、代码、变更等"
                 onClick={() => inspectorOpen ? setInspectorOpen(false) : openInspector(defaultInspectorTab)}
               >
-                <PanelRight size={14} />工作台{taskContextCount > 0 && <b>{taskContextCount}</b>}
+                <PanelRight size={16} />{taskContextCount > 0 && <b>{taskContextCount}</b>}
               </button>
-              <div className="mode-switch">
-                <button className={mode === "plan" ? "active" : ""} onClick={() => setMode("plan")}>Plan</button>
-                <button className={mode === "build" ? "active build" : ""} onClick={() => setMode("build")}>Build</button>
-              </div>
               {busy && <button className="stop-button" onClick={() => void cancelTurn()}>停止</button>}
             </div>
           </div>
@@ -3532,21 +2859,19 @@ function App() {
             }}
           >
             {messages.length === 0 && !streaming && (
-              <WelcomeGuide
-                activeScope={activeScope}
-                projectName={repoRoot.split("/").filter(Boolean).slice(-1)[0] || ""}
-                connection={connection}
-                // llmProfile 为 null = 还在读 Keychain（"检查中"），不是"没配"——
-                // 这两态必须分开，否则冷启动瞬间会误报"请先配置模型"。
-                modelLoaded={llmProfile !== null}
-                modelConfigured={Boolean(llmProfile?.configured)}
-                runtimeStarting={runtimeStarting}
-                projectSwitching={projectSwitching}
-                onOpenSettings={() => setSettingsOpen(true)}
-                onChooseProject={() => setSettingsOpen(true)}
-                onDraftFirstDelivery={() => setPrompt(FIRST_DELIVERY_PROMPT)}
-                onDraftProjectBrief={() => setPrompt(PROJECT_BRIEF_PROMPT)}
-              />
+              <div className="home-greeting">
+                <span className="home-mark" aria-hidden="true">V</span>
+                {/* 冷启动要等本地引擎起来（约数秒）；这期间别摆出一个看着能用、其实还没连上的首页，
+                    连上后再切到上次的会话也就不显得突兀（真机 2026-10-06）。 */}
+                {/* 引擎通常一秒内就连上（Desktop 一启动就预先拉起 runtime）：提示延后 400ms 才显示，
+                    连得快就不闪；占位保持同样高度，避免布局跳动。 */}
+                {homeStarting
+                  ? <h1 className={`home-starting ${showHomeStarting ? "" : "pending"}`} aria-hidden={!showHomeStarting}><LoaderCircle className="activity-spinner" size={20} />正在启动本地引擎…</h1>
+                  : <h1>有什么可以帮你？</h1>}
+                {llmProfileChecked && !llmProfile?.configured && (
+                  <p>还没有配置模型服务。<button onClick={() => { setSettingsSection("account"); setSettingsOpen(true); }}>登录或填写 Key</button></p>
+                )}
+              </div>
             )}
 
             {plan.length > 0 && (
@@ -3643,7 +2968,7 @@ function App() {
                       <span className="prompt-queue-index">{index + 1}</span>
                       <span className="prompt-queue-copy" title={item.text}>
                         <strong>{item.text}</strong>
-                        <small>{item.mode === "build" ? "Build" : "Plan"}{item.context_count > 0 ? ` · ${item.context_count} 个引用` : ""}</small>
+                        {item.context_count > 0 && <small>{item.context_count} 个引用</small>}
                       </span>
                       <button className="prompt-queue-now" onClick={() => void sendQueuedPromptNow(item.id)}>现在执行</button>
                       <button className="prompt-queue-remove" aria-label={`删除排队任务 ${index + 1}`} onClick={() => void removeQueuedPrompt(item.id)}><X size={13} /></button>
@@ -3653,7 +2978,36 @@ function App() {
                 </div>
               </section>
             )}
-            <div className={`composer ${runtimeStarting || projectSwitching ? "preparing" : ""}`}>
+            <div
+              className={`composer ${runtimeStarting || projectSwitching ? "preparing" : ""} ${dragOver ? "drag-over" : ""}`}
+              onDragOver={(event) => {
+                if (!event.dataTransfer.types.includes("Files")) return;
+                event.preventDefault();
+                setDragOver(true);
+              }}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOver(false);
+              }}
+              onDrop={(event) => {
+                if (!event.dataTransfer.files.length) return;
+                event.preventDefault();
+                setDragOver(false);
+                void addFiles(event.dataTransfer.files);
+              }}
+            >
+              {attachments.length > 0 && (
+                <div className="attachment-chips">
+                  {attachments.map((item) => (
+                    <span key={item.id} className={`attachment-chip ${item.kind}`} title={item.name}>
+                      {item.kind === "image"
+                        ? <img src={item.data} alt="" />
+                        : item.kind === "audio" ? <Music size={13} /> : <FileText size={13} />}
+                      <em>{item.name}</em>
+                      <button aria-label={`移除附件 ${item.name}`} onClick={() => removeAttachment(item.id)}><X size={12} /></button>
+                    </span>
+                  ))}
+                </div>
+              )}
               {contextItems.length > 0 && (
                 <div className="context-chips">
                   {contextItems.map((item) => (
@@ -3670,6 +3024,12 @@ function App() {
               <textarea
                 value={prompt}
                 onChange={(event) => setPrompt(event.target.value)}
+                onPaste={(event) => {
+                  const files = Array.from(event.clipboardData.files);
+                  if (files.length === 0) return;
+                  event.preventDefault();
+                  void addFiles(files);
+                }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
@@ -3686,17 +3046,86 @@ function App() {
                     title="添加项目或文件上下文"
                     onClick={() => activeScope === "general" ? void chooseRepo() : openInspector("files")}
                   ><Plus size={17} /></button>
-                  <span>{activeScope === "general"
-                    ? busy ? "Enter 加入队列 · 不访问本机文件" : "不访问本机文件"
-                    : contextItems.length > 0
-                      ? `${contextItems.length} 个源码引用`
-                      : busy ? "Enter 加入队列 · Shift+Enter 换行" : mode === "build" ? "可修改 · 变更需审查" : "只读规划"}</span>
+                  <button
+                    className="composer-attach"
+                    aria-label="添加附件"
+                    title="添加附件：图片、音频或文本文件，也可以直接拖入或粘贴"
+                    onClick={() => attachmentInputRef.current?.click()}
+                  ><Paperclip size={16} /></button>
+                  <input
+                    ref={attachmentInputRef}
+                    type="file"
+                    multiple
+                    hidden
+                    onChange={(event) => {
+                      if (event.target.files?.length) void addFiles(event.target.files);
+                      event.target.value = "";
+                    }}
+                  />
+                  {trust && trust.levels.length > 1 && (
+                    <label className="composer-chip" title="授权方式：Agent 动手前要不要先问你">
+                      <ShieldCheck size={14} />
+                      <select
+                        aria-label="授权方式"
+                        value={trust.level}
+                        disabled={trustBusy}
+                        onChange={(event) => void changeTrustLevel(event.target.value as TrustLevel)}
+                      >
+                        {trust.levels.map((level) => <option key={level} value={level}>{TRUST_CHIP_LABEL[level]}</option>)}
+                      </select>
+                    </label>
+                  )}
+                  {(busy || contextItems.length > 0) && (
+                    <span>{contextItems.length > 0 ? `${contextItems.length} 个源码引用` : "Enter 加入队列"}</span>
+                  )}
                 </div>
-                <button className={`composer-send ${busy ? "queueing" : ""}`} aria-label={busy ? "加入待运行队列" : "发送"} title={busy ? "加入待运行队列" : "发送"} onClick={() => void sendPrompt()} disabled={(!prompt.trim() && contextItems.length === 0) || savingFile || runtimeStarting || projectSwitching}><ArrowUp size={17} /></button>
+                <div className="composer-actions">
+                {composerModelChoices.length === 1 && (
+                  <span className="composer-model single" title="当前模型；在「设置 → 模型」里可以添加更多">
+                    <Cpu size={13} />{composerModelChoices[0].label}
+                  </span>
+                )}
+                {composerModelChoices.length > 1 && (
+                  <label className="composer-model" title={composerModelChoices.find((choice) => choice.value === modelChoice)?.hint}>
+                    <Cpu size={13} />
+                    <select
+                      aria-label="选择模型"
+                      value={modelChoice}
+                      onChange={(event) => {
+                        setSavedModelChoice(event.target.value);
+                        persistModelChoice(event.target.value);
+                      }}
+                    >
+                      {composerModelChoices.filter((choice) => !choice.group).map((choice) => (
+                        <option key={choice.value} value={choice.value}>{choice.label}{choice.value === "auto" ? "" : ` · ${[choice.hint, ...(choice.badges ?? [])].join(" · ")}`}</option>
+                      ))}
+                      {[...new Set(composerModelChoices.flatMap((choice) => choice.group ? [choice.group] : []))].map((group) => (
+                        <optgroup key={group} label={group}>
+                          {composerModelChoices.filter((choice) => choice.group === group).map((choice) => (
+                            <option key={choice.value} value={choice.value}>{choice.label}{choice.badges?.length ? ` · ${choice.badges.join(" · ")}` : ""}</option>
+                          ))}
+                        </optgroup>
+                      ))}
+                    </select>
+                  </label>
+                )}
+                <button className={`composer-send ${busy ? "queueing" : ""}`} aria-label={busy ? "加入待运行队列" : "发送"} title={busy ? "加入待运行队列" : "发送"} onClick={() => void sendPrompt()} disabled={(!prompt.trim() && contextItems.length === 0 && attachments.length === 0) || savingFile || runtimeStarting || projectSwitching}><ArrowUp size={17} /></button>
+                </div>
               </div>
             </div>
+            {messages.length === 0 && !streaming && (
+              <ProjectPicker
+                projects={projects}
+                activeProjectName={activeScope === "project" ? (repoRoot.split("/").filter(Boolean).slice(-1)[0] || "项目") : null}
+                disabled={projectSwitching || runtimeStarting}
+                onPick={(project) => void switchProject(project)}
+                onAddProject={() => void chooseRepo()}
+                onLeaveProject={() => void switchManagedScope("general")}
+              />
+            )}
           </div>
         </section>
+        )}
 
         {inspectorOpen && (
         <aside className="inspector">
@@ -3706,6 +3135,7 @@ function App() {
           </div>
           <div className="inspector-tabs">
             <button className={tabClass("inbox")} onClick={() => openInspector("inbox")}>收件箱<small>{runtimeInboxSummary.actionable}</small></button>
+            <button className={tabClass("preview")} onClick={() => openInspector("preview")}>预览<small>{artifacts.length + previewReferenceItems.length}</small></button>
             {activeScope !== "general" && <button className={tabClass("files")} onClick={() => openInspector("files")}>代码<small>{filteredWorkspaceFiles.length}</small></button>}
             {activeScope !== "general" && <button className={tabClass("diff")} onClick={() => { setTaskReviewTask(null); setTaskBranchReview(null); setTaskBranchDiff(null); setTaskBranchSelectedPath(""); openInspector("diff"); void refreshGitReview(); void refreshPrDelivery(); void refreshIsolatedDeliveries(); }}>变更<small>{(gitReview?.files.length ?? 0) + isolatedDeliveries.length}</small></button>}
             {activeScope !== "general" && <button className={tabClass("runs")} onClick={() => openInspector("runs")}>运行<small>{activeRuns.length}</small></button>}
@@ -3716,125 +3146,15 @@ function App() {
           </div>
           <div className="inspector-body">
             {inspectorTab === "inbox" && (
-              <div className="runtime-inbox-panel">
-                <div className="runtime-inbox-hero">
-                  <div>
-                    <span>DESKTOP CONTROL PLANE</span>
-                    <h2>所有工作，一处处理</h2>
-                    <p>后台项目继续运行；这里只汇总需要你关注、正在执行和可以继续的工作。</p>
-                  </div>
-                  <button onClick={() => void refreshRuntimeInboxes()} title="立即刷新所有本地 runtime">刷新</button>
-                </div>
-                <div className="runtime-inbox-metrics">
-                  <div className={runtimeInboxSummary.actionable > 0 ? "attention" : ""}><strong>{runtimeInboxSummary.actionable}</strong><span>需要处理</span></div>
-                  <div><strong>{runtimeInboxSummary.working}</strong><span>Agent 执行中</span></div>
-                  <div><strong>{runtimeInboxSummary.tasks}</strong><span>后台工作</span></div>
-                  <div><strong>{runtimeInboxSummary.goals}</strong><span>活跃目标</span></div>
-                </div>
-
-                <div className="runtime-inbox-list">
-                  {runtimeInboxes.length === 0 && (
-                    <div className="panel-empty">
-                      <Inbox size={22} />
-                      <strong>还没有可汇总的本地工作</strong>
-                      <span>打开通用会话或项目后，Desktop 会自动在这里发现它。</span>
-                    </div>
-                  )}
-                  {[...runtimeInboxes].sort((left, right) => {
-                    const leftCounts = left.snapshot?.counts;
-                    const rightCounts = right.snapshot?.counts;
-                    const leftScore = (leftCounts?.decisions ?? 0) + (leftCounts?.hook_issues ?? 0)
-                      + (leftCounts?.goals_blocked ?? 0) + (leftCounts?.tasks_attention ?? 0);
-                    const rightScore = (rightCounts?.decisions ?? 0) + (rightCounts?.hook_issues ?? 0)
-                      + (rightCounts?.goals_blocked ?? 0) + (rightCounts?.tasks_attention ?? 0);
-                    return rightScore - leftScore || left.label.localeCompare(right.label, "zh-CN");
-                  }).map((runtimeInbox) => {
-                    const snapshot = runtimeInbox.snapshot;
-                    const counts = snapshot?.counts;
-                    const actionable = (counts?.decisions ?? 0) + (counts?.hook_issues ?? 0)
-                      + (counts?.goals_blocked ?? 0) + (counts?.tasks_attention ?? 0);
-                    const importantSessions = (snapshot?.sessions ?? [])
-                      .filter((session) => ["needs_input", "failed", "working", "queued"].includes(session.status))
-                      .slice(0, 5);
-                    const importantGoals = (snapshot?.goals ?? [])
-                      .filter((goal) => goal.status !== "achieved")
-                      .slice(0, 4);
-                    const importantTasks = (snapshot?.tasks ?? [])
-                      .filter((task) => ["queued", "running", "cancelling", "blocked", "failed", "paused", "interrupted"].includes(task.status))
-                      .slice(0, 4);
-                    return (
-                      <section className={`runtime-inbox-card ${runtimeInbox.runtimeId === processStatus.runtimeId ? "current" : ""} ${runtimeInbox.error ? "degraded" : ""}`} key={runtimeInbox.runtimeId}>
-                        <button className="runtime-inbox-card-head" onClick={() => void activateRuntimeInbox(runtimeInbox)}>
-                          <span className={`runtime-inbox-runtime-dot ${runtimeInbox.error ? "error" : actionable > 0 ? "attention" : (counts?.sessions_working ?? 0) > 0 ? "working" : "healthy"}`} />
-                          <span className="runtime-inbox-title">
-                            <strong>{runtimeInbox.label}</strong>
-                            <small>{runtimeInbox.scope === "general" ? "通用" : runtimeInbox.scope === "scratch" ? "Scratch" : runtimeInbox.repoRoot || "项目"}</small>
-                          </span>
-                          <span className="runtime-inbox-card-meta">
-                            {actionable > 0 && <b>{actionable} 待处理</b>}
-                            {(counts?.sessions_working ?? 0) > 0 && <em>{counts?.sessions_working} 执行中</em>}
-                            <small>{runtimeInbox.checkedAt ? formatRelativeTime(runtimeInbox.checkedAt / 1000) : ""}</small>
-                          </span>
-                        </button>
-
-                        {runtimeInbox.error && (
-                          <div className="runtime-inbox-error">
-                            <CircleAlert size={14} />
-                            <span><strong>暂时无法刷新</strong><small>{runtimeInbox.error}</small></span>
-                          </div>
-                        )}
-
-                        {(snapshot?.decisions ?? []).slice(0, 5).map((decision) => {
-                          const targetTab = decision.kind === "goal" ? "goals"
-                            : decision.kind === "task" ? "tasks"
-                              : decision.kind === "run" ? "runs" : "decisions";
-                          return (
-                            <button className="runtime-inbox-item decision" key={`decision:${decision.id}`} onClick={() => void openRuntimeInboxPanel(runtimeInbox, targetTab, decision.session_id)}>
-                              <span className={`runtime-inbox-item-dot severity-${decision.severity}`} />
-                              <span><strong>{decision.title}</strong><small>{decision.detail || "等待你的处理"}</small></span>
-                              <em>处理</em>
-                            </button>
-                          );
-                        })}
-
-                        {importantSessions.map((session) => (
-                          <button className="runtime-inbox-item" key={`session:${session.sid}`} onClick={() => void openRuntimeInboxSession(runtimeInbox, session.sid, session.status === "needs_input" || session.status === "failed")}>
-                            <span className={`runtime-inbox-item-dot status-${session.status}`} />
-                            <span>
-                              <strong>{session.title || "新任务"}</strong>
-                              <small>{session.status === "needs_input"
-                                ? `${session.pending_input_count || 1} 项等待确认`
-                                : session.status === "failed" ? "任务需要处理"
-                                  : session.activity || session.running_prompt || statusLabel(session.status)}</small>
-                            </span>
-                            <em>{session.branch || statusLabel(session.status)}</em>
-                          </button>
-                        ))}
-
-                        {importantGoals.map((goal) => (
-                          <button className="runtime-inbox-item" key={`goal:${goal.id}`} onClick={() => void openRuntimeInboxPanel(runtimeInbox, "goals")}>
-                            <span className={`runtime-inbox-item-dot status-${goal.status}`} />
-                            <span><strong>{goal.objective || "未命名目标"}</strong><small>{goal.blocker || goal.next_action || `${goal.progress.passed}/${goal.progress.total} 条完成标准`}</small></span>
-                            <em>{statusLabel(goal.status)}</em>
-                          </button>
-                        ))}
-
-                        {importantTasks.map((task) => (
-                          <button className="runtime-inbox-item" key={`task:${task.id}`} onClick={() => void openRuntimeInboxPanel(runtimeInbox, "tasks", task.owner_session, task.id)}>
-                            <span className={`runtime-inbox-item-dot status-${task.status}`} />
-                            <span><strong>{task.prompt || "后台工作"}</strong><small>{task.detail || task.branch || task.id}</small></span>
-                            <em>{statusLabel(task.status)}</em>
-                          </button>
-                        ))}
-
-                        {snapshot && actionable === 0 && importantSessions.length === 0 && importantGoals.length === 0 && importantTasks.length === 0 && (
-                          <div className="runtime-inbox-clear"><CircleCheck size={15} />当前没有需要关注的工作</div>
-                        )}
-                      </section>
-                    );
-                  })}
-                </div>
-              </div>
+              <RuntimeInboxPanel
+                runtimeInboxes={runtimeInboxes}
+                summary={runtimeInboxSummary}
+                currentRuntimeId={processStatus.runtimeId}
+                onRefresh={() => void refreshRuntimeInboxes()}
+                onActivate={(runtimeInbox) => void activateRuntimeInbox(runtimeInbox)}
+                onOpenSession={(runtimeInbox, sid, needsInput) => void openRuntimeInboxSession(runtimeInbox, sid, needsInput)}
+                onOpenPanel={(runtimeInbox, tab, sid, taskId) => void openRuntimeInboxPanel(runtimeInbox, tab, sid, taskId)}
+              />
             )}
             {inspectorTab === "files" && (
               <FilesPanel
@@ -3995,6 +3315,29 @@ function App() {
                   onDispatchUpdated: () => void refreshTasks() }}
               />
             )}
+            {inspectorTab === "preview" && (
+              <PreviewPanel
+                view={previewView}
+                onSelectView={(view) => {
+                  setPreviewView(view);
+                  if (view === "artifacts" && artifacts.length === 0) void refreshProjectAssets(activeScope !== "general");
+                }}
+                plan={plan}
+                steps={previewSteps}
+                busy={busy}
+                artifacts={artifacts}
+                selectedArtifact={selectedArtifact}
+                artifactVersion={artifactVersion}
+                artifactVersions={artifactVersions}
+                artifactPreviewLoading={artifactPreviewLoading}
+                securedArtifactHtml={securedArtifactHtml}
+                onSelectArtifact={setSelectedArtifactId}
+                onSelectVersion={(id, version) => void loadArtifactPreview(id, version)}
+                onOpenArtifact={openSelectedArtifact}
+                references={previewReferenceItems}
+                onOpenReference={(url) => void openUrl(url).catch((error) => setBanner(errorText(error, "打开链接失败")))}
+              />
+            )}
             {inspectorTab === "project" && (
               <ProjectAssetsPanel
                 activeScope={activeScope}
@@ -4079,6 +3422,8 @@ function App() {
           llmBaseInput={llmBaseInput}
           llmModelInput={llmModelInput}
           llmKeyInput={llmKeyInput}
+          llmFastInput={llmFastInput}
+          llmStrongInput={llmStrongInput}
           llmProfileBusy={llmProfileBusy}
           repoRoot={repoRoot}
           baseUrl={baseUrl}
@@ -4086,9 +3431,16 @@ function App() {
           trust={trust}
           trustBusy={trustBusy}
           onTrustChange={changeTrustLevel}
-          onClose={() => setSettingsOpen(false)}
+          onClose={() => { setSettingsOpen(false); setSettingsSection(undefined); }}
           onLlmBaseChange={setLlmBaseInput}
           onLlmModelChange={setLlmModelInput}
+          onLlmFastChange={setLlmFastInput}
+          onLlmStrongChange={setLlmStrongInput}
+          onRestartRuntime={restartCurrentRuntimeForLlmProfile}
+          onLlmProfileChange={applyLlmProfile}
+          modelPicks={modelPicks}
+          onModelPicksChange={changeModelPicks}
+          initialSection={settingsSection}
           onLlmKeyChange={setLlmKeyInput}
           onSaveLlmProfile={saveLlmProfile}
           onClearLlmProfile={clearLlmProfile}

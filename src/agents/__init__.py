@@ -7,15 +7,6 @@ from .roles import (
     ReviewerAgent,
     TesterAgent
 )
-from .custom_agent import (
-    AgentRole,
-    AgentCapability as CustomAgentCapability,
-    ToolPermission,
-    CustomAgentConfig,
-    AgentTemplate,
-    CustomAgentManager,
-    AGENT_TEMPLATES
-)
 from .manager import (
     AgentManager,
     AgentInstance,
@@ -41,14 +32,6 @@ __all__ = [
     "ReviewerAgent",
     "TesterAgent",
     
-    # Custom
-    "AgentRole",
-    "CustomAgentCapability",
-    "ToolPermission",
-    "CustomAgentConfig",
-    "AgentTemplate",
-    "CustomAgentManager",
-    "AGENT_TEMPLATES",
     
     # Advanced
     "AgentManager",

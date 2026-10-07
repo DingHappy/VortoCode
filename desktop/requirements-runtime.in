@@ -18,5 +18,5 @@ uvicorn==0.47.0
 websockets==16.0
 
 # Build-time package whose bootloader and runtime hooks are embedded by the
-# one-file sidecar.
+# onedir runtime.
 pyinstaller==6.20.0

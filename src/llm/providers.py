@@ -186,6 +186,22 @@ def client_for_spec(spec: str) -> Optional[Any]:
     return _client(target, model)
 
 
+def chat_target(spec: str) -> Optional[Tuple[ProviderSpec, str]]:
+    """聊天里选的 `供应商:模型` → (端点, 模型)。只认已登记且有凭据的**非默认**供应商。
+
+    不是这种形状（或供应商没登记）返回 None，调用方把整串当默认端点上的模型名——
+    有些模型名本身就带冒号（如 `qwen2.5:7b`），不能见冒号就拆。
+    """
+    provider_name, sep, model = (spec or "").partition(":")
+    provider_name, model = provider_name.strip().lower(), model.strip()
+    if not sep or not model or provider_name in ("", DEFAULT_PROVIDER):
+        return None
+    target = providers().get(provider_name)
+    if target is None or not target.usable:
+        return None
+    return target, model
+
+
 def describe_roles() -> str:
     """一行人话：当前各工序分别跑在哪。给 doctor / 启动日志用，也便于真机核对。"""
     table = role_models()

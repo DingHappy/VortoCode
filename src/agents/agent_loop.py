@@ -653,8 +653,22 @@ class MainAgent:
         return self._llm
 
     def set_model(self, model: str) -> None:
-        """切换本 agent 后续调用使用的模型：就地改客户端 config.model（惰性客户端先建再改）。"""
-        self._client().config.model = str(model)
+        """切换本 agent 后续调用使用的模型：就地改客户端 config.model（惰性客户端先建再改）。
+
+        `供应商:模型`（供应商须经 VORTOCODE_PROVIDER_<ID>_BASE/_KEY 登记）连同端点和 key 一起换；
+        普通模型名则切回原端点。key 只跟着自己的端点走，绝不借给别家（见 llm/providers.py）。
+        """
+        from src.llm.providers import chat_target
+        client = self._client()
+        target = chat_target(str(model))
+        if target is not None and hasattr(client, "use_endpoint"):
+            provider, name = target
+            client.use_endpoint(provider.base_url, provider.api_key)
+            client.config.model = name
+            return
+        if hasattr(client, "reset_endpoint"):
+            client.reset_endpoint()
+        client.config.model = str(model)
 
     def current_model(self) -> str:
         """当前 agent 实际会用的模型名（读客户端 config）。拿不到返回空串。"""

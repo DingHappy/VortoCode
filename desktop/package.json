@@ -24,6 +24,7 @@
     "signing:doctor": "node scripts/dev-signing.mjs doctor",
     "bundle:dev-signed": "node scripts/dev-signing.mjs build",
     "install:dev-signed": "node scripts/dev-signing.mjs install",
+    "install:notarized": "VORTOCODE_NOTARY_PROFILE=${VORTOCODE_NOTARY_PROFILE:-vortocode-notary} node scripts/dev-signing.mjs install",
     "verify:installed": "node scripts/dev-signing.mjs verify"
   },
   "dependencies": {
