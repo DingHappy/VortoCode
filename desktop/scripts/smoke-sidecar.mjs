@@ -1,18 +1,13 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { RUNTIME_DIR_NAME, runtimeExecutableName } from "./runtime-tree.mjs";
+
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(desktopRoot, "..");
-
-function commandOutput(command, args) {
-  const result = spawnSync(command, args, { cwd: repoRoot, encoding: "utf8" });
-  if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(result.stderr || result.stdout || `${command} failed`);
-  return result.stdout.trim();
-}
 
 async function freePort() {
   const server = createServer();
@@ -27,13 +22,12 @@ async function freePort() {
   return port;
 }
 
-const targetTriple = commandOutput("rustc", ["--print", "host-tuple"]);
-const extension = process.platform === "win32" ? ".exe" : "";
 const runtime = process.env.VORTOCODE_RUNTIME_BIN || join(
   desktopRoot,
   "src-tauri",
   "binaries",
-  `vortocode-runtime-${targetTriple}${extension}`,
+  RUNTIME_DIR_NAME,
+  runtimeExecutableName(),
 );
 if (!existsSync(runtime)) throw new Error(`Desktop runtime sidecar not found: ${runtime}`);
 
@@ -81,7 +75,7 @@ try {
         break;
       }
     } catch {
-      // PyInstaller one-file extraction and first imports are intentionally included in the timeout.
+      // First imports (and macOS's first scan of freshly installed binaries) are included in the timeout.
     }
     await sleep(250);
   }

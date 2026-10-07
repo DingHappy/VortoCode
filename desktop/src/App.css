@@ -9857,6 +9857,11 @@ input::placeholder {
   font-weight: 500;
 }
 
+/* 启动提示延后显示：先占位不可见，连得快就不闪。 */
+.home-starting.pending {
+  visibility: hidden;
+}
+
 /* ── 对标 MiMo：侧边栏 / 顶栏 / 首页输入区精简 ───────────────────────── */
 .sidebar-section-title .sidebar-fold {
   display: inline-flex;

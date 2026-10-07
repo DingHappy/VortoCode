@@ -2,15 +2,15 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync,
-  lstatSync,
   mkdirSync,
   readFileSync,
-  readdirSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { RUNTIME_DIR_NAME, filesBelow, machOFiles, runtimeExecutableName, sha256Tree, treeSize } from "./runtime-tree.mjs";
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = resolve(desktopRoot, "..");
@@ -38,26 +38,6 @@ function requiredOutput(commandName, args) {
 
 function sha256File(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
-}
-
-function filesBelow(root) {
-  return readdirSync(root, { withFileTypes: true })
-    .flatMap((entry) => {
-      const path = join(root, entry.name);
-      return entry.isDirectory() ? filesBelow(path) : [path];
-    })
-    .sort();
-}
-
-function sha256Tree(root) {
-  const hash = createHash("sha256");
-  for (const path of filesBelow(root)) {
-    const metadata = lstatSync(path);
-    hash.update(relative(root, path));
-    hash.update(String(metadata.mode & 0o777));
-    hash.update(readFileSync(path));
-  }
-  return hash.digest("hex");
 }
 
 function findFile(root, name) {
@@ -98,7 +78,9 @@ const dmgPath = join(
 if (!existsSync(appPath)) throw new Error(`macOS app bundle is missing: ${appPath}`);
 
 const executablePath = join(appPath, "Contents", "MacOS", "vortocode-desktop");
-const sidecarPath = join(appPath, "Contents", "MacOS", "vortocode-runtime");
+// 内置 runtime 是 onedir 目录，随 resources 放在 Contents/Resources/runtime/。
+const runtimeDir = join(appPath, "Contents", "Resources", RUNTIME_DIR_NAME);
+const sidecarPath = join(runtimeDir, runtimeExecutableName());
 const noticesPath = findFile(join(appPath, "Contents", "Resources"), "THIRD_PARTY_NOTICES.txt");
 for (const [label, path] of [["main executable", executablePath], ["sidecar", sidecarPath], ["third-party notices", noticesPath]]) {
   if (!path || !existsSync(path)) throw new Error(`${label} is missing from ${appPath}`);
@@ -111,6 +93,7 @@ const managedPythonSources = JSON.parse(readFileSync(managedPythonSourcesPath, "
 const managedPythonSourcesSha256 = sha256File(managedPythonSourcesPath);
 const pinnedPythonSource = managedPythonSources.sources[targetTriple];
 const sourceSidecarPath = join(tauriRoot, "binaries", sidecarManifest.binary);
+const sourceRuntimeDir = join(tauriRoot, "binaries", RUNTIME_DIR_NAME);
 const sourceNotices = join(tauriRoot, "resources", "THIRD_PARTY_NOTICES.txt");
 const architectureEvidence = {
   executable: requiredOutput("file", [executablePath]),
@@ -119,9 +102,10 @@ const architectureEvidence = {
 if (!architectureEvidence.executable.includes(expectedFileArchitecture) || !architectureEvidence.sidecar.includes(expectedFileArchitecture)) {
   throw new Error(`Bundle architecture does not match ${targetTriple}`);
 }
-if (!existsSync(sourceSidecarPath)
-  || statSync(sourceSidecarPath).size !== sidecarManifest.size
-  || sha256File(sourceSidecarPath) !== sidecarManifest.binarySha256) {
+if (sidecarManifest.layout !== "onedir"
+  || !existsSync(sourceSidecarPath)
+  || treeSize(sourceRuntimeDir) !== sidecarManifest.size
+  || sha256Tree(sourceRuntimeDir) !== sidecarManifest.runtimeSha256Tree) {
   throw new Error("Source sidecar does not match the frozen sidecar manifest");
 }
 if (sha256File(noticesPath) !== sidecarManifest.noticesSha256 || sha256File(sourceNotices) !== sidecarManifest.noticesSha256) {
@@ -133,14 +117,21 @@ const codeSignatureDetails = command("codesign", ["-dv", "--verbose=4", appPath]
 const signed = codeSignature.status === 0 && !/Signature=adhoc/i.test(codeSignatureDetails.output);
 const bundledSidecarSignature = command("codesign", ["--verify", "--strict", "--verbose=2", sidecarPath]);
 const bundledSidecarSignatureDetails = command("codesign", ["-dv", "--verbose=4", sidecarPath]);
+// 公证要求 runtime 目录里的每个 Mach-O（libpython、扩展模块）都带非 ad-hoc 签名，不只是入口。
+const runtimeBinariesSigned = machOFiles(runtimeDir).every((binary) => {
+  const verified = command("codesign", ["--verify", "--strict", binary]);
+  const details = command("codesign", ["-dv", "--verbose=4", binary]);
+  return verified.status === 0 && !/Signature=adhoc/i.test(details.output);
+});
 const sidecarSigned = bundledSidecarSignature.status === 0
-  && !/Signature=adhoc/i.test(bundledSidecarSignatureDetails.output);
+  && !/Signature=adhoc/i.test(bundledSidecarSignatureDetails.output)
+  && runtimeBinariesSigned;
 if (signed) {
   if (!sidecarSigned) {
     throw new Error("Signed app contains a sidecar without a non-ad-hoc nested code signature");
   }
-} else if (statSync(sidecarPath).size !== sidecarManifest.size
-  || sha256File(sidecarPath) !== sidecarManifest.binarySha256) {
+} else if (treeSize(runtimeDir) !== sidecarManifest.size
+  || sha256Tree(runtimeDir) !== sidecarManifest.runtimeSha256Tree) {
   throw new Error("Unsigned bundled sidecar does not exactly match the frozen sidecar manifest");
 }
 const notarization = command("xcrun", ["stapler", "validate", appPath]);
@@ -222,10 +213,10 @@ const evidence = {
     },
     sidecar: {
       codeSignatureValid: bundledSidecarSignature.status === 0,
-      path: relative(repoRoot, sidecarPath),
-      sha256: sha256File(sidecarPath),
+      path: relative(repoRoot, runtimeDir),
+      sha256Tree: sha256Tree(runtimeDir),
       signed: sidecarSigned,
-      size: statSync(sidecarPath).size,
+      size: treeSize(runtimeDir),
     },
   },
   formatVersion: 1,

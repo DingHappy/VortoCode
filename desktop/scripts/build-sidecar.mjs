@@ -1,8 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  chmodSync,
-  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -15,6 +13,7 @@ import {
 import { delimiter, dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { RUNTIME_DIR_NAME, filesBelow, runtimeExecutableName, sha256Tree, treeSize } from "./runtime-tree.mjs";
 import { ensureSidecarEnvironment } from "./sidecar-environment.mjs";
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -44,9 +43,15 @@ function sourceFiles(path) {
 
 const targetTriple = output("rustc", ["--print", "host-tuple"]);
 const extension = process.platform === "win32" ? ".exe" : "";
-const binaryName = `vortocode-runtime-${targetTriple}${extension}`;
+// onedir：可执行文件 + _internal/ 放在固定目录，作为 Tauri resources 打进 App。
+// 不用 one-file——它每次启动都要把整个 Python 环境解压到临时目录，实测多花 3–4 秒（首次近 10 秒）。
 const binaryDir = join(tauriRoot, "binaries");
-const binaryPath = join(binaryDir, binaryName);
+const runtimeDir = join(binaryDir, RUNTIME_DIR_NAME);
+const executableName = runtimeExecutableName();
+const binaryName = `${RUNTIME_DIR_NAME}/${executableName}`;
+const executablePath = join(runtimeDir, executableName);
+// 旧版 one-file 产物；换成 onedir 后清掉，免得被误当成当前 runtime。
+const legacyBinaryPath = join(binaryDir, `vortocode-runtime-${targetTriple}${extension}`);
 const buildRoot = join(tauriRoot, "target", "sidecar", targetTriple);
 const manifestPath = join(buildRoot, "manifest.json");
 const inventoryPath = join(buildRoot, "third-party-inventory.json");
@@ -84,9 +89,11 @@ for (const file of inputs.flatMap(sourceFiles).sort()) {
 }
 const digest = fingerprint.digest("hex");
 
-if (existsSync(binaryPath) && existsSync(manifestPath) && existsSync(inventoryPath) && existsSync(noticesPath)) {
+if (existsSync(executablePath) && existsSync(manifestPath) && existsSync(inventoryPath) && existsSync(noticesPath)) {
   const cached = JSON.parse(readFileSync(manifestPath, "utf8"));
-  if (cached.fingerprint === digest && cached.binary === binaryName) {
+  // runtime 目录不分架构：还要比对目录树，换过 target 或被改动过都会重建。
+  if (cached.fingerprint === digest && cached.binary === binaryName && cached.layout === "onedir"
+    && cached.runtimeSha256Tree === sha256Tree(runtimeDir)) {
     console.log(`Desktop runtime sidecar is current (${binaryName}, ${cached.size} bytes)`);
     process.exit(0);
   }
@@ -128,7 +135,7 @@ const args = [
   "PyInstaller",
   "--noconfirm",
   "--clean",
-  "--onefile",
+  "--onedir",
   "--noupx",
   "--log-level",
   "WARN",
@@ -167,17 +174,17 @@ const built = spawnSync(python, args, {
 if (built.error) throw built.error;
 if (built.status !== 0) throw new Error(`PyInstaller failed with exit code ${built.status}`);
 
-const builtPath = join(distPath, `vortocode-runtime${extension}`);
-if (!existsSync(builtPath) || statSync(builtPath).size < 1024 * 1024) {
-  throw new Error(`PyInstaller did not produce a valid sidecar at ${builtPath}`);
+const builtDir = join(distPath, "vortocode-runtime");
+const builtExecutable = join(builtDir, executableName);
+if (!existsSync(builtExecutable) || treeSize(builtDir) < 1024 * 1024) {
+  throw new Error(`PyInstaller did not produce a valid sidecar at ${builtDir}`);
 }
-const temporary = `${binaryPath}.${process.pid}.tmp`;
-copyFileSync(builtPath, temporary);
-if (process.platform !== "win32") chmodSync(temporary, 0o755);
-rmSync(binaryPath, { force: true });
-renameSync(temporary, binaryPath);
+// dist 与 binaries 同在 src-tauri 下：整目录 rename，不逐个复制。
+rmSync(runtimeDir, { recursive: true, force: true });
+renameSync(builtDir, runtimeDir);
+rmSync(legacyBinaryPath, { force: true });
 
-const size = statSync(binaryPath).size;
+const size = treeSize(runtimeDir);
 const analysisPath = join(workPath, "vortocode-runtime", "Analysis-00.toc");
 const notices = spawnSync(python, [
   join(desktopRoot, "scripts", "generate_third_party_notices.py"),
@@ -197,8 +204,9 @@ if (notices.status !== 0) throw new Error(`Third-party notice generation failed 
 const inventory = JSON.parse(readFileSync(inventoryPath, "utf8"));
 const manifest = {
   binary: binaryName,
-  binarySha256: createHash("sha256").update(readFileSync(binaryPath)).digest("hex"),
+  fileCount: filesBelow(runtimeDir).length,
   fingerprint: digest,
+  layout: "onedir",
   noticesSha256: createHash("sha256").update(readFileSync(noticesPath)).digest("hex"),
   pyinstaller: pyinstallerVersion,
   python: pythonVersion,
@@ -207,6 +215,7 @@ const manifest = {
   pythonProvenance: sidecarEnvironment.pythonProvenance,
   pythonProvider: inventory.pythonRuntime.provider,
   runtimeLockSha256: sidecarEnvironment.lockSha256,
+  runtimeSha256Tree: sha256Tree(runtimeDir),
   runtimeEnvironment: sidecarEnvironment.managed ? "managed" : "external",
   size,
   targetTriple,
@@ -216,4 +225,4 @@ const manifest = {
 const manifestTemporary = `${manifestPath}.${process.pid}.tmp`;
 writeFileSync(manifestTemporary, `${JSON.stringify(manifest, null, 2)}\n`);
 renameSync(manifestTemporary, manifestPath);
-console.log(`Built Desktop runtime sidecar: ${binaryPath} (${size} bytes)`);
+console.log(`Built Desktop runtime sidecar: ${runtimeDir} (${size} bytes)`);
