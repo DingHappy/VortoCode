@@ -109,7 +109,10 @@ class IMBridge:
     def __init__(self, repo_root: str, adapter: ChannelAdapter, owner_id: str, *,
                  channel: str = "im", mode: str = "plan", llm=None, runner=None,
                  with_dev: bool = True, persona: str = "",
-                 allow_from: Optional[Iterable] = None):
+                 allow_from: Optional[Iterable] = None, workspace_scope=None):
+        from src.gateway.workspace_scope import current_workspace_scope, normalize_workspace_scope
+        self.workspace_scope = (current_workspace_scope() if workspace_scope is None
+                                else normalize_workspace_scope(workspace_scope, default="general"))
         self.repo_root = str(repo_root)
         self.adapter = adapter
         self.channel = channel
@@ -137,7 +140,7 @@ class IMBridge:
         # 后台任务运行时：serve 内嵌模式注入共享 runner（单一并发池/台账/订阅集，kind="im-dev"
         # 分发回本 bridge 的 worker，见 gateway/im_service）；standalone 懒建自己的（向后兼容）
         # 研究员助手（给同事用）：不给改主项目代码/落分支/开 PR 的工具面
-        self._with_dev = bool(with_dev)
+        self._with_dev = bool(with_dev) and self.workspace_scope == "project"
         # 人设：由本人首次对话时自述，落在自己的状态目录里（见 _persona_path）
         self._persona = str(persona or "")
         self._runner = runner
@@ -202,7 +205,7 @@ class IMBridge:
                               with_dev=getattr(self, "_with_dev", True),
                               extra_system=(f"【服务对象】{persona}" if persona else None),
                               on_progress=_progress, llm=self._llm, can_ask_human=True,
-                              untrusted_input=True)
+                              untrusted_input=True, workspace_scope=self.workspace_scope)
         self._restore_session(agent)
         return agent
 
@@ -303,6 +306,9 @@ class IMBridge:
 
     # ------------------------------------------------------------ 主循环
     async def run(self) -> None:
+        claim = getattr(self.adapter, "claim_polling", None)
+        if claim is not None:
+            claim()
         # 时间戳用 time.time()（墙钟）不用 monotonic：要跨进程重启比较，monotonic 重启即归零。
         warn = self.allow_from_warning()
         if warn or self._should_say_hello():
@@ -502,6 +508,11 @@ class IMBridge:
     async def _handle_command(self, text: str) -> None:
         raw_cmd = text.split()[0]
         cmd = _norm_cmd(raw_cmd)
+        if self.workspace_scope != "project" and (
+                cmd in {"/task", "/tasks"} or cmd in _PIPE_LIST or cmd in _PIPE_GO
+                or cmd in _PIPE_URL or cmd in _PIPE_VERDICTS):
+            await self._safe_send("这个命令需要 Project 工作区；当前 Runtime 不具备项目权限。")
+            return
         if cmd == "/mode":
             arg = text[len("/mode"):].strip()
             self.mode = arg if arg in ("plan", "build") else ("build" if self.mode == "plan" else "plan")
@@ -514,10 +525,10 @@ class IMBridge:
                    f"{'运行中' if busy else '空闲'} · 白名单 {len(self.allow_from)} 人 · "
                    f"已忽略白名单外 {self._ignored} 条、群里没 @ 我 {self._ignored_no_mention} 条")
             msg += "\n" + self._session_age_line()
-            pipe = self._pipeline_status_line()
+            pipe = self._pipeline_status_line() if self.workspace_scope == "project" else ""
             if pipe:
                 msg += "\n" + pipe
-            recent = self._recent_plan()                 # 最近的 dev_auto 计划进度（可 dev_resume 续跑）
+            recent = self._recent_plan() if self.workspace_scope == "project" else None
             if recent:
                 msg += f"\n最近计划：{recent}"
             warn = self.allow_from_warning()             # 白名单配错的自检（开机横幅可能早刷没了）
@@ -923,6 +934,8 @@ class IMBridge:
 
     async def _task_worker(self, task, on_progress):
         """后台 dev 任务：跑 dev_auto（open_pr=True + 后台确认门 + draft）；集成绿→按钮→draft PR。"""
+        if self.workspace_scope != "project":
+            raise RuntimeError("Development tasks require a Project workspace")
         from src.agents.dev_plan import load_plan
         from src.agents.main_agent import build_dev_tools
         tools = {t.name: t for t in build_dev_tools(self.repo_root, on_progress=on_progress,
@@ -978,6 +991,9 @@ class IMBridge:
         return f"后台任务 {task.id} · {task.status}\n{tail}{agent_link()}"
 
     async def _submit_task(self, prompt: str) -> None:
+        if self.workspace_scope != "project":
+            await self._safe_send("后台开发任务需要 Project 工作区。")
+            return
         if not prompt:
             await self._safe_send("用法：/task <要后台跑的任务描述>")
             return
@@ -1017,7 +1033,7 @@ class IMBridge:
                 # 文件走文本告知路径（agent 用 read_file 自己读）；图片走 run_turn 的
                 # images 通道（#186 的多模态入口）。**两者都在污点回合内**——kind="im" 的
                 # 会话每回合无条件打污点，图里写的指令因此拿不到任何免确认授权。
-                prompt = text + self._pipeline_pointer()
+                prompt = text + (self._pipeline_pointer() if self.workspace_scope == "project" else "")
                 if files:
                     prompt = ((prompt + "\n\n") if prompt else "") + \
                         "（用户随消息发来文件，已存到：\n" + \

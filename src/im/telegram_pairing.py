@@ -100,6 +100,7 @@ async def pair_telegram(token: str, *, state_dir: Path | None = None,
         raise PairingError("这个 Bot 已有主人；不会重新配对")
     adapter = TelegramAdapter(token, "", request_fn=request_fn)
     try:
+        adapter.claim_polling()
         me = await adapter._api("getMe")
         if not isinstance(me, dict) or str(me.get("id")) != _bot_id(token):
             raise PairingError("无法确认 Bot 身份；没有开启配对")

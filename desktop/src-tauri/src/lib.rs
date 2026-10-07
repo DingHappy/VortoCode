@@ -2959,6 +2959,11 @@ fn configure_gateway_command(
     command.arg(port.to_string());
     command.current_dir(repo_root);
     command.env("VORTOCODE_WORKSPACE_SCOPE", scope);
+    // Channels belong to an explicitly started resident service, not each Desktop tab.
+    // Pin values: removing them allows Python's load_dotenv to re-enable them.
+    command.env("VORTOCODE_IM", "");
+    command.env("VORTOCODE_CRON", "0");
+    command.env("VORTOCODE_HEARTBEAT", "0");
     // 监护进程 pid：runtime 据此在我们被强杀/崩溃时自己退出。正常退出走 RunEvent::Exit 的
     // terminate_gateway_child；强杀时那条回调根本不会执行，于是 runtime 会继续占着端口、
     // 持着一个能调模型的 agent，而界面上再无入口（2026-09-17 真机诊断留下两对孤儿进程）。
@@ -5806,6 +5811,21 @@ mod tests {
             key == OsStr::new("VORTOCODE_SUPERVISOR_PID")
                 && value == Some(OsStr::new(expected.as_str()))
         }));
+    }
+
+    #[test]
+    fn managed_gateway_pins_resident_services_off() {
+        let command = configure_gateway_command(
+            Command::new("python"), false, Path::new("/tmp/project"),
+            8123, "", PROJECT_SCOPE,
+        );
+        for (name, expected) in [
+            ("VORTOCODE_IM", ""), ("VORTOCODE_CRON", "0"), ("VORTOCODE_HEARTBEAT", "0"),
+        ] {
+            assert!(command.get_envs().any(|(key, value)| {
+                key == OsStr::new(name) && value == Some(OsStr::new(expected))
+            }));
+        }
     }
 
     #[test]

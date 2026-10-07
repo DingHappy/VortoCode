@@ -84,24 +84,35 @@ def load_allow_from(channel: str):
 
 
 def start_embedded(channel: str, repo_root: str, *, mode: str = "plan",
-                   adapter=None, owner: Optional[str] = None, runner=None):
+                   adapter=None, owner: Optional[str] = None, runner=None, register_worker=None):
     """在 serve 进程内起 bridge：构造（或注入，测试用）adapter → 建 bridge（共享 runner）→
     登记单例 + kind 分发 → 返回 (bridge, adapter)。调用方负责 asyncio.create_task(bridge.run())。
     """
     from src.im.bridge import IMBridge
+    if _ACTIVE["bridge"] is not None:
+        raise IMConfigError("An IM bridge already owns this Runtime")
+    if runner is None or register_worker is None:
+        raise IMConfigError("Embedded IM requires an injected Runtime runner and worker registrar")
     if adapter is None:
         adapter, owner = build_adapter(channel)
-    if runner is None:
-        from src.web.routers.tasks import get_runner
-        runner = get_runner()
     bridge = IMBridge(repo_root, adapter, str(owner), channel=channel, mode=mode, runner=runner,
                       allow_from=load_allow_from(channel))
-    from src.web.routers import tasks as tasks_router
-    tasks_router.register_im_worker(bridge._task_worker)   # kind="im-dev" 分发回 bridge worker
+    claim = getattr(adapter, "claim_polling", None)
+    if claim is not None:
+        claim()
     # IM 也收任务进度/终态（与 WS 同一订阅集）；unsubscribe 必须留着——stop 时不退订的话，
     # lifespan 重启/动态启停会把更新继续投给已停的 bridge/adapter（评审抓的订阅泄漏）
-    _ACTIVE["unsubscribe"] = runner.subscribe(bridge._on_task_update)
+    try:
+        register_worker(bridge._task_worker)
+        _ACTIVE["unsubscribe"] = runner.subscribe(bridge._on_task_update)
+    except Exception:
+        register_worker(None)
+        release = getattr(adapter, "release_polling", None)
+        if release is not None:
+            release()
+        raise
     _ACTIVE["bridge"] = bridge
+    _ACTIVE["register_worker"] = register_worker
     from src.gateway import im_runtime
     # 注册**不吞异常**的 notify_send，而不是 _safe_send：通知投递路径必须让失败冒出来，
     # notify_owner 才能返回 False、投递器才能落"未送达"的账（2026-07-28 早上的教训）。
@@ -127,11 +138,9 @@ def stop_embedded() -> None:
             unsub()                                        # 从共享 runner 退订（防泄漏到已停 bridge）
         except Exception:  # noqa: BLE001
             pass
-    try:
-        from src.web.routers import tasks as tasks_router
-        tasks_router.register_im_worker(None)
-    except Exception:  # noqa: BLE001
-        pass
+    register_worker = _ACTIVE.pop("register_worker", None)
+    if register_worker is not None:
+        register_worker(None)
 
 
 def current_bridge():

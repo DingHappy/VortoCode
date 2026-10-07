@@ -11,6 +11,8 @@ import pytest
 pytest.importorskip("fastapi")
 
 from src.gateway import im_service  # noqa: E402
+from src.web.routers.tasks import register_im_worker  # noqa: E402
+from src.web.runtime import get_services  # noqa: E402
 
 
 class FakeAdapter:
@@ -64,20 +66,19 @@ def _clean_registry():
 # ------------------------------------------------------------ 内嵌装配：共享 runner + kind 分发
 @pytest.mark.asyncio
 async def test_start_embedded_shares_runner_and_registers_dispatch(tmp_path, monkeypatch):
-    from src.web.routers import tasks as tr
     adapter, runner = FakeAdapter(), FakeRunner()
     bridge, _ = im_service.start_embedded("telegram", str(tmp_path),
-                                          adapter=adapter, owner="42", runner=runner)
+                                          adapter=adapter, owner="42", runner=runner, register_worker=register_im_worker)
     assert im_service.current_bridge() is bridge
     assert bridge._on_task_update in runner.subs             # IM 收任务进度（与 WS 同一订阅集）
-    assert tr._IM_WORKER is not None                         # kind 分发已登记
+    assert get_services().im_worker is not None                         # kind 分发已登记
     # IM 的 /task 提交走共享 runner、kind="im-dev"
     await bridge._submit_task("修个 bug")
     assert runner.submitted == [("im-dev", "修个 bug")]
     # 注销后干净：单例清、kind 分发清、**runner 订阅退掉**（评审抓的泄漏——否则 lifespan
     # 重启/动态启停会把任务更新继续投给已停的 bridge/adapter）
     im_service.stop_embedded()
-    assert im_service.current_bridge() is None and tr._IM_WORKER is None
+    assert im_service.current_bridge() is None and get_services().im_worker is None
     assert runner.subs == [], "stop_embedded 后共享 runner 上不许残留旧 bridge 的订阅"
 
 
@@ -87,7 +88,7 @@ async def test_restart_embedded_leaves_single_subscription(tmp_path):
     runner = FakeRunner()
     for _ in range(3):
         im_service.start_embedded("telegram", str(tmp_path),
-                                  adapter=FakeAdapter(), owner="42", runner=runner)
+                                  adapter=FakeAdapter(), owner="42", runner=runner, register_worker=register_im_worker)
         assert len(runner.subs) == 1
         im_service.stop_embedded()
         assert len(runner.subs) == 0
@@ -131,7 +132,7 @@ async def test_notifier_delivers_three_ways(tmp_path, monkeypatch):
     monkeypatch.setattr(task_events, "broadcast_notice", ws_got.append)
     adapter = FakeAdapter()
     im_service.start_embedded("telegram", str(tmp_path),
-                              adapter=adapter, owner="42", runner=FakeRunner())
+                              adapter=adapter, owner="42", runner=FakeRunner(), register_worker=register_im_worker)
     notify = tr.make_notifier(str(tmp_path))
     await notify("cron 作业 nightly 跑完：全绿")
     assert any("nightly" in n.get("text", "") for n in tr.load_notices(str(tmp_path), 10))  # ① 台账
@@ -165,7 +166,7 @@ async def test_notify_owner_im_failure_swallowed(tmp_path):
             raise RuntimeError("网断了")
 
     im_service.start_embedded("telegram", str(tmp_path),
-                              adapter=BoomAdapter(), owner="42", runner=FakeRunner())
+                              adapter=BoomAdapter(), owner="42", runner=FakeRunner(), register_worker=register_im_worker)
     assert await im_service.notify_owner("hi") is False    # 不抛，但绝不谎报送达
 
 
@@ -199,7 +200,7 @@ async def test_notifier_no_marker_when_delivered(tmp_path, monkeypatch):
     monkeypatch.setattr(task_events, "broadcast_notice", lambda _t: None)
     adapter = FakeAdapter()
     im_service.start_embedded("telegram", str(tmp_path),
-                              adapter=adapter, owner="42", runner=FakeRunner())
+                              adapter=adapter, owner="42", runner=FakeRunner(), register_worker=register_im_worker)
     await tr.make_notifier(str(tmp_path))("顺利送达的通知")
     assert adapter.sent and "顺利送达" in adapter.sent[-1]
     assert not [n for n in tr.load_notices(str(tmp_path), 10)

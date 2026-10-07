@@ -21,71 +21,9 @@ from src.web.auth import auth_middleware, get_api_token
 
 @asynccontextmanager
 async def _lifespan(_app):
-    """启动/关停钩子：①恢复上次崩在半路的后台任务（running→interrupted）；②opt-in 起 cron/heartbeat
-    调度循环；③opt-in 内嵌 IM 桥（VORTOCODE_IM=telegram|dingtalk——单进程唯一状态所有者，PR-5）。"""
-    import asyncio
-    import os as _os
-    sched_task = None
-    watchdog_task = None
-    stop_event = asyncio.Event()
-    im_task = None
-    im_adapter = None
-    run_manager = None
-    terminal_manager = None
-    try:
-        # 监护进程看门狗：Desktop 被强杀/崩溃时不留下孤儿 runtime（只在申报了监护 pid 时启动）。
-        from src.gateway.supervisor_watchdog import start_watchdog
-        watchdog_task = start_watchdog()
-        if watchdog_task is not None:
-            print("  🐕 看门狗已启动：监护进程退出后 runtime 自动退出")
-        from src.web.routers.tasks import get_runner, scheduler_loop
-        recovered = get_runner().recover()
-        if recovered:
-            print(f"  ↻ 对账 {len(recovered)} 条后台任务/检查中断记录（不自动重试）")
-        from src.web.task_dispatch import get_dispatch_service
-        dependency_audit = get_dispatch_service().audit_dependencies()
-        if dependency_audit and not dependency_audit["complete"]:
-            print("  （依赖启动核对未覆盖全部记录，请核对扫描上限或损坏/存储错误；不自动执行）")
-        # cron / heartbeat 调度循环：**opt-in**（任一开关开才起，默认全关——不擅自跑自主 LLM 作业）
-        if any(_os.getenv(k, "").strip().lower() in ("1", "true", "yes", "on")
-               for k in ("VORTOCODE_CRON", "VORTOCODE_HEARTBEAT")):
-            sched_task = asyncio.create_task(scheduler_loop(stop_event))
-            print("  ⏰ cron/heartbeat 调度循环已启动（opt-in）")
-        from src.web.routers.runs import get_run_manager
-        run_manager = get_run_manager()
-        recovered_runs = run_manager.recover()
-        if recovered_runs:
-            print(f"  ↻ 恢复 {len(recovered_runs)} 个中断的 Desktop 运行记录")
-        from src.web.routers.terminals import get_terminal_manager
-        terminal_manager = get_terminal_manager()
-    except Exception as e:  # noqa: BLE001 —— 恢复/调度失败不该挡服务启动
-        print(f"  （后台任务恢复/调度跳过：{e}）")
-    im_channel = _os.getenv("VORTOCODE_IM", "").strip().lower()
-    if im_channel:                             # 显式 opt-in 的 IM 凭证缺失要响（fail-closed，不静默降级）
-        from src.gateway import im_service
-        bridge, im_adapter = im_service.start_embedded(im_channel, _os.getcwd())
-        im_task = asyncio.create_task(bridge.run())
-        print(f"  🌉 IM 桥已内嵌（{im_channel}，共享任务池；只服务已配对 owner）")
-    try:
+    from src.web.runtime import runtime_lifespan
+    async with runtime_lifespan():
         yield
-    finally:
-        stop_event.set()
-        if watchdog_task is not None:
-            watchdog_task.cancel()
-        if sched_task is not None:
-            sched_task.cancel()
-        if im_task is not None:
-            im_task.cancel()
-            from src.gateway import im_service
-            im_service.stop_embedded()
-            if im_adapter is not None:
-                import contextlib
-                with contextlib.suppress(Exception):
-                    await im_adapter.close()
-        if run_manager is not None:
-            await run_manager.shutdown()
-        if terminal_manager is not None:
-            terminal_manager.shutdown()
 
 
 app = FastAPI(

@@ -17,106 +17,29 @@ router = APIRouter()
 
 # 进程内单例运行时（绑到 server 的 cwd）。lifespan 里 recover()；测试可覆盖 _RUNNER / _worker。
 _RUNNER = None
-_IM_WORKER = None      # serve 内嵌 IM 时登记（gateway/im_service）：kind="im-dev" 的任务路由给它
 _SESSION_ID = re.compile(r"[A-Za-z0-9._-]{1,120}")
-_HANDOFF_STATUSES = {"done", "failed", "cancelled", "paused", "interrupted"}
 
 
 def register_im_worker(worker) -> None:
-    """登记/注销 IM 的任务 worker（共享 runner 的 kind 分发目标；None=注销）。"""
-    global _IM_WORKER
-    _IM_WORKER = worker
+    from src.web.runtime import get_services
+    get_services().register_im_worker(worker)
 
 
 async def _dev_worker(task, on_progress):
-    """dev 型后台任务：直接跑 dev_auto（确定性），落 vorto/* 分支 + C1 计划；不 push（后台无人值守）。
-
-    kind="im-dev"（serve 内嵌 IM 的 /task 提交）分发给 bridge 的 worker——它带按钮确认门
-    （在跑中经 IM 确认 push+开 draft PR），共享同一 runner 的并发池/台账/订阅集。
-    """
-    from src.agents.main_agent import build_dev_tools
-    from src.agents.dev_plan import load_plan
-    from src.agents.worktree_bindings import bind_worktree_owner
-
-    if task.kind == "im-dev" and _IM_WORKER is not None:
-        return await _IM_WORKER(task, on_progress)
-
-    async def _deny(_m):                       # 后台无人值守：外向操作默认拒绝（push 交给人点 open_pr）
-        return False
-
-    questions, question_factory = None, None
-    answered_round = bool(task.development.get("execution_revision"))
-    if task.kind in {"dev", "dev-resume"} and task.owner_session:
-        from src.web.task_dispatch import get_development_questions
-        from src.agents.task_questions import bind_development_question
-        questions = get_development_questions()
-        questions.begin(task)
-
-        def question_factory(plan, block):
-            task.plan_id, task.branch = plan.plan_id, plan.branch
-            questions.validate_execution(task)
-            return bind_development_question(questions, task, plan, block)
-
-    tools = {t.name: t for t in build_dev_tools(os.getcwd(), on_progress=on_progress,
-                                                confirm=_deny, draft_pr=True, question_factory=question_factory)}
-    # 用 **task-scoped plan_id** 钉住本次计划——绝不靠 list_plans()[0]（全局最新）猜：并发跑多任务时
-    # 那会拿到别的任务刚生成的 plan/branch，导致 open_pr 给错任务推错分支（#128 评审）。
-    from src.agents.tool import ToolTurnYield
-    try:
-        if (task.kind == "dev-resume" or answered_round) and task.plan_id:
-            from src.gateway.task_recovery import validate_recovery_plan
-            if not answered_round:
-                validate_recovery_plan(task, load_plan(os.getcwd(), task.plan_id))
-            pid = task.plan_id
-            with bind_worktree_owner(task_id=task.id, owner_session=task.owner_session, plan_id=pid):
-                result = await tools["dev_resume"].handler({"plan_id": pid})
-        else:
-            pid = task.plan_id or f"bg-{task.id}"
-            task.plan_id = pid
-            on_progress(f"已绑定持久计划 {pid}")
-            with bind_worktree_owner(task_id=task.id, owner_session=task.owner_session, plan_id=pid):
-                result = await tools["dev_auto"].handler({"task": task.prompt, "plan_id": pid})
-    except ToolTurnYield:
-        from src.gateway.tasks import TaskBlocked
-        if questions is None or not questions.awaiting(task):
-            raise RuntimeError("开发提问未能持久保存") from None
-        raise TaskBlocked() from None
-    plan = load_plan(os.getcwd(), pid)         # 按确定 id 精确取回本次 C1 计划（可 dev_resume 续跑）
-    if plan is not None:
-        task.plan_id = plan.plan_id
-        task.branch = plan.branch
-    if (plan is None or plan.status not in {"integrated", "done"}
-            or any(not block.landed for block in plan.blocks)
-            or isinstance(plan.review, dict) and plan.review.get("blocked")):
-        task.result = str(result or "")[-4000:]
-        reason = "开发任务未提交完整持久计划" if plan is None else "开发计划仍未完成：" + plan.summary()
-        raise RuntimeError(reason + "\n" + task.result[-800:])
-    return result
+    """Compatibility entry point; execution and IM dispatch belong to Gateway."""
+    if task.kind == "im-dev":
+        from src.web.runtime import get_services
+        return await get_services().execute(task, on_progress)
+    from src.web.runtime import make_development_worker
+    return await make_development_worker(os.getcwd())(task, on_progress)
 
 
 def get_runner():
-    """惰性建全局 runner（绑 cwd + dev worker + WS 广播订阅）。lifespan 与各端点共用同一个。"""
-    global _RUNNER
-    if _RUNNER is None:
-        from src.gateway import TaskRunner
-        def _on_update(task):
-            # Goal 同步和 WS 广播共用同一个 task 生命周期；目标完成闸门仍由 Goal 自己判定，
-            # task=done 只会写入执行证据，绝不会直接把 goal 标 achieved。
-            try:
-                from src.gateway.goals import sync_goal_from_task
-
-                sync_goal_from_task(os.getcwd(), task)
-            except Exception:  # noqa: BLE001 —— 目标投影失败不拖垮后台任务本身
-                pass
-            view = _task_view(task)
-            task_events.broadcast_task_update(view)
-            if task.owner_session and task.status in _HANDOFF_STATUSES:
-                task_events.publish_task_handoff(task.owner_session, view)
-            from src.web.task_dispatch import observe_dependency_change
-            observe_dependency_change(os.getcwd(), task)
-
-        _RUNNER = TaskRunner(os.getcwd(), _dev_worker, on_update=_on_update)
-    return _RUNNER
+    """Return the shared Runtime runner (or an explicit test override)."""
+    if _RUNNER is not None:
+        return _RUNNER
+    from src.web.runtime import get_services
+    return get_services().runner
 
 
 def _task_view(t, *, worktrees=None) -> dict:
@@ -348,44 +271,9 @@ def make_notifier(cwd: str):
 
 
 async def scheduler_loop(stop_event):
-    """常驻调度循环（server lifespan 起，opt-in）：每分钟 tick 一次 cron；按 heartbeat 间隔值班。
-
-    默认关（VORTOCODE_CRON / VORTOCODE_HEARTBEAT 二者都未开则本循环根本不启动，见 lifespan）。
-    cron / heartbeat 都隔离会话跑、产出进台账 / 按 announce 投递——投递走 make_notifier 三路
-    （台账 + WS 广播 + IM 推 owner），**绝不静默丢**。
-    """
-    import asyncio
-    from datetime import datetime
-    from src.gateway import cron as _cron
-    from src.gateway import heartbeat as _hb
-
+    from src.gateway.scheduler import scheduler_loop as run_scheduler
     cwd = os.getcwd()
-    cron_on = os.getenv("VORTOCODE_CRON", "").strip().lower() in ("1", "true", "yes", "on")
-    hb_on = os.getenv("VORTOCODE_HEARTBEAT", "").strip().lower() in ("1", "true", "yes", "on")
-    hb_every = _hb.heartbeat_every_seconds()
-    last_hb = 0.0
-
-    async def _submit(item):
-        await get_runner().submit(item, kind="dev")
-
-    _notify = make_notifier(cwd)
-
-    while not stop_event.is_set():
-        try:
-            now = datetime.now()
-            if cron_on:
-                await _cron.run_due(cwd, now, notify=_notify)   # 到点的作业各自隔离跑，结果按 announce 投递
-            if hb_on:
-                mono = asyncio.get_event_loop().time()
-                if mono - last_hb >= hb_every:
-                    last_hb = mono
-                    await _hb.run_heartbeat(cwd, submit=_submit, notify=_notify, hour=now.hour)
-        except Exception:  # noqa: BLE001 —— 单次 tick 出错不拖垮循环
-            pass
-        try:
-            await asyncio.wait_for(stop_event.wait(), timeout=60)   # 每分钟 tick 一次（可被停止打断）
-        except asyncio.TimeoutError:
-            pass
+    await run_scheduler(stop_event, cwd=cwd, runner=get_runner(), notify=make_notifier(cwd))
 
 
 @router.post("/api/tasks/{tid}/open_pr")

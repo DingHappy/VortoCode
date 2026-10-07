@@ -83,6 +83,7 @@ class DingTalkAdapter(ChannelAdapter):
                  connect_fn: Optional[ConnectFn] = None, reply_fn: Optional[ReplyFn] = None,
                  oto_fn: Optional[OtoFn] = None, card_sender=None,
                  inbox_dir: Optional[str] = None):
+        self._polling_lease = None
         self._cid = client_id
         self._secret = client_secret
         self.owner_id = str(owner_id)
@@ -110,7 +111,19 @@ class DingTalkAdapter(ChannelAdapter):
         self._inbox_dir = str(Path(inbox_dir or Path.home() / ".vortocode" / "im_inbox"))
 
     # ------------------------------------------------------------ ChannelAdapter
+    def claim_polling(self):
+        """One Stream consumer per application on this host."""
+        if self._polling_lease is None:
+            from src.gateway.process_lease import channel_lease
+            self._polling_lease = channel_lease("dingtalk", self._cid).acquire()
+
+    def release_polling(self):
+        if self._polling_lease is not None:
+            self._polling_lease.release()
+            self._polling_lease = None
+
     async def poll(self) -> AsyncIterator[ChannelEvent]:
+        self.claim_polling()
         backoff = 1.0
         while True:
             try:
@@ -460,6 +473,7 @@ class DingTalkAdapter(ChannelAdapter):
             except Exception:  # noqa: BLE001
                 pass
             self._session = None
+        self.release_polling()
 
     # ------------------------------------------------------------ 真实 transport（需钉钉 app 验证）
     async def _default_connect(self):

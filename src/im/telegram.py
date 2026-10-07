@@ -46,6 +46,7 @@ class TelegramAdapter(ChannelAdapter):
                  poll_timeout: int = 25, bot_username: Optional[str] = None,
                  inbox_dir: Optional[str] = None,
                  download_fn: Optional[DownloadFn] = None):
+        self._polling_lease = None
         self._token = token
         self.owner_id = str(owner_id)
         self._poll_timeout = poll_timeout
@@ -103,7 +104,15 @@ class TelegramAdapter(ChannelAdapter):
         return await self._request_fn(method, payload)
 
     # ------------------------------------------------------------ ChannelAdapter 实现
+    def claim_polling(self):
+        """Same-host Bot ownership across workspaces and token rotations."""
+        if self._polling_lease is None:
+            from src.gateway.process_lease import channel_lease
+            identity = self._token.split(":", 1)[0]
+            self._polling_lease = channel_lease("telegram", identity).acquire()
+
     async def poll(self) -> AsyncIterator[ChannelEvent]:
+        self.claim_polling()
         backoff = 1.0
         while True:
             try:
@@ -287,6 +296,11 @@ class TelegramAdapter(ChannelAdapter):
         except Exception:  # noqa: BLE001
             pass
 
+    def release_polling(self):
+        if self._polling_lease is not None:
+            self._polling_lease.release()
+            self._polling_lease = None
+
     async def close(self) -> None:
         if self._session is not None:
             try:
@@ -294,6 +308,7 @@ class TelegramAdapter(ChannelAdapter):
             except Exception:  # noqa: BLE001
                 pass
             self._session = None
+        self.release_polling()
 
 
 # ------------------------------------------------------------ 归一化：Telegram update → ChannelEvent

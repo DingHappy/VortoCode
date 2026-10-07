@@ -364,6 +364,7 @@ class TaskRunner:
         self._worker = worker
         self._sem = asyncio.Semaphore(max_concurrent or bg_concurrency())
         self._running: Dict[str, asyncio.Task] = {}
+        self._closing = False
         self._pause_requested: set[str] = set()
         self._subs: set = set()
         if on_update is not None:
@@ -382,7 +383,17 @@ class TaskRunner:
                 pass
 
     # -------- 生命周期
+    async def shutdown(self):
+        """Drain executing workers before relinquishing workspace ownership."""
+        self._closing = True
+        pending = list(self._running.values())
+        for future in pending:
+            future.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
     def recover(self) -> List[BackgroundTask]:
+        self._closing = False
         recovered = self.ledger.recover_interrupted()
         from src.gateway.continuations import recover_claims
         recovered.extend(recover_claims(self.ledger))
@@ -393,6 +404,8 @@ class TaskRunner:
     async def submit(self, prompt: str, kind: str = "dev", *, goal_id: str = "",
                      plan_id: str = "", parent_task_id: str = "",
                      owner_session: str = "") -> BackgroundTask:
+        if self._closing:
+            raise RuntimeError("Runtime is shutting down")
         task = self.ledger.create(
             kind,
             prompt,
@@ -412,6 +425,8 @@ class TaskRunner:
 
     def enqueue_worker(self, tid: str) -> None:
         """Run an already durable queued task with the ordinary worker/lifecycle."""
+        if self._closing:
+            raise RuntimeError("Runtime is shutting down")
         with TASK_STATE_LOCK:
             task = self.ledger.load(tid)
             if task is None or task.status != "queued" or self.is_active(tid):
@@ -451,6 +466,8 @@ class TaskRunner:
         The runner owns concurrency/cancellation; injected callbacks own state.
         Register synchronously so two callers cannot schedule the same task.
         """
+        if self._closing:
+            raise RuntimeError("Runtime is shutting down")
         if self.is_active(tid):
             return False
         if self.ledger.load(tid) is None:
