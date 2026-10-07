@@ -1,5 +1,6 @@
-// 输入框的模型选择：「自动」按任务调度，或固定用某个已配置的模型。
-// 可选项只来自本机模型配置（主模型 + 快速 / 强力档），服务端也只接受这几个。
+// 输入框的模型选择：「自动」按任务调度，或固定用某个模型。
+// 输入框只列少量常用模型：主模型 + 快速 / 强力档，加上一份短名单（默认取服务端推荐，
+// 可在「设置 → 模型」里增删、调整顺序）；服务上的其余模型都在设置里挑。
 import type { DesktopLlmProfileStatus, ModelInfo } from "../types";
 import { STORAGE_KEYS } from "./storage";
 
@@ -16,6 +17,9 @@ export interface ModelChoice {
 }
 
 export const ALL_MODELS_GROUP = "全部模型";
+/** 输入框里的短名单：没调整过时是服务端推荐，调整过就是用户自己的常用模型。 */
+export const RECOMMENDED_GROUP = "推荐";
+export const PICKED_GROUP = "常用";
 export const MODEL_GROUPS = {
   coding: "推荐 · 编程",
   fast: "推荐 · 快速",
@@ -67,7 +71,23 @@ function serviceGroup(info: ModelInfo): string {
 
 const GROUP_ORDER: string[] = [MODEL_GROUPS.coding, MODEL_GROUPS.fast, MODEL_GROUPS.omni, MODEL_GROUPS.multimodal, MODEL_GROUPS.chat, MODEL_GROUPS.snapshots];
 
-/** 默认服务上的其他模型。服务给了分类就按分类分组，只列能跑 Agent 的；没给分类（别家服务）按名字粗筛。 */
+/** 已配置的几档（主模型 / 快速 / 强力），它们总在输入框里。 */
+function configuredModels(profile: DesktopLlmProfileStatus): Set<string> {
+  return new Set([profile.fastModel, profile.model, profile.strongModel].map((model) => model?.trim() ?? "").filter(Boolean));
+}
+
+/** 默认服务上的其他模型（设置里可挑的全集）。服务给了分类就按分类分组，只列能跑 Agent 的；没给分类（别家服务）按名字粗筛。 */
+export function availableModels(profile: DesktopLlmProfileStatus | null): ModelChoice[] {
+  return profile?.model ? serviceModelChoices(profile, configuredModels(profile)) : [];
+}
+
+/** 服务端推荐（编程主力在前、快速在后）；别家服务没有推荐，短名单默认为空。 */
+export function recommendedModels(profile: DesktopLlmProfileStatus | null): string[] {
+  return availableModels(profile)
+    .filter((choice) => choice.group === MODEL_GROUPS.coding || choice.group === MODEL_GROUPS.fast)
+    .map((choice) => choice.value);
+}
+
 function serviceModelChoices(profile: DesktopLlmProfileStatus, configured: Set<string>): ModelChoice[] {
   const infos = profile.modelInfo ?? [];
   if (infos.some((info) => info.category)) {
@@ -86,7 +106,8 @@ function serviceModelChoices(profile: DesktopLlmProfileStatus, configured: Set<s
     .map((model) => ({ value: model, label: model, hint: ALL_MODELS_GROUP, group: ALL_MODELS_GROUP }));
 }
 
-export function modelChoices(profile: DesktopLlmProfileStatus | null): ModelChoice[] {
+/** picks 为 null 表示没调整过，用服务端推荐；名单里已不在服务上的模型自动略过。 */
+export function modelChoices(profile: DesktopLlmProfileStatus | null, picks: string[] | null = null): ModelChoice[] {
   if (!profile?.model) return [];
   const tiers: Array<[string | undefined, string]> = [
     [profile.fastModel, "快速"],
@@ -107,7 +128,12 @@ export function modelChoices(profile: DesktopLlmProfileStatus | null): ModelChoi
     const badges = modelBadges(info.get(choice.value));
     if (badges.length) choice.badges = badges;
   }
-  const listed = serviceModelChoices(profile, new Set(seen.keys()));
+  const available = new Map(serviceModelChoices(profile, new Set(seen.keys())).map((choice) => [choice.value, choice]));
+  const group = picks ? PICKED_GROUP : RECOMMENDED_GROUP;
+  const listed = [...new Set(picks ?? recommendedModels(profile))].flatMap((model) => {
+    const choice = available.get(model);
+    return choice ? [{ ...choice, group }] : [];
+  });
   // 自定义供应商的模型以 `ID:模型` 发给 runtime，由它换到对应端点和 Key。
   const custom = (profile.providers ?? []).flatMap((provider) => provider.hasKey || provider.models.length
     ? provider.models.map((model) => ({ value: `${provider.id}:${model}`, label: model, hint: provider.name, group: provider.name }))
@@ -121,6 +147,25 @@ export function modelChoices(profile: DesktopLlmProfileStatus | null): ModelChoi
 export function resolveModelChoice(saved: string | null, choices: ModelChoice[]): string {
   if (saved && choices.some((choice) => choice.value === saved)) return saved;
   return choices[0]?.value ?? "";
+}
+
+/** 输入框短名单；没存过（或存的不是字符串数组）返回 null，表示跟随服务端推荐。 */
+export function loadModelPicks(): string[] | null {
+  try {
+    const payload: unknown = JSON.parse(localStorage.getItem(STORAGE_KEYS.modelPicks) ?? "null");
+    return Array.isArray(payload) && payload.every((item) => typeof item === "string") ? payload : null;
+  } catch {
+    return null;
+  }
+}
+
+export function persistModelPicks(picks: string[] | null): void {
+  try {
+    if (picks) localStorage.setItem(STORAGE_KEYS.modelPicks, JSON.stringify(picks));
+    else localStorage.removeItem(STORAGE_KEYS.modelPicks);
+  } catch {
+    // 存不下只是下次回到推荐名单。
+  }
 }
 
 export function loadModelChoice(): string | null {

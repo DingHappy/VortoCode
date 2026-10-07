@@ -9380,6 +9380,45 @@ input::placeholder {
   white-space: nowrap;
 }
 
+.model-picks-more {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.model-picks-more summary {
+  color: var(--n11);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.model-picks-more[open] summary {
+  margin-bottom: 10px;
+}
+
+.model-picks-more input {
+  width: 100%;
+  height: 30px;
+  margin-bottom: 10px;
+  padding: 0 10px;
+  border: 1px solid var(--n6);
+  border-radius: 8px;
+  color: var(--n12);
+  background: var(--n0);
+  font-size: 12px;
+}
+
+.model-picks-group {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.model-picks-group > span {
+  color: var(--n9);
+  font-size: 11px;
+}
+
 .custom-provider-editor {
   display: flex;
   flex-direction: column;

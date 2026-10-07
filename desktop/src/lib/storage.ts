@@ -17,6 +17,8 @@ export const STORAGE_KEYS = {
   theme: "vortocode.desktop.theme",
   // 输入框的模型选择：「自动」或某个已配置的模型。
   modelChoice: "vortocode.desktop.modelChoice",
+  // 输入框里的常用模型短名单（有序）；没存过就跟随服务端推荐。
+  modelPicks: "vortocode.desktop.modelPicks",
 } as const;
 
 // 每个项目一个会话 id，key 由项目 id 拼出前缀。

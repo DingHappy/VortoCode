@@ -113,7 +113,7 @@ import { composeMessageText, mediaPayload } from "./lib/attachments";
 import { useAttachments } from "./hooks/useAttachments";
 import { latestTurnSteps, previewReferences, publishedArtifactId, type PreviewView } from "./lib/preview";
 import { PreviewPanel } from "./components/PreviewPanel";
-import { loadModelChoice, modelChoices, persistModelChoice, resolveModelChoice } from "./lib/modelChoice";
+import { loadModelChoice, loadModelPicks, modelChoices, persistModelChoice, persistModelPicks, resolveModelChoice } from "./lib/modelChoice";
 
 
 type PendingWorkspaceSave = { rid: string; path: string; content: string; buffer: string };
@@ -377,7 +377,12 @@ function App() {
     llmKeyInput, setLlmKeyInput, llmProfileBusy, saveLlmProfile, clearLlmProfile,
   } = useLlmProfile(settingsOpen, setBanner, () => restartCurrentRuntimeForLlmProfile());
   const [savedModelChoice, setSavedModelChoice] = useState<string | null>(() => loadModelChoice());
-  const composerModelChoices = useMemo(() => modelChoices(llmProfile), [llmProfile]);
+  const [modelPicks, setModelPicks] = useState<string[] | null>(() => loadModelPicks());
+  const changeModelPicks = useCallback((picks: string[] | null) => {
+    setModelPicks(picks);
+    persistModelPicks(picks);
+  }, []);
+  const composerModelChoices = useMemo(() => modelChoices(llmProfile, modelPicks), [llmProfile, modelPicks]);
   const modelChoice = resolveModelChoice(savedModelChoice, composerModelChoices);
   // 「变更」面板域（Git 审查 / 任务分支审查 / 评论 / PR 交付）已收进 useChangeReview；
   // 发给 Agent 的两个回调与协议事件对 setGitReviewRevision 的写入留在 App。
@@ -3421,6 +3426,8 @@ function App() {
           onLlmStrongChange={setLlmStrongInput}
           onRestartRuntime={restartCurrentRuntimeForLlmProfile}
           onLlmProfileChange={applyLlmProfile}
+          modelPicks={modelPicks}
+          onModelPicksChange={changeModelPicks}
           initialSection={settingsSection}
           onLlmKeyChange={setLlmKeyInput}
           onSaveLlmProfile={saveLlmProfile}

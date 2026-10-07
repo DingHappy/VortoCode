@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import type { DesktopLlmProfileStatus } from "../types";
-import { AUTO_MODEL, formatContextWindow, MODEL_GROUPS, modelChoices, resolveModelChoice } from "./modelChoice";
+import {
+  ALL_MODELS_GROUP, AUTO_MODEL, availableModels, formatContextWindow, MODEL_GROUPS, modelChoices, PICKED_GROUP, RECOMMENDED_GROUP,
+  recommendedModels, resolveModelChoice,
+} from "./modelChoice";
 
 const profile = (extra: Partial<DesktopLlmProfileStatus>): DesktopLlmProfileStatus => ({
   configured: true, baseUrl: "https://x.example/v1", model: "main", provider: "custom", requiresKey: true, ...extra,
@@ -21,10 +24,12 @@ describe("modelChoices", () => {
 });
 
 describe("default service model list", () => {
-  it("lists the service's chat models under 全部模型 and skips speech/embedding models", () => {
-    const choices = modelChoices(profile({ models: ["main", "fast-chat", "mimo-v2.5-tts", "text-embedding-3", "whisper-1"] }));
-    expect(choices.map((choice) => choice.value)).toEqual(["main", "fast-chat"]);
-    expect(choices[1].group).toBe("全部模型");
+  it("offers the service's chat models in settings under 全部模型, skipping speech/embedding models", () => {
+    const withModels = profile({ models: ["main", "fast-chat", "mimo-v2.5-tts", "text-embedding-3", "whisper-1"] });
+    expect(availableModels(withModels).map((choice) => [choice.value, choice.group])).toEqual([["fast-chat", ALL_MODELS_GROUP]]);
+    // 别家服务没有推荐：输入框默认只列已配置的模型，其余要在设置里加。
+    expect(modelChoices(withModels).map((choice) => choice.value)).toEqual(["main"]);
+    expect(modelChoices(withModels, ["fast-chat"]).map((choice) => choice.value)).toEqual(["main", "fast-chat"]);
   });
 });
 
@@ -44,11 +49,11 @@ describe("default service model list with relay categories", () => {
     { id: "mimo-v2.5-tts", category: "tts" },
     { id: "chat-no-tools", category: "chat", capabilities: ["reasoning"] },
   ];
-  const choices = modelChoices(profile({ models: modelInfo.map((info) => info.id), modelInfo }));
+  const relay = profile({ models: modelInfo.map((info) => info.id), modelInfo });
+  const choices = availableModels(relay);
 
-  it("groups by the service's tier and category, with snapshots last", () => {
+  it("groups the full list by the service's tier and category, with snapshots last", () => {
     expect(choices.map((choice) => [choice.value, choice.group])).toEqual([
-      ["main", undefined],
       ["mimo-v2.6-pro", MODEL_GROUPS.coding],
       ["qwen3-coder-flash", MODEL_GROUPS.fast],
       ["qwen3.8-omni-flash", MODEL_GROUPS.omni],
@@ -68,7 +73,26 @@ describe("default service model list with relay categories", () => {
   it("labels capabilities and context length, including on the configured model", () => {
     expect(choices.find((choice) => choice.value === "mimo-v2.6-pro")?.badges).toEqual(["看图", "听音频", "推理", "1M"]);
     expect(choices.find((choice) => choice.value === "glm-vision")?.badges).toEqual(["看图", "128K"]);
-    expect(choices[0]).toMatchObject({ hint: "主模型", badges: ["256K"] });
+    expect(modelChoices(relay)[0]).toMatchObject({ value: "main", hint: "主模型", badges: ["256K"] });
+  });
+
+  it("keeps the composer short: configured models plus the service's recommendations by default", () => {
+    expect(recommendedModels(relay)).toEqual(["mimo-v2.6-pro", "qwen3-coder-flash"]);
+    expect(modelChoices(relay).map((choice) => [choice.value, choice.group])).toEqual([
+      ["main", undefined],
+      ["mimo-v2.6-pro", RECOMMENDED_GROUP],
+      ["qwen3-coder-flash", RECOMMENDED_GROUP],
+    ]);
+  });
+
+  it("uses the user's own ordered picks, dropping ones the service no longer offers or can't run", () => {
+    const picks = ["glm-vision", "gone-model", "qwen-mt-plus", "mimo-v2.6-pro", "glm-vision", "main"];
+    expect(modelChoices(relay, picks).map((choice) => [choice.value, choice.group])).toEqual([
+      ["main", undefined],
+      ["glm-vision", PICKED_GROUP],
+      ["mimo-v2.6-pro", PICKED_GROUP],
+    ]);
+    expect(modelChoices(relay, []).map((choice) => choice.value)).toEqual(["main"]);
   });
 
   it("formats context windows in binary or decimal units", () => {
@@ -80,8 +104,9 @@ describe("default service model list with relay categories", () => {
 describe("default service model list without categories", () => {
   it("falls back to name filtering when modelInfo carries ids only", () => {
     const models = ["main", "gpt-4o", "whisper-1", "text-embedding-3"];
-    const choices = modelChoices(profile({ models, modelInfo: models.map((id) => ({ id })) }));
-    expect(choices.map((choice) => [choice.value, choice.group])).toEqual([["main", undefined], ["gpt-4o", "全部模型"]]);
+    const plain = profile({ models, modelInfo: models.map((id) => ({ id })) });
+    expect(availableModels(plain).map((choice) => [choice.value, choice.group])).toEqual([["gpt-4o", ALL_MODELS_GROUP]]);
+    expect(recommendedModels(plain)).toEqual([]);
   });
 });
 
