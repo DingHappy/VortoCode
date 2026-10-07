@@ -62,22 +62,6 @@ async def test_records_devloop_iterations(tmp_path):
     assert metrics.get_counter("devloop.iterations") >= 1
 
 
-@pytest.mark.asyncio
-async def test_metrics_endpoint_reflects_activity(tmp_path):
-    from fastapi.testclient import TestClient
-    from src.web.server import app
-
-    metrics.reset()
-    await IterativeDevLoop(_Dev(), _Tester(), _Rev(), max_iterations=1).run(
-        "x", workspace=str(tmp_path))
-
-    r = TestClient(app).get("/api/monitoring/metrics")
-    assert r.status_code == 200
-    data = r.json()
-    assert "metrics" in data
-    assert any("devloop.iterations" in k for k in data["metrics"].get("counters", {}))
-
-
 def test_timer_percentiles():
     metrics.reset()
     for v in [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]:

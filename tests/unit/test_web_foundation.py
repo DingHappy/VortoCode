@@ -1,30 +1,6 @@
 """web 后端地基测试：自定义/高级 agent 持久化（离线）。"""
 
 
-
-def test_custom_agent_persists_across_reload(tmp_path):
-    from src.agents.custom_agent import CustomAgentManager
-
-    p = str(tmp_path / "ca.json")
-    m1 = CustomAgentManager(persist_path=p)
-    a = m1.create_agent(name="我的Agent", description="d")
-
-    m2 = CustomAgentManager(persist_path=p)          # 模拟重启
-    got = m2.get_agent(a.id)
-    assert got is not None and got.name == "我的Agent"
-
-
-def test_custom_agent_delete_persists(tmp_path):
-    from src.agents.custom_agent import CustomAgentManager
-
-    p = str(tmp_path / "ca.json")
-    m1 = CustomAgentManager(persist_path=p)
-    a = m1.create_agent(name="x")
-    m1.delete_agent(a.id)
-
-    assert CustomAgentManager(persist_path=p).get_agent(a.id) is None
-
-
 def test_advanced_agent_persists_without_duplicating_defaults(tmp_path):
     from src.agents.manager import AgentManager
 

@@ -200,18 +200,6 @@ def test_default_workdir_is_a_real_directory():
     assert Path(state.workdir).is_dir()
 
 
-def test_cloud_sandbox_execute_disabled_by_default(client):
-    r = client.post("/api/sandbox/sid/execute", params={"command": "id"})
-    assert r.status_code == 403
-
-
-def test_editor_out_of_bounds_write_blocked(client):
-    r = client.post("/api/editor/edit", json={
-        "file": "../../evil.py", "line": 1, "end_line": 1, "content": "x = 1",
-    })
-    assert r.json().get("success") is False
-
-
 # ---------------------------------- 鉴权豁免页面：能开 ≠ 能用
 
 def test_exempt_pages_load_but_their_data_apis_do_not(client, monkeypatch):

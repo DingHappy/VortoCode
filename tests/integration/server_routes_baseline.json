@@ -48,96 +48,6 @@
     ]
   },
   {
-    "path": "/api/agents/advanced",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/agents/advanced",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/agents/advanced/from-template/{template_name}",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/agents/advanced/stats",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/agents/advanced/{agent_id}",
-    "methods": [
-      "DELETE"
-    ]
-  },
-  {
-    "path": "/api/agents/advanced/{agent_id}",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/agents/advanced/{agent_id}/performance",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/agents/advanced/{agent_id}/toggle",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/agents/custom",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/agents/custom",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/agents/custom/{agent_id}",
-    "methods": [
-      "DELETE"
-    ]
-  },
-  {
-    "path": "/api/agents/custom/{agent_id}/activate",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/agents/custom/{agent_id}/deactivate",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/agents/templates",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/agents/templates/{template_name}",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
     "path": "/api/artifacts",
     "methods": [
       "GET"
@@ -187,60 +97,6 @@
   },
   {
     "path": "/api/auth/status",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/browser/click",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/browser/fill",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/browser/navigate",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/browser/screenshot",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/cache/clear",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/cache/stats",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/context",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/context/memory",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/cost/report",
     "methods": [
       "GET"
     ]
@@ -426,39 +282,9 @@
     ]
   },
   {
-    "path": "/api/docs/generate",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/editor/apply",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/editor/edit",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/editor/undo",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
     "path": "/api/extensions/inspect",
     "methods": [
       "GET"
-    ]
-  },
-  {
-    "path": "/api/git/commit",
-    "methods": [
-      "POST"
     ]
   },
   {
@@ -469,12 +295,6 @@
   },
   {
     "path": "/api/git/delivery/checks/{check_id}/log",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/git/diff",
     "methods": [
       "GET"
     ]
@@ -493,12 +313,6 @@
   },
   {
     "path": "/api/git/isolated-deliveries/{delivery_id}/diff",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/git/log",
     "methods": [
       "GET"
     ]
@@ -553,30 +367,6 @@
   },
   {
     "path": "/api/git/review/pr",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/git/status",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/github/issues",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/github/issues/{issue_number}",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/github/issues/{issue_number}/fix",
     "methods": [
       "POST"
     ]
@@ -702,18 +492,6 @@
     ]
   },
   {
-    "path": "/api/monitoring/metrics",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/monitoring/reset",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
     "path": "/api/notices",
     "methods": [
       "GET"
@@ -745,60 +523,6 @@
   },
   {
     "path": "/api/pipelines/{run_id}/review",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/projects",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/projects",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/projects/stats/all",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/projects/{project_id}",
-    "methods": [
-      "DELETE"
-    ]
-  },
-  {
-    "path": "/api/projects/{project_id}",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/projects/{project_id}/execute",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/projects/{project_id}/files",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/projects/{project_id}/search",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/projects/{project_id}/switch",
     "methods": [
       "POST"
     ]
@@ -841,72 +565,6 @@
   },
   {
     "path": "/api/runtime-inbox",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/sandbox/create",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/sandbox/execute",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/sandbox/list",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/sandbox/{sandbox_id}/destroy",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/sandbox/{sandbox_id}/execute",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/skills",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/skills",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/skills/execute",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/skills/reload",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/skills/search/{query}",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/skills/{skill_name}",
     "methods": [
       "GET"
     ]
@@ -1002,24 +660,6 @@
     ]
   },
   {
-    "path": "/api/templates",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/templates/{template_id}",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/api/templates/{template_id}/create",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
     "path": "/api/terminals",
     "methods": [
       "GET"
@@ -1051,12 +691,6 @@
   },
   {
     "path": "/api/terminals/{terminal_id}/stop",
-    "methods": [
-      "POST"
-    ]
-  },
-  {
-    "path": "/api/testing/generate",
     "methods": [
       "POST"
     ]

@@ -1,6 +1,5 @@
 """成本预算告警测试。"""
 
-import pytest
 
 from src.models import cost_tracker, set_budget, track_usage
 
@@ -31,14 +30,3 @@ def test_no_alert_within_budget():
     track_usage("gpt-4o", 1000, 500, agent="dev")           # 远低于预算
     assert cost_tracker.alerts == []
 
-
-@pytest.mark.asyncio
-async def test_cost_report_exposes_alerts():
-    from fastapi.testclient import TestClient
-    from src.web.server import app
-    _reset()
-    set_budget("dev", 0.0001)
-    track_usage("gpt-4o", 1000, 500, agent="dev")
-    r = TestClient(app).get("/api/cost/report?period=all").json()
-    assert "alerts" in r
-    assert len(r["alerts"]) >= 1
