@@ -166,6 +166,9 @@ def main():
     p.add_argument("--mode", choices=["plan", "build"], default="plan",
                    help="初始模式（默认 plan；IM 里可 /mode 切）")
 
+    p = sub.add_parser("im-pair", help="Telegram 私聊一次性配对（输出短时配对码，不需预知用户 ID）")
+    p.add_argument("channel", choices=["telegram"])
+
     p = sub.add_parser("cron", help="定时作业（.vortocode/cron.yaml）：list 看表 / run <name> 手动触发一次")
     p.add_argument("action", choices=["list", "run"], help="list 列出作业 / run 手动跑一个")
     p.add_argument("name", nargs="?", help="run 时的作业名")
@@ -331,6 +334,9 @@ def main():
     elif args.command == "im":
         asyncio.run(run_im(args.channel, mode=args.mode))
 
+    elif args.command == "im-pair":
+        sys.exit(asyncio.run(run_im_pair(args.channel)))
+
     elif args.command == "cron":
         asyncio.run(run_cron(args.action, args.name))
 
@@ -445,6 +451,25 @@ async def run_im(channel: str, *, mode: str = "plan"):
         await bridge.run()
     finally:
         await adapter.close()
+
+
+async def run_im_pair(channel: str) -> int:
+    import os
+    from src.im.telegram_pairing import PairingError, pair_telegram
+    token = os.getenv("VORTOCODE_TG_TOKEN", "").strip()
+    if not token:
+        print("✗ 先在私密环境配置 VORTOCODE_TG_TOKEN", file=sys.stderr)
+        return 2
+    try:
+        owner = await pair_telegram(token)
+    except PairingError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        return 2
+    except Exception as exc:  # noqa: BLE001 - transport errors may contain token-bearing URL
+        print(f"✗ Telegram 配对请求失败（{type(exc).__name__}）；检查网络和 Bot token。", file=sys.stderr)
+        return 2
+    print(f"✓ Telegram 主人已配对（ID {owner}）；启动时会自动读取安全配对记录。")
+    return 0
 
 
 async def run_cron(action: str, name=None):

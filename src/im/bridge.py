@@ -112,6 +112,7 @@ class IMBridge:
                  allow_from: Optional[Iterable] = None):
         self.repo_root = str(repo_root)
         self.adapter = adapter
+        self.channel = channel
         self.owner_id = str(owner_id)
         # 入站白名单：没配 → 只放 owner（配对制原样）；配了空 → 全拒。判定见 normalize_allow_from。
         self.allow_from = normalize_allow_from(allow_from, self.owner_id)
@@ -249,6 +250,9 @@ class IMBridge:
             # 空白名单是合法的 fail-closed 配置（"空 ≠ 不限制"），但必须说出来。
             return ("⚠ 入站白名单（allowFrom）为空 → 当前**拒绝一切入站消息**，包括你自己。"
                     "清掉 VORTOCODE_IM_ALLOW_FROM（回到只放 owner）或把要放行的 id 填进去。")
+        if self.channel == "telegram" and self.allow_from - {self.owner_id}:
+            return ("⚠ Telegram 当前只支持主人单人会话；额外白名单成员会被拒绝。"
+                    "多人使用须先完成逐人会话、工作区和额度隔离。")
         if self.owner_id and self.owner_id not in self.allow_from:
             # 配了白名单却漏了自己：主人的消息、以及**审批 y/n 与按钮点击**都在第一道闸就被丢，
             # 表现为"机器人不理我 + 每个确认都等到 600s 超时被拒"，极难猜到是白名单漏了自己。
@@ -409,7 +413,8 @@ class IMBridge:
     async def _on_event(self, ev) -> None:
         """**IM 侧唯一的入站闸**（三道，全是默认拒绝方向；通道适配器一律不自己判定）。
 
-        ① 白名单：sender 不在 allow_from 里 → 丢。空白名单 = 谁都不行（含 owner）。
+        ① Telegram 单主人门：非 owner 一律丢（固定 owner 回复路由/会话，不可扩白名单）。
+           其余通道按白名单判；空白名单 = 谁都不行（含 owner）。
         ② 群提及门：群聊里没显式 @ 到本机器人 → 当没看见。陌生群/被拉进的群不再能驱动 agent。
         ③ 审批仍只认 owner：白名单可以放同事进来聊天，但**批准/拒绝确认是特权动作**，
            只有配对的主人能点——白名单变宽绝不能顺带把审批权变宽。
@@ -419,6 +424,12 @@ class IMBridge:
         产出（进度/结果/确认提问）劫到自己的会话里。
         """
         sender = str(ev.sender_id)
+        # Telegram 当前 transport 固定把回复发给 owner，且整桥只保留一个会话。
+        # 仅放宽 allowFrom 会把别人的输入/结果串进主人的私聊与历史；在真正的逐人
+        # 会话和回复路由落地前，必须在此 fail-closed，不允许配置绕过。
+        if self.channel == "telegram" and sender != self.owner_id:
+            self._ignored += 1
+            return
         if sender not in self.allow_from:           # ① 白名单外：静默忽略并计数
             self._ignored += 1
             return
@@ -495,6 +506,8 @@ class IMBridge:
             arg = text[len("/mode"):].strip()
             self.mode = arg if arg in ("plan", "build") else ("build" if self.mode == "plan" else "plan")
             await self._safe_send(f"模式已切到 **{self.mode}**（plan=只读、build=可写/跑流水线）。")
+        elif cmd == "/bind" and self.channel == "telegram":
+            await self._safe_send("已完成主人配对；旧配对码不能再次使用。")
         elif cmd == "/status":
             busy = self._turn_task is not None and not self._turn_task.done()
             msg = (f"仓库 {Path(self.repo_root).name} · 模式 {self.mode} · "
@@ -944,6 +957,9 @@ class IMBridge:
             return
         if task.status in ("done", "failed", "cancelled", "interrupted"):
             loop.create_task(self._safe_send(self._task_final_text(task)))
+        elif task.status == "blocked":
+            loop.create_task(self._safe_send(
+                f"⚠ 后台任务 {task.id} 等待你的回答；请回到发起任务的客户端处理。"))
         elif task.status == "running" and task.log:
             now = time.monotonic()
             if now - self._task_prog.get(task.id, 0.0) >= self._progress_interval:

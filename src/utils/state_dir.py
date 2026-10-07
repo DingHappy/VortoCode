@@ -46,6 +46,7 @@ _STATE_ENTRIES = [
     "trust.json",
     "worktree_bindings.json",
     "task_reviews/",
+    "im-pairings/",
     "isolated_deliveries/",
     # 2026-09-18 补：这几处生成态一直没进托管区，于是在**没有 gitignore .vortocode/ 的目标仓库**里
     # 原样冒进 git status——真机诊断时桌面端的改动列表里就混着 `.vortocode/journal`。

@@ -8,6 +8,7 @@ some later channel.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 
 OwnerNotifier = Callable[[str], Awaitable[object]]
@@ -53,3 +54,16 @@ async def notify_owner(text: str) -> bool:
         return True
     except Exception:  # noqa: BLE001 - notification failures must not break schedulers
         return False
+
+
+def start_confirmation_notice(message: str) -> asyncio.Task | None:
+    """Remind the owner without granting another channel approval authority.
+
+    The requesting client retains the confirmation future. Its caller cancels
+    unfinished delivery when that confirmation closes, preventing late reminders.
+    """
+    if _OWNER_NOTIFIER is None:
+        return None
+    text = ("⚠ VortoCode 需要操作确认，请回到发起请求的客户端允许或拒绝。\n"
+            "这条消息仅作提醒，在 TG 回复不会批准这项操作。\n" + str(message)[:1000])
+    return asyncio.create_task(notify_owner(text))
