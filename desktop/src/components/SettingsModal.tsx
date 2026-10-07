@@ -22,6 +22,7 @@ import { LlmConnectionCheck } from "./settings/LlmConnectionCheck";
 import { AccountPane } from "./settings/AccountPane";
 import { BrowserPane } from "./settings/BrowserPane";
 import { CustomProviders } from "./settings/CustomProviders";
+import { ModelPicks } from "./settings/ModelPicks";
 import { PersonalizePane } from "./settings/PersonalizePane";
 import { UsagePane } from "./settings/UsagePane";
 import {
@@ -51,7 +52,7 @@ const SETTINGS_NAV: Array<{ group: string; items: Array<{ id: SettingsSection; l
       { id: "account", label: "账号", keywords: "登录 账号 退出 套餐 token plan 注册 vortocode" },
       { id: "general", label: "常规", keywords: "工作区 项目 引擎 runtime 连接 恢复 scratch gateway token 高级" },
       { id: "usage", label: "使用情况", keywords: "用量 额度 剩余 计费 费用 quota usage billing" },
-      { id: "model", label: "模型", keywords: "模型服务 供应商 api key relay openai deepseek kimi glm 千问 minimax 本机 测试连接 上下文" },
+      { id: "model", label: "模型", keywords: "模型服务 供应商 api key relay openai deepseek kimi glm 千问 minimax 本机 测试连接 上下文 常用模型 推荐 排序 输入框" },
       { id: "personalize", label: "个性化", keywords: "全局指令 自定义指令 agents.md instructions" },
       { id: "appearance", label: "外观", keywords: "主题 深色 浅色 跟随系统 theme dark light" },
       { id: "config", label: "配置", keywords: "配置文件 路径 finder llm-profile agents.md" },
@@ -94,6 +95,9 @@ type SettingsModalProps = {
   onLlmStrongChange: (value: string) => void;
   onRestartRuntime: () => Promise<boolean>;
   onLlmProfileChange: (profile: DesktopLlmProfileStatus) => void;
+  /** 输入框里的常用模型短名单；null = 跟随服务端推荐。 */
+  modelPicks: string[] | null;
+  onModelPicksChange: (picks: string[] | null) => void;
   initialSection?: SettingsSection;
   onLlmKeyChange: (value: string) => void;
   onSaveLlmProfile: () => void;
@@ -139,6 +143,8 @@ export function SettingsModal({
   onLlmStrongChange,
   onRestartRuntime,
   onLlmProfileChange,
+  modelPicks,
+  onModelPicksChange,
   initialSection,
   onLlmKeyChange,
   onSaveLlmProfile,
@@ -309,6 +315,7 @@ export function SettingsModal({
               disabled={llmProfileBusy || !llmBaseInput.trim() || !llmModelInput.trim() || (!llmInputIsLocal && !llmKeyInput.trim() && !(llmProfile?.configured && sameLlmBase(llmProfile.baseUrl, llmBaseInput)))}
             >{llmProfileBusy ? "正在应用…" : "保存并重启当前引擎"}</button>
           </div>
+          <ModelPicks profile={llmProfile} picks={modelPicks} onChange={onModelPicksChange} />
           <CustomProviders profile={llmProfile} onProfile={onLlmProfileChange} onRestartRuntime={onRestartRuntime} />
         </section>
         )}
