@@ -123,15 +123,7 @@ async def workspace_scope_middleware(request, call_next):
 from src.web.routers.pages import router as pages_router
 from src.web.routers.git import router as git_router
 from src.web.routers.context import router as context_router
-from src.web.routers.agents import router as agents_router
-from src.web.routers.skills import router as skills_router
-from src.web.routers.projects import router as projects_router
-from src.web.routers.editor import router as editor_router
-from src.web.routers.sandbox import router as sandbox_router
-from src.web.routers.browser import router as browser_router
-from src.web.routers.github import router as github_router
 from src.web.routers.ops import router as ops_router
-from src.web.routers.generators import router as generators_router
 from src.web.routers.realtime import router as realtime_router
 from src.web.routers.artifacts import router as artifacts_router
 from src.web.routers.auth_routes import router as auth_router
@@ -152,9 +144,7 @@ from src.web.routers.trust import router as trust_router
 
 for _router in (
     pages_router, git_router, context_router,
-    agents_router, skills_router,
-    projects_router, editor_router, sandbox_router,
-    browser_router, github_router, ops_router, generators_router, realtime_router,
+    ops_router, realtime_router,
     artifacts_router, auth_router, tasks_router, delegations_router, task_inbox_router, goals_router, runs_router, terminals_router, decisions_router,
     journal_router, hooks_router, extensions_router, cron_router, dev_plans_router,
     pipelines_router, trust_router,
