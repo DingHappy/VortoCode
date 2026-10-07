@@ -957,6 +957,9 @@ class IMBridge:
             return
         if task.status in ("done", "failed", "cancelled", "interrupted"):
             loop.create_task(self._safe_send(self._task_final_text(task)))
+        elif task.status == "blocked":
+            loop.create_task(self._safe_send(
+                f"⚠ 后台任务 {task.id} 等待你的回答；请回到发起任务的客户端处理。"))
         elif task.status == "running" and task.log:
             now = time.monotonic()
             if now - self._task_prog.get(task.id, 0.0) >= self._progress_interval:

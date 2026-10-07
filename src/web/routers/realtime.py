@@ -180,6 +180,8 @@ def _make_ws_confirm(websocket, q):
             "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
         q.put_nowait(P.make_event(P.AGENT_CONFIRM, id=cid, text=str(message), tainted=tainted))
+        from src.gateway.im_runtime import start_confirmation_notice
+        notice = start_confirmation_notice(message)
         reason = "answered"
         try:
             return bool(await asyncio.wait_for(fut, timeout=300))
@@ -196,6 +198,9 @@ def _make_ws_confirm(websocket, q):
             reason = "cancelled"
             return False
         finally:
+            if notice is not None:
+                notice.cancel()
+                await asyncio.gather(notice, return_exceptions=True)
             _PENDING_CONFIRMS.pop(cid, None)
             # 没有这一条，超时后前端那张卡片会一直挂着、按钮还能点，而后端早已按拒绝往下走了
             # （2026-09-17 真机诊断）。答过的也发：多客户端附着时另一端要同步收起卡片。
