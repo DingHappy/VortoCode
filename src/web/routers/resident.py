@@ -25,17 +25,30 @@ async def dispatches():
     return {"dispatches": await dispatch.refresh(os.getcwd())}
 
 
+def _audit(entry: dict, allowed: bool) -> None:
+    """下发 / 撤回是人的决定：记进决策审计，右侧「审核记录」里看得到。"""
+    from src.gateway.audit import record_decision_audit
+    verb = "下发任务单" if allowed else "撤回任务单"
+    record_decision_audit(os.getcwd(), session=str(entry.get("session") or "desktop"), mode="",
+                          operation=f"{verb}「{entry.get('title')}」到 {entry.get('project')}",
+                          decision=allowed, tainted=bool(entry.get("tainted")))
+
+
 @router.post("/api/dispatches/{dispatch_id}/approve")
 async def approve_dispatch(dispatch_id: str):
     try:
-        return await dispatch.approve(os.getcwd(), dispatch_id)
+        entry = await dispatch.approve(os.getcwd(), dispatch_id)
     except dispatch.DispatchError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    _audit(entry, True)
+    return entry
 
 
 @router.post("/api/dispatches/{dispatch_id}/cancel")
 async def cancel_dispatch(dispatch_id: str):
     try:
-        return dispatch.cancel(os.getcwd(), dispatch_id)
+        entry = dispatch.cancel(os.getcwd(), dispatch_id)
     except dispatch.DispatchError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
+    _audit(entry, False)
+    return entry

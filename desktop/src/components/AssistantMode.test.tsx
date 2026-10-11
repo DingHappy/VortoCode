@@ -22,7 +22,7 @@ it("右侧：身份卡显示连接状态与模型；等你处理的件数跟在�
   const online = renderToStaticMarkup(<AssistantPanel name="VortoCode" connected modelLabel="Qwen3.6" host={{ kind: "local", canAddResident: true }} onAddResident={() => {}} onRetryResident={() => {}} tab="feed" onTab={() => {}} onClose={() => {}} waiting={2}><p>内容</p></AssistantPanel>);
   expect(online).toContain("已连接 · Qwen3.6");
   expect(online).toContain("2 件等你处理");
-  const offline = renderToStaticMarkup(<AssistantPanel name="VortoCode" connected={false} host={{ kind: "local", canAddResident: true }} onAddResident={() => {}} onRetryResident={() => {}} tab="steps" onTab={() => {}} onClose={() => {}}><p>内容</p></AssistantPanel>);
+  const offline = renderToStaticMarkup(<AssistantPanel name="VortoCode" connected={false} host={{ kind: "local", canAddResident: true }} onAddResident={() => {}} onRetryResident={() => {}} tab="audit" onTab={() => {}} onClose={() => {}}><p>内容</p></AssistantPanel>);
   expect(offline).toContain("连接中断");
   expect(offline).not.toContain("等你处理");
 });
@@ -38,4 +38,23 @@ it("身份卡说明助理住在哪：常驻电脑 / 本机；本机时给出连�
   expect(panel({ kind: "resident", name: "vorto-code", reachable: false })).toContain(">重新连接常驻电脑</button>");
   expect(panel({ kind: "local", canAddResident: true })).toContain(">连接常驻电脑</button>");
   expect(panel({ kind: "local", canAddResident: false })).toContain(">重新连接常驻电脑</button>");
+});
+
+it("右侧四个图标标签：动态 / 审核记录 / 定时 / 身份，等你处理的件数挂在动态上", () => {
+  const html = renderToStaticMarkup(<AssistantPanel name="小V" connected host={{ kind: "local", canAddResident: false }} onAddResident={() => {}} onRetryResident={() => {}} tab="identity" onTab={() => {}} onClose={() => {}} waiting={3}><p /></AssistantPanel>);
+  for (const label of ["动态", "审核记录", "定时", "身份"]) expect(html).toContain(`aria-label="${label}"`);
+  expect(html).toContain('aria-selected="true" aria-label="身份"');
+  expect(html).toContain("3 件等你处理");
+});
+
+it("审核记录只列决策，写明允许/拒绝与是否读过外部内容", async () => {
+  const { AssistantAudit } = await import("./AssistantMode");
+  const html = renderToStaticMarkup(<AssistantAudit entries={[
+    { id: "1", category: "decision", operation: "下发任务单「修登录」到 VortoCode", decision: "allowed" },
+    { id: "2", category: "decision", operation: "发布制品？\n本周周报", decision: "denied", tainted: true },
+    { id: "3", category: "tool", tool: "web_fetch" },
+  ]} />);
+  expect(html).toContain("下发任务单「修登录」到 VortoCode");
+  expect(html).toContain("已拒绝 · 读过外部内容后");
+  expect(html).not.toContain("web_fetch");
 });

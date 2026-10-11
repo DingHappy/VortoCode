@@ -2,7 +2,7 @@ import { ManagementNav } from "./components/ManagementNav";
 import { isManagementTab } from "./lib/inspector";
 import { WorkbenchLauncher, WorkbenchTabs, type WorkbenchTool } from "./components/WorkbenchTabs";
 import { ActivityFeed } from "./components/ActivityFeed";
-import { AssistantMemories, AssistantPanel, AssistantProfileDialog, AssistantSidebar, ModeSwitch, type AppMode, type AssistantTab } from "./components/AssistantMode";
+import { AssistantAudit, AssistantIdentity, AssistantPanel, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, type AppMode, type AssistantTab } from "./components/AssistantMode";
 import { dispatchFeedItem, taskFeedItem, turnFeedItem, type FeedItem } from "./lib/activityFeed";
 import { ConfirmationReply } from "./components/ConfirmationReply";
 import { createConfirmationReply } from "./lib/confirm";
@@ -59,6 +59,7 @@ import type {
   AssistantDispatch,
   AssistantMemory,
   AssistantProfile,
+  AssistantScheduleItem,
   AuditEntry,
   CommandRunItem,
   CommandRunKind,
@@ -324,7 +325,8 @@ function App() {
   const [mainChatSid, setMainChatSid] = useState(() => { try { return localStorage.getItem(STORAGE_KEYS.mainChatSid) ?? ""; } catch { return ""; } });
   const [assistantTab, setAssistantTab] = useState<AssistantTab>("feed");
   // 助理的名字 / 关于你，以及它记住的事（都在助理所在的那台电脑上）
-  const [assistantProfile, setAssistantProfile] = useState<AssistantProfile>({ name: "VortoCode", about_you: "" });
+  const [assistantProfile, setAssistantProfile] = useState<AssistantProfile>({ name: "VortoCode", soul: "", about_you: "" });
+  const [assistantSchedule, setAssistantSchedule] = useState<AssistantScheduleItem[]>([]);
   const [assistantMemories, setAssistantMemories] = useState<AssistantMemory[]>([]);
   const [profileDialogOpen, setProfileDialogOpen] = useState(false);
   const [agentTurns, setAgentTurns] = useState<AgentTurn[]>([]);
@@ -3640,32 +3642,32 @@ function App() {
             tab={assistantTab} onClose={() => setInspectorOpen(false)} waiting={assistantWaiting}
             onTab={(tab) => {
               setAssistantTab(tab);
-              if (tab === "memory") void clientRef.current?.listAssistantMemories().then(setAssistantMemories).catch(() => setAssistantMemories([]));
+              const client = clientRef.current;
+              if (tab === "audit") void refreshAudit();
+              if (tab === "schedule") void client?.getAssistantSchedule().then(setAssistantSchedule).catch(() => setAssistantSchedule([]));
+              if (tab === "identity") void client?.listAssistantMemories().then(setAssistantMemories).catch(() => setAssistantMemories([]));
             }}>
-            {assistantTab === "memory"
-              ? <AssistantMemories memories={assistantMemories} onDelete={(memory) => void (async () => {
-                  if (!await confirmAction(`忘掉这条记忆？\n\n${memory.content}`)) return;
-                  try {
-                    await clientRef.current?.deleteAssistantMemory(memory.id);
-                    setAssistantMemories((previous) => previous.filter((item) => item.id !== memory.id));
-                  } catch (error) {
-                    setBanner(errorText(error, "删除记忆失败"));
-                  }
-                })()} />
-              : assistantTab === "feed"
-              ? <ActivityFeed items={[...agentTurns.map(turnFeedItem), ...dispatchItems, ...feedItems]} scope="all" onScope={() => {}}
+            {assistantTab === "audit" ? <AssistantAudit entries={auditEntries} />
+              : assistantTab === "schedule" ? <AssistantSchedule items={assistantSchedule} />
+              : assistantTab === "identity" ? <AssistantIdentity profile={assistantProfile} memories={assistantMemories}
+                  onEdit={() => setProfileDialogOpen(true)}
+                  onDeleteMemory={(memory) => void (async () => {
+                    if (!await confirmAction(`忘掉这条记忆？\n\n${memory.content}`)) return;
+                    try {
+                      await clientRef.current?.deleteAssistantMemory(memory.id);
+                      setAssistantMemories((previous) => previous.filter((item) => item.id !== memory.id));
+                    } catch (error) {
+                      setBanner(errorText(error, "删除记忆失败"));
+                    }
+                  })()} />
+              : <ActivityFeed items={[...agentTurns.map(turnFeedItem), ...dispatchItems, ...feedItems]} scope="all" onScope={() => {}}
                   currentSession={activeSid}
                   onOpen={(item) => {
                     if (item.dispatchId) { void openDispatch(item.dispatchId); return; }
                     if (item.taskId) { focusTask(item.taskId); return; }
                     const sid = item.session?.replace(/^sid-/, "");
                     if (sid) { setMainView("chat"); void switchSession(sid); }
-                  }} />
-              : <SessionInfo key={activeSid} context={currentSession?.context} busy={busy} needsInput={Boolean(pendingConfirm)}
-                  connected={connection === "connected"} plan={plan} queued={promptQueue.length}
-                  activities={activities.filter(item => item.rid === (activeTurnRid ?? [...activities].reverse().find(candidate => candidate.rid)?.rid))}
-                  model={onAssistantHost() ? runtime.model ?? "" : composerModelChoices.find(item => item.value === modelChoice)?.label ?? ""}
-                  onRefresh={() => void refreshSessions()} onOpenSettings={() => { setSettingsSection("general"); setSettingsOpen(true); }} />}
+                  }} />}
           </AssistantPanel>
         )}
         {(mainView === "management" || (mainView === "chat" && inspectorOpen && appMode !== "assistant")) && (
