@@ -132,8 +132,37 @@ def build_report(root: str, now: datetime, label: str) -> str:
     return "\n".join(lines)
 
 
+_REPORT_SYSTEM = (
+    "你是用户的私人助理「{name}」。{soul}下面是今天的工作素材（对话摘要、任务单状态、等用户处理的事）。"
+    "写一份给用户手机上看的{label}：第一句先说要他处理的事（没有就说没有），再用两三句讲今天做成了什么、"
+    "还在进行什么。不超过 8 行，口语、具体；只依据素材，不要编造素材里没有的结果。"
+)
+
+
+async def compose_report(root: str, now: datetime, label: str, *, llm: Any = None) -> str:
+    """早报 / 晚报：数据由台账给，话由模型说（像助理在汇报，而不是一张统计表）。模型不可用就发数据版。"""
+    facts = build_report(root, now, label)
+    try:
+        from src.memory.assistant_profile import load_profile
+
+        profile = load_profile(root)
+        if llm is None:
+            from src.llm.client import LLMClient
+            llm = LLMClient()
+        system = _REPORT_SYSTEM.format(name=profile["name"], label=label,
+                                       soul=f"你的说话方式：{profile['soul']}。" if profile["soul"] else "")
+        response = await asyncio.wait_for(
+            llm.chat([{"role": "system", "content": system}, {"role": "user", "content": facts}],
+                     temperature=0.4, max_tokens=1500), 90)
+        text = str((response or {}).get("content") or "").strip()
+    except Exception as error:  # noqa: BLE001 —— 写不出来就发数据版，汇报不能断
+        logger.warning("早晚报改写失败，发数据版：%s", error)
+        return facts
+    return f"🗒 {label}\n{text}" if text else facts
+
+
 async def watch_once(root: str, now: datetime, *, notify: Notify, refresh=assistant_dispatch.refresh,
-                     times: Optional[List[str]] = None) -> None:
+                     times: Optional[List[str]] = None, writer=None) -> None:
     """巡检一轮：刷新任务状态、推送变化、到点发报告。首次运行只记下现状，不把旧账推一遍。"""
     state = _load_state(root)
     first_run = state is None
@@ -154,7 +183,7 @@ async def watch_once(root: str, now: datetime, *, notify: Notify, refresh=assist
         key = f"{due:%Y-%m-%d} {hhmm}"
         if due <= now < due + _REPORT_GRACE and key not in sent:
             label = "早报" if hour < 12 else "晚报"
-            await notify(build_report(root, now, label))
+            await notify(await (writer or compose_report)(root, now, label))
             sent.append(key)
     state["reports"] = sent[-20:]
     state["seen"] = {key: value for key, value in seen.items() if key in {item["id"] for item in items}}

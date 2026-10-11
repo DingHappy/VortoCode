@@ -1,6 +1,6 @@
 // 右侧「任务动态」：把后台任务台账投影成一条按时间分组的动态流（参考 Muse）。
 // 纯函数、零请求：数据来自已有的 /api/tasks，只决定「显示成什么样」。
-import type { AgentTurn, AssistantDispatch, TaskItem } from "../types";
+import type { AgentTurn, AssistantDispatch, NoticeItem, TaskItem } from "../types";
 
 /** 展示用的五档：等你处理 / 进行中 / 完成 / 失败 / 已停下（暂停、中断，可续跑）。 */
 export type FeedStatus = "waiting" | "running" | "done" | "failed" | "stopped";
@@ -169,4 +169,31 @@ export function dispatchFeedItem(item: AssistantDispatch): FeedItem | null {
     status: DISPATCH_STATUS[item.status] ?? "running",
     at: item.updated_at || item.created_at,
   };
+}
+
+/**
+ * 通知 → 动态：定时作业的结果（⏰）与早晚报（🗒）。其余来源（转发测试、投递告警）不进动态。
+ * 它按时间自己做的事也是「它为你做过的事」，和对话、任务单排在一起。
+ */
+export function noticeFeedItem(notice: NoticeItem, index = 0): FeedItem | null {
+  const source = String(notice.source ?? "");
+  const text = String(notice.text ?? "").trim();
+  const lines = text.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  if (!text || !notice.ts) return null;
+  if (source.startsWith("cron:")) {
+    const name = source.slice(5) || "定时作业";
+    const failed = /^(❌|⚠)/.test(text);
+    return {
+      id: `notice:${notice.ts}:${index}`, kind: "task", title: `⏰ ${name}`,
+      summary: firstSentence(lines.slice(1).join("\n") || lines[0], MAX_SUMMARY) || (failed ? "没有跑成" : "跑完了"),
+      status: failed ? "failed" : "done", at: notice.ts,
+    };
+  }
+  if (source === "assistant" && text.startsWith("🗒")) {
+    return {
+      id: `notice:${notice.ts}:${index}`, kind: "chat", title: firstSentence(lines[0], MAX_TITLE),
+      summary: firstSentence(lines.slice(1).join("\n"), MAX_SUMMARY) || "已发到手机", status: "done", at: notice.ts,
+    };
+  }
+  return null;
 }

@@ -44,3 +44,12 @@ def test_scratch_keeps_tools_inside_an_explicit_workspace(tmp_path):
     assert "run_command" in agent.tools
     assert "request_workspace" in agent.tools
     assert "Scratch 隔离临时工作区" in agent._system("plan")
+
+
+@pytest.mark.parametrize("cron, expected", [("", False), ("1", True)])
+def test_general_assistant_gets_schedule_tools_only_where_cron_runs(tmp_path, monkeypatch, cron, expected):
+    """「每天早上帮我…」：常驻助理（本进程开着调度）才有排班工具；Desktop 本机 sidecar 固定关调度，
+    给了只会建出永远不跑的作业。"""
+    monkeypatch.setenv("VORTOCODE_CRON", cron)
+    names = set(build_session(str(tmp_path), kind="web", workspace_scope="general").tools)
+    assert ({"cron_add", "cron_list", "cron_toggle"} <= names) is expected

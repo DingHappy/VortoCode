@@ -53,19 +53,23 @@ async def test_first_run_records_without_replaying_then_notifies_changes(tmp_pat
     assert len(inbox.messages) == 2 and "✅" in inbox.messages[1] and "vorto/fix" in inbox.messages[1]
 
 
+async def _facts(root, now, label):
+    return watch.build_report(root, now, label)
+
+
 async def test_reports_once_per_slot_within_grace(tmp_path):
     root, inbox = str(tmp_path), _Inbox()
     dispatch.propose(root, project="VortoCode", title="等确认的", goal="g")
     before = datetime(2026, 10, 11, 8, 59, tzinfo=TZ)
-    await watch.watch_once(root, before, notify=inbox, refresh=_items(root), times=["09:00"])
+    await watch.watch_once(root, before, notify=inbox, refresh=_items(root), times=["09:00"], writer=_facts)
     assert inbox.messages == []
     at = datetime(2026, 10, 11, 9, 1, tzinfo=TZ)
-    await watch.watch_once(root, at, notify=inbox, refresh=_items(root), times=["09:00"])
-    await watch.watch_once(root, at + timedelta(minutes=1), notify=inbox, refresh=_items(root), times=["09:00"])
+    await watch.watch_once(root, at, notify=inbox, refresh=_items(root), times=["09:00"], writer=_facts)
+    await watch.watch_once(root, at + timedelta(minutes=1), notify=inbox, refresh=_items(root), times=["09:00"], writer=_facts)
     reports = [text for text in inbox.messages if text.startswith("🗒")]
     assert len(reports) == 1 and "早报" in reports[0] and "等你处理：1 件" in reports[0] and "等确认的" in reports[0]
     late = datetime(2026, 10, 12, 12, 0, tzinfo=TZ)                # 超过补发窗口：不补
-    await watch.watch_once(root, late, notify=inbox, refresh=_items(root), times=["09:00"])
+    await watch.watch_once(root, late, notify=inbox, refresh=_items(root), times=["09:00"], writer=_facts)
     assert len([text for text in inbox.messages if text.startswith("🗒")]) == 1
 
 
@@ -149,3 +153,30 @@ async def test_notify_owner_prefers_local_bridge_then_relay(monkeypatch):
     monkeypatch.setattr(im_rt, "_OWNER_NOTIFIER", None)
     assert await im_rt.notify_owner("b") and relayed == ["b"]
     assert not await im_rt.notify_owner("c", relay=False) and relayed == ["b"]
+
+
+
+async def test_report_is_written_by_the_model_with_fallback(tmp_path):
+    from src.memory.assistant_profile import save_profile
+
+    root = str(tmp_path)
+    save_profile(root, name="小V", soul="简短直接")
+    dispatch.propose(root, project="VortoCode", title="修登录", goal="g")
+    now = datetime(2026, 10, 11, 9, 0, tzinfo=TZ)
+    seen = []
+
+    class _LLM:
+        async def chat(self, messages, **_kw):
+            seen.append(messages)
+            return {"content": "有 1 件等你确认：修登录。今天别的都顺利。"}
+
+    text = await watch.compose_report(root, now, "早报", llm=_LLM())
+    assert text == "🗒 早报\n有 1 件等你确认：修登录。今天别的都顺利。"
+    system, user = seen[0][0]["content"], seen[0][1]["content"]
+    assert "「小V」" in system and "简短直接" in system and "不要编造" in system
+    assert "修登录" in user and "等你处理：1 件" in user                      # 素材来自台账
+
+    class _Down:
+        async def chat(self, *_a, **_k):
+            raise RuntimeError("relay down")
+    assert (await watch.compose_report(root, now, "早报", llm=_Down())).startswith("🗒 早报（")   # 退回数据版

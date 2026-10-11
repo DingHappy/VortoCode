@@ -15,6 +15,8 @@ TUI 的富 UI 装配（约 494 行闭包，着色 diff/ConfirmScreen）**刻意�
 
 from __future__ import annotations
 
+import os
+
 import logging
 from pathlib import Path
 
@@ -174,6 +176,11 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
             from src.agents.tools.memory import build_memory_tools
             tools += [tool for tool in build_memory_tools(repo_root, gated_confirm, source=kind)
                       if tool.name != "remember_repo"]
+            # 交代定时的事（「每天早上帮我…」）：只在本进程真的会跑调度时给——Desktop 本机 sidecar
+            # 固定关调度，给了只会建出永远不跑的作业。建/改都过确认门；要联网的作业创建时单独问人。
+            if os.getenv("VORTOCODE_CRON", "").strip().lower() in ("1", "true", "yes", "on"):
+                from src.agents.tools.cron import build_cron_tools
+                tools += build_cron_tools(repo_root, gated_confirm)
             # 常驻助理：登记了常驻电脑项目才有。只能提议任务单，下发由人在 Desktop 点。
             from src.agents.taint import is_tainted
             from src.workflow.tasks.assistant_dispatch import build_dispatch_tools
