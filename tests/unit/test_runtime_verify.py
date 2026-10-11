@@ -502,13 +502,18 @@ def test_sandboxed_tests_get_a_writable_throwaway_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(policy, "sandboxed_exec_argv", lambda worktree, cmd, backend: cmd)
     seen = {}
 
+    monkeypatch.setenv("VORTOCODE_IM_ROLE", "notify")          # 宿主服务的运行配置
+    monkeypatch.setenv("VORTOCODE_CRON", "1")
+
     def fake_run(cmd, cwd, env, **_kw):
+        seen["leaked"] = sorted(key for key in env if key.startswith("VORTOCODE_") and key != "VORTOCODE_IN_SANDBOX")
         seen["cache"] = env.get("XDG_CACHE_HOME")
         seen["exists_during"] = os.path.isdir(seen["cache"] or "")
         return SimpleNamespace(returncode=0, stdout="ok", stderr="")
     monkeypatch.setattr(worktree.subprocess, "run", fake_run)
     assert worktree.run_tests(tmp_path, ["pytest", "-q"])["ok"] is True
     assert seen["exists_during"] and not os.path.exists(seen["cache"])      # 跑时存在、跑完删掉
+    assert seen["leaked"] == []                                             # 宿主的 VORTOCODE_* 不进测试
 
 
 def test_selftest_failure_note_carries_the_test_tail():
