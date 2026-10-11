@@ -304,3 +304,6 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 .work-place button.active { color: var(--n13); background: var(--n0); box-shadow: 0 1px 2px rgba(var(--ink-rgb), .08); }
 .work-place button:disabled { cursor: default; opacity: .55; }
 .work-place button:focus-visible { outline: 2px solid var(--daily-accent-text); outline-offset: 1px; }
+.conversation-place { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; padding: 2px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 500; vertical-align: 2px; color: var(--n10); background: var(--n3); }
+.conversation-place.resident { color: var(--daily-accent-text); background: var(--daily-accent-soft); }
+.project-session svg { flex: none; margin-right: 5px; vertical-align: -1px; color: var(--n9); }

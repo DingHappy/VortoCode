@@ -20,9 +20,11 @@ import {
   FileCode2,
   GitCompareArrows,
   Inbox,
+  Laptop,
   Library,
   ListChecks,
   Search,
+  Server,
   ShieldCheck,
   Folder,
   FileText,
@@ -110,7 +112,7 @@ import { PluginsPage } from "./components/PluginsPage";
 import { ProjectPicker } from "./components/ProjectPicker";
 import { RemoteProjectDialog } from "./components/RemoteProjectDialog";
 import { findAssistantHost, isAssistantHost, mainChatKey, workProjects } from "./lib/assistantHost";
-import { listedProjects, localTwin, residentEntry, residentTwin, type ResidentProject, type WorkPlace } from "./lib/residentPlace";
+import { listedProjects, localTwin, placedSessions, residentEntry, residentTwin, type ResidentProject, type WorkPlace } from "./lib/residentPlace";
 import { TurnTimeline } from "./components/TurnTimeline";
 import { useChangeReview } from "./hooks/useChangeReview";
 import { useExtensionsStatus } from "./hooks/useExtensionsStatus";
@@ -1903,6 +1905,23 @@ function App() {
     return () => { cancelled = true; };
   }, [residentHost?.id, residentHost?.baseUrl]);  // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 常驻电脑上各项目的会话（侧栏里与本机会话合在一起显示）。在常驻电脑那份上时直接用当前会话列表。
+  const [residentSessions, setResidentSessions] = useState<Record<string, SessionSummary[]>>({});
+  const residentTwinIds = residentHost
+    ? projects.filter((item) => item.kind === "remote" && !isAssistantHost(item) && localTwin(item, projects) && residentTwin(item, projects, residentHost)?.id === item.id).map((item) => item.id)
+    : [];
+  const residentTwinKey = residentTwinIds.join("|");
+  useEffect(() => {
+    let cancelled = false;
+    void Promise.all(residentTwinIds.map(async (id) => {
+      const project = projects.find((item) => item.id === id);
+      if (!project) return [id, []] as const;
+      const list = await new GatewayClient({ baseUrl: project.baseUrl, token: "", remoteProjectId: id }).listSessions().catch(() => []);
+      return [id, list] as const;
+    })).then((entries) => { if (!cancelled) setResidentSessions(Object.fromEntries(entries)); });
+    return () => { cancelled = true; };
+  }, [residentTwinKey, activeSid]);  // eslint-disable-line react-hooks/exhaustive-deps
+
   /** 当前工作台项目（本机那份或常驻电脑那份）。 */
   const currentWorkProject = (): DesktopProjectProfile | undefined => remoteProjectRef.current
     ? projects.find((item) => item.id === remoteProjectRef.current && !isAssistantHost(item))
@@ -1917,6 +1936,14 @@ function App() {
       if (twin) await switchProject(twin);
       else setBanner("本机还没有这个项目：先在本机添加它的目录");
       return;
+    }
+    if (current.kind !== "remote" && clientRef.current) {
+      // 本机没提交的改动不会跟过去：常驻电脑上那份 clone 看不到它们。
+      const review = await clientRef.current.getGitReview().catch(() => null);
+      const changed = review?.files.length ?? 0;
+      if (changed > 0 && !await confirmAction(
+        `本机有 ${changed} 个文件的改动还没提交${review?.branch ? `（分支 ${review.branch}）` : ""}。\n`
+        + "常驻电脑上那份项目看不到这些改动；需要的话先提交并推送，再到常驻电脑上拉取。\n\n仍然切到常驻电脑吗？")) return;
     }
     let twin = residentTwin(current, projects, residentHost);
     if (!twin) {
@@ -3039,9 +3066,12 @@ function App() {
             {listedProjects(projects, residentHost).slice(0, 8).map((project) => {
               const keyword = sidebarQuery.trim().toLowerCase();
               const nameMatches = !keyword || project.name.toLowerCase().includes(keyword);
-              const nested = projectSessions
-                .filter((item) => item.projectId === project.id)
-                .filter((item) => nameMatches || item.title.toLowerCase().includes(keyword));
+              const twinId = project.kind !== "remote" && residentHost ? residentTwin(project, projects, residentHost)?.id : undefined;
+              const nested = placedSessions(
+                projectSessions.filter((item) => item.projectId === project.id),
+                twinId ? (remoteProjectRef.current === twinId ? sessions : residentSessions[twinId] ?? []) : [],
+                twinId,
+              ).filter((item) => nameMatches || item.title.toLowerCase().includes(keyword));
               if (!nameMatches && nested.length === 0) return null;
               const onResidentTwin = project.kind !== "remote" && Boolean(residentHost && remoteProjectRef.current)
                 && residentTwin(project, projects, residentHost!)?.id === remoteProjectRef.current;
@@ -3080,14 +3110,16 @@ function App() {
                   )}
                 </div>
                 {/* 项目下直接列出它最近的会话（MiMo 式）：点一下切到该项目并打开那条会话。 */}
-                {!project.missing && nested.map((item) => (
-                  <button
-                    key={item.sid}
-                    className={`project-session ${active && item.sid === activeSid ? "active" : ""}`}
-                    title={item.title}
-                    onClick={() => void (active ? switchSession(item.sid) : switchProject(project, { sid: item.sid }))}
-                  >{item.title}</button>
-                ))}
+                {!project.missing && nested.map((item) => {
+                  const here = item.place === "resident" ? remoteProjectRef.current === item.projectId : !remoteProjectRef.current && active;
+                  const target = item.place === "resident" ? projects.find((entry) => entry.id === item.projectId) ?? project : project;
+                  return <button
+                    key={`${item.place}:${item.sid}`}
+                    className={`project-session ${here && item.sid === activeSid ? "active" : ""}`}
+                    title={`${item.title}${twinId ? ` · ${item.place === "resident" ? "在常驻电脑上" : "在本机"}` : ""}`}
+                    onClick={() => void (here ? switchSession(item.sid) : switchProject(target, { sid: item.sid }))}
+                  >{twinId && (item.place === "resident" ? <Server size={12} aria-label="常驻电脑" /> : <Laptop size={12} aria-label="本机" />)}{item.title}</button>;
+                })}
                 </Fragment>
               );
             })}
@@ -3246,6 +3278,10 @@ function App() {
           <div className="conversation-header">
             <div>
               <strong>{appMode === "assistant" && activeSid === mainChatSid ? "主要聊天" : currentSession?.title || "新对话"}</strong>
+              {appMode !== "assistant" && residentHost && currentWorkProject() && (
+                <span className={`conversation-place ${remoteProjectRef.current ? "resident" : "local"}`}>
+                  {remoteProjectRef.current ? <><Server size={12} aria-hidden="true" />常驻电脑</> : <><Laptop size={12} aria-hidden="true" />本机</>}
+                </span>)}
             </div>
             <div className="conversation-actions">
               <button
