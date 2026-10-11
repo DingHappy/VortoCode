@@ -1966,6 +1966,91 @@ async fn remember_resident_project(
     result
 }
 
+/// 常驻电脑交付的分支名闸：只收 git 常见分支字符，挡掉选项注入（`-` 开头）与 refspec 花样（`..`、`@{`、`:`）。
+fn valid_resident_branch(branch: &str) -> bool {
+    !branch.is_empty()
+        && branch.len() <= 200
+        && branch
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'))
+        && !branch.starts_with(['-', '/', '.'])
+        && !branch.ends_with(['/', '.'])
+        && !branch.ends_with(".lock")
+        && !branch.contains("..")
+        && !branch.contains("//")
+}
+
+/// 从登记信息拼出常驻电脑上那份 clone 的 SSH 地址：主机取自服务地址，目录取自登记的绝对路径。
+fn resident_fetch_source(base_url: &str, repo_root: &str) -> Result<String, String> {
+    let base = validate_remote_server_url(base_url)?;
+    let parsed = Url::parse(&base).map_err(|error| format!("常驻电脑地址无法解析：{error}"))?;
+    let host = parsed.host_str().ok_or("常驻电脑地址缺少主机名")?;
+    let root = repo_root.trim_end_matches('/');
+    let safe = root.starts_with('/')
+        && root.len() > 1
+        && !root.contains("..")
+        && root
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '/' | '-'));
+    if !safe {
+        return Err("常驻电脑上的项目目录含有不支持的字符，无法通过 SSH 拉取".into());
+    }
+    let host = if host.contains(':') { format!("[{host}]") } else { host.to_string() };
+    Ok(format!("ssh://{host}{root}"))
+}
+
+/// 把常驻电脑上交付的分支拉回本机同名项目（SSH）。常驻电脑没有 GitHub 推送权限：
+/// 交付物由本机拉回、用本机的凭据开 PR。只快进或新建本地分支（refspec 不带 `+`），
+/// 本地分支已分叉或正被检出时由 git 拒绝，不会覆盖你的提交。
+#[tauri::command]
+async fn fetch_resident_branch(
+    app: AppHandle,
+    resident_project_id: String,
+    local_project_id: String,
+    branch: String,
+) -> Result<String, String> {
+    if !valid_resident_branch(&branch) {
+        return Err("分支名不合法，已拒绝拉取".into());
+    }
+    let path = project_registry_path(&app)?;
+    let base = resolve_remote_base(&path, &resident_project_id)?;
+    let registry = load_project_registry(&path)?;
+    let resident = registry
+        .projects
+        .iter()
+        .find(|item| item.id == resident_project_id)
+        .ok_or("常驻电脑上的项目未登记")?;
+    let local = registry
+        .projects
+        .iter()
+        .find(|item| item.id == local_project_id && item.kind != PROJECT_KIND_REMOTE)
+        .ok_or("本机项目未登记")?;
+    let source = resident_fetch_source(&base, &resident.repo_root)?;
+    let root = git_workspace_root(Path::new(&local.repo_root))?;
+    let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
+    tauri::async_runtime::spawn_blocking(move || {
+        let output = Command::new("git")
+            .args(["fetch", "--no-tags", "--", &source, &refspec])
+            .current_dir(&root)
+            // 不弹密码框、不无限等：GUI 里没有终端可以输入
+            .env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o ConnectTimeout=10")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .output()
+            .map_err(|error| format!("无法运行 git fetch：{error}"))?;
+        if output.status.success() {
+            Ok(format!("已拉到本机分支 {branch}"))
+        } else {
+            let detail = String::from_utf8_lossy(&output.stderr);
+            Err(format!(
+                "拉取失败：{}",
+                detail.trim().chars().take(400).collect::<String>()
+            ))
+        }
+    })
+    .await
+    .map_err(|error| format!("拉取任务失败：{error}"))?
+}
+
 // ── 远程传输层（R3a-2a）：HTTP 代理 ──────────────────────────────────────────
 // 方案 A 的落点：**webview 从不提供目标 URL**，只给注册过的 project_id——由 Rust 查注册表取
 // base_url、从 Keychain 取 token 并代注 Authorization。于是「只连注册过的 server_url」不再是
@@ -3534,6 +3619,7 @@ pub fn run() {
             remember_desktop_project,
             remember_remote_project,
             remember_resident_project,
+            fetch_resident_branch,
             remote_http_request,
             remote_ws_connect,
             remote_ws_send,
@@ -5156,6 +5242,28 @@ mod tests {
     }
 
     // ── R3a 远程工作区：网段校验 + 注册流 + 向后兼容 ────────────────────────────
+
+    #[test]
+    fn resident_branch_gate_rejects_option_and_refspec_tricks() {
+        for good in ["vorto/fix-login", "feature/a.b_c", "v1"] {
+            assert!(valid_resident_branch(good), "{good}");
+        }
+        for bad in ["", "-u", "--upload-pack=x", "a..b", "a:b", "+main", "a b", "x.lock", "/a", "a/", "a//b", "@{0}", ".hidden"] {
+            assert!(!valid_resident_branch(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn resident_fetch_source_uses_registered_host_and_dir() {
+        assert_eq!(
+            resident_fetch_source("http://192.168.10.97:8082", "/home/me/projects/VortoCode/").unwrap(),
+            "ssh://192.168.10.97/home/me/projects/VortoCode"
+        );
+        assert!(resident_fetch_source("http://192.168.10.97:8082", "projects/x").is_err());
+        assert!(resident_fetch_source("http://192.168.10.97:8082", "/home/me/a b").is_err());
+        assert!(resident_fetch_source("http://192.168.10.97:8082", "/home/../etc").is_err());
+        assert!(resident_fetch_source("http://8.8.8.8:8082", "/srv/x").is_err());
+    }
 
     #[test]
     fn sibling_server_url_only_changes_the_port() {

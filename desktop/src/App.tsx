@@ -3674,6 +3674,15 @@ function App() {
                 busy={busy}
                 diffPayload={diffPayload}
                 isolatedDeliveries={isolatedDeliveries}
+                onPullToLocal={(() => {
+                  const current = currentWorkProject();
+                  const local = current?.kind === "remote" ? localTwin(current, projects) : undefined;
+                  if (!current || !local) return undefined;
+                  return (branch: string) => void invoke<string>("fetch_resident_branch", {
+                    residentProjectId: current.id, localProjectId: local.id, branch,
+                  }).then((message) => setBanner(`${message}。切到「本机」后可在变更面板审查、开 PR。`))
+                    .catch((error) => setBanner(errorText(error, "拉回本机失败")));
+                })()}
                 isolatedDelivery={isolatedDelivery}
                 isolatedDeliveryDiff={isolatedDeliveryDiff}
                 isolatedDeliveryPath={isolatedDeliveryPath}
