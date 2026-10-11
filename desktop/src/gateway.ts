@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 import WebSocket, { type Message as WebSocketMessage } from "@tauri-apps/plugin-websocket";
 
 import type {
+  AgentTurn,
   ArtifactMeta,
   ArtifactVersionSnapshot,
   AuditEntry,
@@ -339,6 +340,12 @@ export class GatewayClient {
       `/api/agent/sessions/${encodeURIComponent(sid)}/hook-issues/${encodeURIComponent(issueId)}/ack`,
       { method: "POST" },
     );
+  }
+
+  /** 助理模式动态：跨会话最近的回合（标题与结果由后端在回合结束后生成）。 */
+  async listAgentActivity(limit = 100): Promise<AgentTurn[]> {
+    const payload = await this.request<{ turns?: AgentTurn[] }>(`/api/agent/activity?limit=${encodeURIComponent(String(limit))}`);
+    return payload.turns ?? [];
   }
 
   async listTasks(): Promise<TaskItem[]> {

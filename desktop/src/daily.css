@@ -284,4 +284,7 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 .mode-switch button.active, .assistant-tabs button.active { font-weight: 600; color: var(--n13); background: var(--n0); box-shadow: 0 1px 2px rgba(var(--ink-rgb), .1), 0 0 0 .5px rgba(var(--ink-rgb), .06); }
 .assistant-tabs button svg { flex: 0 0 auto; }
 .assistant-tabs .assistant-tab-badge { position: static; min-width: 17px; height: 17px; margin-left: 2px; padding: 0 5px; border-radius: 999px; font-size: 10.5px; font-style: normal; font-weight: 600; line-height: 17px; color: var(--amber-text); background: var(--amber-bg); }
-
+/* 窄窗口：助理面板与原侧栏一样改为覆盖层，不挤到下一行 */
+@media (max-width: 1100px) {
+  .workbench > .assistant-panel { position: absolute; z-index: 15; right: 0; top: 0; bottom: 0; width: min(360px, calc(100% - 220px)); box-shadow: -8px 0 24px rgba(var(--ink-rgb), .08); }
+}

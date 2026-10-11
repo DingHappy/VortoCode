@@ -2,7 +2,8 @@ import { ManagementNav } from "./components/ManagementNav";
 import { isManagementTab } from "./lib/inspector";
 import { WorkbenchLauncher, WorkbenchTabs, type WorkbenchTool } from "./components/WorkbenchTabs";
 import { ActivityFeed } from "./components/ActivityFeed";
-import { taskFeedItem } from "./lib/activityFeed";
+import { AssistantPanel, AssistantSidebar, ModeSwitch, type AppMode } from "./components/AssistantMode";
+import { taskFeedItem, turnFeedItem } from "./lib/activityFeed";
 import { ConfirmationReply } from "./components/ConfirmationReply";
 import { createConfirmationReply } from "./lib/confirm";
 import { ConfirmationTrust } from "./components/ConfirmationTrust";
@@ -52,6 +53,7 @@ import {
   normalizeLocalBaseUrl,
 } from "./gateway";
 import type {
+  AgentTurn,
   AuditEntry,
   CommandRunItem,
   CommandRunKind,
@@ -301,6 +303,13 @@ function App() {
   const [workbenchTabs, setWorkbenchTabs] = useState<InspectorTab[]>([]);
   const [workbenchLauncher, setWorkbenchLauncher] = useState(false);
   const [feedScope, setFeedScope] = useState<"all" | "session">("all");
+  // 助理模式（参考 Muse 个人助理）：一个常驻「主要聊天」+ 旁聊；右侧是助理本人与它做过的事。
+  const [appMode, setAppMode] = useState<AppMode>(() => {
+    try { return localStorage.getItem(STORAGE_KEYS.appMode) === "assistant" ? "assistant" : "work"; } catch { return "work"; }
+  });
+  const [mainChatSid, setMainChatSid] = useState(() => { try { return localStorage.getItem(STORAGE_KEYS.mainChatSid) ?? ""; } catch { return ""; } });
+  const [assistantTab, setAssistantTab] = useState<"feed" | "steps">("feed");
+  const [agentTurns, setAgentTurns] = useState<AgentTurn[]>([]);
   const [tabsNeedingAttention, setTabsNeedingAttention] = useState<ReadonlySet<InspectorTab>>(
     () => new Set());
   const openInspector = useCallback((tab: InspectorTab) => {
@@ -1860,6 +1869,53 @@ function App() {
     }
   };
 
+  // ── 助理模式 ─────────────────────────────────────────────────────────────
+  const refreshAgentTurns = useCallback(async () => {
+    const client = clientRef.current;
+    if (!client) return;
+    try {
+      setAgentTurns(await client.listAgentActivity(100));
+    } catch {
+      // 动态是旁路信息：拿不到就保留上一次的，不打扰对话。
+    }
+  }, []);
+
+  /** 打开「主要聊天」：第一次进助理模式时生成一个固定会话并记住，之后一直用它。 */
+  const openMainChat = async () => {
+    let sid = mainChatSid;
+    if (!sid) {
+      sid = createSessionId();
+      setMainChatSid(sid);
+      try { localStorage.setItem(STORAGE_KEYS.mainChatSid, sid); } catch { /* 存不下也照常使用本次会话 */ }
+    }
+    setMainView("chat");
+    await switchSession(sid);
+  };
+
+  /** 新建旁聊。从主要聊天出发时必须换新会话——newSession 对空草稿只清界面不换 id，会把旁聊并进主要聊天。 */
+  const newSideChat = async () => {
+    setMainView("chat");
+    if (activeSid !== mainChatSid) {
+      await newSession();
+      return;
+    }
+    const sid = createSessionId();
+    clearSessionView();
+    setActiveSid(sid);
+    await connectToRuntime(sid);
+  };
+
+  const changeAppMode = async (mode: AppMode) => {
+    setAppMode(mode);
+    try { localStorage.setItem(STORAGE_KEYS.appMode, mode); } catch { /* 只影响下次启动记不住 */ }
+    if (mode !== "assistant") return;
+    // 助理模式固定用通用工作区（不绑项目），右侧助理面板默认打开。
+    if (activeScope !== "general" && !await switchManagedScope("general")) return;
+    setInspectorOpen(true);
+    setAssistantTab("feed");
+    await openMainChat();
+  };
+
   const renameSession = async (session: SessionSummary) => {
     const title = window.prompt("重命名会话", session.title)?.trim();
     if (!title || !clientRef.current) return;
@@ -2701,6 +2757,23 @@ function App() {
     else if (next !== inspectorTab) openInspector(next);
   };
 
+  // 启动时若上次停在助理模式、却被「回到上次项目」带进了项目工作区：只纠正一次，回到通用工作区的主要聊天。
+  const assistantStartupCheckedRef = useRef(false);
+  useEffect(() => {
+    if (assistantStartupCheckedRef.current || connection !== "connected") return;
+    assistantStartupCheckedRef.current = true;
+    if (appMode === "assistant" && activeScope !== "general") void changeAppMode("assistant");
+  // 只在首次连上时检查一次；changeAppMode 每次渲染都是新函数，故不列入依赖。
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connection]);
+
+  useEffect(() => {
+    if (appMode !== "assistant" || connection !== "connected" || busy) return;
+    void refreshAgentTurns();
+    const later = window.setTimeout(() => void refreshAgentTurns(), 8000);
+    return () => window.clearTimeout(later);
+  }, [appMode, connection, busy, activeSid, refreshAgentTurns]);
+
   return (
     <main className="app-shell">
       <header className="topbar" data-tauri-drag-region="deep">
@@ -2724,7 +2797,7 @@ function App() {
         )}
       </div>
 
-      <div className={`workbench ${mainView === "chat" && inspectorOpen ? "inspector-open" : "inspector-closed"} ${mainView === "chat" && inspectorOpen && !showWorkbenchLauncher && ["files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
+      <div className={`workbench ${mainView === "chat" && inspectorOpen ? "inspector-open" : "inspector-closed"} ${mainView === "chat" && inspectorOpen && appMode !== "assistant" && !showWorkbenchLauncher && ["files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
         <aside className="sidebar">
           <div className="sidebar-brand">
             <strong>VortoCode</strong>
@@ -2747,6 +2820,17 @@ function App() {
               />
             </label>
           )}
+          <ModeSwitch mode={appMode} onChange={(mode) => void changeAppMode(mode)} />
+          {appMode === "assistant" ? (
+            <AssistantSidebar
+              mainChat={{ sid: mainChatSid, preview: agentTurns.find((turn) => turn.sid === mainChatSid)?.outcome, busy: busy && activeSid === mainChatSid }}
+              sideChats={sessions.filter((session) => session.sid !== mainChatSid && (session.messages > 0 || session.sid === activeSid))
+                .map((session) => ({ sid: session.sid, title: session.title, busy: session.status === "working" }))}
+              current={activeSid}
+              onSelect={(sid) => { setMainView("chat"); void (sid === mainChatSid ? openMainChat() : switchSession(sid)); }}
+              onNewSideChat={() => void newSideChat()}
+            />
+          ) : <>
           <nav className="sidebar-nav" aria-label="主导航">
             <button onClick={() => { setMainView("chat"); void newSession(); }} disabled={connection !== "connected"}>
               <SquarePen size={16} /><span>新对话</span>
@@ -2964,6 +3048,7 @@ function App() {
             )}
           </div>
           )}
+          </>}
           <div className="sidebar-footer">
             <button
               className="sidebar-account"
@@ -3016,7 +3101,7 @@ function App() {
         <section className={`conversation ${messages.length === 0 && !streaming ? "empty-state" : ""}`}>
           <div className="conversation-header">
             <div>
-              <strong>{currentSession?.title || "新对话"}</strong>
+              <strong>{appMode === "assistant" && activeSid === mainChatSid ? "主要聊天" : currentSession?.title || "新对话"}</strong>
             </div>
             <div className="conversation-actions">
               <button
@@ -3025,7 +3110,7 @@ function App() {
                 aria-label="任务动态"
                 title={feedWaiting ? `任务动态 · ${feedWaiting} 件等你处理` : plan.length ? `任务动态 · 当前步骤 ${planDone}/${plan.length}` : "任务动态"}
                 onClick={() => inspectorOpen ? setInspectorOpen(false)
-                  : workbenchTabs.length > 0 && !isManagementTab(inspectorTab) ? setInspectorOpen(true) : openInspector("feed")}
+                  : appMode === "assistant" || (workbenchTabs.length > 0 && !isManagementTab(inspectorTab)) ? setInspectorOpen(true) : openInspector("feed")}
               >
                 <PanelRight size={16} />
                 {(busy || feedWaiting > 0) && <i className={`workbench-toggle-dot${!busy ? " waiting" : ""}`} aria-hidden="true" />}
@@ -3155,7 +3240,7 @@ function App() {
                 </div>
               </section>
             )}
-              <ProjectPicker
+              {appMode !== "assistant" && <ProjectPicker
                 projects={projects}
                 activeProjectName={activeScope === "project" ? (repoRoot.split("/").filter(Boolean).slice(-1)[0] || "项目") : null}
                 disabled={projectSwitching || runtimeStarting || busy || !!pendingConfirm}
@@ -3163,7 +3248,7 @@ function App() {
                 onAddProject={() => void chooseRepo()}
                 onAddRemote={() => setRemoteDialogOpen(true)}
                 onLeaveProject={() => void switchManagedScope("general")}
-              />
+              />}
             <div
               className={`composer ${runtimeStarting || projectSwitching ? "preparing" : ""} ${dragOver ? "drag-over" : ""}`}
               onDragOver={(event) => {
@@ -3294,7 +3379,26 @@ function App() {
         </section>
         )}
 
-        {(mainView === "management" || (mainView === "chat" && inspectorOpen)) && (
+        {mainView === "chat" && inspectorOpen && appMode === "assistant" && (
+          <AssistantPanel name="VortoCode" connected={connection === "connected"}
+            modelLabel={composerModelChoices.find(item => item.value === modelChoice)?.label}
+            tab={assistantTab} onTab={setAssistantTab} onClose={() => setInspectorOpen(false)} waiting={feedWaiting}>
+            {assistantTab === "feed"
+              ? <ActivityFeed items={[...agentTurns.map(turnFeedItem), ...feedItems]} scope="all" onScope={() => {}}
+                  currentSession={activeSid}
+                  onOpen={(item) => {
+                    if (item.taskId) { focusTask(item.taskId); return; }
+                    const sid = item.session?.replace(/^sid-/, "");
+                    if (sid) { setMainView("chat"); void switchSession(sid); }
+                  }} />
+              : <SessionInfo key={activeSid} context={currentSession?.context} busy={busy} needsInput={Boolean(pendingConfirm)}
+                  connected={connection === "connected"} plan={plan} queued={promptQueue.length}
+                  activities={activities.filter(item => item.rid === (activeTurnRid ?? [...activities].reverse().find(candidate => candidate.rid)?.rid))}
+                  model={composerModelChoices.find(item => item.value === modelChoice)?.label ?? ""}
+                  onRefresh={() => void refreshSessions()} onOpenSettings={() => { setSettingsSection("general"); setSettingsOpen(true); }} />}
+          </AssistantPanel>
+        )}
+        {(mainView === "management" || (mainView === "chat" && inspectorOpen && appMode !== "assistant")) && (
         <aside className={mainView === "management" ? "inspector management-page" : "inspector"}>
           {mainView === "management" ? <>
             <div className="inspector-context-head">

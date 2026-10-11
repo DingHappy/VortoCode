@@ -36,12 +36,14 @@ afterEach(() => {
 });
 
 describe("STORAGE_KEYS", () => {
-  it("固定住全部 12 个 key 字面量（防拼写漂移）", () => {
+  it("固定住全部 14 个 key 字面量（防拼写漂移）", () => {
     expect(STORAGE_KEYS).toEqual({
       baseUrl: "vortocode.desktop.baseUrl",
       sid: "vortocode.desktop.sid",
       repoRoot: "vortocode.desktop.repoRoot",
       generalSid: "vortocode.desktop.generalSid",
+      appMode: "vortocode.desktop.appMode",
+      mainChatSid: "vortocode.desktop.mainChatSid",
       scratchSid: "vortocode.desktop.scratchSid",
       notificationsEnabled: "vortocode.desktop.notificationsEnabled",
       notifiedDecisions: "vortocode.desktop.notifiedDecisions",
