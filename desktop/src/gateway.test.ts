@@ -89,6 +89,27 @@ describe("registered remote transport", () => {
     expect(invoke).toHaveBeenLastCalledWith("remote_ws_close", { connId: "wrong" });
     expect(vi.mocked(invoke).mock.calls.some(([command]) => command === "remote_ws_send")).toBe(false);
   });
+
+  it.each([
+    ["general", undefined, true],              // 常驻助理：通用范围、没有目录
+    ["project", "/home/x/VortoCode", false],   // 同一台服务器上的项目服务不能冒充助理
+  ])("resident assistant host must report General scope (%s)", async (scope, workdir, accepted) => {
+    const handlers = new Map<string, (event: { payload: unknown }) => void>();
+    vi.mocked(listen).mockImplementation(async (name, handler) => {
+      handlers.set(name, handler as (event: { payload: unknown }) => void); return () => undefined;
+    });
+    vi.mocked(invoke).mockImplementation(async (command) => {
+      if (command === "remote_ws_connect") {
+        handlers.get("remote-ws-message")!({ payload: { connId: "c1", data: JSON.stringify({ type: "init", v: DESKTOP_PROTOCOL_VERSION, data: { scope, workdir } }) } });
+        return "c1";
+      }
+      return undefined;
+    });
+    const client = new GatewayClient({ baseUrl: "http://192.168.1.2:8081", token: "", remoteProjectId: "host", expectedScope: "general" });
+    const connecting = client.connect("sid-main", vi.fn());
+    if (accepted) await expect(connecting).resolves.toBeUndefined();
+    else await expect(connecting).rejects.toThrow("实际工作区");
+  });
 });
 
 interface Frame {

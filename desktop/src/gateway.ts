@@ -131,8 +131,9 @@ export class GatewayClient {
     const seenSequences = new Set<number>();
     let identityResolve: (() => void) | undefined;
     let identityReject: ((error: Error) => void) | undefined;
-    let identityChecked = !this.settings.expectedWorkdir;
-    const identity = this.settings.remoteProjectId && this.settings.expectedWorkdir
+    const expectGeneral = this.settings.expectedScope === "general";
+    let identityChecked = !this.settings.expectedWorkdir && !expectGeneral;
+    const identity = this.settings.remoteProjectId && (this.settings.expectedWorkdir || expectGeneral)
       ? new Promise<void>((resolve, reject) => { identityResolve = resolve; identityReject = reject; }) : null;
     const identityTimeout = identity ? setTimeout(() => identityReject?.(new Error("远端未返回工作区身份，连接已拒绝")), 10_000) : null;
     const persistCursor = (value: number, force = false) => {
@@ -144,7 +145,10 @@ export class GatewayClient {
       if (identity && !identityChecked) {
         if (event.type !== "init") return;
         const snapshot = event.data as RuntimeSnapshot | undefined;
-        if (snapshot?.scope !== "project" || snapshot.workdir?.replace(/\/$/, "") !== this.settings.expectedWorkdir?.replace(/\/$/, "") || event.v !== DESKTOP_PROTOCOL_VERSION) {
+        const sameWorkspace = expectGeneral
+          ? snapshot?.scope === "general"
+          : snapshot?.scope === "project" && snapshot.workdir?.replace(/\/$/, "") === this.settings.expectedWorkdir?.replace(/\/$/, "");
+        if (!sameWorkspace || event.v !== DESKTOP_PROTOCOL_VERSION) {
           identityReject?.(new Error("远端实际工作区或协议与登记信息不一致，请检查服务地址和项目目录"));
           return;
         }

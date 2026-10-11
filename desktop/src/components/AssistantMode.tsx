@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { ListChecks, MessageCircle, MessagesSquare, Plus, X } from "lucide-react";
+import { Laptop, ListChecks, MessageCircle, MessagesSquare, Plus, Server, X } from "lucide-react";
 
 export type AppMode = "assistant" | "work";
 
@@ -35,9 +35,17 @@ export function AssistantSidebar({ mainChat, sideChats, current, onSelect, onNew
   </nav>;
 }
 
+/** 助理住在哪：常驻电脑（一直开着）或本机兜底（合上笔记本就停）。 */
+export type AssistantHostInfo = { kind: "resident"; name: string } | { kind: "local"; canAddResident: boolean };
+
 /** 助理模式右侧：助理身份 + 动态（它为你做过的每件事）/ 本轮步骤。 */
-export function AssistantPanel({ name, connected, modelLabel, tab, onTab, onClose, waiting, children }: {
+export function AssistantPanel({ name, connected, host, onAddResident, onRetryResident, modelLabel, tab, onTab, onClose, waiting, children }: {
   name: string; connected: boolean; modelLabel?: string;
+  host: AssistantHostInfo;
+  /** 还没登记常驻电脑：去登记 */
+  onAddResident: () => void;
+  /** 登记过但这次没连上、正用本机兜底：再连一次 */
+  onRetryResident: () => void;
   tab: "feed" | "steps"; onTab: (tab: "feed" | "steps") => void; onClose: () => void;
   /** 等你处理的件数：动态图标上的提示 */
   waiting?: number;
@@ -49,6 +57,15 @@ export function AssistantPanel({ name, connected, modelLabel, tab, onTab, onClos
       <div className="assistant-avatar" aria-hidden="true">{name.slice(0, 1).toUpperCase()}</div>
       <strong>{name}</strong>
       <span className={`assistant-status${connected ? " online" : ""}`}>{connected ? "已连接" : "连接中断"}{connected && modelLabel ? ` · ${modelLabel}` : ""}</span>
+      <span className={`assistant-host ${host.kind}`}>
+        {host.kind === "resident" ? <Server size={13} aria-hidden="true" /> : <Laptop size={13} aria-hidden="true" />}
+        {host.kind === "resident" ? `住在常驻电脑「${host.name}」` : "在本机运行"}
+      </span>
+      {host.kind === "resident"
+        ? <small className="assistant-host-note">合上笔记本它也照常干活。</small>
+        : host.canAddResident
+          ? <button className="assistant-host-action" onClick={onAddResident}>连接常驻电脑</button>
+          : <button className="assistant-host-action" onClick={onRetryResident}>重新连接常驻电脑</button>}
     </div>
     <div className="assistant-tabs" role="tablist" aria-label="助理面板">
       <button role="tab" aria-selected={tab === "feed"} className={tab === "feed" ? "active" : ""} onClick={() => onTab("feed")}>
