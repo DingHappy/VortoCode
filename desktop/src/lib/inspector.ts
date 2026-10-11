@@ -1,5 +1,5 @@
 export type InspectorTab =
-  | "inbox" | "preview" | "files" | "diff" | "runs" | "goals" | "tasks" | "decisions" | "project";
+  | "info" | "inbox" | "preview" | "files" | "diff" | "runs" | "goals" | "tasks" | "decisions" | "project";
 
 /**
  * Agent 那边发生的事要不要切走你正在看的标签。
@@ -17,3 +17,6 @@ export function autoFocusDecision(input: {
   if (input.current === input.target) return "ignore";
   return "mark";
 }
+
+/** Management pages are application navigation, never conversation inspectors. */
+export const isManagementTab = (tab: InspectorTab) => ["inbox", "tasks", "goals", "decisions"].includes(tab);

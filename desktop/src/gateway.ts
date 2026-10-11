@@ -548,6 +548,10 @@ export class GatewayClient {
     return payload.goals ?? [];
   }
 
+  async getGoal(id: string): Promise<GoalItem> {
+    return this.request(`/api/goals/${encodeURIComponent(id)}`);
+  }
+
   async createGoal(input: CreateGoalInput): Promise<GoalItem> {
     return this.request("/api/goals", { method: "POST", body: JSON.stringify(input) });
   }
@@ -755,6 +759,14 @@ export class GatewayClient {
       method: "PUT",
       body: JSON.stringify({ trusted }),
     });
+  }
+
+  async getMcpConnection(session: string): Promise<import("./types").McpConnectionSnapshot> {
+    return this.request(`/api/extensions/mcp?session=${encodeURIComponent(session)}`);
+  }
+
+  async connectMcp(session: string): Promise<import("./types").McpConnectionSnapshot> {
+    return this.request(`/api/extensions/mcp/connect?session=${encodeURIComponent(session)}`, { method: "POST" });
   }
 
   async getExtensionsInspect(): Promise<ExtensionsInspectSnapshot> {

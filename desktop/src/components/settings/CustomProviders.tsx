@@ -7,7 +7,7 @@ import { useState } from "react";
 
 import { confirmAction } from "../../lib/confirm";
 import { errorText } from "../../lib/errorText";
-import { PROVIDER_PRESETS } from "../../lib/providers";
+import { isLocalModelBase, PROVIDER_PRESETS } from "../../lib/providers";
 import type { DesktopLlmProfileStatus, DesktopLlmProviderStatus } from "../../types";
 import { LlmConnectionCheck } from "./LlmConnectionCheck";
 
@@ -79,14 +79,14 @@ export function CustomProviders({ profile, onProfile, onRestartRuntime }: Props)
 
   const taken = Boolean(draft && !draft.editing && providers.some((item) => item.id === draft.id.trim().toLowerCase()));
   const canSave = Boolean(draft && draft.id.trim() && draft.baseUrl.trim() && !taken
-    && (draft.apiKey.trim() || draft.editing || draft.baseUrl.startsWith("http://127.0.0.1") || draft.baseUrl.startsWith("http://localhost")));
+    && (draft.apiKey.trim() || draft.editing || isLocalModelBase(draft.baseUrl)));
 
   return (
     <section className="custom-providers" aria-label="自定义供应商">
       <div className="custom-providers-head">
         <div>
           <strong>自定义供应商</strong>
-          <p>使用你自己的密钥：填入各家的 API Key，即可在聊天里选用它们的模型。Key 只保存在本机配置文件里。</p>
+          <p>云端或本机 OpenAI 兼容服务均可接入，支持 oMLX。本机无需鉴权时可留空 Key；启用鉴权时填写该服务自己的 Key。</p>
         </div>
         <div className="custom-providers-toolbar">
           <button aria-label="刷新模型列表" title="刷新模型列表" onClick={() => void refresh()} disabled={busy || providers.length === 0}>
@@ -106,7 +106,7 @@ export function CustomProviders({ profile, onProfile, onRestartRuntime }: Props)
             <li key={provider.id}>
               <div>
                 <strong>{provider.name}</strong>
-                <span>{provider.id} · {provider.baseUrl} · {provider.models.length} 个模型{provider.hasKey ? "" : " · 未设置 Key"}</span>
+                <span>{provider.id} · {provider.baseUrl} · {provider.models.length} 个模型{provider.hasKey ? "" : " · 未设置 Key（仅本机无需鉴权时可用）"}</span>
               </div>
               <button onClick={() => setDraft({ id: provider.id, name: provider.name, baseUrl: provider.baseUrl, apiKey: "", editing: true })} disabled={busy}>编辑</button>
               <button aria-label={`删除 ${provider.name}`} onClick={() => void remove(provider)} disabled={busy}><Trash2 size={14} /></button>
@@ -119,7 +119,7 @@ export function CustomProviders({ profile, onProfile, onRestartRuntime }: Props)
         <div className="custom-provider-editor">
           {!draft.editing && (
             <div className="provider-presets">
-              {PROVIDER_PRESETS.filter((preset) => preset.id !== "local").map((preset) => (
+              {PROVIDER_PRESETS.map((preset) => (
                 <button key={preset.id} className={draft.id === preset.id ? "active" : ""} onClick={() => usePreset(preset.id)}>{preset.label}</button>
               ))}
               <button className={draft.id === "" || !PROVIDER_PRESETS.some((preset) => preset.id === draft.id) ? "active" : ""} onClick={() => usePreset(null)}>
@@ -147,7 +147,7 @@ export function CustomProviders({ profile, onProfile, onRestartRuntime }: Props)
                   type={showKey ? "text" : "password"}
                   value={draft.apiKey}
                   autoComplete="new-password"
-                  placeholder={draft.editing ? "已保存；修改时输入新 Key" : "API Key"}
+                  placeholder={isLocalModelBase(draft.baseUrl) ? "本机无需鉴权时可留空" : draft.editing ? "已保存；修改时输入新 Key" : "API Key"}
                   onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })}
                 />
                 <button aria-label={showKey ? "隐藏 Key" : "显示 Key"} onClick={() => setShowKey(!showKey)}>{showKey ? <EyeOff size={14} /> : <Eye size={14} />}</button>

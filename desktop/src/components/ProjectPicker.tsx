@@ -1,4 +1,4 @@
-// 输入框下方的「进入项目工作」：搜索并切到一个项目、添加新项目，或回到不绑定目录的通用会话。
+// 输入框上方的「进入项目工作」：搜索并切到一个项目、添加新项目，或回到不绑定目录的通用会话。
 import { ChevronDown, Folder, Plus, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -52,7 +52,7 @@ export function ProjectPicker({ projects, activeProjectName, disabled, onPick, o
   return (
     <div className="project-picker" ref={rootRef}>
       <button className="project-picker-trigger" onClick={() => setOpen(!open)} disabled={disabled} aria-expanded={open}>
-        {activeProjectName ? <><Folder size={14} />在 {activeProjectName} 中工作</> : "进入项目工作"}
+        {activeProjectName ? <><Folder size={14} />工作区域：{activeProjectName}</> : "工作区域：未选择项目"}
         <ChevronDown size={14} />
       </button>
       {open && (

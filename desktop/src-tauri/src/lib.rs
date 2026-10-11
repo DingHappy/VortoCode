@@ -3334,23 +3334,49 @@ fn stop_supervised_runtime(
     Ok(true)
 }
 
-fn present_main_window(app: &AppHandle) {
-    let Some(window) = app.get_webview_window("main") else {
-        eprintln!("VortoCode Desktop 主窗口不存在，无法切换到前台");
-        return;
-    };
+#[derive(Default)]
+struct MainWindowPresentation(std::sync::atomic::AtomicBool);
 
-    let result = (|| -> tauri::Result<()> {
-        window.show()?;
-        if window.is_minimized()? {
-            window.unminimize()?;
+impl MainWindowPresentation {
+    fn user_hidden(&self) -> bool {
+        self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn set_user_hidden(&self, hidden: bool) {
+        self.0.store(hidden, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+fn present_main_window(app: &AppHandle, explicit: bool) {
+    let handle = app.clone();
+    // Recheck the close intent on the UI thread: a late page load or startup
+    // fallback must not reopen a window that the user has just hidden.
+    if let Err(error) = app.run_on_main_thread(move || {
+        let state = handle.state::<MainWindowPresentation>();
+        if !explicit && state.user_hidden() {
+            return;
         }
-        window.set_focus()?;
-        Ok(())
-    })();
-
-    if let Err(error) = result {
-        eprintln!("VortoCode Desktop 切换到前台失败：{error}");
+        let Some(window) = handle.get_webview_window("main") else {
+            eprintln!("VortoCode Desktop 主窗口不存在，无法切换到前台");
+            return;
+        };
+        if !explicit && window.is_minimized().unwrap_or(true) {
+            return;
+        }
+        let result = (|| -> tauri::Result<()> {
+            window.show()?;
+            state.set_user_hidden(false);
+            if window.is_minimized()? {
+                window.unminimize()?;
+            }
+            window.set_focus()?;
+            Ok(())
+        })();
+        if let Err(error) = result {
+            eprintln!("VortoCode Desktop 切换到前台失败：{error}");
+        }
+    }) {
+        eprintln!("VortoCode Desktop 窗口呈现调度失败：{error}");
     }
 }
 
@@ -3358,11 +3384,33 @@ fn present_main_window(app: &AppHandle) {
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            present_main_window(app);
+            present_main_window(app, true);
         }))
+        .on_window_event(|window, event| {
+            #[cfg(target_os = "macos")]
+            if window.label() == "main" {
+                if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                    // Red close button preserves the session and its original
+                    // runtime. Explicit Quit still follows RunEvent::Exit.
+                    api.prevent_close();
+                    let state = window.app_handle().state::<MainWindowPresentation>();
+                    state.set_user_hidden(true);
+                    if let Err(error) = window.hide() {
+                        state.set_user_hidden(false);
+                        eprintln!("VortoCode Desktop 隐藏失败，窗口保持打开：{error}");
+                    }
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (window, event);
+        })
         .on_page_load(|webview, payload| {
             if webview.label() == "main" && matches!(payload.event(), PageLoadEvent::Finished) {
-                present_main_window(webview.app_handle());
+                if let Some(window) = webview.app_handle().get_webview_window("main") {
+                    if !window.is_minimized().unwrap_or(true) {
+                        present_main_window(webview.app_handle(), false);
+                    }
+                }
             }
         })
         // 窗口在配置里默认隐藏，等页面加载完才显示（否则启动时先闪一下白窗口，真机 2026-10-06）。
@@ -3390,13 +3438,16 @@ pub fn run() {
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(Duration::from_secs(4)).await;
                 if let Some(window) = handle.get_webview_window("main") {
-                    if !window.is_visible().unwrap_or(true) {
-                        present_main_window(&handle);
+                    if !window.is_visible().unwrap_or(true)
+                        && !window.is_minimized().unwrap_or(true)
+                    {
+                        present_main_window(&handle, false);
                     }
                 }
             });
             Ok(())
         })
+        .manage(MainWindowPresentation::default())
         .manage(GatewayProcess::default())
         .manage(DesktopLlmProfileStore::default())
         .manage(RemoteWsRegistry::default())
@@ -3450,12 +3501,12 @@ pub fn run() {
 
     app.run(|app_handle, event| {
         if matches!(event, tauri::RunEvent::Ready) {
-            present_main_window(app_handle);
+            present_main_window(app_handle, false);
         }
 
         #[cfg(target_os = "macos")]
         if matches!(event, tauri::RunEvent::Reopen { .. }) {
-            present_main_window(app_handle);
+            present_main_window(app_handle, true);
         }
 
         if matches!(event, tauri::RunEvent::Exit) {

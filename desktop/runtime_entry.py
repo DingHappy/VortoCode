@@ -30,14 +30,34 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--version", action="version", version="%(prog)s 0.1.0")
     subcommands = parser.add_subparsers(dest="command", required=True)
+    subcommands.add_parser("model-capabilities", help="check bundled model client without inference or credentials")
     server = subcommands.add_parser("server", help="start the local Gateway server")
     server.add_argument("--host", choices=("127.0.0.1", "localhost"), default="127.0.0.1")
     server.add_argument("--port", type=local_port, default=8080)
     return parser
 
 
+async def model_capabilities() -> dict:
+    from importlib.metadata import version
+    from src.llm.client import LLMClient, LLMConfig
+
+    client = LLMClient(LLMConfig(base_url="http://127.0.0.1:1/v1", api_key="", model="diagnostic"))
+    try:
+        if await client._get_client() is None:
+            raise RuntimeError("Desktop native tool client unavailable: OpenAI-compatible SDK missing")
+        return {"version": 1, "native_tools_client": True, "openai": version("openai"),
+                "httpx": version("httpx"), "inference_sent": False}
+    finally:
+        await client.close()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "model-capabilities":
+        import asyncio
+        import json
+        print(json.dumps(asyncio.run(model_capabilities())))
+        return 0
     if args.command == "server":
         os.environ["VORTOCODE_DESKTOP_SIDECAR"] = "1"
         from src.web.server import start_server

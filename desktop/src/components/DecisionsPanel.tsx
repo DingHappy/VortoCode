@@ -27,7 +27,6 @@ type DecisionsPanelProps = {
   notificationsEnabled: boolean;
   onToggleNotifications: () => void;
   onRefresh: () => void;
-  onAnswerConfirmation: (id: string, ok: boolean) => void;
   onOpenDecision: (decision: DecisionItem) => void;
   onSendPrFeedback: (check?: PrDeliveryCheck) => void;
   onDismissDecision: (decision: DecisionItem) => void;
@@ -41,7 +40,6 @@ export function DecisionsPanel({
   notificationsEnabled,
   onToggleNotifications,
   onRefresh,
-  onAnswerConfirmation,
   onOpenDecision,
   onSendPrFeedback,
   onDismissDecision,
@@ -77,10 +75,7 @@ export function DecisionsPanel({
           {decision.tainted && <div className="decision-warning">外部内容已进入本回合，自动授权失效，必须由你核对。</div>}
           <div className="decision-actions">
             {decision.kind === "confirmation" ? (
-              <>
-                <button className="danger" onClick={() => void onAnswerConfirmation(decision.target_id, false)}>拒绝</button>
-                <button className="primary" onClick={() => void onAnswerConfirmation(decision.target_id, true)}>允许一次</button>
-              </>
+              <button className="primary" onClick={()=>void onOpenDecision(decision)}>查看确认卡</button>
             ) : (
               <>
                 <button className="primary" onClick={() => void onOpenDecision(decision)}>

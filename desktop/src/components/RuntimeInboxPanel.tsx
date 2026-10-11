@@ -1,6 +1,9 @@
 // App.tsx 抽出的「收件箱」面板（纯展示件，只搬家不改行为）。
 // 汇总所有本地 runtime 的待处理/执行中工作；数据全是 App 传入的只读快照，
 // 切换 runtime、打开会话或面板等副作用都经回调交还 App。
+import { useState } from "react";
+import { boardSessionId, validTaskLifecycle } from "../lib/taskBoard";
+import { TaskBoard } from "./TaskBoard";
 import { CircleAlert, CircleCheck, Inbox } from "lucide-react";
 
 import type { InspectorTab } from "../lib/inspector";
@@ -17,7 +20,7 @@ type RuntimeInboxPanelProps = {
   onRefresh: () => void;
   onActivate: (runtimeInbox: DesktopRuntimeInbox) => void;
   onOpenSession: (runtimeInbox: DesktopRuntimeInbox, sid: string, needsInput: boolean) => void;
-  onOpenPanel: (runtimeInbox: DesktopRuntimeInbox, tab: InboxPanelTab, sid?: string, taskId?: string) => void;
+  onOpenPanel: (runtimeInbox: DesktopRuntimeInbox, tab: InboxPanelTab, sid?: string, taskId?: string, goalId?: string) => void;
 };
 
 export function RuntimeInboxPanel({
@@ -29,15 +32,17 @@ export function RuntimeInboxPanel({
   onOpenSession,
   onOpenPanel,
 }: RuntimeInboxPanelProps) {
+  const [expanded, setExpanded] = useState(false);
+  const [view, setView] = useState<"board" | "list">("board");
   return (
-    <div className="runtime-inbox-panel">
+    <div className={`runtime-inbox-panel ${expanded ? "board-expanded" : ""}`}>
       <div className="runtime-inbox-hero">
         <div>
           <span>DESKTOP CONTROL PLANE</span>
           <h2>所有工作，一处处理</h2>
           <p>后台项目继续运行；这里只汇总需要你关注、正在执行和可以继续的工作。</p>
         </div>
-        <button onClick={onRefresh} title="立即刷新所有本地 runtime">刷新</button>
+<div className="task-board-toolbar"><button onClick={() => setExpanded(!expanded)}>{expanded ? "收起看板" : "展开看板"}</button><button onClick={onRefresh} title="立即刷新所有本地 runtime">刷新</button></div>
       </div>
       <div className="runtime-inbox-metrics">
         <div className={summary.actionable > 0 ? "attention" : ""}><strong>{summary.actionable}</strong><span>需要处理</span></div>
@@ -46,7 +51,24 @@ export function RuntimeInboxPanel({
         <div><strong>{summary.goals}</strong><span>活跃目标</span></div>
       </div>
 
-      <div className="runtime-inbox-list">
+      <div className="task-board-view-switch" aria-label="工作视图">
+        <button aria-pressed={view === "board"} onClick={() => setView("board")}>看板</button>
+        <button aria-pressed={view === "list"} onClick={() => setView("list")}>按项目查看</button>
+      </div>
+      {view === "board" ? <TaskBoard sources={runtimeInboxes} currentRuntimeId={currentRuntimeId}
+        onOpenGoals={(source, goalId) => onOpenPanel(source, "goals", undefined, undefined, goalId)}
+        onOpen={(item) => {
+          if (item.source.error) return;
+          if (item.kind === "session") onOpenSession(item.source, item.id, item.column === "attention");
+          else if (item.kind === "task") onOpenPanel(item.source, "tasks", item.sessionId, item.id);
+          else if (item.kind === "goal") onOpenPanel(item.source, "goals", undefined, undefined, item.id);
+          else {
+            const decision = item.source.snapshot?.decisions.find((entry) => entry.id === item.id);
+            onOpenPanel(item.source, decision?.kind === "goal" ? "goals" : decision?.kind === "task" ? "tasks"
+              : decision?.kind === "run" ? "runs" : "decisions", item.sessionId,
+              decision?.kind === "task" ? decision.target_id : undefined, decision?.kind === "goal" ? decision.target_id : undefined);
+          }
+        }} /> : <div className="runtime-inbox-list">
         {runtimeInboxes.length === 0 && (
           <div className="panel-empty">
             <Inbox size={22} />
@@ -74,7 +96,11 @@ export function RuntimeInboxPanel({
             .filter((goal) => goal.status !== "achieved")
             .slice(0, 4);
           const importantTasks = (snapshot?.tasks ?? [])
-            .filter((task) => ["queued", "running", "cancelling", "blocked", "failed", "paused", "interrupted"].includes(task.status))
+            .filter((task) => {
+              const lifecycle = validTaskLifecycle(task);
+              return lifecycle ? ["queued", "working", "attention"].includes(lifecycle.column)
+                : ["waiting", "queued", "running", "cancelling", "blocked", "failed", "paused", "interrupted", "done"].includes(task.status);
+            })
             .slice(0, 4);
           return (
             <section className={`runtime-inbox-card ${runtimeInbox.runtimeId === currentRuntimeId ? "current" : ""} ${runtimeInbox.error ? "degraded" : ""}`} key={runtimeInbox.runtimeId}>
@@ -103,7 +129,7 @@ export function RuntimeInboxPanel({
                   : decision.kind === "task" ? "tasks"
                     : decision.kind === "run" ? "runs" : "decisions";
                 return (
-                  <button className="runtime-inbox-item decision" key={`decision:${decision.id}`} onClick={() => onOpenPanel(runtimeInbox, targetTab, decision.session_id)}>
+                  <button className="runtime-inbox-item decision" key={`decision:${decision.id}`} onClick={() => onOpenPanel(runtimeInbox, targetTab, decision.session_id ? boardSessionId(decision.session_id) : undefined, decision.kind === "task" ? decision.target_id : undefined, decision.kind === "goal" ? decision.target_id : undefined)}>
                     <span className={`runtime-inbox-item-dot severity-${decision.severity}`} />
                     <span><strong>{decision.title}</strong><small>{decision.detail || "等待你的处理"}</small></span>
                     <em>处理</em>
@@ -126,7 +152,7 @@ export function RuntimeInboxPanel({
               ))}
 
               {importantGoals.map((goal) => (
-                <button className="runtime-inbox-item" key={`goal:${goal.id}`} onClick={() => onOpenPanel(runtimeInbox, "goals")}>
+                <button className="runtime-inbox-item" key={`goal:${goal.id}`} onClick={() => onOpenPanel(runtimeInbox, "goals", undefined, undefined, goal.id)}>
                   <span className={`runtime-inbox-item-dot status-${goal.status}`} />
                   <span><strong>{goal.objective || "未命名目标"}</strong><small>{goal.blocker || goal.next_action || `${goal.progress.passed}/${goal.progress.total} 条完成标准`}</small></span>
                   <em>{statusLabel(goal.status)}</em>
@@ -134,10 +160,10 @@ export function RuntimeInboxPanel({
               ))}
 
               {importantTasks.map((task) => (
-                <button className="runtime-inbox-item" key={`task:${task.id}`} onClick={() => onOpenPanel(runtimeInbox, "tasks", task.owner_session, task.id)}>
+                <button className="runtime-inbox-item" key={`task:${task.id}`} onClick={() => onOpenPanel(runtimeInbox, "tasks", boardSessionId(task.owner_session), task.id)}>
                   <span className={`runtime-inbox-item-dot status-${task.status}`} />
                   <span><strong>{task.prompt || "后台工作"}</strong><small>{task.detail || task.branch || task.id}</small></span>
-                  <em>{statusLabel(task.status)}</em>
+                  <em>{validTaskLifecycle(task)?.label || statusLabel(task.status)}</em>
                 </button>
               ))}
 
@@ -147,7 +173,7 @@ export function RuntimeInboxPanel({
             </section>
           );
         })}
-      </div>
+      </div>}
     </div>
   );
 }

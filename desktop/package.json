@@ -1,7 +1,7 @@
 {
   "name": "vortocode-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.12",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,6 +11,7 @@
     "sidecar:smoke": "node scripts/smoke-sidecar.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:delivery": "node --test scripts/install-app.test.mjs scripts/build-info.test.mjs",
     "check": "npm run build && npm run test && node scripts/check-runtime-entry.mjs && npm run sidecar:build && cargo test --manifest-path src-tauri/Cargo.toml --lib && cargo check --manifest-path src-tauri/Cargo.toml",
     "check:ci": "tsc --noEmit && vitest run && cargo test --manifest-path src-tauri/Cargo.toml --lib --offline && cargo check --manifest-path src-tauri/Cargo.toml --offline",
     "preview": "vite preview",
@@ -24,6 +25,7 @@
     "signing:doctor": "node scripts/dev-signing.mjs doctor",
     "bundle:dev-signed": "node scripts/dev-signing.mjs build",
     "install:dev-signed": "node scripts/dev-signing.mjs install",
+    "install:built-signed": "node scripts/dev-signing.mjs install-built",
     "install:notarized": "VORTOCODE_NOTARY_PROFILE=${VORTOCODE_NOTARY_PROFILE:-vortocode-notary} node scripts/dev-signing.mjs install",
     "verify:installed": "node scripts/dev-signing.mjs verify"
   },

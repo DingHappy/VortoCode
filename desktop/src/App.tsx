@@ -1,3 +1,11 @@
+import { ManagementNav } from "./components/ManagementNav";
+import { isManagementTab } from "./lib/inspector";
+import { WorkbenchNav } from "./components/WorkbenchNav";
+import { ConfirmationReply } from "./components/ConfirmationReply";
+import { createConfirmationReply } from "./lib/confirm";
+import { ConfirmationTrust } from "./components/ConfirmationTrust";
+import { ComposerCommands } from "./components/ComposerCommands";
+import { ContextStatus, SessionInfo } from "./components/SessionInfo";
 import { invoke } from "@tauri-apps/api/core";
 import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -27,6 +35,7 @@ import {
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import "./App.css";
+import "./daily.css";
 import {
   createSessionId,
   DESKTOP_PROTOCOL_VERSION,
@@ -73,6 +82,7 @@ import { TasksPanel } from "./tasks/TasksPanel";
 import { useTasks } from "./hooks/useTasks";
 import { useTaskDispatch } from "./hooks/useTaskDispatch";
 import { taskCollaborationDraft, type CollaborationAction } from "./lib/taskCollaboration";
+import { McpConnectionCard } from "./components/McpConnectionCard";
 import { ExtensionsInspector } from "./components/ExtensionsInspector";
 import { FilesPanel } from "./components/FilesPanel";
 import { GitReviewPanel } from "./components/GitReviewPanel";
@@ -83,6 +93,7 @@ import { ProjectAssetsPanel } from "./components/ProjectAssetsPanel";
 import { RunsPanel } from "./components/RunsPanel";
 import { RuntimeInboxPanel } from "./components/RuntimeInboxPanel";
 import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
+import { BuildVersion } from "./components/BuildVersion";
 import { ArtifactCenter } from "./components/ArtifactCenter";
 import { PluginsPage } from "./components/PluginsPage";
 import { ProjectPicker } from "./components/ProjectPicker";
@@ -154,11 +165,12 @@ const TRUST_CHIP_LABEL: Record<TrustLevel, string> = {
 
 function inspectorTabLabel(tab: InspectorTab): string {
   return {
-    inbox: "收件箱",
+    info: "任务步骤",
+    inbox: "工作看板",
     preview: "预览",
     files: "代码",
     diff: "变更",
-    runs: "运行",
+    runs: "命令控制台",
     goals: "完成标准",
     tasks: "后台工作",
     decisions: "待处理",
@@ -178,6 +190,7 @@ function contextItemLabel(item: ContextItem): string {
 
 function App() {
   const clientRef = useRef<GatewayClient | null>(null);
+  const creatingSessionRef = useRef(false);
   const sessionConnectionRef = useRef<SessionConnection<GatewayClient> | null>(null);
   if (!sessionConnectionRef.current) sessionConnectionRef.current = new SessionConnection(clientRef);
   const workspaceRootRef = useRef("");
@@ -230,7 +243,9 @@ function App() {
   const [activities, setActivities] = useState<TurnActivity[]>([]);
   const [previewView, setPreviewView] = useState<PreviewView>("plan");
   // 主区域：对话，或侧边栏打开的「插件」「产物中心」页面。切换会话时回到对话。
-  const [mainView, setMainView] = useState<"chat" | "plugins" | "artifacts">("chat");
+  const [mainView, setMainView] = useState<"chat" | "plugins" | "artifacts" | "management">("chat");
+  const mainViewRef = useRef(mainView);
+  mainViewRef.current = mainView;
   const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined);
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [projectSessions, setProjectSessions] = useState<ProjectSessionSummary[]>([]);
@@ -260,6 +275,14 @@ function App() {
   const mode = "build" as const;
   const [prompt, setPrompt] = useState("");
   const [pendingConfirm, setPendingConfirm] = useState<PendingConfirmation | null>(null);
+  const confirmationViewRef = useRef({client:clientRef.current,scope:activeSid,id:"",state:pendingConfirm?.responseState});
+  confirmationViewRef.current = {client:clientRef.current,scope:activeSid,id:pendingConfirm?.id ?? "",state:pendingConfirm?.responseState};
+  const confirmationReplyRef = useRef<ReturnType<typeof createConfirmationReply<GatewayClient>> | null>(null);
+  if (!confirmationReplyRef.current) confirmationReplyRef.current = createConfirmationReply(
+    () => ({...confirmationViewRef.current,client:clientRef.current}),
+    (client,id,ok) => client.send({type:"agent_confirm_response",id,ok}),
+    (id,responseState,responseError) => setPendingConfirm(current => current?.id===id ? {...current,responseState,responseError} : current));
+  const confirmationCheckRef = useRef<{id:string;nonce:string;client:GatewayClient;scope:string}|null>(null);
   const [workspaceRequest, setWorkspaceRequest] = useState<WorkspaceRequest | null>(null);
 
   const [inspectorTab, setInspectorTabState] = useState<InspectorTab>("project");
@@ -268,7 +291,8 @@ function App() {
     () => new Set());
   const openInspector = useCallback((tab: InspectorTab) => {
     setInspectorTabState(tab);
-    setInspectorOpen(true);
+    setMainView(isManagementTab(tab) ? "management" : "chat");
+    setInspectorOpen(!isManagementTab(tab));
     setTabsNeedingAttention((previous) => {
       if (!previous.has(tab)) return previous;
       const next = new Set(previous);
@@ -283,7 +307,7 @@ function App() {
   const inspectorTabRef = useRef<InspectorTab>("inbox");
   const autoOpenInspector = useCallback((tab: InspectorTab) => {
     const decision = autoFocusDecision({
-      open: inspectorOpenRef.current,
+      open: inspectorOpenRef.current || mainViewRef.current !== "chat" || isManagementTab(tab),
       current: inspectorTabRef.current,
       target: tab,
     });
@@ -361,7 +385,7 @@ function App() {
   // goal 域状态与只写自身的回调已收进 useGoals（hooks/useGoals.ts）；跨域的 runGoal /
   // runGoalVerifiers / adoptRunEvidence 留在 App。
   const {
-    goals, setGoals, refreshGoals,
+    goals, setGoals, refreshGoals, goalFocus, focusGoal, resetGoalNavigation,
     goalObjective, setGoalObjective, goalCriteria, setGoalCriteria,
     goalConstraints, setGoalConstraints, goalNonGoals, setGoalNonGoals,
     goalEvidenceDrafts, setGoalEvidenceDrafts, goalVerifierDrafts, setGoalVerifierDrafts,
@@ -517,11 +541,6 @@ function App() {
     () => runs.filter((run) => ["queued", "running", "cancelling", "failed"].includes(run.status)),
     [runs],
   );
-  const taskContextCount = decisionItems.length + activeTasks.length + activeGoals.length + activeRuns.length
-    + (gitReview?.files.length ?? 0);
-  const defaultInspectorTab: InspectorTab = activeScope === "general"
-    ? decisionItems.length > 0 ? "decisions" : "project"
-    : (gitReview?.files.length ?? 0) > 0 ? "diff" : "files";
   const runtimeInboxSources = useMemo(() => runtimeProcesses
     .filter((item) => item.running && item.runtimeId && item.baseUrl)
     .map((item) => {
@@ -573,13 +592,17 @@ function App() {
     return items;
   }, [activeScope, decisionItems, processStatus.runtimeId, repoRoot, runtimeInboxes]);
 
+  const sessionRefreshAttemptRef = useRef(0);
   const refreshSessions = useCallback(async () => {
+    const attempt = ++sessionRefreshAttemptRef.current;
     const client = clientRef.current;
     if (!client) return;
     try {
-      setSessions(await client.listSessions());
+      const result = await client.listSessions();
+      if (client !== clientRef.current || attempt !== sessionRefreshAttemptRef.current) return;
+      setSessions(result);
     } catch (error) {
-      setConnectionNote(errorText(error, "读取会话失败"));
+      if (client === clientRef.current && attempt === sessionRefreshAttemptRef.current) setConnectionNote(errorText(error, "读取会话失败"));
     }
   }, []);
 
@@ -961,7 +984,18 @@ function App() {
             void refreshSessions();
           }
           break;
+        case "agent_confirm_state": {
+          const check = confirmationCheckRef.current;
+          if (!check || check.id !== event.id || check.nonce !== event.nonce || check.client !== clientRef.current || check.scope !== confirmationViewRef.current.scope || typeof event.pending !== "boolean") break;
+          confirmationCheckRef.current = null;
+          confirmationReplyRef.current?.close(check.id);
+          setPendingConfirm(current => current?.id !== check.id ? current : event.pending === true
+            ? {...current,responseState:"idle",responseError:"运行端仍在等待，可重新选择本次批准。"} : null);
+          if (event.pending === false) setBanner("运行端已不再等待此确认；请查看活动记录核对处理结果");
+          break;
+        }
         case "agent_confirm_closed":
+          confirmationReplyRef.current?.close(String(event.id ?? ""));
           // 后端不再等这条确认了（超时按拒绝、回合取消、或别的客户端已应答）。
           // 没有这一支时，卡片会一直挂着且按钮可点，但点了什么都不会发生。
           setPendingConfirm((current) => (current && current.id === event.id ? null : current));
@@ -1466,6 +1500,8 @@ function App() {
   }, [globalNotificationItems, notificationSyncVersion, notificationsEnabled]);
 
   const clearSessionView = () => {
+    confirmationReplyRef.current?.close();
+    confirmationCheckRef.current = null;
     setMessages([]);
     setPlan([]);
     setActivities([]);
@@ -1490,6 +1526,7 @@ function App() {
     resetChangeReview();
     setRuns([]);
     resetTasks();
+    resetGoalNavigation();
     setGoals([]);
     setNotices([]);
     setDecisions([]);
@@ -1757,32 +1794,57 @@ function App() {
 
   const openRuntimeInboxSession = async (runtimeInbox: DesktopRuntimeInbox, sid: string, needsInput = false) => {
     if (!await activateRuntimeInbox(runtimeInbox)) return;
-    await switchSession(sid);
-    if (needsInput) openInspector("decisions");
+    if(!await switchSession(sid))return;
+    setMainView("chat");
+    if (needsInput) openInspector("info");
     else setInspectorOpen(false);
   };
 
+  const inboxNavigationRef = useRef(0);
   const openRuntimeInboxPanel = async (
     runtimeInbox: DesktopRuntimeInbox,
-    tab: Extract<InspectorTab, "decisions" | "goals" | "tasks" | "runs">,
+    tab: Extract<InspectorTab, "inbox" | "decisions" | "goals" | "tasks" | "runs">,
     sid = "",
     taskId = "",
+    goalId = "",
   ) => {
-    if (!await activateRuntimeInbox(runtimeInbox)) return;
-    if (sid) await switchSession(sid);
+    const attempt = ++inboxNavigationRef.current;
+    if (!await activateRuntimeInbox(runtimeInbox) || attempt !== inboxNavigationRef.current) return;
+    const client = clientRef.current;
+    if (sid && tab !== "goals") await switchSession(sid);
+    if (attempt !== inboxNavigationRef.current || client !== clientRef.current) return;
     if (tab === "tasks" && taskId) focusTask(taskId);
-    else openInspector(tab);
+    else {
+      openInspector(tab);
+      if (tab === "goals") {
+        resetGoalNavigation();
+        if (goalId) void focusGoal(goalId);
+        else void refreshGoals();
+      }
+    }
   };
 
   const newSession = async () => {
+    if (creatingSessionRef.current) return;
     if (savingFile) {
       setBanner("请先完成或拒绝当前源码保存确认");
       return;
     }
+    // Already on an unused draft: clear attachments without creating another server slot.
+    if (!currentSession && !busy && !messages.length && !streaming && !plan.length
+        && !activities.length && !pendingConfirm && !promptQueue.length) {
+      clearSessionView();
+      return;
+    }
     const sid = createSessionId();
+    creatingSessionRef.current = true;
     clearSessionView();
     setActiveSid(sid);
-    await connectToRuntime(sid);
+    try {
+      await connectToRuntime(sid);
+    } finally {
+      creatingSessionRef.current = false;
+    }
   };
 
   const renameSession = async (session: SessionSummary) => {
@@ -2023,16 +2085,22 @@ function App() {
   };
 
   const answerConfirmationById = async (id: string, ok: boolean) => {
-    if (!id || !clientRef.current) return;
-    setPendingConfirm((current) => current?.id === id ? null : current);
-    try {
-      await clientRef.current.send({ type: "agent_confirm_response", id, ok });
-    } finally {
-      window.setTimeout(() => {
-        void refreshDecisions();
-        void refreshAudit();
-      }, 120);
-    }
+    await confirmationReplyRef.current?.submit(id,ok);
+    void refreshDecisions();
+    void refreshAudit();
+  };
+  const checkConfirmation = async () => {
+    const client=clientRef.current;
+    if(!client || !pendingConfirm || connection!=="connected")return;
+    const check={client,scope:activeSid,id:pendingConfirm.id,nonce:createSessionId()};
+    confirmationCheckRef.current=check;
+    try { await client.send({type:"agent_confirm_check",id:check.id,nonce:check.nonce}); }
+    catch { if(confirmationCheckRef.current===check && clientRef.current===client && confirmationViewRef.current.scope===check.scope){confirmationCheckRef.current=null;setBanner("核对发送失败，请恢复连接后重试");} }
+    window.setTimeout(()=>{
+      if(confirmationCheckRef.current!==check || clientRef.current!==client || confirmationViewRef.current.scope!==check.scope)return;
+      confirmationCheckRef.current=null;
+      setBanner("未收到核对回执，请检查连接或更新运行端后再核对；不会自动重发批准。");
+    },8000);
   };
 
   const answerConfirmation = async (ok: boolean) => {
@@ -2495,6 +2563,11 @@ function App() {
   };
 
   const openDecision = async (decision: DecisionItem) => {
+    if(decision.kind === "confirmation") {
+      if(decision.session_id && decision.session_id !== activeSid)await switchSession(decision.session_id);
+      openInspector("info");
+      return;
+    }
     if (decision.kind === "hook") {
       if (decision.session_id && decision.session_id !== activeSid) {
         await switchSession(decision.session_id);
@@ -2583,6 +2656,7 @@ function App() {
     <main className="app-shell">
       <header className="topbar" data-tauri-drag-region="deep">
         <div className="topbar-spacer" />
+        <BuildVersion />
         {/* 平时不摆状态字（MiMo 式干净顶栏）；只有没连上时才露出连接状态。 */}
         {connection !== "connected" && (
           <div className={`connection-pill ${connection}`} title={`${runtime.workdir || repoRoot || "通用会话"} · 协议 ${protocolVersion ?? "—"}`}>
@@ -2601,7 +2675,7 @@ function App() {
         )}
       </div>
 
-      <div className={`workbench ${inspectorOpen ? "inspector-open" : "inspector-closed"} ${inspectorOpen && ["inbox", "files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
+      <div className={`workbench ${mainView === "chat" && inspectorOpen ? "inspector-open" : "inspector-closed"} ${mainView === "chat" && inspectorOpen && ["files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
         <aside className="sidebar">
           <div className="sidebar-brand">
             <strong>VortoCode</strong>
@@ -2626,8 +2700,13 @@ function App() {
           )}
           <nav className="sidebar-nav" aria-label="主导航">
             <button onClick={() => { setMainView("chat"); void newSession(); }} disabled={connection !== "connected"}>
-              <SquarePen size={16} /><span>新建任务</span>
+              <SquarePen size={16} /><span>新对话</span>
             </button>
+            <button className={mainView === "management" ? "active" : ""} onClick={()=>{openInspector("inbox");void refreshRuntimeInboxes();}}><Package size={16}/><span>任务中心</span></button>
+          </nav>
+          <details className="sidebar-secondary" open={mainView === "plugins" || mainView === "artifacts" || undefined}>
+            <summary>更多</summary>
+            <nav className="sidebar-nav" aria-label="扩展导航">
             <button
               className={mainView === "plugins" ? "active" : ""}
               onClick={() => {
@@ -2643,7 +2722,8 @@ function App() {
             >
               <Package size={16} /><span>产物中心</span>
             </button>
-          </nav>
+            </nav>
+          </details>
           <div className="sidebar-section-title project-section-title sidebar-first-section">
             <button className="sidebar-fold" aria-expanded={projectsOpen} onClick={() => setProjectsOpen(!projectsOpen)}>
               项目<ChevronDown size={13} className={projectsOpen ? "" : "folded"} />
@@ -2680,7 +2760,7 @@ function App() {
                   </div>
                 </div>
               ))}
-            {projects.length === 0 && <div className="project-empty">还没有项目；在输入框下方「进入项目工作」里添加。</div>}
+            {projects.length === 0 && <div className="project-empty">添加项目后，可以在这里查看和切换。</div>}
             {projects.slice(0, 8).map((project) => {
               const keyword = sidebarQuery.trim().toLowerCase();
               const nameMatches = !keyword || project.name.toLowerCase().includes(keyword);
@@ -2838,11 +2918,11 @@ function App() {
           <div className="sidebar-footer">
             <button
               className="sidebar-account"
-              title={llmProfile?.account ? `已登录 ${llmProfile.account.username}` : "登录 VortoCode 账号"}
+              title={llmProfile?.account ? `已登录 ${llmProfile.account.username}` : "账号与登录"}
               onClick={() => { setSettingsSection("account"); setSettingsOpen(true); }}
             >
               <span className="sidebar-avatar">{llmProfile?.account ? (llmProfile.account.displayName || llmProfile.account.username).slice(0, 1).toUpperCase() : <UserRound size={14} />}</span>
-              <span>{llmProfile?.account ? (llmProfile.account.displayName || llmProfile.account.username) : "登录"}</span>
+              <span>{llmProfile?.account ? (llmProfile.account.displayName || llmProfile.account.username) : "账号"}</span>
             </button>
             <button className="sidebar-gear" aria-label="设置" title="设置" onClick={() => setSettingsOpen(true)}>
               <Settings2 size={16} />
@@ -2853,6 +2933,7 @@ function App() {
         {mainView === "plugins" ? (
           <PluginsPage
             activeScope={activeScope}
+            mcpConnection={<McpConnectionCard client={clientRef.current} session={activeSid} connection={connection} />}
             projectName={repoRoot.split("/").filter(Boolean).slice(-1)[0] || ""}
             inspector={(
               <ExtensionsInspector
@@ -2868,7 +2949,7 @@ function App() {
             onChooseProject={() => void chooseRepo()}
             onOpenBrowserSettings={() => { setSettingsSection("browser"); setSettingsOpen(true); }}
           />
-        ) : mainView === "artifacts" ? (
+        ) : mainView === "management" ? null : mainView === "artifacts" ? (
           <ArtifactCenter
             artifacts={artifacts}
             loading={projectAssetsLoading}
@@ -2886,17 +2967,17 @@ function App() {
         <section className={`conversation ${messages.length === 0 && !streaming ? "empty-state" : ""}`}>
           <div className="conversation-header">
             <div>
-              <strong>{currentSession?.title || "新任务"}</strong>
+              <strong>{currentSession?.title || "新对话"}</strong>
             </div>
             <div className="conversation-actions">
               <button
-                className={`context-toggle ${inspectorOpen ? "active" : ""}`}
+                className={`context-toggle workbench-toggle ${inspectorOpen ? "active" : ""}`}
                 aria-expanded={inspectorOpen}
-                aria-label="工作台"
-                title="工作台：预览、代码、变更等"
-                onClick={() => inspectorOpen ? setInspectorOpen(false) : openInspector(defaultInspectorTab)}
+                aria-label="任务步骤"
+                title="查看当前会话的执行进展"
+                onClick={() => inspectorOpen ? setInspectorOpen(false) : openInspector("info")}
               >
-                <PanelRight size={16} />{taskContextCount > 0 && <b>{taskContextCount}</b>}
+                <PanelRight size={16} /><span>任务步骤</span>
               </button>
               {busy && <button className="stop-button" onClick={() => void cancelTurn()}>停止</button>}
             </div>
@@ -2912,30 +2993,23 @@ function App() {
           >
             {messages.length === 0 && !streaming && (
               <div className="home-greeting">
-                <span className="home-mark" aria-hidden="true">V</span>
                 {/* 冷启动要等本地引擎起来（约数秒）；这期间别摆出一个看着能用、其实还没连上的首页，
                     连上后再切到上次的会话也就不显得突兀（真机 2026-10-06）。 */}
                 {/* 引擎通常一秒内就连上（Desktop 一启动就预先拉起 runtime）：提示延后 400ms 才显示，
                     连得快就不闪；占位保持同样高度，避免布局跳动。 */}
                 {homeStarting
                   ? <h1 className={`home-starting ${showHomeStarting ? "" : "pending"}`} aria-hidden={!showHomeStarting}><LoaderCircle className="activity-spinner" size={20} />正在启动本地引擎…</h1>
-                  : <h1>有什么可以帮你？</h1>}
+                  : <><h1>开始一项工作</h1><p>描述你要解决的问题，或选择工作区域开始。</p></>}
                 {llmProfileChecked && !llmProfile?.configured && (
-                  <p>还没有配置模型服务。<button onClick={() => { setSettingsSection("account"); setSettingsOpen(true); }}>登录或填写 Key</button></p>
+                  <p>还没有配置模型服务。<button onClick={() => { setSettingsSection("model"); setSettingsOpen(true); }}>连接模型</button></p>
                 )}
               </div>
             )}
 
             {plan.length > 0 && (
-              <section className="plan-card">
-                <div className="plan-heading"><span>执行计划</span><b>{plan.filter((item) => item.status === "completed").length}/{plan.length}</b></div>
-                {plan.map((item, index) => (
-                  <div className={`plan-row ${item.status}`} key={`${index}-${item.step}`}>
-                    <span>{item.status === "completed" ? "✓" : item.status === "in_progress" ? "●" : "○"}</span>
-                    <p>{item.step}</p>
-                  </div>
-                ))}
-              </section>
+              <button className="plan-summary" onClick={()=>openInspector("info")}>
+                执行编排 · {plan.filter(item=>item.status === "completed").length}/{plan.length} 步 · 查看进展
+              </button>
             )}
 
             {messages.map((message) => (
@@ -2947,7 +3021,7 @@ function App() {
                   </div>
                 </article>
                 {message.role === "user" && message.rid && activityGroups.has(message.rid) && (
-                  <TurnTimeline items={activityGroups.get(message.rid) ?? []} active={busy && activeTurnRid === message.rid} />
+                  <TurnTimeline items={activityGroups.get(message.rid) ?? []} active={busy && activeTurnRid === message.rid} hasOutput={messages.some(reply => reply.role === "assistant" && reply.rid === message.rid && reply.text.trim().length > 0)} />
                 )}
               </Fragment>
             ))}
@@ -2983,12 +3057,12 @@ function App() {
                         : "Runtime 请求确认"}
                   </strong>
                   <p>{pendingConfirm.text}</p>
-                  <div>
-                    <button className="deny" onClick={() => void answerConfirmation(false)}>拒绝</button>
-                    <button className="allow" onClick={() => void answerConfirmation(true)}>
-                      {!pendingConfirm.tainted && isPlanExecutionConfirmation(pendingConfirm.text) ? "授权继续" : "允许一次"}
-                    </button>
-                  </div>
+                  <ConfirmationTrust key={pendingConfirm.id} trust={trust} busy={trustBusy}
+                    connected={connection === "connected"} tainted={pendingConfirm.tainted}
+                    onChange={changeTrustLevel} />
+                  <ConfirmationReply state={pendingConfirm.responseState} error={pendingConfirm.responseError} connected={connection === "connected"}
+                    allowLabel={!pendingConfirm.tainted && isPlanExecutionConfirmation(pendingConfirm.text) ? "授权继续" : "允许一次"}
+                    onCheck={()=>void checkConfirmation()} onAnswer={ok=>void answerConfirmation(ok)} />
                 </div>
               </section>
             )}
@@ -3030,6 +3104,15 @@ function App() {
                 </div>
               </section>
             )}
+              <ProjectPicker
+                projects={projects}
+                activeProjectName={activeScope === "project" ? (repoRoot.split("/").filter(Boolean).slice(-1)[0] || "项目") : null}
+                disabled={projectSwitching || runtimeStarting || busy || !!pendingConfirm}
+                onPick={(project) => void switchProject(project)}
+                onAddProject={() => void chooseRepo()}
+                onAddRemote={() => setRemoteDialogOpen(true)}
+                onLeaveProject={() => void switchManagedScope("general")}
+              />
             <div
               className={`composer ${runtimeStarting || projectSwitching ? "preparing" : ""} ${dragOver ? "drag-over" : ""}`}
               onDragOver={(event) => {
@@ -3073,31 +3156,19 @@ function App() {
                   ))}
                 </div>
               )}
-              <textarea
-                value={prompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                onPaste={(event) => {
-                  const files = Array.from(event.clipboardData.files);
-                  if (files.length === 0) return;
-                  event.preventDefault();
-                  void addFiles(files);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    void sendPrompt();
-                  }
-                }}
-                placeholder={activeScope === "general" ? "描述你想构建或解决的问题…" : activeScope === "scratch" ? "描述要在 Scratch 中验证的任务…" : "描述项目目标，Shift+Enter 换行…"}
-              />
+              <ComposerCommands key={activeSid} prompt={prompt} onPrompt={setPrompt} project={activeScope !== "general"}
+                disabled={runtimeStarting || projectSwitching} onSend={() => void sendPrompt()}
+                onPaste={(event) => { const files = Array.from(event.clipboardData.files); if (files.length) { event.preventDefault(); void addFiles(files); } }}
+                onAction={(command) => {
+                  if (command === "attach") attachmentInputRef.current?.click();
+                  else if (command === "project") void chooseRepo();
+                  else if (command === "files") openInspector("files");
+                  else if (command === "info") openInspector("info");
+                  else if (command === "model") { setSettingsSection("model"); setSettingsOpen(true); }
+                  else if (command === "new" && connection === "connected") void newSession();
+                }}>
               <div className="composer-footer">
                 <div className="composer-tools">
-                  <button
-                    className="composer-attach"
-                    aria-label="添加项目或文件上下文"
-                    title="添加项目或文件上下文"
-                    onClick={() => activeScope === "general" ? void chooseRepo() : openInspector("files")}
-                  ><Plus size={17} /></button>
                   <button
                     className="composer-attach"
                     aria-label="添加附件"
@@ -3119,7 +3190,7 @@ function App() {
                       <ShieldCheck size={14} />
                       <select
                         aria-label="授权方式"
-                        value={trust.level}
+                        value={trust.levels.includes(trust.level) ? trust.level : trust.effective}
                         disabled={trustBusy}
                         onChange={(event) => void changeTrustLevel(event.target.value as TrustLevel)}
                       >
@@ -3161,52 +3232,46 @@ function App() {
                     </select>
                   </label>
                 )}
+                <ContextStatus key={activeSid} context={currentSession?.context} />
                 <button className={`composer-send ${busy ? "queueing" : ""}`} aria-label={busy ? "加入待运行队列" : "发送"} title={busy ? "加入待运行队列" : "发送"} onClick={() => void sendPrompt()} disabled={(!prompt.trim() && contextItems.length === 0 && attachments.length === 0) || savingFile || runtimeStarting || projectSwitching}><ArrowUp size={17} /></button>
                 </div>
               </div>
+              </ComposerCommands>
             </div>
-            {messages.length === 0 && !streaming && (
-              <ProjectPicker
-                projects={projects}
-                activeProjectName={activeScope === "project" ? (repoRoot.split("/").filter(Boolean).slice(-1)[0] || "项目") : null}
-                disabled={projectSwitching || runtimeStarting}
-                onPick={(project) => void switchProject(project)}
-                onAddProject={() => void chooseRepo()}
-                onAddRemote={() => setRemoteDialogOpen(true)}
-                onLeaveProject={() => void switchManagedScope("general")}
-              />
-            )}
+
           </div>
         </section>
         )}
 
-        {inspectorOpen && (
-        <aside className="inspector">
+        {(mainView === "management" || (mainView === "chat" && inspectorOpen)) && (
+        <aside className={mainView === "management" ? "inspector management-page" : "inspector"}>
           <div className="inspector-context-head">
-            <div><span>任务上下文</span><strong>{inspectorTabLabel(inspectorTab)}</strong></div>
-            <button aria-label="关闭工作台" onClick={() => setInspectorOpen(false)}><X size={16} /></button>
+            <div><span>{mainView === "management" ? "任务中心" : "当前会话"}</span><strong>{inspectorTabLabel(inspectorTab)}</strong></div>
+            <button aria-label={mainView === "management" ? "返回对话" : "关闭会话侧栏"} onClick={() => {setMainView("chat");setInspectorOpen(false);}}><X size={16} /></button>
           </div>
-          <div className="inspector-tabs">
-            <button className={tabClass("inbox")} onClick={() => openInspector("inbox")}>收件箱<small>{runtimeInboxSummary.actionable}</small></button>
+          {mainView === "management" ? <ManagementNav current={inspectorTab} onSelect={openInspector}/> : <WorkbenchNav current={inspectorTab} label={inspectorTabLabel(inspectorTab)} busy={busy} tabClass={tabClass} onSelect={openInspector}>
             <button className={tabClass("preview")} onClick={() => openInspector("preview")}>预览<small>{artifacts.length + previewReferenceItems.length}</small></button>
             {activeScope !== "general" && <button className={tabClass("files")} onClick={() => openInspector("files")}>代码<small>{filteredWorkspaceFiles.length}</small></button>}
             {activeScope !== "general" && <button className={tabClass("diff")} onClick={() => { setTaskReviewTask(null); setTaskBranchReview(null); setTaskBranchDiff(null); setTaskBranchSelectedPath(""); openInspector("diff"); void refreshGitReview(); void refreshPrDelivery(); void refreshIsolatedDeliveries(); }}>变更<small>{(gitReview?.files.length ?? 0) + isolatedDeliveries.length}</small></button>}
-            {activeScope !== "general" && <button className={tabClass("runs")} onClick={() => openInspector("runs")}>运行<small>{activeRuns.length}</small></button>}
-            {(inspectorTab === "goals" || activeGoals.length > 0) && <button className={inspectorTab === "goals" ? "active" : ""} onClick={() => openInspector("goals")}>完成<small>{activeGoals.length}</small></button>}
-            {(inspectorTab === "tasks" || activeTasks.length > 0) && <button className={inspectorTab === "tasks" ? "active" : ""} onClick={() => openInspector("tasks")}>后台<small>{activeTasks.length}</small></button>}
-            {(inspectorTab === "decisions" || decisionItems.length > 0) && <button className={inspectorTab === "decisions" ? "active" : ""} onClick={() => { openInspector("decisions"); void refreshDecisions(); void refreshAudit(); }}>待处理<small>{decisionItems.length}</small></button>}
+            {activeScope !== "general" && <button className={tabClass("runs")} onClick={() => openInspector("runs")}>控制台<small>{activeRuns.length}</small></button>}
             {(inspectorTab === "project" || activeScope === "general" || artifacts.length > 0 || (repoMemory?.total_entries ?? 0) > 0) && <button className={inspectorTab === "project" ? "active" : ""} onClick={() => { openInspector("project"); void refreshProjectAssets(activeScope !== "general"); }}>上下文<small>{artifacts.length + (repoMemory?.total_entries ?? 0)}</small></button>}
-          </div>
+          </WorkbenchNav>}
           <div className="inspector-body">
+            {inspectorTab === "info" && <SessionInfo key={activeSid} context={currentSession?.context} busy={busy} needsInput={Boolean(pendingConfirm)}
+              connected={connection === "connected"} plan={plan} queued={promptQueue.length}
+              activities={activities.filter(item => item.rid === (activeTurnRid ?? [...activities].reverse().find(candidate => candidate.rid)?.rid))}
+              model={composerModelChoices.find(item => item.value === modelChoice)?.label ?? ""}
+              onRefresh={() => void refreshSessions()} onOpenSettings={() => { setSettingsSection("general"); setSettingsOpen(true); }} />}
+
             {inspectorTab === "inbox" && (
               <RuntimeInboxPanel
                 runtimeInboxes={runtimeInboxes}
                 summary={runtimeInboxSummary}
                 currentRuntimeId={processStatus.runtimeId}
                 onRefresh={() => void refreshRuntimeInboxes()}
-                onActivate={(runtimeInbox) => void activateRuntimeInbox(runtimeInbox)}
+                onActivate={(runtimeInbox) => void openRuntimeInboxPanel(runtimeInbox,"inbox")}
                 onOpenSession={(runtimeInbox, sid, needsInput) => void openRuntimeInboxSession(runtimeInbox, sid, needsInput)}
-                onOpenPanel={(runtimeInbox, tab, sid, taskId) => void openRuntimeInboxPanel(runtimeInbox, tab, sid, taskId)}
+                onOpenPanel={(runtimeInbox, tab, sid, taskId, goalId) => void openRuntimeInboxPanel(runtimeInbox, tab, sid, taskId, goalId)}
               />
             )}
             {inspectorTab === "files" && (
@@ -3326,6 +3391,9 @@ function App() {
             )}
             {inspectorTab === "goals" && (
               <GoalsPanel
+                goalFocus={goalFocus}
+                onRetryFocus={() => { if (goalFocus) void focusGoal(goalFocus.id); }}
+                onClearFocus={() => { resetGoalNavigation(); void refreshGoals(); }}
                 goals={goals}
                 tasks={tasks}
                 runs={runs}
@@ -3449,7 +3517,6 @@ function App() {
                   notificationsEnabled={notificationsEnabled}
                   onToggleNotifications={toggleSystemNotifications}
                   onRefresh={() => { void refreshDecisions(); void refreshAudit(); void refreshPrDelivery(); }}
-                  onAnswerConfirmation={answerConfirmationById}
                   onOpenDecision={openDecision}
                   onSendPrFeedback={sendPrFeedbackToAgent}
                   onDismissDecision={dismissDecision}

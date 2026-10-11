@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { createServer } from "node:net";
 import { dirname, join, resolve } from "node:path";
@@ -30,6 +30,15 @@ const runtime = process.env.VORTOCODE_RUNTIME_BIN || join(
   runtimeExecutableName(),
 );
 if (!existsSync(runtime)) throw new Error(`Desktop runtime sidecar not found: ${runtime}`);
+const capabilities = spawnSync(runtime, ["model-capabilities"], { encoding: "utf8", timeout: 30_000 });
+if (capabilities.error || capabilities.status !== 0) {
+  throw new Error(`Desktop bundled model client check failed: ${capabilities.stderr || capabilities.error}`);
+}
+const modelClient = JSON.parse(capabilities.stdout.trim());
+if (modelClient.version !== 1 || modelClient.native_tools_client !== true || modelClient.inference_sent !== false) {
+  throw new Error("Desktop bundled native tool client contract is missing");
+}
+console.log(`Bundled model client verified: openai=${modelClient.openai}, httpx=${modelClient.httpx}; no inference`);
 
 const port = await freePort();
 const startedAt = Date.now();

@@ -13,7 +13,7 @@ import {
   SquareTerminal,
   Wrench,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { formatActivityDuration } from "../lib/labels";
 import type { TurnActivity } from "../types";
@@ -40,20 +40,30 @@ function activityDetails(activity: TurnActivity): string {
   return sections.join("\n\n");
 }
 
-export function TurnTimeline({ items, active }: { items: TurnActivity[]; active: boolean }) {
+export function timelineExpanded(items: TurnActivity[], active: boolean, hasOutput: boolean): boolean {
+  return active || !hasOutput || items.some(item => ["failed", "blocked", "cancelled", "timed_out", "running"].includes(item.status));
+}
+
+export function TurnTimeline({ items, active, hasOutput = false }: { items: TurnActivity[]; active: boolean; hasOutput?: boolean }) {
+  const automaticOpen = timelineExpanded(items, active, hasOutput);
+  const [open, setOpen] = useState(automaticOpen);
+  useEffect(() => { setOpen(automaticOpen); }, [automaticOpen]);
   if (items.length === 0) return null;
   const phaseDuration = items
     .filter((item) => item.kind === "phase")
     .reduce((total, item) => total + (item.durationMs ?? 0), 0);
   const tools = items.filter((item) => item.kind === "tool");
   const hooks = items.filter((item) => item.kind === "hook");
+  const attention = items.filter(item => ["failed", "blocked", "cancelled", "timed_out"].includes(item.status));
   return (
     <section className={`turn-timeline ${active ? "active" : ""}`} aria-label="Agent 执行过程" aria-live={active ? "polite" : "off"}>
-      <div className="timeline-heading">
-        <span>{active ? "正在工作" : phaseDuration > 0 ? `已工作 ${formatActivityDuration(phaseDuration)}` : "执行过程"}</span>
+      <button type="button" className="timeline-heading" aria-expanded={open} onClick={() => setOpen(value => !value)}>
+        <ChevronDown size={14} className={open ? "" : "timeline-collapsed"} />
+        <span>{active ? "正在工作" : "执行过程"}{phaseDuration > 0 ? ` · ${formatActivityDuration(phaseDuration)}` : ""}</span>
+        {attention.length > 0 && <strong className="timeline-attention">{attention.length} 项需要关注</strong>}
         {(tools.length > 0 || hooks.length > 0) && <small>{tools.length > 0 ? `${tools.length} 个工具` : ""}{tools.length > 0 && hooks.length > 0 ? " · " : ""}{hooks.length > 0 ? `${hooks.length} 个 Hook` : ""}</small>}
-      </div>
-      <div className="timeline-list">
+      </button>
+      {open && <div className="timeline-list">
         {items.map((activity) => {
           const details = activityDetails(activity);
           const row = (
@@ -72,7 +82,7 @@ export function TurnTimeline({ items, active }: { items: TurnActivity[]; active:
             <div className={`timeline-row ${activity.kind} ${activity.status}`} key={activity.id}>{row}</div>
           );
         })}
-      </div>
+      </div>}
     </section>
   );
 }

@@ -16,6 +16,7 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   { id: "glm", label: "智谱 GLM", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "", requiresKey: true },
   { id: "qwen", label: "千问", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus", requiresKey: true },
   { id: "minimax", label: "MiniMax", baseUrl: "https://api.minimaxi.com/v1", model: "", requiresKey: true },
+  { id: "omlx", label: "oMLX", baseUrl: "http://127.0.0.1:8000/v1", model: "", requiresKey: false },
   { id: "local", label: "本机模型", baseUrl: "http://127.0.0.1:11434/v1", model: "", requiresKey: false },
 ];
 
@@ -27,7 +28,9 @@ function normalizeBase(url: string): string {
 export function presetForBaseUrl(baseUrl: string): ProviderPreset | null {
   const base = normalizeBase(baseUrl);
   if (!base) return null;
-  if (/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/.test(base)) {
+  const exact = PROVIDER_PRESETS.find((preset) => normalizeBase(preset.baseUrl) === base);
+  if (exact) return exact;
+  if (isLocalModelBase(baseUrl)) {
     return PROVIDER_PRESETS.find((preset) => preset.id === "local") ?? null;
   }
   return PROVIDER_PRESETS.find((preset) => normalizeBase(preset.baseUrl) === base) ?? null;
@@ -37,4 +40,15 @@ export function presetForBaseUrl(baseUrl: string): ProviderPreset | null {
 export function sameLlmBase(left: string, right: string): boolean {
   const normalize = (value: string) => value.trim().replace(/\/+$/, "");
   return normalize(left) !== "" && normalize(left) === normalize(right);
+}
+
+
+/** Exact loopback URL policy shared by model configuration forms. No host-prefix exemptions. */
+export function isLocalModelBase(baseUrl: string): boolean {
+  try {
+    const url = new URL(baseUrl.trim());
+    return ["http:", "https:"].includes(url.protocol)
+      && ["127.0.0.1", "localhost"].includes(url.hostname)
+      && !url.username && !url.password && !url.search && !url.hash;
+  } catch { return false; }
 }

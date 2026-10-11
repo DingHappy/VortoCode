@@ -1,6 +1,6 @@
 [package]
 name = "vortocode-desktop"
-version = "0.1.0"
+version = "0.1.12"
 description = "VortoCode local-first agent workbench"
 authors = ["VortoCode Team"]
 edition = "2021"

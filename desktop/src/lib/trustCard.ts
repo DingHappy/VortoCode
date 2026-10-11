@@ -14,7 +14,7 @@ import type { TrustLevel, TrustStatus } from "../types";
 export const TRUST_ORDER: Record<TrustLevel, number> = { ask: 0, reads: 1, full: 2 };
 
 export const TRUST_LABELS: Record<TrustLevel, { title: string; hint: string }> = {
-  ask: { title: "每次确认", hint: "写文件、执行命令都问你" },
+  ask: { title: "每次确认", hint: "跨目录读取、写文件与执行命令先确认" },
   reads: { title: "只读免确认", hint: "读文件不问，写和执行仍要你点头" },
   full: { title: "完全信任", hint: "不再逐次确认；污点回合除外" },
 };
@@ -56,8 +56,9 @@ export function trustCard(trust: TrustStatus | null | undefined): TrustCard | nu
           : undefined,
       };
     }),
-    note: trust.level !== trust.effective
+    note: (trust.supervised ? "监管已开启：写入、执行与外发始终需逐次确认；路径、敏感文件与危险命令拦截不受档位影响。 " : "") + (trust.local_file_reads
+      ? "可按完整路径读取项目外的普通文本：每次确认或只读免确认。授权按当前工作区保存，General 单独保存；不包含跨目录写入、执行或敏感文件。 " : "") + (trust.level !== trust.effective
       ? `已选「${TRUST_LABELS[trust.level]?.title ?? trust.level}」，但这个会话最高只到「${TRUST_LABELS[trust.effective].title}」，按后者执行。`
-      : "读过网页、搜索或 MCP 内容的那一轮，无论哪一档都会重新向你确认（防提示注入）。",
+      : "读过本机文件、网页、搜索或 MCP 内容的那一轮，无论哪一档都会重新向你确认（防提示注入）。"),
   };
 }
