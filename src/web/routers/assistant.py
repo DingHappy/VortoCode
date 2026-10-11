@@ -67,3 +67,20 @@ async def phone_chats(limit: int = 200):
         chats.append({"sid": sid, "title": summary.get("title") or sid, "updated": summary.get("updated"),
                       "transcript": transcript[-max(1, min(int(limit), 400)):]})
     return {"chats": chats}
+
+
+@router.get("/api/assistant/memory-proposals")
+async def memory_proposals():
+    """聊天里提炼出的「关于你」候选，等你确认。"""
+    return {"proposals": assistant_profile.list_memory_proposals(os.getcwd())}
+
+
+@router.post("/api/assistant/memory-proposals/{proposal_id}")
+async def decide_memory_proposal(proposal_id: str, body: dict):
+    action = str((body or {}).get("action") or "")
+    if action not in ("approve", "reject"):
+        raise HTTPException(status_code=400, detail="action 只能是 approve 或 reject")
+    result = assistant_profile.review_memory_proposal(os.getcwd(), proposal_id, action == "approve")
+    if not result.get("ok"):
+        raise HTTPException(status_code=409, detail=str(result.get("error") or "无法处理这条候选"))
+    return result

@@ -152,3 +152,9 @@ def test_old_archives_without_at_take_time_from_turn_events(tmp_path):
                              {"rid": "r1", "type": "agent_phase", "recorded_at": "2026-10-09T01:00:30+00:00"}])
     assert recent_turns(str(tmp_path))[0]["at"] == "2026-10-09T01:00:30+00:00"
 
+
+
+def test_digest_carries_memory_candidates_separately():
+    digest = parse_digest('{"title": "查询宁波天气", "outcome": "给出天气", "remember": ["住在宁波", " ", 3, "a", "b", "c"]}')
+    assert digest["remember"] == ["住在宁波", "a", "b"]                 # 只收字符串、最多 3 条
+    assert "remember" not in parse_digest('{"title": "闲聊", "outcome": "打招呼", "remember": []}')

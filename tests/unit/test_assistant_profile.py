@@ -59,3 +59,35 @@ def test_profile_and_memory_routes(tmp_path, monkeypatch):
     assert [item["content"] for item in client.get("/api/assistant/memories").json()["memories"]] == ["喜欢先给结论"]
     assert client.delete(f"/api/assistant/memories/{memory_id}").json() == {"ok": True}
     assert client.delete(f"/api/assistant/memories/{memory_id}").status_code == 404
+
+
+def test_auto_memory_candidates_only_ever_become_proposals(tmp_path):
+    """聊天里提炼的候选一律进待确认（不是你让它记的）；重复跳过；疑似凭据隔离、不可批准；批准后才生效。"""
+    root = str(tmp_path)
+    (tmp_path / ".vortocode").mkdir()
+    _remember(tmp_path, "住在宁波")
+    ids = profile.propose_memories(root, ["住在宁波", "汇报喜欢先给结论", "汇报喜欢先给结论",
+                                          "我的密钥是 sk-abcdefghijklmnop1234"], source="assistant", tainted=False)
+    assert len(ids) == 2
+    pending = profile.list_memory_proposals(root)
+    assert [item["content"] for item in pending] == ["汇报喜欢先给结论"]            # 隔离的不在待确认里
+    assert [m["content"] for m in profile.list_memories(root)] == ["住在宁波"]        # 还没生效
+    assert profile.review_memory_proposal(root, pending[0]["id"], True)["ok"]
+    assert {m["content"] for m in profile.list_memories(root)} == {"住在宁波", "汇报喜欢先给结论"}
+    assert profile.list_memory_proposals(root) == []
+
+
+def test_memory_proposal_routes(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    (tmp_path / ".vortocode").mkdir(exist_ok=True)
+    [pid] = profile.propose_memories(str(tmp_path), ["常用 Telegram"], source="im", tainted=True)
+    from src.web.server import app
+
+    client = TestClient(app)
+    assert client.get("/api/assistant/memory-proposals").json()["proposals"][0]["tainted"] is True
+    assert client.post(f"/api/assistant/memory-proposals/{pid}", json={"action": "maybe"}).status_code == 400
+    assert client.post(f"/api/assistant/memory-proposals/{pid}", json={"action": "reject"}).json()["status"] == "rejected"
+    assert client.post(f"/api/assistant/memory-proposals/{pid}", json={"action": "approve"}).status_code == 409

@@ -882,5 +882,17 @@
     "methods": [
       "GET"
     ]
+  },
+  {
+    "path": "/api/assistant/memory-proposals",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/assistant/memory-proposals/{proposal_id}",
+    "methods": [
+      "POST"
+    ]
   }
 ]
