@@ -8,9 +8,12 @@ def test_general_session_has_no_repository_or_host_tools(tmp_path):
     names = set(agent.tools)
     assert {"web_fetch", "web_search", "request_workspace", "publish_artifact"} <= names
     assert names.isdisjoint({
-        "read_file", "grep", "git_status", "save_memory", "use_skill",
+        "read_file", "grep", "git_status", "remember_repo", "use_skill",
         "run_command", "dev_isolated", "dev_parallel", "open_pr",
     })
+    # 助理记得你（2026-10-11 起）：长期记忆不是仓库/宿主机能力——写入过 write_policy 且要确认，
+    # 召回按外部摄入算污点。仓库记忆（remember_repo）在无目录的通用范围仍然没有。
+    assert {"save_memory", "recall_memory"} <= names
     assert agent._env_context is False
     system = agent._system("plan")
     assert "General 无目录会话" in system

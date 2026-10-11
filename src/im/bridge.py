@@ -203,6 +203,8 @@ class IMBridge:
         # 冒充运维的指令），**每个回合一开始就打污点**——污点态下一切免确认授权失效，
         # 记忆写入也降级（指令性文本不进长期记忆）。这条对 IM 无例外，见 OPENCLAW_INTEGRATION 第 2 条。
         persona = getattr(self, "_persona", "") or read_persona(self.repo_root)
+        if getattr(self, "workspace_scope", "") == "general":
+            persona = ""        # 通用范围（常驻助理）：服务对象随助理资料统一注入，这里不再重复
         agent = build_session(self.repo_root, kind="im", confirm=_confirm,
                               with_dev=getattr(self, "_with_dev", True),
                               extra_system=(f"【服务对象】{persona}" if persona else None),

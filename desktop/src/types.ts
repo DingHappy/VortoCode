@@ -114,6 +114,18 @@ export interface AgentTurn {
   at: string;
 }
 
+export interface AssistantProfile {
+  name: string;
+  /** 关于你（服务对象）：与手机端共用 persona.md */
+  about_you: string;
+}
+
+export interface AssistantMemory {
+  id: string;
+  content: string;
+  created_at: string;
+}
+
 /** 常驻助理写的任务单：proposed 等你确认下发，之后跟随项目运行时上的任务状态。 */
 export interface AssistantDispatch {
   id: string;

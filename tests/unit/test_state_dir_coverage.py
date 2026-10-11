@@ -23,6 +23,7 @@ USER_CONFIG = {
     "AGENTS.md", "BACKLOG.md", "HEARTBEAT.md", "agents", "assistants.yaml", "commands",
     "cron.yaml", "hooks.yaml", "instructions.md", "permissions.yaml", "persona.md",
     "pipelines", "review-policy.yaml", "skills", "verify.yaml",
+    "assistant.json",   # 助理的名字：用户在 Desktop 里起的，与 persona.md 同属用户配置
 }
 
 # 不是目标仓库里的路径，扫描分辨不出来，在此登记豁免。
