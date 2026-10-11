@@ -35,6 +35,11 @@ async def run_isolated_session(repo_root: str, prompt: str, *, mode: str = "buil
     # （fail-closed 就在 gate 里，不靠这里塞一个"一律拒"的哨兵回调）。
     confirm = make_confirm_gate(auto_approve=False, can_ask_human=False)
     capabilities = SessionCapabilities.for_profile(UNATTENDED_PROFILE, repo_root)
+    from src.gateway.workspace_scope import GENERAL, current_workspace_scope
+    if current_workspace_scope() == GENERAL:
+        return await _run_general_isolated(repo_root, prompt, mode=mode, model=model, llm=llm,
+                                           allow_web=allow_web, extra_system=extra_system,
+                                           capabilities=capabilities, confirm=confirm)
     tools = build_agent_tools(
         repo_root, confirm=confirm, with_artifacts=False, memory_source="isolated",
         capabilities=capabilities,
@@ -78,6 +83,50 @@ async def run_isolated_session(repo_root: str, prompt: str, *, mode: str = "buil
                   env_context=True, native=native_default(), capabilities=capabilities)
     if parts:
         kwargs["extra_system"] = "\n\n".join(parts)
+    if llm is not None:
+        kwargs["llm"] = llm
+    agent = MainAgent(tools, **kwargs)
+    if model:
+        try:
+            agent.set_model(model)
+        except Exception:  # noqa: BLE001 —— 设模型失败不影响跑（用默认）
+            pass
+    return await agent.run_turn(prompt, mode=mode, emit=lambda _t: None)
+
+
+async def _run_general_isolated(repo_root: str, prompt: str, *, mode: str, model: Optional[str], llm,
+                                allow_web: bool, extra_system: Optional[str], capabilities, confirm) -> str:
+    """常驻助理（通用范围）的无人值守回合：「每天早上帮我…」这类你交代的定时事项。
+
+    通用范围没有工作区：**不给**文件 / 命令 / Git / 记忆写入 / 排班 / 出站投递，一个都不给。
+    唯一可能的工具是联网，且只在这条作业创建时由人单独授权过（allow_web）才给。
+
+    带进去的个人资料按「有没有外传通道」分：
+    - 不联网的作业：名字、SOUL、关于你、长期记忆摘录都带（它连一条出站路都没有）；
+    - 联网的作业：只带名字与 SOUL。网页里的提示注入能诱导模型 fetch 攻击者的 URL，
+      GET 的 query 就是外传通道——关于你和记忆不能与它同处一个上下文。
+    """
+    from src.agents.main_agent import MainAgent, native_default
+    from src.agents.permissions import load_permissions
+    from src.memory.assistant_profile import assistant_system_parts, load_profile
+
+    tools = []
+    if allow_web:
+        from src.agents.tools.web import build_web_tools
+        tools = build_web_tools()
+    if allow_web:
+        profile = load_profile(repo_root)
+        parts = [f"【你是谁】你是用户的私人助理「{profile['name']}」。"]
+        if profile["soul"]:
+            parts.append(f"【你的性格与说话方式】{profile['soul']}")
+    else:
+        parts = assistant_system_parts(repo_root)
+    parts.append("【定时事项】这是用户事先交代、到点自动执行的一件事；结果会推给用户。"
+                 "如实说做成了什么、没做成什么；没有工具做不到的事直接说明，不要编造。")
+    if extra_system:
+        parts.append(extra_system)
+    kwargs = dict(plan_tool=True, permissions=load_permissions(repo_root), env_context=False,
+                  native=native_default(), capabilities=capabilities, extra_system="\n\n".join(parts))
     if llm is not None:
         kwargs["llm"] = llm
     agent = MainAgent(tools, **kwargs)
