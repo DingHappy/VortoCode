@@ -10,13 +10,13 @@
 // 纯移动保持原样，不新增 useCallback。
 //
 // 跨域触点：结果提示走注入的 onBanner；保存/编辑后切到目标面板走注入的 onShowGoals。
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { RefObject } from "react";
 
 import type { GatewayClient } from "../gateway";
 import { errorText } from "../lib/errorText";
-import { criterionVerifierDraft, goalEvidenceKey, goalFormLines } from "../lib/goals";
-import type { GoalVerifierDraft } from "../lib/goals";
+import { createGoalNavigation, criterionVerifierDraft, goalEvidenceKey, goalFormLines } from "../lib/goals";
+import type { GoalFocus, GoalVerifierDraft } from "../lib/goals";
 import { confirmAction } from "../lib/confirm";
 import type { GoalCriterion, GoalItem } from "../types";
 
@@ -35,11 +35,32 @@ export function useGoals(
   const [editingGoalId, setEditingGoalId] = useState<string | null>(null);
   const [goalSubmitting, setGoalSubmitting] = useState(false);
 
+  const [goalFocus, setGoalFocus] = useState<GoalFocus | null>(null);
+  const navigationRef = useRef<ReturnType<typeof createGoalNavigation> | null>(null);
+  if (!navigationRef.current) navigationRef.current = createGoalNavigation(() => clientRef.current, (focus) => {
+    setGoalFocus(focus);
+    if (focus?.status === "ready" && focus.goal) {
+      const loaded = focus.goal;
+      setGoals((previous) => [loaded, ...previous.filter((goal) => goal.id !== loaded.id)]);
+    }
+  });
+  const readGeneration = useRef(0);
+  const resetGoalNavigation = () => {
+    readGeneration.current += 1;
+    navigationRef.current!.reset();
+  };
+  const focusGoal = (id: string) => {
+    readGeneration.current += 1;
+    return navigationRef.current!.focus(id);
+  };
+
   const refreshGoals = useCallback(async () => {
     const client = clientRef.current;
     if (!client) return;
+    const attempt = ++readGeneration.current;
     try {
-      setGoals(await client.listGoals());
+      const loaded = await client.listGoals();
+      if (attempt === readGeneration.current && client === clientRef.current) setGoals(loaded);
     } catch {
       // Goal 面板不是连接握手的硬依赖；旧 runtime 可继续使用会话与任务面。
     }
@@ -94,14 +115,17 @@ export function useGoals(
   };
 
   const deleteGoalDraft = async (goal: GoalItem) => {
-    if (!clientRef.current || !await confirmAction(`删除目标草稿“${goal.objective}”？`)) return;
+    const client = clientRef.current;
+    if (!client || !await confirmAction(`删除目标草稿“${goal.objective}”？`) || client !== clientRef.current) return;
     try {
-      await clientRef.current.deleteGoal(goal.id);
+      await client.deleteGoal(goal.id);
+      if (client !== clientRef.current) return;
       setGoals((previous) => previous.filter((item) => item.id !== goal.id));
       if (editingGoalId === goal.id) resetGoalForm();
+      navigationRef.current!.clearDeleted(goal.id);
       onBanner("目标草稿已删除");
     } catch (error) {
-      onBanner(errorText(error, "目标草稿删除失败"));
+      if (client === clientRef.current) onBanner(errorText(error, "目标草稿删除失败"));
     }
   };
 
@@ -166,7 +190,7 @@ export function useGoals(
   };
 
   return {
-    goals, setGoals, refreshGoals,
+    goals, setGoals, refreshGoals, goalFocus, focusGoal, resetGoalNavigation,
     goalObjective, setGoalObjective, goalCriteria, setGoalCriteria,
     goalConstraints, setGoalConstraints, goalNonGoals, setGoalNonGoals,
     goalEvidenceDrafts, setGoalEvidenceDrafts, goalVerifierDrafts, setGoalVerifierDrafts,

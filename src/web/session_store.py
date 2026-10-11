@@ -20,6 +20,12 @@ _MAX_ACTIVITIES = 300     # 生命周期事件含 start/finish 更新；留足�
 _MAX_PROMPT_QUEUE = 20
 
 
+def session_has_content(data: dict) -> bool:
+    """Context/capability metadata alone is a draft, not a recent conversation."""
+    return any(data.get(key) for key in (
+        "transcript", "history", "plan", "activities", "prompt_queue", "title"))
+
+
 def _sid_of(key: str) -> Optional[str]:
     """从会话键取出可落盘的 sid：只认 `sid-` 前缀、清洗成文件名安全字符；否则 None（不持久化）。"""
     if not key or not key.startswith("sid-"):
@@ -58,7 +64,7 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
                  tool_names: Optional[List[str]] = None,
                  behavior_fp: Optional[str] = None,
                  mode: Optional[str] = None) -> bool:
-    """把一个 sid 会话存盘。返回是否真的写了（非 sid 会话/出错 → False）。
+    """保存一个 sid 会话。返回保存成功或新空草稿无需保存（非法键/出错 → False）。
 
     title：显式标题（重命名用）。不传则**保留磁盘上已有标题**，避免每回合存盘把用户改的名冲掉。
     tool_names：存盘时刻 agent 的工具清单。复原时与新装配的清单 diff——服务升级加了工具后，
@@ -103,6 +109,9 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
         data["behavior_fp"] = str(behavior_fp)
     if mode in ("plan", "build"):                   # 只认这两个值，别把脏数据带进下次装配
         data["mode"] = mode
+    # 新空草稿不落盘；但主人显式切到 build 是一次决定，重启不许抹回 plan（IM 会话常在开口前就切模式）。
+    if not session_has_content(data) and data.get("mode") != "build" and not p.exists():
+        return True  # Clean draft: nothing needs saving; never remove historical files.
     try:
         from src.utils.state_dir import ensure_state_gitignore
         ensure_state_gitignore(repo_root)    # 会话持久化也是 .vortocode 生成态写入点（自忽略，防足迹）
@@ -167,6 +176,7 @@ def list_sessions(repo_root: str) -> List[Dict[str, Any]]:
             data.get("activities") or [], hook_acknowledgements.get(f"sid-{p.stem}") or [],
         )
         out.append({
+            "has_content": session_has_content(data),
             "sid": p.stem,
             "title": data.get("title") or title_from_transcript(transcript),
             "messages": len(transcript),

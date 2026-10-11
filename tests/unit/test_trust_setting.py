@@ -67,7 +67,7 @@ def test_api_stores_the_choice_but_reports_the_clamped_effect(client):
     assert client.get("/api/trust").json()["level"] == FULL
 
 
-def test_desktop_project_sidecar_may_reach_full(tmp_path, monkeypatch):
+def test_desktop_project_supervision_clamps_historical_full(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
     monkeypatch.chdir(tmp_path)
@@ -77,7 +77,9 @@ def test_desktop_project_sidecar_may_reach_full(tmp_path, monkeypatch):
 
     client = TestClient(app)
     body = client.put("/api/trust", json={"level": FULL}).json()
-    assert body["ceiling"] == FULL and body["effective"] == FULL
+    assert body["ceiling"] == READS and body["effective"] == READS
+    assert body["level"] == FULL and body["capability_profile"] == "local"
+    assert body["supervised"] and body["levels"] == [ASK, READS]
 
 
 def test_change_is_audited(client, tmp_path):
@@ -106,3 +108,20 @@ async def test_gate_follows_a_live_level_change(tmp_path):
     set_trust_level(str(tmp_path), FULL)
     assert await gate("再写一次？", trust.WRITE) is True
     assert len(asked) == 1                    # 改成完全信任后不再问，且没有重建会话
+
+
+def test_desktop_general_can_choose_read_approval_without_project(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from src.web.server import app
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    monkeypatch.setenv("VORTOCODE_DESKTOP_SIDECAR", "1")
+    client = TestClient(app)
+    status = client.put("/api/trust", json={"level": READS}).json()
+    assert status["effective"] == READS and status["local_file_reads"] is True
+    assert status["ceiling"] == READS and status["workspace_scope"] == "general"
+    assert client.get("/api/trust").json()["level"] == READS
+    assert client.get("/api/editor/files").status_code == 409
+    monkeypatch.delenv("VORTOCODE_DESKTOP_SIDECAR")
+    assert client.get("/api/trust").status_code == 409

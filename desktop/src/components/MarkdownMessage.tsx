@@ -1,5 +1,5 @@
 // App.tsx 抽出的 Markdown 渲染组件（B8-④b S1，只搬家不改行为）。
-// 一个极简的行级 Markdown 渲染器：代码块 / 标题 / 引用 / 列表 / 段落 + 行内标记。
+// 行级 Markdown 子集：代码块 / 表格 / 标题 / 引用 / 列表 / 段落 + 行内标记。
 // safeLink / inlineMarkdown 是它的私有辅助函数，随组件一起搬出。
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { ReactNode } from "react";
@@ -7,6 +7,36 @@ import type { ReactNode } from "react";
 function safeLink(value: string): string | null {
   const url = value.trim();
   return /^(https?:|mailto:)/i.test(url) ? url : null;
+}
+
+function tableCells(line: string): string[] {
+  const cells: string[] = [];
+  let cell = "";
+  const text = line.trim();
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "\\" && i + 1 < text.length) {
+      const next = text[++i];
+      cell += next === "|" ? next : `\\${next}`;
+    } else if (text[i] === "|") {
+      cells.push(cell.trim()); cell = "";
+    } else cell += text[i];
+  }
+  cells.push(cell.trim());
+  if (text.startsWith("|")) cells.shift();
+  if (text.endsWith("|") && cells[cells.length - 1] === "") cells.pop();
+  return cells;
+}
+
+function tableHeader(lines: string[], index: number) {
+  if (!lines[index]?.includes("|") || !lines[index + 1]?.includes("|")) return null;
+  const header = tableCells(lines[index]);
+  const divider = tableCells(lines[index + 1]);
+  if (header.length < 2 || header.length > 32 || divider.length !== header.length
+    || !divider.every(cell => /^:?-{3,}:?$/.test(cell))) return null;
+  const align = divider.map(cell => cell.startsWith(":")
+    ? cell.endsWith(":") ? "center" as const : "left" as const
+    : cell.endsWith(":") ? "right" as const : undefined);
+  return { header, align };
 }
 
 function inlineMarkdown(text: string, key: string): ReactNode[] {
@@ -66,6 +96,22 @@ export function MarkdownMessage({ text }: { text: string }) {
       blocks.push(<pre key={`code-${index}`}><code data-language={fence[1] || undefined}>{code.join("\n")}</code></pre>);
       continue;
     }
+    const table = tableHeader(lines, index);
+    if (table) {
+      const start = index;
+      const rows: string[][] = [];
+      index += 2;
+      while (index < lines.length && lines[index].trim() && lines[index].includes("|")
+        && !/^\s*(?:```|>|#{1,6}\s|[-*+]\s|\d+[.)]\s)/.test(lines[index])) {
+        rows.push(tableCells(lines[index++]));
+      }
+      blocks.push(<div className="md-table-scroll" key={`table-${start}`} tabIndex={0} role="region" aria-label="回复表格">
+        <table><thead><tr>{table.header.map((cell, col) => <th key={col} scope="col" style={{ textAlign: table.align[col] }}>{inlineMarkdown(cell, `th-${start}-${col}`)}</th>)}</tr></thead>
+          <tbody>{rows.map((row, r) => <tr key={r}>{table.header.map((_, col) => <td key={col} style={{ textAlign: table.align[col] }}>{inlineMarkdown(row[col] ?? "", `td-${start}-${r}-${col}`)}</td>)}</tr>)}</tbody>
+        </table>
+      </div>);
+      continue;
+    }
     const heading = line.match(/^(#{1,6})\s+(.*)$/);
     if (heading) {
       blocks.push(<h3 className={`md-heading md-h${heading[1].length}`} key={`heading-${index}`}>{inlineMarkdown(heading[2], `h-${index}`)}</h3>);
@@ -97,8 +143,9 @@ export function MarkdownMessage({ text }: { text: string }) {
     }
     const paragraph: string[] = [];
     while (index < lines.length && lines[index].trim()
+      && !tableHeader(lines, index)
       && !/^(#{1,6})\s+/.test(lines[index])
-      && !/^```/.test(lines[index])
+      && !/^```\s*([\w+-]*)\s*$/.test(lines[index])
       && !/^\s*(?:>|[-*+]\s+|\d+[.)]\s+)/.test(lines[index])) {
       paragraph.push(lines[index++]);
     }

@@ -288,6 +288,18 @@
     ]
   },
   {
+    "path": "/api/extensions/mcp",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/extensions/mcp/connect",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
     "path": "/api/git/delivery",
     "methods": [
       "GET"

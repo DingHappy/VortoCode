@@ -114,7 +114,7 @@ def _decision_view(item: Any) -> dict[str, Any] | None:
     }
 
 
-def _task_view(item: Any) -> dict[str, Any] | None:
+def _task_view(item: Any, summary: dict | None = None) -> dict[str, Any] | None:
     task_id = _text(_get(item, "id"), 180)
     status = _text(_get(item, "status"), 24)
     if not task_id or status not in _TASK_STATUSES:
@@ -123,7 +123,7 @@ def _task_view(item: Any) -> dict[str, Any] | None:
     if status == "waiting":
         detail = "等待前置结果验收，核对后显式推进"
     if status == "blocked":
-        collaboration = _get(item, "development" if _get(item, "kind") in {"dev", "dev-resume"} else "collaboration", {})
+        collaboration = _get(item, "development" if _get(item, "kind") in ("dev", "dev-resume") else "collaboration", {})
         questions = collaboration.get("questions", []) if isinstance(collaboration, dict) else []
         if isinstance(questions, list) and questions and isinstance(questions[-1], dict):
             detail = questions[-1].get("question") or detail
@@ -132,6 +132,7 @@ def _task_view(item: Any) -> dict[str, Any] | None:
         "status": status,
         "prompt": _text(_get(item, "prompt"), 240),
         "detail": _text(detail, 500),
+        "lifecycle": summary,
         "owner_session": _text(_get(item, "owner_session"), 180),
         "goal_id": _text(_get(item, "goal_id"), 180),
         "plan_id": _text(_get(item, "plan_id"), 180),
@@ -155,7 +156,10 @@ def build_runtime_inbox(
     tasks = list(tasks)[:200]
     from src.gateway.task_recovery import recovery_links
     resumed_sources = recovery_links(tasks)
-    task_views = [view for item in tasks if (view := _task_view(item))]
+    from src.gateway.task_summary import SnapshotSources, task_summary
+    sources = SnapshotSources(tasks)
+    task_views = [view for item in tasks if (view := _task_view(
+        item, task_summary(item, sources, recovered_by=resumed_sources.get(_get(item, "id"), ""))))]
     return {
         "version": 1,
         "scope": _text(scope, 24),
@@ -173,6 +177,6 @@ def build_runtime_inbox(
             "goals_active": sum(item["status"] in {"draft", "active"} for item in goal_views),
             "goals_blocked": sum(item["status"] in {"blocked", "failed"} for item in goal_views),
             "tasks_active": sum(item["status"] in {"queued", "running", "cancelling"} for item in task_views),
-            "tasks_attention": sum(item["id"] not in resumed_sources and item["status"] in {"waiting", "blocked", "failed", "paused", "interrupted"} for item in task_views),
+            "tasks_attention": sum(item["lifecycle"]["column"] == "attention" for item in task_views),
         },
     }

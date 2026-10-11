@@ -1,4 +1,4 @@
-// 输入框下方的「进入项目工作」：搜索并切到一个项目、添加新项目，或回到不绑定目录的通用会话。
+// 输入框上方的「进入项目工作」：搜索并切到一个项目、添加新项目，或回到不绑定目录的通用会话。
 import { ChevronDown, Folder, Plus, Search, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
@@ -12,10 +12,11 @@ type Props = {
   disabled: boolean;
   onPick: (project: DesktopProjectProfile) => void;
   onAddProject: () => void;
+  onAddRemote: () => void;
   onLeaveProject: () => void;
 };
 
-export function ProjectPicker({ projects, activeProjectName, disabled, onPick, onAddProject, onLeaveProject }: Props) {
+export function ProjectPicker({ projects, activeProjectName, disabled, onPick, onAddProject, onAddRemote, onLeaveProject }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState(false);
@@ -51,7 +52,7 @@ export function ProjectPicker({ projects, activeProjectName, disabled, onPick, o
   return (
     <div className="project-picker" ref={rootRef}>
       <button className="project-picker-trigger" onClick={() => setOpen(!open)} disabled={disabled} aria-expanded={open}>
-        {activeProjectName ? <><Folder size={14} />在 {activeProjectName} 中工作</> : "进入项目工作"}
+        {activeProjectName ? <><Folder size={14} />工作区域：{activeProjectName}</> : "工作区域：未选择项目"}
         <ChevronDown size={14} />
       </button>
       {open && (
@@ -63,7 +64,7 @@ export function ProjectPicker({ projects, activeProjectName, disabled, onPick, o
           <div className="project-picker-list">
             {shown.map((project) => (
               <button key={project.id} role="menuitem" title={project.repoRoot} onClick={() => choose(() => onPick(project))}>
-                <Folder size={15} /><span>{project.name}</span>
+                <Folder size={15} /><span>{project.kind === "remote" ? `远端 · ${project.name}` : project.name}</span>
               </button>
             ))}
             {shown.length === 0 && <p>{keyword ? "没有匹配的项目" : "还没有项目"}</p>}
@@ -73,6 +74,7 @@ export function ProjectPicker({ projects, activeProjectName, disabled, onPick, o
           </div>
           <div className="project-picker-actions">
             <button role="menuitem" onClick={() => choose(onAddProject)}><Plus size={15} /><span>添加新项目</span></button>
+            <button role="menuitem" onClick={() => choose(onAddRemote)}><Plus size={15} /><span>连接远端工作区</span></button>
             {activeProjectName && (
               <button role="menuitem" onClick={() => choose(onLeaveProject)}><X size={15} /><span>不使用项目</span></button>
             )}

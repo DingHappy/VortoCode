@@ -83,3 +83,37 @@ def test_runtime_inbox_sanitizes_decision_payloads():
     assert len(decision["detail"]) == 1201
     assert len(decision["session_id"]) == 181
     assert "secret" not in decision
+
+
+def test_runtime_inbox_task_lifecycle_counts_include_pending_handoff_not_done_success():
+    from src.gateway.tasks import BackgroundTask
+    from src.gateway.handoffs import revision
+    value = BackgroundTask.new("dev", "done", owner_session="sid-owner")
+    value.status, value.result = "done", "result"
+    original = value.to_dict()
+    pending = build_runtime_inbox(scope="project", tasks=[value])
+    assert pending["counts"]["tasks_attention"] == 1
+    assert pending["tasks"][0]["lifecycle"]["handling"] == "pending"
+    assert value.to_dict() == original
+    value.handoff_receipt = {"revision": revision(value), "note": "checked", "handled_at": "2026-10-07T00:00:00+00:00"}
+    handled = build_runtime_inbox(scope="project", tasks=[value])
+    assert handled["counts"]["tasks_attention"] == 0
+    assert handled["tasks"][0]["lifecycle"]["column"] == "completed"
+    assert handled["tasks"][0]["lifecycle"]["review"] == "not_applicable"
+
+
+def test_completed_task_does_not_promote_its_linked_goal_or_write_evidence():
+    from src.gateway.goals import Goal
+    from src.gateway.handoffs import revision
+    from src.gateway.tasks import BackgroundTask
+    goal = Goal.new("deliver", ["real proof"])
+    goal.status = "active"
+    value = BackgroundTask.new("dev", "done", owner_session="sid-owner", goal_id=goal.id)
+    value.status, value.result = "done", "result"
+    goal.task_ids = [value.id]
+    value.handoff_receipt = {"revision": revision(value), "note": "handled", "handled_at": "2026-10-07T00:00:00+00:00"}
+    original = goal.to_dict()
+    view = build_runtime_inbox(scope="project", tasks=[value], goals=[goal])
+    assert view["tasks"][0]["lifecycle"]["column"] == "completed"
+    assert view["goals"][0]["status"] == "active" and view["goals"][0]["progress"]["passed"] == 0
+    assert goal.to_dict() == original

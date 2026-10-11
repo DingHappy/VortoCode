@@ -50,7 +50,7 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
         # 否则新加的确认点又会漏（此前 9 个确认点里只有 2 个记得加）。
         # 申报操作类别，好让授权档位分得开读和执行：`cat src/x.py` 和 `rm -rf build/` 不该
         # 一个待遇。判不出来按执行面算（fail-closed），见 src/agents/shell.py:is_read_only。
-        kind = READ if is_read_only(cmd) else EXECUTE
+        kind = EXECUTE if getattr(confirm, "supervised", False) else READ if is_read_only(cmd) else EXECUTE
         if not await request(confirm, f"在仓库根目录{label}？\n  $ {cmd}{sandbox_notice}", kind):
             return f"用户拒绝了命令：{cmd}"
         from src.gateway.change_sources import capture_workspace_state

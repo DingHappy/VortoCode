@@ -119,7 +119,6 @@ const excludedModules = [
   "matplotlib",
   "mcp",
   "numpy",
-  "openai",
   "playwright",
   "qdrant_client",
   "rich",
@@ -158,6 +157,7 @@ for (const [source, destination] of [
   args.push("--add-data", `${source}${delimiter}${destination}`);
 }
 for (const module of excludedModules) args.push("--exclude-module", module);
+args.push("--collect-all", "openai", "--copy-metadata", "httpx");
 args.push(join(desktopRoot, "runtime_entry.py"));
 
 console.log(`Building Desktop runtime sidecar for ${targetTriple} with ${pythonVersion}...`);

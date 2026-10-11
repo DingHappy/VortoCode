@@ -1073,3 +1073,1273 @@ final-packaged-runtime 日志另行保留；第二副本的 52705/52706 端口�
 不提供历史/退役删除、导入、历史容量释放、自动检查/推进或新 provider 权限。下一阶段
 继续设计迁移记录、退役资料自身保存/再迁移、目标故障域准入与显式历史释放合同。
 原共享锁仍只有单进程保证。合同见 PRD 第 35 节和 TASK_DISPATCH_API.md。
+
+## 36. Desktop 跨会话看板首版（2026-10-07）
+
+源码：原 RuntimeInboxPanel 新增默认四列看板、保留按项目视图及展开/收起；TaskBoard 与
+纯投影模块独立实现项目/会话/Goal 交集筛选、来源导航、原 Goal 设置入口。CLI/Gateway
+源码、原 TaskLedger/执行池与自动检查/推进/provider 权限未改变。合同见
+DESKTOP_TASK_BOARD.md、TASK_COLLABORATION_PRD.md 第 36 节。
+
+自动验证：前端全部 348 项 / 32 文件通过，其中看板新增 11 项合同与静态渲染测试。
+既有 Inbox 与 Goal 合同 14 项通过 / 1 条既有 Starlette 弃用提示；本轮未重跑整个后端
+回归。TypeScript（包含 QA fixture）和正式 Desktop Vite 构建通过，最后构建 19.85 秒，
+原有 >500 kB chunk 提示保留。git diff --check 通过。运行日志保存在
+`/tmp/vorto-board-tests.log`、`/tmp/vorto-board-backend-contracts.log`、
+`/tmp/vorto-board-build.log`。
+
+独立运行验证：单独构建原 Desktop RuntimeInboxPanel/TaskBoard 为静态生产资源
+`/tmp/vorto-board-isolated`，仅绑定本机临时端口 51067；使用两个项目的固定摘要，故意
+复用 task/session/Goal ID，以导航回调记录来源。此 fixture 不接真实 Gateway、凭据、
+模型或持久化；正式 dist 不包含 QA 页面。可复用入口为 desktop/qa/task-board.html，
+独立配置 qa/vite.config.ts；这是隔离组件包，不是新 .app 或冻结 sidecar 的验收。
+
+Ego-browser TaskSpace 105 的真实浏览器操作已通过：
+
+- 项目 B / 会话 one / Goal goal-shared 的交集只留下对应任务；任务导航精确返回
+  `[b, tasks, one, same-id]`，不会定位同名项目 A 任务。
+- 设置 Goal 返回 `[b, goals]`；任务类待处理事项同样带 owner 与目标 task ID。
+- B 失联后保留历史卡片且所有卡片和 Goal 入口禁用；移除 B 后原筛选保持“来源已
+  移除”、零卡片，不默认为另一个项目。切换到 A 与旧按项目视图仍可工作。
+- done 任务停留待核对，已完成列只显示权威 achieved Goal；展开/收起工作。
+- 1400px 页面宽度 1400、四列存在；390px 的 fixture-only 外层宽度覆盖后页面宽度
+  390，列容器 324 / 内容 996，横向滚动留在列内。正式 Desktop 的 900px 最小宽度
+  保留。初次窄视口得到页面宽度 900 的记录保留，没有将该断言改记通过。
+
+浏览器证据 `/tmp/vorto-board-browser-acceptance.json` 保留首次交互及原窄视口限制，
+`/tmp/vorto-board-browser-final-layout.json` 保存隔离外层修正后的尺寸断言。两次截图
+均在 CDP captureScreenshot 超时，截图/视觉验收仍未通过；DOM 与交互通过不能替代
+视觉验收。未尝试原生窗口控制、解锁、焦点或 Hook。TaskSpace 105 已 finish({keep:[]})
+一次关闭；本轮仅启动的静态服务在验收后停止，其他项目、Codex 与协调会话未处理。
+
+真实 Gateway 跨项目连接/目标保存/任务操作全链路、新原生 .app/sidecar 运行包、真实
+provider 与原生 GUI 均未验收；原生验证按用户要求继续暂缓。未正式发布或安装。
+本轮只证明看板源码、构建、隔离包和浏览器组件交互。此前失败与未验收记录保留。
+
+下一步：先扩展原摘要的权威验收/交接/有效性字段，减少历史已处理任务的待核对卡片；
+再做同项目跨会话 Goal 关联、精确 Goal 定位和完整台账分页。本轮未实现这些写合同，
+也没有开启拖拽执行、自动推进、自动模型检查或新增 provider 权限。
+
+## 37. 看板权威任务摘要与真实会话来源（2026-10-07）
+
+源码：原 runtime Inbox 增加可选 lifecycle version=1，TaskLedger 的原共享锁包住读取；
+task_summary.py 只用当前 200 条前缀和总共 2048 次内存来源查询，复用原验收形状、
+结果版本回执、依赖核对和恢复血缘。缺来源/损坏/耗尽 unknown，观测冲突或已固定失效
+invalid；不读额外任务文件、不停止/执行/验收、不改任务或 Goal。CLI 无新看板；常驻
+端仅增加只读数据字段。Desktop 校验完成组合并区分验收/交接/依赖有效性，原项目视图
+同样不漏 done 待处理。原 owner 的单个 sid- 前缀只在 Desktop 导航边界转换。
+
+本地验证：前端全部 359 项 / 32 文件通过；相关后端 226 项通过 / 1 条既有 Starlette
+弃用提示；另重跑 Inbox 5 项，包含新增“完成任务不改变已关联 Goal/验收证据”边界。
+这两次后端集合共 227 个不同测试，不是一次全量后端回归。覆盖已处理但未验收、已
+验收但待交接、同文新轮次、改结果/损坏回执、未知/损坏来源、预算耗尽、归属/轮次变化、
+已固定失效/前置恢复、重启、旧恢复历史、不改源数据和新旧客户端兼容。TypeScript 与
+正式 Desktop Vite 构建通过（22.20 秒，既有 chunk 提示保留）；新增最后的历史呈现测试
+后再次 TypeScript 检查通过，产品源码未再变化。Ruff/git diff --check 通过。
+日志为 `/tmp/vorto-board-lifecycle-{frontend,backend,build,final-types,goal-boundary}.log`。
+
+独立运行验证：`desktop/qa/task-board-server.py` 在专用临时根
+`/tmp/vorto-board-lifecycle-icatz56j` 复制 src，使用独立 TaskLedger/会话/Goal；未接项目
+原台账。手动 seed 记录，挂原 `/api/runtime-inbox`、`/api/task-inbox/.../acknowledge`
+路由；不启动完整 agent runtime、worker 或真实 provider，模型构造被禁止。
+独立 Vite 生产资源 `/tmp/vorto-board-lifecycle-assets` 使用原 GatewayClient 和原
+RuntimeInboxPanel/TaskBoard；仅 QA 把 Tauri HTTP 插件传输替换为浏览器 fetch，正式
+配置不变。此为独立源码/组件包，不是新 .app、冻结 sidecar 二进制或原生传输验收。
+
+Ego-browser TaskSpace 106 通过原客户端和真实本机 HTTP 验证：
+
+- 实际服务返回 owner_session=sid-owner，持久会话 sid=owner。会话筛选保留对应任务，
+  来源导航精确为 `[a,tasks,owner,task-parent]`；旧按项目视图也返回正确 owner/task。
+- 初始 parent 已验收但未处理交接，child 已验收/handled 且依赖 valid，dev 交接已
+  处理但“不代表验收”，缺来源 unknown 仍待处理。所有只读筛选/导航前后的任务文件
+  SHA 完全一致。
+- 浏览器通过原交接 API 处理 parent 当前结果（200）后进入完成列；测试突变端点
+  修改临时 parent 结果后，child 保留 done/result/accepted，显示 invalid 且待处理。
+- 显式测试核对使用原 invalidate 领域路径固定 child 失效。保留变更前后证据，再将
+  临时 parent 原文恢复并重启同一台账；child 仍 invalid，parent 当前交接保持 handled，
+  缺来源仍 unknown。旧 child revision 的回执请求返回 409；Goal 未被任务投影升级。
+- 最终独立 runtime 的四个变更模块 SHA 与工作区一致；模型构造记录始终为 0。
+
+初次浏览器点击因 fixture 根容器继承 overflow:hidden 导致按钮不可见的失败保留；
+只调整 QA 外层 overflow 后重跑通过，未改变产品窗口最小宽度。最终截图再次在
+Page.captureScreenshot 超时，视觉/截图仍未验收，没有把第 36 节失败改为通过。最终
+DOM 记录为 700px 页面宽度 700、四列容器存在；它不能替代视觉或原生包验收。
+
+证据 `/tmp/vorto-board-lifecycle-initial.json`、`/tmp/vorto-board-lifecycle-browser.json`、
+`/tmp/vorto-board-lifecycle-restart.json`、`/tmp/vorto-board-lifecycle-browser-final.json`。
+临时根保留 candidate 源码、host 元数据、改变后原始 parent 记录、最终模块 SHA 与
+cleanup.json。TaskSpace 106 已 finish({keep:[]}) 一次关闭，本轮唯一端口 51773 的服务
+经 PID/命令验证后停止；没有处理 Codex、协调会话或其他项目进程。
+
+原生验证继续按用户要求暂缓；已安装 .app/原生插件传输、完整常驻端启动、真实
+provider/硬预算、正式发布均未验收，没有安装或发布。独立临时 API 证据不能替代
+真实用户项目与生产权限环境。自动检查/自动推进和历史迁移边界保持原状。
+下一步同项目跨会话 Goal 关联合同与精确定位；全量看板分页另行设计。
+
+## 38. Desktop 精确 Goal 定位（2026-10-07）
+
+承接第37节，完成精确定位切片；跨会话关联写入并未实现，合同边界见 PRD 第38节。
+保留第36/37节截图失败和全部原生未完成记录。本轮不操作原生 GUI。
+
+### 源码与测试
+
+- 原 GatewayClient 单项 getGoal，原 useGoals 的定位请求代次/client 固定，列表读取
+  防迟到覆盖；原 GoalsPanel 显示精确 ID、单项目标或明确未核验状态。
+- 看板 Goal、已有任务 Goal 引用、Goal 事项与按项目列表传入来源 runtime/精确 ID。
+  原 App 复用项目激活；查看项目 Goal 不切换会话，不提交 Goal run 或验收。
+- 加入旧请求失败/成功、同项目重置、相同 ID 跨客户端、404、错误身份、重试、
+  无连接、摘要外单项、隐藏旧卡操作、原列表更新、旧删除不清理新定位测试。
+- 全前端最终 369 项/34 文件通过；TypeScript 随生产 build 通过。相关后端
+  test_goals/test_goal_revision/test_gateway_runtime_inbox 共33项通过（8.64秒），
+  1个既有 Starlette 弃用警告。没有声称全后端或 Rust/sidecar 回归通过。
+- 日志：`/tmp/vorto-goal-navigation-tests.log`、`/tmp/vorto-goal-navigation-build.log`、
+  `/tmp/vorto-goal-navigation-backend.log`、`/tmp/vorto-goal-navigation-qa-build.log`。
+  初次 TypeScript 因测试使用 Array.at 超出目标库失败，改索引后通过；一次 SSR
+  断言把通用提示“指定目标”误作旧标题，改为精确 h3 断言后通过，失败记录不作通过依据。
+
+### 独立运行与实际浏览器
+
+- 独立生产 QA 资源 `/tmp/vorto-goal-navigation-assets`；原源码拷贝运行目录
+  `/tmp/vorto-board-lifecycle-8qc11sa7/runtime`，独立临时工作区在同根 workspace。
+  仅装配原 Inbox/交接/Goal routers；模型构造陷阱记录为空，非真实 provider。
+- 本轮 Ego TaskSpace107 的实际 DOM 操作：看板查看指定 Goal，原 getGoal 读取
+  `goal-458aa7895f`、呈现原合同与0/1验收；缺失 goal-missing 返回404，旧目标卡数量0；
+  原 ID 显式重试保持未核验；明确返回列表恢复，再从原项目列表定位同一 ID。
+- 相同 Goal ID 的两个静态项目 fixture：任务“查看关联 Goal”回执分别为
+  `[a,goals,"","",goal-shared]`、`[b,goals,"","",goal-shared]`。
+  这验证原组件来源路由，不能证明完整 App 连接/项目启动过程或真实任务关联写入。
+- 看板定位前后、缺失/重试/返回列表和原列表定位后，5个任务及1个 Goal 文件 SHA
+  完全相同。模型调用数组长度0。浏览器核验脚本初次将数组与数字0比较而失败，
+  修正为数组长度后验证通过；保留该失败原因于 final JSON，不改写为产品失败/通过。
+- 证据：`/tmp/vorto-goal-navigation-browser.json`、`/tmp/vorto-goal-navigation-missing.json`、
+  `/tmp/vorto-goal-navigation-final.json`、`/tmp/vorto-goal-navigation-static.json`。
+- TaskSpace107 已 finish keep[]，仅本轮 PID82428/端口59941经命令行和监听端口双重
+  校验后停止，清理凭据保存同根 cleanup.json；未处理其它会话进程。
+- 最后的删除迟到响应隔离及 App 返回列表刷新补丁以新增合同测试与最终构建验收；
+  已结束的浏览器轮次没有再次测试删除写入。实际浏览器验证覆盖定位/读取/错误恢复，
+  不声称验证全部原 Goal 写操作。最终 QA 包随后重新构建，未作为已浏览器逐项验证的包。
+
+### 验收层级
+
+源码/合同测试与生产前端构建通过；独立拷贝原接口+客户端组件的浏览器读取路径通过。
+独立 QA 前端资源不是原生 .app、完整 Gateway 启动或已安装 Desktop。
+截图视觉未验收（本轮未再尝试截图），原生 GUI/真实 provider 未验收且继续暂缓，
+没有新增自动检查/自动推进/provider授权；没有正式发布、安装、提交或部署。
+
+
+## 39. 本机模型供应商与角色路由（2026-10-07）
+
+承接用户“本地的agent的配置接入……本地的模型”方向，完成本机空 Key 供应商路由
+和网络/凭据隔离切片。Goal 关联写入仍未完成；不改变第38节已完成或未验收记录。
+
+### 实现与合同
+
+- 修复 Desktop 允许回环空 Key、后端却拒绝端点的断点。原 providers 登记显式回环
+  端点时补固定非秘密 `not-required`，原 client_for_spec/工序角色/chat路由均复用。
+- 显式传入本机 LLMConfig 空 Key 不再回填默认云端 Key；本机自己的 Key 保留。
+  回环 URL 严格解析 hostname、scheme、凭据、query、fragment、port；远程无 Key
+  和伪 localhost 主机无本机豁免。SDK 与 aiohttp 本机 transport 不读代理；公网不变。
+- Desktop 自定义供应商包含本机预设；移除原 startsWith 的主机豁免，主模型设置共用
+  URL判断。本机鉴权和配置文字明确；保留既有保存确认与当前 runtime 重启机制。
+- 不写实际 profile/.env，不启动/下载真实模型，不改 provider 权限、预算、执行池或
+  自动推进。配置、角色文件示例和官方协议来源见 LOCAL_MODELS.md。
+
+### 源码、测试及构建
+
+- 最终相关后端114项通过（2.39秒），覆盖 providers、routing、全部 test_llm*、
+  task_collaboration 和 dispatch_service；不是完整后端回归。
+- 第一次扩大回归110通过、4个既有 list_models 测试因沙箱禁止绑定端口失败。
+  原记录保留 `/tmp/vorto-local-model-regression-sandbox-blocked.log`；获自动允许本机
+  专属测试端口后完整114通过，最终 `/tmp/vorto-local-model-regression.log`。
+- 前端370项/34文件通过，TypeScript和生产前端Vite build通过（19.22秒），保留既有
+  chunk >500k提示。日志 `/tmp/vorto-local-model-frontend.log`、
+  `/tmp/vorto-local-model-build.log`。Ruff与diff检查通过；没有修改Rust或重建.app/sidecar。
+
+### 隔离 HTTP 与独立源码副本
+
+- 新 integration HTTP fixture 随机本机端口，原模型清单读取、原客户端聊天和401失败，
+  均使用合成响应；设置坏 HTTP/HTTPS_PROXY、清空NO_PROXY，确认本机仍直连。
+  真实请求接收头只见本机占位符，不包含云端canary；401只有一次请求，不借Key/重试。
+- 工作区2 passed、1 skipped（1.71秒）。独立复制源码目录
+  `/tmp/vorto-local-model-validation-35c5ygf7` 同样2 passed、1 skipped（1.70秒），
+  明确打印导入路径为该副本 src/llm/client.py。两个原模块 SHA记录 metadata.json，
+  另存 `/tmp/vorto-local-model-isolated-root.json`；测试服务在fixture finally 自停。
+- `/tmp/vorto-local-model-http.log`、`/tmp/vorto-local-model-isolated.log` 为最终日志。
+  此副本是源码隔离运行验收，不是已打包/安装的Desktop运行包。
+- 首次试验原生工具 HTTP 回路失败：环境无 OpenAI SDK，原 aiohttp降级不返回
+  tool_calls。现在普通聊天与原生工具回路分别验证，后者按可选依赖缺失明确skip，
+  未改为通过。单元测试SDK注入替身验证 trust_env=False，但不证明真实SDK工具调用。
+
+### 真实服务及其它未验收层
+
+- 只读检查本机11434/11435/1234的 `/v1/models`，初次默认代理检查均Timeout；
+  显式禁用代理后均URLError，未核验到可用服务（不据此断言所有本机服务不存在）。
+  结果 `/tmp/vorto-local-model-existing-services.json`。未启动Ollama/LM Studio，未
+  下载或加载模型，未停止任何其它项目、Codex桌面端或协调进程。
+- 实际本机模型推理/流式/工具能力、真实SDK工具HTTP、真实provider硬预算未验收。
+  本轮未操作浏览器设置保存或原生GUI，已有原生暂缓/失败记录保持；正式发布、安装
+  与部署未做。真实配置保存/重启仍待原生验收，不将前端build视为原生保存已通过。
+- 下一阶段：明确用户选择的已运行服务与实际模型ID，在具备SDK依赖后验证原工具
+  Agent回路/流式/失败恢复。不能因本机或普通聊天通过而启用自动模型检查或推进。
+
+## 40. 本机角色工具回路与真实SDK隔离验收（2026-10-07）
+
+承接第39节 SDK 缺失的未验收项。本轮临时真实SDK证据独立记录，不删除第39节skip/失败。
+
+### 源码修复
+
+- `LLMClient.chat/stream_chat` 带原生tools但无SDK时明确报依赖缺失，不把工具合同
+  静默降级为普通请求。两条入口均验证未调用aiohttp普通聊天发送路径。
+- 原非流式SDK响应省略usage时仍返回正文/工具结果，usage为{}；原记账估算保留，
+  不能把{}当provider精确用量或硬预算证明。
+- `build_subagent` 沿用 `native_default()`；自定义角色遵循原VORTOCODE_NATIVE_TOOLS
+  开关，0明确关闭。只读角色工具面仍无run_command/task，不新增权限或执行池。
+
+### 临时SDK、测试与构建层
+
+- 先尝试已有缓存离线安装，但jiter依赖不齐而失败；随后固定OpenAI SDK3.14.1及其
+  依赖安装在 `/tmp/vorto-local-sdk-deps`，缓存 `/tmp/vorto-local-sdk-cache`。
+  用户Python环境、项目实际.env/profile及真实模型服务均未改。不是已安装runtime升级。
+- 临时真实SDK相关回归174项通过（2.79秒），最终日志
+  `/tmp/vorto-local-sdk-regression.log`；模型/provider/路由/全部test_llm*、原任务协作/
+  下派/角色装配/问题与交付工具合同。不是完整后端回归。
+- 用户原无SDK解释器相关61项通过（0.46秒），日志
+  `/tmp/vorto-local-sdk-no-sdk.log`。SDK spy单元测试不替代真实SDK HTTP合同。
+- Python变更模块编译、Ruff、diff检查通过。前端未改，本轮未重跑前端构建；保留
+  第39节370项前端与生产前端build记录。不声明新.app/sidecar/Rust或正式运行包通过。
+
+### 原客户端/角色与独立运行验收
+
+- 实际本机HTTP/SSE socket、原LLMClient与真实SDK，共7项通过（4.48秒），无skip：
+  模型清单/普通聊天、401单次失败、非流式工具schema、usage缺失、正文/推理与工具
+  JSON参数分片、原角色只读工具回路、流式中断关闭响应及显式新请求复用连接。
+  设置坏代理、清空NO_PROXY后仍直连，收到的auth为非秘密占位符，不含云端canary。
+- 原角色文件 model=local:fixture:7b 经原registry/build_subagent/MainAgent执行原
+  read_file，读到真实临时README标记；下一次请求包含role=tool与该标记，返回最终
+  结论，README未改。两次请求同本机端点/实际模型ID fixture:7b。
+  未创建正式任务或证明done/验收/交接/持久交付/Goal达成。
+- 第一次角色回路仍返回普通fixture回答：复核装配遗漏native设置，同时测试套件
+  conftest默认native=0；修复原装配并在该用例显式设为1，后续通过。没有放宽角色工具面。
+- 工作区最终日志 `/tmp/vorto-local-sdk-http.log`。独立复制源码
+  `/tmp/vorto-local-sdk-validation-jad7jfd2` 使用同临时SDK，七项再次通过；导入路径打印
+  为该副本src/llm/client.py，SDK版本3.14.1。最终
+  `/tmp/vorto-local-sdk-isolated.log`、`/tmp/vorto-local-sdk-isolated-root.json`。
+  metadata.json保留源码SHA与14个临时依赖版本，源码SHA与最终工作区一致。
+- 末次对齐副本时一次脚本误以临时cwd作源路径触发SameFileError；随后的默认沙箱
+  重跑被本机端口权限阻止，保留 `/tmp/vorto-local-sdk-isolated-sandbox-blocked.log`。
+  修正为绝对项目源路径、沿用获准专属端口后最终复验通过。失败不作为通过依据。
+- 合成服务由fixture finally shutdown/server_close/thread.join自停；未停止任何其它
+  模型服务、项目会话、Codex桌面端或协调进程。临时依赖与证据保留以便复核。
+
+### 保留的边界
+
+本轮通过的是实际SDK+合成模型HTTP/SSE+原角色/工具程序的隔离合同，不是实际Ollama/
+LM Studio模型推理或质量验收。未再次启动/探测真实服务，延续第39节实际服务未核验状态。
+真实模型工具可靠性、流式质量、provider硬预算、实际runtime依赖安装/启动及Desktop
+原生配置保存重启未验收；本轮不做浏览器或原生GUI，不改此前原生暂缓/失败记录。
+未发布、安装正式包、提交或部署，也未新增自动模型检查/自动推进/provider授权。
+
+
+## 41. 用户实际oMLX服务与配置入口（2026-10-08）
+
+用户纠正实际使用oMLX。只读复核源码、工作区及真实进程/监听端口，保护两个服务和其它
+项目/会话；没有原生窗口控制、启动、停止或推理调用。
+
+### 实际服务发现
+
+- 只读发现omlx-server PID30789监听127.0.0.1:11500、PID88424监听127.0.0.1:8100。
+  无认证GET /v1/models：11500返回401，8100返回200、owned_by=omlx，模型ID为
+  Qwen3.6-35B-A3B-4bit。端口非软件默认值，之前仅11434/11435/1234检查不能覆盖它们。
+- 原VortoCode客户端使用进程局部OMLX供应商配置读取8100模型清单成功；无真实.env/
+  profile/角色目录写入，未读/打印服务Key。11500未继续鉴权探测，不借云端Key或绕过401。
+- 同第40节独立源码副本 `/tmp/vorto-local-sdk-validation-jad7jfd2` 的原providers/client
+  再次读取8100清单成功，导入路径为副本src/llm/providers.py。三个运行模块SHA与最终
+  工作区相同，复用临时SDK，非新运行包或已安装Desktop。
+- 证据 `/tmp/vorto-omlx-discovery.json`、`/tmp/vorto-omlx-client-discovery.json`、
+  `/tmp/vorto-omlx-isolated-discovery.json`。操作均为list_models，inference_sent=false。
+
+### 源码、合同与构建
+
+- 原Desktop设置/自定义供应商的共享预设增加oMLX，官方默认http://127.0.0.1:8000/v1
+  可编辑，不把用户8100/11500或当前模型硬编码为全局默认。model仍空，取实际服务清单。
+  精确预设匹配优先于泛用回环分类，未知端口不推断服务品牌。
+- 后端复用现有omlx:<模型ID>通用供应商路由，新增测试保护完整模型ID及实例自己的
+  token，沿用本机空Key占位符/代理隔离，不新增provider授权或角色工具面。
+- 全前端371项/34文件通过；相关后端49项通过（0.39秒）；TypeScript与生产前端build
+  通过（19.25秒），保留既有大chunk提示。Ruff与diff检查通过。
+  `/tmp/vorto-omlx-frontend.log`、`/tmp/vorto-omlx-backend.log`、`/tmp/vorto-omlx-build.log`。
+  最后仅测试名称/文档措辞调整，没有在构建后改产品代码。
+- 本轮未改Python运行源码；后端接口/SDK使用第40节已有能力，没有创建另一套适配器。
+  当前机器的oMLX配置步骤与官方来源见LOCAL_MODELS.md，.env.example提供可编辑示例。
+
+### 验收边界
+
+本轮真实服务只读模型清单已验收，不能据此证明推理鉴权、工具调用、流式、上下文、质量
+或硬预算。11500的鉴权仍未满足；8100也没有发送chat或加载模型。不停止现有实例、不
+触碰其它会话进程。原生GUI/配置保存重启继续暂缓，未做浏览器配置保存；CLI/runtime
+真实配置未改，正式.app/sidecar运行包、安装与发布未验收/未执行。
+第39节常用端口超时/不可用记录、第40节合成模型与SDK合同保留，不改记为oMLX推理通过。
+自动模型检查/推进/provider权限保持原边界，下一阶段按选定oMLX实例进行明确有界推理验证。
+
+
+## 42. 模型连接检查身份隔离（2026-10-08）
+
+- 原 LlmConnectionCheck 提取有界请求控制到 lib/llmConnectionCheck.ts，绑定草稿与代次。
+  layout effect 在字段变化/卸载时作废请求；状态只展示当前草稿；地址/Key变化清空候选。
+- 新增7项合同测试：当前成功、地址/Key/模型变化后迟到成功、reset后迟到错误、旧结束
+  不影响新请求忙碌状态、当前错误可恢复。未新增推理、配置保存、服务启动/停止调用。
+- 首次 TypeScript 检查因测试数组.at不在原目标lib中失败；改用索引，不扩大编译目标。
+- 测试/构建最终证据见 /tmp/vorto-connection-check-tests.log 与
+  /tmp/vorto-connection-check-build.log；最终数量及通过情况以日志为准。
+- 本轮只做源码、合同测试和生产前端构建。浏览器实际交互、独立.app/sidecar运行包、
+  原生GUI、真实provider推理、配置保存重启未验收；正式发布未执行，旧失败记录保留。
+- 实际配置仍为云端；按用户指令8100实例已正常终止，11500后台可达（HTTP200），
+  不意味着11500模型推理认证已满足。第41节8100读取证据仅作为历史保留。
+
+
+## 43. 共享 Agent 协议提示收敛（2026-10-08）
+
+- 源码：原agent_loop.py分离原生schema与提示式JSON说明，同回合永久回退立即切换；
+  build能力文案限定原工具/权限范围，两种协议纳入原恢复行为指纹。未修改Desktop前端。
+- 复现：独立副本切回HEAD旧agent_loop，新增三项测试失败；失败日志
+  /tmp/vorto-prompt-protocol-before.log保留。复现证明协议文字冲突，不证明模型质量下降。
+- 最终相关261项通过（5.75秒），/tmp/vorto-prompt-protocol-final.log。独立副本141项
+  通过（0.90秒），/tmp/vorto-prompt-protocol-isolated.log；路径、退出码与最终源码SHA
+  在/tmp/vorto-prompt-protocol-isolated.json。
+- 实际SDK+合成服务7项通过（4.89秒），/tmp/vorto-prompt-protocol-sdk.log；使用已有
+  临时SDK，测试仅自建临时回环服务并自行清理，未调用真实oMLX或云端模型。
+- 本地Python编译、Ruff及diff检查通过；本轮没有新的前端构建/.app/sidecar构建。
+  独立源码副本不是正式安装包。浏览器/原生GUI/真实provider模型效果未验收，未发布。
+- 用户实际模型配置未变，11500服务未操作；原生失败与暂缓记录保留。没有启用自动
+  检查、自动推进或新provider权限；完成状态不能替代任务验收、交接、持久交付或Goal。
+
+
+## 44. 深色时间线与本地搜索响应兼容（2026-10-08）
+
+### 源码/本地构建
+
+- 时间线硬编码浅色文字/图标背景/详情色改用原主题变量，长标签换行。
+- SDK缺失降级路径修复content缺失/null，检测无效响应与不支持的原生工具请求。
+- General请求附加日期与搜索说明修正，不暴露工作区，不写history，不改搜索结果。
+- 旧源码在独立副本的两个content用例失败（缺失字段KeyError及null不规范），保留
+  /tmp/vorto-local-model-content-before.log。初次日期注入导致历史/压缩两项失败，
+  改请求级附加后最终192项通过，/tmp/vorto-local-model-fixes.log。
+- 前端378项/35文件通过，/tmp/vorto-local-model-ui-tests.log；生产前端构建20.61秒
+  通过，/tmp/vorto-local-model-ui-build.log，保留大chunk提示。Python编译/Ruff/diff通过。
+
+### 隔离运行与浏览器
+
+- 独立源码副本192项通过，/tmp/vorto-local-model-isolated.log。源模块字节与当前工作区
+  一致，路径/SHA见/tmp/vorto-local-model-isolated.json；不是正式.app/sidecar包。
+- SDK+合成回环服务7项通过，/tmp/vorto-local-model-sdk-regression.log。真实provider
+  推理未执行，测试自建服务自行关闭。
+- QA真实TurnTimeline组件与原App.css：desktop/qa/timeline.html、timeline.tsx，
+  仅通过本轮专用Vite 1448运行，已停止；没有调用模型或改用户配置。
+- ego-browser TaskSpace109实际主题切换与搜索详情展开完成，finish keep=[]已结束。
+  深色icon背景rgb(24,24,24)、文字rgb(186,186,186)；浅色背景rgb(247,247,245)、
+  文字rgb(94,94,90)。长搜索词label高度38px、white-space normal，无横向溢出。
+  Page.captureScreenshot超时，截图/像素视觉验收未完成；不能改记截图通过。
+
+### 真实环境/原生/发布
+
+- 项目原web_search实际公开检索oMLX official GitHub返回官网、GitHub、benchmark
+  三条结果，/tmp/vorto-real-search-probe.txt。仅证明当次搜索后端可用，不证明模型推理
+  或资料新鲜度/答案正确。没有使用模型API Key或向真实模型发送请求。
+- 用户截图证明界面显示选中本地模型与配置重启提示，不证明原始响应/SDK版本或
+  该截图准确异常路径；真实本地模型完整搜索工具回路仍未验收。
+- 原生GUI继续暂缓，正式.app/sidecar运行包未构建或替换，未安装、提交或发布。
+  原有失败证据保留，TaskLedger/锁/执行池/Goal与自动检查权限边界均未改变。
+
+
+## 45. SDK入包、真实本地搜索回路与安装替换（2026-10-08）
+
+### 源码与合同
+
+- runtime锁定openai3.14.1/httpx0.28.1及其缺失依赖，移除冻结排除openai规则，
+  收集SDK模块和元数据；核心既有版本保留。锁解析/tmp/vorto-desktop-sdk-resolution.json。
+- model-capabilities只构造/关闭原本地SDK客户端，固定回环端点，不发送请求；
+  缺SDK报错并关闭客户端，不能传地址/Key。原smoke增加构造合同。
+- 默认LLMClient保留启动器保存的本地端点/Key；显式空Key本地配置仍不借环境云端Key。
+- 第一次新增诊断单测误以为LLMConfig自行生成占位符，51项中1项失败；真实占位符
+  由LLMClient构造，修正fixture断言后最终相关95项通过，
+  /tmp/vorto-desktop-local-contract.log。Ruff/JS语法/diff通过。
+- 最终SDK合成HTTP/SSE7项通过（4.77秒），/tmp/vorto-desktop-local-sdk-contract.log。
+
+### 构建与运行包
+
+- 原内置runtime没有SDK，并明确exclude openai；首次入包后的实际回路仍401，
+  保留/tmp/vorto-frozen-local-probe-before-auth-fix.json。保存Key读取/models200且
+  模型存在，定位默认客户端覆盖Key；修复后重建。
+- 最终新包完整构建/sidecar smoke/Rust release/Developer ID签名通过，
+  /tmp/vorto-desktop-local-build.log及target/release/dev-signing-evidence.json。
+  PyInstaller可选openai.helpers缺numpy告警保留；没有增加voice模型能力。
+- 冻结.app/Contents/Resources/runtime的独立临时Gateway实际读取保存的11500配置，
+  原WS agent plan请求经本地Qwen3.6-35B-A3B-4bit调用web_search，收到succeeded与
+  实际搜索结果，agent_emit回复https://github.com/jundot/omlx并agent_done。
+  /tmp/vorto-frozen-local-probe.json passed=true。仅本测试临时cwd/会话；结束自行停止。
+  max_steps2、客户端120秒期限不证明provider硬预算或取消后服务端停止。
+
+### 安装与真实环境
+
+- 已按用户授权替换/Applications/VortoCode.app；先备份并校验旧包到
+  /private/tmp/vorto-desktop-backup-ITeK6o/VortoCode.app。保留旧包，未停止其它应用/
+  项目/模型服务，也未操作窗口、输入法或原生系统权限。安装前未发现VortoCode GUI进程。
+- /tmp/vorto-desktop-install-evidence.json：新GUI二进制SHA
+  92dc1e151579005301d3cf8c49334c7bf6ecf412d396e144f5ab16adca0a3e41，runtime树SHA
+  00ad2944c15a91faae2eb347c1ce2204c233497a3dd4b7ca5283829d509ed102。
+  与最终构建证据一致，designated requirement与旧安装相同。
+- 已安装SDK诊断openai3.14.1/httpx0.28.1与Gateway smoke通过（556毫秒），
+  /tmp/vorto-desktop-installed-smoke.log；原verify签名通过，
+  /tmp/vorto-desktop-installed-signature.log。没有启动原生GUI进行验收。
+- profile当前实际配置为11500/Qwen且Key存在；Key只在进程内使用，未改变profile/
+  .env/服务设置，未打印到证据。真实搜索链路通过不能替代文件编辑、Shell、视觉、音频、
+  长上下文、取消服务端停止、自动检查或Goal验收。
+
+原生GUI继续暂缓，第44节浏览器截图超时仍未完成；本轮磁盘安装已完成，未正式发布/
+公证上传/提交/部署，不将安装完成当作原生验收或全能力通过。
+
+## 46. 模型设置交互收敛（2026-10-08）
+
+**基线**：保留第45节安装与真实oMLX验收及更早原生未完成记录。本轮是源码与浏览器隔离验收，
+不是已安装Desktop窗口验收，也没有改变用户配置或其它会话。
+
+实际复现：原设置页显示全部供应商/调度字段；本机快捷预设会把自定义端口替换为默认端口；
+更换服务地址仍展示旧模型上下文与“已安全保存”的Key提示。浏览器TaskSpace110使用原组件、
+非敏感模拟profile，未经真实鉴权或写盘。IAB不可用；截图CDP超时，未获得视觉证据，
+不能称为完整产品设计审查。以下是当前DOM/交互检查与合同证据。
+
+1. 进入模型服务设置：成功。新增操作顺序说明，本地模型无需登录；字段字体实际13px，
+   当前视口settings-pane无水平溢出；无截图，不证明所有视口或像素质量。
+2. 点击oMLX快捷项：成功保留11500与Qwen模型。不是对服务类型的自动识别。
+3. 修改为另一地址：上下文显示“当前草稿尚未检测”，旧配置来源不适用于草稿；
+   Key提示改为仅无需鉴权才可留空，不显示另一服务Key已保存。
+4. Key显示按钮：成功切换用户输入框类型；未读取或显示任何真实Key。
+5. 模型名清空：保存禁用，展示填写模型名/获取列表的原因。高级选项初始两项均关闭、可显式展开；
+   搜索oMLX仅列模型服务入口。
+6. 独立编译副本：使用/tmp/vorto-settings-compiled，模型设置来自生产原组件；
+   保存按钮只记录“仅记录保存意图，未写盘或重启”，未调用原生API。不能作为实际保存成功证明。
+
+**源码/测试**：modelSettings.test.ts新增6项合同；36文件/384项前端测试通过，
+包括原连接请求隔离测试。git diff --check通过；完整前端tsc/vite构建通过。
+日志：/tmp/vorto-settings-tests.log、/tmp/vorto-settings-build.log、/tmp/vorto-settings-fixture-build.log。
+
+**运行包/真实环境/发布**：本轮没有构建新的Tauri运行包或替换/验收已安装包；
+第45节通过仅属于当时包与真实搜索链路。没有新的provider调用或权限。
+原生与视觉截图验收仍未完成，未正式发布。独立页面服务器和本轮浏览器空间验收后关闭，
+不触碰Codex、oMLX、协调聊天或其它项目进程。下一轮按PRD第46节显式诊断合同推进。
+
+## 47. 工具循环诊断与联网调用截断（2026-10-08）
+
+**原环境证据**：当前运行9071/9076是/Applications/VortoCode.app及其General Gateway59928；
+保留11500 oMLX进程30789。只读session_events与audit确认rid
+7e310247-0c19-4fc4-bae7-ee83c47298cc循环检索，最终61次搜索/45次fetch/1次产物列表。
+最后模型工具格式错误（unrecoverable tool call）后agent_done，不是任务成功或Goal完成。
+首次检查为55次搜索/41次fetch；继续增长不是UI动画重复。现有同参数提醒没有派发截断，
+变化关键词与Build自动续跑使单次请求执行过多工具。
+
+**现场处理**：没有停止进程。拟按原Gateway取消前再次读到原请求已终态，未发送取消。
+最初系统Python没有websockets，未建立连接；改用既有miniforge环境复核后只报告已终态。
+未连接其它会话、未改真实用户配置或权限，不证明provider调用即时停止。
+
+**源码/测试**：新增单个MainAgent用户回合联网派发上限，跨原Build续跑累计；
+原生/提示式工具共用准入，批次后缀不执行、不写入历史。到限原无工具收尾，
+不自动继续或借空回复升级模式；失败调用也消耗额度。9项新增合同，原相关228项测试通过；
+补入批次与配置合同后最终19项定向回归通过；ruff与diff检查通过。
+日志/tmp/vorto-web-loop-contract.log、/tmp/vorto-web-loop-final-contract.log、/tmp/vorto-web-loop-sdk.log；
+真实SDK7项HTTP/SSE测试通过，属于合成回环端点。
+
+**构建/隔离运行包**：/tmp/vorto-web-loop-bundle.log记录sidecar/前端/Rust/Tauri与原Developer ID签名通过，
+无公证上传。包含第46节设置优化。独立冻结Gateway的合成循环模型只派发2次web_fetch，
+随后一次无工具收尾；总3次模拟模型请求，输出“联网检索已停止，资料不足，尚未核实。”并agent_done。
+web_fetch使用拒绝SSRF的回环URL，不访问外部网站。证据/tmp/vorto-frozen-loop-evidence.json。
+首次合成夹具空Key被原Gateway入口拒绝，/tmp/vorto-frozen-loop-initial-evidence.json保留未通过；
+仅夹具改用fixture-nonsecret，未改产品鉴权。不是实际oMLX循环96次后的同上下文复验。
+
+**真实本机provider**：隔离新冻结包读取已有11500配置，Key只在子进程环境中，未打印或写盘。
+联网额度1，实际web_search成功并回复官方GitHub链接，证据/tmp/vorto-web-loop-local-probe.json。
+正常搜索路径真实通过；无限模型行为的截断由上述合成循环证明，不声称已覆盖所有真实模型行为。
+不是token/时间/费用硬预算，不证明子Agent链级额度或provider硬取消。
+
+**浏览器/原生/发布**：第46节原设置组件的浏览器及独立编译检查保留；本轮UI来自同一源码并随包构建。
+没有新的截图或原生窗口/焦点/IME/VoiceOver/Hook验收，原记录仍未完成。未正式发布。
+安装替换沿用既有授权，同签名备份核验；当前运行进程未被重启，新代码需退出并重新打开应用后加载。
+
+安装最终结果：/Applications/VortoCode.app；旧包备份/private/tmp/vorto-desktop-backup-2fnjar/VortoCode.app，
+安装证据/tmp/vorto-web-loop-install-evidence.json（不覆盖第45节安装记录）。新应用SHA256
+5fc0fdc4b21814193966133bf491e99870c06fd2d16edd99b58277f127733a31，runtime树SHA256
+65a69b461287182f42a3f71fcf77021b0d1de756a0c0afdbb04f6dfc312d234c。
+已安装包SDK诊断与sidecar smoke通过543ms；签名/指定要求/构建哈希复核通过，日志
+/tmp/vorto-web-loop-installed-smoke.log、/tmp/vorto-web-loop-installed-signature.log。
+本轮原生GUI未启动/重启，用户现有运行实例仍是此前已加载的版本。
+
+
+## 48. MCP / Skill 调用链（2026-10-08，UTC运行证据为10-09）
+
+**源码与测试**：首轮3项合同失败，日志/tmp/vorto-extension-before.log；修复连接执行路由、完整参数schema、
+失败事件、Skill来源/相对路径、安全保存及加载边界。中途夹具缺transport造成1失败/211通过，
+补齐真实客户端属性后复验，未改产品合同迁就夹具。最终227项通过/1项既有Starlette警告，
+/tmp/vorto-extension-contract.log；Ruff和diff检查通过。
+
+**构建**：/tmp/vorto-extension-bundle.log记录sidecar SDK smoke、tsc/vite、Rust/Tauri及原Developer ID
+Ningbo Vorto Technology Co., Ltd (8UTMY2WR9H)签名通过。没有公证上传或正式发布；
+原可选voice_helpers缺numpy警告不变，不声称音频验收。
+
+**独立运行包**：/tmp/vorto-extension-package-initial-evidence.json保留项目local作用域拒绝MCP的失败尝试。
+没有放宽权限；新/tmp/vorto-extension-package-evidence.json分别用General允许作用域与项目Skill作用域，
+MCP整数/required合同、成功及isError失败事件通过；use_skill后实际read_file引用资料并输出资源确认。
+模型为合成SSE/JSON端点，MCP是自有旧REST夹具，不是标准第三方互操作证据。
+
+**真实本机模型**：/tmp/vorto-extension-local-model-evidence.json passed=true。
+隔离新冻结Gateway消费已有http://127.0.0.1:11500/v1配置，Qwen3.6-35B-A3B-4bit成功调用一次
+mcp__fixture__count，count为整数2，最后回复“工具调用已成功完成。”。Key只在子进程环境，未打印或保存。
+步骤上限限制模型轮次，不能当成MCP批次/provider token或费用硬预算。MCP服务仍为自有回环REST夹具，
+没有第三方服务、真实模型Skill引用或新provider授权。所有隔离子进程结束并回收，不停止原oMLX/Desktop。
+
+**安装**：沿用既有替换授权，/Applications/VortoCode.app已更新；旧包备份
+/private/tmp/vorto-desktop-backup-YcBK59/VortoCode.app。/tmp/vorto-extension-install-evidence.json固定安装哈希：
+app 48336a5c35f48b07adb75d8ac27d5779fd627590ebb8007056426a2fc4affba0，
+runtime b75b8416aa9ed6f24e6a1d285105ce5027e3f57a0b0942949bd9325a2d34e44f。
+已安装SDK诊断与隔离sidecar健康通过549ms，日志/tmp/vorto-extension-installed-smoke.log。
+首次沙箱签名复核报aiohttp扩展invalid signature，保留/tmp/vorto-extension-installed-signature.log；
+只读提升权限复核通过/tmp/vorto-extension-installed-signature-escalated.log，未重新签名或改包。
+安装时源/目标/备份哈希及指定签名要求核验通过。
+
+**浏览器/原生/发布**：本轮没有新增浏览器或原生UI验收，第46节浏览器记录及此前未完成断言保留。
+未启动、停止或重启现有GUI，会话保持运行；用户退出并重新打开后才加载新代码。未正式发布。
+当前HTTP不是标准Streamable HTTP；Desktop项目local边界拒绝外部MCP，General不加载仓库Skill，
+默认opt-in未开启；配置可见不代表当前会话可用。多服务器同名路由、显式连接/重试入口、Skill重载仍待下一轮。
+自动检查、自动推进及生命周期/Goal边界均未改变。
+
+
+## 49. MCP 多服务同名工具与刷新保护（2026-10-08）
+
+**源码/合同测试**：复现两个服务同名覆盖及刷新先删后读问题；首次新增测试3失败/1通过，
+/tmp/vorto-mcp-identity-before.log。固定完整服务/工具身份，远端调用保留原名；无歧义裸名称兼容，
+权限规则同时保留原名和完整名，调用频率归一。刷新先校验后发布，HTTP错误不作为空目录，
+注销等待前移除连接所有权，拒绝迟到发布。新增17项合同，最终相关224项通过，
+/tmp/vorto-mcp-identity-tests.log；Ruff及diff检查通过。
+中途客户端夹具缺transport的1失败/52通过已修正为实际属性，并补完整回归；没有更改产品迁就夹具。
+
+**构建记录**：构建期间补齐目录和注销竞态后重新构建，前两次构建不作为最终源码交付证明。
+日志/tmp/vorto-mcp-identity-bundle.log、/tmp/vorto-mcp-identity-final-bundle.log保留；
+最终交付构建日志/tmp/vorto-mcp-identity-delivery-bundle.log。
+准备临时脚本时系统Python字节码缓存写权限错误，改为只在内存编译，未调整系统权限；
+一次准备命令从desktop目录访问根目录相对路径失败，无源码写入，后续仅更新文档计数。
+
+**验收边界**：当前仍是自有旧REST MCP适配器，不能代表标准Streamable HTTP互操作。
+本轮没有新的真实oMLX/第三方provider或浏览器验收；第48节本机模型通过仅保留为此前证据。
+不改真实MCP配置、不启用默认opt-in、不扩展项目local能力；同连接并发刷新序号/版本绑定尚未建立。
+没有原生启动/焦点/输入法/VoiceOver/Hook验收，原未完成断言保留，未公证上传或正式发布。
+任务done、验收、交接、持久交付和Goal边界不变。
+
+
+**最终构建/隔离运行**：最终同Developer ID完整包构建通过，包含最后注销竞态修复，未公证上传。
+/tmp/vorto-mcp-identity-package-evidence.json passed=true；General隔离Gateway连接两个均提供count的
+自有回环REST服务，实际端点顺序/alpha/tools/call、/beta/tools/call、/alpha/tools/call，
+三次远端name均为count。两服务成功事件与第三次isError失败事件正确，schema整数/必填保留；
+项目作用域Skill use_skill/read_file及资源标记回归通过。模型为合成JSON/SSE，未访问第三方。
+独立子进程及夹具均结束回收，不触碰Codex、原Desktop/oMLX或协调会话。
+
+**安装/健康**：/Applications/VortoCode.app更新，旧包备份/private/tmp/vorto-desktop-backup-ZOwXZf/VortoCode.app；
+/tmp/vorto-mcp-identity-install-evidence.json记录app SHA256 61b653903793becafb1a9b1e7e57882f4e0c57a1a269693ecc942787e45b4de5，
+runtime树SHA256 e7628a6eb04256dc193d86dae68027308bb3949b38948621ab70c99be4449add。安装前后及备份哈希、原指定签名要求通过；
+已安装签名复核/tmp/vorto-mcp-identity-installed-signature.log通过，SDK诊断/sidecar健康
+/tmp/vorto-mcp-identity-installed-smoke.log通过。未自动启动/停止/重启原生应用，用户退出重开才加载新代码。
+本轮无新增真实provider、浏览器或原生GUI验收，未正式发布。
+
+
+## 50. 标准HTTP工具子集与真实本机模型（2026-10-08）
+
+**源码/合同测试**：新增src/tools/mcp_http.py，经原MCP工厂显式选择2026-07-28 Streamable HTTP。
+旧省略protocol配置继续legacy_rest，权限/完整身份/原执行器不变。新增28项HTTP合同，相关252项通过，
+/tmp/vorto-mcp-http-contract.log；Ruff及diff检查通过。覆盖JSON/SSE/CR、分页/预算、身份/错误、
+超时/取消、参数头安全编码、非法schema排除、原权限和不支持版本在请求前拒绝。
+代码及接口范围见MCP_HTTP.md、PRD第50节；没有完整MCP符合性声明。
+
+**本地构建**：/tmp/vorto-mcp-http-bundle.log记录sidecar SDK、tsc/vite、Rust/Tauri及原Developer ID
+Ningbo Vorto Technology Co., Ltd (8UTMY2WR9H)签名通过，未公证上传。既有可选音频依赖和前端chunk
+大小告警未改变，不声称对应功能或性能验收。
+
+**原包复现/独立运行包**：/tmp/vorto-mcp-http-before-evidence.json用旧安装包隔离实例复核同一标准端点，
+passed=false，无MCP工具调用；原Skill用法仍通过。失败证据保留，不启动原生窗口或改用户会话。
+/tmp/vorto-mcp-http-package-evidence.json用新冻结包与原Gateway WebSocket客户端协议，passed=true。
+General作用域连接两个同名count服务：alpha返回JSON、beta返回SSE，每个目录两页；实际工具端点
+顺序/alpha、/beta、/alpha，原name=count，第三次isError呈现failed，整数/required完整。
+夹具检查协议/方法/名称/Count头与请求正文一致；项目Skill的use_skill/read_file和资源标记回归通过。
+模型为自有合成JSON/SSE，不代表第三方MCP符合性或浏览器/原生GUI验收。
+
+**真实oMLX**：/tmp/vorto-mcp-http-local-model-evidence.json passed=true，新冻结包隔离General会话
+读取已有http://127.0.0.1:11500/v1配置，Qwen3.6-35B-A3B-4bit成功调用一次mcp__beta__count，
+count为整数2，远端是自有2026标准SSE端点，最终回复“操作已成功完成。”。Key仅在子进程环境，不打印/保存。
+单模型工具轮次及禁自动Build续跑用于有界探测，不是批次/provider token/费用硬预算。
+不是第三方服务、真实模型Skill、原生Desktop配置保存或实际窗口验收；没新增provider授权。
+各探测子进程和夹具回收，未停止原oMLX、Codex、协调或其它项目进程。
+
+**安装包**：沿用已有替换授权更新/Applications/VortoCode.app，旧包备份/private/tmp/vorto-desktop-backup-dfekA2/VortoCode.app。
+/tmp/vorto-mcp-http-install-evidence.json固定app SHA256 e56af5fffd0abab249059922864f50592ab64f7854aef149a8363a93f2360d95，
+runtime树SHA256 6ac9216af99a58a25021b0f78e1aa89c212a07c97be9f51738008b5ebebd2e00。源/目标/备份及原指定签名要求核验通过；
+/tmp/vorto-mcp-http-installed-signature.log复核通过，/tmp/vorto-mcp-http-installed-smoke.log记录
+已安装SDK与隔离sidecar健康通过。不自动启动/停止/重启原生应用，退出重开后才加载新代码。
+
+**未验收与下一轮**：本轮无新的浏览器/原生GUI验收，原失败断言与未完成记录保留，未正式发布。
+仅支持明确2026版本tools/list及tools/call，不自动降级/重试；2025标准会话及完整版本协商、
+资源/prompts、订阅、MRTR、sampling/elicitation/roots和Desktop连接状态/重试入口均未实现。
+项目local仍拒绝外部MCP，General无仓库Skill；真实配置/默认opt-in/自动检查推进均未修改。
+下一轮按PRD第50节实现旧标准显式兼容及状态恢复入口；done、验收、交接、持久交付与Goal仍分离。
+
+
+## 51. 旧标准HTTP、资源提示与Desktop连接重试（2026-10-08）
+
+**源码/合同测试**：原mcp_http新增显式2025-03-26/2025-06-18/2025-11-25握手及有限协商，
+Session-Id/initialized/DELETE及取消通知，过期调用不重放。旧server声明资源/提示时追加原权限门内
+通用列表/读取工具，不自动采样、订阅或执行返回的提示。mcp_session领域管理原agent接入/观察/重试，
+旧工具失败保留、自有目录替换去重、迟到/忙拒绝、并发连接拒绝；配置范围/大小/16服务/30秒有界。
+原Gateway新增两条精确会话状态/手动连接端点，项目local继续拒绝，General其它项目API仍受限。
+最终263项后端相关回归通过，/tmp/vorto-mcp-session-contract.log；Ruff/diff通过。
+资源测试夹具最初误把资源请求当工具请求读arguments而失败，修正夹具后回归通过；不是产品重放/回退。
+
+**前端/浏览器**：Desktop原插件入口增加McpConnectionCard；展示当前会话状态、数量、时间、失败与重试。
+请求按client/session/connection代次隔离，原客户端入口复用；没有持久化真实MCP配置或默认打开opt-in。
+384项原前端测试通过，tsc通过，/tmp/vorto-mcp-desktop-tests.log；独立编译原组件
+/tmp/vorto-mcp-desktop-fixture-build.log。浏览器ego-browser空间111验证首次失败可见、手动重试成功、
+在途切会话后旧响应忽略、local受限按钮禁用；/tmp/vorto-mcp-browser-evidence.json。
+一次旧元素引用失效，在同一空间刷新snapshot后继续完成，未新建空间规避错误；最终finish关闭空间，
+本轮回环页面服务器停止。不以DOM/夹具验收替代实际Desktop保存或原生窗口，未做视觉截图验收。
+最初准备fixture使用错误相对路径未写入，按desktop工作目录修正后编译/浏览器验收通过。
+
+**构建/冻结包验收**：初次/tmp/vorto-mcp-desktop-bundle.log构建通过，但运行API被原General范围门
+拒绝，/tmp/vorto-mcp-desktop-package-evidence.json保留passed=false；进一步
+/tmp/vorto-mcp-desktop-package-diagnostic.json固定workspace_required及无MCP请求。
+仅新增两条精确范围合同后重建，最终/tmp/vorto-mcp-desktop-final-bundle.log通过原Developer ID签名，
+未公证上传。/tmp/vorto-mcp-desktop-final-package-evidence.json passed=true：
+原Gateway WebSocket建立会话后实际POST两次连接/重试、GET状态，目录保持10个工具无重复；
+alpha2025-03-26 JSON及beta2025-11-25 SSE工具成功/失败状态正确，resources/read和prompts/get成功，
+项目Skill use_skill/read_file回归通过。两服务声明资源/提示，工具数包含通用工具，不是10个资源。
+模型/服务均为自有合成回环夹具；不是第三方MCP完整符合性或真实浏览器HTTP接入原生应用的证明。
+
+**真实本机模型**：/tmp/vorto-mcp-desktop-local-model-evidence.json passed=true。
+新冻结包读取已有11500 oMLX配置，手动连接/重试两次后Qwen3.6-35B-A3B-4bit仅调用一次
+mcp__beta__count，整数count=2，旧版SSE自有服务结果正确，最后回复“操作已成功完成。”。
+Key只在隔离子进程环境，不打印/存盘。单工具轮次/禁自动Build继续仅为本次有限探测，
+不是provider硬预算或取消费用证明；真实模型资源/提示、第三方服务尚未验收。
+本轮隔离子进程及服务均回收，不触碰原oMLX、Codex、协调或其它项目进程。
+
+**安装/签名/健康**：沿用已有授权更新/Applications/VortoCode.app，旧包备份/private/tmp/vorto-desktop-backup-bBbxNN/VortoCode.app。
+/tmp/vorto-mcp-desktop-install-evidence.json固定app SHA256 93c53319d49aedbc04abdeb4b2fda71e0e9c3713cec238e4993f85bf15dce891，
+runtime树SHA256 78c1f2b4f36cf95cbd81780b48a3289e78d9031abb1bf730b89a65083ff97090。源/目标/备份及原签名指定要求核验通过；
+/tmp/vorto-mcp-desktop-installed-signature.log复核通过，/tmp/vorto-mcp-desktop-installed-smoke.log
+记录已安装SDK/隔离sidecar健康通过。没有启动、停止或重启原生GUI，新代码需退出重开后加载。
+
+**未完成/发布边界**：原生GUI/焦点/输入法/Spaces/VoiceOver/Hook仍未验收，旧失败断言保留，未正式发布。
+不是完整MCP符合性；资源-only目录装配、2026资源提示发现、2024双端点SSE、断流恢复、
+订阅、sampling/elicitation/roots/MRTR及工具版本绑定仍待合同/实现/验收。
+未扩大provider或项目local权限，未启用自动模型检查/推进，done、验收、交接、持久交付和Goal仍分离。
+
+
+## 52. 资源-only装配与重试观察真实性（2026-10-09）
+
+**源码/合同测试**：仅resources或prompts的旧标准服务不再被强制请求tools/list，
+只装配初始化已声明能力。未声明任何相关能力是成功空目录，已声明tools的失败仍上抛。
+失败尝试记录attempted_at，保留旧目录observed_at；新连接发布后取消不恢复旧观察。
+候选清理异常/超时不能把连接中标记永久锁住，finally释放；未确认清理不证明远端停止。
+/tmp/vorto-mcp-feature-only-before.log保留修复前3项失败；新增5项合同后，
+/tmp/vorto-mcp-feature-only-contract.log记录268项相关测试通过。最终Ruff和git diff --check通过。
+原目录、执行池、权限与会话入口复用，未新增自动重试、模型动作或数据库。
+
+**本地构建**：首次/tmp/vorto-mcp-feature-only-bundle.log成功，但最终清理修复在其构建期间完成，
+因此不作为最终源码包证据。停止源码改动后重建，/tmp/vorto-mcp-feature-only-final-bundle.log
+记录最终签名包成功：冻结Python、SDK/隔离健康、tsc/Vite、Rust及原Developer ID签名通过。
+既有大chunk和非本轮voice_helpers依赖收集警告保留；未公证上传。
+
+**独立运行包**：/tmp/vorto-mcp-feature-only-package-evidence.json passed=true。
+使用最终冻结runtime、自有临时工作区与合成模型，原WebSocket建立General会话后通过原REST端点
+手动连接/重试共4次，GET状态始终为4个通用工具且无重复。alpha是2025-03-26 JSON资源-only服务，
+beta是2025-11-25 SSE提示-only服务；resources/read和prompts/get实际执行成功，RPC记录无tools/list。
+随后隔离项目会话use_skill/read_file回归成功。模型/服务均为回环夹具，未访问真实provider。
+本轮只回收自有子进程与服务器，未停止oMLX、Codex、协调或其它项目进程。
+
+**安装/健康**：沿用已有授权，备份旧包至/private/tmp/vorto-desktop-backup-7FaqNk/VortoCode.app，
+再更新/Applications/VortoCode.app。/tmp/vorto-mcp-feature-only-install-evidence.json固定
+app SHA256 c6305492cacb89c6b5dd8cd0bd42186c6353d84f53975eb997065ef00196b255，
+runtime树SHA256 d17e991186f8fbc11f89c0ff45bc8717b1e593ff9c0c93391d3e41815cc41291。
+源/目标/备份摘要及原签名指定要求核验通过；/tmp/vorto-mcp-feature-only-installed-signature.log
+复核通过，/tmp/vorto-mcp-feature-only-installed-smoke.log记录已安装隔离sidecar健康547ms通过。
+没有启动、停止、重启或绑定原生GUI；当前已打开应用需用户以后退出重开才加载新代码。
+
+**验收/发布边界**：本轮无前端源码改动或新浏览器验收，第51节原组件浏览器证据仅保留原范围。
+本轮真实provider未验收，第51节oMLX单工具调用记录保留，不扩大成真实模型资源/提示验收。
+原生GUI、焦点、输入法、Spaces、VoiceOver、Hook继续未验收，旧失败断言保留；未正式发布。
+2026资源/提示发现与目录版本/调用绑定是下一切片；sampling、elicitation、roots、订阅、
+断流恢复、2024 SSE及完整MCP符合性仍待独立合同。未扩大provider或项目local权限，
+未启用自动检查/推进；done、验收、交接、持久交付与Goal仍分离。
+
+
+## 53. 初始化失败清理与取消恢复（2026-10-09）
+
+**源码/合同**：复核第52节后发现manager移交前失败清理尚无独立超时，清理异常会掩盖
+原初始化失败；候选清理期间取消也未标明清理未确认。/tmp/vorto-mcp-cleanup-before.log
+保留4项修复前失败，24项通过。在原mcp_tools/mcp_session实现独立5秒失败清理额度、
+原始异常保留、取消继续传播及固定无敏感信息note投影。会话finally释放在途门；
+清理未确认不证明远端停止，asyncio超时不能强行终止非合作式阻塞。原目录/会话/权限复用。
+新增5项合同覆盖清理错误/超时/取消、会话取消未确认及脱敏。首次广泛回归沙箱不能绑定回环：
+/tmp/vorto-mcp-cleanup-contract.log保留245通过/27项fixture错误；获准回环后
+/tmp/vorto-mcp-cleanup-final-contract.log最终273项通过，Ruff/git diff --check通过。
+
+**本地构建**：/tmp/vorto-mcp-cleanup-bundle.log记录冻结Python、SDK smoke、tsc/Vite、
+Rust及原Developer ID签名构建通过，未公证上传。既有chunk/voice_helpers收集警告未改记消失。
+临时probe的系统Python py_compile尝试被缓存目录权限拒绝，改用AST只读语法核验通过；
+不是产品构建失败，也没有扩大缓存写权限。
+
+**独立运行包**：/tmp/vorto-mcp-cleanup-package-evidence.json passed=true，使用最终冻结runtime、
+自有临时工作区及回环合成模型/服务。原Gateway WebSocket/REST建立会话并连接/重试，
+资源-only JSON和提示-only SSE目录保持4个工具无重复；主动返回不支持版本使重连HTTP409，
+GET核验旧目录/工具数/observed_at不变、attempted_at存在，随后手动重试成功。成功连接共5次。
+实际resources/read、prompts/get及项目Skill use_skill/read_file均成功，RPC无tools/list。
+清理异常/超时/取消由合同测试覆盖；包验收验证服务错误及恢复，不冒称包中注入清理故障。
+只回收自有子进程和服务器，未停止oMLX、Codex、协调聊天或其它项目。
+
+**安装/签名/健康**：沿用已有授权，备份/private/tmp/vorto-desktop-backup-LmDA2A/VortoCode.app，
+再更新/Applications/VortoCode.app。/tmp/vorto-mcp-cleanup-install-evidence.json固定
+app SHA256 43e69a21bff0fb32be251c4ad0c4265ba7371f5f272fbcb5c890c56086c36225，
+runtime树SHA256 65039643ae3d1ef4f55015e7c777f88cb422d629fe8e4f4bce18bebed561c85c。
+原指定签名要求、源/目标/备份摘要核验通过；/tmp/vorto-mcp-cleanup-installed-signature.log
+签名复核通过；/tmp/vorto-mcp-cleanup-installed-smoke.log记录已安装sidecar健康549ms通过。
+未启动/停止/重启原生GUI，当前已打开应用仍需用户以后退出重开加载新代码。
+
+**验收/发布边界**：本轮无前端源码改动或新浏览器/真实provider验收。第51节原组件浏览器、
+oMLX单工具记录仅保留原范围，不当作本轮真实模型资源/提示或清理故障验收。
+原生GUI/焦点/输入法/Spaces/VoiceOver/Hook仍未验收，旧失败断言保留；未正式发布。
+下一阶段为2026资源/提示发现和目录版本/调用绑定，完整MCP仍未达成。
+未扩大provider/项目local权限、自动检查/推进；done、验收、交接、持久交付和Goal分离。
+
+
+## 54. 简单查询收敛与macOS关闭到Dock（2026-10-09）
+
+**问题来源/源码**：用户天气截图显示3次搜索+1次读取，真实General会话历史核对为
+西雅图旅游、宁波百科/旅行及杜鹃花等无关搜索结果，最后wttr.in/Ningbo读取成功。
+该记录已经收尾，不能称无限循环或Build重复。原SYSTEM_TEMPLATE加入简单查询收敛、
+城市/主题/日期检查与来源链接规则，改写一次后转已知数据源或说明不足；多来源研究不套用此建议。
+这是软指导，原运行时派发额度不变，搜索后端相关性未解决。
+macOS主窗口CloseRequested阻止销毁并minimize，失败保留窗口；原Dock Reopen/单实例恢复复用，
+Quit/Command-Q仍使用原Exit清理。页面加载和启动4秒兜底尊重最小化，不新增后台动作。
+其它平台关闭行为不变。截图Markdown表格原文显示已定位：原MarkdownMessage没有表格解析，
+本轮未改渲染器，保留下一切片，不误记已修复。
+
+**单元/合同测试**：/tmp/vorto-search-dock-contract.log记录170项后端相关测试通过，Ruff/diff通过。
+/tmp/vorto-search-dock-rust.log保留77通过/4项回环绑定PermissionDenied失败；获准自有回环后
+/tmp/vorto-search-dock-final-rust.log记录81项Rust测试通过。这不是关闭/Dock实际点击验收。
+
+**构建与隔离包**：/tmp/vorto-search-dock-bundle.log记录冻结Python、SDK smoke、tsc/Vite、
+Rust及原Developer ID签名通过，未公证上传；既有chunk/voice_helpers收集警告保留。
+/tmp/vorto-search-dock-package-evidence.json passed=true，原Gateway/冻结runtime的实际模型请求
+包含新简单查询指导；合成回环模型/服务验证MCP资源/提示、失败重连保留观察后恢复、Skill读取回归。
+这是原运行包入口验证，没有启动原生窗口，不证明Dock呈现或前端表格已修复。
+
+**真实本机模型**：/tmp/vorto-search-local-evidence.json passed=true，仅一次隔离查询
+“宁波今天天气怎么样？简要回答并提供来源。”；读取已有11500 oMLX/Qwen3.6-35B-A3B-4bit配置，
+Key只在子进程环境，不打印/存盘。实际2次搜索+1次web_fetch，最终回复包含wttr.in/Ningbo来源链接。
+两次搜索依然无关，最后来源读取取得数据。验收仅为该次派发次数/收尾/链接，不证明相关性修复、
+所有简单查询都会收敛或气象准确性。3次web派发、3步、禁自动Build继续及100秒观察限额只约束
+此隔离探测，不是provider费用/token硬预算或远端费用停止证明；没有新provider权限。
+自有runtime已回收，原Desktop/oMLX/Codex/协调及其它项目进程未停止。
+
+**安装/签名/健康**：沿用授权，备份/private/tmp/vorto-desktop-backup-dnXeOz/VortoCode.app，
+更新/Applications/VortoCode.app。/tmp/vorto-search-dock-install-evidence.json固定
+app SHA256 cd18ead8bd9352fc6701e3b11eec4900dd7e8c96e953499a58223c5748a2da37，
+runtime树SHA256 4f30e45b56344d5e2b9e122909703d35a42753dc94ae214ec717e62408ade45d。
+源/目标/备份与原签名要求通过，/tmp/vorto-search-dock-installed-signature.log复核通过，
+/tmp/vorto-search-dock-installed-smoke.log记录已安装sidecar健康552ms通过。
+沿已授权入口整理，仅刷新VortoCode主注册，不删除包/备份，不处理Vorto Write文件。
+没有自动启动、退出或重启GUI，新关闭行为需用户明确退出再打开后加载。
+
+**未验收/发布**：原生Dock最小化/恢复、关闭失败、Quit清理及启动加载期间交互仍未验收，
+焦点/输入法/Spaces/VoiceOver/Hook旧失败及未完成记录保留。无新浏览器验收，未正式发布。
+下一切片表格安全渲染与搜索相关性；MCP未完成合同继续保留。未开启自动检查/推进；
+done、验收、交接、持久交付和Goal保持分离。
+
+
+## 55. 日常使用与交付收敛（2026-10-09）
+
+**范围/源码**：用户明确选择稳定日常使用与交付，本轮暂停扩MCP/provider/自动化能力。
+README/ROADMAP与DESKTOP_DAILY_BASELINE.md统一主链路、唯一安装入口、固定命令及已知边界；
+保留原TaskLedger/执行池/生命周期及全部无关工作区改动，未提交、合并或正式发布。
+原MarkdownMessage补表格子集、安全行内内容、32列限制和窄宽滚动，没有新增渲染数据库或库。
+最终复核非法代码围栏触发原同步死循环，/tmp/vorto-daily-malformed-before.log保留4秒未返回
+及只终止自有探测进程组证据；统一段落/围栏准入后普通文字不再卡住。
+
+**测试**：新增6项回复合同，最终/tmp/vorto-daily-final-frontend.log记录390项前端通过，tsc通过。
+首次389项通过后tsc拒绝Array.at，改用既有编译目标支持的下标，没有扩大编译目标。
+新增6项安装合同覆盖成功备份、首次安装、保存失败、暂存损坏、发布后核验失败回退、身份变化拒绝；
+/tmp/vorto-daily-final-delivery.log全通过，脚本语法/diff通过。回退失败保留资料路径已实现，
+本轮未注入真实/模拟回退失败，不把该分支当作已验收。后端/Rust未改，沿第54节保留原范围。
+
+**浏览器**：应用ego-browser技能，在空间112运行原组件编译夹具，表格/表头/数值对齐正常，
+代码块原文、HTML文字/危险链接不执行、可聚焦区域及280px容器横向滚动通过，
+/tmp/vorto-daily-browser-evidence.json passed=true。首次420px表格正好容纳，断言错误要求
+发生溢出而失败；/tmp/vorto-daily-browser-first-check.json保留。在同一空间调整夹具容器后通过，
+不是产品修复或另起空间规避。最终关闭自有空间/回环服务器。未做截图/原生视觉验收，
+表格浏览器证据早于非法围栏最后一行修复，后者由390项合同覆盖，不扩大原浏览器范围。
+
+**构建/隔离运行**：/tmp/vorto-daily-bundle.log与首次固定安装成功，但最终围栏修复之后
+重新构建，最终/tmp/vorto-daily-final-bundle.log通过冻结Python、SDK健康、tsc/Vite、Rust和
+原Developer ID签名，未公证上传；既有chunk/voice_helpers收集警告保留。
+本轮隔离运行是安装包sidecar健康，未新做MCP/真实provider推理验收；第54节原运行包及
+oMLX一次2搜索/1读取记录保留原范围，不当作搜索相关性修复或本轮全部端侧验收。
+
+**固定交付**：原仓库安装命令改用install-app事务函数，先核验备份、核验暂存，再整包替换/核验，
+失败回退；install:built-signed复用构建签名证据，无需会话临时脚本。独立健康失败保留备份并报错，
+不声称自动回退。首次真实安装日志/tmp/vorto-daily-install.log/证据保留；最终通过仓库同一命令
+再次安装，/tmp/vorto-daily-final-install.log、/tmp/vorto-daily-final-install-evidence.json固定
+备份/var/folders/zm/skbnydt12gq5023jfjb2wf_00000gn/T/vortocode-desktop-backup-59xseL/VortoCode.app，
+app SHA256 c277350d1ad7fe8d8ea43ce888c9772848addc25bb6729f2418194db9f2590ce，
+runtime树SHA256 0c5ed420d908dde1ae15f6beeb927f8c9d739b6cd55bf3c95b68758dfa9435b0。
+已安装sidecar健康553ms通过，/tmp/vorto-daily-final-installed-signature.log签名复核通过。
+沿已有入口整理授权只重登VortoCode主入口，/tmp/vorto-daily-final-entry-evidence.json
+核验系统仅登记/Applications/VortoCode.app；未删除构建包、回退备份或其它项目文件。
+未启动/关闭/重启原生GUI，用户需要⌘Q退出旧实例再开，新关闭按钮是最小化。
+
+**未验收/发布**：原生Dock/关闭/恢复、输入法/Spaces/VoiceOver/Hook及旧失败继续保留；未正式发布。
+搜索相关性依然有偏题、完整MCP未完成、真实模型资源/提示未验收；后续只优先主链路复现阻塞。
+无自动模型检查/推进或provider权限扩展；done、验收、交接、持久交付和Goal分离。
+
+
+## 56. 可见版本与构建身份（2026-10-09）
+
+**源码/测试**：Desktop版本统一0.1.1，npm/Tauri/Cargo与对应锁文件一致。原顶栏BuildVersion
+显示版本/源码短摘要，原设置常规显示完整构建标识/本地化时间和⌘Q重开提示；设置搜索包含版本。
+Vite编译常量和build-info.json来自同一次createBuildInfo，只读取限定产品输入，根.env和用户配置
+不纳入。时间与源码摘要区分不同源码/相同源码重建，不冒充Git提交；签名证据保留同一元数据，
+构建完成复核期间未变源码，安装拒绝过期/缺版本证据。不是原子构建快照或全部动态依赖指纹。
+/tmp/vorto-version-frontend.log记录391项通过，/tmp/vorto-version-delivery.log记录7项通过：
+原6项安装合同加1项多断言生成合同（确定性、时间变更、未提交改动、根.env排除、版本失配拒绝）。
+/tmp/vorto-version-tsc.log类型检查通过，脚本语法/diff通过；没有改协议/Python/provider模型版本。
+
+**浏览器**：ego-browser空间113使用原BuildVersion编译夹具验证顶栏短信息、完整tooltip、设置详情
+及更新提示，/tmp/vorto-version-browser-evidence.json passed=true。夹具标识是
+20261009T060305580Z-ca6d3f6b；它与产品包源码摘要相同，但独立编译时间不同，不混为安装包身份。
+空间/回环服务器已关闭，无模型请求/真实会话修改，不是原生窗口或整个设置入口交互验收。
+
+**本地构建/安装**：/tmp/vorto-version-bundle.log通过冻结Python/SDK健康、tsc/Vite、Rust与
+原Developer ID签名，构建完成源码摘要一致性门通过，未公证上传；既有构建警告保留。
+产品包身份 **0.1.1 / 20261009T060241213Z-ca6d3f6b**，源码摘要
+ca6d3f6b081d2c94792f2840f0ae13a3aa31bcba17cd3b4fa651498a3bc03131。
+dist/build-info.json与签名证据buildInfo一致，实际编译JS包含同一标识，已安装Info.plist为0.1.1。
+沿用授权，通过仓库install:built-signed备份/核验/替换，/tmp/vorto-version-install.log及
+/tmp/vorto-version-install-evidence.json固定备份
+/var/folders/zm/skbnydt12gq5023jfjb2wf_00000gn/T/vortocode-desktop-backup-jYE77Z/VortoCode.app，
+app SHA256 fbb241ba6e73a8e5264c6e3239f18593f0595b192dd4dee7c635143bd14dad78，
+runtime树SHA256 1cb2d4e681e75b1e2b4917789da0fb56bcf91450081be258cb3903ceafd3fc20。
+安装包隔离sidecar健康547ms通过；/tmp/vorto-version-installed-signature.log复核通过。
+入口整理授权保持，/tmp/vorto-version-entry-evidence.json核验仅/Applications/VortoCode.app主注册，
+不删除构建/备份/其它项目文件，不自动启动、退出或重启原生GUI。
+
+**未验收/发布**：当前旧窗口不会随磁盘更新改成新版本，需要用户⌘Q重开加载。原生版本显示、
+Dock/焦点/输入法/Spaces/VoiceOver/Hook继续未验收，旧失败保留；未正式发布。
+本轮无新真实provider或MCP调用验收，既有证据保留原范围；不启用自动模型检查/推进或新权限。
+done、验收、交接、持久交付和Goal分离，继续按第55节收敛主链路。
+
+## 57. Composer与运行信息验收（2026-10-09）
+
+**源码**：原App/Composer菜单、ContextStatus/SessionInfo、Inspector信息页接入，复用原
+client、plan、activities、prompt queue和sessions；dashboard补compact_enabled投影。
+原时间线/确认卡/权限门保留。effort明确默认不可调，手动压缩未接通，没有假选择或模型参数。
+加号真实用途改为可解释菜单，`/`同菜单动作，未知命令打开菜单时不送模型，IME组合不拦截。
+刷新会话补client与最新请求代次隔离，切会话重建菜单。版本0.1.2，协议/Python版本不混同。
+
+**测试/本地构建**：394项前端、7项交付、5项dashboard合同通过；tsc通过。
+`/tmp/vorto-info-tests.log`、`/tmp/vorto-info-delivery.log`、`/tmp/vorto-info-backend.log`、
+`/tmp/vorto-info-tsc.log`。系统Python/.venv无pytest失败保留，使用既有miniforge环境完成。
+`/tmp/vorto-info-bundle.log`签名bundle成功；构建保留已有大chunk及未公证警告。
+最终buildId `20261009T062944690Z-d0986f69`，sourceFingerprint
+`d0986f69e152bff14f5a34f2521f5fbd442478b95803e05c1d24a36f10f776dc`。
+
+**真实浏览器组件操作**：ego-browser Space114已结束，原组件生产夹具验证加号菜单开关、
+`/info`键盘选择并清草稿、General不列源码引用、未知命令不发送、Shift+Enter换行、普通
+Enter发送、effort禁用。`/tmp/vorto-info-browser-evidence.json`通过；是合成快照隔离组件，
+不是已安装原生窗口。首次菜单被原composer overflow:hidden裁切，修复后通过。
+864px浏览器低于Desktop原900px最小宽度产生的页面溢出保留诊断，夹具单独覆盖最小宽度，
+不宣称改变Desktop最小窗口合同。截图Page.captureScreenshot超时；截图视觉验收未通过/未完成。
+
+**独立运行包**：`/tmp/vorto-info-package-evidence.json`/probe.log通过：签名bundle内runtime
+在独立临时目录、随机loopback端口运行，用合成模型完成一个原plan回合，再读真实sessions。
+used_tokens=2987、历史预算8000、模型窗口unknown、compact_enabled=true、will_compact=false；
+请求未带reasoning_effort。只终止探测自身进程。此项不证明真实oMLX effort、压缩执行成功或
+provider硬预算。本轮不调用真实provider，不重置其配置，不启动任何原生GUI。
+
+**安装**：沿用既有授权，先验证旧包备份，再事务替换/核验到`/Applications/VortoCode.app`；
+日志`/tmp/vorto-info-install.log`，备份
+`/var/folders/zm/skbnydt12gq5023jfjb2wf_00000gn/T/vortocode-desktop-backup-NuqaXZ/VortoCode.app`。
+安装后签名/sidecar烟测结果追加于下方；没有退出或重启正在运行的Desktop。
+
+**未验收/发布**：真实oMLX本轮能力、原生GUI/焦点/IME/Spaces/VoiceOver/Hook和截图视觉验收
+未验收；既有失败记录保留。无公证/正式发布/提交/合并/新增自动推进或provider权限。
+
+安装最终核验：sidecar smoke 549ms通过，SDK构造不调用真实模型；
+`/tmp/vorto-info-signature.log`签名核验通过，identifier=com.vorto.vortocode，Team=8UTMY2WR9H。
+`/tmp/vorto-info-installed-evidence.json`实际Info.plist版本0.1.2，注册入口仅
+`/Applications/VortoCode.app`；只撤销本次构建副本注册，不删除文件或重置其它项目注册。
+`git diff --check`通过。浏览器截图超时仍未验收，未启动/退出原生窗口，运行中的旧窗口不会
+因安装自动加载新版本；用户自行⌘Q后重开才加载v0.1.2。
+
+## 58. macOS关闭隐藏与显式恢复（2026-10-09）
+
+**源码**：当前关闭路径从minimize改hide，原prevent_close/runtime生命周期保留；应用保留
+常规Dock入口，Reopen/单实例显式show/unminimize/focus，⌘Q原Exit清理不变。
+内存MainWindowPresentation标记用户隐藏意图；原Ready/PageLoad/4秒兜底调度到UI线程并
+重核该意图，避免迟到启动事件复活窗口。hide失败清除标记并报告，防止销毁会话。
+其它平台CloseRequested仍不介入，不新增数据库、任务池、provider权限或自动推进。
+
+**测试/构建**：`/tmp/vorto-hide-rust.log`81项既有Rust合同通过，包含回环端口检查；
+这些合同不模拟macOS窗口隐藏/恢复，不能当作原生验收。git diff --check通过。
+版本配置/锁文件一致0.1.3，签名构建/安装/烟测在下方追加最终结果。
+
+**原生与发布边界**：遵照用户暂缓原生验证要求，没有启动、退出、绑定或操作任何原生窗口，
+没有聚焦/输入法/Spaces/VoiceOver/Hook验收。隐藏后Dock呈现、恢复焦点、hide失败实际表现、
+启动时关闭、后台任务继续运行及正常Quit清理仍未验收，旧失败不改记通过。
+本輪不调用真实模型，不修改oMLX服务/设置；正式发布和公证未执行。
+
+最终交付：7项交付合同通过（`/tmp/vorto-hide-delivery.log`），签名包构建成功
+（`/tmp/vorto-hide-bundle.log`）。buildId=`20261009T063603708Z-377d2837`，sourceFingerprint=
+`377d28374394da56b77d854cd4bc239458ad3afd2da94f11eb0e2e981c770ba4`。
+备份核验后安装到`/Applications/VortoCode.app`，旧包保留在
+`/var/folders/zm/skbnydt12gq5023jfjb2wf_00000gn/T/vortocode-desktop-backup-9TaQVr/VortoCode.app`。
+`/tmp/vorto-hide-install.log`安装及包内runtime smoke 551ms通过；SDK构造/健康检查无推理。
+签名核验日志`/tmp/vorto-hide-signature.log`；单入口注册凭据`/tmp/vorto-hide-installed-evidence.json`。
+签名/烟测不替代关闭与Dock原生验收，未正式发布。用户自行⌘Q退出并重开才加载新窗口行为。
+
+## 59. 上下文百分比浮层（2026-10-09）
+
+**源码**：用户截图中的28×28通用按钮规则挤压已定位；ContextStatus独立尺寸/nowrap/
+flex-shrink修复，模型标签最大宽度与footer换行。按钮仅百分比，点击body portal小浮层，
+不触发Inspector打开；信息页大段上下文收起。Esc/外部/关闭与焦点恢复、视口限制、滚动/
+resize定位和会话切换清理实现；原快照/未知/预算区分保留。无provider/台账/执行流程改动。
+
+**测试/构建**：394项前端、7项交付合同、tsc通过（`/tmp/vorto-context-tests.log`、
+`/tmp/vorto-context-delivery.log`、`/tmp/vorto-context-tsc.log`）。覆盖触发按钮仅百分比、
+无快照不为0、窗口与历史预算区分、压缩未知/关闭/待尝试，右侧不常驻token长文。
+签名构建`/tmp/vorto-context-bundle.log`通过，未公证；git diff --check通过。
+0.1.4 buildId=`20261009T064723549Z-826495d9`，sourceFingerprint=
+`826495d94a5bbb7dea5304112e043f8f653deb24e089c08ae41c32932645acd7`。
+
+**真实浏览器隔离组件**：ego-browser Space115原生产组件+原完整composer-footer结构，
+合成窗口数据0.6%，按钮量测47.9×30、不溢出。点击小浮层未打开侧栏，焦点进入浮层，Esc
+返回入口，关闭按钮/实际外部点击收起。320px输入框下百分比和发送按钮均在框内，composer
+无横向溢出，280px浮层在视口内；`/tmp/vorto-context-browser-evidence.json`通过，空间已关闭。
+首次「外部」选择的textarea中心被浮层覆盖，工具正确拦截，改用真实外部标题验证；保留记录。
+Page.captureScreenshot再次CDP超时，截图视觉验收未完成，未反复尝试或改为原生控制。
+
+**安装/隔离运行**：已有授权下备份、事务替换`/Applications/VortoCode.app`到0.1.4；
+`/tmp/vorto-context-install.log`包内runtime健康/SDK构造smoke 554ms通过，无推理。
+签名核验`/tmp/vorto-context-signature.log`，单入口/版本凭据`/tmp/vorto-context-installed-evidence.json`。
+未启动、关闭或重启当前原生窗口；旧窗口自行⌘Q后重开才加载新版本。
+
+**未验收/正式发布**：本轮真实provider未调用，原生浮层/焦点/IME/Spaces/VoiceOver/Hook、
+截图视觉验收与正式发布未验收；历史原生失败不改记通过，不启用自动检查/推进或新权限。
+
+最终签名核验通过，版本0.1.4，注册仅/Applications入口；备份保留于
+`/var/folders/zm/skbnydt12gq5023jfjb2wf_00000gn/T/vortocode-desktop-backup-R5ZO3h/VortoCode.app`。
+仅撤销本次构建副本注册，不删除无关应用或重置全局注册数据库。
+
+## 60. 日常页面内容收敛（2026-10-09）
+
+**源码与内容核对**：原App首页/导航、SessionInfo、SettingsModal、AccountPane、PluginsPage。
+运行状态优先、空区块隐藏、详情折叠；确认/断连有原入口，失败活动保留。未配置模型直接
+进入模型设置，本地模型无需登录；新对话/任务概念分开，重复工作台入口合并；版本折叠、
+插件说明缩短。新增DESKTOP_CONTENT_GUIDELINES规范，原任务/权限/生命周期边界不变。
+首页主App只做源码核对，本轮未运行完整原生App流程。
+
+**视觉审查阻塞**：Product Design审查流程preflight无保存上下文；iab返回Browser is not
+available。备用ego-browser的Page.captureScreenshot仍CDP超时，未转原生应用控制或反复尝试。
+按audit/SKILL.md「Do not claim an audit if the actual flow could not be accessed and captured.」
+完整截图审查未完成；以下DOM/操作验证不当作视觉验收。既有截图和原生失败记录保留。
+
+**源码测试与构建**：`/tmp/vorto-content-tests.log`396项前端、`/tmp/vorto-content-delivery.log`
+7项交付、tsc通过；新增合同核对空闲简洁、等待确认、失败信息优先与断连处理入口。
+`/tmp/vorto-content-bundle.log`为签名bundle记录，已有大chunk/未公证警告保留。
+buildId=`20261009T070410058Z-6f92ea69`，sourceFingerprint=
+`6f92ea6948993390de9c7f1618130bc6983e8c73311d3dba9507fca0c18b1b75`。
+
+**浏览器组件操作**：原生产组件隔离夹具、合成数据，ego-browser Space116；证据
+`/tmp/vorto-content-browser-evidence.json`。空闲不展示空步骤/活动，详情默认折叠并能打开；
+执行显示实际失败活动、确认指向原卡、断连打开连接设置。设置/插件的后续操作追加最终结果。
+不保存真实配置、登录账号、发送模型请求或替换真实provider；首页入口未以浏览器覆盖整个App。
+
+**交付边界**：版本0.1.5，签名安装/原runtime smoke和单入口证据在下方追加。
+原生UI/焦点/IME/Spaces/VoiceOver/Hook、截图视觉审查及正式发布未验收；无公证/提交/合并，
+done/验收/交接处理/持久交付/Goal仍独立，不启用自动推进或新provider权限。
+
+浏览器最终操作补充：常规页details.open=false，点击「版本与构建信息」可展开；账号页
+明确本地/第三方无需登录且链接进入原模型设置。插件页选择项目和浏览器设置按钮均到原
+回调，夹具只记录意图。versionHidden的getClientRects测量为false，未将它用于视觉断言；
+保留该测量与截图缺失边界。Space116已结束，仅组件交互通过，不声明完整视觉审查通过。
+
+最终交付：签名bundle成功、旧包备份核验后安装0.1.5，运行包smoke 546ms通过，
+`/tmp/vorto-content-install.log`记录备份
+`/var/folders/zm/skbnydt12gq5023jfjb2wf_00000gn/T/vortocode-desktop-backup-mZiJxa/VortoCode.app`。
+`/tmp/vorto-content-signature.log`签名核验通过，`/tmp/vorto-content-installed-evidence.json`
+记录实际版本0.1.5、注册仅/Applications/VortoCode.app；只撤销本次构建副本注册，
+不删除其它应用或重置全局库。git diff --check通过。未启动或退出旧原生窗口，
+用户自行⌘Q重开后加载新版；完整视觉审查与原生验收保持未完成。
+
+## 第61节：Desktop 按授权读取本机文件（2026-10-09）
+
+**源码与合同**：0.1.6沿用files领域、build_session、原gate/trust/deny/审计；
+Desktop可读取完整路径的单个普通UTF-8文本，固定64KiB，不改项目读写围栏。
+审批版本检查、敏感原/规范路径、目录/管道/二进制拒绝、取消传播、串行确认、
+General profile与HTTP边界及客户端迟到请求隔离已实现。一次批准不保存目录授权。
+合同见DESKTOP_FILE_ACCESS.md、PRD第61节；任务生命周期/provider自动化边界保持。
+
+**测试**：121项合同测试通过（authorized_local_files/general_workspace_session/workspace_scope/
+trust_setting/three_end_contract/repo_files_scope/trust_levels）；39项协议/MCP/General回归通过，
+两组存在重叠，不把合计称为独立用例数。前端397项、交付7项通过，tsc --noEmit与
+独立QA构建通过。源码git diff --check通过。Starlette/httpx弃用警告保留，不影响通过。
+
+**浏览器**：ego-browser Space117使用原SettingsModal/trustCard及原useTrustLevel夹具。
+General只读选项可切换，完全信任禁用，明确项目外文本与跨目录写/执行不包含；
+A工作区待保存切到B后，旧GET/PUT返回仍显示B/ask/非busy，未发旧成功横幅。
+`/tmp/vorto-file-browser-evidence.json`保存交互证据；夹具不保存真实配置。
+Space117结束，自己的18789静态QA服务停止。仅组件/请求隔离验证，不宣称完整App或视觉审核。
+
+**独立运行包**：`desktop/qa/local-file-package-probe.py`启动本轮签名包Gateway、临时General
+目录、独立合成模型与工作区外测试文件。真实WS原agent_confirm/response路径：拒绝不返回
+内容，允许一次读取且档位仍ask，PUT reads后新回合0次确认读取；原审计有读取记录，
+General ceiling仍reads，模型请求无reasoning_effort。全部通过。自己创建的runtime/model
+探针结束；未访问真实模型凭据或其它会话。证据`/tmp/vorto-file-package-evidence.json`、
+日志`/tmp/vorto-file-package-probe.log`，合成模型不能代表oMLX实际模型遵守新工具合同。
+
+**本地构建/安装**：Developer ID签名包0.1.6构建成功；buildId
+`20261009T072417143Z-f4415e10`，sourceFingerprint
+`f4415e1055de5ab871515f6e2cf57343c64b11de614d75f938b2533fe7dc68a9`。
+原事务安装先核验备份与候选再替换/核验，安装到`/Applications/VortoCode.app`，Plist版本0.1.6；
+备份`/var/folders/zm/skbnydt12gq5023jfjb2wf_00000gn/T/vortocode-desktop-backup-xPEETZ/VortoCode.app`。
+已安装runtime smoke 549ms通过（SDK/健康，无推理），签名核验通过。日志
+`/tmp/vorto-file-bundle.log`、`/tmp/vorto-file-install.log`、`/tmp/vorto-file-signature.log`。
+
+**未验收/未发布**：真实oMLX的新工具选择/审批用户流、原生GUI/焦点/IME/Spaces/VoiceOver/
+Hook未验收，旧失败记录保留。未启动/退出现有窗口，用户自行⌘Q重开后加载新代码。
+未公证、提交、合并或正式发布；不存在跨目录写/执行、敏感批准、目录grant或自动推进。
+下一步可独立完善按目录/期限/撤销的只读grant合同，之后再单独设计跨目录写入，不用提高
+档位隐式开放全文件系统。
+
+## 第62节：确认卡升档与监管（2026-10-09）
+
+**源码**：确认卡复用原trust设置/请求隔离，可保存更高且不超过上限的档位，不代答本次审批；
+保存失败保留档位，断连/保存中禁用。Desktop监督由可信原装配实施：effective最高reads，
+历史FULL不删除但降档，auto_approve不越过；原文件工具已识别敏感参数硬拒绝，shell含只读
+仍EXECUTE；原危险规则/deny/沙箱保持。CLI/普通Web合同不改，不启用新provider/自动模型检查。
+
+**测试/本地构建**：118项相关Python合同通过，覆盖旧FULL/auto_approve不能免写/执行/外发、
+无人值守拒绝、敏感文件read/write硬拒绝及内容保持、危险命令批准不可绕过、只读shell仍需
+确认及原三端门。前端400项、交付7项通过，tsc与独立QA构建通过，git diff --check通过。
+原Starlette/httpx弃用警告仍在。第一次构建期间补充监管代码，原构建摘要拒绝该候选，未安装；
+冻结源码后重建成功，正确保留构建与源码一致性门，不把旧候选当新实现验收。
+
+**浏览器**：ego-browser Space118使用原ConfirmationTrust/useTrustLevel夹具。保存失败
+显示测试错误且ask/未批准；再次保存成功为reads，确认仍未批准；点击允许一次才批准。
+最高档不再显示升档按钮，卡说明写/执行/外发仍审批。证据
+`/tmp/vorto-supervision-browser-evidence.json`，不保存真实档位；Space118已结束、
+自己的18789 QA服务停止。组件交互而非完整原生流程/视觉审核。
+
+**独立运行包**：`desktop/qa/supervision-package-probe.py`使用独立Project运行包Gateway、
+合成模型和临时文件。原WS/HTTP链路5条用例通过：拒绝读取、一次允许、预授权读，旧FULL
+实际reads下拒绝写文件仍不存在，逐次人工允许才创建。审计存在，profile仍local、levels
+仅ask/reads、supervised=true；模型未发送effort。证据
+`/tmp/vorto-supervision-package-evidence.json`，日志`/tmp/vorto-supervision-package.log`。
+自己创建的模型/runtime结束。未调用真实oMLX，不将合成结果当作真实模型验收。
+
+**签名构建**：0.1.7，buildId `20261009T074018992Z-01443ae9`，sourceFingerprint
+`01443ae9e2640de3bab8ae3896658eca2a07ca945e363cf43684f6ecb9a74074`，Developer ID签名成功，
+日志`/tmp/vorto-supervision-bundle.log`。安装与已安装包核验追加在下方。
+
+**剩余边界**：不是识别所有危险的证明；任意脚本、第三方工具隐含副作用、普通文本中的
+未被路径识别秘密不由此有限规则全面分类；原被批准的隔离任务内部仍按原范围执行。
+新监管的真实oMLX用户流程/原生GUI/IME/Spaces/VoiceOver/Hook未验收，旧失败保留。
+未公证、正式发布、提交或合并，未启动/退出当前窗口；done/验收/交接/交付/Goal分离。
+
+最终安装：旧包备份核验位置
+`/var/folders/zm/skbnydt12gq5023jfjb2wf_00000gn/T/vortocode-desktop-backup-mkc2ZR/VortoCode.app`。
+事务安装至/Applications/VortoCode.app，Plist版本0.1.7，已安装sidecar smoke 552ms通过
+（SDK/健康无推理），签名核验通过，构建摘要与最终源码一致。日志
+`/tmp/vorto-supervision-install.log`、`/tmp/vorto-supervision-signature.log`。
+只取消本轮构建副本注册并刷新主目录入口，不删除应用或重置库。未重启当前窗口，
+用户自行⌘Q重开加载新版；真实模型、原生与正式发布边界保持未完成。
+
+## 第63节：空白会话记录收敛（2026-10-09）
+
+**源码**：原session_store内容判定复用到Dashboard；新纯空save返回True表示无需写盘，
+不创建对话JSON，不删除既有文件。Dashboard只隐藏无内容/无运行/确认/任务的条目，
+计划/历史/活动/队列/显式名称仍保存显示。Desktop空白页复用sid，新建连接互斥防重复点击。
+原生命周期/TaskLedger/监管/provider边界不变，没有批量删历史或另建会话表。
+
+**测试与本地构建**：第一组63项存储/WS/容量/Dashboard/actor通过，后续会话/事件/恢复73项
+通过（有重叠，不累加为独立用例）。验证空live首次消息显现、旧空JSON隐藏但原文不删、
+显式名称和队列保留、后台任务零消息仍显示、纯空保存no-op、容量与活动保护不退化。
+原context_snapshot测试改为真实用户消息后检查上下文持久化，新增无内容测试明确新合同。
+前端400项、交付7项通过；tsc与git diff --check通过，Starlette/httpx弃用警告保留。
+
+**剩余边界**：原生Desktop点击/焦点/IME/Spaces/VoiceOver/Hook未验收，不启动/退出窗口。
+本轮浏览器完整App点击未独立验收；独立运行包WS/REST与存储结果追加下方，不能推广为
+原生或真实oMLX模型验收。未正式发布、公证、提交或合并；旧失败与历史资料保留。
+
+独立运行包结果：`desktop/qa/draft-package-probe.py`用本轮签名General Gateway真实WS/REST
+连续连接55个新sid，覆盖50个会话容量的淘汰：recent_before_send=0、empty_files=0。
+随后合成模型3个用户回合，最近列表恰好含file-deny/file-once/file-preapproved，拒绝审批
+也保留已发送消息；旧只读审批/审计合同继续通过。证据`/tmp/vorto-draft-package-evidence.json`，
+日志`/tmp/vorto-draft-package.log`。临时目录
+`/var/folders/zm/skbnydt12gq5023jfjb2wf_00000gn/T/vorto-file-package-p4fq1z_n`，
+仅自己的runtime/model已结束，不访问真实provider或其它会话。
+
+签名构建0.1.8成功，buildId `20261009T075711091Z-9993a681`，sourceFingerprint
+`9993a68133d23b5551fe69b8674e80065763170baaba632f0b26b5ad93d0a288`；日志
+`/tmp/vorto-draft-bundle.log`。安装结果追加下方。运行包协议客户端通过不等同Desktop原生
+点击/浏览器完整App验收；真实oMLX未验收，正式发布未完成。
+
+最终安装：旧包备份核验在
+`/var/folders/zm/skbnydt12gq5023jfjb2wf_00000gn/T/vortocode-desktop-backup-QqQ0fx/VortoCode.app`。
+事务安装/核验/回退合同保持，/Applications版本0.1.8，已安装sidecar smoke 549ms通过
+（SDK/健康，不推理），签名核验通过；日志`/tmp/vorto-draft-install.log`、
+`/tmp/vorto-draft-signature.log`。只撤销本轮构建副本注册并刷新主入口。
+最终源码与构建摘要匹配，git diff --check通过，未重启当前窗口；用户⌘Q重开加载新版。
+
+## 第64节：当前执行工作台与审批回执恢复（2026-10-09）
+
+**源码**：工作台主导航收为当前执行/看板/更多，次级页原入口保留。发送时遵循原焦点规则，
+已有其他页只提示不抢焦点。聊天计划缩为查看入口，当前执行显示原plan步骤/完成数、当前running
+工具、owner_session精确匹配的原任务快照、执行者与轮次；开发任务定位原TaskCard再展开依赖图。
+没有plan显示未提供，不制造百分比/拓扑。父任务不作为依赖断言；done与验收/交接/Goal分别记录。
+新增WorkbenchNav与ConfirmationReply从原App拆出，业务沿用原clientRef/TaskFeed/确认Future。
+
+审批提交成功仅awaiting，失败保留卡并锁定重复答复；closed或手动核对不再等待才收起。
+check只读、所属会话隔离；id/nonce/client/sid守卫迟到响应，8秒无回执保留未知。核对仍pending
+明确回到人工答复，不自动重发。待处理列表去所属会话原确认卡，不从第二入口盲目批准。
+
+**测试**：Python协议冻结/WS会话/三端/本机文件授权/授权档位131通过（原Starlette弃用警告1）；
+Desktop Vitest 412通过，TypeScript通过，交付测试7通过。覆盖提交未闭卡、双击去重、失败
+保留、显式重试、receipt先到、换client/sid/id迟到隔离、计划缺失和生命周期独立，以及只读check
+owner/跨会话/已答复/未知ID不解开Future。git diff --check通过。
+日志：`/tmp/vorto-workbench-{frontend,python,delivery}.log`。
+
+**真实浏览器、隔离组件**：Ego Space119在回环静态生产构建中操作原WorkbenchNav/SessionInfo/
+ConfirmationReply与controller。计划1/3、进行中工具、reviewer第2轮、编排入口回调正常；无计划
+提示正常。审批合成发送异常仍保留卡，DOM两答复按钮disabled；核对后人工拒绝发送次数1→2，
+运行端关闭回执夹具收卡；更多→预览后菜单关闭，返回当前执行正常。完成后space与静态服务器
+已关闭。夹具数据为合成快照，未连接真实模型/台账；编排入口只验定位回调，未进行完整App中的
+真实开发DAG互动。无截图视觉审查证据，不等同原生Desktop布局验收。
+
+**独立运行包**：`desktop/qa/workbench-package-probe.py`使用签名包Gateway、独立临时目录与合成
+OpenAI兼容模型，经真实WS/REST得到agent_plan的in_progress/pending。拒绝/一次批准/reads预授权
+三种本机文件链路通过；前两种check pending=true、不改变Future，其他会话check=false；答复后
+closed和check=false正常，审计保留。不发送effort、不接真实oMLX、无GUI，子进程finally清理。
+证据`/tmp/vorto-workbench-package-evidence.json`及日志`/tmp/vorto-workbench-package.log`。
+首次探针误用固定工具调用ID，而原客户端重建ID，合成模型提前结束造成等待核对超时；修正为
+依据实际tool_calls工具名后通过。失败证据`/tmp/vorto-workbench-package-first-failure.json`保留，
+未把这次失败写为产品或原生通过。
+
+**交付**：最终构建/安装身份及核验结果见下方追加记录。原生GUI/真实provider推理与真实开发
+下派DAG仍未验收；此前原生失败/待验记录不改。未公证、未正式发布，未启用自动检查/推进。
+下一阶段按第64节：会话输入草稿切换保护和明确人工触发的本地模型推理/工具诊断。
+
+最终签名包0.1.9，buildId `20261009T082441538Z-8f14e5e3`，sourceFingerprint
+`8f14e5e398bee1aad4ac30ae7a68539c670537060305115a985f243126892013`，最终源码摘要核对一致。最终独立运行包探针再次通过。
+本地事务安装到`/Applications/VortoCode.app`，已核验备份`/var/folders/zm/skbnydt12gq5023jfjb2wf_00000gn/T/vortocode-desktop-backup-MwUZfT/VortoCode.app`；
+安装后runtime smoke 549ms通过（SDK/健康无推理），签名核验通过。构建/安装/签名日志
+`/tmp/vorto-workbench-{bundle,install,signature}.log`。仅取消仓库构建副本的LaunchServices注册
+并刷新Applications主入口，没有全局重置、GUI启动/退出或其它项目进程清理。
+当前正在运行的旧GUI未重启，用户需自行⌘Q后重开加载本轮版本；正式发布仍未进行。
+
+## 第65节：纠正看板与会话混层（2026-10-09）
+
+第64节导航经用户反馈不合适，原验证证据保留但该导航被本节取代。源码0.1.10：左侧任务中心
+在主区域承载看板/任务/目标/待处理；管理路由统一由isManagementTab定义，原面板和客户端复用。
+会话侧栏移除四类管理入口、下派列表/编排图及全局计数，顶部固定当前执行；保留本轮plan/tool/
+确认/队列及折叠会话详情，辅助项目工具仍在更多。管理页后台变化仅提示，不抢主区域焦点。
+看板原工作区切换保持任务中心；打开会话转对话/确认卡，失败不伪装成功导航。
+
+前端414项通过，TypeScript通过，交付7项通过；测试包括管理/会话路由分类、导航无管理泄漏、
+SessionInfo无下派/Goal/图，原审批故障恢复测试继续通过。无后端合同改动，Python验收沿用第64节，
+本轮没有再次声称新的后端测试结果。日志`/tmp/vorto-management-{frontend,delivery}.log`。
+
+真实浏览器Ego Space120操作原ManagementNav/WorkbenchNav/SessionInfo的生产构建隔离夹具：
+管理导航为看板/任务/目标/待处理，会话导航无上述按钮；当前执行步骤1/3、工具显示、无下派列表、
+无计划提示通过。Space和仅本轮静态服务器已关闭。此证据是原组件与合成数据，非完整App的
+跨runtime导航或原生布局验收，未获取视觉截图。审批/provider/自动推进无新增授权。
+
+首次构建期间最终入口检查补去旧默认跳转/全局计数，摘要保护拒绝该候选，未安装。
+记录`/tmp/vorto-management-build-source-drift.log`保留；最终冻结源码重建，最终身份追加如下。
+原生GUI、真实provider与完整跨会话管理点击仍未验收；以前失败记录不改，正式发布未进行。
+
+最终构建0.1.10，buildId `20261009T083754863Z-9501b883`，sourceFingerprint
+`9501b8830a8752ce37a2e213507a8d1cf0d2fa2064fd52fb267b780ba5f983b0`，摘要与最终源码一致，签名通过。
+独立签名运行包以原第64节探针复测三类文件读/计划事件/确认前后只读核对及跨会话隔离通过，
+证据`/tmp/vorto-management-package-evidence.json`；不证明新的跨runtime页面导航/原生UI。
+已备份`/var/folders/zm/skbnydt12gq5023jfjb2wf_00000gn/T/vortocode-desktop-backup-uEZpYo/VortoCode.app`，事务安装到`/Applications/VortoCode.app`；
+安装后runtime smoke 551ms（SDK/健康无推理）及签名核验通过。日志
+`/tmp/vorto-management-{bundle,install,signature,package}.log`。仅注销仓库构建副本的注册并
+刷新Applications主入口，无GUI启动/退出，无其它项目进程清理，无正式发布。
+下一阶段需专门复核看板跨会话panel定位：旧代码的client守卫在主动切sid重建client时
+可能中止定位；本轮未把完整App的这一路径验为通过，需独立复现/合同测试。
+
+## 66. 执行过程与最终输出分层（2026-10-10，源码 0.1.11）
+
+用户确认朴素风格、无对话头像、工作区域选择在输入框上方，并授权继续实施：运行时
+展示过程，最终输出后缩略；当前计划/任务步骤在侧栏。修改复用原 TurnTimeline、
+SessionInfo、ProjectPicker 与 App 原消息/rid，不新增领域库或执行池。
+
+自动折叠必须是相同 rid 有非空 assistant 结果且该回合非 active。只有工具完成或 busy
+停止不能证明已交付；无结果、仍有 running、failed/blocked/cancelled/timed_out 保持展开。
+收起后可人工展开原记录；手动收起异常仍在摘要保留“需要关注”。执行耗时仍是原 phase
+累计时长，非新增墙钟或费用计量。模型思考只使用原公开活动标签，不生成内部推理。
+
+发送消息不再自动开 info；已有打开状态保持。SessionInfo 投影原结构化计划与异常，
+不重复普通工具过程；无计划不创建计划区。工作区域选择器移到输入框上方，已有会话
+也可见；运行、确认、切换、启动期间禁用，仍走原切换入口。对话原本使用文字署名，
+没有聊天头像，未新增图像头像；完整浅色视觉重绘尚未实现，主题设置保持。
+
+前端合同包含停止无结果、有结果后收起、运行与异常不得折叠；真实浏览器 Ego Space122
+操作原组件合成夹具，最终输出 open=false/list=false，人工展开工具历史成功，新回合
+open=true，无输出停止 open=true，失败 open=true/需要关注=true。截图
+`/tmp/vorto-process-browser.png`、`/tmp/vorto-process-output-browser.png`。此为组件交互证据，
+不是完整 App/真实 provider 或原生界面验收；不以截图宣称与设计稿一致。独立回环端口
+43987、浏览器验证页已关闭；4318 已被占用，未处理该进程。
+
+设计稿 `exec-e5bb6e77-65bd-4b9e-830f-0217f1353d76.png` 已生成并在 Preview 打开。
+设计图中模型与工具结论为示例，不作为实际模型连接证据。本轮未替换已安装 0.1.10，
+未进行签名运行包、真实 provider、原生 GUI 或正式发布。旧原生失败/未验收记录保留。
+最终前端测试、构建、交付脚本测试日志分别为 `/tmp/vorto-process-{tests,build,delivery}.log`。
+
+## 67. 日常页面整体布局（2026-10-10，0.1.12）
+
+承接第66节，用户授权继续朴素风格。新增 `desktop/src/daily.css`，App 在原 App.css 后
+加载，保留原主题偏好；新对话与任务中心是主要导航，插件/产物入口在更多中。新对话
+取消装饰标识和渐变，标题“开始一项工作”；正文15px，标题22px，模型/权限13px，
+输入框取消重阴影；原组件与权限/任务领域状态不改。任务步骤是当前会话入口名称。
+1024px 窗口侧栏为覆盖层，保留关闭入口；管理页仍在主区域，不进入侧栏。
+
+前端416项、交付脚本7项通过。构建通过，保留原 Monaco 大块警告，没有声称包体优化。
+浏览器 Ego Space123 验证原组件/产品CSS的布局夹具 `qa/daily.html`：空白/执行/结果、
+浅/深色、侧栏关闭/打开、上下文弹层、工作区域选择/退出、输入合成任务通过。
+1024x768 下 scrollWidth=1024，composer宽756，侧栏 position=absolute；上下文与工作
+区域菜单边界在视口内。原CSS固定Markdown标题色和11px高优先级模型样式复核后已改。
+Runtime/Log开启后的观察轮次无 exceptionThrown/entryAdded；不声称扫描所有历史日志。
+截图 `/tmp/vorto-daily-{empty,working,final,dark,narrow}.png` 已查看，前三张已在Preview打开。
+
+夹具不是完整App、真实客户端会话恢复或原生窗口。完整设计一致性报告 `design-qa.md`
+保持 blocked；并非组件检查失败，而是完整App视觉证据缺失。原生已明确暂缓，不等待
+解锁、不启动GUI。第65节跨会话定位及第66节真实rid/恢复折叠仍独立待验收。
+仅关闭Space123及本轮回环43987服务器，没有处理其它端口、桌面端或协调会话。
+
+本地签名0.1.12构建：buildId `20261010T075127306Z-beea833a`，sourceFingerprint
+`beea833aa2a222d1dfb35dd8f9ecb87e87de3aea12f4237256205b4ebc5d3677` 与冻结源码核对一致。
+独立运行包复用 workbench-package-probe：合成provider、本地临时工作区、文件拒绝/
+单次批准/授权档位、计划事件、确认前后只读核对和跨会话隔离通过。
+证据 `/tmp/vorto-daily-package-evidence.json`，real_provider=false；这不是GUI布局验收。
+
+已核验备份 `/var/folders/zm/skbnydt12gq5023jfjb2wf_00000gn/T/vortocode-desktop-backup-MH6mZr/VortoCode.app`
+并事务安装 `/Applications/VortoCode.app`；安装后runtime smoke550ms，SDK/健康无推理。
+本轮没有退出/启动原生应用，旧进程是否加载新文件未当作验收，用户自行退出重开。
+签名、公证、真实provider、原生GUI、正式发布分别报告：签名按最终日志核验，未公证、
+未调用真实provider、原生暂缓、无正式发布。既有失败断言与历史未验收记录保留。
+日志 `/tmp/vorto-daily-{tests,delivery,build,bundle,package,install,signature}.log`。
+
+第67节最终核验：安装签名核验通过，bundle identifier/Developer ID指定要求一致；最终源码
+摘要仍匹配0.1.12构建。相关diff无空白错误。真实provider、原生GUI、公证/正式发布未验收。

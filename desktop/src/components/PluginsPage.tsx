@@ -9,27 +9,29 @@ type Props = {
   activeScope: WorkspaceScope;
   projectName: string;
   inspector: ReactNode;
+  mcpConnection?: ReactNode;
   onChooseProject: () => void;
   onOpenBrowserSettings: () => void;
 };
 
-export function PluginsPage({ activeScope, projectName, inspector, onChooseProject, onOpenBrowserSettings }: Props) {
+export function PluginsPage({ activeScope, projectName, inspector, mcpConnection, onChooseProject, onOpenBrowserSettings }: Props) {
   return (
     <section className="main-page">
       <header className="main-page-head">
         <div>
           <h1>插件</h1>
-          <p>扩展 Agent 能做的事：项目里的技能、MCP 服务、Hook 和规则，以及内置的浏览器操控。</p>
+          <p>管理工具连接与项目扩展。</p>
         </div>
       </header>
 
       <div className="plugin-builtins">
         <button onClick={onOpenBrowserSettings}>
           <Globe size={18} />
-          <span><strong>浏览器操控</strong><small>在独立浏览器里打开网页、读取和截图，点击和输入逐次确认</small></span>
+          <span><strong>浏览器操控</strong><small>打开网页、读取内容并操作页面</small></span>
         </button>
       </div>
 
+      {mcpConnection}
       {activeScope === "project" ? (
         <div className="plugin-project">
           <h2>{projectName || "当前项目"} 的扩展</h2>
@@ -38,8 +40,8 @@ export function PluginsPage({ activeScope, projectName, inspector, onChooseProje
       ) : (
         <div className="main-page-empty">
           <Puzzle size={22} />
-          <strong>技能、MCP 和 Hook 跟着项目加载</strong>
-          <p>选择一个 Git 项目后，这里会列出它带来的扩展和它们的安全状态。</p>
+          <strong>还未选择项目</strong>
+          <p>打开项目后，这里会显示它的技能与规则。</p>
           <button onClick={onChooseProject}>选择项目</button>
         </div>
       )}

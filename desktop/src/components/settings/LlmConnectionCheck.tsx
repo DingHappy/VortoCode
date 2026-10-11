@@ -1,9 +1,8 @@
 // 模型设置里的「测试连接」：只验证不保存；成功时回传服务的模型列表给模型名做候选。
 import { invoke } from "@tauri-apps/api/core";
-import { useState } from "react";
-
-import { errorText } from "../../lib/errorText";
-import type { LlmConnectionTest } from "../../types";
+import { useLayoutEffect, useRef, useState } from "react";
+import { createConnectionCheck, sameConnectionDraft } from "../../lib/llmConnectionCheck";
+import type { ConnectionCheckState } from "../../lib/llmConnectionCheck";
 
 type Props = {
   baseUrl: string;
@@ -13,30 +12,38 @@ type Props = {
 };
 
 export function LlmConnectionCheck({ baseUrl, apiKey, model, onModels }: Props) {
-  const [result, setResult] = useState<LlmConnectionTest | null>(null);
-  const [error, setError] = useState("");
-  const [testing, setTesting] = useState(false);
-
-  const test = async () => {
-    setTesting(true);
-    setError("");
-    setResult(null);
-    try {
-      const outcome = await invoke<LlmConnectionTest>("test_llm_connection", { baseUrl, apiKey, model });
-      setResult(outcome);
-      if (outcome.models.length) onModels(outcome.models);
-    } catch (failure) {
-      setError(errorText(failure, "测试连接失败"));
-    } finally {
-      setTesting(false);
-    }
-  };
+  const draft = { baseUrl, apiKey, model };
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const modelsRef = useRef(onModels);
+  modelsRef.current = onModels;
+  const [state, setState] = useState<ConnectionCheckState | null>(null);
+  const checkRef = useRef<ReturnType<typeof createConnectionCheck> | null>(null);
+  if (!checkRef.current) checkRef.current = createConnectionCheck(
+    () => draftRef.current,
+    (value) => invoke("test_llm_connection", value),
+    setState,
+    (values) => modelsRef.current(values),
+  );
+  useLayoutEffect(() => {
+    checkRef.current!.reset();
+    setState(null);
+    return () => checkRef.current!.reset();
+  }, [baseUrl, apiKey, model]);
+  useLayoutEffect(() => {
+    modelsRef.current([]);
+  }, [baseUrl, apiKey]);
+  const active = state && sameConnectionDraft(state.draft, draft) ? state : null;
+  const result = active?.result;
+  const error = active?.error || "";
+  const testing = active?.testing || false;
 
   const tone = error || (result && !result.ok) ? "danger" : result ? "ok" : "";
   return (
     <div className="llm-connection-check">
-      <button onClick={() => void test()} disabled={testing || !baseUrl.trim()}>{testing ? "测试中…" : "测试连接"}</button>
-      {(error || result) && <span className={`llm-connection-result ${tone}`}>{error || result?.message}</span>}
+      <button onClick={() => void checkRef.current!.test()} disabled={testing || !baseUrl.trim()}>{testing ? "获取中…" : "获取模型列表"}</button>
+      {(error || result) && <span role="status" className={`llm-connection-result ${tone}`}>{error || result?.message}</span>}
+      <small>仅查询模型列表，不保存配置；推理与工具调用需另行验证。</small>
     </div>
   );
 }

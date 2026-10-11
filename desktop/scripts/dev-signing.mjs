@@ -6,7 +6,6 @@ import {
   mkdtempSync,
   mkdirSync,
   readFileSync,
-  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -15,6 +14,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { RUNTIME_DIR_NAME, machOFiles, runtimeExecutableName, sha256Tree } from "./runtime-tree.mjs";
+import { installApp } from "./install-app.mjs";
+import { createBuildInfo } from "./build-info.mjs";
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const tauriRoot = join(desktopRoot, "src-tauri");
@@ -360,11 +361,18 @@ function previousEvidence() {
 }
 
 function writeEvidence(identity, signature) {
+  const buildInfo = JSON.parse(readFileSync(join(desktopRoot, "dist", "build-info.json"), "utf8"));
+  const current = createBuildInfo(desktopRoot, new Date(buildInfo.builtAt));
+  if (buildInfo.version !== tauriConfig.version || buildInfo.sourceFingerprint !== current.sourceFingerprint
+    || buildInfo.buildId !== current.buildId) {
+    throw new Error("Product sources changed during the build; rebuild before recording delivery evidence");
+  }
   mkdirSync(dirname(evidencePath), { recursive: true });
   writeFileSync(evidencePath, `${JSON.stringify({
     formatVersion: 1,
     generatedAt: new Date().toISOString(),
     identity,
+    buildInfo,
     product: {
       identifier: tauriConfig.identifier,
       name: tauriConfig.productName,
@@ -411,19 +419,24 @@ function buildSigned() {
 }
 
 function installSigned() {
-  const signature = buildSigned();
-  // ditto 会把新包**合并**进已有目录，旧版留下的文件（例如 one-file 时代的
-  // Contents/MacOS/vortocode-runtime）会破坏签名封装。先复制到同卷的临时位置，再整体替换。
-  const staging = `${installedAppPath}.installing-${process.pid}`;
-  rmSync(staging, { recursive: true, force: true });
-  required("ditto", [appPath, staging], { stdio: "inherit" });
-  rmSync(installedAppPath, { recursive: true, force: true });
-  renameSync(staging, installedAppPath);
-  const installed = signatureDetails(installedAppPath);
-  assertStableRequirement(signature, installed, "Installed application");
-  if (signature.appSha256 !== installed.appSha256 || signature.sidecarSha256 !== installed.sidecarSha256) {
-    throw new Error("Installed application does not match the signed build output");
+  buildSigned();
+  installBuiltSigned();
+}
+
+function installBuiltSigned() {
+  const evidence = previousEvidence();
+  if (!evidence?.signature) throw new Error("Build/signing evidence missing; run bundle:dev-signed first");
+  if (evidence.product?.version !== tauriConfig.version || evidence.buildInfo?.version !== tauriConfig.version) {
+    throw new Error("Build version evidence is missing or outdated; rebuild before installing");
   }
+  const built = signatureDetails(appPath);
+  assertStableRequirement(evidence.signature, built, "Built application");
+  if (built.appSha256 !== evidence.signature.appSha256 || built.sidecarSha256 !== evidence.signature.sidecarSha256) {
+    throw new Error("Built app no longer matches signing evidence; rebuild before installing");
+  }
+  const { backup } = installApp({ source: appPath, target: installedAppPath, inspect: signatureDetails,
+    copy: (source, target) => required("ditto", [source, target], { stdio: "inherit" }) });
+  console.log(`Verified backup: ${backup ?? "first install"}`);
   required("npm", ["run", "sidecar:smoke"], {
     env: {
       ...process.env,
@@ -449,6 +462,7 @@ try {
   else if (action === "build") buildSigned();
   else if (action === "install") installSigned();
   else if (action === "verify") verifyInstalled();
+  else if (action === "install-built") installBuiltSigned();
   else throw new Error(`Unknown action: ${action}`);
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));

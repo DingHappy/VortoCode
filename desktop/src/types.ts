@@ -4,6 +4,9 @@ export type WorkspaceScope = "general" | "scratch" | "project";
 export interface ConnectionSettings {
   baseUrl: string;
   token: string;
+  /** Registered native remote workspace; credentials stay in Keychain. */
+  remoteProjectId?: string;
+  expectedWorkdir?: string;
 }
 
 export interface RuntimeSnapshot {
@@ -48,6 +51,8 @@ export interface ProtocolEvent {
   tainted?: boolean;
   scope?: WorkspaceScope;
   reason?: string;
+  nonce?: string;
+  pending?: boolean;
   task?: string;
   items?: unknown[];
   running?: PromptQueueItem;
@@ -112,6 +117,7 @@ export interface SessionContextUsage {
   history_messages: number;
   policy: string;
   will_compact: boolean;
+  compact_enabled?: boolean | null;
 }
 
 export interface SessionBackgroundTasks {
@@ -709,7 +715,22 @@ export interface RuntimeInboxGoal {
   progress: GoalItem["progress"];
 }
 
+export interface TaskLifecycleSummary {
+  version: 1;
+  execution: string;
+  kind: string;
+  review: "unknown" | "not_applicable" | "not_submitted" | "pending" | "accepted" | "rework_requested";
+  handling: "unknown" | "not_applicable" | "pending" | "handled";
+  validity: "unknown" | "not_applicable" | "valid" | "invalid";
+  round: number | null;
+  revision: string;
+  column: "queued" | "working" | "attention" | "completed" | "history";
+  label: string;
+  recovered_by: string;
+}
+
 export interface RuntimeInboxTask {
+  lifecycle?: TaskLifecycleSummary | null;
   id: string;
   status: string;
   prompt: string;
@@ -874,6 +895,8 @@ export interface JournalContinuation {
 }
 
 export interface PendingConfirmation {
+  responseState?: import("./lib/confirm").ConfirmationReplyState;
+  responseError?: string;
   id: string;
   text: string;
   tainted: boolean;
@@ -1348,6 +1371,8 @@ export interface OpenWorkspaceFileResult {
 export type TrustLevel = "ask" | "reads" | "full";
 
 export type TrustStatus = {
+  local_file_reads?: boolean;
+  supervised?: boolean;
   level: TrustLevel;
   effective: TrustLevel;
   ceiling: TrustLevel;
@@ -1369,3 +1394,11 @@ export type DesktopRuntimeInbox = {
   error: string;
   checkedAt: number;
 };
+
+export interface McpConnectionSnapshot {
+  status: "blocked" | "disconnected" | "connecting" | "connected" | "partial" | "error";
+  detail: string;
+  tool_count: number;
+  observed_at: string | null;
+  profile: string;
+}

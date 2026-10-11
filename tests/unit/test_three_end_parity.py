@@ -162,7 +162,7 @@ def test_contract_E_all_shells_delegate_to_gateway_factory(monkeypatch, tmp_path
     _cli_agent(tmp_path)
     _web_agent()
     from src.im.bridge import IMBridge
-    stub = SimpleNamespace(repo_root=str(tmp_path), _llm=None,
+    stub = SimpleNamespace(workspace_scope="project", repo_root=str(tmp_path), _llm=None,
                            _confirm_holder={"fn": None}, _progress_holder={"fn": None},
                            _restore_session=lambda agent: None)
     IMBridge._build_agent(stub)
@@ -176,7 +176,7 @@ def test_contract_E_im_toolset_equals_cli(monkeypatch, tmp_path):
 
     from src.im.bridge import IMBridge
     monkeypatch.chdir(tmp_path)
-    stub = SimpleNamespace(repo_root=str(tmp_path), _llm=None,
+    stub = SimpleNamespace(workspace_scope="project", repo_root=str(tmp_path), _llm=None,
                            _confirm_holder={"fn": None}, _progress_holder={"fn": None},
                            _restore_session=lambda agent: None)
     im = _names(IMBridge._build_agent(stub))

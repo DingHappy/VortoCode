@@ -1,12 +1,18 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { fileURLToPath } from "node:url";
+import { createBuildInfo } from "./scripts/build-info.mjs";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
+const buildInfo = createBuildInfo(fileURLToPath(new URL(".", import.meta.url)));
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [react()],
+  define: { __DESKTOP_BUILD_INFO__: JSON.stringify(buildInfo) },
+  plugins: [react(), { name: "desktop-build-info", generateBundle() {
+    this.emitFile({ type: "asset", fileName: "build-info.json", source: JSON.stringify(buildInfo, null, 2) });
+  } }],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

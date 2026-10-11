@@ -82,7 +82,9 @@ def http_workspace_requirement(path: str, scope: str | None = None) -> str | Non
     if active != GENERAL:
         return None
     normalized = "/" + str(path or "").lstrip("/")
-    if normalized in ("/", "/agent", "/ws"):
+    if normalized == "/api/trust" and os.getenv("VORTOCODE_DESKTOP_SIDECAR") == "1":
+        return None  # Desktop General can select read approval without gaining a project.
+    if normalized in ("/", "/agent", "/ws", "/api/extensions/mcp", "/api/extensions/mcp/connect"):
         return None
     if any(normalized == prefix.rstrip("/") or normalized.startswith(prefix)
            for prefix in _GENERAL_HTTP_PREFIXES):

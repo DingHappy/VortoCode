@@ -14,9 +14,12 @@
 // 当前分页、搜索词和外观选择是纯本地 UI 态，留在组件内。
 import { useMemo, useState } from "react";
 import type { ReactNode } from "react";
+import { Eye, EyeOff } from "lucide-react";
+import { BuildVersion } from "./BuildVersion";
+import { applyModelPreset, modelSettingsState } from "../lib/modelSettings";
 
 import { contextWindowSourceLabel, formatTokenCount } from "../lib/labels";
-import { PROVIDER_PRESETS, presetForBaseUrl, sameLlmBase } from "../lib/providers";
+import { isLocalModelBase, PROVIDER_PRESETS, presetForBaseUrl } from "../lib/providers";
 import { ConfigPane } from "./settings/ConfigPane";
 import { LlmConnectionCheck } from "./settings/LlmConnectionCheck";
 import { AccountPane } from "./settings/AccountPane";
@@ -50,9 +53,9 @@ const SETTINGS_NAV: Array<{ group: string; items: Array<{ id: SettingsSection; l
     group: "个人",
     items: [
       { id: "account", label: "账号", keywords: "登录 账号 退出 套餐 token plan 注册 vortocode" },
-      { id: "general", label: "常规", keywords: "工作区 项目 引擎 runtime 连接 恢复 scratch gateway token 高级" },
+      { id: "general", label: "常规", keywords: "版本 构建 version 关于 工作区 项目 引擎 runtime 连接 恢复 scratch gateway token 高级" },
       { id: "usage", label: "使用情况", keywords: "用量 额度 剩余 计费 费用 quota usage billing" },
-      { id: "model", label: "模型", keywords: "模型服务 供应商 api key relay openai deepseek kimi glm 千问 minimax 本机 测试连接 上下文 常用模型 推荐 排序 输入框" },
+      { id: "model", label: "模型服务", keywords: "omlx 本地 端侧 获取模型列表 模型服务 供应商 api key relay openai deepseek kimi glm 千问 minimax 本机 测试连接 上下文 常用模型 推荐 排序 输入框" },
       { id: "personalize", label: "个性化", keywords: "全局指令 自定义指令 agents.md instructions" },
       { id: "appearance", label: "外观", keywords: "主题 深色 浅色 跟随系统 theme dark light" },
       { id: "config", label: "配置", keywords: "配置文件 路径 finder llm-profile agents.md" },
@@ -163,13 +166,22 @@ export function SettingsModal({
   onTrustChange,
 }: SettingsModalProps) {
   const trustView = trustCard(trust);
-  const llmInputIsLocal = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/i.test(llmBaseInput.trim());
+  const llmInputIsLocal = isLocalModelBase(llmBaseInput);
   const [section, setSection] = useState<SettingsSection>(
     initialSection ?? (llmProfile && !llmProfile.configured ? "account" : "general"));
   const [query, setQuery] = useState("");
   const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference);
   const [modelOptions, setModelOptions] = useState<string[]>([]);
   const activePreset = presetForBaseUrl(llmBaseInput);
+  const [showKey, setShowKey] = useState(false);
+  const draft = { baseUrl: llmBaseInput, model: llmModelInput, apiKey: llmKeyInput, fastModel: llmFastInput, strongModel: llmStrongInput };
+  const modelState = modelSettingsState(llmProfile, draft);
+  const choosePreset = (preset: typeof PROVIDER_PRESETS[number]) => {
+    const next = applyModelPreset(draft, preset);
+    if (next === draft) return;
+    onLlmBaseChange(next.baseUrl); onLlmModelChange(next.model); onLlmKeyChange(next.apiKey);
+    setShowKey(false); setModelOptions([]);
+  };
   const visibleNav = useMemo(() => {
     const keyword = query.trim().toLowerCase();
     if (!keyword) return SETTINGS_NAV;
@@ -189,7 +201,7 @@ export function SettingsModal({
 
   return (
     <div className="modal-backdrop">
-      <section className="settings-modal settings-layout" aria-label="设置">
+      <section className="settings-modal settings-layout" role="dialog" aria-modal="true" aria-label="设置">
         <nav className="settings-nav" aria-label="设置分类">
           <h2>设置</h2>
           <input
@@ -221,12 +233,13 @@ export function SettingsModal({
         </div>
         {section === "general" && (
         <>
+
         <p className="settings-intro">
           {activeScope === "project"
-            ? "VortoCode 会自动管理这个项目的本地引擎；通常不需要配置地址或手动连接。"
+            ? "当前项目的连接由应用管理。"
             : activeScope === "scratch"
-              ? "Scratch 是应用管理的隔离 Git 工作区，适合生成、运行和测试临时代码。"
-              : "普通任务直接在 General 中运行，不读取本机目录；需要文件时再创建 Scratch 或选择项目。"}
+              ? "临时工作区适合生成、运行和测试代码。"
+              : "可以直接对话；需要处理项目文件时，再选择项目。"}
         </p>
         </>
         )}
@@ -235,7 +248,7 @@ export function SettingsModal({
         <section className={`llm-profile-card ${llmProfile?.configured ? "configured" : "unconfigured"}`}>
           <div className="llm-profile-head">
             <div>
-              <span>模型服务</span>
+              <span>已保存的模型服务</span>
               <strong>{llmProfile?.configured
                 ? llmProfile.provider === "vortocode" ? "VortoCode Relay 已配置" : llmProfile.provider === "local" ? "本机模型已配置" : "自定义服务已配置"
                 : "先配置模型，才能开始对话"}</strong>
@@ -248,19 +261,21 @@ export function SettingsModal({
               在下面改服务地址或填新 Key 会替换掉它；要换账号请到<button onClick={() => setSection("account")}>账号</button>。
             </p>
           )}
+          <p className="llm-setup-guide">填写服务地址 → 获取模型列表 → 选择模型 → 保存应用。本地模型无需登录 VortoCode 账号。</p>
+          <p className="llm-profile-note">快捷项只用于预填地址；切换本机快捷项会保留你已经填写的本机端口和模型。</p>
           <div className="llm-profile-presets" aria-label="模型服务快捷设置">
             {PROVIDER_PRESETS.map((preset) => (
               <button
                 key={preset.id}
                 className={activePreset?.id === preset.id ? "active" : ""}
-                onClick={() => { onLlmBaseChange(preset.baseUrl); onLlmModelChange(preset.model); onLlmKeyChange(""); setModelOptions([]); }}
+                onClick={() => choosePreset(preset)}
               >{preset.label}</button>
             ))}
             <button className={!activePreset && llmBaseInput.trim() ? "active" : ""} onClick={() => { onLlmBaseChange(""); onLlmModelChange(""); onLlmKeyChange(""); setModelOptions([]); }}>自定义</button>
           </div>
           <div className="llm-profile-fields">
             <label>
-              <span>API Base</span>
+              <span>模型服务地址</span>
               <input value={llmBaseInput} onChange={(event) => onLlmBaseChange(event.target.value)} placeholder="https://your-gateway.example/v1" />
             </label>
             <label>
@@ -268,7 +283,7 @@ export function SettingsModal({
               <input
                 value={llmModelInput}
                 onChange={(event) => onLlmModelChange(event.target.value)}
-                placeholder="服务中实际可用的模型名；可先「测试连接」查看"
+                placeholder="服务中的模型名；可先获取模型列表"
                 list="llm-model-options"
               />
               <datalist id="llm-model-options">
@@ -276,16 +291,36 @@ export function SettingsModal({
               </datalist>
             </label>
             <label>
-              <span>API Key <em>{llmInputIsLocal ? "本机服务可留空" : "保存在本机配置文件，仅你的账户可读"}</em></span>
-              <input
-                type="password"
+              <span>API Key <em>{modelState.sameService ? "留空沿用此服务已保存的 Key" : llmInputIsLocal ? "仅无需鉴权时可留空；否则填写本机服务 Key" : "保存在本机配置文件，仅你的账户可读"}</em></span>
+              <div className="llm-key-field"><input
+                type={showKey ? "text" : "password"}
                 value={llmKeyInput}
                 onChange={(event) => onLlmKeyChange(event.target.value)}
                 autoComplete="new-password"
-                placeholder={llmProfile?.configured ? "已安全保存；修改时输入新 Key" : "输入模型服务 Key"}
-              />
+                placeholder={modelState.sameService ? "留空保留原 Key；替换时输入新 Key" : "输入此服务的 Key"}
+              /><button type="button" aria-label={showKey ? "隐藏 API Key" : "显示 API Key"} onClick={() => setShowKey(!showKey)}>{showKey ? <EyeOff size={16}/> : <Eye size={16}/>}</button></div>
             </label>
           </div>
+          <div className={`llm-model-capability ${modelState.sameModel && (llmProfile?.contextWindow ?? 0) > 0 ? "known" : "unknown"}`}>
+            <span>模型上下文</span>
+            <strong>{modelState.sameModel && (llmProfile?.contextWindow ?? 0) > 0 ? `${formatTokenCount(llmProfile?.contextWindow)} tokens` : "当前草稿尚未检测"}</strong>
+            <em>{modelState.sameModel ? contextWindowSourceLabel(llmProfile?.contextWindowSource) : "旧配置的信息不适用于此草稿"}</em>
+          </div>
+          <p className="llm-profile-note">远程服务必须使用 HTTPS；本机 HTTP 仅允许 127.0.0.1 / localhost。保存后只重启当前 runtime，其他后台项目在下次启动时采用新配置。</p>
+          {llmProfile?.configPath && (
+            <p className="llm-profile-note">配置文件：<code>{llmProfile.configPath}</code>（也可直接编辑，重启 Desktop 后生效）</p>
+          )}
+          <LlmConnectionCheck baseUrl={llmBaseInput} apiKey={llmKeyInput} model={llmModelInput} onModels={setModelOptions} />
+          <p className="llm-save-status" role="status">{modelState.missing || (modelState.dirty ? "修改尚未保存，不会影响当前对话。" : "与已保存配置一致；模型列表可达不等于推理或工具已验证。")}</p>
+          <div className="llm-profile-actions">
+            {llmProfile?.configured && <button onClick={() => void onClearLlmProfile()} disabled={llmProfileBusy}>清除配置</button>}
+            <button
+              className="primary"
+              onClick={() => void onSaveLlmProfile()}
+              disabled={llmProfileBusy || Boolean(modelState.missing)}
+            >{llmProfileBusy ? "正在应用…" : "保存并重启当前引擎"}</button>
+          </div>
+          <details className="llm-extra-settings"><summary>高级模型选项（可选）</summary>
           <div className="llm-routing-fields">
             <p>智能调度 <em>输入框选「自动」时，简短问答走快速模型，Build、带图或复杂任务走强力模型；留空则都用主模型。</em></p>
             <label>
@@ -297,26 +332,12 @@ export function SettingsModal({
               <input value={llmStrongInput} onChange={(event) => onLlmStrongChange(event.target.value)} placeholder="可选，例如推理更强的大模型" list="llm-model-options" />
             </label>
           </div>
-          <div className={`llm-model-capability ${(llmProfile?.contextWindow ?? 0) > 0 ? "known" : "unknown"}`}>
-            <span>模型上下文</span>
-            <strong>{(llmProfile?.contextWindow ?? 0) > 0 ? `${formatTokenCount(llmProfile?.contextWindow)} tokens` : "保存时自动检测"}</strong>
-            <em>{contextWindowSourceLabel(llmProfile?.contextWindowSource)}</em>
-          </div>
-          <p className="llm-profile-note">远程服务必须使用 HTTPS；本机 HTTP 仅允许 127.0.0.1 / localhost。保存后只重启当前 runtime，其他后台项目在下次启动时采用新配置。</p>
-          {llmProfile?.configPath && (
-            <p className="llm-profile-note">配置文件：<code>{llmProfile.configPath}</code>（也可直接编辑，重启 Desktop 后生效）</p>
-          )}
-          <div className="llm-profile-actions">
-            <LlmConnectionCheck baseUrl={llmBaseInput} apiKey={llmKeyInput} model={llmModelInput} onModels={setModelOptions} />
-            {llmProfile?.configured && <button onClick={() => void onClearLlmProfile()} disabled={llmProfileBusy}>清除配置</button>}
-            <button
-              className="primary"
-              onClick={() => void onSaveLlmProfile()}
-              disabled={llmProfileBusy || !llmBaseInput.trim() || !llmModelInput.trim() || (!llmInputIsLocal && !llmKeyInput.trim() && !(llmProfile?.configured && sameLlmBase(llmProfile.baseUrl, llmBaseInput)))}
-            >{llmProfileBusy ? "正在应用…" : "保存并重启当前引擎"}</button>
-          </div>
+          <p className="llm-profile-note">快速与强力模型随上方保存一起应用；下方常用模型名单独生效。</p>
           <ModelPicks profile={llmProfile} picks={modelPicks} onChange={onModelPicksChange} />
+          </details>
+          <details className="llm-extra-settings"><summary>其他模型供应商（可选）</summary>
           <CustomProviders profile={llmProfile} onProfile={onLlmProfileChange} onRestartRuntime={onRestartRuntime} />
+          </details>
         </section>
         )}
 
@@ -355,7 +376,7 @@ export function SettingsModal({
         )}
 
         {section === "trust" && !trustView && (
-          <p className="settings-intro">授权级别按项目保存；打开 Git 项目后可以在这里设置。</p>
+          <p className="settings-intro">连接当前运行服务后可设置授权级别；旧服务可能不支持。</p>
         )}
         {section === "trust" && trustView && (
           <section className="trust-card" aria-label="授权级别">
@@ -428,6 +449,7 @@ export function SettingsModal({
 
         {section === "general" && (
         <>
+        <details className="settings-about"><summary>版本与构建信息</summary><BuildVersion details /></details>
         <details className="advanced-settings">
           <summary>高级连接设置</summary>
           <p>仅在连接手动启动的 `vc server` 或排查本地引擎时使用。</p>

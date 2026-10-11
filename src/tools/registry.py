@@ -226,43 +226,78 @@ class DynamicToolRegistry(ToolRegistry):
         super().__init__()
         self.mcp_clients: Dict[str, Any] = {}  # server_name -> MCPClient
     
+    def get(self, tool_name: str) -> Optional[Tool]:
+        # Bare names are legacy aliases only when there is exactly one source.
+        exact = super().get(tool_name)
+        if exact is not None:
+            return exact
+        matches = [t for t in self.tools.values()
+                   if t.metadata.get("mcp_tool_name") == tool_name]
+        return matches[0] if len(matches) == 1 else None
+
+    def _stage_mcp_tools(self, client: Any, tools: list) -> List[Tool]:
+        import re
+        from copy import deepcopy
+        if (not isinstance(client.server_name, str)
+                or not re.fullmatch(r"[A-Za-z0-9_-]+", client.server_name)
+                or "__" in client.server_name or len(client.server_name) > 56):
+            raise ValueError("Unsupported MCP server identity")
+        staged = []
+        seen = set()
+        for mt in tools:
+            # Reject separator ambiguity and names outside the model API contract.
+            parts = (client.server_name, mt.name)
+            if any(not isinstance(p, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", p)
+                   or "__" in p for p in parts):
+                raise ValueError("Unsupported MCP server/tool identity")
+            name = f"mcp__{client.server_name}__{mt.name}"
+            if len(name) > 64 or name in seen:
+                raise ValueError("Duplicate or oversized MCP tool identity")
+            if mt.server_name and mt.server_name != client.server_name:
+                raise ValueError("MCP tool source differs from connected server")
+            existing = self.tools.get(name)
+            if existing and existing.server_name != client.server_name:
+                raise ValueError("MCP identity collides with an existing tool")
+            seen.add(name)
+            staged.append(Tool(
+                name=name, description=mt.description, category="mcp",
+                permissions=[ToolPermission.EXECUTE], input_schema=deepcopy(mt.input_schema),
+                server_name=client.server_name, server_url=mt.server_url,
+                tags=["mcp", "dynamic"], metadata={"mcp_tool_name": mt.name},
+            ))
+        return staged
+
     async def register_mcp_server(self, client: Any) -> bool:
-        """注册MCP服务器并加载其工具"""
+        """Stage and validate the entire catalogue before publishing it."""
+        if client.server_name in self.mcp_clients:
+            return False
         try:
             if not await client.connect():
+                await client.disconnect()
                 return False
-            
+            staged = self._stage_mcp_tools(client, await client.list_tools())
+            if client.server_name in self.mcp_clients:
+                await client.disconnect()
+                return False
             self.mcp_clients[client.server_name] = client
-            
-            # 加载服务器提供的工具
-            tools = await client.list_tools()
-            for mcp_tool in tools:
-                tool = Tool(
-                    name=mcp_tool.name,
-                    description=mcp_tool.description,
-                    category="mcp",
-                    permissions=[ToolPermission.EXECUTE],
-                    input_schema=mcp_tool.input_schema,
-                    server_name=mcp_tool.server_name,
-                    server_url=mcp_tool.server_url,
-                    tags=["mcp", "dynamic"]
-                )
+            for tool in staged:
                 self.register(tool)
-            
-            logger.info(f"Registered MCP server {client.server_name} with {len(tools)} tools")
             return True
-            
-        except Exception as e:
+        except BaseException as e:
+            await client.disconnect()
+            if not isinstance(e, Exception):
+                raise
             logger.error(f"Failed to register MCP server: {e}")
             return False
-    
+
     async def unregister_mcp_server(self, server_name: str) -> bool:
         """注销MCP服务器及其工具"""
         if server_name not in self.mcp_clients:
             return False
         
-        client = self.mcp_clients[server_name]
+        client = self.mcp_clients.pop(server_name)
         
+        # Relinquish ownership before awaiting disconnect: late refresh cannot publish.
         # 移除服务器提供的工具
         tools_to_remove = self.get_tools_by_server(server_name)
         for tool in tools_to_remove:
@@ -270,41 +305,28 @@ class DynamicToolRegistry(ToolRegistry):
         
         # 断开连接
         await client.disconnect()
-        del self.mcp_clients[server_name]
         
         logger.info(f"Unregistered MCP server: {server_name}")
         return True
     
     async def refresh_server_tools(self, server_name: str) -> bool:
-        """刷新服务器工具"""
-        if server_name not in self.mcp_clients:
+        client = self.mcp_clients.get(server_name)
+        if client is None:
             return False
-        
-        client = self.mcp_clients[server_name]
-        
-        # 移除旧工具
-        old_tools = self.get_tools_by_server(server_name)
-        for tool in old_tools:
+        try:
+            staged = self._stage_mcp_tools(client, await client.list_tools())
+        except Exception as e:
+            logger.warning(f"Failed to refresh MCP server {server_name}: {e}")
+            return False
+        # A response from a disconnected/replaced source cannot publish tools.
+        if self.mcp_clients.get(server_name) is not client:
+            return False
+        for tool in self.get_tools_by_server(server_name):
             self.unregister(tool.name)
-        
-        # 加载新工具
-        tools = await client.list_tools()
-        for mcp_tool in tools:
-            tool = Tool(
-                name=mcp_tool.name,
-                description=mcp_tool.description,
-                category="mcp",
-                permissions=[ToolPermission.EXECUTE],
-                input_schema=mcp_tool.input_schema,
-                server_name=mcp_tool.server_name,
-                server_url=mcp_tool.server_url,
-                tags=["mcp", "dynamic"]
-            )
+        for tool in staged:
             self.register(tool)
-        
-        logger.info(f"Refreshed tools for server {server_name}: {len(tools)} tools")
         return True
-    
+
     async def refresh_all_servers(self) -> Dict[str, bool]:
         """刷新所有服务器工具"""
         results = {}
@@ -327,7 +349,7 @@ class DynamicToolRegistry(ToolRegistry):
         
         from .mcp_client import MCPToolCall
         tool_call = MCPToolCall(
-            tool_name=tool_name,
+            tool_name=tool.metadata.get("mcp_tool_name", tool.name),
             arguments=arguments
         )
         

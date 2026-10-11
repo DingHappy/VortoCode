@@ -32,6 +32,7 @@ from typing import List, Optional, Tuple
 _PRIMARY_ARG = {
     "run_command": ("command", "cmd"),
     "read_file": ("path",),
+    "read_local_file": ("path",),
     "edit_file": ("path",),
     "write_file": ("path",),
     "web_fetch": ("url", "href"),

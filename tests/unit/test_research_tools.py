@@ -63,7 +63,8 @@ async def test_research_parallel_runs_all_and_labels(tmp_path):
     by = _by_name(str(tmp_path), llm=EchoLLM())
     out = await by["research_parallel"].handler({"tasks": ["问题甲", "问题乙"]})
     assert "【问题甲】" in out and "【问题乙】" in out          # 各路结论带标题
-    assert "结论<问题甲>" in out and "结论<问题乙>" in out
+    # 子任务原文送达子 agent（其后还附有运行时日期注记，故只断前缀）
+    assert "结论<问题甲\n" in out and "结论<问题乙\n" in out
     # 空列表 → 友好报错
     assert "需要 tasks" in await by["research_parallel"].handler({"tasks": []})
 

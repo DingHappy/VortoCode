@@ -30,3 +30,29 @@ describe("confirmAction", () => {
     })).toBe(false);
   });
 });
+
+import { createConfirmationReply, type ConfirmationReplyState } from "./confirm";
+function replyFixture() {
+  let view={client:{} as object|null,scope:"one",id:"c1",state:"idle" as ConfirmationReplyState};
+  let resolve!:()=>void, reject!:(error:Error)=>void;
+  const pending=new Promise<void>((yes,no)=>{resolve=yes;reject=no;});
+  const calls:boolean[]=[];const states:ConfirmationReplyState[]=[];
+  const reply=createConfirmationReply(()=>view,async(_client,_id,ok)=>{calls.push(ok);await pending;},(_id,state)=>{view={...view,state};states.push(state);});
+  return {reply,calls,states,resolve,reject,view:()=>view,set:(change:Partial<typeof view>)=>{view={...view,...change};}};
+}
+it("holds the approval until a server receipt and prevents duplicate submissions",async()=>{
+  const f=replyFixture();const p=f.reply.submit("c1",true);
+  await f.reply.submit("c1",false);expect(f.calls).toEqual([true]);expect(f.view().state).toBe("sending");
+  f.resolve();await p;expect(f.view().state).toBe("awaiting");
+  await f.reply.submit("c1",true);expect(f.calls).toHaveLength(1);
+});
+it("keeps uncertain failures until an explicit read-only check permits retry",async()=>{
+  const f=replyFixture();const p=f.reply.submit("c1",true);f.reject(Error("lost"));await p;
+  expect(f.view().state).toBe("failed");await f.reply.submit("c1",true);expect(f.calls).toHaveLength(1);
+  f.reply.close("c1");f.set({state:"idle"});await f.reply.submit("c1",false);expect(f.calls).toEqual([true,false]);
+});
+it.each(["receipt","client","scope","id"])("ignores late transport completions after %s changes",async(change)=>{
+  const f=replyFixture();const p=f.reply.submit("c1",true);
+  if(change==="receipt")f.reply.close("c1");else if(change==="client")f.set({client:{}});else if(change==="scope")f.set({scope:"two"});else f.set({id:"c2"});
+  f.resolve();await p;expect(f.states).toEqual(["sending"]);
+});

@@ -74,7 +74,7 @@ export function AccountPane({ profile, onProfile, onRestartRuntime, onOpenModelS
 
   return (
     <div className="settings-stack">
-      <p className="settings-intro">登录 VortoCode 账号即可使用你的 Token Plan（Desktop 套餐），不用手动复制 Key。也可以不登录，直接在「模型」里填写 API Key / Token Plan Key，或添加第三方模型。</p>
+      <p className="settings-intro">账号用于 VortoCode 云端服务。使用本地或第三方模型，可直接前往「模型」设置，无需登录。</p>
 
       {account ? (
         <section className="settings-card account-card" aria-label="当前账号">
@@ -121,7 +121,7 @@ export function AccountPane({ profile, onProfile, onRestartRuntime, onOpenModelS
         </section>
       )}
 
-      <button className="account-alt" onClick={onOpenModelSettings}>直接填写 API Key 或添加第三方模型 →</button>
+      <button className="account-alt" onClick={onOpenModelSettings}>连接本地或第三方模型 →</button>
     </div>
   );
 }

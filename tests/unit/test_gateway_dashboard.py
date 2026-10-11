@@ -115,5 +115,16 @@ def test_agent_context_summary_is_bounded_and_failure_safe():
         "history_messages": 24,
         "policy": "preserve",
         "will_compact": True,
+        "compact_enabled": None,
     }
     assert agent_context_summary(object()) == {}
+
+
+def test_context_compaction_switch_remains_explicit_and_unknown_for_legacy():
+    class Agent:
+        def __init__(self, enabled):
+            self.enabled = enabled
+        def context_usage(self, mode):
+            return {"compact_enabled": self.enabled, "will_compact": self.enabled}
+    assert agent_context_summary(Agent(False))["compact_enabled"] is False
+    assert agent_context_summary(Agent(True))["compact_enabled"] is True

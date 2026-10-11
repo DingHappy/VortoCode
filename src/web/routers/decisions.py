@@ -41,13 +41,16 @@ async def runtime_inbox():
 
     root = os.getcwd()
     scope = current_workspace_scope()
-    return build_runtime_inbox(
-        scope=scope,
-        sessions=_session_dashboard_snapshot(root),
-        decisions=_queue(100),
-        goals=[] if scope == GENERAL else GoalLedger(root).list(),
-        tasks=[] if scope == GENERAL else TaskLedger(root).list(limit=200),
-    )
+    from src.gateway.tasks import TASK_STATE_LOCK
+
+    with TASK_STATE_LOCK:
+        return build_runtime_inbox(
+            scope=scope,
+            sessions=_session_dashboard_snapshot(root),
+            decisions=_queue(100),
+            goals=[] if scope == GENERAL else GoalLedger(root).list(),
+            tasks=[] if scope == GENERAL else TaskLedger(root).list(limit=200),
+        )
 
 
 @router.post("/api/decisions/{decision_id}/dismiss")

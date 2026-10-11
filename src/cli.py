@@ -447,8 +447,14 @@ async def run_im(channel: str, *, mode: str = "plan"):
     warn = bridge.allow_from_warning()      # 白名单配错（空 / 漏了 owner）→ 开机就在终端讲清楚：
     if warn:                                # 不是坏了，是配置把你自己也挡在门外了
         print(warn, file=sys.stderr)
+    from src.gateway.process_lease import ProcessLease
     try:
-        await bridge.run()
+        with ProcessLease(Path(cwd) / ".vortocode" / "runtime.lock"):
+            try:
+                await bridge.run()
+            finally:
+                if bridge._runner is not None:
+                    await bridge._runner.shutdown()
     finally:
         await adapter.close()
 
@@ -500,6 +506,17 @@ async def run_cron(action: str, name=None):
     print((result or "（无输出）").strip())
 
 
+def make_background_development_worker(root):
+    from src.agents.main_agent import build_dev_tools
+    from src.agents.dev_plan import load_plan
+    from src.gateway.development_worker import execute_development
+
+    async def worker(task, on_progress):
+        return await execute_development(root, task, on_progress,
+                                         build_tools=build_dev_tools, load_plan=load_plan)
+    return worker
+
+
 async def run_heartbeat_cli():
     """heartbeat run：立刻值班一次（隔离会话、便宜模型）。领 backlog 时 submit 并**等它真跑完**。
 
@@ -507,27 +524,35 @@ async def run_heartbeat_cli():
     否则 asyncio.run 退出时 pending 任务会被取消，backlog 却已被标 [~]（领走了没干完，误导，#129 评审）。
     """
     from src.gateway import heartbeat as _hb
-    from src.gateway import TaskRunner
-    from src.web.routers.tasks import _dev_worker
+    from src.gateway.runtime import RuntimeServices
+    from src.gateway.process_lease import ProcessLease
+    from src.gateway.workspace_scope import current_workspace_scope
     cwd = str(Path.cwd())
-    runner = TaskRunner(cwd, _dev_worker)
-    submitted: list = []
+    if current_workspace_scope() != "project":
+        raise RuntimeError("Autonomous scheduling requires a Project workspace")
+    with ProcessLease(Path(cwd) / ".vortocode" / "runtime.lock"):
+        worker = make_background_development_worker(cwd)
+        runner = RuntimeServices(cwd, development_worker=worker).runner
+        try:
+            submitted: list = []
 
-    async def _submit(item):
-        t = await runner.submit(item, kind="dev")
-        submitted.append(t.id)                 # 记下来，函数返回前 drain，别让进程退出把它取消
+            async def _submit(item):
+                t = await runner.submit(item, kind="dev")
+                submitted.append(t.id)                 # 记下来，函数返回前 drain，别让进程退出把它取消
 
-    async def _notify(text):
-        print(text)
+            async def _notify(text):
+                print(text)
 
-    print("🫀 心跳值班一次…", file=sys.stderr)
-    res = await _hb.run_heartbeat(cwd, submit=_submit, notify=_notify)
-    for tid in submitted:                      # 等领到的活真正跑完（否则 backlog 标了 [~] 却没干完）
-        print(f"⏳ 等后台任务 {tid} 跑完…", file=sys.stderr)
-        await runner.join(tid)
-        done = runner.get(tid)
-        print(f"[task {tid}] {done.status if done else '?'}", file=sys.stderr)
-    print(f"[heartbeat] action={res['action']}", file=sys.stderr)
+            print("🫀 心跳值班一次…", file=sys.stderr)
+            res = await _hb.run_heartbeat(cwd, submit=_submit, notify=_notify)
+            for tid in submitted:                      # 等领到的活真正跑完（否则 backlog 标了 [~] 却没干完）
+                print(f"⏳ 等后台任务 {tid} 跑完…", file=sys.stderr)
+                await runner.join(tid)
+                done = runner.get(tid)
+                print(f"[task {tid}] {done.status if done else '?'}", file=sys.stderr)
+            print(f"[heartbeat] action={res['action']}", file=sys.stderr)
+        finally:
+            await runner.shutdown()
 
 
 def _split_paths(raw):

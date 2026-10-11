@@ -25,12 +25,10 @@ class HandoffConflict(ValueError):
 TERMINAL = {"done", "failed", "cancelled", "paused", "interrupted"}
 
 
-def _service_delegation(task: BackgroundTask) -> bool:
+def collaboration_state_valid(task: BackgroundTask) -> bool:
+    """Shared read-only shape gate; it does not accept or repair a task."""
     state = task.collaboration
-    if task.kind != "delegation" or not isinstance(state, dict):
-        return False
-    dispatch = state.get("dispatch")
-    return (isinstance(dispatch, dict) and dispatch.get("source") == "api"
+    return (task.kind == "delegation" and isinstance(state, dict)
             and type(state.get("round")) is int and 1 <= state["round"] <= 3
             and isinstance(state.get("assignee"), str)
             and isinstance(state.get("review"), str)
@@ -39,6 +37,13 @@ def _service_delegation(task: BackgroundTask) -> bool:
             and len(state["acceptance"]) <= 20
             and all(isinstance(item, str) for item in state["acceptance"])
             and type(state.get("tainted")) is bool)
+
+
+def _service_delegation(task: BackgroundTask) -> bool:
+    if not collaboration_state_valid(task):
+        return False
+    dispatch = task.collaboration.get("dispatch")
+    return isinstance(dispatch, dict) and dispatch.get("source") == "api"
 
 
 def revision(task: BackgroundTask) -> str:

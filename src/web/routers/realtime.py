@@ -108,6 +108,15 @@ async def handle_websocket_message(websocket: WebSocket, message: Dict[str, Any]
     elif msg_type == P.AGENT_QUEUE_SEND_NOW:
         await _send_queued_prompt_now(websocket, str(message.get("id") or "")[:64])
 
+    elif msg_type == P.AGENT_CONFIRM_CHECK:
+        cid = str(message.get("id") or "")[:128]
+        nonce = str(message.get("nonce") or "")[:128]
+        item = _PENDING_CONFIRMS.get(cid)
+        future = item.get("future") if isinstance(item, dict) else None
+        waiting = bool(future is not None and not future.done()
+                       and item.get("session") == _session_key(websocket))
+        await websocket.send_json(P.make_event(P.AGENT_CONFIRM_STATE, id=cid, nonce=nonce, pending=waiting))
+
     elif msg_type == P.AGENT_CONFIRM_RESPONSE:  # 前端对 agent_confirm 的应答 → 解开等待的工具
         pending = _PENDING_CONFIRMS.get(message.get("id"))
         if isinstance(pending, dict) and pending.get("session") != _session_key(websocket):
@@ -454,6 +463,7 @@ def _new_agent():
                           # 就按新档生效，不必重建 agent（重建会把对话历史丢掉）。
                           trust_level=lambda: get_trust_level(repo_root),
                           workspace_scope=workspace_scope,
+                          allow_local_files=os.getenv("VORTOCODE_DESKTOP_SIDECAR") == "1",
                           on_workspace_required=_workspace_required)
     agent._web_confirm_holder = confirm_holder     # _run_agent_turn 每回合把它指向当前 ws
     agent._web_progress_holder = progress_holder
@@ -471,7 +481,7 @@ async def _ensure_mcp(agent, say) -> None:
     故与 TUI(/mcp)、CLI(--mcp) 一样走显式 opt-in。开了之后无配置 → connect_mcp 返 (None, [])、
     静默跳过；失败不影响回合。manager 挂 agent._mcp_mgr，会话淘汰时 _shutdown_mcp_async 关掉。
     """
-    if getattr(agent, "_mcp_tried", False):
+    if getattr(agent, "_mcp_connecting", False) or getattr(agent, "_mcp_tried", False):
         return
     agent._mcp_tried = True
     agent._mcp_mgr = None
@@ -492,9 +502,9 @@ async def _ensure_mcp(agent, say) -> None:
             os.getcwd(), capability_profile=agent._capabilities.profile,
             confirm=_mcp_confirm
         )
+        agent._mcp_mgr = mgr  # Empty tool lists still own connected resources.
         if mcp_tools:
             agent.add_tools(mcp_tools)
-            agent._mcp_mgr = mgr
             say(f"🔌 接入 {len(mcp_tools)} 个 MCP 工具")
     except Exception as e:  # noqa: BLE001
         say(f"🔌 MCP 连接失败: {_exc_text(e)}")
@@ -621,6 +631,7 @@ def _tool_summary(name: str, args: Dict[str, Any]) -> str:
     labels = {
         # —— 读代码 ——
         "read_file": _with("读取", path) if path else "读取文件",
+        "read_local_file": _with("读取本机文件", path),
         "list_files": _with("浏览", path) if path else "浏览文件",
         "glob": _with("按文件名查找", query) if query else "按文件名查找",
         "grep": _with("搜索", query) if query else "搜索内容",
@@ -750,7 +761,7 @@ def _session_dashboard_snapshot(repo_root: str) -> list[Dict[str, Any]]:
         background_tasks_by_session,
         project_dashboard_context,
     )
-    from src.web.session_store import list_sessions, title_from_transcript
+    from src.web.session_store import list_sessions, title_from_transcript, session_has_content
 
     resolved_root = str(Path(repo_root).resolve())
     project = project_dashboard_context(resolved_root)
@@ -770,6 +781,8 @@ def _session_dashboard_snapshot(repo_root: str) -> list[Dict[str, Any]]:
     for item in list_sessions(repo_root):
         sid = item["sid"]
         tasks = {**empty_tasks, **task_groups.get(sid, {})}
+        if item.get("has_content") is False and not tasks["total"]:
+            continue
         hook_issues = item.get("hook_issues") if isinstance(item.get("hook_issues"), dict) \
             else empty_hook_issues
         status = "failed" if tasks["attention"] or hook_issues["count"] \
@@ -823,6 +836,11 @@ def _session_dashboard_snapshot(repo_root: str) -> list[Dict[str, Any]]:
             status = "idle"
 
         disk = rows.get(sid, {})
+        agent = sess.get("agent")
+        if not (sid in rows or working or pending or queue_count or running or tasks["total"]
+                or session_has_content({**sess, "history": getattr(agent, "history", []),
+                                        "plan": getattr(agent, "plan", [])})):
+            continue
         mode = (running or {}).get("mode") if isinstance(running, dict) else None
         context = agent_context_summary(sess.get("agent"), mode or "plan")
         rows[sid] = {

@@ -209,3 +209,14 @@ def test_examples_parse_with_real_parser():
     assert by_name["product-manager"].tools == "read" and by_name["qa"].tools == "read"
     assert by_name["backend-dev"].tools == "dev" and by_name["frontend-dev"].tools == "dev"
     assert by_name["scout"].tools == "read"        # 选材员只读：它不写文章、更不发布
+
+
+@pytest.mark.parametrize("setting, expected", [("1", True), ("0", False)])
+def test_custom_role_inherits_existing_native_protocol_setting(tmp_path, monkeypatch, setting, expected):
+    monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", setting)
+    _write_agent(tmp_path, "pm.md", _PM)
+    sub = build_subagent(str(tmp_path), registry_for(str(tmp_path)).get("product-manager"))
+    assert sub._native is expected
+    assert "read_file" in sub.tools
+    assert "run_command" not in sub.tools
+    assert "task" not in sub.tools

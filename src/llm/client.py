@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
-from src.utils.http import outbound_session
+from src.utils.http import local_session, outbound_session
 from src.llm.streaming import StreamInterrupted, close_stream
 
 logger = logging.getLogger(__name__)
@@ -492,7 +492,13 @@ class LLMClient:
 
         # 从环境变量读取配置
         if not self.config.api_key:
-            self.config.api_key = os.getenv("OPENAI_API_KEY", "")
+            from src.llm.providers import local_model_endpoint
+            # Default client consumes the launcher's endpoint/key pair (Desktop profile).
+            # An explicit keyless local config must never borrow an ambient cloud key.
+            configured_key = os.getenv("OPENAI_API_KEY", "") if config is None else ""
+            self.config.api_key = configured_key or (
+                "not-required" if local_model_endpoint(self.config.base_url)
+                else os.getenv("OPENAI_API_KEY", ""))
         if not self.config.base_url:
             self.config.base_url = os.getenv(
                 "OPENAI_API_BASE", DEFAULT_LLM_BASE_URL
@@ -542,9 +548,15 @@ class LLMClient:
             if self._client is not None:
                 return self._client
             try:
-                from openai import AsyncOpenAI
+                from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 
+                from src.llm.providers import local_model_endpoint
+                # 本机模型不走代理环境变量。用 SDK 自带的客户端类：openai 3.x 底层换成了 httpx2，
+                # 裸 httpx.AsyncClient 类型不符。None 即 SDK 默认客户端。
+                http_client = (DefaultAsyncHttpxClient(trust_env=False)
+                               if local_model_endpoint(self.config.base_url) else None)
                 self._client = AsyncOpenAI(
+                    http_client=http_client,
                     base_url=self.config.base_url,
                     api_key=self.config.api_key,
                     timeout=_sdk_timeout(self.config),
@@ -611,7 +623,9 @@ class LLMClient:
         client = await self._get_client()
 
         if client is None:
-            # 无 openai 库时回退到 aiohttp（不支持原生 tools）
+            # Do not silently discard a caller's tool contract on the fallback path.
+            if tools:
+                raise RuntimeError("原生工具调用需要 OpenAI SDK，请安装项目 llm 可选依赖")
             return await self._chat_with_requests(
                 messages, model, temperature, max_tokens
             )
@@ -653,17 +667,18 @@ class LLMClient:
                 {"id": tc.id, "name": tc.function.name, "arguments": tc.function.arguments}
                 for tc in message.tool_calls
             ]
-        _account(messages, message.content, getattr(response, "usage", None), model=kwargs["model"])
+        usage = getattr(response, "usage", None)
+        _account(messages, message.content, usage, model=kwargs["model"])
         return {
             "content": message.content,
             "reasoning": reasoning,
             "tool_calls": tool_calls,
             "model": response.model,
             "usage": {
-                "prompt_tokens": response.usage.prompt_tokens,
-                "completion_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens,
-            },
+                "prompt_tokens": usage.prompt_tokens,
+                "completion_tokens": usage.completion_tokens,
+                "total_tokens": usage.total_tokens,
+            } if usage is not None else {},
         }
 
     async def stream(
@@ -743,7 +758,7 @@ class LLMClient:
         同时把分片的 tool_calls 跨 chunk 累积成完整列表。一旦出现 tool_call 增量就停止把后续正文喂给
         on_content——本次是"调工具"响应，附带碎语不该当最终回复回显（与提示式 _complete 的"疑似工具
         调用则抑制"对齐；也保证 CLI 的累计偏移只在最终步推进）。思维链增量走 on_reasoning，不混进正文。
-        无 openai 库 → 回退非流式 chat（同样透传 tools），保证"模型无关"兜底不破。
+        无 openai 库且不带 tools → 回退非流式 chat；带 tools 时明确报依赖缺失，不静默丢工具合同。
         """
         client = await self._get_client()
         if client is None:                     # 无 openai 库：降级路径不支持流式/原生 tools
@@ -827,6 +842,11 @@ class LLMClient:
                 "reasoning_content": reasoning,
                 "tool_calls": tool_calls, "model": model or self.config.model}
 
+    def _endpoint_session(self, **kwargs):
+        from src.llm.providers import local_model_endpoint
+        factory = local_session if local_model_endpoint(self.config.base_url) else outbound_session
+        return factory(**kwargs)
+
     async def _chat_with_requests(
         self,
         messages: List[Dict[str, str]],
@@ -859,15 +879,27 @@ class LLMClient:
             if attempt:                                  # 重试前指数退避（首次 attempt=0 不睡）
                 await asyncio.sleep(self.config.retry_base_delay * (2 ** (attempt - 1)))
             try:
-                async with outbound_session(timeout=timeout) as session:
+                async with self._endpoint_session(timeout=timeout) as session:
                     async with session.post(url, json=payload, headers=headers) as response:
                         if response.status == 200:
                             data = await response.json()
-                            msg = data["choices"][0]["message"]
+                            if not isinstance(data, dict):
+                                raise RuntimeError("模型响应格式无效：应为 JSON 对象；未重试本次请求")
+                            choices = data.get("choices")
+                            if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+                                raise RuntimeError("模型响应格式无效：缺少 choices/message；未重试本次请求")
+                            msg = choices[0].get("message")
+                            if not isinstance(msg, dict):
+                                raise RuntimeError("模型响应格式无效：缺少 message；未重试本次请求")
+                            content = msg.get("content")
+                            if msg.get("tool_calls"):
+                                raise RuntimeError("模型返回了原生工具调用，但当前 SDK 降级路径不支持；请安装 llm 可选依赖")
+                            if content is not None and not isinstance(content, str):
+                                raise RuntimeError("模型响应格式无效：content 应为文本；未重试本次请求")
                             _account(messages, msg.get("content"), data.get("usage"),
                                      model=payload["model"])
                             return {
-                                "content": msg["content"],
+                                "content": content or "",
                                 "reasoning": msg.get("reasoning_content") or msg.get("reasoning"),
                                 "model": data.get("model", ""),
                                 "usage": data.get("usage", {}),
@@ -897,7 +929,7 @@ class LLMClient:
         if self.config.api_key:
             headers["Authorization"] = f"Bearer {self.config.api_key}"
         timeout = aiohttp.ClientTimeout(total=min(self.config.timeout, 10.0))
-        async with outbound_session(timeout=timeout) as session:
+        async with self._endpoint_session(timeout=timeout) as session:
             async with session.get(url, headers=headers) as response:
                 if response.status != 200:
                     raise Exception(f"获取模型列表失败：HTTP {response.status}")
@@ -935,7 +967,7 @@ class LLMClient:
         headers = {"Content-Type": "application/json",
                    "Authorization": f"Bearer {self.config.api_key}"}
         timeout = _aiohttp_timeout(self.config)
-        async with outbound_session(timeout=timeout) as session:
+        async with self._endpoint_session(timeout=timeout) as session:
             async with session.post(url, json=payload, headers=headers) as resp:
                 if resp.status != 200:
                     raise Exception(f"TTS 请求失败: {resp.status} - {(await resp.text())[:300]}")

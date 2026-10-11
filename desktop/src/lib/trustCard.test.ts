@@ -58,3 +58,10 @@ describe("授权档位卡", () => {
     expect(card?.options.map((option) => option.level)).toEqual(["ask", "reads"]);
   });
 });
+
+it("Desktop 文件授权说明不把只读扩成跨目录写入", () => {
+  const card = trustCard(status({ local_file_reads: true, workspace_scope: "general", ceiling: "reads" }));
+  expect(card?.note).toContain("项目外的普通文本");
+  expect(card?.note).toContain("General 单独保存");
+  expect(card?.note).toContain("不包含跨目录写入");
+});

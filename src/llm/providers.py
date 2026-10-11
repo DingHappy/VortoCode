@@ -14,7 +14,7 @@
     自己写的实现，会系统性漏掉自己的盲区——它实现时认为对的地方，审的时候还是认为对。
 
 安全底线（有回归测试钉住）：**一个 provider 的 key 绝不外借**。声明了端点却没给 key 的
-provider 一律不可用，宁可回落默认也不把中转站的 key 发到另一家厂商的地址上。
+远程 provider 一律不可用；本机回环允许固定非秘密占位符，宁可回落默认也不把中转站的 key 发到另一家厂商的地址上。
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ import logging
 import os
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Tuple
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ DEFAULT_PROVIDER = "default"
 
 @dataclass(frozen=True)
 class ProviderSpec:
-    """一个可用的模型端点。api_key 为空 = 不可用（见模块头的"key 绝不外借"）。"""
+    """一个可用的模型端点。api_key 为有效凭据或本机固定占位符；为空表示不可用。"""
 
     name: str
     base_url: str
@@ -53,6 +54,28 @@ class RoleTarget:
 
 def _env(name: str) -> str:
     return (os.getenv(name) or "").strip()
+
+
+def local_model_endpoint(base_url: str) -> bool:
+    """Exact Desktop loopback policy; no DNS lookup or host-prefix exemptions."""
+    try:
+        parsed = urlsplit(base_url)
+        local = (parsed.scheme in ("http", "https")
+                 and parsed.hostname in ("127.0.0.1", "localhost")
+                 and parsed.username is None and parsed.password is None
+                 and not parsed.query and not parsed.fragment)
+        _ = parsed.port
+        return local
+    except ValueError:
+        return False
+
+
+def _provider_key(base_url: str, api_key: str) -> str:
+    """Non-secret SDK placeholder only for loopback; never borrow the default key.
+
+    This is not authentication and cannot bypass a server requiring its own token.
+    """
+    return api_key or ("not-required" if local_model_endpoint(base_url) else "")
 
 
 def providers() -> Dict[str, ProviderSpec]:
@@ -81,7 +104,9 @@ def providers() -> Dict[str, ProviderSpec]:
         name = key[len(prefix):-len(suffix)].lower()
         if not name:
             continue
-        out[name] = ProviderSpec(name, _env(key), _env(f"{prefix}{name.upper()}_KEY"))
+        base = _env(key)
+        api_key = _env(f"{prefix}{name.upper()}_KEY")
+        out[name] = ProviderSpec(name, base, _provider_key(base, api_key))
     return out
 
 

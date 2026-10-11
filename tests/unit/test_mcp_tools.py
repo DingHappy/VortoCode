@@ -9,6 +9,7 @@ from src.agents.mcp_tools import (
     connect_mcp,
     wrap_mcp_manager,
 )
+from src.utils.async_ops import timeout_scope
 
 
 class _FakeTool:
@@ -64,7 +65,7 @@ async def test_wrap_handler_reports_error():
     mgr = _FakeManager([_FakeTool("x", "s")], _FakeResult(False, error="boom"))
     tool = wrap_mcp_manager(mgr)[0]
     out = await tool.handler({})
-    assert "MCP 工具出错" in out and "boom" in out
+    assert out["ok"] is False and "MCP 工具出错" in out["error"] and "boom" in out["error"]
 
 
 @pytest.mark.asyncio
@@ -118,3 +119,35 @@ def test_external_mcp_url_rejects_embedded_credentials(url):
 
 def test_external_mcp_url_allows_public_http_without_credential_signals():
     assert _credential_free_http_url("https://example.com/mcp?tenant=public") is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('cleanup_mode', ['error', 'timeout', 'cancel'])
+async def test_initialization_failure_keeps_original_error_and_bounds_cleanup(tmp_path, monkeypatch, cleanup_mode):
+    import asyncio
+    import src.agents.mcp_tools as module
+    import src.tools.manager as managers
+    (tmp_path / 'config').mkdir()
+    (tmp_path / 'config/mcp.yaml').write_text('{}')
+    original = ValueError('initialization failed')
+    class FailedManager:
+        def __init__(self, *args, **kwargs):
+            self.config = {'servers': [{'name': 'fixture', 'transport': 'http',
+                                       'url': 'http://127.0.0.1/mcp', 'credentialed': False}]}
+        async def initialize(self):
+            raise original
+        async def shutdown(self):
+            if cleanup_mode == 'error':
+                raise RuntimeError('cleanup failed')
+            if cleanup_mode == 'cancel':
+                raise asyncio.CancelledError()
+            await asyncio.Event().wait()
+    monkeypatch.setattr(managers, 'ToolManager', FailedManager)
+    monkeypatch.setattr(module, 'MCP_CLEANUP_TIMEOUT', .01, raising=False)
+    expected = asyncio.CancelledError if cleanup_mode == 'cancel' else ValueError
+    with pytest.raises(expected) as caught:
+        async with timeout_scope(.2):
+            await connect_mcp(tmp_path, capability_profile='external')
+    if cleanup_mode != 'cancel':
+        assert caught.value is original
+    assert 'MCP cleanup unconfirmed' in getattr(caught.value, '__notes__', [])

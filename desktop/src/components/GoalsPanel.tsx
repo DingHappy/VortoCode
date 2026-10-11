@@ -7,7 +7,9 @@
 // ——全部留 App 经 props 下传，本面板无任何自持状态。
 // goalFormLines/goalEvidenceKey/criterionVerifierDraft 与 GoalVerifierDraft 上收 lib/goals
 // （App 写路径与本面板共用）。
+import { useEffect, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
+import type { GoalFocus } from "../lib/goals";
 
 import { statusLabel, verifierKindLabel } from "../lib/labels";
 import { criterionVerifierDraft, goalEvidenceKey, goalFormLines } from "../lib/goals";
@@ -22,6 +24,9 @@ import type {
 } from "../types";
 
 type GoalsPanelProps = {
+  goalFocus?: GoalFocus | null;
+  onRetryFocus?: () => void;
+  onClearFocus?: () => void;
   goals: GoalItem[];
   tasks: TaskItem[];
   runs: CommandRunItem[];
@@ -56,6 +61,7 @@ type GoalsPanelProps = {
 };
 
 export function GoalsPanel({
+  goalFocus, onRetryFocus, onClearFocus,
   goals,
   tasks,
   runs,
@@ -83,6 +89,14 @@ export function GoalsPanel({
   onSaveVerifier,
   onRecordEvidence,
 }: GoalsPanelProps) {
+  const focusedCard = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (goalFocus?.status === "ready") focusedCard.current?.scrollIntoView({ block: "nearest" });
+  }, [goalFocus]);
+  // A list refresh may update this ID, but never substitute a different Goal.
+  const visibleGoals = goalFocus
+    ? goalFocus.status === "ready" && goalFocus.goal ? [goals.find((goal) => goal.id === goalFocus.id) ?? goalFocus.goal] : []
+    : goals;
   return (
     <div className="goals-panel">
       <div className="goal-form">
@@ -117,8 +131,14 @@ export function GoalsPanel({
         </div>
       </div>
 
-      {goals.length === 0 && <div className="panel-empty compact"><strong>还没有开发目标</strong><p>目标会把执行计划、分支和逐项验收证据串在一起。</p></div>}
-      {goals.map((goal) => {
+      {goalFocus && <div className="goal-focus-notice" role="status">
+        <strong>定位目标 · {goalFocus.id}</strong>
+        <p>{goalFocus.status === "loading" ? "正在读取来源项目的目标合同…" : goalFocus.status === "error" ? `目标未核验：${goalFocus.error}` : "已读取指定目标；任务完成与目标验收分别记录。"}</p>
+        {goalFocus.status === "error" && <button onClick={onRetryFocus}>重新读取指定目标</button>}
+        <button onClick={onClearFocus}>查看目标列表</button>
+      </div>}
+      {!goalFocus && goals.length === 0 && <div className="panel-empty compact"><strong>还没有开发目标</strong><p>目标会把执行计划、分支和逐项验收证据串在一起。</p></div>}
+      {visibleGoals.map((goal) => {
         const activeTask = tasks.some((task) => task.goal_id === goal.id && ["queued", "running"].includes(task.status));
         const activeVerifier = runs.some((run) => run.goal_id === goal.id && ["queued", "running", "cancelling"].includes(run.status));
         const hasVerifiers = goal.acceptance_criteria.some((criterion) => Boolean(criterion.verifier));
@@ -131,7 +151,7 @@ export function GoalsPanel({
           !evidence.criterion_id && evidence.passed && !evidence.stale_reason && ["test", "review"].includes(evidence.kind)
         ));
         return (
-          <section className={`goal-card ${goal.status}`} key={goal.id}>
+          <section ref={goalFocus?.id === goal.id ? focusedCard : undefined} className={`goal-card ${goal.status}`} data-goal-id={goal.id} key={goal.id}>
             <div className="goal-card-head">
               <span className={`task-status ${goal.status}`}>{statusLabel(goal.status)}</span>
               <small>{progress.passed}/{progress.total} 已验收</small>

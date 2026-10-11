@@ -30,7 +30,7 @@ def test_inbound_registry_frozen():
     assert sorted(P.INBOUND) == sorted([
         "ping", "get_status", "agent", "agent_cancel",
         "agent_queue_remove", "agent_queue_send_now",
-        "agent_confirm_response", "agent_tts", "workspace_edit", "task_list",
+        "agent_confirm_check", "agent_confirm_response", "agent_tts", "workspace_edit", "task_list",
         "agent_events_replay",
     ])
 
@@ -43,6 +43,7 @@ def test_outbound_registry_frozen():
         "agent_reasoning",      # PR-4 加：思维链增量（仅 want_reasoning 的客户端收，TUI attach 用）
         "agent_diff",           # 富 UI 协议化第一步：确认前的结构化 diff 推送（attach TUI/桌面端渲染）
         "agent_error", "agent_done", "agent_cancelled", "agent_confirm",
+        "agent_confirm_state",
         "agent_confirm_closed",  # v10 加：这条确认不再等待（超时/取消/已应答），客户端据此收起卡片
         "agent_queue", "agent_events",
         "agent_tts_audio", "agent_tts_error",

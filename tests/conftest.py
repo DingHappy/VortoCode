@@ -73,3 +73,11 @@ def _hermetic_user_instructions(monkeypatch, tmp_path_factory):
     from src.agents import project
     monkeypatch.setattr(project, "USER_INSTRUCTIONS_PATH",
                         tmp_path_factory.mktemp("no-user-instructions") / "AGENTS.md")
+
+
+@pytest.fixture(autouse=True)
+def _isolated_channel_ownership(monkeypatch, tmp_path_factory, request):
+    import hashlib
+    identity = hashlib.sha256(request.node.nodeid.encode()).hexdigest()
+    directory = tmp_path_factory.getbasetemp() / "channel-locks" / identity
+    monkeypatch.setenv("VORTOCODE_IM_LOCK_DIR", str(directory))

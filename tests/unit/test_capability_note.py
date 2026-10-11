@@ -174,13 +174,14 @@ def test_stub_agent_without_tools_never_breaks_restore(tmp_path):
 # ---------------------------------------------------------------- 存储层字段语义
 def test_save_without_tool_names_preserves_recorded_list(tmp_path):
     """不带清单的调用方（升级期的旧代码路径）不许把已记录的清单抹掉。"""
-    save_session(str(tmp_path), SID, [], [], None, tool_names=["a", "b"])
+    save_session(str(tmp_path), SID, [], [{"role": "user", "content": "hi"}], None,
+                 tool_names=["a", "b"])
     save_session(str(tmp_path), SID, [], [{"role": "user", "content": "hi"}], None)
     assert load_session(str(tmp_path), SID)["tool_names"] == ["a", "b"]
 
 
 def test_legacy_file_loads_tool_names_as_none_not_empty(tmp_path):
-    save_session(str(tmp_path), SID, [], [], None)
+    save_session(str(tmp_path), SID, [], [{"role": "user", "content": "hi"}], None)
     assert load_session(str(tmp_path), SID)["tool_names"] is None
 
 
@@ -255,7 +256,8 @@ def test_fingerprint_survives_round_trip_to_disk(tmp_path):
     from src.agents.main_agent import MainAgent, build_read_tools
 
     fp = MainAgent(build_read_tools(str(tmp_path))).behavior_fingerprint()
-    save_session(str(tmp_path), SID, [], [], None, tool_names=["a"], behavior_fp=fp)
+    save_session(str(tmp_path), SID, [], [{"role": "user", "content": "x"}], None,
+                 tool_names=["a"], behavior_fp=fp)
     assert load_session(str(tmp_path), SID)["behavior_fp"] == fp
 
     save_session(str(tmp_path), SID, [], [{"role": "user", "content": "x"}], None)
@@ -291,6 +293,7 @@ def test_save_without_mode_keeps_the_recorded_one(tmp_path):
 
 
 def test_garbage_mode_is_not_persisted(tmp_path):
-    save_session(str(tmp_path), SID, [], [], None, mode="../../etc/passwd")
+    save_session(str(tmp_path), SID, [], [{"role": "user", "content": "x"}], None,
+                 mode="../../etc/passwd")
     assert load_session(str(tmp_path), SID)["mode"] is None
     assert _bridge(tmp_path).mode == "plan", "脏数据把装配带偏了"

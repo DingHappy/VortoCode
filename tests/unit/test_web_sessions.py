@@ -275,3 +275,70 @@ def test_api_refuses_to_delete_running_session(client):
     response = c.delete("/api/agent/sessions/running")
     assert response.status_code == 409
     assert ss.load_session(str(root), "sid-running") is not None
+
+
+def test_blank_live_sessions_are_not_recent_but_started_sessions_are(client):
+    from types import SimpleNamespace
+    from src.web.routers import realtime
+    c, root = client
+    blank = {"repo_root":str(root),"agent":SimpleNamespace(history=[],plan=[]),
+             "transcript":[],"activities":[],"prompt_queue":[]}
+    realtime._SESSIONS["sid-draft"] = blank
+    assert c.get("/api/agent/sessions").json()["sessions"] == []
+    blank["transcript"] = [{"role":"user","text":"hello"}]
+    assert c.get("/api/agent/sessions").json()["sessions"][0]["sid"] == "draft"
+
+
+def test_historical_blank_is_hidden_without_deletion_and_named_or_queued_kept(client):
+    import json
+    c, root = client
+    directory = root / ".vortocode/web_sessions"
+    directory.mkdir(parents=True)
+    old = directory / "old-empty.json"
+    original = json.dumps({"transcript":[],"history":[],"context_usage":{"pct":1}})
+    old.write_text(original)
+    ss.save_session(str(root),"sid-named",[],[],None,title="保留的工作")
+    ss.save_session(str(root),"sid-queued",[],[],None,prompt_queue=[{"id":"q1","text":"待执行"}])
+    ids = {s["sid"] for s in c.get("/api/agent/sessions").json()["sessions"]}
+    assert ids == {"named","queued"}
+    assert old.read_text() == original
+
+
+def test_empty_session_with_background_task_stays_visible(client):
+    import json
+    from src.gateway.tasks import TaskLedger
+    c, root = client
+    directory = root / ".vortocode/web_sessions"
+    directory.mkdir(parents=True)
+    (directory / "task-owner.json").write_text(json.dumps({"transcript":[]}))
+    TaskLedger(str(root)).create("dev","retain evidence",owner_session="sid-task-owner")
+    assert "task-owner" in {s["sid"] for s in c.get("/api/agent/sessions").json()["sessions"]}
+
+@pytest.mark.asyncio
+async def test_confirmation_check_is_read_only_and_owned():
+    import asyncio
+    from src.web.routers import realtime as rt
+    class Socket:
+        def __init__(self, sid):
+            self.query_params={"sid":sid}
+            self.events=[]
+        async def send_json(self,event):
+            self.events.append(event)
+    owner,other=Socket("approval-owner"),Socket("approval-other")
+    future=asyncio.get_running_loop().create_future()
+    key="readonly-check-fixture"
+    rt._PENDING_CONFIRMS[key]={"session":"sid-approval-owner","future":future}
+    try:
+        for socket,expected in [(owner,True),(other,False)]:
+            await rt.handle_websocket_message(socket,{"type":"agent_confirm_check","id":key,"nonce":"check-1"})
+            assert socket.events[-1]["pending"] is expected
+            assert socket.events[-1]["nonce"]=="check-1"
+            assert not future.done()
+        future.set_result(False)
+        await rt.handle_websocket_message(owner,{"type":"agent_confirm_check","id":key,"nonce":"check-2"})
+        assert owner.events[-1]["pending"] is False
+        assert future.result() is False
+        await rt.handle_websocket_message(owner,{"type":"agent_confirm_check","id":"missing","nonce":"check-3"})
+        assert owner.events[-1]["pending"] is False
+    finally:
+        rt._PENDING_CONFIRMS.pop(key,None)
