@@ -274,3 +274,14 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 .assistant-panel-body > .activity-feed { padding-top: 6px; }
 .assistant-panel-body > .activity-feed .activity-feed-scope { display: none; }
 .assistant-panel-body > .session-info { padding: 14px 20px; }
+
+/* 两处切换统一成同一种分段控件：等宽、选中与未选中字重只差一档，不跳宽；徽标跟在文字后面 */
+.mode-switch, .assistant-tabs { display: flex; gap: 2px; padding: 3px; border-radius: 10px; background: var(--n3); }
+.mode-switch { margin: 2px 16px 12px; }
+.assistant-tabs { margin: 6px 20px 4px; }
+.mode-switch button, .assistant-tabs button { position: static; flex: 1 1 0; display: flex; align-items: center; justify-content: center; gap: 6px; height: 30px; padding: 0 10px; border: 0; border-radius: 7px; font-size: 13px; font-weight: 500; color: var(--n10); background: transparent; cursor: pointer; transition: color .12s ease, background-color .12s ease; }
+.mode-switch button:hover:not(.active), .assistant-tabs button:hover:not(.active) { color: var(--n12); }
+.mode-switch button.active, .assistant-tabs button.active { font-weight: 600; color: var(--n13); background: var(--n0); box-shadow: 0 1px 2px rgba(var(--ink-rgb), .1), 0 0 0 .5px rgba(var(--ink-rgb), .06); }
+.assistant-tabs button svg { flex: 0 0 auto; }
+.assistant-tabs .assistant-tab-badge { position: static; min-width: 17px; height: 17px; margin-left: 2px; padding: 0 5px; border-radius: 999px; font-size: 10.5px; font-style: normal; font-weight: 600; line-height: 17px; color: var(--amber-text); background: var(--amber-bg); }
+

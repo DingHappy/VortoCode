@@ -1,13 +1,13 @@
 import type { ReactNode } from "react";
-import { Briefcase, ListChecks, MessageCircle, MessagesSquare, Plus, Sparkles, X } from "lucide-react";
+import { ListChecks, MessageCircle, MessagesSquare, Plus, X } from "lucide-react";
 
 export type AppMode = "assistant" | "work";
 
 /** 左上角模式切换：助理（个人助理，一个常驻主聊天）/ 工作台（按项目开对话写代码）。 */
 export function ModeSwitch({ mode, onChange }: { mode: AppMode; onChange: (mode: AppMode) => void }) {
   return <div className="mode-switch" role="radiogroup" aria-label="界面模式">
-    <button role="radio" aria-checked={mode === "assistant"} className={mode === "assistant" ? "active" : ""} onClick={() => onChange("assistant")}><Sparkles size={14} />助理</button>
-    <button role="radio" aria-checked={mode === "work"} className={mode === "work" ? "active" : ""} onClick={() => onChange("work")}><Briefcase size={14} />工作台</button>
+    <button role="radio" aria-checked={mode === "assistant"} className={mode === "assistant" ? "active" : ""} onClick={() => onChange("assistant")}>助理</button>
+    <button role="radio" aria-checked={mode === "work"} className={mode === "work" ? "active" : ""} onClick={() => onChange("work")}>工作台</button>
   </div>;
 }
 
@@ -51,9 +51,10 @@ export function AssistantPanel({ name, connected, modelLabel, tab, onTab, onClos
       <span className={`assistant-status${connected ? " online" : ""}`}>{connected ? "已连接" : "连接中断"}{connected && modelLabel ? ` · ${modelLabel}` : ""}</span>
     </div>
     <div className="assistant-tabs" role="tablist" aria-label="助理面板">
-      <button role="tab" aria-selected={tab === "feed"} className={tab === "feed" ? "active" : ""} title="动态" aria-label="动态" onClick={() => onTab("feed")}>
-        <MessagesSquare size={16} />{waiting ? <i className="assistant-tab-badge">{waiting}</i> : null}</button>
-      <button role="tab" aria-selected={tab === "steps"} className={tab === "steps" ? "active" : ""} title="本轮步骤" aria-label="本轮步骤" onClick={() => onTab("steps")}><ListChecks size={16} /></button>
+      <button role="tab" aria-selected={tab === "feed"} className={tab === "feed" ? "active" : ""} onClick={() => onTab("feed")}>
+        <MessagesSquare size={15} aria-hidden="true" />动态{waiting ? <i className="assistant-tab-badge" aria-label={`${waiting} 件等你处理`}>{waiting}</i> : null}</button>
+      <button role="tab" aria-selected={tab === "steps"} className={tab === "steps" ? "active" : ""} onClick={() => onTab("steps")}>
+        <ListChecks size={15} aria-hidden="true" />步骤</button>
     </div>
     <div className="assistant-panel-body">{children}</div>
   </aside>;
