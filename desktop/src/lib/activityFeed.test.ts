@@ -1,0 +1,62 @@
+import { describe, expect, it } from "vitest";
+import type { TaskItem } from "../types";
+import { feedStatus, feedTime, firstSentence, groupFeed, taskFeedItem, type FeedItem } from "./activityFeed";
+
+const task = (overrides: Partial<TaskItem>): TaskItem => ({ id: "t1", status: "done", ...overrides });
+const question = (status: "open" | "answered") => ({ id: "q", task_id: "t1", round: 1, status, question: "要删除哪几条帖子？请列出链接。", options: [], context: "", asked_by: "worker", answerer: "owner" as const, created: "", expires_at: "", answer: "", answered_at: "" });
+
+describe("firstSentence", () => {
+  it("取第一个非空行的第一句，去掉 Markdown 与代码块，超长截断", () => {
+    expect(firstSentence("## 结论\n\n完成了静态审查。另外还有别的。", 40)).toBe("结论");
+    expect(firstSentence("```py\nx=1\n```\n已归档记录；下一步待定", 40)).toBe("已归档记录；");
+    expect(firstSentence("一二三四五六七八九十", 6)).toBe("一二三四五…");
+    expect(firstSentence(undefined, 10)).toBe("");
+    // 标识符里的下划线不是 Markdown：截图里 timeout_scope 曾被显示成 timeoutscope
+    expect(firstSentence("补了 `timeout_scope` / **add_note** 两个垫片。", 40)).toBe("补了 timeout_scope / add_note 两个垫片。");
+    expect(firstSentence("- 见 [报告](https://x/y) 第二节", 40)).toBe("见 报告 第二节");
+  });
+});
+
+describe("feedStatus / taskFeedItem", () => {
+  it("有待回答的问题或等验收 → 等你处理，且优先于运行状态", () => {
+    expect(feedStatus(task({ status: "running", development: { version: 1, round: 1, owner_session: "", plan_id: "", root_task_id: "", questions: [question("open")] } }))).toBe("waiting");
+    expect(feedStatus(task({ status: "done", collaboration: { assignee: "", round: 1, review: "pending", acceptance: [], tainted: false, messages: [] } }))).toBe("waiting");
+    expect(feedStatus(task({ status: "running", development: { version: 1, round: 1, owner_session: "", plan_id: "", root_task_id: "", questions: [question("answered")] } }))).toBe("running");
+  });
+
+  it("后端七种状态全部有归属", () => {
+    expect(["queued", "running", "done", "failed", "cancelled", "paused", "interrupted"].map((status) => feedStatus(task({ status }))))
+      .toEqual(["running", "running", "done", "failed", "failed", "stopped", "stopped"]);
+  });
+
+  it("标题取请求第一句，摘要按状态取结果/错误/问题的第一句", () => {
+    const done = taskFeedItem(task({ prompt: "调研 vortocode 项目。顺便看看测试", result: "完成了静态审查并归档记录。细节见报告。", updated_at: "2026-10-11T12:59:00" }));
+    expect(done).toMatchObject({ title: "调研 vortocode 项目。", summary: "完成了静态审查并归档记录。", status: "done", at: "2026-10-11T12:59:00" });
+    expect(taskFeedItem(task({ status: "failed", error: "网络超时" })).summary).toBe("网络超时");
+    expect(taskFeedItem(task({ status: "cancelled" })).summary).toBe("已取消");
+    expect(taskFeedItem(task({ status: "paused" })).summary).toBe("已暂停，可以继续");
+    expect(taskFeedItem(task({ status: "running", development: { version: 1, round: 1, owner_session: "", plan_id: "", root_task_id: "", questions: [question("open")] } })).summary)
+      .toBe("等你回复：要删除哪几条帖子？");
+    expect(taskFeedItem(task({ prompt: "" })).title).toBe("未命名任务");
+  });
+});
+
+describe("groupFeed", () => {
+  const now = new Date(2026, 9, 11, 13, 0);
+  const item = (id: string, status: FeedItem["status"], at: string): FeedItem => ({ id, title: id, summary: "", status, at });
+
+  it("等你处理置顶，其余按今天 / 昨天 / 日期 / 更早分组且组内时间倒序", () => {
+    const groups = groupFeed([
+      item("a", "done", "2026-10-11T09:00:00"), item("b", "done", "2026-10-11T12:00:00"),
+      item("c", "failed", "2026-10-10T11:00:00"), item("d", "waiting", "2026-10-09T08:00:00"),
+      item("e", "done", "2026-10-02T08:00:00"), item("f", "done", ""),
+    ], now);
+    expect(groups.map((group) => group.label)).toEqual(["等你处理", "今天", "昨天", "10月2日", "更早"]);
+    expect(groups[1].items.map((entry) => entry.id)).toEqual(["b", "a"]);
+  });
+
+  it("时间只显示几点几分；没有时间就留空", () => {
+    expect(feedTime(item("a", "done", "2026-10-11T09:05:00"))).toBe("09:05");
+    expect(feedTime(item("b", "done", "not-a-date"))).toBe("");
+  });
+});
