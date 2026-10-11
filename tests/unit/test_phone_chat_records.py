@@ -78,3 +78,17 @@ def test_phone_chats_route_is_read_only_listing(tmp_path, monkeypatch):
     chats = TestClient(app).get("/api/assistant/phone-chats").json()["chats"]
     assert [chat["sid"] for chat in chats] == ["telegram-42"]
     assert chats[0]["title"] == "📱 Telegram" and chats[0]["transcript"] == [{"role": "user", "text": "在吗", "rid": "r1", "at": "x"}]
+
+
+def test_liveness_reports_inbound_gate_without_ids(tmp_path):
+    """「机器人装死」时能一眼看出是白名单挡人（真机：交互角色继承了 .env 里 '' → 全拒）。不暴露 id。"""
+    bridge = IMBridge.__new__(IMBridge)
+    bridge.repo_root, bridge._sid, bridge._turn_task, bridge._pending_msgs = str(tmp_path), "sid-telegram-42", None, []
+    bridge.adapter = type("A", (), {"liveness": lambda self: {"connected": True}})()
+    bridge.owner_id = "42"
+    cases = [(False, set(), "blocked_all"), (False, {"7"}, "owner_missing"), (False, {"42"}, "ok"), (True, set(), "ok")]
+    for notification_only, allow_from, expected in cases:
+        bridge.notification_only, bridge.allow_from = notification_only, allow_from
+        live = bridge.liveness()
+        assert live["inbound"] == expected
+        assert "42" not in str({k: v for k, v in live.items() if k != "channel"})
