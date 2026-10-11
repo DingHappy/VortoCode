@@ -509,3 +509,15 @@ def test_sandboxed_tests_get_a_writable_throwaway_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(worktree.subprocess, "run", fake_run)
     assert worktree.run_tests(tmp_path, ["pytest", "-q"])["ok"] is True
     assert seen["exists_during"] and not os.path.exists(seen["cache"])      # 跑时存在、跑完删掉
+
+
+def test_selftest_failure_note_carries_the_test_tail():
+    """自测红要带证据：测试输出最后几行（整行），而不是只有「自测未过」。"""
+    from src.agents.dev_policy import _evidence_tail
+
+    out = "collected 3900 items\n" + "." * 50 + "\nFAILED tests/unit/test_tui.py::test_x - Read-only file system\n1 failed, 3899 passed"
+    tail = _evidence_tail(out, 120)
+    assert tail.startswith("：") and "FAILED tests/unit/test_tui.py::test_x" in tail and tail.endswith("1 failed, 3899 passed")
+    assert "collected" not in tail
+    assert _evidence_tail("测试超时（>600s）") == "：测试超时（>600s）"
+    assert _evidence_tail("") == "" and _evidence_tail(None) == ""

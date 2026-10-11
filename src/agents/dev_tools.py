@@ -21,6 +21,7 @@ from src.agents.dev_policy import (
     _missing_tests_retry_prompt,
     _dropped_tests_retry_prompt,
     _fail_note,
+    _evidence_tail,
     _noop_note,
     _log_stage_usage,
     _detect_base_branch,
@@ -208,7 +209,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     # ——人照着"未达标"去改任务描述，改一晚上也没用，因为根本不是任务的问题。
                     prev_ver = last.get("ver")
                     if prev_ver and not prev_ver.get("ok"):
-                        why = "自测未过（红）"
+                        why = "自测未过（红）" + _evidence_tail(prev_ver.get("output"), 160)
                     elif not str(last.get("diff") or "").strip():
                         why = "没有产出任何改动"
                     else:
@@ -544,7 +545,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                             # （找不到目标段落 / 认为已经满足 / 理解成了别的任务）。
                             b.note = _noop_note(r.get("conclusion"))
                         else:
-                            b.note = "自测未过"
+                            b.note = "自测未过" + _evidence_tail((r.get("ver") or {}).get("output"))
                 _save()                                      # 落地前先记下哪些没绿
                 apply_res = await await_thread(apply_diffs_to_branch, repo_root, branch, items, None)
                 # 只以 applied 为**白名单**判 landed——绝不靠"不在 failed 就是 landed"反推：
