@@ -684,7 +684,7 @@ workspace_id、owner/source/round、request_id、archived_at、历史 report 及
 连续范围及累计链。导出的 kind 为 task_coverage_archive、version=1，evidence 包括
 workspace_id、scope、scan_id、checkpoint_digest、checkpoint、observation、archived_at、
 request_id；归档 ID 固定来源分组及操作身份。纯核验可调用
-`src.gateway.task_scan.verify_archive(artifact)`，无需读取当前任务或启动 runtime。
+`src.workflow.tasks.task_scan.verify_archive(artifact)`，无需读取当前任务或启动 runtime。
 摘要规范仍为键排序、ASCII 转义及紧凑分隔的 JSON；外层 sha256=digest(evidence)，
 checkpoint_digest=digest(checkpoint)，收据链由 checkpoint.snapshot_id 逐项递推
 `digest([previous_digest,receipt])`，必须等于 checkpoint.evidence_digest。

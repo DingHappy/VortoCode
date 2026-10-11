@@ -10,7 +10,7 @@ _RUN_MANAGER = None
 def get_run_manager():
     global _RUN_MANAGER
     if _RUN_MANAGER is None:
-        from src.gateway.runs import RunManager
+        from src.workflow.workbench.runs import RunManager
 
         _RUN_MANAGER = RunManager(os.getcwd())
     return _RUN_MANAGER
@@ -20,7 +20,7 @@ def get_run_manager():
 async def list_runs():
     # Desktop 每 900ms 轮一次这条。显式给上界，让轮询开销与保留策略解耦——
     # 轮转是软上限（未处理的失败记录不许删，可以顶破），这里不给限就又变回整目录读。
-    from src.gateway.runs import max_run_files
+    from src.workflow.workbench.runs import max_run_files
 
     return {"runs": [run.to_dict() for run in get_run_manager().list(max_run_files())]}
 

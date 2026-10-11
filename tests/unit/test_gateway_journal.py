@@ -5,8 +5,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.gateway.audit import record_decision_audit, record_tool_audit
-from src.gateway.goals import GoalLedger
-from src.gateway.journal import (
+from src.workflow.workbench.goals import GoalLedger
+from src.workflow.workbench.journal import (
     JournalStore,
     add_journal_note,
     build_daily_journal,
@@ -16,8 +16,8 @@ from src.gateway.journal import (
     snapshot_daily_journal,
     today,
 )
-from src.gateway.runs import RunLedger
-from src.gateway.tasks import TaskLedger
+from src.workflow.workbench.runs import RunLedger
+from src.workflow.tasks.tasks import TaskLedger
 
 
 def _seed_day(root):

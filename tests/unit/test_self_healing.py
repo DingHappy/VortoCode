@@ -1,4 +1,4 @@
-"""自愈层（gateway/remediation）——白名单诊断 + 安全的自动处置 + 真的被接上去。
+"""自愈层（scheduling/remediation）——白名单诊断 + 安全的自动处置 + 真的被接上去。
 
 分四组：
 1. **诊断**：白名单认得出真机上实际发生过的故障文本（每条都附出处，不是想出来的样本）。
@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from src.gateway import remediation as rem
+from src.scheduling import remediation as rem
 
 
 @pytest.fixture(autouse=True)
@@ -160,7 +160,7 @@ def test_disabled_still_diagnoses_but_does_not_act(tmp_path, monkeypatch):
 
 def test_healing_is_audited(tmp_path):
     """静默自愈比不自愈更可怕——人会以为环境一直是好的。每次处置都要落台账。"""
-    from src.gateway.notices import load_notices
+    from src.scheduling.notices import load_notices
     root = _repo(tmp_path)
     assert rem.remediate(root, "Author identity unknown", source="cron:x").healed
     texts = [n.get("text", "") for n in load_notices(root, 10)]
@@ -258,7 +258,7 @@ def test_preflight_dev_still_blocks_what_it_cannot_fix(tmp_path, monkeypatch):
 
 async def test_cron_failure_path_attaches_diagnosis(tmp_path, monkeypatch):
     """cron 作业炸了 → 通报里要带上诊断/处置结论（无人值守最需要它）。"""
-    from src.gateway import cron as cron_mod
+    from src.scheduling import cron as cron_mod
     root = _repo(tmp_path)
     job = cron_mod.CronJob(name="j", schedule=cron_mod.parse_schedule("at 03:00"),
                            prompt="x", announce="im")
@@ -286,7 +286,7 @@ async def test_cron_success_path_diagnoses_but_never_acts(tmp_path, monkeypatch)
     真机 2026-07-27 09:47 就是这一类（没 allow_web，模型回了一大段"我没有联网工具"）：
     值得诊断，但绝不值得让它驱动任何动作。
     """
-    from src.gateway import cron as cron_mod
+    from src.scheduling import cron as cron_mod
     root = _repo(tmp_path)
     job = cron_mod.CronJob(name="j", schedule=cron_mod.parse_schedule("at 03:00"),
                            prompt="x", announce="im")

@@ -3,9 +3,9 @@ from dataclasses import asdict
 
 import pytest
 
-from src.gateway.continuations import ContinuationConflict, ContinuationService, recover_claims
-from src.gateway.handoffs import CompletionInbox, revision
-from src.gateway.tasks import TaskLedger, TaskRunner
+from src.workflow.tasks.continuations import ContinuationConflict, ContinuationService, recover_claims
+from src.workflow.tasks.handoffs import CompletionInbox, revision
+from src.workflow.tasks.tasks import TaskLedger, TaskRunner
 from src.llm.hard_budget import CheckLimits
 
 

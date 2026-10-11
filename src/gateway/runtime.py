@@ -8,7 +8,7 @@ from src.gateway.process_lease import ProcessLease
 class RuntimeServices:
     """Own the single execution pool and dispatch, independent of a transport."""
     def __init__(self, root, *, development_worker, on_update=None, workspace_scope=None):
-        from src.gateway.tasks import TaskRunner
+        from src.workflow.tasks.tasks import TaskRunner
         from src.gateway.workspace_scope import current_workspace_scope, normalize_workspace_scope
         self.root = str(Path(root).resolve())
         self.scope = (current_workspace_scope() if workspace_scope is None else

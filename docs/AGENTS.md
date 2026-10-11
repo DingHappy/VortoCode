@@ -25,23 +25,23 @@ Desktop本地模型交付补充（2026-10-08）：内置Gateway现在包含锁�
 | `src/gateway/session_actor.py` | 前台/检查共用唯一槽位与清理、输入 FIFO/优先项、停止与恢复 | WebSocket、模型、存储格式和事件协议 |
 | `src/gateway/session_event_stream.py` | 事件序号、原子补收/订阅、有界回放和广播 | 工作区选择、WebSocket、模型执行 |
 | `src/gateway/session_events.py` | 分段事件 journal、容量限制与磁盘恢复 | 实时订阅和模型执行 |
-| `src/gateway/tasks.py` | 精确任务身份校验、共享台账、后台执行与崩溃恢复 | 模型和角色选择 |
-| `src/gateway/task_summary.py` | 原 Inbox 的有界只读验收/交接/依赖观察与看板投影，复用共享锁和原领域合同 | 写入台账、磁盘追加扫描、自动推进、任务验收或 Goal 达成 |
-| `src/gateway/task_recovery.py` | 开发恢复身份、来源/计划版本校验、单次恢复与血缘投影；复用原执行池 | HTTP、模型、第二套台账或调度器 |
-| `src/gateway/collaboration.py` | 委派状态、任务消息、轮次校验与发起 Agent 验收 | LLM、WebSocket、自动启动会话 |
-| `src/gateway/task_questions.py` | 台账内的问题合同、期限、答复幂等与轮次变更校验 | 存储实例、模型、调度器 |
-| `src/gateway/dev_questions.py` | 开发问题绑定任务/块/计划版本，清理后答复恢复与固定轮次合同 | 模型、Git 清理、第二套任务池 |
+| `src/workflow/tasks/tasks.py` | 精确任务身份校验、共享台账、后台执行与崩溃恢复 | 模型和角色选择 |
+| `src/workflow/tasks/task_summary.py` | 原 Inbox 的有界只读验收/交接/依赖观察与看板投影，复用共享锁和原领域合同 | 写入台账、磁盘追加扫描、自动推进、任务验收或 Goal 达成 |
+| `src/workflow/tasks/task_recovery.py` | 开发恢复身份、来源/计划版本校验、单次恢复与血缘投影；复用原执行池 | HTTP、模型、第二套台账或调度器 |
+| `src/workflow/tasks/collaboration.py` | 委派状态、任务消息、轮次校验与发起 Agent 验收 | LLM、WebSocket、自动启动会话 |
+| `src/workflow/tasks/task_questions.py` | 台账内的问题合同、期限、答复幂等与轮次变更校验 | 存储实例、模型、调度器 |
+| `src/workflow/tasks/dev_questions.py` | 开发问题绑定任务/块/计划版本，清理后答复恢复与固定轮次合同 | 模型、Git 清理、第二套任务池 |
 | `src/agents/task_questions.py` | 绑定当前任务的提问工具与持久暂停信号 | 接受任意任务身份、回答或扩大权限 |
-| `src/gateway/handoffs.py` | 后台完成收件箱、结果版本与持久处理回执 | 模型调度、任务成功判定 |
-| `src/gateway/continuations.py` | 结果版本授权、一次认领、撤销和启动中断对账 | 模型调度、汇报送达、任务验收 |
-| `src/gateway/continuation_checks.py` | 注入式 actor 检查桥、预算记录、持久汇报回执后确认交接 | provider 选择、独立调度池、任务验收 |
-| `src/gateway/check_reports.py` | 校验台账结果、原会话持久汇报、尝试身份去重 | 模型调用、扩大授权、用户已读判定 |
+| `src/workflow/tasks/handoffs.py` | 后台完成收件箱、结果版本与持久处理回执 | 模型调度、任务成功判定 |
+| `src/workflow/tasks/continuations.py` | 结果版本授权、一次认领、撤销和启动中断对账 | 模型调度、汇报送达、任务验收 |
+| `src/workflow/tasks/continuation_checks.py` | 注入式 actor 检查桥、预算记录、持久汇报回执后确认交接 | provider 选择、独立调度池、任务验收 |
+| `src/workflow/tasks/check_reports.py` | 校验台账结果、原会话持久汇报、尝试身份去重 | 模型调用、扩大授权、用户已读判定 |
 | `src/gateway/sessions.py` | 安全容量淘汰、会话生命周期、真实保存结果、先保存再追加展示消息 | 结果验收、自动启动检查 |
-| `src/gateway/dispatch.py` | 请求幂等、下派、查询与有界返工；复用后台并发池 | HTTP、LLM、角色权限装配 |
-| `src/gateway/task_dependencies.py` | 有界依赖合同、结果版本快照、固定失效记录与只读核对 | 调度池、模型、自动推进 |
-| `src/gateway/task_dependents.py` | 有界反向发现、事件/启动/用户回合核对与原停止路径协调 | 持久索引、文件监听、轮询、自动推进或模型 |
-| `src/gateway/task_scan.py` | 原 TaskLedger 的有界清单、覆盖检查点/归档、显式观察、历史文件回验及本地保存凭据 | 任务副本、监听/轮询、调度、长期全局依赖索引或模型 |
-| `src/gateway/task_chain_budget.py` | 根任务中的链级准入与逐轮执行额度预留、只读用量投影 | token/费用计量、退款、调度池或模型 |
+| `src/workflow/tasks/dispatch.py` | 请求幂等、下派、查询与有界返工；复用后台并发池 | HTTP、LLM、角色权限装配 |
+| `src/workflow/tasks/task_dependencies.py` | 有界依赖合同、结果版本快照、固定失效记录与只读核对 | 调度池、模型、自动推进 |
+| `src/workflow/tasks/task_dependents.py` | 有界反向发现、事件/启动/用户回合核对与原停止路径协调 | 持久索引、文件监听、轮询、自动推进或模型 |
+| `src/workflow/tasks/task_scan.py` | 原 TaskLedger 的有界清单、覆盖检查点/归档、显式观察、历史文件回验及本地保存凭据 | 任务副本、监听/轮询、调度、长期全局依赖索引或模型 |
+| `src/workflow/tasks/task_chain_budget.py` | 根任务中的链级准入与逐轮执行额度预留、只读用量投影 | token/费用计量、退款、调度池或模型 |
 | `src/agents/dispatch.py` | 只读服务角色装配与执行预算限制 | 路由、第二套调度器 |
 | `src/web/task_dispatch.py` | HTTP/主 Agent 共用服务装配、任务事件和当前用户回合提示 | 独立并发池、自动模型回合 |
 | `src/web/routers/task_inbox.py` | 完成收件箱的类型化 HTTP 读取与手动回执适配 | 模型调用、验收、重新发布完成事件 |
@@ -198,7 +198,7 @@ TUI 的委派工具已迁移到同一协作服务，终端只保留结果渲染�
 ## 后台开发问题与恢复边界
 
 仅明确 owner_session 的后台 dev/dev-resume 注入开发提问工具。agents/dev_tools.py 通过
-question_factory 接受任务绑定；gateway/dev_questions.py 校验台账合同，不能反向装配模型。
+question_factory 接受任务绑定；workflow/tasks/dev_questions.py 校验台账合同，不能反向装配模型。
 问题先随 running 保存；ToolTurnYield 退出实现 Agent 和隔离工具，finally 清理未提交工作树。
 只有外层 worker 清理返回后，原 TaskRunner 保存 blocked、通知并释放槽位。阶段中崩溃则
 标记 interrupted 并关闭未证明清理的问题，不能恢复成已阻塞或自动执行。

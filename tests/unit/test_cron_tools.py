@@ -14,7 +14,7 @@
 
 import pytest
 
-from src.gateway.cron import (CronEditError, add_job, check_trigger, load_jobs, parse_jobs_text,
+from src.scheduling.cron import (CronEditError, add_job, check_trigger, load_jobs, parse_jobs_text,
                               set_job_enabled)
 
 # 一份"像真的"的作业表：带主人手写注释 + 一个已有作业。编辑面不许把这些弄丢。
@@ -24,7 +24,7 @@ jobs:
   # 中转站巡检：确定性作业，零 LLM。绝对路径解释器是踩过坑才写死的（PATH 极简）。
   - name: relay_duty
     schedule: "at 02:00"
-    command: "/opt/venv/bin/python -m src.gateway.relay_duty"
+    command: "/opt/venv/bin/python -m src.scheduling.relay_duty"
     timeout: 120
     announce: im
     enabled: true
@@ -247,7 +247,7 @@ def test_command_job_needs_the_host_execution_switch(tmp_path, monkeypatch):
 def test_same_job_cannot_be_triggered_concurrently(tmp_path, monkeypatch):
     _seed(tmp_path)
     monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
-    from src.gateway.cron import track_trigger
+    from src.scheduling.cron import track_trigger
 
     class _Running:
         def done(self):
@@ -260,7 +260,7 @@ def test_same_job_cannot_be_triggered_concurrently(tmp_path, monkeypatch):
     try:
         assert check_trigger(str(tmp_path), "relay_duty")[1] == "busy"
     finally:
-        from src.gateway.cron import _TRIGGER_INFLIGHT
+        from src.scheduling.cron import _TRIGGER_INFLIGHT
         _TRIGGER_INFLIGHT.pop("relay_duty", None)
 
 
@@ -268,7 +268,7 @@ async def test_run_declined_does_not_start_anything(tmp_path, monkeypatch):
     _seed(tmp_path)
     monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
     started = []
-    import src.gateway.cron as cron
+    import src.scheduling.cron as cron
     monkeypatch.setattr(cron, "run_job_by_name", lambda *a, **k: started.append(1))
     out = await _tools(tmp_path, _no())["cron_run"].handler({"name": "relay_duty"})
     assert "未触发" in out and not started
@@ -412,8 +412,8 @@ async def test_unattended_session_web_follows_the_job_flag(tmp_path):
 
 async def test_job_carries_allow_web_into_the_run(tmp_path):
     """cron.run_job 必须把作业的 allow_web 透传给隔离会话，否则 yaml 里写了也白写。"""
-    from src.gateway.cron import load_jobs as _lj
-    from src.gateway.cron import run_job
+    from src.scheduling.cron import load_jobs as _lj
+    from src.scheduling.cron import run_job
 
     _seed(tmp_path)
     add_job(tmp_path, name="news", schedule="at 09:00", prompt="搜新闻", allow_web=True)
@@ -491,7 +491,7 @@ async def test_unknown_job_is_reported_not_created(tmp_path):
 
 def test_web_toggle_never_touches_job_content(tmp_path):
     """守的是这条：不许改 prompt/command/schedule，所以劫持不了已被信任的作业。"""
-    from src.gateway.cron import set_job_web
+    from src.scheduling.cron import set_job_web
 
     _seed(tmp_path)
     before = {j.name: (j.schedule.raw, j.prompt, j.command) for j in load_jobs(tmp_path)}
@@ -503,7 +503,7 @@ def test_web_toggle_never_touches_job_content(tmp_path):
 
 
 def test_web_toggle_is_a_single_line_change(tmp_path):
-    from src.gateway.cron import set_job_web
+    from src.scheduling.cron import set_job_web
 
     _seed(tmp_path)
     before = _text(tmp_path).splitlines()
@@ -540,7 +540,7 @@ async def test_manual_trigger_pushes_to_the_owner(tmp_path, monkeypatch):
     import src.gateway.im_runtime as im_rt
     monkeypatch.setattr(im_rt, "notify_owner", lambda t: pushed.append(str(t)) or _noop())
 
-    import src.gateway.cron as cron
+    import src.scheduling.cron as cron
 
     async def _fake_session(root, prompt, **kw):
         return "📰 今日科技新闻摘要：假会话的产出"
@@ -571,7 +571,7 @@ async def _noop():
 
 def test_notifier_is_a_single_source(tmp_path):
     """三路投递器只此一份：web 路由的入口必须委派到 gateway，别各写一份（第三个调用方总会漏）。"""
-    from src.gateway.notices import make_notifier as gw
+    from src.scheduling.notices import make_notifier as gw
     from src.web.routers.tasks import make_notifier as web
 
     a, b = gw(str(tmp_path)), web(str(tmp_path))
@@ -581,7 +581,7 @@ def test_notifier_is_a_single_source(tmp_path):
 
 async def test_notifier_writes_the_ledger_even_when_im_is_down(tmp_path, monkeypatch):
     """台账是唯一有持久保证的一路：IM 挂了也不能把结果丢了。"""
-    from src.gateway.notices import load_notices, make_notifier
+    from src.scheduling.notices import load_notices, make_notifier
 
     import src.gateway.im_runtime as im_rt
 

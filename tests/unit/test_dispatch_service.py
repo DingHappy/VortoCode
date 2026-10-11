@@ -4,9 +4,9 @@ import asyncio
 import httpx
 import pytest
 
-from src.gateway.collaboration import CollaborationConflict
-from src.gateway.dispatch import DispatchService
-from src.gateway.tasks import TaskLedger, TaskRunner
+from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.dispatch import DispatchService
+from src.workflow.tasks.tasks import TaskLedger, TaskRunner
 
 
 def make_service(root, *, execute=None, worker=None, validator=lambda _: None):
@@ -252,7 +252,7 @@ async def test_api_execution_enters_main_agent_inbox_and_shared_review_receipt(t
     from src.agents.agent_loop import MainAgent
     from src.agents.delegation import build_research_tools
     from src.agents.taint import is_tainted, reset_taint
-    from src.gateway.handoffs import CompletionInbox
+    from src.workflow.tasks.handoffs import CompletionInbox
     from src.web.routers.delegations import _view
 
     dispatch, runner = make_service(tmp_path)

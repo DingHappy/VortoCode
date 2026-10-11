@@ -3,8 +3,8 @@ import subprocess
 
 import pytest
 
-from src.gateway.goals import Goal, GoalLedger, evidence_revision
-from src.gateway.runs import RunManager
+from src.workflow.workbench.goals import Goal, GoalLedger, evidence_revision
+from src.workflow.workbench.runs import RunManager
 
 
 def git(root, *args):
@@ -171,7 +171,7 @@ def test_non_git_workspace_keeps_unversioned_acceptance(tmp_path):
 
 
 def test_list_shares_revision_read_but_next_request_refreshes(repo, monkeypatch):
-    from src.gateway import goals
+    from src.workflow.workbench import goals
 
     ledger, first = active_goal(repo)
     _, second = active_goal(repo)

@@ -14,8 +14,8 @@ import asyncio
 import pytest
 import yaml
 
-from src.gateway.pipeline import PipelineStore, load_definition
-from src.gateway.products import ProductStore
+from src.workflow.pipeline.pipeline import PipelineStore, load_definition
+from src.workflow.pipeline.products import ProductStore
 from src.im.bridge import IMBridge
 from tests.unit.test_im_bridge import OWNER, FakeAdapter, ScriptedLLM, _drive_no_turn, _msg
 
@@ -72,7 +72,7 @@ async def _drive_with_advance(bridge, adapter, *events, timeout=5):
 
 def _no_real_advance(monkeypatch):
     """把真推进换成记账的假货——本文件测的是人批这一路，不是 advance（那边另有测试）。"""
-    from src.gateway import pipeline as _p
+    from src.workflow.pipeline import pipeline as _p
     called = []
 
     async def fake(repo_root, run_id, **kw):
@@ -368,7 +368,7 @@ async def test_queued_notices_are_flushed_even_without_a_reconnect(repo, monkeyp
     补发原先只在"通道重连过"时触发。桥连着好几天不断，那条就一直躺着，12 小时后按
     STALE_HOURS 当过期丢掉——于是"卡住了叫人"从来叫不到人。
     """
-    from src.gateway import notices
+    from src.scheduling import notices
 
     notices.queue_undelivered(str(repo), "🌐 该你推一下了", source="pipeline:content-ops")
     assert notices.pending_undelivered_count(str(repo)) == 1
@@ -510,7 +510,7 @@ async def test_an_unknown_command_shows_what_was_actually_received(repo):
 @pytest.mark.asyncio
 async def test_url_registers_a_published_link_against_the_live_run(repo):
     """**你只需要给一次链接**，数字之后自动查——手填数字的活第三天就没人做了。"""
-    from src.gateway.channel_stats import load_urls
+    from src.workflow.pipeline.channel_stats import load_urls
 
     run = _waiting_run(repo)
     bridge, adapter = _bridge(repo)

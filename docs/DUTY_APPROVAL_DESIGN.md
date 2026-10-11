@@ -2,9 +2,9 @@
 
 > 状态：设计定稿（2026-07-19，Fable 5）。实现排期见 OPC 战略 P1 与 `.vortocode/BACKLOG.md` B7 批。
 > 前置事实（写设计前逐一核对过源码）：
-> - `src/gateway/decisions.py`：决策队列是持久状态的确定性投影；`confirm:<cid>` 项带 `tainted`
+> - `src/workflow/tasks/decisions.py`：决策队列是持久状态的确定性投影；`confirm:<cid>` 项带 `tainted`
 >   标记且 `can_dismiss=False`；DecisionStore 只是"已查看"台账。
-> - `src/gateway/goals.py`：Goal = 目标/约束/逐条验收（每条可挂 test/build/lint/file verifier）/
+> - `src/workflow/workbench/goals.py`：Goal = 目标/约束/逐条验收（每条可挂 test/build/lint/file verifier）/
 >   证据/状态机（draft→active→blocked/achieved/failed），落 `.vortocode/goals/`。
 > - `src/im/bridge.py`：配对制（只服务 owner）、按钮确认走内存 Future、超时 600s=拒绝（fail-closed）。
 >   **局限：确认按钮只能放行 IM 桥自己会话的确认，批不了其他端（Desktop/Web/无人值守）的待决事项。**

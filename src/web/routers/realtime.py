@@ -288,7 +288,7 @@ async def _detach_session_subscriber(websocket) -> None:
 
 async def _poll_git_review_change(key: str, repo_root: str) -> Optional[bool]:
     """Poll one cheap invalidation token; publish only after the initial baseline."""
-    from src.gateway.git_review import review_watch_state
+    from src.workflow.review.git_review import review_watch_state
 
     try:
         current = await asyncio.to_thread(review_watch_state, repo_root)
@@ -382,7 +382,7 @@ def _new_agent():
     repo_root = os.getcwd()
 
     def _task_update(task) -> None:
-        from src.gateway.worktree_sessions import task_session_view
+        from src.workflow.tasks.worktree_sessions import task_session_view
         _task_events.broadcast_task_update(task_session_view(repo_root, task))
         from src.web.task_dispatch import observe_dependency_change
         observe_dependency_change(repo_root, task)
@@ -542,7 +542,7 @@ async def _persist_check_report(key: str, payload: dict):
 
     No completion-triggered model scheduling is registered by this adapter.
     """
-    from src.gateway.check_reports import CheckReportWriter
+    from src.workflow.tasks.check_reports import CheckReportWriter
     session = _TABLE.peek(key)
     if session is None or not session.get("repo_root"):
         raise ValueError("所属会话已关闭，不能保存检查汇报")
@@ -756,7 +756,7 @@ def _session_dashboard_snapshot(repo_root: str) -> list[Dict[str, Any]]:
     存盘会话。VortoCode 额外保留 ``queued``，表示用户停止后仍有持久输入等待恢复。
     """
     from pathlib import Path
-    from src.gateway.dashboard import (
+    from src.workflow.tasks.dashboard import (
         agent_context_summary,
         background_tasks_by_session,
         project_dashboard_context,
@@ -766,7 +766,7 @@ def _session_dashboard_snapshot(repo_root: str) -> list[Dict[str, Any]]:
     resolved_root = str(Path(repo_root).resolve())
     project = project_dashboard_context(resolved_root)
     task_groups = background_tasks_by_session(resolved_root)
-    from src.gateway.hook_issues import (
+    from src.workflow.workbench.hook_issues import (
         hook_issue_snapshot, load_hook_issue_acknowledgements,
     )
     hook_acknowledgements = load_hook_issue_acknowledgements(resolved_root)
@@ -887,7 +887,7 @@ async def agent_sessions_delete(sid: str):
         watcher.cancel()
     _GIT_REVIEW_WATCH_STATES.pop(key, None)
     event_root = str((sess or {}).get("repo_root") or os.getcwd())
-    from src.gateway.hook_issues import forget_hook_issue_session
+    from src.workflow.workbench.hook_issues import forget_hook_issue_session
     hook_issues_cleared = forget_hook_issue_session(event_root, key)
     from src.gateway.session_events import SessionEventJournal
     events_cleared = SessionEventJournal(event_root, key).clear()
@@ -914,7 +914,7 @@ async def acknowledge_session_hook_issue(sid: str, issue_id: str):
     """Hide one reviewed Hook failure from the actionable Dashboard queue."""
     import os
     from pathlib import Path
-    from src.gateway.hook_issues import (
+    from src.workflow.workbench.hook_issues import (
         acknowledge_hook_issue, hook_issue_snapshot, load_hook_issue_acks,
     )
     from src.web.session_store import load_session
@@ -1213,7 +1213,7 @@ async def _run_workspace_edit(websocket, path: str, content: str, expected_sha25
                 return str(error)
             outcome.update(ok=True, sha256=new_hash,
                            message=f"已保存 {prepared.relative_path}（{len(prepared.content)} 字节）")
-            from src.gateway.change_sources import record_change_source
+            from src.workflow.review.change_sources import record_change_source
             record_change_source(
                 os.getcwd(), prepared.relative_path, before_text,
                 prepared.content.decode("utf-8"), source="user",

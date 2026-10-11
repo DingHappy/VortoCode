@@ -8,6 +8,7 @@
 #   ./scripts/ci-local.sh            # 全跑（含 desktop 段，默认）
 #   ./scripts/ci-local.sh quick      # 跳过 integration/live 与 desktop，快一半
 #   SKIP_DESKTOP=1 ./scripts/ci-local.sh   # 跳过 desktop 段（逃生口）
+#   ./scripts/ci-local.sh changed    # 按本分支改动挑关：只改 desktop/ 不跑 python 段，反之亦然
 #
 # 自建 runner 就绪后（装机见 docs/OPS.md）：
 #   设仓库变量 CI_RUNNER=self-hosted → gh workflow enable CI → 手动 workflow_dispatch 验一次
@@ -19,6 +20,24 @@ cd "$(dirname "$0")/.." || exit 2
 MODE="${1:-full}"
 FAILED=()
 SKIPPED=()
+
+# changed 模式：相对 main 的合并基点（含未提交改动）判断改了哪一侧。判不出来就两侧都跑——
+# 宁可多跑，不可漏跑。desktop/runtime_entry.py 归 python 侧：它的测试在 pytest 里。
+RUN_PY=1
+RUN_DESKTOP=1
+if [ "$MODE" = "changed" ]; then
+  _base="$(git merge-base HEAD main 2>/dev/null)"
+  if [ -n "$_base" ]; then
+    _changed="$( { git diff --name-only "$_base"; git ls-files --others --exclude-standard; } | sort -u)"
+    if [ -n "$_changed" ]; then
+      printf '%s\n' "$_changed" | grep -qv '^desktop/' \
+        || printf '%s\n' "$_changed" | grep -qx 'desktop/runtime_entry.py' \
+        || RUN_PY=0
+      printf '%s\n' "$_changed" | grep -q '^desktop/' || RUN_DESKTOP=0
+    fi
+  fi
+  MODE=full
+fi
 
 run_gate() {
   local name="$1"; shift
@@ -54,6 +73,7 @@ run_python_gate() {
   run_gate "$name" "$@"
 }
 
+run_python_section() {
 run_python_gate "ruff（真错误门禁）" ruff python3 -m ruff check src tests
 run_python_gate "mypy（范围见 pyproject [tool.mypy]）" mypy python3 -m mypy
 
@@ -98,6 +118,13 @@ fi
 # 东西没送到人手机上"（cron_run 漏传 notify、确认门绕过分档函数、三处硬编码教钉钉用户按 Tab）。
 # 那类缺陷对"断函数返回值"的测试天然免疫——返回值确实是对的。
 run_python_gate "pytest（e2e 交付链路 canary）" pytest python3 -m pytest tests/e2e -q
+}
+
+if [ "$RUN_PY" = "1" ]; then
+  run_python_section
+else
+  skip_gate "python（ruff/mypy/pytest）" "changed 模式：本分支只改了 desktop/"
+fi
 
 # ─────────────────────────────────────────────────────────────
 # desktop 段（B6-2）——**刻意只跑 `npm run check` 的离线子集**
@@ -159,6 +186,10 @@ _desktop_build_inputs_missing() {
 }
 
 run_desktop_section() {
+  if [ "$RUN_DESKTOP" != "1" ]; then
+    skip_gate "desktop" "changed 模式：本分支没改 desktop/"
+    return
+  fi
   if [ -n "${SKIP_DESKTOP:-}" ]; then
     skip_gate "desktop" "SKIP_DESKTOP=1 显式跳过"
     return

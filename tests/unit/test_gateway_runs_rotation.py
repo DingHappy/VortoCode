@@ -2,8 +2,8 @@
 
 这些用例断的是**行为**（造出真实的 run 文件，看 list/prune 怎么处置），不查源码子串。
 """
-from src.gateway.decisions import DecisionStore
-from src.gateway.runs import CommandRun, RunLedger, max_run_files
+from src.workflow.tasks.decisions import DecisionStore
+from src.workflow.workbench.runs import CommandRun, RunLedger, max_run_files
 
 
 def _make(ledger: RunLedger, index: int, status: str = "done") -> CommandRun:
@@ -178,7 +178,7 @@ def test_updating_an_existing_run_does_not_trigger_rotation(tmp_path, monkeypatc
 
 def test_decision_queue_still_surfaces_old_failed_runs(tmp_path, monkeypatch):
     """端到端：失败 run 被挤成最旧之后，决策队列仍然捞得到它。"""
-    from src.gateway.decisions import build_decision_queue
+    from src.workflow.tasks.decisions import build_decision_queue
 
     monkeypatch.setenv("VORTOCODE_MAX_RUN_FILES", "5")
     ledger = RunLedger(str(tmp_path))

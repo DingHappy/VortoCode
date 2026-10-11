@@ -36,7 +36,41 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # 只改 desktop/ 的提交不需要 python 三道关（desktop 段只在本地门禁跑）。
+  # 被 `if:` 跳过的 job 对 required check 报 Success，所以仍满足「每个 PR 都出必需检查」。
+  # 判不出（首推、手动触发、diff 失败）一律当作要跑——宁可多跑，不可漏跑。
+  changes:
+    runs-on: ${{ github.event.repository.private && vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 5
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+            pull_request) base="$PR_BASE" ;;
+            push) base="$PUSH_BEFORE" ;;
+            *) base="" ;;
+          esac
+          python=true
+          if [ -n "$base" ] && files="$(git diff --name-only "$base"...HEAD 2>/dev/null)" && [ -n "$files" ]; then
+            if ! printf '%s\n' "$files" | grep -qv '^desktop/' \
+               && ! printf '%s\n' "$files" | grep -qx 'desktop/runtime_entry.py'; then
+              python=false
+            fi
+          fi
+          echo "python=$python" | tee -a "$GITHUB_OUTPUT"
+
   lint:
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     runs-on: ${{ github.event.repository.private && vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
@@ -58,6 +92,8 @@ jobs:
         run: .venv/bin/ruff check src tests
 
   typecheck:
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     runs-on: ${{ github.event.repository.private && vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
@@ -79,6 +115,8 @@ jobs:
         run: .venv/bin/python -m mypy
 
   test:
+    needs: changes
+    if: needs.changes.outputs.python == 'true'
     runs-on: ${{ github.event.repository.private && vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:

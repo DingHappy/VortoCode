@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from src.gateway import notices as N
+from src.scheduling import notices as N
 from src.im.channel import ChannelAdapter
 
 
@@ -263,7 +263,7 @@ async def test_cron_notice_keeps_job_name_and_records_trigger(tmp_path):
     我在收口投递器时把 source 统一写成了 "scheduler"，等于把前者抹掉——而那正是
     2026-07-27 排查漏推时用的线索。两件事分开记，别混成一件。
     """
-    from src.gateway import cron as C
+    from src.scheduling import cron as C
     from src.gateway import im_runtime
 
     im_runtime.set_owner_notifier(None)
@@ -286,7 +286,7 @@ async def test_cron_notice_keeps_job_name_and_records_trigger(tmp_path):
 
 @pytest.mark.asyncio
 async def test_scheduler_trigger_is_the_default(tmp_path):
-    from src.gateway import cron as C
+    from src.scheduling import cron as C
     from src.gateway import im_runtime
 
     im_runtime.set_owner_notifier(None)
@@ -306,7 +306,7 @@ async def test_scheduler_trigger_is_the_default(tmp_path):
 @pytest.mark.asyncio
 async def test_legacy_notifier_without_kwargs_still_delivers(tmp_path):
     """老式投递器（只吃一个位置参数）不能因为归因这件事收不到通知——降级调用兜住。"""
-    from src.gateway import cron as C
+    from src.scheduling import cron as C
 
     got: list = []
 

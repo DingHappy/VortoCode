@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from src.gateway.pipeline import (
+from src.workflow.pipeline.pipeline import (
     PipelineDef, PipelineStore, advance, resolve_inputs, review, review_fingerprint,
 )
-from src.gateway.products import ProductStore
+from src.workflow.pipeline.products import ProductStore
 
 
 def setup_run(root, *, name="test", stages=None):

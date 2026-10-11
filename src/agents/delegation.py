@@ -62,8 +62,8 @@ def build_delegation_executor(repo_root: str, *, llm: Any = None,
     def _response(task) -> str:
         from src.agents.taint import mark_tainted
         if task.kind in {"dev", "dev-resume"}:
-            from src.gateway.dev_questions import development_state
-            from src.gateway.task_questions import question_views
+            from src.workflow.tasks.dev_questions import development_state
+            from src.workflow.tasks.task_questions import question_views
             state = development_state(task)
             if state.get("tainted"):
                 mark_tainted()
@@ -87,10 +87,10 @@ def build_delegation_executor(repo_root: str, *, llm: Any = None,
             if task.status == "blocked" else
             "检查失败或中断原因；需要继续时用 task_followup 补充要求，超出预算交给用户"
         )
-        from src.gateway.task_questions import question_views
-        from src.gateway.task_chain_budget import budget_view
-        from src.gateway.tasks import TaskLedger
-        from src.gateway.task_dependencies import dependency_view
+        from src.workflow.tasks.task_questions import question_views
+        from src.workflow.tasks.task_chain_budget import budget_view
+        from src.workflow.tasks.tasks import TaskLedger
+        from src.workflow.tasks.task_dependencies import dependency_view
         dependencies = dependency_view(task, collaboration.ledger if collaboration else TaskLedger(repo_root))
         if dependencies.get("result_valid") is False:
             next_action = dependencies["next_action"]
@@ -234,7 +234,7 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
                               "max_parallel": {"type": "integer"}}),
     ]
     if collaboration is not None:
-        from src.gateway.handoffs import CompletionInbox
+        from src.workflow.tasks.handoffs import CompletionInbox
         inbox = CompletionInbox(repo_root, collaboration.owner_identity,
                                 on_update=collaboration.notify_update)
 
@@ -250,7 +250,7 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
                               str(args.get("revision") or ""), args.get("note")), ensure_ascii=False)
 
         async def _status(args: dict) -> str:
-            from src.gateway.tasks import TaskLedger
+            from src.workflow.tasks.tasks import TaskLedger
             tid = str(args.get("task_id") or "")
             if tid:
                 development = TaskLedger(repo_root).load(tid)
@@ -274,7 +274,7 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
             previous = collaboration.get(str(args.get("task_id") or ""))
             dispatch = previous.collaboration.get("dispatch")
             if isinstance(dispatch, dict) and dispatch.get("source") == "api":
-                from src.gateway.collaboration import CollaborationConflict
+                from src.workflow.tasks.collaboration import CollaborationConflict
                 raise CollaborationConflict("服务下派任务请通过原下派入口补充要求，以保留步骤、超时和并发限制")
             if previous.collaboration.get("tainted"):
                 from src.agents.taint import mark_tainted
@@ -308,7 +308,7 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
         ]
         if answer_task_question is not None:
             async def _answer(args: dict) -> str:
-                from src.gateway.collaboration import CollaborationConflict
+                from src.workflow.tasks.collaboration import CollaborationConflict
                 if set(args) != {"task_id", "round", "question_id", "answer"}:
                     raise CollaborationConflict("task_answer 必须提供 task_id、round、question_id 和 answer，不接受其他字段")
                 # Resolve the live owner for every invocation. The injected public
@@ -333,7 +333,7 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
                                  "answer": {"type": "string", "minLength": 1, "maxLength": 2000}}))
         if release_task_dependencies is not None:
             async def _release(args: dict) -> str:
-                from src.gateway.collaboration import CollaborationConflict
+                from src.workflow.tasks.collaboration import CollaborationConflict
                 if set(args) != {"task_id", "round"}:
                     raise CollaborationConflict("task_release 只接受 task_id 和精确 round")
                 task, replayed = release_task_dependencies(collaboration.owner_identity(), args["task_id"], args["round"])
@@ -347,7 +347,7 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
                               argument_schema={"round": {"type": "integer", "minimum": 1, "maximum": 3}}))
         if reconcile_task_dependencies is not None:
             async def _reconcile(args: dict) -> str:
-                from src.gateway.collaboration import CollaborationConflict
+                from src.workflow.tasks.collaboration import CollaborationConflict
                 if set(args) != {"task_id", "round"}:
                     raise CollaborationConflict("task_reconcile 只接受 task_id 和精确 round")
                 task, changed, stopped = reconcile_task_dependencies(collaboration.owner_identity(), args["task_id"], args["round"])

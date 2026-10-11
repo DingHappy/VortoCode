@@ -6,11 +6,11 @@ import json
 import httpx
 import pytest
 
-from src.gateway.collaboration import CollaborationConflict
-from src.gateway.dispatch import DispatchBusy, DispatchService
-from src.gateway.handoffs import CompletionInbox, revision
-from src.gateway.task_dependencies import dependency_view, normalize_requirements
-from src.gateway.tasks import TaskLedger, TaskRunner
+from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.dispatch import DispatchBusy, DispatchService
+from src.workflow.tasks.handoffs import CompletionInbox, revision
+from src.workflow.tasks.task_dependencies import dependency_view, normalize_requirements
+from src.workflow.tasks.tasks import TaskLedger, TaskRunner
 
 
 def fixture(root, *, execute=None):
@@ -142,7 +142,7 @@ async def test_changed_consumed_version_is_rejected_before_model(tmp_path, chang
     assert final.status == "failed" and final.error and len(calls) == 1
     if change in {"missing_contract", "bad_resolution"}:
         assert dependency_view(final, runner.ledger)["failure"]
-        from src.gateway.worktree_sessions import task_session_view
+        from src.workflow.tasks.worktree_sessions import task_session_view
         assert task_session_view(str(tmp_path), final, worktrees=[])["dependencies"]["failure"]
         with pytest.raises(CollaborationConflict):
             service.release("owner", task.id, 1)
@@ -381,9 +381,9 @@ async def test_http_dependency_submission_release_auth_and_view(tmp_path, monkey
 
 
 def test_waiting_projects_as_attention_without_completion(tmp_path):
-    from src.gateway.decisions import build_decision_queue
-    from src.gateway.runtime_inbox import build_runtime_inbox
-    from src.gateway.worktree_sessions import task_session_view
+    from src.workflow.tasks.decisions import build_decision_queue
+    from src.workflow.tasks.runtime_inbox import build_runtime_inbox
+    from src.workflow.tasks.worktree_sessions import task_session_view
     service, runner, calls = fixture(tmp_path)
     parent = service.collaboration("owner").create("前置", dispatch={"source": "api", "max_steps": 4, "timeout_seconds": 30})
     child, _ = submit(service, parent)

@@ -128,7 +128,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             if res["ok"]:
                 delivery_note = ""
                 try:
-                    from src.gateway.isolated_deliveries import record_isolated_delivery
+                    from src.workflow.review.isolated_deliveries import record_isolated_delivery
                     await await_thread(
                         record_isolated_delivery, repo_root, branch=branch, description=desc,
                         base_oid=base_oid, verification=ver, attempts=attempts)
@@ -833,7 +833,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         dp = _dp.load_plan(repo_root, pid)
         if dp is None:
             return f"找不到计划 {pid}（.vortocode/dev_plans/{pid}.json 不存在或损坏）。dev_resume() 不带参可列出可续计划。"
-        from src.gateway.tasks import TaskLedger
+        from src.workflow.tasks.tasks import TaskLedger
         if any(task.plan_id == pid and task.status == "blocked" and task.development
                for task in TaskLedger(repo_root).list()):
             raise ValueError("开发计划仍等待回答；请回答或取消问题后再恢复")

@@ -6,13 +6,13 @@ import sys
 import httpx
 import pytest
 
-from src.gateway.collaboration import CollaborationConflict
-from src.gateway.dispatch import DispatchService
-from src.gateway.handoffs import CompletionInbox, revision
-from src.gateway.task_chain_budget import budget_view
-from src.gateway.task_dependencies import dependency_view
-from src.gateway.task_dependents import discover
-from src.gateway.tasks import MAX_SCAN_RECORD_BYTES, BackgroundTask, TaskLedger, TaskRunner
+from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.dispatch import DispatchService
+from src.workflow.tasks.handoffs import CompletionInbox, revision
+from src.workflow.tasks.task_chain_budget import budget_view
+from src.workflow.tasks.task_dependencies import dependency_view
+from src.workflow.tasks.task_dependents import discover
+from src.workflow.tasks.tasks import MAX_SCAN_RECORD_BYTES, BackgroundTask, TaskLedger, TaskRunner
 from src.utils.async_ops import cancel_requested
 
 
@@ -361,7 +361,7 @@ def test_scan_does_not_follow_symlinks_and_reports_unreadable_directory(tmp_path
     def unreadable(*args):
         raise PermissionError("cannot read directory")
 
-    monkeypatch.setattr("src.gateway.tasks.os.scandir", unreadable)
+    monkeypatch.setattr("src.workflow.tasks.tasks.os.scandir", unreadable)
     scan = ledger.scan()
     assert not scan.complete and not scan.readable and not scan.tasks
 

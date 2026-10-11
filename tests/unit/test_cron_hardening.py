@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from src.gateway.cron import (CronJob, CronState, TokenBudgetTripped, parse_schedule,
+from src.scheduling.cron import (CronJob, CronState, TokenBudgetTripped, parse_schedule,
                               run_job)
 from src.llm.budget import BudgetedLLM, TokenBudgetExceeded
 from src.llm.client import add_usage, reset_usage
@@ -23,7 +23,7 @@ def _notices_text(tmp_path) -> str:
 
 
 def _failed_runs(tmp_path):
-    from src.gateway.runs import RunLedger
+    from src.workflow.workbench.runs import RunLedger
     return [run for run in RunLedger(str(tmp_path)).list() if run.status == "failed"]
 
 
@@ -174,7 +174,7 @@ _CRON_YAML = """
 jobs:
   - name: duty_a
     schedule: "at 00:05"
-    command: "python -m src.gateway.relay_duty"
+    command: "python -m src.scheduling.relay_duty"
     enabled: true
   - name: duty_b
     schedule: "every 1h"
@@ -199,7 +199,7 @@ def _yesterday() -> str:
 
 def _plant_cron_run(tmp_path, day: str, *, command: str, cron_job: str = ""):
     """铸一条 created 落在 day 正午（本地时间）的 cron run。"""
-    from src.gateway.runs import CommandRun, RunLedger
+    from src.workflow.workbench.runs import CommandRun, RunLedger
     run = CommandRun.new(command, "cron")
     noon_local = datetime.strptime(day, "%Y-%m-%d").replace(hour=12).astimezone()
     run.created = noon_local.astimezone(timezone.utc).isoformat(timespec="seconds")
@@ -210,7 +210,7 @@ def _plant_cron_run(tmp_path, day: str, *, command: str, cron_job: str = ""):
 
 def test_journal_duty_flags_silent_death_when_nothing_ran(tmp_path):
     """启用的作业昨天一条运行痕迹都没有 → 对账节点名缺勤 + 指向调度器/serve 的排查话术。"""
-    from src.gateway.journal import build_daily_journal
+    from src.workflow.workbench.journal import build_daily_journal
     _write_cron_yaml(tmp_path)
 
     duty = build_daily_journal(str(tmp_path), _yesterday())["duty"]
@@ -222,11 +222,11 @@ def test_journal_duty_flags_silent_death_when_nothing_ran(tmp_path):
 
 def test_journal_duty_matches_runs_by_stamp_and_command_fallback(tmp_path):
     """实跑归属：新记录按 sandbox.cron_job 名字戳；老记录按命令文本回退匹配。全勤 → 无告警。"""
-    from src.gateway.journal import build_daily_journal
+    from src.workflow.workbench.journal import build_daily_journal
     _write_cron_yaml(tmp_path)
     day = _yesterday()
     _plant_cron_run(tmp_path, day, command="cron:duty_b", cron_job="duty_b")          # 新戳
-    _plant_cron_run(tmp_path, day, command="python -m src.gateway.relay_duty")        # 老记录回退
+    _plant_cron_run(tmp_path, day, command="python -m src.scheduling.relay_duty")        # 老记录回退
 
     duty = build_daily_journal(str(tmp_path), day)["duty"]
     assert duty["missing"] == [] and duty["note"] == ""
@@ -234,7 +234,7 @@ def test_journal_duty_matches_runs_by_stamp_and_command_fallback(tmp_path):
 
 
 def test_journal_duty_partial_absence_names_the_absentee(tmp_path):
-    from src.gateway.journal import build_daily_journal
+    from src.workflow.workbench.journal import build_daily_journal
     _write_cron_yaml(tmp_path)
     day = _yesterday()
     _plant_cron_run(tmp_path, day, command="cron:duty_b", cron_job="duty_b")
@@ -246,7 +246,7 @@ def test_journal_duty_partial_absence_names_the_absentee(tmp_path):
 
 def test_journal_duty_absent_without_enabled_jobs(tmp_path):
     """没有启用作业 → duty 整节为 None（不制造噪音）；今天之后的日子也没有"应跑"。"""
-    from src.gateway.journal import build_daily_journal
+    from src.workflow.workbench.journal import build_daily_journal
     assert build_daily_journal(str(tmp_path), _yesterday())["duty"] is None
 
     _write_cron_yaml(tmp_path)

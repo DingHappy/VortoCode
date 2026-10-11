@@ -158,7 +158,7 @@ def list_sessions(repo_root: str) -> List[Dict[str, Any]]:
     d = Path(repo_root) / ".vortocode" / _DIRNAME
     if not d.is_dir():
         return []
-    from src.gateway.hook_issues import (
+    from src.workflow.workbench.hook_issues import (
         hook_issue_snapshot, load_hook_issue_acknowledgements,
     )
     hook_acknowledgements = load_hook_issue_acknowledgements(repo_root)

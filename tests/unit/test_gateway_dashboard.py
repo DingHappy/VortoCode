@@ -1,12 +1,12 @@
 """Cross-client Agent Dashboard projections."""
 import subprocess
 
-from src.gateway.dashboard import (
+from src.workflow.tasks.dashboard import (
     agent_context_summary,
     background_tasks_by_session,
     project_dashboard_context,
 )
-from src.gateway.tasks import TaskLedger
+from src.workflow.tasks.tasks import TaskLedger
 from src.agents.worktree_bindings import bind_worktree_owner, record_worktree_binding
 
 

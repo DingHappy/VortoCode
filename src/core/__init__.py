@@ -17,7 +17,7 @@ from .monitoring import (
 )
 
 # 注：task_queue（TaskQueue/TaskScheduler 骨架）从未接线，已于 2026-07 退役——
-# 后台任务改由常驻运行时 src/gateway/tasks.py（TaskRunner + write-ahead 台账）承担。
+# 后台任务改由常驻运行时 src/workflow/tasks/tasks.py（TaskRunner + write-ahead 台账）承担。
 
 from .cache import (
     CacheEntry,

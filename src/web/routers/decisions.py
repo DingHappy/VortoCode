@@ -7,10 +7,10 @@ router = APIRouter()
 
 
 def _queue(limit: int = 100, session: str = "") -> list[dict]:
-    from src.gateway.decisions import DecisionStore, build_decision_queue
-    from src.gateway.goals import GoalLedger
-    from src.gateway.runs import RunLedger
-    from src.gateway.tasks import TaskLedger
+    from src.workflow.tasks.decisions import DecisionStore, build_decision_queue
+    from src.workflow.workbench.goals import GoalLedger
+    from src.workflow.workbench.runs import RunLedger
+    from src.workflow.tasks.tasks import TaskLedger
     from src.web.routers.realtime import pending_confirmations
 
     root = os.getcwd()
@@ -33,15 +33,15 @@ async def list_decisions(limit: int = 100, session: str = ""):
 @router.get("/api/runtime-inbox")
 async def runtime_inbox():
     """One bounded read-only snapshot for Desktop's cross-runtime inbox."""
-    from src.gateway.goals import GoalLedger
-    from src.gateway.runtime_inbox import build_runtime_inbox
-    from src.gateway.tasks import TaskLedger
+    from src.workflow.workbench.goals import GoalLedger
+    from src.workflow.tasks.runtime_inbox import build_runtime_inbox
+    from src.workflow.tasks.tasks import TaskLedger
     from src.gateway.workspace_scope import GENERAL, current_workspace_scope
     from src.web.routers.realtime import _session_dashboard_snapshot
 
     root = os.getcwd()
     scope = current_workspace_scope()
-    from src.gateway.tasks import TASK_STATE_LOCK
+    from src.workflow.tasks.tasks import TASK_STATE_LOCK
 
     with TASK_STATE_LOCK:
         return build_runtime_inbox(
@@ -55,7 +55,7 @@ async def runtime_inbox():
 
 @router.post("/api/decisions/{decision_id}/dismiss")
 async def dismiss_decision(decision_id: str):
-    from src.gateway.decisions import DecisionStore
+    from src.workflow.tasks.decisions import DecisionStore
 
     current = next((item for item in _queue(200) if item["id"] == decision_id), None)
     if current is None:

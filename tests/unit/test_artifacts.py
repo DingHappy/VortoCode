@@ -6,7 +6,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from src.web.artifacts import (
+from src.agents.tools.artifacts import (
     ArtifactStore, artifact_url, build_artifact_tools, render_markdown_doc, max_bytes,
 )
 

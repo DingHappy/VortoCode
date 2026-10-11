@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from src.gateway import task_scan as scan
+from src.workflow.tasks import task_scan as scan
 from tests.unit.test_task_coverage_file import file_fixture, expected
 
 
@@ -84,7 +84,7 @@ def test_uploaded_receipt_and_bytes_never_read_path_or_current_source(tmp_path, 
         "scan_inventory",
     ):
         monkeypatch.setattr(service.runner.ledger, method, deny)
-    monkeypatch.setattr("src.gateway.task_scan.os.open", deny)
+    monkeypatch.setattr("src.workflow.tasks.task_scan.os.open", deny)
     view = service.verify_coverage_preservation(
         "owner",
         source.id,

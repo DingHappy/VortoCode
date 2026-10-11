@@ -3,14 +3,14 @@ import asyncio
 
 import pytest
 
-from src.gateway.runs import (
+from src.workflow.workbench.runs import (
     RunLedger,
     RunManager,
     detect_preview_url,
     normalize_preview_url,
     parse_test_results,
 )
-from src.gateway.goals import GoalLedger
+from src.workflow.workbench.goals import GoalLedger
 
 
 def test_run_ledger_persists_structured_result_and_recovers(tmp_path):

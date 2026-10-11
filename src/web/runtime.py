@@ -10,7 +10,7 @@ _HANDOFF_STATUSES = {"done", "failed", "cancelled", "paused", "interrupted"}
 def make_development_worker(root):
     from src.agents.main_agent import build_dev_tools
     from src.agents.dev_plan import load_plan
-    from src.gateway.development_worker import execute_development
+    from src.workflow.tasks.development_worker import execute_development
     from src.web.task_dispatch import get_development_questions
 
     async def worker(task, on_progress):
@@ -28,8 +28,8 @@ def get_services():
         root = os.getcwd()
 
         def on_update(task):
-            from src.gateway.goals import sync_goal_from_task
-            from src.gateway.worktree_sessions import task_session_view
+            from src.workflow.workbench.goals import sync_goal_from_task
+            from src.workflow.tasks.worktree_sessions import task_session_view
             from src.web import task_events
             from src.web.task_dispatch import observe_dependency_change
             try:

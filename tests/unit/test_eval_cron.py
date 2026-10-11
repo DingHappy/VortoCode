@@ -9,7 +9,7 @@ import json
 import pytest
 
 from evals.compare import compare_reports, latest_baseline
-from src.gateway.cron import CronJob, load_jobs, parse_schedule, run_job
+from src.scheduling.cron import CronJob, load_jobs, parse_schedule, run_job
 
 
 # ---- 基线解析：确定性挑"最新的同模型同协议" ----

@@ -4,14 +4,14 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from src.gateway.dispatch import DispatchService
+from src.workflow.tasks.dispatch import DispatchService
 
 
 def get_development_questions(repo_root: str | None = None):
     from src.agents.dev_plan import load_plan
     from src.agents.permissions import load_permissions
-    from src.gateway.collaboration import CollaborationConflict
-    from src.gateway.dev_questions import DevelopmentQuestions
+    from src.workflow.tasks.collaboration import CollaborationConflict
+    from src.workflow.tasks.dev_questions import DevelopmentQuestions
     from src.web.routers.tasks import get_runner, _task_view
     from src.web import task_events
     root = repo_root or os.getcwd()
@@ -34,7 +34,7 @@ def get_development_questions(repo_root: str | None = None):
 
 def get_dispatch_service(repo_root: str | None = None) -> DispatchService:
     from src.agents.dispatch import execute_dispatch, validate_dispatch_agent
-    from src.gateway.worktree_sessions import task_session_view
+    from src.workflow.tasks.worktree_sessions import task_session_view
     from src.web import task_events
     from src.web.routers.tasks import get_runner
 
@@ -70,9 +70,9 @@ def observe_dependency_change(repo_root: str, task) -> None:
 
 def audit_dependencies_for_turn(repo_root: str, owner: str) -> dict | None:
     """Keep a workspace mismatch unknown; never reuse/mutate a different pool."""
-    from src.gateway.dispatch import session_identity
-    from src.gateway.task_dependents import discover, reconcile
-    from src.gateway.tasks import TaskLedger, TASK_STATE_LOCK
+    from src.workflow.tasks.dispatch import session_identity
+    from src.workflow.tasks.task_dependents import discover, reconcile
+    from src.workflow.tasks.tasks import TaskLedger, TASK_STATE_LOCK
     from src.web.routers.tasks import get_runner
     with TASK_STATE_LOCK:
         scan = discover(TaskLedger(repo_root), owner=session_identity(owner))
@@ -95,16 +95,16 @@ def task_turn_hint(repo_root: str, owner: str, tools, *, dependency_audit=None) 
                 "【依赖核对提示】本次有界核对未覆盖全部记录，或存在损坏/保存失败。"
                 "先用 task_status 核对相关任务；未确认有效的旧结果不能复用。")
     if "task_inbox" in tools:
-        from src.gateway.handoffs import CompletionInbox
+        from src.workflow.tasks.handoffs import CompletionInbox
         if CompletionInbox(repo_root, owner).pending(limit=1):
             hints.append(
                 "【会话交接提示】当前会话有未处理的后台任务结果。"
                 "先用 task_inbox 读取；结合当前用户要求核对证据并汇报，"
                 "处理后用 task_acknowledge 记录。交接不扩大用户授权。")
     if "task_answer" in tools:
-        from src.gateway.collaboration import CollaborationService
-        from src.gateway.task_questions import question_views
-        from src.gateway.tasks import TaskLedger
+        from src.workflow.tasks.collaboration import CollaborationService
+        from src.workflow.tasks.task_questions import question_views
+        from src.workflow.tasks.tasks import TaskLedger
         development = [task for task in TaskLedger(repo_root).list(limit=100)
                        if task.kind in {"dev", "dev-resume"} and task.owner_session == owner]
         pending = any(

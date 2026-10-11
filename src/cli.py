@@ -248,7 +248,7 @@ def main():
 
     if args.command in {"coverage-verify", "coverage-preserve", "coverage-preservation-verify", "coverage-retirement-verify"}:
         import json
-        from src.gateway.task_scan import verify_file_path, preserve_file_path, verify_preservation_path, verify_retirement_path
+        from src.workflow.tasks.task_scan import verify_file_path, preserve_file_path, verify_preservation_path, verify_retirement_path
         fields = ("archive_id", "archive_digest", "workspace_id", "owner_session", "source_task_id", "source_round",
                   "file_digest", "scan_id", "retirement_digest")
         try:
@@ -341,19 +341,19 @@ def main():
         asyncio.run(run_cron(args.action, args.name))
 
     elif args.command == "collect":
-        from src.gateway.collect_cli import run_collect_cli
+        from src.workflow.pipeline.collect_cli import run_collect_cli
         sys.exit(run_collect_cli(quiet=args.quiet))
 
     elif args.command == "stats":
-        from src.gateway.collect_cli import run_stats_cli
+        from src.workflow.pipeline.collect_cli import run_stats_cli
         sys.exit(run_stats_cli(quiet=args.quiet))
 
     elif args.command == "digest":
-        from src.gateway.collect_cli import run_digest_cli
+        from src.workflow.pipeline.collect_cli import run_digest_cli
         sys.exit(run_digest_cli(limit=args.limit))
 
     elif args.command == "pipeline":
-        from src.gateway.pipeline_cli import run_pipeline_cli
+        from src.workflow.pipeline.pipeline_cli import run_pipeline_cli
         sys.exit(asyncio.run(run_pipeline_cli(
             args.action, args.name, verdict=args.verdict or "", comment=args.comment,
             rollback_to=args.rollback_to, max_stages=args.max_stages, yes=args.yes,
@@ -480,7 +480,7 @@ async def run_im_pair(channel: str) -> int:
 
 async def run_cron(action: str, name=None):
     """cron 子命令：list 列出作业 / run <name> 手动触发一次（隔离会话真跑，进度到 stderr）。"""
-    from src.gateway import cron as _cron
+    from src.scheduling import cron as _cron
     cwd = str(Path.cwd())
     if action == "list":
         jobs = _cron.load_jobs(cwd)
@@ -509,7 +509,7 @@ async def run_cron(action: str, name=None):
 def make_background_development_worker(root):
     from src.agents.main_agent import build_dev_tools
     from src.agents.dev_plan import load_plan
-    from src.gateway.development_worker import execute_development
+    from src.workflow.tasks.development_worker import execute_development
 
     async def worker(task, on_progress):
         return await execute_development(root, task, on_progress,
@@ -523,7 +523,7 @@ async def run_heartbeat_cli():
     这是一次性命令：若领了 backlog 活就 submit 到本地 runner，然后 **drain（await）** 那个任务——
     否则 asyncio.run 退出时 pending 任务会被取消，backlog 却已被标 [~]（领走了没干完，误导，#129 评审）。
     """
-    from src.gateway import heartbeat as _hb
+    from src.scheduling import heartbeat as _hb
     from src.gateway.runtime import RuntimeServices
     from src.gateway.process_lease import ProcessLease
     from src.gateway.workspace_scope import current_workspace_scope

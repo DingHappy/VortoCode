@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from src.gateway.runtime_inbox import build_runtime_inbox
+from src.workflow.tasks.runtime_inbox import build_runtime_inbox
 
 
 def test_runtime_inbox_builds_bounded_actionable_counts():
@@ -86,8 +86,8 @@ def test_runtime_inbox_sanitizes_decision_payloads():
 
 
 def test_runtime_inbox_task_lifecycle_counts_include_pending_handoff_not_done_success():
-    from src.gateway.tasks import BackgroundTask
-    from src.gateway.handoffs import revision
+    from src.workflow.tasks.tasks import BackgroundTask
+    from src.workflow.tasks.handoffs import revision
     value = BackgroundTask.new("dev", "done", owner_session="sid-owner")
     value.status, value.result = "done", "result"
     original = value.to_dict()
@@ -103,9 +103,9 @@ def test_runtime_inbox_task_lifecycle_counts_include_pending_handoff_not_done_su
 
 
 def test_completed_task_does_not_promote_its_linked_goal_or_write_evidence():
-    from src.gateway.goals import Goal
-    from src.gateway.handoffs import revision
-    from src.gateway.tasks import BackgroundTask
+    from src.workflow.workbench.goals import Goal
+    from src.workflow.tasks.handoffs import revision
+    from src.workflow.tasks.tasks import BackgroundTask
     goal = Goal.new("deliver", ["real proof"])
     goal.status = "active"
     value = BackgroundTask.new("dev", "done", owner_session="sid-owner", goal_id=goal.id)

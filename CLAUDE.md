@@ -53,7 +53,13 @@ vc --help                        # 全部子命令：tui/server/agent/self-*/im/
 
 **模块分层（2026-08-03 拆分后）**：`main_agent.py`（工具工厂：dev/research/subagent）→ `agent_loop.py`（`MainAgent` 与协议解析/上下文预算）→ `tools/*`（无状态工具）。**方向单一不成环**——工具工厂要用 MainAgent 起子 agent，所以 MainAgent 必须在下游。TUI 同理：`tui/app.py`（界面）→ `tui/commands.py`（38 个斜杠命令的 mixin）。
 
-**隔离 dev 流水线（护城河）**：`dev_auto` → `decompose` 拆无依赖并行批 → 每件在一次性 git **worktree**（`src/agents/worktree.py`）里 implement+自测 → 逐件+集成验证（`verify_profiles.py`/`subagent_verifier.py`）→ 落 `vorto/*` 分支 → 开 PR。计划落 `.vortocode/dev_plans/<id>.json`（write-ahead，可 `dev_resume` 续跑），并由 `src/gateway/dev_graph.py` 投影成 DAG 供 `GET /api/dev-plans/{id}/graph` 与 Desktop 依赖图视图消费（**纯投影零新状态**）。各阶段 token 用量经 `src/llm/client.py` 的 `usage_scope()` 分段计量，记 INFO 日志（模型分层的数据地基）。**全程不碰 main / 主工作区**，委派需人工确认。`.vortocode/` 是 gitignored（本地经验：`memory/repo.md`、`agents/*.md` 自定义角色、`artifacts/` 制品）。
+**包布局（2026-10-10 拆 gateway 后）**：依赖方向 前端（`tui/` `web/` `im/` `desktop/`）→ `gateway/` → `workflow/`·`scheduling/` → 内核（`agents/` `tools/` `llm/` `memory/`）。
+- `gateway/`：只管会话装配与传输——`agent_session`/`session`/`sessions`/`session_actor`/事件流/`protocol`/`client`/`runtime`/`audit`/IM 内嵌服务。
+- `workflow/tasks`：后台任务台账与协作（委派/依赖/续跑/提问/看板投影）；`workflow/review`：Git 评审与交付；`workflow/workbench`：Desktop 工作台（目标/命令运行/终端/日志）；`workflow/pipeline`：非代码流水线。
+- `scheduling/`：cron/heartbeat/自愈/通知台账/中转巡检。
+- 内核**不得导入** `web/` `tui/`（制品工具已下沉为 `agents/tools/artifacts.py`，cron 排期计算在 `scheduling/cron.py:next_due`）。新业务模块别再往 `gateway/` 塞。已知存量例外（惰性导入，待下沉）：`gateway/sessions.py`→`web.session_store`，`scheduling/{cron,heartbeat}.py`→`web.auth`（安全闸，挪动需单独评审），`scheduling/notices.py`→`web.task_events`。
+
+**隔离 dev 流水线（护城河）**：`dev_auto` → `decompose` 拆无依赖并行批 → 每件在一次性 git **worktree**（`src/agents/worktree.py`）里 implement+自测 → 逐件+集成验证（`verify_profiles.py`/`subagent_verifier.py`）→ 落 `vorto/*` 分支 → 开 PR。计划落 `.vortocode/dev_plans/<id>.json`（write-ahead，可 `dev_resume` 续跑），并由 `src/workflow/tasks/dev_graph.py` 投影成 DAG 供 `GET /api/dev-plans/{id}/graph` 与 Desktop 依赖图视图消费（**纯投影零新状态**）。各阶段 token 用量经 `src/llm/client.py` 的 `usage_scope()` 分段计量，记 INFO 日志（模型分层的数据地基）。**全程不碰 main / 主工作区**，委派需人工确认。`.vortocode/` 是 gitignored（本地经验：`memory/repo.md`、`agents/*.md` 自定义角色、`artifacts/` 制品）。
 
 **LLM 网关**：所有模型调用走自建 One API 中转（OpenAI 兼容），`src/llm/`。默认走**原生 function-calling**，模型不支持则**自动回退提示式协议**；`VORTOCODE_NATIVE_TOOLS=0` 强制提示式。
 

@@ -110,7 +110,7 @@ async def test_stream_can_be_closed_from_another_task_without_context_token_erro
 
 
 async def test_cron_job_scope_counts_nested_work_and_isolates_other_jobs(tmp_path):
-    from src.gateway.cron import CronJob, parse_schedule, run_job
+    from src.scheduling.cron import CronJob, parse_schedule, run_job
     started, release = asyncio.Event(), asyncio.Event()
     guards = {}
 

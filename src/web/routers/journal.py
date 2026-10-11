@@ -8,7 +8,7 @@ router = APIRouter()
 
 @router.get("/api/journal")
 async def get_journal(date: str = ""):
-    from src.gateway.journal import get_daily_journal
+    from src.workflow.workbench.journal import get_daily_journal
 
     try:
         return get_daily_journal(os.getcwd(), date)
@@ -18,14 +18,14 @@ async def get_journal(date: str = ""):
 
 @router.get("/api/journal/days")
 async def list_journal_days():
-    from src.gateway.journal import JournalStore
+    from src.workflow.workbench.journal import JournalStore
 
     return {"days": JournalStore(os.getcwd()).list_days()}
 
 
 @router.get("/api/journal/weekly")
 async def get_weekly_journal(end: str = "", days: int = 7):
-    from src.gateway.journal import build_weekly_journal
+    from src.workflow.workbench.journal import build_weekly_journal
 
     try:
         return build_weekly_journal(os.getcwd(), end, days)
@@ -35,7 +35,7 @@ async def get_weekly_journal(end: str = "", days: int = 7):
 
 @router.get("/api/journal/continuation")
 async def get_journal_continuation(date: str):
-    from src.gateway.journal import build_journal_continuation
+    from src.workflow.workbench.journal import build_journal_continuation
 
     try:
         return build_journal_continuation(os.getcwd(), date)
@@ -45,7 +45,7 @@ async def get_journal_continuation(date: str):
 
 @router.post("/api/journal/snapshot")
 async def snapshot_journal(body: dict):
-    from src.gateway.journal import snapshot_daily_journal
+    from src.workflow.workbench.journal import snapshot_daily_journal
 
     try:
         return snapshot_daily_journal(os.getcwd(), str((body or {}).get("date") or ""))
@@ -57,7 +57,7 @@ async def snapshot_journal(body: dict):
 
 @router.post("/api/journal/notes")
 async def add_note(body: dict):
-    from src.gateway.journal import add_journal_note
+    from src.workflow.workbench.journal import add_journal_note
 
     payload = body or {}
     try:

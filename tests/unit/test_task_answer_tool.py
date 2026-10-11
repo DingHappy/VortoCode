@@ -9,9 +9,9 @@ import pytest
 from src.agents.agent_loop import MainAgent
 from src.agents.main_agent import build_research_tools
 from src.agents.permissions import Permissions
-from src.gateway.collaboration import CollaborationConflict, CollaborationService
-from src.gateway.dispatch import DispatchService
-from src.gateway.tasks import TaskLedger, TaskRunner
+from src.workflow.tasks.collaboration import CollaborationConflict, CollaborationService
+from src.workflow.tasks.dispatch import DispatchService
+from src.workflow.tasks.tasks import TaskLedger, TaskRunner
 
 
 def setup(root, owner="sid-owner", execute=None):

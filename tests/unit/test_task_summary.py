@@ -1,10 +1,10 @@
 """Lifecycle summaries are observations, never acceptance/handling writes."""
 from copy import deepcopy
 
-from src.gateway.handoffs import CompletionInbox, revision
-from src.gateway.task_dependencies import _input
-from src.gateway.task_summary import SnapshotSources, task_summary
-from src.gateway.tasks import BackgroundTask, TaskLedger
+from src.workflow.tasks.handoffs import CompletionInbox, revision
+from src.workflow.tasks.task_dependencies import _input
+from src.workflow.tasks.task_summary import SnapshotSources, task_summary
+from src.workflow.tasks.tasks import BackgroundTask, TaskLedger
 
 
 def task(name="source", *, status="done", kind="delegation", review="accepted"):

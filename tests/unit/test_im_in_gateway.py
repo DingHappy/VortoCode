@@ -47,7 +47,7 @@ class FakeRunner:
         self.subs: list = []
 
     async def submit(self, prompt, kind="dev"):
-        from src.gateway.tasks import BackgroundTask
+        from src.workflow.tasks.tasks import BackgroundTask
         t = BackgroundTask.new(kind, prompt)
         self.submitted.append((kind, prompt))
         return t
@@ -68,7 +68,7 @@ def _clean_registry():
 async def test_notification_role_blocks_commands_and_approvals_without_agent(tmp_path, monkeypatch):
     from src.im.bridge import IMBridge
     from src.im.channel import ChannelEvent
-    from src.gateway.tasks import BackgroundTask
+    from src.workflow.tasks.tasks import BackgroundTask
 
     monkeypatch.setenv("VORTOCODE_IM_ROLE", "notify")
     monkeypatch.setattr(IMBridge, "_build_agent", lambda self: pytest.fail("notification sink built an agent"))
@@ -128,7 +128,7 @@ async def test_restart_embedded_leaves_single_subscription(tmp_path):
 @pytest.mark.asyncio
 async def test_dev_worker_dispatches_im_kind_to_bridge_worker(tmp_path, monkeypatch):
     """共享 runner 的 worker：kind="im-dev" 路由给 IM worker（保住在跑中的按钮确认 UX）。"""
-    from src.gateway.tasks import BackgroundTask
+    from src.workflow.tasks.tasks import BackgroundTask
     from src.web.routers import tasks as tr
 
     async def _im_worker(task, on_progress):

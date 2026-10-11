@@ -37,7 +37,7 @@ jobs:
   # 全绿 → 退出码 0，静默只落 Journal 台账；异常 → 非零退出码 → 决策队列出条 + 通报（announce: im）。
   - name: relay_duty
     schedule: "at 02:00"
-    command: "python3 -m src.gateway.relay_duty"   # ← 常驻环境请换绝对路径解释器（见文件头 ⚠）
+    command: "python3 -m src.scheduling.relay_duty"   # ← 常驻环境请换绝对路径解释器（见文件头 ⚠）
     timeout: 120
     announce: im
     enabled: false             # 默认关；真机接线时改 true 并确认 VORTOCODE_CRON=1

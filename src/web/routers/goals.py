@@ -12,7 +12,7 @@ from typing import Any, List
 
 from fastapi import APIRouter, HTTPException
 
-from src.gateway.goals import Goal, GoalLedger, evaluate_file_verifier, evidence_revision
+from src.workflow.workbench.goals import Goal, GoalLedger, evaluate_file_verifier, evidence_revision
 
 router = APIRouter()
 
@@ -266,7 +266,7 @@ async def record_goal_evidence(goal_id: str, criterion_id: str, body: dict):
     if payload.get("run_id") and payload.get("evidence_id"):
         raise HTTPException(status_code=400, detail="只能选择一种证据来源")
     if payload.get("run_id"):
-        from src.gateway.runs import RunLedger
+        from src.workflow.workbench.runs import RunLedger
 
         run = RunLedger(os.getcwd()).load(str(payload["run_id"]))
         if run is None or run.kind != "test" or run.status not in {"done", "failed"}:

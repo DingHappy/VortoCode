@@ -1,4 +1,4 @@
-"""D1 v1 · 后台任务运行时（src/gateway/tasks.py）+ REST 路由 + vcs draft 参数。
+"""D1 v1 · 后台任务运行时（src/workflow/tasks/tasks.py）+ REST 路由 + vcs draft 参数。
 
 不真跑流水线：注入假 worker，聚焦①台账 write-ahead + 崩溃恢复 ②并发上限排队 ③取消 ④异常→failed
 ⑤worker 设 plan_id/branch ⑥REST 端点鉴权/校验/404/open_pr 硬闸 ⑦gh --draft 传导。
@@ -7,8 +7,8 @@ import asyncio
 
 import pytest
 
-from src.gateway import TaskRunner, bg_concurrency
-from src.gateway.tasks import BackgroundTask, TaskLedger
+from src.workflow.tasks.tasks import TaskRunner, bg_concurrency
+from src.workflow.tasks.tasks import BackgroundTask, TaskLedger
 
 
 # --------------------------------------------------------------------- 台账
@@ -79,8 +79,8 @@ def test_ledger_rejects_record_identity_mismatching_filename(tmp_path, corrupt_i
 
 def test_misnamed_record_cannot_duplicate_inbox_or_redirect_state_changes(tmp_path):
     import json
-    from src.gateway.continuations import ContinuationConflict, ContinuationService
-    from src.gateway.handoffs import CompletionInbox, HandoffConflict, revision
+    from src.workflow.tasks.continuations import ContinuationConflict, ContinuationService
+    from src.workflow.tasks.handoffs import CompletionInbox, HandoffConflict, revision
 
     led = TaskLedger(str(tmp_path))
     first = led.create("dev", "真实任务", owner_session="sid-owner")
@@ -101,8 +101,8 @@ def test_misnamed_record_cannot_duplicate_inbox_or_redirect_state_changes(tmp_pa
 
 
 def test_task_filename_alias_cannot_redirect_an_exact_id_lookup(tmp_path):
-    from src.gateway.continuations import ContinuationConflict, ContinuationService
-    from src.gateway.handoffs import CompletionInbox, HandoffConflict, revision
+    from src.workflow.tasks.continuations import ContinuationConflict, ContinuationService
+    from src.workflow.tasks.handoffs import CompletionInbox, HandoffConflict, revision
 
     ledger = TaskLedger(str(tmp_path))
     task = ledger.create("dev", "精确任务身份", owner_session="sid-owner")
@@ -239,7 +239,7 @@ async def test_dev_worker_pins_plan_no_cross_attribution(tmp_path, monkeypatch):
     import src.agents.main_agent as ma
     import src.web.routers.tasks as tm
     from src.agents import dev_plan as _dp
-    from src.gateway.tasks import BackgroundTask
+    from src.workflow.tasks.tasks import BackgroundTask
 
     class _T:
         def __init__(self, name, handler):

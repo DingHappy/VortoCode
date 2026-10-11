@@ -349,7 +349,7 @@ class IMBridge:
         lv["role"] = "notify" if self.notification_only else "interactive"
         lv["queued"] = len(self._pending_msgs)
         try:
-            from src.gateway.notices import pending_undelivered_count
+            from src.scheduling.notices import pending_undelivered_count
             lv["undelivered"] = pending_undelivered_count(self.repo_root)
         except Exception:  # noqa: BLE001
             lv["undelivered"] = 0
@@ -358,7 +358,7 @@ class IMBridge:
     def _pending_undelivered(self) -> int:
         """补发队列里还剩几条。读不到当 0——补发是旁路，绝不能反过来拖垮心跳。"""
         try:
-            from src.gateway.notices import pending_undelivered_count
+            from src.scheduling.notices import pending_undelivered_count
             return int(pending_undelivered_count(self.repo_root) or 0)
         except Exception:  # noqa: BLE001
             return 0
@@ -370,7 +370,7 @@ class IMBridge:
         等于"补发"永远是人手动干的活——2026-07-28 早上那次补发就是我手动跑脚本干的。
         """
         try:
-            from src.gateway.notices import flush_undelivered
+            from src.scheduling.notices import flush_undelivered
             return await flush_undelivered(self.repo_root, self.notify_send)
         except Exception:  # noqa: BLE001 —— 补发是旁路，绝不能拖垮开机/心跳
             return {"sent": 0, "dropped": 0, "kept": 0}
@@ -669,7 +669,7 @@ class IMBridge:
     # ------------------------------------------------------------ 流水线（在手机上批）
     def _live_runs(self) -> list:
         """还没走完的流水线运行，等人批的排最前——手机上第一屏就该是"该你管的"。"""
-        from src.gateway.pipeline import PipelineStore
+        from src.workflow.pipeline.pipeline import PipelineStore
         runs = [r for r in PipelineStore(self.repo_root).list()
                 if r.status not in {"done", "abandoned"}]
         return sorted(runs, key=lambda r: (r.status != "awaiting_review", r.created), reverse=False)
@@ -706,8 +706,8 @@ class IMBridge:
             if run is None:
                 await self._safe_send(err)
                 return
-            from src.gateway.pipeline import review_fingerprint
-            from src.gateway.products import MAX_PREVIEW_CHARS, ProductStore
+            from src.workflow.pipeline.pipeline import review_fingerprint
+            from src.workflow.pipeline.products import MAX_PREVIEW_CHARS, ProductStore
             store = ProductStore(self.repo_root)
             products = {s.product_id: store.load(s.product_id) for s in run.stages if s.product_id}
             waiting = run.awaiting()
@@ -735,7 +735,7 @@ class IMBridge:
         那个"批"字没有意义：他批的是自己没看过的东西（真机反馈："我没看到文本"）。
         其余工序仍只给摘要，否则一屏刷满历史产出，真正要看的反而被埋掉。
         """
-        from src.gateway.products import MAX_PREVIEW_CHARS, ProductStore, render_payload
+        from src.workflow.pipeline.products import MAX_PREVIEW_CHARS, ProductStore, render_payload
         store = ProductStore(self.repo_root)
         lines = [f"{run.pipeline} · {run.run_id} · {run.status}"]
         for stage in run.stages:
@@ -772,7 +772,7 @@ class IMBridge:
         为什么不是让你报数字：手填能用，但每轮要人记得去查、去算、去打字，这种事第三天就
         没人做了。发完文章顺手发一句链接，成本接近于零。
         """
-        from src.gateway.channel_stats import _known_unsupported, register_url
+        from src.workflow.pipeline.channel_stats import _known_unsupported, register_url
 
         url = rest.split()[0] if rest.split() else ""
         if not url.lower().startswith(("http://", "https://")):
@@ -827,7 +827,7 @@ class IMBridge:
         """人批三档。**判定全在这里确定性地做，不经过模型**——批不批是人的意思，
         让模型去理解一句话再决定，等于把人闸换成一次概率事件。
         """
-        from src.gateway.pipeline import review as _review
+        from src.workflow.pipeline.pipeline import review as _review
 
         token, comment = "", rest.strip()
         first = comment.split(maxsplit=1)[0] if comment else ""
@@ -885,8 +885,8 @@ class IMBridge:
         既没说产出是什么，也没说下一步该敲什么，而 tick 的通知里这两样都有。
         `advance` 的原始字段留在末尾一行，排查时还看得见。
         """
-        from src.gateway.pipeline import PipelineStore
-        from src.gateway.pipeline_tick import TickOutcome, _message
+        from src.workflow.pipeline.pipeline import PipelineStore
+        from src.workflow.pipeline.pipeline_tick import TickOutcome, _message
 
         raw = (f"{result.status}"
                + (f" · 跑了 {'、'.join(result.ran)}" if result.ran else "")
@@ -910,7 +910,7 @@ class IMBridge:
         人就在关口——这正是把它接到 IM 上的意义。
         """
         from src.agents.pipeline_exec import build_stage_executor
-        from src.gateway.pipeline import advance
+        from src.workflow.pipeline.pipeline import advance
 
         q: asyncio.Queue = asyncio.Queue()
         confirm = self._make_confirm(q)
@@ -937,7 +937,7 @@ class IMBridge:
     # ------------------------------------------------------------ 后台任务（不占回合）
     def _get_runner(self):
         if self._runner is None:
-            from src.gateway import TaskRunner
+            from src.workflow.tasks.tasks import TaskRunner
             self._runner = TaskRunner(self.repo_root, self._task_worker,
                                       on_update=self._on_task_update)
         return self._runner

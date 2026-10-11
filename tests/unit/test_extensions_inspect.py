@@ -37,7 +37,7 @@ def test_inspect_extensions_reports_effective_sources_without_sensitive_bodies(t
     )
     monkeypatch.setenv("VORTOCODE_HOOK_TRUST_STORE", str(tmp_path / "trust.json"))
 
-    from src.gateway.extensions_inspect import inspect_extensions
+    from src.workflow.workbench.extensions_inspect import inspect_extensions
 
     snapshot = inspect_extensions(str(root))
     encoded = json.dumps(snapshot, ensure_ascii=False)

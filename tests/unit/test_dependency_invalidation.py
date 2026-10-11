@@ -5,12 +5,12 @@ import json
 import httpx
 import pytest
 
-from src.gateway.collaboration import CollaborationConflict
-from src.gateway.dispatch import DispatchService
-from src.gateway.handoffs import CompletionInbox, revision
-from src.gateway.task_chain_budget import budget_view
-from src.gateway.task_dependencies import dependency_view, validate_consumed
-from src.gateway.tasks import TaskLedger, TaskRunner
+from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.dispatch import DispatchService
+from src.workflow.tasks.handoffs import CompletionInbox, revision
+from src.workflow.tasks.task_chain_budget import budget_view
+from src.workflow.tasks.task_dependencies import dependency_view, validate_consumed
+from src.workflow.tasks.tasks import TaskLedger, TaskRunner
 from src.utils.async_ops import cancel_requested
 
 
@@ -284,7 +284,7 @@ async def test_blocked_invalidation_closes_question_without_new_round(tmp_path):
 
 @pytest.mark.asyncio
 async def test_read_projection_and_review_gate_catch_stale_history(tmp_path):
-    from src.gateway.worktree_sessions import task_session_view
+    from src.workflow.tasks.worktree_sessions import task_session_view
     service, runner, parent, child, _ = await setup(tmp_path)
     service.release("owner", child.id, 1)
     await runner.join(child.id)

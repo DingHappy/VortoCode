@@ -4,11 +4,11 @@ import json
 
 import pytest
 
-from src.gateway.collaboration import CollaborationConflict
-from src.gateway.dispatch import DispatchService
-from src.gateway.handoffs import revision
-from src.gateway.task_chain_budget import budget_view
-from src.gateway.tasks import TaskLedger, TaskRunner
+from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.dispatch import DispatchService
+from src.workflow.tasks.handoffs import revision
+from src.workflow.tasks.task_chain_budget import budget_view
+from src.workflow.tasks.tasks import TaskLedger, TaskRunner
 
 
 LIMITS = {"tasks": 4, "rounds": 4, "steps": 16, "timeout_seconds": 120}

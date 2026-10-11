@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from src.gateway.git_review import (
+from src.workflow.review.git_review import (
     apply_review_action,
     commit_reviewed,
     normalize_git_path,
@@ -13,8 +13,8 @@ from src.gateway.git_review import (
     review_snapshot,
     review_watch_state,
 )
-from src.gateway.review_threads import ReviewConflict, ReviewThreadStore
-from src.gateway.change_sources import (
+from src.workflow.review.review_threads import ReviewConflict, ReviewThreadStore
+from src.workflow.review.change_sources import (
     capture_workspace_state,
     record_change_source,
     record_workspace_side_effects,
@@ -376,7 +376,7 @@ def test_reviewed_pr_guards_and_uses_draft_flow(tmp_path, monkeypatch):
         open_reviewed_pr(str(tmp_path), title="Desktop review", base=base)
 
     import src.agents.vcs as vcs
-    import src.gateway.git_review as git_review
+    import src.workflow.review.git_review as git_review
 
     seen = {}
     monkeypatch.setattr(git_review.shutil, "which", lambda name: "/usr/bin/gh" if name == "gh" else None)

@@ -14,8 +14,8 @@ import asyncio
 import pytest
 import yaml
 
-from src.gateway.pipeline import PipelineStore, load_definition
-from src.gateway.products import ProductStore
+from src.workflow.pipeline.pipeline import PipelineStore, load_definition
+from src.workflow.pipeline.products import ProductStore
 from src.im.bridge import _STALE_TURNS, IMBridge
 from tests.unit.test_im_bridge import OWNER, FakeAdapter, ScriptedLLM, _drive_no_turn, _msg
 

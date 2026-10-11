@@ -5,7 +5,7 @@ import time
 
 import pytest
 
-from src.gateway.terminals import TerminalManager
+from src.workflow.workbench.terminals import TerminalManager
 
 
 pytestmark = [

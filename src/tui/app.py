@@ -3053,7 +3053,7 @@ class VortoCodeTUI(TUICommandsMixin, App):
         def repl_artifact(m: "re.Match") -> str:
             aid = m.group(1)
             try:
-                from src.web.artifacts import ArtifactStore
+                from src.agents.tools.artifacts import ArtifactStore
                 store = ArtifactStore(self.repo_root)
                 meta = store.meta(aid)
                 content = store.html(aid)
@@ -3444,7 +3444,7 @@ class VortoCodeTUI(TUICommandsMixin, App):
             from src.memory.rewind import record_edit
             record_edit(self.sessions.store, self.session_id, rel, before, after,
                         turn_id=self._edit_turn_id, tool=tool)
-            from src.gateway.change_sources import record_change_source
+            from src.workflow.review.change_sources import record_change_source
             record_change_source(
                 self.repo_root, rel, before or "", after, source="agent",
                 session=self.session_id, turn=self._edit_turn_id, tool=tool,
@@ -3835,7 +3835,7 @@ class VortoCodeTUI(TUICommandsMixin, App):
         # Share task lifecycle and role assembly with Desktop/Web/CLI; only render here.
         import uuid
         from src.agents.main_agent import build_research_tools, research_parallel_cap
-        from src.gateway.collaboration import CollaborationService
+        from src.workflow.tasks.collaboration import CollaborationService
 
         async def _sub_confirm(message: str) -> bool:
             return await self._confirm_always(message, scope="delegate")
@@ -3989,7 +3989,7 @@ class VortoCodeTUI(TUICommandsMixin, App):
 
         # 制品（artifact）：把会话产出发布成可分享、实时更新的网页（由 Web 服务器在 /artifact 渲染）。
         # 首次发布弹确认（对齐 CC「批准后再发不再问」：更新静默），发布成功提示可点链接。
-        from src.web.artifacts import build_artifact_tools
+        from src.agents.tools.artifacts import build_artifact_tools
 
         async def _artifact_confirm(preview: dict, _is_update: bool) -> bool:
             t = preview.get("title") or preview.get("id") or "未命名"

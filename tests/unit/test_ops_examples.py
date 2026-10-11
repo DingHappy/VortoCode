@@ -13,7 +13,7 @@ _EXAMPLES = Path(__file__).resolve().parents[2] / "examples"
 
 
 def test_cron_example_parses_with_real_loader(tmp_path):
-    from src.gateway import cron as _cron
+    from src.scheduling import cron as _cron
     d = tmp_path / ".vortocode"
     d.mkdir()
     shutil.copy(_EXAMPLES / "cron.yaml.example", d / "cron.yaml")
@@ -34,7 +34,7 @@ def test_cron_example_parses_with_real_loader(tmp_path):
 
 def test_heartbeat_backlog_examples_exist_and_match_conventions():
     hb = (_EXAMPLES / "HEARTBEAT.md.example").read_text(encoding="utf-8")
-    assert "HEARTBEAT_OK" in hb                       # 与 gateway/heartbeat 的丢弃约定一致
+    assert "HEARTBEAT_OK" in hb                       # 与 scheduling/heartbeat 的丢弃约定一致
     assert "BACKLOG" in hb
     bl = (_EXAMPLES / "BACKLOG.md.example").read_text(encoding="utf-8")
     assert "- [ ]" in bl and "- [~]" in bl            # 领活标记约定（claim_backlog_item）

@@ -8,7 +8,7 @@ import pytest
 
 from src.agents import worktree
 from src.agents.tools.files import build_test_tool
-from src.gateway.tasks import TaskRunner
+from src.workflow.tasks.tasks import TaskRunner
 from src.utils.async_ops import (
     _TimeoutScope310, await_thread, cancel_requested, request_cancel, run_with_timeout,
     timeout_scope,

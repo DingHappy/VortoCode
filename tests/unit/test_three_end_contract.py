@@ -253,7 +253,7 @@ async def test_tainted_artifact_update_must_pass_the_gate(tmp_path):
     而内核适配器里那句"污点更新要过门"因为够不到 confirm 而是死代码。这里真装配 → 真发 → 真 update。
     """
     from src.agents.main_agent import build_agent_tools, make_confirm_gate
-    from src.web.artifacts import ArtifactStore
+    from src.agents.tools.artifacts import ArtifactStore
 
     async def _yes(_m):
         return True                                # 端一律说"人同意了"——不该由它说了算

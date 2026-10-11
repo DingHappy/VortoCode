@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from src.gateway.channel_stats import (
+from src.workflow.pipeline.channel_stats import (
     ChannelStat, collect_stats, fetch_one, load_urls, register_url, summarize, to_payload,
 )
 
@@ -112,7 +112,7 @@ def test_the_payload_warns_measure_not_to_read_unqueryable_as_bad(tmp_path):
 
 
 def test_over_budget_urls_are_named_not_dropped(tmp_path, monkeypatch):
-    from src.gateway import channel_stats as cs
+    from src.workflow.pipeline import channel_stats as cs
 
     clock = {"t": 0.0}
     monkeypatch.setattr(cs.time, "monotonic", lambda: clock["t"])
@@ -152,7 +152,7 @@ def test_only_verified_adapters_ship():
     这条钉住"适配器清单里的每一个都是真机验过的"：新增一个就要同时在这里登记，
     而登记这个动作本身提醒你先去真机跑一遍。
     """
-    from src.gateway.channel_stats import ADAPTERS
+    from src.workflow.pipeline.channel_stats import ADAPTERS
 
     verified = {"_bilibili"}
     assert {a.__name__ for a in ADAPTERS} == verified
@@ -181,7 +181,7 @@ def test_empty_ledger_is_not_a_failure(tmp_path, monkeypatch, capsys):
     同模块的 docstring 早写过这个判据（"报红会让台账里全是红的、人反而不看了"），只是当时
     只想到"查到了但查不出数"，没想到"一条都还没有"。两者是同一类。
     """
-    from src.gateway.collect_cli import run_stats_cli
+    from src.workflow.pipeline.collect_cli import run_stats_cli
 
     monkeypatch.chdir(tmp_path)
     assert run_stats_cli(quiet=False) == 0

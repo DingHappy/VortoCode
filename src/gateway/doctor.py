@@ -242,7 +242,7 @@ def _check_schedule_timezone(cwd: str) -> Check:
     import time as _time
     from datetime import datetime
     try:
-        from src.gateway.cron import load_jobs
+        from src.scheduling.cron import load_jobs
         jobs = [j for j in load_jobs(cwd) if j.enabled]
     except Exception as e:  # noqa: BLE001
         return Check("schedule-tz", "warn", f"读 cron.yaml 失败：{type(e).__name__}: {e}")

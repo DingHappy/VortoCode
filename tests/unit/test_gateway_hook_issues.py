@@ -1,6 +1,6 @@
 """Actionable Hook issue projection stays bounded and acknowledgement-safe."""
 
-from src.gateway.hook_issues import (
+from src.workflow.workbench.hook_issues import (
     acknowledge_hook_issue, forget_hook_issue_session, has_hook_issue,
     hook_issue_snapshot, load_hook_issue_acks,
 )

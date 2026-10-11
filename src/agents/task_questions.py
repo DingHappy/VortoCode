@@ -31,8 +31,8 @@ class DevelopmentQuestionBinding:
 
 def bind_development_question(service, task, plan, block) -> DevelopmentQuestionBinding:
     """Only the trusted executor selects the task, plan, block and version."""
-    from src.gateway.dev_questions import development_state
-    from src.gateway.task_recovery import plan_revision
+    from src.workflow.tasks.dev_questions import development_state
+    from src.workflow.tasks.task_recovery import plan_revision
     state = development_state(task)
     round_number, revision = state["round"], plan_revision(plan)
     history = [q for q in state["questions"] if q.get("status") == "answered"]

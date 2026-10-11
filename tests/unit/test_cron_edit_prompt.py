@@ -14,14 +14,14 @@
 
 import pytest
 
-from src.gateway.cron import CronEditError, load_jobs, set_job_prompt
+from src.scheduling.cron import CronEditError, load_jobs, set_job_prompt
 
 YAML = """\
 # 主人手写的注释——改完必须还在
 jobs:
   - name: relay_duty          # 受信任的 command 作业
     schedule: at 02:00
-    command: python -m src.gateway.relay_duty
+    command: python -m src.scheduling.relay_duty
     enabled: true
   - name: daily-tech-news
     schedule: at 09:00
@@ -57,7 +57,7 @@ def test_command_job_stays_locked(tmp_path):
     root = _repo(tmp_path)
     with pytest.raises(CronEditError, match="command"):
         set_job_prompt(root, "relay_duty", "干点别的")
-    assert _job(root, "relay_duty").command == "python -m src.gateway.relay_duty"
+    assert _job(root, "relay_duty").command == "python -m src.scheduling.relay_duty"
 
 
 def test_unknown_job_refused(tmp_path):

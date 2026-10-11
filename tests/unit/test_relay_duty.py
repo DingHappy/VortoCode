@@ -4,7 +4,7 @@
 """
 import json
 
-from src.gateway.relay_duty import DEFAULT_RELAY_URL, run_duty
+from src.scheduling.relay_duty import DEFAULT_RELAY_URL, run_duty
 
 BASE = DEFAULT_RELAY_URL
 
