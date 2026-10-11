@@ -1911,6 +1911,61 @@ async fn remember_remote_project(
     result
 }
 
+/// 同一台常驻电脑上另一个端口的服务地址：只换端口，主机与协议不变（再过一遍网段校验）。
+fn sibling_server_url(host_base: &str, port: u16) -> Result<String, String> {
+    let base = validate_remote_server_url(host_base)?;
+    let mut parsed = Url::parse(&base).map_err(|error| format!("常驻电脑地址无法解析：{error}"))?;
+    if port < 1024 {
+        return Err("常驻电脑上的项目端口必须在 1024 以上".into());
+    }
+    parsed
+        .set_port(Some(port))
+        .map_err(|_| "常驻电脑地址不能设置端口".to_string())?;
+    validate_remote_server_url(parsed.as_str())
+}
+
+/// 登记常驻电脑上的一个项目运行时（「在哪做：常驻电脑」）。令牌**沿用常驻电脑那条登记**：
+/// 在 Rust 内从钥匙串复制，不经过网页层；目的地只能是同一主机的另一个端口，网页层给不出别的主机。
+/// 新登记仍要原生确认框（与 remember_remote_project 同口径，fail-closed）。
+#[tauri::command]
+async fn remember_resident_project(
+    app: AppHandle,
+    host_project_id: String,
+    port: u16,
+    remote_repo_root: String,
+    name: String,
+) -> Result<DesktopProjectProfile, String> {
+    let path = project_registry_path(&app)?;
+    let host_base = resolve_remote_base(&path, &host_project_id)?;
+    let normalized = sibling_server_url(&host_base, port)?;
+    let repo_root = remote_repo_root.trim();
+    if !repo_root.starts_with('/') {
+        return Err("常驻电脑上的项目目录必须是绝对路径".into());
+    }
+    let token = remote_token_keychain::read(&host_project_id)?
+        .filter(|value| !value.trim().is_empty())
+        .ok_or("常驻电脑的访问 token 不在钥匙串里，请重新连接常驻电脑")?;
+    let id = remote_project_id(&normalized, repo_root);
+    let known = load_project_registry(&path)?
+        .projects
+        .iter()
+        .any(|project| project.id == id);
+    let confirmed = if known {
+        false
+    } else {
+        confirm_remote_registration(&app, &normalized).await?
+    };
+    if !known && !confirmed {
+        return Err("新远程工作区注册未获用户确认，已取消".into());
+    }
+    remote_token_keychain::write(&id, token.trim())?;
+    let result = remember_remote_flow(&path, &normalized, repo_root, &name, &id, known, confirmed);
+    if result.is_err() && !known {
+        let _ = remote_token_keychain::delete(&id);
+    }
+    result
+}
+
 // ── 远程传输层（R3a-2a）：HTTP 代理 ──────────────────────────────────────────
 // 方案 A 的落点：**webview 从不提供目标 URL**，只给注册过的 project_id——由 Rust 查注册表取
 // base_url、从 Keychain 取 token 并代注 Authorization。于是「只连注册过的 server_url」不再是
@@ -3478,6 +3533,7 @@ pub fn run() {
             list_project_sessions,
             remember_desktop_project,
             remember_remote_project,
+            remember_resident_project,
             remote_http_request,
             remote_ws_connect,
             remote_ws_send,
@@ -5100,6 +5156,20 @@ mod tests {
     }
 
     // ── R3a 远程工作区：网段校验 + 注册流 + 向后兼容 ────────────────────────────
+
+    #[test]
+    fn sibling_server_url_only_changes_the_port() {
+        assert_eq!(
+            sibling_server_url("http://192.168.10.97:8081", 8082).unwrap(),
+            "http://192.168.10.97:8082"
+        );
+        assert_eq!(
+            sibling_server_url("https://srv.ts.net", 8443).unwrap(),
+            "https://srv.ts.net:8443"
+        );
+        assert!(sibling_server_url("http://192.168.10.97:8081", 22).is_err());
+        assert!(sibling_server_url("http://8.8.8.8:8081", 8082).is_err()); // 公网 http 照样拒
+    }
 
     #[test]
     fn validate_remote_server_url_accepts_https_and_private_http() {

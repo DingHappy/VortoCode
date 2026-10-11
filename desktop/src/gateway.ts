@@ -54,6 +54,7 @@ import type {
   TrustStatus,
   WorktreeWorkspaceSnapshot,
 } from "./types";
+import type { ResidentProject } from "./lib/residentPlace";
 
 export const DESKTOP_PROTOCOL_VERSION = 10;
 const EVENT_CURSOR_PREFIX = "vortocode.desktop.eventCursor:";
@@ -350,6 +351,12 @@ export class GatewayClient {
   async listAgentActivity(limit = 100): Promise<AgentTurn[]> {
     const payload = await this.request<{ turns?: AgentTurn[] }>(`/api/agent/activity?limit=${encodeURIComponent(String(limit))}`);
     return payload.turns ?? [];
+  }
+
+  /** 常驻电脑上的项目登记表（名称 / 目录 / 端口）：工作台「在哪做」据此找到服务器上的同名项目。 */
+  async listResidentProjects(): Promise<ResidentProject[]> {
+    const payload = await this.request<{ projects?: ResidentProject[] }>("/api/resident/projects");
+    return Array.isArray(payload.projects) ? payload.projects : [];
   }
 
   async listTasks(): Promise<TaskItem[]> {

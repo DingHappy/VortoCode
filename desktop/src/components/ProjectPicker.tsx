@@ -1,7 +1,8 @@
 // 输入框上方的「进入项目工作」：搜索并切到一个项目、添加新项目，或回到不绑定目录的通用会话。
-import { ChevronDown, Folder, Plus, Search, X } from "lucide-react";
+import { ChevronDown, Folder, Laptop, Plus, Search, Server, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import type { WorkPlace } from "../lib/residentPlace";
 import type { DesktopProjectProfile } from "../types";
 
 const COLLAPSED_COUNT = 3;
@@ -14,9 +15,11 @@ type Props = {
   onAddProject: () => void;
   onAddRemote: () => void;
   onLeaveProject: () => void;
+  /** 「在哪做」：只有本机和常驻电脑都能做这个项目时才有。 */
+  place?: { current: WorkPlace; localAvailable: boolean; residentAvailable: boolean; onChange: (place: WorkPlace) => void };
 };
 
-export function ProjectPicker({ projects, activeProjectName, disabled, onPick, onAddProject, onAddRemote, onLeaveProject }: Props) {
+export function ProjectPicker({ projects, activeProjectName, disabled, onPick, onAddProject, onAddRemote, onLeaveProject, place }: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState(false);
@@ -55,6 +58,14 @@ export function ProjectPicker({ projects, activeProjectName, disabled, onPick, o
         {activeProjectName ? <><Folder size={14} />工作区域：{activeProjectName}</> : "工作区域：未选择项目"}
         <ChevronDown size={14} />
       </button>
+      {place && <span className="work-place" role="radiogroup" aria-label="在哪做">
+        <button role="radio" aria-checked={place.current === "local"} className={place.current === "local" ? "active" : ""}
+          disabled={disabled || !place.localAvailable} title={place.localAvailable ? "在这台电脑的项目目录里做，适合边看边改" : "本机还没有这个项目"}
+          onClick={() => place.current !== "local" && place.onChange("local")}><Laptop size={13} />本机</button>
+        <button role="radio" aria-checked={place.current === "resident"} className={place.current === "resident" ? "active" : ""}
+          disabled={disabled || !place.residentAvailable} title={place.residentAvailable ? "在常驻电脑上做：合上笔记本也照常进行，做完交付分支" : "常驻电脑上还没有这个项目"}
+          onClick={() => place.current !== "resident" && place.onChange("resident")}><Server size={13} />常驻电脑</button>
+      </span>}
       {open && (
         <div className="project-picker-menu" role="menu">
           <label className="project-picker-search">

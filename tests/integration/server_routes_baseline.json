@@ -816,5 +816,11 @@
     "methods": [
       "GET"
     ]
+  },
+  {
+    "path": "/api/resident/projects",
+    "methods": [
+      "GET"
+    ]
   }
 ]
