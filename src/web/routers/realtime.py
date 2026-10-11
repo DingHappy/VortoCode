@@ -761,7 +761,7 @@ def _session_dashboard_snapshot(repo_root: str) -> list[Dict[str, Any]]:
         background_tasks_by_session,
         project_dashboard_context,
     )
-    from src.web.session_store import list_sessions, title_from_transcript, session_has_content
+    from src.gateway.session_store import list_sessions, title_from_transcript, session_has_content
 
     resolved_root = str(Path(repo_root).resolve())
     project = project_dashboard_context(resolved_root)
@@ -872,7 +872,7 @@ def _session_dashboard_snapshot(repo_root: str) -> list[Dict[str, Any]]:
 async def agent_sessions_delete(sid: str):
     """删除一个会话：磁盘落盘 + 顺手逐出内存 _SESSIONS（并关其 MCP，别残留子进程）。"""
     import os
-    from src.web.session_store import delete_session
+    from src.gateway.session_store import delete_session
     key = f"sid-{sid}"
     if not _ACTORS.forget(key):
         raise HTTPException(status_code=409, detail="会话仍在运行；请先停止回合再删除")
@@ -898,7 +898,7 @@ async def agent_sessions_delete(sid: str):
 async def agent_sessions_rename(sid: str, request: Request):
     """重命名一个会话（body: {"title": "..."}）。"""
     import os
-    from src.web.session_store import rename_session
+    from src.gateway.session_store import rename_session
     try:
         body = await request.json()
     except Exception:  # noqa: BLE001
@@ -917,7 +917,7 @@ async def acknowledge_session_hook_issue(sid: str, issue_id: str):
     from src.workflow.workbench.hook_issues import (
         acknowledge_hook_issue, hook_issue_snapshot, load_hook_issue_acks,
     )
-    from src.web.session_store import load_session
+    from src.gateway.session_store import load_session
 
     key = f"sid-{sid}"
     target = str(issue_id or "").strip()[:160]

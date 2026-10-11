@@ -18,7 +18,7 @@ from src.gateway.agent_session import capability_update_note, inject_capability_
 from src.gateway.sessions import SessionTable
 from src.im.bridge import IMBridge
 from src.im.channel import ChannelAdapter
-from src.web.session_store import load_session, save_session
+from src.gateway.session_store import load_session, save_session
 
 OWNER = "owner-1"
 SID = f"sid-test-{OWNER}"

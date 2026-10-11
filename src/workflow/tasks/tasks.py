@@ -8,7 +8,7 @@
 worker**（async(task, on_progress)->result_text）解耦——本模块不依赖 MainAgent，可用假 worker 确定性测试；
 server / IM 各自注入"建 agent + 跑一回合"的 worker。状态变更经 on_update 回调推给订阅者（WS/IM）。
 
-设计仿 web/session_store（原子 .tmp+replace）与 realtime 的后台回合（asyncio.create_task + 可取消）。
+设计仿 gateway/session_store（原子 .tmp+replace）与 realtime 的后台回合（asyncio.create_task + 可取消）。
 """
 from __future__ import annotations
 

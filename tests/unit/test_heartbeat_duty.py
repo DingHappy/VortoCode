@@ -214,7 +214,7 @@ async def test_anomaly_is_surfaced_and_recorded(tmp_path, monkeypatch):
 async def test_all_clear_is_silent_and_leaves_exactly_one_journal_line(tmp_path, monkeypatch):
     """检查单全过 → 零通知、零会话历史增长、Journal 有且仅有一行台账。"""
     from src.workflow.workbench.journal import build_daily_journal
-    from src.web import session_store
+    from src.gateway import session_store
     from src.web.routers.tasks import load_notices, record_notice
 
     monkeypatch.delenv("VORTOCODE_HEARTBEAT_CHECKLIST", raising=False)

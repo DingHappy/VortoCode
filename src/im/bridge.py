@@ -213,7 +213,7 @@ class IMBridge:
 
     def _restore_session(self, agent) -> None:
         try:
-            from src.web.session_store import load_session
+            from src.gateway.session_store import load_session
             saved = load_session(self.repo_root, self._sid)
         except Exception:  # noqa: BLE001
             saved = None
@@ -234,7 +234,7 @@ class IMBridge:
     def _persist(self) -> None:
         try:
             from src.gateway.agent_session import session_behavior_fp, session_tool_names
-            from src.web.session_store import save_session
+            from src.gateway.session_store import save_session
             save_session(self.repo_root, self._sid, transcript=[],
                          history=self.agent.history, plan=getattr(self.agent, "plan", None),
                          tool_names=session_tool_names(self.agent),

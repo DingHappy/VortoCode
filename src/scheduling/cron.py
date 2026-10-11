@@ -683,7 +683,7 @@ def check_trigger(repo_root: str, name: str) -> tuple[Optional[str], Optional[st
     if not job.enabled:
         return (f"作业 {name} 已停用（enabled: false）；先启用再触发", "disabled", job)
     if job.kind == "command":
-        from src.web.auth import shell_enabled
+        from src.sandbox.policy import shell_enabled
         if not shell_enabled():
             return ("宿主机命令执行已默认禁用（VORTOCODE_ENABLE_SHELL=1 才开）；"
                     f"{name} 是 command 作业，拒绝触发", "shell_disabled", job)

@@ -329,7 +329,7 @@ async def test_prompt_queue_stop_pauses_and_remove_is_authoritative(monkeypatch)
 @pytest.mark.asyncio
 async def test_stop_before_execution_keeps_durable_input_and_notifies_original_request(monkeypatch, tmp_path):
     from src.web.routers import realtime
-    from src.web.session_store import load_session
+    from src.gateway.session_store import load_session
     monkeypatch.chdir(tmp_path)
     ws = _FakeWS(sid="unstarted-stop")
     agent = _QueueAgent()
@@ -1265,7 +1265,7 @@ async def test_session_persists_and_restores_across_restart(monkeypatch, tmp_pat
         key = _key(ws)
         assert realtime._SESSIONS[key]["transcript"]               # 内存里有了
         # 磁盘也写了
-        from src.web.session_store import load_session
+        from src.gateway.session_store import load_session
         saved = load_session(str(tmp_path), key)
         assert saved and any("记住这句" in m["text"] for m in saved["transcript"])
 

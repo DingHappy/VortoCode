@@ -48,7 +48,7 @@ from src.workflow.tasks.tasks import BackgroundTask, TaskLedger, TASK_STATE_LOCK
 from src.workflow.tasks.handoffs import revision  # noqa: E402
 from src.workflow.tasks.task_dependencies import _input, invalidate  # noqa: E402
 from src.workflow.workbench.goals import GoalLedger  # noqa: E402
-from src.web.session_store import save_session  # noqa: E402
+from src.gateway.session_store import save_session  # noqa: E402
 from src.web.routers import decisions, task_inbox, goals  # noqa: E402
 
 ledger = TaskLedger(str(data))

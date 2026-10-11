@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from src.gateway.sessions import SessionCapacityError, SessionTable
-from src.web.session_store import load_session, save_session
+from src.gateway.session_store import load_session, save_session
 
 
 def agent():
@@ -61,7 +61,7 @@ def test_full_protected_table_rejects_before_agent_construction(tmp_path, protec
 def test_failed_idle_save_cannot_discard_state(tmp_path, monkeypatch):
     table = SessionTable(max_sessions=1)
     existing = seed(table, tmp_path, "sid-unsaved")
-    monkeypatch.setattr("src.web.session_store.save_session", lambda *a, **k: False)
+    monkeypatch.setattr("src.gateway.session_store.save_session", lambda *a, **k: False)
     with pytest.raises(SessionCapacityError):
         table.get("sid-new", repo_root=str(tmp_path), factory=agent)
     assert table.data == {"sid-unsaved": existing}
@@ -75,7 +75,7 @@ def test_failed_save_skips_candidate_and_evicts_other_saved_idle_session(tmp_pat
     def selective_save(root, key, *args, **kwargs):
         return False if key == "sid-unsaved" else save_session(root, key, *args, **kwargs)
 
-    monkeypatch.setattr("src.web.session_store.save_session", selective_save)
+    monkeypatch.setattr("src.gateway.session_store.save_session", selective_save)
     table.get("sid-new", repo_root=str(tmp_path), factory=agent)
     assert table.data["sid-unsaved"] is unsaved and "sid-saved" not in table.data
     assert load_session(str(tmp_path), "sid-saved")["transcript"] == saved["transcript"]

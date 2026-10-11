@@ -7,7 +7,7 @@ import subprocess
 import pytest
 from fastapi.testclient import TestClient
 
-from src.web import session_store as ss
+from src.gateway import session_store as ss
 
 
 def _mk(root, sid, transcript, title=None):

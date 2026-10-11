@@ -39,12 +39,6 @@ def get_api_token() -> str:
 SESSION_COOKIE = "vortocode_session"
 
 
-def shell_enabled() -> bool:
-    from src.env_compat import env_compat
-    return env_compat("VORTOCODE_ENABLE_SHELL", "AUTODEV_ENABLE_SHELL", "").strip().lower() \
-        in ("1", "true", "yes", "on")
-
-
 # 鉴权豁免：页面 HTML 外壳（本身不含数据，数据走各自需鉴权的 API）、API 文档、健康检查、
 # 登录/状态端点（必须能在鉴权前访问，否则没法登录）。
 # 路线 A 下线遗留页后只剩主线页 /、/agent、/artifacts（含制品分享链接）。
@@ -100,6 +94,8 @@ async def auth_middleware(request, call_next):
 
 def require_shell() -> None:
     """危险的宿主机执行入口调用此函数；未显式开启则拒绝（fail-closed）。"""
+    from src.sandbox.policy import shell_enabled
+
     if not shell_enabled():
         raise HTTPException(
             status_code=403,
