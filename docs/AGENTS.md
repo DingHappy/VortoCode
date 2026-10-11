@@ -3,10 +3,16 @@
 > 当前实现：一个会话主 Agent + 按需委派的角色子 Agent + 隔离开发工具。
 > 早期固定五角色批处理流水线已经退役；本文描述当前运行路径。
 
+Desktop本地模型交付补充（2026-10-08）：内置Gateway现在包含锁定的OpenAI兼容工具客户端，
+原sidecar smoke校验SDK构造与服务健康；CLI仍按原llm可选依赖安装。只读运行包诊断
+`vortocode-runtime model-capabilities`不发送推理；模型列表、真实推理与工具验收分别记录。
+默认客户端消费启动器的端点/Key对，显式空Key本地角色不借云端凭据。
+
 ## 模块边界
 
 | 模块 | 职责 | 不承担的职责 |
 | --- | --- | --- |
+| `src/llm/providers.py` / `src/llm/client.py` | 原模型端点/角色路由、回环空 Key 占位符与本机代理隔离 | 自动启动/下载本机模型、借用其它供应商密钥或推断 provider 硬预算能力 |
 | `src/llm/hard_budget.py` | 严格适配器门、请求前预留、累计 token/请求/工具/时间预算 | 默认 provider 能力推断、持久认领和授权 |
 | `src/llm/streaming.py` | 执行中断信号、受检查回调与本地流清理 | 任务台账、失效判定、远端费用停止 |
 | `src/agents/bounded_check.py` | 单次只读检查装配与结构化预算结果 | 自动调度、回执或任务验收 |
@@ -20,6 +26,7 @@
 | `src/gateway/session_event_stream.py` | 事件序号、原子补收/订阅、有界回放和广播 | 工作区选择、WebSocket、模型执行 |
 | `src/gateway/session_events.py` | 分段事件 journal、容量限制与磁盘恢复 | 实时订阅和模型执行 |
 | `src/gateway/tasks.py` | 精确任务身份校验、共享台账、后台执行与崩溃恢复 | 模型和角色选择 |
+| `src/gateway/task_summary.py` | 原 Inbox 的有界只读验收/交接/依赖观察与看板投影，复用共享锁和原领域合同 | 写入台账、磁盘追加扫描、自动推进、任务验收或 Goal 达成 |
 | `src/gateway/task_recovery.py` | 开发恢复身份、来源/计划版本校验、单次恢复与血缘投影；复用原执行池 | HTTP、模型、第二套台账或调度器 |
 | `src/gateway/collaboration.py` | 委派状态、任务消息、轮次校验与发起 Agent 验收 | LLM、WebSocket、自动启动会话 |
 | `src/gateway/task_questions.py` | 台账内的问题合同、期限、答复幂等与轮次变更校验 | 存储实例、模型、调度器 |
@@ -39,6 +46,8 @@
 | `src/web/task_dispatch.py` | HTTP/主 Agent 共用服务装配、任务事件和当前用户回合提示 | 独立并发池、自动模型回合 |
 | `src/web/routers/task_inbox.py` | 完成收件箱的类型化 HTTP 读取与手动回执适配 | 模型调用、验收、重新发布完成事件 |
 | `desktop/src/connection/sessionConnection.ts` | 握手、断开代次与事件来源校验；复用唯一 clientRef | 项目注册、通知、面板数据与运行时启动 |
+| `desktop/src/components/TaskBoard.tsx` / `desktop/src/lib/taskBoard.ts` | Desktop 有界跨会话看板、作用域筛选和来源导航，复用 runtime Inbox | 第二套任务库、执行/验收状态机、调度或跨会话授权 |
+| `desktop/src/hooks/useGoals.ts` / `desktop/src/lib/goals.ts` / `desktop/src/components/GoalsPanel.tsx` | 原目标表单、精确只读定位、请求代次及客户端隔离、失败重试 | 跨会话授权、任务归属改写或按任务状态推导 Goal 达成 |
 | `desktop/src/tasks/TasksPanel.tsx` | 任务入口、工作区/计划列表、任务卡与任务定位 | 请求、权限判定和业务状态推导 |
 | `desktop/src/components/TaskCard.tsx` | 任务结果、任务消息、验收/返工入口 | 权限判定和任务状态推导 |
 | `desktop/src/hooks/useTasks.ts` / `desktop/src/tasks/taskFeed.ts` | 任务/工作区快照、选中任务、请求与实时事件合并、暂停/恢复/取消 | 导航、系统通知、服务端状态推导 |
@@ -339,3 +348,125 @@ scan_id 一份，最多 128 份/8192 字节。原 TaskLedger 提供 load/save/id
 退役凭据不包含原完整收据链、不证明迁移或历史保留，也不释放历史容量。下一阶段仍
 需迁移记录、退役资料自身保存/再迁移及独立故障域合同，生产自动检查/推进未开启。
 详细合同见 PRD 第 31 至 35 节及 TASK_DISPATCH_API.md。
+
+## 联网派发防循环（第47节）
+
+MainAgent沿用原模型/工具执行循环，对web_search/web_fetch增加单个用户回合的派发额度，
+默认12、可显式配置1–64；Build自动续跑不重置，仅新的run_turn重置。达到额度立即截断
+调用批次的后缀（包括其中的写操作），保留已执行前缀的工具结果并转原无工具收尾路径。
+不继续Build，不借空收尾触发plan→build升级；失败工具也消费准入额度。只限制该Agent
+的联网工具派发，不是provider请求/token/费用/时间硬预算，不限制子Agent总和，也不替代
+任务验收、交接或Goal。能力恢复指纹包含该额度版本和配置，不包含运行中用量。
+
+
+## MCP / Skill 执行适配（第48节）
+
+Tool可携带完整input_schema；原生/提示式协议与恢复指纹保留外部参数合同。
+ToolManager成功连接必须同时交给原ToolExecutor，失败注册/装配关闭资源；空工具列表仍保留清理所有权。
+MCP isError和客户端失败转ok=false，原Agent展示failed。当前HTTP仍是旧REST适配器，不能当标准MCP。
+Web显式opt-in及external/unattended无凭据HTTP边界不变，Desktop项目local不加载外部MCP。
+主Agent的SkillRegistry检查仓库范围/256KiB限制，返回来源及引用基准；读取资源仍走原权限工具，
+保存使用YAML安全序列化并拒绝越界目标。General无仓库Skill；不自动执行脚本或重载外部变化。
+标准传输、多服务器同名身份和Desktop显式连接入口待独立合同，见PRD第48节。
+
+
+## MCP 多服务身份（第49节）
+
+DynamicToolRegistry使用mcp__server__tool完整键，metadata保存远端原名，执行器和动态调用只向
+该server连接传原名；包装器不重复前缀。旧裸名称只在无歧义时解析，权限规则匹配原名及完整名，
+server_names边界不变，频率以完整身份共用。目录先验证再发布，失败保留原目录；HTTP读取错误
+不能变成空列表，显式空列表可更新。注销后的迟到刷新拒绝；重复服务器不替换原连接。
+当前身份ASCII且无双下划线、整体64字符以内；不支持的身份显式拒绝，未实现通用名称编码。
+标准HTTP仍待实现，不能声称本轮标准互操作通过。具体范围见PRD第49节。
+
+
+## 显式Streamable HTTP子集（第50节）
+
+src/tools/mcp_http.py属于原MCP领域，factory通过http+protocol=streamable_http选择；
+旧省略protocol配置仍是legacy_rest。当前仅支持2026-07-28工具列表/调用，单端点POST、JSON/SSE及
+请求元数据/参数头镜像；不发送initialize/GET流，不自动协商、降级、重试或跟随重定向。
+目录/响应/时间均有界，非法结果上抛，isError保持失败；取消清理本地流，不证明远端停止。
+权限及Desktop项目local边界不变。非当前版本/不支持服务输入请求显式拒绝，不扩展clientCapabilities。
+这只替代第48/49节“标准HTTP待实现”的工具子集缺口，完整兼容及GUI入口仍待下一阶段。
+配置与上限见MCP_HTTP.md，证据见PRD/DESKTOP_ACCEPTANCE第50节。
+
+
+## 旧HTTP会话与Desktop接入（第51节）
+
+原mcp_http支持显式三种2025版本握手/session/通知/清理，不重放过期调用；旧server声明资源/提示
+时追加原权限门内通用读取工具，输出仍不可信。sampling/elicitation/roots/订阅未实现。
+原agent通过mcp_session装配连接/观察/重试；原注册表和执行器复用，失败保留旧工具，迟到/忙拒绝发布。
+General只允许两条精确MCP会话REST端点，项目扩展检查不放行；profile及无凭据HTTP门继续有效。
+Desktop插件页按client/session/connection代次隔离请求，不自动重试/执行模型，目录连接不当作调用验收。
+工作区范围/配置大小/服务数量/总体30秒有界，完整合同及未完成能力见MCP_HTTP.md和PRD第51节。
+
+
+## 资源-only与观察合同（第52节）
+
+旧HTTP初始化未声明tools时不请求tools/list，仅装配已声明资源/提示；现代发现路径不变。
+失败重试的attempted_at与成功目录observed_at分开；发布后取消不恢复旧观察。
+候选清理有界且finally释放连接中标记，未确认清理单独保留，不声称远端停止。
+原目录、执行器、会话/客户端入口及权限继续复用，具体证据见PRD和验收第52节。
+
+## 初始化失败清理合同（第53节）
+
+connect_mcp在manager尚未移交时也限制失败清理5秒，异常/超时保留原错误；取消继续传播。
+只用固定异常note传递清理未确认到会话观察，不暴露原服务错误。候选清理期间取消同样
+记录未确认并释放连接中标记；不证明远端停止，不自动重试，不新增后台池或权限。
+
+## 简单查询与Desktop关闭（第54节）
+
+简单实时查询优先已知数据源，搜索无关最多建议改写一次后读取来源或说明不足；属于提示指导，
+不是硬预算，也不替代原派发额度。macOS主窗口关闭改为最小化，保留原runtime和会话；
+Dock重开恢复窗口，明确Quit仍退出清理。启动延迟显示不得自动恢复已最小化窗口。
+其它平台不变，原生Dock点击仍待验收，不新增自动任务或provider授权。
+
+## 日常使用与交付收敛（第55节）
+
+当前阶段暂停扩MCP/自动化/provider权限，主链路与固定交付入口见DESKTOP_DAILY_BASELINE.md。
+表格使用原消息组件/安全链接，代码与HTML文字不执行；非法围栏不能阻塞段落扫描。
+仓库安装必须先核验保存备份、核验暂存，再整体替换/核验，失败回退；回退失败保留资料。
+不自动启动/关闭GUI，不以本地签名包当正式稳定发布；旧验收边界及任务生命周期不变。
+
+## Desktop 显式本机只读授权（第61节）
+
+General不再一概要求切项目才能读指定文本：仅Desktop原可信装配显式加入read_local_file，
+原gate/READ/档位/审计/deny复用。固定64KiB单文件，敏感原/规范路径拒绝，审批前后和读取后
+核对文件版本；不拓宽read_file/写/执行围栏。串行确认，不可信内容撤销本轮预授权。
+普通Web/IM/CLI不自动增加该工具；General profile仍external。无需新增用户环境开关。
+权限档位按原工作区保存，General独立，客户端隔离旧请求。跨目录写/执行/目录grant未实现。
+
+## Desktop 确认卡与监管（第62节）
+
+原确认卡可保存授权级别，但不代答本次批准。新版Desktop原可信装配把审批上限夹为reads，
+保留历史FULL，屏蔽旧auto_approve；普通CLI/Web不改。所有Desktop shell含只读仍归EXECUTE，
+写/执行/外发门仍人工，敏感参数在原工具内核硬拒绝，原deny/沙箱/危险命令闸保留。
+这不是能识别所有脚本/第三方工具风险的证明，不启用自动监管模型或任务推进。
+
+## 空白会话投影（第63节）
+
+session_store.session_has_content统一判定记录内容，新纯空条目保存是无需写盘的成功no-op，
+Dashboard隐藏无内容且无运行/确认/任务的条目；原磁盘文件不删除，自定义名称/历史/活动/
+队列仍保留。Desktop复用未使用空页并互斥新建连接；不靠messages=0抹掉失败或任务证据。
+
+## 当前执行与审批回执（第64节）
+
+WorkbenchNav/SessionInfo只投影原plan/当前活动/精确owner的TaskFeed快照，开发图复用原TaskCard。
+无计划明确unknown，不通过工具完成推导验收/交接/Goal；父任务不作依赖推论。
+ConfirmationReply/controller发送成功仅awaiting、失败保留卡；原closed闭合。只读check按所属会话/
+Future返回pending，客户端按id/nonce/client/sid隔离迟到响应；人工核对后才能重试，不自动批准。
+更多保留原入口；待处理跳原会话确认卡。无新执行池/provider授权或自动模型检查。
+
+## 全局管理与会话执行分离（第65节，修正第64节导航）
+
+isManagementTab的inbox/tasks/goals/decisions是主区域任务中心，非会话侧栏。
+看板及原领域面板/客户端复用；会话侧栏不放下派列表/图或全局计数，只有原计划/当前活动/
+确认与折叠详情。后台事件只能提示全局页，不能自动打开它；看板打开会话转对话，
+切工作区保持任务中心。原授权、回执、验收、交接与Goal不变。
+
+## 日常会话界面（第66–67节）
+
+TurnTimeline按原活动与同rid非空输出决定自动折叠；无结果或异常保持可见，可手动查看历史。
+SessionInfo只展示当前计划和异常，ProjectPicker固定在输入框上方，运行/确认时禁用。
+daily.css复用主题tokens，窄窗口当前会话侧栏为覆盖层；管理页保持独立主区域。
+导航/样式不更改领域生命周期、授权或执行池，浏览器夹具不代替完整App/原生/provider验收。

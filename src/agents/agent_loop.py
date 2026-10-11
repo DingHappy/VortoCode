@@ -379,6 +379,8 @@ def _tool_catalog(tools: list[Tool]) -> str:
         a = "，".join(f"{k}（{desc}）" for k, desc in t.args.items()) or "无"
         kind = "只读" if t.read_only else "写/重型"
         lines.append(f"- {t.name}（{kind}）：{t.description}  参数：{a}")
+        if t.input_schema is not None:
+            lines.append("  参数合同：" + json.dumps(t.input_schema, ensure_ascii=False, sort_keys=True))
     return "\n".join(lines)
 
 
@@ -422,16 +424,25 @@ def _env_block() -> str:
     return "<env>\n" + "\n".join(lines) + "\n</env>"
 
 
+_PROMPTED_TOOL_PROTOCOL = """【工具调用协议】需要调用工具时，**只输出 JSON、不要任何多余文字**：
+- 单个工具：一个对象 {"tool": "工具名", "args": {参数...}}
+- 多个**相互独立的只读**工具想同时用（如一次读几个文件）：一个数组 [{"tool":...}, {"tool":...}]，
+  它们会并行执行、省往返；但有先后依赖、或涉及写/重型操作时，仍一次只给一个。
+不需要工具、要回答用户时，**直接输出自然语言**（简洁），不要输出 JSON。
+"""
+
+_NATIVE_TOOL_PROTOCOL = """【工具调用协议】使用当前请求提供的原生 tools schema 和结构化 tool_calls 调用工具。
+不要把工具调用写成正文 JSON，也不要在正文中伪造工具结果。
+只有相互独立的只读调用可并行；有依赖、写入或重型操作时按顺序调用并观察结果。
+无需工具时直接用自然语言回答；工具参数、权限和执行结果以实际工具合同为准。
+"""
+
 SYSTEM_TEMPLATE = """你是 VortoCode 的主助手，通过终端 / 浏览器 / IM 等入口和用户对话（同一个 runtime，多个入口）。VortoCode 是一个多 Agent 软件开发框架。
 你可以调用下列工具来读代码、扫描仓库，或把"正经的开发任务"交给开发流水线（dev→test→review，会真跑测试与审查）：
 
 {catalog}
 
-【工具调用协议】需要调用工具时，**只输出 JSON、不要任何多余文字**：
-- 单个工具：一个对象 {{"tool": "工具名", "args": {{参数...}}}}
-- 多个**相互独立的只读**工具想同时用（如一次读几个文件）：一个数组 [{{"tool":...}}, {{"tool":...}}]，
-  它们会并行执行、省往返；但有先后依赖、或涉及写/重型操作时，仍一次只给一个。
-不需要工具、要回答用户时，**直接输出自然语言**（简洁），不要输出 JSON。
+{tool_protocol}
 每次工具调用后，其返回会作为**工具输出**回灌给你（提示式协议下以 `[工具 X 结果]` 开头；原生 tools
 模式下是结构化 tool 消息）——**那是工具的输出，不是用户发来的新消息**，别把它当成用户在给你看东西
 或已经结束对话；据此决定下一步或给出最终回答。若任务需要写文件/跑流水线，**务必真正调用对应工具**
@@ -454,6 +465,12 @@ SYSTEM_TEMPLATE = """你是 VortoCode 的主助手，通过终端 / 浏览器 / 
 需要实时或站外信息（天气、股价、新闻、某个库的最新用法…）就用 web_search / web_fetch 真去查一次，
 别拿训练先验当答案、也别把用户推给别的 App。确实没有对应工具时，明说缺的是哪一类工具，
 而不是笼统地说"我不具备这个能力"。
+【简单实时查询的收敛】天气、单个价格等简单查询，有已知可靠公开数据页面时优先 web_fetch，
+不要先反复换语言搜索。需要搜索时先检索一次并检查城市、主题、日期是否匹配；百科、旅游或
+其它城市页面不能当作天气证据。结果无关或不足时最多再改写一次搜索，仍无关就改读已知数据源
+或说明尚未核实，不继续堆关键词。已有足够资料立即回答。多来源研究按用户范围检索，不套用
+简单查询的次数建议；原联网派发额度与权限仍生效。回答实时数值附来源链接；单位换算应依据
+页面实际数值，页面没有的日期、预测或精确数值不得补造。这是选择工具的指导，不是硬预算。
 【周期性要求 = 排班，不是现在做一次】用户说"每天早上九点…""每周一…""以后每隔 N 小时…""定时…"
 这类**带重复周期**的要求时，他要的是让这件事**将来自动反复发生**，不是你立刻跑一遍就完事。
 有 cron_add 就用它建一个定时作业（把要做的事写进 prompt），没有就如实说这一档缺什么。
@@ -590,6 +607,11 @@ class MainAgent:
         self._env_sent = ""                    # 已注入过消息流的环境快照：没变化就不重复附，省 token
         # 本回合里"同一只读工具 + 同一参数 + 同一结果"出现过几次（见 _repeat_call_note）。
         self._repeat_calls: dict[str, int] = {}
+        # One human turn, including build continuations. This is a dispatch cap,
+        # not a provider token/time budget or task acceptance signal.
+        self.max_web_tool_calls = min(64, _env_int("VORTOCODE_MAX_WEB_TOOL_CALLS", 12))
+        self._web_tool_calls = 0
+        self._web_budget_exhausted = False
         # 本回合直接改过的文件 / 是否跑过任何命令（见 _unverified_writes_note）。
         self._turn_writes: set[str] = set()
         self._turn_verified = False
@@ -703,11 +725,12 @@ class MainAgent:
             + "plan 可以充分使用只读工具完成分析，但要目标明确、信息够用就停止并总结；"
             "不要默认启动大量子 agent。"
             if mode == "plan"
-            else "build 模式下所有工具可用。"
+            else "build 模式下仅可使用当前工具清单中的能力；现有权限、确认门和 capability 限制仍然生效。"
         )
         self._last_mode_rule = mode_rule       # 行为指纹取样用（见 behavior_fingerprint）
         prompt = SYSTEM_TEMPLATE.format(
             catalog=_tool_catalog(self._tool_list),
+            tool_protocol=_NATIVE_TOOL_PROTOCOL if self._native else _PROMPTED_TOOL_PROTOCOL,
             mode=mode, mode_desc=mode_desc, mode_rule=mode_rule,
         )
         hint = self._orchestration_hint()      # 据可用工具给"大任务怎么展开"的编排指引
@@ -776,8 +799,11 @@ class MainAgent:
 
         if not getattr(self, "_last_mode_rule", ""):
             self._system("plan")                        # 取一次样，填充 _last_mode_rule
+        # 两种协议的静态规则都属于恢复合同；运行时回退本身不改变能力身份。
         material = "\n".join((_tool_catalog(self._tool_list), SYSTEM_TEMPLATE,
-                              str(getattr(self, "_last_mode_rule", ""))))
+                              _NATIVE_TOOL_PROTOCOL, _PROMPTED_TOOL_PROTOCOL,
+                              str(getattr(self, "_last_mode_rule", "")),
+                              f"web-dispatch-v1:{self.max_web_tool_calls}"))
         return hashlib.sha256(material.encode("utf-8")).hexdigest()[:32]
 
     async def _request_build(self, args: dict) -> str:
@@ -1296,6 +1322,7 @@ class MainAgent:
         """把工具表转成 OpenAI function-calling 的 schema（原生工具模式用）。"""
         schema = []
         for t in self._tool_list:
+            from copy import deepcopy
             props = {k: {"type": "string", "description": v, **t.argument_schema.get(k, {})}
                      for k, v in t.args.items()}
             schema.append({
@@ -1303,7 +1330,7 @@ class MainAgent:
                 "function": {
                     "name": t.name,
                     "description": t.description,
-                    "parameters": {"type": "object", "properties": props, "required": []},
+                    "parameters": deepcopy(t.input_schema) if t.input_schema is not None else {"type": "object", "properties": props, "required": []},
                 },
             })
         return schema
@@ -1377,6 +1404,10 @@ class MainAgent:
             return result
 
         if self._capabilities is not None:
+            if getattr(self, "_supervised", False):
+                from src.agents.capabilities import _sensitive_arg
+                if _sensitive_arg(name, args, self._capabilities.repo_root):
+                    return finish("blocked", "[监管拦截] 此文件入口不访问敏感凭据或内部状态；提高授权也不放行。")
             reason = self._capabilities.denied(
                 name,
                 args,
@@ -1508,8 +1539,7 @@ class MainAgent:
                     f"结果与上次完全一致。别再重复调用了，就用这份内容继续下一步。）")
         return (f"（本回合第 {n} 次用同样的参数调 {tool.name}，结果与前几次逐字节相同，"
                 f"这里不再重复贴出——内容就在上面几条工具结果里，直接用。"
-                f"你已经掌握了需要的信息，请立刻做实际动作（修改文件 / 调用实现类工具），"
-                f"或者直接给出最终回答。）")
+                f"请依据已有结果回答；仍无法核实的部分要明确说明，不要猜测。）")
 
     _MAX_TURN_TOOL_IMAGES = 4      # 单次注入的图片上限：图按 ~1000 token 计，堆多了挤掉正文预算
 
@@ -1597,7 +1627,7 @@ class MainAgent:
             _mark_taint(calls)
             return r
         all_ro = all(self.tools.get(n) is not None and self.tools[n].read_only
-                     and not self.tools[n].yields_turn for n, _ in calls)
+                     and not self.tools[n].yields_turn and not self.tools[n].serial for n, _ in calls)
         if all_ro:                                  # 全只读 → 并发（CC 式并行读）
             rs = await asyncio.gather(*[self._run_tool(n, a, mode, say) for n, a in calls],
                                       return_exceptions=True)
@@ -1638,8 +1668,24 @@ class MainAgent:
 
     def _limit_tool_calls(self, calls: list, mode: str, used: int,
                           say: Callable[[str], None]) -> tuple[list, int, bool]:
-        """返回 (可执行 calls, 新 used, 是否已耗尽)；plan 不再有专属工具调用上限。"""
-        return calls, used + len(calls), False
+        """Admit a bounded web-call prefix, shared across all segments of a human turn."""
+        admitted = []
+        for name, args in calls:
+            if name in ("web_search", "web_fetch"):
+                if self._web_tool_calls >= self.max_web_tool_calls:
+                    self._web_budget_exhausted = True
+                    break
+                self._web_tool_calls += 1
+            admitted.append((name, args))
+            if self._web_tool_calls >= self.max_web_tool_calls:
+                self._web_budget_exhausted = True
+                break
+        if self._web_tool_calls >= self.max_web_tool_calls:
+            self._web_budget_exhausted = True
+        if self._web_budget_exhausted:
+            say(housekeeping("联网检索已达到本次请求的调用上限；停止继续检索，"
+                             "依据已有结果回答，并说明尚未核实的内容。"))
+        return admitted, used + len(admitted), self._web_budget_exhausted
 
     async def run_turn(
         self,
@@ -1661,6 +1707,8 @@ class MainAgent:
         """
         start_turn()                  # 本回合的人类等待清零（见 wait_clock）
         self._repeat_calls.clear()    # 重复调用计数是回合作用域：新问题重读同一个文件是正当的
+        self._web_tool_calls = 0
+        self._web_budget_exhausted = False
         self._turn_writes.clear()
         self._turn_verified = False
         from src.agents.taint import mark_channel_untrusted, mark_tainted, reset_taint
@@ -1756,6 +1804,23 @@ class MainAgent:
         while steps < self._step_budget(mode):
             steps += 1
             messages = [{"role": "system", "content": self._system(mode)}] + self._trimmed_history(mode)
+            if not self._env_context:
+                # 无目录会话仍需日期；只附到本次请求，不能挤占持久历史/压缩预算。
+                from datetime import datetime
+                date_note = (f"【当前日期】{datetime.now():%Y-%m-%d}（运行环境本地日期）。"
+                             "检索最新/近期信息以此为参考；用户指定历史范围时遵循用户范围。")
+                for index in range(len(messages) - 1, 0, -1):
+                    if messages[index].get("role") != "user":
+                        continue
+                    message = dict(messages[index])
+                    content = message.get("content")
+                    if isinstance(content, str) and content.startswith("[工具 "):
+                        continue  # 工具结果必须保持原样，日期不是搜索后端返回的证据。
+                    message["content"] = (content + [{"type": "text", "text": date_note}]
+                                          if isinstance(content, list)
+                                          else (str(content or "") + "\n\n" + date_note))
+                    messages[index] = message
+                    break
 
             # 原生 function-calling 路径（opt-in）；模型不支持就永久回退到提示式协议
             if self._native:
@@ -1771,6 +1836,8 @@ class MainAgent:
                     # 保留 native、下轮重试。本步无论如何走下面的提示式协议兜底，回合照常推进。
                     if _native_error_is_permanent(e):
                         self._native = False
+                        # 同一次请求回退也必须切换协议提示，不能继续用原生 schema 指令。
+                        messages[0] = {"role": "system", "content": self._system(mode)}
                         resp = None
                     else:
                         if self._raise_llm_errors:     # 流水线档：如实上抛，别装成"空结论"
@@ -1892,7 +1959,7 @@ class MainAgent:
         return await self._force_finish(mode, say, stream_cb, emit, reasoning_cb, stream_shown)
 
     def _should_auto_continue_build(self, mode: str, auto_continues: int) -> bool:
-        if mode == "plan" and not self._escalated:
+        if self._web_budget_exhausted or (mode == "plan" and not self._escalated):
             return False
         return auto_continues < self.build_auto_continues
 
@@ -1916,7 +1983,7 @@ class MainAgent:
             content = ""
         # 收尾这一轮也可能夹带自创的行内工具语法；它是协议噪音，不该出现在人看到的回答里。
         content = _strip_inline_tool_noise(content)
-        if not content and await self._try_budget_escalation(mode):
+        if not content and not self._web_budget_exhausted and await self._try_budget_escalation(mode):
             return await self._run_turn_body(
                 "继续上一轮任务。plan 阶段单段执行预算已到，用户已同意切到 build；"
                 "请基于已有上下文继续完成，不要重新从头开始。",
@@ -1928,6 +1995,8 @@ class MainAgent:
         return content
 
     def _budget_exhausted_message(self, mode: str, *, finish_error: bool = False) -> str:
+        if self._web_budget_exhausted:
+            return "（本次请求的联网调用上限已到，已停止检索；现有资料不足以完成核实。请缩小问题范围后重试。）"
         if mode == "plan" and not self._escalated:
             if finish_error:
                 return "（plan 单段执行预算已到；收尾时网络/中转站出错，请稍后重试，或切到 build 后继续。）"

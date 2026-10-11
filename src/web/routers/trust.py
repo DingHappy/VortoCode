@@ -23,13 +23,17 @@ def _status() -> dict:
     repo_root = os.getcwd()
     profile = _capability_profile()
     stored = get_trust_level(repo_root)
+    desktop = os.getenv("VORTOCODE_DESKTOP_SIDECAR") == "1"
+    approval_profile = "external" if desktop else profile
     return {
         "level": stored,
-        "effective": resolve(stored, profile),   # 被能力档案夹过之后**真正生效**的那一档
-        "ceiling": ceiling(profile),
-        "levels": list(available_levels()),
+        "effective": resolve(stored, approval_profile),
+        "ceiling": ceiling(approval_profile),
+        "levels": ["ask", "reads"] if desktop else list(available_levels()),
         "capability_profile": profile,
         "workspace_scope": current_workspace_scope(),
+        "local_file_reads": desktop,
+        "supervised": desktop,
     }
 
 

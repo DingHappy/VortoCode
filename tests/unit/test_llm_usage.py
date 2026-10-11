@@ -182,6 +182,40 @@ def _client(max_retries):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("message", [{"reasoning_content": "thinking"}, {"content": None}])
+async def test_fallback_missing_or_null_content_is_not_a_keyerror(monkeypatch, message):
+    import aiohttp
+    session = _FakeSession([_FakeResp(200, {"choices": [{"message": message}]})])
+    monkeypatch.setattr(aiohttp, "ClientSession", lambda **kw: session)
+    out = await _client(3)._chat_with_requests([{"role": "user", "content": "latest models"}])
+    assert out["content"] == ""
+    assert session.posts == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [[], {}, {"choices": []}, {"choices": [{"message": None}]},
+                                 {"choices": [{"message": {"content": {"wrong": "shape"}}}]}])
+async def test_fallback_invalid_response_has_actionable_error_without_retry(monkeypatch, body):
+    import aiohttp
+    session = _FakeSession([_FakeResp(200, body)])
+    monkeypatch.setattr(aiohttp, "ClientSession", lambda **kw: session)
+    with pytest.raises(RuntimeError, match="模型响应格式无效"):
+        await _client(3)._chat_with_requests([{"content": "hi"}])
+    assert session.posts == 1
+
+
+@pytest.mark.asyncio
+async def test_fallback_unsolicited_tools_are_not_silently_discarded(monkeypatch):
+    import aiohttp
+    body = {"choices": [{"message": {"tool_calls": [{"id": "x"}]}}]}
+    session = _FakeSession([_FakeResp(200, body)])
+    monkeypatch.setattr(aiohttp, "ClientSession", lambda **kw: session)
+    with pytest.raises(RuntimeError, match="SDK 降级路径不支持"):
+        await _client(3)._chat_with_requests([{"content": "hi"}])
+    assert session.posts == 1
+
+
+@pytest.mark.asyncio
 async def test_fallback_retries_transient_then_succeeds(monkeypatch):
     import aiohttp
     reset_usage()

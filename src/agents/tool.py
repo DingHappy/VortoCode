@@ -28,3 +28,5 @@ class Tool:
     required_capabilities: tuple[str, ...] = ()
     argument_schema: dict[str, dict] = field(default_factory=dict)
     yields_turn: bool = False  # Execute sequentially; later tools must not run after a suspension.
+    input_schema: dict | None = None  # Full external JSON Schema; native/provided tools retain types and required fields.
+    serial: bool = False  # Read-only tools that may ask for approval must not race confirmation cards.

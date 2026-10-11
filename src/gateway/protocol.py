@@ -31,6 +31,8 @@ AGENT = "agent"                              # 发起一个回合（text/mode/im
 AGENT_CANCEL = "agent_cancel"                # 「停止」：中断在跑的回合
 AGENT_QUEUE_REMOVE = "agent_queue_remove"    # 删除一条尚未开始的排队输入
 AGENT_QUEUE_SEND_NOW = "agent_queue_send_now"  # 提升排队输入：中断当前回合后立即执行
+AGENT_CONFIRM_CHECK = "agent_confirm_check"
+AGENT_CONFIRM_STATE = "agent_confirm_state"
 AGENT_CONFIRM_RESPONSE = "agent_confirm_response"   # 对 agent_confirm 的应答（id + ok）
 AGENT_TTS = "agent_tts"                      # 「🔊 播放」：合成一条回复的语音
 WORKSPACE_EDIT = "workspace_edit"            # Desktop 显式源码保存（path/content/expected_sha256）
@@ -86,6 +88,7 @@ INBOUND: Dict[str, _Spec] = {
     AGENT_CANCEL: ((), ()),
     AGENT_QUEUE_REMOVE: (("id",), ()),
     AGENT_QUEUE_SEND_NOW: (("id",), ()),
+    AGENT_CONFIRM_CHECK: (("id", "nonce"), ()),
     AGENT_CONFIRM_RESPONSE: (("id",), ("ok",)),
     AGENT_TTS: (("id", "text"), ()),         # 无 id 的应答前端无法归位，白白烧一次合成 → 必填
     WORKSPACE_EDIT: (("path", "content", "expected_sha256"), ("rid",)),
@@ -117,6 +120,7 @@ OUTBOUND: Dict[str, _Spec] = {
     # 就是 fail-open：serve 换个版本/改个措辞，客户端的 --yes 又会在污点回合放行。
     # 可选字段（老客户端忽略即可，不破冻结协议）；**客户端读不到它时必须按"可能有污点"处理**。
     AGENT_CONFIRM: (("id", "text"), ("tainted",)),
+    AGENT_CONFIRM_STATE: (("id", "nonce", "pending"), ()),
     AGENT_CONFIRM_CLOSED: (("id",), ("reason",)),
     AGENT_DIFF: (("diff",), ("title",)),     # diff=unified diff 文本（serve 侧已截断）；title=一句话语境
     AGENT_TTS_AUDIO: (("id", "data"), ()),

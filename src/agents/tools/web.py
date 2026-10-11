@@ -38,8 +38,9 @@ def build_web_tools() -> list[Tool]:
                  {"url": "要抓取的 http(s) 网址"}, _web_fetch, read_only=True,
                  untrusted_source=True, external_content=True),
             Tool("web_search",
-                 "联网搜索（DuckDuckGo，无需 key）：给查询返回若干「标题/URL/摘要」，再用 web_fetch "
-                 "深读感兴趣的链接。查最新信息/报错/库用法时先搜后读。只读、无需确认",
+                 "联网搜索（DuckDuckGo/Bing，无需 key）：给查询返回若干「标题/URL/摘要」，再用 web_fetch "
+                 "深读链接并核对来源与发布时间。查最新信息时参考本轮日期，不凭训练知识添加过时年份；"
+                 "用户指定历史年份则保留范围。搜索失败或无结果不代表已核实。只读、无需确认",
                  {"query": "搜索关键词/问题"}, _web_search, read_only=True,
                  untrusted_source=True, external_content=True)]
 

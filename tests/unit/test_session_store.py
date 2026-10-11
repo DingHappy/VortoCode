@@ -76,9 +76,18 @@ def test_session_table_persists_dashboard_context_snapshot(tmp_path):
                     "history_messages": 8, "policy": "preserve", "will_compact": False}
 
     table = SessionTable()
-    table.get("sid-context", repo_root=str(tmp_path), factory=Agent)
+    table.get("sid-context", repo_root=str(tmp_path), factory=Agent)["transcript"] = [{"role": "user", "text": "真实会话上下文"}]
     table.persist("sid-context", str(tmp_path))
 
     saved = load_session(str(tmp_path), "sid-context")
     assert saved["context_usage"]["pct"] == 25
     assert saved["context_usage"]["max_tokens"] == 12000
+
+
+def test_draft_save_is_clean_noop_without_new_disk_file(tmp_path):
+    from src.web.session_store import save_session, load_session
+    assert save_session(str(tmp_path),"sid-draft",[],[],None,context_usage={"pct":1},tool_names=["web_search"])
+    assert load_session(str(tmp_path),"sid-draft") is None
+    assert not (tmp_path / ".vortocode/web_sessions/draft.json").exists()
+    assert save_session(str(tmp_path),"sid-draft",[{"role":"user","text":"hi"}],[],None)
+    assert load_session(str(tmp_path),"sid-draft")["transcript"]

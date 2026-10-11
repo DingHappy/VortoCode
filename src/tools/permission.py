@@ -175,6 +175,9 @@ class ToolPermissionManager:
                 reason=f"Tool {tool_name} not found"
             )
         
+        # Use the resolved identity for both alias and qualified rate accounting.
+        tool_name = tool.name
+
         # 检查工具是否启用
         if not tool.enabled:
             return PermissionCheckResult(
@@ -232,7 +235,11 @@ class ToolPermissionManager:
             return False
         
         # 检查工具名称
-        if rule.tool_names and tool.name not in rule.tool_names:
+        names = {tool.name}
+        raw_name = getattr(tool, "metadata", {}).get("mcp_tool_name")
+        if raw_name:
+            names.add(raw_name)
+        if rule.tool_names and not names.intersection(rule.tool_names):
             return False
         
         # 检查工具分类

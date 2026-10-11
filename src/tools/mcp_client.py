@@ -201,7 +201,8 @@ class StdioMCPClient(MCPClient):
             if response and "result" in response:
                 result_data = response["result"]
                 return MCPToolResult(
-                    success=True,
+                    success=result_data.get("isError", False) is False,
+                    error=None if result_data.get("isError", False) is False else "MCP server reported a tool error",
                     output=result_data.get("content", []),
                     tool_name=tool_call.tool_name,
                     execution_time=execution_time
@@ -348,30 +349,21 @@ class HTTPMCPClient(MCPClient):
         self.connected = False
     
     async def list_tools(self) -> List[MCPTool]:
-        """列出可用工具"""
+        """An unreadable catalogue is a failure, never an empty catalogue."""
         if not self.connected or not self.session:
-            return []
-        
-        try:
-            async with self.session.get(f"{self.base_url}/tools") as response:
-                if response.status == 200:
-                    data = await response.json()
-                    tools = []
-                    for tool_data in data.get("tools", []):
-                        tool = MCPTool(
-                            name=tool_data.get("name", ""),
-                            description=tool_data.get("description", ""),
-                            input_schema=tool_data.get("inputSchema", {}),
-                            server_name=self.server_name,
-                            server_url=self.base_url
-                        )
-                        tools.append(tool)
-                    return tools
-        except Exception as e:
-            logger.error(f"Failed to list tools: {e}")
-        
-        return []
-    
+            raise RuntimeError("Not connected to MCP server")
+        async with self.session.get(f"{self.base_url}/tools") as response:
+            if response.status != 200:
+                raise RuntimeError(f"MCP catalogue HTTP {response.status}")
+            data = await response.json()
+            if not isinstance(data, dict) or not isinstance(data.get("tools"), list):
+                raise ValueError("Invalid MCP catalogue")
+            return [MCPTool(
+                name=item["name"], description=item.get("description", ""),
+                input_schema=item.get("inputSchema", {}), server_name=self.server_name,
+                server_url=self.base_url,
+            ) for item in data["tools"]]
+
     async def call_tool(self, tool_call: MCPToolCall) -> MCPToolResult:
         """调用工具"""
         import time
@@ -399,7 +391,8 @@ class HTTPMCPClient(MCPClient):
                 if response.status == 200:
                     result_data = await response.json()
                     return MCPToolResult(
-                        success=True,
+                        success=result_data.get("isError", False) is False,
+                        error=None if result_data.get("isError", False) is False else "MCP server reported a tool error",
                         output=result_data.get("content", []),
                         tool_name=tool_call.tool_name,
                         execution_time=execution_time
@@ -432,6 +425,12 @@ def create_mcp_client(
     if transport == MCPTransport.STDIO:
         return StdioMCPClient(server_name, **kwargs)
     elif transport == MCPTransport.HTTP:
+        protocol = kwargs.pop("protocol", "legacy_rest")
+        if protocol == "streamable_http":
+            from .mcp_http import StreamableHTTPMCPClient
+            return StreamableHTTPMCPClient(server_name, **kwargs)
+        if protocol != "legacy_rest":
+            raise ValueError(f"Unsupported MCP HTTP protocol: {protocol}")
         return HTTPMCPClient(server_name, **kwargs)
     else:
         raise ValueError(f"Unsupported transport: {transport}")

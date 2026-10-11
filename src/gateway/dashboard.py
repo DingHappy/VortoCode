@@ -183,6 +183,7 @@ def agent_context_summary(agent: Any, mode: str = "plan") -> Dict[str, Any]:
             "history_messages": max(0, int(usage.get("history_messages") or 0)),
             "policy": str(usage.get("policy") or "")[:32],
             "will_compact": bool(usage.get("will_compact")),
+            "compact_enabled": bool(usage.get("compact_enabled")) if "compact_enabled" in usage else None,
         }
     except Exception:  # noqa: BLE001 - telemetry must never alter a turn
         return {}

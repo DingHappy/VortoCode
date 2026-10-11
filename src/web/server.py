@@ -51,7 +51,7 @@ async def workspace_scope_middleware(request, call_next):
                 "error": {
                     "code": "workspace_required",
                     "scope": required,
-                    "reason": f"这个功能需要{label}；General 不访问文件、Shell 或 Git",
+                    "reason": f"这个功能需要{label}；General 不通过此入口访问项目文件、Shell 或 Git",
                 }
             },
         )

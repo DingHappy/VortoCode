@@ -74,6 +74,9 @@ class ToolManager:
             
             try:
                 server_name = server_config.get("name")
+                if server_name in self.mcp_clients:
+                    logger.warning(f"Duplicate MCP server ignored: {server_name}")
+                    continue
                 transport = MCPTransport(server_config.get("transport", "stdio"))
                 
                 # 创建客户端
@@ -90,7 +93,11 @@ class ToolManager:
                         server_name,
                         transport,
                         base_url=server_config.get("url"),
-                        headers=server_config.get("headers", {})
+                        headers=server_config.get("headers", {}),
+                        protocol=server_config.get("protocol", "legacy_rest"),
+                        **({"protocol_version": server_config.get("protocol_version", "2026-07-28"),
+                            "timeout": server_config.get("timeout", 30.0)}
+                           if server_config.get("protocol") == "streamable_http" else {})
                     )
                 else:
                     logger.warning(f"Unsupported transport for server {server_name}: {transport}")
@@ -100,8 +107,10 @@ class ToolManager:
                 success = await self.tool_registry.register_mcp_server(client)
                 if success:
                     self.mcp_clients[server_name] = client
+                    self.tool_executor.mcp_clients[server_name] = client
                     logger.info(f"Loaded MCP server: {server_name}")
                 else:
+                    await client.disconnect()
                     logger.warning(f"Failed to load MCP server: {server_name}")
                     
             except Exception as e:
@@ -207,6 +216,8 @@ class ToolManager:
         
         # 取消所有执行
         await self.tool_executor.cancel_all()
+        self.mcp_clients.clear()
+        self.tool_executor.mcp_clients.clear()
         
         logger.info("Tool manager shut down")
 

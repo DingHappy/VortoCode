@@ -20,6 +20,7 @@ class LoadedSkill:
     name: str
     description: str
     instructions: str
+    source: str = ""
 
 
 class SkillRegistry:
@@ -28,8 +29,9 @@ class SkillRegistry:
     渐进式披露：只把 name+description 放进系统提示（catalog），完整正文等 use_skill 时才加载。
     """
 
-    def __init__(self, skill_dirs: list[str]) -> None:
+    def __init__(self, skill_dirs: list[str], *, allowed_root: str | None = None) -> None:
         self._dirs = list(skill_dirs)
+        self._root = Path(allowed_root).resolve() if allowed_root else None
         self.skills: dict[str, LoadedSkill] = {}
 
     def load(self) -> "SkillRegistry":
@@ -41,12 +43,18 @@ class SkillRegistry:
             return self
         for path in SkillParser.discover_skills(self._dirs):
             try:
-                meta, instructions, _args, _hooks = SkillParser.parse_file(path)
+                resolved = path.resolve(strict=True)
+                if self._root is not None:
+                    resolved.relative_to(self._root)
+                if resolved.stat().st_size > 256 * 1024:
+                    continue
+                meta, instructions, _args, _hooks = SkillParser.parse_file(resolved)
             except Exception:  # noqa: BLE001
                 continue
             name = (meta.name or path.parent.name).strip()
             if name:
-                self.skills[name] = LoadedSkill(name, (meta.description or "").strip(), instructions)
+                source = resolved.relative_to(self._root).as_posix() if self._root else str(resolved)
+                self.skills[name] = LoadedSkill(name, (meta.description or "").strip(), instructions, source)
         return self
 
     def catalog(self) -> str:
@@ -60,7 +68,7 @@ class SkillRegistry:
 def _skill_registry_for(repo_root: str):
     from pathlib import Path as _P
     return SkillRegistry([str(_P(repo_root) / "skills"),
-                          str(_P(repo_root) / ".vortocode" / "skills")]).load()
+                          str(_P(repo_root) / ".vortocode" / "skills")], allowed_root=repo_root).load()
 
 
 def skill_catalog(repo_root: str) -> str:
@@ -87,7 +95,9 @@ def build_skill_tools(repo_root: str, confirm) -> list[Tool]:
             avail = "、".join(registry.skills) or "（无）"
             return f"没有名为 {name} 的技能。可用：{avail}"
         return (f"【技能「{sk.name}」完整指令】请据此执行（用你的其它工具完成），"
-                f"不要原样复述给用户：\n\n{sk.instructions}")
+                f"不要原样复述给用户。来源：{sk.source}；"
+                f"路径基准：{Path(sk.source).parent.as_posix()}。"
+                f"引用文件按此基准读取，脚本仍须遵守当前工作区与工具授权，不自动执行：\n\n{sk.instructions}")
 
     async def _save_skill(args: dict) -> str:
         name = _re.sub(r"[^\w一-鿿-]", "-", str(args.get("name", "")).strip()).strip("-")
@@ -99,8 +109,14 @@ def build_skill_tools(repo_root: str, confirm) -> list[Tool]:
                 f"把技能「{name}」写到 .vortocode/skills/{name}/SKILL.md？（用户技能目录，不碰 main）"):
             return f"用户取消了保存技能 {name}。"
         p = Path(repo_root) / ".vortocode" / "skills" / name / "SKILL.md"
+        try:
+            p.resolve().relative_to(Path(repo_root).resolve())
+        except (OSError, RuntimeError, ValueError):
+            return {"ok": False, "error": "技能保存路径指向工作区外，已拒绝。"}
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(f"---\nname: {name}\ndescription: {desc}\n---\n\n{instr}\n", encoding="utf-8")
+        import yaml
+        header = yaml.safe_dump({"name": name, "description": desc}, allow_unicode=True, sort_keys=False)
+        p.write_text(f"---\n{header}---\n\n{instr}\n", encoding="utf-8")
         registry.load()                              # 原地重扫：当前 agent 立刻能 use_skill 到它
         return f"已保存技能 {name} 到 .vortocode/skills/{name}/SKILL.md。"
 

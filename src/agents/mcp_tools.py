@@ -12,6 +12,10 @@ from typing import Any, List, Optional, Tuple
 from urllib.parse import parse_qsl, unquote_plus, urlsplit
 
 
+MCP_CLEANUP_TIMEOUT = 5
+MCP_CLEANUP_UNCONFIRMED = 'MCP cleanup unconfirmed'
+
+
 def wrap_mcp_manager(manager: Any) -> List:
     """把已初始化的 ToolManager 的 MCP 工具包成 main_agent.Tool 列表。"""
     from src.agents.tool import Tool
@@ -19,20 +23,23 @@ def wrap_mcp_manager(manager: Any) -> List:
     for mt in manager.list_tools():
         orig = mt.name
         server = getattr(mt, "server_name", "") or "mcp"
-        props = (getattr(mt, "input_schema", None) or {}).get("properties", {}) or {}
+        from copy import deepcopy
+        schema = {"type": "object", **deepcopy(getattr(mt, "input_schema", None) or {})}
+        props = schema.get("properties", {}) or {}
         targs = {k: str(v.get("description") or v.get("type") or "") for k, v in props.items()}
 
         async def handler(a: dict, _orig=orig) -> str:
             res = await manager.execute_tool(_orig, a)
             if getattr(res, "success", True):
                 return str(getattr(res, "output", res))
-            return f"MCP 工具出错: {getattr(res, 'error', res)}"
+            return {"ok": False, "error": f"MCP 工具出错: {getattr(res, 'error', res)}"}
 
         # untrusted_source=True：MCP server 返回的是**外部不可信内容**，摄入即给本回合打污点，
         # 之后同回合的对外动作会被提升确认等级（D0 防提示注入外发）。
-        wrapped.append(Tool(f"mcp__{server}__{orig}", f"[MCP:{server}] {mt.description}",
+        public_name = orig if getattr(mt, "metadata", {}).get("mcp_tool_name") else f"mcp__{server}__{orig}"
+        wrapped.append(Tool(public_name, f"[MCP:{server}] {mt.description}",
                             targs, handler, read_only=False, untrusted_source=True,
-                            external_content=True))
+                            external_content=True, input_schema=schema))
     return wrapped
 
 
@@ -134,11 +141,30 @@ async def connect_mcp(repo_root, *, capability_profile: str | None = None,
     cfg = Path(repo_root) / "config" / "mcp.yaml"
     if not cfg.is_file():
         return None, []
+    if cfg.stat().st_size > 256 * 1024 or not cfg.resolve().is_relative_to(Path(repo_root).resolve()):
+        raise ValueError("MCP configuration exceeds workspace or size boundary")
     from src.tools.manager import ToolManager
     mgr = ToolManager(str(cfg), confirm=confirm)
     safe_servers = _credential_free_http_servers(mgr.config)
     if not safe_servers:
         return None, []
+    if len(safe_servers) > 16:
+        raise ValueError("MCP server budget exceeded (16)")
     mgr.config = {**mgr.config, "servers": safe_servers}
-    await mgr.initialize()
-    return mgr, wrap_mcp_manager(mgr)
+    try:
+        if not await mgr.initialize():
+            raise RuntimeError("MCP manager initialization failed")
+        return mgr, wrap_mcp_manager(mgr)
+    except BaseException as error:
+        import asyncio
+        try:
+            async with asyncio.timeout(MCP_CLEANUP_TIMEOUT):
+                await mgr.shutdown()
+        except asyncio.CancelledError as cancelled:
+            cancelled.add_note(MCP_CLEANUP_UNCONFIRMED)
+            raise
+        except Exception:
+            # Preserve the initialization/discovery failure; cleanup cannot
+            # turn it into success or hide its cause. No remote-stop claim.
+            error.add_note(MCP_CLEANUP_UNCONFIRMED)
+        raise

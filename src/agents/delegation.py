@@ -6,7 +6,7 @@ import json
 from contextlib import nullcontext
 from typing import Any, Awaitable, Callable
 
-from src.agents.agent_loop import MainAgent
+from src.agents.agent_loop import MainAgent, native_default
 from src.agents.dev_tools import build_dev_tools
 from src.agents.tool import Tool, ToolTurnYield
 from src.agents.tools.files import build_read_tools
@@ -407,7 +407,7 @@ def build_subagent(repo_root: str, spec: Any, *, llm: Any = None,
             routed = None
     # 项目级权限硬拦（.vortocode/permissions.yaml deny）必须继承，避免角色文件绕过项目规则。
     sub = agent_factory(tools, llm=routed or llm, max_steps=spec.max_steps, extra_system=extra,
-                    permissions=load_permissions(repo_root), capabilities=capabilities)
+                    permissions=load_permissions(repo_root), capabilities=capabilities, native=native_default())
     if spec.model and routed is None:
         try:
             sub.set_model(spec.model)

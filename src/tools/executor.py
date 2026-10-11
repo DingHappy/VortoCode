@@ -150,7 +150,7 @@ class ToolExecutor:
         
         # 创建工具调用
         tool_call = MCPToolCall(
-            tool_name=tool.name,
+            tool_name=tool.metadata.get("mcp_tool_name", tool.name),
             arguments=arguments
         )
         

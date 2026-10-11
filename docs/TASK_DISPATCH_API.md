@@ -903,3 +903,85 @@ capacity.unreadable_retired 计数为 unknown。退役目录观察最多 256 项
 接受 --scan-id/--retirement-digest 及原 workspace/owner/source/round/archive 期望绑定。
 拒绝超长、非普通文件、符号链接、重复字段、非 UTF-8/BOM、非有限数字及损坏/跨域身份。
 不读取原任务/归档，不导入，不恢复覆盖，不删除资料，不释放历史容量。
+
+## Desktop 工作看板入口（2026-10-07）
+
+Desktop 看板只读复用原 `/api/runtime-inbox` version=1 和原 runtime/会话导航；没有新增
+看板写 API、任务副本或调度池。项目/会话/Goal 筛选固定 runtime 身份，done 摘要缺完整
+验收与交接证据时仍为待核对。卡片操作回到原项目/owner_session/task_id，由原任务卡
+或 Goal 接口执行权限、轮次与版本检查。“设置 Goal”仅打开原目标面板，不能创建即
+执行或放宽权限。摘要覆盖范围、失联/版本未知与下一阶段合同见 DESKTOP_TASK_BOARD.md。
+
+### 看板任务 lifecycle 摘要（第 37 节）
+
+`GET /api/runtime-inbox` 的任务条目兼容增加可选 `lifecycle` version=1。execution/kind、
+review、handling、validity、round/revision、column/label、recovered_by 分别投影执行、
+验收、交接、依赖观察和原恢复血缘。依赖只核对本次 200 条前缀，总额 2048 次内存
+来源读取，不补扫；未覆盖/损坏/耗尽 unknown，观测冲突或已固定失效 invalid。
+任务注意事项计数改用同一领域投影，包含 done 待验收/待交接，不漏计历史失效。
+
+客户端只消费通过版本、执行状态及完成组合校验的摘要；未知/矛盾回退待核对。已完成
+不等于持久交付或 Goal。原 `owner_session` 保持 sid- 身份，Desktop 在导航与筛选边界
+去掉单个前缀，不更改请求授权身份。原任务/回执写接口及权限、轮次、版本门不变。
+详情见 DESKTOP_TASK_BOARD.md，第 36 节的无 lifecycle 保守路径继续兼容旧服务。
+
+
+### Desktop 精确 Goal 查看（PRD 第38节）
+
+继续使用既有 `GET /api/goals/{goal_id}`，GatewayClient 增加 `getGoal(id)` 适配。
+客户端 ID 按路径段编码；响应 ID 必须与请求完全相同，404/错误保持未核验。
+看板导航携带来源 runtime、可选目标 ID；Goal 为项目域，不为查看目标切换来源会话。
+无 ID 打开列表；有 ID 只展示该单项目标。请求代次与 client 身份防止迟到结果串项目。
+未新增 Goal 关联写入 API，未改 TaskLedger、预算、授权、回执或 achieved 合同。
+
+
+### 本机角色模型（PRD 第39节）
+
+原 `.vortocode/agents/*.md` 的 `model: local:<完整模型ID>` 使用已登记的
+`VORTOCODE_PROVIDER_LOCAL_BASE`/`_KEY`，复用原 role 客户端与执行池。
+精确回环地址可以空 Key，用固定非秘密占位符；本机要求鉴权时必须使用本机 token。
+不增加请求字段或客户端自授模型/provider权限，不把本机供应商视为硬预算 provider。
+格式与 Desktop/CLI 配置步骤见 [本机模型接入](./LOCAL_MODELS.md)。
+
+
+### 原生工具依赖及本机兼容响应（PRD第40节）
+
+原角色文件装配沿用 `VORTOCODE_NATIVE_TOOLS`，不扩大角色工具权限。
+请求原生tools但缺OpenAI SDK时明确失败，不能静默按普通chat处理。
+原SDK响应无usage时返回结果且usage为空对象，不能作为精确provider用量或硬预算证据。
+临时真实SDK验证只读角色与流式合同，不新增任务API、模型选择授权或自动推进。
+
+
+### oMLX配置入口（PRD第41节）
+
+沿用已有OpenAI兼容供应商登记：`VORTOCODE_PROVIDER_OMLX_BASE` / `_KEY`与
+`model: omlx:<完整模型ID>`；原HTTP任务入口不新增模型选择或自授权字段。
+Desktop独立oMLX预设官方默认8000，可按实例实际端口修改；服务鉴权需要自己的Key。
+模型清单成功不等于实际推理/工具能力或硬预算，当前实例发现记录见LOCAL_MODELS。
+
+### Desktop会话信息补充（PRD第57节）
+
+`GET /api/agent/sessions`原`context`投影增加`compact_enabled: boolean | null`：
+true启用、false关闭；缺失或null为旧runtime未知，客户端不得推断启用。
+`will_compact`仅表示下个模型回合开始前的压缩条件，不是压缩完成凭据；百分比与tokens
+是最近runtime快照的估算，`max_tokens`为历史管理预算，不是provider窗口/费用硬限制。
+原始会话结果、actor执行门与任务生命周期不变。此读取不启动推理/压缩，不扩大授权。
+Desktop的`/info`等是本地菜单动作，不是新增HTTP命令或模型工具。effort和手动压缩未接通。
+
+## Desktop执行投影与只读确认核对（第64节，0.1.9）
+
+工作台读取原agent_plan、agent_tool/activity和TaskFeed，按owner_session精确匹配sid；
+快照列表不是完整任务图/验收证明。开发任务仍从原任务卡展开依赖图；父任务不等同前置依赖。
+`done`、验收、交接处理、持久交付、Goal各自保留。无下派接口或执行池变化。
+
+WS加法合同（原版本10）：
+- 入站`agent_confirm_check`必需`id`、`nonce`，各按最多128字符回显。
+- 出站`agent_confirm_state`必需`id`、`nonce`、布尔`pending`。
+- 仅当原待确认Future未结束且所属会话与当前连接相同才pending=true；未知、结束、跨会话均false。
+- 查询不调用set_result、不改变批准/拒绝、不返回审批文字。false不代表操作成功或已批准。
+- 原`agent_confirm_response`、归属检查、去重Future及`agent_confirm_closed`不变。
+- 客户端发送后等待closed；不确定失败时先手动check，仍pending才重新启用人工答复。
+  核对8秒无回执仍保留卡、不开自动重试。id/nonce/client/sid隔离旧响应，跨归属不批准。
+
+第65节导航修正（0.1.10）：原看板/任务/目标/待处理放主区域任务中心；
+会话侧栏不再投影TaskFeed下派列表或全局计数。数据/接口/所属身份/审批/验收合同不变。

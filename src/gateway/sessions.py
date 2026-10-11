@@ -122,7 +122,7 @@ class SessionTable:
         return self.data.pop(key, None)
 
     def persist(self, key: str, repo_root: str, *, transcript: Optional[list] = None) -> bool:
-        """Return actual persistence success; ordinary callers may ignore failure.
+        """Return save success (including a clean draft with nothing to save).
 
         A transcript override stages a durable append before changing live state.
         """
