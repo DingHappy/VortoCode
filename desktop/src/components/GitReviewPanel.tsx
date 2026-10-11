@@ -39,6 +39,8 @@ type GitReviewPanelProps = {
   busy: boolean;
   diffPayload: DiffPayload | null;
   isolatedDeliveries: IsolatedDelivery[];
+  /** 在常驻电脑那份项目上时：把交付分支拉回本机同名项目（之后在本机审、开 PR）。 */
+  onPullToLocal?: (branch: string) => void;
   isolatedDelivery: IsolatedDeliverySnapshot | null;
   isolatedDeliveryDiff: IsolatedDeliveryDiff | null;
   isolatedDeliveryPath: string;
@@ -103,6 +105,7 @@ export function GitReviewPanel({
   busy,
   diffPayload,
   isolatedDeliveries,
+  onPullToLocal,
   isolatedDelivery,
   isolatedDeliveryDiff,
   isolatedDeliveryPath,
@@ -216,7 +219,10 @@ export function GitReviewPanel({
             </div>
             {isolatedDelivery.truncated && <div className="file-list-limit">改动文件超过 2,000 项，列表已截断。</div>}
             {isolatedDeliveryDiff && <DiffViewer payload={{ title: isolatedDeliveryDiff.path, diff: isolatedDeliveryDiff.diff }} />}
-            <p>审查后可在终端运行 <code>git switch {isolatedDelivery.branch}</code> 继续修改；主工作区可能有未提交改动，切换前先检查 Git 状态。</p>
+            {onPullToLocal
+              ? <p className="isolated-delivery-pull">这是常驻电脑上的交付。<button onClick={() => onPullToLocal(isolatedDelivery.branch)}>拉回本机</button>
+                  把分支 <code>{isolatedDelivery.branch}</code> 拉到本机同名项目，在本机审查、开 PR（常驻电脑没有推送权限）。</p>
+              : <p>审查后可在终端运行 <code>git switch {isolatedDelivery.branch}</code> 继续修改；主工作区可能有未提交改动，切换前先检查 Git 状态。</p>}
           </div>
         )}
       </section>

@@ -49,3 +49,32 @@ export function listedProjects(projects: DesktopProjectProfile[], host?: Desktop
     return !localTwin(project, projects);
   });
 }
+
+export interface PlacedSession {
+  sid: string;
+  title: string;
+  /** 秒 */
+  updatedAt: number;
+  place: WorkPlace;
+  projectId: string;
+}
+
+/**
+ * 侧栏项目下的会话：本机那份的会话 + 常驻电脑那份的会话合在一起，按时间倒序，各自标明在哪做。
+ * 常驻电脑上没说过话的空会话不列。
+ */
+export function placedSessions(
+  local: Array<{ projectId: string; sid: string; title: string; updatedAt: number }>,
+  resident: Array<{ sid: string; title: string; messages: number; updated: number }>,
+  residentProjectId: string | undefined,
+  limit = 8,
+): PlacedSession[] {
+  const merged: PlacedSession[] = [
+    ...local.map((item) => ({ ...item, place: "local" as const })),
+    ...(residentProjectId ? resident.filter((item) => item.messages > 0).map((item) => ({
+      sid: item.sid, title: item.title || "新对话", updatedAt: Math.floor(item.updated || 0),
+      place: "resident" as const, projectId: residentProjectId,
+    })) : []),
+  ];
+  return merged.sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit);
+}

@@ -1,0 +1,19 @@
+#!/bin/sh
+# 常驻电脑上的项目 clone 保持最新：把 ~/projects/* 的默认分支快进到 origin。
+# 只在「停在默认分支、工作区干净」时更新——有人（agent 或你）正在改就跳过，绝不覆盖改动。
+# 隔离交付在各自的 vorto/* 分支和 worktree 里，不受影响。
+# 装：cp 到 ~/.local/bin/vortocode-sync-projects 并 chmod +x；配 vortocode-sync-projects.{service,timer}。
+set -u
+for repo in "$HOME"/projects/*/; do
+  [ -d "$repo/.git" ] || continue
+  default=$(git -C "$repo" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')
+  [ -n "$default" ] || default=main
+  branch=$(git -C "$repo" symbolic-ref --quiet --short HEAD 2>/dev/null || echo "")
+  if [ "$branch" != "$default" ] || [ -n "$(git -C "$repo" status --porcelain 2>/dev/null)" ]; then
+    echo "skip $repo（在 ${branch:-游离 HEAD} 上或有未提交改动）"
+    continue
+  fi
+  git -C "$repo" fetch --quiet --no-tags origin "$default" \
+    && git -C "$repo" merge --ff-only --quiet "origin/$default" \
+    && echo "ok   $repo → $(git -C "$repo" log --oneline -1)"
+done

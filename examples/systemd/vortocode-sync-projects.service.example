@@ -1,0 +1,9 @@
+# 配合 vortocode-sync-projects.timer：把常驻电脑上的项目 clone 快进到 origin（见同名 .sh.example）。
+[Unit]
+Description=Fast-forward resident project clones to origin
+
+[Service]
+Type=oneshot
+# 代理出网的机器：systemd 不继承 shell 环境，这里写死
+# Environment=HTTPS_PROXY=http://<代理>:7890
+ExecStart=%h/.local/bin/vortocode-sync-projects

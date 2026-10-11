@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { DesktopProjectProfile } from "../types";
 import { ASSISTANT_HOST_ROOT } from "./assistantHost";
-import { listedProjects, localTwin, projectKey, residentEntry, residentTwin } from "./residentPlace";
+import { listedProjects, localTwin, placedSessions, projectKey, residentEntry, residentTwin } from "./residentPlace";
 
 const p = (id: string, kind: "local" | "remote", repoRoot: string, baseUrl = "http://127.0.0.1:8080"): DesktopProjectProfile =>
   ({ id, name: repoRoot.split("/").pop() || id, kind, repoRoot, baseUrl, lastOpenedAt: 0 });
@@ -29,5 +29,17 @@ describe("residentPlace", () => {
   it("项目列表：去掉常驻助理；本机有同名时常驻电脑那份不重复列出，只在常驻电脑上的照常列出", () => {
     expect(listedProjects([host, local, resident, otherServer, solo], host).map((item) => item.id)).toEqual(["local", "other", "solo"]);
     expect(listedProjects([host, local, resident]).map((item) => item.id)).toEqual(["local", "res"]);   // 没有常驻电脑：不合并
+  });
+});
+
+describe("placedSessions", () => {
+  it("本机与常驻电脑的会话合在一起按时间倒序，各自标明在哪；常驻电脑上的空会话不列", () => {
+    const sessions = placedSessions(
+      [{ projectId: "local", sid: "a", title: "本机修 bug", updatedAt: 100 }],
+      [{ sid: "b", title: "常驻电脑跑测试", messages: 4, updated: 200.7 }, { sid: "c", title: "", messages: 0, updated: 300 }],
+      "res",
+    );
+    expect(sessions.map((item) => [item.sid, item.place, item.projectId])).toEqual([["b", "resident", "res"], ["a", "local", "local"]]);
+    expect(placedSessions([], [{ sid: "b", title: "x", messages: 1, updated: 1 }], undefined)).toEqual([]);
   });
 });
