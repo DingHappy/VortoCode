@@ -97,6 +97,9 @@ async def test_notification_role_blocks_commands_and_approvals_without_agent(tmp
 
 @pytest.mark.asyncio
 async def test_start_embedded_shares_runner_and_registers_dispatch(tmp_path, monkeypatch):
+    # 用例测交互桥：宿主若配了「只发通知」（常驻电脑的 .env 就是），桥不收任务，用例会红在环境上
+    for key in ("VORTOCODE_IM_ROLE", "VORTOCODE_IM_ALLOW_FROM", "VORTOCODE_TG_ALLOW_FROM"):
+        monkeypatch.delenv(key, raising=False)
     adapter, runner = FakeAdapter(), FakeRunner()
     bridge, _ = im_service.start_embedded("telegram", str(tmp_path),
                                           adapter=adapter, owner="42", runner=runner, register_worker=register_im_worker)

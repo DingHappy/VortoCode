@@ -303,7 +303,10 @@ def run_tests(worktree, cmd: Optional[list] = None, timeout: Optional[int] = Non
                 "sandbox": evidence, "warning": ""}
     exec_cmd = (sandboxed_exec_argv(worktree, cmd, backend=decision.backend)
                 if decision.isolated else cmd)
-    env = child_env()
+    # 被测的是候选改动，不是宿主服务：服务自己的运行配置（.env 读进来的 VORTOCODE_IM_ROLE、
+    # 白名单、调度开关……）不许漏进测试进程——否则用例按宿主的配置走，红在环境而不在改动上
+    # （真机 2026-10-11：常驻电脑上 test_im_in_gateway 因继承 IM_ROLE=notify 红）。与本地门禁同口径。
+    env = {key: value for key, value in child_env().items() if not key.startswith("VORTOCODE_")}
     if decision.isolated:
         # 让被测代码看得见"我在沙箱里"。沙箱按设计禁掉 fork PTY / 起子进程等能力，
         # 依赖这些能力的用例在这里必红——那是环境限制，不是候选改动的问题。
