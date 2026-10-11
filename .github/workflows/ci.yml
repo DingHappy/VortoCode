@@ -119,7 +119,9 @@ jobs:
 
   test:
     needs: changes
-    if: needs.changes.outputs.python == 'true'
+    # 刻意不在 job 级用 if：矩阵 job 被整体跳过时只上报一个 "test"，必需检查要的是
+    # "test (3.10, unit-core)" 这类展开后的名字，永远等不到 → PR 被卡死（#399 撞到）。
+    # 所以矩阵照常展开，只把每一步按 python 改动与否跳过，几秒内报成功。
     runs-on: ${{ github.event.repository.private && vars.CI_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
@@ -130,20 +132,24 @@ jobs:
         suite: ["unit-core", "tui", "integration-live"]
     steps:
       - uses: actions/checkout@v5
+        if: needs.changes.outputs.python == 'true'
 
       - name: Set up Python ${{ matrix.python-version }}
+        if: needs.changes.outputs.python == 'true'
         uses: actions/setup-python@v6
         with:
           python-version: ${{ matrix.python-version }}
           # 同上：不开 cache: pip，改用 PIP_CACHE_DIR 的本地持久缓存（理由见文件头与 lint 处注释）。
 
       - name: Install dependencies
+        if: needs.changes.outputs.python == 'true'
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
           .venv/bin/pip install -c constraints.txt -e ".[llm,dev,tui]"
 
       - name: Run tests (offline, deterministic)
+        if: needs.changes.outputs.python == 'true'
         # 刻意不提供任何 API key / token：
         # 无 OPENAI_API_KEY → 角色 Agent 不会自动启用真实 LLM（保持离线）
         # 无 VORTOCODE_API_TOKEN / VORTOCODE_ENABLE_SHELL → 安全默认值生效
