@@ -49,6 +49,7 @@ _GENERAL_HTTP_PREFIXES = (
     "/api/cost/",
     "/api/auth/",
     "/api/agent/sessions",
+    "/api/agent/activity",      # 助理模式动态：只读各会话的回合摘要，与会话列表同级，不碰项目/Shell/Git
     "/api/artifacts",
     "/artifact/",
     "/artifacts",

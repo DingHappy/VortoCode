@@ -36,6 +36,7 @@ def test_general_snapshot_does_not_expose_managed_directory(monkeypatch):
 def test_general_http_surface_cannot_bypass_agent_tool_boundary():
     assert http_workspace_requirement("/api/artifacts", GENERAL) is None
     assert http_workspace_requirement("/api/agent/sessions", GENERAL) is None
+    assert http_workspace_requirement("/api/agent/activity", GENERAL) is None   # 助理模式动态（真机曾 409）
     assert http_workspace_requirement("/api/runtime-inbox", GENERAL) is None
     assert http_workspace_requirement("/api/git/review", GENERAL) == PROJECT
     assert http_workspace_requirement("/api/repo-memory", GENERAL) == PROJECT
