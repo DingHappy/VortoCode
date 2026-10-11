@@ -33,24 +33,19 @@ async def list_decisions(limit: int = 100, session: str = ""):
 @router.get("/api/runtime-inbox")
 async def runtime_inbox():
     """One bounded read-only snapshot for Desktop's cross-runtime inbox."""
-    from src.workflow.workbench.goals import GoalLedger
-    from src.workflow.tasks.runtime_inbox import build_runtime_inbox
-    from src.workflow.tasks.tasks import TaskLedger
+    from src.workflow.tasks.runtime_inbox import snapshot_runtime_inbox
     from src.gateway.workspace_scope import GENERAL, current_workspace_scope
     from src.web.routers.realtime import _session_dashboard_snapshot
 
     root = os.getcwd()
     scope = current_workspace_scope()
-    from src.workflow.tasks.tasks import TASK_STATE_LOCK
-
-    with TASK_STATE_LOCK:
-        return build_runtime_inbox(
-            scope=scope,
-            sessions=_session_dashboard_snapshot(root),
-            decisions=_queue(100),
-            goals=[] if scope == GENERAL else GoalLedger(root).list(),
-            tasks=[] if scope == GENERAL else TaskLedger(root).list(limit=200),
-        )
+    return snapshot_runtime_inbox(
+        root,
+        scope=scope,
+        include_ledgers=scope != GENERAL,
+        sessions=lambda: _session_dashboard_snapshot(root),
+        decisions=lambda: _queue(100),
+    )
 
 
 @router.post("/api/decisions/{decision_id}/dismiss")

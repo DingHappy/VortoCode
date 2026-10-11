@@ -73,7 +73,7 @@ def _product_line(repo_root: str, product_id: str) -> str:
     return f"{product.summary or product.kind}{mark}"
 
 
-def _message(repo_root: str, run, outcome: TickOutcome) -> str:
+def outcome_message(repo_root: str, run, outcome: TickOutcome) -> str:
     """通知正文。**简报 + 指路，不是内容本身。**
 
     IM 这条路的职责是"叫人"：一屏几十行的选题池在手机上读不了，把全文塞进推送人反而更不会读。
@@ -204,7 +204,7 @@ async def tick(
         signature = _signature(outcome, run)
         if signature != (run.notified or ""):
             if signature and notify is not None:
-                text = _message(repo_root, run, outcome)
+                text = outcome_message(repo_root, run, outcome)
                 # 归属写成 pipeline:<名字>：台账上"哪条流水线出的"要一眼看得出，与 cron 的
                 # source="cron:<作业名>" 同口径（record_notice 注释里记过抹掉归属的教训）。
                 if _accepts_source(notify):

@@ -328,11 +328,11 @@ def test_the_message_never_claims_more_than_happened(repo, status, ran, expect, 
     （_signature 对 running 返回空、不通报），所以一直没露馅；但 bridge 的 /go 跑完
     就是 running——复用的那一刻，"还有工序没跑完"就会被说成"全部完成"。
     """
-    from src.workflow.pipeline.pipeline_tick import TickOutcome, _message
+    from src.workflow.pipeline.pipeline_tick import TickOutcome, outcome_message
 
     run_id = _start(repo)
     run = PipelineStore(repo).load(run_id)
-    msg = _message(repo, run, TickOutcome(run_id=run_id, pipeline=run.pipeline,
+    msg = outcome_message(repo, run, TickOutcome(run_id=run_id, pipeline=run.pipeline,
                                           status=status, ran=ran))
     assert expect in msg and forbid not in msg
 
