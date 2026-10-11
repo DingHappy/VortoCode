@@ -548,15 +548,15 @@ class LLMClient:
             if self._client is not None:
                 return self._client
             try:
-                from openai import AsyncOpenAI
+                from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 
                 from src.llm.providers import local_model_endpoint
-                transport = {}
-                if local_model_endpoint(self.config.base_url):
-                    import httpx
-                    transport["http_client"] = httpx.AsyncClient(trust_env=False)
+                # 本机模型不走代理环境变量。用 SDK 自带的客户端类：openai 3.x 底层换成了 httpx2，
+                # 裸 httpx.AsyncClient 类型不符。None 即 SDK 默认客户端。
+                http_client = (DefaultAsyncHttpxClient(trust_env=False)
+                               if local_model_endpoint(self.config.base_url) else None)
                 self._client = AsyncOpenAI(
-                    **transport,
+                    http_client=http_client,
                     base_url=self.config.base_url,
                     api_key=self.config.api_key,
                     timeout=_sdk_timeout(self.config),

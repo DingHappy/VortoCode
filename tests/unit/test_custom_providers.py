@@ -118,7 +118,10 @@ async def test_sdk_local_transport_ignores_proxy_environment(registered, monkeyp
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(AsyncOpenAI=FakeSDK))
+    import httpx
+    # SDK 自带的 DefaultAsyncHttpxClient 就是 httpx(2).AsyncClient 子类；桩用 httpx 版即可断 trust_env
+    monkeypatch.setitem(sys.modules, "openai", SimpleNamespace(
+        AsyncOpenAI=FakeSDK, DefaultAsyncHttpxClient=httpx.AsyncClient))
     client = LLMClient(LLMConfig(base_url="http://localhost:1234/v1", api_key="", model="m"))
     await client._get_client()
     transport = captured["http_client"]
