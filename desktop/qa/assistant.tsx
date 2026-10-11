@@ -50,7 +50,7 @@ function Fixture() {
         </div>
         <div className="composer-wrap"><div className="composer"><textarea aria-label="消息" placeholder="给助理交代一件事…" /><div className="composer-footer"><div className="composer-tools"><Paperclip size={16} /><span className="composer-model single"><Cpu size={14} />Qwen3.6 · 本地</span></div><div className="composer-actions"><button className="composer-send" aria-label="发送"><ArrowUp size={16} /></button></div></div></div></div>
       </section>
-      {panel && <AssistantPanel name="VortoCode" connected modelLabel="Qwen3.6 本地" tab={tab} onTab={setTab} onClose={() => setPanel(false)} waiting={feed.filter((item) => item.status === "waiting").length}>
+      {panel && <AssistantPanel name="VortoCode" connected modelLabel="mimo-v2.6-pro" host={{ kind: "resident", name: "vorto-code" }} onAddResident={() => {}} onRetryResident={() => {}} tab={tab} onTab={setTab} onClose={() => setPanel(false)} waiting={feed.filter((item) => item.status === "waiting").length}>
         {tab === "feed" ? <ActivityFeed items={feed} scope="all" onScope={() => {}} onOpen={(item) => item.session && setCurrent(item.session.replace(/^sid-/, ""))} />
           : <SessionInfo busy connected plan={[]} activities={[{ id: "a", kind: "tool", name: "read_file", status: "completed", label: "读取 README.md", durationMs: 1200 }, { id: "b", kind: "tool", name: "grep", status: "running", label: "搜索循环依赖" }]} queued={0} model="Qwen3.6" onRefresh={() => {}} />}
       </AssistantPanel>}

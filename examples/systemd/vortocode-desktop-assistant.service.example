@@ -1,0 +1,47 @@
+# VortoCode 常驻助理 —— 给 Desktop「助理」模式住的那台一直开着的电脑（systemd 用户单元）。
+#
+# Desktop 的助理模式默认连这里：你交代完就可以合上笔记本，它在服务器上接着做，
+# 回来在「动态」里看结果。连不上时 Desktop 退回本机通用工作区兜底。
+#
+# 跑的是 **General 通用范围**（与 Desktop 本机助理同一档能力：对话、联网检索、制品；
+# 不读写文件、不跑命令、不碰 Git）。和同机的项目服务（vortocode-server，8080）分开：
+# 各自一个端口、一个状态目录，通知渠道与定时任务只归项目服务。
+#
+# 装（服务器上，以运行用户身份）：
+#   1. mkdir -p ~/assistant
+#   2. cp examples/systemd/vortocode-desktop-assistant.service.example \
+#         ~/.config/systemd/user/vortocode-assistant.service    （按实际路径改代码目录/代理）
+#   3. systemctl --user daemon-reload && systemctl --user enable --now vortocode-assistant
+#      （用户单元要随开机启动，需 `sudo loginctl enable-linger <用户>`）
+#   4. Desktop → 助理 → 右侧「连接常驻电脑」：填 http://<服务器>:8081 和 VORTOCODE_API_TOKEN。
+#
+# 对外监听 0.0.0.0，**必须**设 VORTOCODE_API_TOKEN（代码目录的 .env 里那份会被读到；
+# 设了则所有 /api/* 与 /ws 强制鉴权）。
+
+[Unit]
+Description=VortoCode assistant (resident personal assistant for Desktop, General scope)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 助理的会话、动态和制品都存在这个目录（与 8080 的项目服务分开）
+WorkingDirectory=%h/assistant
+Environment=VORTOCODE_WORKSPACE_SCOPE=general
+# 通知渠道与定时任务归项目服务；这里固定关掉，免得 .env 把它们读回来
+Environment=VORTOCODE_IM=
+Environment=VORTOCODE_CRON=0
+Environment=VORTOCODE_HEARTBEAT=0
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# 代理出网的机器：systemd 不继承 shell 环境，这里写死
+# Environment=HTTP_PROXY=http://<代理>:7890
+# Environment=HTTPS_PROXY=http://<代理>:7890
+# Environment=NO_PROXY=127.0.0.1,localhost
+# 代码不在工作目录里：让 `-m src.cli` 找得到包
+Environment=PYTHONPATH=%h/personal_project/VortoCode
+ExecStart=%h/personal_project/VortoCode/.venv/bin/python -m src.cli server --host 0.0.0.0 --port 8081
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

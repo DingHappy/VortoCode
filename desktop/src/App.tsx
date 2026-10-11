@@ -109,6 +109,7 @@ import { ArtifactCenter } from "./components/ArtifactCenter";
 import { PluginsPage } from "./components/PluginsPage";
 import { ProjectPicker } from "./components/ProjectPicker";
 import { RemoteProjectDialog } from "./components/RemoteProjectDialog";
+import { findAssistantHost, isAssistantHost, mainChatKey, workProjects } from "./lib/assistantHost";
 import { TurnTimeline } from "./components/TurnTimeline";
 import { useChangeReview } from "./hooks/useChangeReview";
 import { useExtensionsStatus } from "./hooks/useExtensionsStatus";
@@ -221,7 +222,11 @@ function App() {
   const runtimeInboxSourcesRef = useRef<Array<Omit<DesktopRuntimeInbox, "snapshot" | "error" | "checkedAt">>>([]);
   const projectSwitchingRef = useRef(false);
   const remoteProjectRef = useRef<string | null>(null);
-  const [remoteDialogOpen, setRemoteDialogOpen] = useState(false);
+  // 当前连着的远端若是常驻助理（通用范围）就记下它的 id；与 remoteProjectRef 相等才算「在常驻电脑上」。
+  const assistantHostRef = useRef<string | null>(null);
+  // 进助理模式前工作台停在哪个项目：切回工作台时回到那里，而不是丢在通用工作区。
+  const workReturnRef = useRef<string | null>(null);
+  const [remoteDialogOpen, setRemoteDialogOpen] = useState<false | "project" | "assistant">(false);
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(true);
   const activeTurnRidRef = useRef<string | null>(null);
@@ -298,7 +303,10 @@ function App() {
   const [workspaceRequest, setWorkspaceRequest] = useState<WorkspaceRequest | null>(null);
 
   const [inspectorTab, setInspectorTabState] = useState<InspectorTab>("project");
-  const [inspectorOpen, setInspectorOpen] = useState(false);
+  // 助理模式右侧（助理身份 + 动态）默认打开；工作台默认收起。
+  const [inspectorOpen, setInspectorOpen] = useState(() => {
+    try { return localStorage.getItem(STORAGE_KEYS.appMode) === "assistant"; } catch { return false; }
+  });
   // 会话侧栏的标签栏：打开过的工具；launcher = 正在看工具列表（点了「＋」或标签全关了）。
   const [workbenchTabs, setWorkbenchTabs] = useState<InspectorTab[]>([]);
   const [workbenchLauncher, setWorkbenchLauncher] = useState(false);
@@ -584,8 +592,9 @@ function App() {
       };
     }).concat(projects.filter((item) => item.kind === "remote").map((item) => ({
       runtimeId: `remote:${item.id}`, projectId: item.id, workspaceId: undefined,
-      scope: "project" as WorkspaceScope, label: `远端 · ${item.name}`,
-      repoRoot: item.repoRoot, baseUrl: item.baseUrl,
+      scope: (isAssistantHost(item) ? "general" : "project") as WorkspaceScope,
+      label: isAssistantHost(item) ? `常驻助理 · ${item.name}` : `远端 · ${item.name}`,
+      repoRoot: isAssistantHost(item) ? undefined : item.repoRoot, baseUrl: item.baseUrl,
     }))), [projects, runtimeProcesses]);
   runtimeInboxSourcesRef.current = runtimeInboxSources;
   const runtimeInboxSourceKey = useMemo(
@@ -1154,7 +1163,10 @@ function App() {
       const requestedBaseUrl = options.baseUrl ?? baseUrl;
       const requestedRepoRoot = options.repoRoot ?? repoRoot;
       const requestedToken = options.token ?? token;
-      const requestedScope = options.scope ?? runtime.scope ?? (requestedRepoRoot.trim() ? "project" : "general");
+      const remoteAssistant = Boolean(options.remoteProjectId ?? remoteProjectRef.current)
+        && assistantHostRef.current === (options.remoteProjectId ?? remoteProjectRef.current);
+      const requestedScope = remoteAssistant ? "general"
+        : options.scope ?? runtime.scope ?? (requestedRepoRoot.trim() ? "project" : "general");
       setBanner(null);
       setContextItems([]);
       decisionNotificationReadyRef.current = false;
@@ -1169,11 +1181,13 @@ function App() {
         if (requestedRepoRoot.trim()) localStorage.setItem(STORAGE_KEYS.repoRoot, requestedRepoRoot.trim());
         localStorage.setItem(STORAGE_KEYS.sid, sid);
         const client = await attempt.attach(
-          () => new GatewayClient({ baseUrl: normalized, token: remoteId ? "" : requestedToken, remoteProjectId: remoteId, expectedWorkdir: remoteId ? requestedRepoRoot : undefined }), sid, handleProtocolEvent,
+          () => new GatewayClient({ baseUrl: normalized, token: remoteId ? "" : requestedToken, remoteProjectId: remoteId,
+            expectedWorkdir: remoteId && !remoteAssistant ? requestedRepoRoot : undefined,
+            expectedScope: remoteAssistant ? "general" : undefined }), sid, handleProtocolEvent,
         );
         if (!client) return false;
         setConnection("connected");
-        setConnectionNote(remoteId ? "远端工作区已连接；离开 Desktop 后服务器任务继续运行" : requestedScope === "general" ? "通用会话已就绪" : requestedScope === "scratch" ? "隔离 Scratch 已就绪" : "项目工作区已就绪");
+        setConnectionNote(remoteAssistant ? "常驻电脑已连接；合上笔记本它也照常干活" : remoteId ? "远端工作区已连接；离开 Desktop 后服务器任务继续运行" : requestedScope === "general" ? "通用会话已就绪" : requestedScope === "scratch" ? "隔离 Scratch 已就绪" : "项目工作区已就绪");
         if (remoteId) localStorage.setItem(projectSessionKey(remoteId), sid);
         if (!remoteId && requestedScope === "project" && requestedRepoRoot.trim()) {
           try {
@@ -1709,7 +1723,7 @@ function App() {
     managedRuntime?: GatewayProcessStatus,
   ): Promise<boolean> => {
     if (projectSwitchingRef.current) return false;
-    if (activeScope === scope && connection === "connected"
+    if (activeScope === scope && connection === "connected" && !remoteProjectRef.current
       && (!managedRuntime || managedRuntime.runtimeId === processStatus.runtimeId)) return true;
     if (savingFile) {
       setBanner("请先完成或拒绝当前源码保存确认，再切换工作区范围");
@@ -1794,6 +1808,11 @@ function App() {
 
   const activateRuntimeInbox = async (runtimeInbox: DesktopRuntimeInbox): Promise<boolean> => {
     if (runtimeInbox.runtimeId === processStatus.runtimeId && connection === "connected") return true;
+    const host = projects.find((item) => item.id === runtimeInbox.projectId && isAssistantHost(item));
+    if (host) {
+      await changeAppMode("assistant");
+      return remoteProjectRef.current === host.id;
+    }
     if (runtimeInbox.scope === "general") {
       const managedRuntime = runtimeProcesses.find((item) => item.runtimeId === runtimeInbox.runtimeId);
       return switchManagedScope("general", managedRuntime);
@@ -1880,16 +1899,62 @@ function App() {
     }
   }, []);
 
-  /** 打开「主要聊天」：第一次进助理模式时生成一个固定会话并记住，之后一直用它。 */
-  const openMainChat = async () => {
-    let sid = mainChatSid;
+  /** 打开「主要聊天」：每台电脑第一次进助理模式时生成一个固定会话并记住，之后一直用它。 */
+  const openMainChat = async (hostId: string | null = remoteProjectRef.current && remoteProjectRef.current === assistantHostRef.current ? remoteProjectRef.current : null) => {
+    const key = mainChatKey(hostId);
+    let sid = "";
+    try { sid = localStorage.getItem(key) ?? ""; } catch { /* 读不到就新开一个 */ }
     if (!sid) {
       sid = createSessionId();
-      setMainChatSid(sid);
-      try { localStorage.setItem(STORAGE_KEYS.mainChatSid, sid); } catch { /* 存不下也照常使用本次会话 */ }
+      try { localStorage.setItem(key, sid); } catch { /* 存不下也照常使用本次会话 */ }
     }
+    setMainChatSid(sid);
     setMainView("chat");
     await switchSession(sid);
+  };
+
+  /** 连到常驻电脑上的助理（通用范围）。已经连着就直接返回。 */
+  const connectAssistantHost = async (host: DesktopProjectProfile): Promise<boolean> => {
+    if (remoteProjectRef.current === host.id && assistantHostRef.current === host.id && connection === "connected") return true;
+    if (projectSwitchingRef.current) return false;
+    if (savingFile) {
+      setBanner("请先完成或拒绝当前源码保存确认");
+      return false;
+    }
+    projectSwitchingRef.current = true;
+    setProjectSwitching(true);
+    supervisionGenerationRef.current += 1;
+    try {
+      await disconnect();
+      clearProjectView();
+      const key = mainChatKey(host.id);
+      let sid = "";
+      try { sid = localStorage.getItem(key) ?? ""; } catch { /* 读不到就新开一个 */ }
+      if (!sid) {
+        sid = createSessionId();
+        try { localStorage.setItem(key, sid); } catch { /* 存不下也照常使用本次会话 */ }
+      }
+      setMainChatSid(sid);
+      setActiveSid(sid);
+      setRepoRoot("");
+      setBaseUrl(host.baseUrl);
+      remoteProjectRef.current = host.id;
+      assistantHostRef.current = host.id;
+      managedProcessRunningRef.current = false;
+      setProcessStatus({ ...EMPTY_PROCESS, runtimeId: `remote:${host.id}`, projectId: host.id,
+        scope: "general", repoRoot: "", baseUrl: host.baseUrl,
+        message: "常驻电脑上的助理由服务器管理" });
+      setRecoveryRecord(null);
+      return await connectToRuntime(sid, { baseUrl: host.baseUrl, repoRoot: "", scope: "general",
+        remoteProjectId: host.id, token: "" });
+    } catch (error) {
+      setBanner(errorText(error, "连接常驻电脑失败"));
+      return false;
+    } finally {
+      supervisionGenerationRef.current += 1;
+      projectSwitchingRef.current = false;
+      setProjectSwitching(false);
+    }
   };
 
   /** 新建旁聊。从主要聊天出发时必须换新会话——newSession 对空草稿只清界面不换 id，会把旁聊并进主要聊天。 */
@@ -1905,15 +1970,33 @@ function App() {
     await connectToRuntime(sid);
   };
 
-  const changeAppMode = async (mode: AppMode) => {
+  const onAssistantHost = () => Boolean(remoteProjectRef.current) && remoteProjectRef.current === assistantHostRef.current;
+
+  const changeAppMode = async (mode: AppMode, known: DesktopProjectProfile[] = projects) => {
     setAppMode(mode);
     try { localStorage.setItem(STORAGE_KEYS.appMode, mode); } catch { /* 只影响下次启动记不住 */ }
-    if (mode !== "assistant") return;
-    // 助理模式固定用通用工作区（不绑项目），右侧助理面板默认打开。
-    if (activeScope !== "general" && !await switchManagedScope("general")) return;
+    if (mode !== "assistant") {
+      // 回到进助理模式前的那个项目；没有就回本机通用工作区（工作台不在常驻电脑上干活）。
+      const back = workProjects(known).find((project) => project.id === workReturnRef.current && !project.missing);
+      workReturnRef.current = null;
+      if (back) await switchProject(back);
+      else if (onAssistantHost()) await switchManagedScope("general");
+      return;
+    }
+    if (!onAssistantHost()) {
+      try { workReturnRef.current = activeScope === "project" ? localStorage.getItem(STORAGE_KEYS.lastProjectId) : null; } catch { workReturnRef.current = null; }
+    }
+    // 助理默认住在常驻电脑上（合上笔记本也照常干活）；没登记或连不上，才用本机通用工作区兜底。
+    const host = findAssistantHost(known);
+    let hostId: string | null = null;
+    if (host) {
+      if (await connectAssistantHost(host)) hostId = host.id;
+      else setBanner(`常驻电脑「${host.name}」暂时连不上，先用本机助理；它不在时你交代的事不会继续做。`);
+    }
+    if (!hostId && (remoteProjectRef.current || activeScope !== "general") && !await switchManagedScope("general")) return;
     setInspectorOpen(true);
     setAssistantTab("feed");
-    await openMainChat();
+    await openMainChat(hostId);
   };
 
   const renameSession = async (session: SessionSummary) => {
@@ -2010,7 +2093,8 @@ function App() {
         rid,
         want_reasoning: false,
         // 只在本机模型配置已读到时才带：服务端只接受已配置的模型，「自动」由它按任务调度。
-        ...(modelChoice ? { model: modelChoice } : {}),
+        // 常驻电脑用它自己配置的模型：本机的模型名在那边不一定有，不带。
+        ...(modelChoice && !onAssistantHost() ? { model: modelChoice } : {}),
       });
       return true;
     } catch (error) {
@@ -2757,12 +2841,20 @@ function App() {
     else if (next !== inspectorTab) openInspector(next);
   };
 
-  // 启动时若上次停在助理模式、却被「回到上次项目」带进了项目工作区：只纠正一次，回到通用工作区的主要聊天。
+  // 启动时若上次停在助理模式、却被「回到上次项目」带进了项目工作区：只纠正一次，回到助理所在电脑的主要聊天。
   const assistantStartupCheckedRef = useRef(false);
   useEffect(() => {
     if (assistantStartupCheckedRef.current || connection !== "connected") return;
     assistantStartupCheckedRef.current = true;
-    if (appMode === "assistant" && activeScope !== "general") void changeAppMode("assistant");
+    if (appMode === "assistant") {
+      // 登记表可能还没读完：现读一次，再决定去常驻电脑还是留在本机通用工作区。
+      void refreshProjectRegistry().catch(() => projects).then((known) => {
+        const host = findAssistantHost(known);
+        const placed = host ? onAssistantHost() && remoteProjectRef.current === host.id : !remoteProjectRef.current && activeScope === "general";
+        if (!placed) void changeAppMode("assistant", known);
+        else setInspectorOpen(true);
+      });
+    }
   // 只在首次连上时检查一次；changeAppMode 每次渲染都是新函数，故不列入依赖。
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connection]);
@@ -2861,7 +2953,7 @@ function App() {
             <button className="sidebar-fold" aria-expanded={projectsOpen} onClick={() => setProjectsOpen(!projectsOpen)}>
               项目<ChevronDown size={13} className={projectsOpen ? "" : "folded"} />
             </button>
-            <button aria-label="连接远端工作区" title="连接远端工作区" onClick={() => setRemoteDialogOpen(true)} disabled={projectSwitching}>远端</button>
+            <button aria-label="连接远端工作区" title="连接远端工作区" onClick={() => setRemoteDialogOpen("project")} disabled={projectSwitching}>远端</button>
             <button aria-label="添加 Git 项目" title="添加 Git 项目" onClick={() => void chooseRepo()} disabled={projectSwitching}><FolderPlus size={15} /></button>
           </div>
           {projectsOpen && (
@@ -2893,8 +2985,8 @@ function App() {
                   </div>
                 </div>
               ))}
-            {projects.length === 0 && <div className="project-empty">添加项目后，可以在这里查看和切换。</div>}
-            {projects.slice(0, 8).map((project) => {
+            {workProjects(projects).length === 0 && <div className="project-empty">添加项目后，可以在这里查看和切换。</div>}
+            {workProjects(projects).slice(0, 8).map((project) => {
               const keyword = sidebarQuery.trim().toLowerCase();
               const nameMatches = !keyword || project.name.toLowerCase().includes(keyword);
               const nested = projectSessions
@@ -3135,7 +3227,11 @@ function App() {
                     连得快就不闪；占位保持同样高度，避免布局跳动。 */}
                 {homeStarting
                   ? <h1 className={`home-starting ${showHomeStarting ? "" : "pending"}`} aria-hidden={!showHomeStarting}><LoaderCircle className="activity-spinner" size={20} />正在启动本地引擎…</h1>
-                  : <><h1>开始一项工作</h1><p>描述你要解决的问题，或选择工作区域开始。</p></>}
+                  : appMode === "assistant"
+                    ? <><h1>有什么要交代的？</h1><p>{onAssistantHost()
+                      ? "交代完就可以合上电脑：它在常驻电脑上接着做，做完了在右侧「动态」里回报。"
+                      : "说一件要办的事，做完了会在右侧「动态」里回报。"}</p></>
+                    : <><h1>开始一项工作</h1><p>描述你要解决的问题，或选择工作区域开始。</p></>}
                 {llmProfileChecked && !llmProfile?.configured && (
                   <p>还没有配置模型服务。<button onClick={() => { setSettingsSection("model"); setSettingsOpen(true); }}>连接模型</button></p>
                 )}
@@ -3241,12 +3337,12 @@ function App() {
               </section>
             )}
               {appMode !== "assistant" && <ProjectPicker
-                projects={projects}
+                projects={workProjects(projects)}
                 activeProjectName={activeScope === "project" ? (repoRoot.split("/").filter(Boolean).slice(-1)[0] || "项目") : null}
                 disabled={projectSwitching || runtimeStarting || busy || !!pendingConfirm}
                 onPick={(project) => void switchProject(project)}
                 onAddProject={() => void chooseRepo()}
-                onAddRemote={() => setRemoteDialogOpen(true)}
+                onAddRemote={() => setRemoteDialogOpen("project")}
                 onLeaveProject={() => void switchManagedScope("general")}
               />}
             <div
@@ -3339,12 +3435,17 @@ function App() {
                   )}
                 </div>
                 <div className="composer-actions">
-                {composerModelChoices.length === 1 && (
+                {onAssistantHost() && (
+                  <span className="composer-model single" title="助理在常驻电脑上，用那台电脑配置的模型">
+                    <Cpu size={13} />{runtime.model || "常驻电脑的模型"}
+                  </span>
+                )}
+                {!onAssistantHost() && composerModelChoices.length === 1 && (
                   <span className="composer-model single" title="当前模型；在「设置 → 模型」里可以添加更多">
                     <Cpu size={13} />{composerModelChoices[0].label}
                   </span>
                 )}
-                {composerModelChoices.length > 1 && (
+                {!onAssistantHost() && composerModelChoices.length > 1 && (
                   <label className="composer-model" title={composerModelChoices.find((choice) => choice.value === modelChoice)?.hint}>
                     <Cpu size={13} />
                     <select
@@ -3381,7 +3482,10 @@ function App() {
 
         {mainView === "chat" && inspectorOpen && appMode === "assistant" && (
           <AssistantPanel name="VortoCode" connected={connection === "connected"}
-            modelLabel={composerModelChoices.find(item => item.value === modelChoice)?.label}
+            host={onAssistantHost() ? { kind: "resident", name: findAssistantHost(projects)?.name ?? "常驻电脑", reachable: connection === "connected" } : { kind: "local", canAddResident: !findAssistantHost(projects) }}
+            onAddResident={() => setRemoteDialogOpen("assistant")}
+            onRetryResident={() => void changeAppMode("assistant")}
+            modelLabel={onAssistantHost() ? runtime.model : composerModelChoices.find(item => item.value === modelChoice)?.label}
             tab={assistantTab} onTab={setAssistantTab} onClose={() => setInspectorOpen(false)} waiting={feedWaiting}>
             {assistantTab === "feed"
               ? <ActivityFeed items={[...agentTurns.map(turnFeedItem), ...feedItems]} scope="all" onScope={() => {}}
@@ -3394,7 +3498,7 @@ function App() {
               : <SessionInfo key={activeSid} context={currentSession?.context} busy={busy} needsInput={Boolean(pendingConfirm)}
                   connected={connection === "connected"} plan={plan} queued={promptQueue.length}
                   activities={activities.filter(item => item.rid === (activeTurnRid ?? [...activities].reverse().find(candidate => candidate.rid)?.rid))}
-                  model={composerModelChoices.find(item => item.value === modelChoice)?.label ?? ""}
+                  model={onAssistantHost() ? runtime.model ?? "" : composerModelChoices.find(item => item.value === modelChoice)?.label ?? ""}
                   onRefresh={() => void refreshSessions()} onOpenSettings={() => { setSettingsSection("general"); setSettingsOpen(true); }} />}
           </AssistantPanel>
         )}
@@ -3415,7 +3519,7 @@ function App() {
             {inspectorTab === "info" && <SessionInfo key={activeSid} context={currentSession?.context} busy={busy} needsInput={Boolean(pendingConfirm)}
               connected={connection === "connected"} plan={plan} queued={promptQueue.length}
               activities={activities.filter(item => item.rid === (activeTurnRid ?? [...activities].reverse().find(candidate => candidate.rid)?.rid))}
-              model={composerModelChoices.find(item => item.value === modelChoice)?.label ?? ""}
+              model={onAssistantHost() ? runtime.model ?? "" : composerModelChoices.find(item => item.value === modelChoice)?.label ?? ""}
               onRefresh={() => void refreshSessions()} onOpenSettings={() => { setSettingsSection("general"); setSettingsOpen(true); }} />}
 
             {inspectorTab === "inbox" && (
@@ -3683,10 +3787,12 @@ function App() {
         )}
       </div>
 
-      {remoteDialogOpen && <RemoteProjectDialog onClose={() => setRemoteDialogOpen(false)} onRegistered={async (profile) => {
-        setProjects((previous) => [profile, ...previous.filter((item) => item.id !== profile.id)]);
+      {remoteDialogOpen && <RemoteProjectDialog purpose={remoteDialogOpen} onClose={() => setRemoteDialogOpen(false)} onRegistered={async (profile) => {
+        const known = [profile, ...projects.filter((item) => item.id !== profile.id)];
+        setProjects(known);
         setRemoteDialogOpen(false);
-        await switchProject(profile);
+        if (isAssistantHost(profile)) await changeAppMode("assistant", known);
+        else await switchProject(profile);
       }} />}
       {settingsOpen && (
         <SettingsModal

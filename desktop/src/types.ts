@@ -7,6 +7,8 @@ export interface ConnectionSettings {
   /** Registered native remote workspace; credentials stay in Keychain. */
   remoteProjectId?: string;
   expectedWorkdir?: string;
+  /** 远端应有的范围：常驻助理跑通用范围（没有目录可核对），只核对范围与协议。默认 project。 */
+  expectedScope?: WorkspaceScope;
 }
 
 export interface RuntimeSnapshot {
