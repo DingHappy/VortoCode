@@ -1,0 +1,9 @@
+[Unit]
+Description=Keep resident project clones up to date
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=15min
+
+[Install]
+WantedBy=timers.target
