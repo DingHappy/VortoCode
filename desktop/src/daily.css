@@ -200,4 +200,7 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 .session-info-notice.waiting strong { color: var(--amber-text); }
 .session-info-empty { margin: 4px 0 0; font-size: 13px; line-height: 1.7; color: var(--n10); }
 .session-info .session-info-section:first-child h4 { margin-top: 0; }
+/* 本轮执行：每行右侧对齐耗时；侧栏顶部若直接是「会话详情」，去掉它上方那条分隔线 */
+.session-step-time { margin-left: auto; padding-left: 12px; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--n9); white-space: nowrap; line-height: 1.6; }
+.session-info > .session-info-details:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
 
