@@ -109,7 +109,8 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
         data["behavior_fp"] = str(behavior_fp)
     if mode in ("plan", "build"):                   # 只认这两个值，别把脏数据带进下次装配
         data["mode"] = mode
-    if not session_has_content(data) and not p.exists():
+    # 新空草稿不落盘；但主人显式切到 build 是一次决定，重启不许抹回 plan（IM 会话常在开口前就切模式）。
+    if not session_has_content(data) and data.get("mode") != "build" and not p.exists():
         return True  # Clean draft: nothing needs saving; never remove historical files.
     try:
         from src.utils.state_dir import ensure_state_gitignore

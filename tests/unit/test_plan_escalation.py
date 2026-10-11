@@ -137,7 +137,7 @@ def test_build_mode_rule_carries_no_escalation_coaching(tmp_path):
     """build 模式无需升级——那段引导不该出现（request_build 本身仍在工具目录里，属正常）。"""
     prompt = _agent(tmp_path, "im", _Asked())._system("build")
     assert "主动请求授权" not in prompt and "/mode build" not in prompt
-    assert "build 模式下所有工具可用" in prompt
+    assert "build 模式下仅可使用当前工具清单中的能力" in prompt
 
 
 def test_no_tui_key_leaks_anywhere_in_the_agent_facing_surface(tmp_path):

@@ -91,3 +91,12 @@ def test_draft_save_is_clean_noop_without_new_disk_file(tmp_path):
     assert not (tmp_path / ".vortocode/web_sessions/draft.json").exists()
     assert save_session(str(tmp_path),"sid-draft",[{"role":"user","text":"hi"}],[],None)
     assert load_session(str(tmp_path),"sid-draft")["transcript"]
+
+
+def test_draft_with_explicit_build_mode_is_kept(tmp_path):
+    """空草稿不落盘，但主人显式切的 build 是决定：重启后不许回到 plan。默认 plan 仍不落盘。"""
+    from src.web.session_store import save_session, load_session
+    assert save_session(str(tmp_path),"sid-plan",[],[],None,mode="plan")
+    assert load_session(str(tmp_path),"sid-plan") is None
+    assert save_session(str(tmp_path),"sid-build",[],[],None,mode="build")
+    assert load_session(str(tmp_path),"sid-build")["mode"] == "build"
