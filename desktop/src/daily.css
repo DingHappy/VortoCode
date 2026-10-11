@@ -296,3 +296,11 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 }
 /* 助理模式左侧占满剩余高度，把账号/设置压回底部（与工作台模式的会话列表一致） */
 .sidebar > .assistant-sidebar { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+
+/* 工作台「在哪做：本机 / 常驻电脑」：跟在工作区域后面 */
+.project-picker { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.work-place { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--n3); }
+.work-place button { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 9px; border: 0; border-radius: 6px; font-size: 12px; color: var(--n10); background: transparent; cursor: pointer; }
+.work-place button.active { color: var(--n13); background: var(--n0); box-shadow: 0 1px 2px rgba(var(--ink-rgb), .08); }
+.work-place button:disabled { cursor: default; opacity: .55; }
+.work-place button:focus-visible { outline: 2px solid var(--daily-accent-text); outline-offset: 1px; }

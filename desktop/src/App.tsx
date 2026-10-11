@@ -110,6 +110,7 @@ import { PluginsPage } from "./components/PluginsPage";
 import { ProjectPicker } from "./components/ProjectPicker";
 import { RemoteProjectDialog } from "./components/RemoteProjectDialog";
 import { findAssistantHost, isAssistantHost, mainChatKey, workProjects } from "./lib/assistantHost";
+import { listedProjects, localTwin, residentEntry, residentTwin, type ResidentProject, type WorkPlace } from "./lib/residentPlace";
 import { TurnTimeline } from "./components/TurnTimeline";
 import { useChangeReview } from "./hooks/useChangeReview";
 import { useExtensionsStatus } from "./hooks/useExtensionsStatus";
@@ -1889,6 +1890,55 @@ function App() {
   };
 
   // ── 助理模式 ─────────────────────────────────────────────────────────────
+  // 常驻电脑上有哪些项目（它的登记表）：工作台「在哪做」据此判断能不能切到常驻电脑。
+  const residentHost = findAssistantHost(projects);
+  const [residentProjects, setResidentProjects] = useState<ResidentProject[]>([]);
+  useEffect(() => {
+    if (!residentHost) { setResidentProjects([]); return undefined; }
+    let cancelled = false;
+    new GatewayClient({ baseUrl: residentHost.baseUrl, token: "", remoteProjectId: residentHost.id })
+      .listResidentProjects()
+      .then((items) => { if (!cancelled) setResidentProjects(items); })
+      .catch(() => { if (!cancelled) setResidentProjects([]); });   // 连不上常驻电脑：只是不提供「常驻电脑」选项
+    return () => { cancelled = true; };
+  }, [residentHost?.id, residentHost?.baseUrl]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** 当前工作台项目（本机那份或常驻电脑那份）。 */
+  const currentWorkProject = (): DesktopProjectProfile | undefined => remoteProjectRef.current
+    ? projects.find((item) => item.id === remoteProjectRef.current && !isAssistantHost(item))
+    : activeScope === "project" ? projects.find((item) => item.kind !== "remote" && item.repoRoot === repoRoot.trim()) : undefined;
+
+  /** 「在哪做」切换：换到另一边的同名项目；常驻电脑那份还没登记就按它的登记表登记（令牌沿用常驻电脑）。 */
+  const changeWorkPlace = async (target: WorkPlace) => {
+    const current = currentWorkProject();
+    if (!current || !residentHost) return;
+    if (target === "local") {
+      const twin = localTwin(current, projects);
+      if (twin) await switchProject(twin);
+      else setBanner("本机还没有这个项目：先在本机添加它的目录");
+      return;
+    }
+    let twin = residentTwin(current, projects, residentHost);
+    if (!twin) {
+      const entry = residentEntry(current, residentProjects);
+      if (!entry) {
+        setBanner("常驻电脑上还没有这个项目");
+        return;
+      }
+      try {
+        const profile = await invoke<DesktopProjectProfile>("remember_resident_project", {
+          hostProjectId: residentHost.id, port: entry.port, remoteRepoRoot: entry.repo_root, name: entry.name,
+        });
+        twin = profile;
+        setProjects((previous) => [profile, ...previous.filter((item) => item.id !== profile.id)]);
+      } catch (error) {
+        setBanner(errorText(error, "登记常驻电脑上的项目失败"));
+        return;
+      }
+    }
+    await switchProject(twin);
+  };
+
   const refreshAgentTurns = useCallback(async () => {
     const client = clientRef.current;
     if (!client) return;
@@ -2985,20 +3035,22 @@ function App() {
                   </div>
                 </div>
               ))}
-            {workProjects(projects).length === 0 && <div className="project-empty">添加项目后，可以在这里查看和切换。</div>}
-            {workProjects(projects).slice(0, 8).map((project) => {
+            {listedProjects(projects, residentHost).length === 0 && <div className="project-empty">添加项目后，可以在这里查看和切换。</div>}
+            {listedProjects(projects, residentHost).slice(0, 8).map((project) => {
               const keyword = sidebarQuery.trim().toLowerCase();
               const nameMatches = !keyword || project.name.toLowerCase().includes(keyword);
               const nested = projectSessions
                 .filter((item) => item.projectId === project.id)
                 .filter((item) => nameMatches || item.title.toLowerCase().includes(keyword));
               if (!nameMatches && nested.length === 0) return null;
-              const active = project.kind === "remote" ? remoteProjectRef.current === project.id : !remoteProjectRef.current && project.repoRoot === repoRoot.trim();
+              const onResidentTwin = project.kind !== "remote" && Boolean(residentHost && remoteProjectRef.current)
+                && residentTwin(project, projects, residentHost!)?.id === remoteProjectRef.current;
+              const active = project.kind === "remote" ? remoteProjectRef.current === project.id : onResidentTwin || (!remoteProjectRef.current && project.repoRoot === repoRoot.trim());
               const managedRuntime = project.kind === "remote" ? undefined : runtimeProcesses.find((item) => item.projectId === project.id || item.repoRoot === project.repoRoot);
               const managedRunning = Boolean(managedRuntime?.running);
               const recovery = runtimeRecoveries.find((item) => item.projectId === project.id);
               const connected = active && connection === "connected";
-              const health = project.kind === "remote" ? connected ? "远端已连接" : "远端 · 点击连接" : project.missing ? "目录已不存在 · 可移除" : managedRunning && !active ? "后台运行中" : managedRunning ? "本地引擎运行中" : connected ? "工作区就绪" : recovery?.status === "crashed" ? "上次异常退出 · 点击恢复" : recovery?.status === "running" ? "可重新附着" : active ? connectionText : "未启动";
+              const health = onResidentTwin ? connected ? "在常驻电脑上" : "常驻电脑 · 连接中" : project.kind === "remote" ? connected ? "远端已连接" : "远端 · 点击连接" : project.missing ? "目录已不存在 · 可移除" : managedRunning && !active ? "后台运行中" : managedRunning ? "本地引擎运行中" : connected ? "工作区就绪" : recovery?.status === "crashed" ? "上次异常退出 · 点击恢复" : recovery?.status === "running" ? "可重新附着" : active ? connectionText : "未启动";
               return (
                 <Fragment key={project.id}>
                 <div
@@ -3337,13 +3389,22 @@ function App() {
               </section>
             )}
               {appMode !== "assistant" && <ProjectPicker
-                projects={workProjects(projects)}
-                activeProjectName={activeScope === "project" ? (repoRoot.split("/").filter(Boolean).slice(-1)[0] || "项目") : null}
+                projects={listedProjects(projects, residentHost)}
+                activeProjectName={activeScope === "project" ? (currentWorkProject()?.name || repoRoot.split("/").filter(Boolean).slice(-1)[0] || "项目") : null}
                 disabled={projectSwitching || runtimeStarting || busy || !!pendingConfirm}
                 onPick={(project) => void switchProject(project)}
                 onAddProject={() => void chooseRepo()}
                 onAddRemote={() => setRemoteDialogOpen("project")}
                 onLeaveProject={() => void switchManagedScope("general")}
+                place={(() => {
+                  const current = currentWorkProject();
+                  if (!current || !residentHost) return undefined;
+                  const localAvailable = current.kind !== "remote" || Boolean(localTwin(current, projects));
+                  const residentAvailable = Boolean(residentTwin(current, projects, residentHost) || residentEntry(current, residentProjects));
+                  if (!localAvailable || !residentAvailable) return undefined;
+                  return { current: current.kind === "remote" ? "resident" as const : "local" as const, localAvailable, residentAvailable,
+                    onChange: (target: WorkPlace) => void changeWorkPlace(target) };
+                })()}
               />}
             <div
               className={`composer ${runtimeStarting || projectSwitching ? "preparing" : ""} ${dragOver ? "drag-over" : ""}`}

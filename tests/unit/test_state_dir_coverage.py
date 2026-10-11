@@ -30,6 +30,7 @@ NOT_A_REPO_PATH = {
     "channel-locks",  # ~/.vortocode 下，同机 Bot 所有权跨仓库共用
     "im_inbox",      # 在 ~/.vortocode 下（IM 收件箱跨仓库共用），不落目标仓库
     "browser-profile",  # 在 ~/.vortocode 下（浏览器操控的独立配置目录），不落目标仓库
+    "resident_projects.json",  # 在 ~/.vortocode 下（常驻电脑的项目登记表，运维手写），不落目标仓库
     "sessions",      # 只在 cron.py 的 docstring 里出现，说的是"本模块不写这个"
     ".gitignore",    # 清单文件自己
 }

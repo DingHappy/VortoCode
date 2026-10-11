@@ -50,6 +50,7 @@ _GENERAL_HTTP_PREFIXES = (
     "/api/auth/",
     "/api/agent/sessions",
     "/api/agent/activity",      # 助理模式动态：只读各会话的回合摘要，与会话列表同级，不碰项目/Shell/Git
+    "/api/resident/projects",   # 常驻电脑上的项目登记表：只读名称/目录/端口，不读项目内容
     "/api/artifacts",
     "/artifact/",
     "/artifacts",
