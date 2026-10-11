@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 import re
 
-from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.errors import CollaborationConflict
 from src.utils.ids import typed_id
 
 MAX_LIMITS = {"tasks": 32, "rounds": 96, "steps": 1152, "timeout_seconds": 57600}

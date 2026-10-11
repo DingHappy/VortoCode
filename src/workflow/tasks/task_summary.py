@@ -5,7 +5,7 @@ against the supplied task prefix. Missing sources/budget are unknown, not invali
 """
 from __future__ import annotations
 
-from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.errors import CollaborationConflict
 from src.workflow.tasks.handoffs import collaboration_state_valid, completion_state
 from src.workflow.tasks.task_dependencies import dependency_state, dependency_view, has_dependencies
 from src.workflow.tasks.tasks import BackgroundTask

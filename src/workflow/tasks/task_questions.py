@@ -18,7 +18,7 @@ def _now() -> datetime:
 
 
 def _conflict(message: str):
-    from src.workflow.tasks.collaboration import CollaborationConflict
+    from src.workflow.tasks.errors import CollaborationConflict
     return CollaborationConflict(message)
 
 

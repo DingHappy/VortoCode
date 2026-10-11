@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.errors import CollaborationConflict
 from src.workflow.tasks.dispatch import DispatchService
 from src.workflow.tasks.handoffs import revision
 from src.workflow.tasks.task_chain_budget import budget_view

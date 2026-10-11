@@ -4,7 +4,7 @@ import asyncio
 import httpx
 import pytest
 
-from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.errors import CollaborationConflict
 from src.workflow.tasks.dispatch import DispatchService
 from src.workflow.tasks.tasks import TaskLedger, TaskRunner
 

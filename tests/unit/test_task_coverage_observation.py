@@ -3,7 +3,7 @@ import copy
 
 import pytest
 
-from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.errors import CollaborationConflict
 from src.workflow.tasks.dispatch import DispatchService
 from src.workflow.tasks.task_scan import MAX_CHECKPOINT_BYTES, checkpoint_path
 from src.workflow.tasks.tasks import TaskRunner

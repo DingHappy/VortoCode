@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 from typing import Callable
 
-from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.errors import CollaborationConflict
 from src.workflow.tasks.dispatch import DispatchBusy, session_identity
 from src.workflow.tasks.task_questions import _expired, _now, _text, cancel_open_questions, new_question
 from src.workflow.tasks.task_recovery import plan_revision

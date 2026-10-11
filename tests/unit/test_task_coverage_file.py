@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.errors import CollaborationConflict
 from src.workflow.tasks.task_scan import MAX_ARCHIVE_BYTES, archive_path, digest, verify_file_bytes, verify_file_path
 from tests.unit.test_task_coverage import fixture, finish, task_bytes
 from tests.unit.test_task_coverage_archive import exported, retain

@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from src.agents.agent_loop import MainAgent
-from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.errors import CollaborationConflict
 from src.llm.client import LLMClient, LLMConfig
 
 

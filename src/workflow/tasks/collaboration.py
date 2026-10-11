@@ -9,6 +9,12 @@ from __future__ import annotations
 from typing import Callable
 
 from src.gateway.audit import _clip_text
+from src.workflow.tasks.errors import CollaborationConflict
+from src.workflow.tasks.task_chain_budget import prepare, reserve, validate_reserved
+from src.workflow.tasks.task_dependencies import (
+    dependency_state, has_dependencies, invalidate, resolve, validate_consumed,
+)
+from src.workflow.tasks.task_questions import answer, ask, cancel_open_questions, validate_answer
 from src.workflow.tasks.tasks import BackgroundTask, TaskLedger, TASK_STATE_LOCK, _now
 from src.utils.ids import typed_id
 
@@ -19,10 +25,6 @@ _MAX_MESSAGES = 32
 
 def _text(value: object, limit: int = 4000) -> str:
     return _clip_text(value, limit)
-
-
-class CollaborationConflict(ValueError):
-    """Wrong owner, stale execution or invalid lifecycle transition."""
 
 
 class CollaborationService:
@@ -104,7 +106,6 @@ class CollaborationService:
                 task.dependencies = dependencies
                 task.status = "waiting"
             if chain_limits is not None or (dispatch and dispatch.get("source") == "api"):
-                from src.workflow.tasks.task_chain_budget import prepare
                 task.chain_budget = prepare(task, self.ledger, (dependencies or {}).get("requires", []), chain_limits)
             self._message(task, "assigned", task.owner_session, prompt)
             return self._save(task)
@@ -125,10 +126,8 @@ class CollaborationService:
             task = self._load(task_id, expected_round)
             if task.status != "queued":
                 raise CollaborationConflict("任务已经开始或结束，不能重复执行")
-            from src.workflow.tasks.task_dependencies import has_dependencies, validate_consumed
             if has_dependencies(task):
                 validate_consumed(task, self.ledger)
-            from src.workflow.tasks.task_chain_budget import validate_reserved
             validate_reserved(task, self.ledger)
             task.status = "running"
             self._message(task, "started", task.collaboration["assignee"], "已领取任务")
@@ -141,7 +140,6 @@ class CollaborationService:
             task = self._load(task_id, expected_round)
             if task.status != "running":
                 raise CollaborationConflict("任务不在运行中，拒绝重复提交结果")
-            from src.workflow.tasks.task_dependencies import has_dependencies, invalidate
             if has_dependencies(task):
                 invalidate(task, self.ledger)
                 if task.dependencies["resolution"] == "invalidated":
@@ -174,7 +172,6 @@ class CollaborationService:
 
     def ask_question(self, task_id: str, expected_round: int, question: str,
                      options: list[str] | None = None, context: str = "", *, tainted: bool = False) -> BackgroundTask:
-        from src.workflow.tasks.task_questions import ask
         self._round(expected_round)
         with _LOCK:
             task = self._load(task_id, expected_round)
@@ -185,16 +182,13 @@ class CollaborationService:
 
     def answer_question(self, task_id: str, expected_round: int, question_id: str,
                         text: str) -> tuple[BackgroundTask, bool]:
-        from src.workflow.tasks.task_questions import answer, validate_answer
         with _LOCK:
             task = self._load(task_id)
             _, replayed = validate_answer(task, expected_round, question_id, text)
             if replayed:
                 return task, True
-            from src.workflow.tasks.task_dependencies import has_dependencies, validate_consumed
             if has_dependencies(task):
                 validate_consumed(task, self.ledger)
-            from src.workflow.tasks.task_chain_budget import reserve
             reserve(task, self.ledger, task.collaboration["round"] + 1)
             replayed = answer(task, expected_round, question_id, text)
             if not replayed:
@@ -210,7 +204,6 @@ class CollaborationService:
             task = self._load(task_id, expected_round)
             if task.status not in {"waiting", "queued", "running", "blocked"} and not (timed_out and task.status == "cancelled"):
                 return task
-            from src.workflow.tasks.task_questions import cancel_open_questions
             cancel_open_questions(task)
             if isinstance(task.dependencies, dict) and task.dependencies.get("resolution") == "invalidated":
                 error, cancelled = task.dependencies["invalidation"]["reason"], False
@@ -221,7 +214,6 @@ class CollaborationService:
             return self._save(task)
 
     def _check_consumed(self, task: BackgroundTask) -> None:
-        from src.workflow.tasks.task_dependencies import has_dependencies, invalidate, validate_consumed
         if has_dependencies(task):
             if invalidate(task, self.ledger):
                 self._message(task, "dependencies_invalidated", task.owner_session, task.dependencies["invalidation"]["reason"])
@@ -234,7 +226,6 @@ class CollaborationService:
             self._check_consumed(self._load(task_id, expected_round))
 
     def reconcile_dependencies(self, task_id: str, expected_round: int) -> tuple[BackgroundTask, bool]:
-        from src.workflow.tasks.task_dependencies import invalidate
         self._round(expected_round)
         with _LOCK:
             task = self._load(task_id, expected_round)
@@ -256,10 +247,8 @@ class CollaborationService:
                 raise CollaborationConflict("任务已验收；新的工作请创建新任务")
             if expected_round >= _MAX_ROUNDS:
                 raise CollaborationConflict("已达到 3 轮执行上限，请交由用户决策")
-            from src.workflow.tasks.task_dependencies import has_dependencies, validate_consumed
             if has_dependencies(task):
                 validate_consumed(task, self.ledger)
-            from src.workflow.tasks.task_chain_budget import reserve
             reserve(task, self.ledger, expected_round + 1)
             task.collaboration["round"] += 1
             task.collaboration["review"] = "not_submitted"
@@ -269,7 +258,6 @@ class CollaborationService:
 
     def release_dependencies(self, task_id: str, expected_round: int) -> tuple[BackgroundTask, bool]:
         """Persist a single explicit release; failed requirements never start work."""
-        from src.workflow.tasks.task_dependencies import dependency_state, resolve
         self._round(expected_round)
         with _LOCK:
             task = self._load(task_id)
@@ -282,7 +270,6 @@ class CollaborationService:
             if pending and not failure:
                 raise CollaborationConflict("前置任务尚未完成并验收；未推进")
             if not failure:
-                from src.workflow.tasks.task_chain_budget import reserve
                 reserve(task, self.ledger, expected_round)
             state.update(inputs=inputs if not failure else [], released_round=expected_round,
                          resolution="failed" if failure else "consumed")

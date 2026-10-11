@@ -6,7 +6,7 @@ import json
 import httpx
 import pytest
 
-from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.errors import CollaborationConflict
 from src.workflow.tasks.dispatch import DispatchBusy, DispatchService
 from src.workflow.tasks.handoffs import CompletionInbox, revision
 from src.workflow.tasks.task_dependencies import dependency_view, normalize_requirements

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from src.gateway.audit import _clip_text
-from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.errors import CollaborationConflict
 from src.workflow.tasks.handoffs import revision
 from src.workflow.tasks.tasks import _now
 from src.utils.ids import typed_id

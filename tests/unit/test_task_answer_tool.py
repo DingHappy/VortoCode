@@ -9,7 +9,8 @@ import pytest
 from src.agents.agent_loop import MainAgent
 from src.agents.main_agent import build_research_tools
 from src.agents.permissions import Permissions
-from src.workflow.tasks.collaboration import CollaborationConflict, CollaborationService
+from src.workflow.tasks.collaboration import CollaborationService
+from src.workflow.tasks.errors import CollaborationConflict
 from src.workflow.tasks.dispatch import DispatchService
 from src.workflow.tasks.tasks import TaskLedger, TaskRunner
 

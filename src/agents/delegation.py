@@ -274,7 +274,7 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
             previous = collaboration.get(str(args.get("task_id") or ""))
             dispatch = previous.collaboration.get("dispatch")
             if isinstance(dispatch, dict) and dispatch.get("source") == "api":
-                from src.workflow.tasks.collaboration import CollaborationConflict
+                from src.workflow.tasks.errors import CollaborationConflict
                 raise CollaborationConflict("服务下派任务请通过原下派入口补充要求，以保留步骤、超时和并发限制")
             if previous.collaboration.get("tainted"):
                 from src.agents.taint import mark_tainted
@@ -308,7 +308,7 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
         ]
         if answer_task_question is not None:
             async def _answer(args: dict) -> str:
-                from src.workflow.tasks.collaboration import CollaborationConflict
+                from src.workflow.tasks.errors import CollaborationConflict
                 if set(args) != {"task_id", "round", "question_id", "answer"}:
                     raise CollaborationConflict("task_answer 必须提供 task_id、round、question_id 和 answer，不接受其他字段")
                 # Resolve the live owner for every invocation. The injected public
@@ -333,7 +333,7 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
                                  "answer": {"type": "string", "minLength": 1, "maxLength": 2000}}))
         if release_task_dependencies is not None:
             async def _release(args: dict) -> str:
-                from src.workflow.tasks.collaboration import CollaborationConflict
+                from src.workflow.tasks.errors import CollaborationConflict
                 if set(args) != {"task_id", "round"}:
                     raise CollaborationConflict("task_release 只接受 task_id 和精确 round")
                 task, replayed = release_task_dependencies(collaboration.owner_identity(), args["task_id"], args["round"])
@@ -347,7 +347,7 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
                               argument_schema={"round": {"type": "integer", "minimum": 1, "maximum": 3}}))
         if reconcile_task_dependencies is not None:
             async def _reconcile(args: dict) -> str:
-                from src.workflow.tasks.collaboration import CollaborationConflict
+                from src.workflow.tasks.errors import CollaborationConflict
                 if set(args) != {"task_id", "round"}:
                     raise CollaborationConflict("task_reconcile 只接受 task_id 和精确 round")
                 task, changed, stopped = reconcile_task_dependencies(collaboration.owner_identity(), args["task_id"], args["round"])

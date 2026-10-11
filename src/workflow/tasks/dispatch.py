@@ -12,7 +12,8 @@ import re
 from pathlib import Path
 from typing import Awaitable, Callable
 
-from src.workflow.tasks.collaboration import CollaborationConflict, CollaborationService
+from src.workflow.tasks.collaboration import CollaborationService
+from src.workflow.tasks.errors import CollaborationConflict
 from src.workflow.tasks.tasks import BackgroundTask, TaskRunner, TASK_STATE_LOCK
 from src.utils.async_ops import run_with_timeout
 from src.utils.ids import typed_id

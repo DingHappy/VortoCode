@@ -9,7 +9,7 @@ from src.workflow.tasks.dispatch import DispatchService
 def get_development_questions(repo_root: str | None = None):
     from src.agents.dev_plan import load_plan
     from src.agents.permissions import load_permissions
-    from src.workflow.tasks.collaboration import CollaborationConflict
+    from src.workflow.tasks.errors import CollaborationConflict
     from src.workflow.tasks.dev_questions import DevelopmentQuestions
     from src.web.routers.tasks import get_runner, _task_view
     from src.web import task_events

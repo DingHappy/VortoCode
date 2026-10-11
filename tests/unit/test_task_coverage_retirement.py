@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.errors import CollaborationConflict
 from src.workflow.tasks.task_scan import archive_path, retirement_path, digest, verify_retirement, verify_retirement_path
 from src.workflow.tasks.dispatch import DispatchService
 from src.workflow.tasks.tasks import TaskRunner
