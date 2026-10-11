@@ -63,3 +63,114 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 .project-picker-trigger { color: var(--n11); }
 .session-info { padding: 0; font-size: 14px; }
 .composer-footer .composer-tools > .composer-chip, .composer-footer .composer-tools > .composer-model.single { font-size: 13px; color: var(--n11); }
+
+/* ── 任务步骤侧栏与相关按钮（2026-10-11 视觉整理）──────────────────────────────
+   只用现有主题变量；深色下另给一档更亮的强调色，保证小字号文字可读。 */
+:root { --daily-accent-text: #3559b4; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --daily-accent-text: #93acec; --daily-accent-soft: #93acec1f; } }
+:root[data-theme="dark"] { --daily-accent-text: #93acec; --daily-accent-soft: #93acec1f; }
+
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+
+/* 顶栏「任务步骤」开关：常态是有边框的次级按钮，展开时高亮，带进度角标 */
+.conversation-actions { display: flex; align-items: center; gap: 8px; }
+.context-toggle.workbench-toggle { height: 32px; min-width: 0; padding: 0 12px; gap: 6px; font-size: 13px; color: var(--n11); border: 1px solid var(--n5); border-radius: 8px; background: var(--n0); }
+.context-toggle.workbench-toggle:hover { color: var(--n13); border-color: var(--n7); background: var(--n2); }
+.context-toggle.workbench-toggle.active, .context-toggle.workbench-toggle[aria-expanded="true"] { color: var(--daily-accent-text); border-color: transparent; background: var(--daily-accent-soft); }
+.workbench-toggle-count { padding: 0 6px; border-radius: 999px; font-size: 11px; line-height: 18px; font-variant-numeric: tabular-nums; color: var(--n11); background: var(--n4); }
+.workbench-toggle.active .workbench-toggle-count, .workbench-toggle[aria-expanded="true"] .workbench-toggle-count { color: var(--daily-accent-text); background: var(--n0); }
+.conversation-actions .stop-button { height: 32px; padding: 0 12px; border-radius: 8px; font-size: 13px; color: var(--red-text); border: 1px solid var(--red-line); background: transparent; }
+.conversation-actions .stop-button:hover { background: var(--red-bg); }
+.context-toggle.workbench-toggle:focus-visible, .conversation-actions .stop-button:focus-visible, .session-info-button:focus-visible, .session-info-details summary:focus-visible, .inspector-context-head button:focus-visible { outline: 2px solid var(--daily-accent-text); outline-offset: 2px; }
+
+/* 侧栏头与标签行 */
+.inspector-context-head { padding: 14px 16px 12px 20px; }
+.inspector-context-head span { font-size: 11px; letter-spacing: .02em; color: var(--n9); }
+.inspector-context-head strong { font-size: 15px; font-weight: 600; color: var(--n13); }
+.inspector-context-head button { width: 30px; height: 30px; border-radius: 8px; color: var(--n10); }
+.inspector-context-head button:hover { color: var(--n13); background: var(--n3); }
+.inspector-tabs { gap: 4px; padding: 6px 12px; min-height: 0; border-bottom: 1px solid var(--n4); }
+.inspector-tabs button { flex: 0 0 auto; gap: 6px; height: 30px; padding: 0 10px; border-radius: 7px; font-size: 13px; color: var(--n10); background: transparent; }
+.inspector-tabs button:hover { color: var(--n13); background: var(--n3); }
+.inspector-tabs button.active { color: var(--n13); font-weight: 600; background: var(--n3); }
+.inspector-tabs button.active::after { display: none; }
+.inspector-tabs button small { color: var(--n11); background: var(--n4); font-weight: normal; }
+.inspector-tabs > button > small { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; color: var(--daily-accent-text); background: var(--daily-accent-soft); }
+.inspector-tabs > button > small::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: session-pulse 1.4s ease-in-out infinite; }
+.workbench-more { flex: 0 0 auto; margin-left: auto; min-width: 0; }
+.workbench-more summary { height: 30px; display: flex; align-items: center; padding: 0 10px; border-radius: 7px; font-size: 13px; color: var(--n10); list-style: none; }
+.workbench-more summary::-webkit-details-marker { display: none; }
+.workbench-more summary::after { content: "▾"; margin-left: 4px; font-size: 10px; }
+.workbench-more summary:hover, .workbench-more[open] summary { color: var(--n13); background: var(--n3); }
+
+/* 会话状态：彩色圆点 + 文字 */
+.inspector-body .session-info-status { padding-bottom: 14px; }
+.session-info-status h3 { font-size: 13px; font-weight: 600; color: var(--n12); }
+.session-info-status h3 .session-state-pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 500; color: var(--n11); background: var(--n3); }
+.session-state-pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.session-info-status h3 .session-state-pill.ready { color: var(--green-text); background: var(--green-bg); }
+.session-info-status h3 .session-state-pill.running { color: var(--daily-accent-text); background: var(--daily-accent-soft); }
+.session-state-pill.running::before { animation: session-pulse 1.4s ease-in-out infinite; }
+.session-info-status h3 .session-state-pill.waiting { color: var(--amber-text); background: var(--amber-bg); }
+.session-info-status h3 .session-state-pill.offline { color: var(--red-text); background: var(--red-bg); }
+.session-info-status p { margin: 10px 0 0; font-size: 13px; line-height: 1.6; color: var(--n10); }
+
+/* 执行进度：标题 + 进度条 + 竖向步骤条 */
+.session-info .session-info-section h4 { margin: 20px 0 10px; font-size: 13px; font-weight: 600; color: var(--n12); }
+.session-info-section h4 small { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--n10); }
+.session-progress { height: 4px; margin-bottom: 12px; overflow: hidden; border-radius: 999px; background: var(--n4); }
+.session-progress span { display: block; height: 100%; border-radius: inherit; background: var(--green-text); transition: width .3s ease; }
+.session-info .session-info-steps { position: relative; padding: 0; }
+.session-info .session-info-steps li.session-step { position: relative; display: flex; align-items: flex-start; gap: 10px; margin: 0; padding: 7px 8px; border-radius: 8px; }
+.session-step:not(:last-child)::before { content: ""; position: absolute; left: 15.5px; top: 27px; bottom: -7px; width: 1px; background: var(--n5); }
+.session-step.done:not(:last-child)::before { background: var(--green-line); }
+.session-info .session-info-steps li .session-step-icon { display: flex; flex: 0 0 auto; margin-top: 2px; }
+.session-info .session-info-steps li .session-step-icon svg { margin: 0; color: var(--n8); }
+.session-info .session-info-steps li.done .session-step-icon svg { color: var(--green-text); }
+.session-info .session-info-steps li.active { background: var(--daily-accent-soft); }
+.session-info .session-info-steps li.active .session-step-icon svg { color: var(--daily-accent-text); }
+.session-info .session-info-steps li.alert .session-step-icon svg { color: var(--red-text); }
+.session-step-text { min-width: 0; font-size: 13.5px; line-height: 1.5; color: var(--n12); }
+.session-step.done .session-step-text { color: var(--n10); }
+.session-step.pending .session-step-text { color: var(--n11); }
+.session-step.active .session-step-text { font-weight: 600; color: var(--n13); }
+.session-info .session-info-steps li .session-step-text small:not(.sr-only) { display: block; margin-top: 1px; font-size: 12px; font-weight: normal; }
+.session-step.active small { color: var(--daily-accent-text); }
+.session-step.alert small { color: var(--red-text); }
+.session-step-spin { animation: session-spin 1s linear infinite; }
+
+/* 需要关注 / 排队 */
+.session-info-attention .session-info-activities { padding: 4px 12px; border: 1px solid var(--red-line); border-radius: 8px; background: var(--red-bg); }
+.session-info-attention .session-info-activities li { padding: 7px 0; font-size: 13px; color: var(--n12); border-color: var(--red-line); }
+.session-info-attention .session-info-activities li:last-child { border-bottom: 0; }
+.session-info-attention .session-info-activities small { color: var(--red-text); }
+.session-info-queue { display: inline-flex; margin: 14px 0 0; padding: 3px 10px; border-radius: 999px; font-size: 12px; color: var(--amber-text); background: var(--amber-bg); }
+
+/* 会话详情：自绘箭头，展开后是一张浅底卡片 */
+.session-info .session-info-details { margin-top: 22px; padding-top: 14px; border-top: 1px solid var(--n4); color: var(--n10); }
+.session-info-details summary { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 0; border-radius: 6px; font-size: 12.5px; list-style: none; color: var(--n10); }
+.session-info-details summary::-webkit-details-marker { display: none; }
+.session-info-details summary:hover { color: var(--n13); }
+.session-info-details summary svg { transition: transform .15s ease; }
+.session-info-details[open] summary svg { transform: rotate(90deg); }
+.session-info-details dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 12px; margin: 12px 0; padding: 12px; border-radius: 8px; font-size: 12.5px; background: var(--n2); }
+.session-info-details dt { color: var(--n9); }
+.session-info-details dd { margin: 0; color: var(--n12); }
+
+/* 侧栏里的按钮：统一一档尺寸；primary 用强调色 */
+.session-info .session-info-button { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 7px; font-size: 12.5px; color: var(--n12); border: 1px solid var(--n5); background: var(--n0); cursor: pointer; }
+.session-info .session-info-button:hover:not(:disabled) { border-color: var(--n7); background: var(--n2); }
+.session-info .session-info-button:disabled { opacity: .5; cursor: not-allowed; }
+.session-info .session-info-button.primary { margin-top: 10px; color: #fff; border-color: transparent; background: var(--daily-accent); }
+.session-info .session-info-button.primary:hover { background: #3559b4; }
+
+/* 二轮微调：按钮文字跟随按钮配色；当前标签不重复显示「运行中」；等待类步骤用琥珀色；关注卡片紧凑对齐 */
+.context-toggle.workbench-toggle span { font-size: 13px; color: inherit; }
+.inspector-tabs > button.active > small { display: none; }
+.session-info .session-info-steps li.warn .session-step-icon svg { color: var(--amber-text); }
+.session-step.warn small { color: var(--amber-text); }
+.session-info-attention .session-info-activities li { align-items: center; margin: 0; padding: 8px 0; border-bottom: 1px solid var(--red-line); }
+.session-info-attention .session-info-activities li span { line-height: 1.4; }
+@keyframes session-spin { to { transform: rotate(360deg); } }
+@keyframes session-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .session-step-spin, .session-state-pill.running::before, .inspector-tabs > button > small::before { animation: none; } }

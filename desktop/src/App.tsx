@@ -2978,6 +2978,7 @@ function App() {
                 onClick={() => inspectorOpen ? setInspectorOpen(false) : openInspector("info")}
               >
                 <PanelRight size={16} /><span>任务步骤</span>
+                {plan.length > 0 && <small className="workbench-toggle-count">{plan.filter(item => item.status === "completed").length}/{plan.length}</small>}
               </button>
               {busy && <button className="stop-button" onClick={() => void cancelTurn()}>停止</button>}
             </div>
