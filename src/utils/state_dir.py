@@ -21,6 +21,7 @@ _STATE_ENTRIES = [
     "worktrees/",
     "dev_plans/",
     "tasks/",
+    "dispatches/",
     "task_scans/",
     "goals/",
     "runs/",

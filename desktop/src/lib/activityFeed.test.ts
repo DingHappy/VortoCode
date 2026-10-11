@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TaskItem } from "../types";
-import { feedStatus, feedTime, firstSentence, groupFeed, taskFeedItem, turnFeedItem, type FeedItem } from "./activityFeed";
+import { dispatchFeedItem, feedStatus, feedTime, firstSentence, groupFeed, taskFeedItem, turnFeedItem, type FeedItem } from "./activityFeed";
 
 const task = (overrides: Partial<TaskItem>): TaskItem => ({ id: "t1", status: "done", ...overrides });
 const question = (status: "open" | "answered") => ({ id: "q", task_id: "t1", round: 1, status, question: "要删除哪几条帖子？请列出链接。", options: [], context: "", asked_by: "worker", answerer: "owner" as const, created: "", expires_at: "", answer: "", answered_at: "" });
@@ -76,5 +76,23 @@ describe("turnFeedItem", () => {
   it("有回复记为完成并带结果句；没有回复记为已停下", () => {
     expect(turnFeedItem(turn({}))).toMatchObject({ id: "turn:abc:r1", status: "done", summary: "给出今明两天天气", session: "abc", rid: "r1" });
     expect(turnFeedItem(turn({ status: "no_reply" }))).toMatchObject({ status: "stopped", summary: "没有完成，可以在对话里继续" });
+  });
+});
+
+describe("dispatchFeedItem", () => {
+  const dispatch = (overrides: Partial<import("../types").AssistantDispatch>): import("../types").AssistantDispatch => ({
+    id: "d1", project: "VortoCode", title: "修登录超时", goal: "改超时", criteria: [], status: "proposed", tainted: false,
+    remote_task_id: "", result: "", error: "", branch: "", created_at: "2026-10-11T01:00:00Z", updated_at: "2026-10-11T01:05:00Z", ...overrides });
+
+  it("等你确认下发的置顶并说明项目；含外部内容时提醒细看", () => {
+    expect(dispatchFeedItem(dispatch({}))).toMatchObject({ status: "waiting", summary: "等你确认下发 · VortoCode", dispatchId: "d1", at: "2026-10-11T01:05:00Z" });
+    expect(dispatchFeedItem(dispatch({ tainted: true }))?.summary).toContain("含外部内容");
+  });
+
+  it("下发后跟着远端状态走；撤回的不显示", () => {
+    expect(dispatchFeedItem(dispatch({ status: "running" }))?.status).toBe("running");
+    expect(dispatchFeedItem(dispatch({ status: "done", branch: "vorto/fix" }))?.summary).toBe("已交付分支 vorto/fix");
+    expect(dispatchFeedItem(dispatch({ status: "send_failed", error: "connection refused" }))).toMatchObject({ status: "failed" });
+    expect(dispatchFeedItem(dispatch({ status: "cancelled" }))).toBeNull();
   });
 });

@@ -5,6 +5,7 @@ import WebSocket, { type Message as WebSocketMessage } from "@tauri-apps/plugin-
 
 import type {
   AgentTurn,
+  AssistantDispatch,
   ArtifactMeta,
   ArtifactVersionSnapshot,
   AuditEntry,
@@ -351,6 +352,17 @@ export class GatewayClient {
   async listAgentActivity(limit = 100): Promise<AgentTurn[]> {
     const payload = await this.request<{ turns?: AgentTurn[] }>(`/api/agent/activity?limit=${encodeURIComponent(String(limit))}`);
     return payload.turns ?? [];
+  }
+
+  /** 常驻助理的任务单（顺带刷新已下发任务的状态）。 */
+  async listDispatches(): Promise<AssistantDispatch[]> {
+    const payload = await this.request<{ dispatches?: AssistantDispatch[] }>("/api/dispatches");
+    return Array.isArray(payload.dispatches) ? payload.dispatches : [];
+  }
+
+  /** 人确认下发 / 撤回一张任务单。 */
+  async decideDispatch(id: string, decision: "approve" | "cancel"): Promise<AssistantDispatch> {
+    return this.request(`/api/dispatches/${encodeURIComponent(id)}/${decision}`, { method: "POST" });
   }
 
   /** 常驻电脑上的项目登记表（名称 / 目录 / 端口）：工作台「在哪做」据此找到服务器上的同名项目。 */

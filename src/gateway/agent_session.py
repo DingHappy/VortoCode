@@ -169,6 +169,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
                     f"删除制品「{preview.get('title') or preview.get('id')}」？此操作不可逆。"))
 
             tools += build_artifact_tools(repo_root, confirm=_publish, confirm_delete=_delete)
+            # 常驻助理：登记了常驻电脑项目才有。只能提议任务单，下发由人在 Desktop 点。
+            from src.agents.taint import is_tainted
+            from src.workflow.tasks.assistant_dispatch import build_dispatch_tools
+            tools += build_dispatch_tools(repo_root, is_tainted=is_tainted)
     else:
         tools = build_agent_tools(repo_root, confirm=gated_confirm, on_progress=on_progress,
                                   with_artifacts=(kind == "web"),   # 制品查看页只有 Web 有
@@ -213,6 +217,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         "【工作区范围】当前是 Scratch 隔离临时工作区。只在这里创建和运行临时代码；"
         "需要修改用户已有项目时调用 request_workspace(scope=project)，不要搜索或猜测其他目录。"
     ] if workspace_scope == SCRATCH else []
+    if workspace_scope == GENERAL and any(tool.name == "propose_task" for tool in tools):
+        parts.append("【派活】你是常驻助理：要改代码或在项目里干的活，用 propose_task 写成任务单交给常驻电脑上的"
+                     "项目去做（用户确认后才执行），不要调用 request_workspace，也不要自己动手。"
+                     "汇报进度前先用 list_dispatches 查最新状态，如实说明哪些还在等用户确认。")
     if allow_local_files and kind == "web":
         if workspace_scope == GENERAL:
             parts[0] = (

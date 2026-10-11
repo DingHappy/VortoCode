@@ -822,5 +822,23 @@
     "methods": [
       "GET"
     ]
+  },
+  {
+    "path": "/api/dispatches",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/dispatches/{dispatch_id}/approve",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/dispatches/{dispatch_id}/cancel",
+    "methods": [
+      "POST"
+    ]
   }
 ]

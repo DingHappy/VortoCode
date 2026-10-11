@@ -3,7 +3,7 @@ import { isManagementTab } from "./lib/inspector";
 import { WorkbenchLauncher, WorkbenchTabs, type WorkbenchTool } from "./components/WorkbenchTabs";
 import { ActivityFeed } from "./components/ActivityFeed";
 import { AssistantPanel, AssistantSidebar, ModeSwitch, type AppMode } from "./components/AssistantMode";
-import { taskFeedItem, turnFeedItem } from "./lib/activityFeed";
+import { dispatchFeedItem, taskFeedItem, turnFeedItem, type FeedItem } from "./lib/activityFeed";
 import { ConfirmationReply } from "./components/ConfirmationReply";
 import { createConfirmationReply } from "./lib/confirm";
 import { ConfirmationTrust } from "./components/ConfirmationTrust";
@@ -56,6 +56,7 @@ import {
 } from "./gateway";
 import type {
   AgentTurn,
+  AssistantDispatch,
   AuditEntry,
   CommandRunItem,
   CommandRunKind,
@@ -321,6 +322,10 @@ function App() {
   const [mainChatSid, setMainChatSid] = useState(() => { try { return localStorage.getItem(STORAGE_KEYS.mainChatSid) ?? ""; } catch { return ""; } });
   const [assistantTab, setAssistantTab] = useState<"feed" | "steps">("feed");
   const [agentTurns, setAgentTurns] = useState<AgentTurn[]>([]);
+  // 常驻助理写的任务单（等你确认下发 / 在做 / 做完）。
+  const [dispatches, setDispatches] = useState<AssistantDispatch[]>([]);
+  // 只依赖「有没有在做的」这个布尔值：每次刷新都是新数组，直接依赖数组会让刷新自己触发自己。
+  const trackingDispatches = dispatches.some((item) => item.status === "running" || item.status === "waiting");
   const [tabsNeedingAttention, setTabsNeedingAttention] = useState<ReadonlySet<InspectorTab>>(
     () => new Set());
   const openInspector = useCallback((tab: InspectorTab) => {
@@ -1974,6 +1979,11 @@ function App() {
     } catch {
       // 动态是旁路信息：拿不到就保留上一次的，不打扰对话。
     }
+    try {
+      setDispatches(await client.listDispatches());
+    } catch {
+      // 老版本服务没有派活接口：当作没有任务单。
+    }
   }, []);
 
   /** 打开「主要聊天」：每台电脑第一次进助理模式时生成一个固定会话并记住，之后一直用它。 */
@@ -2888,6 +2898,36 @@ function App() {
   // 任务动态：后台任务台账的投影（useTasks 已随 task_update 推送实时更新）。
   const feedItems = tasks.map(taskFeedItem);
   const feedWaiting = feedItems.filter((item) => item.status === "waiting").length;
+  const dispatchItems = dispatches.map(dispatchFeedItem).filter((item): item is FeedItem => item !== null);
+  const assistantWaiting = feedWaiting + dispatchItems.filter((item) => item.status === "waiting").length;
+
+  /** 任务单：等你确认的 → 看一遍再下发（或撤回）；其余 → 说明现状。 */
+  const openDispatch = async (id: string) => {
+    const item = dispatches.find((entry) => entry.id === id);
+    const client = clientRef.current;
+    if (!item || !client) return;
+    if (item.status === "proposed" || item.status === "send_failed") {
+      const detail = [`下发到常驻电脑上的「${item.project}」？`, "", item.title, "", item.goal,
+        ...(item.criteria.length ? ["", "验收标准：", ...item.criteria.map((line) => `· ${line}`)] : []),
+        ...(item.tainted ? ["", "⚠ 这张任务单是在读过网页等外部内容后写的，请确认内容是你要的。"] : [])].join("\n");
+      try {
+        if (await confirmAction(detail)) {
+          await client.decideDispatch(id, "approve");
+          setBanner(`已下发「${item.title}」：常驻电脑在做，做完会在动态里回报。`);
+        } else if (item.status === "proposed" && await confirmAction(`不做「${item.title}」了？撤回这张任务单。`)) {
+          await client.decideDispatch(id, "cancel");
+        }
+      } catch (error) {
+        setBanner(errorText(error, "处理任务单失败"));
+      }
+      await refreshAgentTurns();
+      return;
+    }
+    setBanner(item.status === "done"
+      ? `「${item.title}」已完成${item.branch ? `，交付分支 ${item.branch}：到工作台切到常驻电脑上的 ${item.project}，在变更面板审查或拉回本机` : ""}。`
+      : item.status === "failed" ? `「${item.title}」失败：${item.error || "没有错误信息"}`
+      : `「${item.title}」${item.status === "waiting" ? "在等人回答，到工作台的常驻电脑项目里处理" : "还在做"}。`);
+  };
   const workbenchTools: WorkbenchTool[] = ([
     { id: "feed", label: "任务动态", icon: <Inbox size={15} />, badge: feedWaiting ? String(feedWaiting) : undefined,
       open: () => { openInspector("feed"); void refreshTasks(); } },
@@ -2940,8 +2980,10 @@ function App() {
     if (appMode !== "assistant" || connection !== "connected" || busy) return;
     void refreshAgentTurns();
     const later = window.setTimeout(() => void refreshAgentTurns(), 8000);
-    return () => window.clearTimeout(later);
-  }, [appMode, connection, busy, activeSid, refreshAgentTurns]);
+    // 常驻电脑上还有任务在做：每 30 秒看一次进度（台账刷新时顺带查项目运行时）
+    const tracking = trackingDispatches ? window.setInterval(() => void refreshAgentTurns(), 30_000) : undefined;
+    return () => { window.clearTimeout(later); if (tracking) window.clearInterval(tracking); };
+  }, [appMode, connection, busy, activeSid, refreshAgentTurns, trackingDispatches]);
 
   return (
     <main className="app-shell">
@@ -3583,11 +3625,12 @@ function App() {
             onAddResident={() => setRemoteDialogOpen("assistant")}
             onRetryResident={() => void changeAppMode("assistant")}
             modelLabel={onAssistantHost() ? runtime.model : composerModelChoices.find(item => item.value === modelChoice)?.label}
-            tab={assistantTab} onTab={setAssistantTab} onClose={() => setInspectorOpen(false)} waiting={feedWaiting}>
+            tab={assistantTab} onTab={setAssistantTab} onClose={() => setInspectorOpen(false)} waiting={assistantWaiting}>
             {assistantTab === "feed"
-              ? <ActivityFeed items={[...agentTurns.map(turnFeedItem), ...feedItems]} scope="all" onScope={() => {}}
+              ? <ActivityFeed items={[...agentTurns.map(turnFeedItem), ...dispatchItems, ...feedItems]} scope="all" onScope={() => {}}
                   currentSession={activeSid}
                   onOpen={(item) => {
+                    if (item.dispatchId) { void openDispatch(item.dispatchId); return; }
                     if (item.taskId) { focusTask(item.taskId); return; }
                     const sid = item.session?.replace(/^sid-/, "");
                     if (sid) { setMainView("chat"); void switchSession(sid); }
