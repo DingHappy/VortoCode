@@ -498,9 +498,12 @@ async def _ensure_mcp(agent, say) -> None:
             fn = holder.get("fn") if holder else None
             return bool(await fn(message)) if fn is not None else False
 
+        from src.gateway.workspace_scope import GENERAL, current_workspace_scope
         mgr, mcp_tools = await connect_mcp(
             os.getcwd(), capability_profile=agent._capabilities.profile,
-            confirm=_mcp_confirm
+            confirm=_mcp_confirm,
+            # 带凭据的连接器（GitHub 等）只给常驻助理：通用范围没有文件/命令/Git
+            allow_connectors=current_workspace_scope() == GENERAL,
         )
         agent._mcp_mgr = mgr  # Empty tool lists still own connected resources.
         if mcp_tools:

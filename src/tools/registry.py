@@ -263,7 +263,9 @@ class DynamicToolRegistry(ToolRegistry):
                 name=name, description=mt.description, category="mcp",
                 permissions=[ToolPermission.EXECUTE], input_schema=deepcopy(mt.input_schema),
                 server_name=client.server_name, server_url=mt.server_url,
-                tags=["mcp", "dynamic"], metadata={"mcp_tool_name": mt.name},
+                tags=["mcp", "dynamic"],
+                metadata={"mcp_tool_name": mt.name,
+                          "annotations": deepcopy(getattr(mt, "annotations", None) or {})},
             ))
         return staged
 

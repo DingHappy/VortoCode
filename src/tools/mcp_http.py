@@ -289,9 +289,11 @@ class StreamableHTTPMCPClient(MCPClient):
                     except ValueError as e:
                         logger.warning('Excluded MCP tool %s: %s', item['name'], e)
                         continue
+                    annotations = item.get('annotations')
                     tools.append(MCPTool(name=item['name'], description=item.get('description', ''),
                                          input_schema=schema, server_name=self.server_name,
-                                         server_url=self.base_url))
+                                         server_url=self.base_url,
+                                         annotations=annotations if isinstance(annotations, dict) else {}))
                 cursor = result.get('nextCursor')
                 if cursor is None:
                     self.tools = self._feature_tools(tools)
