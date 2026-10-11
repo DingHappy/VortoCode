@@ -859,6 +859,10 @@ async def run_job(repo_root: str, job: CronJob, *, run_session=None, notify=None
     """
     try:
         if job.kind == "command":
+            from src.gateway.workspace_scope import GENERAL, current_workspace_scope
+            if current_workspace_scope() == GENERAL:
+                # 常驻助理没有工作区，也不跑 shell：手写进 cron.yaml 的 command 作业在这里拒绝，照常留痕通报
+                raise PermissionError("通用范围（常驻助理）不跑 command 作业；命令类作业请放在项目服务里")
             code, out, sandbox = await run_command_job(repo_root, job)
             ok = code == 0
             head = (f"✅ cron [{job.name}] 通过" if ok

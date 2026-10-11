@@ -32,6 +32,21 @@ class RuntimeServices:
         return await self.development_worker(task, on_progress)
 
 
+def scheduling_scope_error() -> str:
+    """当前范围能不能开调度；能 → 空串，不能 → 拒绝原因（启动即失败，别静默不跑）。
+
+    通用范围（常驻助理）只跑你交代的定时事项：无人值守会话按通用范围装配（无文件/命令），
+    command 作业在执行时拒绝。Heartbeat 会领 BACKLOG 派开发任务，仍只属于项目范围。
+    """
+    from src.gateway.workspace_scope import GENERAL, PROJECT, current_workspace_scope
+    scope = current_workspace_scope()
+    heartbeat_on = os.getenv("VORTOCODE_HEARTBEAT", "").strip().lower() in ("1", "true", "yes", "on")
+    if scope == PROJECT or (scope == GENERAL and not heartbeat_on):
+        return ""
+    return "Autonomous scheduling requires a Project workspace" + (
+        "（Heartbeat 只能在项目范围开）" if scope == GENERAL else "")
+
+
 @asynccontextmanager
 async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
                            make_run_manager, make_terminal_manager, register_im_worker):
@@ -68,9 +83,9 @@ async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
         # cron / heartbeat 调度循环：**opt-in**（任一开关开才起，默认全关——不擅自跑自主 LLM 作业）
         if any(os.getenv(k, "").strip().lower() in ("1", "true", "yes", "on")
                for k in ("VORTOCODE_CRON", "VORTOCODE_HEARTBEAT")):
-            from src.gateway.workspace_scope import current_workspace_scope
-            if current_workspace_scope() != "project":
-                raise RuntimeError("Autonomous scheduling requires a Project workspace")
+            refusal = scheduling_scope_error()
+            if refusal:
+                raise RuntimeError(refusal)
             sched_task = asyncio.create_task(scheduler(stop_event))
             print("  ⏰ cron/heartbeat 调度循环已启动（opt-in）")
         run_manager = make_run_manager()
