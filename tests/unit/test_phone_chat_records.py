@@ -89,6 +89,7 @@ def test_liveness_reports_inbound_gate_without_ids(tmp_path):
     cases = [(False, set(), "blocked_all"), (False, {"7"}, "owner_missing"), (False, {"42"}, "ok"), (True, set(), "ok")]
     for notification_only, allow_from, expected in cases:
         bridge.notification_only, bridge.allow_from = notification_only, allow_from
+        bridge._ignored, bridge._ignored_no_mention = 3, 0
         live = bridge.liveness()
-        assert live["inbound"] == expected
+        assert live["inbound"] == expected and live["ignored"] == 3
         assert "42" not in str({k: v for k, v in live.items() if k != "channel"})

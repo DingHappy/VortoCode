@@ -371,6 +371,8 @@ class IMBridge:
         # 入站闸的配置状态（只给类别，不给 id）：「机器人装死」时一眼看出是不是白名单把人挡在外面。
         # 只发通知的角色本来就不收入站，不报。真机 2026-10-11：交互角色继承了 .env 里 ''（全拒）。
         lv["inbound"] = "ok" if self.notification_only else self.inbound_state()
+        lv["ignored"] = int(getattr(self, "_ignored", 0))                    # 被入站闸丢掉的条数
+        lv["ignored_no_mention"] = int(getattr(self, "_ignored_no_mention", 0))
         try:
             from src.scheduling.notices import pending_undelivered_count
             lv["undelivered"] = pending_undelivered_count(self.repo_root)
