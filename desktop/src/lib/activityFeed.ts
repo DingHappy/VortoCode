@@ -1,12 +1,18 @@
 // 右侧「任务动态」：把后台任务台账投影成一条按时间分组的动态流（参考 Muse）。
 // 纯函数、零请求：数据来自已有的 /api/tasks，只决定「显示成什么样」。
-import type { TaskItem } from "../types";
+import type { AgentTurn, TaskItem } from "../types";
 
 /** 展示用的五档：等你处理 / 进行中 / 完成 / 失败 / 已停下（暂停、中断，可续跑）。 */
 export type FeedStatus = "waiting" | "running" | "done" | "failed" | "stopped";
 
+/** 条目做的是哪类事，决定完成态的图标：联网查资料 / 跑命令 / 改代码文件 / 普通对答 / 后台任务。 */
+export type FeedKind = "web" | "command" | "code" | "chat" | "task";
+
 export interface FeedItem {
   id: string;
+  kind?: FeedKind;
+  /** 对话回合：点开后跳回这一句 */
+  rid?: string;
   title: string;
   summary: string;
   status: FeedStatus;
@@ -66,6 +72,7 @@ export function taskFeedItem(task: TaskItem): FeedItem {
     : firstSentence(task.error, MAX_SUMMARY) || (task.status === "cancelled" ? "已取消" : "执行失败");
   return {
     id: `task:${task.id}`,
+    kind: "task",
     taskId: task.id,
     title: firstSentence(task.prompt, MAX_TITLE) || "未命名任务",
     summary,
@@ -108,3 +115,25 @@ export function feedTime(item: FeedItem): string {
   const date = new Date(time);
   return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
+
+const WEB_TOOLS = /^(web_|browser|screenshot)/;
+const CODE_TOOLS = /^(write_file|edit_file|apply_patch|dev_)/;
+
+/** 一轮对话 → 一条动态。没有最终回复的回合（中断、出错）记为「已停下」。 */
+export function turnFeedItem(turn: AgentTurn): FeedItem {
+  const names = turn.tool_names ?? [];
+  const kind: FeedKind = names.some((name) => WEB_TOOLS.test(name)) ? "web"
+    : names.some((name) => CODE_TOOLS.test(name)) ? "code"
+    : names.includes("run_command") ? "command" : "chat";
+  return {
+    id: `turn:${turn.sid}:${turn.rid}`,
+    kind,
+    rid: turn.rid,
+    title: turn.title || "未命名事项",
+    summary: turn.status === "done" ? turn.outcome || "已回复" : "没有完成，可以在对话里继续",
+    status: turn.status === "done" ? "done" : "stopped",
+    at: turn.at,
+    session: turn.sid,
+  };
+}
+

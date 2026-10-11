@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TaskItem } from "../types";
-import { feedStatus, feedTime, firstSentence, groupFeed, taskFeedItem, type FeedItem } from "./activityFeed";
+import { feedStatus, feedTime, firstSentence, groupFeed, taskFeedItem, turnFeedItem, type FeedItem } from "./activityFeed";
 
 const task = (overrides: Partial<TaskItem>): TaskItem => ({ id: "t1", status: "done", ...overrides });
 const question = (status: "open" | "answered") => ({ id: "q", task_id: "t1", round: 1, status, question: "要删除哪几条帖子？请列出链接。", options: [], context: "", asked_by: "worker", answerer: "owner" as const, created: "", expires_at: "", answer: "", answered_at: "" });
@@ -58,5 +58,23 @@ describe("groupFeed", () => {
   it("时间只显示几点几分；没有时间就留空", () => {
     expect(feedTime(item("a", "done", "2026-10-11T09:05:00"))).toBe("09:05");
     expect(feedTime(item("b", "done", "not-a-date"))).toBe("");
+  });
+});
+
+describe("turnFeedItem", () => {
+  const turn = (overrides: Partial<import("../types").AgentTurn>): import("../types").AgentTurn => ({
+    sid: "abc", session_title: "主要聊天", rid: "r1", title: "查询宁波天气", outcome: "给出今明两天天气",
+    digest_source: "model", status: "done", tools: 1, tool_names: [], at: "2026-10-11T02:00:00+00:00", ...overrides });
+
+  it("按用过的工具选类别：联网 > 改代码 > 跑命令 > 普通对答", () => {
+    expect(turnFeedItem(turn({ tool_names: ["read_file", "web_search"] })).kind).toBe("web");
+    expect(turnFeedItem(turn({ tool_names: ["write_file", "run_command"] })).kind).toBe("code");
+    expect(turnFeedItem(turn({ tool_names: ["run_command"] })).kind).toBe("command");
+    expect(turnFeedItem(turn({ tool_names: [] })).kind).toBe("chat");
+  });
+
+  it("有回复记为完成并带结果句；没有回复记为已停下", () => {
+    expect(turnFeedItem(turn({}))).toMatchObject({ id: "turn:abc:r1", status: "done", summary: "给出今明两天天气", session: "abc", rid: "r1" });
+    expect(turnFeedItem(turn({ status: "no_reply" }))).toMatchObject({ status: "stopped", summary: "没有完成，可以在对话里继续" });
   });
 });

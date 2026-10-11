@@ -98,6 +98,20 @@ export interface TurnActivity {
   durationMs?: number;
 }
 
+/** GET /api/agent/activity 的一条：某个会话里的一轮对话（标题与结果由模型生成，失败时取原文）。 */
+export interface AgentTurn {
+  sid: string;
+  session_title: string;
+  rid: string;
+  title: string;
+  outcome: string;
+  digest_source: "model" | "text";
+  status: "done" | "no_reply";
+  tools: number;
+  tool_names?: string[];
+  at: string;
+}
+
 export interface PlanItem {
   step: string;
   status: "pending" | "in_progress" | "completed" | string;

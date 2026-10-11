@@ -114,6 +114,16 @@ def turn_parts(transcript: List[Dict[str, Any]], rid: str):
     return request, reply
 
 
+def turn_tool_names(activities: List[Dict[str, Any]], rid: str, limit: int = 5) -> List[str]:
+    """本轮用过的工具名（去重、保序、最多 limit 个）：前端据此选图标（联网查资料 / 跑命令 / 改文件）。"""
+    names: List[str] = []
+    for event in activities:
+        name = str(event.get("name") or "")
+        if event.get("rid") == rid and event.get("type") == "agent_tool" and name and name not in names:
+            names.append(name)
+    return names[:limit]
+
+
 def turn_tools(activities: List[Dict[str, Any]], rid: str) -> List[str]:
     """本轮用过的工具（按工具调用 id 去重，开始/结束两条事件算一次）。"""
     seen: Dict[str, str] = {}
@@ -160,6 +170,7 @@ def recent_turns(repo_root: str, limit: int = 100) -> List[Dict[str, Any]]:
                 "digest_source": digest.get("source", "text"),
                 "status": "done" if reply is not None else "no_reply",
                 "tools": len(turn_tools(activities, rid)),
+                "tool_names": turn_tool_names(activities, rid),
                 "at": (reply or {}).get("at") or request.get("at") or _activity_time(activities, rid),
                 "updated": summary.get("updated"),
             })

@@ -230,3 +230,47 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 .activity-feed-text small { margin-top: 1px; font-size: 11.5px; font-variant-numeric: tabular-nums; color: var(--n9); }
 .workbench-toggle-dot.waiting { background: var(--amber-text); animation: none; }
 .inspector-body > .activity-feed { margin: -20px; }
+
+/* ── 助理模式（参考 Muse 个人助理）：主要聊天 + 旁聊；右侧是助理本人 + 它做过的事 ── */
+.mode-switch { display: flex; gap: 2px; margin: 0 14px 10px; padding: 3px; border-radius: 10px; background: var(--n3); }
+.mode-switch button { flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px; height: 30px; border: 0; border-radius: 8px; font-size: 13px; color: var(--n10); background: transparent; cursor: pointer; }
+.mode-switch button.active { color: var(--n13); font-weight: 600; background: var(--n0); box-shadow: 0 1px 2px rgba(var(--ink-rgb), .08); }
+
+.assistant-sidebar { display: flex; flex-direction: column; gap: 2px; padding: 4px 12px; }
+.assistant-main-chat { display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px; border: 0; border-radius: 10px; text-align: left; color: var(--n12); background: transparent; cursor: pointer; }
+.assistant-main-chat:hover { background: var(--n3); }
+.assistant-main-chat.active { background: var(--daily-accent-soft); }
+.assistant-main-chat-icon { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex: 0 0 auto; border-radius: 9px; color: var(--daily-accent-text); background: var(--daily-accent-soft); }
+.assistant-main-chat.active .assistant-main-chat-icon { color: #fff; background: var(--daily-accent); }
+.assistant-main-chat-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.assistant-main-chat-text strong { font-size: 14px; font-weight: 600; }
+.assistant-main-chat-text small { margin-top: 1px; overflow: hidden; font-size: 12px; color: var(--n10); white-space: nowrap; text-overflow: ellipsis; }
+.assistant-section-title { display: flex; align-items: center; justify-content: space-between; margin: 18px 4px 4px 10px; font-size: 12px; color: var(--n9); }
+.assistant-section-title button { display: flex; align-items: center; justify-content: center; width: 26px; height: 26px; border: 0; border-radius: 7px; color: var(--n10); background: transparent; cursor: pointer; }
+.assistant-section-title button:hover { color: var(--n13); background: var(--n3); }
+.assistant-side-empty { margin: 4px 10px; font-size: 12px; line-height: 1.6; color: var(--n9); }
+.assistant-side-chat { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 36px; padding: 0 10px; border: 0; border-radius: 8px; font-size: 13.5px; text-align: left; color: var(--n11); background: transparent; cursor: pointer; }
+.assistant-side-chat span { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.assistant-side-chat svg { flex: 0 0 auto; color: var(--n9); }
+.assistant-side-chat:hover { background: var(--n3); }
+.assistant-side-chat.active { color: var(--n13); font-weight: 600; background: var(--daily-accent-soft); }
+.assistant-main-chat:focus-visible, .assistant-side-chat:focus-visible, .assistant-section-title button:focus-visible, .mode-switch button:focus-visible { outline: 2px solid var(--daily-accent-text); outline-offset: 1px; }
+
+.assistant-panel { position: relative; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--n4); background: var(--n1); }
+.assistant-panel-close { position: absolute; top: 12px; right: 12px; display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 0; border-radius: 8px; color: var(--n10); background: transparent; cursor: pointer; }
+.assistant-panel-close:hover { color: var(--n13); background: var(--n3); }
+.assistant-identity { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 34px 20px 16px; }
+.assistant-avatar { display: flex; align-items: center; justify-content: center; width: 64px; height: 64px; margin-bottom: 6px; border-radius: 50%; font-size: 26px; font-weight: 700; color: #fff; background: linear-gradient(135deg, #5b7fe0, #3a56b0); box-shadow: 0 6px 18px rgba(65, 104, 201, .25); }
+.assistant-identity strong { font-size: 17px; font-weight: 650; color: var(--n13); }
+.assistant-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--red-text); }
+.assistant-status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.assistant-status.online { color: var(--n10); }
+.assistant-status.online::before { background: var(--green-text); }
+.assistant-tabs { display: flex; gap: 4px; margin: 6px 18px 4px; padding: 3px; border-radius: 10px; background: var(--n3); }
+.assistant-tabs button { position: relative; flex: 1; display: flex; align-items: center; justify-content: center; height: 30px; border: 0; border-radius: 8px; color: var(--n10); background: transparent; cursor: pointer; }
+.assistant-tabs button.active { color: var(--n13); background: var(--n0); box-shadow: 0 1px 2px rgba(var(--ink-rgb), .08); }
+.assistant-tab-badge { position: absolute; top: 3px; right: calc(50% - 22px); min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px; font-size: 10.5px; font-style: normal; line-height: 16px; color: #fff; background: var(--amber-text); }
+.assistant-panel-body { flex: 1; min-height: 0; overflow-y: auto; }
+.assistant-panel-body > .activity-feed { padding-top: 6px; }
+.assistant-panel-body > .activity-feed .activity-feed-scope { display: none; }
+.assistant-panel-body > .session-info { padding: 14px 20px; }
