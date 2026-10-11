@@ -3,11 +3,11 @@ import os
 
 import pytest
 
-from src.gateway.collaboration import CollaborationConflict
-from src.gateway.dispatch import DispatchService
-from src.gateway.handoffs import CompletionInbox, revision
-from src.gateway.task_dependencies import _input
-from src.gateway.tasks import BackgroundTask, TaskLedger, TaskRunner
+from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.dispatch import DispatchService
+from src.workflow.tasks.handoffs import CompletionInbox, revision
+from src.workflow.tasks.task_dependencies import _input
+from src.workflow.tasks.tasks import BackgroundTask, TaskLedger, TaskRunner
 
 
 def record(ledger, tid, parents=(), consumed=False):
@@ -101,7 +101,7 @@ def test_many_descendants_accumulate_graph_then_reconcile_pages_with_latched_his
         assert task.status == "done" and task.collaboration["review"] == "accepted"
         assert (task.result, task.dependencies["inputs"]) == before[child.id]
         assert task.dependencies["resolution"] == "invalidated"
-    from src.gateway.handoffs import completion_state
+    from src.workflow.tasks.handoffs import completion_state
     assert sum(not completion_state(service.runner.ledger.load(child.id))["handled"] for child in children) == 70 and not calls
     before_replay = task_bytes(service)
     replay = step(service, source, pages[-2])
@@ -217,13 +217,13 @@ def test_damaged_record_coverage_is_unknown_not_complete(tmp_path, damage):
 def test_exhausted_budgets_never_claim_whole_graph_coverage(tmp_path, monkeypatch, kind, reason):
     service, source, _, _ = fixture(tmp_path, children=3)
     if kind in ("nodes", "edges"):
-        monkeypatch.setattr(f"src.gateway.task_dependents.MAX_COVERAGE_{'NODES' if kind == 'nodes' else 'EDGES'}", 1)
+        monkeypatch.setattr(f"src.workflow.tasks.task_dependents.MAX_COVERAGE_{'NODES' if kind == 'nodes' else 'EDGES'}", 1)
     elif kind == "depth":
-        monkeypatch.setattr("src.gateway.task_dependents.MAX_DEPTH", 0)
+        monkeypatch.setattr("src.workflow.tasks.task_dependents.MAX_DEPTH", 0)
     elif kind == "inventory":
-        monkeypatch.setattr("src.gateway.task_scan.MAX_INVENTORY", 1)
+        monkeypatch.setattr("src.workflow.tasks.task_scan.MAX_INVENTORY", 1)
     else:
-        monkeypatch.setattr("src.gateway.task_scan.MAX_TOTAL_BYTES", 1)
+        monkeypatch.setattr("src.workflow.tasks.task_scan.MAX_TOTAL_BYTES", 1)
     final = finish(service, source)[-1]
     assert not final["complete"] and reason in final["coverage"]["reasons"] and not final["next_cursor"]
 
@@ -231,7 +231,7 @@ def test_exhausted_budgets_never_claim_whole_graph_coverage(tmp_path, monkeypatc
 def test_page_byte_budget_advances_and_non_json_names_count_toward_inventory(tmp_path, monkeypatch):
     service, source, _, _ = fixture(tmp_path, fillers=4)
     (service.runner.ledger._dir() / "00-note.txt").write_text("directory entry")
-    monkeypatch.setattr("src.gateway.task_scan.MAX_PAGE_BYTES", 1200)
+    monkeypatch.setattr("src.workflow.tasks.task_scan.MAX_PAGE_BYTES", 1200)
     first = step(service, source)
     assert first["coverage"]["entries_read"] < first["coverage"]["entries_total"]
     assert finish(service, source, first)[-1]["complete"]
@@ -307,7 +307,7 @@ def test_inventory_unreadable_and_checkpoint_retention_fail_closed(tmp_path, mon
     monkeypatch.setattr(TaskLedger, "scan_inventory", lambda _: ([], "inventory_unreadable"))
     result = step(service, source)
     assert result["coverage"]["state"] == "unknown" and not result["next_cursor"]
-    monkeypatch.setattr("src.gateway.task_scan.MAX_CHECKPOINTS", 1)
+    monkeypatch.setattr("src.workflow.tasks.task_scan.MAX_CHECKPOINTS", 1)
     with pytest.raises(CollaborationConflict, match="保留上限"):
         step(service, source, request_id="new")
 
@@ -346,7 +346,7 @@ async def test_typed_http_cursor_recovery_and_coverage_state(tmp_path, monkeypat
 
 
 def test_cumulative_receipts_replay_and_ranges_can_be_independently_verified(tmp_path):
-    from src.gateway.task_scan import digest
+    from src.workflow.tasks.task_scan import digest
     service, source, _, _ = fixture(tmp_path, fillers=5)
     pages = finish(service, source, page_size=2)
     assert len({page["snapshot_id"] for page in pages}) == 1
@@ -364,7 +364,7 @@ def test_cumulative_receipts_replay_and_ranges_can_be_independently_verified(tmp
 
 def test_page_budget_is_terminal_incomplete_not_progress_or_whole_graph_success(tmp_path, monkeypatch):
     service, source, _, _ = fixture(tmp_path, fillers=4)
-    monkeypatch.setattr("src.gateway.task_dependents.MAX_COVERAGE_PAGES", 1)
+    monkeypatch.setattr("src.workflow.tasks.task_dependents.MAX_COVERAGE_PAGES", 1)
     first = step(service, source, page_size=1)
     final = step(service, source, first)
     assert final["coverage"]["entries_read"] == 1 and not final["complete"] and not final["next_cursor"]

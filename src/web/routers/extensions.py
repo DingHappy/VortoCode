@@ -10,7 +10,7 @@ router = APIRouter()
 
 @router.get("/api/extensions/inspect")
 async def inspect_project_extensions():
-    from src.gateway.extensions_inspect import inspect_extensions
+    from src.workflow.workbench.extensions_inspect import inspect_extensions
 
     return inspect_extensions(os.getcwd())
 

@@ -322,7 +322,7 @@ async def lane_notify(root: str) -> Lane:
     注册断了的表现是「台账里什么都有、手机上什么都没有」，而台账那一路照常绿。
     """
     from src.gateway import im_runtime
-    from src.gateway.notices import load_notices, make_notifier
+    from src.scheduling.notices import load_notices, make_notifier
 
     chan = FakeChannel()
     got: list = []
@@ -353,7 +353,7 @@ async def lane_cron_delivery(root: str) -> Lane:
     当时断的正是工具到投递器这一截，库函数自己一直是好的。测库函数会永远绿。
     """
     from src.agents.main_agent import build_cron_tools
-    from src.gateway import cron as cron_mod
+    from src.scheduling import cron as cron_mod
     from src.gateway import im_runtime
 
     chan = FakeChannel()
@@ -426,7 +426,7 @@ async def lane_cold_push(root: str) -> Lane:
     那一行的等价性由 tests/unit/test_im_bridge.py 钉着。
     """
     from src.gateway import im_runtime
-    from src.gateway.notices import make_notifier
+    from src.scheduling.notices import make_notifier
     from src.im.dingtalk import DingTalkAdapter
 
     sent: list = []

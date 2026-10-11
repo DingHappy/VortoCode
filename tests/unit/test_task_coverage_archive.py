@@ -7,10 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from src.gateway.collaboration import CollaborationConflict
-from src.gateway.dispatch import DispatchService
-from src.gateway.task_scan import archive_path, digest, verify_archive
-from src.gateway.tasks import TaskRunner
+from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.dispatch import DispatchService
+from src.workflow.tasks.task_scan import archive_path, digest, verify_archive
+from src.workflow.tasks.tasks import TaskRunner
 from tests.unit.test_task_coverage import fixture, finish, step, task_bytes
 
 
@@ -196,7 +196,7 @@ def test_archive_save_failures_never_release_active(tmp_path, monkeypatch, failu
     with monkeypatch.context() as patch:
         if failure == "sync":
             patch.setattr(
-                "src.gateway.task_scan.os.fsync",
+                "src.workflow.tasks.task_scan.os.fsync",
                 lambda _: (_ for _ in ()).throw(OSError("disk sync failed")),
             )
         elif failure == "write":
@@ -207,13 +207,13 @@ def test_archive_save_failures_never_release_active(tmp_path, monkeypatch, failu
                     raise OSError("archive write unavailable")
                 return original_open(path, flags, *args)
 
-            patch.setattr("src.gateway.task_scan.os.open", fail_write)
+            patch.setattr("src.workflow.tasks.task_scan.os.open", fail_write)
         elif failure == "replace":
             patch.setattr(
                 Path, "replace", lambda *args: (_ for _ in ()).throw(OSError("replace failed"))
             )
         else:
-            original = __import__("src.gateway.task_scan", fromlist=["load_archive"]).load_archive
+            original = __import__("src.workflow.tasks.task_scan", fromlist=["load_archive"]).load_archive
             count = 0
 
             def readback(*args):
@@ -223,7 +223,7 @@ def test_archive_save_failures_never_release_active(tmp_path, monkeypatch, failu
                     raise OSError("readback failed")
                 return original(*args)
 
-            patch.setattr("src.gateway.task_scan.load_archive", readback)
+            patch.setattr("src.workflow.tasks.task_scan.load_archive", readback)
         with pytest.raises(OSError):
             retain(service, source, row)
     assert service.runner.ledger.load_scan(row["report"]["scan_id"]) == before
@@ -249,7 +249,7 @@ def test_release_unlink_or_directory_sync_failure_retry_keeps_archive(tmp_path, 
         with pytest.raises(OSError):
             release(service, source, a)
     assert service.runner.ledger.load_scan(a["scan_id"]) and exported(service, source, a)
-    sync = __import__("src.gateway.task_scan", fromlist=["_sync_directory"])._sync_directory
+    sync = __import__("src.workflow.tasks.task_scan", fromlist=["_sync_directory"])._sync_directory
 
     def fail_active(path):
         if path.name == "task_scans":
@@ -258,7 +258,7 @@ def test_release_unlink_or_directory_sync_failure_retry_keeps_archive(tmp_path, 
 
     # The archive parent sync occurs before unlink, so this is a pre-release failure.
     with monkeypatch.context() as patch:
-        patch.setattr("src.gateway.task_scan._sync_directory", fail_active)
+        patch.setattr("src.workflow.tasks.task_scan._sync_directory", fail_active)
         with pytest.raises(OSError):
             release(service, source, a)
     assert service.runner.ledger.load_scan(a["scan_id"])
@@ -278,7 +278,7 @@ def test_damaged_history_cannot_free_active_or_claim_verified(tmp_path, monkeypa
         path.unlink()
         path.symlink_to(service.runner.ledger._path(source.id))
     elif damage == "oversize":
-        monkeypatch.setattr("src.gateway.task_scan.MAX_ARCHIVE_BYTES", 32)
+        monkeypatch.setattr("src.workflow.tasks.task_scan.MAX_ARCHIVE_BYTES", 32)
     else:
         changed = copy.deepcopy(artifact)
         if damage == "checksum":
@@ -411,14 +411,14 @@ def test_post_unlink_sync_failure_can_be_confirmed_after_restart(tmp_path, monke
     service, source, _, _ = fixture(tmp_path, children=0)
     finish(service, source)
     a = retain(service, source)
-    sync = __import__("src.gateway.task_scan", fromlist=["_sync_directory"])._sync_directory
+    sync = __import__("src.workflow.tasks.task_scan", fromlist=["_sync_directory"])._sync_directory
     def fail_after_unlink(path):
         if path.name == "task_scans" and service.runner.ledger.load_scan(a["scan_id"]) is None:
             raise OSError("post unlink directory sync failed")
         sync(path)
 
     with monkeypatch.context() as patch:
-        patch.setattr("src.gateway.task_scan._sync_directory", fail_after_unlink)
+        patch.setattr("src.workflow.tasks.task_scan._sync_directory", fail_after_unlink)
         with pytest.raises(OSError):
             release(service, source, a)
     assert service.runner.ledger.load_scan(a["scan_id"]) is None

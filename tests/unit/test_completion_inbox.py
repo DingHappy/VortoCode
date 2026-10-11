@@ -3,8 +3,8 @@ import asyncio
 import pytest
 
 from src.agents.delegation import build_research_tools
-from src.gateway.collaboration import CollaborationService
-from src.gateway.handoffs import CompletionInbox, HandoffConflict, completion_state
+from src.workflow.tasks.collaboration import CollaborationService
+from src.workflow.tasks.handoffs import CompletionInbox, HandoffConflict, completion_state
 
 
 def setup_inbox(root):
@@ -52,7 +52,7 @@ def test_owner_terminal_kind_and_persistence_boundaries(tmp_path, monkeypatch):
 
 
 def test_standalone_inbox_resolves_dynamic_owner_and_corrupt_receipt(tmp_path):
-    from src.gateway.tasks import TaskLedger
+    from src.workflow.tasks.tasks import TaskLedger
 
     owner = {"id": "sid-first"}
     inbox = CompletionInbox(str(tmp_path), lambda: owner["id"])
@@ -124,7 +124,7 @@ def test_receipt_notifications_follow_durable_save_and_are_idempotent(tmp_path):
     _, task, _ = setup_inbox(tmp_path)
     notified = []
     def update(saved):
-        from src.gateway.tasks import TaskLedger
+        from src.workflow.tasks.tasks import TaskLedger
         assert TaskLedger(str(tmp_path)).load(saved.id).handoff_receipt == saved.handoff_receipt
         notified.append(saved.id)
         raise RuntimeError("transport disconnected")
@@ -231,8 +231,8 @@ async def test_next_user_turn_notified_until_receipt_without_injecting_result(tm
 
 
 def test_service_delivery_rounds_share_inbox_without_conflating_acceptance(tmp_path):
-    from src.gateway.handoffs import completion_state
-    from src.gateway.worktree_sessions import task_session_view
+    from src.workflow.tasks.handoffs import completion_state
+    from src.workflow.tasks.worktree_sessions import task_session_view
 
     service = CollaborationService(str(tmp_path), "sid-owner")
     task = service.create("分析入口", "reviewer", ["提供证据"], dispatch={"source": "api"})

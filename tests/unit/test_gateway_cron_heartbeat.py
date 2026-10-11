@@ -1,4 +1,4 @@
-"""D3 · cron（定时作业）+ heartbeat（值班）——src/gateway/cron.py + heartbeat.py。
+"""D3 · cron（定时作业）+ heartbeat（值班）——src/scheduling/cron.py + heartbeat.py。
 
 不真跑流水线/不触模型：注入假 run_session/submit/notify，聚焦①schedule 解析+due ②作业表加载
 ③状态持久化 ④隔离执行+announce ⑤activeHours ⑥HEARTBEAT_OK 丢弃 ⑦backlog 领活+标记 ⑧不重复领。
@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from src.gateway import cron, heartbeat
+from src.scheduling import cron, heartbeat
 
 
 @pytest.mark.asyncio
@@ -281,8 +281,8 @@ async def test_scheduler_loop_wires_notify_to_cron_and_heartbeat(tmp_path, monke
     """常驻 scheduler 必须给 cron/heartbeat 传 notify——否则 announce=im/surfaced 在 daemon 路径
     静默丢失（codex 审 #129）。断言两处都收到非空 notify，且 notify 真会落通知台账。"""
     import asyncio
-    from src.gateway import cron as _cron
-    from src.gateway import heartbeat as _hb
+    from src.scheduling import cron as _cron
+    from src.scheduling import heartbeat as _hb
     from src.web.routers import tasks as tm
 
     monkeypatch.chdir(tmp_path)
@@ -339,14 +339,14 @@ def _seed_human_session(tmp_path):
 
 
 def _cron_runs(tmp_path):
-    from src.gateway.runs import RunLedger
+    from src.workflow.workbench.runs import RunLedger
     return [r for r in RunLedger(str(tmp_path)).list() if r.kind == "cron"]
 
 
 @pytest.mark.asyncio
 async def test_cron_output_goes_to_journal_not_human_session_history(tmp_path):
     """例行产出进 Journal（run lane），**人类会话历史长度一字不变**。"""
-    from src.gateway.journal import build_daily_journal
+    from src.workflow.workbench.journal import build_daily_journal
     from src.web.session_store import load_session
 
     transcript, history = _seed_human_session(tmp_path)
@@ -379,9 +379,9 @@ jobs:
 @pytest.mark.asyncio
 async def test_failed_command_job_reaches_decision_queue_and_notice_ledger(tmp_path, monkeypatch):
     """红线：作业失败 → 决策队列（有东西要你拍板）+ 通知台账，announce=silent 也压不住。"""
-    from src.gateway.decisions import DecisionStore, build_decision_queue
-    from src.gateway.notices import load_notices
-    from src.gateway.runs import RunLedger
+    from src.workflow.tasks.decisions import DecisionStore, build_decision_queue
+    from src.scheduling.notices import load_notices
+    from src.workflow.workbench.runs import RunLedger
 
     async def fake_command(repo_root, job):
         return 1, "评测回归 2 例", {"backend": "seatbelt", "isolated": True}
@@ -407,8 +407,8 @@ async def test_failed_command_job_reaches_decision_queue_and_notice_ledger(tmp_p
 @pytest.mark.asyncio
 async def test_job_exception_is_recorded_not_swallowed(tmp_path):
     """作业炸了（沙箱 fail-closed / 模型不可用 / 脚本抛）：照样留痕 + 通报，且记为已跑不刷屏。"""
-    from src.gateway.decisions import build_decision_queue
-    from src.gateway.runs import RunLedger
+    from src.workflow.tasks.decisions import build_decision_queue
+    from src.workflow.workbench.runs import RunLedger
     from src.web.session_store import load_session
 
     _seed_human_session(tmp_path)
@@ -443,7 +443,7 @@ jobs:
 @pytest.mark.asyncio
 async def test_silent_success_stays_out_of_notice_ledger_but_is_journaled(tmp_path):
     """announce=silent 只压成功产出：台账不响，但 Journal 仍有账可查（例行日志不刷人）。"""
-    from src.gateway.notices import load_notices
+    from src.scheduling.notices import load_notices
 
     async def fake_session(repo_root, prompt, **k):
         return "没什么事"
@@ -462,7 +462,7 @@ async def test_silent_success_stays_out_of_notice_ledger_but_is_journaled(tmp_pa
 @pytest.mark.asyncio
 async def test_announce_falls_back_to_notice_ledger_when_push_dies(tmp_path):
     """推送这一路挂了 → 兜底落通知台账（去处永远是台账，不是谁的聊天记录）。"""
-    from src.gateway.notices import load_notices
+    from src.scheduling.notices import load_notices
 
     async def fake_session(repo_root, prompt, **k):
         return "跑完了"

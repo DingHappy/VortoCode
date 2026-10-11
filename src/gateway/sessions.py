@@ -138,7 +138,7 @@ class SessionTable:
                 return False
             from src.web.session_store import save_session
             from src.gateway.agent_session import session_behavior_fp, session_tool_names
-            from src.gateway.dashboard import agent_context_summary
+            from src.workflow.tasks.dashboard import agent_context_summary
             agent = sess.get("agent")
             mode = getattr(agent, "_context_mode", "plan")
             return save_session(repo_root, key, (sess.get("transcript") or []) if transcript is None else transcript,

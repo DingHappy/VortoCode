@@ -6,8 +6,8 @@ import os
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.gateway.dispatch import session_identity
-from src.gateway.handoffs import CompletionInbox, HandoffConflict
+from src.workflow.tasks.dispatch import session_identity
+from src.workflow.tasks.handoffs import CompletionInbox, HandoffConflict
 from src.web import task_events
 
 router = APIRouter(prefix="/api/task-inbox", tags=["Task handoff"])
@@ -24,7 +24,7 @@ def _inbox(session: str) -> CompletionInbox:
     root = os.getcwd()
 
     def on_update(task):
-        from src.gateway.worktree_sessions import task_session_view
+        from src.workflow.tasks.worktree_sessions import task_session_view
         # A receipt update is not another delivery/completion notification.
         task_events.broadcast_task_update(task_session_view(root, task))
 

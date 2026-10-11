@@ -193,7 +193,7 @@ def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable
     注：调用方（CLI/Web）应把 `skill_catalog(repo_root)` 注入 extra_system，模型才知道有哪些技能可 use_skill。
     """
     import uuid
-    from src.gateway.collaboration import CollaborationService
+    from src.workflow.tasks.collaboration import CollaborationService
     owner = task_owner or memory_session_id or f"agent-{uuid.uuid4().hex}"
     collaboration = CollaborationService(repo_root, owner, on_update=on_task_update)
     tools = (build_read_tools(repo_root)
@@ -207,7 +207,7 @@ def build_agent_tools(repo_root: str, *, confirm, on_progress: Optional[Callable
     if with_web:
         tools += build_web_tools() + build_screenshot_tool(repo_root)
     if with_artifacts:
-        from src.web.artifacts import build_artifact_tools    # 惰性导入：避免 agents 层在导入期硬依赖 web
+        from src.agents.tools.artifacts import build_artifact_tools    # 惰性导入：避免 agents 层在导入期硬依赖 web
 
         # 制品是**对外发布**（写盘 + 经 /artifact/<id> 提供服务）、删除不可逆 → 必须过确认门。
         # 此前这里根本没传 confirm，publish/delete 完全绕过了 gate（自审逮到）。

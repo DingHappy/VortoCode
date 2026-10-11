@@ -17,7 +17,7 @@ import os
 from fastapi import Request
 
 from src.web.deps import *  # noqa: F401,F403
-from src.web.artifacts import ArtifactStore
+from src.agents.tools.artifacts import ArtifactStore
 
 router = APIRouter()
 

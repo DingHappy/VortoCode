@@ -9,7 +9,7 @@
 """
 import pytest
 
-from src.gateway.products import MAX_PREVIEW_CHARS, render_payload
+from src.workflow.pipeline.products import MAX_PREVIEW_CHARS, render_payload
 
 
 def test_it_shows_the_actual_items_not_just_a_count():

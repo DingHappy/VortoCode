@@ -12,8 +12,8 @@ import asyncio
 import pytest
 import yaml
 
-from src.gateway.pipeline import MAX_STAGE_ATTEMPTS, PipelineStore, review, review_fingerprint
-from src.gateway.pipeline_tick import MAX_RUNS_PER_TICK, tick
+from src.workflow.pipeline.pipeline import MAX_STAGE_ATTEMPTS, PipelineStore, review, review_fingerprint
+from src.workflow.pipeline.pipeline_tick import MAX_RUNS_PER_TICK, tick
 
 DEF = {
     "name": "content-ops",
@@ -51,7 +51,7 @@ async def _boom(stage_def, inputs):
 
 
 def _start(repo) -> str:
-    from src.gateway.pipeline import load_definition
+    from src.workflow.pipeline.pipeline import load_definition
     return PipelineStore(repo).start(load_definition(repo, "content-ops")).run_id
 
 
@@ -234,7 +234,7 @@ async def test_tick_exits_zero_even_when_a_human_is_needed(repo, monkeypatch, ca
     人会收到两条说同一件事的消息，run 台账里还会多一条不是失败的失败。
     （对照 `advance` 的 1=需要人处理——两个命令服务的读者不同。）
     """
-    from src.gateway import pipeline_cli, pipeline_tick
+    from src.workflow.pipeline import pipeline_cli, pipeline_tick
 
     monkeypatch.chdir(repo)
     sent = []
@@ -259,7 +259,7 @@ async def test_a_web_stage_is_not_run_unattended(repo):
     第一版 tick 传 capabilities=None 且照传 with_web——**那句话对这条路径是假的**。
     出网既是信息入口也是外传通道（web_fetch 的 GET query 就能带走东西），无人值守下尤其如此。
     """
-    from src.gateway.pipeline import load_definition
+    from src.workflow.pipeline.pipeline import load_definition
 
     d = repo + "/.vortocode/pipelines/web-ops.yaml"
     with open(d, "w", encoding="utf-8") as fh:
@@ -278,7 +278,7 @@ async def test_a_web_stage_is_not_run_unattended(repo):
 @pytest.mark.asyncio
 async def test_a_web_stage_runs_when_a_human_is_at_the_gate(repo):
     """有人在就照跑——"不给网"针对的是没人看着那一档，不是把出网工序永久禁掉。"""
-    from src.gateway.pipeline import load_definition
+    from src.workflow.pipeline.pipeline import load_definition
 
     with open(repo + "/.vortocode/pipelines/web-ops.yaml", "w", encoding="utf-8") as fh:
         yaml.safe_dump({"name": "web-ops", "stages": [
@@ -328,7 +328,7 @@ def test_the_message_never_claims_more_than_happened(repo, status, ran, expect, 
     （_signature 对 running 返回空、不通报），所以一直没露馅；但 bridge 的 /go 跑完
     就是 running——复用的那一刻，"还有工序没跑完"就会被说成"全部完成"。
     """
-    from src.gateway.pipeline_tick import TickOutcome, _message
+    from src.workflow.pipeline.pipeline_tick import TickOutcome, _message
 
     run_id = _start(repo)
     run = PipelineStore(repo).load(run_id)

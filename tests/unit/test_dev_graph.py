@@ -7,7 +7,7 @@
 import pytest
 
 from src.agents.dev_plan import Block, DevPlan, save_plan
-from src.gateway.dev_graph import graph_of, plan_graph, plan_summaries
+from src.workflow.tasks.dev_graph import graph_of, plan_graph, plan_summaries
 
 
 def _plan(blocks, **kw):

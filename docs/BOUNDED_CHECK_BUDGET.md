@@ -56,7 +56,7 @@ committed_tokens、usage_complete 和 blocked_reason；HardBudgetError 也附带
 
 ## 持久授权与认领切片
 
-`gateway/continuations.py` 将授权保存在原任务的 `continuation.entries`，按交接内容版本索引。
+`workflow/tasks/continuations.py` 将授权保存在原任务的 `continuation.entries`，按交接内容版本索引。
 当前授权针对已结束且未处理的 dev / API 下派结果；提交时预授权、HTTP/UI 操作入口和
 会话 actor 接续仍待装配。授权保存 owner、随机授权 ID、严格预算；预算不能在认领时扩大。
 重复授权只在同版本、同预算、尚未认领时幂等返回。同一结果版本的认领、撤销或已结束记录
@@ -78,7 +78,7 @@ TaskRunner 启动恢复会将 claimed 检查记为 interrupted，通知沿用现
 
 ## 会话 actor 检查桥
 
-`gateway/continuation_checks.py` 注入已有 SessionActors、ContinuationService、有界执行器、
+`workflow/tasks/continuation_checks.py` 注入已有 SessionActors、ContinuationService、有界执行器、
 工作区资格函数和持久汇报 writer。能力报告 `check_budget_support` 与 HardBudgetedLLM
 共用同一个资格门，默认 LLMClient 缺少严格声明与可靠输入计量；HTTP capabilities 显式
 返回 automatic_check.available=false，不凭兼容接口、环境变量或估算 usage 放行。

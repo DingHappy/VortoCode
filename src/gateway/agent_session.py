@@ -152,7 +152,7 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         # 位于应用管理目录，就顺带暴露 read/shell/git/memory/skill/dev/pr。
         tools = build_web_tools() + [workspace_tool]
         if kind == "web":
-            from src.web.artifacts import build_artifact_tools
+            from src.agents.tools.artifacts import build_artifact_tools
 
             async def _publish(preview: dict, is_update: bool) -> bool:
                 verb = "更新" if is_update else "发布"

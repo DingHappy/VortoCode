@@ -15,8 +15,8 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from src.gateway.pipeline import PipelineStore, load_definition, review, review_fingerprint
-from src.gateway.products import ProductStore
+from src.workflow.pipeline.pipeline import PipelineStore, load_definition, review, review_fingerprint
+from src.workflow.pipeline.products import ProductStore
 
 router = APIRouter()
 

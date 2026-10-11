@@ -6,11 +6,11 @@ from types import SimpleNamespace
 import pytest
 
 from src.agents.bounded_check import run_bounded_check
-from src.gateway.continuation_checks import ContinuationChecks, PersistedCheckReport
-from src.gateway.continuations import ContinuationService
-from src.gateway.handoffs import CompletionInbox, revision
+from src.workflow.tasks.continuation_checks import ContinuationChecks, PersistedCheckReport
+from src.workflow.tasks.continuations import ContinuationService
+from src.workflow.tasks.handoffs import CompletionInbox, revision
 from src.gateway.session_actor import ActorContext, SessionActors, new_prompt_item
-from src.gateway.tasks import TaskLedger
+from src.workflow.tasks.tasks import TaskLedger
 from src.llm.client import LLMClient
 from src.llm.hard_budget import BudgetSupport, CheckLimits, check_budget_support
 

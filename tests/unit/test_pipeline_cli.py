@@ -6,9 +6,9 @@
 import pytest
 import yaml
 
-from src.gateway.pipeline import PipelineStore, review_fingerprint
-from src.gateway.pipeline_cli import run_pipeline_cli
-from src.gateway.products import ProductStore
+from src.workflow.pipeline.pipeline import PipelineStore, review_fingerprint
+from src.workflow.pipeline.pipeline_cli import run_pipeline_cli
+from src.workflow.pipeline.products import ProductStore
 
 DEF = {
     "name": "content-ops",

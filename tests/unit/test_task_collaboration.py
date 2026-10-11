@@ -9,10 +9,10 @@ import pytest
 
 from src.agents.main_agent import MainAgent, build_agent_tools, build_research_tools
 from src.agents import taint
-from src.gateway.collaboration import CollaborationConflict, CollaborationService
-from src.gateway.tasks import TaskLedger
-from src.gateway.decisions import build_decision_queue
-from src.gateway.worktree_sessions import task_session_view
+from src.workflow.tasks.collaboration import CollaborationConflict, CollaborationService
+from src.workflow.tasks.tasks import TaskLedger
+from src.workflow.tasks.decisions import build_decision_queue
+from src.workflow.tasks.worktree_sessions import task_session_view
 
 
 class EchoLLM:
@@ -223,7 +223,7 @@ def test_standard_factory_wires_collaboration_and_modules_do_not_import_facade(t
                                             with_web=False, with_cron=False, with_dev=False)}
     assert {"task", "task_status", "task_review", "task_followup"} <= set(by)
     root = Path(__file__).resolve().parents[2]
-    for file in ["src/agents/dev_tools.py", "src/agents/dev_policy.py", "src/agents/delegation.py", "src/gateway/collaboration.py"]:
+    for file in ["src/agents/dev_tools.py", "src/agents/dev_policy.py", "src/agents/delegation.py", "src/workflow/tasks/collaboration.py"]:
         tree = ast.parse((root / file).read_text())
         assert not any(isinstance(node, ast.ImportFrom) and node.module == "src.agents.main_agent"
                        for node in ast.walk(tree)), file

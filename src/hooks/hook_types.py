@@ -39,7 +39,7 @@ class CommandHook(Hook):
 
     async def execute(self, event: HookEvent) -> HookResult:
         """执行命令"""
-        from src.gateway.change_sources import capture_workspace_state, record_workspace_side_effects
+        from src.workflow.review.change_sources import capture_workspace_state, record_workspace_side_effects
 
         attribution_root = self.cwd or os.getcwd()
         before_state = capture_workspace_state(attribution_root)

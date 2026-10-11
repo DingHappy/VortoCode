@@ -5,7 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.gateway.audit import record_tool_audit
-from src.gateway.decisions import DecisionStore, build_decision_queue
+from src.workflow.tasks.decisions import DecisionStore, build_decision_queue
 
 
 class _DecisionWS:
@@ -74,7 +74,7 @@ def test_decision_and_audit_rest_endpoints(tmp_path, monkeypatch):
         str(tmp_path), session="desktop", mode="plan", name="read_file",
         args={"path": "README.md"}, result="ok",
     )
-    from src.gateway.goals import GoalLedger
+    from src.workflow.workbench.goals import GoalLedger
     from src.web.server import app
 
     goal = GoalLedger(str(tmp_path)).create("修复回归", ["测试通过"])
@@ -98,7 +98,7 @@ def test_paused_task_survives_restart_unwoken_but_visible(tmp_path):
 
     造真实台账文件、用全新 TaskRunner 模拟重启后的进程，断行为不查源码。
     """
-    from src.gateway.tasks import TaskLedger, TaskRunner
+    from src.workflow.tasks.tasks import TaskLedger, TaskRunner
 
     ledger = TaskLedger(str(tmp_path))
     paused = ledger.create(prompt="拆分 App.tsx 文件面板", kind="dev")

@@ -7,8 +7,8 @@ import sys
 
 import pytest
 
-from src.gateway.collaboration import CollaborationConflict
-from src.gateway.task_scan import MAX_ARCHIVE_BYTES, archive_path, digest, verify_file_bytes, verify_file_path
+from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.task_scan import MAX_ARCHIVE_BYTES, archive_path, digest, verify_file_bytes, verify_file_path
 from tests.unit.test_task_coverage import fixture, finish, task_bytes
 from tests.unit.test_task_coverage_archive import exported, retain
 
@@ -136,7 +136,7 @@ def test_offline_file_reader_refuses_unsafe_or_changing_files(tmp_path, monkeypa
         def change(current):
             path.write_bytes(raw + b" ")
             return original(current)
-        monkeypatch.setattr("src.gateway.task_scan.os.lstat", change)
+        monkeypatch.setattr("src.workflow.tasks.task_scan.os.lstat", change)
     with pytest.raises((ValueError, OSError)):
         verify_file_path(path)
 

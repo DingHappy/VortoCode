@@ -118,7 +118,7 @@ App 仅注入快照、下派模型和领域动作，原 DOM 层次、class 与�
 
 ### 开发恢复与任务定位
 
-开发恢复由 gateway/task_recovery.py 校验一次恢复身份和来源/计划摘要，使用原 TaskRunner；
+开发恢复由 workflow/tasks/task_recovery.py 校验一次恢复身份和来源/计划摘要，使用原 TaskRunner；
 HTTP 层只适配状态与错误，不增加调度器。来源任务通过 task_update 刷新 can_resume 和
 resumed_task_id；同一恢复请求返回 replayed 及原子任务实际状态。useTasks 按返回 ID
 合并并定位恢复任务，重试提示已有恢复，仍使用原连接代次拒绝迟到响应。
@@ -133,7 +133,7 @@ ID/轮次；提交仍走 GatewayClient.submitDelegation 的请求幂等合同。
 TaskDependencyActions 只显示服务器的 ready/failure/consumed 投影，以共用 useTaskAction
 控制单次提交与连接隔离，releaseTaskDependencies 使用原 HTTP 服务，界面不调度 Agent。
 失败后提示新建合同，保留原任务的失败证据；空依赖字段兼容旧研究卡的验收/返工。
-依赖核对集中在 gateway/task_dependencies.py，推进与排队使用原 DispatchService 和
+依赖核对集中在 workflow/tasks/task_dependencies.py，推进与排队使用原 DispatchService 和
 TaskRunner。主 Agent/HTTP/任务卡不增加各自状态机或执行池；范围与运行证据见
 TASK_COLLABORATION_PRD.md 第 25 节及 DESKTOP_ACCEPTANCE.md。
 
@@ -148,7 +148,7 @@ TaskChainBudget 只显示服务端重新计算的任务数、轮次、步骤和�
 不在客户端扣款或退款。TaskFeed 收到带额度的任务事件后重读权威快照，更新同链
 其他卡片，仍用原请求代次和连接隔离拒绝迟到读取。额度不足时原任务动作表单保留
 草稿，等待状态不被界面推进；
-取消与早结束也不改变根的历史预留。所有入口复用 gateway/task_chain_budget.py、
+取消与早结束也不改变根的历史预留。所有入口复用 workflow/tasks/task_chain_budget.py、
 TaskLedger、原共享锁和 TaskRunner，未增加连接、调度器或自动模型回合。
 步骤和超时按每轮原合同预留，不声称 token/费用硬上限；验收证据见
 DESKTOP_ACCEPTANCE.md，阶段范围见 TASK_COLLABORATION_PRD.md 第 26 节。
@@ -182,7 +182,7 @@ update/handoff 合并。读取期间任何新 upsert 都标记补读，因此无
 
 ## 2026-10-04 服务端下游协调
 
-反向发现与停止集中在 gateway/task_dependents.py；DispatchService 的协作通知、主 Agent
+反向发现与停止集中在 workflow/tasks/task_dependents.py；DispatchService 的协作通知、主 Agent
 审查适配和 TaskRunner 更新调用同一有界领域路径。启动恢复后和已有所属用户回合可补查
 离线变更，核对不会启动付费模型。没有消费合同的用户回合先只读判断，不构造后台池；
 工作区不一致时保留核对不完整提示，不借另一工作区的池修改当前记录。

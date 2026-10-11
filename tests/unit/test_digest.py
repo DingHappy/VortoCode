@@ -7,8 +7,8 @@ signals 里已经带着分数、增量、标题、链接，**按分数挑是确�
 零 token、而且编不了。LLM 该留给真正需要判断的地方。
 """
 
-from src.gateway.collect_cli import render_digest
-from src.gateway.products import Product
+from src.workflow.pipeline.collect_cli import render_digest
+from src.workflow.pipeline.products import Product
 
 
 def _product(signals, failed=None):
@@ -77,7 +77,7 @@ def test_empty_but_with_failures_says_both():
 # ------------------------------------------------------------------ CLI
 def test_cli_refuses_when_collection_never_ran(tmp_path, monkeypatch, capsys):
     """退出码 1 = 还没采过。cron 据此知道该不该报红——而不是推一份空早报。"""
-    from src.gateway.collect_cli import run_digest_cli
+    from src.workflow.pipeline.collect_cli import run_digest_cli
 
     monkeypatch.chdir(tmp_path)
     assert run_digest_cli() == 1
@@ -85,8 +85,8 @@ def test_cli_refuses_when_collection_never_ran(tmp_path, monkeypatch, capsys):
 
 
 def test_cli_prints_the_digest(tmp_path, monkeypatch, capsys):
-    from src.gateway.collect_cli import run_digest_cli
-    from src.gateway.products import ProductStore
+    from src.workflow.pipeline.collect_cli import run_digest_cli
+    from src.workflow.pipeline.products import ProductStore
 
     monkeypatch.chdir(tmp_path)
     ProductStore(str(tmp_path)).create("signals", payload={

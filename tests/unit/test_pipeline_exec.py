@@ -8,8 +8,8 @@ import pathlib
 import pytest
 
 from src.agents.pipeline_exec import build_stage_executor
-from src.gateway.pipeline import StageDef
-from src.gateway.products import ProductStore
+from src.workflow.pipeline.pipeline import StageDef
+from src.workflow.pipeline.products import ProductStore
 
 
 @pytest.fixture

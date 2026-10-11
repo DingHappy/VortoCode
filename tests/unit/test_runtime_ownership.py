@@ -100,7 +100,7 @@ async def test_startup_failure_releases_workspace_before_retry(tmp_path, monkeyp
 
 @pytest.mark.asyncio
 async def test_runner_shutdown_drains_worker_before_releasing_ownership(tmp_path):
-    from src.gateway.tasks import TaskRunner
+    from src.workflow.tasks.tasks import TaskRunner
     started, stopped = asyncio.Event(), asyncio.Event()
     async def worker(task, progress):
         started.set()
@@ -181,7 +181,7 @@ async def test_dingtalk_application_has_one_owner_across_workspaces():
 
 @pytest.mark.asyncio
 async def test_stopped_runner_cannot_accept_or_schedule_more_work(tmp_path):
-    from src.gateway.tasks import TaskRunner
+    from src.workflow.tasks.tasks import TaskRunner
     async def worker(task, progress):
         pytest.fail("A stopped Runtime must not execute work")
     runner = TaskRunner(tmp_path, worker)

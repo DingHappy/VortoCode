@@ -6,9 +6,9 @@ import httpx
 import pytest
 
 from src.agents import dev_plan
-from src.gateway.handoffs import CompletionInbox
-from src.gateway.task_recovery import RecoveryConflict, TaskRecovery, recovery_task_id, validate_recovery_plan
-from src.gateway.tasks import TaskLedger, TaskRunner
+from src.workflow.tasks.handoffs import CompletionInbox
+from src.workflow.tasks.task_recovery import RecoveryConflict, TaskRecovery, recovery_task_id, validate_recovery_plan
+from src.workflow.tasks.tasks import TaskLedger, TaskRunner
 
 
 def stopped(root, *, worker=None, kind="dev"):
@@ -35,7 +35,7 @@ def stopped(root, *, worker=None, kind="dev"):
 
 @pytest.mark.asyncio
 async def test_resume_replay_before_and_after_execution_keeps_identity_and_handoff(tmp_path):
-    from src.gateway.worktree_sessions import task_session_view
+    from src.workflow.tasks.worktree_sessions import task_session_view
     runner, recovery, source, plan, calls, updates = stopped(tmp_path)
     resumed, replayed = recovery.resume(source.id)
     assert not replayed and resumed.id == recovery_task_id(source.id)
@@ -57,9 +57,9 @@ async def test_resume_replay_before_and_after_execution_keeps_identity_and_hando
 
 @pytest.mark.asyncio
 async def test_recovery_lineage_resolves_old_attention_but_preserves_unmatched_failures(tmp_path):
-    from src.gateway.dashboard import background_tasks_by_session
-    from src.gateway.decisions import build_decision_queue
-    from src.gateway.runtime_inbox import build_runtime_inbox
+    from src.workflow.tasks.dashboard import background_tasks_by_session
+    from src.workflow.tasks.decisions import build_decision_queue
+    from src.workflow.tasks.runtime_inbox import build_runtime_inbox
     runner, recovery, source, _, _, _ = stopped(tmp_path)
     child, _ = recovery.resume(source.id)
     assert build_decision_queue(tasks=runner.list()) == []

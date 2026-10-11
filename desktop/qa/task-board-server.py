@@ -44,10 +44,10 @@ LLMClient.__init__ = reject_model
 
 from fastapi import FastAPI  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
-from src.gateway.tasks import BackgroundTask, TaskLedger, TASK_STATE_LOCK  # noqa: E402
-from src.gateway.handoffs import revision  # noqa: E402
-from src.gateway.task_dependencies import _input, invalidate  # noqa: E402
-from src.gateway.goals import GoalLedger  # noqa: E402
+from src.workflow.tasks.tasks import BackgroundTask, TaskLedger, TASK_STATE_LOCK  # noqa: E402
+from src.workflow.tasks.handoffs import revision  # noqa: E402
+from src.workflow.tasks.task_dependencies import _input, invalidate  # noqa: E402
+from src.workflow.workbench.goals import GoalLedger  # noqa: E402
 from src.web.session_store import save_session  # noqa: E402
 from src.web.routers import decisions, task_inbox, goals  # noqa: E402
 
@@ -115,7 +115,7 @@ listener.bind(("127.0.0.1", args.port))
 listener.listen(128)
 port = listener.getsockname()[1]
 metadata = {"root": str(root), "port": port, "pid": os.getpid(), "runtime_files": {
-    name: hashlib.sha256((runtime / name).read_bytes()).hexdigest() for name in ["src/gateway/task_summary.py", "src/gateway/runtime_inbox.py", "src/gateway/handoffs.py", "src/web/routers/decisions.py"]}}
+    name: hashlib.sha256((runtime / name).read_bytes()).hexdigest() for name in ["src/workflow/tasks/task_summary.py", "src/workflow/tasks/runtime_inbox.py", "src/workflow/tasks/handoffs.py", "src/web/routers/decisions.py"]}}
 (root / "host.json").write_text(json.dumps(metadata, indent=2))
 print(json.dumps(metadata), flush=True)
 import uvicorn  # noqa: E402

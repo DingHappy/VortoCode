@@ -1,6 +1,6 @@
 """后台任务路由（D1 v1）——把长 dev 流水线搬到后台，提交即返回、可查询/取消、崩溃可恢复。
 
-取代此前从未接线的 src/core/task_queue 骨架（已退役）。运行时是 src/gateway/tasks.TaskRunner，
+取代此前从未接线的 src/core/task_queue 骨架（已退役）。运行时是 src/workflow/tasks/tasks.TaskRunner，
 台账 write-ahead 落 .vortocode/tasks/<id>.json。dev 型任务直接调 dev_auto 工具（确定性，
 不指望模型自己路由），产出 vorto/* 分支 + C1 计划；后台无人值守 → 外向操作（push）默认不做，
 落分支后由人点 /api/tasks/{id}/open_pr 开 **draft** PR（"人在合并口"）。
@@ -43,14 +43,14 @@ def get_runner():
 
 
 def _task_view(t, *, worktrees=None) -> dict:
-    from src.gateway.worktree_sessions import task_session_view
+    from src.workflow.tasks.worktree_sessions import task_session_view
 
     return task_session_view(os.getcwd(), t, worktrees=worktrees)
 
 
 def _task_snapshot() -> list[dict]:
     """Join one Git worktree snapshot onto every durable task without N Git scans."""
-    from src.gateway.worktree_sessions import list_worktree_sessions
+    from src.workflow.tasks.worktree_sessions import list_worktree_sessions
 
     worktrees = list_worktree_sessions(os.getcwd())
     return [_task_view(task, worktrees=worktrees) for task in get_runner().list()]
@@ -97,7 +97,7 @@ async def get_task_bg(tid: str):
 
 @router.get("/api/worktrees")
 async def list_worktree_workspace():
-    from src.gateway.worktree_sessions import worktree_workspace_snapshot
+    from src.workflow.tasks.worktree_sessions import worktree_workspace_snapshot
 
     return worktree_workspace_snapshot(os.getcwd())
 
@@ -111,7 +111,7 @@ def _task_or_404(tid: str):
 
 @router.get("/api/tasks/{tid}/review")
 async def get_task_branch_review(tid: str):
-    from src.gateway.task_review import task_review_snapshot
+    from src.workflow.review.task_review import task_review_snapshot
 
     try:
         return await asyncio.to_thread(task_review_snapshot, os.getcwd(), _task_or_404(tid))
@@ -121,7 +121,7 @@ async def get_task_branch_review(tid: str):
 
 @router.get("/api/tasks/{tid}/review/diff")
 async def get_task_branch_review_diff(tid: str, path: str):
-    from src.gateway.task_review import task_review_diff
+    from src.workflow.review.task_review import task_review_diff
 
     try:
         return await asyncio.to_thread(task_review_diff, os.getcwd(), _task_or_404(tid), path)
@@ -131,7 +131,7 @@ async def get_task_branch_review_diff(tid: str, path: str):
 
 @router.post("/api/tasks/{tid}/review/action")
 async def apply_task_branch_review(tid: str, body: dict):
-    from src.gateway.task_review import apply_task_review_action
+    from src.workflow.review.task_review import apply_task_review_action
 
     payload = body or {}
     try:
@@ -153,7 +153,7 @@ async def apply_task_branch_review(tid: str, body: dict):
 
 @router.post("/api/tasks/{tid}/review/verify")
 async def verify_task_branch_review(tid: str):
-    from src.gateway.task_review import verify_task_review
+    from src.workflow.review.task_review import verify_task_review
 
     try:
         result = await asyncio.to_thread(verify_task_review, os.getcwd(), _task_or_404(tid))
@@ -185,8 +185,8 @@ class DevelopmentAnswer(BaseModel):
 @router.post("/api/tasks/{tid}/answer", status_code=202)
 async def answer_development_question(tid: str, body: DevelopmentAnswer):
     from src.web.task_dispatch import get_development_questions
-    from src.gateway.collaboration import CollaborationConflict
-    from src.gateway.dispatch import DispatchBusy
+    from src.workflow.tasks.collaboration import CollaborationConflict
+    from src.workflow.tasks.dispatch import DispatchBusy
     try:
         task, replayed = get_development_questions().answer(
             body.session, tid, body.round, body.question_id, body.answer)
@@ -217,7 +217,7 @@ async def resume_task_bg(tid: str):
     if previous is None:
         raise HTTPException(status_code=404, detail=f"无此任务 {tid}")
     from src.agents.dev_plan import load_plan
-    from src.gateway.task_recovery import RecoveryConflict, TaskRecovery
+    from src.workflow.tasks.task_recovery import RecoveryConflict, TaskRecovery
     try:
         recovery = TaskRecovery(
             runner, read_plan=lambda pid: load_plan(os.getcwd(), pid),
@@ -232,10 +232,10 @@ async def resume_task_bg(tid: str):
 
 # ---- 通知台账：daemon 路径（scheduler 里的 cron/heartbeat）的投递终点，绝不静默丢 ----
 # cron 的 announce=im 结果、heartbeat 的 surfaced 发现，此前在常驻 scheduler 里没接 notify → 无声消失
-# （codex 审 #129）。台账本体已下沉到 src/gateway/notices.py（CLI 与调度循环都要写它，不该为了
+# （codex 审 #129）。台账本体已下沉到 src/scheduling/notices.py（CLI 与调度循环都要写它，不该为了
 # 记一条通知去导入 FastAPI 层），这里只保留 REST 出口 + 旧入口再导出。
-from src.gateway.notices import MAX_NOTICES as _MAX_NOTICES  # noqa: E402
-from src.gateway.notices import load_notices, record_notice  # noqa: E402,F401
+from src.scheduling.notices import MAX_NOTICES as _MAX_NOTICES  # noqa: E402
+from src.scheduling.notices import load_notices, record_notice  # noqa: E402,F401
 
 
 @router.get("/api/notices")
@@ -263,15 +263,15 @@ def make_notifier(cwd: str):
     """造调度通知投递器（三路，**绝不静默丢**——codex 审 #129）：
     ①持久台账（GET /api/notices 可查）②WS 广播 ③IM 推 owner（serve 内嵌 bridge 时，PR-5 收口）。
 
-    实现已上移到 `src.gateway.notices`（agents 层的 cron 工具也要用它，不该为推一条通知
+    实现已上移到 `src.scheduling.notices`（agents 层的 cron 工具也要用它，不该为推一条通知
     导入 FastAPI 层）。这里保留同名再导出，旧调用方不变。
     """
-    from src.gateway.notices import make_notifier as _make
+    from src.scheduling.notices import make_notifier as _make
     return _make(cwd)
 
 
 async def scheduler_loop(stop_event):
-    from src.gateway.scheduler import scheduler_loop as run_scheduler
+    from src.scheduling.scheduler import scheduler_loop as run_scheduler
     cwd = os.getcwd()
     await run_scheduler(stop_event, cwd=cwd, runner=get_runner(), notify=make_notifier(cwd))
 
@@ -293,7 +293,7 @@ async def open_task_pr(tid: str):
         raise HTTPException(status_code=400, detail="该任务没有产出分支，无法开 PR")
     if not t.branch.startswith("vorto/"):        # 硬闸：只对隔离流水线分支开 PR，绝不碰 main/其它
         raise HTTPException(status_code=400, detail=f"拒绝：只对 vorto/* 分支开 PR，收到 {t.branch}")
-    from src.gateway.task_review import task_review_delivery_ready
+    from src.workflow.review.task_review import task_review_delivery_ready
     ready, reason = task_review_delivery_ready(os.getcwd(), t)
     if not ready:
         raise HTTPException(status_code=409, detail=reason)

@@ -13,8 +13,8 @@ from pathlib import Path
 import pytest
 
 from src.browser.verify import run_browser_probe
-from src.gateway.pipeline import PipelineDef, PipelineStore, advance
-from src.gateway.products import ProductStore
+from src.workflow.pipeline.pipeline import PipelineDef, PipelineStore, advance
+from src.workflow.pipeline.products import ProductStore
 
 pytestmark = pytest.mark.skipif(os.getenv("VORTOCODE_LIVE_BROWSER") != "1",
                               reason="requires opt-in real Chromium and loopback listener")

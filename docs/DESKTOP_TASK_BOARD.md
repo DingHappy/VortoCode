@@ -62,7 +62,7 @@ TypeScript 检查，正式 Vite 入口仍为 index.html，不打包 QA 页面。
 | column / label | 服务端工作投影与说明，客户端仍核对合法状态组合 |
 | recovered_by | 原恢复合同匹配的接续 task ID，旧状态保留在历史 |
 
-`src/gateway/task_summary.py` 只处理原 TaskLedger 的当前 200 条摘要前缀，来源查询总额
+`src/workflow/tasks/task_summary.py` 只处理原 TaskLedger 的当前 200 条摘要前缀，来源查询总额
 2048 次，复用原有界图核对，不追加文件读写。缺来源/损坏/预算不足 unknown；观察到
 当前轮次、归属或结果版本冲突 invalid；合法已固定失效不会自动解除。valid 不证明
 没有外部临时变更、全图覆盖或执行已停止。共享锁仍只有单进程保证。

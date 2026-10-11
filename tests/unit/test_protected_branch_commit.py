@@ -11,7 +11,7 @@ import subprocess
 
 import pytest
 
-from src.gateway.git_review import commit_reviewed
+from src.workflow.review.git_review import commit_reviewed
 
 
 def _run(repo, *args):

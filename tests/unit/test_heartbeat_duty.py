@@ -15,7 +15,7 @@ import json
 
 import pytest
 
-from src.gateway import heartbeat
+from src.scheduling import heartbeat
 
 
 def _write_checklist(root, text, name="HEARTBEAT.md"):
@@ -179,7 +179,7 @@ async def test_empty_checklist_file_behaves_as_no_checklist(tmp_path, monkeypatc
 # --------------------------------------------------------------- ③ 有异常上报
 @pytest.mark.asyncio
 async def test_anomaly_is_surfaced_and_recorded(tmp_path, monkeypatch):
-    from src.gateway.journal import build_daily_journal
+    from src.workflow.workbench.journal import build_daily_journal
     from src.web.routers.tasks import load_notices, record_notice
 
     monkeypatch.delenv("VORTOCODE_HEARTBEAT_CHECKLIST", raising=False)
@@ -213,7 +213,7 @@ async def test_anomaly_is_surfaced_and_recorded(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_all_clear_is_silent_and_leaves_exactly_one_journal_line(tmp_path, monkeypatch):
     """检查单全过 → 零通知、零会话历史增长、Journal 有且仅有一行台账。"""
-    from src.gateway.journal import build_daily_journal
+    from src.workflow.workbench.journal import build_daily_journal
     from src.web import session_store
     from src.web.routers.tasks import load_notices, record_notice
 
@@ -276,7 +276,7 @@ async def test_all_clear_is_silent_and_leaves_exactly_one_journal_line(tmp_path,
 @pytest.mark.asyncio
 async def test_silent_runs_accumulate_one_ledger_line_each(tmp_path, monkeypatch):
     """连跑三次静默心跳 → 三行台账、零通知（台账是可数的值班证明，不是噪声开关）。"""
-    from src.gateway.journal import build_daily_journal
+    from src.workflow.workbench.journal import build_daily_journal
 
     monkeypatch.delenv("VORTOCODE_HEARTBEAT_CHECKLIST", raising=False)
     _write_checklist(tmp_path, "- 看 CI 是否红\n")
@@ -295,7 +295,7 @@ async def test_silent_runs_accumulate_one_ledger_line_each(tmp_path, monkeypatch
 @pytest.mark.asyncio
 async def test_skipped_outside_active_hours_writes_nothing(tmp_path):
     """窗口外根本没值班 → 不该刷台账（否则夜里每 tick 一行，把 Journal 冲成噪声）。"""
-    from src.gateway.journal import build_daily_journal
+    from src.workflow.workbench.journal import build_daily_journal
 
     _write_checklist(tmp_path, "- 看 CI 是否红\n")
     res = await heartbeat.run_heartbeat(str(tmp_path), hour=3, active_hours="9-23")

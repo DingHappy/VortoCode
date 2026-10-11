@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from src.gateway.products import MAX_PAYLOAD_BYTES, Product, ProductStore
+from src.workflow.pipeline.products import MAX_PAYLOAD_BYTES, Product, ProductStore
 
 
 @pytest.fixture

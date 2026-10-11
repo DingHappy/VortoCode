@@ -23,7 +23,7 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
     background_sources: dict[str, dict] = {}
 
     def _record_command_effects(before_state, tool: str = "run_command") -> None:
-        from src.gateway.change_sources import record_workspace_side_effects
+        from src.workflow.review.change_sources import record_workspace_side_effects
 
         record_workspace_side_effects(
             repo_root, before_state, source="agent", tool=tool,
@@ -53,7 +53,7 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
         kind = EXECUTE if getattr(confirm, "supervised", False) else READ if is_read_only(cmd) else EXECUTE
         if not await request(confirm, f"在仓库根目录{label}？\n  $ {cmd}{sandbox_notice}", kind):
             return f"用户拒绝了命令：{cmd}"
-        from src.gateway.change_sources import capture_workspace_state
+        from src.workflow.review.change_sources import capture_workspace_state
         before_state = capture_workspace_state(repo_root)
         # 若预判时不是已确认的 auto fallback，执行阶段必须继续要求隔离，避免 backend/policy
         # 在确认后变化时静默降级。显式 off 仍由 policy 自身放行。
@@ -93,7 +93,7 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
             if res.get("status") in {"exited", "done", "failed", "cancelled", "stopped"}:
                 background_sources.pop(bid, None)
             else:
-                from src.gateway.change_sources import capture_workspace_state
+                from src.workflow.review.change_sources import capture_workspace_state
                 background_sources[bid] = capture_workspace_state(repo_root) or before_state
         head = f"[{res['id']}] {res['status']}" + (f"（退出码 {res['code']}）" if res['code'] is not None else "")
         drop = f"\n（⚠ 有 {res['dropped']} 行因缓冲上限被挤掉、未读到）" if res.get("dropped") else ""

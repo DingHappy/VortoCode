@@ -6,7 +6,7 @@ import subprocess
 import pytest
 
 from src.agents.dev_plan import DevPlan, save_plan
-from src.gateway.task_review import (
+from src.workflow.review.task_review import (
     apply_task_review_action,
     task_review_delivery_ready,
     task_review_diff,
@@ -14,7 +14,7 @@ from src.gateway.task_review import (
     task_review_summary,
     verify_task_review,
 )
-from src.gateway.tasks import BackgroundTask, TaskRunner
+from src.workflow.tasks.tasks import BackgroundTask, TaskRunner
 
 
 def _git(root, *args, check=True):

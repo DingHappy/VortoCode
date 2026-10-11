@@ -8,7 +8,7 @@ router = APIRouter()
 
 @router.get("/api/git/delivery")
 async def git_delivery_snapshot():
-    from src.gateway.pr_delivery import current_pr_delivery
+    from src.workflow.review.pr_delivery import current_pr_delivery
 
     try:
         return await asyncio.to_thread(current_pr_delivery, os.getcwd())
@@ -18,7 +18,7 @@ async def git_delivery_snapshot():
 
 @router.get("/api/git/delivery/checks/{check_id}/log")
 async def git_delivery_check_log(check_id: str):
-    from src.gateway.pr_delivery import current_failed_check_log
+    from src.workflow.review.pr_delivery import current_failed_check_log
 
     try:
         return await asyncio.to_thread(current_failed_check_log, os.getcwd(), check_id)
@@ -27,7 +27,7 @@ async def git_delivery_check_log(check_id: str):
 
 @router.get("/api/git/review")
 async def git_review_snapshot():
-    from src.gateway.git_review import review_snapshot
+    from src.workflow.review.git_review import review_snapshot
 
     try:
         return await asyncio.to_thread(review_snapshot, os.getcwd())
@@ -37,7 +37,7 @@ async def git_review_snapshot():
 
 @router.get("/api/git/isolated-deliveries")
 async def git_isolated_deliveries():
-    from src.gateway.isolated_deliveries import list_isolated_deliveries
+    from src.workflow.review.isolated_deliveries import list_isolated_deliveries
 
     try:
         return {"deliveries": await asyncio.to_thread(list_isolated_deliveries, os.getcwd())}
@@ -47,7 +47,7 @@ async def git_isolated_deliveries():
 
 @router.get("/api/git/isolated-deliveries/{delivery_id}")
 async def git_isolated_delivery(delivery_id: str):
-    from src.gateway.isolated_deliveries import isolated_delivery_snapshot
+    from src.workflow.review.isolated_deliveries import isolated_delivery_snapshot
 
     try:
         return await asyncio.to_thread(isolated_delivery_snapshot, os.getcwd(), delivery_id)
@@ -57,7 +57,7 @@ async def git_isolated_delivery(delivery_id: str):
 
 @router.get("/api/git/isolated-deliveries/{delivery_id}/diff")
 async def git_isolated_delivery_diff(delivery_id: str, path: str):
-    from src.gateway.isolated_deliveries import isolated_delivery_diff
+    from src.workflow.review.isolated_deliveries import isolated_delivery_diff
 
     try:
         return await asyncio.to_thread(isolated_delivery_diff, os.getcwd(), delivery_id, path)
@@ -67,7 +67,7 @@ async def git_isolated_delivery_diff(delivery_id: str, path: str):
 
 @router.get("/api/git/review/diff")
 async def git_review_diff(path: str, scope: str = "working"):
-    from src.gateway.git_review import review_diff
+    from src.workflow.review.git_review import review_diff
 
     try:
         return await asyncio.to_thread(review_diff, os.getcwd(), path, scope=scope)
@@ -77,7 +77,7 @@ async def git_review_diff(path: str, scope: str = "working"):
 
 @router.post("/api/git/review/action")
 async def git_review_action(body: dict):
-    from src.gateway.git_review import apply_review_action
+    from src.workflow.review.git_review import apply_review_action
 
     payload = body or {}
     try:
@@ -102,14 +102,14 @@ async def git_review_action(body: dict):
 
 @router.get("/api/git/review/comments")
 async def git_review_comments():
-    from src.gateway.review_threads import ReviewThreadStore
+    from src.workflow.review.review_threads import ReviewThreadStore
 
     return {"comments": await asyncio.to_thread(ReviewThreadStore(os.getcwd()).list)}
 
 
 @router.post("/api/git/review/comments")
 async def create_git_review_comment(body: dict):
-    from src.gateway.review_threads import ReviewConflict, ReviewThreadStore
+    from src.workflow.review.review_threads import ReviewConflict, ReviewThreadStore
 
     payload = body or {}
     try:
@@ -131,7 +131,7 @@ async def create_git_review_comment(body: dict):
 
 @router.patch("/api/git/review/comments/{comment_id}")
 async def update_git_review_comment(comment_id: str, body: dict):
-    from src.gateway.review_threads import ReviewThreadStore
+    from src.workflow.review.review_threads import ReviewThreadStore
 
     try:
         result = await asyncio.to_thread(
@@ -148,7 +148,7 @@ async def update_git_review_comment(comment_id: str, body: dict):
 
 @router.delete("/api/git/review/comments/{comment_id}")
 async def delete_git_review_comment(comment_id: str):
-    from src.gateway.review_threads import ReviewThreadStore
+    from src.workflow.review.review_threads import ReviewThreadStore
 
     if not await asyncio.to_thread(ReviewThreadStore(os.getcwd()).delete, comment_id):
         raise HTTPException(status_code=404, detail=f"无此审查评论 {comment_id}")
@@ -157,7 +157,7 @@ async def delete_git_review_comment(comment_id: str):
 
 @router.post("/api/git/review/commit")
 async def git_review_commit(body: dict):
-    from src.gateway.git_review import commit_reviewed
+    from src.workflow.review.git_review import commit_reviewed
 
     try:
         result = await asyncio.to_thread(
@@ -173,7 +173,7 @@ async def git_review_commit(body: dict):
 
 @router.post("/api/git/review/pr")
 async def git_review_pr(body: dict):
-    from src.gateway.git_review import open_reviewed_pr
+    from src.workflow.review.git_review import open_reviewed_pr
 
     payload = body or {}
     try:

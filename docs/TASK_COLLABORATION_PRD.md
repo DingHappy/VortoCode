@@ -427,7 +427,7 @@ await 子 Agent。实际执行前仍复核角色并从持久问答记录重建�
 ## 23. 开发暂停与持久恢复基础切片
 
 开发 Agent 问答需要先能可靠停止和恢复既有计划。本切片收敛原 `/api/tasks/{id}/resume`，
-通过 gateway/task_recovery.py 封装恢复合同，HTTP 保留薄适配，继续使用原 TaskLedger、
+通过 workflow/tasks/task_recovery.py 封装恢复合同，HTTP 保留薄适配，继续使用原 TaskLedger、
 TaskRunner、dev_resume 和完成收件箱，不新增调度池或状态存储。
 
 一次停止记录只创建一个确定身份的 dev-resume 子任务，保留原 owner、goal、plan 和
@@ -670,7 +670,7 @@ provider 复核原停止/历史交接路径。详细证据见 DESKTOP_ACCEPTANCE
 仍可能只有读取时显示失效，旧交接回执也没有新的持久 revision。本切片把有界发现与
 原核对/停止连接起来，使服务更新、启动恢复和已有所属用户回合能够记录这些失效。
 
-领域实现集中在 gateway/task_dependents.py，读取原 TaskLedger，在共享 TASK_STATE_LOCK
+领域实现集中在 workflow/tasks/task_dependents.py，读取原 TaskLedger，在共享 TASK_STATE_LOCK
 内构建临时反向关系，核对后丢弃；没有第二份台账、持久索引、调度器、文件监听或轮询。
 一次最多读 512 个目录项（包括非 JSON，另探测一项判断截断），每条记录最多 262144 字节。
 反向发现最多 32 个下游、8 层、128 次边访问；环去重、来源自身不包含在结果中。

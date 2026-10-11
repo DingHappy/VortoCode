@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from src.gateway.signals import (
+from src.workflow.pipeline.signals import (
     DEDUP_DAYS, Signal, collect, summarize, to_payload,
 )
 
@@ -100,7 +100,7 @@ def test_failed_sources_travel_with_the_payload(tmp_path):
 
 # ------------------------------------------------------------------ 真解析器吃真格式
 def test_hacker_news_parsing():
-    from src.gateway.signals import _hacker_news
+    from src.workflow.pipeline.signals import _hacker_news
 
     pages = {
         "https://hacker-news.firebaseio.com/v0/topstories.json": [1, 2],
@@ -115,7 +115,7 @@ def test_hacker_news_parsing():
 
 
 def test_github_parsing():
-    from src.gateway.signals import _github_new_repos
+    from src.workflow.pipeline.signals import _github_new_repos
 
     body = {"items": [{"full_name": "a/b", "description": "一个新库",
                        "html_url": "https://github.com/a/b", "stargazers_count": 900,
@@ -133,14 +133,14 @@ def test_github_parsing():
 ])
 def test_rss_handles_both_rss_and_atom(body, expect):
     """RSS 和 Atom 是两种格式，只认一种的话有一半的源静默产出空列表。"""
-    from src.gateway.signals import _rss
+    from src.workflow.pipeline.signals import _rss
 
     out = _rss(lambda u: body.encode(), "blog", "https://e.example/feed")
     assert out and out[0].title == expect and out[0].url.startswith("https://e.example/")
 
 
 def test_html_entities_and_tags_are_stripped():
-    from src.gateway.signals import _clean
+    from src.workflow.pipeline.signals import _clean
 
     assert _clean("<b>A &amp; B</b>") == "A & B"
 
@@ -169,7 +169,7 @@ def test_a_transient_failure_is_retried(monkeypatch):
     """
     import urllib.error
 
-    from src.gateway import signals as sg
+    from src.workflow.pipeline import signals as sg
 
     calls = []
 
@@ -204,7 +204,7 @@ def test_an_http_error_is_not_retried(monkeypatch):
     import urllib.error
 
     from src.agents import web_fetch
-    from src.gateway import signals as sg
+    from src.workflow.pipeline import signals as sg
 
     calls = []
 
@@ -226,7 +226,7 @@ def test_giving_up_reports_the_last_transport_error(monkeypatch):
     import urllib.error
 
     from src.agents import web_fetch
-    from src.gateway import signals as sg
+    from src.workflow.pipeline import signals as sg
 
     def always(req, timeout=0):
         raise urllib.error.URLError("connection reset")
@@ -246,7 +246,7 @@ def test_sources_beyond_the_budget_are_named_not_silently_dropped(tmp_path, monk
     **采集是定时作业，不能无限拖。** 但超预算时必须**点名**说哪些源没跑到——静默少一块，
     scout 会拿残缺的数据当全景去判断"什么在热"。
     """
-    from src.gateway import signals as sg
+    from src.workflow.pipeline import signals as sg
 
     clock = {"t": 0.0}
     monkeypatch.setattr(sg.time, "monotonic", lambda: clock["t"])
@@ -272,7 +272,7 @@ def test_hacker_news_stops_instead_of_eating_the_whole_round(monkeypatch):
     """一个源最多吃掉半个预算——31 次往返卡在第 5 次时，该停下把位置让给别的源。"""
     import json as _json
 
-    from src.gateway import signals as sg
+    from src.workflow.pipeline import signals as sg
 
     clock = {"t": 0.0}
     monkeypatch.setattr(sg.time, "monotonic", lambda: clock["t"])
@@ -317,7 +317,7 @@ def test_v2ex_ad_nodes_are_dropped():
     """真机抓到的热门里，"推广"节点那条是「注册就送 $11」的广告。"""
     import json as _json
 
-    from src.gateway.signals import _v2ex_hot
+    from src.workflow.pipeline.signals import _v2ex_hot
 
     body = [
         {"id": 1, "title": "一条广告", "replies": 99, "node": {"title": "推广"}},

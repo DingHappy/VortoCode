@@ -7,8 +7,8 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.gateway.collaboration import CollaborationConflict
-from src.gateway.dispatch import DispatchBusy
+from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.dispatch import DispatchBusy
 from src.web.task_dispatch import get_dispatch_service
 
 router = APIRouter(prefix="/api/delegations", tags=["Task dispatch"])
@@ -106,11 +106,11 @@ def _http_error(error):
 
 
 def _view(task) -> dict:
-    from src.gateway.handoffs import completion_state
-    from src.gateway.task_questions import question_views
-    from src.gateway.task_dependencies import dependency_view
-    from src.gateway.task_chain_budget import budget_view
-    from src.gateway.tasks import TaskLedger
+    from src.workflow.tasks.handoffs import completion_state
+    from src.workflow.tasks.task_questions import question_views
+    from src.workflow.tasks.task_dependencies import dependency_view
+    from src.workflow.tasks.task_chain_budget import budget_view
+    from src.workflow.tasks.tasks import TaskLedger
     return {"id": task.id, "status": task.status, "session": task.owner_session,
             "prompt": task.prompt, "agent": task.collaboration["assignee"],
             "round": task.collaboration["round"], "review": task.collaboration["review"],
@@ -134,7 +134,7 @@ async def capabilities():
     # The production factory still returns the generic client. Never infer a
     # reliable token bound from context_usage or SDK/OpenAI compatibility.
     check_support = check_budget_support(LLMClient)
-    from src.gateway.task_chain_budget import MAX_LIMITS, DEFAULT_LIMITS
+    from src.workflow.tasks.task_chain_budget import MAX_LIMITS, DEFAULT_LIMITS
     return {"version": 1, "mode": "read", "default_agent": "read-only researcher",
             "questions": {"available": True, "max_questions": 2, "expires_seconds": 86400,
                           "answer_uses_next_round": True, "answerer": "owner"},
@@ -314,7 +314,7 @@ async def export_coverage(task_id: str, archive_id: str, session: str = Query(mi
 @router.get("/{task_id}/coverage-archives/{archive_id}/verify")
 async def verify_stored_coverage(task_id: str, archive_id: str, session: str = Query(min_length=1, max_length=124),
                                 round: int = Query(ge=1, le=3)):
-    from src.gateway.task_scan import archive_view
+    from src.workflow.tasks.task_scan import archive_view
     try:
         return archive_view(get_dispatch_service().export_coverage(session, task_id, round, archive_id))
     except (ValueError, OSError) as error:
@@ -323,7 +323,7 @@ async def verify_stored_coverage(task_id: str, archive_id: str, session: str = Q
 
 @router.post("/{task_id}/coverage-archives/{archive_id}/verify")
 async def verify_exported_coverage(task_id: str, archive_id: str, body: CoverageVerify):
-    from src.gateway.task_scan import archive_view
+    from src.workflow.tasks.task_scan import archive_view
     try:
         return archive_view(get_dispatch_service().export_coverage(body.session, task_id, body.round,
                                                                     archive_id, body.artifact))
@@ -336,7 +336,7 @@ async def verify_coverage_file(task_id: str, archive_id: str, request: Request,
                                session: str = Query(min_length=1, max_length=124), round: int = Query(ge=1, le=3),
                                archive_digest: str = Query(pattern=r"^[a-f0-9]{64}$"),
                                file_digest: str = Query(pattern=r"^[a-f0-9]{64}$")):
-    from src.gateway.task_scan import MAX_ARCHIVE_BYTES
+    from src.workflow.tasks.task_scan import MAX_ARCHIVE_BYTES
     if (set(request.query_params) != {"session", "round", "archive_digest", "file_digest"}
             or len(request.query_params.multi_items()) != 4):
         raise HTTPException(422, "文件核验参数缺失、重复或包含额外字段")
@@ -374,7 +374,7 @@ async def verify_coverage_preservation(task_id: str, archive_id: str, request: R
         session: str = Query(min_length=1, max_length=124), round: int = Query(ge=1, le=3),
         archive_digest: str = Query(pattern=r"^[a-f0-9]{64}$"), file_digest: str = Query(pattern=r"^[a-f0-9]{64}$"),
         receipt_file_digest: str = Query(pattern=r"^[a-f0-9]{64}$")):
-    from src.gateway.task_scan import MAX_PRESERVATION_REQUEST_BYTES
+    from src.workflow.tasks.task_scan import MAX_PRESERVATION_REQUEST_BYTES
     fields = {"session", "round", "archive_digest", "file_digest", "receipt_file_digest"}
     if set(request.query_params) != fields or len(request.query_params.multi_items()) != len(fields):
         raise HTTPException(422, "保存凭据核对参数缺失、重复或包含额外字段")

@@ -118,7 +118,7 @@ def test_runtime_kernel_can_assemble_without_importing_web(tmp_path):
     import sys
     script = """import sys
 from src.gateway.runtime import RuntimeServices
-from src.gateway.development_worker import execute_development
+from src.workflow.tasks.development_worker import execute_development
 async def worker(task, progress):
     return 'done'
 services = RuntimeServices(sys.argv[1], development_worker=worker)

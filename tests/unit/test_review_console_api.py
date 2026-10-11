@@ -8,8 +8,8 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-from src.gateway.pipeline import PipelineStore, load_definition
-from src.gateway.products import ProductStore
+from src.workflow.pipeline.pipeline import PipelineStore, load_definition
+from src.workflow.pipeline.products import ProductStore
 
 DEF = {"name": "content-ops", "stages": [
     {"id": "scout", "produces": "topic_pool", "review": True},

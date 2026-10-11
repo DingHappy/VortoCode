@@ -59,7 +59,7 @@ def preflight_dev(repo_root: str, *, want_pr: bool = False, heal: bool = True,
     纪律：只查**流水线必然依赖、缺了必然失败**的东西，每条都给可直接粘贴的修复命令。
     可有可无的一律不进来——预检一旦变成噪音就会被无视。
 
-    `heal=True`（默认）：白名单内**能安全自动处置**的问题（见 gateway/remediation.py）就地修好，
+    `heal=True`（默认）：白名单内**能安全自动处置**的问题（见 scheduling/remediation.py）就地修好，
     修成了就不再算阻塞——"检查出来只会拦住你"和"检查出来顺手修好"差的正是"离不离得开作者"。
     自动处置的作用域一律限本仓库、可逆、幂等；碰全局配置/要装东西/要联网的一律不自动做。
 
@@ -93,7 +93,7 @@ def preflight_dev(repo_root: str, *, want_pr: bool = False, heal: bool = True,
     if not heal or not problems:
         return problems
 
-    from src.gateway.remediation import remediate
+    from src.scheduling.remediation import remediate
     remaining: list[str] = []
     for problem in problems:
         outcome = remediate(repo_root, problem, source="preflight_dev")

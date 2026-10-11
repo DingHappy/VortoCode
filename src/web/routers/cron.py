@@ -5,49 +5,25 @@
 手动触发只接受**已在 cron.yaml 里声明**的作业名：请求命名不了命令/提示词内容，
 不授予调度器本就没有的任何能力（与 `vc cron run <name>` 同语义，便于远程验收）。
 """
-from datetime import timedelta
-
 from src.web.deps import *  # noqa: F401,F403
 
+from src.scheduling.cron import _NEXT_DUE_HORIZON_DAYS, next_due
+
 router = APIRouter()
-
-# 触发守卫（F2–F5）与在跑表已上收到 `src.gateway.cron`：agent 的 cron_run 工具走同一份判定，
-# 各写一份必然漂移、且漂移方向永远是"新那份更松"。这里只负责把拒绝原因映射成 HTTP 状态。
-_REASON_STATUS = {"not_found": 404, "disabled": 409, "shell_disabled": 403, "busy": 409}
-
-# next_due 探测视界：月度作业（含 31 日与跳月）都落在视界内；更远的如实报
-# 「视界内无排期」（null），不再与死表达式混为一谈（对抗审查 F1）。
-_NEXT_DUE_HORIZON_DAYS = 62
 
 
 def _cron_enabled() -> bool:
     return os.getenv("VORTOCODE_CRON", "").strip().lower() in ("1", "true", "yes", "on")
 
 
-def _next_due(schedule, last, now: datetime) -> Optional[datetime]:
-    """下一个应跑时刻。语义与调度器本体同源，不写第二套真相：
-
-    - `every`：连续语义，直接精确计算（last+interval，已超期即「现在」）——不吃
-      分钟栅格，避免比真值晚最多 1 分钟（对抗审查 F6）；
-    - `at`/`cron`：本就以分钟为语义粒度，逐分钟探测 Schedule.due() 即精确值；
-      视界 62 天，None 含义是「视界内无排期」（含死表达式，但不特指它）。
-    """
-    if schedule.kind == "every" and schedule.interval:
-        target = now if last is None else last + schedule.interval
-        return target if target > now else now
-    probe = now.replace(second=0, microsecond=0)
-    end = probe + timedelta(days=_NEXT_DUE_HORIZON_DAYS)
-    step = timedelta(minutes=1)
-    while probe <= end:
-        if schedule.due(probe, last):
-            return probe
-        probe += step
-    return None
+# 触发守卫（F2–F5）与在跑表已上收到 `src.scheduling.cron`：agent 的 cron_run 工具走同一份判定，
+# 各写一份必然漂移、且漂移方向永远是"新那份更松"。这里只负责把拒绝原因映射成 HTTP 状态。
+_REASON_STATUS = {"not_found": 404, "disabled": 409, "shell_disabled": 403, "busy": 409}
 
 
 def _job_payload(job, state, now: datetime) -> Dict[str, Any]:
     last = state.last_run(job.name)
-    next_due = _next_due(job.schedule, last, now) if job.enabled else None
+    due = next_due(job.schedule, last, now) if job.enabled else None
     return {
         "name": job.name,
         "schedule": job.schedule.raw,
@@ -60,14 +36,14 @@ def _job_payload(job, state, now: datetime) -> Dict[str, Any]:
         "model": job.model,
         "last_run": last.isoformat(timespec="seconds") if last else None,
         "failures": state.failures(job.name),
-        "next_due": next_due.isoformat(timespec="seconds") if next_due else None,
+        "next_due": due.isoformat(timespec="seconds") if due else None,
     }
 
 
 @router.get("/api/cron")
 async def cron_overview():
     """作业表全景：调度总开关 + 每项的内容/上次跑/连败/下次应跑。"""
-    from src.gateway.cron import CronState, load_jobs
+    from src.scheduling.cron import CronState, load_jobs
 
     cwd = os.getcwd()
     now = datetime.now()
@@ -84,7 +60,7 @@ async def _run_named_job(cwd: str, name: str) -> None:
     唯一额外责任：触发与编辑 cron.yaml 赛跑导致作业消失时，走通知面留痕而非无声蒸发
     （对抗审查 F5）。手动跑刻意不写 last_run（与 `vc cron run` 同口径）：占用调度位会
     让手动验收顺延正班，那才是错的。"""
-    from src.gateway import cron as _cron
+    from src.scheduling import cron as _cron
     from src.web.routers.tasks import make_notifier
 
     notify = make_notifier(cwd)
@@ -108,7 +84,7 @@ async def trigger_cron_job(name: str):
     结果异步落 runs 台账与通知台账（cron run lane），HTTP 只应答「已开跑」——
     LLM/夜跑类作业可长达小时级，不能挂在请求上。
     """
-    from src.gateway.cron import check_trigger, track_trigger
+    from src.scheduling.cron import check_trigger, track_trigger
 
     cwd = os.getcwd()
     reason, code, job = check_trigger(cwd, name)

@@ -8,11 +8,11 @@ import pytest
 from src.agents.agent_loop import MainAgent
 from src.agents.delegation import build_delegation_executor
 from src.agents.tool import Tool
-from src.gateway.collaboration import CollaborationConflict, CollaborationService
-from src.gateway.dispatch import DispatchService
-from src.gateway.handoffs import CompletionInbox, completion_state
-from src.gateway.task_questions import question_views
-from src.gateway.tasks import TaskLedger, TaskRunner
+from src.workflow.tasks.collaboration import CollaborationConflict, CollaborationService
+from src.workflow.tasks.dispatch import DispatchService
+from src.workflow.tasks.handoffs import CompletionInbox, completion_state
+from src.workflow.tasks.task_questions import question_views
+from src.workflow.tasks.tasks import TaskLedger, TaskRunner
 
 
 def blocked(root, owner="sid-owner"):
@@ -47,9 +47,9 @@ def test_question_and_answer_persist_with_separate_execution_review_and_handling
 
 
 def test_waiting_task_is_visible_in_decisions_and_runtime_inbox(tmp_path):
-    from src.gateway.decisions import build_decision_queue
-    from src.gateway.runtime_inbox import build_runtime_inbox
-    from src.gateway.worktree_sessions import task_session_view
+    from src.workflow.tasks.decisions import build_decision_queue
+    from src.workflow.tasks.runtime_inbox import build_runtime_inbox
+    from src.workflow.tasks.worktree_sessions import task_session_view
     service, task, qid = blocked(tmp_path)
     decisions = build_decision_queue(tasks=[task])
     assert len(decisions) == 1 and decisions[0]["action"] == "open_task"

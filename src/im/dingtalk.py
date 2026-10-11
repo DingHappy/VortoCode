@@ -250,7 +250,7 @@ class DingTalkAdapter(ChannelAdapter):
         还有一条单测把这个行为当特性钉着（"还没 webhook → 不发（钉钉反应式）"）。
 
         两条通道都失败 → **抛异常**。上层 `notify_owner` 据此返回 False，
-        投递器才有机会往台账落一条"未送达"（见 gateway/notices.py）。
+        投递器才有机会往台账落一条"未送达"（见 scheduling/notices.py）。
         """
         # **超长要拆，不能丢**。原先是 _clip 截断 + 一句"已截断"——人知道被截了，但后半截
         # 再也拿不到（真机 2026-09-10 用户反馈，且正好发生在产出物预览上：批之前要看的内容看不全）。

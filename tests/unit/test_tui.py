@@ -4226,7 +4226,7 @@ async def test_assistant_markdown_does_not_crash_and_records_raw():
 
 @pytest.mark.asyncio
 async def test_at_artifact_injects_content(tmp_path):
-    from src.web.artifacts import ArtifactStore
+    from src.agents.tools.artifacts import ArtifactStore
     aid = ArtifactStore(str(tmp_path)).publish("看板", "<h1>DASH</h1>")["id"]
     app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:

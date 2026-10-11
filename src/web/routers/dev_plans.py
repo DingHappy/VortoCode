@@ -12,7 +12,7 @@ router = APIRouter()
 @router.get("/api/dev-plans")
 async def list_dev_plans():
     """计划列表，按最近更新排序（IM /status 同款数据，REST 化）。"""
-    from src.gateway.dev_graph import plan_summaries
+    from src.workflow.tasks.dev_graph import plan_summaries
 
     return plan_summaries(os.getcwd())
 
@@ -20,7 +20,7 @@ async def list_dev_plans():
 @router.get("/api/dev-plans/{plan_id}/graph")
 async def dev_plan_graph(plan_id: str):
     """一份计划的 DAG 投影：nodes + 服务端算好的拓扑 layers（前端不需要图算法）。"""
-    from src.gateway.dev_graph import plan_graph
+    from src.workflow.tasks.dev_graph import plan_graph
 
     graph = plan_graph(os.getcwd(), plan_id)
     if graph is None:

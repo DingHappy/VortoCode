@@ -125,7 +125,7 @@ CheckReportWriter 复用原会话 transcript，按尝试身份去重。保存失
 
 完整 Python 单测与集成回归 3132 项通过、2 项跳过；最终 19 项汇报专项测试包括补充的
 文件名身份别名、损坏尝试字段和实际 Web 历史回放。Ruff/diff 检查通过。
-sidecar 已重新构建，冻结模块清单包含 src.gateway.check_reports；临时工作目录中的
+sidecar 已重新构建，冻结模块清单包含 src.workflow.tasks.check_reports；临时工作目录中的
 打包服务启动、恢复导入和能力接口 smoke 通过。没有真实模型调用、前端交互修改、
 原生应用安装或部署，未重复前端/Rust 测试；自动检查仍关闭。
 
@@ -261,7 +261,7 @@ sidecar 重建后，在临时工作目录启动本机确定性假模型 HTTP 服
 
 ### 开发暂停与持久恢复基础切片
 
-原开发恢复入口收敛到 gateway/task_recovery.py，复用 TaskLedger、TaskRunner 和隔离
+原开发恢复入口收敛到 workflow/tasks/task_recovery.py，复用 TaskLedger、TaskRunner 和隔离
 dev_resume。一次来源只创建一个恢复子任务；重复请求、完成后重试及重启后查询不重新
 执行。合同保存来源/计划摘要，执行前版本变化拒绝；损坏身份、错归属、活动计划、满队列
 和存储失败不能换新身份绕过。恢复任务可独立交接，旧来源保留历史并退出重复注意事项。

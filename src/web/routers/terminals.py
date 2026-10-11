@@ -20,7 +20,7 @@ _TERMINAL_MANAGER = None
 def get_terminal_manager():
     global _TERMINAL_MANAGER
     if _TERMINAL_MANAGER is None:
-        from src.gateway.terminals import TerminalManager
+        from src.workflow.workbench.terminals import TerminalManager
 
         _TERMINAL_MANAGER = TerminalManager(os.getcwd())
     return _TERMINAL_MANAGER

@@ -30,4 +30,4 @@ async def test_b3_decomposition_is_chained():
 
 
 # 注：test_b5_taskqueue_stop_does_not_hang 已随 src/core/task_queue（从未接线的骨架）
-# 于 2026-07 退役删除。后台任务改由 src/gateway/tasks.TaskRunner 承担，其测试见 test_gateway_tasks.py。
+# 于 2026-07 退役删除。后台任务改由 src/workflow/tasks/tasks.TaskRunner 承担，其测试见 test_gateway_tasks.py。

@@ -418,7 +418,7 @@ class TUICommandsMixin:
 
     def _cmd_artifacts(self) -> None:
         """/artifacts 列出已发布的制品（标题/版本/类型/链接）。需起 Web 服务器才能打开。"""
-        from src.web.artifacts import ArtifactStore, artifact_url
+        from src.agents.tools.artifacts import ArtifactStore, artifact_url
         items = ArtifactStore(self.repo_root).list()
         if not items:
             self._emit("(还没有制品。build 模式下让主 agent publish_artifact，"

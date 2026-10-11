@@ -179,7 +179,7 @@ def test_api_session_dashboard_merges_live_status_and_prioritizes_action(client)
     realtime._PENDING_CONFIRMS["confirm-1"] = {
         "session": "sid-live", "text": "允许运行测试？", "created": "2026-07-16T00:00:00Z",
     }
-    from src.gateway.tasks import TaskLedger
+    from src.workflow.tasks.tasks import TaskLedger
     background = TaskLedger(str(root)).create("dev", "后台补测试", owner_session="sid-live")
     background.status = "running"
     background.branch = "vorto/dashboard"
@@ -204,7 +204,7 @@ def test_api_session_dashboard_merges_live_status_and_prioritizes_action(client)
 
 def test_api_dashboard_promotes_failed_background_work(client):
     c, root = client
-    from src.gateway.tasks import TaskLedger
+    from src.workflow.tasks.tasks import TaskLedger
 
     _mk(root, "failed-owner", [{"role": "user", "text": "后台交付"}])
     task = TaskLedger(str(root)).create("dev", "修复失败", owner_session="sid-failed-owner")
@@ -306,7 +306,7 @@ def test_historical_blank_is_hidden_without_deletion_and_named_or_queued_kept(cl
 
 def test_empty_session_with_background_task_stays_visible(client):
     import json
-    from src.gateway.tasks import TaskLedger
+    from src.workflow.tasks.tasks import TaskLedger
     c, root = client
     directory = root / ".vortocode/web_sessions"
     directory.mkdir(parents=True)

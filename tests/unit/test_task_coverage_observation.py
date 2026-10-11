@@ -3,10 +3,10 @@ import copy
 
 import pytest
 
-from src.gateway.collaboration import CollaborationConflict
-from src.gateway.dispatch import DispatchService
-from src.gateway.task_scan import MAX_CHECKPOINT_BYTES, checkpoint_path
-from src.gateway.tasks import TaskRunner
+from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.dispatch import DispatchService
+from src.workflow.tasks.task_scan import MAX_CHECKPOINT_BYTES, checkpoint_path
+from src.workflow.tasks.tasks import TaskRunner
 from tests.unit.test_task_coverage import fixture, finish, step, task_bytes
 from tests.unit.test_task_coverage_archive import retain, release, exported
 

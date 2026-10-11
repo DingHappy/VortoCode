@@ -3,8 +3,8 @@ import asyncio
 
 import pytest
 
-from src.gateway.goals import GoalLedger, evaluate_file_verifier, sync_goal_from_task
-from src.gateway.tasks import BackgroundTask, TaskRunner
+from src.workflow.workbench.goals import GoalLedger, evaluate_file_verifier, sync_goal_from_task
+from src.workflow.tasks.tasks import BackgroundTask, TaskRunner
 
 
 def test_goal_roundtrip_and_contract(tmp_path):
@@ -241,7 +241,7 @@ def test_goal_rest_configures_and_runs_file_verifier(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "artifact.txt").write_text("READY\n", encoding="utf-8")
     from fastapi.testclient import TestClient
-    from src.gateway.runs import RunManager
+    from src.workflow.workbench.runs import RunManager
     from src.web.routers import runs as runs_router
     from src.web.routers import tasks as tasks_router
     from src.web.server import app

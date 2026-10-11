@@ -8,10 +8,10 @@ from pathlib import Path
 
 import pytest
 
-from src.gateway.collaboration import CollaborationConflict
-from src.gateway.task_scan import archive_path, retirement_path, digest, verify_retirement, verify_retirement_path
-from src.gateway.dispatch import DispatchService
-from src.gateway.tasks import TaskRunner
+from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.task_scan import archive_path, retirement_path, digest, verify_retirement, verify_retirement_path
+from src.workflow.tasks.dispatch import DispatchService
+from src.workflow.tasks.tasks import TaskRunner
 from tests.unit.test_task_coverage import fixture, finish, step, task_bytes
 from tests.unit.test_task_coverage_archive import retain, release
 
@@ -74,7 +74,7 @@ def test_fixed_binding_replay_restart_and_read_are_immutable(tmp_path):
 def test_legacy_archives_protect_until_explicit_backfill(tmp_path):
     service, source, archive, calls = retained(tmp_path)
     ledger = service.runner.ledger
-    from src.gateway.task_scan import checkpoint_path
+    from src.workflow.tasks.task_scan import checkpoint_path
     checkpoint_path(ledger, archive["scan_id"]).unlink()  # Previous version already released without retirement.
     before = archive_path(ledger, archive["archive_id"]).read_bytes()
     assert not ledger.scan_retirement_ids()
@@ -90,7 +90,7 @@ def test_legacy_archives_protect_until_explicit_backfill(tmp_path):
 def test_partial_release_freezes_pages_status_observation_but_can_retry(tmp_path, monkeypatch):
     service, source, archive, calls = retained(tmp_path)
     ledger = service.runner.ledger
-    from src.gateway.task_scan import checkpoint_path
+    from src.workflow.tasks.task_scan import checkpoint_path
     path = checkpoint_path(ledger, archive["scan_id"])
     before = path.read_bytes(), task_bytes(service)
     unlink = Path.unlink
@@ -126,7 +126,7 @@ def test_save_failure_never_releases_and_retry_preserves_published_evidence(tmp_
     ledger = service.runner.ledger
     before = task_bytes(service)
     archive_bytes = archive_path(ledger, archive["archive_id"]).read_bytes()
-    from src.gateway import task_scan as scan
+    from src.workflow.tasks import task_scan as scan
     sync, link, fsync, load = scan._sync_directory, os.link, os.fsync, scan.load_retirement
     def fail_sync(path):
         if (stage == "directory_sync" and path.name == "retirements"

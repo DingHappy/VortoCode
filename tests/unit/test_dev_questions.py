@@ -10,12 +10,12 @@ import pytest
 from src.agents.agent_loop import MainAgent
 from src.agents.dev_plan import Block, DevPlan, load_plan, save_checkpoint
 from src.agents.task_questions import bind_development_question
-from src.gateway.collaboration import CollaborationConflict
-from src.gateway.dev_questions import DevelopmentQuestions
-from src.gateway.dispatch import DispatchBusy
-from src.gateway.handoffs import CompletionInbox
-from src.gateway.task_recovery import TaskRecovery, plan_revision
-from src.gateway.tasks import TaskBlocked, TaskLedger, TaskRunner
+from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.dev_questions import DevelopmentQuestions
+from src.workflow.tasks.dispatch import DispatchBusy
+from src.workflow.tasks.handoffs import CompletionInbox
+from src.workflow.tasks.task_recovery import TaskRecovery, plan_revision
+from src.workflow.tasks.tasks import TaskBlocked, TaskLedger, TaskRunner
 
 
 def fixture(root, worker=None):
@@ -352,7 +352,7 @@ async def test_direct_dev_resume_cannot_bypass_open_question(tmp_path):
 @pytest.mark.asyncio
 async def test_parent_reads_and_answers_development_under_shared_pool(tmp_path, monkeypatch, native):
     from src.agents.main_agent import build_research_tools
-    from src.gateway.collaboration import CollaborationService
+    from src.workflow.tasks.collaboration import CollaborationService
     from src.web import task_dispatch
     from src.web.routers import tasks
     runner, service, task, plan, qid = blocked(tmp_path)
@@ -397,9 +397,9 @@ async def test_parent_reads_and_answers_development_under_shared_pool(tmp_path, 
 
 
 def test_blocked_development_projections_keep_exact_question(tmp_path):
-    from src.gateway.decisions import build_decision_queue
-    from src.gateway.runtime_inbox import build_runtime_inbox
-    from src.gateway.worktree_sessions import task_session_view
+    from src.workflow.tasks.decisions import build_decision_queue
+    from src.workflow.tasks.runtime_inbox import build_runtime_inbox
+    from src.workflow.tasks.worktree_sessions import task_session_view
     runner, service, task, plan, qid = blocked(tmp_path)
     view = task_session_view(str(tmp_path), task, worktrees=[])
     assert view["questions"][0]["id"] == qid and not view["can_resume"] and not view["can_pause"]

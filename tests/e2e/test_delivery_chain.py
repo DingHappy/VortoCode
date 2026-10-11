@@ -114,7 +114,7 @@ async def test_cron_detector_catches_missing_notify(box, monkeypatch):
     lane = await lane_cron_delivery(box.root)
     assert lane.ok, f"基线本身就是红的：{lane.detail}"
 
-    from src.gateway import cron as cron_mod
+    from src.scheduling import cron as cron_mod
     real = cron_mod.run_job_by_name
 
     async def _no_notify(repo_root, name, **kw):        # 把 notify 吞掉 = 复现原 bug

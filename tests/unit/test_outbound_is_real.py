@@ -9,7 +9,7 @@ import pytest
 
 from src.agents.pipeline_exec import build_stage_executor
 from src.agents.subagents import OUTBOUND_FACES
-from src.gateway.pipeline import StageDef
+from src.workflow.pipeline.pipeline import StageDef
 
 
 @pytest.fixture
@@ -130,7 +130,7 @@ async def test_a_stage_that_needs_nothing_special_runs(repo, monkeypatch):
 def test_an_unknown_capability_in_the_yaml_is_a_loud_error():
     """**打错一个字母不能静默忽略。** `needs: [datta]` 照跑的话，那道闸看起来生效了其实没有
     ——比没有闸更糟。"""
-    from src.gateway.pipeline import PipelineDef
+    from src.workflow.pipeline.pipeline import PipelineDef
 
     with pytest.raises(ValueError, match="不认识的能力"):
         PipelineDef.from_dict({"name": "t", "stages": [{"id": "a", "needs": ["datta"]}]})

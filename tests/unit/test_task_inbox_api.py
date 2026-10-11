@@ -4,8 +4,8 @@ from copy import deepcopy
 import pytest
 from fastapi.testclient import TestClient
 
-from src.gateway.handoffs import CompletionInbox, completion_state, revision
-from src.gateway.tasks import TaskLedger, TaskRunner
+from src.workflow.tasks.handoffs import CompletionInbox, completion_state, revision
+from src.workflow.tasks.tasks import TaskLedger, TaskRunner
 from src.llm.client import LLMClient
 from src.web import task_events
 from src.web.server import app

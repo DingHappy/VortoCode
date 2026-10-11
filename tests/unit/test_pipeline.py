@@ -6,10 +6,10 @@
 import pytest
 import yaml
 
-from src.gateway.pipeline import (
+from src.workflow.pipeline.pipeline import (
     PipelineDef, PipelineStore, advance, load_definition, review, review_fingerprint,
 )
-from src.gateway.products import ProductStore
+from src.workflow.pipeline.products import ProductStore
 
 CONTENT_OPS = {
     "name": "content-ops",
@@ -307,7 +307,7 @@ async def test_failed_stage_is_retryable_until_the_cap(started):
     都不该让整轮死掉。但也不能无限重试——一个持续失败的工序在 cron 上每天烧一遍 token，
     那是"永远亮着的红灯"的花钱版本。
     """
-    from src.gateway.pipeline import MAX_STAGE_ATTEMPTS
+    from src.workflow.pipeline.pipeline import MAX_STAGE_ATTEMPTS
     store, run = started
     calls = {"n": 0}
 

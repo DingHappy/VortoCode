@@ -3,7 +3,7 @@ import subprocess
 
 import pytest
 
-from src.gateway.pr_delivery import current_failed_check_log, current_pr_delivery
+from src.workflow.review.pr_delivery import current_failed_check_log, current_pr_delivery
 
 
 def _git(root, *args):

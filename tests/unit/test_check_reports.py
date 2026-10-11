@@ -6,13 +6,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from src.gateway.check_reports import CheckReportWriter
-from src.gateway.continuation_checks import ContinuationChecks
-from src.gateway.continuations import ContinuationConflict, ContinuationService
-from src.gateway.handoffs import CompletionInbox, revision
+from src.workflow.tasks.check_reports import CheckReportWriter
+from src.workflow.tasks.continuation_checks import ContinuationChecks
+from src.workflow.tasks.continuations import ContinuationConflict, ContinuationService
+from src.workflow.tasks.handoffs import CompletionInbox, revision
 from src.gateway.session_actor import ActorContext, SessionActors
 from src.gateway.sessions import SessionTable
-from src.gateway.tasks import TaskLedger
+from src.workflow.tasks.tasks import TaskLedger
 from src.llm.hard_budget import CheckLimits
 from src.web import session_store as ss
 

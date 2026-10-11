@@ -38,8 +38,8 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
     async def _list(_args: dict) -> str:
         from datetime import datetime as _dt
 
-        from src.gateway.cron import CronState, load_jobs
-        from src.web.routers.cron import _next_due
+        from src.scheduling.cron import CronState, load_jobs
+        from src.scheduling.cron import next_due
 
         jobs = load_jobs(repo_root)
         if not jobs:
@@ -51,7 +51,7 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
         lines = [f"调度总开关：{'✅ 开' if on else '⛔ 关（作业不会自动跑，仍可 cron_run 手动触发）'}"]
         for j in jobs:
             last = state.last_run(j.name)
-            nxt = _next_due(j.schedule, last, now) if j.enabled else None
+            nxt = next_due(j.schedule, last, now) if j.enabled else None
             fails = state.failures(j.name)
             lines.append(
                 f"- {j.name}（{j.kind}）{'' if j.enabled else ' ⛔已停用'}"
@@ -64,7 +64,7 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
         return "\n".join(lines)
 
     async def _add(args: dict) -> str:
-        from src.gateway.cron import CronEditError, add_job
+        from src.scheduling.cron import CronEditError, add_job
 
         name = str(args.get("name") or "").strip()
         schedule = str(args.get("schedule") or "").strip()
@@ -99,7 +99,7 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
             return (f"已写入作业 {name}，但保持**停用**（你拒绝了启用）。"
                     f"想跑再说一声，或 cron_run 手动跑一次试试。\n{block}")
         try:
-            from src.gateway.cron import set_job_enabled
+            from src.scheduling.cron import set_job_enabled
             set_job_enabled(repo_root, name, True)
         except Exception as e:  # noqa: BLE001
             return f"作业 {name} 已写入但启用失败：{type(e).__name__}: {e}（现为停用态）"
@@ -107,7 +107,7 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
         # 直接贴出来就会出现"已启用"和 `enabled: false` 同框——工具自己跟自己矛盾。真机
         # 2026-07-27 模型信了更具体的那半，回报"已创建但默认停用"，用户于是又说一次"启用"。
         # 别让人去分辨工具话里哪半是真的。
-        from src.gateway.cron import job_block
+        from src.scheduling.cron import job_block
         note = ("" if allow_web else
                 ("\n⚠️ 你拒绝了出网许可，该作业**不能联网**——若它的内容需要搜索/抓网页，"
                  "到点会如实报告缺工具。要改请人工编辑 cron.yaml 加 `allow_web: true`。"
@@ -117,7 +117,7 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
                 + (job_block(repo_root, name) or block) + note)
 
     async def _toggle(args: dict) -> str:
-        from src.gateway.cron import CronEditError, set_job_enabled
+        from src.scheduling.cron import CronEditError, set_job_enabled
 
         name = str(args.get("name") or "").strip()
         enabled = _truthy(args.get("enabled", True))
@@ -131,7 +131,7 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
             return f"未改动：写 cron.yaml 失败 {type(e).__name__}: {e}"
 
     async def _set_prompt(args: dict) -> str:
-        from src.gateway.cron import CronEditError, job_block, load_jobs, set_job_prompt
+        from src.scheduling.cron import CronEditError, job_block, load_jobs, set_job_prompt
 
         name = str(args.get("name") or "").strip()
         new = str(args.get("prompt") or "").strip()
@@ -167,7 +167,7 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
         return f"✅ {note}。当前该作业在 cron.yaml 里是：\n{job_block(repo_root, name)}"
 
     async def _set_web(args: dict) -> str:
-        from src.gateway.cron import CronEditError, load_jobs, set_job_web
+        from src.scheduling.cron import CronEditError, load_jobs, set_job_web
 
         name = str(args.get("name") or "").strip()
         want = _truthy(args.get("allow_web", True))
@@ -192,7 +192,7 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
     async def _run(args: dict) -> str:
         import asyncio as _aio
 
-        from src.gateway.cron import check_trigger, run_job_by_name, track_trigger
+        from src.scheduling.cron import check_trigger, run_job_by_name, track_trigger
 
         name = str(args.get("name") or "").strip()
         reason, _code, job = check_trigger(repo_root, name)
@@ -203,7 +203,7 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
         # 后台跑：夜跑评测这类作业可长达小时级，挂在回合上会把对话卡死。
         # **必须传 notify**：不传的话 `_announce` 只会 record_notice 写盘，人手机上收不到任何东西——
         # 真机 2026-07-27 就是这样，主人在钉钉等了半天，而这里的注释当时还写着"announce 推 IM"。
-        from src.gateway.notices import make_notifier
+        from src.scheduling.notices import make_notifier
         task = _aio.get_running_loop().create_task(
             run_job_by_name(repo_root, name, notify=make_notifier(repo_root)))
         track_trigger(name, task)

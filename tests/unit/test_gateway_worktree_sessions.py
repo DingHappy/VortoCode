@@ -3,8 +3,8 @@ import subprocess
 
 from src.agents.dev_plan import Block, DevPlan, save_plan
 from src.agents.worktree_bindings import bind_worktree_owner, record_worktree_binding
-from src.gateway.tasks import BackgroundTask
-from src.gateway.worktree_sessions import task_session_view, worktree_workspace_snapshot
+from src.workflow.tasks.tasks import BackgroundTask
+from src.workflow.tasks.worktree_sessions import task_session_view, worktree_workspace_snapshot
 
 
 def _git(root, *args):

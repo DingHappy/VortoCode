@@ -3,7 +3,7 @@ import subprocess
 
 import pytest
 
-from src.gateway.isolated_deliveries import (
+from src.workflow.review.isolated_deliveries import (
     isolated_delivery_diff,
     isolated_delivery_snapshot,
     list_isolated_deliveries,

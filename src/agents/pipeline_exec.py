@@ -1,6 +1,6 @@
 """流水线工序执行器——把一道工序接到真的带角色子 agent 上。
 
-`gateway/pipeline.py` 只管"推到哪了、谁在等谁"，刻意不 import agent 层（与 review.py 让
+`workflow/pipeline/pipeline.py` 只管"推到哪了、谁在等谁"，刻意不 import agent 层（与 review.py 让
 main_agent 注入 reviewer 同一理由，避免反向依赖成环）。本模块住在 agents 侧，负责把
 `StageDef + 输入产出物` 变成一次真回合，并在这里完成三处**必须由执行侧做**的接线：
 
@@ -34,8 +34,8 @@ import json
 import re
 from typing import Any, Callable, Dict, List, Optional
 
-from src.gateway.pipeline import StageDef, StageNotStarted
-from src.gateway.products import Product
+from src.workflow.pipeline.pipeline import StageDef, StageNotStarted
+from src.workflow.pipeline.products import Product
 
 _MAX_INPUT_CHARS = 12000          # 单条输入产出物喂进提示词的上限（超了截断并明说截断过）
 _OBJECT = re.compile(r"\{.*\}", re.S)

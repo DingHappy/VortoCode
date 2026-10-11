@@ -63,10 +63,10 @@ def test_the_two_rules_are_not_interchangeable():
 
 # ------------------------------------------------------------------ 各调用点真的走了这一份
 @pytest.mark.parametrize("module, attr, kind", [
-    ("src.gateway.pipeline", "_clean_id", "safe"),
-    ("src.gateway.products", "_clean_id", "safe"),
-    ("src.gateway.goals", "_clean_id", "safe"),
-    ("src.gateway.tasks", "_clean_id", "safe"),
+    ("src.workflow.pipeline.pipeline", "_clean_id", "safe"),
+    ("src.workflow.pipeline.products", "_clean_id", "safe"),
+    ("src.workflow.workbench.goals", "_clean_id", "safe"),
+    ("src.workflow.tasks.tasks", "_clean_id", "safe"),
     ("src.agents.dev_plan", "_clean_id", "safe"),
     ("src.web.session_store", "_clean_sid", "safe"),
 ])
@@ -87,9 +87,9 @@ def test_sanitize_callers_delegate_rather_than_reimplement(monkeypatch, module, 
 
 
 @pytest.mark.parametrize("module, cls, prefix", [
-    ("src.gateway.runs", "RunLedger", "run"),
-    ("src.gateway.terminals", None, "term"),
-    ("src.gateway.review_threads", None, "review"),
+    ("src.workflow.workbench.runs", "RunLedger", "run"),
+    ("src.workflow.workbench.terminals", None, "term"),
+    ("src.workflow.review.review_threads", None, "review"),
 ])
 def test_validate_callers_delegate(monkeypatch, module, cls, prefix):
     import importlib
