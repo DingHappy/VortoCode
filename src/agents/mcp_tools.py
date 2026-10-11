@@ -18,13 +18,20 @@ MCP_CLEANUP_TIMEOUT = 5
 MCP_CLEANUP_UNCONFIRMED = 'MCP cleanup unconfirmed'
 
 
-def wrap_mcp_manager(manager: Any) -> List:
-    """把已初始化的 ToolManager 的 MCP 工具包成 main_agent.Tool 列表。"""
+def wrap_mcp_manager(manager: Any, read_only_servers: frozenset = frozenset()) -> List:
+    """把已初始化的 ToolManager 的 MCP 工具包成 main_agent.Tool 列表。
+
+    read_only_servers：只读连接器。只收标了 `readOnlyHint: true` 的工具（没标的一律不给——
+    服务端的只读模式之外再筛一道，令牌权限给大了也用不上写工具），并按只读工具登记。
+    """
     from src.agents.tool import Tool
     wrapped: List = []
     for mt in manager.list_tools():
         orig = mt.name
         server = getattr(mt, "server_name", "") or "mcp"
+        read_only = server in read_only_servers
+        if read_only and (getattr(mt, "metadata", {}) or {}).get("annotations", {}).get("readOnlyHint") is not True:
+            continue
         from copy import deepcopy
         schema = {"type": "object", **deepcopy(getattr(mt, "input_schema", None) or {})}
         props = schema.get("properties", {}) or {}
@@ -40,7 +47,7 @@ def wrap_mcp_manager(manager: Any) -> List:
         # 之后同回合的对外动作会被提升确认等级（D0 防提示注入外发）。
         public_name = orig if getattr(mt, "metadata", {}).get("mcp_tool_name") else f"mcp__{server}__{orig}"
         wrapped.append(Tool(public_name, f"[MCP:{server}] {mt.description}",
-                            targs, handler, read_only=False, untrusted_source=True,
+                            targs, handler, read_only=read_only, untrusted_source=True,
                             external_content=True, input_schema=schema))
     return wrapped
 
@@ -123,8 +130,71 @@ def _credential_free_http_servers(config: dict) -> list[dict]:
     return allowed
 
 
+_CONNECTOR_NAME = r"[a-z][a-z0-9_-]{0,31}"
+_MAX_SECRET_BYTES = 4096
+
+
+def connector_secret_path(name: str) -> Path:
+    return Path.home() / ".vortocode" / "connectors" / f"{name}.token"
+
+
+def load_connector_secret(name: str) -> str:
+    """读连接器凭据：只认 `~/.vortocode/connectors/<name>.token`，且必须是只有本人可读的普通文件。
+
+    凭据**只在这里**进内存、只进 HTTP 头：不进配置、不进系统提示、不进任何工具结果。
+    权限放宽了（组/其他人可读）就拒绝——别把一个谁都能读的令牌当成主人的授权。"""
+    import os
+    import re
+    import stat
+    if not re.fullmatch(_CONNECTOR_NAME, str(name or "")):
+        raise ValueError("连接器名称不合法")
+    path = connector_secret_path(name)
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_uid != os.getuid():
+        raise PermissionError(f"连接器凭据 {path} 必须是本人所有、权限 600 的普通文件")
+    if info.st_size > _MAX_SECRET_BYTES:
+        raise ValueError("连接器凭据文件过大")
+    secret = path.read_text(encoding="utf-8").strip()
+    if not secret or any(ch.isspace() for ch in secret):
+        raise ValueError("连接器凭据为空或格式不对")
+    return secret
+
+
+def _credentialed_connectors(config: dict) -> list[dict]:
+    """带凭据的 HTTP 连接器（如 GitHub）。**只在通用范围**（常驻助理：没有文件/命令/Git）可用。
+
+    配置里只写凭据**名字**（`credential: github`），令牌原文在 `~/.vortocode/connectors/` 下；
+    配置自带 headers 一律拒绝（防止把令牌直接写进仓库文件）。`read_only: true` 时附上
+    GitHub 的只读头，并在客户端只收 readOnlyHint 工具。缺凭据、权限不对 → 跳过这一个。"""
+    import logging
+    servers = config.get("servers") if isinstance(config, dict) else []
+    out = []
+    for server in servers if isinstance(servers, list) else []:
+        if not isinstance(server, dict) or not server.get("enabled", True) or not server.get("credential"):
+            continue
+        url = str(server.get("url") or "")
+        if (str(server.get("transport") or "").lower() != "http" or server.get("headers")
+                or not url.startswith("https://") or not _credential_free_http_url(url)):
+            continue
+        try:
+            secret = load_connector_secret(str(server["credential"]))
+        except (OSError, ValueError) as error:
+            logging.getLogger(__name__).warning("连接器 %s 未启用：%s", server.get("name"), error)
+            continue
+        headers = {"Authorization": f"Bearer {secret}"}
+        if server.get("read_only", True):
+            headers["X-MCP-Readonly"] = "true"
+        entry = {key: value for key, value in server.items() if key not in ("credential",)}
+        entry.update(headers=headers, read_only=bool(server.get("read_only", True)),
+                     protocol=server.get("protocol", "streamable_http"),
+                     # 托管的 MCP 服务（GitHub 等）目前走 2025-06-18 的握手；配置里可单独指定
+                     protocol_version=server.get("protocol_version", "2025-06-18"))
+        out.append(entry)
+    return out
+
+
 async def connect_mcp(repo_root, *, capability_profile: str | None = None,
-                      confirm: Any = None) -> Tuple[Optional[Any], List]:
+                      confirm: Any = None, allow_connectors: bool = False) -> Tuple[Optional[Any], List]:
     """据 `repo_root/config/mcp.yaml` 连 MCP 服务器，返回 (manager, wrapped_tools)。
 
     无配置文件 → (None, [])，不报错（多数仓库没 MCP）。连接异常上抛由调用方兜（打印/忽略）。
@@ -132,6 +202,8 @@ async def connect_mcp(repo_root, *, capability_profile: str | None = None,
 
     confirm: `action: ask` 权限规则的确认门（async (msg)->bool）。**不传则 ASK 规则一律拒绝**
       （fail-closed，绝不降级成放行）——调用方有真人守着就该传自己的确认门进来。
+    allow_connectors: 带凭据的连接器（GitHub 等）只在**没有文件/命令/Git 的会话**里接，
+      由调用方按范围决定（常驻助理的通用范围才传 True），默认不接。
     """
     from src.agents.capabilities import EXTERNAL_PROFILE, UNATTENDED_PROFILE, normalize_profile
 
@@ -148,6 +220,9 @@ async def connect_mcp(repo_root, *, capability_profile: str | None = None,
     from src.tools.manager import ToolManager
     mgr = ToolManager(str(cfg), confirm=confirm)
     safe_servers = _credential_free_http_servers(mgr.config)
+    connectors = _credentialed_connectors(mgr.config) if allow_connectors else []
+    safe_servers = safe_servers + connectors
+    read_only_servers = frozenset(str(item.get("name")) for item in connectors if item.get("read_only"))
     if not safe_servers:
         return None, []
     if len(safe_servers) > 16:
@@ -156,7 +231,7 @@ async def connect_mcp(repo_root, *, capability_profile: str | None = None,
     try:
         if not await mgr.initialize():
             raise RuntimeError("MCP manager initialization failed")
-        return mgr, wrap_mcp_manager(mgr)
+        return mgr, wrap_mcp_manager(mgr, read_only_servers)
     except BaseException as error:
         import asyncio
         try:

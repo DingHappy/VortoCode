@@ -25,6 +25,8 @@ class MCPTool(BaseModel):
     input_schema: Dict[str, Any] = Field(default_factory=dict)
     server_name: str = ""
     server_url: str = ""
+    # MCP tool annotations（readOnlyHint 等）：只读连接器据此在客户端再筛一遍
+    annotations: Dict[str, Any] = Field(default_factory=dict)
 
 
 class MCPToolCall(BaseModel):
