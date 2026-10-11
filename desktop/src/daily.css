@@ -77,8 +77,6 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 .context-toggle.workbench-toggle { height: 32px; min-width: 0; padding: 0 12px; gap: 6px; font-size: 13px; color: var(--n11); border: 1px solid var(--n5); border-radius: 8px; background: var(--n0); }
 .context-toggle.workbench-toggle:hover { color: var(--n13); border-color: var(--n7); background: var(--n2); }
 .context-toggle.workbench-toggle.active, .context-toggle.workbench-toggle[aria-expanded="true"] { color: var(--daily-accent-text); border-color: transparent; background: var(--daily-accent-soft); }
-.workbench-toggle-count { padding: 0 6px; border-radius: 999px; font-size: 11px; line-height: 18px; font-variant-numeric: tabular-nums; color: var(--n11); background: var(--n4); }
-.workbench-toggle.active .workbench-toggle-count, .workbench-toggle[aria-expanded="true"] .workbench-toggle-count { color: var(--daily-accent-text); background: var(--n0); }
 .conversation-actions .stop-button { height: 32px; padding: 0 12px; border-radius: 8px; font-size: 13px; color: var(--red-text); border: 1px solid var(--red-line); background: transparent; }
 .conversation-actions .stop-button:hover { background: var(--red-bg); }
 .context-toggle.workbench-toggle:focus-visible, .conversation-actions .stop-button:focus-visible, .session-info-button:focus-visible, .session-info-details summary:focus-visible, .inspector-context-head button:focus-visible { outline: 2px solid var(--daily-accent-text); outline-offset: 2px; }
@@ -95,31 +93,12 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 .inspector-tabs button.active { color: var(--n13); font-weight: 600; background: var(--n3); }
 .inspector-tabs button.active::after { display: none; }
 .inspector-tabs button small { color: var(--n11); background: var(--n4); font-weight: normal; }
-.inspector-tabs > button > small { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; color: var(--daily-accent-text); background: var(--daily-accent-soft); }
-.inspector-tabs > button > small::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: session-pulse 1.4s ease-in-out infinite; }
-.workbench-more { flex: 0 0 auto; margin-left: auto; min-width: 0; }
-.workbench-more summary { height: 30px; display: flex; align-items: center; padding: 0 10px; border-radius: 7px; font-size: 13px; color: var(--n10); list-style: none; }
-.workbench-more summary::-webkit-details-marker { display: none; }
-.workbench-more summary::after { content: "▾"; margin-left: 4px; font-size: 10px; }
-.workbench-more summary:hover, .workbench-more[open] summary { color: var(--n13); background: var(--n3); }
 
 /* 会话状态：彩色圆点 + 文字 */
-.inspector-body .session-info-status { padding-bottom: 14px; }
-.session-info-status h3 { font-size: 13px; font-weight: 600; color: var(--n12); }
-.session-info-status h3 .session-state-pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 500; color: var(--n11); background: var(--n3); }
-.session-state-pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-.session-info-status h3 .session-state-pill.ready { color: var(--green-text); background: var(--green-bg); }
-.session-info-status h3 .session-state-pill.running { color: var(--daily-accent-text); background: var(--daily-accent-soft); }
-.session-state-pill.running::before { animation: session-pulse 1.4s ease-in-out infinite; }
-.session-info-status h3 .session-state-pill.waiting { color: var(--amber-text); background: var(--amber-bg); }
-.session-info-status h3 .session-state-pill.offline { color: var(--red-text); background: var(--red-bg); }
-.session-info-status p { margin: 10px 0 0; font-size: 13px; line-height: 1.6; color: var(--n10); }
 
 /* 执行进度：标题 + 进度条 + 竖向步骤条 */
 .session-info .session-info-section h4 { margin: 20px 0 10px; font-size: 13px; font-weight: 600; color: var(--n12); }
 .session-info-section h4 small { font-size: 12px; font-variant-numeric: tabular-nums; color: var(--n10); }
-.session-progress { height: 4px; margin-bottom: 12px; overflow: hidden; border-radius: 999px; background: var(--n4); }
-.session-progress span { display: block; height: 100%; border-radius: inherit; background: var(--green-text); transition: width .3s ease; }
 .session-info .session-info-steps { position: relative; padding: 0; }
 .session-info .session-info-steps li.session-step { position: relative; display: flex; align-items: flex-start; gap: 10px; margin: 0; padding: 7px 8px; border-radius: 8px; }
 .session-step:not(:last-child)::before { content: ""; position: absolute; left: 15.5px; top: 27px; bottom: -7px; width: 1px; background: var(--n5); }
@@ -165,12 +144,60 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 .session-info .session-info-button.primary:hover { background: #3559b4; }
 
 /* 二轮微调：按钮文字跟随按钮配色；当前标签不重复显示「运行中」；等待类步骤用琥珀色；关注卡片紧凑对齐 */
-.context-toggle.workbench-toggle span { font-size: 13px; color: inherit; }
-.inspector-tabs > button.active > small { display: none; }
 .session-info .session-info-steps li.warn .session-step-icon svg { color: var(--amber-text); }
 .session-step.warn small { color: var(--amber-text); }
 .session-info-attention .session-info-activities li { align-items: center; margin: 0; padding: 8px 0; border-bottom: 1px solid var(--red-line); }
 .session-info-attention .session-info-activities li span { line-height: 1.4; }
 @keyframes session-spin { to { transform: rotate(360deg); } }
 @keyframes session-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
-@media (prefers-reduced-motion: reduce) { .session-step-spin, .session-state-pill.running::before, .inspector-tabs > button > small::before { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .session-step-spin, .workbench-toggle-dot, .workbench-tab-live { animation: none; } }
+
+/* ── 会话侧栏改为「工作台」（2026-10-11，参考 MiMo）：标签栏 + 工具列表，侧栏里只放打开的工具 ── */
+/* 顶栏开关：只留图标，进度在悬停提示里；执行中右上角一个跳动的小点 */
+.context-toggle.workbench-toggle.icon-only { position: relative; width: 32px; min-width: 32px; padding: 0; justify-content: center; border-color: transparent; background: transparent; color: var(--n10); }
+.context-toggle.workbench-toggle.icon-only:hover { color: var(--n13); background: var(--n3); }
+.context-toggle.workbench-toggle.icon-only.active { color: var(--daily-accent-text); background: var(--daily-accent-soft); }
+.workbench-toggle-dot { position: absolute; top: 6px; right: 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--daily-accent-text); animation: session-pulse 1.4s ease-in-out infinite; }
+
+/* 标签栏 */
+.workbench-tabs { display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 8px 10px 8px 12px; border-bottom: 1px solid var(--n4); }
+.workbench-tab-list { display: flex; align-items: center; gap: 2px; min-width: 0; flex: 1; overflow-x: auto; scrollbar-width: none; }
+.workbench-tab-list::-webkit-scrollbar { display: none; }
+.workbench-tab { position: relative; display: flex; align-items: center; flex: 0 0 auto; height: 32px; border-radius: 8px; color: var(--n10); }
+.workbench-tab:hover { color: var(--n13); background: var(--n3); }
+.workbench-tab.active { color: var(--n13); background: var(--n3); }
+.workbench-tab-main { display: flex; align-items: center; gap: 7px; height: 100%; padding: 0 4px 0 10px; border: 0; border-radius: 8px 0 0 8px; font-size: 13px; color: inherit; background: transparent; cursor: pointer; white-space: nowrap; }
+.workbench-tab.active .workbench-tab-main { font-weight: 600; }
+.workbench-tab-close { display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin-right: 5px; padding: 0; border: 0; border-radius: 5px; color: var(--n9); background: transparent; opacity: 0; cursor: pointer; }
+.workbench-tab:hover .workbench-tab-close, .workbench-tab.active .workbench-tab-close, .workbench-tab-close:focus-visible { opacity: 1; }
+.workbench-tab-close:hover { color: var(--n13); background: var(--n5); }
+.workbench-tab-live, .workbench-tab-attention { width: 6px; height: 6px; border-radius: 50%; }
+.workbench-tab-live { background: var(--daily-accent-text); animation: session-pulse 1.4s ease-in-out infinite; }
+.workbench-tab-attention { background: var(--amber-text); }
+.workbench-tab-add, .workbench-panel-close { display: flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; color: var(--n10); background: transparent; cursor: pointer; }
+.workbench-tab-add { margin-left: 2px; }
+.workbench-tab-add:hover, .workbench-panel-close:hover, .workbench-tab-add.active { color: var(--n13); background: var(--n3); }
+.workbench-tab-main:focus-visible, .workbench-tab-add:focus-visible, .workbench-panel-close:focus-visible, .workbench-launcher-item:focus-visible { outline: 2px solid var(--daily-accent-text); outline-offset: 1px; }
+
+/* 工具列表：宽松的图标行，像 MiMo 的空工作台 */
+.workbench-launcher { display: flex; flex-direction: column; gap: 4px; padding: 28px 20px; }
+.workbench-launcher-item { display: flex; align-items: center; gap: 14px; height: 48px; padding: 0 14px; border: 0; border-radius: 10px; font-size: 14.5px; color: var(--n12); background: transparent; text-align: left; cursor: pointer; }
+.workbench-launcher-item:hover { background: var(--n3); }
+.workbench-launcher-icon { display: flex; color: var(--n10); }
+.workbench-launcher-item:hover .workbench-launcher-icon { color: var(--n13); }
+.workbench-launcher-icon svg { width: 18px; height: 18px; }
+.workbench-launcher-label { flex: 1; }
+.workbench-launcher-item small { padding: 1px 8px; border-radius: 6px; font-size: 12px; font-variant-numeric: tabular-nums; color: var(--n10); background: var(--n3); }
+.inspector-body[hidden] { display: none !important; }
+
+/* 任务步骤里：只有要人动手时才出提示卡；空状态一句灰字 */
+.session-info-notice { padding: 12px 14px; border-radius: 10px; font-size: 13px; }
+.session-info-notice strong { display: block; font-size: 13px; }
+.session-info-notice p { margin: 4px 0 0; color: var(--n11); }
+.session-info-notice.offline { border: 1px solid var(--red-line); background: var(--red-bg); }
+.session-info-notice.offline strong { color: var(--red-text); }
+.session-info-notice.waiting { border: 1px solid var(--amber-line); background: var(--amber-bg); }
+.session-info-notice.waiting strong { color: var(--amber-text); }
+.session-info-empty { margin: 4px 0 0; font-size: 13px; line-height: 1.7; color: var(--n10); }
+.session-info .session-info-section:first-child h4 { margin-top: 0; }
+

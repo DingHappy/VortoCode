@@ -1,6 +1,6 @@
 import { ManagementNav } from "./components/ManagementNav";
 import { isManagementTab } from "./lib/inspector";
-import { WorkbenchNav } from "./components/WorkbenchNav";
+import { WorkbenchLauncher, WorkbenchTabs, type WorkbenchTool } from "./components/WorkbenchTabs";
 import { ConfirmationReply } from "./components/ConfirmationReply";
 import { createConfirmationReply } from "./lib/confirm";
 import { ConfirmationTrust } from "./components/ConfirmationTrust";
@@ -13,6 +13,11 @@ import {
   ArrowUp,
   ChevronDown,
   Cpu,
+  Eye,
+  FileCode2,
+  GitCompareArrows,
+  Library,
+  ListChecks,
   Search,
   ShieldCheck,
   Folder,
@@ -28,6 +33,7 @@ import {
   Plus,
   Settings2,
   SquarePen,
+  SquareTerminal,
   Trash2,
   UserRound,
   X,
@@ -112,7 +118,7 @@ import {
   isPlanBudgetConfirmation,
 } from "./lib/onboarding";
 import { sessionStatusLabel, statusLabel } from "./lib/labels";
-import { autoFocusDecision, type InspectorTab } from "./lib/inspector";
+import { autoFocusDecision, closeWorkbenchTab, openWorkbenchTab, type InspectorTab } from "./lib/inspector";
 import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey, projectToRestore,
   STORAGE_KEYS } from "./lib/storage";
 import { normalizeEditorText, serializeEditorText } from "./lib/text";
@@ -287,12 +293,19 @@ function App() {
 
   const [inspectorTab, setInspectorTabState] = useState<InspectorTab>("project");
   const [inspectorOpen, setInspectorOpen] = useState(false);
+  // 会话侧栏的标签栏：打开过的工具；launcher = 正在看工具列表（点了「＋」或标签全关了）。
+  const [workbenchTabs, setWorkbenchTabs] = useState<InspectorTab[]>([]);
+  const [workbenchLauncher, setWorkbenchLauncher] = useState(false);
   const [tabsNeedingAttention, setTabsNeedingAttention] = useState<ReadonlySet<InspectorTab>>(
     () => new Set());
   const openInspector = useCallback((tab: InspectorTab) => {
     setInspectorTabState(tab);
     setMainView(isManagementTab(tab) ? "management" : "chat");
     setInspectorOpen(!isManagementTab(tab));
+    if (!isManagementTab(tab)) {
+      setWorkbenchTabs((previous) => openWorkbenchTab(previous, tab));
+      setWorkbenchLauncher(false);
+    }
     setTabsNeedingAttention((previous) => {
       if (!previous.has(tab)) return previous;
       const next = new Set(previous);
@@ -325,11 +338,6 @@ function App() {
   }, [openInspector]);
   useEffect(() => { inspectorOpenRef.current = inspectorOpen; }, [inspectorOpen]);
   useEffect(() => { inspectorTabRef.current = inspectorTab; }, [inspectorTab]);
-  // 标签样式：当前页 = active；有新动静但你没看 = attention（一个小点，不抢焦点）。
-  const tabClass = useCallback((tab: InspectorTab) => [
-    inspectorTab === tab ? "active" : "",
-    tabsNeedingAttention.has(tab) ? "attention" : "",
-  ].filter(Boolean).join(" "), [inspectorTab, tabsNeedingAttention]);
   const [diffPayload, setDiffPayload] = useState<DiffPayload | null>(null);
   // 对话式隔离交付的审查视图已收进 useIsolatedDeliveries（hooks/useIsolatedDeliveries.ts）。
   const {
@@ -2652,6 +2660,37 @@ function App() {
     return () => window.cancelAnimationFrame(frame);
   }, [activities, busy, messages, pendingConfirm, streaming]);
 
+  // 会话侧栏的工具：标签栏与工具列表共用。点击动作沿用原标签按钮的（含变更/上下文的刷新）。
+  const planDone = plan.filter((item) => item.status === "completed").length;
+  const scoped = activeScope !== "general";
+  const workbenchTools: WorkbenchTool[] = ([
+    { id: "info", label: "任务步骤", icon: <ListChecks size={15} />, badge: plan.length ? `${planDone}/${plan.length}` : undefined,
+      live: busy, open: () => openInspector("info") },
+    { id: "preview", label: "预览", icon: <Eye size={15} />, badge: String(artifacts.length + previewReferenceItems.length),
+      open: () => openInspector("preview") },
+    scoped && { id: "files", label: "代码", icon: <FileCode2 size={15} />, badge: String(filteredWorkspaceFiles.length),
+      open: () => openInspector("files") },
+    scoped && { id: "diff", label: "变更", icon: <GitCompareArrows size={15} />, badge: String((gitReview?.files.length ?? 0) + isolatedDeliveries.length),
+      open: () => { setTaskReviewTask(null); setTaskBranchReview(null); setTaskBranchDiff(null); setTaskBranchSelectedPath(""); openInspector("diff"); void refreshGitReview(); void refreshPrDelivery(); void refreshIsolatedDeliveries(); } },
+    scoped && { id: "runs", label: "控制台", icon: <SquareTerminal size={15} />, badge: String(activeRuns.length),
+      open: () => openInspector("runs") },
+    (inspectorTab === "project" || activeScope === "general" || artifacts.length > 0 || (repoMemory?.total_entries ?? 0) > 0)
+      && { id: "project", label: "上下文", icon: <Library size={15} />, badge: String(artifacts.length + (repoMemory?.total_entries ?? 0)),
+        open: () => { openInspector("project"); void refreshProjectAssets(activeScope !== "general"); } },
+  ] as (WorkbenchTool | false)[])
+    .filter((tool): tool is WorkbenchTool => Boolean(tool))
+    .map((tool) => ({ ...tool, badge: tool.badge === "0" ? undefined : tool.badge, attention: tabsNeedingAttention.has(tool.id) }));
+  const shownWorkbenchTabs = (workbenchTabs.includes(inspectorTab) || isManagementTab(inspectorTab) ? workbenchTabs : [...workbenchTabs, inspectorTab])
+    .filter((tab) => workbenchTools.some((tool) => tool.id === tab));
+  const showWorkbenchLauncher = workbenchLauncher || shownWorkbenchTabs.length === 0;
+  const closeWorkbenchTool = (tab: InspectorTab) => {
+    const { tabs, next } = closeWorkbenchTab(shownWorkbenchTabs, tab, inspectorTab);
+    setWorkbenchTabs(tabs);
+    if (workbenchLauncher) return;
+    if (next === null) setWorkbenchLauncher(true);
+    else if (next !== inspectorTab) openInspector(next);
+  };
+
   return (
     <main className="app-shell">
       <header className="topbar" data-tauri-drag-region="deep">
@@ -2675,7 +2714,7 @@ function App() {
         )}
       </div>
 
-      <div className={`workbench ${mainView === "chat" && inspectorOpen ? "inspector-open" : "inspector-closed"} ${mainView === "chat" && inspectorOpen && ["files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
+      <div className={`workbench ${mainView === "chat" && inspectorOpen ? "inspector-open" : "inspector-closed"} ${mainView === "chat" && inspectorOpen && !showWorkbenchLauncher && ["files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
         <aside className="sidebar">
           <div className="sidebar-brand">
             <strong>VortoCode</strong>
@@ -2971,14 +3010,14 @@ function App() {
             </div>
             <div className="conversation-actions">
               <button
-                className={`context-toggle workbench-toggle ${inspectorOpen ? "active" : ""}`}
+                className={`context-toggle workbench-toggle icon-only ${inspectorOpen ? "active" : ""}`}
                 aria-expanded={inspectorOpen}
                 aria-label="任务步骤"
-                title="查看当前会话的执行进展"
+                title={plan.length ? `任务步骤 ${planDone}/${plan.length}` : "任务步骤"}
                 onClick={() => inspectorOpen ? setInspectorOpen(false) : openInspector("info")}
               >
-                <PanelRight size={16} /><span>任务步骤</span>
-                {plan.length > 0 && <small className="workbench-toggle-count">{plan.filter(item => item.status === "completed").length}/{plan.length}</small>}
+                <PanelRight size={16} />
+                {busy && <i className="workbench-toggle-dot" aria-hidden="true" />}
               </button>
               {busy && <button className="stop-button" onClick={() => void cancelTurn()}>停止</button>}
             </div>
@@ -3246,18 +3285,16 @@ function App() {
 
         {(mainView === "management" || (mainView === "chat" && inspectorOpen)) && (
         <aside className={mainView === "management" ? "inspector management-page" : "inspector"}>
-          <div className="inspector-context-head">
-            <div><span>{mainView === "management" ? "任务中心" : "当前会话"}</span><strong>{inspectorTabLabel(inspectorTab)}</strong></div>
-            <button aria-label={mainView === "management" ? "返回对话" : "关闭会话侧栏"} onClick={() => {setMainView("chat");setInspectorOpen(false);}}><X size={16} /></button>
-          </div>
-          {mainView === "management" ? <ManagementNav current={inspectorTab} onSelect={openInspector}/> : <WorkbenchNav current={inspectorTab} label={inspectorTabLabel(inspectorTab)} busy={busy} tabClass={tabClass} onSelect={openInspector}>
-            <button className={tabClass("preview")} onClick={() => openInspector("preview")}>预览<small>{artifacts.length + previewReferenceItems.length}</small></button>
-            {activeScope !== "general" && <button className={tabClass("files")} onClick={() => openInspector("files")}>代码<small>{filteredWorkspaceFiles.length}</small></button>}
-            {activeScope !== "general" && <button className={tabClass("diff")} onClick={() => { setTaskReviewTask(null); setTaskBranchReview(null); setTaskBranchDiff(null); setTaskBranchSelectedPath(""); openInspector("diff"); void refreshGitReview(); void refreshPrDelivery(); void refreshIsolatedDeliveries(); }}>变更<small>{(gitReview?.files.length ?? 0) + isolatedDeliveries.length}</small></button>}
-            {activeScope !== "general" && <button className={tabClass("runs")} onClick={() => openInspector("runs")}>控制台<small>{activeRuns.length}</small></button>}
-            {(inspectorTab === "project" || activeScope === "general" || artifacts.length > 0 || (repoMemory?.total_entries ?? 0) > 0) && <button className={inspectorTab === "project" ? "active" : ""} onClick={() => { openInspector("project"); void refreshProjectAssets(activeScope !== "general"); }}>上下文<small>{artifacts.length + (repoMemory?.total_entries ?? 0)}</small></button>}
-          </WorkbenchNav>}
-          <div className="inspector-body">
+          {mainView === "management" ? <>
+            <div className="inspector-context-head">
+              <div><span>任务中心</span><strong>{inspectorTabLabel(inspectorTab)}</strong></div>
+              <button aria-label="返回对话" onClick={() => {setMainView("chat");setInspectorOpen(false);}}><X size={16} /></button>
+            </div>
+            <ManagementNav current={inspectorTab} onSelect={openInspector}/>
+          </> : <WorkbenchTabs tools={workbenchTools} tabs={shownWorkbenchTabs} current={inspectorTab} launcher={showWorkbenchLauncher}
+            onShowLauncher={() => setWorkbenchLauncher(true)} onCloseTab={closeWorkbenchTool} onClosePanel={() => setInspectorOpen(false)} />}
+          {mainView === "chat" && showWorkbenchLauncher && <WorkbenchLauncher tools={workbenchTools} />}
+          <div className="inspector-body" hidden={mainView === "chat" && showWorkbenchLauncher}>
             {inspectorTab === "info" && <SessionInfo key={activeSid} context={currentSession?.context} busy={busy} needsInput={Boolean(pendingConfirm)}
               connected={connection === "connected"} plan={plan} queued={promptQueue.length}
               activities={activities.filter(item => item.rid === (activeTurnRid ?? [...activities].reverse().find(candidate => candidate.rid)?.rid))}
