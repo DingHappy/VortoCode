@@ -487,3 +487,25 @@ def test_parallel_pytest_and_timeout_are_opt_in(monkeypatch):
     assert worktree._test_timeout() == 1500
     monkeypatch.setenv("VORTOCODE_TEST_TIMEOUT", "abc")
     assert worktree._test_timeout() == 600
+
+
+def test_sandboxed_tests_get_a_writable_throwaway_cache(tmp_path, monkeypatch):
+    """沙箱里 $HOME 只读：给测试一个跑完即删的 XDG_CACHE_HOME（真机：jedi 写 ~/.cache 失败让用例红）。"""
+    import os
+    from types import SimpleNamespace
+
+    import src.sandbox.policy as policy
+
+    decision = SimpleNamespace(allowed=True, isolated=True, backend="bwrap", reason="",
+                               to_dict=lambda: {"backend": "bwrap"})
+    monkeypatch.setattr(policy, "resolve_sandbox", lambda **_: decision)
+    monkeypatch.setattr(policy, "sandboxed_exec_argv", lambda worktree, cmd, backend: cmd)
+    seen = {}
+
+    def fake_run(cmd, cwd, env, **_kw):
+        seen["cache"] = env.get("XDG_CACHE_HOME")
+        seen["exists_during"] = os.path.isdir(seen["cache"] or "")
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+    monkeypatch.setattr(worktree.subprocess, "run", fake_run)
+    assert worktree.run_tests(tmp_path, ["pytest", "-q"])["ok"] is True
+    assert seen["exists_during"] and not os.path.exists(seen["cache"])      # 跑时存在、跑完删掉
