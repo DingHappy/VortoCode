@@ -19,16 +19,6 @@ from .monitoring import (
 # 注：task_queue（TaskQueue/TaskScheduler 骨架）从未接线，已于 2026-07 退役——
 # 后台任务改由常驻运行时 src/workflow/tasks/tasks.py（TaskRunner + write-ahead 台账）承担。
 
-from .cache import (
-    CacheEntry,
-    CacheStats,
-    MemoryCache,
-    RedisCache,
-    CacheManager,
-    cache_key,
-    cached,
-)
-
 from .tracing import (
     set_trace_id,
     get_trace_id,
@@ -54,13 +44,4 @@ __all__ = [
     "check_disk",
     "check_cpu",
     "metrics",
-
-    # 缓存
-    "CacheEntry",
-    "CacheStats",
-    "MemoryCache",
-    "RedisCache",
-    "CacheManager",
-    "cache_key",
-    "cached",
 ]

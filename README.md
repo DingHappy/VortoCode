@@ -195,7 +195,11 @@ vortocode/
 ### 1. 安装依赖
 
 ```bash
-pip install -r requirements.txt
+# 依赖以 pyproject.toml 为唯一来源
+pip install -e .
+
+# 想要与 CI 完全一致的版本：加上锁文件约束
+pip install -c constraints.txt -e '.[llm,dev,tui]'
 
 # 可选：安装向量数据库支持（用于语义记忆）
 pip install '.[memory]'

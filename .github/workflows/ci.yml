@@ -6,6 +6,9 @@
 # `pip install -e .` 时，pip 会先卸载已装的 vortocode——卸到一半另一个 job 正要用 `vc`，
 # 就报 `No such file or directory: .../bin/vc` 挂在安装步（2026-07-26 真机随机咬）。
 # venv 建在各自 workspace 里，天然隔离；托管 runner 上多花几秒，代价可忽略。
+# **依赖锁**：三个 job 都用 `-c constraints.txt` 安装（由 pyproject 经 uv 生成，覆盖 3.10/3.12）。
+# 上游发新版不会再让无关 PR 突然变红（2026-10-11 openai 3.x 换 httpx2 就这么咬过一次）；
+# 升级依赖 = 一个显式刷新锁文件的 PR，命令见 CLAUDE.md。
 name: CI
 
 on:
@@ -87,7 +90,7 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/pip install ruff
+          .venv/bin/pip install -c constraints.txt ruff
       - name: Ruff (real-error gate — 见 pyproject [tool.ruff.lint])
         run: .venv/bin/ruff check src tests
 
@@ -110,7 +113,7 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/pip install -e ".[llm,dev]"
+          .venv/bin/pip install -c constraints.txt -e ".[llm,dev]"
       - name: Mypy (范围见 pyproject [tool.mypy] 的 files；圈外存量问题不阻塞)
         run: .venv/bin/python -m mypy
 
@@ -138,7 +141,7 @@ jobs:
         run: |
           python -m venv .venv
           .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/pip install -e ".[llm,dev,tui]"
+          .venv/bin/pip install -c constraints.txt -e ".[llm,dev,tui]"
 
       - name: Run tests (offline, deterministic)
         # 刻意不提供任何 API key / token：

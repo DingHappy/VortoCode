@@ -4,12 +4,6 @@ from .skill import Skill, SkillMetadata, SkillArgument, SkillHook, SkillResult
 from .parser import SkillParser
 from .registry import SkillRegistry, SimpleSkill
 from .executor import SkillExecutor
-from .skill_manager import (
-    SkillDefinition,
-    Skill as ManagedSkill,
-    SkillRegistry as ManagedSkillRegistry,
-    SkillManager
-)
 from .discovery import (
     SkillVersion,
     SkillManifest,
@@ -30,10 +24,6 @@ __all__ = [
     "SkillRegistry",
     "SimpleSkill",
     "SkillExecutor",
-    "SkillDefinition",
-    "ManagedSkill",
-    "ManagedSkillRegistry",
-    "SkillManager",
 
     # 技能发现
     "SkillVersion",
