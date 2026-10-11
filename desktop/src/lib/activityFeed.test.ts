@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TaskItem } from "../types";
-import { dispatchFeedItem, feedStatus, feedTime, firstSentence, groupFeed, taskFeedItem, turnFeedItem, type FeedItem } from "./activityFeed";
+import { dispatchFeedItem, noticeFeedItem, feedStatus, feedTime, firstSentence, groupFeed, taskFeedItem, turnFeedItem, type FeedItem } from "./activityFeed";
 
 const task = (overrides: Partial<TaskItem>): TaskItem => ({ id: "t1", status: "done", ...overrides });
 const question = (status: "open" | "answered") => ({ id: "q", task_id: "t1", round: 1, status, question: "要删除哪几条帖子？请列出链接。", options: [], context: "", asked_by: "worker", answerer: "owner" as const, created: "", expires_at: "", answer: "", answered_at: "" });
@@ -100,5 +100,17 @@ describe("dispatchFeedItem", () => {
     expect(dispatchFeedItem(dispatch({ status: "done", branch: "vorto/fix" }))?.summary).toBe("已交付分支 vorto/fix");
     expect(dispatchFeedItem(dispatch({ status: "send_failed", error: "connection refused" }))).toMatchObject({ status: "failed" });
     expect(dispatchFeedItem(dispatch({ status: "cancelled" }))).toBeNull();
+  });
+});
+
+describe("noticeFeedItem", () => {
+  it("定时作业结果进动态（⏰），失败标失败；早晚报进动态（🗒）；其他通知不进", () => {
+    expect(noticeFeedItem({ ts: "2026-10-11T01:00:23Z", source: "cron:daily_digest", text: "✅ cron [daily_digest] 通过\n今天 3 条新闻已整理" }))
+      .toMatchObject({ title: "⏰ daily_digest", status: "done", summary: "今天 3 条新闻已整理" });
+    expect(noticeFeedItem({ ts: "2026-10-11T01:00:23Z", source: "cron:relay_duty", text: "❌ cron [relay_duty] 失败\n超时" })?.status).toBe("failed");
+    expect(noticeFeedItem({ ts: "2026-10-11T13:00:34Z", source: "assistant", text: "🗒 晚报\n有 1 件等你确认。" }))
+      .toMatchObject({ title: "🗒 晚报", summary: "有 1 件等你确认。" });
+    expect(noticeFeedItem({ ts: "2026-10-11T12:25:27Z", source: "assistant", text: "测试：推送通道已接通" })).toBeNull();
+    expect(noticeFeedItem({ ts: "2026-10-11T12:25:27Z", source: "relay", text: "x" })).toBeNull();
   });
 });

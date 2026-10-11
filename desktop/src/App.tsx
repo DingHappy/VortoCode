@@ -3,7 +3,7 @@ import { isManagementTab } from "./lib/inspector";
 import { WorkbenchLauncher, WorkbenchTabs, type WorkbenchTool } from "./components/WorkbenchTabs";
 import { ActivityFeed } from "./components/ActivityFeed";
 import { AssistantAudit, AssistantIdentity, AssistantPanel, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PhoneChatDialog, type AppMode, type AssistantTab } from "./components/AssistantMode";
-import { dispatchFeedItem, isPhoneSession, taskFeedItem, turnFeedItem, type FeedItem } from "./lib/activityFeed";
+import { dispatchFeedItem, isPhoneSession, noticeFeedItem, taskFeedItem, turnFeedItem, type FeedItem } from "./lib/activityFeed";
 import { ConfirmationReply } from "./components/ConfirmationReply";
 import { createConfirmationReply } from "./lib/confirm";
 import { ConfirmationTrust } from "./components/ConfirmationTrust";
@@ -2920,7 +2920,8 @@ function App() {
   // 任务动态：后台任务台账的投影（useTasks 已随 task_update 推送实时更新）。
   const feedItems = tasks.map(taskFeedItem);
   const feedWaiting = feedItems.filter((item) => item.status === "waiting").length;
-  const dispatchItems = dispatches.map(dispatchFeedItem).filter((item): item is FeedItem => item !== null);
+  const dispatchItems = [...dispatches.map(dispatchFeedItem), ...notices.map(noticeFeedItem)]
+    .filter((item): item is FeedItem => item !== null);
   const assistantWaiting = feedWaiting + dispatchItems.filter((item) => item.status === "waiting").length;
 
   /** 任务单：等你确认的 → 看一遍再下发（或撤回）；其余 → 说明现状。 */
