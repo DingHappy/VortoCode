@@ -114,6 +114,10 @@ async def _run_general_isolated(repo_root: str, prompt: str, *, mode: str, model
     if allow_web:
         from src.agents.tools.web import build_web_tools
         tools = build_web_tools()
+    else:
+        # 不联网的作业可以看本机状态（今天的动态 / 任务单 / 定时事项）——只读、无出站通道
+        from src.scheduling.assistant_watch import build_status_tools
+        tools = build_status_tools(repo_root)
     if allow_web:
         profile = load_profile(repo_root)
         parts = [f"【你是谁】你是用户的私人助理「{profile['name']}」。"]

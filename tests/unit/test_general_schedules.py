@@ -33,6 +33,8 @@ async def test_general_unattended_session_tools_and_context(tmp_path, monkeypatc
                     "cron_add", "send_image", "send_file", "dev_auto", "remember_repo"}
     assert not seen["tools"] & file_or_host                                  # 一个工作区工具都没有
     assert (seen["tools"] >= {"web_fetch", "web_search"}) is allow_web       # 联网只在授权时给
+    # 只读的本机状态只给不联网的作业（与个人资料同一条边界）
+    assert ({"today_activity", "schedule_list"} <= seen["tools"]) is (not allow_web)
     assert "「小V」" in seen["system"] and "简短直接" in seen["system"]
     # 能联网的作业不带「关于你」与记忆（出站通道 + 个人资料不同处）；不联网的带上
     assert ("住在宁波" in seen["system"]) is (not allow_web)
@@ -64,3 +66,27 @@ async def test_command_job_refused_in_general_scope(tmp_path, monkeypatch, gener
     with pytest.raises(PermissionError):
         await cron.run_job(str(tmp_path), job, notify=notify)
     assert ran == [] and notices and "不跑 command 作业" in notices[-1]
+
+
+async def test_status_tools_read_local_ledgers(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from src.gateway.session_store import save_session
+    from src.scheduling.assistant_watch import build_status_tools
+
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    save_session(str(tmp_path), "sid-a", [
+        {"role": "user", "text": "宁波天气", "rid": "r1", "at": now},
+        {"role": "assistant", "text": "晴", "rid": "r1", "at": now,
+         "digest": {"title": "查询宁波天气", "outcome": "晴天", "source": "model"}}], [{"role": "user", "content": "x"}], None)
+    tools = {tool.name: tool for tool in build_status_tools(str(tmp_path))}
+    assert "查询宁波天气：晴天" in await tools["today_activity"].handler({})
+    assert all(tool.read_only for tool in tools.values())
+
+
+def test_assistant_prompt_explains_what_schedules_can_reach(tmp_path, monkeypatch):
+    from src.gateway.agent_session import build_session
+
+    monkeypatch.setenv("VORTOCODE_CRON", "1")
+    system = build_session(str(tmp_path), kind="web", workspace_scope="general")._system("plan")
+    assert "【定时事项】" in system and "不能**读文件、跑命令、查 Git" in system
