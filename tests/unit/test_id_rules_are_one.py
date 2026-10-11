@@ -68,7 +68,7 @@ def test_the_two_rules_are_not_interchangeable():
     ("src.workflow.workbench.goals", "_clean_id", "safe"),
     ("src.workflow.tasks.tasks", "_clean_id", "safe"),
     ("src.agents.dev_plan", "_clean_id", "safe"),
-    ("src.web.session_store", "_clean_sid", "safe"),
+    ("src.gateway.session_store", "_clean_sid", "safe"),
 ])
 def test_sanitize_callers_delegate_rather_than_reimplement(monkeypatch, module, attr, kind):
     """把核心那份临时换掉，调用点必须**跟着**改变行为——还留着自己实现的就不会变。

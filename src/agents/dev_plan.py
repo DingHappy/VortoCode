@@ -7,7 +7,7 @@ dev_auto 此前全内存：10 个子任务断在第 7 个就得从头再来，�
 - 可观测：同一份计划文件是进度播报 / IM /status / （PR-2）后台任务台账的数据源。
 - 可手改：删一块 / 改描述后 resume 按改后的跑（计划就是 artifact，借鉴 CC dynamic workflows）。
 
-本模块 UI 无关、纯数据 + 原子落盘（仿 web/session_store 的 `.tmp`+replace）；执行编排在
+本模块 UI 无关、纯数据 + 原子落盘（仿 gateway/session_store 的 `.tmp`+replace）；执行编排在
 main_agent.build_dev_tools 里，本模块只管"计划长什么样、怎么存取"。
 """
 from __future__ import annotations

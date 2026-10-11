@@ -14,7 +14,7 @@ from src.gateway.session_actor import ActorContext, SessionActors
 from src.gateway.sessions import SessionTable
 from src.workflow.tasks.tasks import TaskLedger
 from src.llm.hard_budget import CheckLimits
-from src.web import session_store as ss
+from src.gateway import session_store as ss
 
 
 class Agent:

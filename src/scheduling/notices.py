@@ -12,7 +12,17 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List, Optional
+
+# 实时广播给已连接的客户端（WS）。由传输层启动时注册（见 web/routers/tasks.py）——调度层不
+# 反向依赖 Web。没注册（如命令行单独跑 cron）就只走台账与 IM 两路：那时本来也没有客户端在连。
+_notice_broadcaster: Optional[Callable[[str], None]] = None
+
+
+def set_notice_broadcaster(broadcaster: Optional[Callable[[str], None]]) -> None:
+    global _notice_broadcaster
+    _notice_broadcaster = broadcaster
+
 
 MAX_NOTICES = 500
 
@@ -190,8 +200,8 @@ def make_notifier(repo_root: str, *, source: str = "scheduler", trigger: str = "
         trg = trigger or _default_trigger
         record_notice(repo_root, str(text), source=src, trigger=trg)   # ① 台账（唯一有持久保证）
         try:
-            from src.web import task_events
-            task_events.broadcast_notice(str(text))    # ② WS 广播给连着的客户端
+            if _notice_broadcaster is not None:
+                _notice_broadcaster(str(text))         # ② WS 广播给连着的客户端
         except Exception:  # noqa: BLE001
             pass
         delivered = False

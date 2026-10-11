@@ -3,7 +3,7 @@
 从 realtime `_SESSIONS` 原样上移的语义：按稳定会话键存 `{agent, transcript, last, usage}`、
 超上限仅淘汰已保存的空闲会话（活动/确认保护由装配层注入，表自身保护队列），回调关 MCP 等；
 内存没有时先从磁盘按键复原
-（跨服务器重启不丢对话）、回合收尾持久化。持久层沿用既有 `src/web/session_store`
+（跨服务器重启不丢对话）、回合收尾持久化。持久层沿用既有 `src/gateway/session_store`
 （迁移归属留给 PR-6 收口）。
 
 工厂（造 agent）由调用方传入——本表只管生命周期，不做装配（装配见 agent_session.build_session）。
@@ -74,7 +74,7 @@ class SessionTable:
             activities: list = []
             prompt_queue: list = []
             try:                                  # 跨重启复原：磁盘有这个键就把历史/计划灌回 agent
-                from src.web.session_store import load_session
+                from src.gateway.session_store import load_session
                 saved = load_session(repo_root, key)
             except Exception:  # noqa: BLE001
                 saved = None
@@ -136,7 +136,7 @@ class SessionTable:
         try:
             if sess.get("repo_root") and Path(sess["repo_root"]).resolve() != Path(repo_root).resolve():
                 return False
-            from src.web.session_store import save_session
+            from src.gateway.session_store import save_session
             from src.gateway.agent_session import session_behavior_fp, session_tool_names
             from src.workflow.tasks.dashboard import agent_context_summary
             agent = sess.get("agent")
@@ -157,7 +157,7 @@ class SessionTable:
         The report identity must be stable. Live transcript changes only after
         disk success, so a failed append cannot masquerade as a stored report.
         """
-        from src.web.session_store import _MAX_TRANSCRIPT
+        from src.gateway.session_store import _MAX_TRANSCRIPT
         with self._persist_lock:
             sess = self.data.get(key)
             if (not sess or not sess.get("repo_root")

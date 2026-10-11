@@ -235,7 +235,7 @@ async def resume_task_bg(tid: str):
 # （codex 审 #129）。台账本体已下沉到 src/scheduling/notices.py（CLI 与调度循环都要写它，不该为了
 # 记一条通知去导入 FastAPI 层），这里只保留 REST 出口 + 旧入口再导出。
 from src.scheduling.notices import MAX_NOTICES as _MAX_NOTICES  # noqa: E402
-from src.scheduling.notices import load_notices, record_notice  # noqa: E402,F401
+from src.scheduling.notices import load_notices, record_notice, set_notice_broadcaster  # noqa: E402,F401
 
 
 @router.get("/api/notices")
@@ -303,3 +303,5 @@ async def open_task_pr(tid: str):
     return {"ok": res.get("ok"), "url": res.get("url", ""), "error": res.get("error", "")}
 
 task_events.set_task_snapshot_provider(_task_snapshot)
+# 调用时再查 task_events.broadcast_notice（而非注册时绑定函数对象），替换/打桩都能生效。
+set_notice_broadcaster(lambda text: task_events.broadcast_notice(text))

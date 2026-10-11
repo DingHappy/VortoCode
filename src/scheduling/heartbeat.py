@@ -136,7 +136,7 @@ def resolve_checklist_path(repo_root: str, checklist: Optional[str] = None) -> O
     raw = str(checklist if checklist is not None else os.getenv(_CHECKLIST_ENV) or "").strip()
     if not raw:
         return Path(repo_root) / ".vortocode" / _HEARTBEAT_MD
-    from src.web.auth import resolve_within
+    from src.utils.paths import resolve_within
 
     return resolve_within(repo_root, raw)
 

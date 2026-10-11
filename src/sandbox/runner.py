@@ -51,12 +51,6 @@ def docker_available() -> bool:
     return ok
 
 
-def host_exec_allowed() -> bool:
-    from src.env_compat import env_compat
-    return env_compat("VORTOCODE_ENABLE_SHELL", "AUTODEV_ENABLE_SHELL", "").strip().lower() \
-        in ("1", "true", "yes", "on")
-
-
 async def run_code(code: str, language: str = "python", timeout: int = 30,
                    workspace: Optional[str] = None) -> RunResult:
     """执行生成代码：Docker 优先，否则 OS 隔离；host 仅显式 off + shell gate。"""
@@ -87,7 +81,9 @@ async def run_code(code: str, language: str = "python", timeout: int = 30,
         )
 
     # 3. 显式 off 仍需旧的 shell 能力门；环境变量不能单独绕过 sandbox policy。
-    if not decision.isolated and not host_exec_allowed():
+    from src.sandbox.policy import shell_enabled
+
+    if not decision.isolated and not shell_enabled():
         error = ("OS 沙箱已显式关闭，但未开启宿主机代码执行 "
                  "（VORTOCODE_ENABLE_SHELL=1），已拒绝执行。")
         evidence = {**evidence, "allowed": False, "reason": error}

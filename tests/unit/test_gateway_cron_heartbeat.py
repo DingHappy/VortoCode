@@ -328,7 +328,7 @@ def _cron_job(name="nightly", *, announce="im", prompt="干活", command=""):
 
 def _seed_human_session(tmp_path):
     """造一个真人会话（落盘的 sid 会话），返回它当前的 (transcript, history) 快照。"""
-    from src.web.session_store import load_session, save_session
+    from src.gateway.session_store import load_session, save_session
     transcript = [{"role": "user", "text": "帮我看看登录 bug"},
                   {"role": "assistant", "text": "看了，是 token 过期"}]
     history = [{"role": "user", "content": "帮我看看登录 bug"},
@@ -347,7 +347,7 @@ def _cron_runs(tmp_path):
 async def test_cron_output_goes_to_journal_not_human_session_history(tmp_path):
     """例行产出进 Journal（run lane），**人类会话历史长度一字不变**。"""
     from src.workflow.workbench.journal import build_daily_journal
-    from src.web.session_store import load_session
+    from src.gateway.session_store import load_session
 
     transcript, history = _seed_human_session(tmp_path)
     _write_cron_yaml(tmp_path, """
@@ -409,7 +409,7 @@ async def test_job_exception_is_recorded_not_swallowed(tmp_path):
     """作业炸了（沙箱 fail-closed / 模型不可用 / 脚本抛）：照样留痕 + 通报，且记为已跑不刷屏。"""
     from src.workflow.tasks.decisions import build_decision_queue
     from src.workflow.workbench.runs import RunLedger
-    from src.web.session_store import load_session
+    from src.gateway.session_store import load_session
 
     _seed_human_session(tmp_path)
     _write_cron_yaml(tmp_path, """

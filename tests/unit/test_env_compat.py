@@ -49,7 +49,8 @@ def test_security_vars_honor_new_prefix(monkeypatch, key):
     monkeypatch.setenv("VORTOCODE_API_TOKEN", "tok")
     assert auth.get_api_token() == "tok"                   # server 的 fail-closed 守卫也走它
     monkeypatch.setenv("VORTOCODE_ENABLE_SHELL", "1")
-    assert auth.shell_enabled() is True
+    from src.sandbox.policy import shell_enabled
+    assert shell_enabled() is True
     # 绑非本地但已设 token → 放行（新前缀生效）
     assert server._insecure_bind_reason("0.0.0.0") == ""
 
