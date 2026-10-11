@@ -567,8 +567,26 @@ async def _digest_turn(key: str, rid: str) -> None:
     except Exception as error:  # noqa: BLE001 —— generate_digest 自身不抛；这里只防意外，绝不影响会话
         logger.warning("回合摘要任务异常：%s", error)
         return
+    candidates = digest.pop("remember", None)
     reply["digest"] = digest
     _TABLE.persist(key, sess.get("repo_root") or os.getcwd())
+    _propose_turn_memories(sess, rid, candidates)
+
+
+def _propose_turn_memories(sess: dict, rid: str, candidates) -> None:
+    """常驻助理（通用范围）：本轮提炼出的「关于你」候选进待确认。用过联网/召回的回合标为读过外部内容。"""
+    import os
+    from src.gateway.workspace_scope import GENERAL, current_workspace_scope
+    if not candidates or current_workspace_scope() != GENERAL:
+        return
+    from src.gateway.turn_digest import turn_tool_names
+    from src.memory.assistant_profile import propose_memories
+    names = turn_tool_names(sess.get("activities") or [], rid, limit=50)
+    tainted = any(name.startswith(("web_", "browser", "recall_memory", "mcp")) for name in names)
+    try:
+        propose_memories(sess.get("repo_root") or os.getcwd(), list(candidates), source="assistant", tainted=tainted)
+    except Exception as error:  # noqa: BLE001 —— 记忆候选是旁路
+        logger.warning("记忆候选写入失败：%s", error)
 
 
 async def _persist_check_report(key: str, payload: dict):

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { ArrowLeft, CalendarClock, Smartphone, Check, Clock3, Fingerprint, HeartPulse, Laptop, List, MessageCircle, MessagesSquare, PencilLine, Plus, Server, ShieldCheck, Trash2, X } from "lucide-react";
 import { useState } from "react";
-import type { AssistantMemory, AssistantProfile, AssistantScheduleItem, AuditEntry, PhoneChat } from "../types";
+import type { AssistantMemory, AssistantProfile, AssistantScheduleItem, AuditEntry, MemoryProposal, PhoneChat } from "../types";
 import { MarkdownMessage } from "./MarkdownMessage";
 
 export type AppMode = "assistant" | "work";
@@ -200,16 +200,29 @@ export function AssistantSchedule({ items }: { items: AssistantScheduleItem[] })
 }
 
 /** 「身份」：名字 + SOUL（它的性格）+ 关于你 + 记忆。点记忆卡片看全部、可以删。 */
-export function AssistantIdentity({ profile, memories, onEdit, onDeleteMemory }: {
+export function AssistantIdentity({ profile, memories, proposals = [], onEdit, onDeleteMemory, onDecideProposal }: {
   profile: AssistantProfile;
   memories: AssistantMemory[];
+  /** 聊天里提炼出的候选：你点 ✓ 才记 */
+  proposals?: MemoryProposal[];
   onEdit: () => void;
   onDeleteMemory: (memory: AssistantMemory) => void;
+  onDecideProposal?: (proposal: MemoryProposal, approve: boolean) => void;
 }) {
   const [showMemories, setShowMemories] = useState(false);
   if (showMemories) {
     return <section className="assistant-section">
       <h5><button className="assistant-back" aria-label="返回身份" onClick={() => setShowMemories(false)}><ArrowLeft size={14} /></button>记忆</h5>
+      {proposals.length > 0 && <>
+        <p className="assistant-proposal-title">待确认 · 聊天里听到的，你点 ✓ 才会记住</p>
+        <ul className="assistant-memories proposals">
+          {proposals.map((proposal) => <li key={proposal.id}>
+            <span>{proposal.content}{proposal.tainted && <small className="assistant-proposal-flag">来自手机或外部内容，看仔细</small>}</span>
+            <button aria-label="记住" title="记住" onClick={() => onDecideProposal?.(proposal, true)}><Check size={14} /></button>
+            <button aria-label="不要" title="不要" onClick={() => onDecideProposal?.(proposal, false)}><X size={14} /></button>
+          </li>)}
+        </ul>
+      </>}
       <AssistantMemories memories={memories} onDelete={onDeleteMemory} />
     </section>;
   }
@@ -229,7 +242,7 @@ export function AssistantIdentity({ profile, memories, onEdit, onDeleteMemory }:
         <span>{profile.about_you.slice(0, 40)}</span>
       </button>
       <button className="assistant-card memory" onClick={() => setShowMemories(true)}>
-        <b>记忆</b><small>{memories.length ? `记得 ${memories.length} 件事` : "还没有"}</small>
+        <b>记忆</b><small>{memories.length ? `记得 ${memories.length} 件事` : "还没有"}{proposals.length ? ` · ${proposals.length} 条待确认` : ""}</small>
         <span>{latest ? `最近 ${latest}` : ""}</span>
       </button>
     </div>

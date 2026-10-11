@@ -59,6 +59,7 @@ import type {
   AssistantDispatch,
   AssistantMemory,
   AssistantProfile,
+  MemoryProposal,
   AssistantScheduleItem,
   PhoneChat,
   AuditEntry,
@@ -329,6 +330,7 @@ function App() {
   const [assistantProfile, setAssistantProfile] = useState<AssistantProfile>({ name: "VortoCode", soul: "", about_you: "" });
   const [assistantSchedule, setAssistantSchedule] = useState<AssistantScheduleItem[]>([]);
   const [assistantMemories, setAssistantMemories] = useState<AssistantMemory[]>([]);
+  const [memoryProposals, setMemoryProposals] = useState<MemoryProposal[]>([]);
   const [profileDialogOpen, setProfileDialogOpen] = useState(false);
   // 手机上和助理的聊天：只读查看（不接管——两个进程同时写一段对话会互相覆盖）
   const [phoneChats, setPhoneChats] = useState<PhoneChat[]>([]);
@@ -3657,11 +3659,24 @@ function App() {
               const client = clientRef.current;
               if (tab === "audit") void refreshAudit();
               if (tab === "schedule") void client?.getAssistantSchedule().then(setAssistantSchedule).catch(() => setAssistantSchedule([]));
-              if (tab === "identity") void client?.listAssistantMemories().then(setAssistantMemories).catch(() => setAssistantMemories([]));
+              if (tab === "identity") {
+                void client?.listAssistantMemories().then(setAssistantMemories).catch(() => setAssistantMemories([]));
+                void client?.listMemoryProposals().then(setMemoryProposals).catch(() => setMemoryProposals([]));
+              }
             }}>
             {assistantTab === "audit" ? <AssistantAudit entries={auditEntries} />
               : assistantTab === "schedule" ? <AssistantSchedule items={assistantSchedule} />
               : assistantTab === "identity" ? <AssistantIdentity profile={assistantProfile} memories={assistantMemories}
+                  proposals={memoryProposals}
+                  onDecideProposal={(proposal, approve) => void (async () => {
+                    try {
+                      await clientRef.current?.decideMemoryProposal(proposal.id, approve);
+                      setMemoryProposals((previous) => previous.filter((item) => item.id !== proposal.id));
+                      if (approve) setAssistantMemories(await clientRef.current?.listAssistantMemories() ?? []);
+                    } catch (error) {
+                      setBanner(errorText(error, "处理记忆候选失败"));
+                    }
+                  })()}
                   onEdit={() => setProfileDialogOpen(true)}
                   onDeleteMemory={(memory) => void (async () => {
                     if (!await confirmAction(`忘掉这条记忆？\n\n${memory.content}`)) return;

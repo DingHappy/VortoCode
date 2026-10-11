@@ -1068,11 +1068,20 @@ class IMBridge:
             return
         client_of = getattr(self.agent, "_client", None)
         try:
-            reply_entry["digest"] = await generate_digest(client_of() if callable(client_of) else None,
-                                                          request, reply_entry.get("text", ""))
+            digest = await generate_digest(client_of() if callable(client_of) else None,
+                                           request, reply_entry.get("text", ""))
         except Exception:  # noqa: BLE001 —— 摘要是旁路
             return
+        candidates = digest.pop("remember", None)
+        reply_entry["digest"] = digest
         self._persist()
+        if candidates:
+            # 手机来的话一律按外部输入（IM 入站不可信）：候选只进待确认，标为读过外部内容
+            try:
+                from src.memory.assistant_profile import propose_memories
+                propose_memories(self.repo_root, list(candidates), source="im", tainted=True)
+            except Exception:  # noqa: BLE001 —— 记忆候选是旁路
+                pass
 
     async def _run_turn(self, text: str, images: Optional[list] = None,
                         files: Optional[list] = None) -> None:

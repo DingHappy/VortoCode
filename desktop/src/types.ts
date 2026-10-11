@@ -141,6 +141,14 @@ export interface AssistantScheduleItem {
   last?: string | null;
 }
 
+export interface MemoryProposal {
+  id: string;
+  content: string;
+  created_at: string;
+  /** 来自读过外部内容的回合（或手机）：确认前看仔细 */
+  tainted: boolean;
+}
+
 export interface AssistantMemory {
   id: string;
   content: string;

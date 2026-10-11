@@ -9,6 +9,7 @@ import type {
   AssistantMemory,
   AssistantProfile,
   AssistantScheduleItem,
+  MemoryProposal,
   PhoneChat,
   ArtifactMeta,
   ArtifactVersionSnapshot,
@@ -383,6 +384,17 @@ export class GatewayClient {
   async listAssistantMemories(): Promise<AssistantMemory[]> {
     const payload = await this.request<{ memories?: AssistantMemory[] }>("/api/assistant/memories");
     return Array.isArray(payload.memories) ? payload.memories : [];
+  }
+
+  /** 聊天里提炼出的「关于你」候选（待确认）。 */
+  async listMemoryProposals(): Promise<MemoryProposal[]> {
+    const payload = await this.request<{ proposals?: MemoryProposal[] }>("/api/assistant/memory-proposals");
+    return Array.isArray(payload.proposals) ? payload.proposals : [];
+  }
+
+  async decideMemoryProposal(id: string, approve: boolean): Promise<void> {
+    await this.request(`/api/assistant/memory-proposals/${encodeURIComponent(id)}`,
+      { method: "POST", body: JSON.stringify({ action: approve ? "approve" : "reject" }) });
   }
 
   async deleteAssistantMemory(id: string): Promise<void> {

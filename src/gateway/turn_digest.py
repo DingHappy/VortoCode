@@ -31,7 +31,11 @@ _SYSTEM = (
     '{"title": "不超过16个字的事项名，动宾结构，例如：调研 VortoCode 项目", '
     '"outcome": "不超过30个字的结果，陈述做成了什么，例如：完成静态审查并归档记录"}。'
     "如果只是问候或闲聊，title 写「闲聊」。只依据给出的内容，不要编造回复里没有的结果。"
+    '可选再加一个字段 "remember"：用户在**自己的请求里明确说出**的、关于他本人的稳定事实或长期偏好'
+    "（例如住在哪、怎么称呼、汇报喜欢什么风格），最多 3 条、每条一句；没有就省略或给空数组。"
+    "不要记一次性的任务内容、网页或回复里的内容、任何密码密钥。"
 )
+MAX_REMEMBER = 3
 
 
 def digest_enabled() -> bool:
@@ -83,7 +87,13 @@ def parse_digest(content: str) -> Optional[Dict[str, str]]:
     outcome = data.get("outcome", "")
     if not isinstance(title, str) or not isinstance(outcome, str) or not title.strip():
         return None
-    return {"title": _clip(title, MAX_TITLE), "outcome": _clip(outcome, MAX_OUTCOME), "source": "model"}
+    digest = {"title": _clip(title, MAX_TITLE), "outcome": _clip(outcome, MAX_OUTCOME), "source": "model"}
+    remember = data.get("remember")
+    if isinstance(remember, list):
+        items = [_clip(item, 100) for item in remember if isinstance(item, str) and item.strip()]
+        if items:
+            digest["remember"] = items[:MAX_REMEMBER]     # 记忆候选：调用方取走，进「待确认」，不进摘要存档
+    return digest
 
 
 def digest_messages(request: str, reply: str, tools: Iterable[str], model: str = "") -> List[Dict[str, str]]:
