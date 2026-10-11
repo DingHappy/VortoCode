@@ -1,6 +1,8 @@
 import { ManagementNav } from "./components/ManagementNav";
 import { isManagementTab } from "./lib/inspector";
 import { WorkbenchLauncher, WorkbenchTabs, type WorkbenchTool } from "./components/WorkbenchTabs";
+import { ActivityFeed } from "./components/ActivityFeed";
+import { taskFeedItem } from "./lib/activityFeed";
 import { ConfirmationReply } from "./components/ConfirmationReply";
 import { createConfirmationReply } from "./lib/confirm";
 import { ConfirmationTrust } from "./components/ConfirmationTrust";
@@ -16,6 +18,7 @@ import {
   Eye,
   FileCode2,
   GitCompareArrows,
+  Inbox,
   Library,
   ListChecks,
   Search,
@@ -171,6 +174,7 @@ const TRUST_CHIP_LABEL: Record<TrustLevel, string> = {
 
 function inspectorTabLabel(tab: InspectorTab): string {
   return {
+    feed: "任务动态",
     info: "任务步骤",
     inbox: "工作看板",
     preview: "预览",
@@ -296,6 +300,7 @@ function App() {
   // 会话侧栏的标签栏：打开过的工具；launcher = 正在看工具列表（点了「＋」或标签全关了）。
   const [workbenchTabs, setWorkbenchTabs] = useState<InspectorTab[]>([]);
   const [workbenchLauncher, setWorkbenchLauncher] = useState(false);
+  const [feedScope, setFeedScope] = useState<"all" | "session">("all");
   const [tabsNeedingAttention, setTabsNeedingAttention] = useState<ReadonlySet<InspectorTab>>(
     () => new Set());
   const openInspector = useCallback((tab: InspectorTab) => {
@@ -2663,7 +2668,12 @@ function App() {
   // 会话侧栏的工具：标签栏与工具列表共用。点击动作沿用原标签按钮的（含变更/上下文的刷新）。
   const planDone = plan.filter((item) => item.status === "completed").length;
   const scoped = activeScope !== "general";
+  // 任务动态：后台任务台账的投影（useTasks 已随 task_update 推送实时更新）。
+  const feedItems = tasks.map(taskFeedItem);
+  const feedWaiting = feedItems.filter((item) => item.status === "waiting").length;
   const workbenchTools: WorkbenchTool[] = ([
+    { id: "feed", label: "任务动态", icon: <Inbox size={15} />, badge: feedWaiting ? String(feedWaiting) : undefined,
+      open: () => { openInspector("feed"); void refreshTasks(); } },
     { id: "info", label: "任务步骤", icon: <ListChecks size={15} />, badge: plan.length ? `${planDone}/${plan.length}` : undefined,
       live: busy, open: () => openInspector("info") },
     { id: "preview", label: "预览", icon: <Eye size={15} />, badge: String(artifacts.length + previewReferenceItems.length),
@@ -3012,12 +3022,13 @@ function App() {
               <button
                 className={`context-toggle workbench-toggle icon-only ${inspectorOpen ? "active" : ""}`}
                 aria-expanded={inspectorOpen}
-                aria-label="任务步骤"
-                title={plan.length ? `任务步骤 ${planDone}/${plan.length}` : "任务步骤"}
-                onClick={() => inspectorOpen ? setInspectorOpen(false) : openInspector("info")}
+                aria-label="任务动态"
+                title={feedWaiting ? `任务动态 · ${feedWaiting} 件等你处理` : plan.length ? `任务动态 · 当前步骤 ${planDone}/${plan.length}` : "任务动态"}
+                onClick={() => inspectorOpen ? setInspectorOpen(false)
+                  : workbenchTabs.length > 0 && !isManagementTab(inspectorTab) ? setInspectorOpen(true) : openInspector("feed")}
               >
                 <PanelRight size={16} />
-                {busy && <i className="workbench-toggle-dot" aria-hidden="true" />}
+                {(busy || feedWaiting > 0) && <i className={`workbench-toggle-dot${!busy ? " waiting" : ""}`} aria-hidden="true" />}
               </button>
               {busy && <button className="stop-button" onClick={() => void cancelTurn()}>停止</button>}
             </div>
@@ -3295,6 +3306,8 @@ function App() {
             onShowLauncher={() => setWorkbenchLauncher(true)} onCloseTab={closeWorkbenchTool} onClosePanel={() => setInspectorOpen(false)} />}
           {mainView === "chat" && showWorkbenchLauncher && <WorkbenchLauncher tools={workbenchTools} />}
           <div className="inspector-body" hidden={mainView === "chat" && showWorkbenchLauncher}>
+            {inspectorTab === "feed" && <ActivityFeed items={feedItems} scope={feedScope} onScope={setFeedScope}
+              currentSession={activeSid} onOpen={(item) => { if (item.taskId) focusTask(item.taskId); }} />}
             {inspectorTab === "info" && <SessionInfo key={activeSid} context={currentSession?.context} busy={busy} needsInput={Boolean(pendingConfirm)}
               connected={connection === "connected"} plan={plan} queued={promptQueue.length}
               activities={activities.filter(item => item.rid === (activeTurnRid ?? [...activities].reverse().find(candidate => candidate.rid)?.rid))}
