@@ -846,5 +846,29 @@
     "methods": [
       "POST"
     ]
+  },
+  {
+    "path": "/api/assistant/memories",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/assistant/memories/{memory_id}",
+    "methods": [
+      "DELETE"
+    ]
+  },
+  {
+    "path": "/api/assistant/profile",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/assistant/profile",
+    "methods": [
+      "PUT"
+    ]
   }
 ]

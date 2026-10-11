@@ -2,7 +2,7 @@ import { ManagementNav } from "./components/ManagementNav";
 import { isManagementTab } from "./lib/inspector";
 import { WorkbenchLauncher, WorkbenchTabs, type WorkbenchTool } from "./components/WorkbenchTabs";
 import { ActivityFeed } from "./components/ActivityFeed";
-import { AssistantPanel, AssistantSidebar, ModeSwitch, type AppMode } from "./components/AssistantMode";
+import { AssistantMemories, AssistantPanel, AssistantProfileDialog, AssistantSidebar, ModeSwitch, type AppMode, type AssistantTab } from "./components/AssistantMode";
 import { dispatchFeedItem, taskFeedItem, turnFeedItem, type FeedItem } from "./lib/activityFeed";
 import { ConfirmationReply } from "./components/ConfirmationReply";
 import { createConfirmationReply } from "./lib/confirm";
@@ -57,6 +57,8 @@ import {
 import type {
   AgentTurn,
   AssistantDispatch,
+  AssistantMemory,
+  AssistantProfile,
   AuditEntry,
   CommandRunItem,
   CommandRunKind,
@@ -320,7 +322,11 @@ function App() {
     try { return localStorage.getItem(STORAGE_KEYS.appMode) === "assistant" ? "assistant" : "work"; } catch { return "work"; }
   });
   const [mainChatSid, setMainChatSid] = useState(() => { try { return localStorage.getItem(STORAGE_KEYS.mainChatSid) ?? ""; } catch { return ""; } });
-  const [assistantTab, setAssistantTab] = useState<"feed" | "steps">("feed");
+  const [assistantTab, setAssistantTab] = useState<AssistantTab>("feed");
+  // 助理的名字 / 关于你，以及它记住的事（都在助理所在的那台电脑上）
+  const [assistantProfile, setAssistantProfile] = useState<AssistantProfile>({ name: "VortoCode", about_you: "" });
+  const [assistantMemories, setAssistantMemories] = useState<AssistantMemory[]>([]);
+  const [profileDialogOpen, setProfileDialogOpen] = useState(false);
   const [agentTurns, setAgentTurns] = useState<AgentTurn[]>([]);
   // 常驻助理写的任务单（等你确认下发 / 在做 / 做完）。
   const [dispatches, setDispatches] = useState<AssistantDispatch[]>([]);
@@ -1984,6 +1990,11 @@ function App() {
     } catch {
       // 老版本服务没有派活接口：当作没有任务单。
     }
+    try {
+      setAssistantProfile(await client.getAssistantProfile());
+    } catch {
+      // 老版本服务没有助理资料接口：沿用默认名字。
+    }
   }, []);
 
   /** 打开「主要聊天」：每台电脑第一次进助理模式时生成一个固定会话并记住，之后一直用它。 */
@@ -3620,13 +3631,28 @@ function App() {
         )}
 
         {mainView === "chat" && inspectorOpen && appMode === "assistant" && (
-          <AssistantPanel name="VortoCode" connected={connection === "connected"}
+          <AssistantPanel name={assistantProfile.name || "VortoCode"} connected={connection === "connected"}
+            onEditProfile={() => setProfileDialogOpen(true)}
             host={onAssistantHost() ? { kind: "resident", name: findAssistantHost(projects)?.name ?? "常驻电脑", reachable: connection === "connected" } : { kind: "local", canAddResident: !findAssistantHost(projects) }}
             onAddResident={() => setRemoteDialogOpen("assistant")}
             onRetryResident={() => void changeAppMode("assistant")}
             modelLabel={onAssistantHost() ? runtime.model : composerModelChoices.find(item => item.value === modelChoice)?.label}
-            tab={assistantTab} onTab={setAssistantTab} onClose={() => setInspectorOpen(false)} waiting={assistantWaiting}>
-            {assistantTab === "feed"
+            tab={assistantTab} onClose={() => setInspectorOpen(false)} waiting={assistantWaiting}
+            onTab={(tab) => {
+              setAssistantTab(tab);
+              if (tab === "memory") void clientRef.current?.listAssistantMemories().then(setAssistantMemories).catch(() => setAssistantMemories([]));
+            }}>
+            {assistantTab === "memory"
+              ? <AssistantMemories memories={assistantMemories} onDelete={(memory) => void (async () => {
+                  if (!await confirmAction(`忘掉这条记忆？\n\n${memory.content}`)) return;
+                  try {
+                    await clientRef.current?.deleteAssistantMemory(memory.id);
+                    setAssistantMemories((previous) => previous.filter((item) => item.id !== memory.id));
+                  } catch (error) {
+                    setBanner(errorText(error, "删除记忆失败"));
+                  }
+                })()} />
+              : assistantTab === "feed"
               ? <ActivityFeed items={[...agentTurns.map(turnFeedItem), ...dispatchItems, ...feedItems]} scope="all" onScope={() => {}}
                   currentSession={activeSid}
                   onOpen={(item) => {
@@ -3936,6 +3962,13 @@ function App() {
         )}
       </div>
 
+      {profileDialogOpen && <AssistantProfileDialog profile={assistantProfile} onClose={() => setProfileDialogOpen(false)}
+        onSave={async (next) => {
+          const client = clientRef.current;
+          if (!client) throw new Error("还没连上助理");
+          setAssistantProfile(await client.saveAssistantProfile(next));
+          setProfileDialogOpen(false);
+        }} />}
       {remoteDialogOpen && <RemoteProjectDialog purpose={remoteDialogOpen} onClose={() => setRemoteDialogOpen(false)} onRegistered={async (profile) => {
         const known = [profile, ...projects.filter((item) => item.id !== profile.id)];
         setProjects(known);

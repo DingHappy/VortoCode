@@ -2,7 +2,7 @@ import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ArrowUp, Cpu, Paperclip, Search, Settings } from "lucide-react";
 import { ActivityFeed } from "../src/components/ActivityFeed";
-import { AssistantPanel, AssistantSidebar, ModeSwitch, type AppMode } from "../src/components/AssistantMode";
+import { AssistantMemories, AssistantPanel, AssistantSidebar, ModeSwitch, type AppMode } from "../src/components/AssistantMode";
 import { SessionInfo } from "../src/components/SessionInfo";
 import { MarkdownMessage } from "../src/components/MarkdownMessage";
 import { taskFeedItem, turnFeedItem } from "../src/lib/activityFeed";
@@ -29,7 +29,7 @@ const feed = [...turns.map(turnFeedItem), ...tasks.map(taskFeedItem)];
 function Fixture() {
   const [mode, setMode] = useState<AppMode>("assistant");
   const [current, setCurrent] = useState("main");
-  const [tab, setTab] = useState<"feed" | "steps">("feed");
+  const [tab, setTab] = useState<import("../src/components/AssistantMode").AssistantTab>("feed");
   const [panel, setPanel] = useState(true);
   return <div className="app-shell"><header className="topbar"><small>助理模式隔离验收 · 合成数据</small>
     <button onClick={() => document.documentElement.dataset.theme = document.documentElement.dataset.theme === "light" ? "dark" : "light"}>切换主题</button>
@@ -51,7 +51,7 @@ function Fixture() {
         <div className="composer-wrap"><div className="composer"><textarea aria-label="消息" placeholder="给助理交代一件事…" /><div className="composer-footer"><div className="composer-tools"><Paperclip size={16} /><span className="composer-model single"><Cpu size={14} />Qwen3.6 · 本地</span></div><div className="composer-actions"><button className="composer-send" aria-label="发送"><ArrowUp size={16} /></button></div></div></div></div>
       </section>
       {panel && <AssistantPanel name="VortoCode" connected modelLabel="mimo-v2.6-pro" host={{ kind: "resident", name: "vorto-code" }} onAddResident={() => {}} onRetryResident={() => {}} tab={tab} onTab={setTab} onClose={() => setPanel(false)} waiting={feed.filter((item) => item.status === "waiting").length}>
-        {tab === "feed" ? <ActivityFeed items={feed} scope="all" onScope={() => {}} onOpen={(item) => item.session && setCurrent(item.session.replace(/^sid-/, ""))} />
+        {tab === "memory" ? <AssistantMemories memories={[{ id: "m1", content: "汇报先给结论，再说细节", created_at: "" }, { id: "m2", content: "住在宁波，常用 Telegram", created_at: "" }]} onDelete={() => {}} /> : tab === "feed" ? <ActivityFeed items={feed} scope="all" onScope={() => {}} onOpen={(item) => item.session && setCurrent(item.session.replace(/^sid-/, ""))} />
           : <SessionInfo busy connected plan={[]} activities={[{ id: "a", kind: "tool", name: "read_file", status: "completed", label: "读取 README.md", durationMs: 1200 }, { id: "b", kind: "tool", name: "grep", status: "running", label: "搜索循环依赖" }]} queued={0} model="Qwen3.6" onRefresh={() => {}} />}
       </AssistantPanel>}
     </div></div>;

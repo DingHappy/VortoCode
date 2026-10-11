@@ -309,3 +309,15 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 .project-session svg { flex: none; margin-right: 5px; vertical-align: -1px; color: var(--n9); }
 .isolated-delivery-pull button { margin: 0 6px; padding: 3px 10px; border: 1px solid var(--n5); border-radius: 7px; font-size: 12px; color: var(--n12); background: var(--n0); cursor: pointer; }
 .isolated-delivery-pull button:hover { background: var(--n3); }
+
+/* 助理资料与记忆 */
+.assistant-name { display: inline-flex; align-items: center; gap: 4px; }
+.assistant-name button { display: inline-flex; padding: 3px; border: 0; border-radius: 6px; color: var(--n9); background: transparent; cursor: pointer; }
+.assistant-name button:hover { color: var(--n13); background: var(--n3); }
+.assistant-memories { margin: 0; padding: 6px 14px 14px; list-style: none; }
+.assistant-memories li { display: flex; align-items: flex-start; gap: 8px; padding: 9px 6px; border-bottom: 1px solid var(--n4); font-size: 13px; line-height: 1.5; color: var(--n12); }
+.assistant-memories li span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.assistant-memories li button { flex: none; display: inline-flex; padding: 4px; border: 0; border-radius: 6px; color: var(--n9); background: transparent; cursor: pointer; }
+.assistant-memories li button:hover { color: var(--red-text); background: var(--n3); }
+.assistant-memory-empty { margin: 14px 18px; font-size: 13px; line-height: 1.6; color: var(--n9); }
+.assistant-profile-dialog textarea { width: 100%; resize: vertical; font: inherit; }

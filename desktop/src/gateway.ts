@@ -6,6 +6,8 @@ import WebSocket, { type Message as WebSocketMessage } from "@tauri-apps/plugin-
 import type {
   AgentTurn,
   AssistantDispatch,
+  AssistantMemory,
+  AssistantProfile,
   ArtifactMeta,
   ArtifactVersionSnapshot,
   AuditEntry,
@@ -352,6 +354,25 @@ export class GatewayClient {
   async listAgentActivity(limit = 100): Promise<AgentTurn[]> {
     const payload = await this.request<{ turns?: AgentTurn[] }>(`/api/agent/activity?limit=${encodeURIComponent(String(limit))}`);
     return payload.turns ?? [];
+  }
+
+  /** 常驻助理的名字与「关于你」（两端共用）。 */
+  async getAssistantProfile(): Promise<AssistantProfile> {
+    return this.request("/api/assistant/profile");
+  }
+
+  async saveAssistantProfile(profile: Partial<AssistantProfile>): Promise<AssistantProfile> {
+    return this.request("/api/assistant/profile", { method: "PUT", body: JSON.stringify(profile) });
+  }
+
+  /** 助理记住的关于你的事（最新在前）。 */
+  async listAssistantMemories(): Promise<AssistantMemory[]> {
+    const payload = await this.request<{ memories?: AssistantMemory[] }>("/api/assistant/memories");
+    return Array.isArray(payload.memories) ? payload.memories : [];
+  }
+
+  async deleteAssistantMemory(id: string): Promise<void> {
+    await this.request(`/api/assistant/memories/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
 
   /** 常驻助理的任务单（顺带刷新已下发任务的状态）。 */

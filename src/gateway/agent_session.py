@@ -169,6 +169,11 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
                     f"删除制品「{preview.get('title') or preview.get('id')}」？此操作不可逆。"))
 
             tools += build_artifact_tools(repo_root, confirm=_publish, confirm_delete=_delete)
+        if kind in ("web", "im"):
+            # 助理记得你：长期记忆（写入过 write_policy + 确认；仓库记忆在通用范围没有意义，不给）
+            from src.agents.tools.memory import build_memory_tools
+            tools += [tool for tool in build_memory_tools(repo_root, gated_confirm, source=kind)
+                      if tool.name != "remember_repo"]
             # 常驻助理：登记了常驻电脑项目才有。只能提议任务单，下发由人在 Desktop 点。
             from src.agents.taint import is_tainted
             from src.workflow.tasks.assistant_dispatch import build_dispatch_tools
@@ -217,6 +222,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         "【工作区范围】当前是 Scratch 隔离临时工作区。只在这里创建和运行临时代码；"
         "需要修改用户已有项目时调用 request_workspace(scope=project)，不要搜索或猜测其他目录。"
     ] if workspace_scope == SCRATCH else []
+    if workspace_scope == GENERAL and kind in ("web", "im"):
+        # 名字、服务对象、长期记忆摘录：装配时读一次，会话内字节稳定
+        from src.memory.assistant_profile import assistant_system_parts
+        parts.extend(assistant_system_parts(repo_root))
     if workspace_scope == GENERAL and any(tool.name == "propose_task" for tool in tools):
         parts.append("【派活】你是常驻助理：要改代码或在项目里干的活，用 propose_task 写成任务单交给常驻电脑上的"
                      "项目去做（用户确认后才执行），不要调用 request_workspace，也不要自己动手。"
