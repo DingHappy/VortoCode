@@ -233,7 +233,7 @@ async def test_supervised_project_sensitive_tools_cannot_be_unlocked(tmp_path):
 async def test_supervision_confirms_even_read_only_shell(tmp_path, monkeypatch):
     from types import SimpleNamespace
     from src.agents.tools.shell import build_command_tool
-    from src.agents import sandbox
+    from src.sandbox import policy as sandbox
     from src.agents.gate import make_confirm_gate
     asked = []
     async def ask(message):

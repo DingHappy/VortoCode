@@ -228,10 +228,10 @@ def test_run_tests_marks_sandbox_env(tmp_path, monkeypatch):
             return {"backend": "seatbelt", "isolated": True}
 
     monkeypatch.setattr(wt, "_git", lambda *a, **k: None, raising=False)
-    monkeypatch.setattr("src.agents.sandbox.resolve_sandbox", lambda **k: _Decision())
-    monkeypatch.setattr("src.agents.sandbox.sandboxed_exec_argv",
+    monkeypatch.setattr("src.sandbox.policy.resolve_sandbox", lambda **k: _Decision())
+    monkeypatch.setattr("src.sandbox.policy.sandboxed_exec_argv",
                         lambda w, c, backend=None: list(c))
-    monkeypatch.setattr("src.agents.sandbox.child_env", lambda: {"PATH": "/usr/bin"})
+    monkeypatch.setattr("src.sandbox.policy.child_env", lambda: {"PATH": "/usr/bin"})
 
     def _fake_run(cmd, **kw):
         seen["env"] = kw.get("env") or {}

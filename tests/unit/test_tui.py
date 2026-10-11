@@ -3920,7 +3920,7 @@ async def test_host_fallback_force_prompt_ignores_allow_and_session_blanket(monk
 @pytest.mark.asyncio
 async def test_run_command_auto_fallback_cannot_execute_via_allow_rule(monkeypatch, tmp_path):
     import asyncio
-    from src.agents import sandbox as sb
+    from src.sandbox import policy as sb
     import src.agents.shell as shell
 
     (tmp_path / ".vortocode").mkdir()

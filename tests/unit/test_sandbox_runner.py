@@ -60,7 +60,7 @@ async def test_host_fallback_when_shell_enabled(monkeypatch):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("policy", ["auto", "required"])
 async def test_run_code_shell_flag_cannot_bypass_required_isolation(monkeypatch, tmp_path, policy):
-    from src.agents import sandbox as sb
+    from src.sandbox import policy as sb
 
     marker = tmp_path / "must-not-exist"
     monkeypatch.setattr(runner, "docker_available", lambda: False)
@@ -81,7 +81,7 @@ async def test_run_code_shell_flag_cannot_bypass_required_isolation(monkeypatch,
 
 @pytest.mark.asyncio
 async def test_run_code_uses_available_os_sandbox_without_host_shell_gate(monkeypatch, tmp_path):
-    from src.agents import sandbox as sb
+    from src.sandbox import policy as sb
 
     monkeypatch.setattr(runner, "docker_available", lambda: False)
     monkeypatch.setattr(sb, "sandbox_backend", lambda: "bubblewrap")
@@ -174,7 +174,7 @@ async def test_run_pytest_host_when_no_image(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_run_pytest_fails_closed_without_os_sandbox(monkeypatch, tmp_path):
-    from src.agents import sandbox as sb
+    from src.sandbox import policy as sb
     monkeypatch.delenv("VORTOCODE_SANDBOX_IMAGE", raising=False)
     monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
     monkeypatch.setattr(runner, "docker_available", lambda: False)
@@ -187,7 +187,7 @@ async def test_run_pytest_fails_closed_without_os_sandbox(monkeypatch, tmp_path)
 
 @pytest.mark.asyncio
 async def test_run_pytest_uses_available_os_sandbox(monkeypatch, tmp_path):
-    from src.agents import sandbox as sb
+    from src.sandbox import policy as sb
     monkeypatch.delenv("VORTOCODE_SANDBOX_IMAGE", raising=False)
     monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
     monkeypatch.setattr(runner, "docker_available", lambda: False)

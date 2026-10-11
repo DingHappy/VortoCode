@@ -977,7 +977,7 @@ def test_run_tests_pass_and_fail(tmp_path):
 
 def test_run_tests_unattended_fails_closed_without_backend(tmp_path, monkeypatch):
     import sys
-    from src.agents import sandbox as sb
+    from src.sandbox import policy as sb
     from src.agents.worktree import run_tests
     marker = tmp_path / "must-not-exist"
     monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)

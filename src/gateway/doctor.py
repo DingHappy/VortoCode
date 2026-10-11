@@ -132,7 +132,7 @@ def _check_permissions(cwd: str) -> Check:
 
 def _check_sandbox() -> Check:
     """Report whether unattended/generated-code execution can be isolated."""
-    from src.agents.sandbox import resolve_sandbox
+    from src.sandbox.policy import resolve_sandbox
     decision = resolve_sandbox(require_isolation=True)
     if decision.isolated:
         return Check("sandbox", "ok", decision.reason)

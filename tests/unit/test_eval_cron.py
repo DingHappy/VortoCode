@@ -125,7 +125,7 @@ async def test_command_job_fails_closed_when_sandbox_required_but_unavailable(mo
     """codex 审出的真问题：cron 是**无人值守**路径。原实现自己 create_subprocess_shell，
     绕过整条沙箱边界——连 VORTOCODE_SANDBOX=required 都拦不住它。现在走统一执行入口
     （require_isolation=True）：沙箱不可用就 fail-closed，绝不偷偷在宿主机裸跑。"""
-    import src.agents.sandbox as sb
+    import src.sandbox.policy as sb
     monkeypatch.setenv("VORTOCODE_SANDBOX", "required")
     monkeypatch.setattr(sb, "sandbox_backend", lambda: "")      # 本机没有可用后端
 

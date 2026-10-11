@@ -74,7 +74,7 @@ class _TerminalProcess:
         import pty
         import termios
 
-        from src.agents.sandbox import resolve_sandbox, sandboxed_exec_argv
+        from src.sandbox.policy import resolve_sandbox, sandboxed_exec_argv
 
         shell = os.environ.get("SHELL", "").strip()
         if not shell.startswith("/") or not os.access(shell, os.X_OK):

@@ -77,7 +77,7 @@ async def run_code(code: str, language: str = "python", timeout: int = 30,
             logger.warning("Docker 执行失败，尝试共享 OS sandbox 策略: %s", e)
 
     # 2. 生成代码属于无人值守路径：auto/required 无 backend 必须 fail-closed。
-    from src.agents.sandbox import resolve_sandbox, sandboxed_exec_argv
+    from src.sandbox.policy import resolve_sandbox, sandboxed_exec_argv
     decision = resolve_sandbox(require_isolation=True)
     evidence = decision.to_dict()
     if not decision.allowed:
@@ -114,7 +114,7 @@ async def run_code(code: str, language: str = "python", timeout: int = 30,
 async def run_pytest(workspace: str, timeout: int = 120) -> RunResult:
     """在工作区运行 pytest。
 
-    配置测试镜像且 Docker 可用时优先走容器；否则使用 agents.sandbox 的
+    配置测试镜像且 Docker 可用时优先走容器；否则使用 sandbox.policy 的
     Seatbelt/bubblewrap 策略。生成代码属于无人值守执行，OS 沙箱不可用时默认 fail-closed，
     只有显式 ``VORTOCODE_SANDBOX=off`` 才允许宿主机执行。
     """
@@ -132,7 +132,7 @@ async def run_pytest(workspace: str, timeout: int = 120) -> RunResult:
         }
         return result
 
-    from src.agents.sandbox import resolve_sandbox, sandboxed_exec_argv
+    from src.sandbox.policy import resolve_sandbox, sandboxed_exec_argv
     from src.utils.python_exe import pytest_argv
     decision = resolve_sandbox(require_isolation=True)
     evidence = decision.to_dict()
@@ -156,7 +156,7 @@ async def _exec_argv(argv, timeout: int, runtime: str, isolated: bool,
     # 过 child_env 剥操作密钥：OS-沙箱/host 分支跑的是仓库可控的 pytest（任意 conftest/测试
     # 代码），密钥留在 env + 回退路径网络开放 = 可外带。Docker 分支的 docker CLI 本不需要这些
     # 密钥、容器又拿镜像 env 非宿主 env，补上纯无害纵深。与 shell.py 的 run_command 同口径。
-    from src.agents.sandbox import child_env
+    from src.sandbox.policy import child_env
     try:
         proc = await asyncio.create_subprocess_exec(
             *argv, cwd=cwd, env=child_env(),
@@ -185,7 +185,7 @@ async def _run_code_argv(argv: list[str], timeout: int, *, runtime: str,
     # 过 child_env 剥操作密钥：这里跑的正是 `python3 -c / node -e / bash -c` 生成代码（可投毒），
     # OS-沙箱回退路径网络开放，密钥留在 env 即等于把中转站 key 递到不可信代码手里可外带。
     # 目标项目自身若需某密钥，走 VORTOCODE_ENV_PASSTHROUGH 显式放行。与 shell.py 同口径。
-    from src.agents.sandbox import child_env
+    from src.sandbox.policy import child_env
     try:
         proc = await asyncio.create_subprocess_exec(
             *argv, cwd=cwd, env=child_env(),

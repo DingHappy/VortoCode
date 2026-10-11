@@ -72,7 +72,7 @@ def test_check_permissions_bad_yaml_is_fail(tmp_path):
 
 
 def test_check_sandbox_reports_isolated_off_and_unavailable(monkeypatch):
-    from src.agents import sandbox as sb
+    from src.sandbox import policy as sb
     monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
     monkeypatch.setattr(sb, "sandbox_backend", lambda: "seatbelt")
     assert doctor._check_sandbox().level == "ok"

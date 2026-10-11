@@ -9,7 +9,7 @@
 """
 import pytest
 
-from src.agents.sandbox import _STRIPPED_ENV_KEYS, child_env
+from src.sandbox.policy import _STRIPPED_ENV_KEYS, child_env
 
 
 # ── child_env dict 层 ────────────────────────────────────────────────
@@ -85,7 +85,7 @@ def test_subprocess_sees_passthrough(monkeypatch, tmp_path):
 def test_subprocess_cannot_read_secret_through_sandbox(monkeypatch, tmp_path):
     """沙箱路径（seatbelt/bwrap）同样剥密钥——现有 off 路径之外补一条真沙箱钉，
     防将来重构 sandboxed_argv 时从别处重注父 env 而无测试变红（对抗审查 F6）。"""
-    from src.agents.sandbox import resolve_sandbox
+    from src.sandbox.policy import resolve_sandbox
     from src.agents.shell import run_command
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-sandbox-leak")
