@@ -22,19 +22,17 @@ export function SessionInfo({ context, busy, connected, needsInput = false, plan
   const hasWork = plan.length > 0 || activities.length > 0;
   const attention = activities.filter(item => ["failed", "blocked", "cancelled", "timed_out"].includes(item.status));
   const done = plan.filter(item => item.status === "completed").length;
-  const state = !connected ? { tone: "offline", text: "连接中断" } : needsInput ? { tone: "waiting", text: "等待确认" } : busy ? { tone: "running", text: "运行中" } : { tone: "ready", text: "就绪" };
+  // 侧栏只放步骤。常态（就绪/运行中）不单独占一块——运行中由步骤高亮与标签上的小点表达；
+  // 只有要人动手的状态（断线、等确认）才出一条提示。
   return <section className="session-info" aria-label="当前会话运行信息">
-    <div className="session-info-status" role="status">
-      <h3>会话状态 <span className={`session-state-pill ${state.tone}`}>{state.text}</span></h3>
-      {!connected ? <><p>恢复连接后可继续使用。</p>{onOpenSettings && <button className="session-info-button primary" onClick={onOpenSettings}>打开连接设置</button>}</>
-        : needsInput ? <p>请在输入框上方确认后继续。</p>
-        : !hasWork ? <p>{busy ? "正在处理请求，新的进展会显示在这里。" : "发送消息开始；有任务进展时会显示在这里。"}</p> : null}
-    </div>
+    {!connected ? <div className="session-info-notice offline" role="status">
+      <strong>连接中断</strong><p>恢复连接后可继续使用。</p>
+      {onOpenSettings && <button className="session-info-button primary" onClick={onOpenSettings}>打开连接设置</button>}
+    </div> : needsInput ? <div className="session-info-notice waiting" role="status">
+      <strong>等待确认</strong><p>请在输入框上方确认后继续。</p>
+    </div> : !hasWork ? <p className="session-info-empty" role="status">{busy ? "正在处理请求，新的进展会显示在这里。" : "发送消息开始；有任务进展时会显示在这里。"}</p> : null}
     {plan.length > 0 && <section className="session-info-section">
-      <h4>执行进度 <small>{done}/{plan.length}</small></h4>
-      <div className="session-progress" role="progressbar" aria-label="执行进度" aria-valuemin={0} aria-valuemax={plan.length} aria-valuenow={done}>
-        <span style={{ width: `${Math.round((done / plan.length) * 100)}%` }} />
-      </div>
+      <h4>执行进度 <small aria-label={`已完成 ${done} / ${plan.length}`}>{done}/{plan.length}</small></h4>
       <ol className="session-info-steps">{plan.map((item, index) => {
         const tone = stepTone(item.status);
         // 已完成/待执行由图标表达，文字只给读屏；进行中与异常才把状态写出来，避免每行都挂一行灰字。

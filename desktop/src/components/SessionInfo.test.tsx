@@ -44,7 +44,6 @@ it("keeps confirmation and failure information ahead of secondary settings", () 
 it("keeps only conversation execution progress in the sidebar",()=>{
   const html=renderToStaticMarkup(<SessionInfo {...props} plan={[{step:"读取来源",status:"completed"},{step:"核对结论",status:"in_progress"},{step:"交付",status:"pending"}]} activities={[{id:"t1",kind:"tool",status:"running",label:"读取网页"}]} />);
   for(const text of ["执行进度","1/3","核对结论"])expect(html).toContain(text);
-  expect(html).toContain('aria-valuenow="1"'); expect(html).toContain('aria-valuemax="3"');
   for(const text of ["本会话下派任务","看板","Goal","查看编排图"])expect(html).not.toContain(text);
 });
 it("does not invent a plan when the runtime has not provided one",()=>{
