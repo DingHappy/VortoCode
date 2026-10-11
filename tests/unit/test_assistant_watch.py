@@ -107,3 +107,45 @@ def test_schedule_overview_lists_reports_heartbeat_and_cron(tmp_path, monkeypatc
     assert items["report-09:00"]["title"] == "早报" and items["report-21:00"]["title"] == "晚报"
     assert items["heartbeat"]["schedule"] == "每 30m" and "follow-up" in items
     assert items["cron-看邮箱"]["detail"] == "有新询盘就告诉我"
+
+
+def test_relay_route_never_relays_again(tmp_path, monkeypatch):
+    """两个服务互相配了转发地址也不成环：收到转发的一方只在本地投递，没桥就排补发。"""
+    from fastapi.testclient import TestClient
+
+    import src.gateway.im_runtime as im_rt
+    from src.scheduling.notices import pending_undelivered_count
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    monkeypatch.setenv("VORTOCODE_OWNER_NOTIFY_URL", "http://127.0.0.1:9")
+    monkeypatch.setattr(im_rt, "_OWNER_NOTIFIER", None)
+    relayed = []
+
+    async def _relay(text, **_kw):
+        relayed.append(text)
+        return True
+    monkeypatch.setattr(im_rt, "relay_owner_notice", _relay)
+    from src.web.server import app
+
+    assert TestClient(app).post("/api/im/notify", json={"text": "🔔 定时作业跑完了"}).json() == {"ok": True}
+    assert relayed == [] and pending_undelivered_count(str(tmp_path)) == 1
+
+
+async def test_notify_owner_prefers_local_bridge_then_relay(monkeypatch):
+    import src.gateway.im_runtime as im_rt
+
+    sent, relayed = [], []
+
+    async def _bridge(text):
+        sent.append(text)
+
+    async def _relay(text, **_kw):
+        relayed.append(text)
+        return True
+    monkeypatch.setattr(im_rt, "relay_owner_notice", _relay)
+    monkeypatch.setattr(im_rt, "_OWNER_NOTIFIER", _bridge)
+    assert await im_rt.notify_owner("a") and sent == ["a"] and relayed == []
+    monkeypatch.setattr(im_rt, "_OWNER_NOTIFIER", None)
+    assert await im_rt.notify_owner("b") and relayed == ["b"]
+    assert not await im_rt.notify_owner("c", relay=False) and relayed == ["b"]

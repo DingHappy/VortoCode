@@ -179,7 +179,7 @@ async def flush_undelivered(repo_root: str, send, *, now: datetime = None) -> Di
     return {"sent": len(fresh), "dropped": dropped, "kept": 0}
 
 
-def make_notifier(repo_root: str, *, source: str = "scheduler", trigger: str = ""):
+def make_notifier(repo_root: str, *, source: str = "scheduler", trigger: str = "", relay: bool = True):
     """造三路通知投递器：①持久台账 ②WS 广播 ③IM 推 owner。每路 best-effort，一路挂不拖另两路。
 
     **凡是"跑完要让人知道"的路径都必须用它**，别只调 `record_notice`——那只写盘，人手机上什么
@@ -207,7 +207,8 @@ def make_notifier(repo_root: str, *, source: str = "scheduler", trigger: str = "
         delivered = False
         try:
             from src.gateway.im_runtime import notify_owner
-            delivered = bool(await notify_owner(f"🔔 {text}"))   # ③ IM 推已配对 owner
+            # ③ IM 推已配对 owner：本进程有桥就直接发，没有就交给同机持有 IM 的服务（relay=False 时只本地）
+            delivered = bool(await notify_owner(f"🔔 {text}", relay=relay))
         except Exception:  # noqa: BLE001
             pass
         if not delivered:

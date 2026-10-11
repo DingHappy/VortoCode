@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
-import { ArrowLeft, CalendarClock, Check, Clock3, Fingerprint, HeartPulse, Laptop, List, MessageCircle, MessagesSquare, PencilLine, Plus, Server, ShieldCheck, Trash2, X } from "lucide-react";
+import { ArrowLeft, CalendarClock, Smartphone, Check, Clock3, Fingerprint, HeartPulse, Laptop, List, MessageCircle, MessagesSquare, PencilLine, Plus, Server, ShieldCheck, Trash2, X } from "lucide-react";
 import { useState } from "react";
-import type { AssistantMemory, AssistantProfile, AssistantScheduleItem, AuditEntry } from "../types";
+import type { AssistantMemory, AssistantProfile, AssistantScheduleItem, AuditEntry, PhoneChat } from "../types";
+import { MarkdownMessage } from "./MarkdownMessage";
 
 export type AppMode = "assistant" | "work";
 
@@ -16,9 +17,12 @@ export function ModeSwitch({ mode, onChange }: { mode: AppMode; onChange: (mode:
 export interface SideChat { sid: string; title: string; at?: string; busy?: boolean }
 
 /** 助理模式左侧：「主要聊天」常驻置顶，岔开的话题放「旁聊」。 */
-export function AssistantSidebar({ mainChat, sideChats, current, onSelect, onNewSideChat }: {
+export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], current, onSelect, onOpenPhoneChat, onNewSideChat }: {
   mainChat: { sid: string; preview?: string; busy?: boolean };
   sideChats: SideChat[];
+  /** 手机上和助理的聊天：点开只读查看 */
+  phoneChats?: Array<{ sid: string; title: string }>;
+  onOpenPhoneChat?: (sid: string) => void;
   current: string;
   onSelect: (sid: string) => void;
   onNewSideChat: () => void;
@@ -29,6 +33,10 @@ export function AssistantSidebar({ mainChat, sideChats, current, onSelect, onNew
       <span className="assistant-main-chat-text"><strong>主要聊天</strong>{mainChat.preview && <small>{mainChat.preview}</small>}</span>
       {mainChat.busy && <i className="workbench-tab-live" aria-label="进行中" />}
     </button>
+    {phoneChats.map((chat) => <button key={chat.sid} className="assistant-side-chat phone" onClick={() => onOpenPhoneChat?.(chat.sid)}
+      title="手机上和助理的聊天（这里只读，在手机上回复）">
+      <Smartphone size={15} /><span>{chat.title.replace(/^📱\s*/, "")} · 手机</span>
+    </button>)}
     <div className="assistant-section-title"><span>旁聊</span><button aria-label="新建旁聊" title="新建旁聊" onClick={onNewSideChat}><Plus size={15} /></button></div>
     {sideChats.length === 0 && <p className="assistant-side-empty">岔开的话题可以开一个旁聊，不打扰主要聊天。</p>}
     {sideChats.map((chat) => <button key={chat.sid} className={`assistant-side-chat${current === chat.sid ? " active" : ""}`} onClick={() => onSelect(chat.sid)}>
@@ -226,4 +234,20 @@ export function AssistantIdentity({ profile, memories, onEdit, onDeleteMemory }:
       </button>
     </div>
   </section>;
+}
+
+/** 手机上的聊天（只读）：两个进程同时写一段对话会互相覆盖，所以 Desktop 只看不接管。 */
+export function PhoneChatDialog({ chat, onClose }: { chat: PhoneChat; onClose: () => void }) {
+  return <div className="modal-backdrop" onClick={onClose}><section className="settings-modal phone-chat-dialog" role="dialog" aria-modal="true"
+    aria-label={chat.title} onClick={(event) => event.stopPropagation()}>
+    <header><h2><Smartphone size={16} />{chat.title.replace(/^📱\s*/, "")} · 手机上的聊天</h2>
+      <button aria-label="关闭" onClick={onClose}><X size={16} /></button></header>
+    <p className="phone-chat-note">这里只读。要接着聊，在手机上回复——记忆、任务单、动态两边是同一份。</p>
+    <div className="phone-chat-messages">
+      {chat.transcript.length === 0 && <p className="assistant-memory-empty">还没有聊过。</p>}
+      {chat.transcript.map((item, index) => <article key={`${item.rid ?? index}:${item.role}:${index}`} className={`message ${item.role === "user" ? "user" : "assistant"}`}>
+        <div className="message-body">{item.role === "user" ? item.text : <MarkdownMessage text={item.text} />}</div>
+      </article>)}
+    </div>
+  </section></div>;
 }

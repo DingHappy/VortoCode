@@ -4,8 +4,8 @@
   新写好等你确认的任务单、完成（含分支）、失败、在等人回答。手机上只是提醒，确认下发仍在 Desktop。
 - 早报 / 晚报（默认 09:00、21:00，本机时区）：今天聊了几件事、任务单各状态几件、哪些等你处理。
   直接从台账生成，不调模型。
-- 推送走 ``VORTOCODE_OWNER_NOTIFY_URL`` 指向的那个持有 IM 的服务（POST /api/im/notify），
-  **没配就不启动**——Desktop 本机的通用会话不会冒出推送。
+- 推送：本进程持有 IM 桥就直接发；否则交给 ``VORTOCODE_OWNER_NOTIFY_URL`` 指向的同机服务。
+  两者都没有就不启动——Desktop 本机的通用会话（IM 固定关、不配转发）不会冒出推送。
 """
 from __future__ import annotations
 
@@ -33,7 +33,8 @@ def notify_url() -> str:
 
 
 def watch_enabled() -> bool:
-    return bool(notify_url())
+    """本进程自己持有 IM，或配了转发地址，才有地方汇报。Desktop 的本机 sidecar 两者都固定关掉。"""
+    return bool(notify_url() or os.getenv("VORTOCODE_IM", "").strip())
 
 
 def report_times() -> List[str]:
@@ -49,23 +50,20 @@ def report_times() -> List[str]:
     return times
 
 
-async def relay_notify(text: str) -> bool:
-    """把一条通知交给持有 IM 的服务转发给主人。失败返回 False，不抛。"""
-    import aiohttp
+def owner_reporter(root: str) -> Notify:
+    """汇报给主人：记通知台账，本进程有 IM 桥就直接推，没有就交给同机持有 IM 的服务。"""
+    from src.scheduling.notices import make_notifier
 
-    url = notify_url()
-    if not url:
-        return False
-    token = os.getenv("VORTOCODE_API_TOKEN", "").strip()
-    headers = {"Authorization": f"Bearer {token}"} if token else {}
-    try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15), trust_env=False) as client:
-            async with client.post(f"{url}/api/im/notify", json={"text": text, "source": "assistant"},
-                                   headers=headers) as response:
-                return response.status < 400
-    except Exception as error:  # noqa: BLE001 —— 推送是旁路
-        logger.warning("助理通知转发失败：%s", error)
-        return False
+    deliver = make_notifier(root, source="assistant")
+
+    async def report(text: str) -> bool:
+        try:
+            await deliver(text)
+            return True
+        except Exception as error:  # noqa: BLE001 —— 推送是旁路
+            logger.warning("助理汇报失败：%s", error)
+            return False
+    return report
 
 
 def _state_path(root: str) -> Path:
@@ -163,8 +161,9 @@ async def watch_once(root: str, now: datetime, *, notify: Notify, refresh=assist
     _save_state(root, state)
 
 
-async def watch_loop(root: str, stop: asyncio.Event, *, notify: Notify = relay_notify,
+async def watch_loop(root: str, stop: asyncio.Event, *, notify: Optional[Notify] = None,
                      interval: float = INTERVAL_SECONDS) -> None:
+    notify = notify or owner_reporter(root)
     while not stop.is_set():
         try:
             await watch_once(root, datetime.now().astimezone(), notify=notify)

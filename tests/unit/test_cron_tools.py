@@ -538,7 +538,7 @@ async def test_manual_trigger_pushes_to_the_owner(tmp_path, monkeypatch):
 
     pushed = []
     import src.gateway.im_runtime as im_rt
-    monkeypatch.setattr(im_rt, "notify_owner", lambda t: pushed.append(str(t)) or _noop())
+    monkeypatch.setattr(im_rt, "notify_owner", lambda t, **_kw: pushed.append(str(t)) or _noop())
 
     import src.scheduling.cron as cron
 

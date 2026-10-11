@@ -45,10 +45,36 @@ async def send_owner_media(path: str, caption: str = "", kind: str = "image") ->
         return False
 
 
-async def notify_owner(text: str) -> bool:
-    """Send a best-effort owner notification if a bridge registered one."""
-    if _OWNER_NOTIFIER is None:
+def owner_notify_url() -> str:
+    """同机持有 IM 的那个服务（本进程没有 IM 桥时，通知交给它转发）。"""
+    import os
+    return os.getenv("VORTOCODE_OWNER_NOTIFY_URL", "").strip().rstrip("/")
+
+
+async def relay_owner_notice(text: str, *, source: str = "relay") -> bool:
+    """POST 到 owner_notify_url 的 /api/im/notify。对端只在本地投递、不再转发，所以不会成环。"""
+    url = owner_notify_url()
+    if not url:
         return False
+    import os
+
+    import aiohttp
+
+    token = os.getenv("VORTOCODE_API_TOKEN", "").strip()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15), trust_env=False) as client:
+            async with client.post(f"{url}/api/im/notify", json={"text": str(text), "source": source},
+                                   headers=headers) as response:
+                return response.status < 400
+    except Exception:  # noqa: BLE001 - notification failures must not break schedulers
+        return False
+
+
+async def notify_owner(text: str, *, relay: bool = True) -> bool:
+    """Send a best-effort owner notification: this process's bridge, else the configured relay."""
+    if _OWNER_NOTIFIER is None:
+        return await relay_owner_notice(text) if relay else False
     try:
         await _OWNER_NOTIFIER(str(text))
         return True

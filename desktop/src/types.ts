@@ -122,6 +122,14 @@ export interface AssistantProfile {
   about_you: string;
 }
 
+/** 手机上（Telegram / 钉钉）和助理的聊天：Desktop 只读查看。 */
+export interface PhoneChat {
+  sid: string;
+  title: string;
+  updated?: number;
+  transcript: Array<{ role: string; text: string; rid?: string; at?: string }>;
+}
+
 export interface AssistantScheduleItem {
   id: string;
   kind: "report" | "watch" | "heartbeat" | "cron";

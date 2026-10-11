@@ -45,3 +45,25 @@ async def get_schedule():
     """助理名下的定时事项：早晚报、Heartbeat、定时作业。"""
     from src.scheduling.assistant_watch import schedule_overview
     return {"items": schedule_overview(os.getcwd())}
+
+
+_IM_PREFIXES = ("telegram-", "dingtalk-")
+
+
+@router.get("/api/assistant/phone-chats")
+async def phone_chats(limit: int = 200):
+    """手机上（Telegram / 钉钉）和助理的聊天记录，**只读**：Desktop 只看不接管，
+    回复留在手机上——两个进程同时写一段对话会互相覆盖历史。"""
+    from src.gateway.session_store import list_sessions, load_session
+
+    root, chats = os.getcwd(), []
+    for summary in list_sessions(root):
+        sid = str(summary.get("sid") or "")
+        if not sid.startswith(_IM_PREFIXES):
+            continue
+        data = load_session(root, f"sid-{sid}") or {}
+        transcript = [{key: item.get(key) for key in ("role", "text", "rid", "at")}
+                      for item in data.get("transcript") or [] if isinstance(item, dict)]
+        chats.append({"sid": sid, "title": summary.get("title") or sid, "updated": summary.get("updated"),
+                      "transcript": transcript[-max(1, min(int(limit), 400)):]})
+    return {"chats": chats}

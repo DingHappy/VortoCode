@@ -73,6 +73,12 @@ describe("turnFeedItem", () => {
     expect(turnFeedItem(turn({ tool_names: [] })).kind).toBe("chat");
   });
 
+  it("手机上聊的标 📱，没完成时提示回手机继续", () => {
+    expect(turnFeedItem(turn({ sid: "telegram-42" })).title).toBe("📱 查询宁波天气");
+    expect(turnFeedItem(turn({ sid: "telegram-42", status: "no_reply" })).summary).toBe("没有完成，可以在手机上继续");
+    expect(turnFeedItem(turn({})).title).toBe("查询宁波天气");
+  });
+
   it("有回复记为完成并带结果句；没有回复记为已停下", () => {
     expect(turnFeedItem(turn({}))).toMatchObject({ id: "turn:abc:r1", status: "done", summary: "给出今明两天天气", session: "abc", rid: "r1" });
     expect(turnFeedItem(turn({ status: "no_reply" }))).toMatchObject({ status: "stopped", summary: "没有完成，可以在对话里继续" });
