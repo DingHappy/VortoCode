@@ -759,10 +759,12 @@ async def test_session_reused_and_transcript_replayed_across_reconnect(monkeypat
         await _drain(ws1)
         # 一回合后，会话 transcript 记下了用户输入 + 最终回复
         sess = realtime._SESSIONS[_key(ws1)]
-        assert sess["transcript"] == [
+        assert [{k: item[k] for k in ("role", "text")} for item in sess["transcript"]] == [
             {"role": "user", "text": "你好"},
             {"role": "assistant", "text": "回复：你好"},
         ]
+        # 每条带墙钟时间：助理模式的动态按时间分组
+        assert all("T" in item.get("at", "") for item in sess["transcript"])
 
         # 「重连」：同 sid 的新连接 → 同一会话键、同一 agent
         ws2 = _FakeWS(sid="s-persist")

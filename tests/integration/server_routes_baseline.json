@@ -24,6 +24,12 @@
     ]
   },
   {
+    "path": "/api/agent/activity",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
     "path": "/api/agent/sessions",
     "methods": [
       "GET"
