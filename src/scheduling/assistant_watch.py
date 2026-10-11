@@ -234,3 +234,36 @@ def schedule_overview(root: str) -> List[Dict[str, Any]]:
     except Exception:  # noqa: BLE001 —— 作业表坏了不影响其余几项
         pass
     return items
+
+
+def build_status_tools(root: str) -> list:
+    """不联网的定时事项可用的只读状态工具：今天的动态、任务单、定时作业列表。
+
+    全部只读、只读本机台账（任务单进度会问同机的项目运行时），没有任何出站通道——
+    与「不联网的作业可以带关于你与记忆」同一条边界。联网作业不给。"""
+    from src.agents.tool import Tool
+    from src.gateway.turn_digest import recent_turns
+
+    async def _today(_args: dict) -> str:
+        now = datetime.now().astimezone()
+        rows = []
+        for turn in recent_turns(root, 100):
+            try:
+                at = datetime.fromisoformat(str(turn.get("at")).replace("Z", "+00:00")).astimezone(now.tzinfo)
+            except (TypeError, ValueError):
+                continue
+            if at.date() == now.date():
+                rows.append(f"- {at:%H:%M} {turn.get('title')}：{turn.get('outcome') or '—'}")
+        return "今天聊过的事：\n" + "\n".join(rows) if rows else "今天还没有聊过什么。"
+
+    async def _cron(_args: dict) -> str:
+        items = schedule_overview(root)
+        if not items:
+            return "没有定时事项。"
+        return "\n".join(f"- {item['title']}：{item['schedule']}{'' if item['enabled'] else '（已停用）'}"
+                         + (f"，上次 {item['last']}" if item.get("last") else "") for item in items)
+
+    tools = [Tool("today_activity", "今天和用户聊过的事（每件一行：时间、标题、结果）。", {}, _today),
+             Tool("schedule_list", "列出定时事项（早晚报、跟进、你交代的作业）与上次运行时间。", {}, _cron)]
+    tools += [tool for tool in assistant_dispatch.build_dispatch_tools(root) if tool.name == "list_dispatches"]
+    return tools

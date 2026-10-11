@@ -233,6 +233,11 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         # 名字、服务对象、长期记忆摘录：装配时读一次，会话内字节稳定
         from src.memory.assistant_profile import assistant_system_parts
         parts.extend(assistant_system_parts(repo_root))
+    if workspace_scope == GENERAL and any(tool.name == "cron_add" for tool in tools):
+        parts.append("【定时事项】用 cron_add 交代的事会在无人值守下自动跑：不联网的只能看今天的动态、"
+                     "任务单进度、定时事项列表，并带着关于用户的资料；联网的（allow_web）能搜索/抓网页，"
+                     "但看不到关于用户的资料与记忆。都**不能**读文件、跑命令、查 Git。"
+                     "写作业内容时只要求这些能拿到的东西，别要求做不到的事。")
     if workspace_scope == GENERAL and any(tool.name == "propose_task" for tool in tools):
         parts.append("【派活】你是常驻助理：要改代码或在项目里干的活，用 propose_task 写成任务单交给常驻电脑上的"
                      "项目去做（用户确认后才执行），不要调用 request_workspace，也不要自己动手。"
