@@ -7,6 +7,9 @@ export const STORAGE_KEYS = {
   sid: "vortocode.desktop.sid",
   repoRoot: "vortocode.desktop.repoRoot",
   generalSid: "vortocode.desktop.generalSid",
+  // 助理 / 工作台 两种界面模式；助理模式里常驻的「主要聊天」会话。
+  appMode: "vortocode.desktop.appMode",
+  mainChatSid: "vortocode.desktop.mainChatSid",
   scratchSid: "vortocode.desktop.scratchSid",
   notificationsEnabled: "vortocode.desktop.notificationsEnabled",
   notifiedDecisions: "vortocode.desktop.notifiedDecisions",

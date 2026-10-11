@@ -10,6 +10,7 @@ from src.gateway.turn_digest import (
     generate_digest,
     parse_digest,
     recent_turns,
+    turn_tool_names,
     turn_tools,
 )
 
@@ -70,6 +71,9 @@ def test_turn_tools_counts_each_call_once():
         {"rid": "r2", "type": "agent_tool", "id": "c", "summary": "别的回合"},
     ]
     assert turn_tools(events, "r1") == ["搜索网页", "read_file"]
+    named = [{"rid": "r1", "type": "agent_tool", "id": str(i), "name": n} for i, n in enumerate(
+        ["web_search", "web_search", "web_fetch", "a", "b", "c", "d"])]
+    assert turn_tool_names(named, "r1") == ["web_search", "web_fetch", "a", "b", "c"]
 
 
 def test_recent_turns_across_sessions_newest_first(tmp_path):

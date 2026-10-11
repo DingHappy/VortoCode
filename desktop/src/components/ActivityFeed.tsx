@@ -1,15 +1,19 @@
-import { CircleCheck, CirclePause, CircleX, LoaderCircle, MessageCircleQuestion } from "lucide-react";
-import { feedTime, groupFeed, type FeedItem, type FeedStatus } from "../lib/activityFeed";
+import { CircleCheck, CirclePause, CircleX, FileCode2, Globe, LoaderCircle, MessageCircleQuestion, SquareTerminal } from "lucide-react";
+import { feedTime, groupFeed, type FeedItem, type FeedKind, type FeedStatus } from "../lib/activityFeed";
 
 const STATUS_TEXT: Record<FeedStatus, string> = {
   waiting: "等你处理", running: "进行中", done: "已完成", failed: "失败", stopped: "已停下",
 };
 
-function FeedIcon({ status }: { status: FeedStatus }) {
+function FeedIcon({ status, kind }: { status: FeedStatus; kind?: FeedKind }) {
   if (status === "waiting") return <MessageCircleQuestion size={17} aria-hidden="true" />;
   if (status === "running") return <LoaderCircle size={17} aria-hidden="true" className="session-step-spin" />;
   if (status === "failed") return <CircleX size={17} aria-hidden="true" />;
   if (status === "stopped") return <CirclePause size={17} aria-hidden="true" />;
+  // 完成态按做的事选图标：联网查资料 / 跑命令 / 改代码；普通对答与后台任务用对勾
+  if (kind === "web") return <Globe size={17} aria-hidden="true" />;
+  if (kind === "command") return <SquareTerminal size={17} aria-hidden="true" />;
+  if (kind === "code") return <FileCode2 size={17} aria-hidden="true" />;
   return <CircleCheck size={17} aria-hidden="true" />;
 }
 
@@ -41,7 +45,7 @@ export function ActivityFeed({ items, scope, onScope, currentSession, onOpen, no
       <h5>{group.label}</h5>
       <ul>{group.items.map((item) => <li key={item.id}>
         <button className={`activity-feed-item ${item.status}`} onClick={() => onOpen(item)}>
-          <span className="activity-feed-icon"><FeedIcon status={item.status} /></span>
+          <span className="activity-feed-icon"><FeedIcon status={item.status} kind={item.kind} /></span>
           <span className="activity-feed-text">
             <strong>{item.title}</strong>
             <span>{item.summary}</span>
