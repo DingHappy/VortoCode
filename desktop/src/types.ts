@@ -114,6 +114,23 @@ export interface AgentTurn {
   at: string;
 }
 
+/** 常驻助理写的任务单：proposed 等你确认下发，之后跟随项目运行时上的任务状态。 */
+export interface AssistantDispatch {
+  id: string;
+  project: string;
+  title: string;
+  goal: string;
+  criteria: string[];
+  status: "proposed" | "send_failed" | "running" | "waiting" | "done" | "failed" | "cancelled" | "stopped";
+  tainted: boolean;
+  remote_task_id: string;
+  result: string;
+  error: string;
+  branch: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface PlanItem {
   step: string;
   status: "pending" | "in_progress" | "completed" | string;

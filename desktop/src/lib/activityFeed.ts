@@ -1,6 +1,6 @@
 // 右侧「任务动态」：把后台任务台账投影成一条按时间分组的动态流（参考 Muse）。
 // 纯函数、零请求：数据来自已有的 /api/tasks，只决定「显示成什么样」。
-import type { AgentTurn, TaskItem } from "../types";
+import type { AgentTurn, AssistantDispatch, TaskItem } from "../types";
 
 /** 展示用的五档：等你处理 / 进行中 / 完成 / 失败 / 已停下（暂停、中断，可续跑）。 */
 export type FeedStatus = "waiting" | "running" | "done" | "failed" | "stopped";
@@ -20,6 +20,8 @@ export interface FeedItem {
   at: string;
   session?: string;
   taskId?: string;
+  /** 常驻助理的任务单 */
+  dispatchId?: string;
 }
 
 export interface FeedGroup {
@@ -137,3 +139,29 @@ export function turnFeedItem(turn: AgentTurn): FeedItem {
   };
 }
 
+
+const DISPATCH_STATUS: Record<AssistantDispatch["status"], FeedStatus> = {
+  proposed: "waiting", send_failed: "failed", running: "running", waiting: "waiting",
+  done: "done", failed: "failed", cancelled: "stopped", stopped: "stopped",
+};
+
+/** 任务单 → 动态：等你确认下发的置顶；下发后跟着常驻电脑上的任务走。撤回的不显示。 */
+export function dispatchFeedItem(item: AssistantDispatch): FeedItem | null {
+  if (item.status === "cancelled") return null;
+  const summary = item.status === "proposed" ? `等你确认下发 · ${item.project}${item.tainted ? " · 含外部内容，请细看" : ""}`
+    : item.status === "send_failed" ? `下发失败，可以重试：${firstSentence(item.error, MAX_SUMMARY - 10)}`
+    : item.status === "waiting" ? `${item.project} · 在等人回答`
+    : item.status === "running" ? `${item.project} · 在做`
+    : item.status === "done" ? firstSentence(item.result, MAX_SUMMARY) || (item.branch ? `已交付分支 ${item.branch}` : "已完成")
+    : item.status === "stopped" ? `${item.project} · 已停下`
+    : firstSentence(item.error, MAX_SUMMARY) || "执行失败";
+  return {
+    id: `dispatch:${item.id}`,
+    kind: "code",
+    dispatchId: item.id,
+    title: item.title,
+    summary,
+    status: DISPATCH_STATUS[item.status] ?? "running",
+    at: item.updated_at || item.created_at,
+  };
+}
