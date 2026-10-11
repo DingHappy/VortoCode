@@ -1,6 +1,5 @@
 """技能发现和版本管理"""
 
-import asyncio
 import json
 import logging
 import yaml
@@ -486,83 +485,6 @@ class SkillVersionManager:
             return 0
 
 
-class AutoReloadingSkillDiscovery(SkillDiscovery):
-    """自动重载技能发现器"""
-    
-    def __init__(self, config: Optional[SkillDiscoveryConfig] = None):
-        super().__init__(config)
-        self.file_watchers: Dict[str, Any] = {}
-        self.reload_callbacks: List[callable] = []
-    
-    async def start_watching(self) -> None:
-        """开始监视文件变化"""
-        try:
-            from watchdog.observers import Observer
-            from watchdog.events import FileSystemEventHandler
-            
-            class SkillFileHandler(FileSystemEventHandler):
-                def __init__(self, discovery):
-                    self.discovery = discovery
-                
-                def on_modified(self, event):
-                    if event.src_path.endswith("SKILL.md"):
-                        logger.info(f"Skill file modified: {event.src_path}")
-                        asyncio.create_task(self.discovery._reload_skill_file(event.src_path))
-                
-                def on_created(self, event):
-                    if event.src_path.endswith("SKILL.md"):
-                        logger.info(f"New skill file: {event.src_path}")
-                        asyncio.create_task(self.discovery._load_skill(Path(event.src_path)))
-            
-            handler = SkillFileHandler(self)
-            observer = Observer()
-            
-            for skill_dir in self.config.skill_dirs:
-                if Path(skill_dir).exists():
-                    observer.schedule(handler, skill_dir, recursive=True)
-                    logger.info(f"Watching skill directory: {skill_dir}")
-            
-            observer.start()
-            self.file_watchers["main"] = observer
-            
-        except ImportError:
-            logger.warning("watchdog not installed. File watching disabled.")
-    
-    async def stop_watching(self) -> None:
-        """停止监视文件变化"""
-        for name, observer in self.file_watchers.items():
-            observer.stop()
-            observer.join()
-        
-        self.file_watchers.clear()
-    
-    async def _reload_skill_file(self, file_path: str) -> None:
-        """重新加载技能文件"""
-        try:
-            skill = await self._load_skill(Path(file_path))
-            if skill:
-                self.skill_registry.register(skill)
-                
-                # 调用回调
-                for callback in self.reload_callbacks:
-                    try:
-                        await callback(skill)
-                    except Exception as e:
-                        logger.error(f"Reload callback error: {e}")
-        except Exception as e:
-            logger.error(f"Failed to reload skill file {file_path}: {e}")
-    
-    def add_reload_callback(self, callback: callable) -> None:
-        """添加重载回调"""
-        self.reload_callbacks.append(callback)
-
-
-def create_skill_discovery(
-    config: Optional[SkillDiscoveryConfig] = None,
-    auto_reload: bool = False
-) -> SkillDiscovery:
+def create_skill_discovery(config: Optional[SkillDiscoveryConfig] = None) -> SkillDiscovery:
     """创建技能发现器工厂函数"""
-    if auto_reload:
-        return AutoReloadingSkillDiscovery(config)
-    else:
-        return SkillDiscovery(config)
+    return SkillDiscovery(config)

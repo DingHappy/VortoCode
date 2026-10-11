@@ -15,7 +15,10 @@ TUI 的富 UI 装配（约 494 行闭包，着色 diff/ConfirmScreen）**刻意�
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 _KINDS = ("web", "cli", "im")
 _SKILL_HEADER = "【可用技能】(需要时用 use_skill 加载其完整指令再执行)"
@@ -37,7 +40,8 @@ def load_project_hook_system(repo_root: str, *, require_trust: bool = True):
     try:
         from src.hooks import HookSystem
         return HookSystem(config_path=str(cfg))
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001 —— 配置坏了不该拖垮会话，但钩子（含信任门）被整体禁用必须让人看见
+        logger.warning("项目 Hook 配置加载失败，本会话不启用 Hook（%s）：%s", cfg, e)
         return None
 
 

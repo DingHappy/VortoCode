@@ -20,10 +20,13 @@ node_modules / 构建产物不进快照（否则 `npm install` 后一次快照�
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 _SHADOW_DIRNAME = "shadow.git"
 _MAX_SNAPSHOTS = 50            # 只留最近 N 个回合快照（更早的 ref 删掉，对象由 gc 回收）
@@ -58,13 +61,16 @@ def _ensure_shadow(repo_root: str) -> Optional[Path]:
         shadow.mkdir(parents=True, exist_ok=True)
         r = _run(repo_root, shadow, "init", "--quiet")
         if r.returncode != 0:
+            logger.warning("checkpoint 影子仓库 git init 失败，本次不做快照：%s",
+                           (r.stderr or "").strip()[:200])
             return None
         # 影子仓库额外排除 .vortocode/ 自身（快照里存快照 = 递归膨胀）
         info = shadow / "info"
         info.mkdir(parents=True, exist_ok=True)
         (info / "exclude").write_text(".vortocode/\n", encoding="utf-8")
         return shadow
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001 —— 建不起影子仓库就没有 rewind 安全网，降级要可见
+        logger.warning("checkpoint 影子仓库创建失败，本次不做快照：%s", e)
         return None
 
 

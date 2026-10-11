@@ -324,13 +324,6 @@ class TestCreateSkillDiscovery:
         
         assert isinstance(discovery, SkillDiscovery)
         assert discovery.config.auto_discover is False
-    
-    def test_create_auto_reload(self):
-        """测试创建自动重载发现器"""
-        discovery = create_skill_discovery(auto_reload=True)
-        
-        # 注意：AutoReloadingSkillDiscovery是SkillDiscovery的子类
-        assert isinstance(discovery, SkillDiscovery)
 
 
 if __name__ == "__main__":

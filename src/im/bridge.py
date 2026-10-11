@@ -240,8 +240,9 @@ class IMBridge:
                          tool_names=session_tool_names(self.agent),
                          behavior_fp=session_behavior_fp(self.agent),
                          mode=self.mode)
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001 —— 存盘失败不炸回合，但会话会静默丢，要留痕
+            import logging
+            logging.getLogger("vortocode.im").warning("IM 会话存盘失败：%s", _exc_text(e)[:160])
 
     # ------------------------------------------------------------ 配置自检（只诊断，不改判定）
     def allow_from_warning(self) -> Optional[str]:

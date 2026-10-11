@@ -16,7 +16,6 @@ from .discovery import (
     SkillDiscoveryConfig,
     SkillDiscovery,
     SkillVersionManager,
-    AutoReloadingSkillDiscovery,
     create_skill_discovery
 )
 
@@ -42,6 +41,5 @@ __all__ = [
     "SkillDiscoveryConfig",
     "SkillDiscovery",
     "SkillVersionManager",
-    "AutoReloadingSkillDiscovery",
     "create_skill_discovery",
 ]

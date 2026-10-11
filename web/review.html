@@ -88,11 +88,15 @@ async function api(path, opts, _retried) {
   return body;
 }
 
+// 所有来自数据的插值都过 esc：summary/note 等可能含抓取来的外部内容（提示注入 → 存储型 XSS）。
+const esc = v => String(v ?? "").replace(/[&<>"']/g,
+  c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
 const badge = s => s === "awaiting_review" ? '<span class="badge wait">等你批</span>'
   : s === "failed" ? '<span class="badge fail">失败</span>'
   : s === "needs_reconciliation" ? '<span class="badge fail">待核对执行结果</span>'
   : s === "done" ? '<span class="badge">已完成</span>'
-  : '<span class="badge run">' + s + "</span>";
+  : '<span class="badge run">' + esc(s) + "</span>";
 
 async function loadList() {
   try {
@@ -100,14 +104,14 @@ async function loadList() {
     runs = d.runs || [];
     $("#count").textContent = d.awaiting ? d.awaiting + " 条等你批" : "没有等你批的";
     $("#list").innerHTML = runs.length ? runs.map(r => `
-      <div class="run${cur && cur.run_id === r.run_id ? " sel" : ""}" data-id="${r.run_id}">
-        <div class="top"><strong>${r.pipeline}</strong>${badge(r.status)}</div>
-        <div class="id">${r.run_id}</div>
-        <div class="meta">${r.awaiting ? "等批：" + r.awaiting + " · " : ""}${r.tokens} tok</div>
+      <div class="run${cur && cur.run_id === r.run_id ? " sel" : ""}" data-id="${esc(r.run_id)}">
+        <div class="top"><strong>${esc(r.pipeline)}</strong>${badge(r.status)}</div>
+        <div class="id">${esc(r.run_id)}</div>
+        <div class="meta">${r.awaiting ? "等批：" + esc(r.awaiting) + " · " : ""}${esc(r.tokens)} tok</div>
       </div>`).join("") : '<div class="empty">没有在跑的流水线</div>';
     $("#list").querySelectorAll(".run").forEach(el =>
       el.onclick = () => loadDetail(el.dataset.id));
-  } catch (e) { $("#list").innerHTML = '<div class="empty">读不到：' + e.message + "</div>"; }
+  } catch (e) { $("#list").innerHTML = '<div class="empty">读不到：' + esc(e.message) + "</div>"; }
 }
 
 function renderStage(s) {
@@ -117,18 +121,18 @@ function renderStage(s) {
     .filter(Boolean).map(t => `<span class="badge">${t}</span>`).join("");
   let body = "";
   if (p && p.missing) {
-    body = `<div class="note">⚠ 产出物 ${p.id} 读不到——台账可能被改过。下游会按污点处理。</div>`;
+    body = `<div class="note">⚠ 产出物 ${esc(p.id)} 读不到——台账可能被改过。下游会按污点处理。</div>`;
   } else if (p) {
-    body = `<div class="meta">${p.kind} · ${p.id}${p.tainted ? ' <span class="badge taint">⚠外部来源</span>' : ""}</div>
-      <div style="margin:6px 0 10px">${p.summary || ""}</div>
-      <pre>${JSON.stringify(p.payload, null, 2).replace(/[<&]/g, c => c === "<" ? "&lt;" : "&amp;")}</pre>`;
-    if (p.tainted && p.taint_reason) body += `<div class="note">来源：${p.taint_reason}</div>`;
+    body = `<div class="meta">${esc(p.kind)} · ${esc(p.id)}${p.tainted ? ' <span class="badge taint">⚠外部来源</span>' : ""}</div>
+      <div style="margin:6px 0 10px">${esc(p.summary)}</div>
+      <pre>${esc(JSON.stringify(p.payload, null, 2))}</pre>`;
+    if (p.tainted && p.taint_reason) body += `<div class="note">来源：${esc(p.taint_reason)}</div>`;
   } else {
     body = '<div class="meta">还没有产出。</div>';
   }
-  if (s.note) body += `<div class="note">${s.note}</div>`;
-  return `<div class="stage"><div class="hd"><span class="name">${s.id}</span>${badge(s.status)}${flags}
-    <span class="grow" style="flex:1"></span><span class="meta">${s.tokens ? s.tokens + " tok" : ""}${s.attempts > 1 ? " · 第 " + s.attempts + " 次" : ""}</span></div>
+  if (s.note) body += `<div class="note">${esc(s.note)}</div>`;
+  return `<div class="stage"><div class="hd"><span class="name">${esc(s.id)}</span>${badge(s.status)}${flags}
+    <span class="grow" style="flex:1"></span><span class="meta">${s.tokens ? esc(s.tokens) + " tok" : ""}${s.attempts > 1 ? " · 第 " + esc(s.attempts) + " 次" : ""}</span></div>
     <div class="bd">${body}</div></div>`;
 }
 
@@ -138,10 +142,10 @@ async function loadDetail(id) {
   } catch (e) { toast("读不到：" + e.message); return; }
   const waiting = cur.awaiting;
   $("#detail").innerHTML = `
-    <div class="meta">${cur.pipeline} · ${cur.run_id} · ${cur.status}</div>
+    <div class="meta">${esc(cur.pipeline)} · ${esc(cur.run_id)} · ${esc(cur.status)}</div>
     ${cur.stages.map(renderStage).join("")}
     ${waiting ? `
-      <div class="stage"><div class="hd"><span class="name">给「${waiting}」一个回执</span></div>
+      <div class="stage"><div class="hd"><span class="name">给「${esc(waiting)}」一个回执</span></div>
       <div class="bd">
         <textarea id="cm" aria-label="审批意见" placeholder="驳回必须写一句为什么——不说理由，重跑出来还是原样。"></textarea>
         <div class="acts">
