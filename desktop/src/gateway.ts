@@ -8,6 +8,7 @@ import type {
   AssistantDispatch,
   AssistantMemory,
   AssistantProfile,
+  AssistantScheduleItem,
   ArtifactMeta,
   ArtifactVersionSnapshot,
   AuditEntry,
@@ -363,6 +364,12 @@ export class GatewayClient {
 
   async saveAssistantProfile(profile: Partial<AssistantProfile>): Promise<AssistantProfile> {
     return this.request("/api/assistant/profile", { method: "PUT", body: JSON.stringify(profile) });
+  }
+
+  /** 助理名下的定时事项（早晚报、跟进、Heartbeat、定时作业）。 */
+  async getAssistantSchedule(): Promise<AssistantScheduleItem[]> {
+    const payload = await this.request<{ items?: AssistantScheduleItem[] }>("/api/assistant/schedule");
+    return Array.isArray(payload.items) ? payload.items : [];
   }
 
   /** 助理记住的关于你的事（最新在前）。 */

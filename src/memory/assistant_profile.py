@@ -1,7 +1,7 @@
 """常驻助理的「人」：名字、关于你（服务对象）、它记住的关于你的事。
 
-- 名字存 ``.vortocode/assistant.json``；关于你沿用 IM 端已有的 ``.vortocode/persona.md``
-  （【服务对象】），Desktop 与手机两端共用同一份。
+- 名字存 ``.vortocode/assistant.json``；SOUL（它自己的性格与说话方式）存 ``.vortocode/SOUL.md``；
+  关于你沿用 IM 端已有的 ``.vortocode/persona.md``（【服务对象】）。Desktop 与手机两端共用同一份。
 - 长期记忆就是记忆工具写进 ``sessions.db`` 的 ``__longterm__``（写入已过 write_policy：污点回合的
   指令性文本、疑似凭据进不来）。会话装配时取最近若干条，作为**资料**带进系统提示——
   装配时读一次，会话内字节稳定（前缀缓存）；新记住的事从下一个会话起自动带上。
@@ -15,6 +15,7 @@ from typing import Any, Dict, List
 
 MAX_NAME = 20
 MAX_ABOUT = 2000
+MAX_SOUL = 2000
 BRIEF_ITEMS = 30
 BRIEF_CHARS = 2000
 DEFAULT_NAME = "VortoCode"
@@ -35,14 +36,26 @@ def load_profile(root: str) -> Dict[str, str]:
         name = str(data.get("name") or "").strip() if isinstance(data, dict) else ""
     except (OSError, ValueError):
         pass
+    return {"name": name[:MAX_NAME] or DEFAULT_NAME,
+            "soul": _read(_state(root) / "SOUL.md")[:MAX_SOUL],
+            "about_you": _read(_state(root) / "persona.md")[:MAX_ABOUT]}
+
+
+def _read(path: Path) -> str:
     try:
-        about = (_state(root) / "persona.md").read_text(encoding="utf-8").strip()
+        return path.read_text(encoding="utf-8").strip()
     except OSError:
-        about = ""
-    return {"name": name[:MAX_NAME] or DEFAULT_NAME, "about_you": about[:MAX_ABOUT]}
+        return ""
 
 
-def save_profile(root: str, *, name: str | None = None, about_you: str | None = None) -> Dict[str, str]:
+def _write(path: Path, text: str) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(text.strip() + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def save_profile(root: str, *, name: str | None = None, about_you: str | None = None,
+                 soul: str | None = None) -> Dict[str, str]:
     state = _state(root)
     state.mkdir(parents=True, exist_ok=True)
     if name is not None:
@@ -51,9 +64,9 @@ def save_profile(root: str, *, name: str | None = None, about_you: str | None = 
         tmp.write_text(json.dumps({"name": clean}, ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, state / "assistant.json")
     if about_you is not None:
-        tmp = state / "persona.md.tmp"
-        tmp.write_text(str(about_you).strip()[:MAX_ABOUT] + "\n", encoding="utf-8")
-        os.replace(tmp, state / "persona.md")
+        _write(state / "persona.md", str(about_you)[:MAX_ABOUT])
+    if soul is not None:
+        _write(state / "SOUL.md", str(soul)[:MAX_SOUL])
     return load_profile(root)
 
 
@@ -82,6 +95,8 @@ def assistant_system_parts(root: str) -> List[str]:
     profile = load_profile(root)
     parts = [f"【你是谁】你是用户的私人助理「{profile['name']}」。像一位靠谱的助理那样说话：先给结论，"
              "交代完的事要跟进，做不到的直说。"]
+    if profile["soul"]:
+        parts.append(f"【你的性格与说话方式】{profile['soul']}")
     if profile["about_you"]:
         parts.append(f"【服务对象】{profile['about_you']}")
     lines, used = [], 0

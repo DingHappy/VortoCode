@@ -91,3 +91,19 @@ def test_relay_route_records_notice(tmp_path, monkeypatch):
     assert client.post("/api/im/notify", json={"text": "✅ 完成了", "source": "assistant"}).json() == {"ok": True}
     assert any("完成了" in item.get("text", "") and item.get("source") == "assistant"
                for item in load_notices(str(tmp_path), 10))
+
+
+def test_schedule_overview_lists_reports_heartbeat_and_cron(tmp_path, monkeypatch):
+    monkeypatch.delenv("VORTOCODE_OWNER_NOTIFY_URL", raising=False)
+    monkeypatch.delenv("VORTOCODE_HEARTBEAT", raising=False)
+    assert watch.schedule_overview(str(tmp_path)) == []
+    monkeypatch.setenv("VORTOCODE_OWNER_NOTIFY_URL", "http://127.0.0.1:8080")
+    monkeypatch.setenv("VORTOCODE_ASSISTANT_REPORT_TIMES", "09:00,21:00")
+    monkeypatch.setenv("VORTOCODE_HEARTBEAT", "1")
+    (tmp_path / ".vortocode").mkdir()
+    (tmp_path / ".vortocode" / "cron.yaml").write_text(
+        "jobs:\n  - name: 看邮箱\n    schedule: at 08:30\n    prompt: 有新询盘就告诉我\n", encoding="utf-8")
+    items = {item["id"]: item for item in watch.schedule_overview(str(tmp_path))}
+    assert items["report-09:00"]["title"] == "早报" and items["report-21:00"]["title"] == "晚报"
+    assert items["heartbeat"]["schedule"] == "每 30m" and "follow-up" in items
+    assert items["cron-看邮箱"]["detail"] == "有新询盘就告诉我"

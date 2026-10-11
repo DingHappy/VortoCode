@@ -116,8 +116,21 @@ export interface AgentTurn {
 
 export interface AssistantProfile {
   name: string;
+  /** SOUL：它自己的性格与说话方式 */
+  soul: string;
   /** 关于你（服务对象）：与手机端共用 persona.md */
   about_you: string;
+}
+
+export interface AssistantScheduleItem {
+  id: string;
+  kind: "report" | "watch" | "heartbeat" | "cron";
+  title: string;
+  schedule: string;
+  detail?: string;
+  enabled: boolean;
+  next?: string | null;
+  last?: string | null;
 }
 
 export interface AssistantMemory {

@@ -870,5 +870,11 @@
     "methods": [
       "PUT"
     ]
+  },
+  {
+    "path": "/api/assistant/schedule",
+    "methods": [
+      "GET"
+    ]
   }
 ]

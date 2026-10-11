@@ -104,3 +104,18 @@ def test_general_web_session_gets_dispatch_tools_but_not_workspace_tools(tmp_pat
     names = set(agent.tools)
     assert {"propose_task", "list_dispatches"} <= names
     assert not names & {"run_command", "write_file", "dev_auto"}
+
+
+def test_approve_and_cancel_routes_are_audited(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from src.gateway.audit import list_audit
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    from src.web.server import app
+
+    entry = dispatch.propose(str(tmp_path), project="VortoCode", title="不做了", goal="g")
+    assert TestClient(app).post(f"/api/dispatches/{entry['id']}/cancel").json()["status"] == "cancelled"
+    decisions = [item for item in list_audit(str(tmp_path), 10) if item["category"] == "decision"]
+    assert decisions and decisions[0]["decision"] == "denied" and "撤回任务单「不做了」到 VortoCode" in decisions[0]["operation"]

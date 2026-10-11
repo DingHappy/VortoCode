@@ -174,3 +174,35 @@ async def watch_loop(root: str, stop: asyncio.Event, *, notify: Notify = relay_n
             await asyncio.wait_for(stop.wait(), timeout=interval)
         except asyncio.TimeoutError:
             pass
+
+
+def schedule_overview(root: str) -> List[Dict[str, Any]]:
+    """右侧「定时」页：助理名下按时间自己会做的事。只读配置，不触发任何作业。"""
+    items: List[Dict[str, Any]] = []
+    if watch_enabled():
+        for hhmm in report_times():
+            label = "早报" if int(hhmm.split(":")[0]) < 12 else "晚报"
+            items.append({"id": f"report-{hhmm}", "kind": "report", "title": label,
+                          "schedule": f"每天 {hhmm}", "detail": "今天聊过的事、任务单状态、等你处理的", "enabled": True})
+        items.append({"id": "follow-up", "kind": "watch", "title": "跟进派出去的活",
+                      "schedule": f"每 {INTERVAL_SECONDS // 60} 分钟", "detail": "状态有变化就推到手机", "enabled": True})
+    if os.getenv("VORTOCODE_HEARTBEAT", "").strip().lower() in ("1", "true", "yes", "on"):
+        every = (os.getenv("VORTOCODE_HEARTBEAT_EVERY", "30m") or "30m").strip()
+        items.append({"id": "heartbeat", "kind": "heartbeat", "title": "Heartbeat",
+                      "schedule": f"每 {every}", "detail": "按 HEARTBEAT.md 检查单巡视，有情况才告诉你", "enabled": True})
+    try:
+        from src.scheduling.cron import CronState, load_jobs, next_due
+
+        now = datetime.now()
+        state = CronState(root)
+        for job in load_jobs(root):
+            last = state.last_run(job.name)
+            due = next_due(job.schedule, last, now) if job.enabled else None
+            items.append({"id": f"cron-{job.name}", "kind": "cron", "title": job.name,
+                          "schedule": job.schedule.raw, "detail": (job.prompt or job.command or "")[:200],
+                          "enabled": bool(job.enabled),
+                          "next": due.isoformat(timespec="minutes") if due else None,
+                          "last": last.isoformat(timespec="minutes") if last else None})
+    except Exception:  # noqa: BLE001 —— 作业表坏了不影响其余几项
+        pass
+    return items

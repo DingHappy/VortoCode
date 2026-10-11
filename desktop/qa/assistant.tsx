@@ -2,8 +2,7 @@ import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ArrowUp, Cpu, Paperclip, Search, Settings } from "lucide-react";
 import { ActivityFeed } from "../src/components/ActivityFeed";
-import { AssistantMemories, AssistantPanel, AssistantSidebar, ModeSwitch, type AppMode } from "../src/components/AssistantMode";
-import { SessionInfo } from "../src/components/SessionInfo";
+import { AssistantAudit, AssistantIdentity, AssistantPanel, AssistantSchedule, AssistantSidebar, ModeSwitch, type AppMode } from "../src/components/AssistantMode";
 import { MarkdownMessage } from "../src/components/MarkdownMessage";
 import { taskFeedItem, turnFeedItem } from "../src/lib/activityFeed";
 import type { AgentTurn, TaskItem } from "../src/types";
@@ -25,6 +24,19 @@ const tasks: TaskItem[] = [
   { id: "t2", status: "running", prompt: "给 Desktop 打包签名版", log: ["正在构建 sidecar 运行时"], owner_session: "sid-main", updated_at: ago(3) },
 ];
 const feed = [...turns.map(turnFeedItem), ...tasks.map(taskFeedItem)];
+const audit = [
+  { id: "a1", category: "decision" as const, operation: "下发任务单「登录加超时重试」到 VortoCode", decision: "allowed" as const, ts: ago(60 * 23) },
+  { id: "a2", category: "decision" as const, operation: "保存长期记忆？\n汇报先给结论，再说细节", decision: "allowed" as const, ts: ago(60 * 5) },
+  { id: "a3", category: "decision" as const, operation: "发布制品「本周周报」？", decision: "denied" as const, tainted: true, ts: ago(60 * 26) },
+];
+const schedule = [
+  { id: "report-09:00", kind: "report" as const, title: "早报", schedule: "每天 09:00", detail: "今天聊过的事、任务单状态、等你处理的", enabled: true },
+  { id: "report-21:00", kind: "report" as const, title: "晚报", schedule: "每天 21:00", detail: "今天聊过的事、任务单状态、等你处理的", enabled: true },
+  { id: "follow-up", kind: "watch" as const, title: "跟进派出去的活", schedule: "每 1 分钟", detail: "状态有变化就推到手机", enabled: true },
+  { id: "heartbeat", kind: "heartbeat" as const, title: "Heartbeat", schedule: "每 30m", detail: "按 HEARTBEAT.md 检查单巡视，有情况才告诉你", enabled: true },
+];
+const memories = [{ id: "m1", content: "汇报先给结论，再说细节", created_at: "2026-10-11T09:00:00" }, { id: "m2", content: "住在宁波，常用 Telegram", created_at: "2026-10-09T09:00:00" }];
+const profile = { name: "小V", soul: "简短直接，先给结论；不确定就直说。", about_you: "丁开心，在宁波做 AI 编码工具。" };
 
 function Fixture() {
   const [mode, setMode] = useState<AppMode>("assistant");
@@ -50,9 +62,11 @@ function Fixture() {
         </div>
         <div className="composer-wrap"><div className="composer"><textarea aria-label="消息" placeholder="给助理交代一件事…" /><div className="composer-footer"><div className="composer-tools"><Paperclip size={16} /><span className="composer-model single"><Cpu size={14} />Qwen3.6 · 本地</span></div><div className="composer-actions"><button className="composer-send" aria-label="发送"><ArrowUp size={16} /></button></div></div></div></div>
       </section>
-      {panel && <AssistantPanel name="VortoCode" connected modelLabel="mimo-v2.6-pro" host={{ kind: "resident", name: "vorto-code" }} onAddResident={() => {}} onRetryResident={() => {}} tab={tab} onTab={setTab} onClose={() => setPanel(false)} waiting={feed.filter((item) => item.status === "waiting").length}>
-        {tab === "memory" ? <AssistantMemories memories={[{ id: "m1", content: "汇报先给结论，再说细节", created_at: "" }, { id: "m2", content: "住在宁波，常用 Telegram", created_at: "" }]} onDelete={() => {}} /> : tab === "feed" ? <ActivityFeed items={feed} scope="all" onScope={() => {}} onOpen={(item) => item.session && setCurrent(item.session.replace(/^sid-/, ""))} />
-          : <SessionInfo busy connected plan={[]} activities={[{ id: "a", kind: "tool", name: "read_file", status: "completed", label: "读取 README.md", durationMs: 1200 }, { id: "b", kind: "tool", name: "grep", status: "running", label: "搜索循环依赖" }]} queued={0} model="Qwen3.6" onRefresh={() => {}} />}
+      {panel && <AssistantPanel name={profile.name} onEditProfile={() => {}} connected modelLabel="mimo-v2.6-pro" host={{ kind: "resident", name: "vorto-code" }} onAddResident={() => {}} onRetryResident={() => {}} tab={tab} onTab={setTab} onClose={() => setPanel(false)} waiting={feed.filter((item) => item.status === "waiting").length}>
+        {tab === "audit" ? <AssistantAudit entries={audit} />
+          : tab === "schedule" ? <AssistantSchedule items={schedule} />
+          : tab === "identity" ? <AssistantIdentity profile={profile} memories={memories} onEdit={() => {}} onDeleteMemory={() => {}} />
+          : <ActivityFeed items={feed} scope="all" onScope={() => {}} onOpen={(item) => item.session && setCurrent(item.session.replace(/^sid-/, ""))} />}
       </AssistantPanel>}
     </div></div>;
 }

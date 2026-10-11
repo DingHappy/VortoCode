@@ -20,10 +20,12 @@ async def put_profile(body: dict):
     body = body or {}
     name = body.get("name")
     about = body.get("about_you")
+    soul = body.get("soul")
     if name is not None and not str(name).strip():
         raise HTTPException(status_code=400, detail="名字不能为空")
     return assistant_profile.save_profile(os.getcwd(), name=None if name is None else str(name),
-                                          about_you=None if about is None else str(about))
+                                          about_you=None if about is None else str(about),
+                                          soul=None if soul is None else str(soul))
 
 
 @router.get("/api/assistant/memories")
@@ -36,3 +38,10 @@ async def remove_memory(memory_id: str):
     if not assistant_profile.delete_memory(os.getcwd(), memory_id):
         raise HTTPException(status_code=404, detail="没有这条记忆")
     return {"ok": True}
+
+
+@router.get("/api/assistant/schedule")
+async def get_schedule():
+    """助理名下的定时事项：早晚报、Heartbeat、定时作业。"""
+    from src.scheduling.assistant_watch import schedule_overview
+    return {"items": schedule_overview(os.getcwd())}
