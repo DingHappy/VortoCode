@@ -630,7 +630,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         # runtime=True：verify_branch 会在**目标分支的 worktree 内**读 verify.yaml 决定跑不跑运行时验证
         # ——从分支自己的配置读（本次改动的 verify.yaml 生效），坏配置判红、没配则只跑单测。
         integ = await await_thread(
-            verify_branch, repo_root, branch, test_cmd, "wt-verify-" + uuid.uuid4().hex[:8], True)
+            verify_branch, repo_root, branch, test_cmd, "wt-verify-" + uuid.uuid4().hex[:8], True, dp.base)
         dp.integration = integ
         if integ["ok"]:
             dp.status = "integrated"

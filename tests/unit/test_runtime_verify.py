@@ -444,3 +444,46 @@ async def test_dev_auto_requests_runtime_and_reports(tmp_path, monkeypatch):
     assert "运行时验证" in out and "smoke" in out
     assert "screenshot: /tmp/browser-smoke.png" in out
     assert "集成后全量测试 + 运行时验证通过" in out
+
+
+# ---------------------------------------------------------------- 集成验证的改动面分档与提速（真机 2026-10-11）
+
+def _commit_on_branch(path, files: dict, branch="vorto/feature"):
+    _git(path, "checkout", "-q", branch)
+    for name, body in files.items():
+        (path / name).parent.mkdir(parents=True, exist_ok=True)
+        (path / name).write_text(body, encoding="utf-8")
+    _git(path, "add", "-A")
+    _git(path, "commit", "-q", "-m", "change")
+    _git(path, "checkout", "-q", "main")
+
+
+def test_verify_branch_skips_suite_for_docs_only_branch(tmp_path):
+    """只加文档：集成验证如实跳过（跳过≠通过）。真机：只加一个 .md，串行全量跑了 600s 超时判失败。"""
+    _init_repo(tmp_path)
+    _commit_on_branch(tmp_path, {"docs/e2e-check.md": "端到端验收\n"})
+    res = worktree.verify_branch(str(tmp_path), "vorto/feature", ["false"], "wt-docs", True, "main")
+    assert res["ok"] is True and res["skipped"] is True and "docs/e2e-check.md" in res["output"]
+
+
+def test_verify_branch_runs_suite_when_code_changed_or_base_unknown(tmp_path):
+    _init_repo(tmp_path)
+    _commit_on_branch(tmp_path, {"docs/x.md": "x\n", "src/a.py": "x = 1\n"})
+    assert worktree.verify_branch(str(tmp_path), "vorto/feature", ["false"], "wt-code", True, "main")["ok"] is False
+    assert worktree.verify_branch(str(tmp_path), "vorto/feature", ["false"], "wt-nobase", True)["ok"] is False
+    assert worktree.verify_branch(str(tmp_path), "vorto/feature", ["false"], "wt-badbase", True, "no-such")["ok"] is False
+
+
+def test_parallel_pytest_and_timeout_are_opt_in(monkeypatch):
+    monkeypatch.delenv("VORTOCODE_TEST_WORKERS", raising=False)
+    monkeypatch.delenv("VORTOCODE_TEST_TIMEOUT", raising=False)
+    assert worktree._parallel_pytest(["python", "-m", "pytest", "-q"]) == ["python", "-m", "pytest", "-q"]
+    assert worktree._test_timeout() == 600
+    monkeypatch.setenv("VORTOCODE_TEST_WORKERS", "auto")
+    monkeypatch.setenv("VORTOCODE_TEST_TIMEOUT", "1500")
+    assert worktree._parallel_pytest(["python", "-m", "pytest", "-q"])[-4:] == ["-n", "auto", "--dist", "loadfile"]
+    assert worktree._parallel_pytest(["npm", "test"]) == ["npm", "test"]                 # 只动 pytest
+    assert worktree._parallel_pytest(["pytest", "-n", "2"]) == ["pytest", "-n", "2"]     # 已指定就不加
+    assert worktree._test_timeout() == 1500
+    monkeypatch.setenv("VORTOCODE_TEST_TIMEOUT", "abc")
+    assert worktree._test_timeout() == 600

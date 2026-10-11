@@ -8,6 +8,8 @@ worktree 建在 .vortocode/worktrees/<id>（gitignored），不污染 git status
 """
 from __future__ import annotations
 
+import os
+
 import asyncio
 import shutil
 import subprocess
@@ -261,7 +263,28 @@ async def in_worktree(repo_root, wid: str,
         await _git_op(remove_worktree, repo_root, path)
 
 
-def run_tests(worktree, cmd: Optional[list] = None, timeout: int = 600, *,
+def _test_timeout(default: int = 600) -> int:
+    """测试超时（秒）：`VORTOCODE_TEST_TIMEOUT` 可调（慢机器上全量要更久），非法值用默认。"""
+    try:
+        value = int(os.getenv("VORTOCODE_TEST_TIMEOUT", "") or default)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _parallel_pytest(cmd: list) -> list:
+    """`VORTOCODE_TEST_WORKERS`（如 auto / 4）：pytest 命令加 xdist 并行（按文件分发，与本仓门禁同口径）。
+    没装 xdist 或命令里已指定 -n 就原样返回——只是提速，不改变测什么。"""
+    workers = os.getenv("VORTOCODE_TEST_WORKERS", "").strip()
+    if not workers or not any("pytest" in str(part) for part in cmd) or "-n" in cmd:
+        return cmd
+    import importlib.util
+    if importlib.util.find_spec("xdist") is None:
+        return cmd
+    return [*cmd, "-n", workers, "--dist", "loadfile"]
+
+
+def run_tests(worktree, cmd: Optional[list] = None, timeout: Optional[int] = None, *,
               require_isolation: bool = True) -> dict:
     """在 worktree 里跑测试做逐件验证；生成代码默认必须在 OS 沙箱中执行。
 
@@ -270,7 +293,8 @@ def run_tests(worktree, cmd: Optional[list] = None, timeout: int = 600, *,
     """
     from src.sandbox.policy import child_env, resolve_sandbox, sandboxed_exec_argv
     from src.utils.python_exe import pytest_argv
-    cmd = list(cmd) if cmd else pytest_argv("-q")
+    cmd = _parallel_pytest(list(cmd) if cmd else pytest_argv("-q"))
+    timeout = timeout or _test_timeout()
     decision = resolve_sandbox(require_isolation=require_isolation)
     evidence = decision.to_dict()
     shown = " ".join(cmd)
@@ -559,8 +583,16 @@ def _fold_runtime_verify(repo_root, worktree, result: dict, run_id: str) -> dict
     return result
 
 
+def _branch_changed_paths(repo_root, base: str, branch: str) -> list[str]:
+    """分支相对 base 改了哪些文件（三点 diff）。git 失败返回空表——调用方据此落回全量。"""
+    r = _git(repo_root, "diff", "--name-only", f"{base}...{branch}", check=False)
+    if r.returncode != 0:
+        return []
+    return [line.strip() for line in (r.stdout or "").splitlines() if line.strip()]
+
+
 def verify_branch(repo_root, branch: str, test_cmd: list, wid: str,
-                  runtime: bool = False) -> dict:
+                  runtime: bool = False, base: Optional[str] = None) -> dict:
     """在临时 worktree 检出 branch 跑一遍测试做**最终集成验证**，返回 {ok, output, cmd}；清理 worktree。
 
     （dev_auto 把并行批 + 依赖接力都落到同一分支后，用它对整条分支做一次权威全量复验。）
@@ -568,7 +600,14 @@ def verify_branch(repo_root, branch: str, test_cmd: list, wid: str,
     runtime=True 且**单测先过**时，再按**目标分支自己**的 `.vortocode/verify.yaml` 里标 auto 的
     profile 跑运行时验证（"真能跑起来"），结果并进 `result["runtime"]`、任一红/配置坏则整体 ok=False。
     单测就红则跳过运行时（省时，反正已判失败）。
+
+    base：给了就按「整条分支相对 base」判档——纯文档改动如实跳过（与逐件落分支同一规矩；
+    真机 2026-10-11：只加一个 .md，集成时仍串行跑全量、超时判失败）。算不出改动面一律全量。
     """
+    if base:
+        paths = _branch_changed_paths(repo_root, base, branch)
+        if paths and all(p.lower().endswith(_DOC_ONLY_SUFFIXES) for p in paths):
+            return _skipped_verification(", ".join(paths)[:120])
     path = _worktrees_dir(repo_root) / wid
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.exists():
