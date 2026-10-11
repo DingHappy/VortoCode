@@ -336,7 +336,7 @@ def save_archive(ledger, artifact):
         _sync_directory(path.parent.parent)
         return
     if len(archive_ids(ledger)) >= MAX_ARCHIVES:
-        from src.workflow.tasks.collaboration import CollaborationConflict
+        from src.workflow.tasks.errors import CollaborationConflict
         raise CollaborationConflict("历史归档已达到 128 个上限；保留现有资料，可只读导出；未释放活动容量")
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + "." + secrets.token_hex(8) + ".tmp")
@@ -385,7 +385,7 @@ def archive_view(artifact, *, replayed=False):
 
 
 def _archive_scope(ledger, artifact, owner, source, round_number):
-    from src.workflow.tasks.collaboration import CollaborationConflict
+    from src.workflow.tasks.errors import CollaborationConflict
     evidence, _ = verify_archive(artifact)
     if evidence["workspace_id"] != workspace_id(ledger) or evidence["scope"][:3] != [owner, source, round_number]:
         raise CollaborationConflict("历史覆盖归属、来源、轮次或工作区不匹配")
@@ -396,7 +396,7 @@ def retain(service, session, source, round_number, scan_id, request_id, checkpoi
     from copy import deepcopy
     import re
     from src.workflow.tasks.dispatch import session_identity
-    from src.workflow.tasks.collaboration import CollaborationConflict
+    from src.workflow.tasks.errors import CollaborationConflict
     from src.workflow.tasks.tasks import TASK_STATE_LOCK
     from src.workflow.tasks.task_dependents import _coverage_time, _coverage_validity, _coverage_invalidate
     owner, ledger = session_identity(session), service.runner.ledger
@@ -437,7 +437,7 @@ def retain(service, session, source, round_number, scan_id, request_id, checkpoi
 
 def release(service, session, source, round_number, scan_id, archive_id, archive_digest, checkpoint_digest):
     from src.workflow.tasks.dispatch import session_identity
-    from src.workflow.tasks.collaboration import CollaborationConflict
+    from src.workflow.tasks.errors import CollaborationConflict
     from src.workflow.tasks.tasks import TASK_STATE_LOCK
     ledger, owner = service.runner.ledger, session_identity(session)
     with TASK_STATE_LOCK:
@@ -553,7 +553,7 @@ def observe(service, session, source, *, workspace, request_id, checkpoints):
     """
     import re
     from src.workflow.tasks.dispatch import session_identity
-    from src.workflow.tasks.collaboration import CollaborationConflict
+    from src.workflow.tasks.errors import CollaborationConflict
     from src.workflow.tasks.tasks import TASK_STATE_LOCK
     from src.workflow.tasks.task_dependents import _coverage_invalidate, _coverage_report, _coverage_time
     ledger, owner = service.runner.ledger, session_identity(session)
@@ -645,7 +645,7 @@ def observe(service, session, source, *, workspace, request_id, checkpoints):
 
 def export(service, session, source, round_number, archive_id, artifact=None):
     from src.workflow.tasks.dispatch import session_identity
-    from src.workflow.tasks.collaboration import CollaborationConflict
+    from src.workflow.tasks.errors import CollaborationConflict
     from src.workflow.tasks.tasks import TASK_STATE_LOCK
     ledger = service.runner.ledger
     with TASK_STATE_LOCK:
@@ -689,7 +689,7 @@ def _strict_json(payload, maximum):
 
 def verify_file_bytes(payload: bytes, *, expected=None):
     """Verify a portable copy, never import it or attest to durable external storage."""
-    from src.workflow.tasks.collaboration import CollaborationConflict
+    from src.workflow.tasks.errors import CollaborationConflict
     from src.workflow.tasks.task_dependents import _coverage_time
     if not isinstance(payload, bytes) or not 0 < len(payload) <= MAX_ARCHIVE_BYTES:
         raise ValueError("历史文件为空或超过 8454144 字节上限；未确认文件")
@@ -766,7 +766,7 @@ def _preservation_names(view):
 def verify_preservation_bytes(artifact_bytes, receipt_bytes, *, expected=None, receipt_file_digest=None):
     """A receipt is a local assertion, not a signed storage or durability proof."""
     from datetime import datetime
-    from src.workflow.tasks.collaboration import CollaborationConflict
+    from src.workflow.tasks.errors import CollaborationConflict
     view = verify_file_bytes(artifact_bytes, expected=expected)
     raw_digest = hashlib.sha256(receipt_bytes).hexdigest()
     if receipt_file_digest is not None and receipt_file_digest != raw_digest:
@@ -1079,7 +1079,7 @@ def load_retirement(ledger, scan_id):
 
 def save_retirement(ledger, record):
     import secrets
-    from src.workflow.tasks.collaboration import CollaborationConflict
+    from src.workflow.tasks.errors import CollaborationConflict
     e = verify_retirement(record)
     path = retirement_path(ledger, e["scan_id"])
     if path.exists() or path.is_symlink():
@@ -1131,7 +1131,7 @@ def retirement_view(record):
 
 
 def _retirement_scope(ledger, record, owner, source, round_number):
-    from src.workflow.tasks.collaboration import CollaborationConflict
+    from src.workflow.tasks.errors import CollaborationConflict
     e = verify_retirement(record)
     if e["workspace_id"] != workspace_id(ledger) or e["scope"][:3] != [owner, source, round_number]:
         raise CollaborationConflict("扫描退役凭据归属、来源、轮次或工作区不匹配")
@@ -1150,7 +1150,7 @@ def retirement_status(ledger, scan_id, owner, source, round_number):
 
 def read_retirement(service, session, source, round_number, scan_id):
     from src.workflow.tasks.dispatch import session_identity
-    from src.workflow.tasks.collaboration import CollaborationConflict
+    from src.workflow.tasks.errors import CollaborationConflict
     from src.workflow.tasks.tasks import TASK_STATE_LOCK
     with TASK_STATE_LOCK:
         ledger = service.runner.ledger
@@ -1164,7 +1164,7 @@ def read_retirement(service, session, source, round_number, scan_id):
 def verify_retirement_path(path, *, expected=None):
     record = _strict_json(_read_regular_file(path, MAX_RETIREMENT_BYTES), MAX_RETIREMENT_BYTES)
     view = retirement_view(record)
-    from src.workflow.tasks.collaboration import CollaborationConflict
+    from src.workflow.tasks.errors import CollaborationConflict
     for key, value in (expected or {}).items():
         if key not in view or type(value) is not type(view[key]) or view[key] != value:
             raise CollaborationConflict("扫描退役凭据期望身份不匹配；状态未知")

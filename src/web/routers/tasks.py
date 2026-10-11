@@ -185,7 +185,7 @@ class DevelopmentAnswer(BaseModel):
 @router.post("/api/tasks/{tid}/answer", status_code=202)
 async def answer_development_question(tid: str, body: DevelopmentAnswer):
     from src.web.task_dispatch import get_development_questions
-    from src.workflow.tasks.collaboration import CollaborationConflict
+    from src.workflow.tasks.errors import CollaborationConflict
     from src.workflow.tasks.dispatch import DispatchBusy
     try:
         task, replayed = get_development_questions().answer(

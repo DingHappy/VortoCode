@@ -7,7 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.errors import CollaborationConflict
 from src.workflow.tasks.dispatch import DispatchBusy
 from src.web.task_dispatch import get_dispatch_service
 

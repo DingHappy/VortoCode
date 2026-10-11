@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from src.gateway.audit import _clip_text
-from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.errors import CollaborationConflict
 from src.workflow.tasks.task_dependencies import MAX_DEPTH, MAX_DEPENDENCIES, dependency_state
 from src.workflow.tasks.tasks import MAX_SCAN_ENTRIES, MAX_SCAN_RECORD_BYTES, TASK_STATE_LOCK
 from src.utils.ids import typed_id

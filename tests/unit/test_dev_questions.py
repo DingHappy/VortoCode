@@ -10,7 +10,7 @@ import pytest
 from src.agents.agent_loop import MainAgent
 from src.agents.dev_plan import Block, DevPlan, load_plan, save_checkpoint
 from src.agents.task_questions import bind_development_question
-from src.workflow.tasks.collaboration import CollaborationConflict
+from src.workflow.tasks.errors import CollaborationConflict
 from src.workflow.tasks.dev_questions import DevelopmentQuestions
 from src.workflow.tasks.dispatch import DispatchBusy
 from src.workflow.tasks.handoffs import CompletionInbox

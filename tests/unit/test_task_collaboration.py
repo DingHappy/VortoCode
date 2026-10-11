@@ -9,7 +9,8 @@ import pytest
 
 from src.agents.main_agent import MainAgent, build_agent_tools, build_research_tools
 from src.agents import taint
-from src.workflow.tasks.collaboration import CollaborationConflict, CollaborationService
+from src.workflow.tasks.collaboration import CollaborationService
+from src.workflow.tasks.errors import CollaborationConflict
 from src.workflow.tasks.tasks import TaskLedger
 from src.workflow.tasks.decisions import build_decision_queue
 from src.workflow.tasks.worktree_sessions import task_session_view
