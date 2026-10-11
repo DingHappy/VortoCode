@@ -1,0 +1,176 @@
+"""常驻助理的巡检与汇报：Desktop 关着也照常跟进派出去的活，有变化推到手机，早晚各报一次。
+
+- 每分钟向项目运行时刷新已下发任务的状态（assistant_dispatch.refresh），状态一变就推送：
+  新写好等你确认的任务单、完成（含分支）、失败、在等人回答。手机上只是提醒，确认下发仍在 Desktop。
+- 早报 / 晚报（默认 09:00、21:00，本机时区）：今天聊了几件事、任务单各状态几件、哪些等你处理。
+  直接从台账生成，不调模型。
+- 推送走 ``VORTOCODE_OWNER_NOTIFY_URL`` 指向的那个持有 IM 的服务（POST /api/im/notify），
+  **没配就不启动**——Desktop 本机的通用会话不会冒出推送。
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import Any, Awaitable, Callable, Dict, List, Optional
+
+from src.workflow.tasks import assistant_dispatch
+
+logger = logging.getLogger(__name__)
+
+INTERVAL_SECONDS = 60
+_REPORT_GRACE = timedelta(hours=2)          # 错过整点（重启、断网）两小时内补发，再晚就不补
+_NOTIFY_STATUSES = {"proposed", "waiting", "done", "failed", "send_failed"}
+
+Notify = Callable[[str], Awaitable[bool]]
+
+
+def notify_url() -> str:
+    return os.getenv("VORTOCODE_OWNER_NOTIFY_URL", "").strip().rstrip("/")
+
+
+def watch_enabled() -> bool:
+    return bool(notify_url())
+
+
+def report_times() -> List[str]:
+    raw = os.getenv("VORTOCODE_ASSISTANT_REPORT_TIMES", "09:00,21:00")
+    times = []
+    for part in raw.split(","):
+        part = part.strip()
+        try:
+            datetime.strptime(part, "%H:%M")
+        except ValueError:
+            continue
+        times.append(part)
+    return times
+
+
+async def relay_notify(text: str) -> bool:
+    """把一条通知交给持有 IM 的服务转发给主人。失败返回 False，不抛。"""
+    import aiohttp
+
+    url = notify_url()
+    if not url:
+        return False
+    token = os.getenv("VORTOCODE_API_TOKEN", "").strip()
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15), trust_env=False) as client:
+            async with client.post(f"{url}/api/im/notify", json={"text": text, "source": "assistant"},
+                                   headers=headers) as response:
+                return response.status < 400
+    except Exception as error:  # noqa: BLE001 —— 推送是旁路
+        logger.warning("助理通知转发失败：%s", error)
+        return False
+
+
+def _state_path(root: str) -> Path:
+    return Path(root) / ".vortocode" / "dispatches" / "watch.json"
+
+
+def _load_state(root: str) -> Optional[Dict[str, Any]]:
+    try:
+        data = json.loads(_state_path(root).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _save_state(root: str, state: Dict[str, Any]) -> None:
+    path = _state_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def status_message(item: Dict[str, Any]) -> str:
+    title = f"{item.get('project')}：{item.get('title')}"
+    status = item.get("status")
+    if status == "proposed":
+        return f"📝 助理写好了任务单，等你确认下发——{title}\n在 Desktop 助理的「动态」里确认（手机上回复不会下发）。"
+    if status == "waiting":
+        return f"⏸ {title} 在等人回答，到工作台的常驻电脑项目里处理。"
+    if status == "done":
+        branch = f"，交付分支 {item['branch']}" if item.get("branch") else ""
+        result = str(item.get("result") or "").strip()
+        return f"✅ {title} 完成{branch}。" + (f"\n{result[-300:]}" if result else "")
+    return f"❌ {title} 失败：{str(item.get('error') or '没有错误信息')[:300]}"
+
+
+def build_report(root: str, now: datetime, label: str) -> str:
+    """早报 / 晚报正文：今天的对话、任务单状态、等你处理的。"""
+    from src.gateway.turn_digest import recent_turns
+
+    today = now.date()
+
+    def local_day(value: str) -> Optional[Any]:
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(now.tzinfo).date()
+        except (TypeError, ValueError):
+            return None
+
+    turns = [turn for turn in recent_turns(root, 200) if local_day(turn.get("at", "")) == today]
+    items = [item for item in assistant_dispatch.list_dispatches(root) if item.get("status") != "cancelled"]
+    active = [item for item in items if item.get("status") in ("proposed", "running", "waiting", "send_failed")
+              or local_day(item.get("updated_at", "")) == today]
+    lines = [f"🗒 {label}（{now:%m月%d日 %H:%M}）", f"今天聊了 {len(turns)} 件事。"]
+    for turn in turns[:5]:
+        lines.append(f"· {turn.get('title')}：{turn.get('outcome') or '—'}")
+    names = {"proposed": "等你确认下发", "send_failed": "下发失败", "running": "在做", "waiting": "在等人回答",
+             "done": "完成", "failed": "失败", "stopped": "已停下"}
+    if active:
+        lines.append("")
+        lines.append("任务单：")
+        for item in active[:10]:
+            lines.append(f"· [{names.get(item.get('status'), item.get('status'))}] {item.get('project')}：{item.get('title')}")
+    waiting = [item for item in items if item.get("status") in ("proposed", "waiting", "send_failed")]
+    lines.append("")
+    lines.append(f"等你处理：{len(waiting)} 件。" if waiting else "没有等你处理的事。")
+    return "\n".join(lines)
+
+
+async def watch_once(root: str, now: datetime, *, notify: Notify, refresh=assistant_dispatch.refresh,
+                     times: Optional[List[str]] = None) -> None:
+    """巡检一轮：刷新任务状态、推送变化、到点发报告。首次运行只记下现状，不把旧账推一遍。"""
+    state = _load_state(root)
+    first_run = state is None
+    state = state or {"seen": {}, "reports": []}
+    items = await refresh(root)
+    seen: Dict[str, str] = state.setdefault("seen", {})
+    for item in items:
+        status = str(item.get("status") or "")
+        if seen.get(item["id"]) == status:
+            continue
+        if not first_run and status in _NOTIFY_STATUSES:
+            await notify(status_message(item))
+        seen[item["id"]] = status
+    sent: List[str] = state.setdefault("reports", [])
+    for hhmm in times if times is not None else report_times():
+        hour, minute = map(int, hhmm.split(":"))
+        due = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        key = f"{due:%Y-%m-%d} {hhmm}"
+        if due <= now < due + _REPORT_GRACE and key not in sent:
+            label = "早报" if hour < 12 else "晚报"
+            await notify(build_report(root, now, label))
+            sent.append(key)
+    state["reports"] = sent[-20:]
+    state["seen"] = {key: value for key, value in seen.items() if key in {item["id"] for item in items}}
+    _save_state(root, state)
+
+
+async def watch_loop(root: str, stop: asyncio.Event, *, notify: Notify = relay_notify,
+                     interval: float = INTERVAL_SECONDS) -> None:
+    while not stop.is_set():
+        try:
+            await watch_once(root, datetime.now().astimezone(), notify=notify)
+        except Exception as error:  # noqa: BLE001 —— 巡检失败不拖垮服务，下一轮再来
+            logger.warning("助理巡检失败：%s", error)
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=interval)
+        except asyncio.TimeoutError:
+            pass

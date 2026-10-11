@@ -840,5 +840,11 @@
     "methods": [
       "POST"
     ]
+  },
+  {
+    "path": "/api/im/notify",
+    "methods": [
+      "POST"
+    ]
   }
 ]

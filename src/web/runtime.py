@@ -1,4 +1,6 @@
 """HTTP/Desktop binding for the shared Runtime lifecycle."""
+import asyncio
+import contextlib
 import os
 from contextlib import asynccontextmanager
 
@@ -58,4 +60,17 @@ async def runtime_lifespan():
                     audit_dependencies=lambda: get_dispatch_service().audit_dependencies(),
                     make_run_manager=get_run_manager, make_terminal_manager=get_terminal_manager,
                     register_im_worker=register_im_worker):
-        yield
+        from src.gateway.workspace_scope import GENERAL, current_workspace_scope
+        from src.scheduling.assistant_watch import watch_enabled, watch_loop
+        watch, stop = None, asyncio.Event()
+        # 常驻助理（General + 配了通知转发地址）：跟进派出去的活、推送变化、早晚汇报
+        if current_workspace_scope() == GENERAL and watch_enabled():
+            watch = asyncio.create_task(watch_loop(os.getcwd(), stop))
+        try:
+            yield
+        finally:
+            stop.set()
+            if watch is not None:
+                watch.cancel()
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await watch
