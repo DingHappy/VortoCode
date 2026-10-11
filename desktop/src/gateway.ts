@@ -9,6 +9,7 @@ import type {
   AssistantMemory,
   AssistantProfile,
   AssistantScheduleItem,
+  PhoneChat,
   ArtifactMeta,
   ArtifactVersionSnapshot,
   AuditEntry,
@@ -364,6 +365,12 @@ export class GatewayClient {
 
   async saveAssistantProfile(profile: Partial<AssistantProfile>): Promise<AssistantProfile> {
     return this.request("/api/assistant/profile", { method: "PUT", body: JSON.stringify(profile) });
+  }
+
+  /** 手机上和助理的聊天（只读）。 */
+  async listPhoneChats(): Promise<PhoneChat[]> {
+    const payload = await this.request<{ chats?: PhoneChat[] }>("/api/assistant/phone-chats");
+    return Array.isArray(payload.chats) ? payload.chats : [];
   }
 
   /** 助理名下的定时事项（早晚报、跟进、Heartbeat、定时作业）。 */

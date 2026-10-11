@@ -121,7 +121,12 @@ export function feedTime(item: FeedItem): string {
 const WEB_TOOLS = /^(web_|browser|screenshot)/;
 const CODE_TOOLS = /^(write_file|edit_file|apply_patch|dev_)/;
 
-/** 一轮对话 → 一条动态。没有最终回复的回合（中断、出错）记为「已停下」。 */
+/** 手机（Telegram / 钉钉）上的会话：Desktop 只读查看，不接管。 */
+export function isPhoneSession(sid?: string): boolean {
+  return /^(sid-)?(telegram|dingtalk)-/.test(sid ?? "");
+}
+
+/** 一轮对话 → 一条动态。没有最终回复的回合（中断、出错）记为「已停下」。手机上聊的标 📱。 */
 export function turnFeedItem(turn: AgentTurn): FeedItem {
   const names = turn.tool_names ?? [];
   const kind: FeedKind = names.some((name) => WEB_TOOLS.test(name)) ? "web"
@@ -131,8 +136,8 @@ export function turnFeedItem(turn: AgentTurn): FeedItem {
     id: `turn:${turn.sid}:${turn.rid}`,
     kind,
     rid: turn.rid,
-    title: turn.title || "未命名事项",
-    summary: turn.status === "done" ? turn.outcome || "已回复" : "没有完成，可以在对话里继续",
+    title: `${isPhoneSession(turn.sid) ? "📱 " : ""}${turn.title || "未命名事项"}`,
+    summary: turn.status === "done" ? turn.outcome || "已回复" : isPhoneSession(turn.sid) ? "没有完成，可以在手机上继续" : "没有完成，可以在对话里继续",
     status: turn.status === "done" ? "done" : "stopped",
     at: turn.at,
     session: turn.sid,

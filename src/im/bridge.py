@@ -52,6 +52,10 @@ def _persona_path_for(repo_root: str):
     return Path(repo_root) / ".vortocode" / "persona.md"
 
 
+_MAX_TRANSCRIPT = 400
+_CHANNEL_NAMES = {"telegram": "Telegram", "dingtalk": "钉钉"}
+
+
 def read_persona(repo_root: str) -> str:
     """从工作区读人设。**模块级函数**而不是实例方法——_build_agent 会被契约测试用桩对象
     调用（SimpleNamespace 没有实例方法），把装配路径绑死在实例上会让那层契约失效。"""
@@ -220,6 +224,8 @@ class IMBridge:
         except Exception:  # noqa: BLE001
             saved = None
         if saved:
+            # 对话记录（不只是模型上下文）：Desktop 助理能只读看手机上聊了什么，「动态」能列出每一轮
+            self._transcript = [item for item in saved.get("transcript") or [] if isinstance(item, dict)]
             agent.history = saved.get("history") or []
             if saved.get("plan"):
                 agent.plan = saved["plan"]
@@ -237,7 +243,10 @@ class IMBridge:
         try:
             from src.gateway.agent_session import session_behavior_fp, session_tool_names
             from src.gateway.session_store import save_session
-            save_session(self.repo_root, self._sid, transcript=[],
+            channel = self._sid.split("-")[1] if self._sid.count("-") >= 2 else "im"
+            save_session(self.repo_root, self._sid,
+                         transcript=list(getattr(self, "_transcript", []))[-_MAX_TRANSCRIPT:],
+                         title=f"📱 {_CHANNEL_NAMES.get(channel, channel)}",
                          history=self.agent.history, plan=getattr(self.agent, "plan", None),
                          tool_names=session_tool_names(self.agent),
                          behavior_fp=session_behavior_fp(self.agent),
@@ -1027,8 +1036,35 @@ class IMBridge:
         await self._safe_send("后台任务：\n" + "\n".join(lines))
 
     # ------------------------------------------------------------ 一个回合（queue+drain+Future）
+    def _record(self, role: str, text: str, rid: str) -> dict:
+        """记一条对话记录（与 Web 会话同一格式：role / text / rid / at）。"""
+        from datetime import datetime, timezone
+        entry = {"role": role, "text": str(text or ""), "rid": rid,
+                 "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+        if not hasattr(self, "_transcript"):
+            self._transcript = []
+        self._transcript.append(entry)
+        return entry
+
+    async def _digest(self, request: str, reply_entry: dict) -> None:
+        """回合结束后在后台写一条「动态」摘要（常驻助理才写；失败只退回原文截取，不影响对话）。"""
+        from src.gateway.turn_digest import digest_enabled, generate_digest
+        if self.workspace_scope != "general" or not digest_enabled():
+            return
+        client_of = getattr(self.agent, "_client", None)
+        try:
+            reply_entry["digest"] = await generate_digest(client_of() if callable(client_of) else None,
+                                                          request, reply_entry.get("text", ""))
+        except Exception:  # noqa: BLE001 —— 摘要是旁路
+            return
+        self._persist()
+
     async def _run_turn(self, text: str, images: Optional[list] = None,
                         files: Optional[list] = None) -> None:
+        import uuid
+        rid = f"im-{uuid.uuid4().hex[:12]}"
+        self._record("user", text, rid)
+        reply_holder: dict = {}
         q: asyncio.Queue = asyncio.Queue()
         self._confirm_holder["fn"] = self._make_confirm(q)
         self._progress_holder["fn"] = lambda msg: q.put_nowait(("progress", str(msg)))
@@ -1056,6 +1092,7 @@ class IMBridge:
                                                   emit=lambda t: emitted.append(str(t)))
                 if not str(reply or "").strip() and emitted:
                     reply = emitted[-1]                  # 死因兜底：把 emit 的错误原文交出去
+                reply_holder["entry"] = self._record("assistant", reply, rid)
                 q.put_nowait(("final", reply))
             except asyncio.CancelledError:
                 q.put_nowait(("final", "（已取消）"))
@@ -1066,6 +1103,9 @@ class IMBridge:
                 q.put_nowait(("__done__", None))
 
         await self._drain(q, asyncio.create_task(_inner()))
+        if reply_holder.get("entry") is not None:
+            # 不阻塞下一条消息：摘要在后台生成，写好后再存一次盘
+            asyncio.create_task(self._digest(text, reply_holder["entry"]))
 
     async def _drain(self, q: asyncio.Queue, inner) -> None:
         """把一次长任务的 (progress / confirm / final) 事件流推到通道上，收尾清干净。

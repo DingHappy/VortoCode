@@ -255,8 +255,11 @@ async def relay_owner_notice(body: dict):
     if not text:
         raise HTTPException(status_code=400, detail="缺少 text")
     source = str((body or {}).get("source") or "relay").strip()[:40] or "relay"
+    if text.startswith("🔔 "):
+        text = text[2:].strip()           # 转发方的投递器已经加过铃铛
     from src.scheduling.notices import make_notifier
-    await make_notifier(os.getcwd(), source=source)(text[:3000])
+    # relay=False：只在本进程投递（没送到就排补发），绝不再转出去——两个服务互指也不会成环
+    await make_notifier(os.getcwd(), source=source, relay=False)(text[:3000])
     return {"ok": True}
 
 

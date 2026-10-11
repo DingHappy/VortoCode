@@ -355,3 +355,13 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 .assistant-card.about { background: linear-gradient(140deg, #2f9e78, #1b6a52); }
 .assistant-card.memory { background: linear-gradient(140deg, #4a5fe0, #23308f); }
 .assistant-card:focus-visible { outline: 2px solid var(--daily-accent-text); outline-offset: 2px; }
+
+/* 手机上的聊天（只读） */
+.assistant-side-chat.phone svg { color: var(--daily-accent-text); }
+.phone-chat-dialog { display: flex; flex-direction: column; width: min(760px, calc(100vw - 32px)); max-height: min(80vh, 760px); }
+.phone-chat-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.phone-chat-dialog header h2 { display: flex; align-items: center; gap: 6px; margin: 0; }
+.phone-chat-dialog header button { display: inline-flex; padding: 5px; border: 0; border-radius: 7px; color: var(--n10); background: transparent; cursor: pointer; }
+.phone-chat-dialog header button:hover { background: var(--n3); }
+.phone-chat-note { margin: 6px 0 10px; font-size: 12.5px; color: var(--n9); }
+.phone-chat-messages { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }

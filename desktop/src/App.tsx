@@ -2,8 +2,8 @@ import { ManagementNav } from "./components/ManagementNav";
 import { isManagementTab } from "./lib/inspector";
 import { WorkbenchLauncher, WorkbenchTabs, type WorkbenchTool } from "./components/WorkbenchTabs";
 import { ActivityFeed } from "./components/ActivityFeed";
-import { AssistantAudit, AssistantIdentity, AssistantPanel, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, type AppMode, type AssistantTab } from "./components/AssistantMode";
-import { dispatchFeedItem, taskFeedItem, turnFeedItem, type FeedItem } from "./lib/activityFeed";
+import { AssistantAudit, AssistantIdentity, AssistantPanel, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PhoneChatDialog, type AppMode, type AssistantTab } from "./components/AssistantMode";
+import { dispatchFeedItem, isPhoneSession, taskFeedItem, turnFeedItem, type FeedItem } from "./lib/activityFeed";
 import { ConfirmationReply } from "./components/ConfirmationReply";
 import { createConfirmationReply } from "./lib/confirm";
 import { ConfirmationTrust } from "./components/ConfirmationTrust";
@@ -60,6 +60,7 @@ import type {
   AssistantMemory,
   AssistantProfile,
   AssistantScheduleItem,
+  PhoneChat,
   AuditEntry,
   CommandRunItem,
   CommandRunKind,
@@ -329,6 +330,9 @@ function App() {
   const [assistantSchedule, setAssistantSchedule] = useState<AssistantScheduleItem[]>([]);
   const [assistantMemories, setAssistantMemories] = useState<AssistantMemory[]>([]);
   const [profileDialogOpen, setProfileDialogOpen] = useState(false);
+  // 手机上和助理的聊天：只读查看（不接管——两个进程同时写一段对话会互相覆盖）
+  const [phoneChats, setPhoneChats] = useState<PhoneChat[]>([]);
+  const [phoneChatSid, setPhoneChatSid] = useState<string | null>(null);
   const [agentTurns, setAgentTurns] = useState<AgentTurn[]>([]);
   // 常驻助理写的任务单（等你确认下发 / 在做 / 做完）。
   const [dispatches, setDispatches] = useState<AssistantDispatch[]>([]);
@@ -1997,6 +2001,11 @@ function App() {
     } catch {
       // 老版本服务没有助理资料接口：沿用默认名字。
     }
+    try {
+      setPhoneChats(await client.listPhoneChats());
+    } catch {
+      setPhoneChats([]);
+    }
   }, []);
 
   /** 打开「主要聊天」：每台电脑第一次进助理模式时生成一个固定会话并记住，之后一直用它。 */
@@ -3048,10 +3057,12 @@ function App() {
           {appMode === "assistant" ? (
             <AssistantSidebar
               mainChat={{ sid: mainChatSid, preview: agentTurns.find((turn) => turn.sid === mainChatSid)?.outcome, busy: busy && activeSid === mainChatSid }}
-              sideChats={sessions.filter((session) => session.sid !== mainChatSid && (session.messages > 0 || session.sid === activeSid))
+              sideChats={sessions.filter((session) => session.sid !== mainChatSid && !isPhoneSession(session.sid) && (session.messages > 0 || session.sid === activeSid))
                 .map((session) => ({ sid: session.sid, title: session.title, busy: session.status === "working" }))}
               current={activeSid}
               onSelect={(sid) => { setMainView("chat"); void (sid === mainChatSid ? openMainChat() : switchSession(sid)); }}
+              phoneChats={phoneChats.map((chat) => ({ sid: chat.sid, title: chat.title }))}
+              onOpenPhoneChat={(sid) => setPhoneChatSid(sid)}
               onNewSideChat={() => void newSideChat()}
             />
           ) : <>
@@ -3666,6 +3677,7 @@ function App() {
                     if (item.dispatchId) { void openDispatch(item.dispatchId); return; }
                     if (item.taskId) { focusTask(item.taskId); return; }
                     const sid = item.session?.replace(/^sid-/, "");
+                    if (sid && isPhoneSession(sid)) { setPhoneChatSid(sid); return; }
                     if (sid) { setMainView("chat"); void switchSession(sid); }
                   }} />}
           </AssistantPanel>
@@ -3964,6 +3976,8 @@ function App() {
         )}
       </div>
 
+      {phoneChatSid && phoneChats.some((chat) => chat.sid === phoneChatSid) && <PhoneChatDialog
+        chat={phoneChats.find((chat) => chat.sid === phoneChatSid)!} onClose={() => setPhoneChatSid(null)} />}
       {profileDialogOpen && <AssistantProfileDialog profile={assistantProfile} onClose={() => setProfileDialogOpen(false)}
         onSave={async (next) => {
           const client = clientRef.current;
