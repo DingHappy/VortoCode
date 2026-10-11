@@ -186,6 +186,21 @@ def _dropped_tests_retry_prompt(base: str, gone: list[str]) -> str:
 from src.utils.exc_utils import _exc_text  # noqa: F401 — re-exported so existing "from src.agents.main_agent import _exc_text" keeps working
 
 
+def _evidence_tail(output, limit: int = 400) -> str:
+    """测试输出的最后几行（从整行开始），附在「自测未过」后面当证据；没有输出就不附。
+
+    真机 2026-10-11：常驻电脑上一个小改动两次自测红，台账只剩「自测未过」四个字——
+    人分不清是代码错、用例在沙箱里的环境问题，还是超时。"""
+    lines = [line for line in str(output or "").strip().splitlines() if line.strip()]
+    tail, used = [], 0
+    for line in reversed(lines):
+        if used + len(line) > limit and tail:
+            break
+        tail.insert(0, line[-limit:])
+        used += len(line)
+    return ("：" + " | ".join(tail)) if tail else ""
+
+
 def _fail_note(result: dict) -> str:
     """接力块失败时给人的说明——**按真实死因分流，且两种线索都带**。
 
