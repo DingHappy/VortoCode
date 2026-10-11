@@ -34,6 +34,7 @@ it("身份卡说明助理住在哪：常驻电脑 / 本机；本机时给出连�
   expect(resident).toContain("住在常驻电脑「vorto-code」");
   expect(resident).toContain("合上笔记本它也照常干活");
   expect(resident).not.toContain("连接常驻电脑</button>");
+  expect(panel({ kind: "resident", name: "常驻电脑" })).toContain("住在常驻电脑</span>");   // 名字就叫常驻电脑时不重复
   expect(panel({ kind: "local", canAddResident: true })).toContain(">连接常驻电脑</button>");
   expect(panel({ kind: "local", canAddResident: false })).toContain(">重新连接常驻电脑</button>");
 });

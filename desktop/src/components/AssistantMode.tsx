@@ -59,7 +59,7 @@ export function AssistantPanel({ name, connected, host, onAddResident, onRetryRe
       <span className={`assistant-status${connected ? " online" : ""}`}>{connected ? "已连接" : "连接中断"}{connected && modelLabel ? ` · ${modelLabel}` : ""}</span>
       <span className={`assistant-host ${host.kind}`}>
         {host.kind === "resident" ? <Server size={13} aria-hidden="true" /> : <Laptop size={13} aria-hidden="true" />}
-        {host.kind === "resident" ? `住在常驻电脑「${host.name}」` : "在本机运行"}
+        {host.kind === "resident" ? `住在常驻电脑${host.name && host.name !== "常驻电脑" ? `「${host.name}」` : ""}` : "在本机运行"}
       </span>
       {host.kind === "resident"
         ? <small className="assistant-host-note">合上笔记本它也照常干活。</small>
