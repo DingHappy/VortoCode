@@ -244,6 +244,22 @@ async def get_notices(limit: int = 50):
     return {"notices": load_notices(os.getcwd(), max(1, min(int(limit), _MAX_NOTICES)))}
 
 
+@router.post("/api/im/notify")
+async def relay_owner_notice(body: dict):
+    """同机其他服务（常驻助理）借本服务的 IM 推一条通知给主人：记台账、推 IM、没送到排补发。
+
+    只是提醒通道：不授予任何确认/下发权限。与所有 /api/* 一样要令牌；agent 的联网工具只能
+    GET 公网地址，够不到这里。
+    """
+    text = str((body or {}).get("text") or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="缺少 text")
+    source = str((body or {}).get("source") or "relay").strip()[:40] or "relay"
+    from src.scheduling.notices import make_notifier
+    await make_notifier(os.getcwd(), source=source)(text[:3000])
+    return {"ok": True}
+
+
 @router.get("/api/im/status")
 async def get_im_status():
     """内嵌 IM 桥的活性快照（连着没 / 多久没收到帧 / 重连过几次 / 有几条通知没补发出去）。
