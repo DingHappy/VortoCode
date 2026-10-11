@@ -288,3 +288,5 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 @media (max-width: 1100px) {
   .workbench > .assistant-panel { position: absolute; z-index: 15; right: 0; top: 0; bottom: 0; width: min(360px, calc(100% - 220px)); box-shadow: -8px 0 24px rgba(var(--ink-rgb), .08); }
 }
+/* 助理模式左侧占满剩余高度，把账号/设置压回底部（与工作台模式的会话列表一致） */
+.sidebar > .assistant-sidebar { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
