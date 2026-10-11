@@ -48,18 +48,33 @@ async def test_generate_digest_uses_model_output():
     digest = await generate_digest(llm, "宁波", "今天宁波晴，25°C……", ["搜索网页：宁波 天气"])
     assert digest == {"title": "查询宁波天气", "outcome": "给出今明两天天气与出行建议", "source": "model"}
     messages, kwargs = llm.calls[0]
-    assert "搜索网页：宁波 天气" in messages[1]["content"] and kwargs["max_tokens"] == 160
+    assert "搜索网页：宁波 天气" in messages[1]["content"] and kwargs["max_tokens"] == 1024
 
 
-@pytest.mark.parametrize("llm", [
-    None,
-    _LLM(error=RuntimeError("relay down")),
-    _LLM(content="抱歉，我无法总结"),
-    _LLM(content='{"title": "慢"}', delay=1.0),
+@pytest.mark.parametrize("llm, reason", [
+    (None, "no_model"),
+    (_LLM(error=RuntimeError("relay down")), "error: RuntimeError: relay down"),
+    (_LLM(content="抱歉，我无法总结"), "not_json"),
+    (_LLM(content=""), "empty"),           # 推理型模型把预算花在思考上，正文为空（真机 Qwen3.6）
+    (_LLM(content='{"title": "慢"}', delay=1.0), "error: TimeoutError:"),
 ])
-async def test_generate_digest_falls_back_to_text_on_any_failure(llm):
+async def test_generate_digest_falls_back_to_text_and_records_why(llm, reason):
     digest = await generate_digest(llm, "检查本地模型。还有别的", "连接正常。", timeout=0.05)
-    assert digest == {"title": "检查本地模型。", "outcome": "连接正常。", "source": "text"}
+    assert {k: digest[k] for k in ("title", "outcome", "source")} == {"title": "检查本地模型。", "outcome": "连接正常。", "source": "text"}
+    assert digest["reason"] == reason
+
+
+async def test_inline_think_block_is_ignored():
+    llm = _LLM('<think>先想想 {"title": "草稿"} 不对</think>{"title": "查询宁波天气", "outcome": "给出天气"}')
+    assert (await generate_digest(llm, "宁波", "晴。"))["title"] == "查询宁波天气"
+
+
+@pytest.mark.parametrize("model, suffixed", [("Qwen3.6-35B-A3B-4bit", True), ("mimo-v2.6-pro", False), ("", False)])
+async def test_qwen_gets_no_think_switch(model, suffixed):
+    llm = _LLM('{"title": "x", "outcome": "y"}')
+    llm.config = type("Cfg", (), {"model": model})()
+    await generate_digest(llm, "宁波", "晴。")
+    assert llm.calls[0][0][1]["content"].endswith("/no_think") is suffixed
 
 
 def test_turn_tools_counts_each_call_once():

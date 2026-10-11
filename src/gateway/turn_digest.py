@@ -19,7 +19,9 @@ logger = logging.getLogger(__name__)
 
 MAX_TITLE = 20
 MAX_OUTCOME = 40
-DIGEST_TIMEOUT_SECONDS = 30
+DIGEST_TIMEOUT_SECONDS = 45
+# 推理型模型（Qwen3 等）会先在 reasoning 里想一段再写正文：预算给小了，正文是空的。
+DIGEST_MAX_TOKENS = 1024
 _MAX_SESSIONS_SCANNED = 30
 _MAX_TURNS_PER_SESSION = 60
 
@@ -52,18 +54,23 @@ def _first_sentence(text: str) -> str:
     return ""
 
 
-def fallback_digest(request: str, reply: str) -> Dict[str, str]:
-    """模型不可用时的兜底：标题取请求第一句，结果取回复第一句。"""
-    return {
+def fallback_digest(request: str, reply: str, reason: str = "") -> Dict[str, str]:
+    """模型不可用时的兜底：标题取请求第一句，结果取回复第一句。reason 记下为什么没用模型，便于事后排查。"""
+    digest = {
         "title": _clip(_first_sentence(request), MAX_TITLE) or "未命名事项",
         "outcome": _clip(_first_sentence(reply), MAX_OUTCOME),
         "source": "text",
     }
+    if reason:
+        digest["reason"] = _clip(reason, 120)
+    return digest
 
 
 def parse_digest(content: str) -> Optional[Dict[str, str]]:
     """从模型输出里取第一个 JSON 对象；字段缺失、类型不对或标题为空都算失败。"""
-    match = re.search(r"\{[\s\S]*?\}", str(content or ""))
+    # 有的服务把思考过程以 <think>…</think> 直接混在正文里：先去掉再找 JSON
+    text = re.sub(r"<think>[\s\S]*?(</think>|$)", " ", str(content or ""))
+    match = re.search(r"\{[\s\S]*?\}", text)
     if not match:
         return None
     try:
@@ -79,12 +86,12 @@ def parse_digest(content: str) -> Optional[Dict[str, str]]:
     return {"title": _clip(title, MAX_TITLE), "outcome": _clip(outcome, MAX_OUTCOME), "source": "model"}
 
 
-def digest_messages(request: str, reply: str, tools: Iterable[str]) -> List[Dict[str, str]]:
+def digest_messages(request: str, reply: str, tools: Iterable[str], model: str = "") -> List[Dict[str, str]]:
     used = "、".join(_clip(tool, 40) for tool in list(tools)[:12]) or "无"
-    return [
-        {"role": "system", "content": _SYSTEM},
-        {"role": "user", "content": f"用户请求：{str(request)[:1500]}\n用过的工具：{used}\n助理最终回复：{str(reply)[:3000]}"},
-    ]
+    content = f"用户请求：{str(request)[:1500]}\n用过的工具：{used}\n助理最终回复：{str(reply)[:3000]}"
+    if "qwen" in str(model).lower():
+        content += "\n/no_think"   # Qwen3 的本轮免思考开关：摘要是简单任务，省时也省预算
+    return [{"role": "system", "content": _SYSTEM}, {"role": "user", "content": content}]
 
 
 async def generate_digest(llm: Any, request: str, reply: str, tools: Iterable[str] = (),
@@ -92,18 +99,22 @@ async def generate_digest(llm: Any, request: str, reply: str, tools: Iterable[st
     """生成摘要；拿不到合格的模型输出就退回原文截取。不抛异常（取消除外）。"""
     from src.utils.async_ops import run_with_timeout
 
-    if llm is not None:
-        try:
-            response = await run_with_timeout(
-                llm.chat(digest_messages(request, reply, tools), temperature=0.2, max_tokens=160), timeout)
-            content = response.get("content") if isinstance(response, dict) else None
-            parsed = parse_digest(content or "")
-            if parsed:
-                return parsed
-            logger.info("回合摘要：模型输出不是合格的 JSON，改用原文截取")
-        except Exception as error:  # noqa: BLE001 —— 摘要是旁路，失败只降级为原文截取
-            logger.warning("回合摘要生成失败，改用原文截取：%s", error)
-    return fallback_digest(request, reply)
+    if llm is None:
+        return fallback_digest(request, reply, "no_model")
+    model = str(getattr(getattr(llm, "config", None), "model", "") or "")
+    try:
+        response = await run_with_timeout(
+            llm.chat(digest_messages(request, reply, tools, model), temperature=0.2, max_tokens=DIGEST_MAX_TOKENS), timeout)
+    except Exception as error:  # noqa: BLE001 —— 摘要是旁路，失败只降级为原文截取
+        logger.warning("回合摘要生成失败，改用原文截取：%s", error)
+        return fallback_digest(request, reply, f"error: {type(error).__name__}: {error}")
+    content = str((response.get("content") if isinstance(response, dict) else "") or "")
+    parsed = parse_digest(content)
+    if parsed:
+        return parsed
+    reason = "empty" if not content.strip() else "not_json"
+    logger.info("回合摘要：模型输出不可用（%s），改用原文截取", reason)
+    return fallback_digest(request, reply, reason)
 
 
 def turn_parts(transcript: List[Dict[str, Any]], rid: str):
