@@ -37,6 +37,9 @@ def test_general_http_surface_cannot_bypass_agent_tool_boundary():
     assert http_workspace_requirement("/api/artifacts", GENERAL) is None
     assert http_workspace_requirement("/api/agent/sessions", GENERAL) is None
     assert http_workspace_requirement("/api/agent/activity", GENERAL) is None   # 助理模式动态（真机曾 409）
+    # 常驻助理持有 Telegram：同机服务转发通知、查桥状态都走这里（真机 2026-10-11 曾被挡成 workspace_required）
+    assert http_workspace_requirement("/api/im/notify", GENERAL) is None
+    assert http_workspace_requirement("/api/im/status", GENERAL) is None
     assert http_workspace_requirement("/api/runtime-inbox", GENERAL) is None
     assert http_workspace_requirement("/api/git/review", GENERAL) == PROJECT
     assert http_workspace_requirement("/api/repo-memory", GENERAL) == PROJECT
