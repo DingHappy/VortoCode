@@ -6,7 +6,7 @@
 """
 import pytest
 
-from src.agents.sandbox import _STRIPPED_ENV_KEYS
+from src.sandbox.policy import _STRIPPED_ENV_KEYS
 
 
 class _FakeProc:

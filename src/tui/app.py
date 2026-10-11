@@ -2511,7 +2511,7 @@ class VortoCodeTUI(TUICommandsMixin, App):
             self._emit("用法: /verify run <命令>")
             return {"ran": False, "ok": False, "cmd": cmd, "error": "empty command"}
         from src.agents.shell import is_dangerous
-        from src.agents.sandbox import resolve_sandbox
+        from src.sandbox.policy import resolve_sandbox
         danger = is_dangerous(cmd)
         if danger:
             self._emit(f"拒绝执行高危验证命令: {danger}")
@@ -3740,7 +3740,7 @@ class VortoCodeTUI(TUICommandsMixin, App):
                 return "run_command 需要 command。"
             from src.agents.main_agent import _truthy
             bg = _truthy(args.get("background"))
-            from src.agents.sandbox import resolve_sandbox
+            from src.sandbox.policy import resolve_sandbox
             from src.agents.shell import is_dangerous, run_command, run_command_background
             why = is_dangerous(cmd)
             if why:                                   # 兜底硬拒（即便始终允许）

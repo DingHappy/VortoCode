@@ -59,6 +59,7 @@ vc --help                        # 全部子命令：tui/server/agent/self-*/im/
 - `gateway/`：只管会话装配与传输——`agent_session`/`session`/`sessions`/`session_actor`/事件流/`protocol`/`client`/`runtime`/`audit`/IM 内嵌服务。
 - `workflow/tasks`：后台任务台账与协作（委派/依赖/续跑/提问/看板投影）；`workflow/review`：Git 评审与交付；`workflow/workbench`：Desktop 工作台（目标/命令运行/终端/日志）；`workflow/pipeline`：非代码流水线。
 - `scheduling/`：cron/heartbeat/自愈/通知台账/中转巡检。
+- `sandbox/`：OS 沙箱**策略** `policy.py`（seatbelt/bwrap 决策、写路径白名单、子进程密钥剥离——安全内核，被 shell/hooks/skills/MCP/runner 共用）+ 沙箱**执行** `runner.py`/`docker_sandbox.py`。
 - 内核**不得导入** `web/` `tui/`（制品工具已下沉为 `agents/tools/artifacts.py`，cron 排期计算在 `scheduling/cron.py:next_due`）。新业务模块别再往 `gateway/` 塞。已知存量例外（惰性导入，待下沉）：`gateway/sessions.py`→`web.session_store`，`scheduling/{cron,heartbeat}.py`→`web.auth`（安全闸，挪动需单独评审），`scheduling/notices.py`→`web.task_events`。
 - 外层（web/im/tui/cli/gateway/agents）只用 `workflow` 的**公开名字**：不导入下划线私有函数，也不拿台账锁 `TASK_STATE_LOCK` 自己拼锁内读写——要在锁内完成的操作由 workflow 提供成一个函数（如 `snapshot_runtime_inbox`、`audit_owner_dependencies`）。`tests/unit/test_workflow_boundary.py` 钉住。刻意**不**在 `workflow/__init__` 堆再导出：只改 import 路径不改依赖，不算解耦。
 

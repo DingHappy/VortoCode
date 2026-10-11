@@ -199,7 +199,7 @@ async def test_build_command_tool_confirm_gate(tmp_path):
 @pytest.mark.asyncio
 async def test_build_command_tool_surfaces_fallback_before_confirmation(
         tmp_path, monkeypatch):
-    from src.agents import sandbox as sb
+    from src.sandbox import policy as sb
     from src.agents.main_agent import build_command_tool
     asked = []
 
@@ -222,7 +222,7 @@ async def test_build_command_tool_surfaces_fallback_before_confirmation(
 
 @pytest.mark.asyncio
 async def test_build_command_tool_rechecks_isolation_after_confirmation(tmp_path, monkeypatch):
-    from src.agents import sandbox as sb
+    from src.sandbox import policy as sb
     from src.agents.main_agent import build_command_tool
     import src.agents.shell as shell
 

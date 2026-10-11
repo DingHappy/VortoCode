@@ -168,7 +168,7 @@ def test_runtime_check_simple_cmd_fail(tmp_path):
 
 
 def test_runtime_check_requires_sandbox_unless_explicitly_off(tmp_path, monkeypatch):
-    from src.agents import sandbox as sb
+    from src.sandbox import policy as sb
     monkeypatch.delenv("VORTOCODE_SANDBOX", raising=False)
     monkeypatch.setattr(sb, "sandbox_backend", lambda: "")
     r = worktree.run_runtime_check(tmp_path, {"name": "blocked", "cmd": "echo nope"})

@@ -159,7 +159,7 @@ class SelfImprovementLoop:
         tmp = tmp_dir / f"test__l2tmp_{uuid.uuid4().hex[:8]}.py"
         tmp.write_text(content, encoding="utf-8")
         try:
-            from src.agents.sandbox import child_env
+            from src.sandbox.policy import child_env
             # 跑的是模型生成的测试内容——同 shell 工具走统一的操作密钥围栏（切断外带链）
             env = {**child_env(), "PYTHONPATH": str(self.root)}
             proc = await asyncio.create_subprocess_exec(

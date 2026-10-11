@@ -4,7 +4,7 @@ import shutil  # noqa: F401 - referenced by the string-form skipif below
 
 import pytest
 
-from src.agents import sandbox as sb
+from src.sandbox import policy as sb
 
 
 def test_profile_restricts_writes_to_repo_and_temp(tmp_path):

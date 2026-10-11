@@ -75,7 +75,7 @@ class CommandHook(Hook):
         }, ensure_ascii=False)
 
         try:
-            from src.agents.sandbox import child_env
+            from src.sandbox.policy import child_env
             # hook 命令连沙箱都不套（此处无 OS 沙箱包装）：至少剥掉操作密钥，别让生命周期
             # 钩子成为绕过 child_env 的外带口。folder-trust 门控是准入，这里是纵深防御。
             spawn_options = {"cwd": self.cwd, "env": child_env()}

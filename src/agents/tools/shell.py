@@ -31,7 +31,7 @@ def build_command_tool(repo_root: str, confirm) -> list[Tool]:
 
     async def _run(args: dict) -> str:
         import asyncio
-        from src.agents.sandbox import resolve_sandbox
+        from src.sandbox.policy import resolve_sandbox
         from src.agents.shell import (is_dangerous, is_read_only, run_command,
                                       run_command_background)
         cmd = str(args.get("command") or args.get("cmd") or "").strip()
