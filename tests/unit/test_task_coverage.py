@@ -65,7 +65,29 @@ def task_bytes(service):
     return {path.name: path.read_bytes() for path in service.runner.ledger._dir().glob("*.json")}
 
 
-def test_large_ledger_old_prefix_omits_child_new_pages_cover_without_mutation(tmp_path):
+class _NameOrderedScandir:
+    """把目录顺序钉成「按文件名」：扫描本来就不承诺目录顺序，但这条用例要一个「改写后仍在
+    512 条之外」的记录。tmpfs 会把刚改写的文件排到最前（真机：常驻电脑把 /tmp 换成内存盘后
+    这条用例红），ext4 按名字哈希不动——用例依赖的条件由用例自己给，而不是赌文件系统。"""
+
+    def __init__(self, real, path):
+        with real(path) as entries:
+            self._entries = sorted(entries, key=lambda entry: entry.name)
+
+    def __enter__(self):
+        return iter(self._entries)
+
+    def __exit__(self, *_exc):
+        return False
+
+
+def test_large_ledger_old_prefix_omits_child_new_pages_cover_without_mutation(tmp_path, monkeypatch):
+    import os
+    import src.workflow.tasks.tasks as tasks_module
+
+    real = os.scandir
+    monkeypatch.setattr(tasks_module.os, "scandir",
+                        lambda path: _NameOrderedScandir(real, path) if str(path).endswith("tasks") else real(path))
     service, source, _, calls = fixture(tmp_path, fillers=600, children=0)
     hidden = sorted({f"task-{index:05}" for index in range(600)} - {task.id for task in service.runner.ledger.scan().tasks})[0]
     children = [record(service.runner.ledger, hidden, [source])]
