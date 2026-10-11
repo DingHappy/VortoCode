@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import weakref
-from typing import Awaitable, Callable, Optional, TypeVar
+from typing import Any, AsyncContextManager, Awaitable, Callable, Optional, TypeVar
 
 _T = TypeVar("_T")
 
@@ -45,6 +45,50 @@ async def run_with_timeout(awaitable: Awaitable[_T], seconds: float) -> _T:
     except asyncio.TimeoutError:
         raise TimeoutError() from None
 
+
+
+class _TimeoutScope310:
+    """3.10 版 asyncio.timeout：到点取消当前任务，在块出口把这次取消换成内置 TimeoutError。
+
+    与 3.11+ 的差别：到点与外部取消恰好同时发生时分不清，按超时处理（与 async-timeout 库同限）。
+    """
+
+    def __init__(self, seconds: Optional[float]) -> None:
+        self._seconds = seconds
+        self._expired = False
+        self._handle: Optional[asyncio.TimerHandle] = None
+
+    def _expire(self, task: asyncio.Task) -> None:
+        self._expired = True
+        task.cancel()
+
+    async def __aenter__(self) -> "_TimeoutScope310":
+        task = asyncio.current_task()
+        if task is None:
+            raise RuntimeError("timeout_scope() must be used inside a task")
+        if self._seconds is not None:
+            self._handle = asyncio.get_running_loop().call_later(
+                max(self._seconds, 0), self._expire, task)
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        if self._handle is not None:
+            self._handle.cancel()
+        if self._expired and exc_type is asyncio.CancelledError:
+            raise TimeoutError() from exc
+        # 3.11 起 asyncio.TimeoutError 就是内置 TimeoutError；3.10 是两个类，块内（如 aiohttp 自带超时）
+        # 抛出的统一成内置类，调用方按 3.11 语义 except TimeoutError 才接得住。
+        if exc_type is asyncio.TimeoutError and not issubclass(asyncio.TimeoutError, TimeoutError):
+            raise TimeoutError() from exc
+        return False
+
+
+def timeout_scope(seconds: Optional[float]) -> AsyncContextManager[Any]:
+    """`async with timeout_scope(s):` 等价 3.11+ 的 `async with asyncio.timeout(s):`，3.10 也可用。"""
+    timeout = getattr(asyncio, "timeout", None)
+    if timeout is not None:
+        return timeout(seconds)
+    return _TimeoutScope310(seconds)
 
 # 3.10 没有 Task.cancelling() 计数：经 request_cancel 发出的取消记在这里，任务回收后自动消失。
 _CANCEL_REQUESTED: "weakref.WeakSet[asyncio.Task]" = weakref.WeakSet()

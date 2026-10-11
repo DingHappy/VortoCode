@@ -9,6 +9,7 @@ from src.agents.mcp_tools import (
     connect_mcp,
     wrap_mcp_manager,
 )
+from src.utils.async_ops import timeout_scope
 
 
 class _FakeTool:
@@ -145,7 +146,7 @@ async def test_initialization_failure_keeps_original_error_and_bounds_cleanup(tm
     monkeypatch.setattr(module, 'MCP_CLEANUP_TIMEOUT', .01, raising=False)
     expected = asyncio.CancelledError if cleanup_mode == 'cancel' else ValueError
     with pytest.raises(expected) as caught:
-        async with asyncio.timeout(.2):
+        async with timeout_scope(.2):
             await connect_mcp(tmp_path, capability_profile='external')
     if cleanup_mode != 'cancel':
         assert caught.value is original

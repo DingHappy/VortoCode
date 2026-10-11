@@ -10,6 +10,7 @@ import re
 import time
 
 from .mcp_client import MCPClient, MCPTool, MCPToolCall, MCPToolResult, MCPTransport
+from src.utils.async_ops import timeout_scope
 
 logger = logging.getLogger(__name__)
 VERSION = "2026-07-28"
@@ -108,7 +109,7 @@ class StreamableHTTPMCPClient(MCPClient):
         self.connected = False
         if self.session is not None and self.session_id is not None:
             try:
-                async with asyncio.timeout(2):
+                async with timeout_scope(2):
                     async with self.session.delete(self.base_url, headers=self._session_headers(),
                                                    allow_redirects=False):
                         pass
@@ -161,7 +162,7 @@ class StreamableHTTPMCPClient(MCPClient):
         except asyncio.CancelledError:
             if self.protocol_version != VERSION and self.session is not None and method != 'initialize':
                 try:
-                    async with asyncio.timeout(1):
+                    async with timeout_scope(1):
                         await self._notify('notifications/cancelled', {'requestId': request_id})
                 except (Exception, asyncio.CancelledError):
                     logger.warning('MCP cancellation notification not confirmed')
@@ -268,7 +269,7 @@ class StreamableHTTPMCPClient(MCPClient):
             return self.tools
         tools, seen, cursors = [], set(), set()
         cursor = None
-        async with asyncio.timeout(self.timeout):
+        async with timeout_scope(self.timeout):
             for _ in range(MAX_PAGES):
                 result = await self._rpc('tools/list', {'cursor': cursor} if cursor is not None else {})
                 entries = result.get('tools')

@@ -1,6 +1,7 @@
 """Session-owned MCP attachment, explicit retries and redacted observations."""
 import asyncio
 from datetime import datetime, timezone
+from src.utils.async_ops import timeout_scope
 
 
 def snapshot(agent):
@@ -34,7 +35,7 @@ async def connect_agent(agent, root, *, current=lambda: True, confirm=None):
     manager = None
     committed = False
     try:
-        async with asyncio.timeout(30):
+        async with timeout_scope(30):
             manager, tools = await connect_mcp(root, capability_profile=agent._capabilities.profile, confirm=confirm)
         if not current():
             raise RuntimeError('会话正在执行或已切换；未接入新工具，请稍后重试')
@@ -63,7 +64,7 @@ async def connect_agent(agent, root, *, current=lambda: True, confirm=None):
         manager = None  # Ownership transferred to the original session cleanup path.
         if old is not None:
             try:
-                async with asyncio.timeout(MCP_CLEANUP_TIMEOUT):
+                async with timeout_scope(MCP_CLEANUP_TIMEOUT):
                     await old.shutdown()
             except Exception:
                 agent._mcp_observation['detail'] += ' 旧连接清理未确认。' 
@@ -82,7 +83,7 @@ async def connect_agent(agent, root, *, current=lambda: True, confirm=None):
         try:
             if manager is not None:
                 try:
-                    async with asyncio.timeout(MCP_CLEANUP_TIMEOUT):
+                    async with timeout_scope(MCP_CLEANUP_TIMEOUT):
                         await manager.shutdown()
                 except asyncio.CancelledError:
                     agent._mcp_observation['detail'] += ' 新连接清理未确认。'

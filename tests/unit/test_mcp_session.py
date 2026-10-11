@@ -4,6 +4,7 @@ import pytest
 from src.agents.agent_loop import MainAgent
 from src.agents.tool import Tool
 from src.agents.mcp_session import connect_agent, snapshot
+from src.utils.exc_utils import add_note
 
 class Manager:
     def __init__(self):
@@ -131,7 +132,7 @@ async def test_cancel_during_candidate_cleanup_records_unknown_and_releases_retr
 async def test_factory_cleanup_unknown_is_visible_without_exposing_error(monkeypatch):
     import src.agents.mcp_tools as module
     a=agent()
-    error=ValueError('secret service detail');error.add_note('MCP cleanup unconfirmed')
+    error=ValueError('secret service detail');add_note(error, 'MCP cleanup unconfirmed')
     async def fail(*args,**kwargs):raise error
     monkeypatch.setattr(module,'connect_mcp',fail)
     with pytest.raises(ValueError):await connect_agent(a,'.')

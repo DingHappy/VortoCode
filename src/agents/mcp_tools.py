@@ -10,6 +10,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
 from urllib.parse import parse_qsl, unquote_plus, urlsplit
+from src.utils.async_ops import timeout_scope
+from src.utils.exc_utils import add_note
 
 
 MCP_CLEANUP_TIMEOUT = 5
@@ -158,13 +160,13 @@ async def connect_mcp(repo_root, *, capability_profile: str | None = None,
     except BaseException as error:
         import asyncio
         try:
-            async with asyncio.timeout(MCP_CLEANUP_TIMEOUT):
+            async with timeout_scope(MCP_CLEANUP_TIMEOUT):
                 await mgr.shutdown()
         except asyncio.CancelledError as cancelled:
-            cancelled.add_note(MCP_CLEANUP_UNCONFIRMED)
+            add_note(cancelled, MCP_CLEANUP_UNCONFIRMED)
             raise
         except Exception:
             # Preserve the initialization/discovery failure; cleanup cannot
             # turn it into success or hide its cause. No remote-stop claim.
-            error.add_note(MCP_CLEANUP_UNCONFIRMED)
+            add_note(error, MCP_CLEANUP_UNCONFIRMED)
         raise

@@ -9,7 +9,11 @@ import pytest
 from src.agents import worktree
 from src.agents.tools.files import build_test_tool
 from src.gateway.tasks import TaskRunner
-from src.utils.async_ops import await_thread, cancel_requested, request_cancel, run_with_timeout
+from src.utils.async_ops import (
+    _TimeoutScope310, await_thread, cancel_requested, request_cancel, run_with_timeout,
+    timeout_scope,
+)
+from src.utils.exc_utils import add_note
 
 
 async def wait_started(event):
@@ -268,3 +272,43 @@ async def test_cancel_request_stays_visible_after_cancellation_is_swallowed():
     assert cancel_requested(task)   # 被吞掉的取消仍算"已请求"，调用方据此不重复取消
     release.set()
     await task
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", [timeout_scope, _TimeoutScope310], ids=["native", "py310"])
+async def test_timeout_scope_passes_through_and_raises_builtin_timeout(scope):
+    async with scope(1):
+        await asyncio.sleep(0)
+    with pytest.raises(TimeoutError):
+        async with scope(0.01):
+            await asyncio.Event().wait()
+    async with scope(None):          # None = 不限时
+        await asyncio.sleep(0)
+    with pytest.raises(TimeoutError):   # 块内自带超时（如 aiohttp）抛的 asyncio.TimeoutError 也统一成内置类
+        async with scope(5):
+            raise asyncio.TimeoutError()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("scope", [timeout_scope, _TimeoutScope310], ids=["native", "py310"])
+async def test_timeout_scope_keeps_external_cancellation(scope):
+    entered = asyncio.Event()
+
+    async def body():
+        async with scope(5):
+            entered.set()
+            await asyncio.Event().wait()
+
+    task = asyncio.create_task(body())
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):   # 外部取消不许被改写成超时
+        await task
+
+
+def test_add_note_is_readable_through_dunder_notes():
+    error = ValueError("x")
+    add_note(error, "first")
+    add_note(error, "second")
+    assert getattr(error, "__notes__", ()) == ["first", "second"]
+

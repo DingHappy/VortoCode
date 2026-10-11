@@ -7,3 +7,12 @@ def _exc_text(e: BaseException) -> str:
     """
     detail = str(e).strip()
     return f"{type(e).__name__}: {detail}" if detail else type(e).__name__
+
+
+def add_note(error: BaseException, note: str) -> None:
+    """BaseException.add_note 是 3.11+；3.10 直接写 __notes__，读侧 getattr(e, "__notes__", ()) 两版一致。"""
+    adder = getattr(error, "add_note", None)
+    if adder is not None:
+        adder(note)
+    else:
+        error.__notes__ = [*getattr(error, "__notes__", ()), note]  # type: ignore[attr-defined]
