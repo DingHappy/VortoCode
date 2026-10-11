@@ -256,6 +256,14 @@ class IMBridge:
             logging.getLogger("vortocode.im").warning("IM 会话存盘失败：%s", _exc_text(e)[:160])
 
     # ------------------------------------------------------------ 配置自检（只诊断，不改判定）
+    def inbound_state(self) -> str:
+        """入站白名单的状态类别：ok / blocked_all（空白名单，全拒）/ owner_missing（漏了主人）。"""
+        if not self.allow_from:
+            return "blocked_all"
+        if self.owner_id and self.owner_id not in self.allow_from:
+            return "owner_missing"
+        return "ok"
+
     def allow_from_warning(self) -> Optional[str]:
         """白名单配错时的一句人话提醒（开机横幅 + /status 都用）；配置正常返回 None。
 
@@ -360,6 +368,11 @@ class IMBridge:
         lv["busy"] = self._turn_task is not None and not self._turn_task.done()
         lv["role"] = "notify" if self.notification_only else "interactive"
         lv["queued"] = len(self._pending_msgs)
+        # 入站闸的配置状态（只给类别，不给 id）：「机器人装死」时一眼看出是不是白名单把人挡在外面。
+        # 只发通知的角色本来就不收入站，不报。真机 2026-10-11：交互角色继承了 .env 里 ''（全拒）。
+        lv["inbound"] = "ok" if self.notification_only else self.inbound_state()
+        lv["ignored"] = int(getattr(self, "_ignored", 0))                    # 被入站闸丢掉的条数
+        lv["ignored_no_mention"] = int(getattr(self, "_ignored_no_mention", 0))
         try:
             from src.scheduling.notices import pending_undelivered_count
             lv["undelivered"] = pending_undelivered_count(self.repo_root)
