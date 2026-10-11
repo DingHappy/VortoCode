@@ -106,3 +106,23 @@ def test_personas_are_isolated_per_workspace(tmp_path):
              with_dev=False)._save_persona("我是甲，做市场")
     bb = IMBridge(str(b_dir), ChannelAdapter(), "u2", channel="dingtalk", with_dev=False)
     assert bb._load_persona() == "", "乙读到了甲的人设——工作区没隔离干净"
+
+
+async def test_resident_assistant_chats_without_persona_onboarding(tmp_path):
+    """常驻助理（通用范围）不走「先自述」引导：没写「关于你」也直接进对话（真机：发「你好」只收到引导语、没落记录）。"""
+    from src.im.bridge import IMBridge
+    from src.im.channel import ChannelEvent
+
+    started, sent = [], []
+    for scope, expect_turn in (("general", True), ("project", False)):
+        started.clear(); sent.clear()
+        b = IMBridge(str(tmp_path / scope), ChannelAdapter(), "u1", channel="dingtalk", with_dev=False,
+                     workspace_scope=scope)
+        b._start_turn = lambda text, imgs, atts: started.append(text)
+
+        async def _send(text):
+            sent.append(text)
+        b._safe_send = _send
+        await b._on_event(ChannelEvent(kind="message", sender_id="u1", text="你好"))
+        assert (started == ["你好"]) is expect_turn
+        assert any("先让我了解你" in text for text in sent) is (not expect_turn)
