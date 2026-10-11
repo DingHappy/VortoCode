@@ -293,8 +293,8 @@ def add_usage(prompt_tokens: int, completion_tokens: int, cached_tokens: int = 0
         try:
             from src.models.cost import track_usage
             track_usage(str(model), int(prompt_tokens or 0), int(completion_tokens or 0))
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001 —— 记账失败不影响调用，但成本台账会漏记，要可见
+            logger.warning("成本记账失败（%s）：%s", model, e)
 
 
 def _accumulate_usage(u: Dict[str, Any], prompt_tokens: int, completion_tokens: int,

@@ -63,6 +63,24 @@ def test_agent_session_loads_project_hooks_only_after_trust(tmp_path, monkeypatc
     assert active is not None and active.registry.get("notify") is not None
 
 
+def test_broken_hook_config_disables_hooks_loudly(tmp_path, monkeypatch, caplog):
+    """钩子含信任门：加载失败可以降级成"本会话不启用"，但不许静默——否则没人知道安全钩子没生效。"""
+    root = _repo(tmp_path)
+    monkeypatch.setenv("VORTOCODE_HOOK_TRUST_STORE", str(tmp_path / "trust.json"))
+    from src.gateway.agent_session import load_project_hook_system
+    from src.hooks.trust import set_project_trusted
+
+    assert set_project_trusted(str(root), True)
+
+    def broken(*_args, **_kwargs):
+        raise ValueError("bad hooks.yaml")
+
+    monkeypatch.setattr("src.hooks.HookSystem", broken)
+    with caplog.at_level("WARNING", logger="src.gateway.agent_session"):
+        assert load_project_hook_system(str(root)) is None
+    assert "Hook 配置加载失败" in caplog.text and "bad hooks.yaml" in caplog.text
+
+
 def test_hook_preview_normalizes_single_event_and_invalid_timeout(tmp_path, monkeypatch):
     root = _repo(tmp_path)
     monkeypatch.setenv("VORTOCODE_HOOK_TRUST_STORE", str(tmp_path / "trust.json"))

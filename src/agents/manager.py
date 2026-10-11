@@ -347,8 +347,8 @@ class AgentManager:
             p.parent.mkdir(parents=True, exist_ok=True)
             data = {aid: inst.config.model_dump(mode="json") for aid, inst in self.agents.items()}
             p.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001 —— 持久化失败不拖垮注册，但不能静默丢（磁盘满/权限）
+            logger.warning("Agent 注册表写盘失败（%s）：%s", self.persist_path, e)
 
     def _load(self) -> None:
         import json

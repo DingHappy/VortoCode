@@ -213,8 +213,8 @@ class Agent(ABC):
                             int(usage.get("completion_tokens", 0)),
                             agent=self.role,
                         )
-                    except Exception:
-                        pass
+                    except Exception as e:  # noqa: BLE001 —— 记账失败不影响回答，但台账漏记要可见
+                        logger.warning("成本记账失败（%s）：%s", self.role, e)
                 return resp.get("content", "") or ""
             return str(resp)
         except Exception:
