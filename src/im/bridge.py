@@ -505,7 +505,9 @@ class IMBridge:
                 return
             # 研究员助手第一次见面：先请本人自述人设，再开始干活。
             # **不由管理员代填**——本人两句话胜过旁人揣摩三段。
-            if not self._with_dev and not self._load_persona():
+            # 常驻助理（通用范围）不走这道门：「关于你」在 Desktop 身份卡里填，没填也能直接聊；
+            # 否则主人发一句「你好」只会收到引导语、不进对话也不落记录（真机 2026-10-11）。
+            if not self._with_dev and self.workspace_scope != "general" and not self._load_persona():
                 if len(text) >= 8:                       # 够长就当作自述收下
                     self._save_persona(text)
                     await self._safe_send(
