@@ -8,6 +8,8 @@ VortoCode 是一个 Python 编写的 AI 编码 agent 框架：一个交互式主
 
 ```bash
 pip install -e '.[dev]'          # 开发依赖（ruff/mypy/black/pytest）。功能全开用 '.[all]'
+# 依赖锁：pyproject 是唯一来源，CI 用 -c constraints.txt 安装。改了依赖或要升级时刷新锁并单独提 PR：
+uv pip compile pyproject.toml --extra llm --extra dev --extra tui --universal --python-version 3.10 -o constraints.txt
 
 # 测试
 python -m pytest tests/ -q                          # 全量
