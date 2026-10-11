@@ -50,3 +50,13 @@ it("does not invent a plan when the runtime has not provided one",()=>{
   const html=renderToStaticMarkup(<SessionInfo {...props}/>);
   expect(html).not.toContain("执行进度");expect(html).not.toContain("下派状态");
 });
+it("lists this turn's real work when the runtime gave no plan",()=>{
+  const html=renderToStaticMarkup(<SessionInfo {...props} busy={false} queued={0} activities={[
+    {id:"p",kind:"phase",phase:"thinking",status:"completed",label:"分析任务",durationMs:30000},
+    {id:"t1",kind:"tool",name:"web_search",status:"completed",label:"搜索网页",durationMs:1500},
+    {id:"t2",kind:"tool",name:"web_fetch",status:"failed",label:"读取网页",durationMs:800}]}/>);
+  for(const text of ["本轮执行","30 秒","2 个工具","搜索网页","读取网页","失败"])expect(html).toContain(text);
+  expect(html).not.toContain("执行进度");
+  expect(html).not.toContain("需要关注");   // 失败项已在本轮执行里标出，不再重复列一遍
+  expect(html).not.toContain("发送消息开始");
+});
