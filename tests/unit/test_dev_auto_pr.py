@@ -53,6 +53,13 @@ def _patch_pipeline(monkeypatch, *, integration_ok=True):
     def fake_verify(*a, **k):
         return {"ok": integration_ok, "output": "" if integration_ok else "FAIL tail"}
 
+    # 预检会查本机有没有 gh（要开 PR 时）：这组用例测的是 PR 门本身，不该取决于跑测试的机器装没装 gh
+    # （真机：常驻电脑刻意不装 gh，这组 12 条全红在「环境预检未过」）。
+    import shutil
+    real_which = shutil.which
+    monkeypatch.setattr(shutil, "which",
+                        lambda name, *a, **k: "/usr/bin/gh" if name == "gh" else real_which(name, *a, **k))
+
     monkeypatch.setattr(dec, "decompose_for_parallel", fake_decompose)
     monkeypatch.setattr(wt, "run_isolated_task", fake_run_isolated)
     monkeypatch.setattr(wt, "apply_diffs_to_branch", fake_apply)
