@@ -537,6 +537,40 @@ def _persist_session(websocket) -> None:
     _TABLE.persist(_session_key(websocket), os.getcwd())
 
 
+_DIGEST_TASKS: "set[asyncio.Task]" = set()   # 持有引用：防止后台摘要任务被垃圾回收中途丢掉
+
+
+def _schedule_turn_digest(key: str, rid: Optional[str]) -> None:
+    """回合收尾后在后台写一条工作记录摘要（标题 + 一句结果），不阻塞下一回合。"""
+    from src.gateway.turn_digest import digest_enabled
+    if not rid or not digest_enabled():
+        return
+    task = asyncio.create_task(_digest_turn(key, str(rid)))
+    _DIGEST_TASKS.add(task)
+    task.add_done_callback(_DIGEST_TASKS.discard)
+
+
+async def _digest_turn(key: str, rid: str) -> None:
+    import os
+    from src.gateway.turn_digest import generate_digest, turn_parts, turn_tools
+    sess = _SESSIONS.get(key)
+    if not sess:
+        return
+    request, reply = turn_parts(sess.get("transcript") or [], rid)
+    if request is None or reply is None or reply.get("digest"):
+        return                                # 中断/失败没有最终回复：不写摘要，读的一侧会兜底
+    agent = sess.get("agent")
+    client = agent._client() if hasattr(agent, "_client") else None
+    try:
+        digest = await generate_digest(client, request.get("text", ""), reply.get("text", ""),
+                                       turn_tools(sess.get("activities") or [], rid))
+    except Exception as error:  # noqa: BLE001 —— generate_digest 自身不抛；这里只防意外，绝不影响会话
+        logger.warning("回合摘要任务异常：%s", error)
+        return
+    reply["digest"] = digest
+    _TABLE.persist(key, sess.get("repo_root") or os.getcwd())
+
+
 async def _persist_check_report(key: str, payload: dict):
     """Check bridge writer: disk before notification, replay through agent_history.
 
@@ -569,7 +603,9 @@ def _record(websocket, role: str, text: str, *, rid: Optional[str] = None) -> No
     if sess is None:
         return
     t = sess["transcript"]
-    item = {"role": role, "text": str(text)}
+    from datetime import datetime, timezone
+    # at：助理模式的动态按时间分组；旧存档没有这个字段，读的一侧当未知处理。
+    item = {"role": role, "text": str(text), "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     if rid:
         item["rid"] = str(rid)
     t.append(item)
@@ -711,6 +747,14 @@ def _tool_summary(name: str, args: Dict[str, Any]) -> str:
 
 
 # ---- 多会话管理 API（供 agent.html 的会话侧栏：列表/删除/重命名；新建=前端换 sid 隐式创建）----
+
+@router.get("/api/agent/activity")
+async def agent_activity(limit: int = 100):
+    """助理模式的动态流：跨会话最近的回合，每轮一条（标题、一句结果、时间、工具数）。只读。"""
+    import os
+    from src.gateway.turn_digest import recent_turns
+    return {"turns": recent_turns(os.getcwd(), limit)}
+
 
 @router.get("/api/agent/sessions")
 async def agent_sessions_list():
@@ -1623,4 +1667,5 @@ async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list
         if th is not None:
             th["fn"] = None
         _persist_session(websocket)           # 回合收尾存盘（含中断）：跨服务器重启不丢对话
+        _schedule_turn_digest(key, rid)       # 后台写工作记录摘要（助理模式的动态流）
         await _advance_prompt_queue(websocket, reason=stop_reason)
