@@ -224,6 +224,8 @@ function App() {
   const remoteProjectRef = useRef<string | null>(null);
   // 当前连着的远端若是常驻助理（通用范围）就记下它的 id；与 remoteProjectRef 相等才算「在常驻电脑上」。
   const assistantHostRef = useRef<string | null>(null);
+  // 进助理模式前工作台停在哪个项目：切回工作台时回到那里，而不是丢在通用工作区。
+  const workReturnRef = useRef<string | null>(null);
   const [remoteDialogOpen, setRemoteDialogOpen] = useState<false | "project" | "assistant">(false);
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
   const autoScrollRef = useRef(true);
@@ -1974,9 +1976,15 @@ function App() {
     setAppMode(mode);
     try { localStorage.setItem(STORAGE_KEYS.appMode, mode); } catch { /* 只影响下次启动记不住 */ }
     if (mode !== "assistant") {
-      // 工作台不在常驻电脑上干活：离开助理模式时回到本机通用工作区。
-      if (onAssistantHost()) await switchManagedScope("general");
+      // 回到进助理模式前的那个项目；没有就回本机通用工作区（工作台不在常驻电脑上干活）。
+      const back = workProjects(known).find((project) => project.id === workReturnRef.current && !project.missing);
+      workReturnRef.current = null;
+      if (back) await switchProject(back);
+      else if (onAssistantHost()) await switchManagedScope("general");
       return;
+    }
+    if (!onAssistantHost()) {
+      try { workReturnRef.current = activeScope === "project" ? localStorage.getItem(STORAGE_KEYS.lastProjectId) : null; } catch { workReturnRef.current = null; }
     }
     // 助理默认住在常驻电脑上（合上笔记本也照常干活）；没登记或连不上，才用本机通用工作区兜底。
     const host = findAssistantHost(known);
@@ -3474,7 +3482,7 @@ function App() {
 
         {mainView === "chat" && inspectorOpen && appMode === "assistant" && (
           <AssistantPanel name="VortoCode" connected={connection === "connected"}
-            host={onAssistantHost() ? { kind: "resident", name: findAssistantHost(projects)?.name ?? "常驻电脑" } : { kind: "local", canAddResident: !findAssistantHost(projects) }}
+            host={onAssistantHost() ? { kind: "resident", name: findAssistantHost(projects)?.name ?? "常驻电脑", reachable: connection === "connected" } : { kind: "local", canAddResident: !findAssistantHost(projects) }}
             onAddResident={() => setRemoteDialogOpen("assistant")}
             onRetryResident={() => void changeAppMode("assistant")}
             modelLabel={onAssistantHost() ? runtime.model : composerModelChoices.find(item => item.value === modelChoice)?.label}

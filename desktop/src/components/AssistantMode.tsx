@@ -36,7 +36,7 @@ export function AssistantSidebar({ mainChat, sideChats, current, onSelect, onNew
 }
 
 /** 助理住在哪：常驻电脑（一直开着）或本机兜底（合上笔记本就停）。 */
-export type AssistantHostInfo = { kind: "resident"; name: string } | { kind: "local"; canAddResident: boolean };
+export type AssistantHostInfo = { kind: "resident"; name: string; reachable?: boolean } | { kind: "local"; canAddResident: boolean };
 
 /** 助理模式右侧：助理身份 + 动态（它为你做过的每件事）/ 本轮步骤。 */
 export function AssistantPanel({ name, connected, host, onAddResident, onRetryResident, modelLabel, tab, onTab, onClose, waiting, children }: {
@@ -62,7 +62,10 @@ export function AssistantPanel({ name, connected, host, onAddResident, onRetryRe
         {host.kind === "resident" ? `住在常驻电脑${host.name && host.name !== "常驻电脑" ? `「${host.name}」` : ""}` : "在本机运行"}
       </span>
       {host.kind === "resident"
-        ? <small className="assistant-host-note">合上笔记本它也照常干活。</small>
+        ? host.reachable === false
+          // 连不上通常是隧道没开或网络断了：服务器上的助理还在干活，只是这台电脑看不到
+          ? <button className="assistant-host-action" onClick={onRetryResident}>重新连接常驻电脑</button>
+          : <small className="assistant-host-note">合上笔记本它也照常干活。</small>
         : host.canAddResident
           ? <button className="assistant-host-action" onClick={onAddResident}>连接常驻电脑</button>
           : <button className="assistant-host-action" onClick={onRetryResident}>重新连接常驻电脑</button>}
