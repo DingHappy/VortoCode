@@ -301,7 +301,10 @@ function App() {
   const [workspaceRequest, setWorkspaceRequest] = useState<WorkspaceRequest | null>(null);
 
   const [inspectorTab, setInspectorTabState] = useState<InspectorTab>("project");
-  const [inspectorOpen, setInspectorOpen] = useState(false);
+  // 助理模式右侧（助理身份 + 动态）默认打开；工作台默认收起。
+  const [inspectorOpen, setInspectorOpen] = useState(() => {
+    try { return localStorage.getItem(STORAGE_KEYS.appMode) === "assistant"; } catch { return false; }
+  });
   // 会话侧栏的标签栏：打开过的工具；launcher = 正在看工具列表（点了「＋」或标签全关了）。
   const [workbenchTabs, setWorkbenchTabs] = useState<InspectorTab[]>([]);
   const [workbenchLauncher, setWorkbenchLauncher] = useState(false);
@@ -2082,7 +2085,8 @@ function App() {
         rid,
         want_reasoning: false,
         // 只在本机模型配置已读到时才带：服务端只接受已配置的模型，「自动」由它按任务调度。
-        ...(modelChoice ? { model: modelChoice } : {}),
+        // 常驻电脑用它自己配置的模型：本机的模型名在那边不一定有，不带。
+        ...(modelChoice && !onAssistantHost() ? { model: modelChoice } : {}),
       });
       return true;
     } catch (error) {
@@ -2840,6 +2844,7 @@ function App() {
         const host = findAssistantHost(known);
         const placed = host ? onAssistantHost() && remoteProjectRef.current === host.id : !remoteProjectRef.current && activeScope === "general";
         if (!placed) void changeAppMode("assistant", known);
+        else setInspectorOpen(true);
       });
     }
   // 只在首次连上时检查一次；changeAppMode 每次渲染都是新函数，故不列入依赖。
@@ -3214,7 +3219,11 @@ function App() {
                     连得快就不闪；占位保持同样高度，避免布局跳动。 */}
                 {homeStarting
                   ? <h1 className={`home-starting ${showHomeStarting ? "" : "pending"}`} aria-hidden={!showHomeStarting}><LoaderCircle className="activity-spinner" size={20} />正在启动本地引擎…</h1>
-                  : <><h1>开始一项工作</h1><p>描述你要解决的问题，或选择工作区域开始。</p></>}
+                  : appMode === "assistant"
+                    ? <><h1>有什么要交代的？</h1><p>{onAssistantHost()
+                      ? "交代完就可以合上电脑：它在常驻电脑上接着做，做完了在右侧「动态」里回报。"
+                      : "说一件要办的事，做完了会在右侧「动态」里回报。"}</p></>
+                    : <><h1>开始一项工作</h1><p>描述你要解决的问题，或选择工作区域开始。</p></>}
                 {llmProfileChecked && !llmProfile?.configured && (
                   <p>还没有配置模型服务。<button onClick={() => { setSettingsSection("model"); setSettingsOpen(true); }}>连接模型</button></p>
                 )}
@@ -3418,12 +3427,17 @@ function App() {
                   )}
                 </div>
                 <div className="composer-actions">
-                {composerModelChoices.length === 1 && (
+                {onAssistantHost() && (
+                  <span className="composer-model single" title="助理在常驻电脑上，用那台电脑配置的模型">
+                    <Cpu size={13} />{runtime.model || "常驻电脑的模型"}
+                  </span>
+                )}
+                {!onAssistantHost() && composerModelChoices.length === 1 && (
                   <span className="composer-model single" title="当前模型；在「设置 → 模型」里可以添加更多">
                     <Cpu size={13} />{composerModelChoices[0].label}
                   </span>
                 )}
-                {composerModelChoices.length > 1 && (
+                {!onAssistantHost() && composerModelChoices.length > 1 && (
                   <label className="composer-model" title={composerModelChoices.find((choice) => choice.value === modelChoice)?.hint}>
                     <Cpu size={13} />
                     <select
@@ -3476,7 +3490,7 @@ function App() {
               : <SessionInfo key={activeSid} context={currentSession?.context} busy={busy} needsInput={Boolean(pendingConfirm)}
                   connected={connection === "connected"} plan={plan} queued={promptQueue.length}
                   activities={activities.filter(item => item.rid === (activeTurnRid ?? [...activities].reverse().find(candidate => candidate.rid)?.rid))}
-                  model={composerModelChoices.find(item => item.value === modelChoice)?.label ?? ""}
+                  model={onAssistantHost() ? runtime.model ?? "" : composerModelChoices.find(item => item.value === modelChoice)?.label ?? ""}
                   onRefresh={() => void refreshSessions()} onOpenSettings={() => { setSettingsSection("general"); setSettingsOpen(true); }} />}
           </AssistantPanel>
         )}
@@ -3497,7 +3511,7 @@ function App() {
             {inspectorTab === "info" && <SessionInfo key={activeSid} context={currentSession?.context} busy={busy} needsInput={Boolean(pendingConfirm)}
               connected={connection === "connected"} plan={plan} queued={promptQueue.length}
               activities={activities.filter(item => item.rid === (activeTurnRid ?? [...activities].reverse().find(candidate => candidate.rid)?.rid))}
-              model={composerModelChoices.find(item => item.value === modelChoice)?.label ?? ""}
+              model={onAssistantHost() ? runtime.model ?? "" : composerModelChoices.find(item => item.value === modelChoice)?.label ?? ""}
               onRefresh={() => void refreshSessions()} onOpenSettings={() => { setSettingsSection("general"); setSettingsOpen(true); }} />}
 
             {inspectorTab === "inbox" && (
