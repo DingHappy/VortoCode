@@ -7,7 +7,7 @@ status rules or copy unbounded task/goal payloads across projects.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 _SESSION_STATUSES = {"needs_input", "failed", "working", "queued", "idle", "inactive", "completed"}
 _GOAL_STATUSES = {"draft", "active", "blocked", "failed", "achieved"}
@@ -180,3 +180,28 @@ def build_runtime_inbox(
             "tasks_attention": sum(item["lifecycle"]["column"] == "attention" for item in task_views),
         },
     }
+
+
+def snapshot_runtime_inbox(
+    repo_root: str,
+    *,
+    scope: str,
+    include_ledgers: bool,
+    sessions: Callable[[], Any],
+    decisions: Callable[[], Any],
+) -> dict[str, Any]:
+    """在任务台账锁内一次读齐所有来源，收件箱才是同一时刻的快照。
+
+    锁归台账所有：调用方只给出会话/决策两个来源的读取函数，不自己拿锁。
+    """
+    from src.workflow.tasks.tasks import TASK_STATE_LOCK, TaskLedger
+    from src.workflow.workbench.goals import GoalLedger
+
+    with TASK_STATE_LOCK:
+        return build_runtime_inbox(
+            scope=scope,
+            sessions=sessions(),
+            decisions=decisions(),
+            goals=GoalLedger(repo_root).list() if include_ledgers else [],
+            tasks=TaskLedger(repo_root).list(limit=200) if include_ledgers else [],
+        )

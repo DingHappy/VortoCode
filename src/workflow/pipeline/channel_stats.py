@@ -116,7 +116,7 @@ ADAPTERS: List[Callable[[str, Callable[[str], bytes]], Optional[ChannelStat]]] =
 ]
 
 
-def _known_unsupported(url: str) -> Optional[ChannelStat]:
+def known_unsupported(url: str) -> Optional[ChannelStat]:
     from urllib.parse import urlparse
 
     host = (urlparse(url).hostname or "").lower()
@@ -132,7 +132,7 @@ def _known_unsupported(url: str) -> Optional[ChannelStat]:
 
 def fetch_one(url: str, fetch: Callable[[str], bytes]) -> ChannelStat:
     """查一条。**任何情况下都返回一条记录**——查不到也要留痕，而不是从结果里消失。"""
-    known = _known_unsupported(url)
+    known = known_unsupported(url)
     if known is not None:
         return known
     for adapter in ADAPTERS:

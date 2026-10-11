@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
 
 from src.workflow.tasks.dispatch import DispatchService
 
@@ -70,19 +69,13 @@ def observe_dependency_change(repo_root: str, task) -> None:
 
 def audit_dependencies_for_turn(repo_root: str, owner: str) -> dict | None:
     """Keep a workspace mismatch unknown; never reuse/mutate a different pool."""
-    from src.workflow.tasks.dispatch import session_identity
-    from src.workflow.tasks.task_dependents import discover, reconcile
-    from src.workflow.tasks.tasks import TaskLedger, TASK_STATE_LOCK
+    from src.workflow.tasks.task_dependents import audit_owner_dependencies
     from src.web.routers.tasks import get_runner
-    with TASK_STATE_LOCK:
-        scan = discover(TaskLedger(repo_root), owner=session_identity(owner))
-        if not scan.tasks:
-            return {**scan.summary(), "tasks": []}
-        runner = get_runner()
-        if Path(repo_root).resolve() != Path(runner.ledger.repo_root).resolve():
-            return {**scan.summary(), "complete": False, "scope_mismatch": True, "tasks": [],
-                    "errors": [{"error": "后台台账属于其他工作区；未核对或修改当前任务"}]}
-        return reconcile(get_dispatch_service(repo_root), scan)
+    return audit_owner_dependencies(
+        repo_root, owner,
+        runner_root=lambda: get_runner().ledger.repo_root,
+        service=lambda: get_dispatch_service(repo_root),
+    )
 
 
 def task_turn_hint(repo_root: str, owner: str, tools, *, dependency_audit=None) -> str:

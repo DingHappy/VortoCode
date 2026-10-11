@@ -9,6 +9,8 @@ from collections import deque
 from contextvars import ContextVar
 from dataclasses import dataclass
 import logging
+from pathlib import Path
+from typing import Any, Callable
 
 from src.gateway.audit import _clip_text
 from src.workflow.tasks.collaboration import CollaborationConflict
@@ -504,3 +506,28 @@ def coverage_status(service, session, task_id, round_number, scan_id=None):
         state["observed_at"] = _coverage_time()
         ledger.save_scan(state)
         return _coverage_report(state)
+
+
+def audit_owner_dependencies(
+    repo_root: str,
+    owner: str,
+    *,
+    runner_root: Callable[[], str],
+    service: Callable[[], Any],
+) -> dict:
+    """一次有界的依赖核对（发现 + 对账），作为同一笔台账事务完成。
+
+    后台 runner 属于别的工作区时结果保持未知：不核对、不修改那个任务池。
+    runner/service 惰性取得——没有相关任务时两者都不碰。
+    """
+    from src.workflow.tasks.dispatch import session_identity
+    from src.workflow.tasks.tasks import TaskLedger
+
+    with TASK_STATE_LOCK:
+        scan = discover(TaskLedger(repo_root), owner=session_identity(owner))
+        if not scan.tasks:
+            return {**scan.summary(), "tasks": []}
+        if Path(repo_root).resolve() != Path(runner_root()).resolve():
+            return {**scan.summary(), "complete": False, "scope_mismatch": True, "tasks": [],
+                    "errors": [{"error": "后台台账属于其他工作区；未核对或修改当前任务"}]}
+        return reconcile(service(), scan)

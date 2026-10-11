@@ -773,7 +773,7 @@ class IMBridge:
         为什么不是让你报数字：手填能用，但每轮要人记得去查、去算、去打字，这种事第三天就
         没人做了。发完文章顺手发一句链接，成本接近于零。
         """
-        from src.workflow.pipeline.channel_stats import _known_unsupported, register_url
+        from src.workflow.pipeline.channel_stats import known_unsupported, register_url
 
         url = rest.split()[0] if rest.split() else ""
         if not url.lower().startswith(("http://", "https://")):
@@ -787,7 +787,7 @@ class IMBridge:
         msg = f"✅ 已登记{('（归到 ' + run_id + '）') if run_id else ''}：{url}"
         # **当场告诉你这个渠道到底查不查得到**（只查本地那张表，不联网）——等到出数据那天
         # 才发现是空的，那一轮就白等了。
-        known = _known_unsupported(url)
+        known = known_unsupported(url)
         if known is not None:
             # 查不到就现在说。等到 measure 那天才发现是空的，那一轮的数据就白等了。
             msg += f"\n⚠ 但这个渠道**查不到数据**：{known.reason}\n数据回流那一步会跳过它。"
@@ -887,7 +887,7 @@ class IMBridge:
         `advance` 的原始字段留在末尾一行，排查时还看得见。
         """
         from src.workflow.pipeline.pipeline import PipelineStore
-        from src.workflow.pipeline.pipeline_tick import TickOutcome, _message
+        from src.workflow.pipeline.pipeline_tick import TickOutcome, outcome_message
 
         raw = (f"{result.status}"
                + (f" · 跑了 {'、'.join(result.ran)}" if result.ran else "")
@@ -900,7 +900,7 @@ class IMBridge:
                               ran=list(result.ran), blocked_on=result.blocked_on,
                               reason=result.reason)
         try:
-            return _message(self.repo_root, run, outcome) + f"\n\n（{raw}）"
+            return outcome_message(self.repo_root, run, outcome) + f"\n\n（{raw}）"
         except Exception:  # noqa: BLE001 —— 措辞出问题不该把跑完这件事本身也吞掉
             return raw
 
