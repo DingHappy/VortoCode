@@ -309,6 +309,13 @@ def run_tests(worktree, cmd: Optional[list] = None, timeout: Optional[int] = Non
         # 依赖这些能力的用例在这里必红——那是环境限制，不是候选改动的问题。
         # 没有这个标记，流水线的验证关会对**任何**改动一律判红（真机复盘：护城河曾因此全堵）。
         env = {**env, "VORTOCODE_IN_SANDBOX": "1"}
+    cache_dir = None
+    if decision.isolated:
+        # 沙箱里 $HOME 只读：jedi / pip / pre-commit 这类往 ~/.cache 写缓存的工具会直接失败，
+        # 用例红在「写不了缓存」而不是候选改动上（真机 2026-10-11：test_rename_symbol_tool_cancel）。
+        # 给一个跑完即删的临时缓存目录；系统临时目录在两种沙箱里都可写。
+        cache_dir = tempfile.mkdtemp(prefix="vortocode-test-cache-")
+        env = {**env, "XDG_CACHE_HOME": cache_dir}
     try:
         r = subprocess.run(exec_cmd, cwd=str(worktree), env=env,
                            capture_output=True, text=True, timeout=timeout)
@@ -326,6 +333,9 @@ def run_tests(worktree, cmd: Optional[list] = None, timeout: Optional[int] = Non
         output = f"测试无法运行: {e}" + (("\n" + warning) if warning else "")
         return {"ok": False, "output": output, "cmd": shown,
                 "sandbox": evidence, "warning": warning}
+    finally:
+        if cache_dir:
+            shutil.rmtree(cache_dir, ignore_errors=True)
 
 
 async def run_isolated_task(repo_root, wid: str, description: str,

@@ -138,6 +138,16 @@ def cancel(root: str, dispatch_id: str) -> Dict[str, Any]:
     return _update(root, dispatch_id, change)
 
 
+def _tail_lines(text: Any, limit: int) -> str:
+    """取结尾一段，但从整行开始（别把「vorto/auto-4c82d9d8」截成「uto-4c82d9d8」推到手机上）。"""
+    value = str(text or "").strip()
+    if len(value) <= limit:
+        return value
+    tail = value[-limit:]
+    cut = tail.find("\n")
+    return tail[cut + 1:] if 0 <= cut < len(tail) - 1 else tail
+
+
 def _service_url(project: Dict[str, Any], path: str) -> str:
     return f"http://127.0.0.1:{int(project['port'])}{path}"
 
@@ -198,8 +208,8 @@ async def refresh(root: str, *, http=_http) -> List[Dict[str, Any]]:
         status = _REMOTE_STATUS.get(str(task.get("status") or ""), entry["status"])
 
         def change(item: Dict[str, Any], task=task, status=status) -> None:
-            item.update(status=status, result=str(task.get("result") or "")[-1500:],
-                        error=str(task.get("error") or "")[-500:], branch=str(task.get("branch") or ""))
+            item.update(status=status, result=_tail_lines(task.get("result"), 1500),
+                        error=_tail_lines(task.get("error"), 500), branch=str(task.get("branch") or ""))
         _update(root, entry["id"], change)
     return list_dispatches(root)
 

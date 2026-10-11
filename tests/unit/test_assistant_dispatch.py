@@ -119,3 +119,11 @@ def test_approve_and_cancel_routes_are_audited(tmp_path, monkeypatch):
     assert TestClient(app).post(f"/api/dispatches/{entry['id']}/cancel").json()["status"] == "cancelled"
     decisions = [item for item in list_audit(str(tmp_path), 10) if item["category"] == "decision"]
     assert decisions and decisions[0]["decision"] == "denied" and "撤回任务单「不做了」到 VortoCode" in decisions[0]["operation"]
+
+
+def test_tail_lines_starts_at_a_whole_line():
+    text = "第一行很长" * 40 + "\n⚠️ 已落到 vorto/auto-4c82d9d8，但集成后全量测试未过\n测试超时"
+    tail = dispatch._tail_lines(text, 60)
+    assert tail.startswith("⚠️ 已落到 vorto/auto-4c82d9d8") and tail.endswith("测试超时")
+    assert dispatch._tail_lines("短", 60) == "短"
+    assert len(dispatch._tail_lines("x" * 200, 50)) == 50          # 没有换行就照旧按字数截
