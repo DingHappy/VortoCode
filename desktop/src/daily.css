@@ -370,6 +370,21 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 .assistant-memories.proposals li { background: var(--n2); border-radius: 8px; border-bottom: 0; margin-bottom: 4px; }
 .assistant-proposal-flag { display: block; margin-top: 2px; font-size: 11px; color: var(--amber-text); }
 
+/* Assistant task cards share the existing palette in conversation and activity. */
+.assistant-task-cards { display: grid; gap: 12px; }
+.assistant-task-card { min-width: 0; margin: 12px 0; padding: 16px; border: 1px solid var(--n5); border-radius: 12px; background: var(--n2); color: var(--n12); overflow-wrap: anywhere; }
+.assistant-task-card header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
+.assistant-task-card header span, .assistant-task-card small { color: var(--n10); }
+.assistant-task-card p { margin: 8px 0; }
+.assistant-task-card summary { cursor: pointer; padding: 6px 0; }
+.assistant-task-text { white-space: pre-wrap; }
+.assistant-task-card .task-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.assistant-task-card .task-actions button { min-height: 34px; font-size: 13px; color: var(--n12); background: var(--n3); border-color: var(--n5); }
+.assistant-task-card .task-error { color: var(--red-text); font-size: 13px; line-height: 1.5; }
+.assistant-task-card .task-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.assistant-task-status { font-weight: 600; }
+.assistant-task-warning { color: var(--n11); border-left: 2px solid var(--daily-accent); padding-left: 8px; }
+
 .assistant-schedule > .assistant-schedule-card { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .assistant-schedule-card p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .assistant-schedule-card small { overflow-wrap: anywhere; }

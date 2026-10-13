@@ -6,9 +6,9 @@ VortoCode 是面向开发者的本地优先 Agent 工作台：从目标与约束
 
 ## 定位
 
-当前优先收敛 **Desktop 日常使用与交付**：本地模型对话、联网读取、会话恢复、显式工具连接与单一安装入口。
+当前优先收敛 **常驻助理与 Desktop 工作台的交付闭环**：助理收集、提议任务、跟进和汇报，项目工作台负责隔离开发、验证与审查。交互任务卡提供确认下发、状态核对与交付定位，关键操作仍由人决定。
 使用步骤、固定交付命令与未验收项统一见 [Desktop 日常使用基线](docs/DESKTOP_DAILY_BASELINE.md)。
-现有任务/Goal/项目能力保留，本阶段暂停扩展新的自动化和 MCP 协议能力；本地签名包不等于正式稳定发布。
+优先验证已有定时指令、只读连接器和项目任务的日常流程，再扩展协议与自动化范围；本地签名包不等于正式稳定发布。当前任务卡合同见 [助理任务交付](docs/ASSISTANT_DELIVERY.md)。
 
 ## 产品形态方向
 
@@ -357,3 +357,5 @@ MIT License
 - [Model Context Protocol](https://modelcontextprotocol.io/) - 工具集成标准
 - [AaaS](https://github.com/Gotradepal/agents_as_a_service) - 自我编排框架参考
 - [Manus Killswitch](https://github.com/m0r6aN/Manus-Killswitch) - 多 Agent 协作参考
+
+私人助手评测：`python -m evals --suite assistant --list` 查看 14 道固定场景，`--live` 显式运行模型。用临时资料测试记忆、定时跟进、确认拒绝和结果证据；详见[私人助手能力与题库](docs/ASSISTANT_EVALS.md)。

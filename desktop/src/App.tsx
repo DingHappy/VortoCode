@@ -2,6 +2,11 @@ import { ManagementNav } from "./components/ManagementNav";
 import { isManagementTab } from "./lib/inspector";
 import { WorkbenchLauncher, WorkbenchTabs, type WorkbenchTool } from "./components/WorkbenchTabs";
 import { ActivityFeed } from "./components/ActivityFeed";
+import { AssistantTaskCard } from "./components/AssistantTaskCard";
+import { loadAssistantData } from "./lib/assistantData";
+import { AssistantRefreshQueue } from "./lib/assistantRefresh";
+import { AssistantActionGate, type AssistantTaskAction } from "./lib/assistantTask";
+import { openAssistantTask } from "./lib/assistantNavigation";
 import { AssistantAudit, AssistantIdentity, AssistantPanel, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PhoneChatDialog, type AppMode, type AssistantTab } from "./components/AssistantMode";
 import { dispatchFeedItem, isPhoneSession, noticeFeedItem, taskFeedItem, turnFeedItem, type FeedItem } from "./lib/activityFeed";
 import { ConfirmationReply } from "./components/ConfirmationReply";
@@ -330,10 +335,6 @@ function App() {
   // 助理的名字 / 关于你，以及它记住的事（都在助理所在的那台电脑上）
   const [assistantProfile, setAssistantProfile] = useState<AssistantProfile>({ name: "VortoCode", soul: "", about_you: "" });
   const scheduleReadEpoch = useRef(0);
-  const assistantScope = `${baseUrl}:${repoRoot}:${processStatus.runtimeId}:${connection}`;
-  const assistantScopeRef = useRef(assistantScope);
-  assistantScopeRef.current = assistantScope;
-  useEffect(() => { scheduleReadEpoch.current += 1; setAssistantSchedule([]); }, [assistantScope]);
   const [assistantSchedule, setAssistantSchedule] = useState<AssistantScheduleItem[]>([]);
   const [assistantMemories, setAssistantMemories] = useState<AssistantMemory[]>([]);
   const [memoryProposals, setMemoryProposals] = useState<MemoryProposal[]>([]);
@@ -352,10 +353,25 @@ function App() {
   const [phoneChats, setPhoneChats] = useState<PhoneChat[]>([]);
   const [phoneChatSid, setPhoneChatSid] = useState<string | null>(null);
   const [agentTurns, setAgentTurns] = useState<AgentTurn[]>([]);
-  // 常驻助理写的任务单（等你确认下发 / 在做 / 做完）。
-  const [dispatches, setDispatches] = useState<AssistantDispatch[]>([]);
-  // 只依赖「有没有在做的」这个布尔值：每次刷新都是新数组，直接依赖数组会让刷新自己触发自己。
-  const trackingDispatches = dispatches.some((item) => item.status === "running" || item.status === "waiting");
+  // Snapshots are bound to the loaded host before they can expose actions.
+  const assistantScope = `${baseUrl}:${repoRoot}:${processStatus.runtimeId}:${connection}`;
+  const assistantScopeRef = useRef(assistantScope);
+  assistantScopeRef.current = assistantScope;
+  const [dispatchSnapshot, setDispatches] = useState<AssistantDispatch[]>([]);
+  const [dispatchSnapshotScope, setDispatchSnapshotScope] = useState<string | null>(null);
+  const dispatches = dispatchSnapshotScope === assistantScope ? dispatchSnapshot : [];
+  const trackingDispatches = dispatches.some((item) => ["running", "waiting", "sending", "submission_unknown"].includes(item.status));
+  const [selectedDispatchId, setSelectedDispatchId] = useState<string | null>(null);
+  const assistantLoadEpoch = useRef(0);
+  const assistantRefreshQueue = useRef(new AssistantRefreshQueue());
+  const assistantActionGate = useRef(new AssistantActionGate());
+  useEffect(() => {
+    assistantLoadEpoch.current += 1;
+    setAgentTurns([]); setDispatches([]); setDispatchSnapshotScope(null); setPhoneChats([]); setPhoneChatSid(null);
+    setAssistantProfile({ name: "VortoCode", soul: "", about_you: "" });
+    setAssistantSchedule([]); setAssistantMemories([]); setMemoryProposals([]);
+    setSelectedDispatchId(null); setProfileDialogOpen(false);
+  }, [assistantScope]);
   const [tabsNeedingAttention, setTabsNeedingAttention] = useState<ReadonlySet<InspectorTab>>(
     () => new Set());
   const openInspector = useCallback((tab: InspectorTab) => {
@@ -2001,29 +2017,22 @@ function App() {
     await switchProject(twin);
   };
 
-  const refreshAgentTurns = useCallback(async () => {
+  const refreshAgentTurns = useCallback(async (refreshId?: string) => {
     const client = clientRef.current;
     if (!client) return;
-    try {
-      setAgentTurns(await client.listAgentActivity(100));
-    } catch {
-      // 动态是旁路信息：拿不到就保留上一次的，不打扰对话。
-    }
-    try {
-      setDispatches(await client.listDispatches());
-    } catch {
-      // 老版本服务没有派活接口：当作没有任务单。
-    }
-    try {
-      setAssistantProfile(await client.getAssistantProfile());
-    } catch {
-      // 老版本服务没有助理资料接口：沿用默认名字。
-    }
-    try {
-      setPhoneChats(await client.listPhoneChats());
-    } catch {
-      setPhoneChats([]);
-    }
+    const scope = assistantScopeRef.current;
+    const current = () => clientRef.current === client && assistantScopeRef.current === scope;
+    const request = assistantRefreshQueue.current.request(client, scope, refreshId, current, async () => {
+      const epoch = ++assistantLoadEpoch.current;
+      await loadAssistantData(client, () => current() && assistantLoadEpoch.current === epoch,
+        { turns: setAgentTurns,
+          dispatches: items => { setDispatches(items); setDispatchSnapshotScope(scope); },
+          dispatchError: () => setDispatches(previous => previous.map(item => ({ ...item,
+            sync_state: "unreachable", sync_error: "无法读取最新任务单，请恢复连接后核对" }))),
+          profile: setAssistantProfile, chats: setPhoneChats }, refreshId);
+    });
+    if (refreshId) await request;
+    else await request.catch(() => {}); // Background polling reports failures through snapshot freshness.
   }, []);
 
   /** 打开「主要聊天」：每台电脑第一次进助理模式时生成一个固定会话并记住，之后一直用它。 */
@@ -2942,32 +2951,50 @@ function App() {
     .filter((item): item is FeedItem => item !== null);
   const assistantWaiting = feedWaiting + dispatchItems.filter((item) => item.status === "waiting").length;
 
-  /** 任务单：等你确认的 → 看一遍再下发（或撤回）；其余 → 说明现状。 */
   const openDispatch = async (id: string) => {
-    const item = dispatches.find((entry) => entry.id === id);
+    setSelectedDispatchId(id);
+    setAssistantTab("feed"); setInspectorOpen(true);
+  };
+
+  const actOnDispatch = async (item: AssistantDispatch, action: AssistantTaskAction) => {
     const client = clientRef.current;
-    if (!item || !client) return;
-    if (item.status === "proposed" || item.status === "send_failed") {
-      const detail = [`下发到常驻电脑上的「${item.project}」？`, "", item.title, "", item.goal,
-        ...(item.criteria.length ? ["", "验收标准：", ...item.criteria.map((line) => `· ${line}`)] : []),
-        ...(item.tainted ? ["", "⚠ 这张任务单是在读过网页等外部内容后写的，请确认内容是你要的。"] : [])].join("\n");
-      try {
-        if (await confirmAction(detail)) {
-          await client.decideDispatch(id, "approve");
-          setBanner(`已下发「${item.title}」：常驻电脑在做，做完会在动态里回报。`);
-        } else if (item.status === "proposed" && await confirmAction(`不做「${item.title}」了？撤回这张任务单。`)) {
-          await client.decideDispatch(id, "cancel");
-        }
-      } catch (error) {
-        setBanner(errorText(error, "处理任务单失败"));
+    const scope = assistantScope;
+    const current = () => clientRef.current === client && assistantScopeRef.current === scope;
+    if (!client || connection !== "connected") throw new Error("请先恢复连接");
+    await assistantActionGate.current.run(client, scope, item.id, current, async () => {
+      if (action === "refresh") { await refreshAgentTurns(item.id); return; }
+      if (action === "approve" || action === "cancel") {
+        if (!await confirmAction(action === "cancel" ? `撤回任务单「${item.title}」？`
+          : [`确认将「${item.title}」下发到 ${item.project}？`, item.goal,
+            ...item.criteria.map(line => `· ${line}`),
+            ...(item.tainted ? ["包含外部内容，请核对目标与范围。"] : [])].join("\n\n"))) return;
+        if (!current()) return;
+        try { await client.decideDispatch(item.id, action); }
+        finally { if (current()) await refreshAgentTurns(); }
+        return;
       }
-      await refreshAgentTurns();
-      return;
-    }
-    setBanner(item.status === "done"
-      ? `「${item.title}」已完成${item.branch ? `，交付分支 ${item.branch}：到工作台切到常驻电脑上的 ${item.project}，在变更面板审查或拉回本机` : ""}。`
-      : item.status === "failed" ? `「${item.title}」失败：${item.error || "没有错误信息"}`
-      : `「${item.title}」${item.status === "waiting" ? "在等人回答，到工作台的常驻电脑项目里处理" : "还在做"}。`);
+      const host = projects.find(project => project.id === remoteProjectRef.current && isAssistantHost(project));
+      if (!host) throw new Error("请连接这张任务单所属的常驻助理，再打开项目任务");
+      await openAssistantTask(client, item, host.id, {
+        current,
+        register: async (hostId, entry) => {
+          const profile = await invoke<DesktopProjectProfile>("remember_resident_project", {
+            hostProjectId: hostId, port: entry.port, remoteRepoRoot: entry.repo_root, name: entry.name,
+          });
+          if (current()) setProjects(previous => [profile, ...previous.filter(project => project.id !== profile.id)]);
+          return profile;
+        },
+        switchProject, getProjectClient: () => clientRef.current,
+        onConnected: (_profile, id) => {
+          workReturnRef.current = null;
+          setAppMode("work");
+          try { localStorage.setItem(STORAGE_KEYS.appMode, "work"); } catch { /* The current navigation still works. */ }
+          focusTask(id);
+        },
+        onReview: openTaskBranchReview,
+        onError: error => setBanner(errorText(error, "读取项目任务失败，请核对状态")),
+      });
+    });
   };
   const workbenchTools: WorkbenchTool[] = ([
     { id: "feed", label: "任务动态", icon: <Inbox size={15} />, badge: feedWaiting ? String(feedWaiting) : undefined,
@@ -3431,6 +3458,11 @@ function App() {
               </Fragment>
             ))}
 
+            {appMode === "assistant" && dispatches.filter(item => item.session?.replace(/^sid-/, "") === activeSid
+              && item.status !== "cancelled").slice(0, 8).map(item => <AssistantTaskCard
+                key={`${assistantScope}:${item.id}`} task={item} connected={connection === "connected"}
+                onAction={action => actOnDispatch(item, action)} />)}
+
             {orphanActivities.length > 0 && <TurnTimeline items={orphanActivities} active={busy && !activeTurnRid} />}
 
             {streaming && (
@@ -3674,16 +3706,16 @@ function App() {
               setAssistantTab(tab);
               const client = clientRef.current;
               if (tab === "audit") void refreshAudit();
+              const scope = assistantScopeRef.current;
+              const current = () => clientRef.current === client && assistantScopeRef.current === scope;
               if (tab === "schedule") {
-                const scope = assistantScopeRef.current;
                 const epoch = ++scheduleReadEpoch.current;
-                const current = () => clientRef.current === client && assistantScopeRef.current === scope;
                 void client?.getAssistantSchedule().then(items => { if (current() && epoch === scheduleReadEpoch.current) setAssistantSchedule(items); }).catch(error => { if (current()) setBanner(String(error)); });
               }
               if (tab === "identity") {
-                void client?.listAssistantMemories().then(setAssistantMemories).catch(() => setAssistantMemories([]));
-                void client?.listMemoryProposals().then(setMemoryProposals).catch(() => setMemoryProposals([]));
-                void client?.listConnectors().then(setConnectors).catch(() => setConnectors([]));
+                void client?.listAssistantMemories().then(items => { if (current()) setAssistantMemories(items); }).catch(() => {});
+                void client?.listMemoryProposals().then(items => { if (current()) setMemoryProposals(items); }).catch(() => {});
+                void client?.listConnectors().then(items => { if (current()) setConnectors(items); }).catch(() => {});
               }
             }}>
             {assistantTab === "audit" ? <AssistantAudit entries={auditEntries} />
@@ -3742,25 +3774,44 @@ function App() {
                     }
                   })()}
                   onDecideProposal={(proposal, approve) => void (async () => {
+                    const client = clientRef.current;
+                    const scope = assistantScopeRef.current;
+                    const current = () => clientRef.current === client && assistantScopeRef.current === scope;
+                    if (!client) return;
                     try {
-                      await clientRef.current?.decideMemoryProposal(proposal.id, approve);
+                      await client.decideMemoryProposal(proposal.id, approve);
+                      if (!current()) return;
                       setMemoryProposals((previous) => previous.filter((item) => item.id !== proposal.id));
-                      if (approve) setAssistantMemories(await clientRef.current?.listAssistantMemories() ?? []);
+                      if (approve) {
+                        const memories = await client.listAssistantMemories();
+                        if (current()) setAssistantMemories(memories);
+                      }
                     } catch (error) {
-                      setBanner(errorText(error, "处理记忆候选失败"));
+                      if (current()) setBanner(errorText(error, "处理记忆候选失败"));
                     }
                   })()}
                   onEdit={() => setProfileDialogOpen(true)}
                   onDeleteMemory={(memory) => void (async () => {
-                    if (!await confirmAction(`忘掉这条记忆？\n\n${memory.content}`)) return;
+                    const client = clientRef.current;
+                    const scope = assistantScopeRef.current;
+                    const current = () => clientRef.current === client && assistantScopeRef.current === scope;
+                    if (!client || !await confirmAction(`忘掉这条记忆？\n\n${memory.content}`) || !current()) return;
                     try {
-                      await clientRef.current?.deleteAssistantMemory(memory.id);
-                      setAssistantMemories((previous) => previous.filter((item) => item.id !== memory.id));
+                      await client.deleteAssistantMemory(memory.id);
+                      if (current()) setAssistantMemories((previous) => previous.filter((item) => item.id !== memory.id));
                     } catch (error) {
-                      setBanner(errorText(error, "删除记忆失败"));
+                      if (current()) setBanner(errorText(error, "删除记忆失败"));
                     }
                   })()} />
-              : <ActivityFeed items={[...agentTurns.map(turnFeedItem), ...dispatchItems, ...feedItems]} scope="all" onScope={() => {}}
+              : <><section className="assistant-task-cards" aria-label="交互任务单">
+                  {selectedDispatchId && dispatches.find(item => item.id === selectedDispatchId) && <AssistantTaskCard
+                    key={`${assistantScope}:${selectedDispatchId}`} task={dispatches.find(item => item.id === selectedDispatchId)!}
+                    connected={connection === "connected"} onAction={action => actOnDispatch(dispatches.find(item => item.id === selectedDispatchId)!, action)} />}
+                  {!selectedDispatchId && dispatches.filter(item => item.status === "proposed" || item.status === "submission_unknown").slice(0, 3).map(item =>
+                    <AssistantTaskCard key={`${assistantScope}:${item.id}`} task={item} connected={connection === "connected"}
+                      onAction={action => actOnDispatch(item, action)} />)}
+                  {selectedDispatchId && <button onClick={() => setSelectedDispatchId(null)}>收起任务详情</button>}
+                </section><ActivityFeed items={[...agentTurns.map(turnFeedItem), ...dispatchItems, ...feedItems]} scope="all" onScope={() => {}}
                   currentSession={activeSid}
                   onOpen={(item) => {
                     if (item.dispatchId) { void openDispatch(item.dispatchId); return; }
@@ -3768,7 +3819,7 @@ function App() {
                     const sid = item.session?.replace(/^sid-/, "");
                     if (sid && isPhoneSession(sid)) { setPhoneChatSid(sid); return; }
                     if (sid) { setMainView("chat"); void switchSession(sid); }
-                  }} />}
+                  }} /></>}
           </AssistantPanel>
         )}
         {(mainView === "management" || (mainView === "chat" && inspectorOpen && appMode !== "assistant")) && (
@@ -4071,8 +4122,11 @@ function App() {
         onSave={async (next) => {
           const client = clientRef.current;
           if (!client) throw new Error("还没连上助理");
-          setAssistantProfile(await client.saveAssistantProfile(next));
-          setProfileDialogOpen(false);
+          const scope = assistantScopeRef.current;
+          assistantLoadEpoch.current += 1; // A pre-save profile read cannot restore the old identity.
+          const profile = await client.saveAssistantProfile(next);
+          if (clientRef.current !== client || assistantScopeRef.current !== scope) return;
+          setAssistantProfile(profile); setProfileDialogOpen(false);
         }} />}
       {remoteDialogOpen && <RemoteProjectDialog purpose={remoteDialogOpen} onClose={() => setRemoteDialogOpen(false)} onRegistered={async (profile) => {
         const known = [profile, ...projects.filter((item) => item.id !== profile.id)];

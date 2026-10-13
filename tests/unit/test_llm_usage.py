@@ -382,3 +382,39 @@ async def test_stream_chat_assembles_tool_calls_and_suppresses_content(monkeypat
     assert seen == []                                # 出现 tool_call 后正文不回显
     assert out["tool_calls"] == [
         {"id": "1", "name": "read_file", "arguments": '{"path": "a.py"}'}]  # 分片被拼回完整
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('backend', ['sdk', 'fallback'])
+@pytest.mark.parametrize('usage', [None, {'prompt_tokens': 7, 'completion_tokens': 0, 'total_tokens': 7}])
+async def test_content_filter_blocks_text_and_tools_without_retry(monkeypatch, backend, usage):
+    from src.llm.client import ProviderContentFiltered
+
+    client = _client(3)
+    calls = []
+    message = {'content': 'blocked private content', 'tool_calls': [{'unsafe': True}]}
+    if backend == 'sdk':
+        async def create(**kwargs):
+            calls.append(kwargs)
+            return SimpleNamespace(model='mimo-response', usage=usage,
+                                   choices=[SimpleNamespace(finish_reason='content_filter', message=message)])
+        async def get_client():
+            return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+        monkeypatch.setattr(client, '_get_client', get_client)
+        run = client.chat
+    else:
+        import aiohttp
+        session = _FakeSession([_FakeResp(200, {'model': 'mimo-response', 'usage': usage,
+                                              'choices': [{'finish_reason': 'content_filter', 'message': message}]})])
+        monkeypatch.setattr(aiohttp, 'ClientSession', lambda **kwargs: session)
+        run = client._chat_with_requests
+    reset_usage()
+    with pytest.raises(ProviderContentFiltered) as caught:
+        await run([{'role': 'user', 'content': 'original question'}])
+    error = caught.value
+    assert error.response_model == 'mimo-response'
+    assert error.usage == (usage or {})
+    assert 'private' not in str(error)
+    assert (len(calls) if backend == 'sdk' else session.posts) == 1
+    assert get_usage()['calls'] == (1 if usage else 0)
+    assert get_usage()['total_tokens'] == (7 if usage else 0)  # Never estimate filtered usage.

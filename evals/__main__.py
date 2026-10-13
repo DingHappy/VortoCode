@@ -86,6 +86,9 @@ async def _run(args) -> dict:
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="python -m evals", description="VortoCode 真机评测 harness")
+    p.add_argument("--suite", choices=["dev", "assistant"], default="dev", help="开发交付或私人助手题集")
+    p.add_argument("--live", action="store_true", help="显式运行私人助手真实模型评测")
+    p.add_argument("--candidate", metavar="FILE", help="离线复查助手报告并与基线比较，不调用模型")
     p.add_argument("--scenario", default="all",
                    help="场景名或 all（默认 all）。可选：" + ", ".join(BY_NAME))
     p.add_argument("--model", help="覆盖 DEFAULT_MODEL（如 mimo-v2.5 / mimo-v2.5-pro）")
@@ -107,6 +110,15 @@ def main(argv=None) -> int:
                    help="模型×协议矩阵串行跑，汇一张对比表（如 'mimo-v2.5,mimo-v2.5-pro × native,prompt'）")
     args = p.parse_args(argv)
 
+    if args.suite == "assistant":
+        _load_dotenv()
+        from .assistant.cli import main as assistant_main
+        try:
+            return assistant_main(args)
+        except ValueError as error:
+            p.error(str(error))
+    if args.live or args.candidate:
+        p.error("--live 仅用于 --suite assistant；开发工具评测沿用原入口")
     if args.scenario != "all" and args.scenario not in BY_NAME:
         p.error(f"未知场景：{args.scenario}")
     if args.repeat < 1:

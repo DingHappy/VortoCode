@@ -511,3 +511,33 @@ async def test_image_taint_resets_next_turn(tmp_path):
     taint.reset_taint()
     await agent._run_tools([("read_file", {"path": "y.png"})], "plan", lambda _m: None)
     assert taint.is_tainted() is True    # 这轮又读了图，当然还是污点
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('name', ['search_conversations', 'read_conversation_excerpt'])
+async def test_conversation_evidence_tools_taint_current_turn(tmp_path, name):
+    import hashlib
+    directory = tmp_path / '.vortocode/web_sessions'
+    directory.mkdir(parents=True)
+    raw = json.dumps({'transcript': [{'role': 'user', 'text': 'fictional violin preference'}]}).encode()
+    (directory / 'fixture.json').write_bytes(raw)
+    tools = {tool.name: tool for tool in build_memory_tools(str(tmp_path), _yes)}
+    assert tools[name].untrusted_source
+    agent = MainAgent([tools[name]])
+    args = {'query': 'violin'} if name == 'search_conversations' else {
+        'id': 'fixture:0', 'archive_revision': hashlib.sha256(raw).hexdigest()}
+    assert 'fictional violin preference' in await tools[name].handler(args)
+    await agent._run_tools([(name, args)], 'plan', lambda _: None)
+    assert taint.is_tainted()
+
+
+@pytest.mark.parametrize('name', ['search_conversations', 'read_conversation_excerpt'])
+@pytest.mark.parametrize('same_turn', [True, False])
+def test_realtime_memory_candidates_keep_conversation_evidence_taint(tmp_path, monkeypatch, name, same_turn):
+    from src.web.routers.realtime import _propose_turn_memories
+    seen = []
+    monkeypatch.setenv('VORTOCODE_WORKSPACE_SCOPE', 'general')
+    monkeypatch.setattr('src.memory.assistant_profile.propose_memories', lambda *args, **kwargs: seen.append(kwargs))
+    sess = {'repo_root': str(tmp_path), 'activities': [{'type': 'agent_tool', 'name': name, 'rid': 'current' if same_turn else 'previous'}]}
+    _propose_turn_memories(sess, 'current', ['fictional preference'])
+    assert seen[0]['tainted'] is same_turn

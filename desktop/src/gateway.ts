@@ -129,6 +129,10 @@ export class GatewayClient {
 
   constructor(private readonly settings: ConnectionSettings) {}
 
+  matchesRemoteProject(projectId: string): boolean {
+    return this.settings.remoteProjectId === projectId;
+  }
+
   async connect(sid: string, onEvent: (event: ProtocolEvent) => void): Promise<void> {
     await this.disconnect();
     this.sessionId = sid;
@@ -429,8 +433,8 @@ export class GatewayClient {
   }
 
   /** 常驻助理的任务单（顺带刷新已下发任务的状态）。 */
-  async listDispatches(): Promise<AssistantDispatch[]> {
-    const payload = await this.request<{ dispatches?: AssistantDispatch[] }>("/api/dispatches");
+  async listDispatches(refreshId?: string): Promise<AssistantDispatch[]> {
+    const payload = await this.request<{ dispatches?: AssistantDispatch[] }>(`/api/dispatches${refreshId ? `?refresh_id=${encodeURIComponent(refreshId)}` : ""}`);
     return Array.isArray(payload.dispatches) ? payload.dispatches : [];
   }
 
@@ -443,6 +447,10 @@ export class GatewayClient {
   async listResidentProjects(): Promise<ResidentProject[]> {
     const payload = await this.request<{ projects?: ResidentProject[] }>("/api/resident/projects");
     return Array.isArray(payload.projects) ? payload.projects : [];
+  }
+
+  async getTask(id: string): Promise<TaskItem> {
+    return this.request(`/api/tasks/${encodeURIComponent(id)}`);
   }
 
   async listTasks(): Promise<TaskItem[]> {

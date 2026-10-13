@@ -97,7 +97,7 @@ describe("dispatchFeedItem", () => {
 
   it("下发后跟着远端状态走；撤回的不显示", () => {
     expect(dispatchFeedItem(dispatch({ status: "running" }))?.status).toBe("running");
-    expect(dispatchFeedItem(dispatch({ status: "done", branch: "vorto/fix" }))?.summary).toBe("已交付分支 vorto/fix");
+    expect(dispatchFeedItem(dispatch({ status: "done", branch: "vorto/fix" }))?.summary).toBe("执行结束，等待审查 · vorto/fix");
     expect(dispatchFeedItem(dispatch({ status: "send_failed", error: "connection refused" }))).toMatchObject({ status: "failed" });
     expect(dispatchFeedItem(dispatch({ status: "cancelled" }))).toBeNull();
   });

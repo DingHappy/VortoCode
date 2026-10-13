@@ -8,6 +8,7 @@
 import asyncio
 import os
 import re
+from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.web.deps import *  # noqa: F401,F403
@@ -74,8 +75,21 @@ async def submit_task(body: dict):
     prompt = str((body or {}).get("prompt") or (body or {}).get("task") or "").strip()
     if not prompt:
         raise HTTPException(status_code=400, detail="缺少 prompt（要后台跑的任务）")
+    if "expected_repo_root" in body:
+        expected = body["expected_repo_root"]
+        actual = str(Path(get_runner().ledger.repo_root).resolve())
+        if not isinstance(expected, str) or expected != actual:
+            raise HTTPException(status_code=409, detail="项目运行时目录与提交目标不匹配；未创建任务")
     try:
-        task = await get_runner().submit(prompt, kind="dev", owner_session=_owner_session(body or {}))
+        if "request_id" in (body or {}):
+            from src.workflow.tasks.submissions import submit_once
+            task = await submit_once(get_runner(), body["request_id"], prompt, _owner_session(body or {}))
+        else:
+            task = await get_runner().submit(prompt, kind="dev", owner_session=_owner_session(body or {}))
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     except OSError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     return {"id": task.id, "status": task.status}
@@ -84,7 +98,8 @@ async def submit_task(body: dict):
 @router.get("/api/tasks")
 async def list_tasks_bg():
     """列出后台任务（按最近更新排序）。"""
-    return {"tasks": _task_snapshot()}
+    return {"tasks": _task_snapshot(), "submission_idempotency": 1,
+            "submission_scope": {"repo_root": str(Path(get_runner().ledger.repo_root).resolve())}}
 
 
 @router.get("/api/tasks/{tid}")
@@ -92,7 +107,7 @@ async def get_task_bg(tid: str):
     t = get_runner().get(tid)
     if t is None:
         raise HTTPException(status_code=404, detail=f"无此任务 {tid}")
-    return _task_view(t)
+    return {**_task_view(t), "execution_scope": {"repo_root": str(Path(get_runner().ledger.repo_root).resolve())}}
 
 
 @router.get("/api/worktrees")

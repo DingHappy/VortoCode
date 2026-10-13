@@ -31,6 +31,9 @@ memory = [
     "qdrant-client>=1.7.0",
     "sentence-transformers>=2.2.0",
 ]
+evals = [
+    "tiktoken>=0.12,<1",
+]
 llm = [
     "openai>=1.0.0",
     "anthropic>=0.18.0",

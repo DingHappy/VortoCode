@@ -202,6 +202,8 @@ export function useChangeReview(
       onBanner("这个任务还没有可审查的分支");
       return;
     }
+    const generation = ++gitReviewRefreshGenerationRef.current;
+    const current = () => clientRef.current === client && generation === gitReviewRefreshGenerationRef.current;
     setTaskReviewTask(task);
     setTaskBranchReview(null);
     setTaskBranchDiff(null);
@@ -210,6 +212,7 @@ export function useChangeReview(
     setGitReviewLoading(true);
     try {
       const snapshot = await client.getTaskBranchReview(task.id);
+      if (!current()) return;
       setTaskBranchReview(snapshot);
       const selected = snapshot.files.find((file) => file.path === preferredPath) ?? snapshot.files[0];
       if (!selected) {
@@ -217,11 +220,12 @@ export function useChangeReview(
         return;
       }
       setTaskBranchSelectedPath(selected.path);
-      setTaskBranchDiff(await client.getTaskBranchReviewDiff(task.id, selected.path));
+      const diff = await client.getTaskBranchReviewDiff(task.id, selected.path);
+      if (current()) setTaskBranchDiff(diff);
     } catch (error) {
-      setGitReviewError(errorText(error, "读取任务分支审查失败"));
+      if (current()) setGitReviewError(errorText(error, "读取任务分支审查失败"));
     } finally {
-      setGitReviewLoading(false);
+      if (current()) setGitReviewLoading(false);
     }
   };
 

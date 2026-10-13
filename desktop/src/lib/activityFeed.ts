@@ -146,18 +146,21 @@ export function turnFeedItem(turn: AgentTurn): FeedItem {
 
 
 const DISPATCH_STATUS: Record<AssistantDispatch["status"], FeedStatus> = {
-  proposed: "waiting", send_failed: "failed", running: "running", waiting: "waiting",
+  proposed: "waiting", sending: "running", submission_unknown: "waiting", send_failed: "failed", running: "running", waiting: "waiting",
   done: "done", failed: "failed", cancelled: "stopped", stopped: "stopped",
 };
 
 /** 任务单 → 动态：等你确认下发的置顶；下发后跟着常驻电脑上的任务走。撤回的不显示。 */
 export function dispatchFeedItem(item: AssistantDispatch): FeedItem | null {
   if (item.status === "cancelled") return null;
-  const summary = item.status === "proposed" ? `等你确认下发 · ${item.project}${item.tainted ? " · 含外部内容，请细看" : ""}`
+  const summary = item.sync_state === "unreachable" ? `${item.project} · 当前无法核实 · 上次核对 ${item.last_checked_at || "尚无记录"}`
+    : item.status === "sending" ? `${item.project} · 正在下发，请核对状态`
+    : item.status === "submission_unknown" ? `${item.project} · 提交结果待核对`
+    : item.status === "proposed" ? `等你确认下发 · ${item.project}${item.tainted ? " · 含外部内容，请细看" : ""}`
     : item.status === "send_failed" ? `下发失败，可以重试：${firstSentence(item.error, MAX_SUMMARY - 10)}`
     : item.status === "waiting" ? `${item.project} · 在等人回答`
     : item.status === "running" ? `${item.project} · 在做`
-    : item.status === "done" ? firstSentence(item.result, MAX_SUMMARY) || (item.branch ? `已交付分支 ${item.branch}` : "已完成")
+    : item.status === "done" ? `执行结束，等待审查${item.branch ? ` · ${item.branch}` : ""}`
     : item.status === "stopped" ? `${item.project} · 已停下`
     : firstSentence(item.error, MAX_SUMMARY) || "执行失败";
   return {
