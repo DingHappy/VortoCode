@@ -5,6 +5,7 @@ import { ActivityFeed } from "./components/ActivityFeed";
 import { AssistantTaskCard } from "./components/AssistantTaskCard";
 import { loadAssistantData } from "./lib/assistantData";
 import { prepareAvatar } from "./lib/avatar";
+import { resolveMainChat, sourceLabel } from "./lib/mainChat";
 import { AssistantRefreshQueue } from "./lib/assistantRefresh";
 import { AssistantActionGate, type AssistantTaskAction } from "./lib/assistantTask";
 import { openAssistantTask } from "./lib/assistantNavigation";
@@ -907,11 +908,12 @@ function App() {
           break;
         case "agent_history":
           setMessages(
-            ((event.items ?? []) as Array<{ role?: string; text?: string; rid?: string }>).map((item, index) => ({
+            ((event.items ?? []) as Array<{ role?: string; text?: string; rid?: string; source?: string }>).map((item, index) => ({
               id: `history-${index}-${activeSid}`,
               role: item.role === "user" ? "user" : "assistant",
               text: String(item.text ?? ""),
               rid: item.rid,
+              ...(typeof item.source === "string" && item.source ? { source: item.source } : {}),
             })),
           );
           break;
@@ -2072,10 +2074,10 @@ function App() {
       const key = mainChatKey(host.id);
       let sid = "";
       try { sid = localStorage.getItem(key) ?? ""; } catch { /* 读不到就新开一个 */ }
-      if (!sid) {
-        sid = createSessionId();
-        try { localStorage.setItem(key, sid); } catch { /* 存不下也照常使用本次会话 */ }
-      }
+      if (!sid) sid = createSessionId();
+      // 主要聊天由常驻电脑统一登记（手机、电脑共用一段）：已登记就用那段，没登记就把本机这段报上去
+      sid = await resolveMainChat(new GatewayClient({ baseUrl: host.baseUrl, token: "", remoteProjectId: host.id }), sid);
+      try { localStorage.setItem(key, sid); } catch { /* 存不下也照常使用本次会话 */ }
       setMainChatSid(sid);
       setActiveSid(sid);
       setRepoRoot("");
@@ -3472,9 +3474,11 @@ function App() {
               <Fragment key={message.id}>
                 <article className={`message ${message.role}`}>
                   {appMode === "assistant" && message.role === "assistant"
-                    ? <div className="message-author with-avatar"><AssistantAvatarImage name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} size={22} />{assistantProfile.name || "VortoCode"}</div>
+                    ? <div className="message-author with-avatar"><AssistantAvatarImage name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} size={22} />{assistantProfile.name || "VortoCode"}
+                      {message.source && <span className="message-source">回复在手机上</span>}</div>
                     : <div className="message-author">{message.role === "user" ? "你" : message.role === "assistant" ? "VortoCode" : "Runtime"}</div>}
                   <div className="message-body">
+                    {message.role === "user" && sourceLabel(message.source) && <div className="message-source">{sourceLabel(message.source)}</div>}
                     {message.images && message.images.length > 0 && <div className="message-images">
                       {message.images.map((src, index) => <img key={index} src={src} alt={`发送的图片 ${index + 1}`} />)}
                     </div>}

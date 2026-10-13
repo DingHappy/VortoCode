@@ -435,3 +435,7 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 /* 随消息发出的图片：缩略图 */
 .message-images { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
 .message-images img { display: block; max-width: 220px; max-height: 160px; border: 1px solid var(--n5); border-radius: 8px; object-fit: cover; background: var(--n0); }
+
+/* 主要聊天里从手机发来的消息 */
+.message-source { display: inline-block; margin-bottom: 6px; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 500; color: var(--n10); background: var(--n3); }
+.message-author.with-avatar .message-source { margin: 0 0 0 4px; }
