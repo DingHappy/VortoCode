@@ -86,6 +86,45 @@ def _save_state(root: str, state: Dict[str, Any]) -> None:
     os.replace(tmp, path)
 
 
+_DIGEST_LIMIT = 300
+# 开发流水线报告里的流程提示：对看通知的人没用
+_BOILERPLATE = ("已把任务分解为", "（计划已存盘")
+_SENTENCE_ENDS = "。！？；\n"
+
+
+def _clip_head(text: str, limit: int) -> str:
+    """从头截到 limit 以内，尽量停在句末，不切半句；截了就补「…」。"""
+    if len(text) <= limit:
+        return text
+    head = text[:limit]
+    cut = max(head.rfind(ch) for ch in _SENTENCE_ENDS)
+    return (head[:cut + 1] if cut >= limit // 3 else head).rstrip() + "…"
+
+
+def result_digest(result: str, limit: int = _DIGEST_LIMIT) -> str:
+    """任务结果压成通知正文：从末尾往前取**整段**（结论和验收在后面），不在半句中间切。
+
+    以前取 ``result[-300:]``，开头会是「.py 新增…」这种半截话。省略了内容就提示去 Desktop 看全文。
+    """
+    text = result.replace("**", "").strip()
+    paragraphs = [part.strip() for part in text.split("\n\n") if part.strip()]
+    paragraphs = [part for part in paragraphs if not part.startswith(_BOILERPLATE)]
+    kept: List[str] = []
+    used = 0
+    for part in reversed(paragraphs):
+        cost = len(part) + (2 if kept else 0)
+        if used + cost > limit:
+            break
+        kept.insert(0, part)
+        used += cost
+    if not kept and paragraphs:                 # 最后一段本身就超长：取它的开头
+        kept = [_clip_head(paragraphs[-1], limit)]
+    digest = "\n\n".join(kept)
+    if digest and digest != "\n\n".join(paragraphs):
+        digest += "\n（完整结果在 Desktop 助理的「动态」里）"
+    return digest
+
+
 def status_message(item: Dict[str, Any]) -> str:
     title = f"{item.get('project')}：{item.get('title')}"
     status = item.get("status")
@@ -95,9 +134,9 @@ def status_message(item: Dict[str, Any]) -> str:
         return f"⏸ {title} 在等人回答，到工作台的常驻电脑项目里处理。"
     if status == "done":
         branch = f"，交付分支 {item['branch']}" if item.get("branch") else ""
-        result = str(item.get("result") or "").strip()
-        return f"✅ {title} 完成{branch}。" + (f"\n{result[-300:]}" if result else "")
-    return f"❌ {title} 失败：{str(item.get('error') or '没有错误信息')[:300]}"
+        digest = result_digest(str(item.get("result") or ""))
+        return f"✅ {title} 完成{branch}。" + (f"\n{digest}" if digest else "")
+    return f"❌ {title} 失败：{_clip_head(str(item.get('error') or '没有错误信息').strip(), _DIGEST_LIMIT)}"
 
 
 def build_report(root: str, now: datetime, label: str) -> str:

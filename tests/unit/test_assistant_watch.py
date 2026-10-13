@@ -180,3 +180,53 @@ async def test_report_is_written_by_the_model_with_fallback(tmp_path):
         async def chat(self, *_a, **_k):
             raise RuntimeError("relay down")
     assert (await watch.compose_report(root, now, "早报", llm=_Down())).startswith("🗒 早报（")   # 退回数据版
+
+
+# —— 完成通知正文：不在半句中间切（2026-10-11 真机：开头是「.py 新增…」）——
+
+_DEV_REPORT = """已把任务分解为 1 个子任务：1 个独立(并行) + 0 个有依赖(接力)。
+（计划已存盘 plan_id=bg-task-900ef4ce76；中断后可 dev_resume 续跑）
+
+【独立批】1/1 落到分支：
+  · 新增 short_hash 工具函数及单测（验收第三次）
+
+目标：
+验收用、不合并：在 src/utils/ids.py 新增 short_hash(text: str, n: int = 8) -> str，返回 text 的 sha256 十六进制摘要前 n 位；在 tests/unit/test_ids_short_hash.py 新增单测，覆盖默认长度 8、自定义长度、同输入同输出。只改这两个文件。
+
+验收标准：
+- 新单测通过
+- 全量测试通过
+- 只改这两个文件：✅
+
+✅ 全部落到 vorto/auto-190d3e2b（1 独立 + 0 依赖）且**集成后全量测试通过**（未碰 main，git checkout vorto/auto-190d3e2b 查看）。（本次改动含 1 个测试文件）"""
+
+
+def test_done_notice_keeps_whole_paragraphs_from_the_end():
+    from src.scheduling.assistant_watch import status_message
+    text = status_message({"project": "VortoCode", "title": "short_hash", "status": "done",
+                           "branch": "vorto/auto-190d3e2b", "result": _DEV_REPORT})
+    body = text.split("\n", 1)[1]
+    assert body.startswith("验收标准：")                       # 从整段开头起，不是半句话
+    assert "集成后全量测试通过" in body and "**" not in body    # 结论在，加粗符号去掉
+    assert "计划已存盘" not in body
+    assert body.endswith("（完整结果在 Desktop 助理的「动态」里）")
+
+
+def test_short_result_is_sent_whole_without_pointer():
+    from src.scheduling.assistant_watch import result_digest
+    assert result_digest("改好了。\n\n测试全过。") == "改好了。\n\n测试全过。"
+    assert result_digest("") == ""
+
+
+def test_single_overlong_paragraph_is_cut_at_a_sentence_end():
+    from src.scheduling.assistant_watch import result_digest
+    digest = result_digest("第一句话说明做了什么。" * 40)
+    first = digest.split("\n")[0]
+    assert len(first) <= 301 and first.endswith("。…")
+
+
+def test_failure_notice_is_not_cut_mid_sentence():
+    from src.scheduling.assistant_watch import status_message
+    text = status_message({"project": "P", "title": "t", "status": "failed",
+                           "error": "集成测试没过。" * 60})
+    assert text.endswith("。…") and len(text) < 340
