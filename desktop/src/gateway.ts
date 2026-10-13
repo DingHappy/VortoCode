@@ -391,6 +391,19 @@ export class GatewayClient {
     await this.request("/api/assistant/avatar", { method: "DELETE" });
   }
 
+  /** 主要聊天（手机、电脑共用的那一段）登记在常驻电脑上；还没登记返回 null。 */
+  async getMainChat(): Promise<string | null> {
+    const payload = await this.request<{ sid?: string | null }>("/api/assistant/main-chat");
+    return payload.sid ?? null;
+  }
+
+  async claimMainChat(sid: string): Promise<string> {
+    const payload = await this.request<{ sid?: string }>("/api/assistant/main-chat", {
+      method: "PUT", body: JSON.stringify({ sid }),
+    });
+    return payload.sid ?? sid;
+  }
+
   /** 手机上和助理的聊天（只读）。 */
   async listPhoneChats(): Promise<PhoneChat[]> {
     const payload = await this.request<{ chats?: PhoneChat[] }>("/api/assistant/phone-chats");
