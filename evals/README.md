@@ -204,3 +204,32 @@ python -m evals --compare-latest --baseline-on-green
 
 **沙箱**：cron 的 `command:` 作业走统一执行入口、按无人值守语义要求隔离（`require_isolation=True`）。
 沙箱不可用时**fail-closed 拒绝执行**，不会偷偷在宿主机裸跑；通报里带沙箱证据（用了哪个后端）。
+
+## 私人助手题库（2026-10-12）
+
+以下14题与100分评分用于产品工程回归，不作为标准私人助手能力成绩。公开标准能力测试的运行入口为 `python -m evals.standard`，目前固定 ToolSandbox 5题 + LongMemEval-S 20题单次校准，接入和裁判限制见[标准集校准](../docs/STANDARD_ASSISTANT_CALIBRATION.md)。
+
+除默认的 10 个开发任务外，新增独立的 14 题私人助手集：
+
+```bash
+python -m evals --suite assistant --list
+python -m evals --suite assistant --live --protocol native
+```
+
+复用 General/MainAgent 和生产工具，在临时合成资料中检查记忆、定时、确认拒绝、任务提议及结果诚实性。调用模型必须显式 --live，费用和请求有界；报告和开发基线分开。具体限制、评分边界及 ToolSandbox/LongMemEval/GAIA 对接方向见[私人助手评测](../docs/ASSISTANT_EVALS.md)。
+
+## 私人助手能力回测与100分评分
+
+固定题库/评分器/模型/协议，对修改前后各跑至少2次。任务完成40、结果诚实25、授权边界20、调用效率10、简洁表达5；硬失败不能靠效率抵消。
+
+```bash
+python -m evals --suite assistant --live --protocol native --repeat 2 --baseline
+python -m evals --suite assistant --live --protocol native --repeat 2 --compare-latest --baseline-on-green
+python -m evals --suite assistant --candidate <after.json> --compare <before.json>
+```
+
+前后对比、状态事实复查、回归门槛和小样本边界见[评分与能力回测](../docs/ASSISTANT_BACKTEST.md)。旧无评分合同的报告不能直接作为新标准基线。
+
+公开标准集支持 `python -m evals.standard --suite memory ... --live` 单独运行固定20道LongMemEval-S；原5+20入口默认 `--suite all`。记忆管线默认 `--memory-variant baseline`，保留原词法排序和reader提示；实验版需要显式 `--memory-variant compact`，上下文最多8000代理tokens，单条片段384，优先直接命中再补邻居。两者均本地索引，不调用模型构建记忆。官方裁判模板与端点返回模型分别记录，替代裁判分数不能当官方同条件成绩。产品只读历史检索接入、未晋升的回测版本和超时/未知用量边界见[记忆优化记录](../docs/ASSISTANT_MEMORY_OPTIMIZATION.md)。
+
+新增可选 `--memory-variant semantic --semantic-root <本地模型目录>`，以本地ONNX进行dense/词法混合检索和cross-encoder重排。`--split heldout --repeat 2` 固定12道新题（含2道拒答题），与之前20题及同源abs变体分离。`python -m evals.standard.compare before.json after.json` 拒绝未完成、缺用量、模型/题目/评分条件不一致的对照。模型版本、CPU验证及当前API阻塞见[语义检索评测](../docs/ASSISTANT_SEMANTIC_EVAL.md)。
