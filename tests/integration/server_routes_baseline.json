@@ -942,5 +942,17 @@
     "methods": [
       "DELETE"
     ]
+  },
+  {
+    "path": "/api/assistant/main-chat",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/assistant/main-chat",
+    "methods": [
+      "PUT"
+    ]
   }
 ]

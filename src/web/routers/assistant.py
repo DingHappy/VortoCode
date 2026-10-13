@@ -57,6 +57,26 @@ async def remove_avatar():
     return {"removed": assistant_profile.delete_avatar(os.getcwd())}
 
 
+@router.get("/api/assistant/main-chat")
+async def get_main_chat():
+    """主要聊天是哪一段（手机、电脑共用）；还没登记返回 sid=null。"""
+    from src.gateway.main_conversation import main_chat_key
+    key = main_chat_key(os.getcwd())
+    return {"sid": key[len("sid-"):] if key else None}
+
+
+@router.put("/api/assistant/main-chat")
+async def claim_main_chat(body: dict):
+    """登记主要聊天（Desktop 第一次连上时把自己已有的那段报上来）。已登记过就返回已登记的那段。"""
+    from src.gateway.main_conversation import claim_main_chat as claim
+    sid = str((body or {}).get("sid") or "")
+    try:
+        key = claim(os.getcwd(), f"sid-{sid}")
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"sid": key[len("sid-"):]}
+
+
 @router.get("/api/assistant/memories")
 async def get_memories():
     return {"memories": assistant_profile.list_memories(os.getcwd())}
