@@ -80,6 +80,8 @@ export interface ConversationMessage {
   role: "user" | "assistant" | "system";
   text: string;
   rid?: string;
+  /** 本次会话里随消息发出的图片（data URL，只在内存里，不落盘；重开会话后只剩「🖼×N」标记） */
+  images?: string[];
 }
 
 export type TurnActivityStatus = "running" | "completed" | "succeeded" | "failed" | "blocked" | "cancelled" | string;

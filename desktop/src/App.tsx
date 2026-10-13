@@ -2196,9 +2196,11 @@ function App() {
     const willQueue = busy;
     const displayText = text || (selectedAttachments.length > 0 ? "请查看我添加的附件。" : "请分析我选择的本地文件。");
     const rid = createSessionId().slice(0, 64);
+    // 图片直接显示缩略图，不再列文件名；其余附件和引用的文件照旧列名字
+    const sentImages = selectedAttachments.filter((item) => item.kind === "image").map((item) => item.data);
     const attachmentNote = [
       ...selectedContext.map(contextItemLabel),
-      ...selectedAttachments.map((item) => item.name),
+      ...selectedAttachments.filter((item) => item.kind !== "image").map((item) => item.name),
     ];
     setPrompt("");
     setContextItems([]);
@@ -2224,6 +2226,7 @@ function App() {
         role: "user",
         text: attachmentNote.length > 0 ? `${displayText}\n\n📎 ${attachmentNote.join(" · ")}` : displayText,
         rid,
+        ...(sentImages.length > 0 ? { images: sentImages } : {}),
       }]);
     }
     try {
@@ -3472,6 +3475,9 @@ function App() {
                     ? <div className="message-author with-avatar"><AssistantAvatarImage name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} size={22} />{assistantProfile.name || "VortoCode"}</div>
                     : <div className="message-author">{message.role === "user" ? "你" : message.role === "assistant" ? "VortoCode" : "Runtime"}</div>}
                   <div className="message-body">
+                    {message.images && message.images.length > 0 && <div className="message-images">
+                      {message.images.map((src, index) => <img key={index} src={src} alt={`发送的图片 ${index + 1}`} />)}
+                    </div>}
                     {message.role === "assistant" ? <MarkdownMessage text={message.text} /> : message.text}
                   </div>
                 </article>

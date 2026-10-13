@@ -431,3 +431,7 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 .assistant-avatar-actions button { flex: 1; }
 .message-author.with-avatar { display: flex; align-items: center; gap: 8px; }
 .message-author.with-avatar .assistant-avatar-initial, .message-author.with-avatar .assistant-avatar-image { box-shadow: none; }
+
+/* 随消息发出的图片：缩略图 */
+.message-images { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.message-images img { display: block; max-width: 220px; max-height: 160px; border: 1px solid var(--n5); border-radius: 8px; object-fit: cover; background: var(--n0); }
