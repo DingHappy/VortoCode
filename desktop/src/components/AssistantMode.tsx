@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { ArrowLeft, CalendarClock, Smartphone, Check, Clock3, Fingerprint, HeartPulse, Laptop, List, MessageCircle, MessagesSquare, PencilLine, Plus, Server, ShieldCheck, Trash2, X } from "lucide-react";
 import { useState } from "react";
-import type { AssistantMemory, AssistantProfile, AssistantScheduleItem, AuditEntry, MemoryProposal, PhoneChat } from "../types";
+import type { AssistantConnector, AssistantMemory, AssistantProfile, AssistantScheduleItem, AuditEntry, MemoryProposal, PhoneChat } from "../types";
 import { MarkdownMessage } from "./MarkdownMessage";
 
 export type AppMode = "assistant" | "work";
@@ -200,7 +200,7 @@ export function AssistantSchedule({ items }: { items: AssistantScheduleItem[] })
 }
 
 /** 「身份」：名字 + SOUL（它的性格）+ 关于你 + 记忆。点记忆卡片看全部、可以删。 */
-export function AssistantIdentity({ profile, memories, proposals = [], onEdit, onDeleteMemory, onDecideProposal }: {
+export function AssistantIdentity({ profile, memories, proposals = [], connectors = [], onEdit, onDeleteMemory, onDecideProposal, onConnector }: {
   profile: AssistantProfile;
   memories: AssistantMemory[];
   /** 聊天里提炼出的候选：你点 ✓ 才记 */
@@ -208,6 +208,9 @@ export function AssistantIdentity({ profile, memories, proposals = [], onEdit, o
   onEdit: () => void;
   onDeleteMemory: (memory: AssistantMemory) => void;
   onDecideProposal?: (proposal: MemoryProposal, approve: boolean) => void;
+  /** 连接的服务（GitHub 等） */
+  connectors?: AssistantConnector[];
+  onConnector?: (action: "connect" | "disconnect" | "open" | "copy", connector: AssistantConnector) => void;
 }) {
   const [showMemories, setShowMemories] = useState(false);
   if (showMemories) {
@@ -246,6 +249,7 @@ export function AssistantIdentity({ profile, memories, proposals = [], onEdit, o
         <span>{latest ? `最近 ${latest}` : ""}</span>
       </button>
     </div>
+    {connectors.length > 0 && <AssistantConnectors connectors={connectors} onAction={onConnector} />}
   </section>;
 }
 
@@ -263,4 +267,41 @@ export function PhoneChatDialog({ chat, onClose }: { chat: PhoneChat; onClose: (
       </article>)}
     </div>
   </section></div>;
+}
+
+const PROVIDER_NAMES: Record<string, string> = { github: "GitHub" };
+
+/** 连接的服务：点「连接」→ 显示验证码 → 你在 github.com/login/device 输入并授权 → 常驻电脑自动连上。 */
+export function AssistantConnectors({ connectors, onAction }: {
+  connectors: AssistantConnector[];
+  onAction?: (action: "connect" | "disconnect" | "open" | "copy", connector: AssistantConnector) => void;
+}) {
+  return <div className="assistant-connectors">
+    <h5>连接的服务</h5>
+    <ul>
+      {connectors.map((item) => {
+        const label = PROVIDER_NAMES[item.provider] ?? item.name;
+        return <li key={item.name}>
+          <div className="assistant-connector-head">
+            <strong>{label}</strong>
+            <small>{item.connected ? `已连接${item.read_only ? " · 只读" : ""}`
+              : item.authorizing ? "等你在 GitHub 上授权…" : item.expired ? "授权已过期" : "未连接"}</small>
+            {item.connected
+              ? <button onClick={() => onAction?.("disconnect", item)}>断开</button>
+              : !item.authorizing && <button className="primary" onClick={() => onAction?.("connect", item)}>连接</button>}
+          </div>
+          {item.authorizing && <div className="assistant-connector-code">
+            <p>在浏览器打开 GitHub 授权页，输入下面的验证码，点 Authorize：</p>
+            <code aria-label="验证码">{item.authorizing.user_code}</code>
+            <div>
+              <button onClick={() => onAction?.("copy", item)}>复制验证码</button>
+              <button className="primary" onClick={() => onAction?.("open", item)}>打开 GitHub</button>
+            </div>
+          </div>}
+          {item.error && !item.connected && <p className="assistant-connector-error" role="alert">{item.error}</p>}
+          {item.connected && <p className="assistant-connector-note">只读：能看仓库、Issue、PR 和 CI，不能改任何东西。新开的对话里生效。</p>}
+        </li>;
+      })}
+    </ul>
+  </div>;
 }

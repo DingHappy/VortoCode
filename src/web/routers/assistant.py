@@ -84,3 +84,31 @@ async def decide_memory_proposal(proposal_id: str, body: dict):
     if not result.get("ok"):
         raise HTTPException(status_code=409, detail=str(result.get("error") or "无法处理这条候选"))
     return result
+
+
+@router.get("/api/assistant/connectors")
+async def connectors_status():
+    """连接的服务（GitHub 等）：是否已连上、是否正在授权（验证码与链接）。不含令牌。"""
+    from src.workflow.workbench import connectors
+    return {"connectors": connectors.status(os.getcwd())}
+
+
+@router.post("/api/assistant/connectors/{name}/authorize")
+async def connector_authorize(name: str):
+    """发起设备授权：返回验证码与 github.com/login/device 链接，常驻电脑在后台等你点授权。"""
+    from src.workflow.workbench import connectors
+    try:
+        return await connectors.start_authorization(os.getcwd(), name)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except Exception as error:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=f"发起授权失败：{error}") from error
+
+
+@router.delete("/api/assistant/connectors/{name}")
+async def connector_disconnect(name: str):
+    from src.workflow.workbench import connectors
+    try:
+        return {"removed": connectors.disconnect(os.getcwd(), name)}
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error

@@ -6,6 +6,7 @@ import WebSocket, { type Message as WebSocketMessage } from "@tauri-apps/plugin-
 import type {
   AgentTurn,
   AssistantDispatch,
+  AssistantConnector,
   AssistantMemory,
   AssistantProfile,
   AssistantScheduleItem,
@@ -384,6 +385,21 @@ export class GatewayClient {
   async listAssistantMemories(): Promise<AssistantMemory[]> {
     const payload = await this.request<{ memories?: AssistantMemory[] }>("/api/assistant/memories");
     return Array.isArray(payload.memories) ? payload.memories : [];
+  }
+
+  /** 连接的服务（GitHub 等）。 */
+  async listConnectors(): Promise<AssistantConnector[]> {
+    const payload = await this.request<{ connectors?: AssistantConnector[] }>("/api/assistant/connectors");
+    return Array.isArray(payload.connectors) ? payload.connectors : [];
+  }
+
+  /** 发起设备授权：拿到给人看的验证码与链接，常驻电脑在后台等你在 GitHub 上点授权。 */
+  async authorizeConnector(name: string): Promise<{ user_code: string; verification_uri: string }> {
+    return this.request(`/api/assistant/connectors/${encodeURIComponent(name)}/authorize`, { method: "POST" });
+  }
+
+  async disconnectConnector(name: string): Promise<void> {
+    await this.request(`/api/assistant/connectors/${encodeURIComponent(name)}`, { method: "DELETE" });
   }
 
   /** 聊天里提炼出的「关于你」候选（待确认）。 */
