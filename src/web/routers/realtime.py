@@ -11,6 +11,7 @@ from fastapi import Request
 
 from src.gateway import protocol as P
 from src.gateway.sessions import SessionTable, SessionCapacityError
+from src.gateway.main_conversation import set_main_conversation_host
 from src.gateway.session_event_stream import SessionEventStream
 from src.gateway.session_actor import (
     ActorContext, SessionActors, MAX_PROMPT_QUEUE as _MAX_PROMPT_QUEUE,
@@ -1054,6 +1055,72 @@ def _actor_context(websocket) -> ActorContext:
                 P.AGENT_CANCELLED, text="此回合尚未执行，输入已保留在队列。", rid=item.get("rid") or item["id"]),
             fallback=websocket),
     )
+
+
+# ── 主要聊天的其他入口（Telegram 等）：同一个 actor 槽位、同一份历史 ─────────────────────────
+def _key_actor_context(key: str) -> ActorContext:
+    """不依附某条 WebSocket 的 actor 上下文：外部入口的回合用它占位，事件广播给这段对话的所有观察者。"""
+    import os
+
+    def session() -> Dict[str, Any]:
+        return _TABLE.get(key, repo_root=os.getcwd(), factory=_new_agent, max_sessions=_MAX_SESSIONS)
+
+    context: ActorContext
+
+    async def publish() -> None:
+        await _publish_session_event(key, P.make_event(P.AGENT_QUEUE, **_ACTORS.snapshot(context)))
+
+    async def _no_execute(_item: Dict[str, Any]) -> None:   # 外部回合不从队列启动
+        return None
+
+    context = ActorContext(key=key, get_session=session, touch=lambda: _touch_session(session()),
+                           persist=lambda: _TABLE.persist(key, os.getcwd()), publish=publish,
+                           execute=_no_execute)
+    return context
+
+
+def _append_transcript(sess: Dict[str, Any], role: str, text: str, *, rid: str, source: str) -> None:
+    from datetime import datetime, timezone
+    transcript = sess["transcript"]
+    transcript.append({"role": role, "text": str(text), "rid": rid, "source": source,
+                       "at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+    _touch_session(sess)
+    if len(transcript) > _MAX_TRANSCRIPT:
+        del transcript[:-_MAX_TRANSCRIPT]
+
+
+class MainConversationBusy(RuntimeError):
+    """主要聊天里前面的回合一直没结束，外部入口这一轮没能排上。"""
+
+
+async def _run_main_conversation_turn(*, key: str, source: str, user_text: str, rid: str, run) -> str:
+    """外部入口的一个回合：拿主要聊天的最新历史跑完，历史交回、记进对话、推给正在看的 Desktop。"""
+    context = _key_actor_context(key)
+    outcome: Dict[str, str] = {"reply": ""}
+
+    async def execute() -> None:
+        sess = context.get_session()
+        _append_transcript(sess, "user", user_text, rid=rid, source=source)
+        await _publish_session_event(key, P.make_event(P.AGENT_HISTORY, items=list(sess["transcript"])))
+        try:
+            history, reply = await run(list(getattr(sess["agent"], "history", None) or []))
+            sess["agent"].history = list(history)
+            _append_transcript(sess, "assistant", reply, rid=rid, source=source)
+            outcome["reply"] = str(reply)
+            _schedule_turn_digest(key, rid)
+        finally:
+            context.persist()
+            await _publish_session_event(key, P.make_event(P.AGENT_HISTORY, items=list(sess["transcript"])))
+            await _publish_session_event(key, P.make_event(P.AGENT_DONE, rid=rid))
+
+    item = _new_prompt_item(text=user_text, mode="plan", images=[], audio=[], rid=rid,
+                           want_reasoning=False, context_items=[])
+    if not await _ACTORS.run_exclusive(context, execute, item=item):
+        raise MainConversationBusy("主要聊天里还有回合没结束，稍后再发一次")
+    return outcome["reply"]
+
+
+set_main_conversation_host(_run_main_conversation_turn)
 
 
 def _prompt_queue(websocket) -> list[Dict[str, Any]]:

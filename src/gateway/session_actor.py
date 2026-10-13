@@ -269,6 +269,38 @@ class SessionActors:
         else:
             await context.publish()
 
+    async def run_exclusive(self, context: ActorContext, execute: Callable[[], Awaitable[None]], *,
+                            item: Prompt | None = None, wait_timeout: float = 600.0,
+                            poll: float = 0.2) -> bool:
+        """另一个入口（如 Telegram）的回合：等当前回合和已排队的输入跑完，占住同一个槽位跑到底。
+
+        与 Web 回合同一把「锁」——同一时刻只有一个回合改这段对话的历史。占位期间 Web 新输入照常
+        进队列（不会像后台检查那样被抢占），结束后由 advance 接着跑队列。「停止」照常可以中断它。
+        等太久（前面的回合卡住）返回 False，由调用方告诉用户稍后再试。
+        ``item`` 给了就登记为「正在跑」，观察者（Desktop）据此显示这一轮在进行中。
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + wait_timeout
+        while self.busy(context.key) or self.queue(context) or context.key in self.priority:
+            if loop.time() >= deadline:
+                return False
+            await asyncio.sleep(poll)
+        # 检查与占位之间没有 await：别的观察者看到的一定是已占用的槽位。
+        self.auto_stopped.discard(context.key)
+        if item is not None:
+            self.running[context.key] = item
+        self._launch(context, execute, kind="external")
+        task = self.tasks[context.key]
+        await context.publish()
+        try:
+            await asyncio.wait({task})
+        except asyncio.CancelledError:
+            if not task.done():               # 调用方自己被取消：把回合也停掉
+                request_cancel(task)
+            raise
+        task.result()                         # 回合出错原样抛给调用方；被「停止」则抛 CancelledError
+        return True
+
     def cancel(self, key: str, *, reason: str = "stop") -> bool:
         if reason in {"stop", "disconnect"}:
             self.auto_stopped.add(key)

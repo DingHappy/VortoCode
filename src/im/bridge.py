@@ -109,6 +109,12 @@ def normalize_allow_from(allow_from: Optional[Iterable], owner_id: str) -> froze
     return frozenset(str(x).strip() for x in allow_from if str(x).strip())
 
 
+def _shared_text(text: str, images: Optional[list], files: Optional[list]) -> str:
+    """写进主要聊天的那一行：原话 + 附件标记（图片/文件本身不进对话记录）。"""
+    marks = ([f"🖼×{len(images)}"] if images else []) + ([f"📎×{len(files)}"] if files else [])
+    return f"{text}　{' '.join(marks)}" if marks else text
+
+
 class IMBridge:
     def __init__(self, repo_root: str, adapter: ChannelAdapter, owner_id: str, *,
                  channel: str = "im", mode: str = "plan", llm=None, runner=None,
@@ -247,7 +253,8 @@ class IMBridge:
             save_session(self.repo_root, self._sid,
                          transcript=list(getattr(self, "_transcript", []))[-_MAX_TRANSCRIPT:],
                          title=f"📱 {_CHANNEL_NAMES.get(channel, channel)}",
-                         history=self.agent.history, plan=getattr(self.agent, "plan", None),
+                         history=[] if self._shares_main_chat() else self.agent.history,
+                         plan=getattr(self.agent, "plan", None),
                          tool_names=session_tool_names(self.agent),
                          behavior_fp=session_behavior_fp(self.agent),
                          mode=self.mode)
@@ -572,6 +579,9 @@ class IMBridge:
             if warn:
                 msg += "\n" + warn
             await self._safe_send(msg)
+        elif cmd == "/new" and self._shares_main_chat():
+            await self._safe_send("手机和电脑现在共用一段主要聊天，不能在这里清空。"
+                                  "想换个话题，可以在 Desktop 里开一个旁聊。")
         elif cmd == "/new":
             self.agent.history = []
             if hasattr(self.agent, "plan"):
@@ -1051,6 +1061,13 @@ class IMBridge:
         await self._safe_send("后台任务：\n" + "\n".join(lines))
 
     # ------------------------------------------------------------ 一个回合（queue+drain+Future）
+    def _shares_main_chat(self) -> bool:
+        """常驻助理（通用范围）且主要聊天已登记、宿主在本进程：手机上的话写进那一段。"""
+        if self.workspace_scope != "general":
+            return False
+        from src.gateway.main_conversation import shared_turn_target
+        return shared_turn_target(self.repo_root) is not None
+
     def _record(self, role: str, text: str, rid: str) -> dict:
         """记一条对话记录（与 Web 会话同一格式：role / text / rid / at）。"""
         from datetime import datetime, timezone
@@ -1087,7 +1104,9 @@ class IMBridge:
                         files: Optional[list] = None) -> None:
         import uuid
         rid = f"im-{uuid.uuid4().hex[:12]}"
-        self._record("user", text, rid)
+        shared = self._shares_main_chat()
+        if not shared:
+            self._record("user", text, rid)
         reply_holder: dict = {}
         q: asyncio.Queue = asyncio.Queue()
         self._confirm_holder["fn"] = self._make_confirm(q)
@@ -1111,12 +1130,34 @@ class IMBridge:
                     prompt = ((prompt + "\n\n") if prompt else "") + \
                         "（用户随消息发来文件，已存到：\n" + \
                         "\n".join(f"  {f}" for f in files) + "\n用 read_file 读取。）"
-                reply = await self.agent.run_turn(prompt, mode=self.mode, say=_say,
-                                                  images=list(images or []) or None,
-                                                  emit=lambda t: emitted.append(str(t)))
-                if not str(reply or "").strip() and emitted:
-                    reply = emitted[-1]                  # 死因兜底：把 emit 的错误原文交出去
-                reply_holder["entry"] = self._record("assistant", reply, rid)
+                async def _turn() -> str:
+                    reply = await self.agent.run_turn(prompt, mode=self.mode, say=_say,
+                                                      images=list(images or []) or None,
+                                                      emit=lambda t: emitted.append(str(t)))
+                    if not str(reply or "").strip() and emitted:
+                        reply = emitted[-1]              # 死因兜底：把 emit 的错误原文交出去
+                    return str(reply or "")
+
+                if shared:
+                    # 主要聊天：拿那一段的最新历史跑本回合（工具/污点/确认仍是 IM 自己的），跑完交回。
+                    # 对话记录与「动态」摘要由主要聊天那边统一写，这里不再各记一份。
+                    from src.gateway.main_conversation import run_external_turn
+
+                    async def _run(history: list):
+                        self.agent.history = list(history)
+                        reply = await _turn()
+                        return list(self.agent.history), reply
+
+                    reply = await run_external_turn(self.repo_root, source=self.channel,
+                                                    user_text=_shared_text(text, images, files),
+                                                    rid=rid, run=_run)
+                    if reply is None:                    # 刚好不能合并（宿主没了）：照旧单独跑
+                        self._record("user", text, rid)
+                        reply = await _turn()
+                        reply_holder["entry"] = self._record("assistant", reply, rid)
+                else:
+                    reply = await _turn()
+                    reply_holder["entry"] = self._record("assistant", reply, rid)
                 q.put_nowait(("final", reply))
             except asyncio.CancelledError:
                 q.put_nowait(("final", "（已取消）"))
