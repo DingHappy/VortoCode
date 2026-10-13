@@ -153,3 +153,14 @@ async def test_dated_tool_reports_excluded_sources_and_original_read_is_untruste
     assert result['kind'] == 'untrusted_conversation_evidence'
     assert result['excerpts'][0]['content'] == '显卡 unknown'
     assert read.read_only and read.untrusted_source
+
+
+def test_gateway_message_at_is_used_for_date_filter_and_original_read(tmp_path):
+    from src.gateway.session_store import save_session
+    from src.memory.archive_search import read_archive_excerpt
+    assert save_session(str(tmp_path), 'sid-fixture', [
+        {'role': 'user', 'text': 'fictional violin preference', 'at': '2024-01-01T09:00:00Z'}], [], None)
+    row = search_archives(str(tmp_path), 'violin', after='2024-01-01', before='2024-01-01')['rows'][0]
+    assert row['date_kind'] == 'message_timestamp' and row['date'] == '2024-01-01T09:00:00Z'
+    restored = read_archive_excerpt(str(tmp_path), row['id'], row['archive_revision'])
+    assert restored['date'] == row['date'] and restored['date_kind'] == row['date_kind']

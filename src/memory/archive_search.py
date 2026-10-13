@@ -104,7 +104,7 @@ def read_archive_excerpt(repo_root, evidence_id, revision, *, offset=0):
     if offset > len(content):
         raise ValueError('offset 超出消息长度')
     end = min(offset + 6000, len(content))
-    timestamp = turn.get('timestamp') or turn.get('ts')
+    timestamp = turn.get('timestamp') or turn.get('ts') or turn.get('at')
     return {'id': evidence_id, 'source_session': sid, 'archive_revision': revision,
             'role': turn['role'], 'content': content[offset:end], 'offset': offset,
             'content_length': len(content), 'truncated': end < len(content),
@@ -156,7 +156,7 @@ def search_archives(repo_root: str, query: str, *, limit=8, after=None, before=N
             content = turn.get('text') or turn.get('content')
             if not isinstance(content, str) or not content.strip():
                 continue
-            date = turn.get('timestamp') or turn.get('ts')
+            date = turn.get('timestamp') or turn.get('ts') or turn.get('at')
             day = _message_day(date)
             if start or end:
                 if day is None:
