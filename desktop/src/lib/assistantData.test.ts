@@ -70,3 +70,23 @@ it("a profile read started before saving cannot restore the previous identity", 
   expect(sinks.profile).toHaveBeenCalledTimes(1);
   expect(sinks.profile).toHaveBeenLastCalledWith({ name: "saved name" });
 });
+
+it("avatar: late response after switching host is dropped; a server without the route keeps the initial", async () => {
+  const slow = deferred<any>();
+  const base = { listAgentActivity: async () => [], listDispatches: async () => [],
+    getAssistantProfile: async () => ({ name: "x" }), listPhoneChats: async () => [] };
+  const late = { ...base, getAssistantAvatar: () => slow.promise } as unknown as GatewayClient;
+  const avatar = vi.fn();
+  let current = true;
+  const loading = loadAssistantData(late, () => current, { turns: vi.fn(), dispatches: vi.fn(), profile: vi.fn(), chats: vi.fn(), avatar });
+  current = false;
+  slow.resolve({ type: "image/png", data: "AAAA" });
+  await loading;
+  expect(avatar).not.toHaveBeenCalled();
+
+  const old = { ...base, getAssistantAvatar: async () => { throw new Error("404"); } } as unknown as GatewayClient;
+  const dispatches = vi.fn();
+  await expect(loadAssistantData(old, () => true, { turns: vi.fn(), dispatches, profile: vi.fn(), chats: vi.fn(), avatar })).resolves.toBeUndefined();
+  expect(avatar).not.toHaveBeenCalled();
+  expect(dispatches).toHaveBeenCalled();
+});

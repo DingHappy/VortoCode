@@ -420,3 +420,14 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 .assistant-starter-list button:hover { border-color: var(--daily-accent); background: var(--daily-accent-soft); }
 .assistant-starter-list strong { font-size: 13px; font-weight: 600; color: var(--n13); }
 .assistant-starter-list span { font-size: 12px; line-height: 1.5; color: var(--n10); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-line; }
+
+/* 助理头像：图或名字首字 */
+.assistant-avatar { background: none; box-shadow: none; }
+.assistant-avatar-image, .assistant-avatar-initial { display: flex; align-items: center; justify-content: center; width: 64px; height: 64px; flex: none; border-radius: 50%; object-fit: cover; font-weight: 700; color: #fff; box-shadow: 0 6px 18px rgba(65, 104, 201, .2); }
+.assistant-avatar-initial { font-size: 26px; }
+.assistant-profile-head { display: flex; align-items: center; gap: 10px; }
+.assistant-profile-head .assistant-avatar-initial, .assistant-profile-head .assistant-avatar-image { box-shadow: none; }
+.assistant-avatar-actions { display: flex; gap: 8px; }
+.assistant-avatar-actions button { flex: 1; }
+.message-author.with-avatar { display: flex; align-items: center; gap: 8px; }
+.message-author.with-avatar .assistant-avatar-initial, .message-author.with-avatar .assistant-avatar-image { box-shadow: none; }

@@ -1,8 +1,9 @@
 import { AssistantScheduleCard } from "./AssistantScheduleCard";
 import type { ReactNode } from "react";
 import { ArrowLeft, Smartphone, Check, Clock3, Fingerprint, Laptop, List, MessageCircle, MessagesSquare, PencilLine, Plus, Server, ShieldCheck, Trash2, X } from "lucide-react";
-import { useState } from "react";
-import type { AssistantConnector, AssistantMemory, AssistantProfile, AssistantScheduleItem, AuditEntry, MemoryProposal, PhoneChat } from "../types";
+import { useRef, useState } from "react";
+import { avatarHue, avatarInitial, avatarSrc } from "../lib/avatar";
+import type { AssistantAvatar, AssistantConnector, AssistantMemory, AssistantProfile, AssistantScheduleItem, AuditEntry, MemoryProposal, PhoneChat } from "../types";
 import { MarkdownMessage } from "./MarkdownMessage";
 
 export type AppMode = "assistant" | "work";
@@ -59,8 +60,9 @@ const TABS: Array<{ id: AssistantTab; label: string; icon: ReactNode }> = [
   { id: "identity", label: "身份", icon: <Fingerprint size={16} aria-hidden="true" /> },
 ];
 
-export function AssistantPanel({ name, connected, host, onAddResident, onRetryResident, onEditProfile, modelLabel, tab, onTab, onClose, waiting, children }: {
+export function AssistantPanel({ name, avatar, connected, host, onAddResident, onRetryResident, onEditProfile, modelLabel, tab, onTab, onClose, waiting, children }: {
   name: string; connected: boolean; modelLabel?: string;
+  avatar?: AssistantAvatar | null;
   host: AssistantHostInfo;
   /** 还没登记常驻电脑：去登记 */
   onAddResident: () => void;
@@ -77,7 +79,7 @@ export function AssistantPanel({ name, connected, host, onAddResident, onRetryRe
     <button className="assistant-panel-close" aria-label="收起侧栏" title="收起侧栏" onClick={onClose}><X size={16} /></button>
     <div className="assistant-identity">
       <div className="assistant-avatar">
-        <span aria-hidden="true">{name.slice(0, 1).toUpperCase()}</span>
+        <AssistantAvatarImage name={name} avatar={avatar} />
         {onEditProfile && <button aria-label="修改助理资料" title="名字、SOUL 与「关于你」" onClick={onEditProfile}><PencilLine size={12} /></button>}
       </div>
       <strong className="assistant-name">{name}</strong>
@@ -206,8 +208,11 @@ export function AssistantSchedule({ items, connected = false, onToggle, onHistor
 }
 
 /** 「身份」：名字 + SOUL（它的性格）+ 关于你 + 记忆。点记忆卡片看全部、可以删。 */
-export function AssistantIdentity({ profile, memories, proposals = [], connectors = [], onEdit, onDeleteMemory, onDecideProposal, onConnector }: {
+export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposals = [], connectors = [], onEdit, onDeleteMemory, onDecideProposal, onConnector }: {
   profile: AssistantProfile;
+  /** 头像：选了文件就换，null 恢复成名字首字 */
+  avatar?: AssistantAvatar | null;
+  onAvatar?: (file: File | null) => void;
   memories: AssistantMemory[];
   /** 聊天里提炼出的候选：你点 ✓ 才记 */
   proposals?: MemoryProposal[];
@@ -219,6 +224,7 @@ export function AssistantIdentity({ profile, memories, proposals = [], connector
   onConnector?: (action: "connect" | "disconnect" | "open" | "copy", connector: AssistantConnector) => void;
 }) {
   const [showMemories, setShowMemories] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
   if (showMemories) {
     return <section className="assistant-section">
       <h5><button className="assistant-back" aria-label="返回身份" onClick={() => setShowMemories(false)}><ArrowLeft size={14} /></button>记忆</h5>
@@ -238,8 +244,17 @@ export function AssistantIdentity({ profile, memories, proposals = [], connector
   const latest = memories[0]?.created_at?.slice(0, 10).replace(/-/g, ".").slice(2);
   return <section className="assistant-section">
     <div className="assistant-profile-card">
-      <strong>{profile.name}</strong>
+      <div className="assistant-profile-head">
+        <AssistantAvatarImage name={profile.name} avatar={avatar} size={44} />
+        <strong>{profile.name}</strong>
+      </div>
       <button onClick={onEdit}><PencilLine size={13} />编辑</button>
+      {onAvatar && <div className="assistant-avatar-actions">
+        <button onClick={() => fileRef.current?.click()}>换头像</button>
+        {avatar && <button onClick={() => onAvatar(null)}>用名字首字</button>}
+        <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden
+          onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) onAvatar(file); }} />
+      </div>}
     </div>
     <div className="assistant-cards">
       <button className="assistant-card soul" onClick={onEdit}>
@@ -331,4 +346,16 @@ export function AssistantStarterTips({ tips, onPick, onDismiss }: {
       </button>)}
     </div>
   </div>;
+}
+
+/** 助理头像：有图用图，没有就用名字首字（颜色随名字）。 */
+export function AssistantAvatarImage({ name, avatar, size }: { name: string; avatar?: AssistantAvatar | null; size?: number }) {
+  const src = avatarSrc(avatar);
+  const style = size ? { width: size, height: size, fontSize: Math.round(size * 0.42) } : undefined;
+  if (src) return <img className="assistant-avatar-image" src={src} alt="" style={style} />;
+  const hue = avatarHue(name);
+  return <span className="assistant-avatar-initial" aria-hidden="true"
+    style={{ ...style, background: `linear-gradient(135deg, hsl(${hue} 62% 60%), hsl(${(hue + 24) % 360} 58% 44%))` }}>
+    {avatarInitial(name)}
+  </span>;
 }

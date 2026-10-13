@@ -924,5 +924,23 @@
     "methods": [
       "GET"
     ]
+  },
+  {
+    "path": "/api/assistant/avatar",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/assistant/avatar",
+    "methods": [
+      "PUT"
+    ]
+  },
+  {
+    "path": "/api/assistant/avatar",
+    "methods": [
+      "DELETE"
+    ]
   }
 ]

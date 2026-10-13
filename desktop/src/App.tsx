@@ -4,10 +4,11 @@ import { WorkbenchLauncher, WorkbenchTabs, type WorkbenchTool } from "./componen
 import { ActivityFeed } from "./components/ActivityFeed";
 import { AssistantTaskCard } from "./components/AssistantTaskCard";
 import { loadAssistantData } from "./lib/assistantData";
+import { prepareAvatar } from "./lib/avatar";
 import { AssistantRefreshQueue } from "./lib/assistantRefresh";
 import { AssistantActionGate, type AssistantTaskAction } from "./lib/assistantTask";
 import { openAssistantTask } from "./lib/assistantNavigation";
-import { AssistantAudit, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PhoneChatDialog, type AppMode, type AssistantTab } from "./components/AssistantMode";
+import { AssistantAudit, AssistantAvatarImage, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PhoneChatDialog, type AppMode, type AssistantTab } from "./components/AssistantMode";
 import { dispatchFeedItem, isPhoneSession, noticeFeedItem, taskFeedItem, turnFeedItem, type FeedItem } from "./lib/activityFeed";
 import { ConfirmationReply } from "./components/ConfirmationReply";
 import { createConfirmationReply } from "./lib/confirm";
@@ -64,6 +65,7 @@ import type {
   AssistantDispatch,
   AssistantMemory,
   AssistantProfile,
+  AssistantAvatar,
   MemoryProposal,
   AssistantConnector,
   AssistantScheduleItem,
@@ -335,6 +337,7 @@ function App() {
   const [assistantTab, setAssistantTab] = useState<AssistantTab>("feed");
   // 助理的名字 / 关于你，以及它记住的事（都在助理所在的那台电脑上）
   const [assistantProfile, setAssistantProfile] = useState<AssistantProfile>({ name: "VortoCode", soul: "", about_you: "" });
+  const [assistantAvatar, setAssistantAvatar] = useState<AssistantAvatar | null>(null);
   const scheduleReadEpoch = useRef(0);
   const [assistantSchedule, setAssistantSchedule] = useState<AssistantScheduleItem[]>([]);
   const [assistantMemories, setAssistantMemories] = useState<AssistantMemory[]>([]);
@@ -369,7 +372,7 @@ function App() {
   useEffect(() => {
     assistantLoadEpoch.current += 1;
     setAgentTurns([]); setDispatches([]); setDispatchSnapshotScope(null); setPhoneChats([]); setPhoneChatSid(null);
-    setAssistantProfile({ name: "VortoCode", soul: "", about_you: "" });
+    setAssistantProfile({ name: "VortoCode", soul: "", about_you: "" }); setAssistantAvatar(null);
     setAssistantSchedule([]); setAssistantMemories([]); setMemoryProposals([]);
     setSelectedDispatchId(null); setProfileDialogOpen(false);
   }, [assistantScope]);
@@ -2032,7 +2035,7 @@ function App() {
           dispatches: items => { setDispatches(items); setDispatchSnapshotScope(scope); },
           dispatchError: () => setDispatches(previous => previous.map(item => ({ ...item,
             sync_state: "unreachable", sync_error: "无法读取最新任务单，请恢复连接后核对" }))),
-          profile: setAssistantProfile, chats: setPhoneChats }, refreshId);
+          profile: setAssistantProfile, chats: setPhoneChats, avatar: setAssistantAvatar }, refreshId);
     });
     if (refreshId) await request;
     else await request.catch(() => {}); // Background polling reports failures through snapshot freshness.
@@ -3465,7 +3468,9 @@ function App() {
             {messages.map((message) => (
               <Fragment key={message.id}>
                 <article className={`message ${message.role}`}>
-                  <div className="message-author">{message.role === "user" ? "你" : message.role === "assistant" ? "VortoCode" : "Runtime"}</div>
+                  {appMode === "assistant" && message.role === "assistant"
+                    ? <div className="message-author with-avatar"><AssistantAvatarImage name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} size={22} />{assistantProfile.name || "VortoCode"}</div>
+                    : <div className="message-author">{message.role === "user" ? "你" : message.role === "assistant" ? "VortoCode" : "Runtime"}</div>}
                   <div className="message-body">
                     {message.role === "assistant" ? <MarkdownMessage text={message.text} /> : message.text}
                   </div>
@@ -3485,7 +3490,9 @@ function App() {
 
             {streaming && (
               <article className="message assistant streaming">
-                <div className="message-author">VortoCode <span>正在回复</span></div>
+                {appMode === "assistant"
+                  ? <div className="message-author with-avatar"><AssistantAvatarImage name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} size={22} />{assistantProfile.name || "VortoCode"} <span>正在回复</span></div>
+                  : <div className="message-author">VortoCode <span>正在回复</span></div>}
                 <div className="message-body"><MarkdownMessage text={streaming} /><i className="cursor" data-rid={streamingRid} /></div>
               </article>
             )}
@@ -3713,7 +3720,7 @@ function App() {
         )}
 
         {mainView === "chat" && inspectorOpen && appMode === "assistant" && (
-          <AssistantPanel name={assistantProfile.name || "VortoCode"} connected={connection === "connected"}
+          <AssistantPanel name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} connected={connection === "connected"}
             onEditProfile={() => setProfileDialogOpen(true)}
             host={onAssistantHost() ? { kind: "resident", name: findAssistantHost(projects)?.name ?? "常驻电脑", reachable: connection === "connected" } : { kind: "local", canAddResident: !findAssistantHost(projects) }}
             onAddResident={() => setRemoteDialogOpen("assistant")}
@@ -3771,6 +3778,17 @@ function App() {
                     return runs;
                   }} />
               : assistantTab === "identity" ? <AssistantIdentity profile={assistantProfile} memories={assistantMemories}
+                  avatar={assistantAvatar}
+                  onAvatar={(file) => void (async () => {
+                    const client = clientRef.current;
+                    if (!client) return;
+                    try {
+                      if (file) setAssistantAvatar(await client.saveAssistantAvatar(await prepareAvatar(file)));
+                      else { await client.removeAssistantAvatar(); setAssistantAvatar(null); }
+                    } catch (error) {
+                      setBanner(errorText(error, "换头像失败"));
+                    }
+                  })()}
                   proposals={memoryProposals}
                   connectors={connectors}
                   onConnector={(action, connector) => void (async () => {
