@@ -376,6 +376,17 @@ export class GatewayClient {
   }
 
   /** 助理名下的定时事项（早晚报、跟进、Heartbeat、定时作业）。 */
+  async setScheduleEnabled(name: string, enabled: boolean, revision: string): Promise<void> {
+    await this.request(`/api/cron/${encodeURIComponent(name)}/enabled`, {
+      method: "PUT", body: JSON.stringify({ enabled, revision }),
+    });
+  }
+
+  async getScheduleHistory(name: string): Promise<import("./types").AssistantScheduleRun[]> {
+    const payload = await this.request<{ runs: import("./types").AssistantScheduleRun[] }>(`/api/cron/${encodeURIComponent(name)}/history`);
+    return payload.runs;
+  }
+
   async getAssistantSchedule(): Promise<AssistantScheduleItem[]> {
     const payload = await this.request<{ items?: AssistantScheduleItem[] }>("/api/assistant/schedule");
     return Array.isArray(payload.items) ? payload.items : [];

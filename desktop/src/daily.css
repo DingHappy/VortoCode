@@ -370,6 +370,14 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 .assistant-memories.proposals li { background: var(--n2); border-radius: 8px; border-bottom: 0; margin-bottom: 4px; }
 .assistant-proposal-flag { display: block; margin-top: 2px; font-size: 11px; color: var(--amber-text); }
 
+.assistant-schedule > .assistant-schedule-card { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.assistant-schedule-card p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.assistant-schedule-card small { overflow-wrap: anywhere; }
+.assistant-schedule-history { display: flex; flex-direction: column; gap: 12px; }
+.assistant-schedule-history article { border-top: 1px solid var(--n5); padding-top: 8px; }
+
+.assistant-schedule > .assistant-schedule-card.disabled { opacity: 1; }
+
 /* 连接的服务 */
 .assistant-connectors { margin-top: 16px; }
 .assistant-connectors h5 { margin: 0 4px 8px; font-size: 13px; font-weight: 650; color: var(--n13); }

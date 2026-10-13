@@ -258,16 +258,20 @@ def schedule_overview(root: str) -> List[Dict[str, Any]]:
         items.append({"id": "heartbeat", "kind": "heartbeat", "title": "Heartbeat",
                       "schedule": f"每 {every}", "detail": "按 HEARTBEAT.md 检查单巡视，有情况才告诉你", "enabled": True})
     try:
-        from src.scheduling.cron import CronState, load_jobs, next_due
+        from src.scheduling.cron import CronState, next_due
+        from src.scheduling.schedule_cards import config_snapshot
 
         now = datetime.now()
         state = CronState(root)
-        for job in load_jobs(root):
+        jobs, revision = config_snapshot(root)
+        scheduler_enabled = os.getenv("VORTOCODE_CRON", "").strip().lower() in ("1", "true", "yes", "on")
+        for job in jobs:
             last = state.last_run(job.name)
             due = next_due(job.schedule, last, now) if job.enabled else None
             items.append({"id": f"cron-{job.name}", "kind": "cron", "title": job.name,
                           "schedule": job.schedule.raw, "detail": (job.prompt or job.command or "")[:200],
-                          "enabled": bool(job.enabled),
+                          "enabled": bool(job.enabled), "revision": revision,
+                          "scheduler_enabled": scheduler_enabled, "failures": state.failures(job.name),
                           "next": due.isoformat(timespec="minutes") if due else None,
                           "last": last.isoformat(timespec="minutes") if last else None})
     except Exception:  # noqa: BLE001 —— 作业表坏了不影响其余几项
@@ -300,9 +304,24 @@ def build_status_tools(root: str) -> list:
         if not items:
             return "没有定时事项。"
         return "\n".join(f"- {item['title']}：{item['schedule']}{'' if item['enabled'] else '（已停用）'}"
-                         + (f"，上次 {item['last']}" if item.get("last") else "") for item in items)
+                         + ("；调度总开关未开启，不会自动执行" if item.get("scheduler_enabled") is False else "")
+                         + (f"，上次定时执行 {item['last']}" if item.get("last") else "") for item in items)
 
-    tools = [Tool("today_activity", "今天和用户聊过的事（每件一行：时间、标题、结果）。", {}, _today),
-             Tool("schedule_list", "列出定时事项（早晚报、跟进、你交代的作业）与上次运行时间。", {}, _cron)]
+    async def _history(args: dict) -> str:
+        from src.scheduling.cron import load_jobs
+        from src.scheduling.schedule_cards import recent_runs
+
+        name = str(args.get("name") or "").strip()
+        if name not in {job.name for job in load_jobs(root)}:
+            return "没有这个定时作业；先用 schedule_list 查看名称。"
+        rows = recent_runs(root, name)
+        if not rows:
+            return f"{name}：没有找到保留的执行记录，不能据此判断从未执行。"
+        return json.dumps({"job": name, "retained_only": True, "runs": rows}, ensure_ascii=False)
+
+    tools = [Tool("today_activity", "今天和用户聊过的事（每件一行：时间、标题、结果）。", {}, _today, untrusted_source=True),
+             Tool("schedule_list", "列出定时事项（早晚报、跟进、你交代的作业）与上次运行时间。", {}, _cron, untrusted_source=True),
+             Tool("schedule_history", "读取指定定时作业最近保留的执行记录、成功/失败及错误；空记录不代表从未执行。",
+                  {"name": "定时作业的精确名称"}, _history, untrusted_source=True)]
     tools += [tool for tool in assistant_dispatch.build_dispatch_tools(root) if tool.name == "list_dispatches"]
     return tools

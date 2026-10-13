@@ -591,3 +591,14 @@ async def test_notifier_writes_the_ledger_even_when_im_is_down(tmp_path, monkeyp
     monkeypatch.setattr(im_rt, "notify_owner", _boom)
     await make_notifier(str(tmp_path))("作业跑完了")
     assert any("作业跑完了" in n.get("text", "") for n in load_notices(str(tmp_path)))
+
+
+async def test_cron_list_without_schedule_timestamp_does_not_claim_never_ran(tmp_path, monkeypatch):
+    from src.scheduling.cron import record_outcome
+    from src.agents.tools.cron import build_cron_tools
+    (tmp_path / ".vortocode").mkdir(exist_ok=True)
+    (tmp_path / ".vortocode" / "cron.yaml").write_text('jobs:\n  - name: brief\n    schedule: "at 09:00"\n    prompt: "简报"\n')
+    record_outcome(str(tmp_path), "brief", ok=False, summary="手动运行失败", error="连接超时")
+    tools = {tool.name: tool for tool in build_cron_tools(str(tmp_path))}
+    result = await tools["cron_list"].handler({})
+    assert "未记录（不代表从未执行）" in result and "上次 从未" not in result
