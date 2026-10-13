@@ -727,6 +727,43 @@ async def test_dev_auto_reports_final_integration_failure(monkeypatch, tmp_path)
     assert "集成后全量测试未过" in out and "FINAL_INTEG_RED" in out and "分支保留待修" in out
 
 
+
+@pytest.mark.asyncio
+async def test_dev_auto_bullet_uses_first_line_of_multiline_desc(monkeypatch, tmp_path):
+    # 2026-10-11 真机：没拆分时子任务 desc 就是整段任务（标题+目标+验收标准），整段拼「：✅」
+    # 让 ✅ 只挂在最后一条验收标准上，看着像前几条没过。列表只用首行。
+    import subprocess as _sp
+    _sp.run(["git", "-C", str(tmp_path), "init", "-q"], check=True, capture_output=True)
+    _sp.run(["git", "-C", str(tmp_path), "config", "user.name", "t"], check=True, capture_output=True)
+    _sp.run(["git", "-C", str(tmp_path), "config", "user.email", "t@t"], check=True, capture_output=True)
+    import src.agents.worktree as wt
+    import src.agents.decompose as dec
+    from src.agents.main_agent import build_dev_tools
+    from src.orchestrator.task_analyzer import SubTask
+
+    desc = "新增 short_hash\n\n目标：\n加函数\n\n验收标准：\n- 新单测通过\n- 只改两个文件"
+    a = SubTask(id="a", title="")
+
+    async def fake_decompose(task, **k):
+        return {"descriptions": [desc], "independent": [a], "deferred": [], "total": 1}
+    monkeypatch.setattr(dec, "decompose_for_parallel", fake_decompose)
+
+    async def fake_isolated(repo, wid, d, build, test_cmd=None):
+        return ("diff\n", "ok", {"ok": True, "output": "", "cmd": "pytest"})
+    monkeypatch.setattr(wt, "run_isolated_task", fake_isolated)
+    monkeypatch.setattr(wt, "apply_diffs_to_branch",
+                        lambda repo, br, items, tc=None: {"ok": True, "branch": br,
+                                                          "applied": [m for _d, m in items],
+                                                          "failed": [], "integration": None})
+    monkeypatch.setattr(wt, "verify_branch",
+                        lambda repo, br, tc, wid, *a, **k: {"ok": True, "output": "", "cmd": "pytest"})
+
+    tool = {t.name: t for t in build_dev_tools(str(tmp_path))}["dev_auto"]
+    out = await tool.handler({"task": "新增 short_hash"})
+    assert "  · 新增 short_hash：✅" in out
+    assert "只改两个文件：✅" not in out and "验收标准" not in out
+
+
 # ---- 失败子任务自修复重试 ----
 
 @pytest.mark.asyncio
