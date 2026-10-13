@@ -585,7 +585,7 @@ def _propose_turn_memories(sess: dict, rid: str, candidates) -> None:
     from src.gateway.turn_digest import turn_tool_names
     from src.memory.assistant_profile import propose_memories
     names = turn_tool_names(sess.get("activities") or [], rid, limit=50)
-    tainted = any(name.startswith(("web_", "browser", "recall_memory", "mcp")) for name in names)
+    tainted = any(name.startswith(("web_", "browser", "recall_memory", "search_conversations", "read_conversation_excerpt", "mcp")) for name in names)
     try:
         propose_memories(sess.get("repo_root") or os.getcwd(), list(candidates), source="assistant", tainted=tainted)
     except Exception as error:  # noqa: BLE001 —— 记忆候选是旁路
@@ -719,6 +719,8 @@ def _tool_summary(name: str, args: Dict[str, Any]) -> str:
         # —— 记忆与技能 ——
         "save_memory": "记住这件事",
         "recall_memory": _with("回忆", query) if query else "回忆相关记忆",
+        "search_conversations": _with("翻找以前的对话", query) if query else "翻找以前的对话",
+        "read_conversation_excerpt": "查看以前对话的片段",
         "remember_repo": "记住仓库经验",
         "list_memory_proposals": "查看待确认的记忆",
         "review_memory_proposal": "处理待确认的记忆",
