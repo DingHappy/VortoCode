@@ -325,17 +325,22 @@ class TaskLedger:
 
     def recover_interrupted(self) -> List[BackgroundTask]:
         """启动时调用：把上次崩在半路（仍标 running）的任务改标 interrupted（可交 dev_resume 续跑）。"""
+        from src.workflow.tasks.submissions import is_submission_task_id
         recovered = []
         for t in self.list():
             dispatch = t.collaboration.get("dispatch", {}) if isinstance(t.collaboration, dict) else {}
+            queued_submission = t.status == "queued" and t.kind == "dev" and is_submission_task_id(t.id)
             if t.status == "running" or (
                 t.status == "queued" and (
                     isinstance(dispatch, dict) and dispatch.get("source") == "api"
+                    or queued_submission
                     or isinstance(t.recovery, dict) and t.recovery.get("source_task_id")
                     or isinstance(t.development, dict) and t.development.get("execution_revision")
                 )
             ):
                 t.status = "interrupted"
+                if queued_submission and not t.error:
+                    t.error = "运行时重启时发现未完成的排队提交；未自动重放，请核对原任务及持久计划。"
                 if t.development:
                     from src.workflow.tasks.task_questions import cancel_open_questions
                     cancel_open_questions(t)

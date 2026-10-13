@@ -20,9 +20,12 @@ async def resident_projects():
 
 
 @router.get("/api/dispatches")
-async def dispatches():
+async def dispatches(refresh_id: str | None = None):
     """任务单列表（最新在前），顺带向项目运行时刷新已下发任务的状态。"""
-    return {"dispatches": await dispatch.refresh(os.getcwd())}
+    try:
+        return {"dispatches": await dispatch.refresh(os.getcwd(), dispatch_id=refresh_id)}
+    except dispatch.DispatchError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
 
 
 def _audit(entry: dict, allowed: bool) -> None:

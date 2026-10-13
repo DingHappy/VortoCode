@@ -25,7 +25,13 @@ class _Http:
         self.calls.append((method, url, payload))
         if self.error:
             raise self.error
-        return self.responses.pop(0) if self.responses else {}
+        if method == "GET" and url.endswith("/api/tasks"):
+            return {"submission_idempotency": 1, "submission_scope": {"repo_root": "/srv/VortoCode"}}
+        response = self.responses.pop(0) if self.responses else {}
+        if method == "GET" and not url.endswith("/review"):
+            response.setdefault("id", url.rsplit("/", 1)[-1])
+            response.setdefault("execution_scope", {"repo_root": "/srv/VortoCode"})
+        return response
 
 
 def test_propose_only_records_and_targets_registered_projects(tmp_path):
@@ -42,10 +48,10 @@ def test_propose_only_records_and_targets_registered_projects(tmp_path):
 
 async def test_approve_sends_prompt_to_registered_loopback_port(tmp_path):
     entry = dispatch.propose(str(tmp_path), project="VortoCode", title="修登录", goal="改超时", criteria=["单测"])
-    http = _Http([{"id": "task-1", "status": "queued"}])
+    http = _Http([{"id": dispatch.submission_task_id(entry["request_id"]), "status": "queued"}])
     sent = await dispatch.approve(str(tmp_path), entry["id"], http=http)
-    assert sent["status"] == "running" and sent["remote_task_id"] == "task-1"
-    method, url, payload = http.calls[0]
+    assert sent["status"] == "running" and sent["remote_task_id"] == dispatch.submission_task_id(entry["request_id"])
+    method, url, payload = http.calls[1]
     assert (method, url) == ("POST", "http://127.0.0.1:8082/api/tasks")
     assert payload["prompt"] == "修登录\n\n目标：\n改超时\n\n验收标准：\n- 单测"
     with pytest.raises(dispatch.DispatchError, match="已经下发"):
@@ -57,7 +63,7 @@ async def test_send_failure_is_recorded_and_retryable(tmp_path):
     with pytest.raises(dispatch.DispatchError, match="下发失败"):
         await dispatch.approve(str(tmp_path), entry["id"], http=_Http(error=OSError("connection refused")))
     assert dispatch.list_dispatches(str(tmp_path))[0]["status"] == "send_failed"
-    assert (await dispatch.approve(str(tmp_path), entry["id"], http=_Http([{"id": "task-2"}])))["remote_task_id"] == "task-2"
+    assert (await dispatch.approve(str(tmp_path), entry["id"], http=_Http([{"id": dispatch.submission_task_id(entry["request_id"])}])))["remote_task_id"] == dispatch.submission_task_id(entry["request_id"])
 
 
 def test_cancel_only_before_sending(tmp_path):
@@ -71,8 +77,8 @@ async def test_refresh_maps_remote_status_and_keeps_unreachable_entries(tmp_path
     root = str(tmp_path)
     first = dispatch.propose(root, project="VortoCode", title="a", goal="g")
     second = dispatch.propose(root, project="VortoCode", title="b", goal="g")
-    await dispatch.approve(root, first["id"], http=_Http([{"id": "t1"}]))
-    await dispatch.approve(root, second["id"], http=_Http([{"id": "t2"}]))
+    await dispatch.approve(root, first["id"], http=_Http([{"id": dispatch.submission_task_id(first["request_id"])}]))
+    await dispatch.approve(root, second["id"], http=_Http([{"id": dispatch.submission_task_id(second["request_id"])}]))
     done = {"status": "done", "result": "已交付分支", "branch": "vorto/fix-login"}
     items = await dispatch.refresh(root, http=_Http([done, {"status": "blocked"}]))
     by_title = {item["title"]: item for item in items}
@@ -80,6 +86,10 @@ async def test_refresh_maps_remote_status_and_keeps_unreachable_entries(tmp_path
     assert by_title["b"]["status"] == "waiting"
     items = await dispatch.refresh(root, http=_Http(error=OSError("down")))   # 不可达：保持原状
     assert {item["title"]: item["status"] for item in items} == {"a": "done", "b": "waiting"}
+    assert next(item for item in items if item["title"] == "b")["sync_state"] == "unreachable"
+    assert all(item["last_checked_at"] for item in items)
+    explicit = await dispatch.refresh(root, dispatch_id=first["id"], http=_Http(error=OSError("down")))
+    assert next(item for item in explicit if item["title"] == "a")["sync_state"] == "unreachable"
 
 
 async def test_tools_only_propose_and_say_it_is_not_running_yet(tmp_path):

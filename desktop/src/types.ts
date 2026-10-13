@@ -182,7 +182,41 @@ export interface AssistantDispatch {
   title: string;
   goal: string;
   criteria: string[];
-  status: "proposed" | "send_failed" | "running" | "waiting" | "done" | "failed" | "cancelled" | "stopped";
+  status: "proposed" | "sending" | "submission_unknown" | "send_failed" | "running" | "waiting" | "done" | "failed" | "cancelled" | "stopped";
+  session?: string;
+  request_id?: string;
+  legacy_submission?: boolean;
+  submission_attempted?: boolean;
+  submission_target?: { port: number; repo_root: string };
+  submission_runtime_root?: string;
+  sync_state?: "current" | "unreachable";
+  last_checked_at?: string;
+  sync_error?: string;
+  delivery_error?: string;
+  recovery_error?: string;
+  recovery_task?: {
+    id: string;
+    source_revision?: string;
+    parent_task_id: string;
+    plan_id: string;
+    status: string;
+    branch: string;
+    result: string;
+    error: string;
+    checked_at: string;
+    has_further_recovery: boolean;
+    delivery_evidence?: AssistantDispatch["delivery_evidence"];
+  } | null;
+  delivery_evidence?: {
+    head: string;
+    verification: "passed" | "failed" | "stale" | "unknown";
+    verified_head: string;
+    verified_at: string;
+    coverage_known: boolean;
+    accepted_hunks: number | null;
+    total_hunks: number | null;
+    checked_at: string;
+  } | null;
   tainted: boolean;
   remote_task_id: string;
   result: string;
@@ -311,6 +345,7 @@ export interface DevPlanGraph {
 }
 
 export interface TaskItem {
+  execution_scope?: { repo_root: string };
   id: string;
   kind?: string;
   prompt?: string;

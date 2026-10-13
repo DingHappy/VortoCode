@@ -118,6 +118,13 @@ async def test_schedule_tools_report_disabled_scheduler_and_exact_failure(tmp_pa
     assert "没有这个定时作业" in await tools["schedule_history"].handler({"name": "../other"})
 
 
+def test_continuity_results_mark_external_contents_untrusted(tmp_path, monkeypatch):
+    from src.scheduling.assistant_watch import build_status_tools
+    from src.workflow.tasks.assistant_dispatch import build_dispatch_tools
+    monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(tmp_path / "registry.json"))
+    (tmp_path / "registry.json").write_text('{"projects":[{"name":"demo","repo_root":"/tmp/demo","port":65534}]}')
+    tools = {tool.name: tool for tool in build_status_tools(str(tmp_path)) + build_dispatch_tools(str(tmp_path))}
+    assert all(tools[name].untrusted_source for name in ("today_activity", "schedule_list", "schedule_history", "list_dispatches"))
 
 
 def test_general_reporting_stays_evidence_based_when_concise(tmp_path):

@@ -163,6 +163,9 @@ def task_session_view(
         if resumed is not None or recovery_error:
             can_resume = False
     data["resumed_task_id"] = resumed.id if resumed else ""
+    if resumed is not None:
+        from src.workflow.tasks.task_recovery import source_revision
+        data["recovery_source_revision"] = source_revision(task)
     next_action = (
         recovery_error
         if recovery_error else
