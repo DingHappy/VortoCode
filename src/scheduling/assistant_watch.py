@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 INTERVAL_SECONDS = 60
 _REPORT_GRACE = timedelta(hours=2)          # 错过整点（重启、断网）两小时内补发，再晚就不补
-_NOTIFY_STATUSES = {"proposed", "waiting", "done", "failed", "send_failed"}
+_NOTIFY_STATUSES = {"proposed", "waiting", "done", "failed", "send_failed", "submission_unknown"}
 
 Notify = Callable[[str], Awaitable[bool]]
 
@@ -96,7 +96,9 @@ def status_message(item: Dict[str, Any]) -> str:
     if status == "done":
         branch = f"，交付分支 {item['branch']}" if item.get("branch") else ""
         result = str(item.get("result") or "").strip()
-        return f"✅ {title} 完成{branch}。" + (f"\n{result[-300:]}" if result else "")
+        return f"✅ {title} 执行结束，等待审查{branch}。" + (f"\n{result[-300:]}" if result else "")
+    if status == "submission_unknown":
+        return f"⚠ {title} 提交结果待核对，请在 Desktop 的任务卡核对状态。"
     return f"❌ {title} 失败：{str(item.get('error') or '没有错误信息')[:300]}"
 
 
@@ -114,19 +116,21 @@ def build_report(root: str, now: datetime, label: str) -> str:
 
     turns = [turn for turn in recent_turns(root, 200) if local_day(turn.get("at", "")) == today]
     items = [item for item in assistant_dispatch.list_dispatches(root) if item.get("status") != "cancelled"]
-    active = [item for item in items if item.get("status") in ("proposed", "running", "waiting", "send_failed")
+    active = [item for item in items if item.get("status") in ("proposed", "running", "waiting", "send_failed", "sending", "submission_unknown")
               or local_day(item.get("updated_at", "")) == today]
     lines = [f"🗒 {label}（{now:%m月%d日 %H:%M}）", f"今天聊了 {len(turns)} 件事。"]
     for turn in turns[:5]:
         lines.append(f"· {turn.get('title')}：{turn.get('outcome') or '—'}")
     names = {"proposed": "等你确认下发", "send_failed": "下发失败", "running": "在做", "waiting": "在等人回答",
-             "done": "完成", "failed": "失败", "stopped": "已停下"}
+             "done": "执行结束，待审查", "failed": "失败", "stopped": "已停下",
+             "sending": "正在下发", "submission_unknown": "提交结果待核对"}
     if active:
         lines.append("")
         lines.append("任务单：")
         for item in active[:10]:
-            lines.append(f"· [{names.get(item.get('status'), item.get('status'))}] {item.get('project')}：{item.get('title')}")
-    waiting = [item for item in items if item.get("status") in ("proposed", "waiting", "send_failed")]
+            freshness = " · 当前无法核实" if item.get("sync_state") == "unreachable" else ""
+            lines.append(f"· [{names.get(item.get('status'), item.get('status'))}] {item.get('project')}：{item.get('title')}{freshness}")
+    waiting = [item for item in items if item.get("status") in ("proposed", "waiting", "send_failed", "submission_unknown")]
     lines.append("")
     lines.append(f"等你处理：{len(waiting)} 件。" if waiting else "没有等你处理的事。")
     return "\n".join(lines)

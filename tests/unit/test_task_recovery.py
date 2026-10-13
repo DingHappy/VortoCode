@@ -400,3 +400,20 @@ async def test_direct_dev_resume_rejects_nonisolated_branch(tmp_path):
     tool = next(t for t in build_dev_tools(str(tmp_path)) if t.name == "dev_resume")
     with pytest.raises(ValueError, match="隔离分支"):
         await tool.handler({"plan_id": plan.plan_id})
+
+
+@pytest.mark.asyncio
+async def test_real_task_views_supply_matching_recovery_observation_contract(tmp_path):
+    from src.workflow.tasks.assistant_recovery import recovery_observation
+    from src.workflow.tasks.worktree_sessions import task_session_view
+    runner, recovery, source, _, _, _ = stopped(tmp_path)
+    child, _ = recovery.resume(source.id)
+    try:
+        original = task_session_view(str(tmp_path), source, worktrees=[])
+        resumed = task_session_view(str(tmp_path), runner.get(child.id), worktrees=[])
+        for view in (original, resumed):
+            view['execution_scope'] = {'repo_root': str(tmp_path)}
+        result = recovery_observation(original, resumed, repo_root=str(tmp_path))
+        assert result['id'] == child.id and result['parent_task_id'] == source.id
+    finally:
+        await runner.shutdown()
