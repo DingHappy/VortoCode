@@ -894,5 +894,23 @@
     "methods": [
       "POST"
     ]
+  },
+  {
+    "path": "/api/assistant/connectors",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/assistant/connectors/{name}",
+    "methods": [
+      "DELETE"
+    ]
+  },
+  {
+    "path": "/api/assistant/connectors/{name}/authorize",
+    "methods": [
+      "POST"
+    ]
   }
 ]

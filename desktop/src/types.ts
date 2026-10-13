@@ -141,6 +141,19 @@ export interface AssistantScheduleItem {
   last?: string | null;
 }
 
+/** 连接的服务（GitHub 等）：不含令牌。authorizing 时给人看验证码与链接。 */
+export interface AssistantConnector {
+  name: string;
+  provider: string;
+  read_only: boolean;
+  connected: boolean;
+  expired: boolean;
+  connected_at?: number | null;
+  expires_at?: number | null;
+  authorizing: { user_code: string; verification_uri: string; expires_at: number } | null;
+  error: string;
+}
+
 export interface MemoryProposal {
   id: string;
   content: string;

@@ -60,6 +60,7 @@ import type {
   AssistantMemory,
   AssistantProfile,
   MemoryProposal,
+  AssistantConnector,
   AssistantScheduleItem,
   PhoneChat,
   AuditEntry,
@@ -331,7 +332,17 @@ function App() {
   const [assistantSchedule, setAssistantSchedule] = useState<AssistantScheduleItem[]>([]);
   const [assistantMemories, setAssistantMemories] = useState<AssistantMemory[]>([]);
   const [memoryProposals, setMemoryProposals] = useState<MemoryProposal[]>([]);
+  // 连接的服务（GitHub 等）：授权进行中时轮询，常驻电脑拿到令牌后这里自动变成「已连接」
+  const [connectors, setConnectors] = useState<AssistantConnector[]>([]);
   const [profileDialogOpen, setProfileDialogOpen] = useState(false);
+  const connectorAuthorizing = connectors.some((item) => item.authorizing);
+  useEffect(() => {
+    if (!connectorAuthorizing || assistantTab !== "identity") return;
+    const timer = window.setInterval(() => {
+      void clientRef.current?.listConnectors().then(setConnectors).catch(() => undefined);
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [connectorAuthorizing, assistantTab]);
   // 手机上和助理的聊天：只读查看（不接管——两个进程同时写一段对话会互相覆盖）
   const [phoneChats, setPhoneChats] = useState<PhoneChat[]>([]);
   const [phoneChatSid, setPhoneChatSid] = useState<string | null>(null);
@@ -3662,12 +3673,32 @@ function App() {
               if (tab === "identity") {
                 void client?.listAssistantMemories().then(setAssistantMemories).catch(() => setAssistantMemories([]));
                 void client?.listMemoryProposals().then(setMemoryProposals).catch(() => setMemoryProposals([]));
+                void client?.listConnectors().then(setConnectors).catch(() => setConnectors([]));
               }
             }}>
             {assistantTab === "audit" ? <AssistantAudit entries={auditEntries} />
               : assistantTab === "schedule" ? <AssistantSchedule items={assistantSchedule} />
               : assistantTab === "identity" ? <AssistantIdentity profile={assistantProfile} memories={assistantMemories}
                   proposals={memoryProposals}
+                  connectors={connectors}
+                  onConnector={(action, connector) => void (async () => {
+                    const client = clientRef.current;
+                    try {
+                      if (action === "copy" && connector.authorizing) await navigator.clipboard.writeText(connector.authorizing.user_code);
+                      if (action === "open" && connector.authorizing) await openUrl(connector.authorizing.verification_uri);
+                      if (action === "connect") {
+                        const started = await client?.authorizeConnector(connector.name);
+                        if (started) await openUrl(started.verification_uri).catch(() => undefined);
+                      }
+                      if (action === "disconnect") {
+                        if (!await confirmAction("断开 GitHub？助理之后就看不到你的仓库了。\n\nGitHub 那边的授权可以到 Settings → Applications 里撤销。")) return;
+                        await client?.disconnectConnector(connector.name);
+                      }
+                      if (action === "connect" || action === "disconnect") setConnectors(await client?.listConnectors() ?? []);
+                    } catch (error) {
+                      setBanner(errorText(error, "连接服务失败"));
+                    }
+                  })()}
                   onDecideProposal={(proposal, approve) => void (async () => {
                     try {
                       await clientRef.current?.decideMemoryProposal(proposal.id, approve);
