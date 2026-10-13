@@ -7,7 +7,7 @@ import { loadAssistantData } from "./lib/assistantData";
 import { AssistantRefreshQueue } from "./lib/assistantRefresh";
 import { AssistantActionGate, type AssistantTaskAction } from "./lib/assistantTask";
 import { openAssistantTask } from "./lib/assistantNavigation";
-import { AssistantAudit, AssistantIdentity, AssistantPanel, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PhoneChatDialog, type AppMode, type AssistantTab } from "./components/AssistantMode";
+import { AssistantAudit, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PhoneChatDialog, type AppMode, type AssistantTab } from "./components/AssistantMode";
 import { dispatchFeedItem, isPhoneSession, noticeFeedItem, taskFeedItem, turnFeedItem, type FeedItem } from "./lib/activityFeed";
 import { ConfirmationReply } from "./components/ConfirmationReply";
 import { createConfirmationReply } from "./lib/confirm";
@@ -124,6 +124,7 @@ import { PluginsPage } from "./components/PluginsPage";
 import { ProjectPicker } from "./components/ProjectPicker";
 import { RemoteProjectDialog } from "./components/RemoteProjectDialog";
 import { findAssistantHost, isAssistantHost, mainChatKey, workProjects } from "./lib/assistantHost";
+import { dismissStarterTips, recordAssistantSend, shouldShowStarterTips, starterTips } from "./lib/starterTips";
 import { listedProjects, localTwin, placedSessions, residentEntry, residentTwin, type ResidentProject, type WorkPlace } from "./lib/residentPlace";
 import { TurnTimeline } from "./components/TurnTimeline";
 import { useChangeReview } from "./hooks/useChangeReview";
@@ -1946,6 +1947,8 @@ function App() {
   // 常驻电脑上有哪些项目（它的登记表）：工作台「在哪做」据此判断能不能切到常驻电脑。
   const residentHost = findAssistantHost(projects);
   const [residentProjects, setResidentProjects] = useState<ResidentProject[]>([]);
+  // 空白对话里的上手示例（用熟了或点了「不再显示」就收起）
+  const [showStarterTips, setShowStarterTips] = useState(() => shouldShowStarterTips());
   useEffect(() => {
     if (!residentHost) { setResidentProjects([]); return undefined; }
     let cancelled = false;
@@ -2197,6 +2200,10 @@ function App() {
     setPrompt("");
     setContextItems([]);
     if (selectedAttachments.length > 0) setAttachments([]);
+    if (appMode === "assistant" && showStarterTips) {
+      recordAssistantSend();
+      setShowStarterTips(shouldShowStarterTips());
+    }
     autoScrollRef.current = true;
     if (!willQueue) {
       setBusy(true);
@@ -3430,7 +3437,18 @@ function App() {
                   : appMode === "assistant"
                     ? <><h1>有什么要交代的？</h1><p>{onAssistantHost()
                       ? "交代完就可以合上电脑：它在常驻电脑上接着做，做完了在右侧「动态」里回报。"
-                      : "说一件要办的事，做完了会在右侧「动态」里回报。"}</p></>
+                      : "说一件要办的事，做完了会在右侧「动态」里回报。"}</p>
+                    {showStarterTips && llmProfile?.configured && <AssistantStarterTips
+                      tips={starterTips({ resident: onAssistantHost(), projects: residentProjects.map((item) => item.name) })}
+                      onDismiss={() => { dismissStarterTips(); setShowStarterTips(false); }}
+                      onPick={(tip) => {
+                        setPrompt(tip.prompt);
+                        window.requestAnimationFrame(() => {
+                          const input = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="任务输入"]');
+                          input?.focus();
+                          input?.setSelectionRange(tip.prompt.length, tip.prompt.length);
+                        });
+                      }} />}</>
                     : <><h1>开始一项工作</h1><p>描述你要解决的问题，或选择工作区域开始。</p></>}
                 {llmProfileChecked && !llmProfile?.configured && (
                   <p>还没有配置模型服务。<button onClick={() => { setSettingsSection("model"); setSettingsOpen(true); }}>连接模型</button></p>

@@ -22,6 +22,8 @@ export const STORAGE_KEYS = {
   modelChoice: "vortocode.desktop.modelChoice",
   // 输入框里的常用模型短名单（有序）；没存过就跟随服务端推荐。
   modelPicks: "vortocode.desktop.modelPicks",
+  // 助理模式空白对话里的上手示例：发过几条或点了「不再显示」就收起。
+  starterTips: "vortocode.desktop.starterTips",
 } as const;
 
 // 每个项目一个会话 id，key 由项目 id 拼出前缀。
