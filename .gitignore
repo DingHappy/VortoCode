@@ -90,3 +90,7 @@ Thumbs.db
 # 本地运行时状态（Claude Code 调度锁等，非项目源）
 # ─────────────────────────────────────────────────────────────
 .claude/
+
+# Local private assistant notes are kept outside this public repository.
+/docs/LOCAL_INFERENCE_99.md
+/docs/MIMO_FILTER_DIAGNOSTIC.md
