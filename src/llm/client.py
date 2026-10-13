@@ -47,6 +47,27 @@ MODELS: Dict[str, Dict[str, str]] = {
 _TRANSIENT_STATUS = {408, 409, 429, 500, 502, 503, 504}
 
 
+class ProviderContentFiltered(RuntimeError):
+    """A provider blocked a completion; its text must not become an answer/tool call."""
+
+    def __init__(self, response_model: str, usage: Any = None):
+        super().__init__("模型服务端过滤了本次响应（content_filter）；未自动重试")
+        self.response_model = response_model
+        self.finish_reason = "content_filter"
+        self.usage = {}
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            value = usage.get(key) if isinstance(usage, dict) else getattr(usage, key, None)
+            if type(value) is int and value >= 0:
+                self.usage[key] = value
+
+
+def _raise_content_filtered(messages, response_model, usage, *, requested_model):
+    error = ProviderContentFiltered(response_model, usage)
+    if all(key in error.usage for key in ("prompt_tokens", "completion_tokens")):
+        _account(messages, "", error.usage, model=requested_model)
+    raise error
+
+
 # 各模型的**上下文窗口**（token）：让历史预算按模型自适应，而非死守一个保守值。
 # 只登记「有把握」且来自官方模型资料的公开模型；服务端 /models 返回更小的实际部署上限时，
 # Desktop 会把该值经 VORTOCODE_MODEL_CONTEXT_WINDOW 注入并优先覆盖这里。前缀/包含匹配采用
@@ -657,6 +678,9 @@ class LLMClient:
         if stream:
             return {"stream": response}
 
+        if getattr(response.choices[0], "finish_reason", None) == "content_filter":
+            _raise_content_filtered(messages, response.model, getattr(response, "usage", None),
+                                    requested_model=kwargs["model"])
         message = response.choices[0].message
         # 推理型模型（如 DeepSeek-R1 系）会把思维链放在 reasoning_content/reasoning，
         # 普通模型没有该字段，getattr 取 None。这是推理链的源头。
@@ -725,6 +749,9 @@ class LLMClient:
                 choices = getattr(chunk, "choices", None)
                 if not choices:
                     continue
+                if getattr(choices[0], "finish_reason", None) == "content_filter":
+                    _raise_content_filtered(messages, getattr(chunk, "model", None) or create["model"],
+                                            exact, requested_model=create["model"])
                 delta = getattr(choices[0], "delta", None)
                 if delta is not None and on_reasoning is not None:   # 推理增量走侧信道（不混进正文）
                     rc = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
@@ -790,6 +817,9 @@ class LLMClient:
                 choices = getattr(chunk, "choices", None)
                 if not choices:
                     continue
+                if getattr(choices[0], "finish_reason", None) == "content_filter":
+                    _raise_content_filtered(messages, getattr(chunk, "model", None) or create["model"],
+                                            exact, requested_model=create["model"])
                 delta = getattr(choices[0], "delta", None)
                 if delta is None:
                     continue
@@ -888,6 +918,9 @@ class LLMClient:
                             choices = data.get("choices")
                             if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
                                 raise RuntimeError("模型响应格式无效：缺少 choices/message；未重试本次请求")
+                            if choices[0].get("finish_reason") == "content_filter":
+                                _raise_content_filtered(messages, data.get("model", ""), data.get("usage"),
+                                                        requested_model=payload["model"])
                             msg = choices[0].get("message")
                             if not isinstance(msg, dict):
                                 raise RuntimeError("模型响应格式无效：缺少 message；未重试本次请求")
