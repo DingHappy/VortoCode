@@ -161,6 +161,12 @@ export interface AssistantConnector {
   error: string;
 }
 
+/** 助理头像：base64 位图（PNG/JPEG/WebP），没设过为 null。 */
+export interface AssistantAvatar {
+  type: string;
+  data: string;
+}
+
 export interface MemoryProposal {
   id: string;
   content: string;

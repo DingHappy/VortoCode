@@ -2,7 +2,7 @@ import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ArrowUp, Cpu, Paperclip, Search, Settings } from "lucide-react";
 import { ActivityFeed } from "../src/components/ActivityFeed";
-import { AssistantAudit, AssistantIdentity, AssistantPanel, AssistantSchedule, AssistantSidebar, ModeSwitch, type AppMode } from "../src/components/AssistantMode";
+import { AssistantAudit, AssistantAvatarImage, AssistantIdentity, AssistantPanel, AssistantSchedule, AssistantSidebar, ModeSwitch, type AppMode } from "../src/components/AssistantMode";
 import { MarkdownMessage } from "../src/components/MarkdownMessage";
 import { taskFeedItem, turnFeedItem } from "../src/lib/activityFeed";
 import type { AgentTurn, TaskItem } from "../src/types";
@@ -38,7 +38,18 @@ const schedule = [
 const memories = [{ id: "m1", content: "汇报先给结论，再说细节", created_at: "2026-10-11T09:00:00" }, { id: "m2", content: "住在宁波，常用 Telegram", created_at: "2026-10-09T09:00:00" }];
 const profile = { name: "小V", soul: "简短直接，先给结论；不确定就直说。", about_you: "丁开心，在宁波做 AI 编码工具。" };
 
+// ?avatar=1：用一张画出来的示例图当头像（合成数据）
+function sampleAvatar(): import("../src/types").AssistantAvatar | null {
+  if (new URLSearchParams(location.search).get("avatar") !== "1") return null;
+  const canvas = document.createElement("canvas"); canvas.width = canvas.height = 256;
+  const c = canvas.getContext("2d")!; const g = c.createLinearGradient(0, 0, 256, 256);
+  g.addColorStop(0, "#f6b26b"); g.addColorStop(1, "#e06666"); c.fillStyle = g; c.fillRect(0, 0, 256, 256);
+  c.font = "150px serif"; c.textAlign = "center"; c.textBaseline = "middle"; c.fillText("🦊", 128, 140);
+  const url = canvas.toDataURL("image/png"); return { type: "image/png", data: url.slice(url.indexOf(",") + 1) };
+}
+
 function Fixture() {
+  const [avatar, setAvatar] = useState(sampleAvatar);
   const [mode, setMode] = useState<AppMode>("assistant");
   const [current, setCurrent] = useState("main");
   const [tab, setTab] = useState<import("../src/components/AssistantMode").AssistantTab>("feed");
@@ -58,14 +69,14 @@ function Fixture() {
       <section className="conversation"><div className="conversation-header"><strong>{current === "main" ? "主要聊天" : current === "side-1" ? "整理周报" : "MCP 接入"}</strong></div>
         <div className="conversation-scroll">
           <article className="message user"><div className="message-body">你帮我看一下 VortoCode 这个项目，做一次静态审查。</div></article>
-          <article className="message assistant"><div className="message-author">VortoCode</div><div className="message-body"><MarkdownMessage text={"看完了，结论先说：**工程纪律是全场最强的一项**——离线 CI、契约测试钉死路由基线、污点追踪。\n\n完整报告已归档到知识库，右侧动态里有这次的记录。"} /></div></article>
+          <article className="message assistant"><div className="message-author with-avatar"><AssistantAvatarImage name={profile.name} avatar={avatar} size={22} />{profile.name}</div><div className="message-body"><MarkdownMessage text={"看完了，结论先说：**工程纪律是全场最强的一项**——离线 CI、契约测试钉死路由基线、污点追踪。\n\n完整报告已归档到知识库，右侧动态里有这次的记录。"} /></div></article>
         </div>
         <div className="composer-wrap"><div className="composer"><textarea aria-label="消息" placeholder="给助理交代一件事…" /><div className="composer-footer"><div className="composer-tools"><Paperclip size={16} /><span className="composer-model single"><Cpu size={14} />Qwen3.6 · 本地</span></div><div className="composer-actions"><button className="composer-send" aria-label="发送"><ArrowUp size={16} /></button></div></div></div></div>
       </section>
-      {panel && <AssistantPanel name={profile.name} onEditProfile={() => {}} connected modelLabel="mimo-v2.6-pro" host={{ kind: "resident", name: "vorto-code" }} onAddResident={() => {}} onRetryResident={() => {}} tab={tab} onTab={setTab} onClose={() => setPanel(false)} waiting={feed.filter((item) => item.status === "waiting").length}>
+      {panel && <AssistantPanel name={profile.name} avatar={avatar} onEditProfile={() => {}} connected modelLabel="mimo-v2.6-pro" host={{ kind: "resident", name: "vorto-code" }} onAddResident={() => {}} onRetryResident={() => {}} tab={tab} onTab={setTab} onClose={() => setPanel(false)} waiting={feed.filter((item) => item.status === "waiting").length}>
         {tab === "audit" ? <AssistantAudit entries={audit} />
           : tab === "schedule" ? <AssistantSchedule items={schedule} />
-          : tab === "identity" ? <AssistantIdentity profile={profile} memories={memories} onEdit={() => {}} onDeleteMemory={() => {}} />
+          : tab === "identity" ? <AssistantIdentity profile={profile} avatar={avatar} onAvatar={(file) => void (file ? import("../src/lib/avatar").then(m => m.prepareAvatar(file)).then(setAvatar) : setAvatar(null))} memories={memories} onEdit={() => {}} onDeleteMemory={() => {}} />
           : <ActivityFeed items={feed} scope="all" onScope={() => {}} onOpen={(item) => item.session && setCurrent(item.session.replace(/^sid-/, ""))} />}
       </AssistantPanel>}
     </div></div>;

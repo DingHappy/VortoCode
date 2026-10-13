@@ -70,6 +70,63 @@ def save_profile(root: str, *, name: str | None = None, about_you: str | None = 
     return load_profile(root)
 
 
+# —— 头像：只给界面用，**不进 load_profile**（会话装配读它；图片不该进模型上下文）——
+MAX_AVATAR_BYTES = 512 * 1024
+_AVATAR_TYPES = {"png": "image/png", "jpeg": "image/jpeg", "webp": "image/webp"}
+
+
+def _avatar_kind(data: bytes) -> str | None:
+    """按文件头认格式，不信扩展名或声明的类型；SVG 等可带脚本的格式一律不收。"""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "jpeg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def load_avatar(root: str) -> Dict[str, str] | None:
+    """{"type": "image/png", "data": <base64>}；没有或文件坏了返回 None。"""
+    import base64
+    for kind, mime in _AVATAR_TYPES.items():
+        path = _state(root) / f"assistant-avatar.{kind}"
+        try:
+            data = path.read_bytes()
+        except OSError:
+            continue
+        if len(data) <= MAX_AVATAR_BYTES and _avatar_kind(data) == kind:
+            return {"type": mime, "data": base64.b64encode(data).decode("ascii")}
+    return None
+
+
+def save_avatar(root: str, data: bytes) -> Dict[str, str]:
+    kind = _avatar_kind(data)
+    if kind is None:
+        raise ValueError("只支持 PNG、JPEG、WebP 图片")
+    if len(data) > MAX_AVATAR_BYTES:
+        raise ValueError("图片太大了（最大 512KB）")
+    state = _state(root)
+    state.mkdir(parents=True, exist_ok=True)
+    tmp = state / f".assistant-avatar.{kind}.tmp"
+    tmp.write_bytes(data)
+    os.replace(tmp, state / f"assistant-avatar.{kind}")
+    for other in _AVATAR_TYPES:                 # 换了格式：旧文件删掉，免得读到旧图
+        if other != kind:
+            (state / f"assistant-avatar.{other}").unlink(missing_ok=True)
+    return load_avatar(root) or {}
+
+
+def delete_avatar(root: str) -> bool:
+    removed = False
+    for kind in _AVATAR_TYPES:
+        path = _state(root) / f"assistant-avatar.{kind}"
+        if path.exists():
+            path.unlink()
+            removed = True
+    return removed
+
+
 def list_memories(root: str, limit: int = 200) -> List[Dict[str, Any]]:
     """它记住的关于你的事，最新的在前。没有记忆库时不创建它。"""
     if not _db_path(root).exists():

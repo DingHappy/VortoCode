@@ -6,6 +6,7 @@ import WebSocket, { type Message as WebSocketMessage } from "@tauri-apps/plugin-
 import type {
   AgentTurn,
   AssistantDispatch,
+  AssistantAvatar,
   AssistantConnector,
   AssistantMemory,
   AssistantProfile,
@@ -371,6 +372,23 @@ export class GatewayClient {
 
   async saveAssistantProfile(profile: Partial<AssistantProfile>): Promise<AssistantProfile> {
     return this.request("/api/assistant/profile", { method: "PUT", body: JSON.stringify(profile) });
+  }
+
+  /** 助理头像（存在助理所在的那台电脑上）；没设过返回 null。 */
+  async getAssistantAvatar(): Promise<AssistantAvatar | null> {
+    const payload = await this.request<{ avatar?: AssistantAvatar | null }>("/api/assistant/avatar");
+    return payload.avatar ?? null;
+  }
+
+  async saveAssistantAvatar(avatar: AssistantAvatar): Promise<AssistantAvatar | null> {
+    const payload = await this.request<{ avatar?: AssistantAvatar | null }>("/api/assistant/avatar", {
+      method: "PUT", body: JSON.stringify({ data: avatar.data }),
+    });
+    return payload.avatar ?? null;
+  }
+
+  async removeAssistantAvatar(): Promise<void> {
+    await this.request("/api/assistant/avatar", { method: "DELETE" });
   }
 
   /** 手机上和助理的聊天（只读）。 */

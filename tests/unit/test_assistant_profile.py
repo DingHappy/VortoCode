@@ -91,3 +91,53 @@ def test_memory_proposal_routes(tmp_path, monkeypatch):
     assert client.post(f"/api/assistant/memory-proposals/{pid}", json={"action": "maybe"}).status_code == 400
     assert client.post(f"/api/assistant/memory-proposals/{pid}", json={"action": "reject"}).json()["status"] == "rejected"
     assert client.post(f"/api/assistant/memory-proposals/{pid}", json={"action": "approve"}).status_code == 409
+
+
+# —— 头像 ——
+
+_PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+_JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 32
+
+
+def test_avatar_accepts_only_real_images_by_header(tmp_path):
+    import pytest
+    root = str(tmp_path)
+    assert profile.load_avatar(root) is None
+    for bad in (b"<svg onload=alert(1)>", b"GIF89a....", b""):
+        with pytest.raises(ValueError):
+            profile.save_avatar(root, bad)
+    with pytest.raises(ValueError):
+        profile.save_avatar(root, _PNG + b"\x00" * profile.MAX_AVATAR_BYTES)
+    assert profile.save_avatar(root, _PNG)["type"] == "image/png"
+    # 换成 JPEG：旧 PNG 删掉，读到的是新图
+    assert profile.save_avatar(root, _JPEG)["type"] == "image/jpeg"
+    assert not (tmp_path / ".vortocode" / "assistant-avatar.png").exists()
+    # 被改成伪装文件（扩展名对、内容不对）：当作没有
+    (tmp_path / ".vortocode" / "assistant-avatar.jpeg").write_bytes(b"<svg/>")
+    assert profile.load_avatar(root) is None
+    assert profile.delete_avatar(root) is True and profile.delete_avatar(root) is False
+
+
+def test_avatar_never_enters_profile_or_system_prompt(tmp_path):
+    profile.save_avatar(str(tmp_path), _PNG)
+    assert set(profile.load_profile(str(tmp_path))) == {"name", "soul", "about_you"}
+
+
+def test_avatar_routes(tmp_path, monkeypatch):
+    import base64
+    from fastapi.testclient import TestClient
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    from src.web.server import app
+
+    client = TestClient(app)
+    assert client.get("/api/assistant/avatar").json() == {"avatar": None}
+    data = base64.b64encode(_PNG).decode()
+    assert client.put("/api/assistant/avatar", json={"data": data}).json()["avatar"]["data"] == data
+    assert client.get("/api/assistant/avatar").json()["avatar"]["type"] == "image/png"
+    assert client.put("/api/assistant/avatar", json={"data": "不是base64!"}).status_code == 400
+    assert client.put("/api/assistant/avatar", json={"data": base64.b64encode(b"<svg/>").decode()}).status_code == 400
+    assert client.put("/api/assistant/avatar", json={}).status_code == 400
+    assert client.delete("/api/assistant/avatar").json() == {"removed": True}
+    assert client.get("/api/assistant/avatar").json() == {"avatar": None}

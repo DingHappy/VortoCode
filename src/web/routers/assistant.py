@@ -28,6 +28,35 @@ async def put_profile(body: dict):
                                           soul=None if soul is None else str(soul))
 
 
+@router.get("/api/assistant/avatar")
+async def get_avatar():
+    """助理头像（base64）；没设过返回 avatar=null，界面用名字首字。"""
+    return {"avatar": assistant_profile.load_avatar(os.getcwd())}
+
+
+@router.put("/api/assistant/avatar")
+async def put_avatar(body: dict):
+    """换头像：{"data": <base64>}。按文件头认 PNG/JPEG/WebP，最大 512KB。"""
+    import base64
+    import binascii
+    raw = (body or {}).get("data")
+    if not isinstance(raw, str) or len(raw) > assistant_profile.MAX_AVATAR_BYTES * 4 // 3 + 8:
+        raise HTTPException(status_code=400, detail="需要 base64 图片数据（最大 512KB）")
+    try:
+        data = base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError) as error:
+        raise HTTPException(status_code=400, detail="图片数据不是有效的 base64") from error
+    try:
+        return {"avatar": assistant_profile.save_avatar(os.getcwd(), data)}
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+@router.delete("/api/assistant/avatar")
+async def remove_avatar():
+    return {"removed": assistant_profile.delete_avatar(os.getcwd())}
+
+
 @router.get("/api/assistant/memories")
 async def get_memories():
     return {"memories": assistant_profile.list_memories(os.getcwd())}
