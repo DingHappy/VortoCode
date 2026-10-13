@@ -311,3 +311,24 @@ export function AssistantConnectors({ connectors, onAction }: {
     </ul>
   </div>;
 }
+
+/** 空白对话里的上手示例：点一下填进输入框，改一改再发。 */
+export function AssistantStarterTips({ tips, onPick, onDismiss }: {
+  tips: import("../lib/starterTips").StarterTip[];
+  onPick: (tip: import("../lib/starterTips").StarterTip) => void;
+  onDismiss: () => void;
+}) {
+  if (tips.length === 0) return null;
+  return <div className="assistant-starter-tips">
+    <div className="assistant-starter-head">
+      <span>可以这样用</span>
+      <button onClick={onDismiss}>不再显示</button>
+    </div>
+    <div className="assistant-starter-list">
+      {tips.map((tip) => <button key={tip.id} onClick={() => onPick(tip)}>
+        <strong>{tip.label}</strong>
+        <span>{tip.prompt}</span>
+      </button>)}
+    </div>
+  </div>;
+}

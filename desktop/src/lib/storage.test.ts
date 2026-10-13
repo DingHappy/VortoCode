@@ -52,6 +52,7 @@ describe("STORAGE_KEYS", () => {
       theme: "vortocode.desktop.theme",
       modelChoice: "vortocode.desktop.modelChoice",
       modelPicks: "vortocode.desktop.modelPicks",
+      starterTips: "vortocode.desktop.starterTips",
     });
   });
 });
