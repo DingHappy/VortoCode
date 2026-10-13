@@ -58,7 +58,7 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
                 f"{' 🌐可联网' if j.allow_web else ''}\n"
                 f"    排期 {j.schedule.raw}"
                 f" · 下次 {nxt.strftime('%m-%d %H:%M') if nxt else '—'}"
-                f" · 上次 {last.strftime('%m-%d %H:%M') if last else '从未'}"
+                f" · 上次定时运行 {last.strftime('%m-%d %H:%M') if last else '未记录（不代表从未执行）'}"
                 f"{f' · 🔴连败 {fails}' if fails else ''}\n"
                 f"    内容 {' '.join((j.command or j.prompt).split())[:100]}")
         return "\n".join(lines)

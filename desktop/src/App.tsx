@@ -329,6 +329,11 @@ function App() {
   const [assistantTab, setAssistantTab] = useState<AssistantTab>("feed");
   // 助理的名字 / 关于你，以及它记住的事（都在助理所在的那台电脑上）
   const [assistantProfile, setAssistantProfile] = useState<AssistantProfile>({ name: "VortoCode", soul: "", about_you: "" });
+  const scheduleReadEpoch = useRef(0);
+  const assistantScope = `${baseUrl}:${repoRoot}:${processStatus.runtimeId}:${connection}`;
+  const assistantScopeRef = useRef(assistantScope);
+  assistantScopeRef.current = assistantScope;
+  useEffect(() => { scheduleReadEpoch.current += 1; setAssistantSchedule([]); }, [assistantScope]);
   const [assistantSchedule, setAssistantSchedule] = useState<AssistantScheduleItem[]>([]);
   const [assistantMemories, setAssistantMemories] = useState<AssistantMemory[]>([]);
   const [memoryProposals, setMemoryProposals] = useState<MemoryProposal[]>([]);
@@ -3669,7 +3674,12 @@ function App() {
               setAssistantTab(tab);
               const client = clientRef.current;
               if (tab === "audit") void refreshAudit();
-              if (tab === "schedule") void client?.getAssistantSchedule().then(setAssistantSchedule).catch(() => setAssistantSchedule([]));
+              if (tab === "schedule") {
+                const scope = assistantScopeRef.current;
+                const epoch = ++scheduleReadEpoch.current;
+                const current = () => clientRef.current === client && assistantScopeRef.current === scope;
+                void client?.getAssistantSchedule().then(items => { if (current() && epoch === scheduleReadEpoch.current) setAssistantSchedule(items); }).catch(error => { if (current()) setBanner(String(error)); });
+              }
               if (tab === "identity") {
                 void client?.listAssistantMemories().then(setAssistantMemories).catch(() => setAssistantMemories([]));
                 void client?.listMemoryProposals().then(setMemoryProposals).catch(() => setMemoryProposals([]));
@@ -3677,7 +3687,39 @@ function App() {
               }
             }}>
             {assistantTab === "audit" ? <AssistantAudit entries={auditEntries} />
-              : assistantTab === "schedule" ? <AssistantSchedule items={assistantSchedule} />
+              : assistantTab === "schedule" ? <AssistantSchedule key={assistantScope} items={assistantSchedule} connected={connection === "connected"}
+                  onRefresh={async () => {
+                    const client = clientRef.current;
+                    const scope = assistantScope;
+                    if (!client || assistantScopeRef.current !== scope) return;
+                    const epoch = ++scheduleReadEpoch.current;
+                    const items = await client.getAssistantSchedule();
+                    if (clientRef.current === client && assistantScopeRef.current === scope && epoch === scheduleReadEpoch.current) setAssistantSchedule(items);
+                  }}
+                  onToggle={async item => {
+                    const client = clientRef.current;
+                    const scope = assistantScope;
+                    const current = () => clientRef.current === client && assistantScopeRef.current === scope;
+                    if (!client || !current() || !item.revision) return;
+                    const epoch = ++scheduleReadEpoch.current;
+                    await client.setScheduleEnabled(item.title, !item.enabled, item.revision);
+                    if (!current()) return;
+                    // Reload every card: the revision covers the shared config file.
+                    try {
+                      const items = await client.getAssistantSchedule();
+                      if (current() && epoch === scheduleReadEpoch.current) setAssistantSchedule(items);
+                    } catch {
+                      if (current()) throw new Error("启停配置已保存，但刷新失败，请重新核对状态");
+                    }
+                  }}
+                  onHistory={async item => {
+                    const client = clientRef.current;
+                    const scope = assistantScope;
+                    if (!client || assistantScopeRef.current !== scope) return [];
+                    const runs = await client.getScheduleHistory(item.title);
+                    if (clientRef.current !== client || assistantScopeRef.current !== scope) return [];
+                    return runs;
+                  }} />
               : assistantTab === "identity" ? <AssistantIdentity profile={assistantProfile} memories={assistantMemories}
                   proposals={memoryProposals}
                   connectors={connectors}

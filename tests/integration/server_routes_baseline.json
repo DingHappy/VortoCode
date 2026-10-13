@@ -912,5 +912,17 @@
     "methods": [
       "POST"
     ]
+  },
+  {
+    "path": "/api/cron/{name}/enabled",
+    "methods": [
+      "PUT"
+    ]
+  },
+  {
+    "path": "/api/cron/{name}/history",
+    "methods": [
+      "GET"
+    ]
   }
 ]

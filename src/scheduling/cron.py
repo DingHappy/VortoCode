@@ -410,6 +410,22 @@ def _write(repo_root: str, text: str) -> None:
     tmp.replace(p)                                    # 原子替换：别让并发的调度器读到半截表
 
 
+def _config_edit(operation):
+    """Serialize config writers from Desktop, CLI and agent tools."""
+    from functools import wraps
+
+    @wraps(operation)
+    def locked(repo_root, *args, **kwargs):
+        from src.workflow.pipeline.pipeline_storage import PipelineBusy, pipeline_lock
+        try:
+            with pipeline_lock(repo_root, "cron-config", kind="edit"):
+                return operation(repo_root, *args, **kwargs)
+        except PipelineBusy as error:
+            raise CronEditError("定时配置正在修改，请稍后刷新") from error
+    return locked
+
+
+@_config_edit
 def add_job(repo_root: str, *, name: str, schedule: str, prompt: str,
             announce: str = "im", enabled: bool = True, model: str = "",
             budget: int = 0, allow_web: bool = False) -> str:
@@ -533,8 +549,13 @@ def _set_bool_field(repo_root: str, name: str, field: str, value: bool) -> None:
     _write(repo_root, new_text)
 
 
-def set_job_enabled(repo_root: str, name: str, enabled: bool) -> str:
+@_config_edit
+def set_job_enabled(repo_root: str, name: str, enabled: bool, *, expected_revision: Optional[str] = None) -> str:
     """启用/停用一个已有作业（单行改，不碰其它内容）。返回一句结果描述。"""
+    if expected_revision is not None:
+        from src.scheduling.schedule_cards import config_revision
+        if expected_revision != config_revision(repo_root):
+            raise CronEditError("定时配置已变化，请刷新后再操作")
     _set_bool_field(repo_root, name, "enabled", enabled)
     return f"作业 {name} 已{'启用' if enabled else '停用'}"
 
@@ -545,6 +566,7 @@ def _snapshot(jobs: List[CronJob]) -> Dict[str, tuple]:
                      j.allow_web, j.announce, j.model, j.budget, j.timeout) for j in jobs}
 
 
+@_config_edit
 def set_job_prompt(repo_root: str, name: str, prompt: str) -> str:
     """改一个**prompt 作业**的提示内容（整块替换，其余一个字节不动）。
 
@@ -649,6 +671,7 @@ def set_job_prompt(repo_root: str, name: str, prompt: str) -> str:
     return f"作业 {name} 的内容已更新"
 
 
+@_config_edit
 def set_job_web(repo_root: str, name: str, allow_web: bool) -> str:
     """给/收回一个已有作业的出网许可（单行改）。
 

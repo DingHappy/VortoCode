@@ -1,5 +1,6 @@
+import { AssistantScheduleCard } from "./AssistantScheduleCard";
 import type { ReactNode } from "react";
-import { ArrowLeft, CalendarClock, Smartphone, Check, Clock3, Fingerprint, HeartPulse, Laptop, List, MessageCircle, MessagesSquare, PencilLine, Plus, Server, ShieldCheck, Trash2, X } from "lucide-react";
+import { ArrowLeft, Smartphone, Check, Clock3, Fingerprint, Laptop, List, MessageCircle, MessagesSquare, PencilLine, Plus, Server, ShieldCheck, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import type { AssistantConnector, AssistantMemory, AssistantProfile, AssistantScheduleItem, AuditEntry, MemoryProposal, PhoneChat } from "../types";
 import { MarkdownMessage } from "./MarkdownMessage";
@@ -181,20 +182,25 @@ export function AssistantAudit({ entries, now }: { entries: AuditEntry[]; now?: 
 }
 
 /** 「定时」：它按时间自己会做的事（早晚报、跟进、Heartbeat、定时作业）。 */
-export function AssistantSchedule({ items }: { items: AssistantScheduleItem[] }) {
-  const icon = (kind: string) => kind === "heartbeat" ? <HeartPulse size={15} /> : kind === "cron" ? <CalendarClock size={15} /> : <Clock3 size={15} />;
+export function AssistantSchedule({ items, connected = false, onToggle, onHistory, onRefresh }: {
+  items: AssistantScheduleItem[]; connected?: boolean;
+  onRefresh?: () => Promise<void>;
+  onToggle?: (item: AssistantScheduleItem) => Promise<void>;
+  onHistory?: (item: AssistantScheduleItem) => Promise<import("../types").AssistantScheduleRun[]>;
+}) {
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
   return <section className="assistant-section">
-    <h5>定时</h5>
+    <h5>定时 {onRefresh && <button disabled={!connected || refreshing} onClick={() => {
+      setRefreshing(true); setError("");
+      void onRefresh().catch(error => setError(String(error))).finally(() => setRefreshing(false));
+    }}>刷新</button>}</h5>
+    {error && <p role="alert">{error}</p>}
     {items.length === 0 && <p className="assistant-memory-empty">还没有定时的事。比如让它「每天早上给我一份简报」，或者在常驻电脑上打开早晚报。</p>}
     <ul className="assistant-schedule">
-      {items.map((item) => <li key={item.id} className={item.enabled ? "" : "disabled"}>
-        <span className="assistant-schedule-icon">{icon(item.kind)}</span>
-        <span className="assistant-audit-text">
-          <strong>{item.title}</strong>
-          <small>{item.schedule}{item.enabled ? "" : " · 已停用"}{item.next ? ` · 下次 ${item.next.replace("T", " ").slice(5, 16)}` : ""}</small>
-          {item.detail && <span>{item.detail}</span>}
-        </span>
-      </li>)}
+      {items.map(item => <AssistantScheduleCard key={item.id} item={item} connected={connected}
+        onToggle={onToggle || (async () => { throw new Error("当前界面不支持管理"); })}
+        onHistory={onHistory || (async () => [])} />)}
     </ul>
   </section>;
 }

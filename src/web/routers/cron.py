@@ -1,7 +1,6 @@
 """cron 作业表的观察面 + 手动触发（B9-②，远程驾驶舱）。
 
-第一版**刻意只读**：不提供改 cron.yaml 的写路径——无人值守作业的修改面等于
-「谁能让这台机器夜里自主干活」，属安全敏感区，先观察后另行设计。
+配置写入仅支持已有作业的启停，必须携带读取时的配置版本；不接受命令或提示词。
 手动触发只接受**已在 cron.yaml 里声明**的作业名：请求命名不了命令/提示词内容，
 不授予调度器本就没有的任何能力（与 `vc cron run <name>` 同语义，便于远程验收）。
 """
@@ -97,3 +96,31 @@ async def trigger_cron_job(name: str):
     task = asyncio.get_running_loop().create_task(_run_named_job(cwd, name))
     track_trigger(name, task)
     return {"started": True, "name": job.name, "kind": job.kind}
+
+
+@router.put("/api/cron/{name}/enabled")
+async def change_cron_enabled(name: str, body: dict):
+    from src.scheduling.cron import CronEditError, load_jobs, set_job_enabled
+    from src.scheduling.schedule_cards import config_revision
+
+    if type(body.get("enabled")) is not bool or not isinstance(body.get("revision"), str):
+        raise HTTPException(status_code=400, detail="需要 enabled 布尔值和读取时的 revision")
+    cwd = os.getcwd()
+    if name not in {job.name for job in load_jobs(cwd)}:
+        raise HTTPException(status_code=404, detail="没有这个定时作业")
+    try:
+        set_job_enabled(cwd, name, body["enabled"], expected_revision=body["revision"])
+        return {"enabled": body["enabled"], "revision": config_revision(cwd)}
+    except CronEditError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+
+@router.get("/api/cron/{name}/history")
+async def cron_history(name: str):
+    from src.scheduling.cron import load_jobs
+    from src.scheduling.schedule_cards import recent_runs
+
+    cwd = os.getcwd()
+    if name not in {job.name for job in load_jobs(cwd)}:
+        raise HTTPException(status_code=404, detail="没有这个定时作业")
+    return {"runs": recent_runs(cwd, name), "retained_only": True}
