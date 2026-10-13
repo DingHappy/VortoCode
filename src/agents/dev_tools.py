@@ -582,14 +582,16 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             landed_n = sum(1 for b in ind if b.landed)
             out.append(f"\n【独立批】{landed_n}/{len(ind)} 落到分支：")
             for b in ind:
+                # 只用标题/首行：desc 常是整段任务（目标+验收标准），整段拼「：✅」会让 ✅ 只挂在最后一条标准上
+                disp = b.title or (b.desc.strip().splitlines() or [b.id])[0]
                 if b.landed:
                     skipped = (b.note or "").startswith("跳过测试")
-                    out.append(f"  · {b.desc}：✅" + ("（**已跳过测试：纯文档，跳过≠通过**）"
-                                                     if skipped else ""))
+                    out.append(f"  · {disp}：✅" + ("（**已跳过测试：纯文档，跳过≠通过**）"
+                                                   if skipped else ""))
                 elif (b.note or "").startswith("自测绿但"):  # 自测绿但没落成 → 如实点名带原因（#123 诚实性）
-                    out.append(f"  · {b.desc}：⚠️ {b.note}")
+                    out.append(f"  · {disp}：⚠️ {b.note}")
                 else:
-                    out.append(f"  · {b.desc}：❌ {b.note or '未过'}")
+                    out.append(f"  · {disp}：❌ {b.note or '未过'}")
 
         # 2) 依赖块：拓扑序逐个在 branch 之上接力实现+自测，绿则就地提交（推进 tip 给下一个看）。
         todo_dep = dp.pending("dependent")
