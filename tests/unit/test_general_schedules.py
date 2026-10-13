@@ -90,3 +90,40 @@ def test_assistant_prompt_explains_what_schedules_can_reach(tmp_path, monkeypatc
     monkeypatch.setenv("VORTOCODE_CRON", "1")
     system = build_session(str(tmp_path), kind="web", workspace_scope="general")._system("plan")
     assert "【定时事项】" in system and "不能**读文件、跑命令、查 Git" in system
+
+
+@pytest.mark.parametrize("scheduler", ["0", "1"])
+def test_interactive_general_has_readonly_continuity_even_without_scheduler(tmp_path, monkeypatch, scheduler):
+    from src.gateway.agent_session import build_session
+    monkeypatch.setenv("VORTOCODE_CRON", scheduler)
+    agent = build_session(str(tmp_path), kind="web", workspace_scope="general")
+    assert {"today_activity", "schedule_list", "schedule_history"} <= set(agent.tools)
+    assert all(agent.tools[name].read_only for name in ("today_activity", "schedule_list", "schedule_history"))
+    assert ("cron_add" in agent.tools) is (scheduler == "1")
+    assert not {"read_file", "run_command", "git_status"} & set(agent.tools)
+
+
+async def test_schedule_tools_report_disabled_scheduler_and_exact_failure(tmp_path, monkeypatch):
+    from src.scheduling.assistant_watch import build_status_tools
+    from src.scheduling.cron import record_outcome
+    (tmp_path / ".vortocode").mkdir()
+    (tmp_path / ".vortocode" / "cron.yaml").write_text('jobs:\n  - name: brief\n    schedule: "at 09:00"\n    prompt: "简报"\n')
+    monkeypatch.setenv("VORTOCODE_CRON", "0")
+    tools = {tool.name: tool for tool in build_status_tools(str(tmp_path))}
+    assert "不会自动执行" in await tools["schedule_list"].handler({})
+    assert "不能据此判断从未执行" in await tools["schedule_history"].handler({"name": "brief"})
+    record_outcome(str(tmp_path), "brief", ok=False, summary="失败", error="连接超时")
+    result = await tools["schedule_history"].handler({"name": "brief"})
+    assert '"status": "failed"' in result and "连接超时" in result
+    assert "没有这个定时作业" in await tools["schedule_history"].handler({"name": "../other"})
+
+
+
+
+def test_general_reporting_stays_evidence_based_when_concise(tmp_path):
+    from src.gateway.agent_session import build_session
+    system = build_session(str(tmp_path), kind="web", workspace_scope="general")._system("build")
+    assert "用户要求详细时再展开" in system
+    assert "不能省掉确认和核验" in system
+    assert "允许调整查询继续检索" in system
+    assert "任务台账为依据" in system

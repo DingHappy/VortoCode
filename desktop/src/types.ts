@@ -130,6 +130,10 @@ export interface PhoneChat {
   transcript: Array<{ role: string; text: string; rid?: string; at?: string }>;
 }
 
+export interface AssistantScheduleRun {
+  id: string; status: string; created: string; summary: string; error: string;
+}
+
 export interface AssistantScheduleItem {
   id: string;
   kind: "report" | "watch" | "heartbeat" | "cron";
@@ -139,6 +143,9 @@ export interface AssistantScheduleItem {
   enabled: boolean;
   next?: string | null;
   last?: string | null;
+  revision?: string;
+  scheduler_enabled?: boolean;
+  failures?: number;
 }
 
 /** 连接的服务（GitHub 等）：不含令牌。authorizing 时给人看验证码与链接。 */

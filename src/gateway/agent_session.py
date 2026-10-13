@@ -181,6 +181,9 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
             if os.getenv("VORTOCODE_CRON", "").strip().lower() in ("1", "true", "yes", "on"):
                 from src.agents.tools.cron import build_cron_tools
                 tools += build_cron_tools(repo_root, gated_confirm)
+            # Read-only continuity remains useful even when this host does not run cron.
+            from src.scheduling.assistant_watch import build_status_tools
+            tools += [tool for tool in build_status_tools(repo_root) if tool.name != "list_dispatches"]
             # 常驻助理：登记了常驻电脑项目才有。只能提议任务单，下发由人在 Desktop 点。
             from src.agents.taint import is_tainted
             from src.workflow.tasks.assistant_dispatch import build_dispatch_tools
@@ -233,6 +236,18 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         # 名字、服务对象、长期记忆摘录：装配时读一次，会话内字节稳定
         from src.memory.assistant_profile import assistant_system_parts
         parts.extend(assistant_system_parts(repo_root))
+    if workspace_scope == GENERAL and kind in ("web", "im"):
+        parts.append("【持续跟进】汇报今天做过的事、定时状态和运行结果前，先读取对应状态工具。"
+                     "对话摘要是历史记录，不是任务执行或验收证据；定时作业启用不代表调度总开关开启。"
+                     "暂停只影响后续排期，不代表已在执行的任务停止。没有保留记录时说无法核实，不推断从未执行。"
+                     "不要声称后台工作已经开始、通知已经送达或任务已验收，除非工具提供对应证据。"
+                     "错误记录只证明所记录的错误，不凭超时推断网络、数据源或代码根因；需要更多证据就明确说尚待核实。"
+                     "简单问答和状态汇报默认简短：给结论、必要证据、需要用户处理的下一步，通常150字以内；用户要求详细时再展开。"
+                     "不为简单结果罗列全部记录ID或重复时间，不在已答清楚时附加无关反问。"
+                     "用户已给出明确对象和动作时，可直接使用带内部校验的动作工具；成功或拒绝回执足以核实该操作时，"
+                     "不额外先查后查。证据不足时仍须继续读取或澄清，不能省掉确认和核验。"
+                     "任务是否执行、是否验收以任务台账为依据，不额外搜索长期记忆或聊天来证明验收。"
+                     "不要重复同条件查询来重述已有结论；确实缺少必要信息时，允许调整查询继续检索。")
     if workspace_scope == GENERAL and any(tool.name == "cron_add" for tool in tools):
         parts.append("【定时事项】用 cron_add 交代的事会在无人值守下自动跑：不联网的只能看今天的动态、"
                      "任务单进度、定时事项列表，并带着关于用户的资料；联网的（allow_web）能搜索/抓网页，"
