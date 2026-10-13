@@ -8,6 +8,7 @@ tools merely because its managed data directory happens to exist on disk.
 from __future__ import annotations
 
 import os
+import re
 
 GENERAL = "general"
 SCRATCH = "scratch"
@@ -63,6 +64,11 @@ _GENERAL_HTTP_PREFIXES = (
     "/api/journal",
     "/api/notices",
 )
+# 只放行精确形状（不是 /api/cron 前缀）：助理「定时」页的启停与执行历史。启停只认已有作业名+版本、
+# 不收命令/提示词；手动触发 /run 与作业表全景仍需工作区（真机 2026-10-13：常驻助理上点历史 409）。
+_GENERAL_HTTP_PATTERNS = (
+    re.compile(r"/api/cron/[^/]+/(enabled|history)"),
+)
 _PROJECT_HTTP_PREFIXES = (
     "/api/git",
     "/api/github",
@@ -93,6 +99,8 @@ def http_workspace_requirement(path: str, scope: str | None = None) -> str | Non
         return None
     if any(normalized == prefix.rstrip("/") or normalized.startswith(prefix)
            for prefix in _GENERAL_HTTP_PREFIXES):
+        return None
+    if any(pattern.fullmatch(normalized) for pattern in _GENERAL_HTTP_PATTERNS):
         return None
     if any(normalized == prefix or normalized.startswith(prefix + "/")
            for prefix in _PROJECT_HTTP_PREFIXES):

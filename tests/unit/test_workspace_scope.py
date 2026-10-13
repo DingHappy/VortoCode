@@ -49,3 +49,13 @@ def test_general_http_surface_cannot_bypass_agent_tool_boundary():
     assert http_workspace_requirement("/api/tasks", GENERAL) == SCRATCH
     assert http_workspace_requirement("/api/runs", SCRATCH) is None
     assert http_workspace_requirement("/api/git/review", PROJECT) is None
+
+
+def test_general_allows_only_schedule_card_cron_endpoints():
+    """助理「定时」页在常驻助理（General）上启停作业、看执行历史（真机曾 409）；其余 cron 面仍要工作区。"""
+    assert http_workspace_requirement("/api/cron/morning-brief/enabled", GENERAL) is None
+    assert http_workspace_requirement("/api/cron/morning-brief/history", GENERAL) is None
+    assert http_workspace_requirement("/api/cron/morning-brief/run", GENERAL) == SCRATCH
+    assert http_workspace_requirement("/api/cron", GENERAL) == SCRATCH
+    assert http_workspace_requirement("/api/cron/a/b/history", GENERAL) == SCRATCH
+    assert http_workspace_requirement("/api/cron/x/history/extra", GENERAL) == SCRATCH
