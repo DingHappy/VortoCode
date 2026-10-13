@@ -516,10 +516,17 @@ async def test_image_taint_resets_next_turn(tmp_path):
 @pytest.mark.asyncio
 @pytest.mark.parametrize('name', ['search_conversations', 'read_conversation_excerpt'])
 async def test_conversation_evidence_tools_taint_current_turn(tmp_path, name):
+    import hashlib
+    directory = tmp_path / '.vortocode/web_sessions'
+    directory.mkdir(parents=True)
+    raw = json.dumps({'transcript': [{'role': 'user', 'text': 'fictional violin preference'}]}).encode()
+    (directory / 'fixture.json').write_bytes(raw)
     tools = {tool.name: tool for tool in build_memory_tools(str(tmp_path), _yes)}
     assert tools[name].untrusted_source
     agent = MainAgent([tools[name]])
-    args = {'query': 'fictional topic'} if name == 'search_conversations' else {'id': 'absent:0', 'archive_revision': 'a' * 64}
+    args = {'query': 'violin'} if name == 'search_conversations' else {
+        'id': 'fixture:0', 'archive_revision': hashlib.sha256(raw).hexdigest()}
+    assert 'fictional violin preference' in await tools[name].handler(args)
     await agent._run_tools([(name, args)], 'plan', lambda _: None)
     assert taint.is_tainted()
 
