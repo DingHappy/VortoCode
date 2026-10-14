@@ -315,3 +315,55 @@ async def test_late_external_observer_cancel_does_not_stop_newer_desktop_turn():
     assert actors.snapshot(context)["running"]["id"] == "desktop"
     desktop_release.set()
     await current
+
+
+def test_concurrent_claims_publish_one_complete_registration(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, local
+
+    root = str(tmp_path)
+    original_read = mc.main_chat_key
+    barrier, state = Barrier(2), local()
+
+    def synchronized_first_read(root):
+        result = original_read(root)
+        if not getattr(state, "read", False):
+            state.read = True
+            barrier.wait(timeout=5)
+        return result
+
+    monkeypatch.setattr(mc, "main_chat_key", synchronized_first_read)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(mc.claim_main_chat, root, key) for key in ("sid-first", "sid-second")]
+        results = [future.result(timeout=5) for future in futures]
+    assert results[0] == results[1] == original_read(root)
+    assert results[0] in {"sid-first", "sid-second"}
+    assert list((tmp_path / ".vortocode").glob(".main_chat.*.tmp")) == []
+
+
+def test_corrupt_registration_is_preserved_and_claim_route_reports_conflict(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from src.web.server import app
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    path = tmp_path / ".vortocode" / "main_chat.json"
+    path.parent.mkdir()
+    path.write_text("{broken", encoding="utf-8")
+    with pytest.raises(mc.MainChatUnavailable):
+        mc.claim_main_chat(str(tmp_path), "sid-new")
+    response = TestClient(app).put("/api/assistant/main-chat", json={"sid": "new"})
+    assert response.status_code == 409
+    assert path.read_text(encoding="utf-8") == "{broken"
+    assert list(path.parent.glob(".main_chat.*.tmp")) == []
+
+
+def test_failed_registration_publication_cleans_temporary_file(tmp_path, monkeypatch):
+    def fail_link(*args):
+        raise OSError("publication failed")
+
+    monkeypatch.setattr(mc.os, "link", fail_link)
+    with pytest.raises(OSError, match="publication failed"):
+        mc.claim_main_chat(str(tmp_path), "sid-new")
+    assert mc.main_chat_key(str(tmp_path)) is None
+    assert list((tmp_path / ".vortocode").glob(".main_chat.*.tmp")) == []

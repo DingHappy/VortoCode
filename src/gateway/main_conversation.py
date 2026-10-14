@@ -14,10 +14,15 @@ from __future__ import annotations
 import json
 import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any, Awaitable, Callable, List, Optional, Protocol, Tuple
 
 _SID = re.compile(r"sid-[A-Za-z0-9_-]{1,80}")
+
+
+class MainChatUnavailable(RuntimeError):
+    """An existing registration cannot safely be replaced by a new claim."""
 
 # run(history) -> (新的 history, 回复正文)：入口拿着主要聊天的最新历史跑完自己的回合
 TurnRunner = Callable[[List[Any]], Awaitable[Tuple[List[Any], str]]]
@@ -59,10 +64,31 @@ def claim_main_chat(root: str, key: str) -> str:
         return existing
     path = _path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps({"key": key}), encoding="utf-8")
-    os.replace(tmp, path)
-    return key
+    # Publish a fully written file only if no registration exists. Unlike
+    # replace(), link() cannot overwrite a concurrent winner; readers never
+    # observe the partially written file that exclusive open would expose.
+    fd, name = tempfile.mkstemp(prefix=".main_chat.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump({"key": key}, handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(name, path)
+        except FileExistsError:
+            winner = main_chat_key(root)
+            if winner is None:
+                raise MainChatUnavailable("主要聊天登记损坏，请恢复原登记后重试") from None
+            return winner
+        if os.name != "nt":
+            directory = os.open(path.parent, os.O_RDONLY)
+            try:
+                os.fsync(directory)
+            finally:
+                os.close(directory)
+        return key
+    finally:
+        Path(name).unlink(missing_ok=True)
 
 
 def shared_turn_target(root: str) -> Optional[Tuple[MainConversationHost, str]]:

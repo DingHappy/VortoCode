@@ -68,12 +68,14 @@ async def get_main_chat():
 @router.put("/api/assistant/main-chat")
 async def claim_main_chat(body: dict):
     """登记主要聊天（Desktop 第一次连上时把自己已有的那段报上来）。已登记过就返回已登记的那段。"""
-    from src.gateway.main_conversation import claim_main_chat as claim
+    from src.gateway.main_conversation import MainChatUnavailable, claim_main_chat as claim
     sid = str((body or {}).get("sid") or "")
     try:
         key = claim(os.getcwd(), f"sid-{sid}")
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+    except MainChatUnavailable as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     return {"sid": key[len("sid-"):]}
 
 
