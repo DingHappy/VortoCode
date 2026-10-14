@@ -291,12 +291,20 @@ class SessionActors:
             self.running[context.key] = item
         self._launch(context, execute, kind="external")
         task = self.tasks[context.key]
-        await context.publish()
         try:
+            await context.publish()
             await asyncio.wait({task})
         except asyncio.CancelledError:
-            if not task.done():               # 调用方自己被取消：把回合也停掉
-                request_cancel(task)
+            # The observer may disappear during the initial publication too.
+            # Stop only the slot we reserved, never a newer queued turn.
+            if self.tasks.get(context.key) is task:
+                self.cancel(context.key, reason="stop")
+            raise
+        except Exception:
+            # Failed publication must not leave an unobserved external turn
+            # executing or automatically drain the foreground queue.
+            if self.tasks.get(context.key) is task:
+                self.cancel(context.key, reason="stop")
             raise
         task.result()                         # 回合出错原样抛给调用方；被「停止」则抛 CancelledError
         return True

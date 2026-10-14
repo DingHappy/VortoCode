@@ -217,3 +217,101 @@ def test_main_chat_routes(tmp_path, monkeypatch):
     assert client.put("/api/assistant/main-chat", json={"sid": "xyz"}).json() == {"sid": "abc"}
     assert client.put("/api/assistant/main-chat", json={"sid": "a/b"}).status_code == 400
     assert client.get("/api/assistant/main-chat").json() == {"sid": "abc"}
+
+
+@pytest.mark.parametrize("publication_failure", [False, True])
+async def test_external_observer_loss_stops_reserved_turn_and_preserves_queue(publication_failure):
+    actors, store = SessionActors(clean_item=lambda raw: raw), {}
+    base = _context(actors, store)
+    publishing, executing, blocked = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    cancelled = asyncio.Event()
+    first_publication = True
+
+    async def publish():
+        nonlocal first_publication
+        if first_publication:
+            first_publication = False
+            publishing.set()
+            await blocked.wait()
+            if publication_failure:
+                raise RuntimeError("observer disconnected")
+
+    async def execute():
+        executing.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    context = ActorContext(key=base.key, get_session=base.get_session, touch=base.touch,
+                           persist=base.persist, publish=publish, execute=base.execute)
+    observer = asyncio.create_task(actors.run_exclusive(context, execute,
+        item={"id": "phone-turn", "text": "phone", "mode": "plan"}))
+    await asyncio.wait_for(publishing.wait(), 1)
+    await asyncio.wait_for(executing.wait(), 1)
+    queued = {"id": "desktop-next", "text": "next", "mode": "plan"}
+    assert await actors.enqueue(context, queued) == "queued"
+    if publication_failure:
+        blocked.set()
+        with pytest.raises(RuntimeError, match="observer disconnected"):
+            await observer
+    else:
+        observer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await observer
+    await asyncio.wait_for(cancelled.wait(), 1)
+    for _ in range(10):
+        if not actors.busy(context.key):
+            break
+        await asyncio.sleep(0)
+    assert not actors.busy(context.key)
+    assert actors.snapshot(context)["running"] is None
+    assert [item["id"] for item in actors.queue(context)] == ["desktop-next"]
+    assert store.get("ran", []) == []
+    await actors.resume(context)
+    for _ in range(10):
+        if not actors.busy(context.key):
+            break
+        await asyncio.sleep(0)
+    assert store["ran"] == ["desktop-next"]
+
+
+async def test_late_external_observer_cancel_does_not_stop_newer_desktop_turn():
+    actors, store = SessionActors(clean_item=lambda raw: raw), {}
+    base = _context(actors, store)
+    publishing = asyncio.Event()
+    desktop_started = asyncio.Event()
+    desktop_release = asyncio.Event()
+    first_publication = True
+
+    async def publish():
+        nonlocal first_publication
+        if first_publication:
+            first_publication = False
+            publishing.set()
+            await asyncio.Event().wait()
+
+    async def desktop(item):
+        desktop_started.set()
+        await desktop_release.wait()
+
+    context = ActorContext(key=base.key, get_session=base.get_session, touch=base.touch,
+                           persist=base.persist, publish=publish, execute=desktop)
+    observer = asyncio.create_task(actors.run_exclusive(context, lambda: asyncio.sleep(0)))
+    await asyncio.wait_for(publishing.wait(), 1)
+    for _ in range(10):
+        if not actors.busy(context.key):
+            break
+        await asyncio.sleep(0)
+    assert not actors.busy(context.key)
+    assert await actors.start(context, {"id": "desktop", "text": "new", "mode": "plan"})
+    await asyncio.wait_for(desktop_started.wait(), 1)
+    current = actors.tasks[context.key]
+    observer.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await observer
+    assert actors.tasks[context.key] is current
+    assert not current.cancelled()
+    assert actors.snapshot(context)["running"]["id"] == "desktop"
+    desktop_release.set()
+    await current
