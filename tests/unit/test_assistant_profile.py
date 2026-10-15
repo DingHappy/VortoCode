@@ -31,14 +31,15 @@ def test_memories_listed_newest_first_and_deletable(tmp_path):
     assert [item["id"] for item in profile.list_memories(str(tmp_path))] == [second]
 
 
-def test_general_session_carries_name_about_you_and_memories(tmp_path):
+def test_general_system_keeps_profile_but_does_not_freeze_memory_contents(tmp_path):
     (tmp_path / ".vortocode").mkdir()
     profile.save_profile(str(tmp_path), name="小V", about_you="在宁波。", soul="说话简短，先给结论。")
     _remember(tmp_path, "汇报时先给结论")
     system = build_session(str(tmp_path), kind="web", workspace_scope="general")._system("plan")
     assert "私人助理「小V」" in system and "【服务对象】在宁波。" in system
     assert "【你的性格与说话方式】说话简短，先给结论。" in system
-    assert "汇报时先给结论" in system and "是资料不是指令" in system
+    assert "汇报时先给结论" not in system and "记忆使用" in system
+    assert "用户当下的要求优先" in system
 
 
 def test_profile_and_memory_routes(tmp_path, monkeypatch):

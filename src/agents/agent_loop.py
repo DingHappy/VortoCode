@@ -518,6 +518,7 @@ class MainAgent:
         untrusted_input: bool = False,
         raise_llm_errors: bool = False,
         execution_check: Optional[Callable[[], None]] = None,
+        auto_recall: bool = False,
     ) -> None:
         import os
         # 复用既有 src/hooks 的 HookSystem：把工具生命周期事件（pre/post/error）接进 agent loop
@@ -534,6 +535,8 @@ class MainAgent:
         # （no-op），把通道外伤记成 agent 内科病（真机复盘：三任务六轮全被 502 吞成"无改动/出错"）。
         self._raise_llm_errors = bool(raise_llm_errors)
         self._execution_check = execution_check
+        self._auto_recall = bool(auto_recall)
+        self._turn_memory_context = ""
         self.max_steps = _env_int("VORTOCODE_MAX_STEPS", 6 if max_steps is None else max_steps)
         # build 单段默认给得比 plan 宽：plan 只读摸底，build 要读文件→改→跑测试→看输出→再改，
         # 六步连"读两个文件再动手"都不够。真机 2026-09-17：一个三行的改动，每一轮都在读完
@@ -1714,6 +1717,7 @@ class MainAgent:
         self._web_budget_exhausted = False
         self._turn_writes.clear()
         self._turn_verified = False
+        self._turn_memory_context = ""
         from src.agents.taint import mark_channel_untrusted, mark_tainted, reset_taint
         reset_taint()                       # 回合作用域污点：每回合从"未摄入外部内容"开始（D0）
         # 端级不可信入口（IM）：用户输入自身就是外部内容，**每回合无条件重新打污点**。
@@ -1767,6 +1771,16 @@ class MainAgent:
         self._escalated = False                # 每轮重置；切 build 由 UI 持久化到 mode
         self._pending_images = []              # 每轮重置：上轮异常中断可能残留未注入的图
         self._media_ingested = False           # 本轮是否真往上下文注入过图片（→ 打污点，见 _mark_taint）
+        if (auto_continues == 0 and self._auto_recall and len(str(user_text).strip()) >= 4
+                and "<vortocode_untrusted_memory>" not in str(user_text)):
+            tool = self.tools.get("recall_memory")
+            if tool is not None and tool.read_only and tool.untrusted_source:
+                # Existing permission, capability, audit and tool-budget gates apply.
+                recalled = await self._run_tool("recall_memory", {"query": str(user_text)[:256], "_automatic": True}, mode, say)
+                if recalled.startswith("<vortocode_untrusted_memory>"):
+                    from src.agents.taint import mark_tainted
+                    mark_tainted()
+                    self._turn_memory_context = recalled
         from src.llm.content import build_user_content
         if not self._task_anchor:              # 捕获原始任务（首个 user 纯文本）——压缩后仍作锚点（修 #16）。
             # 先于 env/plan 附加块捕获：历史已有首条 user 就用它；本轮就是首条时用原始 user_text，
@@ -1807,11 +1821,15 @@ class MainAgent:
         while steps < self._step_budget(mode):
             steps += 1
             messages = [{"role": "system", "content": self._system(mode)}] + self._trimmed_history(mode)
+            request_notes = [self._turn_memory_context] if self._turn_memory_context else []
             if not self._env_context:
                 # 无目录会话仍需日期；只附到本次请求，不能挤占持久历史/压缩预算。
                 from datetime import datetime
                 date_note = (f"【当前日期】{datetime.now():%Y-%m-%d}（运行环境本地日期）。"
                              "检索最新/近期信息以此为参考；用户指定历史范围时遵循用户范围。")
+                request_notes.append(date_note)
+            if request_notes:
+                note = "\n\n".join(request_notes)
                 for index in range(len(messages) - 1, 0, -1):
                     if messages[index].get("role") != "user":
                         continue
@@ -1819,9 +1837,9 @@ class MainAgent:
                     content = message.get("content")
                     if isinstance(content, str) and content.startswith("[工具 "):
                         continue  # 工具结果必须保持原样，日期不是搜索后端返回的证据。
-                    message["content"] = (content + [{"type": "text", "text": date_note}]
+                    message["content"] = (content + [{"type": "text", "text": note}]
                                           if isinstance(content, list)
-                                          else (str(content or "") + "\n\n" + date_note))
+                                          else (str(content or "") + "\n\n" + note))
                     messages[index] = message
                     break
 

@@ -2,7 +2,6 @@
 
 import json
 import logging
-import re
 import sqlite3
 import uuid
 from datetime import datetime
@@ -377,29 +376,8 @@ class SessionStore:
         就完全不匹配。这里把 query 切成词，按命中词数打分（大小写无关）、整句命中额外加权，
         再以既有的 importance/recency 次序稳定收尾。零依赖、召回大幅变准（语义向量召回留作后续）。
         """
-        rows = self.get_memories(session_id)          # 已按 importance DESC, created_at DESC 排好
-        q = (query or "").strip().lower()
-        if not q:
-            return rows[:limit]
-        # 中英混排都能切：按空白 + 常见标点分词；退化时用整句
-        terms = [t for t in re.split(r"[\s,，。;；、/：:()（）\[\]{}]+", q) if t] or [q]
-        # 中文无空格，整词子串匹配几乎必失（问「测试怎么跑」配不上「跑测试用 pytest」）。补 CJK 相邻
-        # 二元组（测试/试怎/怎么/么跑…）捕捉「测试」这类核心词——经典轻量中文匹配，零依赖。
-        for run in re.findall(r"[㐀-鿿]{2,}", q):
-            terms.extend(run[i:i + 2] for i in range(len(run) - 1))
-        terms = list(dict.fromkeys(terms))            # 去重，避免同词重复计分
-        scored = []
-        for r in rows:
-            content = str(r.get("content", "")).lower()
-            score = sum(1 for t in terms if t in content)
-            if q in content:                          # 整句原样命中额外加权（保留旧行为的强信号）
-                score += len(terms)
-            if score > 0:
-                scored.append((score, r))
-        if not scored:
-            return []
-        scored.sort(key=lambda sr: sr[0], reverse=True)   # 稳定排序：同分保留 importance/recency 次序
-        return [r for _, r in scored][:limit]
+        from src.memory.lexical import rank_memories
+        return rank_memories(self.get_memories(session_id), query, limit)
 
     def add_memory_proposal(self, content: str, *, decision: str, reasons: List[str],
                             source: str, origin_session_id: str, tainted: bool,
