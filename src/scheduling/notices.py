@@ -92,19 +92,20 @@ def _read_undelivered(repo_root: str) -> List[Dict[str, Any]]:
     return out
 
 
-def _write_undelivered(repo_root: str, items: List[Dict[str, Any]]) -> None:
+def _write_undelivered(repo_root: str, items: List[Dict[str, Any]]) -> bool:
     p = _undelivered_path(repo_root)
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         if not items:
             p.unlink(missing_ok=True)
-            return
+            return True
         body = "\n".join(json.dumps(x, ensure_ascii=False) for x in items[-MAX_UNDELIVERED:])
         tmp = p.with_suffix(".jsonl.tmp")
         tmp.write_text(body + "\n", encoding="utf-8")
         tmp.replace(p)
+        return True
     except (OSError, TypeError, ValueError):
-        pass
+        return False
 
 
 def pending_undelivered_count(repo_root: str) -> int:
@@ -112,12 +113,12 @@ def pending_undelivered_count(repo_root: str) -> int:
     return len(_read_undelivered(repo_root))
 
 
-def queue_undelivered(repo_root: str, text: str, *, source: str = "") -> None:
-    """把一条没推到 IM 的通知排进补发队列。best-effort。"""
+def queue_undelivered(repo_root: str, text: str, *, source: str = "") -> bool:
+    """把一条没推到 IM 的通知排进补发队列；返回是否保存成功，不代表送达。"""
     items = _read_undelivered(repo_root)
     items.append({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                   "source": str(source)[:120], "text": str(text)[:2000], "attempts": 0})
-    _write_undelivered(repo_root, items)
+    return _write_undelivered(repo_root, items)
 
 
 def _too_old(item: Dict[str, Any], now: datetime) -> bool:
@@ -182,6 +183,9 @@ async def flush_undelivered(repo_root: str, send, *, now: datetime = None) -> Di
 def make_notifier(repo_root: str, *, source: str = "scheduler", trigger: str = "", relay: bool = True):
     """造三路通知投递器：①持久台账 ②WS 广播 ③IM 推 owner。每路 best-effort，一路挂不拖另两路。
 
+    返回 True 表示 IM/转发已受理，或已保存到本地补发队列；不代表用户已读。
+    只有台账或 WS 成功不算受理：它们不会在桥恢复后主动补推。
+
     **凡是"跑完要让人知道"的路径都必须用它**，别只调 `record_notice`——那只写盘，人手机上什么
     都收不到。真机 2026-07-27 就栽在这儿：`cron_run` 工具手动触发时没传 notify，于是作业跑完
     结果只落台账，主人在钉钉等了半天没等到，而工具的注释还写着"announce 推 IM"。
@@ -193,7 +197,7 @@ def make_notifier(repo_root: str, *, source: str = "scheduler", trigger: str = "
     """
     _default_source, _default_trigger = source, trigger
 
-    async def _notify(text, *, source: str = "", trigger: str = "") -> None:
+    async def _notify(text, *, source: str = "", trigger: str = "") -> bool:
         # 归属可按次覆盖：同一个投递器既服务调度到点，也服务人手动触发（见 record_notice 的
         # source/trigger 之分）。不传就用造投递器时给的那套。
         src = source or _default_source
@@ -219,7 +223,8 @@ def make_notifier(repo_root: str, *, source: str = "scheduler", trigger: str = "
             record_notice(repo_root,
                           f"⚠ 该通知未能推到 IM（无桥或发送失败），内容已在台账：{str(text)[:60]}",
                           source="delivery")
-            queue_undelivered(repo_root, str(text), source=src)
+            return queue_undelivered(repo_root, str(text), source=src)
+        return True
 
     return _notify
 

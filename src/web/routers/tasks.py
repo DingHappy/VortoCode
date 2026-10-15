@@ -274,7 +274,9 @@ async def relay_owner_notice(body: dict):
         text = text[2:].strip()           # 转发方的投递器已经加过铃铛
     from src.scheduling.notices import make_notifier
     # relay=False：只在本进程投递（没送到就排补发），绝不再转出去——两个服务互指也不会成环
-    await make_notifier(os.getcwd(), source=source, relay=False)(text[:3000])
+    accepted = await make_notifier(os.getcwd(), source=source, relay=False)(text[:3000])
+    if not accepted:
+        raise HTTPException(status_code=503, detail="通知未发送且无法保存补发，请稍后重试")
     return {"ok": True}
 
 

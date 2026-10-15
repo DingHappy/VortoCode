@@ -3,7 +3,7 @@
 - 每分钟向项目运行时刷新已下发任务的状态（assistant_dispatch.refresh），状态一变就推送：
   新写好等你确认的任务单、完成（含分支）、失败、在等人回答。手机上只是提醒，确认下发仍在 Desktop。
 - 早报 / 晚报（默认 09:00、21:00，本机时区）：今天聊了几件事、任务单各状态几件、哪些等你处理。
-  直接从台账生成，不调模型。
+  模型整理台账素材，不可用时发数据版；投递失败复用已保存正文。
 - 推送：本进程持有 IM 桥就直接发；否则交给 ``VORTOCODE_OWNER_NOTIFY_URL`` 指向的同机服务。
   两者都没有就不启动——Desktop 本机的通用会话（IM 固定关、不配转发）不会冒出推送。
 """
@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
@@ -25,6 +26,7 @@ INTERVAL_SECONDS = 60
 _REPORT_GRACE = timedelta(hours=2)          # 错过整点（重启、断网）两小时内补发，再晚就不补
 _NOTIFY_STATUSES = {"proposed", "waiting", "done", "failed", "send_failed", "submission_unknown"}
 
+# True = 发送或入补发队列已受理；不代表用户已读。
 Notify = Callable[[str], Awaitable[bool]]
 
 
@@ -58,10 +60,9 @@ def owner_reporter(root: str) -> Notify:
 
     async def report(text: str) -> bool:
         try:
-            await deliver(text)
-            return True
+            return bool(await deliver(text))
         except Exception as error:  # noqa: BLE001 —— 推送是旁路
-            logger.warning("助理汇报失败：%s", error)
+            logger.warning("助理汇报失败：%s", type(error).__name__)
             return False
     return report
 
@@ -79,11 +80,26 @@ def _load_state(root: str) -> Optional[Dict[str, Any]]:
 
 
 def _save_state(root: str, state: Dict[str, Any]) -> None:
+    from src.utils.state_dir import ensure_state_gitignore
+
+    ensure_state_gitignore(root)
     path = _state_path(root)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, path)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # 早晚报草稿可能含私人摘要；临时文件和最终文件均仅当前用户可读写。
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                     prefix="watch-", suffix=".tmp", delete=False) as stream:
+        tmp = Path(stream.name)
+        try:
+            json.dump(state, stream, ensure_ascii=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+    try:
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 _DIGEST_LIMIT = 300
@@ -204,6 +220,17 @@ async def compose_report(root: str, now: datetime, label: str, *, llm: Any = Non
     return f"🗒 {label}\n{text}" if text else facts
 
 
+async def _notify_accepted(notify: Notify, text: str) -> bool:
+    try:
+        accepted = bool(await notify(text))
+    except Exception as error:  # noqa: BLE001 —— 一条失败不能挡住其它任务；取消继续向外传播
+        logger.warning("助理通知未受理：%s", type(error).__name__)
+        return False
+    if not accepted:
+        logger.warning("助理通知未受理，留待下轮巡检")
+    return accepted
+
+
 async def watch_once(root: str, now: datetime, *, notify: Notify, refresh=assistant_dispatch.refresh,
                      times: Optional[List[str]] = None, writer=None) -> None:
     """巡检一轮：刷新任务状态、推送变化、到点发报告。首次运行只记下现状，不把旧账推一遍。"""
@@ -211,25 +238,51 @@ async def watch_once(root: str, now: datetime, *, notify: Notify, refresh=assist
     first_run = state is None
     state = state or {"seen": {}, "reports": []}
     items = await refresh(root)
-    seen: Dict[str, str] = state.setdefault("seen", {})
-    for item in items:
-        status = str(item.get("status") or "")
-        if seen.get(item["id"]) == status:
-            continue
-        if not first_run and status in _NOTIFY_STATUSES:
-            await notify(status_message(item))
-        seen[item["id"]] = status
+    item_ids = {item["id"] for item in items}
+    seen: Dict[str, str] = {key: value for key, value in state.setdefault("seen", {}).items()
+                            if key in item_ids}
+    state["seen"] = seen
+    if first_run:
+        seen.update({item["id"]: str(item.get("status") or "") for item in items})
+    # 首次快照整体保存，不能因首条通知失败，把下一轮误当成首次而吞掉重试。
+    _save_state(root, state)
+    if not first_run:
+        for item in items:
+            status = str(item.get("status") or "")
+            if seen.get(item["id"]) == status:
+                continue
+            if status in _NOTIFY_STATUSES and not await _notify_accepted(notify, status_message(item)):
+                continue
+            seen[item["id"]] = status
+            # 后续项失败或取消时，已受理的项不能被整轮重放。
+            _save_state(root, state)
     sent: List[str] = state.setdefault("reports", [])
+    due_reports = {}
     for hhmm in times if times is not None else report_times():
         hour, minute = map(int, hhmm.split(":"))
         due = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
         key = f"{due:%Y-%m-%d} {hhmm}"
         if due <= now < due + _REPORT_GRACE and key not in sent:
-            label = "早报" if hour < 12 else "晚报"
-            await notify(await (writer or compose_report)(root, now, label))
+            due_reports[key] = "早报" if hour < 12 else "晚报"
+    # 只缓存当前补发窗口内的正文，重试不再次付费生成；过期/取消配置后删除。
+    drafts: Dict[str, str] = {key: text for key, text in state.get("report_drafts", {}).items()
+                              if key in due_reports and isinstance(text, str)}
+    state["report_drafts"] = drafts
+    _save_state(root, state)
+    for key, label in due_reports.items():
+        if key not in drafts:
+            try:
+                drafts[key] = await (writer or compose_report)(root, now, label)
+            except Exception as error:  # noqa: BLE001 —— 一份报告失败不挡住其它时间槽
+                logger.warning("助理报告生成失败：%s", type(error).__name__)
+                continue
+            _save_state(root, state)
+        if await _notify_accepted(notify, drafts[key]):
             sent.append(key)
+            del drafts[key]
+            state["reports"] = sent[-20:]
+            _save_state(root, state)
     state["reports"] = sent[-20:]
-    state["seen"] = {key: value for key, value in seen.items() if key in {item["id"] for item in items}}
     _save_state(root, state)
 
 
