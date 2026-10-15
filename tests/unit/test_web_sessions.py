@@ -113,6 +113,25 @@ def test_api_rename_requires_title(client):
     assert c.patch("/api/agent/sessions/s3", json={"title": "  "}).json()["ok"] is False
 
 
+def test_cold_persisted_queue_is_visible_without_loading_an_agent(client, monkeypatch):
+    from src.gateway.session_store import save_session
+    from src.web.routers import realtime
+
+    c, root = client
+    queued = [{"id": "retained", "text": "synthetic paused input", "mode": "plan"}]
+    assert save_session(str(root), "sid-cold-paused", [], [], None,
+                        prompt_queue=queued, prompt_queue_paused=True)
+
+    def unexpected_agent():
+        raise AssertionError("Read-only listing must not restore or run an agent")
+
+    monkeypatch.setattr(realtime, "_new_agent", unexpected_agent)
+    rows = {row["sid"]: row for row in c.get("/api/agent/sessions").json()["sessions"]}
+    assert rows["cold-paused"]["queue_count"] == 1
+    assert rows["cold-paused"]["status"] == "queued"
+    assert "sid-cold-paused" not in realtime._SESSIONS
+
+
 def test_websocket_capacity_rejects_without_losing_queued_session(client, monkeypatch):
     from starlette.websockets import WebSocketDisconnect
     from src.web.routers import realtime

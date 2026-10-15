@@ -215,6 +215,16 @@ def main():
     sub.add_parser("canary", help="端到端交付验收：一句话进来→确认→结果送到出站面，六条链路逐条验"
                                   "（不触网/不烧 token/不碰真工作区；部署后的强制关卡）")
 
+    p = sub.add_parser("runtime-acceptance", help="常驻运行验收：只读采样，不调用模型或提交任务")
+    p.add_argument("--assistant-url")
+    p.add_argument("--code-url")
+    p.add_argument("--relay-url")
+    p.add_argument("--require-im", action="store_true")
+    p.add_argument("--duration", type=float, default=86400)
+    p.add_argument("--interval", type=float, default=60)
+    p.add_argument("--output")
+    p.add_argument("--report", help="只读已有报告；没有完整结束记录时保持 incomplete")
+
     p = sub.add_parser("roster", help="多助手名册（每人一个专属小蜜）：list 看名单 / check 体检 / "
                                       "template 出 env 模板——起服务前先查出配错的地方")
     p.add_argument("action", choices=["list", "check", "template"],
@@ -367,6 +377,34 @@ def main():
 
     elif args.command == "canary":
         sys.exit(asyncio.run(run_canary_cli()))
+
+    elif args.command == "runtime-acceptance":
+        import json
+        from src.gateway.runtime_acceptance import Target, monitor, read_report
+        try:
+            if args.report:
+                result = read_report(args.report)
+                code = 0 if result["state"] == "passed" else 1
+            else:
+                if not args.assistant_url or not args.code_url or not args.output:
+                    raise ValueError("Sampling requires assistant/code targets and output")
+                try:
+                    from dotenv import load_dotenv
+                    load_dotenv(Path(__file__).parent.parent / ".env")
+                except ImportError:
+                    pass
+                targets = [Target("assistant", args.assistant_url, assistant=True), Target("code", args.code_url)]
+                if args.relay_url:
+                    targets.append(Target("relay", args.relay_url))
+                result = monitor(targets, args.output, duration=args.duration, interval=args.interval,
+                                 token=env_compat("VORTOCODE_API_TOKEN", "AUTODEV_API_TOKEN", "").strip(),
+                                 require_im=args.require_im)
+                code = 0 if result["completed"] and result["coverage_complete"] and not result["unhealthy_samples"] else 1
+        except (ValueError, OSError) as error:
+            print(json.dumps({"state": "error", "error_type": type(error).__name__}))
+            sys.exit(2)
+        print(json.dumps(result, ensure_ascii=True))
+        sys.exit(code)
 
     elif args.command == "roster":
         sys.exit(run_roster_cli(args.action, args.arg or "", args.roster_file))

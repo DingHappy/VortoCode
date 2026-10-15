@@ -176,6 +176,7 @@ def list_sessions(repo_root: str) -> List[Dict[str, Any]]:
         if not isinstance(data, dict):
             continue
         transcript = data.get("transcript") or []
+        queue = data.get("prompt_queue") if isinstance(data.get("prompt_queue"), list) else []
         hook_issues = hook_issue_snapshot(
             data.get("activities") or [], hook_acknowledgements.get(f"sid-{p.stem}") or [],
         )
@@ -184,6 +185,7 @@ def list_sessions(repo_root: str) -> List[Dict[str, Any]]:
             "sid": p.stem,
             "title": data.get("title") or title_from_transcript(transcript),
             "messages": len(transcript),
+            "queue_count": sum(1 for item in queue[:_MAX_PROMPT_QUEUE] if isinstance(item, dict) and item.get("id")),
             "updated": mtime,
             "context": data.get("context_usage") or {},
             "hook_issues": hook_issues,
