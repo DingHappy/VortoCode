@@ -585,7 +585,14 @@ def _propose_turn_memories(sess: dict, rid: str, candidates) -> None:
         return
     from src.gateway.turn_digest import turn_tool_names
     from src.memory.assistant_profile import propose_memories
-    names = turn_tool_names(sess.get("activities") or [], rid, limit=50)
+    activities = []
+    for event in sess.get("activities") or []:
+        args = event.get("args") if isinstance(event.get("args"), dict) else {}
+        if (event.get("name") == "recall_memory" and args.get("_automatic") is True
+                and not str(event.get("result") or "").startswith("<vortocode_untrusted_memory>")):
+            continue  # An empty/blocked automatic read did not ingest memory content.
+        activities.append(event)
+    names = turn_tool_names(activities, rid, limit=50)
     tainted = any(name.startswith(("web_", "browser", "recall_memory", "search_conversations", "read_conversation_excerpt", "mcp")) for name in names)
     try:
         propose_memories(sess.get("repo_root") or os.getcwd(), list(candidates), source="assistant", tainted=tainted)

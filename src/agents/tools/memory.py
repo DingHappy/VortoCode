@@ -130,8 +130,14 @@ def build_memory_tools(repo_root: str, confirm=None, *, source: str = "agent",
                     f"更早的 {dropped} 条不再注入。建议精简这个文件。")
         return msg
 
-    async def _recall_memory(args: dict) -> str:
+    async def _recall_memory(args: dict) -> str | dict:
         q = str(args.get("query", "")).strip()
+        if args.get("_automatic") is True:
+            from src.memory.active_recall import recall_context
+            try:
+                return await asyncio.to_thread(recall_context, repo_root, q)
+            except (OSError, ValueError, sqlite3.Error):
+                return {"ok": False, "text": "自动记忆检索暂不可用，不能据此推断没有相关记忆。"}
         try:
             store = _store()
             rows = (store.search_memories("__longterm__", q, 10) if q

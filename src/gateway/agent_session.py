@@ -233,9 +233,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         "需要修改用户已有项目时调用 request_workspace(scope=project)，不要搜索或猜测其他目录。"
     ] if workspace_scope == SCRATCH else []
     if workspace_scope == GENERAL and kind in ("web", "im"):
-        # 名字、服务对象、长期记忆摘录：装配时读一次，会话内字节稳定
+        # 人设保持稳定；相关记忆由每个用户回合只读检索，不冻结在 system 中。
         from src.memory.assistant_profile import assistant_system_parts
-        parts.extend(assistant_system_parts(repo_root))
+        parts.extend(assistant_system_parts(repo_root, include_memories=False))
+        kwargs["auto_recall"] = os.getenv("VORTOCODE_AUTO_RECALL", "1").strip().lower() not in {"0", "false", "no", "off"}
     if workspace_scope == GENERAL and kind in ("web", "im"):
         parts.append("【持续跟进】汇报今天做过的事、定时状态和运行结果前，先读取对应状态工具。"
                      "对话摘要是历史记录，不是任务执行或验收证据；定时作业启用不代表调度总开关开启。"
