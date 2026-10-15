@@ -48,6 +48,30 @@ Heartbeat behavior follows three public rules:
 - A reply consisting only of `HEARTBEAT_OK` (apart from surrounding whitespace) is recorded without sending a user notification. Mixed findings or quoted acknowledgements are surfaced.
 - A heartbeat may report or propose work, but it cannot silently merge code or broaden its own permissions.
 
+### Continuous runtime acceptance
+
+Run the read-only sampler on the monitored machine, with loopback HTTP origins in
+`ASSISTANT_URL` and `CODE_URL`. Authentication uses the existing private API-token
+configuration; credentials are never command arguments or report contents.
+
+```bash
+vc runtime-acceptance --assistant-url "$ASSISTANT_URL" --code-url "$CODE_URL" \
+  --require-im --duration 86400 --interval 60 \
+  --output .vortocode/acceptance/run.jsonl
+vc runtime-acceptance --report .vortocode/acceptance/run.jsonl
+```
+
+Use an OS supervisor for long runs. Omit `--require-im` for installations without
+a phone bridge. Sampling reads health, queue and bridge counters, submits no tasks,
+and makes no model requests. Reports contain aggregate statuses, not conversations,
+addresses or credentials; existing reports cannot be overwritten.
+
+A missing final record, interruption or insufficient sampling coverage stays
+`incomplete`. `passed` describes only the sampled runtime checks. It does not prove
+task completion, phone delivery, answer quality or actual model cost. Review those
+separately using task, delivery and human-acceptance evidence. Samples also cannot
+detect every outage between polling intervals.
+
 ## 三、日常用法（attach 优先）
 
 Start the state-owning runtime:
