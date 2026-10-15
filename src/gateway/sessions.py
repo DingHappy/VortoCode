@@ -96,6 +96,7 @@ class SessionTable:
                 "transcript": transcript,
                 "activities": activities,
                 "prompt_queue": prompt_queue,
+                "prompt_queue_paused": bool(saved and saved.get("prompt_queue_paused") is True),
                 "last": 0.0,
                 "updated": now,
                 "repo_root": repo_root,
@@ -145,6 +146,7 @@ class SessionTable:
                          getattr(agent, "history", []) or [], getattr(agent, "plan", None),
                          activities=sess.get("activities") or [],
                          prompt_queue=sess.get("prompt_queue") or [],
+                         prompt_queue_paused=sess.get("prompt_queue_paused") is True,
                          context_usage=agent_context_summary(agent, mode),
                          tool_names=session_tool_names(agent),
                          behavior_fp=session_behavior_fp(agent)) is True

@@ -120,7 +120,10 @@ class SessionActors:
         running = self.running.get(context.key)
         return {"items": [public_prompt_item(item, index) for index, item in enumerate(self.queue(context))],
                 "running": public_prompt_item(running) if running else None,
-                "paused": context.key in self.auto_stopped and not self.busy(context.key)}
+                "paused": self.is_paused(context) and not self.busy(context.key)}
+
+    def is_paused(self, context: ActorContext) -> bool:
+        return context.key in self.auto_stopped or context.get_session().get("prompt_queue_paused") is True
 
     async def enqueue(self, context: ActorContext, item: Prompt) -> str:
         queue = self.queue(context)
@@ -147,6 +150,7 @@ class SessionActors:
         self.running[context.key] = item
         self._foreground_contexts[context.key] = context
         self.auto_stopped.discard(context.key)
+        context.get_session()["prompt_queue_paused"] = False
         context.touch()
         context.persist()
         # Reserve before yielding, so another observer sees the same busy actor.
@@ -160,7 +164,7 @@ class SessionActors:
         """Reserve the same actor slot; foreground queue and explicit stop win."""
         key = context.key
         if (self.busy(key) or self.queue(context) or key in self.priority
-                or key in self.auto_stopped):
+                or self.is_paused(context)):
             return False
 
         self._launch(context, execute, kind="background", on_cancel_before_start=on_cancel_before_start)
@@ -232,6 +236,7 @@ class SessionActors:
             return  # A stale completion must not clear or dequeue a newer turn.
         self.running.pop(context.key, None)
         if reason in ("stop", "disconnect"):
+            context.get_session()["prompt_queue_paused"] = True
             context.persist()
             await context.publish()
             return
@@ -246,8 +251,13 @@ class SessionActors:
         if item is None or not await self.start(foreground, item):
             await context.publish()
 
-    async def resume(self, context: ActorContext) -> None:
+    async def resume(self, context: ActorContext, *, automatic: bool = False) -> None:
+        if automatic and self.is_paused(context):
+            await context.publish()
+            return
         if not self.busy(context.key) and (self.priority.get(context.key) or self.queue(context)):
+            self.auto_stopped.discard(context.key)
+            context.get_session()["prompt_queue_paused"] = False
             await self.advance(context, reason=None)
 
     async def remove(self, context: ActorContext, item_id: str) -> None:
@@ -289,13 +299,14 @@ class SessionActors:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + wait_timeout
         while self.busy(context.key) or self.queue(context) or context.key in self.priority:
-            if not self.busy(context.key) and context.key in self.auto_stopped:
+            if not self.busy(context.key) and self.is_paused(context):
                 return False  # Paused input needs an explicit foreground resume.
             if loop.time() >= deadline:
                 return False
             await asyncio.sleep(poll)
         # 检查与占位之间没有 await：别的观察者看到的一定是已占用的槽位。
         self.auto_stopped.discard(context.key)
+        context.get_session()["prompt_queue_paused"] = False
         if item is not None:
             self.running[context.key] = item
         self._launch(context, execute, kind="external")
@@ -307,20 +318,24 @@ class SessionActors:
             # The observer may disappear during the initial publication too.
             # Stop only the slot we reserved, never a newer queued turn.
             if self.tasks.get(context.key) is task:
-                self.cancel(context.key, reason="stop")
+                self.cancel(context.key, reason="stop", context=context)
             raise
         except Exception:
             # Failed publication must not leave an unobserved external turn
             # executing or automatically drain the foreground queue.
             if self.tasks.get(context.key) is task:
-                self.cancel(context.key, reason="stop")
+                self.cancel(context.key, reason="stop", context=context)
             raise
         task.result()                         # 回合出错原样抛给调用方；被「停止」则抛 CancelledError
         return True
 
-    def cancel(self, key: str, *, reason: str = "stop") -> bool:
+    def cancel(self, key: str, *, reason: str = "stop", context: ActorContext | None = None) -> bool:
         if reason in {"stop", "disconnect"}:
             self.auto_stopped.add(key)
+            owner = context or self._foreground_contexts.get(key)
+            if owner is not None and owner.key == key:
+                owner.get_session()["prompt_queue_paused"] = True
+                owner.persist()
         task = self.tasks.get(key)
         if task is not None and (key in self._operation_kind or not task.done()):
             if key in self.running or key in self._operation_kind:

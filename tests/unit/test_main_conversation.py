@@ -464,3 +464,71 @@ async def test_incomplete_phone_turn_is_consistent_in_display_context_and_saved_
     finally:
         realtime._TABLE.pop(key)
         realtime._ACTORS.forget(key)
+
+
+@pytest.mark.parametrize("restart", [False, True])
+async def test_stopped_queue_remains_paused_on_reconnect_or_reconstruction(tmp_path, restart):
+    from src.gateway.session_store import load_session
+    from src.gateway.sessions import SessionTable
+
+    class Agent:
+        def __init__(self):
+            self.history = []
+            self.plan = []
+
+    root, key = str(tmp_path), "sid-paused-reconnect"
+    table = SessionTable()
+    session = table.get(key, repo_root=root, factory=Agent)
+    actors = SessionActors(clean_item=lambda raw: raw)
+    started, release = asyncio.Event(), asyncio.Event()
+    ran = []
+
+    async def execute(item):
+        ran.append(item["id"])
+        if item["id"] == "running":
+            started.set()
+            await release.wait()
+
+    async def publish():
+        pass
+
+    def context_for(current_table):
+        return ActorContext(key=key, get_session=lambda: current_table.peek(key),
+                            touch=lambda: None, persist=lambda: current_table.persist(key, root),
+                            publish=publish, execute=execute)
+
+    context = context_for(table)
+    await actors.start(context, {"id": "running", "text": "current", "mode": "plan"})
+    await asyncio.wait_for(started.wait(), 1)
+    await actors.enqueue(context, {"id": "queued", "text": "retained", "mode": "plan"})
+    task = actors.tasks[key]
+    actors.cancel(key, reason="stop", context=context)
+    # Pause is durable before cancellation cleanup gets its next timeslice.
+    assert load_session(root, key)["prompt_queue_paused"] is True
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert actors.snapshot(context)["paused"] is True
+    assert ran == ["running"]
+
+    if restart:
+        actors = SessionActors(clean_item=lambda raw: raw)
+        table = SessionTable()
+        session = table.get(key, repo_root=root, factory=Agent)
+        context = context_for(table)
+        assert key not in actors.auto_stopped
+        assert session["prompt_queue_paused"] is True
+
+    await actors.resume(context, automatic=True)
+    assert actors.snapshot(context)["paused"] is True
+    assert [item["id"] for item in actors.queue(context)] == ["queued"]
+    assert ran == ["running"]
+    assert await asyncio.wait_for(actors.run_exclusive(context, lambda: asyncio.sleep(0)), 1) is False
+
+    await actors.send_now(context, "queued")
+    if actors.busy(key):
+        await actors.tasks[key]
+    assert ran == ["running", "queued"]
+    assert load_session(root, key)["prompt_queue_paused"] is False
+    assert load_session(root, key)["prompt_queue"] == []
+    await actors.resume(context, automatic=True)
+    assert ran == ["running", "queued"]

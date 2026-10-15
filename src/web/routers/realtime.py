@@ -1135,7 +1135,7 @@ async def _run_main_conversation_turn(*, key: str, source: str, user_text: str, 
     item = _new_prompt_item(text=user_text, mode="plan", images=[], audio=[], rid=rid,
                            want_reasoning=False, context_items=[])
     if not await _ACTORS.run_exclusive(context, execute, item=item):
-        if key in _ACTORS.auto_stopped:
+        if _ACTORS.is_paused(context):
             raise MainConversationBusy("主要聊天队列已暂停，请在电脑继续或移除排队消息后重试")
         raise MainConversationBusy("主要聊天里还有回合没结束，稍后再发一次")
     return outcome["reply"]
@@ -1166,7 +1166,7 @@ async def _advance_prompt_queue(websocket, *, reason: Optional[str]) -> None:
 
 
 async def _resume_prompt_queue(websocket) -> None:
-    await _ACTORS.resume(_actor_context(websocket))
+    await _ACTORS.resume(_actor_context(websocket), automatic=True)
 
 
 async def _remove_queued_prompt(websocket, item_id: str) -> None:
@@ -1178,7 +1178,7 @@ async def _send_queued_prompt_now(websocket, item_id: str) -> None:
 
 
 def _cancel_agent_turn(websocket, *, reason: str = "stop") -> bool:
-    return _ACTORS.cancel(_session_key(websocket), reason=reason)
+    return _ACTORS.cancel(_session_key(websocket), reason=reason, context=_actor_context(websocket))
 
 
 async def handle_agent_message(websocket, message: Dict[str, Any]):
