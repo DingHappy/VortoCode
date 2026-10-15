@@ -67,7 +67,17 @@ and makes no model requests. Reports contain aggregate statuses, not conversatio
 addresses or credentials; existing reports cannot be overwritten.
 
 A missing final record, interruption or insufficient sampling coverage stays
-`incomplete`. `passed` describes only the sampled runtime checks. It does not prove
+`incomplete`. The reader checks each planned time slot and all configured targets;
+duplicate samples, malformed records and contradictory status flags cannot fill
+coverage gaps. Summary totals alone cannot approve a run.
+
+`--report` groups consecutive bad samples per target into incidents, with problem
+counts, first/last bad observations and the next healthy observation. These are
+sampling boundaries, not exact outage durations. Details retain the latest 20
+incidents, with full aggregate counts. Recovery does not erase earlier unhealthy
+samples: a complete run containing them remains `failed`.
+
+`passed` describes only the sampled runtime checks. It does not prove
 task completion, phone delivery, answer quality or actual model cost. Review those
 separately using task, delivery and human-acceptance evidence. Samples also cannot
 detect every outage between polling intervals.
