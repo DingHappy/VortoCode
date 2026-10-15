@@ -45,7 +45,7 @@ Enabling a scheduler or heartbeat does not grant extra tools. The active permiss
 Heartbeat behavior follows three public rules:
 
 - The configured checklist is treated as untrusted input.
-- A clean result containing `HEARTBEAT_OK` is recorded without sending a user notification.
+- A reply consisting only of `HEARTBEAT_OK` (apart from surrounding whitespace) is recorded without sending a user notification. Mixed findings or quoted acknowledgements are surfaced.
 - A heartbeat may report or propose work, but it cannot silently merge code or broaden its own permissions.
 
 ## 三、日常用法（attach 优先）

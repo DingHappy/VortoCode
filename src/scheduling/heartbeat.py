@@ -1,7 +1,7 @@
 """heartbeat — 便宜的周期性"值班"（D3）。
 
 照抄 OpenClaw 的成本控制：隔离会话跑（不污染主上下文）、只带轻上下文（HEARTBEAT.md）、可指定便宜
-模型、activeHours 限时段、应答含 `HEARTBEAT_OK` 就直接丢弃不打扰用户。自我迭代闭环的落地形态：
+模型、activeHours 限时段、应答仅为 `HEARTBEAT_OK` 才静默不打扰用户。自我迭代闭环的落地形态：
 心跳醒来 → 从 `.vortocode/BACKLOG.md` 领一条活 → 提交后台流水线（产出 draft PR）→ IM 通知。
 
 领活铁律：一次最多领一条、领了在条目上标在跑、产出只到 draft PR 为止、**永不自动合并**。
@@ -13,7 +13,7 @@
   `UNATTENDED_PROFILE` 不给出网工具的理由）。正文进 `<vortocode_untrusted_memory>` 数据边界，
   `MainAgent.run_turn` 见到该标记即 `mark_tainted()`——本回合**一切免确认授权失效**，
   污点规则对"本地检查单"没有豁免。
-- **无事静默**：检查单全过（应答含 `HEARTBEAT_OK`）→ 不通知、不写会话历史（隔离会话本就不写），
+- **无事静默**：检查单全过（应答仅为 `HEARTBEAT_OK`）→ 不通知、不写会话历史（隔离会话本就不写），
   只往 Journal 落**一行确定性台账**（`.vortocode/audit.log` 的 event 行，不含任何模型正文）。
 """
 from __future__ import annotations
@@ -72,8 +72,8 @@ def in_active_hours(hour: int, window: Optional[tuple]) -> bool:
 
 
 def is_ok_response(text: str) -> bool:
-    """应答表示"没事"（含 HEARTBEAT_OK）→ 直接丢弃不打扰。"""
-    return _OK_TOKEN in (text or "")
+    """Only the standalone acknowledgement is quiet; mixed findings must surface."""
+    return (text or "").strip() == _OK_TOKEN
 
 
 # --------------------------------------------------------------------- backlog 领活

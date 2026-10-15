@@ -239,7 +239,7 @@ async def test_all_clear_is_silent_and_leaves_exactly_one_journal_line(tmp_path,
 
     async def ok_session(repo_root, prompt, **kwargs):
         assert "看磁盘水位" in prompt                           # 确实按检查单值的班
-        return "逐条看过，全部正常 HEARTBEAT_OK"
+        return "HEARTBEAT_OK"
 
     res = await heartbeat.run_heartbeat(
         str(tmp_path), notify=notify, run_session=ok_session, hour=12)
