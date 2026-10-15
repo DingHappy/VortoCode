@@ -90,6 +90,7 @@ class SessionActors:
         self.stop_reasons: dict[str, str] = {}
         self._operation_kind: dict[str, str] = {}
         self.auto_stopped: set[str] = set()
+        self._foreground_contexts: dict[str, ActorContext] = {}
 
     @property
     def background(self) -> dict[str, asyncio.Task]:
@@ -118,7 +119,8 @@ class SessionActors:
     def snapshot(self, context: ActorContext) -> dict:
         running = self.running.get(context.key)
         return {"items": [public_prompt_item(item, index) for index, item in enumerate(self.queue(context))],
-                "running": public_prompt_item(running) if running else None}
+                "running": public_prompt_item(running) if running else None,
+                "paused": context.key in self.auto_stopped and not self.busy(context.key)}
 
     async def enqueue(self, context: ActorContext, item: Prompt) -> str:
         queue = self.queue(context)
@@ -131,6 +133,7 @@ class SessionActors:
         if len(queue) >= self.max_queue - int(reserved):
             return "full"
         queue.append(item)
+        self._foreground_contexts[context.key] = context
         context.touch()
         context.persist()
         if self._operation_kind.get(context.key, "").startswith("background"):
@@ -142,6 +145,7 @@ class SessionActors:
         if self.busy(context.key):
             return False
         self.running[context.key] = item
+        self._foreground_contexts[context.key] = context
         self.auto_stopped.discard(context.key)
         context.touch()
         context.persist()
@@ -236,7 +240,10 @@ class SessionActors:
         if item is None and queue:
             item = queue.pop(0)
         context.persist()
-        if item is None or not await self.start(context, item):
+        foreground = self._foreground_contexts.get(context.key, context)
+        if item is None:
+            self._foreground_contexts.pop(context.key, None)
+        if item is None or not await self.start(foreground, item):
             await context.publish()
 
     async def resume(self, context: ActorContext) -> None:
@@ -282,6 +289,8 @@ class SessionActors:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + wait_timeout
         while self.busy(context.key) or self.queue(context) or context.key in self.priority:
+            if not self.busy(context.key) and context.key in self.auto_stopped:
+                return False  # Paused input needs an explicit foreground resume.
             if loop.time() >= deadline:
                 return False
             await asyncio.sleep(poll)
@@ -339,4 +348,5 @@ class SessionActors:
         self.stop_reasons.pop(key, None)
         self._operation_kind.pop(key, None)
         self.auto_stopped.discard(key)
+        self._foreground_contexts.pop(key, None)
         return True

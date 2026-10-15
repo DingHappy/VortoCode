@@ -1100,14 +1100,33 @@ async def _run_main_conversation_turn(*, key: str, source: str, user_text: str, 
 
     async def execute() -> None:
         sess = context.get_session()
+        previous_history = list(getattr(sess["agent"], "history", None) or [])
         _append_transcript(sess, "user", user_text, rid=rid, source=source)
-        await _publish_session_event(key, P.make_event(P.AGENT_HISTORY, items=list(sess["transcript"])))
+
+        def record_incomplete(message: str) -> None:
+            _append_transcript(sess, "assistant", message, rid=rid, source=source)
+            sess["agent"].history = previous_history + [
+                {"role": "user", "content": user_text},
+                {"role": "assistant", "content": message},
+            ]
+
         try:
-            history, reply = await run(list(getattr(sess["agent"], "history", None) or []))
+            await _publish_session_event(key, P.make_event(P.AGENT_HISTORY, items=list(sess["transcript"])))
+            history, reply = await run(list(previous_history))
             sess["agent"].history = list(history)
             _append_transcript(sess, "assistant", reply, rid=rid, source=source)
             outcome["reply"] = str(reply)
             _schedule_turn_digest(key, rid)
+        except asyncio.CancelledError:
+            message = "本轮已取消，未确认完成；可能已有部分操作，请核对结果后再继续。"
+            record_incomplete(message)
+            await _publish_session_event(key, P.make_event(P.AGENT_CANCELLED, rid=rid, text=message))
+            raise
+        except Exception:
+            message = "本轮执行失败，未确认完成；可能已有部分操作，请核对结果后再继续。"
+            record_incomplete(message)
+            await _publish_session_event(key, P.make_event(P.AGENT_ERROR, rid=rid, text=message))
+            raise
         finally:
             context.persist()
             await _publish_session_event(key, P.make_event(P.AGENT_HISTORY, items=list(sess["transcript"])))
@@ -1116,6 +1135,8 @@ async def _run_main_conversation_turn(*, key: str, source: str, user_text: str, 
     item = _new_prompt_item(text=user_text, mode="plan", images=[], audio=[], rid=rid,
                            want_reasoning=False, context_items=[])
     if not await _ACTORS.run_exclusive(context, execute, item=item):
+        if key in _ACTORS.auto_stopped:
+            raise MainConversationBusy("主要聊天队列已暂停，请在电脑继续或移除排队消息后重试")
         raise MainConversationBusy("主要聊天里还有回合没结束，稍后再发一次")
     return outcome["reply"]
 

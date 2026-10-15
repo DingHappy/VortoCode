@@ -306,6 +306,7 @@ function App() {
   }, []);
   const [busy, setBusy] = useState(false);
   const [promptQueue, setPromptQueue] = useState<PromptQueueItem[]>([]);
+  const [promptQueuePaused, setPromptQueuePaused] = useState(false);
   // 不再区分 Plan / Build：每轮都按可修改的模式运行，写盘、执行、外发照旧逐次过确认门
   //（授权档位决定问不问，污点回合一律问人）。只读规划交给模型自己判断，不再让用户先选模式。
   const mode = "build" as const;
@@ -929,6 +930,7 @@ function App() {
             .filter((item): item is PromptQueueItem => item !== null);
           const running = normalizePromptQueueItem(event.running);
           setPromptQueue(queued);
+          setPromptQueuePaused(event.paused === true);
           if (running) {
             setBusy(true);
             updateActiveTurnRid(running.id);
@@ -1605,6 +1607,7 @@ function App() {
     setStreamingRid(undefined);
     updateActiveTurnRid(null);
     setPromptQueue([]);
+    setPromptQueuePaused(false);
     setPendingConfirm(null);
     setWorkspaceRequest(null);
     setDiffPayload(null);
@@ -3557,8 +3560,8 @@ function App() {
             {promptQueue.length > 0 && (
               <section className="prompt-queue" aria-label="待运行任务">
                 <div className="prompt-queue-head">
-                  <span>接下来</span><b>{promptQueue.length}</b>
-                  <small>当前回合结束后依次执行</small>
+                  <span>{promptQueuePaused ? "已暂停" : "接下来"}</span><b>{promptQueue.length}</b>
+                  <small>{promptQueuePaused ? "输入已保留，点击「现在执行」继续" : "当前回合结束后依次执行"}</small>
                 </div>
                 <div className="prompt-queue-list">
                   {promptQueue.slice(0, 4).map((item, index) => (

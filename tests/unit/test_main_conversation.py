@@ -367,3 +367,100 @@ def test_failed_registration_publication_cleans_temporary_file(tmp_path, monkeyp
         mc.claim_main_chat(str(tmp_path), "sid-new")
     assert mc.main_chat_key(str(tmp_path)) is None
     assert list((tmp_path / ".vortocode").glob(".main_chat.*.tmp")) == []
+
+
+async def test_phone_completion_runs_desktop_queue_with_its_original_executor():
+    actors, store = SessionActors(clean_item=lambda raw: raw), {}
+    desktop = _context(actors, store)
+    phone_started, phone_release = asyncio.Event(), asyncio.Event()
+    swallowed = []
+
+    async def no_execute(item):
+        swallowed.append(item["id"])
+
+    phone = ActorContext(key=desktop.key, get_session=desktop.get_session,
+                         touch=desktop.touch, persist=desktop.persist,
+                         publish=desktop.publish, execute=no_execute)
+
+    async def turn():
+        phone_started.set()
+        await phone_release.wait()
+
+    external = asyncio.create_task(actors.run_exclusive(phone, turn))
+    await asyncio.wait_for(phone_started.wait(), 1)
+    assert await actors.enqueue(desktop, {"id": "desktop-next", "text": "next", "mode": "plan"}) == "queued"
+    phone_release.set()
+    assert await external
+    if actors.busy(desktop.key):
+        await actors.tasks[desktop.key]
+    assert store["ran"] == ["desktop-next"]
+    assert swallowed == []
+    assert actors.queue(desktop) == []
+    assert actors.forget(desktop.key)
+    assert desktop.key not in actors._foreground_contexts
+
+
+async def test_phone_request_reports_paused_queue_without_waiting_or_consuming_input():
+    actors, store = SessionActors(clean_item=lambda raw: raw), {}
+    context = _context(actors, store)
+    queued = {"id": "desktop-next", "text": "next", "mode": "plan"}
+    assert await actors.enqueue(context, queued) == "queued"
+    actors.cancel(context.key, reason="stop")
+    calls = []
+
+    async def phone():
+        calls.append("phone")
+
+    assert await asyncio.wait_for(actors.run_exclusive(context, phone), 1) is False
+    assert actors.snapshot(context)["paused"] is True
+    assert calls == []
+    assert actors.queue(context) == [queued]
+    await actors.resume(context)
+    assert actors.snapshot(context)["paused"] is False
+    if actors.busy(context.key):
+        await actors.tasks[context.key]
+    assert store["ran"] == ["desktop-next"]
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_incomplete_phone_turn_is_consistent_in_display_context_and_saved_history(tmp_path, monkeypatch, cancelled):
+    monkeypatch.chdir(tmp_path)
+    from src.gateway.session_store import load_session
+    from src.web.routers import realtime
+
+    events = []
+
+    async def capture(key, event, *, fallback=None):
+        events.append(event)
+
+    monkeypatch.setattr(realtime, "_publish_session_event", capture)
+    key = "sid-incomplete-phone"
+    try:
+        sess = realtime._TABLE.get(key, repo_root=str(tmp_path), factory=realtime._new_agent)
+        original = [{"role": "user", "content": "earlier desktop message"}]
+        sess["agent"].history = original
+
+        async def run(history):
+            assert history == original
+            if cancelled:
+                raise asyncio.CancelledError()
+            raise RuntimeError("provider unavailable")
+
+        expected = asyncio.CancelledError if cancelled else RuntimeError
+        with pytest.raises(expected):
+            await realtime._run_main_conversation_turn(key=key, source="telegram",
+                user_text="phone request", rid="im-incomplete", run=run)
+        saved = load_session(str(tmp_path), key)
+        assert saved["history"] == sess["agent"].history
+        assert saved["history"][:-2] == original
+        assert saved["history"][-2] == {"role": "user", "content": "phone request"}
+        message = saved["history"][-1]["content"]
+        assert ("已取消" if cancelled else "执行失败") in message
+        assert "未确认完成" in message
+        assert saved["transcript"][-1]["text"] == message
+        assert saved["transcript"][-1]["source"] == "telegram"
+        assert any(event["type"] == ("agent_cancelled" if cancelled else "agent_error") for event in events)
+        assert not realtime._ACTORS.busy(key)
+    finally:
+        realtime._TABLE.pop(key)
+        realtime._ACTORS.forget(key)
