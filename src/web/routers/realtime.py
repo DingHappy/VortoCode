@@ -854,12 +854,12 @@ def _session_dashboard_snapshot(repo_root: str) -> list[Dict[str, Any]]:
         hook_issues = item.get("hook_issues") if isinstance(item.get("hook_issues"), dict) \
             else empty_hook_issues
         status = "failed" if tasks["attention"] or hook_issues["count"] \
-            else "working" if tasks["active"] else "inactive"
+            else "working" if tasks["active"] else "queued" if item.get("queue_count") else "inactive"
         rows[sid] = {
             **item,
             **project,
             "status": status,
-            "queue_count": 0,
+            "queue_count": item.get("queue_count", 0),
             "pending_input": False,
             "pending_input_count": 0,
             "running_prompt": "",
