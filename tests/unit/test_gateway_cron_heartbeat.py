@@ -182,7 +182,8 @@ def test_active_hours_and_ok():
     assert heartbeat.in_active_hours(3, (9, 23)) is False
     assert heartbeat.in_active_hours(3, (22, 6)) is True            # 跨午夜
     assert heartbeat.in_active_hours(12, None) is True             # 不限时段
-    assert heartbeat.is_ok_response("all good HEARTBEAT_OK") is True
+    assert heartbeat.is_ok_response("  HEARTBEAT_OK\n") is True
+    assert heartbeat.is_ok_response("all good HEARTBEAT_OK") is False
     assert heartbeat.is_ok_response("有事要处理") is False
 
 
@@ -244,7 +245,7 @@ async def test_run_heartbeat_ok_discarded_vs_surfaced(tmp_path):
         notified.append(text)
 
     async def ok_session(repo_root, prompt, **k):
-        return "看了一圈，没事 HEARTBEAT_OK"
+        return "HEARTBEAT_OK"
     res = await heartbeat.run_heartbeat(str(tmp_path), notify=notify, run_session=ok_session, hour=12)
     assert res["action"] == "ok" and not notified                  # HEARTBEAT_OK → 丢弃不打扰
 
