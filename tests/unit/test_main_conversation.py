@@ -217,3 +217,318 @@ def test_main_chat_routes(tmp_path, monkeypatch):
     assert client.put("/api/assistant/main-chat", json={"sid": "xyz"}).json() == {"sid": "abc"}
     assert client.put("/api/assistant/main-chat", json={"sid": "a/b"}).status_code == 400
     assert client.get("/api/assistant/main-chat").json() == {"sid": "abc"}
+
+
+@pytest.mark.parametrize("publication_failure", [False, True])
+async def test_external_observer_loss_stops_reserved_turn_and_preserves_queue(publication_failure):
+    actors, store = SessionActors(clean_item=lambda raw: raw), {}
+    base = _context(actors, store)
+    publishing, executing, blocked = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    cancelled = asyncio.Event()
+    first_publication = True
+
+    async def publish():
+        nonlocal first_publication
+        if first_publication:
+            first_publication = False
+            publishing.set()
+            await blocked.wait()
+            if publication_failure:
+                raise RuntimeError("observer disconnected")
+
+    async def execute():
+        executing.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.set()
+
+    context = ActorContext(key=base.key, get_session=base.get_session, touch=base.touch,
+                           persist=base.persist, publish=publish, execute=base.execute)
+    observer = asyncio.create_task(actors.run_exclusive(context, execute,
+        item={"id": "phone-turn", "text": "phone", "mode": "plan"}))
+    await asyncio.wait_for(publishing.wait(), 1)
+    await asyncio.wait_for(executing.wait(), 1)
+    queued = {"id": "desktop-next", "text": "next", "mode": "plan"}
+    assert await actors.enqueue(context, queued) == "queued"
+    if publication_failure:
+        blocked.set()
+        with pytest.raises(RuntimeError, match="observer disconnected"):
+            await observer
+    else:
+        observer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await observer
+    await asyncio.wait_for(cancelled.wait(), 1)
+    for _ in range(10):
+        if not actors.busy(context.key):
+            break
+        await asyncio.sleep(0)
+    assert not actors.busy(context.key)
+    assert actors.snapshot(context)["running"] is None
+    assert [item["id"] for item in actors.queue(context)] == ["desktop-next"]
+    assert store.get("ran", []) == []
+    await actors.resume(context)
+    for _ in range(10):
+        if not actors.busy(context.key):
+            break
+        await asyncio.sleep(0)
+    assert store["ran"] == ["desktop-next"]
+
+
+async def test_late_external_observer_cancel_does_not_stop_newer_desktop_turn():
+    actors, store = SessionActors(clean_item=lambda raw: raw), {}
+    base = _context(actors, store)
+    publishing = asyncio.Event()
+    desktop_started = asyncio.Event()
+    desktop_release = asyncio.Event()
+    first_publication = True
+
+    async def publish():
+        nonlocal first_publication
+        if first_publication:
+            first_publication = False
+            publishing.set()
+            await asyncio.Event().wait()
+
+    async def desktop(item):
+        desktop_started.set()
+        await desktop_release.wait()
+
+    context = ActorContext(key=base.key, get_session=base.get_session, touch=base.touch,
+                           persist=base.persist, publish=publish, execute=desktop)
+    observer = asyncio.create_task(actors.run_exclusive(context, lambda: asyncio.sleep(0)))
+    await asyncio.wait_for(publishing.wait(), 1)
+    for _ in range(10):
+        if not actors.busy(context.key):
+            break
+        await asyncio.sleep(0)
+    assert not actors.busy(context.key)
+    assert await actors.start(context, {"id": "desktop", "text": "new", "mode": "plan"})
+    await asyncio.wait_for(desktop_started.wait(), 1)
+    current = actors.tasks[context.key]
+    observer.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await observer
+    assert actors.tasks[context.key] is current
+    assert not current.cancelled()
+    assert actors.snapshot(context)["running"]["id"] == "desktop"
+    desktop_release.set()
+    await current
+
+
+def test_concurrent_claims_publish_one_complete_registration(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier, local
+
+    root = str(tmp_path)
+    original_read = mc.main_chat_key
+    barrier, state = Barrier(2), local()
+
+    def synchronized_first_read(root):
+        result = original_read(root)
+        if not getattr(state, "read", False):
+            state.read = True
+            barrier.wait(timeout=5)
+        return result
+
+    monkeypatch.setattr(mc, "main_chat_key", synchronized_first_read)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(mc.claim_main_chat, root, key) for key in ("sid-first", "sid-second")]
+        results = [future.result(timeout=5) for future in futures]
+    assert results[0] == results[1] == original_read(root)
+    assert results[0] in {"sid-first", "sid-second"}
+    assert list((tmp_path / ".vortocode").glob(".main_chat.*.tmp")) == []
+
+
+def test_corrupt_registration_is_preserved_and_claim_route_reports_conflict(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from src.web.server import app
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    path = tmp_path / ".vortocode" / "main_chat.json"
+    path.parent.mkdir()
+    path.write_text("{broken", encoding="utf-8")
+    with pytest.raises(mc.MainChatUnavailable):
+        mc.claim_main_chat(str(tmp_path), "sid-new")
+    response = TestClient(app).put("/api/assistant/main-chat", json={"sid": "new"})
+    assert response.status_code == 409
+    assert path.read_text(encoding="utf-8") == "{broken"
+    assert list(path.parent.glob(".main_chat.*.tmp")) == []
+
+
+def test_failed_registration_publication_cleans_temporary_file(tmp_path, monkeypatch):
+    def fail_link(*args):
+        raise OSError("publication failed")
+
+    monkeypatch.setattr(mc.os, "link", fail_link)
+    with pytest.raises(OSError, match="publication failed"):
+        mc.claim_main_chat(str(tmp_path), "sid-new")
+    assert mc.main_chat_key(str(tmp_path)) is None
+    assert list((tmp_path / ".vortocode").glob(".main_chat.*.tmp")) == []
+
+
+async def test_phone_completion_runs_desktop_queue_with_its_original_executor():
+    actors, store = SessionActors(clean_item=lambda raw: raw), {}
+    desktop = _context(actors, store)
+    phone_started, phone_release = asyncio.Event(), asyncio.Event()
+    swallowed = []
+
+    async def no_execute(item):
+        swallowed.append(item["id"])
+
+    phone = ActorContext(key=desktop.key, get_session=desktop.get_session,
+                         touch=desktop.touch, persist=desktop.persist,
+                         publish=desktop.publish, execute=no_execute)
+
+    async def turn():
+        phone_started.set()
+        await phone_release.wait()
+
+    external = asyncio.create_task(actors.run_exclusive(phone, turn))
+    await asyncio.wait_for(phone_started.wait(), 1)
+    assert await actors.enqueue(desktop, {"id": "desktop-next", "text": "next", "mode": "plan"}) == "queued"
+    phone_release.set()
+    assert await external
+    if actors.busy(desktop.key):
+        await actors.tasks[desktop.key]
+    assert store["ran"] == ["desktop-next"]
+    assert swallowed == []
+    assert actors.queue(desktop) == []
+    assert actors.forget(desktop.key)
+    assert desktop.key not in actors._foreground_contexts
+
+
+async def test_phone_request_reports_paused_queue_without_waiting_or_consuming_input():
+    actors, store = SessionActors(clean_item=lambda raw: raw), {}
+    context = _context(actors, store)
+    queued = {"id": "desktop-next", "text": "next", "mode": "plan"}
+    assert await actors.enqueue(context, queued) == "queued"
+    actors.cancel(context.key, reason="stop")
+    calls = []
+
+    async def phone():
+        calls.append("phone")
+
+    assert await asyncio.wait_for(actors.run_exclusive(context, phone), 1) is False
+    assert actors.snapshot(context)["paused"] is True
+    assert calls == []
+    assert actors.queue(context) == [queued]
+    await actors.resume(context)
+    assert actors.snapshot(context)["paused"] is False
+    if actors.busy(context.key):
+        await actors.tasks[context.key]
+    assert store["ran"] == ["desktop-next"]
+
+
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_incomplete_phone_turn_is_consistent_in_display_context_and_saved_history(tmp_path, monkeypatch, cancelled):
+    monkeypatch.chdir(tmp_path)
+    from src.gateway.session_store import load_session
+    from src.web.routers import realtime
+
+    events = []
+
+    async def capture(key, event, *, fallback=None):
+        events.append(event)
+
+    monkeypatch.setattr(realtime, "_publish_session_event", capture)
+    key = "sid-incomplete-phone"
+    try:
+        sess = realtime._TABLE.get(key, repo_root=str(tmp_path), factory=realtime._new_agent)
+        original = [{"role": "user", "content": "earlier desktop message"}]
+        sess["agent"].history = original
+
+        async def run(history):
+            assert history == original
+            if cancelled:
+                raise asyncio.CancelledError()
+            raise RuntimeError("provider unavailable")
+
+        expected = asyncio.CancelledError if cancelled else RuntimeError
+        with pytest.raises(expected):
+            await realtime._run_main_conversation_turn(key=key, source="telegram",
+                user_text="phone request", rid="im-incomplete", run=run)
+        saved = load_session(str(tmp_path), key)
+        assert saved["history"] == sess["agent"].history
+        assert saved["history"][:-2] == original
+        assert saved["history"][-2] == {"role": "user", "content": "phone request"}
+        message = saved["history"][-1]["content"]
+        assert ("已取消" if cancelled else "执行失败") in message
+        assert "未确认完成" in message
+        assert saved["transcript"][-1]["text"] == message
+        assert saved["transcript"][-1]["source"] == "telegram"
+        assert any(event["type"] == ("agent_cancelled" if cancelled else "agent_error") for event in events)
+        assert not realtime._ACTORS.busy(key)
+    finally:
+        realtime._TABLE.pop(key)
+        realtime._ACTORS.forget(key)
+
+
+@pytest.mark.parametrize("restart", [False, True])
+async def test_stopped_queue_remains_paused_on_reconnect_or_reconstruction(tmp_path, restart):
+    from src.gateway.session_store import load_session
+    from src.gateway.sessions import SessionTable
+
+    class Agent:
+        def __init__(self):
+            self.history = []
+            self.plan = []
+
+    root, key = str(tmp_path), "sid-paused-reconnect"
+    table = SessionTable()
+    session = table.get(key, repo_root=root, factory=Agent)
+    actors = SessionActors(clean_item=lambda raw: raw)
+    started, release = asyncio.Event(), asyncio.Event()
+    ran = []
+
+    async def execute(item):
+        ran.append(item["id"])
+        if item["id"] == "running":
+            started.set()
+            await release.wait()
+
+    async def publish():
+        pass
+
+    def context_for(current_table):
+        return ActorContext(key=key, get_session=lambda: current_table.peek(key),
+                            touch=lambda: None, persist=lambda: current_table.persist(key, root),
+                            publish=publish, execute=execute)
+
+    context = context_for(table)
+    await actors.start(context, {"id": "running", "text": "current", "mode": "plan"})
+    await asyncio.wait_for(started.wait(), 1)
+    await actors.enqueue(context, {"id": "queued", "text": "retained", "mode": "plan"})
+    task = actors.tasks[key]
+    actors.cancel(key, reason="stop", context=context)
+    # Pause is durable before cancellation cleanup gets its next timeslice.
+    assert load_session(root, key)["prompt_queue_paused"] is True
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert actors.snapshot(context)["paused"] is True
+    assert ran == ["running"]
+
+    if restart:
+        actors = SessionActors(clean_item=lambda raw: raw)
+        table = SessionTable()
+        session = table.get(key, repo_root=root, factory=Agent)
+        context = context_for(table)
+        assert key not in actors.auto_stopped
+        assert session["prompt_queue_paused"] is True
+
+    await actors.resume(context, automatic=True)
+    assert actors.snapshot(context)["paused"] is True
+    assert [item["id"] for item in actors.queue(context)] == ["queued"]
+    assert ran == ["running"]
+    assert await asyncio.wait_for(actors.run_exclusive(context, lambda: asyncio.sleep(0)), 1) is False
+
+    await actors.send_now(context, "queued")
+    if actors.busy(key):
+        await actors.tasks[key]
+    assert ran == ["running", "queued"]
+    assert load_session(root, key)["prompt_queue_paused"] is False
+    assert load_session(root, key)["prompt_queue"] == []
+    await actors.resume(context, automatic=True)
+    assert ran == ["running", "queued"]

@@ -150,7 +150,7 @@ async def test_unstarted_turn_restores_once_and_send_now_keeps_fifo():
     await actors.send_now(context, "third")
     await drain(actors)
     assert seen == ["third", "first", "second"]
-    assert actors.snapshot(context) == {"items": [], "running": None}
+    assert actors.snapshot(context) == {"items": [], "running": None, "paused": False}
 
 
 @pytest.mark.asyncio

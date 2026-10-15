@@ -63,7 +63,8 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
                  context_usage: Optional[Dict[str, Any]] = None,
                  tool_names: Optional[List[str]] = None,
                  behavior_fp: Optional[str] = None,
-                 mode: Optional[str] = None) -> bool:
+                 mode: Optional[str] = None,
+                 prompt_queue_paused: Optional[bool] = None) -> bool:
     """保存一个 sid 会话。返回保存成功或新空草稿无需保存（非法键/出错 → False）。
 
     title：显式标题（重命名用）。不传则**保留磁盘上已有标题**，避免每回合存盘把用户改的名冲掉。
@@ -78,7 +79,7 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
     p = _path(repo_root, sid)
     existing: Dict[str, Any] = {}
     if (title is None or context_usage is None or tool_names is None
-            or behavior_fp is None or mode is None) and p.is_file():
+            or behavior_fp is None or mode is None or prompt_queue_paused is None) and p.is_file():
         try:
             loaded = json.loads(p.read_text(encoding="utf-8"))
             existing = loaded if isinstance(loaded, dict) else {}
@@ -100,6 +101,8 @@ def save_session(repo_root: str, key: str, transcript: List[dict],
         "plan": list(plan or []),
         "activities": list(activities or [])[-_MAX_ACTIVITIES:],
         "prompt_queue": list(prompt_queue or [])[:_MAX_PROMPT_QUEUE],
+        "prompt_queue_paused": (existing.get("prompt_queue_paused") is True
+                                if prompt_queue_paused is None else prompt_queue_paused is True),
         "context_usage": dict(context_usage or {}),
         "title": title,
     }
@@ -144,6 +147,7 @@ def load_session(repo_root: str, key: str) -> Optional[Dict[str, Any]]:
         "plan": data.get("plan") or [],
         "activities": data.get("activities") or [],
         "prompt_queue": data.get("prompt_queue") or [],
+        "prompt_queue_paused": data.get("prompt_queue_paused") is True,
         "context_usage": data.get("context_usage") or {},
         "title": data.get("title"),
         # 刻意不 `or []`：None=老档从没记录过清单（复原时退化为通用能力提醒），[]≠None。

@@ -58,6 +58,7 @@ export interface ProtocolEvent {
   task?: string;
   items?: unknown[];
   running?: PromptQueueItem;
+  paused?: boolean;
   baseline?: string;
   source_revision?: string;
   head?: string;

@@ -100,3 +100,13 @@ def test_draft_with_explicit_build_mode_is_kept(tmp_path):
     assert load_session(str(tmp_path),"sid-plan") is None
     assert save_session(str(tmp_path),"sid-build",[],[],None,mode="build")
     assert load_session(str(tmp_path),"sid-build")["mode"] == "build"
+
+
+def test_queue_pause_survives_legacy_save_and_can_be_explicitly_cleared(tmp_path):
+    root, key = str(tmp_path), "sid-paused"
+    queued = [{"id": "q1", "text": "retained", "mode": "plan"}]
+    assert save_session(root, key, [], [], None, prompt_queue=queued, prompt_queue_paused=True)
+    assert save_session(root, key, [], [], None, prompt_queue=queued)
+    assert load_session(root, key)["prompt_queue_paused"] is True
+    assert save_session(root, key, [], [], None, prompt_queue=queued, prompt_queue_paused=False)
+    assert load_session(root, key)["prompt_queue_paused"] is False
