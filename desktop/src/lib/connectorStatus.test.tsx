@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AssistantConnectors } from "../components/AssistantMode";
 import type { AssistantConnector } from "../types";
-import { connectorCredentialView, ConnectorStatusReads } from "./connectorStatus";
+import { connectorCredentialView, connectorDisconnectMessage, ConnectorStatusReads } from "./connectorStatus";
 
 const saved: AssistantConnector = {
   name: "fixture", provider: "github", read_only: true, connected: true, expired: false,
@@ -11,6 +11,12 @@ const saved: AssistantConnector = {
 };
 
 describe("connector credential evidence", () => {
+  it("offers actual local disconnection only when the runtime advertises it", () => {
+    const html = renderToStaticMarkup(<AssistantConnectors connectors={[{ ...saved, local_revocation_supported: true }]} />);
+    expect(html).toContain("断开本机连接");
+    const legacy = renderToStaticMarkup(<AssistantConnectors connectors={[saved]} />);
+    expect(legacy).toContain("移除凭据");
+  });
   it("renders valid credentials without claiming a service connection", () => {
     const html = renderToStaticMarkup(<AssistantConnectors connectors={[saved]} />);
     expect(html).toContain("凭据可用");
@@ -50,6 +56,25 @@ describe("connector credential evidence", () => {
 
   it("does not label a configured write connector as read-only", () => {
     expect(connectorCredentialView({ ...saved, read_only: false }).label).not.toContain("只读");
+  });
+});
+
+describe("local disconnect receipts", () => {
+  it("distinguishes confirmed local cleanup from remote cancellation", () => {
+    const text = connectorDisconnectMessage({ removed: true, calls_blocked: true, revocation_scope: "current_process",
+      credential_cleanup_confirmed: true, cleanup_status: "confirmed", remote_requests_verified: false });
+    expect(text).toContain("已禁用"); expect(text).toContain("清理已确认");
+    expect(text).toContain("仍需单独核对"); expect(text).not.toContain("远端已停止");
+  });
+  it("keeps failed file and transport cleanup visible", () => {
+    const text = connectorDisconnectMessage({ removed: false, calls_blocked: true, revocation_scope: "current_process",
+      credential_cleanup_confirmed: false, cleanup_status: "unconfirmed" });
+    expect(text).toContain("文件清理未确认"); expect(text).toContain("连接清理未确认");
+    expect(text).toContain("已禁用");
+  });
+  it("never upgrades a legacy delete response to a revocation proof", () => {
+    const text = connectorDisconnectMessage({ removed: true });
+    expect(text).toContain("尚未确认"); expect(text).not.toContain("已禁用");
   });
 });
 

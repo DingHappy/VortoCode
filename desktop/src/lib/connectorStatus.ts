@@ -1,4 +1,4 @@
-import type { AssistantConnector } from "../types";
+import type { AssistantConnector, ConnectorDisconnectReceipt } from "../types";
 import type { GatewayClient } from "../gateway";
 
 /** Credential evidence is independent of session-owned MCP connection observations. */
@@ -13,6 +13,16 @@ export function connectorCredentialView(item: AssistantConnector) {
     label: !available && item.authorizing ? "等待 GitHub 授权…" : labels[status] + (available && item.read_only ? " · 只读配置" : ""),
     canClear: available || status === "invalid" || status === "expired" || item.credential_status === "unknown" || item.connected === true || !!item.authorizing,
   };
+}
+
+export function connectorDisconnectMessage(receipt: ConnectorDisconnectReceipt | null | undefined): string {
+  if (receipt?.calls_blocked !== true || receipt.revocation_scope !== "current_process") {
+    return "凭据移除请求已返回；旧连接是否禁用尚未确认，请核对或更新运行实例。";
+  }
+  return ["本运行实例已禁用此连接器的后续调用。",
+    receipt.credential_cleanup_confirmed === true ? "本机凭据清理已确认。" : "凭据文件清理未确认，请检查本机权限。",
+    receipt.cleanup_status === "confirmed" ? "本地连接清理已确认。" : "本地连接清理未确认，请核对运行实例及凭据清理状态。",
+    "已发出的远端请求及 GitHub 授权仍需单独核对。"].join("\n");
 }
 
 /** Coalesce reads and invalidate responses that predate a write or host change. */

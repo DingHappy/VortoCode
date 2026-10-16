@@ -17,7 +17,6 @@ from src.gateway.session_actor import (
     ActorContext, SessionActors, MAX_PROMPT_QUEUE as _MAX_PROMPT_QUEUE,
     clean_prompt_item, new_prompt_item as _new_prompt_item,
 )
-from src.utils.exc_utils import _exc_text
 from src.agents.notice import timeline_text
 from src.agents.wait_clock import minus_wait, waited
 from src.utils.rich_markup import strip_rich_markup
@@ -490,7 +489,7 @@ async def _ensure_mcp(agent, say) -> None:
     if os.getenv("VORTOCODE_WEB_MCP") not in ("1", "true", "yes"):
         return                              # 默认关闭（避免坏配置卡死每回合）
     try:
-        from src.agents.mcp_tools import connect_mcp
+        from src.agents.mcp_session import connect_agent
 
         async def _mcp_confirm(message: str) -> bool:
             # MCP 权限规则里 action=ask 的工具 → 真的问人：复用本回合已绑到当前 ws 的确认门
@@ -499,19 +498,13 @@ async def _ensure_mcp(agent, say) -> None:
             fn = holder.get("fn") if holder else None
             return bool(await fn(message)) if fn is not None else False
 
-        from src.gateway.workspace_scope import GENERAL, current_workspace_scope
-        mgr, mcp_tools = await connect_mcp(
-            os.getcwd(), capability_profile=agent._capabilities.profile,
-            confirm=_mcp_confirm,
-            # 带凭据的连接器（GitHub 等）只给常驻助理：通用范围没有文件/命令/Git
-            allow_connectors=current_workspace_scope() == GENERAL,
-        )
-        agent._mcp_mgr = mgr  # Empty tool lists still own connected resources.
-        if mcp_tools:
-            agent.add_tools(mcp_tools)
-            say(f"🔌 接入 {len(mcp_tools)} 个 MCP 工具")
+        from src.gateway.workspace_scope import current_workspace_scope
+        state = await connect_agent(agent, os.getcwd(), confirm=_mcp_confirm,
+                                    workspace_scope=current_workspace_scope(), no_config_ok=True)
+        if state.get('tool_count'):
+            say(f"🔌 接入 {state['tool_count']} 个 MCP 工具")
     except Exception as e:  # noqa: BLE001
-        say(f"🔌 MCP 连接失败: {_exc_text(e)}")
+        say(f"🔌 MCP 连接失败: {type(e).__name__}；请检查服务及授权状态。")
 
 
 def _shutdown_mcp_async(agent) -> None:

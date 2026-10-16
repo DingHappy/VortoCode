@@ -8,7 +8,7 @@ import { prepareAvatar } from "./lib/avatar";
 import { resolveMainChat, sourceLabel } from "./lib/mainChat";
 import { AssistantRefreshQueue } from "./lib/assistantRefresh";
 import { AssistantActionGate, type AssistantTaskAction } from "./lib/assistantTask";
-import { ConnectorStatusReads } from "./lib/connectorStatus";
+import { ConnectorStatusReads, connectorDisconnectMessage } from "./lib/connectorStatus";
 import { openAssistantTask } from "./lib/assistantNavigation";
 import { AssistantAudit, AssistantAvatarImage, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PhoneChatDialog, type AppMode, type AssistantTab } from "./components/AssistantMode";
 import { AssistantGoals } from "./components/AssistantGoals";
@@ -3829,6 +3829,7 @@ function App() {
                     if (!client || !current()) return;
                     try {
                       await assistantActionGate.current.run(client, scope, `connector:${connector.name}`, current, async () => {
+                        let receiptMessage = "";
                         if (action === "copy" && connector.authorizing) await navigator.clipboard.writeText(connector.authorizing.user_code);
                         if (action === "open" && connector.authorizing) await openUrl(connector.authorizing.verification_uri);
                         if (action === "connect") {
@@ -3838,14 +3839,24 @@ function App() {
                           if (started) await openUrl(started.verification_uri).catch(() => undefined);
                         }
                         if (action === "disconnect") {
-                          if (!await confirmAction("移除本机 GitHub 凭据并取消待处理授权？\n\n这不会关闭已建立的服务连接。GitHub 授权仍需到 Settings → Applications 撤销。")) return;
+                          const prompt = connector.local_revocation_supported
+                            ? "断开此连接器并移除本机凭据？\n\n将禁用本运行实例的后续调用，并尝试关闭本地连接。已发出的远端请求不会因此被确认停止；GitHub 授权仍需单独撤销。"
+                            : "移除本机 GitHub 凭据并取消待处理授权？\n\n当前运行版本尚未确认能关闭旧连接；GitHub 授权仍需单独撤销。";
+                          if (!await confirmAction(prompt)) return;
                           if (!current()) return;
                           connectorReads.current.invalidate();
-                          await client.disconnectConnector(connector.name);
+                          const receipt = await client.disconnectConnector(connector.name);
+                          if (!current()) return;
+                          receiptMessage = connectorDisconnectMessage(receipt);
                         }
                         if (current() && (action === "connect" || action === "disconnect")) {
                           connectorReads.current.invalidate();
-                          await refreshConnectorStatus(client, scope);
+                          try { await refreshConnectorStatus(client, scope); }
+                          catch {
+                            if (current()) setBanner((receiptMessage ? receiptMessage + "\n" : "") + "状态刷新失败，请重新核对。");
+                            return;
+                          }
+                          if (current() && receiptMessage) setBanner(receiptMessage);
                         }
                       });
                     } catch (error) {

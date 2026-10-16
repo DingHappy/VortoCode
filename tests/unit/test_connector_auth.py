@@ -94,4 +94,6 @@ def test_routes_never_return_the_token(root, monkeypatch):
     body = client.get("/api/assistant/connectors").text
     assert "ghu_secretvalue" not in body and '"connected":true' in body.replace(" ", "")
     assert client.post("/api/assistant/connectors/nope/authorize").status_code == 404
-    assert client.delete("/api/assistant/connectors/github").json() == {"removed": True}
+    receipt = client.delete("/api/assistant/connectors/github").json()
+    assert receipt["removed"] and receipt["calls_blocked"] and receipt["cleanup_status"] == "confirmed"
+    assert not receipt["remote_requests_verified"] and not receipt["provider_authorization_revoked"]

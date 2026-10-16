@@ -309,7 +309,7 @@ export function AssistantConnectors({ connectors, onAction }: {
           <div className="assistant-connector-head">
             <strong>{label}</strong>
             <small>{credential.label}</small>
-            {credential.canClear && <button onClick={() => onAction?.("disconnect", item)}>{item.authorizing ? "取消授权" : "移除凭据"}</button>}
+            {credential.canClear && <button onClick={() => onAction?.("disconnect", item)}>{item.authorizing ? "取消授权" : item.local_revocation_supported ? "断开本机连接" : "移除凭据"}</button>}
             {!credential.available && !item.authorizing && <button className="primary" onClick={() => onAction?.("connect", item)}>授权</button>}
           </div>
           {item.authorizing && <div className="assistant-connector-code">
@@ -325,7 +325,7 @@ export function AssistantConnectors({ connectors, onAction }: {
         </li>;
       })}
     </ul>
-    <p className="assistant-connector-note">凭据可用不代表服务在线。移除凭据不会关闭已有连接，也不会撤销 GitHub 上的授权。</p>
+    <p className="assistant-connector-note">凭据可用不代表服务在线。断开以本地回执为准；GitHub 授权和远端已发请求仍需单独核对。</p>
   </div>;
 }
 

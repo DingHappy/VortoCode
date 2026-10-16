@@ -32,6 +32,7 @@ class ToolManager:
         
         # MCP客户端
         self.mcp_clients: Dict[str, MCPClient] = {}
+        self.connector_access: Dict[str, Any] = {}
         
         # 加载配置
         if config_path:
@@ -103,6 +104,9 @@ class ToolManager:
                     logger.warning(f"Unsupported transport for server {server_name}: {transport}")
                     continue
                 
+                if server_name in self.connector_access:
+                    from .connector_access import GuardedConnectorClient
+                    client = GuardedConnectorClient(client, self.connector_access[server_name])
                 # 注册服务器
                 success = await self.tool_registry.register_mcp_server(client)
                 if success:
@@ -209,6 +213,15 @@ class ToolManager:
             }
         }
     
+    def detach_connector_servers(self, servers) -> None:
+        """Revoke exact server identities before any asynchronous transport cleanup."""
+        for server in servers:
+            self.mcp_clients.pop(server, None)
+            self.tool_executor.mcp_clients.pop(server, None)
+            self.tool_registry.mcp_clients.pop(server, None)
+            for tool in list(self.tool_registry.get_tools_by_server(server)):
+                self.tool_registry.unregister(tool.name)
+
     async def shutdown(self) -> None:
         """关闭工具管理器"""
         # 断开所有MCP服务器

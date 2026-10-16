@@ -163,6 +163,8 @@ export interface AssistantConnector {
   credential_status?: "missing" | "available" | "invalid" | "expired" | "unknown";
   credential_available?: boolean;
   credential_error?: string;
+  local_revocation_supported?: boolean;
+  locally_revoked?: boolean;
   connection_status?: "unobserved";
   authorized_at?: number | null;
   expired: boolean;
@@ -170,6 +172,18 @@ export interface AssistantConnector {
   expires_at?: number | null;
   authorizing: { user_code: string; verification_uri: string; expires_at: number } | null;
   error: string;
+}
+
+export interface ConnectorDisconnectReceipt {
+  removed: boolean;
+  calls_blocked?: boolean;
+  credential_cleanup_confirmed?: boolean;
+  connections_disabled?: number;
+  closed_connections?: number;
+  cleanup_status?: "confirmed" | "unconfirmed";
+  revocation_scope?: "current_process";
+  remote_requests_verified?: boolean;
+  provider_authorization_revoked?: boolean;
 }
 
 /** 助理头像：base64 位图（PNG/JPEG/WebP），没设过为 null。 */
