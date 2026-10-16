@@ -1,6 +1,6 @@
 import { AssistantScheduleCard } from "./AssistantScheduleCard";
 import type { ReactNode } from "react";
-import { ArrowLeft, Smartphone, Check, Clock3, Fingerprint, Laptop, List, MessageCircle, MessagesSquare, PencilLine, Plus, Server, ShieldCheck, Trash2, X } from "lucide-react";
+import { ArrowLeft, Smartphone, Check, Clock3, Fingerprint, Laptop, List, MessageCircle, MessagesSquare, PencilLine, Plus, Server, ShieldCheck, Target, Trash2, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { avatarHue, avatarInitial, avatarSrc } from "../lib/avatar";
 import type { AssistantAvatar, AssistantConnector, AssistantMemory, AssistantProfile, AssistantScheduleItem, AuditEntry, MemoryProposal, PhoneChat } from "../types";
@@ -50,11 +50,12 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], current
 /** 助理住在哪：常驻电脑（一直开着）或本机兜底（合上笔记本就停）。 */
 export type AssistantHostInfo = { kind: "resident"; name: string; reachable?: boolean } | { kind: "local"; canAddResident: boolean };
 
-/** 助理模式右侧（参考 Muse）：动态 / 审核记录 / 定时 / 身份（SOUL、关于你、记忆）。 */
-export type AssistantTab = "feed" | "audit" | "schedule" | "identity";
+/** 助理模式右侧：动态 / 目标 / 审核记录 / 定时 / 身份（SOUL、关于你、记忆）。 */
+export type AssistantTab = "feed" | "goals" | "audit" | "schedule" | "identity";
 
 const TABS: Array<{ id: AssistantTab; label: string; icon: ReactNode }> = [
   { id: "feed", label: "动态", icon: <List size={16} aria-hidden="true" /> },
+  { id: "goals", label: "目标", icon: <Target size={16} aria-hidden="true" /> },
   { id: "audit", label: "审核记录", icon: <ShieldCheck size={16} aria-hidden="true" /> },
   { id: "schedule", label: "定时", icon: <Clock3 size={16} aria-hidden="true" /> },
   { id: "identity", label: "身份", icon: <Fingerprint size={16} aria-hidden="true" /> },

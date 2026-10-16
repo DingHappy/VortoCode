@@ -119,6 +119,11 @@ class Goal:
     next_action: str = "确认目标并开始执行"
     created: str = ""
     updated: str = ""
+    kind: str = "development"
+    due_at: str = ""
+    follow_up_at: str = ""
+    revision: int = 0
+    request_fingerprint: str = ""
 
     @staticmethod
     def new(
@@ -150,6 +155,8 @@ class Goal:
 
     def contract_prompt(self) -> str:
         """Render a stable execution contract for ``dev_auto``/``dev_resume`` workers."""
+        if self.kind != "development":
+            raise ValueError("私人目标不能作为开发执行合同")
         lines = ["请按下面的目标合同完成开发。", "", f"目标：{self.objective}", "", "验收标准："]
         lines.extend(f"- [{item.id}] {item.text}" for item in self.acceptance_criteria)
         verifier_lines = []
@@ -296,8 +303,11 @@ class Goal:
 class GoalLedger:
     """Atomic repository-local persistence for goal contracts and evidence."""
 
-    def __init__(self, repo_root: str):
+    def __init__(self, repo_root: str, *, kind: str = "development"):
+        if kind not in {"development", "personal"}:
+            raise ValueError("未知目标类型")
         self.repo_root = str(repo_root)
+        self.kind = kind
 
     def _dir(self) -> Path:
         return Path(self.repo_root) / ".vortocode" / _DIRNAME
@@ -323,6 +333,8 @@ class GoalLedger:
         return goal
 
     def save(self, goal: Goal) -> bool:
+        if goal.kind != self.kind:
+            return False
         goal_id = _clean_id(goal.id)
         if goal_id is None:
             return False
@@ -334,6 +346,11 @@ class GoalLedger:
 
             ensure_state_gitignore(self.repo_root)
             path.parent.mkdir(parents=True, exist_ok=True)
+            if self.kind == "personal":
+                from src.workflow.pipeline.pipeline_storage import write_json
+
+                write_json(path, goal.to_dict())
+                return True
             temp = path.with_suffix(".json.tmp")
             temp.write_text(json.dumps(goal.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
             temp.replace(path)
@@ -346,11 +363,19 @@ class GoalLedger:
         if clean is None:
             return None
         path = self._path(clean)
+        if self.kind == "personal" and (
+            path.is_symlink() or path.parent.is_symlink() or path.parent.parent.is_symlink()
+        ):
+            return None
         if not path.is_file():
             return None
         try:
+            if self.kind == "personal" and path.stat().st_size > 2 * 1024 * 1024:
+                return None
             data = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(data, dict):
+                return None
+            if data.get("kind", "development") != self.kind or data.get("id") != clean:
                 return None
             goal = Goal.from_dict(data)
             self.refresh_evidence(goal, revision_cache=_revision_cache)
@@ -362,6 +387,8 @@ class GoalLedger:
 
     def refresh_evidence(self, goal: Goal, *, revision_cache: Optional[dict] = None) -> None:
         """Invalidate stale criterion decisions without deleting historical observations."""
+        if goal.kind == "personal":
+            return
         if not any(item.criterion_id and item.passed for item in goal.evidence):
             return
         # A single list/inbox refresh shares a Git snapshot per target branch.
@@ -466,6 +493,8 @@ class GoalLedger:
         goal = self.load(goal_id)
         if goal is None:
             raise KeyError(goal_id)
+        if goal.kind != "development":
+            raise ValueError("私人目标不支持开发验收器")
         if goal.status != "draft" or goal.task_ids or goal.evidence:
             raise ValueError("只有尚未执行、没有证据的 draft 目标可以修改验收器")
         criterion = goal.criterion(criterion_id)
@@ -521,6 +550,8 @@ class GoalLedger:
         goal = self.load(goal_id)
         if goal is None:
             raise KeyError(goal_id)
+        if goal.kind != "development":
+            raise ValueError("私人目标需要用户逐条确认")
         commit, reason = evidence_revision(self.repo_root, goal.branch)
         if verified_commit is None:
             verified_commit = commit

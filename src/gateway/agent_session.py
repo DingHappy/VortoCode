@@ -176,6 +176,8 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
             from src.agents.tools.memory import build_memory_tools
             tools += [tool for tool in build_memory_tools(repo_root, gated_confirm, source=kind)
                       if tool.name != "remember_repo"]
+            from src.agents.tools.personal_goals import build_personal_goal_tools
+            tools += build_personal_goal_tools(repo_root)
             # 交代定时的事（「每天早上帮我…」）：只在本进程真的会跑调度时给——Desktop 本机 sidecar
             # 固定关调度，给了只会建出永远不跑的作业。建/改都过确认门；要联网的作业创建时单独问人。
             if os.getenv("VORTOCODE_CRON", "").strip().lower() in ("1", "true", "yes", "on"):
@@ -239,6 +241,8 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         kwargs["auto_recall"] = os.getenv("VORTOCODE_AUTO_RECALL", "1").strip().lower() not in {"0", "false", "no", "off"}
     if workspace_scope == GENERAL and kind in ("web", "im"):
         parts.append("【持续跟进】汇报今天做过的事、定时状态和运行结果前，先读取对应状态工具。"
+                     "用户问个人目标时用 personal_goals 查询当前状态；目标卡可创建目标、更新进展和逐条确认验收。"
+                     "目标期限与跟进时间本身不会启动定时提醒，不能把保存目标说成后台执行已经开始。"
                      "对话摘要是历史记录，不是任务执行或验收证据；定时作业启用不代表调度总开关开启。"
                      "暂停只影响后续排期，不代表已在执行的任务停止。没有保留记录时说无法核实，不推断从未执行。"
                      "不要声称后台工作已经开始、通知已经送达或任务已验收，除非工具提供对应证据。"
