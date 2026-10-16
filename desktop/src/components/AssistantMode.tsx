@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { ArrowLeft, Smartphone, Check, Clock3, Fingerprint, Laptop, List, MessageCircle, MessagesSquare, PencilLine, Plus, Server, ShieldCheck, Target, Trash2, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { avatarHue, avatarInitial, avatarSrc } from "../lib/avatar";
+import { connectorCredentialView } from "../lib/connectorStatus";
 import type { AssistantAvatar, AssistantConnector, AssistantMemory, AssistantProfile, AssistantScheduleItem, AuditEntry, MemoryProposal, PhoneChat } from "../types";
 import { MarkdownMessage } from "./MarkdownMessage";
 
@@ -293,7 +294,7 @@ export function PhoneChatDialog({ chat, onClose }: { chat: PhoneChat; onClose: (
 
 const PROVIDER_NAMES: Record<string, string> = { github: "GitHub" };
 
-/** 连接的服务：点「连接」→ 显示验证码 → 你在 github.com/login/device 输入并授权 → 常驻电脑自动连上。 */
+/** 设备授权只保存凭据；实际 MCP 连接由当前会话的插件页观察。 */
 export function AssistantConnectors({ connectors, onAction }: {
   connectors: AssistantConnector[];
   onAction?: (action: "connect" | "disconnect" | "open" | "copy", connector: AssistantConnector) => void;
@@ -303,14 +304,13 @@ export function AssistantConnectors({ connectors, onAction }: {
     <ul>
       {connectors.map((item) => {
         const label = PROVIDER_NAMES[item.provider] ?? item.name;
+        const credential = connectorCredentialView(item);
         return <li key={item.name}>
           <div className="assistant-connector-head">
             <strong>{label}</strong>
-            <small>{item.connected ? `已连接${item.read_only ? " · 只读" : ""}`
-              : item.authorizing ? "等你在 GitHub 上授权…" : item.expired ? "授权已过期" : "未连接"}</small>
-            {item.connected
-              ? <button onClick={() => onAction?.("disconnect", item)}>断开</button>
-              : !item.authorizing && <button className="primary" onClick={() => onAction?.("connect", item)}>连接</button>}
+            <small>{credential.label}</small>
+            {credential.canClear && <button onClick={() => onAction?.("disconnect", item)}>{item.authorizing ? "取消授权" : "移除凭据"}</button>}
+            {!credential.available && !item.authorizing && <button className="primary" onClick={() => onAction?.("connect", item)}>授权</button>}
           </div>
           {item.authorizing && <div className="assistant-connector-code">
             <p>在浏览器打开 GitHub 授权页，输入下面的验证码，点 Authorize：</p>
@@ -320,11 +320,12 @@ export function AssistantConnectors({ connectors, onAction }: {
               <button className="primary" onClick={() => onAction?.("open", item)}>打开 GitHub</button>
             </div>
           </div>}
-          {item.error && !item.connected && <p className="assistant-connector-error" role="alert">{item.error}</p>}
-          {item.connected && <p className="assistant-connector-note">只读：能看仓库、Issue、PR 和 CI，不能改任何东西。新开的对话里生效。</p>}
+          {(item.error || item.credential_error) && !credential.available && <p className="assistant-connector-error" role="alert">{item.error || item.credential_error}</p>}
+          {credential.available && <p className="assistant-connector-note">凭据已保存。到插件页连接当前会话并查看连接状态；工具调用仍受会话权限控制。</p>}
         </li>;
       })}
     </ul>
+    <p className="assistant-connector-note">凭据可用不代表服务在线。移除凭据不会关闭已有连接，也不会撤销 GitHub 上的授权。</p>
   </div>;
 }
 

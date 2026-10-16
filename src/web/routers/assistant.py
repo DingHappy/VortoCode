@@ -139,7 +139,7 @@ async def decide_memory_proposal(proposal_id: str, body: dict):
 
 @router.get("/api/assistant/connectors")
 async def connectors_status():
-    """连接的服务（GitHub 等）：是否已连上、是否正在授权（验证码与链接）。不含令牌。"""
+    """本机凭据可用性与设备授权状态；不代表 MCP 已连接，不含令牌。"""
     from src.workflow.workbench import connectors
     return {"connectors": connectors.status(os.getcwd())}
 

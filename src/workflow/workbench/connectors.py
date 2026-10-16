@@ -15,8 +15,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import re
+import stat
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -73,30 +75,74 @@ def _find(root: str, name: str) -> Dict[str, Any]:
     raise KeyError(f"没有可授权的连接器：{name}")
 
 
-def _read_meta(name: str) -> Dict[str, Any]:
+def _read_meta(name: str) -> Optional[Dict[str, Any]]:
     try:
-        data = json.loads(_meta_path(name).read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
-        return {}
+        path = _meta_path(name)
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_size > 8192:
+            return None
+        with path.open("rb") as handle:
+            raw = handle.read(8193)
+        if len(raw) > 8192:
+            return None
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else None
+    except FileNotFoundError:
+        return {}  # Manually provisioned credentials need no OAuth metadata.
+    except (OSError, ValueError, RecursionError):
+        return None
+
+
+def _timestamp(value: object):
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 2**53 - 1 and math.isfinite(value):
+        return value
+    return None
 
 
 def status(root: str) -> List[Dict[str, Any]]:
-    """每个连接器：是否已连上、什么时候连上、会不会过期、是否正在授权（验证码与链接）。"""
+    """Local credential readiness only; no provider probe or MCP connection inference.
+
+    ``connected`` is retained as a legacy alias for credential availability.
+    Session-owned MCP observations remain on /api/extensions/mcp.
+    """
+    from src.agents.mcp_tools import load_connector_secret
+
     rows = []
     for item in connector_configs(root):
         name = item["name"]
-        meta = _read_meta(name)
-        expires_at = meta.get("expires_at")
-        expired = bool(expires_at) and float(expires_at) <= time.time()
+        metadata = _read_meta(name)
+        meta = metadata or {}
+        expires_at = _timestamp(meta.get("expires_at"))
+        expired = expires_at is not None and expires_at <= time.time()
+        try:
+            load_connector_secret(name)
+            credential_status = "available"
+        except FileNotFoundError:
+            credential_status = "missing"
+        except (OSError, ValueError):
+            credential_status = "invalid"
+        if credential_status == "available":
+            if metadata is None or (meta.get("expires_at") is not None and expires_at is None):
+                credential_status = "unknown"
+            elif expired:
+                credential_status = "expired"
+        available = credential_status == "available"
+        credential_error = {
+            "invalid": "凭据不可用，请重新授权或检查本机凭据权限。",
+            "unknown": "授权有效期信息无法确认，请检查后重新授权。",
+            "expired": "凭据已过期，请重新授权。",
+        }.get(credential_status, "")
+        authorized_at = _timestamp(meta.get("connected_at"))
         pending = _PENDING.get(name)
         if pending and pending.get("expires_at", 0) <= time.time():
             pending = None
         rows.append({
             "name": name, "provider": item["provider"], "read_only": item["read_only"],
-            "connected": _token_path(name).is_file() and not expired,
+            "connected": available,  # Compatibility only; never proof of a live service.
+            "credential_status": credential_status, "credential_available": available,
+            "credential_error": credential_error, "connection_status": "unobserved",
             "expired": expired,
-            "connected_at": meta.get("connected_at"),
+            "authorized_at": authorized_at, "connected_at": authorized_at,
             "expires_at": expires_at,
             "authorizing": ({"user_code": pending["user_code"], "verification_uri": pending["verification_uri"],
                              "expires_at": pending["expires_at"]} if pending and not pending.get("error") else None),

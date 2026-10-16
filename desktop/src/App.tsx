@@ -8,6 +8,7 @@ import { prepareAvatar } from "./lib/avatar";
 import { resolveMainChat, sourceLabel } from "./lib/mainChat";
 import { AssistantRefreshQueue } from "./lib/assistantRefresh";
 import { AssistantActionGate, type AssistantTaskAction } from "./lib/assistantTask";
+import { ConnectorStatusReads } from "./lib/connectorStatus";
 import { openAssistantTask } from "./lib/assistantNavigation";
 import { AssistantAudit, AssistantAvatarImage, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PhoneChatDialog, type AppMode, type AssistantTab } from "./components/AssistantMode";
 import { AssistantGoals } from "./components/AssistantGoals";
@@ -345,17 +346,11 @@ function App() {
   const [assistantSchedule, setAssistantSchedule] = useState<AssistantScheduleItem[]>([]);
   const [assistantMemories, setAssistantMemories] = useState<AssistantMemory[]>([]);
   const [memoryProposals, setMemoryProposals] = useState<MemoryProposal[]>([]);
-  // 连接的服务（GitHub 等）：授权进行中时轮询，常驻电脑拿到令牌后这里自动变成「已连接」
-  const [connectors, setConnectors] = useState<AssistantConnector[]>([]);
+  // 设备授权期间只轮询本机凭据状态；这不代表当前会话 MCP 已连接。
+  const [connectorSnapshot, setConnectors] = useState<AssistantConnector[]>([]);
+  const [connectorSnapshotScope, setConnectorSnapshotScope] = useState<string | null>(null);
+  const connectorReads = useRef(new ConnectorStatusReads());
   const [profileDialogOpen, setProfileDialogOpen] = useState(false);
-  const connectorAuthorizing = connectors.some((item) => item.authorizing);
-  useEffect(() => {
-    if (!connectorAuthorizing || assistantTab !== "identity") return;
-    const timer = window.setInterval(() => {
-      void clientRef.current?.listConnectors().then(setConnectors).catch(() => undefined);
-    }, 4000);
-    return () => window.clearInterval(timer);
-  }, [connectorAuthorizing, assistantTab]);
   // 手机上和助理的聊天：只读查看（不接管——两个进程同时写一段对话会互相覆盖）
   const [phoneChats, setPhoneChats] = useState<PhoneChat[]>([]);
   const [phoneChatSid, setPhoneChatSid] = useState<string | null>(null);
@@ -364,6 +359,26 @@ function App() {
   const assistantScope = `${baseUrl}:${repoRoot}:${processStatus.runtimeId}:${connection}`;
   const assistantScopeRef = useRef(assistantScope);
   assistantScopeRef.current = assistantScope;
+  const connectors = connectorSnapshotScope === assistantScope ? connectorSnapshot : [];
+  const connectorAuthorizing = connectors.some((item) => item.authorizing);
+  const refreshConnectorStatus = useCallback((client: GatewayClient, scope: string) => {
+    const current = () => clientRef.current === client && assistantScopeRef.current === scope;
+    return connectorReads.current.read(client, scope, current, (items) => {
+      setConnectors(items); setConnectorSnapshotScope(scope);
+    });
+  }, []);
+  useEffect(() => {
+    const client = clientRef.current;
+    if (client && connection === "connected" && assistantTab === "identity") {
+      void refreshConnectorStatus(client, assistantScope).catch(() => undefined);
+    }
+  }, [assistantTab, assistantScope, connection, refreshConnectorStatus]);
+  useEffect(() => {
+    const client = clientRef.current;
+    if (!client || connection !== "connected" || !connectorAuthorizing || assistantTab !== "identity") return;
+    const timer = window.setInterval(() => { void refreshConnectorStatus(client, assistantScope).catch(() => undefined); }, 4000);
+    return () => window.clearInterval(timer);
+  }, [connectorAuthorizing, assistantTab, assistantScope, connection, refreshConnectorStatus]);
   const [dispatchSnapshot, setDispatches] = useState<AssistantDispatch[]>([]);
   const [dispatchSnapshotScope, setDispatchSnapshotScope] = useState<string | null>(null);
   const dispatches = dispatchSnapshotScope === assistantScope ? dispatchSnapshot : [];
@@ -377,6 +392,7 @@ function App() {
     setAgentTurns([]); setDispatches([]); setDispatchSnapshotScope(null); setPhoneChats([]); setPhoneChatSid(null);
     setAssistantProfile({ name: "VortoCode", soul: "", about_you: "" }); setAssistantAvatar(null);
     setAssistantSchedule([]); setAssistantMemories([]); setMemoryProposals([]);
+    setConnectors([]); setConnectorSnapshotScope(null);
     setSelectedDispatchId(null); setProfileDialogOpen(false);
   }, [assistantScope]);
   const [tabsNeedingAttention, setTabsNeedingAttention] = useState<ReadonlySet<InspectorTab>>(
@@ -3754,7 +3770,7 @@ function App() {
               if (tab === "identity") {
                 void client?.listAssistantMemories().then(items => { if (current()) setAssistantMemories(items); }).catch(() => {});
                 void client?.listMemoryProposals().then(items => { if (current()) setMemoryProposals(items); }).catch(() => {});
-                void client?.listConnectors().then(items => { if (current()) setConnectors(items); }).catch(() => {});
+                if (client) void refreshConnectorStatus(client, scope).catch(() => {});
               }
             }}>
             {assistantTab === "audit" ? <AssistantAudit entries={auditEntries} />
@@ -3808,20 +3824,32 @@ function App() {
                   connectors={connectors}
                   onConnector={(action, connector) => void (async () => {
                     const client = clientRef.current;
+                    const scope = assistantScope;
+                    const current = () => clientRef.current === client && assistantScopeRef.current === scope;
+                    if (!client || !current()) return;
                     try {
-                      if (action === "copy" && connector.authorizing) await navigator.clipboard.writeText(connector.authorizing.user_code);
-                      if (action === "open" && connector.authorizing) await openUrl(connector.authorizing.verification_uri);
-                      if (action === "connect") {
-                        const started = await client?.authorizeConnector(connector.name);
-                        if (started) await openUrl(started.verification_uri).catch(() => undefined);
-                      }
-                      if (action === "disconnect") {
-                        if (!await confirmAction("断开 GitHub？助理之后就看不到你的仓库了。\n\nGitHub 那边的授权可以到 Settings → Applications 里撤销。")) return;
-                        await client?.disconnectConnector(connector.name);
-                      }
-                      if (action === "connect" || action === "disconnect") setConnectors(await client?.listConnectors() ?? []);
+                      await assistantActionGate.current.run(client, scope, `connector:${connector.name}`, current, async () => {
+                        if (action === "copy" && connector.authorizing) await navigator.clipboard.writeText(connector.authorizing.user_code);
+                        if (action === "open" && connector.authorizing) await openUrl(connector.authorizing.verification_uri);
+                        if (action === "connect") {
+                          connectorReads.current.invalidate();
+                          const started = await client.authorizeConnector(connector.name);
+                          if (!current()) return;
+                          if (started) await openUrl(started.verification_uri).catch(() => undefined);
+                        }
+                        if (action === "disconnect") {
+                          if (!await confirmAction("移除本机 GitHub 凭据并取消待处理授权？\n\n这不会关闭已建立的服务连接。GitHub 授权仍需到 Settings → Applications 撤销。")) return;
+                          if (!current()) return;
+                          connectorReads.current.invalidate();
+                          await client.disconnectConnector(connector.name);
+                        }
+                        if (current() && (action === "connect" || action === "disconnect")) {
+                          connectorReads.current.invalidate();
+                          await refreshConnectorStatus(client, scope);
+                        }
+                      });
                     } catch (error) {
-                      setBanner(errorText(error, "连接服务失败"));
+                      if (current()) setBanner(errorText(error, "连接服务失败"));
                     }
                   })()}
                   onDecideProposal={(proposal, approve) => void (async () => {
