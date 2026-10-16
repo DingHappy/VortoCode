@@ -46,6 +46,40 @@ def endpoint():
     try:yield f'http://127.0.0.1:{server.server_port}/mcp',state
     finally:server.shutdown();server.server_close();thread.join(timeout=2)
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('version', ['2025-06-18', VERSION])
+@pytest.mark.parametrize('server_error', [False, True])
+async def test_structured_result_survives_original_manager_executor_and_agent_wrapper(endpoint, tmp_path, version, server_error):
+    from src.agents.mcp_tools import connect_mcp
+    import yaml
+    url, state = endpoint
+    structured = {'count': 2, 'matched': True, 'next': None}
+    content = [{'type': 'text', 'text': '结构化结果'},
+               {'type': 'resource_link', 'uri': 'https://resource.example.test/item', 'name': 'fixture'}]
+    def reply(payload, message):
+        if payload['method'] == 'tools/call':
+            message['result'] = {'content': content, 'structuredContent': structured, 'isError': server_error}
+        return 200, 'application/json', json.dumps(message).encode()
+    state['reply'] = reply
+    config = tmp_path / 'config'; config.mkdir()
+    (config / 'mcp.yaml').write_text(yaml.safe_dump({
+        'servers': [{'name': 'fixture', 'transport': 'http', 'protocol': 'streamable_http',
+                     'protocol_version': version, 'url': url, 'credentialed': False}],
+        'permissions': {'rules': [{'id': 'fixture-count', 'scope': 'global', 'action': 'allow',
+                                   'server_names': ['fixture'], 'tool_names': ['count'], 'priority': 100}]}}))
+    manager, tools = await connect_mcp(str(tmp_path), capability_profile='external')
+    try:
+        result = await tools[0].handler({'count': 2})
+        if server_error:
+            assert result['ok'] is False
+        else:
+            assert json.loads(result) == {'content': content, 'structuredContent': structured}
+        assert sum(payload['method'] == 'tools/call' for payload, _ in state['calls']) == 1
+        assert tools[0].untrusted_source and tools[0].external_content and not tools[0].read_only
+    finally:
+        await manager.shutdown()
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('mode',['json','sse'])
 async def test_exact_endpoint_metadata_pagination_and_error_state(endpoint,mode):

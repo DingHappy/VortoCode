@@ -40,9 +40,27 @@ class MCPToolResult(BaseModel):
     """MCP工具调用结果"""
     success: bool
     output: Any = None
+    structured_content: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     tool_name: str = ""
     execution_time: float = 0.0
+
+
+def parse_tool_result(data: Any, *, tool_name: str, execution_time: float) -> MCPToolResult:
+    """One tools/call result contract for all transports; never infer success from text."""
+    if (not isinstance(data, dict) or not isinstance(data.get("content"), list)
+            or type(data.get("isError", False)) is not bool
+            or any(not isinstance(item, dict) or not isinstance(item.get("type"), str)
+                   for item in data["content"])
+            or ("structuredContent" in data and not isinstance(data["structuredContent"], dict))):
+        raise ValueError("Invalid MCP tool result")
+    # Retain server content as data, including unknown future block types. This
+    # is envelope validation, not outputSchema or multimedia conformance proof.
+    success = not data.get("isError", False)
+    return MCPToolResult(success=success, output=data["content"],
+                         structured_content=data.get("structuredContent"),
+                         error=None if success else "MCP server reported a tool error",
+                         tool_name=tool_name, execution_time=execution_time)
 
 
 class MCPClient(ABC):
@@ -202,13 +220,8 @@ class StdioMCPClient(MCPClient):
             
             if response and "result" in response:
                 result_data = response["result"]
-                return MCPToolResult(
-                    success=result_data.get("isError", False) is False,
-                    error=None if result_data.get("isError", False) is False else "MCP server reported a tool error",
-                    output=result_data.get("content", []),
-                    tool_name=tool_call.tool_name,
-                    execution_time=execution_time
-                )
+                return parse_tool_result(result_data, tool_name=tool_call.tool_name,
+                                         execution_time=execution_time)
             elif response and "error" in response:
                 return MCPToolResult(
                     success=False,
@@ -392,13 +405,8 @@ class HTTPMCPClient(MCPClient):
                 
                 if response.status == 200:
                     result_data = await response.json()
-                    return MCPToolResult(
-                        success=result_data.get("isError", False) is False,
-                        error=None if result_data.get("isError", False) is False else "MCP server reported a tool error",
-                        output=result_data.get("content", []),
-                        tool_name=tool_call.tool_name,
-                        execution_time=execution_time
-                    )
+                    return parse_tool_result(result_data, tool_name=tool_call.tool_name,
+                                             execution_time=execution_time)
                 else:
                     error_data = await response.json()
                     return MCPToolResult(

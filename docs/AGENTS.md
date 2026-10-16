@@ -375,6 +375,12 @@ General Web/IM 的个人指令技能由独立 personal-skills 目录提供，不
 
 ## MCP 多服务身份（第49节）
 
+后续适配补充：tools/call 结果经原 MCPClient/ToolExecutor 保留 structuredContent，
+Agent 复杂结果使用 JSON；信封损坏/isError 保持失败，不作 outputSchema 或多模态符合性声明。
+项目 use_skill/save_skill 由 Web/CLI/TUI 共用，加载核对原文件摘要，变化后需显式重载；
+禁止模型调用声明在目录及加载两处生效，来源/版本随指令提供，加载会标记原回合污点。
+TUI 使用原 skill 确认门及工作区围栏；不增加脚本执行、联网权限或第二套任务状态。
+
 DynamicToolRegistry使用mcp__server__tool完整键，metadata保存远端原名，执行器和动态调用只向
 该server连接传原名；包装器不重复前缀。旧裸名称只在无歧义时解析，权限规则匹配原名及完整名，
 server_names边界不变，频率以完整身份共用。目录先验证再发布，失败保留原目录；HTTP读取错误

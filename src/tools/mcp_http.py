@@ -341,12 +341,9 @@ class StreamableHTTPMCPClient(MCPClient):
                                      execution_time=time.monotonic()-start)
             result = await self._rpc('tools/call', {'name': tool_call.tool_name,
                                                   'arguments': tool_call.arguments}, headers)
-            if not isinstance(result.get('content'), list):
-                raise ValueError('Invalid MCP tool result')
-            success = result.get('isError', False) is False
-            return MCPToolResult(success=success, output=result['content'],
-                                 error=None if success else 'MCP server reported a tool error',
-                                 tool_name=tool_call.tool_name, execution_time=time.monotonic()-start)
+            from .mcp_client import parse_tool_result
+            return parse_tool_result(result, tool_name=tool_call.tool_name,
+                                     execution_time=time.monotonic()-start)
         except Exception as e:
             return MCPToolResult(success=False, error=str(e), tool_name=tool_call.tool_name,
                                  execution_time=time.monotonic()-start)

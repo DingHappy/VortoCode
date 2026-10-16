@@ -1,6 +1,7 @@
 """SKILL.md 文件解析器"""
 
 import yaml
+import re
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -22,15 +23,18 @@ class SkillParser:
     def parse_content(content: str, default_name: str = "unknown") -> Tuple[SkillMetadata, str, List[SkillArgument], Dict[str, List[SkillHook]]]:
         """解析技能内容"""
         # 分离 frontmatter 和内容
-        parts = content.split("---", 2)
-        
-        if len(parts) < 3:
+        header = re.match(r"\A---\r?\n(.*?)\r?\n---(?:\r?\n|\Z)", content, re.S)
+        if header is None:
+            if content.startswith(("---\n", "---\r\n")):
+                raise ValueError("技能 frontmatter 缺少结束分隔行")
             # 没有 frontmatter
             metadata = SkillMetadata(name=default_name)
             return metadata, content.strip(), [], {}
         
         # 解析 YAML frontmatter
-        frontmatter = yaml.safe_load(parts[1]) or {}
+        frontmatter = yaml.safe_load(header[1]) or {}
+        if not isinstance(frontmatter, dict):
+            raise ValueError("技能 frontmatter 必须是映射")
         
         # 解析元数据
         metadata = SkillMetadata(
@@ -72,7 +76,7 @@ class SkillParser:
                 ]
         
         # 获取指令内容
-        instructions = parts[2].strip()
+        instructions = content[header.end():].strip()
         
         return metadata, instructions, arguments, hooks
     

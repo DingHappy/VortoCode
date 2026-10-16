@@ -76,7 +76,7 @@ async def test_skill_source_cannot_cross_the_project_boundary(tmp_path):
     (root/"skills").symlink_to(outside,target_is_directory=True)
     tool=next(t for t in build_skill_tools(str(root),None) if t.name=="use_skill")
     result=await tool.handler({"name":"escaped"})
-    assert "没有名为" in result and "OUTSIDE-MARKER" not in result
+    assert result["ok"] is False and "没有名为" in result["error"] and "OUTSIDE-MARKER" not in str(result)
 
 @pytest.mark.asyncio
 async def test_skill_save_roundtrips_yaml_punctuation_after_confirmation(tmp_path):
