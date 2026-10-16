@@ -40,9 +40,9 @@ it("身份卡说明助理住在哪：常驻电脑 / 本机；本机时给出连�
   expect(panel({ kind: "local", canAddResident: false })).toContain(">重新连接常驻电脑</button>");
 });
 
-it("右侧四个图标标签：动态 / 审核记录 / 定时 / 身份，等你处理的件数挂在动态上", () => {
+it("右侧五个图标标签：动态 / 目标 / 审核记录 / 定时 / 身份，等你处理的件数挂在动态上", () => {
   const html = renderToStaticMarkup(<AssistantPanel name="小V" connected host={{ kind: "local", canAddResident: false }} onAddResident={() => {}} onRetryResident={() => {}} tab="identity" onTab={() => {}} onClose={() => {}} waiting={3}><p /></AssistantPanel>);
-  for (const label of ["动态", "审核记录", "定时", "身份"]) expect(html).toContain(`aria-label="${label}"`);
+  for (const label of ["动态", "目标", "审核记录", "定时", "身份"]) expect(html).toContain(`aria-label="${label}"`);
   expect(html).toContain('aria-selected="true" aria-label="身份"');
   expect(html).toContain("3 件等你处理");
 });

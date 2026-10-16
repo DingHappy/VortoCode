@@ -805,6 +805,24 @@ export interface CreateGoalInput {
   start?: boolean;
 }
 
+export interface PersonalGoal extends GoalItem {
+  kind: "personal";
+  revision: number;
+  due_at: string;
+  follow_up_at: string;
+  overdue: boolean;
+  follow_up_due: boolean;
+}
+
+export interface PersonalGoalInput {
+  request_id: string;
+  objective: string;
+  acceptance_criteria: string[];
+  next_action: string;
+  due_at?: string;
+  follow_up_at?: string;
+}
+
 export interface NoticeItem {
   ts?: string;
   source?: string;

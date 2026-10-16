@@ -954,5 +954,35 @@
     "methods": [
       "PUT"
     ]
+  },
+  {
+    "path": "/api/assistant/goals",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/assistant/goals",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/assistant/goals/{goal_id}",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/assistant/goals/{goal_id}",
+    "methods": [
+      "PATCH"
+    ]
+  },
+  {
+    "path": "/api/assistant/goals/{goal_id}/criteria/{criterion_id}/evidence",
+    "methods": [
+      "POST"
+    ]
   }
 ]

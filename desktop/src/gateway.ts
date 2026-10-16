@@ -10,6 +10,8 @@ import type {
   AssistantConnector,
   AssistantMemory,
   AssistantProfile,
+  PersonalGoal,
+  PersonalGoalInput,
   AssistantScheduleItem,
   MemoryProposal,
   PhoneChat,
@@ -368,6 +370,27 @@ export class GatewayClient {
   /** 常驻助理的名字与「关于你」（两端共用）。 */
   async getAssistantProfile(): Promise<AssistantProfile> {
     return this.request("/api/assistant/profile");
+  }
+
+  async listPersonalGoals(): Promise<PersonalGoal[]> {
+    const result = await this.request<{ goals: PersonalGoal[] }>("/api/assistant/goals");
+    return result.goals;
+  }
+
+  async createPersonalGoal(input: PersonalGoalInput): Promise<PersonalGoal> {
+    return this.request("/api/assistant/goals", { method: "POST", body: JSON.stringify(input) });
+  }
+
+  async updatePersonalGoal(goal: PersonalGoal, input: Partial<Pick<PersonalGoal, "next_action" | "blocker" | "due_at" | "follow_up_at">>): Promise<PersonalGoal> {
+    return this.request(`/api/assistant/goals/${encodeURIComponent(goal.id)}`, {
+      method: "PATCH", body: JSON.stringify({ ...input, revision: goal.revision }),
+    });
+  }
+
+  async confirmPersonalGoal(goal: PersonalGoal, criterionId: string, summary: string, passed: boolean): Promise<PersonalGoal> {
+    return this.request(`/api/assistant/goals/${encodeURIComponent(goal.id)}/criteria/${encodeURIComponent(criterionId)}/evidence`, {
+      method: "POST", body: JSON.stringify({ revision: goal.revision, summary, passed, confirmed: true }),
+    });
   }
 
   async saveAssistantProfile(profile: Partial<AssistantProfile>): Promise<AssistantProfile> {
