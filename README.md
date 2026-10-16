@@ -36,6 +36,7 @@ VortoCode 后续会按同一 agent runtime 拆成三种入口，而不是分裂�
 - **子 agent 委派**：把独立调研任务派给隔离上下文的只读子 agent，支持并行 fan-out
 - **自定义角色子 agent**（`.vortocode/agents/*.md`，公司架构式分工）：frontmatter 定角色（产品经理/前端/后端/QA…），正文即 system prompt；`task`/`research_parallel` 用 `agent=<名>` 按名委派——read 型只读，`tools: dev` 型可经**隔离流水线**真写代码（落 `vorto/*` 分支、委派需人工确认，绝不碰主区）。模板见 `examples/agents/`
 - **SKILL.md 技能**：渐进式按需加载（复用 `src/skills` 解析器），还能让 agent 现场起草新技能
+- **插件接入范围**：MCP 手动连接、项目 Skill/Hook/规则，以及私人助理范围的限制见 [扩展接入](docs/EXTENSIONS.md)。
 - **跨会话记忆**：`/resume` 重建对话上下文；`save_memory`/`recall_memory` 沉淀跨会话知识
 - **@上下文注入**：`@文件`→内容、`@目录`→清单、`@符号`→AST 定义位置
 - **双协议**：**默认走原生 function-calling（native）**——对支持的模型更可靠（真机对照 dogfood：同一开发任务 native 3/3 正确落地、提示式仅 1/3，提示式下模型易把工具结果误当用户消息、凭空编造交付）；模型不支持则**自动回退**提示式协议（模型无关兜底）。`VORTOCODE_NATIVE_TOOLS=0` 可强制走提示式。三端（TUI/Web/CLI）统一

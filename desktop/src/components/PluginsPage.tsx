@@ -1,5 +1,5 @@
 // 侧边栏「插件」：集中查看当前项目加载的技能、MCP 服务、Hook 和规则，以及浏览器操控这类内置能力的开关入口。
-// 扩展按项目加载（来自仓库里的 .vortocode/、AGENTS.md 等），通用会话没有项目，只给出说明和入口。
+// General 可显式连接已配置 MCP；项目 Skill、Hook 和规则在选择工作区后加载。
 import { Globe, Puzzle } from "lucide-react";
 import type { ReactNode } from "react";
 
@@ -20,7 +20,7 @@ export function PluginsPage({ activeScope, projectName, inspector, mcpConnection
       <header className="main-page-head">
         <div>
           <h1>插件</h1>
-          <p>管理工具连接与项目扩展。</p>
+          <p>连接 MCP 工具服务，查看项目 Skill、Hook 和规则。</p>
         </div>
       </header>
 
@@ -40,8 +40,10 @@ export function PluginsPage({ activeScope, projectName, inspector, mcpConnection
       ) : (
         <div className="main-page-empty">
           <Puzzle size={22} />
-          <strong>还未选择项目</strong>
-          <p>打开项目后，这里会显示它的技能与规则。</p>
+          <strong>{activeScope === "general" ? "私人助理扩展" : "项目扩展"}</strong>
+          <p>{activeScope === "general"
+            ? "私人助理可通过上方 MCP 卡片连接已配置服务。项目 Skill、Hook 和规则需要选择项目后加载。"
+            : "选择项目后，这里会显示它的 Skill、Hook 和规则。"}</p>
           <button onClick={onChooseProject}>选择项目</button>
         </div>
       )}
