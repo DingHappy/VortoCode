@@ -1,6 +1,8 @@
 """Engineering fixtures, not capability questions or live benchmark scores."""
 from copy import deepcopy
 import json
+import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -31,14 +33,15 @@ def paired(tmp_path_factory):
 
 
 def paired_reports(tmp_path, monkeypatch):
-    import tiktoken
     monkeypatch.setenv('OPENAI_API_BASE', 'https://models.example.test/v1')
     monkeypatch.setenv('OPENAI_API_KEY', 'synthetic-model-key')
     monkeypatch.setenv('DEFAULT_MODEL', 'judge')
     monkeypatch.setenv('VORTOCODE_MODEL_PRICES', json.dumps({f'default:{model}': {
         'input_per_million': price, 'output_per_million': price, 'currency': 'CNY'}
         for model, price in [('cheap', 1), ('strong', 10), ('judge', 20)]}))
-    monkeypatch.setattr(tiktoken, 'get_encoding', lambda _: Encoding())
+    # The CI base install deliberately excludes optional eval dependencies. The
+    # fixture uses a deterministic proxy and must not require or download them.
+    monkeypatch.setitem(sys.modules, 'tiktoken', SimpleNamespace(get_encoding=lambda _: Encoding()))
     monkeypatch.setattr(runner, 'select_holdout', lambda _: questions())
     monkeypatch.setattr(runner, 'source_metadata', lambda: {'source_sha256': 'a' * 64, 'head': 'fixture', 'dirty': False})
     data = tmp_path / 'data.json'; data.write_text(json.dumps(questions()))
