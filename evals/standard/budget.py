@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
+import time
 
 from src.llm.client import ProviderContentFiltered
 
@@ -36,6 +38,24 @@ class Meter:
         self.encoding, self.limit, self.request_limit = encoding, tokens, requests
         self.entries, self.committed, self.reported, self.reason = [], 0, 0, ""
         self.checkpoint = checkpoint
+        self.current_trial = None
+
+    def begin_trial(self, benchmark: str, question_id: str, repeat: int = 1):
+        if benchmark not in {"ToolSandbox", "LongMemEval-S"} or not isinstance(question_id, str) or not question_id or type(repeat) is not int or repeat < 1:
+            raise ValueError("invalid trial identity")
+        self.current_trial = {"benchmark": benchmark, "id": question_id, "repeat": repeat}
+
+    def _cost(self, entry, usage):
+        from src.llm.observations import configured_tariff
+        prompt, completion = usage.get('prompt_tokens'), usage.get('completion_tokens')
+        exact = (all(type(v) is int and v >= 0 for v in (prompt, completion))
+                 and prompt + completion == usage.get('total_tokens'))
+        target = entry['target']
+        price = configured_tariff(target['provider'], target['model'])
+        cost = ((prompt * price['input_per_million'] + completion * price['output_per_million']) / 1_000_000) if exact and price else None
+        entry.update(usage_evidence='exact' if exact else 'total_only', tariff=price,
+                     cost_estimate=cost if cost is None or math.isfinite(cost) else None,
+                     currency=price['currency'] if price else None)
 
     def snapshot(self):
         return {"limit": self.limit, "request_limit": self.request_limit, "requests": len(self.entries),
@@ -53,8 +73,15 @@ class Meter:
             self.reason = "local request/token reservation limit reached"
             self.checkpoint()
             raise CalibrationStopped(self.reason)
-        entry = {"role": role, "reserved": estimate, "settled": False, "model": kwargs.get('model') or client.config.model}
+        from src.llm.providers import request_target_view
+        target = request_target_view(client)
+        target['model'] = kwargs.get('model') or client.config.model
+        entry = {"role": role, "reserved": estimate, "settled": False, "model": target['model'],
+                 "target": target, "trial": dict(self.current_trial) if self.current_trial else None,
+                 "input_sha256": hashlib.sha256(body.encode()).hexdigest(),
+                 "parameters": {"temperature": kwargs.get('temperature'), "max_tokens": cap}}
         self.entries.append(entry); self.committed += estimate; self.checkpoint()
+        started = time.monotonic()
         try:
             response = await client.chat(messages, **{**kwargs, 'max_tokens': cap})
             usage = response.get('usage') or {}
@@ -64,6 +91,7 @@ class Meter:
                 raise CalibrationStopped('provider usage missing; reservation retained')
             total = usage['total_tokens']
             entry.update(settled=True, usage=usage, response_model=response.get('model'))
+            self._cost(entry, usage)
             self.reported += total
             self.committed += total - estimate
             if self.committed > self.limit:
@@ -78,6 +106,7 @@ class Meter:
             if type(usage.get('total_tokens')) is int:
                 total = usage['total_tokens']
                 entry.update(settled=True, usage=usage)
+                self._cost(entry, usage)
                 self.reported += total
                 self.committed += total - estimate
             self.reason = ('provider content_filter; calibration stopped' if entry['settled'] else
@@ -89,6 +118,9 @@ class Meter:
             self.reason = self.reason or 'request interrupted/failed; further calls stopped'
             self.checkpoint()
             raise
+        finally:
+            entry['elapsed_ms'] = int((time.monotonic() - started) * 1000)
+            self.checkpoint()
 
 
 class MeteredClient:
