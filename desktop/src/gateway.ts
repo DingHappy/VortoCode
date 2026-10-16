@@ -8,6 +8,7 @@ import type {
   AssistantDispatch,
   AssistantAvatar,
   AssistantConnector,
+  ConnectorDisconnectReceipt,
   AssistantMemory,
   AssistantProfile,
   PersonalGoal,
@@ -480,8 +481,8 @@ export class GatewayClient {
     return this.request(`/api/assistant/connectors/${encodeURIComponent(name)}/authorize`, { method: "POST" });
   }
 
-  async disconnectConnector(name: string): Promise<void> {
-    await this.request(`/api/assistant/connectors/${encodeURIComponent(name)}`, { method: "DELETE" });
+  async disconnectConnector(name: string): Promise<ConnectorDisconnectReceipt> {
+    return this.request(`/api/assistant/connectors/${encodeURIComponent(name)}`, { method: "DELETE" });
   }
 
   /** 聊天里提炼出的「关于你」候选（待确认）。 */

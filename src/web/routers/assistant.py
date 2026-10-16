@@ -152,14 +152,33 @@ async def connector_authorize(name: str):
         return await connectors.start_authorization(os.getcwd(), name)
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    except Exception as error:  # noqa: BLE001
-        raise HTTPException(status_code=502, detail=f"发起授权失败：{error}") from error
+    except connectors.AuthorizationSuperseded:
+        raise HTTPException(status_code=409, detail="授权已取消或被替换，请核对当前状态。") from None
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail="发起授权失败，请检查服务配置后重试。") from None
 
 
 @router.delete("/api/assistant/connectors/{name}")
 async def connector_disconnect(name: str):
     from src.workflow.workbench import connectors
+    from src.agents.mcp_session import detach_connector, finish_connector_detach
+    from src.web.routers.realtime import _SESSIONS
+    detached = []
+    def disabled(revocation):
+        seen = set()
+        for record in list(_SESSIONS.values()):
+            agent = record.get('agent') if isinstance(record, dict) else None
+            if agent is None or id(agent) in seen:
+                continue
+            seen.add(id(agent))
+            revision = detach_connector(agent, revocation)
+            if revision is not None:
+                detached.append((agent, revision))
+    def cleaned(status):
+        for agent, revision in detached:
+            finish_connector_detach(agent, revision, status)
     try:
-        return {"removed": connectors.disconnect(os.getcwd(), name)}
+        result = await connectors.disconnect_with_connections(os.getcwd(), name, on_revoke=disabled, on_cleanup=cleaned)
+        return {**result, "sessions_updated": len(detached)}
     except KeyError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error

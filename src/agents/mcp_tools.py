@@ -122,7 +122,7 @@ def _credential_free_http_servers(config: dict) -> list[dict]:
         transport = str(server.get("transport") or "stdio").strip().lower()
         if transport != "http" or server.get("credentialed") is not False:
             continue
-        if server.get("headers"):
+        if server.get("headers") or server.get("credential"):
             continue
         if not _credential_free_http_url(server.get("url")):
             continue
@@ -143,12 +143,15 @@ def load_connector_secret(name: str) -> str:
 
     凭据**只在这里**进内存、只进 HTTP 头：不进配置、不进系统提示、不进任何工具结果。
     权限放宽了（组/其他人可读）就拒绝——别把一个谁都能读的令牌当成主人的授权。"""
-    import os
     import re
-    import stat
     if not re.fullmatch(_CONNECTOR_NAME, str(name or "")):
         raise ValueError("连接器名称不合法")
-    path = connector_secret_path(name)
+    return _read_connector_secret(connector_secret_path(name))
+
+
+def _read_connector_secret(path: Path) -> str:
+    import os
+    import stat
     info = path.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_mode & 0o077 or info.st_uid != os.getuid():
         raise PermissionError(f"连接器凭据 {path} 必须是本人所有、权限 600 的普通文件")
@@ -158,6 +161,36 @@ def load_connector_secret(name: str) -> str:
     if not secret or any(ch.isspace() for ch in secret):
         raise ValueError("连接器凭据为空或格式不对")
     return secret
+
+
+def _connector_identity(path: Path) -> tuple:
+    import hashlib
+    def stamp():
+        value = path.lstat()
+        return value.st_dev, value.st_ino, value.st_mtime_ns, value.st_ctime_ns, value.st_size
+    before = stamp()
+    secret = _read_connector_secret(path)
+    after = stamp()
+    if before != after:
+        raise PermissionError("连接器凭据在读取期间发生变化")
+    return (*after, hashlib.sha256(secret.encode("utf-8")).digest())
+
+
+def connector_locally_revoked(name: str) -> bool:
+    from src.tools.connector_access import connector_identity_revoked
+    try:
+        return connector_identity_revoked(name, _connector_identity(connector_secret_path(name)))
+    except (OSError, ValueError):
+        return False
+
+
+def revoke_connector(name: str):
+    from src.tools.connector_access import revoke_connector_access
+    try:
+        identity = _connector_identity(connector_secret_path(name))
+    except (OSError, ValueError):
+        identity = None
+    return revoke_connector_access(name, identity)
 
 
 def _credentialed_connectors(config: dict) -> list[dict]:
@@ -185,7 +218,7 @@ def _credentialed_connectors(config: dict) -> list[dict]:
         if server.get("read_only", True):
             headers["X-MCP-Readonly"] = "true"
         entry = {key: value for key, value in server.items() if key not in ("credential",)}
-        entry.update(headers=headers, read_only=bool(server.get("read_only", True)),
+        entry.update(headers=headers, credential_ref=str(server["credential"]), read_only=bool(server.get("read_only", True)),
                      protocol=server.get("protocol", "streamable_http"),
                      # 托管的 MCP 服务（GitHub 等）目前走 2025-06-18 的握手；配置里可单独指定
                      protocol_version=server.get("protocol_version", "2025-06-18"))
@@ -227,8 +260,28 @@ async def connect_mcp(repo_root, *, capability_profile: str | None = None,
         return None, []
     if len(safe_servers) > 16:
         raise ValueError("MCP server budget exceeded (16)")
+    import re
+    if any(not isinstance(server.get("name"), str)
+           or not re.fullmatch(r"[A-Za-z0-9_-]{1,56}", server["name"]) or "__" in server["name"]
+           for server in safe_servers):
+        raise ValueError("Unsupported MCP server identity")
+    if len({str(server.get("name")) for server in safe_servers}) != len(safe_servers):
+        raise ValueError("Duplicate MCP server identity")
     mgr.config = {**mgr.config, "servers": safe_servers}
     try:
+        import hashlib
+        from src.tools.connector_access import ConnectorAccess, bind_connector_access
+        accesses = {}
+        for entry in connectors:
+            credential = entry["credential_ref"]
+            path = connector_secret_path(credential)
+            access = ConnectorAccess(credential, lambda path=path: _connector_identity(path))
+            expected = hashlib.sha256(entry["headers"]["Authorization"][7:].encode("utf-8")).digest()
+            if not access.matches_digest(expected):
+                access.revoke()
+                raise PermissionError("连接器凭据在建立连接前发生变化")
+            accesses[str(entry.get("name"))] = access
+        bind_connector_access(mgr, accesses)
         if not await mgr.initialize():
             raise RuntimeError("MCP manager initialization failed")
         return mgr, wrap_mcp_manager(mgr, read_only_servers)

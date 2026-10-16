@@ -553,6 +553,8 @@ async def test_web_ensure_mcp_connects_once(monkeypatch):
         return "ok"
 
     class FakeMgr:
+        mcp_clients = {"s": type("Client", (), {"connected": True})()}
+        config = {"servers": [{}]}
         async def shutdown(self):
             pass
 

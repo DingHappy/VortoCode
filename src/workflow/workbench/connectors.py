@@ -33,6 +33,12 @@ _CLIENT_ID = re.compile(r"(Iv1\.|Iv2[0-9]|Ov2[0-9])[A-Za-z0-9_.]{6,64}")
 
 # 进行中的授权：{name: {...}}。设备码只在这里。
 _PENDING: Dict[str, Dict[str, Any]] = {}
+_AUTH_ATTEMPTS: Dict[str, object] = {}
+
+
+class AuthorizationSuperseded(RuntimeError):
+    def __init__(self):
+        super().__init__("授权已取消或被新的请求替换，请核对当前状态。")
 
 
 def _connectors_dir() -> Path:
@@ -105,7 +111,7 @@ def status(root: str) -> List[Dict[str, Any]]:
     ``connected`` is retained as a legacy alias for credential availability.
     Session-owned MCP observations remain on /api/extensions/mcp.
     """
-    from src.agents.mcp_tools import load_connector_secret
+    from src.agents.mcp_tools import load_connector_secret, connector_locally_revoked
 
     rows = []
     for item in connector_configs(root):
@@ -121,8 +127,11 @@ def status(root: str) -> List[Dict[str, Any]]:
             credential_status = "missing"
         except (OSError, ValueError):
             credential_status = "invalid"
+        locally_revoked = connector_locally_revoked(name)
         if credential_status == "available":
-            if metadata is None or (meta.get("expires_at") is not None and expires_at is None):
+            if locally_revoked:
+                credential_status = "invalid"
+            elif metadata is None or (meta.get("expires_at") is not None and expires_at is None):
                 credential_status = "unknown"
             elif expired:
                 credential_status = "expired"
@@ -132,6 +141,8 @@ def status(root: str) -> List[Dict[str, Any]]:
             "unknown": "授权有效期信息无法确认，请检查后重新授权。",
             "expired": "凭据已过期，请重新授权。",
         }.get(credential_status, "")
+        if locally_revoked:
+            credential_error = "本机已撤销此凭据，请重新授权或完成凭据清理。"
         authorized_at = _timestamp(meta.get("connected_at"))
         pending = _PENDING.get(name)
         if pending and pending.get("expires_at", 0) <= time.time():
@@ -141,6 +152,7 @@ def status(root: str) -> List[Dict[str, Any]]:
             "connected": available,  # Compatibility only; never proof of a live service.
             "credential_status": credential_status, "credential_available": available,
             "credential_error": credential_error, "connection_status": "unobserved",
+            "locally_revoked": locally_revoked, "local_revocation_supported": True,
             "expired": expired,
             "authorized_at": authorized_at, "connected_at": authorized_at,
             "expires_at": expires_at,
@@ -178,7 +190,9 @@ def _save_token(name: str, token: str, expires_in: Optional[int]) -> None:
 
 
 async def _poll(name: str, client_id: str, post=_post, sleep=asyncio.sleep) -> None:
-    pending = _PENDING[name]
+    pending = _PENDING.get(name)
+    if pending is None:
+        return
     interval = max(5, int(pending.get("interval") or 5))
     while time.time() < pending["expires_at"]:
         await sleep(interval)
@@ -188,34 +202,53 @@ async def _poll(name: str, client_id: str, post=_post, sleep=asyncio.sleep) -> N
             result = await post(_TOKEN_URL, {"client_id": client_id, "device_code": pending["device_code"],
                                              "grant_type": _GRANT})
         except Exception as error:  # noqa: BLE001 —— 网络抖动：下一轮再问
-            logger.warning("连接器 %s 授权轮询失败：%s", name, error)
+            if _PENDING.get(name) is not pending:
+                return
+            logger.warning("连接器 %s 授权轮询失败（%s）", name, type(error).__name__)
             continue
+        if _PENDING.get(name) is not pending or time.time() >= pending["expires_at"]:
+            return
         token = result.get("access_token")
         if isinstance(token, str) and token and not any(ch.isspace() for ch in token):
             expires_in = result.get("expires_in")
             _save_token(name, token, int(expires_in) if isinstance(expires_in, int) else None)
             _PENDING.pop(name, None)
+            _AUTH_ATTEMPTS.pop(name, None)
             return
-        error = str(result.get("error") or "")
-        if error == "authorization_pending":
+        error_code = str(result.get("error") or "")
+        if error_code == "authorization_pending":
             continue
-        if error == "slow_down":
+        if error_code == "slow_down":
             interval += 5
             continue
         pending["error"] = {"expired_token": "验证码过期了，重新点一次连接",
-                            "access_denied": "你在 GitHub 上拒绝了授权"}.get(error, f"授权失败：{error or '未知错误'}")
+                            "access_denied": "你在 GitHub 上拒绝了授权"}.get(error_code, "授权失败，请重新授权。")
         return
-    pending["error"] = "验证码过期了，重新点一次连接"
+    if _PENDING.get(name) is pending:
+        pending["error"] = "验证码过期了，重新点一次连接"
 
 
 async def start_authorization(root: str, name: str, *, post=_post) -> Dict[str, Any]:
     """发起设备授权：返回给人看的验证码与链接；后台开始轮询。设备码不出本进程。"""
     item = _find(root, name)
-    result = await post(_DEVICE_CODE_URL, {"client_id": item["client_id"]})
+    attempt = object()
+    _AUTH_ATTEMPTS[name] = attempt
+    previous = _PENDING.pop(name, None)
+    if previous and previous.get("task"):
+        previous["task"].cancel()
+    try:
+        result = await post(_DEVICE_CODE_URL, {"client_id": item["client_id"]})
+    except BaseException:
+        if _AUTH_ATTEMPTS.get(name) is attempt:
+            _AUTH_ATTEMPTS.pop(name, None)
+        raise
+    if _AUTH_ATTEMPTS.get(name) is not attempt:
+        raise AuthorizationSuperseded()
     user_code, uri, device_code = result.get("user_code"), result.get("verification_uri"), result.get("device_code")
     if not (isinstance(user_code, str) and isinstance(device_code, str)
             and isinstance(uri, str) and uri.startswith("https://github.com/")):
-        raise ValueError(f"GitHub 没给出验证码：{result.get('error_description') or result.get('error') or '未知原因'}")
+        _AUTH_ATTEMPTS.pop(name, None)
+        raise ValueError("GitHub 设备授权响应无效")
     _PENDING[name] = {"device_code": device_code, "user_code": user_code, "verification_uri": uri,
                       "interval": int(result.get("interval") or 5),
                       "expires_at": time.time() + int(result.get("expires_in") or 900)}
@@ -224,12 +257,25 @@ async def start_authorization(root: str, name: str, *, post=_post) -> Dict[str, 
     return {"user_code": user_code, "verification_uri": uri, "expires_at": _PENDING[name]["expires_at"]}
 
 
-def disconnect(root: str, name: str) -> bool:
+def disconnect(root: str, name: str, *, on_revoke=None) -> bool:
     """断开：删令牌与状态（GitHub 上的授权请到 App 设置里撤销）。"""
-    _find(root, name)
+    if not _NAME.fullmatch(name):
+        raise KeyError("连接器名称无效")
+    try:
+        _find(root, name)
+    except KeyError:
+        from src.tools.connector_access import has_connector_access
+        if not (name in _PENDING or name in _AUTH_ATTEMPTS or has_connector_access(name)
+                or os.path.lexists(_token_path(name)) or os.path.lexists(_meta_path(name))):
+            raise
+    from src.agents.mcp_tools import revoke_connector
+    revocation = revoke_connector(name)
+    _AUTH_ATTEMPTS.pop(name, None)
     pending = _PENDING.pop(name, None)
     if pending and pending.get("task"):
         pending["task"].cancel()
+    if on_revoke is not None:
+        on_revoke(revocation)
     removed = False
     for path in (_token_path(name), _meta_path(name)):
         try:
@@ -238,3 +284,27 @@ def disconnect(root: str, name: str) -> bool:
         except FileNotFoundError:
             pass
     return removed
+
+
+async def disconnect_with_connections(root: str, name: str, *, on_revoke=None, on_cleanup=None) -> dict:
+    """Acknowledge local revocation separately from file/transport cleanup and remote effects."""
+    from src.tools.connector_access import cleanup_revocation
+    revocations = []
+    def disabled(value):
+        revocations.append(value)
+        if on_revoke is not None:
+            on_revoke(value)
+    removed, credential_cleanup = False, True
+    try:
+        removed = disconnect(root, name, on_revoke=disabled)
+    except OSError:
+        credential_cleanup = False
+    cleanup = {"connections_disabled": 0, "closed_connections": 0, "cleanup_status": "unconfirmed"}
+    try:
+        cleanup = await cleanup_revocation(revocations[0])
+    finally:
+        if on_cleanup is not None:
+            on_cleanup(cleanup["cleanup_status"])
+    return {"removed": removed, "credential_cleanup_confirmed": credential_cleanup,
+            "calls_blocked": True, "revocation_scope": "current_process", **cleanup,
+            "remote_requests_verified": False, "provider_authorization_revoked": False}
