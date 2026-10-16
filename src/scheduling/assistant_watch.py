@@ -234,6 +234,11 @@ async def _notify_accepted(notify: Notify, text: str) -> bool:
 async def watch_once(root: str, now: datetime, *, notify: Notify, refresh=assistant_dispatch.refresh,
                      times: Optional[List[str]] = None, writer=None) -> None:
     """巡检一轮：刷新任务状态、推送变化、到点发报告。首次运行只记下现状，不把旧账推一遍。"""
+    from src.workflow.workbench.goal_followup import poll_goal_followups
+    try:
+        await poll_goal_followups(root, now, notify=notify)
+    except Exception as error:  # Goals and dispatch refresh fail independently; cancellation propagates.
+        logger.warning("个人目标巡检失败：%s", type(error).__name__)
     state = _load_state(root)
     first_run = state is None
     state = state or {"seen": {}, "reports": []}
@@ -310,6 +315,20 @@ def schedule_overview(root: str) -> List[Dict[str, Any]]:
                           "schedule": f"每天 {hhmm}", "detail": "今天聊过的事、任务单状态、等你处理的", "enabled": True})
         items.append({"id": "follow-up", "kind": "watch", "title": "跟进派出去的活",
                       "schedule": f"每 {INTERVAL_SECONDS // 60} 分钟", "detail": "状态有变化就推到手机", "enabled": True})
+    try:
+        from src.gateway.workspace_scope import GENERAL, current_workspace_scope
+        from src.workflow.workbench.personal_goals import PersonalGoals
+        configured = current_workspace_scope() == GENERAL and watch_enabled()
+        for goal in PersonalGoals(root).list():
+            reminder = goal["follow_up"]
+            if reminder.get("status") == "scheduled":
+                items.append({"id": goal["id"], "kind": "goal", "title": f"目标提醒：{goal['objective'][:100]}",
+                              "schedule": f"一次 · {reminder['due_at']}", "enabled": True,
+                              "detail": "已批准的目标提醒；在目标卡中核对正文、暂停和通知结果。",
+                              "scheduler_enabled": configured,
+                              "next": reminder.get("next_attempt_at") or reminder["due_at"]})
+    except (OSError, ValueError, KeyError, TypeError):
+        logger.warning("个人目标提醒概览暂不可用")
     if os.getenv("VORTOCODE_HEARTBEAT", "").strip().lower() in ("1", "true", "yes", "on"):
         every = (os.getenv("VORTOCODE_HEARTBEAT_EVERY", "30m") or "30m").strip()
         items.append({"id": "heartbeat", "kind": "heartbeat", "title": "Heartbeat",
@@ -361,7 +380,8 @@ def build_status_tools(root: str) -> list:
         if not items:
             return "没有定时事项。"
         return "\n".join(f"- {item['title']}：{item['schedule']}{'' if item['enabled'] else '（已停用）'}"
-                         + ("；调度总开关未开启，不会自动执行" if item.get("scheduler_enabled") is False else "")
+                         + (("；未配置助理通知，提醒不会自动触发" if item.get("kind") == "goal" else "；调度总开关未开启，不会自动执行")
+                            if item.get("scheduler_enabled") is False else "")
                          + (f"，上次定时执行 {item['last']}" if item.get("last") else "") for item in items)
 
     async def _history(args: dict) -> str:

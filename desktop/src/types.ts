@@ -141,7 +141,7 @@ export interface AssistantScheduleRun {
 
 export interface AssistantScheduleItem {
   id: string;
-  kind: "report" | "watch" | "heartbeat" | "cron";
+  kind: "report" | "watch" | "heartbeat" | "cron" | "goal";
   title: string;
   schedule: string;
   detail?: string;
@@ -812,6 +812,22 @@ export interface PersonalGoal extends GoalItem {
   follow_up_at: string;
   overdue: boolean;
   follow_up_due: boolean;
+  follow_up?: PersonalGoalFollowUp;
+  follow_up_history?: PersonalGoalFollowUp[];
+  follow_up_preview?: string;
+  follow_up_runtime_configured?: boolean;
+}
+
+export interface PersonalGoalFollowUp {
+  id?: string;
+  status?: "scheduled" | "sending" | "accepted" | "acknowledged" | "failed" | "unknown" | "cancelled";
+  text?: string;
+  due_at?: string;
+  reason?: string;
+  attempts?: number;
+  accepted_at?: string;
+  attempted_at?: string;
+  user_acknowledged_at?: string;
 }
 
 export interface PersonalGoalInput {

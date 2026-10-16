@@ -23,13 +23,13 @@ export function AssistantScheduleCard({ item, connected, onToggle, onHistory }: 
     <small>{item.schedule} · {item.enabled ? "已启用" : "已暂停"}</small>
     {item.detail && <p>{item.detail}</p>}
     {item.last && <small>上次定时执行：{item.last.replace("T", " ")}</small>}
-    {item.scheduler_enabled === false ? <small>此运行端的定时调度总开关未开启</small>
+    {item.scheduler_enabled === false ? <small>{item.kind === "goal" ? "此运行端未配置目标提醒通知" : "此运行端的定时调度总开关未开启"}</small>
       : item.next && <small>下次：{item.next.replace("T", " ")}</small>}
     {Boolean(item.failures) && <small>连续失败 {item.failures} 次</small>}
     {managed ? <div className="assistant-task-actions">
       <button disabled={!connected || busy} onClick={() => void act(() => onToggle(item))}>{item.enabled ? "暂停" : "恢复"}</button>
       <button disabled={!connected || busy} onClick={() => void act(async () => setRuns(await onHistory(item)))}>执行记录</button>
-    </div> : <small>由运行端配置管理</small>}
+    </div> : <small>{item.kind === "goal" ? "在个人目标卡中核对或暂停" : "由运行端配置管理"}</small>}
     {!connected && <small>连接断开，暂时无法核对或操作</small>}
     {error && <p role="alert">{error}</p>}
     {runs && <div className="assistant-schedule-history">

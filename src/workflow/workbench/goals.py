@@ -124,6 +124,8 @@ class Goal:
     follow_up_at: str = ""
     revision: int = 0
     request_fingerprint: str = ""
+    follow_up: Dict[str, Any] = field(default_factory=dict)
+    follow_up_history: List[Dict[str, Any]] = field(default_factory=list)
 
     @staticmethod
     def new(

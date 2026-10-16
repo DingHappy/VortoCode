@@ -289,6 +289,23 @@ describe("task dispatch HTTP contracts", () => {
   });
 });
 
+describe("personal goal reminder HTTP contracts", () => {
+  it("binds approval and manual receipt to the displayed goal revision", async () => {
+    vi.mocked(tauriFetch).mockResolvedValue({ ok: true, json: async () => ({ id: "personal-example" }) } as Response);
+    const client = new GatewayClient(SETTINGS);
+    const goal = { id: "personal-example", revision: 7 } as import("./types").PersonalGoal;
+    await client.configurePersonalGoalFollowUp(goal, true, true);
+    await client.acknowledgePersonalGoalFollowUp(goal);
+    const calls = vi.mocked(tauriFetch).mock.calls;
+    expect(calls[0][0]).toContain("/api/assistant/goals/personal-example/follow-up");
+    expect(calls[0][1]?.method).toBe("PUT");
+    expect(JSON.parse(String(calls[0][1]?.body))).toEqual({ revision: 7, enabled: true, confirmed: true, acknowledge_uncertain: true });
+    expect(calls[1][0]).toContain("/follow-up/acknowledge");
+    expect(calls[1][1]?.method).toBe("POST");
+    expect(JSON.parse(String(calls[1][1]?.body))).toEqual({ revision: 7, confirmed: true });
+  });
+});
+
 // ─────────────────────────── ② 事件分发 ───────────────────────────
 
 describe("事件分发", () => {

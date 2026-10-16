@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { goalDate, localGoalDate, personalGoalActions, type PersonalGoalClient } from "./personalGoals";
+import { goalDate, goalFollowUpLabel, localGoalDate, personalGoalActions, type PersonalGoalClient } from "./personalGoals";
 import type { PersonalGoal } from "../types";
 
 const personalGoal: PersonalGoal = { id: "personal-example", kind: "personal", revision: 1, objective: "整理旅行计划",
@@ -23,6 +23,11 @@ function setup(list = vi.fn(async () => [personalGoal])) {
 }
 
 describe("personal goal response scope", () => {
+  it("shows failed and uncertain notification results without claiming delivery", () => {
+    expect(goalFollowUpLabel({ ...personalGoal, follow_up: { status: "failed" } })).toContain("人工重试");
+    expect(goalFollowUpLabel({ ...personalGoal, follow_up: { status: "sending" } })).toContain("尚未核对");
+    expect(goalFollowUpLabel({ ...personalGoal, follow_up: { status: "cancelled" } })).toContain("失效");
+  });
   it("does not publish a previous host's delayed read", async () => {
     const result = deferred<PersonalGoal[]>();
     const state = setup(vi.fn(() => result.promise));

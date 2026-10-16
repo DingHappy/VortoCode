@@ -984,5 +984,17 @@
     "methods": [
       "POST"
     ]
+  },
+  {
+    "path": "/api/assistant/goals/{goal_id}/follow-up",
+    "methods": [
+      "PUT"
+    ]
+  },
+  {
+    "path": "/api/assistant/goals/{goal_id}/follow-up/acknowledge",
+    "methods": [
+      "POST"
+    ]
   }
 ]

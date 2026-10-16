@@ -337,6 +337,9 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 .assistant-goal-card p, .assistant-goals > p { font-size: 12px; line-height: 1.6; color: var(--n10); }
 .assistant-goals button { margin: 4px 6px 4px 0; color: var(--n12); background: var(--n0); border: 1px solid var(--n5); border-radius: 6px; cursor: pointer; }
 .assistant-goals button:disabled { opacity: .5; cursor: default; }
+.assistant-goal-followup { margin: 12px 0; padding: 10px; border-radius: 7px; background: var(--n2); }
+.assistant-goal-followup pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; line-height: 1.6; }
+.assistant-goal-followup input[type="checkbox"] { width: auto; justify-self: start; }
 .assistant-section h5 { display: flex; align-items: center; gap: 6px; margin: 8px 4px 10px; font-size: 13px; font-weight: 650; color: var(--n13); }
 .assistant-back { display: inline-flex; padding: 3px; border: 0; border-radius: 6px; color: var(--n10); background: transparent; cursor: pointer; }
 .assistant-back:hover { background: var(--n3); }
