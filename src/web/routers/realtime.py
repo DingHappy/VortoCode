@@ -593,7 +593,7 @@ def _propose_turn_memories(sess: dict, rid: str, candidates) -> None:
             continue  # An empty/blocked automatic read did not ingest memory content.
         activities.append(event)
     names = turn_tool_names(activities, rid, limit=50)
-    tainted = any(name.startswith(("web_", "browser", "recall_memory", "search_conversations", "read_conversation_excerpt", "personal_goals", "mcp")) for name in names)
+    tainted = any(name.startswith(("web_", "browser", "recall_memory", "search_conversations", "read_conversation_excerpt", "personal_goals", "schedule_list", "mcp")) for name in names)
     try:
         propose_memories(sess.get("repo_root") or os.getcwd(), list(candidates), source="assistant", tainted=tainted)
     except Exception as error:  # noqa: BLE001 —— 记忆候选是旁路

@@ -21,3 +21,10 @@ it("environment-controlled items and legacy servers do not expose management", (
     expect(html).not.toContain("<button");
   }
 });
+it("personal reminders direct management to the goal card and do not expose cron actions", () => {
+  const html = renderToStaticMarkup(<AssistantScheduleCard item={{ ...item, kind: "goal", id: "personal-demo" }} {...props} />);
+  expect(html).toContain("此运行端未配置目标提醒通知");
+  expect(html).toContain("在个人目标卡中核对或暂停");
+  expect(html).not.toContain("<button");
+  expect(html).not.toContain("调度总开关未开启");
+});

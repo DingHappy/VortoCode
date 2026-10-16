@@ -393,6 +393,19 @@ export class GatewayClient {
     });
   }
 
+  async configurePersonalGoalFollowUp(goal: PersonalGoal, enabled: boolean, acknowledgeUncertain = false): Promise<PersonalGoal> {
+    return this.request(`/api/assistant/goals/${encodeURIComponent(goal.id)}/follow-up`, {
+      method: "PUT", body: JSON.stringify({ revision: goal.revision, enabled, confirmed: enabled,
+        acknowledge_uncertain: acknowledgeUncertain }),
+    });
+  }
+
+  async acknowledgePersonalGoalFollowUp(goal: PersonalGoal): Promise<PersonalGoal> {
+    return this.request(`/api/assistant/goals/${encodeURIComponent(goal.id)}/follow-up/acknowledge`, {
+      method: "POST", body: JSON.stringify({ revision: goal.revision, confirmed: true }),
+    });
+  }
+
   async saveAssistantProfile(profile: Partial<AssistantProfile>): Promise<AssistantProfile> {
     return this.request("/api/assistant/profile", { method: "PUT", body: JSON.stringify(profile) });
   }

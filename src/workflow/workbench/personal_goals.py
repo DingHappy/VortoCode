@@ -1,7 +1,7 @@
 """Non-executing personal goal contracts, using the existing goal files and evidence.
 
-Deadlines are tracking metadata. This module does not schedule, submit tasks,
-run verifiers, call a model, or treat execution receipts as user acceptance.
+Deadlines are tracking metadata. Explicit approval can authorize one reminder;
+this module never submits tasks, runs verifiers, or calls a model.
 """
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import json
 import os
 import re
 import sys
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
@@ -42,6 +43,16 @@ def _date(value: object) -> str:
 def _fields(body: dict, allowed: set[str]) -> None:
     if set(body) - allowed:
         raise ValueError("请求包含不支持的字段")
+
+
+def follow_up_preview(goal: Goal) -> str:
+    """Exact bounded notification body, shown before approval and saved unchanged."""
+    lines = ["📌 目标跟进提醒", goal.objective[:200], f"跟进时间：{goal.follow_up_at}",
+             f"下一步：{goal.next_action[:500]}"]
+    if goal.blocker:
+        lines.append(f"阻塞：{goal.blocker[:500]}")
+    lines.append("这是一次提醒，不代表任务执行完成或目标达成。")
+    return "\n".join(lines)
 
 
 class PersonalGoals:
@@ -87,6 +98,8 @@ class PersonalGoals:
         goal = self.ledger.load(goal_id)
         if goal is None:
             raise KeyError(goal_id)
+        if not isinstance(goal.follow_up, dict) or not isinstance(goal.follow_up_history, list):
+            raise ValueError("提醒记录格式无效")
         return goal
 
     @staticmethod
@@ -98,6 +111,7 @@ class PersonalGoals:
         active = goal.status != "achieved"
         result = goal.to_dict()
         result.update(
+            follow_up_preview=follow_up_preview(goal),
             progress={"passed": sum(c.status == "passed" for c in goal.acceptance_criteria),
                       "failed": sum(c.status == "failed" for c in goal.acceptance_criteria),
                       "total": len(goal.acceptance_criteria)},
@@ -163,6 +177,56 @@ class PersonalGoals:
         if type(revision) is not int or revision != goal.revision:
             raise ValueError("目标已变化，请刷新后重试")
 
+    @staticmethod
+    def _invalidate_follow_up(goal: Goal) -> None:
+        if goal.follow_up.get("status") == "scheduled":
+            goal.follow_up.update(status="cancelled", reason="目标进展或验收已更新，需要重新批准提醒")
+        elif goal.follow_up.get("status") == "sending":
+            # Holding the lock means the old sending claim has no live sender.
+            goal.follow_up.update(status="unknown", reason="此前发送中断，需核对通知结果")
+
+    def configure_follow_up(self, goal_id: str, body: dict) -> dict:
+        _fields(body, {"revision", "enabled", "confirmed", "acknowledge_uncertain"})
+        enabled = body.get("enabled")
+        if type(enabled) is not bool or (enabled and body.get("confirmed") is not True):
+            raise ValueError("启用提醒需要用户明确批准")
+        with self._lock(goal_id):
+            goal = self._load(goal_id)
+            self._revision(goal, body)
+            old = goal.follow_up
+            if enabled:
+                if goal.status == "achieved" or not goal.follow_up_at:
+                    raise ValueError("需要未达成的目标和已保存的下次跟进时间")
+                _date(goal.follow_up_at)
+                if old.get("status") in {"unknown", "sending"} and body.get("acknowledge_uncertain") is not True:
+                    raise ValueError("此前通知结果不明，请核对后明确批准可能重复的提醒")
+                if old.get("id"):
+                    goal.follow_up_history = [*goal.follow_up_history, dict(old)][-20:]
+                goal.follow_up = {"id": uuid.uuid4().hex, "status": "scheduled", "attempts": 0,
+                                  "approved_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                  "due_at": goal.follow_up_at, "text": follow_up_preview(goal)}
+            else:
+                if old.get("status") in {"accepted", "acknowledged", "unknown", "sending"}:
+                    raise ValueError("该通知可能已经受理，暂停不能撤回；请先核对结果")
+                goal.follow_up = {**old, "status": "cancelled", "reason": "用户暂停提醒"}
+            goal.revision += 1
+            return self._save(goal)
+
+    def acknowledge_follow_up(self, goal_id: str, body: dict) -> dict:
+        _fields(body, {"revision", "confirmed"})
+        if body.get("confirmed") is not True:
+            raise ValueError("需要用户明确确认已看到这条提醒")
+        with self._lock(goal_id):
+            goal = self._load(goal_id)
+            self._revision(goal, body)
+            state = goal.follow_up
+            if not state.get("id") or type(state.get("attempts")) is not int or state["attempts"] < 1:
+                raise ValueError("还没有这条提醒的通知尝试记录")
+            state.update(status="acknowledged", user_acknowledged_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                         reason="用户明确确认已看到提醒，不代表目标已达成")
+            goal.revision += 1
+            return self._save(goal)
+
     def update(self, goal_id: str, body: dict) -> dict:
         _fields(body, {"revision", "next_action", "blocker", "due_at", "follow_up_at"})
         with self._lock(goal_id):
@@ -180,6 +244,7 @@ class PersonalGoals:
             goal.status = "blocked" if goal.blocker or failed else "active"
             if failed and not goal.blocker:
                 goal.blocker = "仍有验收标准未通过，请复验"
+            self._invalidate_follow_up(goal)
             goal.revision += 1
             return self._save(goal)
 
@@ -211,5 +276,6 @@ class PersonalGoals:
                                     else "继续推进并核对剩余验收标准"
                                     if previous_next_action == "处理未通过的事项并重新确认"
                                     else previous_next_action)
+            self._invalidate_follow_up(goal)
             goal.revision += 1
             return self._save(goal)
