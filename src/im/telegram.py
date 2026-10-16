@@ -6,13 +6,15 @@ HTTP 层可注入（`request_fn`）：默认用 aiohttp（硬依赖）；测试�
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import time
 import uuid as _uuid
 from pathlib import Path
-from typing import AsyncIterator, Awaitable, Callable, Optional
+from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
 from .channel import ChannelAdapter, ChannelEvent, chunk_text
+from .telegram_errors import TelegramError, request_error
 from src.utils.http import outbound_session
 
 # 注入式 HTTP：async (method, payload) -> Telegram 返回的 result（ok=False 时应抛异常）
@@ -27,6 +29,7 @@ _ME_RETRY_MAX = 300.0       # 退避上限：持续失败时最多 5 分钟试�
 # 而不是发一次注定失败的请求再把 API 的英文报错甩给用户。
 _TEXT_LIMIT = 4000                # Bot API 单条文本硬限制 4096，留点余量
 _MAX_FILE_BYTES = 20 * 1024 * 1024
+logger = logging.getLogger(__name__)
 # 按 Telegram 的消息字段分两类：能当图看的进 images（agent 读图路径），其余进 files。
 _IMAGE_FIELDS = ("photo", "sticker")
 _FILE_FIELDS = ("document", "video", "audio", "voice", "video_note", "animation")
@@ -35,10 +38,6 @@ _FILE_FIELDS = ("document", "video", "audio", "voice", "video_note", "animation"
 def _now() -> float:
     """单调钟（getMe 退避用）。独立函数是为了测试能注入假时钟，不去动 stdlib 的 time。"""
     return time.monotonic()
-
-
-class TelegramError(Exception):
-    pass
 
 
 class TelegramAdapter(ChannelAdapter):
@@ -65,6 +64,21 @@ class TelegramAdapter(ChannelAdapter):
         self._me_resolved = self._bot_username is not None
         self._me_retry_at = 0.0        # 下次允许重试 getMe 的单调时刻（退避窗口内不再打 API）
         self._me_backoff = 0.0         # 当前退避长度（秒），成功即作废
+        self._polling: dict[str, Any] = {"failures": 0, "consecutive_failures": 0, "malformed_updates": 0,
+                         "last_error_category": "none", "last_error_code": None,
+                         "last_failure_at": None, "last_recovery_at": None, "retry_at": None}
+
+    def liveness(self) -> dict:
+        state, now = self._polling, _now()
+        def age(value):
+            return None if value is None else round(max(0.0, now - value), 1)
+        result = super().liveness()
+        result["polling"] = {key: state[key] for key in ("failures", "consecutive_failures", "malformed_updates",
+                                                       "last_error_category", "last_error_code")}
+        result["polling"].update(last_failure_age=age(state["last_failure_at"]),
+                                 last_recovery_age=age(state["last_recovery_at"]),
+                                 retry_in=max(0.0, round((state["retry_at"] or now) - now, 1)))
+        return result
 
     # ------------------------------------------------------------ HTTP（默认 aiohttp，可注入替换）
     async def _default_request(self, method: str, payload: dict):
@@ -73,13 +87,22 @@ class TelegramAdapter(ChannelAdapter):
             self._session = outbound_session()
         url = f"https://api.telegram.org/bot{self._token}/{method}"
         timeout = aiohttp.ClientTimeout(total=self._poll_timeout + 15)
+        status = None
         try:
             async with self._session.post(url, json=payload, timeout=timeout) as resp:
+                status = resp.status
                 data = await resp.json()
         except Exception as exc:  # noqa: BLE001 - aiohttp URL contains the Bot token
-            raise TelegramError(f"{method} 请求失败（{type(exc).__name__}）") from None
-        if not data.get("ok"):
-            raise TelegramError(str(data.get("description", "unknown")))
+            raise request_error(exc, status) from None
+        if not isinstance(data, dict):
+            raise TelegramError("Bot API 返回结构无效", category="invalid_response")
+        if data.get("ok") is not True:
+            code = data.get("error_code")
+            if type(code) is not int:
+                code = status
+            parameters = data.get("parameters")
+            retry_after = parameters.get("retry_after") if isinstance(parameters, dict) else None
+            raise TelegramError("Bot API 请求未成功", code=code, retry_after=retry_after)
         return data.get("result")
 
     async def _default_download(self, file_path: str) -> bytes:
@@ -117,9 +140,16 @@ class TelegramAdapter(ChannelAdapter):
         backoff = 1.0
         while True:
             try:
+                self._polling["retry_at"] = None
                 updates = await self._api("getUpdates", offset=self._offset,
                                           timeout=self._poll_timeout,
                                           allowed_updates=["message", "callback_query"])
+                if not isinstance(updates, list):
+                    raise TelegramError("长轮询返回结构无效", category="invalid_response")
+                if self._polling["consecutive_failures"]:
+                    logger.info("Telegram 长轮询恢复 failures=%d", self._polling["consecutive_failures"])
+                    self._polling["last_recovery_at"] = _now()
+                self._polling["consecutive_failures"] = 0
                 backoff = 1.0
                 # 长轮询正常返回（哪怕是空的）就是"线还活着"——不是"收到用户消息"，
                 # 主人一夜不说话是常态，拿消息当活性会天天误报。
@@ -127,20 +157,39 @@ class TelegramAdapter(ChannelAdapter):
                     self.note_connected()
                 self.note_frame()
             except Exception as e:  # noqa: BLE001 —— 网络抖动/超时：退避重连，绝不把桥拖垮
-                self.note_disconnected(f"长轮询失败: {type(e).__name__}")
-                await asyncio.sleep(backoff)
+                failure = e if isinstance(e, TelegramError) else request_error(e)
+                delay = max(backoff, failure.retry_after or 0)
+                self._polling.update(failures=self._polling["failures"] + 1,
+                                     consecutive_failures=self._polling["consecutive_failures"] + 1,
+                                     last_error_category=failure.category, last_error_code=failure.code,
+                                     last_failure_at=_now(), retry_at=_now() + delay)
+                self.note_disconnected(f"长轮询失败: {failure.category}")
+                logger.warning("Telegram 长轮询失败 category=%s code=%s retry_seconds=%.1f",
+                               failure.category, failure.code, delay)
+                await asyncio.sleep(delay)
                 backoff = min(backoff * 2, 30.0)
                 continue
             for up in updates or []:
-                self._offset = max(self._offset, int(up.get("update_id", 0)) + 1)
+                if (not isinstance(up, dict) or type(up.get("update_id")) is not int or up["update_id"] < 0):
+                    self._polling["malformed_updates"] += 1
+                    logger.warning("Telegram 畸形更新已跳过")
+                    continue
+                self._offset = max(self._offset, up["update_id"] + 1)
                 if self.notification_only:
                     continue
-                if _is_group_update(up):
-                    await self._resolve_me()          # 只有群消息才需要知道自己的 @ 名
-                ev = _to_event(up, self._bot_username, self._bot_id)
-                if ev is None:
+                try:
+                    if any(key in up and not isinstance(up[key], dict) for key in ("message", "callback_query")):
+                        raise ValueError("Invalid update payload")
+                    if _is_group_update(up):
+                        await self._resolve_me()          # 只有群消息才需要知道自己的 @ 名
+                    ev = _to_event(up, self._bot_username, self._bot_id)
+                    if ev is None:
+                        continue
+                    refs = _attachment_refs(up.get("message") or {})
+                except (AttributeError, KeyError, TypeError, ValueError):
+                    self._polling["malformed_updates"] += 1
+                    logger.warning("Telegram 畸形更新已跳过")
                     continue
-                refs = _attachment_refs(up.get("message") or {})
                 # Bridge owns the admission decision, but fetching attachments
                 # happens before it sees this event. Never download unapproved
                 # senders' files (or unmentioned group traffic) into our inbox.
