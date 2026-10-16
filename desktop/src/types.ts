@@ -158,7 +158,13 @@ export interface AssistantConnector {
   name: string;
   provider: string;
   read_only: boolean;
+  /** Legacy credential-readiness alias, never evidence of an MCP connection. */
   connected: boolean;
+  credential_status?: "missing" | "available" | "invalid" | "expired" | "unknown";
+  credential_available?: boolean;
+  credential_error?: string;
+  connection_status?: "unobserved";
+  authorized_at?: number | null;
   expired: boolean;
   connected_at?: number | null;
   expires_at?: number | null;
