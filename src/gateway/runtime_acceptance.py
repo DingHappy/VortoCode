@@ -97,6 +97,9 @@ def probe(target: Target, *, token="", require_im=False, fetch=fetch_json, timeo
                 for key in ("undelivered", "reconnects"):
                     if type(data.get(key)) is int and data[key] >= 0:
                         result["im"][key] = data[key]
+                if isinstance(data.get("polling"), dict):
+                    from src.im.telegram_errors import safe_poll_diagnostics
+                    result["im"]["polling"] = safe_poll_diagnostics(data["polling"])
                 if result["im"].get("undelivered", 0) > 0:
                     problems.append("im_delivery_pending")
                 if target.assistant and require_im and not (

@@ -29,6 +29,14 @@ Telegram Bot token 先放在运行 `vc` 的私密环境中，不要作为命令�
 
 同一个 Bot 只能有一个 `getUpdates` 消费者；配对时先停用该 Bot 的其他轮询实例。现有 `vc server` 只内嵌一个 IM 通道；已有钉钉服务不要直接切成 Telegram。Telegram 当前是单主人会话，即便额外配置 `VORTOCODE_TG_ALLOW_FROM`，其他用户也会被拒绝，以防消息进入主人的会话或回复被送到主人。管理员邀请其他用户的设计与上线门槛见 [Telegram 接入与邀请](./TELEGRAM_ACCESS.md)。
 
+### Telegram 接收恢复与诊断
+
+长轮询请求失败时，接收器按 1、2、4、8、16、30 秒退避，后续普通失败保持 30 秒上限。遇到 429 时，等待时间至少覆盖服务端提供的有效 `retry_after`，即使超过普通退避上限；该字段含义见 [Telegram Bot API](https://core.telegram.org/bots/api#responseparameters)。恢复后重置连续失败数，保留本进程累计失败数和最近失败类别。
+
+认证后的 `/api/im/status` 在 Telegram 的 `polling` 字段中提供累计与连续失败数、畸形更新数、固定错误类别、HTTP/API 错误码、距失败/恢复的秒数和剩余等待秒数。错误日志仅记录固定类别、状态码和等待时间，不记录 Bot token、请求 URL、服务端描述或消息正文。类别用于缩小排查范围，不能单独证明根因；这些计数重启后归零。
+
+无效的整批响应会重试且不推进 offset。单条畸形更新会被计数并跳过，后续有效更新继续处理；带有效更新 ID 的记录会照常推进 offset，因此这不是持久收件箱或消息必达保证。空轮询成功也属于连接活性，发送通知成功不算接收恢复。只读验收采样器仅保留上述诊断字段的白名单，断连采样点仍记为异常，恢复后也不会抹掉。
+
 ## 二、开关矩阵（都是 opt-in，默认全关 = 零自主消耗）
 
 Background capabilities are disabled unless the operator enables them explicitly:
