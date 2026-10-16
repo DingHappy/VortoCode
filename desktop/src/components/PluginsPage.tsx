@@ -10,11 +10,12 @@ type Props = {
   projectName: string;
   inspector: ReactNode;
   mcpConnection?: ReactNode;
+  personalSkills?: ReactNode;
   onChooseProject: () => void;
   onOpenBrowserSettings: () => void;
 };
 
-export function PluginsPage({ activeScope, projectName, inspector, mcpConnection, onChooseProject, onOpenBrowserSettings }: Props) {
+export function PluginsPage({ activeScope, projectName, inspector, mcpConnection, personalSkills, onChooseProject, onOpenBrowserSettings }: Props) {
   return (
     <section className="main-page">
       <header className="main-page-head">
@@ -32,6 +33,7 @@ export function PluginsPage({ activeScope, projectName, inspector, mcpConnection
       </div>
 
       {mcpConnection}
+      {activeScope === "general" && personalSkills}
       {activeScope === "project" ? (
         <div className="plugin-project">
           <h2>{projectName || "当前项目"} 的扩展</h2>
@@ -42,7 +44,7 @@ export function PluginsPage({ activeScope, projectName, inspector, mcpConnection
           <Puzzle size={22} />
           <strong>{activeScope === "general" ? "私人助理扩展" : "项目扩展"}</strong>
           <p>{activeScope === "general"
-            ? "私人助理可通过上方 MCP 卡片连接已配置服务。项目 Skill、Hook 和规则需要选择项目后加载。"
+            ? "私人助理可管理上方个人技能并连接已配置 MCP 服务。项目 Skill、Hook 和规则需要选择项目后加载。"
             : "选择项目后，这里会显示它的 Skill、Hook 和规则。"}</p>
           <button onClick={onChooseProject}>选择项目</button>
         </div>

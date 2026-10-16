@@ -126,6 +126,7 @@ import { SettingsModal, type SettingsSection } from "./components/SettingsModal"
 import { BuildVersion } from "./components/BuildVersion";
 import { ArtifactCenter } from "./components/ArtifactCenter";
 import { PluginsPage } from "./components/PluginsPage";
+import { PersonalSkillsCard } from "./components/PersonalSkillsCard";
 import { ProjectPicker } from "./components/ProjectPicker";
 import { RemoteProjectDialog } from "./components/RemoteProjectDialog";
 import { findAssistantHost, isAssistantHost, mainChatKey, workProjects } from "./lib/assistantHost";
@@ -3391,6 +3392,7 @@ function App() {
           <PluginsPage
             activeScope={activeScope}
             mcpConnection={<McpConnectionCard client={clientRef.current} session={activeSid} connection={connection} />}
+            personalSkills={<PersonalSkillsCard client={clientRef.current} connection={connection} />}
             projectName={repoRoot.split("/").filter(Boolean).slice(-1)[0] || ""}
             inspector={(
               <ExtensionsInspector

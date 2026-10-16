@@ -51,6 +51,7 @@ _STATE_ENTRIES = [
     "isolated_deliveries/",
     "runtime.lock",
     "main_chat.json",          # 常驻助理的主要聊天登记（Desktop 连上时写，手机/电脑共用）
+    "personal-skills/",        # 助理个人指令及版本审批，仅保存在当前实例的数据目录
     # 2026-09-18 补：这几处生成态一直没进托管区，于是在**没有 gitignore .vortocode/ 的目标仓库**里
     # 原样冒进 git status——真机诊断时桌面端的改动列表里就混着 `.vortocode/journal`。
     # 判据只有一条：**谁写的**。工具写的进这里；用户手改的（permissions.yaml / hooks.yaml /

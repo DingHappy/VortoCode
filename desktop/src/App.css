@@ -6021,6 +6021,18 @@ button.worktree-live:not(:disabled):hover {
 .extensions-inspect-item > p { color: #8d97a5; }
 .extensions-inspect-item > em { color: #ca9a5d; white-space: normal; }
 
+.personal-skills-card { min-width: 0; }
+.personal-skills-card button { padding: 6px 10px; font-size: 12px; }
+.personal-skills-card .extensions-inspect-item > small,
+.personal-skills-card .extensions-inspect-item > p { font-size: 12px; line-height: 1.6; white-space: normal; }
+.personal-skill-editor { display: grid; gap: 12px; }
+.personal-skill-editor label { display: grid; gap: 6px; font-size: 13px; }
+.personal-skill-editor input,
+.personal-skill-editor textarea { box-sizing: border-box; width: 100%; min-width: 0; padding: 9px; color: inherit; background: transparent; border: 1px solid #475263; border-radius: 6px; font: inherit; }
+.personal-skill-editor textarea { resize: vertical; line-height: 1.6; }
+.personal-skill-review { min-width: 0; padding: 12px; border: 1px solid #475263; border-radius: 6px; }
+.personal-skill-review pre { max-height: 420px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.6; }
+
 .extensions-inspect-empty {
   padding: 18px 10px;
   border: 1px dashed #2c3440;

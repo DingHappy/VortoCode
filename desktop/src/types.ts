@@ -186,6 +186,26 @@ export interface ConnectorDisconnectReceipt {
   provider_authorization_revoked?: boolean;
 }
 
+export interface PersonalSkill {
+  id: string;
+  name: string;
+  description: string;
+  revision: string;
+  enabled: boolean;
+  source_scope: "personal";
+  status: "enabled" | "needs_review";
+  capabilities: string[];
+  model_invocable: boolean;
+  detail: string;
+  instructions?: string;
+}
+
+export interface PersonalSkillsSnapshot {
+  items: PersonalSkill[];
+  issues: string[];
+  truncated: boolean;
+}
+
 /** 助理头像：base64 位图（PNG/JPEG/WebP），没设过为 null。 */
 export interface AssistantAvatar {
   type: string;

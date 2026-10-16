@@ -996,5 +996,29 @@
     "methods": [
       "POST"
     ]
+  },
+  {
+    "path": "/api/assistant/skills",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/assistant/skills/{skill_id}",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/assistant/skills/{skill_id}",
+    "methods": [
+      "PUT"
+    ]
+  },
+  {
+    "path": "/api/assistant/skills/{skill_id}/enabled",
+    "methods": [
+      "PUT"
+    ]
   }
 ]

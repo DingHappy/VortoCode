@@ -367,6 +367,9 @@ MCP isError和客户端失败转ok=false，原Agent展示failed。当前HTTP仍�
 Web显式opt-in及external/unattended无凭据HTTP边界不变，Desktop项目local不加载外部MCP。
 主Agent的SkillRegistry检查仓库范围/256KiB限制，返回来源及引用基准；读取资源仍走原权限工具，
 保存使用YAML安全序列化并拒绝越界目标。General无仓库Skill；不自动执行脚本或重载外部变化。
+General Web/IM 的个人指令技能由独立 personal-skills 目录提供，不复用项目发现。
+用户在插件页保存停用版本、审阅正文并批准文件摘要；模型仅能列举/加载，不能保存或批准。
+每次加载重新核对版本及审批；不执行 Hook/脚本/相对引用，不扩大工具权限。加载事件不是任务执行验收。
 标准传输、多服务器同名身份和Desktop显式连接入口待独立合同，见PRD第48节。
 
 

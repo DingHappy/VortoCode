@@ -10,6 +10,61 @@ from src.memory import assistant_profile
 router = APIRouter()
 
 
+def _personal_skills():
+    from src.gateway.workspace_scope import GENERAL, current_workspace_scope
+    from src.workflow.workbench.personal_skills import PersonalSkills
+    if current_workspace_scope() != GENERAL:
+        raise HTTPException(403, "个人技能仅在私人助理范围管理")
+    return PersonalSkills(os.getcwd())
+
+
+def _skill_error(error):
+    from src.workflow.workbench.personal_skills import SkillConflict
+    if isinstance(error, FileNotFoundError):
+        return HTTPException(404, "个人技能不存在")
+    if isinstance(error, SkillConflict):
+        return HTTPException(409, "技能正在更新或版本已变化，请刷新并重新审阅")
+    return HTTPException(400, "个人技能无法处理，请检查格式、长度、版本和存储权限")
+
+
+@router.get("/api/assistant/skills")
+async def personal_skills_list():
+    skills = _personal_skills()
+    try:
+        return skills.list()
+    except Exception as error:
+        raise _skill_error(error) from None
+
+
+@router.get("/api/assistant/skills/{skill_id}")
+async def personal_skill_preview(skill_id: str):
+    skills = _personal_skills()
+    try:
+        return skills.get(skill_id, preview=True)
+    except Exception as error:
+        raise _skill_error(error) from None
+
+
+@router.put("/api/assistant/skills/{skill_id}")
+async def personal_skill_save(skill_id: str, body: dict):
+    skills = _personal_skills()
+    try:
+        return skills.save(skill_id, body)
+    except Exception as error:
+        raise _skill_error(error) from None
+
+
+@router.put("/api/assistant/skills/{skill_id}/enabled")
+async def personal_skill_enabled(skill_id: str, body: dict):
+    skills = _personal_skills()
+    try:
+        if set(body) != {"enabled", "revision"}:
+            raise ValueError("需要明确的状态和版本")
+        return skills.set_enabled(skill_id, enabled=body["enabled"], revision=body["revision"])
+    except Exception as error:
+        raise _skill_error(error) from None
+
+
 @router.get("/api/assistant/profile")
 async def get_profile():
     return assistant_profile.load_profile(os.getcwd())
