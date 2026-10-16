@@ -39,6 +39,8 @@ struct DesktopLlmProfile {
     fast_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     strong_model: Option<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    role_models: HashMap<String, String>,
     /// 用户自己添加的其他供应商（各带各的 Key）；聊天里以 `id:模型` 选用。
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     providers: Vec<DesktopLlmProvider>,
@@ -134,6 +136,7 @@ struct DesktopLlmProfileStatus {
     fast_model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     strong_model: Option<String>,
+    role_models: HashMap<String, String>,
     providers: Vec<DesktopLlmProviderStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     account: Option<DesktopAccount>,
@@ -208,6 +211,7 @@ fn default_llm_profile() -> DesktopLlmProfile {
         context_window_source: official_model_context_window(DEFAULT_LLM_MODEL).map(|_| "catalog".into()),
         fast_model: None,
         strong_model: None,
+        role_models: HashMap::new(),
         providers: Vec::new(),
         account: None,
         signed_out: false,
@@ -282,7 +286,35 @@ fn normalize_llm_profile(mut profile: DesktopLlmProfile) -> Result<DesktopLlmPro
     // 配置文件可以手改：清单会拼进环境变量，读回来也要清洗一遍。
     profile.models = clean_model_list(std::mem::take(&mut profile.models));
     profile.model_info = clean_model_infos(std::mem::take(&mut profile.model_info));
+    profile.role_models = normalize_role_models(&profile)?;
     Ok(profile)
+}
+
+fn normalize_role_models(profile: &DesktopLlmProfile) -> Result<HashMap<String, String>, String> {
+    let mut roles = HashMap::new();
+    for (role, value) in &profile.role_models {
+        if !matches!(role.as_str(), "research" | "implement" | "review") {
+            return Err("不支持的子 Agent 模型角色".into());
+        }
+        let value = value.trim();
+        if value.is_empty() { continue; }
+        if value.len() > 160 || value.chars().any(|c| c.is_control() || c == ',' || c == '=') {
+            return Err("子 Agent 模型名无效".into());
+        }
+        let target = if !value.contains(':') || model_choice_ids(profile).iter().any(|id| id == value) {
+            format!("default:{value}")
+        } else {
+            let (provider, model) = value.split_once(':').ok_or("子 Agent 模型配置无效")?;
+            if model.is_empty() { return Err("子 Agent 模型名不能为空".into()); }
+            if provider != "default" && !profile.providers.iter().any(|item| item.id == provider
+                && (!item.api_key.is_empty() || llm_provider(&item.base_url) == "local")) {
+                return Err("子 Agent 使用的供应商未配置或缺少凭据".into());
+            }
+            value.to_string()
+        };
+        roles.insert(role.clone(), target);
+    }
+    Ok(roles)
 }
 
 fn context_window_number(value: &serde_json::Value) -> Option<u64> {
@@ -729,6 +761,7 @@ fn desktop_llm_profile_status(profile: Option<&DesktopLlmProfile>) -> DesktopLlm
             .unwrap_or_else(|| "unknown".into()),
         fast_model: profile.fast_model.clone(),
         strong_model: profile.strong_model.clone(),
+        role_models: profile.role_models.clone(),
         providers: profile
             .providers
             .iter()
@@ -785,9 +818,14 @@ async fn confirm_llm_profile_change(
             strong.as_deref().unwrap_or("（同主模型）")
         ),
     };
+    let mut roles: Vec<_> = profile.role_models.iter().collect();
+    roles.sort_by_key(|(role, _)| *role);
+    let roles = roles.iter().map(|(role, model)| format!("\n{}：{model}", match role.as_str() {
+        "research" => "研究子 Agent", "implement" => "实现子 Agent", "review" => "审查子 Agent", _ => role,
+    })).collect::<String>();
     let message = format!(
-        "网页层请求把模型服务改为：\n\n服务地址：{}\n模型：{}{}\n\n仅当这是你刚在设置页保存的配置时才确认。",
-        profile.base_url, profile.model, tiers
+        "网页层请求把模型服务改为：\n\n服务地址：{}\n主模型：{}{}\n子 Agent 分工：{}\n\n仅当这是你刚在设置页保存的配置时才确认。",
+        profile.base_url, profile.model, tiers, if roles.is_empty() { "未单独配置" } else { &roles }
     );
     let app = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -831,6 +869,7 @@ async fn set_llm_profile(
     model: String,
     fast_model: Option<String>,
     strong_model: Option<String>,
+    role_models: Option<HashMap<String, String>>,
     store: State<'_, DesktopLlmProfileStore>,
 ) -> Result<DesktopLlmProfileStatus, String> {
     // 只改模型名 / 调度档时不必重输 Key：留空则沿用已保存的 Key，规则同 test_llm_connection
@@ -865,6 +904,7 @@ async fn set_llm_profile(
         context_window_source: None,
         fast_model,
         strong_model,
+        role_models: role_models.or_else(|| saved.as_ref().map(|profile| profile.role_models.clone())).unwrap_or_default(),
         // 改默认模型服务时保留已添加的其他供应商（它们各带各的 Key，与默认服务无关）。
         providers: saved.map(|saved| saved.providers).unwrap_or_default(),
         account,
@@ -898,6 +938,9 @@ fn configure_llm_profile(command: &mut Command, profile: Option<&DesktopLlmProfi
     let Some(profile) = profile else {
         return;
     };
+    let mut roles: Vec<_> = profile.role_models.iter().collect();
+    roles.sort_by_key(|(role, _)| *role);
+    command.env("VORTOCODE_MODEL_ROLES", roles.iter().map(|(role, model)| format!("{role}={model}")).collect::<Vec<_>>().join(","));
     if profile.signed_out {
         // 退出登录后默认服务不可用；自定义供应商仍各用各的 Key。
         for provider in &profile.providers {
@@ -3840,6 +3883,7 @@ fn normalize_llm_provider(mut provider: DesktopLlmProvider) -> Result<DesktopLlm
         context_window_source: None,
         fast_model: None,
         strong_model: None,
+        role_models: HashMap::new(),
         providers: Vec::new(),
         account: None,
         signed_out: false,
@@ -4219,6 +4263,7 @@ async fn relay_login(
         context_window_source: None,
         fast_model: saved.as_ref().filter(|_| same_base).and_then(|saved| saved.fast_model.clone()),
         strong_model: saved.as_ref().filter(|_| same_base).and_then(|saved| saved.strong_model.clone()),
+        role_models: saved.as_ref().map(|profile| profile.role_models.clone()).unwrap_or_default(),
         models: saved.as_ref().filter(|_| same_base).map(|saved| saved.models.clone()).unwrap_or_default(),
         model_info: saved.as_ref().filter(|_| same_base).map(|saved| saved.model_info.clone()).unwrap_or_default(),
         providers: saved.map(|saved| saved.providers).unwrap_or_default(),
@@ -4304,6 +4349,7 @@ async fn test_llm_connection(
         context_window_source: None,
         fast_model: None,
         strong_model: None,
+        role_models: HashMap::new(),
         providers: Vec::new(),
         account: None,
         signed_out: false,
@@ -4590,6 +4636,7 @@ mod tests {
             context_window_source: None,
             fast_model: None,
             strong_model: None,
+            role_models: HashMap::new(),
             providers: Vec::new(),
             account: None,
             signed_out: false,
@@ -4610,6 +4657,7 @@ mod tests {
             context_window_source: None,
             fast_model: None,
             strong_model: None,
+            role_models: HashMap::new(),
             providers: Vec::new(),
             account: None,
             signed_out: false,
@@ -4627,6 +4675,7 @@ mod tests {
             context_window_source: None,
             fast_model: None,
             strong_model: None,
+            role_models: HashMap::new(),
             providers: Vec::new(),
             account: None,
             signed_out: false,
@@ -4642,6 +4691,7 @@ mod tests {
             context_window_source: None,
             fast_model: None,
             strong_model: None,
+            role_models: HashMap::new(),
             providers: Vec::new(),
             account: None,
             signed_out: false,
@@ -4661,6 +4711,7 @@ mod tests {
             context_window_source: Some("service".into()),
             fast_model: None,
             strong_model: None,
+            role_models: HashMap::new(),
             providers: Vec::new(),
             account: None,
             signed_out: false,
@@ -4705,6 +4756,7 @@ mod tests {
         let routed = DesktopLlmProfile {
             fast_model: Some("model-fast".into()),
             strong_model: Some("model-strong".into()),
+            role_models: HashMap::new(),
             providers: Vec::new(),
             account: None,
             signed_out: false,
@@ -4790,6 +4842,7 @@ mod tests {
             context_window_source: None,
             fast_model: None,
             strong_model: None,
+            role_models: HashMap::new(),
             providers: vec![normalize_llm_provider(sample_provider("deepseek")).unwrap()],
             account: None,
             signed_out: false,
@@ -4848,6 +4901,7 @@ mod tests {
             context_window_source: None,
             fast_model: None,
             strong_model: None,
+            role_models: HashMap::new(),
             providers: vec![normalize_llm_provider(sample_provider("deepseek")).unwrap()],
             account: None,
             signed_out: true,
@@ -4880,6 +4934,7 @@ mod tests {
             context_window_source: None,
             fast_model: None,
             strong_model: None,
+            role_models: HashMap::new(),
             providers: Vec::new(),
             account: None,
             signed_out: false,
@@ -4949,6 +5004,7 @@ mod tests {
             context_window_source: None,
             fast_model: None,
             strong_model: None,
+            role_models: HashMap::new(),
             providers: Vec::new(),
             account: None,
             signed_out: false,
@@ -5029,6 +5085,7 @@ mod tests {
             context_window_source: None,
             fast_model: Some("  fast  ".into()),
             strong_model: Some("   ".into()),
+            role_models: HashMap::new(),
             providers: Vec::new(),
             account: None,
             signed_out: false,
@@ -5040,6 +5097,7 @@ mod tests {
         assert_eq!(profile.strong_model, None);
         assert!(normalize_llm_profile(DesktopLlmProfile {
             strong_model: Some("bad\u{7}".into()),
+            role_models: HashMap::new(),
             providers: Vec::new(),
             account: None,
             signed_out: false,
@@ -5092,6 +5150,7 @@ mod tests {
                 context_window_source: Some("configured".into()),
                 fast_model: None,
                 strong_model: None,
+                role_models: HashMap::new(),
                 providers: Vec::new(),
                 account: None,
                 signed_out: false,
@@ -5158,6 +5217,7 @@ mod tests {
             context_window_source: Some("configured".into()),
             fast_model: None,
             strong_model: None,
+            role_models: HashMap::new(),
             providers: Vec::new(),
             account: None,
             signed_out: false,
@@ -6510,6 +6570,7 @@ mod tests {
             context_window_source: None,
             fast_model: None,
             strong_model: None,
+            role_models: HashMap::new(),
             providers: Vec::new(),
             account: None,
             signed_out: false,
@@ -6649,12 +6710,73 @@ mod tests {
             context_window_source: Some("configured".into()),
             fast_model: None,
             strong_model: None,
+            role_models: HashMap::new(),
             providers: Vec::new(),
             account: None,
             signed_out: false,
             model_info: Vec::new(),
             models: Vec::new(),
         }
+    }
+
+    #[test]
+    fn role_models_roundtrip_and_launch_with_separate_provider_credentials() {
+        let mut profile = sample_llm_profile();
+        profile.providers.push(DesktopLlmProvider {
+            id: "worker".into(), name: "Worker".into(),
+            base_url: "https://worker.example.test/v1".into(), api_key: "synthetic-worker-key".into(),
+            models: vec!["small:tag".into()],
+        });
+        profile.role_models = HashMap::from([
+            ("research".into(), "worker:small:tag".into()),
+            ("implement".into(), "default:code-model".into()),
+            ("review".into(), "default:review-model".into()),
+        ]);
+        let profile = normalize_llm_profile(profile).unwrap();
+        let raw = serde_json::to_vec(&profile).unwrap();
+        let reopened: DesktopLlmProfile = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(reopened.role_models, profile.role_models);
+        let status = serde_json::to_string(&desktop_llm_profile_status(Some(&profile))).unwrap();
+        assert!(status.contains("roleModels"));
+        assert!(!status.contains("synthetic-worker-key"));
+        let mut command = Command::new("fixture");
+        configure_llm_profile(&mut command, Some(&profile));
+        let env = command.get_envs().map(|(key, value)| (key.to_str().unwrap().to_string(), value.map(|value| value.to_str().unwrap().to_string()))).collect::<HashMap<_, _>>();
+        assert_eq!(env["VORTOCODE_MODEL_ROLES"].as_deref(), Some("implement=default:code-model,research=worker:small:tag,review=default:review-model"));
+        assert_eq!(env["VORTOCODE_PROVIDER_WORKER_KEY"].as_deref(), Some("synthetic-worker-key"));
+        assert_eq!(env["OPENAI_API_KEY"].as_deref(), Some(profile.api_key.as_str()));
+    }
+
+    #[test]
+    fn role_models_reject_unknown_channels_and_environment_injection() {
+        for (role, target) in [("research", "missing:small"), ("research", "small,review=large"),
+            ("research", "small\nTOKEN=value"), ("unknown", "small"), ("research", "default:")] {
+            let mut profile = sample_llm_profile();
+            profile.role_models.insert(role.into(), target.into());
+            assert!(normalize_llm_profile(profile).is_err());
+        }
+    }
+
+    #[test]
+    fn role_models_preserve_default_model_tags_and_clear_ambient_roles() {
+        let mut profile = sample_llm_profile();
+        profile.models.push("qwen:7b".into());
+        profile.role_models.insert("research".into(), "qwen:7b".into());
+        profile.role_models.insert("review".into(), "  ".into());
+        let profile = normalize_llm_profile(profile).unwrap();
+        assert_eq!(profile.role_models["research"], "default:qwen:7b");
+        assert!(!profile.role_models.contains_key("review"));
+        let mut command = Command::new("fixture");
+        configure_llm_profile(&mut command, Some(&sample_llm_profile()));
+        assert_eq!(command.get_envs().find(|(key, _)| *key == "VORTOCODE_MODEL_ROLES").unwrap().1, Some(std::ffi::OsStr::new("")));
+    }
+
+    #[test]
+    fn old_profile_without_roles_remains_compatible() {
+        let mut raw = serde_json::to_value(sample_llm_profile()).unwrap();
+        raw.as_object_mut().unwrap().remove("roleModels");
+        let profile: DesktopLlmProfile = serde_json::from_value(raw).unwrap();
+        assert!(profile.role_models.is_empty());
     }
 
     #[test]

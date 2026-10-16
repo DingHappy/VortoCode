@@ -133,6 +133,22 @@ class CollaborationService:
             self._message(task, "started", task.collaboration["assignee"], "已领取任务")
             return self._save(task)
 
+    def record_model_target(self, task_id: str, expected_round: int, target: dict) -> BackgroundTask:
+        """Persist selected request metadata, not completion or provider-response proof."""
+        self._round(expected_round)
+        if not isinstance(target, dict) or set(target) != {"model", "provider", "evidence"} \
+                or target.get("evidence") != "selected_request_target" \
+                or any(not isinstance(target[key], str) or len(target[key]) > 160 for key in ("model", "provider")):
+            raise CollaborationConflict("模型目标记录无效")
+        from src.memory.write_policy import redact_secret_like
+        with _LOCK:
+            task = self._load(task_id, expected_round)
+            if task.status != "running":
+                raise CollaborationConflict("任务不在执行中，拒绝模型目标记录")
+            task.collaboration["model_target"] = {**{key: redact_secret_like(value)[0] for key, value in target.items()},
+                                                   "round": expected_round}
+            return self._save(task)
+
     def finish(self, task_id: str, expected_round: int, result: str, *,
                error: str = "", cancelled: bool = False, tainted: bool = False) -> BackgroundTask:
         self._round(expected_round)

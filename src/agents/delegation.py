@@ -98,6 +98,7 @@ def build_delegation_executor(repo_root: str, *, llm: Any = None,
             "task_id": task.id, "round": task.collaboration["round"],
             "status": task.status, "review": task.collaboration["review"],
             "assignee": task.collaboration["assignee"],
+            "model_target": task.collaboration.get("model_target"),
             "acceptance": task.collaboration["acceptance"],
             "result": task.result, "error": task.error,
             "questions": question_views(task),
@@ -110,6 +111,7 @@ def build_delegation_executor(repo_root: str, *, llm: Any = None,
                      acceptance=None) -> tuple[str, bool]:
         from src.agents.taint import is_tainted, merge_nested_taint
         task = None
+        sub = None
         if collaboration is not None:
             task = collaboration.get(task_id) if task_id else collaboration.create(desc, agent_name, acceptance)
             if task.collaboration.get("tainted"):
@@ -126,6 +128,7 @@ def build_delegation_executor(repo_root: str, *, llm: Any = None,
             return _response(completed), completed.collaboration["tainted"]
 
         async def _execute():
+            nonlocal sub
             sub, err = _sub_for(agent_name)
             if err:
                 return _complete(error=err)
@@ -141,6 +144,8 @@ def build_delegation_executor(repo_root: str, *, llm: Any = None,
             # Tracked tasks must not turn model errors into successful submissions.
             if task is not None:
                 sub._raise_llm_errors = True
+                from src.llm.providers import request_target_view
+                collaboration.record_model_target(task.id, task.collaboration["round"], request_target_view(getattr(sub, "_llm", None)))
                 if task.collaboration.get("dispatch", {}).get("source") == "api" and task.collaboration["round"] < 3:
                     from src.agents.task_questions import build_question_tool
                     sub.add_tools([build_question_tool(collaboration, task)])
@@ -167,6 +172,9 @@ def build_delegation_executor(repo_root: str, *, llm: Any = None,
             if isinstance(error, OSError) and collaboration is not None:
                 raise
             return _complete(error=f"(子任务出错: {error})")
+        finally:
+            if sub is not None and getattr(sub, "_owns_role_client", False):
+                await sub._client().close()
 
     return _spawn, _response
 
@@ -399,18 +407,30 @@ def build_subagent(repo_root: str, spec: Any, *, llm: Any = None,
     # 角色文件里的 `model:` 也支持 `provider:model`——写成后者就整个换端点（直连别家），
     # 只写模型名则沿用当前端点（中转站里换个模型）。端点不可用会回落，不借别家的 key。
     routed = None
-    if spec.model:
+    model = spec.model if spec.model and spec.model != "inherit" else None
+    if model:
         try:
             from src.llm.providers import client_for_spec
-            routed = client_for_spec(spec.model)
+            routed = client_for_spec(model)
         except Exception:  # noqa: BLE001
             routed = None
+    if not model and llm is None:
+        from src.llm.providers import client_for_role
+        routed = client_for_role(spec.name) or client_for_role("implement" if spec.tools == "dev" else "research")
+    selected = routed or llm
+    owns_client = False
+    if model and routed is None and selected is not None:
+        from src.llm.client import LLMClient
+        if type(selected) is LLMClient:
+            selected = LLMClient(selected.config.model_copy(deep=True))
+            owns_client = True
     # 项目级权限硬拦（.vortocode/permissions.yaml deny）必须继承，避免角色文件绕过项目规则。
-    sub = agent_factory(tools, llm=routed or llm, max_steps=spec.max_steps, extra_system=extra,
+    sub = agent_factory(tools, llm=selected, max_steps=spec.max_steps, extra_system=extra,
                     permissions=load_permissions(repo_root), capabilities=capabilities, native=native_default())
-    if spec.model and routed is None:
+    sub._owns_role_client = owns_client
+    if model and routed is None:
         try:
-            sub.set_model(spec.model)
+            sub.set_model(model)
         except Exception:  # noqa: BLE001
             pass
     return sub

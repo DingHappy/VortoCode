@@ -178,12 +178,15 @@ def build_stage_executor(
                             capabilities=capabilities)
 
         log(f"▶ 工序 {stage_def.id}" + (f"（角色 {stage_def.role}）" if stage_def.role else ""))
-        with usage_scope() as usage:                       # 分段计量：哪道工序贵，得答得出
-            with merge_nested_taint() as nested:
-                if inherited:
-                    # 输入带污点 → 本回合就是在处理不可信内容，工序内部的外发工具必须看得见。
-                    mark_tainted()
-                reply = await sub.run_turn(prompt, mode="build" if stage_def.outbound else "plan")
+        try:
+            with usage_scope() as usage:
+                with merge_nested_taint() as nested:
+                    if inherited:
+                        mark_tainted()
+                    reply = await sub.run_turn(prompt, mode="build" if stage_def.outbound else "plan")
+        finally:
+            if getattr(sub, "_owns_role_client", False):
+                await sub._client().close()
 
         data = _parse_output(reply, stage_def)
         summary = str(data.pop("summary", "") or "").strip()
