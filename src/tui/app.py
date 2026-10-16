@@ -3414,11 +3414,13 @@ class VortoCodeTUI(TUICommandsMixin, App):
     def _skill_registry(self, reload: bool = False):
         """技能注册表（惰性构建+缓存）。/skills reload 时 reload=True 重新扫描。"""
         from src.agents.main_agent import SkillRegistry
-        if self._skills is None or reload:
+        if self._skills is None:
             self._skills = SkillRegistry([
                 str(Path(self.repo_root) / "skills"),
                 str(Path(self.repo_root) / ".vortocode" / "skills"),
-            ]).load()
+            ], allowed_root=self.repo_root).load()
+        elif reload:
+            self._skills.load()
         return self._skills
 
     def _snapshot_workspace(self, label: str) -> None:
@@ -3871,35 +3873,13 @@ class VortoCodeTUI(TUICommandsMixin, App):
         delegation_tools = [_render_delegation(tool) for tool in delegation_tools]
 
         # SKILL.md 技能：按需加载（progressive disclosure），复用 src.skills 的解析器
+        from src.agents.tools.skills import build_skill_tools
+
+        async def _confirm_skill(message: str) -> bool:
+            return bool(await self._confirm_always(message, scope="skill"))
+
         registry = self._skill_registry()
-
-        async def _t_use_skill(args: dict) -> str:
-            name = str(args.get("name") or args.get("skill") or "").strip()
-            sk = registry.get(name)
-            if not sk:
-                avail = "、".join(registry.skills) or "（无）"
-                return f"没有名为 {name} 的技能。可用：{avail}"
-            return (f"【技能「{sk.name}」完整指令】请据此执行（用你的其它工具完成），"
-                    f"不要原样复述给用户：\n\n{sk.instructions}")
-
-        async def _t_save_skill(args: dict) -> str:
-            name = re.sub(r"[^\w一-鿿-]", "-", str(args.get("name", "")).strip()).strip("-")
-            desc = str(args.get("description", "")).strip()
-            instr = str(args.get("instructions", "")).strip()
-            if not name or not instr:
-                return "save_skill 需要 name 和 instructions（技能正文）。"
-            p = Path(self.repo_root) / ".vortocode" / "skills" / name / "SKILL.md"
-            ok = await self._confirm_always(
-                f"build 模式：把技能「{name}」写到 .vortocode/skills/{name}/SKILL.md？（用户技能目录，不碰 main）",
-                scope="skill")   # 技能=agent 之后会自动加载执行的指令，绝不能被"始终允许写"顺带授权
-            if not ok:
-                return f"用户取消了保存技能 {name}。"
-            content = f"---\nname: {name}\ndescription: {desc}\n---\n\n{instr}\n"
-            p.parent.mkdir(parents=True, exist_ok=True)
-            p.write_text(content, encoding="utf-8")
-            self._skill_registry(reload=True)   # 原地重扫：当前 agent 立刻能 use_skill 到它
-            self._chrome(f"[green]已保存技能 {name}（/skills 可见）[/green]")
-            return f"已保存技能 {name} 到 .vortocode/skills/{name}/SKILL.md。"
+        skill_tools = build_skill_tools(self.repo_root, _confirm_skill, registry=registry)
 
         async def _confirm_memory(message: str) -> bool:
             # 记忆是跨会话持久化面：不吃普通写操作的“始终允许”，每次都让用户看到内容/去向。
@@ -3914,12 +3894,7 @@ class VortoCodeTUI(TUICommandsMixin, App):
             session_id=lambda: self.session_id,
         )
 
-        tools = read_tools + delegation_tools + memory_tools + [
-            Tool("use_skill", "加载某个技能(SKILL.md)的完整指令到上下文，然后据此执行",
-                 {"name": "技能名"}, _t_use_skill, read_only=True),
-            Tool("save_skill", "把一套可复用流程保存成新技能(SKILL.md)到用户技能目录；写操作，需确认，仅 build",
-                 {"name": "技能名", "description": "一句话描述", "instructions": "技能正文（自然语言步骤）"},
-                 _t_save_skill, read_only=False),
+        tools = read_tools + delegation_tools + memory_tools + skill_tools + [
             Tool("edit_file", "对仓库文件做精确字符串替换：默认 old 须唯一（替 1 处）；old 出现多次时传 "
                  "replace_all=true 一次替换全部。写操作，需确认，仅 build",
                  {"path": "相对路径", "old": "要替换的原文", "new": "替换为",

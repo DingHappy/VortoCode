@@ -18,6 +18,7 @@ class ToolExecutionResult(BaseModel):
     success: bool
     tool_name: str
     output: Any = None
+    structured_content: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     execution_time: float = 0.0
     metadata: Dict[str, Any] = Field(default_factory=dict)
@@ -164,6 +165,7 @@ class ToolExecutor:
             success=result.success,
             tool_name=tool.name,
             output=result.output,
+            structured_content=result.structured_content,
             error=result.error,
             execution_time=result.execution_time,
             metadata={

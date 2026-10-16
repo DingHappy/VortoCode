@@ -56,6 +56,22 @@ Desktop插件页现有当前会话连接状态、手动连接/重试；local会�
 同连接并发刷新序号、工具版本执行绑定和通用名称编码仍待独立合同。
 实际包、测试及未验收层见 [Desktop验收记录](./DESKTOP_ACCEPTANCE.md) 第50节。
 
+## 工具返回数据适配
+
+既有 stdio、legacy REST 与 Streamable HTTP 的 `tools/call` 使用同一结果信封校验：
+`content` 必须为带类型的内容块列表，`isError` 若存在必须为布尔值，`structuredContent`
+若存在必须为对象。结构化数据经原注册表、执行器和 Agent 包装层保留；复杂输出使用 JSON
+序列化，保留布尔值、null、中文及资源链接，不再用 Python 容器字符串代替 JSON。
+无结构化字段的列表结果保持 JSON 数组，原内部纯文本结果保持文本。
+服务端 `isError: true` 及损坏结果仍为失败，不根据文本内容猜成功，也不自动重放调用。
+
+此处遵循 [MCP 工具结果的数据合同](https://modelcontextprotocol.io/specification/2025-06-18/server/tools#tool-result)，
+只校验信封，不宣称验证完整 `outputSchema` 或全部内容块内部结构。未知类型块作为数据保留，
+图片/音频尚未自动转为模型多模态附件；资源链接不自动访问，服务端元数据不作为本地授权。
+旧版资源/提示通用读取工具沿用原结果格式，不把它们误当成 `tools/call` 结果。
+原来源污点、Build/权限门、连接器凭据与 HTTP 读取上限继续适用。
+回环测试覆盖 HTTP 到原 Agent 包装层的成功/失败数据链路，不代表第三方服务或真实模型验收。
+
 
 ## Desktop 手动入口与资源/提示
 
