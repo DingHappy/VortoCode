@@ -395,6 +395,17 @@ export interface DevPlanGraph {
   cyclic_ids: string[];
 }
 
+export interface ModelComparison {
+  round: number; observed_at: string; status: string; summary: string;
+  recommended_target: { provider: string; model: string } | null;
+  coverage_complete: boolean;
+  candidates: { provider: string; model: string; configured: boolean; current: boolean; eligible: boolean;
+    on_frontier: boolean; tasks: number; accepted: number; acceptance_lower_bound: number | null;
+    p95_elapsed_ms: number | null; currency: string | null; missing: string[];
+    worker_cost_per_accepted: number | null; judge_cost_per_accepted: number | null;
+    total_cost_per_accepted: number | null; one_more_worker_round_estimate: number | null }[];
+}
+
 export interface TaskItem {
   execution_scope?: { repo_root: string };
   id: string;
@@ -415,6 +426,7 @@ export interface TaskItem {
       cost_estimate: number | null; currency: string | null; components: { estimated_calls: number }[] }[];
     model_assessment?: { round: number; action: string; reason: string; state: string; source: string;
       probability_calibration?: string };
+    model_comparison?: ModelComparison;
     round: number;
     review: "not_submitted" | "pending" | "accepted" | "rework_requested";
     acceptance: string[];

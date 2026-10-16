@@ -68,8 +68,9 @@ def build_model_assessment_tools(service, *, allow_judge: bool = True, confirm=N
     async def _assess(args):
         from src.agents.taint import mark_tainted
         from src.llm.client import LLMClient, LLMConfig, estimate_tokens
-        from src.llm.observations import observation_scope, summarize
-        from src.llm.providers import request_target_view, resolve
+        from src.llm.observations import configured_tariff, observation_scope, summarize
+        from src.llm.providers import configured_worker_targets, request_target_view, resolve
+        from src.workflow.tasks.model_comparison import compare_models
         # No caller-selected provider, arbitrary budget, verdict or self-reported use.
         if set(args) != {"task_id", "round"}:
             raise ValueError("评估只接受 task_id 和 round")
@@ -78,6 +79,12 @@ def build_model_assessment_tools(service, *, allow_judge: bool = True, confirm=N
         history = service.model_profiles(exclude=data["task_id"])
         decision = fast_decision(data, history)
         token = revision(data)
+        price_targets = {(b.get("provider"), b.get("model")) for p in history["profiles"]
+                         for b in p.get("price_bases", []) if isinstance(b.get("provider"), str) and isinstance(b.get("model"), str)}
+        prices = {(p, m): configured_tariff(p, m) for p, m in price_targets if isinstance(p, str) and isinstance(m, str)}
+        comparison = service.record_model_comparison(data["task_id"], data["round"], token,
+            compare_models(data, history, configured_worker_targets(), prices))
+        decision["model_comparison"] = comparison
         # Disabled/unavailable judge is not a claim: configuring it later remains possible.
         target = resolve("assess") if decision["action"] == "judge_needed" and allow_judge else None
         if decision["action"] == "judge_needed" and target is None:
@@ -93,7 +100,7 @@ def build_model_assessment_tools(service, *, allow_judge: bool = True, confirm=N
                 if previous["revision"] != token:
                     previous = {**previous, "action": "evidence_needed", "stale": True,
                                 "reason": "本轮已经尝试评判且证据已变化，不自动重复调用"}
-                return json.dumps(previous, ensure_ascii=False)
+                return json.dumps({**previous, "model_comparison": comparison}, ensure_ascii=False)
             if confirm is None or not await confirm(
                 f"使用评判模型 {target.provider.name}:{target.model} 评估任务 {data['task_id']} 第 {data['round']} 轮？"
                 "会发送任务、交付结果及模型统计；至多一次请求、最多请求 800 输出 token，费用按服务计收，不自动执行或验收。"):
@@ -101,7 +108,7 @@ def build_model_assessment_tools(service, *, allow_judge: bool = True, confirm=N
                                    "reason": "未获评判调用确认，未发送请求或消耗本轮评判机会"}, ensure_ascii=False)
         claimed, fresh = service.claim_model_assessment(data["task_id"], data["round"], token, decision)
         if not fresh or decision["action"] != "judge_needed":
-            return json.dumps(claimed, ensure_ascii=False)
+            return json.dumps({**claimed, "model_comparison": comparison}, ensure_ascii=False)
         # Own client: no mutation of cached role client, no SDK/fallback retries.
         client = LLMClient(LLMConfig(base_url=target.provider.base_url, api_key=target.provider.api_key,
                                      model=target.model, max_retries=0, timeout=20))
@@ -135,6 +142,7 @@ def build_model_assessment_tools(service, *, allow_judge: bool = True, confirm=N
             except Exception:  # noqa: BLE001 - cleanup cannot erase charged-call evidence.
                 pass
         decision["judge_target"] = request_target_view(client)
+        decision["model_comparison"] = comparison
         decision["judge_observation"] = summarize(meter, int((time.monotonic() - started) * 1000), "read", complete=completed)
         return json.dumps(service.finish_model_assessment(data["task_id"], data["round"], token, decision), ensure_ascii=False)
 

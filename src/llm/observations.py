@@ -37,7 +37,7 @@ def record_response(config, model: str, prompt: int, completion: int, exact: boo
         item["estimated_calls"] += int(not exact)
 
 
-def _tariff(provider: str, model: str):
+def configured_tariff(provider: str, model: str):
     """Only explicit operator prices, keyed by provider:model; no guessed catalog price."""
     try:
         prices = json.loads(os.getenv("VORTOCODE_MODEL_PRICES", "{}"))
@@ -56,7 +56,7 @@ def summarize(meter: dict, elapsed_ms: int, category: str, *, complete: bool) ->
     from src.gateway.audit import _clip_text
     components = []
     for item in meter.values():
-        price = _tariff(item["provider"], item["model"])
+        price = configured_tariff(item["provider"], item["model"])
         estimate = ((item["prompt_tokens"] * price["input_per_million"]
                      + item["completion_tokens"] * price["output_per_million"]) / 1_000_000) if price else None
         components.append({**item, "provider": _clip_text(item["provider"], 160),

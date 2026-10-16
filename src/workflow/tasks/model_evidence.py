@@ -76,6 +76,11 @@ def profiles(ledger, owner: str, *, exclude: str = "") -> dict:
                     raise ValueError("invalid observation")
                 assessment = next((a for a in task.collaboration.get("model_assessment_attempts", [])
                                    if a["round"] == item["round"]), {})
+                judge = assessment.get("judge_observation") or {}
+                if (not isinstance(judge, dict) or not isinstance(judge.get("components", []), list)
+                        or len(judge.get("components", [])) > 32
+                        or any(not isinstance(c, dict) for c in judge.get("components", []))):
+                    raise ValueError("invalid judge accounting")
                 group.append((task.id, {**item, "judge": assessment.get("judge_observation"),
                                        "judge_attempted": bool(assessment)}))
                 forecast = assessment.get("forecasts", {}).get("meets_acceptance")
@@ -102,9 +107,14 @@ def profiles(ledger, owner: str, *, exclude: str = "") -> dict:
         settled = accepted + rework + failed
         tokens = sorted(item["tokens"] for item in items if item.get("tokens") is not None)
         costs: dict = {}
+        price_bases: dict = {}
+        judge_price_basis_unknown = False
         judge_costs: dict = {}
         unknown_judge_costs = 0
         for item in items:
+            for component in item["components"]:
+                basis = {k: component.get(k) for k in ("provider", "model", "tariff")}
+                price_bases[json.dumps(basis, sort_keys=True)] = basis
             if (type(item.get("cost_estimate")) in (float, int) and math.isfinite(item["cost_estimate"])
                     and item["cost_estimate"] >= 0 and item.get("currency") in {"USD", "CNY", "EUR"}):
                 cost = costs.setdefault(item["currency"], {"known_estimate": 0.0, "priced_rounds": 0})
@@ -112,6 +122,12 @@ def profiles(ledger, owner: str, *, exclude: str = "") -> dict:
                 cost["priced_rounds"] += 1
             if item["judge_attempted"]:
                 judge = item.get("judge") or {}
+                judge_components = judge.get("components", [])
+                if not judge_components:
+                    judge_price_basis_unknown = True
+                for component in judge_components:
+                    basis = {k: component.get(k) for k in ("provider", "model", "tariff")}
+                    price_bases[json.dumps(basis, sort_keys=True)] = basis
                 if (type(judge.get("cost_estimate")) in (int, float) and math.isfinite(judge["cost_estimate"])
                         and judge["cost_estimate"] >= 0 and judge.get("currency") in {"USD", "CNY", "EUR"}):
                     judge_costs[judge["currency"]] = judge_costs.get(judge["currency"], 0.0) + judge["cost_estimate"]
@@ -136,6 +152,9 @@ def profiles(ledger, owner: str, *, exclude: str = "") -> dict:
                        "unknown_usage_rounds": sum(item["usage_evidence"] != "accounted_responses" for item in items),
                        "estimated_usage_rounds": sum(any(c["estimated_calls"] for c in item["components"]) for item in items),
                        "costs": costs, "unknown_cost_rounds": len(items) - sum(c["priced_rounds"] for c in costs.values()),
+                       "price_bases": [price_bases[key] for key in sorted(price_bases)][:64],
+                       "price_bases_truncated": len(price_bases) > 64,
+                       "judge_price_basis_unknown": judge_price_basis_unknown,
                        "judge_cost_estimates": judge_costs, "unknown_judge_cost_rounds": unknown_judge_costs,
                        "cost_per_accepted": {currency: c["known_estimate"] / accepted
                                              for currency, c in costs.items()
@@ -178,7 +197,7 @@ def fast_decision(data: dict, history: dict) -> dict:
         action, reason = "stop", "已到三轮上限，交给用户决策"
     elif data["status"] not in {"done", "failed", "cancelled", "interrupted"}:
         action, reason = "evidence_needed", "先等待执行结束或回答当前问题"
-    elif data["dependencies"].get("resolution") == "invalidated":
+    elif data["dependencies"].get("resolution") in {"failed", "invalidated"}:
         action, reason = "evidence_needed", "前置结果已失效，不能靠换模型恢复授权"
     elif sum(item.get("status") == "failed" or item.get("review") == "rework_requested" for item in records) >= 2:
         action, reason = "upgrade_recommended", "同一任务连续失败或返工，继续原模型的返工风险较高"

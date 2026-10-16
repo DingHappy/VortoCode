@@ -5316,6 +5316,12 @@ button.worktree-live:not(:disabled):hover {
   background: rgba(210, 167, 96, 0.12);
 }
 
+.task-model-comparison { margin: 12px 0; }
+.task-model-comparison summary { cursor: pointer; }
+.task-model-comparison table { width: 100%; margin-top: 12px; border-collapse: collapse; font-size: 12px; }
+.task-model-comparison th, .task-model-comparison td { padding: 8px; text-align: left; vertical-align: top; border-bottom: 1px solid #48515e; }
+.task-model-comparison td { min-width: 110px; overflow-wrap: anywhere; }
+
 .task-card small {
   color: #596273;
   font-family: "DM Mono", monospace;

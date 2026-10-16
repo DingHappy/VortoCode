@@ -87,11 +87,12 @@ def providers() -> Dict[str, ProviderSpec]:
     """
     from src.llm.client import DEFAULT_LLM_BASE_URL
 
+    default_base = _env("OPENAI_API_BASE") or DEFAULT_LLM_BASE_URL
     out: Dict[str, ProviderSpec] = {
         DEFAULT_PROVIDER: ProviderSpec(
             DEFAULT_PROVIDER,
-            _env("OPENAI_API_BASE") or DEFAULT_LLM_BASE_URL,
-            _env("OPENAI_API_KEY"),
+            default_base,
+            _provider_key(default_base, _env("OPENAI_API_KEY")),
         )
     }
     anthropic_base, anthropic_key = _env("ANTHROPIC_BASE_URL"), _env("ANTHROPIC_AUTH_TOKEN")
@@ -259,3 +260,37 @@ def request_target_view(client) -> dict:
 def reset_cache() -> None:
     """清掉客户端缓存（测试用，或改了 env 想让新配置立刻生效）。"""
     _cache.clear()
+
+
+def configured_worker_targets() -> dict:
+    """Bounded, non-secret candidates; configuration is not tool capability proof.
+
+    No clients or requests. The assessor-only role does not make a worker candidate.
+    Match the identity used by request_target_view, including endpoint aliases.
+    """
+    from types import SimpleNamespace
+    from src.llm.client import LLMConfig
+    from src.llm.routing import model_choices, routing_tiers
+    table = providers()
+    defaults = model_choices()
+    selections = [(DEFAULT_PROVIDER, LLMConfig().model)]
+    selections += [(DEFAULT_PROVIDER, model) for model in sorted(defaults)]
+    for model in routing_tiers().values():
+        routed = chat_target(model) if model not in defaults else None
+        selections.append((routed[0].name, routed[1]) if routed else (DEFAULT_PROVIDER, model))
+    for role in sorted(role_models()):
+        if role == "assess":
+            continue
+        target = resolve(role)
+        if target:
+            selections.append((target.provider.name, target.model))
+    unique = {}
+    for provider, model in selections:
+        spec = table.get(provider)
+        if not spec or not (spec.usable or local_model_endpoint(spec.base_url)) or not model:
+            continue
+        view = request_target_view(SimpleNamespace(config=SimpleNamespace(
+            base_url=spec.base_url, api_key=spec.api_key, model=model)))
+        unique[(view["provider"], view["model"])] = {"provider": view["provider"], "model": view["model"]}
+    return {"targets": [unique[key] for key in sorted(unique)][:64], "truncated": len(unique) > 64,
+            "evidence": "configured_not_tool_verified"}

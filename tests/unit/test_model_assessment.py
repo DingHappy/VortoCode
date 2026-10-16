@@ -91,7 +91,8 @@ async def test_independent_judge_is_metered_not_acceptance_and_not_repeated(tmp_
     assess = tool(service)
     first = json.loads(await assess.handler({"task_id": task.id, "round": 1}))
     second = json.loads(await assess.handler({"task_id": task.id, "round": 1}))
-    assert first == second and called == ["judge"]
+    assert first["revision"] == second["revision"] and first["forecasts"] == second["forecasts"]
+    assert first["judge_observation"] == second["judge_observation"] and called == ["judge"]
     assert first["action"] == "review_recommended" and first["probability_calibration"] == "unvalidated"
     assert first["judge_observation"]["cost_estimate"] == pytest.approx(.00019)
     assert service.get(task.id).collaboration["review"] == "pending"

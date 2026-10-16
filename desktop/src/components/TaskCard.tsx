@@ -8,6 +8,7 @@ import { TaskQuestionActions } from "./TaskQuestionActions";
 import { TaskDependencyActions } from "./TaskDependencyActions";
 import { TaskChainBudget } from "./TaskChainBudget";
 import { TaskCoverageActions } from "./TaskCoverageActions";
+import { TaskModelComparison } from "./TaskModelComparison";
 import type { GatewayClient } from "../gateway";
 
 type Props = {
@@ -108,6 +109,7 @@ export function TaskCard({ task, focused, taskReviewVerifying, loadPlanGraph,
             （仅建议，不自动执行或验收）
           </p>}
           <strong>{task.dependencies?.result_valid === false ? "依赖已失效 · 历史记录保留" : task.collaboration.review === "accepted" ? "已验收" : task.collaboration.review === "pending" ? "执行结束 · 待验收" : task.collaboration.review === "rework_requested" ? "已请求返工" : "尚未提交结果"}</strong>
+          {task.collaboration.model_comparison?.round === task.collaboration.round && <TaskModelComparison report={task.collaboration.model_comparison} />}
           {task.result && <details><summary>查看交付结果</summary><pre>{task.result}</pre></details>}
           {task.collaboration.messages.length > 0 && <details><summary>Agent 任务消息</summary>
             {task.collaboration.messages.map((message) => <div key={message.id}><small>{message.sender || "研究员"} · {message.kind} · 第 {message.round} 轮</small><pre>{message.body}</pre></div>)}
@@ -115,6 +117,7 @@ export function TaskCard({ task, focused, taskReviewVerifying, loadPlanGraph,
           <div className="task-actions">
             {taskCollaborationDraft(task, "review") && <button onClick={() => onCollaboration(task, "review")}>交给主 Agent 验收</button>}
             {taskCollaborationDraft(task, "followup") && <button onClick={() => onCollaboration(task, "followup")}>补充要求 / 返工</button>}
+            {taskCollaborationDraft(task, "assess") && <button onClick={() => onCollaboration(task, "assess")}>评估模型与成本</button>}
           </div>
           <DispatchTaskActions task={task} getClient={getClient} onUpdated={onDispatchUpdated} />
         </div>
