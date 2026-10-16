@@ -742,6 +742,8 @@ def _tool_summary(name: str, args: Dict[str, Any]) -> str:
         "browser_type": _with("浏览器输入到元素", str(args.get("ref") or "").strip()),
         "research_parallel": _with("并行调研：", task, 50),
         "task_status": _with("查看任务：", str(args.get("task_id") or ""), 50),
+        "task_model_profiles": "查看模型任务表现",
+        "task_model_assess": _with("评估是否继续原模型：", str(args.get("task_id") or ""), 50),
         "task_inbox": "读取后台任务交接",
         "task_acknowledge": _with("记录交接处理：", str(args.get("task_id") or ""), 50),
         "task_review": _with("验收子任务：", str(args.get("task_id") or ""), 50),

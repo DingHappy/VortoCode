@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from contextlib import nullcontext
 from typing import Any, Awaitable, Callable
 
@@ -99,6 +100,8 @@ def build_delegation_executor(repo_root: str, *, llm: Any = None,
             "status": task.status, "review": task.collaboration["review"],
             "assignee": task.collaboration["assignee"],
             "model_target": task.collaboration.get("model_target"),
+            "model_observations": task.collaboration.get("model_observations", []),
+            "model_assessment": task.collaboration.get("model_assessment"),
             "acceptance": task.collaboration["acceptance"],
             "result": task.result, "error": task.error,
             "questions": question_views(task),
@@ -108,12 +111,15 @@ def build_delegation_executor(repo_root: str, *, llm: Any = None,
         }, ensure_ascii=False)
 
     async def _spawn(desc: str, agent_name: str = "", *, task_id: str = "",
-                     acceptance=None) -> tuple[str, bool]:
+                     acceptance=None, task_type="analysis") -> tuple[str, bool]:
         from src.agents.taint import is_tainted, merge_nested_taint
         task = None
         sub = None
+        started = time.monotonic()
+        meter: dict = {}
+        category = "read"
         if collaboration is not None:
-            task = collaboration.get(task_id) if task_id else collaboration.create(desc, agent_name, acceptance)
+            task = collaboration.get(task_id) if task_id else collaboration.create(desc, agent_name, acceptance, task_type=task_type)
             if task.collaboration.get("tainted"):
                 from src.agents.taint import mark_tainted
                 mark_tainted()
@@ -122,19 +128,25 @@ def build_delegation_executor(repo_root: str, *, llm: Any = None,
         def _complete(result: str = "", *, error: str = "", cancelled: bool = False):
             if task is None:
                 return error or result, is_tainted()
+            from src.llm.observations import summarize
+            metrics = summarize(meter, int((time.monotonic() - started) * 1000), category,
+                                complete=bool(result.strip()) and not error and not cancelled)
+            metrics["task_type"] = task.collaboration.get("task_type", "analysis")
             completed = collaboration.finish(
                 task.id, task.collaboration["round"], result,
-                error=error, cancelled=cancelled, tainted=is_tainted())
+                error=error, cancelled=cancelled, tainted=is_tainted(),
+                model_observation=metrics)
             return _response(completed), completed.collaboration["tainted"]
 
         async def _execute():
-            nonlocal sub
+            nonlocal sub, category
             sub, err = _sub_for(agent_name)
             if err:
                 return _complete(error=err)
             if on_child_tool is not None:
                 sub._on_tool = on_child_tool
             has_dev = any(t.startswith("dev_") for t in sub.tools)
+            category = "dev" if has_dev else "read"
             if has_dev:
                 if confirm is None:
                     return _complete(error=f"角色 {agent_name} 是 dev 型，当前入口没有确认通道——已拒绝（fail-closed）。")
@@ -156,11 +168,17 @@ def build_delegation_executor(repo_root: str, *, llm: Any = None,
             return _complete(result or ("(无结论)" if task is None else "")) if task else (result or "(无结论)", nested.child_tainted)
 
         try:
-            return await _execute()
+            from src.llm.observations import observation_scope
+            with observation_scope() as meter:
+                return await _execute()
         except ToolTurnYield:
             blocked = collaboration.get(task.id)
             if blocked.status != "blocked" or blocked.collaboration["round"] != task.collaboration["round"]:
                 raise RuntimeError("任务未持久进入等待回答状态") from None
+            from src.llm.observations import summarize
+            blocked = collaboration.record_model_progress(task.id, task.collaboration["round"], {
+                **summarize(meter, int((time.monotonic() - started) * 1000), category, complete=False),
+                "task_type": task.collaboration.get("task_type", "analysis")})
             return _response(blocked), blocked.collaboration["tainted"]
         except asyncio.CancelledError:
             if task is not None and collaboration.get(task.id).status == "blocked":
@@ -197,7 +215,7 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
             return "task 需要 description（要委派给子 agent 的子任务）。"
         from src.agents.taint import mark_tainted
         result, child_tainted = await _spawn(desc, str(args.get("agent") or "").strip(),
-                                           acceptance=args.get("acceptance"))
+                                           acceptance=args.get("acceptance"), task_type=args.get("task_type", "analysis"))
         if child_tainted:
             mark_tainted()
         return result
@@ -226,9 +244,11 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
              "可选 agent=<角色名> 用自定义角色（见系统提示【可用子 agent】；dev 型角色能用隔离流水线写代码）",
              {"description": "要委派给子 agent 的子任务",
               "agent": "可选：自定义角色名（.vortocode/agents/ 里定义；缺省=只读研究员）",
+              "task_type": "可选：analysis/coding/review/documentation/translation/extraction；同类任务统计标签，默认 analysis",
               **({"acceptance": "可选：验收标准字符串列表；完成后主 Agent 必须审查结果"} if collaboration else {})},
              _task, read_only=True,
-             argument_schema={"acceptance": {"type": "array", "items": {"type": "string"}}} if collaboration else {}),
+             argument_schema={"acceptance": {"type": "array", "items": {"type": "string"}},
+                              "task_type": {"type": "string", "enum": ["analysis", "coding", "review", "documentation", "translation", "extraction"]}} if collaboration else {}),
         Tool("research_parallel",
              "并行委派多个子 agent 同时处理**相互独立**的子问题，汇总各自结论（最多 5 个）；"
              "默认轻量最多 2 个；用户明确要求全面/多角度/并行深挖时，可传 max_parallel 和 reason 放宽。"
@@ -242,6 +262,8 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
                               "max_parallel": {"type": "integer"}}),
     ]
     if collaboration is not None:
+        from src.agents.tools.model_assessment import build_model_assessment_tools
+        tools += build_model_assessment_tools(collaboration, allow_judge=llm is None, confirm=confirm)
         from src.workflow.tasks.handoffs import CompletionInbox
         inbox = CompletionInbox(repo_root, collaboration.owner_identity,
                                 on_update=collaboration.notify_update)
@@ -310,7 +332,7 @@ def build_research_tools(repo_root: str, *, llm: Any = None,
                  {"task_id": "任务 ID", "round": "当前执行轮次整数", "verdict": "accept 或 rework",
                   "note": "具体审查理由与证据引用"}, _review,
                  argument_schema={"round": {"type": "integer"}, "verdict": {"type": "string", "enum": ["accept", "rework"]}}),
-            Tool("task_followup", "给原执行 Agent 补充信息或返工要求并继续同一任务；最多 3 轮，dev 仍需确认。",
+            Tool("task_followup", "给原执行 Agent 补充信息或返工要求并继续同一任务；继续前可用 task_model_assess 核对原模型收益，最多 3 轮，dev 仍需确认。",
                  {"task_id": "任务 ID", "round": "当前执行轮次整数", "message": "补充信息或具体返工要求"}, _followup,
                  argument_schema={"round": {"type": "integer"}}),
         ]

@@ -411,6 +411,10 @@ export interface TaskItem {
   collaboration?: {
     assignee: string;
     model_target?: { model: string; provider: string; evidence: "selected_request_target"; round: number };
+    model_observations?: { round: number; tokens: number | null; elapsed_ms: number; usage_evidence: string;
+      cost_estimate: number | null; currency: string | null; components: { estimated_calls: number }[] }[];
+    model_assessment?: { round: number; action: string; reason: string; state: string; source: string;
+      probability_calibration?: string };
     round: number;
     review: "not_submitted" | "pending" | "accepted" | "rework_requested";
     acceptance: string[];

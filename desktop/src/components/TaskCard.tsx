@@ -97,6 +97,16 @@ export function TaskCard({ task, focused, taskReviewVerifying, loadPlanGraph,
         <div className="task-collaboration">
           <p>执行 Agent：{task.collaboration.assignee || "研究员"} · 第 {task.collaboration.round} 轮</p>
           {task.collaboration.model_target?.round === task.collaboration.round && <p>请求目标：{task.collaboration.model_target.provider} / {task.collaboration.model_target.model || "模型未确认"}（不代表供应商已响应）</p>}
+          {task.collaboration.model_observations?.filter(item => item.round === task.collaboration?.round).map(item => <p key={item.round}>
+            本轮用量：{item.tokens == null ? "未知" : `${item.tokens} tokens`}
+            {item.components.some(part => part.estimated_calls > 0) ? "（含估算）" : ""} · {(item.elapsed_ms / 1000).toFixed(1)} 秒 ·
+            费用估算：{item.cost_estimate == null ? "未知" : `${item.cost_estimate.toFixed(6)} ${item.currency}`}（非账单）
+            {item.usage_evidence !== "accounted_responses" ? " · 计量不完整" : ""}
+          </p>)}
+          {task.collaboration.model_assessment?.round === task.collaboration.round && <p>
+            模型建议：{task.collaboration.model_assessment.state === "running" ? "评判中或已中断，尚无结论" : task.collaboration.model_assessment.reason}
+            （仅建议，不自动执行或验收）
+          </p>}
           <strong>{task.dependencies?.result_valid === false ? "依赖已失效 · 历史记录保留" : task.collaboration.review === "accepted" ? "已验收" : task.collaboration.review === "pending" ? "执行结束 · 待验收" : task.collaboration.review === "rework_requested" ? "已请求返工" : "尚未提交结果"}</strong>
           {task.result && <details><summary>查看交付结果</summary><pre>{task.result}</pre></details>}
           {task.collaboration.messages.length > 0 && <details><summary>Agent 任务消息</summary>

@@ -61,10 +61,10 @@ class ProviderContentFiltered(RuntimeError):
                 self.usage[key] = value
 
 
-def _raise_content_filtered(messages, response_model, usage, *, requested_model):
+def _raise_content_filtered(messages, response_model, usage, *, requested_model, config=None):
     error = ProviderContentFiltered(response_model, usage)
     if all(key in error.usage for key in ("prompt_tokens", "completion_tokens")):
-        _account(messages, "", error.usage, model=requested_model)
+        _account(messages, "", error.usage, model=requested_model, config=config)
     raise error
 
 
@@ -405,7 +405,7 @@ class usage_scope:  # noqa: N801 —— 当上下文管理器用，小写读着�
 
 
 def _account(messages: List[Dict[str, str]], content: Optional[str], usage: Any = None,
-             model: str = "") -> None:
+             model: str = "", config=None) -> None:
     """记一次调用用量：有 API 精确 usage 就用，否则按文本估算。
 
     content 可能是内容块数组（多模态）：只数其中文本，图片/音频按固定成本估，
@@ -420,12 +420,16 @@ def _account(messages: List[Dict[str, str]], content: Optional[str], usage: Any 
         ct = getattr(usage, "completion_tokens", None)
         if isinstance(usage, dict):
             pt, ct = usage.get("prompt_tokens"), usage.get("completion_tokens")
-    if pt is None or ct is None:
+    exact = all(type(value) is int and value >= 0 for value in (pt, ct))
+    if not exact:
         pt = sum(estimate_tokens(content_to_text(m.get("content", "")))
                  + count_images(m.get("content")) * IMAGE_TOKEN_COST
                  + count_audio(m.get("content")) * AUDIO_TOKEN_COST for m in messages)
         ct = estimate_tokens(content_to_text(content) if content is not None else "")
+    pt, ct = int(pt or 0), int(ct or 0)
     add_usage(pt, ct, cached, model=model)
+    from src.llm.observations import record_response
+    record_response(config, model, pt, ct, exact)
 
 
 _NO_VISION_MODELS: set = set()          # 本进程内已知"不支持图片"的模型，避免每次都白撞一次 404
@@ -680,7 +684,7 @@ class LLMClient:
 
         if getattr(response.choices[0], "finish_reason", None) == "content_filter":
             _raise_content_filtered(messages, response.model, getattr(response, "usage", None),
-                                    requested_model=kwargs["model"])
+                                    requested_model=kwargs["model"], config=self.config)
         message = response.choices[0].message
         # 推理型模型（如 DeepSeek-R1 系）会把思维链放在 reasoning_content/reasoning，
         # 普通模型没有该字段，getattr 取 None。这是推理链的源头。
@@ -692,7 +696,7 @@ class LLMClient:
                 for tc in message.tool_calls
             ]
         usage = getattr(response, "usage", None)
-        _account(messages, message.content, usage, model=kwargs["model"])
+        _account(messages, message.content, usage, model=kwargs["model"], config=self.config)
         return {
             "content": message.content,
             "reasoning": reasoning,
@@ -751,7 +755,7 @@ class LLMClient:
                     continue
                 if getattr(choices[0], "finish_reason", None) == "content_filter":
                     _raise_content_filtered(messages, getattr(chunk, "model", None) or create["model"],
-                                            exact, requested_model=create["model"])
+                                            exact, requested_model=create["model"], config=self.config)
                 delta = getattr(choices[0], "delta", None)
                 if delta is not None and on_reasoning is not None:   # 推理增量走侧信道（不混进正文）
                     rc = getattr(delta, "reasoning_content", None) or getattr(delta, "reasoning", None)
@@ -768,7 +772,7 @@ class LLMClient:
                     yield content
         finally:
             await close_stream(resp)
-        _account(messages, "".join(parts), exact, model=create["model"])   # 有精确 usage 用精确，否则估算
+        _account(messages, "".join(parts), exact, model=create["model"], config=self.config)
 
     async def stream_chat(
         self,
@@ -819,7 +823,7 @@ class LLMClient:
                     continue
                 if getattr(choices[0], "finish_reason", None) == "content_filter":
                     _raise_content_filtered(messages, getattr(chunk, "model", None) or create["model"],
-                                            exact, requested_model=create["model"])
+                                            exact, requested_model=create["model"], config=self.config)
                 delta = getattr(choices[0], "delta", None)
                 if delta is None:
                     continue
@@ -857,7 +861,7 @@ class LLMClient:
         finally:
             await close_stream(resp)
         full = "".join(parts)
-        _account(messages, full, exact, model=create["model"])   # 有精确 usage 用精确，否则估算
+        _account(messages, full, exact, model=create["model"], config=self.config)
         tool_calls = None
         if tc_acc:
             tool_calls = [
@@ -920,7 +924,7 @@ class LLMClient:
                                 raise RuntimeError("模型响应格式无效：缺少 choices/message；未重试本次请求")
                             if choices[0].get("finish_reason") == "content_filter":
                                 _raise_content_filtered(messages, data.get("model", ""), data.get("usage"),
-                                                        requested_model=payload["model"])
+                                                        requested_model=payload["model"], config=self.config)
                             msg = choices[0].get("message")
                             if not isinstance(msg, dict):
                                 raise RuntimeError("模型响应格式无效：缺少 message；未重试本次请求")
@@ -930,7 +934,7 @@ class LLMClient:
                             if content is not None and not isinstance(content, str):
                                 raise RuntimeError("模型响应格式无效：content 应为文本；未重试本次请求")
                             _account(messages, msg.get("content"), data.get("usage"),
-                                     model=payload["model"])
+                                     model=payload["model"], config=self.config)
                             return {
                                 "content": content or "",
                                 "reasoning": msg.get("reasoning_content") or msg.get("reasoning"),
