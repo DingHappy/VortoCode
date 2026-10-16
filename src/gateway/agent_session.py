@@ -178,6 +178,8 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
                       if tool.name != "remember_repo"]
             from src.agents.tools.personal_goals import build_personal_goal_tools
             tools += build_personal_goal_tools(repo_root)
+            from src.agents.tools.personal_skills import build_personal_skill_tools
+            tools += build_personal_skill_tools(repo_root)
             # 交代定时的事（「每天早上帮我…」）：只在本进程真的会跑调度时给——Desktop 本机 sidecar
             # 固定关调度，给了只会建出永远不跑的作业。建/改都过确认门；要联网的作业创建时单独问人。
             if os.getenv("VORTOCODE_CRON", "").strip().lower() in ("1", "true", "yes", "on"):
@@ -240,6 +242,8 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         parts.extend(assistant_system_parts(repo_root, include_memories=False))
         kwargs["auto_recall"] = os.getenv("VORTOCODE_AUTO_RECALL", "1").strip().lower() not in {"0", "false", "no", "off"}
     if workspace_scope == GENERAL and kind in ("web", "im"):
+        parts.append("【个人技能】需要复用流程时先用 list_personal_skills 查看当前版本，再用 use_personal_skill 加载已启用指令。"
+                     "个人技能由用户在插件页审阅和启停；不能自行启用。加载指令不代表执行成功，也不增加文件、命令或外发权限。")
         parts.append("【持续跟进】汇报今天做过的事、定时状态和运行结果前，先读取对应状态工具。"
                      "用户问个人目标时用 personal_goals 查询当前状态；目标卡可创建目标、更新进展和逐条确认验收。"
                      "目标期限与跟进时间本身不会启动定时提醒；用户需在目标卡预览并批准一次提醒。"

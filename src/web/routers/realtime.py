@@ -728,6 +728,8 @@ def _tool_summary(name: str, args: Dict[str, Any]) -> str:
         "review_memory_proposal": "处理待确认的记忆",
         "save_skill": _with("保存技能", title),
         "use_skill": _with("使用技能", title),
+        "list_personal_skills": "查看个人技能",
+        "use_personal_skill": "加载个人技能指令",
         # —— 上网与研究 ——
         "web_search": f"搜索网页：{query[:100]}" if query else "搜索网页",
         "web_fetch": "读取网页",

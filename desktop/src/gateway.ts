@@ -9,6 +9,8 @@ import type {
   AssistantAvatar,
   AssistantConnector,
   ConnectorDisconnectReceipt,
+  PersonalSkill,
+  PersonalSkillsSnapshot,
   AssistantMemory,
   AssistantProfile,
   PersonalGoal,
@@ -483,6 +485,22 @@ export class GatewayClient {
 
   async disconnectConnector(name: string): Promise<ConnectorDisconnectReceipt> {
     return this.request(`/api/assistant/connectors/${encodeURIComponent(name)}`, { method: "DELETE" });
+  }
+
+  async getPersonalSkills(): Promise<PersonalSkillsSnapshot> {
+    return this.request("/api/assistant/skills");
+  }
+
+  async previewPersonalSkill(id: string): Promise<PersonalSkill> {
+    return this.request(`/api/assistant/skills/${encodeURIComponent(id)}`);
+  }
+
+  async savePersonalSkill(id: string, body: { name: string; description: string; instructions: string; revision: string | null }): Promise<PersonalSkill> {
+    return this.request(`/api/assistant/skills/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify(body) });
+  }
+
+  async setPersonalSkillEnabled(id: string, enabled: boolean, revision: string): Promise<PersonalSkill> {
+    return this.request(`/api/assistant/skills/${encodeURIComponent(id)}/enabled`, { method: "PUT", body: JSON.stringify({ enabled, revision }) });
   }
 
   /** 聊天里提炼出的「关于你」候选（待确认）。 */
