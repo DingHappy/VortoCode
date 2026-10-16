@@ -23,8 +23,14 @@ def snapshot(agent):
                         'tool_count': 0, 'observed_at': None}), 'profile': profile}
 
 
-async def connect_agent(agent, root, *, current=lambda: True, confirm=None):
+async def connect_agent(agent, root, *, current=lambda: True, confirm=None, workspace_scope="project"):
+    """Attach an explicitly requested catalogue; scope comes from trusted entrypoint assembly.
+
+    Named credential connectors are exclusive to General, just as in the Web
+    opt-in path. Missing/unknown scope must never inherit process environment.
+    """
     from src.agents.mcp_tools import connect_mcp, MCP_CLEANUP_TIMEOUT, MCP_CLEANUP_UNCONFIRMED
+    from src.gateway.workspace_scope import GENERAL, normalize_workspace_scope
     if getattr(agent, '_mcp_connecting', False):
         raise RuntimeError('MCP connection already in progress')
     if agent._capabilities.profile not in ('external', 'unattended'):
@@ -36,11 +42,14 @@ async def connect_agent(agent, root, *, current=lambda: True, confirm=None):
     committed = False
     try:
         async with timeout_scope(30):
-            manager, tools = await connect_mcp(root, capability_profile=agent._capabilities.profile, confirm=confirm)
+            manager, tools = await connect_mcp(
+                root, capability_profile=agent._capabilities.profile, confirm=confirm,
+                allow_connectors=normalize_workspace_scope(workspace_scope) == GENERAL,
+            )
         if not current():
             raise RuntimeError('会话正在执行或已切换；未接入新工具，请稍后重试')
         if manager is None:
-            raise RuntimeError('没有可连接的配置，请检查启用状态及无凭据 HTTP 限制')
+            raise RuntimeError('没有可连接的配置，请检查启用状态、HTTP 限制及连接器凭据')
         if not manager.mcp_clients:
             raise RuntimeError('配置中的服务均未连接成功，请检查协议版本及服务状态')
         old = getattr(agent, '_mcp_mgr', None)

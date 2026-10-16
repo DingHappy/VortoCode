@@ -60,7 +60,7 @@ Desktop插件页现有当前会话连接状态、手动连接/重试；local会�
 ## Desktop 手动入口与资源/提示
 
 插件页的MCP卡查询当前会话状态，连接读取已启用的无凭据HTTP配置及目录；不需要开启环境opt-in，
-按钮本身就是一次显式操作。重复在途连接拒绝，任务运行期间拒绝更新；结束前重核会话/agent/执行身份。
+按钮本身就是一次显式操作。General 也可连接已配置的命名凭据连接器，使用原私有凭据与只读筛选合同；Project/Scratch 不加载这类凭据。接入范围与操作步骤见 [扩展接入](./EXTENSIONS.md)。重复在途连接拒绝，任务运行期间拒绝更新；结束前重核会话/agent/执行身份。
 GET /api/extensions/mcp?session=<sid>、POST /api/extensions/mcp/connect?session=<sid>沿用原Gateway鉴权。
 General只放行这两个精确端点，不放行项目extensions/inspect或任意mcp子路径；项目local仍拒绝接入。
 失败保留原工具/连接，重试同步替换原工具目录并清理旧manager，旧连接清理未确认单独显示。
