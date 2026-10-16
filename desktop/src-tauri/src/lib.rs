@@ -293,7 +293,7 @@ fn normalize_llm_profile(mut profile: DesktopLlmProfile) -> Result<DesktopLlmPro
 fn normalize_role_models(profile: &DesktopLlmProfile) -> Result<HashMap<String, String>, String> {
     let mut roles = HashMap::new();
     for (role, value) in &profile.role_models {
-        if !matches!(role.as_str(), "research" | "implement" | "review") {
+        if !matches!(role.as_str(), "research" | "implement" | "review" | "assess") {
             return Err("不支持的子 Agent 模型角色".into());
         }
         let value = value.trim();
@@ -821,7 +821,7 @@ async fn confirm_llm_profile_change(
     let mut roles: Vec<_> = profile.role_models.iter().collect();
     roles.sort_by_key(|(role, _)| *role);
     let roles = roles.iter().map(|(role, model)| format!("\n{}：{model}", match role.as_str() {
-        "research" => "研究子 Agent", "implement" => "实现子 Agent", "review" => "审查子 Agent", _ => role,
+        "research" => "研究子 Agent", "implement" => "实现子 Agent", "review" => "审查子 Agent", "assess" => "模型评判器（按需额外调用）", _ => role,
     })).collect::<String>();
     let message = format!(
         "网页层请求把模型服务改为：\n\n服务地址：{}\n主模型：{}{}\n子 Agent 分工：{}\n\n仅当这是你刚在设置页保存的配置时才确认。",
@@ -6717,6 +6717,18 @@ mod tests {
             model_info: Vec::new(),
             models: Vec::new(),
         }
+    }
+
+    #[test]
+    fn assessor_role_is_explicit_and_uses_existing_role_launch_contract() {
+        let mut profile = sample_llm_profile();
+        profile.role_models.insert("assess".into(), "judge-model".into());
+        let roles = normalize_role_models(&profile).unwrap();
+        assert_eq!(roles.get("assess").map(String::as_str), Some("default:judge-model"));
+        profile.role_models.insert("assess".into(), "missing:judge-model".into());
+        assert!(normalize_role_models(&profile).is_err());
+        profile.role_models.insert("assess".into(), "".into());
+        assert!(normalize_role_models(&profile).unwrap().is_empty());
     }
 
     #[test]

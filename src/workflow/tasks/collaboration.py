@@ -82,7 +82,11 @@ class CollaborationService:
 
     def create(self, prompt: str, assignee: str = "", acceptance: list[str] | None = None, *,
                task_id: str | None = None, dispatch: dict | None = None,
-               dependencies: dict | None = None, chain_limits: dict | None = None) -> BackgroundTask:
+               dependencies: dict | None = None, chain_limits: dict | None = None,
+               task_type: str = "analysis") -> BackgroundTask:
+        from src.workflow.tasks.model_evidence import TASK_TYPES
+        if not isinstance(task_type, str) or task_type not in TASK_TYPES:
+            raise CollaborationConflict("任务类型无效")
         if not prompt.strip():
             raise CollaborationConflict("任务目标不能为空")
         if acceptance is not None and (
@@ -99,6 +103,7 @@ class CollaborationService:
                 "assignee": assignee, "round": 1, "review": "not_submitted",
                 "acceptance": [_text(item, 500) for item in acceptance or []],
                 "messages": [], "message_seq": 0, "tainted": False,
+                "task_type": task_type,
             }
             if dispatch is not None:
                 task.collaboration["dispatch"] = dispatch
@@ -150,7 +155,8 @@ class CollaborationService:
             return self._save(task)
 
     def finish(self, task_id: str, expected_round: int, result: str, *,
-               error: str = "", cancelled: bool = False, tainted: bool = False) -> BackgroundTask:
+               error: str = "", cancelled: bool = False, tainted: bool = False,
+               model_observation: dict | None = None) -> BackgroundTask:
         self._round(expected_round)
         with _LOCK:
             task = self._load(task_id, expected_round)
@@ -164,6 +170,11 @@ class CollaborationService:
             task.result, task.error = _text(result, 8000), _text(error, 1000)
             task.collaboration["tainted"] = task.collaboration.get("tainted", False) or tainted
             task.collaboration["review"] = "pending" if task.status == "done" else "not_submitted"
+            if model_observation is not None:
+                from src.workflow.tasks.model_evidence import observation
+                records = task.collaboration.setdefault("model_observations", [])
+                records.append(observation(task, model_observation))
+                task.collaboration["model_observations"] = records[-_MAX_ROUNDS:]
             self._message(task, "submitted" if task.status == "done" else task.status,
                           task.collaboration["assignee"], task.error or task.result)
             return self._save(task)
@@ -183,8 +194,90 @@ class CollaborationService:
             if task.collaboration["review"] != "pending":
                 raise CollaborationConflict("本轮已经验收，请勿重复改变决策")
             task.collaboration["review"] = desired
+            for item in task.collaboration.get("model_observations", []):
+                if item["round"] == expected_round:
+                    item["review"] = desired
             self._message(task, verdict, task.owner_session, note)
             return self._save(task)
+
+    def model_profiles(self, *, exclude: str = "") -> dict:
+        from src.workflow.tasks.model_evidence import profiles
+        with _LOCK:
+            return profiles(self.ledger, self.owner_identity(), exclude=exclude)
+
+    def record_model_progress(self, task_id: str, expected_round: int, metrics: dict) -> BackgroundTask:
+        """Keep spent effort when a worker durably yields for an answer."""
+        from src.workflow.tasks.model_evidence import observation
+        self._round(expected_round)
+        with _LOCK:
+            task = self._load(task_id, expected_round)
+            records = task.collaboration.setdefault("model_observations", [])
+            if task.status != "blocked" or any(item["round"] == expected_round for item in records):
+                raise CollaborationConflict("只能记录当前等待回答轮次的一次用量")
+            task.collaboration["model_observations"] = (records + [observation(task, metrics)])[-_MAX_ROUNDS:]
+            return self._save(task)
+
+    def model_assessment_snapshot(self, task_id: str, expected_round: int) -> dict:
+        from src.workflow.tasks.model_evidence import snapshot
+        self._round(expected_round)
+        with _LOCK:
+            task = self._load(task_id, expected_round)
+            return snapshot(task)
+
+    def model_assessment_attempt(self, task_id: str, expected_round: int) -> dict | None:
+        self._round(expected_round)
+        with _LOCK:
+            task = self._load(task_id, expected_round)
+            return next((item for item in task.collaboration.get("model_assessment_attempts", [])
+                         if item["round"] == expected_round), None)
+
+    def claim_model_assessment(self, task_id: str, expected_round: int, expected_revision: str,
+                               decision: dict) -> tuple[dict, bool]:
+        """Persist one claim per result revision before an optional paid judgment."""
+        from src.workflow.tasks.model_evidence import revision, snapshot
+        self._round(expected_round)
+        with _LOCK:
+            task = self._load(task_id, expected_round)
+            if revision(snapshot(task)) != expected_revision:
+                raise CollaborationConflict("任务证据已变化，请重新评估")
+            previous = task.collaboration.get("model_assessment", {})
+            if previous.get("revision") == expected_revision:
+                return previous, False
+            attempts = task.collaboration.setdefault("model_assessment_attempts", [])
+            if decision["action"] == "judge_needed":
+                attempted = next((item for item in attempts if item["round"] == expected_round), None)
+                if attempted is not None:
+                    return {**attempted, "action": "evidence_needed", "stale": True,
+                            "reason": "本轮已经尝试评判且证据已变化；保留原记录，不自动重复调用"}, False
+            record = {**decision, "revision": expected_revision, "round": expected_round,
+                      "state": "running" if decision["action"] == "judge_needed" else "complete"}
+            task.collaboration["model_assessment"] = record
+            if decision["action"] == "judge_needed":
+                task.collaboration["model_assessment_attempts"] = (attempts + [record])[-_MAX_ROUNDS:]
+            self._save(task)
+            return record, True
+
+    def finish_model_assessment(self, task_id: str, expected_round: int, expected_revision: str,
+                                decision: dict) -> dict:
+        from src.workflow.tasks.model_evidence import revision, snapshot
+        self._round(expected_round)
+        with _LOCK:
+            task = self._load(task_id)
+            attempts = task.collaboration.get("model_assessment_attempts", [])
+            attempt = next((item for item in attempts if item["round"] == expected_round
+                            and item["revision"] == expected_revision), {})
+            if attempt.get("state") != "running":
+                raise CollaborationConflict("评估结果已过期或已经提交")
+            stale = revision(snapshot(task)) != expected_revision
+            record = {**decision, "revision": expected_revision, "round": expected_round, "state": "complete"}
+            if stale:
+                record.update(stale=True, action="evidence_needed", reason="评判期间任务证据已变化，保留计量但不应用旧建议")
+            if task.collaboration.get("model_assessment", {}).get("revision") == expected_revision:
+                task.collaboration["model_assessment"] = record
+            task.collaboration["model_assessment_attempts"] = [
+                record if item["revision"] == expected_revision else item for item in attempts]
+            self._save(task)
+            return record
 
     def ask_question(self, task_id: str, expected_round: int, question: str,
                      options: list[str] | None = None, context: str = "", *, tainted: bool = False) -> BackgroundTask:

@@ -22,8 +22,8 @@ it("role-only edits are unsaved changes while blanks and order are equivalent", 
   expect(modelSettingsState(profile, { ...draft, roleModels: { research: "  " } }).dirty).toBe(false);
   expect(normalizedRoleModels({ review: " large ", research: "small" })).toEqual({ research: "small", review: "large" });
 });
-it("renders the three wired roles and distinguishes channels from permissions", () => {
+it("renders worker roles and the opt-in assessor with distinct defaults", () => {
   const html = renderToStaticMarkup(<ModelRoles profile={profile} value={{ research: "worker:cheap:tag" }} onChange={() => {}} />);
-  for (const label of ["研究子 Agent", "实现子 Agent", "审查子 Agent", "每家使用自己的 Key", "仅配置本机引擎"]) expect(html).toContain(label);
+  for (const label of ["研究子 Agent", "实现子 Agent", "审查子 Agent", "模型评判器", "评判器留空关闭额外调用", "每家使用自己的 Key", "仅配置本机引擎"]) expect(html).toContain(label);
   expect(html).not.toContain("synthetic-worker-key");
 });
