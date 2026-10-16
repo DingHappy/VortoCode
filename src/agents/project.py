@@ -16,17 +16,31 @@ _CANDIDATES = ["AGENTS.md", "CLAUDE.md", "VORTO.md", ".vortocode/AGENTS.md"]
 _MAX_CHARS = 8000   # 截断防把上下文挤爆（项目指令该精炼，不是塞整本手册）
 
 
-def find_instructions_file(repo_root: str) -> Optional[Path]:
-    """返回按优先级找到的第一个存在且非空的项目指令文件路径；没有则 None。"""
-    base = Path(repo_root)
+def _read_project_instructions(repo_root: str) -> Optional[tuple[Path, str]]:
+    """Resolve the project boundary before reading a rule, including parent links."""
+    try:
+        base = Path(repo_root).resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None
     for name in _CANDIDATES:
         p = base / name
         try:
-            if p.is_file() and p.read_text(encoding="utf-8", errors="ignore").strip():
-                return p
-        except OSError:
+            target = p.resolve(strict=True)
+            target.relative_to(base)
+            if not target.is_file():
+                continue
+            text = target.read_text(encoding="utf-8", errors="ignore").strip()
+            if text:
+                return p, text
+        except (OSError, RuntimeError, ValueError):
             continue
     return None
+
+
+def find_instructions_file(repo_root: str) -> Optional[Path]:
+    """返回按优先级找到的工作区内非空项目指令路径；越界或不可读则继续回退。"""
+    found = _read_project_instructions(repo_root)
+    return found[0] if found is not None else None
 
 
 def load_project_instructions(repo_root: str) -> str:
@@ -34,15 +48,10 @@ def load_project_instructions(repo_root: str) -> str:
 
     超长截断（_MAX_CHARS），结尾标注被截断，避免悄悄丢内容又不撑爆上下文。
     """
-    p = find_instructions_file(repo_root)
-    if p is None:
+    found = _read_project_instructions(repo_root)
+    if found is None:
         return ""
-    try:
-        text = p.read_text(encoding="utf-8", errors="ignore").strip()
-    except OSError:
-        return ""
-    if not text:
-        return ""
+    p, text = found
     truncated = ""
     if len(text) > _MAX_CHARS:
         text = text[:_MAX_CHARS]
