@@ -224,6 +224,22 @@ class CollaborationService:
             task = self._load(task_id, expected_round)
             return snapshot(task)
 
+    def record_model_comparison(self, task_id: str, expected_round: int, expected_revision: str, report: dict) -> dict:
+        """Save derived advice on the original task, never an execution authorization."""
+        from src.workflow.tasks.model_evidence import revision, snapshot
+        self._round(expected_round)
+        if (not isinstance(report, dict) or report.get("automatic_execution") is not False
+                or not isinstance(report.get("candidates"), list) or len(report["candidates"]) > 65):
+            raise CollaborationConflict("模型比较记录无效")
+        with _LOCK:
+            task = self._load(task_id, expected_round)
+            if revision(snapshot(task)) != expected_revision:
+                raise CollaborationConflict("模型比较期间任务证据已变化")
+            record = {**report, "revision": expected_revision, "round": expected_round, "observed_at": _now()}
+            task.collaboration["model_comparison"] = record
+            self._save(task)
+            return record
+
     def model_assessment_attempt(self, task_id: str, expected_round: int) -> dict | None:
         self._round(expected_round)
         with _LOCK:

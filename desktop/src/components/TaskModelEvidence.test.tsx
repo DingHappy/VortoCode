@@ -18,6 +18,7 @@ const task: TaskItem = { id: "task-example", kind: "delegation", status: "done",
 it("shows usage estimates and unknown prices without granting acceptance", () => {
   const html = markup(task);
   for (const label of ["120 tokens", "含估算", "1.5", "费用估算：未知", "非账单", "先补验证证据", "仅建议，不自动执行或验收", "待验收"]) expect(html).toContain(label);
+  expect(html).toContain("评估模型与成本");
 });
 it("does not display an old round's model advice or usage as current", () => {
   const html = markup({ ...task, collaboration: { ...task.collaboration!, round: 2 } });

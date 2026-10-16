@@ -16,6 +16,18 @@ describe("task collaboration drafts", () => {
     expect(draft?.text).toContain("task_review");
   });
 
+  it("prepares an assessment draft without executing, switching or accepting", () => {
+    const draft = taskCollaborationDraft(task, "assess");
+    expect(draft?.sid).toBe("parent");
+    for (const text of ["task-abc 第 2 轮", "task_model_assess", "总费用", "原确认门", "不自动换模型、返工或验收"]) expect(draft?.text).toContain(text);
+    for (const altered of [
+      { ...task, status: "running" }, { ...task, owner_session: "agent-unknown" },
+      { ...task, collaboration: { ...task.collaboration!, review: "accepted" as const } },
+      { ...task, collaboration: { ...task.collaboration!, round: 4 } },
+      { ...task, dependencies: { result_valid: false } },
+    ]) expect(taskCollaborationDraft(altered, "assess")).toBeNull();
+  });
+
   it("only prepares feedback for unfinished acceptance within the retry budget", () => {
     expect(taskCollaborationDraft(task, "followup")?.text).toContain("补充要求：");
     const accepted = { ...task, collaboration: { ...task.collaboration!, review: "accepted" as const } };
