@@ -242,6 +242,20 @@ def describe_roles() -> str:
     return "；".join(parts)
 
 
+def request_target_view(client) -> dict:
+    """Non-secret selected request target; never proof of a provider response or weights."""
+    from src.memory.write_policy import redact_secret_like
+    config = getattr(client, "config", None)
+    if client is None:
+        from src.llm.client import LLMConfig
+        return {"provider": "default", "model": LLMConfig().model, "evidence": "selected_request_target"}
+    base = getattr(config, "base_url", None)
+    provider = next((name for name, spec in providers().items()
+                     if spec.base_url == base and spec.api_key == getattr(config, "api_key", None)), "injected")
+    model = redact_secret_like(str(getattr(config, "model", "") or ""))[0][:160]
+    return {"provider": provider, "model": model, "evidence": "selected_request_target"}
+
+
 def reset_cache() -> None:
     """清掉客户端缓存（测试用，或改了 env 想让新配置立刻生效）。"""
     _cache.clear()

@@ -96,6 +96,7 @@ export function TaskCard({ task, focused, taskReviewVerifying, loadPlanGraph,
       {task.kind === "delegation" && task.collaboration && (
         <div className="task-collaboration">
           <p>执行 Agent：{task.collaboration.assignee || "研究员"} · 第 {task.collaboration.round} 轮</p>
+          {task.collaboration.model_target?.round === task.collaboration.round && <p>请求目标：{task.collaboration.model_target.provider} / {task.collaboration.model_target.model || "模型未确认"}（不代表供应商已响应）</p>}
           <strong>{task.dependencies?.result_valid === false ? "依赖已失效 · 历史记录保留" : task.collaboration.review === "accepted" ? "已验收" : task.collaboration.review === "pending" ? "执行结束 · 待验收" : task.collaboration.review === "rework_requested" ? "已请求返工" : "尚未提交结果"}</strong>
           {task.result && <details><summary>查看交付结果</summary><pre>{task.result}</pre></details>}
           {task.collaboration.messages.length > 0 && <details><summary>Agent 任务消息</summary>

@@ -24,6 +24,7 @@ export function useLlmProfile(
   const [llmKeyInput, setLlmKeyInput] = useState("");
   const [llmFastInput, setLlmFastInput] = useState("");
   const [llmStrongInput, setLlmStrongInput] = useState("");
+  const [llmRolesInput, setLlmRolesInput] = useState<Record<string, string>>({});
   const [llmProfileBusy, setLlmProfileBusy] = useState(false);
   // 读过一次（成功或失败）。失败时不能让引导卡永远停在"检查中"：显示为待配置，点进设置会重读。
   const [llmProfileChecked, setLlmProfileChecked] = useState(false);
@@ -36,6 +37,7 @@ export function useLlmProfile(
     setLlmModelInput(profile.model);
     setLlmFastInput(profile.fastModel ?? "");
     setLlmStrongInput(profile.strongModel ?? "");
+    setLlmRolesInput(profile.roleModels ?? {});
     setLlmKeyInput("");
   };
 
@@ -49,6 +51,7 @@ export function useLlmProfile(
         setLlmModelInput(profile.model);
         setLlmFastInput(profile.fastModel ?? "");
         setLlmStrongInput(profile.strongModel ?? "");
+        setLlmRolesInput(profile.roleModels ?? {});
         setLlmKeyInput("");
       })
       .catch((error) => onBanner(error instanceof Error ? error.message : String(error)))
@@ -65,9 +68,11 @@ export function useLlmProfile(
         model: llmModelInput.trim(),
         fastModel: llmFastInput.trim() || null,
         strongModel: llmStrongInput.trim() || null,
+        roleModels: llmRolesInput,
       });
       setLlmProfile(profile);
       setLlmKeyInput("");
+      setLlmRolesInput(profile.roleModels ?? {});
       const restarted = await onRestartRuntime();
       if (restarted) onBanner(`${profile.provider === "vortocode" ? "VortoCode Relay" : profile.provider === "local" ? "本机模型服务" : "自定义模型服务"}已保存到本机配置文件，当前 runtime 已重启`);
     } catch (error) {
@@ -87,6 +92,7 @@ export function useLlmProfile(
       setLlmModelInput(profile.model);
       setLlmFastInput("");
       setLlmStrongInput("");
+      setLlmRolesInput({});
       setLlmKeyInput("");
       const restarted = await onRestartRuntime();
       if (restarted) onBanner("模型服务配置已清除；需要对话时可随时重新设置");
@@ -100,6 +106,7 @@ export function useLlmProfile(
   return {
     llmProfile, applyLlmProfile, llmProfileChecked, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput,
     llmKeyInput, setLlmKeyInput, llmFastInput, setLlmFastInput, llmStrongInput, setLlmStrongInput,
+    llmRolesInput, setLlmRolesInput,
     llmProfileBusy, saveLlmProfile, clearLlmProfile,
   };
 }

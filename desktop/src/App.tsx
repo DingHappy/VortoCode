@@ -514,6 +514,7 @@ function App() {
   const {
     llmProfile, applyLlmProfile, llmProfileChecked, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput,
     llmFastInput, setLlmFastInput, llmStrongInput, setLlmStrongInput,
+    llmRolesInput, setLlmRolesInput,
     llmKeyInput, setLlmKeyInput, llmProfileBusy, saveLlmProfile, clearLlmProfile,
   } = useLlmProfile(settingsOpen, setBanner, () => restartCurrentRuntimeForLlmProfile());
   const [savedModelChoice, setSavedModelChoice] = useState<string | null>(() => loadModelChoice());
@@ -4243,6 +4244,8 @@ function App() {
           llmKeyInput={llmKeyInput}
           llmFastInput={llmFastInput}
           llmStrongInput={llmStrongInput}
+          llmRolesInput={llmRolesInput}
+          onLlmRolesChange={setLlmRolesInput}
           llmProfileBusy={llmProfileBusy}
           repoRoot={repoRoot}
           baseUrl={baseUrl}

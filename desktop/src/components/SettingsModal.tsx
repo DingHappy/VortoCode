@@ -26,6 +26,7 @@ import { AccountPane } from "./settings/AccountPane";
 import { BrowserPane } from "./settings/BrowserPane";
 import { CustomProviders } from "./settings/CustomProviders";
 import { ModelPicks } from "./settings/ModelPicks";
+import { ModelRoles } from "./settings/ModelRoles";
 import { PersonalizePane } from "./settings/PersonalizePane";
 import { UsagePane } from "./settings/UsagePane";
 import {
@@ -86,6 +87,8 @@ type SettingsModalProps = {
   llmKeyInput: string;
   llmFastInput: string;
   llmStrongInput: string;
+  llmRolesInput: Record<string, string>;
+  onLlmRolesChange: (value: Record<string, string>) => void;
   llmProfileBusy: boolean;
   repoRoot: string;
   baseUrl: string;
@@ -134,6 +137,8 @@ export function SettingsModal({
   llmKeyInput,
   llmFastInput,
   llmStrongInput,
+  llmRolesInput,
+  onLlmRolesChange,
   llmProfileBusy,
   repoRoot,
   baseUrl,
@@ -174,7 +179,7 @@ export function SettingsModal({
   const [modelOptions, setModelOptions] = useState<string[]>([]);
   const activePreset = presetForBaseUrl(llmBaseInput);
   const [showKey, setShowKey] = useState(false);
-  const draft = { baseUrl: llmBaseInput, model: llmModelInput, apiKey: llmKeyInput, fastModel: llmFastInput, strongModel: llmStrongInput };
+  const draft = { baseUrl: llmBaseInput, model: llmModelInput, apiKey: llmKeyInput, fastModel: llmFastInput, strongModel: llmStrongInput, roleModels: llmRolesInput };
   const modelState = modelSettingsState(llmProfile, draft);
   const choosePreset = (preset: typeof PROVIDER_PRESETS[number]) => {
     const next = applyModelPreset(draft, preset);
@@ -321,6 +326,7 @@ export function SettingsModal({
             >{llmProfileBusy ? "正在应用…" : "保存并重启当前引擎"}</button>
           </div>
           <details className="llm-extra-settings"><summary>高级模型选项（可选）</summary>
+          <ModelRoles profile={llmProfile} value={llmRolesInput} onChange={onLlmRolesChange} disabled={llmProfileBusy} />
           <div className="llm-routing-fields">
             <p>智能调度 <em>输入框选「自动」时，简短问答走快速模型，Build、带图或复杂任务走强力模型；留空则都用主模型。</em></p>
             <label>
