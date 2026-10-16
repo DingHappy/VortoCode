@@ -5,6 +5,7 @@ import argparse
 import ast
 import asyncio
 import json
+import hashlib
 from importlib.metadata import distributions
 import random
 import subprocess
@@ -15,11 +16,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from evals.assistant.runner import source_metadata
-from src.llm.client import LLMClient, LLMConfig
+from src.llm.providers import request_target_view
 from src.workflow.pipeline.pipeline_storage import write_json
 
 from .budget import Meter, MeteredClient, coverage_summary, failure_record
 from .longmemeval import context_for, data_sha, ingest, reader_messages, select, select_holdout
+from .model_study import close_clients, evaluation_client, judge_label
 
 TOOL_CASES = ['send_message_with_contact_content_cellular_off', 'add_reminder_content_and_weekday_delta_and_time',
               'modify_contact_with_message_recency_multiple_user_turn', 'remove_contact_by_phone_ambiguous',
@@ -37,7 +39,7 @@ def judge_prompt(source):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Pinned ToolSandbox + LongMemEval-S calibration')
-    parser.add_argument('--toolsandbox-root', type=Path, required=True)
+    parser.add_argument('--toolsandbox-root', type=Path)
     parser.add_argument('--longmem-data', type=Path, required=True)
     parser.add_argument('--judge-prompt-source', type=Path, required=True)
     parser.add_argument('--tokens', type=int, default=1_000_000)
@@ -47,43 +49,58 @@ def main(argv=None):
     parser.add_argument('--memory-variant', choices=['baseline', 'compact'], default='baseline')
     parser.add_argument('--split', choices=['pilot', 'heldout'], default='pilot')
     parser.add_argument('--repeat', type=int, choices=[1, 2], default=1)
+    parser.add_argument('--worker-model', help='registered provider:model; default uses the existing default client')
+    parser.add_argument('--judge-model', help='independent scoring target; does not inherit --worker-model')
+    parser.add_argument('--simulator-model', help='independent ToolSandbox user target; does not inherit --worker-model')
     args = parser.parse_args(argv)
     if not args.live:
         parser.error('model requests require --live')
     if not 0 < args.tokens <= 1_500_000:
         parser.error('calibration budget must be 1..1,500,000 tokens')
-    revision = subprocess.check_output(['git', '-C', str(args.toolsandbox_root), 'rev-parse', 'HEAD'], text=True).strip()
-    if revision != TOOL_REVISION:
-        parser.error('ToolSandbox revision differs from pinned calibration version')
+    revision = None
+    if args.toolsandbox_root:
+        revision = subprocess.check_output(['git', '-C', str(args.toolsandbox_root), 'rev-parse', 'HEAD'], text=True).strip()
+        if revision != TOOL_REVISION:
+            parser.error('ToolSandbox revision differs from pinned calibration version')
+    elif args.suite == 'all':
+        parser.error('--toolsandbox-root is required for the tool suite')
     # No commercial data import: only the explicitly selected local benchmark file.
     dataset = json.loads(args.longmem_data.read_text())
     chosen = select_holdout(dataset) if args.split == 'heldout' else select(dataset)
     tool_cases = TOOL_CASES if args.suite == 'all' else []
-    sys.path.insert(0, str(args.toolsandbox_root))
-    import attrs
     import tiktoken
-    from tool_sandbox.common.execution_context import RoleType
-    from tool_sandbox.common.tool_discovery import ToolBackend
-    from tool_sandbox.roles.execution_environment import ExecutionEnvironment
-    from tool_sandbox.scenarios import named_scenarios
-    from .toolsandbox import VortoAgent, VortoUser
-
-    random.seed(20261012)
-    scenarios = named_scenarios(ToolBackend.DEFAULT)
+    if tool_cases:
+        sys.path.insert(0, str(args.toolsandbox_root))
+        import attrs
+        from tool_sandbox.common.execution_context import RoleType
+        from tool_sandbox.common.tool_discovery import ToolBackend
+        from tool_sandbox.roles.execution_environment import ExecutionEnvironment
+        from tool_sandbox.scenarios import named_scenarios
+        from .toolsandbox import VortoAgent, VortoUser
+        random.seed(20261012)
+        scenarios = named_scenarios(ToolBackend.DEFAULT)
     for name in tool_cases:
         if any('rapid_api' in tool.__module__ for tool in scenarios[name].starting_context.get_available_tools(scrambling_allowed=False).values()):
             # Unrelated available-but-denied tools are not exposed by the role allowlist.
             allowed = scenarios[name].starting_context.tool_allow_list or []
             if any('weather' in tool or 'stock' in tool or 'location_around' in tool for tool in allowed):
                 raise ValueError('calibration selected a network-dependent scenario')
-    config = LLMConfig(max_retries=0, timeout=90, request_timeout=90)
-    client = LLMClient(config)
+    client = evaluation_client(args.worker_model)
+    judge_client = evaluation_client(args.judge_model)
+    simulator_client = evaluation_client(args.simulator_model)
+    config = client.config
     encoding = tiktoken.get_encoding('cl100k_base')
     args.out.mkdir(parents=True, exist_ok=True)
     run_id = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
     path = args.out / f'{run_id}.json'
-    report = {'version': 2, 'scope': 'standard-subset-calibration', 'model': config.model,
-              'user_simulator': config.model, 'judge': config.model, 'judge_condition': 'substitute model with official prompt; not official judge-model conditions',
+    report = {'version': 3, 'scope': 'standard-subset-calibration', 'suite': args.suite, 'model': config.model,
+              'user_simulator': simulator_client.config.model, 'judge': judge_client.config.model,
+              'model_targets': {'worker': request_target_view(client), 'judge': request_target_view(judge_client),
+                                'simulator': request_target_view(simulator_client)},
+              'endpoint_fingerprints': {role: hashlib.sha256(c.config.base_url.encode()).hexdigest()
+                                        for role, c in [('worker', client), ('judge', judge_client), ('simulator', simulator_client)]},
+              'judge_condition': 'substitute model with official prompt; not official judge-model conditions',
+              'grading_protocol': 'strict-yes-no-v1',
               'tokenizer_proxy': 'cl100k_base', 'source_before': source_metadata(),
               'toolsandbox_revision': revision, 'longmem_sha256': data_sha(args.longmem_data),
               'judge_prompt_sha256': data_sha(args.judge_prompt_source),
@@ -113,9 +130,11 @@ def main(argv=None):
         for name in tool_cases:
             print('▶ ToolSandbox ' + name, flush=True)
             before = meter.reported
+            meter.begin_trial('ToolSandbox', name)
+            request_start = len(meter.entries)
             try:
                 roles = {RoleType.AGENT: VortoAgent(loop, MeteredClient(client, meter, 'toolsandbox-agent')),
-                         RoleType.USER: VortoUser(loop, MeteredClient(client, meter, 'toolsandbox-user')),
+                         RoleType.USER: VortoUser(loop, MeteredClient(simulator_client, meter, 'toolsandbox-user')),
                          RoleType.EXECUTION_ENVIRONMENT: ExecutionEnvironment()}
                 result = scenarios[name].play_and_evaluate(roles, args.out / run_id / 'toolsandbox', name)
                 scores = attrs.asdict(result.evaluation_result)
@@ -125,6 +144,7 @@ def main(argv=None):
             except Exception as error:
                 row = {'benchmark': 'ToolSandbox', 'id': name, **failure_record(error), 'tokens': meter.reported - before}
                 print('  failed: ' + type(error).__name__, flush=True)
+            row.update(request_start=request_start, request_end=len(meter.entries))
             report['results'].append(row); checkpoint()
             if meter.reason:
                 break
@@ -135,10 +155,12 @@ def main(argv=None):
                 for row, repeat in [(row, repeat) for row in chosen for repeat in range(1, args.repeat + 1)]:
                     print(f"▶ LongMemEval-S {row['question_id']} repeat={repeat}", flush=True)
                     before = meter.reported
+                    meter.begin_trial('LongMemEval-S', row['question_id'], repeat)
+                    request_start = len(meter.entries)
                     answer = None
                     try:
                         if row['question_id'] not in contexts:
-                            root = Path(temporary) / row['question_id']
+                            root = Path(temporary) / f'case-{len(contexts)}'
                             root.mkdir()
                             store = ingest(row, root)
                             contexts[row['question_id']] = context_for(store, row['question'], encoding, variant=args.memory_variant)
@@ -149,13 +171,13 @@ def main(argv=None):
                         if not answer.strip():
                             raise ValueError('empty reader answer')
                         prompt = prompt_fn(row['question_type'], row['question'], row['answer'], answer, abstention='_abs' in row['question_id'])
-                        verdict = loop.run_until_complete(meter.chat(client, 'longmemeval-judge', [{'role': 'user', 'content': prompt}], temperature=0))
+                        verdict = loop.run_until_complete(meter.chat(judge_client, 'longmemeval-judge', [{'role': 'user', 'content': prompt}], temperature=0))
                         text = verdict.get('content') or ''
                         if not text.strip():
                             raise ValueError('empty judge answer')
                         record = {'benchmark': 'LongMemEval-S', 'id': row['question_id'], 'type': row['question_type'], 'status': 'completed',
                                   'repeat': repeat, 'abstention': row['question_id'].endswith('_abs'),
-                                  'hypothesis': answer, 'judge_response': text, 'label': 'yes' in text.lower(),
+                                  'hypothesis': answer, 'judge_response': text, 'label': judge_label(text),
                                   'retrieved_messages': sources, 'context_tokens_proxy': len(encoding.encode(context, disallowed_special=())),
                                   'ingested_sessions': len(row['haystack_sessions']), 'tokens': meter.reported - before}
                         print(f"  substitute-judge label={record['label']}", flush=True)
@@ -164,6 +186,7 @@ def main(argv=None):
                                   'repeat': repeat,
                                   'tokens': meter.reported - before}
                         print('  failed: ' + type(error).__name__, flush=True)
+                    record.update(request_start=request_start, request_end=len(meter.entries))
                     report['results'].append(record); checkpoint()
                     if meter.reason:
                         break
@@ -173,7 +196,7 @@ def main(argv=None):
         report['error'] = type(error).__name__
         raise
     finally:
-        loop.run_until_complete(client.close())
+        loop.run_until_complete(close_clients(client, judge_client, simulator_client))
         loop.close()
         report['seconds'] = round(time.monotonic() - started, 3)
         report['source_after'] = source_metadata()
