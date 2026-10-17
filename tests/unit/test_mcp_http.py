@@ -5,6 +5,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
 
 import pytest
+from src.agents.gate import make_confirm_gate
 from src.tools.mcp_http import StreamableHTTPMCPClient, VERSION, header_paths, header_value
 from src.tools.mcp_client import MCPToolCall, MCPTransport, create_mcp_client
 
@@ -68,7 +69,7 @@ async def test_structured_result_survives_original_manager_executor_and_agent_wr
                      'protocol_version': version, 'url': url, 'credentialed': False}],
         'permissions': {'rules': [{'id': 'fixture-count', 'scope': 'global', 'action': 'allow',
                                    'server_names': ['fixture'], 'tool_names': ['count'], 'priority': 100}]}}))
-    manager, tools = await connect_mcp(str(tmp_path), capability_profile='external')
+    manager, tools = await connect_mcp(str(tmp_path), capability_profile='external', confirm=make_confirm_gate(auto_approve=True))
     try:
         result = await tools[0].handler({'count': 2})
         if server_error:
@@ -127,7 +128,7 @@ async def test_inline_media_crosses_http_manager_and_original_image_queue(endpoi
                      'protocol_version': '2025-06-18', 'url': url, 'credentialed': False}],
         'permissions': {'rules': [{'id': 'fixture-count', 'scope': 'global', 'action': 'allow',
                                    'server_names': ['fixture'], 'tool_names': ['count'], 'priority': 100}]}}))
-    manager, tools = await connect_mcp(str(tmp_path), capability_profile='external')
+    manager, tools = await connect_mcp(str(tmp_path), capability_profile='external', confirm=make_confirm_gate(auto_approve=True))
     traces = []
     agent = MainAgent(tools, on_tool_event=lambda *args: traces.append(args))
     reset_taint()
@@ -277,7 +278,7 @@ async def test_duplicate_tool_and_count_budget_fail_closed(endpoint):
 @pytest.mark.asyncio
 async def test_manager_explicit_protocol_respects_original_permission_gate(endpoint):
     from src.tools.manager import ToolManager
-    url,state=endpoint;manager=ToolManager()
+    url,state=endpoint;manager=ToolManager(confirm=make_confirm_gate(auto_approve=True))
     manager.config={'servers':[{'name':'fixture','transport':'http','protocol':'streamable_http','url':url}],
                     'permissions':{'rules':[{'id':'only-count','action':'allow','tool_names':['count'],'priority':200}]}}
     try:
@@ -291,7 +292,7 @@ async def test_manager_explicit_protocol_respects_original_permission_gate(endpo
 @pytest.mark.asyncio
 async def test_wrong_configured_version_never_contacts_endpoint(endpoint):
     from src.tools.manager import ToolManager
-    url,state=endpoint;manager=ToolManager()
+    url,state=endpoint;manager=ToolManager(confirm=make_confirm_gate(auto_approve=True))
     manager.config={'servers':[{'name':'fixture','transport':'http','protocol':'streamable_http',
                                 'protocol_version':'2024-11-05','url':url}]}
     try:

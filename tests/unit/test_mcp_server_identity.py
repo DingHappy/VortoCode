@@ -1,5 +1,6 @@
 """MCP server identity must survive collisions and failed catalogue refreshes."""
 import pytest
+from src.agents.gate import make_confirm_gate
 from src.agents.mcp_tools import wrap_mcp_manager
 from src.tools.registry import DynamicToolRegistry, Tool
 from src.tools.mcp_client import MCPTool, MCPToolResult, MCPTransport
@@ -43,7 +44,7 @@ async def test_failed_refresh_preserves_catalogue():
 async def test_identity_keeps_raw_permission_rules_and_alias_rate_counts():
     r=DynamicToolRegistry();a=Client('alpha');await r.register_mcp_server(a)
     pm=ToolPermissionManager();pm.add_rule(PermissionRule(id='deny',tool_names=['search'],action=PermissionAction.DENY,priority=200))
-    ex=ToolExecutor(r,pm);ex.mcp_clients={'alpha':a}
+    ex=ToolExecutor(r,pm,confirm=make_confirm_gate(auto_approve=True));ex.mcp_clients={'alpha':a}
     assert not (await ex.execute('mcp__alpha__search',{})).success
     assert a.calls==[]
     pm.add_rule(PermissionRule(id='allow',tool_names=['search'],server_names=['alpha'],action=PermissionAction.ALLOW,priority=300))
@@ -107,7 +108,7 @@ async def test_qualified_server_permission_does_not_authorize_other_source():
     r=DynamicToolRegistry();a=Client('alpha');b=Client('beta')
     await r.register_mcp_server(a);await r.register_mcp_server(b)
     pm=ToolPermissionManager();pm.add_rule(PermissionRule(id='alpha-only',tool_names=['mcp__alpha__search'],action=PermissionAction.ALLOW,priority=200))
-    ex=ToolExecutor(r,pm);ex.mcp_clients={'alpha':a,'beta':b}
+    ex=ToolExecutor(r,pm,confirm=make_confirm_gate(auto_approve=True));ex.mcp_clients={'alpha':a,'beta':b}
     assert (await ex.execute('mcp__alpha__search',{})).success
     assert not (await ex.execute('mcp__beta__search',{})).success
     assert not (await ex.execute('search',{})).success

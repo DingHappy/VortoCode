@@ -25,6 +25,39 @@ from src.agents.main_agent import make_confirm_gate
 ALL_ENDS = ["cli", "web", "im"]
 
 
+@pytest.mark.parametrize('kind', ALL_ENDS + ['desktop', 'unattended'])
+async def test_mcp_allow_follows_each_session_kernel_gate(kind, tmp_path, mcp_permission_probe, monkeypatch):
+    from src.gateway.agent_session import build_session
+    from src.agents.mcp_session import connect_agent
+    import src.agents.mcp_tools as module
+    from src.agents.capabilities import SessionCapabilities
+    async def fake_human(_): return True
+    agent = build_session(str(tmp_path), kind='web' if kind == 'desktop' else 'cli' if kind == 'unattended' else kind,
+                          confirm=fake_human, auto_approve=kind != 'unattended', allow_local_files=kind == 'desktop',
+                          can_ask_human=False, capability_profile='unattended' if kind == 'unattended' else 'external')
+    captured = []
+    async def connect(*args, **kwargs):
+        captured.append(kwargs['confirm'])
+        manager, tools, client = await mcp_permission_probe(kwargs['confirm'])
+        captured.append(client)
+        return manager, tools
+    monkeypatch.setattr(module, 'connect_mcp', connect)
+    await connect_agent(agent, str(tmp_path), confirm=fake_human)
+    assert captured[0] is agent._confirm_gate
+    name = 'mcp__probe__act'
+    try:
+        expected = int(kind not in ('desktop', 'unattended'))
+        first = await agent.tools[name].handler({})
+        assert (first == 'probe executed') is bool(expected)
+        taint.mark_tainted()
+        assert (await agent.tools[name].handler({}))['ok'] is False and captured[1].calls == expected
+        agent._capabilities = SessionCapabilities.for_profile('local', str(tmp_path))
+        await agent._run_tool(name, {}, 'build', lambda _: None)
+        assert captured[1].calls == expected
+    finally:
+        await agent._mcp_mgr.shutdown()
+
+
 @pytest.fixture(autouse=True)
 def _clean_taint():
     taint.reset_taint()

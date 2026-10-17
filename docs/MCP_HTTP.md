@@ -33,6 +33,10 @@ Web仍要求 `VORTOCODE_WEB_MCP=1`；没有自动启用、扫描第三方配置�
 Desktop项目/Scratch的local边界仍拒绝外部MCP；General不加载仓库Skill。
 Desktop插件页现有当前会话连接状态、手动连接/重试；local会话显示受限且禁用按钮。`ask`规则没有人工确认门时仍拒绝。
 
+`permissions.rules` 是额外过滤层，`allow` 不能授权执行或绕过污点。原执行器对每个 MCP
+调用执行内核确认判定，`allow` 和 `ask` 均须通过；`deny` 保持硬拒绝。没有确认门时失败关闭。
+Desktop/Web/IM 会话使用原会话 gate，CLI 的显式 `--yes` 仍受污点否决；TUI 保留原人工确认。
+
 未写 `protocol` 的旧配置继续使用 `legacy_rest`，走旧 `/health`、`/tools`、`/tools/call`。
 新模式只访问配置中的原始完整端点，不追加路径。2026版本不发送initialize/GET/DELETE；显式2025版本进行initialize、initialized通知、Session-Id传递及退出DELETE清理。
 `protocol`拼写错误或不在已支持版本列表内显式拒绝，不自动降级、重发或跟随HTTP重定向。

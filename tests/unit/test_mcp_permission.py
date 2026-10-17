@@ -64,7 +64,7 @@ async def test_ask_rule_denied_when_user_refuses():
     ex = ToolExecutor(_FakeRegistry(), _pm_with(PermissionAction.ASK), confirm=confirm)
     _stub(ex)
     r = await ex.execute("mcp__srv__write", {})
-    assert not r.success and "取消" in r.error
+    assert not r.success and "拒绝" in r.error
 
 
 @pytest.mark.asyncio
@@ -74,7 +74,7 @@ async def test_ask_rule_fail_closed_without_confirm_gate():
     _stub(ex)
     r = await ex.execute("mcp__srv__write", {})
     assert not r.success
-    assert "ask" in r.error and "确认门" in r.error       # 理由说清楚（此前是含糊的 permission denied）
+    assert "内核确认" in r.error       # 理由说清楚（此前是含糊的 permission denied）
 
 
 @pytest.mark.asyncio
@@ -89,7 +89,7 @@ async def test_confirm_gate_exception_denies():
 
 
 @pytest.mark.asyncio
-async def test_allow_rule_runs_without_asking():
+async def test_allow_rule_still_requires_kernel_confirmation():
     asked = []
 
     async def confirm(msg):
@@ -99,7 +99,7 @@ async def test_allow_rule_runs_without_asking():
     ex = ToolExecutor(_FakeRegistry(), _pm_with(PermissionAction.ALLOW), confirm=confirm)
     _stub(ex)
     r = await ex.execute("mcp__srv__write", {})
-    assert r.success and not asked                        # allow 不问
+    assert r.success and len(asked) == 1                  # allow 不能替代内核确认
 
 
 @pytest.mark.asyncio

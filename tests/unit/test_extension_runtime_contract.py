@@ -22,7 +22,8 @@ class FakeClient:
 async def test_registered_manager_routes_to_its_connected_client(monkeypatch):
     import src.tools.manager as module
     client=FakeClient();monkeypatch.setattr(module,"create_mcp_client",lambda *a,**k:client)
-    manager=ToolManager(confirm=lambda _:True)
+    from src.agents.gate import make_confirm_gate
+    manager=ToolManager(confirm=make_confirm_gate(auto_approve=True))
     manager.config={"servers":[{"name":"fixture","transport":"http","url":"http://fixture.invalid"}],"permissions":{"rules":[{"id":"fixture-only","scope":"global","action":"allow","tool_names":["count"],"priority":100}]}}
     try:
         assert await manager.initialize()

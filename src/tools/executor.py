@@ -63,7 +63,20 @@ class ToolExecutor:
         # 从来不"问"——配置在撒谎。
         # 修法**只往安全一侧靠**：有确认门就问、同意才放行；**没有确认门仍然拒绝**（fail-closed），
         # 只是把理由说清楚，绝不把"要问人"降级成"直接放行"。
-        if permission_result.requires_confirmation:
+        tool = self.tool_registry.get(tool_name)
+        if tool is not None and tool.server_name and (permission_result.allowed or permission_result.requires_confirmation):
+            # YAML ALLOW only passes the additional filter; it never authorizes a
+            # remote invocation. Even ASK uses this same final kernel decision.
+            from src.agents.gate import make_confirm_gate, request
+            try:
+                gate = make_confirm_gate(self.confirm, can_ask_human=self.confirm is not None)
+                approved = await request(gate, f"MCP 工具 `{tool_name}` 需要确认\n  参数：{arguments}")
+            except Exception:
+                approved = False
+            if not approved:
+                return ToolExecutionResult(success=False, tool_name=tool_name,
+                    error="MCP 调用未获内核确认，已拒绝执行", execution_time=time.time() - start_time)
+        elif permission_result.requires_confirmation:
             if self.confirm is None:
                 return ToolExecutionResult(
                     success=False,
