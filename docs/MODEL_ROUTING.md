@@ -156,6 +156,19 @@ VORTOCODE_MODEL_PRICES={"default:reader-model":{"input_per_million":1,"output_pe
 
 ## 外部执行者（Codex / Claude Code CLI）
 
+### 两种模式，别混
+
+| | 本机模式 | 常驻模式 |
+|---|---|---|
+| 场景 | 你自己电脑上的 Desktop / 终端 | 常驻电脑（服务器）上的 VortoCode 服务 |
+| 判定 | 没设 `VORTOCODE_WORKER_HOME` | 服务环境里设了 `VORTOCODE_WORKER_HOME` |
+| CLI 登录与配置 | 你的个人登录；透传个人配置里的模型选择 | 只用 `$VORTOCODE_WORKER_HOME/codex`、`/claude` 两个专用目录（0700），不碰服务账号 home 下任何个人配置 |
+| 在哪配置 | Desktop「设置 → 高级模型选项」 | 服务的 env 文件 / systemd drop-in |
+| 登录 | 平时怎么登就怎么登 | `vc workers login codex`（设备码）/ `vc workers login claude` |
+| 查看状态 | `vc workers status`、设置页 | 服务器上 `vc workers status`；本机 Desktop 通过 `/api/delegations/capabilities` 的 `external_workers` 只读查看 |
+
+Desktop 只改本机引擎，不远程改常驻电脑的配置。
+
 隔离 dev 流水线的「实现」和「审查」两个角色可以交给本机已安装、已登录的 Codex CLI 或 Claude Code CLI。拆解、worktree 隔离、自测重试、逐件和集成验证、确认门、开 PR 仍由 VortoCode 负责，外部执行者只负责在给定目录里写代码或给出审查结论。
 
 ```dotenv

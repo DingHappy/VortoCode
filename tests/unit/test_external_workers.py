@@ -60,8 +60,9 @@ def _fold(worker, events):
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch, tmp_path_factory):
     taint.reset_taint()
-    for name in (ew.ROLE_ENV, ew.TIMEOUT_ENV, "VORTOCODE_CODEX_BIN", "VORTOCODE_CLAUDE_BIN"):
+    for name in (ew.ROLE_ENV, ew.TIMEOUT_ENV, ew.WORKER_HOME_ENV, "VORTOCODE_CODEX_BIN", "VORTOCODE_CLAUDE_BIN"):
         monkeypatch.delenv(name, raising=False)
+    ew._SUMMARY_CACHE.clear()
     # 测试绝不读真实的 ~/.codex / ~/.claude：指到空目录
     empty = tmp_path_factory.mktemp("cli-home")
     monkeypatch.setenv("CODEX_HOME", str(empty))
@@ -192,6 +193,9 @@ if worker == "codex":
     if write:
         open("impl.txt", "w").write("done\\n")
         emit({{"type": "item.completed", "item": {{"type": "file_change", "changes": [{{"path": "impl.txt"}}]}}}})
+    if mode == "home":
+        emit({{"type": "item.completed", "item": {{"type": "agent_message",
+              "text": "home:" + os.environ.get("CODEX_HOME", "") + "|" + os.environ.get("CLAUDE_CONFIG_DIR", "")}}}})
     if mode == "web":
         emit({{"type": "item.completed", "item": {{"type": "web_search", "query": "q"}}}})
     emit({{"type": "item.completed", "item": {{"type": "agent_message", "text": "got:" + prompt[-12:]}}}})
@@ -537,3 +541,84 @@ def test_doctor_fails_when_logged_out_or_missing(fake_cli, tmp_path, monkeypatch
     monkeypatch.delenv("VORTOCODE_CODEX_BIN")
     check = _check_external_workers()
     assert check.level == "fail" and "找不到命令" in check.detail
+
+
+# ── 两种模式：本机（个人登录）/ 常驻（专用目录），不混 ──
+
+def test_resident_mode_never_reads_personal_cli_config(tmp_path, monkeypatch):
+    personal = tmp_path / "personal"
+    personal.mkdir()
+    (personal / "config.toml").write_text('model = "personal-model"\n')
+    (personal / "settings.json").write_text(json.dumps({"model": "personal-opus", "env": {"ANTHROPIC_BASE_URL": "https://p"}}))
+    monkeypatch.setenv("CODEX_HOME", str(personal))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(personal))
+    assert ew.worker_mode() == "local" and 'model="personal-model"' in ew.codex_user_overrides()
+
+    dedicated = tmp_path / "workers"
+    monkeypatch.setenv(ew.WORKER_HOME_ENV, str(dedicated))
+    assert ew.worker_mode() == "resident"
+    assert ew.codex_user_overrides() == [] and ew.user_config("claude") == ([], {})
+    (dedicated / "codex").mkdir(parents=True)
+    (dedicated / "codex" / "config.toml").write_text('model = "server-model"\n')
+    assert ew.codex_user_overrides() == ["-c", 'model="server-model"']   # 常驻电脑自己的配置照样生效
+
+
+def test_resident_mode_points_both_clis_at_private_dedicated_dirs(tmp_path, monkeypatch):
+    dedicated = tmp_path / "workers"
+    monkeypatch.setenv(ew.WORKER_HOME_ENV, str(dedicated))
+    env = ew.worker_env()
+    assert env["CODEX_HOME"] == str(dedicated / "codex") and env["CLAUDE_CONFIG_DIR"] == str(dedicated / "claude")
+    for sub in ("codex", "claude"):
+        assert (dedicated / sub).stat().st_mode & 0o777 == 0o700
+    monkeypatch.delenv(ew.WORKER_HOME_ENV)
+    assert ew.mode_env() == {}                                        # 本机模式不改 CLI 的 home
+
+
+async def test_resident_child_runs_against_dedicated_home(fake_cli, tmp_path, monkeypatch):
+    dedicated = tmp_path / "workers"
+    monkeypatch.setenv(ew.WORKER_HOME_ENV, str(dedicated))
+    monkeypatch.setenv("FAKE_MODE", "home")
+    run = await ew.run_worker("codex", "go", str(tmp_path), write=False)
+    assert f"home:{dedicated / 'codex'}|{dedicated / 'claude'}" in [e.text for e in run.events]
+
+
+def test_doctor_names_the_mode_and_resident_login_command(fake_cli, tmp_path, monkeypatch):
+    from src.gateway.doctor import _check_external_workers
+    monkeypatch.setenv(ew.ROLE_ENV, "implement=codex")
+    assert _check_external_workers().detail.startswith("本机模式·个人登录")
+    monkeypatch.setenv(ew.WORKER_HOME_ENV, str(tmp_path / "workers"))
+    monkeypatch.setenv("FAKE_LOGGED_OUT", "1")
+    check = _check_external_workers()
+    assert check.detail.startswith("常驻模式·专用登录") and "vc workers login codex" in check.detail
+
+
+def test_workers_login_only_writes_into_the_dedicated_home(fake_cli, tmp_path, monkeypatch, capsys):
+    import subprocess
+    from src import cli
+    calls = []
+    monkeypatch.setattr(subprocess, "run", lambda argv, env=None, **_: calls.append((argv, env)) or
+                        type("R", (), {"returncode": 0})())
+    assert cli.run_workers_cli("login", "codex") == 2 and not calls     # 本机模式：不替你改个人配置
+    assert "模式：本机" in capsys.readouterr().out
+    dedicated = tmp_path / "workers"
+    monkeypatch.setenv(ew.WORKER_HOME_ENV, str(dedicated))
+    assert cli.run_workers_cli("login", "codex") == 0
+    argv, env = calls[0]
+    assert argv[1:] == ["login", "--device-auth"] and env["CODEX_HOME"] == str(dedicated / "codex")
+
+
+async def test_capabilities_expose_mode_and_status_without_credentials(fake_cli, tmp_path, monkeypatch):
+    from src.web.routers.delegations import capabilities
+    monkeypatch.setenv(ew.ROLE_ENV, "implement=codex,review=claude")
+    monkeypatch.setenv(ew.WORKER_HOME_ENV, str(tmp_path / "workers"))
+    summary = (await capabilities())["external_workers"]
+    assert summary["mode"] == "resident" and summary["roles"] == {"implement": "codex", "review": "claude"}
+    assert {w["worker"]: w["logged_in"] for w in summary["workers"]} == {"claude": True, "codex": True}
+    assert set(summary["workers"][0]) == {"worker", "found", "logged_in", "auth", "model", "provider"}
+
+
+def test_summary_cache_drops_when_configuration_changes(fake_cli, monkeypatch):
+    monkeypatch.setenv(ew.ROLE_ENV, "implement=codex")
+    assert ew.workers_summary()["roles"] == {"implement": "codex"}
+    monkeypatch.setenv(ew.ROLE_ENV, "review=claude")
+    assert ew.workers_summary()["roles"] == {"review": "claude"}

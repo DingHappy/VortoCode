@@ -197,6 +197,12 @@ def main():
 
     sub.add_parser("doctor", help="一键自检：git/凭证/中转站/serve/权限文件/gh/IM——常驻化后'用不了'大多是管道问题")
 
+    p = sub.add_parser("workers", help="外部执行者（Codex / Claude Code CLI）：查看模式与状态，或在常驻电脑上登录专用账号")
+    workers_sub = p.add_subparsers(dest="workers_command")
+    workers_sub.add_parser("status", help="当前模式（本机 / 常驻）、角色分工、各 CLI 是否已装已登录、用哪个模型")
+    wl = workers_sub.add_parser("login", help="登录外部 CLI；常驻模式下登录进 VORTOCODE_WORKER_HOME 的专用目录")
+    wl.add_argument("worker", choices=["codex", "claude"])
+
     sub.add_parser("canary", help="端到端交付验收：一句话进来→确认→结果送到出站面，六条链路逐条验"
                                   "（不触网/不烧 token/不碰真工作区；部署后的强制关卡）")
 
@@ -350,6 +356,9 @@ def main():
 
     elif args.command == "doctor":
         sys.exit(asyncio.run(run_doctor()))
+
+    elif args.command == "workers":
+        sys.exit(run_workers_cli(args.workers_command or "status", getattr(args, "worker", "")))
 
     elif args.command == "canary":
         sys.exit(asyncio.run(run_canary_cli()))
@@ -1051,6 +1060,32 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
     if failed:
         raise SystemExit(1)
     return reply
+
+
+def run_workers_cli(command, worker=""):
+    """`vc workers status|login <cli>`：两种模式要分清，输出第一行永远先说明当前是哪种。"""
+    import subprocess
+    from src.agents import external_workers as ew
+    from src.gateway.doctor import _check_external_workers
+    home = ew.worker_home()
+    if home is None:
+        print("模式：本机（CLI 使用你的个人登录与个人配置里的模型选择）")
+    else:
+        print(f"模式：常驻（CLI 只用专用目录 {home}，不碰个人配置）")
+    if command == "status":
+        check = _check_external_workers()
+        print(f"{check.glyph} {check.detail}")
+        return 1 if check.level == "fail" else 0
+    if home is None:
+        print(f"本机模式下按平时的方式登录即可（{' '.join(ew.login_argv(worker)[1:])}）；"
+              "这里不替你改个人配置。常驻电脑请先在服务环境设 VORTOCODE_WORKER_HOME。")
+        return 2
+    if not ew.worker_binary(worker):
+        print(f"找不到 {worker} 命令：先安装，或设 VORTOCODE_{worker.upper()}_BIN")
+        return 1
+    target = ew.codex_home() if worker == "codex" else ew.claude_config_dir()
+    print(f"登录到 {target}（需要在真终端里交互完成）…")
+    return subprocess.run(ew.login_argv(worker), env=ew.worker_env()).returncode
 
 
 _CLI_SESSION = ".vortocode/cli_session.json"

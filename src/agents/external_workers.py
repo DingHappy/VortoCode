@@ -9,6 +9,14 @@ VortoCode 仍是中介：拆解、worktree 隔离、自测重试、逐件与集�
     VORTOCODE_EXTERNAL_WORKERS=implement=codex,review=claude
     VORTOCODE_EXTERNAL_WORKER_TIMEOUT=1800        # 单次运行秒数，超时杀整个进程组
     VORTOCODE_CODEX_BIN / VORTOCODE_CLAUDE_BIN    # 可选：CLI 路径（缺省走 PATH）
+    VORTOCODE_WORKER_HOME=~/.vortocode/workers    # 常驻模式：CLI 用这里的专用登录与配置
+
+两种模式（别混）：
+- **本机模式**（没设 VORTOCODE_WORKER_HOME）：Desktop / 终端在你自己的电脑上跑，CLI 用你的个人
+  登录，并透传你个人配置里的模型选择。
+- **常驻模式**（设了 VORTOCODE_WORKER_HOME）：常驻电脑上的服务。CLI 只用该目录下的专用登录与配置
+  （`codex/` 作 CODEX_HOME、`claude/` 作 CLAUDE_CONFIG_DIR），不碰服务账号 home 下任何人的个人配置。
+  用 `vc workers login codex|claude` 登录进去。
 
 安全边界（改之前先读 docs/MODEL_ROUTING.md「外部执行者」）：
 - 可写只在流水线给的一次性 worktree 里；审查一律只读。
@@ -113,7 +121,8 @@ def worker_binary(worker: str) -> Optional[str]:
 
 def worker_env() -> dict[str, str]:
     from src.sandbox.policy import child_env
-    return {k: v for k, v in child_env().items() if k not in _EXTRA_STRIPPED}
+    env = {k: v for k, v in child_env().items() if k not in _EXTRA_STRIPPED}
+    return {**env, **mode_env()}
 
 
 # ── 个人配置透传（只透传模型选择） ─────────────────────────────────────────
@@ -145,7 +154,23 @@ def _toml_value(value: Any) -> Optional[str]:
     return None
 
 
+WORKER_HOME_ENV = "VORTOCODE_WORKER_HOME"
+
+
+def worker_home() -> Optional[Path]:
+    """常驻模式的专用目录；本机模式返回 None。"""
+    raw = os.getenv(WORKER_HOME_ENV, "").strip()
+    return Path(raw).expanduser() if raw else None
+
+
+def worker_mode() -> str:
+    return "resident" if worker_home() is not None else "local"
+
+
 def codex_home() -> Path:
+    home = worker_home()
+    if home is not None:
+        return home / "codex"
     return Path(os.getenv("CODEX_HOME") or Path.home() / ".codex")
 
 
@@ -175,8 +200,30 @@ def codex_user_overrides(config_path: Optional[Path] = None) -> list[str]:
     return args
 
 
+def claude_config_dir() -> Path:
+    home = worker_home()
+    if home is not None:
+        return home / "claude"
+    return Path(os.getenv("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+
+
 def claude_settings_path() -> Path:
-    return Path(os.getenv("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "settings.json"
+    return claude_config_dir() / "settings.json"
+
+
+def mode_env() -> dict[str, str]:
+    """常驻模式下把两个 CLI 指到专用目录（不存在就建，权限 0700）；本机模式不改。"""
+    if worker_home() is None:
+        return {}
+    env = {}
+    for key, path in (("CODEX_HOME", codex_home()), ("CLAUDE_CONFIG_DIR", claude_config_dir())):
+        path.mkdir(parents=True, exist_ok=True)
+        try:
+            path.chmod(0o700)
+        except OSError:
+            pass
+        env[key] = str(path)
+    return env
 
 
 def claude_user_settings(settings_path: Optional[Path] = None) -> tuple[list[str], dict[str, str]]:
@@ -536,7 +583,8 @@ def describe_worker(worker: str) -> dict:
     """给 doctor / 设置页用：装没装、登没登录、实际用哪个模型。只读，不发模型请求。"""
     import subprocess
     info: dict = {"worker": worker, "binary": worker_binary(worker), "logged_in": None,
-                  "auth": "", "model": ""}
+                  "auth": "", "model": "", "mode": worker_mode(),
+                  "home": str(codex_home() if worker == "codex" else claude_config_dir())}
     extra, extra_env = user_config(worker)
     if "--model" in extra:
         info["model"] = extra[extra.index("--model") + 1]
@@ -569,3 +617,36 @@ def describe_worker(worker: str) -> dict:
         if extra_env.get("ANTHROPIC_BASE_URL"):
             info["provider"] = "ANTHROPIC_BASE_URL（第三方）"
     return info
+
+
+def login_argv(worker: str) -> list[str]:
+    """`vc workers login` 实际执行的命令：常驻电脑通常没有浏览器，Codex 走设备码。"""
+    binary = worker_binary(worker) or worker
+    if worker == "codex":
+        return [binary, "login", "--device-auth"]
+    return [binary, "auth", "login"]
+
+
+_SUMMARY_CACHE: dict = {}
+
+
+def workers_summary(max_age: float = 60.0) -> dict:
+    """给 /api/delegations/capabilities：本实例的执行者模式与状态（只读，不含凭据）。
+
+    登录检查要起子进程，按 max_age 缓存；配置一变（角色表 / 模式目录）立即失效。
+    """
+    import time
+    table = parse_role_workers(os.getenv(ROLE_ENV, ""))
+    key = (os.getenv(ROLE_ENV, ""), os.getenv(WORKER_HOME_ENV, ""))
+    cached = _SUMMARY_CACHE.get("value")
+    if cached and _SUMMARY_CACHE.get("key") == key and time.monotonic() - _SUMMARY_CACHE["at"] < max_age:
+        return cached
+    workers = []
+    for worker in sorted(set(table.values())):
+        info = describe_worker(worker)
+        workers.append({"worker": worker, "found": bool(info["binary"]), "logged_in": info["logged_in"],
+                        "auth": info["auth"], "model": info["model"], "provider": info.get("provider", "")})
+    value = {"mode": worker_mode(), "home": str(worker_home()) if worker_home() else None,
+             "roles": table, "workers": workers}
+    _SUMMARY_CACHE.update(value=value, key=key, at=time.monotonic())
+    return value

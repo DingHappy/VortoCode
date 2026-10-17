@@ -269,11 +269,13 @@ def _check_schedule_timezone(cwd: str) -> Check:
 
 def _check_external_workers() -> Check:
     """配了外部执行者（Codex / Claude Code CLI）时：装了没、登录了没、实际用哪个模型。"""
-    from src.agents.external_workers import ROLE_ENV, describe_worker, parse_role_workers
+    from src.agents.external_workers import ROLE_ENV, describe_worker, parse_role_workers, worker_home
     table = parse_role_workers(os.getenv(ROLE_ENV, ""))
     if not table:
         return Check("workers", "ok", "未配置外部执行者（实现/审查用内置子 Agent）")
-    parts, level = [], "ok"
+    home = worker_home()
+    parts = [f"常驻模式·专用登录 {home}" if home else "本机模式·个人登录"]
+    level = "ok"
     for role, worker in sorted(table.items()):
         info = describe_worker(worker)
         if not info["binary"]:
@@ -282,7 +284,8 @@ def _check_external_workers() -> Check:
             continue
         if info["logged_in"] is False:
             level = "fail"
-            login = "codex login" if worker == "codex" else "claude auth login"
+            login = (f"vc workers login {worker}" if home else
+                     "codex login" if worker == "codex" else "claude auth login")
             parts.append(f"{role}={worker}：未登录（在终端运行 {login}）")
             continue
         if info["logged_in"] is None and level == "ok":
