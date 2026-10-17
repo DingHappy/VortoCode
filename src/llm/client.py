@@ -509,6 +509,10 @@ class LLMConfig(BaseModel):
     retry_base_delay: float = 0.5      # 降级路径的退避基数（指数退避；测试可设 0 免真睡）
 
 
+
+class NativeToolsUnavailable(RuntimeError):
+    """本进程没有原生 function-calling 能力（缺 OpenAI SDK）：调用方应回退提示式协议，而不是重试。"""
+
 class LLMClient:
     """LLM 客户端 - OpenAI 兼容接口，带连接池复用"""
 
@@ -650,7 +654,7 @@ class LLMClient:
         if client is None:
             # Do not silently discard a caller's tool contract on the fallback path.
             if tools:
-                raise RuntimeError("原生工具调用需要 OpenAI SDK，请安装项目 llm 可选依赖")
+                raise NativeToolsUnavailable("原生工具调用需要 OpenAI SDK，请安装项目 llm 可选依赖")
             return await self._chat_with_requests(
                 messages, model, temperature, max_tokens
             )
