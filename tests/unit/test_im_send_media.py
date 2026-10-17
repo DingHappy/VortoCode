@@ -37,6 +37,27 @@ def _tools(tmp_path, confirm=None):
     return {t.name: t for t in build_im_media_tools(str(tmp_path), confirm=confirm)}
 
 
+async def test_media_registration_missing_registered_and_cleared(tmp_path):
+    from src.agents.tools.media import set_owner_media_sender
+    from src.gateway import im_runtime
+    (tmp_path / 'probe.txt').write_text('synthetic media')
+    async def yes(_): return True
+    calls = []
+    async def sender(*args): calls.append(args); return True
+    tool = _tools(tmp_path, yes)['send_file']
+    set_owner_media_sender(None)
+    try:
+        missing = await tool.handler({'path': 'probe.txt'})
+        assert missing['ok'] is False and '当前会话没有可用的 IM 通道' in missing['text']
+        im_runtime.set_owner_media_sender(sender)
+        assert '已发送' in await tool.handler({'path': 'probe.txt', 'caption': 'fixture'})
+        assert calls == [(str(tmp_path / 'probe.txt'), 'fixture', 'file')]
+        im_runtime.set_owner_media_sender(None)
+        assert (await tool.handler({'path': 'probe.txt'}))['ok'] is False and len(calls) == 1
+    finally:
+        im_runtime.set_owner_media_sender(None)
+
+
 # ---------------------------------------------------------------- 装配面
 
 def test_unattended_profile_has_no_media_tools(tmp_path):
@@ -60,7 +81,7 @@ async def test_rejects_path_outside_workspace(tmp_path, monkeypatch):
     async def _spy(path, caption, kind):
         sent.append(path)
         return True
-    monkeypatch.setattr("src.gateway.im_runtime.send_owner_media", _spy)
+    monkeypatch.setattr("src.agents.tools.media._OWNER_MEDIA_SENDER", _spy)
 
     async def _yes(_m):
         return True
@@ -87,7 +108,7 @@ async def test_denied_confirm_blocks_send(tmp_path, monkeypatch):
     async def _spy(path, caption, kind):
         sent.append(path)
         return True
-    monkeypatch.setattr("src.gateway.im_runtime.send_owner_media", _spy)
+    monkeypatch.setattr("src.agents.tools.media._OWNER_MEDIA_SENDER", _spy)
 
     async def _no(_m):
         return False
@@ -112,7 +133,7 @@ async def test_tainted_turn_must_ask_human(tmp_path, monkeypatch):
     async def _spy(path, caption, kind):
         sent.append(path)
         return True
-    monkeypatch.setattr("src.gateway.im_runtime.send_owner_media", _spy)
+    monkeypatch.setattr("src.agents.tools.media._OWNER_MEDIA_SENDER", _spy)
 
     async def _ask(msg):
         asked.append(msg)
@@ -139,12 +160,12 @@ async def test_reports_honestly_when_no_bridge(tmp_path, monkeypatch):
 
     async def _none(path, caption, kind):
         return False                      # 没桥 / 通道不支持
-    monkeypatch.setattr("src.gateway.im_runtime.send_owner_media", _none)
+    monkeypatch.setattr("src.agents.tools.media._OWNER_MEDIA_SENDER", _none)
 
     async def _yes(_m):
         return True
     out = await _tools(tmp_path, _yes)["send_image"].handler({"path": "a.png"})
-    assert "未发送" in out and "仍在原路径" in out
+    assert out["ok"] is False and "未发送" in out["text"] and "仍在原路径" in out["text"]
 
 
 async def test_sends_with_caption_and_kind(tmp_path, monkeypatch):
@@ -154,7 +175,7 @@ async def test_sends_with_caption_and_kind(tmp_path, monkeypatch):
     async def _spy(path, caption, kind):
         got.update(path=path, caption=caption, kind=kind)
         return True
-    monkeypatch.setattr("src.gateway.im_runtime.send_owner_media", _spy)
+    monkeypatch.setattr("src.agents.tools.media._OWNER_MEDIA_SENDER", _spy)
 
     async def _yes(_m):
         return True

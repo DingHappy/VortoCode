@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+from importlib.util import resolve_name
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,38 @@ from fastapi import HTTPException
 SRC = Path(__file__).resolve().parents[2] / "src"
 FRONTENDS = {"web", "tui", "im"}          # 前端/传输层：可以依赖下层，反之不行
 ENTRYPOINTS = {"cli.py"}                  # 命令行入口负责把各端装起来
+
+
+def _imports(path, root=SRC):
+    rel = path.relative_to(root).with_suffix('')
+    package = '.'.join(('src', *rel.parts[:-1]))
+    for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                yield node.lineno, alias.name
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ''
+            if node.level:
+                module = resolve_name('.' * node.level + module, package)
+            yield node.lineno, module
+            for alias in node.names:
+                yield node.lineno, module + '.' + alias.name
+
+
+@pytest.mark.parametrize('module', ['agents/gate.py', 'agents/taint.py', 'agents/capabilities.py',
+                                    'memory/write_policy.py', 'sandbox/policy.py'])
+def test_security_core_never_imports_upper_layers(module):
+    forbidden = tuple('src.' + name for name in ('workflow', 'gateway', 'scheduling', 'web', 'tui', 'im'))
+    found = [(line, name) for line, name in _imports(SRC / module)
+             if any(name == prefix or name.startswith(prefix + '.') for prefix in forbidden)]
+    assert not found, f'{module}: {found}'
+
+
+def test_import_walker_catches_delayed_alias_and_relative_imports(tmp_path):
+    path = tmp_path / 'agents/probe.py'; path.parent.mkdir()
+    path.write_text('def delayed():\n    from src import workflow as wf\n    import src.gateway as gw\n    from .. import scheduling\n    from ..web import router\n')
+    names = {name for _, name in _imports(path, tmp_path)}
+    assert {'src.workflow', 'src.gateway', 'src.scheduling', 'src.web'} <= names
 
 
 def test_lower_layers_never_import_web_or_tui():

@@ -11,6 +11,14 @@ from typing import Callable, Optional
 from src.agents.tool import Tool
 from src.agents.tools.files import _resolve_within
 
+_OWNER_MEDIA_SENDER = None
+
+
+def set_owner_media_sender(sender) -> None:
+    """Composition hook: async (path, caption, kind) -> bool; None disconnects."""
+    global _OWNER_MEDIA_SENDER
+    _OWNER_MEDIA_SENDER = sender
+
 
 def build_im_media_tools(repo_root: str, confirm: Optional[Callable] = None) -> list[Tool]:
     """把图片/文件推给**已配对的 owner**（目前钉钉/Telegram）。
@@ -43,10 +51,15 @@ def build_im_media_tools(repo_root: str, confirm: Optional[Callable] = None) -> 
                                f"（{p.stat().st_size // 1024} KB）")
             if not ok:
                 return "已取消：用户未放行本次发送。"
-        from src.gateway.im_runtime import send_owner_media
-        sent = await send_owner_media(str(p), caption, kind)
-        return (f"✅ 已发送 {p.name} 到 IM。" if sent
-                else "未发送：当前没有已连接的 IM 桥，或该通道不支持发媒体（内容仍在原路径）。")
+        sender = _OWNER_MEDIA_SENDER
+        if sender is None:
+            return {"ok": False, "text": "未发送：当前会话没有可用的 IM 通道（内容仍在原路径）。"}
+        try:
+            sent = bool(await sender(str(p), caption, kind))
+        except Exception:
+            sent = False
+        return (f"✅ 已发送 {p.name} 到 IM。" if sent else
+                {"ok": False, "text": "未发送：当前没有已连接的 IM 桥，或该通道不支持发媒体（内容仍在原路径）。"})
 
     async def _send_document(args: dict) -> str:
         """把一段**内容**落成文件再发出去。
@@ -77,6 +90,8 @@ def build_im_media_tools(repo_root: str, confirm: Optional[Callable] = None) -> 
         except OSError as e:
             return f"落盘失败：{e}"
         result = await _send({"path": str(target.relative_to(base)), "caption": caption}, "file")
+        if isinstance(result, dict):
+            return {**result, "text": result["text"] + f"（已落盘 {target.relative_to(base)}）"}
         return f"{result}（已落盘 {target.relative_to(base)}）"
 
     return [

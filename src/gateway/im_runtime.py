@@ -29,6 +29,8 @@ def set_owner_media_sender(sender) -> None:
     """注册"给 owner 发媒体"的出口（签名 async (path, caption, kind) -> bool）。"""
     global _OWNER_MEDIA_SENDER
     _OWNER_MEDIA_SENDER = sender
+    from src.agents.tools.media import set_owner_media_sender as register_sender
+    register_sender(send_owner_media if sender is not None else None)
 
 
 async def send_owner_media(path: str, caption: str = "", kind: str = "image") -> bool:

@@ -53,9 +53,12 @@ vc --help                        # 全部子命令：tui/server/agent/self-*/im/
 - **记忆写入策略** `src/memory/write_policy.py`：durable/proposal/quarantine/reject 四级；污点回合的指令性文本与疑似凭据不进长期记忆。
 - **前缀缓存稳定**：system prompt 在**同一会话内必须字节级稳定**（静态注入，装配时读一次），否则破坏 relay 侧前缀缓存命中。仓库记忆（`src/agents/repo_memory.py`）等静态注入项都遵守这条。
 
-**模块分层（2026-08-03 拆分后）**：`main_agent.py`（工具工厂：dev/research/subagent）→ `agent_loop.py`（`MainAgent` 与协议解析/上下文预算）→ `tools/*`（无状态工具）。**方向单一不成环**——工具工厂要用 MainAgent 起子 agent，所以 MainAgent 必须在下游。TUI 同理：`tui/app.py`（界面）→ `tui/commands.py`（38 个斜杠命令的 mixin）。
+**运行循环与能力装配分离**：`agents/agent_loop.py` 消费共享 Tool 协议，负责模型回合、权限检查、上下文预算与 Hook；`main_agent.py`、`delegation.py`、`dev_tools.py` 和 `agents/tools/*` 等负责具体能力及业务装配，可组合公开的 workflow/scheduling 服务。工具实现并非一律无状态，不能把整个 `agents/` 都描述为不依赖业务层的底层内核。TUI 的 `app.py` → `commands.py` mixin 关系保持现状，不在此轮拆分。
 
-**包布局（2026-10-10 拆 gateway 后）**：依赖方向 前端（`tui/` `web/` `im/` `desktop/`）→ `gateway/` → `workflow/`·`scheduling/` → 内核（`agents/` `tools/` `llm/` `memory/`）。
+**包布局**：这是共享 runtime 的装配分层，不是按包名划一条绝对单向链。
+- **安全核心**：`agents/gate.py`、`agents/taint.py`、`agents/capabilities.py`、`memory/write_policy.py`、`sandbox/policy.py` 是底层策略；`agents/agent_loop.py` 承担底层模型回合与工具运行。五个策略模块不得导入 `workflow`、`gateway`、`scheduling`、`web`、`tui`、`im`，含函数内和相对 import，由 `tests/unit/test_layering.py` 的 AST 契约钉住。
+- **工具工厂/能力装配**：`agents/main_agent.py`、`delegation.py`、`dev_tools.py`、`task_questions.py`、`dispatch.py`、`pipeline_exec.py`、`dev_policy.py`、`agents/tools/*` 等可在函数内组合 `workflow` / `scheduling` 的公开 API，不向 `gateway` 或前端反向取业务能力。媒体发送通过下层注册钩子接线。
+- `agents/mcp_session.py` 是现有会话装配例外，仍使用 `gateway.workspace_scope` 的作用域规范化；因此本轮没有声称整个 `agents/` 都不得导入 `gateway`，也没有加条件不成立的全包断言。安全核心名单不因该例外放宽。
 - `gateway/`：只管会话装配与传输——`agent_session`/`session`/`sessions`/`session_actor`/事件流/`protocol`/`client`/`runtime`/`audit`/IM 内嵌服务。
 - `workflow/tasks`：后台任务台账与协作（委派/依赖/续跑/提问/看板投影）；`workflow/review`：Git 评审与交付；`workflow/workbench`：Desktop 工作台（目标/命令运行/终端/日志）；`workflow/pipeline`：非代码流水线。
 - `scheduling/`：cron/heartbeat/自愈/通知台账/中转巡检。
