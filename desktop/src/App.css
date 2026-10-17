@@ -9359,7 +9359,8 @@ input::placeholder {
   line-height: 17px;
 }
 
-.custom-providers-note.danger {
+.custom-providers-note.danger,
+.llm-routing-fields small.danger {
   color: var(--red-text);
 }
 

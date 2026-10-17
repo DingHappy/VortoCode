@@ -1460,6 +1460,12 @@ export interface DesktopLlmProviderStatus {
 }
 
 /** 设置 → 浏览器操控。 */
+export interface ExternalWorkerStatus {
+  worker: string;
+  label: string;
+  path?: string | null;
+}
+
 export interface BrowserControlStatus {
   enabled: boolean;
   browserPath?: string | null;

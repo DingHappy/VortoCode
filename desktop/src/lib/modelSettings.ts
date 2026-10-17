@@ -1,6 +1,6 @@
 import { isLocalModelBase, sameLlmBase } from "./providers";
 import type { ProviderPreset } from "./providers";
-import type { DesktopLlmProfileStatus } from "../types";
+import type { DesktopLlmProfileStatus, ExternalWorkerStatus } from "../types";
 import { availableModels } from "./modelChoice";
 
 export function roleModelOptions(profile: DesktopLlmProfileStatus | null) {
@@ -9,6 +9,13 @@ export function roleModelOptions(profile: DesktopLlmProfileStatus | null) {
   return [...defaults.map(model => ({ value: `default:${model}`, label: `默认服务 · ${model}` })),
     ...(profile.providers ?? []).filter(provider => provider.hasKey || isLocalModelBase(provider.baseUrl))
       .flatMap(provider => provider.models.map(model => ({ value: `${provider.id}:${model}`, label: `${provider.name} · ${model}` })))];
+}
+
+/** 实现 / 审查角色可选的外部 CLI；检测结果只影响标签，不影响能否保存（引擎会如实报「找不到」）。 */
+export function externalWorkerOptions(workers: ExternalWorkerStatus[] | null) {
+  return (workers ?? [{ worker: "codex", label: "Codex CLI（本机）" }, { worker: "claude", label: "Claude Code CLI（本机）" }])
+    .map(item => ({ value: `cli:${item.worker}`,
+      label: `${item.label}${workers === null ? "" : item.path ? " · 已安装" : " · 未找到"}` }));
 }
 
 export type ModelDraft = { baseUrl: string; model: string; apiKey: string; fastModel: string; strongModel: string; roleModels?: Record<string, string> };
