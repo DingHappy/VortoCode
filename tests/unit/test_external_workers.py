@@ -65,6 +65,7 @@ def _clean(monkeypatch, tmp_path_factory):
     for name in (ew.ROLE_ENV, ew.TIMEOUT_ENV, ew.WORKER_HOME_ENV, "VORTOCODE_CODEX_BIN", "VORTOCODE_CLAUDE_BIN"):
         monkeypatch.delenv(name, raising=False)
     ew._SUMMARY_CACHE.clear()
+    ew._COOLDOWN_UNTIL.clear()
     # 测试绝不读真实的 ~/.codex / ~/.claude，也不能在 ~/.nvm 等兜底位置找到真 CLI：HOME 一并指到空目录
     empty = tmp_path_factory.mktemp("cli-home")
     monkeypatch.setenv("HOME", str(empty))
@@ -188,6 +189,12 @@ if mode == "sleep":
 if mode == "fail":
     print("login required", file=sys.stderr)
     sys.exit(3)
+if mode == "limit":
+    print("You've hit your usage limit. Try again later.", file=sys.stderr)
+    sys.exit(1)
+if mode == "crash":
+    print("Traceback: SyntaxError in generated file", file=sys.stderr)
+    sys.exit(1)
 if os.environ.get("FAKE_LEAK"):
     emit({{"type": "item.completed", "item": {{"type": "agent_message",
           "text": "env:" + ",".join(k for k in ("OPENAI_API_KEY", "GITHUB_TOKEN") if k in os.environ)}}}})
@@ -656,3 +663,86 @@ async def test_child_path_starts_with_the_cli_directory(fake_cli, tmp_path, monk
     run = await ew.run_worker("codex", "go", str(tmp_path), write=False)
     assert run.ok                                                   # 假 CLI 的 shebang 解释器不受影响
     assert ew._env_for(ew.worker_binary("codex"), {"PATH": "/usr/bin"})["PATH"].startswith(str(fake_cli))
+
+
+# ── 执行者不可用 → 内置子 Agent 接手 + 冷却 ──
+
+def test_unavailable_signals_versus_ordinary_failures():
+    assert ew.is_unavailable(ew.WorkerRun("codex", error="codex 退出码 1：You've hit your usage limit"))
+    assert ew.is_unavailable(ew.WorkerRun("claude", error="Invalid API key · Please run /login"))
+    assert ew.is_unavailable(ew.WorkerRun("codex", error="找不到 codex 命令"))
+    assert not ew.is_unavailable(ew.WorkerRun("codex", error="codex 退出码 1：SyntaxError in generated file"))
+    run = _fold("claude", [{"type": "rate_limit_event", "rate_limit_info": {"status": "rejected"}}])
+    assert run.rate_limited and ew.is_unavailable(run)
+    assert not _fold("claude", [{"type": "rate_limit_event", "rate_limit_info": {"status": "allowed"}}]).rate_limited
+
+
+class _Internal:
+    def __init__(self):
+        self.calls = []
+
+    async def run_turn(self, message, mode="build", emit=None, **_):
+        self.calls.append((message, mode))
+        return "internal did it"
+
+
+async def test_unavailable_worker_hands_the_block_to_the_internal_agent(fake_cli, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_MODE", "limit")
+    internal, progress = _Internal(), []
+    agent = ew.ExternalWorkerAgent("codex", str(tmp_path), write=True, fallback=lambda: internal,
+                                   on_progress=progress.append)
+    assert await agent.run_turn("implement it") == "internal did it"
+    assert internal.calls == [("implement it", "build")]
+    assert ew.cooling_down("codex") and not ew.cooling_down("claude")
+    assert any("不可用" in line and "内置子 Agent 接手" in line for line in progress)
+
+
+async def test_ordinary_failures_still_raise_for_the_pipeline_retry(fake_cli, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_MODE", "crash")
+    internal = _Internal()
+    agent = ew.ExternalWorkerAgent("codex", str(tmp_path), write=True, fallback=lambda: internal)
+    with pytest.raises(ew.ExternalWorkerError, match="SyntaxError"):
+        await agent.run_turn("go")
+    assert internal.calls == [] and not ew.cooling_down("codex")
+
+
+async def test_without_fallback_unavailable_still_fails_honestly(fake_cli, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_MODE", "limit")
+    with pytest.raises(ew.ExternalWorkerError, match="usage limit"):
+        await ew.ExternalWorkerAgent("codex", str(tmp_path), write=True).run_turn("go")
+
+
+def test_cooling_worker_is_skipped_until_the_cooldown_ends(monkeypatch, tmp_path):
+    monkeypatch.setenv(ew.ROLE_ENV, "implement=codex")
+    ew.start_cooldown("codex")
+    progress = []
+    assert ew.external_agent_for_role("implement", str(tmp_path), on_progress=progress.append) is None
+    assert progress and "冷却中" in progress[0]
+    ew._COOLDOWN_UNTIL["codex"] = 0
+    assert ew.external_agent_for_role("implement", str(tmp_path)) is not None
+    monkeypatch.setenv(ew.COOLDOWN_ENV, "0")
+    ew.start_cooldown("codex")
+    assert not ew.cooling_down("codex")                            # 0 = 不冷却，每块都再试一次
+
+
+async def test_dev_isolated_external_implementer_falls_back_to_the_internal_writer(fake_cli, tmp_path, monkeypatch):
+    import src.agents.worktree as worktree
+    from src.agents.main_agent import build_dev_tools
+
+    monkeypatch.setenv(ew.ROLE_ENV, "implement=codex")
+    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "1")
+    built = []
+
+    async def fake_run_isolated_task(_repo_root, _wid, desc, build_agent, test_cmd=None, **_kw):
+        work = tmp_path / "wt"
+        work.mkdir(exist_ok=True)
+        built.append(build_agent(str(work)))
+        return "", "", None
+
+    monkeypatch.setattr(worktree, "run_isolated_task", fake_run_isolated_task)
+    tools = {t.name: t for t in build_dev_tools(str(tmp_path))}
+    await tools["dev_isolated"].handler({"description": "add impl"})
+    external = built[0]
+    assert isinstance(external, ew.ExternalWorkerAgent) and external.fallback is not None
+    internal = external.fallback()
+    assert not isinstance(internal, ew.ExternalWorkerAgent) and "write_file" in internal.tools

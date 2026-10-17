@@ -76,6 +76,7 @@ class WorkerRun:
     error: str = ""
     exit_code: Optional[int] = None
     used_network: bool = False
+    rate_limited: bool = False
     cost_usd: Optional[float] = None
     usage: dict = field(default_factory=dict)
 
@@ -379,6 +380,11 @@ def parse_claude_event(obj: dict) -> list[WorkerEvent]:
                 else:
                     events.append(WorkerEvent("tool", f"{name} {detail}".strip(), {"network": network}))
         return events
+    if kind == "rate_limit_event":
+        info = obj.get("rate_limit_info") if isinstance(obj.get("rate_limit_info"), dict) else {}
+        if str(info.get("status") or "").lower() == "rejected":
+            return [WorkerEvent("error", "订阅额度已用完（rate limit rejected）", {"rate_limited": True})]
+        return []
     if kind == "result":
         data = {"session_id": str(obj.get("session_id") or ""), "subtype": obj.get("subtype"),
                 "cost_usd": obj.get("total_cost_usd"), "usage": obj.get("usage") or {},
@@ -412,6 +418,8 @@ def fold_event(run: WorkerRun, event: WorkerEvent) -> None:
             run.session_id = event.data["session_id"]
     if event.data.get("network"):
         run.used_network = True
+    if event.data.get("rate_limited"):
+        run.rate_limited = True
 
 
 # ── 运行 ──────────────────────────────────────────────────────────────────
@@ -518,6 +526,45 @@ def describe_event(worker: str, event: WorkerEvent) -> str:
     return ""
 
 
+# ── 不可用 → 切换到内置子 Agent ────────────────────────────────────────────
+# 「执行者不可用」（没装、没登录、额度/限流）和「执行者干砸了」是两回事：前者换个执行者就能继续，
+# 后者交给流水线原有的重试与自修复。只有前者切换，并让该执行者冷却一段时间，后面的块直接用内置的。
+COOLDOWN_ENV = "VORTOCODE_EXTERNAL_WORKER_COOLDOWN_MIN"
+_UNAVAILABLE_SIGNALS = (
+    "找不到", "not logged in", "please run /login", "run /login", "login required", "unauthorized",
+    "authentication", "oauth token", "invalid api key", "401", "usage limit", "rate limit",
+    "rate_limit", "limit reached", "quota", "429", "credit balance", "insufficient_quota",
+)
+_COOLDOWN_UNTIL: dict[str, float] = {}
+
+
+def is_unavailable(run: WorkerRun) -> bool:
+    if run.rate_limited:
+        return True
+    text = (run.error or "").lower()
+    return any(signal in text for signal in _UNAVAILABLE_SIGNALS)
+
+
+def _cooldown_seconds() -> float:
+    try:
+        minutes = float(os.getenv(COOLDOWN_ENV, "30") or 30)
+    except ValueError:
+        minutes = 30.0
+    return max(0.0, minutes) * 60
+
+
+def cooling_down(worker: str) -> bool:
+    import time
+    return _COOLDOWN_UNTIL.get(worker, 0.0) > time.monotonic()
+
+
+def start_cooldown(worker: str) -> None:
+    import time
+    seconds = _cooldown_seconds()
+    if seconds > 0:
+        _COOLDOWN_UNTIL[worker] = time.monotonic() + seconds
+
+
 QUESTION_MARKER = "VORTO_QUESTION"
 QUESTION_RULES = (
     "\n\n【缺少必要事实时】不要猜测，也不要改与任务无关的东西。先停止修改，"
@@ -555,9 +602,11 @@ class ExternalWorkerAgent:
     def __init__(self, worker: str, cwd: str, *, write: bool, system: str = "",
                  capabilities: Any = None,
                  on_progress: Optional[Callable[[str], None]] = None,
-                 question: Any = None) -> None:
+                 question: Any = None, fallback: Optional[Callable[[], Any]] = None) -> None:
         if worker not in WORKERS:
             raise ValueError(f"未知外部执行者 {worker!r}")
+        # 执行者不可用时接手的内置子 Agent 工厂（同一 worktree、同一提问绑定）；不给则如实失败
+        self.fallback = fallback
         self.worker, self.cwd, self.write, self.system = worker, str(cwd), write, system
         # 开发任务的提问绑定（task_questions.DevelopmentQuestionBinding）：执行者没有我们的工具，
         # 只能按约定输出一行 VORTO_QUESTION；由这里替它调用同一个 ask_task_question。
@@ -588,6 +637,12 @@ class ExternalWorkerAgent:
         if run.used_network:
             mark_tainted()
         if not run.ok:
+            if self.fallback is not None and is_unavailable(run):
+                start_cooldown(self.worker)
+                if self.on_progress is not None:
+                    self.on_progress(f"[{self.worker}] 不可用（{(run.error or '')[:60]}），本块改由内置子 Agent 接手；"
+                                     f"{int(_cooldown_seconds() // 60)} 分钟内不再派给 {self.worker}")
+                return await self.fallback().run_turn(message, mode=mode, emit=emit)
             raise ExternalWorkerError(run.error or f"{self.worker} 未给出结果")
         asked = parse_question(run.final_text)
         if asked is not None:
@@ -601,14 +656,19 @@ class ExternalWorkerAgent:
 
 def external_agent_for_role(role: str, cwd: str, *, system: str = "", capabilities: Any = None,
                             on_progress: Optional[Callable[[str], None]] = None,
-                            question: Any = None) -> Optional[ExternalWorkerAgent]:
-    """角色配了外部执行者就造一个；没配返回 None（调用方照旧用内部子 agent）。"""
+                            question: Any = None, fallback: Optional[Callable[[], Any]] = None
+                            ) -> Optional[ExternalWorkerAgent]:
+    """角色配了外部执行者就造一个；没配、或它正在冷却，返回 None（调用方照旧用内部子 agent）。"""
     worker = worker_for_role(role)
     if worker is None:
         return None
+    if cooling_down(worker):
+        if on_progress is not None:
+            on_progress(f"[{worker}] 冷却中（刚才不可用），本块用内置子 Agent")
+        return None
     return ExternalWorkerAgent(worker, cwd, write=role == "implement", system=system,
                                capabilities=capabilities, on_progress=on_progress,
-                               question=question if role == "implement" else None)
+                               question=question if role == "implement" else None, fallback=fallback)
 
 
 def describe_worker(worker: str) -> dict:
