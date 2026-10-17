@@ -334,15 +334,50 @@ def describe_event(worker: str, event: WorkerEvent) -> str:
     return ""
 
 
+QUESTION_MARKER = "VORTO_QUESTION"
+QUESTION_RULES = (
+    "\n\n【缺少必要事实时】不要猜测，也不要改与任务无关的东西。先停止修改，"
+    f"然后让最后一条回复只包含一行：{QUESTION_MARKER} " + '{"question": "具体问题", '
+    '"options": ["最多 3 个建议答案"], "context": "已确认的事实、文件证据和未完成内容"}'
+    "\n这一行会转给人回答；回答后会在干净的工作区重新实现本块，未提交的改动不会保留。"
+)
+
+
+def parse_question(text: str) -> Optional[dict]:
+    """从结论里找 `VORTO_QUESTION {json}` 行；JSON 坏了就把整行余下部分当问题，不丢。"""
+    for line in reversed((text or "").splitlines()):
+        stripped = line.strip().strip("`").strip()
+        if not stripped.startswith(QUESTION_MARKER):
+            continue
+        rest = stripped[len(QUESTION_MARKER):].strip().lstrip(":：").strip()
+        try:
+            data = json.loads(rest)
+        except ValueError:
+            data = {"question": rest}
+        if not isinstance(data, dict):
+            data = {"question": str(data)}
+        question = str(data.get("question") or "").strip()
+        if not question:
+            return None
+        options = data.get("options") if isinstance(data.get("options"), list) else []
+        return {"question": question[:2000], "options": [str(o)[:200] for o in options[:3]],
+                "context": str(data.get("context") or "")[:4000]}
+    return None
+
+
 class ExternalWorkerAgent:
     """与 MainAgent 同形的最小适配：流水线只调 `run_turn`。"""
 
     def __init__(self, worker: str, cwd: str, *, write: bool, system: str = "",
                  capabilities: Any = None,
-                 on_progress: Optional[Callable[[str], None]] = None) -> None:
+                 on_progress: Optional[Callable[[str], None]] = None,
+                 question: Any = None) -> None:
         if worker not in WORKERS:
             raise ValueError(f"未知外部执行者 {worker!r}")
         self.worker, self.cwd, self.write, self.system = worker, str(cwd), write, system
+        # 开发任务的提问绑定（task_questions.DevelopmentQuestionBinding）：执行者没有我们的工具，
+        # 只能按约定输出一行 VORTO_QUESTION；由这里替它调用同一个 ask_task_question。
+        self.question = question
         self.capabilities = capabilities
         self.on_progress = on_progress
         self.tools: dict = {}
@@ -358,23 +393,35 @@ class ExternalWorkerAgent:
             if line and self.on_progress is not None:
                 self.on_progress(line)
 
+        tool = getattr(self.question, "tool", None)
+        system = self.system + (QUESTION_RULES if tool is not None else "")
+        from src.agents.taint import mark_tainted
+        if getattr(self.question, "tainted", False):
+            mark_tainted()                     # 之前的问答来自不可信回合：本回合同样按污点处理
         run = await run_worker(self.worker, message, self.cwd, write=self.write and mode != "plan",
-                               system=self.system, on_event=_event)
+                               system=system, on_event=_event)
         self.last_run = run
         if run.used_network:
-            from src.agents.taint import mark_tainted
             mark_tainted()
         if not run.ok:
             raise ExternalWorkerError(run.error or f"{self.worker} 未给出结果")
+        asked = parse_question(run.final_text)
+        if asked is not None:
+            if tool is None:                   # 没有提问通道（非开发任务 / 提问次数用尽）：如实失败，不装成结论
+                raise ExternalWorkerError(f"{self.worker} 需要人工确认但当前任务不能提问：{asked['question'][:300]}")
+            if self.on_progress is not None:
+                self.on_progress(f"[{self.worker}] 提问：{asked['question'][:100]}")
+            await tool.handler(asked)          # 落台账并抛 ToolTurnYield，与内部子 agent 提问同一路径
         return run.final_text
 
 
 def external_agent_for_role(role: str, cwd: str, *, system: str = "", capabilities: Any = None,
-                            on_progress: Optional[Callable[[str], None]] = None
-                            ) -> Optional[ExternalWorkerAgent]:
+                            on_progress: Optional[Callable[[str], None]] = None,
+                            question: Any = None) -> Optional[ExternalWorkerAgent]:
     """角色配了外部执行者就造一个；没配返回 None（调用方照旧用内部子 agent）。"""
     worker = worker_for_role(role)
     if worker is None:
         return None
     return ExternalWorkerAgent(worker, cwd, write=role == "implement", system=system,
-                               capabilities=capabilities, on_progress=on_progress)
+                               capabilities=capabilities, on_progress=on_progress,
+                               question=question if role == "implement" else None)

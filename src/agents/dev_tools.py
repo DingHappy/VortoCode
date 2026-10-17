@@ -161,7 +161,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 # 自测重试、逐件/集成验证、落分支照旧由本流水线负责。
                 from src.agents.external_workers import external_agent_for_role
                 external = external_agent_for_role("implement", wt, system=extra,
-                                                   capabilities=capabilities, on_progress=_progress)
+                                                   capabilities=capabilities, on_progress=_progress,
+                                                   question=question)
                 if external is not None:
                     return external
                 tools = build_read_tools(wt) + build_write_tools(wt) + [build_test_tool(wt, test_cmd)]

@@ -183,6 +183,14 @@ if worker == "codex":
     if mode == "web":
         emit({{"type": "item.completed", "item": {{"type": "web_search", "query": "q"}}}})
     emit({{"type": "item.completed", "item": {{"type": "agent_message", "text": "got:" + prompt[-12:]}}}})
+    emit({{"type": "item.completed", "item": {{"type": "agent_message",
+          "text": "rules:" + str("VORTO_QUESTION" in prompt)}}}})
+    if mode == "ask":
+        emit({{"type": "item.completed", "item": {{"type": "agent_message", "text":
+              'I cannot tell which rounding to use.\\nVORTO_QUESTION {{"question": "Round half up or half even?", '
+              '"options": ["half up", "half even"], "context": "calc.py has no rounding yet"}}'}}}})
+        emit({{"type": "turn.completed", "usage": {{}}}})
+        sys.exit(0)
     emit({{"type": "item.completed", "item": {{"type": "agent_message", "text": "codex finished"}}}})
     emit({{"type": "turn.completed", "usage": {{"output_tokens": 1}}}})
 else:
@@ -322,3 +330,83 @@ async def test_dev_isolated_routes_implementer_to_configured_worker(fake_cli, tm
     await tools["dev_isolated"].handler({"description": "add impl"})
     assert built and isinstance(built[0], ew.ExternalWorkerAgent) and built[0].write
     assert any(line.startswith("[codex] 改动") for line in progress)
+
+
+# ── 提问（开发任务的 ask_task_question 通道） ──
+
+def test_parse_question_line_variants():
+    q = ew.parse_question('x\nVORTO_QUESTION {"question": "Q?", "options": ["a","b","c","d"], "context": "c"}')
+    assert q == {"question": "Q?", "options": ["a", "b", "c"], "context": "c"}
+    assert ew.parse_question("`VORTO_QUESTION: {\"question\": \"Q2\"}`")["question"] == "Q2"
+    assert ew.parse_question("VORTO_QUESTION which file?")["question"] == "which file?"   # JSON 坏了也不丢
+    assert ew.parse_question("all done") is None
+    assert ew.parse_question('VORTO_QUESTION {"question": ""}') is None
+
+
+class _Binding:
+    def __init__(self, *, with_tool=True, tainted=False):
+        from src.agents.tool import Tool, ToolTurnYield
+        self.asked = []
+
+        async def ask(args):
+            self.asked.append(args)
+            raise ToolTurnYield("开发问题已保存")
+
+        self.tool = Tool("ask_task_question", "ask", {}, ask, yields_turn=True) if with_tool else None
+        self.context, self.tainted = "", tainted
+
+
+async def test_worker_question_goes_through_the_task_question_tool(fake_cli, tmp_path, monkeypatch):
+    from src.agents.tool import ToolTurnYield
+    monkeypatch.setenv("FAKE_MODE", "ask")
+    binding, progress = _Binding(), []
+    agent = ew.ExternalWorkerAgent("codex", str(tmp_path), write=True, question=binding,
+                                   on_progress=progress.append)
+    with pytest.raises(ToolTurnYield):
+        await agent.run_turn("implement rounding")
+    assert binding.asked == [{"question": "Round half up or half even?",
+                              "options": ["half up", "half even"], "context": "calc.py has no rounding yet"}]
+    assert any(e.text == "rules:True" for e in agent.last_run.events)     # 只有能提问时才教它怎么问
+    assert any(line.startswith("[codex] 提问") for line in progress)
+
+
+async def test_question_rules_only_when_a_question_channel_exists(fake_cli, tmp_path):
+    agent = ew.ExternalWorkerAgent("codex", str(tmp_path), write=True, question=_Binding(with_tool=False))
+    await agent.run_turn("go")
+    assert any(e.text == "rules:False" for e in agent.last_run.events)
+
+
+async def test_question_without_channel_fails_instead_of_passing_as_conclusion(fake_cli, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_MODE", "ask")
+    agent = ew.ExternalWorkerAgent("codex", str(tmp_path), write=True)
+    with pytest.raises(ew.ExternalWorkerError, match="不能提问"):
+        await agent.run_turn("go")
+
+
+async def test_tainted_question_history_keeps_turn_tainted(fake_cli, tmp_path):
+    agent = ew.ExternalWorkerAgent("codex", str(tmp_path), write=True, question=_Binding(tainted=True))
+    await agent.run_turn("go")
+    assert taint.is_tainted()
+
+
+def test_reviewer_never_gets_a_question_channel(monkeypatch, tmp_path):
+    monkeypatch.setenv(ew.ROLE_ENV, "implement=codex,review=claude")
+    binding = _Binding()
+    assert ew.external_agent_for_role("implement", str(tmp_path), question=binding).question is binding
+    assert ew.external_agent_for_role("review", str(tmp_path), question=binding).question is None
+
+
+async def test_dependent_block_question_suspends_and_leaves_branch_untouched(fake_cli, tmp_path, monkeypatch):
+    from src.agents.tool import ToolTurnYield
+    from src.agents.worktree import run_dependent_on_branch
+    repo = _git_repo(tmp_path / "repo")
+    subprocess.run(["git", "branch", "vorto/q"], cwd=repo, check=True)
+    before = subprocess.run(["git", "rev-parse", "vorto/q"], cwd=repo, capture_output=True, text=True).stdout
+    monkeypatch.setenv("FAKE_MODE", "ask")
+    binding = _Binding()
+    with pytest.raises(ToolTurnYield):
+        await run_dependent_on_branch(str(repo), "wt-q", "vorto/q", "implement rounding",
+                                      lambda wt: ew.ExternalWorkerAgent("codex", wt, write=True, question=binding),
+                                      "msg", None)
+    after = subprocess.run(["git", "rev-parse", "vorto/q"], cwd=repo, capture_output=True, text=True).stdout
+    assert binding.asked and before == after
