@@ -15,7 +15,7 @@ VortoCode 是面向开发者的本地优先 Agent 工作台：从目标与约束
 VortoCode 后续会按同一 agent runtime 拆成三种入口，而不是分裂成三套实现：
 
 - **Desktop 版（当前默认产品，P0）**：面向低门槛的本地常驻工作台，启动即进入 General 无目录会话，按需显式升级到隔离 Scratch 或用户选择的 Git Project；跨项目 Inbox、Goal、源码、diff、权限确认、artifact、项目记忆和后台任务共用同一本机 Gateway 内核。
-- **CLI 版（高级/自动化入口）**：保留 `vc tui` / `vc agent` / `vc server`，服务终端重度用户、脚本、CI、远程主机和 runtime 调试，不再作为新用户默认入口。
+- **CLI 版（高级/自动化入口）**：保留 `vc agent` / `vc server`，服务终端重度用户、脚本、CI、远程主机和 runtime 调试，不再作为新用户默认入口。
 - **Web 服务版（后续团队入口）**：面向团队/托管服务，提供多用户、共享 artifact、队列化任务和权限/账单/审计能力；当前界面开发优先让位于 Desktop，底层仍共享同一隔离 dev 流水线。
 
 ## 核心理念
@@ -29,7 +29,7 @@ VortoCode 后续会按同一 agent runtime 拆成三种入口，而不是分裂�
 
 ### 交互式主 Agent（agent loop · 仿 Claude Code / opencode）
 
-`vc tui`（终端）、Desktop 与 Web 控制台 `/agent`（浏览器）共用同一个**主 agent loop**：一个会聊天的 LLM，在"输入 → 模型 →（工具 → 回灌）\* → 流式回复"的循环里自己决定该聊天、读代码，还是把开发任务交给流水线 —— **寒暄不会触发构建，要动手才动手**。
+Desktop、无头 CLI `vc agent` 与 Web 控制台 `/agent`（浏览器）共用同一个**主 agent loop**：一个会聊天的 LLM，在"输入 → 模型 →（工具 → 回灌）\* → 流式回复"的循环里自己决定该聊天、读代码，还是把开发任务交给流水线 —— **寒暄不会触发构建，要动手才动手**。
 
 - **工具集**：`read_file` / `list_files` / `grep`（只读）· `edit_file` / `write_file`（写/重型，需确认）· `task` / `research_parallel`（子 agent 委派）· `use_skill` / `save_skill`（技能）· `save_memory` / `recall_memory`（长期记忆）· `publish_artifact` / `list_artifacts`（制品，见下）· 以及 `/mcp` 接入的任意外部 MCP 工具
 - **plan / build = 工具权限门**：plan 只放只读工具；写/重型/外部工具仅 build，且写盘前弹确认 —— 落实"人在关口"
@@ -39,8 +39,8 @@ VortoCode 后续会按同一 agent runtime 拆成三种入口，而不是分裂�
 - **插件接入范围**：MCP 手动连接、项目 Skill/Hook/规则，以及私人助理范围的限制见 [扩展接入](docs/EXTENSIONS.md)。
 - **跨会话记忆**：`/resume` 重建对话上下文；`save_memory`/`recall_memory` 沉淀跨会话知识
 - **@上下文注入**：`@文件`→内容、`@目录`→清单、`@符号`→AST 定义位置
-- **双协议**：**默认走原生 function-calling（native）**——对支持的模型更可靠（真机对照 dogfood：同一开发任务 native 3/3 正确落地、提示式仅 1/3，提示式下模型易把工具结果误当用户消息、凭空编造交付）；模型不支持则**自动回退**提示式协议（模型无关兜底）。`VORTOCODE_NATIVE_TOOLS=0` 可强制走提示式。三端（TUI/Web/CLI）统一
-- **可观测/可审计**：token 用量统计（`/usage`）；TUI、Web 与 Desktop 共用脱敏工具/权限审计台账，Desktop 将人工确认、阻塞 Goal、失败任务和 PR/CI 汇成待决策队列
+- **双协议**：**默认走原生 function-calling（native）**——对支持的模型更可靠（真机对照 dogfood：同一开发任务 native 3/3 正确落地、提示式仅 1/3，提示式下模型易把工具结果误当用户消息、凭空编造交付）；模型不支持则**自动回退**提示式协议（模型无关兜底）。`VORTOCODE_NATIVE_TOOLS=0` 可强制走提示式。各端（Desktop/Web/CLI）统一
+- **可观测/可审计**：token 用量统计（`/usage`）；Web 与 Desktop 共用脱敏工具/权限审计台账，Desktop 将人工确认、阻塞 Goal、失败任务和 PR/CI 汇成待决策队列
 - **不中断思路**：Desktop 在 Agent 运行时仍可继续输入；后续提示由 Gateway 持久化排队，可删除或提升为“现在执行”，同时维持单会话单前台回合
 - **命令**：`/skills /tools /mcp /usage /audit /sessions /resume /new /mode /tasks /review /verify /clear /help`
 
@@ -56,8 +56,8 @@ VortoCode 后续会按同一 agent runtime 拆成三种入口，而不是分裂�
 - **删除**：`delete_artifact` 工具（写·build·确认）/ `DELETE /api/artifacts/<id>` / 画廊删除按钮
 - **`@artifact:<id>` 注入**：对话里 `@artifact:<id>` 把某制品当前内容带给主 agent 迭代（"改一下 @artifact:xxx"）
 - **静态隔离 + 大小上限**：查看页 `iframe sandbox` + 限制性 **CSP（`default-src 'none'`，禁外联/SSRF）**；单页 ≤ **16 MiB**（`VORTOCODE_ARTIFACT_MAX_BYTES` 可调）——对齐 CC
-- **可分享 / 认证可见**：链接即可分享；设了 `VORTOCODE_API_TOKEN` 时需要先登录或用 Authorization/X-API-Token 访问（token 不进 URL）。画廊 `/artifacts` 列全部；TUI `/artifacts` 命令列出
-- **人在关口**：发布/删除是写操作——TUI 弹确认，Web 端靠 build 模式门控
+- **可分享 / 认证可见**：链接即可分享；设了 `VORTOCODE_API_TOKEN` 时需要先登录或用 Authorization/X-API-Token 访问（token 不进 URL）。画廊 `/artifacts` 列全部
+- **人在关口**：发布/删除是写操作——经内核确认门，Web 端另有 build 模式门控
 - **落盘**：`.vortocode/artifacts/<id>/`（gitignored，运行时产物）；由 Web 服务器渲染，`VORTOCODE_WEB_BASE` 可改链接前缀
 
 ### Dogfooding（用 VortoCode 开发它自己）
@@ -110,7 +110,7 @@ VortoCode 后续会按同一 agent runtime 拆成三种入口，而不是分裂�
 - **事件驱动**: 基于事件触发
 - **可扩展**: 支持自定义 Hook 类型
 - **审计日志**: 完整的操作记录
-- **项目信任**: 仓库 Hook 默认禁用，Desktop/TUI 显式审查授权，信任记录不写回仓库
+- **项目信任**: 仓库 Hook 默认禁用，Desktop 显式审查授权，信任记录不写回仓库
 
 ### 验证闭环（隔离 dev 流水线内）
 
@@ -151,7 +151,7 @@ VortoCode 后续会按同一 agent runtime 拆成三种入口，而不是分裂�
 
 ```
 vortocode/
-├── main.py              CLI 入口（agent / server / analyze / tui / test / demo）
+├── main.py              CLI 入口（agent / server / analyze / workers / doctor / test / demo）
 ├── src/
 │   ├── agents/          底层 agent_loop/安全策略 + 工具工厂（按需装配 workflow/scheduling 的公开能力）
 │   ├── llm/             LLM 客户端（One API 网关，异步 AsyncOpenAI）
@@ -162,7 +162,7 @@ vortocode/
 │   ├── tools/           MCP 工具集成（动态发现 / 权限管理）
 │   ├── core/            核心设施（monitoring 指标 / cache / tracing；self_healing、task_queue 已退役删除）
 │   ├── sandbox/         OS 策略 / Docker 沙箱与显式宿主机回落
-│   └── browser/ gateway/ im/ tui/ …（2026-10 删除无前端调用的旧 Web 接口及其模块：
+│   └── browser/ gateway/ im/ …（终端 TUI 已于 2026-10-17 退役；2026-10 删除无前端调用的旧 Web 接口及其模块：
 │                         context/ security/ projects/ github/ templates/ testing/ documentation/ 自定义 agent 管理器）
 ├── web/                 控制台前端（原生 HTML/CSS/JS，无构建步骤）
 ├── desktop/             Tauri 2 + React 本机工作台（复用 gateway 协议与 Python runtime）
@@ -194,7 +194,7 @@ vortocode/
 pip install -e .
 
 # 想要与 CI 完全一致的版本：加上锁文件约束
-pip install -c constraints.txt -e '.[llm,dev,tui]'
+pip install -c constraints.txt -e '.[llm,dev]'
 
 # 可选：安装向量数据库支持（用于语义记忆）
 pip install '.[memory]'
@@ -262,9 +262,6 @@ vc --help                # 查看所有子命令
 
 ```bash
 
-# 交互式主 agent（终端全屏 TUI；需 pip install '.[tui]' 与 OPENAI_API_KEY）
-vc tui
-
 # Web 控制台（默认 127.0.0.1:8080；对外暴露务必设 VORTOCODE_API_TOKEN）
 vc server                            # 起服务后浏览器打开 /agent 即是网页版主 agent
 
@@ -311,10 +308,10 @@ Desktop 预览包已内置只暴露本机 Gateway 的 Python sidecar，不要求
    [OPS.md《二、开关矩阵》](docs/OPS.md#二开关矩阵都是-opt-in默认全关--零自主消耗)。
    **对外暴露前务必先设 `VORTOCODE_API_TOKEN`**（设了则所有 `/api/*` 与 `/ws` 强制鉴权）。
 
-3. **日用** —— `vc tui --attach`
+3. **日用** —— Desktop，或 `vc agent --attach`
 
    ```bash
-   vc tui --attach    # TUI 作协议客户端，回合交给常驻 serve 跑；serve 不在时自动回退进程内、不挡活
+   vc agent --attach "…"   # 回合交给常驻 serve 跑；serve 不在时自动回退进程内、不挡活
    ```
 
    attach 优先的日常用法（后台任务、通知三路、`vc agent --attach` 脚本化问答）见

@@ -101,7 +101,7 @@ vc server
 Then attach a client:
 
 ```bash
-vc tui --attach
+vc agent --attach "…"
 ```
 
 The attached client can disconnect without taking ownership of the running session. Use the Web or Desktop client for reviewing diffs, pending confirmations, Goals, artifacts, and background-task results.

@@ -126,20 +126,3 @@ def test_unknown_tools_keep_their_own_name():
 
 
 # ---------------------------------------------------------------- 终端不受影响
-def test_tui_still_routes_tool_lines_after_the_marker(tmp_path):
-    """终端**要**看这些细节，标记必须在 TUI 入口就剥掉。
-
-    回归：``\\u2063`` 不是空白字符，``str.strip()`` 不会去掉它——不剥就会让
-    ``startswith("🔧")`` 静默失配，工具行从此不再进 turn timeline 预览，而且没有任何报错。
-    """
-    import pytest
-
-    pytest.importorskip("textual")
-    from src.tui.app import VortoCodeTUI
-
-    app = VortoCodeTUI(repo_root=str(tmp_path))
-    app._turn_tool_counts, app._turn_tool_lines = {}, []
-    app._turn_tool_previewed = 5                 # 跳过写屏（预览上限已满），只验路由
-    app._turn_say(housekeeping("🔧 [b]read_file[/b][dim] src/a.py[/dim]"))
-    assert app._turn_tool_counts == {"read_file": 1}
-    assert app._turn_tool_lines == ["🔧 read_file src/a.py"]

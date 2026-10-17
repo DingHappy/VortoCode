@@ -43,10 +43,6 @@ def _clean_scalar(value: object) -> str:
     return str(value or "").strip().strip("'\"")
 
 
-def is_valid_command_name(name: str) -> bool:
-    """命令文件名是否合法。"""
-    return bool(_NAME_RE.match(str(name or "").strip()))
-
 
 def _normalize_args_schema(value: object) -> list[dict]:
     """解析 frontmatter args/arguments 为轻量 schema，供列表和 preview 展示。
@@ -101,24 +97,6 @@ def _schema_hint(schema: list[dict]) -> str:
         bits.append(f"<{name}>" if item.get("required") else f"[{name}]")
     return " ".join(bits)
 
-
-def default_command_template(name: str) -> str:
-    """新建自定义命令时写入的安全模板。"""
-    name = str(name or "custom").strip() or "custom"
-    return (
-        "---\n"
-        f"description: {name} workflow\n"
-        "mode: plan\n"
-        "args:\n"
-        "  - name: target\n"
-        "    required: false\n"
-        "    description: 文件、分支、PR 或任务描述\n"
-        "---\n"
-        "\n"
-        "请根据以下目标给出执行计划或检查结果：\n"
-        "\n"
-        "$ARGUMENTS\n"
-    )
 
 
 def _parse(text: str, name: str) -> UserCommand:

@@ -135,35 +135,3 @@ async def test_project_skill_load_taints_parent_batch_and_missing_skill_is_faile
         reset_taint()
 
 
-@pytest.mark.asyncio
-async def test_tui_uses_shared_skill_boundary_save_and_reload(tmp_path, monkeypatch):
-    pytest.importorskip("textual")
-    from src.tui.app import VortoCodeTUI
-    path = write_skill(tmp_path)
-    app = VortoCodeTUI(repo_root=str(tmp_path))
-    prompts = []
-    async def confirm(message, *, scope): prompts.append((message, scope)); return True
-    monkeypatch.setattr(app, "_confirm_always", confirm)
-    agent = app._build_main_agent()
-    tool = agent.tools["use_skill"]
-    original = await tool.handler({"name": "helper"})
-    assert "来源：.vortocode/skills/helper/SKILL.md" in original and "版本摘要" in original
-    path.write_text("changed instructions")
-    assert (await tool.handler({"name": "helper"}))["ok"] is False
-    registry = app._skill_registry()
-    assert app._skill_registry(reload=True) is registry
-    assert "changed instructions" in await tool.handler({"name": "helper"})
-    description = "步骤: 描述 #保留\n第二行"
-    await agent.tools["save_skill"].handler({"name": "new-skill", "description": description, "instructions": "new body"})
-    assert prompts[-1][1] == "skill" and registry.get("new-skill").description == description
-    assert "new body" in await tool.handler({"name": "new-skill"})
-
-
-def test_tui_registry_rejects_outside_sources(tmp_path):
-    pytest.importorskip("textual")
-    from src.tui.app import VortoCodeTUI
-    root = tmp_path / "project"; root.mkdir()
-    outside = tmp_path / "outside"; outside.mkdir()
-    (outside / "SKILL.md").write_text("---\nname: escaped\n---\nOUTSIDE_MARKER")
-    (root / "skills").symlink_to(outside, target_is_directory=True)
-    assert VortoCodeTUI(repo_root=str(root))._skill_registry().get("escaped") is None

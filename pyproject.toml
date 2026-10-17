@@ -41,10 +41,6 @@ llm = [
 mcp = [
     "mcp>=1.0.0",
 ]
-tui = [
-    "textual>=8.0",
-    "rich>=13.0",
-]
 parsing = [
     "tree-sitter>=0.21.0",
     "tree-sitter-python>=0.21.0",
@@ -67,7 +63,7 @@ dev = [
     "types-PyYAML>=6.0",   # yaml 是核心依赖且有官方 stub：装上而不是 ignore 掉
 ]
 all = [
-    "vortocode[memory,llm,mcp,parsing,tui,browser,dev]",
+    "vortocode[memory,llm,mcp,parsing,browser,dev]",
 ]
 
 [project.scripts]

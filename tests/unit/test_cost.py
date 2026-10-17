@@ -70,19 +70,6 @@ def test_explicit_free_pricing_is_distinct_from_missing_pricing(monkeypatch):
     assert cost_for("local", 100, 50) == 0
 
 
-def test_tui_shows_unknown_total_and_preserves_known_subtotal():
-    from types import SimpleNamespace
-    from src.llm.client import usage_scope, add_usage
-    from src.tui.commands import TUICommandsMixin
-    output = []
-    view = SimpleNamespace(_emit=output.append, _context_usage_label=lambda: "")
-    with usage_scope():
-        add_usage(1000, 1000, model="mimo-v2.5")
-        add_usage(100, 100, model="unpriced")
-        TUICommandsMixin._cmd_usage(view, "")
-    assert "费用未知（未配置单价）" in output[0]
-    assert "费用合计未知" in output[0] and "$0.0030" in output[0]
-
 
 def test_add_usage_without_model_skips_tracker():
     from src.llm.client import add_usage
