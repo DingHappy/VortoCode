@@ -1059,6 +1059,8 @@ def run_workers_cli(command, worker=""):
     from src.agents import external_workers as ew
     from src.gateway.doctor import _check_external_workers
     home = ew.worker_home()
+    if not ew.experimental_enabled():
+        print(f"实验功能：关闭（设 {ew.EXPERIMENTAL_ENV}=1 才会把实现/审查分发给外部 CLI）")
     if home is None:
         print("模式：本机（CLI 使用你的个人登录与个人配置里的模型选择）")
     else:
