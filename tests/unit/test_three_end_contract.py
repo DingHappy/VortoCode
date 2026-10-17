@@ -991,3 +991,51 @@ def test_system_prompt_states_the_no_false_denial_rule():
 
     prompt = MainAgent(build_read_tools("."))._system("build")
     assert "否认自己的能力" in prompt, "系统提示丢了「不许凭印象否认能力」这条规则"
+
+
+@pytest.mark.parametrize('kind', ALL_ENDS + ['desktop'])
+@pytest.mark.parametrize('human_available', [True, False])
+async def test_readonly_connector_keeps_taint_and_later_mcp_confirmation(
+        kind, human_available, tmp_path, readonly_connector_probe):
+    from src.gateway.agent_session import build_session
+    asked = []
+    async def human(message):
+        asked.append(message)
+        return True
+    agent = build_session(str(tmp_path), kind='web' if kind == 'desktop' else kind,
+                          confirm=human, auto_approve=True, can_ask_human=human_available,
+                          allow_local_files=kind == 'desktop', capability_profile='external',
+                          workspace_scope='general')
+    manager, tools, clients = await readonly_connector_probe(agent._confirm_gate)
+    agent.add_tools(tools)
+    try:
+        assert not taint.is_tainted()
+        result = await agent._run_tools([('mcp__trusted__read', {})], 'plan', lambda _: None)
+        assert result[0][1] == 'probe executed'
+        assert taint.is_tainted() and not asked
+        # Repeated read works after external content, without clearing taint.
+        await agent._run_tools([('mcp__trusted__read', {})], 'plan', lambda _: None)
+        assert clients['trusted'].calls == ['read', 'read'] and not asked
+        await agent._run_tools([('mcp__plain__write', {})], 'build', lambda _: None)
+        assert clients['plain'].calls == (['write'] if human_available else [])
+        assert len(asked) == int(human_available)
+        if asked:
+            assert '外部内容' in asked[0]
+        assert taint.is_tainted()
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.parametrize('profile', ['local', 'unattended'])
+async def test_readonly_connector_never_expands_restricted_profile(profile, readonly_connector_probe):
+    if profile == 'local':
+        with pytest.raises(PermissionError):
+            await readonly_connector_probe(profile=profile)
+        return
+    manager, tools, clients = await readonly_connector_probe(profile=profile)
+    try:
+        assert set(clients) == {'plain'}
+        assert all(not tool.name.startswith('mcp__trusted__') for tool in tools)
+        assert manager.tool_executor.read_only_servers == frozenset()
+    finally:
+        await manager.shutdown()
