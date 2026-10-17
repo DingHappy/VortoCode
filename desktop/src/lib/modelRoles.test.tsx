@@ -28,13 +28,13 @@ it("renders worker roles and the opt-in assessor with distinct defaults", () => 
   expect(html).not.toContain("synthetic-worker-key");
 });
 
-const workers = [{ worker: "codex", label: "Codex CLI（本机）", path: "/nvm/bin/codex" },
+const workers = [{ worker: "codex", label: "Codex CLI（本机）", path: "/nvm/bin/codex", loggedIn: true, auth: "Logged in using ChatGPT" },
   { worker: "claude", label: "Claude Code CLI（本机）", path: null }];
 
 it("offers local CLIs only to implement and review, with install status", () => {
   const html = renderToStaticMarkup(<ModelRoles profile={profile} value={{ implement: "cli:codex", review: "cli:claude" }}
     onChange={() => {}} workers={workers} />);
-  expect(html).toContain("已找到 /nvm/bin/codex");
+  expect(html).toContain("已就绪：/nvm/bin/codex · Logged in using ChatGPT");
   expect(html).toContain("本机没找到 claude 命令");
   expect(html).toContain("CLI 拿不到 GitHub 令牌");
   const cliList = html.slice(html.indexOf('id="llm-role-cli-options"'));
@@ -44,8 +44,15 @@ it("offers local CLIs only to implement and review, with install status", () => 
   expect(html.match(/list="llm-role-cli-options"/g)).toHaveLength(2);
 });
 it("labels CLI options by detection result and treats them as role edits", () => {
-  expect(externalWorkerOptions(workers).map(item => item.label)).toEqual(["Codex CLI（本机） · 已安装", "Claude Code CLI（本机） · 未找到"]);
+  expect(externalWorkerOptions(workers).map(item => item.label)).toEqual(["Codex CLI（本机） · 已就绪", "Claude Code CLI（本机） · 未找到"]);
+  expect(externalWorkerOptions([{ ...workers[0], loggedIn: false }])[0].label).toContain("未登录");
   expect(externalWorkerOptions(null).map(item => item.value)).toEqual(["cli:codex", "cli:claude"]);
   const draft = { baseUrl: profile.baseUrl, model: profile.model, apiKey: "", fastModel: "", strongModel: "" };
   expect(modelSettingsState(profile, { ...draft, roleModels: { implement: "cli:codex" } }).dirty).toBe(true);
+});
+
+it("tells the user how to log in when the CLI is installed but signed out", () => {
+  const html = renderToStaticMarkup(<ModelRoles profile={profile} value={{ implement: "cli:claude" }} onChange={() => {}}
+    workers={[{ worker: "claude", label: "Claude Code CLI（本机）", path: "/bin/claude", loggedIn: false }]} />);
+  expect(html).toContain("但未登录：在终端运行 claude auth login");
 });

@@ -1464,6 +1464,9 @@ export interface ExternalWorkerStatus {
   worker: string;
   label: string;
   path?: string | null;
+  /** null = 没装或检查不了；false = 明确未登录 */
+  loggedIn?: boolean | null;
+  auth?: string | null;
 }
 
 export interface BrowserControlStatus {

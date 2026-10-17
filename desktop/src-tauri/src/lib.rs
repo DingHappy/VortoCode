@@ -403,14 +403,71 @@ struct ExternalWorkerStatus {
     worker: String,
     label: String,
     path: Option<String>,
+    /// None = 没装或检查不了（超时 / 起不来）；Some(false) = 明确未登录。
+    logged_in: Option<bool>,
+    auth: Option<String>,
+}
+
+/// 第三方 Anthropic 兼容服务配在 settings.json 的 env 里时，`claude auth status` 会说未登录，但其实可用。
+fn claude_settings_has_api_credentials() -> bool {
+    let dir = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".claude")));
+    let Some(raw) = dir.and_then(|dir| std::fs::read_to_string(dir.join("settings.json")).ok()) else { return false };
+    let Ok(settings) = serde_json::from_str::<serde_json::Value>(&raw) else { return false };
+    ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"].iter().any(|key| settings["env"][key].as_str().is_some_and(|v| !v.is_empty()))
+        || settings["apiKeyHelper"].as_str().is_some_and(|v| !v.is_empty())
+}
+
+/// 跑 `codex login status` / `claude auth status`（不发模型请求），10 秒超时。
+fn external_worker_login(worker: &str, binary: &Path) -> (Option<bool>, Option<String>) {
+    let mut command = Command::new(binary);
+    command.args(if worker == "codex" { ["login", "status"] } else { ["auth", "status"] })
+        .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+    if let Some(dir) = binary.parent() {
+        let inherited = std::env::var_os("PATH").map(|path| std::env::split_paths(&path).collect::<Vec<_>>()).unwrap_or_default();
+        if let Ok(path) = std::env::join_paths(std::iter::once(dir.to_path_buf()).chain(inherited)) {
+            command.env("PATH", path);
+        }
+    }
+    let Ok(child) = command.spawn() else { return (None, Some("无法启动".into())) };
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let pid = child.id();
+    std::thread::spawn(move || { let _ = sender.send(child.wait_with_output()); });
+    let output = match receiver.recv_timeout(std::time::Duration::from_secs(10)) {
+        Ok(Ok(output)) => output,
+        Ok(Err(_)) => return (None, Some("检查失败".into())),
+        Err(_) => {
+            let _ = Command::new("kill").arg("-9").arg(pid.to_string()).status();
+            return (None, Some("检查超时".into()));
+        }
+    };
+    let text = String::from_utf8_lossy(&output.stdout).to_string() + &String::from_utf8_lossy(&output.stderr);
+    if worker == "codex" {
+        let ok = output.status.success() && text.to_lowercase().contains("logged in");
+        return (Some(ok), text.lines().next().map(|line| line.trim().chars().take(60).collect()));
+    }
+    let status = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap_or_default();
+    if status["loggedIn"].as_bool() == Some(true) {
+        return (Some(true), status["authMethod"].as_str().map(str::to_string));
+    }
+    if claude_settings_has_api_credentials() {
+        return (Some(true), Some("settings.json 中的 API 凭据".into()));
+    }
+    (Some(false), None)
 }
 
 #[tauri::command(async)]
 fn detect_external_workers() -> Vec<ExternalWorkerStatus> {
-    EXTERNAL_WORKERS.iter().map(|worker| ExternalWorkerStatus {
-        worker: worker.to_string(),
-        label: external_worker_label(worker).to_string(),
-        path: find_cli_binary(worker).map(|path| path.display().to_string()),
+    EXTERNAL_WORKERS.iter().map(|worker| {
+        let path = find_cli_binary(worker);
+        let (logged_in, auth) = path.as_deref().map(|binary| external_worker_login(worker, binary)).unwrap_or((None, None));
+        ExternalWorkerStatus {
+            worker: worker.to_string(),
+            label: external_worker_label(worker).to_string(),
+            path: path.map(|path| path.display().to_string()),
+            logged_in,
+            auth,
+        }
     }).collect()
 }
 
@@ -6928,6 +6985,27 @@ mod tests {
         assert!(dirs[0] == PathBuf::from("/usr/bin") && newest < older);
         assert!(dirs.contains(&home.join(".local/bin")) && dirs.contains(&PathBuf::from("/opt/homebrew/bin")));
         let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn external_worker_login_reads_cli_status_without_model_calls() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("vc-login-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = |name: &str, body: &str| {
+            let path = dir.join(name);
+            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        };
+        let codex_in = script("codex-in", "[ \"$1 $2\" = \"login status\" ] && echo 'Logged in using ChatGPT'");
+        let codex_out = script("codex-out", "echo 'Not logged in'; exit 1");
+        let claude_in = script("claude-in", "echo '{\"loggedIn\": true, \"authMethod\": \"claude.ai\"}'");
+        assert_eq!(external_worker_login("codex", &codex_in), (Some(true), Some("Logged in using ChatGPT".into())));
+        assert_eq!(external_worker_login("codex", &codex_out).0, Some(false));
+        assert_eq!(external_worker_login("claude", &claude_in), (Some(true), Some("claude.ai".into())));
+        assert_eq!(external_worker_login("codex", &dir.join("missing")).0, None);   // 起不来 ≠ 未登录
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

@@ -15,7 +15,7 @@ export function roleModelOptions(profile: DesktopLlmProfileStatus | null) {
 export function externalWorkerOptions(workers: ExternalWorkerStatus[] | null) {
   return (workers ?? [{ worker: "codex", label: "Codex CLI（本机）" }, { worker: "claude", label: "Claude Code CLI（本机）" }])
     .map(item => ({ value: `cli:${item.worker}`,
-      label: `${item.label}${workers === null ? "" : item.path ? " · 已安装" : " · 未找到"}` }));
+      label: `${item.label}${workers === null ? "" : !item.path ? " · 未找到" : item.loggedIn === false ? " · 未登录" : item.loggedIn ? " · 已就绪" : " · 已安装"}` }));
 }
 
 export type ModelDraft = { baseUrl: string; model: string; apiKey: string; fastModel: string; strongModel: string; roleModels?: Record<string, string> };

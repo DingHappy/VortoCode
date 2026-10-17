@@ -18,9 +18,11 @@ function cliStatus(value: string, workers: ExternalWorkerStatus[] | null) {
   const worker = workers?.find(item => item.worker === value.slice(4));
   if (!workers) return <small>正在检查本机是否安装…</small>;
   if (!worker) return <small className="danger">不支持的外部 CLI</small>;
-  return worker.path
-    ? <small>已找到 {worker.path}；须已在终端登录</small>
-    : <small className="danger">本机没找到 {worker.worker} 命令：安装并在终端登录后，保存并重启引擎</small>;
+  const login = worker.worker === "codex" ? "codex login" : "claude auth login";
+  if (!worker.path) return <small className="danger">本机没找到 {worker.worker} 命令：安装并在终端运行 {login} 后，保存并重启引擎</small>;
+  if (worker.loggedIn === false) return <small className="danger">已找到 {worker.path}，但未登录：在终端运行 {login}</small>;
+  if (worker.loggedIn) return <small>已就绪：{worker.path}{worker.auth ? ` · ${worker.auth}` : ""}</small>;
+  return <small>已找到 {worker.path}；登录状态未能确认{worker.auth ? `（${worker.auth}）` : ""}</small>;
 }
 
 export function ModelRoles({ profile, value, onChange, disabled = false, workers: given }: {
