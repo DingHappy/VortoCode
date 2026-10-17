@@ -1,14 +1,14 @@
-"""PWA 深链（P4）的回归网。
+"""公网深链的回归网。
 
-一条纪律两面测：配了 → 该出现的两个时刻真的出现；没配 → **逐字节等于今天的行为**
-（和卡片模板同款：新能力锁在配置门后，配错世界也不变坏）。
+浏览器对话台 /agent 已于 2026-10-17 退役：后台任务通知不再附 /agent 链接（点进去会是 404）；
+流水线审批台 /review 仍在，审批通知照旧指路过去。没配公网地址时逐字节等于没有深链的行为。
 """
 
 from types import SimpleNamespace
 
 import pytest
 
-from src.gateway.public_url import agent_link, public_base_url
+from src.gateway.public_url import public_base_url, review_link
 from src.im.bridge import IMBridge
 from tests.unit.test_im_bridge import OWNER, FakeAdapter, ScriptedLLM
 
@@ -21,13 +21,13 @@ def _clean_env(monkeypatch):
 # ---------------------------------------------------------------- 1. 解析
 def test_unset_means_empty():
     assert public_base_url() == ""
-    assert agent_link() == ""
+    assert review_link("r-1") == ""
 
 
-def test_configured_yields_link(monkeypatch):
+def test_configured_yields_review_link(monkeypatch):
     monkeypatch.setenv("VORTOCODE_PUBLIC_BASE_URL", "http://192.168.10.97:8080/")
-    assert public_base_url() == "http://192.168.10.97:8080"   # 尾斜杠收掉，别拼出 //agent
-    assert agent_link() == "\n📱 http://192.168.10.97:8080/agent"
+    assert public_base_url() == "http://192.168.10.97:8080"   # 尾斜杠收掉，别拼出 //review
+    assert review_link("r-1") == "\n📱 http://192.168.10.97:8080/review（r-1）"
 
 
 @pytest.mark.parametrize("bad", ["javascript:alert(1)", "file:///etc/passwd",
@@ -35,7 +35,7 @@ def test_configured_yields_link(monkeypatch):
 def test_non_http_schemes_are_refused(monkeypatch, bad):
     """钉钉消息里的链接会被点——javascript:/file: 从配置渗进消息就是埋雷。"""
     monkeypatch.setenv("VORTOCODE_PUBLIC_BASE_URL", bad)
-    assert agent_link() == ""
+    assert review_link() == ""
 
 
 # ---------------------------------------------------------------- 2. 接入点
@@ -48,19 +48,14 @@ def _task(status="done", result="搞定了"):
     return SimpleNamespace(id="t-1", status=status, result=result, error="")
 
 
-def test_final_notice_carries_link_when_configured(tmp_path, monkeypatch):
-    monkeypatch.setenv("VORTOCODE_PUBLIC_BASE_URL", "http://h:8080")
-    text = _bridge(tmp_path)._task_final_text(_task())
-    assert "后台任务 t-1 · done" in text and "搞定了" in text
-    assert text.endswith("\n📱 http://h:8080/agent")
-
-
-def test_final_notice_unchanged_when_unset(tmp_path):
-    """没配 = 今天的行为，逐字节。"""
+@pytest.mark.parametrize("configured", [False, True])
+def test_final_notice_never_links_the_retired_console(tmp_path, monkeypatch, configured):
+    if configured:
+        monkeypatch.setenv("VORTOCODE_PUBLIC_BASE_URL", "http://h:8080")
     assert _bridge(tmp_path)._task_final_text(_task()) == "后台任务 t-1 · done\n搞定了"
 
 
-def test_failed_task_keeps_error_tail_and_link(tmp_path, monkeypatch):
+def test_failed_task_keeps_error_tail(tmp_path, monkeypatch):
     monkeypatch.setenv("VORTOCODE_PUBLIC_BASE_URL", "http://h:8080")
     text = _bridge(tmp_path)._task_final_text(_task(status="failed", result=""))
-    assert "failed" in text and text.endswith("/agent")
+    assert text.startswith("后台任务 t-1 · failed") and "/agent" not in text

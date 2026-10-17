@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-VortoCode 是一个 Python 编写的 AI 编码 agent 框架：一个交互式主 agent loop，对外入口是 Desktop 与无头 CLI（另有冻结的浏览器 Web 控制台）+ IM 桥接 + 无人值守隔离会话，底层共用同一 agent runtime 与一条隔离 dev 流水线。仓库注释与文档以中文为主。
+VortoCode 是一个 Python 编写的 AI 编码 agent 框架：一个交互式主 agent loop，对外入口是 Desktop 与无头 CLI + IM 桥接 + 无人值守隔离会话，底层共用同一 agent runtime 与一条隔离 dev 流水线。仓库注释与文档以中文为主。
 
 ## 常用命令
 
@@ -28,7 +28,7 @@ python -m mypy                   # 范围见 pyproject [tool.mypy]，只圈 llm 
 black src tests                  # 格式化，line-length=100
 
 # 运行
-vc server                        # Web 控制台，默认 127.0.0.1:8080，浏览器开 /agent
+vc server                        # 引擎服务（Desktop / attach 连它），默认 127.0.0.1:8080
 vc agent -b "任务描述"            # 无头跑一次开发任务（走隔离 dev 流水线）
 vc --help                        # 全部子命令：server/agent/im/cron/heartbeat/doctor/workers…
 ```
@@ -43,7 +43,7 @@ vc --help                        # 全部子命令：server/agent/im/cron/heartb
 
 **入口**：`vc`/`vortocode` → `src/cli.py:main`（`main.py` 是薄壳）。包采用**扁平布局**：包名就是 `src`，一律 `from src.xxx import ...`。
 
-**一个 runtime，多个前端（"三端同源"）**：Desktop（经 Web API）/ Web `/agent` / 无头 CLI / IM 桥接都通过 `src/gateway/agent_session.py` 的 `build_session(kind=...)` 工厂装配同一个 `MainAgent`（**`src/agents/agent_loop.py`**；`main_agent.py` 再导出，存量 `from src.agents.main_agent import MainAgent` 照常可用）。无人值守（cron/heartbeat）走 `src/gateway/session.py` 的 `run_isolated_session`（全新隔离上下文，不读写主会话）。跨进程 attach 走 `src/gateway/protocol.py` + `client.py` 的 WS 协议。终端 TUI 已于 2026-10-17 退役删除。
+**一个 runtime，多个前端（"三端同源"）**：Desktop（经 Web API + `/ws`）/ 无头 CLI / IM 桥接都通过 `src/gateway/agent_session.py` 的 `build_session(kind=...)` 工厂装配同一个 `MainAgent`（**`src/agents/agent_loop.py`**；`main_agent.py` 再导出，存量 `from src.agents.main_agent import MainAgent` 照常可用）。无人值守（cron/heartbeat）走 `src/gateway/session.py` 的 `run_isolated_session`（全新隔离上下文，不读写主会话）。跨进程 attach 走 `src/gateway/protocol.py` + `client.py` 的 WS 协议。终端 TUI 已于 2026-10-17 退役删除。
 
 **安全内核（改动前必读——最容易踩的地方）**：安全规则**上收到内核一处**，别在每个端各写一遍（那正是"加一端漏一端"的历史病根，`tests/unit/test_three_end_contract.py` 是钉死它的能力矩阵契约表）。
 - **确认门** `make_confirm_gate`（**`src/agents/gate.py`**，main_agent 仅再导出）：唯一的确认/放行判定。各端只声明能力（`auto_approve` 是否 headless、`can_ask_human` 是否有真人），**由内核决定问不问、能不能免**。别再往 `build_agent_tools` 塞裸 confirm。
@@ -73,7 +73,7 @@ vc --help                        # 全部子命令：server/agent/im/cron/heartb
 
 ## 约定与坑
 
-- **开发侧重（2026-10-07 定）：内核通用、产品聚焦。** 新能力只往内核（`agents/` loop·确认门·污点·能力档案、`tools/`、`llm/`、`memory/`、隔离 dev 流水线）里加，对外入口只做 Desktop + 无头 CLI（+ 钉钉远程派活）。**终端 TUI 已于 2026-10-17 退役删除；Web 控制台冻结：只修 bug、不加功能、不再要求与 Desktop 对齐**。新增 API 路由前先确认有前端会调用它——2026-10 已删掉一批「没有任何前端调用」的旧接口（61 条）。
+- **开发侧重（2026-10-07 定）：内核通用、产品聚焦。** 新能力只往内核（`agents/` loop·确认门·污点·能力档案、`tools/`、`llm/`、`memory/`、隔离 dev 流水线）里加，对外入口只做 Desktop + 无头 CLI（+ 钉钉远程派活）。**终端 TUI 与浏览器对话台（`/agent`、PWA、`/artifacts` 画廊）已于 2026-10-17 退役删除**；`src/web/` 保留的是 Desktop 用的 API 与 `/ws`，以及流水线审批台 `/review`（IM 通知里的审批链接指向它）和制品查看页 `/artifact/<id>`。新增 API 路由前先确认有前端会调用它——2026-10 已删掉一批「没有任何前端调用」的旧接口（61 条）。
 - **改 Web/安全/Agent 前后必跑测试**。`tests/integration/` 是**路由契约安全网**：冻结 API 路由集合 + WS + 鉴权/执行闸/路径穿越。新增 API 路由要同步更新 `tests/integration/server_routes_baseline.json` 基线，否则契约测试红。
 - 修 bug 尽量补回归测试（见 `tests/unit/test_bugfix_regressions.py`）。
 - **测试必须离线、确定性**：live/联网/烧 token 的测试默认跳过；不要引入真实 API 依赖。

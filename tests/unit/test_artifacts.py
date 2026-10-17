@@ -160,7 +160,7 @@ def test_missing_artifact_404(client):
 
 def test_gallery_and_empty_list_ok(client):
     c, _ = client
-    assert c.get("/artifacts").status_code == 200          # 画廊页（无 500）
+    assert c.get("/artifacts").status_code == 404          # 画廊页已随浏览器控制台退役；Desktop 走 API
     assert c.get("/api/artifacts").json() == {"artifacts": []}
 
 

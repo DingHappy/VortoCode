@@ -21,9 +21,6 @@ from src.agents.tools.artifacts import ArtifactStore
 
 router = APIRouter()
 
-_PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
-_WEB_DIR = _PROJECT_ROOT / "web"
-
 # 禁止外联：默认 none，仅放行内联样式/脚本与 data: 图片/字体；禁表单提交与 base 改写。
 # frame-ancestors 'self'：只允许自家查看页（同源）嵌 raw，禁外站 iframe（防点击劫持/外部嵌套）。
 _ARTIFACT_CSP = (
@@ -41,15 +38,6 @@ def _store() -> ArtifactStore:
 
 def _abs_url(request: Request, artifact_id: str) -> str:
     return str(request.base_url).rstrip("/") + f"/artifact/{artifact_id}"
-
-
-@router.get("/artifacts")
-async def artifacts_gallery():
-    """制品画廊页。"""
-    p = _WEB_DIR / "artifacts.html"
-    if p.exists():
-        return FileResponse(p, media_type="text/html")
-    return {"message": "Artifacts gallery not found"}
 
 
 @router.get("/api/artifacts")
