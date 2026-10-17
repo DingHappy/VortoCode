@@ -153,3 +153,23 @@ VORTOCODE_MODEL_PRICES={"default:reader-model":{"input_per_million":1,"output_pe
 
 固定公开题的角色隔离、请求归属、离线 token 预估和静态题型路由回测现已接入原标准评测，
 使用方法及尚未验证的边界见 [模型配对与离线路由回测](./MODEL_POLICY_REPLAY.md)。
+
+## 外部执行者（Codex / Claude Code CLI）
+
+隔离 dev 流水线的「实现」和「审查」两个角色可以交给本机已安装、已登录的 Codex CLI 或 Claude Code CLI。拆解、worktree 隔离、自测重试、逐件和集成验证、确认门、开 PR 仍由 VortoCode 负责，外部执行者只负责在给定目录里写代码或给出审查结论。
+
+```dotenv
+VORTOCODE_EXTERNAL_WORKERS=implement=codex,review=claude
+VORTOCODE_EXTERNAL_WORKER_TIMEOUT=1800      # 单次运行秒数，超时终止整个进程组
+# VORTOCODE_CODEX_BIN=/path/to/codex        # 可选，缺省从 PATH 查找
+# VORTOCODE_CLAUDE_BIN=/path/to/claude
+```
+
+- 配置只从主进程环境变量读取，不读仓库文件。只认 `implement`、`review` 两个角色和 `codex`、`claude` 两个执行者，其他值会被忽略并记警告。
+- 某个角色配置了外部执行者后，它的 `VORTOCODE_MODEL_ROLES` 分工不再生效。调用方显式注入的审查模型（测试、预算客户端）仍然优先。
+- 实现角色只在流水线创建的一次性 worktree 里写。Codex 使用 `-s workspace-write`；Claude 使用 `--permission-mode dontAsk` 加工具白名单（读、查找、编辑、`pytest`）。审查角色一律只读：Codex 用 `-s read-only`，Claude 不给编辑工具。
+- 不使用任何 `--dangerously-*`、`danger-full-access`、`bypassPermissions` 参数。Claude 只加载 `local` 级 settings，用户级和项目级的放宽规则与 hooks 都不生效。两者都不接入外部 MCP。
+- 子进程环境沿用 `sandbox/policy.child_env()` 的密钥剥离，并额外去掉 `GITHUB_TOKEN`、`GH_TOKEN`：push 和开 PR 只由 VortoCode 通过确认门完成。
+- 无人值守档位（cron/heartbeat）拒绝启动外部执行者。事件流里出现联网动作时，本回合会被标为污点。
+- 找不到命令、超时、非零退出、事件报错都会按「通道故障」上报，并沿用原有的重试和播报。外部执行者的执行过程（命令、改动的文件）会出现在 dev 进度里。
+- 暂不支持执行者中途向人提问，也不支持按会话续跑；会话 ID 已记录在运行结果中，留给后续接入。

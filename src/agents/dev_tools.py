@@ -157,6 +157,13 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
 
         def _mk(_desc):
             def _b(wt):
+                # 配了外部执行者（VORTOCODE_EXTERNAL_WORKERS implement=codex|claude）就交给它在本 worktree 里写；
+                # 自测重试、逐件/集成验证、落分支照旧由本流水线负责。
+                from src.agents.external_workers import external_agent_for_role
+                external = external_agent_for_role("implement", wt, system=extra,
+                                                   capabilities=capabilities, on_progress=_progress)
+                if external is not None:
+                    return external
                 tools = build_read_tools(wt) + build_write_tools(wt) + [build_test_tool(wt, test_cmd)]
                 kwargs = {}
                 if question is not None:
@@ -434,10 +441,15 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     # 审查段是**异厂商最有价值**的地方，理由是独立性不是强弱：同一个模型自己审
                     # 自己写的实现，会系统性漏掉自己的盲区（实现时认为对的，审时还是认为对）。
                     # 显式注入的 llm（测试/调用方）优先，其次才看角色表。
+                    from src.agents.external_workers import external_agent_for_role
                     from src.llm.providers import client_for_role
-                    agent = agent_factory(tools, llm=llm or client_for_role("review"),
-                                      max_steps=max_steps, extra_system=extra,
-                                      capabilities=capabilities, raise_llm_errors=True)
+                    agent = None if llm is not None else external_agent_for_role(
+                        "review", str(path), system=extra, capabilities=capabilities,
+                        on_progress=_progress)
+                    if agent is None:
+                        agent = agent_factory(tools, llm=llm or client_for_role("review"),
+                                              max_steps=max_steps, extra_system=extra,
+                                              capabilities=capabilities, raise_llm_errors=True)
                     prompt = (f"审查分支 {_branch}（相对 {_base}）的以下改动。只报 P0/P1、每条带验证证据、"
                               f"用 run_tests 复现你怀疑的问题，最后只输出 JSON 数组：\n\n```diff\n{diff}\n```")
                     from src.agents.taint import merge_nested_taint
