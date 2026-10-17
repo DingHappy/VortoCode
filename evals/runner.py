@@ -23,6 +23,14 @@ from src.agents.worktree import verify_branch
 from .scoring import GitFacts, Score, score
 
 
+
+def tool_text(result) -> str:
+    """工具结果统一成文本：失败时 dev 工具返回 {"ok": False, "text": ...}（台账据此记 failed），
+    评分规则只看文本——直接切片 dict 会让整轮评测崩掉、后面的场景全不跑。"""
+    if isinstance(result, dict):
+        return str(result.get("text") or result.get("error") or result)
+    return "" if result is None else str(result)
+
 def _git(repo: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(["git", "-C", str(repo), *args],
                           capture_output=True, text=True, check=check)
@@ -119,7 +127,7 @@ async def run_scenario(scenario, workdir: Path, *, via_agent: bool = False,
                                       {"tool": name, "args": args, "result": str(result)}))
                 message = await agent.run_turn(prompt, mode="build", emit=lambda text: None)
             else:
-                message = await tool.handler(dict(scenario.args))
+                message = tool_text(await tool.handler(dict(scenario.args)))
     except Exception as e:  # noqa: BLE001 —— 评测要如实记录崩溃，不吞
         message = f"(EXCEPTION) {type(e).__name__}: {e}"
         execution_error = message

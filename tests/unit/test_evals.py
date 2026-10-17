@@ -282,3 +282,12 @@ async def test_runner_fails_resume_that_deletes_red_test(monkeypatch, tmp_path):
     assert s.landed                                                  # 洗绿后分支确实绿了……
     assert s.changed_ok is False and not s.passed                    # ……但交付物门看穿：util_b.py 不在 diff
     assert "util_b.py" in s.honest_reason
+
+
+def test_structured_tool_failures_are_scored_as_text():
+    """2026-10-17：vague_instruction 的 dev 工具返回 {"ok": False, "text": …}，评分切片 dict 崩掉，后 4 个场景没跑。"""
+    from evals.runner import tool_text
+    assert tool_text({"ok": False, "text": "❌ 未产生改动"}) == "❌ 未产生改动"
+    assert tool_text("✅ 已落分支") == "✅ 已落分支"
+    assert tool_text(None) == ""
+    assert "ok" in tool_text({"ok": False})                       # 没有 text 也不崩，留下原样供人看
