@@ -377,6 +377,8 @@ General Web/IM 的个人指令技能由独立 personal-skills 目录提供，不
 
 后续适配补充：tools/call 结果经原 MCPClient/ToolExecutor 保留 structuredContent，
 Agent 复杂结果使用 JSON；信封损坏/isError 保持失败，不作 outputSchema 或多模态符合性声明。
+内联图片经 mcp_media 有界投影进入原图片队列，已识别二进制字段不进工具文本，音频/blob
+明确未加载；适配层不取 URL/路径、不选择模型。附件仍按原消息历史保存，不新增存储或执行器。
 项目 use_skill/save_skill 由 Web/CLI/TUI 共用，加载核对原文件摘要，变化后需显式重载；
 禁止模型调用声明在目录及加载两处生效，来源/版本随指令提供，加载会标记原回合污点。
 TUI 使用原 skill 确认门及工作区围栏；不增加脚本执行、联网权限或第二套任务状态。

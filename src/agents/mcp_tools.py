@@ -40,15 +40,8 @@ def wrap_mcp_manager(manager: Any, read_only_servers: frozenset = frozenset()) -
         async def handler(a: dict, _orig=orig) -> str:
             res = await manager.execute_tool(_orig, a)
             if getattr(res, "success", True):
-                import json
-                output = getattr(res, "output", res)
-                structured = getattr(res, "structured_content", None)
-                if structured is not None:
-                    return json.dumps({"content": output, "structuredContent": structured},
-                                      ensure_ascii=False, allow_nan=False)
-                if isinstance(output, (list, dict)):
-                    return json.dumps(output, ensure_ascii=False, allow_nan=False)
-                return str(output)
+                from src.agents.mcp_media import render_result
+                return render_result(getattr(res, "output", res), getattr(res, "structured_content", None))
             return {"ok": False, "error": f"MCP 工具出错: {getattr(res, 'error', res)}"}
 
         # untrusted_source=True：MCP server 返回的是**外部不可信内容**，摄入即给本回合打污点，

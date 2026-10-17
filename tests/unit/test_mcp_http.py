@@ -101,6 +101,50 @@ async def test_exact_endpoint_metadata_pagination_and_error_state(endpoint,mode)
     finally:await client.disconnect()
     assert not client.connected and client.session is None
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('mode', ['json', 'sse'])
+@pytest.mark.parametrize('server_error', [False, True])
+async def test_inline_media_crosses_http_manager_and_original_image_queue(endpoint, tmp_path, mode, server_error):
+    import base64
+    import yaml
+    from src.agents.agent_loop import MainAgent, _to_native_messages
+    from src.agents.mcp_tools import connect_mcp
+    from src.agents.taint import reset_taint, is_tainted
+    url, state = endpoint
+    encoded = base64.b64encode(b'\x89PNG\r\n\x1a\nfixture').decode()
+    def reply(payload, message):
+        if payload['method'] == 'tools/call':
+            message['result'] = {'content': [{'type': 'text', 'text': 'fixture screenshot'},
+                                            {'type': 'image', 'mimeType': 'image/png', 'data': encoded}],
+                                 'structuredContent': {'captured': True}, 'isError': server_error}
+        body = json.dumps(message).encode()
+        return (200, 'text/event-stream', b'data: ' + body + b'\n\n') if mode == 'sse' else (200, 'application/json', body)
+    state['reply'] = reply
+    config = tmp_path / 'config'; config.mkdir()
+    (config / 'mcp.yaml').write_text(yaml.safe_dump({
+        'servers': [{'name': 'fixture', 'transport': 'http', 'protocol': 'streamable_http',
+                     'protocol_version': '2025-06-18', 'url': url, 'credentialed': False}],
+        'permissions': {'rules': [{'id': 'fixture-count', 'scope': 'global', 'action': 'allow',
+                                   'server_names': ['fixture'], 'tool_names': ['count'], 'priority': 100}]}}))
+    manager, tools = await connect_mcp(str(tmp_path), capability_profile='external')
+    traces = []
+    agent = MainAgent(tools, on_tool_event=lambda *args: traces.append(args))
+    reset_taint()
+    try:
+        result = await agent._run_tools([(tools[0].name, {'count': 2})], 'build', lambda _: None)
+        assert encoded not in str(result) and encoded not in json.dumps(traces) and is_tainted()
+        agent._flush_pending_images()
+        if server_error:
+            assert not agent.history and any(args[1]['status'] == 'failed' for args in traces if args[0] == 'finish')
+        else:
+            assert '"captured": true' in result[0][1]
+            assert _to_native_messages(agent.history)[-1]['content'][1]['image_url']['url'] == 'data:image/png;base64,' + encoded
+        assert sum(payload['method'] == 'tools/call' for payload, _ in state['calls']) == 1
+    finally:
+        reset_taint()
+        await manager.shutdown()
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize('defect',['wrong_id','rpc_error','malformed','oversized','redirect','mrtr','server_request','unfinished'])
 async def test_wire_failures_never_retry_or_become_empty_catalogues(endpoint,defect):
