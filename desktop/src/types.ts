@@ -606,6 +606,8 @@ export interface TaskChainBudget {
 
 /** 某个 VortoCode 实例上外部执行者的只读状态（/api/delegations/capabilities 的 external_workers）。 */
 export interface ExternalWorkersSummary {
+  /** 实验开关是否打开；旧版本实例没有这个字段 */
+  experimental?: boolean;
   mode: "local" | "resident";
   home?: string | null;
   roles: Record<string, string>;

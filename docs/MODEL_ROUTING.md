@@ -156,6 +156,8 @@ VORTOCODE_MODEL_PRICES={"default:reader-model":{"input_per_million":1,"output_pe
 
 ## 外部执行者（Codex / Claude Code CLI）
 
+> **实验功能，默认关闭。** 主线由 VortoCode 自己的子 Agent 完成。只有同时设了 `VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS=1`，下面的角色表才生效；Desktop 在「设置 → 高级模型选项」里有对应开关（打开时弹原生确认，开关后重启当前引擎）。关着时 `cli:*` 选项不提供，已选的标注「不生效」，`vc doctor` / `vc workers status` 也会说明实验功能未开启。
+
 ### 两种模式，别混
 
 | | 本机模式 | 常驻模式 |

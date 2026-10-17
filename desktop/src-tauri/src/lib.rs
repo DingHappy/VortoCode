@@ -347,6 +347,8 @@ fn configure_external_workers(command: &mut Command, profile: &DesktopLlmProfile
     command.env("VORTOCODE_MODEL_ROLES", models.iter().map(|(role, model)| format!("{role}={model}")).collect::<Vec<_>>().join(","));
     command.env("VORTOCODE_EXTERNAL_WORKERS", external.iter()
         .map(|(role, value)| format!("{role}={}", value.trim_start_matches("cli:"))).collect::<Vec<_>>().join(","));
+    // 实验开关不随模型配置走，只由引擎启动处按 Desktop 偏好打开（configure_experimental_workers）。
+    command.env_remove("VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS");
 }
 
 fn context_window_number(value: &serde_json::Value) -> Option<u64> {
@@ -642,6 +644,9 @@ const BROWSER_CANDIDATES: [&str; 4] = [
 struct DesktopPreferences {
     #[serde(default)]
     browser_control: bool,
+    /// 实验功能：把实现 / 审查分发给本机 Codex / Claude Code CLI。默认关闭。
+    #[serde(default)]
+    experimental_external_workers: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -685,6 +690,48 @@ fn configure_browser_control(command: &mut Command, preferences: &DesktopPrefere
             command.env_remove("VORTOCODE_BROWSER_PATH");
         }
     }
+}
+
+/// 实验开关只在引擎启动处按偏好打开；configure_llm_profile 那边一律先清掉，不从父进程继承。
+fn configure_experimental_workers(command: &mut Command, preferences: &DesktopPreferences) {
+    if preferences.experimental_external_workers {
+        command.env("VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS", "1");
+    } else {
+        command.env_remove("VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS");
+    }
+}
+
+#[tauri::command(async)]
+fn get_experimental_workers(app: AppHandle) -> Result<bool, String> {
+    Ok(read_desktop_preferences(&desktop_preferences_path(&app)?).experimental_external_workers)
+}
+
+#[tauri::command]
+async fn set_experimental_workers(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    if enabled {
+        // 打开是放权：原生确认在 webview 之外，页面脚本无法替用户点「启用」。关闭是收权，不必问。
+        let dialog_app = app.clone();
+        let confirmed = tauri::async_runtime::spawn_blocking(move || {
+            with_main_window_parent(&dialog_app, dialog_app.dialog().message(
+                "实验功能：开启后，隔离开发里的「实现 / 审查」可以按你在模型分工里选的 cli:codex / cli:claude，交给这台电脑上你本人登录的 CLI 执行（消耗你的订阅额度）。\n\n拆解、隔离、验证、确认和开 PR 仍由 VortoCode 负责；CLI 拿不到 GitHub 令牌。默认关闭，随时可以关掉。",
+            ))
+            .title("开启实验功能：外部执行者")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom("开启".into(), "取消".into()))
+            .blocking_show()
+        })
+        .await
+        .map_err(|error| format!("实验功能确认对话框失败：{error}"))?;
+        if !confirmed {
+            return Err("未确认，实验功能保持关闭".into());
+        }
+    }
+    let path = desktop_preferences_path(&app)?;
+    let mut preferences = read_desktop_preferences(&path);
+    preferences.experimental_external_workers = enabled;
+    save_json_atomic_with_mode(&path, "desktop-preferences", &preferences, Some(0o600))?;
+    Ok(enabled)
 }
 
 #[tauri::command(async)]
@@ -3427,6 +3474,7 @@ fn start_gateway(
     for (mut command, label) in candidates {
         configure_llm_profile(&mut command, llm_profile.as_ref());
         configure_browser_control(&mut command, &preferences);
+        configure_experimental_workers(&mut command, &preferences);
         prepare_gateway_process(&mut command);
         command
             .stdout(Stdio::from(log.try_clone().map_err(|error| {
@@ -3681,6 +3729,8 @@ pub fn run() {
             set_user_instructions,
             get_browser_control,
             set_browser_control,
+            get_experimental_workers,
+            set_experimental_workers,
             save_llm_provider,
             remove_llm_provider,
             refresh_llm_providers,
@@ -6828,6 +6878,22 @@ mod tests {
         let env = command.get_envs().map(|(key, value)| (key.to_str().unwrap().to_string(), value.map(|value| value.to_str().unwrap().to_string()))).collect::<HashMap<_, _>>();
         assert_eq!(env["VORTOCODE_MODEL_ROLES"].as_deref(), Some("research=default:small"));
         assert_eq!(env["VORTOCODE_EXTERNAL_WORKERS"].as_deref(), Some("implement=codex,review=claude"));
+    }
+
+    #[test]
+    fn experimental_workers_flag_is_off_by_default_and_never_inherited() {
+        assert!(!DesktopPreferences::default().experimental_external_workers);
+        let old: DesktopPreferences = serde_json::from_str(r#"{"browserControl": true}"#).unwrap();
+        assert!(!old.experimental_external_workers);                        // 旧偏好文件：关闭
+        let mut command = Command::new("fixture");
+        command.env("VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS", "1");      // 假装从父进程继承了
+        configure_llm_profile(&mut command, Some(&sample_llm_profile()));
+        configure_experimental_workers(&mut command, &DesktopPreferences::default());
+        assert_eq!(command.get_envs().find(|(k, _)| *k == "VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS").unwrap().1, None);
+        let on = DesktopPreferences { experimental_external_workers: true, ..Default::default() };
+        configure_experimental_workers(&mut command, &on);
+        assert_eq!(command.get_envs().find(|(k, _)| *k == "VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS").unwrap().1,
+                   Some(std::ffi::OsStr::new("1")));
     }
 
     #[test]

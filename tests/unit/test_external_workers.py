@@ -66,6 +66,7 @@ def _clean(monkeypatch, tmp_path_factory):
         monkeypatch.delenv(name, raising=False)
     ew._SUMMARY_CACHE.clear()
     ew._COOLDOWN_UNTIL.clear()
+    monkeypatch.setenv(ew.EXPERIMENTAL_ENV, "1")     # 本文件测的就是这项实验功能；默认关闭另有专测
     # 测试绝不读真实的 ~/.codex / ~/.claude，也不能在 ~/.nvm 等兜底位置找到真 CLI：HOME 一并指到空目录
     empty = tmp_path_factory.mktemp("cli-home")
     monkeypatch.setenv("HOME", str(empty))
@@ -746,3 +747,46 @@ async def test_dev_isolated_external_implementer_falls_back_to_the_internal_writ
     assert isinstance(external, ew.ExternalWorkerAgent) and external.fallback is not None
     internal = external.fallback()
     assert not isinstance(internal, ew.ExternalWorkerAgent) and "write_file" in internal.tools
+
+
+# ── 实验功能：默认关闭 ──
+
+def test_role_table_is_ignored_until_the_experimental_switch_is_on(monkeypatch, tmp_path):
+    monkeypatch.delenv(ew.EXPERIMENTAL_ENV)
+    monkeypatch.setenv(ew.ROLE_ENV, "implement=codex,review=claude")
+    assert ew.worker_for_role("implement") is None
+    assert ew.external_agent_for_role("implement", str(tmp_path)) is None
+    summary = ew.workers_summary()
+    assert summary["experimental"] is False and summary["roles"] == {}
+    for off in ("0", "false", "", "no"):
+        monkeypatch.setenv(ew.EXPERIMENTAL_ENV, off)
+        assert ew.worker_for_role("implement") is None
+    monkeypatch.setenv(ew.EXPERIMENTAL_ENV, "1")
+    assert ew.worker_for_role("implement") == "codex"
+
+
+def test_doctor_says_the_experiment_is_off(monkeypatch):
+    from src.gateway.doctor import _check_external_workers
+    monkeypatch.delenv(ew.EXPERIMENTAL_ENV)
+    monkeypatch.setenv(ew.ROLE_ENV, "implement=codex")
+    check = _check_external_workers()
+    assert check.level == "ok" and "实验功能" in check.detail and "不生效" in check.detail
+
+
+async def test_dev_isolated_uses_internal_writer_when_experiment_is_off(monkeypatch, tmp_path):
+    import src.agents.worktree as worktree
+    from src.agents.main_agent import build_dev_tools
+
+    monkeypatch.delenv(ew.EXPERIMENTAL_ENV)
+    monkeypatch.setenv(ew.ROLE_ENV, "implement=codex")
+    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "1")
+    built = []
+
+    async def fake_run_isolated_task(_repo_root, _wid, desc, build_agent, test_cmd=None, **_kw):
+        built.append(build_agent(str(tmp_path)))
+        return "", "", None
+
+    monkeypatch.setattr(worktree, "run_isolated_task", fake_run_isolated_task)
+    tools = {t.name: t for t in build_dev_tools(str(tmp_path))}
+    await tools["dev_isolated"].handler({"description": "add impl"})
+    assert built and not isinstance(built[0], ew.ExternalWorkerAgent)

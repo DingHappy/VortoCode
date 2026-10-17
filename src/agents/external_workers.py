@@ -4,8 +4,12 @@ VortoCode 仍是中介：拆解、worktree 隔离、自测重试、逐件与集�
 这里只把「谁来写 / 谁来审」换成外部 CLI。`ExternalWorkerAgent` 与 `MainAgent` 同样暴露
 `run_turn(message, mode, emit)`，所以 `dev_tools` 只在两个工厂点换实现即可。
 
+**实验功能，默认关闭**：必须同时设 `VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS=1`，否则角色表一律不生效，
+实现与审查照旧走 VortoCode 自己的子 Agent。主线以自研框架为准，这条路只供试用。
+
 配置（只认主进程环境变量，不读仓库文件——能改仓库的不该能换执行者）::
 
+    VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS=1
     VORTOCODE_EXTERNAL_WORKERS=implement=codex,review=claude
     VORTOCODE_EXTERNAL_WORKER_TIMEOUT=1800        # 单次运行秒数，超时杀整个进程组
     VORTOCODE_CODEX_BIN / VORTOCODE_CLAUDE_BIN    # 可选：CLI 路径（缺省走 PATH）
@@ -103,8 +107,21 @@ def parse_role_workers(raw: str) -> dict[str, str]:
     return table
 
 
+EXPERIMENTAL_ENV = "VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS"
+
+
+def experimental_enabled() -> bool:
+    """实验开关：没打开时角色表不生效（fail-closed 到内置子 Agent）。"""
+    return os.getenv(EXPERIMENTAL_ENV, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def active_role_workers() -> dict[str, str]:
+    """真正生效的角色表：实验开关关着时为空。"""
+    return parse_role_workers(os.getenv(ROLE_ENV, "")) if experimental_enabled() else {}
+
+
 def worker_for_role(role: str) -> Optional[str]:
-    return parse_role_workers(os.getenv(ROLE_ENV, "")).get(role)
+    return active_role_workers().get(role)
 
 
 def worker_timeout() -> int:
@@ -729,8 +746,8 @@ def workers_summary(max_age: float = 60.0) -> dict:
     登录检查要起子进程，按 max_age 缓存；配置一变（角色表 / 模式目录）立即失效。
     """
     import time
-    table = parse_role_workers(os.getenv(ROLE_ENV, ""))
-    key = (os.getenv(ROLE_ENV, ""), os.getenv(WORKER_HOME_ENV, ""))
+    table = active_role_workers()
+    key = (os.getenv(ROLE_ENV, ""), os.getenv(WORKER_HOME_ENV, ""), experimental_enabled())
     cached = _SUMMARY_CACHE.get("value")
     if cached and _SUMMARY_CACHE.get("key") == key and time.monotonic() - _SUMMARY_CACHE["at"] < max_age:
         return cached
@@ -740,7 +757,8 @@ def workers_summary(max_age: float = 60.0) -> dict:
         workers.append({"worker": worker, "found": bool(info["binary"]), "path": info["binary"] or "",
                         "logged_in": info["logged_in"], "auth": info["auth"], "model": info["model"],
                         "provider": info.get("provider", "")})
-    value = {"mode": worker_mode(), "home": str(worker_home()) if worker_home() else None,
+    value = {"experimental": experimental_enabled(),
+             "mode": worker_mode(), "home": str(worker_home()) if worker_home() else None,
              "roles": table, "workers": workers}
     _SUMMARY_CACHE.update(value=value, key=key, at=time.monotonic())
     return value

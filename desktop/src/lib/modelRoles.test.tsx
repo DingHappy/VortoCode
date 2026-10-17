@@ -36,7 +36,7 @@ const localSummary = { mode: "local" as const, home: null, roles: {}, workers: [
   { worker: "claude", found: false, path: "", logged_in: null, auth: "", model: "", provider: "" }] };
 
 it("offers local CLIs only to implement and review, with install status", () => {
-  const html = renderToStaticMarkup(<ModelRoles profile={profile} value={{ implement: "cli:codex", review: "cli:claude" }}
+  const html = renderToStaticMarkup(<ModelRoles experimental profile={profile} value={{ implement: "cli:codex", review: "cli:claude" }}
     onChange={() => {}} engine={localEngine(localSummary)} />);
   expect(html).toContain("已就绪：/nvm/bin/codex · Logged in using ChatGPT");
   expect(html).toContain("本机没找到 claude 命令");
@@ -56,7 +56,7 @@ it("labels CLI options by detection result and treats them as role edits", () =>
 });
 
 it("tells the user how to log in when the CLI is installed but signed out", () => {
-  const html = renderToStaticMarkup(<ModelRoles profile={profile} value={{ implement: "cli:claude" }} onChange={() => {}}
+  const html = renderToStaticMarkup(<ModelRoles experimental profile={profile} value={{ implement: "cli:claude" }} onChange={() => {}}
     engine={localEngine({ ...localSummary, workers: [{ worker: "claude", found: true, path: "/bin/claude", logged_in: false, auth: "", model: "", provider: "" }] })} />);
   expect(html).toContain("但未登录：在终端运行 claude auth login");
 });
@@ -66,7 +66,7 @@ const residentSummary = { mode: "resident" as const, home: "/home/vc/.vortocode/
     { worker: "claude", found: true, logged_in: false, auth: "", model: "", provider: "" }] };
 
 it("shows the resident instance read-only and separately from the local engine", () => {
-  const html = renderToStaticMarkup(<ModelRoles profile={profile} value={{ implement: "cli:codex" }} onChange={() => {}}
+  const html = renderToStaticMarkup(<ModelRoles experimental profile={profile} value={{ implement: "cli:codex" }} onChange={() => {}}
     engine={{ place: "resident", name: "VortoCode", summary: residentSummary }} />);
   expect(html).toContain("本机引擎：");
   expect(html).toContain("当前连着常驻电脑；切回本机项目后显示本机 CLI 的状态");   // 不拿常驻电脑的状态冒充本机
@@ -90,7 +90,30 @@ it("does not render a resident block for a local project", () => {
 
 it("maps the engine's kernel report and explains when the local engine is not running", () => {
   expect(workerStatuses(localSummary)).toEqual(workers.map(w => ({ ...w, loggedIn: w.loggedIn ?? null, auth: w.auth ?? null })));
-  const html = renderToStaticMarkup(<ModelRoles profile={profile} value={{ implement: "cli:codex" }} onChange={() => {}}
+  const html = renderToStaticMarkup(<ModelRoles experimental profile={profile} value={{ implement: "cli:codex" }} onChange={() => {}}
     engine={{ place: "local", name: "本机", summary: null, error: "引擎未运行，启动后可检查" }} />);
   expect(html).toContain("引擎未运行，启动后可检查");
+});
+
+it("experimental switch off (default): no cli options, and an existing cli choice is marked as not in effect", () => {
+  const html = renderToStaticMarkup(<ModelRoles profile={profile} value={{ implement: "cli:codex" }} onChange={() => {}}
+    engine={localEngine(localSummary)} />);
+  expect(html).not.toContain('id="llm-role-cli-options"');
+  expect(html).not.toContain('<option value="cli:codex"');
+  expect(html).toContain("实验功能未开启：这一项不生效，实现子 Agent仍用内置子 Agent");
+  expect(html).toContain("默认关闭");
+  expect(html).not.toContain('type="checkbox" checked=""');
+  expect(html).not.toContain("执行者不可用时自动改由内置子 Agent 接手");
+});
+it("experimental switch on: cli options and the explanation appear", () => {
+  const html = renderToStaticMarkup(<ModelRoles experimental profile={profile} value={{}} onChange={() => {}}
+    engine={localEngine(localSummary)} onExperimentalToggle={() => {}} />);
+  expect(html).toContain('id="llm-role-cli-options"');
+  expect(html).toContain('type="checkbox" checked=""');
+  expect(html).toContain("执行者不可用时自动改由内置子 Agent 接手");
+});
+it("resident block says when the instance has the experiment off", () => {
+  const html = renderToStaticMarkup(<ResidentWorkers view={{ place: "resident", name: "x",
+    summary: { ...residentSummary, experimental: false, roles: {} } }} />);
+  expect(html).toContain("没有开启实验功能");
 });

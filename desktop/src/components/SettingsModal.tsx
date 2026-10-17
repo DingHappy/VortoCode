@@ -12,7 +12,9 @@
 //
 // 布局：左侧分组导航 + 搜索，右侧显示当前分页（参照 MiMo Desktop 的设置交互，独立实现）。
 // 当前分页、搜索词和外观选择是纯本地 UI 态，留在组件内。
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { errorText } from "../lib/errorText";
 import type { ReactNode } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { BuildVersion } from "./BuildVersion";
@@ -182,6 +184,28 @@ export function SettingsModal({
   const [modelOptions, setModelOptions] = useState<string[]>([]);
   const activePreset = presetForBaseUrl(llmBaseInput);
   const [showKey, setShowKey] = useState(false);
+  // 实验功能：外部执行者（Desktop 偏好，默认关闭）。打开要过原生确认，开关后重启当前引擎才生效。
+  const [experimental, setExperimental] = useState(false);
+  const [experimentalBusy, setExperimentalBusy] = useState(false);
+  const [experimentalNote, setExperimentalNote] = useState("");
+  useEffect(() => {
+    let alive = true;
+    invoke<boolean>("get_experimental_workers").then((value) => { if (alive) setExperimental(Boolean(value)); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  const toggleExperimental = async (next: boolean) => {
+    setExperimentalBusy(true);
+    setExperimentalNote("");
+    try {
+      setExperimental(await invoke<boolean>("set_experimental_workers", { enabled: next }));
+      const restarted = await onRestartRuntime();
+      setExperimentalNote(restarted ? (next ? "已开启，当前引擎已重启" : "已关闭，当前引擎已重启") : "已保存，下次启动引擎时生效");
+    } catch (failure) {
+      setExperimentalNote(errorText(failure, "切换实验功能失败"));
+    } finally {
+      setExperimentalBusy(false);
+    }
+  };
   const draft = { baseUrl: llmBaseInput, model: llmModelInput, apiKey: llmKeyInput, fastModel: llmFastInput, strongModel: llmStrongInput, roleModels: llmRolesInput };
   const modelState = modelSettingsState(llmProfile, draft);
   const choosePreset = (preset: typeof PROVIDER_PRESETS[number]) => {
@@ -329,7 +353,8 @@ export function SettingsModal({
             >{llmProfileBusy ? "正在应用…" : "保存并重启当前引擎"}</button>
           </div>
           <details className="llm-extra-settings"><summary>高级模型选项（可选）</summary>
-          <ModelRoles profile={llmProfile} value={llmRolesInput} onChange={onLlmRolesChange} disabled={llmProfileBusy} engine={engineWorkers} />
+          <ModelRoles profile={llmProfile} value={llmRolesInput} onChange={onLlmRolesChange} disabled={llmProfileBusy} engine={engineWorkers}
+            experimental={experimental} experimentalBusy={experimentalBusy} experimentalNote={experimentalNote} onExperimentalToggle={(next) => void toggleExperimental(next)} />
           <div className="llm-routing-fields">
             <p>智能调度 <em>输入框选「自动」时，简短问答走快速模型，Build、带图或复杂任务走强力模型；留空则都用主模型。</em></p>
             <label>

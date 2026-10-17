@@ -269,10 +269,14 @@ def _check_schedule_timezone(cwd: str) -> Check:
 
 def _check_external_workers() -> Check:
     """配了外部执行者（Codex / Claude Code CLI）时：装了没、登录了没、实际用哪个模型。"""
-    from src.agents.external_workers import ROLE_ENV, describe_worker, parse_role_workers, worker_home
+    from src.agents.external_workers import (EXPERIMENTAL_ENV, ROLE_ENV, describe_worker, experimental_enabled,
+                                             parse_role_workers, worker_home)
     table = parse_role_workers(os.getenv(ROLE_ENV, ""))
     if not table:
         return Check("workers", "ok", "未配置外部执行者（实现/审查用内置子 Agent）")
+    if not experimental_enabled():
+        return Check("workers", "ok", f"外部执行者是实验功能，当前关闭（{EXPERIMENTAL_ENV} 未设为 1）："
+                                      "已配置的角色表不生效，实现/审查用内置子 Agent")
     home = worker_home()
     parts = [f"常驻模式·专用登录 {home}" if home else "本机模式·个人登录"]
     level = "ok"
