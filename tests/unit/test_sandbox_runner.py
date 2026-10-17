@@ -103,30 +103,6 @@ async def test_run_code_uses_available_os_sandbox_without_host_shell_gate(monkey
     assert r.sandbox["policy"] == "required"
 
 
-@pytest.mark.asyncio
-async def test_cloud_sandbox_threads_its_workspace_into_run_code(monkeypatch, tmp_path):
-    from src.cloud_sandbox.manager import SandboxConfig, SandboxInstance, SandboxStatus
-
-    captured = {}
-
-    async def fake_run_code(code, language="python", timeout=30, workspace=None):
-        captured.update(code=code, language=language, timeout=timeout, workspace=workspace)
-        return runner.RunResult(success=True, stdout="ok", exit_code=0)
-
-    monkeypatch.setattr(runner, "run_code", fake_run_code)
-    sandbox = SandboxInstance(SandboxConfig(timeout=17))
-    sandbox.status = SandboxStatus.RUNNING
-    sandbox.work_dir = tmp_path
-
-    result = await sandbox.execute("print('ok')", language="python")
-
-    assert result.success and result.stdout == "ok"
-    assert captured == {
-        "code": "print('ok')",
-        "language": "python",
-        "timeout": 17,
-        "workspace": str(tmp_path),
-    }
 
 
 @pytest.mark.asyncio

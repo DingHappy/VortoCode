@@ -167,7 +167,7 @@ vortocode/
 │   ├── tools/           MCP 工具集成（动态发现 / 权限管理）
 │   ├── core/            核心设施（monitoring 指标 / cache / tracing；self_healing、task_queue 已退役删除）
 │   ├── editor/          surgical 精确编辑原语（`vc fix` / TUI 用；旧 CodeEditor 随 /api/editor 删除）
-│   ├── sandbox/         Docker 沙箱（cloud_sandbox 为非隔离简化执行，默认关闭）
+│   ├── sandbox/         OS 策略 / Docker 沙箱与显式宿主机回落
 │   └── browser/ gateway/ im/ tui/ …（2026-10 删除无前端调用的旧 Web 接口及其模块：
 │                         context/ security/ projects/ github/ templates/ testing/ documentation/ 自定义 agent 管理器）
 ├── web/                 控制台前端（原生 HTML/CSS/JS，无构建步骤）
@@ -245,7 +245,7 @@ OPENAI_API_KEY=your-vortocode-relay-key
 # 设置后，所有 /api/* 与 /ws 强制鉴权（请求需带 Authorization: Bearer <token> 或 X-API-Token）
 # 不设置则仅本地放行；对外暴露务必设置
 VORTOCODE_API_TOKEN=
-# 非隔离 sandbox/cloud_sandbox 的宿主机降级执行默认禁用，仅在可信环境置 1 开启
+# sandbox 的宿主机降级执行默认禁用，仅在可信环境置 1 开启
 # （/api/terminal/execute 已随路线 A 退役删除；agent 的 run_command 走确认门，不受此开关）
 VORTOCODE_ENABLE_SHELL=
 # Agent shell / generated-code sandbox policy: auto (default) | required | off.
