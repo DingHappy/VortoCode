@@ -31,7 +31,7 @@ black src tests                  # 格式化，line-length=100
 vc tui                           # 全屏终端主 agent（需 '.[tui]' + OPENAI_API_KEY）
 vc server                        # Web 控制台，默认 127.0.0.1:8080，浏览器开 /agent
 vc agent -b "任务描述"            # 无头跑一次开发任务（走隔离 dev 流水线）
-vc --help                        # 全部子命令：tui/server/agent/self-*/im/cron/heartbeat/doctor…
+vc --help                        # 全部子命令：tui/server/agent/im/cron/heartbeat/doctor…
 ```
 
 **CI 状态**：私有仓库可通过 `CI_RUNNER` 使用受信任的自托管 runner；仓库公开后，工作流会强制改用 GitHub 托管 runner。**合并到 main 前仍要本地跑 `./scripts/ci-local.sh`**：它刻意清空 `OPENAI_API_KEY/VORTOCODE_API_TOKEN/VORTOCODE_ENABLE_SHELL/ENABLE_BROWSER`，保证测试离线、确定性——别依赖你 `.env` 里的 key 让本地变绿。

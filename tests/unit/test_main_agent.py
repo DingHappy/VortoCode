@@ -342,7 +342,7 @@ def test_plan_has_no_dedicated_low_budget(monkeypatch):
 
 
 def test_plan_tool_off_by_default():
-    assert "update_plan" not in MainAgent([]).tools            # 默认不带（子 agent/orchestrator 不变）
+    assert "update_plan" not in MainAgent([]).tools            # 默认不带（子 agent 不变）
     assert "update_plan" in MainAgent([], plan_tool=True).tools
     assert "request_build" in MainAgent([], plan_tool=True).tools
 
@@ -453,7 +453,7 @@ async def _noop(args):
 
 
 def test_orchestration_hint_adapts_to_tools():
-    # 无相关工具（如 research 子 agent/orchestrator）→ 不给编排指引，不被诱导嵌套
+    # 无相关工具（如 research 子 agent）→ 不给编排指引，不被诱导嵌套
     assert "怎么干大活" not in MainAgent([])._system("build")
     # 只有 update_plan → 有计划指引、无并行实现指引
     only_plan = MainAgent([], plan_tool=True)._system("build")

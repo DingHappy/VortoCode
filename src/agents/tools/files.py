@@ -197,7 +197,7 @@ def build_authorized_file_tools(confirm) -> list[Tool]:
 
 
 def build_read_tools(repo_root: str) -> list[Tool]:
-    """构建一组只读工具（read_file/list_files/grep/analyze_repo），UI 无关，供 TUI/Web 共用。"""
+    """构建一组只读工具（read_file/list_files/grep），UI 无关，供 TUI/Web 共用。"""
     from pathlib import Path
 
     # 全仓库文本文件（grep/list_files 用）：跳过噪音目录、只收文本类扩展名——
@@ -508,9 +508,6 @@ def build_read_tools(repo_root: str) -> list[Tool]:
                 break
         return "\n".join(out).rstrip() if out else f"没有匹配 /{pat}/ 的内容。"
 
-    async def _analyze_repo(args: dict) -> str:
-        from src.orchestrator.self_analysis import analyze_self, render_report
-        return render_report(await analyze_self(repo_root))
 
     async def _find_definition(args: dict) -> str:
         from src.agents.lsp import find_definition
@@ -641,7 +638,6 @@ def build_read_tools(repo_root: str) -> list[Tool]:
              "类似 ripgrep -C，定位后不必再 read_file）",
              {"pattern": "正则", "dir": "可选子目录", "context": "可选，命中行前后各显示的行数(±N，≤5)"},
              _grep, read_only=True),
-        Tool("analyze_repo", "只读扫描本仓库列出问题清单，无需 key", {}, _analyze_repo, read_only=True),
         Tool("find_definition",
              "语义查符号定义（jedi/LSP 级，跟随 import、比 grep 准）：给函数/类/变量名"
              "（可点号如 Class.method），返回定义位置+签名+文档",

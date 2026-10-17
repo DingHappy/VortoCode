@@ -105,7 +105,7 @@ async def test_nothing_configured_changes_nothing(tmp_path, monkeypatch):
 
 def test_decompose_role_reaches_the_planner(monkeypatch):
     monkeypatch.setenv("VORTOCODE_MODEL_ROLES", "decompose=vendorb:planner-xl")
-    from src.orchestrator.task_analyzer import TaskDecomposer
+    from src.agents.task_analyzer import TaskDecomposer
     d = TaskDecomposer()
     assert d.llm_client is not None
     assert d.llm_client.config.model == "planner-xl"

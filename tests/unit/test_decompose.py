@@ -3,7 +3,7 @@
 import pytest
 
 from src.agents.decompose import decompose_for_parallel
-from src.orchestrator.task_analyzer import SubTask
+from src.agents.task_analyzer import SubTask
 
 
 class _FakeAnalyzer:

@@ -51,21 +51,14 @@ def _at_dir_files() -> int:
     return _env_limit("VORTOCODE_AT_DIR_FILES", 50)
 
 SLASH_COMMANDS = [
-    "/analyze", "/improve", "/fix", "/run", "/apply", "/agents", "/runagent", "/skills", "/mcp",
+    "/skills", "/mcp",
     "/artifacts", "/diff", "/changes", "/rewind", "/checkpoint", "/review", "/verify", "/preflight", "/git", "/commit", "/pr", "/pr-check", "/pr-fix", "/fix-ci", "/sessions", "/resume", "/new", "/mode", "/plan", "/build", "/model", "/think", "/theme", "/usage",
     "/context", "/compact", "/permissions", "/memory", "/tasks", "/tools", "/audit", "/speak", "/commands", "/hooks", "/clear", "/help", "/quit",
 ]
 # 必须带参数的命令：补全面板里回车不直接执行，先补成 "/cmd " 让用户接着填参数
-ARG_SLASH_CMDS = {"/fix", "/run", "/resume", "/runagent", "/pr-check", "/pr-fix", "/fix-ci"}
+ARG_SLASH_CMDS = {"/resume", "/pr-check", "/pr-fix", "/fix-ci"}
 # 命令 → 一句话说明（命令补全面板用，让 / 命令可发现、可补全）
 COMMAND_INFO = {
-    "/analyze": "L1 自分析（只读扫描，无需 key）",
-    "/improve": "L2 给测试缺口生成测试（需 key·build）",
-    "/fix": "深审并外科修复指定文件（需 key·build）",
-    "/run": "跑开发循环 dev→test→review（流式）",
-    "/apply": "把 /run 产出（工作区代码）带 diff 应用到仓库",
-    "/agents": "列出已创建的 agent",
-    "/runagent": "用某个已创建 agent 执行任务",
     "/skills": "列出 SKILL.md 技能（reload 重扫）",
     "/mcp": "接入 MCP 服务器工具（build 门控）",
     "/artifacts": "列出已发布的制品（画廊在 /artifacts）",
@@ -107,7 +100,7 @@ COMMAND_INFO = {
     "/quit": "退出",
 }
 ACTION_CMDS = {
-    "analyze", "improve", "fix", "run", "apply", "runagent", "mcp",
+    "mcp",
     "review", "verify", "commit", "pr", "pr-check", "pr-fix", "fix-ci", "compact",
 }   # 跑长任务，受忙碌态约束
 BUSY_WORKER_GROUPS = {"action", "review", "verify", "git", "compact"}
@@ -151,15 +144,9 @@ def _sanitize_input(s: str) -> str:
     s = _CTRL_SEQ_RE.sub("", s)
     return "".join(ch for ch in s if ch >= " " or ch in ("\t", "\n"))
 
-_AGENTS_DB = lambda root: str(Path(root) / ".vortocode" / "web_advanced_agents.json")
 
 HELP = """可用命令:
-  直接输入自然语言   和主 agent 对话：答疑/读代码/扫描仓库，需要时调起 dev→test→review 开发（仅 build；/run 可强制）；@文件 / @artifact:<id> 带入上下文
-  /analyze            L1 自分析（只读扫描本仓库，无需 LLM key）
-  /improve            L2 给测试缺口生成测试（需 key；build 模式下才写分支）
-  /fix <文件,...>     L2.2 深审并外科修复指定文件（需 key；build 模式下才写分支）
-  /run <目标>         跑开发循环（dev→test→review，流式）
-  /apply              把上次 /run 的产出（工作区代码）带 diff+确认应用到仓库（闭合"实现→落地"）
+  直接输入自然语言   和主 agent 对话：答疑/读代码，build 模式可委派隔离开发；@文件 / @artifact:<id> 带入上下文
   /skills [reload]    列出 SKILL.md 技能（reload 重新扫描）
   /tools              列出主 agent 可用工具及其读写权限
   /audit              查看工具调用审计日志（.vortocode/audit.log）
@@ -180,8 +167,6 @@ HELP = """可用命令:
   /pr-fix <ref>       确认后切 build 并让主 agent 调 pr_fix 修复 PR 反馈
   /fix-ci [verify] <ref>  诊断 PR review/CI；verify 先跑最小安全复现
   /mcp [list|off]     接入 config/mcp.yaml 的 MCP 服务器工具（build 门控）
-  /agents             列出已创建的 agent（网页/API 建的，同一份存储）
-  /runagent <id> <任务>  用某个已创建的 agent 执行任务（流式）
   /sessions [操作]    列出历史会话；rename/delete 管理会话
   /resume <id>        恢复某个历史会话
   /new [local|external] 新开会话；local=开发/凭据，external=网页/MCP、无凭据
@@ -519,7 +504,6 @@ class VortoCodeTUI(TUICommandsMixin, App):
         self._turn_tool_lines: list[str] = []   # 本回合 🔧 工具行（结果流预览，收尾折叠）
         self._turn_tool_counts: dict[str, int] = {}  # 工具名 → 次数（折叠摘要用）
         self._turn_tool_previewed = 0       # 已写入结果流的工具预览数（避免长回合刷屏）
-        self._last_dev = None              # 最近一次 dev 流水线产出 {workspace, files}，供 /apply
         # 常驻状态栏缓存：仓库/分支/dirty/PR 由后台 worker 异步刷新，render 只读缓存（不阻塞 UI）
         self._sb = {"branch": "", "dirty": False, "pr": "", "model": _model_name(),
                     "pr_branch": None, "pr_on": True}
@@ -540,7 +524,7 @@ class VortoCodeTUI(TUICommandsMixin, App):
         yield PaletteView(id="palette")
         yield Static(id="statusbar")
         # opencode 式多行编辑器（回车提交 / Ctrl+J 换行 / 自动长高）；补全提示全靠面板，
-        # 不做幽灵文字——↑↓ 选了 /run 幽灵还写 /analyze 的打架问题在结构上消失。
+        # 不做幽灵文字——↑↓ 选了 /review 幽灵还写 /verify 的打架问题在结构上消失。
         yield PromptEditor(placeholder="输入需求（自然语言），或 / 看命令…  · Shift+Enter/Ctrl+J 换行",
                            id="prompt")
 
@@ -588,7 +572,7 @@ class VortoCodeTUI(TUICommandsMixin, App):
         if not os.getenv("OPENAI_API_KEY"):
             self._chrome("[yellow]⚠ 未配置 OPENAI_API_KEY[/yellow][dim] —— 对话/开发需要它："
                          "在项目根 [b].env[/b] 写 OPENAI_API_KEY=sk-... 后重启即可；"
-                         "无 key 也能用 [b]/analyze[/b] 扫描、[b]/help[/b]。[/dim]")
+                         "无 key 也能用 [b]/help[/b] 查看命令、[b]/diff[/b] 查看改动。[/dim]")
 
     # ---------------------------------------------------------------- 输出
     def _chrome(self, markup: str) -> None:
@@ -1987,22 +1971,6 @@ class VortoCodeTUI(TUICommandsMixin, App):
                          "（推理型模型的思维链；对无 reasoning 的模型无影响）[/dim]")
         elif cmd == "clear":
             self.action_clear_log()
-        elif cmd == "analyze":
-            self._do_analyze()
-        elif cmd == "improve":
-            self._do_improve()
-        elif cmd == "fix":
-            if arg:
-                self._do_fix(arg)
-            else:
-                self._chrome("[red]/fix 需要文件参数[/red]，如 /fix src/foo.py")
-        elif cmd == "run":
-            if arg:
-                self._do_run(arg)
-            else:
-                self._chrome("[red]/run 需要目标[/red]，如 /run 实现一个阶乘函数")
-        elif cmd == "apply":
-            self._do_apply()
         elif cmd == "sessions":
             self._cmd_sessions(arg)
         elif cmd == "resume":
@@ -2062,19 +2030,12 @@ class VortoCodeTUI(TUICommandsMixin, App):
             self._cmd_pr_doctor(arg, alias="/fix-ci")
         elif cmd == "mcp":
             self._cmd_mcp(arg)
-        elif cmd == "agents":
-            self._cmd_agents()
         elif cmd == "speak":
             self._cmd_speak(arg)
         elif cmd == "commands":
             self._cmd_commands(arg)
         elif cmd == "hooks":
             self._cmd_hooks(arg)
-        elif cmd == "runagent":
-            if arg:
-                self._do_runagent(arg)
-            else:
-                self._chrome("[red]用法: /runagent <id> <任务>[/red]")
         elif cmd in self._user_commands():
             self._run_user_command(cmd, arg)        # 用户自定义命令：展开模板 → 交给主 agent
         else:
@@ -2833,42 +2794,6 @@ class VortoCodeTUI(TUICommandsMixin, App):
         return wrap_mcp_manager(self._mcp)
 
 
-
-    @work(exclusive=True, group="action")
-    async def _do_runagent(self, arg: str) -> None:
-        parts = arg.split(maxsplit=1)
-        if len(parts) < 2:
-            self._chrome("[red]用法: /runagent <id> <任务>[/red]")
-            return
-        aid, task = parts[0], parts[1]
-        from src.agents.manager import AgentManager
-        from src.agents.config_agent import build_config_agent
-
-        inst = AgentManager(persist_path=_AGENTS_DB(self.repo_root)).get_agent(aid)
-        if not inst:
-            self._chrome(f"[red]没有 agent {aid}（/agents 查看）[/red]")
-            return
-        cfg = inst.config
-        self._chrome(f"[cyan]运行 agent「{cfg.name}」：{task}[/cyan]")
-        buf: list[str] = []
-        preview = self._make_stream_preview(label=cfg.name)
-
-        def on_token(tok: str) -> None:
-            buf.append(tok)
-            preview("".join(buf))
-
-        try:
-            agent = build_config_agent(cfg.name, cfg.role, cfg.system_prompt, cfg.model)
-            result = await agent.execute(task, context={"on_token": on_token})
-            self._emit(f"「{cfg.name}」结果: {'成功' if result.success else '失败'}")
-            if result.output:
-                self._emit(str(result.output)[:2000])
-            elif result.error:
-                self._emit(f"错误: {result.error}")
-        except Exception as e:  # noqa: BLE001
-            self._emit(f"执行出错: {e}")
-
-
     def _session_manage_list_text(self) -> str:
         rows = self.sessions.list_recent_sessions(20)
         if not rows:
@@ -3120,56 +3045,7 @@ class VortoCodeTUI(TUICommandsMixin, App):
         return "\n\n".join(chunks)
 
     # ---------------------------------------------------------------- 动作（worker，不阻塞 UI）
-    async def _confirm_apply(self, loop, result, what: str) -> None:
-        """build 模式下，写分支前弹确认；确认才 apply。"""
-        n = len(result.accepted)
-        ok = await self._confirm_write(
-            f"build 模式：把 {n} 项{what}写入一个新分支？（不会碰 main）"
-        )
-        if ok:
-            branch = loop.apply(result)
-            self._chrome(f"[green]已写入分支 {branch}（请 review 后合并）[/green]")
-        else:
-            self._chrome("[yellow]已取消写入（保留为提案）[/yellow]")
 
-    @work(exclusive=True, group="action")
-    async def _do_analyze(self) -> None:
-        self._chrome("[cyan]运行 L1 自分析…[/cyan]")
-        from src.orchestrator.self_analysis import analyze_self, render_report
-        try:
-            report = await analyze_self(self.repo_root)
-            self._emit(render_report(report))
-        except Exception as e:  # noqa: BLE001
-            self._emit(f"分析出错: {e}")
-
-    @work(exclusive=True, group="action")
-    async def _do_improve(self) -> None:
-        self._chrome("[cyan]L2 自改进：测试缺口 → 生成测试 → 真 pytest 门控…[/cyan]")
-        from src.orchestrator.self_improve import SelfImprovementLoop, render_result
-        try:
-            loop = SelfImprovementLoop(self.repo_root)
-            result = await loop.propose()
-            if self.mode == "build" and result.accepted:
-                await self._confirm_apply(loop, result, "测试")
-            self._emit(render_result(result))
-        except Exception as e:  # noqa: BLE001
-            self._emit(f"自改进出错: {e}")
-
-    @work(exclusive=True, group="action")
-    async def _do_fix(self, paths: str) -> None:
-        self._chrome("[cyan]L2.2 代码修复：深审 → 外科修改 → 全量门控…[/cyan]")
-        from src.orchestrator.self_analysis import analyze_self
-        from src.orchestrator.code_fix import CodeFixLoop, render_result
-        try:
-            rel = [p.strip() for p in paths.replace("@", "").split(",") if p.strip()]
-            report = await analyze_self(self.repo_root, llm_paths=rel)
-            loop = CodeFixLoop(self.repo_root)
-            result = await loop.propose(report.findings)
-            if self.mode == "build" and result.accepted:
-                await self._confirm_apply(loop, result, "修复")
-            self._emit(render_result(result))
-        except Exception as e:  # noqa: BLE001
-            self._emit(f"修复出错: {e}")
 
     def _auto_recall(self, text: str):
         """回合前按用户话**自动召回**最相关的几条长期记忆，作为轻量上下文注入。
@@ -3233,7 +3109,7 @@ class VortoCodeTUI(TUICommandsMixin, App):
         if not os.getenv("OPENAI_API_KEY"):
             self._chrome("[green]对话[/green] [dim](未配置 OPENAI_API_KEY)[/dim]")
             self._emit("配置 OPENAI_API_KEY 后即可自由对话/开发（见 .env）。")
-            self._emit("现在无需 key 也能用：/analyze 扫描本仓库、/help 看全部命令。")
+            self._emit("现在无需 key 也能用：/diff 查看改动、/help 看全部命令。")
             return
         if self.agent is None:
             self.agent = self._build_main_agent()
@@ -3457,7 +3333,7 @@ class VortoCodeTUI(TUICommandsMixin, App):
     def _build_main_agent(self):
         """构建主 agent 及其工具集（工具是闭包，复用本 TUI 已有的能力）。
 
-        只读工具（read_file/list_files/analyze_repo）plan 也可用；写/重型工具
+        只读工具（read_file/list_files/grep）plan 也可用；写/重型工具
         （edit_file/dev_isolated/dev_auto/run_command…）仅 build —— 这就是 opencode Plan/Build 的"工具权限门"。
         """
         from src.agents.main_agent import MainAgent, Tool
@@ -4171,111 +4047,6 @@ class VortoCodeTUI(TUICommandsMixin, App):
         except Exception:  # noqa: BLE001
             pass
 
-    # ---------------------------------------------------------------- 开发流水线
-    @work(exclusive=True, group="action")
-    async def _do_run(self, goal: str) -> None:
-        """/run 入口：直接进开发流水线（不经意图判定）。"""
-        await self._run_dev(goal)
-
-    def _safe_repo_path(self, rel: str):
-        """把相对路径锁在仓库内，挡 ../ 与绝对路径越界。返回 Path 或 None。"""
-        base = Path(self.repo_root).resolve()
-        try:
-            p = (base / rel).resolve()
-        except Exception:  # noqa: BLE001
-            return None
-        return p if (p == base or base in p.parents) else None
-
-    @work(exclusive=True, group="action")
-    async def _do_apply(self) -> None:
-        """/apply：把最近一次 dev 流水线产出（工作区代码）带 diff+确认地落到仓库，闭合"实现→应用"。"""
-        last = self._last_dev
-        if not last or not last.get("files"):
-            self._emit("(没有待应用的产出。先 /run <目标> 或让主 agent 开发，跑出产出后再 /apply。)")
-            return
-        ws = Path(last["workspace"])
-        self._chrome(f"[cyan]待应用产出（{len(last['files'])} 个文件，逐个看 diff）:[/cyan]")
-        pending = []                          # (rel, dst, new)
-        for rel in last["files"]:
-            src = ws / rel
-            if not src.is_file():
-                continue
-            dst = self._safe_repo_path(rel)
-            if dst is None:
-                self._emit(f"(跳过越界路径: {rel})")
-                continue
-            try:
-                new = src.read_text(encoding="utf-8")
-            except Exception:  # noqa: BLE001
-                continue
-            old = dst.read_text(encoding="utf-8") if dst.is_file() else ""
-            if old == new:
-                continue                      # 与仓库一致，无需应用
-            self._chrome(f"[b]{rel}[/b] [dim]({'修改' if old else '新建'})[/dim]")
-            self._show_diff(rel, old, new)
-            pending.append((rel, dst, new))
-        if not pending:
-            self._emit("(工作区产出与仓库一致，无需应用。)")
-            return
-        ok = await self._confirm_write(
-            f"把这 {len(pending)} 个文件从工作区应用到仓库？"
-            f"（只改工作区、不碰 main；/diff 可复核、git 可回滚）")
-        if not ok:
-            self._emit("已取消应用。")
-            return
-        applied = []
-        for rel, dst, new in pending:
-            try:
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                dst.write_text(new, encoding="utf-8")
-                applied.append(rel)
-            except Exception as e:  # noqa: BLE001
-                self._emit(f"写 {rel} 失败: {e}")
-        self._chrome(f"[green]已应用 {len(applied)} 个文件到仓库（/diff 复核，git diff 可查）[/green]")
-        self._last_dev = None
-
-    async def _run_dev(self, goal: str) -> str:
-        """跑 dev→test→review 流水线。返回一句结果摘要（供主 agent 回灌/汇总）。"""
-        goal_text, ctx_files = self._expand_at_files(goal)
-        if ctx_files:
-            self._chrome(f"[dim]带入文件上下文: {', '.join(ctx_files)}[/dim]")
-        self._chrome(f"[cyan]开发（dev→test→review，流式）：{goal_text}[/cyan]")
-
-        buf: list[str] = []
-        preview = self._make_stream_preview(label="developer")
-
-        def on_token(tok: str) -> None:
-            buf.append(tok)
-            preview("".join(buf))
-
-        async def on_iter(record) -> None:
-            ok = "✓" if record.tests_passed else "✗"
-            self._emit(f"  第{record.iteration}轮 · 测试{ok} · 审查={record.review_verdict or '—'}")
-            buf.clear()
-
-        from src.orchestrator.dev_loop import IterativeDevLoop
-        from src.agents.roles import DeveloperAgent, TesterAgent, ReviewerAgent
-        try:
-            task = goal_text
-            if ctx_files:
-                task += "\n\n相关文件:\n" + self._read_files(ctx_files)
-            loop = IterativeDevLoop(DeveloperAgent(), TesterAgent(), ReviewerAgent(),
-                                    max_iterations=2)
-            result = await loop.run(task, on_token=on_token, on_iteration=on_iter)
-            ok = "成功" if result.success else "未完成"
-            summary = f"结果: {ok} · 迭代 {result.iterations} · 工作区 {result.workspace}"
-            self._emit(summary)
-            if result.files:
-                files_line = "产出文件: " + ", ".join(result.files)
-                self._emit(files_line)
-                summary += " · " + files_line
-                # 记下产出，供 /apply 把工作区代码（带 diff+确认）落到仓库 —— 闭合"实现→应用"流程
-                self._last_dev = {"workspace": result.workspace, "files": list(result.files)}
-                self._chrome("[cyan]产出在工作区。用 [b]/apply[/b] 把它（先给 diff、再确认）应用到仓库。[/cyan]")
-        except Exception as e:  # noqa: BLE001
-            summary = f"执行出错: {e}"
-            self._emit(summary)
-        return summary
 
 
 def run(attach: str | None = None) -> None:

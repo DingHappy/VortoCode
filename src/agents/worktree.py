@@ -436,7 +436,7 @@ def run_runtime_check(worktree, profile: dict, timeout: int = 180, *,
       serve 中途自己崩了则带其输出提前判失败。
     - **serve + browser**：可选 check 先探活，然后在 loopback-only Playwright 中加载页面、留截图证据。
       证据写到主工作区而非临时 worktree，所以集成 worktree 清理后仍可诊断。
-    - **只有 cmd**：阻塞跑 cmd，退出码判定（自包含冒烟/e2e/build/self-analyze）。
+    - **只有 cmd**：阻塞跑 cmd，退出码判定（自包含冒烟/e2e/build）。
     危险命令（serve/check/cmd 任一）一律先被 is_dangerous 拦下：拒绝执行、判不通过。
     """
     import time

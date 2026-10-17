@@ -694,7 +694,6 @@ def _tool_summary(name: str, args: Dict[str, Any]) -> str:
         "glob": _with("按文件名查找", query) if query else "按文件名查找",
         "grep": _with("搜索", query) if query else "搜索内容",
         "search_code": _with("搜索", query) if query else "搜索代码",
-        "analyze_repo": "扫描仓库找问题",
         "document_symbols": _with("列出符号：", path) if path else "列出文件里的符号",
         "find_definition": _with("查找定义", symbol or query),
         "find_references": _with("查找引用", symbol or query),

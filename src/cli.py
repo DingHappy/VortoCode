@@ -60,19 +60,16 @@ def _setup_logging() -> int:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="VortoCode · 多 Agent 协作开发框架（能自分析 / 自改进自己）",
+        description="VortoCode · 多 Agent 协作开发框架",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""\
             常用示例:
-              %(prog)s self-analyze                       只读扫描自己、列出问题（无需 LLM key）
               %(prog)s agent "列出 src 下有哪些模块"         headless 跑主 agent（仿 claude -p；可管道/脚本化，需 key）
               %(prog)s agent -b "实现阶乘函数及其单测"       build 模式：主 agent 用隔离 dev 流水线实现（取代已退役的 run）
-              %(prog)s self-improve --apply               给测试缺口自动补测试并写到新分支
-              %(prog)s self-fix --paths src/foo.py        深审并外科修复指定文件
               %(prog)s server --port 8080                 启动 Web 控制台
               %(prog)s tui                                进入交互式 TUI（仿 opencode，需 .[tui]）
 
-            每个命令都有自己的帮助，例如:  %(prog)s self-fix -h
+            每个命令都有自己的帮助，例如:  %(prog)s agent -h
         """),
     )
     sub = parser.add_subparsers(dest="command", metavar="<命令>",
@@ -141,18 +138,6 @@ def main():
 
     p = sub.add_parser("analyze", help="只分析一个任务的复杂度/拆解，不执行")
     p.add_argument("--task", "-t", required=True, help="要分析的任务")
-
-    p = sub.add_parser("self-analyze", help="[L1] 只读扫描本仓库，列出问题清单（孤儿/循环依赖/测试缺口/未声明依赖）")
-    p.add_argument("--paths", help="逗号分隔的文件，额外对其跑 LLM 深审（需 key）")
-
-    p = sub.add_parser("self-improve", help="[L2] 测试缺口 → 生成测试 → 真 pytest 门控（需 key）")
-    p.add_argument("--apply", action="store_true", help="把通过门控的测试写到新分支（默认 dry-run 只看提案）")
-    p.add_argument("--max-fixes", type=int, default=3, metavar="N", help="单次最多处理几个（默认 3）")
-
-    p = sub.add_parser("self-fix", help="[L2.2] 深审 bug/坏味道 → 外科修改 → 全量门控（需 key）")
-    p.add_argument("--paths", required=True, help="逗号分隔的文件，对其深审并修复")
-    p.add_argument("--apply", action="store_true", help="把通过门控的修复写到新分支（默认 dry-run）")
-    p.add_argument("--max-fixes", type=int, default=3, metavar="N", help="单次最多处理几个（默认 3）")
 
     sub.add_parser("test", help="运行测试套件（pytest）")
     sub.add_parser("demo", help="演示模式：打印指引并启动 Web 服务")
@@ -322,15 +307,6 @@ def main():
 
     elif args.command == "analyze":
         asyncio.run(analyze_task(args.task))
-
-    elif args.command == "self-analyze":
-        asyncio.run(run_self_analysis(_split_paths(args.paths)))
-
-    elif args.command == "self-improve":
-        asyncio.run(run_self_improvement(apply=args.apply, max_fixes=args.max_fixes))
-
-    elif args.command == "self-fix":
-        asyncio.run(run_self_fix(_split_paths(args.paths), apply=args.apply, max_fixes=args.max_fixes))
 
     elif args.command == "test":
         run_tests()
@@ -591,11 +567,6 @@ async def run_heartbeat_cli():
             print(f"[heartbeat] action={res['action']}", file=sys.stderr)
         finally:
             await runner.shutdown()
-
-
-def _split_paths(raw):
-    """把 --paths 的逗号分隔串拆成列表；为空则 None。"""
-    return [p.strip() for p in raw.split(",") if p.strip()] if raw else None
 
 
 def _read_prompt_arg(raw):
@@ -1159,7 +1130,7 @@ def run_server(host: str, port: int, im: str = ""):
 
 async def analyze_task(task: str):
     """分析任务"""
-    from src.orchestrator import TaskAnalyzer
+    from src.agents.task_analyzer import TaskAnalyzer
     
     analyzer = TaskAnalyzer()
     analysis = await _with_progress(analyzer.analyze(task), "分析任务")
@@ -1170,57 +1141,6 @@ async def analyze_task(task: str):
     print(f"Duration: {analysis.estimated_duration}s")
     print(f"Capabilities: {analysis.required_capabilities}")
     print(f"Agents: {analysis.suggested_agents}")
-
-
-async def run_self_analysis(paths=None):
-    """L1 自我分析：扫描本仓库，打印排序的问题清单（只读）。
-
-    paths 给定时（如 --paths src/a.py,src/b.py）才对这些文件跑 LLM 深审。
-    """
-    from src.orchestrator.self_analysis import analyze_self, render_report
-
-    if paths:
-        print(f"对 {len(paths)} 个文件启用 LLM 深审：{', '.join(paths)}")
-    report = await _with_progress(analyze_self(".", llm_paths=paths), "扫描仓库")
-    print(render_report(report))
-
-
-async def run_self_improvement(apply: bool = False, max_fixes: int = 3):
-    """L2 自我改进：L1 找测试缺口 -> 生成测试 -> 真 pytest 门控 -> 提案（默认 dry-run）。
-
-    需要配置 LLM（用于生成测试）。--apply 时把通过门控的测试写到一个新分支供 review。
-    """
-    from src.orchestrator.self_improve import SelfImprovementLoop, render_result
-
-    loop = SelfImprovementLoop(".", max_fixes=max_fixes)
-    result = await _with_progress(loop.propose(), "生成并门控测试")
-    if apply and result.accepted:
-        branch = loop.apply(result)
-        print(f"已把 {len(result.accepted)} 个通过门控的测试写到分支: {branch}")
-    print(render_result(result))
-
-
-async def run_self_fix(paths=None, apply: bool = False, max_fixes: int = 3):
-    """L2.2 代码修复：深审找 bug/坏味道 -> 外科修改 -> 全量测试门控 -> 提案（默认 dry-run）。
-
-    需要配置 LLM（深审与编辑都用）。--paths 指定要审+修的文件。
-    --apply 时把通过全量门控的修复写到新分支供 review。
-    """
-    from src.orchestrator.self_analysis import analyze_self
-    from src.orchestrator.code_fix import CodeFixLoop, render_result
-
-    if not paths:
-        print("self-fix 需要 --paths 指定文件，如：--paths src/a.py,src/b.py")
-        return
-
-    print(f"深审 {len(paths)} 个文件以发现 bug/坏味道：{', '.join(paths)}")
-    report = await _with_progress(analyze_self(".", llm_paths=paths), "深审文件")
-    loop = CodeFixLoop(".", max_fixes=max_fixes)
-    result = await _with_progress(loop.propose(report.findings), "修复并门控")   # 内部只挑 bug/code-smell 类
-    if apply and result.accepted:
-        branch = loop.apply(result)
-        print(f"已把 {len(result.accepted)} 个通过门控的修复写到分支: {branch}")
-    print(render_result(result))
 
 
 def run_tui(attach=None):

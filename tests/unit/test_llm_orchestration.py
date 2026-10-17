@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from src.orchestrator.task_analyzer import (
+from src.agents.task_analyzer import (
     TaskAnalyzer, TaskDecomposer, TaskComplexity, TaskAnalysis,
 )
 

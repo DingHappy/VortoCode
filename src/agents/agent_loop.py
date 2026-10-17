@@ -749,7 +749,7 @@ class MainAgent:
         return prompt
 
     def _orchestration_hint(self) -> str:
-        """大任务的编排指引：仅当具备相应工具时才给（research 子 agent/orchestrator 无这些工具→不给，
+        """大任务的编排指引：仅当具备相应工具时才给（research 子 agent 无这些工具→不给，
         也就不会被诱导去嵌套/乱用）。让主 agent 把「计划→并行隔离实现→逐件验证」一句话用起来。"""
         has_plan = "update_plan" in self.tools
         has_iso = "dev_isolated" in self.tools

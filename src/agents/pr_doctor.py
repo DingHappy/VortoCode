@@ -98,7 +98,6 @@ def _verify_suggestions(repo_root: str, checks: list[dict]) -> list[dict]:
         wanted.append(("unit", "失败检查看起来是 Python 测试"))
     if any(k in names for k in ("git", "workflow", "preflight", "pr")):
         wanted.append(("git-workflow", "失败检查看起来和 Git/PR 流程相关"))
-    wanted.append(("self-analyze", "提交前做一次确定性仓库扫描"))
 
     out: list[dict] = []
     for name, reason in wanted:

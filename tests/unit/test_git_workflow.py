@@ -164,7 +164,6 @@ def test_preflight_report_combines_risks_tests_and_commit_message(tmp_path):
     assert "/review" in text
     assert "/review --fix" in text
     assert "/verify unit" in text
-    assert "/verify self-analyze" in text
     assert "/verify --changed" in text
     assert "/commit all --suggest" in text
 
@@ -239,7 +238,7 @@ def test_verify_profiles_load_project_yaml_and_resolve(tmp_path):
     (tmp_path / ".vortocode" / "verify.yaml").write_text(
         "profiles:\n"
         "  smoke:\n"
-        "    cmd: python main.py self-analyze\n"
+        "    cmd: python main.py --help\n"
         "    description: quick scan\n",
         encoding="utf-8",
     )
@@ -249,7 +248,7 @@ def test_verify_profiles_load_project_yaml_and_resolve(tmp_path):
     resolved = resolve_verify_profile(str(tmp_path), "SMOKE")
 
     assert loaded["ok"] is True
-    assert loaded["profiles"]["smoke"]["cmd"] == "python main.py self-analyze"
+    assert loaded["profiles"]["smoke"]["cmd"] == "python main.py --help"
     assert "smoke [project]" in text
     assert resolved["ok"] is True
     assert resolved["name"] == "smoke"

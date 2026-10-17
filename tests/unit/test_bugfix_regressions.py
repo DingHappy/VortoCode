@@ -56,7 +56,7 @@ def test_b2_hook_registry_load_no_importerror(tmp_path):
 @pytest.mark.asyncio
 async def test_b3_decomposition_is_chained():
     """B3: 子任务依赖应为链式（只指向上一个），而非依赖之前全部。"""
-    from src.orchestrator.task_analyzer import (
+    from src.agents.task_analyzer import (
         TaskDecomposer, TaskAnalysis, TaskComplexity,
     )
     dec = TaskDecomposer(use_llm=False)   # 验证规则版链式分解
