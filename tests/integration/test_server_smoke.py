@@ -92,11 +92,12 @@ def test_unused_legacy_endpoints_gone(client):
         assert client.post(path).status_code == 404, f"{path} 应已删除"
 
 
-def test_root_serves_main_agent_console(client):
-    """P1#8：默认首页 `/` 指向主线 agent 对话台，而非遗留 admin.html。"""
+def test_root_is_a_service_banner_after_console_retirement(client):
+    """浏览器对话台已退役：`/` 只说明这是 API 服务、该用哪个客户端，不再返回任何页面。"""
     r = client.get("/")
     assert r.status_code == 200
-    assert "主 Agent" in r.text and "管理控制台" not in r.text
+    body = r.json()
+    assert body["message"] == "VortoCode API" and "/review" in body["clients"]
 
 
 def test_websocket_basic(client):

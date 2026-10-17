@@ -29,7 +29,7 @@ VortoCode 后续会按同一 agent runtime 拆成三种入口，而不是分裂�
 
 ### 交互式主 Agent（agent loop · 仿 Claude Code / opencode）
 
-Desktop、无头 CLI `vc agent` 与 Web 控制台 `/agent`（浏览器）共用同一个**主 agent loop**：一个会聊天的 LLM，在"输入 → 模型 →（工具 → 回灌）\* → 流式回复"的循环里自己决定该聊天、读代码，还是把开发任务交给流水线 —— **寒暄不会触发构建，要动手才动手**。
+Desktop 与无头 CLI `vc agent` 共用同一个**主 agent loop**：一个会聊天的 LLM，在"输入 → 模型 →（工具 → 回灌）\* → 流式回复"的循环里自己决定该聊天、读代码，还是把开发任务交给流水线 —— **寒暄不会触发构建，要动手才动手**。
 
 - **工具集**：`read_file` / `list_files` / `grep`（只读）· `edit_file` / `write_file`（写/重型，需确认）· `task` / `research_parallel`（子 agent 委派）· `use_skill` / `save_skill`（技能）· `save_memory` / `recall_memory`（长期记忆）· `publish_artifact` / `list_artifacts`（制品，见下）· 以及 `/mcp` 接入的任意外部 MCP 工具
 - **plan / build = 工具权限门**：plan 只放只读工具；写/重型/外部工具仅 build，且写盘前弹确认 —— 落实"人在关口"
@@ -53,10 +53,10 @@ Desktop、无头 CLI `vc agent` 与 Web 控制台 `/agent`（浏览器）共用�
 - **一句话发布**：build 模式里说"把这个做成一个可分享的页面"，agent 调 `publish_artifact`（自包含 HTML 或 **markdown**，markdown 渲染成 GitHub 风整页）→ 返回链接 `/(…)/artifact/<id>`
 - **实时更新**：带相同 `id` 重新发布即 `version+1`，已打开的查看页**自动刷新**（轮询版本号）
 - **版本历史 / pin**：每次发布留快照，查看页可下拉**回看任意历史版本**（`?v=N`）、一键**设为默认**给查看者看哪一版——对齐 CC「choose which version viewers see」
-- **删除**：`delete_artifact` 工具（写·build·确认）/ `DELETE /api/artifacts/<id>` / 画廊删除按钮
+- **删除**：`delete_artifact` 工具（写·build·确认）/ `DELETE /api/artifacts/<id>`
 - **`@artifact:<id>` 注入**：对话里 `@artifact:<id>` 把某制品当前内容带给主 agent 迭代（"改一下 @artifact:xxx"）
 - **静态隔离 + 大小上限**：查看页 `iframe sandbox` + 限制性 **CSP（`default-src 'none'`，禁外联/SSRF）**；单页 ≤ **16 MiB**（`VORTOCODE_ARTIFACT_MAX_BYTES` 可调）——对齐 CC
-- **可分享 / 认证可见**：链接即可分享；设了 `VORTOCODE_API_TOKEN` 时需要先登录或用 Authorization/X-API-Token 访问（token 不进 URL）。画廊 `/artifacts` 列全部
+- **可分享 / 认证可见**：链接即可分享；设了 `VORTOCODE_API_TOKEN` 时需要先登录或用 Authorization/X-API-Token 访问（token 不进 URL）。Desktop 里可以列出全部制品
 - **人在关口**：发布/删除是写操作——经内核确认门，Web 端另有 build 模式门控
 - **落盘**：`.vortocode/artifacts/<id>/`（gitignored，运行时产物）；由 Web 服务器渲染，`VORTOCODE_WEB_BASE` 可改链接前缀
 
@@ -262,8 +262,8 @@ vc --help                # 查看所有子命令
 
 ```bash
 
-# Web 控制台（默认 127.0.0.1:8080；对外暴露务必设 VORTOCODE_API_TOKEN）
-vc server                            # 起服务后浏览器打开 /agent 即是网页版主 agent
+# 引擎服务（默认 127.0.0.1:8080；Desktop 与 vc agent --attach 连它；对外暴露务必设 VORTOCODE_API_TOKEN）
+vc server
 
 # Desktop 本机工作台（需 Node.js、Rust 与 Tauri 2 系统依赖）
 cd desktop && npm install && npm run tauri dev
@@ -299,7 +299,7 @@ Desktop 预览包已内置只暴露本机 Gateway 的 Python sidecar，不要求
 2. **常驻** —— `vc server`
 
    ```bash
-   vc server    # 唯一状态所有者，缺省 127.0.0.1:8080；浏览器开 /agent 即网页版主 agent
+   vc server    # 唯一状态所有者，缺省 127.0.0.1:8080；Desktop 与 attach 客户端连它
    ```
 
    macOS 用 launchd 开机常驻、内嵌 IM、代理环境注意事项见

@@ -20,12 +20,6 @@ def public_base_url() -> str:
     return raw
 
 
-def agent_link() -> str:
-    """控制台深链的展示行；未配置 → 空串（调用方直接拼接，无需判空再加换行）。"""
-    base = public_base_url()
-    return f"\n📱 {base}/agent" if base else ""
-
-
 def review_link(run_id: str = "") -> str:
     """审批台深链；未配置 → 空串。
 

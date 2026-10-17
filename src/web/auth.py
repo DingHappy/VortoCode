@@ -41,15 +41,9 @@ SESSION_COOKIE = "vortocode_session"
 
 # 鉴权豁免：页面 HTML 外壳（本身不含数据，数据走各自需鉴权的 API）、API 文档、健康检查、
 # 登录/状态端点（必须能在鉴权前访问，否则没法登录）。
-# 路线 A 下线遗留页后只剩主线页 /、/agent、/artifacts（含制品分享链接）。
+# 浏览器对话台与 PWA 已于 2026-10-17 退役；剩下的页面只有服务首页 / 与流水线审批台 /review。
 _EXEMPT_PREFIXES = ("/docs", "/redoc", "/openapi.json", "/static")
-# PWA 静态件必须豁免，而且不豁免就没法用：<link rel="manifest"> 的 fetch 默认 **anonymous
-# 不带 Cookie**（除非 crossorigin="use-credentials"），Android 的可安装性检查同样匿名取
-# manifest/sw——设了 token 的真机上这四条 401，「加到主屏幕」就退化成普通书签
-# （2026-08-02 部署后 curl 当场撞到）。内容全部公开无敏感：名字、图标、三行空监听的 sw。
-_EXEMPT_EXACT = {"/", "/agent", "/artifacts", "/review",
-                 "/agent.css", "/agent.js",   # 对话台的样式/逻辑（拆分件）：登录门本身要靠它们渲染
-                 "/manifest.webmanifest", "/pwa-icon.svg", "/pwa-icon.png", "/sw.js",
+_EXEMPT_EXACT = {"/", "/review",
                  "/api/health", "/api/health/quick",
                  "/api/auth/login", "/api/auth/logout", "/api/auth/status"}
 

@@ -43,40 +43,6 @@ def test_query_token_rejected(client, monkeypatch):
     assert client.get("/api/status", params={"token": "secret"}).status_code == 401
 
 
-def test_pwa_assets_exempt_but_api_stays_locked(client, monkeypatch):
-    """设了 token 时 PWA 静态件必须放行——浏览器取 manifest 是 **anonymous 不带 Cookie** 的，
-    Android 可安装检查同样匿名，拦了「加到主屏幕」就退化成普通书签
-    （2026-08-02 真机部署后 curl 当场撞到 401，本地门禁清空 token 所以测不出）。
-
-    同一条测试里必须钉住反面：豁免只有这四条**具体文件**，/api/* 照锁——
-    别让"放静态件"悄悄放宽成"放路径前缀"。
-    """
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
-    for path, ctype in (("/manifest.webmanifest", "application/manifest+json"),
-                        ("/pwa-icon.svg", "image/svg+xml"),
-                        ("/pwa-icon.png", "image/png"),
-                        ("/sw.js", "text/javascript")):
-        r = client.get(path)
-        assert r.status_code == 200, f"{path} 被鉴权拦了——手机装不上 PWA"
-        assert ctype in r.headers.get("content-type", ""), path
-    assert client.get("/api/status").status_code == 401, "API 面绝不能跟着静态件一起放"
-    assert client.get("/api/dev-plans").status_code == 401
-
-
-def test_agent_assets_exempt_but_api_stays_locked(client, monkeypatch):
-    """设了 token 时对话台的样式/逻辑（2026-08 拆分件）必须放行——/agent 页本身免鉴权，
-    它 <link>/<script> 引的静态件被 401 的话，登录门连样式都渲染不出来（白屏收 token）。
-    反面照钉：豁免只有这两条具体文件，/api/* 照锁。
-    """
-    monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
-    for path, ctype in (("/agent.css", "text/css"),
-                        ("/agent.js", "text/javascript")):
-        r = client.get(path)
-        assert r.status_code == 200, f"{path} 被鉴权拦了——登录门自己都渲染不出来"
-        assert ctype in r.headers.get("content-type", ""), path
-    assert client.get("/api/status").status_code == 401
-    assert client.get("/api/dev-plans").status_code == 401
-
 
 def test_login_sets_httponly_cookie_and_authorizes(client, monkeypatch):
     monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
@@ -212,7 +178,7 @@ def test_exempt_pages_load_but_their_data_apis_do_not(client, monkeypatch):
     这条把两半都钉住：外壳 200、数据 401。任何新加进豁免清单的页面都要自带登录门。
     """
     monkeypatch.setenv("VORTOCODE_API_TOKEN", "secret")
-    for page in ("/review", "/agent", "/"):
+    for page in ("/review", "/"):
         assert client.get(page).status_code == 200, page
     assert client.get("/api/pipelines").status_code == 401
 
@@ -244,10 +210,21 @@ def test_every_exempt_html_page_carries_a_login_gate():
 
     from src.web.auth import _EXEMPT_EXACT
 
-    pages = {"/review": "review.html", "/agent": "agent.js"}   # 外壳 + 它的脚本
+    pages = {"/review": "review.html"}   # 外壳（浏览器对话台 /agent 已于 2026-10-17 退役）
     web = Path(__file__).resolve().parents[2] / "web"
     for route, asset in pages.items():
         assert route in _EXEMPT_EXACT, f"{route} 不在豁免清单里了，这条测试该更新"
         text = (web / asset).read_text(encoding="utf-8")
         assert "/api/auth/status" in text and "/api/auth/login" in text, \
             f"{asset} 没有登录门：设了 token 的机器上这页会是空白的"
+
+
+
+def test_retired_console_and_pwa_paths_are_gone_and_not_exempt(client):
+    """浏览器对话台与 PWA 已退役：路径不再存在，也不再留在鉴权豁免清单里（豁免越少越好）。"""
+    from src.web.auth import _EXEMPT_EXACT
+
+    for path in ("/agent", "/agent.css", "/agent.js", "/manifest.webmanifest",
+                 "/pwa-icon.svg", "/pwa-icon.png", "/sw.js", "/artifacts"):
+        assert path not in _EXEMPT_EXACT, path
+        assert client.get(path).status_code == 404, path

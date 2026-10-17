@@ -6,24 +6,6 @@
     ]
   },
   {
-    "path": "/agent",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/agent.css",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/agent.js",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
     "path": "/api/agent/activity",
     "methods": [
       "GET"
@@ -744,12 +726,6 @@
     ]
   },
   {
-    "path": "/artifacts",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
     "path": "/docs",
     "methods": [
       "GET",
@@ -764,28 +740,10 @@
     ]
   },
   {
-    "path": "/manifest.webmanifest",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
     "path": "/openapi.json",
     "methods": [
       "GET",
       "HEAD"
-    ]
-  },
-  {
-    "path": "/pwa-icon.png",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/pwa-icon.svg",
-    "methods": [
-      "GET"
     ]
   },
   {
@@ -797,12 +755,6 @@
   },
   {
     "path": "/review",
-    "methods": [
-      "GET"
-    ]
-  },
-  {
-    "path": "/sw.js",
     "methods": [
       "GET"
     ]
