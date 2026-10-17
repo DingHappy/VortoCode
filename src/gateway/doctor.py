@@ -267,6 +267,32 @@ def _check_schedule_timezone(cwd: str) -> Check:
     return Check("schedule-tz", "ok", detail)
 
 
+def _check_external_workers() -> Check:
+    """配了外部执行者（Codex / Claude Code CLI）时：装了没、登录了没、实际用哪个模型。"""
+    from src.agents.external_workers import ROLE_ENV, describe_worker, parse_role_workers
+    table = parse_role_workers(os.getenv(ROLE_ENV, ""))
+    if not table:
+        return Check("workers", "ok", "未配置外部执行者（实现/审查用内置子 Agent）")
+    parts, level = [], "ok"
+    for role, worker in sorted(table.items()):
+        info = describe_worker(worker)
+        if not info["binary"]:
+            level = "fail"
+            parts.append(f"{role}={worker}：找不到命令（安装后重启，或设 VORTOCODE_{worker.upper()}_BIN）")
+            continue
+        if info["logged_in"] is False:
+            level = "fail"
+            login = "codex login" if worker == "codex" else "claude auth login"
+            parts.append(f"{role}={worker}：未登录（在终端运行 {login}）")
+            continue
+        if info["logged_in"] is None and level == "ok":
+            level = "warn"
+        bits = [b for b in (info.get("auth"), info.get("provider"),
+                            f"模型 {info['model']}" if info.get("model") else "模型 CLI 默认") if b]
+        parts.append(f"{role}={worker}（{'，'.join(bits)}）")
+    return Check("workers", level, "；".join(parts))
+
+
 async def run_checks(cwd: str) -> List[Check]:
     """跑全部自检，顺序稳定（供人读与测试断言）；单项意外炸 → 记 fail，不拖全体。"""
     import inspect
@@ -281,6 +307,7 @@ async def run_checks(cwd: str) -> List[Check]:
         ("im", _check_im),
         ("im-live", _check_im_liveness),
         ("schedule-tz", lambda: _check_schedule_timezone(cwd)),
+        ("workers", _check_external_workers),
     ]
     out: List[Check] = []
     for name, fn in plan:

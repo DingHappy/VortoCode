@@ -15,6 +15,10 @@ VortoCode 仍是中介：拆解、worktree 隔离、自测重试、逐件与集�
 - 永不拼 `--dangerously-*` / `danger-full-access` / `bypassPermissions`；显式参数覆盖用户级放宽。
 - 子进程环境走 `sandbox.policy.child_env()`，再剥 GitHub 令牌：交付由 VortoCode 做，执行者不 push。
 - unattended 档位 fail-closed；事件里出现联网动作就把本回合标污点。
+- 不继承个人配置里的 hooks / 插件 / 记忆 / 通知 / MCP / 权限放宽，只透传「用哪个模型、哪家服务」：
+  Codex 用 `--ignore-user-config` 再按白名单回填 model / model_provider；Claude 只加载 local 级
+  settings，再从用户 settings.json 回填 `model` 与 `env`（第三方模型通常配在这里）。
+- 不存会话：Codex `--ephemeral`、Claude `--no-session-persistence`（每次都是新会话，不续用）。
 """
 from __future__ import annotations
 
@@ -22,9 +26,11 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import signal
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
@@ -110,23 +116,121 @@ def worker_env() -> dict[str, str]:
     return {k: v for k, v in child_env().items() if k not in _EXTRA_STRIPPED}
 
 
+# ── 个人配置透传（只透传模型选择） ─────────────────────────────────────────
+
+_CODEX_PASSTHROUGH = ("model", "model_reasoning_effort", "model_provider", "service_tier")
+_SAFE_KEY = re.compile(r"^[A-Za-z0-9_-]+$")
+_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _toml_value(value: Any) -> Optional[str]:
+    """把配置值写回 `-c key=value` 能解析的 TOML 字面量；不认识的类型返回 None（跳过，不猜）。"""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, list):
+        items = [_toml_value(v) for v in value]
+        return None if any(i is None for i in items) else "[" + ", ".join(items) + "]"  # type: ignore[arg-type]
+    if isinstance(value, dict):
+        parts = []
+        for key, item in value.items():
+            rendered = _toml_value(item)
+            if rendered is None:
+                return None
+            parts.append(f"{json.dumps(str(key), ensure_ascii=False)} = {rendered}")
+        return "{ " + ", ".join(parts) + " }"
+    return None
+
+
+def codex_home() -> Path:
+    return Path(os.getenv("CODEX_HOME") or Path.home() / ".codex")
+
+
+def codex_user_overrides(config_path: Optional[Path] = None) -> list[str]:
+    """从用户 config.toml 只取模型选择（含所选第三方 provider 的定义），拼成 `-c` 参数。"""
+    path = config_path or codex_home() / "config.toml"
+    try:
+        try:
+            import tomllib                      # type: ignore[import-not-found]
+        except ModuleNotFoundError:             # Python 3.10
+            import tomli as tomllib             # type: ignore[no-redef]
+        config = tomllib.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, ModuleNotFoundError):
+        return []
+    args: list[str] = []
+    for key in _CODEX_PASSTHROUGH:
+        rendered = _toml_value(config.get(key)) if key in config else None
+        if rendered is not None:
+            args += ["-c", f"{key}={rendered}"]
+    provider = config.get("model_provider")
+    table = (config.get("model_providers") or {}).get(provider) if isinstance(provider, str) else None
+    if isinstance(table, dict) and _SAFE_KEY.match(provider or ""):
+        for key, value in table.items():
+            rendered = _toml_value(value)
+            if rendered is not None and _SAFE_KEY.match(str(key)):
+                args += ["-c", f"model_providers.{provider}.{key}={rendered}"]
+    return args
+
+
+def claude_settings_path() -> Path:
+    return Path(os.getenv("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "settings.json"
+
+
+def claude_user_settings(settings_path: Optional[Path] = None) -> tuple[list[str], dict[str, str]]:
+    """从用户 settings.json 只取 `model`（→ --model）与 `env`（→ 子进程环境，不进 argv）。
+
+    第三方模型（ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / ANTHROPIC_MODEL…）通常就配在 `env` 里；
+    hooks、插件、权限放宽仍然不加载。`apiKeyHelper` 是取凭据的命令，按原样交给 --settings。
+    """
+    try:
+        settings = json.loads((settings_path or claude_settings_path()).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return [], {}
+    if not isinstance(settings, dict):
+        return [], {}
+    args: list[str] = []
+    model = settings.get("model")
+    if isinstance(model, str) and model.strip():
+        args += ["--model", model.strip()]
+    helper = settings.get("apiKeyHelper")
+    if isinstance(helper, str) and helper.strip():
+        args += ["--settings", json.dumps({"apiKeyHelper": helper.strip()}, ensure_ascii=False)]
+    raw_env = settings.get("env") if isinstance(settings.get("env"), dict) else {}
+    env = {str(k): str(v) for k, v in raw_env.items()
+           if _ENV_NAME.match(str(k)) and isinstance(v, (str, int, float, bool))}
+    return args, env
+
+
+def user_config(worker: str) -> tuple[list[str], dict[str, str]]:
+    """(额外 argv, 额外环境)。环境里同样剥掉交付令牌：个人配置不能把 push 能力带回来。"""
+    if worker == "codex":
+        return codex_user_overrides(), {}
+    args, env = claude_user_settings()
+    from src.sandbox.policy import is_stripped_env
+    return args, {k: v for k, v in env.items() if k not in _EXTRA_STRIPPED and not is_stripped_env(k)}
+
+
 # ── 命令行 ────────────────────────────────────────────────────────────────
 
 def build_argv(worker: str, *, cwd: str, write: bool, system: str = "",
-               binary: str = "") -> list[str]:
+               binary: str = "", extra: tuple[str, ...] | list[str] = ()) -> list[str]:
     """拼一次无头运行的 argv。权限只由这里的显式参数决定，不继承用户级放宽。
 
     提示词一律走 stdin（见 `stdin_text`）：审查提示词带整份 diff，放进 argv 会撞 ARG_MAX。
     """
     if worker == "codex":
-        return [binary or "codex", "exec", "--json",
+        return [binary or "codex", "exec", "--json", "--ignore-user-config", "--ephemeral",
                 "-s", "workspace-write" if write else "read-only",
-                "-C", cwd, "-c", "mcp_servers={}", "-"]
+                "-C", cwd, "-c", "mcp_servers={}", *extra, "-"]
     if worker == "claude":
         tools = _CLAUDE_READ_TOOLS + (_CLAUDE_WRITE_TOOLS if write else ())
         argv = [binary or "claude", "-p", "--output-format", "stream-json", "--verbose",
                 "--permission-mode", "dontAsk", "--permission-prompts", "none",
-                "--setting-sources", "local", "--strict-mcp-config"]
+                "--setting-sources", "local", "--strict-mcp-config", "--no-session-persistence",
+                *extra]
         if system.strip():
             argv += ["--append-system-prompt", system.strip()]
         return argv + ["--allowedTools", *tools]
@@ -252,10 +356,11 @@ async def run_worker(worker: str, prompt: str, cwd: str, *, write: bool, system:
     if not binary:
         run.error = f"找不到 {worker} 命令：请先安装并登录，或设置 VORTOCODE_{worker.upper()}_BIN"
         return run
-    argv = build_argv(worker, cwd=cwd, write=write, system=system, binary=binary)
+    extra, extra_env = user_config(worker)
+    argv = build_argv(worker, cwd=cwd, write=write, system=system, binary=binary, extra=extra)
     parse = _PARSERS[worker]
     proc = await asyncio.create_subprocess_exec(
-        *argv, cwd=cwd, env=worker_env(), stdin=asyncio.subprocess.PIPE,
+        *argv, cwd=cwd, env={**worker_env(), **extra_env}, stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         start_new_session=True, limit=16 * 1024 * 1024)
     stderr_chunks: list[bytes] = []
@@ -425,3 +530,42 @@ def external_agent_for_role(role: str, cwd: str, *, system: str = "", capabiliti
     return ExternalWorkerAgent(worker, cwd, write=role == "implement", system=system,
                                capabilities=capabilities, on_progress=on_progress,
                                question=question if role == "implement" else None)
+
+
+def describe_worker(worker: str) -> dict:
+    """给 doctor / 设置页用：装没装、登没登录、实际用哪个模型。只读，不发模型请求。"""
+    import subprocess
+    info: dict = {"worker": worker, "binary": worker_binary(worker), "logged_in": None,
+                  "auth": "", "model": ""}
+    extra, extra_env = user_config(worker)
+    if "--model" in extra:
+        info["model"] = extra[extra.index("--model") + 1]
+    for i, arg in enumerate(extra[:-1]):
+        if arg == "-c" and extra[i + 1].startswith(("model=", "model_provider=")):
+            key, _, value = extra[i + 1].partition("=")
+            info["model" if key == "model" else "provider"] = value.strip('"')
+    if not info["binary"]:
+        return info
+    cmd = [info["binary"], "login", "status"] if worker == "codex" else [info["binary"], "auth", "status"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=15,
+                           env={**worker_env(), **extra_env}, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired) as error:
+        info["auth"] = f"无法检查登录状态：{type(error).__name__}"
+        return info
+    text = (r.stdout or "") + (r.stderr or "")
+    if worker == "codex":
+        info["logged_in"] = r.returncode == 0 and "logged in" in text.lower()
+        info["auth"] = text.strip().splitlines()[0][:80] if text.strip() else ""
+    else:
+        try:
+            status = json.loads(r.stdout)
+        except ValueError:
+            status = {}
+        third_party = any(k in extra_env or os.getenv(k) for k in
+                          ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"))
+        info["logged_in"] = bool(status.get("loggedIn")) or third_party
+        info["auth"] = str(status.get("authMethod") or ("settings.json env" if third_party else ""))
+        if extra_env.get("ANTHROPIC_BASE_URL"):
+            info["provider"] = "ANTHROPIC_BASE_URL（第三方）"
+    return info

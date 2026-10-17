@@ -3,6 +3,7 @@
 事件样本录自真实 CLI（codex-cli 0.162、Claude Code 2.1，2026-10-17），路径已脱敏；
 运行测试用一个假 CLI 脚本，全程离线、不碰真实账号。
 """
+import json
 import os
 import stat
 import subprocess
@@ -57,10 +58,14 @@ def _fold(worker, events):
 
 
 @pytest.fixture(autouse=True)
-def _clean(monkeypatch):
+def _clean(monkeypatch, tmp_path_factory):
     taint.reset_taint()
     for name in (ew.ROLE_ENV, ew.TIMEOUT_ENV, "VORTOCODE_CODEX_BIN", "VORTOCODE_CLAUDE_BIN"):
         monkeypatch.delenv(name, raising=False)
+    # 测试绝不读真实的 ~/.codex / ~/.claude：指到空目录
+    empty = tmp_path_factory.mktemp("cli-home")
+    monkeypatch.setenv("CODEX_HOME", str(empty))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(empty))
     yield
     taint.reset_taint()
 
@@ -162,6 +167,13 @@ def test_failures_and_network_use_are_reported():
 _FAKE = """#!{python}
 import json, os, sys, time
 mode = os.environ.get("FAKE_MODE", "ok")
+if sys.argv[1:3] in (["login", "status"], ["auth", "status"]):
+    out = os.environ.get("FAKE_LOGGED_OUT")
+    if sys.argv[1] == "login":
+        print("Not logged in" if out else "Logged in using ChatGPT")
+    else:
+        print(json.dumps({{"loggedIn": not out, "authMethod": "claude.ai"}}))
+    sys.exit(1 if out else 0)
 prompt = sys.stdin.read()
 worker = os.path.basename(sys.argv[0]).split("-")[0]
 def emit(obj):
@@ -195,7 +207,9 @@ if worker == "codex":
     emit({{"type": "turn.completed", "usage": {{"output_tokens": 1}}}})
 else:
     emit({{"type": "system", "subtype": "init", "session_id": "c-1"}})
-    emit({{"type": "result", "subtype": "success", "is_error": False, "result": "[]", "session_id": "c-1"}})
+    seen = ",".join(k for k in ("ANTHROPIC_BASE_URL", "GITHUB_TOKEN", "OPENAI_API_KEY") if k in os.environ)
+    emit({{"type": "result", "subtype": "success", "is_error": False,
+          "result": ("env:" + seen) if mode == "env" else "[]", "session_id": "c-1"}})
 """
 
 
@@ -410,3 +424,116 @@ async def test_dependent_block_question_suspends_and_leaves_branch_untouched(fak
                                       "msg", None)
     after = subprocess.run(["git", "rev-parse", "vorto/q"], cwd=repo, capture_output=True, text=True).stdout
     assert binding.asked and before == after
+
+
+# ── 个人配置：隔离 + 只透传模型选择 ──
+
+_CODEX_CONFIG = """
+model = "gpt-x"
+model_reasoning_effort = "high"
+model_provider = "deep"
+notify = ["/bin/say", "done"]
+
+[features]
+hooks = true
+memories = true
+
+[model_providers.deep]
+name = "DeepSeek"
+base_url = "https://api.example.test/v1"
+env_key = "DEEP_API_KEY"
+wire_api = "chat"
+http_headers = { "X-Org" = "me" }
+
+[model_providers."bad id"]
+base_url = "https://evil.example.test"
+
+[mcp_servers.x]
+command = "evil"
+"""
+
+
+def test_codex_passes_only_model_choice_from_user_config(tmp_path, monkeypatch):
+    (tmp_path / "config.toml").write_text(_CODEX_CONFIG)
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    args = ew.codex_user_overrides()
+    pairs = [args[i + 1] for i in range(0, len(args), 2)]
+    assert args[::2] == ["-c"] * len(pairs)
+    assert 'model="gpt-x"' in pairs and 'model_reasoning_effort="high"' in pairs and 'model_provider="deep"' in pairs
+    assert 'model_providers.deep.base_url="https://api.example.test/v1"' in pairs
+    assert 'model_providers.deep.http_headers={ "X-Org" = "me" }' in pairs
+    joined = " ".join(pairs)
+    for leaked in ("notify", "features", "hooks", "memories", "mcp_servers", "evil"):
+        assert leaked not in joined
+
+
+def test_codex_argv_ignores_user_config_and_does_not_persist_sessions():
+    argv = ew.build_argv("codex", cwd="/w", write=True, extra=["-c", 'model="gpt-x"'])
+    assert "--ignore-user-config" in argv and "--ephemeral" in argv
+    assert argv[-3:] == ["-c", 'model="gpt-x"', "-"]
+
+
+def test_broken_or_missing_codex_config_means_cli_defaults(tmp_path, monkeypatch):
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    assert ew.codex_user_overrides() == []
+    (tmp_path / "config.toml").write_text("model = [unclosed")
+    assert ew.codex_user_overrides() == []
+
+
+def test_claude_passes_model_and_env_but_not_hooks_or_permissions(tmp_path, monkeypatch):
+    (tmp_path / "settings.json").write_text(json.dumps({
+        "model": "opus", "apiKeyHelper": "/usr/local/bin/key-helper",
+        "env": {"ANTHROPIC_BASE_URL": "https://glm.example.test/anthropic", "ANTHROPIC_AUTH_TOKEN": "t",
+                "GITHUB_TOKEN": "g", "OPENAI_API_KEY": "k", "bad name": "x"},
+        "hooks": {"PreToolUse": [{"hooks": [{"command": "evil"}]}]},
+        "permissions": {"allow": ["Bash(*)"]}}))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    args, env = ew.user_config("claude")
+    assert args[:2] == ["--model", "opus"]
+    assert json.loads(args[args.index("--settings") + 1]) == {"apiKeyHelper": "/usr/local/bin/key-helper"}
+    assert env == {"ANTHROPIC_BASE_URL": "https://glm.example.test/anthropic", "ANTHROPIC_AUTH_TOKEN": "t"}
+    assert "evil" not in " ".join(args) and "Bash(*)" not in " ".join(args)
+    argv = ew.build_argv("claude", cwd="/w", write=False, extra=args)
+    assert "--no-session-persistence" in argv and argv[argv.index("--setting-sources") + 1] == "local"
+
+
+async def test_third_party_claude_env_reaches_the_child_without_tokens(fake_cli, tmp_path, monkeypatch):
+    (tmp_path / "settings.json").write_text(json.dumps({"env": {
+        "ANTHROPIC_BASE_URL": "https://glm.example.test/anthropic", "GITHUB_TOKEN": "g"}}))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("FAKE_MODE", "env")
+    run = await ew.run_worker("claude", "go", str(tmp_path), write=False)
+    assert run.ok and run.final_text == "env:ANTHROPIC_BASE_URL"
+
+
+# ── doctor ──
+
+def test_doctor_reports_unconfigured_as_fine():
+    from src.gateway.doctor import _check_external_workers
+    check = _check_external_workers()
+    assert check.level == "ok" and "未配置" in check.detail
+
+
+def test_doctor_reports_login_and_model(fake_cli, tmp_path, monkeypatch):
+    from src.gateway.doctor import _check_external_workers
+    (tmp_path / "config.toml").write_text('model = "gpt-x"\n')
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path))
+    monkeypatch.setenv(ew.ROLE_ENV, "implement=codex,review=claude")
+    check = _check_external_workers()
+    assert check.level == "ok", check.detail
+    assert "implement=codex（Logged in using ChatGPT，模型 gpt-x）" in check.detail
+    assert "review=claude（claude.ai，模型 CLI 默认）" in check.detail
+
+
+def test_doctor_fails_when_logged_out_or_missing(fake_cli, tmp_path, monkeypatch):
+    from src.gateway.doctor import _check_external_workers
+    monkeypatch.setenv(ew.ROLE_ENV, "implement=codex")
+    monkeypatch.setenv("FAKE_LOGGED_OUT", "1")
+    check = _check_external_workers()
+    assert check.level == "fail" and "codex login" in check.detail
+    monkeypatch.setenv("VORTOCODE_CODEX_BIN", str(tmp_path / "nope"))
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.delenv("VORTOCODE_CODEX_BIN")
+    check = _check_external_workers()
+    assert check.level == "fail" and "找不到命令" in check.detail
