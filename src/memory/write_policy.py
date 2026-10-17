@@ -11,7 +11,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
-from src.memory.session_store import SessionStore
+from src.memory.conversation_db import SessionStore
 
 POLICY_VERSION = 1
 MAX_MEMORY_CONTENT = 4_000

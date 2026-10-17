@@ -6,7 +6,7 @@ from src.memory import assistant_profile as profile
 
 
 def _remember(root, *contents):
-    from src.memory.session_store import SessionStore
+    from src.memory.conversation_db import SessionStore
     store = SessionStore(str(root / ".vortocode" / "sessions.db"))
     return [store.add_memory("__longterm__", "fact", text) for text in contents]
 

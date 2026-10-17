@@ -330,7 +330,7 @@ async def test_model_picker_stays_offline_without_api_key(monkeypatch):
 @pytest.mark.asyncio
 async def test_sessions_picker_resumes_selected(tmp_path):
     """/sessions 弹会话选择器，回车恢复选中会话（免记 id）。"""
-    from src.memory.session_store import SessionStore
+    from src.memory.conversation_db import SessionStore
     db = str(tmp_path / ".vortocode" / "sessions.db")
     store = SessionStore(db)
     old = store.create_session("旧会话")
@@ -353,7 +353,7 @@ async def test_sessions_picker_resumes_selected(tmp_path):
 @pytest.mark.asyncio
 async def test_sessions_search_finds_message_and_resumes(tmp_path):
     """/sessions search 跨历史消息搜索，并能从结果选择器恢复会话。"""
-    from src.memory.session_store import SessionStore
+    from src.memory.conversation_db import SessionStore
     db = str(tmp_path / ".vortocode" / "sessions.db")
     store = SessionStore(db)
     sid = store.create_session("需求讨论")
@@ -370,7 +370,7 @@ async def test_sessions_search_finds_message_and_resumes(tmp_path):
 
 
 def test_sessions_rename_and_unknown(tmp_path):
-    from src.memory.session_store import SessionStore
+    from src.memory.conversation_db import SessionStore
 
     store = SessionStore(str(tmp_path / ".vortocode" / "sessions.db"))
     sid = store.create_session("旧名")
@@ -391,7 +391,7 @@ def test_sessions_rename_and_unknown(tmp_path):
 
 def test_resume_context_shows_health_and_session_audit(tmp_path):
     import subprocess
-    from src.memory.session_store import SessionStore
+    from src.memory.conversation_db import SessionStore
 
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     (tmp_path / "dirty.py").write_text("x = 1\n", encoding="utf-8")
@@ -429,7 +429,7 @@ def test_resume_context_shows_health_and_session_audit(tmp_path):
 
 @pytest.mark.asyncio
 async def test_sessions_delete_confirm_removes_session(tmp_path):
-    from src.memory.session_store import SessionStore
+    from src.memory.conversation_db import SessionStore
 
     store = SessionStore(str(tmp_path / ".vortocode" / "sessions.db"))
     sid = store.create_session("待删")
@@ -448,7 +448,7 @@ async def test_sessions_delete_confirm_removes_session(tmp_path):
 
 @pytest.mark.asyncio
 async def test_sessions_delete_cancel_keeps_session(tmp_path):
-    from src.memory.session_store import SessionStore
+    from src.memory.conversation_db import SessionStore
 
     store = SessionStore(str(tmp_path / ".vortocode" / "sessions.db"))
     sid = store.create_session("保留")
@@ -848,7 +848,7 @@ def test_external_tui_at_file_cannot_bypass_sensitive_read_gate(tmp_path):
 
 @pytest.mark.asyncio
 async def test_resume_restores_external_capability_profile(tmp_path):
-    from src.memory.session_store import SessionStore
+    from src.memory.conversation_db import SessionStore
 
     store = SessionStore(str(tmp_path / ".vortocode" / "sessions.db"))
     sid = store.create_session("external session")
@@ -2107,7 +2107,7 @@ async def test_session_persists_messages(tmp_path):
         await _submit(app, pilot, "/help")
         sid = app.session_id
 
-    from src.memory.session_store import SessionStore
+    from src.memory.conversation_db import SessionStore
     store = SessionStore(str(tmp_path / ".vortocode" / "sessions.db"))
     msgs = store.get_messages(sid)
     assert any("可用命令" in m["content"] for m in msgs)   # /help 输出已落盘
@@ -2130,7 +2130,7 @@ async def test_session_title_and_summary_are_updated(tmp_path, monkeypatch):
         assert await _wait_for(app, pilot, "修改建议")
         sid = app.session_id
 
-    from src.memory.session_store import SessionStore
+    from src.memory.conversation_db import SessionStore
     store = SessionStore(str(tmp_path / ".vortocode" / "sessions.db"))
     row = store.get_session(sid)
     md = __import__("json").loads(row["metadata"])
@@ -2154,7 +2154,7 @@ def test_tui_run_disables_mouse_capture_for_native_copy(monkeypatch):
 @pytest.mark.asyncio
 async def test_resume_pre_capability_snapshot_keeps_only_sanitized_summary(monkeypatch, tmp_path):
     import src.llm.client as llmmod
-    from src.memory.session_store import SessionStore
+    from src.memory.conversation_db import SessionStore
 
     class FakeLLM:
         def __init__(self, *a, **k):
@@ -2189,7 +2189,7 @@ async def test_resume_pre_capability_snapshot_keeps_only_sanitized_summary(monke
 @pytest.mark.asyncio
 async def test_resume_legacy_agent_history_uses_session_summary(monkeypatch, tmp_path):
     import src.llm.client as llmmod
-    from src.memory.session_store import SessionStore
+    from src.memory.conversation_db import SessionStore
 
     class FakeLLM:
         def __init__(self, *a, **k):
@@ -2220,7 +2220,7 @@ async def test_resume_legacy_agent_history_uses_session_summary(monkeypatch, tmp
 
 @pytest.mark.asyncio
 async def test_resume_replays_session(tmp_path):
-    from src.memory.session_store import SessionStore
+    from src.memory.conversation_db import SessionStore
 
     db = str(tmp_path / ".vortocode" / "sessions.db")
     store = SessionStore(db)
@@ -2236,7 +2236,7 @@ async def test_resume_replays_session(tmp_path):
 
 @pytest.mark.asyncio
 async def test_resume_shows_session_context_summary(tmp_path):
-    from src.memory.session_store import SessionStore
+    from src.memory.conversation_db import SessionStore
 
     db = str(tmp_path / ".vortocode" / "sessions.db")
     store = SessionStore(db)

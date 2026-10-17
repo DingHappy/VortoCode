@@ -131,7 +131,7 @@ def list_memories(root: str, limit: int = 200) -> List[Dict[str, Any]]:
     """它记住的关于你的事，最新的在前。没有记忆库时不创建它。"""
     if not _db_path(root).exists():
         return []
-    from src.memory.session_store import SessionStore
+    from src.memory.conversation_db import SessionStore
 
     rows = SessionStore(str(_db_path(root))).get_memories("__longterm__")
     rows.sort(key=lambda row: str(row.get("created_at") or ""), reverse=True)
@@ -142,7 +142,7 @@ def list_memories(root: str, limit: int = 200) -> List[Dict[str, Any]]:
 def delete_memory(root: str, memory_id: str) -> bool:
     if not _db_path(root).exists():
         return False
-    from src.memory.session_store import SessionStore
+    from src.memory.conversation_db import SessionStore
 
     return SessionStore(str(_db_path(root))).delete_memory("__longterm__", str(memory_id))
 
@@ -176,7 +176,7 @@ def assistant_system_parts(root: str, *, include_memories: bool = True) -> List[
 def propose_memories(root: str, items: List[str], *, source: str, tainted: bool) -> List[str]:
     """回合里提炼出的「关于你」候选：**一律只进待确认**（不是你让它记的），你在「身份 → 记忆」里点了才生效。
     写入策略照旧：疑似凭据脱敏隔离、过长丢弃。与已有记忆 / 待确认重复的跳过。返回新提案 id。"""
-    from src.memory.session_store import SessionStore
+    from src.memory.conversation_db import SessionStore
     from src.memory.write_policy import MemoryWritePolicy, MemoryWriteRequest
 
     clean = [" ".join(str(item).split()) for item in items or [] if str(item).strip()]
@@ -208,7 +208,7 @@ def list_memory_proposals(root: str) -> List[Dict[str, Any]]:
     """待确认的记忆候选（不含隔离的疑似凭据——那些不能批准）。"""
     if not _db_path(root).exists():
         return []
-    from src.memory.session_store import SessionStore
+    from src.memory.conversation_db import SessionStore
 
     rows = SessionStore(str(_db_path(root))).list_memory_proposals("pending", limit=100)
     return [{"id": str(row.get("id")), "content": str(row.get("content") or ""),
@@ -216,7 +216,7 @@ def list_memory_proposals(root: str) -> List[Dict[str, Any]]:
 
 
 def review_memory_proposal(root: str, proposal_id: str, approve: bool) -> Dict[str, Any]:
-    from src.memory.session_store import SessionStore
+    from src.memory.conversation_db import SessionStore
     from src.memory.write_policy import MemoryWriter
 
     return MemoryWriter(SessionStore(str(_db_path(root)))).review(

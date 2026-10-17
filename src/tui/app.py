@@ -29,7 +29,7 @@ from textual.widgets import Header, Input, RichLog, Static, TextArea
 from textual.worker import WorkerState
 
 from src.agents.notice import strip_marker
-from src.memory.session_store import SessionManager
+from src.memory.conversation_db import SessionManager
 # 斜杠命令实现（38 个 _cmd_*，约 1580 行）搬到同目录 commands.py：
 # 它们回答的是「用户敲了命令做什么」，与「怎么把界面画出来」是两件事。
 # mixin 保持方法解析原样，行为逐字节不变（见 commands.py 的模块 docstring）。

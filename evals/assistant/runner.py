@@ -39,7 +39,7 @@ def setup(case: dict, root: Path) -> dict:
     registry.write_text(json.dumps({"projects": [{"name": "demo", "repo_root": str(root / "project"), "port": 65534}]}))
     save_profile(str(root), name="小V", soul="简短准确，先给结论。")
     if fixture in {"preference", "location", "hidden_memory"}:
-        from src.memory.session_store import SessionStore
+        from src.memory.conversation_db import SessionStore
         store = SessionStore(str(state / "sessions.db"))
         if fixture == "preference":
             store.add_memory("__longterm__", "fact", "用户希望汇报时先给结论")

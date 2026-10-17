@@ -11,7 +11,7 @@ import pytest
 from src.agents import taint
 from src.agents.main_agent import (MainAgent, Tool, build_command_tool, build_pr_tool,
                                     build_memory_tools, build_research_tools, build_web_tools)
-from src.memory.session_store import SessionStore
+from src.memory.conversation_db import SessionStore
 
 
 @pytest.fixture(autouse=True)

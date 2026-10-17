@@ -8,7 +8,7 @@ from .base import (
     ExpertMemory,
     MemorySystem
 )
-from .session_store import SessionStore, SessionManager
+from .conversation_db import SessionStore, SessionManager
 from .vector_memory import (
     VectorMemory,
     VectorMemoryConfig,

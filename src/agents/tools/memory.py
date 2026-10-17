@@ -17,7 +17,7 @@ from src.agents.tool import Tool
 
 def _longterm_store(repo_root: str):
     """跨会话长期记忆用的 SessionStore（与 TUI 同一 db、同一固定 __longterm__ session_id）。"""
-    from src.memory.session_store import SessionStore
+    from src.memory.conversation_db import SessionStore
     return SessionStore(str(Path(repo_root) / ".vortocode" / "sessions.db"))
 
 

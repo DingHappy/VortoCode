@@ -5,7 +5,7 @@ import hashlib
 from pathlib import Path
 
 from src.memory.conversation_search import ConversationSearch
-from src.memory.session_store import SessionStore
+from src.memory.conversation_db import SessionStore
 
 QUOTAS = {'knowledge-update': 4, 'temporal-reasoning': 4, 'multi-session': 4,
           'single-session-preference': 3, 'single-session-user': 3, 'single-session-assistant': 2}

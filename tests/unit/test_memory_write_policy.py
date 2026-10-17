@@ -1,7 +1,7 @@
 import json
 import sqlite3
 
-from src.memory.session_store import SessionStore
+from src.memory.conversation_db import SessionStore
 from src.memory.write_policy import (MemoryWriteRequest, MemoryWriter,
                                      sanitize_persistent_summary)
 

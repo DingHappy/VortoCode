@@ -6,7 +6,7 @@ import sqlite3
 import pytest
 
 from src.memory.conversation_evidence import read_stored_excerpt, search_stored_conversations
-from src.memory.session_store import SessionStore
+from src.memory.conversation_db import SessionStore
 
 
 def message(tmp_path, content='显卡升级', *, metadata=None):

@@ -136,7 +136,7 @@ def test_original_read_rejects_symlink_and_system_messages(tmp_path):
 @pytest.mark.asyncio
 async def test_dated_tool_reports_excluded_sources_and_original_read_is_untrusted(tmp_path):
     from src.agents.tools.memory import build_memory_tools
-    from src.memory.session_store import SessionStore
+    from src.memory.conversation_db import SessionStore
     archive(tmp_path, 'gpu', '显卡 unknown')
     store = SessionStore(str(tmp_path / '.vortocode/sessions.db'))
     store.add_message(store.create_session(), 'user', '显卡 old sqlite')
