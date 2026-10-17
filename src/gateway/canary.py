@@ -333,7 +333,7 @@ async def lane_notify(root: str) -> Lane:
 
     im_runtime.set_owner_notifier(_sink)
     try:
-        await make_notifier(root)("canary 投递探针")
+        await make_notifier(root)("canary 投递探针", urgent=True)
     finally:
         im_runtime.set_owner_notifier(None)
 
@@ -446,7 +446,7 @@ async def lane_cold_push(root: str) -> Lane:
 
     im_runtime.set_owner_notifier(_notify_send)
     try:
-        await make_notifier(root)("冷启动投递探针")
+        await make_notifier(root)("冷启动投递探针", urgent=True)
     finally:
         im_runtime.set_owner_notifier(None)
 
