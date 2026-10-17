@@ -602,9 +602,24 @@ export interface TaskChainBudget {
   error?: string;
 }
 
+/** 某个 VortoCode 实例上外部执行者的只读状态（/api/delegations/capabilities 的 external_workers）。 */
+export interface ExternalWorkersSummary {
+  mode: "local" | "resident";
+  home?: string | null;
+  roles: Record<string, string>;
+  workers: Array<{ worker: string; found: boolean; logged_in: boolean | null; auth: string; model: string; provider: string }>;
+}
+
+export interface ResidentWorkersView {
+  name: string;
+  summary: ExternalWorkersSummary | null;
+  error?: string;
+}
+
 export interface DispatchCapabilities {
   version: number;
   mode: "read";
+  external_workers?: ExternalWorkersSummary;
   agents: Array<{ name: string; description: string }>;
   limits: { max_steps: number; timeout_seconds: number; max_rounds: number; active_tasks: number };
   dependencies?: { available: boolean; mode: "explicit_release"; max_dependencies: number; automatic_release: boolean;

@@ -9360,8 +9360,20 @@ input::placeholder {
 }
 
 .custom-providers-note.danger,
-.llm-routing-fields small.danger {
+.llm-routing-fields small.danger,
+.llm-resident-workers .danger {
   color: var(--red-text);
+}
+
+.llm-resident-workers {
+  display: grid;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.llm-resident-workers > p {
+  margin: 0;
 }
 
 .custom-providers-toolbar {

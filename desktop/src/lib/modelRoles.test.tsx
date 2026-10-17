@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ModelRoles } from "../components/settings/ModelRoles";
+import { ModelRoles, ResidentWorkers } from "../components/settings/ModelRoles";
 import { externalWorkerOptions, modelSettingsState, normalizedRoleModels, roleModelOptions } from "./modelSettings";
 import type { DesktopLlmProfileStatus } from "../types";
 
@@ -55,4 +55,29 @@ it("tells the user how to log in when the CLI is installed but signed out", () =
   const html = renderToStaticMarkup(<ModelRoles profile={profile} value={{ implement: "cli:claude" }} onChange={() => {}}
     workers={[{ worker: "claude", label: "Claude Code CLI（本机）", path: "/bin/claude", loggedIn: false }]} />);
   expect(html).toContain("但未登录：在终端运行 claude auth login");
+});
+
+const residentSummary = { mode: "resident" as const, home: "/home/vc/.vortocode/workers", roles: { implement: "codex", review: "claude" },
+  workers: [{ worker: "codex", found: true, logged_in: true, auth: "Logged in using ChatGPT", model: "gpt-x", provider: "" },
+    { worker: "claude", found: true, logged_in: false, auth: "", model: "", provider: "" }] };
+
+it("shows the resident instance read-only and separately from the local engine", () => {
+  const html = renderToStaticMarkup(<ModelRoles profile={profile} value={{}} onChange={() => {}} workers={[]}
+    resident={{ name: "VortoCode", summary: residentSummary }} />);
+  expect(html).toContain("本机引擎：");
+  expect(html).toContain("常驻电脑「VortoCode」的外部执行者");
+  expect(html).toContain("常驻模式，专用登录在 /home/vc/.vortocode/workers");
+  expect(html).toContain("实现：codex — 已就绪 · Logged in using ChatGPT · 模型 gpt-x");
+  expect(html).toContain("未登录：在常驻电脑上运行 vc workers login claude");
+  const residentPart = html.slice(html.indexOf("llm-resident-workers"));
+  expect(residentPart).not.toContain("<input");                      // 只读：没有可编辑项
+});
+it("warns when a resident instance still uses the service account's personal CLI config", () => {
+  const html = renderToStaticMarkup(<ResidentWorkers view={{ name: "x", summary: { ...residentSummary, mode: "local", home: null } }} />);
+  expect(html).toContain("没有设 VORTOCODE_WORKER_HOME");
+  expect(renderToStaticMarkup(<ResidentWorkers view={{ name: "x", summary: null }} />)).toContain("还不会报告");
+  expect(renderToStaticMarkup(<ResidentWorkers view={{ name: "x", summary: { ...residentSummary, roles: {} } }} />)).toContain("未配置外部执行者");
+});
+it("does not render a resident block for a local project", () => {
+  expect(renderToStaticMarkup(<ModelRoles profile={profile} value={{}} onChange={() => {}} workers={[]} />)).not.toContain("常驻电脑「");
 });
