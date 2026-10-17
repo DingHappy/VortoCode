@@ -39,7 +39,7 @@ Desktop插件页现有当前会话连接状态、手动连接/重试；local会�
 且 YAML 判定为 `allow` 时，跳过这一次执行器确认（污点态也适用）。执行器会重新检查元数据，
 普通 MCP server 自报只读不能豁免；`ask` 仍须确认，`deny` 仍拒绝。结果仍给回合打污点，
 后续非只读调用仍须确认；local/unattended 档位不接入这些连接器。
-Desktop/Web/IM 会话使用原会话 gate，CLI 的显式 `--yes` 仍受污点否决；TUI 保留原人工确认。
+Desktop/Web/IM 会话使用原会话 gate，CLI 的显式 `--yes` 仍受污点否决。
 
 未写 `protocol` 的旧配置继续使用 `legacy_rest`，走旧 `/health`、`/tools`、`/tools/call`。
 新模式只访问配置中的原始完整端点，不追加路径。2026版本不发送initialize/GET/DELETE；显式2025版本进行initialize、initialized通知、Session-Id传递及退出DELETE清理。

@@ -2,14 +2,14 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-VortoCode 是一个 Python 编写的 AI 编码 agent 框架：一个交互式主 agent loop，配三种前端入口（终端 TUI / 浏览器 Web / 无头 CLI）+ IM 桥接 + 无人值守隔离会话，底层共用同一 agent runtime 与一条隔离 dev 流水线。仓库注释与文档以中文为主。
+VortoCode 是一个 Python 编写的 AI 编码 agent 框架：一个交互式主 agent loop，对外入口是 Desktop 与无头 CLI（另有冻结的浏览器 Web 控制台）+ IM 桥接 + 无人值守隔离会话，底层共用同一 agent runtime 与一条隔离 dev 流水线。仓库注释与文档以中文为主。
 
 ## 常用命令
 
 ```bash
 pip install -e '.[dev]'          # 开发依赖（ruff/mypy/black/pytest）。功能全开用 '.[all]'
 # 依赖锁：pyproject 是唯一来源，CI 用 -c constraints.txt 安装。改了依赖或要升级时刷新锁并单独提 PR：
-uv pip compile pyproject.toml --extra llm --extra dev --extra tui --universal --python-version 3.10 -o constraints.txt
+uv pip compile pyproject.toml --extra llm --extra dev --universal --python-version 3.10 -o constraints.txt
 
 # 测试
 python -m pytest tests/ -q                          # 全量
@@ -28,10 +28,9 @@ python -m mypy                   # 范围见 pyproject [tool.mypy]，只圈 llm 
 black src tests                  # 格式化，line-length=100
 
 # 运行
-vc tui                           # 全屏终端主 agent（需 '.[tui]' + OPENAI_API_KEY）
 vc server                        # Web 控制台，默认 127.0.0.1:8080，浏览器开 /agent
 vc agent -b "任务描述"            # 无头跑一次开发任务（走隔离 dev 流水线）
-vc --help                        # 全部子命令：tui/server/agent/im/cron/heartbeat/doctor…
+vc --help                        # 全部子命令：server/agent/im/cron/heartbeat/doctor/workers…
 ```
 
 **CI 状态**：私有仓库可通过 `CI_RUNNER` 使用受信任的自托管 runner；仓库公开后，工作流会强制改用 GitHub 托管 runner。**合并到 main 前仍要本地跑 `./scripts/ci-local.sh`**：它刻意清空 `OPENAI_API_KEY/VORTOCODE_API_TOKEN/VORTOCODE_ENABLE_SHELL/ENABLE_BROWSER`，保证测试离线、确定性——别依赖你 `.env` 里的 key 让本地变绿。
@@ -44,7 +43,7 @@ vc --help                        # 全部子命令：tui/server/agent/im/cron/he
 
 **入口**：`vc`/`vortocode` → `src/cli.py:main`（`main.py` 是薄壳）。包采用**扁平布局**：包名就是 `src`，一律 `from src.xxx import ...`。
 
-**一个 runtime，多个前端（"三端同源"）**：TUI / Web `/agent` / 无头 CLI / IM 桥接都通过 `src/gateway/agent_session.py` 的 `build_session(kind=...)` 工厂装配同一个 `MainAgent`（**`src/agents/agent_loop.py`**；`main_agent.py` 再导出，存量 `from src.agents.main_agent import MainAgent` 照常可用）。无人值守（cron/heartbeat）走 `src/gateway/session.py` 的 `run_isolated_session`（全新隔离上下文，不读写主会话）。跨进程 attach 走 `src/gateway/protocol.py` + `client.py` 的 WS 协议。**TUI 是刻意的例外**：它用富 UI 版工具（着色 diff + ConfirmScreen）自行装配，不走 `build_agent_tools`。
+**一个 runtime，多个前端（"三端同源"）**：Desktop（经 Web API）/ Web `/agent` / 无头 CLI / IM 桥接都通过 `src/gateway/agent_session.py` 的 `build_session(kind=...)` 工厂装配同一个 `MainAgent`（**`src/agents/agent_loop.py`**；`main_agent.py` 再导出，存量 `from src.agents.main_agent import MainAgent` 照常可用）。无人值守（cron/heartbeat）走 `src/gateway/session.py` 的 `run_isolated_session`（全新隔离上下文，不读写主会话）。跨进程 attach 走 `src/gateway/protocol.py` + `client.py` 的 WS 协议。终端 TUI 已于 2026-10-17 退役删除。
 
 **安全内核（改动前必读——最容易踩的地方）**：安全规则**上收到内核一处**，别在每个端各写一遍（那正是"加一端漏一端"的历史病根，`tests/unit/test_three_end_contract.py` 是钉死它的能力矩阵契约表）。
 - **确认门** `make_confirm_gate`（**`src/agents/gate.py`**，main_agent 仅再导出）：唯一的确认/放行判定。各端只声明能力（`auto_approve` 是否 headless、`can_ask_human` 是否有真人），**由内核决定问不问、能不能免**。别再往 `build_agent_tools` 塞裸 confirm。
@@ -53,7 +52,7 @@ vc --help                        # 全部子命令：tui/server/agent/im/cron/he
 - **记忆写入策略** `src/memory/write_policy.py`：durable/proposal/quarantine/reject 四级；污点回合的指令性文本与疑似凭据不进长期记忆。
 - **前缀缓存稳定**：system prompt 在**同一会话内必须字节级稳定**（静态注入，装配时读一次），否则破坏 relay 侧前缀缓存命中。仓库记忆（`src/agents/repo_memory.py`）等静态注入项都遵守这条。
 
-**运行循环与能力装配分离**：`agents/agent_loop.py` 消费共享 Tool 协议，负责模型回合、权限检查、上下文预算与 Hook；`main_agent.py`、`delegation.py`、`dev_tools.py` 和 `agents/tools/*` 等负责具体能力及业务装配，可组合公开的 workflow/scheduling 服务。工具实现并非一律无状态，不能把整个 `agents/` 都描述为不依赖业务层的底层内核。TUI 的 `app.py` → `commands.py` mixin 关系保持现状，不在此轮拆分。
+**运行循环与能力装配分离**：`agents/agent_loop.py` 消费共享 Tool 协议，负责模型回合、权限检查、上下文预算与 Hook；`main_agent.py`、`delegation.py`、`dev_tools.py` 和 `agents/tools/*` 等负责具体能力及业务装配，可组合公开的 workflow/scheduling 服务。工具实现并非一律无状态，不能把整个 `agents/` 都描述为不依赖业务层的底层内核。
 
 **包布局**：这是共享 runtime 的装配分层，不是按包名划一条绝对单向链。
 - **安全核心**：`agents/gate.py`、`agents/taint.py`、`agents/capabilities.py`、`memory/write_policy.py`、`sandbox/policy.py` 是底层策略；`agents/agent_loop.py` 承担底层模型回合与工具运行。五个策略模块不得导入 `workflow`、`gateway`、`scheduling`、`web`、`tui`、`im`，含函数内和相对 import，由 `tests/unit/test_layering.py` 的 AST 契约钉住。
@@ -63,10 +62,10 @@ vc --help                        # 全部子命令：tui/server/agent/im/cron/he
 - `workflow/tasks`：后台任务台账与协作（委派/依赖/续跑/提问/看板投影）；`workflow/review`：Git 评审与交付；`workflow/workbench`：Desktop 工作台（目标/命令运行/终端/日志）；`workflow/pipeline`：非代码流水线。
 - `scheduling/`：cron/heartbeat/自愈/通知台账/中转巡检。
 - `sandbox/`：OS 沙箱**策略** `policy.py`（seatbelt/bwrap 决策、写路径白名单、子进程密钥剥离——安全内核，被 shell/hooks/skills/MCP/runner 共用）+ 沙箱**执行** `runner.py`/`docker_sandbox.py`。
-- 内核**不得导入** `web/` `tui/`（制品工具已下沉为 `agents/tools/artifacts.py`，cron 排期计算在 `scheduling/cron.py:next_due`）。新业务模块别再往 `gateway/` 塞。
-- **下层一律不导入前端**：除 `web/` `tui/` `im/` 与入口 `cli.py` 外，任何模块（含函数内延迟 import）都不得导入 `src.web` / `src.tui`。下层需要通知前端时用注册钩子（如 `scheduling/notices.py:set_notice_broadcaster`，由 Web 启动时注册）。会话存盘在 `gateway/session_store.py`。SQLite 会话/记忆存储另在 `memory/conversation_db.py`，保留 `SessionStore` / `SessionManager` 类名与原数据库路径。`tests/unit/test_layering.py` 钉住。
+- 内核**不得导入** `web/`（制品工具已下沉为 `agents/tools/artifacts.py`，cron 排期计算在 `scheduling/cron.py:next_due`）。新业务模块别再往 `gateway/` 塞。
+- **下层一律不导入前端**：除 `web/` `im/` 与入口 `cli.py` 外，任何模块（含函数内延迟 import）都不得导入 `src.web`。下层需要通知前端时用注册钩子（如 `scheduling/notices.py:set_notice_broadcaster`，由 Web 启动时注册）。会话存盘在 `gateway/session_store.py`。SQLite 会话/记忆存储另在 `memory/conversation_db.py`，保留 `SessionStore` / `SessionManager` 类名与原数据库路径。`tests/unit/test_layering.py` 钉住。
 - **宿主机命令执行开关全仓唯一一份**：`sandbox/policy.py:shell_enabled`（Web 的 `require_shell`、cron 的 command 作业、沙箱 runner 回落宿主机都只认它，均函数内导入以便统一打桩）。别在别处再读 `VORTOCODE_ENABLE_SHELL`。
-- 外层（web/im/tui/cli/gateway/agents）只用 `workflow` 的**公开名字**：不导入下划线私有函数，也不拿台账锁 `TASK_STATE_LOCK` 自己拼锁内读写——要在锁内完成的操作由 workflow 提供成一个函数（如 `snapshot_runtime_inbox`、`audit_owner_dependencies`）。`tests/unit/test_workflow_boundary.py` 钉住。刻意**不**在 `workflow/__init__` 堆再导出：只改 import 路径不改依赖，不算解耦。
+- 外层（web/im/cli/gateway/agents）只用 `workflow` 的**公开名字**：不导入下划线私有函数，也不拿台账锁 `TASK_STATE_LOCK` 自己拼锁内读写——要在锁内完成的操作由 workflow 提供成一个函数（如 `snapshot_runtime_inbox`、`audit_owner_dependencies`）。`tests/unit/test_workflow_boundary.py` 钉住。刻意**不**在 `workflow/__init__` 堆再导出：只改 import 路径不改依赖，不算解耦。
 
 **隔离 dev 流水线（护城河）**：`dev_auto` → `decompose` 拆无依赖并行批 → 每件在一次性 git **worktree**（`src/agents/worktree.py`）里 implement+自测 → 逐件+集成验证（`verify_profiles.py`/`subagent_verifier.py`）→ 落 `vorto/*` 分支 → 开 PR。计划落 `.vortocode/dev_plans/<id>.json`（write-ahead，可 `dev_resume` 续跑），并由 `src/workflow/tasks/dev_graph.py` 投影成 DAG 供 `GET /api/dev-plans/{id}/graph` 与 Desktop 依赖图视图消费（**纯投影零新状态**）。各阶段 token 用量经 `src/llm/client.py` 的 `usage_scope()` 分段计量，记 INFO 日志（模型分层的数据地基）。**全程不碰 main / 主工作区**，委派需人工确认。`.vortocode/` 是 gitignored（本地经验：`memory/repo.md`、`agents/*.md` 自定义角色、`artifacts/` 制品）。
 
@@ -74,7 +73,7 @@ vc --help                        # 全部子命令：tui/server/agent/im/cron/he
 
 ## 约定与坑
 
-- **开发侧重（2026-10-07 定）：内核通用、产品聚焦。** 新能力只往内核（`agents/` loop·确认门·污点·能力档案、`tools/`、`llm/`、`memory/`、隔离 dev 流水线）里加，对外入口只做 Desktop + 无头 CLI（+ 钉钉远程派活）。**TUI 与 Web 控制台冻结：只修 bug、不加功能、不再要求与 Desktop 对齐**。新增 API 路由前先确认有前端会调用它——2026-10 已删掉一批「没有任何前端调用」的旧接口（61 条）。
+- **开发侧重（2026-10-07 定）：内核通用、产品聚焦。** 新能力只往内核（`agents/` loop·确认门·污点·能力档案、`tools/`、`llm/`、`memory/`、隔离 dev 流水线）里加，对外入口只做 Desktop + 无头 CLI（+ 钉钉远程派活）。**终端 TUI 已于 2026-10-17 退役删除；Web 控制台冻结：只修 bug、不加功能、不再要求与 Desktop 对齐**。新增 API 路由前先确认有前端会调用它——2026-10 已删掉一批「没有任何前端调用」的旧接口（61 条）。
 - **改 Web/安全/Agent 前后必跑测试**。`tests/integration/` 是**路由契约安全网**：冻结 API 路由集合 + WS + 鉴权/执行闸/路径穿越。新增 API 路由要同步更新 `tests/integration/server_routes_baseline.json` 基线，否则契约测试红。
 - 修 bug 尽量补回归测试（见 `tests/unit/test_bugfix_regressions.py`）。
 - **测试必须离线、确定性**：live/联网/烧 token 的测试默认跳过；不要引入真实 API 依赖。

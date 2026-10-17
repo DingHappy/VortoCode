@@ -110,7 +110,7 @@ Project Control Center 第二阶段的 Runtime Supervisor 已落地：Tauri 原�
 
 定位：为终端重度用户、脚本、CI、远程主机和 runtime 调试保留最快的本机入口。
 
-- `vc tui` / `vc agent` / `vc server` 与 Desktop 共享同一 agent、权限、审计和数据合同
+- `vc agent` / `vc server` 与 Desktop 共享同一 agent、权限、审计和数据合同
 - plan/build 权限门、写盘确认、工具审计、token/context 使用量保持一等能力
 - 保留 session resume、slash commands、管道化调用和无图形环境运行能力
 - CLI 的新交互功能以服务 Desktop 内核复用或自动化场景为准，不再单独抢占产品界面优先级

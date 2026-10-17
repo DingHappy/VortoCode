@@ -657,10 +657,6 @@ def has_staged_changes(repo_root: str) -> bool:
     return _git(repo_root, "diff", "--cached", "--quiet").returncode == 1
 
 
-def has_any_changes(repo_root: str) -> bool:
-    info = status_summary(repo_root)
-    return bool(info.get("ok") and info.get("porcelain"))
-
 
 def commit_changes(repo_root: str, message: str, *, stage_all: bool = False) -> dict:
     """Create a local git commit.

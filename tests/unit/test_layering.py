@@ -9,7 +9,7 @@ import pytest
 from fastapi import HTTPException
 
 SRC = Path(__file__).resolve().parents[2] / "src"
-FRONTENDS = {"web", "tui", "im"}          # 前端/传输层：可以依赖下层，反之不行
+FRONTENDS = {"web", "im"}          # 前端/传输层：可以依赖下层，反之不行
 ENTRYPOINTS = {"cli.py"}                  # 命令行入口负责把各端装起来
 
 

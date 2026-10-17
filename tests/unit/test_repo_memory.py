@@ -178,35 +178,6 @@ async def test_remember_repo_warns_when_over_injection_limit(tmp_path):
     assert "超注入上限" in out and "不再注入" in out       # 如实说：更早的条目已挤出注入
 
 
-@pytest.mark.asyncio
-async def test_tui_dev_tools_also_inherit_repo_memory(tmp_path, monkeypatch):
-    """codex 审出的真问题：TUI 自建 dev_isolated/dev_parallel 子 agent，extra_system 是硬编码的
-    ——"dev 子 agent 也带上"此前只在 factory/dev_auto 路径成立，TUI 那两个工具仍会失忆。"""
-    pytest.importorskip("textual")
-    from src.tui.app import VortoCodeTUI
-    _write_repo_mem(tmp_path, "- 测试命令是 make test（pytest 会漏集成用例）")
-
-    built = {}
-
-    async def _fake_isolated(repo_root, wid, description, build_agent, mode="build", test_cmd=None):
-        wt = tmp_path / "fake-wt"                        # 假 worktree：**不含** .vortocode/
-        wt.mkdir(exist_ok=True)
-        built.setdefault("agents", []).append(build_agent(str(wt)))
-        return "", "done", {"ok": True, "output": "", "cmd": []}
-
-    monkeypatch.setattr("src.agents.worktree.run_isolated_task", _fake_isolated)
-    app = VortoCodeTUI(repo_root=str(tmp_path))
-    async with app.run_test():
-        tools = {t.name: t for t in app._build_main_agent()._tool_list}
-        await tools["dev_isolated"].handler({"description": "加个函数"})
-        await tools["dev_parallel"].handler({"tasks": ["改 A"]})
-
-    assert len(built["agents"]) == 2                      # 两个 TUI dev 工具都建了子 agent
-    for sub in built["agents"]:
-        assert "仓库记忆" in (sub.extra_system or "")
-        assert "make test" in sub._system("build")       # 子 agent 确实看得到这条事实
-        assert "必须用 edit_file/write_file" in sub.extra_system   # 角色指令没被顶掉
-
 
 @pytest.mark.asyncio
 async def test_dev_subagent_inherits_repo_memory(tmp_path, monkeypatch):

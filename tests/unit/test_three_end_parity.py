@@ -35,10 +35,6 @@ def _web_agent():
     return _new_agent()
 
 
-def _tui_agent(tmp_path):
-    from src.tui.app import VortoCodeTUI
-    return VortoCodeTUI(repo_root=str(tmp_path))._build_main_agent()
-
 
 def _names(agent):
     return set(agent.tools)
@@ -49,25 +45,9 @@ def _names(agent):
 # Web 相对 CLI 多出的制品工具（with_artifacts=True）——有意，已由 test_agent_factory 覆盖 CLI⊆Web。
 WEB_ONLY_ARTIFACTS = {"publish_artifact", "list_artifacts", "delete_artifact"}
 
-# task_answer 必须复用 Web runtime 的共享 TaskRunner；独立 CLI/IM/TUI 没有该服务接线，
+# task_answer 必须复用 Web runtime 的共享 TaskRunner；独立 CLI/IM 没有该服务接线，
 # 不为凑齐工具面建立另一并发池。工厂仅在显式注入公共答复操作时提供该工具。
 INTENTIONAL_WEB_SERVICE_ONLY = {"task_answer", "task_release", "task_reconcile"}
-
-# TUI 独有、**有意设计**：富 UI 版的符号级重构（着色 diff + ConfirmScreen）。
-#
-# edit_file / write_file 已于 2026-09-17 补进工厂（build_confirmed_write_tools）：三端都能直接
-# 改工作区，写盘前过内核确认门并先给 unified diff。此前只有 TUI 有，Desktop/Web/CLI 的写只能走
-# 隔离 dev 流水线——真机诊断里，三行的小改动因此要跑几分钟流水线，模型受挫后还会绕去
-# run_command 拼 sed/python 改文件。TUI 仍用自己那份富 UI 直写工具（同名、不同实现）。
-INTENTIONAL_TUI_ONLY = {"rename_symbol"}
-
-# 曾登记的"存疑漂移"已全部清零（三端漂移清理 PR）：save_memory/recall_memory/use_skill/save_skill
-# 已抽 UI 无关版补进工厂（build_memory_tools/build_skill_tools，CLI/Web 同步获得）；dev_auto 已补进
-# TUI（复用工厂 Tool）；legacy run_dev_workflow 已从 TUI 删除。→ 两个漂移集合现应为**空**。
-# 若将来某端又加/删工具而没在此登记，下面契约 A 立刻红。
-KNOWN_DRIFT_TUI_ONLY = set()
-KNOWN_DRIFT_FACTORY_ONLY = set()
-
 
 # ------------------------------------------------------------ 契约 A：工具集冻结
 def test_contract_A_cli_subset_of_web_registered_differences(monkeypatch, tmp_path):
@@ -78,65 +58,19 @@ def test_contract_A_cli_subset_of_web_registered_differences(monkeypatch, tmp_pa
     assert web - cli == WEB_ONLY_ARTIFACTS | INTENTIONAL_WEB_SERVICE_ONLY, f"CLI/Web 差异漂移：{web - cli}"
 
 
-def test_contract_A_tui_vs_web_is_fully_registered(monkeypatch, tmp_path):
-    """TUI 与 Web 的差集必须**完全等于**已登记白名单——出现任何未登记的新漂移即红。
-
-    这条是三端一致的核心闸门：谁给某一端加/删工具而没更新白名单，这里就红，逼他做有意决策。
-    """
-    monkeypatch.chdir(tmp_path)
-    tui, web = _names(_tui_agent(tmp_path)), _names(_web_agent())
-
-    tui_only = tui - web
-    web_only = web - tui
-    assert tui_only == INTENTIONAL_TUI_ONLY | KNOWN_DRIFT_TUI_ONLY, (
-        f"TUI 独有工具集变了（新漂移或已修复未登记）：多出 "
-        f"{tui_only - (INTENTIONAL_TUI_ONLY | KNOWN_DRIFT_TUI_ONLY)}，"
-        f"少了 {(INTENTIONAL_TUI_ONLY | KNOWN_DRIFT_TUI_ONLY) - tui_only}")
-    assert web_only == INTENTIONAL_WEB_SERVICE_ONLY | KNOWN_DRIFT_FACTORY_ONLY, (
-        f"Web 独有工具集变了：{web_only}（对照登记 {INTENTIONAL_WEB_SERVICE_ONLY | KNOWN_DRIFT_FACTORY_ONLY}）")
-
-
-# ------------------------------------------------------------ 契约 B：test_cmd 按仓库探测（非写死 pytest）
-@pytest.mark.asyncio
-async def test_contract_B_tui_dev_isolated_detects_repo_test_cmd(monkeypatch, tmp_path):
-    """TUI dev_isolated 的 test_cmd 必须按仓库类型探测（detect_test_cmd），不再写死 pytest。
-
-    回归 PR-1 修复：此前 TUI 的 dev_isolated/dev_parallel 写死 `pytest -q`，对 Node/Go/Rust 仓库
-    流水线整体失效（护城河静默失效）。这里造一个 Node 仓库，断言探测出 npm 而非 pytest。
-    """
-    (tmp_path / "package.json").write_text('{"scripts": {"test": "node --test"}}', encoding="utf-8")
-    import src.agents.worktree as wt
-    from src.tui.app import VortoCodeTUI
-
-    captured = {}
-
-    async def _fake_isolated(repo_root, wid, desc, build_agent, mode="build", test_cmd=None):
-        captured["test_cmd"] = test_cmd
-        return ("", "no-op", None)     # 空 diff → handler 早返回，不进落分支路径
-
-    monkeypatch.setattr(wt, "run_isolated_task", _fake_isolated)
-    app = VortoCodeTUI(repo_root=str(tmp_path))
-    monkeypatch.setattr(app, "_chrome", lambda *a, **k: None)
-    agent = app._build_main_agent()
-
-    await agent.tools["dev_isolated"].handler({"description": "加个函数"})
-    assert captured["test_cmd"] == ["npm", "test", "--silent"], captured["test_cmd"]
-
 
 # ------------------------------------------------------------ 契约 C：native 开关三端一致
 def test_contract_C_native_default_honored_by_all_three_ends(monkeypatch, tmp_path):
-    """VORTOCODE_NATIVE_TOOLS 必须被**三端**遵从（#115：此前只 TUI 读，CLI/Web 硬写 False）。"""
+    """VORTOCODE_NATIVE_TOOLS 必须被 CLI 与 Web 遵从（#115：此前只 TUI 读，CLI/Web 硬写 False；TUI 已退役）。"""
     monkeypatch.chdir(tmp_path)
 
     monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", "1")
     assert _cli_agent(tmp_path)._native is True
     assert _web_agent()._native is True
-    assert _tui_agent(tmp_path)._native is True
 
     monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", "0")
     assert _cli_agent(tmp_path)._native is False
     assert _web_agent()._native is False
-    assert _tui_agent(tmp_path)._native is False
 
 
 # ------------------------------------------------------------ 契约 E：三端装配出自同一工厂（PR-2 · D1）
@@ -185,21 +119,3 @@ def test_contract_E_im_toolset_equals_cli(monkeypatch, tmp_path):
 
 
 # ------------------------------------------------------------ 契约 D：共享工具的参数 schema / 权限一致
-def test_contract_D_shared_tools_have_identical_args_and_gate(monkeypatch, tmp_path):
-    """凡三端共有的工具，其对模型暴露的参数键集合与 read_only（plan/build 门）必须逐一致。
-
-    防"某端给共享工具偷偷少个参数 / 改了权限门"这类隐形漂移（#117 就是 dev_parallel 少传参数
-    退化成假绿的近亲）。
-    """
-    monkeypatch.chdir(tmp_path)
-    web = _web_agent().tools
-    tui = _tui_agent(tmp_path).tools
-
-    drift = []
-    for name in sorted(set(web) & set(tui)):
-        w, t = web[name], tui[name]
-        if set(w.args) != set(t.args):
-            drift.append(f"{name}: web_args={sorted(w.args)} vs tui_args={sorted(t.args)}")
-        if w.read_only != t.read_only:
-            drift.append(f"{name}: read_only web={w.read_only} vs tui={t.read_only}")
-    assert not drift, "共享工具 schema/权限漂移：\n" + "\n".join(drift)

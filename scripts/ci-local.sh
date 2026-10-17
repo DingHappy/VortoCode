@@ -105,10 +105,10 @@ if [ "$JOBS" != "0" ] && python3 -c "import xdist" 2>/dev/null; then
 fi
 
 if [ "$MODE" = "quick" ]; then
-  run_python_gate "pytest（unit + tui）" pytest \
+  run_python_gate "pytest（unit）" pytest \
     python3 -m pytest tests/unit tests/test_basic.py -q "${PYTEST_PAR[@]}"
 else
-  run_python_gate "pytest（全量，同 CI 的三个 suite）" pytest \
+  run_python_gate "pytest（全量，同 CI 的两个 suite）" pytest \
     python3 -m pytest tests/unit tests/test_basic.py tests/integration tests/live -q \
       "${PYTEST_PAR[@]}"
 fi

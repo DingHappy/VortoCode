@@ -52,10 +52,6 @@ def _primary_value(tool: str, args: dict) -> str:
     return ""
 
 
-def primary_arg_keys(tool: str) -> tuple[str, ...]:
-    """Return the argument keys used for pattern matching for a tool."""
-    return _PRIMARY_ARG.get(tool, ())
-
 
 class Permissions:
     """项目权限规则。deny 硬拦；allow 只表示命中时可免人工确认。"""

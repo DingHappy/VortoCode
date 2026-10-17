@@ -67,7 +67,6 @@ def main():
               %(prog)s agent "列出 src 下有哪些模块"         headless 跑主 agent（仿 claude -p；可管道/脚本化，需 key）
               %(prog)s agent -b "实现阶乘函数及其单测"       build 模式：主 agent 用隔离 dev 流水线实现（取代已退役的 run）
               %(prog)s server --port 8080                 启动 Web 控制台
-              %(prog)s tui                                进入交互式 TUI（仿 opencode，需 .[tui]）
 
             每个命令都有自己的帮助，例如:  %(prog)s agent -h
         """),
@@ -141,11 +140,6 @@ def main():
 
     sub.add_parser("test", help="运行测试套件（pytest）")
     sub.add_parser("demo", help="演示模式：打印指引并启动 Web 服务")
-    p = sub.add_parser("tui", help="进入交互式全屏 TUI（仿 opencode；需 textual: pip install '.[tui]'）")
-    p.add_argument("--attach", nargs="?", const="", metavar="URL",
-                   help="协议客户端模式：回合交常驻 serve 跑（缺省 $VORTOCODE_SERVE_URL 或 "
-                        "http://127.0.0.1:8080）；serve 不在则该回合自动回退进程内")
-
     p = sub.add_parser("im", help="IM 通道桥：常驻长连，把主 agent 搬上 IM（手机发任务/确认/回报）")
     p.add_argument("channel", choices=["telegram", "dingtalk"], help="IM 通道（telegram / dingtalk）")
     p.add_argument("--mode", choices=["plan", "build"], default="plan",
@@ -319,9 +313,6 @@ def main():
 
     elif args.command == "demo":
         run_demo()
-
-    elif args.command == "tui":
-        run_tui(attach=args.attach)
 
     elif args.command == "im":
         asyncio.run(run_im(args.channel, mode=args.mode))
@@ -1188,34 +1179,6 @@ async def analyze_task(task: str):
     print(f"Duration: {analysis.estimated_duration}s")
     print(f"Capabilities: {analysis.required_capabilities}")
     print(f"Agents: {analysis.suggested_agents}")
-
-
-def run_tui(attach=None):
-    """启动交互式 TUI（仿 opencode）。未装 textual 时给出安装提示，不崩。
-
-    attach 非 None = 协议客户端模式（"" 用缺省 URL：$VORTOCODE_SERVE_URL 或 127.0.0.1:8080）。
-    """
-    # 中文/输入法(IME)输入修复：禁用 Kitty 键盘协议。
-    # textual 8.x 启用 Kitty 协议时会带上「关联文本上报」标志(\x1b[>25u)，但它自己的
-    # CSI u 解析器(textual/_xterm_parser.py)处理不了输入法一次性提交的多码点中文——
-    # 形如 \x1b[32;;20320:22909u（“你好”）：正则不接受冒号子参数、chr(int(text)) 也只认
-    # 单码点，于是整段转义序列被当成普通文字漏进输入框（显示成 [32;;20320:22909u）。
-    # 关掉后终端回退传统编码，IME 中文以普通 UTF-8 字符到达，输入恢复正常。
-    # 必须在 import textual 之前设置（textual.constants 在导入时读取该变量）。
-    # 仍想用 Kitty 协议者可显式覆盖：export TEXTUAL_DISABLE_KITTY_KEY=0
-    import os
-    os.environ.setdefault("TEXTUAL_DISABLE_KITTY_KEY", "1")
-    try:
-        from src.tui.app import run as run_tui_app
-    except ImportError as e:
-        if (getattr(e, "name", "") or "") in ("textual", "rich") or "textual" in str(e) or "rich" in str(e):
-            print("交互式 TUI 需要 textual：请先  pip install '.[tui]'（或 pip install textual rich）")
-            return
-        raise
-    url = None
-    if attach is not None:
-        url = attach or os.getenv("VORTOCODE_SERVE_URL") or "http://127.0.0.1:8080"
-    run_tui_app(attach=url)
 
 
 def run_tests():

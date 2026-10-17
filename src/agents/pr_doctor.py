@@ -361,19 +361,6 @@ def build_pr_doctor_report(repo_root: str, ref: str, feedback: dict, *,
     }
 
 
-def pr_doctor_report(repo_root: str, ref: str) -> dict:
-    from src.agents.vcs import failed_check_log_excerpts, pr_feedback
-
-    feedback = pr_feedback(repo_root, ref)
-    logs: list[dict] = []
-    log_error = ""
-    if feedback.get("ok") and feedback.get("failing_checks"):
-        log_result = failed_check_log_excerpts(repo_root, list(feedback.get("failing_checks") or []))
-        logs = list(log_result.get("logs") or [])
-        if not log_result.get("ok"):
-            log_error = str(log_result.get("error") or "")
-    return build_pr_doctor_report(repo_root, ref, feedback, check_logs=logs, check_log_error=log_error)
-
 
 def format_pr_doctor_report(report: dict) -> str:
     ref = str(report.get("ref") or "")
