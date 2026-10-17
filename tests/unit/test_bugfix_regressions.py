@@ -4,6 +4,48 @@
 import pytest
 
 
+@pytest.mark.parametrize('action', ['allow', 'ask'])
+async def test_mcp_yaml_never_overrides_kernel_gate(mcp_permission_probe, monkeypatch, action):
+    from src.agents import gate, taint
+    asked = []
+    async def would_approve(message): asked.append(message); return True
+    confirm = gate.make_confirm_gate(would_approve, auto_approve=True, can_ask_human=False)
+    manager, tools, client = await mcp_permission_probe(confirm, action)
+    taint.reset_taint()
+    try:
+        assert await tools[0].handler({}) == 'probe executed'
+        taint.mark_tainted()
+        assert (await tools[0].handler({}))['ok'] is False and client.calls == 1 and not asked
+        taint.reset_taint()
+        monkeypatch.setattr(gate, 'decide', lambda **_: gate.DENY)
+        assert (await tools[0].handler({}))['ok'] is False and client.calls == 1
+    finally:
+        taint.reset_taint(); await manager.shutdown()
+
+
+async def test_mcp_allow_without_confirm_fails_closed(mcp_permission_probe):
+    manager, tools, client = await mcp_permission_probe()
+    try:
+        assert (await tools[0].handler({}))['ok'] is False and client.calls == 0
+    finally:
+        await manager.shutdown()
+
+
+@pytest.mark.parametrize('approved', [False, True])
+async def test_tainted_mcp_allow_requires_real_answer(mcp_permission_probe, approved):
+    from src.agents import gate, taint
+    prompts = []
+    async def human(message): prompts.append(message); return approved
+    manager, tools, client = await mcp_permission_probe(gate.make_confirm_gate(human, auto_approve=True, can_ask_human=True))
+    taint.mark_tainted()
+    try:
+        result = await tools[0].handler({})
+        assert client.calls == int(approved) and len(prompts) == 1 and gate.TAINT_WARNING in prompts[0]
+        assert (result == 'probe executed') is approved
+    finally:
+        taint.reset_taint(); await manager.shutdown()
+
+
 def test_b2_hook_registry_load_no_importerror(tmp_path):
     """B2: load_from_config 曾从 .hook 误导入而必崩；现应安全。"""
     from src.hooks.registry import HookRegistry

@@ -63,6 +63,8 @@ async def setup(tmp_path, monkeypatch):
     monkeypatch.setattr(realtime, "_SESSIONS", sessions)
     async def make_agent():
         agent = MainAgent([])
+        from src.agents.gate import make_confirm_gate
+        agent._confirm_gate = make_confirm_gate(auto_approve=True)
         agent._capabilities = SimpleNamespace(profile="external")
         agents.append(agent)
         sessions[str(len(agents))] = {"agent": agent}

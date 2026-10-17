@@ -1001,7 +1001,8 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
     if use_mcp:                                   # --mcp：接 config/mcp.yaml 的 MCP 服务器工具
         from src.agents.mcp_tools import connect_mcp
         try:
-            mcp_mgr, mcp_tools = await connect_mcp(cwd, capability_profile=profile)
+            mcp_mgr, mcp_tools = await connect_mcp(cwd, capability_profile=profile,
+                                                 confirm=agent._confirm_gate)
             if mcp_tools:
                 agent.add_tools(mcp_tools)
                 if not quiet:

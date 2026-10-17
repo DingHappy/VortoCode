@@ -45,7 +45,8 @@ async def connect_agent(agent, root, *, current=lambda: True, confirm=None, work
     try:
         async with timeout_scope(30):
             manager, tools = await connect_mcp(
-                root, capability_profile=agent._capabilities.profile, confirm=confirm,
+                root, capability_profile=agent._capabilities.profile,
+                confirm=getattr(agent, '_confirm_gate', None) or confirm,
                 allow_connectors=normalize_workspace_scope(workspace_scope) == GENERAL,
             )
         if not current() or getattr(agent, '_mcp_revision', 0) != revision:
