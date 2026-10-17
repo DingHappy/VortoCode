@@ -1,4 +1,4 @@
-"""工具权限管理：MCP 规则只增加过滤约束，ALLOW 不替代执行器最终的内核确认门。"""
+"""工具权限管理：MCP 规则只增加过滤约束，ALLOW 不单独授权执行；仅本地指定只读连接器的只读工具可免执行器确认。"""
 
 import logging
 from enum import Enum

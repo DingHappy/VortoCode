@@ -33,8 +33,12 @@ Web仍要求 `VORTOCODE_WEB_MCP=1`；没有自动启用、扫描第三方配置�
 Desktop项目/Scratch的local边界仍拒绝外部MCP；General不加载仓库Skill。
 Desktop插件页现有当前会话连接状态、手动连接/重试；local会话显示受限且禁用按钮。`ask`规则没有人工确认门时仍拒绝。
 
-`permissions.rules` 是额外过滤层，`allow` 不能授权执行或绕过污点。原执行器对每个 MCP
-调用执行内核确认判定，`allow` 和 `ask` 均须通过；`deny` 保持硬拒绝。没有确认门时失败关闭。
+`permissions.rules` 是额外过滤层。除下述只读豁免外，MCP 的 `allow` 和 `ask` 均须通过
+原执行器的内核确认判定；`deny` 保持硬拒绝。没有确认门时失败关闭。
+仅当 server 属于本地配置选定的只读连接器、工具 `annotations.readOnlyHint is True`、
+且 YAML 判定为 `allow` 时，跳过这一次执行器确认（污点态也适用）。执行器会重新检查元数据，
+普通 MCP server 自报只读不能豁免；`ask` 仍须确认，`deny` 仍拒绝。结果仍给回合打污点，
+后续非只读调用仍须确认；local/unattended 档位不接入这些连接器。
 Desktop/Web/IM 会话使用原会话 gate，CLI 的显式 `--yes` 仍受污点否决；TUI 保留原人工确认。
 
 未写 `protocol` 的旧配置继续使用 `legacy_rest`，走旧 `/health`、`/tools`、`/tools/call`。

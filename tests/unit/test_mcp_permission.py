@@ -153,3 +153,84 @@ def _stub(ex):
         return ToolExecutionResult(success=True, tool_name=tool.name, output="ok")
 
     ex._execute_locally = _local
+
+
+@pytest.mark.parametrize(('server_selected', 'hint', 'action', 'human', 'allowed', 'asks'), [
+    (True, True, 'allow', None, True, 0),
+    (True, True, 'allow', True, True, 0),
+    (True, None, 'allow', True, True, 1),
+    (True, False, 'allow', None, False, 0),
+    (True, 'true', 'allow', True, True, 1),
+    (True, 1, 'allow', True, True, 1),
+    (False, True, 'allow', True, True, 1),
+    (False, True, 'allow', None, False, 0),
+    (True, True, 'ask', True, True, 1),
+    (True, True, 'ask', False, False, 1),
+    (True, True, 'ask', None, False, 0),
+    (True, True, 'deny', True, False, 0),
+])
+async def test_readonly_connector_executor_requires_all_three_conditions(
+        server_selected, hint, action, human, allowed, asks):
+    """Direct manager calls cannot rely on the wrapper's hint filtering."""
+    from src.agents import taint
+    from src.tools.manager import ToolManager
+    from src.tools.registry import Tool
+    asked = []
+    async def confirm(message):
+        asked.append(message)
+        return human
+    manager = ToolManager(confirm=confirm if human is not None else None,
+                          read_only_servers=frozenset({'srv'}) if server_selected else frozenset())
+    tool = Tool(name='mcp__srv__write', server_name='srv',
+                metadata={'annotations': {'readOnlyHint': hint}})
+    manager.tool_registry.register(tool)
+    manager.permission_manager.rules = _pm_with(PermissionAction(action)).rules
+    _stub(manager.tool_executor)
+    taint.reset_taint()
+    taint.mark_tainted()
+    try:
+        result = await manager.execute_tool(tool.name, {})
+        assert result.success is allowed
+        assert len(asked) == asks
+        assert len(manager.tool_executor.execution_history) == int(allowed)
+        assert taint.is_tainted()  # exemption never clears taint
+    finally:
+        taint.reset_taint()
+
+
+async def test_configured_readonly_connector_exemption_reaches_executor(readonly_connector_probe):
+    from src.agents import taint
+    manager, tools, clients = await readonly_connector_probe()
+    wrapped = {tool.name: tool for tool in tools}
+    assert 'mcp__trusted__write' not in wrapped
+    taint.reset_taint()
+    taint.mark_tainted()
+    try:
+        assert await wrapped['mcp__trusted__read'].handler({}) == 'probe executed'
+        assert (await manager.execute_tool('mcp__trusted__write', {})).success is False
+        assert (await wrapped['mcp__plain__read'].handler({}))['ok'] is False
+        assert clients['trusted'].calls == ['read']
+        assert clients['plain'].calls == []
+    finally:
+        taint.reset_taint()
+        await manager.shutdown()
+
+
+@pytest.mark.parametrize('action', ['ask', 'deny'])
+async def test_connector_yaml_rules_still_apply_end_to_end(action, readonly_connector_probe):
+    asked = []
+    async def human(message):
+        asked.append(message)
+        return True
+    manager, tools, clients = await readonly_connector_probe(human, action)
+    try:
+        tool = next(t for t in tools if t.name == 'mcp__trusted__read')
+        result = await tool.handler({})
+        if action == 'ask':
+            assert result == 'probe executed' and len(asked) == 1
+            assert clients['trusted'].calls == ['read']
+        else:
+            assert result['ok'] is False and not asked
+            assert not clients['trusted'].calls
+    finally:
+        await manager.shutdown()

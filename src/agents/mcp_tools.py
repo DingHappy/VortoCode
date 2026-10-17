@@ -254,7 +254,7 @@ async def connect_mcp(repo_root, *, capability_profile: str | None = None,
     from src.tools.manager import ToolManager
     mgr = ToolManager(str(cfg), confirm=confirm)
     safe_servers = _credential_free_http_servers(mgr.config)
-    connectors = _credentialed_connectors(mgr.config) if allow_connectors else []
+    connectors = _credentialed_connectors(mgr.config) if allow_connectors and profile == EXTERNAL_PROFILE else []
     safe_servers = safe_servers + connectors
     read_only_servers = frozenset(str(item.get("name")) for item in connectors if item.get("read_only"))
     if not safe_servers:
@@ -269,6 +269,8 @@ async def connect_mcp(repo_root, *, capability_profile: str | None = None,
     if len({str(server.get("name")) for server in safe_servers}) != len(safe_servers):
         raise ValueError("Duplicate MCP server identity")
     mgr.config = {**mgr.config, "servers": safe_servers}
+    if read_only_servers:
+        mgr.set_read_only_servers(read_only_servers)
     try:
         import hashlib
         from src.tools.connector_access import ConnectorAccess, bind_connector_access
