@@ -12,6 +12,8 @@ import sys
 import pytest
 
 from src.agents import external_workers as ew
+
+ew_search = ew._search_dirs
 from src.agents import taint
 
 CODEX_EVENTS = [
@@ -63,10 +65,12 @@ def _clean(monkeypatch, tmp_path_factory):
     for name in (ew.ROLE_ENV, ew.TIMEOUT_ENV, ew.WORKER_HOME_ENV, "VORTOCODE_CODEX_BIN", "VORTOCODE_CLAUDE_BIN"):
         monkeypatch.delenv(name, raising=False)
     ew._SUMMARY_CACHE.clear()
-    # 测试绝不读真实的 ~/.codex / ~/.claude：指到空目录
+    # 测试绝不读真实的 ~/.codex / ~/.claude，也不能在 ~/.nvm 等兜底位置找到真 CLI：HOME 一并指到空目录
     empty = tmp_path_factory.mktemp("cli-home")
+    monkeypatch.setenv("HOME", str(empty))
     monkeypatch.setenv("CODEX_HOME", str(empty))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(empty))
+    monkeypatch.setattr(ew, "_search_dirs", lambda: [] if os.environ.get("HOME") == str(empty) else ew_search(), raising=True)
     yield
     taint.reset_taint()
 
@@ -614,7 +618,7 @@ async def test_capabilities_expose_mode_and_status_without_credentials(fake_cli,
     summary = (await capabilities())["external_workers"]
     assert summary["mode"] == "resident" and summary["roles"] == {"implement": "codex", "review": "claude"}
     assert {w["worker"]: w["logged_in"] for w in summary["workers"]} == {"claude": True, "codex": True}
-    assert set(summary["workers"][0]) == {"worker", "found", "logged_in", "auth", "model", "provider"}
+    assert set(summary["workers"][0]) == {"worker", "found", "path", "logged_in", "auth", "model", "provider"}
 
 
 def test_summary_cache_drops_when_configuration_changes(fake_cli, monkeypatch):
@@ -622,3 +626,33 @@ def test_summary_cache_drops_when_configuration_changes(fake_cli, monkeypatch):
     assert ew.workers_summary()["roles"] == {"implement": "codex"}
     monkeypatch.setenv(ew.ROLE_ENV, "review=claude")
     assert ew.workers_summary()["roles"] == {"review": "claude"}
+
+
+# ── 唯一的检测实现（Desktop 只读 capabilities，不再自己找） ──
+
+def test_summary_reports_both_clis_even_before_any_role_is_configured(fake_cli):
+    summary = ew.workers_summary()
+    assert summary["roles"] == {} and [w["worker"] for w in summary["workers"]] == ["codex", "claude"]
+    assert all(w["found"] and w["path"] for w in summary["workers"])
+
+
+def test_binary_found_outside_path_like_a_gui_launch(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    newer, older = home / ".nvm/versions/node/v25.2.0/bin", home / ".nvm/versions/node/v20.1.0/bin"
+    for directory in (newer, older):
+        directory.mkdir(parents=True)
+        (directory / "codex").write_text("#!/bin/sh\n")
+        (directory / "codex").chmod(0o755)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    assert ew.worker_binary("codex") == str(newer / "codex")
+    env = ew._env_for(ew.worker_binary("codex"), {"PATH": "/usr/bin:/bin"})
+    assert env["PATH"] == f"{newer}:/usr/bin:/bin"                  # 同目录的 node 才找得到
+
+
+async def test_child_path_starts_with_the_cli_directory(fake_cli, tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    monkeypatch.setenv("FAKE_MODE", "ok")
+    run = await ew.run_worker("codex", "go", str(tmp_path), write=False)
+    assert run.ok                                                   # 假 CLI 的 shebang 解释器不受影响
+    assert ew._env_for(ew.worker_binary("codex"), {"PATH": "/usr/bin"})["PATH"].startswith(str(fake_cli))

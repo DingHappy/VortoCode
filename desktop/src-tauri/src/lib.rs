@@ -338,137 +338,15 @@ fn external_worker_label(worker: &str) -> &'static str {
     }
 }
 
-/// 从 Dock 启动的 App 拿不到登录 shell 的 PATH：除了继承的 PATH，再看几个常见安装位置
-/// （nvm / Homebrew / npm 全局 / 官方安装脚本）。
-fn cli_search_dirs(path: Option<std::ffi::OsString>, home: Option<PathBuf>) -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = path.map(|path| std::env::split_paths(&path).collect()).unwrap_or_default();
-    if let Some(home) = &home {
-        for sub in [".local/bin", ".npm-global/bin", ".bun/bin", ".volta/bin", ".claude/local"] {
-            dirs.push(home.join(sub));
-        }
-        if let Ok(entries) = std::fs::read_dir(home.join(".nvm/versions/node")) {
-            let mut versions: Vec<PathBuf> = entries.flatten().map(|entry| entry.path().join("bin")).collect();
-            versions.sort();
-            versions.reverse();                       // 新版本优先
-            dirs.extend(versions);
-        }
-    }
-    dirs.extend(["/opt/homebrew/bin", "/usr/local/bin"].map(PathBuf::from));
-    dirs
-}
-
-fn find_cli_binary(name: &str) -> Option<PathBuf> {
-    cli_search_dirs(std::env::var_os("PATH"), std::env::var_os("HOME").map(PathBuf::from))
-        .into_iter().map(|dir| dir.join(name)).find(|path| path.is_file())
-}
-
 /// 角色表里的 `cli:*` 分流成 VORTOCODE_EXTERNAL_WORKERS；其余照旧进 VORTOCODE_MODEL_ROLES。
-/// 找到的 CLI 用绝对路径传给引擎，并把它所在目录放到 PATH 最前（nvm 装的 codex 靠同目录的 node 启动）。
+/// 找 CLI、补 PATH、查登录都在引擎内核里做（同一份实现服务本机与常驻电脑），这里只传角色表。
 fn configure_external_workers(command: &mut Command, profile: &DesktopLlmProfile) {
-    configure_external_workers_with(command, profile, find_cli_binary);
-}
-
-fn configure_external_workers_with(command: &mut Command, profile: &DesktopLlmProfile,
-                                   resolve: impl Fn(&str) -> Option<PathBuf>) {
     let mut roles: Vec<_> = profile.role_models.iter().collect();
     roles.sort_by_key(|(role, _)| *role);
     let (external, models): (Vec<_>, Vec<_>) = roles.into_iter().partition(|(_, value)| value.starts_with("cli:"));
     command.env("VORTOCODE_MODEL_ROLES", models.iter().map(|(role, model)| format!("{role}={model}")).collect::<Vec<_>>().join(","));
     command.env("VORTOCODE_EXTERNAL_WORKERS", external.iter()
         .map(|(role, value)| format!("{role}={}", value.trim_start_matches("cli:"))).collect::<Vec<_>>().join(","));
-    let mut path_dirs: Vec<PathBuf> = Vec::new();
-    for worker in EXTERNAL_WORKERS {
-        let env = format!("VORTOCODE_{}_BIN", worker.to_uppercase());
-        match external.iter().any(|(_, value)| value.trim_start_matches("cli:") == worker).then(|| resolve(worker)).flatten() {
-            Some(binary) => {
-                if let Some(dir) = binary.parent() {
-                    if !path_dirs.iter().any(|known| known == dir) { path_dirs.push(dir.to_path_buf()); }
-                }
-                command.env(env, binary);
-            }
-            None => { command.env_remove(env); }
-        }
-    }
-    if !path_dirs.is_empty() {
-        let inherited = std::env::var_os("PATH").map(|path| std::env::split_paths(&path).collect::<Vec<_>>()).unwrap_or_default();
-        if let Ok(path) = std::env::join_paths(path_dirs.into_iter().chain(inherited)) {
-            command.env("PATH", path);
-        }
-    }
-}
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ExternalWorkerStatus {
-    worker: String,
-    label: String,
-    path: Option<String>,
-    /// None = 没装或检查不了（超时 / 起不来）；Some(false) = 明确未登录。
-    logged_in: Option<bool>,
-    auth: Option<String>,
-}
-
-/// 第三方 Anthropic 兼容服务配在 settings.json 的 env 里时，`claude auth status` 会说未登录，但其实可用。
-fn claude_settings_has_api_credentials() -> bool {
-    let dir = std::env::var_os("CLAUDE_CONFIG_DIR").map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".claude")));
-    let Some(raw) = dir.and_then(|dir| std::fs::read_to_string(dir.join("settings.json")).ok()) else { return false };
-    let Ok(settings) = serde_json::from_str::<serde_json::Value>(&raw) else { return false };
-    ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"].iter().any(|key| settings["env"][key].as_str().is_some_and(|v| !v.is_empty()))
-        || settings["apiKeyHelper"].as_str().is_some_and(|v| !v.is_empty())
-}
-
-/// 跑 `codex login status` / `claude auth status`（不发模型请求），10 秒超时。
-fn external_worker_login(worker: &str, binary: &Path) -> (Option<bool>, Option<String>) {
-    let mut command = Command::new(binary);
-    command.args(if worker == "codex" { ["login", "status"] } else { ["auth", "status"] })
-        .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
-    if let Some(dir) = binary.parent() {
-        let inherited = std::env::var_os("PATH").map(|path| std::env::split_paths(&path).collect::<Vec<_>>()).unwrap_or_default();
-        if let Ok(path) = std::env::join_paths(std::iter::once(dir.to_path_buf()).chain(inherited)) {
-            command.env("PATH", path);
-        }
-    }
-    let Ok(child) = command.spawn() else { return (None, Some("无法启动".into())) };
-    let (sender, receiver) = std::sync::mpsc::channel();
-    let pid = child.id();
-    std::thread::spawn(move || { let _ = sender.send(child.wait_with_output()); });
-    let output = match receiver.recv_timeout(std::time::Duration::from_secs(10)) {
-        Ok(Ok(output)) => output,
-        Ok(Err(_)) => return (None, Some("检查失败".into())),
-        Err(_) => {
-            let _ = Command::new("kill").arg("-9").arg(pid.to_string()).status();
-            return (None, Some("检查超时".into()));
-        }
-    };
-    let text = String::from_utf8_lossy(&output.stdout).to_string() + &String::from_utf8_lossy(&output.stderr);
-    if worker == "codex" {
-        let ok = output.status.success() && text.to_lowercase().contains("logged in");
-        return (Some(ok), text.lines().next().map(|line| line.trim().chars().take(60).collect()));
-    }
-    let status = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap_or_default();
-    if status["loggedIn"].as_bool() == Some(true) {
-        return (Some(true), status["authMethod"].as_str().map(str::to_string));
-    }
-    if claude_settings_has_api_credentials() {
-        return (Some(true), Some("settings.json 中的 API 凭据".into()));
-    }
-    (Some(false), None)
-}
-
-#[tauri::command(async)]
-fn detect_external_workers() -> Vec<ExternalWorkerStatus> {
-    EXTERNAL_WORKERS.iter().map(|worker| {
-        let path = find_cli_binary(worker);
-        let (logged_in, auth) = path.as_deref().map(|binary| external_worker_login(worker, binary)).unwrap_or((None, None));
-        ExternalWorkerStatus {
-            worker: worker.to_string(),
-            label: external_worker_label(worker).to_string(),
-            path: path.map(|path| path.display().to_string()),
-            logged_in,
-            auth,
-        }
-    }).collect()
 }
 
 fn context_window_number(value: &serde_json::Value) -> Option<u64> {
@@ -3793,7 +3671,6 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_websocket::init())
         .invoke_handler(tauri::generate_handler![
-            detect_external_workers,
             get_llm_profile,
             set_llm_profile,
             clear_llm_profile,
@@ -6947,16 +6824,10 @@ mod tests {
         let profile = normalize_llm_profile(profile).unwrap();
         assert_eq!(profile.role_models["implement"], "cli:codex");
         let mut command = Command::new("fixture");
-        configure_external_workers_with(&mut command, &profile, |worker| match worker {
-            "codex" => Some(PathBuf::from("/nvm/v25/bin/codex")),
-            _ => None,                                   // claude 没装：不传路径，引擎会如实报「找不到」
-        });
+        configure_external_workers(&mut command, &profile);
         let env = command.get_envs().map(|(key, value)| (key.to_str().unwrap().to_string(), value.map(|value| value.to_str().unwrap().to_string()))).collect::<HashMap<_, _>>();
         assert_eq!(env["VORTOCODE_MODEL_ROLES"].as_deref(), Some("research=default:small"));
         assert_eq!(env["VORTOCODE_EXTERNAL_WORKERS"].as_deref(), Some("implement=codex,review=claude"));
-        assert_eq!(env["VORTOCODE_CODEX_BIN"].as_deref(), Some("/nvm/v25/bin/codex"));
-        assert_eq!(env["VORTOCODE_CLAUDE_BIN"], None);  // 显式清掉，不继承父进程里的旧值
-        assert!(env["PATH"].as_deref().unwrap().starts_with("/nvm/v25/bin"));   // 同目录的 node 才找得到
     }
 
     #[test]
@@ -6968,44 +6839,9 @@ mod tests {
             assert!(normalize_llm_profile(profile).is_err(), "{role}={target}");
         }
         let mut command = Command::new("fixture");
-        configure_external_workers_with(&mut command, &sample_llm_profile(), |_| panic!("没配外部 CLI 就不该去找"));
+        configure_external_workers(&mut command, &sample_llm_profile());
         assert_eq!(command.get_envs().find(|(key, _)| *key == "VORTOCODE_EXTERNAL_WORKERS").unwrap().1,
                    Some(std::ffi::OsStr::new("")));
-    }
-
-    #[test]
-    fn cli_search_covers_gui_launch_without_shell_path() {
-        let home = std::env::temp_dir().join(format!("vc-cli-search-{}", std::process::id()));
-        for version in ["v20.1.0", "v25.2.0"] {
-            std::fs::create_dir_all(home.join(".nvm/versions/node").join(version).join("bin")).unwrap();
-        }
-        let dirs = cli_search_dirs(Some("/usr/bin:/bin".into()), Some(home.clone()));
-        let newest = dirs.iter().position(|dir| dir.ends_with("v25.2.0/bin")).unwrap();
-        let older = dirs.iter().position(|dir| dir.ends_with("v20.1.0/bin")).unwrap();
-        assert!(dirs[0] == PathBuf::from("/usr/bin") && newest < older);
-        assert!(dirs.contains(&home.join(".local/bin")) && dirs.contains(&PathBuf::from("/opt/homebrew/bin")));
-        let _ = std::fs::remove_dir_all(home);
-    }
-
-    #[test]
-    fn external_worker_login_reads_cli_status_without_model_calls() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("vc-login-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let script = |name: &str, body: &str| {
-            let path = dir.join(name);
-            std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-            path
-        };
-        let codex_in = script("codex-in", "[ \"$1 $2\" = \"login status\" ] && echo 'Logged in using ChatGPT'");
-        let codex_out = script("codex-out", "echo 'Not logged in'; exit 1");
-        let claude_in = script("claude-in", "echo '{\"loggedIn\": true, \"authMethod\": \"claude.ai\"}'");
-        assert_eq!(external_worker_login("codex", &codex_in), (Some(true), Some("Logged in using ChatGPT".into())));
-        assert_eq!(external_worker_login("codex", &codex_out).0, Some(false));
-        assert_eq!(external_worker_login("claude", &claude_in), (Some(true), Some("claude.ai".into())));
-        assert_eq!(external_worker_login("codex", &dir.join("missing")).0, None);   // 起不来 ≠ 未登录
-        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

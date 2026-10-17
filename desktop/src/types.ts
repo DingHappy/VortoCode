@@ -607,14 +607,18 @@ export interface ExternalWorkersSummary {
   mode: "local" | "resident";
   home?: string | null;
   roles: Record<string, string>;
-  workers: Array<{ worker: string; found: boolean; logged_in: boolean | null; auth: string; model: string; provider: string }>;
+  workers: Array<{ worker: string; found: boolean; path?: string; logged_in: boolean | null; auth: string; model: string; provider: string }>;
 }
 
-export interface ResidentWorkersView {
+/** 设置页读到的「当前连着的那个引擎」的外部执行者状态：本机引擎或常驻电脑，同一个接口。 */
+export interface EngineWorkersView {
+  place: "local" | "resident";
   name: string;
   summary: ExternalWorkersSummary | null;
   error?: string;
 }
+
+export type ResidentWorkersView = EngineWorkersView;
 
 export interface DispatchCapabilities {
   version: number;

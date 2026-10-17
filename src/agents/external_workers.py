@@ -114,9 +114,41 @@ def worker_timeout() -> int:
     return value if value > 0 else DEFAULT_TIMEOUT
 
 
+def _search_dirs() -> list[Path]:
+    """PATH 之外的常见安装位置：从 Dock 启动的 Desktop、systemd 服务都拿不到登录 shell 的 PATH。"""
+    home = Path.home()
+    dirs = [home / sub for sub in (".local/bin", ".npm-global/bin", ".bun/bin", ".volta/bin", ".claude/local")]
+    nvm = home / ".nvm" / "versions" / "node"
+    try:
+        dirs += sorted((p / "bin" for p in nvm.iterdir()), reverse=True)   # 新版本优先
+    except OSError:
+        pass
+    return dirs + [Path("/opt/homebrew/bin"), Path("/usr/local/bin")]
+
+
 def worker_binary(worker: str) -> Optional[str]:
     override = os.getenv(f"VORTOCODE_{worker.upper()}_BIN", "").strip()
-    return override or shutil.which(worker)
+    if override:
+        return override
+    found = shutil.which(worker)
+    if found:
+        return found
+    for directory in _search_dirs():
+        candidate = directory / worker
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    return None
+
+
+def _env_for(binary: Optional[str], env: dict[str, str]) -> dict[str, str]:
+    """CLI 所在目录放到 PATH 最前：nvm 装的 codex 是 `#!/usr/bin/env node`，靠同目录的 node 启动。"""
+    if not binary:
+        return env
+    directory = str(Path(binary).parent)
+    path = env.get("PATH", "")
+    if directory in path.split(os.pathsep):
+        return env
+    return {**env, "PATH": directory + (os.pathsep + path if path else "")}
 
 
 def worker_env() -> dict[str, str]:
@@ -407,7 +439,7 @@ async def run_worker(worker: str, prompt: str, cwd: str, *, write: bool, system:
     argv = build_argv(worker, cwd=cwd, write=write, system=system, binary=binary, extra=extra)
     parse = _PARSERS[worker]
     proc = await asyncio.create_subprocess_exec(
-        *argv, cwd=cwd, env={**worker_env(), **extra_env}, stdin=asyncio.subprocess.PIPE,
+        *argv, cwd=cwd, env=_env_for(binary, {**worker_env(), **extra_env}), stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         start_new_session=True, limit=16 * 1024 * 1024)
     stderr_chunks: list[bytes] = []
@@ -597,7 +629,7 @@ def describe_worker(worker: str) -> dict:
     cmd = [info["binary"], "login", "status"] if worker == "codex" else [info["binary"], "auth", "status"]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=15,
-                           env={**worker_env(), **extra_env}, stdin=subprocess.DEVNULL)
+                           env=_env_for(info["binary"], {**worker_env(), **extra_env}), stdin=subprocess.DEVNULL)
     except (OSError, subprocess.TimeoutExpired) as error:
         info["auth"] = f"无法检查登录状态：{type(error).__name__}"
         return info
@@ -633,6 +665,7 @@ _SUMMARY_CACHE: dict = {}
 def workers_summary(max_age: float = 60.0) -> dict:
     """给 /api/delegations/capabilities：本实例的执行者模式与状态（只读，不含凭据）。
 
+    这是唯一的检测实现：Desktop 不论看本机引擎还是常驻电脑，都读对应实例的这一份。
     登录检查要起子进程，按 max_age 缓存；配置一变（角色表 / 模式目录）立即失效。
     """
     import time
@@ -642,10 +675,11 @@ def workers_summary(max_age: float = 60.0) -> dict:
     if cached and _SUMMARY_CACHE.get("key") == key and time.monotonic() - _SUMMARY_CACHE["at"] < max_age:
         return cached
     workers = []
-    for worker in sorted(set(table.values())):
+    for worker in WORKERS:                     # 两个都报：设置页要在选择之前就能看到哪个可用
         info = describe_worker(worker)
-        workers.append({"worker": worker, "found": bool(info["binary"]), "logged_in": info["logged_in"],
-                        "auth": info["auth"], "model": info["model"], "provider": info.get("provider", "")})
+        workers.append({"worker": worker, "found": bool(info["binary"]), "path": info["binary"] or "",
+                        "logged_in": info["logged_in"], "auth": info["auth"], "model": info["model"],
+                        "provider": info.get("provider", "")})
     value = {"mode": worker_mode(), "home": str(worker_home()) if worker_home() else None,
              "roles": table, "workers": workers}
     _SUMMARY_CACHE.update(value=value, key=key, at=time.monotonic())

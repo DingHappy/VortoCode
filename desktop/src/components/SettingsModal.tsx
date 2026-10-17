@@ -42,7 +42,7 @@ import type {
   DesktopLlmProfileStatus,
   GatewayProcessStatus,
   GatewayRecoveryRecord,
-  ResidentWorkersView,
+  EngineWorkersView,
   TrustLevel,
   TrustStatus,
   WorkspaceScope,
@@ -90,7 +90,7 @@ type SettingsModalProps = {
   llmStrongInput: string;
   llmRolesInput: Record<string, string>;
   onLlmRolesChange: (value: Record<string, string>) => void;
-  residentWorkers?: ResidentWorkersView | null;
+  engineWorkers?: EngineWorkersView | null;
   llmProfileBusy: boolean;
   repoRoot: string;
   baseUrl: string;
@@ -141,7 +141,7 @@ export function SettingsModal({
   llmStrongInput,
   llmRolesInput,
   onLlmRolesChange,
-  residentWorkers = null,
+  engineWorkers = null,
   llmProfileBusy,
   repoRoot,
   baseUrl,
@@ -329,7 +329,7 @@ export function SettingsModal({
             >{llmProfileBusy ? "正在应用…" : "保存并重启当前引擎"}</button>
           </div>
           <details className="llm-extra-settings"><summary>高级模型选项（可选）</summary>
-          <ModelRoles profile={llmProfile} value={llmRolesInput} onChange={onLlmRolesChange} disabled={llmProfileBusy} resident={residentWorkers} />
+          <ModelRoles profile={llmProfile} value={llmRolesInput} onChange={onLlmRolesChange} disabled={llmProfileBusy} engine={engineWorkers} />
           <div className="llm-routing-fields">
             <p>智能调度 <em>输入框选「自动」时，简短问答走快速模型，Build、带图或复杂任务走强力模型；留空则都用主模型。</em></p>
             <label>
