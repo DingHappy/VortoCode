@@ -719,7 +719,7 @@ result = await hook_system.trigger(
 print(f"Hook 执行结果: {result.success}")
 
 # 在 Agent 中使用
-class DeveloperAgent:
+class HookAwareWorker:
     def __init__(self, hook_system: HookSystem):
         self.hook_system = hook_system
     

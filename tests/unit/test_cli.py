@@ -18,17 +18,18 @@ def test_no_command_prints_overview_and_exits_zero(monkeypatch, capsys):
     assert e.value.code == 0
     out = capsys.readouterr().out
     assert "可用命令" in out
-    assert "self-analyze" in out and "self-fix" in out      # 命令带说明
+    assert "agent" in out and "analyze" in out             # 仍支持主 Agent 和任务分析
+    assert "self-" not in out
     assert "常用示例" in out                                  # 有示例
 
 
-def test_self_fix_requires_paths(monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["vortocode", "self-fix"])
-    with pytest.raises(SystemExit) as e:
+@pytest.mark.parametrize("command", ["self-analyze", "self-improve", "self-fix"])
+def test_removed_commands_are_unknown(monkeypatch, capsys, command):
+    monkeypatch.setattr(sys, "argv", ["vortocode", command])
+    with pytest.raises(SystemExit) as error:
         cli.main()
-    assert e.value.code != 0                                 # argparse 缺必填参数 -> 退出码 2
-    err = capsys.readouterr().err
-    assert "--paths" in err
+    assert error.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err
 
 
 def test_run_command_retired(monkeypatch, capsys):
@@ -41,13 +42,13 @@ def test_run_command_retired(monkeypatch, capsys):
 
 def test_help_is_per_command(monkeypatch, capsys):
     # 子命令 -h 只显示该命令自己的参数（不再是全局糊一脸）
-    monkeypatch.setattr(sys, "argv", ["vortocode", "self-improve", "-h"])
+    monkeypatch.setattr(sys, "argv", ["vortocode", "analyze", "-h"])
     with pytest.raises(SystemExit) as e:
         cli.main()
     assert e.value.code == 0
     out = capsys.readouterr().out
-    assert "--apply" in out and "--max-fixes" in out
-    assert "--stage" not in out          # quant 的参数不该出现在 self-improve 帮助里
+    assert "--task" in out
+    assert "--stage" not in out          # 其它命令的参数不应出现在任务分析帮助里
 
 
 # ---- 长跑命令的运行计时（_with_progress）----

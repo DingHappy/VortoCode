@@ -2,7 +2,6 @@
 
 __version__ = "0.1.0"
 
-from .agents.base import Agent, AgentConfig
 from .hooks.hook import Hook, HookEvent, HookEventType, HookResult
 from .hooks.registry import HookRegistry
 from .hooks.executor import HookExecutor, HookSystem
@@ -19,8 +18,6 @@ from .tools.mcp_client import MCPClient, MCPTransport, MCPTool
 # 注：src/monitoring 孤儿包（与生产在用的 src/core/monitoring 重名并行）随路线 A 删除。
 
 __all__ = [
-    "Agent",
-    "AgentConfig",
     "Hook",
     "HookEvent",
     "HookEventType",

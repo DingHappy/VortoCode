@@ -663,7 +663,7 @@ async def test_dev_auto_independent_then_dependent_topo_then_verify(monkeypatch,
     import src.agents.worktree as wt
     import src.agents.decompose as dec
     from src.agents.main_agent import build_dev_tools
-    from src.orchestrator.task_analyzer import SubTask
+    from src.agents.task_analyzer import SubTask
 
     a = SubTask(id="a", title="A")
     b = SubTask(id="b", title="B", dependencies=["a"])
@@ -704,7 +704,7 @@ async def test_dev_auto_reports_final_integration_failure(monkeypatch, tmp_path)
     import src.agents.worktree as wt
     import src.agents.decompose as dec
     from src.agents.main_agent import build_dev_tools
-    from src.orchestrator.task_analyzer import SubTask
+    from src.agents.task_analyzer import SubTask
 
     a = SubTask(id="a", title="A")
 
@@ -739,7 +739,7 @@ async def test_dev_auto_bullet_uses_first_line_of_multiline_desc(monkeypatch, tm
     import src.agents.worktree as wt
     import src.agents.decompose as dec
     from src.agents.main_agent import build_dev_tools
-    from src.orchestrator.task_analyzer import SubTask
+    from src.agents.task_analyzer import SubTask
 
     desc = "新增 short_hash\n\n目标：\n加函数\n\n验收标准：\n- 新单测通过\n- 只改两个文件"
     a = SubTask(id="a", title="")
@@ -877,7 +877,7 @@ async def test_dev_auto_dependent_self_repairs(monkeypatch, tmp_path):
     import src.agents.worktree as wt
     import src.agents.decompose as dec
     from src.agents.main_agent import build_dev_tools
-    from src.orchestrator.task_analyzer import SubTask
+    from src.agents.task_analyzer import SubTask
     a = SubTask(id="a", title="A")
     b = SubTask(id="b", title="B", dependencies=["a"])
 
@@ -940,7 +940,7 @@ async def test_dev_auto_emits_progress_through_phases(monkeypatch, tmp_path):
     import src.agents.worktree as wt
     import src.agents.decompose as dec
     from src.agents.main_agent import build_dev_tools
-    from src.orchestrator.task_analyzer import SubTask
+    from src.agents.task_analyzer import SubTask
     a = SubTask(id="a", title="A")
     b = SubTask(id="b", title="B", dependencies=["a"])
 

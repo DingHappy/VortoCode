@@ -158,7 +158,7 @@ class TaskAnalyzer:
 只返回 JSON，不要有其他内容。"""
 
         try:
-            from ..agents.base import extract_json
+            from ..utils.json_extract import extract_json
             response = await self.llm_client.analyze(prompt, system_prompt)
             result = extract_json(response)
             if not isinstance(result, dict):
@@ -375,7 +375,7 @@ class TaskDecomposer:
 
     async def _decompose_with_llm(self, task: str, analysis: TaskAnalysis) -> List[SubTask]:
         """用 LLM 拆分为带依赖的子任务；id 规范化、依赖只指向更早子任务（保证 DAG 无环）。"""
-        from ..agents.base import extract_json
+        from ..utils.json_extract import extract_json
 
         prompt = f"""把下面的软件开发任务分解为有序的子任务，返回 JSON 数组。
 

@@ -12,12 +12,6 @@ from pathlib import Path
 def _builtin_profiles(repo_root: str) -> dict[str, dict]:
     root = Path(repo_root)
     profiles: dict[str, dict] = {}
-    if (root / "main.py").is_file():
-        profiles["self-analyze"] = {
-            "cmd": "python main.py self-analyze",
-            "description": "run VortoCode deterministic repository scan",
-            "source": "builtin",
-        }
     if (root / "tests" / "unit").is_dir():
         profiles["unit"] = {
             "cmd": "pytest -q tests/unit",
@@ -147,11 +141,11 @@ def load_verify_profiles(repo_root: str) -> dict:
 
     profiles:
       smoke:
-        cmd: python main.py self-analyze
+        cmd: python main.py --help
 
     or:
 
-    smoke: python main.py self-analyze
+    smoke: python main.py --help
     """
     profiles = _builtin_profiles(repo_root)
     path = Path(repo_root) / ".vortocode" / "verify.yaml"
@@ -295,6 +289,4 @@ def recommend_verify_profiles(repo_root: str, changed_paths: list[str] | None = 
         _add_recommendation(recs, profiles, "git-workflow", "Git workflow / verify profile 相关文件有改动")
     if any(Path(p).suffix == ".py" or p.startswith("tests/") for p in paths):
         _add_recommendation(recs, profiles, "unit", "Python 源码或测试有改动")
-    if paths:
-        _add_recommendation(recs, profiles, "self-analyze", "提交前做一次确定性仓库扫描")
     return {"ok": True, "recommendations": recs[:max_profiles], "profiles": profiles}

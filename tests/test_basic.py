@@ -3,9 +3,8 @@
 import pytest
 from src.hooks import Hook, HookEvent, HookEventType, HookResult, HookRegistry
 from src.skills import SkillMetadata, SkillParser
-from src.agents import AgentConfig, AgentStatus
 from src.memory import MemorySystem, MemoryItem, ShortTermMemory
-from src.orchestrator import TaskAnalyzer, TaskComplexity
+from src.agents.task_analyzer import TaskAnalyzer, TaskComplexity
 
 
 # Hook 系统测试
@@ -76,23 +75,6 @@ Test instructions with $arg1
         assert metadata.description == "Test skill"
         assert "testing" in metadata.capabilities
         assert "$arg1" in instructions
-
-
-# Agent 系统测试
-class TestAgentSystem:
-    def test_agent_config(self):
-        """测试 Agent 配置"""
-        config = AgentConfig(
-            role="developer",
-            name="Test Agent"
-        )
-        assert config.role == "developer"
-        assert config.name == "Test Agent"
-    
-    def test_agent_status(self):
-        """测试 Agent 状态"""
-        assert AgentStatus.IDLE.value == "idle"
-        assert AgentStatus.RUNNING.value == "running"
 
 
 # 记忆系统测试

@@ -1,65 +1,6 @@
 """可观测/指标埋点测试（离线）。"""
 
-import json
-
-import pytest
-
 from src.core import metrics
-from src.agents.roles import DeveloperAgent
-from src.agents.base import Agent, AgentConfig, AgentResult
-from src.orchestrator.dev_loop import IterativeDevLoop
-
-
-class FakeLLM:
-    def __init__(self, content):
-        self.content = content
-
-    async def chat(self, messages, model=None, temperature=None, **kw):
-        return {"content": self.content, "usage": {"total_tokens": 7}}
-
-
-class _Dev(Agent):
-    def __init__(self):
-        super().__init__(AgentConfig(role="developer"))
-
-    async def execute(self, t, **kw):
-        return AgentResult(success=True, output={"files_created": []}, files_created=[])
-
-
-class _Tester(Agent):
-    def __init__(self):
-        super().__init__(AgentConfig(role="tester"))
-
-    async def execute(self, t, **kw):
-        return AgentResult(success=True, output={"passed": True})
-
-
-class _Rev(Agent):
-    def __init__(self):
-        super().__init__(AgentConfig(role="reviewer"))
-
-    async def execute(self, t, **kw):
-        return AgentResult(success=True, output={"verdict": "approve"})
-
-
-@pytest.mark.asyncio
-async def test_records_llm_calls_and_tokens(tmp_path):
-    metrics.reset()
-    payload = json.dumps({"files": [{"path": "a.py", "content": "x = 1\n"}]})
-    dev = DeveloperAgent(llm_client=FakeLLM(payload))
-    await dev.execute("x", context={"workspace": str(tmp_path)})
-
-    assert metrics.get_counter("llm.calls", {"role": "developer"}) >= 1
-    assert metrics.get_counter("llm.tokens") >= 7
-
-
-@pytest.mark.asyncio
-async def test_records_devloop_iterations(tmp_path):
-    metrics.reset()
-    await IterativeDevLoop(_Dev(), _Tester(), _Rev(), max_iterations=2).run(
-        "x", workspace=str(tmp_path))
-    assert metrics.get_counter("devloop.runs") >= 1
-    assert metrics.get_counter("devloop.iterations") >= 1
 
 
 def test_timer_percentiles():

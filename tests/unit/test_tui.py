@@ -1,7 +1,6 @@
 """交互式 TUI 的无头测试（Textual Pilot，不需要真终端）。
 
-验证 TUI 外壳与命令分发：启动问候、/help、/mode 切换、未知命令、以及 /analyze
-真正驱动 L1 并把报告写进对话区。LLM 相关命令（/run 等）需 key，不在此测。
+验证 TUI 外壳与命令分发：启动问候、/help、/mode 切换、未知命令，以及隔离开发和工具确认。
 """
 
 import json
@@ -84,26 +83,6 @@ class _FakeKey:
         self.prevented = True
 
 
-def _fake_improve_loop(applied):
-    import src.orchestrator.self_improve as si
-
-    class FakeLoop:
-        def __init__(self, root):
-            pass
-
-        async def propose(self):
-            return si.ImprovementResult(proposals=[si.Proposal(
-                finding_title="t", module="m", test_path="tests/x.py",
-                accepted=True, reason="ok")])
-
-        def apply(self, result):
-            applied.append(True)
-            result.branch = "l2/fake"
-            return "l2/fake"
-
-    return si, FakeLoop
-
-
 @pytest.mark.asyncio
 async def test_starts_in_plan_mode_and_greets():
     from textual.widgets import Footer
@@ -123,7 +102,7 @@ async def test_help_lists_commands():
     async with app.run_test() as pilot:
         await _submit(app, pilot, "/help")
         joined = "\n".join(app.transcript)
-        assert "/analyze" in joined and "/run" in joined and "/fix" in joined
+        assert "/review" in joined and "/tasks" in joined and "/verify" in joined
 
 
 @pytest.mark.asyncio
@@ -607,56 +586,7 @@ async def test_submit_sanitizes_before_dispatch(tmp_path):
     async with app.run_test() as pilot:
         await _submit(app, pilot, "/help\x1b[27;2;13~")  # /help 后粘了漏进的序列
         joined = "\n".join(app.transcript)
-        assert "/analyze" in joined                      # 清洗后 = /help，正确分发（非"未知命令"）
-
-
-@pytest.mark.asyncio
-async def test_analyze_runs_l1_and_reports(tmp_path):
-    # 临时小仓库，让 /analyze 确定、快、无需 key
-    (tmp_path / "src").mkdir()
-    (tmp_path / "src" / "__init__.py").write_text("")
-    (tmp_path / "src" / "util.py").write_text("def f():\n    return 1\n")
-    (tmp_path / "tests").mkdir()
-    (tmp_path / "tests" / "__init__.py").write_text("")
-    (tmp_path / "tests" / "test_util.py").write_text(
-        "from src.util import f\n\n\ndef test_f():\n    assert f() == 1\n"
-    )
-
-    app = VortoCodeTUI(repo_root=str(tmp_path))
-    async with app.run_test() as pilot:
-        await _submit(app, pilot, "/analyze")
-        assert await _wait_for(app, pilot, "自我分析报告"), "L1 报告未出现在对话区"
-
-
-@pytest.mark.asyncio
-async def test_run_command_invokes_dev_loop(monkeypatch, tmp_path):
-    # /run 命令：把开发目标交给 IterativeDevLoop 跑（流式）。legacy run_dev_workflow **工具已退役**
-    # （三端漂移清理），老 dev→test→review 循环现只经 /run（及 /apply 复用其产出）触达。FakeLoop 不触网。
-    import src.orchestrator.dev_loop as dl
-
-    seen_tokens = []
-
-    class FakeLoop:
-        def __init__(self, *a, **k):
-            pass
-
-        async def run(self, task, on_token=None, on_iteration=None, **k):
-            if on_token:
-                on_token("hel")
-                on_token("lo")
-                seen_tokens.append("ok")
-            return dl.DevLoopResult(success=True, iterations=1,
-                                    workspace=str(tmp_path), files=["a.py"], reason="ok")
-
-    monkeypatch.setattr(dl, "IterativeDevLoop", FakeLoop)
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
-
-    app = VortoCodeTUI(repo_root=str(tmp_path))
-    async with app.run_test() as pilot:
-        await _submit(app, pilot, "/run 写一个加法函数")
-        assert await _wait_for(app, pilot, "开发（dev→test→review")   # /run 触发了流水线
-        assert await _wait_for(app, pilot, "结果: 成功")               # 汇总回显
-        assert seen_tokens == ["ok"]                                   # 流式回调确实被调用
+        assert "/review" in joined                      # 清洗后 = /help，正确分发（非"未知命令"）
 
 
 @pytest.mark.asyncio
@@ -759,13 +689,10 @@ async def test_agent_edit_file_requires_confirm(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_plain_text_no_key_offline_and_no_pipeline(monkeypatch, tmp_path):
     # 没 key：普通话走离线引导，绝不触发流水线、也不构建主 agent（回归：修"你好也去开发 app.py"）。
-    import src.orchestrator.dev_loop as dl
 
-    class BoomLoop:
-        def __init__(self, *a, **k):
-            raise AssertionError("无 key 不应触发开发流水线")
-
-    monkeypatch.setattr(dl, "IterativeDevLoop", BoomLoop)
+    def no_agent(*args, **kwargs):
+        raise AssertionError("无 key 不应构建主 agent")
+    monkeypatch.setattr(VortoCodeTUI, "_build_main_agent", no_agent)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
@@ -1552,9 +1479,9 @@ async def test_audit_command_shows_log(tmp_path):
         await _submit(app, pilot, "/audit")
         assert any("暂无审计" in t for t in app.transcript)   # 还没调用工具
         agent = app._build_main_agent()
-        await agent._run_tool("analyze_repo", {}, "plan", lambda _m: None)
+        await agent._run_tool("list_files", {}, "plan", lambda _m: None)
         await _submit(app, pilot, "/audit")
-        assert await _wait_for(app, pilot, "analyze_repo")
+        assert await _wait_for(app, pilot, "list_files")
 
 
 def test_expand_context_file_dir_symbol(tmp_path):
@@ -1891,7 +1818,7 @@ def test_tui_agent_has_shared_read_tools(tmp_path):
     # TUI 与 web/CLI 同源：build_read_tools 的全部只读工具都在（含 LSP 导航 + git 只读工具）
     app = VortoCodeTUI(repo_root=str(tmp_path))
     agent = app._build_main_agent()
-    want = {"read_file", "grep", "list_files", "analyze_repo", "find_definition",
+    want = {"read_file", "grep", "list_files", "find_definition",
             "find_references", "document_symbols", "git_status", "show_diff", "list_branches"}
     assert want <= set(agent.tools), want - set(agent.tools)
     for n in want:
@@ -2299,7 +2226,7 @@ async def test_action_blocked_while_busy(tmp_path):
     app = VortoCodeTUI(repo_root=str(tmp_path))
     async with app.run_test() as pilot:
         app._busy = True                              # 手动置忙（无真任务）
-        await _submit(app, pilot, "/analyze")         # 动作命令应被挡
+        await _submit(app, pilot, "/review")          # 动作命令应被挡
         assert any("正在处理" in t for t in app.transcript)
         assert not any("运行 L1" in t for t in app.transcript)   # analyze 未启动
 
@@ -2333,101 +2260,6 @@ async def test_non_action_worker_sets_busy_and_audit_shows_stall(tmp_path):
         assert app._busy is False
 
 
-@pytest.mark.asyncio
-async def test_agents_lists_created_agents(tmp_path):
-    from src.agents.manager import AgentManager
-    db = str(tmp_path / ".vortocode" / "web_advanced_agents.json")
-    a = AgentManager(persist_path=db).create_agent("我的助手", "custom")
-
-    app = VortoCodeTUI(repo_root=str(tmp_path))
-    async with app.run_test() as pilot:
-        await _submit(app, pilot, "/agents")
-        joined = "\n".join(app.transcript)
-        assert "我的助手" in joined and a.config.id in joined
-
-
-@pytest.mark.asyncio
-async def test_runagent_unknown_id(tmp_path):
-    app = VortoCodeTUI(repo_root=str(tmp_path))
-    async with app.run_test() as pilot:
-        await _submit(app, pilot, "/runagent nope 做事")
-        assert await _wait_for(app, pilot, "没有 agent")
-
-
-@pytest.mark.asyncio
-async def test_runagent_runs_a_stored_agent(monkeypatch, tmp_path):
-    from src.agents.manager import AgentManager
-    import src.agents.config_agent as ca
-
-    db = str(tmp_path / ".vortocode" / "web_advanced_agents.json")
-    aid = AgentManager(persist_path=db).create_agent("跑跑", "custom").config.id
-
-    class FakeLLM:
-        async def chat(self, messages, model=None, temperature=None, max_tokens=None, stream=False):
-            return {"content": "干完了"}
-
-    def fake_build(name, role="custom", system_prompt="", model="inherit", llm_client=None):
-        cfg = ca.AgentConfig(role=role or "custom", name=name,
-                             system_prompt=system_prompt or "x", model="inherit")
-        return ca.ConfigAgent(cfg, llm_client=FakeLLM())
-
-    monkeypatch.setattr(ca, "build_config_agent", fake_build)
-    app = VortoCodeTUI(repo_root=str(tmp_path))
-    async with app.run_test() as pilot:
-        await _submit(app, pilot, f"/runagent {aid} 做点事")
-        assert await _wait_for(app, pilot, "干完了")        # 用存储的 agent 真跑出结果
-
-
-@pytest.mark.asyncio
-async def test_build_apply_confirm_cancel(monkeypatch, tmp_path):
-    applied = []
-    si, FakeLoop = _fake_improve_loop(applied)
-    monkeypatch.setattr(si, "SelfImprovementLoop", FakeLoop)
-
-    app = VortoCodeTUI(repo_root=str(tmp_path))
-    async with app.run_test() as pilot:
-        await _submit(app, pilot, "/mode")            # → build
-        assert app.mode == "build"
-        await _submit(app, pilot, "/improve")
-        assert await _wait_inline_confirm(app, pilot), "写分支前应确认"
-        await pilot.press("n")                        # 取消
-        await pilot.pause()
-        assert applied == []                          # 没写分支
-        assert await _wait_for(app, pilot, "已取消写入")
-
-
-@pytest.mark.asyncio
-async def test_build_apply_confirm_accept(monkeypatch, tmp_path):
-    applied = []
-    si, FakeLoop = _fake_improve_loop(applied)
-    monkeypatch.setattr(si, "SelfImprovementLoop", FakeLoop)
-
-    app = VortoCodeTUI(repo_root=str(tmp_path))
-    async with app.run_test() as pilot:
-        await _submit(app, pilot, "/mode")
-        await _submit(app, pilot, "/improve")
-        assert await _wait_inline_confirm(app, pilot)
-        await pilot.press("y")                        # 确认
-        await pilot.pause()
-        assert applied == [True]                      # 写了分支
-        assert await _wait_for(app, pilot, "已写入分支")
-
-
-@pytest.mark.asyncio
-async def test_plan_mode_never_writes(monkeypatch, tmp_path):
-    # plan 模式即使有可纳入项也不应弹确认/不写分支
-    applied = []
-    si, FakeLoop = _fake_improve_loop(applied)
-    monkeypatch.setattr(si, "SelfImprovementLoop", FakeLoop)
-
-    app = VortoCodeTUI(repo_root=str(tmp_path))   # 默认 plan
-    async with app.run_test() as pilot:
-        await _submit(app, pilot, "/improve")
-        assert await _wait_for(app, pilot, "tests/x.py")   # render_result 提案行出现=跑完
-        assert applied == []                                # plan 模式没写
-        assert len(app.screen_stack) == 1                   # 没弹确认
-
-
 # ---------------------------------------------------------------- TUI 交互 UX
 @pytest.mark.asyncio
 async def test_command_palette_lists_matching_commands():
@@ -2441,7 +2273,7 @@ async def test_command_palette_lists_matching_commands():
         palette = app.query_one("#palette", Static)
         assert palette.display is True
         txt = str(palette.render())
-        assert "/analyze" in txt and "/artifacts" in txt    # 列出匹配命令
+        assert "/audit" in txt and "/artifacts" in txt    # 列出匹配命令
         inp.value = "你好"                                   # 非 / 输入
         await pilot.pause()
         assert palette.display is False                     # → 隐藏
@@ -2552,11 +2384,11 @@ async def test_palette_tab_cycles_when_exact():
     async with app.run_test() as pilot:
         inp = app.query_one("#prompt", PromptEditor)
         inp.focus()
-        inp.value = "/ru"; await pilot.pause()
+        inp.value = "/pr"; await pilot.pause()
+        app._pal_idx = app._pal_accepts.index("/pr")
         app.action_toggle_mode(); await pilot.pause()
-        assert inp.value == "/run"
-        app.action_toggle_mode(); await pilot.pause()
-        assert inp.value == "/runagent"                                # 轮换而非卡死
+        assert inp.value == "/pr-check"                             # exact /pr cycles to its next candidate
+
 
 
 @pytest.mark.asyncio
@@ -2574,15 +2406,15 @@ async def test_palette_enter_runs_selected_command():
 
 @pytest.mark.asyncio
 async def test_palette_enter_on_arg_command_fills_input():
-    """必带参数的命令（/fix 等）回车不执行，补成 '/fix ' 等用户填参数。"""
+    """必带参数的命令（/fix-ci 等）回车不执行，先补空格等待参数。"""
     app = VortoCodeTUI(repo_root=".")
     async with app.run_test() as pilot:
         inp = app.query_one("#prompt", PromptEditor)
         inp.focus()
-        inp.value = "/fi"; await pilot.pause()
+        inp.value = "/fix-c"; await pilot.pause()
         n0 = len(app.transcript)
         await pilot.press("enter"); await pilot.pause()
-        assert inp.value == "/fix "                                    # 停在输入框等参数
+        assert inp.value == "/fix-ci "                                    # 停在输入框等参数
         assert len(app.transcript) == n0                               # 没有提交
 
 
@@ -3050,7 +2882,7 @@ async def test_cmd_verify_profile_lists_and_runs_project_profile(tmp_path, monke
     (tmp_path / ".vortocode" / "verify.yaml").write_text(
         "profiles:\n"
         "  smoke:\n"
-        "    cmd: python main.py self-analyze\n"
+        "    cmd: python main.py analyze --task sample\n"
         "    description: quick scan\n",
         encoding="utf-8",
     )
@@ -3070,7 +2902,7 @@ async def test_cmd_verify_profile_lists_and_runs_project_profile(tmp_path, monke
         assert "profile smoke" in str(app._confirm_message)
         await pilot.press("y")
         assert await _wait_for(app, pilot, "runtime 验证通过")
-        assert ran["cmd"] == "python main.py self-analyze"
+        assert ran["cmd"] == "python main.py analyze --task sample"
         assert "scan ok" in "\n".join(app.transcript)
 
 
@@ -3690,22 +3522,6 @@ async def test_inline_confirm_write_uses_palette_not_modal(tmp_path):
         assert app._allow_writes_session is True
 
 
-@pytest.mark.asyncio
-async def test_improve_confirm_always_sets_flag(monkeypatch, tmp_path):
-    applied = []
-    si, FakeLoop = _fake_improve_loop(applied)
-    monkeypatch.setattr(si, "SelfImprovementLoop", FakeLoop)
-    app = VortoCodeTUI(repo_root=str(tmp_path))
-    async with app.run_test() as pilot:
-        await _submit(app, pilot, "/mode")                # → build
-        await _submit(app, pilot, "/improve")
-        assert await _wait_inline_confirm(app, pilot)
-        await pilot.press("a")                            # 选"始终允许（记住）"
-        await pilot.pause()
-        assert applied == [True]                          # a 也算确认 → 写了
-        assert app._allow_writes_session is True          # 且置位会话标志
-
-
 # ---- B5-1：「始终允许」跨会话常驻（写进项目设置；三条边界一律不放宽）----
 
 @pytest.mark.asyncio
@@ -4288,46 +4104,6 @@ async def test_message_colors_follow_theme(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_apply_copies_workspace_output_to_repo(tmp_path):
-    ws = tmp_path / ".vortocode" / "workspaces" / "devloop-test"
-    (ws / "src").mkdir(parents=True)
-    (ws / "src" / "new.py").write_text("print('hi')\n")       # 模拟 dev 产出
-    app = VortoCodeTUI(repo_root=str(tmp_path))
-    async with app.run_test() as pilot:
-        app._last_dev = {"workspace": str(ws), "files": ["src/new.py"]}
-        app._do_apply()                                       # @work worker
-        assert await _wait_inline_confirm(app, pilot)         # 确认"应用到仓库?"
-        await pilot.press("y")
-        for _ in range(40):
-            if (tmp_path / "src" / "new.py").is_file():
-                break
-            await pilot.pause(0.05)
-        assert (tmp_path / "src" / "new.py").read_text() == "print('hi')\n"   # 落到仓库
-        assert app._last_dev is None                          # 应用后清空
-
-
-@pytest.mark.asyncio
-async def test_apply_blocks_path_traversal(tmp_path):
-    ws = tmp_path / ".vortocode" / "workspaces" / "devloop-test"
-    ws.mkdir(parents=True)
-    (ws.parent / "evil.py").write_text("BAD")             # ws/../evil.py 这个源存在
-    app = VortoCodeTUI(repo_root=str(tmp_path))
-    async with app.run_test() as pilot:
-        app._last_dev = {"workspace": str(ws), "files": ["../evil.py"]}   # 越界路径
-        app._do_apply()
-        assert await _wait_for(app, pilot, "跳过越界")        # 越界被拒、不应用
-        assert not (tmp_path.parent / "evil.py").exists()    # 没写到仓库外
-
-
-@pytest.mark.asyncio
-async def test_apply_nothing_pending(tmp_path):
-    app = VortoCodeTUI(repo_root=str(tmp_path))
-    async with app.run_test() as pilot:
-        app._do_apply()
-        assert await _wait_for(app, pilot, "没有待应用")
-
-
-@pytest.mark.asyncio
 async def test_reply_streams_then_lands_in_log(monkeypatch, tmp_path):
     from src.agents.main_agent import MainAgent
     from textual.widgets import RichLog
@@ -4462,3 +4238,16 @@ async def test_render_plan_panel():
         # 传空计划 → 面板收起（/new 复位）
         app._render_plan([])
         assert app.query_one("#plan", Static).display is False
+
+
+async def test_retired_slash_commands_are_not_advertised_or_executable(tmp_path):
+    app = VortoCodeTUI(repo_root=str(tmp_path))
+    removed = ('analyze', 'improve', 'fix', 'run', 'apply', 'agents', 'runagent')
+    async with app.run_test() as pilot:
+        for command in removed:
+            assert '/' + command not in tui_app.SLASH_COMMANDS
+            assert '/' + command not in tui_app.COMMAND_INFO
+            app._dispatch('/' + command)
+            await pilot.pause()
+            assert any('未知命令 /' + command in text for text in app.transcript)
+        assert app.agent is None

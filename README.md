@@ -31,7 +31,7 @@ VortoCode 后续会按同一 agent runtime 拆成三种入口，而不是分裂�
 
 `vc tui`（终端）、Desktop 与 Web 控制台 `/agent`（浏览器）共用同一个**主 agent loop**：一个会聊天的 LLM，在"输入 → 模型 →（工具 → 回灌）\* → 流式回复"的循环里自己决定该聊天、读代码，还是把开发任务交给流水线 —— **寒暄不会触发构建，要动手才动手**。
 
-- **工具集**：`read_file` / `list_files` / `grep` / `analyze_repo`（只读）· `edit_file` / `write_file` / `run_dev_workflow`（写/重型，需确认）· `task` / `research_parallel`（子 agent 委派）· `use_skill` / `save_skill`（技能）· `save_memory` / `recall_memory`（长期记忆）· `publish_artifact` / `list_artifacts`（制品，见下）· 以及 `/mcp` 接入的任意外部 MCP 工具
+- **工具集**：`read_file` / `list_files` / `grep`（只读）· `edit_file` / `write_file`（写/重型，需确认）· `task` / `research_parallel`（子 agent 委派）· `use_skill` / `save_skill`（技能）· `save_memory` / `recall_memory`（长期记忆）· `publish_artifact` / `list_artifacts`（制品，见下）· 以及 `/mcp` 接入的任意外部 MCP 工具
 - **plan / build = 工具权限门**：plan 只放只读工具；写/重型/外部工具仅 build，且写盘前弹确认 —— 落实"人在关口"
 - **子 agent 委派**：把独立调研任务派给隔离上下文的只读子 agent，支持并行 fan-out
 - **自定义角色子 agent**（`.vortocode/agents/*.md`，公司架构式分工）：frontmatter 定角色（产品经理/前端/后端/QA…），正文即 system prompt；`task`/`research_parallel` 用 `agent=<名>` 按名委派——read 型只读，`tools: dev` 型可经**隔离流水线**真写代码（落 `vorto/*` 分支、委派需人工确认，绝不碰主区）。模板见 `examples/agents/`
@@ -42,7 +42,7 @@ VortoCode 后续会按同一 agent runtime 拆成三种入口，而不是分裂�
 - **双协议**：**默认走原生 function-calling（native）**——对支持的模型更可靠（真机对照 dogfood：同一开发任务 native 3/3 正确落地、提示式仅 1/3，提示式下模型易把工具结果误当用户消息、凭空编造交付）；模型不支持则**自动回退**提示式协议（模型无关兜底）。`VORTOCODE_NATIVE_TOOLS=0` 可强制走提示式。三端（TUI/Web/CLI）统一
 - **可观测/可审计**：token 用量统计（`/usage`）；TUI、Web 与 Desktop 共用脱敏工具/权限审计台账，Desktop 将人工确认、阻塞 Goal、失败任务和 PR/CI 汇成待决策队列
 - **不中断思路**：Desktop 在 Agent 运行时仍可继续输入；后续提示由 Gateway 持久化排队，可删除或提升为“现在执行”，同时维持单会话单前台回合
-- **命令**：`/run /analyze /improve /fix /skills /tools /mcp /usage /audit /agents /runagent /sessions /resume /new /mode /clear /help`
+- **命令**：`/skills /tools /mcp /usage /audit /sessions /resume /new /mode /tasks /review /verify /clear /help`
 
 > 早期版本把"任何自然语言 = 开发目标（等同 `/run`）"，会出现"打个招呼也跑完整 dev→test→review"的尴尬；现已收敛为上面的主 agent loop，开发只是它的一个工具。
 
@@ -60,13 +60,9 @@ VortoCode 后续会按同一 agent runtime 拆成三种入口，而不是分裂�
 - **人在关口**：发布/删除是写操作——TUI 弹确认，Web 端靠 build 模式门控
 - **落盘**：`.vortocode/artifacts/<id>/`（gitignored，运行时产物）；由 Web 服务器渲染，`VORTOCODE_WEB_BASE` 可改链接前缀
 
-### 自我迭代 / dogfooding（用 vortocode 开发它自己）
+### Dogfooding（用 VortoCode 开发它自己）
 
-- **L1 自分析** (`vc self-analyze`)：只读扫描本仓库，找孤儿模块 / 循环依赖 / 测试缺口 / 未声明依赖（确定性，无需 LLM key）
-- **L2 自改进** (`vc self-improve`)：给"没测试的模块"自动生成测试，**必须真 pytest 通过**才纳入（客观门控，非 LLM 自评）
-- **L2.2 代码修复** (`vc self-fix --paths ...`)：深审 bug/坏味道 → 外科手术式精确编辑 → **全量测试门控**，绿才留、红回滚
-- **安全边界**：默认 dry-run 只出提案；改动只进新分支、绝不碰 main、需人确认 —— 落实"人在合并口"
-- **交互前端** (`vc tui` / Web `/agent`)：把上面能力串进交互式主 agent loop（详见上文「交互式主 Agent」）
+把改进任务派给正常的隔离 dev 流水线，在独立 worktree 中实现、验证并提交 PR，经过审核后合并。
 
 ### 隔离 dev 流水线（差异化护城河）
 
@@ -155,10 +151,9 @@ VortoCode 后续会按同一 agent runtime 拆成三种入口，而不是分裂�
 
 ```
 vortocode/
-├── main.py              CLI 入口（agent / server / analyze / self-* / tui / test / demo）
+├── main.py              CLI 入口（agent / server / analyze / tui / test / demo）
 ├── src/
 │   ├── agents/          底层 agent_loop/安全策略 + 工具工厂（按需装配 workflow/scheduling 的公开能力）
-│   ├── orchestrator/    任务分析/分解（task_analyzer）+ 迭代 dev loop + 自迭代（analyze/improve/fix）；5 角色批处理引擎已退役删除
 │   ├── llm/             LLM 客户端（One API 网关，异步 AsyncOpenAI）
 │   ├── web/             FastAPI 服务：server.py 装配 + routers/ 各域路由 + state/schemas/deps/auth
 │   ├── memory/          记忆系统（SQLite 会话 + JSON 长期记忆 + 向量数据库）
@@ -166,7 +161,6 @@ vortocode/
 │   ├── hooks/           生命周期 Hook
 │   ├── tools/           MCP 工具集成（动态发现 / 权限管理）
 │   ├── core/            核心设施（monitoring 指标 / cache / tracing；self_healing、task_queue 已退役删除）
-│   ├── editor/          surgical 精确编辑原语（`vc fix` / TUI 用；旧 CodeEditor 随 /api/editor 删除）
 │   ├── sandbox/         OS 策略 / Docker 沙箱与显式宿主机回落
 │   └── browser/ gateway/ im/ tui/ …（2026-10 删除无前端调用的旧 Web 接口及其模块：
 │                         context/ security/ projects/ github/ templates/ testing/ documentation/ 自定义 agent 管理器）
@@ -178,7 +172,7 @@ vortocode/
 └── config/              默认配置（default.yaml / mcp.yaml）
 ```
 
-> 注：早期版本曾计划把代码放在顶层 `orchestrator/`、`agents/`、`sandbox/`，
+> 注：早期版本曾计划把代码放在顶层独立包，
 > 现已统一收敛到 `src/` 下；那几个顶层目录已废弃。
 
 ## 技术栈
@@ -267,10 +261,6 @@ vc --help                # 查看所有子命令
 ### 4. 使用
 
 ```bash
-# 自我迭代（dogfooding；self-analyze 无需 key）
-vc self-analyze                      # 只读扫描自己、列出问题
-vc self-improve                      # 给测试缺口生成测试（真 pytest 门控；默认 dry-run）
-vc self-fix --paths src/x.py         # 深审并外科修复指定文件
 
 # 交互式主 agent（终端全屏 TUI；需 pip install '.[tui]' 与 OPENAI_API_KEY）
 vc tui
@@ -339,7 +329,7 @@ Desktop 预览包已内置只暴露本机 Gateway 的 Python sidecar，不要求
 - **Phase 1**: ~~自我编排引擎~~ — **已退役**（5 角色批处理/能力匹配/失败恢复删除）；仅保留任务分析/分解，并入隔离 dev 流水线
 - **Phase 2**: 工具集成层 — MCP 工具自动发现+注册可用
 - **Phase 3**: 记忆与学习系统 — 会话/长期/向量记忆可用；知识图谱已移除（未集成的孤儿模块）
-- **Phase 4**: 技能与子代理系统 — 技能/Hooks 可用；子代理（SubAgentManager）尚未接入主链路
+- **Phase 4**: 技能与子代理系统 — 技能/Hooks 与按需角色子代理已接入主运行链路
 - **Phase 5**: 高级特性与优化 — 监控/安全/沙箱可用；实时补全、内联编辑、多模型协商等仍为规划项
 
 当前方向与后续阶段以 [开发路线图](docs/ROADMAP.md) 和本 README 上文「核心特性」为准；`DEVELOPMENT_SUMMARY` 仅保留历史演进记录，部分内容可能已经过时。

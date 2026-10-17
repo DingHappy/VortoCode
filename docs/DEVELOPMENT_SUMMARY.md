@@ -20,9 +20,8 @@
 
 ## 近期新增能力
 
-- **迭代开发闭环**：开发→测试→审查→失败反馈修复（`src/orchestrator/dev_loop.py`）。
 - **Web 实时驱动**：`/api/start` 驱动 需求→架构→闭环，进度/每轮迭代/token 经 WebSocket 实时广播，前端 `index.html` 渲染。
-- **LLM 流式输出**：`LLMClient.stream()` + Agent `_complete(on_token=...)`，开发阶段 token 实时上屏。
+- **LLM 流式输出**：主 Agent 使用 `LLMClient.stream()`；旧角色基类的流式入口已删除。
 - **统一沙箱**：`src/sandbox/runner.py` 优先 Docker 真隔离，无 Docker 时按 `VORTOCODE_ENABLE_SHELL`（兼容旧名 `AUTODEV_ENABLE_SHELL`）降级宿主机，否则 fail-closed。
 - **语义检索**：`code_indexer` 向量检索；回退 embedder 改为词袋哈希向量，无 key 也能按词重叠排序。
 - ~~**长目标自治**：`run_autonomous_goal()` / `AutonomousLoop`~~ —— **已退役删除**（路线 A）；长任务改用隔离 dev 流水线（`dev_auto`/`dev_parallel`）。
@@ -31,12 +30,12 @@
 - **Tester 隔离**：`run_pytest` 在配置了 `AUTODEV_SANDBOX_IMAGE` 且有 Docker 时容器内隔离跑 pytest（断网），否则宿主机（默认不破坏开发流程）。
 - **流式节流**：`TokenBatcher` 累积到阈值/换行才广播，避免逐 token 洪泛。
 - **索引增量/持久化**：`CodeIndexer` 按文件 hash 跳过未变更、仅重嵌入变更、移除已删，并持久化 hash 跨进程续用。
-- **长程编码自治**：`run_autonomous_coding()` 用 LLM 把目标拆成多步，逐步在同一工作区跑迭代闭环并聚合。
+- **旧迭代开发实验已删除**：自分析、自动补测、外科修复和旧三角色闭环退出产品；开发任务统一交给正常隔离 dev 流水线。
 - **前端时间线**：`index.html` 把 `dev_iteration` 渲染为带轮次/测试/审查徽章的时间线卡片，token 流式上屏。
 - **独立时间线面板**：右侧固定可关闭面板（`#devPanel`），execution_started 显示并清空、dev_iteration 追加卡片、completed 收尾。
-- **可观测/指标**：进程级全局 `MetricsCollector`（`src/core` 的 `metrics`），在 `_complete`/dev_loop 埋点（llm.calls/tokens/errors/latency、devloop.runs/iterations，带 role 标签），`/api/monitoring/metrics` 实时暴露。
-- **成本追踪**：全局 `cost_tracker`（`src/models`），`_complete` 按模型 tokens×定价埋点，`/api/cost/report` 返回 total_cost/tokens/calls。
-- **结构化日志/trace**：`src/core/tracing`：JSON 格式器 + `trace_id` contextvar，orchestrate/dev_loop/Web 执行起始设 id 贯穿日志；`setup_structured_logging()` opt-in。
+- **可观测/指标**：进程级全局 `MetricsCollector`（`src/core` 的 `metrics`），通过当前运行链路记录指标，`/api/monitoring/metrics` 实时暴露。
+- **成本追踪**：全局 `cost_tracker`（`src/models`），当前用量入口 `add_usage` 按模型 tokens×定价记账，`/api/cost/report` 返回 total_cost/tokens/calls。
+- **结构化日志/trace**：`src/core/tracing`：JSON 格式器 + `trace_id` contextvar，主 Agent/隔离开发/Web 执行沿用 trace 上下文；`setup_structured_logging()` opt-in。
 - **指标/成本仪表盘**：`index.html` 左下浮动按钮开关的面板，轮询 `/api/monitoring/metrics` 与 `/api/cost/report` 渲染计数器/延迟分位/费用。
 
 ### 基建批

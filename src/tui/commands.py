@@ -27,9 +27,8 @@ from pathlib import Path
 from textual import work
 from textual.widgets import RichLog
 
-# ListPicker / _AGENTS_DB 留在 app.py（前者是本 TUI 的小组件，后者是路径常量）。
+# ListPicker 留在 app.py（本 TUI 的小组件）。
 # **函数体内导入**：app 在模块级导入本模块，这里再模块级导回去就成真环。
-# 这正是 self-analyze 环检测该放行的那类边（2026-08-03 刚把那条判据修准）。
 
 
 class TUICommandsMixin:
@@ -1310,20 +1309,6 @@ class TUICommandsMixin:
         except Exception as e:  # noqa: BLE001
             self._emit(f"MCP 连接失败: {e}")
 
-    # ---------------------------------------------------------------- 已创建的 agent
-    def _cmd_agents(self) -> None:
-        from src.tui.app import _AGENTS_DB   # 延迟导入：app 模块级导入本模块，模块级导回去会成真环
-        from src.agents.manager import AgentManager
-        mgr = AgentManager(persist_path=_AGENTS_DB(self.repo_root))
-        agents = mgr.list_agents()
-        if not agents:
-            self._emit("(无已创建的 agent；可在网页或 API 创建)")
-            return
-        lines = ["已创建的 agent（/runagent <id> <任务> 运行）:"]
-        for a in agents:
-            off = "" if a.config.is_active else " (停用)"
-            lines.append(f"  {a.config.id}  {a.config.name} [{a.config.role}]{off}")
-        self._emit("\n".join(lines))
 
     # ---------------------------------------------------------------- 会话
     def _cmd_sessions(self, arg: str = "") -> None:

@@ -1,6 +1,6 @@
 """把一个大任务自动分解成"可并行的独立子任务"——给 dev_auto 喂进隔离 dev 流水线。
 
-复用 orchestrator 既有的 `TaskAnalyzer`/`TaskDecomposer`（之前只服务批处理引擎，没接进交互式主
+复用既有的 `TaskAnalyzer`/`TaskDecomposer`（之前只服务批处理引擎，没接进交互式主
 agent loop）：分析复杂度 → 分解成 SubTask（带依赖图）。这里只取**无依赖**的子任务作为可并行的
 一批，其余（有依赖的）交回让上层提示"需后续处理"——因为 dev_parallel 的各块从同一 base 并发跑、
 互不可见，依赖链不能简单并行。UI 无关、可注入假分解器测试。
@@ -91,9 +91,9 @@ async def decompose_for_parallel(task: str, *, analyzer: Optional[Any] = None,
     - descriptions：无依赖子任务拼成的实现描述串（含验收标准），最多 max_parallel 条 → 直接喂 dev_parallel。
     - independent / deferred：无依赖 / 有依赖的 SubTask 列表（deferred 不并行，交回上层提示）。
     - total：分解出的子任务总数。
-    analyzer/decomposer 可注入（测试用）；默认用 orchestrator 的真实实现（带 key 走 LLM、否则规则版）。
+    analyzer/decomposer 可注入（测试用）；默认用任务分析器的真实实现（带 key 走 LLM、否则规则版）。
     """
-    from src.orchestrator.task_analyzer import TaskAnalyzer, TaskDecomposer
+    from src.agents.task_analyzer import TaskAnalyzer, TaskDecomposer
     analyzer = analyzer or TaskAnalyzer()
     decomposer = decomposer or TaskDecomposer()
     analysis = await analyzer.analyze(task)

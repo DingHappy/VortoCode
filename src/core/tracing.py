@@ -1,6 +1,6 @@
 """结构化（JSON）日志 + trace 关联 id。
 
-- trace_id 用 contextvar 维护，一次运行（orchestrate / dev_loop / Web 执行）共享一个 id，
+- trace_id 用 contextvar 维护，一次运行（主 Agent / 隔离开发 / Web 执行）共享一个 id，
   写进每条日志，便于把一次运行的日志聚合/追踪。
 - setup_structured_logging() 为 opt-in：调用后根 logger 输出 JSON 行（含 trace_id）。
   不调用则不改变默认日志行为（避免影响测试/库使用方）。
