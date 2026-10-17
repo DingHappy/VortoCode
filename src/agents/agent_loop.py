@@ -337,6 +337,9 @@ def _native_error_is_permanent(exc: BaseException) -> bool:
     判据：4xx（除 429）视为永久（请求本身不被接受，如模型不支持 function-calling）；429/5xx/
     超时/连接等视为瞬时；拿不准 → 当瞬时（宁可下轮重试，也别因一次抖动永久关死能力）。
     """
+    from src.llm.client import NativeToolsUnavailable
+    if isinstance(exc, NativeToolsUnavailable):    # 缺 SDK：本进程永远发不出原生请求，重试也不会好
+        return True
     status = getattr(exc, "status_code", None) or getattr(exc, "status", None)
     if isinstance(status, int):
         return 400 <= status < 500 and status != 429

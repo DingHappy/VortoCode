@@ -73,3 +73,49 @@ async def test_b3_decomposition_is_chained():
 
 # 注：test_b5_taskqueue_stop_does_not_hang 已随 src/core/task_queue（从未接线的骨架）
 # 于 2026-07 退役删除。后台任务改由 src/workflow/tasks/tasks.TaskRunner 承担，其测试见 test_gateway_tasks.py。
+
+
+# ── 无头 CLI 静默失败（2026-10-17 真机：本机没装 openai SDK）──────────────────────────────
+# 原生工具调用报「需要 OpenAI SDK」被当成瞬时故障 → 不回退提示式、回合以空回复结束；
+# 无头 CLI 又把唯一的死因（emit 出的提示）丢掉 → 用户看到「空输出 + 退出码 0」。
+
+class _NativeFailingLLM:
+    """带 tools 的原生请求抛给定异常；不带 tools（提示式协议）正常回复。"""
+
+    def __init__(self, error, reply="OK"):
+        self.error, self.reply, self.native_calls = error, reply, 0
+
+    async def chat(self, messages, **kwargs):
+        if kwargs.get("tools"):
+            self.native_calls += 1
+            raise self.error
+        return {"content": self.reply}
+
+
+async def test_missing_sdk_falls_back_to_prompt_protocol(monkeypatch, capsys):
+    from src import cli
+    from src.llm.client import NativeToolsUnavailable
+
+    monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", "1")
+    llm = _NativeFailingLLM(NativeToolsUnavailable("原生工具调用需要 OpenAI SDK"))
+    assert await cli.run_agent_headless("你好", llm=llm) == "OK"
+    assert llm.native_calls == 1                    # 一次即永久回退，不每步重撞
+    assert capsys.readouterr().out.strip() == "OK"
+
+
+@pytest.mark.parametrize("as_json", [False, True])
+async def test_headless_reports_channel_failure_instead_of_silent_exit(monkeypatch, capsys, as_json):
+    import json
+    from src import cli
+
+    monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", "1")
+    with pytest.raises(SystemExit) as exit_info:
+        await cli.run_agent_headless("你好", llm=_NativeFailingLLM(RuntimeError("Request timed out")),
+                                     as_json=as_json, quiet=True)
+    assert exit_info.value.code == 1
+    cap = capsys.readouterr()
+    assert "模型服务暂时无响应" in cap.err and "timed out" in cap.err   # --quiet 也要说清死因
+    if as_json:
+        assert "模型服务暂时无响应" in json.loads(cap.out)["error"]
+    else:
+        assert "模型服务暂时无响应" not in cap.out    # 死因不进 stdout，免得污染管道

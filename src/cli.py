@@ -1013,14 +1013,24 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
         if audio:
             bits.append(f"🎧 {len(audio)} 段音频")
         print(f"\033[2m附带 {' · '.join(bits)}\033[0m", file=sys.stderr, flush=True)
+    # emit 平时与最终回复同文（回复已走 stdout），但回合失败时它是唯一的死因（如「模型服务暂时无响应」）。
+    # 此前直接丢掉 → 失败表现为「空输出 + 退出码 0」，人和脚本都以为什么也没发生。先收着，空回复时再报。
+    notices: list = []
+
+    def emit(message):
+        notices.append(str(message))
+
     reply = await agent.run_turn(
-        prompt, mode=mode, say=say, emit=(lambda _m: None),
+        prompt, mode=mode, say=say, emit=emit,
         stream_cb=(stream_cb if streaming else None), images=images, audio=audio,
         reasoning_cb=reason_cb)
 
+    failed = not (reply or "").strip() and any(n.strip() for n in notices)
+    if failed:                                      # 回合没给出回复、只留下旁路提示：如实报失败（stderr，不进管道）
+        print(next(n for n in reversed(notices) if n.strip()), file=sys.stderr, flush=True)
     if as_json:
         import json
-        print(json.dumps({"reply": reply, "mode": mode,
+        print(json.dumps({"reply": reply, "mode": mode, **({"error": next(n for n in reversed(notices) if n.strip())} if failed else {}),
                           "tools": tools_log, "plan": plan_holder["plan"]},
                          ensure_ascii=False, indent=2))
     elif streaming:
@@ -1038,6 +1048,8 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
             await mcp_mgr.shutdown()
         except Exception:  # noqa: BLE001
             pass
+    if failed:
+        raise SystemExit(1)
     return reply
 
 
