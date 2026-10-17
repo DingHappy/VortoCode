@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
-import { AssistantPanel, AssistantSidebar, ModeSwitch } from "./AssistantMode";
+import { AssistantPanel, AssistantSidebar, MemoryProposals, ModeSwitch } from "./AssistantMode";
 
 it("模式切换：两个选项，当前项 aria-checked", () => {
   const html = renderToStaticMarkup(<ModeSwitch mode="assistant" onChange={() => {}} />);
@@ -57,4 +57,15 @@ it("审核记录只列决策，写明允许/拒绝与是否读过外部内容", 
   expect(html).toContain("下发任务单「修登录」到 VortoCode");
   expect(html).toContain("已拒绝 · 读过外部内容后");
   expect(html).not.toContain("web_fetch");
+});
+
+it("待确认记忆：可能更新了旧记忆的才多一个「记住并替换旧的」，并写出旧的是哪条", () => {
+  const html = renderToStaticMarkup(<MemoryProposals proposals={[
+    { id: "p1", content: "搬到杭州了", created_at: "", tainted: false, related: [{ id: "m1", content: "住在北京朝阳" }] },
+    { id: "p2", content: "周末想去爬山", created_at: "", tainted: false, related: [] },
+  ]} />);
+  expect(html).toContain("可能更新了：住在北京朝阳");
+  expect(html.match(/aria-label="记住并替换旧的"/g)).toHaveLength(1);
+  expect(html).toContain('title="记住（旧的也保留）"');
+  expect(renderToStaticMarkup(<MemoryProposals proposals={[]} />)).toBe("");
 });

@@ -509,9 +509,10 @@ export class GatewayClient {
     return Array.isArray(payload.proposals) ? payload.proposals : [];
   }
 
-  async decideMemoryProposal(id: string, approve: boolean): Promise<void> {
+  /** replace：批准时一并删掉的旧记忆（服务端只认它自己算出的相关项）。 */
+  async decideMemoryProposal(id: string, approve: boolean, replace: string[] = []): Promise<void> {
     await this.request(`/api/assistant/memory-proposals/${encodeURIComponent(id)}`,
-      { method: "POST", body: JSON.stringify({ action: approve ? "approve" : "reject" }) });
+      { method: "POST", body: JSON.stringify({ action: approve ? "approve" : "reject", ...(replace.length ? { replace } : {}) }) });
   }
 
   async deleteAssistantMemory(id: string): Promise<void> {

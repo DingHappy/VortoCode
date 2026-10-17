@@ -186,7 +186,11 @@ async def decide_memory_proposal(proposal_id: str, body: dict):
     action = str((body or {}).get("action") or "")
     if action not in ("approve", "reject"):
         raise HTTPException(status_code=400, detail="action 只能是 approve 或 reject")
-    result = assistant_profile.review_memory_proposal(os.getcwd(), proposal_id, action == "approve")
+    replace = (body or {}).get("replace") or []
+    if not isinstance(replace, list) or len(replace) > 5:
+        raise HTTPException(status_code=400, detail="replace 必须是最多 5 个记忆 id 的列表")
+    result = assistant_profile.review_memory_proposal(os.getcwd(), proposal_id, action == "approve",
+                                                      replace=[str(item) for item in replace])
     if not result.get("ok"):
         raise HTTPException(status_code=409, detail=str(result.get("error") or "无法处理这条候选"))
     return result

@@ -204,20 +204,85 @@ def propose_memories(root: str, items: List[str], *, source: str, tainted: bool)
     return created
 
 
+# 新记忆可能「更新」了旧记忆（搬家、换工作、改称呼）。词法重叠抓不住这类变化——「住在北京」和
+# 「搬到杭州」几乎没有共同的字——所以再按话题归类：同一话题下的新旧记忆标成「可能相关」。
+# 只是提示：替换不替换由人在确认时决定，不自动删除，也不额外调用模型。
+_TOPICS = {
+    "住处": ("住在", "住址", "搬到", "搬家", "家在", "定居", "城市", "老家"),
+    "工作": ("公司", "工作", "上班", "入职", "离职", "跳槽", "职位", "岗位", "老板", "同事"),
+    "称呼": ("叫我", "称呼", "名字叫", "我叫", "昵称"),
+    "家人与宠物": ("妻子", "老婆", "丈夫", "老公", "孩子", "儿子", "女儿", "父亲", "母亲", "爸爸", "妈妈",
+                "猫", "狗", "宠物"),
+    "作息": ("起床", "睡觉", "作息", "早睡", "晚睡", "午休"),
+    "联系方式": ("电话", "手机号", "邮箱", "微信"),
+    "饮食": ("不吃", "忌口", "过敏", "素食", "口味"),
+    "汇报方式": ("汇报", "先说结论", "先给结论", "简短", "详细"),
+}
+_STOP_BIGRAMS = {"用户", "喜欢", "希望", "以后", "现在", "已经", "我们", "一个", "这个"}
+
+
+def _topics(text: str) -> set:
+    return {topic for topic, words in _TOPICS.items() if any(word in text for word in words)}
+
+
+def _bigrams(text: str) -> set:
+    import re
+    grams = set()
+    for run in re.findall(r"[㐀-鿿]{2,}", text):
+        grams |= {run[i:i + 2] for i in range(len(run) - 1)}
+    grams |= {w.lower() for w in re.findall(r"[A-Za-z0-9]{3,}", text)}
+    return grams - _STOP_BIGRAMS
+
+
+def related_memories(content: str, memories: List[Dict[str, Any]], limit: int = 2) -> List[Dict[str, str]]:
+    """可能被这条新记忆更新的已有记忆：同一话题，或至少两个有意义的双字词重叠。"""
+    topics, grams, scored = _topics(content), _bigrams(content), []
+    for memory in memories:
+        old = str(memory.get("content") or "")
+        shared_topics = topics & _topics(old)
+        overlap = len(grams & _bigrams(old))
+        if " ".join(old.split()) == " ".join(content.split()) or not (shared_topics or overlap >= 2):
+            continue
+        scored.append((len(shared_topics) * 3 + overlap, memory))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [{"id": str(m.get("id")), "content": str(m.get("content") or "")} for _, m in scored[:limit]]
+
+
 def list_memory_proposals(root: str) -> List[Dict[str, Any]]:
-    """待确认的记忆候选（不含隔离的疑似凭据——那些不能批准）。"""
+    """待确认的记忆候选（不含隔离的疑似凭据——那些不能批准），附可能被它更新的旧记忆。"""
     if not _db_path(root).exists():
         return []
     from src.memory.conversation_db import SessionStore
 
     rows = SessionStore(str(_db_path(root))).list_memory_proposals("pending", limit=100)
+    memories = list_memories(root)
     return [{"id": str(row.get("id")), "content": str(row.get("content") or ""),
-             "created_at": str(row.get("created_at") or ""), "tainted": bool(row.get("tainted"))} for row in rows]
+             "created_at": str(row.get("created_at") or ""), "tainted": bool(row.get("tainted")),
+             "related": related_memories(str(row.get("content") or ""), memories)} for row in rows]
 
 
-def review_memory_proposal(root: str, proposal_id: str, approve: bool) -> Dict[str, Any]:
+def review_memory_proposal(root: str, proposal_id: str, approve: bool,
+                           replace: List[str] | None = None) -> Dict[str, Any]:
+    """批准或拒绝一条候选；批准时可顺带删掉它取代的旧记忆。
+
+    `replace` 只能从**服务端此刻重新算出**的相关记忆里选：客户端传来别的 id 一律忽略，
+    这个接口不能被拿来删任意一条记忆。先批准、成功了才删旧的——批准失败时旧记忆原样保留。
+    """
     from src.memory.conversation_db import SessionStore
     from src.memory.write_policy import MemoryWriter
 
-    return MemoryWriter(SessionStore(str(_db_path(root)))).review(
+    store = SessionStore(str(_db_path(root)))
+    allowed: set = set()
+    if approve and replace:
+        pending = {str(row.get("id")): row for row in store.list_memory_proposals("pending", limit=200)}
+        proposal = pending.get(str(proposal_id))
+        if proposal is not None:
+            allowed = {item["id"] for item in related_memories(str(proposal.get("content") or ""),
+                                                                list_memories(root))}
+    result = MemoryWriter(store).review(
         proposal_id, "approve" if approve else "reject", confirmed=True, reviewer="desktop")
+    if approve and result.get("ok") and allowed:
+        replaced = [mid for mid in dict.fromkeys(str(r) for r in replace or []) if mid in allowed
+                    and store.delete_memory("__longterm__", mid)]
+        result = {**result, "replaced": replaced}
+    return result
