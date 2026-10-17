@@ -121,7 +121,11 @@ async def run_scenario(scenario, workdir: Path, *, via_agent: bool = False,
                         return await original.handler({**args, "open_pr": False})
 
                     agent_tools.append(replace(original, handler=local_handler))
+                # 与 Desktop 打开项目的会话同档（local）。不传时 MainAgent 默认最严的 external，
+                                # 那一档没有 host_process，dev 工具全被能力层拦下——测到的就不是真实使用场景。
+                from src.agents.capabilities import LOCAL_PROFILE, SessionCapabilities
                 agent = MainAgent(agent_tools, llm=llm, max_steps=12, native=native_default(),
+                                  capabilities=SessionCapabilities.for_profile(LOCAL_PROFILE, str(repo)),
                                   raise_llm_errors=True,
                                   on_tool=lambda name, args, result: trace.append(
                                       {"tool": name, "args": args, "result": str(result)}))
