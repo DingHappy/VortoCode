@@ -16,7 +16,8 @@ logger = logging.getLogger(__name__)
 class ToolManager:
     """工具管理器"""
     
-    def __init__(self, config_path: Optional[str] = None, confirm: Optional[Any] = None):
+    def __init__(self, config_path: Optional[str] = None, confirm: Optional[Any] = None,
+                 read_only_servers: frozenset[str] = frozenset()):
         self.config_path = config_path
         self.config: Dict[str, Any] = {}
 
@@ -27,7 +28,8 @@ class ToolManager:
         self.tool_executor = AsyncToolExecutor(
             self.tool_registry,
             self.permission_manager,
-            confirm=confirm
+            confirm=confirm,
+            read_only_servers=read_only_servers,
         )
         
         # MCP客户端
@@ -38,6 +40,10 @@ class ToolManager:
         if config_path:
             self.load_config(config_path)
     
+    def set_read_only_servers(self, servers: frozenset[str]) -> None:
+        """Apply the trusted connector selection before initialization/exposure."""
+        self.tool_executor.read_only_servers = frozenset(servers)
+
     def load_config(self, config_path: str) -> bool:
         """加载配置文件"""
         try:

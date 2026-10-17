@@ -31,7 +31,8 @@ class ToolExecutor:
         self,
         tool_registry: ToolRegistry,
         permission_manager: Optional[ToolPermissionManager] = None,
-        confirm: Optional[Any] = None
+        confirm: Optional[Any] = None,
+        read_only_servers: frozenset[str] = frozenset(),
     ):
         self.tool_registry = tool_registry
         self.permission_manager = permission_manager or ToolPermissionManager()
@@ -40,7 +41,15 @@ class ToolExecutor:
         # ASK 规则的确认门：async (message) -> bool。**缺省 fail-closed**（ASK 判定为拒绝，
         # 且如实说明原因）——绝不能因为没接确认门就把"要问人"降级成"直接放行"。
         self.confirm = confirm
+        # Trusted local connector configuration, never remote tool metadata alone.
+        self.read_only_servers = frozenset(read_only_servers)
     
+    def _read_only_connector_call(self, tool: Tool) -> bool:
+        annotations = (getattr(tool, "metadata", None) or {}).get("annotations")
+        return (tool.server_name in self.read_only_servers
+                and isinstance(annotations, dict)
+                and annotations.get("readOnlyHint") is True)
+
     async def execute(
         self,
         tool_name: str,
@@ -65,12 +74,15 @@ class ToolExecutor:
         # 只是把理由说清楚，绝不把"要问人"降级成"直接放行"。
         tool = self.tool_registry.get(tool_name)
         if tool is not None and tool.server_name and (permission_result.allowed or permission_result.requires_confirmation):
-            # YAML ALLOW only passes the additional filter; it never authorizes a
-            # remote invocation. Even ASK uses this same final kernel decision.
+            # Only operator-selected read-only connectors with a literal True
+            # hint and YAML ALLOW skip this additional confirmation. ASK still
+            # goes through the kernel; remote metadata alone grants nothing.
             from src.agents.gate import make_confirm_gate, request
             try:
                 gate = make_confirm_gate(self.confirm, can_ask_human=self.confirm is not None)
-                approved = await request(gate, f"MCP 工具 `{tool_name}` 需要确认\n  参数：{arguments}")
+                exempt = (permission_result.allowed and not permission_result.requires_confirmation
+                          and self._read_only_connector_call(tool))
+                approved = exempt or await request(gate, f"MCP 工具 `{tool_name}` 需要确认\n  参数：{arguments}")
             except Exception:
                 approved = False
             if not approved:
@@ -320,9 +332,11 @@ class AsyncToolExecutor(ToolExecutor):
         tool_registry: ToolRegistry,
         permission_manager: Optional[ToolPermissionManager] = None,
         max_workers: int = 10,
-        confirm: Optional[Any] = None
+        confirm: Optional[Any] = None,
+        read_only_servers: frozenset[str] = frozenset(),
     ):
-        super().__init__(tool_registry, permission_manager, confirm=confirm)
+        super().__init__(tool_registry, permission_manager, confirm=confirm,
+                         read_only_servers=read_only_servers)
         self.max_workers = max_workers
         self.worker_semaphore = asyncio.Semaphore(max_workers)
         self.running_tasks: Dict[str, asyncio.Task] = {}
