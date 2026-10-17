@@ -8,7 +8,7 @@ import pytest
 from evals.standard.budget import CalibrationStopped, Meter
 from evals.standard.longmemeval import context_for, ingest, reader_messages, select, QUOTAS
 from src.memory.conversation_search import ConversationSearch
-from src.memory.session_store import SessionStore
+from src.memory.conversation_db import SessionStore
 
 
 class Encoding:

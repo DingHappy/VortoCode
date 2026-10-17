@@ -7,7 +7,7 @@
 import pytest
 
 from src.memory.rewind import group_turns, record_edit, rewind_turns
-from src.memory.session_store import SessionStore
+from src.memory.conversation_db import SessionStore
 
 
 @pytest.fixture()

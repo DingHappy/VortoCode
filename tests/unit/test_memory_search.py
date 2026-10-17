@@ -1,9 +1,9 @@
-"""长期记忆检索排序（src/memory/session_store.SessionStore.search_memories）单测。
+"""长期记忆检索排序（src/memory/conversation_db.SessionStore.search_memories）单测。
 
 旧版 `LIKE '%整句%'` 极脆——整条 query 须原样作子串出现；现改为**词重叠打分 + CJK 二元组**排序。
 """
 
-from src.memory.session_store import SessionStore
+from src.memory.conversation_db import SessionStore
 
 
 def _store(tmp_path):

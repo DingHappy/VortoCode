@@ -5,7 +5,7 @@ import sqlite3
 import pytest
 
 from src.gateway.agent_session import build_session
-from src.memory.session_store import SessionStore
+from src.memory.conversation_db import SessionStore
 
 
 class RecordingLLM:
