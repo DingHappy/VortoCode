@@ -157,7 +157,7 @@ VortoCode 后续会按同一 agent runtime 拆成三种入口，而不是分裂�
 vortocode/
 ├── main.py              CLI 入口（agent / server / analyze / self-* / tui / test / demo）
 ├── src/
-│   ├── agents/          交互式主 agent loop（main_agent）+ 隔离 dev 流水线（worktree/decompose）+ 工具工厂
+│   ├── agents/          底层 agent_loop/安全策略 + 工具工厂（按需装配 workflow/scheduling 的公开能力）
 │   ├── orchestrator/    任务分析/分解（task_analyzer）+ 迭代 dev loop + 自迭代（analyze/improve/fix）；5 角色批处理引擎已退役删除
 │   ├── llm/             LLM 客户端（One API 网关，异步 AsyncOpenAI）
 │   ├── web/             FastAPI 服务：server.py 装配 + routers/ 各域路由 + state/schemas/deps/auth
