@@ -263,22 +263,6 @@ class ToolExecutor:
         
         return final_results
     
-    def get_execution_history(
-        self,
-        tool_name: Optional[str] = None,
-        limit: int = 100
-    ) -> List[ToolExecutionResult]:
-        """获取执行历史"""
-        history = self.execution_history
-        
-        if tool_name:
-            history = [r for r in history if r.tool_name == tool_name]
-        
-        return history[-limit:]
-    
-    def clear_history(self) -> None:
-        """清空执行历史"""
-        self.execution_history.clear()
     
     def get_statistics(self) -> Dict[str, Any]:
         """获取执行统计"""
@@ -341,54 +325,6 @@ class AsyncToolExecutor(ToolExecutor):
         self.worker_semaphore = asyncio.Semaphore(max_workers)
         self.running_tasks: Dict[str, asyncio.Task] = {}
     
-    async def execute_with_progress(
-        self,
-        tool_calls: List[Dict[str, Any]],
-        agent_role: str = "",
-        progress_callback: Optional[callable] = None
-    ) -> List[ToolExecutionResult]:
-        """带进度回调的批量执行"""
-        results = []
-        completed = 0
-        total = len(tool_calls)
-        
-        async def execute_and_report(tool_name: str, arguments: Dict[str, Any], index: int):
-            nonlocal completed
-            
-            async with self.worker_semaphore:
-                result = await self.execute(tool_name, arguments, agent_role)
-                completed += 1
-                
-                if progress_callback:
-                    progress_callback(completed, total, tool_name, result)
-                
-                return result
-        
-        # 创建任务
-        tasks = []
-        for i, call in enumerate(tool_calls):
-            tool_name = call.get("tool_name") or call.get("name")
-            arguments = call.get("arguments", {})
-            task = execute_and_report(tool_name, arguments, i)
-            tasks.append(task)
-        
-        # 执行任务
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        # 处理结果
-        final_results = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                tool_name = tool_calls[i].get("tool_name") or tool_calls[i].get("name")
-                final_results.append(ToolExecutionResult(
-                    success=False,
-                    tool_name=tool_name,
-                    error=str(result)
-                ))
-            else:
-                final_results.append(result)
-        
-        return final_results
     
     async def cancel_execution(self, execution_id: str) -> bool:
         """取消执行"""

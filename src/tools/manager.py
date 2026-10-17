@@ -2,7 +2,6 @@
 
 import logging
 import yaml
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .mcp_client import MCPClient, MCPTransport, create_mcp_client
@@ -188,9 +187,6 @@ class ToolManager:
             enabled_only=enabled_only
         )
     
-    def get_tool(self, tool_name: str) -> Optional[Tool]:
-        """获取工具"""
-        return self.tool_registry.get(tool_name)
     
     def search_tools(self, query: str) -> List[Tool]:
         """搜索工具"""
@@ -241,19 +237,3 @@ class ToolManager:
         logger.info("Tool manager shut down")
 
 
-class ToolManagerFactory:
-    """工具管理器工厂"""
-    
-    @staticmethod
-    def create(config_path: Optional[str] = None) -> ToolManager:
-        """创建工具管理器"""
-        return ToolManager(config_path)
-    
-    @staticmethod
-    def create_default() -> ToolManager:
-        """创建默认工具管理器"""
-        default_config_path = Path(__file__).parent.parent.parent / "config" / "mcp.yaml"
-        if default_config_path.exists():
-            return ToolManager(str(default_config_path))
-        else:
-            return ToolManager()
