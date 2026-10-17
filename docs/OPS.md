@@ -48,6 +48,17 @@ Background capabilities are disabled unless the operator enables them explicitly
 | Backlog claiming | `examples/BACKLOG.md.example` | Disabled |
 | IM bridge | `vc server --im <channel>` | Disabled |
 
+### Phone notification quiet hours and duplicates
+
+Every proactive notice (scheduled jobs, heartbeat, assistant follow-ups, pipelines) goes through one notifier. It always writes the notice ledger (`/api/notices`) and broadcasts to connected Desktop clients; only the phone push is shaped:
+
+| Variable | Example | Default | Effect |
+| --- | --- | --- | --- |
+| `VORTOCODE_QUIET_HOURS` | `23:00-08:00` | unset (off) | Local time, may cross midnight. Pushes during the window are held and sent as one digest within a minute after it ends. An invalid value disables the window instead of swallowing notices. |
+| `VORTOCODE_NOTICE_DEDUP_MIN` | `60` | `60` | The same source + same text (whitespace ignored) reaches the phone once per window. `0` turns it off. |
+
+Delivery probes (`vc canary`) bypass both. When one service relays notices to another (e.g. project service → resident assistant), set the variables on both.
+
 Enabling a scheduler or heartbeat does not grant extra tools. The active permission profile, sandbox policy, confirmation gates, and network policy still apply.
 
 Heartbeat behavior follows three public rules:

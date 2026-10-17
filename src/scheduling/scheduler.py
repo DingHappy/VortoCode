@@ -37,6 +37,13 @@ async def scheduler_loop(stop_event, *, cwd, runner, notify):
             except Exception as error:  # noqa: BLE001 - keep the scheduler alive, without immediate model retries.
                 logger.warning("Heartbeat tick failed (%s)", type(error).__name__)
         try:
+            # 安静时段结束后，把攒着的通知合成一条推出去（时段内或没有攒的：什么都不做）
+            from src.gateway.im_runtime import notify_owner
+            from src.scheduling.notices import flush_quiet_digest
+            await flush_quiet_digest(cwd, lambda message: notify_owner(message))
+        except Exception as error:  # noqa: BLE001 - delivery retries on the next tick.
+            logger.warning("Quiet-hours digest failed (%s)", type(error).__name__)
+        try:
             await asyncio.wait_for(stop_event.wait(), timeout=60)   # 每分钟 tick 一次（可被停止打断）
         except asyncio.TimeoutError:
             pass
