@@ -120,18 +120,6 @@ class ToolRegistry:
         
         return tools
     
-    def list_categories(self) -> List[str]:
-        """列出所有分类"""
-        return list(self.categories.keys())
-    
-    def list_servers(self) -> List[str]:
-        """列出所有服务器"""
-        return list(self.servers.keys())
-    
-    def get_tools_by_category(self, category: str) -> List[Tool]:
-        """获取分类下的工具"""
-        tool_names = self.categories.get(category, [])
-        return [self.tools[name] for name in tool_names if name in self.tools]
     
     def get_tools_by_server(self, server_name: str) -> List[Tool]:
         """获取服务器提供的工具"""
@@ -151,31 +139,6 @@ class ToolRegistry:
         
         return results
     
-    def enable_tool(self, tool_name: str) -> bool:
-        """启用工具"""
-        if tool_name in self.tools:
-            self.tools[tool_name].enabled = True
-            return True
-        return False
-    
-    def disable_tool(self, tool_name: str) -> bool:
-        """禁用工具"""
-        if tool_name in self.tools:
-            self.tools[tool_name].enabled = False
-            return True
-        return False
-    
-    def update_tool(self, tool_name: str, updates: Dict[str, Any]) -> bool:
-        """更新工具信息"""
-        if tool_name not in self.tools:
-            return False
-        
-        tool = self.tools[tool_name]
-        for key, value in updates.items():
-            if hasattr(tool, key):
-                setattr(tool, key, value)
-        
-        return True
     
     def clear(self) -> None:
         """清空注册表"""
@@ -183,41 +146,6 @@ class ToolRegistry:
         self.categories.clear()
         self.servers.clear()
     
-    def export_tools(self, file_path: str) -> bool:
-        """导出工具列表到文件"""
-        try:
-            import json
-            data = {
-                "tools": [tool.model_dump() for tool in self.tools.values()],
-                "categories": self.categories,
-                "servers": self.servers
-            }
-            
-            with open(file_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, indent=2, ensure_ascii=False)
-            
-            return True
-        except Exception as e:
-            logger.error(f"Failed to export tools: {e}")
-            return False
-    
-    def import_tools(self, file_path: str) -> bool:
-        """从文件导入工具列表"""
-        try:
-            import json
-            
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            for tool_data in data.get("tools", []):
-                tool = Tool(**tool_data)
-                self.register(tool)
-            
-            return True
-        except Exception as e:
-            logger.error(f"Failed to import tools: {e}")
-            return False
-
 
 class DynamicToolRegistry(ToolRegistry):
     """动态工具注册表，支持从MCP服务器动态加载工具"""
