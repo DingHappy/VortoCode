@@ -1,6 +1,6 @@
 import { AssistantScheduleCard } from "./AssistantScheduleCard";
 import type { ReactNode } from "react";
-import { ArrowLeft, Smartphone, Check, Clock3, Fingerprint, Laptop, List, MessageCircle, MessagesSquare, PencilLine, Plus, Server, ShieldCheck, Target, Trash2, X } from "lucide-react";
+import { ArrowLeft, Smartphone, Check, Clock3, Fingerprint, Laptop, List, MessageCircle, MessagesSquare, PencilLine, Plus, RefreshCw, Server, ShieldCheck, Target, Trash2, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { avatarHue, avatarInitial, avatarSrc } from "../lib/avatar";
 import { connectorCredentialView } from "../lib/connectorStatus";
@@ -210,6 +210,27 @@ export function AssistantSchedule({ items, connected = false, onToggle, onHistor
 }
 
 /** 「身份」：名字 + SOUL（它的性格）+ 关于你 + 记忆。点记忆卡片看全部、可以删。 */
+/** 待确认的记忆；可能更新了旧记忆的，多一个「记住并替换旧的」。 */
+export function MemoryProposals({ proposals, onDecide }: {
+  proposals: MemoryProposal[];
+  onDecide?: (proposal: MemoryProposal, approve: boolean, replace?: string[]) => void;
+}) {
+  if (!proposals.length) return null;
+  return <>
+    <p className="assistant-proposal-title">待确认 · 聊天里听到的，你点 ✓ 才会记住</p>
+    <ul className="assistant-memories proposals">
+      {proposals.map((proposal) => <li key={proposal.id}>
+        <span>{proposal.content}{proposal.tainted && <small className="assistant-proposal-flag">来自手机或外部内容，看仔细</small>}
+          {proposal.related?.length ? <small className="assistant-proposal-related">可能更新了：{proposal.related.map((item) => item.content).join("；")}</small> : null}</span>
+        {proposal.related?.length ? <button aria-label="记住并替换旧的" title="记住，并删掉被它更新的旧记忆"
+          onClick={() => onDecide?.(proposal, true, proposal.related?.map((item) => item.id))}><RefreshCw size={14} /></button> : null}
+        <button aria-label="记住" title={proposal.related?.length ? "记住（旧的也保留）" : "记住"} onClick={() => onDecide?.(proposal, true)}><Check size={14} /></button>
+        <button aria-label="不要" title="不要" onClick={() => onDecide?.(proposal, false)}><X size={14} /></button>
+      </li>)}
+    </ul>
+  </>;
+}
+
 export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposals = [], connectors = [], onEdit, onDeleteMemory, onDecideProposal, onConnector }: {
   profile: AssistantProfile;
   /** 头像：选了文件就换，null 恢复成名字首字 */
@@ -220,7 +241,7 @@ export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposa
   proposals?: MemoryProposal[];
   onEdit: () => void;
   onDeleteMemory: (memory: AssistantMemory) => void;
-  onDecideProposal?: (proposal: MemoryProposal, approve: boolean) => void;
+  onDecideProposal?: (proposal: MemoryProposal, approve: boolean, replace?: string[]) => void;
   /** 连接的服务（GitHub 等） */
   connectors?: AssistantConnector[];
   onConnector?: (action: "connect" | "disconnect" | "open" | "copy", connector: AssistantConnector) => void;
@@ -230,16 +251,7 @@ export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposa
   if (showMemories) {
     return <section className="assistant-section">
       <h5><button className="assistant-back" aria-label="返回身份" onClick={() => setShowMemories(false)}><ArrowLeft size={14} /></button>记忆</h5>
-      {proposals.length > 0 && <>
-        <p className="assistant-proposal-title">待确认 · 聊天里听到的，你点 ✓ 才会记住</p>
-        <ul className="assistant-memories proposals">
-          {proposals.map((proposal) => <li key={proposal.id}>
-            <span>{proposal.content}{proposal.tainted && <small className="assistant-proposal-flag">来自手机或外部内容，看仔细</small>}</span>
-            <button aria-label="记住" title="记住" onClick={() => onDecideProposal?.(proposal, true)}><Check size={14} /></button>
-            <button aria-label="不要" title="不要" onClick={() => onDecideProposal?.(proposal, false)}><X size={14} /></button>
-          </li>)}
-        </ul>
-      </>}
+      <MemoryProposals proposals={proposals} onDecide={onDecideProposal} />
       <AssistantMemories memories={memories} onDelete={onDeleteMemory} />
     </section>;
   }

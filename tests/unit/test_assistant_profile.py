@@ -142,3 +142,53 @@ def test_avatar_routes(tmp_path, monkeypatch):
     assert client.put("/api/assistant/avatar", json={}).status_code == 400
     assert client.delete("/api/assistant/avatar").json() == {"removed": True}
     assert client.get("/api/assistant/avatar").json() == {"avatar": None}
+
+
+# ── 新记忆更新旧记忆：提示相关项，替换由人决定，服务端只认自己算出的相关项 ──
+
+def test_related_memories_catch_topic_updates_that_share_no_words():
+    old = [{"id": "a", "content": "住在北京朝阳"}, {"id": "b", "content": "喜欢先给结论"},
+           {"id": "c", "content": "养了一只猫叫团子"}]
+    assert [m["id"] for m in profile.related_memories("搬到杭州了", old)] == ["a"]       # 同属「住处」
+    assert [m["id"] for m in profile.related_memories("猫改名叫年糕", old)] == ["c"]
+    assert profile.related_memories("周末想去爬山", old) == []                          # 无关：不硬凑
+    assert profile.related_memories("住在北京朝阳", old) == []                          # 完全相同不是「更新」
+
+
+def test_approving_with_replace_removes_only_the_superseded_memory(tmp_path):
+    root = str(tmp_path)
+    (tmp_path / ".vortocode").mkdir()
+    [old_home] = _remember(tmp_path, "住在北京朝阳")
+    [style] = _remember(tmp_path, "汇报喜欢先给结论")
+    [pid] = profile.propose_memories(root, ["搬到杭州了"], source="assistant", tainted=False)
+    [proposal] = profile.list_memory_proposals(root)
+    assert [r["id"] for r in proposal["related"]] == [old_home]
+    result = profile.review_memory_proposal(root, pid, True, replace=[old_home, style, "nope"])
+    assert result["ok"] and result["replaced"] == [old_home]                 # 无关的那条与伪造 id 都被忽略
+    assert {m["content"] for m in profile.list_memories(root)} == {"汇报喜欢先给结论", "搬到杭州了"}
+
+
+def test_rejecting_or_plain_approval_never_deletes_old_memories(tmp_path):
+    root = str(tmp_path)
+    (tmp_path / ".vortocode").mkdir()
+    [old_home] = _remember(tmp_path, "住在北京朝阳")
+    [p1, p2] = profile.propose_memories(root, ["搬到杭州了", "家在苏州"], source="assistant", tainted=False)
+    assert "replaced" not in profile.review_memory_proposal(root, p1, False, replace=[old_home])
+    profile.review_memory_proposal(root, p2, True)                            # 只点了 ✓：旧的也保留
+    assert {m["content"] for m in profile.list_memories(root)} == {"住在北京朝阳", "家在苏州"}
+
+
+def test_memory_proposal_replace_route_validates_input(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    (tmp_path / ".vortocode").mkdir(exist_ok=True)
+    [old_home] = _remember(tmp_path, "住在北京朝阳")
+    [pid] = profile.propose_memories(str(tmp_path), ["搬到杭州了"], source="assistant", tainted=False)
+    from src.web.server import app
+
+    client = TestClient(app)
+    assert client.post(f"/api/assistant/memory-proposals/{pid}", json={"action": "approve", "replace": "x"}).status_code == 400
+    r = client.post(f"/api/assistant/memory-proposals/{pid}", json={"action": "approve", "replace": [old_home]})
+    assert r.status_code == 200 and r.json()["replaced"] == [old_home]

@@ -380,6 +380,7 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 .assistant-memories.proposals { padding-top: 0; margin-bottom: 8px; }
 .assistant-memories.proposals li { background: var(--n2); border-radius: 8px; border-bottom: 0; margin-bottom: 4px; }
 .assistant-proposal-flag { display: block; margin-top: 2px; font-size: 11px; color: var(--amber-text); }
+.assistant-proposal-related { display: block; margin-top: 2px; font-size: 11px; color: var(--muted); }
 
 /* Assistant task cards share the existing palette in conversation and activity. */
 .assistant-task-cards { display: grid; gap: 12px; }

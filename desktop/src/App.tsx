@@ -3885,13 +3885,13 @@ function App() {
                       if (current()) setBanner(errorText(error, "连接服务失败"));
                     }
                   })()}
-                  onDecideProposal={(proposal, approve) => void (async () => {
+                  onDecideProposal={(proposal, approve, replace) => void (async () => {
                     const client = clientRef.current;
                     const scope = assistantScopeRef.current;
                     const current = () => clientRef.current === client && assistantScopeRef.current === scope;
                     if (!client) return;
                     try {
-                      await client.decideMemoryProposal(proposal.id, approve);
+                      await client.decideMemoryProposal(proposal.id, approve, replace ?? []);
                       if (!current()) return;
                       setMemoryProposals((previous) => previous.filter((item) => item.id !== proposal.id));
                       if (approve) {

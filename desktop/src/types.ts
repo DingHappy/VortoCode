@@ -218,6 +218,8 @@ export interface MemoryProposal {
   created_at: string;
   /** 来自读过外部内容的回合（或手机）：确认前看仔细 */
   tainted: boolean;
+  /** 可能被这条新记忆更新的旧记忆（同一话题或用词重叠）；只是提示，替换要人点 */
+  related?: Array<{ id: string; content: string }>;
 }
 
 export interface AssistantMemory {
