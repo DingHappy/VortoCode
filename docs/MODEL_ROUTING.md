@@ -153,3 +153,42 @@ VORTOCODE_MODEL_PRICES={"default:reader-model":{"input_per_million":1,"output_pe
 
 固定公开题的角色隔离、请求归属、离线 token 预估和静态题型路由回测现已接入原标准评测，
 使用方法及尚未验证的边界见 [模型配对与离线路由回测](./MODEL_POLICY_REPLAY.md)。
+
+## 外部执行者（Codex / Claude Code CLI）
+
+### 两种模式，别混
+
+| | 本机模式 | 常驻模式 |
+|---|---|---|
+| 场景 | 你自己电脑上的 Desktop / 终端 | 常驻电脑（服务器）上的 VortoCode 服务 |
+| 判定 | 没设 `VORTOCODE_WORKER_HOME` | 服务环境里设了 `VORTOCODE_WORKER_HOME` |
+| CLI 登录与配置 | 你的个人登录；透传个人配置里的模型选择 | 只用 `$VORTOCODE_WORKER_HOME/codex`、`/claude` 两个专用目录（0700），不碰服务账号 home 下任何个人配置 |
+| 在哪配置 | Desktop「设置 → 高级模型选项」 | 服务的 env 文件 / systemd drop-in |
+| 登录 | 平时怎么登就怎么登 | `vc workers login codex`（设备码）/ `vc workers login claude` |
+| 查看状态 | `vc workers status`、设置页 | 服务器上 `vc workers status`；本机 Desktop 通过 `/api/delegations/capabilities` 的 `external_workers` 只读查看 |
+
+Desktop 只改本机引擎，不远程改常驻电脑的配置。
+
+隔离 dev 流水线的「实现」和「审查」两个角色可以交给本机已安装、已登录的 Codex CLI 或 Claude Code CLI。拆解、worktree 隔离、自测重试、逐件和集成验证、确认门、开 PR 仍由 VortoCode 负责，外部执行者只负责在给定目录里写代码或给出审查结论。
+
+```dotenv
+VORTOCODE_EXTERNAL_WORKERS=implement=codex,review=claude
+VORTOCODE_EXTERNAL_WORKER_TIMEOUT=1800      # 单次运行秒数，超时终止整个进程组
+# VORTOCODE_CODEX_BIN=/path/to/codex        # 可选，缺省从 PATH 查找
+# VORTOCODE_CLAUDE_BIN=/path/to/claude
+```
+
+- 配置只从主进程环境变量读取，不读仓库文件。只认 `implement`、`review` 两个角色和 `codex`、`claude` 两个执行者，其他值会被忽略并记警告。
+- 某个角色配置了外部执行者后，它的 `VORTOCODE_MODEL_ROLES` 分工不再生效。调用方显式注入的审查模型（测试、预算客户端）仍然优先。
+- 实现角色只在流水线创建的一次性 worktree 里写。Codex 使用 `-s workspace-write`；Claude 使用 `--permission-mode dontAsk` 加工具白名单（读、查找、编辑、`pytest`）。审查角色一律只读：Codex 用 `-s read-only`，Claude 不给编辑工具。
+- 不使用任何 `--dangerously-*`、`danger-full-access`、`bypassPermissions` 参数。两者都不接入外部 MCP。
+- **个人配置只透传「用哪个模型、哪家服务」**，hooks、插件、记忆、通知、MCP、权限放宽都不继承：
+  - Codex 以 `--ignore-user-config` 运行（登录凭据照常从 `CODEX_HOME` 读），再从 `config.toml` 回填 `model`、`model_reasoning_effort`、`model_provider`、`service_tier`，以及所选 `model_providers.<id>` 的定义。所以在 config.toml 里配的第三方供应商可以用；这个供应商 `env_key` 指向的环境变量，必须在 VortoCode 引擎的环境里也存在（从 Dock 启动的 Desktop 读不到 shell 配置文件里的变量）。
+  - Claude 只加载 `local` 级 settings，再从 `~/.claude/settings.json`（或 `CLAUDE_CONFIG_DIR`）回填 `model`（转成 `--model`）、`env`（作为子进程环境变量传入，不进命令行参数）和 `apiKeyHelper`。用 `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` 接第三方模型时，配在 settings.json 的 `env` 里即可，Desktop 启动时也能生效。`env` 里的 `GITHUB_TOKEN` 和 VortoCode 自己的密钥照样会被剥离。
+  - 如果环境里设了 `ANTHROPIC_API_KEY`，Claude 会按 API 计费，而不是走订阅额度。
+- 不保存会话：Codex 用 `--ephemeral`，Claude 用 `--no-session-persistence`。每次实现或审查都是新会话，不会出现在你自己的 `resume` 列表里。订阅额度与你平时使用这两个 CLI 共享。
+- `vc doctor` 的 `workers` 一项会检查配置的执行者：命令有没有找到、有没有登录（`codex login status` / `claude auth status`），以及实际使用的模型和服务。
+- 子进程环境沿用 `sandbox/policy.child_env()` 的密钥剥离，并额外去掉 `GITHUB_TOKEN`、`GH_TOKEN`：push 和开 PR 只由 VortoCode 通过确认门完成。
+- 无人值守档位（cron/heartbeat）拒绝启动外部执行者。事件流里出现联网动作时，本回合会被标为污点。
+- 找不到命令、超时、非零退出、事件报错都会按「通道故障」上报，并沿用原有的重试和播报。外部执行者的执行过程（命令、改动的文件）会出现在 dev 进度里。
+- 开发任务里的实现执行者可以提问：缺少必要事实时，它会在最后一条回复里输出一行 `VORTO_QUESTION {"question": …, "options": […], "context": …}`，VortoCode 识别后调用同一个 `ask_task_question`，问题进入任务台账、推送给你、任务进入等待。回答之后，和内部子 Agent 一样在干净的 worktree 里带着问答上下文重做当前块，不续用外部 CLI 的会话。只有存在提问通道时（有所属会话的开发任务、未超过提问次数），才会把这条约定告诉执行者；没有通道时输出了这一行，按失败处理，不会当成结论。审查执行者不能提问。

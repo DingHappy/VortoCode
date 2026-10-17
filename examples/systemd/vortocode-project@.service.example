@@ -31,6 +31,11 @@ Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=HTTP_PROXY=http://<代理>:7890
 Environment=HTTPS_PROXY=http://<代理>:7890
 Environment=NO_PROXY=127.0.0.1,localhost
+# 外部执行者（可选）：实现交给 Codex、审查交给 Claude Code。常驻模式下 CLI 只用专用目录里的登录，
+# 不碰本账号 home 下的个人配置；先用 `VORTOCODE_WORKER_HOME=... vc workers login codex|claude` 登录。
+# 两个 CLI 访问 OpenAI / Anthropic 走上面的代理；PATH 里要能找到 codex（及其 node）和 claude。
+#Environment=VORTOCODE_EXTERNAL_WORKERS=implement=codex,review=claude
+#Environment=VORTOCODE_WORKER_HOME=%h/.vortocode/workers
 # 用 vc 入口（editable 安装指向部署目录）：不会从 cwd 导入项目里的 src
 ExecStart=/bin/sh -c "exec %h/personal_project/VortoCode/.venv/bin/vc server --host 0.0.0.0 --port $VORTOCODE_PROJECT_PORT"
 Restart=always

@@ -226,6 +226,11 @@ def _env_passthrough_allowlist() -> frozenset[str]:
     return frozenset(name.strip() for name in raw.split(",") if name.strip())
 
 
+def is_stripped_env(name: str) -> bool:
+    """这个变量名会不会被子进程环境剥掉（同 child_env 的判定，供别处合并额外环境时复用）。"""
+    return name in _STRIPPED_ENV_KEYS and name not in _env_passthrough_allowlist()
+
+
 def child_env() -> dict[str, str]:
     """构造子进程环境：主进程 env 去掉操作密钥，但保留 allowlist 放行项。
 

@@ -135,7 +135,11 @@ async def capabilities():
     # reliable token bound from context_usage or SDK/OpenAI compatibility.
     check_support = check_budget_support(LLMClient)
     from src.workflow.tasks.task_chain_budget import MAX_LIMITS, DEFAULT_LIMITS
+    from src.agents.external_workers import workers_summary
+    from src.utils.async_ops import await_thread
+    external = await await_thread(workers_summary)   # 登录检查要起子进程：丢线程，且有缓存
     return {"version": 1, "mode": "read", "default_agent": "read-only researcher",
+            "external_workers": external,
             "questions": {"available": True, "max_questions": 2, "expires_seconds": 86400,
                           "answer_uses_next_round": True, "answerer": "owner"},
             "dependencies": {"available": True, "mode": "explicit_release", "max_dependencies": 8,
