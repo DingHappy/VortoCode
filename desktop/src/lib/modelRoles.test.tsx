@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ModelRoles, ResidentWorkers } from "../components/settings/ModelRoles";
+import { ModelRoles, ResidentWorkers, workerStatuses } from "../components/settings/ModelRoles";
 import { externalWorkerOptions, modelSettingsState, normalizedRoleModels, roleModelOptions } from "./modelSettings";
 import type { DesktopLlmProfileStatus } from "../types";
 
@@ -30,10 +30,14 @@ it("renders worker roles and the opt-in assessor with distinct defaults", () => 
 
 const workers = [{ worker: "codex", label: "Codex CLI（本机）", path: "/nvm/bin/codex", loggedIn: true, auth: "Logged in using ChatGPT" },
   { worker: "claude", label: "Claude Code CLI（本机）", path: null }];
+const localEngine = (summary: Parameters<typeof workerStatuses>[0]) => ({ place: "local" as const, name: "本机", summary: summary ?? null });
+const localSummary = { mode: "local" as const, home: null, roles: {}, workers: [
+  { worker: "codex", found: true, path: "/nvm/bin/codex", logged_in: true, auth: "Logged in using ChatGPT", model: "gpt-x", provider: "" },
+  { worker: "claude", found: false, path: "", logged_in: null, auth: "", model: "", provider: "" }] };
 
 it("offers local CLIs only to implement and review, with install status", () => {
   const html = renderToStaticMarkup(<ModelRoles profile={profile} value={{ implement: "cli:codex", review: "cli:claude" }}
-    onChange={() => {}} workers={workers} />);
+    onChange={() => {}} engine={localEngine(localSummary)} />);
   expect(html).toContain("已就绪：/nvm/bin/codex · Logged in using ChatGPT");
   expect(html).toContain("本机没找到 claude 命令");
   expect(html).toContain("CLI 拿不到 GitHub 令牌");
@@ -53,7 +57,7 @@ it("labels CLI options by detection result and treats them as role edits", () =>
 
 it("tells the user how to log in when the CLI is installed but signed out", () => {
   const html = renderToStaticMarkup(<ModelRoles profile={profile} value={{ implement: "cli:claude" }} onChange={() => {}}
-    workers={[{ worker: "claude", label: "Claude Code CLI（本机）", path: "/bin/claude", loggedIn: false }]} />);
+    engine={localEngine({ ...localSummary, workers: [{ worker: "claude", found: true, path: "/bin/claude", logged_in: false, auth: "", model: "", provider: "" }] })} />);
   expect(html).toContain("但未登录：在终端运行 claude auth login");
 });
 
@@ -62,9 +66,10 @@ const residentSummary = { mode: "resident" as const, home: "/home/vc/.vortocode/
     { worker: "claude", found: true, logged_in: false, auth: "", model: "", provider: "" }] };
 
 it("shows the resident instance read-only and separately from the local engine", () => {
-  const html = renderToStaticMarkup(<ModelRoles profile={profile} value={{}} onChange={() => {}} workers={[]}
-    resident={{ name: "VortoCode", summary: residentSummary }} />);
+  const html = renderToStaticMarkup(<ModelRoles profile={profile} value={{ implement: "cli:codex" }} onChange={() => {}}
+    engine={{ place: "resident", name: "VortoCode", summary: residentSummary }} />);
   expect(html).toContain("本机引擎：");
+  expect(html).toContain("当前连着常驻电脑；切回本机项目后显示本机 CLI 的状态");   // 不拿常驻电脑的状态冒充本机
   expect(html).toContain("常驻电脑「VortoCode」的外部执行者");
   expect(html).toContain("常驻模式，专用登录在 /home/vc/.vortocode/workers");
   expect(html).toContain("实现：codex — 已就绪 · Logged in using ChatGPT · 模型 gpt-x");
@@ -73,11 +78,19 @@ it("shows the resident instance read-only and separately from the local engine",
   expect(residentPart).not.toContain("<input");                      // 只读：没有可编辑项
 });
 it("warns when a resident instance still uses the service account's personal CLI config", () => {
-  const html = renderToStaticMarkup(<ResidentWorkers view={{ name: "x", summary: { ...residentSummary, mode: "local", home: null } }} />);
+  const view = (summary: typeof residentSummary | null) => ({ place: "resident" as const, name: "x", summary });
+  const html = renderToStaticMarkup(<ResidentWorkers view={view({ ...residentSummary, mode: "local", home: null } as never)} />);
   expect(html).toContain("没有设 VORTOCODE_WORKER_HOME");
-  expect(renderToStaticMarkup(<ResidentWorkers view={{ name: "x", summary: null }} />)).toContain("还不会报告");
-  expect(renderToStaticMarkup(<ResidentWorkers view={{ name: "x", summary: { ...residentSummary, roles: {} } }} />)).toContain("未配置外部执行者");
+  expect(renderToStaticMarkup(<ResidentWorkers view={view(null)} />)).toContain("还不会报告");
+  expect(renderToStaticMarkup(<ResidentWorkers view={view({ ...residentSummary, roles: {} as never })} />)).toContain("未配置外部执行者");
 });
 it("does not render a resident block for a local project", () => {
-  expect(renderToStaticMarkup(<ModelRoles profile={profile} value={{}} onChange={() => {}} workers={[]} />)).not.toContain("常驻电脑「");
+  expect(renderToStaticMarkup(<ModelRoles profile={profile} value={{}} onChange={() => {}} engine={localEngine(localSummary)} />)).not.toContain("常驻电脑「");
+});
+
+it("maps the engine's kernel report and explains when the local engine is not running", () => {
+  expect(workerStatuses(localSummary)).toEqual(workers.map(w => ({ ...w, loggedIn: w.loggedIn ?? null, auth: w.auth ?? null })));
+  const html = renderToStaticMarkup(<ModelRoles profile={profile} value={{ implement: "cli:codex" }} onChange={() => {}}
+    engine={{ place: "local", name: "本机", summary: null, error: "引擎未运行，启动后可检查" }} />);
+  expect(html).toContain("引擎未运行，启动后可检查");
 });

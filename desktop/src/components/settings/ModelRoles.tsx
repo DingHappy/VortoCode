@@ -1,6 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useState } from "react";
-import type { DesktopLlmProfileStatus, ExternalWorkerStatus, ResidentWorkersView } from "../../types";
+import type { DesktopLlmProfileStatus, EngineWorkersView, ExternalWorkerStatus, ExternalWorkersSummary, ResidentWorkersView } from "../../types";
 import { externalWorkerOptions, roleModelOptions } from "../../lib/modelSettings";
 
 export const MODEL_ROLES = [
@@ -13,10 +11,19 @@ export const MODEL_ROLES = [
 /** 实现与审查可以交给本机已登录的 Codex / Claude Code CLI（`cli:codex`、`cli:claude`）。 */
 const CLI_ROLES = new Set(["implement", "review"]);
 
-function cliStatus(value: string, workers: ExternalWorkerStatus[] | null) {
+const CLI_LABEL: Record<string, string> = { codex: "Codex CLI（本机）", claude: "Claude Code CLI（本机）" };
+
+/** 引擎报来的状态（内核唯一实现）→ 设置页用的形状。 */
+export function workerStatuses(summary: ExternalWorkersSummary | null | undefined): ExternalWorkerStatus[] | null {
+  if (!summary) return null;
+  return summary.workers.map(item => ({ worker: item.worker, label: CLI_LABEL[item.worker] ?? item.worker,
+    path: item.found ? item.path || "已安装" : null, loggedIn: item.found ? item.logged_in : null, auth: item.auth || null }));
+}
+
+function cliStatus(value: string, workers: ExternalWorkerStatus[] | null, unknown: string) {
   if (!value.startsWith("cli:")) return null;
   const worker = workers?.find(item => item.worker === value.slice(4));
-  if (!workers) return <small>正在检查本机是否安装…</small>;
+  if (!workers) return <small>{unknown}</small>;
   if (!worker) return <small className="danger">不支持的外部 CLI</small>;
   const login = worker.worker === "codex" ? "codex login" : "claude auth login";
   if (!worker.path) return <small className="danger">本机没找到 {worker.worker} 命令：安装并在终端运行 {login} 后，保存并重启引擎</small>;
@@ -51,30 +58,25 @@ export function ResidentWorkers({ view }: { view: ResidentWorkersView }) {
   </div>;
 }
 
-export function ModelRoles({ profile, value, onChange, disabled = false, workers: given, resident = null }: {
+export function ModelRoles({ profile, value, onChange, disabled = false, engine = null }: {
   profile: DesktopLlmProfileStatus | null; value: Record<string, string>;
   onChange: (value: Record<string, string>) => void; disabled?: boolean;
-  workers?: ExternalWorkerStatus[] | null;
-  resident?: ResidentWorkersView | null;
+  /** 当前连着的引擎报来的执行者状态；本机引擎时用于下方输入框的检查，常驻电脑时单独只读展示。 */
+  engine?: EngineWorkersView | null;
 }) {
   const options = roleModelOptions(profile);
-  const [found, setFound] = useState<ExternalWorkerStatus[] | null>(given ?? null);
-  useEffect(() => {
-    if (given !== undefined) return;
-    let alive = true;
-    invoke<ExternalWorkerStatus[]>("detect_external_workers")
-      .then(result => { if (alive) setFound(result); })
-      .catch(() => { if (alive) setFound([]); });
-    return () => { alive = false; };
-  }, [given]);
-  const workers = given !== undefined ? given : found;
+  const local = engine?.place === "local" ? engine : null;
+  const resident = engine?.place === "resident" ? engine : null;
+  const workers = local ? workerStatuses(local.summary) : null;
+  const unknown = resident ? "当前连着常驻电脑；切回本机项目后显示本机 CLI 的状态"
+    : local?.error ?? (local && !local.summary ? "本机引擎版本还不会报告 CLI 状态" : "正在检查本机是否安装…");
   return <section className="llm-routing-fields" aria-label="主与子 Agent 模型分工">
     <p>主与子 Agent 模型分工 <em>主 Agent 跟随聊天框的模型选择，上方是默认主模型。研究、实现和审查留空使用默认服务模型；评判器留空关闭额外调用。</em></p>
     {MODEL_ROLES.map(([role, label, hint]) => <label key={role}><span>{label}</span>
       <input aria-label={label} list={CLI_ROLES.has(role) ? "llm-role-cli-options" : "llm-role-model-options"} value={value[role] || ""} disabled={disabled} maxLength={160}
         placeholder={role === "assess" ? "关闭，或 供应商ID:模型ID" : CLI_ROLES.has(role) ? "默认模型、供应商ID:模型ID，或 cli:codex / cli:claude" : "默认模型，或 供应商ID:模型ID"}
         onChange={event => onChange({ ...value, [role]: event.target.value })} />
-      {cliStatus(value[role] || "", workers) ?? <small>{hint}</small>}
+      {cliStatus(value[role] || "", workers, unknown) ?? <small>{hint}</small>}
     </label>)}
     <datalist id="llm-role-model-options">{options.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</datalist>
     <datalist id="llm-role-cli-options">{[...externalWorkerOptions(workers), ...options].map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</datalist>

@@ -81,7 +81,7 @@ import type {
   ConversationMessage,
   DecisionItem,
   DesktopProjectProfile,
-  ResidentWorkersView,
+  EngineWorkersView,
   DiffPayload,
   GatewayProcessStatus,
   GatewayRecoveryRecord,
@@ -2009,20 +2009,23 @@ function App() {
     ? projects.find((item) => item.id === remoteProjectRef.current && !isAssistantHost(item))
     : activeScope === "project" ? projects.find((item) => item.kind !== "remote" && item.repoRoot === repoRoot.trim()) : undefined;
 
-  // 设置页「常驻电脑的外部执行者」：只读。当前项目在常驻电脑上时，问那个实例自己的
-  // /api/delegations/capabilities——本机设置从不改常驻电脑的配置，两边不混。
-  const [residentWorkers, setResidentWorkers] = useState<ResidentWorkersView | null>(null);
+  // 设置页的外部执行者状态：问「当前连着的那个引擎」自己的 /api/delegations/capabilities。
+  // 本机引擎与常驻电脑走同一个接口、同一份内核实现；本机设置从不改常驻电脑的配置，两边不混。
+  const [engineWorkers, setEngineWorkers] = useState<EngineWorkersView | null>(null);
   const remoteProjectKey = remoteProjectRef.current;
   useEffect(() => {
     const project = currentWorkProject();
     const client = clientRef.current;
-    if (!settingsOpen || !project || project.kind !== "remote" || !client) { setResidentWorkers(null); return undefined; }
+    if (!settingsOpen) { setEngineWorkers(null); return undefined; }
+    const place = project?.kind === "remote" ? "resident" as const : "local" as const;
+    const name = place === "resident" ? project?.name ?? "常驻电脑" : "本机";
+    if (!client) { setEngineWorkers({ place, name, summary: null, error: "引擎未运行，启动后可检查" }); return undefined; }
     let alive = true;
     client.dispatchCapabilities()
-      .then((value) => { if (alive) setResidentWorkers({ name: project.name, summary: value.external_workers ?? null }); })
-      .catch(() => { if (alive) setResidentWorkers({ name: project.name, summary: null, error: "暂时读不到常驻电脑的执行者状态" }); });
+      .then((value) => { if (alive) setEngineWorkers({ place, name, summary: value.external_workers ?? null }); })
+      .catch(() => { if (alive) setEngineWorkers({ place, name, summary: null, error: "暂时读不到引擎的执行者状态" }); });
     return () => { alive = false; };
-  }, [settingsOpen, remoteProjectKey]);  // eslint-disable-line react-hooks/exhaustive-deps
+  }, [settingsOpen, remoteProjectKey, connection]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   /** 「在哪做」切换：换到另一边的同名项目；常驻电脑那份还没登记就按它的登记表登记（令牌沿用常驻电脑）。 */
   const changeWorkPlace = async (target: WorkPlace) => {
@@ -4262,7 +4265,7 @@ function App() {
           llmStrongInput={llmStrongInput}
           llmRolesInput={llmRolesInput}
           onLlmRolesChange={setLlmRolesInput}
-          residentWorkers={residentWorkers}
+          engineWorkers={engineWorkers}
           llmProfileBusy={llmProfileBusy}
           repoRoot={repoRoot}
           baseUrl={baseUrl}
