@@ -81,6 +81,7 @@ import type {
   ConversationMessage,
   DecisionItem,
   DesktopProjectProfile,
+  ResidentWorkersView,
   DiffPayload,
   GatewayProcessStatus,
   GatewayRecoveryRecord,
@@ -2007,6 +2008,21 @@ function App() {
   const currentWorkProject = (): DesktopProjectProfile | undefined => remoteProjectRef.current
     ? projects.find((item) => item.id === remoteProjectRef.current && !isAssistantHost(item))
     : activeScope === "project" ? projects.find((item) => item.kind !== "remote" && item.repoRoot === repoRoot.trim()) : undefined;
+
+  // 设置页「常驻电脑的外部执行者」：只读。当前项目在常驻电脑上时，问那个实例自己的
+  // /api/delegations/capabilities——本机设置从不改常驻电脑的配置，两边不混。
+  const [residentWorkers, setResidentWorkers] = useState<ResidentWorkersView | null>(null);
+  const remoteProjectKey = remoteProjectRef.current;
+  useEffect(() => {
+    const project = currentWorkProject();
+    const client = clientRef.current;
+    if (!settingsOpen || !project || project.kind !== "remote" || !client) { setResidentWorkers(null); return undefined; }
+    let alive = true;
+    client.dispatchCapabilities()
+      .then((value) => { if (alive) setResidentWorkers({ name: project.name, summary: value.external_workers ?? null }); })
+      .catch(() => { if (alive) setResidentWorkers({ name: project.name, summary: null, error: "暂时读不到常驻电脑的执行者状态" }); });
+    return () => { alive = false; };
+  }, [settingsOpen, remoteProjectKey]);  // eslint-disable-line react-hooks/exhaustive-deps
 
   /** 「在哪做」切换：换到另一边的同名项目；常驻电脑那份还没登记就按它的登记表登记（令牌沿用常驻电脑）。 */
   const changeWorkPlace = async (target: WorkPlace) => {
@@ -4246,6 +4262,7 @@ function App() {
           llmStrongInput={llmStrongInput}
           llmRolesInput={llmRolesInput}
           onLlmRolesChange={setLlmRolesInput}
+          residentWorkers={residentWorkers}
           llmProfileBusy={llmProfileBusy}
           repoRoot={repoRoot}
           baseUrl={baseUrl}
