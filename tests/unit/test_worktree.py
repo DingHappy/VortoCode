@@ -1109,3 +1109,52 @@ def test_failed_test_ids_reads_the_pytest_summary():
               "ERROR tests/unit/test_b.py::test_y\nFAILED tests/unit/test_a.py::test_x - again\n"
               "1 failed, 1 error in 0.1s\n")
     assert worktree.failed_test_ids(output) == ["tests/unit/test_a.py::test_x", "tests/unit/test_b.py::test_y"]
+
+
+# —— .worktreeinclude：被 gitignore 的本地配置要显式声明才带进 worktree ——
+
+def _config_repo(tmp_path):
+    import sys
+    _init_repo(tmp_path)
+
+    def git(*a):
+        subprocess.run(["git", "-C", str(tmp_path), *a], check=True, capture_output=True)
+    (tmp_path / ".gitignore").write_text(".env\n.vortocode/\nbuild/\n")
+    (tmp_path / "test_cfg.py").write_text(
+        "from pathlib import Path\n\ndef test_cfg():\n    assert Path('.env').read_text().strip() == 'MODE=local'\n")
+    git("add", "-A"); git("commit", "-q", "-m", "needs local .env")
+    (tmp_path / ".env").write_text("MODE=local\n")
+    worktree.ensure_branch(str(tmp_path), "vorto/cfg")
+    return git, [sys.executable, "-m", "pytest", "-q", "test_cfg.py"]
+
+
+def test_ignored_local_config_reaches_tests_only_when_declared(tmp_path):
+    _git_, cmd = _config_repo(tmp_path)
+    assert worktree.verify_branch(str(tmp_path), "vorto/cfg", cmd, "wt-cfg-1")["ok"] is False
+    (tmp_path / ".worktreeinclude").write_text("# 本地配置\n.env\n")
+    assert worktree.verify_branch(str(tmp_path), "vorto/cfg", cmd, "wt-cfg-2")["ok"] is True
+
+
+def test_only_ignored_files_outside_state_dirs_are_selected(tmp_path):
+    _config_repo(tmp_path)
+    (tmp_path / "notes.txt").write_text("untracked but not ignored\n")           # 会混进 diff：不带
+    (tmp_path / ".vortocode" / "worktrees" / "other").mkdir(parents=True)
+    (tmp_path / ".vortocode" / "worktrees" / "other" / "x.py").write_text("x\n")   # 别的 worktree：不带
+    (tmp_path / "build").mkdir()
+    (tmp_path / "build" / "out.bin").write_text("artifact\n")
+    (tmp_path / ".worktreeinclude").write_text("*\n")
+    assert sorted(worktree.local_includes(str(tmp_path))) == [".env", "build/out.bin"]
+
+
+def test_included_files_are_never_committed_and_secrets_are_named(tmp_path):
+    _config_repo(tmp_path)
+    (tmp_path / ".worktreeinclude").write_text(".env\n")
+    diff = "diff --git a/b.py b/b.py\nnew file mode 100644\n--- /dev/null\n+++ b/b.py\n@@ -0,0 +1 @@\n+B = 1\n"
+    res = worktree.apply_diffs_to_branch(str(tmp_path), "vorto/inc", [(diff, "add b")])
+    assert res["ok"]
+    files = subprocess.run(["git", "-C", str(tmp_path), "ls-tree", "-r", "--name-only", "vorto/inc"],
+                           capture_output=True, text=True).stdout.split()
+    assert "b.py" in files and ".env" not in files
+    note = worktree.included_note([".env", "config/app.yaml"])
+    assert ".env 疑似含密钥" in note and "config/app.yaml" in note
+    assert worktree.included_note([]) == ""

@@ -476,6 +476,8 @@ def verify_task_review(repo_root: str, task: Any) -> dict[str, Any]:
         add = _git(context["root"], "worktree", "add", "--detach", str(worktree), context["head"])
         if add.returncode != 0:
             raise ValueError((add.stderr or add.stdout or "创建验证 worktree 失败").strip())
+        from src.agents.worktree import include_local_files
+        include_local_files(context["root"], worktree)
         try:
             from src.agents.test_detect import detect_test_cmd
             from src.agents.worktree import run_tests
