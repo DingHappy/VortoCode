@@ -984,5 +984,11 @@
     "methods": [
       "POST"
     ]
+  },
+  {
+    "path": "/api/followups/{followup_id}/start",
+    "methods": [
+      "POST"
+    ]
   }
 ]

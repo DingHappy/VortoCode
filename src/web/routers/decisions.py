@@ -13,9 +13,11 @@ def _queue(limit: int = 100, session: str = "") -> list[dict]:
     from src.workflow.tasks.tasks import TaskLedger
     from src.web.routers.realtime import pending_confirmations
 
+    from src.workflow.tasks.followups import decision_items as followup_items
+
     root = os.getcwd()
     store = DecisionStore(root)
-    return build_decision_queue(
+    queue = build_decision_queue(
         confirmations=pending_confirmations(str(session or "")[:180]),
         goals=GoalLedger(root).list(),
         tasks=TaskLedger(root).list(),
@@ -23,6 +25,8 @@ def _queue(limit: int = 100, session: str = "") -> list[dict]:
         dismissed=store.dismissed(),
         limit=limit,
     )
+    # 跟进建议排在最后：它们是建议，不挡任何事
+    return (queue + followup_items(root))[:max(1, limit)]
 
 
 @router.get("/api/decisions")
@@ -57,6 +61,13 @@ async def dismiss_decision(decision_id: str):
         raise HTTPException(status_code=404, detail="待决策事项已解决或不存在")
     if not current.get("can_dismiss"):
         raise HTTPException(status_code=409, detail="实时确认不能忽略，请明确允许或拒绝")
+    if current.get("kind") == "followup":
+        from src.workflow.tasks import followups
+        try:
+            followups.dismiss(os.getcwd(), current["target_id"])
+        except followups.FollowupError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from None
+        return {"ok": True, "id": decision_id}
     if not DecisionStore(os.getcwd()).dismiss(decision_id):
         raise HTTPException(status_code=409, detail="无法忽略该事项")
     return {"ok": True, "id": decision_id}

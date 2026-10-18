@@ -38,6 +38,7 @@ _STATE_ENTRIES = [
     "sessions.db",
     "audit.log",
     "cron_state.json",
+    "followups.json",
     "cli_session.json",
     "tui_theme",
     "tui_history",
