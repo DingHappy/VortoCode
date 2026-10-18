@@ -3,7 +3,7 @@
 2026-07 路线 A：遗留页 admin / index(classic) / workstation / multi-workspace 及其
 路由已下线删除——它们是 5 角色批处理编排时代的 UI；其后端（execution/security/
 workspaces/indexing/sessions 路由与引擎）已于 b4 全部物理删除。
-主线只保留 /（agent 台）、/agent、/artifacts。
+2026-10-17 浏览器对话台（/agent、/artifacts 画廊）退役后，只剩 / 的 API 说明与 /review 审批台。
 """
 from src.web.deps import *  # noqa: F401,F403
 
