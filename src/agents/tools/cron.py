@@ -26,7 +26,9 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
     观察够了，这里补上写面。
 
     四条边界（都不是随手定的）：
-    - **写面一律过确认门**。IM 每回合强制污点 → 免确认失效 → 每次建/停都必须真人点头。
+    - **扩大自动执行面的写操作过确认门**（建、启用、手动触发）。IM 每回合强制污点 → 免确认失效。
+      停用不问（让人容易关掉捣乱的作业），但会推一条通知给主人：2026-10-12 一次验收会话停掉了
+      常驻助理的早报，之后六天没人发现。
     - **只建 prompt 作业**，不建 command 作业：见 cron.py 编辑面纪律第 3 条。
     - **不给删除**。停用可逆、可见、可再启用；删除会把主人的 relay_duty 这类巡检静默抹掉。
     - **无人值守档不给这组工具**（build_agent_tools 的 with_cron=False）：cron 作业能创建
@@ -124,11 +126,19 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
         if enabled and not await _ask(f"启用定时作业「{name}」？启用后它会在无人盯屏时自动跑。"):
             return f"未启用 {name}（你拒绝了）。"
         try:
-            return "✅ " + set_job_enabled(repo_root, name, enabled)
+            done = "✅ " + set_job_enabled(repo_root, name, enabled)
         except CronEditError as e:
             return f"未改动：{e}"
         except (OSError, ValueError) as e:
             return f"未改动：写 cron.yaml 失败 {type(e).__name__}: {e}"
+        if not enabled:
+            from src.scheduling.notices import make_notifier
+            try:
+                await make_notifier(repo_root, source=f"cron:{name}:disabled")(
+                    f"⏸ 定时作业「{name}」已被停用，重新启用前不会再自动跑。不是你的意思的话，回复「启用 {name}」。")
+            except Exception:  # noqa: BLE001 —— 通知是旁路，停用本身已经生效
+                pass
+        return done
 
     async def _set_prompt(args: dict) -> str:
         from src.scheduling.cron import CronEditError, job_block, load_jobs, set_job_prompt

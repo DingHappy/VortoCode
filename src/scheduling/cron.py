@@ -851,10 +851,10 @@ def _escalate_streak(repo_root: str, job: CronJob, streak: int) -> str:
     threshold = _env_int("VORTOCODE_CRON_FAIL_ESCALATE", 3)
     if threshold <= 0 or streak < threshold:
         return ""
-    marker = f"🔺 已连续失败 {streak} 次（阈值 {threshold}）——不是偶发抖动，需要人工介入"
+    marker = f"🔺 cron [{job.name}] 已连续失败 {streak} 次（阈值 {threshold}）——不是偶发抖动，需要人工介入"
     try:
         from src.scheduling.notices import record_notice
-        record_notice(repo_root, f"cron [{job.name}] {marker}", source=f"cron:{job.name}:escalation")
+        record_notice(repo_root, marker, source=f"cron:{job.name}:escalation")
     except Exception:  # noqa: BLE001 —— 升级通知是旁路，写不进去不影响作业结果本身
         pass
     return marker
@@ -898,7 +898,8 @@ async def run_job(repo_root: str, job: CronJob, *, run_session=None, notify=None
             streak = CronState(repo_root).record_result(job.name, ok)
             escalation = "" if ok else _escalate_streak(repo_root, job, streak)
             if escalation:
-                result = f"{result}\n{escalation}"
+                # 放第一行：长输出之后的末行在手机上看不到，安静时段汇总还会把每条截到 120 字
+                result = f"{escalation}\n{result}"
             _mark_ran(repo_root, job, now)
             record_outcome(repo_root, job.name, ok=ok, summary=result, command=job.command,
                            code=code, sandbox=sandbox,
@@ -958,12 +959,12 @@ async def run_job(repo_root: str, job: CronJob, *, run_session=None, notify=None
             detail = f"{detail}\n{heal_note}"
         streak = CronState(repo_root).record_result(job.name, False)
         escalation = _escalate_streak(repo_root, job, streak)
-        if escalation:
-            detail = f"{detail}\n{escalation}"
         _mark_ran(repo_root, job, now)
         record_outcome(repo_root, job.name, ok=False, summary=detail, command=job.command,
-                       code=-1, error=f"cron [{job.name}] 执行异常：{detail}")
-        await _announce(repo_root, job, f"🔴 cron [{job.name}] **执行异常**：{detail}",
+                       code=-1, error=f"cron [{job.name}] 执行异常：{detail}"
+                       + (f"\n{escalation}" if escalation else ""))
+        await _announce(repo_root, job, (f"{escalation}\n" if escalation else "")
+                        + f"🔴 cron [{job.name}] **执行异常**：{detail}",
                         ok=False, notify=notify, trigger=trigger)
         raise
 
