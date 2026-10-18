@@ -117,6 +117,7 @@ import { McpConnectionCard } from "./components/McpConnectionCard";
 import { McpServersCard } from "./components/McpServersCard";
 import { ProjectSkillsCard } from "./components/ProjectSkillsCard";
 import { CatalogCard } from "./components/CatalogCard";
+import { groupSessions, liveSessionStatus } from "./lib/sessionGroups";
 import { ExtensionsInspector } from "./components/ExtensionsInspector";
 import { FilesPanel } from "./components/FilesPanel";
 import { GitReviewPanel } from "./components/GitReviewPanel";
@@ -3318,10 +3319,13 @@ function App() {
           {recentOpen && (
           <div className="session-list">
             {sessions.length === 0 && <div className="session-empty">描述一个目标后，任务线程会出现在这里。</div>}
-            {sessions.filter((session) => !sidebarQuery.trim()
-              || (session.title || "新任务").toLowerCase().includes(sidebarQuery.trim().toLowerCase())).map((session) => {
+            {(() => {
+              const visible = sessions.filter((session) => !sidebarQuery.trim()
+                || (session.title || "新任务").toLowerCase().includes(sidebarQuery.trim().toLowerCase()));
+              const groups = groupSessions(visible, activeSid, busy);
+              const renderSession = (session: SessionSummary) => {
               const active = session.sid === activeSid;
-              const liveStatus = active && busy && session.status !== "needs_input" ? "working" : session.status ?? "inactive";
+              const liveStatus = liveSessionStatus(session, active, busy);
               const backgroundCount = (session.background_tasks?.active ?? 0) + (session.background_tasks?.attention ?? 0);
               // 列表只留标题；元信息只保留需要人动手的（后台任务、待处理、Hook 问题）。
               const hasMetadata = Boolean(backgroundCount || session.hook_issues?.count);
@@ -3378,7 +3382,14 @@ function App() {
                   </div>
                 </div>
               );
-            })}
+              };
+              return groups.map((group) => (
+                <Fragment key={group.key}>
+                  {groups.length > 1 && <div className={`session-group-label group-${group.key}`}>{group.label} · {group.sessions.length}</div>}
+                  {group.sessions.map(renderSession)}
+                </Fragment>
+              ));
+            })()}
             {(decisionItems.length > 0 || activeGoals.length > 0 || activeTasks.length > 0) && (
               <div className="work-queue">
                 <div className="work-queue-label">需要继续</div>

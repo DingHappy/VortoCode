@@ -10450,3 +10450,14 @@ button.timeline-heading { width: 100%; border: 0; background: transparent; color
 .mcp-server-row.available em { color: var(--green); opacity: 1; }
 .mcp-server-actions { display: flex; gap: 6px; align-items: flex-start; flex-shrink: 0; }
 .catalog-skill-scope { display: flex; gap: 8px; align-items: center; margin: 10px 0 2px; font-size: 13px; }
+
+/* 侧边栏会话分组：等你处理置顶（只有多于一组时才显示组名） */
+.session-group-label {
+  padding: 8px 7px 4px;
+  color: var(--n9);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+.session-group-label.group-needs { color: var(--amber); }
+.session-group-label:first-child { padding-top: 2px; }
