@@ -119,6 +119,8 @@ Desktop 与无头 CLI `vc agent` 共用同一个**主 agent loop**：一个会�
 - **子 agent 自测**: 隔离 worktree 里 implement→run_tests→fix 自纠直到通过
 - **逐件 + 集成验证**: 单件绿才落分支，多件合并后再跑一遍全量（防"单独绿、合起来红"）
 - **自修复重试**: 某件红了换全新 worktree 带失败反馈重试
+- **基线对比**: 测试红了，把失败的那几个拿到改动前的代码上再跑；改动前就红的不算这次改动的错，报告里单独列出
+- **本地配置（`.worktreeinclude`）**: worktree 只有被跟踪的文件。测试要用 `.env` 这类被 gitignore 的本地配置时，在仓库根目录写 `.worktreeinclude`（gitignore 语法，一行一个），只复制**同时被 gitignore** 的文件，不碰 `.vortocode/` 与 `.git/`，不会进提交。⚠ 复制进去的内容子 Agent（模型）能读到，含密钥的文件要想清楚再加；报告会点名疑似密钥的文件
 - **上下文管理**: 长对话锚点裁剪 + 滚动纪要压缩
 
 ### 性能监控

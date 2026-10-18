@@ -71,9 +71,73 @@ def add_worktree(repo_root, wid: str) -> Path:
     if path.exists():                              # 残留则先清，避免 add 冲突
         remove_worktree(repo_root, path)
     _git(repo_root, "worktree", "add", "--detach", str(path), "HEAD")
+    include_local_files(repo_root, path)
     from src.agents.worktree_bindings import record_worktree_binding
     record_worktree_binding(str(repo_root), wid)
     return path
+
+
+# ── 本地配置带进 worktree（显式选择） ─────────────────────────────────────────
+# worktree 只有被跟踪的文件；.env 这类被 gitignore 的本地配置不在里面，依赖它的测试会红在
+# 「缺配置」上而不是改动上。仓库根目录的 .worktreeinclude（gitignore 语法，一行一个）声明哪些要带进去。
+# **只复制同时被 gitignore 的文件**（它们不会混进 diff），**不复制 .vortocode/ 与 .git/**。
+# 代价要说清楚：子 Agent（模型）能读到复制进去的内容，.env 里的密钥也一样——所以必须显式写这个文件才会发生。
+WORKTREE_INCLUDE = ".worktreeinclude"
+_INCLUDE_MAX_FILES = 200
+_INCLUDE_MAX_BYTES = 5 * 1024 * 1024
+_SECRET_LIKE = re.compile(r"(^|/)(\.env(\.[^/]*)?|[^/]*\.(pem|key|p12|pfx)|[^/]*(credential|secret|token)[^/]*|id_(rsa|ed25519|ecdsa))$",
+                          re.IGNORECASE)
+
+
+def local_includes(repo_root) -> list[str]:
+    """.worktreeinclude 选中、且被 gitignore 的本地文件（相对路径，已按数量/体积上限截断）。"""
+    root = Path(repo_root)
+    spec = root / WORKTREE_INCLUDE
+    if not spec.is_file():
+        return []
+    listed = _git(root, "ls-files", "-z", "--others", "--ignored", f"--exclude-from={spec}", check=False)
+    candidates = [name for name in (listed.stdout or "").split("\0")
+                  if name and not name.startswith((".vortocode/", ".git/")) and ".." not in Path(name).parts]
+    if not candidates:
+        return []
+    checked = subprocess.run(["git", "-C", str(root), "check-ignore", "-z", "--stdin"],
+                             input="\0".join(candidates) + "\0", capture_output=True, text=True)
+    ignored = {name for name in (checked.stdout or "").split("\0") if name}
+    chosen: list[str] = []
+    total = 0
+    for name in candidates:
+        source = root / name
+        if name not in ignored or source.is_symlink() or not source.is_file():
+            continue
+        size = source.stat().st_size
+        if len(chosen) >= _INCLUDE_MAX_FILES or total + size > _INCLUDE_MAX_BYTES:
+            break
+        chosen.append(name)
+        total += size
+    return chosen
+
+
+def include_local_files(repo_root, worktree) -> list[str]:
+    """把 local_includes 选中的文件复制进 worktree（已存在的不覆盖）；返回实际复制了哪些。"""
+    copied: list[str] = []
+    for name in local_includes(repo_root):
+        target = Path(worktree) / name
+        if target.exists():
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(Path(repo_root) / name, target)
+        copied.append(name)
+    return copied
+
+
+def included_note(copied: list[str]) -> str:
+    """报告里的一句话：带进了哪些本地文件，疑似密钥要点名。"""
+    if not copied:
+        return ""
+    secrets = [name for name in copied if _SECRET_LIKE.search(name)]
+    shown = "、".join(copied[:3]) + (f" 等 {len(copied)} 个" if len(copied) > 3 else "")
+    warn = f"；其中 {'、'.join(secrets[:3])} 疑似含密钥，子 Agent 能读到" if secrets else ""
+    return f"（按 {WORKTREE_INCLUDE} 带进隔离区的本地文件：{shown}{warn}）"
 
 
 # 收集 diff 时兜底排除的构建/缓存噪音（gitignore 语法）：隔离实现子 agent 自测会生成
@@ -222,6 +286,7 @@ def apply_diffs_to_branch(repo_root, branch: str, items: list,
     failed: list = []
     integration: Optional[dict] = None
     base = _git(path, "rev-parse", "HEAD", check=False).stdout.strip()
+    include_local_files(repo_root, path)                  # 被 gitignore 的，不会被下面的 add -A 提交
     try:
         for diff, msg in items:
             if not (diff or "").strip():
@@ -377,6 +442,7 @@ def compare_with_base(repo_root, base: Optional[str], result: dict) -> dict:
     add = _git(repo_root, "worktree", "add", "--detach", str(path), base, check=False)
     if add.returncode != 0:
         return result
+    include_local_files(repo_root, path)
     try:
         # 改动新加的测试文件在基线上不存在；混进去 pytest 会整轮报「找不到文件」，什么都没跑
         present = [test for test in failed if (path / test.split("::", 1)[0]).exists()]
@@ -468,6 +534,7 @@ async def run_dependent_on_branch(repo_root, wid: str, branch: str, description:
         add = await _git_op(_git, repo_root, "worktree", "add", str(path), branch, check=False)
         if add.returncode != 0:
             return {"ok": False, "conclusion": "", "output": "worktree add 失败: " + (add.stderr or "").strip()[:200]}
+        await _git_op(include_local_files, repo_root, path)
         agent = build_agent(str(path))
         from src.agents.taint import merge_nested_taint
         try:
@@ -699,6 +766,7 @@ def verify_branch(repo_root, branch: str, test_cmd: list, wid: str,
     add = _git(repo_root, "worktree", "add", str(path), branch, check=False)
     if add.returncode != 0:
         return {"ok": False, "output": "worktree add 失败: " + (add.stderr or "").strip()[:200], "cmd": ""}
+    include_local_files(repo_root, path)
     try:
         result = compare_with_base(repo_root, base, run_tests(path, test_cmd))
         if result.get("ok") and runtime:

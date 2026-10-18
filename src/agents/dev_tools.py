@@ -6,7 +6,7 @@ from typing import Any, Callable, Optional
 from src.agents.agent_loop import MainAgent, DEV_SUBAGENT_ROLE, _clip_middle
 from src.agents.tools._common import _truthy
 from src.agents.tool import Tool
-from src.agents.worktree import baseline_note
+from src.agents.worktree import baseline_note, included_note, local_includes
 from src.agents.tools.files import build_read_tools, build_write_tools, build_test_tool
 from src.utils.exc_utils import _exc_text
 from src.utils.async_ops import await_thread
@@ -138,11 +138,13 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     delivery_note = f"（Desktop 交付记录未保存：{_exc_text(error)}；分支仍可用）"
                 return (f"✅ {verdict}{fixed}，落到新分支 {branch}（{change_size}，"
                         f"git checkout {branch} 查看，未碰 main）。" + baseline_note(ver)
+                        + included_note(await await_thread(local_includes, repo_root))
                         + _test_delta_note(diff) + _dropped_tests_note(diff, desc) + delivery_note)
             return f"✅ {verdict}{fixed}，但落分支失败：{res['error']}。diff {change_size}。"
         tail = (ver or {}).get("output", "")[-1000:]
         return {"ok": False, "text": (
-            f"❌ 隔离实现完成但测试未过（试了 {attempts} 次）。失败输出尾部：\n{tail}\n"
+            f"❌ 隔离实现完成但测试未过（试了 {attempts} 次）。"
+            f"{included_note(await await_thread(local_includes, repo_root))}失败输出尾部：\n{tail}\n"
             f"据此修正后重试（再调 dev_isolated）。diff {change_size}，未落地。")}
 
     def _make_writer(test_cmd, question=None):
@@ -433,6 +435,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 add = _git(_repo_root, "worktree", "add", "--detach", str(path), _branch, check=False)
                 if add.returncode != 0:
                     raise RuntimeError("无法创建审查 worktree")
+                from src.agents.worktree import include_local_files
+                include_local_files(_repo_root, path)
                 try:
                     diff = _review._branch_diff(_repo_root, _base, _branch)
                     if not diff.strip():
