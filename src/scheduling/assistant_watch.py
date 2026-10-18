@@ -157,8 +157,8 @@ def status_message(item: Dict[str, Any]) -> str:
     return f"❌ {title} 失败：{_clip_head(str(item.get('error') or '没有错误信息').strip(), _DIGEST_LIMIT)}"
 
 
-def build_report(root: str, now: datetime, label: str) -> str:
-    """早报 / 晚报正文：今天的对话、任务单状态、等你处理的。"""
+def _report_material(root: str, now: datetime):
+    """今天的对话、今天相关的任务单、等你处理的任务单。"""
     from src.gateway.turn_digest import recent_turns
 
     today = now.date()
@@ -173,7 +173,16 @@ def build_report(root: str, now: datetime, label: str) -> str:
     items = [item for item in assistant_dispatch.list_dispatches(root) if item.get("status") != "cancelled"]
     active = [item for item in items if item.get("status") in ("proposed", "running", "waiting", "send_failed", "sending", "submission_unknown")
               or local_day(item.get("updated_at", "")) == today]
-    lines = [f"🗒 {label}（{now:%m月%d日 %H:%M}）", f"今天聊了 {len(turns)} 件事。"]
+    waiting = [item for item in items if item.get("status") in ("proposed", "waiting", "send_failed", "submission_unknown")]
+    return turns, active, waiting
+
+
+def build_report(root: str, now: datetime, label: str) -> str:
+    """早报 / 晚报正文：今天的对话、任务单状态、等你处理的。"""
+    turns, active, waiting = _report_material(root, now)
+    lines = [f"🗒 {label}（{now:%m月%d日 %H:%M}）"]
+    if turns:
+        lines.append(f"今天聊了 {len(turns)} 件事。")
     for turn in turns[:5]:
         lines.append(f"· {turn.get('title')}：{turn.get('outcome') or '—'}")
     names = {"proposed": "等你确认下发", "send_failed": "下发失败", "running": "在做", "waiting": "在等人回答",
@@ -185,21 +194,73 @@ def build_report(root: str, now: datetime, label: str) -> str:
         for item in active[:10]:
             freshness = " · 当前无法核实" if item.get("sync_state") == "unreachable" else ""
             lines.append(f"· [{names.get(item.get('status'), item.get('status'))}] {item.get('project')}：{item.get('title')}{freshness}")
-    waiting = [item for item in items if item.get("status") in ("proposed", "waiting", "send_failed", "submission_unknown")]
     lines.append("")
     lines.append(f"等你处理：{len(waiting)} 件。" if waiting else "没有等你处理的事。")
     return "\n".join(lines)
 
 
+def quiet_report(root: str, now: datetime, label: str) -> Optional[str]:
+    """今天什么都没发生时的报告：早报一行（顺带说明助理还在），晚报不发（空串）。有事返回 None。"""
+    turns, active, waiting = _report_material(root, now)
+    if turns or active or waiting:
+        return None
+    return f"🗒 {label}：今天没有需要你处理的事。" if label == "早报" else ""
+
+
 _REPORT_SYSTEM = (
     "你是用户的私人助理「{name}」。{soul}下面是今天的工作素材（对话摘要、任务单状态、等用户处理的事）。"
-    "写一份给用户手机上看的{label}：第一句先说要他处理的事（没有就说没有），再用两三句讲今天做成了什么、"
-    "还在进行什么。不超过 8 行，口语、具体；只依据素材，不要编造素材里没有的结果。"
+    "写一份给用户手机上扫一眼的{label}：第一句先说要用户处理的事（没有就说没有），再用一两句讲今天做成了什么、"
+    "还在进行什么。最多 5 行，每行不超过 40 个字；素材里没有的类别直接不提，不写「暂无」；"
+    "不用标题、表情符号和加粗。口语、具体；只依据素材，不要编造素材里没有的结果。"
 )
 
 
+NEWS_ENV = "VORTOCODE_ASSISTANT_NEWS_ROOT"      # 有 signals 采集产出的项目目录；不设 = 早报不带新闻
+_NEWS_MAX_AGE = timedelta(hours=24)
+_NEWS_LIMIT = 6
+
+
+def news_section(now: datetime) -> str:
+    """早报末尾的新闻：最新一份 signals（24 小时内），确定性渲染、零模型调用。没有或过期就不带。"""
+    root = os.getenv(NEWS_ENV, "").strip()
+    if not root:
+        return ""
+    try:
+        from src.workflow.pipeline.collect_cli import render_digest
+        from src.workflow.pipeline.products import ProductStore
+
+        product = ProductStore(root).latest("signals")
+        if product is None:
+            return ""
+        created = datetime.fromisoformat(str(product.created).replace("Z", "+00:00"))
+        if created.tzinfo is None:
+            created = created.astimezone()
+        if now - created > _NEWS_MAX_AGE:
+            return ""
+        return render_digest(product, limit=_NEWS_LIMIT)
+    except Exception as error:  # noqa: BLE001 —— 新闻是附带的，读不到不影响早报
+        logger.warning("早报新闻读取失败：%s", type(error).__name__)
+        return ""
+
+
 async def compose_report(root: str, now: datetime, label: str, *, llm: Any = None) -> str:
-    """早报 / 晚报：数据由台账给，话由模型说（像助理在汇报，而不是一张统计表）。模型不可用就发数据版。"""
+    """早报 / 晚报正文；早报末尾附上新闻。
+
+    新闻标题是外部内容：只原样附在模型写完的正文后面，**不进模型上下文**，免得被当成指令。
+    """
+    body = await _compose_body(root, now, label, llm=llm)
+    news = news_section(now) if label == "早报" else ""
+    return f"{body}\n\n{news}" if body and news else body
+
+
+async def _compose_body(root: str, now: datetime, label: str, *, llm: Any = None) -> str:
+    """早报 / 晚报：数据由台账给，话由模型说（像助理在汇报，而不是一张统计表）。模型不可用就发数据版。
+
+    什么都没发生的日子不调模型：早报一行，晚报不发（返回空串，调用方当作已发）。
+    """
+    quiet = quiet_report(root, now, label)
+    if quiet is not None:
+        return quiet
     facts = build_report(root, now, label)
     try:
         from src.memory.assistant_profile import load_profile
@@ -282,7 +343,7 @@ async def watch_once(root: str, now: datetime, *, notify: Notify, refresh=assist
                 logger.warning("助理报告生成失败：%s", type(error).__name__)
                 continue
             _save_state(root, state)
-        if await _notify_accepted(notify, drafts[key]):
+        if not drafts[key] or await _notify_accepted(notify, drafts[key]):   # 空串：今天不必报
             sent.append(key)
             del drafts[key]
             state["reports"] = sent[-20:]
