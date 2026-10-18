@@ -199,6 +199,7 @@ export function decisionKindLabel(kind: DecisionItem["kind"]): string {
     pr_check: "CI",
     pr_review: "Review",
     hook: "Hook",
+    followup: "跟进建议",
   }[kind];
 }
 

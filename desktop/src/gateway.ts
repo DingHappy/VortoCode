@@ -817,6 +817,14 @@ export class GatewayClient {
     });
   }
 
+  /** 把一条跟进建议作为新的后台开发任务启动。 */
+  async startFollowup(id: string): Promise<{ id: string; status: string }> {
+    return this.request(`/api/followups/${encodeURIComponent(id)}/start`, {
+      method: "POST",
+      body: JSON.stringify({ session: this.sessionId }),
+    });
+  }
+
   async dispatchCapabilities(): Promise<DispatchCapabilities> {
     return this.request("/api/delegations/capabilities");
   }

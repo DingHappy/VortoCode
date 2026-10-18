@@ -53,7 +53,7 @@ export function DecisionsPanel({
   return (
     <>
       <div className="decision-section-head">
-        <div><strong>待决策队列</strong><span>确认、阻塞目标、失败任务与 PR 反馈</span></div>
+        <div><strong>待决策队列</strong><span>确认、阻塞目标、失败任务、PR 反馈与跟进建议</span></div>
         <div className="decision-toolbar">
           <button className={notificationsEnabled ? "active" : ""} onClick={() => void onToggleNotifications()}>
             {notificationsEnabled ? "系统通知 已开" : "开启系统通知"}
@@ -67,7 +67,7 @@ export function DecisionsPanel({
       {decisionItems.map((decision) => (
         <section className={`decision-card ${decision.severity} ${decision.tainted ? "tainted" : ""}`} key={decision.id}>
           <div className="decision-card-head">
-            <span>{decisionKindLabel(decision.kind)} · {decision.severity === "critical" ? "关键" : decision.severity === "high" ? "高" : "中"}</span>
+            <span>{decisionKindLabel(decision.kind)} · {decision.severity === "critical" ? "关键" : decision.severity === "high" ? "高" : decision.severity === "low" ? "低" : "中"}</span>
             <time>{decision.created ? new Date(decision.created).toLocaleString("zh-CN") : "当前"}</time>
           </div>
           <strong>{decision.title}</strong>
@@ -79,7 +79,7 @@ export function DecisionsPanel({
             ) : (
               <>
                 <button className="primary" onClick={() => void onOpenDecision(decision)}>
-                  {decision.action === "resume_task" ? "恢复任务" : decision.kind === "pr_check" ? "查看失败日志" : decision.kind === "hook" ? "定位会话" : "打开详情"}
+                  {decision.action === "resume_task" ? "恢复任务" : decision.action === "start_followup" ? "开始" : decision.kind === "pr_check" ? "查看失败日志" : decision.kind === "hook" ? "定位会话" : "打开详情"}
                 </button>
                 {decision.kind === "pr_check" && (
                   <button onClick={() => {

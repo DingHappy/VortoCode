@@ -925,7 +925,7 @@ export interface NoticeItem {
   text: string;
 }
 
-export type DecisionKind = "confirmation" | "goal" | "task" | "run" | "pr_check" | "pr_review" | "hook";
+export type DecisionKind = "confirmation" | "goal" | "task" | "run" | "pr_check" | "pr_review" | "hook" | "followup";
 export type DecisionSeverity = "critical" | "high" | "medium" | "low";
 
 export interface DecisionItem {
@@ -936,7 +936,7 @@ export interface DecisionItem {
   detail: string;
   created?: string;
   target_id: string;
-  action: "confirm" | "open_goal" | "resume_task" | "open_task" | "open_run" | "open_diff" | "open_session";
+  action: "confirm" | "open_goal" | "resume_task" | "open_task" | "open_run" | "open_diff" | "open_session" | "start_followup";
   session_id?: string;
   tainted?: boolean;
   can_dismiss: boolean;

@@ -95,6 +95,31 @@ async def submit_task(body: dict):
     return {"id": task.id, "status": task.status}
 
 
+@router.post("/api/followups/{followup_id}/start")
+async def start_followup(followup_id: str, body: dict | None = None):
+    """把一条跟进建议作为新的后台开发任务启动（人在 Desktop 点「开始」）。"""
+    from src.workflow.tasks import followups
+    root = str(Path(get_runner().ledger.repo_root))
+    try:
+        entry = followups.get_open(root, followup_id)
+    except followups.FollowupError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from None
+    if entry is None:
+        raise HTTPException(status_code=404, detail="跟进建议已处理或不存在")
+    try:
+        task = await get_runner().submit(followups.task_prompt(entry), kind="dev",
+                                         owner_session=_owner_session(body or {}))
+    except (ValueError, RuntimeError) as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    except OSError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    try:
+        followups.mark_started(root, followup_id, task.id)
+    except followups.FollowupError:
+        pass                                   # 任务已经起了；建议状态没改上，至多下次还显示一次
+    return {"id": task.id, "status": task.status, "followup": followup_id}
+
+
 @router.get("/api/tasks")
 async def list_tasks_bg():
     """列出后台任务（按最近更新排序）。"""

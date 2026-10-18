@@ -2940,6 +2940,16 @@ function App() {
       return;
     }
     if (decision.kind === "pr_review") openInspector("diff");
+    if (decision.kind === "followup" && clientRef.current) {
+      try {
+        await clientRef.current.startFollowup(decision.target_id);
+        setDecisions((previous) => previous.filter((item) => item.id !== decision.id));
+        openInspector("tasks");
+        setBanner(`已开始：${decision.title}`);
+      } catch (error) {
+        setBanner(errorText(error, "启动跟进建议失败"));
+      }
+    }
   };
 
   const openJournalAction = async (action: JournalNextAction) => {

@@ -37,6 +37,36 @@ from src.agents.dev_policy import (
     _diff_change_counts,
 )
 
+def build_followup_tool(repo_root: str, source: str, recorded: Optional[list] = None) -> Tool:
+    """开发子 Agent 的「范围外发现」：记一条跟进建议，而不是顺手去改。"""
+    async def _suggest(args: dict) -> str:
+        from src.agents.taint import is_tainted
+        from src.workflow.tasks import followups
+        try:
+            entry = followups.add(repo_root, title=str(args.get("title") or ""), detail=str(args.get("detail") or ""),
+                                  source=source, tainted=is_tainted())
+        except followups.FollowupError as error:
+            return f"没有记下：{error}"
+        if recorded is not None and entry["title"] not in recorded:
+            recorded.append(entry["title"])
+        return f"已记为跟进建议「{entry['title']}」，主人可以在 Desktop 一键开始。继续做你本来的任务，别去改它。"
+
+    return Tool(
+        "suggest_followup",
+        "发现**与本任务无关**、但值得另外处理的问题（别处的 bug、缺的测试、过时的文档）时用它记一条，"
+        "**不要顺手去改**——改动要守在任务范围内。title 一句话说清要做什么，detail 写在哪、为什么。每个任务最多 3 条。",
+        {"title": "要做什么（一句话）", "detail": "在哪、为什么值得做（可选）"},
+        _suggest, read_only=False)
+
+
+def followup_note(titles: list) -> str:
+    """报告末尾的一句：这次范围外发现了什么，去哪儿处理。"""
+    if not titles:
+        return ""
+    shown = "；".join(titles[:3]) + (f" 等 {len(titles)} 条" if len(titles) > 3 else "")
+    return f"\n💡 范围外发现，已记为跟进建议（Desktop「待处理」里一键开始或忽略）：{shown}"
+
+
 def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]] = None,
                     confirm: Optional[Callable] = None, draft_pr: bool = False,
                     capabilities: Any = None,
@@ -139,13 +169,15 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 return (f"✅ {verdict}{fixed}，落到新分支 {branch}（{change_size}，"
                         f"git checkout {branch} 查看，未碰 main）。" + baseline_note(ver)
                         + included_note(await await_thread(local_includes, repo_root))
+                        + followup_note(last.get("followups") or [])
                         + _test_delta_note(diff) + _dropped_tests_note(diff, desc) + delivery_note)
             return f"✅ {verdict}{fixed}，但落分支失败：{res['error']}。diff {change_size}。"
         tail = (ver or {}).get("output", "")[-1000:]
         return {"ok": False, "text": (
             f"❌ 隔离实现完成但测试未过（试了 {attempts} 次）。"
             f"{included_note(await await_thread(local_includes, repo_root))}失败输出尾部：\n{tail}\n"
-            f"据此修正后重试（再调 dev_isolated）。diff {change_size}，未落地。")}
+            f"据此修正后重试（再调 dev_isolated）。diff {change_size}，未落地。"
+            + followup_note(last.get("followups") or []))}
 
     def _make_writer(test_cmd, question=None):
         """造一个'隔离实现子 agent'工厂：worktree 里 read+write+run_tests、自测到通过再交。"""
@@ -158,6 +190,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         from src.llm.providers import client_for_role
         impl_llm = client_for_role("implement")   # 没配 = None = 沿用默认，行为与从前一致
 
+        recorded: list = []
+
         def _mk(_desc):
             def _b(wt):
                 # 配了外部执行者（VORTOCODE_EXTERNAL_WORKERS implement=codex|claude）就交给它在本 worktree 里写；
@@ -169,7 +203,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 return external if external is not None else _internal(wt)
 
             def _internal(wt):
-                tools = build_read_tools(wt) + build_write_tools(wt) + [build_test_tool(wt, test_cmd)]
+                tools = (build_read_tools(wt) + build_write_tools(wt) + [build_test_tool(wt, test_cmd)]
+                         + [build_followup_tool(repo_root, (str(_desc or "").strip().splitlines() or [""])[0], recorded)])
                 kwargs = {}
                 if question is not None:
                     from src.agents.permissions import load_permissions
@@ -190,6 +225,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     agent._untrusted_input = question.tainted
                 return agent
             return _b
+        _mk.followups = recorded             # 本次实现里子 Agent 记下的跟进建议标题（报告用）
         return _mk
 
     async def _implement_with_repair(desc, test_cmd):
@@ -259,7 +295,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 if clean or attempt >= _dev_attempts():
                     _progress(f"✅ 「{desc[:32]}」实现并自测通过"
                               + (f"（修复 {attempt - 1} 次后）" if attempt > 1 else ""))
-                    return last                              # 绿且干净就收（或已用完次数）
+                    return {**last, "followups": list(mk.followups)}   # 绿且干净就收（或已用完次数）
                 if dropped:
                     _progress(f"↻ 「{desc[:32]}」删掉了既有测试（{'、'.join(dropped[:2])}），"
                               f"第 {attempt + 1} 次重做…")
@@ -276,9 +312,9 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         if best_green is not None:
             # 为补测试多试的那几轮都没成，但先前那份绿的实现照样有效——交它，并保留 ⚠ 测试增量提示。
             _progress(f"✅ 「{desc[:32]}」实现并自测通过（未补上要求的测试）")
-            return best_green
+            return {**best_green, "followups": list(mk.followups)}
         _progress(f"❌ 「{desc[:32]}」试了 {_dev_attempts()} 次仍未过")
-        return last
+        return {**last, "followups": list(mk.followups)}
 
     async def _implement_parallel(descs, test_cmd):
         """并行隔离实现 descs（每个内部自修复重试），返回 (greens, lines)。lines=逐条 ✅/❌（标修复次数）。
@@ -305,6 +341,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
 
         results = await asyncio.gather(*[_bounded(t) for t in descs])
         lines, greens = [], []
+        found = [title for r in results if isinstance(r, dict) for title in (r.get("followups") or [])]
         for r in results:
             att = r.get("attempts", 1)
             green = r.get("ver") and r["ver"]["ok"] and (r.get("diff") or "").strip()
@@ -319,6 +356,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                              + (f"（试了 {att} 次）" if att > 1 else ""))
             else:
                 lines.append(f"· {r['desc']}：❌ 未过（试了 {att} 次）")
+        if found:
+            lines.append(followup_note(found).strip())
         return greens, lines
 
     async def _dependent_with_repair(branch, desc, title, test_cmd, question=None):
@@ -495,6 +534,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         每个块状态转换都 **write-ahead 落盘**（先标记再干活/先干活再落地），崩溃时计划文件如实反映进度、
         绝不超前标 landed；resume 据此跳过已 landed、只重跑未完成。out 累积展示文本，返回最终展示串。
         """
+        found: list = []                    # 子 Agent 在范围外记下的跟进建议（报告用）
         import asyncio
 
         from src.llm.client import usage_scope
@@ -551,6 +591,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 results = await asyncio.gather(*[_impl(b) for b in todo_ind])
                 items = []
                 for b, r, spent in results:
+                    found.extend(r.get("followups") or [])
                     b.attempts = r.get("attempts", 1)
                     b.tokens = spent
                     green = r.get("ver") and r["ver"]["ok"] and (r.get("diff") or "").strip()
@@ -616,6 +657,9 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     out.append(f"  · {disp}：⚠️ {b.note}")
                 else:
                     out.append(f"  · {disp}：❌ {b.note or '未过'}")
+
+        if found:
+            out.append(followup_note(found).strip())
 
         # 2) 依赖块：拓扑序逐个在 branch 之上接力实现+自测，绿则就地提交（推进 tip 给下一个看）。
         todo_dep = dp.pending("dependent")
