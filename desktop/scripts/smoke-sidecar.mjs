@@ -104,9 +104,10 @@ try {
   ) {
     throw new Error(`sidecar extension inventory failed (${extensionsResponse.status}): ${JSON.stringify(extensions)}`);
   }
-  const page = await fetch(`http://127.0.0.1:${port}/agent`, { signal: AbortSignal.timeout(5_000) });
+  // 浏览器对话台 /agent 已于 2026-10-17 退役；随包的 Web 页面只剩审批台（IM 审批链接指向它）。
+  const page = await fetch(`http://127.0.0.1:${port}/review`, { signal: AbortSignal.timeout(5_000) });
   const html = await page.text();
-  if (!page.ok || !html.includes("VortoCode · 主 Agent")) {
+  if (!page.ok || !html.includes("VortoCode · 审批台")) {
     throw new Error(`sidecar did not serve bundled Web assets (${page.status})`);
   }
   const terminalResponse = await fetch(`http://127.0.0.1:${port}/api/terminals`, {
