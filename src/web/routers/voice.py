@@ -2,7 +2,7 @@
 
 只给三个工具，都是为「对着音箱说一句」设计的，回答要短、能直接念出来：
 
-- ``today_brief``：现在有什么要我处理的。数据与早晚报同源（台账），不调模型。
+- ``today_brief``：现在有什么要我处理的。与早晚报、Desktop 决策中心同源（attention_items），不调模型。
 - ``dispatch_status``：某张任务单做得怎么样了。只读。
 - ``propose_task``：让 VortoCode 去做一件事。**只记一张提议**，下发仍要主人在手机或 Desktop 确认。
 
@@ -68,7 +68,8 @@ def today_brief(root: str, now: datetime) -> str:
     running = [item for item in active if item.get("status") in ("running", "sending")]
     parts = []
     if waiting:
-        parts.append(f"有 {len(waiting)} 件等你处理：" + "；".join(str(item.get("title")) for item in waiting[:3]) + "。")
+        parts.append(f"有 {len(waiting)} 件等你处理：" + "；".join(str(item.get("title")) for item in waiting[:3])
+                     + ("，还有更多在手机上看" if len(waiting) > 3 else "") + "。")
     if running:
         parts.append(f"正在做 {len(running)} 件：" + "；".join(str(item.get("title")) for item in running[:3]) + "。")
     return "".join(parts) or "现在没有需要你处理的事，也没有正在做的任务。"
