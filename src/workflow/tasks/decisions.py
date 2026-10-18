@@ -191,7 +191,11 @@ def build_decision_queue(
     # （真机 2026-10-18：中转站巡检 10-12~15 的失败在恢复后仍挂在「等你处理」里）。
     latest: dict[tuple[str, str], Any] = {}
     for run in runs:
-        key = (str(getattr(run, "kind", "")), str(getattr(run, "command", "")))
+        # 例行作业按作业名归属：修路径会改掉 command（真机：src.gateway.relay_duty → src.scheduling.relay_duty），
+        # 按 command 分组会让修好前的失败永远挂着
+        sandbox = getattr(run, "sandbox", None)
+        job = sandbox.get("cron_job") if isinstance(sandbox, dict) else None
+        key = ("cron-job", str(job)) if job else (str(getattr(run, "kind", "")), str(getattr(run, "command", "")))
         stamp = str(getattr(run, "updated", "") or getattr(run, "created", ""))
         held = latest.get(key)
         if held is None or stamp > str(getattr(held, "updated", "") or getattr(held, "created", "")):
