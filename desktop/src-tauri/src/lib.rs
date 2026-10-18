@@ -12,6 +12,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{webview::PageLoadEvent, AppHandle, Manager, State};
 use url::{Host, Url};
 
+mod account;
+
 const MAX_WORKSPACE_FILES: usize = 6_000;
 const MAX_PREVIEW_BYTES: u64 = 1024 * 1024;
 const MAX_DESKTOP_PROJECTS: usize = 30;
@@ -3907,6 +3909,7 @@ pub fn run() {
         .manage(GatewayProcess::default())
         .manage(DesktopLlmProfileStore::default())
         .manage(RemoteWsRegistry::default())
+        .manage(account::AccountState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_notification::init())
@@ -3928,6 +3931,10 @@ pub fn run() {
             set_experimental_workers,
             get_desktop_control,
             check_for_update,
+            account::account_status,
+            account::account_login,
+            account::account_login_cancel,
+            account::account_logout,
             get_update_check_enabled,
             set_update_check_enabled,
             set_desktop_control,
