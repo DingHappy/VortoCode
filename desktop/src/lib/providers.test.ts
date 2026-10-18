@@ -4,8 +4,9 @@ import { PROVIDER_PRESETS, isLocalModelBase, presetForBaseUrl, sameLlmBase } fro
 
 describe("provider presets", () => {
   it("match known base URLs regardless of trailing slash or case", () => {
-    expect(presetForBaseUrl("https://token.vortotech.com/v1/")?.id).toBe("vortocode");
+    expect(presetForBaseUrl("https://api.openai.com/v1/")?.id).toBe("openai");
     expect(presetForBaseUrl("HTTPS://api.deepseek.com/v1")?.id).toBe("deepseek");
+    expect(PROVIDER_PRESETS.some((preset) => preset.baseUrl.includes("vortotech"))).toBe(false);   // 自用中转不预设
   });
 
   it("treat any loopback address as the local preset and unknown hosts as custom", () => {

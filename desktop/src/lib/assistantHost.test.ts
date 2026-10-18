@@ -4,7 +4,7 @@ import { ASSISTANT_HOST_ROOT, findAssistantHost, isAssistantHost, mainChatKey, w
 import { STORAGE_KEYS } from "./storage";
 
 const project = (id: string, kind: "local" | "remote", repoRoot: string): DesktopProjectProfile =>
-  ({ id, name: id, kind, repoRoot, baseUrl: "http://192.168.10.97:8080", lastOpenedAt: 0 });
+  ({ id, name: id, kind, repoRoot, baseUrl: "http://192.168.1.20:8080", lastOpenedAt: 0 });
 
 describe("assistantHost", () => {
   const list = [project("repo", "local", "/Users/me/repo"), project("srv", "remote", "/home/me/VortoCode"), project("host", "remote", ASSISTANT_HOST_ROOT)];

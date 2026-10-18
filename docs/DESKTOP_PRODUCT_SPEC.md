@@ -26,7 +26,7 @@ Desktop 是 VortoCode 当前默认产品与首要分发面；CLI 是高级/自�
    Goal 才能进入 `achieved`，失败证据则形成可继续执行的 blocker。
 7. **Desktop 是控制面**：项目切走不等于任务停止；跨项目 Inbox 只聚合各 Gateway 的权威有界快照，
    不在 React 里重新推导业务状态，也不把项目 token 持久化到浏览器存储。
-8. **模型服务可替换**：VortoCode Relay 是快捷默认值而不是产品锁定；用户可在 Desktop 内切换任意
+8. **模型服务可替换**：预设只用于预填地址，不锁定任何服务；用户可在 Desktop 内切换任意
    OpenAI 兼容 HTTPS 网关或本机回环服务。LLM Key 只进入本机配置文件 `llm-profile.json`（权限 600）与子 runtime 环境。
 
 ## 竞品借鉴矩阵

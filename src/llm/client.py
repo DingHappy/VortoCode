@@ -226,7 +226,8 @@ def _int_env(name: str, default: int) -> int:
 # 主 agent + 所有子 agent 的总用量。优先用 API 精确值，拿不到时用估算（流式）。
 # cached_tokens：命中上游 prompt 缓存的输入 token 数（若中转/上游支持自动前缀缓存则 >0）——
 # 用来**验证缓存到底有没有在自有中转生效**（OpenAI 兼容协议下缓存是自动的、无需 cache_control）。
-DEFAULT_LLM_BASE_URL = "https://token.vortotech.com/v1"
+# 没配 OPENAI_API_BASE 时的地址：通用的 OpenAI 官方接口（与 OpenAI SDK 一致），不预设任何自营中转。
+DEFAULT_LLM_BASE_URL = "https://api.openai.com/v1"
 
 # 值是异构的：计数键为 int，"by_model" 是 {模型名: {计数键: int}}（故标 Any 而非 int）
 _USAGE: Dict[str, Any] = {"calls": 0, "prompt_tokens": 0, "completion_tokens": 0,
@@ -487,7 +488,7 @@ class LLMConfig(BaseModel):
 
     base_url: str = Field(default_factory=lambda: os.getenv("OPENAI_API_BASE", DEFAULT_LLM_BASE_URL))
     api_key: str = ""
-    # 默认模型读 .env 的 DEFAULT_MODEL/OPENAI_MODEL；没有配置时走 VortoCode Relay 的默认国产模型。
+    # 默认模型读 .env 的 DEFAULT_MODEL/OPENAI_MODEL；正式使用请显式配置 OPENAI_API_BASE 与 DEFAULT_MODEL。
     model: str = Field(default_factory=lambda: os.getenv("DEFAULT_MODEL") or os.getenv("OPENAI_MODEL") or "mimo-v2.6-pro")
     # 主模型不支持图片时，把"看图"外包给它。空 = 关闭外包（撞到图片直接如实报错）。
     # 真机 2026-07-27：mimo-v2.5-pro 无视觉（404 No endpoints found that support image input），

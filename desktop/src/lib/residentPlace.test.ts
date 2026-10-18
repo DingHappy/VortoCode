@@ -6,11 +6,11 @@ import { listedProjects, localTwin, placedSessions, projectKey, residentEntry, r
 const p = (id: string, kind: "local" | "remote", repoRoot: string, baseUrl = "http://127.0.0.1:8080"): DesktopProjectProfile =>
   ({ id, name: repoRoot.split("/").pop() || id, kind, repoRoot, baseUrl, lastOpenedAt: 0 });
 
-const host = p("host", "remote", ASSISTANT_HOST_ROOT, "http://192.168.10.97:8081");
+const host = p("host", "remote", ASSISTANT_HOST_ROOT, "http://192.168.1.20:8081");
 const local = p("local", "local", "/Users/me/code/VortoCode");
-const resident = p("res", "remote", "/home/me/projects/vortocode", "http://192.168.10.97:8082");
-const otherServer = p("other", "remote", "/srv/VortoCode", "http://192.168.10.50:8080");
-const solo = p("solo", "remote", "/home/me/projects/Notes", "http://192.168.10.97:8083");
+const resident = p("res", "remote", "/home/me/projects/vortocode", "http://192.168.1.20:8082");
+const otherServer = p("other", "remote", "/srv/VortoCode", "http://192.168.1.50:8080");
+const solo = p("solo", "remote", "/home/me/projects/Notes", "http://192.168.1.20:8083");
 
 describe("residentPlace", () => {
   it("按目录名（不分大小写）把本机与常驻电脑上的同一个项目认作一对", () => {

@@ -19,8 +19,12 @@ const MAX_DESKTOP_RUNTIMES: usize = 12;
 const GENERAL_SCOPE: &str = "general";
 const SCRATCH_SCOPE: &str = "scratch";
 const PROJECT_SCOPE: &str = "project";
-const DEFAULT_LLM_BASE_URL: &str = "https://token.vortotech.com/v1";
-const DEFAULT_LLM_MODEL: &str = "mimo-v2.6-pro";
+/// 没配置时表单预填的地址：通用的 OpenAI 官方接口（与 OpenAI SDK 的默认一致），不预设任何自营中转。
+const DEFAULT_LLM_BASE_URL: &str = "https://api.openai.com/v1";
+const DEFAULT_LLM_MODEL: &str = "gpt-4o-mini";
+/// 作者自用的中转：不在预设里；只用来识别「当前配置就是它」，以便显示它的账号/用量页。
+const RELAY_BASE_URL: &str = "https://token.vortotech.com/v1";
+const RELAY_DEFAULT_MODEL: &str = "mimo-v2.6-pro";
 /// 前端默认的本机 runtime 端口（被占用时 select_gateway_port 自动换一个空闲端口）。
 const DEFAULT_GATEWAY_PORT: u16 = 8080;
 
@@ -428,7 +432,7 @@ async fn discover_model_context_window_with(
 }
 
 fn llm_provider(base_url: &str) -> &'static str {
-    if base_url == DEFAULT_LLM_BASE_URL {
+    if base_url == RELAY_BASE_URL {
         "vortocode"
     } else if Url::parse(base_url)
         .ok()
@@ -4450,7 +4454,7 @@ async fn relay_login(
             .as_ref()
             .filter(|_| same_base)
             .map(|saved| saved.model.clone())
-            .unwrap_or_else(|| DEFAULT_LLM_MODEL.into()),
+            .unwrap_or_else(|| RELAY_DEFAULT_MODEL.into()),
         context_window: None,
         context_window_source: None,
         fast_model: saved.as_ref().filter(|_| same_base).and_then(|saved| saved.fast_model.clone()),
@@ -4836,7 +4840,7 @@ mod tests {
             models: Vec::new(),
         })
         .expect("relay profile");
-        assert_eq!(relay.base_url, DEFAULT_LLM_BASE_URL);
+        assert_eq!(relay.base_url, RELAY_BASE_URL);
         assert_eq!(llm_provider(&relay.base_url), "vortocode");
         assert_eq!(relay.context_window, Some(1_000_000));
         assert_eq!(relay.context_window_source.as_deref(), Some("catalog"));
@@ -5508,26 +5512,26 @@ mod tests {
     #[test]
     fn resident_fetch_source_uses_registered_host_and_dir() {
         assert_eq!(
-            resident_fetch_source("http://192.168.10.97:8082", "/home/me/projects/VortoCode/").unwrap(),
-            "ssh://192.168.10.97/home/me/projects/VortoCode"
+            resident_fetch_source("http://192.168.1.20:8082", "/home/me/projects/VortoCode/").unwrap(),
+            "ssh://192.168.1.20/home/me/projects/VortoCode"
         );
-        assert!(resident_fetch_source("http://192.168.10.97:8082", "projects/x").is_err());
-        assert!(resident_fetch_source("http://192.168.10.97:8082", "/home/me/a b").is_err());
-        assert!(resident_fetch_source("http://192.168.10.97:8082", "/home/../etc").is_err());
+        assert!(resident_fetch_source("http://192.168.1.20:8082", "projects/x").is_err());
+        assert!(resident_fetch_source("http://192.168.1.20:8082", "/home/me/a b").is_err());
+        assert!(resident_fetch_source("http://192.168.1.20:8082", "/home/../etc").is_err());
         assert!(resident_fetch_source("http://8.8.8.8:8082", "/srv/x").is_err());
     }
 
     #[test]
     fn sibling_server_url_only_changes_the_port() {
         assert_eq!(
-            sibling_server_url("http://192.168.10.97:8081", 8082).unwrap(),
-            "http://192.168.10.97:8082"
+            sibling_server_url("http://192.168.1.20:8081", 8082).unwrap(),
+            "http://192.168.1.20:8082"
         );
         assert_eq!(
             sibling_server_url("https://srv.ts.net", 8443).unwrap(),
             "https://srv.ts.net:8443"
         );
-        assert!(sibling_server_url("http://192.168.10.97:8081", 22).is_err());
+        assert!(sibling_server_url("http://192.168.1.20:8081", 22).is_err());
         assert!(sibling_server_url("http://8.8.8.8:8081", 8082).is_err()); // 公网 http 照样拒
     }
 

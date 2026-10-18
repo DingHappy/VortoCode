@@ -335,7 +335,7 @@ async def test_custom_relay_stream_does_not_probe_stream_usage_twice(monkeypatch
                 return _FakeStreamResp(chunks)
             self.chat = SimpleNamespace(completions=SimpleNamespace(create=_create))
 
-    c = LLMClient(LLMConfig(base_url="https://token.vortotech.com/v1", api_key="x"))
+    c = LLMClient(LLMConfig(base_url="https://api.example.com/v1", api_key="x"))
 
     async def _fake_get():
         return RecordingOpenAI()

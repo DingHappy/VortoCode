@@ -220,19 +220,19 @@ cp .env.example .env
 # 编辑 .env 文件，配置 LLM API 密钥等
 ```
 
-**LLM 配置（最快路径：VortoCode Relay，OpenAI 兼容接口）：**
-
-Relay 控制台：<https://token.vortotech.com>；API Base 使用下方的 `/v1` 地址。
+**LLM 配置（任何 OpenAI 兼容接口）：**
 
 ```bash
-# 默认使用 VortoCode Relay，提供国产大模型基础；只需要填你的 relay key
-OPENAI_API_BASE=https://token.vortotech.com/v1
-DEFAULT_MODEL=mimo-v2.6-pro
-OPENAI_API_KEY=your-vortocode-relay-key
+# 地址、Key、模型名三项都要填。以 OpenAI 官方为例：
+OPENAI_API_BASE=https://api.openai.com/v1
+OPENAI_API_KEY=your-api-key
+DEFAULT_MODEL=gpt-4o-mini
 
-# 如果使用 OpenAI 官方接口，可改成：
-# OPENAI_API_BASE=https://api.openai.com/v1
-# DEFAULT_MODEL=gpt-4o-mini
+# 其他服务只换地址和模型名，例如 DeepSeek：
+# OPENAI_API_BASE=https://api.deepseek.com/v1
+# DEFAULT_MODEL=deepseek-chat
+# 本机 Ollama（不需要 Key）：
+# OPENAI_API_BASE=http://127.0.0.1:11434/v1
 ```
 
 > `.env` 已被 `.gitignore` 忽略，切勿提交真实密钥。仓库不内置 key；实际调用和费用按你配置的 relay/API 账号计算。

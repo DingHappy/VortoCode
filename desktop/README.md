@@ -17,7 +17,7 @@ VortoCode Desktop 是当前默认产品与首要分发入口，也是现有 Gate
 - 可选团队 hunk 策略：项目可要求全部当前文本 hunk 完成精确接受；任务卡展示 accepted/total/pending，Draft PR 由服务端在交付时实时重验
 - 多项目/多 Scratch runtime 常驻、按项目会话、后台继续执行、精确监督与异常恢复
 - 跨项目 Inbox：统一聚合每个本机 runtime 的待确认、Hook、执行中会话、Goal 与后台任务；单项目失联独立降级，并可直接切到对应项目/会话处理
-- 模型服务快捷设置：VortoCode Relay、自定义 OpenAI 兼容网关与本机回环模型服务；Base URL、模型名和 Key 由原生层管理，保存在本机 `llm-profile.json`（权限 600，可直接编辑），保存后重启当前 runtime 生效
+- 模型服务快捷设置：常见云端服务（OpenAI、DeepSeek、Kimi 等）、自定义 OpenAI 兼容网关与本机回环模型服务；Base URL、模型名和 Key 由原生层管理，保存在本机 `llm-profile.json`（权限 600，可直接编辑），保存后重启当前 runtime 生效
 - 项目记忆安全投影/确认写入，以及版本化 Artifact 沙箱预览和 Agent 迭代
 - runtime 状态、决策中心、共享审计、Project Journal 与显式授权系统通知
 - Hook 失败、超时与阻止事项汇总到 Dashboard/决策中心，可定位会话并安全标记已查看
