@@ -119,6 +119,9 @@ import { ProjectSkillsCard } from "./components/ProjectSkillsCard";
 import { CatalogCard } from "./components/CatalogCard";
 import { groupSessions, liveSessionStatus } from "./lib/sessionGroups";
 import { autoCheckForUpdate, type UpdateCheck } from "./lib/updateCheck";
+import {
+  ACCOUNT_CHANGED_EVENT, getAccountStatus, getMembership, sidebarIdentity, type VortoAccountStatus, type VortoMembership,
+} from "./lib/vortoAccount";
 import { ExtensionsInspector } from "./components/ExtensionsInspector";
 import { FilesPanel } from "./components/FilesPanel";
 import { GitReviewPanel } from "./components/GitReviewPanel";
@@ -128,7 +131,7 @@ import { MarkdownMessage } from "./components/MarkdownMessage";
 import { ProjectAssetsPanel } from "./components/ProjectAssetsPanel";
 import { RunsPanel } from "./components/RunsPanel";
 import { RuntimeInboxPanel } from "./components/RuntimeInboxPanel";
-import { SettingsModal, relayMode, type SettingsSection } from "./components/SettingsModal";
+import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
 import { BuildVersion } from "./components/BuildVersion";
 import { ArtifactCenter } from "./components/ArtifactCenter";
 import { PluginsPage } from "./components/PluginsPage";
@@ -570,6 +573,24 @@ function App() {
   const [pluginsRevision, setPluginsRevision] = useState(0);
   /** 启动时自动检查更新（每天最多一次，设置里可关）；有新版才非空。 */
   const [availableUpdate, setAvailableUpdate] = useState<UpdateCheck | null>(null);
+  // 左下角显示 VortoCode 账号本人；账号卡片里登录/退出/换会员后会广播 ACCOUNT_CHANGED_EVENT
+  const [vortoAccount, setVortoAccount] = useState<{ status: VortoAccountStatus | null; membership: VortoMembership | null }>({ status: null, membership: null });
+  useEffect(() => {
+    let alive = true;
+    const refresh = async () => {
+      try {
+        const status = await getAccountStatus();
+        const membership = status.signedIn && !status.offline ? await getMembership().catch(() => null) : null;
+        if (alive) setVortoAccount({ status, membership });
+      } catch {
+        if (alive) setVortoAccount({ status: null, membership: null });
+      }
+    };
+    void refresh();
+    window.addEventListener(ACCOUNT_CHANGED_EVENT, refresh);
+    return () => { alive = false; window.removeEventListener(ACCOUNT_CHANGED_EVENT, refresh); };
+  }, []);
+  const identity = sidebarIdentity(vortoAccount.status, vortoAccount.membership);
   useEffect(() => { void autoCheckForUpdate().then(setAvailableUpdate); }, []);
   // 切换会话或工作区时回到对话视图。
   useEffect(() => { setMainView("chat"); }, [activeSid, activeScope]);
@@ -3426,11 +3447,14 @@ function App() {
           <div className="sidebar-footer">
             <button
               className="sidebar-account"
-              title={llmProfile?.account ? `已登录 ${llmProfile.account.username}` : relayMode(llmProfile) ? "账号与登录" : "模型服务"}
-              onClick={() => { setSettingsSection(relayMode(llmProfile) ? "account" : "model"); setSettingsOpen(true); }}
+              title={identity.title}
+              onClick={() => { setSettingsSection("general"); setSettingsOpen(true); }}
             >
-              <span className="sidebar-avatar">{llmProfile?.account ? (llmProfile.account.displayName || llmProfile.account.username).slice(0, 1).toUpperCase() : <UserRound size={14} />}</span>
-              <span>{llmProfile?.account ? (llmProfile.account.displayName || llmProfile.account.username) : relayMode(llmProfile) ? "账号" : "模型服务"}</span>
+              <span className="sidebar-avatar">{identity.initial || <UserRound size={14} />}</span>
+              <span className="sidebar-identity">
+                <span>{identity.name}</span>
+                {identity.detail && <small>{identity.detail}</small>}
+              </span>
             </button>
             {availableUpdate && (
               <button className="sidebar-update" title={`VortoCode ${availableUpdate.latest} 已发布，点击打开下载页`}

@@ -9775,10 +9775,25 @@ input::placeholder {
   font-weight: 650;
 }
 
-.sidebar-footer .sidebar-account span:last-child {
+.sidebar-footer .sidebar-account .sidebar-identity {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  line-height: 1.25;
+}
+
+.sidebar-footer .sidebar-account .sidebar-identity > span,
+.sidebar-footer .sidebar-account .sidebar-identity > small {
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.sidebar-footer .sidebar-account .sidebar-identity > small {
+  color: var(--muted);
+  font-size: 11px;
 }
 
 .account-identity {

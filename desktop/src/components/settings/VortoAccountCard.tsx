@@ -6,7 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { confirmAction } from "../../lib/confirm";
 import { errorText } from "../../lib/errorText";
 import {
-  accountHeadline, applyMembership, cancelAccountLogin, getAccountStatus, getMembership, loginAccount, logoutAccount,
+  accountHeadline, announceAccountChanged, applyMembership, cancelAccountLogin, getAccountStatus, getMembership, loginAccount, logoutAccount,
   membershipLine, type VortoAccountStatus, type VortoMembership,
 } from "../../lib/vortoAccount";
 import type { DesktopLlmProfileStatus } from "../../types";
@@ -46,6 +46,7 @@ export function VortoAccountCard({ onProfile, onRestartRuntime, onProfileCleared
       const value = await loginAccount();
       setStatus(value);
       await loadMembership(value);
+      announceAccountChanged();
     } catch (error) { setNote(errorText(error, "登录没有完成")); }
     finally { setLoggingIn(false); }
   };
@@ -60,6 +61,7 @@ export function VortoAccountCard({ onProfile, onRestartRuntime, onProfileCleared
     try {
       setStatus(await logoutAccount());
       setMembership(null);
+      announceAccountChanged();
       if (wasInUse) { await onProfileCleared(); await onRestartRuntime(); }
     } catch (error) { setNote(errorText(error, "退出失败")); }
     finally { setBusy(false); }
@@ -73,6 +75,7 @@ export function VortoAccountCard({ onProfile, onRestartRuntime, onProfileCleared
       await onRestartRuntime();
       setNote("已切换到会员模型");
       await loadMembership(status);
+      announceAccountChanged();
     } catch (error) { setNote(errorText(error, "切换失败")); }
     finally { setBusy(false); }
   };
