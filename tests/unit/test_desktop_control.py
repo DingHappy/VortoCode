@@ -86,7 +86,8 @@ def test_ssh_target_and_display_are_validated_and_text_never_hits_argv():
     argv = backend.argv(["xdotool", "key", "--", "ctrl+l"])
     assert argv[:5] == ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8"] and argv[5] == "user@desktop-vm.lan"
     assert argv[6].startswith('env DISPLAY=:0 XAUTHORITY="$HOME/.Xauthority" xdotool key -- ctrl+l')
-    for bad in ("ssh:host;rm -rf /", "ssh:", "ssh:a b@c", "telnet:host"):
+    for bad in ("ssh:host;rm -rf /", "ssh:", "ssh:a b@c", "telnet:host", "ssh:-oProxyCommand=x", "ssh:-v",
+                "ssh:user@-v", "ssh:-user@host"):
         with pytest.raises(ValueError):
             desktop.DesktopBackend(bad, ":0")
     with pytest.raises(ValueError):

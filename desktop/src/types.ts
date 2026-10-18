@@ -1497,6 +1497,13 @@ export interface BrowserControlStatus {
   browserPath?: string | null;
 }
 
+/** 设置 → 桌面操作（实验）。target 为 local 或 ssh:用户@主机；apps 为逗号分隔的命令名。 */
+export interface DesktopControlStatus {
+  enabled: boolean;
+  target: string;
+  apps: string;
+}
+
 /** 设置页「测试连接」：只验证不保存。 */
 export interface LlmConnectionTest {
   ok: boolean;
