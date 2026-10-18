@@ -186,8 +186,10 @@ export function AssistantAudit({ entries, now }: { entries: AuditEntry[]; now?: 
 }
 
 /** 「定时」：它按时间自己会做的事（早晚报、跟进、Heartbeat、定时作业）。 */
-export function AssistantSchedule({ items, connected = false, onToggle, onHistory, onRefresh }: {
+export function AssistantSchedule({ items, connected = false, local = false, onToggle, onHistory, onRefresh }: {
   items: AssistantScheduleItem[]; connected?: boolean;
+  /** 助理在本机运行：本机引擎不开调度，定时的事不会按时自动跑——空状态别再引导去建定时汇报。 */
+  local?: boolean;
   onRefresh?: () => Promise<void>;
   onToggle?: (item: AssistantScheduleItem) => Promise<void>;
   onHistory?: (item: AssistantScheduleItem) => Promise<import("../types").AssistantScheduleRun[]>;
@@ -200,7 +202,9 @@ export function AssistantSchedule({ items, connected = false, onToggle, onHistor
       void onRefresh().catch(error => setError(String(error))).finally(() => setRefreshing(false));
     }}>刷新</button>}</h5>
     {error && <p role="alert">{error}</p>}
-    {items.length === 0 && <p className="assistant-memory-empty">还没有定时的事。比如让它「每天早上给我一份简报」，或者在常驻电脑上打开早晚报。</p>}
+    {items.length === 0 && <p className="assistant-memory-empty">{local
+      ? "助理现在在本机运行：只在 Desktop 开着时工作，不会按时自动跑定时的事。要每天定时汇报、提醒，需要连接一台一直开着的常驻电脑。"
+      : "还没有定时的事。比如让它「每天早上给我一份简报」，或者在常驻电脑上打开早晚报。"}</p>}
     <ul className="assistant-schedule">
       {items.map(item => <AssistantScheduleCard key={item.id} item={item} connected={connected}
         onToggle={onToggle || (async () => { throw new Error("当前界面不支持管理"); })}

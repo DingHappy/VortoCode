@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
-import { AssistantPanel, AssistantSidebar, MemoryProposals, ModeSwitch } from "./AssistantMode";
+import { AssistantPanel, AssistantSchedule, AssistantSidebar, MemoryProposals, ModeSwitch } from "./AssistantMode";
 
 it("模式切换：两个选项，当前项 aria-checked", () => {
   const html = renderToStaticMarkup(<ModeSwitch mode="assistant" onChange={() => {}} />);
@@ -68,4 +68,11 @@ it("待确认记忆：可能更新了旧记忆的才多一个「记住并替换�
   expect(html.match(/aria-label="记住并替换旧的"/g)).toHaveLength(1);
   expect(html).toContain('title="记住（旧的也保留）"');
   expect(renderToStaticMarkup(<MemoryProposals proposals={[]} />)).toBe("");
+});
+
+it("does not point a local-only user at schedules that will never run", () => {
+  const local = renderToStaticMarkup(<AssistantSchedule items={[]} connected local />);
+  expect(local).toContain("不会按时自动跑"); expect(local).not.toContain("每天早上给我一份简报");
+  const resident = renderToStaticMarkup(<AssistantSchedule items={[]} connected />);
+  expect(resident).toContain("每天早上给我一份简报");
 });
