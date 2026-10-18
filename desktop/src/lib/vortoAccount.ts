@@ -96,3 +96,12 @@ export function sidebarIdentity(status: VortoAccountStatus | null, membership: V
     : status.offline ? "离线" : "";
   return { initial: name.slice(0, 1).toUpperCase(), name, detail, title: `已登录 ${name}${detail ? ` · ${detail}` : ""}` };
 }
+
+/** 账号卡片上的「购买 / 续费」入口：不是会员、或本期额度不足时给。打开账号网站的会员页。 */
+export function membershipAction(status: VortoAccountStatus | null, membership: VortoMembership | null): { label: string; url: string } | null {
+  if (!status?.signedIn || !membership?.available || !status.manageUrl) return null;
+  const url = status.manageUrl.replace(/\/account$/, "/membership");
+  if (!membership.member) return { label: "开通会员", url };
+  if (creditsLow(membership)) return { label: "续费 / 查看档位", url };
+  return null;
+}

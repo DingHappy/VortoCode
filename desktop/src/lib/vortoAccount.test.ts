@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  accountHeadline, creditsLow, keySourceLabel, MEMBER_KEY_SOURCE, membershipLine, sidebarIdentity, type VortoAccountStatus,
+  accountHeadline, creditsLow, keySourceLabel, membershipAction, MEMBER_KEY_SOURCE, membershipLine, sidebarIdentity, type VortoAccountStatus,
   type VortoMembership,
 } from "./vortoAccount";
 
@@ -85,5 +85,25 @@ describe("creditsLow", () => {
     expect(creditsLow({ ...member, creditsPerPeriod: 0 })).toBe(false);
     expect(creditsLow({ ...member, member: false })).toBe(false);
     expect(creditsLow(null)).toBe(false);
+  });
+});
+
+describe("membershipAction", () => {
+  const status: VortoAccountStatus = {
+    signedIn: true, email: "me@example.com", deviceName: "", offline: false,
+    manageUrl: "https://account.example.com/account", note: "",
+  };
+  const member: VortoMembership = {
+    available: true, member: true, planName: "中度", expiresAt: 0, creditsAvailable: 5000, creditsPerPeriod: 6900,
+    keyEnabled: true, inUse: true,
+  };
+  it("offers to join or renew on the account site's membership page", () => {
+    expect(membershipAction(status, { ...member, member: false })).toEqual({ label: "开通会员", url: "https://account.example.com/membership" });
+    expect(membershipAction(status, { ...member, creditsAvailable: 100 })?.label).toBe("续费 / 查看档位");
+  });
+  it("stays out of the way for healthy members, signed-out users and services without membership", () => {
+    expect(membershipAction(status, member)).toBeNull();
+    expect(membershipAction({ ...status, signedIn: false }, { ...member, member: false })).toBeNull();
+    expect(membershipAction(status, { ...member, available: false, member: false })).toBeNull();
   });
 });

@@ -7,7 +7,7 @@ import { confirmAction } from "../../lib/confirm";
 import { errorText } from "../../lib/errorText";
 import {
   accountHeadline, announceAccountChanged, applyMembership, cancelAccountLogin, getAccountStatus, getMembership, loginAccount, logoutAccount,
-  membershipLine, type VortoAccountStatus, type VortoMembership,
+  membershipAction, membershipLine, type VortoAccountStatus, type VortoMembership,
 } from "../../lib/vortoAccount";
 import type { DesktopLlmProfileStatus } from "../../types";
 
@@ -92,6 +92,7 @@ export function VortoAccountCard({ modelConfigured, onProfile, onRestartRuntime,
 
   const signedIn = Boolean(status?.signedIn) && !loggingIn;
   const line = signedIn ? membershipLine(membership) : null;
+  const action = signedIn ? membershipAction(status, membership) : null;
   return <section className="settings-card" aria-label="VortoCode 账号">
     <div className="settings-card-head">
       <strong>VortoCode 账号</strong>
@@ -114,6 +115,7 @@ export function VortoAccountCard({ modelConfigured, onProfile, onRestartRuntime,
           ? <>{" "}<button className="primary" onClick={() => void useMember()} disabled={busy}>使用会员模型</button></>
           : <span className="settings-card-note">（会员模型 Key 已停用）</span>)}
     </p>}
+    {action && <p><button onClick={() => void openUrl(action.url)}>{action.label}</button></p>}
     {note && <p role="alert">{note}</p>}
     <p className="settings-card-note">
       {signedIn
