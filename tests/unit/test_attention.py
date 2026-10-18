@@ -18,9 +18,9 @@ def registry(tmp_path, monkeypatch):
     monkeypatch.setenv("VORTOCODE_RESIDENT_PROJECTS", str(path))
 
 
-def _run(run_id, status, updated, command="python -m src.scheduling.relay_duty", kind="cron"):
+def _run(run_id, status, updated, command="python -m src.scheduling.relay_duty", kind="cron", job=""):
     return SimpleNamespace(id=run_id, status=status, kind=kind, command=command, error="x", output="",
-                           updated=updated, created=updated)
+                           updated=updated, created=updated, sandbox={"cron_job": job} if job else {})
 
 
 def test_a_later_success_resolves_earlier_failures_of_the_same_job():
@@ -30,6 +30,13 @@ def test_a_later_success_resolves_earlier_failures_of_the_same_job():
     assert [item["id"] for item in build_decision_queue(runs=runs)] == ["run:t1"]   # 巡检已恢复，测试仍红
     runs.append(_run("r4", "failed", "2026-10-16T02:00"))
     assert {item["id"] for item in build_decision_queue(runs=runs)} == {"run:t1", "run:r4"}
+
+
+def test_a_fixed_command_path_still_resolves_the_same_job():
+    """真机 2026-10-18：修模块路径改掉了 command，按 command 分组会让修好前的失败一直挂着。"""
+    runs = [_run("r1", "failed", "2026-10-14T02:00", command="python -m src.gateway.relay_duty", job="relay_duty"),
+            _run("r2", "done", "2026-10-15T02:00", command="python -m src.scheduling.relay_duty", job="relay_duty")]
+    assert build_decision_queue(runs=runs) == []
 
 
 def test_attention_merges_dispatches_with_the_decision_queue_most_urgent_first(tmp_path):
