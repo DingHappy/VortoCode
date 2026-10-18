@@ -3562,7 +3562,8 @@ function App() {
                       }} />}</>
                     : <><h1>开始一项工作</h1><p>描述你要解决的问题，或选择工作区域开始。</p></>}
                 {llmProfileChecked && !llmProfile?.configured && (
-                  <p>还没有配置模型服务。<button onClick={() => { setSettingsSection("model"); setSettingsOpen(true); }}>连接模型</button></p>
+                  <p>还没有配置模型服务。<button onClick={() => { setSettingsSection("model"); setSettingsOpen(true); }}>连接模型</button>
+                    {!vortoAccount.status?.signedIn && <>，或<button onClick={() => { setSettingsSection("general"); setSettingsOpen(true); }}>登录 VortoCode 账号</button>（会员直接用会员模型）</>}</p>
                 )}
               </div>
             )}

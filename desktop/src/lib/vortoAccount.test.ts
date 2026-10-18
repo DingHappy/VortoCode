@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  accountHeadline, keySourceLabel, MEMBER_KEY_SOURCE, membershipLine, sidebarIdentity, type VortoAccountStatus,
+  accountHeadline, creditsLow, keySourceLabel, MEMBER_KEY_SOURCE, membershipLine, sidebarIdentity, type VortoAccountStatus,
   type VortoMembership,
 } from "./vortoAccount";
 
@@ -28,7 +28,7 @@ describe("accountHeadline", () => {
 describe("membershipLine", () => {
   const member: VortoMembership = {
     available: true, member: true, planName: "中度", expiresAt: new Date(2026, 10, 18, 12).getTime() / 1000,
-    creditsAvailable: 6900, keyEnabled: true, inUse: false,
+    creditsAvailable: 6900, creditsPerPeriod: 6900, keyEnabled: true, inUse: false,
   };
   it("summarises plan, expiry and remaining credit", () => {
     expect(membershipLine(member)).toBe("会员「中度」· 到期 2026-11-18 · 本期剩余 6,900 Credit");
@@ -54,7 +54,7 @@ describe("sidebarIdentity", () => {
     signedIn: true, email: "me@example.com", deviceName: "Mac", offline: false, manageUrl: "", note: "",
   };
   const member: VortoMembership = {
-    available: true, member: true, planName: "中度", expiresAt: 0, creditsAvailable: 0, keyEnabled: true, inUse: true,
+    available: true, member: true, planName: "中度", expiresAt: 0, creditsAvailable: 3000, creditsPerPeriod: 6900, keyEnabled: true, inUse: true,
   };
   it("shows the signed-in person and their membership", () => {
     expect(sidebarIdentity(signedIn, member)).toEqual({
@@ -66,5 +66,24 @@ describe("sidebarIdentity", () => {
   it("invites signing in, and stays neutral while loading", () => {
     expect(sidebarIdentity({ ...signedIn, signedIn: false, email: "" }, null).name).toBe("登录");
     expect(sidebarIdentity(null, null)).toMatchObject({ initial: "", name: "VortoCode 账号" });
+  });
+});
+
+describe("creditsLow", () => {
+  const member: VortoMembership = {
+    available: true, member: true, planName: "中度", expiresAt: new Date(2026, 10, 18, 12).getTime() / 1000,
+    creditsAvailable: 600, creditsPerPeriod: 6900, keyEnabled: true, inUse: true,
+  };
+  it("warns under a tenth of the period, in the card and the sidebar", () => {
+    expect(creditsLow(member)).toBe(true);
+    expect(membershipLine(member)).toContain("不足一成");
+    const signedIn: VortoAccountStatus = { signedIn: true, email: "me@example.com", deviceName: "", offline: false, manageUrl: "", note: "" };
+    expect(sidebarIdentity(signedIn, member).detail).toBe("中度会员 · 额度不足");
+  });
+  it("stays quiet with enough credit, an unknown total, or no membership", () => {
+    expect(creditsLow({ ...member, creditsAvailable: 700 })).toBe(false);
+    expect(creditsLow({ ...member, creditsPerPeriod: 0 })).toBe(false);
+    expect(creditsLow({ ...member, member: false })).toBe(false);
+    expect(creditsLow(null)).toBe(false);
   });
 });
