@@ -230,3 +230,45 @@ def test_failure_notice_is_not_cut_mid_sentence():
     text = status_message({"project": "P", "title": "t", "status": "failed",
                            "error": "集成测试没过。" * 60})
     assert text.endswith("。…") and len(text) < 340
+
+
+# —— 没事的日子不打扰：早报一行、晚报不发、都不调模型（2026-10-18：早上三条推送，内容大半是「暂无」）——
+
+async def test_quiet_day_sends_one_line_morning_and_no_evening_without_the_model(tmp_path):
+    root, inbox = str(tmp_path), _Inbox()
+
+    class _NoLLM:
+        async def chat(self, *_a, **_k):
+            raise AssertionError("没事的日子不该调模型")
+
+    morning = datetime(2026, 10, 18, 9, 0, tzinfo=TZ)
+    assert await watch.compose_report(root, morning, "早报", llm=_NoLLM()) == "🗒 早报：今天没有需要你处理的事。"
+    assert await watch.compose_report(root, morning, "晚报", llm=_NoLLM()) == ""
+
+    await watch.watch_once(root, morning, notify=inbox, refresh=_items(root), times=[])   # 首次快照
+    evening = datetime(2026, 10, 18, 21, 1, tzinfo=TZ)
+    calls = []
+
+    async def writer(r, n, label):
+        calls.append(label)
+        return await watch.compose_report(r, n, label, llm=_NoLLM())
+
+    for minute in (1, 2):
+        await watch.watch_once(root, evening + timedelta(minutes=minute), notify=inbox, refresh=_items(root),
+                               times=["21:00"], writer=writer)
+    assert inbox.messages == [] and calls == ["晚报"]             # 晚报不发，也不会每分钟重写重试
+
+
+async def test_report_prompt_asks_for_a_glanceable_report(tmp_path):
+    root = str(tmp_path)
+    dispatch.propose(root, project="VortoCode", title="修登录", goal="g")
+    seen = []
+
+    class _LLM:
+        async def chat(self, messages, **_kw):
+            seen.append(messages)
+            return {"content": "修登录等你确认。"}
+
+    await watch.compose_report(root, datetime(2026, 10, 18, 9, 0, tzinfo=TZ), "早报", llm=_LLM())
+    system = seen[0][0]["content"]
+    assert "最多 5 行" in system and "不写「暂无」" in system
