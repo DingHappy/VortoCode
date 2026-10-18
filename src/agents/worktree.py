@@ -9,6 +9,7 @@ worktree 建在 .vortocode/worktrees/<id>（gitignored），不污染 git status
 from __future__ import annotations
 
 import os
+import re
 
 import asyncio
 import shutil
@@ -220,6 +221,7 @@ def apply_diffs_to_branch(repo_root, branch: str, items: list,
     applied: list = []
     failed: list = []
     integration: Optional[dict] = None
+    base = _git(path, "rev-parse", "HEAD", check=False).stdout.strip()
     try:
         for diff, msg in items:
             if not (diff or "").strip():
@@ -242,7 +244,7 @@ def apply_diffs_to_branch(repo_root, branch: str, items: list,
             if verify_tier(merged) == _TIER_DOCS:      # 整批都是文档：同样如实跳过，别演一遍
                 integration = _skipped_verification(", ".join(diff_paths(merged))[:120])
             else:
-                integration = run_tests(path, test_cmd)
+                integration = compare_with_base(repo_root, base, run_tests(path, test_cmd))
         return {"ok": bool(applied), "branch": branch, "applied": applied,
                 "failed": failed, "integration": integration}
     finally:
@@ -341,6 +343,72 @@ def run_tests(worktree, cmd: Optional[list] = None, timeout: Optional[int] = Non
             shutil.rmtree(cache_dir, ignore_errors=True)
 
 
+_FAILED_TEST = re.compile(r"^(?:FAILED|ERROR) (\S+?)(?: - .*)?$", re.M)
+_BASELINE_MAX = 50
+
+
+def failed_test_ids(output: str) -> list[str]:
+    """pytest 简要汇总里 FAILED / ERROR 的测试 id（去重保序）。"""
+    seen: dict = {}
+    for match in _FAILED_TEST.finditer(output or ""):
+        seen.setdefault(match.group(1), None)
+    return list(seen)
+
+
+def compare_with_base(repo_root, base: Optional[str], result: dict) -> dict:
+    """测试红了，就把失败的那几个测试拿到改动前的代码（base）上再跑一遍。
+
+    改动前就失败的不算这次改动的错：结果改判 ok，并在 ``baseline.preexisting`` 里如实列出
+    （上层要写进报告，不能当成全绿）。改动后才出现的失败照样判红，列在 ``baseline.new``。
+    跳过的、超时的、找不到失败测试 id 的、失败太多的、不是 pytest 的，原样返回——宁可误判红，
+    不可误判绿。在基线上偶发通过的不稳定测试会被算成新失败，同样是偏保守的一侧。
+    """
+    if result.get("ok") or result.get("skipped") or not base:
+        return result
+    if "pytest" not in str(result.get("cmd") or ""):
+        return result
+    failed = failed_test_ids(result.get("output") or "")
+    if not failed or len(failed) > _BASELINE_MAX:
+        return result
+    from src.utils.python_exe import pytest_argv
+    import uuid
+    path = _worktrees_dir(repo_root) / f"base-{uuid.uuid4().hex[:8]}"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    add = _git(repo_root, "worktree", "add", "--detach", str(path), base, check=False)
+    if add.returncode != 0:
+        return result
+    try:
+        # 改动新加的测试文件在基线上不存在；混进去 pytest 会整轮报「找不到文件」，什么都没跑
+        present = [test for test in failed if (path / test.split("::", 1)[0]).exists()]
+        if not present:
+            return result
+        rerun = run_tests(path, pytest_argv("-q", *present))
+    finally:
+        remove_worktree(repo_root, path)
+    if "超时" in str(rerun.get("output") or "")[:40]:
+        return result
+    on_base = set(failed_test_ids(rerun.get("output") or "")) if not rerun.get("ok") else set()
+    new = [test for test in failed if test not in on_base]
+    preexisting = [test for test in failed if test in on_base]
+    if not preexisting:
+        return result
+    baseline = {"base": base, "preexisting": preexisting, "new": new}
+    if new:
+        return {**result, "baseline": baseline}
+    return {**result, "ok": True, "baseline": baseline,
+            "output": (f"⚠ {len(preexisting)} 个失败的测试在改动前的代码上同样失败，不计入本次改动："
+                       + "、".join(preexisting[:5]) + "\n\n" + str(result.get("output") or ""))}
+
+
+def baseline_note(verification: Optional[dict]) -> str:
+    """报告里的一句话：通过是「除了主干上本来就红的那些」。没有就空串。"""
+    pre = ((verification or {}).get("baseline") or {}).get("preexisting") or []
+    if not pre:
+        return ""
+    shown = "、".join(pre[:3]) + (f" 等 {len(pre)} 个" if len(pre) > 3 else "")
+    return f"（另有 {shown} 测试在改动前的代码上就失败，未计入本次改动，主干需要单独修）"
+
+
 async def run_isolated_task(repo_root, wid: str, description: str,
                             build_agent: Callable[[str], object],
                             mode: str = "build",
@@ -369,6 +437,9 @@ async def run_isolated_task(repo_root, wid: str, description: str,
             return diff, conclusion, _skipped_verification(", ".join(diff_paths(diff))[:120])
         # pytest 慢且阻塞：丢线程跑（锁外），既不冻 UI、并行时多个测试也能真并发（各自独立 worktree）
         verification = await await_thread(run_tests, path, test_cmd)
+        if not verification.get("ok"):              # 改动前就红的测试不算这次改动的错
+            head = _git(path, "rev-parse", "HEAD", check=False).stdout.strip()
+            verification = await await_thread(compare_with_base, repo_root, head, verification)
         return diff, conclusion, verification
     finally:
         await _git_op(remove_worktree, repo_root, path)
@@ -629,7 +700,7 @@ def verify_branch(repo_root, branch: str, test_cmd: list, wid: str,
     if add.returncode != 0:
         return {"ok": False, "output": "worktree add 失败: " + (add.stderr or "").strip()[:200], "cmd": ""}
     try:
-        result = run_tests(path, test_cmd)
+        result = compare_with_base(repo_root, base, run_tests(path, test_cmd))
         if result.get("ok") and runtime:
             result = _fold_runtime_verify(repo_root, path, result, wid)
         return result

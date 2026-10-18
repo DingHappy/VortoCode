@@ -6,6 +6,7 @@ from typing import Any, Callable, Optional
 from src.agents.agent_loop import MainAgent, DEV_SUBAGENT_ROLE, _clip_middle
 from src.agents.tools._common import _truthy
 from src.agents.tool import Tool
+from src.agents.worktree import baseline_note
 from src.agents.tools.files import build_read_tools, build_write_tools, build_test_tool
 from src.utils.exc_utils import _exc_text
 from src.utils.async_ops import await_thread
@@ -136,7 +137,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 except Exception as error:  # noqa: BLE001
                     delivery_note = f"（Desktop 交付记录未保存：{_exc_text(error)}；分支仍可用）"
                 return (f"✅ {verdict}{fixed}，落到新分支 {branch}（{change_size}，"
-                        f"git checkout {branch} 查看，未碰 main）。"
+                        f"git checkout {branch} 查看，未碰 main）。" + baseline_note(ver)
                         + _test_delta_note(diff) + _dropped_tests_note(diff, desc) + delivery_note)
             return f"✅ {verdict}{fixed}，但落分支失败：{res['error']}。diff {change_size}。"
         tail = (ver or {}).get("output", "")[-1000:]
@@ -383,7 +384,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     f"分支已保留待修：git checkout {branch}，据失败修正后再集成。")
         elif integ and integ["ok"]:
             note = (f"✅ {len(res['applied'])} 块落到 {branch} 且**集成后全量测试通过**（git checkout 查看，未碰 main）。"
-                    + _test_delta_note("\n".join(g["diff"] for g in greens)))
+                    + baseline_note(integ) + _test_delta_note("\n".join(g["diff"] for g in greens)))
         else:                                            # 没跑集成测试（理论上 test_cmd 恒有，留兜底）
             note = f"{len(res['applied'])} 块落到 {branch}（git checkout 查看，未碰 main）。"
         return head + note + dropped_note + "\n" + "\n".join(lines)
@@ -552,6 +553,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     if green:
                         if r["ver"].get("skipped"):   # 文档档位：绿是"没跑测试"的绿，台账要记
                             b.note = "跳过测试（纯文档改动，跳过≠通过）"
+                        elif baseline_note(r["ver"]):
+                            b.note = baseline_note(r["ver"]).strip("（）")
                         items.append((r["diff"], f"dev_auto[{b.id}]: {b.desc}"))
                     else:
                         b.status = "failed"
@@ -657,7 +660,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             _save()
             passed = "**集成后全量测试 + 运行时验证通过**" if (integ.get("runtime")) else "**集成后全量测试通过**"
             done = (f"\n✅ 全部落到 {branch}（{landed_ind} 独立 + {dep_done} 依赖）且{passed}"
-                    f"（未碰 main，git checkout {branch} 查看）。")
+                    f"（未碰 main，git checkout {branch} 查看）。") + baseline_note(integ)
             done += _fmt_runtime(integ)
             # 诚实提示测试增量：从**整条分支相对 base 的实际 diff**算（独立批 + 依赖接力提交都覆盖）。
             changed = await await_thread(_branch_changed_files, repo_root, dp.base, branch)
