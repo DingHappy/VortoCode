@@ -147,6 +147,26 @@ async def test_toggle_enable_asks_but_disable_does_not(tmp_path):
     assert load_jobs(tmp_path)[0].enabled is False                 # 停用不需要点头
 
 
+async def test_disable_tells_the_owner_enable_does_not(tmp_path, monkeypatch):
+    """停用不问，但要推给主人：2026-10-12 验收会话停掉了早报，六天没人发现。"""
+    import src.scheduling.notices as notices
+    sent = []
+
+    def fake_make_notifier(repo_root, **kw):
+        async def notify(text, **_):
+            sent.append((kw.get("source"), text))
+            return True
+        return notify
+
+    monkeypatch.setattr(notices, "make_notifier", fake_make_notifier)
+    _seed(tmp_path)
+    t = _tools(tmp_path, _yes())["cron_toggle"]
+    assert "✅" in await t.handler({"name": "relay_duty", "enabled": False})
+    assert sent == [("cron:relay_duty:disabled", sent[0][1])] and "relay_duty" in sent[0][1]
+    assert "✅" in await t.handler({"name": "relay_duty", "enabled": True})
+    assert len(sent) == 1                                           # 启用已经问过人，不再另推
+
+
 # ---------------------------------------------------------------- 3. 不毁主人的文件
 def test_add_preserves_comments_and_siblings(tmp_path):
     _seed(tmp_path)

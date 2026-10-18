@@ -156,6 +156,48 @@ async def test_command_job_failures_also_count_toward_streak(tmp_path, monkeypat
     assert CronState(str(tmp_path)).failures("cmd") == 2
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["command", "prompt"])
+async def test_escalation_is_the_first_line_and_survives_quiet_digest(tmp_path, monkeypatch, kind):
+    """连败升级要在通知第一行：长输出后的末行在手机上看不到，安静时段汇总还会把每条截到 120 字。"""
+    import src.agents.shell as shell
+    from src.scheduling.notices import flush_quiet_digest, hold_for_quiet
+
+    def fake_run_command(repo_root, command, timeout=None, require_isolation=False):
+        return {"code": 1, "output": "x" * 500, "sandbox": {"backend": "seatbelt", "isolated": True}}
+
+    async def failing(repo_root, prompt, *, mode, model):
+        raise RuntimeError("y" * 500)
+
+    monkeypatch.setattr(shell, "run_command", fake_run_command)
+    monkeypatch.setenv("VORTOCODE_CRON_FAIL_ESCALATE", "2")
+    sent = []
+
+    async def notify(text, **_):
+        sent.append(text)
+        return True
+
+    job = _job("relay", command="exit 1") if kind == "command" else _job("relay")
+    for _ in range(2):
+        try:
+            await run_job(str(tmp_path), job, run_session=failing, notify=notify)
+        except RuntimeError:
+            pass
+    assert "已连续失败" not in sent[0]
+    assert sent[-1].splitlines()[0].startswith("🔺 cron [relay] 已连续失败 2 次")
+
+    hold_for_quiet(str(tmp_path), sent[-1], source="cron:relay")
+    digests = []
+
+    async def send(text):
+        digests.append(text)
+        return True
+
+    monkeypatch.delenv("VORTOCODE_QUIET_HOURS", raising=False)
+    assert await flush_quiet_digest(str(tmp_path), send) == 1
+    assert "已连续失败 2 次" in digests[0]
+
+
 def test_streak_state_does_not_corrupt_last_run(tmp_path):
     """连败计数存在保留键下，与「上次运行时刻」互不踩踏（重启后都还在）。"""
     state = CronState(str(tmp_path))
