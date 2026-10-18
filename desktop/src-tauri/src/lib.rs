@@ -3387,11 +3387,15 @@ fn build_bundled_runtime_command(
     ))
 }
 
+/// 只认构建这个 App 的那棵源码树（按 build.rs 编进来的路径哈希精确比对）：长得像 VortoCode 仓库
+/// 的别处目录一律不算，否则打开一个仿冒仓库就能让 Desktop 跑它的源码。
 fn is_vortocode_development_root(root: &Path) -> bool {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../..")
-        .canonicalize()
-        .is_ok_and(|source_root| source_root == root)
+    use std::os::unix::ffi::OsStrExt;
+    let expected = env!("VORTOCODE_SOURCE_ROOT_SHA256");
+    !expected.is_empty()
+        && root.canonicalize().is_ok_and(|path| {
+            format!("{:x}", Sha256::digest(path.as_os_str().as_bytes())) == expected
+        })
         && root.join("src/cli.py").is_file()
 }
 
