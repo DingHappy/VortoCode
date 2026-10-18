@@ -7,6 +7,7 @@ import { useState } from "react";
 
 import { confirmAction } from "../../lib/confirm";
 import { errorText } from "../../lib/errorText";
+import { ACCOUNT_MANAGE_URL, MEMBER_KEY_SOURCE } from "../../lib/vortoAccount";
 import type { DesktopLlmProfileStatus, RelayLoginOutcome } from "../../types";
 
 const REGISTER_URL = "https://token.vortotech.com/register";
@@ -27,6 +28,7 @@ function formatExpiry(seconds?: number | null): string {
 
 export function AccountPane({ profile, onProfile, onRestartRuntime, onOpenModelSettings }: Props) {
   const account = profile?.account;
+  const member = account?.keySource === MEMBER_KEY_SOURCE;
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [needsPlan, setNeedsPlan] = useState(false);
@@ -86,12 +88,12 @@ export function AccountPane({ profile, onProfile, onRestartRuntime, onOpenModelS
             <button onClick={() => void logout()} disabled={busy}>退出登录</button>
           </div>
           <dl className="account-facts">
-            <div><dt>使用中</dt><dd>{account.keySource === "token_plan" ? "Token Plan（Desktop 套餐）" : "按量 Key（VortoCode Desktop）"}</dd></div>
+            <div><dt>使用中</dt><dd>{member ? "VortoCode 会员" : account.keySource === "token_plan" ? "Token Plan（Desktop 套餐）" : "按量 Key（VortoCode Desktop）"}</dd></div>
             {account.planName && <div><dt>套餐</dt><dd>{account.planName}{account.planExpiry ? ` · ${formatExpiry(account.planExpiry)}` : ""}</dd></div>}
           </dl>
           <div className="settings-card-foot">
             <span>{note}</span>
-            <button onClick={() => open(PLAN_URL)}>{account.keySource === "token_plan" ? "管理套餐" : "购买套餐"}</button>
+            <button onClick={() => open(member ? ACCOUNT_MANAGE_URL : PLAN_URL)}>{member ? "管理会员" : account.keySource === "token_plan" ? "管理套餐" : "购买套餐"}</button>
           </div>
         </section>
       ) : (

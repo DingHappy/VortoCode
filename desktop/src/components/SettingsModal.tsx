@@ -28,6 +28,7 @@ import { AccountPane } from "./settings/AccountPane";
 import { BrowserPane } from "./settings/BrowserPane";
 import { UpdateCard } from "./settings/UpdateCard";
 import { VortoAccountCard } from "./settings/VortoAccountCard";
+import { keySourceLabel } from "../lib/vortoAccount";
 import { DesktopControlPane } from "./settings/DesktopControlPane";
 import { CustomProviders } from "./settings/CustomProviders";
 import { ModelPicks } from "./settings/ModelPicks";
@@ -306,7 +307,7 @@ export function SettingsModal({
           </div>
           {llmProfile?.account && (
             <p className="llm-account-note">
-              当前通过账号 {llmProfile.account.displayName || llmProfile.account.username} 登录，使用{llmProfile.account.keySource === "token_plan" ? " Token Plan" : "按量 Key"}。
+              当前通过账号 {llmProfile.account.displayName || llmProfile.account.username} 登录，使用{keySourceLabel(llmProfile.account.keySource)}。
               在下面改服务地址或填新 Key 会替换掉它；要换账号请到<button onClick={() => setSection("account")}>账号</button>。
             </p>
           )}
@@ -501,7 +502,11 @@ export function SettingsModal({
 
         {section === "general" && (
         <>
-        <VortoAccountCard />
+        <VortoAccountCard
+          onProfile={onLlmProfileChange}
+          onRestartRuntime={onRestartRuntime}
+          onProfileCleared={async () => onLlmProfileChange(await invoke<DesktopLlmProfileStatus>("get_llm_profile"))}
+        />
         <UpdateCard />
         <details className="settings-about"><summary>版本与构建信息</summary><BuildVersion details /></details>
         <details className="advanced-settings">
