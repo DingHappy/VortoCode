@@ -57,6 +57,7 @@ _GENERAL_HTTP_PREFIXES = (
     "/api/im/",                 # IM 桥状态与同机转发通知：常驻助理持有 Telegram 时 8080 经这里转发（真机曾被挡）
     "/api/extensions/catalog",  # 精选目录：MCP 只写本范围的 config/mcp.yaml；技能安装另需项目（见下）
     "/api/extensions/mcp/servers",  # MCP 服务清单与开关：只读写本范围的 config/mcp.yaml，不碰项目文件/Shell/Git
+    "/api/ops/heartbeat",       # 运维心跳报到：只写报到状态、推一条通知，专用令牌（routers/ops_heartbeat.py）
     "/api/voice/",              # 小智语音端点：只读今日事项/任务单 + 记一张待确认提议，专用令牌（routers/voice.py）
     "/api/artifacts",
     "/artifact/",

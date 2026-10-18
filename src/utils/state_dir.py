@@ -39,6 +39,7 @@ _STATE_ENTRIES = [
     "audit.log",
     "cron_state.json",
     "followups.json",
+    "ops_heartbeats.json",
     "cli_session.json",
     "tui_theme",
     "tui_history",
