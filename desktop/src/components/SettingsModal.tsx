@@ -27,6 +27,7 @@ import { LlmConnectionCheck } from "./settings/LlmConnectionCheck";
 import { AccountPane } from "./settings/AccountPane";
 import { BrowserPane } from "./settings/BrowserPane";
 import { UpdateCard } from "./settings/UpdateCard";
+import { VortoAccountCard } from "./settings/VortoAccountCard";
 import { DesktopControlPane } from "./settings/DesktopControlPane";
 import { CustomProviders } from "./settings/CustomProviders";
 import { ModelPicks } from "./settings/ModelPicks";
@@ -500,6 +501,7 @@ export function SettingsModal({
 
         {section === "general" && (
         <>
+        <VortoAccountCard />
         <UpdateCard />
         <details className="settings-about"><summary>版本与构建信息</summary><BuildVersion details /></details>
         <details className="advanced-settings">
