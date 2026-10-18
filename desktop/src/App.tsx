@@ -118,6 +118,7 @@ import { McpServersCard } from "./components/McpServersCard";
 import { ProjectSkillsCard } from "./components/ProjectSkillsCard";
 import { CatalogCard } from "./components/CatalogCard";
 import { groupSessions, liveSessionStatus } from "./lib/sessionGroups";
+import { autoCheckForUpdate, type UpdateCheck } from "./lib/updateCheck";
 import { ExtensionsInspector } from "./components/ExtensionsInspector";
 import { FilesPanel } from "./components/FilesPanel";
 import { GitReviewPanel } from "./components/GitReviewPanel";
@@ -567,6 +568,9 @@ function App() {
   const activeScope: WorkspaceScope = runtime.scope ?? processStatus.scope ?? (repoRoot.trim() ? "project" : "general");
   /** 精选目录装完东西后递增，让插件页的 MCP 服务 / 项目技能卡重新加载。 */
   const [pluginsRevision, setPluginsRevision] = useState(0);
+  /** 启动时自动检查更新（每天最多一次，设置里可关）；有新版才非空。 */
+  const [availableUpdate, setAvailableUpdate] = useState<UpdateCheck | null>(null);
+  useEffect(() => { void autoCheckForUpdate().then(setAvailableUpdate); }, []);
   // 切换会话或工作区时回到对话视图。
   useEffect(() => { setMainView("chat"); }, [activeSid, activeScope]);
   // llmInputIsLocal 派生只服务设置弹窗，已随 <SettingsModal> 搬入组件内计算。
@@ -3428,6 +3432,10 @@ function App() {
               <span className="sidebar-avatar">{llmProfile?.account ? (llmProfile.account.displayName || llmProfile.account.username).slice(0, 1).toUpperCase() : <UserRound size={14} />}</span>
               <span>{llmProfile?.account ? (llmProfile.account.displayName || llmProfile.account.username) : relayMode(llmProfile) ? "账号" : "模型服务"}</span>
             </button>
+            {availableUpdate && (
+              <button className="sidebar-update" title={`VortoCode ${availableUpdate.latest} 已发布，点击打开下载页`}
+                onClick={() => void openUrl(availableUpdate.url)}>新版本 {availableUpdate.latest}</button>
+            )}
             <button className="sidebar-gear" aria-label="设置" title="设置" onClick={() => setSettingsOpen(true)}>
               <Settings2 size={16} />
             </button>

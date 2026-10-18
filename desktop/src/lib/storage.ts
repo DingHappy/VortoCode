@@ -24,6 +24,8 @@ export const STORAGE_KEYS = {
   modelPicks: "vortocode.desktop.modelPicks",
   // 助理模式空白对话里的上手示例：发过几条或点了「不再显示」就收起。
   starterTips: "vortocode.desktop.starterTips",
+  // 上次自动检查更新的时间（毫秒）：每天最多问 GitHub 一次。
+  updateCheckedAt: "vortocode.desktop.updateCheckedAt",
 } as const;
 
 // 每个项目一个会话 id，key 由项目 id 拼出前缀。

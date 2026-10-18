@@ -10468,3 +10468,8 @@ button.timeline-heading { width: 100%; border: 0; background: transparent; color
 .context-warning { font-weight: 600; }
 .context-warning.level-warn { color: var(--amber); }
 .context-warning.level-high { color: var(--red); }
+
+/* 侧栏底部的新版本提醒：点一下打开下载页 */
+.sidebar-update { border: 1px solid var(--accent); color: var(--accent); background: transparent; border-radius: 999px; padding: 2px 10px; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.settings-check { display: flex; align-items: flex-start; gap: 8px; margin: 10px 0 4px; font-size: 13px; }
+.settings-check input { margin-top: 2px; }

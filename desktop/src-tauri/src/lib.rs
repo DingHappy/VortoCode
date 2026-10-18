@@ -658,6 +658,9 @@ struct DesktopPreferences {
     desktop_target: String,
     #[serde(default)]
     desktop_apps: String,
+    /// 关掉启动时检查更新（默认开：每天最多问一次 GitHub 最新版本）。
+    #[serde(default)]
+    update_check_disabled: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -812,6 +815,80 @@ async fn set_desktop_control(app: AppHandle, enabled: bool, target: String, apps
     preferences.desktop_apps = apps;
     save_json_atomic_with_mode(&path, "desktop-preferences", &preferences, Some(0o600))?;
     Ok(desktop_control_status(&preferences))
+}
+
+// ── 检查更新：问 GitHub 最新正式版，比版本号；不下载、不安装，只把下载页交给用户 ──
+const RELEASES_API: &str = "https://api.github.com/repos/DingHappy/VortoCode/releases/latest";
+const RELEASES_PAGE_PREFIX: &str = "https://github.com/DingHappy/VortoCode/releases/";
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct UpdateCheck {
+    current: String,
+    latest: String,
+    newer: bool,
+    url: String,
+    published_at: String,
+}
+
+fn parse_version(raw: &str) -> Option<(u64, u64, u64)> {
+    let core = raw.trim().trim_start_matches('v').split(['-', '+']).next()?;
+    let mut parts = core.split('.').map(|part| part.parse::<u64>().ok());
+    let version = (parts.next()??, parts.next()??, parts.next().unwrap_or(Some(0))?);
+    parts.next().is_none().then_some(version)
+}
+
+/// GitHub 的 releases/latest 已经排除了草稿和预发布；这里只认本仓库的发布页链接，
+/// 响应异常时宁可当没有新版，也不把别的地址交给用户去打开。
+fn update_from_release(current: &str, release: &serde_json::Value) -> Result<UpdateCheck, String> {
+    let tag = release.get("tag_name").and_then(|value| value.as_str()).unwrap_or_default();
+    let latest = parse_version(tag).ok_or_else(|| format!("最新版本号无法识别：{tag}"))?;
+    let installed = parse_version(current).ok_or_else(|| format!("当前版本号无法识别：{current}"))?;
+    let url = release.get("html_url").and_then(|value| value.as_str()).unwrap_or_default();
+    if !url.starts_with(RELEASES_PAGE_PREFIX) {
+        return Err("发布页地址不是本项目的 GitHub Releases，已忽略".into());
+    }
+    Ok(UpdateCheck {
+        current: current.into(),
+        latest: format!("{}.{}.{}", latest.0, latest.1, latest.2),
+        newer: latest > installed,
+        url: url.into(),
+        published_at: release.get("published_at").and_then(|value| value.as_str()).unwrap_or_default().into(),
+    })
+}
+
+#[tauri::command]
+async fn check_for_update(app: AppHandle) -> Result<UpdateCheck, String> {
+    let current = app.package_info().version.to_string();
+    let response = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .user_agent(format!("VortoCode-Desktop/{current}"))
+        .build()
+        .map_err(|error| format!("无法检查更新：{error}"))?
+        .get(RELEASES_API)
+        .header("Accept", "application/vnd.github+json")
+        .send()
+        .await
+        .map_err(|error| format!("连不上 GitHub，稍后再试：{error}"))?;
+    if !response.status().is_success() {
+        return Err(format!("GitHub 返回 {}，稍后再试", response.status()));
+    }
+    let release: serde_json::Value = response.json().await.map_err(|error| format!("GitHub 的响应无法解析：{error}"))?;
+    update_from_release(&current, &release)
+}
+
+#[tauri::command(async)]
+fn get_update_check_enabled(app: AppHandle) -> Result<bool, String> {
+    Ok(!read_desktop_preferences(&desktop_preferences_path(&app)?).update_check_disabled)
+}
+
+#[tauri::command(async)]
+fn set_update_check_enabled(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    let path = desktop_preferences_path(&app)?;
+    let mut preferences = read_desktop_preferences(&path);
+    preferences.update_check_disabled = !enabled;
+    save_json_atomic_with_mode(&path, "desktop-preferences", &preferences, Some(0o600))?;
+    Ok(enabled)
 }
 
 #[tauri::command(async)]
@@ -3850,6 +3927,9 @@ pub fn run() {
             get_experimental_workers,
             set_experimental_workers,
             get_desktop_control,
+            check_for_update,
+            get_update_check_enabled,
+            set_update_check_enabled,
             set_desktop_control,
             save_llm_provider,
             remove_llm_provider,
@@ -7042,6 +7122,24 @@ mod tests {
         let broken = DesktopPreferences { desktop_target: "ssh:-oProxyCommand=x".into(), ..on };
         configure_desktop_control(&mut command, &broken);
         assert_eq!(env_of(&command, "VORTOCODE_ENABLE_DESKTOP_CONTROL"), Some(None));
+    }
+
+    #[test]
+    fn update_check_compares_versions_and_only_trusts_our_release_page() {
+        let release = |tag: &str, url: &str| serde_json::json!({
+            "tag_name": tag, "html_url": url, "published_at": "2026-10-20T00:00:00Z" });
+        let page = "https://github.com/DingHappy/VortoCode/releases/tag/v0.2.1";
+        let newer = update_from_release("0.2.0", &release("v0.2.1", page)).unwrap();
+        assert!(newer.newer && newer.latest == "0.2.1" && newer.url == page);
+        assert!(!update_from_release("0.2.0", &release("v0.2.0", page)).unwrap().newer);
+        assert!(!update_from_release("0.10.0", &release("v0.9.9", page)).unwrap().newer);   // 数字比较，不是字符串
+        assert!(update_from_release("0.2.0", &release("v1.0", page)).unwrap().newer);
+        assert!(update_from_release("0.2.0", &release("v0.3.0", "https://evil.example/download")).is_err());
+        assert!(update_from_release("0.2.0", &release("nightly", page)).is_err());
+        assert_eq!(parse_version("v0.2.0-beta.1"), Some((0, 2, 0)));
+        assert_eq!(parse_version("0.2.0.1"), None);
+        let old: DesktopPreferences = serde_json::from_str(r#"{"browserControl": true}"#).unwrap();
+        assert!(!old.update_check_disabled);                                  // 旧偏好文件：默认检查
     }
 
     #[test]
