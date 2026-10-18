@@ -189,6 +189,8 @@ vortocode/
 
 ## 快速开始
 
+> **只想用 Desktop App？** 看 [docs/GETTING_STARTED_DESKTOP.md](docs/GETTING_STARTED_DESKTOP.md)：从源码构建 App、连上模型、单机能做什么、什么时候才需要常驻电脑。下面是命令行与服务的开发者路径。
+
 ### 1. 安装依赖
 
 ```bash
