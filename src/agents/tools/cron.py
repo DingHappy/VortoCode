@@ -15,6 +15,18 @@ from src.agents.tool import Tool
 from src.agents.tools._common import _truthy
 
 
+def _scheduler_on() -> bool:
+    import os
+    return str(os.getenv("VORTOCODE_CRON", "")).strip().lower() in ("1", "true", "yes", "on")
+
+
+# 只用 Desktop 时本机引擎固定关掉调度（VORTOCODE_CRON=0）：作业写得进去、显示「已启用」，却永远不会到点跑。
+# 建/启用时必须当面说清，不然用户等到第二天才发现提醒没来。
+_SCHEDULER_OFF = ("\n⚠️ 这台机器上的调度**没有打开**（只用 Desktop 时就是这样）：作业不会自动跑，到点也没人执行。"
+                  "可以用 cron_run 手动跑一次；要按时自动跑，需要一台一直开着、以常驻方式运行的电脑"
+                  "（服务带 VORTOCODE_CRON=1 启动）。")
+
+
 def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list[Tool]:
     """定时作业的观察 + 排班面（`.vortocode/cron.yaml`）。
 
@@ -47,8 +59,7 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
         if not jobs:
             return ("cron.yaml 里还没有任何作业。用 cron_add 建一个（只建 prompt 作业）。"
                     "注意：调度循环要服务带 VORTOCODE_CRON=1 起才转。")
-        import os as _os
-        on = str(_os.getenv("VORTOCODE_CRON", "")).strip().lower() in ("1", "true", "yes", "on")
+        on = _scheduler_on()
         state, now = CronState(repo_root), _dt.now()
         lines = [f"调度总开关：{'✅ 开' if on else '⛔ 关（作业不会自动跑，仍可 cron_run 手动触发）'}"]
         for j in jobs:
@@ -96,7 +107,7 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
         # 而不是一个已经在排期里的作业。fail-closed 的方向永远是"不跑"。
         net = "可联网" if allow_web else "**不能联网**"
         ok = await _ask(f"新建定时作业「{name}」并**启用**？它会在无人盯屏时按 {schedule} 自动跑（{net}）：\n"
-                        f"{' '.join(prompt.split())[:300]}")
+                        f"{' '.join(prompt.split())[:300]}" + ("" if _scheduler_on() else _SCHEDULER_OFF))
         if not ok:
             return (f"已写入作业 {name}，但保持**停用**（你拒绝了启用）。"
                     f"想跑再说一声，或 cron_run 手动跑一次试试。\n{block}")
@@ -116,7 +127,7 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
                  if want_web else
                  "\n提示：该作业**不能联网**（无人值守默认不出网）。需要联网请在创建时申报 allow_web。"))
         return (f"✅ 定时作业 {name} 已创建并**已启用**（{schedule}）。无需再启用一次。\n"
-                + (job_block(repo_root, name) or block) + note)
+                + (job_block(repo_root, name) or block) + note + ("" if _scheduler_on() else _SCHEDULER_OFF))
 
     async def _toggle(args: dict) -> str:
         from src.scheduling.cron import CronEditError, set_job_enabled
@@ -126,7 +137,7 @@ def build_cron_tools(repo_root: str, confirm: Optional[Callable] = None) -> list
         if enabled and not await _ask(f"启用定时作业「{name}」？启用后它会在无人盯屏时自动跑。"):
             return f"未启用 {name}（你拒绝了）。"
         try:
-            done = "✅ " + set_job_enabled(repo_root, name, enabled)
+            done = "✅ " + set_job_enabled(repo_root, name, enabled) + ("" if not enabled or _scheduler_on() else _SCHEDULER_OFF)
         except CronEditError as e:
             return f"未改动：{e}"
         except (OSError, ValueError) as e:

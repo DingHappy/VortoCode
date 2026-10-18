@@ -128,6 +128,27 @@ async def test_add_enables_only_after_approval(tmp_path):
     assert job.enabled is True and job.kind == "prompt" and "✅" in out
 
 
+async def test_scheduler_off_is_said_out_loud_when_adding_or_enabling(tmp_path, monkeypatch):
+    """只用 Desktop 时调度固定关着：建/启用作业要当面说「不会自动跑」，别让人第二天才发现提醒没来。"""
+    _seed(tmp_path)
+    asked = []
+
+    async def yes_and_record(message):
+        asked.append(message)
+        return True
+
+    monkeypatch.setenv("VORTOCODE_CRON", "0")
+    tools = _tools(tmp_path, yes_and_record)
+    out = await tools["cron_add"].handler({"name": "remind", "schedule": "at 08:00", "prompt": "提醒我喝水"})
+    assert "调度**没有打开**" in out and "调度**没有打开**" in asked[-1]       # 问之前、建之后都说
+    await tools["cron_toggle"].handler({"name": "remind", "enabled": False})
+    assert "没有打开" in await tools["cron_toggle"].handler({"name": "remind", "enabled": True})
+
+    monkeypatch.setenv("VORTOCODE_CRON", "1")
+    out = await tools["cron_add"].handler({"name": "remind2", "schedule": "at 08:00", "prompt": "提醒我喝水"})
+    assert "没有打开" not in out
+
+
 async def test_no_confirm_callback_means_never_enabled(tmp_path):
     """端没接确认回调（fail-closed）→ 绝不该有作业自己变成启用态。"""
     _seed(tmp_path)

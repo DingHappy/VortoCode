@@ -3826,7 +3826,7 @@ function App() {
             }}>
             {assistantTab === "audit" ? <AssistantAudit entries={auditEntries} />
               : assistantTab === "goals" ? <AssistantGoals key={assistantScope} client={clientRef.current} connected={connection === "connected"} />
-              : assistantTab === "schedule" ? <AssistantSchedule key={assistantScope} items={assistantSchedule} connected={connection === "connected"}
+              : assistantTab === "schedule" ? <AssistantSchedule key={assistantScope} items={assistantSchedule} connected={connection === "connected"} local={!onAssistantHost()}
                   onRefresh={async () => {
                     const client = clientRef.current;
                     const scope = assistantScope;

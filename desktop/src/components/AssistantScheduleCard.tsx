@@ -23,7 +23,7 @@ export function AssistantScheduleCard({ item, connected, onToggle, onHistory }: 
     <small>{item.schedule} · {item.enabled ? "已启用" : "已暂停"}</small>
     {item.detail && <p>{item.detail}</p>}
     {item.last && <small>上次定时执行：{item.last.replace("T", " ")}</small>}
-    {item.scheduler_enabled === false ? <small>{item.kind === "goal" ? "此运行端未配置目标提醒通知" : "此运行端的定时调度总开关未开启"}</small>
+    {item.scheduler_enabled === false ? <small>{item.kind === "goal" ? "这台电脑上没有通知渠道，目标提醒发不出去（需要常驻电脑）" : "这台电脑上调度没开，不会按时自动跑（只用 Desktop 时就是这样；要按时跑需要常驻电脑）"}</small>
       : item.next && <small>下次：{item.next.replace("T", " ")}</small>}
     {Boolean(item.failures) && <small>连续失败 {item.failures} 次</small>}
     {managed ? <div className="assistant-task-actions">
