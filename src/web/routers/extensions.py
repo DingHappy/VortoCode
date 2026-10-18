@@ -52,3 +52,53 @@ async def connect_session_mcp(session: str):
         raise HTTPException(403, str(e)) from e
     except Exception:
         raise HTTPException(409, 'MCP 未更新；检查配置、服务及会话状态后可手动重试。') from None
+
+
+# ── MCP 服务管理（Desktop 插件页）：看清会不会启动、增删启停免凭据 HTTP 服务、测试连接 ──
+
+def _mcp_config_call(fn, *args):
+    from src.web.deps import HTTPException
+    from src.workflow.workbench.mcp_config import McpConfigError
+    try:
+        return fn(os.getcwd(), *args)
+    except McpConfigError as error:
+        raise HTTPException(409 if "已经有" in str(error) else 400, str(error)) from None
+
+
+@router.get("/api/extensions/mcp/servers")
+async def list_mcp_servers():
+    from src.workflow.workbench.mcp_config import list_servers
+    return _mcp_config_call(list_servers)
+
+
+@router.post("/api/extensions/mcp/servers")
+async def add_mcp_server(body: dict):
+    from src.workflow.workbench.mcp_config import add_http_server
+    return _mcp_config_call(add_http_server, str((body or {}).get("name") or ""), str((body or {}).get("url") or ""))
+
+
+@router.put("/api/extensions/mcp/servers/{name}/enabled")
+async def set_mcp_server_enabled(name: str, body: dict):
+    from src.web.deps import HTTPException
+    from src.workflow.workbench.mcp_config import set_enabled
+    enabled = (body or {}).get("enabled")
+    if not isinstance(enabled, bool):
+        raise HTTPException(400, "enabled 需要是 true 或 false")
+    return _mcp_config_call(set_enabled, name, enabled)
+
+
+@router.delete("/api/extensions/mcp/servers/{name}")
+async def remove_mcp_server(name: str):
+    from src.workflow.workbench.mcp_config import remove_server
+    _mcp_config_call(remove_server, name)
+    return {"ok": True}
+
+
+@router.post("/api/extensions/mcp/servers/{name}/test")
+async def test_mcp_server(name: str):
+    from src.web.deps import HTTPException
+    from src.workflow.workbench.mcp_config import McpConfigError, test_server
+    try:
+        return await test_server(os.getcwd(), name)
+    except McpConfigError as error:
+        raise HTTPException(400, str(error)) from None

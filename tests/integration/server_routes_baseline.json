@@ -990,5 +990,35 @@
     "methods": [
       "POST"
     ]
+  },
+  {
+    "path": "/api/extensions/mcp/servers",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/extensions/mcp/servers",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/extensions/mcp/servers/{name}",
+    "methods": [
+      "DELETE"
+    ]
+  },
+  {
+    "path": "/api/extensions/mcp/servers/{name}/enabled",
+    "methods": [
+      "PUT"
+    ]
+  },
+  {
+    "path": "/api/extensions/mcp/servers/{name}/test",
+    "methods": [
+      "POST"
+    ]
   }
 ]

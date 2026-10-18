@@ -1666,6 +1666,28 @@ export type DesktopRuntimeInbox = {
   checkedAt: number;
 };
 
+/** 插件页的 MCP 服务清单：状态与连接时同一套筛选，看到的就是会发生的。 */
+export interface McpServerEntry {
+  name: string;
+  transport: string;
+  target: string;
+  enabled: boolean;
+  status: "available" | "connector" | "blocked" | "disabled";
+  reason: string;
+}
+
+export interface McpServersSnapshot {
+  path: string;
+  exists: boolean;
+  servers: McpServerEntry[];
+}
+
+export interface McpServerTest {
+  ok: boolean;
+  detail: string;
+  tools: string[];
+}
+
 export interface McpConnectionSnapshot {
   status: "blocked" | "disconnected" | "connecting" | "connected" | "partial" | "error";
   detail: string;

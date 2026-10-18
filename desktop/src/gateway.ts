@@ -976,6 +976,28 @@ export class GatewayClient {
     return this.request(`/api/extensions/mcp/connect?session=${encodeURIComponent(session)}`, { method: "POST" });
   }
 
+  async listMcpServers(): Promise<import("./types").McpServersSnapshot> {
+    return this.request("/api/extensions/mcp/servers");
+  }
+
+  async addMcpServer(name: string, url: string): Promise<import("./types").McpServerEntry> {
+    return this.request("/api/extensions/mcp/servers", { method: "POST", body: JSON.stringify({ name, url }) });
+  }
+
+  async setMcpServerEnabled(name: string, enabled: boolean): Promise<import("./types").McpServerEntry> {
+    return this.request(`/api/extensions/mcp/servers/${encodeURIComponent(name)}/enabled`, {
+      method: "PUT", body: JSON.stringify({ enabled }),
+    });
+  }
+
+  async removeMcpServer(name: string): Promise<void> {
+    await this.request(`/api/extensions/mcp/servers/${encodeURIComponent(name)}`, { method: "DELETE" });
+  }
+
+  async testMcpServer(name: string): Promise<import("./types").McpServerTest> {
+    return this.request(`/api/extensions/mcp/servers/${encodeURIComponent(name)}/test`, { method: "POST" });
+  }
+
   async getExtensionsInspect(): Promise<ExtensionsInspectSnapshot> {
     return this.request("/api/extensions/inspect");
   }
