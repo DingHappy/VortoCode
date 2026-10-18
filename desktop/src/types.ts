@@ -1666,6 +1666,26 @@ export type DesktopRuntimeInbox = {
   checkedAt: number;
 };
 
+/** 插件页的项目技能：shared = skills/（随仓库），local = .vortocode/skills/（只在本机）。 */
+export type ProjectSkillScope = "shared" | "local";
+
+export interface ProjectSkill {
+  id: string;
+  scope: ProjectSkillScope;
+  name: string;
+  description: string;
+  revision: string;
+  model_invocable: boolean;
+  extra_fields: string[];
+  instructions?: string;
+}
+
+export interface ProjectSkillsSnapshot {
+  items: ProjectSkill[];
+  issues: string[];
+  locations: Record<ProjectSkillScope, string>;
+}
+
 /** 插件页的 MCP 服务清单：状态与连接时同一套筛选，看到的就是会发生的。 */
 export interface McpServerEntry {
   name: string;

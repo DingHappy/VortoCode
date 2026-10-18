@@ -11,12 +11,13 @@ type Props = {
   inspector: ReactNode;
   mcpConnection?: ReactNode;
   mcpServers?: ReactNode;
+  projectSkills?: ReactNode;
   personalSkills?: ReactNode;
   onChooseProject: () => void;
   onOpenBrowserSettings: () => void;
 };
 
-export function PluginsPage({ activeScope, projectName, inspector, mcpConnection, mcpServers, personalSkills, onChooseProject, onOpenBrowserSettings }: Props) {
+export function PluginsPage({ activeScope, projectName, inspector, mcpConnection, mcpServers, projectSkills, personalSkills, onChooseProject, onOpenBrowserSettings }: Props) {
   return (
     <section className="main-page">
       <header className="main-page-head">
@@ -39,6 +40,7 @@ export function PluginsPage({ activeScope, projectName, inspector, mcpConnection
       {activeScope === "project" ? (
         <div className="plugin-project">
           <h2>{projectName || "当前项目"} 的扩展</h2>
+          {projectSkills}
           {inspector}
         </div>
       ) : (
