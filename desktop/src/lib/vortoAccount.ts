@@ -62,3 +62,26 @@ export function accountHeadline(status: VortoAccountStatus | null, loggingIn: bo
   const who = status.email || "已登录";
   return status.offline ? `${who}（暂时连不上账号服务，稍后会自动恢复）` : who;
 }
+
+/** 账号卡片登录、退出、换会员模型后广播一下，左下角据此刷新。 */
+export const ACCOUNT_CHANGED_EVENT = "vortocode-account-changed";
+export function announceAccountChanged() {
+  window.dispatchEvent(new Event(ACCOUNT_CHANGED_EVENT));
+}
+
+export interface SidebarIdentity {
+  /** 头像字母；空串 = 用默认人像图标 */
+  initial: string;
+  name: string;
+  detail: string;
+  title: string;
+}
+
+/** 左下角显示谁：VortoCode 账号本人（不是模型服务），会员时带上档位。 */
+export function sidebarIdentity(status: VortoAccountStatus | null, membership: VortoMembership | null): SidebarIdentity {
+  if (!status) return { initial: "", name: "VortoCode 账号", detail: "", title: "VortoCode 账号" };
+  if (!status.signedIn) return { initial: "", name: "登录", detail: "", title: "登录 VortoCode 账号" };
+  const name = status.email || "已登录";
+  const detail = membership?.member ? `${membership.planName}会员` : status.offline ? "离线" : "";
+  return { initial: name.slice(0, 1).toUpperCase(), name, detail, title: `已登录 ${name}${detail ? ` · ${detail}` : ""}` };
+}

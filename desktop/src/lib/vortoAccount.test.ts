@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  accountHeadline, keySourceLabel, MEMBER_KEY_SOURCE, membershipLine, type VortoAccountStatus, type VortoMembership,
+  accountHeadline, keySourceLabel, MEMBER_KEY_SOURCE, membershipLine, sidebarIdentity, type VortoAccountStatus,
+  type VortoMembership,
 } from "./vortoAccount";
 
 const base: VortoAccountStatus = {
@@ -45,5 +46,25 @@ describe("keySourceLabel", () => {
     expect(keySourceLabel(MEMBER_KEY_SOURCE)).toBe("VortoCode 会员");
     expect(keySourceLabel("token_plan")).toBe("Token Plan");
     expect(keySourceLabel("pay_as_you_go")).toBe("按量 Key");
+  });
+});
+
+describe("sidebarIdentity", () => {
+  const signedIn: VortoAccountStatus = {
+    signedIn: true, email: "me@example.com", deviceName: "Mac", offline: false, manageUrl: "", note: "",
+  };
+  const member: VortoMembership = {
+    available: true, member: true, planName: "中度", expiresAt: 0, creditsAvailable: 0, keyEnabled: true, inUse: true,
+  };
+  it("shows the signed-in person and their membership", () => {
+    expect(sidebarIdentity(signedIn, member)).toEqual({
+      initial: "M", name: "me@example.com", detail: "中度会员", title: "已登录 me@example.com · 中度会员",
+    });
+    expect(sidebarIdentity(signedIn, { ...member, member: false }).detail).toBe("");
+    expect(sidebarIdentity({ ...signedIn, offline: true }, null).detail).toBe("离线");
+  });
+  it("invites signing in, and stays neutral while loading", () => {
+    expect(sidebarIdentity({ ...signedIn, signedIn: false, email: "" }, null).name).toBe("登录");
+    expect(sidebarIdentity(null, null)).toMatchObject({ initial: "", name: "VortoCode 账号" });
   });
 });
