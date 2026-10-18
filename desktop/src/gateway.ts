@@ -976,6 +976,24 @@ export class GatewayClient {
     return this.request(`/api/extensions/mcp/connect?session=${encodeURIComponent(session)}`, { method: "POST" });
   }
 
+  async listProjectSkills(): Promise<import("./types").ProjectSkillsSnapshot> {
+    return this.request("/api/extensions/skills");
+  }
+
+  async getProjectSkill(scope: string, id: string): Promise<import("./types").ProjectSkill> {
+    return this.request(`/api/extensions/skills/${encodeURIComponent(scope)}/${encodeURIComponent(id)}`);
+  }
+
+  async saveProjectSkill(scope: string, id: string, body: { name: string; description: string; instructions: string; revision: string | null }): Promise<import("./types").ProjectSkill> {
+    return this.request(`/api/extensions/skills/${encodeURIComponent(scope)}/${encodeURIComponent(id)}`, {
+      method: "PUT", body: JSON.stringify(body),
+    });
+  }
+
+  async deleteProjectSkill(scope: string, id: string, revision: string): Promise<void> {
+    await this.request(`/api/extensions/skills/${encodeURIComponent(scope)}/${encodeURIComponent(id)}?revision=${encodeURIComponent(revision)}`, { method: "DELETE" });
+  }
+
   async listMcpServers(): Promise<import("./types").McpServersSnapshot> {
     return this.request("/api/extensions/mcp/servers");
   }

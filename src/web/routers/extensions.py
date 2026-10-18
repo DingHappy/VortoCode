@@ -102,3 +102,41 @@ async def test_mcp_server(name: str):
         return await test_server(os.getcwd(), name)
     except McpConfigError as error:
         raise HTTPException(400, str(error)) from None
+
+
+# ── 项目技能管理（Desktop 插件页）：skills/（随仓库）与 .vortocode/skills/（只在本机） ──
+
+def _skills_call(fn, *args):
+    from src.web.deps import HTTPException
+    from src.workflow.workbench.project_skills import SkillConflict, SkillError
+    try:
+        return fn(os.getcwd(), *args)
+    except SkillConflict as error:
+        raise HTTPException(409, str(error)) from None
+    except SkillError as error:
+        raise HTTPException(404 if str(error).startswith("没有这个技能") else 400, str(error)) from None
+
+
+@router.get("/api/extensions/skills")
+async def list_project_skills():
+    from src.workflow.workbench.project_skills import list_skills
+    return _skills_call(list_skills)
+
+
+@router.get("/api/extensions/skills/{scope}/{skill_id}")
+async def get_project_skill(scope: str, skill_id: str):
+    from src.workflow.workbench.project_skills import get_skill
+    return _skills_call(get_skill, scope, skill_id)
+
+
+@router.put("/api/extensions/skills/{scope}/{skill_id}")
+async def save_project_skill(scope: str, skill_id: str, body: dict):
+    from src.workflow.workbench.project_skills import save_skill
+    return _skills_call(save_skill, scope, skill_id, body or {})
+
+
+@router.delete("/api/extensions/skills/{scope}/{skill_id}")
+async def delete_project_skill(scope: str, skill_id: str, revision: str = ""):
+    from src.workflow.workbench.project_skills import delete_skill
+    _skills_call(delete_skill, scope, skill_id, revision)
+    return {"ok": True}

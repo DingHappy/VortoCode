@@ -1020,5 +1020,29 @@
     "methods": [
       "POST"
     ]
+  },
+  {
+    "path": "/api/extensions/skills",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/extensions/skills/{scope}/{skill_id}",
+    "methods": [
+      "DELETE"
+    ]
+  },
+  {
+    "path": "/api/extensions/skills/{scope}/{skill_id}",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/extensions/skills/{scope}/{skill_id}",
+    "methods": [
+      "PUT"
+    ]
   }
 ]
