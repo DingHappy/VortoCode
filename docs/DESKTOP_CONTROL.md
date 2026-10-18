@@ -51,6 +51,28 @@ VORTOCODE_DESKTOP_APPS=xfce4-terminal,firefox,thunar
 目标机器需要 X11 会话（Wayland 下 xdotool 控制不了别的窗口），并安装 `xdotool`、`scrot`。经 SSH 时，运行 VortoCode
 的机器要能用密钥免交互登录目标机器。推荐给它一台专用的桌面虚拟机（XFCE + X11，自动登录），不要用宿主机自己的桌面会话。
 
+专用虚拟机还要关掉自动锁屏和息屏，否则空闲一阵后屏幕被锁，截屏全黑，点击和输入也落不到桌面上，解锁又要密码。
+XFCE 下（在目标机器的那个用户里执行）：
+
+```bash
+mkdir -p ~/.config/autostart
+for f in light-locker xscreensaver; do
+  printf "[Desktop Entry]\nType=Application\nName=%s\nHidden=true\n" "$f" > ~/.config/autostart/$f.desktop
+done
+printf "[Desktop Entry]\nType=Application\nName=no-blank\nExec=xset s off -dpms s noblank\n" \
+  > ~/.config/autostart/no-blank.desktop
+xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/dpms-enabled -n -t bool -s false
+xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/blank-on-ac -n -t int -s 0
+xfconf-query -c xfce4-power-manager -p /xfce4-power-manager/lock-screen-suspend-hibernate -n -t bool -s false
+```
+
+已经被锁住时：`pkill -x light-locker`，再用 `sudo loginctl activate <会话号>` 切回桌面会话（`loginctl list-sessions`
+里 seat0 上属于该用户的那个）。截屏全黑、窗口列表里有铺满全屏的 `light-locker`，就是这个原因。
+这些设置只适合专给 Agent 用的虚拟机，别照搬到有人在用的桌面上。
+
+Firefox 建议装 Mozilla 官方 APT 源的 deb 包：Ubuntu 自带的 `firefox` 包只是去装 snap 版的过渡包，snap 走代理要另外配置。
+首次启动会弹出使用条款页，这一步由人自己点同意。
+
 ## 实测（2026-10-17，局域网内的测试虚拟机，Ubuntu 24.04 + XFCE，软件渲染）
 
 窗口列表、截屏、启动终端、紧接着输入中文（三次，无丢字）、未安装应用如实报错、疑似密钥拒绝输入、非法按键与名单外应用拒绝。
