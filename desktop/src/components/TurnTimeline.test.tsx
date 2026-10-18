@@ -18,3 +18,15 @@ it("keeps interrupted, blocked and failed work open even after output", () => {
   expect(output).toContain("需要关注");
   expect(output).toContain("旧结果仍可查看");
 });
+
+it("shows a recap of the finished round in the collapsed heading, and a plain count while working", () => {
+  const round: TurnActivity[] = [
+    { id: "e1", kind: "tool", status: "completed", label: "编辑", name: "edit_file", args: { path: "a.py" } },
+    { id: "t1", kind: "tool", status: "completed", label: "测试", name: "run_tests", result: "测试未过 ✗（pytest）" },
+  ];
+  const done = renderToStaticMarkup(<TurnTimeline items={round} active={false} hasOutput />);
+  expect(done).toContain("改了 1 个文件 · 跑测试 1 次（1 次没过）");
+  const working = renderToStaticMarkup(<TurnTimeline items={round} active hasOutput={false} />);
+  expect(working).toContain("2 个工具");
+  expect(working).not.toContain("改了 1 个文件");
+});

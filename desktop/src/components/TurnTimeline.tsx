@@ -16,6 +16,7 @@ import {
 import { useEffect, useState, type ReactNode } from "react";
 
 import { formatActivityDuration } from "../lib/labels";
+import { recapPhrases, turnRecap } from "../lib/turnRecap";
 import type { TurnActivity } from "../types";
 
 function activityIcon(activity: TurnActivity): ReactNode {
@@ -61,7 +62,11 @@ export function TurnTimeline({ items, active, hasOutput = false }: { items: Turn
         <ChevronDown size={14} className={open ? "" : "timeline-collapsed"} />
         <span>{active ? "正在工作" : "执行过程"}{phaseDuration > 0 ? ` · ${formatActivityDuration(phaseDuration)}` : ""}</span>
         {attention.length > 0 && <strong className="timeline-attention">{attention.length} 项需要关注</strong>}
-        {(tools.length > 0 || hooks.length > 0) && <small>{tools.length > 0 ? `${tools.length} 个工具` : ""}{tools.length > 0 && hooks.length > 0 ? " · " : ""}{hooks.length > 0 ? `${hooks.length} 个 Hook` : ""}</small>}
+        {(tools.length > 0 || hooks.length > 0) && <small>{[
+          // 结束后折叠的标题就是这一轮的回顾（改了几个文件、测试过没过…），不用展开也知道做了什么
+          ...(active ? (tools.length > 0 ? [`${tools.length} 个工具`] : []) : recapPhrases(turnRecap(items))),
+          ...(hooks.length > 0 ? [`${hooks.length} 个 Hook`] : []),
+        ].join(" · ")}</small>}
       </button>
       {open && <div className="timeline-list">
         {items.map((activity) => {
