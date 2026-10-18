@@ -65,6 +65,10 @@ def _status(server: Dict[str, Any]) -> tuple[str, str]:
             return "blocked", "连接器必须是 HTTPS、不带 headers、URL 里不能有凭据"
         return "connector", f"凭据「{server['credential']}」：只在常驻助理里、授权后连接"
     if _credential_free_http_servers({"servers": [server]}):
+        if server.get("protocol") != "streamable_http" or server.get("protocol_version") in (None, "2026-07-28"):
+            # 手写的条目常缺这两行：客户端会退回旧 REST 或无状态新协议，现有服务（官方 SDK 1.22）一律回 400
+            return "available", ("会尝试连接，但多半连不上：缺 protocol: streamable_http 或 protocol_version: \"2025-06-18\"；"
+                                 "删掉后从插件页重新添加，或手动补上这两行")
         return "available", "external 会话会连接它；工具调用仍逐次确认"
     if server.get("headers"):
         return "blocked", "带 headers（等于把凭据写进了文件），不会连接"
