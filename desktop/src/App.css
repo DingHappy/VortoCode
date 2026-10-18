@@ -10449,3 +10449,4 @@ button.timeline-heading { width: 100%; border: 0; background: transparent; color
 .mcp-server-row.blocked em { color: var(--red); opacity: 1; }
 .mcp-server-row.available em { color: var(--green); opacity: 1; }
 .mcp-server-actions { display: flex; gap: 6px; align-items: flex-start; flex-shrink: 0; }
+.catalog-skill-scope { display: flex; gap: 8px; align-items: center; margin: 10px 0 2px; font-size: 13px; }

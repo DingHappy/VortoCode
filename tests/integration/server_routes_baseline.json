@@ -1044,5 +1044,23 @@
     "methods": [
       "PUT"
     ]
+  },
+  {
+    "path": "/api/extensions/catalog",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/extensions/catalog/mcp/{item_id}/install",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/extensions/catalog/skills/{item_id}/install",
+    "methods": [
+      "POST"
+    ]
   }
 ]

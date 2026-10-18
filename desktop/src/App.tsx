@@ -116,6 +116,7 @@ import { taskCollaborationDraft, type CollaborationAction } from "./lib/taskColl
 import { McpConnectionCard } from "./components/McpConnectionCard";
 import { McpServersCard } from "./components/McpServersCard";
 import { ProjectSkillsCard } from "./components/ProjectSkillsCard";
+import { CatalogCard } from "./components/CatalogCard";
 import { ExtensionsInspector } from "./components/ExtensionsInspector";
 import { FilesPanel } from "./components/FilesPanel";
 import { GitReviewPanel } from "./components/GitReviewPanel";
@@ -563,6 +564,8 @@ function App() {
 
   const currentSession = sessions.find((session) => session.sid === activeSid);
   const activeScope: WorkspaceScope = runtime.scope ?? processStatus.scope ?? (repoRoot.trim() ? "project" : "general");
+  /** 精选目录装完东西后递增，让插件页的 MCP 服务 / 项目技能卡重新加载。 */
+  const [pluginsRevision, setPluginsRevision] = useState(0);
   // 切换会话或工作区时回到对话视图。
   useEffect(() => { setMainView("chat"); }, [activeSid, activeScope]);
   // llmInputIsLocal 派生只服务设置弹窗，已随 <SettingsModal> 搬入组件内计算。
@@ -3423,8 +3426,9 @@ function App() {
         {mainView === "plugins" ? (
           <PluginsPage
             activeScope={activeScope}
-            mcpServers={<McpServersCard client={clientRef.current} connection={connection} />}
-            projectSkills={<ProjectSkillsCard client={clientRef.current} connection={connection} />}
+            mcpServers={<McpServersCard key={`mcp-${pluginsRevision}`} client={clientRef.current} connection={connection} />}
+            projectSkills={<ProjectSkillsCard key={`skills-${pluginsRevision}`} client={clientRef.current} connection={connection} />}
+            catalog={<CatalogCard client={clientRef.current} connection={connection} activeScope={activeScope} onInstalled={() => setPluginsRevision(value => value + 1)} />}
             mcpConnection={<McpConnectionCard client={clientRef.current} session={activeSid} connection={connection} />}
             personalSkills={<PersonalSkillsCard client={clientRef.current} connection={connection} />}
             projectName={repoRoot.split("/").filter(Boolean).slice(-1)[0] || ""}

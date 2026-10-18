@@ -12,12 +12,13 @@ type Props = {
   mcpConnection?: ReactNode;
   mcpServers?: ReactNode;
   projectSkills?: ReactNode;
+  catalog?: ReactNode;
   personalSkills?: ReactNode;
   onChooseProject: () => void;
   onOpenBrowserSettings: () => void;
 };
 
-export function PluginsPage({ activeScope, projectName, inspector, mcpConnection, mcpServers, projectSkills, personalSkills, onChooseProject, onOpenBrowserSettings }: Props) {
+export function PluginsPage({ activeScope, projectName, inspector, mcpConnection, mcpServers, projectSkills, catalog, personalSkills, onChooseProject, onOpenBrowserSettings }: Props) {
   return (
     <section className="main-page">
       <header className="main-page-head">
@@ -35,6 +36,7 @@ export function PluginsPage({ activeScope, projectName, inspector, mcpConnection
       </div>
 
       {mcpServers}
+      {catalog}
       {mcpConnection}
       {activeScope === "general" && personalSkills}
       {activeScope === "project" ? (

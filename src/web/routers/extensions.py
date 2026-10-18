@@ -140,3 +140,27 @@ async def delete_project_skill(scope: str, skill_id: str, revision: str = ""):
     from src.workflow.workbench.project_skills import delete_skill
     _skills_call(delete_skill, scope, skill_id, revision)
     return {"ok": True}
+
+
+# ── 精选目录：审核过的 MCP 服务与技能，一键装进当前范围 ──
+
+@router.get("/api/extensions/catalog")
+async def extensions_catalog():
+    from src.workflow.workbench.catalog import catalog
+    return catalog(os.getcwd())
+
+
+@router.post("/api/extensions/catalog/mcp/{item_id}/install")
+async def install_catalog_mcp(item_id: str):
+    from src.workflow.workbench.catalog import install_mcp
+    return _mcp_config_call(install_mcp, item_id)
+
+
+@router.post("/api/extensions/catalog/skills/{item_id}/install")
+async def install_catalog_skill(item_id: str, body: dict):
+    from src.gateway.workspace_scope import GENERAL, current_workspace_scope
+    from src.web.deps import HTTPException
+    from src.workflow.workbench.catalog import install_skill
+    if current_workspace_scope() == GENERAL:      # 私人助理没有项目目录，技能走个人技能（要审阅启用）
+        raise HTTPException(409, "私人助理请在「个人技能」里添加；项目技能需要先打开一个项目")
+    return _skills_call(install_skill, item_id, str((body or {}).get("scope") or "local"))

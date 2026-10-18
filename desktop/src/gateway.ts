@@ -976,6 +976,20 @@ export class GatewayClient {
     return this.request(`/api/extensions/mcp/connect?session=${encodeURIComponent(session)}`, { method: "POST" });
   }
 
+  async getExtensionsCatalog(): Promise<import("./types").ExtensionsCatalog> {
+    return this.request("/api/extensions/catalog");
+  }
+
+  async installCatalogMcp(id: string): Promise<import("./types").McpServerEntry> {
+    return this.request(`/api/extensions/catalog/mcp/${encodeURIComponent(id)}/install`, { method: "POST" });
+  }
+
+  async installCatalogSkill(id: string, scope: string): Promise<import("./types").ProjectSkill> {
+    return this.request(`/api/extensions/catalog/skills/${encodeURIComponent(id)}/install`, {
+      method: "POST", body: JSON.stringify({ scope }),
+    });
+  }
+
   async listProjectSkills(): Promise<import("./types").ProjectSkillsSnapshot> {
     return this.request("/api/extensions/skills");
   }
