@@ -26,6 +26,7 @@ import { ConfigPane } from "./settings/ConfigPane";
 import { LlmConnectionCheck } from "./settings/LlmConnectionCheck";
 import { AccountPane } from "./settings/AccountPane";
 import { BrowserPane } from "./settings/BrowserPane";
+import { DesktopControlPane } from "./settings/DesktopControlPane";
 import { CustomProviders } from "./settings/CustomProviders";
 import { ModelPicks } from "./settings/ModelPicks";
 import { ModelRoles } from "./settings/ModelRoles";
@@ -50,7 +51,7 @@ import type {
   WorkspaceScope,
 } from "../types";
 
-export type SettingsSection = "account" | "general" | "usage" | "model" | "personalize" | "appearance" | "config" | "trust" | "browser" | "extensions";
+export type SettingsSection = "account" | "general" | "usage" | "model" | "personalize" | "appearance" | "config" | "trust" | "browser" | "desktop" | "extensions";
 
 const SETTINGS_NAV: Array<{ group: string; items: Array<{ id: SettingsSection; label: string; keywords: string }> }> = [
   {
@@ -70,6 +71,7 @@ const SETTINGS_NAV: Array<{ group: string; items: Array<{ id: SettingsSection; l
     group: "集成",
     items: [
       { id: "browser", label: "浏览器操控", keywords: "浏览器 chrome 网页 点击 截图 browser" },
+      { id: "desktop", label: "桌面操作（实验）", keywords: "桌面 linux x11 xdotool 截屏 窗口 点击 ssh desktop 实验" },
       { id: "extensions", label: "扩展", keywords: "hook 规则 skills mcp 插件 扩展" },
     ],
   },
@@ -477,6 +479,7 @@ export function SettingsModal({
         )}
 
         {section === "browser" && <BrowserPane onRestartRuntime={onRestartRuntime} />}
+        {section === "desktop" && <DesktopControlPane onRestartRuntime={onRestartRuntime} />}
         {section === "extensions" && (children || (
           <p className="settings-intro">打开 Git 项目后，这里会显示该项目加载的规则、Skills、Hooks 与 MCP。</p>
         ))}

@@ -35,6 +35,12 @@
 
 ## 配置
 
+在 Desktop 里：设置 → 集成 →「桌面操作（实验）」，填目标桌面（`ssh:用户@主机`，Linux 本机可留空）和可打开的应用，
+点「启用」并过一次原生确认，当前引擎会自动重启。开着时改目标或应用名单，也会再确认一次。Desktop 启动的本机引擎
+只认这里的设置，不继承父进程里的同名环境变量。
+
+无头 CLI / 常驻服务用环境变量：
+
 ```dotenv
 VORTOCODE_ENABLE_DESKTOP_CONTROL=1
 VORTOCODE_DESKTOP_TARGET=ssh:user@desktop-vm.lan   # 或 local（本机 X11）

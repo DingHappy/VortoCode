@@ -647,6 +647,21 @@ struct DesktopPreferences {
     /// 实验功能：把实现 / 审查分发给本机 Codex / Claude Code CLI。默认关闭。
     #[serde(default)]
     experimental_external_workers: bool,
+    /// 实验功能：Linux X11 桌面操作。默认关闭；目标与可打开的应用随偏好保存。
+    #[serde(default)]
+    desktop_control: bool,
+    #[serde(default)]
+    desktop_target: String,
+    #[serde(default)]
+    desktop_apps: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DesktopControlStatus {
+    enabled: bool,
+    target: String,
+    apps: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -699,6 +714,100 @@ fn configure_experimental_workers(command: &mut Command, preferences: &DesktopPr
     } else {
         command.env_remove("VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS");
     }
+}
+
+/// 与引擎 `src/agents/tools/desktop.py` 同一口径：`local`（仅 Linux）或 `ssh:用户@主机`。
+/// 主机名首字符必须是字母或数字，否则 `-oProxyCommand=…` 一类会被 ssh 当成选项。
+fn normalize_desktop_target(raw: &str) -> Result<String, String> {
+    let target = raw.trim();
+    if target.is_empty() || target == "local" {
+        return if cfg!(target_os = "linux") { Ok("local".into()) }
+            else { Err("这台电脑不是 Linux 桌面：目标请填 ssh:用户@主机".into()) };
+    }
+    let host = target.strip_prefix("ssh:").ok_or("桌面目标只接受 local 或 ssh:用户@主机")?;
+    let (user, machine) = match host.split_once('@') { Some((user, machine)) => (Some(user), machine), None => (None, host) };
+    let word = |part: &str, extra: &str| part.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && part.chars().all(|c| c.is_ascii_alphanumeric() || extra.contains(c));
+    if user.is_some_and(|user| !word(user, "._-")) || !word(machine, ".-") {
+        return Err("桌面目标只接受 local 或 ssh:用户@主机".into());
+    }
+    Ok(target.into())
+}
+
+/// 允许 Agent 打开的应用：逗号分隔的命令名，和引擎侧白名单同一规则。
+fn normalize_desktop_apps(raw: &str) -> Result<String, String> {
+    let mut apps = Vec::new();
+    for name in raw.split([',', '，']).map(str::trim).filter(|name| !name.is_empty()) {
+        let valid = name.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c));
+        if !valid {
+            return Err(format!("应用名「{name}」无效：只填命令名，如 firefox、mousepad"));
+        }
+        if !apps.contains(&name) { apps.push(name); }
+    }
+    if apps.len() > 20 {
+        return Err("可打开的应用最多 20 个".into());
+    }
+    Ok(apps.join(","))
+}
+
+/// 桌面操作只在引擎启动处按偏好打开；偏好里的目标不合法（比如手改坏了）就按关闭处理。
+fn configure_desktop_control(command: &mut Command, preferences: &DesktopPreferences) {
+    for key in ["VORTOCODE_ENABLE_DESKTOP_CONTROL", "VORTOCODE_DESKTOP_TARGET", "VORTOCODE_DESKTOP_DISPLAY", "VORTOCODE_DESKTOP_APPS"] {
+        command.env_remove(key);
+    }
+    if !preferences.desktop_control {
+        return;
+    }
+    let (Ok(target), Ok(apps)) = (normalize_desktop_target(&preferences.desktop_target),
+        normalize_desktop_apps(&preferences.desktop_apps)) else { return };
+    command.env("VORTOCODE_ENABLE_DESKTOP_CONTROL", "1");
+    command.env("VORTOCODE_DESKTOP_TARGET", target);
+    command.env("VORTOCODE_DESKTOP_APPS", apps);
+}
+
+fn desktop_control_status(preferences: &DesktopPreferences) -> DesktopControlStatus {
+    DesktopControlStatus { enabled: preferences.desktop_control, target: preferences.desktop_target.clone(),
+        apps: preferences.desktop_apps.clone() }
+}
+
+#[tauri::command(async)]
+fn get_desktop_control(app: AppHandle) -> Result<DesktopControlStatus, String> {
+    Ok(desktop_control_status(&read_desktop_preferences(&desktop_preferences_path(&app)?)))
+}
+
+#[tauri::command]
+async fn set_desktop_control(app: AppHandle, enabled: bool, target: String, apps: String) -> Result<DesktopControlStatus, String> {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    let apps = normalize_desktop_apps(&apps)?;
+    let target = if enabled { normalize_desktop_target(&target)? } else { target.trim().to_string() };
+    let path = desktop_preferences_path(&app)?;
+    let mut preferences = read_desktop_preferences(&path);
+    // 打开、或者在开着时换了目标机器 / 应用名单，都是放权，走 webview 之外的原生确认；关闭不必问。
+    let widened = enabled && (!preferences.desktop_control || preferences.desktop_target != target
+        || preferences.desktop_apps != apps);
+    if widened {
+        let label = if target == "local" { "这台电脑的桌面".to_string() } else { format!("{} 的桌面", &target[4..]) };
+        let message = format!("实验功能：启用后，Agent 可以截取{label}的屏幕、列出窗口；点击、输入、按键和打开应用每一次都会先问你，即使授权级别是「完全信任」。\n\n只在 Desktop 会话中可用；IM 和自动化任务不会获得这项能力。不会输入疑似密码或密钥的内容。");
+        let dialog_app = app.clone();
+        let confirmed = tauri::async_runtime::spawn_blocking(move || {
+            with_main_window_parent(&dialog_app, dialog_app.dialog().message(message))
+            .title("启用实验功能：桌面操作")
+            .kind(MessageDialogKind::Warning)
+            .buttons(MessageDialogButtons::OkCancelCustom("启用".into(), "取消".into()))
+            .blocking_show()
+        })
+        .await
+        .map_err(|error| format!("桌面操作确认对话框失败：{error}"))?;
+        if !confirmed {
+            return Err("未确认，桌面操作设置没有改变".into());
+        }
+    }
+    preferences.desktop_control = enabled;
+    preferences.desktop_target = target;
+    preferences.desktop_apps = apps;
+    save_json_atomic_with_mode(&path, "desktop-preferences", &preferences, Some(0o600))?;
+    Ok(desktop_control_status(&preferences))
 }
 
 #[tauri::command(async)]
@@ -3475,6 +3584,7 @@ fn start_gateway(
         configure_llm_profile(&mut command, llm_profile.as_ref());
         configure_browser_control(&mut command, &preferences);
         configure_experimental_workers(&mut command, &preferences);
+        configure_desktop_control(&mut command, &preferences);
         prepare_gateway_process(&mut command);
         command
             .stdout(Stdio::from(log.try_clone().map_err(|error| {
@@ -3731,6 +3841,8 @@ pub fn run() {
             set_browser_control,
             get_experimental_workers,
             set_experimental_workers,
+            get_desktop_control,
+            set_desktop_control,
             save_llm_provider,
             remove_llm_provider,
             refresh_llm_providers,
@@ -6894,6 +7006,50 @@ mod tests {
         configure_experimental_workers(&mut command, &on);
         assert_eq!(command.get_envs().find(|(k, _)| *k == "VORTOCODE_EXPERIMENTAL_EXTERNAL_WORKERS").unwrap().1,
                    Some(std::ffi::OsStr::new("1")));
+    }
+
+    fn env_of<'a>(command: &'a Command, key: &str) -> Option<Option<&'a std::ffi::OsStr>> {
+        command.get_envs().find(|(k, _)| *k == key).map(|(_, value)| value)
+    }
+
+    #[test]
+    fn desktop_control_is_off_by_default_and_never_inherited() {
+        let old: DesktopPreferences = serde_json::from_str(r#"{"browserControl": true}"#).unwrap();
+        assert!(!old.desktop_control);                                     // 旧偏好文件：关闭
+        let mut command = Command::new("fixture");
+        command.env("VORTOCODE_ENABLE_DESKTOP_CONTROL", "1");             // 假装从父进程继承了
+        command.env("VORTOCODE_DESKTOP_TARGET", "ssh:someone@elsewhere");
+        configure_desktop_control(&mut command, &DesktopPreferences::default());
+        assert_eq!(env_of(&command, "VORTOCODE_ENABLE_DESKTOP_CONTROL"), Some(None));
+        assert_eq!(env_of(&command, "VORTOCODE_DESKTOP_TARGET"), Some(None));
+
+        let on = DesktopPreferences { desktop_control: true, desktop_target: "ssh:dev@desktop-vm.lan".into(),
+            desktop_apps: "firefox,mousepad".into(), ..Default::default() };
+        configure_desktop_control(&mut command, &on);
+        assert_eq!(env_of(&command, "VORTOCODE_ENABLE_DESKTOP_CONTROL"), Some(Some(std::ffi::OsStr::new("1"))));
+        assert_eq!(env_of(&command, "VORTOCODE_DESKTOP_TARGET"), Some(Some(std::ffi::OsStr::new("ssh:dev@desktop-vm.lan"))));
+        assert_eq!(env_of(&command, "VORTOCODE_DESKTOP_APPS"), Some(Some(std::ffi::OsStr::new("firefox,mousepad"))));
+
+        // 偏好文件被手改出非法目标：按关闭处理，不把它交给引擎
+        let broken = DesktopPreferences { desktop_target: "ssh:-oProxyCommand=x".into(), ..on };
+        configure_desktop_control(&mut command, &broken);
+        assert_eq!(env_of(&command, "VORTOCODE_ENABLE_DESKTOP_CONTROL"), Some(None));
+    }
+
+    #[test]
+    fn desktop_target_and_apps_are_validated() {
+        for good in ["ssh:dev@desktop-vm.lan", "ssh:desktop-vm", "ssh:user_1@10.0.0.5"] {
+            assert_eq!(normalize_desktop_target(good).unwrap(), good);
+        }
+        for bad in ["ssh:", "ssh:-oProxyCommand=x", "ssh:dev@-v", "ssh:dev@host;rm", "ssh:a b@host", "desktop-vm", "ssh:@host"] {
+            assert!(normalize_desktop_target(bad).is_err(), "{bad}");
+        }
+        assert_eq!(normalize_desktop_target("").is_ok(), cfg!(target_os = "linux"));   // local 只在 Linux 上可用
+        assert_eq!(normalize_desktop_apps(" firefox， mousepad,firefox ,").unwrap(), "firefox,mousepad");
+        assert_eq!(normalize_desktop_apps("").unwrap(), "");
+        for bad in ["firefox --new", "-x", "rm;ls", "a/b"] {
+            assert!(normalize_desktop_apps(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

@@ -36,7 +36,8 @@ _TIMEOUT = 20.0
 _MAX_TYPE = 2000
 _KEY = re.compile(r"^[A-Za-z0-9_]+(\+[A-Za-z0-9_]+)*$")       # Return / ctrl+l / alt+F4 / super
 _APP = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-_SSH_TARGET = re.compile(r"^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+$|^[A-Za-z0-9.-]+$")
+# 用户名和主机名都必须以字母或数字开头：以 - 开头的会被 ssh 当成选项（如 -oProxyCommand=…）
+_SSH_TARGET = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*@[A-Za-z0-9][A-Za-z0-9.-]*$|^[A-Za-z0-9][A-Za-z0-9.-]*$")
 
 
 def desktop_control_enabled(kind: str, *, profile: str = "", can_ask_human: bool = False) -> bool:
