@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 import { ContextStatus, SessionInfo } from "./SessionInfo";
-import { contextStatusText } from "./ContextStatus";
+import { contextLevel, contextStatusText } from "./ContextStatus";
 import { matchingCommands } from "./ComposerCommands";
 const context = { used_tokens: 6000, max_tokens: 8000, pct: 75, context_window_tokens: 1000000, context_window_pct: .6, history_messages: 24, policy: "preserve", will_compact: true, compact_enabled: true };
 const props = { busy: true, connected: true, plan: [], activities: [], queued: 2, model: "本地模型", onRefresh() {} };
@@ -59,4 +59,17 @@ it("lists this turn's real work when the runtime gave no plan",()=>{
   expect(html).not.toContain("执行进度");
   expect(html).not.toContain("需要关注");   // 失败项已在本轮执行里标出，不再重复列一遍
   expect(html).not.toContain("发送消息开始");
+});
+
+it("warns when the window is nearly full or history is about to be compacted, even at a small window percent", () => {
+  const calm = { ...context, will_compact: false };
+  expect(contextLevel(calm).level).toBe("normal");
+  expect(contextLevel(context)).toMatchObject({ level: "warn" });                    // 0.6% 窗口，但下一回合要压缩
+  expect(contextLevel(context).reason).toContain("压缩");
+  expect(contextLevel({ ...context, compact_enabled: false }).level).toBe("normal"); // 关了压缩就不会压
+  expect(contextLevel({ ...calm, context_window_pct: 75 }).level).toBe("warn");
+  expect(contextLevel({ ...calm, context_window_pct: 93 })).toMatchObject({ level: "high" });
+  expect(contextLevel().level).toBe("normal");
+  const html = renderToStaticMarkup(<ContextStatus context={{ ...calm, context_window_pct: 93 }} />);
+  expect(html).toContain("level-high"); expect(html).toContain("快满了");
 });

@@ -10461,3 +10461,10 @@ button.timeline-heading { width: 100%; border: 0; background: transparent; color
 }
 .session-group-label.group-needs { color: var(--amber); }
 .session-group-label:first-child { padding-top: 2px; }
+
+/* 上下文接近上限要醒目：琥珀 = 七成以上或下一回合会压缩历史，红 = 九成以上 */
+.context-status.level-warn { border-color: var(--amber); color: var(--amber); }
+.context-status.level-high { border-color: var(--red); color: var(--red); font-weight: 700; }
+.context-warning { font-weight: 600; }
+.context-warning.level-warn { color: var(--amber); }
+.context-warning.level-high { color: var(--red); }
