@@ -98,3 +98,31 @@ async def test_assistant_watch_pushes_overdue_heartbeats(tmp_path, monkeypatch):
 
     await watch.watch_once(root, T0 + timedelta(days=33), notify=notify, refresh=refresh, times=[])
     assert len(sent) == 1 and "restore-drill" in sent[0]
+
+
+def test_brief_line_only_exists_where_heartbeats_are_configured(tmp_path):
+    root = str(tmp_path)
+    assert hb.brief_line(root, T0) == ""                                      # 没配运维心跳：早报里完全没有
+    hb.record(root, "nas-backup", ok=True, expect_hours=30, now=T0)
+    hb.record(root, "restore-drill", ok=True, expect_hours=24 * 32, now=T0)
+    assert hb.brief_line(root, T0 + timedelta(hours=1)) == "运维：2 项正常（nas-backup、restore-drill）"
+    hb.record(root, "account-service", ok=False, text="连不上中转站", expect_hours=3, now=T0)
+    line = hb.brief_line(root, T0 + timedelta(hours=31))                       # nas-backup 也超时了
+    assert line.splitlines() == ["运维：2 项异常，1 项正常", "· account-service 失败（连不上中转站）",
+                                 "· nas-backup 超时没报到"]
+
+
+async def test_morning_brief_carries_the_ops_line_outside_the_model(tmp_path):
+    from src.scheduling import assistant_watch as watch
+    root = str(tmp_path)
+
+    class _NoLLM:
+        async def chat(self, messages, **_kw):
+            raise AssertionError("安静的日子不该调模型")
+
+    now = T0 + timedelta(hours=1)
+    assert await watch.compose_report(root, now, "早报", llm=_NoLLM()) == "🗒 早报：今天没有需要你处理的事。"
+    hb.record(root, "nas-backup", ok=True, now=T0)
+    morning = await watch.compose_report(root, now, "早报", llm=_NoLLM())
+    assert morning == "🗒 早报：今天没有需要你处理的事。\n\n运维：1 项正常（nas-backup）"
+    assert await watch.compose_report(root, now, "晚报", llm=_NoLLM()) == ""

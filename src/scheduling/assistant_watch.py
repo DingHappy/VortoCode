@@ -251,13 +251,17 @@ def news_section(now: datetime) -> str:
 
 
 async def compose_report(root: str, now: datetime, label: str, *, llm: Any = None) -> str:
-    """早报 / 晚报正文；早报末尾附上新闻。
+    """早报 / 晚报正文；早报末尾附上运维摘要（有运维心跳时）和新闻。
 
     新闻标题是外部内容：只原样附在模型写完的正文后面，**不进模型上下文**，免得被当成指令。
     """
     body = await _compose_body(root, now, label, llm=llm)
-    news = news_section(now) if label == "早报" else ""
-    return f"{body}\n\n{news}" if body and news else body
+    if not body or label != "早报":
+        return body
+    from src.scheduling.ops_heartbeats import brief_line
+    # 运维摘要只在配了运维心跳的常驻机器上有（没有报到记录就是空串）；同样不进模型上下文
+    extras = [part for part in (brief_line(root, now), news_section(now)) if part]
+    return "\n\n".join([body, *extras])
 
 
 async def _compose_body(root: str, now: datetime, label: str, *, llm: Any = None) -> str:

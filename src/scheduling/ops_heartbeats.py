@@ -119,5 +119,27 @@ def overdue(root: str, now: Optional[datetime] = None) -> List[str]:
     return messages
 
 
+def brief_line(root: str, now: Optional[datetime] = None) -> str:
+    """早报末尾的一行运维摘要。没有任何报到来源（没配运维心跳的机器）就是空串，早报里完全不出现。"""
+    now = now or datetime.now(timezone.utc)
+    data = _load(root)
+    if not data:
+        return ""
+    healthy, problems = [], []
+    for source, entry in sorted(data.items()):
+        last = _parse(entry.get("last_ok"))
+        expect = float(entry.get("expect_hours") or 26)
+        if entry.get("status") == "failed":
+            problems.append(f"{source} 失败（{entry.get('text') or '没有附带原因'}）"[:120])
+        elif last is None or now - last > timedelta(hours=expect):
+            problems.append(f"{source} 超时没报到")
+        else:
+            healthy.append(source)
+    if not problems:
+        return f"运维：{len(healthy)} 项正常（{'、'.join(healthy)}）"
+    head = f"运维：{len(problems)} 项异常" + (f"，{len(healthy)} 项正常" if healthy else "")
+    return head + "\n" + "\n".join(f"· {item}" for item in problems)
+
+
 def snapshot(root: str) -> Dict[str, Dict[str, Any]]:
     return _load(root)
