@@ -14,9 +14,14 @@
 
 ## 1. 获取 App
 
-目前**没有发布安装包**，需要从源码构建一次（约 5–10 分钟，第一次要联网）。
+到 [GitHub Releases](https://github.com/DingHappy/VortoCode/releases/latest) 下载 `VortoCode_<版本>_aarch64.dmg`，打开后把 VortoCode 拖进「应用程序」。安装包经过 Apple 签名与公证，双击即可打开。
 
-需要：macOS 10.15+、git、Node.js（含 npm）、Rust 工具链（`rustup` 装好即可）。Python **不用自己装**：构建脚本会下载一份固定版本的 CPython，并按 sha256 校验后打进 App。
+- 目前**只支持 Apple 芯片（M 系列）的 Mac**，macOS 11 及以上。
+- 升级：下载新版 DMG 拖进去替换，⌘Q 退出后重新打开。App 每天最多检查一次新版本，有新版时左下角会提示。
+
+<details><summary>从源码构建（开发者）</summary>
+
+需要：git、Node.js（含 npm）、Rust 工具链（`rustup` 装好即可）。Python **不用自己装**：构建脚本会下载一份固定版本的 CPython，并按 sha256 校验后打进 App。
 
 ```bash
 git clone https://github.com/DingHappy/VortoCode.git
@@ -25,13 +30,22 @@ npm ci
 npm run bundle:app
 ```
 
-产物在 `desktop/src-tauri/target/release/bundle/macos/VortoCode.app`，拖进「应用程序」即可。构建会顺带跑一次内置引擎的启动自检，失败会直接报错，不会给你一个打不开的 App。
-
-> 这样构建出来的 App 是**本地签名（ad-hoc）**，只适合自己这台机器用。要分发给别人需要 Apple Developer ID 签名与公证，见 `npm run signing:setup` 与 `docs/PUBLIC_RELEASE_CHECKLIST.md`。
+产物在 `desktop/src-tauri/target/release/bundle/macos/VortoCode.app`。这样构建的 App 是**本地签名（ad-hoc）**，只适合自己这台机器用；分发需要 Developer ID 签名与公证，见 `npm run signing:setup` 与 `docs/PUBLIC_RELEASE_CHECKLIST.md`。
+</details>
 
 ## 2. 第一次打开：连上模型
 
-首页会提示「还没有配置模型服务」，点「连接模型」，在「模型服务」里选一家并填 Key：
+首页会提示「还没有配置模型服务」，有两种方式：
+
+**A. 用 VortoCode 账号（收到邀请时）**
+
+1. 打开 [account.vortotech.com/register](https://account.vortotech.com/register)，用邀请码注册，点验证邮件里的链接（找不到就看看垃圾箱，或在登录页点「没收到验证邮件」）。
+2. 回到 Desktop：设置 → 常规 →「VortoCode 账号」→「登录」。会打开浏览器，在网页上登录并点「允许」；密码只在网页上输入，Desktop 不经手，登录凭证存在 macOS 钥匙串里。
+3. 如果邀请附带了会员，登录后会直接问「用会员模型开始吗？」，点确认就能开始，不用填服务地址和 Key。会员档位、到期日和本期剩余额度在账号卡片和左下角都能看到。
+
+**B. 用你自己的模型服务**
+
+点「连接模型」，在「模型服务」里选一家并填 Key：
 
 | 预设 | 说明 |
 |---|---|
