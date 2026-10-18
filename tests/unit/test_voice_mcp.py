@@ -80,7 +80,7 @@ def test_today_brief_and_status_read_the_ledger(client, tmp_path):
     assert _call(client, "today_brief") == ("现在没有需要你处理的事，也没有正在做的任务。", False)
     dispatch.propose(str(tmp_path), project="VortoCode", title="修登录", goal="g")
     text, _ = _call(client, "today_brief")
-    assert text == "有 1 件等你处理：修登录。"
+    assert text == "有 1 件等你处理：任务单等你确认下发 · 修登录。"
     assert _call(client, "dispatch_status", keyword="登录")[0] == "「修登录」等你确认下发。"
     assert "没有找到" in _call(client, "dispatch_status", keyword="支付")[0]
 
@@ -99,3 +99,12 @@ def test_voice_proposal_is_only_recorded_tainted_notified_and_rate_limited(clien
     assert is_error and "这一小时已经记了 3 张" in text
     assert len(dispatch.list_dispatches(str(tmp_path))) == 3
     assert _call(client, "propose_task", request="  ")[1] is True
+
+
+def test_today_brief_sees_more_than_dispatches(client, tmp_path):
+    """语音和早报读的是同一份「等你处理」：例行作业最新一次失败也要说出来。"""
+    from src.workflow.workbench.runs import CommandRun, RunLedger
+    run = CommandRun.new("python -m src.scheduling.relay_duty", "cron")
+    run.status, run.error = "failed", "中转站巡检失败"
+    RunLedger(str(tmp_path)).save(run)
+    assert _call(client, "today_brief")[0] == "有 1 件等你处理：例行作业失败。"

@@ -163,7 +163,7 @@ STATUS_NAMES = {"proposed": "等你确认下发", "send_failed": "下发失败",
 
 
 def report_material(root: str, now: datetime):
-    """今天的对话、今天相关的任务单、等你处理的任务单。"""
+    """今天的对话、今天相关的任务单、等你处理的事（attention_items，按紧急程度排好）。"""
     from src.gateway.turn_digest import recent_turns
 
     today = now.date()
@@ -178,7 +178,9 @@ def report_material(root: str, now: datetime):
     items = [item for item in assistant_dispatch.list_dispatches(root) if item.get("status") != "cancelled"]
     active = [item for item in items if item.get("status") in ("proposed", "running", "waiting", "send_failed", "sending", "submission_unknown")
               or local_day(item.get("updated_at", "")) == today]
-    waiting = [item for item in items if item.get("status") in ("proposed", "waiting", "send_failed", "submission_unknown")]
+    # 「等你处理」用全入口共用的那一份（决策队列 + 任务单），不再只数任务单
+    from src.workflow.tasks.attention import attention_items
+    waiting = attention_items(root)
     return turns, active, waiting
 
 
@@ -199,6 +201,8 @@ def build_report(root: str, now: datetime, label: str) -> str:
             lines.append(f"· [{names.get(item.get('status'), item.get('status'))}] {item.get('project')}：{item.get('title')}{freshness}")
     lines.append("")
     lines.append(f"等你处理：{len(waiting)} 件。" if waiting else "没有等你处理的事。")
+    for item in waiting[:5]:
+        lines.append(f"· {item.get('title')}")
     return "\n".join(lines)
 
 

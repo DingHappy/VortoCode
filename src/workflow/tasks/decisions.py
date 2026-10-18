@@ -187,7 +187,16 @@ def build_decision_queue(
             target_id=task.id, action="resume_task" if resumable else "open_task",
         ))
 
+    # 同一作业/命令只看最新一次：后来跑通了，之前的失败就已解决，不该一直占着人的注意力
+    # （真机 2026-10-18：中转站巡检 10-12~15 的失败在恢复后仍挂在「等你处理」里）。
+    latest: dict[tuple[str, str], Any] = {}
     for run in runs:
+        key = (str(getattr(run, "kind", "")), str(getattr(run, "command", "")))
+        stamp = str(getattr(run, "updated", "") or getattr(run, "created", ""))
+        held = latest.get(key)
+        if held is None or stamp > str(getattr(held, "updated", "") or getattr(held, "created", "")):
+            latest[key] = run
+    for run in latest.values():
         status = getattr(run, "status", "")
         if status not in {"failed", "interrupted"}:
             continue
