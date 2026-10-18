@@ -114,6 +114,7 @@ import { useTasks } from "./hooks/useTasks";
 import { useTaskDispatch } from "./hooks/useTaskDispatch";
 import { taskCollaborationDraft, type CollaborationAction } from "./lib/taskCollaboration";
 import { McpConnectionCard } from "./components/McpConnectionCard";
+import { McpServersCard } from "./components/McpServersCard";
 import { ExtensionsInspector } from "./components/ExtensionsInspector";
 import { FilesPanel } from "./components/FilesPanel";
 import { GitReviewPanel } from "./components/GitReviewPanel";
@@ -3421,6 +3422,7 @@ function App() {
         {mainView === "plugins" ? (
           <PluginsPage
             activeScope={activeScope}
+            mcpServers={<McpServersCard client={clientRef.current} connection={connection} />}
             mcpConnection={<McpConnectionCard client={clientRef.current} session={activeSid} connection={connection} />}
             personalSkills={<PersonalSkillsCard client={clientRef.current} connection={connection} />}
             projectName={repoRoot.split("/").filter(Boolean).slice(-1)[0] || ""}

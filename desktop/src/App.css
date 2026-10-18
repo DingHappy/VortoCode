@@ -10440,3 +10440,12 @@ button.timeline-heading { width: 100%; border: 0; background: transparent; color
 .timeline-attention { font-size: 12px; color: var(--text); font-weight: 600; }
 .composer-wrap > .project-picker { padding: 0 0 8px; }
 .composer-wrap > .project-picker .project-picker-menu { top: auto; bottom: 100%; max-height: 40vh; overflow: auto; width: min(320px, 100%); }
+
+/* 插件页 · MCP 服务：每行一个服务，状态写明会不会启动 */
+.mcp-server-row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line-soft); }
+.mcp-server-row > div:first-child { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mcp-server-row small { opacity: .75; overflow-wrap: anywhere; }
+.mcp-server-row em { font-style: normal; font-size: 12px; opacity: .8; }
+.mcp-server-row.blocked em { color: var(--red); opacity: 1; }
+.mcp-server-row.available em { color: var(--green); opacity: 1; }
+.mcp-server-actions { display: flex; gap: 6px; align-items: flex-start; flex-shrink: 0; }
