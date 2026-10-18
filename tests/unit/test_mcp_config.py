@@ -102,3 +102,12 @@ async def test_unreachable_server_reports_honestly(root):
     mcp.add_http_server(root, "nowhere", "http://127.0.0.1:9/mcp")              # discard 端口，必定连不上
     result = await mcp.test_server(root, "nowhere")
     assert result == {"ok": False, "detail": "连不上：检查地址、服务是否在跑、协议是否为 streamable HTTP", "tools": []}
+
+
+def test_hand_written_http_entries_without_a_session_protocol_get_a_hint(root):
+    """真机：手写的 http 条目缺 protocol / protocol_version，会被现有服务回 400；页面上「可用」要说清这点。"""
+    reasons = {item["name"]: item["reason"] for item in mcp.list_servers(root)["servers"]}
+    assert "多半连不上" in reasons["remote"]
+    mcp.add_http_server(root, "added", "https://x.example/mcp")
+    reasons = {item["name"]: item["reason"] for item in mcp.list_servers(root)["servers"]}
+    assert "多半连不上" not in reasons["added"]
