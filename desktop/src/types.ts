@@ -1666,6 +1666,30 @@ export type DesktopRuntimeInbox = {
   checkedAt: number;
 };
 
+/** 精选目录：审核过的免凭据 MCP 服务与通用技能。 */
+export interface CatalogMcpItem {
+  id: string;
+  name: string;
+  url: string;
+  homepage: string;
+  description: string;
+  privacy: string;
+  installed: boolean;
+  status: string;
+}
+
+export interface CatalogSkillItem {
+  id: string;
+  name: string;
+  description: string;
+  installed_scopes: ProjectSkillScope[];
+}
+
+export interface ExtensionsCatalog {
+  mcp: CatalogMcpItem[];
+  skills: CatalogSkillItem[];
+}
+
 /** 插件页的项目技能：shared = skills/（随仓库），local = .vortocode/skills/（只在本机）。 */
 export type ProjectSkillScope = "shared" | "local";
 
