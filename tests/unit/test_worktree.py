@@ -1050,3 +1050,62 @@ async def test_run_isolated_task_verifies_in_worktree(tmp_path):
         str(tmp_path), "wt-vf", "x", lambda r: WriteAgent(r),
         test_cmd=[sys.executable, "-c", "import sys; sys.stderr.write('XFAIL'); sys.exit(1)"])
     assert ver2["ok"] is False and "XFAIL" in ver2["output"]
+
+
+# —— 基线对比：改动前就红的测试不算这次改动的错（真机 2026-10-11：一个与改动无关的测试红，整单判失败）——
+
+def _baseline_repo(tmp_path):
+    import sys
+    _init_repo(tmp_path)
+
+    def git(*a):
+        subprocess.run(["git", "-C", str(tmp_path), *a], check=True, capture_output=True)
+    (tmp_path / "test_old.py").write_text("def test_old():\n    assert False, 'red on main already'\n")
+    (tmp_path / "test_ok.py").write_text("def test_ok():\n    assert True\n")
+    git("add", "-A"); git("commit", "-q", "-m", "main with a red test")
+    base = subprocess.run(["git", "-C", str(tmp_path), "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=True).stdout.strip()
+    git("checkout", "-q", "-b", "vorto/x")
+    return git, base, [sys.executable, "-m", "pytest", "-q"]
+
+
+def test_preexisting_failure_does_not_fail_the_change(tmp_path):
+    git, base, cmd = _baseline_repo(tmp_path)
+    (tmp_path / "test_new.py").write_text("def test_new():\n    assert 1 + 1 == 2\n")
+    git("add", "-A"); git("commit", "-q", "-m", "change")
+    git("checkout", "-q", base)
+    res = worktree.verify_branch(str(tmp_path), "vorto/x", cmd, "wt-base-1", base=base)
+    assert res["ok"] is True
+    assert res["baseline"]["preexisting"] == ["test_old.py::test_old"] and res["baseline"]["new"] == []
+    assert "test_old.py::test_old" in worktree.baseline_note(res)
+    assert not list((tmp_path / ".vortocode" / "worktrees").glob("*"))      # 基线 worktree 也清干净
+
+
+def test_new_failure_still_fails_alongside_preexisting(tmp_path):
+    git, base, cmd = _baseline_repo(tmp_path)
+    (tmp_path / "test_new.py").write_text("def test_new():\n    assert False\n")
+    git("add", "-A"); git("commit", "-q", "-m", "change")
+    git("checkout", "-q", base)
+    res = worktree.verify_branch(str(tmp_path), "vorto/x", cmd, "wt-base-2", base=base)
+    assert res["ok"] is False
+    assert res["baseline"]["new"] == ["test_new.py::test_new"]
+    assert res["baseline"]["preexisting"] == ["test_old.py::test_old"]
+
+
+def test_breaking_a_green_test_is_not_excused(tmp_path):
+    git, base, cmd = _baseline_repo(tmp_path)
+    (tmp_path / "test_ok.py").write_text("def test_ok():\n    assert False\n")
+    (tmp_path / "test_old.py").write_text("def test_old():\n    assert True\n")
+    git("add", "-A"); git("commit", "-q", "-m", "break ok, fix old")
+    git("checkout", "-q", base)
+    res = worktree.verify_branch(str(tmp_path), "vorto/x", cmd, "wt-base-3", base=base)
+    assert res["ok"] is False and "baseline" not in res
+    assert worktree.baseline_note(res) == ""
+
+
+def test_failed_test_ids_reads_the_pytest_summary():
+    output = ("....F\n=== short test summary info ===\n"
+              "FAILED tests/unit/test_a.py::test_x - AssertionError: boom\n"
+              "ERROR tests/unit/test_b.py::test_y\nFAILED tests/unit/test_a.py::test_x - again\n"
+              "1 failed, 1 error in 0.1s\n")
+    assert worktree.failed_test_ids(output) == ["tests/unit/test_a.py::test_x", "tests/unit/test_b.py::test_y"]
