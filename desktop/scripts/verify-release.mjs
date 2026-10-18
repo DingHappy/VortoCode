@@ -7,6 +7,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -191,13 +192,21 @@ else {
   if (!dmg.gatekeeperAccepted) warnings.push("Gatekeeper assessment did not accept the DMG");
 }
 if (!pythonProvenanceTrusted) warnings.push("sidecar Python provenance does not match the pinned, SHA-256 verified standalone CPython source");
+// 发出去的包里不能带构建机的家目录（会暴露用户名）：Rust 默认把依赖源码路径写进二进制。
+const homePrefix = Buffer.from(homedir());
+const homePathFiles = filesBelow(appPath)
+  .filter((path) => readFileSync(path).includes(homePrefix))
+  .map((path) => relative(appPath, path));
+const noHomePath = homePathFiles.length === 0;
+if (!noHomePath) warnings.push(`App files contain the build machine's home directory: ${homePathFiles.slice(0, 5).join(", ")}`);
 
 const releaseReady = signed
   && notarized
   && gatekeeperAccepted
   && cleanWorktree
   && Boolean(dmg?.hdiutilValid && dmg.signed && dmg.notarized && dmg.gatekeeperAccepted)
-  && pythonProvenanceTrusted;
+  && pythonProvenanceTrusted
+  && noHomePath;
 const evidence = {
   architecture: architectureEvidence,
   artifacts: {
@@ -226,6 +235,7 @@ const evidence = {
   product: { identifier: tauriConfig.identifier, name: tauriConfig.productName, version: tauriConfig.version },
   releaseGates: {
     gatekeeperAccepted,
+    noHomePath,
     notarized,
     pythonProvenanceTrusted,
     releaseReady,
