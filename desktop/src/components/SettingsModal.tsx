@@ -28,7 +28,7 @@ import { AccountPane } from "./settings/AccountPane";
 import { BrowserPane } from "./settings/BrowserPane";
 import { UpdateCard } from "./settings/UpdateCard";
 import { VortoAccountCard } from "./settings/VortoAccountCard";
-import { keySourceLabel } from "../lib/vortoAccount";
+import { keySourceLabel, MEMBER_KEY_SOURCE } from "../lib/vortoAccount";
 import { DesktopControlPane } from "./settings/DesktopControlPane";
 import { CustomProviders } from "./settings/CustomProviders";
 import { ModelPicks } from "./settings/ModelPicks";
@@ -56,11 +56,20 @@ import type {
 
 export type SettingsSection = "account" | "general" | "usage" | "model" | "personalize" | "appearance" | "config" | "trust" | "browser" | "desktop" | "extensions";
 
-/** 「账号」「使用情况」是作者自用中转的专属页：只有当前模型服务就是它（或已用它的账号登录）时才出现。 */
-const RELAY_ONLY_SECTIONS = new Set<SettingsSection>(["account", "usage"]);
 
 export function relayMode(profile: { provider?: string; account?: unknown } | null | undefined): boolean {
   return profile?.provider === "vortocode" || Boolean(profile?.account);
+}
+
+/** 「账号」是旧的中转站用户名密码登录页：只给真用它登录过的人看；VortoCode 账号在「常规」里，会员 Key 不算。
+ *  「使用情况」跟着中转站走（会员也在用中转站）。 */
+export function sectionVisible(
+  section: SettingsSection,
+  profile: { provider?: string; account?: { keySource?: string } | null } | null | undefined,
+): boolean {
+  if (section === "account") return Boolean(profile?.account) && profile?.account?.keySource !== MEMBER_KEY_SOURCE;
+  if (section === "usage") return relayMode(profile);
+  return true;
 }
 
 const SETTINGS_NAV: Array<{ group: string; items: Array<{ id: SettingsSection; label: string; keywords: string }> }> = [
@@ -190,7 +199,7 @@ export function SettingsModal({
   const trustView = trustCard(trust);
   const llmInputIsLocal = isLocalModelBase(llmBaseInput);
   const [section, setSection] = useState<SettingsSection>(
-    initialSection && (relayMode(llmProfile) || !RELAY_ONLY_SECTIONS.has(initialSection))
+    initialSection && sectionVisible(initialSection, llmProfile)
       ? initialSection
       : llmProfile && !llmProfile.configured ? "model" : "general");
   const [query, setQuery] = useState("");
@@ -228,11 +237,10 @@ export function SettingsModal({
     onLlmBaseChange(next.baseUrl); onLlmModelChange(next.model); onLlmKeyChange(next.apiKey);
     setShowKey(false); setModelOptions([]);
   };
-  const relay = relayMode(llmProfile);
   const visibleNav = useMemo(() => {
     const keyword = query.trim().toLowerCase();
     const nav = SETTINGS_NAV
-      .map((group) => ({ ...group, items: group.items.filter((item) => relay || !RELAY_ONLY_SECTIONS.has(item.id)) }))
+      .map((group) => ({ ...group, items: group.items.filter((item) => sectionVisible(item.id, llmProfile)) }))
       .filter((group) => group.items.length > 0);
     if (!keyword) return nav;
     return nav
@@ -241,7 +249,7 @@ export function SettingsModal({
         items: group.items.filter((item) => `${item.label} ${item.keywords}`.toLowerCase().includes(keyword)),
       }))
       .filter((group) => group.items.length > 0);
-  }, [query, relay]);
+  }, [query, llmProfile]);
   const sectionTitle = SETTINGS_NAV.flatMap((group) => group.items).find((item) => item.id === section)?.label ?? "";
   const changeTheme = (preference: ThemePreference) => {
     setThemePreference(preference);
@@ -503,6 +511,7 @@ export function SettingsModal({
         {section === "general" && (
         <>
         <VortoAccountCard
+          modelConfigured={Boolean(llmProfile?.configured)}
           onProfile={onLlmProfileChange}
           onRestartRuntime={onRestartRuntime}
           onProfileCleared={async () => onLlmProfileChange(await invoke<DesktopLlmProfileStatus>("get_llm_profile"))}

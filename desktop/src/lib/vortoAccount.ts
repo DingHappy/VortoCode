@@ -19,8 +19,16 @@ export interface VortoMembership {
   planName: string;
   expiresAt: number;
   creditsAvailable: number;
+  /** 每期总额；0 = 不知道 */
+  creditsPerPeriod: number;
   keyEnabled: boolean;
   inUse: boolean;
+}
+
+/** 本期剩余不足一成：提前提醒，免得用到一半停下。 */
+export function creditsLow(membership: VortoMembership | null): boolean {
+  return Boolean(membership?.member) && membership!.creditsPerPeriod > 0
+    && membership!.creditsAvailable < membership!.creditsPerPeriod * 0.1;
 }
 
 /** 模型配置里「这把 Key 来自 VortoCode 会员」的标记（与 Rust 侧 MEMBER_KEY_SOURCE 一致）。 */
@@ -51,7 +59,8 @@ export function membershipLine(membership: VortoMembership | null): string | nul
   if (!membership || !membership.available) return null;
   if (!membership.member) return membership.planName ? `会员「${membership.planName}」已到期` : "还不是会员";
   const credits = membership.creditsAvailable.toLocaleString("zh-CN", { maximumFractionDigits: 1 });
-  return `会员「${membership.planName}」· 到期 ${day(membership.expiresAt)} · 本期剩余 ${credits} Credit`;
+  const low = creditsLow(membership) ? "（不足一成，用完后要等下期发放）" : "";
+  return `会员「${membership.planName}」· 到期 ${day(membership.expiresAt)} · 本期剩余 ${credits} Credit${low}`;
 }
 
 /** 卡片上的一句话状态。 */
@@ -82,6 +91,8 @@ export function sidebarIdentity(status: VortoAccountStatus | null, membership: V
   if (!status) return { initial: "", name: "VortoCode 账号", detail: "", title: "VortoCode 账号" };
   if (!status.signedIn) return { initial: "", name: "登录", detail: "", title: "登录 VortoCode 账号" };
   const name = status.email || "已登录";
-  const detail = membership?.member ? `${membership.planName}会员` : status.offline ? "离线" : "";
+  const detail = membership?.member
+    ? `${membership.planName}会员${creditsLow(membership) ? " · 额度不足" : ""}`
+    : status.offline ? "离线" : "";
   return { initial: name.slice(0, 1).toUpperCase(), name, detail, title: `已登录 ${name}${detail ? ` · ${detail}` : ""}` };
 }

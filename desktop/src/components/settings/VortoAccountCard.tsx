@@ -12,22 +12,28 @@ import {
 import type { DesktopLlmProfileStatus } from "../../types";
 
 interface Props {
+  /** 本机是否已配好模型服务：没配时，会员登录后直接问要不要用会员模型开始 */
+  modelConfigured: boolean;
   onProfile: (profile: DesktopLlmProfileStatus) => void;
   onRestartRuntime: () => Promise<boolean>;
   onProfileCleared: () => Promise<void>;
 }
 
-export function VortoAccountCard({ onProfile, onRestartRuntime, onProfileCleared }: Props) {
+export function VortoAccountCard({ modelConfigured, onProfile, onRestartRuntime, onProfileCleared }: Props) {
   const [status, setStatus] = useState<VortoAccountStatus | null>(null);
   const [membership, setMembership] = useState<VortoMembership | null>(null);
   const [loggingIn, setLoggingIn] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
 
-  const loadMembership = useCallback(async (current: VortoAccountStatus | null) => {
-    if (!current?.signedIn || current.offline) { setMembership(null); return; }
-    try { setMembership(await getMembership()); }
-    catch { setMembership(null); }     // 读不到会员信息不影响账号本身
+  const loadMembership = useCallback(async (current: VortoAccountStatus | null): Promise<VortoMembership | null> => {
+    let value: VortoMembership | null = null;
+    if (current?.signedIn && !current.offline) {
+      try { value = await getMembership(); }
+      catch { value = null; }     // 读不到会员信息不影响账号本身
+    }
+    setMembership(value);
+    return value;
   }, []);
 
   useEffect(() => {
@@ -45,8 +51,12 @@ export function VortoAccountCard({ onProfile, onRestartRuntime, onProfileCleared
     try {
       const value = await loginAccount();
       setStatus(value);
-      await loadMembership(value);
+      const member = await loadMembership(value);
       announceAccountChanged();
+      setLoggingIn(false);
+      if (member?.member && member.keyEnabled && !member.inUse && !modelConfigured) {
+        await useMember("你是 VortoCode 会员。现在就用会员模型开始吗？不用再填服务地址和 Key。");
+      }
     } catch (error) { setNote(errorText(error, "登录没有完成")); }
     finally { setLoggingIn(false); }
   };
@@ -67,14 +77,14 @@ export function VortoAccountCard({ onProfile, onRestartRuntime, onProfileCleared
     finally { setBusy(false); }
   };
 
-  const useMember = async () => {
-    if (!await confirmAction("把默认模型服务换成 VortoCode 会员？当前的服务地址和 Key 会被替换，自定义供应商保留。")) return;
+  const useMember = async (question = "把默认模型服务换成 VortoCode 会员？当前的服务地址和 Key 会被替换，自定义供应商保留。") => {
+    if (!await confirmAction(question)) return;
     setBusy(true); setNote("");
     try {
       onProfile(await applyMembership());
       await onRestartRuntime();
       setNote("已切换到会员模型");
-      await loadMembership(status);
+      await loadMembership(await getAccountStatus().catch(() => status));   // 刚登录时闭包里的 status 还是旧的
       announceAccountChanged();
     } catch (error) { setNote(errorText(error, "切换失败")); }
     finally { setBusy(false); }

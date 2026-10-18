@@ -576,6 +576,8 @@ struct ModelAccess {
     #[serde(default)]
     credits_available: f64,
     #[serde(default)]
+    credits_per_period: f64,
+    #[serde(default)]
     key_enabled: bool,
     base_url: Option<String>,
     api_key: Option<String>,
@@ -590,6 +592,8 @@ pub struct Membership {
     plan_name: String,
     expires_at: i64,
     credits_available: f64,
+    /// 每期总额；0 = 不知道（不做「额度不足」提醒）
+    credits_per_period: f64,
     key_enabled: bool,
     /// 当前默认模型服务用的就是会员 Key
     in_use: bool,
@@ -652,6 +656,7 @@ pub async fn account_membership(
         plan_name: access.plan_name,
         expires_at: access.expires_at,
         credits_available: access.credits_available,
+        credits_per_period: access.credits_per_period,
         key_enabled: access.key_enabled,
         in_use: member_key_in_use(&app, &store),
     })
