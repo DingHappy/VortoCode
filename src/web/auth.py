@@ -48,8 +48,8 @@ _EXEMPT_EXACT = {"/", "/review",
                  "/api/auth/login", "/api/auth/logout", "/api/auth/status",
                  # 小智语音端点用自己的专用令牌（routers/voice.py），不收也不放行主 API 令牌
                  "/api/voice/mcp",
-                 # 运维心跳报到同样只认自己的专用令牌（routers/ops_heartbeat.py）
-                 "/api/ops/heartbeat"}
+                 # 运维心跳报到与运维消息同样只认自己的专用令牌（routers/ops_heartbeat.py）
+                 "/api/ops/heartbeat", "/api/ops/notice"}
 
 
 def ct_eq(candidate: str, token: str) -> bool:

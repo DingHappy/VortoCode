@@ -28,7 +28,7 @@ describe("accountHeadline", () => {
 describe("membershipLine", () => {
   const member: VortoMembership = {
     available: true, member: true, planName: "中度", expiresAt: new Date(2026, 10, 18, 12).getTime() / 1000,
-    creditsAvailable: 6900, creditsPerPeriod: 6900, keyEnabled: true, inUse: false,
+    creditsAvailable: 6900, creditsPerPeriod: 6900, renewedUntil: 0, keyEnabled: true, inUse: false,
   };
   it("summarises plan, expiry and remaining credit", () => {
     expect(membershipLine(member)).toBe("会员「中度」· 到期 2026-11-18 · 本期剩余 6,900 Credit");
@@ -54,7 +54,7 @@ describe("sidebarIdentity", () => {
     signedIn: true, email: "me@example.com", deviceName: "Mac", offline: false, manageUrl: "", note: "",
   };
   const member: VortoMembership = {
-    available: true, member: true, planName: "中度", expiresAt: 0, creditsAvailable: 3000, creditsPerPeriod: 6900, keyEnabled: true, inUse: true,
+    available: true, member: true, planName: "中度", expiresAt: 0, creditsAvailable: 3000, creditsPerPeriod: 6900, renewedUntil: 0, keyEnabled: true, inUse: true,
   };
   it("shows the signed-in person and their membership", () => {
     expect(sidebarIdentity(signedIn, member)).toEqual({
@@ -72,7 +72,7 @@ describe("sidebarIdentity", () => {
 describe("creditsLow", () => {
   const member: VortoMembership = {
     available: true, member: true, planName: "中度", expiresAt: new Date(2026, 10, 18, 12).getTime() / 1000,
-    creditsAvailable: 600, creditsPerPeriod: 6900, keyEnabled: true, inUse: true,
+    creditsAvailable: 600, creditsPerPeriod: 6900, renewedUntil: 0, keyEnabled: true, inUse: true,
   };
   it("warns under a tenth of the period, in the card and the sidebar", () => {
     expect(creditsLow(member)).toBe(true);
@@ -94,7 +94,7 @@ describe("membershipAction", () => {
     manageUrl: "https://account.example.com/account", note: "",
   };
   const member: VortoMembership = {
-    available: true, member: true, planName: "中度", expiresAt: 0, creditsAvailable: 5000, creditsPerPeriod: 6900,
+    available: true, member: true, planName: "中度", expiresAt: 0, creditsAvailable: 5000, creditsPerPeriod: 6900, renewedUntil: 0,
     keyEnabled: true, inUse: true,
   };
   it("offers to join or renew on the account site's membership page", () => {
@@ -105,5 +105,16 @@ describe("membershipAction", () => {
     expect(membershipAction(status, member)).toBeNull();
     expect(membershipAction({ ...status, signedIn: false }, { ...member, member: false })).toBeNull();
     expect(membershipAction(status, { ...member, available: false, member: false })).toBeNull();
+  });
+});
+
+describe("membershipLine with a renewal", () => {
+  it("says how far the membership has been renewed", () => {
+    const member: VortoMembership = {
+      available: true, member: true, planName: "中度", expiresAt: new Date(2026, 10, 18, 12).getTime() / 1000,
+      creditsAvailable: 6900, creditsPerPeriod: 6900, renewedUntil: new Date(2026, 11, 18, 12).getTime() / 1000,
+      keyEnabled: true, inUse: true,
+    };
+    expect(membershipLine(member)).toBe("会员「中度」· 到期 2026-11-18 · 已续至 2026-12-18 · 本期剩余 6,900 Credit");
   });
 });

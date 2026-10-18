@@ -119,6 +119,31 @@ def overdue(root: str, now: Optional[datetime] = None) -> List[str]:
     return messages
 
 
+_NOTICE_DAILY_LIMIT = 60
+_notice_times: List[datetime] = []
+
+
+def notice_text(source: str, text: str, now: Optional[datetime] = None) -> str:
+    """家里机器转来的一条运维消息（比如「有人付款了」）：校验来源、抹掉疑似凭据、截断，并限每天条数。
+
+    令牌泄露时也只能每天推有限几条、碰不到别的接口。返回要推给主人的话。
+    """
+    source = str(source or "").strip()
+    if not _SOURCE.fullmatch(source):
+        raise HeartbeatError("source 只能用小写字母、数字和 -，最长 40 个字符")
+    from src.memory.write_policy import redact_secret_like
+    body = redact_secret_like(" ".join(str(text or "").split()))[0][:_MAX_TEXT]
+    if not body:
+        raise HeartbeatError("text 不能为空")
+    now = now or datetime.now(timezone.utc)
+    with _LOCK:
+        _notice_times[:] = [moment for moment in _notice_times if now - moment < timedelta(days=1)]
+        if len(_notice_times) >= _NOTICE_DAILY_LIMIT:
+            raise HeartbeatError("今天的运维消息已经太多了")
+        _notice_times.append(now)
+    return f"📣 {source}：{body}"
+
+
 def brief_line(root: str, now: Optional[datetime] = None) -> str:
     """早报末尾的一行运维摘要。没有任何报到来源（没配运维心跳的机器）就是空串，早报里完全不出现。"""
     now = now or datetime.now(timezone.utc)
