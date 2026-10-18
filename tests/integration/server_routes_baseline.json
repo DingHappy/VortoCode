@@ -1062,5 +1062,11 @@
     "methods": [
       "POST"
     ]
+  },
+  {
+    "path": "/api/ops/heartbeat",
+    "methods": [
+      "POST"
+    ]
   }
 ]

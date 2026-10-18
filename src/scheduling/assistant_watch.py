@@ -303,6 +303,12 @@ async def watch_once(root: str, now: datetime, *, notify: Notify, refresh=assist
                      times: Optional[List[str]] = None, writer=None) -> None:
     """巡检一轮：刷新任务状态、推送变化、到点发报告。首次运行只记下现状，不把旧账推一遍。"""
     from src.workflow.workbench.goal_followup import poll_goal_followups
+    try:  # 家里其它机器的定时活（备份同步、恢复演练）该报没报：每次断档推一次
+        from src.scheduling.ops_heartbeats import overdue
+        for message in overdue(root, now):
+            await _notify_accepted(notify, message)
+    except Exception as error:  # noqa: BLE001 —— 心跳检查失败不挡任务巡检
+        logger.warning("运维心跳检查失败：%s", type(error).__name__)
     try:
         await poll_goal_followups(root, now, notify=notify)
     except Exception as error:  # Goals and dispatch refresh fail independently; cancellation propagates.
