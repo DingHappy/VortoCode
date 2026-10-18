@@ -126,3 +126,27 @@ async def test_morning_brief_carries_the_ops_line_outside_the_model(tmp_path):
     morning = await watch.compose_report(root, now, "早报", llm=_NoLLM())
     assert morning == "🗒 早报：今天没有需要你处理的事。\n\n运维：1 项正常（nas-backup）"
     assert await watch.compose_report(root, now, "晚报", llm=_NoLLM()) == ""
+
+
+def test_notice_route_pushes_a_line_with_the_ops_token_only(client, monkeypatch):
+    monkeypatch.setattr(hb, "_notice_times", [])
+    post = lambda body, token="ops-secret": client.post(  # noqa: E731
+        "/api/ops/notice", json=body, headers={"Authorization": f"Bearer {token}"} if token else {})
+    body = {"source": "account-service", "text": "新付款：sq***@icloud.com 买了「体验」¥9.9"}
+    assert post(body, token=None).status_code == 404
+    assert post(body, token="main-secret").status_code == 404
+    assert post(body).json() == {"ok": True, "notified": True}
+    assert client.sent == ["📣 account-service：新付款：sq***@icloud.com 买了「体验」¥9.9"]
+    assert post({"source": "Bad Name", "text": "x"}).status_code == 400
+    assert post({"source": "account-service", "text": "  "}).status_code == 400
+
+
+def test_notices_are_capped_per_day_and_scrubbed(monkeypatch):
+    monkeypatch.setattr(hb, "_notice_times", [])
+    for i in range(hb._NOTICE_DAILY_LIMIT):
+        hb.notice_text("account-service", f"第 {i} 条", now=T0)
+    with pytest.raises(hb.HeartbeatError):
+        hb.notice_text("account-service", "多了", now=T0 + timedelta(hours=1))
+    assert hb.notice_text("account-service", "隔天又能发", now=T0 + timedelta(days=1, minutes=1))
+    assert "sk-abcdefghijklmnopqrstuvwx123456" not in hb.notice_text(
+        "account-service", "key sk-abcdefghijklmnopqrstuvwx123456", now=T0 + timedelta(days=1, minutes=2))

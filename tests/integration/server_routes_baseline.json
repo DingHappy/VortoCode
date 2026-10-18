@@ -1068,5 +1068,11 @@
     "methods": [
       "POST"
     ]
+  },
+  {
+    "path": "/api/ops/notice",
+    "methods": [
+      "POST"
+    ]
   }
 ]

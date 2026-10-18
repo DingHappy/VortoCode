@@ -58,6 +58,7 @@ _GENERAL_HTTP_PREFIXES = (
     "/api/extensions/catalog",  # 精选目录：MCP 只写本范围的 config/mcp.yaml；技能安装另需项目（见下）
     "/api/extensions/mcp/servers",  # MCP 服务清单与开关：只读写本范围的 config/mcp.yaml，不碰项目文件/Shell/Git
     "/api/ops/heartbeat",       # 运维心跳报到：只写报到状态、推一条通知，专用令牌（routers/ops_heartbeat.py）
+    "/api/ops/notice",          # 运维消息：推一条通知（限每天条数），同一专用令牌
     "/api/voice/",              # 小智语音端点：只读今日事项/任务单 + 记一张待确认提议，专用令牌（routers/voice.py）
     "/api/artifacts",
     "/artifact/",

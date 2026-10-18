@@ -21,6 +21,8 @@ export interface VortoMembership {
   creditsAvailable: number;
   /** 每期总额；0 = 不知道 */
   creditsPerPeriod: number;
+  /** 已续费到哪天（秒）；0 = 没有续费 */
+  renewedUntil: number;
   keyEnabled: boolean;
   inUse: boolean;
 }
@@ -60,7 +62,8 @@ export function membershipLine(membership: VortoMembership | null): string | nul
   if (!membership.member) return membership.planName ? `会员「${membership.planName}」已到期` : "还不是会员";
   const credits = membership.creditsAvailable.toLocaleString("zh-CN", { maximumFractionDigits: 1 });
   const low = creditsLow(membership) ? "（不足一成，用完后要等下期发放）" : "";
-  return `会员「${membership.planName}」· 到期 ${day(membership.expiresAt)} · 本期剩余 ${credits} Credit${low}`;
+  const renewed = membership.renewedUntil > membership.expiresAt ? ` · 已续至 ${day(membership.renewedUntil)}` : "";
+  return `会员「${membership.planName}」· 到期 ${day(membership.expiresAt)}${renewed} · 本期剩余 ${credits} Credit${low}`;
 }
 
 /** 卡片上的一句话状态。 */
