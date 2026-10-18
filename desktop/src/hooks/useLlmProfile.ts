@@ -19,7 +19,7 @@ export function useLlmProfile(
   onRestartRuntime: () => Promise<boolean>,
 ) {
   const [llmProfile, setLlmProfile] = useState<DesktopLlmProfileStatus | null>(null);
-  const [llmBaseInput, setLlmBaseInput] = useState("https://token.vortotech.com/v1");
+  const [llmBaseInput, setLlmBaseInput] = useState("https://api.openai.com/v1");
   const [llmModelInput, setLlmModelInput] = useState("mimo-v2.6-pro");
   const [llmKeyInput, setLlmKeyInput] = useState("");
   const [llmFastInput, setLlmFastInput] = useState("");

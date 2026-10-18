@@ -25,13 +25,13 @@ def test_unset_means_empty():
 
 
 def test_configured_yields_review_link(monkeypatch):
-    monkeypatch.setenv("VORTOCODE_PUBLIC_BASE_URL", "http://192.168.10.97:8080/")
-    assert public_base_url() == "http://192.168.10.97:8080"   # 尾斜杠收掉，别拼出 //review
-    assert review_link("r-1") == "\n📱 http://192.168.10.97:8080/review（r-1）"
+    monkeypatch.setenv("VORTOCODE_PUBLIC_BASE_URL", "http://192.168.1.20:8080/")
+    assert public_base_url() == "http://192.168.1.20:8080"   # 尾斜杠收掉，别拼出 //review
+    assert review_link("r-1") == "\n📱 http://192.168.1.20:8080/review（r-1）"
 
 
 @pytest.mark.parametrize("bad", ["javascript:alert(1)", "file:///etc/passwd",
-                                 "192.168.10.97:8080", "ftp://x", "   "])
+                                 "192.168.1.20:8080", "ftp://x", "   "])
 def test_non_http_schemes_are_refused(monkeypatch, bad):
     """钉钉消息里的链接会被点——javascript:/file: 从配置渗进消息就是埋雷。"""
     monkeypatch.setenv("VORTOCODE_PUBLIC_BASE_URL", bad)

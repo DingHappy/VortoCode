@@ -127,7 +127,7 @@ import { MarkdownMessage } from "./components/MarkdownMessage";
 import { ProjectAssetsPanel } from "./components/ProjectAssetsPanel";
 import { RunsPanel } from "./components/RunsPanel";
 import { RuntimeInboxPanel } from "./components/RuntimeInboxPanel";
-import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
+import { SettingsModal, relayMode, type SettingsSection } from "./components/SettingsModal";
 import { BuildVersion } from "./components/BuildVersion";
 import { ArtifactCenter } from "./components/ArtifactCenter";
 import { PluginsPage } from "./components/PluginsPage";
@@ -3422,11 +3422,11 @@ function App() {
           <div className="sidebar-footer">
             <button
               className="sidebar-account"
-              title={llmProfile?.account ? `已登录 ${llmProfile.account.username}` : "账号与登录"}
-              onClick={() => { setSettingsSection("account"); setSettingsOpen(true); }}
+              title={llmProfile?.account ? `已登录 ${llmProfile.account.username}` : relayMode(llmProfile) ? "账号与登录" : "模型服务"}
+              onClick={() => { setSettingsSection(relayMode(llmProfile) ? "account" : "model"); setSettingsOpen(true); }}
             >
               <span className="sidebar-avatar">{llmProfile?.account ? (llmProfile.account.displayName || llmProfile.account.username).slice(0, 1).toUpperCase() : <UserRound size={14} />}</span>
-              <span>{llmProfile?.account ? (llmProfile.account.displayName || llmProfile.account.username) : "账号"}</span>
+              <span>{llmProfile?.account ? (llmProfile.account.displayName || llmProfile.account.username) : relayMode(llmProfile) ? "账号" : "模型服务"}</span>
             </button>
             <button className="sidebar-gear" aria-label="设置" title="设置" onClick={() => setSettingsOpen(true)}>
               <Settings2 size={16} />

@@ -53,6 +53,13 @@ import type {
 
 export type SettingsSection = "account" | "general" | "usage" | "model" | "personalize" | "appearance" | "config" | "trust" | "browser" | "desktop" | "extensions";
 
+/** 「账号」「使用情况」是作者自用中转的专属页：只有当前模型服务就是它（或已用它的账号登录）时才出现。 */
+const RELAY_ONLY_SECTIONS = new Set<SettingsSection>(["account", "usage"]);
+
+export function relayMode(profile: { provider?: string; account?: unknown } | null | undefined): boolean {
+  return profile?.provider === "vortocode" || Boolean(profile?.account);
+}
+
 const SETTINGS_NAV: Array<{ group: string; items: Array<{ id: SettingsSection; label: string; keywords: string }> }> = [
   {
     group: "个人",
@@ -180,7 +187,9 @@ export function SettingsModal({
   const trustView = trustCard(trust);
   const llmInputIsLocal = isLocalModelBase(llmBaseInput);
   const [section, setSection] = useState<SettingsSection>(
-    initialSection ?? (llmProfile && !llmProfile.configured ? "account" : "general"));
+    initialSection && (relayMode(llmProfile) || !RELAY_ONLY_SECTIONS.has(initialSection))
+      ? initialSection
+      : llmProfile && !llmProfile.configured ? "model" : "general");
   const [query, setQuery] = useState("");
   const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference);
   const [modelOptions, setModelOptions] = useState<string[]>([]);
@@ -216,16 +225,20 @@ export function SettingsModal({
     onLlmBaseChange(next.baseUrl); onLlmModelChange(next.model); onLlmKeyChange(next.apiKey);
     setShowKey(false); setModelOptions([]);
   };
+  const relay = relayMode(llmProfile);
   const visibleNav = useMemo(() => {
     const keyword = query.trim().toLowerCase();
-    if (!keyword) return SETTINGS_NAV;
-    return SETTINGS_NAV
+    const nav = SETTINGS_NAV
+      .map((group) => ({ ...group, items: group.items.filter((item) => relay || !RELAY_ONLY_SECTIONS.has(item.id)) }))
+      .filter((group) => group.items.length > 0);
+    if (!keyword) return nav;
+    return nav
       .map((group) => ({
         ...group,
         items: group.items.filter((item) => `${item.label} ${item.keywords}`.toLowerCase().includes(keyword)),
       }))
       .filter((group) => group.items.length > 0);
-  }, [query]);
+  }, [query, relay]);
   const sectionTitle = SETTINGS_NAV.flatMap((group) => group.items).find((item) => item.id === section)?.label ?? "";
   const changeTheme = (preference: ThemePreference) => {
     setThemePreference(preference);
@@ -295,7 +308,7 @@ export function SettingsModal({
               在下面改服务地址或填新 Key 会替换掉它；要换账号请到<button onClick={() => setSection("account")}>账号</button>。
             </p>
           )}
-          <p className="llm-setup-guide">填写服务地址 → 获取模型列表 → 选择模型 → 保存应用。本地模型无需登录 VortoCode 账号。</p>
+          <p className="llm-setup-guide">填写服务地址 → 获取模型列表 → 选择模型 → 保存应用。任何 OpenAI 兼容服务都可以；本地模型不需要 Key。</p>
           <p className="llm-profile-note">快捷项只用于预填地址；切换本机快捷项会保留你已经填写的本机端口和模型。</p>
           <div className="llm-profile-presets" aria-label="模型服务快捷设置">
             {PROVIDER_PRESETS.map((preset) => (

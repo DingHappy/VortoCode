@@ -59,6 +59,6 @@ async def test_rejection_message_shows_resolved_addresses(tmp_path):
     真机：www.google.com 在国内被投毒成 Facebook IP + Teredo 保留段而被拦。
     只说"拒绝私网"会让人以为是自己配置错了，附上解析地址才诊断得动。
     """
-    out = await _tool(tmp_path).handler({"url": "http://192.168.10.98:3000/"})
-    assert "192.168.10.98" in out
+    out = await _tool(tmp_path).handler({"url": "http://192.168.1.40:3000/"})
+    assert "192.168.1.40" in out
     assert "SSRF" in out

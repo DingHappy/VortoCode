@@ -35,12 +35,11 @@ npm run bundle:app
 
 | 预设 | 说明 |
 |---|---|
-| VortoCode Relay | OpenAI 兼容的中转，需要它的 Key |
 | OpenAI / DeepSeek / Kimi / 智谱 GLM / 千问 / MiniMax | 各家官方接口，用你自己的 Key |
 | 本机模型（Ollama，`http://127.0.0.1:11434/v1`）/ oMLX | 不需要 Key；见 `docs/LOCAL_MODELS.md` |
 | 自定义 | 任何 OpenAI 兼容地址；远程地址必须是 HTTPS |
 
-填完点「测试连接」确认能通。Key 存在 macOS 系统钥匙串里，不写进任何文件或仓库。
+填完点「测试连接」确认能通。Key 保存在本机的 `~/Library/Application Support/com.vorto.vortocode/llm-profile.json`（只有你自己可读写，权限 600），不进任何仓库。
 
 > 本机小模型能聊天，但开发流水线依赖稳定的工具调用和多步规划，小模型经常跟不上。先用一家云端模型把流程跑通，再按需要换。
 

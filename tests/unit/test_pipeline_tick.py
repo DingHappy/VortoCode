@@ -344,12 +344,12 @@ def test_the_notification_points_at_the_review_console(repo, monkeypatch):
     一屏几十行的选题池在手机上读不了，把全文塞进推送人反而更不会读。所以通知给的是
     指路，不是内容——但手机上直接回 /ok 的快捷路径仍然留着（有时你就是想一眼看完直接批）。
     """
-    monkeypatch.setenv("VORTOCODE_PUBLIC_BASE_URL", "http://192.168.10.97:8080")
+    monkeypatch.setenv("VORTOCODE_PUBLIC_BASE_URL", "http://192.168.1.20:8080")
     _start(repo)
     notify = Recorder()
     asyncio.run(tick(repo, execute=_ok, notify=notify))
     text = notify.sent[0][0]
-    assert "/review" in text and "192.168.10.97:8080" in text
+    assert "/review" in text and "192.168.1.20:8080" in text
     assert "/ok" in text                                   # 快捷路径没被拿掉
 
 

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# 把常驻 serve 部署到 agent 专用 VM（默认 vorto-code）——拉代码 → 按需装依赖 → 重启 → 验收。
+# 把常驻 serve 部署到 agent 专用 VM（目标主机用 VORTOCODE_DEPLOY_HOST 指定）——拉代码 → 按需装依赖 → 重启 → 验收。
 #
 # 为什么要有这个脚本：手动部署是「ssh 进去 / git pull / 可能要重装依赖 / 重启服务 / 看日志」
 # 四五步，**最容易漏的是重启**——2026-07-26 真机上就栽过：代码已经 pull 了、服务还跑着旧版本，
 # 于是"验证修复"验的是没修的东西，白折腾一轮。所以这个脚本的核心不是省事，是**证明**：
 # 收尾会打印远端实际运行的 commit 与服务重启时刻，对不上就非零退出。
 #
-#   ./scripts/deploy-agent-vm.sh                 # 部署 main
-#   ./scripts/deploy-agent-vm.sh vorto/some-work # 部署指定分支（真机验证功能分支用）
-#   VORTOCODE_DEPLOY_HOST=myhost ./scripts/deploy-agent-vm.sh
+#   VORTOCODE_DEPLOY_HOST=myhost ./scripts/deploy-agent-vm.sh                 # 部署 main
+#   VORTOCODE_DEPLOY_HOST=myhost ./scripts/deploy-agent-vm.sh vorto/some-work # 部署指定分支
+#   远端目录默认 ~/VortoCode，可用 VORTOCODE_DEPLOY_DIR 改
 #
 # 前置：本机 ssh 能免密登到目标主机；远端已按 docs/OPS.md 装好 venv 与 systemd 用户服务。
 #
@@ -16,10 +16,12 @@
 # 整个家目录——要给 agent 更大权限干活，就得先把爆炸半径关进一台可丢弃的机器（2026-07-26）。
 set -uo pipefail
 
-HOST="${VORTOCODE_DEPLOY_HOST:-vorto-code}"
-REMOTE_DIR="${VORTOCODE_DEPLOY_DIR:-personal_project/VortoCode}"
+HOST="${VORTOCODE_DEPLOY_HOST:-}"
+REMOTE_DIR="${VORTOCODE_DEPLOY_DIR:-VortoCode}"
 SERVICE="${VORTOCODE_DEPLOY_SERVICE:-vortocode-serve.service}"
 REF="${1:-main}"
+
+[ -n "$HOST" ] || { echo "✗ 先用 VORTOCODE_DEPLOY_HOST 指定要部署到的主机（ssh 别名或地址）" >&2; exit 2; }
 
 say() { printf '\n──────── %s ────────\n' "$1"; }
 die() { printf '\n✗ %s\n' "$1" >&2; exit 1; }

@@ -46,7 +46,7 @@ def _hermetic_ambient_credentials(monkeypatch):
 
     `scripts/ci-local.sh` 与 CI 都把这四个设成空串，这本身是对的。但**保护来自调用方**，
     而 CLAUDE.md 教人敲的是裸命令 `python -m pytest tests/ -q`——在 `.env` 里配了
-    `VORTOCODE_API_TOKEN` 的机器上（生产机 192.168.10.97 就是），那条命令会红 55 条，
+    `VORTOCODE_API_TOKEN` 的机器上（生产机就是），那条命令会红 55 条，
     报错还长得像代码坏了（`KeyError: 'artifacts'`——其实是 401 的响应体里没有那个键）。
 
     **空串而不是 delenv，这个区别是要命的**：`load_dotenv(override=False)` 的判据是

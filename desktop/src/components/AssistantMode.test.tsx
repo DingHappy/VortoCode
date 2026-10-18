@@ -30,12 +30,12 @@ it("右侧：身份卡显示连接状态与模型；等你处理的件数跟在�
 it("身份卡说明助理住在哪：常驻电脑 / 本机；本机时给出连接或重连常驻电脑的入口", () => {
   const panel = (host: import("./AssistantMode").AssistantHostInfo) => renderToStaticMarkup(
     <AssistantPanel name="VortoCode" connected host={host} onAddResident={() => {}} onRetryResident={() => {}} tab="feed" onTab={() => {}} onClose={() => {}}><p /></AssistantPanel>);
-  const resident = panel({ kind: "resident", name: "vorto-code" });
-  expect(resident).toContain("住在常驻电脑「vorto-code」");
+  const resident = panel({ kind: "resident", name: "home-server" });
+  expect(resident).toContain("住在常驻电脑「home-server」");
   expect(resident).toContain("合上笔记本它也照常干活");
   expect(resident).not.toContain("连接常驻电脑</button>");
   expect(panel({ kind: "resident", name: "常驻电脑" })).toContain("住在常驻电脑</span>");   // 名字就叫常驻电脑时不重复
-  expect(panel({ kind: "resident", name: "vorto-code", reachable: false })).toContain(">重新连接常驻电脑</button>");
+  expect(panel({ kind: "resident", name: "home-server", reachable: false })).toContain(">重新连接常驻电脑</button>");
   expect(panel({ kind: "local", canAddResident: true })).toContain(">连接常驻电脑</button>");
   expect(panel({ kind: "local", canAddResident: false })).toContain(">重新连接常驻电脑</button>");
 });
