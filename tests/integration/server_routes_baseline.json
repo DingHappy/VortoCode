@@ -972,5 +972,17 @@
     "methods": [
       "PUT"
     ]
+  },
+  {
+    "path": "/api/voice/mcp",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/voice/mcp",
+    "methods": [
+      "POST"
+    ]
   }
 ]
