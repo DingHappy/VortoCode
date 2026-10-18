@@ -55,6 +55,7 @@ _GENERAL_HTTP_PREFIXES = (
     "/api/dispatches",          # 常驻助理的派活台账：任务单与下发（下发由人点，目标只限登记项目）
     "/api/assistant/",          # 常驻助理的名字/关于你/长期记忆（查看与删除）
     "/api/im/",                 # IM 桥状态与同机转发通知：常驻助理持有 Telegram 时 8080 经这里转发（真机曾被挡）
+    "/api/voice/",              # 小智语音端点：只读今日事项/任务单 + 记一张待确认提议，专用令牌（routers/voice.py）
     "/api/artifacts",
     "/artifact/",
     "/api/decisions",

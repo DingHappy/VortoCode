@@ -157,7 +157,12 @@ def status_message(item: Dict[str, Any]) -> str:
     return f"❌ {title} 失败：{_clip_head(str(item.get('error') or '没有错误信息').strip(), _DIGEST_LIMIT)}"
 
 
-def _report_material(root: str, now: datetime):
+STATUS_NAMES = {"proposed": "等你确认下发", "send_failed": "下发失败", "running": "在做", "waiting": "在等人回答",
+                "done": "执行结束，待审查", "failed": "失败", "stopped": "已停下",
+                "sending": "正在下发", "submission_unknown": "提交结果待核对"}
+
+
+def report_material(root: str, now: datetime):
     """今天的对话、今天相关的任务单、等你处理的任务单。"""
     from src.gateway.turn_digest import recent_turns
 
@@ -179,15 +184,13 @@ def _report_material(root: str, now: datetime):
 
 def build_report(root: str, now: datetime, label: str) -> str:
     """早报 / 晚报正文：今天的对话、任务单状态、等你处理的。"""
-    turns, active, waiting = _report_material(root, now)
+    turns, active, waiting = report_material(root, now)
     lines = [f"🗒 {label}（{now:%m月%d日 %H:%M}）"]
     if turns:
         lines.append(f"今天聊了 {len(turns)} 件事。")
     for turn in turns[:5]:
         lines.append(f"· {turn.get('title')}：{turn.get('outcome') or '—'}")
-    names = {"proposed": "等你确认下发", "send_failed": "下发失败", "running": "在做", "waiting": "在等人回答",
-             "done": "执行结束，待审查", "failed": "失败", "stopped": "已停下",
-             "sending": "正在下发", "submission_unknown": "提交结果待核对"}
+    names = STATUS_NAMES
     if active:
         lines.append("")
         lines.append("任务单：")
@@ -201,7 +204,7 @@ def build_report(root: str, now: datetime, label: str) -> str:
 
 def quiet_report(root: str, now: datetime, label: str) -> Optional[str]:
     """今天什么都没发生时的报告：早报一行（顺带说明助理还在），晚报不发（空串）。有事返回 None。"""
-    turns, active, waiting = _report_material(root, now)
+    turns, active, waiting = report_material(root, now)
     if turns or active or waiting:
         return None
     return f"🗒 {label}：今天没有需要你处理的事。" if label == "早报" else ""

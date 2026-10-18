@@ -45,7 +45,9 @@ SESSION_COOKIE = "vortocode_session"
 _EXEMPT_PREFIXES = ("/docs", "/redoc", "/openapi.json", "/static")
 _EXEMPT_EXACT = {"/", "/review",
                  "/api/health", "/api/health/quick",
-                 "/api/auth/login", "/api/auth/logout", "/api/auth/status"}
+                 "/api/auth/login", "/api/auth/logout", "/api/auth/status",
+                 # 小智语音端点用自己的专用令牌（routers/voice.py），不收也不放行主 API 令牌
+                 "/api/voice/mcp"}
 
 
 def ct_eq(candidate: str, token: str) -> bool:
