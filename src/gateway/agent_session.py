@@ -216,6 +216,11 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
     if browser_control_enabled(kind):
         # 浏览器操控：Desktop 设置里显式打开才有；点击/输入在任何授权档位下都过人（interact 类）。
         tools += build_browser_tools(repo_root, gated_confirm)
+    from src.agents.tools.desktop import build_desktop_tools, desktop_control_enabled
+    if desktop_control_enabled(kind, profile=capabilities.profile, can_ask_human=can_ask_human):
+        # 桌面操作（实验功能，默认关闭）：有人值守的 Web/Desktop 会话、local 档位才有；
+        # 点击/输入/按键/开应用在任何授权档位下都过人（interact 类）。
+        tools += build_desktop_tools(repo_root, gated_confirm)
     # 各端**永久**切 build 的真实方式。别让内核去猜，也别在系统提示里写死某一个端的键。
     _SWITCH_HINT = {"im": "回复 `/mode build`", "web": "点界面上的 plan/build 开关",
                     "cli": "重跑时加 `-b` 参数"}
