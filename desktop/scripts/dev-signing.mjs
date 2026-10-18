@@ -401,7 +401,10 @@ function buildSigned() {
   required("npm", ["run", "sidecar:build"], { stdio: "inherit" });
   required("npm", ["run", "sidecar:smoke"], { stdio: "inherit" });
   required("npx", ["tauri", "build", "--bundles", "app"], {
-    env: { ...process.env, APPLE_SIGNING_IDENTITY: identity.name },
+    // Rust 会把依赖源码的绝对路径（含构建机的用户名）写进二进制的 panic 位置信息：
+    // 发出去的包不该带着构建机的家目录。替换成 ~，行为不变。verify-release 会再查一遍。
+    env: { ...process.env, APPLE_SIGNING_IDENTITY: identity.name,
+      RUSTFLAGS: [process.env.RUSTFLAGS, `--remap-path-prefix=${homedir()}=~`].filter(Boolean).join(" ") },
     stdio: "inherit",
   });
   resignPyInstallerBundle(appPath, identity);
