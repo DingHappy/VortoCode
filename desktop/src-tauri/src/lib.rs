@@ -3935,6 +3935,8 @@ pub fn run() {
             account::account_login,
             account::account_login_cancel,
             account::account_logout,
+            account::account_membership,
+            account::account_use_membership,
             get_update_check_enabled,
             set_update_check_enabled,
             set_desktop_control,
@@ -4420,6 +4422,45 @@ fn with_sk_prefix(key: &str) -> String {
     }
 }
 
+/// 把中转站的一把 Key 存成默认模型服务（中转站登录与 VortoCode 会员共用）：同一地址时沿用已选模型、
+/// 调度档和模型清单，换地址则回到默认模型；自定义供应商一律保留。
+async fn save_relay_plan_profile(
+    app: &AppHandle,
+    store: &State<'_, DesktopLlmProfileStore>,
+    key: &str,
+    account: DesktopAccount,
+) -> Result<DesktopLlmProfile, String> {
+    let saved = cached_desktop_llm_profile(app, store)?;
+    let base_url = format!("{RELAY_ORIGIN}/v1");
+    let same_base = saved.as_ref().is_some_and(|saved| saved.base_url == base_url);
+    let profile = normalize_llm_profile(DesktopLlmProfile {
+        base_url,
+        api_key: with_sk_prefix(key),
+        model: saved
+            .as_ref()
+            .filter(|_| same_base)
+            .map(|saved| saved.model.clone())
+            .unwrap_or_else(|| RELAY_DEFAULT_MODEL.into()),
+        context_window: None,
+        context_window_source: None,
+        fast_model: saved.as_ref().filter(|_| same_base).and_then(|saved| saved.fast_model.clone()),
+        strong_model: saved.as_ref().filter(|_| same_base).and_then(|saved| saved.strong_model.clone()),
+        role_models: saved.as_ref().map(|profile| profile.role_models.clone()).unwrap_or_default(),
+        models: saved.as_ref().filter(|_| same_base).map(|saved| saved.models.clone()).unwrap_or_default(),
+        model_info: saved.as_ref().filter(|_| same_base).map(|saved| saved.model_info.clone()).unwrap_or_default(),
+        providers: saved.map(|saved| saved.providers).unwrap_or_default(),
+        account: Some(account),
+        signed_out: false,
+    })?;
+    let profile = with_model_list(profile).await;
+    let profile = save_llm_profile_flow(profile, true, LLM_PROBE_TIMEOUT, |profile| {
+        save_llm_profile_file(&llm_profile_path(app)?, profile)
+    })
+    .await?;
+    store.replace(Some(profile.clone()))?;
+    Ok(profile)
+}
+
 /// 用 VortoCode 中转站账号登录，取用账号的 Token Plan Key（Desktop 套餐即 Token Plan）。
 /// 没有套餐时默认不建 Key，交给用户决定；`allow_pay_as_you_go` 为真才建/复用一把按量 Key。
 /// 只连固定的中转站地址；密码和登录会话只在本次调用里用，结束即登出，不落盘。
@@ -4535,48 +4576,22 @@ async fn relay_login(
     let active = subscription.get("data").and_then(|data| data.get("active")).cloned().unwrap_or_default();
     let _ = get("/api/user/logout").send().await;
 
-    let saved = cached_desktop_llm_profile(&app, &store)?;
-    let base_url = format!("{RELAY_ORIGIN}/v1");
-    let same_base = saved.as_ref().is_some_and(|saved| saved.base_url == base_url);
-    let profile = normalize_llm_profile(DesktopLlmProfile {
-        base_url,
-        api_key: with_sk_prefix(&key),
-        model: saved
-            .as_ref()
-            .filter(|_| same_base)
-            .map(|saved| saved.model.clone())
-            .unwrap_or_else(|| RELAY_DEFAULT_MODEL.into()),
-        context_window: None,
-        context_window_source: None,
-        fast_model: saved.as_ref().filter(|_| same_base).and_then(|saved| saved.fast_model.clone()),
-        strong_model: saved.as_ref().filter(|_| same_base).and_then(|saved| saved.strong_model.clone()),
-        role_models: saved.as_ref().map(|profile| profile.role_models.clone()).unwrap_or_default(),
-        models: saved.as_ref().filter(|_| same_base).map(|saved| saved.models.clone()).unwrap_or_default(),
-        model_info: saved.as_ref().filter(|_| same_base).map(|saved| saved.model_info.clone()).unwrap_or_default(),
-        providers: saved.map(|saved| saved.providers).unwrap_or_default(),
-        account: Some(DesktopAccount {
-            username: user
-                .get("username")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or(&username)
-                .to_string(),
-            display_name: user
-                .get("display_name")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            key_source: key_source.into(),
-            plan_name: active.get("plan_name").and_then(serde_json::Value::as_str).map(str::to_string),
-            plan_expiry: active.get("expiry_time").and_then(serde_json::Value::as_i64),
-        }),
-        signed_out: false,
-    })?;
-    let profile = with_model_list(profile).await;
-    let profile = save_llm_profile_flow(profile, true, LLM_PROBE_TIMEOUT, |profile| {
-        save_llm_profile_file(&llm_profile_path(&app)?, profile)
-    })
-    .await?;
-    store.replace(Some(profile.clone()))?;
+    let account = DesktopAccount {
+        username: user
+            .get("username")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(&username)
+            .to_string(),
+        display_name: user
+            .get("display_name")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        key_source: key_source.into(),
+        plan_name: active.get("plan_name").and_then(serde_json::Value::as_str).map(str::to_string),
+        plan_expiry: active.get("expiry_time").and_then(serde_json::Value::as_i64),
+    };
+    let profile = save_relay_plan_profile(&app, &store, &key, account).await?;
     Ok(RelayLoginOutcome {
         status: Some(with_config_path(desktop_llm_profile_status(Some(&profile)), &app)),
         needs_plan: false,
@@ -4595,18 +4610,25 @@ fn relay_logout(
     app: AppHandle,
     store: State<'_, DesktopLlmProfileStore>,
 ) -> Result<DesktopLlmProfileStatus, String> {
-    let Some(mut profile) = cached_desktop_llm_profile(&app, &store)? else {
-        return Ok(with_config_path(desktop_llm_profile_status(None), &app));
+    sign_out_default_service(&app, &store)
+}
+
+fn sign_out_default_service(
+    app: &AppHandle,
+    store: &State<'_, DesktopLlmProfileStore>,
+) -> Result<DesktopLlmProfileStatus, String> {
+    let Some(mut profile) = cached_desktop_llm_profile(app, store)? else {
+        return Ok(with_config_path(desktop_llm_profile_status(None), app));
     };
     if profile.providers.is_empty() {
-        delete_llm_profile_file(&llm_profile_path(&app)?)?;
+        delete_llm_profile_file(&llm_profile_path(app)?)?;
         store.replace(None)?;
-        return Ok(with_config_path(desktop_llm_profile_status(None), &app));
+        return Ok(with_config_path(desktop_llm_profile_status(None), app));
     }
     profile.api_key.clear();
     profile.account = None;
     profile.signed_out = true;
-    persist_profile(&app, &store, profile)
+    persist_profile(app, store, profile)
 }
 
 #[tauri::command]

@@ -11,8 +11,11 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, State};
 
 use crate::platform_keychain;
+use crate::{DesktopAccount, DesktopLlmProfileStatus, DesktopLlmProfileStore};
 
 pub const DEFAULT_ACCOUNT_URL: &str = "https://account.vortotech.com";
+/// 模型配置里标记「这把 Key 是 VortoCode 会员给的」：退出账号时一并清掉。
+pub const MEMBER_KEY_SOURCE: &str = "vortocode_member";
 const CLIENT_ID: &str = "vortocode-desktop";
 const KEYCHAIN_SERVICE: &[u8] = b"com.vortocode.desktop.account";
 const KEYCHAIN_ACCOUNT: &[u8] = b"session";
@@ -536,6 +539,7 @@ pub fn account_login_cancel(state: State<'_, AccountState>) {
 pub async fn account_logout(
     app: AppHandle,
     state: State<'_, AccountState>,
+    store: State<'_, DesktopLlmProfileStore>,
 ) -> Result<AccountStatus, String> {
     let base = base_url()?;
     let mut slot = state.access.lock().await;
@@ -552,7 +556,133 @@ pub async fn account_logout(
     }
     *slot = None;
     clear_session()?;
+    // 退出账号时，账号给的会员 Key 也不该留在本机
+    if member_key_in_use(&app, &store) {
+        crate::sign_out_default_service(&app, &store)?;
+    }
     Ok(AccountStatus::signed_out(&base, ""))
+}
+
+#[derive(Deserialize, Default)]
+struct ModelAccess {
+    #[serde(default)]
+    available: bool,
+    #[serde(default)]
+    member: bool,
+    #[serde(default)]
+    plan_name: String,
+    #[serde(default)]
+    expires_at: i64,
+    #[serde(default)]
+    credits_available: f64,
+    #[serde(default)]
+    key_enabled: bool,
+    base_url: Option<String>,
+    api_key: Option<String>,
+}
+
+/// 给界面看的会员状态：不含 Key。
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Membership {
+    available: bool,
+    member: bool,
+    plan_name: String,
+    expires_at: i64,
+    credits_available: f64,
+    key_enabled: bool,
+    /// 当前默认模型服务用的就是会员 Key
+    in_use: bool,
+}
+
+async fn fetch_model_access(client: &reqwest::Client, base: &str, access: &str) -> Result<ModelAccess, AuthError> {
+    let response = client
+        .get(format!("{base}/api/model-access"))
+        .bearer_auth(access)
+        .send()
+        .await
+        .map_err(|_| AuthError::Network("连不上账号服务".into()))?;
+    let status = response.status().as_u16();
+    let body: serde_json::Value = response.json().await.unwrap_or_default();
+    match status {
+        200 => serde_json::from_value(body).map_err(|_| AuthError::Network("账号服务的响应无法解析".into())),
+        401 => Err(AuthError::Rejected("登录已失效，请重新登录".into())),
+        _ => Err(AuthError::Network(body["error"].as_str().unwrap_or("暂时读不到会员信息").to_string())),
+    }
+}
+
+/// 会员 Key 只接受固定的中转站地址：账号服务即使被冒充，也不能把 Desktop 引到别的模型服务上。
+pub fn member_base_url_ok(base_url: &str) -> bool {
+    base_url.trim_end_matches('/') == format!("{}/v1", crate::RELAY_ORIGIN)
+}
+
+async fn signed_in_access(
+    app: &AppHandle,
+    state: &State<'_, AccountState>,
+) -> Result<(String, StoredSession, ModelAccess), String> {
+    let base = base_url()?;
+    let mut slot = state.access.lock().await;
+    let Some(mut session) = load_session()?.filter(|session| session.base_url == base) else {
+        return Err("还没有登录 VortoCode 账号".into());
+    };
+    let access = ensure_access(app, &base, &mut slot, &mut session).await.map_err(|error| error.message())?;
+    let client = http(app)?;
+    let model_access = fetch_model_access(&client, &base, &access).await.map_err(|error| error.message())?;
+    Ok((base, session, model_access))
+}
+
+fn member_key_in_use(app: &AppHandle, store: &State<'_, DesktopLlmProfileStore>) -> bool {
+    crate::cached_desktop_llm_profile(app, store)
+        .ok()
+        .flatten()
+        .and_then(|profile| profile.account)
+        .is_some_and(|account| account.key_source == MEMBER_KEY_SOURCE)
+}
+
+#[tauri::command]
+pub async fn account_membership(
+    app: AppHandle,
+    state: State<'_, AccountState>,
+    store: State<'_, DesktopLlmProfileStore>,
+) -> Result<Membership, String> {
+    let (_, _, access) = signed_in_access(&app, &state).await?;
+    Ok(Membership {
+        available: access.available,
+        member: access.member,
+        plan_name: access.plan_name,
+        expires_at: access.expires_at,
+        credits_available: access.credits_available,
+        key_enabled: access.key_enabled,
+        in_use: member_key_in_use(&app, &store),
+    })
+}
+
+/// 把会员的中转站 Key 设为默认模型服务（Key 只在 Rust 和配置文件里，不回给界面）。
+#[tauri::command]
+pub async fn account_use_membership(
+    app: AppHandle,
+    state: State<'_, AccountState>,
+    store: State<'_, DesktopLlmProfileStore>,
+) -> Result<DesktopLlmProfileStatus, String> {
+    let (_, session, access) = signed_in_access(&app, &state).await?;
+    if !access.member {
+        return Err("这个账号还不是会员".into());
+    }
+    let (Some(base_url), Some(key)) = (access.base_url, access.api_key) else {
+        return Err("会员的模型 Key 已停用：在中转站套餐页启用后再试".into());
+    };
+    if !member_base_url_ok(&base_url) {
+        return Err("账号服务给的模型地址不对，已拒绝使用".into());
+    }
+    let account = DesktopAccount {
+        username: session.email.clone(),
+        display_name: session.email,
+        key_source: MEMBER_KEY_SOURCE.into(),
+        plan_name: Some(access.plan_name).filter(|name| !name.is_empty()),
+        plan_expiry: Some(access.expires_at).filter(|expiry| *expiry > 0),
+    };
+    let profile = crate::save_relay_plan_profile(&app, &store, &key, account).await?;
+    Ok(crate::with_config_path(crate::desktop_llm_profile_status(Some(&profile)), &app))
 }
 
 #[cfg(test)]
@@ -600,6 +730,14 @@ mod tests {
         assert_eq!(query["code_challenge_method"], "S256");
         assert_eq!(query["redirect_uri"], "http://127.0.0.1:5000/callback");
         assert_eq!(query["device_name"], "我的 Mac");
+    }
+
+    #[test]
+    fn member_key_only_goes_to_the_fixed_relay() {
+        assert!(member_base_url_ok(&format!("{}/v1", crate::RELAY_ORIGIN)));
+        assert!(member_base_url_ok(&format!("{}/v1/", crate::RELAY_ORIGIN)));
+        assert!(!member_base_url_ok("https://evil.example.com/v1"));
+        assert!(!member_base_url_ok(crate::RELAY_ORIGIN));
     }
 
     #[test]

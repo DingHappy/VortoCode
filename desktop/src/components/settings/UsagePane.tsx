@@ -4,6 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useState } from "react";
 
 import { errorText } from "../../lib/errorText";
+import { ACCOUNT_MANAGE_URL, MEMBER_KEY_SOURCE } from "../../lib/vortoAccount";
 import type { DesktopAccount, LlmUsageSummary } from "../../types";
 
 const PLAN_URL = "https://token.vortotech.com/panel/plan";
@@ -18,12 +19,13 @@ function planDate(seconds?: number | null): string {
  *  所以这里不查它，只显示套餐本身，并把用量明细交给中转站（登录态才能读到周期额度）。 */
 function TokenPlanUsage({ account }: { account: DesktopAccount }) {
   const [error, setError] = useState("");
+  const member = account.keySource === MEMBER_KEY_SOURCE;
   return (
     <div className="settings-stack">
       <section className="settings-card" aria-label="Token Plan">
         <div className="settings-card-head">
-          <strong>Token Plan（Desktop 套餐）</strong>
-          <button onClick={() => void openUrl(PLAN_URL).catch((failure) => setError(errorText(failure, "无法打开浏览器")))}>查看用量</button>
+          <strong>{member ? "VortoCode 会员" : "Token Plan（Desktop 套餐）"}</strong>
+          <button onClick={() => void openUrl(member ? ACCOUNT_MANAGE_URL : PLAN_URL).catch((failure) => setError(errorText(failure, "无法打开浏览器")))}>查看用量</button>
         </div>
         <div className="usage-metrics">
           <div><span>套餐</span><strong>{account.planName || "Token Plan"}</strong></div>
@@ -31,7 +33,9 @@ function TokenPlanUsage({ account }: { account: DesktopAccount }) {
           <div><span>账号</span><strong>{account.displayName || account.username}</strong></div>
         </div>
         {error && <p className="settings-card-note danger">{error}</p>}
-        <p className="settings-card-note">套餐额度按周期重置，剩余额度和明细在中转站「套餐」页查看。套餐信息在登录时读取，续费或换档后重新登录即可刷新。</p>
+        <p className="settings-card-note">{member
+          ? "会员额度按周期重置，本期剩余在设置 → 常规 →「VortoCode 账号」和账号网页上查看。"
+          : "套餐额度按周期重置，剩余额度和明细在中转站「套餐」页查看。套餐信息在登录时读取，续费或换档后重新登录即可刷新。"}</p>
       </section>
     </div>
   );
@@ -42,7 +46,7 @@ function usd(value: number): string {
 }
 
 export function UsagePane({ account }: { account?: DesktopAccount }) {
-  if (account?.keySource === "token_plan") return <TokenPlanUsage account={account} />;
+  if (account?.keySource === "token_plan" || account?.keySource === MEMBER_KEY_SOURCE) return <TokenPlanUsage account={account} />;
   return <BillingUsage />;
 }
 

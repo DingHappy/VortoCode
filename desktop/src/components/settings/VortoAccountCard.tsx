@@ -1,42 +1,84 @@
-// 设置 → 常规 →「VortoCode 账号」：登录 / 退出 / 当前账号与本机设备名。和中转站的「账号」页是两回事。
+// 设置 → 常规 →「VortoCode 账号」：登录 / 退出 / 当前账号与本机设备名，以及会员模型。
+// 和中转站的「账号」页是两回事；会员 Key 只在 Rust 和配置文件里，界面只看到套餐名和额度。
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { confirmAction } from "../../lib/confirm";
 import { errorText } from "../../lib/errorText";
 import {
-  accountHeadline, cancelAccountLogin, getAccountStatus, loginAccount, logoutAccount, type VortoAccountStatus,
+  accountHeadline, applyMembership, cancelAccountLogin, getAccountStatus, getMembership, loginAccount, logoutAccount,
+  membershipLine, type VortoAccountStatus, type VortoMembership,
 } from "../../lib/vortoAccount";
+import type { DesktopLlmProfileStatus } from "../../types";
 
-export function VortoAccountCard() {
+interface Props {
+  onProfile: (profile: DesktopLlmProfileStatus) => void;
+  onRestartRuntime: () => Promise<boolean>;
+  onProfileCleared: () => Promise<void>;
+}
+
+export function VortoAccountCard({ onProfile, onRestartRuntime, onProfileCleared }: Props) {
   const [status, setStatus] = useState<VortoAccountStatus | null>(null);
+  const [membership, setMembership] = useState<VortoMembership | null>(null);
   const [loggingIn, setLoggingIn] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
 
+  const loadMembership = useCallback(async (current: VortoAccountStatus | null) => {
+    if (!current?.signedIn || current.offline) { setMembership(null); return; }
+    try { setMembership(await getMembership()); }
+    catch { setMembership(null); }     // 读不到会员信息不影响账号本身
+  }, []);
+
   useEffect(() => {
     let alive = true;
-    void getAccountStatus().then((value) => { if (alive) setStatus(value); })
-      .catch((error) => { if (alive) setNote(errorText(error, "读取登录状态失败")); });
+    void getAccountStatus().then((value) => {
+      if (!alive) return;
+      setStatus(value);
+      void loadMembership(value);
+    }).catch((error) => { if (alive) setNote(errorText(error, "读取登录状态失败")); });
     return () => { alive = false; };
-  }, []);
+  }, [loadMembership]);
 
   const login = async () => {
     setLoggingIn(true); setNote("");
-    try { setStatus(await loginAccount()); }
-    catch (error) { setNote(errorText(error, "登录没有完成")); }
+    try {
+      const value = await loginAccount();
+      setStatus(value);
+      await loadMembership(value);
+    } catch (error) { setNote(errorText(error, "登录没有完成")); }
     finally { setLoggingIn(false); }
   };
 
   const logout = async () => {
-    if (!await confirmAction("退出 VortoCode 账号？这台电脑会从账号的设备列表里移除。")) return;
+    const message = membership?.inUse
+      ? "退出 VortoCode 账号？这台电脑会从账号的设备列表里移除，会员模型 Key 也会从本机删除。"
+      : "退出 VortoCode 账号？这台电脑会从账号的设备列表里移除。";
+    if (!await confirmAction(message)) return;
     setBusy(true); setNote("");
-    try { setStatus(await logoutAccount()); }
-    catch (error) { setNote(errorText(error, "退出失败")); }
+    const wasInUse = Boolean(membership?.inUse);
+    try {
+      setStatus(await logoutAccount());
+      setMembership(null);
+      if (wasInUse) { await onProfileCleared(); await onRestartRuntime(); }
+    } catch (error) { setNote(errorText(error, "退出失败")); }
+    finally { setBusy(false); }
+  };
+
+  const useMember = async () => {
+    if (!await confirmAction("把默认模型服务换成 VortoCode 会员？当前的服务地址和 Key 会被替换，自定义供应商保留。")) return;
+    setBusy(true); setNote("");
+    try {
+      onProfile(await applyMembership());
+      await onRestartRuntime();
+      setNote("已切换到会员模型");
+      await loadMembership(status);
+    } catch (error) { setNote(errorText(error, "切换失败")); }
     finally { setBusy(false); }
   };
 
   const signedIn = Boolean(status?.signedIn) && !loggingIn;
+  const line = signedIn ? membershipLine(membership) : null;
   return <section className="settings-card" aria-label="VortoCode 账号">
     <div className="settings-card-head">
       <strong>VortoCode 账号</strong>
@@ -45,16 +87,24 @@ export function VortoAccountCard() {
         : signedIn
           ? <span>
               <button onClick={() => void openUrl(status!.manageUrl)}>管理账号</button>{" "}
-              <button onClick={() => void logout()} disabled={busy}>{busy ? "退出中…" : "退出登录"}</button>
+              <button onClick={() => void logout()} disabled={busy}>{busy ? "处理中…" : "退出登录"}</button>
             </span>
           : <button className="primary" onClick={() => void login()} disabled={!status}>登录</button>}
     </div>
     <p>{accountHeadline(status, loggingIn)}</p>
     {signedIn && status?.deviceName && <p className="settings-card-note">本机设备名：{status.deviceName}</p>}
+    {line && <p>
+      {line}
+      {membership?.member && (membership.inUse
+        ? <span className="settings-card-note">（正在使用）</span>
+        : membership.keyEnabled
+          ? <>{" "}<button className="primary" onClick={() => void useMember()} disabled={busy}>使用会员模型</button></>
+          : <span className="settings-card-note">（会员模型 Key 已停用）</span>)}
+    </p>}
     {note && <p role="alert">{note}</p>}
     <p className="settings-card-note">
       {signedIn
-        ? "「管理账号」在网页上查看所有登录过的设备、安全记录，修改密码。"
+        ? "「管理账号」在网页上查看所有登录过的设备、安全记录、会员，修改密码。"
         : "会打开浏览器，在网页上输入密码；Desktop 不经手密码，登录凭证存在 macOS 钥匙串里。目前需要邀请码注册。"}
     </p>
   </section>;
