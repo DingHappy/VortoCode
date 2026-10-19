@@ -89,7 +89,7 @@ export function AssistantPanel({ name, avatar, connected, host, onAddResident, o
         {onEditProfile && <button aria-label="修改助理资料" title="名字、SOUL 与「关于你」" onClick={onEditProfile}><PencilLine size={12} /></button>}
       </div>
       <strong className="assistant-name">{name}</strong>
-      <span className={`assistant-status${connected ? " online" : ""}`}>{connected ? "已连接" : "连接中断"}{connected && modelLabel ? ` · ${modelLabel}` : ""}</span>
+      <span className={`assistant-status${connected ? " online" : ""}`}>{!connected ? "连接中断" : modelLabel === "未连接模型" ? "还没连接模型" : `已连接${modelLabel ? ` · ${modelLabel}` : ""}`}</span>
       <span className={`assistant-host ${host.kind}`}>
         {host.kind === "resident" ? <Server size={13} aria-hidden="true" /> : <Laptop size={13} aria-hidden="true" />}
         {host.kind === "resident" ? `住在常驻电脑${host.name && host.name !== "常驻电脑" ? `「${host.name}」` : ""}` : "在本机运行"}

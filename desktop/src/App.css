@@ -10873,7 +10873,16 @@ ul.trust-note {
   opacity: 0.75;
 }
 
-.composer-model.unset {
+.composer-footer button.composer-model.unset {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 5px;
+  width: auto;
+  height: 30px;
+  padding: 0 11px 0 9px;
+  border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
+  border-radius: 999px;
   color: var(--amber);
   background: transparent;
   cursor: pointer;
