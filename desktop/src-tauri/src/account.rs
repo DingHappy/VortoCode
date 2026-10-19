@@ -688,6 +688,7 @@ pub async fn account_use_membership(
     app: AppHandle,
     state: State<'_, AccountState>,
     store: State<'_, DesktopLlmProfileStore>,
+    as_default: Option<bool>,
 ) -> Result<DesktopLlmProfileStatus, String> {
     let (_, session, access) = signed_in_access(&app, &state).await?;
     if !access.member {
@@ -710,8 +711,12 @@ pub async fn account_use_membership(
     let keeps_default = crate::cached_desktop_llm_profile(&app, &store)?
         .is_some_and(|profile| !profile.signed_out && !profile.model.trim().is_empty()
             && profile.account.as_ref().map_or(true, |account| account.key_source != MEMBER_KEY_SOURCE));
-    if keeps_default {
+    if keeps_default && !as_default.unwrap_or(false) {
         return crate::upsert_member_provider(&app, &store, &key).await;
+    }
+    if keeps_default {
+        // 「设为默认」：原来的默认服务（本机模型、自己的 Key）挪进列表，不丢
+        crate::demote_default_for_member(&app, &store)?;
     }
     let profile = crate::save_relay_plan_profile(&app, &store, &key, account).await?;
     Ok(crate::with_config_path(crate::desktop_llm_profile_status(Some(&profile)), &app))

@@ -10593,3 +10593,167 @@ ul.trust-note {
   display: none;
 }
 
+/* 设置 → 模型服务：所有服务同样的卡片，一个标「默认」 */
+.model-services {
+  display: grid;
+  gap: 12px;
+}
+
+.model-services-intro {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.model-service-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.model-service {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+}
+
+.model-service + .model-service {
+  border-top: 1px solid var(--line);
+}
+
+.model-service-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.model-service-copy strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--n13);
+  font-size: 14px;
+}
+
+.model-service-copy strong em {
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 14%, transparent);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.model-service-copy span {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-service-actions,
+.model-services-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.model-service-actions button,
+.model-services-toolbar button,
+.model-service-kind button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--n12);
+  background: var(--surface-2);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.model-services-toolbar button.primary,
+.model-service-kind button.primary {
+  border-color: var(--accent);
+  color: var(--n0);
+  background: var(--accent);
+}
+
+.model-service-actions button:disabled,
+.model-services-toolbar button:disabled,
+.model-service-kind button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.model-service.empty .model-service-copy span {
+  white-space: normal;
+}
+
+.model-service-chooser {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.model-service-kind {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 16px;
+  align-items: center;
+  padding: 12px 16px;
+}
+
+.model-service-kind + .model-service-kind {
+  border-top: 1px solid var(--line);
+}
+
+.model-service-kind strong {
+  color: var(--n13);
+  font-size: 13.5px;
+}
+
+.model-service-kind span {
+  grid-column: 1;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.model-service-kind > button,
+.model-service-kind > em,
+.model-service-kind > div {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+}
+
+.model-service-kind > div {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 340px;
+}
+
+.model-service-kind > em {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-style: normal;
+}
+
+.model-advanced {
+  margin-top: 4px;
+}
+

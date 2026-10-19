@@ -3942,6 +3942,7 @@ pub fn run() {
             set_desktop_control,
             save_llm_provider,
             remove_llm_provider,
+            promote_llm_provider,
             refresh_llm_providers,
             relay_login,
             relay_logout,
@@ -4300,6 +4301,137 @@ fn member_menu_models(infos: Vec<ModelInfo>) -> Vec<String> {
         models.push(RELAY_DEFAULT_MODEL.into());
     }
     models
+}
+
+/// 「设为默认」换下来的默认服务变成列表里的一个供应商：地址、Key、模型清单都保留，主模型排第一。
+/// 已退出登录或没配好的默认服务没有可保留的东西，返回 None。
+fn default_as_provider(profile: &DesktopLlmProfile, taken: &[DesktopLlmProvider]) -> Option<DesktopLlmProvider> {
+    if profile.signed_out || profile.base_url.trim().is_empty() || profile.model.trim().is_empty() {
+        return None;
+    }
+    let member = profile
+        .account
+        .as_ref()
+        .is_some_and(|account| account.key_source == account::MEMBER_KEY_SOURCE);
+    let host = Url::parse(&profile.base_url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_string))
+        .unwrap_or_default();
+    let (base_id, name) = if member {
+        (MEMBER_PROVIDER_ID.to_string(), "VortoCode 会员".to_string())
+    } else if llm_provider(&profile.base_url) == "local" {
+        ("local".to_string(), "本机模型".to_string())
+    } else {
+        (provider_id_from_host(&host), host.clone())
+    };
+    let mut id = base_id.clone();
+    let mut n = 2;
+    while taken.iter().any(|provider| provider.id == id) {
+        let suffix = format!("_{n}");
+        id = format!("{}{suffix}", &base_id[..base_id.len().min(24 - suffix.len())]);
+        n += 1;
+    }
+    let mut models = profile.models.clone();
+    models.retain(|model| model != &profile.model);
+    models.insert(0, profile.model.clone());
+    Some(DesktopLlmProvider {
+        id,
+        name,
+        base_url: profile.base_url.clone(),
+        api_key: profile.api_key.clone(),
+        models,
+    })
+}
+
+/// 用地址生成一个合法的供应商 ID：api.deepseek.com → deepseek。
+fn provider_id_from_host(host: &str) -> String {
+    let trimmed = host.trim_start_matches("api.").trim_start_matches("www.");
+    let mut id: String = trimmed
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .to_lowercase()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    if !id.chars().next().is_some_and(|c| c.is_ascii_lowercase()) {
+        id = format!("p_{id}");
+    }
+    id.truncate(20);
+    if RESERVED_PROVIDER_IDS.contains(&id.as_str()) {
+        id.push_str("_svc");
+    }
+    id
+}
+
+/// 把列表里的一个供应商设为默认服务，原来的默认服务挪进列表。会员模型走账号命令（要带上账号信息）。
+fn promote_provider(mut profile: DesktopLlmProfile, id: &str) -> Result<DesktopLlmProfile, String> {
+    if id == MEMBER_PROVIDER_ID {
+        return Err("会员模型请在账号里设为默认".into());
+    }
+    let index = profile
+        .providers
+        .iter()
+        .position(|provider| provider.id == id)
+        .ok_or("没有找到这个模型服务")?;
+    let chosen = profile.providers.remove(index);
+    let model = chosen
+        .models
+        .first()
+        .cloned()
+        .ok_or("这个服务还没有模型列表：先点刷新，或检查地址和 Key")?;
+    if let Some(old) = default_as_provider(&profile, &profile.providers) {
+        profile.providers.push(old);
+    }
+    profile.base_url = chosen.base_url;
+    profile.api_key = chosen.api_key;
+    profile.model = model;
+    profile.models = chosen.models;
+    profile.model_info = Vec::new();
+    profile.context_window = None;
+    profile.context_window_source = None;
+    // 快速 / 强力档和角色模型是按原来那个服务的模型名配的，换了服务就不再成立
+    profile.fast_model = None;
+    profile.strong_model = None;
+    profile.role_models = HashMap::new();
+    profile.account = None;
+    profile.signed_out = false;
+    Ok(profile)
+}
+
+/// 「设为默认」：列表里的某个服务换成默认服务（原来的默认服务留在列表里）。
+#[tauri::command]
+async fn promote_llm_provider(
+    app: AppHandle,
+    id: String,
+    store: State<'_, DesktopLlmProfileStore>,
+) -> Result<DesktopLlmProfileStatus, String> {
+    let profile = promote_provider(saved_profile_for_providers(&app, &store)?, id.trim())?;
+    let profile = with_model_list(profile).await;
+    let profile = save_llm_profile_flow(profile, true, LLM_PROBE_TIMEOUT, |profile| {
+        save_llm_profile_file(&llm_profile_path(&app)?, profile)
+    })
+    .await?;
+    store.replace(Some(profile.clone()))?;
+    Ok(with_config_path(desktop_llm_profile_status(Some(&profile)), &app))
+}
+
+/// 会员模型设为默认之前：把现在的默认服务挪进列表，并去掉列表里那份会员模型（它要成为默认）。
+pub(crate) fn demote_default_for_member(
+    app: &AppHandle,
+    store: &State<'_, DesktopLlmProfileStore>,
+) -> Result<(), String> {
+    let Some(mut profile) = cached_desktop_llm_profile(app, store)? else {
+        return Ok(());
+    };
+    profile.providers.retain(|provider| provider.id != MEMBER_PROVIDER_ID);
+    if let Some(old) = default_as_provider(&profile, &profile.providers) {
+        if old.id != MEMBER_PROVIDER_ID {
+            profile.providers.push(old);
+        }
+    }
+    save_llm_profile_file(&llm_profile_path(app)?, &profile)?;
+    store.replace(Some(profile))
 }
 
 /// 会员 Key 已作为供应商加在列表里时返回它（用于静默更新 Key、退出账号时移除）。
@@ -4978,6 +5110,80 @@ fn reveal_desktop_config(app: AppHandle, kind: String) -> Result<(), String> {
     };
     let target = if path.exists() { path } else { path.parent().map(Path::to_path_buf).unwrap_or(path) };
     tauri_plugin_opener::reveal_item_in_dir(&target).map_err(|error| format!("无法在 Finder 中显示：{error}"))
+}
+
+#[cfg(test)]
+mod promote_tests {
+    use super::*;
+
+    fn local_default() -> DesktopLlmProfile {
+        DesktopLlmProfile {
+            base_url: "http://127.0.0.1:11500/v1".into(),
+            api_key: String::new(),
+            model: "qwen-local".into(),
+            context_window: Some(262_144),
+            context_window_source: Some("service".into()),
+            fast_model: Some("qwen-small".into()),
+            strong_model: None,
+            role_models: HashMap::from([("assess".to_string(), "qwen-local".to_string())]),
+            providers: vec![DesktopLlmProvider {
+                id: "deepseek".into(),
+                name: "DeepSeek".into(),
+                base_url: "https://api.deepseek.com/v1".into(),
+                api_key: "sk-ds".into(),
+                models: vec!["deepseek-chat".into(), "deepseek-reasoner".into()],
+            }],
+            account: None,
+            signed_out: false,
+            models: vec!["qwen-small".into(), "qwen-local".into()],
+            model_info: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn promoting_keeps_the_old_default_in_the_list() {
+        let profile = promote_provider(local_default(), "deepseek").unwrap();
+        assert_eq!(profile.base_url, "https://api.deepseek.com/v1");
+        assert_eq!(profile.api_key, "sk-ds");
+        assert_eq!(profile.model, "deepseek-chat");
+        assert_eq!(profile.fast_model, None);
+        assert!(profile.role_models.is_empty());
+        assert_eq!(profile.context_window, None);
+        assert_eq!(profile.providers.len(), 1);
+        let old = &profile.providers[0];
+        assert_eq!((old.id.as_str(), old.name.as_str()), ("local", "本机模型"));
+        assert_eq!(old.base_url, "http://127.0.0.1:11500/v1");
+        assert_eq!(old.models, vec!["qwen-local".to_string(), "qwen-small".to_string()]);
+    }
+
+    #[test]
+    fn promoting_refuses_member_and_empty_providers() {
+        let mut profile = local_default();
+        profile.providers.push(DesktopLlmProvider {
+            id: MEMBER_PROVIDER_ID.into(), name: "VortoCode 会员".into(),
+            base_url: format!("{RELAY_ORIGIN}/v1"), api_key: "sk-m".into(), models: vec!["m".into()],
+        });
+        assert!(promote_provider(profile.clone(), MEMBER_PROVIDER_ID).is_err());
+        profile.providers[0].models.clear();
+        assert!(promote_provider(profile.clone(), "deepseek").is_err());
+        assert!(promote_provider(profile, "missing").is_err());
+    }
+
+    #[test]
+    fn demoted_ids_are_valid_and_unique() {
+        assert_eq!(provider_id_from_host("api.deepseek.com"), "deepseek");
+        assert_eq!(provider_id_from_host("open.bigmodel.cn"), "open");
+        assert_eq!(provider_id_from_host("123.example.com"), "p_123");
+        let mut profile = local_default();
+        profile.base_url = "https://api.deepseek.com/v1".into();
+        profile.api_key = "sk-own".into();
+        let taken = profile.providers.clone();
+        let old = default_as_provider(&profile, &taken).unwrap();
+        assert_eq!(old.id, "deepseek_2");
+        assert!(normalize_llm_provider(old).is_ok());
+        profile.signed_out = true;
+        assert!(default_as_provider(&profile, &taken).is_none());
+    }
 }
 
 #[cfg(test)]

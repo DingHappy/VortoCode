@@ -21,16 +21,16 @@ import { BuildVersion } from "./BuildVersion";
 import { applyModelPreset, modelSettingsState } from "../lib/modelSettings";
 
 import { contextWindowSourceLabel, formatTokenCount } from "../lib/labels";
-import { isLocalModelBase, PROVIDER_PRESETS, presetForBaseUrl } from "../lib/providers";
+import { isLocalModelBase, PROVIDER_PRESETS } from "../lib/providers";
 import { ConfigPane } from "./settings/ConfigPane";
 import { LlmConnectionCheck } from "./settings/LlmConnectionCheck";
 import { AccountPane } from "./settings/AccountPane";
 import { BrowserPane } from "./settings/BrowserPane";
 import { UpdateCard } from "./settings/UpdateCard";
 import { VortoAccountCard } from "./settings/VortoAccountCard";
-import { keySourceLabel, MEMBER_KEY_SOURCE } from "../lib/vortoAccount";
+import { MEMBER_KEY_SOURCE } from "../lib/vortoAccount";
 import { DesktopControlPane } from "./settings/DesktopControlPane";
-import { CustomProviders } from "./settings/CustomProviders";
+import { ModelServices } from "./settings/ModelServices";
 import { ModelPicks } from "./settings/ModelPicks";
 import { ModelRoles } from "./settings/ModelRoles";
 import { PersonalizePane } from "./settings/PersonalizePane";
@@ -70,12 +70,6 @@ export function sectionVisible(
   if (section === "account") return Boolean(profile?.account) && profile?.account?.keySource !== MEMBER_KEY_SOURCE;
   if (section === "usage") return relayMode(profile);
   return true;
-}
-
-/** 正在用会员模型时，手填服务的表单收进折叠里：会员不用碰它，要改用自己的 Key、第三方或本机模型时再展开。 */
-function ManualSetup({ folded, children }: { folded: boolean; children: ReactNode }) {
-  if (!folded) return <>{children}</>;
-  return <details className="llm-extra-settings"><summary>改用其他模型服务（自己的 Key、第三方服务或本机模型）</summary>{children}</details>;
 }
 
 const SETTINGS_NAV: Array<{ group: string; items: Array<{ id: SettingsSection; label: string; keywords: string }> }> = [
@@ -211,7 +205,6 @@ export function SettingsModal({
   const [query, setQuery] = useState("");
   const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference);
   const [modelOptions, setModelOptions] = useState<string[]>([]);
-  const activePreset = presetForBaseUrl(llmBaseInput);
   const [showKey, setShowKey] = useState(false);
   // 实验功能：外部执行者（Desktop 偏好，默认关闭）。打开要过原生确认，开关后重启当前引擎才生效。
   const [experimental, setExperimental] = useState(false);
@@ -236,7 +229,8 @@ export function SettingsModal({
     }
   };
   const draft = { baseUrl: llmBaseInput, model: llmModelInput, apiKey: llmKeyInput, fastModel: llmFastInput, strongModel: llmStrongInput, roleModels: llmRolesInput };
-  const memberInUse = llmProfile?.account?.keySource === MEMBER_KEY_SOURCE;
+  // 默认服务的详细表单：点「编辑」，或还没有服务时在「添加模型服务」里选了预设，才展开
+  const [editingDefault, setEditingDefault] = useState(false);
   const modelState = modelSettingsState(llmProfile, draft);
   const choosePreset = (preset: typeof PROVIDER_PRESETS[number]) => {
     const next = applyModelPreset(draft, preset);
@@ -309,47 +303,22 @@ export function SettingsModal({
         </>
         )}
 
-        {section === "model" && (
-        <section className={`llm-profile-card ${llmProfile?.configured ? "configured" : "unconfigured"}`}>
+        {section === "model" && (<>
+        <ModelServices profile={llmProfile} onProfile={onLlmProfileChange} onRestartRuntime={onRestartRuntime}
+          editingDefault={editingDefault} onEditDefault={setEditingDefault}
+          onSetupDefault={(preset) => {
+            if (preset) choosePreset(preset);
+            else { onLlmBaseChange(""); onLlmModelChange(""); onLlmKeyChange(""); setModelOptions([]); }
+            setEditingDefault(true);
+          }}
+          onOpenAccount={() => setSection("general")} />
+        {editingDefault && (
+        <section className={`llm-profile-card ${llmProfile?.configured ? "configured" : "unconfigured"}`} aria-label="默认服务设置">
           <div className="llm-profile-head">
             <div>
-              <span>已保存的模型服务</span>
-              <strong>{llmProfile?.configured
-                ? memberInUse ? "VortoCode 会员模型" : llmProfile.provider === "vortocode" ? "VortoCode 模型服务已配置" : llmProfile.provider === "local" ? "本机模型已配置" : "自定义服务已配置"
-                : "先配置模型，才能开始对话"}</strong>
+              <span>{llmProfile?.configured ? "编辑默认服务" : "设置默认服务"}</span>
+              <strong>{llmProfile?.configured ? "改地址、模型或 Key" : "填写地址 → 获取模型列表 → 选模型 → 保存"}</strong>
             </div>
-            <i>{llmProfile?.account ? "账号登录" : llmProfile?.configured ? "本机配置" : "需要设置"}</i>
-          </div>
-          {memberInUse && (
-            <p className="llm-account-note">
-              正在使用 {llmProfile?.account?.displayName || "你"} 的会员模型 <strong>{llmProfile?.model}</strong>
-              {(llmProfile?.contextWindow ?? 0) > 0 && <>（上下文 {formatTokenCount(llmProfile?.contextWindow)} tokens）</>}，不用填地址和 Key。
-              会员、额度和账号在 <button onClick={() => setSection("general")}>常规</button> 里查看。
-            </p>
-          )}
-          {llmProfile?.account && !memberInUse && (
-            <p className="llm-account-note">
-              当前通过账号 {llmProfile.account.displayName || llmProfile.account.username} 登录，使用 {keySourceLabel(llmProfile.account.keySource)}。
-              在下面改服务地址或填新 Key 会替换掉它；要换账号请到 <button onClick={() => setSection("account")}>账号</button>。
-            </p>
-          )}
-          {!llmProfile?.account && !llmProfile?.configured && (
-            <p className="llm-account-note">
-              有 VortoCode 会员？到 <button onClick={() => setSection("general")}>常规</button> 里登录账号，一键使用会员模型，不用填下面这些。
-            </p>
-          )}
-          <ManualSetup folded={memberInUse}>
-          <p className="llm-setup-guide">填写服务地址 → 获取模型列表 → 选择模型 → 保存应用。任何 OpenAI 兼容服务都可以；本地模型不需要 Key。</p>
-          <p className="llm-profile-note">快捷项只用于预填地址；切换本机快捷项会保留你已经填写的本机端口和模型。</p>
-          <div className="llm-profile-presets" aria-label="模型服务快捷设置">
-            {PROVIDER_PRESETS.map((preset) => (
-              <button
-                key={preset.id}
-                className={activePreset?.id === preset.id ? "active" : ""}
-                onClick={() => choosePreset(preset)}
-              >{preset.label}</button>
-            ))}
-            <button className={!activePreset && llmBaseInput.trim() ? "active" : ""} onClick={() => { onLlmBaseChange(""); onLlmModelChange(""); onLlmKeyChange(""); setModelOptions([]); }}>自定义</button>
           </div>
           <div className="llm-profile-fields">
             <label>
@@ -384,22 +353,21 @@ export function SettingsModal({
             <strong>{modelState.sameModel && (llmProfile?.contextWindow ?? 0) > 0 ? `${formatTokenCount(llmProfile?.contextWindow)} tokens` : "当前草稿尚未检测"}</strong>
             <em>{modelState.sameModel ? contextWindowSourceLabel(llmProfile?.contextWindowSource) : "旧配置的信息不适用于此草稿"}</em>
           </div>
-          <p className="llm-profile-note">远程服务必须使用 HTTPS；本机 HTTP 仅允许 127.0.0.1 / localhost。保存后只重启当前 runtime，其他后台项目在下次启动时采用新配置。</p>
-          {llmProfile?.configPath && (
-            <p className="llm-profile-note">配置文件：<code>{llmProfile.configPath}</code>（也可直接编辑，重启 Desktop 后生效）</p>
-          )}
+          <p className="llm-profile-note">线上服务要用 https；本机服务可以用 http://127.0.0.1 或 localhost。保存后当前引擎会重启，其他项目下次启动时生效。</p>
           <LlmConnectionCheck baseUrl={llmBaseInput} apiKey={llmKeyInput} model={llmModelInput} onModels={setModelOptions} />
-          <p className="llm-save-status" role="status">{modelState.missing || (modelState.dirty ? "修改尚未保存，不会影响当前对话。" : "与已保存配置一致；模型列表可达不等于推理或工具已验证。")}</p>
+          <p className="llm-save-status" role="status">{modelState.missing || (modelState.dirty ? "修改尚未保存，不会影响当前对话。" : "和已保存的一致。")}</p>
           <div className="llm-profile-actions">
             {llmProfile?.configured && <button onClick={() => void onClearLlmProfile()} disabled={llmProfileBusy}>清除配置</button>}
             <button
               className="primary"
               onClick={() => void onSaveLlmProfile()}
               disabled={llmProfileBusy || Boolean(modelState.missing)}
-            >{llmProfileBusy ? "正在应用…" : "保存并重启当前引擎"}</button>
+            >{llmProfileBusy ? "正在保存…" : "保存"}</button>
           </div>
-          </ManualSetup>
-          <details className="llm-extra-settings"><summary>高级模型选项（可选）</summary>
+        </section>
+        )}
+        {llmProfile?.configured && (<>
+          <details className="llm-extra-settings model-advanced"><summary>高级：自动调度的快速 / 强力模型、常用模型名单</summary>
           <ModelRoles profile={llmProfile} value={llmRolesInput} onChange={onLlmRolesChange} disabled={llmProfileBusy} engine={engineWorkers}
             experimental={experimental} experimentalBusy={experimentalBusy} experimentalNote={experimentalNote} onExperimentalToggle={(next) => void toggleExperimental(next)} />
           <div className="llm-routing-fields">
@@ -416,11 +384,8 @@ export function SettingsModal({
           <p className="llm-profile-note">快速与强力模型随上方保存一起应用；下方常用模型名单独生效。</p>
           <ModelPicks profile={llmProfile} picks={modelPicks} onChange={onModelPicksChange} />
           </details>
-          <details className="llm-extra-settings"><summary>其他模型供应商（可选）</summary>
-          <CustomProviders profile={llmProfile} onProfile={onLlmProfileChange} onRestartRuntime={onRestartRuntime} />
-          </details>
-        </section>
-        )}
+        </>)}
+        </>)}
 
         {section === "account" && (
           <AccountPane
