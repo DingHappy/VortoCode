@@ -10733,18 +10733,18 @@ ul.trust-note {
 }
 
 .model-service-kind > button,
-.model-service-kind > em,
-.model-service-kind > div {
+.model-service-kind > em {
   grid-column: 2;
   grid-row: 1 / span 2;
 }
 
+/* 预设按钮多：统一排在说明下面，左对齐 */
 .model-service-kind > div {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  grid-column: 1 / -1;
   gap: 6px;
-  max-width: 340px;
+  margin-top: 8px;
 }
 
 .model-service-kind > em {
@@ -10755,5 +10755,27 @@ ul.trust-note {
 
 .model-advanced {
   margin-top: 4px;
+}
+
+/* 输入框模型按钮：显示短名，原生菜单盖在上面负责选择（菜单里仍是完整说明） */
+.composer-model {
+  position: relative;
+  padding-right: 9px;
+}
+
+.composer-model-name {
+  max-width: 200px;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.composer-model select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  max-width: none;
+  opacity: 0;
 }
 

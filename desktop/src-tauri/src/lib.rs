@@ -4331,7 +4331,12 @@ fn default_as_provider(profile: &DesktopLlmProfile, taken: &[DesktopLlmProvider]
         id = format!("{}{suffix}", &base_id[..base_id.len().min(24 - suffix.len())]);
         n += 1;
     }
-    let mut models = profile.models.clone();
+    // 有分类信息时只留能跑 Agent 的对话模型（和会员模型菜单同一规则），主模型排第一
+    let mut models = if profile.model_info.iter().any(|info| info.category.is_some()) {
+        member_menu_models(profile.model_info.clone())
+    } else {
+        profile.models.clone()
+    };
     models.retain(|model| model != &profile.model);
     models.insert(0, profile.model.clone());
     Some(DesktopLlmProvider {
