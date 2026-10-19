@@ -38,22 +38,21 @@ export function RuntimeInboxPanel({
     <div className={`runtime-inbox-panel ${expanded ? "board-expanded" : ""}`}>
       <div className="runtime-inbox-hero">
         <div>
-          <span>DESKTOP CONTROL PLANE</span>
           <h2>所有工作，一处处理</h2>
-          <p>后台项目继续运行；这里只汇总需要你关注、正在执行和可以继续的工作。</p>
+          <p>派给 VortoCode 的工作都在这里：等你确认的、正在做的、做完的。关掉窗口它们也会在后台继续。</p>
         </div>
-<div className="task-board-toolbar"><button onClick={() => setExpanded(!expanded)}>{expanded ? "收起看板" : "展开看板"}</button><button onClick={onRefresh} title="立即刷新所有本地 runtime">刷新</button></div>
+<div className="task-board-toolbar"><button onClick={() => setExpanded(!expanded)}>{expanded ? "收起" : "全屏查看"}</button><button onClick={onRefresh} title="立即刷新各项目的工作状态">刷新</button></div>
       </div>
       <div className="runtime-inbox-metrics">
         <div className={summary.actionable > 0 ? "attention" : ""}><strong>{summary.actionable}</strong><span>需要处理</span></div>
-        <div><strong>{summary.working}</strong><span>Agent 执行中</span></div>
+        <div><strong>{summary.working}</strong><span>正在执行</span></div>
         <div><strong>{summary.tasks}</strong><span>后台工作</span></div>
         <div><strong>{summary.goals}</strong><span>活跃目标</span></div>
       </div>
 
       <div className="task-board-view-switch" aria-label="工作视图">
-        <button aria-pressed={view === "board"} onClick={() => setView("board")}>看板</button>
-        <button aria-pressed={view === "list"} onClick={() => setView("list")}>按项目查看</button>
+        <button aria-pressed={view === "board"} onClick={() => setView("board")}>按状态</button>
+        <button aria-pressed={view === "list"} onClick={() => setView("list")}>按项目</button>
       </div>
       {view === "board" ? <TaskBoard sources={runtimeInboxes} currentRuntimeId={currentRuntimeId}
         onOpenGoals={(source, goalId) => onOpenPanel(source, "goals", undefined, undefined, goalId)}

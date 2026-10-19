@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { SessionSummary } from "../types";
-import { groupSessions, sessionGroupKey } from "./sessionGroups";
+import { groupSessions, sessionGroupKey, sessionTimeLabel } from "./sessionGroups";
 
 const session = (sid: string, patch: Partial<SessionSummary> = {}): SessionSummary =>
   ({ sid, title: sid, messages: 1, updated: 0, status: "idle", ...patch });
@@ -32,5 +32,17 @@ describe("groupSessions", () => {
     expect(sessionGroupKey(session("a"), false, true)).toBe("other");
     expect(sessionGroupKey(session("a", { status: "failed" }), false, false)).toBe("needs");
     expect(sessionGroupKey(session("a", { hook_issues: { count: 1, items: [], truncated: false } }), false, false)).toBe("needs");
+  });
+});
+
+describe("sessionTimeLabel", () => {
+  const now = new Date(2026, 9, 19, 15, 30);
+  const at = (...args: [number, number, number, number, number]) => new Date(...args).getTime() / 1000;
+  it("shows time today, 昨天, month-day this year, full date before", () => {
+    expect(sessionTimeLabel(at(2026, 9, 19, 9, 5), now)).toBe("09:05");
+    expect(sessionTimeLabel(at(2026, 9, 18, 23, 59), now)).toBe("昨天");
+    expect(sessionTimeLabel(at(2026, 9, 2, 8, 0), now)).toBe("10月2日");
+    expect(sessionTimeLabel(at(2025, 11, 31, 8, 0), now)).toBe("2025/12/31");
+    expect(sessionTimeLabel(0, now)).toBe("");
   });
 });

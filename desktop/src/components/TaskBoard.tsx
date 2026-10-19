@@ -10,6 +10,15 @@ type Props = {
   onOpenGoals: (source: DesktopRuntimeInbox, goalId?: string) => void;
 };
 
+/** 摘要里的时间是 UTC 的 ISO 字符串：显示成本地时间，今天只写时分。 */
+function localTime(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  const now = new Date();
+  const hm = date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return date.toDateString() === now.toDateString() ? hm : `${date.getMonth() + 1}月${date.getDate()}日 ${hm}`;
+}
+
 export function TaskBoard({ sources, currentRuntimeId, onOpen, onOpenGoals }: Props) {
   const [runtimeId, setRuntimeId] = useState("");
   const [sessionKey, setSessionKey] = useState("");
@@ -38,34 +47,36 @@ export function TaskBoard({ sources, currentRuntimeId, onOpen, onOpenGoals }: Pr
           {sessionKey && !sessions.some((item) => item.key === sessionKey) && <option value={sessionKey}>会话未在本次摘要中</option>}
           {sessions.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
         </select></label>
-        <label>Goal<select aria-label="看板目标" value={goalKey} onChange={(event) => setGoalKey(event.target.value)}>
+        <label>目标<select aria-label="看板目标" value={goalKey} onChange={(event) => setGoalKey(event.target.value)}>
           <option value="">所有目标</option>
           {goalKey && !goals.some((item) => item.key === goalKey) && <option value={goalKey}>目标未在本次摘要中</option>}
           {goals.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
         </select></label>
         <button disabled={!goalSource?.snapshot || !!goalSource.error || goalSource.snapshot.version !== 1 || goalSource.scope === "general"}
           onClick={() => { if (goalSource) onOpenGoals(goalSource); }}
-          title={goalSource ? `打开 ${goalSource.label} 的目标设置` : "请选择项目以设置目标"}>设置 Goal{goalSource ? ` · ${goalSource.label}` : ""}</button>
+          title={goalSource?.scope === "general" ? "目标要在具体项目里设置：先在上面选一个项目" : goalSource ? `打开 ${goalSource.label} 的目标设置` : "请选择项目以设置目标"}>设置目标</button>
       </div>
-      <p className="task-board-scope">当前摘要内 {items.length} 项；包含会话、任务、目标与待处理事项，同一工作可能有多个关联事项。</p>
-      <details className="task-board-scope"><summary>摘要范围与完成状态说明</summary><p>这里只展示最近的有界摘要，不是完整台账。每工作区最多 100 会话、100 事项、200 目标、200 任务。生命周期摘要缺失或未知时需打开原任务核对；已恢复的旧任务保留在历史记录。</p></details>
+      {items.length === 0 && scopedSources.length > 0 && scopedSources.every((source) => !source.error && source.snapshot?.version === 1) && <div className="task-board-welcome">
+        <strong>还没有进行中的工作</strong>
+        <p>在对话里说「帮我在某某项目里做……」，VortoCode 会拆成任务在后台做；需要你确认、正在做和做完的，都会出现在这里。</p>
+      </div>}
       {scopedSources.map((source) => <div className={`task-board-source ${source.error ? "degraded" : ""}`} key={source.runtimeId}>
-        <strong>{source.label}</strong><span>{source.error ? "无法刷新 · 状态未知，历史卡片暂停操作"
-          : source.snapshot?.version !== 1 && source.snapshot ? "摘要版本不支持 · 状态未知" : source.snapshot ? `摘要观察时间 ${source.snapshot.generated_at}` : "尚未获取摘要"}</span>
+        <strong>{source.label}</strong><span>{source.error ? "暂时连不上，状态未知；恢复后自动刷新"
+          : source.snapshot?.version !== 1 && source.snapshot ? "版本不兼容，状态未知" : source.snapshot ? `更新于 ${localTime(source.snapshot.generated_at)}` : "正在读取…"}</span>
       </div>)}
       <div className="task-board-columns" tabIndex={0} aria-label="看板列，可横向滚动">
         {BOARD_COLUMNS.map((column) => {
           const entries = items.filter((item) => item.column === column.id);
           return <section className={`task-board-column ${column.id}`} key={column.id} aria-label={column.label}>
             <h3><i />{column.label}<span>{entries.length} 项</span></h3>
-            {entries.length === 0 && <p className="task-board-empty">当前摘要与筛选内暂无事项</p>}
+            {entries.length === 0 && <p className="task-board-empty">暂无</p>}
             {entries.map((item) => <article className="task-board-card" key={item.key}>
-              <small>{item.source.label} · {item.kind === "task" ? "任务" : item.kind === "goal" ? "Goal" : item.kind === "session" ? "会话" : "事项"}</small>
+              <small>{item.source.label} · {item.kind === "task" ? "任务" : item.kind === "goal" ? "目标" : item.kind === "session" ? "会话" : "事项"}</small>
               <h4>{item.title}</h4><p>{item.detail}</p>
               {item.lifecycle && <small>验收：{({accepted: "已验收", pending: "待验收", not_submitted: "未提交", rework_requested: "需返工", not_applicable: "不适用", unknown: "未知"})[item.lifecycle.review]} · 交接：{({handled: "已处理", pending: "待处理", not_applicable: "不适用", unknown: "未知"})[item.lifecycle.handling]} · 依赖有效性：{({valid: "当前摘要内有效", invalid: "已失效", not_applicable: "不适用", unknown: "未知"})[item.lifecycle.validity]}</small>}
               {item.sessionId && <small>来源会话：{item.source.snapshot?.sessions.find((session) => session.sid === item.sessionId)?.title || item.sessionId}</small>}
-              {item.goalId && item.kind !== "goal" && <small>Goal：{item.source.snapshot?.goals.find((goal) => goal.id === item.goalId)?.objective || item.goalId}</small>}
-              <footer>{item.goalId && item.kind === "task" && <button disabled={!!item.source.error} onClick={() => onOpenGoals(item.source, item.goalId)}>查看关联 Goal</button>}<span>{item.source.error ? "状态未知" : item.status}</span>
+              {item.goalId && item.kind !== "goal" && <small>目标：{item.source.snapshot?.goals.find((goal) => goal.id === item.goalId)?.objective || item.goalId}</small>}
+              <footer>{item.goalId && item.kind === "task" && <button disabled={!!item.source.error} onClick={() => onOpenGoals(item.source, item.goalId)}>查看关联目标</button>}<span>{item.source.error ? "状态未知" : item.status}</span>
                 <button disabled={!!item.source.error} onClick={() => onOpen(item)}>{item.action}</button></footer>
             </article>)}
           </section>;
@@ -77,7 +88,7 @@ export function TaskBoard({ sources, currentRuntimeId, onOpen, onOpenGoals }: Pr
           <p>原交接：{item.lifecycle?.handling === "handled" ? "已处理" : "仍需核对"}；恢复不证明验收或目标达成。</p>
           <button disabled={!!item.source.error} onClick={() => onOpen(item)}>查看历史任务</button></article>)}
       </details>}
-      <p className="task-board-scope">任务执行结束、验收、交接处理、持久交付和 Goal 达成分别记录。看板不启动任务；操作回到来源项目与会话。</p>
+      <details className="task-board-scope"><summary>关于这个看板</summary><p>只显示各项目最近的工作（每个项目最多 100 个会话、200 个任务和目标），不是完整记录。任务执行结束、验收、交接和目标达成分开记录；看板本身不启动任务，点卡片会回到原来的项目和会话。</p></details>
     </section>
   );
 }

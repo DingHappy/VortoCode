@@ -11,7 +11,7 @@ it("stale cards and Goal entry are disabled while retained evidence remains visi
   const html = render([source]);
   expect(html).toContain("状态未知"); expect(html).toContain("历史结果");
   expect(html.match(/disabled=""/g)).toHaveLength(2);
-  expect(html).toContain("不是完整台账"); expect(html).toContain("执行结束");
+  expect(html).toContain("不是完整记录"); expect(html).toContain("执行结束");
 });
 it("General and missing sources cannot expose an executable Goal entry", () => {
   expect(render([])).toContain('disabled=""');
@@ -19,7 +19,7 @@ it("General and missing sources cannot expose an executable Goal entry", () => {
 });
 it("unknown snapshot versions produce an unknown notice without cards", () => {
   const html = render([{ ...source, error: "", snapshot: { ...source.snapshot!, version: 2 } }]);
-  expect(html).toContain("摘要版本不支持"); expect(html).not.toContain("历史结果");
+  expect(html).toContain("版本不兼容"); expect(html).not.toContain("历史结果");
 });
 it("recovered failures remain explicit history with pending handling, not successful cards", () => {
   const historySource: DesktopRuntimeInbox = { ...source, error: "", snapshot: { ...source.snapshot!, tasks: [{
@@ -33,6 +33,6 @@ it("recovered failures remain explicit history with pending handling, not succes
 it("existing task Goal links have a separate exact navigation entry without execution", () => {
   const linked: DesktopRuntimeInbox = {...source, error: "", snapshot: {...source.snapshot!, tasks: [{...source.snapshot!.tasks[0], goal_id: "goal-outside-summary"}]}};
   const html = render([linked]);
-  expect(html).toContain("查看关联 Goal"); expect(html).toContain("goal-outside-summary");
+  expect(html).toContain("查看关联目标"); expect(html).toContain("goal-outside-summary");
   expect(html).not.toContain("开始执行");
 });
