@@ -43,7 +43,6 @@ import {
   Music,
   Package,
   PanelRight,
-  Puzzle,
   PencilLine,
   Plus,
   Settings2,
@@ -3217,28 +3216,15 @@ function App() {
             <button onClick={() => { setMainView("chat"); void newSession(); }} disabled={connection !== "connected"}>
               <SquarePen size={16} /><span>新对话</span>
             </button>
-            <button className={mainView === "management" ? "active" : ""} onClick={()=>{openInspector("inbox");void refreshRuntimeInboxes();}}><Package size={16}/><span>任务中心</span></button>
-          </nav>
-          <details className="sidebar-secondary" open={mainView === "plugins" || mainView === "artifacts" || undefined}>
-            <summary>更多</summary>
-            <nav className="sidebar-nav" aria-label="扩展导航">
-            <button
-              className={mainView === "plugins" ? "active" : ""}
-              onClick={() => {
-                setMainView("plugins");
-                if (activeScope === "project") void Promise.all([refreshExtensionsInspect(), refreshHookStatus()]);
-              }}
-            >
-              <Puzzle size={16} /><span>插件</span>
-            </button>
+            <button className={mainView === "management" ? "active" : ""} title="派出去的任务、目标和等你确认的事" onClick={()=>{openInspector("inbox");void refreshRuntimeInboxes();}}><ListChecks size={16}/><span>工作</span></button>
             <button
               className={mainView === "artifacts" ? "active" : ""}
+              title="Agent 做出来的网页和文档"
               onClick={() => { setMainView("artifacts"); void refreshProjectAssets(activeScope !== "general"); }}
             >
-              <Package size={16} /><span>产物中心</span>
+              <Package size={16} /><span>产物</span>
             </button>
-            </nav>
-          </details>
+          </nav>
           <div className="sidebar-section-title project-section-title sidebar-first-section">
             <button className="sidebar-fold" aria-expanded={projectsOpen} onClick={() => setProjectsOpen(!projectsOpen)}>
               项目<ChevronDown size={13} className={projectsOpen ? "" : "folded"} />

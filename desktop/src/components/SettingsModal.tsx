@@ -421,8 +421,9 @@ export function SettingsModal({
           </section>
         )}
 
+        {section === "abilities" && <h3 className="settings-subhead">授权级别 <small>Agent 动手前要不要先问你</small></h3>}
         {section === "abilities" && !trustView && (
-          <p className="settings-intro">连接当前运行服务后可设置授权级别；旧服务可能不支持。</p>
+          <p className="settings-intro">授权级别按工作区保存：在工作台打开一个对话、连上引擎后就能在这里调整，也可以直接在输入框下方切换。</p>
         )}
         {section === "abilities" && trustView && (
           <section className="trust-card" aria-label="授权级别">
@@ -491,9 +492,7 @@ export function SettingsModal({
         )}
 
         {section === "abilities" && <>
-          <h3 className="settings-subhead">浏览器操控</h3>
           <BrowserPane onRestartRuntime={onRestartRuntime} />
-          <h3 className="settings-subhead">桌面操作（实验）</h3>
           <DesktopControlPane onRestartRuntime={onRestartRuntime} />
           <h3 className="settings-subhead">插件与扩展</h3>
           <div className="settings-card">

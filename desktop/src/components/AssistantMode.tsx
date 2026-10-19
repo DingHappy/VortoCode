@@ -11,10 +11,14 @@ export type AppMode = "assistant" | "work";
 
 /** 左上角模式切换：助理（个人助理，一个常驻主聊天）/ 工作台（按项目开对话写代码）。 */
 export function ModeSwitch({ mode, onChange }: { mode: AppMode; onChange: (mode: AppMode) => void }) {
-  return <div className="mode-switch" role="radiogroup" aria-label="界面模式">
+  return <><div className="mode-switch" role="radiogroup" aria-label="界面模式">
     <button role="radio" aria-checked={mode === "assistant"} className={mode === "assistant" ? "active" : ""} onClick={() => onChange("assistant")}>助理</button>
     <button role="radio" aria-checked={mode === "work"} className={mode === "work" ? "active" : ""} onClick={() => onChange("work")}>工作台</button>
-  </div>;
+  </div>
+  <p className="mode-caption">{mode === "assistant"
+      ? "常驻电脑上的个人助理：交代事情、看简报，合上笔记本也在做"
+      : "在这台电脑的项目里写代码：开对话、派任务、看产物"}</p>
+  </>;
 }
 
 export interface SideChat { sid: string; title: string; at?: string; busy?: boolean }
@@ -99,10 +103,10 @@ export function AssistantPanel({ name, avatar, connected, host, onAddResident, o
           ? <button className="assistant-host-action" onClick={onAddResident}>连接常驻电脑</button>
           : <button className="assistant-host-action" onClick={onRetryResident}>重新连接常驻电脑</button>}
     </div>
-    <div className="assistant-tabs icons" role="tablist" aria-label="助理面板">
+    <div className="assistant-tabs labeled" role="tablist" aria-label="助理面板">
       {TABS.map((item) => <button key={item.id} role="tab" aria-selected={tab === item.id} aria-label={item.label} title={item.label}
         className={tab === item.id ? "active" : ""} onClick={() => onTab(item.id)}>
-        {item.icon}
+        {item.icon}<span>{item.label}</span>
         {item.id === "feed" && waiting ? <i className="assistant-tab-badge" aria-label={`${waiting} 件等你处理`}>{waiting}</i> : null}
       </button>)}
     </div>
