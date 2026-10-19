@@ -1273,9 +1273,12 @@ function App() {
     await Promise.allSettled([...common, ...workspace]);
   }, [refreshSessions, refreshNotices, refreshDecisions, refreshAudit, snapshotTodayJournal, refreshWeeklyJournal, refreshProjectAssets, refreshTasks, refreshWorktrees, refreshRuns, refreshGoals, refreshGitReview, refreshIsolatedDeliveries, refreshPrDelivery, refreshHookStatus, refreshExtensionsInspect]);
 
+  /** 最近一次连接是真的失败了（而不是被更新的连接取代）：只有这时才提示用户。 */
+  const connectFailedRef = useRef(false);
   const connectToRuntime = useCallback(
     async (sid = activeSid, options: RuntimeConnectionOptions = {}): Promise<boolean> => {
       const attempt = sessionConnectionRef.current!.begin();
+      connectFailedRef.current = false;
       const requestedBaseUrl = options.baseUrl ?? baseUrl;
       const requestedRepoRoot = options.repoRoot ?? repoRoot;
       const requestedToken = options.token ?? token;
@@ -1328,6 +1331,7 @@ function App() {
         return true;
       } catch (error) {
         if (!attempt.current()) return false;
+        connectFailedRef.current = true;
         decisionNotificationSyncingRef.current = false;
         setNotificationSyncVersion((value) => value + 1);
         clientRef.current = null;
@@ -1390,7 +1394,8 @@ function App() {
         scope,
       });
       if (!connected) {
-        setBanner("本地引擎已经启动，但工作区连接失败；可在高级设置中查看连接参数");
+        // 被更新的连接取代（比如启动时紧接着切到常驻电脑）不是失败，不提示
+        if (connectFailedRef.current) setBanner("本地引擎已经启动，但工作区连接失败；可在 设置 → 高级 里查看连接参数");
         return false;
       }
       setBanner(null);
