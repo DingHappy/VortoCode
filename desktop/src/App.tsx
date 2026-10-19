@@ -583,6 +583,8 @@ function App() {
         const status = await getAccountStatus();
         const membership = status.signedIn && !status.offline ? await getMembership().catch(() => null) : null;
         if (alive) setVortoAccount({ status, membership });
+        // 读会员信息时会顺手刷新模型列表里的会员模型，界面跟着拿一次最新配置
+        if (alive && membership?.listed) applyLlmProfile(await invoke<DesktopLlmProfileStatus>("get_llm_profile"));
       } catch {
         if (alive) setVortoAccount({ status: null, membership: null });
       }

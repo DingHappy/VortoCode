@@ -4277,16 +4277,29 @@ pub(crate) async fn upsert_member_provider(
         api_key: with_sk_prefix(key),
         models: Vec::new(),
     })?;
-    provider.models = fetch_provider_models(&provider)
-        .await
-        .map(|infos| infos.into_iter().map(|info| info.id).collect())
-        .unwrap_or_default();
-    if provider.models.is_empty() {
-        provider.models = vec![RELAY_DEFAULT_MODEL.into()];
-    }
+    provider.models = member_menu_models(fetch_provider_models(&provider).await.unwrap_or_default());
     profile.providers.retain(|existing| existing.id != MEMBER_PROVIDER_ID);
     profile.providers.push(provider);
     persist_profile(app, store, profile)
+}
+
+/// 会员模型菜单只放能跑 Agent 的对话模型（不要语音、图片、带日期的快照），默认模型排第一。
+/// 服务端没给分类信息时原样保留；什么都没有时至少有默认模型。
+fn member_menu_models(infos: Vec<ModelInfo>) -> Vec<String> {
+    let classified = infos.iter().any(|info| info.category.is_some());
+    let mut models: Vec<String> = infos
+        .into_iter()
+        .filter(|info| !classified || (info.agent_ready() && info.snapshot_of.is_none()))
+        .map(|info| info.id)
+        .collect();
+    if let Some(index) = models.iter().position(|model| model == RELAY_DEFAULT_MODEL) {
+        let first = models.remove(index);
+        models.insert(0, first);
+    }
+    if models.is_empty() {
+        models.push(RELAY_DEFAULT_MODEL.into());
+    }
+    models
 }
 
 /// 会员 Key 已作为供应商加在列表里时返回它（用于静默更新 Key、退出账号时移除）。
@@ -4965,6 +4978,40 @@ fn reveal_desktop_config(app: AppHandle, kind: String) -> Result<(), String> {
     };
     let target = if path.exists() { path } else { path.parent().map(Path::to_path_buf).unwrap_or(path) };
     tauri_plugin_opener::reveal_item_in_dir(&target).map_err(|error| format!("无法在 Finder 中显示：{error}"))
+}
+
+#[cfg(test)]
+mod member_menu_tests {
+    use super::*;
+
+    fn info(id: &str, category: Option<&str>, tools: bool, snapshot: bool) -> ModelInfo {
+        ModelInfo {
+            id: id.into(),
+            category: category.map(Into::into),
+            capabilities: if tools { vec!["tools".into()] } else { Vec::new() },
+            tier: None,
+            snapshot_of: snapshot.then(|| "base".into()),
+            context_window: None,
+        }
+    }
+
+    #[test]
+    fn member_menu_keeps_agent_models_with_the_default_first() {
+        let models = member_menu_models(vec![
+            info("qwen-plus", Some("chat"), true, false),
+            info("mimo-v2.5-tts", Some("tts"), false, false),
+            info("qwen-plus-2025-01-01", Some("chat"), true, true),
+            info(RELAY_DEFAULT_MODEL, Some("omni"), true, false),
+        ]);
+        assert_eq!(models, vec![RELAY_DEFAULT_MODEL.to_string(), "qwen-plus".to_string()]);
+    }
+
+    #[test]
+    fn member_menu_falls_back_to_the_default_model() {
+        assert_eq!(member_menu_models(Vec::new()), vec![RELAY_DEFAULT_MODEL.to_string()]);
+        // 别家服务不给分类：原样保留
+        assert_eq!(member_menu_models(vec![info("a", None, false, false)]), vec!["a".to_string()]);
+    }
 }
 
 #[cfg(test)]

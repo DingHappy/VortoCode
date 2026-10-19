@@ -22,6 +22,7 @@ const KEYCHAIN_ACCOUNT: &[u8] = b"session";
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 // 访问令牌提前一分钟当作过期，免得请求在路上过期
 const ACCESS_MARGIN: Duration = Duration::from_secs(60);
+static MEMBER_LIST_REFRESHED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Default)]
 pub struct AccountState {
@@ -660,7 +661,10 @@ pub async fn account_membership(
     // 会员 Key 换过（比如在中转站轮换）时，悄悄更新列表里那一份，免得切过去才发现用不了
     let listed_key = crate::member_provider_key(&app, &store);
     if let (Some(saved), Some(fresh), Some(base)) = (&listed_key, &access.api_key, &access.base_url) {
-        if access.member && member_base_url_ok(base) && saved.trim_start_matches("sk-") != fresh.trim_start_matches("sk-") {
+        // 每次启动刷新一次模型清单（会员开放的模型会变），之后只在 Key 变了时再更新
+        let first_this_run = !MEMBER_LIST_REFRESHED.swap(true, Ordering::SeqCst);
+        let key_changed = saved.trim_start_matches("sk-") != fresh.trim_start_matches("sk-");
+        if access.member && member_base_url_ok(base) && (key_changed || first_this_run) {
             let _ = crate::upsert_member_provider(&app, &store, fresh).await;
         }
     }
