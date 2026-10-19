@@ -116,7 +116,7 @@ import { McpConnectionCard } from "./components/McpConnectionCard";
 import { McpServersCard } from "./components/McpServersCard";
 import { ProjectSkillsCard } from "./components/ProjectSkillsCard";
 import { CatalogCard } from "./components/CatalogCard";
-import { groupSessions, liveSessionStatus } from "./lib/sessionGroups";
+import { groupSessions, liveSessionStatus, sessionTimeLabel } from "./lib/sessionGroups";
 import { autoCheckForUpdate, type UpdateCheck } from "./lib/updateCheck";
 import {
   ACCOUNT_CHANGED_EVENT, getAccountStatus, getMembership, sidebarIdentity, type VortoAccountStatus, type VortoMembership,
@@ -3242,7 +3242,7 @@ function App() {
             <button className="sidebar-fold" aria-expanded={projectsOpen} onClick={() => setProjectsOpen(!projectsOpen)}>
               项目<ChevronDown size={13} className={projectsOpen ? "" : "folded"} />
             </button>
-            <button aria-label="连接远端工作区" title="连接远端工作区" onClick={() => setRemoteDialogOpen("project")} disabled={projectSwitching}>远端</button>
+            <button aria-label="连接远端工作区" title="连接远端工作区（另一台电脑上的项目）" onClick={() => setRemoteDialogOpen("project")} disabled={projectSwitching}><Server size={15} /></button>
             <button aria-label="添加 Git 项目" title="添加 Git 项目" onClick={() => void chooseRepo()} disabled={projectSwitching}><FolderPlus size={15} /></button>
           </div>
           {projectsOpen && (
@@ -3404,6 +3404,7 @@ function App() {
                       </div>
                     )}
                   </div>
+                  {!showsStatus && <time className="session-time">{sessionTimeLabel(session.updated)}</time>}
                   <div className="session-actions">
                     <button aria-label="重命名任务" title="重命名" onClick={(event) => { event.stopPropagation(); void renameSession(session); }}><PencilLine size={13} /></button>
                     <button aria-label="删除任务" title="删除" onClick={(event) => { event.stopPropagation(); void deleteSession(session); }}><Trash2 size={13} /></button>

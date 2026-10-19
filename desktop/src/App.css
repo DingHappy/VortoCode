@@ -6462,8 +6462,8 @@ button.worktree-live:not(:disabled):hover {
 .runtime-inbox-panel {
   min-height: 100%;
   padding: 16px;
-  color: #383835;
-  background: #f4f4f1;
+  color: var(--n12);
+  background: var(--n2);
 }
 
 .runtime-inbox-hero {
@@ -6479,15 +6479,15 @@ button.worktree-live:not(:disabled):hover {
 }
 
 .runtime-inbox-hero span {
-  color: #969691;
-  font-size: 8px;
+  color: var(--muted);
+  font-size: 11.5px;
   font-weight: 700;
   letter-spacing: 0.12em;
 }
 
 .runtime-inbox-hero h2 {
   margin: 4px 0 5px;
-  color: #282826;
+  color: var(--n13);
   font-size: 19px;
   font-weight: 660;
   letter-spacing: -0.02em;
@@ -6496,25 +6496,25 @@ button.worktree-live:not(:disabled):hover {
 .runtime-inbox-hero p {
   max-width: 520px;
   margin: 0;
-  color: #767671;
-  font-size: 10px;
+  color: var(--muted);
+  font-size: 13px;
   line-height: 1.5;
 }
 
 .runtime-inbox-hero > button {
   flex: 0 0 auto;
   padding: 6px 10px;
-  border: 1px solid #d9d9d4;
+  border: 1px solid var(--line);
   border-radius: 7px;
-  color: #5f5f5b;
-  background: #ffffff;
-  font-size: 10px;
+  color: var(--n12);
+  background: var(--surface-2);
+  font-size: 13px;
   cursor: pointer;
 }
 
 .runtime-inbox-hero > button:hover {
-  color: #242422;
-  border-color: #c4c4be;
+  color: var(--n13);
+  border-color: var(--n6);
 }
 
 .runtime-inbox-metrics {
@@ -6528,29 +6528,29 @@ button.worktree-live:not(:disabled):hover {
   display: grid;
   gap: 1px;
   padding: 10px 11px;
-  border: 1px solid #e0e0db;
+  border: 1px solid var(--line);
   border-radius: 10px;
-  background: #ffffff;
+  background: var(--surface-2);
 }
 
 .runtime-inbox-metrics > div.attention {
   border-color: rgba(184, 73, 73, 0.28);
-  background: #fffafa;
+  background: var(--n3);
 }
 
 .runtime-inbox-metrics strong {
-  color: #2d2d2a;
+  color: var(--n13);
   font-size: 18px;
   font-weight: 650;
 }
 
 .runtime-inbox-metrics .attention strong {
-  color: #a94242;
+  color: var(--red);
 }
 
 .runtime-inbox-metrics span {
-  color: #858580;
-  font-size: 8px;
+  color: var(--muted);
+  font-size: 11.5px;
 }
 
 .runtime-inbox-list {
@@ -6560,15 +6560,15 @@ button.worktree-live:not(:disabled):hover {
 
 .runtime-inbox-card {
   overflow: hidden;
-  border: 1px solid #dfdfda;
+  border: 1px solid var(--line);
   border-radius: 12px;
-  background: #ffffff;
+  background: var(--surface-2);
   box-shadow: 0 1px 2px rgba(32, 32, 30, 0.03);
 }
 
 .runtime-inbox-card.current {
-  border-color: #c9c9c3;
-  box-shadow: inset 2px 0 #2b2b29, 0 1px 2px rgba(32, 32, 30, 0.03);
+  border-color: var(--n6);
+  box-shadow: inset 2px 0 var(--n12), 0 1px 2px rgba(32, 32, 30, 0.03);
 }
 
 .runtime-inbox-card.degraded {
@@ -6590,7 +6590,7 @@ button.worktree-live:not(:disabled):hover {
 }
 
 .runtime-inbox-card-head:hover {
-  background: #fafaf8;
+  background: var(--n3);
 }
 
 .runtime-inbox-runtime-dot,
@@ -6599,7 +6599,7 @@ button.worktree-live:not(:disabled):hover {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: #aaa9a4;
+  background: var(--n9);
 }
 
 .runtime-inbox-runtime-dot.healthy,
@@ -6625,7 +6625,7 @@ button.worktree-live:not(:disabled):hover {
 .runtime-inbox-item-dot.status-interrupted,
 .runtime-inbox-item-dot.severity-critical,
 .runtime-inbox-item-dot.severity-high {
-  background: #b84949;
+  background: var(--red);
 }
 
 .runtime-inbox-runtime-dot.error,
@@ -6643,7 +6643,7 @@ button.worktree-live:not(:disabled):hover {
 
 .runtime-inbox-title strong {
   overflow: hidden;
-  color: #2f2f2c;
+  color: var(--n13);
   font-size: 12px;
   font-weight: 650;
   text-overflow: ellipsis;
@@ -6652,8 +6652,8 @@ button.worktree-live:not(:disabled):hover {
 
 .runtime-inbox-title small {
   overflow: hidden;
-  color: #858580;
-  font-size: 8px;
+  color: var(--muted);
+  font-size: 11.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -6662,12 +6662,12 @@ button.worktree-live:not(:disabled):hover {
   display: flex;
   align-items: center;
   gap: 7px;
-  color: #8b8b86;
-  font-size: 8px;
+  color: var(--muted);
+  font-size: 11.5px;
 }
 
 .runtime-inbox-card-meta b {
-  color: #a94242;
+  color: var(--red);
   font-weight: 650;
 }
 
@@ -6683,8 +6683,8 @@ button.worktree-live:not(:disabled):hover {
   margin: 0 11px 9px;
   padding: 8px 9px;
   border-radius: 7px;
-  color: #8c5b18;
-  background: #fff8ed;
+  color: var(--amber);
+  background: rgba(221, 171, 86, 0.08);
 }
 
 .runtime-inbox-error > span {
@@ -6696,15 +6696,15 @@ button.worktree-live:not(:disabled):hover {
 .runtime-inbox-error strong,
 .runtime-inbox-error small {
   overflow: hidden;
-  font-size: 9px;
+  font-size: 12px;
   font-weight: 550;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .runtime-inbox-error small {
-  color: #9b7746;
-  font-size: 8px;
+  color: var(--amber);
+  font-size: 11.5px;
   font-weight: 400;
 }
 
@@ -6717,7 +6717,7 @@ button.worktree-live:not(:disabled):hover {
   margin: 0 10px;
   padding: 8px 2px;
   border: 0;
-  border-top: 1px solid #eeeeea;
+  border-top: 1px solid var(--line);
   color: inherit;
   background: transparent;
   text-align: left;
@@ -6725,7 +6725,7 @@ button.worktree-live:not(:disabled):hover {
 }
 
 .runtime-inbox-item:hover {
-  background: #fafaf8;
+  background: var(--n3);
 }
 
 .runtime-inbox-item > span:nth-child(2) {
@@ -6742,28 +6742,28 @@ button.worktree-live:not(:disabled):hover {
 }
 
 .runtime-inbox-item strong {
-  color: #41413e;
-  font-size: 10px;
+  color: var(--n12);
+  font-size: 13px;
   font-weight: 580;
 }
 
 .runtime-inbox-item small {
-  color: #8a8a85;
-  font-size: 8px;
+  color: var(--muted);
+  font-size: 11.5px;
 }
 
 .runtime-inbox-item em {
   max-width: 90px;
   overflow: hidden;
-  color: #777772;
-  font-size: 8px;
+  color: var(--muted);
+  font-size: 11.5px;
   font-style: normal;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .runtime-inbox-item.decision em {
-  color: #a94242;
+  color: var(--red);
   font-weight: 650;
 }
 
@@ -6772,8 +6772,8 @@ button.worktree-live:not(:disabled):hover {
   align-items: center;
   gap: 7px;
   padding: 4px 12px 12px 29px;
-  color: #6e8175;
-  font-size: 9px;
+  color: var(--green);
+  font-size: 12px;
 }
 
 @media (max-width: 1120px) {
@@ -10550,5 +10550,46 @@ ul.trust-note {
   gap: 4px;
   margin: 0;
   padding-left: 18px;
+}
+
+.task-board-welcome {
+  padding: 14px 16px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.task-board-welcome strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--n12);
+  font-size: 14px;
+}
+
+.task-board-welcome p {
+  margin: 0;
+}
+
+/* 侧栏：标题行的操作按钮都靠右；会话右侧的时间用来区分同名对话 */
+.sidebar-section-title .sidebar-fold {
+  margin-right: auto;
+}
+
+.session-row {
+  grid-template-columns: 7px minmax(0, 1fr) auto auto;
+}
+
+.session-row .session-time {
+  color: var(--n9);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.session-row:hover .session-time,
+.session-row:focus-within .session-time {
+  display: none;
 }
 

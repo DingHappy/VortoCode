@@ -33,3 +33,15 @@ export function groupSessions(sessions: SessionSummary[], activeSid: string, bus
     .filter((key) => buckets[key].length > 0)
     .map((key) => ({ key, label: LABELS[key], sessions: buckets[key] }));
 }
+
+/** 侧栏会话右侧的时间：今天写时分，昨天写「昨天」，今年写月日，更早带年份。同名会话靠它区分。 */
+export function sessionTimeLabel(updatedSeconds: number, now: Date = new Date()): string {
+  if (!updatedSeconds) return "";
+  const date = new Date(updatedSeconds * 1000);
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const pad = (value: number) => String(value).padStart(2, "0");
+  if (date.getTime() >= startOfToday) return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  if (date.getTime() >= startOfToday - 86_400_000) return "昨天";
+  if (date.getFullYear() === now.getFullYear()) return `${date.getMonth() + 1}月${date.getDate()}日`;
+  return `${date.getFullYear()}/${date.getMonth() + 1}/${date.getDate()}`;
+}
