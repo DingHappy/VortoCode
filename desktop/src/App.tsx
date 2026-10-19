@@ -24,6 +24,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowUp,
   ChevronDown,
+  ChevronsUpDown,
   Cpu,
   Eye,
   FileCode2,
@@ -3794,6 +3795,9 @@ function App() {
                 {!onAssistantHost() && composerModelChoices.length > 0 && (
                   <label className="composer-model" title={composerModelChoices.find((choice) => choice.value === modelChoice)?.hint || "选择模型"}>
                     <Cpu size={13} />
+                    {/* 按钮上只写模型名；完整说明（档位、能力、上下文）只在展开的菜单里 */}
+                    <span className="composer-model-name">{composerModelChoices.find((choice) => choice.value === modelChoice)?.label ?? "选择模型"}</span>
+                    <ChevronsUpDown size={12} aria-hidden />
                     <select
                       aria-label="选择模型"
                       value={modelChoice}
