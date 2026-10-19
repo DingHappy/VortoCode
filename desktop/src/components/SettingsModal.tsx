@@ -72,6 +72,12 @@ export function sectionVisible(
   return true;
 }
 
+/** 正在用会员模型时，手填服务的表单收进折叠里：会员不用碰它，要改用自己的 Key、第三方或本机模型时再展开。 */
+function ManualSetup({ folded, children }: { folded: boolean; children: ReactNode }) {
+  if (!folded) return <>{children}</>;
+  return <details className="llm-extra-settings"><summary>改用其他模型服务（自己的 Key、第三方服务或本机模型）</summary>{children}</details>;
+}
+
 const SETTINGS_NAV: Array<{ group: string; items: Array<{ id: SettingsSection; label: string; keywords: string }> }> = [
   {
     group: "个人",
@@ -230,6 +236,7 @@ export function SettingsModal({
     }
   };
   const draft = { baseUrl: llmBaseInput, model: llmModelInput, apiKey: llmKeyInput, fastModel: llmFastInput, strongModel: llmStrongInput, roleModels: llmRolesInput };
+  const memberInUse = llmProfile?.account?.keySource === MEMBER_KEY_SOURCE;
   const modelState = modelSettingsState(llmProfile, draft);
   const choosePreset = (preset: typeof PROVIDER_PRESETS[number]) => {
     const next = applyModelPreset(draft, preset);
@@ -308,17 +315,30 @@ export function SettingsModal({
             <div>
               <span>已保存的模型服务</span>
               <strong>{llmProfile?.configured
-                ? llmProfile.provider === "vortocode" ? "VortoCode Relay 已配置" : llmProfile.provider === "local" ? "本机模型已配置" : "自定义服务已配置"
+                ? memberInUse ? "VortoCode 会员模型" : llmProfile.provider === "vortocode" ? "VortoCode 模型服务已配置" : llmProfile.provider === "local" ? "本机模型已配置" : "自定义服务已配置"
                 : "先配置模型，才能开始对话"}</strong>
             </div>
             <i>{llmProfile?.account ? "账号登录" : llmProfile?.configured ? "本机配置" : "需要设置"}</i>
           </div>
-          {llmProfile?.account && (
+          {memberInUse && (
             <p className="llm-account-note">
-              当前通过账号 {llmProfile.account.displayName || llmProfile.account.username} 登录，使用{keySourceLabel(llmProfile.account.keySource)}。
-              在下面改服务地址或填新 Key 会替换掉它；要换账号请到<button onClick={() => setSection("account")}>账号</button>。
+              正在使用 {llmProfile?.account?.displayName || "你"} 的会员模型 <strong>{llmProfile?.model}</strong>
+              {(llmProfile?.contextWindow ?? 0) > 0 && <>（上下文 {formatTokenCount(llmProfile?.contextWindow)} tokens）</>}，不用填地址和 Key。
+              会员、额度和账号在 <button onClick={() => setSection("general")}>常规</button> 里查看。
             </p>
           )}
+          {llmProfile?.account && !memberInUse && (
+            <p className="llm-account-note">
+              当前通过账号 {llmProfile.account.displayName || llmProfile.account.username} 登录，使用 {keySourceLabel(llmProfile.account.keySource)}。
+              在下面改服务地址或填新 Key 会替换掉它；要换账号请到 <button onClick={() => setSection("account")}>账号</button>。
+            </p>
+          )}
+          {!llmProfile?.account && !llmProfile?.configured && (
+            <p className="llm-account-note">
+              有 VortoCode 会员？到 <button onClick={() => setSection("general")}>常规</button> 里登录账号，一键使用会员模型，不用填下面这些。
+            </p>
+          )}
+          <ManualSetup folded={memberInUse}>
           <p className="llm-setup-guide">填写服务地址 → 获取模型列表 → 选择模型 → 保存应用。任何 OpenAI 兼容服务都可以；本地模型不需要 Key。</p>
           <p className="llm-profile-note">快捷项只用于预填地址；切换本机快捷项会保留你已经填写的本机端口和模型。</p>
           <div className="llm-profile-presets" aria-label="模型服务快捷设置">
@@ -378,6 +398,7 @@ export function SettingsModal({
               disabled={llmProfileBusy || Boolean(modelState.missing)}
             >{llmProfileBusy ? "正在应用…" : "保存并重启当前引擎"}</button>
           </div>
+          </ManualSetup>
           <details className="llm-extra-settings"><summary>高级模型选项（可选）</summary>
           <ModelRoles profile={llmProfile} value={llmRolesInput} onChange={onLlmRolesChange} disabled={llmProfileBusy} engine={engineWorkers}
             experimental={experimental} experimentalBusy={experimentalBusy} experimentalNote={experimentalNote} onExperimentalToggle={(next) => void toggleExperimental(next)} />
@@ -460,7 +481,9 @@ export function SettingsModal({
                 >{option.title}</button>
               ))}
             </div>
-            <p className="trust-note">{trustView.note}</p>
+            <ul className="trust-note">
+              {trustView.note.split(/。\s*/).filter((line) => line.trim()).map((line) => <li key={line}>{line}。</li>)}
+            </ul>
           </section>
         )}
 
@@ -517,7 +540,7 @@ export function SettingsModal({
           onProfileCleared={async () => onLlmProfileChange(await invoke<DesktopLlmProfileStatus>("get_llm_profile"))}
         />
         <UpdateCard />
-        <details className="settings-about"><summary>版本与构建信息</summary><BuildVersion details /></details>
+        <details className="advanced-settings settings-about"><summary>版本与构建信息</summary><BuildVersion details /></details>
         <details className="advanced-settings">
           <summary>高级连接设置</summary>
           <p>仅在连接手动启动的 `vc server` 或排查本地引擎时使用。</p>

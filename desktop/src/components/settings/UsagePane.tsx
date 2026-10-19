@@ -4,7 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useState } from "react";
 
 import { errorText } from "../../lib/errorText";
-import { ACCOUNT_MANAGE_URL, MEMBER_KEY_SOURCE } from "../../lib/vortoAccount";
+import { ACCOUNT_MANAGE_URL, creditsLow, getMembership, MEMBER_KEY_SOURCE, type VortoMembership } from "../../lib/vortoAccount";
 import type { DesktopAccount, LlmUsageSummary } from "../../types";
 
 const PLAN_URL = "https://token.vortotech.com/panel/plan";
@@ -20,25 +20,39 @@ function planDate(seconds?: number | null): string {
 function TokenPlanUsage({ account }: { account: DesktopAccount }) {
   const [error, setError] = useState("");
   const member = account.keySource === MEMBER_KEY_SOURCE;
+  // 会员的本期剩余、到期与续费从账号服务实时读（登录时存下的套餐信息可能已过时）
+  const [membership, setMembership] = useState<VortoMembership | null>(null);
+  useEffect(() => {
+    if (member) void getMembership().then(setMembership).catch(() => setMembership(null));
+  }, [member]);
+  const live = member && membership?.member ? membership : null;
   return (
     <div className="settings-stack">
       <section className="settings-card" aria-label="Token Plan">
         <div className="settings-card-head">
           <strong>{member ? "VortoCode 会员" : "Token Plan（Desktop 套餐）"}</strong>
-          <button onClick={() => void openUrl(member ? ACCOUNT_MANAGE_URL : PLAN_URL).catch((failure) => setError(errorText(failure, "无法打开浏览器")))}>查看用量</button>
+          <button onClick={() => void openUrl(member ? ACCOUNT_MANAGE_URL : PLAN_URL).catch((failure) => setError(errorText(failure, "无法打开浏览器")))}>{member ? "管理会员" : "查看用量"}</button>
         </div>
-        <div className="usage-metrics">
+        {live ? <div className="usage-metrics">
+          <div><span>档位</span><strong>{live.planName}</strong></div>
+          <div><span>本期剩余</span><strong className={creditsLow(live) ? "warn" : ""}>{credits(live.creditsAvailable)}{live.creditsPerPeriod > 0 && <small> / {credits(live.creditsPerPeriod)} Credit</small>}</strong></div>
+          <div><span>到期</span><strong>{planDate(live.expiresAt)}</strong>{live.renewedUntil > live.expiresAt && <small>已续至 {planDate(live.renewedUntil)}</small>}</div>
+        </div> : <div className="usage-metrics">
           <div><span>套餐</span><strong>{account.planName || "Token Plan"}</strong></div>
           <div><span>到期</span><strong>{planDate(account.planExpiry)}</strong></div>
           <div><span>账号</span><strong>{account.displayName || account.username}</strong></div>
-        </div>
+        </div>}
         {error && <p className="settings-card-note danger">{error}</p>}
         <p className="settings-card-note">{member
-          ? "会员额度按周期重置，本期剩余在设置 → 常规 →「VortoCode 账号」和账号网页上查看。"
+          ? `账号 ${account.displayName || account.username}。Credit 按月发放，当月没用完的月底清零；续费和购买记录在账号网页上。`
           : "套餐额度按周期重置，剩余额度和明细在中转站「套餐」页查看。套餐信息在登录时读取，续费或换档后重新登录即可刷新。"}</p>
       </section>
     </div>
   );
+}
+
+function credits(value: number): string {
+  return value.toLocaleString("zh-CN", { maximumFractionDigits: 1 });
 }
 
 function usd(value: number): string {

@@ -116,10 +116,10 @@ export function VortoAccountCard({ modelConfigured, onProfile, onRestartRuntime,
           ? <>{" "}<button className="primary" onClick={() => void useMember()} disabled={busy}>使用会员模型</button></>
           : <span className="settings-card-note">（会员模型 Key 已停用）</span>)}
     </p>}
-    <p>
-      {action && <><button onClick={() => void openUrl(action.url)}>{action.label}</button>{" "}</>}
+    <div className="settings-card-actions">
+      {action && <button onClick={() => void openUrl(action.url)}>{action.label}</button>}
       <button onClick={() => void openUrl(feedbackMailto())} title="用邮件告诉我们遇到的问题">问题反馈</button>
-    </p>
+    </div>
     {note && <p role="alert">{note}</p>}
     <p className="settings-card-note">
       {signedIn
