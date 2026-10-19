@@ -533,7 +533,8 @@ function App() {
     setModelPicks(picks);
     persistModelPicks(picks);
   }, []);
-  const composerModelChoices = useMemo(() => modelChoices(llmProfile, modelPicks), [llmProfile, modelPicks]);
+  // 没配模型时 Desktop 填的占位默认模型不是真的可用：不列出来，按钮显示「未连接模型」
+  const composerModelChoices = useMemo(() => llmProfile?.configured ? modelChoices(llmProfile, modelPicks) : [], [llmProfile, modelPicks]);
   const modelChoice = resolveModelChoice(savedModelChoice, composerModelChoices);
   // 「变更」面板域（Git 审查 / 任务分支审查 / 评论 / PR 交付）已收进 useChangeReview；
   // 发给 Agent 的两个回调与协议事件对 setGitReviewRevision 的写入留在 App。
@@ -3204,7 +3205,7 @@ function App() {
               />
             </label>
           )}
-          <ModeSwitch mode={appMode} onChange={(mode) => void changeAppMode(mode)} />
+          <ModeSwitch mode={appMode} resident={Boolean(findAssistantHost(projects))} onChange={(mode) => void changeAppMode(mode)} />
           {appMode === "assistant" ? (
             <AssistantSidebar
               mainChat={{ sid: mainChatSid, preview: agentTurns.find((turn) => turn.sid === mainChatSid)?.outcome, busy: busy && activeSid === mainChatSid }}
@@ -3557,9 +3558,21 @@ function App() {
                         });
                       }} />}</>
                     : <><h1>开始一项工作</h1><p>描述你要解决的问题，或选择工作区域开始。</p></>}
-                {llmProfileChecked && !llmProfile?.configured && (
-                  <p>还没有配置模型服务。<button onClick={() => { setSettingsSection("model"); setSettingsOpen(true); }}>连接模型</button>
-                    {!vortoAccount.status?.signedIn && <>，或<button onClick={() => { setSettingsSection("account"); setSettingsOpen(true); }}>登录 VortoCode 账号</button>（会员直接用会员模型）</>}</p>
+                {llmProfileChecked && !llmProfile?.configured && !onAssistantHost() && (
+                  <div className="first-run-card">
+                    <strong>先接一个模型，就能开始</strong>
+                    <p>VortoCode 本身不带模型，两种方式任选一种：</p>
+                    <div className="first-run-actions">
+                      <button className="primary" onClick={() => { setSettingsSection("account"); setSettingsOpen(true); }}>
+                        {vortoAccount.status?.signedIn ? "使用会员模型" : "登录 VortoCode 账号"}
+                        <small>会员直接用，不用填地址和 Key</small>
+                      </button>
+                      <button onClick={() => { setSettingsSection("model"); setSettingsOpen(true); }}>
+                        用自己的模型
+                        <small>本机模型（oMLX、Ollama 等）或自己的 API Key</small>
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
             )}
@@ -3610,6 +3623,13 @@ function App() {
           </div>
 
           <div className="composer-wrap">
+            {llmProfileChecked && !llmProfile?.configured && !onAssistantHost() && messages.length > 0 && (
+              <div className="composer-notice" role="status">
+                还没有连接模型，消息不会有回复。
+                <button onClick={() => { setSettingsSection("account"); setSettingsOpen(true); }}>{vortoAccount.status?.signedIn ? "使用会员模型" : "登录 VortoCode 账号"}</button>
+                <button onClick={() => { setSettingsSection("model"); setSettingsOpen(true); }}>用自己的模型</button>
+              </div>
+            )}
             {/* 确认卡片钉在输入框上方、不随对话流滚动：真机诊断里它渲染在滚动区内，
                 长回合一滚就看不见，用户只看到转圈，以为还在跑（2026-09-17）。 */}
             {pendingConfirm && (
@@ -3783,6 +3803,11 @@ function App() {
                     <Cpu size={13} />{runtime.model || "常驻电脑的模型"}
                   </span>
                 )}
+                {!onAssistantHost() && llmProfileChecked && composerModelChoices.length === 0 && (
+                  <button className="composer-model unset" title="还没有连接模型：点这里添加" onClick={() => { setSettingsSection("model"); setSettingsOpen(true); }}>
+                    <Cpu size={13} /><span className="composer-model-name">未连接模型</span>
+                  </button>
+                )}
                 {!onAssistantHost() && composerModelChoices.length > 0 && (
                   <label className="composer-model" title={composerModelChoices.find((choice) => choice.value === modelChoice)?.hint || "选择模型"}>
                     <Cpu size={13} />
@@ -3825,7 +3850,7 @@ function App() {
             host={onAssistantHost() ? { kind: "resident", name: findAssistantHost(projects)?.name ?? "常驻电脑", reachable: connection === "connected" } : { kind: "local", canAddResident: !findAssistantHost(projects) }}
             onAddResident={() => setRemoteDialogOpen("assistant")}
             onRetryResident={() => void changeAppMode("assistant")}
-            modelLabel={onAssistantHost() ? runtime.model : composerModelChoices.find(item => item.value === modelChoice)?.label}
+            modelLabel={onAssistantHost() ? runtime.model : llmProfile?.configured ? composerModelChoices.find(item => item.value === modelChoice)?.label : "未连接模型"}
             tab={assistantTab} onClose={() => setInspectorOpen(false)} waiting={assistantWaiting}
             onTab={(tab) => {
               setAssistantTab(tab);

@@ -1220,7 +1220,8 @@ async def handle_agent_message(websocket, message: Dict[str, Any]):
         return
     if not os.getenv("OPENAI_API_KEY"):
         await websocket.send_json(P.make_event(
-            P.AGENT_EMIT, text="未配置 OPENAI_API_KEY，无法对话。", rid=rid))
+            P.AGENT_EMIT, text=("还没有连接模型，没法回复。在 Desktop 里：设置 → 模型 添加一个模型服务，"
+                                "或登录 VortoCode 账号直接用会员模型；命令行请设置 OPENAI_API_KEY。"), rid=rid))
         await websocket.send_json(P.make_event(P.AGENT_DONE, rid=rid))
         return
     await _start_prompt_item(websocket, item)

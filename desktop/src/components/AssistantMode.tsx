@@ -10,13 +10,13 @@ import { MarkdownMessage } from "./MarkdownMessage";
 export type AppMode = "assistant" | "work";
 
 /** 左上角模式切换：助理（个人助理，一个常驻主聊天）/ 工作台（按项目开对话写代码）。 */
-export function ModeSwitch({ mode, onChange }: { mode: AppMode; onChange: (mode: AppMode) => void }) {
+export function ModeSwitch({ mode, resident = true, onChange }: { mode: AppMode; resident?: boolean; onChange: (mode: AppMode) => void }) {
   return <><div className="mode-switch" role="radiogroup" aria-label="界面模式">
     <button role="radio" aria-checked={mode === "assistant"} className={mode === "assistant" ? "active" : ""} onClick={() => onChange("assistant")}>助理</button>
     <button role="radio" aria-checked={mode === "work"} className={mode === "work" ? "active" : ""} onClick={() => onChange("work")}>工作台</button>
   </div>
   <p className="mode-caption">{mode === "assistant"
-      ? "常驻电脑上的个人助理：交代事情、看简报，合上笔记本也在做"
+      ? resident ? "常驻电脑上的个人助理：交代事情、看简报，合上笔记本也在做" : "你的个人助理：交代事情、看简报。连上常驻电脑后，合上笔记本也能接着做"
       : "在这台电脑的项目里写代码：开对话、派任务、看产物"}</p>
   </>;
 }
@@ -89,7 +89,7 @@ export function AssistantPanel({ name, avatar, connected, host, onAddResident, o
         {onEditProfile && <button aria-label="修改助理资料" title="名字、SOUL 与「关于你」" onClick={onEditProfile}><PencilLine size={12} /></button>}
       </div>
       <strong className="assistant-name">{name}</strong>
-      <span className={`assistant-status${connected ? " online" : ""}`}>{connected ? "已连接" : "连接中断"}{connected && modelLabel ? ` · ${modelLabel}` : ""}</span>
+      <span className={`assistant-status${connected ? " online" : ""}`}>{!connected ? "连接中断" : modelLabel === "未连接模型" ? "还没连接模型" : `已连接${modelLabel ? ` · ${modelLabel}` : ""}`}</span>
       <span className={`assistant-host ${host.kind}`}>
         {host.kind === "resident" ? <Server size={13} aria-hidden="true" /> : <Laptop size={13} aria-hidden="true" />}
         {host.kind === "resident" ? `住在常驻电脑${host.name && host.name !== "常驻电脑" ? `「${host.name}」` : ""}` : "在本机运行"}

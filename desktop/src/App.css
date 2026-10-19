@@ -10817,3 +10817,98 @@ ul.trust-note {
   font-size: 11px;
 }
 
+/* 新用户：还没有模型时的第一步 */
+.first-run-card {
+  max-width: 560px;
+  margin: 22px auto 0;
+  padding: 18px 20px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface-2);
+  text-align: left;
+}
+
+.first-run-card strong {
+  display: block;
+  color: var(--n13);
+  font-size: 15px;
+}
+
+.first-run-card p {
+  margin: 4px 0 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.first-run-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.first-run-actions button {
+  display: grid;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--n13);
+  background: var(--surface-2);
+  font-size: 13.5px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.first-run-actions button.primary {
+  border-color: var(--accent);
+  color: var(--n0);
+  background: var(--accent);
+}
+
+.first-run-actions small {
+  color: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  opacity: 0.75;
+}
+
+.composer-footer button.composer-model.unset {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 5px;
+  width: auto;
+  height: 30px;
+  padding: 0 11px 0 9px;
+  border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent);
+  border-radius: 999px;
+  color: var(--amber);
+  background: transparent;
+  cursor: pointer;
+}
+
+.composer-notice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--amber) 35%, transparent);
+  border-radius: 10px;
+  color: var(--n12);
+  background: color-mix(in srgb, var(--amber) 8%, transparent);
+  font-size: 13px;
+}
+
+.composer-notice button {
+  padding: 3px 10px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--n12);
+  background: var(--surface-2);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
