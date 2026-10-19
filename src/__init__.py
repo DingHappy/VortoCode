@@ -1,6 +1,6 @@
 """VortoCode: 通用多 Agent 软件开发框架"""
 
-__version__ = "0.2.3"
+__version__ = "0.2.4"
 
 from .hooks.hook import Hook, HookEvent, HookEventType, HookResult
 from .hooks.registry import HookRegistry
