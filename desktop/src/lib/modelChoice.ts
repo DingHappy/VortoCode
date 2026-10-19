@@ -183,3 +183,32 @@ export function persistModelChoice(value: string): void {
     // 存不下只是下次回到默认，不影响本次选择。
   }
 }
+
+/** 输入框模型菜单里「管理模型…」这一项的值：选它是打开设置，不是换模型。 */
+export const MANAGE_MODELS = "__manage_models__";
+
+/** 默认服务在模型菜单里的分组名：让人一眼分清本机模型和线上服务。 */
+export function defaultServiceLabel(profile: DesktopLlmProfileStatus | null): string {
+  if (profile?.account?.keySource === "vortocode_member") return "VortoCode 会员";
+  if (profile?.provider === "local") return "本机模型";
+  if (profile?.provider === "vortocode") return "VortoCode";
+  try { return profile?.baseUrl ? new URL(profile.baseUrl).host : "默认服务"; } catch { return "默认服务"; }
+}
+
+export type ModelMenuSection = { label: string; choices: ModelChoice[] };
+
+/** 按来源分组：「自动」单列最前，其次默认服务（主模型、快速/强力、推荐/常用），再是各个供应商。 */
+export function modelMenuSections(choices: ModelChoice[], profile: DesktopLlmProfileStatus | null): ModelMenuSection[] {
+  const auto = choices.filter((choice) => choice.value === AUTO_MODEL);
+  const providerIds = new Set((profile?.providers ?? []).map((provider) => provider.id));
+  const fromProvider = (choice: ModelChoice) => providerIds.has(choice.value.split(":")[0]) && choice.value.includes(":");
+  const own = choices.filter((choice) => choice.value !== AUTO_MODEL && !fromProvider(choice));
+  const sections: ModelMenuSection[] = [];
+  if (auto.length) sections.push({ label: "", choices: auto });
+  if (own.length) sections.push({ label: defaultServiceLabel(profile), choices: own });
+  for (const provider of profile?.providers ?? []) {
+    const items = choices.filter((choice) => fromProvider(choice) && choice.value.startsWith(`${provider.id}:`));
+    if (items.length) sections.push({ label: provider.name || provider.id, choices: items });
+  }
+  return sections;
+}

@@ -4255,6 +4255,67 @@ fn persist_profile(
     Ok(with_config_path(desktop_llm_profile_status(Some(&profile)), app))
 }
 
+/// 会员模型作为「其他供应商」加进模型列表时用的 ID：默认服务（比如本机模型）不动，两边在输入框里切换。
+pub(crate) const MEMBER_PROVIDER_ID: &str = "vortocode_member";
+
+/// 已登录会员、默认服务是别的（本机模型、自己的 Key）时：把会员模型加成一个供应商，而不是替换默认服务。
+/// 地址固定为中转站（调用方已校验），所以不弹原生确认框；Key 有变化时同一函数也负责更新。
+pub(crate) async fn upsert_member_provider(
+    app: &AppHandle,
+    store: &State<'_, DesktopLlmProfileStore>,
+    key: &str,
+) -> Result<DesktopLlmProfileStatus, String> {
+    let mut profile = saved_profile_for_providers(app, store)?;
+    let replacing = profile.providers.iter().any(|existing| existing.id == MEMBER_PROVIDER_ID);
+    if !replacing && profile.providers.len() >= MAX_CUSTOM_PROVIDERS {
+        return Err(format!("最多添加 {MAX_CUSTOM_PROVIDERS} 个供应商，先删掉一个再加会员模型"));
+    }
+    let mut provider = normalize_llm_provider(DesktopLlmProvider {
+        id: MEMBER_PROVIDER_ID.into(),
+        name: "VortoCode 会员".into(),
+        base_url: format!("{RELAY_ORIGIN}/v1"),
+        api_key: with_sk_prefix(key),
+        models: Vec::new(),
+    })?;
+    provider.models = fetch_provider_models(&provider)
+        .await
+        .map(|infos| infos.into_iter().map(|info| info.id).collect())
+        .unwrap_or_default();
+    if provider.models.is_empty() {
+        provider.models = vec![RELAY_DEFAULT_MODEL.into()];
+    }
+    profile.providers.retain(|existing| existing.id != MEMBER_PROVIDER_ID);
+    profile.providers.push(provider);
+    persist_profile(app, store, profile)
+}
+
+/// 会员 Key 已作为供应商加在列表里时返回它（用于静默更新 Key、退出账号时移除）。
+pub(crate) fn member_provider_key(app: &AppHandle, store: &State<'_, DesktopLlmProfileStore>) -> Option<String> {
+    cached_desktop_llm_profile(app, store)
+        .ok()
+        .flatten()?
+        .providers
+        .into_iter()
+        .find(|provider| provider.id == MEMBER_PROVIDER_ID)
+        .map(|provider| provider.api_key)
+}
+
+/// 退出账号时把会员供应商从列表里拿掉（Key 不该留在本机）。
+pub(crate) fn remove_member_provider(
+    app: &AppHandle,
+    store: &State<'_, DesktopLlmProfileStore>,
+) -> Result<(), String> {
+    let Some(mut profile) = cached_desktop_llm_profile(app, store)? else {
+        return Ok(());
+    };
+    let before = profile.providers.len();
+    profile.providers.retain(|existing| existing.id != MEMBER_PROVIDER_ID);
+    if profile.providers.len() != before {
+        persist_profile(app, store, profile)?;
+    }
+    Ok(())
+}
+
 /// 添加或更新一个自定义供应商。Key 留空 = 沿用同一 ID、同一地址下已保存的 Key。
 #[tauri::command]
 async fn save_llm_provider(

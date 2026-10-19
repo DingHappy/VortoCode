@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent, type ClipboardEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ClipboardEvent, type ReactNode } from "react";
 import { Plus } from "lucide-react";
 
 export const COMPOSER_COMMANDS = [
@@ -26,6 +26,14 @@ export function ComposerCommands({ prompt, onPrompt, project, disabled, onAction
   const open = expanded || slash;
   const choices = matchingCommands(expanded ? "" : prompt, project);
   useEffect(() => { setSelected(0); setDismissed(false); }, [prompt]);
+  // 输入框随内容长高（CSS 封顶 180px，再多就滚动），不用手动拖右下角
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const node = textarea.current;
+    if (!node) return;
+    node.style.height = "auto";
+    node.style.height = `${node.scrollHeight}px`;
+  }, [prompt]);
   const act = (id: ComposerCommand) => {
     if (disabled) return;
     setExpanded(false); setDismissed(true);
@@ -52,7 +60,7 @@ export function ComposerCommands({ prompt, onPrompt, project, disabled, onAction
       </button>)}
       {!choices.length && <p>没有匹配的快捷操作；Esc 关闭后可发送原文。</p>}
     </div>}
-    <textarea onPaste={onPaste} aria-label="任务输入" value={prompt} onChange={event => onPrompt(event.target.value)} placeholder="描述任务，输入 / 查看快捷操作，Shift+Enter 换行…" />
+    <textarea ref={textarea} onPaste={onPaste} aria-label="任务输入" value={prompt} onChange={event => onPrompt(event.target.value)} placeholder="描述任务，输入 / 查看快捷操作，Shift+Enter 换行…" />
     <div className="composer-command-toolbar">
       <button className="composer-attach" aria-label="添加与快捷操作" title="添加附件、引用源码或选择项目" aria-expanded={open} disabled={disabled} onClick={() => { setExpanded(value => !value); setDismissed(false); }}><Plus size={17} /><span>添加</span></button>
       {children}

@@ -57,6 +57,8 @@ export function ContextStatus({ context }: { context?: SessionContextUsage }) {
     document.addEventListener("pointerdown", close); document.addEventListener("keydown", escape);
     return () => { window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true); document.removeEventListener("pointerdown", close); document.removeEventListener("keydown", escape); };
   }, [open]);
+  // 新对话还没有会话快照时不占位：一个孤零零的「—」按钮看不出是什么
+  if (!context) return null;
   return <>
     <button ref={button} type="button" className={`context-status level-${level}`} aria-label={`${text.label} ${text.percent}${reason ? `，${reason}` : ""}`} aria-haspopup="dialog" aria-expanded={open} title={reason || text.label} onClick={() => setOpen(value => !value)}>{text.percent}</button>
     {open && createPortal(<div ref={popup} role="dialog" tabIndex={-1} aria-label="上下文用量" className="context-popover" style={position}>

@@ -1089,7 +1089,8 @@ textarea:focus-visible,
   min-height: 64px;
   max-height: 180px;
   padding: 13px 14px 7px;
-  resize: vertical;
+  resize: none;
+  overflow-y: auto;
   border: 0;
   outline: 0;
   color: #e1e5eb;

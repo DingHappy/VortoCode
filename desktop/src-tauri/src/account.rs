@@ -557,6 +557,7 @@ pub async fn account_logout(
     *slot = None;
     clear_session()?;
     // 退出账号时，账号给的会员 Key 也不该留在本机
+    crate::remove_member_provider(&app, &store)?;
     if member_key_in_use(&app, &store) {
         crate::sign_out_default_service(&app, &store)?;
     }
@@ -601,6 +602,8 @@ pub struct Membership {
     key_enabled: bool,
     /// 当前默认模型服务用的就是会员 Key
     in_use: bool,
+    /// 会员模型作为供应商加在模型列表里（默认服务是别的，比如本机模型）
+    listed: bool,
 }
 
 async fn fetch_model_access(client: &reqwest::Client, base: &str, access: &str) -> Result<ModelAccess, AuthError> {
@@ -654,6 +657,13 @@ pub async fn account_membership(
     store: State<'_, DesktopLlmProfileStore>,
 ) -> Result<Membership, String> {
     let (_, _, access) = signed_in_access(&app, &state).await?;
+    // 会员 Key 换过（比如在中转站轮换）时，悄悄更新列表里那一份，免得切过去才发现用不了
+    let listed_key = crate::member_provider_key(&app, &store);
+    if let (Some(saved), Some(fresh), Some(base)) = (&listed_key, &access.api_key, &access.base_url) {
+        if access.member && member_base_url_ok(base) && saved.trim_start_matches("sk-") != fresh.trim_start_matches("sk-") {
+            let _ = crate::upsert_member_provider(&app, &store, fresh).await;
+        }
+    }
     Ok(Membership {
         available: access.available,
         member: access.member,
@@ -664,6 +674,7 @@ pub async fn account_membership(
         renewed_until: access.renewed_until,
         key_enabled: access.key_enabled,
         in_use: member_key_in_use(&app, &store),
+        listed: listed_key.is_some(),
     })
 }
 
@@ -691,6 +702,13 @@ pub async fn account_use_membership(
         plan_name: Some(access.plan_name).filter(|name| !name.is_empty()),
         plan_expiry: Some(access.expires_at).filter(|expiry| *expiry > 0),
     };
+    // 已经配了别的默认模型（本机模型、自己的 Key）：加进模型列表，不替换它，输入框里两边切换
+    let keeps_default = crate::cached_desktop_llm_profile(&app, &store)?
+        .is_some_and(|profile| !profile.signed_out && !profile.model.trim().is_empty()
+            && profile.account.as_ref().map_or(true, |account| account.key_source != MEMBER_KEY_SOURCE));
+    if keeps_default {
+        return crate::upsert_member_provider(&app, &store, &key).await;
+    }
     let profile = crate::save_relay_plan_profile(&app, &store, &key, account).await?;
     Ok(crate::with_config_path(crate::desktop_llm_profile_status(Some(&profile)), &app))
 }
