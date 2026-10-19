@@ -3453,7 +3453,7 @@ function App() {
             <button
               className="sidebar-account"
               title={identity.title}
-              onClick={() => { setSettingsSection("general"); setSettingsOpen(true); }}
+              onClick={() => { setSettingsSection("account"); setSettingsOpen(true); }}
             >
               <span className="sidebar-avatar">{identity.initial || <UserRound size={14} />}</span>
               <span className="sidebar-identity">
@@ -3492,7 +3492,7 @@ function App() {
               />
             )}
             onChooseProject={() => void chooseRepo()}
-            onOpenBrowserSettings={() => { setSettingsSection("browser"); setSettingsOpen(true); }}
+            onOpenBrowserSettings={() => { setSettingsSection("abilities"); setSettingsOpen(true); }}
           />
         ) : mainView === "management" ? null : mainView === "artifacts" ? (
           <ArtifactCenter
@@ -3568,7 +3568,7 @@ function App() {
                     : <><h1>开始一项工作</h1><p>描述你要解决的问题，或选择工作区域开始。</p></>}
                 {llmProfileChecked && !llmProfile?.configured && (
                   <p>还没有配置模型服务。<button onClick={() => { setSettingsSection("model"); setSettingsOpen(true); }}>连接模型</button>
-                    {!vortoAccount.status?.signedIn && <>，或<button onClick={() => { setSettingsSection("general"); setSettingsOpen(true); }}>登录 VortoCode 账号</button>（会员直接用会员模型）</>}</p>
+                    {!vortoAccount.status?.signedIn && <>，或<button onClick={() => { setSettingsSection("account"); setSettingsOpen(true); }}>登录 VortoCode 账号</button>（会员直接用会员模型）</>}</p>
                 )}
               </div>
             )}
@@ -4009,7 +4009,7 @@ function App() {
               connected={connection === "connected"} plan={plan} queued={promptQueue.length}
               activities={activities.filter(item => item.rid === (activeTurnRid ?? [...activities].reverse().find(candidate => candidate.rid)?.rid))}
               model={onAssistantHost() ? runtime.model ?? "" : composerModelChoices.find(item => item.value === modelChoice)?.label ?? ""}
-              onRefresh={() => void refreshSessions()} onOpenSettings={() => { setSettingsSection("general"); setSettingsOpen(true); }} />}
+              onRefresh={() => void refreshSessions()} onOpenSettings={() => { setSettingsSection("advanced"); setSettingsOpen(true); }} />}
 
             {inspectorTab === "inbox" && (
               <RuntimeInboxPanel
@@ -4340,6 +4340,8 @@ function App() {
           modelPicks={modelPicks}
           onModelPicksChange={changeModelPicks}
           initialSection={settingsSection}
+          onOpenPlugins={() => { setMainView("plugins"); }}
+          onEditAssistant={() => setProfileDialogOpen(true)}
           onLlmKeyChange={setLlmKeyInput}
           onSaveLlmProfile={saveLlmProfile}
           onClearLlmProfile={clearLlmProfile}

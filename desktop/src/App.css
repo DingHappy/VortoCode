@@ -5821,9 +5821,9 @@ button.worktree-live:not(:disabled):hover {
   gap: 10px;
   margin: 10px 0;
   padding: 12px;
-  border: 1px solid #2d3541;
+  border: 1px solid var(--line);
   border-radius: 9px;
-  background: #10141b;
+  background: var(--surface-2);
 }
 
 .extensions-inspect-heading,
@@ -5847,26 +5847,26 @@ button.worktree-live:not(:disabled):hover {
 
 .extensions-inspect-heading span {
   color: var(--accent);
-  font-size: 7px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
 .extensions-inspect-heading strong {
-  color: #dce1e8;
-  font-size: 10px;
+  color: var(--n13);
+  font-size: 13px;
 }
 
 .extensions-inspect-heading button,
 .extensions-hook-trust button {
   height: 28px;
   padding: 0 10px;
-  border: 1px solid #333b47;
+  border: 1px solid var(--line);
   border-radius: 6px;
-  color: #aeb7c4;
-  background: #202630;
-  font-size: 8px;
+  color: var(--n12);
+  background: var(--n3);
+  font-size: 12px;
   cursor: pointer;
 }
 
@@ -5878,8 +5878,8 @@ button.worktree-live:not(:disabled):hover {
 
 .extensions-inspect-card > p {
   margin: 0;
-  color: #737e8d;
-  font-size: 8px;
+  color: var(--muted);
+  font-size: 12px;
   line-height: 14px;
 }
 
@@ -5887,7 +5887,7 @@ button.worktree-live:not(:disabled):hover {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   overflow: hidden;
-  border: 1px solid #29303a;
+  border: 1px solid var(--line);
   border-radius: 7px;
 }
 
@@ -5896,12 +5896,12 @@ button.worktree-live:not(:disabled):hover {
   align-items: baseline;
   gap: 4px;
   padding: 8px;
-  color: #727d8c;
-  font-size: 7px;
+  color: var(--muted);
+  font-size: 11px;
 }
 
-.extensions-inspect-summary span + span { border-left: 1px solid #29303a; }
-.extensions-inspect-summary b { color: #cbd2db; font-size: 11px; }
+.extensions-inspect-summary span + span { border-left: 1px solid var(--line); }
+.extensions-inspect-summary b { color: var(--n13); font-size: 11px; }
 .extensions-inspect-summary .attention b { color: #dfb16e; }
 
 .extensions-inspect-tabs {
@@ -5918,20 +5918,20 @@ button.worktree-live:not(:disabled):hover {
   padding: 0 8px;
   border: 1px solid transparent;
   border-radius: 6px;
-  color: #788392;
+  color: var(--muted);
   background: transparent;
-  font-size: 8px;
+  font-size: 12px;
   cursor: pointer;
 }
 
 .extensions-inspect-tabs button.active {
-  border-color: #333c49;
-  color: #d3d9e1;
-  background: #202630;
+  border-color: var(--line);
+  color: var(--n13);
+  background: var(--n3);
 }
 
 .extensions-inspect-tabs i {
-  color: #596373;
+  color: var(--n9);
   font-style: normal;
 }
 
@@ -5950,10 +5950,10 @@ button.worktree-live:not(:disabled):hover {
   background: rgba(86, 209, 148, 0.04);
 }
 
-.extensions-hook-trust strong { color: #d6bc86; font-size: 8px; }
+.extensions-hook-trust strong { color: #d6bc86; font-size: 12px; }
 .extensions-hook-trust.trusted strong { color: #8bcfad; }
-.extensions-hook-trust span { color: #697485; font-family: "DM Mono", monospace; font-size: 7px; }
-.extensions-hook-trust p { grid-column: 1 / -1; margin: 0; color: #7d8795; font-size: 8px; line-height: 13px; }
+.extensions-hook-trust span { color: #697485; font-family: "DM Mono", monospace; font-size: 11px; }
+.extensions-hook-trust p { grid-column: 1 / -1; margin: 0; color: #7d8795; font-size: 12px; line-height: 13px; }
 .extensions-hook-trust button.primary { color: #17191d; border-color: var(--accent); background: var(--accent); font-weight: 700; }
 .extensions-hook-trust button.danger { color: #dca0a0; border-color: rgba(241, 120, 120, 0.25); }
 
@@ -5968,9 +5968,9 @@ button.worktree-live:not(:disabled):hover {
   display: grid;
   gap: 4px;
   padding: 8px;
-  border: 1px solid #29313b;
+  border: 1px solid var(--line);
   border-radius: 7px;
-  background: rgba(8, 11, 16, 0.5);
+  background: var(--n2);
 }
 
 .extensions-inspect-item.needs_trust,
@@ -5985,23 +5985,23 @@ button.worktree-live:not(:disabled):hover {
 }
 
 .extensions-inspect-item-head span {
-  color: #6e95b7;
-  font-size: 7px;
+  color: var(--muted);
+  font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
 }
 
 .extensions-inspect-item-head strong {
   overflow: hidden;
-  color: #c9d0d9;
-  font-size: 8px;
+  color: var(--n13);
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .extensions-inspect-item-head i {
-  color: #7d8997;
-  font-size: 7px;
+  color: var(--muted);
+  font-size: 11px;
   font-style: normal;
 }
 
@@ -6017,15 +6017,15 @@ button.worktree-live:not(:disabled):hover {
 .extensions-inspect-item > em {
   overflow: hidden;
   margin: 0;
-  color: #697484;
-  font-size: 7px;
+  color: var(--muted);
+  font-size: 11px;
   font-style: normal;
   line-height: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.extensions-inspect-item > p { color: #8d97a5; }
+.extensions-inspect-item > p { color: var(--muted); }
 .extensions-inspect-item > em { color: #ca9a5d; white-space: normal; }
 
 .personal-skills-card { min-width: 0; }
@@ -6035,9 +6035,9 @@ button.worktree-live:not(:disabled):hover {
 .personal-skill-editor { display: grid; gap: 12px; }
 .personal-skill-editor label { display: grid; gap: 6px; font-size: 13px; }
 .personal-skill-editor input,
-.personal-skill-editor textarea { box-sizing: border-box; width: 100%; min-width: 0; padding: 9px; color: inherit; background: transparent; border: 1px solid #475263; border-radius: 6px; font: inherit; }
+.personal-skill-editor textarea { box-sizing: border-box; width: 100%; min-width: 0; padding: 9px; color: inherit; background: transparent; border: 1px solid var(--line); border-radius: 6px; font: inherit; }
 .personal-skill-editor textarea { resize: vertical; line-height: 1.6; }
-.personal-skill-review { min-width: 0; padding: 12px; border: 1px solid #475263; border-radius: 6px; }
+.personal-skill-review { min-width: 0; padding: 12px; border: 1px solid var(--line); border-radius: 6px; }
 .personal-skill-review pre { max-height: 420px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; line-height: 1.6; }
 
 .extensions-inspect-empty {
@@ -6045,13 +6045,13 @@ button.worktree-live:not(:disabled):hover {
   border: 1px dashed #2c3440;
   border-radius: 7px;
   color: #687383;
-  font-size: 8px;
+  font-size: 12px;
   text-align: center;
 }
 
 .extensions-inspect-issues {
   color: #87909e;
-  font-size: 8px;
+  font-size: 12px;
 }
 
 .extensions-inspect-issues summary { cursor: pointer; color: #c0955f; }
@@ -10777,5 +10777,17 @@ ul.trust-note {
   width: 100%;
   max-width: none;
   opacity: 0;
+}
+
+/* 设置：一页里有几块时的小标题 */
+.settings-subhead {
+  margin: 22px 0 10px;
+  color: var(--n12);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.settings-pane > .settings-subhead:first-of-type {
+  margin-top: 4px;
 }
 
