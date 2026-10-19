@@ -5542,8 +5542,8 @@ button.worktree-live:not(:disabled):hover {
 .settings-intro {
   margin: 12px 0 17px;
   color: #8992a2;
-  font-size: 10px;
-  line-height: 17px;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .settings-modal label {
@@ -5557,13 +5557,13 @@ button.worktree-live:not(:disabled):hover {
   justify-content: space-between;
   margin-bottom: 6px;
   color: #aeb5c0;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 600;
 }
 
 .settings-modal label em {
   color: #646d7d;
-  font-size: 8px;
+  font-size: 11.5px;
   font-style: normal;
   font-weight: 400;
 }
@@ -5578,7 +5578,7 @@ button.worktree-live:not(:disabled):hover {
   color: #d9dee6;
   background: #0f1218;
   font-family: "DM Mono", monospace;
-  font-size: 9px;
+  font-size: 12.5px;
 }
 
 .settings-modal input:focus {
@@ -5598,7 +5598,7 @@ button.worktree-live:not(:disabled):hover {
   border-radius: 7px;
   color: #b5bdc8;
   background: #202530;
-  font-size: 9px;
+  font-size: 12.5px;
   cursor: pointer;
 }
 
@@ -5620,13 +5620,13 @@ button.worktree-live:not(:disabled):hover {
 
 .process-card strong {
   color: #c4cad3;
-  font-size: 9px;
+  font-size: 12.5px;
 }
 
 .process-card p {
   margin: 2px 0 0;
   color: #687181;
-  font-size: 8px;
+  font-size: 11.5px;
 }
 
 .recovery-card {
@@ -5653,7 +5653,7 @@ button.worktree-live:not(:disabled):hover {
 
 .recovery-heading strong {
   color: #d6bc86;
-  font-size: 9px;
+  font-size: 12.5px;
 }
 
 .recovery-card.crashed .recovery-heading strong {
@@ -5663,18 +5663,18 @@ button.worktree-live:not(:disabled):hover {
 .recovery-heading time,
 .recovery-card p {
   color: #798395;
-  font-size: 8px;
+  font-size: 11.5px;
 }
 
 .recovery-card p {
   margin: 0;
-  line-height: 14px;
+  line-height: 1.6;
 }
 
 .recovery-card code {
   overflow: hidden;
   color: #aab2bf;
-  font-size: 8px;
+  font-size: 11.5px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -5692,7 +5692,7 @@ button.worktree-live:not(:disabled):hover {
   border-radius: 6px;
   color: #aeb7c4;
   background: #202530;
-  font-size: 8px;
+  font-size: 11.5px;
   cursor: pointer;
 }
 
@@ -6061,8 +6061,8 @@ button.worktree-live:not(:disabled):hover {
   border-left: 2px solid #43506b;
   color: #798395;
   background: rgba(76, 94, 129, 0.06);
-  font-size: 9px;
-  line-height: 15px;
+  font-size: 12.5px;
+  line-height: 1.6;
 }
 
 .advanced-settings {
@@ -6075,7 +6075,7 @@ button.worktree-live:not(:disabled):hover {
 
 .advanced-settings summary {
   color: #929baa;
-  font-size: 9px;
+  font-size: 12.5px;
   font-weight: 650;
   cursor: pointer;
   user-select: none;
@@ -6089,8 +6089,8 @@ button.worktree-live:not(:disabled):hover {
 .advanced-settings > p {
   margin: 0 0 11px;
   color: #737d8d;
-  font-size: 8px;
-  line-height: 14px;
+  font-size: 11.5px;
+  line-height: 1.6;
 }
 
 .advanced-settings label:last-of-type {
@@ -6111,7 +6111,7 @@ button.worktree-live:not(:disabled):hover {
   border-radius: 6px;
   color: #aeb7c4;
   background: #202530;
-  font-size: 8px;
+  font-size: 11.5px;
   cursor: pointer;
 }
 
@@ -8291,13 +8291,13 @@ input::placeholder {
 
 .trust-head span {
   color: var(--n9);
-  font-size: 9px;
+  font-size: 12.5px;
 }
 
 .trust-head strong {
   display: block;
   color: var(--n12);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .trust-head i {
@@ -8305,7 +8305,7 @@ input::placeholder {
   border-radius: 10px;
   color: var(--n9);
   background: var(--n4);
-  font-size: 8px;
+  font-size: 11.5px;
   font-style: normal;
 }
 
@@ -8322,7 +8322,7 @@ input::placeholder {
   border-radius: 8px;
   color: var(--n10);
   background: var(--n0);
-  font-size: 9px;
+  font-size: 12.5px;
   cursor: pointer;
 }
 
@@ -8341,7 +8341,7 @@ input::placeholder {
 .trust-note {
   margin: 0;
   color: var(--n9);
-  font-size: 9px;
+  font-size: 12.5px;
   line-height: 1.5;
 }
 
@@ -10488,3 +10488,66 @@ button.timeline-heading { width: 100%; border: 0; background: transparent; color
 .sidebar-update { border: 1px solid var(--accent); color: var(--accent); background: transparent; border-radius: 999px; padding: 2px 10px; font-size: 12px; cursor: pointer; white-space: nowrap; }
 .settings-check { display: flex; align-items: flex-start; gap: 8px; margin: 10px 0 4px; font-size: 13px; }
 .settings-check input { margin-top: 2px; }
+
+/* 设置页：复选框不吃文本输入框的样式；卡片之间留距；卡片正文统一 13px（2026-10） */
+.settings-modal input[type="checkbox"],
+.settings-modal input[type="radio"] {
+  width: auto;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--accent);
+}
+
+.settings-modal label.settings-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  cursor: pointer;
+}
+
+.settings-modal label.settings-check > span {
+  display: inline;
+  margin: 0;
+  color: var(--n12);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.settings-card p:not(.settings-card-note) {
+  margin: 0;
+  color: var(--n12);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.settings-pane > .settings-card + .settings-card,
+.settings-pane > .settings-card + details,
+.settings-pane > .process-card + .settings-card {
+  margin-top: 12px;
+}
+
+.settings-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.usage-metrics small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.usage-metrics strong.warn {
+  color: var(--amber, #d9a54a);
+}
+
+ul.trust-note {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+}
+
