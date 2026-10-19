@@ -54,49 +54,42 @@ import type {
   WorkspaceScope,
 } from "../types";
 
-export type SettingsSection = "account" | "general" | "usage" | "model" | "personalize" | "appearance" | "config" | "trust" | "browser" | "desktop" | "extensions";
+/** 设置分 5 组：账号与会员、模型、能力（Agent 能做什么）、个性化、高级（本机引擎与文件）。 */
+export type SettingsSection = "account" | "model" | "abilities" | "personal" | "advanced";
 
 
 export function relayMode(profile: { provider?: string; account?: unknown } | null | undefined): boolean {
   return profile?.provider === "vortocode" || Boolean(profile?.account);
 }
 
-/** 「账号」是旧的中转站用户名密码登录页：只给真用它登录过的人看；VortoCode 账号在「常规」里，会员 Key 不算。
+/** 「账号与会员」里两块按需出现：旧的中转站用户名密码登录（只给真用它登录过的人，会员 Key 不算）；
  *  「使用情况」跟着中转站走（会员也在用中转站）。 */
-export function sectionVisible(
-  section: SettingsSection,
+export function settingsBlockVisible(
+  block: "relayLogin" | "usage",
   profile: { provider?: string; account?: { keySource?: string } | null } | null | undefined,
 ): boolean {
-  if (section === "account") return Boolean(profile?.account) && profile?.account?.keySource !== MEMBER_KEY_SOURCE;
-  if (section === "usage") return relayMode(profile);
-  return true;
+  if (block === "relayLogin") return Boolean(profile?.account) && profile?.account?.keySource !== MEMBER_KEY_SOURCE;
+  return relayMode(profile);
 }
 
 const SETTINGS_NAV: Array<{ group: string; items: Array<{ id: SettingsSection; label: string; keywords: string }> }> = [
   {
-    group: "个人",
+    group: "",
     items: [
-      { id: "account", label: "账号", keywords: "登录 账号 退出 套餐 token plan 注册 vortocode" },
-      { id: "general", label: "常规", keywords: "版本 构建 version 关于 工作区 项目 引擎 runtime 连接 恢复 scratch gateway token 高级" },
-      { id: "usage", label: "使用情况", keywords: "用量 额度 剩余 计费 费用 quota usage billing" },
-      { id: "model", label: "模型服务", keywords: "omlx 本地 端侧 获取模型列表 模型服务 供应商 api key relay openai deepseek kimi glm 千问 minimax 本机 测试连接 上下文 常用模型 推荐 排序 输入框" },
-      { id: "personalize", label: "个性化", keywords: "全局指令 自定义指令 agents.md instructions" },
-      { id: "appearance", label: "外观", keywords: "主题 深色 浅色 跟随系统 theme dark light" },
-      { id: "config", label: "配置", keywords: "配置文件 路径 finder llm-profile agents.md" },
-    ],
-  },
-  { group: "安全", items: [{ id: "trust", label: "授权级别", keywords: "权限 确认 只读 完全信任 trust" }] },
-  {
-    group: "集成",
-    items: [
-      { id: "browser", label: "浏览器操控", keywords: "浏览器 chrome 网页 点击 截图 browser" },
-      { id: "desktop", label: "桌面操作（实验）", keywords: "桌面 linux x11 xdotool 截屏 窗口 点击 ssh desktop 实验" },
-      { id: "extensions", label: "扩展", keywords: "hook 规则 skills mcp 插件 扩展" },
+      { id: "account", label: "账号与会员", keywords: "登录 账号 退出 会员 套餐 token plan 注册 vortocode 用量 额度 剩余 计费 quota usage 反馈" },
+      { id: "model", label: "模型", keywords: "omlx 本地 端侧 模型服务 供应商 api key relay openai deepseek kimi glm 千问 minimax 本机 默认 上下文 常用模型 调度" },
+      { id: "abilities", label: "能力", keywords: "授权 权限 确认 只读 完全信任 trust 浏览器 chrome 网页 桌面 截屏 窗口 插件 mcp skills hook 规则 扩展" },
+      { id: "personal", label: "个性化", keywords: "全局指令 自定义指令 agents.md instructions 主题 深色 浅色 跟随系统 外观" },
+      { id: "advanced", label: "高级", keywords: "项目 工作区 引擎 runtime 连接 恢复 scratch gateway token 版本 构建 更新 配置文件 路径 finder" },
     ],
   },
 ];
 
 type SettingsModalProps = {
+  /** 打开插件页（MCP 服务与目录） */
+  onOpenPlugins?: () => void;
+  /** 打开助理资料（名字、SOUL、关于你） */
+  onEditAssistant?: () => void;
   activeScope: WorkspaceScope;
   connection: ConnectionState;
   connectionText: string;
@@ -148,6 +141,8 @@ type SettingsModalProps = {
 };
 
 export function SettingsModal({
+  onOpenPlugins,
+  onEditAssistant,
   activeScope,
   connection,
   connectionText,
@@ -199,9 +194,7 @@ export function SettingsModal({
   const trustView = trustCard(trust);
   const llmInputIsLocal = isLocalModelBase(llmBaseInput);
   const [section, setSection] = useState<SettingsSection>(
-    initialSection && sectionVisible(initialSection, llmProfile)
-      ? initialSection
-      : llmProfile && !llmProfile.configured ? "model" : "general");
+    initialSection ?? (llmProfile && !llmProfile.configured ? "model" : "account"));
   const [query, setQuery] = useState("");
   const [themePreference, setThemePreference] = useState<ThemePreference>(readThemePreference);
   const [modelOptions, setModelOptions] = useState<string[]>([]);
@@ -241,7 +234,7 @@ export function SettingsModal({
   const visibleNav = useMemo(() => {
     const keyword = query.trim().toLowerCase();
     const nav = SETTINGS_NAV
-      .map((group) => ({ ...group, items: group.items.filter((item) => sectionVisible(item.id, llmProfile)) }))
+      .map((group) => ({ ...group, items: group.items }))
       .filter((group) => group.items.length > 0);
     if (!keyword) return nav;
     return nav
@@ -272,7 +265,7 @@ export function SettingsModal({
           />
           {visibleNav.map((group) => (
             <div className="settings-nav-group" key={group.group}>
-              <span>{group.group}</span>
+              {group.group && <span>{group.group}</span>}
               {group.items.map((item) => (
                 <button
                   key={item.id}
@@ -290,17 +283,16 @@ export function SettingsModal({
           <h2>{sectionTitle}</h2>
           <button onClick={onClose} aria-label="关闭设置">×</button>
         </div>
-        {section === "general" && (
-        <>
-
-        <p className="settings-intro">
-          {activeScope === "project"
-            ? "当前项目的连接由应用管理。"
-            : activeScope === "scratch"
-              ? "临时工作区适合生成、运行和测试代码。"
-              : "可以直接对话；需要处理项目文件时，再选择项目。"}
-        </p>
-        </>
+        {section === "account" && (
+          <VortoAccountCard
+            modelConfigured={Boolean(llmProfile?.configured)}
+            onProfile={onLlmProfileChange}
+            onRestartRuntime={onRestartRuntime}
+            onProfileCleared={async () => onLlmProfileChange(await invoke<DesktopLlmProfileStatus>("get_llm_profile"))}
+          />
+        )}
+        {section === "advanced" && (
+        <p className="settings-intro">这台电脑上的本地引擎、项目连接、更新与配置文件。一般不用动。</p>
         )}
 
         {section === "model" && (<>
@@ -311,7 +303,7 @@ export function SettingsModal({
             else { onLlmBaseChange(""); onLlmModelChange(""); onLlmKeyChange(""); setModelOptions([]); }
             setEditingDefault(true);
           }}
-          onOpenAccount={() => setSection("general")} />
+          onOpenAccount={() => setSection("account")} />
         {editingDefault && (
         <section className={`llm-profile-card ${llmProfile?.configured ? "configured" : "unconfigured"}`} aria-label="默认服务设置">
           <div className="llm-profile-head">
@@ -387,7 +379,7 @@ export function SettingsModal({
         </>)}
         </>)}
 
-        {section === "account" && (
+        {section === "account" && settingsBlockVisible("relayLogin", llmProfile) && (
           <AccountPane
             profile={llmProfile}
             onProfile={onLlmProfileChange}
@@ -395,11 +387,19 @@ export function SettingsModal({
             onOpenModelSettings={() => setSection("model")}
           />
         )}
-        {section === "usage" && <UsagePane account={llmProfile?.account} />}
-        {section === "personalize" && <PersonalizePane />}
-        {section === "config" && <ConfigPane llmProfilePath={llmProfile?.configPath} />}
+        {section === "account" && settingsBlockVisible("usage", llmProfile) && <UsagePane account={llmProfile?.account} />}
+        {section === "personal" && onEditAssistant && (
+          <section className="settings-card" aria-label="助理资料">
+            <div className="settings-card-head">
+              <strong>助理资料</strong>
+              <button onClick={() => { onClose(); onEditAssistant(); }}>编辑</button>
+            </div>
+            <p className="settings-card-note">助理的名字、性格（SOUL）和「关于你」。常驻电脑上的助理每次对话都会读。</p>
+          </section>
+        )}
+        {section === "personal" && <PersonalizePane />}
 
-        {section === "appearance" && (
+        {section === "personal" && (
           <section className="appearance-card" aria-label="外观">
             <div className="appearance-row">
               <div>
@@ -421,10 +421,11 @@ export function SettingsModal({
           </section>
         )}
 
-        {section === "trust" && !trustView && (
-          <p className="settings-intro">连接当前运行服务后可设置授权级别；旧服务可能不支持。</p>
+        {section === "abilities" && <h3 className="settings-subhead">授权级别 <small>Agent 动手前要不要先问你</small></h3>}
+        {section === "abilities" && !trustView && (
+          <p className="settings-intro">授权级别按工作区保存：在工作台打开一个对话、连上引擎后就能在这里调整，也可以直接在输入框下方切换。</p>
         )}
-        {section === "trust" && trustView && (
+        {section === "abilities" && trustView && (
           <section className="trust-card" aria-label="授权级别">
             <div className="trust-head">
               <div>
@@ -452,7 +453,7 @@ export function SettingsModal({
           </section>
         )}
 
-        {section === "general" && (
+        {section === "advanced" && (
         <>
         <label>
           <span>{activeScope === "project" ? "Git 项目" : "可选项目"}</span>
@@ -490,20 +491,23 @@ export function SettingsModal({
         </>
         )}
 
-        {section === "browser" && <BrowserPane onRestartRuntime={onRestartRuntime} />}
-        {section === "desktop" && <DesktopControlPane onRestartRuntime={onRestartRuntime} />}
-        {section === "extensions" && (children || (
-          <p className="settings-intro">打开 Git 项目后，这里会显示该项目加载的规则、Skills、Hooks 与 MCP。</p>
-        ))}
+        {section === "abilities" && <>
+          <BrowserPane onRestartRuntime={onRestartRuntime} />
+          <DesktopControlPane onRestartRuntime={onRestartRuntime} />
+          <h3 className="settings-subhead">插件与扩展</h3>
+          <div className="settings-card">
+            <div className="settings-card-head">
+              <strong>MCP 工具服务</strong>
+              {onOpenPlugins && <button onClick={() => { onClose(); onOpenPlugins(); }}>管理插件和 MCP</button>}
+            </div>
+            <p className="settings-card-note">给 Agent 接上外部工具（文档检索、云服务等）。安装和配置在插件页里做。</p>
+          </div>
+          {children || <p className="settings-intro">打开 Git 项目后，这里会显示该项目加载的规则、Skills、Hooks 与 MCP。</p>}
+        </>}
 
-        {section === "general" && (
+        {section === "advanced" && (
         <>
-        <VortoAccountCard
-          modelConfigured={Boolean(llmProfile?.configured)}
-          onProfile={onLlmProfileChange}
-          onRestartRuntime={onRestartRuntime}
-          onProfileCleared={async () => onLlmProfileChange(await invoke<DesktopLlmProfileStatus>("get_llm_profile"))}
-        />
+        <h3 className="settings-subhead">更新与版本</h3>
         <UpdateCard />
         <details className="advanced-settings settings-about"><summary>版本与构建信息</summary><BuildVersion details /></details>
         <details className="advanced-settings">
@@ -542,6 +546,10 @@ export function SettingsModal({
         </div>
         </>
         )}
+        {section === "advanced" && <>
+          <h3 className="settings-subhead">配置文件</h3>
+          <ConfigPane llmProfilePath={llmProfile?.configPath} />
+        </>}
         </div>
       </section>
     </div>

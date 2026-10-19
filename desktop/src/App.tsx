@@ -43,7 +43,6 @@ import {
   Music,
   Package,
   PanelRight,
-  Puzzle,
   PencilLine,
   Plus,
   Settings2,
@@ -1274,9 +1273,12 @@ function App() {
     await Promise.allSettled([...common, ...workspace]);
   }, [refreshSessions, refreshNotices, refreshDecisions, refreshAudit, snapshotTodayJournal, refreshWeeklyJournal, refreshProjectAssets, refreshTasks, refreshWorktrees, refreshRuns, refreshGoals, refreshGitReview, refreshIsolatedDeliveries, refreshPrDelivery, refreshHookStatus, refreshExtensionsInspect]);
 
+  /** 最近一次连接是真的失败了（而不是被更新的连接取代）：只有这时才提示用户。 */
+  const connectFailedRef = useRef(false);
   const connectToRuntime = useCallback(
     async (sid = activeSid, options: RuntimeConnectionOptions = {}): Promise<boolean> => {
       const attempt = sessionConnectionRef.current!.begin();
+      connectFailedRef.current = false;
       const requestedBaseUrl = options.baseUrl ?? baseUrl;
       const requestedRepoRoot = options.repoRoot ?? repoRoot;
       const requestedToken = options.token ?? token;
@@ -1329,6 +1331,7 @@ function App() {
         return true;
       } catch (error) {
         if (!attempt.current()) return false;
+        connectFailedRef.current = true;
         decisionNotificationSyncingRef.current = false;
         setNotificationSyncVersion((value) => value + 1);
         clientRef.current = null;
@@ -1391,7 +1394,8 @@ function App() {
         scope,
       });
       if (!connected) {
-        setBanner("本地引擎已经启动，但工作区连接失败；可在高级设置中查看连接参数");
+        // 被更新的连接取代（比如启动时紧接着切到常驻电脑）不是失败，不提示
+        if (connectFailedRef.current) setBanner("本地引擎已经启动，但工作区连接失败；可在 设置 → 高级 里查看连接参数");
         return false;
       }
       setBanner(null);
@@ -3217,28 +3221,15 @@ function App() {
             <button onClick={() => { setMainView("chat"); void newSession(); }} disabled={connection !== "connected"}>
               <SquarePen size={16} /><span>新对话</span>
             </button>
-            <button className={mainView === "management" ? "active" : ""} onClick={()=>{openInspector("inbox");void refreshRuntimeInboxes();}}><Package size={16}/><span>任务中心</span></button>
-          </nav>
-          <details className="sidebar-secondary" open={mainView === "plugins" || mainView === "artifacts" || undefined}>
-            <summary>更多</summary>
-            <nav className="sidebar-nav" aria-label="扩展导航">
-            <button
-              className={mainView === "plugins" ? "active" : ""}
-              onClick={() => {
-                setMainView("plugins");
-                if (activeScope === "project") void Promise.all([refreshExtensionsInspect(), refreshHookStatus()]);
-              }}
-            >
-              <Puzzle size={16} /><span>插件</span>
-            </button>
+            <button className={mainView === "management" ? "active" : ""} title="派出去的任务、目标和等你确认的事" onClick={()=>{openInspector("inbox");void refreshRuntimeInboxes();}}><ListChecks size={16}/><span>工作</span></button>
             <button
               className={mainView === "artifacts" ? "active" : ""}
+              title="Agent 做出来的网页和文档"
               onClick={() => { setMainView("artifacts"); void refreshProjectAssets(activeScope !== "general"); }}
             >
-              <Package size={16} /><span>产物中心</span>
+              <Package size={16} /><span>产物</span>
             </button>
-            </nav>
-          </details>
+          </nav>
           <div className="sidebar-section-title project-section-title sidebar-first-section">
             <button className="sidebar-fold" aria-expanded={projectsOpen} onClick={() => setProjectsOpen(!projectsOpen)}>
               项目<ChevronDown size={13} className={projectsOpen ? "" : "folded"} />
@@ -3453,7 +3444,7 @@ function App() {
             <button
               className="sidebar-account"
               title={identity.title}
-              onClick={() => { setSettingsSection("general"); setSettingsOpen(true); }}
+              onClick={() => { setSettingsSection("account"); setSettingsOpen(true); }}
             >
               <span className="sidebar-avatar">{identity.initial || <UserRound size={14} />}</span>
               <span className="sidebar-identity">
@@ -3492,7 +3483,7 @@ function App() {
               />
             )}
             onChooseProject={() => void chooseRepo()}
-            onOpenBrowserSettings={() => { setSettingsSection("browser"); setSettingsOpen(true); }}
+            onOpenBrowserSettings={() => { setSettingsSection("abilities"); setSettingsOpen(true); }}
           />
         ) : mainView === "management" ? null : mainView === "artifacts" ? (
           <ArtifactCenter
@@ -3568,7 +3559,7 @@ function App() {
                     : <><h1>开始一项工作</h1><p>描述你要解决的问题，或选择工作区域开始。</p></>}
                 {llmProfileChecked && !llmProfile?.configured && (
                   <p>还没有配置模型服务。<button onClick={() => { setSettingsSection("model"); setSettingsOpen(true); }}>连接模型</button>
-                    {!vortoAccount.status?.signedIn && <>，或<button onClick={() => { setSettingsSection("general"); setSettingsOpen(true); }}>登录 VortoCode 账号</button>（会员直接用会员模型）</>}</p>
+                    {!vortoAccount.status?.signedIn && <>，或<button onClick={() => { setSettingsSection("account"); setSettingsOpen(true); }}>登录 VortoCode 账号</button>（会员直接用会员模型）</>}</p>
                 )}
               </div>
             )}
@@ -4009,7 +4000,7 @@ function App() {
               connected={connection === "connected"} plan={plan} queued={promptQueue.length}
               activities={activities.filter(item => item.rid === (activeTurnRid ?? [...activities].reverse().find(candidate => candidate.rid)?.rid))}
               model={onAssistantHost() ? runtime.model ?? "" : composerModelChoices.find(item => item.value === modelChoice)?.label ?? ""}
-              onRefresh={() => void refreshSessions()} onOpenSettings={() => { setSettingsSection("general"); setSettingsOpen(true); }} />}
+              onRefresh={() => void refreshSessions()} onOpenSettings={() => { setSettingsSection("advanced"); setSettingsOpen(true); }} />}
 
             {inspectorTab === "inbox" && (
               <RuntimeInboxPanel
@@ -4340,6 +4331,8 @@ function App() {
           modelPicks={modelPicks}
           onModelPicksChange={changeModelPicks}
           initialSection={settingsSection}
+          onOpenPlugins={() => { setMainView("plugins"); }}
+          onEditAssistant={() => setProfileDialogOpen(true)}
           onLlmKeyChange={setLlmKeyInput}
           onSaveLlmProfile={saveLlmProfile}
           onClearLlmProfile={clearLlmProfile}
