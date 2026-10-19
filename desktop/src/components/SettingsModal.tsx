@@ -245,6 +245,15 @@ export function SettingsModal({
       .filter((group) => group.items.length > 0);
   }, [query, llmProfile]);
   const sectionTitle = SETTINGS_NAV.flatMap((group) => group.items).find((item) => item.id === section)?.label ?? "";
+  // Esc 关闭设置（输入法组字时不算）
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !event.isComposing) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
   const changeTheme = (preference: ThemePreference) => {
     setThemePreference(preference);
     saveThemePreference(preference);

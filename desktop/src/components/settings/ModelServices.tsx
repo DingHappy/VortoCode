@@ -50,7 +50,8 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
   const hasDefault = Boolean(profile?.configured);
   const defaultIsMember = profile?.account?.keySource === MEMBER_KEY_SOURCE;
   const [draft, setDraft] = useState<Draft | null>(null);
-  const [adding, setAdding] = useState(false);
+  // 一个服务都没有时直接摆出「添加」的几种选择，省掉一次点击
+  const [adding, setAdding] = useState(!profile?.configured && (profile?.providers?.length ?? 0) === 0);
   const [showKey, setShowKey] = useState(false);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
