@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vortocode"
-version = "0.2.3"
+version = "0.2.4"
 description = "通用多 Agent 软件开发框架"
 readme = "README.md"
 license = {text = "MIT"}

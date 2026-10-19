@@ -43,7 +43,6 @@ import {
   Package,
   PanelRight,
   Puzzle,
-  Paperclip,
   PencilLine,
   Plus,
   Settings2,
@@ -169,7 +168,9 @@ import { useAttachments } from "./hooks/useAttachments";
 import { latestTurnSteps, previewReferences, publishedArtifactId, type PreviewView } from "./lib/preview";
 import { PreviewPanel } from "./components/PreviewPanel";
 import { useDelayedFlag } from "./hooks/useDelayedFlag";
-import { loadModelChoice, loadModelPicks, modelChoices, persistModelChoice, persistModelPicks, resolveModelChoice } from "./lib/modelChoice";
+import {
+  loadModelChoice, loadModelPicks, MANAGE_MODELS, modelChoices, modelMenuSections, persistModelChoice, persistModelPicks, resolveModelChoice,
+} from "./lib/modelChoice";
 
 
 type PendingWorkspaceSave = { rid: string; path: string; content: string; buffer: string };
@@ -582,6 +583,8 @@ function App() {
         const status = await getAccountStatus();
         const membership = status.signedIn && !status.offline ? await getMembership().catch(() => null) : null;
         if (alive) setVortoAccount({ status, membership });
+        // 读会员信息时会顺手刷新模型列表里的会员模型，界面跟着拿一次最新配置
+        if (alive && membership?.listed) applyLlmProfile(await invoke<DesktopLlmProfileStatus>("get_llm_profile"));
       } catch {
         if (alive) setVortoAccount({ status: null, membership: null });
       }
@@ -3754,12 +3757,6 @@ function App() {
                 }}>
               <div className="composer-footer">
                 <div className="composer-tools">
-                  <button
-                    className="composer-attach"
-                    aria-label="添加附件"
-                    title="添加附件：图片、音频或文本文件，也可以直接拖入或粘贴"
-                    onClick={() => attachmentInputRef.current?.click()}
-                  ><Paperclip size={16} /></button>
                   <input
                     ref={attachmentInputRef}
                     type="file"
@@ -3793,32 +3790,25 @@ function App() {
                     <Cpu size={13} />{runtime.model || "常驻电脑的模型"}
                   </span>
                 )}
-                {!onAssistantHost() && composerModelChoices.length === 1 && (
-                  <span className="composer-model single" title="当前模型；在「设置 → 模型」里可以添加更多">
-                    <Cpu size={13} />{composerModelChoices[0].label}
-                  </span>
-                )}
-                {!onAssistantHost() && composerModelChoices.length > 1 && (
-                  <label className="composer-model" title={composerModelChoices.find((choice) => choice.value === modelChoice)?.hint}>
+                {!onAssistantHost() && composerModelChoices.length > 0 && (
+                  <label className="composer-model" title={composerModelChoices.find((choice) => choice.value === modelChoice)?.hint || "选择模型"}>
                     <Cpu size={13} />
                     <select
                       aria-label="选择模型"
                       value={modelChoice}
                       onChange={(event) => {
+                        if (event.target.value === MANAGE_MODELS) { setSettingsSection("model"); setSettingsOpen(true); return; }
                         setSavedModelChoice(event.target.value);
                         persistModelChoice(event.target.value);
                       }}
                     >
-                      {composerModelChoices.filter((choice) => !choice.group).map((choice) => (
-                        <option key={choice.value} value={choice.value}>{choice.label}{choice.value === "auto" ? "" : ` · ${[choice.hint, ...(choice.badges ?? [])].join(" · ")}`}</option>
-                      ))}
-                      {[...new Set(composerModelChoices.flatMap((choice) => choice.group ? [choice.group] : []))].map((group) => (
-                        <optgroup key={group} label={group}>
-                          {composerModelChoices.filter((choice) => choice.group === group).map((choice) => (
-                            <option key={choice.value} value={choice.value}>{choice.label}{choice.badges?.length ? ` · ${choice.badges.join(" · ")}` : ""}</option>
-                          ))}
-                        </optgroup>
-                      ))}
+                      {modelMenuSections(composerModelChoices, llmProfile).map((section) => {
+                        const options = section.choices.map((choice) => (
+                          <option key={choice.value} value={choice.value}>{choice.label}{choice.value === "auto" ? "" : [choice.group ? "" : choice.hint, ...(choice.badges ?? [])].filter(Boolean).map((part) => ` · ${part}`).join("")}</option>
+                        ));
+                        return section.label ? <optgroup key={section.label} label={section.label}>{options}</optgroup> : options;
+                      })}
+                      <optgroup label="──────────"><option value={MANAGE_MODELS}>管理模型、添加本机或线上服务…</option></optgroup>
                     </select>
                   </label>
                 )}

@@ -25,6 +25,8 @@ export interface VortoMembership {
   renewedUntil: number;
   keyEnabled: boolean;
   inUse: boolean;
+  /** 会员模型作为供应商加在模型列表里（默认服务是别的，比如本机模型） */
+  listed?: boolean;
 }
 
 /** 本期剩余不足一成：提前提醒，免得用到一半停下。 */

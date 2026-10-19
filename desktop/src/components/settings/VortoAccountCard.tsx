@@ -63,12 +63,12 @@ export function VortoAccountCard({ modelConfigured, onProfile, onRestartRuntime,
   };
 
   const logout = async () => {
-    const message = membership?.inUse
+    const message = membership?.inUse || membership?.listed
       ? "退出 VortoCode 账号？这台电脑会从账号的设备列表里移除，会员模型 Key 也会从本机删除。"
       : "退出 VortoCode 账号？这台电脑会从账号的设备列表里移除。";
     if (!await confirmAction(message)) return;
     setBusy(true); setNote("");
-    const wasInUse = Boolean(membership?.inUse);
+    const wasInUse = Boolean(membership?.inUse || membership?.listed);
     try {
       setStatus(await logoutAccount());
       setMembership(null);
@@ -78,13 +78,16 @@ export function VortoAccountCard({ modelConfigured, onProfile, onRestartRuntime,
     finally { setBusy(false); }
   };
 
-  const useMember = async (question = "把默认模型服务换成 VortoCode 会员？当前的服务地址和 Key 会被替换，自定义供应商保留。") => {
+  // 已经配了别的默认模型（本机模型、自己的 Key）时，会员模型是「加进模型列表」，默认的不动
+  const useMember = async (question = modelConfigured
+    ? "把会员模型加进模型列表？现在的默认模型不变，在输入框的模型菜单里随时切换。"
+    : "用 VortoCode 会员模型作为默认模型服务？") => {
     if (!await confirmAction(question)) return;
     setBusy(true); setNote("");
     try {
       onProfile(await applyMembership());
       await onRestartRuntime();
-      setNote("已切换到会员模型");
+      setNote(modelConfigured ? "已加入模型列表：在输入框的模型菜单里选择" : "已切换到会员模型");
       await loadMembership(await getAccountStatus().catch(() => status));   // 刚登录时闭包里的 status 还是旧的
       announceAccountChanged();
     } catch (error) { setNote(errorText(error, "切换失败")); }
@@ -112,9 +115,11 @@ export function VortoAccountCard({ modelConfigured, onProfile, onRestartRuntime,
       {line}
       {membership?.member && (membership.inUse
         ? <span className="settings-card-note">（正在使用）</span>
-        : membership.keyEnabled
-          ? <>{" "}<button className="primary" onClick={() => void useMember()} disabled={busy}>使用会员模型</button></>
-          : <span className="settings-card-note">（会员模型 Key 已停用）</span>)}
+        : membership.listed
+          ? <span className="settings-card-note">（已在模型列表，在输入框的模型菜单里选择）</span>
+          : membership.keyEnabled
+            ? <>{" "}<button className="primary" onClick={() => void useMember()} disabled={busy}>{modelConfigured ? "加入模型列表" : "使用会员模型"}</button></>
+            : <span className="settings-card-note">（会员模型 Key 已停用）</span>)}
     </p>}
     <div className="settings-card-actions">
       {action && <button onClick={() => void openUrl(action.url)}>{action.label}</button>}
