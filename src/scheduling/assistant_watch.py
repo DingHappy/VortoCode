@@ -265,7 +265,8 @@ async def compose_report(root: str, now: datetime, label: str, *, llm: Any = Non
         return body
     from src.scheduling.ops_heartbeats import brief_line
     # 运维摘要只在配了运维心跳的常驻机器上有（没有报到记录就是空串）；同样不进模型上下文
-    extras = [part for part in (brief_line(root, now), news_section(now)) if part]
+    from src.scheduling.codex_watch import brief as codex_brief
+    extras = [part for part in (codex_brief(root, now), brief_line(root, now), news_section(now)) if part]
     return "\n\n".join([body, *extras])
 
 

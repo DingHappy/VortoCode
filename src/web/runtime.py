@@ -66,11 +66,15 @@ async def runtime_lifespan():
         # 常驻助理（General + 配了通知转发地址）：跟进派出去的活、推送变化、早晚汇报
         if current_workspace_scope() == GENERAL and watch_enabled():
             watch = asyncio.create_task(watch_loop(os.getcwd(), stop))
+        # Mac 上的本机引擎：Desktop 注入了常驻助理的地址和令牌，就看着 Codex、把进度报过去
+        from src.scheduling.codex_observer import observe_loop, observer_enabled
+        observer = asyncio.create_task(observe_loop(stop)) if observer_enabled() else None
         try:
             yield
         finally:
             stop.set()
-            if watch is not None:
-                watch.cancel()
-                with contextlib.suppress(asyncio.CancelledError, Exception):
-                    await watch
+            for task in (watch, observer):
+                if task is not None:
+                    task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await task

@@ -31,6 +31,7 @@ import { VortoAccountCard } from "./settings/VortoAccountCard";
 import { MEMBER_KEY_SOURCE } from "../lib/vortoAccount";
 import { DesktopControlPane } from "./settings/DesktopControlPane";
 import { ModelServices } from "./settings/ModelServices";
+import { CodexWatchCard } from "./settings/CodexWatchCard";
 import { ModelPicks } from "./settings/ModelPicks";
 import { ModelRoles } from "./settings/ModelRoles";
 import { PersonalizePane } from "./settings/PersonalizePane";
@@ -88,6 +89,8 @@ const SETTINGS_NAV: Array<{ group: string; items: Array<{ id: SettingsSection; l
 type SettingsModalProps = {
   /** 打开插件页（MCP 服务与目录） */
   onOpenPlugins?: () => void;
+  /** 登记了常驻电脑（「让助理查看 Codex」要报给它） */
+  hasResident?: boolean;
   /** 打开助理资料（名字、SOUL、关于你） */
   onEditAssistant?: () => void;
   activeScope: WorkspaceScope;
@@ -142,6 +145,7 @@ type SettingsModalProps = {
 
 export function SettingsModal({
   onOpenPlugins,
+  hasResident = false,
   onEditAssistant,
   activeScope,
   connection,
@@ -501,6 +505,7 @@ export function SettingsModal({
         )}
 
         {section === "abilities" && <>
+          <CodexWatchCard hasResident={hasResident} />
           <BrowserPane onRestartRuntime={onRestartRuntime} />
           <DesktopControlPane onRestartRuntime={onRestartRuntime} />
           <h3 className="settings-subhead">插件与扩展</h3>

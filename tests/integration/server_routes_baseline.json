@@ -776,6 +776,18 @@
     ]
   },
   {
+    "path": "/api/codex/report",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/codex/status",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
     "path": "/api/dispatches",
     "methods": [
       "GET"

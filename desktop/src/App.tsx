@@ -4381,6 +4381,7 @@ function App() {
           onModelPicksChange={changeModelPicks}
           initialSection={settingsSection}
           onOpenPlugins={() => { setMainView("plugins"); }}
+          hasResident={Boolean(findAssistantHost(projects))}
           onEditAssistant={() => setProfileDialogOpen(true)}
           onLlmKeyChange={setLlmKeyInput}
           onSaveLlmProfile={saveLlmProfile}
