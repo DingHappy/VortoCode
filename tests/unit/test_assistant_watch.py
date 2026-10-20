@@ -209,7 +209,7 @@ def test_done_notice_keeps_whole_paragraphs_from_the_end():
     assert body.startswith("验收标准：")                       # 从整段开头起，不是半句话
     assert "集成后全量测试通过" in body and "**" not in body    # 结论在，加粗符号去掉
     assert "计划已存盘" not in body
-    assert body.endswith("（完整结果在 Desktop 助理的「动态」里）")
+    assert "（完整结果在 Desktop 助理的「动态」里）" in body and "draft PR" in body
 
 
 def test_short_result_is_sent_whole_without_pointer():
@@ -229,7 +229,8 @@ def test_failure_notice_is_not_cut_mid_sentence():
     from src.scheduling.assistant_watch import status_message
     text = status_message({"project": "P", "title": "t", "status": "failed",
                            "error": "集成测试没过。" * 60})
-    assert text.endswith("。…") and len(text) < 340
+    first, hint = text.split("\n", 1)
+    assert first.endswith("。…") and len(first) < 340 and "改一改再派" in hint
 
 
 # —— 没事的日子不打扰：早报一行、晚报不发、都不调模型（2026-10-18：早上三条推送，内容大半是「暂无」）——

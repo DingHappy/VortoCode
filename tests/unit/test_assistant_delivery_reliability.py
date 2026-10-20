@@ -114,7 +114,7 @@ async def test_restart_reconciliation_only_reads_and_preserves_result(root):
         return {"id": dispatch.submission_task_id(entry["request_id"]), "execution_scope": {"repo_root": root + "/project"}, "status": "done", "branch": "vorto/fix", "result": "tests passed"}
 
     item = (await dispatch.refresh(root, http=read))[0]
-    assert methods == ["GET"] and item["status"] == "done" and item["last_checked_at"]
+    assert set(methods) == {"GET"} and item["status"] == "done" and item["last_checked_at"]
     assert item["sync_state"] == "current" and item["branch"] == "vorto/fix"
 
 

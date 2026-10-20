@@ -496,6 +496,10 @@ class IMBridge:
                 await self.adapter.ack_callback(ev)
                 await self._decide_dispatch(str(ev.callback_id), bool(ev.approved))
                 return
+            elif fut is None and str(ev.callback_id).startswith("dpr-"):
+                await self.adapter.ack_callback(ev)
+                await self._open_dispatch_pr("dsp-" + str(ev.callback_id)[4:], bool(ev.approved))
+                return
             elif fut is None and str(ev.callback_id).startswith("cdx-"):
                 await self.adapter.ack_callback(ev)
                 await self._decide_codex_action(str(ev.callback_id), bool(ev.approved))
@@ -1037,6 +1041,27 @@ class IMBridge:
         title = f"{entry.get('project')}：{entry.get('title')}"
         await self._safe_send(f"✅ 已下发——{title}。做完、失败或需要你回答时会通知你。" if approved
                               else f"已撤回——{title}。")
+
+    async def _open_dispatch_pr(self, dispatch_id: str, approved: bool) -> None:
+        """做完的任务单通知上的「开 PR」按钮：批准 = 推分支并开 draft PR。不经过模型；合并仍由人在 GitHub 上做。"""
+        from src.workflow.tasks import assistant_dispatch as dispatch
+        if not approved:
+            await self._safe_send("好，先不开 PR。之后想开，跟我说一声或在 Desktop 任务卡上点。")
+            return
+        await self._safe_send("⏳ 正在推分支、开 draft PR……")
+        try:
+            entry = await dispatch.open_pr(self.repo_root, dispatch_id)
+        except dispatch.DispatchError as error:
+            await self._safe_send(f"没开成 PR：{error}")
+            return
+        try:
+            from src.gateway.audit import record_decision_audit
+            record_decision_audit(self.repo_root, session=self._sid, mode="",
+                                  operation=f"为任务单「{entry.get('title')}」开 draft PR（手机）", decision=True, tainted=False)
+        except Exception:  # noqa: BLE001
+            import logging
+            logging.getLogger("vortocode.im").warning("开 PR 决定未能记入审计：%s", dispatch_id)
+        await self._safe_send(f"🔀 draft PR 开好了：{entry.get('pr_url')}")
 
     async def _decide_codex_action(self, action_id: str, approved: bool) -> None:
         """「助理想替你给 Codex 发…」通知上的按钮：批准后由 Mac 上的观察员交给 Codex。不经过模型。"""
