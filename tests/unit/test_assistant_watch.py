@@ -182,6 +182,27 @@ async def test_report_is_written_by_the_model_with_fallback(tmp_path):
     assert (await watch.compose_report(root, now, "早报", llm=_Down())).startswith("🗒 早报（")   # 退回数据版
 
 
+async def test_report_never_shows_internal_ids(tmp_path, monkeypatch):
+    root = str(tmp_path)
+    entry = dispatch.propose(root, project="VortoCode", title="修登录", goal="g")
+    now = datetime(2026, 10, 11, 9, 0, tzinfo=TZ)
+    monkeypatch.setattr(watch, "build_report", lambda *_a: f"等你处理：确认下发任务单 {entry['id']}（修登录）")
+    seen = []
+
+    class _LLM:
+        async def chat(self, messages, **_kw):
+            seen.append(messages[1]["content"])
+            return {"content": f"今天得你拍板：确认下发任务单 {entry['id']}。"}
+    text = await watch.compose_report(root, now, "早报", llm=_LLM())
+    assert entry["id"] not in seen[0] and entry["id"] not in text and text.endswith("确认下发任务单。")
+
+    class _Down:
+        async def chat(self, *_a, **_k):
+            raise RuntimeError("relay down")
+    assert entry["id"] not in await watch.compose_report(root, now, "早报", llm=_Down())
+    assert "只说一次" in watch._REPORT_SYSTEM
+
+
 # —— 完成通知正文：不在半句中间切（2026-10-11 真机：开头是「.py 新增…」）——
 
 _DEV_REPORT = """已把任务分解为 1 个子任务：1 个独立(并行) + 0 个有依赖(接力)。
