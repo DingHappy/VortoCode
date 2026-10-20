@@ -77,6 +77,8 @@ def _clean_threads(payload: Any) -> List[dict]:
                 "running_command": str(turn.get("running_command") or "")[:300],
                 "files": [str(path)[:200] for path in (turn.get("files") or [])[:20]],
                 "file_count": int(turn.get("file_count") or 0), "error": str(turn.get("error") or "")[:400],
+                "shell_writes": int(turn.get("shell_writes") or 0),
+                "shell_write_paths": [str(path)[:200] for path in (turn.get("shell_write_paths") or [])[:10]],
             },
         })
     return out

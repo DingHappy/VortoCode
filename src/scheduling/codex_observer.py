@@ -15,6 +15,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import socket
 import time
 from datetime import datetime, timezone
@@ -61,6 +62,41 @@ def _user_text(item: dict) -> str:
     return " ".join(part for part in parts if part)
 
 
+# 用命令写文件（cat > x、tee x、sed -i、cp/mv/touch）：Codex 的命令条目不分读写（都标 unknown），
+# 补丁方式的改动才进 fileChange。不认这些，助理会把「写了文件」误判成「0 个文件、在说谎」（真机 2026-10-20）。
+_PATH = r"(['\"]?)((?:[~./]|[A-Za-z0-9_-]+/)?[A-Za-z0-9_./~-]*?(?:/[A-Za-z0-9_.-]+|\.[A-Za-z0-9]{1,8}))\1(?=[\s;|&)'\"]|$)"
+_REDIRECT = re.compile(r"(?:^|\s)\d?>>?\s*" + _PATH)
+_WRITE_TARGET = [
+    re.compile(r"(?:^|[\s;|&(])tee\s+(?:-a\s+)?" + _PATH),
+    re.compile(r"(?:^|[\s;|&(])touch\s+" + _PATH),
+    re.compile(r"(?:^|[\s;|&(])(?:cp|mv|install)\s+(?:-\S+\s+)*\S+\s+" + _PATH),
+    re.compile(r"(?:^|[\s;|&(])sed\s+-i\S*\s+(?:''\s+)?(?:-e\s+)?(?:'[^']*'|\"[^\"]*\"|\S+)\s+" + _PATH),
+]
+_WRITE_HINT = re.compile(r"\b(?:write_text|write_bytes|fs\.writeFile(?:Sync)?)\(|\bopen\([^)]*,\s*['\"][wa]b?['\"]|\bgit\s+commit\b")
+_READ_ONLY = {"read", "search", "listFiles"}
+
+
+def shell_writes(command: str, actions: Optional[list] = None) -> tuple:
+    """一条命令像不像写了文件：(是否, 写到的路径)。
+
+    Codex 已经认出是读 / 搜 / 列目录的命令不算；其余按重定向、tee、touch、cp/mv、sed -i 找目标，
+    目标必须像个文件（带扩展名或带 /），免得把搜索词里的 ``->``、``=>`` 当成写文件。
+    脚本里写文件（write_text、open(..., 'w')）认得出「可能写了」但拿不到路径。尽力而为，不当证据用。
+    """
+    kinds = {str((action or {}).get("type")) for action in actions or [] if isinstance(action, dict)}
+    if kinds and kinds <= _READ_ONLY:
+        return False, []
+    text = str(command or "")
+    paths: List[str] = []
+    for pattern in (_REDIRECT, *_WRITE_TARGET):
+        for match in pattern.finditer(text):
+            target = match.group(2)
+            if target.startswith("/dev/") or target in paths:
+                continue
+            paths.append(target)
+    return bool(paths or _WRITE_HINT.search(text)), paths
+
+
 def summarize_turn(turn: Optional[dict]) -> Optional[dict]:
     """一轮 → 精简进度：用户的要求、Codex 最后说的话、计划、跑过的命令、改动的文件、在等的命令。"""
     if not isinstance(turn, dict):
@@ -77,6 +113,14 @@ def summarize_turn(turn: Optional[dict]) -> Optional[dict]:
                 path = _home_short(str((change or {}).get("path") or ""))
                 if path and path not in files:
                     files.append(path)
+    writes, write_paths = 0, []
+    for item in commands:
+        wrote, paths = shell_writes(item.get("command") or "", item.get("commandActions"))
+        writes += wrote
+        for path in paths:
+            short = _clip(_home_short(path), 160)
+            if short not in write_paths and short not in files:
+                write_paths.append(short)
     running = next((item for item in reversed(commands) if item.get("status") == "inProgress"), None)
     error = turn.get("error") if isinstance(turn.get("error"), dict) else None
     return {
@@ -93,6 +137,9 @@ def summarize_turn(turn: Optional[dict]) -> Optional[dict]:
         "running_command": _clip((running or {}).get("command"), _TEXT["command"]),
         "files": files[:20],
         "file_count": len(files),
+        "shell_writes": writes,
+        # 重定向出来的日志（> build.log）排后面：先报真正的产出（文档、代码）
+        "shell_write_paths": sorted(write_paths, key=lambda path: path.endswith((".log", ".tmp")) or "/tmp/" in path)[:10],
         "error": _clip((error or {}).get("message"), _TEXT["error"]),
     }
 
