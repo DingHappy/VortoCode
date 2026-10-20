@@ -77,10 +77,14 @@ async def test_explicit_refresh_reads_review_but_regular_poll_does_not(tmp_path,
         urls.append(url)
         return snapshot() if url.endswith("/review") else {"id": "t1", "execution_scope": {"repo_root": "/srv/demo"}, "status": "done", "branch": "vorto/fix"}
 
-    item = (await dispatch.refresh(root, http=http))[0]
-    assert len(urls) == 1 and not item.get("delivery_evidence")
+    dispatch._update(root, entry["id"], lambda item: item.update(status="stopped"))
+    item = (await dispatch.refresh(root, http=http))[0]          # 已结束过的单，例行轮询不读审查
+    dispatch._update(root, entry["id"], lambda item: item.update(status="running"))
+    urls.clear()
+    item = (await dispatch.refresh(root, http=http))[0]          # 刚做完的那一次读一次，通知要用
+    assert len(urls) == 2 and item["delivery_evidence"]["verification"] == "passed"
     item = (await dispatch.refresh(root, http=http, dispatch_id=entry["id"]))[0]
-    assert len(urls) == 3 and item["delivery_evidence"]["verification"] == "passed"
+    assert len(urls) == 4 and item["delivery_evidence"]["verification"] == "passed"
     assert item["delivery_evidence"]["head"] == HEAD
 
     async def invalid(method, url, payload=None):

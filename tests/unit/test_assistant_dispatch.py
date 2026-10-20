@@ -18,8 +18,8 @@ def registry(tmp_path, monkeypatch):
 
 
 class _Http:
-    def __init__(self, responses=None, error=None):
-        self.calls, self.responses, self.error = [], list(responses or []), error
+    def __init__(self, responses=None, error=None, review=None):
+        self.calls, self.responses, self.error, self.review = [], list(responses or []), error, review
 
     async def __call__(self, method, url, payload=None):
         self.calls.append((method, url, payload))
@@ -27,6 +27,8 @@ class _Http:
             raise self.error
         if method == "GET" and url.endswith("/api/tasks"):
             return {"submission_idempotency": 1, "submission_scope": {"repo_root": "/srv/VortoCode"}}
+        if method == "GET" and url.endswith("/review") and self.review is not None:
+            return self.review
         response = self.responses.pop(0) if self.responses else {}
         if method == "GET" and not url.endswith("/review"):
             response.setdefault("id", url.rsplit("/", 1)[-1])
@@ -80,7 +82,7 @@ async def test_refresh_maps_remote_status_and_keeps_unreachable_entries(tmp_path
     await dispatch.approve(root, first["id"], http=_Http([{"id": dispatch.submission_task_id(first["request_id"])}]))
     await dispatch.approve(root, second["id"], http=_Http([{"id": dispatch.submission_task_id(second["request_id"])}]))
     done = {"status": "done", "result": "已交付分支", "branch": "vorto/fix-login"}
-    items = await dispatch.refresh(root, http=_Http([done, {"status": "blocked"}]))
+    items = await dispatch.refresh(root, http=_Http([done, {"status": "blocked"}], review={}))
     by_title = {item["title"]: item for item in items}
     assert by_title["a"]["status"] == "done" and by_title["a"]["branch"] == "vorto/fix-login"
     assert by_title["b"]["status"] == "waiting"
@@ -94,7 +96,7 @@ async def test_refresh_maps_remote_status_and_keeps_unreachable_entries(tmp_path
 
 async def test_tools_only_propose_and_say_it_is_not_running_yet(tmp_path):
     tools = {tool.name: tool for tool in dispatch.build_dispatch_tools(str(tmp_path), is_tainted=lambda: True)}
-    assert set(tools) == {"propose_task", "list_dispatches"} and not tools["propose_task"].read_only
+    assert set(tools) == {"propose_task", "list_dispatches", "answer_dispatch_question"} and not tools["propose_task"].read_only
     reply = await tools["propose_task"].handler({"project": "VortoCode", "title": "修登录", "goal": "改超时",
                                                  "criteria": "- 单测\n- 不改接口"})
     assert "还没有执行" in reply

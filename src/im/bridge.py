@@ -137,6 +137,7 @@ class IMBridge:
         self._pending: dict = {}                         # cid -> Future（确认）
         self._pipeline_previews: dict[str, str] = {}       # 已成功展示的产出版本，审批后消费
         self._turn_task: Optional[asyncio.Task] = None
+        self._pr_jobs: dict[str, asyncio.Task] = {}      # 任务单 id -> 正在推分支开 PR 的后台任务
         # 上一回合还在跑时后来的消息**进队列**而不是被拒。原实现直接 return，用户的话就丢了、
         # 还得重打一遍——尤其外包看图会多一次 LLM 往返，"忙"的窗口被拉长，撞上的概率更高
         # （真机 2026-07-27）。有界是为了防刷屏堆积：满了才如实说满了。
@@ -362,6 +363,11 @@ class IMBridge:
             t, self._heartbeat_task = self._heartbeat_task, None
             if t is not None:
                 t.cancel()                                # 桥停了心跳也得停，别留孤儿协程
+            jobs = [job for job in self._pr_jobs.values() if not job.done()]
+            if jobs:                                      # 开 PR 在项目运行时那边做：给点时间收尾报结果，不无限等
+                _done, rest = await asyncio.wait(jobs, timeout=5)
+                for job in rest:
+                    job.cancel()
 
     # ------------------------------------------------------------ 活性 / 未送达补发
     def liveness(self) -> dict:
@@ -495,6 +501,10 @@ class IMBridge:
             elif fut is None and str(ev.callback_id).startswith("dsp-"):
                 await self.adapter.ack_callback(ev)
                 await self._decide_dispatch(str(ev.callback_id), bool(ev.approved))
+                return
+            elif fut is None and str(ev.callback_id).startswith("dpr-"):
+                await self.adapter.ack_callback(ev)
+                await self._open_dispatch_pr("dsp-" + str(ev.callback_id)[4:], bool(ev.approved))
                 return
             elif fut is None and str(ev.callback_id).startswith("cdx-"):
                 await self.adapter.ack_callback(ev)
@@ -1037,6 +1047,42 @@ class IMBridge:
         title = f"{entry.get('project')}：{entry.get('title')}"
         await self._safe_send(f"✅ 已下发——{title}。做完、失败或需要你回答时会通知你。" if approved
                               else f"已撤回——{title}。")
+
+    async def _open_dispatch_pr(self, dispatch_id: str, approved: bool) -> None:
+        """做完的任务单通知上的「开 PR」按钮：批准 = 推分支并开 draft PR。不经过模型；合并仍由人在 GitHub 上做。
+
+        推分支要走网络、可能几分钟：放后台做，别让桥在这期间收不了你的消息；同一张单连点只开一次。"""
+        if not approved:
+            await self._safe_send("好，先不开 PR。之后想开，跟我说一声或在 Desktop 任务卡上点。")
+            return
+        running = self._pr_jobs.get(dispatch_id)
+        if running is not None and not running.done():
+            await self._safe_send("这张单的 PR 正在开，好了告诉你。")
+            return
+        await self._safe_send("⏳ 正在推分支、开 draft PR……")
+        self._pr_jobs[dispatch_id] = asyncio.create_task(self._open_dispatch_pr_job(dispatch_id))
+
+    async def _open_dispatch_pr_job(self, dispatch_id: str) -> None:
+        from src.workflow.tasks import assistant_dispatch as dispatch
+        try:
+            try:
+                entry = await dispatch.open_pr(self.repo_root, dispatch_id)
+            except dispatch.DispatchError as error:
+                await self._safe_send(f"没开成 PR：{error}")
+                return
+            try:
+                from src.gateway.audit import record_decision_audit
+                record_decision_audit(self.repo_root, session=self._sid, mode="",
+                                      operation=f"为任务单「{entry.get('title')}」开 draft PR（手机）", decision=True,
+                                      tainted=False)
+            except Exception:  # noqa: BLE001
+                import logging
+                logging.getLogger("vortocode.im").warning("开 PR 决定未能记入审计：%s", dispatch_id)
+            await self._safe_send(f"🔀 draft PR 开好了：{entry.get('pr_url')}")
+        except Exception as error:  # noqa: BLE001 —— 后台任务的意外也要告诉主人，别静默吞掉
+            await self._safe_send(f"没开成 PR：{_exc_text(error)}")
+        finally:
+            self._pr_jobs.pop(dispatch_id, None)
 
     async def _decide_codex_action(self, action_id: str, approved: bool) -> None:
         """「助理想替你给 Codex 发…」通知上的按钮：批准后由 Mac 上的观察员交给 Codex。不经过模型。"""
