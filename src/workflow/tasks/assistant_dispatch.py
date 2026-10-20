@@ -382,8 +382,13 @@ async def _refresh_one(root: str, entry: dict, http, *, include_delivery: bool =
     def change(item: Dict[str, Any], task=task, status=status) -> None:
         item.update(status=status, result=_tail_lines(task.get("result"), 1500),
                     error=_tail_lines(task.get("error"), 500), branch=branch,
-                    question=_open_question(task) if status == "waiting" else None,
                     last_checked_at=_now(), sync_state="current", sync_error="")
+        question = _open_question(task) if status == "waiting" else None
+        if question:
+            # 同一个问题沿用第一次看到的时间：没人答太久要提醒
+            same = isinstance(item.get("question"), dict) and item["question"].get("id") == question["id"]
+            question["seen_at"] = item["question"].get("seen_at") if same else _now()
+        item["question"] = question
         item["last_sync_attempt_at"] = _now()
         if include_delivery:
             item.update(recovery_task=recovered, recovery_error=recovery_error)
@@ -434,7 +439,7 @@ async def answer_question(root: str, dispatch_id: str, answer: str, *, http=None
         raise DispatchError(f"没连上项目运行时，回答没交上：{type(error).__name__}") from error
 
     def answered(item: Dict[str, Any]) -> None:
-        item.update(status="running", question=None, error="",
+        item.update(status="running", question=None, error="", resumed_at=_now(),
                     answers=[*(item.get("answers") or []), {"question": question.get("question", "")[:300],
                                                            "answer": answer[:300], "at": _now()}][-4:])
     return _update(root, dispatch_id, answered)

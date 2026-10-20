@@ -203,3 +203,61 @@ async def test_forgotten_dispatches_get_one_nudge(tmp_path):
     assert sum("已自动撤回" in text for text in texts) == 1
     assert {item["id"]: item["status"] for item in dispatch.list_dispatches(root)}[old["id"]] == "cancelled"
     assert sum("做了 4 小时还没结束" in text for text in texts) == 1
+
+
+async def test_unanswered_questions_get_one_reminder_and_answering_restarts_the_clock(tmp_path):
+    from datetime import timedelta, timezone
+    root = str(tmp_path)
+    entry, remote = await _sent(root, remote_status="blocked", questions=[QUESTION])
+    await dispatch.refresh(root, http=remote)
+    item = dispatch.list_dispatches(root)[0]
+    seen_at = item["question"]["seen_at"]
+    await dispatch.refresh(root, http=remote)
+    assert dispatch.list_dispatches(root)[0]["question"]["seen_at"] == seen_at       # 同一个问题不重新计时
+
+    now = datetime.fromisoformat(seen_at)
+    now = (now if now.tzinfo else now.astimezone()).astimezone(timezone.utc)
+    current = {"items": dispatch.list_dispatches(root)}
+
+    async def refresh(_root):
+        return current["items"]
+
+    sent = []
+
+    async def notify(text, confirm_id=""):
+        sent.append(text)
+        return True
+    await watch.watch_once(root, now, notify=notify, refresh=refresh, times=[])         # 首轮只记现状
+    for hours in (1, 7, 8):
+        await watch.watch_once(root, now + timedelta(hours=hours), notify=notify, refresh=refresh, times=[])
+    assert sum("还在等你回答" in text and "30 秒还是 60 秒" in text for text in sent) == 1
+
+    resumed = {**current["items"][0], "status": "running", "question": None,
+               "sent_at": (now - timedelta(hours=10)).isoformat(), "resumed_at": (now + timedelta(hours=8)).isoformat()}
+    current["items"] = [resumed]
+    await watch.watch_once(root, now + timedelta(hours=9), notify=notify, refresh=refresh, times=[])
+    assert not any("还没结束" in text for text in sent)                                 # 从接着做的那刻算
+    await watch.watch_once(root, now + timedelta(hours=12), notify=notify, refresh=refresh, times=[])
+    assert sum("还没结束" in text for text in sent) == 1
+
+
+async def test_pr_button_runs_in_the_background_and_double_clicks_open_once(tmp_path, monkeypatch):
+    import asyncio
+    monkeypatch.setattr("src.gateway.audit.record_decision_audit", lambda root, **kw: None)
+    gate, calls = asyncio.Event(), []
+
+    async def slow_open(root, dispatch_id):
+        calls.append(dispatch_id)
+        await gate.wait()
+        return {"title": "改登录超时", "pr_url": "https://github.com/x/y/pull/9"}
+    monkeypatch.setattr(dispatch, "open_pr", slow_open)
+    adapter = FakeAdapter()
+    bridge = IMBridge(str(tmp_path), adapter, OWNER, channel="test")
+    click = ChannelEvent(kind="callback", sender_id=OWNER, callback_id="dpr-0123456789", approved=True, ack="q")
+    await bridge._on_event(click)
+    await bridge._on_event(click)                       # 推分支期间桥没被卡住，连点只开一次
+    assert any("正在开" in text for text in adapter.texts())
+    gate.set()
+    await asyncio.gather(*bridge._pr_jobs.values())
+    assert calls == ["dsp-0123456789"] and any("pull/9" in text for text in adapter.texts())
+    assert not bridge._pr_jobs
