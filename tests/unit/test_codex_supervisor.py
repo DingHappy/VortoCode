@@ -1,4 +1,4 @@
-"""助理定时监管 Codex：卡住、连续失败、断线、做完后判断下一步、定时巡视。全部离线（模型用假的）。"""
+"""助理每半小时监管一次 Codex：有进展才汇报、卡住 / 失败 / 要拿主意时找你、做完后拟下一步等你批。全部离线。"""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -14,8 +14,13 @@ T0 = datetime(2026, 10, 20, 9, 0, tzinfo=timezone.utc)
 def _thread(status="active", turn_status="inProgress", tid="t1", commands=1, reply="", error="", flags=()):
     return {"id": "th1", "name": "改登录超时", "cwd": "~/proj", "status": status, "flags": list(flags),
             "turn": {"id": tid, "status": turn_status, "request": "把登录超时改成 30 秒", "plan": "1. 改\n2. 补测试",
-                     "commands": commands, "last_command": "pytest -q", "running_command": "pytest -q" if status == "active" else "",
+                     "commands": commands, "last_command": "pytest -q",
+                     "running_command": "pytest -q" if status == "active" else "",
                      "files": ["src/login.py"], "file_count": 1, "reply": reply, "error": error}}
+
+
+def _done(tid="t1", **kw):
+    return _thread(status="idle", turn_status="completed", tid=tid, reply="改好了", **kw)
 
 
 class Notes:
@@ -41,106 +46,125 @@ class FakeLLM:
         return {"content": self.content}
 
 
-async def _tick(root, thread, at, notes, llm=None):
+def _report(root, thread, at):
     watch.record_report(root, {"threads": [thread]}, now=at)
+
+
+async def _check(root, at, notes, llm=None):
     await sup.supervise_once(root, at, notify=notes, llm=llm)
 
 
+def _m(minutes):
+    return T0 + timedelta(minutes=minutes)
+
+
 @pytest.mark.asyncio
-async def test_stuck_turn_is_flagged_once_with_a_stop_button(tmp_path):
+async def test_checks_only_every_half_hour_and_the_first_one_just_looks(tmp_path):
     root, notes = str(tmp_path), Notes()
-    await _tick(root, _thread(), T0, notes)
-    await _tick(root, _thread(), T0 + timedelta(minutes=19), notes)
+    _report(root, _thread(), T0)
+    await _check(root, T0, notes)                       # 起表，不推
+    _report(root, _thread(commands=4), _m(5))
+    for minutes in (1, 10, 29):
+        await _check(root, _m(minutes), notes)
+    assert not notes.sent                               # 不到半小时不看
+    await _check(root, _m(30), notes)
+    assert len(notes.sent) == 1 and "半小时巡视" in notes.texts()[0] and "正在跑 pytest -q" in notes.texts()[0]
+
+
+@pytest.mark.asyncio
+async def test_quiet_half_hours_send_nothing(tmp_path):
+    root, notes = str(tmp_path), Notes()
+    _report(root, _done(), T0)
+    await _check(root, T0, notes)
+    await _check(root, _m(30), notes)
+    await _check(root, _m(60), notes)
     assert not notes.sent
-    await _tick(root, _thread(), T0 + timedelta(minutes=21), notes)
-    await _tick(root, _thread(), T0 + timedelta(minutes=40), notes)
-    stuck = [(text, cid) for text, cid in notes.sent if "可能卡住" in text]
-    assert len(stuck) == 1 and "pytest -q" in stuck[0][0] and stuck[0][1].startswith("cdx-")
+
+
+@pytest.mark.asyncio
+async def test_no_movement_between_checks_is_called_stuck_once_with_a_stop_button(tmp_path):
+    root, notes = str(tmp_path), Notes()
+    _report(root, _thread(), T0)
+    await _check(root, T0, notes)
+    await _check(root, _m(30), notes)
+    await _check(root, _m(60), notes)
+    drafts = [(text, cid) for text, cid in notes.sent if cid]
+    assert len(drafts) == 1 and "可能卡住" in drafts[0][0] and "pytest -q" in drafts[0][0]
     assert watch.load_actions(root)[0]["kind"] == "interrupt"
+    assert "拟好的动作" in notes.texts()[0]
 
 
 @pytest.mark.asyncio
 async def test_waiting_on_you_is_not_called_stuck(tmp_path):
     root, notes = str(tmp_path), Notes()
-    waiting = _thread(flags=["waitingOnApproval"])
-    await _tick(root, waiting, T0, notes)
-    await _tick(root, waiting, T0 + timedelta(minutes=30), notes)
-    assert not any("可能卡住" in text for text in notes.texts())
-
-
-@pytest.mark.asyncio
-async def test_two_failures_in_a_row_are_reported(tmp_path):
-    root, notes = str(tmp_path), Notes()
-    await _tick(root, _thread(status="idle", turn_status="failed", tid="a", error="网络超时"), T0, notes)
-    await _tick(root, _thread(status="idle", turn_status="failed", tid="b", error="网络超时"), T0 + timedelta(minutes=1), notes)
-    assert sum("连续 2 轮失败" in text for text in notes.texts()) == 1
+    _report(root, _thread(flags=["waitingOnApproval"]), T0)
+    await _check(root, T0, notes)
+    await _check(root, _m(30), notes)
+    assert not any("可能卡住" in text for text in notes.texts()) and not watch.load_actions(root)
 
 
 @pytest.mark.asyncio
 async def test_finished_turn_gets_a_next_step_drafted_for_approval(tmp_path):
     root, notes = str(tmp_path), Notes()
     llm = FakeLLM('{"verdict": "continue", "assessment": "改好了但没补测试", "next": "给超时改动补一条单测"}')
-    await _tick(root, _thread(), T0, notes, llm)
-    done = _thread(status="idle", turn_status="completed", reply="改好了")
-    await _tick(root, done, T0 + timedelta(minutes=2), notes, llm)
-    await _tick(root, done, T0 + timedelta(minutes=8), notes, llm)
-    assert llm.calls == 0                                   # 还没空够 10 分钟：你可能正要接着说
-    await _tick(root, done, T0 + timedelta(minutes=13), notes, llm)
-    await _tick(root, done, T0 + timedelta(minutes=30), notes, llm)
-    assert llm.calls == 1                                   # 每轮只判断一次
+    _report(root, _thread(), T0)
+    await _check(root, T0, notes, llm)
+    _report(root, _done(), _m(12))                       # 在眼前做完
+    await _check(root, _m(30), notes, llm)
+    await _check(root, _m(60), notes, llm)
+    assert llm.calls == 1                               # 每轮只判断一次
     action = watch.load_actions(root)[0]
     assert action["text"] == "给超时改动补一条单测" and action["tainted"] and action["status"] == "proposed"
-    text, cid = [item for item in notes.sent if "没补测试" in item[0]][0]
+    digest = notes.texts()[0]
+    assert "做完 1 轮" in digest and "没补测试" in digest
+    text, cid = notes.sent[1]
     assert cid == action["id"] and "批准" in text
 
 
 @pytest.mark.asyncio
-async def test_old_finished_turns_and_ask_verdicts(tmp_path):
+async def test_ask_verdict_and_failures_land_in_the_to_do_list(tmp_path):
     root, notes = str(tmp_path), Notes()
     llm = FakeLLM('{"verdict": "ask", "assessment": "要选用哪个数据库", "next": ""}')
-    done = _thread(status="idle", turn_status="completed")
-    await _tick(root, done, T0, notes, llm)                 # 第一次见就已经做完：不是在我眼前做完的
-    await _tick(root, done, T0 + timedelta(hours=1), notes, llm)
-    assert llm.calls == 0
-    await _tick(root, _thread(tid="t2"), T0 + timedelta(hours=2), notes, llm)
-    await _tick(root, _thread(status="idle", turn_status="completed", tid="t2"), T0 + timedelta(hours=2, minutes=1), notes, llm)
-    await _tick(root, _thread(status="idle", turn_status="completed", tid="t2"), T0 + timedelta(hours=2, minutes=12), notes, llm)
-    assert llm.calls == 1 and not watch.load_actions(root)
-    assert any("需要你拿主意" in text and "数据库" in text for text in notes.texts())
+    _report(root, _thread(tid="t0"), T0)
+    await _check(root, T0, notes, llm)
+    _report(root, _thread(status="idle", turn_status="failed", tid="t0", error="网络超时"), _m(5))
+    _report(root, _thread(tid="t1"), _m(6))
+    _report(root, _done("t1"), _m(20))
+    await _check(root, _m(30), notes, llm)
+    text = notes.texts()[0]
+    assert "要你处理" in text and "失败：网络超时" in text and "要你定方向：要选用哪个数据库" in text
+    assert not watch.load_actions(root)
+
+
+@pytest.mark.asyncio
+async def test_old_sessions_are_not_reviewed(tmp_path):
+    root, notes = str(tmp_path), Notes()
+    llm = FakeLLM('{"verdict": "continue", "assessment": "x", "next": "y"}')
+    _report(root, _done(), T0)                          # 第一次见就已经做完：不是在眼前做完的
+    await _check(root, T0, notes, llm)
+    await _check(root, _m(30), notes, llm)
+    assert llm.calls == 0 and not notes.sent
 
 
 @pytest.mark.asyncio
 async def test_bad_model_output_is_ignored_and_not_retried(tmp_path):
     root, notes = str(tmp_path), Notes()
     llm = FakeLLM("我觉得挺好")
-    await _tick(root, _thread(), T0, notes, llm)
-    done = _thread(status="idle", turn_status="completed")
-    await _tick(root, done, T0 + timedelta(minutes=1), notes, llm)
-    await _tick(root, done, T0 + timedelta(minutes=15), notes, llm)
-    await _tick(root, done, T0 + timedelta(minutes=30), notes, llm)
+    _report(root, _thread(), T0)
+    await _check(root, T0, notes, llm)
+    _report(root, _done(), _m(5))
+    await _check(root, _m(30), notes, llm)
+    await _check(root, _m(60), notes, llm)
     assert llm.calls == 1 and not watch.load_actions(root)
-
-
-@pytest.mark.asyncio
-async def test_periodic_digest_only_when_something_moved(tmp_path):
-    root, notes = str(tmp_path), Notes()
-    sup.save_config(root, interval_minutes=30, nudge=False)
-    idle = _thread(status="idle", turn_status="completed")
-    await _tick(root, idle, T0, notes)                      # 起表
-    await _tick(root, idle, T0 + timedelta(minutes=31), notes)
-    assert not any("巡视" in text for text in notes.texts())   # 没动静不推
-    await _tick(root, _thread(tid="t2"), T0 + timedelta(minutes=40), notes)
-    await _tick(root, _thread(tid="t2", commands=3), T0 + timedelta(minutes=62), notes)
-    digests = [text for text in notes.texts() if "巡视" in text]
-    assert len(digests) == 1 and "正在做" in digests[0] and "3 条命令" in digests[0]
 
 
 @pytest.mark.asyncio
 async def test_mac_going_quiet_is_reported_once(tmp_path):
     root, notes = str(tmp_path), Notes()
-    await _tick(root, _thread(), T0, notes)
-    for minutes in (31, 45):
-        await sup.supervise_once(root, T0 + timedelta(minutes=minutes), notify=notes)
+    _report(root, _thread(), T0)
+    await _check(root, T0, notes)
+    await _check(root, _m(31), notes)
+    await _check(root, _m(62), notes)
     assert sum("没报进度" in text for text in notes.texts()) == 1
 
 
@@ -154,9 +178,9 @@ async def test_no_codex_reports_means_nothing_happens(tmp_path):
 @pytest.mark.asyncio
 async def test_owner_can_tune_the_rhythm_by_chat(tmp_path):
     tool = sup.build_supervisor_tools(str(tmp_path))[0]
-    reply = await tool.handler({"interval_minutes": "15", "nudge": "false"})
-    assert "每 15 分钟" in reply and "不主动" in reply
-    assert sup.load_config(str(tmp_path))["interval_minutes"] == 15
-    reply = await tool.handler({"stuck_minutes": 1})
-    assert sup.load_config(str(tmp_path))["stuck_minutes"] == 5     # 太小的值收到下限
+    reply = await tool.handler({"interval_minutes": "60", "nudge": "false"})
+    assert "每 60 分钟" in reply and "不主动" in reply
+    assert sup.load_config(str(tmp_path))["interval_minutes"] == 60
+    await tool.handler({"interval_minutes": 1})
+    assert sup.load_config(str(tmp_path))["interval_minutes"] == 10     # 太小的值收到下限
     assert "现在的设置" in await tool.handler({})

@@ -413,7 +413,7 @@ def schedule_overview(root: str) -> List[Dict[str, Any]]:
         from src.scheduling.codex_watch import load_state
         if load_state(root).get("received_at"):
             items.append({"id": "codex-supervisor", "kind": "watch", "title": "监管 Codex",
-                          "schedule": f"每 {INTERVAL_SECONDS // 60} 分钟检查", "detail": describe_config(load_config(root)),
+                          "schedule": f"每 {load_config(root)['interval_minutes']} 分钟", "detail": describe_config(load_config(root)),
                           "enabled": True})
     try:
         from src.gateway.workspace_scope import GENERAL, current_workspace_scope

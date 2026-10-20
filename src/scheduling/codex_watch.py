@@ -1,8 +1,9 @@
 """常驻助理这边：收 Mac 上 Codex 观察员报来的进度，存下来、判断要不要提醒主人、给助理一个查进度的工具。
 
-提醒（推手机）只在状态变化时发，而且每件事只发一次：
+马上推手机的只有 Codex 卡在你身上的事，每件只推一次：
 - 等批准 / 等回答：持续超过 ``WAIT_GRACE``（人在电脑前多半已经顺手处理了，别刷屏）；
-- 做完一轮：附 Codex 最后一句说明和改动文件数；失败 / 被中断 / 服务出错：附原因。
+- 服务出错（systemError）。
+做完 / 失败 / 被中断的一轮记成事件，由半小时一次的监管（``codex_supervisor``）汇总进进度里，不一轮推一次。
 观察员只发精简进度（不含完整对话和 diff），这里也只存最新一份。
 """
 from __future__ import annotations
@@ -16,6 +17,7 @@ from typing import Any, Dict, List, Optional
 WAIT_GRACE = timedelta(minutes=2)
 STALE_AFTER = timedelta(minutes=30)     # 这么久没收到报告：观察员不在了（Mac 合盖、Desktop 关了）
 _MAX_THREADS = 12
+_EVENTS_KEEP = 50       # 结束的轮次，等监管汇总
 
 
 def _state_path(root: str) -> Path:
@@ -90,13 +92,14 @@ def _waiting(thread: dict) -> str:
 
 
 def record_report(root: str, payload: Any, *, now: Optional[datetime] = None) -> List[str]:
-    """存下最新进度，返回这次要推给主人的提醒（每件事只推一次）。"""
+    """存下最新进度、记下在眼前结束的轮次，返回这次要马上推给主人的提醒（每件事只推一次）。"""
     now = now or _now()
     threads = _clean_threads(payload)
     previous = load_state(root)
     before = {thread["id"]: thread for thread in previous.get("threads") or []}
     marks: Dict[str, Dict[str, Any]] = previous.get("marks") or {}
     notices: List[str] = []
+    events: List[dict] = [event for event in previous.get("events") or [] if isinstance(event, dict)]
     for thread in threads:
         old = before.get(thread["id"]) or {}
         mark = dict(marks.get(thread["id"]) or {})
@@ -126,20 +129,17 @@ def record_report(root: str, payload: Any, *, now: Optional[datetime] = None) ->
             seen_running = old_turn.get("id") == turn["id"] and old_turn.get("status") == "inProgress"
             newer_turn = bool(old_turn) and old_turn.get("id") != turn["id"]   # 两次报告之间开始又结束的一轮
             if seen_running or newer_turn:
-                files = f"，改了 {turn['file_count']} 个文件" if turn.get("file_count") else ""
-                if turn["status"] == "completed":
-                    reply = (turn.get("reply") or "").strip()
-                    notices.append(f"✅ {label} 做完一轮{files}。" + (f"\n{reply[-300:]}" if reply else ""))
-                else:
-                    reason = turn.get("error") or ("被中断" if turn["status"] == "interrupted" else "没有错误信息")
-                    notices.append(f"❌ {label} 这一轮{'被中断' if turn['status'] == 'interrupted' else '失败'}{files}：{reason[:200]}")
+                events.append({"thread_id": thread["id"], "name": thread["name"], "turn_id": turn["id"],
+                               "status": turn["status"], "file_count": turn.get("file_count") or 0,
+                               "reply": (turn.get("reply") or "")[-300:], "error": (turn.get("error") or "")[:200],
+                               "at": now.isoformat()})
             mark["reported_turn"] = turn["id"]
         if thread.get("status") == "systemError" and old.get("status") != "systemError":
             notices.append(f"⚠️ {label} 出错了（Codex 服务报 systemError），去 Codex 窗口看一下。")
         marks[thread["id"]] = mark
     live = {thread["id"] for thread in threads}
     state = {"threads": threads, "received_at": now.isoformat(), "host": str((payload or {}).get("host") or "")[:60],
-             "marks": {key: value for key, value in marks.items() if key in live}}
+             "marks": {key: value for key, value in marks.items() if key in live}, "events": events[-_EVENTS_KEEP:]}
     _save_state(root, state)
     return notices
 
