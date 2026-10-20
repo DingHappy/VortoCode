@@ -3629,8 +3629,10 @@ function App() {
                 key={`${assistantScope}:${item.id}`} task={item} connected={connection === "connected"}
                 onAction={action => actOnDispatch(item, action)} />)}
 
-            {appMode === "assistant" && codexActions.filter(action => action.session.replace(/^sid-/, "") === activeSid
-              && action.status !== "cancelled").slice(0, 6).map(action => <CodexActionCard
+            {/* 定时监管拟的动作不属于哪段对话：还在等你批时，出现在当前助理对话里 */}
+            {appMode === "assistant" && codexActions.filter(action => (action.session
+              ? action.session.replace(/^sid-/, "") === activeSid
+              : action.status === "proposed") && action.status !== "cancelled").slice(0, 6).map(action => <CodexActionCard
                 key={`${assistantScope}:${action.id}`} action={action} connected={connection === "connected"}
                 onDecide={async (decision) => {
                   const client = clientRef.current;

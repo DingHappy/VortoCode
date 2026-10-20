@@ -326,6 +326,11 @@ async def watch_once(root: str, now: datetime, *, notify: Notify, refresh=assist
         await poll_goal_followups(root, now, notify=notify)
     except Exception as error:  # Goals and dispatch refresh fail independently; cancellation propagates.
         logger.warning("个人目标巡检失败：%s", type(error).__name__)
+    try:  # 定时监管 Mac 上的 Codex：卡住 / 连续失败 / 做完后判断下一步 / 定时进度
+        from src.scheduling.codex_supervisor import supervise_once
+        await supervise_once(root, now, notify=notify)
+    except Exception as error:  # noqa: BLE001 —— Codex 监管失败不挡任务巡检
+        logger.warning("Codex 监管失败：%s", type(error).__name__)
     state = _load_state(root)
     first_run = state is None
     state = state or {"seen": {}, "reports": []}
@@ -404,6 +409,12 @@ def schedule_overview(root: str) -> List[Dict[str, Any]]:
                           "schedule": f"每天 {hhmm}", "detail": "今天聊过的事、任务单状态、等你处理的", "enabled": True})
         items.append({"id": "follow-up", "kind": "watch", "title": "跟进派出去的活",
                       "schedule": f"每 {INTERVAL_SECONDS // 60} 分钟", "detail": "状态有变化就推到手机", "enabled": True})
+        from src.scheduling.codex_supervisor import describe_config, load_config
+        from src.scheduling.codex_watch import load_state
+        if load_state(root).get("received_at"):
+            items.append({"id": "codex-supervisor", "kind": "watch", "title": "监管 Codex",
+                          "schedule": f"每 {INTERVAL_SECONDS // 60} 分钟检查", "detail": describe_config(load_config(root)),
+                          "enabled": True})
     try:
         from src.gateway.workspace_scope import GENERAL, current_workspace_scope
         from src.workflow.workbench.personal_goals import PersonalGoals
