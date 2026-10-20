@@ -540,6 +540,18 @@ export class GatewayClient {
     return this.request(`/api/dispatches/${encodeURIComponent(id)}/${decision}`, { method: "POST" });
   }
 
+  /** 人在任务卡上回答任务在问的问题，任务接着做。 */
+  async answerDispatch(id: string, answer: string): Promise<AssistantDispatch> {
+    return this.request(`/api/dispatches/${encodeURIComponent(id)}/answer`, {
+      method: "POST", body: JSON.stringify({ answer }),
+    });
+  }
+
+  /** 做完的任务单开 draft PR：后台推分支，立刻返回 pr_state=opening，之后核对状态看结果。 */
+  async openDispatchPr(id: string): Promise<AssistantDispatch> {
+    return this.request(`/api/dispatches/${encodeURIComponent(id)}/open_pr`, { method: "POST" });
+  }
+
   /** 常驻电脑上的项目登记表（名称 / 目录 / 端口）：工作台「在哪做」据此找到服务器上的同名项目。 */
   async listResidentProjects(): Promise<ResidentProject[]> {
     const payload = await this.request<{ projects?: ResidentProject[] }>("/api/resident/projects");

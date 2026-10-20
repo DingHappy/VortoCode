@@ -3085,7 +3085,7 @@ function App() {
     setAssistantTab("feed"); setInspectorOpen(true);
   };
 
-  const actOnDispatch = async (item: AssistantDispatch, action: AssistantTaskAction) => {
+  const actOnDispatch = async (item: AssistantDispatch, action: AssistantTaskAction, answer?: string) => {
     const client = clientRef.current;
     const scope = assistantScope;
     const current = () => clientRef.current === client && assistantScopeRef.current === scope;
@@ -3097,6 +3097,15 @@ function App() {
         if (!current()) return;
         try { await client.decideDispatch(item.id, action); }
         finally { if (current()) await refreshAgentTurns(); }
+        return;
+      }
+      // 回答 / 开 PR：按钮在卡片上，人亲手点；后端记审计
+      if (action === "answer" || action === "open_pr") {
+        if (!current()) return;
+        try {
+          if (action === "answer") await client.answerDispatch(item.id, answer ?? "");
+          else await client.openDispatchPr(item.id);
+        } finally { if (current()) await refreshAgentTurns(); }
         return;
       }
       const host = projects.find(project => project.id === remoteProjectRef.current && isAssistantHost(project));
@@ -3627,7 +3636,7 @@ function App() {
             {appMode === "assistant" && dispatches.filter(item => item.session?.replace(/^sid-/, "") === activeSid
               && item.status !== "cancelled").slice(0, 8).map(item => <AssistantTaskCard
                 key={`${assistantScope}:${item.id}`} task={item} connected={connection === "connected"}
-                onAction={action => actOnDispatch(item, action)} />)}
+                onAction={(action, answer) => actOnDispatch(item, action, answer)} />)}
 
             {/* 定时监管拟的动作不属于哪段对话：还在等你批时，出现在当前助理对话里 */}
             {appMode === "assistant" && codexActions.filter(action => (action.session
@@ -4029,10 +4038,10 @@ function App() {
               : <><section className="assistant-task-cards" aria-label="交互任务单">
                   {selectedDispatchId && dispatches.find(item => item.id === selectedDispatchId) && <AssistantTaskCard
                     key={`${assistantScope}:${selectedDispatchId}`} task={dispatches.find(item => item.id === selectedDispatchId)!}
-                    connected={connection === "connected"} onAction={action => actOnDispatch(dispatches.find(item => item.id === selectedDispatchId)!, action)} />}
+                    connected={connection === "connected"} onAction={(action, answer) => actOnDispatch(dispatches.find(item => item.id === selectedDispatchId)!, action, answer)} />}
                   {!selectedDispatchId && dispatches.filter(item => item.status === "proposed" || item.status === "submission_unknown").slice(0, 3).map(item =>
                     <AssistantTaskCard key={`${assistantScope}:${item.id}`} task={item} connected={connection === "connected"}
-                      onAction={action => actOnDispatch(item, action)} />)}
+                      onAction={(action, answer) => actOnDispatch(item, action, answer)} />)}
                   {selectedDispatchId && <button onClick={() => setSelectedDispatchId(null)}>收起任务详情</button>}
                 </section><ActivityFeed items={[...agentTurns.map(turnFeedItem), ...dispatchItems, ...feedItems]} scope="all" onScope={() => {}}
                   currentSession={activeSid}

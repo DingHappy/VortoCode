@@ -158,9 +158,9 @@ export function dispatchFeedItem(item: AssistantDispatch): FeedItem | null {
     : item.status === "submission_unknown" ? `${item.project} · 提交结果待核对`
     : item.status === "proposed" ? `等你确认下发 · ${item.project}${item.tainted ? " · 含外部内容，请细看" : ""}`
     : item.status === "send_failed" ? `下发失败，可以重试：${firstSentence(item.error, MAX_SUMMARY - 10)}`
-    : item.status === "waiting" ? `${item.project} · 在等人回答`
+    : item.status === "waiting" ? (item.question ? `在问你：${firstSentence(item.question.question, MAX_SUMMARY - 6)}` : `${item.project} · 在等人回答`)
     : item.status === "running" ? `${item.project} · 在做`
-    : item.status === "done" ? `执行结束，等待审查${item.branch ? ` · ${item.branch}` : ""}`
+    : item.status === "done" ? (item.pr_url ? `已开 draft PR，等你在 GitHub 审` : `执行结束，等待审查${item.branch ? ` · ${item.branch}` : ""}`)
     : item.status === "stopped" ? `${item.project} · 已停下`
     : firstSentence(item.error, MAX_SUMMARY) || "执行失败";
   return {

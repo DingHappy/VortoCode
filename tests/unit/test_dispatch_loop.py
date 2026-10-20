@@ -261,3 +261,63 @@ async def test_pr_button_runs_in_the_background_and_double_clicks_open_once(tmp_
     await asyncio.gather(*bridge._pr_jobs.values())
     assert calls == ["dsp-0123456789"] and any("pull/9" in text for text in adapter.texts())
     assert not bridge._pr_jobs
+
+
+async def test_desktop_opens_the_pr_in_the_background_once(tmp_path):
+    import asyncio
+    root = str(tmp_path)
+    entry, remote = await _sent(root, remote_status="done", branch="vorto/fix-timeout", result="改好了")
+    await dispatch.refresh(root, http=remote)
+    gate = asyncio.Event()
+
+    async def slow(method, url, payload=None):
+        await gate.wait()
+        return await remote(method, url, payload)
+    first = dispatch.begin_open_pr(root, entry["id"], http=slow)
+    again = dispatch.begin_open_pr(root, entry["id"], http=slow)              # 连点：只开一次
+    assert first["pr_state"] == again["pr_state"] == "opening" and len(dispatch._PR_JOBS) == 1
+    gate.set()
+    await asyncio.gather(*dispatch._PR_JOBS)
+    done = dispatch.list_dispatches(root)[0]
+    assert done["pr_state"] == "opened" and done["pr_url"].endswith("/pull/9")
+    assert sum(url.endswith("/open_pr") for _, url, _ in remote.calls) == 1
+
+
+async def test_background_pr_failure_lands_on_the_card(tmp_path):
+    import asyncio
+    root = str(tmp_path)
+    entry, remote = await _sent(root, remote_status="done", branch="vorto/fix-timeout", result="改好了")
+    await dispatch.refresh(root, http=remote)
+
+    async def refusing(method, url, payload=None):
+        return {"ok": False, "error": "分支已被删"}
+    dispatch.begin_open_pr(root, entry["id"], http=refusing)
+    await asyncio.gather(*dispatch._PR_JOBS)
+    item = dispatch.list_dispatches(root)[0]
+    assert item["pr_state"] == "failed" and "分支已被删" in item["pr_error"]
+    with pytest.raises(dispatch.DispatchError, match="成功做完"):
+        dispatch.begin_open_pr(root, (await _sent(root))[0]["id"])
+
+
+def test_card_routes_answer_and_open_pr_are_audited(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from src.gateway.audit import list_audit
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    from src.web.server import app
+    seen = []
+
+    async def fake_answer(root, dispatch_id, answer, **_kw):
+        seen.append((dispatch_id, answer))
+        return {"id": dispatch_id, "title": "改登录超时", "project": "VortoCode", "status": "running"}
+    monkeypatch.setattr(dispatch, "answer_question", fake_answer)
+    monkeypatch.setattr(dispatch, "begin_open_pr", lambda root, dispatch_id: {
+        "id": dispatch_id, "title": "改登录超时", "project": "VortoCode", "pr_state": "opening"})
+    client = TestClient(app)
+    assert client.post("/api/dispatches/dsp-1/answer", json={"answer": "30 秒"}).json()["status"] == "running"
+    assert client.post("/api/dispatches/dsp-1/answer", json={"answer": ""}).status_code == 422
+    assert client.post("/api/dispatches/dsp-1/open_pr").json()["pr_state"] == "opening"
+    assert seen == [("dsp-1", "30 秒")]
+    operations = [item["operation"] for item in list_audit(str(tmp_path), 10) if item["category"] == "decision"]
+    assert any("回答任务单的问题" in op for op in operations) and any("开 draft PR" in op for op in operations)

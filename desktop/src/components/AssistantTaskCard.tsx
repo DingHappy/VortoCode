@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import type { AssistantDispatch } from "../types";
 import { assistantTaskActions, type AssistantTaskAction } from "../lib/assistantTask";
 
@@ -11,23 +12,27 @@ const labels: Record<AssistantDispatch["status"], string> = {
 type Props = {
   task: AssistantDispatch;
   connected: boolean;
-  onAction: (action: AssistantTaskAction) => Promise<void>;
+  /** ``answer``：action 为 "answer" 时，人在卡片上填的回答 */
+  onAction: (action: AssistantTaskAction, answer?: string) => Promise<void>;
 };
 
 /** Buttons invoke fixed application actions, never instructions from model text. */
 export function AssistantTaskCard({ task, connected, onAction }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [answer, setAnswer] = useState("");
   const pending = useRef(false);
   const identity = useRef(task.id);
   identity.current = task.id;
   const actions = assistantTaskActions(task);
-  const act = async (action: Parameters<Props["onAction"]>[0]) => {
+  // PR 地址来自项目运行时：只把 https 地址当链接
+  const prLink = task.pr_url && /^https:\/\//.test(task.pr_url) ? task.pr_url : "";
+  const act = async (action: Parameters<Props["onAction"]>[0], text?: string) => {
     if (pending.current || !connected) return;
     const id = task.id;
     pending.current = true;
     setBusy(true); setError("");
-    try { await onAction(action); }
+    try { await onAction(action, text); if (action === "answer" && identity.current === id) setAnswer(""); }
     catch (reason) { if (identity.current === id) setError(reason instanceof Error ? reason.message : "操作失败，请核对状态"); }
     finally { pending.current = false; if (identity.current === id) setBusy(false); }
   };
@@ -38,6 +43,7 @@ export function AssistantTaskCard({ task, connected, onAction }: Props) {
       {actions.cancel && <button disabled={busy || !connected} onClick={() => void act("cancel")}>撤回任务单</button>}
       {actions.retry && <button disabled={busy || !connected} onClick={() => void act("approve")}>继续核对并提交</button>}
       {task.remote_task_id && <button disabled={busy || !connected} onClick={() => void act("refresh")}>核对状态</button>}
+      {actions.openPr && <button disabled={busy || !connected} onClick={() => void act("open_pr")}>开 draft PR</button>}
       {actions.open && <button disabled={busy || !connected} onClick={() => void act("open")}>{task.status === "done" && task.branch ? "查看交付与审查" : "打开项目任务"}</button>}
     </div>
   );
@@ -46,7 +52,25 @@ export function AssistantTaskCard({ task, connected, onAction }: Props) {
     <p className="assistant-task-status">{labels[task.status] ?? "状态未知"}</p>
     {task.sync_state === "unreachable" && <p role="status">当前无法核实，保留上次执行状态。{task.sync_error}</p>}
     {task.last_checked_at && <small>上次核对：{new Date(task.last_checked_at).toLocaleString()}</small>}
+    {task.attempt && task.attempt > 1 && <small>第 {task.attempt} 次尝试{task.retry_of ? `（接着 ${task.retry_of}）` : ""}</small>}
     {task.status === "proposed" && actionRow}
+    {task.status === "waiting" && task.question && <section className="assistant-task-question" aria-label="任务在问的问题">
+      <p><strong>任务在问你：</strong></p>
+      <p className="assistant-task-text">{task.question.question}</p>
+      {task.question.context && <details><summary>它查到的情况</summary><p className="assistant-task-text">{task.question.context}</p></details>}
+      {actions.answer ? <>
+        {task.question.options.length > 0 && <div className="task-actions">
+          {task.question.options.map((option, i) => <button key={i} disabled={busy || !connected}
+            onClick={() => setAnswer(option)}>{option}</button>)}
+        </div>}
+        <textarea aria-label="你的回答" value={answer} maxLength={2000} rows={2} disabled={busy || !connected}
+          placeholder="点上面的建议，或直接写你的回答" onChange={event => setAnswer(event.target.value)} />
+        <div className="task-actions">
+          <button disabled={busy || !connected || !answer.trim()} onClick={() => void act("answer", answer.trim())}>交给任务接着做</button>
+        </div>
+        {task.question.expires_at && <small>{new Date(task.question.expires_at).toLocaleString()} 前有效</small>}
+      </> : <small>这张单是旧方式下发的，请打开项目任务回答。</small>}
+    </section>}
     <details open={task.status === "proposed"}>
       <summary>目标与验收标准</summary>
       <p className="assistant-task-text">{task.goal}</p>
@@ -54,6 +78,10 @@ export function AssistantTaskCard({ task, connected, onAction }: Props) {
     </details>
     {task.tainted && <p className="assistant-task-warning">任务单包含外部内容，请确认目标和范围符合你的要求。</p>}
     {task.branch && <p>交付分支：<code>{task.branch}</code></p>}
+    {prLink && <p>draft PR：<a href={prLink} rel="noopener noreferrer"
+      onClick={event => { event.preventDefault(); void openUrl(prLink); }}>{prLink}</a>（合并请在 GitHub 上审完再点）</p>}
+    {!task.pr_url && task.pr_state === "opening" && <p role="status">正在推分支、开 draft PR，稍后点“核对状态”看结果。</p>}
+    {!task.pr_url && task.pr_state === "failed" && <p className="task-error">没开成 PR：{task.pr_error || "原因未知"}</p>}
     {task.branch && <section className="assistant-delivery-evidence" aria-label="交付验证证据">
       {task.delivery_evidence ? <>
         <p>核对提交：<code>{task.delivery_evidence.head.slice(0, 12)}</code></p>

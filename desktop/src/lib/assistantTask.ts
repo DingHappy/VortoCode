@@ -1,6 +1,6 @@
 import type { AssistantDispatch } from "../types";
 
-export type AssistantTaskAction = "approve" | "cancel" | "refresh" | "open";
+export type AssistantTaskAction = "approve" | "cancel" | "refresh" | "open" | "answer" | "open_pr";
 
 export function assistantTaskActions(task: AssistantDispatch) {
   return {
@@ -9,6 +9,10 @@ export function assistantTaskActions(task: AssistantDispatch) {
     retry: ["submission_unknown", "send_failed", "sending"].includes(task.status)
       && Boolean(task.request_id) && !task.legacy_submission,
     open: Boolean(task.remote_task_id) && !["proposed", "sending", "submission_unknown", "send_failed"].includes(task.status),
+    // 旧方式下发的单子没有归属会话，只能到项目工作台回答
+    answer: task.status === "waiting" && Boolean(task.question) && Boolean(task.remote_session),
+    openPr: task.status === "done" && !task.error && !task.pr_url && task.branch.startsWith("vorto/")
+      && task.pr_state !== "opening",
   };
 }
 

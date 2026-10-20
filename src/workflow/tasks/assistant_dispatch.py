@@ -452,10 +452,7 @@ async def open_pr(root: str, dispatch_id: str, *, http=None) -> Dict[str, Any]:
         raise DispatchError("没有这张任务单")
     if entry.get("pr_url"):
         return entry
-    if entry.get("status") != "done" or entry.get("error"):
-        raise DispatchError("只有成功做完的任务单能开 PR")
-    if not str(entry.get("branch") or "").startswith("vorto/"):
-        raise DispatchError("这张任务单没有交付分支")
+    _check_pr_ready(entry)
     project = _find_project(entry["project"])
     if http is None:
         async def http(method, url, payload=None):        # 推分支 + 开 PR 要走网络，给足时间
@@ -468,7 +465,60 @@ async def open_pr(root: str, dispatch_id: str, *, http=None) -> Dict[str, Any]:
         raise DispatchError(f"没连上项目运行时：{type(error).__name__}") from error
     if not result.get("ok") or not result.get("url"):
         raise DispatchError(str(result.get("error") or "项目运行时没有返回 PR 地址")[:300])
-    return _update(root, dispatch_id, lambda item: item.update(pr_url=str(result["url"])[:300]))
+    return _update(root, dispatch_id, lambda item: item.update(pr_url=str(result["url"])[:300], pr_state="opened",
+                                                                pr_error=""))
+
+
+def _check_pr_ready(entry: Dict[str, Any]) -> None:
+    if entry.get("status") != "done" or entry.get("error"):
+        raise DispatchError("只有成功做完的任务单能开 PR")
+    if not str(entry.get("branch") or "").startswith("vorto/"):
+        raise DispatchError("这张任务单没有交付分支")
+
+
+PR_OPENING_STALE_SECONDS = 600          # 「正在开」超过这么久多半是进程重启丢了：允许再点
+_PR_JOBS: set = set()                   # 持有后台任务的引用，免得被回收
+
+
+def _opening(item: Dict[str, Any]) -> bool:
+    if item.get("pr_state") != "opening":
+        return False
+    try:
+        started = datetime.fromisoformat(str(item.get("pr_started_at")))
+    except (TypeError, ValueError):
+        return False
+    return (datetime.now(timezone.utc) - started).total_seconds() < PR_OPENING_STALE_SECONDS
+
+
+def begin_open_pr(root: str, dispatch_id: str, *, http=None) -> Dict[str, Any]:
+    """在后台开 draft PR，立刻返回：推分支可能几分钟，Desktop 连常驻电脑的请求等不了那么久。卡片看 pr_state。"""
+    entry = next((item for item in _load(root) if item.get("id") == dispatch_id), None)
+    if entry is None:
+        raise DispatchError("没有这张任务单")
+    if entry.get("pr_url"):
+        return entry
+    _check_pr_ready(entry)
+    started: List[bool] = []
+
+    def mark(item: Dict[str, Any]) -> None:
+        if item.get("pr_url") or _opening(item):        # 已开 / 正在开：连点只开一次
+            return
+        item.update(pr_state="opening", pr_error="", pr_started_at=_now())
+        started.append(True)
+    entry = _update(root, dispatch_id, mark)
+    if not started:
+        return entry
+
+    async def run() -> None:
+        try:
+            await open_pr(root, dispatch_id, http=http)
+        except Exception as error:  # noqa: BLE001 —— 结果落在任务单上，卡片如实显示
+            reason = str(error) if isinstance(error, DispatchError) else f"没开成：{type(error).__name__}"
+            _update(root, dispatch_id, lambda item: item.update(pr_state="failed", pr_error=reason[:300]))
+    job = asyncio.get_running_loop().create_task(run())
+    _PR_JOBS.add(job)
+    job.add_done_callback(_PR_JOBS.discard)
+    return entry
 
 
 def pr_confirm_id(dispatch_id: str) -> str:
