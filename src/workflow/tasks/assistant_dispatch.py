@@ -360,7 +360,7 @@ async def _refresh_one(root: str, entry: dict, http, *, include_delivery: bool =
 
 
 def build_dispatch_tools(root: str, *, is_tainted: Callable[[], bool] = lambda: False,
-                         session: str = "") -> list:
+                         session: "str | Callable[[], Any]" = "") -> list:
     """常驻助理的派活工具：提议任务单、查看进度。没有登记项目时不提供。"""
     from src.agents.tool import Tool
 
@@ -375,11 +375,13 @@ def build_dispatch_tools(root: str, *, is_tainted: Callable[[], bool] = lambda: 
         try:
             entry = propose(root, project=str(args.get("project") or ""), title=str(args.get("title") or ""),
                             goal=str(args.get("goal") or ""), criteria=list(criteria),
-                            session=session, tainted=is_tainted())
+                            # 记下是哪段对话提的：Desktop 据此把任务单卡片放进那段对话里
+                            session=str((session() if callable(session) else session) or ""),
+                            tainted=is_tainted())
         except DispatchError as error:
             return f"没有提出任务单：{error}"
-        return (f"已写好任务单 {entry['id']}（{entry['project']}：{entry['title']}），放在右侧「动态」的"
-                "「等你处理」里。**还没有执行**——要等用户确认下发。告诉用户去确认，不要声称已经开始做。")
+        return (f"已写好任务单 {entry['id']}（{entry['project']}：{entry['title']}），卡片会出现在这段对话里，"
+                "手机通知上也能批准。**还没有执行**——要等用户确认下发。告诉用户在卡片上确认，不要声称已经开始做。")
 
     async def _list(_args: dict) -> str:
         items = await refresh(root)

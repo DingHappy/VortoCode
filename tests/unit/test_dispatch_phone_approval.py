@@ -116,3 +116,12 @@ async def test_plain_notifier_still_gets_text(tmp_path):
         return True
     assert await watch._notify_accepted(notify, "hello", "dsp-x")
     assert seen == ["hello"]
+
+
+@pytest.mark.asyncio
+async def test_proposals_remember_the_conversation_so_the_card_shows_inline(tmp_path):
+    current = {"sid": "sid-main"}
+    tools = {tool.name: tool for tool in dispatch.build_dispatch_tools(str(tmp_path), session=lambda: current["sid"])}
+    reply = await tools["propose_task"].handler({"project": "VortoCode", "title": "补单测", "goal": "给 safe_id 补边界单测"})
+    assert "卡片会出现在这段对话里" in reply
+    assert dispatch.list_dispatches(str(tmp_path))[0]["session"] == "sid-main"

@@ -3091,10 +3091,7 @@ function App() {
     await assistantActionGate.current.run(client, scope, item.id, current, async () => {
       if (action === "refresh") { await refreshAgentTurns(item.id); return; }
       if (action === "approve" || action === "cancel") {
-        if (!await confirmAction(action === "cancel" ? `撤回任务单「${item.title}」？`
-          : [`确认将「${item.title}」下发到 ${item.project}？`, item.goal,
-            ...item.criteria.map(line => `· ${line}`),
-            ...(item.tainted ? ["包含外部内容，请核对目标与范围。"] : [])].join("\n\n"))) return;
+        // 卡片本身就是确认：目标、验收标准和外部内容提醒都摆在卡片上，点卡片上的按钮即生效，不再弹系统框
         if (!current()) return;
         try { await client.decideDispatch(item.id, action); }
         finally { if (current()) await refreshAgentTurns(); }
