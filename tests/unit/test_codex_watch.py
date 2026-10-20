@@ -58,9 +58,11 @@ def test_only_turns_finishing_in_view_are_reported(tmp_path):
     running = _thread(turn=_turn(status="inProgress", tid="t2"))
     assert watch.record_report(root, {"threads": [running]}, now=NOW) == []
     finished = _thread(status="idle", turn=_turn(status="completed", tid="t2"))
-    notices = watch.record_report(root, {"threads": [finished]}, now=NOW)
-    assert len(notices) == 1 and "做完一轮" in notices[0] and "改了 2 个文件" in notices[0] and "测试通过" in notices[0]
-    assert watch.record_report(root, {"threads": [finished]}, now=NOW) == []    # 同一轮只推一次
+    assert watch.record_report(root, {"threads": [finished]}, now=NOW) == []    # 做完不马上推，记成事件等巡视汇总
+    assert watch.record_report(root, {"threads": [finished]}, now=NOW) == []
+    events = watch.load_state(root)["events"]
+    assert len(events) == 1 and events[0]["turn_id"] == "t2" and events[0]["file_count"] == 2   # 同一轮只记一次
+    assert "测试通过" in events[0]["reply"]
 
 
 def test_failures_and_service_errors_are_reported(tmp_path):
@@ -68,8 +70,9 @@ def test_failures_and_service_errors_are_reported(tmp_path):
     watch.record_report(root, {"threads": [_thread(turn=_turn(tid="t3"))]}, now=NOW)
     failed = _thread(status="systemError", turn=_turn(status="failed", tid="t3", error={"message": "额度用完"}))
     notices = watch.record_report(root, {"threads": [failed]}, now=NOW)
-    assert any("失败" in text and "额度用完" in text for text in notices)
-    assert any("systemError" in text for text in notices)
+    assert len(notices) == 1 and "systemError" in notices[0]
+    event = watch.load_state(root)["events"][0]
+    assert event["status"] == "failed" and "额度用完" in event["error"]
 
 
 def test_waiting_for_approval_is_reported_once_after_the_grace_period(tmp_path):
