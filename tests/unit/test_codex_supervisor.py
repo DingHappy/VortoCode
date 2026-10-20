@@ -184,3 +184,17 @@ async def test_owner_can_tune_the_rhythm_by_chat(tmp_path):
     await tool.handler({"interval_minutes": 1})
     assert sup.load_config(str(tmp_path))["interval_minutes"] == 10     # 太小的值收到下限
     assert "现在的设置" in await tool.handler({})
+
+
+@pytest.mark.asyncio
+async def test_assistant_can_see_what_it_pushed_when_the_owner_replies(tmp_path):
+    from src.scheduling.assistant_watch import build_status_tools
+    from src.scheduling.notices import record_notice
+    root = str(tmp_path)
+    assert "最近没有推过通知" in await {t.name: t for t in build_status_tools(root)}["recent_notices"].handler({})
+    record_notice(root, "🧭 Codex 进度（半小时巡视）\n要你处理：\n· 「改登录超时」要你定方向：要选用哪个数据库", source="codex")
+    record_notice(root, "🗒 早报", source="assistant")
+    tool = {t.name: t for t in build_status_tools(root)}["recent_notices"]
+    text = await tool.handler({"limit": "5"})
+    assert tool.read_only and tool.untrusted_source
+    assert text.index("早报") < text.index("要选用哪个数据库")          # 新的在前

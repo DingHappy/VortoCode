@@ -496,7 +496,27 @@ def build_status_tools(root: str) -> list:
             return f"{name}：没有找到保留的执行记录，不能据此判断从未执行。"
         return json.dumps({"job": name, "retained_only": True, "runs": rows}, ensure_ascii=False)
 
-    tools = [Tool("today_activity", "今天和用户聊过的事（每件一行：时间、标题、结果）。", {}, _today, untrusted_source=True),
+    async def _notices(args: dict) -> str:
+        from src.scheduling.notices import load_notices
+        try:
+            limit = max(1, min(20, int(args.get("limit") or 8)))
+        except (TypeError, ValueError):
+            limit = 8
+        rows = []
+        for notice in load_notices(root, limit):
+            try:
+                at = datetime.fromisoformat(str(notice.get("ts"))).astimezone()
+                when = f"{at:%m-%d %H:%M}"
+            except (TypeError, ValueError):
+                when = "?"
+            rows.append(f"[{when}]\n{str(notice.get('text') or '')[:800]}")
+        return "最近推给用户的通知（新的在前）：\n\n" + "\n\n".join(rows) if rows else "最近没有推过通知。"
+
+    tools = [Tool("recent_notices",
+                  "你最近主动推给用户手机的通知（Codex 巡视汇报、提醒、任务单状态、早晚报），新的在前。"
+                  "用户的话像是在回复一条通知（「就按这个做」「让它补测试」「第二个怎么回事」）时先查它，弄清在回哪条。",
+                  {"limit": "条数，可选，默认 8，最多 20"}, _notices, untrusted_source=True),
+             Tool("today_activity", "今天和用户聊过的事（每件一行：时间、标题、结果）。", {}, _today, untrusted_source=True),
              Tool("schedule_list", "列出定时事项（早晚报、跟进、你交代的作业）与上次运行时间。", {}, _cron, untrusted_source=True),
              Tool("schedule_history", "读取指定定时作业最近保留的执行记录、成功/失败及错误；空记录不代表从未执行。",
                   {"name": "定时作业的精确名称"}, _history, untrusted_source=True)]
