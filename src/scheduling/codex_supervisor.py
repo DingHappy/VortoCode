@@ -104,7 +104,10 @@ _REVIEW_SYSTEM = (
     '"next": "verdict 为 continue 时，替主人给 Codex 的下一句话：具体、可执行；否则空串"}\n'
     "done = 要求已经完成、没有明显遗漏；continue = 还有明确的下一步（计划没做完、测试没跑、说了要做没做、"
     "出了错可以修）；ask = 需要主人拿主意（方向选择、要权限、要钱、要删东西、Codex 在问问题）。"
-    "拿不准时选 ask，不要替主人做决定；不要让 Codex 推送到 main、删除数据或做不可逆的事。"
+    "拿不准时选 ask，不要替主人做决定；不要让 Codex 推送到 main、删除数据或做不可逆的事。\n"
+    "注意：「用补丁改了几个文件」只统计补丁方式的改动，用命令写的文件只能从「可能写了文件的命令」粗略看出，"
+    "脚本里写的文件可能两边都看不到。所以文件数是 0 **不等于**没写文件，不要据此断定 Codex 说的和做的矛盾；"
+    "Codex 说已写好文件、又没有反证时按它说的算。"
 )
 
 
@@ -113,7 +116,9 @@ def _review_material(thread: dict) -> str:
     files = "、".join(turn.get("files") or []) or "（无）"
     return (f"会话：{thread.get('name')}（目录 {thread.get('cwd')}）\n"
             f"要求：{turn.get('request') or '（无）'}\n计划：{turn.get('plan') or '（无）'}\n"
-            f"跑了 {turn.get('commands') or 0} 条命令；改了 {turn.get('file_count') or 0} 个文件：{files}\n"
+            f"跑了 {turn.get('commands') or 0} 条命令；用补丁改了 {turn.get('file_count') or 0} 个文件：{files}\n"
+            f"另有 {turn.get('shell_writes') or 0} 条命令可能写了文件"
+            + (f"：{'、'.join(turn.get('shell_write_paths') or [])}" if turn.get("shell_write_paths") else "") + "\n"
             f"Codex 最后说：{turn.get('reply') or '（无）'}")
 
 
@@ -180,6 +185,8 @@ def _progress_line(thread: dict, finished: List[dict], assessment: str) -> str:
         detail.append(f"这段时间做完 {done} 轮")
     if turn.get("file_count"):
         detail.append(f"改了 {turn['file_count']} 个文件")
+    elif turn.get("shell_write_paths"):
+        detail.append(f"用命令写了 {'、'.join(turn['shell_write_paths'][:3])}")
     if turn.get("running_command"):
         detail.append(f"正在跑 {turn['running_command'][:60]}")
     if detail:

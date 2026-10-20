@@ -239,3 +239,30 @@ async def test_observer_claims_before_sending_and_reports_results():
     assert done == 1 and [call[0] for call in codex.calls] == ["turn/start"]
     assert ("POST", "/api/codex/actions/cdx-a/result", {"ok": True, "error": ""}) in calls
     assert not any("cdx-b/result" in call[1] for call in calls)
+
+
+def test_files_written_by_shell_commands_are_reported():
+    from src.scheduling.codex_observer import shell_writes, summarize_turn
+    assert shell_writes("cat > docs/plan.md <<'EOF'\nhi\nEOF") == (True, ["docs/plan.md"])
+    assert shell_writes("/bin/zsh -lc \"printf '%s' hi > out/report.json\"") == (True, ["out/report.json"])
+    assert shell_writes("echo x | tee -a notes.txt")[1] == ["notes.txt"]
+    assert shell_writes("sed -i '' 's/a/b/' src/x.py")[1] == ["src/x.py"]
+    assert shell_writes("python - <<'P'\nopen('x.md','w').write('a')\nP") == (True, [])     # 认得出写了，拿不到路径
+    for harmless in ("rg -n 'a->b' src", "grep -n 'x => y' a.ts", "ls > /dev/null 2>&1", "echo $((1>0))"):
+        assert shell_writes(harmless) == (False, []), harmless
+    assert shell_writes("cat x.md > y.md", [{"type": "read"}]) == (False, [])               # Codex 认定只读的不算
+    turn = summarize_turn({"id": "t", "status": "completed", "items": [
+        {"type": "commandExecution", "command": "make > build.log 2>&1", "commandActions": [{"type": "unknown"}]},
+        {"type": "commandExecution", "command": "cat > docs/compare.md <<'EOF'", "commandActions": [{"type": "unknown"}]},
+        {"type": "commandExecution", "command": "rg -n foo", "commandActions": [{"type": "search"}]}]})
+    assert turn["file_count"] == 0 and turn["shell_writes"] == 2
+    assert turn["shell_write_paths"] == ["docs/compare.md", "build.log"]                   # 产出排在日志前面
+
+
+def test_reviewer_is_told_file_counts_miss_shell_writes():
+    from src.scheduling import codex_supervisor as sup
+    thread = {"name": "整理方案", "cwd": "~/p", "turn": {"request": "整理成文件", "commands": 3, "file_count": 0, "files": [],
+                                                      "shell_writes": 1, "shell_write_paths": ["docs/compare.md"]}}
+    material = sup._review_material(thread)
+    assert "用补丁改了 0 个文件" in material and "1 条命令可能写了文件：docs/compare.md" in material
+    assert "不等于" in sup._REVIEW_SYSTEM and "没写文件" in sup._REVIEW_SYSTEM
