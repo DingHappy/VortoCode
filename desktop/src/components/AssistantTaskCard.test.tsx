@@ -96,3 +96,17 @@ it("a finished vorto branch offers a draft PR once; the link is shown after and 
   expect(failed).toContain("没开成 PR：分支已被删");
   expect(failed).toContain("开 draft PR");
 });
+
+it("shows the assistant's acceptance check and failure diagnosis without claiming acceptance", () => {
+  const done: AssistantDispatch = { ...task, tainted: false, status: "done", remote_task_id: "t1", branch: "vorto/fix",
+    outcome: { kind: "acceptance", criteria: [{ text: "超时是 30 秒", verdict: "met", evidence: "TIMEOUT=30" },
+      { text: "补了单测", verdict: "unknown", evidence: "" }] } };
+  const html = renderToStaticMarkup(<AssistantTaskCard task={done} connected onAction={async () => {}} />);
+  for (const text of ["1/2 条对上", "✓ 超时是 30 秒——TIMEOUT=30", "? 补了单测", "不代表人工验收"]) expect(html).toContain(text);
+  const failed = renderToStaticMarkup(<AssistantTaskCard task={{ ...task, tainted: false, status: "failed", error: "ImportError",
+    outcome: { kind: "diagnosis", diagnosis: "缺测试依赖", retry: true, change: "先装依赖", draft_id: "dsp-b" } }} connected onAction={async () => {}} />);
+  expect(failed).toContain("助理的判断：缺测试依赖");
+  expect(failed).toContain("已拟好下一次的任务单");
+  const draft = renderToStaticMarkup(<AssistantTaskCard task={{ ...task, retry_note: "先装依赖", attempt: 2 }} connected onAction={async () => {}} />);
+  expect(draft).toContain("这次换个做法：先装依赖");
+});

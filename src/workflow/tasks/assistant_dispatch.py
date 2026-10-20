@@ -125,13 +125,19 @@ def _retry_context(previous: Dict[str, Any]) -> str:
 
 
 def propose(root: str, *, project: str, title: str, goal: str, criteria: Optional[List[str]] = None,
-            session: str = "", tainted: bool = False, retry_of: str = "") -> Dict[str, Any]:
-    """助理提出一张任务单（只记账，不执行）。``retry_of``：接着一张没做成的单子再来一次，自动带上它的错误。"""
+            session: str = "", tainted: bool = False, retry_of: str = "", retry_note: str = "") -> Dict[str, Any]:
+    """助理提出一张任务单（只记账，不执行）。``retry_of``：接着一张没做成的单子再来一次，自动带上它的错误。
+
+    ``retry_note``：助理复盘上次失败后拟的「这次换什么做法」，会写进目标，也单独显示在确认通知里。"""
     target = _find_project(project)
     title = " ".join(str(title or "").split())[:MAX_TITLE]
     goal = str(goal or "").strip()
     if not title or not goal:
         raise DispatchError("任务单需要标题和目标")
+    brief = goal[:MAX_GOAL]           # 不含重试上下文的目标本身：再重试时从它起头，别一层套一层
+    retry_note = " ".join(str(retry_note or "").split())[:600]
+    if retry_note:
+        goal = goal + "\n\n这次换个做法：" + retry_note
     attempt = 1
     if retry_of:
         previous = next((item for item in _load(root) if item.get("id") == retry_of), None)
@@ -160,6 +166,8 @@ def propose(root: str, *, project: str, title: str, goal: str, criteria: Optiona
         "branch": "",
         "attempt": attempt,
         "retry_of": str(retry_of or ""),
+        "brief": brief,
+        "retry_note": retry_note,
         "created_at": _now(),
         "updated_at": _now(),
     }
@@ -170,6 +178,11 @@ def propose(root: str, *, project: str, title: str, goal: str, criteria: Optiona
         items.append(entry)
         _save(root, items)
     return entry
+
+
+def record_outcome(root: str, dispatch_id: str, outcome: Dict[str, Any]) -> Dict[str, Any]:
+    """记下助理对一张结束的任务单的复盘（逐条验收 / 失败诊断）。只记一次：结束一轮复盘一次。"""
+    return _update(root, dispatch_id, lambda item: item.update(outcome={**outcome, "at": _now()}))
 
 
 def list_dispatches(root: str) -> List[Dict[str, Any]]:
@@ -574,6 +587,14 @@ def build_dispatch_tools(root: str, *, is_tainted: Callable[[], bool] = lambda: 
             if item["status"] == "waiting" and isinstance(question, dict):
                 options = "；".join(question.get("options") or [])
                 line += f" 在问：{question.get('question', '')[:300]}" + (f"（建议选项：{options}）" if options else "")
+            outcome = item.get("outcome") if isinstance(item.get("outcome"), dict) else {}
+            if outcome.get("kind") == "acceptance" and outcome.get("criteria"):
+                rows = outcome["criteria"]
+                line += f" 验收对照（助理判断）{sum(row.get('verdict') == 'met' for row in rows)}/{len(rows)} 条对上"
+            elif outcome.get("kind") == "diagnosis":
+                line += f" 复盘：{str(outcome.get('diagnosis') or '')[:120]}"
+                if outcome.get("draft_id"):
+                    line += f"（已起草重试 {outcome['draft_id']}）"
             if item.get("error"):
                 line += f" 错误：{item['error'][:120]}"
             elif item.get("result") and item["status"] == "done":

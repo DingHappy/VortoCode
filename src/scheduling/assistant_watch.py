@@ -151,6 +151,8 @@ def status_message(item: Dict[str, Any]) -> str:
     title = f"{item.get('project')}：{item.get('title')}"
     status = item.get("status")
     if status == "proposed":
+        if item.get("retry_note"):        # 助理复盘失败后起草的下一次：把换的做法摆出来，你看了再批
+            title += f"（第 {item.get('attempt') or 2} 次）\n这次换个做法：{_clip_head(str(item['retry_note']), 400)}"
         if item.get("tainted"):
             return (f"📝 助理写好了任务单，等你确认下发——{title}\n这张是在读过网页等外部内容后写的，"
                     "为安全起见只能在 Desktop 助理的「动态」里确认。")
@@ -172,6 +174,7 @@ def status_message(item: Dict[str, Any]) -> str:
         checked = {"passed": "自动验证通过", "failed": "⚠ 自动验证没通过", "stale": "验证结果已过期（之后又有提交）"}.get(
             str(evidence.get("verification") or ""), "还没有这次提交的验证结果")
         text = f"✅ {title} 做完了，等待审查{branch}；{checked}。" + (f"\n{digest}" if digest else "")
+        text += _acceptance_lines(item)
         if dispatch_pr_ready(item):
             text += "\n点「批准」开一个 draft PR 给你审（合并仍由你在 GitHub 上点），「拒绝」先放着。"
         return text
@@ -180,7 +183,33 @@ def status_message(item: Dict[str, Any]) -> str:
     retry = ("\n要再试，回我「改一改再派」并说说想怎么改，我带上这次的错误重写任务单。"
              if int(item.get("attempt") or 1) < assistant_dispatch.MAX_ATTEMPTS else
              f"\n这件事已经试了 {assistant_dispatch.MAX_ATTEMPTS} 次，建议换个做法或拆小再派。")
+    outcome = item.get("outcome") if isinstance(item.get("outcome"), dict) else {}
+    if outcome.get("kind") == "diagnosis":
+        retry = f"\n我的判断：{_clip_head(str(outcome.get('diagnosis') or ''), 300)}"
+        if outcome.get("draft_id"):
+            retry += f"\n已拟好第 {int(item.get('attempt') or 1) + 1} 次的任务单（换个做法：{_clip_head(str(outcome.get('change') or ''), 200)}），马上推给你确认。"
+        elif outcome.get("capped"):
+            retry += f"\n这件事已经试了 {assistant_dispatch.MAX_ATTEMPTS} 次，建议换个做法或拆小再派。"
+        else:
+            retry += "\n换个做法也难成，需要你拿主意：回我想怎么改，我重写任务单。"
     return f"❌ {title} 失败：{_clip_head(str(item.get('error') or '没有错误信息').strip(), _DIGEST_LIMIT)}" + retry
+
+
+_MARKS = {"met": "✓", "unmet": "✗", "unknown": "?"}
+
+
+def _acceptance_lines(item: Dict[str, Any]) -> str:
+    """做完时助理对照验收标准的复盘：逐条标对上 / 没对上 / 看不出。没写验收标准或没复盘就不写。"""
+    outcome = item.get("outcome") if isinstance(item.get("outcome"), dict) else {}
+    rows = outcome.get("criteria") if outcome.get("kind") == "acceptance" else None
+    if not rows:
+        return ""
+    met = sum(row.get("verdict") == "met" for row in rows)
+    lines = [f"\n验收对照（助理看输出判断，不代表人工验收）：{met}/{len(rows)} 条对上"]
+    for row in rows[:6]:
+        evidence = f"——{_clip_head(str(row.get('evidence') or ''), 80)}" if row.get("evidence") else ""
+        lines.append(f"{_MARKS.get(str(row.get('verdict')), '?')} {_clip_head(str(row.get('text') or ''), 80)}{evidence}")
+    return "\n".join(lines)
 
 
 STATUS_NAMES = {"proposed": "等你确认下发", "send_failed": "下发失败", "running": "在做", "waiting": "在等人回答",
@@ -334,7 +363,7 @@ async def _notify_accepted(notify: Notify, text: str, confirm_id: str = "") -> b
 
 
 async def watch_once(root: str, now: datetime, *, notify: Notify, refresh=assistant_dispatch.refresh,
-                     times: Optional[List[str]] = None, writer=None) -> None:
+                     times: Optional[List[str]] = None, writer=None, review=None) -> None:
     """巡检一轮：刷新任务状态、推送变化、到点发报告。首次运行只记下现状，不把旧账推一遍。"""
     from src.workflow.workbench.goal_followup import poll_goal_followups
     try:  # 家里其它机器的定时活（备份同步、恢复演练）该报没报：每次断档推一次
@@ -369,6 +398,10 @@ async def watch_once(root: str, now: datetime, *, notify: Notify, refresh=assist
             status = str(item.get("status") or "")
             if seen.get(item["id"]) == status:
                 continue
+            if review is not None and status in {"done", "failed"}:
+                # 结束了先复盘：做完对照验收标准，失败诊断原因、值得再试就起草下一次（下发仍要你批）
+                from src.scheduling.dispatch_review import follow_up
+                item = await follow_up(root, item, review)
             # 等确认的任务单带「批准 / 拒绝」按钮（读过外部内容的不带，只能在 Desktop 确认）
             confirm_id = item["id"] if status == "proposed" and not item.get("tainted") else ""
             if status == "done" and dispatch_pr_ready(item):
@@ -476,7 +509,8 @@ async def watch_loop(root: str, stop: asyncio.Event, *, notify: Optional[Notify]
     notify = notify or owner_reporter(root)
     while not stop.is_set():
         try:
-            await watch_once(root, datetime.now().astimezone(), notify=notify)
+            from src.scheduling.dispatch_review import review_outcome
+            await watch_once(root, datetime.now().astimezone(), notify=notify, review=review_outcome)
         except Exception as error:  # noqa: BLE001 —— 巡检失败不拖垮服务，下一轮再来
             logger.warning("助理巡检失败：%s", error)
         try:
