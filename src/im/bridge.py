@@ -506,6 +506,10 @@ class IMBridge:
                 await self.adapter.ack_callback(ev)
                 await self._open_dispatch_pr("dsp-" + str(ev.callback_id)[4:], bool(ev.approved))
                 return
+            elif fut is None and str(ev.callback_id).startswith("dgl-"):
+                await self.adapter.ack_callback(ev)
+                await self._confirm_dispatch_goal("dsp-" + str(ev.callback_id)[4:], bool(ev.approved))
+                return
             elif fut is None and str(ev.callback_id).startswith("cdx-"):
                 await self.adapter.ack_callback(ev)
                 await self._decide_codex_action(str(ev.callback_id), bool(ev.approved))
@@ -1083,6 +1087,36 @@ class IMBridge:
             await self._safe_send(f"没开成 PR：{_exc_text(error)}")
         finally:
             self._pr_jobs.pop(dispatch_id, None)
+
+    async def _confirm_dispatch_goal(self, dispatch_id: str, approved: bool) -> None:
+        """「算不算达成这条验收标准」按钮：批准 = 你亲自确认，记一条通过证据进个人目标。不经过模型。"""
+        from src.workflow.tasks import assistant_dispatch as dispatch
+        if not approved:
+            await self._safe_send("好，这条先不算达成。之后觉得达成了，在目标卡上确认就行。")
+            return
+        try:
+            entry = dispatch.confirm_goal(self.repo_root, dispatch_id)
+        except dispatch.DispatchError as error:
+            await self._safe_send(f"没记上：{error}")
+            return
+        link = entry.get("goal_link") or {}
+        try:
+            from src.gateway.audit import record_decision_audit
+            record_decision_audit(self.repo_root, session=self._sid, mode="",
+                                  operation=f"确认任务单「{entry.get('title')}」达成目标标准「{link.get('criterion')}」（手机）",
+                                  decision=True, tainted=False)
+        except Exception:  # noqa: BLE001
+            import logging
+            logging.getLogger("vortocode.im").warning("目标确认未能记入审计：%s", dispatch_id)
+        progress = ""
+        try:
+            from src.workflow.workbench.personal_goals import PersonalGoals
+            goal = PersonalGoals(self.repo_root).get(str(link.get("id")))
+            progress = f"目标进度 {goal['progress']['passed']}/{goal['progress']['total']}" + (
+                "，🎉 目标达成！" if goal.get("status") == "achieved" else "。")
+        except Exception:  # noqa: BLE001 —— 读不到进度不影响已经记上的确认
+            pass
+        await self._safe_send(f"✅ 已记为通过：{link.get('criterion')}。{progress}")
 
     async def _decide_codex_action(self, action_id: str, approved: bool) -> None:
         """「助理想替你给 Codex 发…」通知上的按钮：批准后由 Mac 上的观察员交给 Codex。不经过模型。"""

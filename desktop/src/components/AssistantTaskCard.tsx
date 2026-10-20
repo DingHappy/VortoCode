@@ -43,6 +43,7 @@ export function AssistantTaskCard({ task, connected, onAction }: Props) {
       {actions.cancel && <button disabled={busy || !connected} onClick={() => void act("cancel")}>撤回任务单</button>}
       {actions.retry && <button disabled={busy || !connected} onClick={() => void act("approve")}>继续核对并提交</button>}
       {task.remote_task_id && <button disabled={busy || !connected} onClick={() => void act("refresh")}>核对状态</button>}
+      {actions.confirmGoal && <button disabled={busy || !connected} onClick={() => void act("confirm_goal")}>算达成这条目标标准</button>}
       {actions.openPr && <button disabled={busy || !connected} onClick={() => void act("open_pr")}>开 draft PR</button>}
       {actions.open && <button disabled={busy || !connected} onClick={() => void act("open")}>{task.status === "done" && task.branch ? "查看交付与审查" : "打开项目任务"}</button>}
     </div>
@@ -52,6 +53,9 @@ export function AssistantTaskCard({ task, connected, onAction }: Props) {
     <p className="assistant-task-status">{labels[task.status] ?? "状态未知"}</p>
     {task.sync_state === "unreachable" && <p role="status">当前无法核实，保留上次执行状态。{task.sync_error}</p>}
     {task.last_checked_at && <small>上次核对：{new Date(task.last_checked_at).toLocaleString()}</small>}
+    {task.goal_link && <p className="assistant-task-goal">为目标「{task.goal_link.objective}」
+      {task.goal_link.criterion ? `· 验收标准：${task.goal_link.criterion}` : ""}
+      {task.goal_confirmed_at ? "（你已确认达成）" : ""}</p>}
     {task.attempt && task.attempt > 1 && <small>第 {task.attempt} 次尝试{task.retry_of ? `（接着 ${task.retry_of}）` : ""}</small>}
     {task.status === "proposed" && task.retry_note && <p>这次换个做法：{task.retry_note}</p>}
     {task.status === "proposed" && actionRow}

@@ -195,6 +195,17 @@ def status_message(item: Dict[str, Any]) -> str:
     return f"❌ {title} 失败：{_clip_head(str(item.get('error') or '没有错误信息').strip(), _DIGEST_LIMIT)}" + retry
 
 
+def goal_message(item: Dict[str, Any]) -> str:
+    link = item.get("goal_link") or {}
+    text = (f"🎯 「{item.get('title')}」是为目标「{_clip_head(str(link.get('objective') or ''), 80)}」做的，"
+            f"对应验收标准：{_clip_head(str(link.get('criterion') or ''), 120)}")
+    outcome = item.get("outcome") if isinstance(item.get("outcome"), dict) else {}
+    rows = outcome.get("criteria") if outcome.get("kind") == "acceptance" else None
+    if rows:
+        text += f"\n（助理对照任务验收标准：{sum(row.get('verdict') == 'met' for row in rows)}/{len(rows)} 条对上）"
+    return text + "\n做完了算不算达成这一条？点「批准」记为通过（等于你亲自确认），「拒绝」先不算。"
+
+
 _MARKS = {"met": "✓", "unmet": "✗", "unknown": "?"}
 
 
@@ -408,6 +419,9 @@ async def watch_once(root: str, now: datetime, *, notify: Notify, refresh=assist
                 confirm_id = assistant_dispatch.pr_confirm_id(item["id"])
             if status in _NOTIFY_STATUSES and not await _notify_accepted(notify, status_message(item), confirm_id):
                 continue
+            if status == "done" and assistant_dispatch.goal_confirm_ready(item):
+                # 挂在个人目标上的活：做完问你算不算达成那条验收标准（只问一次；没送到的在任务卡上还能点）
+                await _notify_accepted(notify, goal_message(item), assistant_dispatch.goal_confirm_id(item["id"]))
             seen[item["id"]] = status
             # 后续项失败或取消时，已受理的项不能被整轮重放。
             _save_state(root, state)

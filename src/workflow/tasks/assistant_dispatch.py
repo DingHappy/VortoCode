@@ -180,15 +180,18 @@ def _retry_context(previous: Dict[str, Any]) -> str:
 
 
 def propose(root: str, *, project: str, title: str, goal: str, criteria: Optional[List[str]] = None,
-            session: str = "", tainted: bool = False, retry_of: str = "", retry_note: str = "") -> Dict[str, Any]:
+            session: str = "", tainted: bool = False, retry_of: str = "", retry_note: str = "",
+            goal_id: str = "", criterion_id: str = "") -> Dict[str, Any]:
     """助理提出一张任务单（只记账，不执行）。``retry_of``：接着一张没做成的单子再来一次，自动带上它的错误。
 
-    ``retry_note``：助理复盘上次失败后拟的「这次换什么做法」，会写进目标，也单独显示在确认通知里。"""
+    ``retry_note``：助理复盘上次失败后拟的「这次换什么做法」，会写进目标，也单独显示在确认通知里。
+    ``goal_id`` / ``criterion_id``：这件活是为哪个个人目标（的哪条验收标准）做的；做完后问你算不算达成。"""
     target = _find_project(project)
     title = " ".join(str(title or "").split())[:MAX_TITLE]
     goal = str(goal or "").strip()
     if not title or not goal:
         raise DispatchError("任务单需要标题和目标")
+    link = _goal_link(root, goal_id, criterion_id) if goal_id else None
     brief = goal[:MAX_GOAL]           # 不含重试上下文的目标本身：再重试时从它起头，别一层套一层
     retry_note = " ".join(str(retry_note or "").split())[:600]
     if retry_note:
@@ -222,6 +225,7 @@ def propose(root: str, *, project: str, title: str, goal: str, criteria: Optiona
         "attempt": attempt,
         "retry_of": str(retry_of or ""),
         "brief": brief,
+        "goal_link": link,
         "retry_note": retry_note,
         "created_at": _now(),
         "updated_at": _now(),
@@ -233,6 +237,62 @@ def propose(root: str, *, project: str, title: str, goal: str, criteria: Optiona
         items.append(entry)
         _save(root, items)
     return entry
+
+
+def _goal_link(root: str, goal_id: str, criterion_id: str = "") -> Dict[str, str]:
+    """任务单挂到个人目标上：只记 id 和标题，进度仍以目标卡为准。"""
+    from src.workflow.workbench.personal_goals import PersonalGoals
+    try:
+        goal = PersonalGoals(root).get(str(goal_id).strip())
+    except (KeyError, ValueError, OSError, TypeError) as error:
+        raise DispatchError(f"找不到个人目标 {goal_id}") from error
+    if goal.get("status") == "achieved":
+        raise DispatchError("这个目标已经达成了，不用再为它派活")
+    criterion = None
+    if criterion_id:
+        criterion = next((row for row in goal.get("acceptance_criteria") or [] if row.get("id") == criterion_id), None)
+        if criterion is None:
+            raise DispatchError(f"目标里没有验收标准 {criterion_id}")
+    return {"id": goal["id"], "objective": str(goal.get("objective") or "")[:200],
+            "criterion_id": str(criterion["id"]) if criterion else "",
+            "criterion": str(criterion.get("text") or "")[:200] if criterion else ""}
+
+
+def goal_confirm_id(dispatch_id: str) -> str:
+    """「算达成这条验收标准」按钮的回调 id。"""
+    return "dgl-" + dispatch_id[4:]
+
+
+def goal_confirm_ready(item: Dict[str, Any]) -> bool:
+    link = item.get("goal_link") if isinstance(item.get("goal_link"), dict) else {}
+    return item.get("status") == "done" and not item.get("error") and bool(link.get("criterion_id")) \
+        and not item.get("goal_confirmed_at")
+
+
+def confirm_goal(root: str, dispatch_id: str) -> Dict[str, Any]:
+    """你确认这张做完的任务单达成了它挂的那条验收标准：记一条你亲自确认的通过证据（和在目标卡上点确认一样）。"""
+    from src.workflow.workbench.personal_goals import PersonalGoals
+    entry = next((item for item in _load(root) if item.get("id") == dispatch_id), None)
+    if entry is None:
+        raise DispatchError("没有这张任务单")
+    if entry.get("goal_confirmed_at"):
+        return entry
+    if not goal_confirm_ready(entry):
+        raise DispatchError("只有挂了验收标准、成功做完的任务单能这样确认")
+    link = entry["goal_link"]
+    evidence = entry.get("delivery_evidence") if isinstance(entry.get("delivery_evidence"), dict) else {}
+    summary = (f"任务单「{entry.get('title')}」做完（{entry.get('project')}"
+               + (f"，分支 {entry['branch']}" if entry.get("branch") else "")
+               + (f"，自动验证 {evidence['verification']}" if evidence.get("verification") else "")
+               + (f"，PR {entry['pr_url']}" if entry.get("pr_url") else "") + "），用户确认达成这条标准")
+    service = PersonalGoals(root)
+    try:
+        goal = service.get(link["id"])
+        service.evidence(link["id"], link["criterion_id"],
+                         {"revision": goal["revision"], "summary": summary, "passed": True, "confirmed": True})
+    except (KeyError, ValueError, OSError, TypeError) as error:
+        raise DispatchError(f"没记上：{error}") from error
+    return _update(root, dispatch_id, lambda item: item.update(goal_confirmed_at=_now()))
 
 
 def record_outcome(root: str, dispatch_id: str, outcome: Dict[str, Any]) -> Dict[str, Any]:
@@ -669,7 +729,9 @@ def build_dispatch_tools(root: str, *, is_tainted: Callable[[], bool] = lambda: 
                             goal=str(args.get("goal") or ""), criteria=list(criteria),
                             # 记下是哪段对话提的：Desktop 据此把任务单卡片放进那段对话里
                             session=str((session() if callable(session) else session) or ""),
-                            tainted=is_tainted(), retry_of=str(args.get("retry_of") or "").strip())
+                            tainted=is_tainted(), retry_of=str(args.get("retry_of") or "").strip(),
+                            goal_id=str(args.get("goal_id") or "").strip(),
+                            criterion_id=str(args.get("criterion_id") or "").strip())
         except DispatchError as error:
             return f"没有提出任务单：{error}"
         return (f"已写好任务单 {entry['id']}（{entry['project']}：{entry['title']}），卡片会出现在这段对话里，"
@@ -693,6 +755,11 @@ def build_dispatch_tools(root: str, *, is_tainted: Callable[[], bool] = lambda: 
                 line += "；不代表人工验收通过"
             if item["status"] in {"running", "waiting"} and progress_line(item):
                 line += f" 进度：{progress_line(item)}"
+            link = item.get("goal_link") if isinstance(item.get("goal_link"), dict) else {}
+            if link:
+                line += f" 为目标「{link.get('objective', '')[:60]}」" + (f"的标准「{link.get('criterion', '')[:60]}」" if link.get("criterion") else "")
+                if item.get("goal_confirmed_at"):
+                    line += "（用户已确认达成）"
             if item.get("branch"):
                 line += f" 分支 {item['branch']}"
             if item.get("pr_url"):
@@ -764,7 +831,9 @@ def build_dispatch_tools(root: str, *, is_tainted: Callable[[], bool] = lambda: 
              {"project": f"项目名，只能是：{names}", "title": "一句话标题（不超过 30 字）",
               "goal": "要做成什么、为什么、范围边界", "criteria": "验收标准，每行一条",
               "retry_of": "可选：接着哪张失败 / 没做完的任务单再来（dsp-…）。会自动带上它的错误和输出，"
-                          "goal 里只写这次要怎么改做法；同一件事最多 3 次"},
+                          "goal 里只写这次要怎么改做法；同一件事最多 3 次",
+              "goal_id": "可选：这件活是为哪个个人目标做的（personal-…，用 personal_goals 查）",
+              "criterion_id": "可选：对应目标里的哪条验收标准；做完后会问用户算不算达成这一条"},
              _propose, read_only=False, serial=True),
         Tool("list_dispatches",
              "查看派出去的任务单：哪些等用户确认、在做、做完了（含结果和分支）、失败了。向用户汇报进度时先调它。",

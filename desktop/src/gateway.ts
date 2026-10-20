@@ -552,6 +552,11 @@ export class GatewayClient {
     return this.request(`/api/dispatches/${encodeURIComponent(id)}/open_pr`, { method: "POST" });
   }
 
+  /** 人确认这张做完的任务单达成了它挂的那条目标验收标准。 */
+  async confirmDispatchGoal(id: string): Promise<AssistantDispatch> {
+    return this.request(`/api/dispatches/${encodeURIComponent(id)}/confirm_goal`, { method: "POST" });
+  }
+
   /** 常驻电脑上的项目登记表（名称 / 目录 / 端口）：工作台「在哪做」据此找到服务器上的同名项目。 */
   async listResidentProjects(): Promise<ResidentProject[]> {
     const payload = await this.request<{ projects?: ResidentProject[] }>("/api/resident/projects");

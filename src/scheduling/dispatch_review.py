@@ -110,7 +110,9 @@ async def follow_up(root: str, item: Dict[str, Any], review=review_outcome) -> D
                     root, project=str(item.get("project")), title=str(item.get("title")),
                     goal=str(item.get("brief") or item.get("goal") or ""), criteria=list(item.get("criteria") or []),
                     session=str(item.get("session") or ""), tainted=bool(item.get("tainted")),
-                    retry_of=str(item["id"]), retry_note=outcome["change"])
+                    retry_of=str(item["id"]), retry_note=outcome["change"],
+                    goal_id=str((item.get("goal_link") or {}).get("id") or ""),
+                    criterion_id=str((item.get("goal_link") or {}).get("criterion_id") or ""))
                 outcome["draft_id"] = draft["id"]
             except assistant_dispatch.DispatchError as error:
                 outcome["retry"] = False
