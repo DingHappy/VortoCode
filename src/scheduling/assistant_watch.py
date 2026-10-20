@@ -58,12 +58,13 @@ def owner_reporter(root: str) -> Notify:
 
     deliver = make_notifier(root, source="assistant")
 
-    async def report(text: str) -> bool:
+    async def report(text: str, confirm_id: str = "") -> bool:
         try:
-            return bool(await deliver(text))
+            return bool(await deliver(text, confirm_id=confirm_id))
         except Exception as error:  # noqa: BLE001 —— 推送是旁路
             logger.warning("助理汇报失败：%s", type(error).__name__)
             return False
+    report.accepts_confirm = True  # type: ignore[attr-defined]  # 任务单通知可带「批准 / 拒绝」按钮
     return report
 
 
@@ -145,7 +146,11 @@ def status_message(item: Dict[str, Any]) -> str:
     title = f"{item.get('project')}：{item.get('title')}"
     status = item.get("status")
     if status == "proposed":
-        return f"📝 助理写好了任务单，等你确认下发——{title}\n在 Desktop 助理的「动态」里确认（手机上回复不会下发）。"
+        if item.get("tainted"):
+            return (f"📝 助理写好了任务单，等你确认下发——{title}\n这张是在读过网页等外部内容后写的，"
+                    "为安全起见只能在 Desktop 助理的「动态」里确认。")
+        return (f"📝 助理写好了任务单，等你确认下发——{title}\n点「批准」就交给常驻电脑去做，「拒绝」撤回；"
+                "也可以在 Desktop 助理的「动态」里确认。回复文字不会下发。")
     if status == "waiting":
         return f"⏸ {title} 在等人回答，到工作台的常驻电脑项目里处理。"
     if status == "done":
@@ -292,9 +297,12 @@ async def _compose_body(root: str, now: datetime, label: str, *, llm: Any = None
     return f"🗒 {label}\n{text}" if text else facts
 
 
-async def _notify_accepted(notify: Notify, text: str) -> bool:
+async def _notify_accepted(notify: Notify, text: str, confirm_id: str = "") -> bool:
     try:
-        accepted = bool(await notify(text))
+        if confirm_id and getattr(notify, "accepts_confirm", False):
+            accepted = bool(await notify(text, confirm_id=confirm_id))  # type: ignore[call-arg]
+        else:
+            accepted = bool(await notify(text))
     except Exception as error:  # noqa: BLE001 —— 一条失败不能挡住其它任务；取消继续向外传播
         logger.warning("助理通知未受理：%s", type(error).__name__)
         return False
@@ -334,7 +342,9 @@ async def watch_once(root: str, now: datetime, *, notify: Notify, refresh=assist
             status = str(item.get("status") or "")
             if seen.get(item["id"]) == status:
                 continue
-            if status in _NOTIFY_STATUSES and not await _notify_accepted(notify, status_message(item)):
+            # 等确认的任务单带「批准 / 拒绝」按钮（读过外部内容的不带，只能在 Desktop 确认）
+            confirm_id = item["id"] if status == "proposed" and not item.get("tainted") else ""
+            if status in _NOTIFY_STATUSES and not await _notify_accepted(notify, status_message(item), confirm_id):
                 continue
             seen[item["id"]] = status
             # 后续项失败或取消时，已受理的项不能被整轮重放。

@@ -31,11 +31,22 @@ export function AssistantTaskCard({ task, connected, onAction }: Props) {
     catch (reason) { if (identity.current === id) setError(reason instanceof Error ? reason.message : "操作失败，请核对状态"); }
     finally { pending.current = false; if (identity.current === id) setBusy(false); }
   };
+  // 等确认的任务单：按钮紧跟在状态下面（目标和验收标准可能很长，别让人滚到底才找得到「确认下发」）
+  const actionRow = (
+    <div className="task-actions">
+      {actions.approve && <button disabled={busy || !connected} onClick={() => void act("approve")}>确认下发</button>}
+      {actions.cancel && <button disabled={busy || !connected} onClick={() => void act("cancel")}>撤回任务单</button>}
+      {actions.retry && <button disabled={busy || !connected} onClick={() => void act("approve")}>继续核对并提交</button>}
+      {task.remote_task_id && <button disabled={busy || !connected} onClick={() => void act("refresh")}>核对状态</button>}
+      {actions.open && <button disabled={busy || !connected} onClick={() => void act("open")}>{task.status === "done" && task.branch ? "查看交付与审查" : "打开项目任务"}</button>}
+    </div>
+  );
   return <article className="assistant-task-card" aria-label={`任务单：${task.title}`}>
     <header><strong>{task.title}</strong><span>{task.project}</span></header>
     <p className="assistant-task-status">{labels[task.status] ?? "状态未知"}</p>
     {task.sync_state === "unreachable" && <p role="status">当前无法核实，保留上次执行状态。{task.sync_error}</p>}
     {task.last_checked_at && <small>上次核对：{new Date(task.last_checked_at).toLocaleString()}</small>}
+    {task.status === "proposed" && actionRow}
     <details open={task.status === "proposed"}>
       <summary>目标与验收标准</summary>
       <p className="assistant-task-text">{task.goal}</p>
@@ -70,13 +81,7 @@ export function AssistantTaskCard({ task, connected, onAction }: Props) {
     </section>}
     {task.recovery_error && <p role="status">恢复任务当前无法完全核实：{task.recovery_error}</p>}
     {task.status === "done" && <small>执行结束不代表验收通过，请在项目工作台核对 diff 和验证证据。</small>}
-    <div className="task-actions">
-      {actions.approve && <button disabled={busy || !connected} onClick={() => void act("approve")}>确认下发</button>}
-      {actions.cancel && <button disabled={busy || !connected} onClick={() => void act("cancel")}>撤回任务单</button>}
-      {actions.retry && <button disabled={busy || !connected} onClick={() => void act("approve")}>继续核对并提交</button>}
-      {task.remote_task_id && <button disabled={busy || !connected} onClick={() => void act("refresh")}>核对状态</button>}
-      {actions.open && <button disabled={busy || !connected} onClick={() => void act("open")}>{task.status === "done" && task.branch ? "查看交付与审查" : "打开项目任务"}</button>}
-    </div>
+    {task.status !== "proposed" && actionRow}
     {!connected && <small>连接中断，恢复后可继续处理。</small>}
     {busy && <small role="status">正在处理…</small>}
     {error && <p role="alert" className="task-error">{error}</p>}

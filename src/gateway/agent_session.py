@@ -191,7 +191,7 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
             # 常驻助理：登记了常驻电脑项目才有。只能提议任务单，下发由人在 Desktop 点。
             from src.agents.taint import is_tainted
             from src.workflow.tasks.assistant_dispatch import build_dispatch_tools
-            tools += build_dispatch_tools(repo_root, is_tainted=is_tainted)
+            tools += build_dispatch_tools(repo_root, is_tainted=is_tainted, session=task_owner or "")
     else:
         tools = build_agent_tools(repo_root, confirm=gated_confirm, on_progress=on_progress,
                                   with_artifacts=(kind == "web"),   # 制品查看页只有 Web 有

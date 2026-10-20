@@ -84,6 +84,29 @@ async def notify_owner(text: str, *, relay: bool = True) -> bool:
         return False
 
 
+_OWNER_CONFIRM_SENDER = None       # 桥起来时注册 adapter.send_confirm：发带「批准 / 拒绝」按钮的消息
+
+
+def set_owner_confirm_sender(sender) -> None:
+    """Register/unregister the bridge's button sender (same lifecycle as the owner notifier)."""
+    global _OWNER_CONFIRM_SENDER
+    _OWNER_CONFIRM_SENDER = sender
+
+
+async def notify_owner_confirm(text: str, confirm_id: str, *, relay: bool = True) -> bool:
+    """推一条带「批准 / 拒绝」按钮的通知；本进程没有桥（或通道不支持按钮）就退回纯文字通知。
+
+    按钮点击由桥直接处理（只认 owner，不经过模型），见 ImBridge 的 callback 分支。
+    """
+    if _OWNER_CONFIRM_SENDER is None:
+        return await notify_owner(text, relay=relay)
+    try:
+        await _OWNER_CONFIRM_SENDER(str(text), str(confirm_id))
+        return True
+    except Exception:  # noqa: BLE001 - fall back to plain text rather than dropping the notice
+        return await notify_owner(text, relay=relay)
+
+
 def start_confirmation_notice(message: str) -> asyncio.Task | None:
     """Remind the owner without granting another channel approval authority.
 

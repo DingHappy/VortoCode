@@ -2141,6 +2141,10 @@ function App() {
   /** 连到常驻电脑上的助理（通用范围）。已经连着就直接返回。 */
   const connectAssistantHost = async (host: DesktopProjectProfile): Promise<boolean> => {
     if (remoteProjectRef.current === host.id && assistantHostRef.current === host.id && connection === "connected") return true;
+    // 启动时本机引擎还在拉起（正在切换）：等它切完再连常驻电脑，别直接判失败退回本机
+    for (let waited = 0; projectSwitchingRef.current && waited < 15_000; waited += 200) {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
     if (projectSwitchingRef.current) return false;
     if (savingFile) {
       setBanner("请先完成或拒绝当前源码保存确认");
@@ -2196,6 +2200,23 @@ function App() {
   };
 
   const onAssistantHost = () => Boolean(remoteProjectRef.current) && remoteProjectRef.current === assistantHostRef.current;
+
+  // 登记了常驻电脑、在助理模式、却连在本机：明着提示，并在后台自动重连（正在回复时不切）
+  const residentMissed = appMode === "assistant" && Boolean(findAssistantHost(projects)) && !onAssistantHost()
+    && connection === "connected" && !projectSwitching;
+  const residentRetryRef = useRef(0);
+  useEffect(() => {
+    if (!residentMissed) { if (onAssistantHost()) residentRetryRef.current = 0; return; }
+    if (busy) return;
+    const delays = [10_000, 30_000, 60_000, 120_000];
+    const timer = window.setTimeout(() => {
+      residentRetryRef.current += 1;
+      void changeAppMode("assistant");
+    }, delays[Math.min(residentRetryRef.current, delays.length - 1)]);
+    return () => window.clearTimeout(timer);
+    // changeAppMode 每次渲染都是新函数；只按状态变化重排定时器
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [residentMissed, busy]);
 
   const changeAppMode = async (mode: AppMode, known: DesktopProjectProfile[] = projects) => {
     setAppMode(mode);
@@ -3070,10 +3091,7 @@ function App() {
     await assistantActionGate.current.run(client, scope, item.id, current, async () => {
       if (action === "refresh") { await refreshAgentTurns(item.id); return; }
       if (action === "approve" || action === "cancel") {
-        if (!await confirmAction(action === "cancel" ? `撤回任务单「${item.title}」？`
-          : [`确认将「${item.title}」下发到 ${item.project}？`, item.goal,
-            ...item.criteria.map(line => `· ${line}`),
-            ...(item.tainted ? ["包含外部内容，请核对目标与范围。"] : [])].join("\n\n"))) return;
+        // 卡片本身就是确认：目标、验收标准和外部内容提醒都摆在卡片上，点卡片上的按钮即生效，不再弹系统框
         if (!current()) return;
         try { await client.decideDispatch(item.id, action); }
         finally { if (current()) await refreshAgentTurns(); }
@@ -3623,6 +3641,12 @@ function App() {
           </div>
 
           <div className="composer-wrap">
+            {residentMissed && (
+              <div className="composer-notice" role="status">
+                常驻电脑没连上，现在是这台电脑上的本机助理：派活、简报和合上笔记本后继续做，都要连上常驻电脑。
+                <button onClick={() => void changeAppMode("assistant")} disabled={projectSwitching}>重新连接</button>
+              </div>
+            )}
             {llmProfileChecked && !llmProfile?.configured && !onAssistantHost() && messages.length > 0 && (
               <div className="composer-notice" role="status">
                 还没有连接模型，消息不会有回复。
