@@ -10918,3 +10918,18 @@ ul.trust-note {
   overflow-y: auto;
 }
 
+
+/* 任务在问的问题：醒目一点，回答框占满卡片宽度 */
+.assistant-task-card .assistant-task-question {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.assistant-task-card .assistant-task-question textarea {
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: 6px;
+  resize: vertical;
+  font: inherit;
+}

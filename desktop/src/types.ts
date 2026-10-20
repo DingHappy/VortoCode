@@ -287,9 +287,18 @@ export interface AssistantDispatch {
   } | null;
   tainted: boolean;
   remote_task_id: string;
+  remote_session?: string;
   result: string;
   error: string;
   branch: string;
+  /** 任务做到一半在问的问题（开发流水线缺关键事实时提的）；回答后清空 */
+  question?: { id: string; round?: number; question: string; options: string[]; context?: string; expires_at?: string; seen_at?: string } | null;
+  answers?: { question: string; answer: string; at: string }[];
+  pr_url?: string;
+  pr_state?: "opening" | "opened" | "failed";
+  pr_error?: string;
+  attempt?: number;
+  retry_of?: string;
   created_at: string;
   updated_at: string;
 }

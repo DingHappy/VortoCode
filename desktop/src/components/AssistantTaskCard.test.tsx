@@ -65,3 +65,34 @@ it("recovery progress preserves the original failure and does not grant executio
   const offline = renderToStaticMarkup(<AssistantTaskCard task={{ ...recovered, sync_state: "unreachable" }} connected onAction={async () => {}} />);
   expect(offline).toContain("恢复信息为上次记录，当前无法重新核实");
 });
+
+it("a waiting task shows its question with suggested answers; legacy tasks point to the workbench", () => {
+  const asking: AssistantDispatch = { ...task, tainted: false, status: "waiting", remote_task_id: "t1", remote_session: "assistant-a",
+    question: { id: "q1", round: 1, question: "超时改成 30 秒还是 60 秒？", options: ["30 秒", "60 秒"], context: "找到了配置",
+      expires_at: "2026-10-13T00:00:00Z" } };
+  const html = renderToStaticMarkup(<AssistantTaskCard task={asking} connected onAction={async () => {}} />);
+  for (const text of ["任务在问你", "30 秒还是 60 秒", "60 秒", "你的回答", "交给任务接着做", "找到了配置"]) expect(html).toContain(text);
+  expect(assistantTaskActions(asking).answer).toBe(true);
+  const legacy = renderToStaticMarkup(<AssistantTaskCard task={{ ...asking, remote_session: undefined }} connected onAction={async () => {}} />);
+  expect(legacy).toContain("请打开项目任务回答");
+  expect(legacy).not.toContain("交给任务接着做");
+});
+
+it("a finished vorto branch offers a draft PR once; the link is shown after and only https is linked", () => {
+  const done: AssistantDispatch = { ...task, tainted: false, status: "done", remote_task_id: "t1", branch: "vorto/fix", attempt: 2, retry_of: "dsp-0" };
+  const html = renderToStaticMarkup(<AssistantTaskCard task={done} connected onAction={async () => {}} />);
+  expect(html).toContain("开 draft PR");
+  expect(html).toContain("第 2 次尝试");
+  expect(assistantTaskActions({ ...done, branch: "feature/x" }).openPr).toBe(false);
+  expect(assistantTaskActions({ ...done, error: "集成没过" }).openPr).toBe(false);
+  const opening = renderToStaticMarkup(<AssistantTaskCard task={{ ...done, pr_state: "opening" }} connected onAction={async () => {}} />);
+  expect(opening).toContain("正在推分支");
+  expect(opening).not.toContain("开 draft PR</button>");
+  const opened = renderToStaticMarkup(<AssistantTaskCard task={{ ...done, pr_url: "https://github.com/x/y/pull/9", pr_state: "opened" }} connected onAction={async () => {}} />);
+  expect(opened).toContain('href="https://github.com/x/y/pull/9"');
+  const sneaky = renderToStaticMarkup(<AssistantTaskCard task={{ ...done, pr_url: "javascript:alert(1)" }} connected onAction={async () => {}} />);
+  expect(sneaky).not.toContain("javascript:");
+  const failed = renderToStaticMarkup(<AssistantTaskCard task={{ ...done, pr_state: "failed", pr_error: "分支已被删" }} connected onAction={async () => {}} />);
+  expect(failed).toContain("没开成 PR：分支已被删");
+  expect(failed).toContain("开 draft PR");
+});

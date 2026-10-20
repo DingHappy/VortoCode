@@ -830,7 +830,19 @@
     ]
   },
   {
+    "path": "/api/dispatches/{dispatch_id}/answer",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
     "path": "/api/dispatches/{dispatch_id}/cancel",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/dispatches/{dispatch_id}/open_pr",
     "methods": [
       "POST"
     ]
