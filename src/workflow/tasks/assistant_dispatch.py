@@ -107,7 +107,62 @@ def task_prompt(entry: Dict[str, Any]) -> str:
     lines = [entry["title"], "", "目标：", entry["goal"]]
     if entry.get("criteria"):
         lines += ["", "验收标准："] + [f"- {item}" for item in entry["criteria"]]
+    known = [row for row in entry.get("known_answers") or [] if isinstance(row, dict)]
+    if known:
+        lines += ["", "这个项目以前的任务里问过、用户答过的（只供参考；和本任务目标冲突时以目标为准，不要因此扩大范围）："]
+        lines += [f"- 问：{row.get('question')}\n  答：{row.get('answer')}" for row in known]
     return "\n".join(lines)
+
+
+# ---- 答过的问题记成项目经验：以后派同一个项目的活时带上，免得同样的问题再问一次 ----
+MAX_KNOWN_ANSWERS = 8
+_ANSWERS_LOCK = threading.Lock()
+
+
+def _answers_path(root: str) -> Path:
+    return _ledger_path(root).parent / "answers.json"
+
+
+def _load_answers(root: str) -> Dict[str, List[Dict[str, str]]]:
+    try:
+        data = json.loads(_answers_path(root).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {str(key): [row for row in rows if isinstance(row, dict)]
+            for key, rows in (data.get("projects") or {}).items() if isinstance(rows, list)} if isinstance(data, dict) else {}
+
+
+def project_answers(root: str, project: str) -> List[Dict[str, str]]:
+    """这个项目记下的问答（新的在后）。"""
+    return _load_answers(root).get(str(project).lower(), [])[-MAX_KNOWN_ANSWERS:]
+
+
+def _remember_answer(root: str, project: str, question: str, answer: str) -> None:
+    question, answer = " ".join(question.split())[:300], " ".join(answer.split())[:300]
+    if not question or not answer:
+        return
+    with _ANSWERS_LOCK:
+        data = _load_answers(root)
+        key = str(project).lower()
+        rows = [row for row in data.get(key, []) if row.get("question") != question]     # 同一个问题以最新回答为准
+        data[key] = [*rows, {"question": question, "answer": answer, "at": _now()}][-MAX_KNOWN_ANSWERS:]
+        write_json(_answers_path(root), {"projects": data})
+
+
+def forget_answers(root: str, project: str, index: int = 0) -> int:
+    """忘掉这个项目记下的问答：index 从 1 起数只删那一条，0 全删。返回删掉几条。"""
+    with _ANSWERS_LOCK:
+        data = _load_answers(root)
+        key = str(project).lower()
+        rows = data.get(key, [])
+        if index:
+            if not 1 <= index <= len(rows):
+                raise DispatchError(f"没有第 {index} 条")
+            removed, data[key] = 1, rows[:index - 1] + rows[index:]
+        else:
+            removed, data[key] = len(rows), []
+        write_json(_answers_path(root), {"projects": data})
+    return removed
 
 
 MAX_ATTEMPTS = 3
@@ -260,6 +315,8 @@ async def approve(root: str, dispatch_id: str, *, http=_http) -> Dict[str, Any]:
             # 任务归属一个专属会话，开发流水线缺关键信息时才能提问（无主任务问不了，只能瞎猜或失败）。
             # 只在首次下发时定：重试必须沿用同一份提交合同（幂等键包含归属）。
             item.setdefault("remote_session", f"assistant-{dispatch_id[4:]}")
+            # 项目经验也在首次下发时定下来，写进任务单：重试沿用同一份 prompt（幂等提交）
+            item.setdefault("known_answers", project_answers(root, str(item.get("project") or "")))
         item.update(status="sending", remote_task_id=submission_task_id(item["request_id"]), error="")
     try:
         with pipeline_lock(root, dispatch_id, kind="assistant-send"):
@@ -451,6 +508,11 @@ async def answer_question(root: str, dispatch_id: str, answer: str, *, http=None
     except Exception as error:  # noqa: BLE001 —— 连不上项目运行时：如实说没交上，问题还在
         raise DispatchError(f"没连上项目运行时，回答没交上：{type(error).__name__}") from error
 
+    try:
+        _remember_answer(root, entry["project"], str(question.get("question") or ""), answer)
+    except OSError:  # 记不下经验不影响这次回答
+        pass
+
     def answered(item: Dict[str, Any]) -> None:
         item.update(status="running", question=None, error="", resumed_at=_now(),
                     answers=[*(item.get("answers") or []), {"question": question.get("question", "")[:300],
@@ -611,7 +673,33 @@ def build_dispatch_tools(root: str, *, is_tainted: Callable[[], bool] = lambda: 
             return f"没有转交：{error}"
         return f"已把回答交给「{entry['title']}」，任务接着做；做完或再有问题会通知用户。"
 
+    async def _answer_memory(args: dict) -> str:
+        project = str(args.get("project") or "").strip()
+        try:
+            name = _find_project(project)["name"]
+        except DispatchError as error:
+            return str(error)
+        if str(args.get("action") or "list").strip() == "forget":
+            if is_tainted():
+                return "没有删：这一轮读过网页等外部内容，删记下的回答要用户直接说。"
+            try:
+                removed = forget_answers(root, name, int(args.get("index") or 0))
+            except (DispatchError, ValueError) as error:
+                return f"没有删：{error}"
+            return f"已忘掉 {name} 记下的 {removed} 条回答。"
+        rows = project_answers(root, name)
+        if not rows:
+            return f"{name} 还没有记下的回答。"
+        return (f"{name} 记下的回答（以后派这个项目的活会带上，供任务参考）：\n"
+                + "\n".join(f"{index}. 问：{row.get('question')} 答：{row.get('answer')}" for index, row in enumerate(rows, 1)))
+
     return [
+        Tool("dispatch_answer_memory",
+             "查看或删除某个项目记下的回答：派出去的任务问过、用户答过的，会记下来，以后派同一个项目的活时自动带上，"
+             "免得同样的问题再问。用户说「那个回答只是这次的」「别再按那个来」时用 forget 删掉。",
+             {"project": f"项目名，只能是：{names}", "action": "list（默认）或 forget",
+              "index": "forget 时：删第几条（list 里的编号）；不填删全部"},
+             _answer_memory, read_only=False, serial=True),
         Tool("answer_dispatch_question",
              "把**用户自己给出的**回答转交给在等回答的任务单（list_dispatches 里 status=waiting、带「在问」的那张）。"
              "只转述用户在这段对话里明确说的答案，不要自己替用户拿主意；用户没答就先把问题和选项告诉用户。",

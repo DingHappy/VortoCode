@@ -321,3 +321,37 @@ def test_card_routes_answer_and_open_pr_are_audited(tmp_path, monkeypatch):
     assert seen == [("dsp-1", "30 秒")]
     operations = [item["operation"] for item in list_audit(str(tmp_path), 10) if item["category"] == "decision"]
     assert any("回答任务单的问题" in op for op in operations) and any("开 draft PR" in op for op in operations)
+
+
+async def test_answers_become_project_experience_for_later_dispatches(tmp_path):
+    root = str(tmp_path)
+    entry, remote = await _sent(root, remote_status="blocked", questions=[QUESTION])
+    await dispatch.refresh(root, http=remote)
+    await dispatch.answer_question(root, entry["id"], "30 秒", http=remote)
+    known = dispatch.project_answers(root, "vortocode")
+    assert known[-1]["question"] == "超时改成 30 秒还是 60 秒？" and known[-1]["answer"] == "30 秒"
+
+    later, later_remote = await _sent(root)
+    post = next(payload for method, url, payload in later_remote.calls if method == "POST" and url.endswith("/api/tasks"))
+    assert "以前的任务里问过、用户答过" in post["prompt"] and "答：30 秒" in post["prompt"]
+    assert dispatch.list_dispatches(root)[0]["known_answers"][-1]["answer"] == "30 秒"     # 定在单子上，重试同一份 prompt
+
+    tools = {tool.name: tool for tool in dispatch.build_dispatch_tools(root)}
+    assert "1. 问：超时改成 30 秒还是 60 秒？ 答：30 秒" in await tools["dispatch_answer_memory"].handler({"project": "VortoCode"})
+    tainted = {tool.name: tool for tool in dispatch.build_dispatch_tools(root, is_tainted=lambda: True)}
+    assert "没有删" in await tainted["dispatch_answer_memory"].handler({"project": "VortoCode", "action": "forget"})
+    assert "忘掉 VortoCode 记下的 1 条" in await tools["dispatch_answer_memory"].handler(
+        {"project": "VortoCode", "action": "forget", "index": "1"})
+    third, third_remote = await _sent(root)
+    post = next(payload for method, url, payload in third_remote.calls if method == "POST" and url.endswith("/api/tasks"))
+    assert "用户答过" not in post["prompt"]
+
+
+def test_same_question_keeps_only_the_latest_answer_and_the_list_is_bounded(tmp_path):
+    root = str(tmp_path)
+    dispatch._remember_answer(root, "VortoCode", "超时多少？", "30 秒")
+    dispatch._remember_answer(root, "VortoCode", "超时多少？", "60 秒")
+    assert [row["answer"] for row in dispatch.project_answers(root, "VortoCode")] == ["60 秒"]
+    for index in range(20):
+        dispatch._remember_answer(root, "VortoCode", f"问题 {index}", "是")
+    assert len(dispatch.project_answers(root, "VortoCode")) == dispatch.MAX_KNOWN_ANSWERS
