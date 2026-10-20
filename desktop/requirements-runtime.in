@@ -4,9 +4,9 @@
 # sidecar environment. Optional browser, MCP, TUI, and vector-memory
 # dependencies stay outside the built-in runtime.
 #
-# Security floors: aiohttp>=3.14.3, Markdown>=3.8.1, python-dotenv>=1.2.2.
+# Security floors: aiohttp>=3.14.5, Markdown>=3.8.1, python-dotenv>=1.2.2.
 # Never pin below these; they close the open GitHub security advisories.
-aiohttp==3.14.3
+aiohttp==3.14.5
 # Native tools + SSE are required by the Desktop agent, including local models.
 openai==3.14.1
 httpx==0.28.1
