@@ -11,7 +11,9 @@
   `GET /api/log/stat`（当日消耗，可配阈值 `VORTOCODE_RELAY_DAILY_QUOTA_LIMIT`）。
 
 重启检测：`/api/status` 的 `start_time` 与上次巡检快照（`.vortocode/duty/relay-state.json`）
-比对——变了就报异常（可能是 OOM/崩溃；正常发布重启也会报一次，下一夜自动转绿，宁保守）。
+比对——变了就报异常（可能是 OOM/崩溃）。中转站的 version 是写死的，分不出发布；所以发布脚本
+可以向常驻助理报一次事件型运维报到（source 默认 ``relay-deploy``，``VORTOCODE_RELAY_DEPLOY_SOURCE`` 可改）：
+上次巡检之后有发布报到，重启就算正常发布、不报红；没有就照旧报异常（宁保守）。
 报告只含数值与原因，**绝不回显任何 token**。
 """
 from __future__ import annotations
@@ -94,7 +96,23 @@ def _save_state(repo_root: str, state: dict) -> None:
         pass
 
 
-def _check_status(fetch: Fetch, base: str, state: dict) -> Tuple[CheckResult, dict]:
+def _deploy_since(repo_root: str, source: str, since: Optional[float]) -> str:
+    """上次巡检之后有没有「中转站发布」报到：有就返回它的说明（可能为空串以外的「发布」），没有返回空串。"""
+    if since is None or not source:
+        return ""
+    try:
+        from src.scheduling.ops_heartbeats import snapshot
+        entry = snapshot(repo_root).get(source) or {}
+        reported = datetime.fromisoformat(str(entry.get("last_report")).replace("Z", "+00:00")).timestamp()
+    except Exception:  # noqa: BLE001 —— 读不到报到就当没有，照旧报异常
+        return ""
+    if reported < since or entry.get("status") != "ok":
+        return ""
+    return str(entry.get("text") or "发布报到") + f"（{datetime.fromtimestamp(reported).isoformat(timespec='minutes')}）"
+
+
+def _check_status(fetch: Fetch, base: str, state: dict, deployed: Callable[[Optional[float]], str] = lambda _since: ""
+                  ) -> Tuple[CheckResult, dict]:
     status, payload, error = _get_json(fetch, f"{base}/api/status", {})
     if error or status != 200 or not payload or payload.get("success") is not True:
         detail = error or f"HTTP {status}，success={payload.get('success') if payload else '无法解析'}"
@@ -111,8 +129,19 @@ def _check_status(fetch: Fetch, base: str, state: dict) -> Tuple[CheckResult, di
                 return datetime.fromtimestamp(int(value)).isoformat(timespec="seconds")
             except Exception:  # noqa: BLE001
                 return str(value)
+        since = state.get("checked_at")
+        if since is None:
+            try:
+                since = float(previous)
+            except (TypeError, ValueError):
+                since = None
+        release = deployed(since)
+        if release:
+            return CheckResult("存活 /api/status", True,
+                               f"200 success=true · 重启过，是发布：{release}（start_time → {_fmt(start_time)}）"), new_state
         detail = (f"200 但**进程重启过**（上次巡检 start_time={_fmt(previous)} → 现在 {_fmt(start_time)}，"
-                  f"version {version}）——若非主动发布需排查 OOM/崩溃；下一夜自动转绿")
+                  f"version {version}）——若非主动发布需排查 OOM/崩溃；下一夜自动转绿。"
+                  "发布脚本向助理报一次 relay-deploy 事件，以后发布就不会报红")
         return CheckResult("存活 /api/status", False, detail), new_state
     return CheckResult("存活 /api/status", True, f"200 success=true · version {version} · 无重启"), new_state
 
@@ -202,7 +231,10 @@ def run_duty(repo_root: str, *, fetch: Fetch = _default_fetch,
 
     state = _load_state(repo_root)
     results: List[CheckResult] = []
-    status_result, new_state = _check_status(fetch, base, state)
+    source = str(environ.get("VORTOCODE_RELAY_DEPLOY_SOURCE") or "relay-deploy").strip()
+    status_result, new_state = _check_status(fetch, base, state,
+                                             lambda since: _deploy_since(repo_root, source, since))
+    new_state["checked_at"] = moment
     results.append(status_result)
     results.append(_check_pricing(fetch, base))
     results.append(_check_billing(fetch, base, sk))

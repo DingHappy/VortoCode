@@ -150,3 +150,10 @@ def test_notices_are_capped_per_day_and_scrubbed(monkeypatch):
     assert hb.notice_text("account-service", "隔天又能发", now=T0 + timedelta(days=1, minutes=1))
     assert "sk-abcdefghijklmnopqrstuvwx123456" not in hb.notice_text(
         "account-service", "key sk-abcdefghijklmnopqrstuvwx123456", now=T0 + timedelta(days=1, minutes=2))
+
+
+def test_route_accepts_event_reports(client, monkeypatch):
+    monkeypatch.setenv("VORTOCODE_OPS_TOKEN", "ops-token")
+    response = client.post("/api/ops/heartbeat", json={"source": "relay-deploy", "ok": True, "text": "发布", "event": True},
+                           headers={"Authorization": "Bearer ops-token"})
+    assert response.status_code == 200 and response.json()["notified"] is False

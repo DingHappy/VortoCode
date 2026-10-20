@@ -36,11 +36,11 @@ async def ops_heartbeat(request: Request):
     except ValueError:
         raise HTTPException(400, "不是合法的 JSON") from None
     if not isinstance(body, dict) or not isinstance(body.get("ok"), bool):
-        raise HTTPException(400, "需要 {source, ok, text?, expect_hours?}")
+        raise HTTPException(400, "需要 {source, ok, text?, expect_hours?, event?}")
     root = os.getcwd()
     try:
         message = record(root, str(body.get("source") or ""), ok=body["ok"], text=str(body.get("text") or ""),
-                         expect_hours=body.get("expect_hours", 26))
+                         expect_hours=body.get("expect_hours", 26), event=body.get("event") is True)
     except HeartbeatError as error:
         raise HTTPException(400, str(error)) from None
     if message:

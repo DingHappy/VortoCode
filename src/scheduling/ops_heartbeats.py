@@ -62,8 +62,10 @@ def _parse(value: Any) -> Optional[datetime]:
 
 
 def record(root: str, source: str, *, ok: bool, text: str = "", expect_hours: float = 26,
-           now: Optional[datetime] = None) -> Optional[str]:
-    """记一次报到；返回要推给主人的话（失败、或失败后第一次恢复），平安无事返回 None。"""
+           now: Optional[datetime] = None, event: bool = False) -> Optional[str]:
+    """记一次报到；返回要推给主人的话（失败、或失败后第一次恢复），平安无事返回 None。
+
+    ``event=True``：事件型报到（如「中转站刚发布」），只记发生时间，不约定间隔、不会因为没报而提醒，也不进早报运维摘要。"""
     source = str(source or "").strip()
     if not _SOURCE.fullmatch(source):
         raise HeartbeatError("source 只能用小写字母、数字和 -，最长 40 个字符")
@@ -83,6 +85,8 @@ def record(root: str, source: str, *, ok: bool, text: str = "", expect_hours: fl
         entry = data.get(source, {})
         was_failing = entry.get("status") == "failed" or bool(entry.get("overdue_alerted_at"))
         entry.update(status="ok" if ok else "failed", text=text, expect_hours=expect, last_report=_iso(now))
+        if event:
+            entry["event"] = True
         if ok:
             entry["last_ok"] = _iso(now)
             entry.pop("overdue_alerted_at", None)
@@ -103,7 +107,7 @@ def overdue(root: str, now: Optional[datetime] = None) -> List[str]:
         data = _load(root)
         changed = False
         for source, entry in data.items():
-            if entry.get("overdue_alerted_at"):
+            if entry.get("overdue_alerted_at") or entry.get("event"):
                 continue
             last = _parse(entry.get("last_ok") or entry.get("last_report"))
             expect = float(entry.get("expect_hours") or 26)
@@ -147,7 +151,7 @@ def notice_text(source: str, text: str, now: Optional[datetime] = None) -> str:
 def brief_line(root: str, now: Optional[datetime] = None) -> str:
     """早报末尾的一行运维摘要。没有任何报到来源（没配运维心跳的机器）就是空串，早报里完全不出现。"""
     now = now or datetime.now(timezone.utc)
-    data = _load(root)
+    data = {source: entry for source, entry in _load(root).items() if not entry.get("event")}
     if not data:
         return ""
     healthy, problems = [], []

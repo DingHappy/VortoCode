@@ -127,3 +127,34 @@ def test_custom_relay_url_from_env(tmp_path):
     assert code == 0
     assert all(url.startswith("http://127.0.0.1:3001/") for url, _ in calls)
     assert "http://127.0.0.1:3001" in report
+
+
+def test_restart_after_a_deploy_report_is_a_release_not_an_alarm(tmp_path):
+    """发布脚本报了 relay-deploy 事件 → 这次重启算发布；没报的重启照旧报异常；上次巡检之前的报到不算数。"""
+    from datetime import datetime, timezone
+
+    from src.scheduling.ops_heartbeats import brief_line, overdue, record
+
+    root, env = str(tmp_path), {}
+    assert run_duty(root, fetch=_fake_fetch(_healthy_routes(1700000000)), env=env, now=1700003600)[0] == 0
+    record(root, "relay-deploy", ok=True, text="发布 a1b2c3", event=True,
+           now=datetime.fromtimestamp(1700050000, timezone.utc))
+    code, report = run_duty(root, fetch=_fake_fetch(_healthy_routes(1700050100)), env=env, now=1700090000)
+    assert code == 0 and "重启过，是发布：发布 a1b2c3" in report
+    code, report = run_duty(root, fetch=_fake_fetch(_healthy_routes(1700150000)), env=env, now=1700176400)
+    assert code == 1 and "进程重启过" in report and "relay-deploy" in report      # 旧的发布报到不能洗白新的重启
+    later = datetime.fromtimestamp(1700176400 + 30 * 86400, timezone.utc)
+    assert overdue(root, later) == [] and brief_line(root, later) == ""           # 事件型报到不催、不进运维摘要
+
+
+def test_deploy_source_is_configurable_and_failed_deploys_do_not_count(tmp_path):
+    from datetime import datetime, timezone
+
+    from src.scheduling.ops_heartbeats import record
+
+    root, env = str(tmp_path), {"VORTOCODE_RELAY_DEPLOY_SOURCE": "relay-release"}
+    run_duty(root, fetch=_fake_fetch(_healthy_routes(1700000000)), env=env, now=1700003600)
+    record(root, "relay-release", ok=False, text="发布失败", event=True, now=datetime.fromtimestamp(1700050000, timezone.utc))
+    assert run_duty(root, fetch=_fake_fetch(_healthy_routes(1700050100)), env=env, now=1700090000)[0] == 1
+    record(root, "relay-release", ok=True, event=True, now=datetime.fromtimestamp(1700100000, timezone.utc))
+    assert run_duty(root, fetch=_fake_fetch(_healthy_routes(1700100100)), env=env, now=1700176400)[0] == 0
