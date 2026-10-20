@@ -5,7 +5,7 @@
 - 一段进度汇报：这半小时有进展、或还有会话在做事时才发；里面列出要你处理的事（失败、要你拿主意）；
 - 每条拟好的动作一条带「批准 / 拒绝」按钮的消息：
   · 卡住：在做事，但跟上次检查比没有任何新动作 → 拟好「叫停」；
-  · 推进：一轮做完、会话空着 → 请模型判断做完没有，没做完拟下一句给 Codex 的话；要你定方向就写进汇报里问你。
+  · 推进：一轮做完、会话空了 15 分钟以上 → 请模型判断做完没有，没做完拟下一句给 Codex 的话；要你定方向就写进汇报里问你。
 - Mac 停止报告而会话还在做事 → 提醒一次。
 
 等批准 / 等回答、服务出错这种 Codex 卡在你身上的事不等半小时，由 ``codex_watch`` 马上推。
@@ -30,6 +30,7 @@ logger = logging.getLogger("vortocode.codex")
 
 DEFAULTS: Dict[str, Any] = {"interval_minutes": 30, "nudge": True}
 _LIMITS = {"interval_minutes": (10, 24 * 60)}
+NUDGE_AFTER_IDLE = timedelta(minutes=15)    # 做完一轮后空这么久才判断下一步
 
 
 def _path(root: str) -> Path:
@@ -161,6 +162,13 @@ def _status_text(thread: dict) -> str:
     return str(codex_watch.STATUS_TEXT.get(thread.get("status"), thread.get("status")))
 
 
+def _reply_head(reply: str, limit: int = 160) -> str:
+    """Codex 的回复开头一段通常就是结论（「已完成，并 commit＋push：」）；取它，不从半句中间切。"""
+    from src.scheduling.assistant_watch import _clip_head
+    paragraphs = [part.strip() for part in reply.replace("**", "").split("\n\n") if part.strip()]
+    return _clip_head(paragraphs[0], limit) if paragraphs else ""
+
+
 def _progress_line(thread: dict, finished: List[dict], assessment: str) -> str:
     turn = thread.get("turn") or {}
     line = f"· 「{thread.get('name')}」{_status_text(thread)}"
@@ -179,7 +187,7 @@ def _progress_line(thread: dict, finished: List[dict], assessment: str) -> str:
     if assessment:
         line += f"\n  助理看法：{assessment[:200]}"
     elif turn.get("status") == "completed" and turn.get("reply"):
-        line += f"\n  最后说：{turn['reply'][-160:]}"
+        line += f"\n  最后说：{_reply_head(turn['reply'])}"
     return line
 
 
@@ -250,7 +258,10 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
                 needs_you.append(text[2:])
 
         # 推进：最近一轮做完、会话空着、还没判断过 → 请模型看下一步；只看在眼前做完的轮次（有结束事件），刚打开的旧会话不算
-        seen_finish = any(event.get("turn_id") == turn.get("id") for event in state.get("events") or [])
+        finish_at = next((codex_watch._parse(event.get("at")) for event in reversed(state.get("events") or [])
+                          if event.get("turn_id") == turn.get("id")), None)
+        # 刚做完的先不判断：你可能正在跟它来回说，下次检查再看（它还空着才说明真停下了）
+        seen_finish = finish_at is not None and now - finish_at >= NUDGE_AFTER_IDLE
         if (config["nudge"] and turn.get("status") == "completed" and thread.get("status") == "idle"
                 and not codex_watch._waiting(thread) and turn.get("id") and seen_finish
                 and mark.get("reviewed_turn") != turn["id"] and not _pending_action(root, tid)):
@@ -277,7 +288,7 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
                     needs_you.append(f"{label}要你定方向：{assessment}")
 
         marks[tid] = mark
-        if moved or finished or thread.get("status") == "active" or codex_watch._waiting(thread) or assessment:
+        if finished or thread.get("status") == "active" or codex_watch._waiting(thread) or assessment:
             lines.append(_progress_line(thread, finished, assessment))
 
     live = {thread["id"] for thread in threads}

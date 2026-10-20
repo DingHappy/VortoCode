@@ -19,8 +19,8 @@ def _thread(status="active", turn_status="inProgress", tid="t1", commands=1, rep
                      "files": ["src/login.py"], "file_count": 1, "reply": reply, "error": error}}
 
 
-def _done(tid="t1", **kw):
-    return _thread(status="idle", turn_status="completed", tid=tid, reply="改好了", **kw)
+def _done(tid="t1", reply="改好了", **kw):
+    return _thread(status="idle", turn_status="completed", tid=tid, reply=reply, **kw)
 
 
 class Notes:
@@ -129,7 +129,7 @@ async def test_ask_verdict_and_failures_land_in_the_to_do_list(tmp_path):
     await _check(root, T0, notes, llm)
     _report(root, _thread(status="idle", turn_status="failed", tid="t0", error="网络超时"), _m(5))
     _report(root, _thread(tid="t1"), _m(6))
-    _report(root, _done("t1"), _m(20))
+    _report(root, _done("t1"), _m(10))
     await _check(root, _m(30), notes, llm)
     text = notes.texts()[0]
     assert "要你处理" in text and "失败：网络超时" in text and "要你定方向：要选用哪个数据库" in text
@@ -198,3 +198,27 @@ async def test_assistant_can_see_what_it_pushed_when_the_owner_replies(tmp_path)
     text = await tool.handler({"limit": "5"})
     assert tool.read_only and tool.untrusted_source
     assert text.index("早报") < text.index("要选用哪个数据库")          # 新的在前
+
+
+@pytest.mark.asyncio
+async def test_a_turn_that_just_finished_waits_for_the_next_check(tmp_path):
+    root, notes = str(tmp_path), Notes()
+    llm = FakeLLM('{"verdict": "continue", "assessment": "还差测试", "next": "补测试"}')
+    _report(root, _thread(), T0)
+    await _check(root, T0, notes, llm)
+    _report(root, _done(reply="已完成，并 commit＋push：\n\n- 分支 feat/x\n- 提交 7a06b797"), _m(25))   # 你可能还在跟它说
+    await _check(root, _m(30), notes, llm)
+    assert llm.calls == 0 and "最后说：已完成，并 commit＋push：" in notes.texts()[0]
+    _report(root, _done(reply="已完成，并 commit＋push：\n\n- 分支 feat/x\n- 提交 7a06b797"), _m(55))   # 观察员心跳
+    await _check(root, _m(60), notes, llm)              # 还空着：真停下了，再判断
+    assert llm.calls == 1 and watch.load_actions(root)[0]["text"] == "补测试"
+
+
+@pytest.mark.asyncio
+async def test_idle_sessions_without_news_are_left_out(tmp_path):
+    root, notes = str(tmp_path), Notes()
+    _report(root, _done(), T0)
+    await _check(root, T0, notes)
+    watch.record_report(root, {"threads": [_done(), {**_done(), "id": "th2", "name": "", "turn": None}]}, now=_m(10))
+    await _check(root, _m(30), notes)
+    assert not notes.sent                               # 新打开的空会话、旧会话都不算进展
