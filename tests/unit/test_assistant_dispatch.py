@@ -96,7 +96,7 @@ async def test_refresh_maps_remote_status_and_keeps_unreachable_entries(tmp_path
 
 async def test_tools_only_propose_and_say_it_is_not_running_yet(tmp_path):
     tools = {tool.name: tool for tool in dispatch.build_dispatch_tools(str(tmp_path), is_tainted=lambda: True)}
-    assert set(tools) == {"propose_task", "list_dispatches", "answer_dispatch_question", "dispatch_answer_memory"} and not tools["propose_task"].read_only
+    assert set(tools) == {"propose_task", "list_dispatches", "answer_dispatch_question", "dispatch_answer_memory", "dispatch_stats"} and not tools["propose_task"].read_only
     reply = await tools["propose_task"].handler({"project": "VortoCode", "title": "修登录", "goal": "改超时",
                                                  "criteria": "- 单测\n- 不改接口"})
     assert "还没有执行" in reply

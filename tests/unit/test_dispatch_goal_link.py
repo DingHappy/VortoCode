@@ -124,3 +124,15 @@ def test_confirm_route_is_audited(tmp_path, monkeypatch):
     assert client.post("/api/dispatches/dsp-nope/confirm_goal").status_code == 409
     assert any("确认任务单达成目标标准" in row["operation"] for row in list_audit(str(tmp_path), 10)
                if row["category"] == "decision")
+
+
+def test_one_live_ticket_per_goal_criterion(tmp_path):
+    root = str(tmp_path)
+    goal_id, criterion_id = _goal(root)
+    first = dispatch.propose(root, project="VortoCode", title="改超时", goal="g", goal_id=goal_id, criterion_id=criterion_id)
+    with pytest.raises(dispatch.DispatchError, match="已经有任务单"):
+        dispatch.propose(root, project="VortoCode", title="又改超时", goal="g", goal_id=goal_id, criterion_id=criterion_id)
+    other = PersonalGoals(root).get(goal_id)["acceptance_criteria"][1]["id"]
+    dispatch.propose(root, project="VortoCode", title="手机登录", goal="g", goal_id=goal_id, criterion_id=other)
+    dispatch.cancel(root, first["id"])
+    dispatch.propose(root, project="VortoCode", title="重新派", goal="g", goal_id=goal_id, criterion_id=criterion_id)

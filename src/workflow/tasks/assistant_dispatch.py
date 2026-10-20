@@ -232,6 +232,12 @@ def propose(root: str, *, project: str, title: str, goal: str, criteria: Optiona
     }
     with _transaction(root):
         items = _load(root)
+        if link and link.get("criterion_id") and not retry_of:
+            busy = next((item for item in items if (item.get("goal_link") or {}).get("criterion_id") == link["criterion_id"]
+                         and (item.get("goal_link") or {}).get("id") == link["id"]
+                         and item.get("status") not in _TERMINAL | {"stopped"}), None)
+            if busy is not None:
+                raise DispatchError(f"这条验收标准已经有任务单 {busy['id']}（{busy.get('status')}），别重复派")
         if sum(item.get("status") not in _TERMINAL for item in items) >= _MAX_ENTRIES:
             raise DispatchError("活动任务单已达上限，请先处理已有任务；未丢弃旧任务")
         items.append(entry)
@@ -520,6 +526,10 @@ async def _refresh_one(root: str, entry: dict, http, *, include_delivery: bool =
             question["seen_at"] = item["question"].get("seen_at") if same else _now()
         item["question"] = question
         item["progress"] = _progress(task, plan)
+        if status in {"done", "failed", "stopped"} and not item.get("finished_at"):
+            item["finished_at"] = _now()                 # 统计「多久做完」用；只记第一次看到结束
+        elif status in {"running", "waiting"}:
+            item.pop("finished_at", None)                # 停下后又续跑：重新算
         item["last_sync_attempt_at"] = _now()
         if include_delivery:
             item.update(recovery_task=recovered, recovery_error=recovery_error)
@@ -812,7 +822,19 @@ def build_dispatch_tools(root: str, *, is_tainted: Callable[[], bool] = lambda: 
         return (f"{name} 记下的回答（以后派这个项目的活会带上，供任务参考）：\n"
                 + "\n".join(f"{index}. 问：{row.get('question')} 答：{row.get('answer')}" for index, row in enumerate(rows, 1)))
 
+    async def _stats(args: dict) -> str:
+        from src.workflow.tasks.dispatch_stats import dispatch_stats, stats_text
+        try:
+            days = min(365, max(1, int(args.get("days") or 30)))
+        except (TypeError, ValueError):
+            days = 30
+        return stats_text(dispatch_stats(root, datetime.now(timezone.utc), days))
+
     return [
+        Tool("dispatch_stats",
+             "派活的成绩：最近 N 天下发多少、做成多少、第一次就成的比例、重试后成的、问了用户几次、通常多久做完、"
+             "验收标准对上多少。用户问「派活效果怎么样」「成功率多少」时用。",
+             {"days": "统计最近几天，默认 30"}, _stats, read_only=True),
         Tool("dispatch_answer_memory",
              "查看或删除某个项目记下的回答：派出去的任务问过、用户答过的，会记下来，以后派同一个项目的活时自动带上，"
              "免得同样的问题再问。用户说「那个回答只是这次的」「别再按那个来」时用 forget 删掉。",
@@ -827,7 +849,9 @@ def build_dispatch_tools(root: str, *, is_tainted: Callable[[], bool] = lambda: 
         Tool("propose_task",
              "把一件开发/修改代码的活写成任务单，交给常驻电脑上的项目去做（隔离分支交付）。"
              f"只是提议：用户在 Desktop 确认后才会执行。可派活的项目：{names}。"
-             "目标要写清楚背景、要改什么、范围边界；验收标准写成可检查的几条。",
+             "目标要写清楚背景、要改什么、范围边界；验收标准写成可检查的几条。"
+             "用户让你推进某个个人目标时：先用 personal_goals 看它的验收标准，对还没通过、靠改代码能达成的每一条"
+             "各写一张任务单并填 goal_id / criterion_id（一条标准一张，不要合并）；不靠改代码的标准告诉用户要他自己做什么。",
              {"project": f"项目名，只能是：{names}", "title": "一句话标题（不超过 30 字）",
               "goal": "要做成什么、为什么、范围边界", "criteria": "验收标准，每行一条",
               "retry_of": "可选：接着哪张失败 / 没做完的任务单再来（dsp-…）。会自动带上它的错误和输出，"

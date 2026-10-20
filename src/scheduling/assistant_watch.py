@@ -322,6 +322,15 @@ async def compose_report(root: str, now: datetime, label: str, *, llm: Any = Non
     新闻标题是外部内容：只原样附在模型写完的正文后面，**不进模型上下文**，免得被当成指令。
     """
     body = await _compose_body(root, now, label, llm=llm)
+    if body and label == "晚报" and now.weekday() == 6:
+        # 周日晚报附一段本周派活成绩（确定性数字，不进模型上下文）；这周没下发过就不带
+        try:
+            from src.workflow.tasks.dispatch_stats import dispatch_stats, stats_text
+            stats = dispatch_stats(root, now, 7)
+            if stats["sent"]:
+                body += "\n\n" + stats_text(stats, title="📊 本周派活")
+        except Exception as error:  # noqa: BLE001 —— 统计是附带的
+            logger.warning("派活统计失败：%s", type(error).__name__)
     if not body or label != "早报":
         return body
     from src.scheduling.ops_heartbeats import brief_line
