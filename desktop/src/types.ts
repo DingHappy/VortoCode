@@ -299,6 +299,19 @@ export interface AssistantDispatch {
   pr_error?: string;
   attempt?: number;
   retry_of?: string;
+  /** 助理复盘失败后拟的「这次换什么做法」 */
+  retry_note?: string;
+  /** 结束后助理的复盘：做完逐条对照验收标准，失败诊断原因（可能已起草下一次） */
+  outcome?: {
+    kind: "acceptance" | "diagnosis";
+    criteria?: { text: string; verdict: "met" | "unmet" | "unknown"; evidence: string }[];
+    summary?: string;
+    diagnosis?: string;
+    retry?: boolean;
+    change?: string;
+    draft_id?: string;
+    capped?: boolean;
+  };
   created_at: string;
   updated_at: string;
 }

@@ -53,6 +53,7 @@ export function AssistantTaskCard({ task, connected, onAction }: Props) {
     {task.sync_state === "unreachable" && <p role="status">当前无法核实，保留上次执行状态。{task.sync_error}</p>}
     {task.last_checked_at && <small>上次核对：{new Date(task.last_checked_at).toLocaleString()}</small>}
     {task.attempt && task.attempt > 1 && <small>第 {task.attempt} 次尝试{task.retry_of ? `（接着 ${task.retry_of}）` : ""}</small>}
+    {task.status === "proposed" && task.retry_note && <p>这次换个做法：{task.retry_note}</p>}
     {task.status === "proposed" && actionRow}
     {task.status === "waiting" && task.question && <section className="assistant-task-question" aria-label="任务在问的问题">
       <p><strong>任务在问你：</strong></p>
@@ -90,6 +91,18 @@ export function AssistantTaskCard({ task, connected, onAction }: Props) {
         <small>证据核对：{new Date(task.delivery_evidence.checked_at).toLocaleString()}</small>
       </> : <p>尚未核对交付证据，点击“核对状态”获取当前提交与审查情况。</p>}
       {task.delivery_error && <p role="status">当前无法核实交付证据：{task.delivery_error}</p>}
+    </section>}
+    {task.outcome?.kind === "acceptance" && task.outcome.criteria && task.outcome.criteria.length > 0 &&
+      <section className="assistant-task-acceptance" aria-label="验收对照">
+        <p>验收对照（助理看输出判断，不代表人工验收）：{task.outcome.criteria.filter(row => row.verdict === "met").length}/{task.outcome.criteria.length} 条对上</p>
+        <ul>{task.outcome.criteria.map((row, i) => <li key={i}>
+          {({ met: "✓", unmet: "✗", unknown: "?" })[row.verdict]} {row.text}{row.evidence ? `——${row.evidence}` : ""}</li>)}</ul>
+      </section>}
+    {task.outcome?.kind === "diagnosis" && <section aria-label="失败复盘">
+      <p>助理的判断：{task.outcome.diagnosis}</p>
+      {task.outcome.draft_id ? <small>已拟好下一次的任务单（换个做法：{task.outcome.change}），在任务单列表里等你确认。</small>
+        : task.outcome.capped ? <small>这件事已经试了好几次，建议换个做法或拆小再派。</small>
+        : <small>换个做法也难成，需要你拿主意：告诉助理想怎么改。</small>}
     </section>}
     {task.result && <details><summary>执行结果</summary><p className="assistant-task-text">{task.result}</p></details>}
     {task.error && <p className="task-error">{task.error}</p>}
