@@ -229,18 +229,20 @@ async def test_timeout_and_cancel_close_response_without_retry(endpoint):
     from threading import Event
     url,state=endpoint;entered=Event();release=Event()
     def blocked(p,msg):
-        entered.set();release.wait(timeout=3)
+        entered.set();release.wait(timeout=30)
         return 200,'application/json',json.dumps(msg).encode()
     state['reply']=blocked;client=StreamableHTTPMCPClient('fixture',url,timeout=.05)
     try:
         await client.connect()
         with pytest.raises(TimeoutError):await client.list_tools()
         assert len(state['calls'])==1
-        client.timeout=2
+        # 超时给足：慢的 CI 上取消晚到时，过了期限的计时器会把取消改报成 TimeoutError（2026-10-20 CI 偶发红）
+        client.timeout=60
         task=asyncio.create_task(client.list_tools())
-        for _ in range(100):
+        for _ in range(1000):
             if len(state['calls'])==2:break
-            await asyncio.sleep(.001)
+            await asyncio.sleep(.01)
+        assert len(state['calls'])==2
         task.cancel()
         with pytest.raises(asyncio.CancelledError):await task
         assert len(state['calls'])==2
@@ -384,15 +386,16 @@ async def test_legacy_cancel_notifies_original_request_without_replay(endpoint):
     from threading import Event
     url,state=endpoint;release=Event()
     def reply(p,msg):
-        if p['method']=='tools/call':release.wait(timeout=3)
+        if p['method']=='tools/call':release.wait(timeout=30)
         return 200,'application/json',json.dumps(msg).encode()
-    state['reply']=reply;client=StreamableHTTPMCPClient('fixture',url,protocol_version='2025-11-25')
+    state['reply']=reply;client=StreamableHTTPMCPClient('fixture',url,protocol_version='2025-11-25',timeout=60)
     try:
         await client.connect();await client.list_tools()
         task=asyncio.create_task(client.call_tool(MCPToolCall(tool_name='count',arguments={'count':2})))
-        for _ in range(100):
+        for _ in range(1000):                       # 等请求真的到了服务端再取消；慢 CI 上 100ms 不够
             if any(p['method']=='tools/call' for p,h in state['calls']):break
-            await asyncio.sleep(.001)
+            await asyncio.sleep(.01)
+        assert any(p['method']=='tools/call' for p,h in state['calls'])
         task.cancel()
         with pytest.raises(asyncio.CancelledError):await task
         calls=[p for p,h in state['calls'] if p['method']=='tools/call']

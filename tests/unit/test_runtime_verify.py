@@ -478,7 +478,7 @@ def test_parallel_pytest_and_timeout_are_opt_in(monkeypatch):
     monkeypatch.delenv("VORTOCODE_TEST_WORKERS", raising=False)
     monkeypatch.delenv("VORTOCODE_TEST_TIMEOUT", raising=False)
     assert worktree._parallel_pytest(["python", "-m", "pytest", "-q"]) == ["python", "-m", "pytest", "-q"]
-    assert worktree._test_timeout() == 600
+    assert worktree._test_timeout() == 1200
     monkeypatch.setenv("VORTOCODE_TEST_WORKERS", "auto")
     monkeypatch.setenv("VORTOCODE_TEST_TIMEOUT", "1500")
     assert worktree._parallel_pytest(["python", "-m", "pytest", "-q"])[-4:] == ["-n", "auto", "--dist", "loadfile"]
@@ -486,7 +486,7 @@ def test_parallel_pytest_and_timeout_are_opt_in(monkeypatch):
     assert worktree._parallel_pytest(["pytest", "-n", "2"]) == ["pytest", "-n", "2"]     # 已指定就不加
     assert worktree._test_timeout() == 1500
     monkeypatch.setenv("VORTOCODE_TEST_TIMEOUT", "abc")
-    assert worktree._test_timeout() == 600
+    assert worktree._test_timeout() == 1200
 
 
 def test_sandboxed_tests_get_a_writable_throwaway_cache(tmp_path, monkeypatch):
@@ -526,3 +526,46 @@ def test_selftest_failure_note_carries_the_test_tail():
     assert "collected" not in tail
     assert _evidence_tail("测试超时（>600s）") == "：测试超时（>600s）"
     assert _evidence_tail("") == "" and _evidence_tail(None) == ""
+
+
+def _red(*ids, cmd="python -m pytest -q"):
+    summary = "\n".join(f"FAILED {test} - AssertionError" for test in ids)
+    return {"ok": False, "output": f"...\n{summary}\n{len(ids)} failed", "cmd": cmd}
+
+
+def test_flaky_failures_pass_on_rerun_and_are_reported(monkeypatch, tmp_path):
+    reruns = []
+
+    def rerun(path, cmd=None, timeout=None, **_kw):
+        reruns.append(cmd)
+        return {"ok": True, "output": "2 passed", "cmd": " ".join(cmd)}
+    monkeypatch.setattr(worktree, "run_tests", rerun)
+    result = worktree.retry_failed(tmp_path, _red("tests/a.py::t1", "tests/b.py::t2"))
+    assert result["ok"] and result["flaky"] == ["tests/a.py::t1", "tests/b.py::t2"]
+    assert "重跑通过" in result["output"] and len(reruns) == 1 and reruns[0][-2:] == ["tests/a.py::t1", "tests/b.py::t2"]
+    assert "不稳定测试" in worktree.baseline_note(result)
+
+
+def test_real_failures_stay_red_and_only_they_go_to_the_baseline_check(monkeypatch, tmp_path):
+    monkeypatch.setattr(worktree, "run_tests", lambda path, cmd=None, **_kw: _red("tests/b.py::t2"))
+    result = worktree.retry_failed(tmp_path, _red("tests/a.py::t1", "tests/b.py::t2"))
+    assert not result["ok"] and result["flaky"] == ["tests/a.py::t1"]
+    assert worktree.failed_test_ids(result["output"]) == ["tests/b.py::t2"]           # 下一关只看仍然失败的
+    monkeypatch.setattr(worktree, "run_tests", lambda path, cmd=None, **_kw: _red("tests/a.py::t1", "tests/b.py::t2"))
+    original = _red("tests/a.py::t1", "tests/b.py::t2")
+    assert worktree.retry_failed(tmp_path, original) is original                      # 全部仍失败：原样交下去
+
+
+def test_retry_is_skipped_when_it_cannot_be_trusted(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(worktree, "run_tests", lambda *a, **k: calls.append(1) or {"ok": False, "output": "测试超时（>1200s）"})
+    timed_out = _red("tests/a.py::t1")
+    assert worktree.retry_failed(tmp_path, timed_out) is timed_out                    # 重跑超时：不改判
+    not_pytest = _red("tests/a.py::t1", cmd="npm test")
+    unparsed = {"ok": False, "output": "collection error", "cmd": "pytest -q"}
+    too_many = _red(*[f"tests/a.py::t{i}" for i in range(60)])
+    for result in (not_pytest, unparsed, too_many, {"ok": True, "output": "", "cmd": "pytest"}):
+        assert worktree.retry_failed(tmp_path, result) is result
+    assert len(calls) == 1
+    monkeypatch.setattr(worktree, "run_tests", lambda *a, **k: {"ok": False, "output": "INTERNALERROR", "cmd": "pytest"})
+    assert worktree.retry_failed(tmp_path, timed_out) is timed_out                    # 重跑红了但读不出是谁
