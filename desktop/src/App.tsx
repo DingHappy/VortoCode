@@ -3100,10 +3100,11 @@ function App() {
         return;
       }
       // 回答 / 开 PR：按钮在卡片上，人亲手点；后端记审计
-      if (action === "answer" || action === "open_pr") {
+      if (action === "answer" || action === "open_pr" || action === "confirm_goal") {
         if (!current()) return;
         try {
           if (action === "answer") await client.answerDispatch(item.id, answer ?? "");
+          else if (action === "confirm_goal") await client.confirmDispatchGoal(item.id);
           else await client.openDispatchPr(item.id);
         } finally { if (current()) await refreshAgentTurns(); }
         return;

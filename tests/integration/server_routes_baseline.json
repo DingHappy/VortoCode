@@ -842,6 +842,12 @@
     ]
   },
   {
+    "path": "/api/dispatches/{dispatch_id}/confirm_goal",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
     "path": "/api/dispatches/{dispatch_id}/open_pr",
     "methods": [
       "POST"

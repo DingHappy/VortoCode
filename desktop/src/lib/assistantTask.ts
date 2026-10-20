@@ -1,6 +1,6 @@
 import type { AssistantDispatch } from "../types";
 
-export type AssistantTaskAction = "approve" | "cancel" | "refresh" | "open" | "answer" | "open_pr";
+export type AssistantTaskAction = "approve" | "cancel" | "refresh" | "open" | "answer" | "open_pr" | "confirm_goal";
 
 export function assistantTaskActions(task: AssistantDispatch) {
   return {
@@ -13,6 +13,8 @@ export function assistantTaskActions(task: AssistantDispatch) {
     answer: task.status === "waiting" && Boolean(task.question) && Boolean(task.remote_session),
     openPr: task.status === "done" && !task.error && !task.pr_url && task.branch.startsWith("vorto/")
       && task.pr_state !== "opening",
+    // 挂了目标验收标准、成功做完、还没确认过：人点一下记为通过
+    confirmGoal: task.status === "done" && !task.error && Boolean(task.goal_link?.criterion_id) && !task.goal_confirmed_at,
   };
 }
 

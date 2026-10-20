@@ -82,3 +82,14 @@ async def open_dispatch_pr(dispatch_id: str):
         raise HTTPException(status_code=409, detail=str(error)) from error
     _audit(entry, True, "为任务单开 draft PR")
     return entry
+
+
+@router.post("/api/dispatches/{dispatch_id}/confirm_goal")
+async def confirm_dispatch_goal(dispatch_id: str):
+    """任务卡上确认「做完的这张单达成了它挂的那条目标验收标准」：人亲手点，等于在目标卡上确认。"""
+    try:
+        entry = dispatch.confirm_goal(os.getcwd(), dispatch_id)
+    except dispatch.DispatchError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    _audit(entry, True, "确认任务单达成目标标准")
+    return entry

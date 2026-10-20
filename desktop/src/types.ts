@@ -305,6 +305,9 @@ export interface AssistantDispatch {
     stage: "" | "running" | "integrated" | "integration_failed" | "done" | "failed";
     steps: { title: string; status: "pending" | "running" | "landed" | "failed" }[];
   } | null;
+  /** 这件活是为哪个个人目标（的哪条验收标准）做的 */
+  goal_link?: { id: string; objective: string; criterion_id: string; criterion: string } | null;
+  goal_confirmed_at?: string;
   /** 助理复盘失败后拟的「这次换什么做法」 */
   retry_note?: string;
   /** 结束后助理的复盘：做完逐条对照验收标准，失败诊断原因（可能已起草下一次） */

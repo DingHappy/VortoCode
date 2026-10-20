@@ -121,3 +121,13 @@ it("a running task shows how far the pipeline got, step by step", () => {
     latest: "正在拆解任务", stage: "", steps: [] } }} connected onAction={async () => {}} />);
   expect(planning).toContain("还在拆计划：正在拆解任务");
 });
+
+it("a task done for a goal criterion asks the owner to confirm it once", () => {
+  const done: AssistantDispatch = { ...task, tainted: false, status: "done", remote_task_id: "t1", branch: "vorto/fix",
+    goal_link: { id: "personal-a", objective: "上线新版登录", criterion_id: "c1", criterion: "登录超时 30 秒" } };
+  const html = renderToStaticMarkup(<AssistantTaskCard task={done} connected onAction={async () => {}} />);
+  for (const text of ["为目标「上线新版登录」", "验收标准：登录超时 30 秒", "算达成这条目标标准"]) expect(html).toContain(text);
+  expect(assistantTaskActions({ ...done, goal_confirmed_at: "2026-10-20T00:00:00Z" }).confirmGoal).toBe(false);
+  expect(assistantTaskActions({ ...done, status: "failed" }).confirmGoal).toBe(false);
+  expect(assistantTaskActions({ ...done, goal_link: { ...done.goal_link!, criterion_id: "" } }).confirmGoal).toBe(false);
+});
