@@ -492,6 +492,10 @@ class IMBridge:
             fut = self._pending.get(ev.callback_id)
             if fut is not None and not fut.done():
                 fut.set_result(bool(ev.approved))
+            elif fut is None and str(ev.callback_id).startswith("dsp-"):
+                await self.adapter.ack_callback(ev)
+                await self._decide_dispatch(str(ev.callback_id), bool(ev.approved))
+                return
             await self.adapter.ack_callback(ev)
             return
         if ev.kind == "message":
@@ -995,6 +999,40 @@ class IMBridge:
             task.plan_id = plan.plan_id
             task.branch = plan.branch
         return result
+
+    async def _decide_dispatch(self, dispatch_id: str, approved: bool) -> None:
+        """任务单通知上的按钮：批准 = 下发给常驻电脑上的项目，拒绝 = 撤回。
+
+        由桥直接调派活台账，**不经过模型**（模型只能提议）；调用方已确认点按钮的是 owner。
+        读过外部内容的任务单（tainted）不接受手机下发，只能在 Desktop 确认。决定记进审核记录。
+        """
+        from src.workflow.tasks import assistant_dispatch as dispatch
+        verb = "下发" if approved else "撤回"
+        try:
+            entry = next((item for item in dispatch.list_dispatches(self.repo_root)
+                          if item.get("id") == dispatch_id), None)
+            if entry is None:
+                await self._safe_send("这张任务单找不到了，可能已经处理过。")
+                return
+            if entry.get("tainted"):
+                await self._safe_send("这张任务单是在读过网页等外部内容后写的，为安全起见只能在 Desktop 助理的「动态」里确认。")
+                return
+            entry = (await dispatch.approve(self.repo_root, dispatch_id) if approved
+                     else dispatch.cancel(self.repo_root, dispatch_id))
+        except dispatch.DispatchError as error:
+            await self._safe_send(f"没有{verb}：{error}")
+            return
+        try:
+            from src.gateway.audit import record_decision_audit
+            record_decision_audit(self.repo_root, session=self._sid, mode="",
+                                  operation=f"{verb}任务单「{entry.get('title')}」到 {entry.get('project')}（手机）",
+                                  decision=approved, tainted=False)
+        except Exception:  # noqa: BLE001 —— 审计失败不撤销已做的决定，但要留痕
+            import logging
+            logging.getLogger("vortocode.im").warning("任务单决定未能记入审计：%s", dispatch_id)
+        title = f"{entry.get('project')}：{entry.get('title')}"
+        await self._safe_send(f"✅ 已下发——{title}。做完、失败或需要你回答时会通知你。" if approved
+                              else f"已撤回——{title}。")
 
     async def _bg_confirm(self, message: str) -> bool:
         """回合外确认（后台任务用）：发按钮 → 等 owner 点击（poll 循环的 callback 分支解 Future）。超时=拒绝。"""

@@ -10912,3 +10912,9 @@ ul.trust-note {
   cursor: pointer;
 }
 
+/* 任务单正文可能很长：限高滚动，按钮不被挤到最底下 */
+.assistant-task-card .assistant-task-text {
+  max-height: 180px;
+  overflow-y: auto;
+}
+

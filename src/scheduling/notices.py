@@ -356,7 +356,8 @@ def make_notifier(repo_root: str, *, source: str = "scheduler", trigger: str = "
     """
     _default_source, _default_trigger = source, trigger
 
-    async def _notify(text, *, source: str = "", trigger: str = "", urgent: bool = False) -> bool:
+    async def _notify(text, *, source: str = "", trigger: str = "", urgent: bool = False,
+                      confirm_id: str = "") -> bool:
         # 归属可按次覆盖：同一个投递器既服务调度到点，也服务人手动触发（见 record_notice 的
         # source/trigger 之分）。不传就用造投递器时给的那套。
         # urgent=True（如投递探针）不受安静时段与重复合并影响：它要测的就是「此刻能不能送到」。
@@ -384,7 +385,11 @@ def make_notifier(repo_root: str, *, source: str = "scheduler", trigger: str = "
 
             await flush_quiet_digest(repo_root, _send)  # 先把时段里攒的补上，顺序才对
             # ③ IM 推已配对 owner：本进程有桥就直接发，没有就交给同机持有 IM 的服务（relay=False 时只本地）
-            delivered = bool(await notify_owner(f"🔔 {text}", relay=relay))
+            if confirm_id:   # 带「批准 / 拒绝」按钮（如助理任务单）；没有桥就退回纯文字
+                from src.gateway.im_runtime import notify_owner_confirm
+                delivered = bool(await notify_owner_confirm(f"🔔 {text}", confirm_id, relay=relay))
+            else:
+                delivered = bool(await notify_owner(f"🔔 {text}", relay=relay))
         except Exception:  # noqa: BLE001
             pass
         if delivered and not urgent:
