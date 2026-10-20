@@ -110,3 +110,14 @@ it("shows the assistant's acceptance check and failure diagnosis without claimin
   const draft = renderToStaticMarkup(<AssistantTaskCard task={{ ...task, retry_note: "先装依赖", attempt: 2 }} connected onAction={async () => {}} />);
   expect(draft).toContain("这次换个做法：先装依赖");
 });
+
+it("a running task shows how far the pipeline got, step by step", () => {
+  const running: AssistantDispatch = { ...task, tainted: false, status: "running", remote_task_id: "t1",
+    progress: { total: 3, landed: 1, failed: 0, more: 0, latest: "", stage: "running",
+      steps: [{ title: "改超时", status: "landed" }, { title: "补单测", status: "running" }, { title: "", status: "pending" }] } };
+  const html = renderToStaticMarkup(<AssistantTaskCard task={running} connected onAction={async () => {}} />);
+  for (const text of ["1/3 步已落地，正在做：补单测", "✓ 改超时", "▶ 补单测", "· 第 3 步"]) expect(html).toContain(text);
+  const planning = renderToStaticMarkup(<AssistantTaskCard task={{ ...running, progress: { total: 0, landed: 0, failed: 0, more: 0,
+    latest: "正在拆解任务", stage: "", steps: [] } }} connected onAction={async () => {}} />);
+  expect(planning).toContain("还在拆计划：正在拆解任务");
+});

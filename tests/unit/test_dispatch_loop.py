@@ -355,3 +355,33 @@ def test_same_question_keeps_only_the_latest_answer_and_the_list_is_bounded(tmp_
     for index in range(20):
         dispatch._remember_answer(root, "VortoCode", f"问题 {index}", "是")
     assert len(dispatch.project_answers(root, "VortoCode")) == dispatch.MAX_KNOWN_ANSWERS
+
+
+async def test_refresh_records_how_far_the_pipeline_got(tmp_path):
+    root = str(tmp_path)
+    plan = {"status": "running", "branch": "vorto/x", "progress": {"landed": 1, "failed": 0, "running": 1, "pending": 1, "total": 3},
+            "blocks": [{"title": "改超时", "status": "landed"}, {"title": "补单测" * 50, "status": "running"},
+                       {"title": "更新文档", "status": "weird"}]}
+    entry, remote = await _sent(root, remote_status="running", plan=plan, log=["拆出 3 块", "块 2 在跑"])
+    await dispatch.refresh(root, http=remote)
+    item = dispatch.list_dispatches(root)[0]
+    progress = item["progress"]
+    assert progress["total"] == 3 and progress["landed"] == 1 and progress["latest"] == "块 2 在跑"
+    assert [step["status"] for step in progress["steps"]] == ["landed", "running", "pending"]   # 认不得的状态不照抄
+    assert len(progress["steps"][1]["title"]) == 120
+    assert dispatch.progress_line(item).startswith("1/3 步已落地，正在做：补单测")
+    tools = {tool.name: tool for tool in dispatch.build_dispatch_tools(root)}
+    assert "进度：1/3 步已落地" in await tools["list_dispatches"].handler({})
+
+    remote.task.update(plan=None, log=["正在拆解任务"])
+    await dispatch.refresh(root, http=remote)
+    assert dispatch.progress_line(dispatch.list_dispatches(root)[0]) == "还在拆计划：正在拆解任务"
+
+
+def test_long_running_nudge_says_where_it_is(tmp_path):
+    item = {"progress": {"total": 4, "landed": 2, "failed": 1, "stage": "running", "latest": "",
+                         "steps": [{"title": "补单测", "status": "running"}]}}
+    assert dispatch.progress_line(item) == "2/4 步已落地，1 步失败，正在做：补单测"
+    assert dispatch.progress_line({**item, "progress": {**item["progress"], "stage": "integration_failed", "steps": []}}) \
+        == "2/4 步已落地，1 步失败，集成测试没过"
+    assert dispatch.progress_line({}) == ""

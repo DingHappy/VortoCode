@@ -31,3 +31,17 @@ export class AssistantActionGate {
     finally { pending.delete(key); }
   }
 }
+
+/** 一句话进度：「3/5 步已落地，正在做：补单测」；没有进度时空串。和常驻电脑那边的 progress_line 同口径。 */
+export function progressLine(task: AssistantDispatch): string {
+  const progress = task.progress;
+  if (!progress) return "";
+  if (!progress.total) return progress.latest ? `还在拆计划：${progress.latest}` : "";
+  let text = `${progress.landed}/${progress.total} 步已落地`;
+  if (progress.failed) text += `，${progress.failed} 步失败`;
+  if (progress.stage === "integrated") text += "，集成测试通过";
+  else if (progress.stage === "integration_failed") text += "，集成测试没过";
+  const running = progress.steps.filter(step => step.status === "running" && step.title).map(step => step.title);
+  if (running.length) text += `，正在做：${running.slice(0, 2).join("、")}`;
+  return text;
+}

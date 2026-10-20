@@ -10933,3 +10933,10 @@ ul.trust-note {
   resize: vertical;
   font: inherit;
 }
+
+/* 流水线每一步：前面的符号就是状态，不要再加列表编号 */
+.assistant-task-card .assistant-task-progress ol {
+  margin: 4px 0 0;
+  padding-left: 0;
+  list-style: none;
+}

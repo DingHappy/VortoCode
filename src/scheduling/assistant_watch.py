@@ -474,8 +474,10 @@ async def _nudge_overdue(root: str, now: datetime, items: List[Dict[str, Any]], 
             since = _when(started)
             if since and now - since >= LONG_RUNNING and nudged.get(item["id"]) != f"long:{started}":
                 hours = int((now - since).total_seconds() // 3600)
+                where = assistant_dispatch.progress_line(item)
                 if await _notify_accepted(notify, f"🐢 {title} 已经做了 {hours} 小时还没结束，可能卡住了。"
-                                                  "到 Desktop 的常驻电脑项目里看一眼进度。"):
+                                                  + (f"现在：{where}。" if where else "")
+                                                  + "到 Desktop 的任务卡或常驻电脑项目里看一眼。"):
                     nudged[item["id"]] = f"long:{started}"
         elif status == "waiting" and isinstance(item.get("question"), dict):
             question = item["question"]
