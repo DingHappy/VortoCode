@@ -22,6 +22,7 @@ _STATE_ENTRIES = [
     "dev_plans/",
     "tasks/",
     "dispatches/",
+    "codex/",
     "task_scans/",
     "goals/",
     "runs/",
