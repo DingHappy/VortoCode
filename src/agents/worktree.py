@@ -309,7 +309,7 @@ def apply_diffs_to_branch(repo_root, branch: str, items: list,
             if verify_tier(merged) == _TIER_DOCS:      # 整批都是文档：同样如实跳过，别演一遍
                 integration = _skipped_verification(", ".join(diff_paths(merged))[:120])
             else:
-                integration = compare_with_base(repo_root, base, run_tests(path, test_cmd))
+                integration = compare_with_base(repo_root, base, retry_failed(path, run_tests(path, test_cmd)))
         return {"ok": bool(applied), "branch": branch, "applied": applied,
                 "failed": failed, "integration": integration}
     finally:
@@ -330,7 +330,7 @@ async def in_worktree(repo_root, wid: str,
         await _git_op(remove_worktree, repo_root, path)
 
 
-def _test_timeout(default: int = 600) -> int:
+def _test_timeout(default: int = 1200) -> int:
     """测试超时（秒）：`VORTOCODE_TEST_TIMEOUT` 可调（慢机器上全量要更久），非法值用默认。"""
     try:
         value = int(os.getenv("VORTOCODE_TEST_TIMEOUT", "") or default)
@@ -420,6 +420,37 @@ def failed_test_ids(output: str) -> list[str]:
     return list(seen)
 
 
+def retry_failed(worktree, result: dict) -> dict:
+    """测试红了，先把失败的那几个在**同一份代码**上原样重跑一次：重跑通过的是不稳定测试，不算这次改动的错。
+
+    只重跑一次；重跑通过的如实列在 ``flaky`` 里（上层要写进报告）。仍然失败的照常往下交给
+    ``compare_with_base`` 判断是不是改动前就红。超时、没解析出失败 id、失败太多、不是 pytest 的原样返回。
+    否则偶发失败的测试拿到改动前的代码上多半通过，会被误算成「改动新弄坏的」（真机 2026-10-11）。
+    """
+    if result.get("ok") or result.get("skipped") or "pytest" not in str(result.get("cmd") or ""):
+        return result
+    failed = failed_test_ids(result.get("output") or "")
+    if not failed or len(failed) > _BASELINE_MAX:
+        return result
+    from src.utils.python_exe import pytest_argv
+    rerun = run_tests(worktree, pytest_argv("-q", *failed))
+    output = str(rerun.get("output") or "")
+    if "超时" in output[:40] or "无法运行" in output[:40]:
+        return result
+    still = set(failed_test_ids(output)) if not rerun.get("ok") else set()
+    if not rerun.get("ok") and not still:
+        return result                                    # 重跑红了却读不出是哪几个：不冒险
+    flaky = [test for test in failed if test not in still]
+    if not flaky:
+        return result
+    note = (f"⚠ {len(flaky)} 个测试第一次失败、原样重跑通过（不稳定，未计入本次改动）："
+            + "、".join(flaky[:5]) + "\n\n")
+    if still:
+        # 只把仍然失败的交给下一关；输出换成重跑的，免得下一关又把不稳定的那几个算进去
+        return {**result, "flaky": flaky, "output": note + output}
+    return {**result, "ok": True, "flaky": flaky, "output": note + str(result.get("output") or "")}
+
+
 def compare_with_base(repo_root, base: Optional[str], result: dict) -> dict:
     """测试红了，就把失败的那几个测试拿到改动前的代码（base）上再跑一遍。
 
@@ -469,10 +500,15 @@ def compare_with_base(repo_root, base: Optional[str], result: dict) -> dict:
 def baseline_note(verification: Optional[dict]) -> str:
     """报告里的一句话：通过是「除了主干上本来就红的那些」。没有就空串。"""
     pre = ((verification or {}).get("baseline") or {}).get("preexisting") or []
-    if not pre:
-        return ""
-    shown = "、".join(pre[:3]) + (f" 等 {len(pre)} 个" if len(pre) > 3 else "")
-    return f"（另有 {shown} 测试在改动前的代码上就失败，未计入本次改动，主干需要单独修）"
+    flaky = (verification or {}).get("flaky") or []
+    notes = []
+    if pre:
+        shown = "、".join(pre[:3]) + (f" 等 {len(pre)} 个" if len(pre) > 3 else "")
+        notes.append(f"另有 {shown} 测试在改动前的代码上就失败，未计入本次改动，主干需要单独修")
+    if flaky:
+        shown = "、".join(flaky[:3]) + (f" 等 {len(flaky)} 个" if len(flaky) > 3 else "")
+        notes.append(f"{shown} 测试第一次失败、重跑通过，是不稳定测试，需要单独修")
+    return f"（{'；'.join(notes)}）" if notes else ""
 
 
 async def run_isolated_task(repo_root, wid: str, description: str,
@@ -768,7 +804,7 @@ def verify_branch(repo_root, branch: str, test_cmd: list, wid: str,
         return {"ok": False, "output": "worktree add 失败: " + (add.stderr or "").strip()[:200], "cmd": ""}
     include_local_files(repo_root, path)
     try:
-        result = compare_with_base(repo_root, base, run_tests(path, test_cmd))
+        result = compare_with_base(repo_root, base, retry_failed(path, run_tests(path, test_cmd)))
         if result.get("ok") and runtime:
             result = _fold_runtime_verify(repo_root, path, result, wid)
         return result
