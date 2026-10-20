@@ -41,3 +41,61 @@ async def codex_status():
     state = codex_watch.load_state(root)
     return {"overview": codex_watch.overview(root), "threads": state.get("threads") or [],
             "received_at": state.get("received_at")}
+
+
+def _action_error(error: Exception) -> HTTPException:
+    return HTTPException(409, str(error))
+
+
+@router.get("/api/codex/actions")
+async def codex_actions(status: str | None = None):
+    """Desktop 卡片列全部；Mac 观察员带 status=approved 取待执行的。"""
+    root = _general_root()
+    items = codex_watch.load_actions(root)
+    if status:
+        items = [item for item in items if item.get("status") == status]
+    return {"actions": list(reversed(items))[:50]}
+
+
+async def _decide(action_id: str, approved: bool):
+    root = _general_root()
+    try:
+        action = codex_watch.decide_action(root, action_id, approved)
+    except codex_watch.CodexActionError as error:
+        raise _action_error(error) from error
+    from src.gateway.audit import record_decision_audit
+    verb = "批准给 Codex 发话" if action.get("kind") == "message" else "批准叫停 Codex"
+    record_decision_audit(root, session=str(action.get("session") or "desktop"), mode="",
+                          operation=f"{verb if approved else '拒绝 Codex 动作'}「{action.get('thread_name')}」",
+                          decision=approved, tainted=bool(action.get("tainted")))
+    return action
+
+
+@router.post("/api/codex/actions/{action_id}/approve")
+async def approve_codex_action(action_id: str):
+    return await _decide(action_id, True)
+
+
+@router.post("/api/codex/actions/{action_id}/cancel")
+async def cancel_codex_action(action_id: str):
+    return await _decide(action_id, False)
+
+
+@router.post("/api/codex/actions/{action_id}/claim")
+async def claim_codex_action(action_id: str):
+    try:
+        return codex_watch.claim_action(_general_root(), action_id)
+    except codex_watch.CodexActionError as error:
+        raise _action_error(error) from error
+
+
+@router.post("/api/codex/actions/{action_id}/result")
+async def codex_action_result(action_id: str, payload: dict = Body(...)):
+    root = _general_root()
+    try:
+        action = codex_watch.finish_action(root, action_id, ok=bool(payload.get("ok")), error=str(payload.get("error") or ""))
+    except codex_watch.CodexActionError as error:
+        raise _action_error(error) from error
+    from src.scheduling.notices import make_notifier
+    await make_notifier(root, source="codex")(codex_watch.action_result_notice(action))
+    return action

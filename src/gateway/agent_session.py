@@ -193,8 +193,9 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
             from src.workflow.tasks.assistant_dispatch import build_dispatch_tools
             tools += build_dispatch_tools(repo_root, is_tainted=is_tainted, session=task_owner or "")
             # Mac 上 Codex 观察员报来的进度：用户问 Codex 在干嘛、让助理检查 / 提醒时用
-            from src.scheduling.codex_watch import build_codex_tools
+            from src.scheduling.codex_watch import build_codex_action_tools, build_codex_tools
             tools += build_codex_tools(repo_root)
+            tools += build_codex_action_tools(repo_root, is_tainted=is_tainted, session=task_owner or "")
     else:
         tools = build_agent_tools(repo_root, confirm=gated_confirm, on_progress=on_progress,
                                   with_artifacts=(kind == "web"),   # 制品查看页只有 Web 有

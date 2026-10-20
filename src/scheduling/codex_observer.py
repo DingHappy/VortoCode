@@ -166,8 +166,11 @@ async def snapshot(client: CodexClient) -> List[dict]:
         if not meta:
             continue
         # 最近一轮读完整条目（要从里面取计划、命令和改动的文件）；只取需要的字段，走的是本机 socket
-        page = await client.call("thread/turns/list", {"threadId": thread_id, "limit": 1, "itemsView": "full"})
-        turns = (page or {}).get("data") or []
+        try:
+            page = await client.call("thread/turns/list", {"threadId": thread_id, "limit": 1, "itemsView": "full"})
+            turns = (page or {}).get("data") or []
+        except RuntimeError:   # 临时会话等不支持按轮读：只报状态，别让一个会话拖垮整轮快照
+            turns = []
         threads.append(summarize_thread(meta, turns[0] if turns else None))
     threads.sort(key=lambda item: item.get("updated_at") or 0, reverse=True)
     return threads
@@ -191,6 +194,65 @@ async def post_report(threads: List[dict], *, http=None) -> bool:
             return response.status < 300
 
 
+async def resident_call(method: str, path: str, payload: Optional[dict] = None) -> dict:
+    """调常驻助理的 Codex 接口（取待执行的动作、认领、报结果）。"""
+    target = report_target()
+    if target is None:
+        raise RuntimeError("没有常驻助理的地址")
+    url, token = target
+    import aiohttp
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15), trust_env=False) as session:
+        async with session.request(method, f"{url}{path}", json=payload,
+                                   headers={"Authorization": f"Bearer {token}"}) as response:
+            if response.status >= 300:
+                raise RuntimeError(f"常驻助理返回 {response.status}")
+            return await response.json()
+
+
+async def execute_action(client: CodexClient, action: dict, threads: List[dict]) -> tuple:
+    """把一条已批准的动作交给 Codex。返回 (成功?, 失败原因)。"""
+    thread = next((item for item in threads if item.get("id") == action.get("thread_id")), None)
+    if thread is None:
+        return False, "这个 Codex 会话已经关了"
+    turn = thread.get("turn") or {}
+    running = thread.get("status") == "active" and turn.get("status") == "inProgress" and turn.get("id")
+    try:
+        if action.get("kind") == "interrupt":
+            if not running:
+                return False, "它已经停了"
+            await client.call("turn/interrupt", {"threadId": thread["id"], "turnId": turn["id"]})
+            return True, ""
+        text = str(action.get("text") or "").strip()
+        if not text:
+            return False, "要发的话是空的"
+        user_input = [{"type": "text", "text": text, "text_elements": []}]
+        if running:   # 正在做：作为补充插进当前这一轮（轮次对不上 Codex 会拒绝，免得插错地方）
+            await client.call("turn/steer", {"threadId": thread["id"], "expectedTurnId": turn["id"], "input": user_input})
+        else:         # 空闲：开新的一轮
+            await client.call("turn/start", {"threadId": thread["id"], "input": user_input})
+        return True, ""
+    except Exception as error:  # noqa: BLE001 —— Codex 拒绝或超时：如实报回去
+        return False, str(error)[:200]
+
+
+async def run_approved_actions(client: CodexClient, threads: List[dict], *, resident=resident_call) -> int:
+    """取你批准过的动作 → 先认领（防止重复发）→ 交给 Codex → 报结果。返回处理了几条。"""
+    data = await resident("GET", "/api/codex/actions?status=approved")
+    done = 0
+    for action in (data or {}).get("actions") or []:
+        action_id = str(action.get("id") or "")
+        if not action_id.startswith("cdx-"):
+            continue
+        try:
+            await resident("POST", f"/api/codex/actions/{action_id}/claim")
+        except Exception:  # noqa: BLE001 —— 别处已认领或状态变了：跳过
+            continue
+        ok, error = await execute_action(client, action, threads)
+        await resident("POST", f"/api/codex/actions/{action_id}/result", {"ok": ok, "error": error})
+        done += 1
+    return done
+
+
 async def observe_loop(stop: asyncio.Event, *, interval: float = INTERVAL_SECONDS) -> None:
     """每 interval 秒看一次 Codex；有变化（或心跳到点）就报给常驻助理。Codex 没在跑就安静等着。"""
     last_digest, last_sent = "", 0.0
@@ -199,13 +261,15 @@ async def observe_loop(stop: asyncio.Event, *, interval: float = INTERVAL_SECOND
             if socket_path().exists():
                 async with CodexClient() as client:
                     threads = await snapshot(client)
-                busy = any(thread["status"] == "active" for thread in threads)
-                now = time.monotonic()
-                current = digest(threads)
-                due = HEARTBEAT_SECONDS if not busy else ACTIVE_HEARTBEAT_SECONDS
-                if current != last_digest or now - last_sent >= due:
-                    if await post_report(threads):
-                        last_digest, last_sent = current, now
+                    busy = any(thread["status"] == "active" for thread in threads)
+                    now = time.monotonic()
+                    current = digest(threads)
+                    due = HEARTBEAT_SECONDS if not busy else ACTIVE_HEARTBEAT_SECONDS
+                    if current != last_digest or now - last_sent >= due:
+                        if await post_report(threads):
+                            last_digest, last_sent = current, now
+                    # 你批准过的「替你给 Codex 发话 / 叫停」
+                    await run_approved_actions(client, threads)
         except asyncio.CancelledError:
             raise
         except Exception as error:  # noqa: BLE001 —— Codex 或常驻电脑暂时不可达：下一轮再试

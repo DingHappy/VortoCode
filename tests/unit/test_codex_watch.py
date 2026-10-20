@@ -132,3 +132,107 @@ async def test_assistant_tool_reads_the_latest_progress(tmp_path):
     tool = watch.build_codex_tools(str(tmp_path))[0]
     assert tool.name == "codex_status" and tool.untrusted_source
     assert "改登录超时" in await tool.handler({})
+
+
+# ── ③ 代你接管 ─────────────────────────────────────────────
+
+def _seed(root, flags=(), status="active", turn_status="inProgress"):
+    thread = _thread(flags=flags, status=status, turn=_turn(status=turn_status, tid="t9"))
+    watch.record_report(root, {"threads": [thread]}, now=NOW)
+    return thread
+
+
+def test_actions_follow_propose_approve_claim_send(tmp_path):
+    root = str(tmp_path)
+    _seed(root)
+    action = watch.propose_action(root, thread="登录", kind="message", text="先别推 main，开个分支", session="sid-main")
+    assert action["status"] == "proposed" and action["thread_name"] == "改登录超时" and action["turn_id"] == "t9"
+    with pytest.raises(watch.CodexActionError):
+        watch.claim_action(root, action["id"])                      # 没批准不能取走
+    watch.decide_action(root, action["id"], True)
+    assert watch.claim_action(root, action["id"])["status"] == "sending"
+    with pytest.raises(watch.CodexActionError):
+        watch.claim_action(root, action["id"])                      # 不会被认领两次（不会发两遍）
+    done = watch.finish_action(root, action["id"], ok=True)
+    assert done["status"] == "sent" and "已发给" in watch.action_result_notice(done)
+    with pytest.raises(watch.CodexActionError):
+        watch.decide_action(root, action["id"], True)
+
+
+def test_actions_are_checked_before_they_are_proposed(tmp_path):
+    root = str(tmp_path)
+    _seed(root, status="idle", turn_status="completed")
+    with pytest.raises(watch.CodexActionError, match="找不到"):
+        watch.propose_action(root, thread="不存在", kind="message", text="hi")
+    with pytest.raises(watch.CodexActionError, match="不需要叫停"):
+        watch.propose_action(root, thread="改登录超时", kind="interrupt")
+    with pytest.raises(watch.CodexActionError):
+        watch.propose_action(root, thread="改登录超时", kind="message", text="  ")
+    rejected = watch.propose_action(root, thread="改登录超时", kind="message", text="继续")
+    assert watch.decide_action(root, rejected["id"], False)["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_action_tool_only_proposes_and_notifies_with_buttons(tmp_path, monkeypatch):
+    root = str(tmp_path)
+    _seed(root)
+    sent = []
+
+    def fake_notifier(_root, **_kw):
+        async def notify(text, confirm_id=""):
+            sent.append((text, confirm_id))
+            return True
+        return notify
+    import src.scheduling.notices as notices
+    monkeypatch.setattr(notices, "make_notifier", fake_notifier)
+    tools = {tool.name: tool for tool in watch.build_codex_action_tools(root, is_tainted=lambda: True, session=lambda: "sid-x")}
+    reply = await tools["propose_codex_message"].handler({"thread": "改登录超时", "text": "跑一下全量测试"})
+    assert "还没有发给 Codex" in reply and not tools["propose_codex_message"].read_only
+    action = watch.load_actions(root)[0]
+    assert action["status"] == "proposed" and action["session"] == "sid-x" and action["tainted"]
+    assert sent[0][1] == action["id"] and "跑一下全量测试" in sent[0][0] and "外部内容" in sent[0][0]
+
+
+class _FakeCodex:
+    def __init__(self):
+        self.calls = []
+
+    async def call(self, method, params):
+        self.calls.append((method, params))
+        return {}
+
+
+@pytest.mark.asyncio
+async def test_observer_steers_running_turns_starts_idle_ones_and_interrupts():
+    running = [_thread(turn=_turn(status="inProgress", tid="t9"))]
+    idle = [_thread(status="idle", turn=_turn(status="completed", tid="t9"))]
+    codex = _FakeCodex()
+    assert await observer.execute_action(codex, {"kind": "message", "thread_id": "th1", "text": "补一句"}, running) == (True, "")
+    assert codex.calls[-1][0] == "turn/steer" and codex.calls[-1][1]["expectedTurnId"] == "t9"
+    assert await observer.execute_action(codex, {"kind": "message", "thread_id": "th1", "text": "下一步"}, idle) == (True, "")
+    assert codex.calls[-1][0] == "turn/start" and codex.calls[-1][1]["input"][0]["text"] == "下一步"
+    assert await observer.execute_action(codex, {"kind": "interrupt", "thread_id": "th1"}, running) == (True, "")
+    assert codex.calls[-1] == ("turn/interrupt", {"threadId": "th1", "turnId": "t9"})
+    assert (await observer.execute_action(codex, {"kind": "interrupt", "thread_id": "th1"}, idle))[0] is False
+    assert (await observer.execute_action(codex, {"kind": "message", "thread_id": "gone", "text": "x"}, idle))[1] == "这个 Codex 会话已经关了"
+
+
+@pytest.mark.asyncio
+async def test_observer_claims_before_sending_and_reports_results():
+    calls = []
+    claimable = {"cdx-a"}
+
+    async def resident(method, path, payload=None):
+        calls.append((method, path, payload))
+        if path.startswith("/api/codex/actions?"):
+            return {"actions": [{"id": "cdx-a", "kind": "message", "thread_id": "th1", "text": "继续"},
+                                {"id": "cdx-b", "kind": "message", "thread_id": "th1", "text": "别处已认领"}]}
+        if path.endswith("/claim"):
+            if path.split("/")[-2] not in claimable:
+                raise RuntimeError("409")
+        return {}
+    codex = _FakeCodex()
+    done = await observer.run_approved_actions(codex, [_thread(status="idle", turn=_turn(status="completed"))], resident=resident)
+    assert done == 1 and [call[0] for call in codex.calls] == ["turn/start"]
+    assert ("POST", "/api/codex/actions/cdx-a/result", {"ok": True, "error": ""}) in calls
+    assert not any("cdx-b/result" in call[1] for call in calls)

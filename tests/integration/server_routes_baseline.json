@@ -776,6 +776,36 @@
     ]
   },
   {
+    "path": "/api/codex/actions",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/codex/actions/{action_id}/approve",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/codex/actions/{action_id}/cancel",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/codex/actions/{action_id}/claim",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/codex/actions/{action_id}/result",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
     "path": "/api/codex/report",
     "methods": [
       "POST"

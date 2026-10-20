@@ -220,3 +220,151 @@ def build_codex_tools(root: str) -> list:
                  "（正在做 / 空闲 / 在等批准 / 在问问题）、跑的命令、改的文件、最后的说明。"
                  "用户问 Codex 进度、或让你检查 / 提醒 Codex 的活时先调它。",
                  {}, _status, untrusted_source=True)]
+
+
+# ── ③ 代你接管：助理拟一条给 Codex 的消息（或叫停），你批准后由 Mac 上的观察员执行 ──────────────
+#
+# 状态：proposed（等你批准）→ approved（等 Mac 取走）→ sending（Mac 认领，正在交给 Codex）→ sent / failed；
+#       你拒绝 → cancelled。批准只能由人做（手机按钮 / Desktop 卡片），模型只能提议。
+# 认领（sending）在执行之前：Mac 报结果失败时停在 sending 等人核对，不会因重试把同一句话发两遍。
+
+_ACTION_TEXT_MAX = 2000
+_ACTIONS_KEEP = 100
+
+
+def _actions_path(root: str) -> Path:
+    return Path(root) / ".vortocode" / "codex" / "actions.json"
+
+
+def load_actions(root: str) -> List[dict]:
+    try:
+        data = json.loads(_actions_path(root).read_text(encoding="utf-8"))
+        return [item for item in data if isinstance(item, dict)] if isinstance(data, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def _save_actions(root: str, items: List[dict]) -> None:
+    path = _actions_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+        json.dump(items[-_ACTIONS_KEEP:], handle, ensure_ascii=False)
+        temp = Path(handle.name)
+    temp.replace(path)
+
+
+class CodexActionError(ValueError):
+    """动作不合法，或当前状态不允许这个操作。"""
+
+
+def _find_thread(root: str, wanted: str) -> dict:
+    wanted = str(wanted or "").strip()
+    threads = load_state(root).get("threads") or []
+    for thread in threads:
+        if thread.get("id") == wanted or str(thread.get("name") or "") == wanted:
+            return thread
+    matches = [thread for thread in threads if wanted and wanted in str(thread.get("name") or "")]
+    if len(matches) == 1:
+        return matches[0]
+    names = "、".join(f"「{thread.get('name')}」" for thread in threads) or "（现在没有打开的 Codex 会话）"
+    raise CodexActionError(f"找不到这个 Codex 会话：{wanted}。打开着的有：{names}")
+
+
+def propose_action(root: str, *, thread: str, kind: str, text: str = "", session: str = "",
+                   tainted: bool = False) -> dict:
+    target = _find_thread(root, thread)
+    text = str(text or "").strip()
+    if kind not in {"message", "interrupt"}:
+        raise CodexActionError("只能拟「发消息」或「叫停」")
+    if kind == "message" and not text:
+        raise CodexActionError("要发给 Codex 的话不能是空的")
+    if kind == "interrupt" and target.get("status") != "active":
+        raise CodexActionError(f"「{target.get('name')}」现在没在做事，不需要叫停")
+    import uuid
+    now = _now().isoformat()
+    action = {"id": f"cdx-{uuid.uuid4().hex[:10]}", "thread_id": target["id"], "thread_name": target.get("name") or "",
+              "kind": kind, "text": text[:_ACTION_TEXT_MAX], "status": "proposed", "tainted": bool(tainted),
+              "session": str(session or "")[:80], "turn_id": (target.get("turn") or {}).get("id") or "",
+              "created_at": now, "updated_at": now, "error": ""}
+    items = load_actions(root)
+    items.append(action)
+    _save_actions(root, items)
+    return action
+
+
+def _change(root: str, action_id: str, allowed: set, **updates) -> dict:
+    items = load_actions(root)
+    for item in items:
+        if item.get("id") == action_id:
+            if item.get("status") not in allowed:
+                raise CodexActionError({"proposed": "这条还在等你批准", "approved": "已经批准，等 Mac 执行",
+                                        "sending": "正在交给 Codex", "sent": "已经发给 Codex 了",
+                                        "failed": "这条已经失败了", "cancelled": "这条已经撤回了"}
+                                       .get(item.get("status"), "状态不允许这个操作"))
+            item.update(updates, updated_at=_now().isoformat())
+            _save_actions(root, items)
+            return dict(item)
+    raise CodexActionError(f"没有这条 Codex 动作：{action_id}")
+
+
+def decide_action(root: str, action_id: str, approved: bool) -> dict:
+    return _change(root, action_id, {"proposed"}, status="approved" if approved else "cancelled")
+
+
+def claim_action(root: str, action_id: str) -> dict:
+    return _change(root, action_id, {"approved"}, status="sending")
+
+
+def finish_action(root: str, action_id: str, *, ok: bool, error: str = "") -> dict:
+    return _change(root, action_id, {"sending"}, status="sent" if ok else "failed", error=str(error or "")[:300])
+
+
+def action_notice(action: dict) -> str:
+    label = f"Codex「{action.get('thread_name')}」"
+    warning = "\n⚠ 助理是在读过外部内容后拟的，发之前看清楚。" if action.get("tainted") else ""
+    if action.get("kind") == "interrupt":
+        return f"🤖 助理建议叫停 {label} 正在做的这一轮。{warning}\n点「批准」叫停，「拒绝」不动。"
+    return f"🤖 助理想替你给 {label} 发：\n{action.get('text')}{warning}\n点「批准」发送，「拒绝」不发。"
+
+
+def action_result_notice(action: dict) -> str:
+    label = f"Codex「{action.get('thread_name')}」"
+    if action.get("status") == "sent":
+        return f"✅ 已{'叫停' if action.get('kind') == 'interrupt' else '发给'} {label}。"
+    return f"❌ 没能{'叫停' if action.get('kind') == 'interrupt' else '发给'} {label}：{action.get('error') or '原因不明'}"
+
+
+def build_codex_action_tools(root: str, *, is_tainted=lambda: False, session=None) -> list:
+    """助理替你给 Codex 发话 / 叫停：只能提议，批准由人做（手机按钮或 Desktop 卡片）。"""
+    from src.agents.tool import Tool
+
+    async def _propose(kind: str, args: dict) -> str:
+        try:
+            action = propose_action(root, thread=str(args.get("thread") or ""), kind=kind, text=str(args.get("text") or ""),
+                                    session=str((session() if callable(session) else session) or ""), tainted=is_tainted())
+        except CodexActionError as error:
+            return f"没有拟好：{error}"
+        try:
+            from src.scheduling.notices import make_notifier
+            await make_notifier(root, source="codex")(action_notice(action), confirm_id=action["id"])
+        except Exception:  # noqa: BLE001 —— 推送失败不影响 Desktop 卡片上批准
+            pass
+        return (f"已拟好（{action['id']}），等用户在手机通知或 Desktop 卡片上批准；**还没有发给 Codex**，"
+                "不要声称已经发了。")
+
+    async def _message(args: dict) -> str:
+        return await _propose("message", args)
+
+    async def _interrupt(args: dict) -> str:
+        return await _propose("interrupt", args)
+
+    return [
+        Tool("propose_codex_message",
+             "替用户给 Mac 上某个 Codex 会话拟一句话（下一步指令、补充要求、回答它的问题）。只是提议，"
+             "用户批准后才发：Codex 空闲就开始新的一轮，正在做就作为补充插进当前这一轮。先用 codex_status 看清会话。",
+             {"thread": "会话名（或 id），只能是 codex_status 里列出的", "text": "要发给 Codex 的话，写清楚、具体"},
+             _message, read_only=False, serial=True),
+        Tool("propose_codex_interrupt",
+             "建议叫停某个 Codex 会话正在做的这一轮（方向错了、在做危险的事、卡住了）。只是提议，用户批准后才叫停。",
+             {"thread": "会话名（或 id）"}, _interrupt, read_only=False, serial=True),
+    ]
