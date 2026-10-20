@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -285,7 +286,15 @@ _REPORT_SYSTEM = (
     "写一份给用户手机上扫一眼的{label}：第一句先说要用户处理的事（没有就说没有），再用一两句讲今天做成了什么、"
     "还在进行什么。最多 5 行，每行不超过 40 个字；素材里没有的类别直接不提，不写「暂无」；"
     "不用标题、表情符号和加粗。口语、具体；只依据素材，不要编造素材里没有的结果。"
+    "同一件事在素材里可能出现好几次（聊过、任务单、等你处理），只说一次；不写内部编号。"
 )
+
+# 任务单 / 后台任务 / 目标的内部编号：对手机上的人没有意义，写进早晚报只是噪音（真机 2026-10-20 晚报）
+_INTERNAL_ID = re.compile(r"[ \t]*[（(]?\b(?:dsp|bg-task|task|personal|cdx|dpr|dgl|run|plan)-[0-9a-f]{6,}\b[）)]?")
+
+
+def _scrub_ids(text: str) -> str:
+    return re.sub(r"[ \t]{2,}", " ", _INTERNAL_ID.sub("", text))
 
 
 NEWS_ENV = "VORTOCODE_ASSISTANT_NEWS_ROOT"      # 有 signals 采集产出的项目目录；不设 = 早报不带新闻
@@ -348,7 +357,7 @@ async def _compose_body(root: str, now: datetime, label: str, *, llm: Any = None
     quiet = quiet_report(root, now, label)
     if quiet is not None:
         return quiet
-    facts = build_report(root, now, label)
+    facts = _scrub_ids(build_report(root, now, label))
     try:
         from src.memory.assistant_profile import load_profile
 
@@ -365,7 +374,7 @@ async def _compose_body(root: str, now: datetime, label: str, *, llm: Any = None
     except Exception as error:  # noqa: BLE001 —— 写不出来就发数据版，汇报不能断
         logger.warning("早晚报改写失败，发数据版：%s", error)
         return facts
-    return f"🗒 {label}\n{text}" if text else facts
+    return f"🗒 {label}\n{_scrub_ids(text)}" if text else facts
 
 
 async def _notify_accepted(notify: Notify, text: str, confirm_id: str = "") -> bool:
