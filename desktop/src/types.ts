@@ -299,6 +299,12 @@ export interface AssistantDispatch {
   pr_error?: string;
   attempt?: number;
   retry_of?: string;
+  /** 开发流水线做到哪了：计划的每一步和已落地数；还没拆出计划时只有最近一条日志 */
+  progress?: {
+    total: number; landed: number; failed: number; more: number; latest: string;
+    stage: "" | "running" | "integrated" | "integration_failed" | "done" | "failed";
+    steps: { title: string; status: "pending" | "running" | "landed" | "failed" }[];
+  } | null;
   /** 助理复盘失败后拟的「这次换什么做法」 */
   retry_note?: string;
   /** 结束后助理的复盘：做完逐条对照验收标准，失败诊断原因（可能已起草下一次） */

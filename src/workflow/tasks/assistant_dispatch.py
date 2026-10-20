@@ -459,6 +459,7 @@ async def _refresh_one(root: str, entry: dict, http, *, include_delivery: bool =
             same = isinstance(item.get("question"), dict) and item["question"].get("id") == question["id"]
             question["seen_at"] = item["question"].get("seen_at") if same else _now()
         item["question"] = question
+        item["progress"] = _progress(task, plan)
         item["last_sync_attempt_at"] = _now()
         if include_delivery:
             item.update(recovery_task=recovered, recovery_error=recovery_error)
@@ -469,6 +470,55 @@ async def _refresh_one(root: str, entry: dict, http, *, include_delivery: bool =
         if include_delivery or branch != entry.get("branch") or status not in _TERMINAL:
             item.update(delivery_evidence=evidence, delivery_error=delivery_error)
     _update(root, entry["id"], change)
+
+
+_STEP_STATES = {"pending", "running", "landed", "failed"}
+# 计划整体：running → integrated（集成绿）/ integration_failed（集成红）/ done（开了 PR）/ failed
+_PLAN_STAGES = {"running", "integrated", "integration_failed", "done", "failed"}
+MAX_STEPS = 12
+
+
+def _progress(task: dict, plan: dict) -> Optional[Dict[str, Any]]:
+    """流水线做到哪了：计划的每一步（标题 + 状态）和已落地数；还没拆出计划时只给最近一条日志。都是任务输出，收紧长度。"""
+    logs = task.get("log") if isinstance(task.get("log"), list) else []
+    latest = _tail_lines(str(logs[-1]), 200) if logs else ""
+    counts = plan.get("progress") if isinstance(plan.get("progress"), dict) else {}
+    blocks = plan.get("blocks") if isinstance(plan.get("blocks"), list) else []
+    if not blocks and not latest:
+        return None
+    steps = [{"title": " ".join(str(block.get("title") or "").split())[:120],
+              "status": str(block.get("status")) if str(block.get("status")) in _STEP_STATES else "pending"}
+             for block in blocks[:MAX_STEPS] if isinstance(block, dict)]
+
+    def count(key: str) -> int:
+        try:
+            return max(0, int(counts.get(key) or 0))
+        except (TypeError, ValueError):
+            return 0
+    return {"total": count("total") or len(blocks), "landed": count("landed"), "failed": count("failed"),
+            "steps": steps, "more": max(0, len(blocks) - MAX_STEPS),
+            "stage": str(plan.get("status")) if str(plan.get("status")) in _PLAN_STAGES else "",
+            "latest": latest}
+
+
+def progress_line(item: Dict[str, Any]) -> str:
+    """一句话进度：「3/5 步已落地，正在做：补单测」。没有进度就空串。"""
+    progress = item.get("progress") if isinstance(item.get("progress"), dict) else None
+    if not progress:
+        return ""
+    if not progress.get("total"):
+        return f"还在拆计划：{progress.get('latest')}" if progress.get("latest") else ""
+    text = f"{progress.get('landed', 0)}/{progress['total']} 步已落地"
+    if progress.get("failed"):
+        text += f"，{progress['failed']} 步失败"
+    if progress.get("stage") == "integrated":
+        text += "，集成测试通过"
+    elif progress.get("stage") == "integration_failed":
+        text += "，集成测试没过"
+    running = [step["title"] for step in progress.get("steps") or [] if step.get("status") == "running" and step.get("title")]
+    if running:
+        text += "，正在做：" + "、".join(running[:2])
+    return text
 
 
 def _open_question(task: dict) -> Optional[Dict[str, Any]]:
@@ -641,6 +691,8 @@ def build_dispatch_tools(root: str, *, is_tainted: Callable[[], bool] = lambda: 
                 states = {"passed": "该提交验证通过", "failed": "该提交验证失败", "stale": "验证证据已过期", "unknown": "尚无该提交的验证证据"}
                 line += f" 提交 {str(evidence.get('head') or '')[:12]}：{states.get(evidence.get('verification'), '验证未知')}"
                 line += "；不代表人工验收通过"
+            if item["status"] in {"running", "waiting"} and progress_line(item):
+                line += f" 进度：{progress_line(item)}"
             if item.get("branch"):
                 line += f" 分支 {item['branch']}"
             if item.get("pr_url"):

@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { AssistantDispatch } from "../types";
-import { assistantTaskActions, type AssistantTaskAction } from "../lib/assistantTask";
+import { assistantTaskActions, progressLine, type AssistantTaskAction } from "../lib/assistantTask";
 
 const labels: Record<AssistantDispatch["status"], string> = {
   proposed: "等待确认下发", sending: "正在下发", submission_unknown: "提交结果待核对",
@@ -55,6 +55,12 @@ export function AssistantTaskCard({ task, connected, onAction }: Props) {
     {task.attempt && task.attempt > 1 && <small>第 {task.attempt} 次尝试{task.retry_of ? `（接着 ${task.retry_of}）` : ""}</small>}
     {task.status === "proposed" && task.retry_note && <p>这次换个做法：{task.retry_note}</p>}
     {task.status === "proposed" && actionRow}
+    {task.progress && task.status !== "proposed" && <section className="assistant-task-progress" aria-label="流水线进度">
+      <p>{progressLine(task)}</p>
+      {task.progress.steps.length > 0 && <ol>{task.progress.steps.map((step, i) => <li key={i} data-status={step.status}>
+        {({ landed: "✓", running: "▶", failed: "✗", pending: "·" })[step.status]} {step.title || `第 ${i + 1} 步`}</li>)}
+        {task.progress.more > 0 && <li>…还有 {task.progress.more} 步</li>}</ol>}
+    </section>}
     {task.status === "waiting" && task.question && <section className="assistant-task-question" aria-label="任务在问的问题">
       <p><strong>任务在问你：</strong></p>
       <p className="assistant-task-text">{task.question.question}</p>
