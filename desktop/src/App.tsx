@@ -3,6 +3,7 @@ import { isManagementTab } from "./lib/inspector";
 import { WorkbenchLauncher, WorkbenchTabs, type WorkbenchTool } from "./components/WorkbenchTabs";
 import { ActivityFeed } from "./components/ActivityFeed";
 import { AssistantTaskCard } from "./components/AssistantTaskCard";
+import { CodexActionCard } from "./components/CodexActionCard";
 import { loadAssistantData } from "./lib/assistantData";
 import { prepareAvatar } from "./lib/avatar";
 import { resolveMainChat, sourceLabel } from "./lib/mainChat";
@@ -104,8 +105,7 @@ import type {
   WorkspaceScope,
   TrustLevel,
   DesktopLlmProfileStatus,
-  ProjectSessionSummary,
-} from "./types";
+  ProjectSessionSummary, CodexAction} from "./types";
 import { DecisionsPanel } from "./components/DecisionsPanel";
 import { SessionConnection } from "./connection/sessionConnection";
 import { TasksPanel } from "./tasks/TasksPanel";
@@ -391,6 +391,7 @@ function App() {
     return () => window.clearInterval(timer);
   }, [connectorAuthorizing, assistantTab, assistantScope, connection, refreshConnectorStatus]);
   const [dispatchSnapshot, setDispatches] = useState<AssistantDispatch[]>([]);
+  const [codexActions, setCodexActions] = useState<CodexAction[]>([]);
   const [dispatchSnapshotScope, setDispatchSnapshotScope] = useState<string | null>(null);
   const dispatches = dispatchSnapshotScope === assistantScope ? dispatchSnapshot : [];
   const trackingDispatches = dispatches.some((item) => ["running", "waiting", "sending", "submission_unknown"].includes(item.status));
@@ -400,7 +401,7 @@ function App() {
   const assistantActionGate = useRef(new AssistantActionGate());
   useEffect(() => {
     assistantLoadEpoch.current += 1;
-    setAgentTurns([]); setDispatches([]); setDispatchSnapshotScope(null); setPhoneChats([]); setPhoneChatSid(null);
+    setAgentTurns([]); setDispatches([]); setCodexActions([]); setDispatchSnapshotScope(null); setPhoneChats([]); setPhoneChatSid(null);
     setAssistantProfile({ name: "VortoCode", soul: "", about_you: "" }); setAssistantAvatar(null);
     setAssistantSchedule([]); setAssistantMemories([]); setMemoryProposals([]);
     setConnectors([]); setConnectorSnapshotScope(null);
@@ -2118,7 +2119,8 @@ function App() {
           dispatches: items => { setDispatches(items); setDispatchSnapshotScope(scope); },
           dispatchError: () => setDispatches(previous => previous.map(item => ({ ...item,
             sync_state: "unreachable", sync_error: "无法读取最新任务单，请恢复连接后核对" }))),
-          profile: setAssistantProfile, chats: setPhoneChats, avatar: setAssistantAvatar }, refreshId);
+          profile: setAssistantProfile, chats: setPhoneChats, avatar: setAssistantAvatar,
+          codexActions: setCodexActions }, refreshId);
     });
     if (refreshId) await request;
     else await request.catch(() => {}); // Background polling reports failures through snapshot freshness.
@@ -3627,6 +3629,16 @@ function App() {
                 key={`${assistantScope}:${item.id}`} task={item} connected={connection === "connected"}
                 onAction={action => actOnDispatch(item, action)} />)}
 
+            {appMode === "assistant" && codexActions.filter(action => action.session.replace(/^sid-/, "") === activeSid
+              && action.status !== "cancelled").slice(0, 6).map(action => <CodexActionCard
+                key={`${assistantScope}:${action.id}`} action={action} connected={connection === "connected"}
+                onDecide={async (decision) => {
+                  const client = clientRef.current;
+                  if (!client) throw new Error("请先恢复连接");
+                  await client.decideCodexAction(action.id, decision);
+                  await refreshAgentTurns();
+                }} />)}
+
             {orphanActivities.length > 0 && <TurnTimeline items={orphanActivities} active={busy && !activeTurnRid} />}
 
             {streaming && (
@@ -4381,6 +4393,7 @@ function App() {
           onModelPicksChange={changeModelPicks}
           initialSection={settingsSection}
           onOpenPlugins={() => { setMainView("plugins"); }}
+          hasResident={Boolean(findAssistantHost(projects))}
           onEditAssistant={() => setProfileDialogOpen(true)}
           onLlmKeyChange={setLlmKeyInput}
           onSaveLlmProfile={saveLlmProfile}

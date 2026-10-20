@@ -496,6 +496,10 @@ class IMBridge:
                 await self.adapter.ack_callback(ev)
                 await self._decide_dispatch(str(ev.callback_id), bool(ev.approved))
                 return
+            elif fut is None and str(ev.callback_id).startswith("cdx-"):
+                await self.adapter.ack_callback(ev)
+                await self._decide_codex_action(str(ev.callback_id), bool(ev.approved))
+                return
             await self.adapter.ack_callback(ev)
             return
         if ev.kind == "message":
@@ -1033,6 +1037,26 @@ class IMBridge:
         title = f"{entry.get('project')}：{entry.get('title')}"
         await self._safe_send(f"✅ 已下发——{title}。做完、失败或需要你回答时会通知你。" if approved
                               else f"已撤回——{title}。")
+
+    async def _decide_codex_action(self, action_id: str, approved: bool) -> None:
+        """「助理想替你给 Codex 发…」通知上的按钮：批准后由 Mac 上的观察员交给 Codex。不经过模型。"""
+        from src.scheduling import codex_watch
+        try:
+            action = codex_watch.decide_action(self.repo_root, action_id, approved)
+        except codex_watch.CodexActionError as error:
+            await self._safe_send(f"没有{'批准' if approved else '拒绝'}：{error}")
+            return
+        try:
+            from src.gateway.audit import record_decision_audit
+            verb = "批准给 Codex 发话" if action.get("kind") == "message" else "批准叫停 Codex"
+            record_decision_audit(self.repo_root, session=self._sid, mode="",
+                                  operation=f"{verb if approved else '拒绝 Codex 动作'}「{action.get('thread_name')}」（手机）",
+                                  decision=approved, tainted=bool(action.get("tainted")))
+        except Exception:  # noqa: BLE001
+            import logging
+            logging.getLogger("vortocode.im").warning("Codex 动作决定未能记入审计：%s", action_id)
+        await self._safe_send("👍 已批准，Mac 上的 VortoCode 会在半分钟内交给 Codex，结果再通知你。" if approved
+                              else "好，不发了。")
 
     async def _bg_confirm(self, message: str) -> bool:
         """回合外确认（后台任务用）：发按钮 → 等 owner 点击（poll 循环的 callback 分支解 Future）。超时=拒绝。"""

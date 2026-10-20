@@ -229,6 +229,21 @@ export interface AssistantMemory {
 }
 
 /** 常驻助理写的任务单：proposed 等你确认下发，之后跟随项目运行时上的任务状态。 */
+/** 助理拟好、等你批准的「替你给 Codex 发话 / 叫停」（常驻助理 /api/codex/actions）。 */
+export interface CodexAction {
+  id: string;
+  thread_id: string;
+  thread_name: string;
+  kind: "message" | "interrupt";
+  text: string;
+  status: "proposed" | "approved" | "sending" | "sent" | "failed" | "cancelled";
+  tainted: boolean;
+  session: string;
+  error: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface AssistantDispatch {
   id: string;
   project: string;

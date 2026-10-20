@@ -84,6 +84,7 @@ from src.web.routers.assistant import router as assistant_router
 from src.web.routers.personal_goals import router as personal_goals_router
 from src.web.routers.voice import router as voice_router
 from src.web.routers.ops_heartbeat import router as ops_heartbeat_router
+from src.web.routers.codex import router as codex_router
 
 for _router in (
     pages_router, git_router, context_router,
@@ -91,6 +92,7 @@ for _router in (
     artifacts_router, auth_router, tasks_router, delegations_router, task_inbox_router, goals_router, runs_router, terminals_router, decisions_router,
     journal_router, hooks_router, extensions_router, cron_router, dev_plans_router,
     pipelines_router, trust_router, resident_router, assistant_router, personal_goals_router, voice_router, ops_heartbeat_router,
+    codex_router,
 ):
     app.include_router(_router)
 

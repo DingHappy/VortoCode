@@ -663,6 +663,9 @@ struct DesktopPreferences {
     /// 关掉启动时检查更新（默认开：每天最多问一次 GitHub 最新版本）。
     #[serde(default)]
     update_check_disabled: bool,
+    /// 关掉「让助理查看 Codex」（默认开：登记了常驻电脑时，本机引擎把 Codex 进度报给常驻助理）。
+    #[serde(default)]
+    codex_watch_disabled: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -758,6 +761,51 @@ fn normalize_desktop_apps(raw: &str) -> Result<String, String> {
         return Err("可打开的应用最多 20 个".into());
     }
     Ok(apps.join(","))
+}
+
+/// 常驻电脑在注册表里的「目录」标记（与网页层 ASSISTANT_HOST_ROOT 一致）。
+const ASSISTANT_HOST_ROOT: &str = "@assistant";
+
+/// 登记了常驻电脑、且没关掉「让助理查看 Codex」时，本机通用引擎带上常驻助理的地址和令牌：
+/// 引擎里的 Codex 观察员据此把 Codex 进度报过去。只给通用范围那一个引擎，免得几个引擎重复报。
+fn configure_codex_watch(command: &mut Command, app: &AppHandle, scope: &str, preferences: &DesktopPreferences) {
+    command.env_remove("VORTOCODE_CODEX_REPORT_URL");
+    command.env_remove("VORTOCODE_CODEX_REPORT_TOKEN");
+    if scope != GENERAL_SCOPE || preferences.codex_watch_disabled {
+        return;
+    }
+    let Some(host) = project_registry_path(app)
+        .and_then(|path| load_project_registry(&path))
+        .ok()
+        .and_then(|registry| {
+            registry
+                .projects
+                .into_iter()
+                .find(|project| project.kind == "remote" && project.repo_root == ASSISTANT_HOST_ROOT)
+        })
+    else {
+        return;
+    };
+    let Some(token) = remote_token_keychain::read(&host.id).ok().flatten().filter(|token| !token.trim().is_empty())
+    else {
+        return;
+    };
+    command.env("VORTOCODE_CODEX_REPORT_URL", host.base_url.trim_end_matches('/'));
+    command.env("VORTOCODE_CODEX_REPORT_TOKEN", token.trim());
+}
+
+#[tauri::command(async)]
+fn get_codex_watch_enabled(app: AppHandle) -> Result<bool, String> {
+    Ok(!read_desktop_preferences(&desktop_preferences_path(&app)?).codex_watch_disabled)
+}
+
+#[tauri::command(async)]
+fn set_codex_watch_enabled(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    let path = desktop_preferences_path(&app)?;
+    let mut preferences = read_desktop_preferences(&path);
+    preferences.codex_watch_disabled = !enabled;
+    save_json_atomic_with_mode(&path, "desktop-preferences", &preferences, Some(0o600))?;
+    Ok(enabled)
 }
 
 /// 桌面操作只在引擎启动处按偏好打开；偏好里的目标不合法（比如手改坏了）就按关闭处理。
@@ -3672,6 +3720,7 @@ fn start_gateway(
         configure_browser_control(&mut command, &preferences);
         configure_experimental_workers(&mut command, &preferences);
         configure_desktop_control(&mut command, &preferences);
+        configure_codex_watch(&mut command, &app, scope, &preferences);
         prepare_gateway_process(&mut command);
         command
             .stdout(Stdio::from(log.try_clone().map_err(|error| {
@@ -3943,6 +3992,8 @@ pub fn run() {
             save_llm_provider,
             remove_llm_provider,
             promote_llm_provider,
+            get_codex_watch_enabled,
+            set_codex_watch_enabled,
             refresh_llm_providers,
             relay_login,
             relay_logout,

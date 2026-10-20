@@ -125,3 +125,21 @@ async def test_proposals_remember_the_conversation_so_the_card_shows_inline(tmp_
     reply = await tools["propose_task"].handler({"project": "VortoCode", "title": "补单测", "goal": "给 safe_id 补边界单测"})
     assert "卡片会出现在这段对话里" in reply
     assert dispatch.list_dispatches(str(tmp_path))[0]["session"] == "sid-main"
+
+
+@pytest.mark.asyncio
+async def test_codex_action_buttons_approve_or_drop_without_the_model(tmp_path, audits):
+    from src.scheduling import codex_watch
+    root = str(tmp_path)
+    thread = {"id": "th1", "name": "改登录超时", "status": "active", "flags": [], "turn": {"id": "t1", "status": "inProgress"}}
+    codex_watch.record_report(root, {"threads": [thread]})
+    keep = codex_watch.propose_action(root, thread="改登录超时", kind="message", text="开个分支再推")
+    drop = codex_watch.propose_action(root, thread="改登录超时", kind="interrupt")
+    adapter = FakeAdapter()
+    bridge = IMBridge(root, adapter, OWNER, channel="test")
+    await _drive_no_turn(bridge, adapter, _click(keep["id"], True, sender="stranger"), _click(keep["id"], True),
+                         _click(drop["id"], False))
+    status = {item["id"]: item["status"] for item in codex_watch.load_actions(root)}
+    assert status == {keep["id"]: "approved", drop["id"]: "cancelled"}
+    assert any("已批准" in text for text in adapter.texts()) and any("不发了" in text for text in adapter.texts())
+    assert len(audits) == 2 and bridge._turn_task is None

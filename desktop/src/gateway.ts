@@ -65,8 +65,7 @@ import type {
   TerminalSession,
   TrustLevel,
   TrustStatus,
-  WorktreeWorkspaceSnapshot,
-} from "./types";
+  WorktreeWorkspaceSnapshot, CodexAction} from "./types";
 import type { ResidentProject } from "./lib/residentPlace";
 
 export const DESKTOP_PROTOCOL_VERSION = 10;
@@ -523,6 +522,17 @@ export class GatewayClient {
   async listDispatches(refreshId?: string): Promise<AssistantDispatch[]> {
     const payload = await this.request<{ dispatches?: AssistantDispatch[] }>(`/api/dispatches${refreshId ? `?refresh_id=${encodeURIComponent(refreshId)}` : ""}`);
     return Array.isArray(payload.dispatches) ? payload.dispatches : [];
+  }
+
+  /** 助理拟好的「替你给 Codex 发话 / 叫停」（旧版常驻电脑没有这个接口：返回空）。 */
+  async listCodexActions(): Promise<CodexAction[]> {
+    const payload = await this.request<{ actions?: CodexAction[] }>("/api/codex/actions");
+    return Array.isArray(payload.actions) ? payload.actions : [];
+  }
+
+  /** 人批准 / 拒绝一条 Codex 动作；批准后由 Mac 上的 VortoCode 交给 Codex。 */
+  async decideCodexAction(id: string, decision: "approve" | "cancel"): Promise<CodexAction> {
+    return this.request(`/api/codex/actions/${encodeURIComponent(id)}/${decision}`, { method: "POST" });
   }
 
   /** 人确认下发 / 撤回一张任务单。 */
