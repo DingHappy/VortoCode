@@ -110,14 +110,40 @@ def task_prompt(entry: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+MAX_ATTEMPTS = 3
+
+
+def _retry_context(previous: Dict[str, Any]) -> str:
+    """上一次没做成的经过，接在新任务单的目标后面，免得你手抄错误。只取结尾，它是任务输出。"""
+    parts = [f"（这是第 {int(previous.get('attempt') or 1) + 1} 次尝试，上一次 {previous['id']} "
+             f"{'失败' if previous.get('status') == 'failed' else '没做完'}。）"]
+    if previous.get("error"):
+        parts.append("上次的错误：\n" + _tail_lines(previous["error"], 600))
+    if previous.get("result"):
+        parts.append("上次的输出结尾：\n" + _tail_lines(previous["result"], 800))
+    return "\n\n".join(parts)
+
+
 def propose(root: str, *, project: str, title: str, goal: str, criteria: Optional[List[str]] = None,
-            session: str = "", tainted: bool = False) -> Dict[str, Any]:
-    """助理提出一张任务单（只记账，不执行）。"""
+            session: str = "", tainted: bool = False, retry_of: str = "") -> Dict[str, Any]:
+    """助理提出一张任务单（只记账，不执行）。``retry_of``：接着一张没做成的单子再来一次，自动带上它的错误。"""
     target = _find_project(project)
     title = " ".join(str(title or "").split())[:MAX_TITLE]
-    goal = str(goal or "").strip()[:MAX_GOAL]
+    goal = str(goal or "").strip()
     if not title or not goal:
         raise DispatchError("任务单需要标题和目标")
+    attempt = 1
+    if retry_of:
+        previous = next((item for item in _load(root) if item.get("id") == retry_of), None)
+        if previous is None:
+            raise DispatchError(f"没有任务单 {retry_of}")
+        if previous.get("status") not in {"failed", "stopped", "send_failed"}:
+            raise DispatchError("只能接着失败或没做完的任务单重派")
+        attempt = int(previous.get("attempt") or 1) + 1
+        if attempt > MAX_ATTEMPTS:
+            raise DispatchError(f"这件事已经试了 {MAX_ATTEMPTS} 次，再派多半还是失败：先跟用户商量换个做法或拆小")
+        goal = goal + "\n\n" + _retry_context(previous)
+    goal = goal[:MAX_GOAL]
     entry = {
         "id": f"dsp-{uuid.uuid4().hex[:10]}",
         "project": target["name"],
@@ -132,6 +158,8 @@ def propose(root: str, *, project: str, title: str, goal: str, criteria: Optiona
         "result": "",
         "error": "",
         "branch": "",
+        "attempt": attempt,
+        "retry_of": str(retry_of or ""),
         "created_at": _now(),
         "updated_at": _now(),
     }
@@ -188,10 +216,10 @@ def _headers() -> Dict[str, str]:
     return {"Authorization": f"Bearer {token}"} if token else {}
 
 
-async def _http(method: str, url: str, payload: Optional[dict] = None) -> Dict[str, Any]:
+async def _http(method: str, url: str, payload: Optional[dict] = None, *, seconds: float = 15) -> Dict[str, Any]:
     import aiohttp
 
-    timeout = aiohttp.ClientTimeout(total=15)
+    timeout = aiohttp.ClientTimeout(total=seconds)
     # trust_env=False：同机回环，不经代理
     async with aiohttp.ClientSession(timeout=timeout, trust_env=False) as client:
         async with client.request(method, url, json=payload, headers=_headers()) as response:
@@ -215,6 +243,10 @@ async def approve(root: str, dispatch_id: str, *, http=_http) -> Dict[str, Any]:
         if item["status"] != "proposed" and not item.get("request_id"):
             raise DispatchError("旧任务单的提交结果未核实，不能安全重试；请到项目工作台核对")
         item.setdefault("request_id", f"assistant-{uuid.uuid4().hex}")
+        if item["status"] == "proposed":
+            # 任务归属一个专属会话，开发流水线缺关键信息时才能提问（无主任务问不了，只能瞎猜或失败）。
+            # 只在首次下发时定：重试必须沿用同一份提交合同（幂等键包含归属）。
+            item.setdefault("remote_session", f"assistant-{dispatch_id[4:]}")
         item.update(status="sending", remote_task_id=submission_task_id(item["request_id"]), error="")
     try:
         with pipeline_lock(root, dispatch_id, kind="assistant-send"):
@@ -244,7 +276,8 @@ async def _send(root: str, dispatch_id: str, claim, http) -> Dict[str, Any]:
         attempted = True
         created = await http("POST", _service_url(project, "/api/tasks"),
                              {"prompt": task_prompt(entry), "request_id": entry["request_id"],
-                              "expected_repo_root": actual_root})
+                              "expected_repo_root": actual_root,
+                              **({"session": entry["remote_session"]} if entry.get("remote_session") else {})})
         task_id = str(created.get("id") or "")
         if task_id != entry["remote_task_id"]:
             # A legacy server may have ignored the key. Preserve its returned id,
@@ -313,6 +346,9 @@ async def _refresh_one(root: str, entry: dict, http, *, include_delivery: bool =
             sync_state="unreachable", sync_error=str(error)[:300], last_sync_attempt_at=_now()))
         return
     status = _REMOTE_STATUS.get(str(task.get("status") or ""), entry["status"])
+    # 刚结束的那一轮顺手取交付证据（验证过没过），做完的通知里要用
+    include_delivery = include_delivery or (status in {"done", "failed", "stopped"} and entry.get("status") not in _TERMINAL
+                                            and entry.get("status") != "stopped")
     plan = task.get("plan") if isinstance(task.get("plan"), dict) else {}
     branch = str(task.get("branch") or plan.get("branch") or "")
     evidence, delivery_error = None, ""
@@ -347,6 +383,12 @@ async def _refresh_one(root: str, entry: dict, http, *, include_delivery: bool =
         item.update(status=status, result=_tail_lines(task.get("result"), 1500),
                     error=_tail_lines(task.get("error"), 500), branch=branch,
                     last_checked_at=_now(), sync_state="current", sync_error="")
+        question = _open_question(task) if status == "waiting" else None
+        if question:
+            # 同一个问题沿用第一次看到的时间：没人答太久要提醒
+            same = isinstance(item.get("question"), dict) and item["question"].get("id") == question["id"]
+            question["seen_at"] = item["question"].get("seen_at") if same else _now()
+        item["question"] = question
         item["last_sync_attempt_at"] = _now()
         if include_delivery:
             item.update(recovery_task=recovered, recovery_error=recovery_error)
@@ -357,6 +399,81 @@ async def _refresh_one(root: str, entry: dict, http, *, include_delivery: bool =
         if include_delivery or branch != entry.get("branch") or status not in _TERMINAL:
             item.update(delivery_evidence=evidence, delivery_error=delivery_error)
     _update(root, entry["id"], change)
+
+
+def _open_question(task: dict) -> Optional[Dict[str, Any]]:
+    """项目任务在等的那个问题（开发流水线缺关键事实时提的）。字段和长度都收紧：它是任务输出。"""
+    questions = task.get("questions") if isinstance(task.get("questions"), list) else []
+    for question in reversed(questions):
+        if isinstance(question, dict) and question.get("status") == "open" and question.get("id"):
+            options = question.get("options") if isinstance(question.get("options"), list) else []
+            return {"id": str(question["id"])[:80], "round": question.get("round"),
+                    "question": str(question.get("question") or "")[:1500],
+                    "options": [str(option)[:200] for option in options[:3]],
+                    "context": _tail_lines(question.get("context"), 600),
+                    "expires_at": str(question.get("expires_at") or "")[:40]}
+    return None
+
+
+async def answer_question(root: str, dispatch_id: str, answer: str, *, http=None) -> Dict[str, Any]:
+    """把主人的回答交给在等的项目任务；任务接着跑（用下一轮执行预算，回答不授予新权限）。"""
+    answer = str(answer or "").strip()
+    if not answer:
+        raise DispatchError("回答不能是空的")
+    entry = next((item for item in _load(root) if item.get("id") == dispatch_id), None)
+    if entry is None:
+        raise DispatchError("没有这张任务单")
+    question = entry.get("question")
+    if entry.get("status") != "waiting" or not isinstance(question, dict):
+        raise DispatchError("这张任务单现在没有在等回答")
+    if not entry.get("remote_session"):
+        raise DispatchError("这张任务单是旧方式下发的，只能在项目工作台里回答")
+    project = _find_project(entry["project"])
+    try:
+        await (http or _http)("POST", _service_url(project, f"/api/tasks/{entry['remote_task_id']}/answer"),
+                              {"session": entry["remote_session"], "round": question.get("round"),
+                               "question_id": question.get("id"), "answer": answer[:2000]})
+    except DispatchError:
+        raise
+    except Exception as error:  # noqa: BLE001 —— 连不上项目运行时：如实说没交上，问题还在
+        raise DispatchError(f"没连上项目运行时，回答没交上：{type(error).__name__}") from error
+
+    def answered(item: Dict[str, Any]) -> None:
+        item.update(status="running", question=None, error="", resumed_at=_now(),
+                    answers=[*(item.get("answers") or []), {"question": question.get("question", "")[:300],
+                                                           "answer": answer[:300], "at": _now()}][-4:])
+    return _update(root, dispatch_id, answered)
+
+
+async def open_pr(root: str, dispatch_id: str, *, http=None) -> Dict[str, Any]:
+    """做完的任务单开一个 draft PR（人点按钮 = 人在合并口的确认；合并仍由人在 GitHub 上做）。"""
+    entry = next((item for item in _load(root) if item.get("id") == dispatch_id), None)
+    if entry is None:
+        raise DispatchError("没有这张任务单")
+    if entry.get("pr_url"):
+        return entry
+    if entry.get("status") != "done" or entry.get("error"):
+        raise DispatchError("只有成功做完的任务单能开 PR")
+    if not str(entry.get("branch") or "").startswith("vorto/"):
+        raise DispatchError("这张任务单没有交付分支")
+    project = _find_project(entry["project"])
+    if http is None:
+        async def http(method, url, payload=None):        # 推分支 + 开 PR 要走网络，给足时间
+            return await _http(method, url, payload, seconds=180)
+    try:
+        result = await http("POST", _service_url(project, f"/api/tasks/{entry['remote_task_id']}/open_pr"), {})
+    except DispatchError:
+        raise
+    except Exception as error:  # noqa: BLE001
+        raise DispatchError(f"没连上项目运行时：{type(error).__name__}") from error
+    if not result.get("ok") or not result.get("url"):
+        raise DispatchError(str(result.get("error") or "项目运行时没有返回 PR 地址")[:300])
+    return _update(root, dispatch_id, lambda item: item.update(pr_url=str(result["url"])[:300]))
+
+
+def pr_confirm_id(dispatch_id: str) -> str:
+    """「开 PR」按钮的回调 id：和「下发」按钮（就是任务单 id）区分开。"""
+    return "dpr-" + dispatch_id[4:]
 
 
 def build_dispatch_tools(root: str, *, is_tainted: Callable[[], bool] = lambda: False,
@@ -377,7 +494,7 @@ def build_dispatch_tools(root: str, *, is_tainted: Callable[[], bool] = lambda: 
                             goal=str(args.get("goal") or ""), criteria=list(criteria),
                             # 记下是哪段对话提的：Desktop 据此把任务单卡片放进那段对话里
                             session=str((session() if callable(session) else session) or ""),
-                            tainted=is_tainted())
+                            tainted=is_tainted(), retry_of=str(args.get("retry_of") or "").strip())
         except DispatchError as error:
             return f"没有提出任务单：{error}"
         return (f"已写好任务单 {entry['id']}（{entry['project']}：{entry['title']}），卡片会出现在这段对话里，"
@@ -390,6 +507,8 @@ def build_dispatch_tools(root: str, *, is_tainted: Callable[[], bool] = lambda: 
         rows = []
         for item in items[:20]:
             line = f"- [{item['status']}] {item['project']}：{item['title']}（{item['id']}）"
+            if int(item.get("attempt") or 1) > 1:
+                line += f" 第 {item['attempt']} 次"
             if item.get("sync_state") == "unreachable":
                 line += f" 当前无法核实；上次核对：{item.get('last_checked_at') or '尚未核对'}"
             evidence = item.get("delivery_evidence")
@@ -399,6 +518,12 @@ def build_dispatch_tools(root: str, *, is_tainted: Callable[[], bool] = lambda: 
                 line += "；不代表人工验收通过"
             if item.get("branch"):
                 line += f" 分支 {item['branch']}"
+            if item.get("pr_url"):
+                line += f" PR {item['pr_url']}"
+            question = item.get("question")
+            if item["status"] == "waiting" and isinstance(question, dict):
+                options = "；".join(question.get("options") or [])
+                line += f" 在问：{question.get('question', '')[:300]}" + (f"（建议选项：{options}）" if options else "")
             if item.get("error"):
                 line += f" 错误：{item['error'][:120]}"
             elif item.get("result") and item["status"] == "done":
@@ -406,13 +531,29 @@ def build_dispatch_tools(root: str, *, is_tainted: Callable[[], bool] = lambda: 
             rows.append(line)
         return "状态：proposed=等用户确认下发，running=在做，waiting=在等人，done=执行结束待审查，不代表验收通过，failed=失败\n" + "\n".join(rows)
 
+    async def _answer(args: dict) -> str:
+        if is_tainted():
+            return "没有转交：这一轮读过网页等外部内容，回答只能由用户在 Desktop 或手机上直接给。"
+        try:
+            entry = await answer_question(root, str(args.get("dispatch_id") or ""), str(args.get("answer") or ""))
+        except DispatchError as error:
+            return f"没有转交：{error}"
+        return f"已把回答交给「{entry['title']}」，任务接着做；做完或再有问题会通知用户。"
+
     return [
+        Tool("answer_dispatch_question",
+             "把**用户自己给出的**回答转交给在等回答的任务单（list_dispatches 里 status=waiting、带「在问」的那张）。"
+             "只转述用户在这段对话里明确说的答案，不要自己替用户拿主意；用户没答就先把问题和选项告诉用户。",
+             {"dispatch_id": "任务单 id（dsp-…）", "answer": "用户的回答，原意转述，写清楚"},
+             _answer, read_only=False, serial=True),
         Tool("propose_task",
              "把一件开发/修改代码的活写成任务单，交给常驻电脑上的项目去做（隔离分支交付）。"
              f"只是提议：用户在 Desktop 确认后才会执行。可派活的项目：{names}。"
              "目标要写清楚背景、要改什么、范围边界；验收标准写成可检查的几条。",
              {"project": f"项目名，只能是：{names}", "title": "一句话标题（不超过 30 字）",
-              "goal": "要做成什么、为什么、范围边界", "criteria": "验收标准，每行一条"},
+              "goal": "要做成什么、为什么、范围边界", "criteria": "验收标准，每行一条",
+              "retry_of": "可选：接着哪张失败 / 没做完的任务单再来（dsp-…）。会自动带上它的错误和输出，"
+                          "goal 里只写这次要怎么改做法；同一件事最多 3 次"},
              _propose, read_only=False, serial=True),
         Tool("list_dispatches",
              "查看派出去的任务单：哪些等用户确认、在做、做完了（含结果和分支）、失败了。向用户汇报进度时先调它。",

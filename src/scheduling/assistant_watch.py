@@ -142,6 +142,11 @@ def result_digest(result: str, limit: int = _DIGEST_LIMIT) -> str:
     return digest
 
 
+def dispatch_pr_ready(item: Dict[str, Any]) -> bool:
+    return (item.get("status") == "done" and not item.get("error") and not item.get("pr_url")
+            and str(item.get("branch") or "").startswith("vorto/"))
+
+
 def status_message(item: Dict[str, Any]) -> str:
     title = f"{item.get('project')}：{item.get('title')}"
     status = item.get("status")
@@ -152,14 +157,30 @@ def status_message(item: Dict[str, Any]) -> str:
         return (f"📝 助理写好了任务单，等你确认下发——{title}\n点「批准」就交给常驻电脑去做，「拒绝」撤回；"
                 "也可以在 Desktop 助理的「动态」里确认。回复文字不会下发。")
     if status == "waiting":
-        return f"⏸ {title} 在等人回答，到工作台的常驻电脑项目里处理。"
+        question = item.get("question") if isinstance(item.get("question"), dict) else None
+        if not question:
+            return f"⏸ {title} 在等人回答，到工作台的常驻电脑项目里处理。"
+        options = question.get("options") or []
+        text = f"❓ {title} 做到一半要问你：\n{_clip_head(str(question.get('question') or ''), 600)}"
+        if options:
+            text += "\n建议：" + "\n".join(f"{index}. {option}" for index, option in enumerate(options, 1))
+        return text + "\n直接回我答案（选项回编号也行），我转给它接着做；24 小时内有效。"
     if status == "done":
         branch = f"，交付分支 {item['branch']}" if item.get("branch") else ""
         digest = result_digest(str(item.get("result") or ""))
-        return f"✅ {title} 执行结束，等待审查{branch}。" + (f"\n{digest}" if digest else "")
+        evidence = item.get("delivery_evidence") if isinstance(item.get("delivery_evidence"), dict) else {}
+        checked = {"passed": "自动验证通过", "failed": "⚠ 自动验证没通过", "stale": "验证结果已过期（之后又有提交）"}.get(
+            str(evidence.get("verification") or ""), "还没有这次提交的验证结果")
+        text = f"✅ {title} 做完了，等待审查{branch}；{checked}。" + (f"\n{digest}" if digest else "")
+        if dispatch_pr_ready(item):
+            text += "\n点「批准」开一个 draft PR 给你审（合并仍由你在 GitHub 上点），「拒绝」先放着。"
+        return text
     if status == "submission_unknown":
         return f"⚠ {title} 提交结果待核对，请在 Desktop 的任务卡核对状态。"
-    return f"❌ {title} 失败：{_clip_head(str(item.get('error') or '没有错误信息').strip(), _DIGEST_LIMIT)}"
+    retry = ("\n要再试，回我「改一改再派」并说说想怎么改，我带上这次的错误重写任务单。"
+             if int(item.get("attempt") or 1) < assistant_dispatch.MAX_ATTEMPTS else
+             f"\n这件事已经试了 {assistant_dispatch.MAX_ATTEMPTS} 次，建议换个做法或拆小再派。")
+    return f"❌ {title} 失败：{_clip_head(str(item.get('error') or '没有错误信息').strip(), _DIGEST_LIMIT)}" + retry
 
 
 STATUS_NAMES = {"proposed": "等你确认下发", "send_failed": "下发失败", "running": "在做", "waiting": "在等人回答",
@@ -350,11 +371,16 @@ async def watch_once(root: str, now: datetime, *, notify: Notify, refresh=assist
                 continue
             # 等确认的任务单带「批准 / 拒绝」按钮（读过外部内容的不带，只能在 Desktop 确认）
             confirm_id = item["id"] if status == "proposed" and not item.get("tainted") else ""
+            if status == "done" and dispatch_pr_ready(item):
+                confirm_id = assistant_dispatch.pr_confirm_id(item["id"])
             if status in _NOTIFY_STATUSES and not await _notify_accepted(notify, status_message(item), confirm_id):
                 continue
             seen[item["id"]] = status
             # 后续项失败或取消时，已受理的项不能被整轮重放。
             _save_state(root, state)
+    if not first_run:
+        await _nudge_overdue(root, now, items, state, notify)
+        _save_state(root, state)
     sent: List[str] = state.setdefault("reports", [])
     due_reports = {}
     for hhmm in times if times is not None else report_times():
@@ -383,6 +409,66 @@ async def watch_once(root: str, now: datetime, *, notify: Notify, refresh=assist
             _save_state(root, state)
     state["reports"] = sent[-20:]
     _save_state(root, state)
+
+
+LONG_RUNNING = timedelta(hours=3)            # 下发后这么久还没结束：提醒一次，可能卡住
+WAITING_REMIND = timedelta(hours=6)          # 任务的问题这么久没人答：再提醒一次（问题一般 24 小时过期）
+PROPOSED_REMIND = timedelta(hours=24)        # 写好的任务单这么久没人确认：再提醒一次
+PROPOSED_EXPIRE = timedelta(days=7)          # 一周没确认：自动撤回（还没执行过，撤回不丢东西）
+
+
+def _when(value: Any) -> Optional[datetime]:
+    try:
+        moment = datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+    return moment if moment.tzinfo else moment.astimezone()
+
+
+async def _nudge_overdue(root: str, now: datetime, items: List[Dict[str, Any]], state: Dict[str, Any],
+                         notify: Notify) -> None:
+    """没人管的单子：跑太久的提醒一次；等确认太久的提醒一次，一周后自动撤回。"""
+    now = now if now.tzinfo else now.astimezone()
+    ids = {item["id"] for item in items}
+    nudged: Dict[str, str] = {key: value for key, value in (state.get("nudged") or {}).items() if key in ids}
+    state["nudged"] = nudged
+    for item in items:
+        title = f"{item.get('project')}：{item.get('title')}"
+        status = item.get("status")
+        if status == "running":
+            # 你回答过问题它才接着做：从接着做的那一刻重新计时
+            started = str(item.get("resumed_at") or item.get("sent_at") or "")
+            since = _when(started)
+            if since and now - since >= LONG_RUNNING and nudged.get(item["id"]) != f"long:{started}":
+                hours = int((now - since).total_seconds() // 3600)
+                if await _notify_accepted(notify, f"🐢 {title} 已经做了 {hours} 小时还没结束，可能卡住了。"
+                                                  "到 Desktop 的常驻电脑项目里看一眼进度。"):
+                    nudged[item["id"]] = f"long:{started}"
+        elif status == "waiting" and isinstance(item.get("question"), dict):
+            question = item["question"]
+            since = _when(question.get("seen_at"))
+            key = f"ask:{question.get('id')}"
+            if since and now - since >= WAITING_REMIND and nudged.get(item["id"]) != key:
+                if await _notify_accepted(notify, f"⏳ {title} 还在等你回答（问了 {int((now - since).total_seconds() // 3600)} 小时）："
+                                                  f"{_clip_head(str(question.get('question') or ''), 200)}\n"
+                                                  "直接回我答案就行；问题发出 24 小时后就过期、答不上了。"):
+                    nudged[item["id"]] = key
+        elif status == "proposed":
+            since = _when(item.get("created_at"))
+            if not since:
+                continue
+            if now - since >= PROPOSED_EXPIRE:
+                try:
+                    assistant_dispatch.cancel(root, item["id"])
+                except assistant_dispatch.DispatchError:
+                    continue
+                await _notify_accepted(notify, f"🗑 {title} 写好一周了一直没确认，已自动撤回（还没执行过）。要做的话跟我说一声重写。")
+                nudged[item["id"]] = "expired"
+            elif now - since >= PROPOSED_REMIND and nudged.get(item["id"]) != "pending":
+                confirm_id = "" if item.get("tainted") else item["id"]
+                if await _notify_accepted(notify, f"📝 {title} 写好一天了还在等你确认。{'点「批准」下发，「拒绝」撤回；' if confirm_id else ''}"
+                                                  "一周不确认会自动撤回。", confirm_id):
+                    nudged[item["id"]] = "pending"
 
 
 async def watch_loop(root: str, stop: asyncio.Event, *, notify: Optional[Notify] = None,
