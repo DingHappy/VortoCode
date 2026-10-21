@@ -53,8 +53,10 @@ def owner_notify_url() -> str:
     return os.getenv("VORTOCODE_OWNER_NOTIFY_URL", "").strip().rstrip("/")
 
 
-async def relay_owner_notice(text: str, *, source: str = "relay") -> bool:
-    """POST 到 owner_notify_url 的 /api/im/notify。对端只在本地投递、不再转发，所以不会成环。"""
+async def relay_owner_notice(text: str, *, source: str = "relay", timed: bool = False) -> bool:
+    """POST 到 owner_notify_url 的 /api/im/notify。对端只在本地投递、不再转发，所以不会成环。
+
+    ``timed``：主人定了时间的提醒，对端不按它自己的安静时段攒着。"""
     url = owner_notify_url()
     if not url:
         return False
@@ -66,17 +68,19 @@ async def relay_owner_notice(text: str, *, source: str = "relay") -> bool:
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15), trust_env=False) as client:
-            async with client.post(f"{url}/api/im/notify", json={"text": str(text), "source": source},
-                                   headers=headers) as response:
+            payload = {"text": str(text), "source": source, **({"timed": True} if timed else {})}
+            async with client.post(f"{url}/api/im/notify", json=payload, headers=headers) as response:
                 return response.status < 400
     except Exception:  # noqa: BLE001 - notification failures must not break schedulers
         return False
 
 
-async def notify_owner(text: str, *, relay: bool = True) -> bool:
+async def notify_owner(text: str, *, relay: bool = True, timed: bool = False) -> bool:
     """Send a best-effort owner notification: this process's bridge, else the configured relay."""
     if _OWNER_NOTIFIER is None:
-        return await relay_owner_notice(text) if relay else False
+        if not relay:
+            return False
+        return await (relay_owner_notice(text, timed=True) if timed else relay_owner_notice(text))
     try:
         await _OWNER_NOTIFIER(str(text))
         return True

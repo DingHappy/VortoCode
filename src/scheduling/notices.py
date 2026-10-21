@@ -357,10 +357,13 @@ def make_notifier(repo_root: str, *, source: str = "scheduler", trigger: str = "
     _default_source, _default_trigger = source, trigger
 
     async def _notify(text, *, source: str = "", trigger: str = "", urgent: bool = False,
-                      confirm_id: str = "") -> bool:
+                      confirm_id: str = "", timed: bool = False) -> bool:
         # 归属可按次覆盖：同一个投递器既服务调度到点，也服务人手动触发（见 record_notice 的
         # source/trigger 之分）。不传就用造投递器时给的那套。
         # urgent=True（如投递探针）不受安静时段与重复合并影响：它要测的就是「此刻能不能送到」。
+        # timed=True：主人亲自定了时间的提醒（如个人目标的到点提醒）。时间是人选的，安静时段
+        # 不能替他改成「早上汇总里再说」；转发给持有 IM 的服务时也带上这个标记。
+        urgent = urgent or timed
         import time
         src = source or _default_source
         trg = trigger or _default_trigger
@@ -389,7 +392,8 @@ def make_notifier(repo_root: str, *, source: str = "scheduler", trigger: str = "
                 from src.gateway.im_runtime import notify_owner_confirm
                 delivered = bool(await notify_owner_confirm(f"🔔 {text}", confirm_id, relay=relay))
             else:
-                delivered = bool(await notify_owner(f"🔔 {text}", relay=relay))
+                delivered = bool(await notify_owner(f"🔔 {text}", relay=relay,
+                                                    **({"timed": True} if timed else {})))
         except Exception:  # noqa: BLE001
             pass
         if delivered and not urgent:
