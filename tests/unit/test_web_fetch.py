@@ -121,3 +121,33 @@ async def test_build_web_tools_exposes_web_fetch():
     # 工具 handler 走到 fetch_url：SSRF 目标被拒（端到端、不触网）
     out = await tools["web_fetch"].handler({"url": "http://127.0.0.1/x"})
     assert "SSRF" in out
+
+
+_SHELL = (b'<html><head><title>Qwen</title>'
+          b'<meta name="description" content="Qwen offers chatbot &amp; tools."/>'
+          b'<meta property="og:title" content="Qwen"/></head>'
+          b'<body><div id="root"></div><script src="/app.js"></script></body></html>')
+
+
+def test_script_rendered_shell_says_why_and_keeps_title_and_description(monkeypatch):
+    """真机 2026-10-09：模型官网抓回 0 字符，模型不知道为什么、换着法子反复抓。"""
+    monkeypatch.setattr(wf, "_urlopen", lambda req, timeout: _FakeResp(_SHELL))
+    out = wf.fetch_url("http://8.8.8.8/blog")
+    assert out.startswith("# http://8.8.8.8/blog（0 字符）")
+    assert "标题：Qwen" in out and "简介：Qwen offers chatbot & tools." in out
+    assert out.count("标题：Qwen") == 1                                    # og:title 同名不重复
+    assert "靠页面脚本" in out and "再抓也一样" in out
+
+
+def test_short_static_page_gets_no_script_note(monkeypatch):
+    monkeypatch.setattr(wf, "_urlopen",
+                        lambda req, timeout: _FakeResp(b"<html><head><title>T</title></head><body>ok</body></html>"))
+    out = wf.fetch_url("http://8.8.8.8/tiny")
+    assert "ok" in out and "靠页面脚本" not in out and "标题" not in out
+
+
+def test_full_page_is_unchanged(monkeypatch):
+    body = b"<html><head><title>T</title><script>x()</script></head><body>" + b"word " * 100 + b"</body></html>"
+    monkeypatch.setattr(wf, "_urlopen", lambda req, timeout: _FakeResp(body))
+    out = wf.fetch_url("http://8.8.8.8/full")
+    assert "靠页面脚本" not in out and "标题" not in out
