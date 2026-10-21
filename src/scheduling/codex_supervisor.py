@@ -222,11 +222,21 @@ def _account_trouble(error: str) -> str:
     return next((hint for pattern, hint in _ACCOUNT_TROUBLE if pattern.search(error or "")), "")
 
 
+# 粘贴进来的长路径只留文件名：不然一串目录就占满了，你问的那句话反而被截掉（真机 2026-10-21）
+_LONG_PATH = re.compile(r"[A-Za-z0-9_.~-]*(?:/[A-Za-z0-9_.-]+){2,}")
+
+
+def _short_request(text: str, limit: int = 60) -> str:
+    from src.scheduling.assistant_watch import _clip_head
+    compact = _LONG_PATH.sub(lambda match: match.group(0).rstrip("/").rsplit("/", 1)[-1], " ".join(text.split()))
+    return _clip_head(compact, limit)
+
+
 def _progress_line(thread: dict, finished: List[dict], assessment: str) -> str:
     turn = thread.get("turn") or {}
     line = f"· 「{thread.get('name')}」{_status_text(thread)}"
     if turn.get("request"):
-        line += f"：{turn['request'][:60]}"
+        line += f"：{_short_request(str(turn['request']))}"
     detail = []
     done = sum(1 for event in finished if event.get("status") == "completed")
     if done:
