@@ -53,6 +53,32 @@ def _persona_path_for(repo_root: str):
 
 
 _MAX_TRANSCRIPT = 400
+_MAX_ACTIVITIES = 300
+
+
+def _tool_recorder(rid: str, sink: list):
+    """把工具生命周期记成精简的 agent_tool 事件：每次调用一条，只有名字和状态——不存参数和结果
+    （手机上的回合常带外部内容，这份记录只用来数工具、选图标）。"""
+    from datetime import datetime, timezone
+    by_id: dict = {}
+
+    def record(stage: str, payload: dict) -> None:
+        if stage not in ("start", "finish") or not isinstance(payload, dict):
+            return
+        call_id = str(payload.get("id") or "")[:64]
+        name = str(payload.get("name") or "")[:80]
+        if not call_id or not name:
+            return
+        event = by_id.get(call_id)
+        if event is None:
+            event = {"type": "agent_tool", "rid": rid, "id": call_id, "name": name, "summary": name,
+                     "status": "running",
+                     "recorded_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+            by_id[call_id] = event
+            sink.append(event)
+        if stage == "finish":
+            event["status"] = str(payload.get("status") or "succeeded")[:20]
+    return record
 _CHANNEL_NAMES = {"telegram": "Telegram", "dingtalk": "钉钉"}
 
 
@@ -147,6 +173,7 @@ class IMBridge:
         self._ignored_no_mention = 0                     # 群聊里没 @ 到本机器人的入站计数
         self._confirm_holder = {"fn": None}
         self._progress_holder = {"fn": None}
+        self._tool_holder = {"fn": None}                 # 本回合的工具生命周期（动态里的工具数/图标靠它）
         # 不支持编辑的通道（钉钉）进度只能发新消息 → 放慢节流免刷屏
         self._edits = getattr(adapter, "edits_supported", True)
         self._progress_interval = 2.0 if self._edits else 10.0
@@ -208,6 +235,11 @@ class IMBridge:
             if fn is not None:
                 fn(msg)
 
+        def _tool_event(stage: str, payload: dict) -> None:
+            fn = getattr(self, "_tool_holder", {}).get("fn")
+            if fn is not None:
+                fn(stage, payload)
+
         # IM 有配对的主人在手机那头（send_confirm 按钮/文本应答）→ 问得到人；无自动放行。
         # 显式声明：内核 gate 默认最严格（问不到人），忘了声明只会更严、不会更松。
         # untrusted_input=True：IM 入站是彻头彻尾的外部不可信内容（转发的网页、群里别人贴的文本、
@@ -219,7 +251,8 @@ class IMBridge:
         agent = build_session(self.repo_root, kind="im", confirm=_confirm,
                               with_dev=getattr(self, "_with_dev", True),
                               extra_system=(f"【服务对象】{persona}" if persona else None),
-                              on_progress=_progress, llm=self._llm, can_ask_human=True,
+                              on_progress=_progress, on_tool_event=_tool_event, llm=self._llm,
+                              can_ask_human=True,
                               untrusted_input=True, workspace_scope=self.workspace_scope)
         self._restore_session(agent)
         return agent
@@ -233,6 +266,7 @@ class IMBridge:
         if saved:
             # 对话记录（不只是模型上下文）：Desktop 助理能只读看手机上聊了什么，「动态」能列出每一轮
             self._transcript = [item for item in saved.get("transcript") or [] if isinstance(item, dict)]
+            self._activities = [item for item in saved.get("activities") or [] if isinstance(item, dict)]
             agent.history = saved.get("history") or []
             if saved.get("plan"):
                 agent.plan = saved["plan"]
@@ -255,6 +289,7 @@ class IMBridge:
                          transcript=list(getattr(self, "_transcript", []))[-_MAX_TRANSCRIPT:],
                          title=f"📱 {_CHANNEL_NAMES.get(channel, channel)}",
                          history=[] if self._shares_main_chat() else self.agent.history,
+                         activities=list(getattr(self, "_activities", [])),
                          plan=getattr(self.agent, "plan", None),
                          tool_names=session_tool_names(self.agent),
                          behavior_fp=session_behavior_fp(self.agent),
@@ -1213,6 +1248,13 @@ class IMBridge:
         self._transcript.append(entry)
         return entry
 
+    def _keep_activities(self, events: list) -> None:
+        """本回合的工具记录存进 IM 自己的会话（与 Web 会话同一格式，有上限）。"""
+        if not hasattr(self, "_activities"):
+            self._activities = []
+        self._activities.extend(events)
+        del self._activities[:-_MAX_ACTIVITIES]
+
     async def _digest(self, request: str, reply_entry: dict) -> None:
         """回合结束后在后台写一条「动态」摘要（常驻助理才写；失败只退回原文截取，不影响对话）。"""
         from src.gateway.turn_digest import digest_enabled, generate_digest
@@ -1246,6 +1288,10 @@ class IMBridge:
         q: asyncio.Queue = asyncio.Queue()
         self._confirm_holder["fn"] = self._make_confirm(q)
         self._progress_holder["fn"] = lambda msg: q.put_nowait(("progress", str(msg)))
+        tools_used: list = []
+        if not hasattr(self, "_tool_holder"):
+            self._tool_holder = {"fn": None}
+        self._tool_holder["fn"] = _tool_recorder(rid, tools_used)
 
         def _say(m: str) -> None:
             q.put_nowait(("progress", _strip(m)))
@@ -1285,14 +1331,16 @@ class IMBridge:
 
                     reply = await run_external_turn(self.repo_root, source=self.channel,
                                                     user_text=_shared_text(text, images, files),
-                                                    rid=rid, run=_run)
+                                                    rid=rid, run=_run, activities=tools_used)
                     if reply is None:                    # 刚好不能合并（宿主没了）：照旧单独跑
                         self._record("user", text, rid)
                         reply = await _turn()
                         reply_holder["entry"] = self._record("assistant", reply, rid)
+                        self._keep_activities(tools_used)
                 else:
                     reply = await _turn()
                     reply_holder["entry"] = self._record("assistant", reply, rid)
+                    self._keep_activities(tools_used)
                 q.put_nowait(("final", reply))
             except asyncio.CancelledError:
                 q.put_nowait(("final", "（已取消）"))
@@ -1337,6 +1385,8 @@ class IMBridge:
         finally:
             self._confirm_holder["fn"] = None
             self._progress_holder["fn"] = None
+            if hasattr(self, "_tool_holder"):
+                self._tool_holder["fn"] = None
             try:
                 await inner
             except asyncio.CancelledError:
