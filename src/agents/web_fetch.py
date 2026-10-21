@@ -197,26 +197,36 @@ def _page_meta(raw: str) -> str:
 class FetchError(Exception):
     """fetch_bytes 的失败原因。说明里**不带网址**：调用方的网址可能本身就是密钥（日历订阅链接）。"""
 
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
 
-def fetch_bytes(url: str, *, max_bytes: int = _MAX_BYTES, timeout: int = 20) -> bytes:
+
+def fetch_bytes(url: str, *, max_bytes: int = _MAX_BYTES, timeout: int = 20,
+                headers: dict | None = None, data: bytes | None = None) -> bytes:
     """按 https 取一份原始内容（插件用）。与 fetch_url 同一套公网校验和逐跳重定向校验，
-    但只认 https，超过 max_bytes 直接报错而不是截断。"""
+    但只认 https，超过 max_bytes 直接报错而不是截断。
+
+    带 headers（多半含令牌）或 data 时不跟重定向：跟过去就等于把令牌交给另一个地址。"""
     cur = (url or "").strip()
+    sensitive = bool(headers) or data is not None
     for _hop in range(_MAX_REDIRECTS + 1):
         p = urlparse(cur)
         if p.scheme != "https":
             raise FetchError("只支持 https 链接")
         if not _host_is_safe(p.hostname or ""):
             raise FetchError("链接指向的不是公网地址")
-        req = urllib.request.Request(cur, headers={"User-Agent": "VortoCode/1.0"})
+        req = urllib.request.Request(cur, data=data, headers={"User-Agent": "VortoCode/1.0", **(headers or {})})
         try:
             resp = _urlopen(req, timeout)
         except urllib.error.HTTPError as e:
             loc = e.headers.get("Location") if getattr(e, "headers", None) else None
             if e.code in (301, 302, 303, 307, 308) and loc:
+                if sensitive:
+                    raise FetchError("对方要求重定向，带凭据的请求不跟随") from None
                 cur = urljoin(cur, loc)
                 continue
-            raise FetchError(f"对方返回 HTTP {e.code}") from None
+            raise FetchError(f"对方返回 HTTP {e.code}", e.code) from None
         except Exception as e:  # noqa: BLE001 —— 原始异常文本可能含网址，只留类型名
             raise FetchError(f"连不上（{type(e).__name__}）") from None
         raw = resp.read(max_bytes + 1)

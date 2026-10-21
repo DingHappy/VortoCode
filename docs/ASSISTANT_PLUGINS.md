@@ -1,7 +1,7 @@
 # 助理插件
 
 私人助理（General 的 Desktop / IM 会话）通过插件接入日历、邮件这类外部数据。
-代码在 `src/plugins/`，每个插件是一个名字、一份凭据、一组工具，外加一段可选的早报内容。
+现有插件：日历、Notion，都是只读。代码在 `src/plugins/`，每个插件是一个名字、一份凭据、一组工具，外加一段可选的早报内容。
 
 ## 规则
 
@@ -29,6 +29,17 @@
 mkdir -p ~/.vortocode/connectors && chmod 700 ~/.vortocode/connectors
 (umask 077; cat > ~/.vortocode/connectors/calendar.token)
 ```
+
+## Notion（只读）
+
+- 凭据：Notion **内部集成**的令牌。在 notion.so/profile/integrations 新建集成，能力只勾「读取内容」。
+- 集成只看得到你在页面右上角「连接」里加给它的页面（含子页面），能看哪些由你在 Notion 里决定。
+- 工具 `notion_search(query, limit)`：按关键词找页面和数据库；不填关键词时列出最近编辑的。
+  工具 `notion_read(page_id)`：读页面的属性、正文和一层子块；如果给的是数据库，就列出最近 50 行。
+  `page_id` 也可以直接贴页面链接。
+- 带令牌的请求不跟随重定向；报错时说明原因，但不带令牌。
+
+放置方式同上，文件名为 `notion.token`。
 
 ## 加一个插件
 
