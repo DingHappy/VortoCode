@@ -194,6 +194,38 @@ def _page_meta(raw: str) -> str:
     return "\n".join(lines[:4])
 
 
+class FetchError(Exception):
+    """fetch_bytes 的失败原因。说明里**不带网址**：调用方的网址可能本身就是密钥（日历订阅链接）。"""
+
+
+def fetch_bytes(url: str, *, max_bytes: int = _MAX_BYTES, timeout: int = 20) -> bytes:
+    """按 https 取一份原始内容（插件用）。与 fetch_url 同一套公网校验和逐跳重定向校验，
+    但只认 https，超过 max_bytes 直接报错而不是截断。"""
+    cur = (url or "").strip()
+    for _hop in range(_MAX_REDIRECTS + 1):
+        p = urlparse(cur)
+        if p.scheme != "https":
+            raise FetchError("只支持 https 链接")
+        if not _host_is_safe(p.hostname or ""):
+            raise FetchError("链接指向的不是公网地址")
+        req = urllib.request.Request(cur, headers={"User-Agent": "VortoCode/1.0"})
+        try:
+            resp = _urlopen(req, timeout)
+        except urllib.error.HTTPError as e:
+            loc = e.headers.get("Location") if getattr(e, "headers", None) else None
+            if e.code in (301, 302, 303, 307, 308) and loc:
+                cur = urljoin(cur, loc)
+                continue
+            raise FetchError(f"对方返回 HTTP {e.code}") from None
+        except Exception as e:  # noqa: BLE001 —— 原始异常文本可能含网址，只留类型名
+            raise FetchError(f"连不上（{type(e).__name__}）") from None
+        raw = resp.read(max_bytes + 1)
+        if len(raw) > max_bytes:
+            raise FetchError("内容太大")
+        return raw if isinstance(raw, bytes) else str(raw).encode("utf-8")
+    raise FetchError("重定向次数太多")
+
+
 def fetch_url(url: str) -> str:
     """抓 URL 返回正文文本（带 SSRF 防护/封顶/超时/逐跳重定向校验）。失败返回 '(' 开头说明串。"""
     cur = (url or "").strip()

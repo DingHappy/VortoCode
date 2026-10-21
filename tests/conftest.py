@@ -81,3 +81,11 @@ def _isolated_channel_ownership(monkeypatch, tmp_path_factory, request):
     identity = hashlib.sha256(request.node.nodeid.encode()).hexdigest()
     directory = tmp_path_factory.getbasetemp() / "channel-locks" / identity
     monkeypatch.setenv("VORTOCODE_IM_LOCK_DIR", str(directory))
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_plugins(monkeypatch):
+    """机器上放了插件凭据（如 ~/.vortocode/connectors/calendar.token）也不该改变测试结论：
+    默认一律当作没接插件。测插件的用例自行把 plugin_ready 换回原函数并指向临时 HOME。"""
+    import src.plugins
+    monkeypatch.setattr(src.plugins, "plugin_ready", lambda name: False)
