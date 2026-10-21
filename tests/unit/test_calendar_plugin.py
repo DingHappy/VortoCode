@@ -167,3 +167,75 @@ async def test_morning_report_carries_today_outside_the_model(home, monkeypatch)
     monkeypatch.setattr(web_fetch, "fetch_bytes", lambda url, **_kw: (_ for _ in ()).throw(web_fetch.FetchError("对方返回 HTTP 404")))
     cal._cache.clear()
     assert "📅 日历这次没读到：日历读取失败：对方返回 HTTP 404" in await watch.compose_report(str(root), now, "早报", llm=None)
+
+
+# —— 日程快开始了：提前推一次，同一件不重复，主人定的时间不受安静时段影响 ——
+
+MEETING = ics("UID:m\nDTSTART;TZID=Asia/Shanghai:20261021T100000\nDTEND;TZID=Asia/Shanghai:20261021T110000\n"
+              "SUMMARY:评审会\nLOCATION:3 楼",
+              "UID:all\nDTSTART;VALUE=DATE:20261021\nSUMMARY:全天的不提醒",
+              "UID:later\nDTSTART;TZID=Asia/Shanghai:20261021T120000\nSUMMARY:午饭")
+
+
+class TimedInbox(list):
+    accepts_timed = True
+
+    def __init__(self, accept=True):
+        super().__init__()
+        self.accept = accept
+
+    async def __call__(self, text, timed=False):
+        self.append((text, timed))
+        return self.accept
+
+
+async def test_reminders_fire_once_inside_the_lead_window(home, monkeypatch):
+    from src.scheduling import assistant_watch as watch
+
+    _token(home)
+    monkeypatch.setattr(web_fetch, "fetch_bytes", lambda url, **_kw: MEETING.encode())
+    root = home / "assistant"
+    root.mkdir()
+
+    async def no_items(_root):
+        return []
+
+    inbox = TimedInbox()
+    for minute in (40, 46, 50, 59):              # 9:40 太早；9:46 进入 15 分钟窗口；之后不重复
+        now = datetime(2026, 10, 21, 9, minute, tzinfo=TZ)
+        await watch.watch_once(str(root), now, notify=inbox, refresh=no_items, times=[])
+    assert inbox == [("⏰ 14 分钟后（10:00）：评审会 @3 楼", True)]
+    await watch.watch_once(str(root), datetime(2026, 10, 21, 10, 1, tzinfo=TZ), notify=inbox, refresh=no_items, times=[])
+    assert len(inbox) == 1                        # 已经开始的不补
+
+
+async def test_unaccepted_reminders_retry_and_zero_minutes_turns_them_off(home, monkeypatch):
+    from src.scheduling import assistant_watch as watch
+
+    _token(home)
+    monkeypatch.setattr(web_fetch, "fetch_bytes", lambda url, **_kw: MEETING.encode())
+    state: dict = {}
+    refused = TimedInbox(accept=False)
+    now = datetime(2026, 10, 21, 9, 50, tzinfo=TZ)
+    await watch._plugin_reminders(now, state, refused)
+    await watch._plugin_reminders(now, state, refused)
+    assert len(refused) == 2 and state["reminded"] == {}
+    monkeypatch.setenv(cal.REMIND_ENV, "0")
+    assert await cal.reminders(now) == []
+    monkeypatch.setenv(cal.REMIND_ENV, "70")
+    later = datetime(2026, 10, 21, 10, 55, tzinfo=TZ)            # 评审会已开始，不补；午饭 65 分钟后
+    assert [text for _, text in await cal.reminders(later)] == ["⏰ 65 分钟后（12:00）：午饭"]
+
+
+async def test_reminder_memory_forgets_after_two_days_and_unreadable_calendar_is_quiet(home, monkeypatch):
+    from src.scheduling import assistant_watch as watch
+
+    now = datetime(2026, 10, 21, 9, 50, tzinfo=TZ)
+    state = {"reminded": {"old": (now - timedelta(days=3)).isoformat(), "new": now.isoformat()}}
+    inbox = TimedInbox()
+    await watch._plugin_reminders(now, state, inbox)     # 没接日历：不提醒、不报错
+    assert inbox == [] and list(state["reminded"]) == ["new"]
+    _token(home)
+    monkeypatch.setattr(web_fetch, "fetch_bytes", lambda url, **_kw: (_ for _ in ()).throw(web_fetch.FetchError("x")))
+    await watch._plugin_reminders(now, state, inbox)
+    assert inbox == []
