@@ -323,6 +323,8 @@ const PLUGIN_STATUS: Record<AssistantPlugin["status"], string> = {
 const PLUGIN_INPUT: Record<string, { label: string; placeholder: string; help: string }> = {
   calendar: { label: "日历订阅链接", placeholder: "https://… 或 webcal://…",
     help: "Google 日历：设置 → 该日历 →「iCal 格式的私密地址」；iCloud：共享日历 → 公开日历 → 复制链接。" },
+  mail: { label: "邮箱:授权码", placeholder: "you@qq.com:授权码",
+    help: "在邮箱设置里开 IMAP 并生成授权码（客户端专用密码，不是登录密码）。QQ/163/126/iCloud/Gmail 自动识别服务器，其他写成 imaps://邮箱:授权码@服务器。" },
   notion: { label: "Notion 集成令牌", placeholder: "ntn_…",
     help: "notion.so/profile/integrations 新建内部集成（只勾读取内容），再在要给助理看的页面「连接」里加上它。" },
 };
