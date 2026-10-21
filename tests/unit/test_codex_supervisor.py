@@ -376,3 +376,14 @@ async def test_other_failures_still_offer_to_draft_a_reply(tmp_path):
     _report(root, _thread(status="idle", turn_status="failed", tid="t1", error="pytest 有 3 个失败"), _m(5))
     await _check(root, _m(30), notes)
     assert "pytest 有 3 个失败" in notes.texts()[0] and "拟好话给 Codex" in notes.texts()[0]
+
+
+@pytest.mark.parametrize("request_text,expected", [
+    ("(.worktrees/agent-tasks/docs/sql/agent_tasks_delivery_status/001_remove_delivering.sql这个迁移迁移了什么",
+     "(001_remove_delivering.sql这个迁移迁移了什么"),
+    ("看下 ~/personal_project/VortoCode/src/cli.py 和 src/web/server.py 的入口", "看下 cli.py 和 server.py 的入口"),
+    ("改 a/b 这一处", "改 a/b 这一处"),                       # 只有一层的不算长路径
+    ("你帮我停了吧这几个", "你帮我停了吧这几个"),
+])
+def test_request_shows_what_you_asked_not_a_wall_of_directories(request_text, expected):
+    assert sup._short_request(request_text) == expected
