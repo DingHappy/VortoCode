@@ -223,6 +223,26 @@ async def plugin_check(name: str):
         return {"ok": False, "status": "available", "detail": "检查超时，对方太慢或网络不通"}
 
 
+@router.put("/api/assistant/plugins/{name}")
+async def plugin_save(name: str, body: dict):
+    """从 Desktop 填插件凭据：写进本机凭据文件后真去读一次。返回里不带凭据。"""
+    from src.plugins import check_plugin, save_credential
+    credential = body.get("credential") if isinstance(body, dict) else None
+    if not isinstance(credential, str):
+        raise HTTPException(status_code=400, detail="缺少凭据")
+    try:
+        await asyncio.to_thread(save_credential, name, credential)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+    try:
+        check = await asyncio.wait_for(check_plugin(name), 45)
+    except asyncio.TimeoutError:
+        check = {"ok": False, "status": "available", "detail": "已保存；检查超时，对方太慢或网络不通"}
+    return {"saved": True, "check": check}
+
+
 @router.delete("/api/assistant/plugins/{name}")
 async def plugin_remove(name: str):
     from src.plugins import remove_credential

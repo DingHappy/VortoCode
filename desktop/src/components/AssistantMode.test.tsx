@@ -101,3 +101,20 @@ it("插件：已接上的能检查、能移除；没接的说凭据放哪；检�
   expect(renderToStaticMarkup(<AssistantPlugins plugins={[]} />)).toBe("");
   expect(renderToStaticMarkup(<AssistantPlugins plugins={plugins} busy="calendar" />)).toContain("处理中…");
 });
+
+it("插件：能在 Desktop 填凭据——没接的给「填写」，接上的给「更换」；不给保存入口时不显示", async () => {
+  const { AssistantPlugins } = await import("./AssistantMode");
+  const plugins = [
+    { name: "calendar", title: "日历（只读）", status: "available" as const, credential_file: "~/.vortocode/connectors/calendar.token", checkable: true },
+    { name: "notion", title: "Notion（只读）", status: "missing" as const, credential_file: "~/.vortocode/connectors/notion.token", checkable: true },
+  ];
+  const html = renderToStaticMarkup(<AssistantPlugins plugins={plugins} onSave={async () => true} />);
+  const [calendar, notion] = html.split("<li>").slice(1);
+  expect(calendar).toContain(">更换</button>");
+  expect(notion).toContain('class="primary">填写</button>');
+  expect(notion).toContain("点「填写」把凭据存到助理所在的电脑");
+  expect(html).not.toContain("<input");                       // 输入框要点了才出现
+  const readOnly = renderToStaticMarkup(<AssistantPlugins plugins={plugins} />);
+  expect(readOnly).not.toContain("填写</button>");
+  expect(readOnly).not.toContain("更换</button>");
+});

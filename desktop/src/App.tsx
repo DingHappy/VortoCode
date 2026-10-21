@@ -407,6 +407,25 @@ function App() {
       void refreshPlugins(client, assistantScope).catch(() => undefined);   // 旧版服务没有这个接口：不显示插件区
     }
   }, [assistantTab, assistantScope, connection, refreshPlugins]);
+  const savePlugin = async (plugin: AssistantPlugin, credential: string): Promise<boolean> => {
+    const client = clientRef.current;
+    const scope = assistantScope;
+    const current = () => clientRef.current === client && assistantScopeRef.current === scope;
+    if (!client || !current()) return false;
+    setPluginBusy(plugin.name);
+    try {
+      const { check } = await client.savePluginCredential(plugin.name, credential);
+      if (!current()) return false;
+      setPluginChecks((prev) => ({ scope, items: { ...(prev?.scope === scope ? prev.items : {}), [plugin.name]: check } }));
+      await refreshPlugins(client, scope);
+      return true;
+    } catch (error) {
+      if (current()) setBanner(errorText(error, "保存凭据失败"));
+      return false;
+    } finally {
+      if (current()) setPluginBusy("");
+    }
+  };
   const pluginAction = (action: "check" | "remove", plugin: AssistantPlugin) => void (async () => {
     const client = clientRef.current;
     const scope = assistantScope;
@@ -4011,7 +4030,8 @@ function App() {
                   plugins={<AssistantPlugins plugins={plugins} busy={pluginBusy}
                     checks={pluginChecks?.scope === assistantScope ? pluginChecks.items : {}}
                     onCheck={(plugin) => pluginAction("check", plugin)}
-                    onRemove={(plugin) => pluginAction("remove", plugin)} />}
+                    onRemove={(plugin) => pluginAction("remove", plugin)}
+                    onSave={(plugin, credential) => savePlugin(plugin, credential)} />}
                   onConnector={(action, connector) => void (async () => {
                     const client = clientRef.current;
                     const scope = assistantScope;
