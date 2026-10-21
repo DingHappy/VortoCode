@@ -5,7 +5,7 @@ import type { CodexAction } from "../types";
 
 const STATUS: Record<CodexAction["status"], string> = {
   proposed: "等你批准", approved: "已批准，等 Mac 上的 VortoCode 交给 Codex", sending: "正在交给 Codex",
-  sent: "已交给 Codex", failed: "没能交给 Codex", cancelled: "已撤回",
+  sent: "已交给 Codex", failed: "没能交给 Codex", cancelled: "已撤回", expired: "已过时，没发",
 };
 
 export function CodexActionCard({ action, connected, onDecide }: {
@@ -33,7 +33,7 @@ export function CodexActionCard({ action, connected, onDecide }: {
       ? <p className="assistant-task-text">叫停它正在做的这一轮（已经做的改动会保留）。</p>
       : <p className="assistant-task-text">{action.text}</p>}
     {action.tainted && <p className="assistant-task-warning">助理是在读过外部内容后拟的，发之前看清楚。</p>}
-    {action.status === "failed" && action.error && <p className="task-error">{action.error}</p>}
+    {(action.status === "failed" || action.status === "expired") && action.error && <p className="task-error">{action.error}</p>}
     {!connected && <small>连接中断，恢复后可继续处理。</small>}
     {error && <p role="alert" className="task-error">{error}</p>}
   </article>;

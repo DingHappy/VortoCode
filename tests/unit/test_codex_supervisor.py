@@ -269,3 +269,71 @@ def test_observer_reports_only_a_number_for_idle_time(monkeypatch):
     from src.scheduling import codex_observer as observer
     monkeypatch.setattr(sys, "platform", "linux")
     assert observer.user_idle_seconds() is None
+
+
+# —— 等你批的动作过时就作废：不放行、也不再挡住后面的推进 ——
+
+def _propose(root, kind="message", session=""):
+    return watch.propose_action(root, thread="th1", kind=kind, text="接着补测试" if kind == "message" else "",
+                                session=session)
+
+
+def test_drafted_message_expires_once_codex_moves_on_and_cannot_be_approved(tmp_path):
+    root = str(tmp_path)
+    _report(root, _done(tid="t1"), T0)
+    draft = _propose(root)
+    _report(root, _done(tid="t1"), _m(1))                       # 还是那一轮：草稿照旧有效
+    assert watch.load_actions(root)[0]["status"] == "proposed"
+    _report(root, _thread(tid="t2"), _m(2))                     # 你在 Mac 上接着说了，开了新的一轮
+    item = watch.load_actions(root)[0]
+    assert item["status"] == "expired" and "新的一轮" in item["error"]
+    with pytest.raises(watch.CodexActionError, match="过时"):
+        watch.decide_action(root, draft["id"], True)
+
+
+def test_drafts_you_asked_for_survive_a_new_turn_but_not_a_closed_session(tmp_path):
+    root = str(tmp_path)
+    _report(root, _done(tid="t1"), T0)
+    _propose(root, session="sid-chat")
+    _report(root, _thread(tid="t2"), _m(1))
+    assert watch.load_actions(root)[0]["status"] == "proposed"
+    watch.record_report(root, {"threads": []}, now=_m(2))       # 会话关了
+    item = watch.load_actions(root)[0]
+    assert item["status"] == "expired" and "关了" in item["error"]
+
+
+def test_stop_draft_only_ever_targets_the_turn_it_was_drafted_for(tmp_path):
+    root = str(tmp_path)
+    _report(root, _thread(tid="t1"), T0)
+    stop = _propose(root, kind="interrupt", session="sid-chat")
+    _report(root, _done(tid="t1"), _m(1))
+    _report(root, _thread(tid="t2"), _m(2))
+    assert watch.load_actions(root)[0]["status"] == "expired"
+    with pytest.raises(watch.CodexActionError, match="叫停的那一轮已经结束"):
+        watch.decide_action(root, stop["id"], True)
+
+
+def test_approve_rechecks_against_the_latest_report(tmp_path):
+    root = str(tmp_path)
+    _report(root, _thread(tid="t1"), T0)
+    stop = _propose(root, kind="interrupt")
+    state = watch.load_state(root)
+    state["threads"][0]["turn"]["status"] = "completed"         # 最新进度已落盘，但还没跑到作废那一步
+    state["threads"][0]["status"] = "idle"
+    watch._save_state(root, state)
+    with pytest.raises(watch.CodexActionError, match="过时"):
+        watch.decide_action(root, stop["id"], True)
+
+
+@pytest.mark.asyncio
+async def test_an_expired_draft_no_longer_blocks_the_next_nudge(tmp_path):
+    root, notes = str(tmp_path), Notes()
+    llm = FakeLLM('{"verdict": "continue", "assessment": "还差测试", "next": "补上测试"}')
+    _report(root, _thread(tid="t1"), T0)
+    await _check(root, T0, notes)
+    _propose(root)                                              # 旧草稿一直没人批
+    _report(root, _thread(tid="t2"), _m(10))
+    _report(root, _done(tid="t2"), _m(12))
+    await _check(root, _m(30), notes, llm)
+    actions = watch.load_actions(root)
+    assert [a["status"] for a in actions] == ["expired", "proposed"] and actions[1]["text"] == "补上测试"

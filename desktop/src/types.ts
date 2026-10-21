@@ -236,7 +236,7 @@ export interface CodexAction {
   thread_name: string;
   kind: "message" | "interrupt";
   text: string;
-  status: "proposed" | "approved" | "sending" | "sent" | "failed" | "cancelled";
+  status: "proposed" | "approved" | "sending" | "sent" | "failed" | "cancelled" | "expired";
   tainted: boolean;
   session: string;
   error: string;
