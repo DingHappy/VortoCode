@@ -69,7 +69,9 @@ async def poll_goal_followups(root: str, now: datetime, *, notify: Callable[[str
                         service._save(goal)  # Never notify before the claim is durable.
                         handled += 1
                         try:
-                            accepted = await asyncio.wait_for(notify(text), timeout=NOTIFY_TIMEOUT)
+                            # 到点时间是主人批准的：投递器支持就标成定时提醒，不被安静时段攒到早上
+                            sent = notify(text, timed=True) if getattr(notify, "accepts_timed", False) else notify(text)
+                            accepted = await asyncio.wait_for(sent, timeout=NOTIFY_TIMEOUT)
                         except Exception:  # Cancellation propagates, preserving the sending claim.
                             state.update(status="unknown", reason="通知结果不明，请核对后再决定是否重试")
                         else:

@@ -59,13 +59,14 @@ def owner_reporter(root: str) -> Notify:
 
     deliver = make_notifier(root, source="assistant")
 
-    async def report(text: str, confirm_id: str = "") -> bool:
+    async def report(text: str, confirm_id: str = "", timed: bool = False) -> bool:
         try:
-            return bool(await deliver(text, confirm_id=confirm_id))
+            return bool(await deliver(text, confirm_id=confirm_id, timed=timed))
         except Exception as error:  # noqa: BLE001 —— 推送是旁路
             logger.warning("助理汇报失败：%s", type(error).__name__)
             return False
     report.accepts_confirm = True  # type: ignore[attr-defined]  # 任务单通知可带「批准 / 拒绝」按钮
+    report.accepts_timed = True  # type: ignore[attr-defined]    # 主人定时的提醒不受安静时段影响
     return report
 
 
