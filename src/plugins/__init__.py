@@ -26,16 +26,18 @@ class Plugin:
     build_tools: Callable[[], list]
     morning_brief: Optional[Callable[[datetime], Awaitable[str]]] = None
     check: Optional[Callable[[], Awaitable[str]]] = None   # 真去读一次，返回一句结果；失败抛异常
+    validate: Optional[Callable[[str], str]] = None         # 从 Desktop 填凭据时的格式校验；错误说明里不回显凭据
 
 
 def available_plugins() -> List[Plugin]:
     from src.plugins import calendar_ics, notion
     return [Plugin(calendar_ics.NAME, "日历（只读）",
                    "用户问日程、有没有空、几点开会时用 calendar_events 查，不要凭记忆回答。",
-                   calendar_ics.build_tools, calendar_ics.morning_brief, calendar_ics.check),
+                   calendar_ics.build_tools, calendar_ics.morning_brief, calendar_ics.check,
+                   calendar_ics.validate),
             Plugin(notion.NAME, "Notion（只读）",
                    "用户提到 Notion 里的笔记、文档、清单或数据库时，先 notion_search 找到页面，再 notion_read 读正文。",
-                   notion.build_tools, check=notion.check)]
+                   notion.build_tools, check=notion.check, validate=notion.validate)]
 
 
 def plugin_ready(name: str) -> bool:
@@ -89,6 +91,28 @@ async def check_plugin(name: str) -> dict:
     except Exception as error:  # noqa: BLE001 —— 插件自己的异常说明已去掉凭据；其他异常只给类型
         known = error.__class__.__module__.startswith("src.plugins")
         return {"ok": False, "status": status, "detail": str(error) if known else f"检查失败（{type(error).__name__}）"}
+
+
+def save_credential(name: str, value: str) -> None:
+    """从 Desktop 填的凭据：校验格式后原子写成本人只读文件（目录 700、文件 600）。
+
+    凭据只写文件：不进返回值、日志或任何模型上下文；校验失败的说明里也不回显它。"""
+    import os
+    from src.agents.mcp_tools import connector_secret_path
+    plugin = _plugin(name)
+    value = str(value or "").strip()
+    if not value or len(value) > 2048 or any(ch.isspace() for ch in value):
+        raise ValueError("凭据为空、太长或含空白")
+    if plugin.validate is not None:
+        value = plugin.validate(value)
+    path = connector_secret_path(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    tmp = path.with_name(f".{name}.token.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(value + "\n")
+    os.replace(tmp, path)
 
 
 def remove_credential(name: str) -> bool:

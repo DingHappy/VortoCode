@@ -320,14 +320,25 @@ const PLUGIN_STATUS: Record<AssistantPlugin["status"], string> = {
 };
 
 /** 插件：日历、Notion 这类外部数据。凭据在助理所在电脑上放文件，这里只看状态、检查、移除。 */
-export function AssistantPlugins({ plugins, checks = {}, busy = "", onCheck, onRemove }: {
+const PLUGIN_INPUT: Record<string, { label: string; placeholder: string; help: string }> = {
+  calendar: { label: "日历订阅链接", placeholder: "https://… 或 webcal://…",
+    help: "Google 日历：设置 → 该日历 →「iCal 格式的私密地址」；iCloud：共享日历 → 公开日历 → 复制链接。" },
+  notion: { label: "Notion 集成令牌", placeholder: "ntn_…",
+    help: "notion.so/profile/integrations 新建内部集成（只勾读取内容），再在要给助理看的页面「连接」里加上它。" },
+};
+
+export function AssistantPlugins({ plugins, checks = {}, busy = "", onCheck, onRemove, onSave }: {
   plugins: AssistantPlugin[];
   checks?: Record<string, PluginCheck>;
-  /** 正在检查或移除的插件名 */
+  /** 正在检查、保存或移除的插件名 */
   busy?: string;
   onCheck?: (plugin: AssistantPlugin) => void;
   onRemove?: (plugin: AssistantPlugin) => void;
+  /** 保存凭据；成功返回 true，输入框随之清空收起 */
+  onSave?: (plugin: AssistantPlugin, credential: string) => Promise<boolean>;
 }) {
+  const [editing, setEditing] = useState("");
+  const [draft, setDraft] = useState("");
   if (!plugins.length) return null;
   return <div className="assistant-connectors assistant-plugins">
     <h5>插件</h5>
@@ -340,14 +351,32 @@ export function AssistantPlugins({ plugins, checks = {}, busy = "", onCheck, onR
             <strong>{item.title}</strong>
             <small>{busy === item.name ? "处理中…" : PLUGIN_STATUS[item.status] ?? item.status}</small>
             {ready && item.checkable && <button disabled={busy === item.name} onClick={() => onCheck?.(item)}>检查</button>}
+            {onSave && editing !== item.name && <button className={ready ? "" : "primary"} disabled={busy === item.name}
+              onClick={() => { setEditing(item.name); setDraft(""); }}>{ready ? "更换" : "填写"}</button>}
             {item.status !== "missing" && <button disabled={busy === item.name} onClick={() => onRemove?.(item)}>移除凭据</button>}
           </div>
+          {editing === item.name && <form className="assistant-plugin-form" onSubmit={(event) => {
+            event.preventDefault();
+            const value = draft.trim();
+            if (!value || !onSave) return;
+            void onSave(item, value).then((ok) => { if (ok) { setEditing(""); setDraft(""); } });
+          }}>
+            <label>{PLUGIN_INPUT[item.name]?.label ?? "凭据"}
+              <input type="password" autoComplete="off" spellCheck={false} value={draft} autoFocus
+                placeholder={PLUGIN_INPUT[item.name]?.placeholder} onChange={(event) => setDraft(event.target.value)} />
+            </label>
+            {PLUGIN_INPUT[item.name] && <p className="assistant-connector-note">{PLUGIN_INPUT[item.name].help}</p>}
+            <div>
+              <button type="button" onClick={() => { setEditing(""); setDraft(""); }}>取消</button>
+              <button type="submit" className="primary" disabled={!draft.trim() || busy === item.name}>保存并检查</button>
+            </div>
+          </form>}
           {check && <p className={check.ok ? "assistant-connector-note" : "assistant-connector-error"} role={check.ok ? undefined : "alert"}>{check.detail}</p>}
-          {!ready && <p className="assistant-connector-note">在助理所在的电脑上把凭据放进 <code>{item.credential_file}</code>（权限 600），新开对话生效。</p>}
+          {!ready && editing !== item.name && <p className="assistant-connector-note">点「填写」把凭据存到助理所在的电脑（<code>{item.credential_file}</code>，权限 600），新开对话生效。</p>}
         </li>;
       })}
     </ul>
-    <p className="assistant-connector-note">插件都只读，带回来的内容当外部资料处理。移除凭据后立即停用。</p>
+    <p className="assistant-connector-note">插件都只读，带回来的内容当外部资料处理。凭据只存在助理所在的电脑上，填完不会再显示；移除后立即停用。</p>
   </div>;
 }
 

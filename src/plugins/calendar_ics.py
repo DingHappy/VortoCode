@@ -406,6 +406,14 @@ async def morning_brief(now: datetime) -> str:
     return "📅 今天的安排\n" + "\n".join(lines)
 
 
+def validate(value: str) -> str:
+    from urllib.parse import urlsplit
+    parts = urlsplit(value)
+    if parts.scheme.lower() not in ("https", "webcal") or not parts.hostname:
+        raise ValueError("要填日历的订阅链接（https:// 或 webcal:// 开头）")
+    return value
+
+
 async def check() -> str:
     now = _local_now()
     cal = await load_calendar(now.tzinfo or timezone.utc)

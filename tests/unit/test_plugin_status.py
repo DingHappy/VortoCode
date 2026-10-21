@@ -81,3 +81,34 @@ def test_remove_deletes_only_a_known_plugin_credential(home, client):
     assert not path.exists() and other.exists()
     assert client.delete("/api/assistant/plugins/notion").json() == {"removed": False}
     assert client.delete("/api/assistant/plugins/github").status_code == 404
+
+
+def test_desktop_can_save_a_credential_which_lands_600_and_is_never_echoed(home, client, monkeypatch):
+    monkeypatch.setattr(web_fetch, "fetch_bytes", lambda url, **_kw: (
+        b"BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:a\r\nDTSTART:20200101T090000\r\nSUMMARY:x\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"))
+    response = client.put("/api/assistant/plugins/calendar", json={"credential": "  " + SECRET + "\n"})
+    assert response.status_code == 200 and "private-abc123" not in response.text
+    assert response.json()["saved"] and response.json()["check"]["ok"]
+    path = home / ".vortocode" / "connectors" / "calendar.token"
+    assert path.read_text() == SECRET + "\n"
+    assert path.stat().st_mode & 0o777 == 0o600 and path.parent.stat().st_mode & 0o777 == 0o700
+    rows = {row["name"]: row["status"] for row in client.get("/api/assistant/plugins").json()["plugins"]}
+    assert rows["calendar"] == "available"
+
+
+@pytest.mark.parametrize("name,value,message", [
+    ("calendar", "http://calendar.example.com/private-abc123", "订阅链接"),
+    ("calendar", "ftp://x/private-abc123", "订阅链接"),
+    ("notion", "private-abc123-not-a-token", "ntn_"),
+    ("notion", "ntn_ private-abc123", "空白"),
+])
+def test_bad_credentials_are_refused_without_echo_or_file(home, client, name, value, message):
+    response = client.put(f"/api/assistant/plugins/{name}", json={"credential": value})
+    assert response.status_code == 400 and message in response.json()["detail"]
+    assert "private-abc123" not in response.text
+    assert not (home / ".vortocode" / "connectors" / f"{name}.token").exists()
+
+
+def test_save_rejects_unknown_plugins_and_missing_fields(home, client):
+    assert client.put("/api/assistant/plugins/github", json={"credential": "ghp_x"}).status_code == 404
+    assert client.put("/api/assistant/plugins/notion", json={}).status_code == 400

@@ -932,6 +932,12 @@
     ]
   },
   {
+    "path": "/api/assistant/plugins/{name}",
+    "methods": [
+      "PUT"
+    ]
+  },
+  {
     "path": "/api/assistant/plugins/{name}/check",
     "methods": [
       "POST"

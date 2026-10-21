@@ -499,6 +499,13 @@ export class GatewayClient {
     return this.request(`/api/assistant/plugins/${encodeURIComponent(name)}/check`, { method: "POST" });
   }
 
+  /** 填插件凭据：服务端写进本机凭据文件后检查一次；返回里不带凭据。 */
+  async savePluginCredential(name: string, credential: string): Promise<{ saved: boolean; check: PluginCheck }> {
+    return this.request(`/api/assistant/plugins/${encodeURIComponent(name)}`, {
+      method: "PUT", body: JSON.stringify({ credential }),
+    });
+  }
+
   async removePluginCredential(name: string): Promise<{ removed: boolean }> {
     return this.request(`/api/assistant/plugins/${encodeURIComponent(name)}`, { method: "DELETE" });
   }
