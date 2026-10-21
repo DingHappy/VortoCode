@@ -76,3 +76,28 @@ it("does not point a local-only user at schedules that will never run", () => {
   const resident = renderToStaticMarkup(<AssistantSchedule items={[]} connected />);
   expect(resident).toContain("每天早上给我一份简报");
 });
+
+it("插件：已接上的能检查、能移除；没接的说凭据放哪；检查结果成功/失败分开显示", async () => {
+  const { AssistantPlugins } = await import("./AssistantMode");
+  const plugins = [
+    { name: "calendar", title: "日历（只读）", status: "available" as const, credential_file: "~/.vortocode/connectors/calendar.token", checkable: true },
+    { name: "notion", title: "Notion（只读）", status: "missing" as const, credential_file: "~/.vortocode/connectors/notion.token", checkable: true },
+    { name: "mail", title: "邮件", status: "invalid" as const, credential_file: "~/.vortocode/connectors/mail.token", checkable: true },
+  ];
+  const html = renderToStaticMarkup(<AssistantPlugins plugins={plugins} checks={{
+    calendar: { ok: true, status: "available", detail: "能读到，共 12 条日程" },
+    mail: { ok: false, status: "invalid", detail: "凭据文件不可用" },
+  }} />);
+  const [calendar, notion, mail] = html.split("<li>").slice(1);
+  expect(calendar).toContain("已接上");
+  expect(calendar).toContain(">检查</button>");
+  expect(calendar).toContain(">移除凭据</button>");
+  expect(calendar).toContain("能读到，共 12 条日程");
+  expect(notion).toContain("未接入");
+  expect(notion).not.toContain("</button>");
+  expect(notion).toContain("<code>~/.vortocode/connectors/notion.token</code>");
+  expect(mail).not.toContain(">检查</button>");
+  expect(mail).toContain('role="alert"');
+  expect(renderToStaticMarkup(<AssistantPlugins plugins={[]} />)).toBe("");
+  expect(renderToStaticMarkup(<AssistantPlugins plugins={plugins} busy="calendar" />)).toContain("处理中…");
+});

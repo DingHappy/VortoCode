@@ -4,7 +4,7 @@ import { ArrowLeft, Smartphone, Check, Clock3, Fingerprint, Laptop, List, Messag
 import { useRef, useState } from "react";
 import { avatarHue, avatarInitial, avatarSrc } from "../lib/avatar";
 import { connectorCredentialView } from "../lib/connectorStatus";
-import type { AssistantAvatar, AssistantConnector, AssistantMemory, AssistantProfile, AssistantScheduleItem, AuditEntry, MemoryProposal, PhoneChat } from "../types";
+import type { AssistantAvatar, AssistantConnector, AssistantMemory, AssistantPlugin, PluginCheck, AssistantProfile, AssistantScheduleItem, AuditEntry, MemoryProposal, PhoneChat } from "../types";
 import { MarkdownMessage } from "./MarkdownMessage";
 
 export type AppMode = "assistant" | "work";
@@ -239,7 +239,7 @@ export function MemoryProposals({ proposals, onDecide }: {
   </>;
 }
 
-export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposals = [], connectors = [], onEdit, onDeleteMemory, onDecideProposal, onConnector }: {
+export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposals = [], connectors = [], onEdit, onDeleteMemory, onDecideProposal, onConnector, plugins }: {
   profile: AssistantProfile;
   /** 头像：选了文件就换，null 恢复成名字首字 */
   avatar?: AssistantAvatar | null;
@@ -253,6 +253,8 @@ export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposa
   /** 连接的服务（GitHub 等） */
   connectors?: AssistantConnector[];
   onConnector?: (action: "connect" | "disconnect" | "open" | "copy", connector: AssistantConnector) => void;
+  /** 插件区块（日历、Notion…），由上层装好状态后传进来 */
+  plugins?: ReactNode;
 }) {
   const [showMemories, setShowMemories] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -293,6 +295,7 @@ export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposa
       </button>
     </div>
     {connectors.length > 0 && <AssistantConnectors connectors={connectors} onAction={onConnector} />}
+    {plugins}
   </section>;
 }
 
@@ -310,6 +313,42 @@ export function PhoneChatDialog({ chat, onClose }: { chat: PhoneChat; onClose: (
       </article>)}
     </div>
   </section></div>;
+}
+
+const PLUGIN_STATUS: Record<AssistantPlugin["status"], string> = {
+  available: "已接上", missing: "未接入", invalid: "凭据文件不可用", revoked: "已在本机撤销",
+};
+
+/** 插件：日历、Notion 这类外部数据。凭据在助理所在电脑上放文件，这里只看状态、检查、移除。 */
+export function AssistantPlugins({ plugins, checks = {}, busy = "", onCheck, onRemove }: {
+  plugins: AssistantPlugin[];
+  checks?: Record<string, PluginCheck>;
+  /** 正在检查或移除的插件名 */
+  busy?: string;
+  onCheck?: (plugin: AssistantPlugin) => void;
+  onRemove?: (plugin: AssistantPlugin) => void;
+}) {
+  if (!plugins.length) return null;
+  return <div className="assistant-connectors assistant-plugins">
+    <h5>插件</h5>
+    <ul>
+      {plugins.map((item) => {
+        const check = checks[item.name];
+        const ready = item.status === "available";
+        return <li key={item.name}>
+          <div className="assistant-connector-head">
+            <strong>{item.title}</strong>
+            <small>{busy === item.name ? "处理中…" : PLUGIN_STATUS[item.status] ?? item.status}</small>
+            {ready && item.checkable && <button disabled={busy === item.name} onClick={() => onCheck?.(item)}>检查</button>}
+            {item.status !== "missing" && <button disabled={busy === item.name} onClick={() => onRemove?.(item)}>移除凭据</button>}
+          </div>
+          {check && <p className={check.ok ? "assistant-connector-note" : "assistant-connector-error"} role={check.ok ? undefined : "alert"}>{check.detail}</p>}
+          {!ready && <p className="assistant-connector-note">在助理所在的电脑上把凭据放进 <code>{item.credential_file}</code>（权限 600），新开对话生效。</p>}
+        </li>;
+      })}
+    </ul>
+    <p className="assistant-connector-note">插件都只读，带回来的内容当外部资料处理。移除凭据后立即停用。</p>
+  </div>;
 }
 
 const PROVIDER_NAMES: Record<string, string> = { github: "GitHub" };

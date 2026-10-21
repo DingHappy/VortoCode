@@ -1,6 +1,7 @@
 """常驻助理的资料与记忆：Desktop 身份卡显示/修改名字与「关于你」，「记忆」页查看与删除。"""
 from __future__ import annotations
 
+import asyncio
 import os
 
 from fastapi import APIRouter, HTTPException
@@ -201,6 +202,34 @@ async def connectors_status():
     """本机凭据可用性与设备授权状态；不代表 MCP 已连接，不含令牌。"""
     from src.workflow.workbench import connectors
     return {"connectors": connectors.status(os.getcwd())}
+
+
+@router.get("/api/assistant/plugins")
+async def plugins_status():
+    """助理插件（日历、Notion…）的本机凭据状态；不含凭据。"""
+    from src.plugins import plugin_status
+    return {"plugins": await asyncio.to_thread(plugin_status)}
+
+
+@router.post("/api/assistant/plugins/{name}/check")
+async def plugin_check(name: str):
+    """真去读一次，告诉你插件能不能用。"""
+    from src.plugins import check_plugin
+    try:
+        return await asyncio.wait_for(check_plugin(name), 45)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except asyncio.TimeoutError:
+        return {"ok": False, "status": "available", "detail": "检查超时，对方太慢或网络不通"}
+
+
+@router.delete("/api/assistant/plugins/{name}")
+async def plugin_remove(name: str):
+    from src.plugins import remove_credential
+    try:
+        return {"removed": await asyncio.to_thread(remove_credential, name)}
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @router.post("/api/assistant/connectors/{name}/authorize")

@@ -8,6 +8,8 @@ import type {
   AssistantDispatch,
   AssistantAvatar,
   AssistantConnector,
+  AssistantPlugin,
+  PluginCheck,
   ConnectorDisconnectReceipt,
   PersonalSkill,
   PersonalSkillsSnapshot,
@@ -484,6 +486,21 @@ export class GatewayClient {
 
   async disconnectConnector(name: string): Promise<ConnectorDisconnectReceipt> {
     return this.request(`/api/assistant/connectors/${encodeURIComponent(name)}`, { method: "DELETE" });
+  }
+
+  /** 助理插件（日历、Notion…）的凭据状态。 */
+  async listPlugins(): Promise<AssistantPlugin[]> {
+    const payload = await this.request<{ plugins?: AssistantPlugin[] }>("/api/assistant/plugins");
+    return Array.isArray(payload.plugins) ? payload.plugins : [];
+  }
+
+  /** 真去读一次，看插件能不能用。 */
+  async checkPlugin(name: string): Promise<PluginCheck> {
+    return this.request(`/api/assistant/plugins/${encodeURIComponent(name)}/check`, { method: "POST" });
+  }
+
+  async removePluginCredential(name: string): Promise<{ removed: boolean }> {
+    return this.request(`/api/assistant/plugins/${encodeURIComponent(name)}`, { method: "DELETE" });
   }
 
   async getPersonalSkills(): Promise<PersonalSkillsSnapshot> {

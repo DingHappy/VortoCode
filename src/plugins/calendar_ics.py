@@ -406,6 +406,14 @@ async def morning_brief(now: datetime) -> str:
     return "📅 今天的安排\n" + "\n".join(lines)
 
 
+async def check() -> str:
+    now = _local_now()
+    cal = await load_calendar(now.tzinfo or timezone.utc)
+    first = _day_start(now)
+    items, _ = occurrences(cal, first, first + timedelta(days=7))
+    return f"能读到，共 {len(cal.events)} 条日程，未来 7 天 {len(items)} 条"
+
+
 def build_tools() -> list:
     from src.agents.tool import Tool
 
