@@ -180,11 +180,46 @@ def _status_text(thread: dict) -> str:
     return str(codex_watch.STATUS_TEXT.get(thread.get("status"), thread.get("status")))
 
 
+_LIST_MARK = re.compile(r"^\s*(?:[-*•]|\d+[.、)）])\s*")
+_COLON_ENDS = ("：", ":")
+
+
+def _flat(paragraph: str) -> str:
+    """一段压成一行：去掉列表符号，行与行之间用「；」，冒号后面直接接。"""
+    out = ""
+    for raw in paragraph.splitlines():
+        line = _LIST_MARK.sub("", raw).strip()
+        if line:
+            out += ("" if not out or out.endswith(_COLON_ENDS) else "；") + line
+    return out
+
+
 def _reply_head(reply: str, limit: int = 160) -> str:
-    """Codex 的回复开头一段通常就是结论（「已完成，并 commit＋push：」）；取它，不从半句中间切。"""
+    """Codex 的回复开头一段通常就是结论（「已完成，并 commit＋push：」）；取它，不从半句中间切。
+
+    开头是一句冒号收尾的引子（「已按这个方向处理：」）时，把后面一段接上，否则只剩一句空话。"""
     from src.scheduling.assistant_watch import _clip_head
-    paragraphs = [part.strip() for part in reply.replace("**", "").split("\n\n") if part.strip()]
-    return _clip_head(paragraphs[0], limit) if paragraphs else ""
+    paragraphs = [_flat(part) for part in reply.replace("**", "").split("\n\n")]
+    paragraphs = [part for part in paragraphs if part]
+    if not paragraphs:
+        return ""
+    head, rest = paragraphs[0], paragraphs[1:]
+    while head.endswith(_COLON_ENDS) and rest and len(head) < limit:
+        head += rest.pop(0)
+    return _clip_head(head, limit)
+
+
+# Codex 自己的登录 / 用量问题：拟句话发给 Codex 没用，得你在 Mac 上处理
+_ACCOUNT_TROUBLE = (
+    (re.compile(r"access token|sign in again|log ?in again|logged out|unauthori[sz]ed|\b401\b|重新登录", re.I),
+     "Codex 的登录失效了，要你在 Mac 上重新登录 Codex，再让它接着做"),
+    (re.compile(r"usage limit|rate limit|quota|insufficient_quota|额度|用量上限", re.I),
+     "Codex 的用量到上限了，等额度恢复（或换账号）后再让它接着做"),
+)
+
+
+def _account_trouble(error: str) -> str:
+    return next((hint for pattern, hint in _ACCOUNT_TROUBLE if pattern.search(error or "")), "")
 
 
 def _progress_line(thread: dict, finished: List[dict], assessment: str) -> str:
@@ -244,6 +279,7 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
               if (codex_watch._parse(event.get("at")) or now) > last_check]
     lines: List[str] = []
     needs_you: List[str] = []
+    on_mac: List[str] = []            # 只能你在 Mac 上处理的（登录、额度），不提「我拟好话给 Codex」
     drafts: List[tuple] = []          # (正文, 动作)
     for thread in threads:
         tid = thread["id"]
@@ -259,7 +295,11 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
         for event in finished:
             if event.get("status") in {"failed", "interrupted"}:
                 verb = "被中断" if event["status"] == "interrupted" else "失败"
-                needs_you.append(f"{label}有一轮{verb}：{(event.get('error') or '没有错误信息')[:160]}")
+                hint = _account_trouble(str(event.get("error") or ""))
+                if hint:
+                    on_mac.append(f"{label}有一轮{verb}：{hint}。")
+                else:
+                    needs_you.append(f"{label}有一轮{verb}：{(event.get('error') or '没有错误信息')[:160]}")
 
         # 卡住：在做事，跟上次检查比没有任何新动作（等你批准 / 回答的另有提醒）
         if (thread.get("status") == "active" and turn.get("status") == "inProgress" and not moved
@@ -314,16 +354,17 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
     live = {thread["id"] for thread in threads}
     data["marks"] = {key: value for key, value in marks.items() if key in live}
     _save(root, data)
-    if lines or needs_you:
+    if lines or needs_you or on_mac:
         text = "🧭 Codex 进度（半小时巡视）" if config["interval_minutes"] == 30 else \
             f"🧭 Codex 进度（每 {config['interval_minutes']} 分钟巡视）"
         text += "\n" + "\n".join(lines)
+        if needs_you or on_mac:
+            text += "\n\n要你处理：\n" + "\n".join(f"· {item}" for item in [*on_mac, *needs_you])
         if needs_you:
-            text += "\n\n要你处理：\n" + "\n".join(f"· {item}" for item in needs_you)
             text += "\n回我怎么做，我拟好话给 Codex。"
         if drafts:
             text += f"\n\n另有 {len(drafts)} 条拟好的动作，在下面等你批。"
-        if not needs_you and not drafts and owner_at_mac(state, now):
+        if not needs_you and not on_mac and not drafts and owner_at_mac(state, now):
             from src.scheduling.notices import record_notice
             record_notice(root, text, source="codex:progress")    # 你在电脑前：只记台账，手机不响
         else:
