@@ -395,6 +395,33 @@ async def _notify_accepted(notify: Notify, text: str, confirm_id: str = "") -> b
     return accepted
 
 
+_REMINDED_KEEP = timedelta(days=2)
+
+
+async def _plugin_reminders(now: datetime, state: Dict[str, Any], notify: Notify) -> None:
+    """插件的到点提醒（日程快开始了）：同一件只推一次；主人自己定的时间，不受安静时段影响。"""
+    from src.plugins import due_reminders
+    reminded: Dict[str, str] = {}
+    for key, value in (state.get("reminded") or {}).items():
+        when = _when(value)
+        if when is not None and now - when < _REMINDED_KEEP:
+            reminded[key] = value
+    state["reminded"] = reminded
+    for key, text in await due_reminders(now):
+        if key in reminded:
+            continue
+        try:
+            if getattr(notify, "accepts_timed", False):
+                accepted = bool(await notify(text, timed=True))  # type: ignore[call-arg]
+            else:
+                accepted = bool(await notify(text))
+        except Exception as error:  # noqa: BLE001
+            logger.warning("日程提醒未受理：%s", type(error).__name__)
+            continue
+        if accepted:
+            reminded[key] = now.isoformat()
+
+
 async def watch_once(root: str, now: datetime, *, notify: Notify, refresh=assistant_dispatch.refresh,
                      times: Optional[List[str]] = None, writer=None, review=None) -> None:
     """巡检一轮：刷新任务状态、推送变化、到点发报告。首次运行只记下现状，不把旧账推一遍。"""
@@ -417,6 +444,8 @@ async def watch_once(root: str, now: datetime, *, notify: Notify, refresh=assist
     state = _load_state(root)
     first_run = state is None
     state = state or {"seen": {}, "reports": []}
+    await _plugin_reminders(now, state, notify)
+    _save_state(root, state)
     items = await refresh(root)
     item_ids = {item["id"] for item in items}
     seen: Dict[str, str] = {key: value for key, value in state.setdefault("seen", {}).items()

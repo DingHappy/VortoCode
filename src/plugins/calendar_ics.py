@@ -422,6 +422,42 @@ async def check() -> str:
     return f"能读到，共 {len(cal.events)} 条日程，未来 7 天 {len(items)} 条"
 
 
+REMIND_ENV = "VORTOCODE_CALENDAR_REMIND_MINUTES"
+
+
+def remind_minutes() -> int:
+    """日程开始前多少分钟提醒；默认 15，0 关闭，最多 120。"""
+    import os
+    try:
+        return max(0, min(120, int(os.getenv(REMIND_ENV, "15").strip() or 15)))
+    except ValueError:
+        return 15
+
+
+async def reminders(now: datetime) -> List[Tuple[str, str]]:
+    """快开始的日程：[(去重键, 提醒文字)]。全天日程不提醒；已经开始的不补。读不到日历就不提醒（早报会说）。"""
+    lead = remind_minutes()
+    if not lead:
+        return []
+    local = now.tzinfo or timezone.utc
+    try:
+        cal = await load_calendar(local)
+    except CalendarError:
+        logger.warning("日程提醒：日历读取失败")
+        return []
+    items, _ = occurrences(cal, now, now + timedelta(minutes=lead))
+    out = []
+    for item in items:
+        if item.all_day or not now <= item.start <= now + timedelta(minutes=lead):
+            continue
+        begin = item.start.astimezone(local)
+        minutes = max(1, -int(-(item.start - now).total_seconds() // 60))
+        place = f" @{item.location}" if item.location else ""
+        key = "calendar:" + hashlib.sha256(f"{item.start.isoformat()}|{item.summary}".encode("utf-8")).hexdigest()[:16]
+        out.append((key, f"⏰ {minutes} 分钟后（{begin:%H:%M}）：{item.summary}{place}"))
+    return out
+
+
 def build_tools() -> list:
     from src.agents.tool import Tool
 
