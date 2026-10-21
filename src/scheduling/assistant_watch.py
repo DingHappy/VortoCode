@@ -468,7 +468,16 @@ async def watch_once(root: str, now: datetime, *, notify: Notify, refresh=assist
                 logger.warning("助理报告生成失败：%s", type(error).__name__)
                 continue
             _save_state(root, state)
-        if not drafts[key] or await _notify_accepted(notify, drafts[key]):   # 空串：今天不必报
+        text, confirm_id, covered = drafts[key], "", ""
+        pending = [item for item in items if item.get("status") == "proposed"]
+        if text and len(pending) == 1 and not pending[0].get("tainted"):
+            # 只有一张单子等你确认：报告直接带它的「批准 / 拒绝」，这张单子就不再另推「写好一天了」
+            only = pending[0]
+            text += f"\n\n下面的按钮对应等你确认的任务单：{only.get('project')}：{only.get('title')}"
+            confirm_id = covered = only["id"]
+        if not text or await _notify_accepted(notify, text, confirm_id):   # 空串：今天不必报
+            if covered and getattr(notify, "accepts_confirm", False):
+                state.setdefault("nudged", {})[covered] = "pending"
             sent.append(key)
             del drafts[key]
             state["reports"] = sent[-20:]
