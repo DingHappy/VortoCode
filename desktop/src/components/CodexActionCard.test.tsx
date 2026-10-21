@@ -23,3 +23,11 @@ it("finished actions show their outcome without buttons", () => {
   expect(html).toContain("它已经停了");
   expect(html).not.toContain("批准发送");
 });
+
+it("expired drafts say why and offer no buttons", () => {
+  const html = renderToStaticMarkup(<CodexActionCard action={{ ...action, status: "expired",
+    error: "Codex 已经开始了新的一轮，这句是按上一轮拟的", tainted: false }} connected onDecide={async () => {}} />);
+  expect(html).toContain("已过时");
+  expect(html).toContain("新的一轮");
+  expect(html).not.toContain("批准发送");
+});

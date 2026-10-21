@@ -291,6 +291,8 @@ async def execute_action(client: CodexClient, action: dict, threads: List[dict])
         if action.get("kind") == "interrupt":
             if not running:
                 return False, "它已经停了"
+            if action.get("turn_id") and turn.get("id") != action.get("turn_id"):
+                return False, "要叫停的那一轮已经结束了，没动新的这一轮"
             await client.call("turn/interrupt", {"threadId": thread["id"], "turnId": turn["id"]})
             return True, ""
         text = str(action.get("text") or "").strip()
