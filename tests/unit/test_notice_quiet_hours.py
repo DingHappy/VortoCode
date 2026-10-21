@@ -6,12 +6,18 @@ import pytest
 from src.scheduling import notices
 
 
+class Pushes(list):
+    timed: list
+
+
 @pytest.fixture
 def pushes(monkeypatch):
-    sent = []
+    sent = Pushes()
+    sent.timed = []
 
-    async def notify_owner(text, *, relay=True):
+    async def notify_owner(text, *, relay=True, timed=False):
         sent.append(text)
+        sent.timed.append(timed)
         return True
 
     import src.gateway.im_runtime as im_runtime
@@ -123,3 +129,77 @@ async def test_urgent_probes_ignore_quiet_hours_and_dedup(tmp_path, pushes, monk
     await notify("投递探针", urgent=True)
     await notify("投递探针", urgent=True)
     assert pushes == ["🔔 投递探针", "🔔 投递探针"] and notices.held_quiet_count(str(tmp_path)) == 0
+
+
+# —— 主人亲自定了时间的提醒：安静时段不替他改时间 ——
+
+async def test_timed_reminder_goes_out_in_quiet_hours_and_is_not_merged(tmp_path, pushes, monkeypatch):
+    monkeypatch.setattr(notices, "in_quiet_hours", lambda now=None: True)
+    notify = notices.make_notifier(str(tmp_path), source="assistant")
+    assert await notify("夜里的普通通知") is True
+    assert await notify("7 点：该出门了", timed=True) is True
+    assert await notify("7 点：该出门了", timed=True) is True      # 主人定了两次就推两次
+    assert pushes == ["🔔 7 点：该出门了", "🔔 7 点：该出门了"] and pushes.timed == [True, True]
+    assert notices.held_quiet_count(str(tmp_path)) == 1          # 普通通知照旧攒着
+
+
+async def test_timed_flag_survives_the_relay_to_the_service_holding_im(tmp_path, monkeypatch):
+    import src.gateway.im_runtime as im_rt
+    from fastapi.testclient import TestClient
+
+    relayed = []
+
+    async def relay(text, **kwargs):
+        relayed.append(kwargs.get("timed", False))
+        return True
+
+    monkeypatch.setattr(im_rt, "relay_owner_notice", relay)
+    monkeypatch.setattr(im_rt, "_OWNER_NOTIFIER", None)
+    assert await im_rt.notify_owner("a", timed=True) and await im_rt.notify_owner("b")
+    assert relayed == [True, False]
+
+    # 接收端：按它自己的安静时段攒普通通知，带 timed 的照推
+    sent = []
+
+    async def local(text, *, relay=True, **kwargs):
+        sent.append((text, kwargs.get("timed", False)))
+        return True
+
+    monkeypatch.setattr(im_rt, "notify_owner", local)
+    monkeypatch.setattr(notices, "in_quiet_hours", lambda now=None: True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    from src.web.server import app
+    client = TestClient(app)
+    assert client.post("/api/im/notify", json={"text": "普通", "source": "assistant"}).json() == {"ok": True}
+    assert client.post("/api/im/notify", json={"text": "定时", "source": "assistant", "timed": True}).json() == {"ok": True}
+    assert client.post("/api/im/notify", json={"text": "假定时", "source": "assistant", "timed": "yes"}).json() == {"ok": True}
+    assert sent == [("🔔 定时", True)]
+    assert notices.held_quiet_count(str(tmp_path)) == 2
+
+
+async def test_goal_reminder_is_sent_as_timed_only_when_the_notifier_supports_it(tmp_path):
+    from src.workflow.workbench.goal_followup import poll_goal_followups
+    from tests.unit.test_goal_followup import NOW, approved
+
+    calls = []
+
+    async def plain(text):
+        calls.append(("plain", text))
+        return True
+
+    async def reporter(text, confirm_id="", timed=False):
+        calls.append(("reporter", timed))
+        return True
+    reporter.accepts_timed = True  # type: ignore[attr-defined]
+
+    approved(tmp_path / "a")
+    approved(tmp_path / "b")
+    await poll_goal_followups(str(tmp_path / "a"), NOW, notify=plain)
+    await poll_goal_followups(str(tmp_path / "b"), NOW, notify=reporter)
+    assert [kind for kind, _ in calls] == ["plain", "reporter"] and calls[1][1] is True
+
+
+def test_owner_reporter_marks_itself_timed_capable(tmp_path):
+    from src.scheduling.assistant_watch import owner_reporter
+    assert getattr(owner_reporter(str(tmp_path)), "accepts_timed", False) is True
