@@ -123,7 +123,7 @@ async def test_telegram_turn_uses_and_returns_main_chat_history(tmp_path):
                           {"role": "assistant", "content": "好的，记下了。"}]}
     calls = []
 
-    async def host(*, key, source, user_text, rid, run):
+    async def host(*, key, source, user_text, rid, run, activities):
         calls.append({"key": key, "source": source, "text": user_text})
         seen = list(shared["history"])
         history, reply = await run(seen)
@@ -532,3 +532,84 @@ async def test_stopped_queue_remains_paused_on_reconnect_or_reconstruction(tmp_p
     assert load_session(root, key)["prompt_queue"] == []
     await actors.resume(context, automatic=True)
     assert ran == ["running", "queued"]
+
+
+# —— 手机上的回合用过的工具：动态里要数得到（之前一律显示 0 个） ——
+
+async def test_im_turn_records_tools_alone_and_when_joining_main_chat(tmp_path):
+    from tests.unit.test_im_bridge import OWNER, FakeAdapter, _msg, _run_turn_to_completion
+    from src.gateway.session_store import load_session
+    from src.im.bridge import IMBridge
+
+    class SearchThenAnswer:
+        """没拿到工具结果前一律要求查一次，拿到就收尾（不依赖旁路还会调几次模型）。"""
+        async def chat(self, messages, **kwargs):
+            done = any("[工具 search_conversations 结果]" in str(m.get("content")) for m in messages)
+            return {"content": "查完了" if done else '{"tool":"search_conversations","args":{"query":"note"}}'}
+
+    adapter = FakeAdapter()
+    bridge = IMBridge(str(tmp_path), adapter, OWNER, channel="telegram", llm=SearchThenAnswer(),
+                      workspace_scope="general")
+    await _run_turn_to_completion(bridge, adapter, _msg("找下 note"))
+    rid = bridge._transcript[0]["rid"]
+    # 自动召回记忆也走工具（与 Desktop 同一口径），这里只看模型主动调的那个
+    tools = [(e["rid"], e["name"], e["status"]) for e in bridge._activities if e["name"] != "recall_memory"]
+    assert tools == [(rid, "search_conversations", "succeeded")]
+    assert all("args" not in e and "result" not in e for e in bridge._activities)
+    saved = load_session(str(tmp_path), bridge._sid)
+    assert "search_conversations" in [e["name"] for e in saved["activities"]]
+
+    handed = []
+
+    async def host(*, key, source, user_text, rid, run, activities):
+        _, reply = await run([])
+        handed.extend(activities)
+        return reply
+
+    mc.set_main_conversation_host(host)
+    mc.claim_main_chat(str(tmp_path), "sid-desk")
+    adapter = FakeAdapter()
+    shared = IMBridge(str(tmp_path), adapter, OWNER, channel="telegram", llm=SearchThenAnswer(),
+                      workspace_scope="general")
+    shared._activities = []
+    await _run_turn_to_completion(shared, adapter, _msg("再找下 note"))
+    assert ("search_conversations", "succeeded") in [(e["name"], e["status"]) for e in handed]
+    assert shared._activities == []                                   # 只记在主要聊天那一份
+
+
+async def test_web_host_keeps_external_tools_and_taints_phone_memories(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VORTOCODE_WORKSPACE_SCOPE", "general")
+    from src.gateway.turn_digest import turn_tools
+    from src.web.routers import realtime
+
+    async def ignore(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(realtime, "_publish_session_event", ignore)
+    monkeypatch.setattr(realtime, "_schedule_turn_digest", lambda key, rid: None)
+    key = "sid-maintools"
+    try:
+        sess = realtime._TABLE.get(key, repo_root=str(tmp_path), factory=realtime._new_agent)
+        events = [{"type": "agent_tool", "rid": "im-t1", "id": "tool-1", "name": "web_fetch",
+                   "summary": "web_fetch", "status": "succeeded", "args": {"url": "x"}},
+                  {"type": "agent_tool", "rid": "im-other", "id": "tool-2", "name": "search_conversations"}]
+
+        async def run(history):
+            return history, "晴"
+
+        await realtime._run_main_conversation_turn(key=key, source="telegram", user_text="天气",
+                                                   rid="im-t1", run=run, activities=events)
+        assert turn_tools(sess["activities"], "im-t1") == ["web_fetch"]
+        assert all("args" not in e and e["rid"] == "im-t1" for e in sess["activities"])
+
+        seen = []
+        monkeypatch.setattr("src.memory.assistant_profile.propose_memories",
+                            lambda *args, **kwargs: seen.append(kwargs["tainted"]))
+        sess["activities"] = []                                       # 即使一个工具都没用
+        realtime._propose_turn_memories(sess, "im-t1", ["synthetic preference"])
+        sess["transcript"].append({"role": "user", "text": "电脑上", "rid": "desk-1"})
+        realtime._propose_turn_memories(sess, "desk-1", ["synthetic preference"])
+        assert seen == [True, False]
+    finally:
+        realtime._TABLE.pop(key)

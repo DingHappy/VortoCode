@@ -30,7 +30,7 @@ TurnRunner = Callable[[List[Any]], Awaitable[Tuple[List[Any], str]]]
 
 class MainConversationHost(Protocol):
     async def __call__(self, *, key: str, source: str, user_text: str, rid: str,
-                       run: TurnRunner) -> str: ...
+                       run: TurnRunner, activities: List[dict]) -> str: ...
 
 
 _HOST: Optional[MainConversationHost] = None
@@ -100,10 +100,13 @@ def shared_turn_target(root: str) -> Optional[Tuple[MainConversationHost, str]]:
 
 
 async def run_external_turn(root: str, *, source: str, user_text: str, rid: str,
-                            run: TurnRunner) -> Optional[str]:
-    """把一个外部入口（如 Telegram）的回合写进主要聊天；不能合并时返回 None，由入口照旧单独处理。"""
+                            run: TurnRunner, activities: Optional[List[dict]] = None) -> Optional[str]:
+    """把一个外部入口（如 Telegram）的回合写进主要聊天；不能合并时返回 None，由入口照旧单独处理。
+
+    ``activities``：入口在 run 期间往里追加本回合的工具事件，宿主跑完后记进主要聊天（动态据此数工具）。"""
     target = shared_turn_target(root)
     if target is None:
         return None
     host, key = target
-    return await host(key=key, source=source, user_text=user_text, rid=rid, run=run)
+    return await host(key=key, source=source, user_text=user_text, rid=rid, run=run,
+                      activities=activities if activities is not None else [])

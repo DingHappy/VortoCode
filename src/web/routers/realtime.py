@@ -586,7 +586,9 @@ def _propose_turn_memories(sess: dict, rid: str, candidates) -> None:
             continue  # An empty/blocked automatic read did not ingest memory content.
         activities.append(event)
     names = turn_tool_names(activities, rid, limit=50)
-    tainted = any(name.startswith(("web_", "browser", "recall_memory", "search_conversations", "read_conversation_excerpt", "personal_goals", "schedule_list", "mcp")) for name in names)
+    # 手机等外部入口来的回合（对话记录带 source）：IM 入站一律按外部输入，与 IM 单独跑时同一口径
+    external = any(item.get("rid") == rid and item.get("source") for item in sess.get("transcript") or [])
+    tainted = external or any(name.startswith(("web_", "browser", "recall_memory", "search_conversations", "read_conversation_excerpt", "personal_goals", "schedule_list", "mcp")) for name in names)
     try:
         propose_memories(sess.get("repo_root") or os.getcwd(), list(candidates), source="assistant", tainted=tainted)
     except Exception as error:  # noqa: BLE001 —— 记忆候选是旁路
@@ -1093,12 +1095,27 @@ def _append_transcript(sess: Dict[str, Any], role: str, text: str, *, rid: str, 
         del transcript[:-_MAX_TRANSCRIPT]
 
 
+def _keep_external_activities(sess: Dict[str, Any], rid: str, events: List[Dict[str, Any]]) -> None:
+    """外部入口回合的工具事件记进主要聊天：只收本回合的 agent_tool，字段按白名单取。"""
+    items = sess.setdefault("activities", [])
+    for event in events:
+        if not isinstance(event, dict) or event.get("type") != P.AGENT_TOOL or event.get("rid") != rid:
+            continue
+        items.append({field: str(event[field])[:120] for field in
+                      ("type", "rid", "id", "name", "summary", "status", "recorded_at") if event.get(field)})
+    if len(items) > 300:
+        del items[:-300]
+
+
 class MainConversationBusy(RuntimeError):
     """主要聊天里前面的回合一直没结束，外部入口这一轮没能排上。"""
 
 
-async def _run_main_conversation_turn(*, key: str, source: str, user_text: str, rid: str, run) -> str:
-    """外部入口的一个回合：拿主要聊天的最新历史跑完，历史交回、记进对话、推给正在看的 Desktop。"""
+async def _run_main_conversation_turn(*, key: str, source: str, user_text: str, rid: str, run,
+                                      activities: Optional[List[Dict[str, Any]]] = None) -> str:
+    """外部入口的一个回合：拿主要聊天的最新历史跑完，历史交回、记进对话、推给正在看的 Desktop。
+
+    ``activities`` 是入口在 run 期间记下的工具事件（只有名字和状态），跑完（含失败）记进这段对话。"""
     context = _key_actor_context(key)
     outcome: Dict[str, str] = {"reply": ""}
 
@@ -1132,6 +1149,7 @@ async def _run_main_conversation_turn(*, key: str, source: str, user_text: str, 
             await _publish_session_event(key, P.make_event(P.AGENT_ERROR, rid=rid, text=message))
             raise
         finally:
+            _keep_external_activities(sess, rid, activities or [])
             context.persist()
             await _publish_session_event(key, P.make_event(P.AGENT_HISTORY, items=list(sess["transcript"])))
             await _publish_session_event(key, P.make_event(P.AGENT_DONE, rid=rid))
