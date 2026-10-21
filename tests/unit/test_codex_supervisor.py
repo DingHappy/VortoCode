@@ -255,6 +255,41 @@ async def test_routine_progress_stays_off_the_phone_while_you_are_at_the_mac(tmp
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("idle,report_age,pushed", [
+    (30, 8, False),          # 新观察员：8 分钟前报时你在，之后没补报「离开」= 还在
+    (30, 13, True),          # 报告超过心跳 + 余量：观察员可能不在了，照推
+    (400, 1, True),          # 报告时就已走开
+])
+async def test_presence_reporting_observer_is_trusted_until_its_report_goes_stale(tmp_path, idle, report_age, pushed):
+    root, notes = str(tmp_path), Notes()
+    _report(root, _thread(), T0)
+    await _check(root, T0, notes)
+    watch.record_report(root, {"threads": [_thread(commands=4)], "user_idle_seconds": idle,
+                               "presence_reports": True}, now=_m(30 - report_age))
+    await _check(root, _m(30), notes)
+    assert bool(notes.sent) is pushed
+
+
+def test_presence_flag_is_kept_only_when_literally_true(tmp_path):
+    for flag, kept in [(True, True), ("true", None), (1, None)]:
+        watch.record_report(str(tmp_path), {"threads": [], "user_idle_seconds": 5, "presence_reports": flag}, now=T0)
+        assert watch.load_state(str(tmp_path)).get("presence_reports") is kept
+    watch.record_report(str(tmp_path), {"threads": [], "presence_reports": True}, now=T0)
+    assert "presence_reports" not in watch.load_state(str(tmp_path))      # 没有空闲时长就不认这个声明
+
+
+def test_observer_reports_the_moment_you_arrive_or_leave():
+    from src.scheduling import codex_observer as observer
+    base = dict(current="d", last_digest="d", now=100.0, last_sent=90.0, busy=False)
+    assert not observer.should_report(**base, present=True, last_present=True)
+    assert observer.should_report(**base, present=False, last_present=True)          # 刚离开
+    assert observer.should_report(**base, present=True, last_present=False)          # 刚回来
+    assert observer.should_report(**base, present=None, last_present=None) is False
+    assert observer.owner_present(299) is True and observer.owner_present(300) is False
+    assert observer.owner_present(None) is None
+
+
+@pytest.mark.asyncio
 async def test_things_that_need_you_still_reach_the_phone_while_you_are_at_the_mac(tmp_path):
     root, notes = str(tmp_path), Notes()
     _report_idle(root, _thread(), T0, 10)

@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 INTERVAL_SECONDS = 20
 HEARTBEAT_SECONDS = 600          # 没变化也每 10 分钟报一次，让助理知道观察员还在
 ACTIVE_HEARTBEAT_SECONDS = 60    # 有会话在跑或在等人时每分钟报一次（「等批准超过 2 分钟」靠它判断）
+PRESENT_IDLE_SECONDS = 300      # 键盘鼠标这么久内动过 = 主人在 Mac 前（与常驻助理同一条线）
 _MAX_THREADS = 12
 _TEXT = {"request": 400, "reply": 900, "plan": 700, "command": 240, "error": 300}
 
@@ -254,6 +255,9 @@ async def post_report(threads: List[dict], *, http=None) -> bool:
     idle = user_idle_seconds()
     if idle is not None:
         payload["user_idle_seconds"] = round(idle)
+        # 声明：主人到 Mac 前 / 离开的那一刻会补报一次。常驻助理据此可以信任「上一份报告时在 = 现在还在」，
+        # 不必要求报告本身是 5 分钟内的（Codex 空闲时心跳 10 分钟才一次）。
+        payload["presence_reports"] = True
     if http is not None:
         return bool(await http(f"{url}/api/codex/report", payload, token))
     import aiohttp
@@ -326,9 +330,21 @@ async def run_approved_actions(client: CodexClient, threads: List[dict], *, resi
     return done
 
 
+def owner_present(idle: Optional[float]) -> Optional[bool]:
+    return None if idle is None else idle < PRESENT_IDLE_SECONDS
+
+
+def should_report(*, current: str, last_digest: str, now: float, last_sent: float, busy: bool,
+                  present: Optional[bool], last_present: Optional[bool]) -> bool:
+    """Codex 有变化、心跳到点，或主人刚到 Mac 前 / 刚离开，就该报。"""
+    due = HEARTBEAT_SECONDS if not busy else ACTIVE_HEARTBEAT_SECONDS
+    return current != last_digest or now - last_sent >= due or present != last_present
+
+
 async def observe_loop(stop: asyncio.Event, *, interval: float = INTERVAL_SECONDS) -> None:
-    """每 interval 秒看一次 Codex；有变化（或心跳到点）就报给常驻助理。Codex 没在跑就安静等着。"""
+    """每 interval 秒看一次 Codex；有变化、心跳到点或你刚到/刚离开 Mac，就报给常驻助理。Codex 没在跑就安静等着。"""
     last_digest, last_sent = "", 0.0
+    last_present: Optional[bool] = None
     while not stop.is_set():
         try:
             if socket_path().exists():
@@ -337,10 +353,11 @@ async def observe_loop(stop: asyncio.Event, *, interval: float = INTERVAL_SECOND
                     busy = any(thread["status"] == "active" for thread in threads)
                     now = time.monotonic()
                     current = digest(threads)
-                    due = HEARTBEAT_SECONDS if not busy else ACTIVE_HEARTBEAT_SECONDS
-                    if current != last_digest or now - last_sent >= due:
+                    present = owner_present(user_idle_seconds())
+                    if should_report(current=current, last_digest=last_digest, now=now, last_sent=last_sent,
+                                     busy=busy, present=present, last_present=last_present):
                         if await post_report(threads):
-                            last_digest, last_sent = current, now
+                            last_digest, last_sent, last_present = current, now, present
                     # 你批准过的「替你给 Codex 发话 / 叫停」
                     await run_approved_actions(client, threads)
         except asyncio.CancelledError:

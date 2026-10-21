@@ -282,6 +282,7 @@ async def test_observer_report_carries_idle_seconds_when_known(monkeypatch):
     monkeypatch.setattr(observer, "user_idle_seconds", lambda: None)
     await observer.post_report([], http=http)
     assert sent[0]["user_idle_seconds"] == 43 and "user_idle_seconds" not in sent[1]
+    assert sent[0]["presence_reports"] is True and "presence_reports" not in sent[1]
 
 
 @pytest.mark.parametrize("raw,kept", [(42, 42), (3.9, 3), (-1, None), ("12", None), (True, None), (10 ** 8, None)])

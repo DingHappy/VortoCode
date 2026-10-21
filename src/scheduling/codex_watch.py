@@ -145,6 +145,8 @@ def record_report(root: str, payload: Any, *, now: Optional[datetime] = None) ->
     idle = (payload or {}).get("user_idle_seconds")
     if isinstance(idle, (int, float)) and not isinstance(idle, bool) and 0 <= idle < 10 ** 7:
         state["user_idle_seconds"] = int(idle)      # Mac 上键盘鼠标多久没动（旧观察员不报：当不知道）
+        if (payload or {}).get("presence_reports") is True:
+            state["presence_reports"] = True        # 观察员会在主人到/离 Mac 时补报（v0.2.13 起）
     _save_state(root, state)
     expire_stale_actions(root, threads)
     return notices
