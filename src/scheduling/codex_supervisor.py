@@ -37,12 +37,20 @@ NUDGE_AFTER_IDLE = timedelta(minutes=15)    # 做完一轮后空这么久才判�
 OWNER_PRESENT_IDLE = timedelta(minutes=5)   # Mac 上键盘鼠标这么久内动过 = 你在电脑前
 
 
+PRESENCE_REPORT_FRESH = timedelta(minutes=12)   # 观察员心跳 10 分钟 + 余量：更久没报 = 观察员可能不在了
+
+
 def owner_at_mac(state: Dict[str, Any], now: datetime) -> bool:
-    """按最新一份报告推算此刻 Mac 的空闲时长；报告太旧或没报这个数都算不在（宁可照常推）。"""
+    """此刻你是否在 Mac 前；报告太旧或没报空闲时长都算不在（宁可照常推）。
+
+    新观察员（presence_reports）在你到/离 Mac 的那一刻会补报，所以「上一份报告时在」在它仍新鲜时可信。
+    旧观察员只在有变化或 10 分钟心跳时报：只能把报告时的空闲加上报告后过去的时间来推算。"""
     idle = state.get("user_idle_seconds")
     received = codex_watch._parse(state.get("received_at"))
     if not isinstance(idle, (int, float)) or isinstance(idle, bool) or received is None or received > now:
         return False
+    if state.get("presence_reports") is True:
+        return timedelta(seconds=float(idle)) < OWNER_PRESENT_IDLE and now - received < PRESENCE_REPORT_FRESH
     return (now - received) + timedelta(seconds=float(idle)) < OWNER_PRESENT_IDLE
 
 
