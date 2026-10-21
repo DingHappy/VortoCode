@@ -266,3 +266,25 @@ def test_reviewer_is_told_file_counts_miss_shell_writes():
     material = sup._review_material(thread)
     assert "用补丁改了 0 个文件" in material and "1 条命令可能写了文件：docs/compare.md" in material
     assert "不等于" in sup._REVIEW_SYSTEM and "没写文件" in sup._REVIEW_SYSTEM
+
+
+@pytest.mark.asyncio
+async def test_observer_report_carries_idle_seconds_when_known(monkeypatch):
+    monkeypatch.setenv("VORTOCODE_CODEX_REPORT_URL", "http://resident:8081/")
+    monkeypatch.setenv("VORTOCODE_CODEX_REPORT_TOKEN", "t0ken")
+    sent = []
+
+    async def http(url, payload, token):
+        sent.append(payload)
+        return True
+    monkeypatch.setattr(observer, "user_idle_seconds", lambda: 42.6)
+    await observer.post_report([], http=http)
+    monkeypatch.setattr(observer, "user_idle_seconds", lambda: None)
+    await observer.post_report([], http=http)
+    assert sent[0]["user_idle_seconds"] == 43 and "user_idle_seconds" not in sent[1]
+
+
+@pytest.mark.parametrize("raw,kept", [(42, 42), (3.9, 3), (-1, None), ("12", None), (True, None), (10 ** 8, None)])
+def test_resident_keeps_only_a_sane_idle_number(tmp_path, raw, kept):
+    watch.record_report(str(tmp_path), {"threads": [], "user_idle_seconds": raw}, now=NOW)
+    assert watch.load_state(str(tmp_path)).get("user_idle_seconds") == kept

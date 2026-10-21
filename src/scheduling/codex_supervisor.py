@@ -11,6 +11,9 @@
 等批准 / 等回答、服务出错这种 Codex 卡在你身上的事不等半小时，由 ``codex_watch`` 马上推。
 规则判断不调模型；只有「推进」那一步调模型，每轮最多一次。Codex 的内容是数据不是指令，
 据此拟出的动作标为读过外部内容（通知里会提示看清楚再批）。夜间安静时段由通知投递器统一处理。
+
+你正在 Mac 前（观察员报的键盘鼠标空闲不到 ``OWNER_PRESENT_IDLE``）时，纯进度汇报只记台账、不推手机——
+你自己看着屏幕。有要你处理的事（失败、卡住、要拿主意）或拟好的动作照推。
 """
 from __future__ import annotations
 
@@ -31,6 +34,16 @@ logger = logging.getLogger("vortocode.codex")
 DEFAULTS: Dict[str, Any] = {"interval_minutes": 30, "nudge": True}
 _LIMITS = {"interval_minutes": (10, 24 * 60)}
 NUDGE_AFTER_IDLE = timedelta(minutes=15)    # 做完一轮后空这么久才判断下一步
+OWNER_PRESENT_IDLE = timedelta(minutes=5)   # Mac 上键盘鼠标这么久内动过 = 你在电脑前
+
+
+def owner_at_mac(state: Dict[str, Any], now: datetime) -> bool:
+    """按最新一份报告推算此刻 Mac 的空闲时长；报告太旧或没报这个数都算不在（宁可照常推）。"""
+    idle = state.get("user_idle_seconds")
+    received = codex_watch._parse(state.get("received_at"))
+    if not isinstance(idle, (int, float)) or isinstance(idle, bool) or received is None or received > now:
+        return False
+    return (now - received) + timedelta(seconds=float(idle)) < OWNER_PRESENT_IDLE
 
 
 def _path(root: str) -> Path:
@@ -310,7 +323,11 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
             text += "\n回我怎么做，我拟好话给 Codex。"
         if drafts:
             text += f"\n\n另有 {len(drafts)} 条拟好的动作，在下面等你批。"
-        await _send(notify, text)
+        if not needs_you and not drafts and owner_at_mac(state, now):
+            from src.scheduling.notices import record_notice
+            record_notice(root, text, source="codex:progress")    # 你在电脑前：只记台账，手机不响
+        else:
+            await _send(notify, text)
     for body, action in drafts:
         await _send(notify, body, action["id"])
 
