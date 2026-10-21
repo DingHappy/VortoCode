@@ -422,3 +422,20 @@ async def test_other_failures_still_offer_to_draft_a_reply(tmp_path):
 ])
 def test_request_shows_what_you_asked_not_a_wall_of_directories(request_text, expected):
     assert sup._short_request(request_text) == expected
+
+
+# —— 出错当场推过（带原因）的那轮失败，巡视只在进度行里提一句，不再列进「要你处理」 ——
+
+@pytest.mark.asyncio
+async def test_a_failure_already_pushed_is_not_listed_again(tmp_path):
+    root, notes = str(tmp_path), Notes()
+    _report(root, _thread(), T0)
+    await _check(root, T0, notes)
+    failed = {**_thread(), "status": "systemError",
+              "turn": {**_thread()["turn"], "status": "failed", "error": "Selected model is at capacity"}}
+    pushed = watch.record_report(root, {"threads": [failed]}, now=_m(10))
+    assert pushed and "满载" in pushed[0]
+    await _check(root, _m(30), notes)
+    texts = notes.texts()
+    assert not any("要你处理" in text for text in texts)
+    assert any("1 轮出错（当时已提醒）" in text for text in texts)

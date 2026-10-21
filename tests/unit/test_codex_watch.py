@@ -70,9 +70,30 @@ def test_failures_and_service_errors_are_reported(tmp_path):
     watch.record_report(root, {"threads": [_thread(turn=_turn(tid="t3"))]}, now=NOW)
     failed = _thread(status="systemError", turn=_turn(status="failed", tid="t3", error={"message": "额度用完"}))
     notices = watch.record_report(root, {"threads": [failed]}, now=NOW)
-    assert len(notices) == 1 and "systemError" in notices[0]
+    assert notices == ["⚠️ Codex「改登录超时」 出错了：Codex 的用量到上限了，等额度恢复（或换账号）后再让它接着做。"]
     event = watch.load_state(root)["events"][0]
-    assert event["status"] == "failed" and "额度用完" in event["error"]
+    assert event["status"] == "failed" and "额度用完" in event["error"] and event["pushed"] is True
+
+
+def test_service_error_carries_the_reason_and_claims_the_failure_reported_soon_after(tmp_path):
+    root = str(tmp_path)
+    watch.record_report(root, {"threads": [_thread(turn=_turn(tid="t3"))]}, now=NOW)
+    broken = _thread(status="systemError", turn=_turn(tid="t3"))
+    [notice] = watch.record_report(root, {"threads": [broken]}, now=NOW)
+    assert "systemError" in notice                                   # 还不知道原因：照旧
+    failed = _thread(status="systemError", turn=_turn(status="failed", tid="t3",
+                                                       error={"message": "Selected model is at capacity"}))
+    assert watch.record_report(root, {"threads": [failed]}, now=NOW + timedelta(minutes=2)) == []
+    assert watch.load_state(root)["events"][-1]["pushed"] is True      # 就是刚才那件事，巡视不再列
+    assert "满载" in watch.account_trouble("Selected model is at capacity. Please try a different model.")
+
+
+def test_a_failure_without_a_service_error_is_left_for_the_review(tmp_path):
+    root = str(tmp_path)
+    watch.record_report(root, {"threads": [_thread(turn=_turn(tid="t3"))]}, now=NOW)
+    failed = _thread(status="idle", turn=_turn(status="failed", tid="t3", error={"message": "tests failed"}))
+    assert watch.record_report(root, {"threads": [failed]}, now=NOW) == []
+    assert "pushed" not in watch.load_state(root)["events"][0]
 
 
 def test_waiting_for_approval_is_reported_once_after_the_grace_period(tmp_path):
