@@ -28,10 +28,13 @@ class Plugin:
 
 
 def available_plugins() -> List[Plugin]:
-    from src.plugins import calendar_ics
+    from src.plugins import calendar_ics, notion
     return [Plugin(calendar_ics.NAME, "日历（只读）",
                    "用户问日程、有没有空、几点开会时用 calendar_events 查，不要凭记忆回答。",
-                   calendar_ics.build_tools, calendar_ics.morning_brief)]
+                   calendar_ics.build_tools, calendar_ics.morning_brief),
+            Plugin(notion.NAME, "Notion（只读）",
+                   "用户提到 Notion 里的笔记、文档、清单或数据库时，先 notion_search 找到页面，再 notion_read 读正文。",
+                   notion.build_tools)]
 
 
 def plugin_ready(name: str) -> bool:
