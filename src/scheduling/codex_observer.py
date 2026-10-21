@@ -7,6 +7,7 @@ Codex CLI（0.16x）的本机后台服务在 ``~/.codex/app-server-control/app-s
 只读：列出已加载的会话、读最近一轮的摘要，压成一份精简进度 POST 给常驻助理
 （``VORTOCODE_CODEX_REPORT_URL`` + ``VORTOCODE_CODEX_REPORT_TOKEN``，由 Desktop 启动本机引擎时注入）。
 不发完整对话和完整 diff：只有任务、最后几句说明、计划、改动的文件名、正在等批准的命令。
+另带一个数：这台 Mac 的键盘鼠标多久没动了——助理据此判断你在不在电脑前，在的话例行进度不推手机。
 """
 from __future__ import annotations
 
@@ -43,6 +44,26 @@ def report_target() -> Optional[tuple]:
 
 def observer_enabled() -> bool:
     return report_target() is not None
+
+
+def user_idle_seconds() -> Optional[float]:
+    """这台 Mac 的键盘鼠标多久没动了（秒）。只有这一个数，不看你在做什么；拿不到就 None（助理照常推）。"""
+    import sys
+    if sys.platform != "darwin":
+        return None
+    try:
+        import ctypes
+        import ctypes.util
+        lib = ctypes.cdll.LoadLibrary(ctypes.util.find_library("ApplicationServices")
+                                      or "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
+        since_last = lib.CGEventSourceSecondsSinceLastEventType
+        since_last.restype = ctypes.c_double
+        since_last.argtypes = [ctypes.c_int32, ctypes.c_uint32]
+        # kCGEventSourceStateCombinedSessionState=0，kCGAnyInputEventType=~0
+        value = float(since_last(0, 0xFFFFFFFF))
+    except Exception:  # noqa: BLE001 —— 拿不到就当不知道
+        return None
+    return value if 0 <= value < 10 ** 7 else None
 
 
 def _clip(text: Any, limit: int, *, tail: bool = False) -> str:
@@ -230,6 +251,9 @@ async def post_report(threads: List[dict], *, http=None) -> bool:
     url, token = target
     payload = {"threads": threads, "observed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                "host": socket.gethostname()[:60]}
+    idle = user_idle_seconds()
+    if idle is not None:
+        payload["user_idle_seconds"] = round(idle)
     if http is not None:
         return bool(await http(f"{url}/api/codex/report", payload, token))
     import aiohttp

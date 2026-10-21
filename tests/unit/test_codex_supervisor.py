@@ -222,3 +222,50 @@ async def test_idle_sessions_without_news_are_left_out(tmp_path):
     watch.record_report(root, {"threads": [_done(), {**_done(), "id": "th2", "name": "", "turn": None}]}, now=_m(10))
     await _check(root, _m(30), notes)
     assert not notes.sent                               # 新打开的空会话、旧会话都不算进展
+
+
+# —— 你在 Mac 前时，纯进度汇报不推手机（只记台账）；要你处理的照推 ——
+
+def _report_idle(root, thread, at, idle):
+    watch.record_report(root, {"threads": [thread], "user_idle_seconds": idle}, now=at)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("idle,report_age,pushed", [
+    (30, 1, False),          # 刚动过鼠标：你在电脑前
+    (400, 1, True),          # 快 7 分钟没动：走开了
+    (60, 8, True),           # 报告是 8 分钟前的：推不出此刻在不在，照推
+    (None, 1, True),         # 旧观察员不报这个数：照推
+    (True, 1, True),         # 类型不对：当不知道
+])
+async def test_routine_progress_stays_off_the_phone_while_you_are_at_the_mac(tmp_path, idle, report_age, pushed):
+    from src.scheduling.notices import load_notices
+    root, notes = str(tmp_path), Notes()
+    _report(root, _thread(), T0)
+    await _check(root, T0, notes)
+    payload = {"threads": [_thread(commands=4)]}
+    if idle is not None:
+        payload["user_idle_seconds"] = idle
+    watch.record_report(root, payload, now=_m(30 - report_age))
+    await _check(root, _m(30), notes)
+    assert bool(notes.sent) is pushed
+    if not pushed:
+        ledger = load_notices(root)
+        assert ledger and "半小时巡视" in ledger[0]["text"] and ledger[0]["source"] == "codex:progress"
+
+
+@pytest.mark.asyncio
+async def test_things_that_need_you_still_reach_the_phone_while_you_are_at_the_mac(tmp_path):
+    root, notes = str(tmp_path), Notes()
+    _report_idle(root, _thread(), T0, 10)
+    await _check(root, T0, notes)
+    _report_idle(root, _thread(), _m(29), 10)       # 半小时没新动作：卡住，拟好叫停
+    await _check(root, _m(30), notes)
+    assert any(cid for _, cid in notes.sent) and "拟好的动作" in notes.texts()[0]
+
+
+def test_observer_reports_only_a_number_for_idle_time(monkeypatch):
+    import sys
+    from src.scheduling import codex_observer as observer
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert observer.user_idle_seconds() is None
