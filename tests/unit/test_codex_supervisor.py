@@ -337,3 +337,42 @@ async def test_an_expired_draft_no_longer_blocks_the_next_nudge(tmp_path):
     await _check(root, _m(30), notes, llm)
     actions = watch.load_actions(root)
     assert [a["status"] for a in actions] == ["expired", "proposed"] and actions[1]["text"] == "补上测试"
+
+
+# —— 进度写得能看：引子不单独出现；登录 / 额度问题告诉你去 Mac 上处理，不说「我拟好话给 Codex」 ——
+
+@pytest.mark.parametrize("reply,expected", [
+    ("已按这个方向处理：\n\n- 把 delivering 改成 pending\n- 清理旧绑定", "已按这个方向处理：把 delivering 改成 pending；清理旧绑定"),
+    ("已完成，并 commit＋push：\n- 分支：feat/x\n- 提交：abc", "已完成，并 commit＋push：分支：feat/x；提交：abc"),
+    ("原因找到了：不是生成慢。\n\n下面是细节", "原因找到了：不是生成慢。"),
+    ("**结论**\n第二行", "结论；第二行"),
+    ("", ""),
+])
+def test_reply_head_never_stops_at_a_lead_in(reply, expected):
+    assert sup._reply_head(reply) == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error,hint", [
+    ("Your access token could not be refreshed because you have since logged out or signed in to another account. "
+     "Please sign in again.", "重新登录 Codex"),
+    ("You've hit your usage limit. Try again later.", "用量到上限"),
+])
+async def test_account_trouble_is_for_you_at_the_mac_not_a_message_to_codex(tmp_path, error, hint):
+    root, notes = str(tmp_path), Notes()
+    _report(root, _thread(tid="t1"), T0)
+    await _check(root, T0, notes)
+    _report(root, _thread(status="idle", turn_status="failed", tid="t1", error=error), _m(5))
+    await _check(root, _m(30), notes)
+    text = notes.texts()[0]
+    assert hint in text and "拟好话给 Codex" not in text and "access token" not in text
+
+
+@pytest.mark.asyncio
+async def test_other_failures_still_offer_to_draft_a_reply(tmp_path):
+    root, notes = str(tmp_path), Notes()
+    _report(root, _thread(tid="t1"), T0)
+    await _check(root, T0, notes)
+    _report(root, _thread(status="idle", turn_status="failed", tid="t1", error="pytest 有 3 个失败"), _m(5))
+    await _check(root, _m(30), notes)
+    assert "pytest 有 3 个失败" in notes.texts()[0] and "拟好话给 Codex" in notes.texts()[0]
