@@ -146,6 +146,7 @@ def record_report(root: str, payload: Any, *, now: Optional[datetime] = None) ->
     if isinstance(idle, (int, float)) and not isinstance(idle, bool) and 0 <= idle < 10 ** 7:
         state["user_idle_seconds"] = int(idle)      # Mac 上键盘鼠标多久没动（旧观察员不报：当不知道）
     _save_state(root, state)
+    expire_stale_actions(root, threads)
     return notices
 
 
@@ -302,6 +303,8 @@ def _change(root: str, action_id: str, allowed: set, **updates) -> dict:
     for item in items:
         if item.get("id") == action_id:
             if item.get("status") not in allowed:
+                if item.get("status") == "expired":
+                    raise CodexActionError(f"这条已经过时了：{item.get('error') or '情况变了'}")
                 raise CodexActionError({"proposed": "这条还在等你批准", "approved": "已经批准，等 Mac 执行",
                                         "sending": "正在交给 Codex", "sent": "已经发给 Codex 了",
                                         "failed": "这条已经失败了", "cancelled": "这条已经撤回了"}
@@ -312,7 +315,44 @@ def _change(root: str, action_id: str, allowed: set, **updates) -> dict:
     raise CodexActionError(f"没有这条 Codex 动作：{action_id}")
 
 
+def stale_reason(action: dict, threads: List[dict]) -> str:
+    """等你批的动作是不是已经过时：会话关了、要叫停的那一轮已经换了，或助理按上一轮拟的话 Codex 已经往下做了。
+
+    你在对话里让助理拟的话（带会话）不因为换了一轮就作废——那是你自己要说的；叫停只认拟的那一轮，
+    否则晚点一下「批准」会叫停你刚开的新一轮。"""
+    thread = next((item for item in threads if item.get("id") == action.get("thread_id")), None)
+    if thread is None:
+        return "这个 Codex 会话已经关了"
+    turn = thread.get("turn") or {}
+    moved = bool(action.get("turn_id")) and bool(turn.get("id")) and turn.get("id") != action.get("turn_id")
+    if action.get("kind") == "interrupt":
+        if moved or not (thread.get("status") == "active" and turn.get("status") == "inProgress"):
+            return "要叫停的那一轮已经结束了"
+    elif moved and not action.get("session"):
+        return "Codex 已经开始了新的一轮，这句是按上一轮拟的"
+    return ""
+
+
+def expire_stale_actions(root: str, threads: Optional[List[dict]] = None) -> List[dict]:
+    """把过时的待批动作标成 expired（原因写进 error）；返回这次作废的。监管据此不再被旧草稿挡住。"""
+    threads = (load_state(root).get("threads") or []) if threads is None else threads
+    items = load_actions(root)
+    expired = []
+    for item in items:
+        if item.get("status") != "proposed":
+            continue
+        reason = stale_reason(item, threads)
+        if reason:
+            item.update(status="expired", error=reason, updated_at=_now().isoformat())
+            expired.append(dict(item))
+    if expired:
+        _save_actions(root, items)
+    return expired
+
+
 def decide_action(root: str, action_id: str, approved: bool) -> dict:
+    if approved:
+        expire_stale_actions(root)       # 批准前按最新进度再核一次：过时的不放行
     return _change(root, action_id, {"proposed"}, status="approved" if approved else "cancelled")
 
 

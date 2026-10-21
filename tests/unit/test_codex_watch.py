@@ -288,3 +288,17 @@ async def test_observer_report_carries_idle_seconds_when_known(monkeypatch):
 def test_resident_keeps_only_a_sane_idle_number(tmp_path, raw, kept):
     watch.record_report(str(tmp_path), {"threads": [], "user_idle_seconds": raw}, now=NOW)
     assert watch.load_state(str(tmp_path)).get("user_idle_seconds") == kept
+
+
+@pytest.mark.asyncio
+async def test_observer_refuses_to_stop_a_newer_turn_than_the_one_approved():
+    class Client:
+        calls = []
+
+        async def call(self, method, params, timeout=20):
+            self.calls.append(method)
+
+    thread = {"id": "th1", "status": "active", "turn": {"id": "t2", "status": "inProgress"}}
+    ok, error = await observer.execute_action(Client(), {"kind": "interrupt", "thread_id": "th1", "turn_id": "t1"},
+                                              [thread])
+    assert not ok and "结束" in error and Client.calls == []
