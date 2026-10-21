@@ -155,6 +155,11 @@ def _host_is_safe(host: str) -> bool:
     return True
 
 
+def host_is_public(host: str) -> bool:
+    """插件连非 HTTP 服务（如 IMAP）前用的同一套公网判定。"""
+    return _host_is_safe(host)
+
+
 def _strip_html(raw: str) -> str:
     """粗暴但够用的 HTML→正文：去 script/style/注释/标签、反转义、压空白。"""
     raw = re.sub(r"(?is)<(script|style|noscript|head)[^>]*>.*?</\1>", " ", raw)
