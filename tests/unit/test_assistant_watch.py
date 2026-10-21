@@ -343,3 +343,56 @@ async def test_stale_or_unconfigured_news_is_left_out(tmp_path, monkeypatch):
     monkeypatch.delenv(watch.NEWS_ENV)
     _signals(news_root, now)
     assert watch.news_section(now) == ""
+
+
+# —— 只有一张单子等确认：早晚报带它的按钮，同一张单子不再另推「写好一天了」 ——
+
+class _ButtonInbox:
+    accepts_confirm = True
+
+    def __init__(self):
+        self.sent = []
+
+    async def __call__(self, text, confirm_id=""):
+        self.sent.append((text, confirm_id))
+        return True
+
+
+async def test_report_carries_the_only_pending_ticket_and_replaces_the_day_old_reminder(tmp_path):
+    root, inbox = str(tmp_path), _ButtonInbox()
+    created = datetime(2026, 10, 20, 8, 46, tzinfo=TZ)
+    ticket = dispatch.propose(root, project="VortoCode", title="补边界单测", goal="g")
+    dispatch._update(root, ticket["id"], lambda item: item.update(created_at=created.isoformat()))
+    await watch.watch_once(root, created, notify=inbox, refresh=_items(root), times=[])          # 首轮只记现状
+    for at in (datetime(2026, 10, 20, 9, 1, tzinfo=TZ), datetime(2026, 10, 21, 8, 47, tzinfo=TZ)):
+        await watch.watch_once(root, at, notify=inbox, refresh=_items(root), times=["09:00"], writer=_facts)
+    reports = [(text, cid) for text, cid in inbox.sent if text.startswith("🗒")]
+    assert len(reports) == 1 and reports[0][1] == ticket["id"]
+    assert "按钮对应等你确认的任务单：VortoCode：补边界单测" in reports[0][0] and ticket["id"] not in reports[0][0]
+    assert not any("写好一天了" in text for text, _ in inbox.sent)
+
+
+async def test_several_pending_tickets_keep_their_own_reminders(tmp_path):
+    root, inbox = str(tmp_path), _ButtonInbox()
+    created = datetime(2026, 10, 20, 8, 46, tzinfo=TZ)
+    for title in ("甲", "乙"):
+        ticket = dispatch.propose(root, project="VortoCode", title=title, goal="g")
+        dispatch._update(root, ticket["id"], lambda item: item.update(created_at=created.isoformat()))
+    await watch.watch_once(root, created, notify=inbox, refresh=_items(root), times=[])
+    for at in (datetime(2026, 10, 20, 9, 1, tzinfo=TZ), datetime(2026, 10, 21, 8, 47, tzinfo=TZ)):
+        await watch.watch_once(root, at, notify=inbox, refresh=_items(root), times=["09:00"], writer=_facts)
+    reports = [(text, cid) for text, cid in inbox.sent if text.startswith("🗒")]
+    assert len(reports) == 1 and reports[0][1] == "" and "按钮对应" not in reports[0][0]
+    assert sum("写好一天了" in text for text, _ in inbox.sent) == 2
+
+
+async def test_tainted_ticket_gets_no_button_on_the_report(tmp_path):
+    root, inbox = str(tmp_path), _ButtonInbox()
+    created = datetime(2026, 10, 20, 8, 46, tzinfo=TZ)
+    ticket = dispatch.propose(root, project="VortoCode", title="读过网页拟的", goal="g", tainted=True)
+    dispatch._update(root, ticket["id"], lambda item: item.update(created_at=created.isoformat()))
+    await watch.watch_once(root, created, notify=inbox, refresh=_items(root), times=[])
+    await watch.watch_once(root, datetime(2026, 10, 20, 9, 1, tzinfo=TZ), notify=inbox, refresh=_items(root),
+                           times=["09:00"], writer=_facts)
+    reports = [(text, cid) for text, cid in inbox.sent if text.startswith("🗒")]
+    assert reports and reports[0][1] == "" and "按钮对应" not in reports[0][0]
