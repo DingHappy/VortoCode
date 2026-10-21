@@ -166,6 +166,34 @@ def _strip_html(raw: str) -> str:
     return text.strip()
 
 
+_THIN_TEXT = 200      # 正文少于这么多字：多半是靠脚本渲染的页面，web_fetch 只拿到空壳
+
+
+def _page_meta(raw: str) -> str:
+    """从 <head> 里取标题和简介（title / description / og:*），给正文是空壳的页面兜个底。"""
+    found: list = []
+    title = re.search(r"(?is)<title[^>]*>(.*?)</title>", raw)
+    if title:
+        found.append(("标题", title.group(1)))
+    for tag in re.findall(r"(?is)<meta\b[^>]*>", raw):
+        name = re.search(r"""(?i)\b(?:name|property)\s*=\s*["']([^"']+)["']""", tag)
+        content = re.search(r"""(?is)\bcontent\s*=\s*["']([^"']*)["']""", tag)
+        if not name or not content:
+            continue
+        key = name.group(1).lower()
+        if key in ("description", "og:description", "twitter:description"):
+            found.append(("简介", content.group(1)))
+        elif key in ("og:title", "twitter:title"):
+            found.append(("标题", content.group(1)))
+    lines, seen = [], set()
+    for label, value in found:
+        value = re.sub(r"\s+", " ", _html.unescape(value)).strip()[:500]
+        if value and value not in seen:
+            seen.add(value)
+            lines.append(f"{label}：{value}")
+    return "\n".join(lines[:4])
+
+
 def fetch_url(url: str) -> str:
     """抓 URL 返回正文文本（带 SSRF 防护/封顶/超时/逐跳重定向校验）。失败返回 '(' 开头说明串。"""
     cur = (url or "").strip()
@@ -198,8 +226,16 @@ def fetch_url(url: str) -> str:
         raw = resp.read(_MAX_BYTES)
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8", errors="replace")
-        text = _strip_html(raw) if ("html" in ctype or raw.lstrip()[:1] == "<") else raw.strip()
+        html = "html" in ctype or raw.lstrip()[:1] == "<"
+        text = _strip_html(raw) if html else raw.strip()
         clipped = text[:_MAX_TEXT]
         tail = "\n…(正文已截断)" if len(text) > _MAX_TEXT else ""
+        if html and len(text) < _THIN_TEXT and re.search(r"(?i)<script\b", raw):
+            # 真机 2026-10-09：几个模型官网抓回来 0 字符，模型不知道为什么，换着参数反复抓。
+            # 说清楚是脚本渲染的空壳，并把 <head> 里的标题和简介给它。
+            meta = _page_meta(raw)
+            tail += ("\n\n" + meta if meta else "") + (
+                "\n\n（这一页的正文要靠页面脚本在浏览器里渲染，web_fetch 只拿到空壳，再抓也一样。"
+                "需要全文的话用浏览器类工具打开，或者换个来源，比如官方 GitHub、Hugging Face、新闻稿、文档站。）")
         return f"# {cur}（{len(text)} 字符）\n{clipped}{tail}"
     return f"(重定向次数超过 {_MAX_REDIRECTS}: {cur})"
