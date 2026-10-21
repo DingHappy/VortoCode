@@ -153,6 +153,7 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         read_only=True,
     )
 
+    active_plugins: list = []
     if workspace_scope == GENERAL:
         # General 是无目录的信任域：只给联网检索、制品和显式范围升级。不能因为进程 cwd
         # 位于应用管理目录，就顺带暴露 read/shell/git/memory/skill/dev/pr。
@@ -198,6 +199,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
             from src.scheduling.codex_supervisor import build_supervisor_tools
             tools += build_supervisor_tools(repo_root)
             tools += build_codex_action_tools(repo_root, is_tainted=is_tainted, session=task_owner or "")
+            # 插件（日历等外部数据）：放了凭据才挂，只读，带回来的内容按外部不可信处理
+            from src.plugins import build_plugin_tools, enabled_plugins
+            active_plugins = enabled_plugins()
+            tools += build_plugin_tools(active_plugins)
     else:
         tools = build_agent_tools(repo_root, confirm=gated_confirm, on_progress=on_progress,
                                   with_artifacts=(kind == "web"),   # 制品查看页只有 Web 有
@@ -252,6 +257,9 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         from src.memory.assistant_profile import assistant_system_parts
         parts.extend(assistant_system_parts(repo_root, include_memories=False))
         kwargs["auto_recall"] = os.getenv("VORTOCODE_AUTO_RECALL", "1").strip().lower() not in {"0", "false", "no", "off"}
+    if active_plugins:
+        from src.plugins import plugin_prompt
+        parts.append(plugin_prompt(active_plugins))
     if workspace_scope == GENERAL and kind in ("web", "im"):
         parts.append("【个人技能】需要复用流程时先用 list_personal_skills 查看当前版本，再用 use_personal_skill 加载已启用指令。"
                      "个人技能由用户在插件页审阅和启停；不能自行启用。加载指令不代表执行成功，也不增加文件、命令或外发权限。")
