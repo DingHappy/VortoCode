@@ -920,6 +920,24 @@
     ]
   },
   {
+    "path": "/api/assistant/plugins",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/assistant/plugins/{name}",
+    "methods": [
+      "DELETE"
+    ]
+  },
+  {
+    "path": "/api/assistant/plugins/{name}/check",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
     "path": "/api/assistant/connectors/{name}/authorize",
     "methods": [
       "POST"

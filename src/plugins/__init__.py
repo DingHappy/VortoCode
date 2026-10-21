@@ -25,16 +25,17 @@ class Plugin:
     hint: str                                   # 写进系统提示的一句用法
     build_tools: Callable[[], list]
     morning_brief: Optional[Callable[[datetime], Awaitable[str]]] = None
+    check: Optional[Callable[[], Awaitable[str]]] = None   # 真去读一次，返回一句结果；失败抛异常
 
 
 def available_plugins() -> List[Plugin]:
     from src.plugins import calendar_ics, notion
     return [Plugin(calendar_ics.NAME, "日历（只读）",
                    "用户问日程、有没有空、几点开会时用 calendar_events 查，不要凭记忆回答。",
-                   calendar_ics.build_tools, calendar_ics.morning_brief),
+                   calendar_ics.build_tools, calendar_ics.morning_brief, calendar_ics.check),
             Plugin(notion.NAME, "Notion（只读）",
                    "用户提到 Notion 里的笔记、文档、清单或数据库时，先 notion_search 找到页面，再 notion_read 读正文。",
-                   notion.build_tools)]
+                   notion.build_tools, check=notion.check)]
 
 
 def plugin_ready(name: str) -> bool:
@@ -44,6 +45,62 @@ def plugin_ready(name: str) -> bool:
     except (OSError, ValueError):
         return False
     return not connector_locally_revoked(name)
+
+
+def credential_status(name: str) -> str:
+    """available / missing / invalid / revoked。只看本机凭据文件，不联网。"""
+    from src.agents.mcp_tools import connector_locally_revoked, load_connector_secret
+    try:
+        load_connector_secret(name)
+    except FileNotFoundError:
+        return "missing"
+    except (OSError, ValueError):
+        return "invalid"
+    return "revoked" if connector_locally_revoked(name) else "available"
+
+
+def plugin_status() -> List[dict]:
+    """Desktop 插件页：每个插件的凭据状态。不含凭据原文，也不含凭据路径以外的本机信息。"""
+    return [{"name": plugin.name, "title": plugin.title, "status": credential_status(plugin.name),
+             "credential_file": f"~/.vortocode/connectors/{plugin.name}.token",
+             "checkable": plugin.check is not None}
+            for plugin in available_plugins()]
+
+
+def _plugin(name: str) -> Plugin:
+    for plugin in available_plugins():
+        if plugin.name == name:
+            return plugin
+    raise KeyError(f"没有这个插件：{name}")
+
+
+async def check_plugin(name: str) -> dict:
+    """真去读一次：凭据不在时直接说，读取失败时给出原因（插件的错误说明里不带凭据）。"""
+    plugin = _plugin(name)
+    status = credential_status(name)
+    if status != "available":
+        return {"ok": False, "status": status, "detail": {
+            "missing": "还没放凭据", "invalid": "凭据文件不可用（要本人所有、权限 600、内容非空）",
+            "revoked": "凭据已在本机撤销"}[status]}
+    if plugin.check is None:
+        return {"ok": True, "status": status, "detail": "凭据可用（这个插件没有在线检查）"}
+    try:
+        return {"ok": True, "status": status, "detail": await plugin.check()}
+    except Exception as error:  # noqa: BLE001 —— 插件自己的异常说明已去掉凭据；其他异常只给类型
+        known = error.__class__.__module__.startswith("src.plugins")
+        return {"ok": False, "status": status, "detail": str(error) if known else f"检查失败（{type(error).__name__}）"}
+
+
+def remove_credential(name: str) -> bool:
+    """删掉本机凭据文件；工具每次调用都重读凭据，所以删了立刻停用。"""
+    from src.agents.mcp_tools import connector_secret_path
+    _plugin(name)
+    path = connector_secret_path(name)
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return False
+    return True
 
 
 def enabled_plugins() -> List[Plugin]:

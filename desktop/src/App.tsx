@@ -11,7 +11,7 @@ import { AssistantRefreshQueue } from "./lib/assistantRefresh";
 import { AssistantActionGate, type AssistantTaskAction } from "./lib/assistantTask";
 import { ConnectorStatusReads, connectorDisconnectMessage } from "./lib/connectorStatus";
 import { openAssistantTask } from "./lib/assistantNavigation";
-import { AssistantAudit, AssistantAvatarImage, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PhoneChatDialog, type AppMode, type AssistantTab } from "./components/AssistantMode";
+import { AssistantAudit, AssistantAvatarImage, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantPlugins, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PhoneChatDialog, type AppMode, type AssistantTab } from "./components/AssistantMode";
 import { AssistantGoals } from "./components/AssistantGoals";
 import { dispatchFeedItem, isPhoneSession, noticeFeedItem, taskFeedItem, turnFeedItem, type FeedItem } from "./lib/activityFeed";
 import { ConfirmationReply } from "./components/ConfirmationReply";
@@ -71,6 +71,8 @@ import type {
   AssistantAvatar,
   MemoryProposal,
   AssistantConnector,
+  AssistantPlugin,
+  PluginCheck,
   AssistantScheduleItem,
   PhoneChat,
   AuditEntry,
@@ -390,6 +392,47 @@ function App() {
     const timer = window.setInterval(() => { void refreshConnectorStatus(client, assistantScope).catch(() => undefined); }, 4000);
     return () => window.clearInterval(timer);
   }, [connectorAuthorizing, assistantTab, assistantScope, connection, refreshConnectorStatus]);
+  // 插件（日历、Notion…）：打开身份页时读一次状态；检查结果只留在本次查看里
+  const [pluginSnapshot, setPlugins] = useState<{ scope: string; items: AssistantPlugin[] } | null>(null);
+  const [pluginChecks, setPluginChecks] = useState<{ scope: string; items: Record<string, PluginCheck> } | null>(null);
+  const [pluginBusy, setPluginBusy] = useState("");
+  const plugins = pluginSnapshot?.scope === assistantScope ? pluginSnapshot.items : [];
+  const refreshPlugins = useCallback(async (client: GatewayClient, scope: string) => {
+    const items = await client.listPlugins();
+    if (clientRef.current === client && assistantScopeRef.current === scope) setPlugins({ scope, items });
+  }, []);
+  useEffect(() => {
+    const client = clientRef.current;
+    if (client && connection === "connected" && assistantTab === "identity") {
+      void refreshPlugins(client, assistantScope).catch(() => undefined);   // 旧版服务没有这个接口：不显示插件区
+    }
+  }, [assistantTab, assistantScope, connection, refreshPlugins]);
+  const pluginAction = (action: "check" | "remove", plugin: AssistantPlugin) => void (async () => {
+    const client = clientRef.current;
+    const scope = assistantScope;
+    const current = () => clientRef.current === client && assistantScopeRef.current === scope;
+    if (!client || !current()) return;
+    if (action === "remove" && !await confirmAction(`移除「${plugin.title}」的凭据？\n\n会删掉助理所在电脑上的凭据文件，插件立即停用；要再用得重新放凭据。`)) return;
+    setPluginBusy(plugin.name);
+    try {
+      if (action === "check") {
+        const result = await client.checkPlugin(plugin.name);
+        if (current()) setPluginChecks((prev) => ({ scope, items: { ...(prev?.scope === scope ? prev.items : {}), [plugin.name]: result } }));
+      } else {
+        await client.removePluginCredential(plugin.name);
+        if (current()) setPluginChecks((prev) => {
+          const items = { ...(prev?.scope === scope ? prev.items : {}) };
+          delete items[plugin.name];
+          return { scope, items };
+        });
+        if (current()) await refreshPlugins(client, scope);
+      }
+    } catch (error) {
+      if (current()) setBanner(errorText(error, action === "check" ? "检查插件失败" : "移除凭据失败"));
+    } finally {
+      if (current()) setPluginBusy("");
+    }
+  })();
   const [dispatchSnapshot, setDispatches] = useState<AssistantDispatch[]>([]);
   const [codexActions, setCodexActions] = useState<CodexAction[]>([]);
   const [dispatchSnapshotScope, setDispatchSnapshotScope] = useState<string | null>(null);
@@ -404,7 +447,7 @@ function App() {
     setAgentTurns([]); setDispatches([]); setCodexActions([]); setDispatchSnapshotScope(null); setPhoneChats([]); setPhoneChatSid(null);
     setAssistantProfile({ name: "VortoCode", soul: "", about_you: "" }); setAssistantAvatar(null);
     setAssistantSchedule([]); setAssistantMemories([]); setMemoryProposals([]);
-    setConnectors([]); setConnectorSnapshotScope(null);
+    setConnectors([]); setConnectorSnapshotScope(null); setPluginBusy("");
     setSelectedDispatchId(null); setProfileDialogOpen(false);
   }, [assistantScope]);
   const [tabsNeedingAttention, setTabsNeedingAttention] = useState<ReadonlySet<InspectorTab>>(
@@ -3965,6 +4008,10 @@ function App() {
                   })()}
                   proposals={memoryProposals}
                   connectors={connectors}
+                  plugins={<AssistantPlugins plugins={plugins} busy={pluginBusy}
+                    checks={pluginChecks?.scope === assistantScope ? pluginChecks.items : {}}
+                    onCheck={(plugin) => pluginAction("check", plugin)}
+                    onRemove={(plugin) => pluginAction("remove", plugin)} />}
                   onConnector={(action, connector) => void (async () => {
                     const client = clientRef.current;
                     const scope = assistantScope;

@@ -174,6 +174,22 @@ export interface AssistantConnector {
   error: string;
 }
 
+/** 助理插件（日历、Notion…）：放了凭据就启用，状态只看本机凭据文件。 */
+export interface AssistantPlugin {
+  name: string;
+  title: string;
+  status: "available" | "missing" | "invalid" | "revoked";
+  /** 凭据该放在助理所在电脑的哪个文件 */
+  credential_file: string;
+  checkable: boolean;
+}
+
+export interface PluginCheck {
+  ok: boolean;
+  status: AssistantPlugin["status"];
+  detail: string;
+}
+
 export interface ConnectorDisconnectReceipt {
   removed: boolean;
   calls_blocked?: boolean;
