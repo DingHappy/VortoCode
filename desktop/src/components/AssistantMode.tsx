@@ -323,6 +323,8 @@ const PLUGIN_STATUS: Record<AssistantPlugin["status"], string> = {
 const PLUGIN_INPUT: Record<string, { label: string; placeholder: string; help: string }> = {
   calendar: { label: "日历订阅链接", placeholder: "https://… 或 webcal://…",
     help: "Google 日历：设置 → 该日历 →「iCal 格式的私密地址」；iCloud：共享日历 → 公开日历 → 复制链接。" },
+  caldav: { label: "邮箱:App 专用密码", placeholder: "you@icloud.com:xxxx-xxxx-xxxx-xxxx",
+    help: "iCloud：appleid.apple.com → 登录与安全 → App 专用密码。其他支持 CalDAV 的日历写成 https://账号:密码@服务器；末尾加 #日历名 可指定写进哪个日历。只会在你确认后新建日程。" },
   mail: { label: "邮箱:授权码", placeholder: "you@qq.com:授权码",
     help: "在邮箱设置里开 IMAP 并生成授权码（客户端专用密码，不是登录密码）。QQ/163/126/iCloud/Gmail 自动识别服务器，其他写成 imaps://邮箱:授权码@服务器。" },
   notion: { label: "Notion 集成令牌", placeholder: "ntn_…",
