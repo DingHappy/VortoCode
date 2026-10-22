@@ -80,6 +80,14 @@ history rewriting does not make a still-valid credential safe.
   hash. Review every source change as a supply-chain update.
 - Run `npm run check` and `npm run bundle:preview`; run
   `npm run release:verify -- --mode release` before publishing an artifact.
+- After the app is notarized and stapled, run `npm run release:updater -- <notes file>`.
+  It packs the app into `VortoCode_<version>_aarch64.app.tar.gz`, signs it with the
+  updater key (`VORTOCODE_UPDATER_KEY`, default `~/.vortocode/updater.key`, never in
+  the repo) and writes `latest.json`. Upload all three next to the DMG; installed apps
+  read `releases/latest/download/latest.json` and verify the archive with the public
+  key pinned in `tauri.conf.json` before replacing themselves. Losing the private key
+  means installed apps can no longer self-update; they must install a DMG signed with a
+  new key by hand.
 - Confirm the bundle contains `vortocode-runtime`, and that the sidecar accepts
   only the fixed local Gateway command surface.
 - Review the generated third-party notices and inventory derived from the actual

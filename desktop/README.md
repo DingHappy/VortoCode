@@ -117,6 +117,11 @@ macOS 产物位于 `src-tauri/target/release/bundle/macos/VortoCode.app` 和
 `src-tauri/target/release/bundle/dmg/VortoCode_<version>_<arch>.dmg`。`sidecar:smoke` 会在随机本机端口验证冻结 runtime 的 health 和 Web 资源；
 `smoke:bundle` 会启动真实 release bundle，并同时验证 React、Tauri IPC 以及安装包内 sidecar 的定位和启动。冻结完成后还会根据 PyInstaller 实际 Analysis 生成 `THIRD_PARTY_NOTICES.txt` 和结构化依赖清单，覆盖实际冻结的 Python distributions 与 standalone runtime 自带的全部许可证；许可证证据缺失会直接中止构建，notices 会随 app 一起打包。
 
+**一键更新**：设置 → 高级 →「更新」和侧栏的「新版本」按钮会调 Rust 侧 `install_update`。它先弹原生确认框，
+然后按 `tauri.conf.json` 里 `plugins.updater` 的地址取 GitHub 最新 Release 的 `latest.json`，用固定在配置里的公钥核对更新包签名，
+通过后替换 App，再经 `RunEvent::Exit` 正常退出（托管引擎照常回收）并重启。发版时在公证、staple 之后运行
+`npm run release:updater -- <更新说明文件>`，把生成的更新包、`.sig` 和 `latest.json` 一起传到 Release。签名私钥只放在发版机器上。
+
 `release:verify` 检查 target architecture、sidecar/notices 哈希、DMG、Git provenance、代码签名、公证票据和 Gatekeeper，并写入 `src-tauri/target/release/release-evidence/`。`preview` 模式允许未签名但明确记录 warning；`--mode release` 对任一正式发布闸门 fail closed。
 
 当前开发者预览包已经内置 core Gateway runtime，不要求用户预装 Python 或 `vc`。Desktop 启动即自动连接 General；普通对话、研究、规划和 Artifact 不绑定目录。Agent 只有在确实需要文件时才能发出结构化 `workspace_required`，用户可以审阅原因和待继续任务后创建 Scratch 或选择 Git 项目；切换后的新会话不会继承 General 的外部内容/凭据上下文，待继续任务只回填输入框供再次确认。范围切换会自动完成启动、health 等待和协议连接；首选端口被占用时自动分配其他回环端口。启动顺序是内置 runtime、系统 `vc`，然后仅在 VortoCode 开发 checkout 中尝试源码 Python 回退；

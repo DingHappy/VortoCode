@@ -1,5 +1,6 @@
-// 检查更新：问 GitHub 最新正式版（Rust 侧 check_for_update），有新版就给一个打开下载页的入口。
-// 不下载、不安装；自动检查每天最多一次，可在设置里关掉（关了就完全不联系 GitHub）。
+// 检查更新：问 GitHub 最新正式版（Rust 侧 check_for_update），有新版就提示。
+// 自动检查每天最多一次，只比版本号，可在设置里关掉（关了就完全不联系 GitHub）。
+// 安装只在用户点了「更新并重启」后发生：Rust 侧弹原生确认，下载后用内置公钥验签，通过才替换并重启。
 import { invoke } from "@tauri-apps/api/core";
 
 import { STORAGE_KEYS } from "./storage";
@@ -31,6 +32,13 @@ function readLastChecked(): number | null {
 
 function writeLastChecked(now: number) {
   try { window.localStorage.setItem(STORAGE_KEYS.updateCheckedAt, String(now)); } catch { /* 隐私模式等：下次再查 */ }
+}
+
+/** 下载、验签、安装新版并重启。用户在原生对话框里点「稍后」或安装失败时抛错（带原因），App 不会重启。 */
+export async function installUpdate(): Promise<string> {
+  const version = await invoke<string>("install_update");
+  await invoke("restart_after_update");
+  return version;
 }
 
 export function checkForUpdate(): Promise<UpdateCheck> {
