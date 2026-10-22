@@ -311,7 +311,13 @@ _REPORT_SYSTEM = (
     "还在进行什么。最多 5 行，每行不超过 40 个字；素材里没有的类别直接不提，不写「暂无」；"
     "不用标题、表情符号和加粗。口语、具体；只依据素材，不要编造素材里没有的结果。"
     "同一件事在素材里可能出现好几次（聊过、任务单、等你处理），只说一次；不写内部编号。"
+    "直接对用户说事，不要提「素材」这个词，也不要写「没有别的可说」这类话（没有就不写）。"
 )
+
+
+def _drop_meta_lines(text: str) -> str:
+    """模型偶尔把内部用词说出来（真机 2026-10-22 早报：「素材里没有别的进展可说」）：这种行整行去掉。"""
+    return "\n".join(line for line in text.splitlines() if "素材" not in line).strip()
 
 # 任务单 / 后台任务 / 目标的内部编号：对手机上的人没有意义，写进早晚报只是噪音（真机 2026-10-20 晚报）
 _INTERNAL_ID = re.compile(r"[ \t]*[（(]?\b(?:dsp|bg-task|task|personal|cdx|dpr|dgl|run|plan)-[0-9a-f]{6,}\b[）)]?")
@@ -403,7 +409,7 @@ async def _compose_body(root: str, now: datetime, label: str, *, llm: Any = None
             response = await asyncio.wait_for(
                 llm.chat([{"role": "system", "content": system}, {"role": "user", "content": facts}],
                          temperature=0.4, max_tokens=1500), 90)
-        text = str((response or {}).get("content") or "").strip()
+        text = _drop_meta_lines(str((response or {}).get("content") or ""))
     except Exception as error:  # noqa: BLE001 —— 写不出来就发数据版，汇报不能断
         logger.warning("早晚报改写失败，发数据版：%s", error)
         return facts

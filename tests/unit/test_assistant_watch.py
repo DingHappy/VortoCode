@@ -426,3 +426,20 @@ def test_evening_report_still_goes_out_when_something_else_moved(tmp_path):
     _aged_ticket(root, "补边界单测", yesterday)
     _aged_ticket(root, "在跑的", yesterday, status="running")
     assert watch.quiet_report(root, datetime(2026, 10, 21, 21, 0, tzinfo=TZ), "晚报") is None
+
+
+
+async def test_report_never_talks_about_its_material(tmp_path, monkeypatch):
+    """真机 2026-10-22 早报：「素材里没有别的进展可说。」——内部用词整行去掉，提示词也不许这么写。"""
+    monkeypatch.setattr(watch, "quiet_report", lambda *_a: None)
+    monkeypatch.setattr(watch, "build_report", lambda *_a: "等你处理：1 件。\n· 修登录")
+    seen = []
+
+    class _LLM:
+        async def chat(self, messages, **_kw):
+            seen.append(messages[0]["content"])
+            return {"content": "修登录的任务单等你确认。\n素材里没有别的进展可说。"}
+
+    text = await watch.compose_report(str(tmp_path), datetime(2026, 10, 22, 9, 0, tzinfo=TZ), "早报", llm=_LLM())
+    assert text == "🗒 早报\n修登录的任务单等你确认。"
+    assert "不要提「素材」" in seen[0]
