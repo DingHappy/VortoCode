@@ -396,3 +396,33 @@ async def test_tainted_ticket_gets_no_button_on_the_report(tmp_path):
                            times=["09:00"], writer=_facts)
     reports = [(text, cid) for text, cid in inbox.sent if text.startswith("🗒")]
     assert reports and reports[0][1] == "" and "按钮对应" not in reports[0][0]
+
+
+# —— 只剩早就写好、今天没动过的待确认单子：早报提一次（带按钮），晚报不再重复 ——
+
+def _aged_ticket(root, title, at, status="proposed"):
+    ticket = dispatch.propose(root, project="VortoCode", title=title, goal="g")
+    items = dispatch._load(root)                       # 直接改台账：_update 会把 updated_at 刷成现在
+    for item in items:
+        if item["id"] == ticket["id"]:
+            item.update(created_at=at.isoformat(), updated_at=at.isoformat(), status=status)
+    dispatch._save(root, items)
+    return ticket
+
+
+def test_evening_report_skips_a_proposal_already_reported_today(tmp_path):
+    root = str(tmp_path)
+    yesterday = datetime(2026, 10, 20, 8, 46, tzinfo=TZ)
+    evening, morning = datetime(2026, 10, 21, 21, 0, tzinfo=TZ), datetime(2026, 10, 21, 9, 0, tzinfo=TZ)
+    _aged_ticket(root, "补边界单测", yesterday)
+    assert watch.quiet_report(root, evening, "晚报") == ""
+    assert watch.quiet_report(root, morning, "早报") is None                       # 早报照常提
+    assert watch.quiet_report(root, datetime(2026, 10, 20, 21, 0, tzinfo=TZ), "晚报") is None   # 当天写好的照常提
+
+
+def test_evening_report_still_goes_out_when_something_else_moved(tmp_path):
+    root = str(tmp_path)
+    yesterday = datetime(2026, 10, 20, 8, 46, tzinfo=TZ)
+    _aged_ticket(root, "补边界单测", yesterday)
+    _aged_ticket(root, "在跑的", yesterday, status="running")
+    assert watch.quiet_report(root, datetime(2026, 10, 21, 21, 0, tzinfo=TZ), "晚报") is None
