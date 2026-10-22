@@ -113,8 +113,11 @@ async def generate_digest(llm: Any, request: str, reply: str, tools: Iterable[st
         return fallback_digest(request, reply, "no_model")
     model = str(getattr(getattr(llm, "config", None), "model", "") or "")
     try:
-        response = await run_with_timeout(
-            llm.chat(digest_messages(request, reply, tools, model), temperature=0.2, max_tokens=DIGEST_MAX_TOKENS), timeout)
+        from src.llm.usage_ledger import usage_source
+        with usage_source("对话摘要"):
+            response = await run_with_timeout(
+                llm.chat(digest_messages(request, reply, tools, model), temperature=0.2, max_tokens=DIGEST_MAX_TOKENS),
+                timeout)
     except Exception as error:  # noqa: BLE001 —— 摘要是旁路，失败只降级为原文截取
         logger.warning("回合摘要生成失败，改用原文截取：%s", error)
         return fallback_digest(request, reply, f"error: {type(error).__name__}: {error}")

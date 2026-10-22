@@ -82,9 +82,11 @@ async def review_outcome(item: Dict[str, Any], *, llm: Any = None) -> Optional[D
     if llm is None:
         from src.llm.client import LLMClient
         llm = LLMClient()
-    response = await asyncio.wait_for(
-        llm.chat([{"role": "system", "content": _SYSTEM}, {"role": "user", "content": _material(item)}],
-                 temperature=0.2, max_tokens=900), 90)
+    from src.llm.usage_ledger import usage_source
+    with usage_source("任务复盘"):
+        response = await asyncio.wait_for(
+            llm.chat([{"role": "system", "content": _SYSTEM}, {"role": "user", "content": _material(item)}],
+                     temperature=0.2, max_tokens=900), 90)
     return parse_outcome(str((response or {}).get("content") or ""), item)
 
 
