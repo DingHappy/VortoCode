@@ -1,5 +1,6 @@
 """邮件插件：只读打开收件箱、不标已读、授权码不外露、钓鱼内容当外部资料、凭据格式与常见邮箱、新邮件提醒。"""
 import email
+import email.policy
 import imaplib
 import os
 from datetime import datetime, timedelta
@@ -73,6 +74,18 @@ class FakeIMAP:
             head = f'1 (UID {uid} FLAGS ({flags}) INTERNALDATE "{internal}" BODY[] {{{len(raw)}}}'.encode()
             out += [(head, raw), b")"]
         return "OK", out
+
+    folders = [b'(\\HasNoChildren) "/" "INBOX"', b'(\\HasNoChildren \\Drafts) "/" "My Drafts"',
+               b'(\\HasNoChildren) "/" "Sent"']
+
+    def list(self):
+        self.commands.append(("LIST",))
+        return "OK", list(self.folders)
+
+    def append(self, mailbox, flags, date_time, message):
+        self.commands.append(("APPEND", mailbox, flags))
+        self.appended = message
+        return "OK", [b"APPEND completed"]
 
     def logout(self):
         self.commands.append(("LOGOUT",))
@@ -251,3 +264,99 @@ async def test_unreadable_mailbox_skips_the_round_without_echoing_the_code(home,
     monkeypatch.setattr(imaplib, "IMAP4_SSL", lambda *a, **kw: FakeIMAP({}, login_ok=False))
     assert await mail.reminders(NOW) == []
     assert CODE not in caplog.text
+
+
+# —— 起草邮件：每次都要确认（任何档位都不免），只存草稿箱、不发送；回复自动补收件人和会话头 ——
+
+class Asker(list):
+    def __init__(self, answer=True):
+        super().__init__()
+        self.answer = answer
+
+    async def __call__(self, message, kind=None):
+        self.append((message, kind))
+        return self.answer
+
+
+def draft_tool(confirm):
+    return {t.name: t for t in mail.build_write_tools(confirm)}["mail_draft"]
+
+
+async def test_draft_asks_every_time_and_only_appends_to_drafts(home, monkeypatch):
+    from src.agents.trust import INTERACT
+    fake = inbox_server(monkeypatch, {})
+    asker = Asker()
+    tool_ = draft_tool(asker)
+    assert not tool_.read_only
+    out = await tool_.handler({"to": "zs@example.com, ls@example.com", "subject": "周五聚餐",
+                               "body": "周五晚上七点，老地方。"})
+    assert len(asker) == 1 and asker[0][1] == INTERACT
+    assert "不发送" in asker[0][0] and "zs@example.com, ls@example.com" in asker[0][0] and "老地方" in asker[0][0]
+    assert ("APPEND", '"My Drafts"', "(\\Draft \\Seen)") in fake.commands
+    saved = email.message_from_bytes(fake.appended, policy=email.policy.default)
+    assert saved["From"] == "me@qq.com" and saved["To"] == "zs@example.com, ls@example.com"
+    assert saved["Subject"] == "周五聚餐" and "老地方" in saved.get_content() and saved["Message-ID"]
+    assert out.startswith("已存进草稿箱「My Drafts」") and "没有发送" in out
+    assert not any(c[0] in ("STORE", "EXPUNGE", "COPY", "MOVE") for c in fake.commands)
+
+
+async def test_reply_draft_fills_recipient_subject_and_thread(home, monkeypatch):
+    fake = inbox_server(monkeypatch, {"12": (message("李四 <ls@example.com>", "发票请查收", NOW - timedelta(hours=2),
+                                                     headers={"Message-ID": "<orig@example.com>",
+                                                              "References": "<root@example.com>",
+                                                              "Reply-To": "finance@example.com"}), False)})
+    asker = Asker()
+    out = await draft_tool(asker).handler({"reply_uid": "12", "body": "收到，谢谢。"})
+    assert "finance@example.com" in asker[0][0] and "回复原邮件" in asker[0][0]
+    saved = email.message_from_bytes(fake.appended, policy=email.policy.default)
+    assert saved["To"] == "finance@example.com" and saved["Subject"] == "Re: 发票请查收"
+    assert saved["In-Reply-To"] == "<orig@example.com>" and saved["References"] == "<root@example.com> <orig@example.com>"
+    assert "Re: 发票请查收" in out
+
+
+async def test_declined_or_malformed_drafts_never_append(home, monkeypatch):
+    fake = inbox_server(monkeypatch, {})
+    assert await draft_tool(Asker(answer=False)).handler(
+        {"to": "zs@example.com", "subject": "s", "body": "b"}) == "用户没有同意，草稿没存。"
+    asker = Asker()
+    for args in ({"to": "zs@example.com\nBcc: evil@example.com", "subject": "s", "body": "b"},
+                 {"to": "不是邮箱", "subject": "s", "body": "b"},
+                 {"to": ",".join(f"u{i}@example.com" for i in range(11)), "subject": "s", "body": "b"},
+                 {"to": "zs@example.com", "subject": "s", "body": "  "},
+                 {"to": "zs@example.com", "subject": "", "body": "b"},
+                 {"reply_uid": "12; DELETE", "body": "b"}):
+        out = await draft_tool(asker).handler(args)
+        assert not out.startswith("已存进")
+    assert asker == [] and not any(c[0] == "APPEND" for c in fake.commands)
+    subject = await draft_tool(Asker()).handler({"to": "zs@example.com", "subject": "a\r\nBcc: x@example.com", "body": "b"})
+    saved = email.message_from_bytes(fake.appended, policy=email.policy.default)
+    assert subject.startswith("已存进") and saved["Bcc"] is None and saved["Subject"] == "a Bcc: x@example.com"
+
+
+async def test_drafts_folder_falls_back_to_known_names(home, monkeypatch):
+    fake = inbox_server(monkeypatch, {})
+    fake.folders = [b'(\\HasNoChildren) "/" "INBOX"', b'(\\HasNoChildren) "/" "&g0l6P3ux-"']
+    await draft_tool(Asker()).handler({"to": "zs@example.com", "subject": "s", "body": "b"})
+    assert ("APPEND", '"&g0l6P3ux-"', "(\\Draft \\Seen)") in fake.commands
+    fake.folders = [b'(\\HasNoChildren) "/" "INBOX"']
+    assert await draft_tool(Asker()).handler({"to": "zs@example.com", "subject": "s", "body": "b"}) == "找不到草稿箱"
+
+
+async def test_session_draft_tool_fails_closed_without_a_human(home, monkeypatch):
+    from src.gateway.agent_session import build_session
+
+    class LLM:
+        async def chat(self, messages, **kwargs):
+            return {"content": "ok"}
+
+    fake = inbox_server(monkeypatch, {})
+    agent = build_session(str(home), kind="im", workspace_scope="general", llm=LLM(), auto_approve=True)
+    assert "mail_draft" in agent.tools and "存进草稿箱" in agent._system("plan")
+    out = await agent.tools["mail_draft"].handler({"to": "zs@example.com", "subject": "s", "body": "b"})
+    assert out == "用户没有同意，草稿没存。" and not any(c[0] == "APPEND" for c in fake.commands)
+    assert plugins.build_plugin_tools([mail_plugin()]) and "mail_draft" not in {
+        t.name for t in plugins.build_plugin_tools([mail_plugin()])}
+
+
+def mail_plugin():
+    return next(p for p in plugins.available_plugins() if p.name == "mail")

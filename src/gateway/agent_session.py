@@ -199,10 +199,11 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
             from src.scheduling.codex_supervisor import build_supervisor_tools
             tools += build_supervisor_tools(repo_root)
             tools += build_codex_action_tools(repo_root, is_tainted=is_tainted, session=task_owner or "")
-            # 插件（日历等外部数据）：放了凭据才挂，只读，带回来的内容按外部不可信处理
+            # 插件（日历等外部数据）：放了凭据才挂，带回来的内容按外部不可信处理；
+            # 写入（存邮件草稿）每次过内核确认门
             from src.plugins import build_plugin_tools, enabled_plugins
             active_plugins = enabled_plugins()
-            tools += build_plugin_tools(active_plugins)
+            tools += build_plugin_tools(active_plugins, confirm=gated_confirm)
     else:
         tools = build_agent_tools(repo_root, confirm=gated_confirm, on_progress=on_progress,
                                   with_artifacts=(kind == "web"),   # 制品查看页只有 Web 有
