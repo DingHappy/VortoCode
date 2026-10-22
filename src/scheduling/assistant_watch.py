@@ -274,9 +274,32 @@ def build_report(root: str, now: datetime, label: str) -> str:
     return "\n".join(lines)
 
 
+def _before_today(value: Any, now: datetime) -> bool:
+    try:
+        moment = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return False
+    moment = moment if moment.tzinfo else moment.astimezone()
+    return moment.astimezone(now.tzinfo).date() < now.date()
+
+
+def _only_old_proposals(active: List[Dict[str, Any]], waiting: List[Dict[str, Any]], now: datetime) -> bool:
+    """今天唯一的「事」是早就写好、今天没动过的待确认任务单：早报已经提过、按钮也在，晚报不必再说一遍。"""
+    if not active or any(item.get("status") != "proposed" or not _before_today(item.get("updated_at"), now)
+                         for item in active):
+        return False
+    return all(item.get("kind") == "dispatch" and str(item.get("id", "")).endswith(":proposed")
+               and _before_today(item.get("created"), now) for item in waiting)
+
+
 def quiet_report(root: str, now: datetime, label: str) -> Optional[str]:
-    """今天什么都没发生时的报告：早报一行（顺带说明助理还在），晚报不发（空串）。有事返回 None。"""
+    """今天什么都没发生时的报告：早报一行（顺带说明助理还在），晚报不发（空串）。有事返回 None。
+
+    只剩早就写好、今天没动过的待确认任务单时，早报照常提（带按钮），晚报不再重复
+    （真机 2026-10-21：同一张单子两天推了 6 次，晚报整份只有这一句）。"""
     turns, active, waiting = report_material(root, now)
+    if label != "早报" and not turns and _only_old_proposals(active, waiting, now):
+        return ""
     if turns or active or waiting:
         return None
     return f"🗒 {label}：今天没有需要你处理的事。" if label == "早报" else ""
