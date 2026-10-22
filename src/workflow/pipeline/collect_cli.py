@@ -12,6 +12,7 @@ scout 据此知道自己看到的是全部还是一部分。
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -103,6 +104,22 @@ def run_digest_cli(*, limit: int = 12) -> int:
     return 0
 
 
+def _title_words(title: str) -> set:
+    """标题里的词（英文按词、中文按相邻两字），用来认出不同来源转的同一件事。"""
+    text = str(title or "").lower()
+    words = set(re.findall(r"[a-z0-9]+", text))
+    for run in re.findall(r"[\u4e00-\u9fff]+", text):
+        words.update(run[index:index + 2] for index in range(max(1, len(run) - 1)))
+    return words
+
+
+def _same_story(a: set, b: set) -> bool:
+    """词几乎一样（重合占八成以上）才算同一件事；词太少的标题不比，免得误伤。"""
+    if len(a) < 4 or len(b) < 4:
+        return False
+    return len(a & b) / len(a | b) >= 0.8
+
+
 def render_digest(product, *, limit: int = 12) -> str:
     """把 signals 产出物渲染成早报。**按来源分组，组内按热度排。**
 
@@ -130,10 +147,19 @@ def render_digest(product, *, limit: int = 12) -> str:
     lines = [f"📰 今日信号（{len(rows)} 条）"]
     share = max(1, limit // max(1, len(by_source)))
     budget = limit
+    chosen: list = []          # 已经列出的标题词：别的源转的同一件事不再列（真机 2026-10-22：HN 和博客同一条 PHP 公告）
     for source in sorted(by_source):
         if budget <= 0:
             break
-        items = sorted(by_source[source], key=heat, reverse=True)[:min(share, budget)]
+        items = []
+        for row in sorted(by_source[source], key=heat, reverse=True):
+            if len(items) >= min(share, budget):
+                break
+            words = _title_words(str(row.get("title") or ""))
+            if any(_same_story(words, seen) for seen in chosen):
+                continue
+            chosen.append(words)
+            items.append(row)
         if not items:
             continue
         lines.append(f"\n【{source}】")

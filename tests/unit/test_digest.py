@@ -123,3 +123,25 @@ def test_a_source_without_scores_shows_no_number_rather_than_zero():
     而真相是"这个源根本没有热度这个概念"——留空位比编一个 0 诚实。"""
     out = render_digest(_product([_sig(source="blog", title="一篇博文", score=0, delta=None)]))
     assert "· 一篇博文" in out and "0 一篇博文" not in out
+
+
+def test_the_same_story_from_two_sources_is_listed_once():
+    """真机 2026-10-22：HN 和 simonwillison 各列了一遍同一条 PHP 安全公告，空出的名额给该源下一条。"""
+    out = render_digest(_product([
+        _sig(source="hackernews", title="Today's PHP security release, and how we're strengthening security", score=644),
+        _sig(source="simonwillison", title="Today's PHP Security Release, and How We're Strengthening PHP Security"),
+        _sig(source="simonwillison", title="A different post about SQLite indexes", score=0),
+        _sig(source="lobsters", title="Firefox Local Mode"),
+        _sig(source="v2ex", title="Firefox Local Mode"),                        # 太短：不比，各列各的
+    ]), limit=8)
+    assert out.count("PHP") == 1 and "SQLite" in out
+    assert out.count("Firefox Local Mode") == 2
+
+
+def test_chinese_titles_are_compared_by_character_pairs():
+    out = render_digest(_product([
+        _sig(source="a", title="苹果发布新款芯片性能提升三成"),
+        _sig(source="b", title="苹果发布新款芯片，性能提升三成"),
+        _sig(source="b", title="另一条不相干的消息内容"),
+    ]), limit=4)
+    assert out.count("苹果") == 1 and "另一条" in out
