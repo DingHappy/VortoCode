@@ -1,10 +1,11 @@
-"""邮件插件（只读）：用 IMAP 看收件箱——最近的邮件、按关键词找、读一封正文；早报附未读概况。
+"""邮件插件：用 IMAP 看收件箱——最近的邮件、按关键词找、读一封正文；早报附未读概况；起草邮件存进草稿箱。
 
 凭据是一条 `imaps://邮箱:授权码@服务器[:端口]`，也可以只填 `邮箱:授权码`（常见邮箱自动补服务器）。
 授权码是邮箱设置里生成的「客户端专用密码」，不是登录密码。凭据放在
 `~/.vortocode/connectors/mail.token`，不进配置、系统提示、日志或工具结果。
 
 - 只用 EXAMINE（只读打开收件箱）和 BODY.PEEK：不改已读状态，不移动、不删除，也不能发信。
+- 唯一的写入是 `mail_draft`：主人逐次确认后往草稿箱放一封草稿（APPEND），不发送；发不发由主人在邮箱里决定。
 - 邮件是外部不可信内容（钓鱼邮件可能写着「忽略之前的指令」），工具一律标记污点。
 - 新邮件提醒：每 5 分钟看一次刚收到的未读，推「📧 新邮件」；群发邮件不推，安静时段照常攒着。
 """
@@ -20,10 +21,12 @@ import logging
 import os
 import re
 import ssl
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from email.header import decode_header, make_header
-from email.utils import parseaddr, parsedate_to_datetime
+from email.message import EmailMessage
+from email.utils import formatdate, make_msgid, parseaddr, parsedate_to_datetime
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote, unquote, urlsplit
 
@@ -315,6 +318,116 @@ async def morning_brief(now: datetime) -> str:
     return f"📬 最近一天未读 {found['total']} 封\n" + "\n".join(lines) + more
 
 
+_ADDRESS = re.compile(r"[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,253}\.[A-Za-z]{2,24}")
+_DRAFT_NAMES = ("Drafts", "&g0l6P3ux-", "[Gmail]/Drafts", "INBOX.Drafts", "Draft")   # &g0l6P3ux- 是「草稿箱」
+_LIST_LINE = re.compile(rb'^\(([^)]*)\) (?:"(?:[^"\\]|\\.)*"|NIL) (.+)$')
+_MAX_RECIPIENTS = 10
+_MAX_DRAFT = 20_000
+
+
+def _addresses(value: str) -> List[str]:
+    found = [part.strip() for part in re.split(r"[,，;；\s]+", str(value or "")) if part.strip()]
+    if not found or len(found) > _MAX_RECIPIENTS or not all(_ADDRESS.fullmatch(item) for item in found):
+        raise MailError(f"收件人要是 1–{_MAX_RECIPIENTS} 个邮箱地址，用逗号隔开")
+    return list(dict.fromkeys(found))
+
+
+def _quoted(name: str) -> str:
+    return '"' + name.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def _drafts_folder(client: Any) -> str:
+    """草稿箱：优先认服务器标了 \\Drafts 的文件夹（RFC 6154），没标就按常见名字找。"""
+    status, data = client.list()
+    if status != "OK":
+        raise MailError("列不出邮箱文件夹")
+    names = []
+    for line in data or []:
+        found = _LIST_LINE.match(line) if isinstance(line, bytes) else None
+        if not found:
+            continue
+        name = found.group(2).strip().decode("utf-8", "replace")
+        if name.startswith('"') and name.endswith('"'):
+            name = re.sub(r'\\(.)', r"\1", name[1:-1])
+        if b"\\drafts" in found.group(1).lower():
+            return name
+        names.append(name)
+    for candidate in _DRAFT_NAMES:
+        if candidate in names:
+            return candidate
+    raise MailError("找不到草稿箱")
+
+
+def prepare_draft(to: str, subject: str, body: str, reply_uid: str = "") -> Dict[str, Any]:
+    """整理一封草稿（还不存）：回复时从原信补收件人、主题和会话头。"""
+    body = str(body or "").strip()
+    if not body:
+        raise MailError("草稿正文是空的")
+    if len(body) > _MAX_DRAFT:
+        raise MailError("草稿太长了")
+    subject = re.sub(r"\s+", " ", str(subject or "")).strip()[:200]
+    draft: Dict[str, Any] = {"to": [], "subject": subject, "body": body, "in_reply_to": "", "references": ""}
+    if reply_uid:
+        if not re.fullmatch(r"\d{1,12}", str(reply_uid)):
+            raise MailError("reply_uid 要用 mail_list 给的数字")
+        client = _connect(_account())
+        try:
+            status, data = client.uid("FETCH", str(reply_uid),
+                                      "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID REFERENCES SUBJECT FROM REPLY-TO)])")
+            raw = next((part[1] for part in data or [] if isinstance(part, tuple) and len(part) > 1), None)
+        finally:
+            _close(client)
+        if status != "OK" or raw is None:
+            raise MailError("找不到要回复的那封邮件")
+        original = email.message_from_bytes(raw)
+        message_id = re.sub(r"\s+", "", str(original.get("Message-ID", "")))[:300]
+        draft["in_reply_to"] = message_id
+        draft["references"] = " ".join(f"{original.get('References', '')} {message_id}".split()[-10:])
+        if not subject:
+            old = _header(original.get("Subject"))
+            draft["subject"] = (old if old.lower().startswith("re:") else f"Re: {old}")[:200]
+        if not str(to or "").strip():
+            to = parseaddr(_header(original.get("Reply-To") or original.get("From") or ""))[1]
+    draft["to"] = _addresses(to)
+    if not draft["subject"]:
+        raise MailError("草稿要有主题")
+    return draft
+
+
+def draft_preview(draft: Dict[str, Any]) -> str:
+    body = draft["body"] if len(draft["body"]) <= 600 else draft["body"][:600] + "\n…（后面还有）"
+    reply = "（回复原邮件）" if draft.get("in_reply_to") else ""
+    return (f"把这封邮件存进你邮箱的草稿箱{reply}？只存草稿，不发送，发不发你在邮箱里决定。\n"
+            f"收件人：{', '.join(draft['to'])}\n主题：{draft['subject']}\n正文：\n{body}")
+
+
+def save_draft(draft: Dict[str, Any]) -> str:
+    """把确认过的草稿放进草稿箱，返回草稿箱名字。"""
+    account = _account()
+    message = EmailMessage()
+    message["From"] = account.user
+    message["To"] = ", ".join(draft["to"])
+    message["Subject"] = draft["subject"]
+    message["Date"] = formatdate(localtime=True)
+    message["Message-ID"] = make_msgid(domain=account.user.rpartition("@")[2] or None)
+    if draft.get("in_reply_to"):
+        message["In-Reply-To"] = draft["in_reply_to"]
+        message["References"] = draft.get("references") or draft["in_reply_to"]
+    message.set_content(draft["body"])
+    client = _connect(account)
+    try:
+        folder = _drafts_folder(client)
+        try:
+            status, _ = client.append(_quoted(folder), "(\\Draft \\Seen)", time.time(), message.as_bytes())
+        except Exception as error:  # noqa: BLE001 —— 只留类型名
+            raise MailError(f"存草稿失败（{type(error).__name__}）") from None
+        if status != "OK":
+            raise MailError("存草稿失败：邮箱服务器没接受")
+    finally:
+        _close(client)
+    return folder
+
+
 def notify_enabled() -> bool:
     return os.getenv(NOTIFY_ENV, "1").strip().lower() not in ("0", "false", "off", "no")
 
@@ -354,6 +467,34 @@ async def reminders(now: datetime) -> List[Tuple[str, str]]:
 async def check() -> str:
     found = await asyncio.to_thread(list_messages, "", 7, True, 1)
     return f"能读到，最近 7 天 {found['scanned']} 封邮件，其中未读 {found['total']} 封"
+
+
+def build_write_tools(confirm: Any) -> list:
+    """起草邮件：每次都要主人在确认卡上点同意（任何授权档位都不免），只存草稿、不发送。"""
+    from src.agents.gate import request
+    from src.agents.tool import Tool
+    from src.agents.trust import INTERACT
+
+    async def _draft(args: dict) -> str:
+        try:
+            draft = await asyncio.to_thread(prepare_draft, str(args.get("to") or ""), str(args.get("subject") or ""),
+                                            str(args.get("body") or ""), str(args.get("reply_uid") or "").strip())
+        except MailError as error:
+            return str(error)
+        if not await request(confirm, draft_preview(draft), INTERACT):
+            return "用户没有同意，草稿没存。"
+        try:
+            folder = await asyncio.to_thread(save_draft, draft)
+        except MailError as error:
+            return str(error)
+        return (f"已存进草稿箱「{folder}」：收件人 {', '.join(draft['to'])}，主题「{draft['subject']}」。"
+                "没有发送，请用户在邮箱里检查后自己发。")
+
+    return [Tool("mail_draft", "起草一封邮件存进用户邮箱的草稿箱，不发送。回复某封信时给 reply_uid，收件人和主题可留空自动补。"
+                 "每次都会请用户确认；正文写完整，不要留占位符。",
+                 {"to": "收件人邮箱，多个用逗号隔开；回复时可空", "subject": "主题；回复时可空",
+                  "body": "正文（纯文本）", "reply_uid": "要回复的那封的 uid（mail_list 给的），可空"},
+                 _draft, read_only=False, untrusted_source=True, serial=True)]
 
 
 def build_tools() -> list:
