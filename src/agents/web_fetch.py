@@ -208,11 +208,12 @@ class FetchError(Exception):
 
 
 def fetch_bytes(url: str, *, max_bytes: int = _MAX_BYTES, timeout: int = 20,
-                headers: dict | None = None, data: bytes | None = None) -> bytes:
+                headers: dict | None = None, data: bytes | None = None, method: str | None = None) -> bytes:
     """按 https 取一份原始内容（插件用）。与 fetch_url 同一套公网校验和逐跳重定向校验，
     但只认 https，超过 max_bytes 直接报错而不是截断。
 
-    带 headers（多半含令牌）或 data 时不跟重定向：跟过去就等于把令牌交给另一个地址。"""
+    带 headers（多半含令牌）或 data 时不跟重定向：跟过去就等于把令牌交给另一个地址。
+    method 给 CalDAV 这类协议用（PROPFIND / PUT），缺省按有没有 data 走 GET 或 POST。"""
     cur = (url or "").strip()
     sensitive = bool(headers) or data is not None
     for _hop in range(_MAX_REDIRECTS + 1):
@@ -221,7 +222,8 @@ def fetch_bytes(url: str, *, max_bytes: int = _MAX_BYTES, timeout: int = 20,
             raise FetchError("只支持 https 链接")
         if not _host_is_safe(p.hostname or ""):
             raise FetchError("链接指向的不是公网地址")
-        req = urllib.request.Request(cur, data=data, headers={"User-Agent": "VortoCode/1.0", **(headers or {})})
+        req = urllib.request.Request(cur, data=data, headers={"User-Agent": "VortoCode/1.0", **(headers or {})},
+                                     method=method)
         try:
             resp = _urlopen(req, timeout)
         except urllib.error.HTTPError as e:
