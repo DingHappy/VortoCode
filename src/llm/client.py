@@ -305,6 +305,8 @@ def estimate_tokens(text: str) -> int:
 
 def add_usage(prompt_tokens: int, completion_tokens: int, cached_tokens: int = 0,
               model: str = "") -> None:
+    from src.llm.usage_ledger import record
+    record(prompt_tokens, completion_tokens, cached_tokens)      # 每天按来源的用量台账（只记数字）
     u = _cur_usage()
     _accumulate_usage(u, prompt_tokens, completion_tokens, cached_tokens, model)
     for meter in _usage_meters.get():

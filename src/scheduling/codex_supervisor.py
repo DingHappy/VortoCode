@@ -165,9 +165,11 @@ async def review_turn(thread: dict, *, llm: Any = None) -> Optional[Dict[str, st
     if llm is None:
         from src.llm.client import LLMClient
         llm = LLMClient()
-    response = await asyncio.wait_for(
-        llm.chat([{"role": "system", "content": _REVIEW_SYSTEM}, {"role": "user", "content": _review_material(thread)}],
-                 temperature=0.2, max_tokens=800), 90)
+    from src.llm.usage_ledger import usage_source
+    with usage_source("Codex 判断"):
+        response = await asyncio.wait_for(
+            llm.chat([{"role": "system", "content": _REVIEW_SYSTEM}, {"role": "user", "content": _review_material(thread)}],
+                     temperature=0.2, max_tokens=800), 90)
     return _parse_review(str((response or {}).get("content") or ""))
 
 

@@ -18,6 +18,12 @@ def _default_prompt_protocol(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _usage_ledger_in_tmp(monkeypatch, tmp_path_factory):
+    """模型用量台账写到临时目录：测试里的假模型调用不能记进真实的 ~/.vortocode/usage。"""
+    monkeypatch.setenv("VORTOCODE_USAGE_DIR", str(tmp_path_factory.mktemp("usage")))
+
+
+@pytest.fixture(autouse=True)
 def _default_dev_review_off(monkeypatch):
     """把测试套件默认钉在**关闭** dev_auto 的 PR 前审查段（VORTOCODE_DEV_REVIEW=0）。
 

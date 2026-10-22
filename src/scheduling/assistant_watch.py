@@ -372,7 +372,11 @@ async def compose_report(root: str, now: datetime, label: str, *, llm: Any = Non
     # 插件的今日段落（如日历）：外部内容，同样只附在正文后面
     from src.plugins import morning_briefs
     calendar = await morning_briefs(now)
-    extras = [part for part in (*calendar, codex_brief(root, now), brief_line(root, now), news_section(now)) if part]
+    # 昨天的模型用量（只在早报带一行；数字来自本机台账，不进模型上下文）
+    from src.llm.usage_ledger import summary_line
+    usage = summary_line(now) if label == "早报" else ""
+    extras = [part for part in (*calendar, codex_brief(root, now), brief_line(root, now), usage, news_section(now))
+              if part]
     return "\n\n".join([body, *extras])
 
 
@@ -394,9 +398,11 @@ async def _compose_body(root: str, now: datetime, label: str, *, llm: Any = None
             llm = LLMClient()
         system = _REPORT_SYSTEM.format(name=profile["name"], label=label,
                                        soul=f"你的说话方式：{profile['soul']}。" if profile["soul"] else "")
-        response = await asyncio.wait_for(
-            llm.chat([{"role": "system", "content": system}, {"role": "user", "content": facts}],
-                     temperature=0.4, max_tokens=1500), 90)
+        from src.llm.usage_ledger import usage_source
+        with usage_source("早晚报"):
+            response = await asyncio.wait_for(
+                llm.chat([{"role": "system", "content": system}, {"role": "user", "content": facts}],
+                         temperature=0.4, max_tokens=1500), 90)
         text = str((response or {}).get("content") or "").strip()
     except Exception as error:  # noqa: BLE001 —— 写不出来就发数据版，汇报不能断
         logger.warning("早晚报改写失败，发数据版：%s", error)
@@ -420,6 +426,21 @@ async def _notify_accepted(notify: Notify, text: str, confirm_id: str = "") -> b
 
 _REMINDED_KEEP = timedelta(days=2)
 _UNTIMED_PER_ROUND = 3
+
+
+async def _usage_runaway(now: datetime, state: Dict[str, Any], notify: Notify) -> None:
+    """模型用量当天暴涨（后台任务可能在反复调用）：一天只提醒一次；没推出去下一轮再试。"""
+    from src.llm.usage_ledger import runaway
+    day = now.date().isoformat()
+    if state.get("usage_alerted") == day:
+        return
+    try:
+        text = runaway(now)
+    except Exception as error:  # noqa: BLE001 —— 台账读不了不挡巡检
+        logger.warning("用量检查失败：%s", type(error).__name__)
+        return
+    if text and await _notify_accepted(notify, text):
+        state["usage_alerted"] = day
 
 
 async def _plugin_reminders(now: datetime, state: Dict[str, Any], notify: Notify) -> None:
@@ -473,6 +494,7 @@ async def watch_once(root: str, now: datetime, *, notify: Notify, refresh=assist
     state = _load_state(root)
     first_run = state is None
     state = state or {"seen": {}, "reports": []}
+    await _usage_runaway(now, state, notify)
     await _plugin_reminders(now, state, notify)
     _save_state(root, state)
     items = await refresh(root)

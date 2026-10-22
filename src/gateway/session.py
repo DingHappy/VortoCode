@@ -91,7 +91,9 @@ async def run_isolated_session(repo_root: str, prompt: str, *, mode: str = "buil
             agent.set_model(model)
         except Exception:  # noqa: BLE001 —— 设模型失败不影响跑（用默认）
             pass
-    return await agent.run_turn(prompt, mode=mode, emit=lambda _t: None)
+    from src.llm.usage_ledger import usage_source
+    with usage_source("定时任务"):
+        return await agent.run_turn(prompt, mode=mode, emit=lambda _t: None)
 
 
 async def _run_general_isolated(repo_root: str, prompt: str, *, mode: str, model: Optional[str], llm,
@@ -139,4 +141,6 @@ async def _run_general_isolated(repo_root: str, prompt: str, *, mode: str, model
             agent.set_model(model)
         except Exception:  # noqa: BLE001 —— 设模型失败不影响跑（用默认）
             pass
-    return await agent.run_turn(prompt, mode=mode, emit=lambda _t: None)
+    from src.llm.usage_ledger import usage_source
+    with usage_source("定时任务"):
+        return await agent.run_turn(prompt, mode=mode, emit=lambda _t: None)

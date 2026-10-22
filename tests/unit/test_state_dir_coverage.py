@@ -34,6 +34,7 @@ NOT_A_REPO_PATH = {
     "browser-profile",  # 在 ~/.vortocode 下（浏览器操控的独立配置目录），不落目标仓库
     "resident_projects.json",  # 在 ~/.vortocode 下（常驻电脑的项目登记表，运维手写），不落目标仓库
     "connectors",    # 在 ~/.vortocode 下（连接器凭据，权限 600，主人手放），不落目标仓库
+    "usage",         # 在 ~/.vortocode 下（每天按来源的模型用量台账，只有数字），不落目标仓库
     "workers",       # 常驻模式外部执行者的专用 CLI 登录（VORTOCODE_WORKER_HOME 示例值 ~/.vortocode/workers），不落目标仓库
     "sessions",      # 只在 cron.py 的 docstring 里出现，说的是"本模块不写这个"
     ".gitignore",    # 清单文件自己

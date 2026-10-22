@@ -59,6 +59,13 @@ Every proactive notice (scheduled jobs, heartbeat, assistant follow-ups, pipelin
 
 Delivery probes (`vc canary`) bypass both. When one service relays notices to another (e.g. project service → resident assistant), set the variables on both.
 
+### Model usage ledger
+
+Every model call adds its token counts (numbers only, never prompts or replies) to `~/.vortocode/usage/daily.json` under a source label: 对话, 早晚报, Codex 判断, 任务复盘, 对话摘要, 定时任务. Processes on the same machine share the file under a lock; 60 days are kept. `VORTOCODE_USAGE_DIR` moves it.
+
+- The morning report ends with one line for yesterday, e.g. `🔢 昨天模型用量：34 次，19.8 万 token（Codex 判断 28 次 · 15.6 万；…）`, and flags a day at 3× or more of the previous 7-day average.
+- The resident assistant pushes one alert per day when today's usage passes 2,000,000 tokens and is at least 3× the 7-day average (or has no history yet), naming the largest source.
+
 Enabling a scheduler or heartbeat does not grant extra tools. The active permission profile, sandbox policy, confirmation gates, and network policy still apply.
 
 Heartbeat behavior follows three public rules:
