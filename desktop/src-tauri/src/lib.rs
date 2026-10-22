@@ -927,6 +927,50 @@ async fn check_for_update(app: AppHandle) -> Result<UpdateCheck, String> {
     update_from_release(&current, &release)
 }
 
+// ── 一键更新：发布页上的 latest.json 指向更新包，用内置公钥验签通过才替换自己，然后走正常退出流程重启 ──
+// 公钥和地址写在 tauri.conf.json（plugins.updater），网页侧改不了；签名私钥只在发版的那台机器上。
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<String, String> {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    use tauri_plugin_updater::UpdaterExt;
+    let update = app
+        .updater()
+        .map_err(|error| format!("更新组件不可用：{error}"))?
+        .check()
+        .await
+        .map_err(|error| format!("检查更新失败：{error}"))?
+        .ok_or_else(|| "已经是最新版本".to_string())?;
+    let version = update.version.clone();
+    // 装完要重启：原生确认在 webview 之外，说清楚正在进行的对话会中断
+    let dialog_app = app.clone();
+    let prompt = format!(
+        "下载并安装 VortoCode {version}？\n\n装好后 App 会自动重启，本机正在进行的对话会中断；常驻电脑上的助理和后台任务不受影响。"
+    );
+    let confirmed = tauri::async_runtime::spawn_blocking(move || {
+        with_main_window_parent(&dialog_app, dialog_app.dialog().message(prompt))
+            .title("更新 VortoCode")
+            .kind(MessageDialogKind::Info)
+            .buttons(MessageDialogButtons::OkCancelCustom("更新并重启".into(), "稍后".into()))
+            .blocking_show()
+    })
+    .await
+    .map_err(|error| format!("更新确认对话框失败：{error}"))?;
+    if !confirmed {
+        return Err("已取消，稍后可在设置里更新".into());
+    }
+    update
+        .download_and_install(|_, _| {}, || {})
+        .await
+        .map_err(|error| format!("下载或安装失败（签名不符也会在这里拒绝）：{error}"))?;
+    Ok(version)
+}
+
+/// 装好更新后重启：走 RunEvent::Exit，托管的引擎进程照常回收。
+#[tauri::command]
+fn restart_after_update(app: AppHandle) {
+    app.request_restart();
+}
+
 #[tauri::command(async)]
 fn get_update_check_enabled(app: AppHandle) -> Result<bool, String> {
     Ok(!read_desktop_preferences(&desktop_preferences_path(&app)?).update_check_disabled)
@@ -3960,6 +4004,7 @@ pub fn run() {
         .manage(RemoteWsRegistry::default())
         .manage(account::AccountState::default())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_http::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
@@ -3980,6 +4025,8 @@ pub fn run() {
             set_experimental_workers,
             get_desktop_control,
             check_for_update,
+            install_update,
+            restart_after_update,
             account::account_status,
             account::account_login,
             account::account_login_cancel,

@@ -119,7 +119,7 @@ import { McpServersCard } from "./components/McpServersCard";
 import { ProjectSkillsCard } from "./components/ProjectSkillsCard";
 import { CatalogCard } from "./components/CatalogCard";
 import { groupSessions, liveSessionStatus, sessionTimeLabel } from "./lib/sessionGroups";
-import { autoCheckForUpdate, type UpdateCheck } from "./lib/updateCheck";
+import { autoCheckForUpdate, installUpdate, type UpdateCheck } from "./lib/updateCheck";
 import {
   ACCOUNT_CHANGED_EVENT, getAccountStatus, getMembership, sidebarIdentity, type VortoAccountStatus, type VortoMembership,
 } from "./lib/vortoAccount";
@@ -638,6 +638,8 @@ function App() {
   const [pluginsRevision, setPluginsRevision] = useState(0);
   /** 启动时自动检查更新（每天最多一次，设置里可关）；有新版才非空。 */
   const [availableUpdate, setAvailableUpdate] = useState<UpdateCheck | null>(null);
+  const [updating, setUpdating] = useState(false);
+  const [updateError, setUpdateError] = useState("");
   // 左下角显示 VortoCode 账号本人；账号卡片里登录/退出/换会员后会广播 ACCOUNT_CHANGED_EVENT
   const [vortoAccount, setVortoAccount] = useState<{ status: VortoAccountStatus | null; membership: VortoMembership | null }>({ status: null, membership: null });
   useEffect(() => {
@@ -3546,8 +3548,14 @@ function App() {
               </span>
             </button>
             {availableUpdate && (
-              <button className="sidebar-update" title={`VortoCode ${availableUpdate.latest} 已发布，点击打开下载页`}
-                onClick={() => void openUrl(availableUpdate.url)}>新版本 {availableUpdate.latest}</button>
+              <button className="sidebar-update" disabled={updating}
+                title={updateError || `VortoCode ${availableUpdate.latest} 已发布，点击更新并重启`}
+                onClick={() => {
+                  setUpdating(true); setUpdateError("");
+                  void installUpdate()
+                    .catch((error) => setUpdateError(errorText(error, "更新失败，可在设置 → 高级 → 更新里重试或下载")))
+                    .finally(() => setUpdating(false));
+                }}>{updating ? "正在更新…" : `新版本 ${availableUpdate.latest}`}</button>
             )}
             <button className="sidebar-gear" aria-label="设置" title="设置" onClick={() => setSettingsOpen(true)}>
               <Settings2 size={16} />
