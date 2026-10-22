@@ -245,6 +245,9 @@ def _progress_line(thread: dict, finished: List[dict], assessment: str) -> str:
     pushed = sum(1 for event in finished if event.get("pushed"))
     if pushed:
         detail.append(f"{pushed} 轮出错（当时已提醒）")
+    stopped = sum(1 for event in finished if event.get("stopped"))
+    if stopped:
+        detail.append(f"中途停了 {stopped} 轮")
     if turn.get("file_count"):
         detail.append(f"改了 {turn['file_count']} 个文件")
     elif turn.get("shell_write_paths"):
@@ -309,6 +312,12 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
         for event in finished:
             if event.get("pushed"):
                 continue                      # 出错当场已经推过（带了原因），巡视不再列一遍
+            if (event.get("status") == "interrupted" and not event.get("error")
+                    and (turn.get("id") != event.get("turn_id") or owner_at_mac(state, now))):
+                # 没报错的中断多半是你在 Mac 上自己叫停的：之后又开了新一轮，或你此刻就在电脑前，
+                # 都不是要你处理的事（真机 2026-10-22：叫停后接着做完一轮，巡视仍推「有一轮被中断」）
+                event["stopped"] = True
+                continue
             if event.get("status") in {"failed", "interrupted"}:
                 verb = "被中断" if event["status"] == "interrupted" else "失败"
                 hint = _account_trouble(str(event.get("error") or ""))

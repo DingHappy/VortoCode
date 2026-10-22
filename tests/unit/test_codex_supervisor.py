@@ -439,3 +439,52 @@ async def test_a_failure_already_pushed_is_not_listed_again(tmp_path):
     texts = notes.texts()
     assert not any("要你处理" in text for text in texts)
     assert any("1 轮出错（当时已提醒）" in text for text in texts)
+
+
+# —— 没报错的中断多半是你自己叫停的：接着做了或你就在 Mac 前，不算「要你处理」 ——
+
+def _interrupted(tid):
+    return _thread(status="idle", turn_status="interrupted", tid=tid)
+
+
+@pytest.mark.asyncio
+async def test_a_stop_you_followed_up_on_is_not_a_to_do(tmp_path):
+    root, notes = str(tmp_path), Notes()
+    _report(root, _thread(tid="t1"), T0)
+    await _check(root, T0, notes)
+    _report(root, _interrupted("t1"), _m(5))
+    _report(root, _thread(tid="t2"), _m(6))
+    _report(root, _done("t2"), _m(10))
+    await _check(root, _m(30), notes)
+    text = notes.texts()[0]
+    assert "要你处理" not in text and "被中断" not in text
+    assert "这段时间做完 1 轮，中途停了 1 轮" in text
+
+
+@pytest.mark.asyncio
+async def test_a_stop_while_you_are_at_the_mac_stays_off_the_phone(tmp_path):
+    from src.scheduling.notices import load_notices
+    root, notes = str(tmp_path), Notes()
+    _report_idle(root, _thread(tid="t1"), T0, 10)
+    await _check(root, T0, notes)
+    watch.record_report(root, {"threads": [_interrupted("t1")], "user_idle_seconds": 20,
+                               "presence_reports": True}, now=_m(25))
+    await _check(root, _m(30), notes)
+    assert notes.sent == [] and "中途停了 1 轮" in load_notices(root)[0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_a_stop_nobody_followed_up_on_still_asks_you(tmp_path):
+    root, notes = str(tmp_path), Notes()
+    _report(root, _thread(tid="t1"), T0)
+    await _check(root, T0, notes)
+    _report(root, _interrupted("t1"), _m(5))
+    await _check(root, _m(30), notes)
+    assert "有一轮被中断：没有错误信息" in notes.texts()[0]
+    _report(root, _thread(tid="t3"), _m(35))
+    errored = {**_thread(tid="t3"), "status": "idle",
+               "turn": {**_thread(tid="t3")["turn"], "status": "interrupted", "error": "连接断开"}}
+    _report(root, errored, _m(40))
+    _report(root, _thread(tid="t4"), _m(41))
+    await _check(root, _m(60), notes)
+    assert "有一轮被中断：连接断开" in notes.texts()[-1]           # 带了错误的中断照常找你
