@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -84,6 +85,22 @@ def _clean_threads(payload: Any) -> List[dict]:
     return out
 
 
+# Codex 自己的登录 / 用量 / 模型满载：拟句话发给 Codex 没用，得你在 Mac 上处理
+_ACCOUNT_TROUBLE = (
+    (re.compile(r"access token|sign in again|log ?in again|logged out|unauthori[sz]ed|\b401\b|重新登录", re.I),
+     "Codex 的登录失效了，要你在 Mac 上重新登录 Codex，再让它接着做"),
+    (re.compile(r"usage limit|rate limit|quota|insufficient_quota|额度|用量上限", re.I),
+     "Codex 的用量到上限了，等额度恢复（或换账号）后再让它接着做"),
+    (re.compile(r"at capacity|overloaded|server is busy|try a different model|满载", re.I),
+     "Codex 用的模型这会儿满载，过几分钟让它重试，或在 Codex 里换个模型"),
+)
+ERROR_PUSH_WINDOW = timedelta(minutes=15)    # 出错提醒和失败轮次在这段时间内算同一件事
+
+
+def account_trouble(error: str) -> str:
+    return next((hint for pattern, hint in _ACCOUNT_TROUBLE if pattern.search(error or "")), "")
+
+
 def _waiting(thread: dict) -> str:
     flags = thread.get("flags") or []
     if "waitingOnApproval" in flags:
@@ -135,9 +152,26 @@ def record_report(root: str, payload: Any, *, now: Optional[datetime] = None) ->
                                "status": turn["status"], "file_count": turn.get("file_count") or 0,
                                "reply": (turn.get("reply") or "")[-300:], "error": (turn.get("error") or "")[:200],
                                "at": now.isoformat()})
+                pushed_at = _parse(mark.get("error_pushed_at"))
+                if turn["status"] == "failed" and pushed_at is not None and now - pushed_at < ERROR_PUSH_WINDOW:
+                    events[-1]["pushed"] = True       # 出错提醒刚推过：这轮失败就是那件事
             mark["reported_turn"] = turn["id"]
         if thread.get("status") == "systemError" and old.get("status") != "systemError":
-            notices.append(f"⚠️ {label} 出错了（Codex 服务报 systemError），去 Codex 窗口看一下。")
+            # 同一次失败只推这一条，带上原因；巡视里就不再列进「要你处理」（真机 2026-10-21 推了两遍）
+            recent = [event for event in events if event.get("thread_id") == thread["id"]
+                      and event.get("status") == "failed" and not event.get("pushed")
+                      and (_parse(event.get("at")) or now) >= now - ERROR_PUSH_WINDOW]
+            error = str(turn.get("error") or (recent[-1].get("error") if recent else "") or "")
+            for event in recent:
+                event["pushed"] = True
+            mark["error_pushed_at"] = now.isoformat()
+            hint = account_trouble(error)
+            if hint:
+                notices.append(f"⚠️ {label} 出错了：{hint}。")
+            elif error:
+                notices.append(f"⚠️ {label} 出错了：{error[:160]}\n去 Codex 窗口看一下。")
+            else:
+                notices.append(f"⚠️ {label} 出错了（Codex 服务报 systemError），去 Codex 窗口看一下。")
         marks[thread["id"]] = mark
     live = {thread["id"] for thread in threads}
     state = {"threads": threads, "received_at": now.isoformat(), "host": str((payload or {}).get("host") or "")[:60],

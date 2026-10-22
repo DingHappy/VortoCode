@@ -217,17 +217,8 @@ def _reply_head(reply: str, limit: int = 160) -> str:
     return _clip_head(head, limit)
 
 
-# Codex 自己的登录 / 用量问题：拟句话发给 Codex 没用，得你在 Mac 上处理
-_ACCOUNT_TROUBLE = (
-    (re.compile(r"access token|sign in again|log ?in again|logged out|unauthori[sz]ed|\b401\b|重新登录", re.I),
-     "Codex 的登录失效了，要你在 Mac 上重新登录 Codex，再让它接着做"),
-    (re.compile(r"usage limit|rate limit|quota|insufficient_quota|额度|用量上限", re.I),
-     "Codex 的用量到上限了，等额度恢复（或换账号）后再让它接着做"),
-)
-
-
-def _account_trouble(error: str) -> str:
-    return next((hint for pattern, hint in _ACCOUNT_TROUBLE if pattern.search(error or "")), "")
+# Codex 自己的登录 / 用量 / 模型满载：拟句话发给 Codex 没用，得你在 Mac 上处理（判定在 codex_watch，当场提醒也用它）
+_account_trouble = codex_watch.account_trouble
 
 
 # 粘贴进来的长路径只留文件名：不然一串目录就占满了，你问的那句话反而被截掉（真机 2026-10-21）
@@ -249,6 +240,9 @@ def _progress_line(thread: dict, finished: List[dict], assessment: str) -> str:
     done = sum(1 for event in finished if event.get("status") == "completed")
     if done:
         detail.append(f"这段时间做完 {done} 轮")
+    pushed = sum(1 for event in finished if event.get("pushed"))
+    if pushed:
+        detail.append(f"{pushed} 轮出错（当时已提醒）")
     if turn.get("file_count"):
         detail.append(f"改了 {turn['file_count']} 个文件")
     elif turn.get("shell_write_paths"):
@@ -311,6 +305,8 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
         assessment = ""
 
         for event in finished:
+            if event.get("pushed"):
+                continue                      # 出错当场已经推过（带了原因），巡视不再列一遍
             if event.get("status") in {"failed", "interrupted"}:
                 verb = "被中断" if event["status"] == "interrupted" else "失败"
                 hint = _account_trouble(str(event.get("error") or ""))
