@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from src.workflow.tasks import assistant_dispatch
+from src.scheduling.patrols import Patrol, PatrolContext, overview as patrol_overview, run_patrols
 
 logger = logging.getLogger(__name__)
 
@@ -478,30 +479,73 @@ async def _plugin_reminders(now: datetime, state: Dict[str, Any], notify: Notify
             reminded[key] = now.isoformat()
 
 
+# —— 巡检登记表：每一项各自计时、各自失败；新提醒在这里登记一项即可（见 patrols.py） ——
+
+async def _patrol_ops(ctx: PatrolContext) -> None:
+    """家里其它机器的定时活（备份同步、恢复演练）该报没报：每次断档推一次。"""
+    from src.scheduling.ops_heartbeats import overdue
+    for message in overdue(ctx.root, ctx.now):
+        await _notify_accepted(ctx.notify, message)
+
+
+async def _patrol_goals(ctx: PatrolContext) -> None:
+    from src.workflow.workbench.goal_followup import poll_goal_followups
+    await poll_goal_followups(ctx.root, ctx.now, notify=ctx.notify)
+
+
+async def _patrol_codex(ctx: PatrolContext) -> None:
+    """定时监管 Mac 上的 Codex：卡住 / 连续失败 / 做完后判断下一步 / 定时进度（节奏由它自己的配置管）。"""
+    from src.scheduling.codex_supervisor import supervise_once
+    await supervise_once(ctx.root, ctx.now, notify=ctx.notify)
+
+
+async def _patrol_usage(ctx: PatrolContext) -> None:
+    await _usage_runaway(ctx.now, ctx.state, ctx.notify)
+
+
+async def _patrol_plugins(ctx: PatrolContext) -> None:
+    await _plugin_reminders(ctx.now, ctx.state, ctx.notify)
+
+
+def _has_ops(root: str) -> bool:
+    from src.scheduling.ops_heartbeats import sources
+    return bool(sources(root))
+
+
+def _has_codex(root: str) -> bool:
+    from src.scheduling.codex_watch import load_state
+    return bool(load_state(root).get("received_at"))
+
+
+def _codex_schedule(root: str) -> str:
+    from src.scheduling.codex_supervisor import load_config
+    return f"每 {load_config(root)['interval_minutes']} 分钟"
+
+
+def _has_reminder_plugins(_root: str) -> bool:
+    from src.plugins import enabled_plugins
+    return any(plugin.reminders is not None for plugin in enabled_plugins())
+
+
+PATROLS: List[Patrol] = [
+    Patrol("ops", "运维心跳", "家里其它机器的定时活（备份、恢复演练）报失败或该报没报时推一条",
+           _patrol_ops, visible=_has_ops),
+    Patrol("goals", "个人目标提醒", "到点推你批准过的目标提醒", _patrol_goals, visible=lambda _root: False),
+    Patrol("codex", "监管 Codex", "看着 Mac 上的 Codex：卡住、出错、要你定方向时找你，定时汇报进度",
+           _patrol_codex, visible=_has_codex, schedule=_codex_schedule),
+    Patrol("usage", "模型用量报警", "当天用量超过 200 万 token 且是前 7 天日均的 3 倍时提醒一次", _patrol_usage),
+    Patrol("plugins", "日程与新邮件提醒", "日程开始前、刚收到的私人邮件，推到手机",
+           _patrol_plugins, visible=_has_reminder_plugins),
+]
+
+
 async def watch_once(root: str, now: datetime, *, notify: Notify, refresh=assistant_dispatch.refresh,
                      times: Optional[List[str]] = None, writer=None, review=None) -> None:
-    """巡检一轮：刷新任务状态、推送变化、到点发报告。首次运行只记下现状，不把旧账推一遍。"""
-    from src.workflow.workbench.goal_followup import poll_goal_followups
-    try:  # 家里其它机器的定时活（备份同步、恢复演练）该报没报：每次断档推一次
-        from src.scheduling.ops_heartbeats import overdue
-        for message in overdue(root, now):
-            await _notify_accepted(notify, message)
-    except Exception as error:  # noqa: BLE001 —— 心跳检查失败不挡任务巡检
-        logger.warning("运维心跳检查失败：%s", type(error).__name__)
-    try:
-        await poll_goal_followups(root, now, notify=notify)
-    except Exception as error:  # Goals and dispatch refresh fail independently; cancellation propagates.
-        logger.warning("个人目标巡检失败：%s", type(error).__name__)
-    try:  # 定时监管 Mac 上的 Codex：卡住 / 连续失败 / 做完后判断下一步 / 定时进度
-        from src.scheduling.codex_supervisor import supervise_once
-        await supervise_once(root, now, notify=notify)
-    except Exception as error:  # noqa: BLE001 —— Codex 监管失败不挡任务巡检
-        logger.warning("Codex 监管失败：%s", type(error).__name__)
+    """巡检一轮：先跑登记的各项巡检，再刷新任务状态、推送变化、到点发报告。首次运行只记下现状，不把旧账推一遍。"""
     state = _load_state(root)
     first_run = state is None
     state = state or {"seen": {}, "reports": []}
-    await _usage_runaway(now, state, notify)
-    await _plugin_reminders(now, state, notify)
+    await run_patrols(PATROLS, PatrolContext(root=root, now=now, notify=notify, state=state))
     _save_state(root, state)
     items = await refresh(root)
     item_ids = {item["id"] for item in items}
@@ -662,12 +706,11 @@ def schedule_overview(root: str) -> List[Dict[str, Any]]:
                           "schedule": f"每天 {hhmm}", "detail": "今天聊过的事、任务单状态、等你处理的", "enabled": True})
         items.append({"id": "follow-up", "kind": "watch", "title": "跟进派出去的活",
                       "schedule": f"每 {INTERVAL_SECONDS // 60} 分钟", "detail": "状态有变化就推到手机", "enabled": True})
-        from src.scheduling.codex_supervisor import describe_config, load_config
-        from src.scheduling.codex_watch import load_state
-        if load_state(root).get("received_at"):
-            items.append({"id": "codex-supervisor", "kind": "watch", "title": "监管 Codex",
-                          "schedule": f"每 {load_config(root)['interval_minutes']} 分钟", "detail": describe_config(load_config(root)),
-                          "enabled": True})
+        items += patrol_overview(PATROLS, root)
+        for item in items:
+            if item["id"] == "patrol-codex":       # 监管 Codex 的说明按它当前的配置写
+                from src.scheduling.codex_supervisor import describe_config, load_config
+                item["detail"] = describe_config(load_config(root))
     try:
         from src.gateway.workspace_scope import GENERAL, current_workspace_scope
         from src.workflow.workbench.personal_goals import PersonalGoals

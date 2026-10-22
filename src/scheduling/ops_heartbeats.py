@@ -99,6 +99,11 @@ def record(root: str, source: str, *, ok: bool, text: str = "", expect_hours: fl
     return None
 
 
+def sources(root: str) -> List[str]:
+    """报到过的来源名；没有就说明这台机器上没配运维心跳。"""
+    return sorted(_load(root))
+
+
 def overdue(root: str, now: Optional[datetime] = None) -> List[str]:
     """超过约定间隔还没报成功的来源；每次断档只返回一次（记下已提醒）。"""
     now = now or datetime.now(timezone.utc)
