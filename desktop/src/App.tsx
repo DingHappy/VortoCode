@@ -9,7 +9,7 @@ import { prepareAvatar } from "./lib/avatar";
 import { resolveMainChat, sourceLabel } from "./lib/mainChat";
 import { AssistantRefreshQueue } from "./lib/assistantRefresh";
 import { AssistantActionGate, type AssistantTaskAction } from "./lib/assistantTask";
-import { ConnectorStatusReads, connectorDisconnectMessage } from "./lib/connectorStatus";
+import { ConnectorStatusReads } from "./lib/connectorStatus";
 import { openAssistantTask } from "./lib/assistantNavigation";
 import { AssistantAudit, AssistantAvatarImage, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantPlugins, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PhoneChatDialog, type AppMode, type AssistantTab } from "./components/AssistantMode";
 import { AssistantGoals } from "./components/AssistantGoals";
@@ -115,6 +115,7 @@ import { ProjectSkillsCard } from "./components/ProjectSkillsCard";
 import { CatalogCard } from "./components/CatalogCard";
 import { autoCheckForUpdate, type UpdateCheck } from "./lib/updateCheck";
 import { SidebarFooter } from "./components/SidebarFooter";
+import { assistantPanelActions } from "./lib/assistantPanelActions";
 import { SidebarProjects } from "./components/SidebarProjects";
 import { SidebarSessions } from "./components/SidebarSessions";
 import {
@@ -3247,6 +3248,27 @@ function App() {
     return () => { window.clearTimeout(later); if (tracking) window.clearInterval(tracking); };
   }, [appMode, connection, busy, activeSid, refreshAgentTurns, trackingDispatches]);
 
+  // 助理面板的操作：每次渲染按此刻的 scope 现装（点下去绑定的就是这一刻的会话和电脑）
+  const panelActions = assistantPanelActions({
+    client: () => clientRef.current,
+    scope: () => assistantScopeRef.current,
+    renderScope: assistantScope,
+    scheduleEpoch: scheduleReadEpoch,
+    connectorReads: connectorReads.current,
+    actionGate: assistantActionGate.current,
+    refreshConnectorStatus,
+    refreshAudit,
+    confirm: confirmAction,
+    openUrl,
+    copy: (text) => navigator.clipboard.writeText(text),
+    prepareAvatar,
+    setBanner,
+    setSchedule: setAssistantSchedule,
+    setMemories: setAssistantMemories,
+    setProposals: setMemoryProposals,
+    setAvatar: setAssistantAvatar,
+  });
+
   return (
     <main className="app-shell">
       <header className="topbar" data-tauri-drag-region="deep">
@@ -3792,69 +3814,16 @@ function App() {
             onRetryResident={() => void changeAppMode("assistant")}
             modelLabel={onAssistantHost() ? runtime.model : llmProfile?.configured ? composerModelChoices.find(item => item.value === modelChoice)?.label : "未连接模型"}
             tab={assistantTab} onClose={() => setInspectorOpen(false)} waiting={assistantWaiting}
-            onTab={(tab) => {
-              setAssistantTab(tab);
-              const client = clientRef.current;
-              if (tab === "audit") void refreshAudit();
-              const scope = assistantScopeRef.current;
-              const current = () => clientRef.current === client && assistantScopeRef.current === scope;
-              if (tab === "schedule") {
-                const epoch = ++scheduleReadEpoch.current;
-                void client?.getAssistantSchedule().then(items => { if (current() && epoch === scheduleReadEpoch.current) setAssistantSchedule(items); }).catch(error => { if (current()) setBanner(String(error)); });
-              }
-              if (tab === "identity") {
-                void client?.listAssistantMemories().then(items => { if (current()) setAssistantMemories(items); }).catch(() => {});
-                void client?.listMemoryProposals().then(items => { if (current()) setMemoryProposals(items); }).catch(() => {});
-                if (client) void refreshConnectorStatus(client, scope).catch(() => {});
-              }
-            }}>
+            onTab={(tab) => { setAssistantTab(tab); panelActions.tabOpened(tab); }}>
             {assistantTab === "audit" ? <AssistantAudit entries={auditEntries} />
               : assistantTab === "goals" ? <AssistantGoals key={assistantScope} client={clientRef.current} connected={connection === "connected"} />
               : assistantTab === "schedule" ? <AssistantSchedule key={assistantScope} items={assistantSchedule} connected={connection === "connected"} local={!onAssistantHost()}
-                  onRefresh={async () => {
-                    const client = clientRef.current;
-                    const scope = assistantScope;
-                    if (!client || assistantScopeRef.current !== scope) return;
-                    const epoch = ++scheduleReadEpoch.current;
-                    const items = await client.getAssistantSchedule();
-                    if (clientRef.current === client && assistantScopeRef.current === scope && epoch === scheduleReadEpoch.current) setAssistantSchedule(items);
-                  }}
-                  onToggle={async item => {
-                    const client = clientRef.current;
-                    const scope = assistantScope;
-                    const current = () => clientRef.current === client && assistantScopeRef.current === scope;
-                    if (!client || !current() || !item.revision) return;
-                    const epoch = ++scheduleReadEpoch.current;
-                    await client.setScheduleEnabled(item.title, !item.enabled, item.revision);
-                    if (!current()) return;
-                    // Reload every card: the revision covers the shared config file.
-                    try {
-                      const items = await client.getAssistantSchedule();
-                      if (current() && epoch === scheduleReadEpoch.current) setAssistantSchedule(items);
-                    } catch {
-                      if (current()) throw new Error("启停配置已保存，但刷新失败，请重新核对状态");
-                    }
-                  }}
-                  onHistory={async item => {
-                    const client = clientRef.current;
-                    const scope = assistantScope;
-                    if (!client || assistantScopeRef.current !== scope) return [];
-                    const runs = await client.getScheduleHistory(item.title);
-                    if (clientRef.current !== client || assistantScopeRef.current !== scope) return [];
-                    return runs;
-                  }} />
+                  onRefresh={panelActions.scheduleRefresh}
+                  onToggle={panelActions.scheduleToggle}
+                  onHistory={panelActions.scheduleHistory} />
               : assistantTab === "identity" ? <AssistantIdentity profile={assistantProfile} memories={assistantMemories}
                   avatar={assistantAvatar}
-                  onAvatar={(file) => void (async () => {
-                    const client = clientRef.current;
-                    if (!client) return;
-                    try {
-                      if (file) setAssistantAvatar(await client.saveAssistantAvatar(await prepareAvatar(file)));
-                      else { await client.removeAssistantAvatar(); setAssistantAvatar(null); }
-                    } catch (error) {
-                      setBanner(errorText(error, "换头像失败"));
-                    }
-                  })()}
+                  onAvatar={(file) => void panelActions.avatar(file)}
                   proposals={memoryProposals}
                   connectors={connectors}
                   plugins={<AssistantPlugins plugins={plugins} busy={pluginBusy}
@@ -3862,77 +3831,10 @@ function App() {
                     onCheck={(plugin) => pluginAction("check", plugin)}
                     onRemove={(plugin) => pluginAction("remove", plugin)}
                     onSave={(plugin, credential) => savePlugin(plugin, credential)} />}
-                  onConnector={(action, connector) => void (async () => {
-                    const client = clientRef.current;
-                    const scope = assistantScope;
-                    const current = () => clientRef.current === client && assistantScopeRef.current === scope;
-                    if (!client || !current()) return;
-                    try {
-                      await assistantActionGate.current.run(client, scope, `connector:${connector.name}`, current, async () => {
-                        let receiptMessage = "";
-                        if (action === "copy" && connector.authorizing) await navigator.clipboard.writeText(connector.authorizing.user_code);
-                        if (action === "open" && connector.authorizing) await openUrl(connector.authorizing.verification_uri);
-                        if (action === "connect") {
-                          connectorReads.current.invalidate();
-                          const started = await client.authorizeConnector(connector.name);
-                          if (!current()) return;
-                          if (started) await openUrl(started.verification_uri).catch(() => undefined);
-                        }
-                        if (action === "disconnect") {
-                          const prompt = connector.local_revocation_supported
-                            ? "断开此连接器并移除本机凭据？\n\n将禁用本运行实例的后续调用，并尝试关闭本地连接。已发出的远端请求不会因此被确认停止；GitHub 授权仍需单独撤销。"
-                            : "移除本机 GitHub 凭据并取消待处理授权？\n\n当前运行版本尚未确认能关闭旧连接；GitHub 授权仍需单独撤销。";
-                          if (!await confirmAction(prompt)) return;
-                          if (!current()) return;
-                          connectorReads.current.invalidate();
-                          const receipt = await client.disconnectConnector(connector.name);
-                          if (!current()) return;
-                          receiptMessage = connectorDisconnectMessage(receipt);
-                        }
-                        if (current() && (action === "connect" || action === "disconnect")) {
-                          connectorReads.current.invalidate();
-                          try { await refreshConnectorStatus(client, scope); }
-                          catch {
-                            if (current()) setBanner((receiptMessage ? receiptMessage + "\n" : "") + "状态刷新失败，请重新核对。");
-                            return;
-                          }
-                          if (current() && receiptMessage) setBanner(receiptMessage);
-                        }
-                      });
-                    } catch (error) {
-                      if (current()) setBanner(errorText(error, "连接服务失败"));
-                    }
-                  })()}
-                  onDecideProposal={(proposal, approve, replace) => void (async () => {
-                    const client = clientRef.current;
-                    const scope = assistantScopeRef.current;
-                    const current = () => clientRef.current === client && assistantScopeRef.current === scope;
-                    if (!client) return;
-                    try {
-                      await client.decideMemoryProposal(proposal.id, approve, replace ?? []);
-                      if (!current()) return;
-                      setMemoryProposals((previous) => previous.filter((item) => item.id !== proposal.id));
-                      if (approve) {
-                        const memories = await client.listAssistantMemories();
-                        if (current()) setAssistantMemories(memories);
-                      }
-                    } catch (error) {
-                      if (current()) setBanner(errorText(error, "处理记忆候选失败"));
-                    }
-                  })()}
+                  onConnector={(action, connector) => void panelActions.connector(action, connector)}
+                  onDecideProposal={(proposal, approve, replace) => void panelActions.decideProposal(proposal, approve, replace)}
                   onEdit={() => setProfileDialogOpen(true)}
-                  onDeleteMemory={(memory) => void (async () => {
-                    const client = clientRef.current;
-                    const scope = assistantScopeRef.current;
-                    const current = () => clientRef.current === client && assistantScopeRef.current === scope;
-                    if (!client || !await confirmAction(`忘掉这条记忆？\n\n${memory.content}`) || !current()) return;
-                    try {
-                      await client.deleteAssistantMemory(memory.id);
-                      if (current()) setAssistantMemories((previous) => previous.filter((item) => item.id !== memory.id));
-                    } catch (error) {
-                      if (current()) setBanner(errorText(error, "删除记忆失败"));
-                    }
-                  })()} />
+                  onDeleteMemory={(memory) => void panelActions.deleteMemory(memory)} />
               : <><section className="assistant-task-cards" aria-label="交互任务单">
                   {selectedDispatchId && dispatches.find(item => item.id === selectedDispatchId) && <AssistantTaskCard
                     key={`${assistantScope}:${selectedDispatchId}`} task={dispatches.find(item => item.id === selectedDispatchId)!}
