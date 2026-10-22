@@ -37,7 +37,6 @@ import {
   Search,
   Server,
   ShieldCheck,
-  Folder,
   FileText,
   FolderPlus,
   LoaderCircle,
@@ -116,6 +115,7 @@ import { ProjectSkillsCard } from "./components/ProjectSkillsCard";
 import { CatalogCard } from "./components/CatalogCard";
 import { autoCheckForUpdate, type UpdateCheck } from "./lib/updateCheck";
 import { SidebarFooter } from "./components/SidebarFooter";
+import { SidebarProjects } from "./components/SidebarProjects";
 import { SidebarSessions } from "./components/SidebarSessions";
 import {
   ACCOUNT_CHANGED_EVENT, getAccountStatus, getMembership, sidebarIdentity, type VortoAccountStatus, type VortoMembership,
@@ -138,7 +138,7 @@ import { ProjectPicker } from "./components/ProjectPicker";
 import { RemoteProjectDialog } from "./components/RemoteProjectDialog";
 import { findAssistantHost, isAssistantHost, mainChatKey, workProjects } from "./lib/assistantHost";
 import { dismissStarterTips, recordAssistantSend, shouldShowStarterTips, starterTips } from "./lib/starterTips";
-import { listedProjects, localTwin, placedSessions, residentEntry, residentTwin, type ResidentProject, type WorkPlace } from "./lib/residentPlace";
+import { listedProjects, localTwin, residentEntry, residentTwin, type ResidentProject, type WorkPlace } from "./lib/residentPlace";
 import { TurnTimeline } from "./components/TurnTimeline";
 import { useChangeReview } from "./hooks/useChangeReview";
 import { useExtensionsStatus } from "./hooks/useExtensionsStatus";
@@ -3327,96 +3327,28 @@ function App() {
             <button aria-label="添加 Git 项目" title="添加 Git 项目" onClick={() => void chooseRepo()} disabled={projectSwitching}><FolderPlus size={15} /></button>
           </div>
           {projectsOpen && (
-          <div className="project-list">
-            {activeScope === "scratch" && (
-              <div className="project-row active healthy">
-                <span className="project-status" />
-                <div className="project-row-copy"><strong>Scratch</strong><span>当前任务的隔离临时工作区</span></div>
-              </div>
-            )}
-            {runtimeProcesses
-              .filter((item) => item.running && item.scope === "scratch" && item.runtimeId !== processStatus.runtimeId)
-              .map((item, index) => (
-                <div
-                  className="project-row healthy"
-                  key={item.runtimeId || `scratch-${index}`}
-                  onClick={() => void switchManagedScope("scratch", item)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") void switchManagedScope("scratch", item);
-                  }}
-                  role="button"
-                  tabIndex={0}
-                  title={item.workspaceRoot || "隔离 Scratch 工作区"}
-                >
-                  <span className="project-status" />
-                  <div className="project-row-copy">
-                    <strong>Scratch {item.workspaceId?.slice(0, 6) || index + 1}</strong>
-                    <span>后台运行中</span>
-                  </div>
-                </div>
-              ))}
-            {listedProjects(projects, residentHost).length === 0 && <div className="project-empty">添加项目后，可以在这里查看和切换。</div>}
-            {listedProjects(projects, residentHost).slice(0, 8).map((project) => {
-              const keyword = sidebarQuery.trim().toLowerCase();
-              const nameMatches = !keyword || project.name.toLowerCase().includes(keyword);
-              const twinId = project.kind !== "remote" && residentHost ? residentTwin(project, projects, residentHost)?.id : undefined;
-              const nested = placedSessions(
-                projectSessions.filter((item) => item.projectId === project.id),
-                twinId ? (remoteProjectRef.current === twinId ? sessions : residentSessions[twinId] ?? []) : [],
-                twinId,
-              ).filter((item) => nameMatches || item.title.toLowerCase().includes(keyword));
-              if (!nameMatches && nested.length === 0) return null;
-              const onResidentTwin = project.kind !== "remote" && Boolean(residentHost && remoteProjectRef.current)
-                && residentTwin(project, projects, residentHost!)?.id === remoteProjectRef.current;
-              const active = project.kind === "remote" ? remoteProjectRef.current === project.id : onResidentTwin || (!remoteProjectRef.current && project.repoRoot === repoRoot.trim());
-              const managedRuntime = project.kind === "remote" ? undefined : runtimeProcesses.find((item) => item.projectId === project.id || item.repoRoot === project.repoRoot);
-              const managedRunning = Boolean(managedRuntime?.running);
-              const recovery = runtimeRecoveries.find((item) => item.projectId === project.id);
-              const connected = active && connection === "connected";
-              const health = onResidentTwin ? connected ? "在常驻电脑上" : "常驻电脑 · 连接中" : project.kind === "remote" ? connected ? "远端已连接" : "远端 · 点击连接" : project.missing ? "目录已不存在 · 可移除" : managedRunning && !active ? "后台运行中" : managedRunning ? "本地引擎运行中" : connected ? "工作区就绪" : recovery?.status === "crashed" ? "上次异常退出 · 点击恢复" : recovery?.status === "running" ? "可重新附着" : active ? connectionText : "未启动";
-              return (
-                <Fragment key={project.id}>
-                <div
-                  className={`project-row ${active ? "active" : ""} ${managedRunning || connected ? "healthy" : ""} ${!managedRunning && recovery?.status === "crashed" ? "attention" : ""} ${project.missing ? "missing" : ""}`}
-                  onClick={() => project.missing
-                    ? setBanner(`项目目录已不存在：${project.repoRoot}。可以点右侧 × 把它从列表移除`)
-                    : void switchProject(project)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") void switchProject(project);
-                  }}
-                  role="button"
-                  tabIndex={0}
-                  title={project.repoRoot}
-                >
-                  <Folder size={15} className="project-folder" />
-                  <div className="project-row-copy">
-                    <strong>{project.kind === "remote" ? `远端 · ${project.name}` : project.name}</strong>
-                    {/* 只在需要注意时显示状态；平时一行只有名字。 */}
-                    {(project.missing || managedRunning || recovery?.status) && <span>{health}</span>}
-                  </div>
-                  {!active && (
-                    <button
-                      aria-label={`移除 ${project.name}`}
-                      title="从最近项目移除"
-                      onClick={(event) => { event.stopPropagation(); void forgetProject(project); }}
-                    ><X size={14} /></button>
-                  )}
-                </div>
-                {/* 项目下直接列出它最近的会话（MiMo 式）：点一下切到该项目并打开那条会话。 */}
-                {!project.missing && nested.map((item) => {
-                  const here = item.place === "resident" ? remoteProjectRef.current === item.projectId : !remoteProjectRef.current && active;
-                  const target = item.place === "resident" ? projects.find((entry) => entry.id === item.projectId) ?? project : project;
-                  return <button
-                    key={`${item.place}:${item.sid}`}
-                    className={`project-session ${here && item.sid === activeSid ? "active" : ""}`}
-                    title={`${item.title}${twinId ? ` · ${item.place === "resident" ? "在常驻电脑上" : "在本机"}` : ""}`}
-                    onClick={() => void (here ? switchSession(item.sid) : switchProject(target, { sid: item.sid }))}
-                  >{twinId && (item.place === "resident" ? <Server size={12} aria-label="常驻电脑" /> : <Laptop size={12} aria-label="本机" />)}{item.title}</button>;
-                })}
-                </Fragment>
-              );
-            })}
-          </div>
+            <SidebarProjects
+              activeScope={activeScope}
+              currentRuntimeId={processStatus.runtimeId}
+              runtimeProcesses={runtimeProcesses}
+              runtimeRecoveries={runtimeRecoveries}
+              projects={projects}
+              residentHost={residentHost}
+              query={sidebarQuery}
+              projectSessions={projectSessions}
+              sessions={sessions}
+              residentSessions={residentSessions}
+              remoteProjectId={remoteProjectRef.current}
+              repoRoot={repoRoot}
+              connection={connection}
+              connectionText={connectionText}
+              activeSid={activeSid}
+              onSwitchScratch={(item) => void switchManagedScope("scratch", item)}
+              onSwitchProject={(project, options) => void switchProject(project, options)}
+              onSwitchSession={(sid) => void switchSession(sid)}
+              onForgetProject={(project) => void forgetProject(project)}
+              onBanner={setBanner}
+            />
           )}
 
           <div className="sidebar-section-title work-items-heading">
