@@ -14,9 +14,7 @@ import { openAssistantTask } from "./lib/assistantNavigation";
 import { AssistantAudit, AssistantAvatarImage, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantPlugins, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PhoneChatDialog, type AppMode, type AssistantTab } from "./components/AssistantMode";
 import { AssistantGoals } from "./components/AssistantGoals";
 import { dispatchFeedItem, isPhoneSession, noticeFeedItem, taskFeedItem, turnFeedItem, type FeedItem } from "./lib/activityFeed";
-import { ConfirmationReply } from "./components/ConfirmationReply";
 import { createConfirmationReply } from "./lib/confirm";
-import { ConfirmationTrust } from "./components/ConfirmationTrust";
 import { ComposerCommands } from "./components/ComposerCommands";
 import { ContextStatus, SessionInfo } from "./components/SessionInfo";
 import { invoke } from "@tauri-apps/api/core";
@@ -25,8 +23,6 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowUp,
   ChevronDown,
-  ChevronsUpDown,
-  Cpu,
   Eye,
   FileCode2,
   GitCompareArrows,
@@ -115,6 +111,7 @@ import { ProjectSkillsCard } from "./components/ProjectSkillsCard";
 import { CatalogCard } from "./components/CatalogCard";
 import { autoCheckForUpdate, type UpdateCheck } from "./lib/updateCheck";
 import { SidebarFooter } from "./components/SidebarFooter";
+import { ComposerModelPicker, ConfirmCard, PromptQueuePanel, WorkspaceRequestCard } from "./components/ComposerPanels";
 import { assistantPanelActions } from "./lib/assistantPanelActions";
 import { SidebarProjects } from "./components/SidebarProjects";
 import { SidebarSessions } from "./components/SidebarSessions";
@@ -149,10 +146,6 @@ import { useProjectAssets } from "./hooks/useProjectAssets";
 import { useTrustLevel } from "./hooks/useTrustLevel";
 import { useJournal } from "./hooks/useJournal";
 import { useLlmProfile } from "./hooks/useLlmProfile";
-import {
-  isPlanExecutionConfirmation,
-  isPlanBudgetConfirmation,
-} from "./lib/onboarding";
 import { autoFocusDecision, closeWorkbenchTab, openWorkbenchTab, type InspectorTab } from "./lib/inspector";
 import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey, projectToRestore,
   STORAGE_KEYS } from "./lib/storage";
@@ -168,7 +161,7 @@ import { latestTurnSteps, previewReferences, publishedArtifactId, type PreviewVi
 import { PreviewPanel } from "./components/PreviewPanel";
 import { useDelayedFlag } from "./hooks/useDelayedFlag";
 import {
-  loadModelChoice, loadModelPicks, MANAGE_MODELS, modelChoices, modelMenuSections, persistModelChoice, persistModelPicks, resolveModelChoice,
+  loadModelChoice, loadModelPicks, modelChoices, persistModelChoice, persistModelPicks, resolveModelChoice,
 } from "./lib/modelChoice";
 
 
@@ -3592,71 +3585,19 @@ function App() {
                 <button onClick={() => { setSettingsSection("model"); setSettingsOpen(true); }}>用自己的模型</button>
               </div>
             )}
-            {/* 确认卡片钉在输入框上方、不随对话流滚动：真机诊断里它渲染在滚动区内，
-                长回合一滚就看不见，用户只看到转圈，以为还在跑（2026-09-17）。 */}
             {pendingConfirm && (
-              <section className={`confirm-card ${pendingConfirm.tainted ? "tainted" : ""}`}>
-                {/* plan 阶段结束请求动手，与"删文件/跑命令"那类确认不是一回事：前者是本次任务
-                    继续往下走的一次性授权，后者是单个危险动作。文案分开，人才知道自己在批什么。
-                    **污点提示优先级最高**——那是安全提示，任何时候都不能被别的文案盖掉。 */}
-                <div className="confirm-icon">{!pendingConfirm.tainted && isPlanExecutionConfirmation(pendingConfirm.text) ? "▶" : "!"}</div>
-                <div className="confirm-copy">
-                  <strong>
-                    {pendingConfirm.tainted
-                      ? "外部内容回合需要人工确认"
-                      : isPlanExecutionConfirmation(pendingConfirm.text)
-                        ? isPlanBudgetConfirmation(pendingConfirm.text)
-                          ? "规划未完成，授权后继续当前任务"
-                          : "计划已就绪，授权后在隔离工作区继续"
-                        : "Runtime 请求确认"}
-                  </strong>
-                  <p>{pendingConfirm.text}</p>
-                  <ConfirmationTrust key={pendingConfirm.id} trust={trust} busy={trustBusy}
-                    connected={connection === "connected"} tainted={pendingConfirm.tainted}
-                    onChange={changeTrustLevel} />
-                  <ConfirmationReply state={pendingConfirm.responseState} error={pendingConfirm.responseError} connected={connection === "connected"}
-                    allowLabel={!pendingConfirm.tainted && isPlanExecutionConfirmation(pendingConfirm.text) ? "授权继续" : "允许一次"}
-                    onCheck={()=>void checkConfirmation()} onAnswer={ok=>void answerConfirmation(ok)} />
-                </div>
-              </section>
+              <ConfirmCard confirm={pendingConfirm} trust={trust} trustBusy={trustBusy} connected={connection === "connected"}
+                onTrust={changeTrustLevel} onCheck={() => void checkConfirmation()} onAnswer={(ok) => void answerConfirmation(ok)} />
             )}
 
             {workspaceRequest && (
-              <section className="confirm-card workspace-request">
-                <div className="confirm-icon">↗</div>
-                <div className="confirm-copy">
-                  <strong>{workspaceRequest.scope === "scratch" ? "这个任务需要隔离 Scratch" : "这个任务需要一个 Git 项目"}</strong>
-                  <p>{workspaceRequest.reason}</p>
-                  {workspaceRequest.task && <code>{workspaceRequest.task}</code>}
-                  <div>
-                    <button className="deny" onClick={() => setWorkspaceRequest(null)}>暂不切换</button>
-                    <button className="allow" onClick={() => void acceptWorkspaceRequest()}>{workspaceRequest.scope === "scratch" ? "创建 Scratch" : "选择项目"}</button>
-                  </div>
-                </div>
-              </section>
+              <WorkspaceRequestCard request={workspaceRequest} onDecline={() => setWorkspaceRequest(null)}
+                onAccept={() => void acceptWorkspaceRequest()} />
             )}
 
             {promptQueue.length > 0 && (
-              <section className="prompt-queue" aria-label="待运行任务">
-                <div className="prompt-queue-head">
-                  <span>{promptQueuePaused ? "已暂停" : "接下来"}</span><b>{promptQueue.length}</b>
-                  <small>{promptQueuePaused ? "输入已保留，点击「现在执行」继续" : "当前回合结束后依次执行"}</small>
-                </div>
-                <div className="prompt-queue-list">
-                  {promptQueue.slice(0, 4).map((item, index) => (
-                    <div className="prompt-queue-row" key={`${item.id}:${item.version}`}>
-                      <span className="prompt-queue-index">{index + 1}</span>
-                      <span className="prompt-queue-copy" title={item.text}>
-                        <strong>{item.text}</strong>
-                        {item.context_count > 0 && <small>{item.context_count} 个引用</small>}
-                      </span>
-                      <button className="prompt-queue-now" onClick={() => void sendQueuedPromptNow(item.id)}>现在执行</button>
-                      <button className="prompt-queue-remove" aria-label={`删除排队任务 ${index + 1}`} onClick={() => void removeQueuedPrompt(item.id)}><X size={13} /></button>
-                    </div>
-                  ))}
-                  {promptQueue.length > 4 && <div className="prompt-queue-more">还有 {promptQueue.length - 4} 条</div>}
-                </div>
-              </section>
+              <PromptQueuePanel items={promptQueue} paused={promptQueuePaused}
+                onRunNow={(id) => void sendQueuedPromptNow(id)} onRemove={(id) => void removeQueuedPrompt(id)} />
             )}
               {appMode !== "assistant" && <ProjectPicker
                 projects={listedProjects(projects, residentHost)}
@@ -3760,41 +3701,10 @@ function App() {
                   )}
                 </div>
                 <div className="composer-actions">
-                {onAssistantHost() && (
-                  <span className="composer-model single" title="助理在常驻电脑上，用那台电脑配置的模型">
-                    <Cpu size={13} />{runtime.model || "常驻电脑的模型"}
-                  </span>
-                )}
-                {!onAssistantHost() && llmProfileChecked && composerModelChoices.length === 0 && (
-                  <button className="composer-model unset" title="还没有连接模型：点这里添加" onClick={() => { setSettingsSection("model"); setSettingsOpen(true); }}>
-                    <Cpu size={13} /><span className="composer-model-name">未连接模型</span>
-                  </button>
-                )}
-                {!onAssistantHost() && composerModelChoices.length > 0 && (
-                  <label className="composer-model" title={composerModelChoices.find((choice) => choice.value === modelChoice)?.hint || "选择模型"}>
-                    <Cpu size={13} />
-                    {/* 按钮上只写模型名；完整说明（档位、能力、上下文）只在展开的菜单里 */}
-                    <span className="composer-model-name">{composerModelChoices.find((choice) => choice.value === modelChoice)?.label ?? "选择模型"}</span>
-                    <ChevronsUpDown size={12} aria-hidden />
-                    <select
-                      aria-label="选择模型"
-                      value={modelChoice}
-                      onChange={(event) => {
-                        if (event.target.value === MANAGE_MODELS) { setSettingsSection("model"); setSettingsOpen(true); return; }
-                        setSavedModelChoice(event.target.value);
-                        persistModelChoice(event.target.value);
-                      }}
-                    >
-                      {modelMenuSections(composerModelChoices, llmProfile).map((section) => {
-                        const options = section.choices.map((choice) => (
-                          <option key={choice.value} value={choice.value}>{choice.label}{choice.value === "auto" ? "" : [choice.group ? "" : choice.hint, ...(choice.badges ?? [])].filter(Boolean).map((part) => ` · ${part}`).join("")}</option>
-                        ));
-                        return section.label ? <optgroup key={section.label} label={section.label}>{options}</optgroup> : options;
-                      })}
-                      <optgroup label="──────────"><option value={MANAGE_MODELS}>管理模型、添加本机或线上服务…</option></optgroup>
-                    </select>
-                  </label>
-                )}
+                <ComposerModelPicker residentModel={runtime.model} onResident={onAssistantHost()} checked={llmProfileChecked}
+                  choices={composerModelChoices} value={modelChoice} profile={llmProfile}
+                  onChoose={(value) => { setSavedModelChoice(value); persistModelChoice(value); }}
+                  onManage={() => { setSettingsSection("model"); setSettingsOpen(true); }} />
                 <ContextStatus key={activeSid} context={currentSession?.context} />
                 <button className={`composer-send ${busy ? "queueing" : ""}`} aria-label={busy ? "加入待运行队列" : "发送"} title={busy ? "加入待运行队列" : "发送"} onClick={() => void sendPrompt()} disabled={(!prompt.trim() && contextItems.length === 0 && attachments.length === 0) || savingFile || runtimeStarting || projectSwitching}><ArrowUp size={17} /></button>
                 </div>
