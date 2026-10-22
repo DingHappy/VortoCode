@@ -44,13 +44,9 @@ import {
   Music,
   Package,
   PanelRight,
-  PencilLine,
   Plus,
-  Settings2,
   SquarePen,
   SquareTerminal,
-  Trash2,
-  UserRound,
   X,
 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -118,8 +114,9 @@ import { McpConnectionCard } from "./components/McpConnectionCard";
 import { McpServersCard } from "./components/McpServersCard";
 import { ProjectSkillsCard } from "./components/ProjectSkillsCard";
 import { CatalogCard } from "./components/CatalogCard";
-import { groupSessions, liveSessionStatus, sessionTimeLabel } from "./lib/sessionGroups";
-import { autoCheckForUpdate, installUpdate, type UpdateCheck } from "./lib/updateCheck";
+import { autoCheckForUpdate, type UpdateCheck } from "./lib/updateCheck";
+import { SidebarFooter } from "./components/SidebarFooter";
+import { SidebarSessions } from "./components/SidebarSessions";
 import {
   ACCOUNT_CHANGED_EVENT, getAccountStatus, getMembership, sidebarIdentity, type VortoAccountStatus, type VortoMembership,
 } from "./lib/vortoAccount";
@@ -155,7 +152,6 @@ import {
   isPlanExecutionConfirmation,
   isPlanBudgetConfirmation,
 } from "./lib/onboarding";
-import { sessionStatusLabel, statusLabel } from "./lib/labels";
 import { autoFocusDecision, closeWorkbenchTab, openWorkbenchTab, type InspectorTab } from "./lib/inspector";
 import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey, projectToRestore,
   STORAGE_KEYS } from "./lib/storage";
@@ -638,8 +634,6 @@ function App() {
   const [pluginsRevision, setPluginsRevision] = useState(0);
   /** 启动时自动检查更新（每天最多一次，设置里可关）；有新版才非空。 */
   const [availableUpdate, setAvailableUpdate] = useState<UpdateCheck | null>(null);
-  const [updating, setUpdating] = useState(false);
-  const [updateError, setUpdateError] = useState("");
   // 左下角显示 VortoCode 账号本人；账号卡片里登录/退出/换会员后会广播 ACCOUNT_CHANGED_EVENT
   const [vortoAccount, setVortoAccount] = useState<{ status: VortoAccountStatus | null; membership: VortoMembership | null }>({ status: null, membership: null });
   useEffect(() => {
@@ -3432,135 +3426,31 @@ function App() {
             <button aria-label="新建任务" title="新建任务" onClick={() => void newSession()} disabled={connection !== "connected"}><Plus size={15} /></button>
           </div>
           {recentOpen && (
-          <div className="session-list">
-            {sessions.length === 0 && <div className="session-empty">描述一个目标后，任务线程会出现在这里。</div>}
-            {(() => {
-              const visible = sessions.filter((session) => !sidebarQuery.trim()
-                || (session.title || "新任务").toLowerCase().includes(sidebarQuery.trim().toLowerCase()));
-              const groups = groupSessions(visible, activeSid, busy);
-              const renderSession = (session: SessionSummary) => {
-              const active = session.sid === activeSid;
-              const liveStatus = liveSessionStatus(session, active, busy);
-              const backgroundCount = (session.background_tasks?.active ?? 0) + (session.background_tasks?.attention ?? 0);
-              // 列表只留标题；元信息只保留需要人动手的（后台任务、待处理、Hook 问题）。
-              const hasMetadata = Boolean(backgroundCount || session.hook_issues?.count);
-              const showsStatus = ["working", "needs_input", "failed", "queued"].includes(liveStatus);
-              const rowTitle = [
-                session.running_prompt || session.activity || session.title,
-                session.cwd ? `目录：${session.cwd}` : "",
-                session.branch ? `分支：${session.branch}` : "",
-                session.background_tasks?.latest_prompt ? `后台：${session.background_tasks.latest_prompt}` : "",
-                session.hook_issues?.latest ? `Hook：${session.hook_issues.latest.summary}` : "",
-              ].filter(Boolean).join("\n");
-              return (
-                <div
-                  className={`session-row ${active ? "active" : ""} ${active && busy ? "busy" : ""} ${hasMetadata ? "with-meta" : ""} status-${liveStatus}`}
-                  key={session.sid}
-                  onClick={() => void switchSession(session.sid)}
-                  role="button"
-                  tabIndex={0}
-                  title={rowTitle}
-                >
-                  <span className="session-status" />
-                  <div className="session-copy">
-                    <strong>{session.title || "新任务"}</strong>
-                    {showsStatus && <span>{sessionStatusLabel(session, active, busy)}</span>}
-                    {hasMetadata && (
-                      <div className="session-meta" aria-label="会话运行上下文">
-                        {(session.background_tasks?.active ?? 0) > 0 && (
-                          <button
-                            className="active"
-                            title="打开对应后台任务、计划与 worktree"
-                            onClick={(event) => { event.stopPropagation(); focusTask(session.background_tasks?.active_task_id ?? session.background_tasks?.latest_task_id ?? ""); }}
-                          >{session.background_tasks?.active} 后台</button>
-                        )}
-                        {(session.background_tasks?.attention ?? 0) > 0 && (
-                          <button
-                            className="attention"
-                            title="打开需要处理的后台任务交接"
-                            onClick={(event) => { event.stopPropagation(); focusTask(session.background_tasks?.attention_task_id ?? session.background_tasks?.latest_task_id ?? ""); }}
-                          >{session.background_tasks?.attention} 待处理</button>
-                        )}
-                        {(session.hook_issues?.count ?? 0) > 0 && (
-                          <button
-                            className="attention"
-                            title="定位 Hook 失败、超时或阻止记录"
-                            onClick={(event) => { event.stopPropagation(); openInspector("decisions"); void switchSession(session.sid); }}
-                          >{session.hook_issues?.count} Hook</button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  {!showsStatus && <time className="session-time">{sessionTimeLabel(session.updated)}</time>}
-                  <div className="session-actions">
-                    <button aria-label="重命名任务" title="重命名" onClick={(event) => { event.stopPropagation(); void renameSession(session); }}><PencilLine size={13} /></button>
-                    <button aria-label="删除任务" title="删除" onClick={(event) => { event.stopPropagation(); void deleteSession(session); }}><Trash2 size={13} /></button>
-                  </div>
-                </div>
-              );
-              };
-              return groups.map((group) => (
-                <Fragment key={group.key}>
-                  {groups.length > 1 && <div className={`session-group-label group-${group.key}`}>{group.label} · {group.sessions.length}</div>}
-                  {group.sessions.map(renderSession)}
-                </Fragment>
-              ));
-            })()}
-            {(decisionItems.length > 0 || activeGoals.length > 0 || activeTasks.length > 0) && (
-              <div className="work-queue">
-                <div className="work-queue-label">需要继续</div>
-                {decisionItems.slice(0, 2).map((decision) => (
-                  <button key={decision.id} onClick={() => void openDecision(decision)}>
-                    <span className={`queue-dot severity-${decision.severity}`} />
-                    <span><strong>{decision.title}</strong><small>{decision.detail}</small></span>
-                    <b>处理</b>
-                  </button>
-                ))}
-                {activeGoals.slice(0, 2).map((goal) => (
-                  <button key={goal.id} onClick={() => openInspector("goals")}>
-                    <span className={`queue-dot status-${goal.status}`} />
-                    <span><strong>{goal.objective}</strong><small>{goal.progress.passed}/{goal.progress.total} 条完成标准</small></span>
-                    <b>{statusLabel(goal.status)}</b>
-                  </button>
-                ))}
-                {activeTasks.slice(0, 3).map((task) => (
-                  <button key={task.id} onClick={() => openInspector("tasks")}>
-                    <span className={`queue-dot status-${task.status}`} />
-                    <span><strong>{task.prompt || task.plan?.task || "后台工作"}</strong><small>{task.branch || task.id}</small></span>
-                    <b>{statusLabel(task.status)}</b>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+            <SidebarSessions
+              sessions={sessions}
+              activeSid={activeSid}
+              busy={busy}
+              query={sidebarQuery}
+              decisions={decisionItems}
+              goals={activeGoals}
+              tasks={activeTasks}
+              onSelect={(sid) => void switchSession(sid)}
+              onFocusTask={focusTask}
+              onOpenHooks={(sid) => { openInspector("decisions"); void switchSession(sid); }}
+              onRename={(session) => void renameSession(session)}
+              onDelete={(session) => void deleteSession(session)}
+              onOpenDecision={(decision) => void openDecision(decision)}
+              onOpenGoals={() => openInspector("goals")}
+              onOpenTasks={() => openInspector("tasks")}
+            />
           )}
           </>}
-          <div className="sidebar-footer">
-            <button
-              className="sidebar-account"
-              title={identity.title}
-              onClick={() => { setSettingsSection("account"); setSettingsOpen(true); }}
-            >
-              <span className="sidebar-avatar">{identity.initial || <UserRound size={14} />}</span>
-              <span className="sidebar-identity">
-                <span>{identity.name}</span>
-                {identity.detail && <small>{identity.detail}</small>}
-              </span>
-            </button>
-            {availableUpdate && (
-              <button className="sidebar-update" disabled={updating}
-                title={updateError || `VortoCode ${availableUpdate.latest} 已发布，点击更新并重启`}
-                onClick={() => {
-                  setUpdating(true); setUpdateError("");
-                  void installUpdate()
-                    .catch((error) => setUpdateError(errorText(error, "更新失败，可在设置 → 高级 → 更新里重试或下载")))
-                    .finally(() => setUpdating(false));
-                }}>{updating ? "正在更新…" : `新版本 ${availableUpdate.latest}`}</button>
-            )}
-            <button className="sidebar-gear" aria-label="设置" title="设置" onClick={() => setSettingsOpen(true)}>
-              <Settings2 size={16} />
-            </button>
-          </div>
+          <SidebarFooter
+            identity={identity}
+            update={availableUpdate}
+            onOpenAccount={() => { setSettingsSection("account"); setSettingsOpen(true); }}
+            onOpenSettings={() => setSettingsOpen(true)}
+          />
         </aside>
 
         {mainView === "plugins" ? (
