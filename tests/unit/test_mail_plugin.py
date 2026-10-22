@@ -1,8 +1,10 @@
-"""邮件插件：只读打开收件箱、不标已读、授权码不外露、钓鱼内容当外部资料、凭据格式与常见邮箱。"""
+"""邮件插件：只读打开收件箱、不标已读、授权码不外露、钓鱼内容当外部资料、凭据格式与常见邮箱、新邮件提醒。"""
+import email
 import imaplib
 import os
 from datetime import datetime, timedelta
 from email.message import EmailMessage
+from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -16,9 +18,11 @@ NOW = datetime(2026, 10, 21, 9, 0, tzinfo=TZ)
 CODE = "abcdsecretcode"
 
 
-def message(sender, subject, when, body="", html="", attachment=False):
+def message(sender, subject, when, body="", html="", attachment=False, headers=None):
     msg = EmailMessage()
     msg["From"], msg["To"], msg["Subject"] = sender, "me@qq.com", subject
+    for name, value in (headers or {}).items():
+        msg[name] = value
     msg["Date"] = when.strftime("%a, %d %b %Y %H:%M:%S %z")
     if html:
         msg.set_content(html, subtype="html")
@@ -53,7 +57,8 @@ class FakeIMAP:
     def uid(self, command, *args):
         self.commands.append((command, *args))
         if command == "SEARCH":
-            return "OK", [b" ".join(uid.encode() for uid in self.messages)]
+            unseen = "UNSEEN" in args
+            return "OK", [b" ".join(uid.encode() for uid, (_, seen) in self.messages.items() if not (unseen and seen))]
         uids, what = args
         uids = uids.decode() if isinstance(uids, bytes) else uids
         if what == "(RFC822.SIZE)":
@@ -63,12 +68,21 @@ class FakeIMAP:
         for uid in uids.split(","):
             raw, seen = self.messages[uid]
             flags = "\\Seen" if seen else ""
-            head = f"1 (UID {uid} FLAGS ({flags}) BODY[] {{{len(raw)}}}".encode()
+            received = email.message_from_bytes(raw)["Date"]          # 服务器收信时间就当是信头日期
+            internal = parsedate_to_datetime(received).strftime("%d-%b-%Y %H:%M:%S %z")
+            head = f'1 (UID {uid} FLAGS ({flags}) INTERNALDATE "{internal}" BODY[] {{{len(raw)}}}'.encode()
             out += [(head, raw), b")"]
         return "OK", out
 
     def logout(self):
         self.commands.append(("LOGOUT",))
+
+
+@pytest.fixture(autouse=True)
+def _fresh_poll_clock():
+    mail._last_poll.clear()
+    yield
+    mail._last_poll.clear()
 
 
 @pytest.fixture
@@ -171,3 +185,69 @@ async def test_mail_plugin_attaches_with_its_hint(home):
 
     agent = build_session(str(home), kind="im", workspace_scope="general", llm=LLM())
     assert {"mail_list", "mail_read"} <= set(agent.tools) and "钓鱼" in agent._system("plan")
+
+
+# —— 新邮件提醒：刚收到的未读才推，群发不推，不受「主人定时」豁免，同一封只推一次 ——
+
+def inbox_server(monkeypatch, messages):
+    fake = FakeIMAP(messages)
+    monkeypatch.setattr(imaplib, "IMAP4_SSL", lambda host, port, **kw: fake)
+    monkeypatch.setattr("src.agents.web_fetch._host_is_safe", lambda host: True)
+    return fake
+
+
+async def test_new_mail_reminders_only_fresh_unread_personal_mail(home, monkeypatch):
+    fake = inbox_server(monkeypatch, {
+        "20": (message("张三 <zs@example.com>", "昨天的未读", NOW - timedelta(hours=3)), False),
+        "21": (message("李四 <ls@example.com>", "明天的会改到下午", NOW - timedelta(minutes=4)), False),
+        "22": (message("shop@example.com", "双十一大促", NOW - timedelta(minutes=3),
+                       headers={"List-Unsubscribe": "<mailto:u@example.com>"}), False),
+        "23": (message("noreply@example.com", "登录提醒", NOW - timedelta(minutes=2),
+                       headers={"Auto-Submitted": "auto-generated"}), False),
+        "24": (message("王五 <ww@example.com>", "已经看过的", NOW - timedelta(minutes=1)), True),
+    })
+    first = await mail.reminders(NOW)
+    assert [text for _, text in first] == ["📧 新邮件 · 李四：明天的会改到下午"] and first[0][0].startswith("mail:")
+    search = next(c for c in fake.commands if c[0] == "SEARCH")
+    assert "UNSEEN" in search and ("SELECT", "INBOX", True) in fake.commands
+    assert all("PEEK" in str(c) for c in fake.commands if c[0] == "FETCH")
+    fake.commands.clear()
+    assert await mail.reminders(NOW + timedelta(minutes=3)) == [] and fake.commands == []   # 5 分钟内不再登录
+    again = await mail.reminders(NOW + timedelta(minutes=5))
+    assert again == first                                                                   # 去重键稳定，由巡检去重
+    mail._last_poll.clear()
+    assert await mail.reminders(NOW + timedelta(minutes=30)) == []                          # 过了 20 分钟不补
+    mail._last_poll.clear()
+    monkeypatch.setenv(mail.NOTIFY_ENV, "0")
+    assert await mail.reminders(NOW) == []
+
+
+async def test_new_mail_respects_quiet_hours_dedups_and_caps_each_round(home, monkeypatch):
+    from src.scheduling import assistant_watch as watch
+
+    monkeypatch.setattr(plugins, "plugin_ready", lambda name: name == "mail")
+    inbox_server(monkeypatch, {str(30 + i): (message(f"同事{i} <c{i}@example.com>", f"第 {i} 封",
+                                                       NOW - timedelta(minutes=10 - i)), False)
+                               for i in range(5)})
+
+    class Inbox(list):
+        accepts_timed = True
+
+        async def __call__(self, text, timed=False):
+            self.append((text, timed))
+            return True
+
+    inbox, state = Inbox(), {}
+    await watch._plugin_reminders(NOW, state, inbox)
+    assert inbox == [(f"📧 新邮件 · 同事{i}：第 {i} 封", False) for i in range(3)]          # 先到的先推，一轮最多 3 封
+    await watch._plugin_reminders(NOW + timedelta(minutes=5), state, inbox)
+    assert [text for text, _ in inbox[3:]] == ["📧 新邮件 · 同事3：第 3 封", "📧 新邮件 · 同事4：第 4 封"]
+    await watch._plugin_reminders(NOW + timedelta(minutes=10), state, inbox)
+    assert len(inbox) == 5 and all(not timed for _, timed in inbox)
+
+
+async def test_unreadable_mailbox_skips_the_round_without_echoing_the_code(home, monkeypatch, caplog):
+    inbox_server(monkeypatch, {})
+    monkeypatch.setattr(imaplib, "IMAP4_SSL", lambda *a, **kw: FakeIMAP({}, login_ok=False))
+    assert await mail.reminders(NOW) == []
+    assert CODE not in caplog.text

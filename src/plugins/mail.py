@@ -6,22 +6,25 @@
 
 - 只用 EXAMINE（只读打开收件箱）和 BODY.PEEK：不改已读状态，不移动、不删除，也不能发信。
 - 邮件是外部不可信内容（钓鱼邮件可能写着「忽略之前的指令」），工具一律标记污点。
+- 新邮件提醒：每 5 分钟看一次刚收到的未读，推「📧 新邮件」；群发邮件不推，安静时段照常攒着。
 """
 from __future__ import annotations
 
 import asyncio
 import email
 import email.policy
+import hashlib
 import imaplib
 import json
 import logging
+import os
 import re
 import ssl
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from email.header import decode_header, make_header
 from email.utils import parseaddr, parsedate_to_datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote, unquote, urlsplit
 
 logger = logging.getLogger(__name__)
@@ -31,6 +34,10 @@ _TIMEOUT = 20
 _MAX_SCAN = 300                  # 列表/搜索最多看最近这么多封的信头
 _MAX_MESSAGE = 2_000_000
 _MAX_TEXT = 6000
+NOTIFY_ENV = "VORTOCODE_MAIL_NOTIFY"
+_NOTIFY_POLL = timedelta(minutes=5)       # 多久看一次新邮件（每次都要登录一次 IMAP）
+_NOTIFY_FRESH = timedelta(minutes=20)     # 只推这么久以内收到的：刚接上邮箱或停机后不把旧未读推一遍
+_last_poll: Dict[str, datetime] = {}
 _HOSTS = {
     "qq.com": "imap.qq.com", "foxmail.com": "imap.qq.com", "vip.qq.com": "imap.qq.com",
     "163.com": "imap.163.com", "126.com": "imap.126.com", "yeah.net": "imap.yeah.net",
@@ -168,17 +175,40 @@ def _date(value: str) -> Optional[datetime]:
 
 _FETCH_HEAD = re.compile(rb"UID (\d+)")
 _FLAGS = re.compile(rb"FLAGS \(([^)]*)\)")
+_INTERNALDATE = re.compile(rb'INTERNALDATE "([^"]+)"')
 
 
-def _headers(client: Any, since: datetime) -> List[Dict[str, Any]]:
-    status, data = client.uid("SEARCH", None, "SINCE", since.strftime("%d-%b-%Y"))
+def _received(head: bytes) -> Optional[datetime]:
+    """服务器收到这封信的时间（INTERNALDATE），比发件人自己写的 Date 可靠。"""
+    found = _INTERNALDATE.search(head)
+    if not found:
+        return None
+    try:
+        return datetime.strptime(found.group(1).decode().strip(), "%d-%b-%Y %H:%M:%S %z")
+    except ValueError:
+        return None
+
+
+def _bulk(message: email.message.Message) -> bool:
+    """群发：订阅、通知、营销邮件都带这些头（退订链接、邮件列表、自动发送）。"""
+    if message.get("List-Unsubscribe") or message.get("List-Id"):
+        return True
+    if str(message.get("Precedence", "")).strip().lower() in ("bulk", "list", "junk"):
+        return True
+    auto = str(message.get("Auto-Submitted", "")).strip().lower()
+    return bool(auto) and auto != "no"
+
+
+def _headers(client: Any, since: datetime, unseen: bool = False) -> List[Dict[str, Any]]:
+    criteria = ("UNSEEN", "SINCE") if unseen else ("SINCE",)
+    status, data = client.uid("SEARCH", None, *criteria, since.strftime("%d-%b-%Y"))
     if status != "OK":
         raise MailError("邮箱搜索失败")
     uids = (data[0] or b"").split()[-_MAX_SCAN:] if data else []
     if not uids:
         return []
     status, data = client.uid("FETCH", b",".join(uids),
-                              "(FLAGS BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])")
+                              "(FLAGS INTERNALDATE BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE LIST-UNSUBSCRIBE LIST-ID PRECEDENCE AUTO-SUBMITTED)])")
     if status != "OK":
         raise MailError("读取信头失败")
     out = []
@@ -189,9 +219,10 @@ def _headers(client: Any, since: datetime) -> List[Dict[str, Any]]:
         if not uid:
             continue
         message = email.message_from_bytes(part[1])
+        date = _date(message.get("Date", ""))
         out.append({"uid": uid.group(1).decode(), "from": _sender(message.get("From", "")),
                     "subject": _header(message.get("Subject"))[:150] or "（无主题）",
-                    "date": _date(message.get("Date", "")),
+                    "date": date, "received": _received(part[0]) or date, "bulk": _bulk(message),
                     "unread": not flags or b"\\Seen" not in flags.group(1)})
     out.sort(key=lambda item: (item["date"] or datetime.min.astimezone(), int(item["uid"])), reverse=True)
     return out
@@ -282,6 +313,42 @@ async def morning_brief(now: datetime) -> str:
     lines = [_line(item).removeprefix("● ") for item in found["items"]]
     more = f"\n…共 {found['total']} 封" if found["total"] > len(lines) else ""
     return f"📬 最近一天未读 {found['total']} 封\n" + "\n".join(lines) + more
+
+
+def notify_enabled() -> bool:
+    return os.getenv(NOTIFY_ENV, "1").strip().lower() not in ("0", "false", "off", "no")
+
+
+def fresh_messages(now: datetime) -> List[Dict[str, Any]]:
+    """刚收到、还没读、不是群发的邮件，先收到的在前。"""
+    client = _connect(_account())
+    try:
+        items = _headers(client, now - timedelta(days=1), unseen=True)
+    finally:
+        _close(client)
+    fresh = [item for item in items if item["unread"] and not item["bulk"] and item["received"]
+             and timedelta(0) <= now - item["received"] <= _NOTIFY_FRESH]
+    return sorted(fresh, key=lambda item: (item["received"], int(item["uid"])))
+
+
+async def reminders(now: datetime) -> List[Tuple[str, str]]:
+    """新邮件提醒：[(去重键, 文字)]。每 5 分钟才真去看一次；读不到就这轮不提醒（早报会说）。"""
+    if not notify_enabled():
+        return []
+    last = _last_poll.get(NAME)
+    if last is not None and timedelta(0) <= now - last < _NOTIFY_POLL:
+        return []
+    _last_poll[NAME] = now
+    try:
+        fresh = await asyncio.to_thread(fresh_messages, now)
+    except MailError:
+        logger.warning("新邮件提醒：邮箱读取失败")
+        return []
+    out = []
+    for item in fresh:
+        digest = hashlib.sha256(f"{item['uid']}|{item['received'].isoformat()}|{item['subject']}".encode("utf-8"))
+        out.append(("mail:" + digest.hexdigest()[:16], f"📧 新邮件 · {item['from']}：{item['subject'][:80]}"))
+    return out
 
 
 async def check() -> str:

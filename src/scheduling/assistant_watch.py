@@ -419,10 +419,11 @@ async def _notify_accepted(notify: Notify, text: str, confirm_id: str = "") -> b
 
 
 _REMINDED_KEEP = timedelta(days=2)
+_UNTIMED_PER_ROUND = 3
 
 
 async def _plugin_reminders(now: datetime, state: Dict[str, Any], notify: Notify) -> None:
-    """插件的到点提醒（日程快开始了）：同一件只推一次；主人自己定的时间，不受安静时段影响。"""
+    """插件的提醒（日程快开始了、新邮件）：同一件只推一次；日程是主人自己定的时间，不受安静时段影响。"""
     from src.plugins import due_reminders
     reminded: Dict[str, str] = {}
     for key, value in (state.get("reminded") or {}).items():
@@ -430,16 +431,21 @@ async def _plugin_reminders(now: datetime, state: Dict[str, Any], notify: Notify
         if when is not None and now - when < _REMINDED_KEEP:
             reminded[key] = value
     state["reminded"] = reminded
-    for key, text in await due_reminders(now):
+    untimed = 0
+    for key, text, timed in await due_reminders(now):
         if key in reminded:
             continue
+        if not timed:                    # 新邮件这类：一轮最多推几条，多出来的下一轮再推
+            if untimed >= _UNTIMED_PER_ROUND:
+                continue
+            untimed += 1
         try:
-            if getattr(notify, "accepts_timed", False):
+            if timed and getattr(notify, "accepts_timed", False):
                 accepted = bool(await notify(text, timed=True))  # type: ignore[call-arg]
             else:
                 accepted = bool(await notify(text))
         except Exception as error:  # noqa: BLE001
-            logger.warning("日程提醒未受理：%s", type(error).__name__)
+            logger.warning("插件提醒未受理：%s", type(error).__name__)
             continue
         if accepted:
             reminded[key] = now.isoformat()
