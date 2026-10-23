@@ -88,6 +88,12 @@ history rewriting does not make a still-valid credential safe.
   key pinned in `tauri.conf.json` before replacing themselves. Losing the private key
   means installed apps can no longer self-update; they must install a DMG signed with a
   new key by hand.
+- After the release is installed on a real Mac (one-click update or DMG), with the app open,
+  run `npm run check:installed`. It is read-only and checks the running app: installed
+  version, signature, Gatekeeper and stapled ticket, the app and runtime processes, the
+  runtime's `/api/health/quick`, stray runtimes from another path, the recovery record, and
+  that `latest.json` points at this version. It then prints a four-item manual checklist
+  (sidebar, a chat turn, the assistant panel tabs, the version in Settings) to click through.
 - Confirm the bundle contains `vortocode-runtime`, and that the sidecar accepts
   only the fixed local Gateway command surface.
 - Review the generated third-party notices and inventory derived from the actual
