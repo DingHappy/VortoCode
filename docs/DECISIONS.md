@@ -95,6 +95,30 @@
 
 ---
 
+## ADR-008：冻结任务协作的高级功能，保留隔离开发流水线核心（2026-10-22）
+
+**背景**：
+- Code 侧（任务协作台账、工作台、隔离开发流水线及 Desktop 对应面板）超过 1.5 万行，约占后端四成。
+- 实际使用：常驻电脑上两个月只跑过 1 次开发计划；助理派活两周 1 张任务单。写代码已交给 Mac 上的 Codex，VortoCode 每天真在用的是常驻助理与 Codex 监管。
+- 2026-10-22 用 `python -m evals` 跑 10 个固定场景（mimo-v2.5-pro，HEAD a8ed403）：落地、诚实、干净都是 100%，共 6 分 22 秒、约 45 万 token。流水线质量没问题，问题是没人用。
+
+**选项**：
+- A. 维持现状，继续按任务协作 PRD 往下做
+- **B. 保留流水线核心，冻结任务协作的高级功能** ✅
+- C. 连流水线一起收缩
+
+**决定**：B
+
+- **保留并照常维护**：隔离开发流水线（`dev_auto` / `dev_isolated` / `dev_resume`、worktree、验证、落 `vorto/*` 分支）、助理派活（`assistant_dispatch`、`dispatch_stats`、`attention`、`decisions`）、后台任务台账基础（`tasks`、`handoffs`、`followups`、`dev_graph`）。
+- **冻结**：任务协作的高级扩展——覆盖记录扫描、归档与退役（`task_scan`）、反向发现与依赖接力（`task_dependents`、`task_dependencies`）、任务链执行额度（`task_chain_budget`）、自动检查授权与报告（`continuations`、`continuation_checks`、`check_reports`）、模型证据与对比（`model_evidence`、`model_comparison`）、跨 runtime 收件箱与看板投影（`runtime_inbox`、`dashboard`）。
+- 冻结的含义：**不加新功能**；安全问题和明确的 bug 照修；内核重构需要时可以跟着改接口。暂不删除，等确认没有依赖、也确实没用后再单独提删除。
+
+**理由**：维护成本花在没人用的地方，挤占了每天在用的助理和 Codex 监管。流水线核心质量好、体量小，又是派活的执行引擎，留着成本低。
+
+**重新评估的条件**：派活或 Desktop Code 模式的真实使用明显增加（例如一周超过 5 张任务单），或用户明确要做团队协作。
+
+---
+
 ## 待决策(占位)
 
 - [ ] **代码 embedding 用什么**?bge-m3 自部署 / OpenAI text-embedding-3 / Voyage

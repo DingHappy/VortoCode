@@ -74,6 +74,7 @@ vc --help                        # 全部子命令：server/agent/im/cron/heartb
 ## 约定与坑
 
 - **开发侧重（2026-10-07 定）：内核通用、产品聚焦。** 新能力只往内核（`agents/` loop·确认门·污点·能力档案、`tools/`、`llm/`、`memory/`、隔离 dev 流水线）里加，对外入口只做 Desktop + 无头 CLI（+ 钉钉远程派活）。**终端 TUI 与浏览器对话台（`/agent`、PWA、`/artifacts` 画廊）已于 2026-10-17 退役删除**；`src/web/` 保留的是 Desktop 用的 API 与 `/ws`，以及流水线审批台 `/review`（IM 通知里的审批链接指向它）和制品查看页 `/artifact/<id>`。新增 API 路由前先确认有前端会调用它——2026-10 已删掉一批「没有任何前端调用」的旧接口（61 条）。
+- **任务协作高级功能已冻结（2026-10-22，ADR-008）**：`workflow/tasks` 下的 `task_scan`、`task_dependents`、`task_dependencies`、`task_chain_budget`、`continuations`、`continuation_checks`、`check_reports`、`model_evidence`、`model_comparison`、`runtime_inbox`、`dashboard` 不加新功能，只修安全问题和明确的 bug。隔离开发流水线和助理派活照常维护。新需求先看能不能放进常驻助理或 Codex 监管。
 - **改 Web/安全/Agent 前后必跑测试**。`tests/integration/` 是**路由契约安全网**：冻结 API 路由集合 + WS + 鉴权/执行闸/路径穿越。新增 API 路由要同步更新 `tests/integration/server_routes_baseline.json` 基线，否则契约测试红。
 - 修 bug 尽量补回归测试（见 `tests/unit/test_bugfix_regressions.py`）。
 - **测试必须离线、确定性**：live/联网/烧 token 的测试默认跳过；不要引入真实 API 依赖。
