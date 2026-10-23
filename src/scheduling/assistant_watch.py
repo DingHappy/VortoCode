@@ -371,6 +371,13 @@ async def compose_report(root: str, now: datetime, label: str, *, llm: Any = Non
                 body += "\n\n" + stats_text(stats, title="📊 本周派活")
         except Exception as error:  # noqa: BLE001 —— 统计是附带的
             logger.warning("派活统计失败：%s", type(error).__name__)
+    if label == "晚报":
+        # 今天 Codex 各会话做成了什么（确定性数字和 Codex 自己的话，不进模型上下文）；
+        # 别的都没发生、但 Codex 干了一天活的日子，晚报也发这一段
+        from src.scheduling.codex_watch import day_summary
+        codex_day = day_summary(root, now)
+        if codex_day:
+            body = f"{body or '🗒 晚报'}\n\n{codex_day}"
     if not body or label != "早报":
         return body
     from src.scheduling.ops_heartbeats import brief_line

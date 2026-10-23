@@ -19,6 +19,7 @@ WAIT_GRACE = timedelta(minutes=2)
 STALE_AFTER = timedelta(minutes=30)     # 这么久没收到报告：观察员不在了（Mac 合盖、Desktop 关了）
 _MAX_THREADS = 12
 _EVENTS_KEEP = 50       # 结束的轮次，等监管汇总
+_DAILY_KEEP_DAYS = 3    # 每天各会话做完几轮的小账：晚报用。事件只留 50 条，忙的一天半天就挤掉了（真机 2026-10-21）
 
 
 def _state_path(root: str) -> Path:
@@ -119,6 +120,7 @@ def record_report(root: str, payload: Any, *, now: Optional[datetime] = None) ->
     marks: Dict[str, Dict[str, Any]] = previous.get("marks") or {}
     notices: List[str] = []
     events: List[dict] = [event for event in previous.get("events") or [] if isinstance(event, dict)]
+    daily: Dict[str, Dict[str, dict]] = previous.get("daily") if isinstance(previous.get("daily"), dict) else {}
     for thread in threads:
         old = before.get(thread["id"]) or {}
         mark = dict(marks.get(thread["id"]) or {})
@@ -152,6 +154,7 @@ def record_report(root: str, payload: Any, *, now: Optional[datetime] = None) ->
                                "status": turn["status"], "file_count": turn.get("file_count") or 0,
                                "reply": (turn.get("reply") or "")[-300:], "error": (turn.get("error") or "")[:200],
                                "at": now.isoformat()})
+                _tally(daily, thread, turn, now)
                 pushed_at = _parse(mark.get("error_pushed_at"))
                 if turn["status"] == "failed" and pushed_at is not None and now - pushed_at < ERROR_PUSH_WINDOW:
                     events[-1]["pushed"] = True       # 出错提醒刚推过：这轮失败就是那件事
@@ -175,7 +178,8 @@ def record_report(root: str, payload: Any, *, now: Optional[datetime] = None) ->
         marks[thread["id"]] = mark
     live = {thread["id"] for thread in threads}
     state = {"threads": threads, "received_at": now.isoformat(), "host": str((payload or {}).get("host") or "")[:60],
-             "marks": {key: value for key, value in marks.items() if key in live}, "events": events[-_EVENTS_KEEP:]}
+             "marks": {key: value for key, value in marks.items() if key in live}, "events": events[-_EVENTS_KEEP:],
+             "daily": _recent_days(daily, now)}
     idle = (payload or {}).get("user_idle_seconds")
     if isinstance(idle, (int, float)) and not isinstance(idle, bool) and 0 <= idle < 10 ** 7:
         state["user_idle_seconds"] = int(idle)      # Mac 上键盘鼠标多久没动（旧观察员不报：当不知道）
@@ -230,6 +234,52 @@ def overview(root: str, *, now: Optional[datetime] = None) -> str:
         if turn.get("error"):
             line += f"；错误：{turn['error'][:160]}"
         lines.append(line)
+    return "\n".join(lines)
+
+
+def _day(now: datetime) -> str:
+    return now.astimezone().date().isoformat()
+
+
+def _tally(daily: Dict[str, Dict[str, dict]], thread: dict, turn: dict, now: datetime) -> None:
+    """记一轮：哪天、哪个会话、做完 / 停了 / 出错。会话名和最后的回复当场记下（会话列表只留最近几个）。"""
+    sessions = daily.setdefault(_day(now), {})
+    bucket = sessions.setdefault(thread["id"], {"completed": 0, "interrupted": 0, "failed": 0})
+    bucket["name"] = thread["name"]
+    status = turn.get("status")
+    if status in ("completed", "interrupted", "failed"):
+        bucket[status] = int(bucket.get(status) or 0) + 1
+    if status == "completed" and turn.get("reply"):
+        bucket["last_reply"] = str(turn["reply"])[:2000]
+    bucket["last_at"] = now.isoformat()
+
+
+def _recent_days(daily: Dict[str, Dict[str, dict]], now: datetime) -> Dict[str, Dict[str, dict]]:
+    keep = {(now.astimezone().date() - timedelta(days=offset)).isoformat() for offset in range(_DAILY_KEEP_DAYS)}
+    return {day: sessions for day, sessions in daily.items() if day in keep and isinstance(sessions, dict)}
+
+
+def day_summary(root: str, now: Optional[datetime] = None) -> str:
+    """晚报附的一段：今天 Codex 各会话做完几轮、最后说了什么。今天没做过就不写。确定性渲染，不进模型上下文。"""
+    now = now or _now()
+    sessions = ((load_state(root).get("daily") or {}).get(_day(now)) or {}).values()
+    rows = [bucket for bucket in sessions if isinstance(bucket, dict)
+            and any(int(bucket.get(key) or 0) for key in ("completed", "interrupted", "failed"))]
+    if not rows:
+        return ""
+    from src.scheduling.codex_supervisor import _reply_head
+    rows.sort(key=lambda bucket: (int(bucket.get("completed") or 0), str(bucket.get("last_at") or "")), reverse=True)
+    total = sum(int(bucket.get("completed") or 0) for bucket in rows)
+    lines = [f"🧑‍💻 Codex 今天：{len(rows)} 个会话，做完 {total} 轮"]
+    for bucket in rows[:6]:
+        extra = [f"停了 {bucket['interrupted']} 轮"] if int(bucket.get("interrupted") or 0) else []
+        extra += [f"出错 {bucket['failed']} 轮"] if int(bucket.get("failed") or 0) else []
+        line = f"· 「{bucket.get('name') or '未命名会话'}」做完 {int(bucket.get('completed') or 0)} 轮"
+        line += f"（{'，'.join(extra)}）" if extra else ""
+        head = _reply_head(str(bucket.get("last_reply") or ""), 100)
+        lines.append(line + (f"\n  最后：{head}" if head else ""))
+    if len(rows) > 6:
+        lines.append(f"…还有 {len(rows) - 6} 个会话")
     return "\n".join(lines)
 
 
