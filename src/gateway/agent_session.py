@@ -336,12 +336,10 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         hooks = load_project_hook_system(repo_root)
         if hooks is not None:
             kwargs["hook_system"] = hooks
-    agent = MainAgent(tools, **kwargs)
-    agent._supervised = bool(allow_local_files and kind == "web")
     # 富客户端的结构化动作不经过模型，但仍必须复用这一份确认门判定。
     # 只暴露已经过 make_confirm_gate 包装的实例，端不能传裸 yes/no 回调绕过污点规则。
-    agent._confirm_gate = gated_confirm
-    return agent
+    return MainAgent(tools, confirm_gate=gated_confirm,
+                     supervised=bool(allow_local_files and kind == "web"), **kwargs)
 
 
 def capability_update_note(saved_tools, current_tools, saved_fp=None, current_fp=None) -> str | None:

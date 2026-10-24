@@ -83,8 +83,8 @@ async def setup(tmp_path, monkeypatch):
         client.close_wait = None
         client.close_error = False
     for agent in agents:
-        if getattr(agent, "_mcp_mgr", None):
-            await agent._mcp_mgr.shutdown()
+        if agent.mcp.manager:
+            await agent.mcp.manager.shutdown()
 
 
 async def test_revoke_removes_tools_from_all_sessions_and_keeps_unrelated_service(setup):
@@ -115,7 +115,7 @@ async def test_captured_tool_cannot_resume_after_confirmation_on_revoked_connect
         entered.set()
         await release.wait()
         return True
-    manager = agent._mcp_mgr
+    manager = agent.mcp.manager
     manager.tool_executor.confirm = confirm
     manager.permission_manager.check_permission = lambda *a: SimpleNamespace(requires_confirmation=True, allowed=False, reason="fixture")
     call = asyncio.create_task(agent.tools["mcp__personal__read"].handler({}))
@@ -218,7 +218,7 @@ async def test_revoke_during_connection_cannot_attach_or_leave_late_resources(se
         release.set()
         with pytest.raises(RuntimeError): await task
         agent = c.agents[0]
-        assert "mcp__personal__read" not in agent.tools and not agent._mcp_connecting
+        assert "mcp__personal__read" not in agent.tools and not agent.mcp.connecting
         assert snapshot(agent)["status"] != "connected"
         assert not next(client for client in c.clients if client.server_name == "personal").connected
     finally:
@@ -329,7 +329,7 @@ async def test_direct_captured_client_also_checks_file_identity(setup):
     from src.tools.mcp_client import MCPToolCall
     c = setup
     agent = await c.make_agent()
-    client = agent._mcp_mgr.mcp_clients["personal"]
+    client = agent.mcp.manager.mcp_clients["personal"]
     connectors._token_path("personal").unlink()
     with pytest.raises(PermissionError): await client.call_tool(MCPToolCall(tool_name="read", arguments={}))
     assert not next(raw for raw in c.clients if raw.server_name == "personal").calls

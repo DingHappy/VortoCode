@@ -567,7 +567,7 @@ async def test_web_ensure_mcp_connects_once(monkeypatch):
     agent = MainAgent([])
     says = []
     await realtime._ensure_mcp(agent, says.append)
-    assert "mcp__s__t" in agent.tools and agent._mcp_mgr is not None
+    assert "mcp__s__t" in agent.tools and agent.mcp.manager is not None
     assert calls["connect"] == 1 and any("MCP" in s for s in says)
     await realtime._ensure_mcp(agent, says.append)      # 第二回合不再连
     assert calls["connect"] == 1
@@ -585,7 +585,7 @@ async def test_web_ensure_mcp_no_config_is_noop(monkeypatch):
     monkeypatch.setenv("VORTOCODE_WEB_MCP", "1")        # opt-in 开着，但无配置 → 仍是 no-op
     agent = MainAgent([])
     await realtime._ensure_mcp(agent, lambda _m: None)
-    assert agent._mcp_mgr is None and not any(n.startswith("mcp__") for n in agent.tools)
+    assert agent.mcp.manager is None and not any(n.startswith("mcp__") for n in agent.tools)
 
 
 @pytest.mark.asyncio
@@ -603,7 +603,7 @@ async def test_web_ensure_mcp_default_off_never_connects(monkeypatch):
     monkeypatch.setattr(mt, "connect_mcp", boom_connect)
     agent = MainAgent([])
     await realtime._ensure_mcp(agent, lambda _m: None)   # 不抛、不连
-    assert called["n"] == 0 and agent._mcp_mgr is None
+    assert called["n"] == 0 and agent.mcp.manager is None
 
 
 @pytest.mark.asyncio
@@ -624,11 +624,11 @@ async def test_web_ensure_mcp_failure_surfaces_exception_type(monkeypatch):
     monkeypatch.setenv("VORTOCODE_WEB_MCP", "1")
 
     agent = MainAgent([])
-    agent._mcp_tried = False  # 重置，确保会走连接逻辑
+    agent.mcp.tried = False  # 重置，确保会走连接逻辑
     says: list[str] = []
     await realtime._ensure_mcp(agent, says.append)
 
-    assert agent._mcp_mgr is None  # 连接确实失败了
+    assert agent.mcp.manager is None  # 连接确实失败了
     assert says, "_ensure_mcp 没有 say 任何消息"
     failure_msg = next(m for m in says if "MCP" in m and "失败" in m)
     assert "TimeoutError" in failure_msg, (
@@ -648,7 +648,7 @@ async def test_web_shutdown_mcp_async_runs_and_safe_without_mgr():
             flag["down"] = True
 
     agent = MainAgent([])
-    agent._mcp_mgr = FakeMgr()
+    agent.mcp.manager = FakeMgr()
     realtime._shutdown_mcp_async(agent)
     await asyncio.sleep(0.05)                            # 让 fire-and-forget 的 shutdown task 跑完
     assert flag["down"] is True

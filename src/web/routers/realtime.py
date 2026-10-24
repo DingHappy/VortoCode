@@ -479,12 +479,11 @@ async def _ensure_mcp(agent, say) -> None:
 
     默认不连——网页无 /mcp 这类显式入口，若每回合自动连，一个慢/坏的 server 会拖死每回合；
     故与 TUI(/mcp)、CLI(--mcp) 一样走显式 opt-in。开了之后无配置 → connect_mcp 返 (None, [])、
-    静默跳过；失败不影响回合。manager 挂 agent._mcp_mgr，会话淘汰时 _shutdown_mcp_async 关掉。
+    静默跳过；失败不影响回合。manager 挂 agent.mcp，会话淘汰时 _shutdown_mcp_async 关掉。
     """
-    if getattr(agent, "_mcp_connecting", False) or getattr(agent, "_mcp_tried", False):
+    from src.agents.mcp_session import claim_auto_attach
+    if not claim_auto_attach(agent):
         return
-    agent._mcp_tried = True
-    agent._mcp_mgr = None
     import os
     if os.getenv("VORTOCODE_WEB_MCP") not in ("1", "true", "yes"):
         return                              # 默认关闭（避免坏配置卡死每回合）
@@ -509,7 +508,8 @@ async def _ensure_mcp(agent, say) -> None:
 
 def _shutdown_mcp_async(agent) -> None:
     """会话淘汰时异步关掉其 MCP manager（fire-and-forget；没有运行中的 loop 就跳过）。"""
-    mgr = getattr(agent, "_mcp_mgr", None)
+    from src.agents.mcp_session import session_manager
+    mgr = session_manager(agent)
     if mgr is None:
         return
     try:
@@ -1388,7 +1388,7 @@ async def _run_workspace_edit(websocket, path: str, content: str, expected_sha25
             q.put_nowait(P.make_event(
                 P.AGENT_DIFF, title=f"Desktop 保存前审查：{prepared.relative_path}",
                 diff=prepared.diff))
-            gate = getattr(agent, "_confirm_gate", None)
+            gate = getattr(agent, "confirm_gate", None)
             if gate is None or not await gate(
                     f"保存 Desktop 对 {prepared.relative_path} 的编辑？确认后会覆盖当前工作区文件。"):
                 outcome["message"] = "用户取消了源码保存"

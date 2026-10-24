@@ -509,6 +509,10 @@ class MainAgent:
         raise_llm_errors: bool = False,
         execution_check: Optional[Callable[[], None]] = None,
         auto_recall: bool = False,
+        # 富客户端的结构化动作（Desktop 保存、显式 MCP 连接）不经过模型，但仍须复用同一份确认门。
+        # 只收 make_confirm_gate 包过的实例（build_session 装配时传入），端不能传裸 yes/no 回调。
+        confirm_gate: Optional[Callable[[str], Awaitable[bool]]] = None,
+        supervised: bool = False,
     ) -> None:
         import os
         # 复用既有 src/hooks 的 HookSystem：把工具生命周期事件（pre/post/error）接进 agent loop
@@ -521,6 +525,10 @@ class MainAgent:
         # 置位后每个回合在 reset_taint() 之后立刻重新打污点（见 run_turn），
         # 因为污点是回合作用域的——在 run_turn 外面调 mark_tainted() 会被回合开头的 reset 抹掉。
         self._untrusted_input = bool(untrusted_input)
+        self._confirm_gate = confirm_gate
+        self._supervised = bool(supervised)
+        from src.agents.mcp_session import McpAttachment
+        self.mcp = McpAttachment()             # 会话自有的 MCP 接入状态，只由 mcp_session 读写
         # 无人值守/流水线档：LLM 通道瞬时故障必须**抛异常**，而不是"emit 提示 + 返回空串"——
         # emit 那套语义是说给盯屏的人听的；后台没有人，空串会被上游误判成"子 agent 没干活"
         # （no-op），把通道外伤记成 agent 内科病（真机复盘：三任务六轮全被 502 吞成"无改动/出错"）。
@@ -697,11 +705,32 @@ class MainAgent:
         except Exception:  # noqa: BLE001
             return ""
 
+    @property
+    def confirm_gate(self) -> Optional[Callable[[str], Awaitable[bool]]]:
+        """装配时注入的确认门（已经过 make_confirm_gate）；没有则 None，调用方应按拒绝处理。"""
+        return self._confirm_gate
+
+    @property
+    def untrusted_input(self) -> bool:
+        return self._untrusted_input
+
     def add_tools(self, tools: list) -> None:
         """运行时追加工具（如连上 MCP 后注入 mcp__* 工具）；同步进 _tool_list（喂系统提示目录）与 tools。"""
         for t in tools:
             self._tool_list.append(t)
             self.tools[t.name] = t
+
+    def remove_tools(self, names) -> set[str]:
+        """运行时移除工具，返回实际移除的名字。
+
+        _tool_list 喂系统提示目录与原生 schema，tools 决定能否执行——两者必须同步改，
+        否则撤销的连接器工具要么仍出现在模型眼前，要么目录里有却调不动。"""
+        names = set(names)
+        removed = {t.name for t in self._tool_list if t.name in names} | (names & self.tools.keys())
+        self._tool_list = [t for t in self._tool_list if t.name not in removed]
+        for name in removed:
+            self.tools.pop(name, None)
+        return removed
 
     def _system(self, mode: str) -> str:
         """系统提示。刻意保持**会话内字节级稳定**（只随 mode 切换/新增工具这类低频事件变化）：
@@ -1387,7 +1416,7 @@ class MainAgent:
 
         return ToolRuntime(lambda: self.tools, ToolExecutionContext(
             capabilities=self._capabilities, permissions=self._permissions,
-            state=self._tool_turn_state, supervised=getattr(self, "_supervised", False),
+            state=self._tool_turn_state, supervised=self._supervised,
             mode_switch_hint=self._mode_switch_hint, on_escalate=self._on_escalate,
             on_hook=self._fire_hook if self._hook_system is not None else None,
             on_event=self._emit_tool_event, on_result=self._on_tool,
@@ -1606,7 +1635,7 @@ class MainAgent:
         # 端级不可信入口（IM）：用户输入自身就是外部内容，**每回合无条件重新打污点**。
         # 必须在这里、reset 之后打——装配时打一次会被下一个回合的 reset 抹掉（污点是回合作用域的）。
         # 用 channel 档而非 external：拦截强度完全一样，但别把"你自己打了句话"说成"读过网页"。
-        if getattr(self, "_untrusted_input", False):
+        if self._untrusted_input:
             mark_channel_untrusted()
         # TUI 自动召回在 agent 外拼接；attach 后 serve 也只能看到文本。显式数据边界让两条路径
         # 都能在 reset 之后重新标污点。用户伪造该标记只会触发更保守的确认，不会获得权限。
