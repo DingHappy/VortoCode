@@ -192,6 +192,25 @@ async def test_unattended_online_job_does_not_gain_personal_memory(tmp_path, mon
     assert "synthetic 火车出差偏好" not in str(llm.requests)
 
 
+@pytest.mark.parametrize("native", ["0", "1"])
+async def test_mixed_language_recall_reaches_the_model_without_leaking_unrelated_facts(tmp_path, monkeypatch, native):
+    monkeypatch.setenv("VORTOCODE_NATIVE_TOOLS", native)
+    remember(tmp_path, "VortoCode 更新需要稳定签名包")
+    remember(tmp_path, "The user maintains a Django website")
+    llm = RecordingLLM()
+    agent = build_session(str(tmp_path), kind="web", workspace_scope="general", llm=llm)
+    prefix = agent._system("plan")
+    await agent.run_turn("VortoCode这次怎么部署")
+    assert "VortoCode 更新需要稳定签名包" in str(llm.requests[-1])
+    assert "Django website" not in str(llm.requests[-1])
+    assert "VortoCode 更新需要稳定签名包" not in str(agent.history)
+    await agent.run_turn("What is the weather?")
+    assert "Django website" not in str(llm.requests[-1])
+    assert "vortocode_untrusted_memory" not in str(llm.requests[-1])
+    assert agent._system("plan") == prefix
+    assert len(llm.requests) == 2
+
+
 @pytest.mark.parametrize("result", ["", "[权限拦截] denied", "<vortocode_untrusted_memory>synthetic fact"])
 @pytest.mark.parametrize("same_turn", [True, False])
 def test_memory_proposals_only_inherit_actual_recall_data(tmp_path, monkeypatch, result, same_turn):
