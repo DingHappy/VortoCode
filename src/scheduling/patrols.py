@@ -3,7 +3,7 @@
 以前每加一项提醒就往 `assistant_watch.watch_once` 里再插一段 try/except，各自记时间戳，
 哪项坏了只在日志里有一行，Desktop 的「定时」页也看不到。现在：
 - 新巡检只要在 `PATROLS` 里登记一项；
-- 一项失败（普通异常）只记下来，其余照跑；取消（CancelledError）照常往外传，不吞；
+- 每项有协作式异步超时；普通异常或超时记下来后继续，取消（CancelledError）照常往外传；
 - 每项的上次运行、上次成功、连续失败次数记在 `.vortocode/dispatches/patrols.json`，
   「定时」页据此显示「连续失败 N 次」。
 
@@ -11,8 +11,10 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import math
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -45,6 +47,13 @@ class Patrol:
     visible: Callable[[str], bool] = lambda _root: True
     #: 「定时」页上的频率说明；None = 按 every 写
     schedule: Optional[Callable[[str], str]] = None
+    #: 单项执行时限；模型巡检可显式放宽。依赖协程响应取消，不隔离同步阻塞。
+    timeout_seconds: float = 30.0
+
+    def __post_init__(self) -> None:
+        if (type(self.timeout_seconds) not in (int, float)
+                or not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0):
+            raise ValueError("巡检执行时限必须是有限正数")
 
 
 def _path(root: str) -> Path:
@@ -86,14 +95,23 @@ async def run_patrols(patrols: List[Patrol], ctx: PatrolContext) -> None:
         last = _parse(record.get("last_run"))
         if patrol.every and last is not None and timedelta(0) <= ctx.now - last < patrol.every:
             continue
-        record["last_run"] = ctx.now.isoformat()
+        record.update(last_run=ctx.now.isoformat(), last_status="running")
+        record.pop("last_error", None)
+        records[patrol.name] = record
+        _save_records(ctx.root, records)
         try:
-            await patrol.run(ctx)
+            await asyncio.wait_for(patrol.run(ctx), timeout=patrol.timeout_seconds)
+        except asyncio.CancelledError:
+            record["last_status"] = "cancelled"
+            _save_records(ctx.root, records)
+            raise
         except Exception as error:  # noqa: BLE001 —— 一项巡检坏了不挡其余；取消（BaseException）照常往外传
             record["failures"] = int(record.get("failures") or 0) + 1
             record["last_error"] = type(error).__name__
+            record["last_status"] = "timed_out" if isinstance(error, asyncio.TimeoutError) else "failed"
             logger.warning("巡检「%s」失败：%s", patrol.title, type(error).__name__)
         else:
+            record["last_status"] = "done"
             record["failures"] = 0
             record.pop("last_error", None)
             record["last_ok"] = ctx.now.isoformat()
@@ -124,5 +142,6 @@ def overview(patrols: List[Patrol], root: str) -> List[Dict[str, Any]]:
         items.append({"id": f"patrol-{patrol.name}", "kind": "watch", "title": patrol.title, "schedule": schedule,
                       "detail": patrol.detail, "enabled": True,
                       "last": last.isoformat(timespec="minutes") if last else None,
-                      "failures": int(record.get("failures") or 0)})
+                      "failures": int(record.get("failures") or 0),
+                      "last_status": record.get("last_status")})
     return items

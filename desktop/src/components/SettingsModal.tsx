@@ -15,6 +15,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { errorText } from "../lib/errorText";
+import type { CodexObserverRead } from "../lib/codexObserverHealth";
 import type { ReactNode } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { BuildVersion } from "./BuildVersion";
@@ -91,6 +92,7 @@ type SettingsModalProps = {
   onOpenPlugins?: () => void;
   /** 登记了常驻电脑（「让助理查看 Codex」要报给它） */
   hasResident?: boolean;
+  readCodexObserver?: () => Promise<CodexObserverRead>;
   /** 打开助理资料（名字、SOUL、关于你） */
   onEditAssistant?: () => void;
   activeScope: WorkspaceScope;
@@ -146,6 +148,7 @@ type SettingsModalProps = {
 export function SettingsModal({
   onOpenPlugins,
   hasResident = false,
+  readCodexObserver,
   onEditAssistant,
   activeScope,
   connection,
@@ -505,7 +508,7 @@ export function SettingsModal({
         )}
 
         {section === "abilities" && <>
-          <CodexWatchCard hasResident={hasResident} />
+          <CodexWatchCard hasResident={hasResident} readSnapshot={readCodexObserver} />
           <BrowserPane onRestartRuntime={onRestartRuntime} />
           <DesktopControlPane onRestartRuntime={onRestartRuntime} />
           <h3 className="settings-subhead">插件与扩展</h3>

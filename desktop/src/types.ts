@@ -151,6 +151,7 @@ export interface AssistantScheduleItem {
   revision?: string;
   scheduler_enabled?: boolean;
   failures?: number;
+  last_status?: "running" | "done" | "failed" | "timed_out" | "cancelled" | null;
 }
 
 /** 连接的服务（GitHub 等）：不含令牌。authorizing 时给人看验证码与链接。 */
@@ -258,6 +259,18 @@ export interface CodexAction {
   error: string;
   created_at: string;
   updated_at: string;
+}
+
+/** 常驻助理保存的精简观察报告；completed 仅表示一轮执行结束。 */
+export interface CodexProgressSnapshot {
+  overview: string;
+  received_at?: string;
+  threads: Array<{
+    id: string; name: string; cwd?: string; status: string; flags: string[]; updated_at?: number;
+    turn?: { id: string; status: string; request?: string; reply?: string; plan?: string; error?: string } | null;
+    /** Missing: legacy observer. Null: unavailable. Decode and bind before use. */
+    execution?: unknown;
+  }>;
 }
 
 export interface AssistantDispatch {
@@ -962,7 +975,7 @@ export interface PersonalGoal extends GoalItem {
 
 export interface PersonalGoalFollowUp {
   id?: string;
-  status?: "scheduled" | "sending" | "accepted" | "acknowledged" | "failed" | "unknown" | "cancelled";
+  status?: "scheduled" | "sending" | "accepted" | "acknowledged" | "failed" | "unknown" | "cancelled" | string;
   text?: string;
   due_at?: string;
   reason?: string;

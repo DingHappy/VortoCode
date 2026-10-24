@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import asyncio
+from types import SimpleNamespace
 
 import pytest
 
@@ -156,6 +158,202 @@ async def test_bad_model_output_is_ignored_and_not_retried(tmp_path):
     await _check(root, _m(30), notes, llm)
     await _check(root, _m(60), notes, llm)
     assert llm.calls == 1 and not watch.load_actions(root)
+
+
+def _multiple_threads(done=False):
+    return [{**(_done(tid=f"turn-{tid}") if done else _thread(tid=f"turn-{tid}")), "id": tid, "name": tid}
+            for tid in ("c", "b", "a")]
+
+
+async def test_review_call_cap_prioritizes_older_work_and_defers_unattempted_turns(tmp_path, monkeypatch):
+    root, notes, calls = str(tmp_path), Notes(), []
+
+    async def review(thread, **_kwargs):
+        calls.append(thread["id"])
+        return {"verdict": "done", "assessment": "完成", "next": ""}
+
+    monkeypatch.setattr(sup, "review_turn", review)
+    watch.record_report(root, {"threads": _multiple_threads()}, now=T0)
+    await _check(root, T0, notes)
+    threads = _multiple_threads()
+    for tid, minute in [("a", 5), ("b", 6), ("c", 7)]:
+        threads = [{**_done(tid=f"turn-{tid}"), "id": tid, "name": tid} if item["id"] == tid else item for item in threads]
+        watch.record_report(root, {"threads": threads}, now=_m(minute))
+    await _check(root, _m(30), notes)
+    assert calls == ["a", "b"]
+    assert "reviewed_turn" not in sup._load(root)["marks"]["c"]
+    watch.record_report(root, {"threads": threads}, now=_m(59))
+    await _check(root, _m(60), notes)
+    assert calls == ["a", "b", "c"]
+
+
+async def test_review_time_budget_cancels_a_slow_model_and_still_reports(tmp_path, monkeypatch):
+    root, notes, calls, cleaned = str(tmp_path), Notes(), [], []
+    monkeypatch.setattr(sup, "REVIEW_BUDGET_SECONDS", 0.01)
+
+    async def stalled(thread, **_kwargs):
+        calls.append(thread["id"])
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleaned.append(thread["id"])
+
+    monkeypatch.setattr(sup, "review_turn", stalled)
+    watch.record_report(root, {"threads": _multiple_threads()}, now=T0)
+    await _check(root, T0, notes)
+    watch.record_report(root, {"threads": _multiple_threads(done=True)}, now=_m(5))
+    await asyncio.wait_for(_check(root, _m(30), notes), timeout=1)
+    assert calls == cleaned == ["a"]
+    marks = sup._load(root)["marks"]
+    assert marks["a"]["reviewed_turn"] == "turn-a"
+    assert "reviewed_turn" not in marks["b"] and "reviewed_turn" not in marks["c"]
+    assert any("半小时巡视" in text for text in notes.texts())
+
+
+async def test_completion_event_must_belong_to_the_same_thread_even_if_turn_ids_match(tmp_path, monkeypatch):
+    root, notes, calls = str(tmp_path), Notes(), []
+
+    async def review(thread, **_kwargs):
+        calls.append(thread["id"])
+        return {"verdict": "done", "assessment": "完成", "next": ""}
+
+    monkeypatch.setattr(sup, "review_turn", review)
+    old = {**_done(tid="shared"), "id": "old"}
+    active = {**_thread(tid="shared"), "id": "active"}
+    watch.record_report(root, {"threads": [old, active]}, now=T0)
+    await _check(root, T0, notes)
+    watch.record_report(root, {"threads": [old, {**_done(tid="shared"), "id": "active"}]}, now=_m(5))
+    await _check(root, _m(30), notes)
+    assert calls == ["active"]
+
+
+async def test_multiple_reviews_share_one_time_budget_instead_of_resetting_it(tmp_path, monkeypatch):
+    root, notes, calls, clock = str(tmp_path), Notes(), [], [0.0]
+    monkeypatch.setattr(sup, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(sup, "REVIEW_BUDGET_SECONDS", 60.0)
+    monkeypatch.setattr(sup, "MAX_REVIEWS_PER_CHECK", 3)
+
+    async def review(thread, **_kwargs):
+        calls.append(thread["id"])
+        clock[0] += 40.0
+        return {"verdict": "done", "assessment": "完成", "next": ""}
+
+    monkeypatch.setattr(sup, "review_turn", review)
+    watch.record_report(root, {"threads": _multiple_threads()}, now=T0)
+    await _check(root, T0, notes)
+    watch.record_report(root, {"threads": _multiple_threads(done=True)}, now=_m(5))
+    await _check(root, _m(30), notes)
+    assert calls == ["a", "b"]
+    assert "reviewed_turn" not in sup._load(root)["marks"]["c"]
+
+
+@pytest.mark.parametrize("verdict", ["continue", "ask", "done"])
+async def test_model_review_is_discarded_when_codex_moves_on_while_it_is_waiting(tmp_path, verdict):
+    root, notes = str(tmp_path), Notes()
+
+    class MovingLLM:
+        async def chat(self, *_args, **_kwargs):
+            _report(root, _done(tid="t2", reply="新一轮已经完成"), _m(30))
+            return {"content": '{"verdict": "' + verdict + '", "assessment": "旧轮次的结论", "next": "旧轮次的建议"}'}
+
+    _report(root, _thread(), T0)
+    await _check(root, T0, notes)
+    _report(root, _done(), _m(5))
+    await _check(root, _m(30), notes, MovingLLM())
+    assert not watch.load_actions(root)
+    assert all("旧轮次" not in text for text in notes.texts())
+
+
+async def test_settings_changed_during_review_are_preserved_and_disable_the_result(tmp_path):
+    root, notes = str(tmp_path), Notes()
+
+    class SettingsLLM:
+        async def chat(self, *_args, **_kwargs):
+            sup.save_config(root, nudge=False, interval_minutes=60)
+            return {"content": '{"verdict": "continue", "assessment": "旧结论", "next": "旧建议"}'}
+
+    _report(root, _thread(), T0)
+    await _check(root, T0, notes)
+    _report(root, _done(), _m(5))
+    await _check(root, _m(30), notes, SettingsLLM())
+    assert sup.load_config(root) == {"interval_minutes": 60, "nudge": False}
+    assert not watch.load_actions(root)
+    assert all("旧结论" not in text for text in notes.texts())
+
+
+@pytest.mark.parametrize("change", ["request", "files", "cwd", "closed"])
+async def test_review_is_invalidated_by_changed_material_even_when_turn_id_is_unchanged(tmp_path, change):
+    root, notes = str(tmp_path), Notes()
+
+    class ChangingLLM:
+        async def chat(self, *_args, **_kwargs):
+            latest = _done()
+            if change == "request":
+                latest["turn"]["request"] = "改成检查注销超时"
+            elif change == "files":
+                latest["turn"]["files"] = ["src/logout.py"]
+            elif change == "cwd":
+                latest["cwd"] = "~/another-project"
+            watch.record_report(root, {"threads": [] if change == "closed" else [latest]}, now=_m(30))
+            return {"content": '{"verdict": "continue", "assessment": "已失效的判断", "next": "已失效的建议"}'}
+
+    _report(root, _thread(), T0)
+    await _check(root, T0, notes)
+    _report(root, _done(), _m(5))
+    await _check(root, _m(30), notes, ChangingLLM())
+    assert not watch.load_actions(root)
+    assert all("已失效" not in text for text in notes.texts())
+
+
+async def test_unchanged_heartbeat_does_not_invalidate_review_and_preserves_new_interval(tmp_path):
+    root, notes = str(tmp_path), Notes()
+
+    class HeartbeatLLM:
+        async def chat(self, *_args, **_kwargs):
+            _report(root, _done(), _m(30))
+            sup.save_config(root, interval_minutes=60)
+            return {"content": '{"verdict": "continue", "assessment": "还差测试", "next": "补测试"}'}
+
+    _report(root, _thread(), T0)
+    await _check(root, T0, notes)
+    _report(root, _done(), _m(5))
+    await _check(root, _m(30), notes, HeartbeatLLM())
+    assert len(watch.load_actions(root)) == 1
+    assert watch.load_actions(root)[0]["turn_id"] == "t1"
+    assert sup.load_config(root) == {"interval_minutes": 60, "nudge": True}
+
+
+async def test_stale_observer_notification_does_not_overwrite_settings_saved_while_sending(tmp_path):
+    root = str(tmp_path)
+    _report(root, _thread(), T0)
+    await _check(root, T0, Notes())
+
+    async def notify(_text, **_kwargs):
+        sup.save_config(root, interval_minutes=60, nudge=False)
+        return True
+
+    await sup.supervise_once(root, _m(31), notify=notify)
+    assert sup.load_config(root) == {"interval_minutes": 60, "nudge": False}
+
+
+@pytest.mark.parametrize("text", [
+    '{"verdict":"continue","assessment":{},"next":"补测试"}',
+    '{"verdict":"continue","assessment":"还有事","next":["补测试"]}',
+    '{"verdict":"done","assessment":null}',
+    '{"verdict":"ask","assessment":" "}',
+    '{"verdict":{},"assessment":"还有事","next":"补测试"}',
+])
+def test_malformed_review_fields_are_not_coerced_into_an_action(text):
+    assert sup._parse_review(text) is None
+
+
+def test_automated_action_must_still_target_the_observed_turn(tmp_path):
+    root = str(tmp_path)
+    _report(root, _thread(tid="t2"), T0)
+    for kind in ("message", "interrupt"):
+        with pytest.raises(watch.CodexActionError, match="轮次已经变化"):
+            watch.propose_action(root, thread="th1", kind=kind, text="旧建议", expected_turn_id="t1")
+    assert not watch.load_actions(root)
 
 
 @pytest.mark.asyncio

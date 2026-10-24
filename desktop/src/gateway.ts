@@ -71,6 +71,7 @@ import type {
 import type { ResidentProject } from "./lib/residentPlace";
 
 export const DESKTOP_PROTOCOL_VERSION = 10;
+const SNAPSHOT_TIMEOUT_MS = 15_000;
 const EVENT_CURSOR_PREFIX = "vortocode.desktop.eventCursor:";
 
 export function createSessionId(): string {
@@ -133,6 +134,9 @@ export class GatewayClient {
   private sessionId = "";
   private remoteConnection: string | null = null;
   private remoteUnlisten: Array<() => void> = [];
+  private snapshotReads = new Map<string, Promise<unknown>>();
+  private snapshotControllers = new Set<AbortController>();
+  private snapshotEpoch = 0;
 
   constructor(private readonly settings: ConnectionSettings) {}
 
@@ -265,6 +269,9 @@ export class GatewayClient {
   }
 
   async disconnect(): Promise<void> {
+    this.snapshotEpoch++;
+    this.snapshotReads.clear();
+    this.snapshotControllers.forEach(controller => controller.abort());
     this.remoteUnlisten.splice(0).forEach((remove) => remove());
     const remote = this.remoteConnection;
     this.remoteConnection = null;
@@ -289,6 +296,8 @@ export class GatewayClient {
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    // 写入后显式核对不能复用写入前尚未完成的快照；写操作本身不合并、不重试。
+    if (init.method && !["GET", "HEAD"].includes(init.method.toUpperCase())) this.snapshotReads.clear();
     if (this.settings.remoteProjectId) return JSON.parse(await this.remoteRequest(path, init)) as T;
     const base = normalizeLocalBaseUrl(this.settings.baseUrl);
     const headers = {
@@ -301,6 +310,35 @@ export class GatewayClient {
       throw runtimeError(detail, response.status);
     }
     return (await response.json()) as T;
+  }
+
+  /** 仅供明确的只读状态入口：合并进行中的同路径读取，不缓存完成结果。 */
+  private readSnapshot<T>(path: string): Promise<T> {
+    const pending = this.snapshotReads.get(path);
+    if (pending) return pending as Promise<T>;
+    const epoch = this.snapshotEpoch;
+    // 远端沿用原生传输的 30 秒总时限；不以 JS 超时假装取消原生请求。
+    const controller = this.settings.remoteProjectId ? null : new AbortController();
+    if (controller) this.snapshotControllers.add(controller);
+    let timedOut = false;
+    const timer = controller ? setTimeout(() => { timedOut = true; controller.abort(); }, SNAPSHOT_TIMEOUT_MS) : null;
+    const promise = this.request<T>(path, controller ? { signal: controller.signal } : {})
+      .then(result => {
+        if (timedOut) throw new Error("读取运行状态超时，请重新核对");
+        if (epoch !== this.snapshotEpoch) throw new Error("连接已切换，请重新核对状态");
+        return result;
+      })
+      .catch(error => {
+        if (timedOut) throw new Error("读取运行状态超时，请重新核对");
+        throw error;
+      })
+      .finally(() => {
+        if (timer !== null) clearTimeout(timer);
+        if (controller) this.snapshotControllers.delete(controller);
+        if (this.snapshotReads.get(path) === promise) this.snapshotReads.delete(path);
+      });
+    this.snapshotReads.set(path, promise);
+    return promise;
   }
 
   private async requestText(path: string, init: RequestInit = {}): Promise<string> {
@@ -343,7 +381,7 @@ export class GatewayClient {
   }
 
   async listSessions(): Promise<SessionSummary[]> {
-    const payload = await this.request<{ sessions?: SessionSummary[] }>("/api/agent/sessions");
+    const payload = await this.readSnapshot<{ sessions?: SessionSummary[] }>("/api/agent/sessions");
     return payload.sessions ?? [];
   }
 
@@ -377,7 +415,7 @@ export class GatewayClient {
   }
 
   async listPersonalGoals(): Promise<PersonalGoal[]> {
-    const result = await this.request<{ goals: PersonalGoal[] }>("/api/assistant/goals");
+    const result = await this.readSnapshot<{ goals: PersonalGoal[] }>("/api/assistant/goals");
     return result.goals;
   }
 
@@ -475,7 +513,7 @@ export class GatewayClient {
 
   /** 连接的服务（GitHub 等）。 */
   async listConnectors(): Promise<AssistantConnector[]> {
-    const payload = await this.request<{ connectors?: AssistantConnector[] }>("/api/assistant/connectors");
+    const payload = await this.readSnapshot<{ connectors?: AssistantConnector[] }>("/api/assistant/connectors");
     return Array.isArray(payload.connectors) ? payload.connectors : [];
   }
 
@@ -552,6 +590,16 @@ export class GatewayClient {
   async listCodexActions(): Promise<CodexAction[]> {
     const payload = await this.request<{ actions?: CodexAction[] }>("/api/codex/actions");
     return Array.isArray(payload.actions) ? payload.actions : [];
+  }
+
+  async getCodexProgress(): Promise<import("./types").CodexProgressSnapshot> {
+    return this.readSnapshot("/api/codex/status");
+  }
+
+  /** 本机观察员诊断；调用者必须选定本机 General runtime。 */
+  async getCodexObserverStatus(): Promise<unknown> {
+    const value = await this.readSnapshot<{ codex_observer?: unknown }>("/api/status");
+    return value.codex_observer;
   }
 
   /** 人批准 / 拒绝一条 Codex 动作；批准后由 Mac 上的 VortoCode 交给 Codex。 */
@@ -640,7 +688,7 @@ export class GatewayClient {
   }
 
   async listRuns(): Promise<CommandRunItem[]> {
-    const payload = await this.request<{ runs?: CommandRunItem[] }>("/api/runs");
+    const payload = await this.readSnapshot<{ runs?: CommandRunItem[] }>("/api/runs");
     return payload.runs ?? [];
   }
 
@@ -794,7 +842,7 @@ export class GatewayClient {
   }
 
   async listGoals(): Promise<GoalItem[]> {
-    const payload = await this.request<{ goals?: GoalItem[] }>("/api/goals");
+    const payload = await this.readSnapshot<{ goals?: GoalItem[] }>("/api/goals");
     return payload.goals ?? [];
   }
 
@@ -1108,12 +1156,12 @@ export class GatewayClient {
 
   async listDecisions(session: string): Promise<DecisionItem[]> {
     const params = new URLSearchParams({ limit: "100", session });
-    const payload = await this.request<{ decisions?: DecisionItem[] }>(`/api/decisions?${params.toString()}`);
+    const payload = await this.readSnapshot<{ decisions?: DecisionItem[] }>(`/api/decisions?${params.toString()}`);
     return payload.decisions ?? [];
   }
 
   async getRuntimeInbox(): Promise<RuntimeInboxSnapshot> {
-    return this.request("/api/runtime-inbox");
+    return this.readSnapshot("/api/runtime-inbox");
   }
 
   async dismissDecision(id: string): Promise<void> {
@@ -1121,7 +1169,7 @@ export class GatewayClient {
   }
 
   async listAudit(limit = 100): Promise<AuditEntry[]> {
-    const payload = await this.request<{ entries?: AuditEntry[] }>(`/api/audit?limit=${limit}`);
+    const payload = await this.readSnapshot<{ entries?: AuditEntry[] }>(`/api/audit?limit=${limit}`);
     return payload.entries ?? [];
   }
 

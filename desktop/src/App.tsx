@@ -4,9 +4,13 @@ import { WorkbenchLauncher, WorkbenchTabs, type WorkbenchTool } from "./componen
 import { ActivityFeed } from "./components/ActivityFeed";
 import { AssistantTaskCard } from "./components/AssistantTaskCard";
 import { CodexActionCard } from "./components/CodexActionCard";
+import { AssistantWorkday } from "./components/AssistantWorkday";
 import { loadAssistantData } from "./lib/assistantData";
 import { prepareAvatar } from "./lib/avatar";
-import { resolveMainChat, sourceLabel } from "./lib/mainChat";
+import { resolveMainChat } from "./lib/mainChat";
+import { ChatHistory } from "./components/ChatHistory";
+import { startPolling } from "./lib/polling";
+import { mergeRuntimeInboxes, observeRuntimeInboxes } from "./lib/runtimeInboxReads";
 import { AssistantRefreshQueue } from "./lib/assistantRefresh";
 import { AssistantActionGate, type AssistantTaskAction } from "./lib/assistantTask";
 import { ConnectorStatusReads } from "./lib/connectorStatus";
@@ -44,7 +48,7 @@ import {
   SquareTerminal,
   X,
 } from "lucide-react";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import "./App.css";
 import "./daily.css";
@@ -128,6 +132,7 @@ import { ProjectAssetsPanel } from "./components/ProjectAssetsPanel";
 import { RunsPanel } from "./components/RunsPanel";
 import { RuntimeInboxPanel } from "./components/RuntimeInboxPanel";
 import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
+import { readLocalCodexObserver } from "./lib/codexObserverHealth";
 import { BuildVersion } from "./components/BuildVersion";
 import { ArtifactCenter } from "./components/ArtifactCenter";
 import { PluginsPage } from "./components/PluginsPage";
@@ -242,6 +247,8 @@ function App() {
   const projectRestoreDoneRef = useRef(false);
   const supervisionGenerationRef = useRef(0);
   const runtimeInboxGenerationRef = useRef(0);
+  const runtimeInboxKeyRef = useRef("");
+  const runtimeInboxPendingRef = useRef<{ key: string; generation: number; promise: Promise<boolean> } | null>(null);
   const runtimeTokensRef = useRef<Map<string, string>>(new Map());
   const runtimeInboxSourcesRef = useRef<Array<Omit<DesktopRuntimeInbox, "snapshot" | "error" | "checkedAt">>>([]);
   const projectSwitchingRef = useRef(false);
@@ -342,6 +349,7 @@ function App() {
   });
   const [mainChatSid, setMainChatSid] = useState(() => { try { return localStorage.getItem(STORAGE_KEYS.mainChatSid) ?? ""; } catch { return ""; } });
   const [assistantTab, setAssistantTab] = useState<AssistantTab>("feed");
+  const [assistantGoalFocus, setAssistantGoalFocus] = useState<{ client: GatewayClient | null; scope: string; id: string } | null>(null);
   // 助理的名字 / 关于你，以及它记住的事（都在助理所在的那台电脑上）
   const [assistantProfile, setAssistantProfile] = useState<AssistantProfile>({ name: "VortoCode", soul: "", about_you: "" });
   const [assistantAvatar, setAssistantAvatar] = useState<AssistantAvatar | null>(null);
@@ -379,8 +387,9 @@ function App() {
   useEffect(() => {
     const client = clientRef.current;
     if (!client || connection !== "connected" || !connectorAuthorizing || assistantTab !== "identity") return;
-    const timer = window.setInterval(() => { void refreshConnectorStatus(client, assistantScope).catch(() => undefined); }, 4000);
-    return () => window.clearInterval(timer);
+    return startPolling(() => refreshConnectorStatus(client, assistantScope), {
+      intervalMs: 4_000, hiddenIntervalMs: 15_000, visibility: document,
+    });
   }, [connectorAuthorizing, assistantTab, assistantScope, connection, refreshConnectorStatus]);
   // 插件（日历、Notion…）：打开身份页时读一次状态；检查结果只留在本次查看里
   const [pluginSnapshot, setPlugins] = useState<{ scope: string; items: AssistantPlugin[] } | null>(null);
@@ -457,7 +466,7 @@ function App() {
     setAssistantProfile({ name: "VortoCode", soul: "", about_you: "" }); setAssistantAvatar(null);
     setAssistantSchedule([]); setAssistantMemories([]); setMemoryProposals([]);
     setConnectors([]); setConnectorSnapshotScope(null); setPluginBusy("");
-    setSelectedDispatchId(null); setProfileDialogOpen(false);
+    setSelectedDispatchId(null); setAssistantGoalFocus(null); setProfileDialogOpen(false);
   }, [assistantScope]);
   const [tabsNeedingAttention, setTabsNeedingAttention] = useState<ReadonlySet<InspectorTab>>(
     () => new Set());
@@ -517,6 +526,10 @@ function App() {
     refreshHookStatus, refreshExtensionsInspect,
   } = useExtensionsStatus(clientRef);
   const [decisions, setDecisions] = useState<DecisionItem[]>([]);
+  const decisionScopeRef = useRef(activeSid);
+  decisionScopeRef.current = activeSid;
+  const decisionReadRef = useRef(0);
+  const auditReadRef = useRef(0);
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
   // auditFilter（审计类别筛选）是纯本地 UI 态，已下移到 <DecisionsPanel> 自持。
   // journal 域 8 个 state + 全部读写回调已收进 useJournal（hook 试点，hooks/useJournal.ts）；
@@ -593,9 +606,9 @@ function App() {
   // 发给 Agent 的两个回调与协议事件对 setGitReviewRevision 的写入留在 App。
   const {
     gitReview, gitReviewDiff, gitSelectedPath, gitReviewScope, gitReviewLoading, gitReviewError,
-    gitReviewRevision, setGitReviewRevision, gitActionBusy, taskReviewTask, setTaskReviewTask,
-    taskBranchReview, setTaskBranchReview, taskBranchDiff, setTaskBranchDiff,
-    taskBranchSelectedPath, setTaskBranchSelectedPath, taskReviewVerifying, gitComments,
+    gitReviewRevision, setGitReviewRevision, gitActionBusy, taskReviewTask,
+    taskBranchReview, taskBranchDiff,
+    taskBranchSelectedPath, taskReviewVerifying, gitComments,
     setGitComments, pendingGitComment, setPendingGitComment, gitCommentDraft, setGitCommentDraft,
     gitCommentSaving, gitCommitMessage, setGitCommitMessage, gitPrTitle, setGitPrTitle, gitPrBase,
     setGitPrBase, gitDeliveryBusy, prDelivery, prDeliveryLoading, prCheckLogs, openGitComments,
@@ -766,9 +779,11 @@ function App() {
     }))), [projects, runtimeProcesses]);
   runtimeInboxSourcesRef.current = runtimeInboxSources;
   const runtimeInboxSourceKey = useMemo(
-    () => runtimeInboxSources.map((item) => `${item.runtimeId}:${item.baseUrl}:${item.label}`).sort().join("|"),
+    () => runtimeInboxSources.map(item => JSON.stringify([item.runtimeId, item.baseUrl, item.label,
+      item.scope, item.projectId, item.workspaceId, item.repoRoot])).sort().join("|"),
     [runtimeInboxSources],
   );
+  runtimeInboxKeyRef.current = runtimeInboxSourceKey;
   const runtimeInboxSummary = useMemo(() => {
     const summary = summarizeRuntimeInboxes(runtimeInboxes.map((item) => ({
       error: item.error,
@@ -795,13 +810,15 @@ function App() {
   const refreshSessions = useCallback(async () => {
     const attempt = ++sessionRefreshAttemptRef.current;
     const client = clientRef.current;
-    if (!client) return;
+    if (!client) return false;
     try {
       const result = await client.listSessions();
-      if (client !== clientRef.current || attempt !== sessionRefreshAttemptRef.current) return;
+      if (client !== clientRef.current || attempt !== sessionRefreshAttemptRef.current) return false;
       setSessions(result);
+      return true;
     } catch (error) {
       if (client === clientRef.current && attempt === sessionRefreshAttemptRef.current) setConnectionNote(errorText(error, "读取会话失败"));
+      return false;
     }
   }, []);
 
@@ -826,22 +843,32 @@ function App() {
     void refreshWorktrees();
   }, [openInspector, refreshTasks, refreshWorktrees]);
 
+  const runRefreshAttemptRef = useRef(0);
   const refreshRuns = useCallback(async () => {
+    const attempt = ++runRefreshAttemptRef.current;
     const client = clientRef.current;
-    if (!client) return;
+    if (!client) return false;
+    const current = () => client === clientRef.current && attempt === runRefreshAttemptRef.current;
     try {
       const nextRuns = await client.listRuns();
+      if (!current()) return false;
       setRuns(nextRuns);
       const linkedFingerprint = nextRuns
         .filter((run) => run.goal_id)
         .map((run) => `${run.id}:${run.status}:${run.updated ?? ""}`)
         .join("|");
       if (linkedFingerprint !== goalRunSyncRef.current) {
+        if (linkedFingerprint) {
+          const nextGoals = await client.listGoals();
+          if (!current()) return false;
+          setGoals(nextGoals);
+        }
         goalRunSyncRef.current = linkedFingerprint;
-        if (linkedFingerprint) setGoals(await client.listGoals());
       }
+      return true;
     } catch {
       // 运行控制台是 Desktop 增量能力；旧 runtime 不支持时保持空态。
+      return false;
     }
   }, []);
 
@@ -856,22 +883,32 @@ function App() {
   }, []);
 
   const refreshDecisions = useCallback(async (sid = activeSid) => {
+    const attempt = ++decisionReadRef.current;
     const client = clientRef.current;
-    if (!client) return;
+    if (!client) return false;
     try {
-      setDecisions(await client.listDecisions(`sid-${sid}`));
+      const next = await client.listDecisions(`sid-${sid}`);
+      if (client !== clientRef.current || attempt !== decisionReadRef.current || sid !== decisionScopeRef.current) return false;
+      setDecisions(next);
+      return true;
     } catch {
       // 旧 runtime 没有决策队列时，PR/CI 决策仍由 Desktop 本地聚合。
+      return false;
     }
   }, [activeSid]);
 
   const refreshAudit = useCallback(async () => {
+    const attempt = ++auditReadRef.current;
     const client = clientRef.current;
-    if (!client) return;
+    if (!client) return false;
     try {
-      setAuditEntries(await client.listAudit(120));
+      const next = await client.listAudit(120);
+      if (client !== clientRef.current || attempt !== auditReadRef.current) return false;
+      setAuditEntries(next);
+      return true;
     } catch {
       // 审计时间线不是对话链路的硬依赖。
+      return false;
     }
   }, []);
 
@@ -1559,21 +1596,31 @@ function App() {
         }
       } catch {
         // 监督器只观察 Desktop 自己的子进程；瞬时 IPC 失败留到下一轮重试。
+        return false;
       }
     };
-    const timer = window.setInterval(() => void supervise(), 2_000);
+    const stop = startPolling(supervise, { intervalMs: 2_000, hiddenIntervalMs: 10_000, visibility: document });
     return () => {
       disposed = true;
-      window.clearInterval(timer);
+      stop();
     };
   }, [activeScope, disconnect, processStatus.runtimeId]);
 
-  const refreshRuntimeInboxes = useCallback(async () => {
+  const readCodexObserver = useCallback(() => readLocalCodexObserver({
+    runtimes: () => invoke<GatewayProcessStatus[]>("list_gateway_processes"),
+    read: source => new GatewayClient({ baseUrl: source.baseUrl!,
+      token: runtimeTokensRef.current.get(source.runtimeId!) ?? "" }).getCodexObserverStatus(),
+  }), []);
+
+  const refreshRuntimeInboxes = useCallback((): Promise<boolean> => {
+    const pending = runtimeInboxPendingRef.current;
+    if (pending?.key === runtimeInboxSourceKey && pending.generation === runtimeInboxGenerationRef.current) return pending.promise;
     const generation = ++runtimeInboxGenerationRef.current;
+    const current = () => generation === runtimeInboxGenerationRef.current && runtimeInboxSourceKey === runtimeInboxKeyRef.current;
     const sources = runtimeInboxSourcesRef.current;
     if (sources.length === 0) {
       setRuntimeInboxes([]);
-      return;
+      return Promise.resolve(true);
     }
     const checkedAt = Date.now();
     // 首见时间 + 连上过没有：用来把"还在启动"和"连上过又断了"分开（见 lib/runtimeInbox.ts）。
@@ -1582,55 +1629,43 @@ function App() {
         runtimeFirstSeenRef.current.set(source.runtimeId, checkedAt);
       }
     });
-    const results = await Promise.all(sources.map(async (source): Promise<DesktopRuntimeInbox> => {
-      try {
-        const client = new GatewayClient({
-          baseUrl: source.baseUrl,
-          token: runtimeTokensRef.current.get(source.runtimeId) ?? "",
-          remoteProjectId: source.runtimeId.startsWith("remote:") ? source.projectId : undefined,
-        });
-        const snapshot = await client.getRuntimeInbox();
-        runtimeEverReachableRef.current.add(source.runtimeId);
-        return { ...source, snapshot, error: "", checkedAt };
-      } catch (error) {
-        return {
-          ...source,
-          snapshot: null,
-          error: errorText(error, "runtime 暂时无法访问"),
-          checkedAt,
-        };
-      }
-    }));
-    if (generation !== runtimeInboxGenerationRef.current) return;
-    setRuntimeInboxes((previous) => {
-      const previousByRuntime = new Map(previous.map((item) => [item.runtimeId, item]));
-      return results.map((item) => item.snapshot ? item : {
-        ...item,
-        snapshot: previousByRuntime.get(item.runtimeId)?.snapshot ?? null,
+    setRuntimeInboxes(previous => current() ? mergeRuntimeInboxes(previous, sources) : previous);
+    const promise = observeRuntimeInboxes(sources, source => {
+      const client = new GatewayClient({
+        baseUrl: source.baseUrl,
+        token: runtimeTokensRef.current.get(source.runtimeId) ?? "",
+        remoteProjectId: source.runtimeId.startsWith("remote:") ? source.projectId : undefined,
       });
+      return client.getRuntimeInbox();
+    }, current, item => {
+      if (item.snapshot) runtimeEverReachableRef.current.add(item.runtimeId);
+      setRuntimeInboxes(previous => current() ? mergeRuntimeInboxes(previous, sources, item) : previous);
+    }).finally(() => {
+      if (runtimeInboxPendingRef.current?.generation === generation) runtimeInboxPendingRef.current = null;
     });
+    runtimeInboxPendingRef.current = { key: runtimeInboxSourceKey, generation, promise };
+    return promise;
   }, [runtimeInboxSourceKey]);
 
   useEffect(() => {
-    void refreshRuntimeInboxes();
-    const timer = window.setInterval(() => void refreshRuntimeInboxes(), 4_000);
+    const stop = startPolling(refreshRuntimeInboxes, {
+      intervalMs: 4_000, hiddenIntervalMs: 15_000, immediate: true, visibility: document,
+    });
     return () => {
       runtimeInboxGenerationRef.current += 1;
-      window.clearInterval(timer);
+      stop();
     };
   }, [refreshRuntimeInboxes]);
 
   useEffect(() => {
     if (connection !== "connected" || activeScope === "general") return undefined;
-    const timer = window.setInterval(() => void refreshRuns(), 900);
-    return () => window.clearInterval(timer);
-  }, [activeScope, connection, refreshRuns]);
+    return startPolling(refreshRuns, { intervalMs: 900, hiddenIntervalMs: 15_000, visibility: document });
+  }, [activeScope, connection, processStatus.runtimeId, refreshRuns]);
 
   useEffect(() => {
     if (connection !== "connected") return undefined;
-    const timer = window.setInterval(() => void refreshSessions(), 2_500);
-    return () => window.clearInterval(timer);
-  }, [connection, refreshSessions]);
+    return startPolling(refreshSessions, { intervalMs: 2_500, hiddenIntervalMs: 10_000, visibility: document });
+  }, [connection, processStatus.runtimeId, refreshSessions]);
 
   const handledPublishRef = useRef(0);
   useEffect(() => {
@@ -1657,12 +1692,11 @@ function App() {
 
   useEffect(() => {
     if (connection !== "connected") return undefined;
-    const timer = window.setInterval(() => {
-      void refreshDecisions();
-      void refreshAudit();
-    }, 4_000);
-    return () => window.clearInterval(timer);
-  }, [connection, refreshAudit, refreshDecisions]);
+    return startPolling(async () => {
+      const results = await Promise.all([refreshDecisions(), refreshAudit()]);
+      return results.some(Boolean);
+    }, { intervalMs: 4_000, hiddenIntervalMs: 15_000, visibility: document });
+  }, [connection, processStatus.runtimeId, refreshAudit, refreshDecisions]);
 
   useEffect(() => {
     if (!settingsOpen || connection !== "connected" || activeScope !== "project") return;
@@ -3130,7 +3164,18 @@ function App() {
   const feedWaiting = feedItems.filter((item) => item.status === "waiting").length;
   const dispatchItems = [...dispatches.map(dispatchFeedItem), ...notices.map(noticeFeedItem)]
     .filter((item): item is FeedItem => item !== null);
-  const assistantWaiting = feedWaiting + dispatchItems.filter((item) => item.status === "waiting").length;
+  const assistantWaiting = feedWaiting + dispatchItems.filter((item) => item.status === "waiting").length
+    + codexActions.filter(item => item.status === "proposed").length + (pendingConfirm ? 1 : 0);
+
+  const decideCodexAction = async (action: CodexAction, decision: "approve" | "cancel") => {
+    const client = clientRef.current, scope = assistantScope;
+    const current = () => clientRef.current === client && assistantScopeRef.current === scope;
+    if (!client || !current()) throw new Error("请先恢复连接");
+    await assistantActionGate.current.run(client, scope, `codex:${action.id}`, current, async () => {
+      await client.decideCodexAction(action.id, decision);
+      if (current()) await refreshAgentTurns();
+    });
+  };
 
   const openDispatch = async (id: string) => {
     setSelectedDispatchId(id);
@@ -3194,7 +3239,7 @@ function App() {
     scoped && { id: "files", label: "代码", icon: <FileCode2 size={15} />, badge: String(filteredWorkspaceFiles.length),
       open: () => openInspector("files") },
     scoped && { id: "diff", label: "变更", icon: <GitCompareArrows size={15} />, badge: String((gitReview?.files.length ?? 0) + isolatedDeliveries.length),
-      open: () => { setTaskReviewTask(null); setTaskBranchReview(null); setTaskBranchDiff(null); setTaskBranchSelectedPath(""); openInspector("diff"); void refreshGitReview(); void refreshPrDelivery(); void refreshIsolatedDeliveries(); } },
+      open: () => { openInspector("diff"); void closeTaskBranchReview(); void refreshPrDelivery(); void refreshIsolatedDeliveries(); } },
     scoped && { id: "runs", label: "控制台", icon: <SquareTerminal size={15} />, badge: String(activeRuns.length),
       open: () => openInspector("runs") },
     (inspectorTab === "project" || activeScope === "general" || artifacts.length > 0 || (repoMemory?.total_entries ?? 0) > 0)
@@ -3520,26 +3565,8 @@ function App() {
               </button>
             )}
 
-            {messages.map((message) => (
-              <Fragment key={message.id}>
-                <article className={`message ${message.role}`}>
-                  {appMode === "assistant" && message.role === "assistant"
-                    ? <div className="message-author with-avatar"><AssistantAvatarImage name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} size={22} />{assistantProfile.name || "VortoCode"}
-                      {message.source && <span className="message-source">回复在手机上</span>}</div>
-                    : <div className="message-author">{message.role === "user" ? "你" : message.role === "assistant" ? "VortoCode" : "Runtime"}</div>}
-                  <div className="message-body">
-                    {message.role === "user" && sourceLabel(message.source) && <div className="message-source">{sourceLabel(message.source)}</div>}
-                    {message.images && message.images.length > 0 && <div className="message-images">
-                      {message.images.map((src, index) => <img key={index} src={src} alt={`发送的图片 ${index + 1}`} />)}
-                    </div>}
-                    {message.role === "assistant" ? <MarkdownMessage text={message.text} /> : message.text}
-                  </div>
-                </article>
-                {message.role === "user" && message.rid && activityGroups.has(message.rid) && (
-                  <TurnTimeline items={activityGroups.get(message.rid) ?? []} active={busy && activeTurnRid === message.rid} hasOutput={messages.some(reply => reply.role === "assistant" && reply.rid === message.rid && reply.text.trim().length > 0)} />
-                )}
-              </Fragment>
-            ))}
+            <ChatHistory messages={messages} activityGroups={activityGroups} busy={busy} activeTurnRid={activeTurnRid}
+              assistant={appMode === "assistant"} name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} />
 
             {appMode === "assistant" && dispatches.filter(item => item.session?.replace(/^sid-/, "") === activeSid
               && item.status !== "cancelled").slice(0, 8).map(item => <AssistantTaskCard
@@ -3551,12 +3578,7 @@ function App() {
               ? action.session.replace(/^sid-/, "") === activeSid
               : action.status === "proposed") && action.status !== "cancelled").slice(0, 6).map(action => <CodexActionCard
                 key={`${assistantScope}:${action.id}`} action={action} connected={connection === "connected"}
-                onDecide={async (decision) => {
-                  const client = clientRef.current;
-                  if (!client) throw new Error("请先恢复连接");
-                  await client.decideCodexAction(action.id, decision);
-                  await refreshAgentTurns();
-                }} />)}
+                onDecide={decision => decideCodexAction(action, decision)} />)}
 
             {orphanActivities.length > 0 && <TurnTimeline items={orphanActivities} active={busy && !activeTurnRid} />}
 
@@ -3724,9 +3746,16 @@ function App() {
             onRetryResident={() => void changeAppMode("assistant")}
             modelLabel={onAssistantHost() ? runtime.model : llmProfile?.configured ? composerModelChoices.find(item => item.value === modelChoice)?.label : "未连接模型"}
             tab={assistantTab} onClose={() => setInspectorOpen(false)} waiting={assistantWaiting}
-            onTab={(tab) => { setAssistantTab(tab); panelActions.tabOpened(tab); }}>
+            onTab={(tab) => { if (tab === "goals") setAssistantGoalFocus(null); setAssistantTab(tab); panelActions.tabOpened(tab); }}>
             {assistantTab === "audit" ? <AssistantAudit entries={auditEntries} />
-              : assistantTab === "goals" ? <AssistantGoals key={assistantScope} client={clientRef.current} connected={connection === "connected"} />
+              : assistantTab === "goals" ? <AssistantGoals key={assistantScope} client={clientRef.current} connected={connection === "connected"}
+                  focusId={assistantGoalFocus?.client === clientRef.current && assistantGoalFocus?.scope === assistantScope ? assistantGoalFocus.id : undefined}
+                  onFocusGoal={(id, owner) => {
+                    if (clientRef.current === owner && assistantScopeRef.current === assistantScope) {
+                      setAssistantGoalFocus({ client: clientRef.current, scope: assistantScope, id });
+                    }
+                  }}
+                  onClearFocus={() => setAssistantGoalFocus(null)} />
               : assistantTab === "schedule" ? <AssistantSchedule key={assistantScope} items={assistantSchedule} connected={connection === "connected"} local={!onAssistantHost()}
                   onRefresh={panelActions.scheduleRefresh}
                   onToggle={panelActions.scheduleToggle}
@@ -3745,7 +3774,18 @@ function App() {
                   onDecideProposal={(proposal, approve, replace) => void panelActions.decideProposal(proposal, approve, replace)}
                   onEdit={() => setProfileDialogOpen(true)}
                   onDeleteMemory={(memory) => void panelActions.deleteMemory(memory)} />
-              : <><section className="assistant-task-cards" aria-label="交互任务单">
+              : <><AssistantWorkday key={assistantScope} client={clientRef.current} scope={assistantScope}
+                  connected={connection === "connected"} dispatches={dispatches}
+                  dispatchesLoaded={dispatchSnapshotScope === assistantScope} codexActions={codexActions}
+                  confirmation={pendingConfirm} onConfirmation={() => {
+                    const card = document.getElementById("active-confirmation");
+                    card?.scrollIntoView({ block: "nearest", behavior: "smooth" }); card?.focus({ preventScroll: true });
+                  }}
+                  onDispatch={id => void openDispatch(id)} onGoals={id => {
+                    setAssistantGoalFocus({ client: clientRef.current, scope: assistantScope, id }); setAssistantTab("goals");
+                  }}
+                  onRefreshTasks={() => refreshAgentTurns()} onCodexDecision={decideCodexAction} />
+                <section className="assistant-task-cards" aria-label="交互任务单">
                   {selectedDispatchId && dispatches.find(item => item.id === selectedDispatchId) && <AssistantTaskCard
                     key={`${assistantScope}:${selectedDispatchId}`} task={dispatches.find(item => item.id === selectedDispatchId)!}
                     connected={connection === "connected"} onAction={(action, answer) => actOnDispatch(dispatches.find(item => item.id === selectedDispatchId)!, action, answer)} />}
@@ -3753,7 +3793,7 @@ function App() {
                     <AssistantTaskCard key={`${assistantScope}:${item.id}`} task={item} connected={connection === "connected"}
                       onAction={(action, answer) => actOnDispatch(item, action, answer)} />)}
                   {selectedDispatchId && <button onClick={() => setSelectedDispatchId(null)}>收起任务详情</button>}
-                </section><ActivityFeed items={[...agentTurns.map(turnFeedItem), ...dispatchItems, ...feedItems]} scope="all" onScope={() => {}}
+                </section><details className="workday-history"><summary>历史动态与对话记录</summary><ActivityFeed items={[...agentTurns.map(turnFeedItem), ...dispatchItems, ...feedItems]} scope="all" onScope={() => {}}
                   currentSession={activeSid}
                   onOpen={(item) => {
                     if (item.dispatchId) { void openDispatch(item.dispatchId); return; }
@@ -3761,7 +3801,7 @@ function App() {
                     const sid = item.session?.replace(/^sid-/, "");
                     if (sid && isPhoneSession(sid)) { setPhoneChatSid(sid); return; }
                     if (sid) { setMainView("chat"); void switchSession(sid); }
-                  }} /></>}
+                  }} /></details></>}
           </AssistantPanel>
         )}
         {(mainView === "management" || (mainView === "chat" && inspectorOpen && appMode !== "assistant")) && (
@@ -4079,6 +4119,7 @@ function App() {
       }} />}
       {settingsOpen && (
         <SettingsModal
+          readCodexObserver={readCodexObserver}
           activeScope={activeScope}
           connection={connection}
           connectionText={connectionText}

@@ -22,7 +22,7 @@ export function ConfirmCard({ confirm, trust, trustBusy, connected, onTrust, onC
   // 后者是单个危险动作。文案分开，人才知道自己在批什么。**污点提示优先级最高**——那是安全提示，任何时候都不能被别的文案盖掉。
   const plan = !confirm.tainted && isPlanExecutionConfirmation(confirm.text);
   return (
-    <section className={`confirm-card ${confirm.tainted ? "tainted" : ""}`}>
+    <section id="active-confirmation" tabIndex={-1} aria-label="操作确认" className={`confirm-card ${confirm.tainted ? "tainted" : ""}`}>
       <div className="confirm-icon">{plan ? "▶" : "!"}</div>
       <div className="confirm-copy">
         <strong>

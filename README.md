@@ -1,22 +1,24 @@
 # VortoCode
 
-VortoCode 是面向开发者的本地优先 Agent 工作台：从目标与约束出发，在隔离工作区实现、验证、审查代码，由人确认关键操作和最终合并。Desktop 是默认入口，CLI 服务自动化，Web 服务版面向后续团队使用。
+VortoCode 是面向开发者的本地优先 AI 工作助手：持续跟进目标与项目，协调 Agent 执行，核对交付依据，并把需要人决定的事带回来。Desktop 是默认入口，隔离开发、验证与审查是其中的执行能力，CLI 服务自动化。
 
 > Public preview / dogfooding project：项目仍在快速迭代，接口、命令和工作流可能调整。欢迎试用、反馈问题和提交小步 PR；生产环境暴露、可信凭证和自托管 runner 请按 [SECURITY.md](SECURITY.md) 的安全约定处理。
 
 ## 定位
 
 当前优先收敛 **常驻助理与 Desktop 工作台的交付闭环**：助理收集、提议任务、跟进和汇报，项目工作台负责隔离开发、验证与审查。交互任务卡提供确认下发、状态核对与交付定位，关键操作仍由人决定。
+日常入口围绕 **今天有哪些事、推进到哪里、哪些已核实完成、什么需要我决定** 收敛。助理「今日」页将个人目标、任务单与 Codex 精简报告投影到同一概览；执行结束与目标验收分开展示。来源、统计及验收边界见 [今日工作](docs/ASSISTANT_WORKDAY.md)。多核心是底层演进方向，当前主会话仍使用自有 Agent，Codex 已有会话控制已独立适配，尚未提供整会话自由切换。
 使用步骤、固定交付命令与未验收项统一见 [Desktop 日常使用基线](docs/DESKTOP_DAILY_BASELINE.md)。
+整体分层、已接入核心、待收敛边界与下一阶段顺序统一见 [当前架构与产品方向](docs/CURRENT_ARCHITECTURE.md)。
 优先验证已有定时指令、只读连接器和项目任务的日常流程，再扩展协议与自动化范围；本地签名包不等于正式稳定发布。当前任务卡合同见 [助理任务交付](docs/ASSISTANT_DELIVERY.md)。
 
 ## 产品形态方向
 
-VortoCode 后续会按同一 agent runtime 拆成三种入口，而不是分裂成三套实现：
+当前优先维护 Desktop 与自动化入口，复用会话、权限和工作领域合同：
 
 - **Desktop 版（当前默认产品，P0）**：面向低门槛的本地常驻工作台，启动即进入 General 无目录会话，按需显式升级到隔离 Scratch 或用户选择的 Git Project；跨项目 Inbox、Goal、源码、diff、权限确认、artifact、项目记忆和后台任务共用同一本机 Gateway 内核。
 - **CLI 版（高级/自动化入口）**：保留 `vc agent` / `vc server`，服务终端重度用户、脚本、CI、远程主机和 runtime 调试，不再作为新用户默认入口。
-- **Web 服务版（后续团队入口）**：面向团队/托管服务，提供多用户、共享 artifact、队列化任务和权限/账单/审计能力；当前界面开发优先让位于 Desktop，底层仍共享同一隔离 dev 流水线。
+- **Web 服务能力与后续团队方向**：当前保留 Desktop 使用的 API、审批与制品查看；完整团队产品按真实需求另行评估，当前投入优先服务个人工作闭环。
 
 ## 核心理念
 
@@ -80,7 +82,7 @@ Desktop 与无头 CLI `vc agent` 共用同一个**主 agent loop**：一个会�
   只代表一次执行结束，只有逐项验收都有通过证据才进入 `achieved`
 - **Project Journal**：Desktop 从审计事件、Goal 证据、任务交接和运行结果确定性生成每日摘要与 7 天周报；本地快照可跨重启恢复，“继续昨天”会先与当前待决策队列重新对账，手工记录会脱敏凭据样式内容
 - **系统通知（显式开启）**：Desktop 只在用户授权后提醒新增的高优先级待决策项；首次开启只建立现状基线，锁屏通知不包含命令、日志或决策正文
-- **CC/opencode 都不内置**：详见上文「交互式主 Agent」与 knowledge base
+- **可选外部执行者**：隔离实现/审查已支持 Codex CLI 与 Claude Code CLI 的实验接入，默认关闭，不随应用内置；OpenCode 尚无核心适配。见 [外部执行者](docs/MODEL_ROUTING.md#外部执行者codex--claude-code-cli)。
 
 ### MCP 工具集成
 
@@ -135,7 +137,8 @@ Desktop 与无头 CLI `vc agent` 共用同一个**主 agent loop**：一个会�
 
 ### 核心设计文档
 
-- [架构设计](docs/ARCHITECTURE.md)
+- [当前架构与产品方向](docs/CURRENT_ARCHITECTURE.md)
+- [历史架构蓝图](docs/ARCHITECTURE.md)
 - [Agent 角色定义](docs/AGENTS.md)
 - [开发路线图](docs/ROADMAP.md)
 - [关键技术决策](docs/DECISIONS.md)

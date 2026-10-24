@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
@@ -18,6 +20,7 @@ from typing import Any, Callable, Dict, List, Optional
 # 实时广播给已连接的客户端（WS）。由传输层启动时注册（见 web/routers/tasks.py）——调度层不
 # 反向依赖 Web。没注册（如命令行单独跑 cron）就只走台账与 IM 两路：那时本来也没有客户端在连。
 _notice_broadcaster: Optional[Callable[[str], None]] = None
+_flushing_roots: set[str] = set()
 
 
 def set_notice_broadcaster(broadcaster: Optional[Callable[[str], None]]) -> None:
@@ -118,6 +121,7 @@ def queue_undelivered(repo_root: str, text: str, *, source: str = "") -> bool:
     """把一条没推到 IM 的通知排进补发队列；返回是否保存成功，不代表送达。"""
     items = _read_undelivered(repo_root)
     items.append({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                  "id": uuid.uuid4().hex,
                   "source": str(source)[:120], "text": str(text)[:2000], "attempts": 0})
     return _write_undelivered(repo_root, items)
 
@@ -133,6 +137,18 @@ def _too_old(item: Dict[str, Any], now: datetime) -> bool:
 
 
 async def flush_undelivered(repo_root: str, send, *, now: datetime = None) -> Dict[str, int]:
+    """同进程同目录只补发一批；取消时保留队列并释放进行中标记。"""
+    key = str(Path(repo_root).resolve())
+    if key in _flushing_roots:
+        return {"sent": 0, "dropped": 0, "kept": pending_undelivered_count(repo_root)}
+    _flushing_roots.add(key)
+    try:
+        return await _flush_undelivered(repo_root, send, now=now)
+    finally:
+        _flushing_roots.discard(key)
+
+
+async def _flush_undelivered(repo_root: str, send, *, now: datetime = None) -> Dict[str, int]:
     """桥恢复后把攒下的未送达通知**补推一条汇总**给主人。返回 {sent, dropped, kept}。
 
     为什么是汇总而不是逐条重放：断连一夜可能攒下十几条，逐条推等于早上被刷屏——
@@ -155,8 +171,9 @@ async def flush_undelivered(repo_root: str, send, *, now: datetime = None) -> Di
             continue
         fresh.append(it)
     if not fresh:
-        _write_undelivered(repo_root, [])
-        return {"sent": 0, "dropped": dropped, "kept": 0}
+        saved = _write_undelivered(repo_root, [])
+        return {"sent": 0, "dropped": dropped if saved else 0,
+                "kept": pending_undelivered_count(repo_root)}
 
     head = f"📬 补发｜断连期间有 {len(fresh)} 条通知没送到（全文都在台账 /api/notices）："
     lines = [head]
@@ -169,16 +186,34 @@ async def flush_undelivered(repo_root: str, send, *, now: datetime = None) -> Di
         lines.append(f"（另有 {dropped} 条太旧或重试超限，已丢弃）")
 
     try:
-        await send("\n".join(lines))
+        # 兼容原 IM bridge 的 None 成功回执；显式 False 是未送达。
+        delivered = await send("\n".join(lines)) is not False
     except Exception:  # noqa: BLE001 —— 补推又失败：原样留着，下次恢复再试
-        for it in fresh:
-            it["attempts"] = int(it.get("attempts") or 0) + 1
-        _write_undelivered(repo_root, fresh)
-        return {"sent": 0, "dropped": dropped, "kept": len(fresh)}
+        delivered = False
 
-    _write_undelivered(repo_root, [])
-    record_notice(repo_root, f"已补发 {len(fresh)} 条断连期间未送达的通知", source="delivery")
-    return {"sent": len(fresh), "dropped": dropped, "kept": 0}
+    # 发送期间可能新入队。只确认原批次，不能清空或用原快照覆盖当前队列。
+    # 新条目有唯一 id；旧无 id 条目按原文及出现次数匹配，不在读取时迁移。
+    def identity(item):
+        return json.dumps(item, sort_keys=True, ensure_ascii=False)
+
+    batch = Counter(identity(item) for item in items)
+    retry = Counter(identity(item) for item in fresh)
+    remaining = []
+    for item in _read_undelivered(repo_root):
+        item_key = identity(item)
+        if batch[item_key] == 0:
+            remaining.append(item)
+            continue
+        batch[item_key] -= 1
+        if not delivered and retry[item_key] > 0:
+            retry[item_key] -= 1
+            remaining.append({**item, "attempts": int(item.get("attempts") or 0) + 1})
+    saved = _write_undelivered(repo_root, remaining)
+    if delivered:
+        record_notice(repo_root, f"已补发 {len(fresh)} 条断连期间未送达的通知"
+                      + ("；队列更新失败，后续可能重复补发" if not saved else ""), source="delivery")
+    return {"sent": len(fresh) if delivered else 0, "dropped": dropped if saved else 0,
+            "kept": pending_undelivered_count(repo_root)}
 
 
 # ── 安静时段与重复合并（只管「推不推手机」，台账与 Desktop 实时广播照旧）──────────────

@@ -59,7 +59,7 @@ export type AssistantHostInfo = { kind: "resident"; name: string; reachable?: bo
 export type AssistantTab = "feed" | "goals" | "audit" | "schedule" | "identity";
 
 const TABS: Array<{ id: AssistantTab; label: string; icon: ReactNode }> = [
-  { id: "feed", label: "动态", icon: <List size={16} aria-hidden="true" /> },
+  { id: "feed", label: "今日", icon: <List size={16} aria-hidden="true" /> },
   { id: "goals", label: "目标", icon: <Target size={16} aria-hidden="true" /> },
   { id: "audit", label: "审核记录", icon: <ShieldCheck size={16} aria-hidden="true" /> },
   { id: "schedule", label: "定时", icon: <Clock3 size={16} aria-hidden="true" /> },

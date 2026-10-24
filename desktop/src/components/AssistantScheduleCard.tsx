@@ -26,6 +26,9 @@ export function AssistantScheduleCard({ item, connected, onToggle, onHistory }: 
     {item.scheduler_enabled === false ? <small>{item.kind === "goal" ? "这台电脑上没有通知渠道，目标提醒发不出去（需要常驻电脑）" : "这台电脑上调度没开，不会按时自动跑（只用 Desktop 时就是这样；要按时跑需要常驻电脑）"}</small>
       : item.next && <small>下次：{item.next.replace("T", " ")}</small>}
     {Boolean(item.failures) && <small>连续失败 {item.failures} 次</small>}
+    {item.last_status === "timed_out" && <small>上次巡检超时</small>}
+    {item.last_status === "cancelled" && <small>上次巡检被中断</small>}
+    {item.last_status === "running" && <small>上次巡检尚无完成记录，可能仍在执行或已中断</small>}
     {managed ? <div className="assistant-task-actions">
       <button disabled={!connected || busy} onClick={() => void act(() => onToggle(item))}>{item.enabled ? "暂停" : "恢复"}</button>
       <button disabled={!connected || busy} onClick={() => void act(async () => setRuns(await onHistory(item)))}>执行记录</button>
