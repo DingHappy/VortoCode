@@ -211,10 +211,10 @@ async def test_web_assembly_and_http_share_runner_updates_and_handoff(tmp_path, 
     assert delegations.get_dispatch_service is task_dispatch.get_dispatch_service
     assert task_dispatch.get_dispatch_service().runner is runner
     agent = realtime._new_agent()
-    agent._web_audit_holder["session"] = "sid-other"
+    realtime.turn_bindings(agent).session = "sid-other"
     with pytest.raises(CollaborationConflict):
         await agent.tools["task_answer"].handler(args)
-    agent._web_audit_holder["session"] = "sid-owner"
+    realtime.turn_bindings(agent).session = "sid-owner"
     answer = json.loads(await agent.tools["task_answer"].handler(args))
     assert answer["status"] == "queued" and handoffs == []
     await runner.join(task.id)
@@ -265,7 +265,7 @@ async def test_real_service_child_asks_parent_answers_and_bounded_child_resumes(
     await runner.join(task.id)
     assert dispatch.get("owner", task.id).status == "blocked" and runner.active_count == 0
     parent = realtime._new_agent()
-    parent._web_audit_holder["session"] = "sid-owner"
+    realtime.turn_bindings(parent).session = "sid-owner"
     task = json.loads(await parent.tools["task_status"].handler({"task_id": task.id}))["task"]
     args = {"task_id": task["task_id"], "round": task["questions"][0]["round"],
             "question_id": task["questions"][0]["id"], "answer": "用户已明确选择测试环境"}

@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 
 from src.gateway.session_store import load_session, save_session
+from src.gateway.turn_bindings import TurnBindings
 from src.gateway.turn_digest import recent_turns
 from src.im.bridge import IMBridge
 
@@ -15,7 +16,7 @@ def _bridge(tmp_path, reply="宁波今天晴。"):
     bridge.workspace_scope = "general"
     bridge.mode = "plan"
     bridge._edits = False
-    bridge._confirm_holder, bridge._progress_holder = {"fn": None}, {"fn": None}
+    bridge._bindings = TurnBindings(session="im")
 
     class _Agent:
         history: list = []

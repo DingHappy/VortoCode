@@ -6,6 +6,8 @@ P.make_event 构造/P.parse_event 校验，新事件类型必须先在 protocol 
 import asyncio
 import os
 import re
+import weakref
+from typing import Any
 
 from fastapi import Request
 
@@ -13,6 +15,7 @@ from src.gateway import protocol as P
 from src.gateway.sessions import SessionTable, SessionCapacityError
 from src.gateway.main_conversation import set_main_conversation_host
 from src.gateway.session_event_stream import SessionEventStream
+from src.gateway.turn_bindings import TurnBindings
 from src.gateway.session_actor import (
     ActorContext, SessionActors, MAX_PROMPT_QUEUE as _MAX_PROMPT_QUEUE,
     clean_prompt_item, new_prompt_item as _new_prompt_item,
@@ -368,17 +371,23 @@ async def _send_session_event_replay(websocket, raw_after_seq: Any, raw_limit: A
     await _EVENT_STREAM.replay(_session_key(websocket), websocket, raw_after_seq, raw_limit)
 
 
+_TURN_BINDINGS: "weakref.WeakKeyDictionary[Any, TurnBindings]" = weakref.WeakKeyDictionary()
+
+
+def turn_bindings(agent) -> TurnBindings:
+    """该会话 agent 的回合回调换绑点；装配时登记，未登记的 agent（测试替身）拿到空绑定（确认即拒）。"""
+    bindings = _TURN_BINDINGS.get(agent)
+    if bindings is None:
+        bindings = _TURN_BINDINGS[agent] = TurnBindings(session="web")
+    return bindings
+
+
 def _new_agent():
-    """Web 端薄壳：装配走 gateway 的单一工厂（kind="web"，含制品工具）；端侧只留 holder 模式——
-    confirm/progress 每回合重绑到当前连接（见 _run_agent_turn），无回合上下文时 confirm 默认拒绝。"""
+    """Web 端薄壳：装配走 gateway 的单一工厂（kind="web"，含制品工具）；端侧回调全部经 TurnBindings——
+    每回合重绑到当前连接（见 _run_agent_turn），无回合上下文时 confirm 默认拒绝。"""
     import os
     from src.gateway.agent_session import build_session
-    confirm_holder = {"fn": None}
-    progress_holder = {"fn": None}                 # dev 流水线进度 → 每回合重绑到当前 ws 的 agent_say
-    diff_holder = {"fn": None}                     # 确认前 diff 推送 → 每回合重绑到当前 ws 的 agent_diff
-    workspace_holder = {"fn": None}                # 范围升级请求 → workspace_required
-    tool_event_holder = {"fn": None}               # 结构化工具 start/finish → agent_tool
-    audit_holder = {"session": "web", "mode": "plan"}
+    bindings = TurnBindings(session="web")
     repo_root = os.getcwd()
 
     def _task_update(task) -> None:
@@ -399,36 +408,12 @@ def _new_agent():
         from src.web.task_dispatch import get_dispatch_service
         return get_dispatch_service(repo_root).reconcile_dependencies(owner, task_id, round_number)
 
-    async def _confirm(message: str) -> bool:
-        fn = confirm_holder["fn"]
-        return bool(await fn(message)) if fn is not None else False
-
-    def _progress(msg: str) -> None:               # 同步、best-effort：长流水线边跑边播，不让前端干等
-        fn = progress_holder["fn"]
-        if fn is not None:
-            fn(msg)
-
-    def _diff(title: str, diff: str) -> None:      # 同步、best-effort（发射端已兜异常，这里只转发）
-        fn = diff_holder["fn"]
-        if fn is not None:
-            fn(title, diff)
-
-    def _workspace_required(scope: str, reason: str, task: str) -> None:
-        fn = workspace_holder["fn"]
-        if fn is not None:
-            fn(scope, reason, task)
-
-    def _tool_event(stage: str, payload: dict) -> None:
-        fn = tool_event_holder["fn"]
-        if fn is not None:
-            fn(stage, payload)
-
     def _audit_tool(name: str, args: dict, result: str) -> None:
         from src.gateway.audit import record_tool_audit
 
         record_tool_audit(
             repo_root,
-            session=audit_holder["session"], mode=audit_holder["mode"],
+            session=bindings.session, mode=bindings.mode,
             name=name, args=args, result=result,
         )
 
@@ -437,7 +422,7 @@ def _new_agent():
 
         record_decision_audit(
             repo_root,
-            session=audit_holder["session"], mode=audit_holder["mode"],
+            session=bindings.session, mode=bindings.mode,
             operation=operation, decision=decision, tainted=tainted,
         )
 
@@ -449,11 +434,13 @@ def _new_agent():
     # 只有 Desktop 托管且明确进入 Scratch/Project 的进程才拿本机能力。普通 Web 入口保持
     # external profile；General 即使由 Desktop 启动也绝不获得 host_process/credentials。
     desktop_trusted = os.getenv("VORTOCODE_DESKTOP_SIDECAR") == "1" and workspace_scope != GENERAL
-    agent = build_session(repo_root, kind="web", confirm=_confirm, on_progress=_progress,
-                          can_ask_human=True, on_diff=_diff, on_tool=_audit_tool,
-                          on_tool_event=_tool_event,
+    agent = build_session(repo_root, kind="web", confirm=bindings.ask,
+                          on_progress=bindings.emit_progress,
+                          can_ask_human=True, on_diff=bindings.emit_diff, on_tool=_audit_tool,
+                          on_tool_event=bindings.emit_tool_event,
+                          on_plan=bindings.emit_plan,
                           on_decision=_audit_decision,
-                          task_owner=lambda: audit_holder["session"],
+                          task_owner=lambda: bindings.session,
                           on_task_update=_task_update,
                           answer_task_question=_answer_task_question,
                           release_task_dependencies=_release_task_dependencies,
@@ -464,13 +451,8 @@ def _new_agent():
                           trust_level=lambda: get_trust_level(repo_root),
                           workspace_scope=workspace_scope,
                           allow_local_files=os.getenv("VORTOCODE_DESKTOP_SIDECAR") == "1",
-                          on_workspace_required=_workspace_required)
-    agent._web_confirm_holder = confirm_holder     # _run_agent_turn 每回合把它指向当前 ws
-    agent._web_progress_holder = progress_holder
-    agent._web_diff_holder = diff_holder
-    agent._web_workspace_holder = workspace_holder
-    agent._web_tool_event_holder = tool_event_holder
-    agent._web_audit_holder = audit_holder
+                          on_workspace_required=bindings.emit_workspace_required)
+    _TURN_BINDINGS[agent] = bindings
     return agent
 
 
@@ -490,15 +472,10 @@ async def _ensure_mcp(agent, say) -> None:
     try:
         from src.agents.mcp_session import connect_agent
 
-        async def _mcp_confirm(message: str) -> bool:
-            # MCP 权限规则里 action=ask 的工具 → 真的问人：复用本回合已绑到当前 ws 的确认门
-            # （_run_agent_turn 里 holder["fn"] = _make_ws_confirm）。拿不到就拒（fail-closed）。
-            holder = getattr(agent, "_web_confirm_holder", None)
-            fn = holder.get("fn") if holder else None
-            return bool(await fn(message)) if fn is not None else False
-
+        # MCP 权限规则里 action=ask 的工具 → 真的问人：复用本回合已绑到当前 ws 的确认门
+        # （_run_agent_turn 里 bind(confirm=_make_ws_confirm)）。拿不到就拒（fail-closed）。
         from src.gateway.workspace_scope import current_workspace_scope
-        state = await connect_agent(agent, os.getcwd(), confirm=_mcp_confirm,
+        state = await connect_agent(agent, os.getcwd(), confirm=turn_bindings(agent).ask,
                                     workspace_scope=current_workspace_scope(), no_config_ok=True)
         if state.get('tool_count'):
             say(f"🔌 接入 {state['tool_count']} 个 MCP 工具")
@@ -1361,12 +1338,9 @@ async def _run_workspace_edit(websocket, path: str, content: str, expected_sha25
 
     agent = _ws_agent(websocket)
     q: asyncio.Queue = asyncio.Queue()
-    holder = getattr(agent, "_web_confirm_holder", None)
-    if holder is not None:
-        holder["fn"] = _make_ws_confirm(websocket, q)
-    audit_holder = getattr(agent, "_web_audit_holder", None)
-    if audit_holder is not None:
-        audit_holder.update(session=_session_key(websocket), mode="build")
+    bindings = turn_bindings(agent)
+    bindings.bind(confirm=_make_ws_confirm(websocket, q))
+    bindings.session, bindings.mode = _session_key(websocket), "build"
 
     def agent_say(message):
         q.put_nowait(P.make_event(P.AGENT_SAY, text=str(message)))
@@ -1454,8 +1428,7 @@ async def _run_workspace_edit(websocket, path: str, content: str, expected_sha25
                 fallback=websocket,
             )
     finally:
-        if holder is not None:
-            holder["fn"] = None
+        bindings.unbind("confirm")
         key = _session_key(websocket)
         if _WS_AGENT_TASKS.get(key) is asyncio.current_task():
             _WS_AGENT_TASKS.pop(key, None)
@@ -1603,13 +1576,10 @@ async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list
         start_working()
         q.put_nowait(P.make_event(P.AGENT_PLAN, items=plan))
 
-    agent._on_plan = agent_plan                  # 计划更新 → 推前端
-    holder = getattr(agent, "_web_confirm_holder", None)
-    if holder is not None:                    # 把 run_command 等的确认门绑到当前连接
-        holder["fn"] = _make_ws_confirm(websocket, q)
-    audit_holder = getattr(agent, "_web_audit_holder", None)
-    if audit_holder is not None:
-        audit_holder.update(session=_session_key(websocket), mode=mode)
+    bindings = turn_bindings(agent)
+    # 计划更新 → 推前端；run_command 等的确认门绑到当前连接
+    bindings.bind(plan=agent_plan, confirm=_make_ws_confirm(websocket, q))
+    bindings.session, bindings.mode = _session_key(websocket), mode
 
     def agent_say(m):
         # 管家消息（上下文压缩、单段预算、逐个工具的回显）只给终端看：图形端的时间线里它们
@@ -1622,71 +1592,64 @@ async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list
         start_working()
         q.put_nowait(P.make_event(P.AGENT_SAY, text=m))
 
-    ph = getattr(agent, "_web_progress_holder", None)
-    if ph is not None:                        # dev 流水线进度（并行实现/修复/接力/集成验证）也走 agent_say
-        ph["fn"] = agent_say
+    bindings.bind(
+        progress=agent_say,                   # dev 流水线进度（并行实现/修复/接力/集成验证）也走 agent_say
+        # 确认前的结构化 diff → agent_diff（attach TUI/桌面端渲染）
+        diff=lambda title, diff: q.put_nowait(
+            P.make_event(P.AGENT_DIFF, diff=str(diff), title=str(title))),
+        workspace_required=lambda scope, reason, task: q.put_nowait(P.make_event(
+            P.WORKSPACE_REQUIRED, scope=str(scope), reason=str(reason), task=str(task))),
+    )
 
-    dh = getattr(agent, "_web_diff_holder", None)
-    if dh is not None:                        # 确认前的结构化 diff → agent_diff（attach TUI/桌面端渲染）
-        dh["fn"] = lambda title, diff: q.put_nowait(
-            P.make_event(P.AGENT_DIFF, diff=str(diff), title=str(title)))
+    def tool_event(stage: str, payload: dict) -> None:
+        from src.gateway.audit import sanitize_audit_value
 
-    wh = getattr(agent, "_web_workspace_holder", None)
-    if wh is not None:
-        wh["fn"] = lambda scope, reason, task: q.put_nowait(P.make_event(
-            P.WORKSPACE_REQUIRED, scope=str(scope), reason=str(reason), task=str(task)))
-
-    th = getattr(agent, "_web_tool_event_holder", None)
-    if th is not None:
-        def tool_event(stage: str, payload: dict) -> None:
-            from src.gateway.audit import sanitize_audit_value
-
-            if stage in {"hook_start", "hook_finish"}:
-                start_working()
-                name = str(payload.get("name") or "hook")
-                status = str(payload.get("status") or ("running" if stage == "hook_start" else "succeeded"))
-                labels = {
-                    "running": f"正在运行 Hook · {name}",
-                    "succeeded": f"Hook 已完成 · {name}",
-                    "failed": f"Hook 失败但已隔离 · {name}",
-                    "timed_out": f"Hook 超时但已隔离 · {name}",
-                    "blocked": f"Hook 已阻止工具 · {name}",
-                }
-                q.put_nowait(P.make_event(
-                    P.AGENT_HOOK,
-                    id=str(payload.get("id") or f"hook-{uuid.uuid4().hex[:12]}"),
-                    name=name,
-                    event=str(payload.get("event") or "unknown"),
-                    tool=str(payload.get("tool") or "") or None,
-                    status=status,
-                    summary=labels.get(status, f"Hook · {name}"),
-                    message=str(sanitize_audit_value(payload.get("message") or ""))[:1000] or None,
-                    error=str(sanitize_audit_value(payload.get("error") or ""))[:1000] or None,
-                    duration_ms=max(0, int(payload.get("duration_ms") or 0)) if stage == "hook_finish" else None,
-                    stop_execution=bool(payload.get("stop_execution")) if stage == "hook_finish" else None,
-                ))
-                return
-
-            raw_args = payload.get("args") if isinstance(payload.get("args"), dict) else {}
-            name = str(payload.get("name") or "tool")
-            if stage == "start":
-                start_working()
-                status = "running"
-            else:
-                status = str(payload.get("status") or "succeeded")
-            fields: Dict[str, Any] = {
-                "id": str(payload.get("id") or f"tool-{uuid.uuid4().hex[:12]}"),
-                "name": name,
-                "status": status,
-                "summary": _tool_summary(name, raw_args),
-                "args": sanitize_audit_value(raw_args),
+        if stage in {"hook_start", "hook_finish"}:
+            start_working()
+            name = str(payload.get("name") or "hook")
+            status = str(payload.get("status") or ("running" if stage == "hook_start" else "succeeded"))
+            labels = {
+                "running": f"正在运行 Hook · {name}",
+                "succeeded": f"Hook 已完成 · {name}",
+                "failed": f"Hook 失败但已隔离 · {name}",
+                "timed_out": f"Hook 超时但已隔离 · {name}",
+                "blocked": f"Hook 已阻止工具 · {name}",
             }
-            if stage != "start":
-                fields["result"] = sanitize_audit_value(payload.get("result"))
-                fields["duration_ms"] = max(0, int(payload.get("duration_ms") or 0))
-            q.put_nowait(P.make_event(P.AGENT_TOOL, **fields))
+            q.put_nowait(P.make_event(
+                P.AGENT_HOOK,
+                id=str(payload.get("id") or f"hook-{uuid.uuid4().hex[:12]}"),
+                name=name,
+                event=str(payload.get("event") or "unknown"),
+                tool=str(payload.get("tool") or "") or None,
+                status=status,
+                summary=labels.get(status, f"Hook · {name}"),
+                message=str(sanitize_audit_value(payload.get("message") or ""))[:1000] or None,
+                error=str(sanitize_audit_value(payload.get("error") or ""))[:1000] or None,
+                duration_ms=max(0, int(payload.get("duration_ms") or 0)) if stage == "hook_finish" else None,
+                stop_execution=bool(payload.get("stop_execution")) if stage == "hook_finish" else None,
+            ))
+            return
 
-        th["fn"] = tool_event
+        raw_args = payload.get("args") if isinstance(payload.get("args"), dict) else {}
+        name = str(payload.get("name") or "tool")
+        if stage == "start":
+            start_working()
+            status = "running"
+        else:
+            status = str(payload.get("status") or "succeeded")
+        fields: Dict[str, Any] = {
+            "id": str(payload.get("id") or f"tool-{uuid.uuid4().hex[:12]}"),
+            "name": name,
+            "status": status,
+            "summary": _tool_summary(name, raw_args),
+            "args": sanitize_audit_value(raw_args),
+        }
+        if stage != "start":
+            fields["result"] = sanitize_audit_value(payload.get("result"))
+            fields["duration_ms"] = max(0, int(payload.get("duration_ms") or 0))
+        q.put_nowait(P.make_event(P.AGENT_TOOL, **fields))
+
+    bindings.bind(tool_event=tool_event)
 
     def agent_emit(m):
         start_responding()
@@ -1808,8 +1771,7 @@ async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list
     finally:
         key = _session_key(websocket)
         stop_reason = _ACTORS.release(key, asyncio.current_task())
-        if th is not None:
-            th["fn"] = None
+        bindings.unbind("tool_event")
         _persist_session(websocket)           # 回合收尾存盘（含中断）：跨服务器重启不丢对话
         _schedule_turn_digest(key, rid)       # 后台写工作记录摘要（助理模式的动态流）
         await _advance_prompt_queue(websocket, reason=stop_reason)

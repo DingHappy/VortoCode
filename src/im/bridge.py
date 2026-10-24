@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 from .channel import ChannelAdapter
+from src.gateway.turn_bindings import TurnBindings
 from src.utils.exc_utils import _exc_text
 
 _MARKUP = re.compile(r"\[/?[a-zA-Z][^\]]*\]")     # 去 Rich 标记（say 里的 [b]…[/b] 等）
@@ -171,9 +172,8 @@ class IMBridge:
         self._queue_cap = 3
         self._ignored = 0                                # 白名单外的入站计数
         self._ignored_no_mention = 0                     # 群聊里没 @ 到本机器人的入站计数
-        self._confirm_holder = {"fn": None}
-        self._progress_holder = {"fn": None}
-        self._tool_holder = {"fn": None}                 # 本回合的工具生命周期（动态里的工具数/图标靠它）
+        # confirm/progress/工具生命周期每回合重绑到当前聊天（动态里的工具数/图标靠 tool_event）
+        self._bindings = TurnBindings(session="im")
         # 不支持编辑的通道（钉钉）进度只能发新消息 → 放慢节流免刷屏
         self._edits = getattr(adapter, "edits_supported", True)
         self._progress_interval = 2.0 if self._edits else 10.0
@@ -222,23 +222,10 @@ class IMBridge:
 
     # ------------------------------------------------------------ 建 agent（第四端：走 gateway 单一工厂）
     def _build_agent(self):
-        """薄壳：装配走 gateway 的单一工厂（kind="im"，最小面）；端侧只留 holder 模式
+        """薄壳：装配走 gateway 的单一工厂（kind="im"，最小面）；端侧回调经 TurnBindings
         （confirm/progress 每回合重绑到当前聊天，见 _run_turn）+ 会话磁盘复原。"""
         from src.gateway.agent_session import build_session
-
-        async def _confirm(message: str) -> bool:
-            fn = self._confirm_holder["fn"]
-            return bool(await fn(message)) if fn is not None else False
-
-        def _progress(msg: str) -> None:
-            fn = self._progress_holder["fn"]
-            if fn is not None:
-                fn(msg)
-
-        def _tool_event(stage: str, payload: dict) -> None:
-            fn = getattr(self, "_tool_holder", {}).get("fn")
-            if fn is not None:
-                fn(stage, payload)
+        bindings = self._bindings
 
         # IM 有配对的主人在手机那头（send_confirm 按钮/文本应答）→ 问得到人；无自动放行。
         # 显式声明：内核 gate 默认最严格（问不到人），忘了声明只会更严、不会更松。
@@ -248,10 +235,11 @@ class IMBridge:
         persona = getattr(self, "_persona", "") or read_persona(self.repo_root)
         if getattr(self, "workspace_scope", "") == "general":
             persona = ""        # 通用范围（常驻助理）：服务对象随助理资料统一注入，这里不再重复
-        agent = build_session(self.repo_root, kind="im", confirm=_confirm,
+        agent = build_session(self.repo_root, kind="im", confirm=bindings.ask,
                               with_dev=getattr(self, "_with_dev", True),
                               extra_system=(f"【服务对象】{persona}" if persona else None),
-                              on_progress=_progress, on_tool_event=_tool_event, llm=self._llm,
+                              on_progress=bindings.emit_progress,
+                              on_tool_event=bindings.emit_tool_event, llm=self._llm,
                               can_ask_human=True,
                               untrusted_input=True, workspace_scope=self.workspace_scope)
         self._restore_session(agent)
@@ -1008,8 +996,8 @@ class IMBridge:
 
         q: asyncio.Queue = asyncio.Queue()
         confirm = self._make_confirm(q)
-        self._confirm_holder["fn"] = confirm
-        self._progress_holder["fn"] = lambda m: q.put_nowait(("progress", _strip(str(m))))
+        self._bindings.bind(confirm=confirm,
+                            progress=lambda m: q.put_nowait(("progress", _strip(str(m)))))
 
         async def _inner():
             try:
@@ -1286,12 +1274,10 @@ class IMBridge:
             self._record("user", text, rid)
         reply_holder: dict = {}
         q: asyncio.Queue = asyncio.Queue()
-        self._confirm_holder["fn"] = self._make_confirm(q)
-        self._progress_holder["fn"] = lambda msg: q.put_nowait(("progress", str(msg)))
         tools_used: list = []
-        if not hasattr(self, "_tool_holder"):
-            self._tool_holder = {"fn": None}
-        self._tool_holder["fn"] = _tool_recorder(rid, tools_used)
+        self._bindings.bind(confirm=self._make_confirm(q),
+                            progress=lambda msg: q.put_nowait(("progress", str(msg))),
+                            tool_event=_tool_recorder(rid, tools_used))
 
         def _say(m: str) -> None:
             q.put_nowait(("progress", _strip(m)))
@@ -1383,10 +1369,7 @@ class IMBridge:
                         await self.adapter.edit_text(pid, "✅ " + "\n".join(lines[-12:]))
                     await self._safe_send(str(payload) or "（无输出）")
         finally:
-            self._confirm_holder["fn"] = None
-            self._progress_holder["fn"] = None
-            if hasattr(self, "_tool_holder"):
-                self._tool_holder["fn"] = None
+            self._bindings.unbind("confirm", "progress", "tool_event")
             try:
                 await inner
             except asyncio.CancelledError:
