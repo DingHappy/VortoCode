@@ -10,7 +10,7 @@ export interface FeedRecordExpansion {
   onToggle: (id: string, open: boolean) => void;
 }
 
-function FeedEntry({ item, onOpen, now, recordExpansion }: { item: FeedItem; onOpen: (item: FeedItem) => void; now: Date; recordExpansion?: FeedRecordExpansion }) {
+function FeedEntry({ item, onOpen, onInspect, now, recordExpansion }: { item: FeedItem; onOpen: (item: FeedItem) => void; onInspect?: (item: FeedItem) => void; now: Date; recordExpansion?: FeedRecordExpansion }) {
   const navigable = Boolean(item.dispatchId || item.taskId || item.session || item.codexActionId || item.confirmationId);
   const validTime = Number.isFinite(Date.parse(item.at));
   const row = <>
@@ -24,10 +24,10 @@ function FeedEntry({ item, onOpen, now, recordExpansion }: { item: FeedItem; onO
         {validTime && <time dateTime={item.at} title={new Date(item.at).toLocaleString("zh-CN")}>{feedTime(item, now)}</time>}
       </small>
     </span>
-    {navigable ? <ChevronRight className="activity-feed-chevron" size={14} aria-hidden="true" />
+    {navigable || onInspect ? <ChevronRight className="activity-feed-chevron" size={14} aria-hidden="true" />
       : <ChevronDown className="activity-feed-chevron" size={14} aria-hidden="true" />}
   </>;
-  return navigable
+  return onInspect ? <button className={`activity-feed-item ${item.status}`} onClick={() => onInspect(item)}>{row}</button> : navigable
     ? <button className={`activity-feed-item ${item.status}`} onClick={() => onOpen(item)}>{row}</button>
     : <details className={`activity-feed-record ${item.status}`} open={recordExpansion ? recordExpansion.openIds.has(item.id) : undefined}
       onToggle={recordExpansion ? event => recordExpansion.onToggle(item.id, event.currentTarget.open) : undefined}>
@@ -52,12 +52,13 @@ function FeedIcon({ status, kind }: { status: FeedStatus; kind?: FeedKind }) {
  * 右侧「任务动态」：对话里交代出去的事，在这里按时间看结果（参考 Muse）。
  * 「等你处理」永远置顶；可只看本对话发起的。
  */
-export function ActivityFeed({ items, scope, onScope, currentSession, onOpen, now = new Date(), emptyMessage, recordExpansion }: {
+export function ActivityFeed({ items, scope, onScope, currentSession, onOpen, onInspect, now = new Date(), emptyMessage, recordExpansion }: {
   items: FeedItem[];
   scope: "all" | "session";
   onScope?: (scope: "all" | "session") => void;
   currentSession?: string;
   onOpen: (item: FeedItem) => void;
+  onInspect?: (item: FeedItem) => void;
   now?: Date;
   emptyMessage?: string;
   recordExpansion?: FeedRecordExpansion;
@@ -77,7 +78,7 @@ export function ActivityFeed({ items, scope, onScope, currentSession, onOpen, no
     {groups.map((group) => <section key={group.key} className={`activity-feed-group ${group.key === "waiting" ? "waiting" : ""}`}>
       <h5>{group.label}</h5>
       <ul>{group.items.map((item) => <li key={item.id}>
-        <FeedEntry item={item} onOpen={onOpen} now={now} recordExpansion={recordExpansion} />
+        <FeedEntry item={item} onOpen={onOpen} onInspect={onInspect} now={now} recordExpansion={recordExpansion} />
       </li>)}</ul>
     </section>)}
   </section>;

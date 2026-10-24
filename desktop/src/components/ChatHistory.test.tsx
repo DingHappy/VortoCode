@@ -42,3 +42,12 @@ it("uses workbench authors outside assistant mode", () => {
   expect(html).toContain('<div class="message-author">你</div>');
   expect(html).toContain('<div class="message-author">VortoCode</div>');
 });
+
+it("exposes exact turn anchors and highlights only the selected turn", () => {
+  const html = renderToStaticMarkup(<ChatHistory {...props} focusedRid="r1"
+    messages={[...messages, { id: "other", rid: "r2", role: "user", text: "别的请求" }]} />);
+  expect(html.match(/located-turn/g)).toHaveLength(2);
+  expect(html.match(/tabindex="-1"/g)).toHaveLength(2);
+  expect(html).toContain('data-turn-rid="r1" data-message-role="user"');
+  expect(html).toContain('class="message user" data-turn-rid="r2"');
+});

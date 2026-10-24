@@ -25,3 +25,9 @@
 .workday-item-link { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--daily-accent); }
 .workday-more { display: block; margin: 10px auto; padding: 6px 10px; border: 0; border-radius: 6px; background: var(--n3); color: var(--n11); font-size: 12px; cursor: pointer; }
 .workday-codex-detail { margin: 12px 16px; font-size: 12px; }
+.resident-computer-card { margin: 0 16px 16px; padding: 12px; border: 1px solid var(--n5); border-radius: 10px; background: var(--n2); color: var(--n12); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.resident-computer-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.resident-computer-heading button { border: 1px solid var(--n5); border-radius: 6px; padding: 4px 8px; background: var(--n1); color: var(--n11); cursor: pointer; }
+.resident-computer-heading button:disabled { opacity: .5; cursor: default; }
+.resident-computer-card p { margin: 8px 0 0; }
+.resident-computer-card .resident-computer-note, .resident-computer-card small { color: var(--n10); font-size: 11px; }

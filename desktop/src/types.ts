@@ -22,6 +22,7 @@ export interface RuntimeSnapshot {
 
 export interface ProtocolEvent {
   type: string;
+  recorded_at?: string;
   rid?: string;
   seq?: number;
   v?: number;
@@ -117,6 +118,11 @@ export interface AgentTurn {
   tools: number;
   tool_names?: string[];
   at: string;
+}
+
+export interface AgentTurnDetail {
+  sid: string; rid: string; request: string; reply: string; events: ProtocolEvent[];
+  has_reply: boolean; truncated: boolean; source: "session_archive";
 }
 
 export interface AssistantProfile {

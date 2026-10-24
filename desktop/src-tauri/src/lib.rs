@@ -15,9 +15,11 @@ use url::{Host, Url};
 mod account;
 mod gateway_process;
 mod remote;
+mod resident_desktop;
 mod workspace_files;
 use gateway_process::*;
 use remote::*;
+use resident_desktop::*;
 use workspace_files::*;
 
 const MAX_WORKSPACE_FILES: usize = 6_000;
@@ -2379,6 +2381,7 @@ pub fn run() {
         .manage(GatewayProcess::default())
         .manage(DesktopLlmProfileStore::default())
         .manage(RemoteWsRegistry::default())
+        .manage(ResidentDesktopManager::default())
         .manage(account::AccountState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -2401,6 +2404,14 @@ pub fn run() {
             get_experimental_workers,
             set_experimental_workers,
             get_desktop_control,
+            get_resident_desktop,
+            refresh_resident_desktop,
+            save_resident_desktop_target,
+            check_resident_desktop,
+            open_resident_desktop,
+            open_resident_desktop_workspace,
+            release_resident_desktop_workspace,
+            close_resident_desktop,
             check_for_update,
             install_update,
             restart_after_update,
@@ -2460,6 +2471,7 @@ pub fn run() {
         }
 
         if matches!(event, tauri::RunEvent::Exit) {
+            app_handle.state::<ResidentDesktopManager>().close(None);
             let state = app_handle.state::<GatewayProcess>();
             if let Ok(mut supervisor) = state.0.lock() {
                 let runtimes = std::mem::take(&mut supervisor.runtimes);

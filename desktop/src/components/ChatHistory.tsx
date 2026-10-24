@@ -7,7 +7,7 @@ import { TurnTimeline } from "./TurnTimeline";
 
 /** 流式正文与输入草稿更新时，历史消息不重新解析；时间线状态仍由原回合资料驱动。 */
 export const ChatHistory = memo(function ChatHistory({ messages, activityGroups, busy, activeTurnRid,
-  assistant, name, avatar }: {
+  assistant, name, avatar, focusedRid }: {
   messages: ConversationMessage[];
   activityGroups: Map<string, TurnActivity[]>;
   busy: boolean;
@@ -15,12 +15,15 @@ export const ChatHistory = memo(function ChatHistory({ messages, activityGroups,
   assistant: boolean;
   name: string;
   avatar: AssistantAvatar | null;
+  focusedRid?: string | null;
 }) {
   const outputRids = useMemo(() => new Set(messages
     .filter(message => message.role === "assistant" && message.text.trim().length > 0)
     .map(message => message.rid)), [messages]);
   return <>{messages.map(message => <Fragment key={message.id}>
-    <article className={`message ${message.role}`}>
+    <article className={`message ${message.role}${focusedRid && message.rid === focusedRid ? " located-turn" : ""}`}
+      data-turn-rid={message.rid} data-message-role={message.role}
+      tabIndex={focusedRid && message.rid === focusedRid ? -1 : undefined}>
       {assistant && message.role === "assistant"
         ? <div className="message-author with-avatar"><AssistantAvatarImage name={name} avatar={avatar} size={22} />{name}
           {message.source && <span className="message-source">回复在手机上</span>}</div>

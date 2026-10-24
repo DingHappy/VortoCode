@@ -200,3 +200,50 @@ def recent_turns(repo_root: str, limit: int = 100) -> List[Dict[str, Any]]:
             })
     turns.sort(key=lambda turn: (turn["at"] or "", turn.get("updated") or 0), reverse=True)
     return turns[:max(1, min(int(limit), 200))]
+
+
+def read_turn_detail(repo_root: str, sid: str, rid: str) -> Optional[Dict[str, Any]]:
+    """Read one recorded turn in this runtime. Never return model history or run a model."""
+    from src.gateway.audit import sanitize_audit_value
+    from src.gateway.session_store import load_session
+    from src.utils.ids import safe_id
+    import math
+
+    sid = sid.removeprefix("sid-")
+    if not sid or len(sid) > 120 or safe_id(sid) != sid or not rid or len(rid) > 160:
+        return None
+    data = load_session(repo_root, f"sid-{sid}")
+    if not data:
+        return None
+    transcript = [item for item in data["transcript"] if isinstance(item, dict)]
+    request, reply = turn_parts(transcript, rid)
+    if request is None:
+        return None
+    truncated = False
+
+    def text(value, limit=12000):
+        nonlocal truncated
+        raw = str(value or "")
+        lines = [str(sanitize_audit_value(line)) for line in raw.splitlines()]
+        cleaned = "\n".join(lines)
+        truncated |= len(raw) > limit or any(len(line) > 360 for line in raw.splitlines())
+        return cleaned[:limit]
+
+    events = []
+    recorded = [event for event in data["activities"] if isinstance(event, dict)
+                and event.get("rid") == rid and event.get("type") in {"agent_phase", "agent_tool", "agent_hook"}]
+    truncated |= len(recorded) > 200
+    for event in recorded[-200:]:
+        shown = {key: text(event[key], 2000) for key in
+                 ("type", "id", "rid", "status", "label", "phase", "name", "summary", "result", "message", "error", "event", "tool", "recorded_at")
+                 if key in event}
+        if isinstance(event.get("args"), dict):
+            shown["args"] = sanitize_audit_value(event["args"])
+        if (isinstance(event.get("duration_ms"), (int, float)) and not isinstance(event["duration_ms"], bool)
+                and math.isfinite(event["duration_ms"]) and event["duration_ms"] >= 0):
+            shown["duration_ms"] = event["duration_ms"]
+        events.append(shown)
+    return {"sid": sid, "rid": rid, "request": text(request.get("text")),
+            "reply": text((reply or {}).get("text")), "events": events,
+            "has_reply": reply is not None, "truncated": truncated,
+            "source": "session_archive"}

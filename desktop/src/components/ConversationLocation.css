@@ -1,0 +1,8 @@
+.conversation-body { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.conversation-body>.conversation-scroll { flex: 1; min-height: 0; }
+.conversation-location { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 24px 0; padding: 10px 12px; border: 1px solid var(--n5); border-radius: 9px; background: var(--n1); color: var(--n11); font-size: 12px; line-height: 1.6; }
+.conversation-location>div { display: flex; gap: 6px; flex: none; }
+.conversation-location button { min-height: 30px; padding: 4px 9px; border: 1px solid var(--n5); border-radius: 6px; background: var(--n2); color: var(--n12); font-size: 12px; cursor: pointer; }
+.conversation-location button:focus-visible { outline: 2px solid var(--daily-accent-text); outline-offset: 2px; }
+.message.located-turn { outline: 2px solid var(--daily-accent-text); outline-offset: 6px; border-radius: 10px; scroll-margin-block-start: 20px; }
+@media(max-width:700px) { .conversation-location { align-items: flex-start; flex-wrap: wrap; } }

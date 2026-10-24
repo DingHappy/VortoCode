@@ -6,33 +6,23 @@ import { ActivitySourcesNotice } from "./ActivitySourcesNotice";
 import { activityCoverage, type ActivitySource } from "../lib/activitySources";
 import { startWorkdayClock } from "../lib/assistantWorkdayReads";
 import "./AssistantActivity.css";
+import { ActivityDetailDialog, type ActivityDetailStep } from "./ActivityDetailDialog";
+import { ActivityRecordDialog } from "./ActivityRecordDialog";
+import type { GatewayClient } from "../gateway";
 
 /** Show the selected record where the user can see it, including after a long scroll. */
-export function AssistantActivityDetail({ title, children, onClose }: { title: string; children: ReactNode; onClose: () => void }) {
-  const ref = useRef<HTMLElement>(null);
-  useEffect(() => {
-    const previous = document.activeElement;
-    const detail = ref.current, activity = detail?.closest(".assistant-activity");
-    ref.current?.scrollIntoView({ block: "nearest" });
-    ref.current?.focus({ preventScroll: true });
-    return () => {
-      // A background update must not steal focus from another input or tab.
-      if (document.activeElement !== document.body && !detail?.contains(document.activeElement)) return;
-      const target = previous instanceof HTMLElement && previous.isConnected ? previous
-        : activity?.isConnected ? activity.querySelector<HTMLElement>('.assistant-activity-filters button[aria-pressed="true"]') : null;
-      target?.scrollIntoView({ block: "nearest" }); target?.focus({ preventScroll: true });
-    };
-  }, []);
-  return <section ref={ref} tabIndex={-1} className="assistant-activity-detail" aria-label={title}>
-    {children}<button className="assistant-activity-close" onClick={onClose}>收起详情</button>
-  </section>;
+export function AssistantActivityDetail({ title, children, onClose, steps, statusLabel }: {
+  title: string; children: ReactNode; onClose: () => void; steps?: ActivityDetailStep[]; statusLabel?: string;
+}) {
+  return <ActivityDetailDialog title={title} steps={steps} statusLabel={statusLabel} onClose={onClose}>{children}</ActivityDetailDialog>;
 }
 
 /** Activity stays visible; the workday projection is an optional overview. */
-export function AssistantActivity({ items, currentSession, connected, overview, children, onOpen, sources = [], onRefresh }: {
+export function AssistantActivity({ items, currentSession, connected, overview, children, onOpen, sources = [], onRefresh, client }: {
   items: FeedItem[]; currentSession?: string; connected: boolean;
   overview: ReactNode; children?: ReactNode; onOpen: (item: FeedItem) => void;
   sources?: ActivitySource[]; onRefresh?: () => void;
+  client?: Pick<GatewayClient,"getAgentActivityDetail"> | null;
 }) {
   const [, setClock] = useState(() => new Date());
   useEffect(() => startWorkdayClock(setClock, document), []);
@@ -40,6 +30,8 @@ export function AssistantActivity({ items, currentSession, connected, overview, 
   const now = Date.now();
   const coverage = activityCoverage(sources, connected, now);
   const [filter, setFilter] = useState<"all" | "waiting">("all");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = items.find(item => item.id === selectedId);
   const [openRecords, setOpenRecords] = useState<ReadonlySet<string>>(() => new Set());
   const itemsRef = useRef(items);
   itemsRef.current = items;
@@ -79,6 +71,7 @@ export function AssistantActivity({ items, currentSession, connected, overview, 
     {children}
     <div ref={listRef} className="assistant-activity-list">
       <ActivityFeed items={shown} scope="all" currentSession={currentSession} onOpen={onOpen}
+        onInspect={item => { if (item.confirmationId || item.codexActionId || item.dispatchId) onOpen(item); else setSelectedId(item.id); }}
         recordExpansion={{ openIds: openRecords, onToggle: (id, open) => {
           // Ignore delayed native toggle events for records no longer in this source.
           if (!itemsRef.current.some(item => item.id === id)) return;
@@ -95,5 +88,6 @@ export function AssistantActivity({ items, currentSession, connected, overview, 
         setFilter("all"); allRef.current?.focus({ preventScroll: true });
       }}>查看全部动态</button>}
     </div>
+    {selected && <ActivityRecordDialog key={selected.id} item={selected} client={client} onClose={() => setSelectedId(null)} onNavigate={() => onOpen(selected)} />}
   </section>;
 }

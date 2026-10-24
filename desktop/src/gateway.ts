@@ -409,6 +409,10 @@ export class GatewayClient {
     return payload.turns ?? [];
   }
 
+  async getAgentActivityDetail(sid: string, rid: string): Promise<import("./types").AgentTurnDetail> {
+    return this.readSnapshot(`/api/agent/activity/${encodeURIComponent(sid.replace(/^sid-/, ""))}/${encodeURIComponent(rid)}`);
+  }
+
   /** 常驻助理的名字与「关于你」（两端共用）。 */
   async getAssistantProfile(): Promise<AssistantProfile> {
     return this.request("/api/assistant/profile");
@@ -633,6 +637,11 @@ export class GatewayClient {
   async listResidentProjects(): Promise<ResidentProject[]> {
     const payload = await this.request<{ projects?: ResidentProject[] }>("/api/resident/projects");
     return Array.isArray(payload.projects) ? payload.projects : [];
+  }
+
+  async getResidentComputer(): Promise<unknown> {
+    const payload = await this.request<{ computer?: unknown }>("/api/resident/projects");
+    return payload.computer;
   }
 
   async getTask(id: string): Promise<TaskItem> {

@@ -39,7 +39,7 @@ it("counts the same visible pending records, including confirmations and Codex a
   const visible = html.slice(html.indexOf("</details>") + "</details>".length);
   expect(visible).toContain("当前对话有操作需要确认");
   expect(visible).toContain("拟发消息");
-  expect(visible.match(/<button class="activity-feed-item waiting"/g)).toHaveLength(2);
+  expect(visible.match(/<button class="activity-feed-item waiting"/g)).toHaveLength(3);
   expect(open).not.toHaveBeenCalled();
 });
 

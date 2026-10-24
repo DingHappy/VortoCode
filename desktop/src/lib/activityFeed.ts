@@ -12,7 +12,7 @@ export type FeedKind = "web" | "command" | "code" | "chat" | "task";
 export interface FeedItem {
   id: string;
   kind?: FeedKind;
-  /** 对话回合标识；当前导航进入所属会话，尚未精确定位到这一句。 */
+  /** 对话回合标识；普通与手机只读对话均可定位原消息。 */
   rid?: string;
   title: string;
   summary: string;
@@ -86,6 +86,7 @@ export function taskFeedItem(task: TaskItem): FeedItem {
     taskId: task.id,
     title: firstSentence(task.prompt, MAX_TITLE) || "未命名任务",
     summary,
+    detail: task.result || task.error || summary,
     status,
     sourceLabel: "后台任务",
     statusLabel: status === "done" ? "执行结束" : status === "running" && task.status === "queued" ? "排队中" : undefined,

@@ -31,6 +31,7 @@ import { UpdateCard } from "./settings/UpdateCard";
 import { VortoAccountCard } from "./settings/VortoAccountCard";
 import { MEMBER_KEY_SOURCE } from "../lib/vortoAccount";
 import { DesktopControlPane } from "./settings/DesktopControlPane";
+import { ResidentDesktopPane } from "./ResidentDesktopPane";
 import { ModelServices } from "./settings/ModelServices";
 import { CodexWatchCard } from "./settings/CodexWatchCard";
 import { ModelPicks } from "./settings/ModelPicks";
@@ -510,6 +511,7 @@ export function SettingsModal({
         {section === "abilities" && <>
           <CodexWatchCard hasResident={hasResident} readSnapshot={readCodexObserver} />
           <BrowserPane onRestartRuntime={onRestartRuntime} />
+          <ResidentDesktopPane />
           <DesktopControlPane onRestartRuntime={onRestartRuntime} />
           <h3 className="settings-subhead">插件与扩展</h3>
           <div className="settings-card">

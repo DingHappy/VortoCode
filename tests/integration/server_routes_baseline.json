@@ -12,6 +12,12 @@
     ]
   },
   {
+    "path": "/api/agent/activity/{sid}/{rid}",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
     "path": "/api/agent/sessions",
     "methods": [
       "GET"

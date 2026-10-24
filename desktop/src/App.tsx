@@ -10,6 +10,8 @@ import { activityCoverage, type ActivityRead, type ActivitySource, type Activity
 import { prepareAvatar } from "./lib/avatar";
 import { resolveMainChat } from "./lib/mainChat";
 import { ChatHistory } from "./components/ChatHistory";
+import { ConversationLocation } from "./components/ConversationLocation";
+import { useConversationLocation } from "./hooks/useConversationLocation";
 import { startPolling } from "./lib/polling";
 import { mergeRuntimeInboxes, observeRuntimeInboxes } from "./lib/runtimeInboxReads";
 import { AssistantRefreshQueue } from "./lib/assistantRefresh";
@@ -20,6 +22,9 @@ import { AssistantAudit, AssistantAvatarImage, AssistantStarterTips, AssistantId
 import { AssistantGoals } from "./components/AssistantGoals";
 import { codexActionFeedItem, confirmationFeedItem, dispatchFeedItem, isPhoneSession, noticeFeedItems, taskFeedItem, turnFeedItem, type FeedItem } from "./lib/activityFeed";
 import { AssistantActivity, AssistantActivityDetail } from "./components/AssistantActivity";
+import { ComputerLauncher, ComputerWorkspacePanel } from "./components/ComputerWorkspace";
+import { useComputerWorkspace } from "./hooks/useComputerWorkspace";
+import { dispatchDetailSteps } from "./components/ActivityRecordDialog";
 import { createConfirmationReply } from "./lib/confirm";
 import { ComposerCommands } from "./components/ComposerCommands";
 import { ContextStatus, SessionInfo } from "./components/SessionInfo";
@@ -289,6 +294,8 @@ function App() {
 
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const conversationLocation = useConversationLocation({ client: clientRef.current, sid: activeSid,
+    messages, container: conversationScrollRef, autoScroll: autoScrollRef });
   const [plan, setPlan] = useState<PlanItem[]>([]);
   const [activities, setActivities] = useState<TurnActivity[]>([]);
   const [previewView, setPreviewView] = useState<PreviewView>("plan");
@@ -351,6 +358,7 @@ function App() {
   });
   const [mainChatSid, setMainChatSid] = useState(() => { try { return localStorage.getItem(STORAGE_KEYS.mainChatSid) ?? ""; } catch { return ""; } });
   const [assistantTab, setAssistantTab] = useState<AssistantTab>("feed");
+  const computerWorkspace = useComputerWorkspace(appMode === "assistant" && mainView === "chat" && inspectorOpen);
   const [assistantGoalFocus, setAssistantGoalFocus] = useState<{ client: GatewayClient | null; scope: string; id: string } | null>(null);
   // 助理的名字 / 关于你，以及它记住的事（都在助理所在的那台电脑上）
   const [assistantProfile, setAssistantProfile] = useState<AssistantProfile>({ name: "VortoCode", soul: "", about_you: "" });
@@ -367,6 +375,14 @@ function App() {
   // 手机上和助理的聊天：只读查看（不接管——两个进程同时写一段对话会互相覆盖）
   const [phoneChats, setPhoneChats] = useState<PhoneChat[]>([]);
   const [phoneChatSid, setPhoneChatSid] = useState<string | null>(null);
+  const [phoneChatRid, setPhoneChatRid] = useState<string | undefined>();
+  const openPhoneChat = (sid: string, rid?: string) => {
+    if (!phoneChats.some(chat => chat.sid === sid)) {
+      setBanner("当前尚未取得这段手机聊天记录，请刷新动态后再试；这不表示记录已删除。");
+      return;
+    }
+    setPhoneChatSid(sid); setPhoneChatRid(rid);
+  };
   const [agentTurns, setAgentTurns] = useState<AgentTurn[]>([]);
   // Snapshots are bound to the loaded host before they can expose actions.
   const assistantScope = `${baseUrl}:${repoRoot}:${processStatus.runtimeId}:${connection}`;
@@ -475,7 +491,7 @@ function App() {
   const assistantActionGate = useRef(new AssistantActionGate());
   useEffect(() => {
     assistantLoadEpoch.current += 1;
-    setAgentTurns([]); setDispatches([]); setCodexActions([]); setDispatchSnapshotScope(null); setPhoneChats([]); setPhoneChatSid(null);
+    setAgentTurns([]); setDispatches([]); setCodexActions([]); setDispatchSnapshotScope(null); setPhoneChats([]); setPhoneChatSid(null); setPhoneChatRid(undefined);
     setAssistantProfile({ name: "VortoCode", soul: "", about_you: "" }); setAssistantAvatar(null);
     setAssistantSchedule([]); setAssistantMemories([]); setMemoryProposals([]);
     setConnectors([]); setConnectorSnapshotScope(null); setPluginBusy("");
@@ -1087,7 +1103,7 @@ function App() {
           );
           break;
         case "agent_activity_history":
-          setActivities(hydrateActivities(event.items ?? []));
+          setActivities(hydrateActivities(event.items ?? [], { missingStatus: "unknown" }));
           break;
         case "agent_plan":
           setPlan((event.items ?? []) as PlanItem[]);
@@ -1769,6 +1785,8 @@ function App() {
   }, [globalNotificationItems, notificationSyncVersion, notificationsEnabled]);
 
   const clearSessionView = () => {
+    conversationLocation.reset();
+    autoScrollRef.current = true;
     confirmationReplyRef.current?.close();
     confirmationCheckRef.current = null;
     setMessages([]);
@@ -2426,6 +2444,7 @@ function App() {
       recordAssistantSend();
       setShowStarterTips(shouldShowStarterTips());
     }
+    conversationLocation.reset();
     autoScrollRef.current = true;
     if (!willQueue) {
       setBusy(true);
@@ -3173,13 +3192,13 @@ function App() {
   }, [activities, messages]);
 
   useEffect(() => {
-    if (!autoScrollRef.current) return;
+    if (conversationLocation.rid || !autoScrollRef.current) return;
     const frame = window.requestAnimationFrame(() => {
       const container = conversationScrollRef.current;
       if (container) container.scrollTop = container.scrollHeight;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [activities, busy, messages, pendingConfirm, streaming]);
+  }, [activities, busy, messages, pendingConfirm, streaming, conversationLocation.rid]);
 
   // 会话侧栏的工具：标签栏与工具列表共用。点击动作沿用原标签按钮的（含变更/上下文的刷新）。
   const planDone = plan.filter((item) => item.status === "completed").length;
@@ -3372,7 +3391,7 @@ function App() {
         )}
       </div>
 
-      <div className={`workbench ${mainView === "chat" && inspectorOpen ? "inspector-open" : "inspector-closed"} ${mainView === "chat" && inspectorOpen && appMode !== "assistant" && !showWorkbenchLauncher && ["files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
+      <div className={`workbench ${computerWorkspace.view ? "computer-open" : ""} ${mainView === "chat" && inspectorOpen ? "inspector-open" : "inspector-closed"} ${mainView === "chat" && inspectorOpen && appMode !== "assistant" && !showWorkbenchLauncher && ["files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
         <aside className="sidebar">
           <div className="sidebar-brand">
             <strong>VortoCode</strong>
@@ -3404,7 +3423,7 @@ function App() {
               current={activeSid}
               onSelect={(sid) => { setMainView("chat"); void (sid === mainChatSid ? openMainChat() : switchSession(sid)); }}
               phoneChats={phoneChats.map((chat) => ({ sid: chat.sid, title: chat.title }))}
-              onOpenPhoneChat={(sid) => setPhoneChatSid(sid)}
+              onOpenPhoneChat={openPhoneChat}
               onNewSideChat={() => void newSideChat()}
             />
           ) : <>
@@ -3550,9 +3569,12 @@ function App() {
             </div>
           </div>
 
+          <div className="conversation-body">
+            <ConversationLocation status={conversationLocation.status} onLatest={conversationLocation.latest} onRetry={conversationLocation.retry} />
           <div
             className="conversation-scroll"
             ref={conversationScrollRef}
+            tabIndex={-1}
             onScroll={(event) => {
               const node = event.currentTarget;
               autoScrollRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 96;
@@ -3608,7 +3630,7 @@ function App() {
             )}
 
             <ChatHistory messages={messages} activityGroups={activityGroups} busy={busy} activeTurnRid={activeTurnRid}
-              assistant={appMode === "assistant"} name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} />
+              assistant={appMode === "assistant"} name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} focusedRid={conversationLocation.rid} />
 
             {appMode === "assistant" && dispatches.filter(item => item.session?.replace(/^sid-/, "") === activeSid
               && item.status !== "cancelled").slice(0, 8).map(item => <AssistantTaskCard
@@ -3635,6 +3657,7 @@ function App() {
 
           </div>
 
+          </div>
           <div className="composer-wrap">
             {residentMissed && (
               <div className="composer-notice" role="status">
@@ -3781,7 +3804,9 @@ function App() {
         )}
 
         {mainView === "chat" && inspectorOpen && appMode === "assistant" && (
-          <AssistantPanel name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} connected={connection === "connected"}
+          computerWorkspace.view ? <ComputerWorkspacePanel view={computerWorkspace.view} onClose={computerWorkspace.close} onRetry={() => void computerWorkspace.open()} />
+          : <AssistantPanel name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} connected={connection === "connected"}
+            computer={<ComputerLauncher onOpen={() => void computerWorkspace.open()} onSettings={() => { setSettingsSection("abilities"); setSettingsOpen(true); }} />}
             onEditProfile={() => setProfileDialogOpen(true)}
             host={onAssistantHost() ? { kind: "resident", name: findAssistantHost(projects)?.name ?? "常驻电脑", reachable: connection === "connected" } : { kind: "local", canAddResident: !findAssistantHost(projects) }}
             onAddResident={() => setRemoteDialogOpen("assistant")}
@@ -3817,6 +3842,7 @@ function App() {
                   onEdit={() => setProfileDialogOpen(true)}
                   onDeleteMemory={(memory) => void panelActions.deleteMemory(memory)} />
               : <AssistantActivity key={assistantScope} items={assistantFeedItems}
+                  client={clientRef.current}
                   currentSession={activeSid} connected={connection === "connected"} sources={activitySources} onRefresh={() => void refreshActivity()}
                   onOpen={(item) => {
                     if (item.confirmationId) { focusConfirmation(item.confirmationId); return; }
@@ -3827,10 +3853,16 @@ function App() {
                     if (item.dispatchId) { void openDispatch(item.dispatchId); return; }
                     if (item.taskId) { focusTask(item.taskId); return; }
                     const sid = item.session?.replace(/^sid-/, "");
-                    if (sid && isPhoneSession(sid)) { setPhoneChatSid(sid); return; }
-                    if (sid) { setMainView("chat"); void switchSession(sid); }
+                    if (sid && isPhoneSession(sid)) { openPhoneChat(sid, item.rid); return; }
+                    if (sid) {
+                      setMainView("chat");
+                      void switchSession(sid).then(opened => {
+                        const client = clientRef.current;
+                        if (opened && client && item.rid && mainViewRef.current === "chat") conversationLocation.locate({ client, sid, rid: item.rid });
+                      });
+                    }
                   }} overview={<AssistantWorkday client={clientRef.current} scope={assistantScope}
-                  connected={connection === "connected"} dispatches={dispatches}
+                  connected={connection === "connected"} resident={onAssistantHost()} dispatches={dispatches}
                   dispatchesLoaded={dispatchSnapshotScope === assistantScope} codexActions={codexActions}
                   confirmation={pendingConfirm} onConfirmation={() => focusConfirmation()}
                   onDispatch={id => void openDispatch(id)} onGoals={id => {
@@ -3839,12 +3871,14 @@ function App() {
                   onRefreshTasks={() => refreshAgentTurns()} onCodexDecision={decideCodexAction} />}>
                 <section className="assistant-task-cards" aria-label="交互任务单">
                   {activityCodexAction && <AssistantActivityDetail key={`${assistantScope}:codex:${activityCodexAction.id}`}
-                    title={`Codex 动作详情：${activityCodexAction.thread_name}`} onClose={() => setSelectedCodexAction(null)}>
+                    title={`Codex 动作详情：${activityCodexAction.thread_name}`} statusLabel="动作记录"
+                    steps={[{id:"request",title:"请求正文",status:"recorded",detail:activityCodexAction.text}]} onClose={() => setSelectedCodexAction(null)}>
                     <CodexActionCard action={activityCodexAction} connected={connection === "connected"}
                       onDecide={decision => decideCodexAction(activityCodexAction, decision)} />
                   </AssistantActivityDetail>}
                   {selectedDispatchId && dispatches.find(item => item.id === selectedDispatchId) && <AssistantActivityDetail
-                    key={`${assistantScope}:dispatch:${selectedDispatchId}`} title="任务单详情" onClose={() => setSelectedDispatchId(null)}><AssistantTaskCard
+                    key={`${assistantScope}:dispatch:${selectedDispatchId}`} title={dispatches.find(item => item.id === selectedDispatchId)!.title}
+                    steps={dispatchDetailSteps(dispatches.find(item => item.id === selectedDispatchId)!)} statusLabel="任务单记录" onClose={() => setSelectedDispatchId(null)}><AssistantTaskCard
                     key={`${assistantScope}:${selectedDispatchId}`} task={dispatches.find(item => item.id === selectedDispatchId)!}
                     connected={connection === "connected"} onAction={(action, answer) => actOnDispatch(dispatches.find(item => item.id === selectedDispatchId)!, action, answer)} /></AssistantActivityDetail>}
                 </section></AssistantActivity>}
@@ -4145,7 +4179,9 @@ function App() {
       </div>
 
       {phoneChatSid && phoneChats.some((chat) => chat.sid === phoneChatSid) && <PhoneChatDialog
-        chat={phoneChats.find((chat) => chat.sid === phoneChatSid)!} onClose={() => setPhoneChatSid(null)} />}
+        key={`${assistantScope}:${phoneChatSid}`} chat={phoneChats.find((chat) => chat.sid === phoneChatSid)!}
+        owner={clientRef.current} focusedRid={phoneChatRid} name={assistantProfile.name || "VortoCode"}
+        onClose={() => { setPhoneChatSid(null); setPhoneChatRid(undefined); }} />}
       {profileDialogOpen && <AssistantProfileDialog profile={assistantProfile} onClose={() => setProfileDialogOpen(false)}
         onSave={async (next) => {
           const client = clientRef.current;

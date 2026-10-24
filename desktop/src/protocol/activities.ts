@@ -26,6 +26,7 @@ export function protocolActivity(event: ProtocolEvent): TurnActivity | null {
       name: String(event.name ?? "tool"),
       args: event.args,
       result: event.result == null ? undefined : String(event.result),
+      error: event.error == null ? undefined : String(event.error),
       durationMs: typeof event.duration_ms === "number" ? event.duration_ms : undefined,
     };
   }
@@ -51,13 +52,20 @@ export function upsertActivity(previous: TurnActivity[], activity: TurnActivity)
   const index = previous.findIndex((item) => item.id === activity.id);
   if (index < 0) return [...previous.slice(-299), activity];
   const next = [...previous];
-  next[index] = { ...previous[index], ...activity };
+  // Finish frames may omit the arguments supplied by the start frame. An
+  // absent optional field must not erase already recorded context.
+  const defined = Object.fromEntries(Object.entries(activity).filter(([, value]) => value !== undefined));
+  next[index] = { ...previous[index], ...defined };
   return next;
 }
 
-export function hydrateActivities(items: unknown[]): TurnActivity[] {
+export function hydrateActivities(items: unknown[], options: { missingStatus?: "unknown" } = {}): TurnActivity[] {
   return items.reduce<TurnActivity[]>((previous, item) => {
-    const activity = protocolActivity((item ?? {}) as ProtocolEvent);
+    let event = (item ?? {}) as ProtocolEvent;
+    if (options.missingStatus === "unknown" && (typeof event.status !== "string" || !event.status.trim())) {
+      event = { ...event, status: previous.find(activity => activity.id === event.id)?.status ?? "unknown" };
+    }
+    const activity = protocolActivity(event);
     return activity ? upsertActivity(previous, activity) : previous;
   }, []);
 }

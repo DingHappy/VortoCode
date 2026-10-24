@@ -793,6 +793,16 @@ async def agent_sessions_list():
     return {"sessions": _session_dashboard_snapshot(os.getcwd())}
 
 
+@router.get("/api/agent/activity/{sid}/{rid}")
+async def agent_activity_detail(sid: str, rid: str):
+    import os
+    from src.gateway.turn_digest import read_turn_detail
+    detail = read_turn_detail(os.getcwd(), sid, rid)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="未找到该回合的已保存记录")
+    return detail
+
+
 _SESSION_STATUS_ORDER = {
     "needs_input": 0,
     "failed": 1,

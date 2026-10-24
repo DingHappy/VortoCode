@@ -6,6 +6,7 @@ import { buildAssistantWorkday, type AssistantWorkday as Workday, type WorkdayBu
 import { assistantWorkdayReads, startWorkdayClock } from "../lib/assistantWorkdayReads";
 import { startPolling } from "../lib/polling";
 import { CodexActionCard } from "./CodexActionCard";
+import { ResidentComputerCard } from "./ResidentComputerCard";
 import "./AssistantWorkday.css";
 
 const BUCKETS = [
@@ -62,8 +63,9 @@ export function AssistantWorkdayView({ model, now, busy = false, connected, onRe
   </section>;
 }
 
-export function AssistantWorkday({ client, scope, connected, dispatches, dispatchesLoaded, codexActions, confirmation, onConfirmation, onDispatch, onGoals, onRefreshTasks, onCodexDecision }: {
-  client: Pick<GatewayClient, "listPersonalGoals" | "getCodexProgress"> | null; scope: string; connected: boolean; dispatches: AssistantDispatch[];
+export function AssistantWorkday({ client, scope, connected, resident = false, dispatches, dispatchesLoaded, codexActions, confirmation, onConfirmation, onDispatch, onGoals, onRefreshTasks, onCodexDecision }: {
+  client: (Pick<GatewayClient, "listPersonalGoals" | "getCodexProgress"> & Partial<Pick<GatewayClient, "getResidentComputer">>) | null;
+  scope: string; connected: boolean; resident?: boolean; dispatches: AssistantDispatch[];
   dispatchesLoaded: boolean; codexActions: CodexAction[];
   confirmation?: PendingConfirmation | null; onConfirmation?: () => void;
   onDispatch: (id: string) => void; onGoals: (id: string) => void; onRefreshTasks: () => Promise<void>;
@@ -108,6 +110,7 @@ export function AssistantWorkday({ client, scope, connected, dispatches, dispatc
       onRefresh={() => { void refreshRef.current?.(); void onRefreshTasks(); }}
       onOpen={target => { if (target.kind === "dispatch") onDispatch(target.id);
         else if (target.kind === "goal") onGoals(target.id); else if (target.kind === "confirmation") onConfirmation?.(); else setSelected({ owner, target }); }} />
+    <ResidentComputerCard client={client} scope={scope} connected={connected} resident={resident} now={now.getTime()} />
     {action && <CodexActionCard key={action.id} action={action} connected={connected}
       onDecide={decision => onCodexDecision(action, decision)} />}
     {thread && <article className="assistant-task-card workday-codex-detail" aria-label={`Codex 进度：${thread.name}`}>

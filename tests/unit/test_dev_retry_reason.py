@@ -49,6 +49,42 @@ async def test_channel_failure_is_reported_as_such(tmp_path, monkeypatch):
     assert "通道故障" in result["text"]
 
 
+@pytest.mark.parametrize("message, expected_attempts", [
+    ("Error code: 507 - Model 'synthetic-model' (19.95GB) does not fit under the dynamic memory ceiling (13.29GB)", 1),
+    ("Model does not fit under dynamic memory ceiling", 1),
+    ("HTTP 507: insufficient storage", 2),
+    ("Model request timed out", 2),
+])
+async def test_capacity_rejection_stops_same_model_retry_only_for_explicit_evidence(
+        tmp_path, monkeypatch, message, expected_attempts):
+    from src.agents import worktree
+    monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "2")
+    calls, progress = [], []
+
+    async def fail(*args, **kwargs):
+        calls.append(args)
+        raise RuntimeError(message)
+
+    async def no_wait(*args):
+        pass
+
+    monkeypatch.setattr(worktree, "run_isolated_task", fail)
+    monkeypatch.setattr("asyncio.sleep", no_wait)
+    tool = next(tool for tool in build_dev_tools(str(tmp_path), on_progress=progress.append)
+                if tool.name == "dev_isolated")
+    result = await tool.handler({"description": "修复折扣"})
+    assert result["ok"] is False
+    assert len(calls) == expected_attempts
+    if expected_attempts == 1:
+        assert not _retry_lines(progress)
+        assert "动态内存上限" in result["text"] and "未自动切换模型" in result["text"]
+        assert "未交付分支" in result["text"]
+        assert "抖动" not in result["text"]
+    else:
+        assert len(_retry_lines(progress)) == 1
+        assert "通道故障" in result["text"]
+
+
 @pytest.mark.asyncio
 async def test_empty_diff_says_no_changes_not_red(tmp_path, monkeypatch):
     monkeypatch.setenv("VORTOCODE_DEV_ATTEMPTS", "2")
