@@ -6,6 +6,7 @@ import { AssistantTaskCard } from "./components/AssistantTaskCard";
 import { CodexActionCard } from "./components/CodexActionCard";
 import { AssistantWorkday } from "./components/AssistantWorkday";
 import { loadAssistantData } from "./lib/assistantData";
+import { activityCoverage, type ActivityRead, type ActivitySource, type ActivitySourceName } from "./lib/activitySources";
 import { prepareAvatar } from "./lib/avatar";
 import { resolveMainChat } from "./lib/mainChat";
 import { ChatHistory } from "./components/ChatHistory";
@@ -17,7 +18,8 @@ import { ConnectorStatusReads } from "./lib/connectorStatus";
 import { openAssistantTask } from "./lib/assistantNavigation";
 import { AssistantAudit, AssistantAvatarImage, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantPlugins, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PhoneChatDialog, type AppMode, type AssistantTab } from "./components/AssistantMode";
 import { AssistantGoals } from "./components/AssistantGoals";
-import { dispatchFeedItem, isPhoneSession, noticeFeedItem, taskFeedItem, turnFeedItem, type FeedItem } from "./lib/activityFeed";
+import { codexActionFeedItem, confirmationFeedItem, dispatchFeedItem, isPhoneSession, noticeFeedItems, taskFeedItem, turnFeedItem, type FeedItem } from "./lib/activityFeed";
+import { AssistantActivity, AssistantActivityDetail } from "./components/AssistantActivity";
 import { createConfirmationReply } from "./lib/confirm";
 import { ComposerCommands } from "./components/ComposerCommands";
 import { ContextStatus, SessionInfo } from "./components/SessionInfo";
@@ -370,6 +372,17 @@ function App() {
   const assistantScope = `${baseUrl}:${repoRoot}:${processStatus.runtimeId}:${connection}`;
   const assistantScopeRef = useRef(assistantScope);
   assistantScopeRef.current = assistantScope;
+  const [activityReads, setActivityReads] = useState<{ client: GatewayClient; scope: string; sources: Partial<Record<ActivitySourceName, ActivityRead>> } | null>(null);
+  const publishActivityRead = useCallback((client: GatewayClient, scope: string, name: ActivitySourceName, state: ActivityRead) => {
+    if (clientRef.current !== client || assistantScopeRef.current !== scope) return;
+    setActivityReads(previous => {
+      if (clientRef.current !== client || assistantScopeRef.current !== scope) return previous;
+      const sources = previous?.client === client && previous.scope === scope ? previous.sources : {};
+      const prior = sources[name] ?? { status: "loading" as const };
+      const next = state.status === "loading" ? { ...prior, checking: true } : { ...prior, ...state, checking: false };
+      return { client, scope, sources: { ...sources, [name]: next } };
+    });
+  }, []);
   const connectors = connectorSnapshotScope === assistantScope ? connectorSnapshot : [];
   const connectorAuthorizing = connectors.some((item) => item.authorizing);
   const refreshConnectorStatus = useCallback((client: GatewayClient, scope: string) => {
@@ -455,8 +468,8 @@ function App() {
   const [codexActions, setCodexActions] = useState<CodexAction[]>([]);
   const [dispatchSnapshotScope, setDispatchSnapshotScope] = useState<string | null>(null);
   const dispatches = dispatchSnapshotScope === assistantScope ? dispatchSnapshot : [];
-  const trackingDispatches = dispatches.some((item) => ["running", "waiting", "sending", "submission_unknown"].includes(item.status));
   const [selectedDispatchId, setSelectedDispatchId] = useState<string | null>(null);
+  const [selectedCodexAction, setSelectedCodexAction] = useState<{ client: GatewayClient | null; scope: string; id: string } | null>(null);
   const assistantLoadEpoch = useRef(0);
   const assistantRefreshQueue = useRef(new AssistantRefreshQueue());
   const assistantActionGate = useRef(new AssistantActionGate());
@@ -466,7 +479,7 @@ function App() {
     setAssistantProfile({ name: "VortoCode", soul: "", about_you: "" }); setAssistantAvatar(null);
     setAssistantSchedule([]); setAssistantMemories([]); setMemoryProposals([]);
     setConnectors([]); setConnectorSnapshotScope(null); setPluginBusy("");
-    setSelectedDispatchId(null); setAssistantGoalFocus(null); setProfileDialogOpen(false);
+    setSelectedDispatchId(null); setSelectedCodexAction(null); setAssistantGoalFocus(null); setProfileDialogOpen(false);
   }, [assistantScope]);
   const [tabsNeedingAttention, setTabsNeedingAttention] = useState<ReadonlySet<InspectorTab>>(
     () => new Set());
@@ -519,6 +532,7 @@ function App() {
   } = useIsolatedDeliveries(clientRef);
   const [runs, setRuns] = useState<CommandRunItem[]>([]);
   const [notices, setNotices] = useState<NoticeItem[]>([]);
+  const noticeReadRef = useRef(0), noticeRevisionRef = useRef(0);
   // Hook 信任 + 扩展清单已收进 useExtensionsStatus；跨域的 toggleHookTrust 留在 App。
   const {
     hookStatus, setHookStatus, hookTrustBusy, setHookTrustBusy,
@@ -543,7 +557,7 @@ function App() {
   const { attachments, setAttachments, addFiles, removeAttachment } = useAttachments(setBanner);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
-  const { tasks, focusedTaskId, worktreeWorkspace, setFocusedTaskId, refreshTasks,
+  const { tasks, taskRead, focusedTaskId, worktreeWorkspace, setFocusedTaskId, refreshTasks,
     refreshWorktrees, resetTasks, upsertTask, acceptTaskEvent, captureTaskScope, cancelTask, pauseTask,
     resumeTask } = useTasks(clientRef, setBanner);
   const {
@@ -875,12 +889,21 @@ function App() {
   const refreshNotices = useCallback(async () => {
     const client = clientRef.current;
     if (!client) return;
+    const scope = assistantScopeRef.current, serial = ++noticeReadRef.current, revision = noticeRevisionRef.current;
+    const current = () => clientRef.current === client && assistantScopeRef.current === scope && noticeReadRef.current === serial;
+    publishActivityRead(client, scope, "notices", { status: "loading" });
     try {
-      setNotices(await client.listNotices());
+      const next = await client.listNotices();
+      if (!current()) return;
+      if (!Array.isArray(next) || noticeRevisionRef.current !== revision) {
+        publishActivityRead(client, scope, "notices", { status: "unavailable" }); return;
+      }
+      setNotices(next);
+      publishActivityRead(client, scope, "notices", { status: "current", checkedAt: Date.now() });
     } catch {
-      // 通知不是对话主链路，失败不阻断连接。
+      if (current()) publishActivityRead(client, scope, "notices", { status: "unavailable" });
     }
-  }, []);
+  }, [publishActivityRead]);
 
   const refreshDecisions = useCallback(async (sid = activeSid) => {
     const attempt = ++decisionReadRef.current;
@@ -1326,6 +1349,7 @@ function App() {
         }
         case "notice": {
           const notice = event.data as NoticeItem;
+          noticeRevisionRef.current++;
           setNotices((previous) => [{ ...notice, text: String(notice?.text ?? "") }, ...previous].slice(0, 100));
           break;
         }
@@ -1775,6 +1799,7 @@ function App() {
     resetGoalNavigation();
     setGoals([]);
     setNotices([]);
+    noticeReadRef.current++; noticeRevisionRef.current++;
     setDecisions([]);
     setAuditEntries([]);
     resetJournal();
@@ -2206,11 +2231,11 @@ function App() {
           dispatchError: () => setDispatches(previous => previous.map(item => ({ ...item,
             sync_state: "unreachable", sync_error: "无法读取最新任务单，请恢复连接后核对" }))),
           profile: setAssistantProfile, chats: setPhoneChats, avatar: setAssistantAvatar,
-          codexActions: setCodexActions }, refreshId);
+          codexActions: setCodexActions, sourceRead: (name, state) => publishActivityRead(client, scope, name, state) }, refreshId);
     });
     if (refreshId) await request;
     else await request.catch(() => {}); // Background polling reports failures through snapshot freshness.
-  }, []);
+  }, [publishActivityRead]);
 
   /** 打开「主要聊天」：每台电脑第一次进助理模式时生成一个固定会话并记住，之后一直用它。 */
   const openMainChat = async (hostId: string | null = remoteProjectRef.current && remoteProjectRef.current === assistantHostRef.current ? remoteProjectRef.current : null) => {
@@ -3161,11 +3186,28 @@ function App() {
   const scoped = activeScope !== "general";
   // 任务动态：后台任务台账的投影（useTasks 已随 task_update 推送实时更新）。
   const feedItems = tasks.map(taskFeedItem);
-  const feedWaiting = feedItems.filter((item) => item.status === "waiting").length;
-  const dispatchItems = [...dispatches.map(dispatchFeedItem), ...notices.map(noticeFeedItem)]
+  const feedWaiting = feedItems.filter(item => item.status === "waiting").length;
+  const dispatchItems = [...dispatches.map(dispatchFeedItem), ...noticeFeedItems(notices)]
     .filter((item): item is FeedItem => item !== null);
-  const assistantWaiting = feedWaiting + dispatchItems.filter((item) => item.status === "waiting").length
-    + codexActions.filter(item => item.status === "proposed").length + (pendingConfirm ? 1 : 0);
+  const assistantFeedItems = [...agentTurns.map(turnFeedItem), ...dispatchItems, ...feedItems,
+    ...codexActions.map(codexActionFeedItem).filter((item): item is FeedItem => item !== null),
+    ...(pendingConfirm ? [confirmationFeedItem(pendingConfirm)] : [])];
+  const assistantWaiting = assistantFeedItems.filter(item => item.status === "waiting").length;
+  const readSources = activityReads?.client === clientRef.current && activityReads?.scope === assistantScope ? activityReads.sources : {};
+  const activitySources: ActivitySource[] = (["turns", "dispatches", "codexActions", "notices"] as const)
+    .map(name => ({ name, ...(readSources[name] ?? { status: "loading" as const }) }));
+  if (activeScope !== "general") activitySources.push({ name: "tasks", ...taskRead });
+  const activityComplete = activityCoverage(activitySources, connection === "connected", Date.now()).complete;
+  const refreshActivity = useCallback(async () => {
+    await Promise.allSettled([refreshAgentTurns(), refreshNotices(), ...(activeScope !== "general" ? [refreshTasks()] : [])]);
+  }, [refreshAgentTurns, refreshNotices, refreshTasks, activeScope]);
+  const activityCodexAction = selectedCodexAction?.client === clientRef.current && selectedCodexAction?.scope === assistantScope
+    ? codexActions.find(item => item.id === selectedCodexAction.id && item.status !== "cancelled") : null;
+  const focusConfirmation = (id?: string) => {
+    if (!pendingConfirm || (id && pendingConfirm.id !== id)) return;
+    const card = document.getElementById("active-confirmation");
+    card?.scrollIntoView({ block: "nearest", behavior: "smooth" }); card?.focus({ preventScroll: true });
+  };
 
   const decideCodexAction = async (action: CodexAction, decision: "approve" | "cancel") => {
     const client = clientRef.current, scope = assistantScope;
@@ -3178,6 +3220,7 @@ function App() {
   };
 
   const openDispatch = async (id: string) => {
+    setSelectedCodexAction(null);
     setSelectedDispatchId(id);
     setAssistantTab("feed"); setInspectorOpen(true);
   };
@@ -3278,13 +3321,12 @@ function App() {
   }, [connection]);
 
   useEffect(() => {
-    if (appMode !== "assistant" || connection !== "connected" || busy) return;
-    void refreshAgentTurns();
-    const later = window.setTimeout(() => void refreshAgentTurns(), 8000);
-    // 常驻电脑上还有任务在做：每 30 秒看一次进度（台账刷新时顺带查项目运行时）
-    const tracking = trackingDispatches ? window.setInterval(() => void refreshAgentTurns(), 30_000) : undefined;
-    return () => { window.clearTimeout(later); if (tracking) window.clearInterval(tracking); };
-  }, [appMode, connection, busy, activeSid, refreshAgentTurns, trackingDispatches]);
+    if (appMode !== "assistant" || connection !== "connected") return;
+    void refreshActivity();
+    const later = window.setTimeout(() => void refreshActivity(), 8000);
+    const stop = startPolling(refreshActivity, { intervalMs: 30_000, hiddenIntervalMs: 120_000, immediate: false, visibility: document });
+    return () => { window.clearTimeout(later); stop(); };
+  }, [appMode, connection, busy, activeSid, refreshActivity]);
 
   // 助理面板的操作：每次渲染按此刻的 scope 现装（点下去绑定的就是这一刻的会话和电脑）
   const panelActions = assistantPanelActions({
@@ -3745,7 +3787,7 @@ function App() {
             onAddResident={() => setRemoteDialogOpen("assistant")}
             onRetryResident={() => void changeAppMode("assistant")}
             modelLabel={onAssistantHost() ? runtime.model : llmProfile?.configured ? composerModelChoices.find(item => item.value === modelChoice)?.label : "未连接模型"}
-            tab={assistantTab} onClose={() => setInspectorOpen(false)} waiting={assistantWaiting}
+            tab={assistantTab} onClose={() => setInspectorOpen(false)} waiting={assistantWaiting} waitingUncertain={!activityComplete}
             onTab={(tab) => { if (tab === "goals") setAssistantGoalFocus(null); setAssistantTab(tab); panelActions.tabOpened(tab); }}>
             {assistantTab === "audit" ? <AssistantAudit entries={auditEntries} />
               : assistantTab === "goals" ? <AssistantGoals key={assistantScope} client={clientRef.current} connected={connection === "connected"}
@@ -3774,34 +3816,38 @@ function App() {
                   onDecideProposal={(proposal, approve, replace) => void panelActions.decideProposal(proposal, approve, replace)}
                   onEdit={() => setProfileDialogOpen(true)}
                   onDeleteMemory={(memory) => void panelActions.deleteMemory(memory)} />
-              : <><AssistantWorkday key={assistantScope} client={clientRef.current} scope={assistantScope}
-                  connected={connection === "connected"} dispatches={dispatches}
-                  dispatchesLoaded={dispatchSnapshotScope === assistantScope} codexActions={codexActions}
-                  confirmation={pendingConfirm} onConfirmation={() => {
-                    const card = document.getElementById("active-confirmation");
-                    card?.scrollIntoView({ block: "nearest", behavior: "smooth" }); card?.focus({ preventScroll: true });
-                  }}
-                  onDispatch={id => void openDispatch(id)} onGoals={id => {
-                    setAssistantGoalFocus({ client: clientRef.current, scope: assistantScope, id }); setAssistantTab("goals");
-                  }}
-                  onRefreshTasks={() => refreshAgentTurns()} onCodexDecision={decideCodexAction} />
-                <section className="assistant-task-cards" aria-label="交互任务单">
-                  {selectedDispatchId && dispatches.find(item => item.id === selectedDispatchId) && <AssistantTaskCard
-                    key={`${assistantScope}:${selectedDispatchId}`} task={dispatches.find(item => item.id === selectedDispatchId)!}
-                    connected={connection === "connected"} onAction={(action, answer) => actOnDispatch(dispatches.find(item => item.id === selectedDispatchId)!, action, answer)} />}
-                  {!selectedDispatchId && dispatches.filter(item => item.status === "proposed" || item.status === "submission_unknown").slice(0, 3).map(item =>
-                    <AssistantTaskCard key={`${assistantScope}:${item.id}`} task={item} connected={connection === "connected"}
-                      onAction={(action, answer) => actOnDispatch(item, action, answer)} />)}
-                  {selectedDispatchId && <button onClick={() => setSelectedDispatchId(null)}>收起任务详情</button>}
-                </section><details className="workday-history"><summary>历史动态与对话记录</summary><ActivityFeed items={[...agentTurns.map(turnFeedItem), ...dispatchItems, ...feedItems]} scope="all" onScope={() => {}}
-                  currentSession={activeSid}
+              : <AssistantActivity key={assistantScope} items={assistantFeedItems}
+                  currentSession={activeSid} connected={connection === "connected"} sources={activitySources} onRefresh={() => void refreshActivity()}
                   onOpen={(item) => {
+                    if (item.confirmationId) { focusConfirmation(item.confirmationId); return; }
+                    if (item.codexActionId) {
+                      setSelectedDispatchId(null);
+                      setSelectedCodexAction({ client: clientRef.current, scope: assistantScope, id: item.codexActionId }); return;
+                    }
                     if (item.dispatchId) { void openDispatch(item.dispatchId); return; }
                     if (item.taskId) { focusTask(item.taskId); return; }
                     const sid = item.session?.replace(/^sid-/, "");
                     if (sid && isPhoneSession(sid)) { setPhoneChatSid(sid); return; }
                     if (sid) { setMainView("chat"); void switchSession(sid); }
-                  }} /></details></>}
+                  }} overview={<AssistantWorkday client={clientRef.current} scope={assistantScope}
+                  connected={connection === "connected"} dispatches={dispatches}
+                  dispatchesLoaded={dispatchSnapshotScope === assistantScope} codexActions={codexActions}
+                  confirmation={pendingConfirm} onConfirmation={() => focusConfirmation()}
+                  onDispatch={id => void openDispatch(id)} onGoals={id => {
+                    setAssistantGoalFocus({ client: clientRef.current, scope: assistantScope, id }); setAssistantTab("goals");
+                  }}
+                  onRefreshTasks={() => refreshAgentTurns()} onCodexDecision={decideCodexAction} />}>
+                <section className="assistant-task-cards" aria-label="交互任务单">
+                  {activityCodexAction && <AssistantActivityDetail key={`${assistantScope}:codex:${activityCodexAction.id}`}
+                    title={`Codex 动作详情：${activityCodexAction.thread_name}`} onClose={() => setSelectedCodexAction(null)}>
+                    <CodexActionCard action={activityCodexAction} connected={connection === "connected"}
+                      onDecide={decision => decideCodexAction(activityCodexAction, decision)} />
+                  </AssistantActivityDetail>}
+                  {selectedDispatchId && dispatches.find(item => item.id === selectedDispatchId) && <AssistantActivityDetail
+                    key={`${assistantScope}:dispatch:${selectedDispatchId}`} title="任务单详情" onClose={() => setSelectedDispatchId(null)}><AssistantTaskCard
+                    key={`${assistantScope}:${selectedDispatchId}`} task={dispatches.find(item => item.id === selectedDispatchId)!}
+                    connected={connection === "connected"} onAction={(action, answer) => actOnDispatch(dispatches.find(item => item.id === selectedDispatchId)!, action, answer)} /></AssistantActivityDetail>}
+                </section></AssistantActivity>}
           </AssistantPanel>
         )}
         {(mainView === "management" || (mainView === "chat" && inspectorOpen && appMode !== "assistant")) && (

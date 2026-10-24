@@ -1,0 +1,5 @@
+.activity-qa-shell { height: 100vh; display: flex; flex-direction: column; }
+.activity-qa-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--n5); font-size: 12px; color: var(--n10); }
+.activity-qa-layout { display: grid; grid-template-columns: minmax(0, 1fr) 340px; flex: 1; min-height: 0; }
+.activity-qa-note { padding: 16px; color: var(--n9); font-size: 12px; }
+@media (max-width: 760px) { .activity-qa-layout { grid-template-columns: minmax(0, 1fr); } .activity-qa-layout > .conversation { display: none; } }

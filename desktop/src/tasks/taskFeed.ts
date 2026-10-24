@@ -1,5 +1,6 @@
 import type { GatewayClient } from "../gateway";
 import type { ProtocolEvent, TaskItem, WorktreeWorkspaceSnapshot } from "../types";
+import type { ActivityRead } from "../lib/activitySources";
 
 export type TaskClient = Pick<GatewayClient,
   "listTasks" | "getWorktreeWorkspace" | "cancelTask" | "pauseTask" | "resumeTask">;
@@ -7,10 +8,11 @@ export type TaskFeedSnapshot = {
   tasks: TaskItem[];
   focusedTaskId: string;
   worktreeWorkspace: WorktreeWorkspaceSnapshot;
+  taskRead: ActivityRead;
 };
 
 const emptySnapshot = (): TaskFeedSnapshot => ({
-  tasks: [], focusedTaskId: "", worktreeWorkspace: { worktrees: [], plans: [] },
+  tasks: [], focusedTaskId: "", worktreeWorkspace: { worktrees: [], plans: [] }, taskRead: { status: "loading" },
 });
 
 /** One hook-owned mirror of server snapshots; no status or permission inference. */
@@ -70,7 +72,11 @@ export class TaskFeed {
       this.taskRevision += 1;
       // This event already supplies all projections; discard any queued follow-up.
       this.eventRefresh = null;
-      this.replace({ ...this.snapshot, tasks: Array.isArray(event.data) ? event.data as TaskItem[] : [] });
+      if (!Array.isArray(event.data)) {
+        this.replace({ ...this.snapshot, taskRead: { ...this.snapshot.taskRead, status: "unavailable" } });
+        return false;
+      }
+      this.replace({ ...this.snapshot, tasks: event.data as TaskItem[], taskRead: { status: "current", checkedAt: Date.now() } });
       return true;
     }
     if (event.type === "task_update" || event.type === "task_handoff") {
@@ -111,14 +117,20 @@ export class TaskFeed {
     if (!request.client) return;
     const serial = ++this.taskRequest;
     const revision = this.taskRevision;
+    this.replace({ ...this.snapshot, taskRead: { ...this.snapshot.taskRead, checking: true } });
     try {
       const tasks = await request.client.listTasks();
+      if (!Array.isArray(tasks)) throw new Error("Invalid task snapshot");
       if (request.current() && serial === this.taskRequest && revision === this.taskRevision) {
         this.taskRevision += 1;
-        this.replace({ ...this.snapshot, tasks });
+        this.replace({ ...this.snapshot, tasks, taskRead: { status: "current", checkedAt: Date.now() } });
       }
     } catch {
       // Retain the last authoritative snapshot; WS events can still update it.
+    } finally {
+      if (request.current() && serial === this.taskRequest && this.snapshot.taskRead.checking) {
+        this.replace({ ...this.snapshot, taskRead: { ...this.snapshot.taskRead, status: "unavailable", checking: false } });
+      }
     }
   };
 

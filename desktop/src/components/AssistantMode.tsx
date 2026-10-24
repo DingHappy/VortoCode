@@ -59,14 +59,14 @@ export type AssistantHostInfo = { kind: "resident"; name: string; reachable?: bo
 export type AssistantTab = "feed" | "goals" | "audit" | "schedule" | "identity";
 
 const TABS: Array<{ id: AssistantTab; label: string; icon: ReactNode }> = [
-  { id: "feed", label: "今日", icon: <List size={16} aria-hidden="true" /> },
+  { id: "feed", label: "动态", icon: <List size={16} aria-hidden="true" /> },
   { id: "goals", label: "目标", icon: <Target size={16} aria-hidden="true" /> },
   { id: "audit", label: "审核记录", icon: <ShieldCheck size={16} aria-hidden="true" /> },
   { id: "schedule", label: "定时", icon: <Clock3 size={16} aria-hidden="true" /> },
   { id: "identity", label: "身份", icon: <Fingerprint size={16} aria-hidden="true" /> },
 ];
 
-export function AssistantPanel({ name, avatar, connected, host, onAddResident, onRetryResident, onEditProfile, modelLabel, tab, onTab, onClose, waiting, children }: {
+export function AssistantPanel({ name, avatar, connected, host, onAddResident, onRetryResident, onEditProfile, modelLabel, tab, onTab, onClose, waiting, waitingUncertain = false, children }: {
   name: string; connected: boolean; modelLabel?: string;
   avatar?: AssistantAvatar | null;
   host: AssistantHostInfo;
@@ -79,6 +79,7 @@ export function AssistantPanel({ name, avatar, connected, host, onAddResident, o
   tab: AssistantTab; onTab: (tab: AssistantTab) => void; onClose: () => void;
   /** 等你处理的件数：动态图标上的提示 */
   waiting?: number;
+  waitingUncertain?: boolean;
   children: ReactNode;
 }) {
   return <aside className="assistant-panel" aria-label="助理">
@@ -107,7 +108,9 @@ export function AssistantPanel({ name, avatar, connected, host, onAddResident, o
       {TABS.map((item) => <button key={item.id} role="tab" aria-selected={tab === item.id} aria-label={item.label} title={item.label}
         className={tab === item.id ? "active" : ""} onClick={() => onTab(item.id)}>
         {item.icon}<span>{item.label}</span>
-        {item.id === "feed" && waiting ? <i className="assistant-tab-badge" aria-label={`${waiting} 件等你处理`}>{waiting}</i> : null}
+        {item.id === "feed" && (waiting || waitingUncertain) ? <i className="assistant-tab-badge"
+          aria-label={waitingUncertain ? `已读取 ${waiting ?? 0} 件待处理，部分来源待核对` : `${waiting} ${connected ? "件等你处理" : "条历史待处理"}`}>
+          {waitingUncertain ? waiting ? `${waiting}+` : "?" : waiting}</i> : null}
       </button>)}
     </div>
     <div className="assistant-panel-body">{children}</div>
