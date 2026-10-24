@@ -1,42 +1,5 @@
-"""记忆系统"""
+"""记忆系统。
 
-from .base import (
-    Memory,
-    MemoryItem,
-    ShortTermMemory,
-    LongTermMemory,
-    ExpertMemory,
-    MemorySystem
-)
-from .conversation_db import SessionStore, SessionManager
-from .vector_memory import (
-    VectorMemory,
-    VectorMemoryConfig,
-    EmbeddingGenerator,
-    LocalEmbeddingGenerator,
-    OpenAIEmbeddingGenerator,
-    VectorStore,
-    QdrantVectorStore,
-    LocalVectorStore,
-    create_vector_memory
-)
-
-__all__ = [
-    "Memory",
-    "MemoryItem",
-    "ShortTermMemory",
-    "LongTermMemory",
-    "ExpertMemory",
-    "MemorySystem",
-    "SessionStore",
-    "SessionManager",
-    "VectorMemory",
-    "VectorMemoryConfig",
-    "EmbeddingGenerator",
-    "LocalEmbeddingGenerator",
-    "OpenAIEmbeddingGenerator",
-    "VectorStore",
-    "QdrantVectorStore",
-    "LocalVectorStore",
-    "create_vector_memory",
-]
+刻意不在包级再导出：记忆写入策略（write_policy）属安全内核，导入它不该连带加载向量记忆/SQLite
+会话库及其依赖。请直接 `from src.memory.<模块> import ...`。
+"""

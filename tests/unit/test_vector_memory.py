@@ -4,12 +4,12 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime
 
-from src.memory import (
+from src.memory.base import MemoryItem
+from src.memory.vector_memory import (
     VectorMemory,
     VectorMemoryConfig,
     LocalEmbeddingGenerator,
     LocalVectorStore,
-    MemoryItem
 )
 
 

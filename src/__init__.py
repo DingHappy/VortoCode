@@ -1,49 +1,6 @@
-"""VortoCode: 通用多 Agent 软件开发框架"""
+"""VortoCode: 通用多 Agent 软件开发框架。
 
-__version__ = "0.2.6"
-
-from .hooks.hook import Hook, HookEvent, HookEventType, HookResult
-from .hooks.registry import HookRegistry
-from .hooks.executor import HookExecutor, HookSystem
-from .skills.skill import Skill, SkillMetadata, SkillResult
-from .skills.registry import SkillRegistry
-from .skills.executor import SkillExecutor
-from .skills.discovery import SkillDiscovery, SkillDiscoveryConfig, SkillVersionManager
-from .memory.base import MemorySystem
-from .memory.vector_memory import VectorMemory, VectorMemoryConfig
-from .tools.registry import ToolRegistry, Tool, ToolPermission
-from .tools.permission import ToolPermissionManager, PermissionRule
-from .tools.executor import ToolExecutor, ToolExecutionResult
-from .tools.mcp_client import MCPClient, MCPTransport, MCPTool
-# 注：src/monitoring 孤儿包（与生产在用的 src/core/monitoring 重名并行）随路线 A 删除。
-
-__all__ = [
-    "Hook",
-    "HookEvent",
-    "HookEventType",
-    "HookResult",
-    "HookRegistry",
-    "HookExecutor",
-    "HookSystem",
-    "Skill",
-    "SkillMetadata",
-    "SkillResult",
-    "SkillRegistry",
-    "SkillExecutor",
-    "SkillDiscovery",
-    "SkillDiscoveryConfig",
-    "SkillVersionManager",
-    "MemorySystem",
-    "VectorMemory",
-    "VectorMemoryConfig",
-    "ToolRegistry",
-    "Tool",
-    "ToolPermission",
-    "ToolPermissionManager",
-    "PermissionRule",
-    "ToolExecutor",
-    "ToolExecutionResult",
-    "MCPClient",
-    "MCPTransport",
-    "MCPTool",
-]
+刻意保持为空：各模块按需 `from src.xxx import ...`。此前这里预先导入 hooks/skills/向量记忆/旧工具
+注册表，导致任何子模块（包括安全内核）都要先付出约 125ms 并拉进 pydantic 等无关依赖。
+版本号以 pyproject.toml 为准。
+"""

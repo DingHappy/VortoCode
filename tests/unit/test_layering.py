@@ -108,3 +108,21 @@ async def test_every_host_exec_gate_follows_the_single_switch(tmp_path, monkeypa
     monkeypatch.setattr(runner, "docker_available", lambda: False)
     result = await runner.run_code("print('x')", "python")
     assert (result.runtime == "host") is allowed
+
+
+def test_security_core_import_does_not_load_unrelated_subsystems():
+    """真导入（不是 AST）：包级 __init__ 的再导出会让安全内核在运行时连带加载 hooks/向量记忆/
+    Docker 沙箱——AST 契约看不到这条路径。在干净子进程里导入后核对 sys.modules。"""
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[2]
+    code = ("import sys\n"
+            "import src.agents.gate, src.agents.taint, src.agents.capabilities\n"
+            "import src.sandbox.policy, src.memory.write_policy\n"
+            "print('\\n'.join(sorted(m for m in sys.modules if m.startswith('src.'))))\n")
+    out = subprocess.run([sys.executable, "-c", code], cwd=root, capture_output=True,
+                         text=True, check=True).stdout.split()
+    unrelated = ("src.hooks", "src.skills", "src.tools", "src.memory.vector_memory",
+                 "src.sandbox.docker_sandbox", "src.workflow", "src.gateway", "src.web")
+    assert [m for m in out if m.startswith(unrelated)] == []

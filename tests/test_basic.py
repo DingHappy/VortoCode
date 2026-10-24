@@ -3,7 +3,7 @@
 import pytest
 from src.hooks import Hook, HookEvent, HookEventType, HookResult, HookRegistry
 from src.skills import SkillMetadata, SkillParser
-from src.memory import MemorySystem, MemoryItem, ShortTermMemory
+from src.memory.base import MemorySystem, MemoryItem, ShortTermMemory
 from src.agents.task_analyzer import TaskAnalyzer, TaskComplexity
 
 
