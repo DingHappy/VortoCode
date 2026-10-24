@@ -22,12 +22,12 @@
 
 - **Web 实时驱动**：`/api/start` 驱动 需求→架构→闭环，进度/每轮迭代/token 经 WebSocket 实时广播，前端 `index.html` 渲染。
 - **LLM 流式输出**：主 Agent 使用 `LLMClient.stream()`；旧角色基类的流式入口已删除。
-- **统一沙箱**：`src/sandbox/runner.py` 优先 Docker 真隔离，无 Docker 时按 `VORTOCODE_ENABLE_SHELL`（兼容旧名 `AUTODEV_ENABLE_SHELL`）降级宿主机，否则 fail-closed。
+- ~~**统一沙箱**：`src/sandbox/runner.py` 优先 Docker 真隔离，无 Docker 时降级宿主机，否则 fail-closed。~~ —— **已退役删除**（只有 TUI 调用）；命令执行走 `run_command` + `sandbox/policy.py`。
 - **语义检索**：`code_indexer` 向量检索；回退 embedder 改为词袋哈希向量，无 key 也能按词重叠排序。
 - ~~**长目标自治**：`run_autonomous_goal()` / `AutonomousLoop`~~ —— **已退役删除**（路线 A）；长任务改用隔离 dev 流水线（`dev_auto`/`dev_parallel`）。
 
 ### 打磨批
-- **Tester 隔离**：`run_pytest` 在配置了 `AUTODEV_SANDBOX_IMAGE` 且有 Docker 时容器内隔离跑 pytest（断网），否则宿主机（默认不破坏开发流程）。
+- ~~**Tester 隔离**：`run_pytest` 在 Docker 容器内隔离跑 pytest。~~ —— **已随 runner 删除**；dev 流水线在一次性 worktree 里自测。
 - **流式节流**：`TokenBatcher` 累积到阈值/换行才广播，避免逐 token 洪泛。
 - **索引增量/持久化**：`CodeIndexer` 按文件 hash 跳过未变更、仅重嵌入变更、移除已删，并持久化 hash 跨进程续用。
 - **旧迭代开发实验已删除**：自分析、自动补测、外科修复和旧三角色闭环退出产品；开发任务统一交给正常隔离 dev 流水线。

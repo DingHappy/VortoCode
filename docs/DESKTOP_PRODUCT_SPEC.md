@@ -38,7 +38,7 @@ Desktop 是 VortoCode 当前默认产品与首要分发面；CLI 是高级/自�
 | 腾讯 Marvis | 常驻、本地隐私、手机接管、系统与文件入口 | 本机 runtime 生命周期；后续做远程伴侣与本地语义搜索 |
 | Marvis Company Brain | Journal、To-dos、Tasks、Project、Universe | 决策队列、每日摘要、项目上下文；知识图谱不进 V0 |
 | xAI grok-build | 服务端权威 Prompt Queue、后台/前台切换、会话事件持久化、稳定 hunk 身份 | 队列、会话交接、持久事件与稳定 hunk/source 第一阶段均已落地 |
-| VortoCode | 隔离 dev 流水线、国产模型 Relay、权限审计、checkpoint/rewind | 作为差异化能力直接显性化，不复制竞品的模型绑定 |
+| VortoCode | 隔离 dev 流水线、国产模型 Relay、权限审计 | 作为差异化能力直接显性化，不复制竞品的模型绑定 |
 
 参考：
 

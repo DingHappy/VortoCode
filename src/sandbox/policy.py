@@ -246,8 +246,8 @@ def child_env() -> dict[str, str]:
 def shell_enabled() -> bool:
     """宿主机命令执行开关（VORTOCODE_ENABLE_SHELL）。**全仓唯一一份判定。**
 
-    Web 的 require_shell、cron 的 command 作业触发、沙箱 runner 的"显式 off 后回落宿主机"
-    都只认这里。此前 web/auth 与 sandbox/runner 各读一遍环境变量——逻辑当下相同，但两份
+    Web 的 require_shell、cron 的 command 作业触发都只认这里。此前 web/auth 与已删除的
+    sandbox/runner 各读一遍环境变量——逻辑当下相同，但两份
     迟早漂移，而这是 fail-closed 的安全闸。调用方请函数内导入，测试 patch 这里即可覆盖全部。
     """
     from src.env_compat import env_compat
