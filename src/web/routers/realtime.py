@@ -5,7 +5,6 @@ P.make_event 构造/P.parse_event 校验，新事件类型必须先在 protocol 
 """
 import asyncio
 import os
-import re
 import weakref
 from typing import Any
 
@@ -15,6 +14,7 @@ from src.gateway import protocol as P
 from src.gateway.sessions import SessionTable, SessionCapacityError
 from src.gateway.main_conversation import set_main_conversation_host
 from src.gateway.session_event_stream import SessionEventStream
+from src.gateway.tool_summary import tool_summary
 from src.gateway.turn_bindings import TurnBindings
 from src.gateway.session_actor import (
     ActorContext, SessionActors, MAX_PROMPT_QUEUE as _MAX_PROMPT_QUEUE,
@@ -641,118 +641,6 @@ def _touch_session(sess: Dict[str, Any]) -> None:
     sess["updated"] = time.time()
 
 
-def _tool_summary(name: str, args: Dict[str, Any]) -> str:
-    """把工具调用压成一句"用户看得懂的动作"；敏感值不进入标题。
-
-    表要**覆盖全部内建工具**：漏掉的会退回 ``name.replace("_", " ")``，于是时间线里冒出
-    ``dev parallel``、``review memory proposal`` 这类内部标识符——看着像日志，不像进展
-    （2026-09-17 真机诊断）。``tests/unit/test_tool_summary.py`` 会在新增工具漏登记时变红。
-
-    退回原名只留给**非内建工具**（MCP / 扩展）：那些名字不归本仓管，原样显示比硬翻成
-    "工具调用"更有信息量。
-    """
-    path = str(args.get("path") or args.get("file") or "").strip()
-    query = str(args.get("query") or args.get("pattern") or "").strip()
-    command = str(args.get("command") or "").strip()
-    title = str(args.get("name") or args.get("title") or args.get("skill") or "").strip()
-    task = str(args.get("task") or args.get("description") or args.get("brief") or "").strip()
-    symbol = str(args.get("symbol") or "").strip()
-    job = str(args.get("id") or args.get("job") or "").strip()
-
-    def _with(prefix: str, detail: str, limit: int = 60) -> str:
-        if not detail:
-            return prefix.rstrip("：")
-        joiner = "" if prefix.endswith("：") else " "
-        return f"{prefix}{joiner}{detail[:limit]}"
-
-    labels = {
-        # —— 读代码 ——
-        "read_file": _with("读取", path) if path else "读取文件",
-        "read_local_file": _with("读取本机文件", path),
-        "list_files": _with("浏览", path) if path else "浏览文件",
-        "glob": _with("按文件名查找", query) if query else "按文件名查找",
-        "grep": _with("搜索", query) if query else "搜索内容",
-        "search_code": _with("搜索", query) if query else "搜索代码",
-        "document_symbols": _with("列出符号：", path) if path else "列出文件里的符号",
-        "find_definition": _with("查找定义", symbol or query),
-        "find_references": _with("查找引用", symbol or query),
-        # —— 改代码 ——
-        "edit_file": _with("修改", path) if path else "修改文件",
-        "write_file": _with("写入", path) if path else "写入文件",
-        "rename_symbol": _with("重命名符号", symbol),
-        # —— 跑命令 ——
-        "run_command": _with("运行", command, 120) if command else "运行命令",
-        "run_tests": _with("跑测试", path or command, 80),
-        "read_output": _with("读取运行输出", job),
-        "stop_command": _with("停止运行", job),
-        # —— 隔离开发流水线 ——
-        "dev_auto": _with("启动隔离开发流水线：", task, 50),
-        "dev_isolated": _with("在隔离分支里实现：", task, 50),
-        "dev_parallel": _with("并行隔离实现：", task, 50),
-        "dev_resume": _with("续跑上次的开发计划", job),
-        "git_status": "查看工作区改动",
-        "show_diff": _with("查看改动", path),
-        "list_branches": "查看分支",
-        "open_pr": _with("开 PR：", title or task, 50),
-        "pr_fix": _with("按评审意见修复 PR", job),
-        # —— 记忆与技能 ——
-        "save_memory": "记住这件事",
-        "recall_memory": _with("回忆", query) if query else "回忆相关记忆",
-        "search_conversations": _with("翻找以前的对话", query) if query else "翻找以前的对话",
-        "read_conversation_excerpt": "查看以前对话的片段",
-        "personal_goals": "核对个人目标与下一步",
-        "remember_repo": "记住仓库经验",
-        "list_memory_proposals": "查看待确认的记忆",
-        "review_memory_proposal": "处理待确认的记忆",
-        "save_skill": _with("保存技能", title),
-        "use_skill": _with("使用技能", title),
-        "list_personal_skills": "查看个人技能",
-        "use_personal_skill": "加载个人技能指令",
-        # —— 上网与研究 ——
-        "web_search": f"搜索网页：{query[:100]}" if query else "搜索网页",
-        "web_fetch": "读取网页",
-        "screenshot_page": "给网页截图",
-        # —— 浏览器操控（输入内容可能敏感，只显示元素编号，不进标题）——
-        "browser_open": _with("浏览器打开", str(args.get("url") or "").strip(), 80),
-        "browser_snapshot": "读取浏览器页面",
-        "browser_screenshot": "给浏览器页面截图",
-        "browser_click": _with("浏览器点击元素", str(args.get("ref") or "").strip()),
-        "browser_type": _with("浏览器输入到元素", str(args.get("ref") or "").strip()),
-        "research_parallel": _with("并行调研：", task, 50),
-        "task_status": _with("查看任务：", str(args.get("task_id") or ""), 50),
-        "task_model_profiles": "查看模型任务表现",
-        "task_model_assess": _with("评估是否继续原模型：", str(args.get("task_id") or ""), 50),
-        "task_inbox": "读取后台任务交接",
-        "task_acknowledge": _with("记录交接处理：", str(args.get("task_id") or ""), 50),
-        "task_review": _with("验收子任务：", str(args.get("task_id") or ""), 50),
-        "task_followup": _with("继续子任务：", str(args.get("task_id") or ""), 50),
-        "task_answer": _with("回答子任务：", str(args.get("task_id") or ""), 50),
-        "task_release": _with("推进依赖任务：", str(args.get("task_id") or ""), 50),
-        "task_reconcile": _with("核对依赖失效：", str(args.get("task_id") or ""), 50),
-        "task": _with("交给子 agent：", task, 50),
-        # —— 定时任务 ——
-        "cron_add": _with("新建定时任务", title),
-        "cron_list": "查看定时任务",
-        "cron_run": _with("立即运行定时任务", title or job),
-        "cron_toggle": _with("启用/停用定时任务", title or job),
-        "cron_set_prompt": _with("改写定时任务的提示词", title or job),
-        "cron_set_web": _with("调整定时任务的联网设置", title or job),
-        # —— 制品与外发 ——
-        "publish_artifact": _with("发布制品", title or path),
-        "list_artifacts": "查看制品",
-        "delete_artifact": _with("删除制品", title or path),
-        "send_file": _with("发送文件", path),
-        "send_image": _with("发送图片", path),
-        "send_document": _with("发送文档", path),
-        # —— 会话控制 ——
-        "update_plan": "更新执行计划",
-        "request_build": "请求切换到 Build",
-        "request_workspace": "请求项目工作区" if str(args.get("scope") or "") == "project"
-        else "请求临时工作区",
-    }
-    return labels.get(name) or re.sub(r"_+", " ", name).strip() or "工具调用"
-
-
 # ---- 多会话管理 API（供 agent.html 的会话侧栏：列表/删除/重命名；新建=前端换 sid 隐式创建）----
 
 @router.get("/api/agent/activity")
@@ -780,153 +668,12 @@ async def agent_activity_detail(sid: str, rid: str):
     return detail
 
 
-_SESSION_STATUS_ORDER = {
-    "needs_input": 0,
-    "failed": 1,
-    "working": 2,
-    "queued": 3,
-    "idle": 4,
-    "inactive": 5,
-    "completed": 6,
-}
-
-
-def _session_activity(sess: Dict[str, Any]) -> str:
-    """取当前运行活动；没有 running 事件时退回最近一次工具/阶段说明。"""
-    activities = sess.get("activities")
-    if not isinstance(activities, list):
-        return ""
-    fallback = ""
-    for event in reversed(activities):
-        if not isinstance(event, dict):
-            continue
-        label = str(event.get("summary") or event.get("label") or event.get("name") or "").strip()
-        if not label:
-            continue
-        if not fallback:
-            fallback = label
-        if event.get("status") == "running":
-            return label
-    return fallback
-
-
 def _session_dashboard_snapshot(repo_root: str) -> list[Dict[str, Any]]:
-    """把已落盘会话和当前 runtime 的 live actor 合并成一份可排序状态表。
-
-    状态优先级参考 grok-build Agent Dashboard：需要用户处理的会话先于工作中、空闲与仅
-    存盘会话。VortoCode 额外保留 ``queued``，表示用户停止后仍有持久输入等待恢复。
-    """
-    from pathlib import Path
-    from src.workflow.tasks.dashboard import (
-        agent_context_summary,
-        background_tasks_by_session,
-        project_dashboard_context,
-    )
-    from src.gateway.session_store import list_sessions, title_from_transcript, session_has_content
-
-    resolved_root = str(Path(repo_root).resolve())
-    project = project_dashboard_context(resolved_root)
-    task_groups = background_tasks_by_session(resolved_root)
-    from src.workflow.workbench.hook_issues import (
-        hook_issue_snapshot, load_hook_issue_acknowledgements,
-    )
-    hook_acknowledgements = load_hook_issue_acknowledgements(resolved_root)
-    empty_tasks = {
-        "total": 0, "active": 0, "attention": 0, "completed": 0,
-        "latest_status": "", "latest_prompt": "", "branch": "",
-        "latest_task_id": "", "active_task_id": "", "attention_task_id": "",
-        "plan_id": "", "worktree_count": 0,
-    }
-    empty_hook_issues = {"count": 0, "latest": None, "items": [], "truncated": False}
-    rows = {}
-    for item in list_sessions(repo_root):
-        sid = item["sid"]
-        tasks = {**empty_tasks, **task_groups.get(sid, {})}
-        if item.get("has_content") is False and not tasks["total"]:
-            continue
-        hook_issues = item.get("hook_issues") if isinstance(item.get("hook_issues"), dict) \
-            else empty_hook_issues
-        status = "failed" if tasks["attention"] or hook_issues["count"] \
-            else "working" if tasks["active"] else "queued" if item.get("queue_count") else "inactive"
-        rows[sid] = {
-            **item,
-            **project,
-            "status": status,
-            "queue_count": item.get("queue_count", 0),
-            "pending_input": False,
-            "pending_input_count": 0,
-            "running_prompt": "",
-            "activity": "",
-            "mode": None,
-            "background_tasks": tasks,
-            "hook_issues": hook_issues,
-            "context": item.get("context") if isinstance(item.get("context"), dict) else {},
-        }
-
-    for key, sess in list(_SESSIONS.items()):
-        if not key.startswith("sid-") or not isinstance(sess, dict):
-            continue
-        session_root = sess.get("repo_root")
-        if session_root and str(Path(str(session_root)).resolve()) != resolved_root:
-            continue
-        sid = key[len("sid-"):]
-        # 旧进程内条目没有 repo_root 时，只在它已有同根磁盘记录时合并，避免跨项目串会话。
-        if not session_root and sid not in rows:
-            continue
-
-        transcript = sess.get("transcript") if isinstance(sess.get("transcript"), list) else []
-        queue = sess.get("prompt_queue") if isinstance(sess.get("prompt_queue"), list) else []
-        queue_count = sum(1 for item in queue if isinstance(item, dict) and item.get("id"))
-        working = _ACTORS.busy(key)
-        pending = pending_confirmations(key)
-        running = _WS_AGENT_RUNNING.get(key)
-        tasks = {**empty_tasks, **task_groups.get(sid, {})}
-        hook_issues = hook_issue_snapshot(
-            sess.get("activities") if isinstance(sess.get("activities"), list) else [],
-            hook_acknowledgements.get(key) or [],
-        )
-        if pending:
-            status = "needs_input"
-        elif tasks["attention"] or hook_issues["count"]:
-            status = "failed"
-        elif working or tasks["active"]:
-            status = "working"
-        elif queue_count:
-            status = "queued"
-        else:
-            status = "idle"
-
-        disk = rows.get(sid, {})
-        agent = sess.get("agent")
-        if not (sid in rows or working or pending or queue_count or running or tasks["total"]
-                or session_has_content({**sess, "history": getattr(agent, "history", []),
-                                        "plan": getattr(agent, "plan", [])})):
-            continue
-        mode = (running or {}).get("mode") if isinstance(running, dict) else None
-        context = agent_context_summary(sess.get("agent"), mode or "plan")
-        rows[sid] = {
-            **project,
-            "sid": sid,
-            "title": disk.get("title") or title_from_transcript(transcript),
-            "messages": len(transcript),
-            "updated": float(sess.get("updated") or disk.get("updated") or 0),
-            "status": status,
-            "queue_count": queue_count,
-            "pending_input": bool(pending),
-            "pending_input_count": len(pending),
-            "running_prompt": str((running or {}).get("text") or "")[:160],
-            "activity": _session_activity(sess)[:160],
-            "mode": mode,
-            "background_tasks": tasks,
-            "hook_issues": hook_issues,
-            "context": context or (disk.get("context") if isinstance(disk.get("context"), dict) else {}),
-        }
-
-    return sorted(
-        rows.values(),
-        key=lambda item: (_SESSION_STATUS_ORDER.get(str(item.get("status")), 99),
-                          -float(item.get("updated") or 0)),
-    )
+    """Dashboard 快照：合并逻辑在 gateway.session_dashboard，这里只交出本进程的实时会话状态。"""
+    from src.gateway.session_dashboard import session_dashboard_snapshot
+    return session_dashboard_snapshot(
+        repo_root, live_sessions=_SESSIONS, is_busy=_ACTORS.busy,
+        pending_for=pending_confirmations, running_for=_WS_AGENT_RUNNING.get)
 
 
 @router.delete("/api/agent/sessions/{sid}")
@@ -1641,7 +1388,7 @@ async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list
             "id": str(payload.get("id") or f"tool-{uuid.uuid4().hex[:12]}"),
             "name": name,
             "status": status,
-            "summary": _tool_summary(name, raw_args),
+            "summary": tool_summary(name, raw_args),
             "args": sanitize_audit_value(raw_args),
         }
         if stage != "start":

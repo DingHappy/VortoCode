@@ -66,15 +66,15 @@ async def _fake_summarize(self, older):      # 不联网：压缩路径只需要
 
 # ---------------------------------------------------------------- 工具标题
 def _summary(name, args=None):
-    from src.web.routers.realtime import _tool_summary
+    from src.gateway.tool_summary import tool_summary
 
-    return _tool_summary(name, args or {})
+    return tool_summary(name, args or {})
 
 
 def test_every_builtin_tool_has_a_human_label(monkeypatch, tmp_path):
     """Web agent 实际暴露的每个工具都要有人话标题。
 
-    断的是行为（拿真实注册表逐个过一遍 `_tool_summary`），不是源码子串：新增工具忘了
+    断的是行为（拿真实注册表逐个过一遍 `tool_summary`），不是源码子串：新增工具忘了
     登记，这里立刻红。
     """
     monkeypatch.chdir(tmp_path)
