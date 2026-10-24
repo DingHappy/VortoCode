@@ -251,5 +251,5 @@ def shell_enabled() -> bool:
     迟早漂移，而这是 fail-closed 的安全闸。调用方请函数内导入，测试 patch 这里即可覆盖全部。
     """
     from src.env_compat import env_compat
-    return env_compat("VORTOCODE_ENABLE_SHELL", "AUTODEV_ENABLE_SHELL", "").strip().lower() \
-        in ("1", "true", "yes", "on")
+    raw = env_compat("VORTOCODE_ENABLE_SHELL", "AUTODEV_ENABLE_SHELL") or ""
+    return raw.strip().lower() in ("1", "true", "yes", "on")

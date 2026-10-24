@@ -97,6 +97,8 @@ files = [
     "src/agents/permissions.py",
     "src/agents/capabilities.py",
     "src/agents/gate.py",          # 确认门内核：安全模型的心脏，必须被类型钉死
+    "src/agents/taint.py",         # 污点追踪：污点态下免确认授权失效，同属安全核心
+    "src/sandbox/policy.py",       # 沙箱策略 + 宿主机命令开关（全仓唯一一份判定）
     "src/agents/trust.py",         # 授权档位：喂给确认门的 pre_authorized，同属内核
     "src/agents/tool.py",          # Agent 无关的工具定义和 schema 适配
     "src/agents/tool_runtime.py",  # 各 Agent 共用的工具执行边界
