@@ -39,7 +39,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # 只改 desktop/ 的提交不需要 python 三道关（desktop 段只在本地门禁跑）。
+  # 只改 desktop/ 的提交不需要 python 三道关；没碰 desktop/ 的提交也不需要 desktop 关。
   # 被 `if:` 跳过的 job 对 required check 报 Success，所以仍满足「每个 PR 都出必需检查」。
   # 判不出（首推、手动触发、diff 失败）一律当作要跑——宁可多跑，不可漏跑。
   changes:
@@ -47,6 +47,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       python: ${{ steps.filter.outputs.python }}
+      desktop: ${{ steps.filter.outputs.desktop }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -63,13 +64,20 @@ jobs:
             *) base="" ;;
           esac
           python=true
+          desktop=true
           if [ -n "$base" ] && files="$(git diff --name-only "$base"...HEAD 2>/dev/null)" && [ -n "$files" ]; then
             if ! printf '%s\n' "$files" | grep -qv '^desktop/' \
                && ! printf '%s\n' "$files" | grep -qx 'desktop/runtime_entry.py'; then
               python=false
             fi
+            # vitest 配置读 src/gateway/protocol.py 的协议版本做漂移守卫，改它也要跑 desktop 关。
+            if ! printf '%s\n' "$files" | grep -q '^desktop/' \
+               && ! printf '%s\n' "$files" | grep -qx 'src/gateway/protocol.py'; then
+              desktop=false
+            fi
           fi
           echo "python=$python" | tee -a "$GITHUB_OUTPUT"
+          echo "desktop=$desktop" | tee -a "$GITHUB_OUTPUT"
 
   lint:
     needs: changes
@@ -182,3 +190,28 @@ jobs:
               exit 2
               ;;
           esac
+
+  # Desktop 前端的离线子集，与本地门禁 desktop 段同口径：tsc（类型）+ vitest（纯逻辑与静态渲染）。
+  # 刻意不跑 `npm run check`：那条链里 sidecar:build 要下载 python-build-standalone，打包正确性
+  # （vite build / sidecar / bundle 冒烟 / cargo）属发布前检查。npm ci 按 package-lock 装，装包时
+  # 不执行依赖的安装脚本——这里只需要类型检查和单测，不需要任何原生构建步骤。
+  desktop:
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    runs-on: ${{ github.event.repository.private && vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: Install dependencies (lockfile, no install scripts)
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: TypeScript
+        run: npx --no-install tsc --noEmit
+      - name: Vitest
+        run: npx --no-install vitest run

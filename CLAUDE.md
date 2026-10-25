@@ -37,7 +37,7 @@ vc --help                        # 全部子命令：server/agent/im/cron/heartb
 
 > ⚠️ **CI 全红先区分基础设施故障与代码故障**：如果所有 job 都在 "Set up job" 阶段因下载 action 或 TLS 失败，先检查 runner 到 GitHub 的网络；job 尚未执行项目代码。通用排查见 `docs/OPS.md` 第六节。
 
-**desktop 段只跑离线子集**（tsc + `cargo test --lib` + `cargo check`，约 22s），**刻意不跑 `npm run check`**：那条链里 `sidecar:build` 会 `curl` 一个 python-build-standalone 包，把网络依赖塞进本该离线的门禁。打包正确性（vite build / sidecar / bundle 冒烟）属发布前检查，仍走 `cd desktop && npm run check`；同口径的单命令版是 `npm run check:ci`。缺 node/node_modules/cargo 或 crate 冷缓存时**跳过并计入收尾的「跳过清单」**，且此时结论不会说「全部通过」——跳过 ≠ 通过。
+**desktop 段只跑离线子集**（tsc + `cargo test --lib` + `cargo check`，约 22s），**刻意不跑 `npm run check`**：那条链里 `sidecar:build` 会 `curl` 一个 python-build-standalone 包，把网络依赖塞进本该离线的门禁。打包正确性（vite build / sidecar / bundle 冒烟）属发布前检查，仍走 `cd desktop && npm run check`；同口径的单命令版是 `npm run check:ci`。GitHub CI 的 `desktop` job 在改了 `desktop/` 或 `src/gateway/protocol.py` 时跑其中的 tsc + vitest（不含 cargo）。缺 node/node_modules/cargo 或 crate 冷缓存时**跳过并计入收尾的「跳过清单」**，且此时结论不会说「全部通过」——跳过 ≠ 通过。
 
 ## 架构大图
 
