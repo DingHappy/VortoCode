@@ -6,6 +6,32 @@ use std::sync::atomic::{AtomicU64, Ordering};
 const CONFLICT: &str =
     "模型配置已被其他操作更新；本次没有写入。请重新读取最新配置后再保存，当前草稿仍保留";
 
+/// Stable command-boundary errors; internal persistence flows retain their existing String errors.
+#[derive(Serialize)]
+pub(crate) struct ModelProfileMutationError {
+    code: &'static str,
+    message: String,
+}
+
+impl From<String> for ModelProfileMutationError {
+    fn from(message: String) -> Self {
+        Self {
+            code: if message == CONFLICT {
+                "model_configuration_conflict"
+            } else {
+                "model_configuration_error"
+            },
+            message,
+        }
+    }
+}
+
+impl From<&str> for ModelProfileMutationError {
+    fn from(message: &str) -> Self {
+        message.to_string().into()
+    }
+}
+
 pub(crate) fn new_profile_revision() -> String {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let nanos = SystemTime::now()
@@ -152,6 +178,16 @@ pub(crate) fn profile_snapshot_status(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn command_errors_have_a_stable_code_and_preserve_other_failures() {
+        let conflict = serde_json::to_value(ModelProfileMutationError::from(CONFLICT)).unwrap();
+        assert_eq!(conflict["code"], "model_configuration_conflict");
+        assert_eq!(conflict["message"], CONFLICT);
+        let failed = serde_json::to_value(ModelProfileMutationError::from("磁盘不可写")).unwrap();
+        assert_eq!(failed["code"], "model_configuration_error");
+        assert_eq!(failed["message"], "磁盘不可写");
+    }
 
     fn fixture(label: &str) -> (PathBuf, DesktopLlmProfileStore, ProfileSnapshot) {
         let path = std::env::temp_dir()

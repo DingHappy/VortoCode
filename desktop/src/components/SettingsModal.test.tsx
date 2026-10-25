@@ -76,3 +76,11 @@ it("does not show the previous model save result as the current account status",
   const markup = renderSettings({ initialSection: "account", llmSaveKind: "pending", llmSaveNote: "配置已保存，等待重启" });
   expect(markup).not.toContain("配置已保存，等待重启");
 });
+it("pauses old runtime receipts and repeated saving until a configuration conflict is resolved", () => {
+  const markup = renderSettings({ initialSection: "model", llmProfileConflict: true, llmRolesInput: { implement: "default:draft" } });
+  expect(markup).toContain('aria-label="模型配置冲突处理"');
+  expect(markup).toContain("引擎生效状态待核对");
+  expect(markup).not.toContain('aria-label="模型配置生效状态"');
+  expect(markup.match(/<button[^>]*>保存模型配置<\/button>/)?.[0]).toContain("disabled");
+  expect(markup).toContain('value="default:draft"');
+});

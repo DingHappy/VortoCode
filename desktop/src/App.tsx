@@ -439,7 +439,7 @@ function App() {
     llmProfile, applyLlmProfile, llmProfileChecked, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput,
     llmFastInput, setLlmFastInput, llmStrongInput, setLlmStrongInput,
     llmRolesInput, setLlmRolesInput,
-    llmKeyInput, setLlmKeyInput, llmProfileBusy, llmSaveNote, llmSaveKind, llmProfileLoading, llmProfileError, reloadLlmProfile, saveLlmProfile, clearLlmProfile,
+    llmKeyInput, setLlmKeyInput, llmProfileBusy, llmSaveNote, llmSaveKind, llmProfileLoading, llmProfileError, llmProfileConflict, reloadLlmProfile, saveLlmProfile, clearLlmProfile,
   } = useLlmProfile(settingsOpen, setBanner, () => restartCurrentRuntimeForLlmProfile());
   const [savedModelChoice, setSavedModelChoice] = useState<string | null>(() => loadModelChoice());
   const [modelPicks, setModelPicks] = useState<string[] | null>(() => loadModelPicks());
@@ -3240,7 +3240,7 @@ function App() {
           llmSaveNote={llmSaveNote}
           llmSaveKind={llmSaveKind}
           llmProfileLoading={llmProfileLoading}
-          llmProfileError={llmProfileError}
+          llmProfileError={llmProfileError} llmProfileConflict={llmProfileConflict}
           onReloadLlmProfile={reloadLlmProfile}
           onEditAssistant={() => setProfileDialogOpen(true)}
           onLlmKeyChange={setLlmKeyInput}

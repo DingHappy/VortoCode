@@ -10,6 +10,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { providerDraftState, type ProviderDraft } from "../../lib/providerDraft";
 import { confirmAction } from "../../lib/confirm";
+import { isModelProfileConflict } from "../../lib/modelProfileConflict";
+import { ModelProfileConflict } from "./ModelProfileConflict";
 import { errorText } from "../../lib/errorText";
 import { formatTokenCount } from "../../lib/labels";
 import { defaultServiceLabel } from "../../lib/modelChoice";
@@ -40,7 +42,7 @@ type Props = {
   onSetupDefault: (preset: ProviderPreset | null) => void;
   /** 去「常规」登录 VortoCode 账号 */
   onOpenAccount: () => void;
-  onDraftStateChange?: (state: { dirty: boolean; busy: boolean }) => void;
+  onDraftStateChange?: (state: { dirty: boolean; busy: boolean; conflict?: boolean }) => void;
 };
 
 function host(url: string): string {
@@ -51,6 +53,7 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
   const providers = profile?.providers ?? [];
   const hasDefault = Boolean(profile?.configured);
   const defaultIsMember = profile?.account?.keySource === MEMBER_KEY_SOURCE;
+  const [conflict, setConflict] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
   const draftRevision = useRef<string | undefined>(undefined);
   const focusEditor = useRef(false);
@@ -84,10 +87,11 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
 
   const draftState = draft ? providerDraftState(draft, providers) : null;
   const dirty = draftState?.dirty ?? false;
-  useEffect(() => { onDraftStateChange?.({ dirty, busy }); }, [dirty, busy, onDraftStateChange]);
+  useEffect(() => { onDraftStateChange?.({ dirty, busy, conflict }); }, [dirty, busy, conflict, onDraftStateChange]);
 
   const applied = async (next: DesktopLlmProfileStatus, done: string) => {
     onProfile(next);
+    setConflict(false);
     setDraft(null); setShowKey(false); setAdding(false);
     try {
       const restarted = await onRestartRuntime();
@@ -105,6 +109,7 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
     try {
       await work();
     } catch (error) {
+      setConflict(isModelProfileConflict(error));
       setNote(errorText(error, failure));
     } finally {
       busyRef.current = false;
@@ -119,7 +124,7 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
   }, "切换编辑失败");
 
   const save = () => run(async () => {
-    if (!draft || !draftState?.canSave) return;
+    if (conflict || !draft || !draftState?.canSave) return;
     const next = await invoke<DesktopLlmProfileStatus>("save_llm_provider", {
       expectedRevision: draftRevision.current ?? null,
       id: draft.id, name: draft.name, baseUrl: draft.baseUrl, apiKey: draft.apiKey,
@@ -261,6 +266,9 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
         </div>
       )}
 
+      {conflict && <ModelProfileConflict onUseLatest={next => {
+        onProfile(next); setDraft(null); setConflict(false); setNote(""); setShowKey(false); setAdding(false);
+      }} onBusyChange={next => { busyRef.current = next; setBusy(next); }} />}
       {draft && (
         <div id="setting-provider-editor" tabIndex={-1} className="custom-provider-editor settings-anchor"
           onFocus={event => { if (event.target === event.currentTarget) nameInput.current?.focus({ preventScroll: true }); }}>
@@ -299,7 +307,7 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
           <p className={`custom-providers-note ${draftState?.missing ? "danger" : ""}`} role="status">{draftState?.missing || (dirty ? "服务修改尚未保存。" : "与已保存的服务一致。")}</p>
           <div className="custom-provider-actions">
             <button onClick={() => void changeEditor(() => setDraft(null))} disabled={busy}>取消</button>
-            <button className="primary" onClick={() => void save()} disabled={busy || !canSave}>{busy ? "保存中…" : draft.editing ? "保存修改" : "添加"}</button>
+            <button className="primary" onClick={() => void save()} disabled={busy || conflict || !canSave}>{busy ? "保存中…" : draft.editing ? "保存修改" : "添加"}</button>
           </div></fieldset>
         </div>
       )}

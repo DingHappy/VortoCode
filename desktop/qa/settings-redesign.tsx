@@ -48,6 +48,8 @@ function settingWrite<T>(kind: string, persist: () => T): Promise<T> | T {
 const calls: string[] = [];
 Object.assign(window, { settingsQACalls: calls, isTauri: true, settingsQAProbeTargets: probeTargets, settingsQASettingRequests: settingRequests, settingsQARestarts: () => restarts,
   settingsQAStoredPermissions: () => ({ browserEnabled: browser.enabled, desktopEnabled: control.enabled, desktopTarget: control.target, desktopApps: control.apps }),
+  settingsQAExternalProfile: () => { profile = { ...profile, revision: "qa-latest-after-preview", model: "latest-after-preview" }; },
+  settingsQAStoredProfile: () => ({ revision: profile.revision, model: profile.model }),
   settingsQAReceiptFail: (fail: boolean) => { receiptFails = fail; },
   settingsQAConfirm: (allow: boolean) => { confirmationsAllowed = allow; } });
 mockIPC(async (cmd, raw) => {
@@ -57,6 +59,7 @@ mockIPC(async (cmd, raw) => {
     case "account_status": return { signedIn: false, email: "", deviceName: "", offline: false, manageUrl: "", note: "" };
     case "get_llm_profile": {
       reads++;
+      if (params.get("recoveryRead") === "fail-once" && reads === 2) throw new Error("模拟最新配置读取失败");
       if (params.get("read") === "fail-once" && reads === 1) throw new Error("模拟本机配置读取失败");
       if (["stale", "stale-error"].includes(params.get("read") || "") && reads === 1) {
         const stale = { ...profile, model: "stale-model" };
@@ -86,6 +89,11 @@ mockIPC(async (cmd, raw) => {
       return { ok: true, status: 200, modelCount: 1, modelAvailable: null, models: [`${providerId || "default"}-model`], message: "合成验收：模型列表可达" };
     }
     case "save_llm_provider": {
+      if (params.get("providerSave") === "conflict" && profile.revision === "qa-revision-1") {
+        profile = { ...profile, revision: "qa-external-provider", model: "externally-updated-model" };
+        throw { code: "model_configuration_conflict", message: "模型配置已被其他操作更新；本次没有写入。当前草稿仍保留" };
+      }
+      if (args.expectedRevision && args.expectedRevision !== profile.revision) throw { code: "model_configuration_conflict", message: "本次没有写入，当前草稿仍保留" };
       if (params.get("providerSave") === "fail") throw new Error("模拟服务保存失败");
       const id = String(args.id).trim().toLowerCase();
       const saved = { id, name: String(args.name).trim() || id, baseUrl: String(args.baseUrl).trim().replace(/\/+$/, ""), hasKey: true, models: [id + "-model"] };
@@ -97,7 +105,11 @@ mockIPC(async (cmd, raw) => {
       return persist();
     }
     case "set_llm_profile": {
-      if (params.get("save") === "conflict") throw new Error("模型配置已被其他操作更新；本次没有写入。请重新读取最新配置后再保存，当前草稿仍保留");
+      if (params.get("save") === "conflict" && profile.revision === "qa-revision-1") {
+        profile = { ...profile, revision: "qa-external-default", model: "externally-updated-model" };
+        throw { code: "model_configuration_conflict", message: "模型配置已被其他操作更新；本次没有写入。当前草稿仍保留" };
+      }
+      if (args.expectedRevision && args.expectedRevision !== profile.revision) throw { code: "model_configuration_conflict", message: "本次没有写入，当前草稿仍保留" };
       if (params.get("save") === "fail") throw new Error("模拟保存失败，草稿仍保留");
       if (params.get("save") === "cancel") throw new Error("操作已取消");
       profile = {
@@ -160,7 +172,7 @@ function Fixture() {
       onClose={() => setOpen(false)} onLlmBaseChange={llm.setLlmBaseInput} onLlmModelChange={llm.setLlmModelInput} onLlmKeyChange={llm.setLlmKeyInput}
       onLlmFastChange={llm.setLlmFastInput} onLlmStrongChange={llm.setLlmStrongInput} onRestartRuntime={restart} onLlmProfileChange={llm.applyLlmProfile}
       onModelPicksChange={noop} onSaveLlmProfile={llm.saveLlmProfile} onClearLlmProfile={llm.clearLlmProfile} llmSaveNote={llm.llmSaveNote}
-      llmSaveKind={llm.llmSaveKind} llmProfileLoading={llm.llmProfileLoading} llmProfileError={llm.llmProfileError} onReloadLlmProfile={llm.reloadLlmProfile}
+      llmProfileConflict={llm.llmProfileConflict} llmSaveKind={llm.llmSaveKind} llmProfileLoading={llm.llmProfileLoading} llmProfileError={llm.llmProfileError} onReloadLlmProfile={llm.reloadLlmProfile}
       hasResident residentName="vorto-97" residentConnected={false} onOpenResidentSetup={() => setNotice("常驻连接入口")} onOpenSchedule={() => setNotice("计划入口")}
       onEditAssistant={() => setNotice("资料入口")} onOpenPlugins={() => setNotice("插件入口")}
       onChooseRepo={noop} onDismissRecovery={noop} onRestoreRecovery={noop} onBaseUrlChange={noop} onTokenChange={noop} onStopRuntime={noop}

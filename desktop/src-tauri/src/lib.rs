@@ -1228,7 +1228,7 @@ async fn set_llm_profile(
     role_models: Option<HashMap<String, String>>,
     expected_revision: Option<String>,
     store: State<'_, DesktopLlmProfileStore>,
-) -> Result<DesktopLlmProfileStatus, String> {
+) -> Result<DesktopLlmProfileStatus, ModelProfileMutationError> {
     // 只改模型名 / 调度档时不必重输 Key：留空则沿用已保存的 Key，规则同 test_llm_connection
     // （仅限同一地址，Key 绝不借给别的服务）。
     let snapshot = cached_profile_snapshot(&app, &store)?;
@@ -1275,7 +1275,7 @@ async fn set_llm_profile(
     let confirmed = confirm_llm_profile_change(&app, &profile).await?;
     let profile = if confirmed { with_model_list(profile).await } else { profile };
     let profile = save_llm_profile_flow(profile, confirmed, LLM_PROBE_TIMEOUT, |_| Ok(())).await?;
-    persist_profile(&app, &store, profile)
+    persist_profile(&app, &store, profile).map_err(Into::into)
 }
 
 // 可能阻塞：移出主线程，原因见 get_llm_profile。
@@ -1284,7 +1284,7 @@ fn clear_llm_profile(
     app: AppHandle,
     expected_revision: Option<String>,
     store: State<'_, DesktopLlmProfileStore>,
-) -> Result<DesktopLlmProfileStatus, String> {
+) -> Result<DesktopLlmProfileStatus, ModelProfileMutationError> {
     let snapshot = cached_profile_snapshot(&app, &store)?;
     snapshot.check_expected(expected_revision.as_deref())?;
     let cleared = store.commit(&llm_profile_path(&app)?, &snapshot.revision, None)?;
@@ -2888,13 +2888,13 @@ async fn promote_llm_provider(
     id: String,
     expected_revision: Option<String>,
     store: State<'_, DesktopLlmProfileStore>,
-) -> Result<DesktopLlmProfileStatus, String> {
+) -> Result<DesktopLlmProfileStatus, ModelProfileMutationError> {
     let profile = saved_profile_for_providers(&app, &store)?;
     check_profile_revision(&profile, expected_revision.as_deref())?;
     let profile = promote_provider(profile, id.trim())?;
     let profile = with_model_list(profile).await;
     let profile = save_llm_profile_flow(profile, true, LLM_PROBE_TIMEOUT, |_| Ok(())).await?;
-    persist_profile(&app, &store, profile)
+    persist_profile(&app, &store, profile).map_err(Into::into)
 }
 
 /// 会员模型设为默认之前：把现在的默认服务挪进列表，并去掉列表里那份会员模型（它要成为默认）。
@@ -2951,7 +2951,7 @@ async fn save_llm_provider(
     api_key: String,
     expected_revision: Option<String>,
     store: State<'_, DesktopLlmProfileStore>,
-) -> Result<DesktopLlmProfileStatus, String> {
+) -> Result<DesktopLlmProfileStatus, ModelProfileMutationError> {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
     let mut profile = saved_profile_for_providers(&app, &store)?;
     check_profile_revision(&profile, expected_revision.as_deref())?;
@@ -2976,7 +2976,7 @@ async fn save_llm_provider(
     })?;
     let replacing = profile.providers.iter().any(|existing| existing.id == provider.id);
     if !replacing && profile.providers.len() >= MAX_CUSTOM_PROVIDERS {
-        return Err(format!("最多添加 {MAX_CUSTOM_PROVIDERS} 个供应商"));
+        return Err(format!("最多添加 {MAX_CUSTOM_PROVIDERS} 个供应商").into());
     }
     // 原生确认在 webview 之外：页面脚本不能悄悄把请求和 Key 指向别的地址。
     let message = format!(
@@ -3005,7 +3005,7 @@ async fn save_llm_provider(
         .unwrap_or_default();
     profile.providers.retain(|existing| existing.id != provider.id);
     profile.providers.push(provider);
-    persist_profile(&app, &store, profile)
+    persist_profile(&app, &store, profile).map_err(Into::into)
 }
 
 #[tauri::command(async)]
@@ -3014,7 +3014,7 @@ fn remove_llm_provider(
     id: String,
     expected_revision: Option<String>,
     store: State<'_, DesktopLlmProfileStore>,
-) -> Result<DesktopLlmProfileStatus, String> {
+) -> Result<DesktopLlmProfileStatus, ModelProfileMutationError> {
     let mut profile = saved_profile_for_providers(&app, &store)?;
     check_profile_revision(&profile, expected_revision.as_deref())?;
     let before = profile.providers.len();
@@ -3022,7 +3022,7 @@ fn remove_llm_provider(
     if profile.providers.len() == before {
         return Err("没有这个供应商".into());
     }
-    persist_profile(&app, &store, profile)
+    persist_profile(&app, &store, profile).map_err(Into::into)
 }
 
 /// 重新拉取默认服务和各供应商的模型列表；拉取失败的保留原列表。
@@ -3031,7 +3031,7 @@ async fn refresh_llm_providers(
     app: AppHandle,
     expected_revision: Option<String>,
     store: State<'_, DesktopLlmProfileStore>,
-) -> Result<DesktopLlmProfileStatus, String> {
+) -> Result<DesktopLlmProfileStatus, ModelProfileMutationError> {
     let mut profile = saved_profile_for_providers(&app, &store)?;
     check_profile_revision(&profile, expected_revision.as_deref())?;
     if !profile.signed_out && !profile.api_key.is_empty() {
@@ -3051,7 +3051,7 @@ async fn refresh_llm_providers(
             provider.models = models.into_iter().map(|info| info.id).collect();
         }
     }
-    persist_profile(&app, &store, profile)
+    persist_profile(&app, &store, profile).map_err(Into::into)
 }
 
 const RELAY_ORIGIN: &str = "https://token.vortotech.com";

@@ -27,6 +27,7 @@ import { VortoAccountCard } from "./settings/VortoAccountCard";
 import { MEMBER_KEY_SOURCE } from "../lib/vortoAccount";
 import { DesktopControlPane } from "./settings/DesktopControlPane";
 import { ResidentDesktopPane } from "./ResidentDesktopPane";
+import { ModelProfileConflict } from "./settings/ModelProfileConflict";
 import { ModelConfigurationState } from "./settings/ModelConfigurationState";
 import { ModelServices } from "./settings/ModelServices";
 import { CodexWatchCard } from "./settings/CodexWatchCard";
@@ -68,7 +69,7 @@ export function settingsBlockVisible(
 }
 
 const NAV_ICONS = { account: UserRound, model: Cpu, computer: Monitor, permissions: ShieldCheck, tools: Blocks, personal: SlidersHorizontal, advanced: Info };
-type DraftState = { dirty: boolean; busy: boolean };
+type DraftState = { dirty: boolean; busy: boolean; conflict?: boolean };
 const DRAFT_ITEMS: Record<string, { label: string; page: SettingsPage; anchor: string }> = {
   provider: { label: "模型服务", page: "model", anchor: "provider-editor" },
   instructions: { label: "全局指令", page: "personal", anchor: "instructions" },
@@ -94,6 +95,7 @@ type SettingsModalProps = {
   llmSaveKind?: ModelSaveKind;
   llmProfileLoading?: boolean;
   llmProfileError?: string;
+  llmProfileConflict?: boolean;
   onReloadLlmProfile?: () => void;
   activeScope: WorkspaceScope;
   connection: ConnectionState;
@@ -150,7 +152,7 @@ export function SettingsModal({
   hasResident = false,
   readCodexObserver,
   onEditAssistant,
-  residentName, residentConnected = false, onOpenResidentSetup, onConnectResident, onOpenSchedule, llmSaveNote = "", llmSaveKind = "idle", llmProfileLoading = false, llmProfileError = "", onReloadLlmProfile,
+  residentName, residentConnected = false, onOpenResidentSetup, onConnectResident, onOpenSchedule, llmSaveNote = "", llmSaveKind = "idle", llmProfileLoading = false, llmProfileError = "", llmProfileConflict = false, onReloadLlmProfile,
   activeScope,
   connection,
   connectionText,
@@ -250,6 +252,7 @@ export function SettingsModal({
   };
   const draft = { baseUrl: llmBaseInput, model: llmModelInput, apiKey: llmKeyInput, fastModel: llmFastInput, strongModel: llmStrongInput, roleModels: llmRolesInput };
   // 默认服务的详细表单：点「编辑」，或还没有服务时在「添加模型服务」里选了预设，才展开
+  const [recoveryBusy, setRecoveryBusy] = useState(false);
   const [editingDefault, setEditingDefault] = useState(false);
   const modelState = modelSettingsState(llmProfile, draft);
   const choosePreset = (preset: typeof PROVIDER_PRESETS[number]) => {
@@ -268,10 +271,11 @@ export function SettingsModal({
   ];
   const pending = pendingChanges.map(item => item.label);
   const modelUnavailable = llmProfileLoading || Boolean(llmProfileError);
+  const modelConflict = llmProfileConflict || Boolean(drafts.provider?.conflict);
   const modelReadMessage = llmProfileLoading ? "正在读取本机模型配置…" : llmProfileError;
-  const modelFeedback = section === "model" ? modelReadMessage || llmSaveNote : "";
-  const modelFeedbackError = section === "model" && (Boolean(llmProfileError) || llmSaveKind === "error");
-  const saving = llmProfileBusy || experimentalBusy || trustBusy || Object.values(drafts).some(state => state.busy);
+  const modelFeedback = section === "model" ? modelReadMessage || (llmProfileConflict ? "已保存配置有更新，请先核对最新配置" : llmSaveNote) : "";
+  const modelFeedbackError = section === "model" && (Boolean(llmProfileError) || llmProfileConflict || llmSaveKind === "error");
+  const saving = recoveryBusy || llmProfileBusy || experimentalBusy || trustBusy || Object.values(drafts).some(state => state.busy);
   const requestLeave = (action: () => void) => {
     if (saving) return;
     if (pending.length) setCloseAction(() => action);
@@ -348,7 +352,9 @@ export function SettingsModal({
                 <p>{llmProfileLoading ? "读取完成后即可编辑。其他分类仍可查看。" : `${llmProfileError}。现有配置不会被清空；请重试后再编辑。`}</p></div>
               {!llmProfileLoading && onReloadLlmProfile && <button onClick={onReloadLlmProfile}>重试读取</button>}
             </section>}
-            {!modelUnavailable && <ModelConfigurationState active={section === "model"} revision={llmProfile?.revision} />}
+            {llmProfileConflict && <ModelProfileConflict onUseLatest={onLlmProfileChange} onBusyChange={setRecoveryBusy} />}
+            {!modelUnavailable && !modelConflict && <ModelConfigurationState active={section === "model"} revision={llmProfile?.revision} />}
+            {modelConflict && <p className="settings-card-note" role="status">模型配置有冲突，引擎生效状态待核对。载入最新配置后再重新核对。</p>}
             {(!modelUnavailable || llmProfile) && <fieldset className="settings-model-fields" disabled={saving || modelUnavailable}>
               <div id="setting-services" className={anchorClass("services")} tabIndex={-1}><fieldset className="settings-model-fields" disabled={modelDirty || saving}><ModelServices onDraftStateChange={draftCallbacks.provider} profile={llmProfile} onProfile={onLlmProfileChange} onRestartRuntime={onRestartRuntime}
                 editingDefault={editingDefault} onEditDefault={setEditingDefault}
@@ -619,7 +625,7 @@ export function SettingsModal({
           </nav>}
         </div>
           {section === "model" && modelDirty && <button disabled={saving || modelUnavailable} onClick={resetModelDraft}>还原模型草稿</button>}
-          {section === "model" && <button className="primary" disabled={saving || modelUnavailable || !modelDirty || Boolean(modelState.missing)}
+          {section === "model" && <button className="primary" disabled={saving || modelUnavailable || llmProfileConflict || !modelDirty || Boolean(modelState.missing)}
             title={modelState.missing || "保存默认模型、角色分工与自动调度配置"} onClick={() => void onSaveLlmProfile()}>{llmProfileBusy ? "保存中…" : "保存模型配置"}</button>}
           <button disabled={saving} onClick={() => requestLeave(onClose)}>完成</button>
         </footer>

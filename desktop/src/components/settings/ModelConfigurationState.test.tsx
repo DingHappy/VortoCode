@@ -4,7 +4,7 @@ import { modelConfigurationSummary, ModelConfigurationState, parseModelConfigura
 
 it("does not reuse a success for a different saved revision", () => {
   const read: ModelConfigurationRead = { schemaVersion: 1, savedRevision: "old", runtimes: [{ runtimeId: "a", status: "applied" }] };
-  expect(modelConfigurationSummary(read, "new")).toContain("正在核对");
+  expect(modelConfigurationSummary(read, "new")).toContain("尚未同步");
   expect(modelConfigurationSummary(read)).toContain("正在核对");
   expect(modelConfigurationSummary(null, "new")).toContain("正在核对");
 });

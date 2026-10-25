@@ -10,6 +10,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState, type SetStateAction } from "react";
 
 import { restartSavedModelProfile, type ModelSaveKind } from "../lib/modelProfileSave";
+import { isModelProfileConflict } from "../lib/modelProfileConflict";
 import { errorText } from "../lib/errorText";
 import { confirmAction } from "../lib/confirm";
 import type { DesktopLlmProfileStatus } from "../types";
@@ -26,6 +27,7 @@ export function useLlmProfile(
   onBanner: (text: string) => void,
   onRestartRuntime: () => Promise<boolean>,
 ) {
+  const [llmProfileConflict, setLlmProfileConflict] = useState(false);
   const [llmSaveNote, setLlmSaveNote] = useState("");
   const [llmSaveKind, setLlmSaveKind] = useState<ModelSaveKind>("idle");
   const clearFeedback = useCallback(() => { setLlmSaveNote(""); setLlmSaveKind("idle"); }, []);
@@ -60,7 +62,9 @@ export function useLlmProfile(
   const applyLlmProfile = (profile: DesktopLlmProfileStatus) => {
     // Account/provider mutations supersede any earlier read, including its late errors.
     ++readGeneration.current;
+    if (llmProfileConflict) onBanner("已载入最新配置，请重新编辑需要的内容");
     clearFeedback();
+    setLlmProfileConflict(false);
     replaceProfile(profile);
     setLlmProfileLoading(false);
     setLlmProfileError("");
@@ -77,7 +81,7 @@ export function useLlmProfile(
     setLlmProfileError("");
     clearFeedback();
     void invoke<DesktopLlmProfileStatus>("get_llm_profile")
-      .then(profile => { if (current()) replaceProfile(profile); })
+      .then(profile => { if (current()) { setLlmProfileConflict(false); replaceProfile(profile); } })
       .catch(error => {
         if (!current()) return;
         const message = errorText(error, "读取本机模型配置失败");
@@ -88,7 +92,7 @@ export function useLlmProfile(
   }, [onBanner, settingsOpen, readAttempt, clearFeedback]);
 
   const saveLlmProfile = async () => {
-    if (llmProfileBusy || llmProfileLoading || llmProfileError || !llmBaseInput.trim() || !llmModelInput.trim()) return;
+    if (llmProfileBusy || llmProfileLoading || llmProfileError || llmProfileConflict || !llmBaseInput.trim() || !llmModelInput.trim()) return;
     setLlmProfileBusy(true);
     setLlmSaveNote("");
     setLlmSaveKind("idle");
@@ -106,6 +110,7 @@ export function useLlmProfile(
       const feedback = await restartSavedModelProfile(onRestartRuntime, "保存");
       setLlmSaveNote(feedback.message); setLlmSaveKind(feedback.kind); onBanner(feedback.message);
     } catch (error) {
+      setLlmProfileConflict(isModelProfileConflict(error));
       const message = errorText(error, "保存模型服务失败");
       setLlmSaveNote(message); setLlmSaveKind("error"); onBanner(message);
     } finally {
@@ -114,7 +119,7 @@ export function useLlmProfile(
   };
 
   const clearLlmProfile = async () => {
-    if (llmProfileBusy || llmProfileLoading || llmProfileError || !await confirmAction("清除本机保存的模型服务配置？当前 runtime 会重启。")) return;
+    if (llmProfileBusy || llmProfileLoading || llmProfileError || llmProfileConflict || !await confirmAction("清除本机保存的模型服务配置？当前 runtime 会重启。")) return;
     setLlmProfileBusy(true);
     setLlmSaveNote("");
     setLlmSaveKind("idle");
@@ -124,6 +129,7 @@ export function useLlmProfile(
       const feedback = await restartSavedModelProfile(onRestartRuntime, "清除");
       setLlmSaveNote(feedback.message); setLlmSaveKind(feedback.kind); onBanner(feedback.message);
     } catch (error) {
+      setLlmProfileConflict(isModelProfileConflict(error));
       const message = errorText(error, "清除模型服务失败");
       setLlmSaveNote(message); setLlmSaveKind("error"); onBanner(message);
     } finally {
@@ -135,6 +141,6 @@ export function useLlmProfile(
     llmProfile, applyLlmProfile, llmProfileChecked, llmBaseInput, setLlmBaseInput: editLlmBaseInput, llmModelInput, setLlmModelInput: editLlmModelInput,
     llmKeyInput, setLlmKeyInput: editLlmKeyInput, llmFastInput, setLlmFastInput: editLlmFastInput, llmStrongInput, setLlmStrongInput: editLlmStrongInput,
     llmRolesInput, setLlmRolesInput: editLlmRolesInput,
-    llmProfileBusy, llmSaveNote, llmSaveKind, llmProfileLoading, llmProfileError, reloadLlmProfile, saveLlmProfile, clearLlmProfile,
+    llmProfileBusy, llmProfileConflict, llmSaveNote, llmSaveKind, llmProfileLoading, llmProfileError, reloadLlmProfile, saveLlmProfile, clearLlmProfile,
   };
 }

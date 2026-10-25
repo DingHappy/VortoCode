@@ -23,7 +23,8 @@ export function parseModelConfigurationRead(value: unknown): ModelConfigurationR
 }
 
 export function modelConfigurationSummary(read: ModelConfigurationRead | null, revision?: string) {
-  if (!read || !revision || read.savedRevision !== revision) return "正在核对已保存配置与本机引擎…";
+  if (!read || !revision) return "正在核对已保存配置与本机引擎…";
+  if (read.savedRevision !== revision) return "已保存配置有更新，当前表单尚未同步；请核对最新配置。";
   if (!read.runtimes.length) return "当前没有运行中的本机引擎；下次启动时使用已保存配置。";
   const applied = read.runtimes.filter(item => item.status === "applied").length;
   const pending = read.runtimes.filter(item => item.status === "pending").length;
