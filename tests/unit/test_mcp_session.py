@@ -39,7 +39,7 @@ async def test_late_connection_is_not_attached(monkeypatch):
     monkeypatch.setattr(module,'connect_mcp',connect)
     with pytest.raises(RuntimeError):await connect_agent(a,'.',current=lambda:False)
     assert m.closed and 'mcp__fixture__count' not in a.tools
-    assert not a._mcp_connecting
+    assert not a.mcp.connecting
 
 @pytest.mark.asyncio
 async def test_local_boundary_and_overlapping_requests(monkeypatch):
@@ -62,7 +62,7 @@ async def test_failed_retry_retains_prior_tools_and_redacts_error(monkeypatch):
     async def fail(*args,**kwargs):raise ValueError('secret endpoint fixture')
     monkeypatch.setattr(module,'connect_mcp',fail)
     with pytest.raises(ValueError):await connect_agent(a,'.')
-    assert a._mcp_mgr is m and not m.closed and 'mcp__fixture__count' in a.tools
+    assert a.mcp.manager is m and not m.closed and 'mcp__fixture__count' in a.tools
     assert 'secret' not in snapshot(a)['detail']
 
 
@@ -79,7 +79,7 @@ async def test_failed_retry_preserves_catalogue_observation_time(monkeypatch):
     a=agent();m=Manager()
     async def connect(*args,**kwargs):return m,[tool('mcp__fixture__count')]
     monkeypatch.setattr(module,'connect_mcp',connect);await connect_agent(a,'.')
-    a._mcp_observation['observed_at']='2026-01-01T00:00:00+00:00'
+    a.mcp.observation['observed_at']='2026-01-01T00:00:00+00:00'
     async def fail(*args,**kwargs):raise ValueError('fixture offline')
     monkeypatch.setattr(module,'connect_mcp',fail)
     with pytest.raises(ValueError):await connect_agent(a,'.')
@@ -92,16 +92,16 @@ async def test_cancel_after_publish_does_not_revert_new_connection_observation(m
     a=agent();old=Manager();new=Manager();managers=iter([old,new])
     async def connect(*args,**kwargs):return next(managers),[tool('mcp__fixture__count')]
     monkeypatch.setattr(module,'connect_mcp',connect);await connect_agent(a,'.')
-    a._mcp_observation['observed_at']='2026-01-01T00:00:00+00:00'
+    a.mcp.observation['observed_at']='2026-01-01T00:00:00+00:00'
     entered=asyncio.Event()
     async def blocked():entered.set();await asyncio.Event().wait()
     old.shutdown=blocked
     task=asyncio.create_task(connect_agent(a,'.'));await entered.wait();task.cancel()
     with pytest.raises(asyncio.CancelledError):await task
-    assert a._mcp_mgr is new and snapshot(a)['status']=='connected'
+    assert a.mcp.manager is new and snapshot(a)['status']=='connected'
     assert snapshot(a)['observed_at']!='2026-01-01T00:00:00+00:00'
     assert '清理未确认' in snapshot(a)['detail']
-    assert not a._mcp_connecting
+    assert not a.mcp.connecting
 
 @pytest.mark.asyncio
 async def test_failed_candidate_cleanup_cannot_leave_retry_latched(monkeypatch):
@@ -111,7 +111,7 @@ async def test_failed_candidate_cleanup_cannot_leave_retry_latched(monkeypatch):
     async def fail_cleanup():raise ValueError('cleanup failed')
     m.shutdown=fail_cleanup;monkeypatch.setattr(module,'connect_mcp',connect)
     with pytest.raises(RuntimeError):await connect_agent(a,'.',current=lambda:False)
-    assert not a._mcp_connecting and '清理未确认' in snapshot(a)['detail']
+    assert not a.mcp.connecting and '清理未确认' in snapshot(a)['detail']
 
 
 @pytest.mark.asyncio
@@ -124,8 +124,8 @@ async def test_cancel_during_candidate_cleanup_records_unknown_and_releases_retr
     task=asyncio.create_task(connect_agent(a,'.',current=lambda:False))
     await entered.wait();task.cancel()
     with pytest.raises(asyncio.CancelledError):await task
-    assert not a._mcp_connecting and '清理未确认' in snapshot(a)['detail']
-    assert not m.closed and not hasattr(a,'_mcp_mgr')
+    assert not a.mcp.connecting and '清理未确认' in snapshot(a)['detail']
+    assert not m.closed and a.mcp.manager is None
 
 
 @pytest.mark.asyncio
@@ -136,5 +136,5 @@ async def test_factory_cleanup_unknown_is_visible_without_exposing_error(monkeyp
     async def fail(*args,**kwargs):raise error
     monkeypatch.setattr(module,'connect_mcp',fail)
     with pytest.raises(ValueError):await connect_agent(a,'.')
-    assert not a._mcp_connecting and '清理未确认' in snapshot(a)['detail']
+    assert not a.mcp.connecting and '清理未确认' in snapshot(a)['detail']
     assert 'secret' not in snapshot(a)['detail']

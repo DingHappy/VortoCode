@@ -57,7 +57,6 @@ def test_clean_model_request_shape():
 
 class _ModelAgent:
     def __init__(self):
-        self._on_plan = None
         self.plan = []
         self.models = []
 

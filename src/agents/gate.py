@@ -156,7 +156,17 @@ def make_confirm_gate(
         _tell(operation, ok, tainted)
         return ok
 
+    setattr(gated, _KERNEL_GATE, True)
     return gated
+
+
+_KERNEL_GATE = "__vortocode_kernel_gate__"
+
+
+def is_kernel_gate(confirm: Any) -> bool:
+    """是否已是 make_confirm_gate 产出的内核门。再包一层会叠两遍污点横幅，
+    且内层审计拿到的是带横幅的文本而不是原始操作——下游执行层据此决定直接用还是包裹。"""
+    return getattr(confirm, _KERNEL_GATE, False) is True
 
 
 async def request(confirm: Optional[Callable[..., Awaitable[bool]]],

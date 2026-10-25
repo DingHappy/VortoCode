@@ -318,7 +318,6 @@ def test_no_hand_serialized_ws_sends():
 class _ScriptedAgent:
     """固定回合形状：say → reasoning → stream → plan → emit。"""
     def __init__(self):
-        self._on_plan = None
         self.plan = []
 
     async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None,
@@ -328,8 +327,8 @@ class _ScriptedAgent:
             reasoning_cb("想")
         if stream_cb:
             stream_cb("部分")
-        if self._on_plan:
-            self._on_plan([{"step": "x", "status": "in_progress"}])
+        from src.web.routers.realtime import turn_bindings
+        turn_bindings(self).emit_plan([{"step": "x", "status": "in_progress"}])
         emit("答案")
 
 

@@ -55,7 +55,7 @@ async def test_mcp_allow_follows_each_session_kernel_gate(kind, tmp_path, mcp_pe
         await agent._run_tool(name, {}, 'build', lambda _: None)
         assert captured[1].calls == expected
     finally:
-        await agent._mcp_mgr.shutdown()
+        await agent.mcp.manager.shutdown()
 
 
 @pytest.fixture(autouse=True)

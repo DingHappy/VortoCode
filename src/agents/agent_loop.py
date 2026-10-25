@@ -509,6 +509,10 @@ class MainAgent:
         raise_llm_errors: bool = False,
         execution_check: Optional[Callable[[], None]] = None,
         auto_recall: bool = False,
+        # 富客户端的结构化动作（Desktop 保存、显式 MCP 连接）不经过模型，但仍须复用同一份确认门。
+        # 只收 make_confirm_gate 包过的实例（build_session 装配时传入），端不能传裸 yes/no 回调。
+        confirm_gate: Optional[Callable[[str], Awaitable[bool]]] = None,
+        supervised: bool = False,
     ) -> None:
         import os
         # 复用既有 src/hooks 的 HookSystem：把工具生命周期事件（pre/post/error）接进 agent loop
@@ -521,6 +525,10 @@ class MainAgent:
         # 置位后每个回合在 reset_taint() 之后立刻重新打污点（见 run_turn），
         # 因为污点是回合作用域的——在 run_turn 外面调 mark_tainted() 会被回合开头的 reset 抹掉。
         self._untrusted_input = bool(untrusted_input)
+        self._confirm_gate = confirm_gate
+        self._supervised = bool(supervised)
+        from src.agents.mcp_session import McpAttachment
+        self.mcp = McpAttachment()             # 会话自有的 MCP 接入状态，只由 mcp_session 读写
         # 无人值守/流水线档：LLM 通道瞬时故障必须**抛异常**，而不是"emit 提示 + 返回空串"——
         # emit 那套语义是说给盯屏的人听的；后台没有人，空串会被上游误判成"子 agent 没干活"
         # （no-op），把通道外伤记成 agent 内科病（真机复盘：三任务六轮全被 502 吞成"无改动/出错"）。
@@ -697,11 +705,32 @@ class MainAgent:
         except Exception:  # noqa: BLE001
             return ""
 
+    @property
+    def confirm_gate(self) -> Optional[Callable[[str], Awaitable[bool]]]:
+        """装配时注入的确认门（已经过 make_confirm_gate）；没有则 None，调用方应按拒绝处理。"""
+        return self._confirm_gate
+
+    @property
+    def untrusted_input(self) -> bool:
+        return self._untrusted_input
+
     def add_tools(self, tools: list) -> None:
         """运行时追加工具（如连上 MCP 后注入 mcp__* 工具）；同步进 _tool_list（喂系统提示目录）与 tools。"""
         for t in tools:
             self._tool_list.append(t)
             self.tools[t.name] = t
+
+    def remove_tools(self, names) -> set[str]:
+        """运行时移除工具，返回实际移除的名字。
+
+        _tool_list 喂系统提示目录与原生 schema，tools 决定能否执行——两者必须同步改，
+        否则撤销的连接器工具要么仍出现在模型眼前，要么目录里有却调不动。"""
+        names = set(names)
+        removed = {t.name for t in self._tool_list if t.name in names} | (names & self.tools.keys())
+        self._tool_list = [t for t in self._tool_list if t.name not in removed]
+        for name in removed:
+            self.tools.pop(name, None)
+        return removed
 
     def _system(self, mode: str) -> str:
         """系统提示。刻意保持**会话内字节级稳定**（只随 mode 切换/新增工具这类低频事件变化）：
@@ -1387,7 +1416,7 @@ class MainAgent:
 
         return ToolRuntime(lambda: self.tools, ToolExecutionContext(
             capabilities=self._capabilities, permissions=self._permissions,
-            state=self._tool_turn_state, supervised=getattr(self, "_supervised", False),
+            state=self._tool_turn_state, supervised=self._supervised,
             mode_switch_hint=self._mode_switch_hint, on_escalate=self._on_escalate,
             on_hook=self._fire_hook if self._hook_system is not None else None,
             on_event=self._emit_tool_event, on_result=self._on_tool,
@@ -1606,7 +1635,7 @@ class MainAgent:
         # 端级不可信入口（IM）：用户输入自身就是外部内容，**每回合无条件重新打污点**。
         # 必须在这里、reset 之后打——装配时打一次会被下一个回合的 reset 抹掉（污点是回合作用域的）。
         # 用 channel 档而非 external：拦截强度完全一样，但别把"你自己打了句话"说成"读过网页"。
-        if getattr(self, "_untrusted_input", False):
+        if self._untrusted_input:
             mark_channel_untrusted()
         # TUI 自动召回在 agent 外拼接；attach 后 serve 也只能看到文本。显式数据边界让两条路径
         # 都能在 reset 之后重新标污点。用户伪造该标记只会触发更保守的确认，不会获得权限。
@@ -1655,29 +1684,9 @@ class MainAgent:
                         result=report_result, error=report_error,
                         progress=report_progress or self._execution_report.progress)
 
-    async def _run_turn_body(
-        self,
-        user_text: str,
-        mode: str = "plan",
-        say: Optional[Callable[[str], None]] = None,
-        emit: Optional[Callable[[str], None]] = None,
-        stream_cb: Optional[Callable[[str], None]] = None,
-        images: Optional[list] = None,
-        audio: Optional[list] = None,
-        reasoning_cb: Optional[Callable[[str], None]] = None,
-        auto_continues: int = 0,
-    ) -> str:
-        """处理一轮用户输入：循环"模型↔工具"，最终把回复交给 emit；并返回最终回复文本。
-
-        say(markup): UI 提示行（如"🔧 调用工具"）；emit(text): 最终/工具的字面输出。
-        stream_cb(partial): 给了就把"最终回复"边生成边流式回显（疑似工具调用的 JSON 不显示）。
-        images: 可选图片引用列表（本地路径/URL/data URL）。
-        audio:  可选音频引用列表（本地路径/data URL）——mimo-v2.5 可直接听音频(input_audio)。
-                有图/音则本轮 user 消息变多模态内容块；都没有则保持纯字符串、完全向后兼容。
-        返回值：最终回复文本（供子 agent 把结论交回父 agent）。
-        """
-        say = say or (lambda _m: None)
-        emit = emit or (lambda _m: None)
+    async def _prepare_turn(self, user_text: str, mode: str, say: Callable[[str], None],
+                            images: Optional[list], audio: Optional[list], auto_continues: int) -> None:
+        """回合准备：重置回合状态、自动召回、本轮 user 入历史并压缩，再附上 env/plan 动态块。"""
         self._context_mode = mode
         self._escalated = False                # 每轮重置；切 build 由 UI 持久化到 mode
         self._pending_images = []              # 每轮重置：上轮异常中断可能残留未注入的图
@@ -1725,6 +1734,68 @@ class MainAgent:
             self.history[-1] = {"role": "user",
                                 "content": build_user_content(sent_text, images, audio)}
 
+    def _request_messages(self, mode: str) -> list[dict]:
+        """本步请求：稳定 system + 裁剪后历史；记忆召回/日期只附到本次请求的最后一条 user，不进持久历史。"""
+        messages = [{"role": "system", "content": self._system(mode)}] + self._trimmed_history(mode)
+        request_notes = [self._turn_memory_context] if self._turn_memory_context else []
+        if not self._env_context:
+            # 无目录会话仍需日期；只附到本次请求，不能挤占持久历史/压缩预算。
+            from datetime import datetime
+            date_note = (f"【当前日期】{datetime.now():%Y-%m-%d}（运行环境本地日期）。"
+                         "检索最新/近期信息以此为参考；用户指定历史范围时遵循用户范围。")
+            request_notes.append(date_note)
+        if request_notes:
+            note = "\n\n".join(request_notes)
+            for index in range(len(messages) - 1, 0, -1):
+                if messages[index].get("role") != "user":
+                    continue
+                message = dict(messages[index])
+                content = message.get("content")
+                if isinstance(content, str) and content.startswith("[工具 "):
+                    continue  # 工具结果必须保持原样，日期不是搜索后端返回的证据。
+                message["content"] = (content + [{"type": "text", "text": note}]
+                                      if isinstance(content, list)
+                                      else (str(content or "") + "\n\n" + note))
+                messages[index] = message
+                break
+        return messages
+
+    async def _dispatch_calls(self, calls: list, recorded: str, reasoning: Any, mode: str,
+                              say: Callable[[str], None]) -> None:
+        """记下这一步的工具调用（提示式历史表示，跨协议一致），执行并回灌结果与工具带回的图。"""
+        message = {"role": "assistant", "content": recorded}
+        if reasoning:
+            message["reasoning_content"] = str(reasoning)
+        self.history.append(message)
+        results = await self._run_tools(calls, mode, say)   # 全只读→并发；含写→顺序
+        self.history.append({"role": "user", "content": _tool_results_msg(results)})
+        self._flush_pending_images()           # 工具带回的图紧跟结果注入（read_file 读图）
+
+    async def _run_turn_body(
+        self,
+        user_text: str,
+        mode: str = "plan",
+        say: Optional[Callable[[str], None]] = None,
+        emit: Optional[Callable[[str], None]] = None,
+        stream_cb: Optional[Callable[[str], None]] = None,
+        images: Optional[list] = None,
+        audio: Optional[list] = None,
+        reasoning_cb: Optional[Callable[[str], None]] = None,
+        auto_continues: int = 0,
+    ) -> str:
+        """处理一轮用户输入：循环"模型↔工具"，最终把回复交给 emit；并返回最终回复文本。
+
+        say(markup): UI 提示行（如"🔧 调用工具"）；emit(text): 最终/工具的字面输出。
+        stream_cb(partial): 给了就把"最终回复"边生成边流式回显（疑似工具调用的 JSON 不显示）。
+        images: 可选图片引用列表（本地路径/URL/data URL）。
+        audio:  可选音频引用列表（本地路径/data URL）——mimo-v2.5 可直接听音频(input_audio)。
+                有图/音则本轮 user 消息变多模态内容块；都没有则保持纯字符串、完全向后兼容。
+        返回值：最终回复文本（供子 agent 把结论交回父 agent）。
+        """
+        say = say or (lambda _m: None)
+        emit = emit or (lambda _m: None)
+        await self._prepare_turn(user_text, mode, say, images, audio, auto_continues)
+
         nudged = False                         # 本轮是否已纠偏过一次（空收尾/残缺工具 JSON → 只重试一次）
         stream_shown: list[str] = []           # 本回合已回显的正文（回合级累加器→保证 stream_cb 单调、CLI 不错位）
         steps = 0
@@ -1732,28 +1803,7 @@ class MainAgent:
         budget_exhausted = False
         while steps < self._step_budget(mode):
             steps += 1
-            messages = [{"role": "system", "content": self._system(mode)}] + self._trimmed_history(mode)
-            request_notes = [self._turn_memory_context] if self._turn_memory_context else []
-            if not self._env_context:
-                # 无目录会话仍需日期；只附到本次请求，不能挤占持久历史/压缩预算。
-                from datetime import datetime
-                date_note = (f"【当前日期】{datetime.now():%Y-%m-%d}（运行环境本地日期）。"
-                             "检索最新/近期信息以此为参考；用户指定历史范围时遵循用户范围。")
-                request_notes.append(date_note)
-            if request_notes:
-                note = "\n\n".join(request_notes)
-                for index in range(len(messages) - 1, 0, -1):
-                    if messages[index].get("role") != "user":
-                        continue
-                    message = dict(messages[index])
-                    content = message.get("content")
-                    if isinstance(content, str) and content.startswith("[工具 "):
-                        continue  # 工具结果必须保持原样，日期不是搜索后端返回的证据。
-                    message["content"] = (content + [{"type": "text", "text": note}]
-                                          if isinstance(content, list)
-                                          else (str(content or "") + "\n\n" + note))
-                    messages[index] = message
-                    break
+            messages = self._request_messages(mode)
 
             # 原生 function-calling 路径（opt-in）；模型不支持就永久回退到提示式协议
             if self._native:
@@ -1821,15 +1871,10 @@ class MainAgent:
                     recorded = json.dumps(
                         [{"tool": n, "args": a} for n, a in calls], ensure_ascii=False) \
                         if budget_exhausted or tcs else content
-                    tool_message = {"role": "assistant", "content": recorded}
-                    reasoning = resp.get("reasoning_content") or resp.get("reasoning")
-                    if reasoning:
-                        tool_message["reasoning_content"] = str(reasoning)
-                    self.history.append(tool_message)
-                    results = await self._run_tools(calls, mode, say)
-                    self.history.append({"role": "user", "content": _tool_results_msg(results)})
+                    await self._dispatch_calls(
+                        calls, recorded, resp.get("reasoning_content") or resp.get("reasoning"),
+                        mode, say)
                     nudged = False                  # 工具结果带来了新信息，允许最终收尾再纠偏一次
-                    self._flush_pending_images()   # 工具带回的图紧跟结果注入（read_file 读图）
                     if budget_exhausted:
                         break
                     continue
@@ -1870,11 +1915,8 @@ class MainAgent:
                 break
             recorded = json.dumps([{"tool": n, "args": a} for n, a in calls], ensure_ascii=False) \
                 if budget_exhausted else content
-            self.history.append({"role": "assistant", "content": recorded})
-            results = await self._run_tools(calls, mode, say)   # 全只读→并发；含写→顺序
-            self.history.append({"role": "user", "content": _tool_results_msg(results)})
+            await self._dispatch_calls(calls, recorded, None, mode, say)
             nudged = False                         # 新工具结果后重新给收尾一次纠偏机会
-            self._flush_pending_images()           # 工具带回的图紧跟结果注入（read_file 读图）
             if budget_exhausted:
                 break
 

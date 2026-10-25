@@ -79,7 +79,7 @@ async def test_manual_general_connection_loads_named_credential_and_keeps_readon
     await c.route("fixture")
     assert not c.clients[0].connected and c.clients[1].connected
     assert [t.name for t in c.agent._tool_list] == ["mcp__fixture__read"]
-    await c.agent._mcp_mgr.shutdown()
+    await c.agent.mcp.manager.shutdown()
 
 
 @pytest.mark.parametrize("scope", ["project", "scratch", "invalid"])
@@ -113,7 +113,7 @@ async def test_local_profile_remains_blocked_even_in_general(configured):
 async def test_bad_secret_retains_prior_connection_without_leaking_details(configured, invalid):
     c = configured
     await c.route("fixture")
-    previous = c.agent._mcp_mgr
+    previous = c.agent.mcp.manager
     observed = snapshot(c.agent)["observed_at"]
     if invalid == "missing":
         c.secret.unlink()
@@ -122,7 +122,7 @@ async def test_bad_secret_retains_prior_connection_without_leaking_details(confi
     with pytest.raises(HTTPException) as caught:
         await c.route("fixture")
     assert caught.value.status_code == 409
-    assert c.agent._mcp_mgr is previous and c.clients[0].connected
+    assert c.agent.mcp.manager is previous and c.clients[0].connected
     state = snapshot(c.agent)
     assert state["observed_at"] == observed and state["attempted_at"]
     assert "synthetic-private-credential" not in json.dumps(state)
@@ -153,7 +153,7 @@ async def test_session_replacement_during_connection_closes_candidate(configured
         await asyncio.gather(pending, return_exceptions=True)
     assert caught.value.status_code == 409
     assert not c.clients[0].connected and not c.agent.tools
-    assert not c.agent._mcp_connecting
+    assert not c.agent.mcp.connecting
 
 
 async def test_busy_session_does_not_connect_or_read_secrets(configured, monkeypatch):
