@@ -1489,3 +1489,46 @@ def test_sessions_evict_oldest_over_cap(monkeypatch, tmp_path):
     finally:
         realtime._SESSIONS.clear()
         realtime._SESSIONS.update(saved)
+
+
+class _LateCallbackAgent:
+    """Keeps the session callbacks after its turn, like work that outlives the turn would."""
+
+    def __init__(self):
+        self.plan = []
+        self.kept = None
+
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None,
+                       reasoning_cb=None):
+        from src.web.routers.realtime import turn_bindings
+        self.kept = turn_bindings(self)
+        emit("完成")
+
+
+@pytest.mark.asyncio
+async def test_turn_end_releases_every_connection_callback(monkeypatch):
+    """回合结束后，确认/进度/diff/plan 不再指向这一轮的队列：确认立即拒绝，事件丢弃，不挂起也不堆积。"""
+    from src.gateway.turn_bindings import SLOTS
+    from src.web.routers import realtime
+
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    ws = _FakeWS(sid="s-late-callbacks")
+    agent = _LateCallbackAgent()
+    _inject_session(ws, agent)
+    try:
+        await realtime.handle_agent_message(ws, {"type": "agent", "text": "go", "rid": "r-late"})
+        await _drain(ws)
+        bindings = agent.kept
+        assert bindings is not None
+        assert {slot: getattr(bindings, slot) for slot in SLOTS} == dict.fromkeys(SLOTS)
+        pending_before = set(realtime._PENDING_CONFIRMS)
+        assert await asyncio.wait_for(bindings.ask("回合结束后才来的确认"), timeout=1) is False
+        assert set(realtime._PENDING_CONFIRMS) == pending_before
+        sent_before = len(ws.sent)
+        bindings.emit_progress("迟到的进度")
+        bindings.emit_diff("迟到", "diff")
+        bindings.emit_plan([{"step": "x"}])
+        await _drain(ws)
+        assert len(ws.sent) == sent_before
+    finally:
+        _cleanup(ws)
