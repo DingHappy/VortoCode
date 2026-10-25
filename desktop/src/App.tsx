@@ -70,7 +70,6 @@ import type {
   EngineWorkersView,
   DiffPayload,
   GatewayProcessStatus,
-  GatewayRecoveryRecord,
   GoalItem,
   JournalNextAction,
   NoticeItem,
@@ -136,8 +135,9 @@ import { useProjectAssets } from "./hooks/useProjectAssets";
 import { useTrustLevel } from "./hooks/useTrustLevel";
 import { useJournal } from "./hooks/useJournal";
 import { useLlmProfile } from "./hooks/useLlmProfile";
-import { EMPTY_PROCESS, observeCurrentRuntime, pruneRuntimeTokens } from "./lib/runtimeSupervision";
-import { inboxTarget, remoteProcessStatus } from "./lib/workspaceRouting";
+import { EMPTY_PROCESS } from "./lib/runtimeSupervision";
+import { inboxTarget } from "./lib/workspaceRouting";
+import { useManagedRuntimes, useRuntimeSupervision } from "./hooks/useManagedRuntimes";
 import { agentFrame, outgoingMessage } from "./protocol/outgoingPrompt";
 import { usePlugins } from "./hooks/usePlugins";
 import { useDecisionNotifications } from "./hooks/useDecisionNotifications";
@@ -192,12 +192,9 @@ function App() {
   const sessionConnectionRef = useRef<SessionConnection<GatewayClient> | null>(null);
   if (!sessionConnectionRef.current) sessionConnectionRef.current = new SessionConnection(clientRef);
   const goalRunSyncRef = useRef("");
-  const managedProcessRunningRef = useRef(false);
   const runtimeStartingRef = useRef(false);
   const initializationStartedRef = useRef(false);
   const projectRestoreDoneRef = useRef(false);
-  const supervisionGenerationRef = useRef(0);
-  const runtimeTokensRef = useRef<Map<string, string>>(new Map());
   const projectSwitchingRef = useRef(false);
   const remoteProjectRef = useRef<string | null>(null);
   // 当前连着的远端若是常驻助理（通用范围）就记下它的 id；与 remoteProjectRef 相等才算「在常驻电脑上」。
@@ -216,10 +213,8 @@ function App() {
   const [connectionNote, setConnectionNote] = useState("随时可以打开项目或开始一个任务");
   const [protocolVersion, setProtocolVersion] = useState<number | null>(null);
   const [runtime, setRuntime] = useState<RuntimeSnapshot>({});
-  const [processStatus, setProcessStatus] = useState<GatewayProcessStatus>(EMPTY_PROCESS);
-  const [runtimeProcesses, setRuntimeProcesses] = useState<GatewayProcessStatus[]>([]);
-  const [runtimeRecoveries, setRuntimeRecoveries] = useState<GatewayRecoveryRecord[]>([]);
-  const [recoveryRecord, setRecoveryRecord] = useState<GatewayRecoveryRecord | null>(null);
+  // Desktop 托管的 runtime 进程（启动/停止/恢复记录/令牌/监督代次）；WebSocket 会话仍在下面的连接代码里。
+  const { runtimes, runtimeTokensRef, processStatus, runtimeProcesses, runtimeRecoveries, recoveryRecord } = useManagedRuntimes();
   const [runtimeStarting, setRuntimeStarting] = useState(false);
   // 冷启动的初始化流程还没走完：这期间首页按「正在启动」处理，不先闪一下「有什么可以帮你？」。
   const [booting, setBooting] = useState(true);
@@ -1050,31 +1045,20 @@ function App() {
     setConnection("connecting");
     setConnectionNote(scope === "general" ? "正在启动通用会话…" : scope === "scratch" ? "正在创建隔离 Scratch…" : "正在启动项目引擎…");
     if (options.announce !== false) setBanner(scope === "general" ? "正在准备通用会话…" : scope === "scratch" ? "正在准备隔离 Scratch…" : "正在准备项目工作区；首次启动可能需要约 20 秒…");
-    supervisionGenerationRef.current += 1;
+    runtimes.invalidate();
     try {
       const preferredUrl = normalizeLocalBaseUrl(remoteProjectRef.current ? "http://127.0.0.1:8080" : options.baseUrl);
       remoteProjectRef.current = null;
       const parsed = new URL(preferredUrl);
       const preferredPort = Number(parsed.port || "8080");
-      const status = await invoke<GatewayProcessStatus>("start_gateway", {
+      const status = await runtimes.launch({
         repoRoot: scope === "project" ? root : null,
         scope,
         workspaceId: options.workspaceId ?? options.sid,
         port: preferredPort,
         token: options.token?.trim() || null,
       });
-
-      if (status.runtimeId && (options.token?.trim() || !runtimeTokensRef.current.has(status.runtimeId))) {
-        runtimeTokensRef.current.set(status.runtimeId, options.token?.trim() || "");
-      }
-
       const actualUrl = normalizeLocalBaseUrl(status.baseUrl || preferredUrl);
-      managedProcessRunningRef.current = status.running;
-      supervisionGenerationRef.current += 1;
-      setProcessStatus(status);
-      setRuntimeProcesses(await invoke<GatewayProcessStatus[]>("list_gateway_processes").catch(() => [status]));
-      setRecoveryRecord(await invoke<GatewayRecoveryRecord | null>("get_gateway_recovery", { runtimeId: status.runtimeId ?? null }).catch(() => null));
-      setRuntimeRecoveries(await invoke<GatewayRecoveryRecord[]>("list_gateway_recoveries").catch(() => []));
       setBaseUrl(actualUrl);
       if (scope === "project") localStorage.setItem(STORAGE_KEYS.repoRoot, root);
       else localStorage.removeItem(STORAGE_KEYS.repoRoot);
@@ -1095,18 +1079,17 @@ function App() {
       setBanner(null);
       return true;
     } catch (error) {
-      supervisionGenerationRef.current += 1;
+      runtimes.invalidate();
       setConnection("error");
       setConnectionNote(errorText(error, "工作区启动失败"));
       setBanner(errorText(error, "工作区启动失败"));
-      setProcessStatus(await invoke<GatewayProcessStatus>("gateway_process_status", { runtimeId: processStatus.runtimeId ?? null }).catch(() => EMPTY_PROCESS));
-      setRecoveryRecord(await invoke<GatewayRecoveryRecord | null>("get_gateway_recovery").catch(() => null));
+      await runtimes.reloadAfterFailure(processStatus.runtimeId);
       return false;
     } finally {
       runtimeStartingRef.current = false;
       setRuntimeStarting(false);
     }
-  }, [connectToRuntime, processStatus.runtimeId]);
+  }, [connectToRuntime, processStatus.runtimeId, runtimes]);
 
   useEffect(() => {
     if (initializationStartedRef.current) return;
@@ -1119,16 +1102,9 @@ function App() {
       }
 
       try {
-        const [status, record, recoveries] = await Promise.all([
-          invoke<GatewayProcessStatus>("gateway_process_status", { runtimeId: null }),
-          invoke<GatewayRecoveryRecord | null>("get_gateway_recovery"),
-          invoke<GatewayRecoveryRecord[]>("list_gateway_recoveries"),
-          refreshProjectRegistry(),
-        ]);
-        managedProcessRunningRef.current = status.running;
-        setProcessStatus(status);
-        setRecoveryRecord(record);
-        setRuntimeRecoveries(recoveries);
+        const [initial] = await Promise.all([runtimes.readInitial(), refreshProjectRegistry()]);
+        runtimes.adoptInitial(initial);
+        const [status] = initial;
 
         // 老配置里还没有默认服务的模型清单：在启动引擎**之前**补拉一次，引擎一起来就认识这些模型。
         // 不能等连上后再拉再重启——刚启动就重启会和启动流程撞车（真机 2026-10-06：引擎没能重新拉起）。
@@ -1166,46 +1142,19 @@ function App() {
         setBooting(false);
       }
     })();
-  }, [activeSid, baseUrl, refreshProjectRegistry, startWorkspace]);
+  }, [activeSid, baseUrl, refreshProjectRegistry, runtimes, startWorkspace]);
 
-  useEffect(() => {
-    let disposed = false;
-    const runtimeId = processStatus.runtimeId;
-    const supervise = async () => {
-      const generation = supervisionGenerationRef.current;
-      try {
-        const statuses = await invoke<GatewayProcessStatus[]>("list_gateway_processes");
-        const recoveries = await invoke<GatewayRecoveryRecord[]>("list_gateway_recoveries").catch(() => []);
-        if (disposed || generation !== supervisionGenerationRef.current) return;
-        pruneRuntimeTokens(runtimeTokensRef.current, statuses);
-        setRuntimeProcesses(statuses);
-        setRuntimeRecoveries(recoveries);
-        if (!runtimeId || runtimeId.startsWith("remote:")) return;
-        const { status, unexpectedlyStopped } = observeCurrentRuntime(statuses, runtimeId, managedProcessRunningRef.current);
-        managedProcessRunningRef.current = status.running;
-        setProcessStatus(status);
-        if (unexpectedlyStopped) {
-          if (status.scope === activeScope) await disconnect();
-          setRecoveryRecord(await invoke<GatewayRecoveryRecord | null>("get_gateway_recovery", { runtimeId }).catch(() => null));
-          setBanner(status.message || "Desktop 托管的 runtime 已退出");
-        }
-      } catch {
-        // 监督器只观察 Desktop 自己的子进程；瞬时 IPC 失败留到下一轮重试。
-        return false;
-      }
-    };
-    const stop = startPolling(supervise, { intervalMs: 2_000, hiddenIntervalMs: 10_000, visibility: document });
-    return () => {
-      disposed = true;
-      stop();
-    };
-  }, [activeScope, disconnect, processStatus.runtimeId]);
+  // 当前 runtime 意外退出：还连着它（同一工作区范围）就断开，恢复记录与提示由监督器处理。
+  const onRuntimeStopped = useCallback(async (status: GatewayProcessStatus) => {
+    if (status.scope === activeScope) await disconnect();
+  }, [activeScope, disconnect]);
+  useRuntimeSupervision({ runtimes, runtimeId: processStatus.runtimeId, onUnexpectedStop: onRuntimeStopped, onBanner: setBanner });
 
   const readCodexObserver = useCallback(() => readLocalCodexObserver({
     runtimes: () => invoke<GatewayProcessStatus[]>("list_gateway_processes"),
     read: source => new GatewayClient({ baseUrl: source.baseUrl!,
-      token: runtimeTokensRef.current.get(source.runtimeId!) ?? "" }).getCodexObserverStatus(),
-  }), []);
+      token: runtimes.tokenFor(source.runtimeId!) }).getCodexObserverStatus(),
+  }), [runtimes]);
 
   useEffect(() => {
     if (connection !== "connected" || activeScope === "general") return undefined;
@@ -1310,7 +1259,7 @@ function App() {
   const runWorkspaceSwitch = async (failure: string, body: () => Promise<boolean>): Promise<boolean> => {
     projectSwitchingRef.current = true;
     setProjectSwitching(true);
-    supervisionGenerationRef.current += 1;
+    runtimes.invalidate();
     try {
       await disconnect();
       clearProjectView();
@@ -1319,7 +1268,7 @@ function App() {
       setBanner(errorText(error, failure));
       return false;
     } finally {
-      supervisionGenerationRef.current += 1;
+      runtimes.invalidate();
       projectSwitchingRef.current = false;
       setProjectSwitching(false);
     }
@@ -1362,9 +1311,7 @@ function App() {
       setBaseUrl(project.baseUrl);
       if (project.kind === "remote") {
         remoteProjectRef.current = project.id;
-        managedProcessRunningRef.current = false;
-        setProcessStatus(remoteProcessStatus(project, false));
-        setRecoveryRecord(null);
+        runtimes.markRemote(project, false);
         localStorage.setItem(STORAGE_KEYS.lastProjectId, project.id);
         await refreshWorkspaceFiles(project.repoRoot);
         openInspector("inbox");
@@ -1391,8 +1338,7 @@ function App() {
             scope: "project",
           });
           if (connected) {
-            managedProcessRunningRef.current = false;
-            setProcessStatus({
+            runtimes.markAttached({
               ...EMPTY_PROCESS,
               projectId: project.id,
               scope: "project",
@@ -1497,9 +1443,7 @@ function App() {
     if (!await confirmAction(`从最近项目中移除“${project.name}”？${effect}`)) return;
     try {
       if (managedRuntime?.runtimeId) {
-        await invoke<GatewayProcessStatus>("stop_gateway", { runtimeId: managedRuntime.runtimeId });
-        runtimeTokensRef.current.delete(managedRuntime.runtimeId);
-        setRuntimeProcesses(await invoke<GatewayProcessStatus[]>("list_gateway_processes").catch(() => []));
+        await runtimes.stopBackground(managedRuntime.runtimeId);
       }
       setProjects(await invoke<DesktopProjectProfile[]>("forget_desktop_project", { projectId: project.id }));
       localStorage.removeItem(projectSessionKey(project.id));
@@ -1725,9 +1669,7 @@ function App() {
       setBaseUrl(host.baseUrl);
       remoteProjectRef.current = host.id;
       assistantHostRef.current = host.id;
-      managedProcessRunningRef.current = false;
-      setProcessStatus(remoteProcessStatus(host, true));
-      setRecoveryRecord(null);
+      runtimes.markRemote(host, true);
       return await connectToRuntime(sid, { baseUrl: host.baseUrl, repoRoot: "", scope: "general",
         remoteProjectId: host.id, token: "" });
     });
@@ -2064,8 +2006,7 @@ function App() {
 
   const dismissRecoveryRecord = async () => {
     try {
-      await invoke("clear_gateway_recovery", { runtimeId: recoveryRecord?.runtimeId ?? null });
-      setRecoveryRecord(null);
+      await runtimes.dismissRecovery(recoveryRecord?.runtimeId);
       setBanner("已忽略上次 runtime 恢复记录");
     } catch (error) {
       setBanner(errorText(error, "清除 runtime 恢复记录失败"));
@@ -2092,19 +2033,14 @@ function App() {
       return;
     }
     const runtimeId = processStatus.runtimeId;
-    supervisionGenerationRef.current += 1;
+    runtimes.invalidate();
     await disconnect();
     try {
-      managedProcessRunningRef.current = false;
-      setProcessStatus(await invoke<GatewayProcessStatus>("stop_gateway", { runtimeId: runtimeId ?? null }));
-      if (runtimeId) runtimeTokensRef.current.delete(runtimeId);
-      setRuntimeProcesses(await invoke<GatewayProcessStatus[]>("list_gateway_processes").catch(() => []));
-      setRuntimeRecoveries(await invoke<GatewayRecoveryRecord[]>("list_gateway_recoveries").catch(() => []));
-      setRecoveryRecord(null);
+      await runtimes.stopCurrent(runtimeId);
     } catch (error) {
       setBanner(errorText(error, "停止本地引擎失败"));
     } finally {
-      supervisionGenerationRef.current += 1;
+      runtimes.invalidate();
     }
   };
 
@@ -2119,15 +2055,10 @@ function App() {
       sid: activeSid,
       token,
     };
-    supervisionGenerationRef.current += 1;
+    runtimes.invalidate();
     await disconnect();
     try {
-      managedProcessRunningRef.current = false;
-      const stopped = await invoke<GatewayProcessStatus>("stop_gateway", { runtimeId: previous.runtimeId });
-      if (stopped.running) throw new Error("当前 runtime 未能停止，模型配置尚未生效");
-      runtimeTokensRef.current.delete(previous.runtimeId);
-      setProcessStatus(stopped);
-      setRuntimeProcesses(await invoke<GatewayProcessStatus[]>("list_gateway_processes").catch(() => []));
+      await runtimes.stopForRestart(previous.runtimeId);
       return await startWorkspace({
         scope: previous.scope,
         repoRoot: previous.scope === "project" ? previous.repoRoot : undefined,
@@ -2141,7 +2072,7 @@ function App() {
       setBanner(errorText(error, "模型配置已保存，但当前 runtime 重启失败"));
       return false;
     } finally {
-      supervisionGenerationRef.current += 1;
+      runtimes.invalidate();
     }
   };
 
@@ -2195,8 +2126,8 @@ function App() {
       setBanner("请先处理当前保存确认或输入框中的草稿，再准备任务交互。");
       return;
     }
-    const generation = supervisionGenerationRef.current;
-    if (!await switchSession(draft.sid) || generation !== supervisionGenerationRef.current) return;
+    const generation = runtimes.currentGeneration();
+    if (!await switchSession(draft.sid) || generation !== runtimes.currentGeneration()) return;
     setPrompt(draft.text);
     setBanner("任务交互已放入发起会话输入框；补充要求后发送。");
   };
