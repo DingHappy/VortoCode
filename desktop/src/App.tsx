@@ -33,12 +33,10 @@ import {
   FileCode2,
   GitCompareArrows,
   Inbox,
-  Laptop,
   Library,
   ListChecks,
   Server,
   FolderPlus,
-  PanelRight,
   Plus,
   SquareTerminal,
   X,
@@ -97,6 +95,7 @@ import { SidebarFooter } from "./components/SidebarFooter";
 import { AttachmentChips, ComposerModelPicker, ConfirmCard, ContextChips, PromptQueuePanel, TrustChip, WorkspaceRequestCard } from "./components/ComposerPanels";
 import { ConversationHome, FirstRunCard } from "./components/ConversationHome";
 import { SidebarBrand, SidebarSectionTitle, WorkNav } from "./components/SidebarChrome";
+import { ConversationHeader } from "./components/ConversationHeader";
 import { assistantPanelActions } from "./lib/assistantPanelActions";
 import { SidebarProjects } from "./components/SidebarProjects";
 import { SidebarSessions } from "./components/SidebarSessions";
@@ -2636,29 +2635,13 @@ function App() {
           />
         ) : (
         <section className={`conversation ${messages.length === 0 && !streaming ? "empty-state" : ""}`}>
-          <div className="conversation-header">
-            <div>
-              <strong>{appMode === "assistant" && activeSid === mainChatSid ? "主要聊天" : currentSession?.title || "新对话"}</strong>
-              {appMode !== "assistant" && residentHost && currentWorkProject() && (
-                <span className={`conversation-place ${remoteProjectRef.current ? "resident" : "local"}`}>
-                  {remoteProjectRef.current ? <><Server size={12} aria-hidden="true" />常驻电脑</> : <><Laptop size={12} aria-hidden="true" />本机</>}
-                </span>)}
-            </div>
-            <div className="conversation-actions">
-              <button
-                className={`context-toggle workbench-toggle icon-only ${inspectorOpen ? "active" : ""}`}
-                aria-expanded={inspectorOpen}
-                aria-label="任务动态"
-                title={feedWaiting ? `任务动态 · ${feedWaiting} 件等你处理` : plan.length ? `任务动态 · 当前步骤 ${planDone}/${plan.length}` : "任务动态"}
-                onClick={() => inspectorOpen ? setInspectorOpen(false)
-                  : appMode === "assistant" || (workbenchTabs.length > 0 && !isManagementTab(inspectorTab)) ? setInspectorOpen(true) : openInspector("feed")}
-              >
-                <PanelRight size={16} />
-                {(busy || feedWaiting > 0) && <i className={`workbench-toggle-dot${!busy ? " waiting" : ""}`} aria-hidden="true" />}
-              </button>
-              {busy && <button className="stop-button" onClick={() => void cancelTurn()}>停止</button>}
-            </div>
-          </div>
+          <ConversationHeader
+            title={appMode === "assistant" && activeSid === mainChatSid ? "主要聊天" : currentSession?.title || "新对话"}
+            place={appMode !== "assistant" && residentHost && currentWorkProject() ? (remoteProjectRef.current ? "resident" : "local") : null}
+            panelOpen={inspectorOpen} waiting={feedWaiting} plan={{ done: planDone, total: plan.length }} busy={busy}
+            onTogglePanel={() => inspectorOpen ? setInspectorOpen(false)
+              : appMode === "assistant" || (workbenchTabs.length > 0 && !isManagementTab(inspectorTab)) ? setInspectorOpen(true) : openInspector("feed")}
+            onStop={() => void cancelTurn()} />
 
           <div className="conversation-body">
             <ConversationLocation status={conversationLocation.status} onLatest={conversationLocation.latest} onRetry={conversationLocation.retry} />
