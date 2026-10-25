@@ -25,7 +25,7 @@ import { createConfirmationReply } from "./lib/confirm";
 import { ComposerCommands } from "./components/ComposerCommands";
 import { ContextStatus, SessionInfo } from "./components/SessionInfo";
 import { invoke } from "@tauri-apps/api/core";
-import { isPermissionGranted, requestPermission, sendNotification } from "@tauri-apps/plugin-notification";
+import { isPermissionGranted, sendNotification } from "@tauri-apps/plugin-notification";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowUp,
@@ -141,13 +141,14 @@ import { useTrustLevel } from "./hooks/useTrustLevel";
 import { useJournal } from "./hooks/useJournal";
 import { useLlmProfile } from "./hooks/useLlmProfile";
 import { usePlugins } from "./hooks/usePlugins";
+import { useDecisionNotifications } from "./hooks/useDecisionNotifications";
 import { useAssistantSnapshot } from "./hooks/useAssistantSnapshot";
 import { useWorkspaceFiles } from "./hooks/useWorkspaceFiles";
 import { useRuntimeInboxes } from "./hooks/useRuntimeInboxes";
 import { contextItemKey, contextItemLabel } from "./lib/sourceContext";
 import { withLocalDecisions } from "./lib/decisionItems";
 import { autoFocusDecision, closeWorkbenchTab, openWorkbenchTab, type InspectorTab } from "./lib/inspector";
-import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey, projectToRestore,
+import { projectSessionKey, projectToRestore,
   STORAGE_KEYS } from "./lib/storage";
 import { localDay } from "./lib/time";
 import { finishRunningActivities, groupActivitiesByTurn, hydrateActivities, protocolActivity, upsertActivity } from "./protocol/activities";
@@ -202,9 +203,6 @@ function App() {
   const sessionConnectionRef = useRef<SessionConnection<GatewayClient> | null>(null);
   if (!sessionConnectionRef.current) sessionConnectionRef.current = new SessionConnection(clientRef);
   const goalRunSyncRef = useRef("");
-  const notifiedDecisionIdsRef = useRef<Set<string>>(loadNotifiedDecisionIds());
-  const decisionNotificationReadyRef = useRef(false);
-  const decisionNotificationSyncingRef = useRef(false);
   const managedProcessRunningRef = useRef(false);
   const runtimeStartingRef = useRef(false);
   const initializationStartedRef = useRef(false);
@@ -406,10 +404,6 @@ function App() {
   // auditFilter（审计类别筛选）是纯本地 UI 态，已下移到 <DecisionsPanel> 自持。
   // journal 域 8 个 state + 全部读写回调已收进 useJournal（hook 试点，hooks/useJournal.ts）；
   // 实例在 banner 声明之后挂载——保存快照/添加记录的结果提示要注入 setBanner。
-  const [notificationsEnabled, setNotificationsEnabled] = useState(
-    () => localStorage.getItem(STORAGE_KEYS.notificationsEnabled) === "true",
-  );
-  const [notificationSyncVersion, setNotificationSyncVersion] = useState(0);
   const [backgroundPrompt, setBackgroundPrompt] = useState("");
   const [banner, setBanner] = useState<string | null>(null);
   const { attachments, setAttachments, addFiles, removeAttachment } = useAttachments(setBanner);
@@ -558,17 +552,11 @@ function App() {
   );
   const { runtimeInboxes, runtimeInboxSummary, refreshRuntimeInboxes } = useRuntimeInboxes({
     runtimeProcesses, projects, decisionItems, runtimeTokensRef });
-  const globalNotificationItems = useMemo(() => {
-    const items = runtimeInboxes.flatMap((runtimeInbox) => (runtimeInbox.snapshot?.decisions ?? [])
-      .filter((item) => item.severity === "critical" || item.severity === "high")
-      .map((item) => ({ id: `runtime:${runtimeInbox.runtimeId}:${item.id}` })));
-    const currentRuntimeId = processStatus.runtimeId || `${activeScope}:${repoRoot || "general"}`;
-    decisionItems
-      .filter((item) => (item.kind === "pr_check" || item.kind === "pr_review")
-        && (item.severity === "critical" || item.severity === "high"))
-      .forEach((item) => items.push({ id: `runtime:${currentRuntimeId}:${item.id}` }));
-    return items;
-  }, [activeScope, decisionItems, processStatus.runtimeId, repoRoot, runtimeInboxes]);
+  const {
+    notificationsEnabled, toggleSystemNotifications,
+    beginNotificationSync, endNotificationSync, stopNotificationSync, resetNotificationBaseline,
+  } = useDecisionNotifications({ runtimeInboxes, decisionItems, onBanner: setBanner,
+    currentRuntimeId: processStatus.runtimeId || `${activeScope}:${repoRoot || "general"}` });
 
   const sessionRefreshAttemptRef = useRef(0);
   const refreshSessions = useCallback(async () => {
@@ -967,14 +955,14 @@ function App() {
   );
 
   const disconnect = useCallback(async () => {
-    decisionNotificationSyncingRef.current = false;
+    stopNotificationSync();
     if (!await sessionConnectionRef.current!.disconnect()) return;
     resetIsolatedDeliveries();
     setConnection("disconnected");
     setConnectionNote("已离开工作区；后台 runtime 与任务继续运行");
     setBusy(false);
     abandonWorkspaceSave();
-  }, [abandonWorkspaceSave, resetIsolatedDeliveries]);
+  }, [abandonWorkspaceSave, resetIsolatedDeliveries, stopNotificationSync]);
 
   // 连接域编排注册表（B8-④c S10）：连接成功后的全量数据装填收敛到这一处。
   // 各域 refresh 按「通用 / 工作区专属」两档显式注册——hook 化的域把归还的回调挂到
@@ -1008,8 +996,7 @@ function App() {
         : options.scope ?? runtime.scope ?? (requestedRepoRoot.trim() ? "project" : "general");
       setBanner(null);
       setContextItems([]);
-      decisionNotificationReadyRef.current = false;
-      decisionNotificationSyncingRef.current = true;
+      beginNotificationSync();
       setConnection("connecting");
       setConnectionNote("正在建立安全协议连接…");
       try {
@@ -1045,21 +1032,19 @@ function App() {
         if (!attempt.current()) return false;
         await refreshAllForScope(requestedScope, sid);
         if (!attempt.current()) return false;
-        decisionNotificationSyncingRef.current = false;
-        setNotificationSyncVersion((value) => value + 1);
+        endNotificationSync();
         setSettingsOpen(false);
         return true;
       } catch (error) {
         if (!attempt.current()) return false;
         connectFailedRef.current = true;
-        decisionNotificationSyncingRef.current = false;
-        setNotificationSyncVersion((value) => value + 1);
+        endNotificationSync();
         clientRef.current = null;
         setConnection("error");
         setConnectionNote(errorText(error, "连接失败"));
         return false;
       }
-    }, [activeSid, baseUrl, handleProtocolEvent, refreshAllForScope, rememberProject, repoRoot, runtime.scope, token],
+    }, [activeSid, baseUrl, beginNotificationSync, endNotificationSync, handleProtocolEvent, refreshAllForScope, rememberProject, repoRoot, runtime.scope, token],
   );
 
   const startWorkspace = useCallback(async (options: StartWorkspaceOptions): Promise<boolean> => {
@@ -1294,39 +1279,6 @@ function App() {
     return () => window.clearInterval(timer);
   }, [connection, snapshotTodayJournal]);
 
-  useEffect(() => {
-    if (!notificationsEnabled) {
-      decisionNotificationReadyRef.current = false;
-      return;
-    }
-    const actionable = globalNotificationItems;
-    if (decisionNotificationSyncingRef.current || !decisionNotificationReadyRef.current) {
-      actionable.forEach((item) => notifiedDecisionIdsRef.current.add(item.id));
-      persistNotifiedDecisionIds(notifiedDecisionIdsRef.current);
-      decisionNotificationReadyRef.current = true;
-      return;
-    }
-    const unseen = actionable.filter((item) => !notifiedDecisionIdsRef.current.has(item.id));
-    if (unseen.length === 0) return;
-    unseen.forEach((item) => notifiedDecisionIdsRef.current.add(item.id));
-    persistNotifiedDecisionIds(notifiedDecisionIdsRef.current);
-    void (async () => {
-      try {
-        if (!await isPermissionGranted()) {
-          localStorage.setItem(STORAGE_KEYS.notificationsEnabled, "false");
-          setNotificationsEnabled(false);
-          setBanner("系统通知权限已关闭；应用内决策队列不受影响");
-          return;
-        }
-        sendNotification({
-          title: "VortoCode 有新的待决策事项",
-          body: `新增 ${unseen.length} 项高优先级事项，打开 Desktop 查看。`,
-        });
-      } catch {
-        // 系统投递失败不能影响 Agent、决策队列或台账刷新。
-      }
-    })();
-  }, [globalNotificationItems, notificationSyncVersion, notificationsEnabled]);
 
   const clearSessionView = () => {
     conversationLocation.reset();
@@ -1367,8 +1319,7 @@ function App() {
     resetProjectAssets();
     resetWorkspaceFiles();
     setToken("");
-    decisionNotificationReadyRef.current = false;
-    decisionNotificationSyncingRef.current = false;
+    resetNotificationBaseline();
   };
 
   const switchProject = async (project: DesktopProjectProfile, options: { fresh?: boolean; sid?: string } = {}): Promise<boolean> => {
@@ -2055,33 +2006,6 @@ function App() {
   };
 
   // selectJournalDay / continueFromYesterday 已随 journal 域收进 useJournal（S6b）。
-
-  const toggleSystemNotifications = async () => {
-    if (notificationsEnabled) {
-      localStorage.setItem(STORAGE_KEYS.notificationsEnabled, "false");
-      decisionNotificationReadyRef.current = false;
-      setNotificationsEnabled(false);
-      setBanner("系统通知已关闭；应用内决策队列仍会保留");
-      return;
-    }
-    try {
-      let granted = await isPermissionGranted();
-      if (!granted) granted = (await requestPermission()) === "granted";
-      if (!granted) {
-        setBanner("系统没有授予通知权限；VortoCode 不会反复请求");
-        return;
-      }
-      const currentIds = globalNotificationItems.map((item) => item.id);
-      currentIds.forEach((id) => notifiedDecisionIdsRef.current.add(id));
-      persistNotifiedDecisionIds(notifiedDecisionIdsRef.current);
-      decisionNotificationReadyRef.current = true;
-      localStorage.setItem(STORAGE_KEYS.notificationsEnabled, "true");
-      setNotificationsEnabled(true);
-      setBanner("系统通知已开启；现有事项只建立基线，之后仅提醒新增高优先级决策");
-    } catch (error) {
-      setBanner(errorText(error, "当前环境无法启用系统通知"));
-    }
-  };
 
   const toggleHookTrust = async () => {
     if (!clientRef.current || !hookStatus?.configured || hookTrustBusy) return;
