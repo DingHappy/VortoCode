@@ -3206,7 +3206,15 @@ function App() {
           onStopRuntime={stopRuntime}
           onConnectExisting={() => void connectToRuntime(activeSid)}
           onStartRuntime={startRuntime}
-          onSwitchScope={(scope) => void switchManagedScope(scope)}
+          onSwitchScope={(scope) => void (async () => {
+            // An explicit local settings action leaves Assistant mode; otherwise
+            // its resident retry would reconnect the remote host after 10 seconds.
+            const leavingAssistant = appMode === "assistant";
+            if (!await switchManagedScope(scope) || !leavingAssistant) return;
+            workReturnRef.current = null;
+            setAppMode("work");
+            try { localStorage.setItem(STORAGE_KEYS.appMode, "work"); } catch { /* next launch only */ }
+          })()}
         >
           {activeScope === "project" && (
             <ExtensionsInspector
