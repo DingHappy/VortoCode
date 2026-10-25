@@ -17,7 +17,9 @@ router = APIRouter()
 
 @router.get("/api/resident/projects")
 async def resident_projects():
-    return {"projects": load_resident_projects()}
+    from src.computer.status import read_local_computer_status
+    from src.utils.async_ops import await_thread
+    return {"projects": load_resident_projects(), "computer": await await_thread(read_local_computer_status)}
 
 
 @router.get("/api/dispatches")

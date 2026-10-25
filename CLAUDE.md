@@ -41,6 +41,8 @@ vc --help                        # 全部子命令：server/agent/im/cron/heartb
 
 ## 架构大图
 
+产品定位、当前执行接入矩阵与近期投入顺序见 `docs/CURRENT_ARCHITECTURE.md`；`docs/ARCHITECTURE.md` 是历史蓝图。
+
 **入口**：`vc`/`vortocode` → `src/cli.py:main`（`main.py` 是薄壳）。包采用**扁平布局**：包名就是 `src`，一律 `from src.xxx import ...`。
 
 **一个 runtime，多个前端（"三端同源"）**：Desktop（经 Web API + `/ws`）/ 无头 CLI / IM 桥接都通过 `src/gateway/agent_session.py` 的 `build_session(kind=...)` 工厂装配同一个 `MainAgent`（**`src/agents/agent_loop.py`**；`main_agent.py` 再导出，存量 `from src.agents.main_agent import MainAgent` 照常可用）。无人值守（cron/heartbeat）走 `src/gateway/session.py` 的 `run_isolated_session`（全新隔离上下文，不读写主会话）。跨进程 attach 走 `src/gateway/protocol.py` + `client.py` 的 WS 协议。终端 TUI 已于 2026-10-17 退役删除。
@@ -52,24 +54,30 @@ vc --help                        # 全部子命令：server/agent/im/cron/heartb
 - **记忆写入策略** `src/memory/write_policy.py`：durable/proposal/quarantine/reject 四级；污点回合的指令性文本与疑似凭据不进长期记忆。
 - **前缀缓存稳定**：system prompt 在**同一会话内必须字节级稳定**（静态注入，装配时读一次），否则破坏 relay 侧前缀缓存命中。仓库记忆（`src/agents/repo_memory.py`）等静态注入项都遵守这条。
 
-**运行循环与能力装配分离**：`agents/agent_loop.py` 消费共享 Tool 协议，负责模型回合、权限检查、上下文预算与 Hook；`main_agent.py`、`delegation.py`、`dev_tools.py` 和 `agents/tools/*` 等负责具体能力及业务装配，可组合公开的 workflow/scheduling 服务。工具实现并非一律无状态，不能把整个 `agents/` 都描述为不依赖业务层的底层内核。
+**运行循环、工具执行与能力装配分离**：`agents/agent_loop.py` 负责模型回合、历史、上下文预算和媒体消息；`agents/tool_runtime.py` 独立承担工具能力/权限检查、plan 升级、Hook/审计、串并行调度和污点传播。`agents/tool.py` 提供共享 Tool 合同与声明/schema 导出。其它 Agent 核心可通过可信宿主适配调用同一个工具运行层，不需要构造 MainAgent；外部核心自带的工具仍由其原生权限系统执行。接入合同见 `docs/TOOL_RUNTIME.md`。`main_agent.py`、`delegation.py`、`dev_tools.py` 和 `agents/tools/*` 等负责具体能力及业务装配，可组合公开的 workflow/scheduling 服务。工具实现并非一律无状态，不能把整个 `agents/` 都描述为不依赖业务层的底层内核。
+
+**外部核心控制**：`agents/backends/control.py` 定义现有会话的状态/启动新轮次/补充指令/请求停止合同；`backends/codex.py` 通过注入的 RPC 连接适配 Codex。观察员的已批准动作实际使用此层，执行前读取最新状态，自动建议与停止绑定原轮次。回执只代表受理，不代表完成；不自动重试、不调整外部核心的权限/模型/沙箱。Gateway 主会话仍使用 MainAgent，尚未实现整会话自由切换。边界见 `docs/AGENT_BACKENDS.md`。这些适配模块同样不得导入 workflow/gateway/scheduling/web/im，分层测试覆盖。
+
+**共同执行观测**：`agents/backends/execution.py` 提供 ExecutionRef / ExecutionSnapshot v1 和只读 ExecutionReporter。自有 Agent、外部 CLI 包装器、Codex 会话适配器已接入；旧执行方法与台账保留。backend/feature 名称开放，未知状态保守 unknown，不兼容版本拒绝；默认身份仅进程有效，持久宿主身份必须显式提供。结果/证据不从模型自述或退出码推断验收，费用未知保留 null。此层不得导入上层、加载插件、授予权限或创建调度器，详见 `docs/EXECUTION_CONTRACT.md`。
+
+**观测上报顺序**：`agents/backends/observation_order.py` 是纯数据的前序游标/代次/序号合同。Codex 观察循环先读现有 status 游标再采集，上报在原 state.json 的文件锁内核对并替换；重复包不更新时间或再次生成提醒。发送端冻结 pending 至回执，409 后旧来源停止上报、不自动抢回；已启用有序来源的状态槽拒绝旧格式覆盖。旧服务无协议声明时兼容旧方式。它不是完整事件补收或执行指令重试，见 `docs/OBSERVATION_ORDER.md`。
 
 **包布局**：这是共享 runtime 的装配分层，不是按包名划一条绝对单向链。
-- **安全核心**：`agents/gate.py`、`agents/taint.py`、`agents/capabilities.py`、`memory/write_policy.py`、`sandbox/policy.py` 是底层策略；`agents/agent_loop.py` 承担底层模型回合与工具运行。五个策略模块不得导入 `workflow`、`gateway`、`scheduling`、`web`、`tui`、`im`，含函数内和相对 import，由 `tests/unit/test_layering.py` 的 AST 契约钉住。
+- **安全核心**：`agents/gate.py`、`agents/taint.py`、`agents/capabilities.py`、`memory/write_policy.py`、`sandbox/policy.py` 是底层策略；`agents/tool.py` / `tool_runtime.py` 是可复用的工具定义与执行层。这七个模块不得导入 `workflow`、`gateway`、`scheduling`、`web`、`tui`、`im`，含函数内和相对 import，由 `tests/unit/test_layering.py` 的 AST 契约钉住。
 - **工具工厂/能力装配**：`agents/main_agent.py`、`delegation.py`、`dev_tools.py`、`task_questions.py`、`dispatch.py`、`pipeline_exec.py`、`dev_policy.py`、`agents/tools/*` 等可在函数内组合 `workflow` / `scheduling` 的公开 API，不向 `gateway` 或前端反向取业务能力。媒体发送通过下层注册钩子接线。
 - `agents/mcp_session.py` 是现有会话装配例外，仍使用 `gateway.workspace_scope` 的作用域规范化；因此本轮没有声称整个 `agents/` 都不得导入 `gateway`，也没有加条件不成立的全包断言。安全核心名单不因该例外放宽。
 - `gateway/`：只管会话装配与传输——`agent_session`/`session`/`sessions`/`session_actor`/事件流/`protocol`/`client`/`runtime`/`audit`/IM 内嵌服务。
 - `workflow/tasks`：后台任务台账与协作（委派/依赖/续跑/提问/看板投影）；`workflow/review`：Git 评审与交付；`workflow/workbench`：Desktop 工作台（目标/命令运行/终端/日志）；`workflow/pipeline`：非代码流水线。
 - `scheduling/`：cron/heartbeat/自愈/通知台账/中转巡检。
-- `sandbox/`：OS 沙箱**策略** `policy.py`（seatbelt/bwrap 决策、写路径白名单、子进程密钥剥离——安全内核，被 shell/hooks/skills/MCP/runner 共用）+ 沙箱**执行** `runner.py`/`docker_sandbox.py`。
+- `sandbox/`：OS 沙箱**策略** `policy.py`（seatbelt/bwrap 决策、写路径白名单、子进程密钥剥离——安全内核，被 shell/hooks/skills/MCP 共用）。代码片段执行入口 `runner.py`/`docker_sandbox.py` 只有 TUI 在用，2026-10 已删除。
 - 内核**不得导入** `web/`（制品工具已下沉为 `agents/tools/artifacts.py`，cron 排期计算在 `scheduling/cron.py:next_due`）。新业务模块别再往 `gateway/` 塞。
 - **下层一律不导入前端**：除 `web/` `im/` 与入口 `cli.py` 外，任何模块（含函数内延迟 import）都不得导入 `src.web`。下层需要通知前端时用注册钩子（如 `scheduling/notices.py:set_notice_broadcaster`，由 Web 启动时注册）。会话存盘在 `gateway/session_store.py`。SQLite 会话/记忆存储另在 `memory/conversation_db.py`，保留 `SessionStore` / `SessionManager` 类名与原数据库路径。`tests/unit/test_layering.py` 钉住。
-- **宿主机命令执行开关全仓唯一一份**：`sandbox/policy.py:shell_enabled`（Web 的 `require_shell`、cron 的 command 作业、沙箱 runner 回落宿主机都只认它，均函数内导入以便统一打桩）。别在别处再读 `VORTOCODE_ENABLE_SHELL`。
+- **宿主机命令执行开关全仓唯一一份**：`sandbox/policy.py:shell_enabled`（Web 的 `require_shell`、cron 的 command 作业都只认它，均函数内导入以便统一打桩）。别在别处再读 `VORTOCODE_ENABLE_SHELL`。
 - 外层（web/im/cli/gateway/agents）只用 `workflow` 的**公开名字**：不导入下划线私有函数，也不拿台账锁 `TASK_STATE_LOCK` 自己拼锁内读写——要在锁内完成的操作由 workflow 提供成一个函数（如 `snapshot_runtime_inbox`、`audit_owner_dependencies`）。`tests/unit/test_workflow_boundary.py` 钉住。刻意**不**在 `workflow/__init__` 堆再导出：只改 import 路径不改依赖，不算解耦。
 
 **隔离 dev 流水线（护城河）**：`dev_auto` → `decompose` 拆无依赖并行批 → 每件在一次性 git **worktree**（`src/agents/worktree.py`）里 implement+自测 → 逐件+集成验证（`verify_profiles.py`/`subagent_verifier.py`）→ 落 `vorto/*` 分支 → 开 PR。计划落 `.vortocode/dev_plans/<id>.json`（write-ahead，可 `dev_resume` 续跑），并由 `src/workflow/tasks/dev_graph.py` 投影成 DAG 供 `GET /api/dev-plans/{id}/graph` 与 Desktop 依赖图视图消费（**纯投影零新状态**）。各阶段 token 用量经 `src/llm/client.py` 的 `usage_scope()` 分段计量，记 INFO 日志（模型分层的数据地基）。**全程不碰 main / 主工作区**，委派需人工确认。`.vortocode/` 是 gitignored（本地经验：`memory/repo.md`、`agents/*.md` 自定义角色、`artifacts/` 制品）。
 
-**LLM 网关**：所有模型调用走自建 One API 中转（OpenAI 兼容），`src/llm/`。默认走**原生 function-calling**，模型不支持则**自动回退提示式协议**；`VORTOCODE_NATIVE_TOOLS=0` 强制提示式。
+**LLM 接入**：自有 Agent 的模型调用统一经 `src/llm/`，连接配置的云端或本机 OpenAI 兼容端点；可使用自建 One API 中转，也可直连兼容服务。角色端点不借用其它 provider 的密钥。默认走**原生 function-calling**，模型不支持则**自动回退提示式协议**；`VORTOCODE_NATIVE_TOOLS=0` 强制提示式。外部 CLI 则继续使用其受限透传的原生模型配置。
 
 ## 约定与坑
 

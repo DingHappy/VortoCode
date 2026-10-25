@@ -119,3 +119,23 @@ async def test_headless_reports_channel_failure_instead_of_silent_exit(monkeypat
         assert "模型服务暂时无响应" in json.loads(cap.out)["error"]
     else:
         assert "模型服务暂时无响应" not in cap.out    # 死因不进 stdout，免得污染管道
+
+
+async def test_tainted_mcp_confirm_shows_one_banner_and_audits_raw_operation(mcp_permission_probe):
+    """会话确认门已经是内核 gate 时，MCP 执行层不能再包一层：否则污点横幅叠两次，
+    内层审计拿到的 operation 也是带横幅的文本而不是原始操作。"""
+    from src.agents import gate, taint
+    prompts, decisions = [], []
+    async def human(message): prompts.append(message); return True
+    session_gate = gate.make_confirm_gate(human, can_ask_human=True,
+                                          on_decision=lambda op, ok, t: decisions.append(op))
+    manager, tools, client = await mcp_permission_probe(session_gate)
+    taint.mark_tainted()
+    try:
+        assert await tools[0].handler({}) == 'probe executed'
+        banner = gate.taint_prefix()
+        assert len(prompts) == 1 and prompts[0].count(banner.strip()) == 1
+        assert len(decisions) == 1 and banner.strip() not in decisions[0]
+        assert decisions[0].startswith('MCP 工具 `')
+    finally:
+        taint.reset_taint(); await manager.shutdown()

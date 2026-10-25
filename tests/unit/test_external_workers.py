@@ -4,6 +4,7 @@
 运行测试用一个假 CLI 脚本，全程离线、不碰真实账号。
 """
 import json
+import asyncio
 import os
 import stat
 import subprocess
@@ -15,6 +16,7 @@ from src.agents import external_workers as ew
 
 ew_search = ew._search_dirs
 from src.agents import taint
+from src.agents.backends.execution import ExecutionRef, ExecutionSnapshot, ExecutionState
 
 CODEX_EVENTS = [
     {"type": "thread.started", "thread_id": "01a1493e-fe25-7ca3-8756-ac7af0dba36c"},
@@ -790,3 +792,83 @@ async def test_dev_isolated_uses_internal_writer_when_experiment_is_off(monkeypa
     tools = {t.name: t for t in build_dev_tools(str(tmp_path))}
     await tools["dev_isolated"].handler({"description": "add impl"})
     assert built and not isinstance(built[0], ew.ExternalWorkerAgent)
+
+
+async def test_worker_publishes_versioned_snapshots_with_host_owned_identity(fake_cli, tmp_path):
+    reports = []
+    owned = ExecutionRef("codex", "host/runtime", "attempt", task_id="task-1", scope="runtime")
+    run = await ew.run_worker("codex", "go", str(tmp_path), write=False,
+                              execution_ref=owned, on_snapshot=reports.append)
+    assert run.ok and reports[0].state == ExecutionState.UNKNOWN
+    assert any(report.state == ExecutionState.RUNNING for report in reports)
+    assert reports[-1].state == ExecutionState.FINISHED
+    assert reports[-1].ref.run_id == "attempt" and reports[-1].ref.task_id == "task-1"
+    assert reports[-1].ref.instance_id == "host/runtime" and reports[-1].ref.scope == "runtime"
+    assert reports[-1].result.evidence == ()
+    assert ExecutionSnapshot.from_dict(json.loads(json.dumps(reports[-1].to_dict()))) == reports[-1]
+
+
+async def test_snapshot_observer_failure_does_not_change_the_worker_result(fake_cli, tmp_path):
+    def broken(report):
+        raise RuntimeError("UI disconnected")
+    run = await ew.run_worker("codex", "go", str(tmp_path), write=False, on_snapshot=broken)
+    assert run.ok and run.execution_report.state == ExecutionState.FINISHED
+
+
+async def test_worker_cancellation_never_publishes_a_successful_completion(fake_cli, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_MODE", "sleep")
+    ready, reports = asyncio.Event(), []
+    def observe(report):
+        reports.append(report)
+        if report.state == ExecutionState.RUNNING:
+            ready.set()
+    task = asyncio.create_task(ew.run_worker("codex", "go", str(tmp_path), write=False, on_snapshot=observe))
+    await asyncio.wait_for(ready.wait(), 2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert reports[-1].state in {ExecutionState.CANCELLED, ExecutionState.UNKNOWN}
+    assert all(report.state != ExecutionState.FINISHED for report in reports)
+    assert reports[-1].error.effect == "possible"
+
+
+async def test_process_success_with_a_question_is_a_waiting_agent_turn(fake_cli, tmp_path, monkeypatch):
+    from src.agents.tool import ToolTurnYield
+    monkeypatch.setenv("FAKE_MODE", "ask")
+    agent = ew.ExternalWorkerAgent("codex", str(tmp_path), write=False, question=_Binding())
+    with pytest.raises(ToolTurnYield):
+        await agent.run_turn("implement")
+    assert agent.last_run.ok and agent.last_run.execution_report.state == ExecutionState.FINISHED
+    assert agent.execution_report.state == ExecutionState.WAITING_USER
+    assert agent.execution_report.result is None
+
+
+async def test_unanswerable_cli_question_is_not_a_finished_agent_turn(fake_cli, tmp_path, monkeypatch):
+    monkeypatch.setenv("FAKE_MODE", "ask")
+    agent = ew.ExternalWorkerAgent("codex", str(tmp_path), write=False)
+    with pytest.raises(ew.ExternalWorkerError):
+        await agent.run_turn("implement")
+    assert agent.execution_report.state == ExecutionState.FAILED
+    assert agent.execution_report.error.code == "unsupported_input"
+
+
+async def test_fallback_reports_the_actual_native_executor(fake_cli, tmp_path, monkeypatch):
+    from src.agents.agent_loop import MainAgent
+    monkeypatch.setenv("FAKE_MODE", "limit")
+    class LLM:
+        async def chat(self, messages, **kwargs):
+            return {"content": "native result"}
+    native = MainAgent([], llm=LLM())
+    agent = ew.ExternalWorkerAgent("codex", str(tmp_path), write=False, fallback=lambda: native)
+    assert await agent.run_turn("go") == "native result"
+    assert agent.last_run.execution_report.state == ExecutionState.FAILED
+    assert agent.execution_report.ref.backend_id == "vortocode"
+    assert agent.execution_report.state == ExecutionState.FINISHED
+
+
+async def test_each_worker_attempt_has_a_distinct_process_scoped_identity(fake_cli, tmp_path):
+    first = await ew.run_worker("codex", "one", str(tmp_path), write=False)
+    second = await ew.run_worker("codex", "two", str(tmp_path), write=False)
+    assert first.execution_report.ref.key != second.execution_report.ref.key
+    assert first.execution_report.ref == first.execution_report.ref
+    assert first.execution_report.ref.scope == "process"

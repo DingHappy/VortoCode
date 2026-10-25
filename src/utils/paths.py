@@ -6,7 +6,7 @@
 
     src/web/auth.resolve_within         空串 → 返回 base 本身；**不捕 OSError**
     src/agents/tools/files._resolve_within   空串 → None；额外 lstrip("@")；捕 OSError
-    src/memory/rewind._resolve_within        空串 → 返回 base；捕 OSError
+    src/memory/rewind._resolve_within        空串 → 返回 base；捕 OSError（rewind 已随 TUI 删除）
 
 而 rewind 那份的注释写着"契约与 src/web/auth.resolve_within 相同"——**那句话是假的**。
 

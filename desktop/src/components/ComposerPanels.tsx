@@ -1,10 +1,12 @@
-// 输入框周围的几块：钉在输入框上方的确认卡片、换工作区请求、待运行队列，以及右下角的模型选择。
-// 只负责显示；授权、回答、执行和保存都交回 App。
-import { ChevronsUpDown, Cpu, X } from "lucide-react";
+// 输入框周围的几块：钉在输入框上方的确认卡片、换工作区请求、待运行队列，输入框里的附件与源码引用，
+// 以及底栏的授权方式和右下角的模型选择。只负责显示；授权、回答、执行和保存都交回 App。
+import { ChevronsUpDown, Cpu, FileText, Music, ShieldCheck, X } from "lucide-react";
 
+import type { Attachment } from "../lib/attachments";
 import { MANAGE_MODELS, modelMenuSections, type ModelChoice } from "../lib/modelChoice";
+import { contextItemKey, contextItemLabel } from "../lib/sourceContext";
 import { isPlanBudgetConfirmation, isPlanExecutionConfirmation } from "../lib/onboarding";
-import type { DesktopLlmProfileStatus, PendingConfirmation, PromptQueueItem, TrustLevel, TrustStatus } from "../types";
+import type { ContextItem, DesktopLlmProfileStatus, PendingConfirmation, PromptQueueItem, TrustLevel, TrustStatus } from "../types";
 import { ConfirmationReply } from "./ConfirmationReply";
 import { ConfirmationTrust } from "./ConfirmationTrust";
 
@@ -22,7 +24,7 @@ export function ConfirmCard({ confirm, trust, trustBusy, connected, onTrust, onC
   // 后者是单个危险动作。文案分开，人才知道自己在批什么。**污点提示优先级最高**——那是安全提示，任何时候都不能被别的文案盖掉。
   const plan = !confirm.tainted && isPlanExecutionConfirmation(confirm.text);
   return (
-    <section className={`confirm-card ${confirm.tainted ? "tainted" : ""}`}>
+    <section id="active-confirmation" tabIndex={-1} aria-label="操作确认" className={`confirm-card ${confirm.tainted ? "tainted" : ""}`}>
       <div className="confirm-icon">{plan ? "▶" : "!"}</div>
       <div className="confirm-copy">
         <strong>
@@ -149,6 +151,63 @@ export function ComposerModelPicker({ residentModel, onResident, checked, choice
           return section.label ? <optgroup key={section.label} label={section.label}>{options}</optgroup> : options;
         })}
         <optgroup label="──────────"><option value={MANAGE_MODELS}>管理模型、添加本机或线上服务…</option></optgroup>
+      </select>
+    </label>
+  );
+}
+
+/** 随这条消息发出的附件：图片显示缩略图，其余显示类型图标和文件名。 */
+export function AttachmentChips({ items, onRemove }: { items: Attachment[]; onRemove: (id: string) => void }) {
+  if (items.length === 0) return null;
+  return (
+    <div className="attachment-chips">
+      {items.map((item) => (
+        <span key={item.id} className={`attachment-chip ${item.kind}`} title={item.name}>
+          {item.kind === "image"
+            ? <img src={item.data} alt="" />
+            : item.kind === "audio" ? <Music size={13} /> : <FileText size={13} />}
+          <em>{item.name}</em>
+          <button aria-label={`移除附件 ${item.name}`} onClick={() => onRemove(item.id)}><X size={12} /></button>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** 随这条消息发出的源码引用（整文件或行区间）。 */
+export function ContextChips({ items, onRemove }: { items: ContextItem[]; onRemove: (item: ContextItem) => void }) {
+  if (items.length === 0) return null;
+  return (
+    <div className="context-chips">
+      {items.map((item) => (
+        <span key={contextItemKey(item)} title={contextItemLabel(item)}>
+          <FileText size={12} />{contextItemLabel(item)}
+          <button aria-label={`移除 ${contextItemLabel(item)}`} onClick={() => onRemove(item)}><X size={12} /></button>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+const TRUST_CHIP_LABEL: Record<TrustLevel, string> = {
+  ask: "每次都问我",
+  reads: "只读自动",
+  full: "完全信任",
+};
+
+/** 底栏的授权方式。只有一个可选档位时不显示；当前档位不在可选里（被会话上限压低）时显示生效档位。 */
+export function TrustChip({ trust, busy, onChange }: { trust: TrustStatus | null; busy: boolean; onChange: (level: TrustLevel) => void }) {
+  if (!trust || trust.levels.length <= 1) return null;
+  return (
+    <label className="composer-chip" title="授权方式：Agent 动手前要不要先问你">
+      <ShieldCheck size={14} />
+      <select
+        aria-label="授权方式"
+        value={trust.levels.includes(trust.level) ? trust.level : trust.effective}
+        disabled={busy}
+        onChange={(event) => onChange(event.target.value as TrustLevel)}
+      >
+        {trust.levels.map((level) => <option key={level} value={level}>{TRUST_CHIP_LABEL[level]}</option>)}
       </select>
     </label>
   );

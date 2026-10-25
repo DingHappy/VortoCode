@@ -107,6 +107,9 @@ def test_hook_trust_api_hot_reloads_live_agents(tmp_path, monkeypatch):
     class Agent:
         _hook_system = None
 
+        def set_hook_system(self, hooks):
+            self._hook_system = hooks
+
     realtime._SESSIONS["sid-hook-test"] = {"agent": Agent(), "last": 0.0}
     try:
         client = TestClient(app)

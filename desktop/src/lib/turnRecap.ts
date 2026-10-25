@@ -7,6 +7,7 @@ const DEV_TOOLS = new Set(["dev_isolated", "dev_parallel", "dev_auto", "dev_resu
 const FAILED = new Set(["failed", "blocked", "cancelled", "timed_out"]);
 
 export interface TurnRecap {
+  /** Legacy field name: paths reported by successful write calls, not verified Git changes. */
   filesChanged: string[];
   tests: { runs: number; failed: number };
   commands: number;
@@ -25,7 +26,8 @@ export function turnRecap(items: TurnActivity[]): TurnRecap {
   for (const tool of tools) {
     const name = tool.name ?? "";
     const failed = FAILED.has(tool.status);
-    if (WRITE_TOOLS.has(name) && !failed && typeof tool.args?.path === "string" && tool.args.path) files.add(tool.args.path);
+    if (WRITE_TOOLS.has(name) && ["completed", "succeeded"].includes(tool.status)
+        && typeof tool.args?.path === "string" && tool.args.path) files.add(tool.args.path);
     if (name === "run_tests") {
       testRuns += 1;
       // run_tests 跑红是「调用成功、结果不过」：认它固定的「测试未过」开头，别去扫输出
@@ -44,10 +46,10 @@ export function turnRecap(items: TurnActivity[]): TurnRecap {
 /** 折叠标题里的短语，按「人最关心」排序；什么都没认出来就只给工具总数。 */
 export function recapPhrases(recap: TurnRecap): string[] {
   const phrases: string[] = [];
-  if (recap.filesChanged.length) phrases.push(`改了 ${recap.filesChanged.length} 个文件`);
-  if (recap.tests.runs) phrases.push(`跑测试 ${recap.tests.runs} 次${recap.tests.failed ? `（${recap.tests.failed} 次没过）` : ""}`);
-  if (recap.devRuns) phrases.push(`隔离开发 ${recap.devRuns} 次`);
-  if (recap.commands) phrases.push(`执行命令 ${recap.commands} 次`);
-  if (!phrases.length && recap.toolCount) phrases.push(`${recap.toolCount} 个工具`);
+  if (recap.filesChanged.length) phrases.push(`文件写入记录 ${recap.filesChanged.length} 项`);
+  if (recap.tests.runs) phrases.push(`测试记录 ${recap.tests.runs} 条${recap.tests.failed ? `（${recap.tests.failed} 条异常）` : ""}`);
+  if (recap.devRuns) phrases.push(`隔离开发记录 ${recap.devRuns} 条`);
+  if (recap.commands) phrases.push(`命令记录 ${recap.commands} 条`);
+  if (!phrases.length && recap.toolCount) phrases.push(`${recap.toolCount} 条工具记录`);
   return phrases;
 }

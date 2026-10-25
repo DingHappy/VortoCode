@@ -80,7 +80,7 @@ describe("task feed request and event ownership", () => {
     list.resolve([task("old")]);
     await fetching;
     expect(commandScope.current()).toBe(false);
-    expect(feed.getSnapshot()).toEqual({ tasks: [], focusedTaskId: "", worktreeWorkspace: { worktrees: [], plans: [] } });
+    expect(feed.getSnapshot()).toEqual({ tasks: [], focusedTaskId: "", worktreeWorkspace: { worktrees: [], plans: [] }, taskRead: { status: "loading" } });
   });
 
   it("isolates worktree reads from resets and reversed response order", async () => {
@@ -124,6 +124,17 @@ describe("task feed request and event ownership", () => {
     list.reject(new Error("offline"));
     await fetching;
     expect(feed.getSnapshot().tasks).toEqual([task("a")]);
+    expect(feed.getSnapshot().taskRead.status).toBe("unavailable");
+  });
+
+  it("a partial update cannot turn a failed full read into complete coverage", async () => {
+    const source = client(); const list = deferred<TaskItem[]>(); source.listTasks = () => list.promise;
+    const feed = new TaskFeed(() => source), reading = feed.refreshTasks();
+    feed.upsert(task("partial"), source); list.resolve([]); await reading;
+    expect(feed.getSnapshot().tasks).toEqual([task("partial")]);
+    expect(feed.getSnapshot().taskRead.status).toBe("unavailable");
+    feed.acceptEvent(event("task_snapshot", []), source);
+    expect(feed.getSnapshot().taskRead.status).toBe("current");
   });
 
   it("refreshes sibling allowances from the server and rejects an older chain read", async () => {

@@ -7,6 +7,8 @@
   提问和记忆落在同一话题就算相关。词面抓不到换个说法的问法，这一层补上。
 话题表刻意保守：只收个人助理常被问到的生活面，词尽量不歧义（单字只收「猫」「狗」「吃」「睡」这类不易误伤的）。
 """
+from collections import Counter
+import math
 import re
 
 _FUNCTION_CHARS = set("了的么吗呢吧啊呀个一是在我你他她它这那有和就都也还要会能把被给让")
@@ -26,6 +28,14 @@ _CONCEPTS = {
     "健康": ("过敏", "体检", "医院", "生病", "吃药"),
 }
 _CONCEPT_WEIGHT = 3
+_IDENTIFIER_WEIGHT = 2
+_ASCII_WORD = re.compile(r"_*[a-z0-9][a-z0-9_]*(?:[.-][a-z0-9_]+)*(?:\+\+|#)?", re.IGNORECASE)
+_ENGLISH_FUNCTION_WORDS = frozenset(
+    "a an the i me my mine we us our you your he him his she her it its they them their "
+    "am is are was were be been being do does did have has had can could may might "
+    "will would shall should must to of in on at by for from with and or but as "
+    "this that these those what which who whom whose when where why how please "
+    "tell say about s".split())
 
 
 def _concepts(text):
@@ -33,26 +43,57 @@ def _concepts(text):
 
 
 def _terms(q):
-    terms = [term for term in re.split(r"[\s,，。;；、/：:()（）\[\]{}?？!！]+", q) if term] or [q]
+    terms = [term for term in re.split(r"[\s,，。;；、/：:()（）\[\]{}?？!！\"'‘’“”]+", q)
+             if any(char.isalnum() for char in term) and term not in _ENGLISH_FUNCTION_WORDS]
+    # Project names and identifiers often touch Chinese text without whitespace.
+    # Keep full identifiers (safe_id, Next.js, C++), not their component fragments.
+    terms.extend(term for term in _ASCII_WORD.findall(q) if term not in _ENGLISH_FUNCTION_WORDS)
     for run in re.findall(r"[㐀-鿿]{2,}", q):
         terms.extend(run[index:index + 2] for index in range(len(run) - 1)
                      if not _FUNCTION_CHARS & set(run[index:index + 2]))
     return list(dict.fromkeys(terms))
 
 
+def _matcher(term):
+    left = r"(?<![a-z0-9_])" if term[0].isascii() and (term[0].isalnum() or term[0] == "_") else ""
+    right = r"(?![a-z0-9_+#])" if term[-1].isascii() and (term[-1].isalnum() or term[-1] in "_+#") else ""
+    if left or right:
+        pattern = re.compile(left + re.escape(term) + right)
+        return lambda text: term in text and pattern.search(text) is not None
+    return lambda text: term in text
+
+
 def rank_memories(rows, query, limit=10):
-    """Rank hits, preserving the caller's importance/recency order for ties."""
+    """Rank lexical/topic hits; importance/recency remains the tie breaker.
+
+    Rare query terms carry more weight than words shared by many candidate
+    facts. This is still lexical retrieval, not semantic similarity or a fact
+    update policy; records and the caller's candidate window are unchanged.
+    """
     q = (query or "").strip().lower()
     if not q:
         return rows[:limit]
     terms, topics = _terms(q), _concepts(q)
-    scored = []
+    topic_words = [_CONCEPTS[name] for name in topics]
+    matchers = [_matcher(term) for term in terms]
+    phrase = _matcher(q)
+    candidates = []
+    frequencies = Counter()
     for row in rows:
         content = str(row.get("content", "")).lower()
-        score = sum(1 for term in terms if term in content)
-        if q in content:
+        matches = [index for index, match in enumerate(matchers) if match(content)]
+        frequencies.update(matches)
+        candidates.append((row, content, matches))
+    weights = {index: 1 + math.log((len(candidates) + 1) / (count + 1))
+               for index, count in frequencies.items()}
+    scored = []
+    for row, content, matches in candidates:
+        score = sum(weights[index] * (_IDENTIFIER_WEIGHT if _ASCII_WORD.fullmatch(terms[index]) else 1)
+                    for index in matches)
+        if matches and phrase(content):
             score += len(terms)
-        score += _CONCEPT_WEIGHT * len(topics & _concepts(content))
+        # Unasked topics cannot affect the score; skip their scans entirely.
+        score += _CONCEPT_WEIGHT * sum(any(word in content for word in words) for words in topic_words)
         if score > 0:
             scored.append((score, row))
     scored.sort(key=lambda entry: entry[0], reverse=True)

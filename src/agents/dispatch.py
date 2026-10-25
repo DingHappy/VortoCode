@@ -27,11 +27,11 @@ async def execute_dispatch(repo_root, task, collaboration):
     def factory(*args, **kwargs):
         kwargs["permissions"] = load_permissions(repo_root)
         kwargs["execution_check"] = lambda: collaboration.check_execution_dependencies(task.id, task.collaboration["round"])
+        kwargs["untrusted_input"] = True
         agent = MainAgent(*args, **kwargs)
         # Environment overrides and role budgets cannot expand the service contract.
         agent.max_steps = min(agent.max_steps, max_steps)
         agent.build_max_steps = min(agent.build_max_steps, max_steps)
-        agent._untrusted_input = True
         return agent
 
     def sub_factory(root, spec, **kwargs):

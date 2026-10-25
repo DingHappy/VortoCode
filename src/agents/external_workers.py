@@ -41,9 +41,15 @@ import os
 import re
 import shutil
 import signal
-from dataclasses import dataclass, field
+import time
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Optional
+
+from src.agents.backends.execution import (
+    ExecutionFailure, ExecutionProgress, ExecutionRef, ExecutionResult, ExecutionSnapshot,
+    ExecutionState, ExecutionUsage, new_run_id, process_instance,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +89,31 @@ class WorkerRun:
     rate_limited: bool = False
     cost_usd: Optional[float] = None
     usage: dict = field(default_factory=dict)
+    run_id: str = field(default_factory=new_run_id)
+    instance_id: str = field(default_factory=lambda: process_instance("external-cli"))
+    observed_at: float = field(default_factory=time.time)
+    started: bool = False
+    failure_code: str = ""
+    cancel_requested: bool = False
+    task_id: str = ""
+    identity_scope: str = "process"
+
+    @property
+    def execution_report(self) -> ExecutionSnapshot:
+        state = ((ExecutionState.CANCELLED if self.exit_code is not None else ExecutionState.UNKNOWN) if self.cancel_requested
+                 else ExecutionState.FINISHED if not self.error and self.exit_code == 0
+                 else ExecutionState.FAILED if self.exit_code is not None or (self.error and not self.started)
+                 else ExecutionState.RUNNING if self.started else ExecutionState.UNKNOWN)
+        ref = ExecutionRef(self.worker, self.instance_id, self.run_id, session_id=self.session_id,
+                           task_id=self.task_id, scope=self.identity_scope)
+        error = (ExecutionFailure("rate_limited" if self.rate_limited else self.failure_code or "backend_error",
+                 self.error, effect="possible" if self.started else "not_started") if self.error else None)
+        result = (ExecutionResult(self.final_text, usage=ExecutionUsage.reported(self.usage, self.cost_usd))
+                  if self.final_text or state == ExecutionState.FINISHED else None)
+        latest = describe_event(self.worker, self.events[-1]) if self.events else ""
+        return ExecutionSnapshot(ref, state, self.observed_at, native_state=f"exit:{self.exit_code}",
+            progress=ExecutionProgress(latest), result=result, error=error,
+            features=frozenset({"result.text", "progress.events", "usage.reported"}))
 
     @property
     def ok(self) -> bool:
@@ -418,6 +449,7 @@ _PARSERS = {"codex": parse_codex_event, "claude": parse_claude_event}
 def fold_event(run: WorkerRun, event: WorkerEvent) -> None:
     """把一条事件并进运行结果（纯函数式累积，便于离线测试）。"""
     run.events.append(event)
+    run.observed_at = time.time()
     if event.kind == "session" and event.data.get("session_id"):
         run.session_id = event.data["session_id"]
     elif event.kind == "message" and event.text.strip():
@@ -453,12 +485,29 @@ def _kill_group(proc: asyncio.subprocess.Process) -> None:
 
 async def run_worker(worker: str, prompt: str, cwd: str, *, write: bool, system: str = "",
                      on_event: Optional[Callable[[WorkerEvent], Any]] = None,
-                     timeout: Optional[int] = None) -> WorkerRun:
+                     timeout: Optional[int] = None, execution_ref: ExecutionRef | None = None,
+                     on_snapshot: Optional[Callable[[ExecutionSnapshot], Any]] = None) -> WorkerRun:
     """跑一次外部 CLI，逐行解析 JSONL 事件。失败如实写进 `WorkerRun.error`，不抛。"""
     run = WorkerRun(worker)
+    if execution_ref is not None:
+        if not isinstance(execution_ref, ExecutionRef) or execution_ref.backend_id != worker or execution_ref.session_id or execution_ref.turn_id:
+            raise ValueError("CLI execution identity must match its worker and a new session")
+        run.run_id, run.instance_id = execution_ref.run_id, execution_ref.instance_id
+        run.task_id, run.identity_scope = execution_ref.task_id, execution_ref.scope
+
+    def publish() -> None:
+        if on_snapshot is not None:
+            try:
+                on_snapshot(run.execution_report)
+            except Exception:  # Observation failures never change execution.
+                logger.debug("外部执行者快照回调出错", exc_info=True)
+
+    publish()
     binary = worker_binary(worker)
     if not binary:
         run.error = f"找不到 {worker} 命令：请先安装并登录，或设置 VORTOCODE_{worker.upper()}_BIN"
+        run.failure_code = "unavailable"
+        publish()
         return run
     extra, extra_env = user_config(worker)
     argv = build_argv(worker, cwd=cwd, write=write, system=system, binary=binary, extra=extra)
@@ -467,6 +516,9 @@ async def run_worker(worker: str, prompt: str, cwd: str, *, write: bool, system:
         *argv, cwd=cwd, env=_env_for(binary, {**worker_env(), **extra_env}), stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
         start_new_session=True, limit=16 * 1024 * 1024)
+    run.started = True
+    run.observed_at = time.time()
+    publish()
     stderr_chunks: list[bytes] = []
 
     async def _drain_stderr():
@@ -487,6 +539,7 @@ async def run_worker(worker: str, prompt: str, cwd: str, *, write: bool, system:
                 continue
             for event in parse(obj):
                 fold_event(run, event)
+                publish()
                 if on_event is not None:
                     try:
                         on_event(event)
@@ -513,7 +566,10 @@ async def run_worker(worker: str, prompt: str, cwd: str, *, write: bool, system:
         await proc.wait()
         run.exit_code = proc.returncode
         run.error = f"{worker} 运行超时（{timeout or worker_timeout()} 秒），已终止"
+        run.failure_code = "timeout"
     except asyncio.CancelledError:
+        run.cancel_requested = True
+        run.error, run.failure_code = "已请求取消本机 CLI", "cancel_requested"
         _kill_group(proc)
         raise
     finally:
@@ -524,9 +580,16 @@ async def run_worker(worker: str, prompt: str, cwd: str, *, write: bool, system:
                 await asyncio.wait_for(task, 5)
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 task.cancel()
+        if run.cancel_requested:
+            run.exit_code = proc.returncode
+            run.observed_at = time.time()
+            publish()
     if not run.error and run.exit_code != 0:
         tail = b"".join(stderr_chunks).decode("utf-8", "replace").strip()[-_TAIL:]
         run.error = f"{worker} 退出码 {run.exit_code}" + (f"：{tail}" if tail else "")
+        run.failure_code = "process_exit"
+    run.observed_at = time.time()
+    publish()
     logger.info("外部执行者 %s 结束：exit=%s session=%s cost=%s error=%s",
                 worker, run.exit_code, run.session_id, run.cost_usd, run.error[:200])
     return run
@@ -632,11 +695,29 @@ class ExternalWorkerAgent:
         self.on_progress = on_progress
         self.tools: dict = {}
         self.last_run: Optional[WorkerRun] = None
+        self._execution_report: ExecutionSnapshot | None = None
+        self._effective_agent: Any = None
 
-    async def run_turn(self, message: str, mode: str = "build", emit: Any = None, **_: Any) -> str:
+    @property
+    def execution_report(self) -> ExecutionSnapshot | None:
+        if self._effective_agent is not None:
+            return getattr(self._effective_agent, "execution_report", None)
+        return self._execution_report
+
+    async def run_turn(self, message: str, mode: str = "build", emit: Any = None,
+                       execution_ref: ExecutionRef | None = None, **_: Any) -> str:
         from src.agents.capabilities import UNATTENDED_PROFILE
+        self._execution_report = None
+        self._effective_agent = None
         if getattr(self.capabilities, "profile", None) == UNATTENDED_PROFILE:
             raise ExternalWorkerError("无人值守档位不允许启动外部执行者（fail-closed）")
+
+        def observe(snapshot: ExecutionSnapshot) -> None:
+            # Process exit is a source fact. This adapter must still check errors
+            # and structured questions before reporting its own turn finished.
+            self._execution_report = (replace(snapshot, state=ExecutionState.RUNNING,
+                progress=ExecutionProgress("执行者已返回，正在核对结果"))
+                if snapshot.state == ExecutionState.FINISHED else snapshot)
 
         def _event(event: WorkerEvent) -> None:
             line = describe_event(self.worker, event)
@@ -649,7 +730,7 @@ class ExternalWorkerAgent:
         if getattr(self.question, "tainted", False):
             mark_tainted()                     # 之前的问答来自不可信回合：本回合同样按污点处理
         run = await run_worker(self.worker, message, self.cwd, write=self.write and mode != "plan",
-                               system=system, on_event=_event)
+                               system=system, on_event=_event, execution_ref=execution_ref, on_snapshot=observe)
         self.last_run = run
         if run.used_network:
             mark_tainted()
@@ -659,15 +740,35 @@ class ExternalWorkerAgent:
                 if self.on_progress is not None:
                     self.on_progress(f"[{self.worker}] 不可用（{(run.error or '')[:60]}），本块改由内置子 Agent 接手；"
                                      f"{int(_cooldown_seconds() // 60)} 分钟内不再派给 {self.worker}")
-                return await self.fallback().run_turn(message, mode=mode, emit=emit)
+                self._effective_agent = self.fallback()
+                return await self._effective_agent.run_turn(message, mode=mode, emit=emit)
             raise ExternalWorkerError(run.error or f"{self.worker} 未给出结果")
         asked = parse_question(run.final_text)
         if asked is not None:
             if tool is None:                   # 没有提问通道（非开发任务 / 提问次数用尽）：如实失败，不装成结论
+                self._execution_report = replace(run.execution_report, state=ExecutionState.FAILED,
+                    error=ExecutionFailure("unsupported_input", "执行者需要人工信息，但当前任务没有提问通道", effect="possible"))
                 raise ExternalWorkerError(f"{self.worker} 需要人工确认但当前任务不能提问：{asked['question'][:300]}")
             if self.on_progress is not None:
                 self.on_progress(f"[{self.worker}] 提问：{asked['question'][:100]}")
-            await tool.handler(asked)          # 落台账并抛 ToolTurnYield，与内部子 agent 提问同一路径
+            self._execution_report = replace(run.execution_report, state=ExecutionState.WAITING_USER,
+                result=None, progress=ExecutionProgress(asked["question"]))
+            try:
+                await tool.handler(asked)      # 落台账并抛 ToolTurnYield，与内部子 agent 提问同一路径
+            except asyncio.CancelledError:
+                self._execution_report = replace(self._execution_report, state=ExecutionState.UNKNOWN,
+                    error=ExecutionFailure("input_uncertain", "提问处理被取消，请核对原任务状态", effect="possible"))
+                raise
+            except Exception as error:
+                from src.agents.tool import ToolTurnYield
+                if not isinstance(error, ToolTurnYield):
+                    self._execution_report = replace(self._execution_report, state=ExecutionState.FAILED,
+                        error=ExecutionFailure("input_failed", str(error), effect="possible"))
+                raise
+            self._execution_report = replace(self._execution_report, state=ExecutionState.UNKNOWN,
+                error=ExecutionFailure("input_unconfirmed", "提问未确认形成持久暂停，请核对原任务", effect="possible"))
+            return run.final_text
+        self._execution_report = run.execution_report
         return run.final_text
 
 

@@ -12,6 +12,7 @@
 """
 
 from datetime import datetime, timedelta, timezone
+import asyncio
 
 import pytest
 
@@ -136,6 +137,90 @@ async def test_flush_sends_one_summary_not_a_replay_storm(tmp_path):
     assert res["sent"] == 12 and len(box) == 1, "补发不该逐条刷屏"
     assert "12 条" in box[0] and "另有 2 条" in box[0]     # 只列前 10 条，其余给计数
     assert N.pending_undelivered_count(str(tmp_path)) == 0
+
+
+async def test_flush_preserves_messages_queued_while_the_sender_is_awaited(tmp_path):
+    root = str(tmp_path)
+    N.queue_undelivered(root, "原通知")
+
+    async def send(_text):
+        N.queue_undelivered(root, "发送期间的新通知")
+
+    result = await N.flush_undelivered(root, send)
+    assert result == {"sent": 1, "dropped": 0, "kept": 1}
+    assert [item["text"] for item in N._read_undelivered(root)] == ["发送期间的新通知"]
+
+
+async def test_explicit_send_failure_keeps_original_and_new_messages(tmp_path):
+    root = str(tmp_path)
+    N.queue_undelivered(root, "原通知")
+
+    async def send(_text):
+        N.queue_undelivered(root, "新通知")
+        return False
+
+    assert await N.flush_undelivered(root, send) == {"sent": 0, "dropped": 0, "kept": 2}
+    entries = N._read_undelivered(root)
+    assert [(item["text"], item["attempts"]) for item in entries] == [("原通知", 1), ("新通知", 0)]
+
+
+async def test_concurrent_flushes_do_not_send_the_same_batch_twice(tmp_path):
+    root = str(tmp_path)
+    N.queue_undelivered(root, "通知")
+    started, release = asyncio.Event(), asyncio.Event()
+    sent = []
+
+    async def send(text):
+        sent.append(text)
+        started.set()
+        await release.wait()
+
+    first = asyncio.create_task(N.flush_undelivered(root, send))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    second = asyncio.create_task(N.flush_undelivered(root, send))
+    await asyncio.sleep(0)
+    release.set()
+    await asyncio.wait_for(asyncio.gather(first, second), timeout=1)
+    assert len(sent) == 1
+    assert N.pending_undelivered_count(root) == 0
+
+
+async def test_legacy_batch_does_not_remove_a_new_notice_with_identical_text(tmp_path):
+    root = str(tmp_path)
+    N._write_undelivered(root, [{"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                                "source": "cron:x", "text": "同一段正文", "attempts": 0}])
+
+    async def send(_text):
+        N.queue_undelivered(root, "同一段正文", source="cron:x")
+
+    assert await N.flush_undelivered(root, send) == {"sent": 1, "dropped": 0, "kept": 1}
+    assert N._read_undelivered(root)[0]["text"] == "同一段正文"
+
+
+async def test_cancelled_flush_keeps_the_queue_and_allows_the_next_attempt(tmp_path):
+    root = str(tmp_path)
+    N.queue_undelivered(root, "通知")
+    started = asyncio.Event()
+
+    async def stalled(_text):
+        started.set()
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(N.flush_undelivered(root, stalled))
+    await asyncio.wait_for(started.wait(), timeout=1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert N.pending_undelivered_count(root) == 1
+    assert (await N.flush_undelivered(root, await _sink([])))["sent"] == 1
+
+
+async def test_delivered_but_queue_write_failed_keeps_an_honest_receipt(tmp_path, monkeypatch):
+    root = str(tmp_path)
+    N.queue_undelivered(root, "通知")
+    monkeypatch.setattr(N, "_write_undelivered", lambda *_args: False)
+    assert await N.flush_undelivered(root, await _sink([])) == {"sent": 1, "dropped": 0, "kept": 1}
+    assert any("队列更新失败" in item["text"] for item in N.load_notices(root))
 
 
 @pytest.mark.asyncio

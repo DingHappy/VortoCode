@@ -182,10 +182,10 @@ async def test_ws_agent_no_key_degrades(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ws_agent_say_strips_rich_markup(monkeypatch):
-    # 真会露到界面上的 say 是 dev 流水线的进度行（"⚙️ 隔离实现…"）。它们经 _web_progress_holder
+    # 真会露到界面上的 say 是 dev 流水线的进度行（"⚙️ 隔离实现…"）。它们经 TurnBindings.progress
     # 走同一条 agent_say，必须剥成纯文本，否则 agent.html / Desktop 会原样显示 [b]/[dim] 标签。
     import src.llm.client as llmmod
-    from src.web.routers.realtime import _ws_agent, handle_agent_message
+    from src.web.routers.realtime import _ws_agent, handle_agent_message, turn_bindings
 
     ws = _FakeWS()
 
@@ -196,7 +196,7 @@ async def test_ws_agent_say_strips_rich_markup(monkeypatch):
         async def chat(self, messages, **k):
             self.n += 1
             if self.n == 1:                     # 回合已开始 → 进度回调已绑到本回合的队列
-                _ws_agent(ws)._web_progress_holder["fn"]("⚙️ [b]隔离实现[/b][dim] 第 1 件[/dim]")
+                turn_bindings(_ws_agent(ws)).emit_progress("⚙️ [b]隔离实现[/b][dim] 第 1 件[/dim]")
             return {"content": "好了。"}
 
     monkeypatch.setattr(llmmod, "LLMClient", FakeLLM)
@@ -529,10 +529,12 @@ def test_web_agent_includes_research_delegation():
         assert name in agent.tools and agent.tools[name].read_only is True
 
 
-def test_web_agent_has_progress_holder():
+def test_web_agent_registers_turn_bindings():
     from src.web.routers import realtime
-    agent = realtime._new_agent()                       # dev 流水线进度 holder：_run_agent_turn 每回合重绑到 ws
-    assert getattr(agent, "_web_progress_holder", None) == {"fn": None}
+    agent = realtime._new_agent()                       # 回调换绑点：_run_agent_turn 每回合重绑到 ws
+    bindings = realtime._TURN_BINDINGS.get(agent)
+    assert bindings is not None and realtime.turn_bindings(agent) is bindings
+    assert all(getattr(bindings, slot) is None for slot in ("confirm", "progress", "diff", "plan"))
 
 
 def test_web_agent_includes_web_fetch():
@@ -567,7 +569,7 @@ async def test_web_ensure_mcp_connects_once(monkeypatch):
     agent = MainAgent([])
     says = []
     await realtime._ensure_mcp(agent, says.append)
-    assert "mcp__s__t" in agent.tools and agent._mcp_mgr is not None
+    assert "mcp__s__t" in agent.tools and agent.mcp.manager is not None
     assert calls["connect"] == 1 and any("MCP" in s for s in says)
     await realtime._ensure_mcp(agent, says.append)      # 第二回合不再连
     assert calls["connect"] == 1
@@ -585,7 +587,7 @@ async def test_web_ensure_mcp_no_config_is_noop(monkeypatch):
     monkeypatch.setenv("VORTOCODE_WEB_MCP", "1")        # opt-in 开着，但无配置 → 仍是 no-op
     agent = MainAgent([])
     await realtime._ensure_mcp(agent, lambda _m: None)
-    assert agent._mcp_mgr is None and not any(n.startswith("mcp__") for n in agent.tools)
+    assert agent.mcp.manager is None and not any(n.startswith("mcp__") for n in agent.tools)
 
 
 @pytest.mark.asyncio
@@ -603,7 +605,7 @@ async def test_web_ensure_mcp_default_off_never_connects(monkeypatch):
     monkeypatch.setattr(mt, "connect_mcp", boom_connect)
     agent = MainAgent([])
     await realtime._ensure_mcp(agent, lambda _m: None)   # 不抛、不连
-    assert called["n"] == 0 and agent._mcp_mgr is None
+    assert called["n"] == 0 and agent.mcp.manager is None
 
 
 @pytest.mark.asyncio
@@ -624,11 +626,11 @@ async def test_web_ensure_mcp_failure_surfaces_exception_type(monkeypatch):
     monkeypatch.setenv("VORTOCODE_WEB_MCP", "1")
 
     agent = MainAgent([])
-    agent._mcp_tried = False  # 重置，确保会走连接逻辑
+    agent.mcp.tried = False  # 重置，确保会走连接逻辑
     says: list[str] = []
     await realtime._ensure_mcp(agent, says.append)
 
-    assert agent._mcp_mgr is None  # 连接确实失败了
+    assert agent.mcp.manager is None  # 连接确实失败了
     assert says, "_ensure_mcp 没有 say 任何消息"
     failure_msg = next(m for m in says if "MCP" in m and "失败" in m)
     assert "TimeoutError" in failure_msg, (
@@ -648,7 +650,7 @@ async def test_web_shutdown_mcp_async_runs_and_safe_without_mgr():
             flag["down"] = True
 
     agent = MainAgent([])
-    agent._mcp_mgr = FakeMgr()
+    agent.mcp.manager = FakeMgr()
     realtime._shutdown_mcp_async(agent)
     await asyncio.sleep(0.05)                            # 让 fire-and-forget 的 shutdown task 跑完
     assert flag["down"] is True
@@ -795,13 +797,12 @@ async def test_no_history_replayed_for_fresh_session():
 class _PlanAgent:
     """跑一回合时设置计划并触发 on_plan（模拟主 agent 调 update_plan）。"""
     def __init__(self):
-        self._on_plan = None
         self.plan = []
 
     async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None):
         self.plan = [{"step": "x", "status": "in_progress"}]
-        if self._on_plan:
-            self._on_plan(self.plan)
+        from src.web.routers.realtime import turn_bindings
+        turn_bindings(self).emit_plan(self.plan)
         emit("好了")
 
 
@@ -967,13 +968,13 @@ def test_desktop_context_items_share_one_eight_item_budget():
 
 class _DesktopEditAgent:
     def __init__(self):
-        self._web_confirm_holder = {"fn": None}
         self.bound_tools = []
         self.confirm_messages = []
 
-    async def _confirm_gate(self, message):
+    async def confirm_gate(self, message):
+        from src.web.routers.realtime import turn_bindings
         self.confirm_messages.append(message)
-        return await self._web_confirm_holder["fn"](message)
+        return await turn_bindings(self).ask(message)
 
     async def _run_bound_tool(self, tool, args, mode, say):
         self.bound_tools.append((tool.name, args["path"], mode))
@@ -1026,7 +1027,8 @@ async def test_desktop_workspace_edit_sends_diff_then_confirms_and_saves(monkeyp
         result = [event for event in ws.sent if event["type"] == P.WORKSPACE_EDIT_RESULT][-1]
         assert result["ok"] is True and result["rid"] == "save-1" and len(result["sha256"]) == 64
         assert path.read_text(encoding="utf-8") == "answer = 2\n"
-        assert agent._web_confirm_holder["fn"] is None
+        from src.web.routers.realtime import turn_bindings
+        assert turn_bindings(agent).confirm is None
     finally:
         _cleanup(ws)
 
@@ -1117,7 +1119,6 @@ def test_sanitize_images():
 class _CaptureAgent:
     """记下收到的 images/audio，便于断言附件透传到 run_turn。"""
     def __init__(self):
-        self._on_plan = None
         self.plan = []
         self.got_images = "unset"
         self.got_audio = "unset"
@@ -1344,12 +1345,12 @@ class _HookLifecycleAgent:
     """Emit one Hook lifecycle through the same holder used by MainAgent."""
 
     def __init__(self):
-        self._web_tool_event_holder = {"fn": None}
         self.plan = []
 
     async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None,
                        reasoning_cb=None):
-        callback = self._web_tool_event_holder["fn"]
+        from src.web.routers.realtime import turn_bindings
+        callback = turn_bindings(self).emit_tool_event
         callback("hook_start", {
             "id": "hook-visible-1", "name": "format", "event": "post_tool_use",
             "tool": "edit_file", "status": "running",
@@ -1488,3 +1489,46 @@ def test_sessions_evict_oldest_over_cap(monkeypatch, tmp_path):
     finally:
         realtime._SESSIONS.clear()
         realtime._SESSIONS.update(saved)
+
+
+class _LateCallbackAgent:
+    """Keeps the session callbacks after its turn, like work that outlives the turn would."""
+
+    def __init__(self):
+        self.plan = []
+        self.kept = None
+
+    async def run_turn(self, text, mode, say, emit, stream_cb, images=None, audio=None,
+                       reasoning_cb=None):
+        from src.web.routers.realtime import turn_bindings
+        self.kept = turn_bindings(self)
+        emit("完成")
+
+
+@pytest.mark.asyncio
+async def test_turn_end_releases_every_connection_callback(monkeypatch):
+    """回合结束后，确认/进度/diff/plan 不再指向这一轮的队列：确认立即拒绝，事件丢弃，不挂起也不堆积。"""
+    from src.gateway.turn_bindings import SLOTS
+    from src.web.routers import realtime
+
+    monkeypatch.setenv("OPENAI_API_KEY", "x")
+    ws = _FakeWS(sid="s-late-callbacks")
+    agent = _LateCallbackAgent()
+    _inject_session(ws, agent)
+    try:
+        await realtime.handle_agent_message(ws, {"type": "agent", "text": "go", "rid": "r-late"})
+        await _drain(ws)
+        bindings = agent.kept
+        assert bindings is not None
+        assert {slot: getattr(bindings, slot) for slot in SLOTS} == dict.fromkeys(SLOTS)
+        pending_before = set(realtime._PENDING_CONFIRMS)
+        assert await asyncio.wait_for(bindings.ask("回合结束后才来的确认"), timeout=1) is False
+        assert set(realtime._PENDING_CONFIRMS) == pending_before
+        sent_before = len(ws.sent)
+        bindings.emit_progress("迟到的进度")
+        bindings.emit_diff("迟到", "diff")
+        bindings.emit_plan([{"step": "x"}])
+        await _drain(ws)
+        assert len(ws.sent) == sent_before
+    finally:
+        _cleanup(ws)

@@ -24,23 +24,27 @@ def _general_root() -> str:
 async def codex_report(payload: dict = Body(...)):
     root = _general_root()
     try:
-        notices = codex_watch.record_report(root, payload)
+        accepted = codex_watch.receive_report(root, payload)
+    except codex_watch.ObservationConflict as error:
+        raise HTTPException(409, str(error)) from error
+    except codex_watch.ObservationBusy as error:
+        raise HTTPException(503, str(error)) from error
     except ValueError as error:
         raise HTTPException(400, str(error)) from error
+    notices = accepted.notices
     if notices:
         from src.scheduling.notices import make_notifier
         notify = make_notifier(root, source="codex")
         for text in notices:
             await notify(text)
-    return {"ok": True, "notices": len(notices)}
+    return {"ok": True, "notices": len(notices), "report_cursor": accepted.cursor,
+            "duplicate": accepted.duplicate}
 
 
 @router.get("/api/codex/status")
 async def codex_status():
     root = _general_root()
-    state = codex_watch.load_state(root)
-    return {"overview": codex_watch.overview(root), "threads": state.get("threads") or [],
-            "received_at": state.get("received_at")}
+    return codex_watch.progress_snapshot(root)
 
 
 def _action_error(error: Exception) -> HTTPException:

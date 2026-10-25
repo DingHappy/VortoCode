@@ -1,0 +1,35 @@
+.assistant-activity { min-width: 0; padding: 4px 0 12px; }
+.assistant-activity-overview { margin: 6px 16px 10px; border: 1px solid var(--n5); border-radius: 10px; }
+.assistant-activity-overview > summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 38px; padding: 8px 12px; box-sizing: border-box; list-style: none; color: var(--n11); font-size: 12px; font-weight: 500; cursor: pointer; }
+.assistant-activity-overview > summary::-webkit-details-marker { display: none; }
+.assistant-activity-overview > summary > span { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+.assistant-activity-overview > summary small { color: var(--amber-text); font-size: 11px; }
+.assistant-activity-overview > summary:hover { color: var(--n13); background: var(--n3); border-radius: 9px; }
+.assistant-activity-overview > summary:focus-visible { outline: 2px solid var(--daily-accent-text); outline-offset: 2px; border-radius: 9px; }
+.assistant-activity-overview > summary > svg { flex: 0 0 auto; transition: transform .15s ease; }
+.assistant-activity-overview[open] > summary > svg { transform: rotate(180deg); }
+.assistant-activity-overview .assistant-workday { padding: 12px; border-top: 1px solid var(--n5); }
+.assistant-activity .activity-feed { padding-top: 0; }
+.assistant-activity-offline { margin: 8px 20px 12px; color: var(--n10); font-size: 12px; line-height: 1.6; }
+.assistant-activity-detail { margin: 8px 16px 12px; border-radius: 10px; }
+.assistant-activity-detail:focus-visible { outline: 2px solid var(--daily-accent-text); outline-offset: 3px; }
+.assistant-activity-close { padding: 6px 10px; margin-bottom: 8px; border: 1px solid var(--n5); border-radius: 7px; background: var(--n3); color: var(--n11); font-size: 12px; cursor: pointer; }
+.assistant-activity-close:focus-visible { outline: 2px solid var(--daily-accent-text); outline-offset: 2px; }
+.assistant-activity-filters { position: sticky; top: 0; z-index: 2; display: flex; gap: 6px; padding: 8px 16px; background: var(--n1); border-bottom: 1px solid var(--n4); }
+.assistant-activity-filters button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 32px; padding: 5px 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--n10); font: inherit; font-size: 12px; cursor: pointer; }
+.assistant-activity-filters button[aria-pressed="true"] { border-color: var(--n5); background: var(--n3); color: var(--n13); }
+.assistant-activity-filters button span { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--n9); }
+.assistant-activity-filters button:focus-visible, .assistant-activity-show-all:focus-visible { outline: 2px solid var(--daily-accent-text); outline-offset: 2px; }
+.assistant-activity-list { scroll-margin-top: 50px; }
+.assistant-activity-detail, .assistant-activity .activity-feed-item { scroll-margin-top: 54px; }
+.assistant-activity-show-all { margin: 0 20px 16px; min-height: 32px; padding: 5px 10px; border: 1px solid var(--n5); border-radius: 8px; background: var(--n3); color: var(--n12); font-size: 12px; cursor: pointer; }
+.activity-sources { margin: 6px 16px; font-size: 11.5px; line-height: 1.6; color: var(--n10); }
+.activity-sources.uncertain { padding: 8px 10px; border: 1px solid var(--n5); border-radius: 8px; color: var(--amber-text); }
+.activity-sources-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.activity-sources-heading button { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; color: var(--n10); background: transparent; cursor: pointer; }
+.activity-sources-heading button:disabled { opacity: .5; cursor: default; }
+.activity-sources-heading button:focus-visible { outline: 2px solid var(--daily-accent-text); }
+.activity-sources summary { cursor: pointer; }
+.activity-sources ul { margin: 6px 0; padding-left: 18px; }
+.activity-sources li { overflow-wrap: anywhere; }
+.activity-sources small { color: var(--n10); }

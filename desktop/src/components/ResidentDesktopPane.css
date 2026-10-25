@@ -1,0 +1,9 @@
+.resident-desktop-pane { padding: 14px; border: 1px solid var(--border, #333); border-radius: 10px; margin: 12px 0; }
+.resident-desktop-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.resident-desktop-pane p { margin: 8px 0; font-size: 12px; overflow-wrap: anywhere; }
+.resident-desktop-pane form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin: 12px 0; }
+.resident-desktop-pane label { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 180px; font-size: 12px; }
+.resident-desktop-pane input { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid var(--border, #444); border-radius: 6px; background: var(--bg, #171717); color: inherit; }
+.resident-desktop-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.resident-desktop-pane button { min-height: 32px; }
+.resident-desktop-note { color: var(--text-secondary, #999); line-height: 1.6; }

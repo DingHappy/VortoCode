@@ -19,9 +19,19 @@ import os
 import re
 import socket
 import time
+import uuid
+from copy import deepcopy
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, List, Optional
+
+from src.agents.backends.codex import CodexBackend, codex_execution_state
+from src.agents.backends.control import control_session
+from src.agents.backends.execution import (
+    ExecutionProgress, ExecutionRef, ExecutionSnapshot, process_instance,
+)
+from src.agents.backends.observation_order import ObservationCursor, ObservationOrder
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +55,52 @@ def report_target() -> Optional[tuple]:
 
 def observer_enabled() -> bool:
     return report_target() is not None
+
+
+@dataclass(frozen=True)
+class ObserverHealth:
+    run_id: str = ""
+    phase: str = "not_started"
+    updated_at: float | None = None
+    last_observed_at: float | None = None
+    last_acknowledged_at: float | None = None
+    transport_mode: str = "unknown"
+    pending: bool = False
+    error_code: str = ""
+
+
+class ObserverMonitor:
+    """One process-local loop observation; contains no target, token or content."""
+    def __init__(self):
+        self.health = ObserverHealth()
+
+    def start(self) -> str:
+        run_id = uuid.uuid4().hex
+        self.health = ObserverHealth(run_id=run_id, phase="starting", updated_at=time.time())
+        return run_id
+
+    def update(self, run_id: str, phase: str, *, publisher: ReportPublisher | None = None,
+               observed: bool = False, acknowledged: bool = False, error_code: str = "") -> None:
+        if run_id != self.health.run_id:
+            return  # An old loop's cleanup cannot stop a replacement loop.
+        now = time.time()
+        self.health = replace(self.health, phase=phase, updated_at=now,
+            last_observed_at=now if observed else self.health.last_observed_at,
+            last_acknowledged_at=now if acknowledged else self.health.last_acknowledged_at,
+            transport_mode=(publisher.mode or "unknown") if publisher is not None else self.health.transport_mode,
+            pending=publisher.pending is not None if publisher is not None else self.health.pending,
+            error_code=error_code)
+
+    def snapshot(self, *, configured: bool) -> dict:
+        health = self.health if configured else ObserverHealth(phase="disabled")
+        return {"schema_version": 1, "configured": configured, **asdict(health)}
+
+
+_MONITOR = ObserverMonitor()
+
+
+def observer_status() -> dict:
+    return _MONITOR.snapshot(configured=observer_enabled())
 
 
 def user_idle_seconds() -> Optional[float]:
@@ -166,9 +222,9 @@ def summarize_turn(turn: Optional[dict]) -> Optional[dict]:
     }
 
 
-def summarize_thread(meta: dict, turn: Optional[dict]) -> dict:
+def summarize_thread(meta: dict, turn: Optional[dict], *, observed_at: float | None = None) -> dict:
     status = meta.get("status") if isinstance(meta.get("status"), dict) else {}
-    return {
+    thread = {
         "id": str(meta.get("id") or ""),
         "name": _clip(meta.get("name") or meta.get("preview") or "（未命名会话）", 60),
         "cwd": _home_short(str(meta.get("cwd") or "")),
@@ -177,6 +233,19 @@ def summarize_thread(meta: dict, turn: Optional[dict]) -> dict:
         "updated_at": meta.get("updatedAt"),
         "turn": summarize_turn(turn),
     }
+    recent = thread["turn"] or {}
+    report = None
+    if thread["id"] and recent.get("id"):
+        report = ExecutionSnapshot(
+            ExecutionRef("codex", process_instance("codex.observer"), recent["id"],
+                         session_id=thread["id"], turn_id=recent["id"]),
+            codex_execution_state(thread["status"], recent["status"], thread["flags"]),
+            time.time() if observed_at is None else observed_at,
+            native_state=f"{thread['status']}:{recent['status']}",
+            progress=ExecutionProgress(recent.get("plan") or recent.get("request") or ""),
+            features=frozenset({"execution.observe"}))
+    thread["execution"] = report.to_dict() if report else None
+    return thread
 
 
 def digest(threads: List[dict]) -> str:
@@ -185,7 +254,10 @@ def digest(threads: List[dict]) -> str:
     for thread in threads:
         turn = dict(thread.get("turn") or {})
         turn.pop("duration_ms", None)
-        stable.append({**thread, "turn": turn})
+        item = {**thread, "turn": turn}
+        if isinstance(thread.get("execution"), dict):
+            item["execution"] = {key: value for key, value in thread["execution"].items() if key != "observed_at"}
+        stable.append(item)
     return hashlib.sha256(json.dumps(stable, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
@@ -232,11 +304,12 @@ async def snapshot(client: CodexClient) -> List[dict]:
     threads = []
     for thread_id in loaded[:_MAX_THREADS]:
         meta = (await client.call("thread/read", {"threadId": thread_id}) or {}).get("thread") or {}
-        if not meta:
+        if not meta or meta.get("id") != thread_id:
             continue
         # 最近一轮读完整条目（要从里面取计划、命令和改动的文件）；只取需要的字段，走的是本机 socket
         try:
-            page = await client.call("thread/turns/list", {"threadId": thread_id, "limit": 1, "itemsView": "full"})
+            page = await client.call("thread/turns/list", {"threadId": thread_id, "limit": 1,
+                                                         "itemsView": "full", "sortDirection": "desc"})
             turns = (page or {}).get("data") or []
         except RuntimeError:   # 临时会话等不支持按轮读：只报状态，别让一个会话拖垮整轮快照
             turns = []
@@ -245,12 +318,8 @@ async def snapshot(client: CodexClient) -> List[dict]:
     return threads
 
 
-async def post_report(threads: List[dict], *, http=None) -> bool:
-    target = report_target()
-    if target is None:
-        return False
-    url, token = target
-    payload = {"threads": threads, "observed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+def _report_payload(threads: List[dict]) -> dict:
+    payload = {"threads": deepcopy(threads), "observed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                "host": socket.gethostname()[:60]}
     idle = user_idle_seconds()
     if idle is not None:
@@ -258,6 +327,16 @@ async def post_report(threads: List[dict], *, http=None) -> bool:
         # 声明：主人到 Mac 前 / 离开的那一刻会补报一次。常驻助理据此可以信任「上一份报告时在 = 现在还在」，
         # 不必要求报告本身是 5 分钟内的（Codex 空闲时心跳 10 分钟才一次）。
         payload["presence_reports"] = True
+    return payload
+
+
+async def post_report(threads: List[dict], *, http=None) -> bool:
+    """Legacy transport retained for older callers and resident services."""
+    target = report_target()
+    if target is None:
+        return False
+    url, token = target
+    payload = _report_payload(threads)
     if http is not None:
         return bool(await http(f"{url}/api/codex/report", payload, token))
     import aiohttp
@@ -267,6 +346,12 @@ async def post_report(threads: List[dict], *, http=None) -> bool:
         async with session.post(f"{url}/api/codex/report", json=payload,
                                 headers={"Authorization": f"Bearer {token}"}) as response:
             return response.status < 300
+
+
+class ResidentHTTPError(RuntimeError):
+    def __init__(self, status: int):
+        self.status = status
+        super().__init__(f"常驻助理返回 {status}")
 
 
 async def resident_call(method: str, path: str, payload: Optional[dict] = None) -> dict:
@@ -280,8 +365,84 @@ async def resident_call(method: str, path: str, payload: Optional[dict] = None) 
         async with session.request(method, f"{url}{path}", json=payload,
                                    headers={"Authorization": f"Bearer {token}"}) as response:
             if response.status >= 300:
-                raise RuntimeError(f"常驻助理返回 {response.status}")
+                raise ResidentHTTPError(response.status)
             return await response.json()
+
+
+class ReportPublisher:
+    """One producer loop; causal reports use the existing status/report routes.
+
+    Keep a pending request unchanged until acknowledged. Losing the cursor fences
+    this publisher; it must never silently read the new cursor and steal it back.
+    """
+    def __init__(self, *, call=None, generation_id: str | None = None):
+        self.call = call or resident_call
+        self.generation_id = generation_id or uuid.uuid4().hex
+        self.producer_id = f"codex.observer:{socket.gethostname()[:60]}"
+        self.mode: str | None = None
+        self.cursor: ObservationCursor | None = None
+        self.sequence = 0
+        self.pending: dict | None = None
+        self.superseded = False
+        self._publishing = False
+
+    async def initialize(self) -> None:
+        if self.mode is not None:
+            return
+        status = await self.call("GET", "/api/codex/status")
+        if not isinstance(status, dict):
+            raise ValueError("进度状态回执无效")
+        if "report_protocol" not in status:
+            self.mode = "legacy"
+            return
+        if type(status["report_protocol"]) is not int or status["report_protocol"] != 1:
+            raise ValueError("不支持常驻助理的上报顺序协议")
+        if "report_cursor" not in status:
+            raise ValueError("上报顺序协议缺少当前游标")
+        cursor = status["report_cursor"]
+        self.cursor = ObservationCursor.from_dict(cursor) if cursor is not None else None
+        self.mode = "ordered"
+
+    async def _send_pending(self) -> bool:
+        assert self.pending is not None
+        try:
+            response = await self.call("POST", "/api/codex/report", deepcopy(self.pending))
+        except ResidentHTTPError as error:
+            if error.status == 409:
+                self.superseded = True
+                logger.info("Codex 观察员上报游标已被接替，停止旧来源上报")
+                return False
+            raise
+        expected = ObservationOrder.from_dict(self.pending["report_order"]).cursor
+        if (not isinstance(response, dict) or response.get("ok") is not True
+                or ObservationCursor.from_dict(response.get("report_cursor")) != expected):
+            raise ValueError("进度上报回执无法核对，保留原报告等待重传")
+        self.cursor, self.sequence, self.pending = expected, expected.sequence, None
+        return True
+
+    async def publish(self, threads: List[dict]) -> bool:
+        if self.superseded:
+            return False
+        if self._publishing:
+            raise RuntimeError("同一个观察员不能并发上报")
+        self._publishing = True
+        try:
+            await self.initialize()
+            payload = _report_payload(threads)
+            if self.mode == "legacy":
+                response = await self.call("POST", "/api/codex/report", payload)
+                return isinstance(response, dict) and response.get("ok") is True
+            if self.pending is not None:
+                prior = {key: value for key, value in self.pending.items() if key != "report_order"}
+                if not await self._send_pending():
+                    return False
+                if prior == payload:
+                    return True
+            order = ObservationOrder(ObservationCursor(self.producer_id, self.generation_id, self.sequence + 1), self.cursor)
+            self.pending = {**payload, "report_order": order.to_dict()}
+            return await self._send_pending()
+        finally:
+            self._publishing = False
 
 
 async def execute_action(client: CodexClient, action: dict, threads: List[dict]) -> tuple:
@@ -292,21 +453,24 @@ async def execute_action(client: CodexClient, action: dict, threads: List[dict])
     turn = thread.get("turn") or {}
     running = thread.get("status") == "active" and turn.get("status") == "inProgress" and turn.get("id")
     try:
+        kind = action.get("kind")
+        if kind not in {"message", "interrupt"}:
+            return False, "不支持这项 Codex 操作"
         if action.get("kind") == "interrupt":
             if not running:
                 return False, "它已经停了"
             if action.get("turn_id") and turn.get("id") != action.get("turn_id"):
                 return False, "要叫停的那一轮已经结束了，没动新的这一轮"
-            await client.call("turn/interrupt", {"threadId": thread["id"], "turnId": turn["id"]})
-            return True, ""
         text = str(action.get("text") or "").strip()
-        if not text:
+        if kind == "message" and not text:
             return False, "要发的话是空的"
-        user_input = [{"type": "text", "text": text, "text_elements": []}]
-        if running:   # 正在做：作为补充插进当前这一轮（轮次对不上 Codex 会拒绝，免得插错地方）
-            await client.call("turn/steer", {"threadId": thread["id"], "expectedTurnId": turn["id"], "input": user_input})
-        else:         # 空闲：开新的一轮
-            await client.call("turn/start", {"threadId": thread["id"], "input": user_input})
+        # Re-read state after approval/claim. Automated suggestions stay bound to
+        # their source turn; explicit user messages retain their original scope.
+        expected = None
+        if kind == "interrupt" or not action.get("session"):
+            expected = str(action.get("turn_id") or turn.get("id") or "") or None
+        await control_session(CodexBackend(client), str(thread["id"]), action=kind,
+                              text=text, expected_turn_id=expected)
         return True, ""
     except Exception as error:  # noqa: BLE001 —— Codex 拒绝或超时：如实报回去
         return False, str(error)[:200]
@@ -341,30 +505,62 @@ def should_report(*, current: str, last_digest: str, now: float, last_sent: floa
     return current != last_digest or now - last_sent >= due or present != last_present
 
 
-async def observe_loop(stop: asyncio.Event, *, interval: float = INTERVAL_SECONDS) -> None:
+async def observe_loop(stop: asyncio.Event, *, interval: float = INTERVAL_SECONDS,
+                       monitor: ObserverMonitor | None = None) -> None:
     """每 interval 秒看一次 Codex；有变化、心跳到点或你刚到/刚离开 Mac，就报给常驻助理。Codex 没在跑就安静等着。"""
     last_digest, last_sent = "", 0.0
     last_present: Optional[bool] = None
-    while not stop.is_set():
-        try:
-            if socket_path().exists():
-                async with CodexClient() as client:
-                    threads = await snapshot(client)
-                    busy = any(thread["status"] == "active" for thread in threads)
-                    now = time.monotonic()
-                    current = digest(threads)
-                    present = owner_present(user_idle_seconds())
-                    if should_report(current=current, last_digest=last_digest, now=now, last_sent=last_sent,
-                                     busy=busy, present=present, last_present=last_present):
-                        if await post_report(threads):
-                            last_digest, last_sent, last_present = current, now, present
-                    # 你批准过的「替你给 Codex 发话 / 叫停」
-                    await run_approved_actions(client, threads)
-        except asyncio.CancelledError:
-            raise
-        except Exception as error:  # noqa: BLE001 —— Codex 或常驻电脑暂时不可达：下一轮再试
-            logger.info("Codex 观察员这一轮没完成：%s", type(error).__name__)
-        try:
-            await asyncio.wait_for(stop.wait(), timeout=interval)
-        except asyncio.TimeoutError:
-            pass
+    publisher = ReportPublisher()
+    monitor = _MONITOR if monitor is None else monitor
+    run_id = monitor.start()
+    try:
+        while not stop.is_set():
+            stage = "codex"
+            try:
+                if socket_path().exists():
+                    monitor.update(run_id, "connecting_codex", publisher=publisher)
+                    async with CodexClient() as client:
+                        # Read the predecessor before collecting a new native snapshot.
+                        stage = "resident"
+                        monitor.update(run_id, "connecting_resident", publisher=publisher)
+                        await publisher.initialize()
+                        stage = "codex"
+                        monitor.update(run_id, "observing", publisher=publisher)
+                        threads = await snapshot(client)
+                        monitor.update(run_id, "observing", publisher=publisher, observed=True)
+                        busy = any(thread["status"] == "active" for thread in threads)
+                        now = time.monotonic()
+                        current = digest(threads)
+                        present = owner_present(user_idle_seconds())
+                        if should_report(current=current, last_digest=last_digest, now=now, last_sent=last_sent,
+                                         busy=busy, present=present, last_present=last_present):
+                            stage = "resident"
+                            monitor.update(run_id, "reporting", publisher=publisher)
+                            if await publisher.publish(threads):
+                                last_digest, last_sent, last_present = current, now, present
+                                monitor.update(run_id, "ready", publisher=publisher, acknowledged=True)
+                            else:
+                                monitor.update(run_id, "superseded" if publisher.superseded else "retrying",
+                                    publisher=publisher, error_code="source_replaced" if publisher.superseded else "invalid_receipt")
+                        else:
+                            monitor.update(run_id, "superseded" if publisher.superseded else "ready", publisher=publisher,
+                                error_code="source_replaced" if publisher.superseded else "")
+                        stage = "actions"
+                        await run_approved_actions(client, threads)
+                else:
+                    monitor.update(run_id, "waiting_codex", publisher=publisher)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:  # noqa: BLE001 —— 下轮重试；诊断不返回异常正文
+                code = ("auth_failed" if isinstance(error, ResidentHTTPError) and error.status in {401, 403}
+                        else "protocol_error" if stage == "resident" and isinstance(error, ValueError)
+                        else {"codex": "codex_unavailable", "resident": "resident_unreachable", "actions": "actions_unavailable"}[stage])
+                monitor.update(run_id, "superseded" if publisher.superseded else "retrying", publisher=publisher,
+                               error_code="source_replaced" if publisher.superseded else code)
+                logger.info("Codex 观察员这一轮没完成：%s", type(error).__name__)
+            try:
+                await asyncio.wait_for(stop.wait(), timeout=interval)
+            except asyncio.TimeoutError:
+                pass
+    finally:
+        monitor.update(run_id, "stopped", publisher=publisher)

@@ -24,11 +24,18 @@ describe("turnRecap", () => {
     expect(recap.filesChanged).toEqual(["a.py", "tests/test_a.py"]);
     expect(recap.tests).toEqual({ runs: 2, failed: 1 });
     expect(recap.failures).toBe(1);
-    expect(recapPhrases(recap)).toEqual(["改了 2 个文件", "跑测试 2 次（1 次没过）", "隔离开发 1 次", "执行命令 1 次"]);
+    expect(recapPhrases(recap)).toEqual(["文件写入记录 2 项", "测试记录 2 条（1 条异常）", "隔离开发记录 1 条", "命令记录 1 条"]);
   });
 
   it("falls back to a plain tool count when nothing is recognised", () => {
-    expect(recapPhrases(turnRecap([tool("grep"), tool("list_files")]))).toEqual(["2 个工具"]);
+    expect(recapPhrases(turnRecap([tool("grep"), tool("list_files")]))).toEqual(["2 条工具记录"]);
     expect(recapPhrases(turnRecap([]))).toEqual([]);
+  });
+
+  it("does not count unfinished, unknown, blocked or stopped writes as completed write records", () => {
+    const recap = turnRecap(["running", "unknown", "future-state", "blocked", "cancelled", "timed_out"]
+      .map(status => tool("write_file", { status, args: { path: `${status}.txt` } })));
+    expect(recap.filesChanged).toEqual([]);
+    expect(recapPhrases(recap).some(text => text.includes("文件写入"))).toBe(false);
   });
 });

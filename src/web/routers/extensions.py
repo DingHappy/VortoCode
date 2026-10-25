@@ -35,18 +35,14 @@ async def mcp_connection_status(session: str):
 @router.post('/api/extensions/mcp/connect')
 async def connect_session_mcp(session: str):
     from src.web.deps import HTTPException
-    from src.web.routers.realtime import _SESSIONS
+    from src.web.routers.realtime import _SESSIONS, turn_bindings
     from src.agents.mcp_session import connect_agent
     from src.gateway.workspace_scope import current_workspace_scope
     key, record, agent, actors = _mcp_session(session)
     if actors.busy(key):
         raise HTTPException(409, '请等待当前任务结束后连接 MCP。')
-    holder = getattr(agent, '_web_confirm_holder', None)
-    async def confirm(message):
-        fn = holder.get('fn') if holder else None
-        return bool(await fn(message)) if fn else False
     try:
-        return await connect_agent(agent, os.getcwd(), confirm=confirm, workspace_scope=current_workspace_scope(),
+        return await connect_agent(agent, os.getcwd(), confirm=turn_bindings(agent).ask, workspace_scope=current_workspace_scope(),
                                    current=lambda: _SESSIONS.get(key) is record and record.get('agent') is agent and not actors.busy(key))
     except PermissionError as e:
         raise HTTPException(403, str(e)) from e

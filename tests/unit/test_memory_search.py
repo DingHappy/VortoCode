@@ -35,3 +35,14 @@ def test_search_no_match_returns_empty(tmp_path):
 def test_search_empty_query_lists_all(tmp_path):
     s = _store(tmp_path)
     assert len(s.search_memories("__longterm__", "")) == 3
+
+
+def test_sqlite_search_ranks_a_named_project_without_matching_identifier_fragments(tmp_path):
+    s = _store(tmp_path)
+    s.add_memory("__longterm__", "fact", "用户维护 Django 网站", importance=0.9)
+    s.add_memory("__longterm__", "fact", "VortoCode 更新需要稳定签名", importance=0.2)
+    s.add_memory("__longterm__", "fact", "用户用 Go 写网络服务", importance=0.2)
+    assert "VortoCode" in s.search_memories("__longterm__", "VortoCode怎么发布")[0]["content"]
+    rows = s.search_memories("__longterm__", "Go")
+    assert rows and all("Django" not in row["content"] for row in rows)
+    assert s.search_memories("__longterm__", "What is the weather?") == []

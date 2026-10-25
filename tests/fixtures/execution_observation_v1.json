@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "ref": {
+    "backend_id": "codex",
+    "instance_id": "process:fixture:codex.observer",
+    "run_id": "t1",
+    "session_id": "th1",
+    "turn_id": "t1",
+    "task_id": "",
+    "scope": "process"
+  },
+  "state": "waiting_user",
+  "observed_at": 100,
+  "native_state": "active:inProgress",
+  "progress": {
+    "summary": "Review current changes",
+    "completed_steps": null,
+    "total_steps": null
+  },
+  "result": null,
+  "error": null,
+  "features": ["execution.observe"]
+}

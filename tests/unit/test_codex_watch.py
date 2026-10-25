@@ -29,7 +29,7 @@ def _turn(status="inProgress", tid="t1", **extra):
 def _thread(flags=(), status="active", turn=None, tid="th1"):
     meta = {"id": tid, "name": "改登录超时", "cwd": f"{HOME}/proj", "updatedAt": 5,
             "status": {"type": status, "activeFlags": list(flags)}}
-    return observer.summarize_thread(meta, turn)
+    return observer.summarize_thread(meta, turn, observed_at=NOW.timestamp())
 
 
 def test_turn_summary_keeps_only_what_the_assistant_needs():
@@ -119,7 +119,7 @@ def test_overview_and_brief_explain_what_the_assistant_can_see(tmp_path):
     text = watch.overview(root, now=NOW + timedelta(minutes=5))
     assert "「改登录超时」（~/proj）：在等你批准" in text and "正在跑：git push origin main" in text
     assert "Mac 可能合盖" in watch.overview(root, now=NOW + timedelta(hours=1))
-    assert "在等你批准" in watch.brief(root, now=NOW + timedelta(hours=1))
+    assert "状态待核对" in watch.brief(root, now=NOW + timedelta(hours=1))
     assert watch.brief(root, now=NOW + timedelta(hours=13)) == ""
 
 
@@ -218,11 +218,20 @@ async def test_action_tool_only_proposes_and_notifies_with_buttons(tmp_path, mon
 
 
 class _FakeCodex:
-    def __init__(self):
+    def __init__(self, thread=None):
         self.calls = []
+        self.thread = thread or _thread(status="idle", turn=_turn(status="completed"))
 
     async def call(self, method, params):
         self.calls.append((method, params))
+        if method == "thread/read":
+            return {"thread": {"id": self.thread["id"], "status": {"type": self.thread["status"]}}}
+        if method == "thread/turns/list":
+            return {"data": [self.thread["turn"]] if self.thread.get("turn") else []}
+        if method == "turn/start":
+            return {"turn": {"id": "new-turn"}}
+        if method == "turn/steer":
+            return {"turnId": params["expectedTurnId"]}
         return {}
 
 
@@ -230,11 +239,13 @@ class _FakeCodex:
 async def test_observer_steers_running_turns_starts_idle_ones_and_interrupts():
     running = [_thread(turn=_turn(status="inProgress", tid="t9"))]
     idle = [_thread(status="idle", turn=_turn(status="completed", tid="t9"))]
-    codex = _FakeCodex()
+    codex = _FakeCodex(running[0])
     assert await observer.execute_action(codex, {"kind": "message", "thread_id": "th1", "text": "补一句"}, running) == (True, "")
     assert codex.calls[-1][0] == "turn/steer" and codex.calls[-1][1]["expectedTurnId"] == "t9"
+    codex.thread = idle[0]
     assert await observer.execute_action(codex, {"kind": "message", "thread_id": "th1", "text": "下一步"}, idle) == (True, "")
     assert codex.calls[-1][0] == "turn/start" and codex.calls[-1][1]["input"][0]["text"] == "下一步"
+    codex.thread = running[0]
     assert await observer.execute_action(codex, {"kind": "interrupt", "thread_id": "th1"}, running) == (True, "")
     assert codex.calls[-1] == ("turn/interrupt", {"threadId": "th1", "turnId": "t9"})
     assert (await observer.execute_action(codex, {"kind": "interrupt", "thread_id": "th1"}, idle))[0] is False
@@ -257,7 +268,7 @@ async def test_observer_claims_before_sending_and_reports_results():
         return {}
     codex = _FakeCodex()
     done = await observer.run_approved_actions(codex, [_thread(status="idle", turn=_turn(status="completed"))], resident=resident)
-    assert done == 1 and [call[0] for call in codex.calls] == ["turn/start"]
+    assert done == 1 and [call[0] for call in codex.calls] == ["thread/read", "thread/turns/list", "turn/start"]
     assert ("POST", "/api/codex/actions/cdx-a/result", {"ok": True, "error": ""}) in calls
     assert not any("cdx-b/result" in call[1] for call in calls)
 
@@ -324,3 +335,28 @@ async def test_observer_refuses_to_stop_a_newer_turn_than_the_one_approved():
     ok, error = await observer.execute_action(Client(), {"kind": "interrupt", "thread_id": "th1", "turn_id": "t1"},
                                               [thread])
     assert not ok and "结束" in error and Client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_observer_rechecks_approved_turn_against_live_state_before_sending():
+    cached = _thread(turn=_turn(tid="old"))
+    current = _thread(turn=_turn(tid="new"))
+    codex = _FakeCodex(current)
+    ok, error = await observer.execute_action(codex,
+        {"kind": "message", "thread_id": "th1", "turn_id": "old", "text": "继续"}, [cached])
+    assert not ok and "变化" in error
+    assert [method for method, _ in codex.calls] == ["thread/read", "thread/turns/list"]
+
+
+@pytest.mark.asyncio
+async def test_observer_explicit_user_message_uses_live_turn_without_replaying_old_context():
+    cached = _thread(turn=_turn(tid="old"))
+    codex = _FakeCodex(_thread(turn=_turn(tid="new")))
+    ok, error = await observer.execute_action(codex,
+        {"kind": "message", "thread_id": "th1", "turn_id": "old", "text": "补充要求", "session": "user"}, [cached])
+    assert ok and not error and codex.calls[-1][1]["expectedTurnId"] == "new"
+
+
+def test_interrupt_receipt_does_not_claim_the_turn_has_finished():
+    notice = watch.action_result_notice({"status": "sent", "kind": "interrupt", "thread_name": "coding"})
+    assert "提交叫停请求" in notice and "最新状态" in notice and "已叫停" not in notice

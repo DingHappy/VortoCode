@@ -4,9 +4,10 @@
  */
 import { describe, expect, it } from "vitest";
 
-import type { ProtocolEvent, TurnActivity } from "../types";
+import type { ConversationMessage, ProtocolEvent, TurnActivity } from "../types";
 import {
   finishRunningActivities,
+  groupActivitiesByTurn,
   hydrateActivities,
   protocolActivity,
   upsertActivity,
@@ -102,6 +103,28 @@ describe("upsertActivity", () => {
 });
 
 describe("hydrateActivities", () => {
+  it("keeps missing archive states unknown and sparse updates preserve the last explicit state", () => {
+    const frames = [
+      { id: "unknown", rid: "r", type: "agent_tool", name: "read_file" },
+      { id: "done", rid: "r", type: "agent_tool", name: "grep", status: "completed", result: "记录结果" },
+      { id: "done", rid: "r", type: "agent_tool", name: "grep", summary: "补充的摘要" },
+      { id: "future", rid: "r", type: "agent_tool", name: "other", status: "future-state" },
+    ];
+    const archive = hydrateActivities(frames, { missingStatus: "unknown" });
+    expect(archive.map(item => item.status)).toEqual(["unknown", "completed", "future-state"]);
+    expect(archive[1].result).toBe("记录结果");
+    expect(hydrateActivities(frames)[0].status).toBe("running"); // existing live/history contract unchanged
+  });
+
+  it("keeps start arguments when a sparse failure frame arrives and preserves the recorded error", () => {
+    const result = hydrateActivities([
+      { id: "t1", rid: "r", type: "agent_tool", name: "read_file", status: "running", args: { path: "README.md" } },
+      { id: "t1", rid: "r", type: "agent_tool", name: "read_file", status: "failed", error: "文件不可读", result: "" },
+    ]);
+    expect(result[0]).toMatchObject({ status: "failed", args: { path: "README.md" }, error: "文件不可读", result: "" });
+    expect(result).toHaveLength(1);
+  });
+
   it("把历史帧折叠成时间线（同 id 去重更新）", () => {
     const result = hydrateActivities([
       { id: "t1", type: "agent_tool", name: "grep", status: "running" },
@@ -134,4 +157,17 @@ describe("finishRunningActivities", () => {
     expect(cancelled[0].label).toBe("任务已取消");
     expect(cancelled[1].label).toBe("工具调用已取消");
   });
+});
+
+it("groups activities under the user message that started the turn", () => {
+  const messages: ConversationMessage[] = [
+    { id: "u1", role: "user", text: "修登录", rid: "r1" },
+    { id: "a1", role: "assistant", text: "好", rid: "r2" },
+  ];
+  const activity = (id: string, rid?: string): TurnActivity => ({ id, rid, kind: "phase", status: "completed", label: id });
+  const { activityGroups, orphanActivities } = groupActivitiesByTurn(messages,
+    [activity("x", "r1"), activity("y", "r2"), activity("z"), activity("w", "r1")]);
+  expect([...activityGroups.entries()].map(([rid, items]) => [rid, items.map(item => item.id)])).toEqual([["r1", ["x", "w"]]]);
+  // 只有 assistant 消息的回合、没有 rid 的活动都单独列出
+  expect(orphanActivities.map(item => item.id)).toEqual(["y", "z"]);
 });

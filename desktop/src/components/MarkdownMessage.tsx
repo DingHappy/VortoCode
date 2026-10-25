@@ -2,7 +2,7 @@
 // 行级 Markdown 子集：代码块 / 表格 / 标题 / 引用 / 列表 / 段落 + 行内标记。
 // safeLink / inlineMarkdown 是它的私有辅助函数，随组件一起搬出。
 import { openUrl } from "@tauri-apps/plugin-opener";
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 
 function safeLink(value: string): string | null {
   const url = value.trim();
@@ -77,7 +77,7 @@ function inlineMarkdown(text: string, key: string): ReactNode[] {
   return output;
 }
 
-export function MarkdownMessage({ text }: { text: string }) {
+export const MarkdownMessage = memo(function MarkdownMessage({ text }: { text: string }) {
   const lines = String(text).replace(/\u0000/g, "").split("\n");
   const blocks: ReactNode[] = [];
   let index = 0;
@@ -158,4 +158,4 @@ export function MarkdownMessage({ text }: { text: string }) {
     );
   }
   return <div className="markdown-body">{blocks}</div>;
-}
+});

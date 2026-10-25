@@ -4,8 +4,8 @@ import { useState } from "react";
 import type { CodexAction } from "../types";
 
 const STATUS: Record<CodexAction["status"], string> = {
-  proposed: "等你批准", approved: "已批准，等 Mac 上的 VortoCode 交给 Codex", sending: "正在交给 Codex",
-  sent: "已交给 Codex", failed: "没能交给 Codex", cancelled: "已撤回", expired: "已过时，没发",
+  proposed: "等你批准", approved: "已批准，尚未确认交给 Codex", sending: "动作已被认领，发送结果待核对",
+  sent: "请求已获 Codex 受理", failed: "动作未能确认送达", cancelled: "已撤回", expired: "已过时，没发",
 };
 
 export function CodexActionCard({ action, connected, onDecide }: {

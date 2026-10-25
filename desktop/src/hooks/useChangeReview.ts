@@ -9,18 +9,21 @@
 // 留在 App 的：sendGitCommentsToAgent / sendPrFeedbackToAgent（走 sendPrompt 发给 Agent，属对话域），
 // 以及协议事件 git_review_changed 对 setGitReviewRevision 的写入（dispatcher 仍只在 App，红线 1）。
 //
-// 红线 3：loadGitReviewDiff / refreshGitReview / refreshPrDelivery 被 App 的 useCallback 依赖，
-// 依赖数组与迁移前一致（只多了恒等的 clientRef）。其余处理函数迁移前就是普通函数，保持原样。
+// Git 读取继续用 useCallback；PR/CI 读取由恒等稳定的 prDeliveryActions 提供，
+// 使用最新 client 引用及请求代次隔离切换、重置和并发刷新。
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useCallback, useMemo, useRef, useState } from "react";
-import type { RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { RefObject, SetStateAction } from "react";
 
 import type { GatewayClient } from "../gateway";
-import { isProtectedBranch } from "../lib/branches";
 import { errorText } from "../lib/errorText";
 import { confirmAction } from "../lib/confirm";
+import { prDeliveryActions } from "../lib/prDeliveryActions";
+import { gitReviewMutations, type GitMutationView } from "../lib/gitReviewMutations";
+import { taskBranchReviewActions, type TaskReviewView } from "../lib/taskBranchReviewActions";
+import { gitCommentActions } from "../lib/gitCommentActions";
+import { ViewMutations } from "../lib/viewRequests";
 import type {
-  GitReviewAction,
   GitReviewComment,
   GitReviewDiff,
   GitReviewFile,
@@ -28,7 +31,6 @@ import type {
   GitReviewScope,
   GitReviewSnapshot,
   PendingGitComment,
-  PrDeliveryCheck,
   PrDeliveryCheckLog,
   PrDeliverySnapshot,
   TaskBranchReviewDiff,
@@ -60,7 +62,12 @@ export function useChangeReview(
   const [taskBranchDiff, setTaskBranchDiff] = useState<TaskBranchReviewDiff | null>(null);
   const [taskBranchSelectedPath, setTaskBranchSelectedPath] = useState("");
   const [taskReviewVerifying, setTaskReviewVerifying] = useState(false);
-  const [gitComments, setGitComments] = useState<GitReviewComment[]>([]);
+  const [gitComments, setGitCommentsState] = useState<GitReviewComment[]>([]);
+  const commentVersionRef = useRef(0);
+  const setGitComments = useCallback((value: SetStateAction<GitReviewComment[]>) => {
+    commentVersionRef.current++;
+    setGitCommentsState(value);
+  }, []);
   const [pendingGitComment, setPendingGitComment] = useState<PendingGitComment | null>(null);
   const [gitCommentDraft, setGitCommentDraft] = useState("");
   const [gitCommentSaving, setGitCommentSaving] = useState(false);
@@ -71,6 +78,23 @@ export function useChangeReview(
   const [prDelivery, setPrDelivery] = useState<PrDeliverySnapshot | null>(null);
   const [prDeliveryLoading, setPrDeliveryLoading] = useState(false);
   const [prCheckLogs, setPrCheckLogs] = useState<Record<string, PrDeliveryCheckLog>>({});
+  const prLatest = useRef({ clientRef, onBanner, prDelivery });
+  prLatest.current = { clientRef, onBanner, prDelivery };
+  const reviewWritesRef = useRef<ViewMutations | null>(null);
+  if (!reviewWritesRef.current) reviewWritesRef.current = new ViewMutations(() => prLatest.current.clientRef.current);
+  const reviewWrites = reviewWritesRef.current;
+  const taskActionsRef = useRef<ReturnType<typeof taskBranchReviewActions> | null>(null);
+  const prActionsRef = useRef<ReturnType<typeof prDeliveryActions> | null>(null);
+  if (!prActionsRef.current) prActionsRef.current = prDeliveryActions({
+    client: () => prLatest.current.clientRef.current,
+    snapshot: () => prLatest.current.prDelivery,
+    setSnapshot: snapshot => { prLatest.current.prDelivery = snapshot; setPrDelivery(snapshot); },
+    setLogs: setPrCheckLogs, setLoading: setPrDeliveryLoading,
+    banner: text => prLatest.current.onBanner(text),
+  });
+  const prActions = prActionsRef.current;
+  const { refreshPrDelivery, loadPrCheckLog } = prActions;
+  useEffect(() => () => prActions.invalidate(), [prActions]);
   const gitReviewRefreshGenerationRef = useRef(0);
   const openGitComments = useMemo(
     () => gitComments.filter((comment) => comment.status === "open"),
@@ -82,29 +106,26 @@ export function useChangeReview(
   );
 
   const loadGitReviewDiff = useCallback(async (path: string, scope: GitReviewScope) => {
+    taskActionsRef.current?.leave();
     const client = clientRef.current;
     if (!client || !path) {
       setGitReviewDiff(null);
       return;
     }
     const generation = ++gitReviewRefreshGenerationRef.current;
+    const current = () => client === clientRef.current && generation === gitReviewRefreshGenerationRef.current;
     setGitReviewLoading(true);
     setGitReviewError("");
-    setTaskReviewTask(null);
-    setTaskBranchReview(null);
-    setTaskBranchDiff(null);
-    setTaskBranchSelectedPath("");
-    setTaskReviewVerifying(false);
     try {
       const diff = await client.getGitReviewDiff(path, scope);
-      if (generation === gitReviewRefreshGenerationRef.current) setGitReviewDiff(diff);
+      if (current()) setGitReviewDiff(diff);
     } catch (error) {
-      if (generation === gitReviewRefreshGenerationRef.current) {
+      if (current()) {
         setGitReviewDiff(null);
         setGitReviewError(errorText(error, "读取 Git diff 失败"));
       }
     } finally {
-      if (generation === gitReviewRefreshGenerationRef.current) setGitReviewLoading(false);
+      if (current()) setGitReviewLoading(false);
     }
   }, [clientRef]);
 
@@ -115,6 +136,8 @@ export function useChangeReview(
     const client = clientRef.current;
     if (!client) return;
     const generation = ++gitReviewRefreshGenerationRef.current;
+    const commentVersion = commentVersionRef.current;
+    const current = () => client === clientRef.current && generation === gitReviewRefreshGenerationRef.current;
     setGitReviewLoading(true);
     setGitReviewError("");
     try {
@@ -122,11 +145,11 @@ export function useChangeReview(
         client.getGitReview(),
         client.listGitReviewComments().catch(() => []),
       ]);
-      if (generation !== gitReviewRefreshGenerationRef.current) return;
+      if (!current()) return;
       const selected = snapshot.files.find((file) => file.path === preferredPath) ?? snapshot.files[0];
       if (!selected) {
         setGitReview(snapshot);
-        setGitComments(comments);
+        if (commentVersion === commentVersionRef.current) setGitComments(comments);
         setGitSelectedPath("");
         setGitReviewDiff(null);
         return;
@@ -137,165 +160,99 @@ export function useChangeReview(
           ? "working"
           : selected.unstaged ? "working" : "staged";
       const diff = await client.getGitReviewDiff(selected.path, scope);
-      if (generation !== gitReviewRefreshGenerationRef.current) return;
+      if (!current()) return;
       setGitReview(snapshot);
-      setGitComments(comments);
+      if (commentVersion === commentVersionRef.current) setGitComments(comments);
       setGitSelectedPath(selected.path);
       setGitReviewScope(scope);
       setGitReviewDiff(diff);
     } catch (error) {
-      if (generation === gitReviewRefreshGenerationRef.current) {
+      if (current()) {
         setGitReviewError(errorText(error, "读取 Git 审查状态失败"));
       }
     } finally {
-      if (generation === gitReviewRefreshGenerationRef.current) setGitReviewLoading(false);
+      if (current()) setGitReviewLoading(false);
     }
   }, [clientRef, gitReviewScope, gitSelectedPath]);
 
-  const refreshPrDelivery = useCallback(async () => {
-    const client = clientRef.current;
-    if (!client) return;
-    setPrDeliveryLoading(true);
-    try {
-      const snapshot = await client.getPrDelivery();
-      setPrDelivery(snapshot);
-      setPrCheckLogs((previous) => Object.fromEntries(
-        Object.entries(previous).filter(([checkId]) => snapshot.failing_checks.some((check) => check.id === checkId)),
-      ));
-    } catch (error) {
-      setPrDelivery({
-        ok: false,
-        branch: "",
-        comments: [],
-        checks: [],
-        failing_checks: [],
-        summary: { total: 0, failed: 0, pending: 0, passed: 0 },
-        error: errorText(error, "读取 PR/CI 状态失败"),
-      });
-    } finally {
-      setPrDeliveryLoading(false);
-    }
-  }, [clientRef]);
-
-  const loadTaskBranchReviewDiff = async (task: TaskItem, path: string) => {
-    const client = clientRef.current;
-    if (!client || !path) {
-      setTaskBranchDiff(null);
-      return;
-    }
-    setGitReviewLoading(true);
-    setGitReviewError("");
-    try {
-      setTaskBranchSelectedPath(path);
-      setTaskBranchDiff(await client.getTaskBranchReviewDiff(task.id, path));
-    } catch (error) {
-      setTaskBranchDiff(null);
-      setGitReviewError(errorText(error, "读取任务分支 diff 失败"));
-    } finally {
-      setGitReviewLoading(false);
-    }
-  };
-
-  const openTaskBranchReview = async (task: TaskItem, preferredPath = "") => {
-    const client = clientRef.current;
-    if (!client || (!task.branch && !task.plan?.branch)) {
-      onBanner("这个任务还没有可审查的分支");
-      return;
-    }
-    const generation = ++gitReviewRefreshGenerationRef.current;
-    const current = () => clientRef.current === client && generation === gitReviewRefreshGenerationRef.current;
-    setTaskReviewTask(task);
-    setTaskBranchReview(null);
-    setTaskBranchDiff(null);
-    setGitReviewError("");
-    onShowChanges();
-    setGitReviewLoading(true);
-    try {
-      const snapshot = await client.getTaskBranchReview(task.id);
-      if (!current()) return;
-      setTaskBranchReview(snapshot);
-      const selected = snapshot.files.find((file) => file.path === preferredPath) ?? snapshot.files[0];
-      if (!selected) {
-        setTaskBranchSelectedPath("");
-        return;
+  const mutationView: GitMutationView = { snapshot: gitReview, revision: gitReviewRevision?.baseline ?? "",
+    commitMessage: gitCommitMessage, prTitle: gitPrTitle, prBase: gitPrBase,
+    commentDraft: gitCommentDraft, pendingComment: pendingGitComment, scope: gitReviewScope };
+  const mutationLatest = useRef({ clientRef, onBanner, refreshGitReview, refreshPrDelivery, view: mutationView });
+  mutationLatest.current = { clientRef, onBanner, refreshGitReview, refreshPrDelivery, view: mutationView };
+  const mutationActionsRef = useRef<ReturnType<typeof gitReviewMutations> | null>(null);
+  if (!mutationActionsRef.current) mutationActionsRef.current = gitReviewMutations({
+    writes: reviewWrites,
+    client: () => mutationLatest.current.clientRef.current,
+    view: () => mutationLatest.current.view,
+    confirm: confirmAction,
+    busy: (kind, value) => kind === "action" ? setGitActionBusy(value) : setGitDeliveryBusy(value),
+    setSnapshot: snapshot => { mutationLatest.current.view.snapshot = snapshot; setGitReview(snapshot); },
+    clearComment: expected => {
+      const latest = mutationLatest.current.view;
+      if (latest.pendingComment === expected.pendingComment && latest.commentDraft === expected.commentDraft) {
+        setPendingGitComment(null);
+        setGitCommentDraft(current => current === expected.commentDraft ? "" : current);
       }
-      setTaskBranchSelectedPath(selected.path);
-      const diff = await client.getTaskBranchReviewDiff(task.id, selected.path);
-      if (current()) setTaskBranchDiff(diff);
-    } catch (error) {
-      if (current()) setGitReviewError(errorText(error, "读取任务分支审查失败"));
-    } finally {
-      if (current()) setGitReviewLoading(false);
-    }
-  };
+    },
+    committed: expected => {
+      setGitCommitMessage(current => current === expected ? "" : current);
+      setGitPrTitle(current => current.trim() ? current : expected.trim());
+    },
+    refreshGitReview: (path, scope) => mutationLatest.current.refreshGitReview(path, scope),
+    refreshPrDelivery: () => mutationLatest.current.refreshPrDelivery(),
+    banner: text => mutationLatest.current.onBanner(text),
+    openUrl,
+  });
+  const mutationActions = mutationActionsRef.current;
+  const { applyGitAction, commitGitReview, openGitReviewPr } = mutationActions;
+  useEffect(() => () => mutationActions.invalidate(), [mutationActions]);
 
-  const closeTaskBranchReview = async () => {
-    setTaskReviewTask(null);
-    setTaskBranchReview(null);
-    setTaskBranchDiff(null);
-    setTaskBranchSelectedPath("");
-    await refreshGitReview();
-  };
+  const taskView: TaskReviewView = { task: taskReviewTask, snapshot: taskBranchReview, diff: taskBranchDiff, path: taskBranchSelectedPath };
+  const taskLatest = useRef({ clientRef, view: taskView, onBanner, onShowChanges, onTaskBranchChanged, refreshGitReview });
+  taskLatest.current = { clientRef, view: taskView, onBanner, onShowChanges, onTaskBranchChanged, refreshGitReview };
+  if (!taskActionsRef.current) taskActionsRef.current = taskBranchReviewActions({
+    client: () => taskLatest.current.clientRef.current,
+    view: () => taskLatest.current.view,
+    writes: reviewWrites,
+    capture: () => {
+      const client = taskLatest.current.clientRef.current, generation = ++gitReviewRefreshGenerationRef.current;
+      return () => client !== null && client === taskLatest.current.clientRef.current && generation === gitReviewRefreshGenerationRef.current;
+    },
+    setTask: task => { taskLatest.current.view.task = task; setTaskReviewTask(task); },
+    setSnapshot: snapshot => { taskLatest.current.view.snapshot = snapshot; setTaskBranchReview(snapshot); },
+    setDiff: diff => { taskLatest.current.view.diff = diff; setTaskBranchDiff(diff); },
+    setPath: path => { taskLatest.current.view.path = path; setTaskBranchSelectedPath(path); },
+    setLoading: setGitReviewLoading, setActionBusy: setGitActionBusy, setVerifying: setTaskReviewVerifying,
+    setError: setGitReviewError, confirm: confirmAction,
+    show: () => taskLatest.current.onShowChanges(),
+    changed: () => taskLatest.current.onTaskBranchChanged(),
+    refreshWorkspace: () => taskLatest.current.refreshGitReview(),
+    banner: text => taskLatest.current.onBanner(text),
+  });
+  const taskActions = taskActionsRef.current;
+  const { loadTaskBranchReviewDiff, openTaskBranchReview, closeTaskBranchReview, applyTaskBranchAction, verifyReviewedTaskBranch } = taskActions;
 
-  const applyTaskBranchAction = async (
-    action: "accept" | "reject",
-    hunk: GitReviewHunk,
-  ) => {
-    const client = clientRef.current;
-    if (!client || !taskReviewTask || !taskBranchReview || !taskBranchDiff) return;
-    if (action === "reject" && !await confirmAction(
-      `确定撤销任务分支 ${taskBranchReview.branch} 中 ${taskBranchDiff.path} 的这个改动块吗？\n\n将创建一条审查提交，旧测试证据会立即失效。`,
-    )) return;
-    setGitActionBusy(true);
-    setGitReviewError("");
-    try {
-      const result = await client.applyTaskBranchReviewAction(taskReviewTask.id, {
-        action,
-        path: taskBranchDiff.path,
-        hunk_id: hunk.id,
-        expected_sha256: hunk.sha256,
-        confirm: action === "reject",
-      });
-      setTaskBranchReview(result.snapshot);
-      const selected = result.snapshot.files.find((file) => file.path === taskBranchDiff.path)
-        ?? result.snapshot.files[0];
-      if (selected) {
-        setTaskBranchSelectedPath(selected.path);
-        setTaskBranchDiff(await client.getTaskBranchReviewDiff(taskReviewTask.id, selected.path));
-      } else {
-        setTaskBranchSelectedPath("");
-        setTaskBranchDiff(null);
+  const commentLatest = useRef({ clientRef, onBanner, refreshGitReview, gitReview, gitComments, pendingGitComment, gitCommentDraft });
+  commentLatest.current = { clientRef, onBanner, refreshGitReview, gitReview, gitComments, pendingGitComment, gitCommentDraft };
+  const commentActionsRef = useRef<ReturnType<typeof gitCommentActions> | null>(null);
+  if (!commentActionsRef.current) commentActionsRef.current = gitCommentActions({
+    client: () => commentLatest.current.clientRef.current,
+    context: () => { const snapshot = commentLatest.current.gitReview; return JSON.stringify([snapshot?.root, snapshot?.branch, snapshot?.head]); },
+    pending: () => commentLatest.current.pendingGitComment,
+    draft: () => commentLatest.current.gitCommentDraft,
+    comments: () => commentLatest.current.gitComments,
+    writes: reviewWrites, setComments: setGitComments, setBusy: setGitCommentSaving,
+    clearDraft: (pending, draft) => {
+      if (commentLatest.current.pendingGitComment === pending && commentLatest.current.gitCommentDraft === draft) {
+        setPendingGitComment(null); setGitCommentDraft(current => current === draft ? "" : current);
       }
-      await onTaskBranchChanged();
-      onBanner(action === "accept"
-        ? "已记录稳定 hunk 接受证据"
-        : "已在任务分支创建撤销提交；重新验证通过前不能开 PR");
-    } catch (error) {
-      setGitReviewError(errorText(error, "任务分支审查操作失败"));
-    } finally {
-      setGitActionBusy(false);
-    }
-  };
-
-  const verifyReviewedTaskBranch = async (targetTask: TaskItem | null = taskReviewTask) => {
-    const client = clientRef.current;
-    if (!client || !targetTask) return;
-    setTaskReviewTask(targetTask);
-    setTaskReviewVerifying(true);
-    setGitReviewError("");
-    try {
-      const result = await client.verifyTaskBranchReview(targetTask.id);
-      setTaskBranchReview(result.snapshot);
-      await onTaskBranchChanged();
-      onBanner(result.ok ? "任务分支已在隔离 worktree 重新验证通过，可以继续交付" : "重新验证未通过，PR 闸门保持关闭");
-    } catch (error) {
-      const message = errorText(error, "任务分支重新验证失败");
-      setGitReviewError(message);
-      onBanner(message);
-    } finally {
-      setTaskReviewVerifying(false);
-    }
-  };
+    },
+    banner: text => commentLatest.current.onBanner(text),
+    refresh: (path, scope) => commentLatest.current.refreshGitReview(path, scope),
+  });
+  const commentActions = commentActionsRef.current;
+  const { addGitComment, updateGitCommentStatus, deleteGitComment } = commentActions;
 
   const openGitReviewFile = async (file: GitReviewFile, scope?: GitReviewScope) => {
     const nextScope = scope ?? (file.unstaged ? "working" : "staged");
@@ -304,41 +261,6 @@ export function useChangeReview(
     setPendingGitComment(null);
     setGitCommentDraft("");
     await loadGitReviewDiff(file.path, nextScope);
-  };
-
-  const applyGitAction = async (
-    action: GitReviewAction,
-    path: string,
-    hunk?: GitReviewHunk,
-  ) => {
-    if (!clientRef.current || gitActionBusy) return;
-    const destructive = action === "revert";
-    if (destructive) {
-      const target = hunk ? `${path} 的 ${hunk.id}` : path;
-      if (!await confirmAction(`撤销 ${target} 的本地修改？这会丢弃对应内容，且不可从 VortoCode 恢复。`)) return;
-    }
-    setGitActionBusy(true);
-    try {
-      const result = await clientRef.current.applyGitReviewAction({
-        action,
-        path,
-        scope: action === "unstage" ? "staged" : "working",
-        hunk_id: hunk?.id,
-        expected_sha256: hunk?.sha256,
-        confirm: destructive,
-      });
-      setGitReview(result.snapshot);
-      setPendingGitComment(null);
-      setGitCommentDraft("");
-      const preferredScope: GitReviewScope = action === "unstage" ? "staged" : "working";
-      await refreshGitReview(path, preferredScope);
-      onBanner(action === "stage" ? "Git 改动已暂存" : action === "unstage" ? "Git 改动已取消暂存" : "本地改动已撤销");
-    } catch (error) {
-      onBanner(errorText(error, "Git 操作失败"));
-      await refreshGitReview(path, gitReviewScope);
-    } finally {
-      setGitActionBusy(false);
-    }
   };
 
   const startGitComment = (path: string, hunk: GitReviewHunk, line: number, side: "new" | "old") => {
@@ -353,124 +275,11 @@ export function useChangeReview(
     setGitCommentDraft("");
   };
 
-  const addGitComment = async () => {
-    const body = gitCommentDraft.trim();
-    const client = clientRef.current;
-    if (!client || !pendingGitComment || !body || gitCommentSaving) return;
-    setGitCommentSaving(true);
-    try {
-      const created = await client.createGitReviewComment({
-        path: pendingGitComment.path,
-        scope: pendingGitComment.scope,
-        hunk_id: pendingGitComment.hunkId,
-        expected_sha256: pendingGitComment.hunkSha256,
-        line: pendingGitComment.line,
-        side: pendingGitComment.side,
-        body,
-      });
-      setGitComments((previous) => [created, ...previous]);
-      setPendingGitComment(null);
-      setGitCommentDraft("");
-    } catch (error) {
-      onBanner(errorText(error, "保存行级评论失败"));
-      await refreshGitReview(pendingGitComment.path, pendingGitComment.scope);
-    } finally {
-      setGitCommentSaving(false);
-    }
-  };
-
-  const updateGitCommentStatus = async (
-    comment: GitReviewComment,
-    status: GitReviewComment["status"],
-  ) => {
-    const client = clientRef.current;
-    if (!client || gitCommentSaving) return;
-    setGitCommentSaving(true);
-    try {
-      const updated = await client.updateGitReviewComment(comment.id, status);
-      setGitComments((previous) => previous.map((item) => item.id === updated.id ? updated : item));
-    } catch (error) {
-      onBanner(errorText(error, "更新审查评论失败"));
-    } finally {
-      setGitCommentSaving(false);
-    }
-  };
-
-  const deleteGitComment = async (comment: GitReviewComment) => {
-    const client = clientRef.current;
-    if (!client || gitCommentSaving) return;
-    setGitCommentSaving(true);
-    try {
-      await client.deleteGitReviewComment(comment.id);
-      setGitComments((previous) => previous.filter((item) => item.id !== comment.id));
-    } catch (error) {
-      onBanner(errorText(error, "删除审查评论失败"));
-    } finally {
-      setGitCommentSaving(false);
-    }
-  };
-
-  const loadPrCheckLog = async (check: PrDeliveryCheck): Promise<PrDeliveryCheckLog | null> => {
-    if (!clientRef.current) return null;
-    try {
-      const result = await clientRef.current.getPrCheckLog(check.id);
-      setPrCheckLogs((previous) => ({ ...previous, [check.id]: result }));
-      return result;
-    } catch (error) {
-      onBanner(errorText(error, "读取 CI 失败日志失败"));
-      return null;
-    }
-  };
-
-  const commitGitReview = async () => {
-    const message = gitCommitMessage.trim();
-    if (!clientRef.current || !message || gitDeliveryBusy) return;
-    // 受保护分支上多问一次：提交到 main 之后就不能从 main 开 PR 了（后端也拦，这里只是
-    // 早一步把原因说清楚，而不是等请求失败再弹一条报错）。
-    const onProtected = isProtectedBranch(gitReview?.branch);
-    if (onProtected && !await confirmAction(
-      `当前在受保护分支 ${gitReview?.branch} 上。\n\n直接提交到这里之后就不能从它开 PR 了`
-      + `（需要先切到功能分支）。确认要直接提交到 ${gitReview?.branch} 吗？`)) return;
-    setGitDeliveryBusy(true);
-    try {
-      const result = await clientRef.current.commitGitReview(message, onProtected);
-      setGitReview(result.snapshot);
-      setGitCommitMessage("");
-      if (!gitPrTitle.trim()) setGitPrTitle(message);
-      await refreshGitReview();
-      onBanner(`已提交审查范围 · ${result.sha}`);
-    } catch (error) {
-      onBanner(errorText(error, "Git 提交失败"));
-    } finally {
-      setGitDeliveryBusy(false);
-    }
-  };
-
-  const openGitReviewPr = async () => {
-    const title = gitPrTitle.trim();
-    const base = gitPrBase.trim();
-    if (!clientRef.current || !title || !base || gitDeliveryBusy) return;
-    if (!await confirmAction(`把当前分支 ${gitReview?.branch || "(unknown)"} push 到 origin，并向 ${base} 创建 Draft PR？`)) return;
-    setGitDeliveryBusy(true);
-    try {
-      const result = await clientRef.current.openGitReviewPr({
-        title,
-        body: `由 VortoCode Desktop 在逐文件、逐 hunk 审查后创建。`,
-        base,
-        confirm: true,
-      });
-      onBanner(`Draft PR 已创建：${result.url}`);
-      await refreshPrDelivery();
-      if (result.url) await openUrl(result.url);
-    } catch (error) {
-      onBanner(errorText(error, "创建 Draft PR 失败"));
-    } finally {
-      setGitDeliveryBusy(false);
-    }
-  };
-
-  /** 切换项目时清空（与迁移前 clearProjectView 内的块一致：任务分支审查/范围/loading 不在此列）。 */
+  /** 切换项目时同时使工作区、任务审查和评论的旧请求失效。 */
   const resetChangeReview = () => {
+    mutationActions.reset();
+    taskActions.reset();
+    commentActions.reset();
     gitReviewRefreshGenerationRef.current += 1;
     setGitReview(null);
     setGitReviewDiff(null);
@@ -480,15 +289,14 @@ export function useChangeReview(
     setGitComments([]);
     setPendingGitComment(null);
     setGitCommentDraft("");
-    setPrDelivery(null);
-    setPrCheckLogs({});
+    prActions.reset();
   };
 
   return {
     gitReview, gitReviewDiff, gitSelectedPath, gitReviewScope, gitReviewLoading, gitReviewError,
-    gitReviewRevision, setGitReviewRevision, gitActionBusy, taskReviewTask, setTaskReviewTask,
-    taskBranchReview, setTaskBranchReview, taskBranchDiff, setTaskBranchDiff,
-    taskBranchSelectedPath, setTaskBranchSelectedPath, taskReviewVerifying, gitComments,
+    gitReviewRevision, setGitReviewRevision, gitActionBusy, taskReviewTask,
+    taskBranchReview, taskBranchDiff,
+    taskBranchSelectedPath, taskReviewVerifying, gitComments,
     setGitComments, pendingGitComment, setPendingGitComment, gitCommentDraft, setGitCommentDraft,
     gitCommentSaving, gitCommitMessage, setGitCommitMessage, gitPrTitle, setGitPrTitle, gitPrBase,
     setGitPrBase, gitDeliveryBusy, prDelivery, prDeliveryLoading, prCheckLogs, openGitComments,
