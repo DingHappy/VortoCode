@@ -140,6 +140,7 @@ import { useProjectAssets } from "./hooks/useProjectAssets";
 import { useTrustLevel } from "./hooks/useTrustLevel";
 import { useJournal } from "./hooks/useJournal";
 import { useLlmProfile } from "./hooks/useLlmProfile";
+import { agentFrame, outgoingMessage } from "./protocol/outgoingPrompt";
 import { usePlugins } from "./hooks/usePlugins";
 import { useDecisionNotifications } from "./hooks/useDecisionNotifications";
 import { useAssistantSnapshot } from "./hooks/useAssistantSnapshot";
@@ -153,11 +154,10 @@ import { projectSessionKey, projectToRestore,
 import { localDay } from "./lib/time";
 import { finishRunningActivities, groupActivitiesByTurn, hydrateActivities, protocolActivity, upsertActivity } from "./protocol/activities";
 import {
-  historyMessages, messageId, promptQueueFromEvent, systemNotice, thinkingActivity, withAssistantReply, withRunningPrompt, withSayActivity,
+  historyMessages, promptQueueFromEvent, systemNotice, thinkingActivity, withAssistantReply, withRunningPrompt, withSayActivity,
 } from "./protocol/transcript";
 import { errorText } from "./lib/errorText";
 import { confirmAction } from "./lib/confirm";
-import { composeMessageText, mediaPayload } from "./lib/attachments";
 import { useAttachments } from "./hooks/useAttachments";
 import { latestTurnSteps, previewReferences, publishedArtifactId, type PreviewView } from "./lib/preview";
 import { PreviewPanel } from "./components/PreviewPanel";
@@ -1893,14 +1893,8 @@ function App() {
 
     const client = clientRef.current;
     const willQueue = busy;
-    const displayText = text || (selectedAttachments.length > 0 ? "请查看我添加的附件。" : "请分析我选择的本地文件。");
-    const rid = createSessionId().slice(0, 64);
-    // 图片直接显示缩略图，不再列文件名；其余附件和引用的文件照旧列名字
-    const sentImages = selectedAttachments.filter((item) => item.kind === "image").map((item) => item.data);
-    const attachmentNote = [
-      ...selectedContext.map(contextItemLabel),
-      ...selectedAttachments.filter((item) => item.kind !== "image").map((item) => item.name),
-    ];
+    const outgoing = { text, context: selectedContext, attachments: selectedAttachments, rid: createSessionId().slice(0, 64) };
+    const { rid } = outgoing;
     setPrompt("");
     setContextItems([]);
     if (selectedAttachments.length > 0) setAttachments([]);
@@ -1913,38 +1907,11 @@ function App() {
     if (!willQueue) {
       setBusy(true);
       updateActiveTurnRid(rid);
-      setActivities((previous) => upsertActivity(previous, {
-        id: `${rid}:thinking`,
-        rid,
-        kind: "phase",
-        status: "running",
-        label: "正在分析任务",
-        phase: "thinking",
-      }));
-      setMessages((previous) => [...previous, {
-        id: messageId("user"),
-        role: "user",
-        text: attachmentNote.length > 0 ? `${displayText}\n\n📎 ${attachmentNote.join(" · ")}` : displayText,
-        rid,
-        ...(sentImages.length > 0 ? { images: sentImages } : {}),
-      }]);
+      setActivities((previous) => upsertActivity(previous, thinkingActivity(rid)));
+      setMessages((previous) => [...previous, outgoingMessage(outgoing)]);
     }
     try {
-      await client.send({
-        type: "agent",
-        text: composeMessageText(displayText, selectedAttachments),
-        ...mediaPayload(selectedAttachments),
-        mode: requestedMode,
-        context_files: selectedContext.filter((item) => !item.startLine).map((item) => item.path),
-        context_selections: selectedContext
-          .filter((item) => item.startLine && item.endLine)
-          .map((item) => ({ path: item.path, start: item.startLine, end: item.endLine })),
-        rid,
-        want_reasoning: false,
-        // 只在本机模型配置已读到时才带：服务端只接受已配置的模型，「自动」由它按任务调度。
-        // 常驻电脑用它自己配置的模型：本机的模型名在那边不一定有，不带。
-        ...(modelChoice && !onAssistantHost() ? { model: modelChoice } : {}),
-      });
+      await client.send(agentFrame(outgoing, requestedMode, modelChoice && !onAssistantHost() ? modelChoice : null));
       return true;
     } catch (error) {
       if (!willQueue) {
