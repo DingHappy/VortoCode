@@ -2028,7 +2028,7 @@ function App() {
     await disconnect();
     try {
       await runtimes.stopForRestart(previous.runtimeId);
-      return await startWorkspace({
+      const started = await startWorkspace({
         scope: previous.scope,
         repoRoot: previous.scope === "project" ? previous.repoRoot : undefined,
         workspaceId: previous.scope === "scratch" ? previous.workspaceId || previous.sid : undefined,
@@ -2037,9 +2037,11 @@ function App() {
         token: previous.token,
         announce: false,
       });
+      if (!started) throw new Error("本机引擎未能重新启动");
+      return true;
     } catch (error) {
       setBanner(errorText(error, "模型配置已保存，但当前 runtime 重启失败"));
-      return false;
+      throw error;
     } finally {
       runtimes.invalidate();
     }

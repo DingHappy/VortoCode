@@ -1503,6 +1503,8 @@ export interface GatewayProcessStatus {
 }
 
 export interface DesktopLlmProfileStatus {
+  /** Opaque native revision; never derived from a credential hash. */
+  revision?: string;
   configured: boolean;
   baseUrl: string;
   model: string;

@@ -12,6 +12,7 @@ import type { ReactNode } from "react";
 import { UserRound, Cpu, Monitor, ShieldCheck, Blocks, SlidersHorizontal, Info, Search, X, MapPin, ChevronRight, Check, CircleAlert, Circle, LoaderCircle } from "lucide-react";
 import { Eye, EyeOff } from "lucide-react";
 import { BuildVersion } from "./BuildVersion";
+import { restartSavedSetting } from "../lib/settingsApply";
 import type { ModelSaveKind } from "../lib/modelProfileSave";
 import { applyModelPreset, modelSettingsState } from "../lib/modelSettings";
 
@@ -26,6 +27,7 @@ import { VortoAccountCard } from "./settings/VortoAccountCard";
 import { MEMBER_KEY_SOURCE } from "../lib/vortoAccount";
 import { DesktopControlPane } from "./settings/DesktopControlPane";
 import { ResidentDesktopPane } from "./ResidentDesktopPane";
+import { ModelConfigurationState } from "./settings/ModelConfigurationState";
 import { ModelServices } from "./settings/ModelServices";
 import { CodexWatchCard } from "./settings/CodexWatchCard";
 import { ModelPicks } from "./settings/ModelPicks";
@@ -239,8 +241,7 @@ export function SettingsModal({
     setExperimentalNote("");
     try {
       setExperimental(await invoke<boolean>("set_experimental_workers", { enabled: next }));
-      const restarted = await onRestartRuntime();
-      setExperimentalNote(restarted ? (next ? "已开启，当前引擎已重启" : "已关闭，当前引擎已重启") : "已保存，下次启动引擎时生效");
+      setExperimentalNote((await restartSavedSetting(onRestartRuntime, next ? "实验执行者配置已开启" : "实验执行者配置已关闭")).message);
     } catch (failure) {
       setExperimentalNote(errorText(failure, "切换实验功能失败"));
     } finally {
@@ -347,6 +348,7 @@ export function SettingsModal({
                 <p>{llmProfileLoading ? "读取完成后即可编辑。其他分类仍可查看。" : `${llmProfileError}。现有配置不会被清空；请重试后再编辑。`}</p></div>
               {!llmProfileLoading && onReloadLlmProfile && <button onClick={onReloadLlmProfile}>重试读取</button>}
             </section>}
+            {!modelUnavailable && <ModelConfigurationState active={section === "model"} revision={llmProfile?.revision} />}
             {(!modelUnavailable || llmProfile) && <fieldset className="settings-model-fields" disabled={saving || modelUnavailable}>
               <div id="setting-services" className={anchorClass("services")} tabIndex={-1}><fieldset className="settings-model-fields" disabled={modelDirty || saving}><ModelServices onDraftStateChange={draftCallbacks.provider} profile={llmProfile} onProfile={onLlmProfileChange} onRestartRuntime={onRestartRuntime}
                 editingDefault={editingDefault} onEditDefault={setEditingDefault}

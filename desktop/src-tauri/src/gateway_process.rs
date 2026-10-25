@@ -419,7 +419,7 @@ pub(crate) fn start_gateway(
 
     // 先读模型配置、再拿 runtime 锁：读配置是 I/O，持锁期间做会让 gateway_process_status
     // 等命令一起排队。结果先留着，失败到原位置再报，保持"已在运行就直接返回"的语义不变。
-    let llm_profile = cached_desktop_llm_profile(&app, &llm_profile_store);
+    let llm_snapshot = cached_profile_snapshot(&app, &llm_profile_store);
     let preferences = desktop_preferences_path(&app)
         .map(|path| read_desktop_preferences(&path))
         .unwrap_or_default();
@@ -457,7 +457,9 @@ pub(crate) fn start_gateway(
         .open(&log_path)
         .map_err(|error| format!("无法打开 runtime 日志：{error}"))?;
     let token = token.unwrap_or_default().trim().to_string();
-    let llm_profile = llm_profile?;
+    let llm_snapshot = llm_snapshot?;
+    let llm_profile = llm_snapshot.profile;
+    let launch_id = new_profile_revision();
 
     let mut candidates = Vec::new();
     let mut sidecar_setup_error = None;
@@ -481,6 +483,8 @@ pub(crate) fn start_gateway(
     }
     let mut last_not_found = None;
     for (mut command, label) in candidates {
+        command.env("VORTOCODE_MODEL_CONFIGURATION_REVISION", &llm_snapshot.revision);
+        command.env("VORTOCODE_CONFIGURATION_LAUNCH_ID", &launch_id);
         configure_llm_profile(&mut command, llm_profile.as_ref());
         configure_browser_control(&mut command, &preferences);
         configure_experimental_workers(&mut command, &preferences);
@@ -526,6 +530,8 @@ pub(crate) fn start_gateway(
                     return Err(format!("runtime 已启动，但无法建立安全恢复记录：{error}"));
                 }
                 let mut inner = GatewayProcessInner {
+                    configuration_revision: Some(llm_snapshot.revision.clone()),
+                    configuration_launch_id: Some(launch_id.clone()),
                     child: Some(child),
                     runtime_id: runtime_id.clone(),
                     project_id: runtime_project_id.clone(),

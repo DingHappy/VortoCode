@@ -13,6 +13,10 @@ use tauri::{webview::PageLoadEvent, AppHandle, Manager, State};
 use url::{Host, Url};
 
 mod account;
+mod profile_store;
+mod configuration_state;
+use configuration_state::*;
+use profile_store::*;
 mod gateway_process;
 mod remote;
 mod resident_desktop;
@@ -41,6 +45,8 @@ const DEFAULT_GATEWAY_PORT: u16 = 8080;
 #[derive(Clone, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DesktopLlmProfile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    revision: Option<String>,
     base_url: String,
     api_key: String,
     model: String,
@@ -139,6 +145,7 @@ struct DesktopLlmProviderStatus {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DesktopLlmProfileStatus {
+    revision: Option<String>,
     configured: bool,
     base_url: String,
     model: String,
@@ -161,46 +168,6 @@ struct DesktopLlmProfileStatus {
     config_path: Option<String>,
 }
 
-#[derive(Default)]
-struct CachedDesktopLlmProfile {
-    loaded: bool,
-    profile: Option<DesktopLlmProfile>,
-}
-
-#[derive(Default)]
-struct DesktopLlmProfileStore(Mutex<CachedDesktopLlmProfile>);
-
-impl DesktopLlmProfileStore {
-    fn get_or_try_init<F>(&self, load: F) -> Result<Option<DesktopLlmProfile>, String>
-    where
-        F: FnOnce() -> Result<Option<DesktopLlmProfile>, String>,
-    {
-        // Keep the lock while loading so concurrent runtime starts share one
-        // Keychain authorization/read instead of opening duplicate prompts.
-        let mut cached = self
-            .0
-            .lock()
-            .map_err(|_| "模型配置缓存锁已损坏".to_string())?;
-        if cached.loaded {
-            return Ok(cached.profile.clone());
-        }
-        let profile = load()?;
-        cached.profile = profile.clone();
-        cached.loaded = true;
-        Ok(profile)
-    }
-
-    fn replace(&self, profile: Option<DesktopLlmProfile>) -> Result<(), String> {
-        let mut cached = self
-            .0
-            .lock()
-            .map_err(|_| "模型配置缓存锁已损坏".to_string())?;
-        cached.profile = profile;
-        cached.loaded = true;
-        Ok(())
-    }
-}
-
 const MIN_MODEL_CONTEXT_WINDOW: u64 = 1_024;
 const MAX_MODEL_CONTEXT_WINDOW: u64 = 20_000_000;
 
@@ -217,6 +184,7 @@ fn official_model_context_window(model: &str) -> Option<u64> {
 
 fn default_llm_profile() -> DesktopLlmProfile {
     DesktopLlmProfile {
+        revision: None,
         base_url: DEFAULT_LLM_BASE_URL.into(),
         api_key: String::new(),
         model: DEFAULT_LLM_MODEL.into(),
@@ -1135,6 +1103,7 @@ fn desktop_llm_profile_status(profile: Option<&DesktopLlmProfile>) -> DesktopLlm
     let fallback = default_llm_profile();
     let profile = profile.unwrap_or(&fallback);
     DesktopLlmProfileStatus {
+        revision: profile.revision.clone(),
         configured: !profile.signed_out
             && (profile.api_key.len() > 0 || llm_provider(&profile.base_url) == "local"),
         base_url: profile.base_url.clone(),
@@ -1174,8 +1143,8 @@ fn get_llm_profile(
     app: AppHandle,
     store: State<'_, DesktopLlmProfileStore>,
 ) -> Result<DesktopLlmProfileStatus, String> {
-    let profile = cached_desktop_llm_profile(&app, &store)?;
-    Ok(with_config_path(desktop_llm_profile_status(profile.as_ref()), &app))
+    let snapshot = cached_profile_snapshot(&app, &store)?;
+    Ok(profile_snapshot_status(&snapshot, &app))
 }
 
 /// 原生确认框必须挂到主窗口上（弹成 sheet）。rfd 在 macOS 上的无父窗口消息框会建出窗口却
@@ -1257,11 +1226,14 @@ async fn set_llm_profile(
     fast_model: Option<String>,
     strong_model: Option<String>,
     role_models: Option<HashMap<String, String>>,
+    expected_revision: Option<String>,
     store: State<'_, DesktopLlmProfileStore>,
 ) -> Result<DesktopLlmProfileStatus, String> {
     // 只改模型名 / 调度档时不必重输 Key：留空则沿用已保存的 Key，规则同 test_llm_connection
     // （仅限同一地址，Key 绝不借给别的服务）。
-    let saved = cached_desktop_llm_profile(&app, &store)?;
+    let snapshot = cached_profile_snapshot(&app, &store)?;
+    snapshot.check_expected(expected_revision.as_deref())?;
+    let saved = snapshot.profile;
     let mut api_key = api_key.trim().to_string();
     if api_key.is_empty() {
         let wanted = base_url.trim().trim_end_matches('/');
@@ -1284,6 +1256,7 @@ async fn set_llm_profile(
         .map(|saved| (saved.models.clone(), saved.model_info.clone()))
         .unwrap_or_default();
     let profile = normalize_llm_profile(DesktopLlmProfile {
+        revision: Some(snapshot.revision),
         base_url,
         api_key,
         model,
@@ -1299,26 +1272,23 @@ async fn set_llm_profile(
         models,
         model_info,
     })?;
-    let path = llm_profile_path(&app)?;
     let confirmed = confirm_llm_profile_change(&app, &profile).await?;
     let profile = if confirmed { with_model_list(profile).await } else { profile };
-    let profile = save_llm_profile_flow(profile, confirmed, LLM_PROBE_TIMEOUT, |profile| {
-        save_llm_profile_file(&path, profile)
-    })
-    .await?;
-    store.replace(Some(profile.clone()))?;
-    Ok(with_config_path(desktop_llm_profile_status(Some(&profile)), &app))
+    let profile = save_llm_profile_flow(profile, confirmed, LLM_PROBE_TIMEOUT, |_| Ok(())).await?;
+    persist_profile(&app, &store, profile)
 }
 
 // 可能阻塞：移出主线程，原因见 get_llm_profile。
 #[tauri::command(async)]
 fn clear_llm_profile(
     app: AppHandle,
+    expected_revision: Option<String>,
     store: State<'_, DesktopLlmProfileStore>,
 ) -> Result<DesktopLlmProfileStatus, String> {
-    delete_llm_profile_file(&llm_profile_path(&app)?)?;
-    store.replace(None)?;
-    Ok(with_config_path(desktop_llm_profile_status(None), &app))
+    let snapshot = cached_profile_snapshot(&app, &store)?;
+    snapshot.check_expected(expected_revision.as_deref())?;
+    let cleared = store.commit(&llm_profile_path(&app)?, &snapshot.revision, None)?;
+    Ok(profile_snapshot_status(&cleared, &app))
 }
 
 fn configure_llm_profile(command: &mut Command, profile: Option<&DesktopLlmProfile>) {
@@ -1400,6 +1370,8 @@ struct GatewayProcessInner {
     repo_root: Option<PathBuf>,
     command: Option<String>,
     base_url: Option<String>,
+    configuration_revision: Option<String>,
+    configuration_launch_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -2408,6 +2380,7 @@ pub fn run() {
         .plugin(tauri_plugin_websocket::init())
         .invoke_handler(tauri::generate_handler![
             get_llm_profile,
+            get_model_configuration_state,
             set_llm_profile,
             clear_llm_profile,
             confirm_action,
@@ -2669,6 +2642,7 @@ fn normalize_llm_provider(mut provider: DesktopLlmProvider) -> Result<DesktopLlm
         return Err("供应商名称无效".into());
     }
     let checked = normalize_llm_profile(DesktopLlmProfile {
+        revision: None,
         base_url: provider.base_url.clone(),
         api_key: provider.api_key.clone(),
         model: "-".into(),
@@ -2754,9 +2728,9 @@ fn persist_profile(
     store: &State<'_, DesktopLlmProfileStore>,
     profile: DesktopLlmProfile,
 ) -> Result<DesktopLlmProfileStatus, String> {
-    save_llm_profile_file(&llm_profile_path(app)?, &profile)?;
-    store.replace(Some(profile.clone()))?;
-    Ok(with_config_path(desktop_llm_profile_status(Some(&profile)), app))
+    let expected = profile.revision.clone().ok_or("模型配置缺少版本，请重新读取后再保存")?;
+    let snapshot = store.commit(&llm_profile_path(app)?, &expected, Some(profile))?;
+    Ok(profile_snapshot_status(&snapshot, app))
 }
 
 /// 会员模型作为「其他供应商」加进模型列表时用的 ID：默认服务（比如本机模型）不动，两边在输入框里切换。
@@ -2912,16 +2886,15 @@ fn promote_provider(mut profile: DesktopLlmProfile, id: &str) -> Result<DesktopL
 async fn promote_llm_provider(
     app: AppHandle,
     id: String,
+    expected_revision: Option<String>,
     store: State<'_, DesktopLlmProfileStore>,
 ) -> Result<DesktopLlmProfileStatus, String> {
-    let profile = promote_provider(saved_profile_for_providers(&app, &store)?, id.trim())?;
+    let profile = saved_profile_for_providers(&app, &store)?;
+    check_profile_revision(&profile, expected_revision.as_deref())?;
+    let profile = promote_provider(profile, id.trim())?;
     let profile = with_model_list(profile).await;
-    let profile = save_llm_profile_flow(profile, true, LLM_PROBE_TIMEOUT, |profile| {
-        save_llm_profile_file(&llm_profile_path(&app)?, profile)
-    })
-    .await?;
-    store.replace(Some(profile.clone()))?;
-    Ok(with_config_path(desktop_llm_profile_status(Some(&profile)), &app))
+    let profile = save_llm_profile_flow(profile, true, LLM_PROBE_TIMEOUT, |_| Ok(())).await?;
+    persist_profile(&app, &store, profile)
 }
 
 /// 会员模型设为默认之前：把现在的默认服务挪进列表，并去掉列表里那份会员模型（它要成为默认）。
@@ -2938,8 +2911,7 @@ pub(crate) fn demote_default_for_member(
             profile.providers.push(old);
         }
     }
-    save_llm_profile_file(&llm_profile_path(app)?, &profile)?;
-    store.replace(Some(profile))
+    persist_profile(app, store, profile).map(|_| ())
 }
 
 /// 会员 Key 已作为供应商加在列表里时返回它（用于静默更新 Key、退出账号时移除）。
@@ -2977,10 +2949,12 @@ async fn save_llm_provider(
     name: String,
     base_url: String,
     api_key: String,
+    expected_revision: Option<String>,
     store: State<'_, DesktopLlmProfileStore>,
 ) -> Result<DesktopLlmProfileStatus, String> {
     use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
     let mut profile = saved_profile_for_providers(&app, &store)?;
+    check_profile_revision(&profile, expected_revision.as_deref())?;
     let wanted_id = id.trim().to_lowercase();
     let wanted_base = base_url.trim().trim_end_matches('/').to_string();
     let mut api_key = api_key.trim().to_string();
@@ -3038,9 +3012,11 @@ async fn save_llm_provider(
 fn remove_llm_provider(
     app: AppHandle,
     id: String,
+    expected_revision: Option<String>,
     store: State<'_, DesktopLlmProfileStore>,
 ) -> Result<DesktopLlmProfileStatus, String> {
     let mut profile = saved_profile_for_providers(&app, &store)?;
+    check_profile_revision(&profile, expected_revision.as_deref())?;
     let before = profile.providers.len();
     profile.providers.retain(|provider| provider.id != id);
     if profile.providers.len() == before {
@@ -3053,9 +3029,11 @@ fn remove_llm_provider(
 #[tauri::command]
 async fn refresh_llm_providers(
     app: AppHandle,
+    expected_revision: Option<String>,
     store: State<'_, DesktopLlmProfileStore>,
 ) -> Result<DesktopLlmProfileStatus, String> {
     let mut profile = saved_profile_for_providers(&app, &store)?;
+    check_profile_revision(&profile, expected_revision.as_deref())?;
     if !profile.signed_out && !profile.api_key.is_empty() {
         let main = DesktopLlmProvider {
             id: "default".into(),
@@ -3144,10 +3122,12 @@ async fn save_relay_plan_profile(
     key: &str,
     account: DesktopAccount,
 ) -> Result<DesktopLlmProfile, String> {
-    let saved = cached_desktop_llm_profile(app, store)?;
+    let snapshot = cached_profile_snapshot(app, store)?;
+    let saved = snapshot.profile;
     let base_url = format!("{RELAY_ORIGIN}/v1");
     let same_base = saved.as_ref().is_some_and(|saved| saved.base_url == base_url);
     let profile = normalize_llm_profile(DesktopLlmProfile {
+        revision: Some(snapshot.revision),
         base_url,
         api_key: with_sk_prefix(key),
         model: saved
@@ -3167,12 +3147,9 @@ async fn save_relay_plan_profile(
         signed_out: false,
     })?;
     let profile = with_model_list(profile).await;
-    let profile = save_llm_profile_flow(profile, true, LLM_PROBE_TIMEOUT, |profile| {
-        save_llm_profile_file(&llm_profile_path(app)?, profile)
-    })
-    .await?;
-    store.replace(Some(profile.clone()))?;
-    Ok(profile)
+    let profile = save_llm_profile_flow(profile, true, LLM_PROBE_TIMEOUT, |_| Ok(())).await?;
+    let expected = profile.revision.clone().ok_or("模型配置缺少版本")?;
+    store.commit(&llm_profile_path(app)?, &expected, Some(profile))?.profile.ok_or("模型配置保存失败".into())
 }
 
 /// 用 VortoCode 中转站账号登录，取用账号的 Token Plan Key（Desktop 套餐即 Token Plan）。
@@ -3331,13 +3308,14 @@ fn sign_out_default_service(
     app: &AppHandle,
     store: &State<'_, DesktopLlmProfileStore>,
 ) -> Result<DesktopLlmProfileStatus, String> {
-    let Some(mut profile) = cached_desktop_llm_profile(app, store)? else {
-        return Ok(with_config_path(desktop_llm_profile_status(None), app));
+    let snapshot = cached_profile_snapshot(app, store)?;
+    let Some(mut profile) = snapshot.profile.clone() else {
+        return Ok(profile_snapshot_status(&snapshot, app));
     };
     if profile.providers.is_empty() {
-        delete_llm_profile_file(&llm_profile_path(app)?)?;
-        store.replace(None)?;
-        return Ok(with_config_path(desktop_llm_profile_status(None), app));
+        let expected = profile.revision.as_deref().ok_or("模型配置缺少版本")?;
+        let cleared = store.commit(&llm_profile_path(app)?, expected, None)?;
+        return Ok(profile_snapshot_status(&cleared, app));
     }
     profile.api_key.clear();
     profile.account = None;
@@ -3380,6 +3358,7 @@ async fn test_llm_connection(
             .unwrap_or_default().to_string();
     }
     let profile = normalize_llm_profile(DesktopLlmProfile {
+        revision: None,
         base_url,
         api_key,
         model: if model.trim().is_empty() { "-".into() } else { model },
@@ -3659,6 +3638,7 @@ mod promote_tests {
 
     fn local_default() -> DesktopLlmProfile {
         DesktopLlmProfile {
+            revision: None,
             base_url: "http://127.0.0.1:11500/v1".into(),
             api_key: String::new(),
             model: "qwen-local".into(),
@@ -3793,6 +3773,7 @@ mod tests {
     #[test]
     fn llm_profiles_allow_https_custom_and_loopback_http_only() {
         let relay = normalize_llm_profile(DesktopLlmProfile {
+            revision: None,
             base_url: "https://token.vortotech.com/v1/".into(),
             api_key: "test-key".into(),
             model: "mimo-v2.5".into(),
@@ -3814,6 +3795,7 @@ mod tests {
         assert_eq!(relay.context_window_source.as_deref(), Some("catalog"));
 
         let local = normalize_llm_profile(DesktopLlmProfile {
+            revision: None,
             base_url: "http://127.0.0.1:11434/v1".into(),
             api_key: String::new(),
             model: "local-model".into(),
@@ -3832,6 +3814,7 @@ mod tests {
         assert_eq!(llm_provider(&local.base_url), "local");
 
         assert!(normalize_llm_profile(DesktopLlmProfile {
+            revision: None,
             base_url: "http://models.example.com/v1".into(),
             api_key: "test-key".into(),
             model: "model".into(),
@@ -3848,6 +3831,7 @@ mod tests {
         })
         .is_err());
         assert!(normalize_llm_profile(DesktopLlmProfile {
+            revision: None,
             base_url: "https://models.example.com/v1".into(),
             api_key: String::new(),
             model: "model".into(),
@@ -3868,6 +3852,7 @@ mod tests {
     #[test]
     fn llm_profile_is_injected_only_into_child_runtime_environment() {
         let profile = DesktopLlmProfile {
+            revision: None,
             base_url: "https://models.example.com/v1".into(),
             api_key: "test-key".into(),
             model: "model-1".into(),
@@ -4047,6 +4032,7 @@ mod tests {
     #[test]
     fn custom_providers_reach_the_runtime_env_but_not_the_status() {
         let profile = DesktopLlmProfile {
+            revision: None,
             base_url: "https://models.example.com/v1".into(),
             api_key: "main-key".into(),
             model: "main".into(),
@@ -4106,6 +4092,7 @@ mod tests {
     #[test]
     fn signed_out_profile_keeps_providers_but_drops_the_default_key() {
         let profile = normalize_llm_profile(DesktopLlmProfile {
+            revision: None,
             base_url: "https://token.vortotech.com/v1".into(),
             api_key: String::new(),
             model: "mimo".into(),
@@ -4139,6 +4126,7 @@ mod tests {
             vec!["a".to_string(), "d".to_string()]
         );
         let mut profile = normalize_llm_profile(DesktopLlmProfile {
+            revision: None,
             base_url: "https://models.example.com/v1".into(),
             api_key: "k".into(),
             model: "main".into(),
@@ -4209,6 +4197,7 @@ mod tests {
             ..ModelInfo::default()
         };
         let mut profile = normalize_llm_profile(DesktopLlmProfile {
+            revision: None,
             base_url: "https://models.example.com/v1".into(),
             api_key: "k".into(),
             model: "main".into(),
@@ -4290,6 +4279,7 @@ mod tests {
     #[test]
     fn routing_tier_names_are_trimmed_and_blank_means_unset() {
         let profile = normalize_llm_profile(DesktopLlmProfile {
+            revision: None,
             base_url: "https://models.example.com/v1".into(),
             api_key: "k".into(),
             model: "main".into(),
@@ -4355,6 +4345,7 @@ mod tests {
         let load = || {
             reads.fetch_add(1, Ordering::SeqCst);
             Ok(Some(DesktopLlmProfile {
+                revision: None,
                 base_url: "https://models.example.com/v1".into(),
                 api_key: "secret".into(),
                 model: "model-1".into(),
@@ -4422,6 +4413,7 @@ mod tests {
     fn llm_profile_store_replaces_cache_after_save_and_clear() {
         let store = DesktopLlmProfileStore::default();
         let profile = DesktopLlmProfile {
+            revision: None,
             base_url: "https://models.example.com/v1".into(),
             api_key: "secret".into(),
             model: "model-2".into(),
@@ -5408,6 +5400,8 @@ mod tests {
             command.args(["-c", "sleep 30"]);
             prepare_gateway_process(&mut command);
             GatewayProcessInner {
+                configuration_revision: None,
+                configuration_launch_id: None,
                 child: Some(command.spawn().expect("spawn supervised runtime")),
                 runtime_id: runtime_id.into(),
                 project_id: Some(runtime_id.into()),
@@ -5472,6 +5466,8 @@ mod tests {
     #[test]
     fn empty_process_state_does_not_leak_old_metadata() {
         let mut inner = GatewayProcessInner {
+            configuration_revision: None,
+            configuration_launch_id: None,
             child: None,
             runtime_id: "project-old".into(),
             project_id: Some("old".into()),
@@ -5775,6 +5771,7 @@ mod tests {
 
     fn probe_profile(port: u16) -> DesktopLlmProfile {
         DesktopLlmProfile {
+            revision: None,
             base_url: format!("http://127.0.0.1:{port}"),
             api_key: String::new(),
             model: "mimo-v2.5".into(),
@@ -5915,6 +5912,7 @@ mod tests {
 
     fn sample_llm_profile() -> DesktopLlmProfile {
         DesktopLlmProfile {
+            revision: None,
             base_url: "https://models.example.com/v1".into(),
             api_key: "sk-file-test".into(),
             model: "model-1".into(),

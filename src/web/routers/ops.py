@@ -30,7 +30,9 @@ async def health_check():
 @router.get("/api/health/quick")
 async def quick_health_check():
     """快速健康检查"""
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+    from src.gateway.configuration_receipt import configuration_receipt
+    return {"status": "healthy", "timestamp": datetime.now().isoformat(),
+            "model_configuration": configuration_receipt()}
 
 # 注：旧的 /api/tasks/queue 与 /api/tasks/list（基于从未接线的 src/core/task_queue 骨架）已退役。
 # 后台任务改由常驻运行时提供：见 src/web/routers/tasks.py（POST/GET /api/tasks…，gateway.TaskRunner）。

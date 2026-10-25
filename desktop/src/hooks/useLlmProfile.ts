@@ -94,6 +94,7 @@ export function useLlmProfile(
     setLlmSaveKind("idle");
     try {
       const profile = await invoke<DesktopLlmProfileStatus>("set_llm_profile", {
+        expectedRevision: llmProfile?.revision ?? null,
         baseUrl: llmBaseInput.trim(),
         apiKey: llmKeyInput.trim(),
         model: llmModelInput.trim(),
@@ -118,7 +119,7 @@ export function useLlmProfile(
     setLlmSaveNote("");
     setLlmSaveKind("idle");
     try {
-      const profile = await invoke<DesktopLlmProfileStatus>("clear_llm_profile");
+      const profile = await invoke<DesktopLlmProfileStatus>("clear_llm_profile", { expectedRevision: llmProfile?.revision ?? null });
       applyLlmProfile(profile);
       const feedback = await restartSavedModelProfile(onRestartRuntime, "清除");
       setLlmSaveNote(feedback.message); setLlmSaveKind(feedback.kind); onBanner(feedback.message);

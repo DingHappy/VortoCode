@@ -10,7 +10,10 @@ import "../src/App.css";
 const params = new URLSearchParams(location.search);
 document.documentElement.setAttribute("data-theme", params.get("theme") || "dark");
 const guest = params.get("state") === "guest";
+let receiptFails = params.get("receipt") === "fail";
+let receiptDeferred = params.get("receipt") === "defer";
 let profile: DesktopLlmProfileStatus = {
+  revision: "qa-revision-1",
   configured: !guest, provider: "local", requiresKey: false,
   baseUrl: guest ? "" : "http://127.0.0.1:8000/v1", model: guest ? "" : "qwen3.5-35b-a3b",
   models: ["qwen3.5-35b-a3b", "qwen3.5-9b"], providers: [], roleModels: {}, configPath: "~/.vortocode/llm-profile.json"
@@ -45,6 +48,7 @@ function settingWrite<T>(kind: string, persist: () => T): Promise<T> | T {
 const calls: string[] = [];
 Object.assign(window, { settingsQACalls: calls, isTauri: true, settingsQAProbeTargets: probeTargets, settingsQASettingRequests: settingRequests, settingsQARestarts: () => restarts,
   settingsQAStoredPermissions: () => ({ browserEnabled: browser.enabled, desktopEnabled: control.enabled, desktopTarget: control.target, desktopApps: control.apps }),
+  settingsQAReceiptFail: (fail: boolean) => { receiptFails = fail; },
   settingsQAConfirm: (allow: boolean) => { confirmationsAllowed = allow; } });
 mockIPC(async (cmd, raw) => {
   const args = (raw ?? {}) as Record<string, string | boolean | Record<string, string>>;
@@ -59,6 +63,20 @@ mockIPC(async (cmd, raw) => {
         return new Promise((resolve, reject) => Object.assign(window, { releaseSettingsStaleRead: () => params.get("read") === "stale-error" ? reject(new Error("过期读取失败")) : resolve(stale) }));
       }
       return profile;
+    }
+    case "get_model_configuration_state": {
+      if (receiptFails) throw new Error("模拟回执读取失败");
+      if (receiptDeferred) {
+        receiptDeferred = false;
+        const staleRevision = profile.revision;
+        return new Promise(resolve => Object.assign(window, { releaseConfigurationReceipt: () => resolve({ schemaVersion: 1, savedRevision: staleRevision, runtimes: [] }) }));
+      }
+      return { schemaVersion: 1, savedRevision: params.get("receipt") === "stale" ? "qa-old" : profile.revision,
+        runtimes: params.get("receipt") === "none" ? [] : [
+          { runtimeId: "qa-general", scope: "general", status: "applied" },
+          { runtimeId: "qa-project", scope: "project", status: "pending" },
+          { runtimeId: "qa-legacy", scope: "scratch", status: "unknown" },
+        ] };
     }
     case "refresh_llm_providers": return profile;
     case "confirm_action": return confirmationsAllowed;
@@ -79,10 +97,11 @@ mockIPC(async (cmd, raw) => {
       return persist();
     }
     case "set_llm_profile": {
+      if (params.get("save") === "conflict") throw new Error("模型配置已被其他操作更新；本次没有写入。请重新读取最新配置后再保存，当前草稿仍保留");
       if (params.get("save") === "fail") throw new Error("模拟保存失败，草稿仍保留");
       if (params.get("save") === "cancel") throw new Error("操作已取消");
       profile = {
-        ...profile, configured: true, baseUrl: String(args.baseUrl), model: String(args.model),
+        ...profile, revision: "qa-revision-saved", configured: true, baseUrl: String(args.baseUrl), model: String(args.model),
         fastModel: args.fastModel as string || undefined, strongModel: args.strongModel as string || undefined, roleModels: args.roleModels as Record<string, string>
       };
       return profile;

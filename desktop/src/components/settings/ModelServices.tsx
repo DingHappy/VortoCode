@@ -52,9 +52,10 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
   const hasDefault = Boolean(profile?.configured);
   const defaultIsMember = profile?.account?.keySource === MEMBER_KEY_SOURCE;
   const [draft, setDraft] = useState<Draft | null>(null);
+  const draftRevision = useRef<string | undefined>(undefined);
   const focusEditor = useRef(false);
   const nameInput = useRef<HTMLInputElement>(null);
-  const openEditor = (next: Draft) => { focusEditor.current = true; setDraft(next); };
+  const openEditor = (next: Draft) => { draftRevision.current = profile?.revision; focusEditor.current = true; setDraft(next); };
   // 一个服务都没有时直接摆出「添加」的几种选择，省掉一次点击
   const [adding, setAdding] = useState(!profile?.configured && (profile?.providers?.length ?? 0) === 0);
   const [showKey, setShowKey] = useState(false);
@@ -120,6 +121,7 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
   const save = () => run(async () => {
     if (!draft || !draftState?.canSave) return;
     const next = await invoke<DesktopLlmProfileStatus>("save_llm_provider", {
+      expectedRevision: draftRevision.current ?? null,
       id: draft.id, name: draft.name, baseUrl: draft.baseUrl, apiKey: draft.apiKey,
     });
     const saved = next.providers?.find((item) => item.id === draft.id.trim().toLowerCase());
@@ -133,7 +135,7 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
     if (!await confirmAction(member
       ? "把会员模型移出列表？以后可以在 设置 → 常规 →「VortoCode 账号」里重新加入。"
       : `删除「${provider.name}」？它的 Key 会从本机配置中移除。`)) return;
-    await applied(await invoke<DesktopLlmProfileStatus>("remove_llm_provider", { id: provider.id }), member ? "已移出会员模型" : `已删除 ${provider.name}`);
+    await applied(await invoke<DesktopLlmProfileStatus>("remove_llm_provider", { id: provider.id, expectedRevision: profile?.revision ?? null }), member ? "已移出会员模型" : `已删除 ${provider.name}`);
   }, "删除失败");
 
   const makeDefault = (provider: DesktopLlmProviderStatus) => run(async () => {
@@ -144,7 +146,7 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
     if (!await confirmAction(`把「${provider.name}」设为默认？新对话和后台任务会用它；「${current}」会留在列表里，随时可以切回来。${routingNotice}`)) return;
     const next = provider.id === MEMBER_PROVIDER_ID
       ? await invoke<DesktopLlmProfileStatus>("account_use_membership", { asDefault: true })
-      : await invoke<DesktopLlmProfileStatus>("promote_llm_provider", { id: provider.id });
+      : await invoke<DesktopLlmProfileStatus>("promote_llm_provider", { id: provider.id, expectedRevision: profile?.revision ?? null });
     onEditDefault(false);
     await applied(next, `已把 ${provider.name} 设为默认`);
   }, "设为默认失败");
@@ -156,7 +158,7 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
   }, "加入会员模型失败");
 
   const refresh = () => run(async () => {
-    onProfile(await invoke<DesktopLlmProfileStatus>("refresh_llm_providers"));
+    onProfile(await invoke<DesktopLlmProfileStatus>("refresh_llm_providers", { expectedRevision: profile?.revision ?? null }));
     setNote("已重新查询模型列表；未能获取的服务保留原列表。");
   }, "刷新模型列表失败");
 

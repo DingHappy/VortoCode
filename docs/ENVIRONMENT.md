@@ -172,6 +172,8 @@ VortoCode 读取的全部 `VORTOCODE_*` 环境变量。常用项的示例与注�
 | `VORTOCODE_DESKTOP_SIDECAR` | Desktop | 标记 runtime 由 Desktop 托管，放开本机文件等 Desktop 专属能力。 | `web/routers/realtime.py`、`agents/tools/browser.py` 等 |
 | `VORTOCODE_WORKSPACE_SCOPE` | Desktop | 工作区范围：`general` / `scratch` / `project`（不设按 `project`）。 | `gateway/workspace_scope.py` |
 | `VORTOCODE_SUPERVISOR_PID` | Desktop | 监护进程 pid；它退出时 runtime 随之退出，不留孤儿。 | `gateway/supervisor_watchdog.py` |
+| `VORTOCODE_MODEL_CONFIGURATION_REVISION` | Desktop | 不含凭据的模型配置版本。运行时就绪后回传启动回执；不代表模型服务可用或推理成功。 | `gateway/configuration_receipt.py` |
+| `VORTOCODE_CONFIGURATION_LAUNCH_ID` | Desktop | 每次启动独有的身份，与配置版本共同核对，防止旧进程响应被当作新进程的回执。 | `gateway/configuration_receipt.py` |
 | `VORTOCODE_MODEL_CHOICES` | Desktop | 默认服务上允许点名的模型列表。 | `llm/routing.py` |
 | `VORTOCODE_MODEL_CONTEXT_WINDOW_SOURCE` | Desktop | 窗口值的来源标记，供设置页显示。 | `llm/client.py` |
 | `VORTOCODE_CODEX_REPORT_URL` / `VORTOCODE_CODEX_REPORT_TOKEN` | Desktop | 本机 Codex 观察结果的上报地址与令牌。 | `scheduling/codex_observer.py` |

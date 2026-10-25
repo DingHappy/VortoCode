@@ -4,6 +4,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useCallback, useEffect, useState } from "react";
 
 import { confirmAction } from "../../lib/confirm";
+import { restartSavedSetting } from "../../lib/settingsApply";
 import { errorText } from "../../lib/errorText";
 import { feedbackMailto } from "../../lib/feedback";
 import {
@@ -73,7 +74,10 @@ export function VortoAccountCard({ modelConfigured, onProfile, onRestartRuntime,
       setStatus(await logoutAccount());
       setMembership(null);
       announceAccountChanged();
-      if (wasInUse) { await onProfileCleared(); await onRestartRuntime(); }
+      if (wasInUse) {
+        await onProfileCleared();
+        setNote((await restartSavedSetting(onRestartRuntime, "已退出登录")).message);
+      }
     } catch (error) { setNote(errorText(error, "退出失败")); }
     finally { setBusy(false); }
   };
@@ -86,8 +90,8 @@ export function VortoAccountCard({ modelConfigured, onProfile, onRestartRuntime,
     setBusy(true); setNote("");
     try {
       onProfile(await applyMembership());
-      await onRestartRuntime();
-      setNote(modelConfigured ? "已加入模型列表：在输入框的模型菜单里选择" : "已切换到会员模型");
+      setNote((await restartSavedSetting(onRestartRuntime,
+        modelConfigured ? "已加入模型列表：在输入框的模型菜单里选择" : "已切换到会员模型")).message);
       await loadMembership(await getAccountStatus().catch(() => status));   // 刚登录时闭包里的 status 还是旧的
       announceAccountChanged();
     } catch (error) { setNote(errorText(error, "切换失败")); }
