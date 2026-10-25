@@ -160,6 +160,9 @@ import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey,
   STORAGE_KEYS } from "./lib/storage";
 import { localDay } from "./lib/time";
 import { finishRunningActivities, hydrateActivities, protocolActivity, upsertActivity } from "./protocol/activities";
+import {
+  historyMessages, messageId, promptQueueFromEvent, systemNotice, thinkingActivity, withAssistantReply, withRunningPrompt, withSayActivity,
+} from "./protocol/transcript";
 import { errorText } from "./lib/errorText";
 import { confirmAction } from "./lib/confirm";
 import { composeMessageText, mediaPayload } from "./lib/attachments";
@@ -179,25 +182,6 @@ const EMPTY_PROCESS: GatewayProcessStatus = {
   running: false,
   message: "本地引擎尚未启动",
 };
-
-function messageId(prefix: string): string {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-}
-
-function normalizePromptQueueItem(value: unknown, fallbackPosition = 0): PromptQueueItem | null {
-  if (!value || typeof value !== "object") return null;
-  const item = value as Partial<PromptQueueItem>;
-  if (!item.id || typeof item.text !== "string") return null;
-  return {
-    id: String(item.id),
-    version: Number.isFinite(item.version) ? Number(item.version) : 0,
-    text: item.text,
-    mode: item.mode === "build" ? "build" : "plan",
-    position: Number.isFinite(item.position) ? Number(item.position) : fallbackPosition,
-    created_at: String(item.created_at ?? ""),
-    context_count: Number.isFinite(item.context_count) ? Number(item.context_count) : 0,
-  };
-}
 
 const TRUST_CHIP_LABEL: Record<TrustLevel, string> = {
   ask: "每次都问我",
@@ -827,6 +811,22 @@ function App() {
 
   const handleProtocolEvent = useCallback(
     (event: ProtocolEvent) => {
+      // init 与 status 都带 runtime 快照：项目工作区跟着 runtime 的 workdir 走，文件列表换目录才重读。
+      const applyRuntimeSnapshot = (snapshot: RuntimeSnapshot) => {
+        setRuntime(snapshot);
+        if (snapshot.scope === "project" && snapshot.workdir) {
+          if (snapshot.workdir !== repoRoot.trim()) {
+            setRepoRoot(snapshot.workdir);
+            localStorage.setItem(STORAGE_KEYS.repoRoot, snapshot.workdir);
+          }
+          if (snapshot.workdir !== workspaceRootRef.current) {
+            void refreshWorkspaceFiles(snapshot.workdir);
+          }
+        } else if (snapshot.scope === "scratch" && snapshot.workdir
+          && snapshot.workdir !== workspaceRootRef.current) {
+          void refreshWorkspaceFiles(snapshot.workdir);
+        }
+      };
       switch (event.type) {
         case "runtime_disconnected":
           setConnection("error");
@@ -837,19 +837,7 @@ function App() {
           const version = typeof event.v === "number" ? event.v : null;
           const snapshot = (event.data ?? {}) as RuntimeSnapshot;
           setProtocolVersion(version);
-          setRuntime(snapshot);
-          if (snapshot.scope === "project" && snapshot.workdir) {
-            if (snapshot.workdir !== repoRoot.trim()) {
-              setRepoRoot(snapshot.workdir);
-              localStorage.setItem(STORAGE_KEYS.repoRoot, snapshot.workdir);
-            }
-            if (snapshot.workdir !== workspaceRootRef.current) {
-              void refreshWorkspaceFiles(snapshot.workdir);
-            }
-          } else if (snapshot.scope === "scratch" && snapshot.workdir
-            && snapshot.workdir !== workspaceRootRef.current) {
-            void refreshWorkspaceFiles(snapshot.workdir);
-          }
+          applyRuntimeSnapshot(snapshot);
           if (version !== null && version !== DESKTOP_PROTOCOL_VERSION) {
             setBanner(`协议版本不一致：Desktop=${DESKTOP_PROTOCOL_VERSION}，runtime=${version}`);
           }
@@ -862,33 +850,10 @@ function App() {
               setBanner(`协议版本不一致：Desktop=${DESKTOP_PROTOCOL_VERSION}，runtime=${event.v}`);
             }
           }
-          {
-            const snapshot = (event.data ?? {}) as RuntimeSnapshot;
-            setRuntime(snapshot);
-            if (snapshot.scope === "project" && snapshot.workdir) {
-              if (snapshot.workdir !== repoRoot.trim()) {
-                setRepoRoot(snapshot.workdir);
-                localStorage.setItem(STORAGE_KEYS.repoRoot, snapshot.workdir);
-              }
-              if (snapshot.workdir !== workspaceRootRef.current) {
-                void refreshWorkspaceFiles(snapshot.workdir);
-              }
-            } else if (snapshot.scope === "scratch" && snapshot.workdir
-              && snapshot.workdir !== workspaceRootRef.current) {
-              void refreshWorkspaceFiles(snapshot.workdir);
-            }
-          }
+          applyRuntimeSnapshot((event.data ?? {}) as RuntimeSnapshot);
           break;
         case "agent_history":
-          setMessages(
-            ((event.items ?? []) as Array<{ role?: string; text?: string; rid?: string; source?: string }>).map((item, index) => ({
-              id: `history-${index}-${activeSid}`,
-              role: item.role === "user" ? "user" : "assistant",
-              text: String(item.text ?? ""),
-              rid: item.rid,
-              ...(typeof item.source === "string" && item.source ? { source: item.source } : {}),
-            })),
-          );
+          setMessages(historyMessages(event, activeSid));
           break;
         case "agent_activity_history":
           setActivities(hydrateActivities(event.items ?? [], { missingStatus: "unknown" }));
@@ -897,33 +862,14 @@ function App() {
           setPlan((event.items ?? []) as PlanItem[]);
           break;
         case "agent_queue": {
-          const queued = (event.items ?? [])
-            .map((item, index) => normalizePromptQueueItem(item, index))
-            .filter((item): item is PromptQueueItem => item !== null);
-          const running = normalizePromptQueueItem(event.running);
+          const { queued, running, paused } = promptQueueFromEvent(event);
           setPromptQueue(queued);
-          setPromptQueuePaused(event.paused === true);
+          setPromptQueuePaused(paused);
           if (running) {
             setBusy(true);
             updateActiveTurnRid(running.id);
-            setActivities((previous) => upsertActivity(previous, {
-              id: `${running.id}:thinking`,
-              rid: running.id,
-              kind: "phase",
-              status: "running",
-              label: "正在分析任务",
-              phase: "thinking",
-            }));
-            setMessages((previous) => previous.some((message) => message.rid === running.id)
-              ? previous
-              : [...previous, {
-                  id: messageId("user"),
-                  role: "user",
-                  text: running.context_count > 0
-                    ? `${running.text}\n\n📎 ${running.context_count} 个源码引用`
-                    : running.text,
-                  rid: running.id,
-                }]);
+            setActivities((previous) => upsertActivity(previous, thinkingActivity(running.id)));
+            setMessages((previous) => withRunningPrompt(previous, running));
           } else {
             setBusy(false);
             updateActiveTurnRid(null);
@@ -955,28 +901,12 @@ function App() {
         case "agent_say": {
           const label = String(event.text ?? "").trim();
           if (!label) break;
-          setActivities((previous) => {
-            if (label.startsWith("🔧") && previous.some((item) => item.rid === event.rid && item.kind === "tool")) return previous;
-            return upsertActivity(previous, {
-              id: messageId(`event-${event.rid ?? "legacy"}`),
-              rid: event.rid,
-              kind: "event",
-              status: "completed",
-              label,
-            });
-          });
+          setActivities((previous) => withSayActivity(previous, event.rid, label));
           break;
         }
         case "agent_reasoning":
           // 不展示原始推理链；老 runtime 若发 reasoning，只映射成安全的阶段状态。
-          setActivities((previous) => upsertActivity(previous, {
-            id: `${event.rid ?? "legacy"}:thinking`,
-            rid: event.rid,
-            kind: "phase",
-            status: "running",
-            label: "正在分析任务",
-            phase: "thinking",
-          }));
+          setActivities((previous) => upsertActivity(previous, thinkingActivity(event.rid)));
           break;
         case "agent_stream":
           setStreaming(String(event.text ?? ""));
@@ -985,16 +915,7 @@ function App() {
         case "agent_emit":
           setStreaming("");
           setStreamingRid(undefined);
-          setMessages((previous) => {
-            const text = String(event.text ?? "");
-            const duplicate = previous.some((message) => event.rid
-              ? message.role === "assistant" && message.rid === event.rid
-              : message.role === "assistant" && message.text === text);
-            return duplicate ? previous : [
-              ...previous,
-              { id: messageId("assistant"), role: "assistant", text, rid: event.rid },
-            ];
-          });
+          setMessages((previous) => withAssistantReply(previous, event));
           break;
         case "agent_error":
           setStreaming("");
@@ -1004,10 +925,7 @@ function App() {
             updateActiveTurnRid(null);
             setActivities((previous) => finishRunningActivities(previous, event.rid, "failed"));
           }
-          setMessages((previous) => [
-            ...previous,
-            { id: messageId("error"), role: "system", text: `出错：${String(event.text ?? "未知错误")}`, rid: event.rid },
-          ]);
+          setMessages((previous) => [...previous, systemNotice("error", event)]);
           break;
         case "agent_done":
           setStreaming("");
@@ -1030,10 +948,7 @@ function App() {
           setBusy(false);
           updateActiveTurnRid(null);
           setActivities((previous) => finishRunningActivities(previous, event.rid, "cancelled"));
-          setMessages((previous) => [
-            ...previous,
-            { id: messageId("cancelled"), role: "system", text: "本回合已中断", rid: event.rid },
-          ]);
+          setMessages((previous) => [...previous, systemNotice("cancelled", event)]);
           void refreshDecisions();
           void refreshAudit();
           void snapshotTodayJournal();
