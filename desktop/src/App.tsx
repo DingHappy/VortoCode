@@ -155,6 +155,7 @@ import { usePlugins } from "./hooks/usePlugins";
 import { useWorkspaceFiles } from "./hooks/useWorkspaceFiles";
 import { useRuntimeInboxes } from "./hooks/useRuntimeInboxes";
 import { contextItemKey, contextItemLabel } from "./lib/sourceContext";
+import { withLocalDecisions } from "./lib/decisionItems";
 import { autoFocusDecision, closeWorkbenchTab, openWorkbenchTab, type InspectorTab } from "./lib/inspector";
 import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey, projectToRestore,
   STORAGE_KEYS } from "./lib/storage";
@@ -598,54 +599,7 @@ function App() {
   }[connection];
   // 派生的可见文件切片 / 预览行 / 行数 / 裁剪标记只服务 <FilesPanel>，已随面板搬入组件内计算。
   // selectedGitFile 与 displayedGit* 族派生只服务「变更」面板，已随 <GitReviewPanel> 搬入组件内计算。
-  const decisionItems = useMemo<DecisionItem[]>(() => {
-    const remote: DecisionItem[] = [];
-    for (const session of sessions) {
-      for (const issue of session.hook_issues?.items ?? []) {
-        remote.push({
-          id: `hook:${session.sid}:${issue.id}`,
-          kind: "hook",
-          severity: "high",
-          title: issue.summary || `Hook 需要处理 · ${issue.name}`,
-          detail: [
-            `${session.title || session.sid} · ${issue.event}${issue.tool ? ` · ${issue.tool}` : ""}`,
-            issue.error || issue.message,
-          ].filter(Boolean).join("\n"),
-          created: issue.created || (session.updated ? new Date(session.updated * 1000).toISOString() : undefined),
-          target_id: issue.id,
-          session_id: session.sid,
-          action: "open_session",
-          can_dismiss: true,
-        });
-      }
-    }
-    if (prDelivery?.ok) {
-      for (const check of prDelivery.failing_checks) {
-        remote.push({
-          id: `pr-check:${check.id}`,
-          kind: "pr_check",
-          severity: "high",
-          title: `CI 失败 · ${check.name}`,
-          detail: `${check.workflow ? `${check.workflow} · ` : ""}${check.conclusion || check.state || check.status || "失败"}`,
-          created: check.completed_at || check.started_at,
-          target_id: check.id,
-          action: "open_diff",
-          can_dismiss: false,
-        });
-      }
-      prDelivery.comments.forEach((comment, index) => remote.push({
-        id: `pr-review:${prDelivery.pr}:${comment.path || "general"}:${comment.line || 0}:${index}`,
-        kind: "pr_review",
-        severity: "high",
-        title: `PR #${prDelivery.pr} 有未解决 Review`,
-        detail: `${comment.path ? `${comment.path}${comment.line ? `:${comment.line}` : ""} · ` : ""}@${comment.author}: ${comment.body}`,
-        target_id: String(index),
-        action: "open_diff",
-        can_dismiss: false,
-      }));
-    }
-    return [...decisions, ...remote];
-  }, [decisions, prDelivery, sessions]);
+  const decisionItems = useMemo(() => withLocalDecisions(decisions, sessions, prDelivery), [decisions, prDelivery, sessions]);
   // 审计筛选派生随 <DecisionsPanel> 搬入；journalActions 派生随 <JournalCard> 搬入（均只服务各自组件）。
   const activeTasks = useMemo(
     () => tasks.filter((task) => ["queued", "running", "blocked", "paused", "failed", "interrupted"].includes(task.status)
