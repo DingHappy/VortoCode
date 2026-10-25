@@ -39,11 +39,7 @@ import {
   ListChecks,
   Search,
   Server,
-  ShieldCheck,
-  FileText,
   FolderPlus,
-  LoaderCircle,
-  Music,
   Package,
   PanelRight,
   Plus,
@@ -89,7 +85,6 @@ import type {
   TaskItem,
   TurnActivity,
   WorkspaceScope,
-  TrustLevel,
   DesktopLlmProfileStatus,
   ProjectSessionSummary, CodexAction} from "./types";
 import { DecisionsPanel } from "./components/DecisionsPanel";
@@ -104,7 +99,8 @@ import { ProjectSkillsCard } from "./components/ProjectSkillsCard";
 import { CatalogCard } from "./components/CatalogCard";
 import { autoCheckForUpdate, type UpdateCheck } from "./lib/updateCheck";
 import { SidebarFooter } from "./components/SidebarFooter";
-import { ComposerModelPicker, ConfirmCard, PromptQueuePanel, WorkspaceRequestCard } from "./components/ComposerPanels";
+import { AttachmentChips, ComposerModelPicker, ConfirmCard, ContextChips, PromptQueuePanel, TrustChip, WorkspaceRequestCard } from "./components/ComposerPanels";
+import { ConversationHome, FirstRunCard } from "./components/ConversationHome";
 import { assistantPanelActions } from "./lib/assistantPanelActions";
 import { SidebarProjects } from "./components/SidebarProjects";
 import { SidebarSessions } from "./components/SidebarSessions";
@@ -148,7 +144,7 @@ import { useDecisionNotifications } from "./hooks/useDecisionNotifications";
 import { useAssistantSnapshot } from "./hooks/useAssistantSnapshot";
 import { useWorkspaceFiles } from "./hooks/useWorkspaceFiles";
 import { useRuntimeInboxes } from "./hooks/useRuntimeInboxes";
-import { contextItemKey, contextItemLabel } from "./lib/sourceContext";
+import { contextItemKey } from "./lib/sourceContext";
 import { withLocalDecisions } from "./lib/decisionItems";
 import { autoFocusDecision, closeWorkbenchTab, openWorkbenchTab, type InspectorTab } from "./lib/inspector";
 import { projectSessionKey, projectToRestore,
@@ -172,12 +168,6 @@ import {
 type RuntimeConnectionOptions = { baseUrl?: string; repoRoot?: string; token?: string; scope?: WorkspaceScope; remoteProjectId?: string };
 type StartWorkspaceOptions = RuntimeConnectionOptions & { baseUrl: string; sid: string; announce?: boolean; workspaceId?: string };
 type WorkspaceRequest = { scope: Exclude<WorkspaceScope, "general">; reason: string; task: string };
-
-const TRUST_CHIP_LABEL: Record<TrustLevel, string> = {
-  ask: "每次都问我",
-  reads: "只读自动",
-  full: "完全信任",
-};
 
 function inspectorTabLabel(tab: InspectorTab): string {
   return {
@@ -2826,46 +2816,25 @@ function App() {
             }}
           >
             {messages.length === 0 && !streaming && (
-              <div className="home-greeting">
-                {/* 冷启动要等本地引擎起来（约数秒）；这期间别摆出一个看着能用、其实还没连上的首页，
-                    连上后再切到上次的会话也就不显得突兀（真机 2026-10-06）。 */}
-                {/* 引擎通常一秒内就连上（Desktop 一启动就预先拉起 runtime）：提示延后 400ms 才显示，
-                    连得快就不闪；占位保持同样高度，避免布局跳动。 */}
-                {homeStarting
-                  ? <h1 className={`home-starting ${showHomeStarting ? "" : "pending"}`} aria-hidden={!showHomeStarting}><LoaderCircle className="activity-spinner" size={20} />正在启动本地引擎…</h1>
-                  : appMode === "assistant"
-                    ? <><h1>有什么要交代的？</h1><p>{onAssistantHost()
-                      ? "交代完就可以合上电脑：它在常驻电脑上接着做，做完了在右侧「动态」里回报。"
-                      : "说一件要办的事，做完了会在右侧「动态」里回报。"}</p>
-                    {showStarterTips && llmProfile?.configured && <AssistantStarterTips
-                      tips={starterTips({ resident: onAssistantHost(), projects: residentProjects.map((item) => item.name) })}
-                      onDismiss={() => { dismissStarterTips(); setShowStarterTips(false); }}
-                      onPick={(tip) => {
-                        setPrompt(tip.prompt);
-                        window.requestAnimationFrame(() => {
-                          const input = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="任务输入"]');
-                          input?.focus();
-                          input?.setSelectionRange(tip.prompt.length, tip.prompt.length);
-                        });
-                      }} />}</>
-                    : <><h1>开始一项工作</h1><p>描述你要解决的问题，或选择工作区域开始。</p></>}
+              <ConversationHome starting={homeStarting} showStarting={showHomeStarting} assistant={appMode === "assistant"}
+                resident={onAssistantHost()}
+                tips={showStarterTips && llmProfile?.configured && <AssistantStarterTips
+                  tips={starterTips({ resident: onAssistantHost(), projects: residentProjects.map((item) => item.name) })}
+                  onDismiss={() => { dismissStarterTips(); setShowStarterTips(false); }}
+                  onPick={(tip) => {
+                    setPrompt(tip.prompt);
+                    window.requestAnimationFrame(() => {
+                      const input = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="任务输入"]');
+                      input?.focus();
+                      input?.setSelectionRange(tip.prompt.length, tip.prompt.length);
+                    });
+                  }} />}>
                 {llmProfileChecked && !llmProfile?.configured && !onAssistantHost() && (
-                  <div className="first-run-card">
-                    <strong>先接一个模型，就能开始</strong>
-                    <p>VortoCode 本身不带模型，两种方式任选一种：</p>
-                    <div className="first-run-actions">
-                      <button className="primary" onClick={() => { setSettingsSection("account"); setSettingsOpen(true); }}>
-                        {vortoAccount.status?.signedIn ? "使用会员模型" : "登录 VortoCode 账号"}
-                        <small>会员直接用，不用填地址和 Key</small>
-                      </button>
-                      <button onClick={() => { setSettingsSection("model"); setSettingsOpen(true); }}>
-                        用自己的模型
-                        <small>本机模型（oMLX、Ollama 等）或自己的 API Key</small>
-                      </button>
-                    </div>
-                  </div>
+                  <FirstRunCard signedIn={Boolean(vortoAccount.status?.signedIn)}
+                    onAccount={() => { setSettingsSection("account"); setSettingsOpen(true); }}
+                    onModel={() => { setSettingsSection("model"); setSettingsOpen(true); }} />
                 )}
-              </div>
+              </ConversationHome>
             )}
 
             {plan.length > 0 && (
@@ -2966,32 +2935,9 @@ function App() {
                 void addFiles(event.dataTransfer.files);
               }}
             >
-              {attachments.length > 0 && (
-                <div className="attachment-chips">
-                  {attachments.map((item) => (
-                    <span key={item.id} className={`attachment-chip ${item.kind}`} title={item.name}>
-                      {item.kind === "image"
-                        ? <img src={item.data} alt="" />
-                        : item.kind === "audio" ? <Music size={13} /> : <FileText size={13} />}
-                      <em>{item.name}</em>
-                      <button aria-label={`移除附件 ${item.name}`} onClick={() => removeAttachment(item.id)}><X size={12} /></button>
-                    </span>
-                  ))}
-                </div>
-              )}
-              {contextItems.length > 0 && (
-                <div className="context-chips">
-                  {contextItems.map((item) => (
-                    <span key={contextItemKey(item)} title={contextItemLabel(item)}>
-                      <FileText size={12} />{contextItemLabel(item)}
-                      <button
-                        aria-label={`移除 ${contextItemLabel(item)}`}
-                        onClick={() => setContextItems((previous) => previous.filter((candidate) => contextItemKey(candidate) !== contextItemKey(item)))}
-                      ><X size={12} /></button>
-                    </span>
-                  ))}
-                </div>
-              )}
+              <AttachmentChips items={attachments} onRemove={removeAttachment} />
+              <ContextChips items={contextItems}
+                onRemove={(item) => setContextItems((previous) => previous.filter((candidate) => contextItemKey(candidate) !== contextItemKey(item)))} />
               <ComposerCommands key={activeSid} prompt={prompt} onPrompt={setPrompt} project={activeScope !== "general"}
                 disabled={runtimeStarting || projectSwitching} onSend={() => void sendPrompt()}
                 onPaste={(event) => { const files = Array.from(event.clipboardData.files); if (files.length) { event.preventDefault(); void addFiles(files); } }}
@@ -3015,19 +2961,7 @@ function App() {
                       event.target.value = "";
                     }}
                   />
-                  {trust && trust.levels.length > 1 && (
-                    <label className="composer-chip" title="授权方式：Agent 动手前要不要先问你">
-                      <ShieldCheck size={14} />
-                      <select
-                        aria-label="授权方式"
-                        value={trust.levels.includes(trust.level) ? trust.level : trust.effective}
-                        disabled={trustBusy}
-                        onChange={(event) => void changeTrustLevel(event.target.value as TrustLevel)}
-                      >
-                        {trust.levels.map((level) => <option key={level} value={level}>{TRUST_CHIP_LABEL[level]}</option>)}
-                      </select>
-                    </label>
-                  )}
+                  <TrustChip trust={trust} busy={trustBusy} onChange={(level) => void changeTrustLevel(level)} />
                   {(busy || contextItems.length > 0) && (
                     <span>{contextItems.length > 0 ? `${contextItems.length} 个源码引用` : "Enter 加入队列"}</span>
                   )}
