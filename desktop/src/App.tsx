@@ -140,6 +140,7 @@ import { useProjectAssets } from "./hooks/useProjectAssets";
 import { useTrustLevel } from "./hooks/useTrustLevel";
 import { useJournal } from "./hooks/useJournal";
 import { useLlmProfile } from "./hooks/useLlmProfile";
+import { EMPTY_PROCESS, observeCurrentRuntime, pruneRuntimeTokens } from "./lib/runtimeSupervision";
 import { agentFrame, outgoingMessage } from "./protocol/outgoingPrompt";
 import { usePlugins } from "./hooks/usePlugins";
 import { useDecisionNotifications } from "./hooks/useDecisionNotifications";
@@ -170,10 +171,6 @@ import {
 type RuntimeConnectionOptions = { baseUrl?: string; repoRoot?: string; token?: string; scope?: WorkspaceScope; remoteProjectId?: string };
 type StartWorkspaceOptions = RuntimeConnectionOptions & { baseUrl: string; sid: string; announce?: boolean; workspaceId?: string };
 type WorkspaceRequest = { scope: Exclude<WorkspaceScope, "general">; reason: string; task: string };
-const EMPTY_PROCESS: GatewayProcessStatus = {
-  running: false,
-  message: "本地引擎尚未启动",
-};
 
 const TRUST_CHIP_LABEL: Record<TrustLevel, string> = {
   ask: "每次都问我",
@@ -1188,19 +1185,11 @@ function App() {
         const statuses = await invoke<GatewayProcessStatus[]>("list_gateway_processes");
         const recoveries = await invoke<GatewayRecoveryRecord[]>("list_gateway_recoveries").catch(() => []);
         if (disposed || generation !== supervisionGenerationRef.current) return;
-        const liveRuntimeIds = new Set(statuses.filter((item) => item.running).map((item) => item.runtimeId).filter(Boolean));
-        for (const runtimeId of runtimeTokensRef.current.keys()) {
-          if (!liveRuntimeIds.has(runtimeId)) runtimeTokensRef.current.delete(runtimeId);
-        }
+        pruneRuntimeTokens(runtimeTokensRef.current, statuses);
         setRuntimeProcesses(statuses);
         setRuntimeRecoveries(recoveries);
         if (!runtimeId || runtimeId.startsWith("remote:")) return;
-        const status = statuses.find((item) => item.runtimeId === runtimeId) ?? {
-          ...EMPTY_PROCESS,
-          runtimeId,
-          message: "当前 runtime 已停止",
-        };
-        const unexpectedlyStopped = managedProcessRunningRef.current && !status.running;
+        const { status, unexpectedlyStopped } = observeCurrentRuntime(statuses, runtimeId, managedProcessRunningRef.current);
         managedProcessRunningRef.current = status.running;
         setProcessStatus(status);
         if (unexpectedlyStopped) {
