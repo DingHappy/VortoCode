@@ -73,8 +73,6 @@ import type {
   AssistantAvatar,
   MemoryProposal,
   AssistantConnector,
-  AssistantPlugin,
-  PluginCheck,
   AssistantScheduleItem,
   PhoneChat,
   AuditEntry,
@@ -158,6 +156,7 @@ import { useProjectAssets } from "./hooks/useProjectAssets";
 import { useTrustLevel } from "./hooks/useTrustLevel";
 import { useJournal } from "./hooks/useJournal";
 import { useLlmProfile } from "./hooks/useLlmProfile";
+import { usePlugins } from "./hooks/usePlugins";
 import { autoFocusDecision, closeWorkbenchTab, openWorkbenchTab, type InspectorTab } from "./lib/inspector";
 import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey, projectToRestore,
   STORAGE_KEYS } from "./lib/storage";
@@ -420,66 +419,6 @@ function App() {
       intervalMs: 4_000, hiddenIntervalMs: 15_000, visibility: document,
     });
   }, [connectorAuthorizing, assistantTab, assistantScope, connection, refreshConnectorStatus]);
-  // 插件（日历、Notion…）：打开身份页时读一次状态；检查结果只留在本次查看里
-  const [pluginSnapshot, setPlugins] = useState<{ scope: string; items: AssistantPlugin[] } | null>(null);
-  const [pluginChecks, setPluginChecks] = useState<{ scope: string; items: Record<string, PluginCheck> } | null>(null);
-  const [pluginBusy, setPluginBusy] = useState("");
-  const plugins = pluginSnapshot?.scope === assistantScope ? pluginSnapshot.items : [];
-  const refreshPlugins = useCallback(async (client: GatewayClient, scope: string) => {
-    const items = await client.listPlugins();
-    if (clientRef.current === client && assistantScopeRef.current === scope) setPlugins({ scope, items });
-  }, []);
-  useEffect(() => {
-    const client = clientRef.current;
-    if (client && connection === "connected" && assistantTab === "identity") {
-      void refreshPlugins(client, assistantScope).catch(() => undefined);   // 旧版服务没有这个接口：不显示插件区
-    }
-  }, [assistantTab, assistantScope, connection, refreshPlugins]);
-  const savePlugin = async (plugin: AssistantPlugin, credential: string): Promise<boolean> => {
-    const client = clientRef.current;
-    const scope = assistantScope;
-    const current = () => clientRef.current === client && assistantScopeRef.current === scope;
-    if (!client || !current()) return false;
-    setPluginBusy(plugin.name);
-    try {
-      const { check } = await client.savePluginCredential(plugin.name, credential);
-      if (!current()) return false;
-      setPluginChecks((prev) => ({ scope, items: { ...(prev?.scope === scope ? prev.items : {}), [plugin.name]: check } }));
-      await refreshPlugins(client, scope);
-      return true;
-    } catch (error) {
-      if (current()) setBanner(errorText(error, "保存凭据失败"));
-      return false;
-    } finally {
-      if (current()) setPluginBusy("");
-    }
-  };
-  const pluginAction = (action: "check" | "remove", plugin: AssistantPlugin) => void (async () => {
-    const client = clientRef.current;
-    const scope = assistantScope;
-    const current = () => clientRef.current === client && assistantScopeRef.current === scope;
-    if (!client || !current()) return;
-    if (action === "remove" && !await confirmAction(`移除「${plugin.title}」的凭据？\n\n会删掉助理所在电脑上的凭据文件，插件立即停用；要再用得重新放凭据。`)) return;
-    setPluginBusy(plugin.name);
-    try {
-      if (action === "check") {
-        const result = await client.checkPlugin(plugin.name);
-        if (current()) setPluginChecks((prev) => ({ scope, items: { ...(prev?.scope === scope ? prev.items : {}), [plugin.name]: result } }));
-      } else {
-        await client.removePluginCredential(plugin.name);
-        if (current()) setPluginChecks((prev) => {
-          const items = { ...(prev?.scope === scope ? prev.items : {}) };
-          delete items[plugin.name];
-          return { scope, items };
-        });
-        if (current()) await refreshPlugins(client, scope);
-      }
-    } catch (error) {
-      if (current()) setBanner(errorText(error, action === "check" ? "检查插件失败" : "移除凭据失败"));
-    } finally {
-      if (current()) setPluginBusy("");
-    }
-  })();
   const [dispatchSnapshot, setDispatches] = useState<AssistantDispatch[]>([]);
   const [codexActions, setCodexActions] = useState<CodexAction[]>([]);
   const [dispatchSnapshotScope, setDispatchSnapshotScope] = useState<string | null>(null);
@@ -494,7 +433,7 @@ function App() {
     setAgentTurns([]); setDispatches([]); setCodexActions([]); setDispatchSnapshotScope(null); setPhoneChats([]); setPhoneChatSid(null); setPhoneChatRid(undefined);
     setAssistantProfile({ name: "VortoCode", soul: "", about_you: "" }); setAssistantAvatar(null);
     setAssistantSchedule([]); setAssistantMemories([]); setMemoryProposals([]);
-    setConnectors([]); setConnectorSnapshotScope(null); setPluginBusy("");
+    setConnectors([]); setConnectorSnapshotScope(null);
     setSelectedDispatchId(null); setSelectedCodexAction(null); setAssistantGoalFocus(null); setProfileDialogOpen(false);
   }, [assistantScope]);
   const [tabsNeedingAttention, setTabsNeedingAttention] = useState<ReadonlySet<InspectorTab>>(
@@ -571,6 +510,8 @@ function App() {
   const [backgroundPrompt, setBackgroundPrompt] = useState("");
   const [banner, setBanner] = useState<string | null>(null);
   const { attachments, setAttachments, addFiles, removeAttachment } = useAttachments(setBanner);
+  const { plugins, pluginBusy, pluginChecks, savePlugin, pluginAction } = usePlugins(
+    clientRef, assistantScopeRef, assistantScope, connection, assistantTab, setBanner);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const { tasks, taskRead, focusedTaskId, worktreeWorkspace, setFocusedTaskId, refreshTasks,
@@ -3833,7 +3774,7 @@ function App() {
                   proposals={memoryProposals}
                   connectors={connectors}
                   plugins={<AssistantPlugins plugins={plugins} busy={pluginBusy}
-                    checks={pluginChecks?.scope === assistantScope ? pluginChecks.items : {}}
+                    checks={pluginChecks}
                     onCheck={(plugin) => pluginAction("check", plugin)}
                     onRemove={(plugin) => pluginAction("remove", plugin)}
                     onSave={(plugin, credential) => savePlugin(plugin, credential)} />}
