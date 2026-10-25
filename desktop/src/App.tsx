@@ -141,6 +141,7 @@ import { useTrustLevel } from "./hooks/useTrustLevel";
 import { useJournal } from "./hooks/useJournal";
 import { useLlmProfile } from "./hooks/useLlmProfile";
 import { EMPTY_PROCESS, observeCurrentRuntime, pruneRuntimeTokens } from "./lib/runtimeSupervision";
+import { inboxTarget, remoteProcessStatus } from "./lib/workspaceRouting";
 import { agentFrame, outgoingMessage } from "./protocol/outgoingPrompt";
 import { usePlugins } from "./hooks/usePlugins";
 import { useDecisionNotifications } from "./hooks/useDecisionNotifications";
@@ -1311,6 +1312,28 @@ function App() {
     resetNotificationBaseline();
   };
 
+  /**
+   * 切项目 / 范围 / 常驻电脑的共同骨架：同一时刻只允许一个切换（调用方先查 projectSwitchingRef）；
+   * 前后各作废一次监督器的旧轮次；先断开、清视图，再由 body 连到新的地方。
+   */
+  const runWorkspaceSwitch = async (failure: string, body: () => Promise<boolean>): Promise<boolean> => {
+    projectSwitchingRef.current = true;
+    setProjectSwitching(true);
+    supervisionGenerationRef.current += 1;
+    try {
+      await disconnect();
+      clearProjectView();
+      return await body();
+    } catch (error) {
+      setBanner(errorText(error, failure));
+      return false;
+    } finally {
+      supervisionGenerationRef.current += 1;
+      projectSwitchingRef.current = false;
+      setProjectSwitching(false);
+    }
+  };
+
   const switchProject = async (project: DesktopProjectProfile, options: { fresh?: boolean; sid?: string } = {}): Promise<boolean> => {
     if (projectSwitchingRef.current) return false;
     if (project.kind !== "remote" && !remoteProjectRef.current && project.repoRoot === repoRoot.trim()) {
@@ -1338,12 +1361,7 @@ function App() {
     if (editorDirty && !await confirmAction("当前文件有未保存修改，切换项目会放弃这些修改。确定继续吗？")) {
       return false;
     }
-    projectSwitchingRef.current = true;
-    setProjectSwitching(true);
-    supervisionGenerationRef.current += 1;
-    try {
-      await disconnect();
-      clearProjectView();
+    return runWorkspaceSwitch("切换项目失败", async () => {
       // fresh：启动时回到项目也从新对话开始（上次的会话仍在「最近」里）。
       const sid = options.sid
         ?? (options.fresh ? null : localStorage.getItem(projectSessionKey(project.id)))
@@ -1354,9 +1372,7 @@ function App() {
       if (project.kind === "remote") {
         remoteProjectRef.current = project.id;
         managedProcessRunningRef.current = false;
-        setProcessStatus({ ...EMPTY_PROCESS, runtimeId: `remote:${project.id}`, projectId: project.id,
-          scope: "project", repoRoot: project.repoRoot, baseUrl: project.baseUrl,
-          message: "远端常驻服务由服务器管理" });
+        setProcessStatus(remoteProcessStatus(project, false));
         setRecoveryRecord(null);
         localStorage.setItem(STORAGE_KEYS.lastProjectId, project.id);
         await refreshWorkspaceFiles(project.repoRoot);
@@ -1407,14 +1423,7 @@ function App() {
         sid,
         token: "",
       });
-    } catch (error) {
-      setBanner(errorText(error, "切换项目失败"));
-      return false;
-    } finally {
-      supervisionGenerationRef.current += 1;
-      projectSwitchingRef.current = false;
-      setProjectSwitching(false);
-    }
+    });
   };
 
   // 重启后回到上次停的项目：通用会话先起来（快、且是失败时的落点），连上后再切回去。
@@ -1457,12 +1466,7 @@ function App() {
     if (editorDirty && !await confirmAction("当前文件有未保存修改，切换范围会放弃这些修改。确定继续吗？")) {
       return false;
     }
-    projectSwitchingRef.current = true;
-    setProjectSwitching(true);
-    supervisionGenerationRef.current += 1;
-    try {
-      await disconnect();
-      clearProjectView();
+    return runWorkspaceSwitch("切换工作区范围失败", async () => {
       const sid = scope === "general"
         ? localStorage.getItem(STORAGE_KEYS.generalSid) ?? createSessionId()
         : managedRuntime?.workspaceId ?? createSessionId();
@@ -1486,14 +1490,7 @@ function App() {
         workspaceId: sid,
         token: "",
       });
-    } catch (error) {
-      setBanner(errorText(error, "切换工作区范围失败"));
-      return false;
-    } finally {
-      supervisionGenerationRef.current += 1;
-      projectSwitchingRef.current = false;
-      setProjectSwitching(false);
-    }
+    });
   };
 
   const forgetProject = async (project: DesktopProjectProfile) => {
@@ -1532,30 +1529,19 @@ function App() {
   };
 
   const activateRuntimeInbox = async (runtimeInbox: DesktopRuntimeInbox): Promise<boolean> => {
-    if (runtimeInbox.runtimeId === processStatus.runtimeId && connection === "connected") return true;
-    const host = projects.find((item) => item.id === runtimeInbox.projectId && isAssistantHost(item));
-    if (host) {
-      await changeAppMode("assistant");
-      return remoteProjectRef.current === host.id;
-    }
-    if (runtimeInbox.scope === "general") {
-      const managedRuntime = runtimeProcesses.find((item) => item.runtimeId === runtimeInbox.runtimeId);
-      return switchManagedScope("general", managedRuntime);
-    }
-    if (runtimeInbox.scope === "scratch") {
-      const managedRuntime = runtimeProcesses.find((item) => item.runtimeId === runtimeInbox.runtimeId);
-      if (!managedRuntime) {
-        setBanner("这个 Scratch runtime 已经停止");
+    const target = inboxTarget(runtimeInbox, { currentRuntimeId: processStatus.runtimeId, connected: connection === "connected",
+      projects, runtimeProcesses });
+    switch (target.kind) {
+      case "current": return true;
+      case "assistant":
+        await changeAppMode("assistant");
+        return remoteProjectRef.current === target.host.id;
+      case "scope": return switchManagedScope(target.scope, target.runtime);
+      case "project": return switchProject(target.project);
+      case "unavailable":
+        setBanner(target.message);
         return false;
-      }
-      return switchManagedScope("scratch", managedRuntime);
     }
-    const project = projects.find((item) => item.id === runtimeInbox.projectId || item.repoRoot === runtimeInbox.repoRoot);
-    if (!project) {
-      setBanner("项目已不在最近项目中，无法从收件箱切换");
-      return false;
-    }
-    return switchProject(project);
   };
 
   const openRuntimeInboxSession = async (runtimeInbox: DesktopRuntimeInbox, sid: string, needsInput = false) => {
@@ -1734,12 +1720,7 @@ function App() {
       setBanner("请先完成或拒绝当前源码保存确认");
       return false;
     }
-    projectSwitchingRef.current = true;
-    setProjectSwitching(true);
-    supervisionGenerationRef.current += 1;
-    try {
-      await disconnect();
-      clearProjectView();
+    return runWorkspaceSwitch("连接常驻电脑失败", async () => {
       const key = mainChatKey(host.id);
       let sid = "";
       try { sid = localStorage.getItem(key) ?? ""; } catch { /* 读不到就新开一个 */ }
@@ -1754,20 +1735,11 @@ function App() {
       remoteProjectRef.current = host.id;
       assistantHostRef.current = host.id;
       managedProcessRunningRef.current = false;
-      setProcessStatus({ ...EMPTY_PROCESS, runtimeId: `remote:${host.id}`, projectId: host.id,
-        scope: "general", repoRoot: "", baseUrl: host.baseUrl,
-        message: "常驻电脑上的助理由服务器管理" });
+      setProcessStatus(remoteProcessStatus(host, true));
       setRecoveryRecord(null);
       return await connectToRuntime(sid, { baseUrl: host.baseUrl, repoRoot: "", scope: "general",
         remoteProjectId: host.id, token: "" });
-    } catch (error) {
-      setBanner(errorText(error, "连接常驻电脑失败"));
-      return false;
-    } finally {
-      supervisionGenerationRef.current += 1;
-      projectSwitchingRef.current = false;
-      setProjectSwitching(false);
-    }
+    });
   };
 
   /** 新建旁聊。从主要聊天出发时必须换新会话——newSession 对空草稿只清界面不换 id，会把旁聊并进主要聊天。 */
