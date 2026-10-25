@@ -29,7 +29,6 @@ import { isPermissionGranted, sendNotification } from "@tauri-apps/plugin-notifi
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   ArrowUp,
-  ChevronDown,
   Eye,
   FileCode2,
   GitCompareArrows,
@@ -37,13 +36,10 @@ import {
   Laptop,
   Library,
   ListChecks,
-  Search,
   Server,
   FolderPlus,
-  Package,
   PanelRight,
   Plus,
-  SquarePen,
   SquareTerminal,
   X,
 } from "lucide-react";
@@ -100,6 +96,7 @@ import { autoCheckForUpdate, type UpdateCheck } from "./lib/updateCheck";
 import { SidebarFooter } from "./components/SidebarFooter";
 import { AttachmentChips, ComposerModelPicker, ConfirmCard, ContextChips, PromptQueuePanel, TrustChip, WorkspaceRequestCard } from "./components/ComposerPanels";
 import { ConversationHome, FirstRunCard } from "./components/ConversationHome";
+import { SidebarBrand, SidebarSectionTitle, WorkNav } from "./components/SidebarChrome";
 import { assistantPanelActions } from "./lib/assistantPanelActions";
 import { SidebarProjects } from "./components/SidebarProjects";
 import { SidebarSessions } from "./components/SidebarSessions";
@@ -238,7 +235,6 @@ function App() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined);
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [projectSessions, setProjectSessions] = useState<ProjectSessionSummary[]>([]);
-  const [sidebarSearchOpen, setSidebarSearchOpen] = useState(false);
   const [sidebarQuery, setSidebarQuery] = useState("");
   // 当前工作区的会话有变化（新开、发了消息）时，顺带刷新各项目下列出的最近会话。
   const sessionsSignature = sessions.map((item) => `${item.sid}:${item.messages}`).join("|");
@@ -2522,27 +2518,7 @@ function App() {
 
       <div className={`workbench ${computerWorkspace.view ? "computer-open" : ""} ${mainView === "chat" && inspectorOpen ? "inspector-open" : "inspector-closed"} ${mainView === "chat" && inspectorOpen && appMode !== "assistant" && !showWorkbenchLauncher && ["files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
         <aside className="sidebar">
-          <div className="sidebar-brand">
-            <strong>VortoCode</strong>
-            <button
-              className={sidebarSearchOpen ? "active" : ""}
-              aria-label="搜索会话和项目"
-              title="搜索会话和项目"
-              onClick={() => { setSidebarSearchOpen(!sidebarSearchOpen); setSidebarQuery(""); }}
-            ><Search size={15} /></button>
-          </div>
-          {sidebarSearchOpen && (
-            <label className="sidebar-search">
-              <Search size={14} />
-              <input
-                autoFocus
-                value={sidebarQuery}
-                placeholder="搜索会话和项目"
-                onChange={(event) => setSidebarQuery(event.target.value)}
-                onKeyDown={(event) => { if (event.key === "Escape") { setSidebarSearchOpen(false); setSidebarQuery(""); } }}
-              />
-            </label>
-          )}
+          <SidebarBrand query={sidebarQuery} onQuery={setSidebarQuery} />
           <ModeSwitch mode={appMode} resident={Boolean(findAssistantHost(projects))} onChange={(mode) => void changeAppMode(mode)} />
           {appMode === "assistant" ? (
             <AssistantSidebar
@@ -2556,26 +2532,15 @@ function App() {
               onNewSideChat={() => void newSideChat()}
             />
           ) : <>
-          <nav className="sidebar-nav" aria-label="主导航">
-            <button onClick={() => { setMainView("chat"); void newSession(); }} disabled={connection !== "connected"}>
-              <SquarePen size={16} /><span>新对话</span>
-            </button>
-            <button className={mainView === "management" ? "active" : ""} title="派出去的任务、目标和等你确认的事" onClick={()=>{openInspector("inbox");void refreshRuntimeInboxes();}}><ListChecks size={16}/><span>工作</span></button>
-            <button
-              className={mainView === "artifacts" ? "active" : ""}
-              title="Agent 做出来的网页和文档"
-              onClick={() => { setMainView("artifacts"); void refreshProjectAssets(activeScope !== "general"); }}
-            >
-              <Package size={16} /><span>产物</span>
-            </button>
-          </nav>
-          <div className="sidebar-section-title project-section-title sidebar-first-section">
-            <button className="sidebar-fold" aria-expanded={projectsOpen} onClick={() => setProjectsOpen(!projectsOpen)}>
-              项目<ChevronDown size={13} className={projectsOpen ? "" : "folded"} />
-            </button>
+          <WorkNav view={mainView} connected={connection === "connected"}
+            onNewChat={() => { setMainView("chat"); void newSession(); }}
+            onWork={() => { openInspector("inbox"); void refreshRuntimeInboxes(); }}
+            onArtifacts={() => { setMainView("artifacts"); void refreshProjectAssets(activeScope !== "general"); }} />
+          <SidebarSectionTitle label="项目" className="project-section-title sidebar-first-section"
+            open={projectsOpen} onToggle={() => setProjectsOpen(!projectsOpen)}>
             <button aria-label="连接远端工作区" title="连接远端工作区（另一台电脑上的项目）" onClick={() => setRemoteDialogOpen("project")} disabled={projectSwitching}><Server size={15} /></button>
             <button aria-label="添加 Git 项目" title="添加 Git 项目" onClick={() => void chooseRepo()} disabled={projectSwitching}><FolderPlus size={15} /></button>
-          </div>
+          </SidebarSectionTitle>
           {projectsOpen && (
             <SidebarProjects
               activeScope={activeScope}
@@ -2601,12 +2566,9 @@ function App() {
             />
           )}
 
-          <div className="sidebar-section-title work-items-heading">
-            <button className="sidebar-fold" aria-expanded={recentOpen} onClick={() => setRecentOpen(!recentOpen)}>
-              最近<ChevronDown size={13} className={recentOpen ? "" : "folded"} />
-            </button>
+          <SidebarSectionTitle label="最近" className="work-items-heading" open={recentOpen} onToggle={() => setRecentOpen(!recentOpen)}>
             <button aria-label="新建任务" title="新建任务" onClick={() => void newSession()} disabled={connection !== "connected"}><Plus size={15} /></button>
-          </div>
+          </SidebarSectionTitle>
           {recentOpen && (
             <SidebarSessions
               sessions={sessions}
