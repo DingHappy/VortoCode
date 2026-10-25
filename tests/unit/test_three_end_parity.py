@@ -16,6 +16,8 @@ agent 暴露的工具集与关键参数，任何**未登记**的新漂移都会�
 
 import pytest
 
+from src.gateway.turn_bindings import TurnBindings
+
 pytest.importorskip("textual")   # 构建 TUI agent 需 textual（CI 装了 .[tui]）
 
 
@@ -97,7 +99,7 @@ def test_contract_E_all_shells_delegate_to_gateway_factory(monkeypatch, tmp_path
     _web_agent()
     from src.im.bridge import IMBridge
     stub = SimpleNamespace(workspace_scope="project", repo_root=str(tmp_path), _llm=None,
-                           _confirm_holder={"fn": None}, _progress_holder={"fn": None},
+                           _bindings=TurnBindings(session="im"),
                            _restore_session=lambda agent: None)
     IMBridge._build_agent(stub)
 
@@ -111,7 +113,7 @@ def test_contract_E_im_toolset_equals_cli(monkeypatch, tmp_path):
     from src.im.bridge import IMBridge
     monkeypatch.chdir(tmp_path)
     stub = SimpleNamespace(workspace_scope="project", repo_root=str(tmp_path), _llm=None,
-                           _confirm_holder={"fn": None}, _progress_holder={"fn": None},
+                           _bindings=TurnBindings(session="im"),
                            _restore_session=lambda agent: None)
     im = _names(IMBridge._build_agent(stub))
     cli = _names(_cli_agent(tmp_path))

@@ -25,10 +25,7 @@ def _reload_live_agents() -> int:
         if agent is None:
             continue
         hooks = load_project_hook_system(os.getcwd())
-        if hasattr(agent, "set_hook_system"):
-            agent.set_hook_system(hooks)
-        else:
-            agent._hook_system = hooks
+        agent.set_hook_system(hooks)
         changed += 1
     return changed
 

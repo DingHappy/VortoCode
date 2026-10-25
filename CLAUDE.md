@@ -69,10 +69,10 @@ vc --help                        # 全部子命令：server/agent/im/cron/heartb
 - `gateway/`：只管会话装配与传输——`agent_session`/`session`/`sessions`/`session_actor`/事件流/`protocol`/`client`/`runtime`/`audit`/IM 内嵌服务。
 - `workflow/tasks`：后台任务台账与协作（委派/依赖/续跑/提问/看板投影）；`workflow/review`：Git 评审与交付；`workflow/workbench`：Desktop 工作台（目标/命令运行/终端/日志）；`workflow/pipeline`：非代码流水线。
 - `scheduling/`：cron/heartbeat/自愈/通知台账/中转巡检。
-- `sandbox/`：OS 沙箱**策略** `policy.py`（seatbelt/bwrap 决策、写路径白名单、子进程密钥剥离——安全内核，被 shell/hooks/skills/MCP/runner 共用）+ 沙箱**执行** `runner.py`/`docker_sandbox.py`。
+- `sandbox/`：OS 沙箱**策略** `policy.py`（seatbelt/bwrap 决策、写路径白名单、子进程密钥剥离——安全内核，被 shell/hooks/skills/MCP 共用）。代码片段执行入口 `runner.py`/`docker_sandbox.py` 只有 TUI 在用，2026-10 已删除。
 - 内核**不得导入** `web/`（制品工具已下沉为 `agents/tools/artifacts.py`，cron 排期计算在 `scheduling/cron.py:next_due`）。新业务模块别再往 `gateway/` 塞。
 - **下层一律不导入前端**：除 `web/` `im/` 与入口 `cli.py` 外，任何模块（含函数内延迟 import）都不得导入 `src.web`。下层需要通知前端时用注册钩子（如 `scheduling/notices.py:set_notice_broadcaster`，由 Web 启动时注册）。会话存盘在 `gateway/session_store.py`。SQLite 会话/记忆存储另在 `memory/conversation_db.py`，保留 `SessionStore` / `SessionManager` 类名与原数据库路径。`tests/unit/test_layering.py` 钉住。
-- **宿主机命令执行开关全仓唯一一份**：`sandbox/policy.py:shell_enabled`（Web 的 `require_shell`、cron 的 command 作业、沙箱 runner 回落宿主机都只认它，均函数内导入以便统一打桩）。别在别处再读 `VORTOCODE_ENABLE_SHELL`。
+- **宿主机命令执行开关全仓唯一一份**：`sandbox/policy.py:shell_enabled`（Web 的 `require_shell`、cron 的 command 作业都只认它，均函数内导入以便统一打桩）。别在别处再读 `VORTOCODE_ENABLE_SHELL`。
 - 外层（web/im/cli/gateway/agents）只用 `workflow` 的**公开名字**：不导入下划线私有函数，也不拿台账锁 `TASK_STATE_LOCK` 自己拼锁内读写——要在锁内完成的操作由 workflow 提供成一个函数（如 `snapshot_runtime_inbox`、`audit_owner_dependencies`）。`tests/unit/test_workflow_boundary.py` 钉住。刻意**不**在 `workflow/__init__` 堆再导出：只改 import 路径不改依赖，不算解耦。
 
 **隔离 dev 流水线（护城河）**：`dev_auto` → `decompose` 拆无依赖并行批 → 每件在一次性 git **worktree**（`src/agents/worktree.py`）里 implement+自测 → 逐件+集成验证（`verify_profiles.py`/`subagent_verifier.py`）→ 落 `vorto/*` 分支 → 开 PR。计划落 `.vortocode/dev_plans/<id>.json`（write-ahead，可 `dev_resume` 续跑），并由 `src/workflow/tasks/dev_graph.py` 投影成 DAG 供 `GET /api/dev-plans/{id}/graph` 与 Desktop 依赖图视图消费（**纯投影零新状态**）。各阶段 token 用量经 `src/llm/client.py` 的 `usage_scope()` 分段计量，记 INFO 日志（模型分层的数据地基）。**全程不碰 main / 主工作区**，委派需人工确认。`.vortocode/` 是 gitignored（本地经验：`memory/repo.md`、`agents/*.md` 自定义角色、`artifacts/` 制品）。

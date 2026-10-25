@@ -284,55 +284,6 @@ class SessionStore:
             
             return [dict(row) for row in cursor.fetchall()]
     
-    def add_edit(self, session_id: str, file: str, old_content: str, 
-                 new_content: str, metadata: Dict = None) -> str:
-        """添加编辑"""
-        edit_id = str(uuid.uuid4())[:8]
-        now = datetime.now().isoformat()
-        
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.execute(
-                "INSERT INTO edits (id, session_id, file, old_content, new_content, created_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (edit_id, session_id, file, old_content, new_content, now, json.dumps(metadata or {}))
-            )
-        
-        return edit_id
-    
-    def delete_edits(self, edit_ids: List[str]) -> int:
-        """删除编辑记录（rewind 还原成功后消费掉，LIFO：下次 /rewind 就是上一个回合）。返回删除条数。"""
-        if not edit_ids:
-            return 0
-        with sqlite3.connect(str(self.db_path)) as conn:
-            marks = ",".join("?" * len(edit_ids))
-            cursor = conn.execute(f"DELETE FROM edits WHERE id IN ({marks})", list(edit_ids))
-            return cursor.rowcount
-
-    def apply_edit(self, edit_id: str) -> bool:
-        """标记编辑为已应用"""
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.execute("UPDATE edits SET applied = 1 WHERE id = ?", (edit_id,))
-        return True
-    
-    def get_edits(self, session_id: str, applied: bool = None) -> List[Dict[str, Any]]:
-        """获取编辑"""
-        with sqlite3.connect(str(self.db_path)) as conn:
-            conn.row_factory = sqlite3.Row
-            
-            # rowid 兜底排序：同一微秒内的连续写入 created_at 可能相同，rewind 的 LIFO 依赖插入序
-            if applied is not None:
-                cursor = conn.execute(
-                    "SELECT * FROM edits WHERE session_id = ? AND applied = ? "
-                    "ORDER BY created_at ASC, rowid ASC",
-                    (session_id, int(applied))
-                )
-            else:
-                cursor = conn.execute(
-                    "SELECT * FROM edits WHERE session_id = ? ORDER BY created_at ASC, rowid ASC",
-                    (session_id,)
-                )
-            
-            return [dict(row) for row in cursor.fetchall()]
-    
     def add_memory(self, session_id: str, memory_type: str, content: str,
                    importance: float = 0.5, metadata: Dict = None) -> str:
         """添加记忆"""

@@ -4,7 +4,7 @@
 
     web/auth.resolve_within           空串 → 返回 base 本身；**不捕 OSError**
     agents/tools/files._resolve_within  空串 → None；额外 lstrip("@")；捕 OSError
-    memory/rewind._resolve_within       空串 → 返回 base；捕 OSError
+    memory/rewind._resolve_within       空串 → 返回 base；捕 OSError（rewind 已随 TUI 删除）
 
 而 rewind 那份的注释写着"契约与 src/web/auth.resolve_within 相同"——**那句话是假的**。
 两份各自演化，谁也不知道自己和另一份已经不一样了。
@@ -15,11 +15,10 @@ CLAUDE.md：「安全规则**上收到内核一处**，别在每个端各写一�
 import pytest
 
 from src.agents.tools.files import _resolve_within as agents_fence
-from src.memory.rewind import _resolve_within as memory_fence
 from src.utils.paths import resolve_within as core
 from src.web.auth import resolve_within as web_fence
 
-FENCES = {"core": core, "web": web_fence, "memory": memory_fence, "agents": agents_fence}
+FENCES = {"core": core, "web": web_fence, "agents": agents_fence}
 
 
 @pytest.mark.parametrize("name, fence", FENCES.items())

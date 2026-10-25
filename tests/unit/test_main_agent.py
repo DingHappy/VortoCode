@@ -2357,3 +2357,23 @@ async def test_leaked_tool_syntax_never_reaches_the_user():
     await agent.run_turn("看看这个文件", mode="plan", say=say, emit=emit)
     shown = "\n".join(out["emit"])
     assert "[tool:" not in shown, shown
+
+
+def test_remove_tools_drops_catalogue_schema_and_dispatch_together():
+    """撤销连接器工具时，模型可见的目录/原生 schema 与可执行表必须同一次移除。"""
+    keep = Tool("keep", "保留", {}, lambda a: "k", read_only=True)
+    gone = Tool("mcp__x__read", "撤销", {}, lambda a: "g", read_only=True)
+    agent = MainAgent([keep, gone])
+    assert agent.remove_tools({"mcp__x__read", "never_existed"}) == {"mcp__x__read"}
+    assert "mcp__x__read" not in agent.tools
+    assert [s["function"]["name"] for s in agent._tools_schema()] == ["keep"]
+    assert "mcp__x__read" not in agent._system("plan")
+
+
+def test_confirm_gate_and_untrusted_input_are_fixed_at_construction():
+    async def gate(_message):
+        return True
+    agent = MainAgent([], confirm_gate=gate, untrusted_input=True)
+    assert agent.confirm_gate is gate and agent.untrusted_input is True
+    bare = MainAgent([])
+    assert bare.confirm_gate is None and bare.untrusted_input is False

@@ -973,7 +973,7 @@ async def run_agent_headless(prompt, *, build=False, auto_yes=False, max_steps=N
         from src.agents.mcp_tools import connect_mcp
         try:
             mcp_mgr, mcp_tools = await connect_mcp(cwd, capability_profile=profile,
-                                                 confirm=agent._confirm_gate)
+                                                 confirm=agent.confirm_gate)
             if mcp_tools:
                 agent.add_tools(mcp_tools)
                 if not quiet:

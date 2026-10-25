@@ -77,9 +77,11 @@ class ToolExecutor:
             # Only operator-selected read-only connectors with a literal True
             # hint and YAML ALLOW skip this additional confirmation. ASK still
             # goes through the kernel; remote metadata alone grants nothing.
-            from src.agents.gate import make_confirm_gate, request
+            from src.agents.gate import is_kernel_gate, make_confirm_gate, request
             try:
-                gate = make_confirm_gate(self.confirm, can_ask_human=self.confirm is not None)
+                # 会话门已是内核 gate → 直接用（再包会叠横幅、污染审计）；端传的裸回调才包一层。
+                gate = self.confirm if is_kernel_gate(self.confirm) else \
+                    make_confirm_gate(self.confirm, can_ask_human=self.confirm is not None)
                 exempt = (permission_result.allowed and not permission_result.requires_confirmation
                           and self._read_only_connector_call(tool))
                 approved = exempt or await request(gate, f"MCP 工具 `{tool_name}` 需要确认\n  参数：{arguments}")

@@ -220,6 +220,8 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     kwargs["permissions"] = load_permissions(repo_root)
                     if question.tool is not None:
                         tools.append(question.tool)
+                    if question.tainted:     # 只在构造时声明、只升不降；不在装配后改私有属性
+                        kwargs["untrusted_input"] = True
                 agent = agent_factory(
                     tools,
                     llm=impl_llm,
@@ -231,7 +233,6 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                     agent.max_steps = min(agent.max_steps, 16)
                     agent.build_max_steps = min(agent.build_max_steps, 16)
                     agent.build_auto_continues = 0
-                    agent._untrusted_input = question.tainted
                 return agent
             return _b
         _mk.followups = recorded             # 本次实现里子 Agent 记下的跟进建议标题（报告用）

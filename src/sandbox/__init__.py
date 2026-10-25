@@ -1,19 +1,5 @@
-"""沙箱执行环境模块"""
+"""OS 沙箱策略（policy.py，安全内核）。
 
-from .docker_sandbox import (
-    DockerSandbox,
-    SandboxManager,
-    SandboxExecutor,
-    SandboxConfig,
-    SandboxResult,
-    SandboxStatus
-)
-
-__all__ = [
-    "DockerSandbox",
-    "SandboxManager",
-    "SandboxExecutor",
-    "SandboxConfig",
-    "SandboxResult",
-    "SandboxStatus",
-]
+代码片段执行入口 runner.py / docker_sandbox.py 只有已退役的 TUI 调用，2026-10 一并删除；
+命令执行走 run_command → policy。请直接 `from src.sandbox.policy import ...`。
+"""
