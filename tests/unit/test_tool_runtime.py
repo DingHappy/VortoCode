@@ -269,3 +269,32 @@ async def test_supervised_sensitive_file_denial_survives_a_local_profile(tmp_pat
         supervised=True, capabilities=SessionCapabilities.for_profile("local", str(tmp_path)))
     outcome = await runtime.execute("read_file", {"path": ".env"})
     assert outcome.status == "blocked" and "监管拦截" in outcome.text
+
+
+async def test_audit_and_hook_failures_keep_the_result_but_are_logged(caplog):
+    """审计回调、Hook 调用本身出错：按设计不改变工具结果，但必须留下日志——不能无声地丢掉审计。"""
+    def broken_audit(*args):
+        raise RuntimeError("audit store unavailable")
+
+    async def broken_hook(stage, payload, stoppable=False):
+        raise RuntimeError("hook system crashed")
+
+    runtime, _ = host([Tool("echo", "Echo", {}, echo, read_only=True)], on_result=broken_audit, on_hook=broken_hook)
+    with caplog.at_level("WARNING", logger="src.agents.tool_runtime"):
+        outcome = await runtime.execute("echo", {"text": "hi"})
+    assert outcome.text == "hi"
+    assert "Hook 调用失败" in caplog.text and "hook system crashed" in caplog.text
+    assert "工具结果的审计回调失败：echo" in caplog.text and "audit store unavailable" in caplog.text
+
+
+async def test_a_failing_decision_audit_does_not_change_the_decision_but_is_logged(caplog):
+    def broken_audit(operation, decision, tainted):
+        raise RuntimeError("audit store unavailable")
+
+    async def human(message):
+        return True
+
+    gate = make_confirm_gate(human, can_ask_human=True, on_decision=broken_audit)
+    with caplog.at_level("WARNING", logger="src.agents.gate"):
+        assert await gate("删除 build/ 目录") is True
+    assert "确认决定的审计回调失败：删除 build/ 目录" in caplog.text

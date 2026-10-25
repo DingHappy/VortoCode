@@ -8,6 +8,7 @@ Tool factories must still bind the shared confirmation gate to their handlers.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -20,6 +21,8 @@ from src.agents.tool import Tool, ToolTurnYield, tool_definitions
 from src.agents.wait_clock import minus_wait, waited
 from src.agents.tools._common import _max_tool_result
 from src.llm.hard_budget import claim_check_tool
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -88,8 +91,8 @@ class ToolRuntime:
         if self.context.on_hook is not None:
             try:
                 return await self.context.on_hook(stage, payload, stoppable=stoppable)
-            except Exception:
-                pass
+            except Exception:  # noqa: BLE001 —— Hook 出错按设计隔离、不阻断工具；但不许静默
+                logger.warning("Hook 调用失败，按隔离处理继续执行：%s %s", stage, payload.get("tool"), exc_info=True)
         return None
 
     def mark_taint(self, tools: list[Tool]) -> None:
@@ -228,8 +231,8 @@ class ToolRuntime:
         if ctx.on_result is not None:           # 审计钩子（失败不影响工具）
             try:
                 ctx.on_result(name, args, result)
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception:  # noqa: BLE001 —— 审计失败不影响工具结果，但不能无声地丢掉审计
+                logger.warning("工具结果的审计回调失败：%s", name, exc_info=True)
         outcome = finish(status, result)
         if yielded is not None:
             raise yielded
