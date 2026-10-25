@@ -9,7 +9,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useEffect, useRef, useState, type SetStateAction } from "react";
 
-import { restartSavedModelProfile, type ModelSaveKind } from "../lib/modelProfileSave";
+import { restartSavedModelProfile, unchangedModelRevision, type ModelSaveKind } from "../lib/modelProfileSave";
 import { isModelProfileConflict } from "../lib/modelProfileConflict";
 import { errorText } from "../lib/errorText";
 import { confirmAction } from "../lib/confirm";
@@ -107,7 +107,7 @@ export function useLlmProfile(
         roleModels: llmRolesInput,
       });
       applyLlmProfile(profile);
-      const feedback = await restartSavedModelProfile(onRestartRuntime, "保存");
+      const feedback = await restartSavedModelProfile(onRestartRuntime, "保存", unchangedModelRevision(llmProfile?.revision, profile.revision));
       setLlmSaveNote(feedback.message); setLlmSaveKind(feedback.kind); onBanner(feedback.message);
     } catch (error) {
       setLlmProfileConflict(isModelProfileConflict(error));
@@ -126,7 +126,7 @@ export function useLlmProfile(
     try {
       const profile = await invoke<DesktopLlmProfileStatus>("clear_llm_profile", { expectedRevision: llmProfile?.revision ?? null });
       applyLlmProfile(profile);
-      const feedback = await restartSavedModelProfile(onRestartRuntime, "清除");
+      const feedback = await restartSavedModelProfile(onRestartRuntime, "清除", unchangedModelRevision(llmProfile?.revision, profile.revision));
       setLlmSaveNote(feedback.message); setLlmSaveKind(feedback.kind); onBanner(feedback.message);
     } catch (error) {
       setLlmProfileConflict(isModelProfileConflict(error));

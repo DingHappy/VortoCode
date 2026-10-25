@@ -145,3 +145,19 @@ final result: passed
 - 截图：`.vortocode/artifacts/settings-conflict-20261025/default-preview.png` 和 `provider-preview.png`。已检查冲突卡片文字、摘要对齐、按钮和固定底栏；截图用于冲突卡片布局。最后新增的冲突期间撤下旧引擎回执由真实 SettingsModal SSR 回归验证。
 - 本轮前端 1106 passed，Rust 128 passed、2 ignored；TypeScript、cargo check 和生产构建通过。沿用既有大 chunk 提示。Python 源码未变，上一轮完整回归 5043 passed、1 skipped 未在本轮重复。
 - 全程为合成 IPC 验收，没有修改用户配置、调用真实模型或部署到常驻服务器。本轮没有重新打包安装；本机已安装 0.2.21 保持上一轮的构建。
+
+
+## 2026-10-25：无变化保存与本机引擎恢复入口
+
+- 模型配置先完成版本与磁盘基线核对，再比较规范化后的完整原生配置。内容相同保留 revision 和文件字节；旧文件只补写一次既有缓存版本；重复清空不产生新版本。Key、地址和角色路由实际变化仍产生新版本，旧快照和外部改动不能通过无变化保存绕过冲突。
+- 会员刷新原地更新，保留其他服务顺序；读取清单失败时只为同 ID、地址、Key 保留旧清单。前端遇到同一非空版本不重启，也不改变运行时回执所表达的待生效状态。
+- 设置直接提供本机启动、重新连接、重新加载、停止。控制从 App 抽到 useLocalRuntimeControls，复用 ManagedRuntimes；停止/重载前后读取精确进程和原执行所有者的活动计数。繁忙、读取失败、来源切换或启动身份变化时不发停止请求；原生停止在监督器锁内再次检查 expectedLaunchId。
+- Scratch 停止/恢复沿用 workspaceId；远端会话隐藏本机控制和诊断，只提供切回本机入口。核对期间直接控制、诊断中的切换/恢复/连接与设置关闭均锁定。保存成功但重载受阻时保留保存成功与具体待生效原因。
+- 新增 GET /api/runtime-activity：沿用认证，只精确放行 General 的该路径；统计原 actor、输入/确认、TaskRunner、运行监视器、终端和在途写请求，不从历史文件或有界任务列表推断空闲，不返回任务正文或凭据。
+- 完整 ci-local.sh 通过：Python 5055 passed / 10 skipped，e2e 25 passed，前端 1125 passed，Rust 132 passed / 2 ignored，ruff、mypy、TypeScript、cargo check 通过。最终 UI 修正后再次执行生产构建和前端 1125 项通过；原生规范化等价输入测试补强后 Rust 132 项及 cargo check 通过。生产构建保留既有大 chunk 提示。
+- Ego 空间 217 使用真实 SettingsModal、useLlmProfile、useLocalRuntimeControls 和 ManagedRuntimes，原生 IPC/进程/活动数据由夹具提供。已验证繁忙/取消不停止、空闲重载、停止后同入口启动、Scratch 原身份恢复、读取失败保留引擎、远端隔离、延迟核对期间禁用关闭及诊断操作。规范化等价角色输入保存请求 1 次、重启 0 次；繁忙时诊断连接输入可编辑数为 0。
+- 截图与日志在 .vortocode/artifacts/runtime-recovery-20261025/。running-light.png、checking-light.png、stopped-scratch-dark.png 已实际打开检查；截图未覆盖之后补充的诊断禁用规则，该规则另由 DOM/组件回归验证。空间已完成并关闭；Ego 提示有可用更新，本轮未升级。
+- 这是停止前检查，不是跨客户端原子静默租约；其他客户端在最终读取和停止之间提交新工作仍存在竞态。应用退出及后台工作区移除沿用原路径。详见 docs/LOCAL_RUNTIME_CONTROL.md 和 docs/MODEL_CONFIGURATION.md。
+- 未修改用户模型/权限配置、调用真实模型、操作常驻服务器或重新签名/公证/安装。当前源码改动不在本机之前安装的 0.2.22 中；本轮未推送。Git 提交状态以实际记录为准。
+
+本轮源码和合成界面验收结果：passed；真实新构建的原生应用验收待进行。

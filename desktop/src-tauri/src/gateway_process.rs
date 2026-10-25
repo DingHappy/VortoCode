@@ -10,6 +10,7 @@ pub(crate) fn process_status(inner: &mut GatewayProcessInner) -> GatewayProcessS
 
     match checked {
         Some((pid, Ok(None))) => GatewayProcessStatus {
+            launch_id: inner.configuration_launch_id.clone(),
             running: true,
             pid: Some(pid),
             runtime_id: Some(inner.runtime_id.clone()),
@@ -31,6 +32,7 @@ pub(crate) fn process_status(inner: &mut GatewayProcessInner) -> GatewayProcessS
         Some((_pid, Ok(Some(exit)))) => {
             inner.child = None;
             GatewayProcessStatus {
+                launch_id: inner.configuration_launch_id.clone(),
                 running: false,
                 pid: None,
                 runtime_id: Some(inner.runtime_id.clone()),
@@ -51,6 +53,7 @@ pub(crate) fn process_status(inner: &mut GatewayProcessInner) -> GatewayProcessS
             }
         }
         Some((_pid, Err(error))) => GatewayProcessStatus {
+            launch_id: inner.configuration_launch_id.clone(),
             running: false,
             pid: None,
             runtime_id: Some(inner.runtime_id.clone()),
@@ -70,6 +73,7 @@ pub(crate) fn process_status(inner: &mut GatewayProcessInner) -> GatewayProcessS
             message: format!("无法读取 runtime 状态：{error}"),
         },
         None => GatewayProcessStatus {
+            launch_id: None,
             running: false,
             pid: None,
             runtime_id: None,
@@ -87,6 +91,7 @@ pub(crate) fn process_status(inner: &mut GatewayProcessInner) -> GatewayProcessS
 
 pub(crate) fn empty_process_status(message: impl Into<String>) -> GatewayProcessStatus {
     GatewayProcessStatus {
+        launch_id: None,
         running: false,
         pid: None,
         runtime_id: None,
@@ -253,12 +258,19 @@ pub(crate) fn bundled_runtime_path(app: &AppHandle) -> Result<PathBuf, String> {
     if path.is_file() {
         Ok(path)
     } else {
-        Err(format!("无法定位 Desktop 内置 runtime：{} 不存在", path.display()))
+        Err(format!(
+            "无法定位 Desktop 内置 runtime：{} 不存在",
+            path.display()
+        ))
     }
 }
 
 pub(crate) fn bundled_runtime_in(resources: &Path) -> PathBuf {
-    let name = if cfg!(windows) { "vortocode-runtime.exe" } else { "vortocode-runtime" };
+    let name = if cfg!(windows) {
+        "vortocode-runtime.exe"
+    } else {
+        "vortocode-runtime"
+    };
     resources.join("runtime").join(name)
 }
 
@@ -483,7 +495,10 @@ pub(crate) fn start_gateway(
     }
     let mut last_not_found = None;
     for (mut command, label) in candidates {
-        command.env("VORTOCODE_MODEL_CONFIGURATION_REVISION", &llm_snapshot.revision);
+        command.env(
+            "VORTOCODE_MODEL_CONFIGURATION_REVISION",
+            &llm_snapshot.revision,
+        );
         command.env("VORTOCODE_CONFIGURATION_LAUNCH_ID", &launch_id);
         configure_llm_profile(&mut command, llm_profile.as_ref());
         configure_browser_control(&mut command, &preferences);
@@ -569,6 +584,7 @@ pub(crate) fn start_gateway(
 pub(crate) fn stop_gateway(
     app: AppHandle,
     runtime_id: Option<String>,
+    expected_launch_id: Option<String>,
     state: State<'_, GatewayProcess>,
 ) -> Result<GatewayProcessStatus, String> {
     let mut supervisor = state
@@ -579,6 +595,10 @@ pub(crate) fn stop_gateway(
     let Some(target) = target else {
         return Ok(empty_process_status("Desktop 尚未启动本机 runtime"));
     };
+    check_stop_launch(
+        supervisor.runtimes.get(&target),
+        expected_launch_id.as_deref(),
+    )?;
     if !supervisor.runtimes.contains_key(&target) {
         if supervisor.active_runtime_id.as_deref() == Some(target.as_str()) {
             supervisor.active_runtime_id = None;
@@ -610,4 +630,38 @@ pub(crate) fn stop_supervised_runtime(
         supervisor.active_runtime_id = None;
     }
     Ok(true)
+}
+
+fn check_stop_launch(
+    inner: Option<&GatewayProcessInner>,
+    expected: Option<&str>,
+) -> Result<(), String> {
+    if let Some(expected) = expected {
+        if expected.is_empty()
+            || inner.and_then(|inner| inner.configuration_launch_id.as_deref()) != Some(expected)
+        {
+            return Err("本机引擎已被其他操作替换或停止，请重新核对；未停止新的进程".into());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    #[test]
+    fn guarded_stop_rejects_replaced_missing_or_unidentified_processes() {
+        let current = GatewayProcessInner {
+            configuration_launch_id: Some("launch-new".into()),
+            ..Default::default()
+        };
+        assert!(check_stop_launch(Some(&current), Some("launch-new")).is_ok());
+        assert!(check_stop_launch(Some(&current), Some("launch-old")).is_err());
+        assert!(check_stop_launch(None, Some("launch-new")).is_err());
+        assert!(check_stop_launch(Some(&current), Some("")).is_err());
+        assert!(
+            check_stop_launch(Some(&GatewayProcessInner::default()), Some("launch-new")).is_err()
+        );
+        assert!(check_stop_launch(Some(&current), None).is_ok());
+    }
 }

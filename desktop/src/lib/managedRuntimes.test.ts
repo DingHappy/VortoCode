@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { DesktopProjectProfile, GatewayProcessStatus, GatewayRecoveryRecord } from "../types";
 import { ManagedRuntimes } from "./managedRuntimes";
@@ -114,4 +114,19 @@ describe("supervision", () => {
 it("a restart refuses to continue when the runtime did not actually stop", async () => {
   const { runtimes } = harness({ stop_gateway: () => process("rt", true) });
   await expect(runtimes.stopForRestart("rt")).rejects.toThrow("模型配置尚未生效");
+});
+
+it("fences a stop to the checked launch and keeps crash supervision after a refused stop", async () => {
+  const { runtimes, calls } = harness({
+    start_gateway: () => process("rt", true), list_gateway_processes: () => [],
+    list_gateway_recoveries: () => [], get_gateway_recovery: () => null,
+    stop_gateway: () => { throw new Error("launch changed"); },
+  });
+  await runtimes.launch({ ...launchArgs, token: "test-token" });
+  await expect(runtimes.stopForRestart("rt", "checked-launch")).rejects.toThrow("launch changed");
+  expect(calls.find(([name]) => name === "stop_gateway")?.[1]).toEqual({ runtimeId: "rt", expectedLaunchId: "checked-launch" });
+  expect(runtimes.tokenFor("rt")).toBe("test-token");
+  const stopped = vi.fn(async () => {});
+  await runtimes.supervise("rt", () => false, stopped);
+  expect(stopped).toHaveBeenCalledTimes(1);
 });

@@ -455,6 +455,9 @@ class RunManager:
         except Exception:  # noqa: BLE001 - UI notification must not break the process
             pass
 
+    def active_count(self) -> int:
+        return len(set(self._processes) | {key for key, task in self._monitors.items() if not task.done()})
+
     def _evidence_revision_for(self, goal_id: str) -> tuple:
         """取目标分支的版本快照。**阻塞**（git 子进程）——从 async 路径调用务必过 to_thread。"""
         from src.workflow.workbench.goals import GoalLedger, evidence_revision

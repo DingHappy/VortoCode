@@ -1164,5 +1164,11 @@
     "methods": [
       "POST"
     ]
+  },
+  {
+    "path": "/api/runtime-activity",
+    "methods": [
+      "GET"
+    ]
   }
 ]

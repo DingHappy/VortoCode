@@ -38,6 +38,15 @@ app.middleware("http")(auth_middleware)
 
 
 @app.middleware("http")
+async def runtime_activity_middleware(request, call_next):
+    if request.method in {"GET", "HEAD", "OPTIONS"}:
+        return await call_next(request)
+    from src.gateway.runtime_activity import track_runtime_write
+    with track_runtime_write():
+        return await call_next(request)
+
+
+@app.middleware("http")
 async def workspace_scope_middleware(request, call_next):
     """General 的 REST 面同样无目录；不能只缩 Agent 工具、却让侧栏 API 偷跑 Shell/Git。"""
     from src.gateway.workspace_scope import http_workspace_requirement

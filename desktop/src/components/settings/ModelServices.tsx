@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import { providerDraftState, type ProviderDraft } from "../../lib/providerDraft";
 import { confirmAction } from "../../lib/confirm";
 import { isModelProfileConflict } from "../../lib/modelProfileConflict";
+import { unchangedModelRevision } from "../../lib/modelProfileSave";
 import { ModelProfileConflict } from "./ModelProfileConflict";
 import { errorText } from "../../lib/errorText";
 import { formatTokenCount } from "../../lib/labels";
@@ -93,6 +94,10 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
     onProfile(next);
     setConflict(false);
     setDraft(null); setShowKey(false); setAdding(false);
+    if (unchangedModelRevision(profile?.revision, next.revision)) {
+      setNote(`${done}；配置内容未变化，保留当前引擎状态`);
+      return;
+    }
     try {
       const restarted = await onRestartRuntime();
       setNote(restarted ? `${done}，本机引擎已重启` : `${done}，下次启动本机引擎时生效`);

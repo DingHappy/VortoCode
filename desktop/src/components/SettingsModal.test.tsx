@@ -84,3 +84,31 @@ it("pauses old runtime receipts and repeated saving until a configuration confli
   expect(markup.match(/<button[^>]*>保存模型配置<\/button>/)?.[0]).toContain("disabled");
   expect(markup).toContain('value="default:draft"');
 });
+it("offers a direct start for an idle General engine without creating a Scratch", () => {
+  const markup = renderSettings({ initialSection: "computer", activeScope: "general", repoRoot: "", connection: "disconnected" });
+  expect(markup).toContain("本机通用工作区");
+  expect(markup.match(/<button[^>]*>启动本机引擎<\/button>/)?.[0]).not.toContain("disabled");
+  expect(markup).not.toContain(">停止本机引擎</button>");
+});
+it("offers guarded reload and stop for an owned engine, with activity feedback", () => {
+  const markup = renderSettings({ initialSection: "computer", processStatus: { running: true, runtimeId: "general", launchId: "launch-test", message: "" }, onReloadRuntime: noop });
+  expect(markup.match(/<button[^>]*>重新加载本机引擎<\/button>/)?.[0]).not.toContain("disabled");
+  expect(markup.match(/<button[^>]*>停止本机引擎<\/button>/)?.[0]).not.toContain("disabled");
+  expect(markup).toContain("仍有活动或无法确认时保留引擎");
+});
+it("does not expose local stop/start controls for remote conversations", () => {
+  const markup = renderSettings({ initialSection: "computer", runtimeIsRemote: true, connection: "disconnected" });
+  expect(markup).toContain("切到本机通用工作区");
+  expect(markup).not.toContain(">启动工作区</button>");
+  expect(markup).not.toContain("高级连接设置");
+  expect(markup).not.toContain(">启动本机引擎</button>");
+  expect(markup).not.toContain(">停止本机引擎</button>");
+  expect(markup).not.toContain(">重新加载本机引擎</button>");
+});
+it("keeps lifecycle controls and closing disabled while activity is being checked", () => {
+  const markup = renderSettings({ initialSection: "computer", activeScope: "general", runtimeActionBusy: true });
+  expect(markup).toContain("正在核对引擎活动");
+  expect(markup.match(/<button[^>]*>新建 Scratch<\/button>/)?.[0]).toContain("disabled");
+  expect(markup.match(/<button[^>]*>选择 Git 项目<\/button>/)?.[0]).toContain("disabled");
+  expect(markup.match(/<button[^>]*>启动本机引擎<\/button>/)?.[0]).toContain("disabled");
+});

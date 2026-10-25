@@ -1,3 +1,4 @@
+import { useLocalRuntimeControls } from "./hooks/useLocalRuntimeControls";
 import { ManagementNav } from "./components/ManagementNav";
 import { isManagementTab } from "./lib/inspector";
 import { WorkbenchLauncher, WorkbenchTabs, type WorkbenchTool } from "./components/WorkbenchTabs";
@@ -1087,6 +1088,16 @@ function App() {
     }
   }, [connectToRuntime, processStatus.runtimeId, runtimes]);
 
+  const localRuntimeControls = useLocalRuntimeControls({
+    processStatus, scope: activeScope, runtime, repoRoot, baseUrl, sid: activeSid, token, runtimes, disconnect, startWorkspace,
+    remote: () => Boolean(remoteProjectRef.current), starting: () => runtimeStartingRef.current,
+    switching: () => projectSwitchingRef.current, client: () => clientRef.current,
+    readActivity: (status, checkedToken) => new GatewayClient({ baseUrl: status.baseUrl!, token: checkedToken }).getRuntimeActivity(),
+    onBanner: setBanner,
+  });
+  const { target: runtimeControlStatus, busy: runtimeActionBusy, note: runtimeActionNote,
+    start: startRuntime, stop: stopRuntime, reload: reloadRuntime, restartIfRunning: restartCurrentRuntimeForLlmProfile } = localRuntimeControls;
+
   useEffect(() => {
     if (initializationStartedRef.current) return;
     initializationStartedRef.current = true;
@@ -1677,6 +1688,7 @@ function App() {
   }, [residentMissed, busy]);
 
   const changeAppMode = async (mode: AppMode, known: DesktopProjectProfile[] = projects) => {
+    if (localRuntimeControls.isOperating()) { setBanner("正在核对本机引擎，请等待操作完成后再切换"); return; }
     setAppMode(mode);
     try { localStorage.setItem(STORAGE_KEYS.appMode, mode); } catch { /* 只影响下次启动记不住 */ }
     if (mode !== "assistant") {
@@ -1982,70 +1994,6 @@ function App() {
     }
   };
 
-  const startRuntime = async () => {
-    if (remoteProjectRef.current) {
-      await connectToRuntime(activeSid);
-      return;
-    }
-    await startWorkspace({
-      repoRoot: repoRoot.trim(),
-      baseUrl,
-      sid: activeSid,
-      token,
-    });
-  };
-
-  const stopRuntime = async () => {
-    if (remoteProjectRef.current) {
-      await disconnect();
-      setBanner("已断开远端连接；服务器和后台任务继续运行");
-      return;
-    }
-    const runtimeId = processStatus.runtimeId;
-    runtimes.invalidate();
-    await disconnect();
-    try {
-      await runtimes.stopCurrent(runtimeId);
-    } catch (error) {
-      setBanner(errorText(error, "停止本地引擎失败"));
-    } finally {
-      runtimes.invalidate();
-    }
-  };
-
-  const restartCurrentRuntimeForLlmProfile = async (): Promise<boolean> => {
-    if (!processStatus.runtimeId || !processStatus.running) return false;
-    const previous = {
-      runtimeId: processStatus.runtimeId,
-      scope: activeScope,
-      workspaceId: processStatus.workspaceId,
-      repoRoot: repoRoot.trim(),
-      baseUrl,
-      sid: activeSid,
-      token,
-    };
-    runtimes.invalidate();
-    await disconnect();
-    try {
-      await runtimes.stopForRestart(previous.runtimeId);
-      const started = await startWorkspace({
-        scope: previous.scope,
-        repoRoot: previous.scope === "project" ? previous.repoRoot : undefined,
-        workspaceId: previous.scope === "scratch" ? previous.workspaceId || previous.sid : undefined,
-        baseUrl: previous.baseUrl,
-        sid: previous.sid,
-        token: previous.token,
-        announce: false,
-      });
-      if (!started) throw new Error("本机引擎未能重新启动");
-      return true;
-    } catch (error) {
-      setBanner(errorText(error, "模型配置已保存，但当前 runtime 重启失败"));
-      throw error;
-    } finally {
-      runtimes.invalidate();
-    }
-  };
 
 
   const runGoal = async (goal: GoalItem, resume = false) => {
@@ -3202,7 +3150,11 @@ function App() {
           connectionNote={connectionNote}
           runtimeStarting={runtimeStarting}
           projectSwitching={projectSwitching}
-          processStatus={processStatus}
+          processStatus={runtimeControlStatus}
+          runtimeActionBusy={runtimeActionBusy}
+          runtimeActionNote={runtimeActionNote}
+          runtimeIsRemote={Boolean(remoteProjectRef.current)}
+          onReloadRuntime={reloadRuntime}
           recoveryRecord={recoveryRecord}
           llmProfile={llmProfile}
           llmBaseInput={llmBaseInput}

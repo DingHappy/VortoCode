@@ -72,6 +72,7 @@ _GENERAL_HTTP_PREFIXES = (
 # 只放行精确形状（不是 /api/cron 前缀）：助理「定时」页的启停与执行历史。启停只认已有作业名+版本、
 # 不收命令/提示词；手动触发 /run 与作业表全景仍需工作区（真机 2026-10-13：常驻助理上点历史 409）。
 _GENERAL_HTTP_PATTERNS = (
+    re.compile(r"/api/runtime-activity"),  # 只读进程活动计数，不授予任务、文件或命令能力。
     re.compile(r"/api/cron/[^/]+/(enabled|history)"),
 )
 _PROJECT_HTTP_PREFIXES = (

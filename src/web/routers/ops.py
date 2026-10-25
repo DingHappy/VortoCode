@@ -36,3 +36,36 @@ async def quick_health_check():
 
 # 注：旧的 /api/tasks/queue 与 /api/tasks/list（基于从未接线的 src/core/task_queue 骨架）已退役。
 # 后台任务改由常驻运行时提供：见 src/web/routers/tasks.py（POST/GET /api/tasks…，gateway.TaskRunner）。
+
+
+@router.get("/api/runtime-activity")
+async def runtime_activity():
+    """A fresh, authenticated, text-free snapshot; no ledger scan or cached inbox."""
+    from pathlib import Path
+    import os
+    from src.gateway.configuration_receipt import configuration_receipt
+    from src.gateway.runtime_activity import runtime_write_count
+    from src.gateway.workspace_scope import current_workspace_scope
+    from src.web.routers import realtime
+    from src.web.routers.tasks import get_runner
+    from src.web.routers.runs import get_run_manager
+    from src.web.routers.terminals import get_terminal_manager
+
+    receipt = configuration_receipt()
+    if receipt is None:
+        return {"version": 1, "ready": False, "launch_id": None,
+                "scope": current_workspace_scope(), "workspace_root": str(Path(os.getcwd()).resolve()), "counts": None}
+    return {
+        "version": 1,
+        "ready": receipt is not None,
+        "launch_id": receipt["launch_id"] if receipt else None,
+        "scope": current_workspace_scope(),
+        "workspace_root": str(Path(os.getcwd()).resolve()),
+        "counts": {
+            **realtime.runtime_session_activity_counts(),
+            "tasks": get_runner().active_count,
+            "commands": get_run_manager().active_count(),
+            "terminals": get_terminal_manager().active_count(),
+            "writes": runtime_write_count(),
+        },
+    }

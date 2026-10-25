@@ -1489,6 +1489,7 @@ export interface PrDeliveryCheckLog {
 }
 
 export interface GatewayProcessStatus {
+  launchId?: string | null;
   running: boolean;
   pid?: number;
   runtimeId?: string;

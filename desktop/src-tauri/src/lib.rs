@@ -1377,6 +1377,7 @@ struct GatewayProcessInner {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct GatewayProcessStatus {
+    launch_id: Option<String>,
     running: bool,
     pid: Option<u32>,
     runtime_id: Option<String>,
@@ -2743,22 +2744,40 @@ pub(crate) async fn upsert_member_provider(
     store: &State<'_, DesktopLlmProfileStore>,
     key: &str,
 ) -> Result<DesktopLlmProfileStatus, String> {
-    let mut profile = saved_profile_for_providers(app, store)?;
+    let profile = saved_profile_for_providers(app, store)?;
     let replacing = profile.providers.iter().any(|existing| existing.id == MEMBER_PROVIDER_ID);
     if !replacing && profile.providers.len() >= MAX_CUSTOM_PROVIDERS {
         return Err(format!("最多添加 {MAX_CUSTOM_PROVIDERS} 个供应商，先删掉一个再加会员模型"));
     }
-    let mut provider = normalize_llm_provider(DesktopLlmProvider {
+    let provider = normalize_llm_provider(DesktopLlmProvider {
         id: MEMBER_PROVIDER_ID.into(),
         name: "VortoCode 会员".into(),
         base_url: format!("{RELAY_ORIGIN}/v1"),
         api_key: with_sk_prefix(key),
         models: Vec::new(),
     })?;
-    provider.models = member_menu_models(fetch_provider_models(&provider).await.unwrap_or_default());
-    profile.providers.retain(|existing| existing.id != MEMBER_PROVIDER_ID);
-    profile.providers.push(provider);
+    let models = fetch_provider_models(&provider).await;
+    let profile = refreshed_member_profile(profile, provider, models);
     persist_profile(app, store, profile)
+}
+
+fn refreshed_member_profile(
+    mut profile: DesktopLlmProfile,
+    mut provider: DesktopLlmProvider,
+    models: Option<Vec<ModelInfo>>,
+) -> DesktopLlmProfile {
+    provider.models = match models {
+        Some(models) => member_menu_models(models),
+        None => profile.providers.iter().find(|existing| existing.id == MEMBER_PROVIDER_ID
+            && existing.base_url == provider.base_url && existing.api_key == provider.api_key)
+            .map(|existing| existing.models.clone()).unwrap_or_else(|| member_menu_models(Vec::new())),
+    };
+    if let Some(existing) = profile.providers.iter_mut().find(|existing| existing.id == MEMBER_PROVIDER_ID) {
+        *existing = provider;
+    } else {
+        profile.providers.push(provider);
+    }
+    profile
 }
 
 /// 会员模型菜单只放能跑 Agent 的对话模型（不要语音、图片、带日期的快照），默认模型排第一。
@@ -3743,6 +3762,39 @@ mod member_menu_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn membership_refresh_preserves_order_catalog_and_revision_when_unchanged() {
+        let root = std::env::temp_dir().join(format!("vorto-member-noop-{}", new_profile_revision()));
+        let path = root.join("profile.json");
+        let store = DesktopLlmProfileStore::default();
+        let initial = store.snapshot(|| read_llm_profile_file(&path)).unwrap();
+        let mut profile = default_llm_profile();
+        profile.api_key = "test-default-key".into();
+        let member = DesktopLlmProvider { id: MEMBER_PROVIDER_ID.into(), name: "VortoCode 会员".into(),
+            base_url: RELAY_BASE_URL.into(), api_key: "sk-test-member".into(), models: vec![RELAY_DEFAULT_MODEL.into(), "other-member-model".into()] };
+        let other = DesktopLlmProvider { id: "other".into(), name: "Other".into(), base_url: "https://other.example.test/v1".into(),
+            api_key: "test-other-key".into(), models: vec!["other-model".into()] };
+        profile.providers = vec![member.clone(), other];
+        let saved = store.commit(&path, &initial.revision, Some(profile)).unwrap();
+        let before = std::fs::read(&path).unwrap();
+        let mut refreshed = member.clone(); refreshed.models.clear();
+        let next = refreshed_member_profile(saved.profile.clone().unwrap(), refreshed.clone(), None);
+        assert_eq!(next.providers[0].id, MEMBER_PROVIDER_ID);
+        assert_eq!(next.providers[0].models, member.models);
+        let same = store.commit(&path, &saved.revision, Some(next)).unwrap();
+        assert_eq!(same.revision, saved.revision);
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        let models = member.models.iter().map(|id| ModelInfo { id: id.clone(), ..Default::default() }).collect();
+        let next = refreshed_member_profile(same.profile.clone().unwrap(), refreshed.clone(), Some(models));
+        assert_eq!(store.commit(&path, &same.revision, Some(next)).unwrap().revision, saved.revision);
+        refreshed.api_key = "sk-test-rotated".into();
+        let next = refreshed_member_profile(same.profile.unwrap(), refreshed, None);
+        let rotated = store.commit(&path, &saved.revision, Some(next)).unwrap();
+        assert_ne!(rotated.revision, saved.revision);
+        assert_eq!(rotated.profile.unwrap().providers[0].api_key, "sk-test-rotated");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     use super::*;
     use std::ffi::OsStr;
     use std::fs::{create_dir_all, remove_dir_all, write};
@@ -5228,6 +5280,7 @@ mod tests {
             message: "running".into(),
         };
         let status = GatewayProcessStatus {
+            launch_id: None,
             running: false,
             pid: None,
             runtime_id: Some("project-test".into()),

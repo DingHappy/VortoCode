@@ -122,6 +122,25 @@ impl DesktopLlmProfileStore {
             return Err(CONFLICT.into());
         }
         next = next.map(normalize_llm_profile).transpose()?;
+        if let Some(profile) = next.as_mut() {
+            profile.revision = Some(cached.revision.clone());
+        }
+        // Check CAS and the disk baseline before recognizing an unchanged write.
+        // Credentials remain part of the native-only equality comparison.
+        if next == cached.profile {
+            // Migrate a legacy file once, retaining the revision already supplied
+            // to running engines. Reading alone never rewrites that file.
+            if next != cached.disk_profile {
+                if let Some(profile) = next.as_ref() {
+                    save_llm_profile_file(path, profile)?;
+                }
+                cached.disk_profile = next;
+            }
+            return Ok(ProfileSnapshot {
+                revision: cached.revision.clone(),
+                profile: cached.profile.clone(),
+            });
+        }
         let revision = new_profile_revision();
         if let Some(profile) = next.as_mut() {
             profile.revision = Some(revision.clone());
@@ -247,6 +266,84 @@ mod tests {
     }
 
     #[test]
+    fn unchanged_save_and_repeated_clear_preserve_revision_and_disk_bytes() {
+        let (path, store, initial) = fixture("unchanged");
+        let empty = store.commit(&path, &initial.revision, None).unwrap();
+        assert_eq!(empty.revision, initial.revision);
+        assert!(!path.exists());
+        let mut profile = default_llm_profile();
+        profile.api_key = "test-idempotent-key".into();
+        profile
+            .role_models
+            .insert("research".into(), "default:research-model".into());
+        let saved = store
+            .commit(&path, &initial.revision, Some(profile))
+            .unwrap();
+        // Formatting is outside the semantic profile. It must survive a no-op,
+        // which also proves that we did not atomically rewrite identical data.
+        let payload = format!("{}\n\n", std::fs::read_to_string(&path).unwrap());
+        std::fs::write(&path, &payload).unwrap();
+        let mut equivalent = saved.profile.clone().unwrap();
+        equivalent.base_url.push('/');
+        equivalent
+            .role_models
+            .insert("research".into(), "research-model".into());
+        let repeated = store
+            .commit(&path, &saved.revision, Some(equivalent))
+            .unwrap();
+        assert_eq!(repeated.revision, saved.revision);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), payload);
+        assert!(store
+            .commit(&path, &initial.revision, saved.profile.clone())
+            .is_err());
+        let cleared = store.commit(&path, &saved.revision, None).unwrap();
+        assert_ne!(cleared.revision, saved.revision);
+        assert_eq!(
+            store
+                .commit(&path, &cleared.revision, None)
+                .unwrap()
+                .revision,
+            cleared.revision
+        );
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn no_op_does_not_hide_external_edits_or_credential_and_routing_changes() {
+        let (path, store, initial) = fixture("meaningful");
+        let mut profile = default_llm_profile();
+        profile.api_key = "test-original-key".into();
+        let mut current = store
+            .commit(&path, &initial.revision, Some(profile))
+            .unwrap();
+        for change in 0..3 {
+            let mut next = current.profile.clone().unwrap();
+            match change {
+                0 => next.api_key = "test-new-key".into(),
+                1 => next.base_url = "https://other.example.test/v1".into(),
+                _ => {
+                    next.role_models
+                        .insert("research".into(), "default:other-model".into());
+                }
+            }
+            let changed = store.commit(&path, &current.revision, Some(next)).unwrap();
+            assert_ne!(changed.revision, current.revision);
+            current = changed;
+        }
+        let mut external = current.profile.clone().unwrap();
+        external.api_key = "test-external-key".into();
+        save_llm_profile_file(&path, &external).unwrap();
+        assert!(store
+            .commit(&path, &current.revision, current.profile.clone())
+            .is_err());
+        assert_eq!(
+            read_llm_profile_file(&path).unwrap().unwrap().api_key,
+            "test-external-key"
+        );
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
     fn external_edit_invalidates_cache_without_overwriting_and_legacy_migrates_on_save() {
         let (path, store, initial) = fixture("external");
         let mut external = default_llm_profile();
@@ -265,6 +362,7 @@ mod tests {
         let saved = store
             .commit(&path, &fresh.revision, fresh.profile.clone())
             .unwrap();
+        assert_eq!(saved.revision, fresh.revision);
         let reloaded_store = DesktopLlmProfileStore::default();
         let reloaded = reloaded_store
             .snapshot(|| read_llm_profile_file(&path))

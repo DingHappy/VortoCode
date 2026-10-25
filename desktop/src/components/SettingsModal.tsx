@@ -102,6 +102,10 @@ type SettingsModalProps = {
   connectionText: string;
   connectionNote: string;
   runtimeStarting: boolean;
+  runtimeActionBusy?: boolean;
+  runtimeActionNote?: string;
+  runtimeIsRemote?: boolean;
+  onReloadRuntime?: () => void;
   projectSwitching: boolean;
   processStatus: GatewayProcessStatus;
   recoveryRecord: GatewayRecoveryRecord | null;
@@ -157,7 +161,7 @@ export function SettingsModal({
   connection,
   connectionText,
   connectionNote,
-  runtimeStarting,
+  runtimeStarting, runtimeActionBusy = false, runtimeActionNote = "", runtimeIsRemote = false, onReloadRuntime,
   projectSwitching,
   processStatus,
   recoveryRecord,
@@ -270,12 +274,14 @@ export function SettingsModal({
     ...Object.entries(drafts).filter(([, state]) => state.dirty).map(([key]) => DRAFT_ITEMS[key]),
   ];
   const pending = pendingChanges.map(item => item.label);
+  const controlScope = processStatus.scope ?? activeScope;
+  const controlRoot = processStatus.repoRoot || repoRoot;
   const modelUnavailable = llmProfileLoading || Boolean(llmProfileError);
   const modelConflict = llmProfileConflict || Boolean(drafts.provider?.conflict);
   const modelReadMessage = llmProfileLoading ? "正在读取本机模型配置…" : llmProfileError;
   const modelFeedback = section === "model" ? modelReadMessage || (llmProfileConflict ? "已保存配置有更新，请先核对最新配置" : llmSaveNote) : "";
   const modelFeedbackError = section === "model" && (Boolean(llmProfileError) || llmProfileConflict || llmSaveKind === "error");
-  const saving = recoveryBusy || llmProfileBusy || experimentalBusy || trustBusy || Object.values(drafts).some(state => state.busy);
+  const saving = runtimeActionBusy || recoveryBusy || llmProfileBusy || experimentalBusy || trustBusy || Object.values(drafts).some(state => state.busy);
   const requestLeave = (action: () => void) => {
     if (saving) return;
     if (pending.length) setCloseAction(() => action);
@@ -451,14 +457,27 @@ export function SettingsModal({
             </section>
             <div id="setting-desktop" className={anchorClass("desktop")} tabIndex={-1}><ResidentDesktopPane onDraftStateChange={draftCallbacks.desktop} /></div>
             <section id="setting-runtime" className={`${anchorClass("runtime")} settings-card`} tabIndex={-1}><div className="settings-card-head"><strong>本机引擎与工作区</strong><span className="settings-scope-tag">这台 Mac</span></div>
-              <p className="settings-runtime-status">{runtimeStarting ? "正在准备本机引擎…" : processStatus.running ? "本机引擎运行中" : "本机引擎未运行"}</p>
-              <details className="settings-runtime-details"><summary>工作区与连接诊断</summary>
+              <p className="settings-runtime-status">{runtimeIsRemote ? "当前会话连接到远端实例" : runtimeStarting ? "正在准备本机引擎…" : processStatus.running ? "本机引擎运行中" : "本机引擎未运行"}</p>
+              <p className="settings-card-note">当前目标：{runtimeIsRemote ? "远端会话；此处不控制服务器" : controlScope === "general" ? "本机通用工作区" : controlScope === "scratch" ? "本机隔离工作区" : `本机项目 · ${controlRoot || "尚未选择目录"}`}</p>
+              <div className="settings-actions" aria-label="本机引擎控制">
+                {runtimeIsRemote ? <button disabled={saving || runtimeStarting || projectSwitching} onClick={() => requestLeave(() => { onClose(); onSwitchScope("general"); })}>切到本机通用工作区</button>
+                  : <>
+                    {!processStatus.running && <button className="primary" disabled={saving || runtimeStarting || projectSwitching || controlScope === "project" && !controlRoot.trim()} onClick={() => void onStartRuntime()}>{runtimeStarting ? "正在准备…" : "启动本机引擎"}</button>}
+                    {processStatus.running && <>
+                      {connection !== "connected" && <button disabled={saving || runtimeStarting || projectSwitching} onClick={() => void onStartRuntime()}>重新连接本机引擎</button>}
+                      <button className="primary" disabled={saving || runtimeStarting || projectSwitching || !processStatus.launchId || !onReloadRuntime} onClick={() => onReloadRuntime?.()}>重新加载本机引擎</button>
+                      <button className="danger" disabled={saving || runtimeStarting || projectSwitching || !processStatus.launchId} onClick={() => void onStopRuntime()}>停止本机引擎</button>
+                    </>}
+                  </>}
+              </div>
+              <p className="settings-card-note" role="status">{runtimeIsRemote ? "切到本机工作区后可管理本机引擎；远端任务继续运行。" : runtimeActionBusy ? "正在核对引擎活动，请等待操作完成…" : runtimeActionNote || "停止与重新加载前会即时核对会话、后台任务和终端；仍有活动或无法确认时保留引擎。"}</p>
+              {!runtimeIsRemote && <details className="settings-runtime-details"><summary>工作区与连接诊断</summary>
                 <>
                   <label>
                     <span>{activeScope === "project" ? "Git 项目" : "可选项目"}</span>
                     <div className="field-row">
                       <input value={repoRoot} readOnly placeholder="尚未选择项目" />
-                      <button onClick={() => void onChooseRepo()} disabled={projectSwitching || runtimeStarting}>选择…</button>
+                      <button onClick={() => void onChooseRepo()} disabled={saving || projectSwitching || runtimeStarting}>选择…</button>
                     </div>
                   </label>
 
@@ -482,8 +501,8 @@ export function SettingsModal({
                         : "检测到上次没有完成退出清理。VortoCode 会先尝试恢复，失败后启动新的本地引擎。"}</p>
                       <code title={recoveryRecord.repoRoot}>{recoveryRecord.repoRoot}</code>
                       <div className="recovery-actions">
-                        <button onClick={() => void onDismissRecovery()}>忽略记录</button>
-                        <button className="primary" onClick={() => void onRestoreRecovery()}>恢复工作区</button>
+                        <button disabled={saving} onClick={() => void onDismissRecovery()}>忽略记录</button>
+                        <button className="primary" disabled={saving} onClick={() => void onRestoreRecovery()}>恢复工作区</button>
                       </div>
                     </div>
                   )}
@@ -495,36 +514,35 @@ export function SettingsModal({
                   <p>仅在连接手动启动的 `vc server` 或排查本地引擎时使用。</p>
                   <label>
                     <span>Gateway 地址</span>
-                    <input value={baseUrl} onChange={(event) => onBaseUrlChange(event.target.value)} placeholder="http://127.0.0.1:8080" />
+                    <input disabled={saving} value={baseUrl} onChange={(event) => onBaseUrlChange(event.target.value)} placeholder="http://127.0.0.1:8080" />
                   </label>
                   <label>
                     <span>API Token <em>仅保存在当前进程内</em></span>
-                    <input type="password" value={token} onChange={(event) => onTokenChange(event.target.value)} placeholder="本机无 token 时留空" />
+                    <input disabled={saving} type="password" value={token} onChange={(event) => onTokenChange(event.target.value)} placeholder="本机无 token 时留空" />
                   </label>
                   <div className="settings-note">
                     只允许 127.0.0.1 / localhost。{processStatus.running && processStatus.command ? `当前引擎：${processStatus.command}` : "此入口只连接本机；常驻电脑使用上方的助手连接。"}
                   </div>
                   <div className="advanced-actions">
-                    {processStatus.running && <button className="danger" onClick={() => void onStopRuntime()} disabled={runtimeStarting}>停止本地引擎</button>}
-                    <button onClick={() => void onConnectExisting()} disabled={!repoRoot.trim() || runtimeStarting}>连接已有实例</button>
+                    <button onClick={() => void onConnectExisting()} disabled={saving || !repoRoot.trim() || runtimeStarting}>连接已有实例</button>
                   </div>
                 </details>
 
                 <div className="settings-actions">
                   {activeScope === "project" && repoRoot.trim() ? (
                     connection === "connected"
-                      ? <button className="primary" onClick={() => requestLeave(onClose)}>完成</button>
-                      : <button className="primary" onClick={() => void onStartRuntime()} disabled={runtimeStarting}>{runtimeStarting ? "正在准备…" : "启动工作区"}</button>
+                      ? <button className="primary" disabled={saving} onClick={() => requestLeave(onClose)}>完成</button>
+                      : <button className="primary" onClick={() => void onStartRuntime()} disabled={saving || runtimeStarting}>{runtimeStarting ? "正在准备…" : "启动工作区"}</button>
                   ) : (
                     <>
-                      {activeScope !== "general" && <button onClick={() => void onSwitchScope("general")} disabled={runtimeStarting || projectSwitching}>返回通用会话</button>}
-                      {activeScope === "general" && <button onClick={() => void onSwitchScope("scratch")} disabled={runtimeStarting || projectSwitching}>新建 Scratch</button>}
-                      <button className="primary" onClick={() => void onChooseRepo()} disabled={runtimeStarting || projectSwitching}>选择 Git 项目</button>
-                      {connection === "connected" && <button onClick={() => requestLeave(onClose)}>完成</button>}
+                      {activeScope !== "general" && <button onClick={() => void onSwitchScope("general")} disabled={saving || runtimeStarting || projectSwitching}>返回通用会话</button>}
+                      {activeScope === "general" && <button onClick={() => void onSwitchScope("scratch")} disabled={saving || runtimeStarting || projectSwitching}>新建 Scratch</button>}
+                      <button className="primary" onClick={() => void onChooseRepo()} disabled={saving || runtimeStarting || projectSwitching}>选择 Git 项目</button>
+                      {connection === "connected" && <button disabled={saving} onClick={() => requestLeave(onClose)}>完成</button>}
                     </>
                   )}
                 </div>
-              </details></section>
+              </details>}</section>
           </div>}
           {visited.has("permissions") && <div hidden={section !== "permissions"} className="settings-page">
             <div id="setting-trust" className={anchorClass("trust")} tabIndex={-1}>        <h3 className="settings-subhead">授权级别 <small>Agent 动手前要不要先问你</small></h3>
