@@ -272,3 +272,20 @@ export function noticeFeedItems(notices: NoticeItem[]): FeedItem[] {
     return [{ ...item, id: `${item.id}:${occurrence}` }];
   });
 }
+
+/** 助理「动态」：回合、派活单与通知、后台任务、Codex 动作，以及正等你批的那条确认。顺序即拼接顺序。 */
+export function assistantFeed({ turns, dispatches, notices, taskItems, codexActions, confirmation }: {
+  turns: AgentTurn[];
+  dispatches: AssistantDispatch[];
+  notices: NoticeItem[];
+  /** 已映射好的后台任务（工作台「任务动态」也用同一份） */
+  taskItems: FeedItem[];
+  codexActions: CodexAction[];
+  confirmation: PendingConfirmation | null;
+}): FeedItem[] {
+  const dispatchItems = [...dispatches.map(dispatchFeedItem), ...noticeFeedItems(notices)]
+    .filter((item): item is FeedItem => item !== null);
+  return [...turns.map(turnFeedItem), ...dispatchItems, ...taskItems,
+    ...codexActions.map(codexActionFeedItem).filter((item): item is FeedItem => item !== null),
+    ...(confirmation ? [confirmationFeedItem(confirmation)] : [])];
+}

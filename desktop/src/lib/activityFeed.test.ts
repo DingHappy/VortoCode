@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CodexAction, TaskItem } from "../types";
-import { codexActionFeedItem, confirmationFeedItem, dispatchFeedItem, noticeFeedItem, noticeFeedItems, feedStatus, feedTime, firstSentence, groupFeed, taskFeedItem, turnFeedItem, type FeedItem } from "./activityFeed";
+import { assistantFeed, codexActionFeedItem, confirmationFeedItem, dispatchFeedItem, noticeFeedItem, noticeFeedItems, feedStatus, feedTime, firstSentence, groupFeed, taskFeedItem, turnFeedItem, type FeedItem } from "./activityFeed";
 
 const task = (overrides: Partial<TaskItem>): TaskItem => ({ id: "t1", status: "done", ...overrides });
 const question = (status: "open" | "answered") => ({ id: "q", task_id: "t1", round: 1, status, question: "要删除哪几条帖子？请列出链接。", options: [], context: "", asked_by: "worker", answerer: "owner" as const, created: "", expires_at: "", answer: "", answered_at: "" });
@@ -198,4 +198,12 @@ it.each(["sending", "awaiting", "failed"] as const)("确认 %s 时仍提供回�
   const item = confirmationFeedItem({ id: "ask", text: "继续执行？", tainted: false, responseState });
   expect(item).toMatchObject({ status: "waiting", statusLabel: "确认回执待核对" });
   expect(item.summary).toContain("不会自动重发批准");
+});
+
+it("assistant feed lists turns, then tasks, then the confirmation waiting on you", () => {
+  const items = assistantFeed({ turns: [], dispatches: [], notices: [], codexActions: [],
+    taskItems: [taskFeedItem(task({ id: "t1" })), taskFeedItem(task({ id: "t2", status: "running" }))],
+    confirmation: { id: "ask", text: "继续？", tainted: false } });
+  expect(items.map(item => item.taskId ?? item.confirmationId)).toEqual(["t1", "t2", "ask"]);
+  expect(assistantFeed({ turns: [], dispatches: [], notices: [], codexActions: [], taskItems: [], confirmation: null })).toEqual([]);
 });

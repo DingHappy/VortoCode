@@ -1,7 +1,7 @@
 // App.tsx 抽出的协议活动映射族（B8-④b S1，只搬家不改行为）。
 // 把 ProtocolEvent 流（agent_phase / agent_tool / agent_hook）折叠成 TurnActivity 时间线，
 // 纯函数、无副作用；事件总线（handleProtocolEvent）仍留在 App.tsx，只是调用这些映射器。
-import type { ProtocolEvent, TurnActivity } from "../types";
+import type { ConversationMessage, ProtocolEvent, TurnActivity } from "../types";
 
 export function protocolActivity(event: ProtocolEvent): TurnActivity | null {
   if (!event.id) return null;
@@ -84,4 +84,20 @@ export function finishRunningActivities(
         : `${activity.kind === "tool" ? "工具调用" : activity.kind === "hook" ? "Hook" : "任务"}失败`;
     return { ...activity, status, label };
   });
+}
+
+/** 活动挂到发起它的那条用户消息下；找不到那条消息的（旧回合、别处发起的）单独列出。 */
+export function groupActivitiesByTurn(messages: ConversationMessage[], activities: TurnActivity[]):
+  { activityGroups: Map<string, TurnActivity[]>; orphanActivities: TurnActivity[] } {
+  const groups = new Map<string, TurnActivity[]>();
+  const orphans: TurnActivity[] = [];
+  const messageRids = new Set(messages.filter((message) => message.role === "user" && message.rid).map((message) => message.rid as string));
+  for (const activity of activities) {
+    if (activity.rid && messageRids.has(activity.rid)) {
+      groups.set(activity.rid, [...(groups.get(activity.rid) ?? []), activity]);
+    } else {
+      orphans.push(activity);
+    }
+  }
+  return { activityGroups: groups, orphanActivities: orphans };
 }
