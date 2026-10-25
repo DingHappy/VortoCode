@@ -65,7 +65,10 @@ npm run release:verify -- --mode preview
 ### macOS 稳定开发签名
 
 **优先用 Apple 签发、带 Team ID 的证书**（`Developer ID Application: …`）。模型服务配置已改存本机
-`llm-profile.json`，不再经过钥匙串；登录钥匙串目前只保存远程工作区 token。macOS 除了受信任应用列表，
+`llm-profile.json`，不再经过钥匙串；登录钥匙串保存 VortoCode 账号的登录令牌
+（`com.vortocode.desktop.account`）和远程工作区 token（`com.vortocode.desktop.remote`）。调试构建
+（`tauri dev`、`cargo test`）用的是加了 `.dev` 后缀的另一组条目：dev 版读不到正式版的凭据，账号显示未登录、
+远端缺令牌，要测就在 dev 版里重新登录或登记；它也就不会为正式凭据弹钥匙串密码。macOS 除了受信任应用列表，
 还会校验钥匙串条目的分区列表（partition list）：Apple 签发的证书匹配稳定的 `teamid:<Team ID>`，点过一次
 “始终允许”后重新打包安装也不再询问；自签名证书没有 Team ID，只能按每个构建的 `cdhash:` 记入分区列表，
 **每装一个新构建就会再弹一次授权**（2026-10-06 实测，模型配置条目里积累了十几个 cdhash——这也是模型配置

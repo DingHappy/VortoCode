@@ -623,19 +623,35 @@ mod platform_keychain {
     }
 }
 
+/// Keychain 条目的 service 名。调试构建（`tauri dev`、`cargo test`）一律加 `.dev`，与正式版的条目分开：
+/// 未签名、每次编译签名都变的二进制去读正式版的条目，macOS 每次都要钥匙串密码；要是在弹窗里点了
+/// 「始终允许」，等于把正式凭据交给一个随时会变的程序。分开后 dev 版读不到正式凭据（账号显示未登录、
+/// 远端缺令牌），要在 dev 版里测就在 dev 版里重新登录或登记，存进它自己的条目。正式版的名字不变。
+pub(crate) fn keychain_service(base: &str) -> String {
+    keychain_service_for(base, cfg!(debug_assertions))
+}
+
+fn keychain_service_for(base: &str, debug_build: bool) -> String {
+    if debug_build {
+        format!("{base}.dev")
+    } else {
+        base.to_string()
+    }
+}
+
 // 远程连接 token：与 LLM key 分开的 Keychain 服务，按项目 id 作 account 以支持多远端。
 // read 只在 Rust 侧的远程代理里用——token 原文不进 webview（spec §连接层安全 2）。
 mod remote_token_keychain {
-    use super::platform_keychain;
-    const SERVICE: &[u8] = b"com.vortocode.desktop.remote";
+    use super::{keychain_service, platform_keychain};
+    const SERVICE: &str = "com.vortocode.desktop.remote";
     pub fn read(account: &str) -> Result<Option<String>, String> {
-        platform_keychain::read(SERVICE, account.as_bytes())
+        platform_keychain::read(keychain_service(SERVICE).as_bytes(), account.as_bytes())
     }
     pub fn write(account: &str, token: &str) -> Result<(), String> {
-        platform_keychain::write(SERVICE, account.as_bytes(), token)
+        platform_keychain::write(keychain_service(SERVICE).as_bytes(), account.as_bytes(), token)
     }
     pub fn delete(account: &str) -> Result<(), String> {
-        platform_keychain::delete(SERVICE, account.as_bytes())
+        platform_keychain::delete(keychain_service(SERVICE).as_bytes(), account.as_bytes())
     }
 }
 
@@ -3602,6 +3618,24 @@ fn reveal_desktop_config(app: AppHandle, kind: String) -> Result<(), String> {
     };
     let target = if path.exists() { path } else { path.parent().map(Path::to_path_buf).unwrap_or(path) };
     tauri_plugin_opener::reveal_item_in_dir(&target).map_err(|error| format!("无法在 Finder 中显示：{error}"))
+}
+
+#[cfg(test)]
+mod keychain_service_tests {
+    use super::keychain_service_for;
+
+    #[test]
+    fn release_builds_keep_the_existing_item_names() {
+        assert_eq!(keychain_service_for("com.vortocode.desktop.remote", false), "com.vortocode.desktop.remote");
+        assert_eq!(keychain_service_for("com.vortocode.desktop.account", false), "com.vortocode.desktop.account");
+    }
+
+    #[test]
+    fn debug_builds_never_touch_the_release_items() {
+        let dev = keychain_service_for("com.vortocode.desktop.remote", true);
+        assert_eq!(dev, "com.vortocode.desktop.remote.dev");
+        assert_ne!(dev, keychain_service_for("com.vortocode.desktop.remote", false));
+    }
 }
 
 #[cfg(test)]

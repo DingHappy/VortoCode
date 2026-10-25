@@ -10,14 +10,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, State};
 
-use crate::platform_keychain;
+use crate::{keychain_service, platform_keychain};
 use crate::{DesktopAccount, DesktopLlmProfileStatus, DesktopLlmProfileStore};
 
 pub const DEFAULT_ACCOUNT_URL: &str = "https://account.vortotech.com";
 /// 模型配置里标记「这把 Key 是 VortoCode 会员给的」：退出账号时一并清掉。
 pub const MEMBER_KEY_SOURCE: &str = "vortocode_member";
 const CLIENT_ID: &str = "vortocode-desktop";
-const KEYCHAIN_SERVICE: &[u8] = b"com.vortocode.desktop.account";
+const KEYCHAIN_SERVICE: &str = "com.vortocode.desktop.account";
 const KEYCHAIN_ACCOUNT: &[u8] = b"session";
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 // 访问令牌提前一分钟当作过期，免得请求在路上过期
@@ -288,7 +288,7 @@ fn http(app: &AppHandle) -> Result<reqwest::Client, String> {
 }
 
 fn load_session() -> Result<Option<StoredSession>, String> {
-    let Some(raw) = platform_keychain::read(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)? else {
+    let Some(raw) = platform_keychain::read(keychain_service(KEYCHAIN_SERVICE).as_bytes(), KEYCHAIN_ACCOUNT)? else {
         return Ok(None);
     };
     Ok(serde_json::from_str(&raw).ok())
@@ -296,11 +296,11 @@ fn load_session() -> Result<Option<StoredSession>, String> {
 
 fn save_session(session: &StoredSession) -> Result<(), String> {
     let raw = serde_json::to_string(session).map_err(|error| error.to_string())?;
-    platform_keychain::write(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT, &raw)
+    platform_keychain::write(keychain_service(KEYCHAIN_SERVICE).as_bytes(), KEYCHAIN_ACCOUNT, &raw)
 }
 
 fn clear_session() -> Result<(), String> {
-    platform_keychain::delete(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)
+    platform_keychain::delete(keychain_service(KEYCHAIN_SERVICE).as_bytes(), KEYCHAIN_ACCOUNT)
 }
 
 #[derive(Deserialize)]
