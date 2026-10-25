@@ -11,6 +11,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { releaseVersions, versionMismatches } from "./release-versions.mjs";
 import { RUNTIME_DIR_NAME, filesBelow, machOFiles, runtimeExecutableName, sha256Tree, treeSize } from "./runtime-tree.mjs";
 
 const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -200,7 +201,13 @@ const homePathFiles = filesBelow(appPath)
 const noHomePath = homePathFiles.length === 0;
 if (!noHomePath) warnings.push(`App files contain the build machine's home directory: ${homePathFiles.slice(0, 5).join(", ")}`);
 
-const releaseReady = signed
+const versions = releaseVersions(repoRoot);
+const mismatchedVersions = versionMismatches(versions);
+const versionsAligned = mismatchedVersions.length === 0;
+if (!versionsAligned) warnings.push(`Version numbers differ: ${mismatchedVersions.join(", ")}`);
+
+const releaseReady = versionsAligned
+  && signed
   && notarized
   && gatekeeperAccepted
   && cleanWorktree
@@ -232,7 +239,7 @@ const evidence = {
   generatedAt: new Date().toISOString(),
   git: { cleanWorktree, commit },
   mode,
-  product: { identifier: tauriConfig.identifier, name: tauriConfig.productName, version: tauriConfig.version },
+  product: { identifier: tauriConfig.identifier, name: tauriConfig.productName, version: tauriConfig.version, versions },
   releaseGates: {
     gatekeeperAccepted,
     noHomePath,
@@ -241,6 +248,7 @@ const evidence = {
     releaseReady,
     sidecarSigned,
     signed,
+    versionsAligned,
   },
   sidecarBuild: sidecarManifest,
   targetTriple,
