@@ -5,17 +5,14 @@ import { ActivityFeed } from "./components/ActivityFeed";
 import { AssistantTaskCard } from "./components/AssistantTaskCard";
 import { CodexActionCard } from "./components/CodexActionCard";
 import { AssistantWorkday } from "./components/AssistantWorkday";
-import { loadAssistantData } from "./lib/assistantData";
-import { activityCoverage, type ActivityRead, type ActivitySource, type ActivitySourceName } from "./lib/activitySources";
+import { activityCoverage, type ActivitySource } from "./lib/activitySources";
 import { prepareAvatar } from "./lib/avatar";
 import { resolveMainChat } from "./lib/mainChat";
 import { ChatHistory } from "./components/ChatHistory";
 import { ConversationLocation } from "./components/ConversationLocation";
 import { useConversationLocation } from "./hooks/useConversationLocation";
 import { startPolling } from "./lib/polling";
-import { AssistantRefreshQueue } from "./lib/assistantRefresh";
 import { AssistantActionGate, type AssistantTaskAction } from "./lib/assistantTask";
-import { ConnectorStatusReads } from "./lib/connectorStatus";
 import { openAssistantTask } from "./lib/assistantNavigation";
 import { AssistantAudit, AssistantAvatarImage, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantPlugins, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PhoneChatDialog, type AppMode, type AssistantTab } from "./components/AssistantMode";
 import { AssistantGoals } from "./components/AssistantGoals";
@@ -65,15 +62,7 @@ import {
   normalizeLocalBaseUrl,
 } from "./gateway";
 import type {
-  AgentTurn,
   AssistantDispatch,
-  AssistantMemory,
-  AssistantProfile,
-  AssistantAvatar,
-  MemoryProposal,
-  AssistantConnector,
-  AssistantScheduleItem,
-  PhoneChat,
   AuditEntry,
   CommandRunItem,
   CommandRunKind,
@@ -152,6 +141,7 @@ import { useTrustLevel } from "./hooks/useTrustLevel";
 import { useJournal } from "./hooks/useJournal";
 import { useLlmProfile } from "./hooks/useLlmProfile";
 import { usePlugins } from "./hooks/usePlugins";
+import { useAssistantSnapshot } from "./hooks/useAssistantSnapshot";
 import { useWorkspaceFiles } from "./hooks/useWorkspaceFiles";
 import { useRuntimeInboxes } from "./hooks/useRuntimeInboxes";
 import { contextItemKey, contextItemLabel } from "./lib/sourceContext";
@@ -320,22 +310,20 @@ function App() {
   const [assistantTab, setAssistantTab] = useState<AssistantTab>("feed");
   const computerWorkspace = useComputerWorkspace(appMode === "assistant" && mainView === "chat" && inspectorOpen);
   const [assistantGoalFocus, setAssistantGoalFocus] = useState<{ client: GatewayClient | null; scope: string; id: string } | null>(null);
-  // 助理的名字 / 关于你，以及它记住的事（都在助理所在的那台电脑上）
-  const [assistantProfile, setAssistantProfile] = useState<AssistantProfile>({ name: "VortoCode", soul: "", about_you: "" });
-  const [assistantAvatar, setAssistantAvatar] = useState<AssistantAvatar | null>(null);
-  const scheduleReadEpoch = useRef(0);
-  const [assistantSchedule, setAssistantSchedule] = useState<AssistantScheduleItem[]>([]);
-  const [assistantMemories, setAssistantMemories] = useState<AssistantMemory[]>([]);
-  const [memoryProposals, setMemoryProposals] = useState<MemoryProposal[]>([]);
-  // 设备授权期间只轮询本机凭据状态；这不代表当前会话 MCP 已连接。
-  const [connectorSnapshot, setConnectors] = useState<AssistantConnector[]>([]);
-  const [connectorSnapshotScope, setConnectorSnapshotScope] = useState<string | null>(null);
-  const connectorReads = useRef(new ConnectorStatusReads());
   const [profileDialogOpen, setProfileDialogOpen] = useState(false);
-  // 手机上和助理的聊天：只读查看（不接管——两个进程同时写一段对话会互相覆盖）
-  const [phoneChats, setPhoneChats] = useState<PhoneChat[]>([]);
   const [phoneChatSid, setPhoneChatSid] = useState<string | null>(null);
   const [phoneChatRid, setPhoneChatRid] = useState<string | undefined>();
+  // Snapshots are bound to the loaded host before they can expose actions.
+  const assistantScope = `${baseUrl}:${repoRoot}:${processStatus.runtimeId}:${connection}`;
+  const assistantScopeRef = useRef(assistantScope);
+  assistantScopeRef.current = assistantScope;
+  const {
+    assistantProfile, assistantAvatar, setAssistantAvatar, scheduleReadEpoch, assistantSchedule, setAssistantSchedule,
+    assistantMemories, setAssistantMemories, memoryProposals, setMemoryProposals,
+    connectors, connectorReads, refreshConnectorStatus, phoneChats, agentTurns, activityReads, publishActivityRead,
+    dispatches, dispatchSnapshotScope, codexActions, refreshAgentTurns, setAssistantProfile, invalidateAssistantReads,
+  } = useAssistantSnapshot({ clientRef, assistantScope, assistantScopeRef, connection, assistantTab });
+  // 手机上和助理的聊天：只读查看（不接管——两个进程同时写一段对话会互相覆盖）
   const openPhoneChat = (sid: string, rid?: string) => {
     if (!phoneChats.some(chat => chat.sid === sid)) {
       setBanner("当前尚未取得这段手机聊天记录，请刷新动态后再试；这不表示记录已删除。");
@@ -343,58 +331,12 @@ function App() {
     }
     setPhoneChatSid(sid); setPhoneChatRid(rid);
   };
-  const [agentTurns, setAgentTurns] = useState<AgentTurn[]>([]);
-  // Snapshots are bound to the loaded host before they can expose actions.
-  const assistantScope = `${baseUrl}:${repoRoot}:${processStatus.runtimeId}:${connection}`;
-  const assistantScopeRef = useRef(assistantScope);
-  assistantScopeRef.current = assistantScope;
-  const [activityReads, setActivityReads] = useState<{ client: GatewayClient; scope: string; sources: Partial<Record<ActivitySourceName, ActivityRead>> } | null>(null);
-  const publishActivityRead = useCallback((client: GatewayClient, scope: string, name: ActivitySourceName, state: ActivityRead) => {
-    if (clientRef.current !== client || assistantScopeRef.current !== scope) return;
-    setActivityReads(previous => {
-      if (clientRef.current !== client || assistantScopeRef.current !== scope) return previous;
-      const sources = previous?.client === client && previous.scope === scope ? previous.sources : {};
-      const prior = sources[name] ?? { status: "loading" as const };
-      const next = state.status === "loading" ? { ...prior, checking: true } : { ...prior, ...state, checking: false };
-      return { client, scope, sources: { ...sources, [name]: next } };
-    });
-  }, []);
-  const connectors = connectorSnapshotScope === assistantScope ? connectorSnapshot : [];
-  const connectorAuthorizing = connectors.some((item) => item.authorizing);
-  const refreshConnectorStatus = useCallback((client: GatewayClient, scope: string) => {
-    const current = () => clientRef.current === client && assistantScopeRef.current === scope;
-    return connectorReads.current.read(client, scope, current, (items) => {
-      setConnectors(items); setConnectorSnapshotScope(scope);
-    });
-  }, []);
-  useEffect(() => {
-    const client = clientRef.current;
-    if (client && connection === "connected" && assistantTab === "identity") {
-      void refreshConnectorStatus(client, assistantScope).catch(() => undefined);
-    }
-  }, [assistantTab, assistantScope, connection, refreshConnectorStatus]);
-  useEffect(() => {
-    const client = clientRef.current;
-    if (!client || connection !== "connected" || !connectorAuthorizing || assistantTab !== "identity") return;
-    return startPolling(() => refreshConnectorStatus(client, assistantScope), {
-      intervalMs: 4_000, hiddenIntervalMs: 15_000, visibility: document,
-    });
-  }, [connectorAuthorizing, assistantTab, assistantScope, connection, refreshConnectorStatus]);
-  const [dispatchSnapshot, setDispatches] = useState<AssistantDispatch[]>([]);
-  const [codexActions, setCodexActions] = useState<CodexAction[]>([]);
-  const [dispatchSnapshotScope, setDispatchSnapshotScope] = useState<string | null>(null);
-  const dispatches = dispatchSnapshotScope === assistantScope ? dispatchSnapshot : [];
   const [selectedDispatchId, setSelectedDispatchId] = useState<string | null>(null);
   const [selectedCodexAction, setSelectedCodexAction] = useState<{ client: GatewayClient | null; scope: string; id: string } | null>(null);
-  const assistantLoadEpoch = useRef(0);
-  const assistantRefreshQueue = useRef(new AssistantRefreshQueue());
   const assistantActionGate = useRef(new AssistantActionGate());
+  // 换了助理 scope：数据由 useAssistantSnapshot 清空，这里清掉指向旧数据的选中与弹窗。
   useEffect(() => {
-    assistantLoadEpoch.current += 1;
-    setAgentTurns([]); setDispatches([]); setCodexActions([]); setDispatchSnapshotScope(null); setPhoneChats([]); setPhoneChatSid(null); setPhoneChatRid(undefined);
-    setAssistantProfile({ name: "VortoCode", soul: "", about_you: "" }); setAssistantAvatar(null);
-    setAssistantSchedule([]); setAssistantMemories([]); setMemoryProposals([]);
-    setConnectors([]); setConnectorSnapshotScope(null);
+    setPhoneChatSid(null); setPhoneChatRid(undefined);
     setSelectedDispatchId(null); setSelectedCodexAction(null); setAssistantGoalFocus(null); setProfileDialogOpen(false);
   }, [assistantScope]);
   const [tabsNeedingAttention, setTabsNeedingAttention] = useState<ReadonlySet<InspectorTab>>(
@@ -1825,25 +1767,6 @@ function App() {
     }
     await switchProject(twin);
   };
-
-  const refreshAgentTurns = useCallback(async (refreshId?: string) => {
-    const client = clientRef.current;
-    if (!client) return;
-    const scope = assistantScopeRef.current;
-    const current = () => clientRef.current === client && assistantScopeRef.current === scope;
-    const request = assistantRefreshQueue.current.request(client, scope, refreshId, current, async () => {
-      const epoch = ++assistantLoadEpoch.current;
-      await loadAssistantData(client, () => current() && assistantLoadEpoch.current === epoch,
-        { turns: setAgentTurns,
-          dispatches: items => { setDispatches(items); setDispatchSnapshotScope(scope); },
-          dispatchError: () => setDispatches(previous => previous.map(item => ({ ...item,
-            sync_state: "unreachable", sync_error: "无法读取最新任务单，请恢复连接后核对" }))),
-          profile: setAssistantProfile, chats: setPhoneChats, avatar: setAssistantAvatar,
-          codexActions: setCodexActions, sourceRead: (name, state) => publishActivityRead(client, scope, name, state) }, refreshId);
-    });
-    if (refreshId) await request;
-    else await request.catch(() => {}); // Background polling reports failures through snapshot freshness.
-  }, [publishActivityRead]);
 
   /** 打开「主要聊天」：每台电脑第一次进助理模式时生成一个固定会话并记住，之后一直用它。 */
   const openMainChat = async (hostId: string | null = remoteProjectRef.current && remoteProjectRef.current === assistantHostRef.current ? remoteProjectRef.current : null) => {
@@ -3657,7 +3580,7 @@ function App() {
           const client = clientRef.current;
           if (!client) throw new Error("还没连上助理");
           const scope = assistantScopeRef.current;
-          assistantLoadEpoch.current += 1; // A pre-save profile read cannot restore the old identity.
+          invalidateAssistantReads(); // A pre-save profile read cannot restore the old identity.
           const profile = await client.saveAssistantProfile(next);
           if (clientRef.current !== client || assistantScopeRef.current !== scope) return;
           setAssistantProfile(profile); setProfileDialogOpen(false);
