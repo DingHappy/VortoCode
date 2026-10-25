@@ -4,9 +4,10 @@
  */
 import { describe, expect, it } from "vitest";
 
-import type { ProtocolEvent, TurnActivity } from "../types";
+import type { ConversationMessage, ProtocolEvent, TurnActivity } from "../types";
 import {
   finishRunningActivities,
+  groupActivitiesByTurn,
   hydrateActivities,
   protocolActivity,
   upsertActivity,
@@ -156,4 +157,17 @@ describe("finishRunningActivities", () => {
     expect(cancelled[0].label).toBe("任务已取消");
     expect(cancelled[1].label).toBe("工具调用已取消");
   });
+});
+
+it("groups activities under the user message that started the turn", () => {
+  const messages: ConversationMessage[] = [
+    { id: "u1", role: "user", text: "修登录", rid: "r1" },
+    { id: "a1", role: "assistant", text: "好", rid: "r2" },
+  ];
+  const activity = (id: string, rid?: string): TurnActivity => ({ id, rid, kind: "phase", status: "completed", label: id });
+  const { activityGroups, orphanActivities } = groupActivitiesByTurn(messages,
+    [activity("x", "r1"), activity("y", "r2"), activity("z"), activity("w", "r1")]);
+  expect([...activityGroups.entries()].map(([rid, items]) => [rid, items.map(item => item.id)])).toEqual([["r1", ["x", "w"]]]);
+  // 只有 assistant 消息的回合、没有 rid 的活动都单独列出
+  expect(orphanActivities.map(item => item.id)).toEqual(["y", "z"]);
 });

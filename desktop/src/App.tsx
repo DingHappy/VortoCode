@@ -19,7 +19,7 @@ import { ConnectorStatusReads } from "./lib/connectorStatus";
 import { openAssistantTask } from "./lib/assistantNavigation";
 import { AssistantAudit, AssistantAvatarImage, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantPlugins, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PhoneChatDialog, type AppMode, type AssistantTab } from "./components/AssistantMode";
 import { AssistantGoals } from "./components/AssistantGoals";
-import { codexActionFeedItem, confirmationFeedItem, dispatchFeedItem, isPhoneSession, noticeFeedItems, taskFeedItem, turnFeedItem, type FeedItem } from "./lib/activityFeed";
+import { assistantFeed, isPhoneSession, taskFeedItem } from "./lib/activityFeed";
 import { AssistantActivity, AssistantActivityDetail } from "./components/AssistantActivity";
 import { ComputerLauncher, ComputerWorkspacePanel } from "./components/ComputerWorkspace";
 import { useComputerWorkspace } from "./hooks/useComputerWorkspace";
@@ -160,7 +160,7 @@ import { autoFocusDecision, closeWorkbenchTab, openWorkbenchTab, type InspectorT
 import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey, projectToRestore,
   STORAGE_KEYS } from "./lib/storage";
 import { localDay } from "./lib/time";
-import { finishRunningActivities, hydrateActivities, protocolActivity, upsertActivity } from "./protocol/activities";
+import { finishRunningActivities, groupActivitiesByTurn, hydrateActivities, protocolActivity, upsertActivity } from "./protocol/activities";
 import {
   historyMessages, messageId, promptQueueFromEvent, systemNotice, thinkingActivity, withAssistantReply, withRunningPrompt, withSayActivity,
 } from "./protocol/transcript";
@@ -2662,19 +2662,7 @@ function App() {
     }
   };
 
-  const { activityGroups, orphanActivities } = useMemo(() => {
-    const groups = new Map<string, TurnActivity[]>();
-    const orphans: TurnActivity[] = [];
-    const messageRids = new Set(messages.filter((message) => message.role === "user" && message.rid).map((message) => message.rid as string));
-    for (const activity of activities) {
-      if (activity.rid && messageRids.has(activity.rid)) {
-        groups.set(activity.rid, [...(groups.get(activity.rid) ?? []), activity]);
-      } else {
-        orphans.push(activity);
-      }
-    }
-    return { activityGroups: groups, orphanActivities: orphans };
-  }, [activities, messages]);
+  const { activityGroups, orphanActivities } = useMemo(() => groupActivitiesByTurn(messages, activities), [activities, messages]);
 
   useEffect(() => {
     if (conversationLocation.rid || !autoScrollRef.current) return;
@@ -2691,11 +2679,8 @@ function App() {
   // 任务动态：后台任务台账的投影（useTasks 已随 task_update 推送实时更新）。
   const feedItems = tasks.map(taskFeedItem);
   const feedWaiting = feedItems.filter(item => item.status === "waiting").length;
-  const dispatchItems = [...dispatches.map(dispatchFeedItem), ...noticeFeedItems(notices)]
-    .filter((item): item is FeedItem => item !== null);
-  const assistantFeedItems = [...agentTurns.map(turnFeedItem), ...dispatchItems, ...feedItems,
-    ...codexActions.map(codexActionFeedItem).filter((item): item is FeedItem => item !== null),
-    ...(pendingConfirm ? [confirmationFeedItem(pendingConfirm)] : [])];
+  const assistantFeedItems = assistantFeed({ turns: agentTurns, dispatches, notices, taskItems: feedItems, codexActions,
+    confirmation: pendingConfirm });
   const assistantWaiting = assistantFeedItems.filter(item => item.status === "waiting").length;
   const readSources = activityReads?.client === clientRef.current && activityReads?.scope === assistantScope ? activityReads.sources : {};
   const activitySources: ActivitySource[] = (["turns", "dispatches", "codexActions", "notices"] as const)
