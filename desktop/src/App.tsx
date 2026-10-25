@@ -13,7 +13,6 @@ import { ChatHistory } from "./components/ChatHistory";
 import { ConversationLocation } from "./components/ConversationLocation";
 import { useConversationLocation } from "./hooks/useConversationLocation";
 import { startPolling } from "./lib/polling";
-import { mergeRuntimeInboxes, observeRuntimeInboxes } from "./lib/runtimeInboxReads";
 import { AssistantRefreshQueue } from "./lib/assistantRefresh";
 import { AssistantActionGate, type AssistantTaskAction } from "./lib/assistantTask";
 import { ConnectorStatusReads } from "./lib/connectorStatus";
@@ -154,6 +153,7 @@ import { useJournal } from "./hooks/useJournal";
 import { useLlmProfile } from "./hooks/useLlmProfile";
 import { usePlugins } from "./hooks/usePlugins";
 import { useWorkspaceFiles } from "./hooks/useWorkspaceFiles";
+import { useRuntimeInboxes } from "./hooks/useRuntimeInboxes";
 import { contextItemKey, contextItemLabel } from "./lib/sourceContext";
 import { autoFocusDecision, closeWorkbenchTab, openWorkbenchTab, type InspectorTab } from "./lib/inspector";
 import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey, projectToRestore,
@@ -161,7 +161,6 @@ import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey,
 import { localDay } from "./lib/time";
 import { finishRunningActivities, hydrateActivities, protocolActivity, upsertActivity } from "./protocol/activities";
 import { errorText } from "./lib/errorText";
-import { summarizeRuntimeInboxes } from "./lib/runtimeInbox";
 import { confirmAction } from "./lib/confirm";
 import { composeMessageText, mediaPayload } from "./lib/attachments";
 import { useAttachments } from "./hooks/useAttachments";
@@ -236,11 +235,7 @@ function App() {
   const initializationStartedRef = useRef(false);
   const projectRestoreDoneRef = useRef(false);
   const supervisionGenerationRef = useRef(0);
-  const runtimeInboxGenerationRef = useRef(0);
-  const runtimeInboxKeyRef = useRef("");
-  const runtimeInboxPendingRef = useRef<{ key: string; generation: number; promise: Promise<boolean> } | null>(null);
   const runtimeTokensRef = useRef<Map<string, string>>(new Map());
-  const runtimeInboxSourcesRef = useRef<Array<Omit<DesktopRuntimeInbox, "snapshot" | "error" | "checkedAt">>>([]);
   const projectSwitchingRef = useRef(false);
   const remoteProjectRef = useRef<string | null>(null);
   // 当前连着的远端若是常驻助理（通用范围）就记下它的 id；与 remoteProjectRef 相等才算「在常驻电脑上」。
@@ -262,9 +257,6 @@ function App() {
   const [processStatus, setProcessStatus] = useState<GatewayProcessStatus>(EMPTY_PROCESS);
   const [runtimeProcesses, setRuntimeProcesses] = useState<GatewayProcessStatus[]>([]);
   const [runtimeRecoveries, setRuntimeRecoveries] = useState<GatewayRecoveryRecord[]>([]);
-  const [runtimeInboxes, setRuntimeInboxes] = useState<DesktopRuntimeInbox[]>([]);
-  const runtimeFirstSeenRef = useRef<Map<string, number>>(new Map());
-  const runtimeEverReachableRef = useRef<Set<string>>(new Set());
   const [recoveryRecord, setRecoveryRecord] = useState<GatewayRecoveryRecord | null>(null);
   const [runtimeStarting, setRuntimeStarting] = useState(false);
   // 冷启动的初始化流程还没走完：这期间首页按「正在启动」处理，不先闪一下「有什么可以帮你？」。
@@ -684,48 +676,8 @@ function App() {
     () => runs.filter((run) => ["queued", "running", "cancelling", "failed"].includes(run.status)),
     [runs],
   );
-  const runtimeInboxSources = useMemo(() => runtimeProcesses
-    .filter((item) => item.running && item.runtimeId && item.baseUrl)
-    .map((item) => {
-      const scope = item.scope ?? (item.repoRoot ? "project" : item.runtimeId === "general" ? "general" : "scratch");
-      const project = projects.find((candidate) => candidate.id === item.projectId || candidate.repoRoot === item.repoRoot);
-      const label = scope === "general"
-        ? "通用会话"
-        : scope === "scratch"
-          ? `Scratch ${item.workspaceId?.slice(0, 6) || item.runtimeId?.slice(-6) || ""}`.trim()
-          : project?.name || item.repoRoot?.split("/").filter(Boolean).slice(-1)[0] || "项目工作区";
-      return {
-        runtimeId: item.runtimeId as string,
-        projectId: item.projectId,
-        workspaceId: item.workspaceId,
-        scope,
-        label,
-        repoRoot: item.repoRoot,
-        baseUrl: item.baseUrl as string,
-      };
-    }).concat(projects.filter((item) => item.kind === "remote").map((item) => ({
-      runtimeId: `remote:${item.id}`, projectId: item.id, workspaceId: undefined,
-      scope: (isAssistantHost(item) ? "general" : "project") as WorkspaceScope,
-      label: isAssistantHost(item) ? `常驻助理 · ${item.name}` : `远端 · ${item.name}`,
-      repoRoot: isAssistantHost(item) ? undefined : item.repoRoot, baseUrl: item.baseUrl,
-    }))), [projects, runtimeProcesses]);
-  runtimeInboxSourcesRef.current = runtimeInboxSources;
-  const runtimeInboxSourceKey = useMemo(
-    () => runtimeInboxSources.map(item => JSON.stringify([item.runtimeId, item.baseUrl, item.label,
-      item.scope, item.projectId, item.workspaceId, item.repoRoot])).sort().join("|"),
-    [runtimeInboxSources],
-  );
-  runtimeInboxKeyRef.current = runtimeInboxSourceKey;
-  const runtimeInboxSummary = useMemo(() => {
-    const summary = summarizeRuntimeInboxes(runtimeInboxes.map((item) => ({
-      error: item.error,
-      firstSeenAt: runtimeFirstSeenRef.current.get(item.runtimeId) ?? item.checkedAt,
-      everReachable: runtimeEverReachableRef.current.has(item.runtimeId),
-      counts: item.snapshot?.counts ?? null,
-    })), Date.now());
-    summary.actionable += decisionItems.filter((item) => item.kind === "pr_check" || item.kind === "pr_review").length;
-    return summary;
-  }, [decisionItems, runtimeInboxes]);
+  const { runtimeInboxes, runtimeInboxSummary, refreshRuntimeInboxes } = useRuntimeInboxes({
+    runtimeProcesses, projects, decisionItems, runtimeTokensRef });
   const globalNotificationItems = useMemo(() => {
     const items = runtimeInboxes.flatMap((runtimeInbox) => (runtimeInbox.snapshot?.decisions ?? [])
       .filter((item) => item.severity === "critical" || item.severity === "high")
@@ -1477,51 +1429,6 @@ function App() {
     read: source => new GatewayClient({ baseUrl: source.baseUrl!,
       token: runtimeTokensRef.current.get(source.runtimeId!) ?? "" }).getCodexObserverStatus(),
   }), []);
-
-  const refreshRuntimeInboxes = useCallback((): Promise<boolean> => {
-    const pending = runtimeInboxPendingRef.current;
-    if (pending?.key === runtimeInboxSourceKey && pending.generation === runtimeInboxGenerationRef.current) return pending.promise;
-    const generation = ++runtimeInboxGenerationRef.current;
-    const current = () => generation === runtimeInboxGenerationRef.current && runtimeInboxSourceKey === runtimeInboxKeyRef.current;
-    const sources = runtimeInboxSourcesRef.current;
-    if (sources.length === 0) {
-      setRuntimeInboxes([]);
-      return Promise.resolve(true);
-    }
-    const checkedAt = Date.now();
-    // 首见时间 + 连上过没有：用来把"还在启动"和"连上过又断了"分开（见 lib/runtimeInbox.ts）。
-    sources.forEach((source) => {
-      if (!runtimeFirstSeenRef.current.has(source.runtimeId)) {
-        runtimeFirstSeenRef.current.set(source.runtimeId, checkedAt);
-      }
-    });
-    setRuntimeInboxes(previous => current() ? mergeRuntimeInboxes(previous, sources) : previous);
-    const promise = observeRuntimeInboxes(sources, source => {
-      const client = new GatewayClient({
-        baseUrl: source.baseUrl,
-        token: runtimeTokensRef.current.get(source.runtimeId) ?? "",
-        remoteProjectId: source.runtimeId.startsWith("remote:") ? source.projectId : undefined,
-      });
-      return client.getRuntimeInbox();
-    }, current, item => {
-      if (item.snapshot) runtimeEverReachableRef.current.add(item.runtimeId);
-      setRuntimeInboxes(previous => current() ? mergeRuntimeInboxes(previous, sources, item) : previous);
-    }).finally(() => {
-      if (runtimeInboxPendingRef.current?.generation === generation) runtimeInboxPendingRef.current = null;
-    });
-    runtimeInboxPendingRef.current = { key: runtimeInboxSourceKey, generation, promise };
-    return promise;
-  }, [runtimeInboxSourceKey]);
-
-  useEffect(() => {
-    const stop = startPolling(refreshRuntimeInboxes, {
-      intervalMs: 4_000, hiddenIntervalMs: 15_000, immediate: true, visibility: document,
-    });
-    return () => {
-      runtimeInboxGenerationRef.current += 1;
-      stop();
-    };
-  }, [refreshRuntimeInboxes]);
 
   useEffect(() => {
     if (connection !== "connected" || activeScope === "general") return undefined;
