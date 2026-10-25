@@ -90,7 +90,6 @@ import type {
   GoalItem,
   JournalNextAction,
   NoticeItem,
-  OpenWorkspaceFileResult,
   PendingConfirmation,
   PlanItem,
   PromptQueueItem,
@@ -99,11 +98,8 @@ import type {
   RuntimeSnapshot,
   DesktopRuntimeInbox,
   SessionSummary,
-  SourceSelection,
   TaskItem,
   TurnActivity,
-  WorkspaceFileContent,
-  WorkspaceFileList,
   WorkspaceScope,
   TrustLevel,
   DesktopLlmProfileStatus,
@@ -157,10 +153,11 @@ import { useTrustLevel } from "./hooks/useTrustLevel";
 import { useJournal } from "./hooks/useJournal";
 import { useLlmProfile } from "./hooks/useLlmProfile";
 import { usePlugins } from "./hooks/usePlugins";
+import { useWorkspaceFiles } from "./hooks/useWorkspaceFiles";
+import { contextItemKey, contextItemLabel } from "./lib/sourceContext";
 import { autoFocusDecision, closeWorkbenchTab, openWorkbenchTab, type InspectorTab } from "./lib/inspector";
 import { loadNotifiedDecisionIds, persistNotifiedDecisionIds, projectSessionKey, projectToRestore,
   STORAGE_KEYS } from "./lib/storage";
-import { normalizeEditorText, serializeEditorText } from "./lib/text";
 import { localDay } from "./lib/time";
 import { finishRunningActivities, hydrateActivities, protocolActivity, upsertActivity } from "./protocol/activities";
 import { errorText } from "./lib/errorText";
@@ -176,7 +173,6 @@ import {
 } from "./lib/modelChoice";
 
 
-type PendingWorkspaceSave = { rid: string; path: string; content: string; buffer: string };
 type RuntimeConnectionOptions = { baseUrl?: string; repoRoot?: string; token?: string; scope?: WorkspaceScope; remoteProjectId?: string };
 type StartWorkspaceOptions = RuntimeConnectionOptions & { baseUrl: string; sid: string; announce?: boolean; workspaceId?: string };
 type WorkspaceRequest = { scope: Exclude<WorkspaceScope, "general">; reason: string; task: string };
@@ -226,24 +222,12 @@ function inspectorTabLabel(tab: InspectorTab): string {
   }[tab];
 }
 
-function contextItemKey(item: ContextItem): string {
-  return `${item.path}:${item.startLine ?? "*"}:${item.endLine ?? "*"}`;
-}
-
-function contextItemLabel(item: ContextItem): string {
-  return item.startLine && item.endLine
-    ? `${item.path}:L${item.startLine}–L${item.endLine}`
-    : item.path;
-}
-
 function App() {
   const clientRef = useRef<GatewayClient | null>(null);
   const creatingSessionRef = useRef(false);
   const sessionConnectionRef = useRef<SessionConnection<GatewayClient> | null>(null);
   if (!sessionConnectionRef.current) sessionConnectionRef.current = new SessionConnection(clientRef);
-  const workspaceRootRef = useRef("");
   const goalRunSyncRef = useRef("");
-  const pendingWorkspaceSaveRef = useRef<PendingWorkspaceSave | null>(null);
   const notifiedDecisionIdsRef = useRef<Set<string>>(loadNotifiedDecisionIds());
   const decisionNotificationReadyRef = useRef(false);
   const decisionNotificationSyncingRef = useRef(false);
@@ -591,20 +575,14 @@ function App() {
     await refreshTasks();
     await refreshWorktrees();
   });
-  const [workspaceFiles, setWorkspaceFiles] = useState<string[]>([]);
-  const [workspaceRoot, setWorkspaceRoot] = useState("");
-  const [workspaceTruncated, setWorkspaceTruncated] = useState(false);
-  const [workspaceLoading, setWorkspaceLoading] = useState(false);
-  const [workspaceError, setWorkspaceError] = useState("");
-  const [fileQuery, setFileQuery] = useState("");
-  const [selectedFile, setSelectedFile] = useState("");
-  const [filePreview, setFilePreview] = useState<WorkspaceFileContent | null>(null);
-  const [contextItems, setContextItems] = useState<ContextItem[]>([]);
-  const [sourceSelection, setSourceSelection] = useState<SourceSelection | null>(null);
-  const [editorMode, setEditorMode] = useState(false);
-  const [editorContent, setEditorContent] = useState("");
-  const [editorEol, setEditorEol] = useState<"\n" | "\r\n">("\n");
-  const [savingFile, setSavingFile] = useState(false);
+  const {
+    workspaceRootRef, workspaceFiles, workspaceTruncated, workspaceLoading, workspaceError,
+    fileQuery, setFileQuery, selectedFile, filePreview, contextItems, setContextItems,
+    sourceSelection, setSourceSelection, editorMode, setEditorMode, editorContent, setEditorContent, editorEol, savingFile,
+    filteredWorkspaceFiles, editorDirty, workspaceMatchesRuntime, previewContextItem, previewContextAttached,
+    refreshWorkspaceFiles, openWorkspaceFile, settleWorkspaceSave, abandonWorkspaceSave, resetWorkspaceFiles,
+    addFileToContext, selectSourceLine, launchExternalEditor, saveWorkspaceFile, discardEditorChanges, closeWorkspaceFile,
+  } = useWorkspaceFiles({ clientRef, remoteProjectRef, repoRoot, runtimeWorkdir: runtime.workdir, connection, protocolVersion, onBanner: setBanner });
 
   const currentSession = sessions.find((session) => session.sid === activeSid);
   const activeScope: WorkspaceScope = runtime.scope ?? processStatus.scope ?? (repoRoot.trim() ? "project" : "general");
@@ -642,24 +620,7 @@ function App() {
     connected: activeScope === "general" ? "通用会话就绪" : activeScope === "scratch" ? "Scratch 就绪" : "项目就绪",
     error: "需要处理",
   }[connection];
-  const filteredWorkspaceFiles = useMemo(() => {
-    const query = fileQuery.trim().toLowerCase();
-    const userFiles = workspaceFiles.filter((path) => path !== ".vortocode" && !path.startsWith(".vortocode/"));
-    return query ? userFiles.filter((path) => path.toLowerCase().includes(query)) : userFiles;
-  }, [fileQuery, workspaceFiles]);
   // 派生的可见文件切片 / 预览行 / 行数 / 裁剪标记只服务 <FilesPanel>，已随面板搬入组件内计算。
-  const editorDirty = Boolean(filePreview && editorContent !== normalizeEditorText(filePreview.content));
-  const workspaceMatchesRuntime = Boolean(
-    runtime.workdir && workspaceRoot && runtime.workdir === workspaceRoot,
-  );
-  const previewContextItem: ContextItem | null = filePreview
-    ? sourceSelection
-      ? { path: filePreview.path, startLine: sourceSelection.start, endLine: sourceSelection.end }
-      : { path: filePreview.path }
-    : null;
-  const previewContextAttached = Boolean(
-    previewContextItem && contextItems.some((item) => contextItemKey(item) === contextItemKey(previewContextItem)),
-  );
   // selectedGitFile 与 displayedGit* 族派生只服务「变更」面板，已随 <GitReviewPanel> 搬入组件内计算。
   const decisionItems = useMemo<DecisionItem[]>(() => {
     const remote: DecisionItem[] = [];
@@ -896,41 +857,6 @@ function App() {
 
   // snapshotTodayJournal 已随 journal 域收进 useJournal（S6b）；总线与 connect 照旧调用。
 
-  const refreshWorkspaceFiles = useCallback(async (root: string) => {
-    if (remoteProjectRef.current) {
-      workspaceRootRef.current = "";
-      setWorkspaceRoot("");
-      setWorkspaceFiles([]);
-      setWorkspaceError("远端工作区的结果、日志和变更请在任务与变更面板查看；这里不会读取本机同名目录。");
-      return;
-    }
-    if (!root.trim()) return;
-    workspaceRootRef.current = root.trim();
-    setWorkspaceLoading(true);
-    setWorkspaceError("");
-    try {
-      const result = await invoke<WorkspaceFileList>("list_workspace_files", { repoRoot: root.trim() });
-      workspaceRootRef.current = result.root;
-      setWorkspaceRoot(result.root);
-      setWorkspaceFiles(result.files);
-      setWorkspaceTruncated(result.truncated);
-      setSelectedFile("");
-      setFilePreview(null);
-      setSourceSelection(null);
-      setContextItems([]);
-      setEditorMode(false);
-      setEditorContent("");
-      setEditorEol("\n");
-    } catch (error) {
-      workspaceRootRef.current = "";
-      setWorkspaceRoot("");
-      setWorkspaceFiles([]);
-      setWorkspaceError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setWorkspaceLoading(false);
-    }
-  }, []);
-
   const refreshProjectRegistry = useCallback(async () => {
     const registered = await invoke<DesktopProjectProfile[]>("list_desktop_projects");
     setProjects(registered);
@@ -946,37 +872,6 @@ function App() {
     setProjects((previous) => [profile, ...previous.filter((item) => item.id !== profile.id)]);
     return profile;
   }, []);
-
-  const openWorkspaceFile = useCallback(async (path: string) => {
-    if (remoteProjectRef.current) {
-      setBanner("远端源码请通过任务变更查看；不会打开本机同名文件。");
-      return;
-    }
-    if (editorDirty && path !== selectedFile && !await confirmAction("当前文件有未保存修改，确定放弃并打开其他文件吗？")) {
-      return;
-    }
-    const root = workspaceRoot || repoRoot.trim() || runtime.workdir || "";
-    if (!root) return;
-    setWorkspaceLoading(true);
-    setWorkspaceError("");
-    setSelectedFile(path);
-    setSourceSelection(null);
-    setEditorMode(false);
-    try {
-      const loaded = await invoke<WorkspaceFileContent>("read_workspace_file", {
-        repoRoot: root,
-        relativePath: path,
-      });
-      setFilePreview(loaded);
-      setEditorEol(loaded.content.includes("\r\n") ? "\r\n" : "\n");
-      setEditorContent(normalizeEditorText(loaded.content));
-    } catch (error) {
-      setFilePreview(null);
-      setWorkspaceError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setWorkspaceLoading(false);
-    }
-  }, [editorDirty, repoRoot, runtime.workdir, selectedFile, workspaceRoot]);
 
   const handleProtocolEvent = useCallback(
     (event: ProtocolEvent) => {
@@ -1242,19 +1137,10 @@ function App() {
           if (activeScope !== "general") void refreshGitReview();
           break;
         case "workspace_edit_result": {
-          const pending = pendingWorkspaceSaveRef.current;
-          if (pending && event.rid && event.rid !== pending.rid) break;
-          pendingWorkspaceSaveRef.current = null;
-          setSavingFile(false);
+          const settled = settleWorkspaceSave(event);
+          if (settled.stale) break;
           setPendingConfirm(null);
-          if (pending) autoOpenInspector("files");
-          if (event.ok && pending && event.path === pending.path && event.sha256) {
-            const savedSize = new TextEncoder().encode(pending.content).byteLength;
-            setFilePreview((previous) => previous?.path === pending.path
-              ? { ...previous, content: pending.content, size: savedSize, sha256: String(event.sha256) }
-              : previous);
-            setEditorContent(pending.buffer);
-          }
+          if (settled.pending) autoOpenInspector("files");
           setBanner(String(event.message ?? (event.ok ? "源码已保存" : "源码保存失败")));
           void refreshDecisions();
           void refreshAudit();
@@ -1314,7 +1200,7 @@ function App() {
           break;
       }
     },
-    [acceptTaskEvent, activeScope, activeSid, notificationsEnabled, openInspector, refreshAudit, refreshDecisions, refreshGitReview, refreshGoals, refreshIsolatedDeliveries, refreshPrDelivery, refreshSessions, refreshWorkspaceFiles, refreshWorktrees, repoRoot, snapshotTodayJournal, updateActiveTurnRid],
+    [acceptTaskEvent, activeScope, activeSid, notificationsEnabled, openInspector, refreshAudit, refreshDecisions, refreshGitReview, refreshGoals, refreshIsolatedDeliveries, refreshPrDelivery, refreshSessions, refreshWorkspaceFiles, refreshWorktrees, repoRoot, settleWorkspaceSave, snapshotTodayJournal, updateActiveTurnRid],
   );
 
   const disconnect = useCallback(async () => {
@@ -1324,9 +1210,8 @@ function App() {
     setConnection("disconnected");
     setConnectionNote("已离开工作区；后台 runtime 与任务继续运行");
     setBusy(false);
-    setSavingFile(false);
-    pendingWorkspaceSaveRef.current = null;
-  }, [resetIsolatedDeliveries]);
+    abandonWorkspaceSave();
+  }, [abandonWorkspaceSave, resetIsolatedDeliveries]);
 
   // 连接域编排注册表（B8-④c S10）：连接成功后的全量数据装填收敛到这一处。
   // 各域 refresh 按「通用 / 工作区专属」两档显式注册——hook 化的域把归还的回调挂到
@@ -1742,8 +1627,7 @@ function App() {
     setWorkspaceRequest(null);
     setDiffPayload(null);
     setContextItems([]);
-    setSavingFile(false);
-    pendingWorkspaceSaveRef.current = null;
+    abandonWorkspaceSave();
     setBusy(false);
   };
 
@@ -1763,18 +1647,7 @@ function App() {
     setAuditEntries([]);
     resetJournal();
     resetProjectAssets();
-    workspaceRootRef.current = "";
-    setWorkspaceFiles([]);
-    setWorkspaceRoot("");
-    setWorkspaceTruncated(false);
-    setWorkspaceError("");
-    setFileQuery("");
-    setSelectedFile("");
-    setFilePreview(null);
-    setSourceSelection(null);
-    setEditorMode(false);
-    setEditorContent("");
-    setEditorEol("\n");
+    resetWorkspaceFiles();
     setToken("");
     decisionNotificationReadyRef.current = false;
     decisionNotificationSyncingRef.current = false;
@@ -2438,111 +2311,6 @@ function App() {
       setBanner(errorText(error, "发送失败"));
       return false;
     }
-  };
-
-  const addFileToContext = (item: ContextItem) => {
-    if (connection !== "connected" || !workspaceMatchesRuntime) {
-      setBanner("源码工作区必须与当前 runtime 项目一致后才能加入 Agent 上下文");
-      return;
-    }
-    setContextItems((previous) => {
-      const key = contextItemKey(item);
-      if (previous.some((candidate) => contextItemKey(candidate) === key)) return previous;
-      const next = item.startLine
-        ? previous.filter((candidate) => candidate.path !== item.path || candidate.startLine)
-        : previous.filter((candidate) => candidate.path !== item.path);
-      if (next.length >= 8) {
-        setBanner("单轮最多选择 8 个源码上下文引用");
-        return previous;
-      }
-      return [...next, item];
-    });
-  };
-
-  const selectSourceLine = (line: number, extend: boolean) => {
-    setSourceSelection((previous) => {
-      if (!extend && previous?.start === line && previous.end === line) return null;
-      if (!extend || !previous) return { anchor: line, start: line, end: line };
-      const distance = Math.max(-499, Math.min(499, line - previous.anchor));
-      const boundedLine = previous.anchor + distance;
-      return {
-        anchor: previous.anchor,
-        start: Math.min(previous.anchor, boundedLine),
-        end: Math.max(previous.anchor, boundedLine),
-      };
-    });
-  };
-
-  const launchExternalEditor = async () => {
-    if (!filePreview) return;
-    const root = workspaceRoot || repoRoot.trim() || runtime.workdir || "";
-    if (!root) return;
-    try {
-      const result = await invoke<OpenWorkspaceFileResult>("open_workspace_file", {
-        repoRoot: root,
-        relativePath: filePreview.path,
-        line: sourceSelection?.start ?? 1,
-      });
-      setBanner(result.message);
-    } catch (error) {
-      setBanner(error instanceof Error ? error.message : String(error));
-    }
-  };
-
-  const saveWorkspaceFile = async () => {
-    if (!filePreview || !editorDirty || savingFile || !clientRef.current) return;
-    if (connection !== "connected" || !workspaceMatchesRuntime) {
-      setBanner("只有连接到当前源码工作区的 runtime 才能保存");
-      return;
-    }
-    if (protocolVersion !== DESKTOP_PROTOCOL_VERSION) {
-      setBanner(`runtime 需要升级到协议 v${DESKTOP_PROTOCOL_VERSION} 才能安全保存源码`);
-      return;
-    }
-    const contentToSave = serializeEditorText(editorContent, editorEol);
-    if (new TextEncoder().encode(contentToSave).byteLength > 1024 * 1024) {
-      setBanner("编辑内容超过保存上限（1 MiB）");
-      return;
-    }
-    const rid = createSessionId().slice(0, 64);
-    pendingWorkspaceSaveRef.current = {
-      rid, path: filePreview.path, content: contentToSave, buffer: editorContent,
-    };
-    setSavingFile(true);
-    try {
-      await clientRef.current.send({
-        type: "workspace_edit",
-        path: filePreview.path,
-        content: contentToSave,
-        expected_sha256: filePreview.sha256,
-        rid,
-      });
-    } catch (error) {
-      pendingWorkspaceSaveRef.current = null;
-      setSavingFile(false);
-      setBanner(errorText(error, "源码保存请求发送失败"));
-    }
-  };
-
-  const discardEditorChanges = async () => {
-    if (!filePreview) return;
-    if (editorDirty && !await confirmAction("放弃当前文件的未保存修改？")) return;
-    setEditorContent(normalizeEditorText(filePreview.content));
-    setEditorMode(false);
-  };
-
-  const closeWorkspaceFile = async () => {
-    if (savingFile) {
-      setBanner("请先完成或拒绝当前源码保存确认");
-      return;
-    }
-    if (editorDirty && !await confirmAction("当前文件有未保存修改，确定关闭吗？")) return;
-    setSelectedFile("");
-    setFilePreview(null);
-    setEditorContent("");
-    setEditorMode(false);
-    setSourceSelection(null);
-    setWorkspaceError("");
   };
 
   // Cmd/Ctrl+S 保存快捷键 effect 随 <FilesPanel> 搬入组件内（调用注入的 onSave）。
