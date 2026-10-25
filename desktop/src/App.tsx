@@ -139,6 +139,7 @@ import { usePlugins } from "./hooks/usePlugins";
 import { useDecisionNotifications } from "./hooks/useDecisionNotifications";
 import { useAssistantSnapshot } from "./hooks/useAssistantSnapshot";
 import { useWorkspaceFiles } from "./hooks/useWorkspaceFiles";
+import { useWorkspacePolling } from "./hooks/useWorkspacePolling";
 import { useRuntimeInboxes } from "./hooks/useRuntimeInboxes";
 import { contextItemKey } from "./lib/sourceContext";
 import { withLocalDecisions } from "./lib/decisionItems";
@@ -1151,15 +1152,8 @@ function App() {
       token: runtimes.tokenFor(source.runtimeId!) }).getCodexObserverStatus(),
   }), [runtimes]);
 
-  useEffect(() => {
-    if (connection !== "connected" || activeScope === "general") return undefined;
-    return startPolling(refreshRuns, { intervalMs: 900, hiddenIntervalMs: 15_000, visibility: document });
-  }, [activeScope, connection, processStatus.runtimeId, refreshRuns]);
-
-  useEffect(() => {
-    if (connection !== "connected") return undefined;
-    return startPolling(refreshSessions, { intervalMs: 2_500, hiddenIntervalMs: 10_000, visibility: document });
-  }, [connection, processStatus.runtimeId, refreshSessions]);
+  useWorkspacePolling({ connection, activeScope, runtimeId: processStatus.runtimeId, refreshRuns, refreshSessions,
+    refreshDecisions, refreshAudit, refreshPrDelivery, snapshotTodayJournal });
 
   const handledPublishRef = useRef(0);
   useEffect(() => {
@@ -1179,30 +1173,10 @@ function App() {
   }, [connection, loadArtifactPreview, selectedArtifactId]);
 
   useEffect(() => {
-    if (connection !== "connected" || activeScope === "general") return undefined;
-    const timer = window.setInterval(() => void refreshPrDelivery(), 20_000);
-    return () => window.clearInterval(timer);
-  }, [activeScope, connection, refreshPrDelivery]);
-
-  useEffect(() => {
-    if (connection !== "connected") return undefined;
-    return startPolling(async () => {
-      const results = await Promise.all([refreshDecisions(), refreshAudit()]);
-      return results.some(Boolean);
-    }, { intervalMs: 4_000, hiddenIntervalMs: 15_000, visibility: document });
-  }, [connection, processStatus.runtimeId, refreshAudit, refreshDecisions]);
-
-  useEffect(() => {
     if (!settingsOpen || connection !== "connected" || activeScope !== "project") return;
     void refreshHookStatus();
     void refreshExtensionsInspect();
   }, [activeScope, connection, refreshExtensionsInspect, refreshHookStatus, settingsOpen]);
-
-  useEffect(() => {
-    if (connection !== "connected") return undefined;
-    const timer = window.setInterval(() => void snapshotTodayJournal(), 30_000);
-    return () => window.clearInterval(timer);
-  }, [connection, snapshotTodayJournal]);
 
 
   const clearSessionView = () => {
