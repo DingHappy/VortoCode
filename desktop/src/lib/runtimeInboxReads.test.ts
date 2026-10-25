@@ -1,6 +1,8 @@
 import { expect, it, vi } from "vitest";
-import type { DesktopRuntimeInbox, RuntimeInboxSnapshot } from "../types";
-import { mergeRuntimeInboxes, observeRuntimeInboxes, type RuntimeInboxSource } from "./runtimeInboxReads";
+import type { DesktopProjectProfile, DesktopRuntimeInbox, GatewayProcessStatus, RuntimeInboxSnapshot } from "../types";
+import {
+  mergeRuntimeInboxes, observeRuntimeInboxes, runtimeInboxSourceKey, runtimeInboxSources, type RuntimeInboxSource,
+} from "./runtimeInboxReads";
 
 const a: RuntimeInboxSource = { runtimeId: "a", scope: "project", repoRoot: "/a", label: "A", baseUrl: "http://127.0.0.1:8080" };
 const b: RuntimeInboxSource = { ...a, runtimeId: "b", repoRoot: "/b", label: "B", baseUrl: "http://127.0.0.1:8081" };
@@ -74,4 +76,38 @@ it.each([
   const source = { ...a, ...changed };
   expect(mergeRuntimeInboxes([observation()], [source], observation())).toEqual([]);
   expect(mergeRuntimeInboxes([observation()], [source], { ...source, snapshot: null, error: "offline", checkedAt: 2 })[0].snapshot).toBeNull();
+});
+
+it("asks running managed runtimes plus registered remote workspaces and the resident assistant", () => {
+  const project = (id: string, name: string, kind: "local" | "remote", repoRoot: string, baseUrl = ""): DesktopProjectProfile =>
+    ({ id, name, kind, repoRoot, baseUrl, lastOpenedAt: 0 });
+  const projects = [
+    project("p1", "VortoCode", "local", "/code/vorto"),
+    project("r1", "服务器", "remote", "/srv/app", "https://srv.example"),
+    project("h1", "家里", "remote", "@assistant", "https://home.example"),
+  ];
+  const running = (patch: Partial<GatewayProcessStatus>): GatewayProcessStatus => ({ running: true, message: "", baseUrl: "http://127.0.0.1:9000", ...patch });
+  const sources = runtimeInboxSources([
+    running({ runtimeId: "general" }),
+    running({ runtimeId: "rt-proj", projectId: "p1", repoRoot: "/code/vorto" }),
+    running({ runtimeId: "rt-scratch-abcdef", workspaceId: "ws123456789" }),
+    running({ runtimeId: "rt-other", repoRoot: "/code/unknown-repo" }),
+    { ...running({ runtimeId: "rt-stopped" }), running: false },
+    running({ runtimeId: "rt-no-url", baseUrl: undefined }),
+  ], projects);
+  expect(sources.map(item => [item.runtimeId, item.scope, item.label])).toEqual([
+    ["general", "general", "通用会话"],
+    ["rt-proj", "project", "VortoCode"],
+    ["rt-scratch-abcdef", "scratch", "Scratch ws1234"],
+    ["rt-other", "project", "unknown-repo"],
+    ["remote:r1", "project", "远端 · 服务器"],
+    ["remote:h1", "general", "常驻助理 · 家里"],
+  ]);
+  expect(sources.find(item => item.runtimeId === "remote:h1")?.repoRoot).toBeUndefined();
+});
+
+it("the source key ignores order but changes with any identity field", () => {
+  expect(runtimeInboxSourceKey([a, b])).toBe(runtimeInboxSourceKey([b, a]));
+  expect(runtimeInboxSourceKey([a, b])).not.toBe(runtimeInboxSourceKey([a, { ...b, baseUrl: "http://127.0.0.1:8082" }]));
+  expect(runtimeInboxSourceKey([a])).not.toBe(runtimeInboxSourceKey([{ ...a, label: "A2" }]));
 });

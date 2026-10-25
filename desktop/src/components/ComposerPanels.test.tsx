@@ -1,8 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 
-import type { PromptQueueItem } from "../types";
-import { ComposerModelPicker, ConfirmCard, PromptQueuePanel, WorkspaceRequestCard } from "./ComposerPanels";
+import type { PromptQueueItem, TrustStatus } from "../types";
+import { AttachmentChips, ComposerModelPicker, ConfirmCard, ContextChips, PromptQueuePanel, TrustChip, WorkspaceRequestCard } from "./ComposerPanels";
 
 const noop = () => {};
 // runtime 发来的两种计划授权请求的开头（与 lib/onboarding 识别的一致）
@@ -50,4 +50,29 @@ it("model picker: resident model, not connected yet, or the choice list", () => 
   const html = renderToStaticMarkup(<ComposerModelPicker {...base} onResident={false} choices={choices} value="m1" />);
   expect(html).toContain('class="composer-model-name">模型一'); expect(html).toContain("模型一 · 快 · 看图");
   expect(html).toContain("管理模型、添加本机或线上服务");
+});
+
+it("attachment chips show image thumbnails and named removers; nothing renders when empty", () => {
+  const html = renderToStaticMarkup(<AttachmentChips onRemove={noop} items={[
+    { id: "a", name: "shot.png", kind: "image", size: 1, data: "data:image/png;base64,AA" },
+    { id: "b", name: "notes.md", kind: "text", size: 1, data: "x" },
+  ]} />);
+  expect(html).toContain('src="data:image/png;base64,AA"');
+  expect(html).toContain("移除附件 notes.md");
+  expect(renderToStaticMarkup(<AttachmentChips items={[]} onRemove={noop} />)).toBe("");
+});
+
+it("context chips label line ranges", () => {
+  const html = renderToStaticMarkup(<ContextChips onRemove={noop} items={[{ path: "src/a.ts" }, { path: "src/b.ts", startLine: 2, endLine: 4 }]} />);
+  expect(html).toContain("src/b.ts:L2–L4");
+  expect(html).toContain("移除 src/a.ts");
+  expect(renderToStaticMarkup(<ContextChips items={[]} onRemove={noop} />)).toBe("");
+});
+
+it("trust chip hides with one level and shows the effective level when the chosen one is capped", () => {
+  const trust = (patch: Partial<TrustStatus>) => ({ level: "full", effective: "reads", levels: ["ask", "reads"], ...patch }) as TrustStatus;
+  const capped = renderToStaticMarkup(<TrustChip trust={trust({})} busy={false} onChange={noop} />);
+  expect(capped).toContain('<option value="reads" selected="">只读自动</option>');
+  expect(renderToStaticMarkup(<TrustChip trust={trust({ levels: ["ask"] })} busy={false} onChange={noop} />)).toBe("");
+  expect(renderToStaticMarkup(<TrustChip trust={null} busy={false} onChange={noop} />)).toBe("");
 });
