@@ -55,3 +55,24 @@ it("opens the legacy abilities entry at permissions and exposes seven clear cate
   for (const label of ["账号与用量", "模型与执行", "电脑与连接", "工具与集成", "个性化", "高级与关于"]) expect(markup).toContain(label);
   expect(markup).toContain("授权级别按工作区保存");
 });
+it("shows a retryable read error without claiming an unknown profile is empty", () => {
+  const markup = renderSettings({ initialSection: "model", llmProfile: null, llmProfileError: "读取失败", onReloadLlmProfile: noop });
+  expect(markup).toContain("暂时无法读取本机模型配置");
+  expect(markup).toContain("重试读取");
+  expect(markup).not.toContain("还没有模型服务");
+  expect(markup.match(/<button[^>]*>保存模型配置<\/button>/)?.[0]).toContain("disabled");
+});
+it("blocks saving a previously loaded draft while a new profile read is pending", () => {
+  const markup = renderSettings({ initialSection: "model", llmProfileLoading: true, llmRolesInput: { implement: "default:draft" } });
+  expect(markup).toContain("正在读取本机模型配置");
+  expect(markup.match(/<button[^>]*>保存模型配置<\/button>/)?.[0]).toContain("disabled");
+});
+it("links an unsaved model draft back to its page and describes the sidebar indicator", () => {
+  const markup = renderSettings({ initialSection: "model", llmRolesInput: { implement: "default:draft" } });
+  expect(markup).toContain('aria-label="前往默认模型与分工"');
+  expect(markup).toContain('aria-describedby="settings-pending-model"');
+});
+it("does not show the previous model save result as the current account status", () => {
+  const markup = renderSettings({ initialSection: "account", llmSaveKind: "pending", llmSaveNote: "配置已保存，等待重启" });
+  expect(markup).not.toContain("配置已保存，等待重启");
+});

@@ -8,11 +8,12 @@ type Props = {
   baseUrl: string;
   apiKey: string;
   model: string;
+  providerId?: string;
   onModels: (models: string[]) => void;
 };
 
-export function LlmConnectionCheck({ baseUrl, apiKey, model, onModels }: Props) {
-  const draft = { baseUrl, apiKey, model };
+export function LlmConnectionCheck({ baseUrl, apiKey, model, providerId, onModels }: Props) {
+  const draft = { baseUrl, apiKey, model, providerId };
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const modelsRef = useRef(onModels);
@@ -21,7 +22,7 @@ export function LlmConnectionCheck({ baseUrl, apiKey, model, onModels }: Props) 
   const checkRef = useRef<ReturnType<typeof createConnectionCheck> | null>(null);
   if (!checkRef.current) checkRef.current = createConnectionCheck(
     () => draftRef.current,
-    (value) => invoke("test_llm_connection", value),
+    (value) => invoke("test_llm_connection", { ...value, providerId: value.providerId ?? null }),
     setState,
     (values) => modelsRef.current(values),
   );
@@ -29,10 +30,10 @@ export function LlmConnectionCheck({ baseUrl, apiKey, model, onModels }: Props) 
     checkRef.current!.reset();
     setState(null);
     return () => checkRef.current!.reset();
-  }, [baseUrl, apiKey, model]);
+  }, [baseUrl, apiKey, model, providerId]);
   useLayoutEffect(() => {
     modelsRef.current([]);
-  }, [baseUrl, apiKey]);
+  }, [baseUrl, apiKey, providerId]);
   const active = state && sameConnectionDraft(state.draft, draft) ? state : null;
   const result = active?.result;
   const error = active?.error || "";

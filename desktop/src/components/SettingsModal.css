@@ -122,3 +122,24 @@ dialog.settings-redesign.settings-layout {
 .settings-model-fields .settings-model-fields { margin-top: 0; }
 .settings-connection-row > div { min-width: 0; flex: 1; overflow-wrap: anywhere; }
 .settings-connection-row > button { flex: none; }
+.settings-modal.settings-redesign .settings-nav-group .settings-pending-dot { width: 6px; height: 6px; margin-left: auto; color: var(--settings-accent-text); flex: none; }
+.settings-read-feedback { display: flex; align-items: flex-start; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-2); }
+.settings-read-feedback > svg { flex: none; margin-top: 2px; color: var(--muted); }
+.settings-read-feedback > div { flex: 1; min-width: 0; }
+.settings-read-feedback strong { font-size: 13px; font-weight: 600; }
+.settings-read-feedback p { margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.settings-savebar > .settings-save-summary { display: block; }
+.settings-save-feedback { display: flex; gap: 9px; align-items: center; }
+.settings-save-feedback > svg { flex: none; }
+.settings-save-feedback[role="alert"] { color: var(--danger, #c74444); }
+.settings-pending-links { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 5px; padding-left: 25px; }
+.settings-modal.settings-redesign .settings-pending-links button { display: inline-flex; align-items: center; gap: 3px; padding: 2px 5px; border: 0; background: transparent; color: var(--settings-accent-text); font-size: 10px; }
+.settings-modal.settings-redesign .settings-pending-links button:hover:not(:disabled) { background: var(--settings-accent-bg); }
+@media (max-width: 760px) { .settings-read-feedback { flex-wrap: wrap; } .settings-read-feedback button { margin-left: 28px; } }
+
+@media (max-width: 760px) { .settings-savebar-model-dirty > .settings-save-summary { flex-basis: 100%; } }
+.provider-editor-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 14px; }
+.provider-editor-heading strong { font-size: 13px; font-weight: 600; }
+.provider-editor-heading small { color: var(--muted); font-size: 10px; }
+.settings-redesign .custom-provider-form label > small { grid-column: 2; color: var(--muted); font-size: 11px; line-height: 1.7; }
+@media (max-width: 760px) { .settings-redesign .custom-provider-form label > small { grid-column: 1 / -1; } }

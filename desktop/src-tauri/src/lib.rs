@@ -3345,24 +3345,39 @@ fn sign_out_default_service(
     persist_profile(app, store, profile)
 }
 
+/// A probe can use a saved key only for the explicitly selected service and exact saved endpoint.
+/// Missing provider_id retains the default-service behavior of older clients.
+fn saved_connection_probe_key<'a>(
+    saved: Option<&'a DesktopLlmProfile>,
+    provider_id: Option<&str>,
+    base_url: &str,
+) -> Option<&'a str> {
+    let saved = saved?;
+    let wanted = base_url.trim().trim_end_matches('/');
+    match provider_id {
+        Some(id) => saved.providers.iter()
+            .find(|provider| provider.id == id.trim().to_lowercase() && provider.base_url == wanted)
+            .map(|provider| provider.api_key.as_str()),
+        None if saved.base_url == wanted => Some(saved.api_key.as_str()),
+        None => None,
+    }
+}
+
 #[tauri::command]
 async fn test_llm_connection(
     base_url: String,
     api_key: String,
     model: String,
+    provider_id: Option<String>,
     app: AppHandle,
     store: State<'_, DesktopLlmProfileStore>,
 ) -> Result<LlmConnectionTest, String> {
-    // Key 留空时先借用已保存的 Key（仅限同一地址），再做完整校验——否则远程服务会因为
-    // "需要 API Key" 在借用之前就被拦下。地址按 normalize_llm_profile 的同一规则比较。
+    // Resolve credentials in native code; never return keys to the webview or borrow from another ID/base.
     let mut api_key = api_key.trim().to_string();
     if api_key.is_empty() {
-        let wanted = base_url.trim().trim_end_matches('/');
-        if let Some(saved) = cached_desktop_llm_profile(&app, &store)? {
-            if saved.base_url == wanted {
-                api_key = saved.api_key;
-            }
-        }
+        let saved = cached_desktop_llm_profile(&app, &store)?;
+        api_key = saved_connection_probe_key(saved.as_ref(), provider_id.as_deref(), &base_url)
+            .unwrap_or_default().to_string();
     }
     let profile = normalize_llm_profile(DesktopLlmProfile {
         base_url,
@@ -3960,6 +3975,54 @@ mod tests {
             api_key: " key ".into(),
             models: vec!["m1".into(), "  ".into(), "bad\u{7}".into()],
         }
+    }
+
+    fn probe_key_fixture() -> DesktopLlmProfile {
+        let mut profile = sample_llm_profile();
+        profile.base_url = "https://default.example.test/v1".into();
+        profile.api_key = "synthetic-default-key".into();
+        profile.providers = vec![DesktopLlmProvider {
+            id: "cloud".into(), name: "Cloud".into(),
+            base_url: "https://cloud.example.test/v1".into(),
+            api_key: "synthetic-cloud-key".into(), models: vec!["m".into()],
+        }];
+        profile
+    }
+
+    #[test]
+    fn connection_probe_selects_only_the_requested_providers_key() {
+        let mut profile = probe_key_fixture();
+        profile.providers.push(DesktopLlmProvider {
+            id: "other".into(), name: "Other".into(),
+            base_url: profile.providers[0].base_url.clone(),
+            api_key: "synthetic-other-key".into(), models: vec!["m".into()],
+        });
+        let base = profile.providers[0].base_url.as_str();
+        assert_eq!(saved_connection_probe_key(Some(&profile), Some("cloud"), base), Some("synthetic-cloud-key"));
+        assert_eq!(saved_connection_probe_key(Some(&profile), Some(" OTHER "), &format!(" {base}/ ")), Some("synthetic-other-key"));
+        assert_eq!(saved_connection_probe_key(Some(&profile), None, base), None);
+        for id in ["unknown", "", "default"] {
+            assert_eq!(saved_connection_probe_key(Some(&profile), Some(id), base), None);
+        }
+    }
+
+    #[test]
+    fn connection_probe_never_reuses_a_saved_key_at_a_changed_endpoint() {
+        let profile = probe_key_fixture();
+        for base in ["https://other.example.test/v1", "https://cloud.example.test/v2",
+            "https://cloud.example.test.evil.test/v1", "https://cloud.example.test/v1?x=1"] {
+            assert_eq!(saved_connection_probe_key(Some(&profile), Some("cloud"), base), None);
+        }
+        assert_eq!(saved_connection_probe_key(Some(&profile), Some("cloud"), &profile.base_url), None);
+        assert_eq!(saved_connection_probe_key(None, Some("cloud"), "https://cloud.example.test/v1"), None);
+    }
+
+    #[test]
+    fn connection_probe_keeps_legacy_default_service_key_selection() {
+        let profile = probe_key_fixture();
+        assert_eq!(saved_connection_probe_key(Some(&profile), None, &format!("{}/", profile.base_url)), Some(profile.api_key.as_str()));
+        assert_eq!(saved_connection_probe_key(Some(&profile), Some("unknown"), &profile.base_url), None);
+        assert_eq!(saved_connection_probe_key(None, None, &profile.base_url), None);
     }
 
     #[test]

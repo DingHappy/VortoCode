@@ -439,7 +439,7 @@ function App() {
     llmProfile, applyLlmProfile, llmProfileChecked, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput,
     llmFastInput, setLlmFastInput, llmStrongInput, setLlmStrongInput,
     llmRolesInput, setLlmRolesInput,
-    llmKeyInput, setLlmKeyInput, llmProfileBusy, llmSaveNote, saveLlmProfile, clearLlmProfile,
+    llmKeyInput, setLlmKeyInput, llmProfileBusy, llmSaveNote, llmSaveKind, llmProfileLoading, llmProfileError, reloadLlmProfile, saveLlmProfile, clearLlmProfile,
   } = useLlmProfile(settingsOpen, setBanner, () => restartCurrentRuntimeForLlmProfile());
   const [savedModelChoice, setSavedModelChoice] = useState<string | null>(() => loadModelChoice());
   const [modelPicks, setModelPicks] = useState<string[] | null>(() => loadModelPicks());
@@ -3236,6 +3236,10 @@ function App() {
           onConnectResident={() => { const host = findAssistantHost(projects); if (host) void connectAssistantHost(host).then(ok => { if (ok) { setAppMode("assistant"); void openMainChat(host.id); } }); }}
           onOpenSchedule={() => { setAppMode("assistant"); setMainView("chat"); setAssistantTab("schedule"); setInspectorOpen(true); }}
           llmSaveNote={llmSaveNote}
+          llmSaveKind={llmSaveKind}
+          llmProfileLoading={llmProfileLoading}
+          llmProfileError={llmProfileError}
+          onReloadLlmProfile={reloadLlmProfile}
           onEditAssistant={() => setProfileDialogOpen(true)}
           onLlmKeyChange={setLlmKeyInput}
           onSaveLlmProfile={saveLlmProfile}

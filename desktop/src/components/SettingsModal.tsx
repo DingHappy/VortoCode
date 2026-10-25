@@ -9,9 +9,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { errorText } from "../lib/errorText";
 import type { CodexObserverRead } from "../lib/codexObserverHealth";
 import type { ReactNode } from "react";
-import { UserRound, Cpu, Monitor, ShieldCheck, Blocks, SlidersHorizontal, Info, Search, X, MapPin, ChevronRight, Check, CircleAlert } from "lucide-react";
+import { UserRound, Cpu, Monitor, ShieldCheck, Blocks, SlidersHorizontal, Info, Search, X, MapPin, ChevronRight, Check, CircleAlert, Circle, LoaderCircle } from "lucide-react";
 import { Eye, EyeOff } from "lucide-react";
 import { BuildVersion } from "./BuildVersion";
+import type { ModelSaveKind } from "../lib/modelProfileSave";
 import { applyModelPreset, modelSettingsState } from "../lib/modelSettings";
 
 import { contextWindowSourceLabel, formatTokenCount } from "../lib/labels";
@@ -66,7 +67,13 @@ export function settingsBlockVisible(
 
 const NAV_ICONS = { account: UserRound, model: Cpu, computer: Monitor, permissions: ShieldCheck, tools: Blocks, personal: SlidersHorizontal, advanced: Info };
 type DraftState = { dirty: boolean; busy: boolean };
-const DRAFT_LABELS = { provider: "模型服务", instructions: "全局指令", desktop: "远程桌面", control: "桌面操作", browser: "浏览器操作" };
+const DRAFT_ITEMS: Record<string, { label: string; page: SettingsPage; anchor: string }> = {
+  provider: { label: "模型服务", page: "model", anchor: "provider-editor" },
+  instructions: { label: "全局指令", page: "personal", anchor: "instructions" },
+  desktop: { label: "远程桌面", page: "computer", anchor: "desktop" },
+  control: { label: "桌面操作", page: "permissions", anchor: "control" },
+  browser: { label: "浏览器操作", page: "permissions", anchor: "browser" },
+};
 
 type SettingsModalProps = {
   /** 打开插件页（MCP 服务与目录） */
@@ -82,6 +89,10 @@ type SettingsModalProps = {
   onConnectResident?: () => void;
   onOpenSchedule?: () => void;
   llmSaveNote?: string;
+  llmSaveKind?: ModelSaveKind;
+  llmProfileLoading?: boolean;
+  llmProfileError?: string;
+  onReloadLlmProfile?: () => void;
   activeScope: WorkspaceScope;
   connection: ConnectionState;
   connectionText: string;
@@ -137,7 +148,7 @@ export function SettingsModal({
   hasResident = false,
   readCodexObserver,
   onEditAssistant,
-  residentName, residentConnected = false, onOpenResidentSetup, onConnectResident, onOpenSchedule, llmSaveNote = "",
+  residentName, residentConnected = false, onOpenResidentSetup, onConnectResident, onOpenSchedule, llmSaveNote = "", llmSaveKind = "idle", llmProfileLoading = false, llmProfileError = "", onReloadLlmProfile,
   activeScope,
   connection,
   connectionText,
@@ -196,7 +207,7 @@ export function SettingsModal({
   const contentRef = useRef<HTMLDivElement>(null);
   const [closeAction, setCloseAction] = useState<(() => void) | null>(null);
   const [drafts, setDrafts] = useState<Record<string, DraftState>>({});
-  const draftCallbacks = useMemo(() => Object.fromEntries(Object.keys(DRAFT_LABELS).map(key => [key,
+  const draftCallbacks = useMemo(() => Object.fromEntries(Object.keys(DRAFT_ITEMS).map(key => [key,
     (state: DraftState) => setDrafts(previous => ({ ...previous, [key]: state })),
   ])), []);
   const navigate = (next: SettingsPage, anchor = "") => {
@@ -250,8 +261,15 @@ export function SettingsModal({
   const currentPage = SETTINGS_SECTIONS.find(item => item.id === section)!;
   const modelDirty = Boolean(llmProfile && (llmProfile.configured ? modelState.dirty
     : editingDefault && (llmBaseInput.trim() || llmModelInput.trim() || llmKeyInput.trim())));
-  const pending = [...(modelDirty ? ["默认模型与分工"] : []), ...Object.entries(drafts).filter(([, state]) => state.dirty)
-    .map(([key]) => DRAFT_LABELS[key as keyof typeof DRAFT_LABELS])];
+  const pendingChanges = [
+    ...(modelDirty ? [{ label: "默认模型与分工", page: "model" as SettingsPage, anchor: editingDefault ? "services" : "roles" }] : []),
+    ...Object.entries(drafts).filter(([, state]) => state.dirty).map(([key]) => DRAFT_ITEMS[key]),
+  ];
+  const pending = pendingChanges.map(item => item.label);
+  const modelUnavailable = llmProfileLoading || Boolean(llmProfileError);
+  const modelReadMessage = llmProfileLoading ? "正在读取本机模型配置…" : llmProfileError;
+  const modelFeedback = section === "model" ? modelReadMessage || llmSaveNote : "";
+  const modelFeedbackError = section === "model" && (Boolean(llmProfileError) || llmSaveKind === "error");
   const saving = llmProfileBusy || experimentalBusy || trustBusy || Object.values(drafts).some(state => state.busy);
   const requestLeave = (action: () => void) => {
     if (saving) return;
@@ -289,7 +307,10 @@ export function SettingsModal({
           }) : SETTINGS_SECTIONS.map(item => {
             const Icon = NAV_ICONS[item.id];
             return <button key={item.id} className={section === item.id ? "active" : ""} aria-current={section === item.id ? "page" : undefined}
-              onClick={() => navigate(item.id)}><Icon size={17} aria-hidden="true" /><span>{item.label}</span></button>;
+              aria-describedby={pendingChanges.some(change => change.page === item.id) ? `settings-pending-${item.id}` : undefined}
+              onClick={() => navigate(item.id)}><Icon size={17} aria-hidden="true" /><span>{item.label}</span>
+              {pendingChanges.some(change => change.page === item.id) && <><Circle className="settings-pending-dot" size={6} fill="currentColor" aria-hidden="true" /><span id={`settings-pending-${item.id}`} hidden>有未保存的修改</span></>}
+            </button>;
           })}
           {query.trim() && !searchResults.length && <p className="settings-nav-empty">没有匹配的设置项<br />试试「远程」「模型」或「权限」</p>}
         </div>
@@ -319,8 +340,14 @@ export function SettingsModal({
               {settingsBlockVisible("usage", llmProfile) && <UsagePane account={llmProfile?.account} />}
             </div>
           </div>}
-          {visited.has("model") && <div hidden={section !== "model"} className="settings-page">
-            <fieldset className="settings-model-fields" disabled={saving}>
+          {visited.has("model") && <div hidden={section !== "model"} className="settings-page" aria-busy={llmProfileLoading}>
+            {modelUnavailable && <section className="settings-read-feedback" role={llmProfileError ? "alert" : "status"}>
+              {llmProfileLoading ? <LoaderCircle size={18} aria-hidden="true" /> : <CircleAlert size={18} aria-hidden="true" />}
+              <div><strong>{llmProfileLoading ? "正在读取本机模型配置…" : "暂时无法读取本机模型配置"}</strong>
+                <p>{llmProfileLoading ? "读取完成后即可编辑。其他分类仍可查看。" : `${llmProfileError}。现有配置不会被清空；请重试后再编辑。`}</p></div>
+              {!llmProfileLoading && onReloadLlmProfile && <button onClick={onReloadLlmProfile}>重试读取</button>}
+            </section>}
+            {(!modelUnavailable || llmProfile) && <fieldset className="settings-model-fields" disabled={saving || modelUnavailable}>
               <div id="setting-services" className={anchorClass("services")} tabIndex={-1}><fieldset className="settings-model-fields" disabled={modelDirty || saving}><ModelServices onDraftStateChange={draftCallbacks.provider} profile={llmProfile} onProfile={onLlmProfileChange} onRestartRuntime={onRestartRuntime}
                 editingDefault={editingDefault} onEditDefault={setEditingDefault}
                 onSetupDefault={(preset) => {
@@ -403,7 +430,7 @@ export function SettingsModal({
                 <strong>模型与执行者分工</strong><p className="settings-card-note">先添加默认模型服务，再配置研究、实现与审查的分工。</p>
                 <div id="setting-routing" className={anchorClass("routing")} tabIndex={-1}><p className="settings-card-note">配置服务后可设置自动调度与常用模型。</p></div>
               </section>}
-            </fieldset>
+            </fieldset>}
           </div>}
           {visited.has("computer") && <div hidden={section !== "computer"} className="settings-page">
             <section id="setting-resident" className={`${anchorClass("resident")} settings-card`} tabIndex={-1} aria-label="常驻助手连接">
@@ -578,11 +605,19 @@ export function SettingsModal({
             </div><div id="setting-files" className={anchorClass("files")} tabIndex={-1}><h3 className="settings-subhead">配置文件</h3><ConfigPane llmProfilePath={llmProfile?.configPath} /></div>
           </div>}
         </div>
-        <footer className="settings-savebar"><div role="status">{saving ? <><CircleAlert size={16} /><span><strong>正在处理…</strong><small>请等待当前操作完成</small></span></>
-          : pending.length ? <><CircleAlert size={16} /><span><strong>{llmSaveNote || "有未保存的修改"}</strong><small>{pending.join("、")}；切换分类会保留草稿</small></span></>
-            : <><Check size={16} /><span><strong>{llmSaveNote || "当前没有未保存的修改"}</strong><small>各项分别保存；权限变更沿用原生确认</small></span></>}</div>
-          {section === "model" && modelDirty && <button disabled={saving} onClick={resetModelDraft}>还原模型草稿</button>}
-          {section === "model" && <button className="primary" disabled={saving || !modelDirty || Boolean(modelState.missing)}
+        <footer className={`settings-savebar${section === "model" && modelDirty ? " settings-savebar-model-dirty" : ""}`}><div className="settings-save-summary">
+          <div className="settings-save-feedback" role={modelFeedbackError ? "alert" : "status"}>
+            {saving || section === "model" && llmProfileLoading ? <LoaderCircle size={16} aria-hidden="true" />
+              : modelFeedbackError || pending.length || section === "model" && llmSaveKind === "pending" ? <CircleAlert size={16} aria-hidden="true" /> : <Check size={16} aria-hidden="true" />}
+            <span><strong>{saving ? "正在处理…" : modelFeedback || (pending.length ? "有未保存的修改" : "当前没有未保存的修改")}</strong>
+              <small>{saving ? "请等待当前操作完成" : pending.length ? "点击下方项目返回编辑；切换分类会保留草稿" : "各项分别保存；权限变更沿用原生确认"}</small></span>
+          </div>
+          {pendingChanges.length > 0 && <nav className="settings-pending-links" aria-label="未保存的设置">
+            {pendingChanges.map(change => <button key={change.label} disabled={saving} onClick={() => navigate(change.page, change.anchor)} aria-label={`前往${change.label}`}>{change.label}<ChevronRight size={11} aria-hidden="true" /></button>)}
+          </nav>}
+        </div>
+          {section === "model" && modelDirty && <button disabled={saving || modelUnavailable} onClick={resetModelDraft}>还原模型草稿</button>}
+          {section === "model" && <button className="primary" disabled={saving || modelUnavailable || !modelDirty || Boolean(modelState.missing)}
             title={modelState.missing || "保存默认模型、角色分工与自动调度配置"} onClick={() => void onSaveLlmProfile()}>{llmProfileBusy ? "保存中…" : "保存模型配置"}</button>}
           <button disabled={saving} onClick={() => requestLeave(onClose)}>完成</button>
         </footer>
