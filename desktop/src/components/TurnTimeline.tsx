@@ -4,6 +4,7 @@
 import {
   BrainCircuit,
   ChevronDown,
+  Circle,
   CircleAlert,
   CircleCheck,
   Cpu,
@@ -19,9 +20,12 @@ import { formatActivityDuration } from "../lib/labels";
 import { recapPhrases, turnRecap } from "../lib/turnRecap";
 import type { TurnActivity } from "../types";
 
-function activityIcon(activity: TurnActivity): ReactNode {
+const unknownStatus = (status: string) => !["running", "completed", "succeeded", "failed", "blocked", "cancelled", "timed_out"].includes(status);
+
+function activityIcon(activity: TurnActivity, active: boolean): ReactNode {
   if (["failed", "blocked", "cancelled", "timed_out"].includes(activity.status)) return <CircleAlert size={15} />;
-  if (activity.status === "running") return <LoaderCircle className="activity-spinner" size={15} />;
+  if (activity.status === "running") return active ? <LoaderCircle className="activity-spinner" size={15} /> : <Circle size={15} />;
+  if (unknownStatus(activity.status)) return <Circle size={15} />;
   if (activity.kind === "phase" && activity.phase === "routing") return <Cpu size={15} />;
   if (activity.kind === "phase") return activity.phase === "thinking" ? <BrainCircuit size={15} /> : <CircleCheck size={15} />;
   if (activity.name === "run_command") return <SquareTerminal size={15} />;
@@ -42,7 +46,7 @@ function activityDetails(activity: TurnActivity): string {
 }
 
 export function timelineExpanded(items: TurnActivity[], active: boolean, hasOutput: boolean): boolean {
-  return active || !hasOutput || items.some(item => ["failed", "blocked", "cancelled", "timed_out", "running"].includes(item.status));
+  return active || !hasOutput || items.some(item => unknownStatus(item.status) || ["failed", "blocked", "cancelled", "timed_out", "running"].includes(item.status));
 }
 
 export function TurnTimeline({ items, active, hasOutput = false }: { items: TurnActivity[]; active: boolean; hasOutput?: boolean }) {
@@ -55,7 +59,8 @@ export function TurnTimeline({ items, active, hasOutput = false }: { items: Turn
     .reduce((total, item) => total + (item.durationMs ?? 0), 0);
   const tools = items.filter((item) => item.kind === "tool");
   const hooks = items.filter((item) => item.kind === "hook");
-  const attention = items.filter(item => ["failed", "blocked", "cancelled", "timed_out"].includes(item.status));
+  const attention = items.filter(item => unknownStatus(item.status) || (!active && item.status === "running")
+    || ["failed", "blocked", "cancelled", "timed_out"].includes(item.status));
   return (
     <section className={`turn-timeline ${active ? "active" : ""}`} aria-label="Agent 执行过程" aria-live={active ? "polite" : "off"}>
       <button type="button" className="timeline-heading" aria-expanded={open} onClick={() => setOpen(value => !value)}>
@@ -73,8 +78,10 @@ export function TurnTimeline({ items, active, hasOutput = false }: { items: Turn
           const details = activityDetails(activity);
           const row = (
             <>
-              <span className={`timeline-icon ${activity.status}`}>{activityIcon(activity)}</span>
-              <span className="timeline-label">{activity.label}</span>
+              <span className={`timeline-icon ${activity.status}`}>{activityIcon(activity, active)}</span>
+              <span className="timeline-label">{activity.label}
+                {unknownStatus(activity.status) ? <small> · 状态待核对</small>
+                  : !active && activity.status === "running" ? <small> · 记录为执行中</small> : null}</span>
               {activity.durationMs != null && <time>{formatActivityDuration(activity.durationMs)}</time>}
             </>
           );

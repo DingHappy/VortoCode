@@ -350,6 +350,7 @@ async def test_cancel_answered_work_before_first_timeslice_and_replay(tmp_path):
 
 @pytest.mark.asyncio
 async def test_native_question_yields_and_permission_denial_never_writes(tmp_path):
+    from src.agents.backends.execution import ExecutionState
     from src.agents.permissions import Permissions
     from src.agents.task_questions import build_question_tool
     from src.agents.tool import ToolTurnYield
@@ -375,3 +376,7 @@ async def test_native_question_yields_and_permission_denial_never_writes(tmp_pat
     with pytest.raises(ToolTurnYield):
         await agent.run_turn("请研究")
     assert llm.calls == 1 and service.get(task.id).status == "blocked"
+    report = agent.execution_report
+    assert report.state == ExecutionState.WAITING_USER
+    assert report.result is None and report.error is None
+    assert report.progress.summary

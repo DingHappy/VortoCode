@@ -50,6 +50,104 @@ async def test_cancellation_is_not_swallowed(tmp_path):
     with pytest.raises(asyncio.CancelledError):
         await reg.run_patrols(patrols, reg.PatrolContext(root=str(tmp_path), now=T0, notify=None))
     assert calls == []
+    assert reg.load_records(str(tmp_path))["x"]["last_status"] == "cancelled"
+
+
+async def test_timeout_cleans_up_and_continues_without_losing_last_success(tmp_path):
+    root, calls = str(tmp_path), []
+    ctx = reg.PatrolContext(root=root, now=T0, notify=None)
+    await reg.run_patrols([_patrol("slow", calls)], ctx)
+    calls.clear()
+
+    async def stalled(_ctx):
+        # 运行前已经落盘；不能等到结束才留执行记录。
+        assert reg.load_records(root)["slow"]["last_status"] == "running"
+        try:
+            await asyncio.Event().wait()
+        finally:
+            calls.append(("cleaned", _ctx.now))
+
+    later = reg.PatrolContext(root=root, now=T0 + timedelta(minutes=1), notify=None)
+    await asyncio.wait_for(reg.run_patrols([
+        reg.Patrol("slow", "慢巡检", "", stalled, timeout_seconds=0.01),
+        _patrol("after", calls),
+    ], later), timeout=1)
+    assert [name for name, _ in calls] == ["cleaned", "after"]
+    record = reg.load_records(root)["slow"]
+    assert record["last_status"] == "timed_out" and record["failures"] == 1
+    assert record["last_ok"] == T0.isoformat()
+    assert record["last_run"] == later.now.isoformat()
+    assert reg.overview([reg.Patrol("slow", "慢巡检", "", stalled)], root)[0]["last_status"] == "timed_out"
+
+    await reg.run_patrols([_patrol("slow", calls)], later)
+    recovered = reg.load_records(root)["slow"]
+    assert recovered["last_status"] == "done" and recovered["failures"] == 0
+    assert "last_error" not in recovered
+    assert recovered["last_ok"] == later.now.isoformat()
+
+
+async def test_parent_cancellation_stops_the_current_patrol_and_does_not_run_the_next(tmp_path):
+    started, cleaned, calls = asyncio.Event(), asyncio.Event(), []
+
+    async def stalled(_ctx):
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cleaned.set()
+
+    task = asyncio.create_task(reg.run_patrols([
+        reg.Patrol("slow", "慢巡检", "", stalled), _patrol("after", calls),
+    ], reg.PatrolContext(root=str(tmp_path), now=T0, notify=None)))
+    try:
+        await asyncio.wait_for(started.wait(), timeout=1)
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert cleaned.is_set() and calls == []
+    record = reg.load_records(str(tmp_path))["slow"]
+    assert record["last_status"] == "cancelled"
+    assert "last_ok" not in record and record.get("failures", 0) == 0
+
+
+@pytest.mark.parametrize("seconds", [0, -1, float("inf"), float("nan"), True, None, "30"])
+def test_patrol_rejects_unbounded_or_invalid_timeouts(seconds):
+    with pytest.raises(ValueError, match="有限正数"):
+        reg.Patrol("bad", "", "", lambda _ctx: None, timeout_seconds=seconds)
+
+
+async def test_watch_still_follows_dispatches_and_sends_reports_after_patrol_timeout(tmp_path, monkeypatch):
+    root, calls, sent = str(tmp_path), [], []
+
+    async def stalled(_ctx):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(watch, "PATROLS", [
+        reg.Patrol("slow", "慢巡检", "", stalled, timeout_seconds=0.01),
+        _patrol("after", calls),
+    ])
+    items = [{"id": "d1", "project": "demo", "title": "修登录", "status": "running"}]
+
+    async def refresh(_root):
+        return items
+
+    async def notify(text, **_kw):
+        sent.append(text)
+        return True
+
+    async def writer(_root, _now, label):
+        return label + "正文"
+
+    await asyncio.wait_for(watch.watch_once(root, T0, notify=notify, refresh=refresh, times=[]), timeout=1)
+    items[0]["status"] = "done"
+    await asyncio.wait_for(watch.watch_once(
+        root, T0 + timedelta(minutes=1), notify=notify, refresh=refresh, times=["09:01"], writer=writer,
+    ), timeout=1)
+    assert [name for name, _ in calls] == ["after", "after"]
+    assert any("修登录" in text for text in sent)
+    assert "早报正文" in sent
+    assert reg.load_records(root)["slow"]["failures"] == 2
 
 
 async def test_overview_lists_visible_patrols_with_last_run_and_failures(tmp_path):

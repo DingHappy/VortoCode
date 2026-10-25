@@ -9,17 +9,64 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import os
 import re
+import sys
 import tempfile
+from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from src.agents.backends.codex import codex_execution_state
+from src.agents.backends.execution import ExecutionProgress, ExecutionSnapshot
+from src.agents.backends.observation_order import ObservationConflict, ObservationCursor, ObservationOrder
 
 WAIT_GRACE = timedelta(minutes=2)
 STALE_AFTER = timedelta(minutes=30)     # 这么久没收到报告：观察员不在了（Mac 合盖、Desktop 关了）
 _MAX_THREADS = 12
 _EVENTS_KEEP = 50       # 结束的轮次，等监管汇总
 _DAILY_KEEP_DAYS = 3    # 每天各会话做完几轮的小账：晚报用。事件只留 50 条，忙的一天半天就挤掉了（真机 2026-10-21）
+
+
+class ObservationBusy(RuntimeError):
+    """The existing report is being committed; a byte-identical retry is safe."""
+
+
+@contextmanager
+def _report_lock(root: str):
+    directory = _state_path(root).parent
+    directory.mkdir(parents=True, exist_ok=True)
+    lock_path = directory / ".report.lock"
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(fd, "r+b") as handle:
+        if sys.platform == "win32":
+            import msvcrt
+            if os.fstat(handle.fileno()).st_size == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError as error:
+                raise ObservationBusy("进度报告正在更新，请重传原报告") from error
+        else:
+            import fcntl
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as error:
+                raise ObservationBusy("进度报告正在更新，请重传原报告") from error
+        # Closing releases the lock; keep the stable inode across commits.
+        yield
+
+
+@dataclass(frozen=True)
+class ReportAcceptance:
+    notices: list[str]
+    cursor: dict | None
+    duplicate: bool = False
 
 
 def _state_path(root: str) -> Path:
@@ -49,7 +96,8 @@ def _now() -> datetime:
 
 def _parse(value: Any) -> Optional[datetime]:
     try:
-        return datetime.fromisoformat(str(value))
+        parsed = datetime.fromisoformat(str(value))
+        return parsed if parsed.tzinfo is not None else None
     except (TypeError, ValueError):
         return None
 
@@ -83,7 +131,61 @@ def _clean_threads(payload: Any) -> List[dict]:
                 "shell_write_paths": [str(path)[:200] for path in (turn.get("shell_write_paths") or [])[:10]],
             },
         })
+        if "execution" in raw:
+            out[-1]["execution"] = _clean_execution(raw["execution"], out[-1])
     return out
+
+
+def _clean_execution(raw: Any, thread: dict) -> dict | None:
+    """A report is an observation, never a source of permissions or acceptance.
+
+    An explicit null marks unavailable/unsupported observations. Absence alone
+    identifies a legacy producer; malformed new reports never use legacy fallback.
+    """
+    if not isinstance(raw, dict):
+        return None
+    try:
+        # Do not decode or retain sender-provided evidence, results or features.
+        report = ExecutionSnapshot.from_dict({key: raw[key] for key in
+            ("schema_version", "ref", "state", "observed_at") if key in raw})
+        ref, turn = report.ref, thread.get("turn") or {}
+        if (ref.backend_id != "codex" or ref.session_id != thread["id"]
+                or not turn.get("id") or ref.turn_id != turn["id"] or ref.run_id != turn["id"]
+                or any(len(getattr(ref, name)) > 200 for name in
+                       ("instance_id", "session_id", "turn_id", "run_id", "task_id"))
+                or ref.task_id
+                or report.state != codex_execution_state(thread["status"], turn["status"], thread["flags"])):
+            return None
+        return ExecutionSnapshot(ref, report.state, report.observed_at,
+            native_state=f"{thread['status']}:{turn['status']}",
+            progress=ExecutionProgress(turn.get("plan") or turn.get("request") or ""),
+            features=frozenset({"execution.observe"})).to_dict()
+    except (ValueError, TypeError):
+        return None
+
+
+def progress_snapshot(root: str) -> dict:
+    """Existing API projection; recheck stored observations without changing state."""
+    state = load_state(root)
+    threads = _clean_threads({"threads": state.get("threads") or []})
+    return {"overview": _overview({**state, "threads": threads}, _now()), "threads": threads,
+            "received_at": state.get("received_at"), "report_protocol": 1,
+            "report_cursor": state.get("report_cursor")}
+
+
+def execution_is_current(thread: dict, now: datetime) -> bool:
+    """Legacy reports keep their contract; a new observation must be usable.
+
+    The report's receive time is checked separately by consumers. A recent
+    heartbeat cannot turn an old, unknown or invalid source observation current.
+    """
+    if "execution" not in thread:
+        return True
+    report = _clean_execution(thread["execution"], thread)
+    if report is None or report["state"] == "unknown":
+        return False
+    age = now.timestamp() - report["observed_at"]
+    return 0 <= age <= STALE_AFTER.total_seconds()
 
 
 # Codex 自己的登录 / 用量 / 模型满载：拟句话发给 Codex 没用，得你在 Mac 上处理
@@ -103,6 +205,10 @@ def account_trouble(error: str) -> str:
 
 
 def _waiting(thread: dict) -> str:
+    if "execution" in thread:
+        report = thread["execution"]
+        if not isinstance(report, dict) or report.get("state") != "waiting_user":
+            return ""
     flags = thread.get("flags") or []
     if "waitingOnApproval" in flags:
         return "approval"
@@ -111,11 +217,49 @@ def _waiting(thread: dict) -> str:
     return ""
 
 
+def _waiting_scope(thread: dict, kind: str, host: str) -> list[str]:
+    turn = thread.get("turn") or {}
+    report = thread.get("execution") or {}
+    ref = report.get("ref") or {}
+    return [host, str(ref.get("instance_id") or ""), thread["id"], str(turn.get("id") or ""), kind]
+
+
 def record_report(root: str, payload: Any, *, now: Optional[datetime] = None) -> List[str]:
     """存下最新进度、记下在眼前结束的轮次，返回这次要马上推给主人的提醒（每件事只推一次）。"""
-    now = now or _now()
+    return receive_report(root, payload, now=now).notices
+
+
+def receive_report(root: str, payload: Any, *, now: Optional[datetime] = None) -> ReportAcceptance:
+    """Compare-and-replace the existing report under one cross-process lock."""
     threads = _clean_threads(payload)
-    previous = load_state(root)
+    with _report_lock(root):
+        previous = load_state(root)
+        raw_cursor = previous.get("report_cursor")
+        current = ObservationCursor.from_dict(raw_cursor) if raw_cursor is not None else None
+        order = ObservationOrder.from_dict(payload["report_order"]) if "report_order" in payload else None
+        fingerprint = None
+        if order is not None:
+            fingerprint = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False,
+                separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+            if current is not None and order.cursor == current:
+                if fingerprint != previous.get("report_fingerprint"):
+                    raise ObservationConflict("相同序号的报告内容发生变化，未覆盖当前状态")
+                return ReportAcceptance([], current.to_dict(), True)
+            order.require_successor(current)
+        elif current is not None:
+            raise ObservationConflict("当前进度已启用顺序校验，旧格式报告未覆盖当前状态")
+        notices = _record_report(root, payload, threads, previous, now=now,
+                                 cursor=order.cursor if order else None, fingerprint=fingerprint)
+        return ReportAcceptance(notices, order.cursor.to_dict() if order else None)
+
+
+def _record_report(root: str, payload: Any, threads: List[dict], previous: dict, *,
+                   now: Optional[datetime], cursor: ObservationCursor | None, fingerprint: str | None) -> List[str]:
+    now = now or _now()
+    host = str((payload or {}).get("host") or "")[:60]
+    received = _parse(previous.get("received_at"))
+    continuous = (received is not None and received.tzinfo is not None
+                  and timedelta(0) <= now - received <= STALE_AFTER)
     before = {thread["id"]: thread for thread in previous.get("threads") or []}
     marks: Dict[str, Dict[str, Any]] = previous.get("marks") or {}
     notices: List[str] = []
@@ -125,11 +269,14 @@ def record_report(root: str, payload: Any, *, now: Optional[datetime] = None) ->
         old = before.get(thread["id"]) or {}
         mark = dict(marks.get(thread["id"]) or {})
         label = f"Codex「{thread['name']}」"
-        waiting = _waiting(thread)
+        waiting = _waiting(thread) if execution_is_current(thread, now) else ""
         if waiting:
-            since = _parse(mark.get("waiting_since")) if mark.get("waiting_kind") == waiting else None
-            since = since or now
-            mark.update(waiting_kind=waiting, waiting_since=since.isoformat())
+            scope = _waiting_scope(thread, waiting, host)
+            since = _parse(mark.get("waiting_since")) if continuous and mark.get("waiting_scope") == scope else None
+            if since is None or since.tzinfo is None or since > now:
+                since = now
+                mark.pop("waiting_notified", None)
+            mark.update(waiting_kind=waiting, waiting_scope=scope, waiting_since=since.isoformat())
             if now - since >= WAIT_GRACE and not mark.get("waiting_notified"):
                 turn = thread.get("turn") or {}
                 if waiting == "approval":
@@ -143,6 +290,7 @@ def record_report(root: str, payload: Any, *, now: Optional[datetime] = None) ->
             mark.pop("waiting_kind", None)
             mark.pop("waiting_since", None)
             mark.pop("waiting_notified", None)
+            mark.pop("waiting_scope", None)
         turn, old_turn = thread.get("turn") or {}, old.get("turn") or {}
         finished = turn.get("id") and turn.get("status") in {"completed", "failed", "interrupted"}
         if finished and mark.get("reported_turn") != turn["id"]:
@@ -177,9 +325,11 @@ def record_report(root: str, payload: Any, *, now: Optional[datetime] = None) ->
                 notices.append(f"⚠️ {label} 出错了（Codex 服务报 systemError），去 Codex 窗口看一下。")
         marks[thread["id"]] = mark
     live = {thread["id"] for thread in threads}
-    state = {"threads": threads, "received_at": now.isoformat(), "host": str((payload or {}).get("host") or "")[:60],
+    state = {"threads": threads, "received_at": now.isoformat(), "host": host,
              "marks": {key: value for key, value in marks.items() if key in live}, "events": events[-_EVENTS_KEEP:],
              "daily": _recent_days(daily, now)}
+    if cursor is not None:
+        state.update(report_cursor=cursor.to_dict(), report_fingerprint=fingerprint)
     idle = (payload or {}).get("user_idle_seconds")
     if isinstance(idle, (int, float)) and not isinstance(idle, bool) and 0 <= idle < 10 ** 7:
         state["user_idle_seconds"] = int(idle)      # Mac 上键盘鼠标多久没动（旧观察员不报：当不知道）
@@ -204,29 +354,34 @@ STATUS_TEXT = {"active": "正在做", "idle": "空闲", "systemError": "出错",
 
 def overview(root: str, *, now: Optional[datetime] = None) -> str:
     """给助理和早晚报用的一段 Codex 进度。没有报告就说明为什么看不到。"""
-    now = now or _now()
-    state = load_state(root)
+    return _overview(load_state(root), now or _now())
+
+
+def _overview(state: dict, now: datetime) -> str:
+    """Render one observation, so overview and details cannot mix report versions."""
     received = _parse(state.get("received_at"))
     if not received:
         return "还没收到过 Codex 的进度：需要在 Mac 上开着 VortoCode Desktop（设置 → 能力里开启「让助理查看 Codex」），并且 Codex 在运行。"
     lines = []
-    stale = now - received > STALE_AFTER
-    lines.append(f"Codex 进度（{_ago((now - received).total_seconds())}更新"
+    stale = not timedelta(0) <= now - received <= STALE_AFTER
+    age_text = _ago((now - received).total_seconds()) if received <= now else "时间待核对"
+    lines.append(f"Codex 进度（{age_text}更新"
                  + ("，Mac 可能合盖或 Desktop 没开，可能不是最新" if stale else "") + "）：")
     threads = state.get("threads") or []
     if not threads:
         lines.append("- 现在没有打开的 Codex 会话。")
     for thread in threads:
         turn = thread.get("turn") or {}
-        status = STATUS_TEXT.get(thread.get("status"), thread.get("status"))
-        waiting = _waiting(thread)
+        current = not stale and execution_is_current(thread, now)
+        status = STATUS_TEXT.get(thread.get("status"), thread.get("status")) if current else "状态待核对"
+        waiting = _waiting(thread) if current else ""
         if waiting:
             status = "在等你批准" if waiting == "approval" else "在问你问题"
         line = f"- 「{thread.get('name')}」（{thread.get('cwd')}）：{status}"
         if turn.get("request"):
             line += f"；这一轮的要求：{turn['request'][:120]}"
         if turn.get("running_command"):
-            line += f"；正在跑：{turn['running_command'][:120]}"
+            line += f"；{'正在跑' if current and not stale else '上次命令'}：{turn['running_command'][:120]}"
         if turn.get("file_count"):
             line += f"；改了 {turn['file_count']} 个文件（{'、'.join(turn.get('files', [])[:5])}）"
         if turn.get("reply"):
@@ -288,10 +443,13 @@ def brief(root: str, now: Optional[datetime] = None) -> str:
     now = now or _now()
     state = load_state(root)
     received = _parse(state.get("received_at"))
-    if not received or now - received > timedelta(hours=12):
+    if not received or not timedelta(0) <= now - received <= timedelta(hours=12):
         return ""
     lines = []
     for thread in state.get("threads") or []:
+        if not execution_is_current(thread, now):
+            lines.append(f"· 「{thread.get('name')}」状态待核对（上次观察）")
+            continue
         waiting = _waiting(thread)
         if waiting:
             lines.append(f"· 「{thread.get('name')}」{'在等你批准' if waiting == 'approval' else '在问你问题'}")
@@ -363,8 +521,10 @@ def _find_thread(root: str, wanted: str) -> dict:
 
 
 def propose_action(root: str, *, thread: str, kind: str, text: str = "", session: str = "",
-                   tainted: bool = False) -> dict:
+                   tainted: bool = False, expected_turn_id: Optional[str] = None) -> dict:
     target = _find_thread(root, thread)
+    if expected_turn_id is not None and (target.get("turn") or {}).get("id", "") != expected_turn_id:
+        raise CodexActionError("Codex 轮次已经变化，旧建议不再适用")
     text = str(text or "").strip()
     if kind not in {"message", "interrupt"}:
         raise CodexActionError("只能拟「发消息」或「叫停」")
@@ -461,7 +621,8 @@ def action_notice(action: dict) -> str:
 def action_result_notice(action: dict) -> str:
     label = f"Codex「{action.get('thread_name')}」"
     if action.get("status") == "sent":
-        return f"✅ 已{'叫停' if action.get('kind') == 'interrupt' else '发给'} {label}。"
+        return (f"✅ 已向 {label} 提交叫停请求；是否已停止以最新状态为准。" if action.get("kind") == "interrupt"
+                else f"✅ 已发给 {label}。")
     return f"❌ 没能{'叫停' if action.get('kind') == 'interrupt' else '发给'} {label}：{action.get('error') or '原因不明'}"
 
 

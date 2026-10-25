@@ -16,7 +16,14 @@ Desktop本地模型交付补充（2026-10-08）：内置Gateway现在包含锁�
 | `src/llm/hard_budget.py` | 严格适配器门、请求前预留、累计 token/请求/工具/时间预算 | 默认 provider 能力推断、持久认领和授权 |
 | `src/llm/streaming.py` | 执行中断信号、受检查回调与本地流清理 | 任务台账、失效判定、远端费用停止 |
 | `src/agents/bounded_check.py` | 单次只读检查装配与结构化预算结果 | 自动调度、回执或任务验收 |
-| `src/agents/agent_loop.py` | 模型回合、工具调度、上下文和权限门 | 客户端导航、任务持久化 |
+| `src/agents/agent_loop.py` | 模型回合、历史、上下文和媒体消息，接入共享工具运行层 | 客户端导航、任务持久化 |
+| `src/agents/tool.py` / `tool_runtime.py` | Agent 无关的工具定义、声明适配、能力/权限检查、调度、Hook/审计与污点传播；[接入合同](TOOL_RUNTIME.md) | 模型调用、会话存储、外部 Agent 自带工具的执行权限 |
+| `src/agents/backends/control.py` / `backends/codex.py` | 现有会话的状态与轮次控制合同、Codex 协议适配；[核心控制合同](AGENT_BACKENDS.md) | 启动额外进程、工具执行、审批代决、会话存储或任意核心切换 |
+| `src/agents/backends/execution.py` | 可扩展的执行身份/状态/进展/结果与证据投影、版本编解码；[执行合同](EXECUTION_CONTRACT.md) | 任务数据库、调度、授权、验收判定或自动插件加载 |
+| `src/agents/backends/observation_order.py` / `scheduling/codex_observer.py` / `codex_watch.py` | 整份快照的前序/代次/序号核对、不可变重传与原状态槽加锁替换；[观测顺序](OBSERVATION_ORDER.md) | 完整事件回放、多主机报告合并、自动抢回上报权或执行指令重试 |
+| `desktop/src/components/AssistantWorkday.tsx` / `lib/assistantWorkday.ts` / `assistantWorkdayReads.ts` | 现有目标、任务单、确认和 Codex 报告的今日投影、独立读取与来源失效；[统计合同](ASSISTANT_WORKDAY.md) | 第二套任务库、自动验收、代替用户审批或判定真实部署完成 |
+| `desktop/src/lib/personalGoalSnapshot.ts` | 今日工作与目标详情共用的读取结构校验、逐条及整体用户验收依据判断；未知状态保守显示 | 目标持久化、自动修复记录、执行或批准操作 |
+| `desktop/src/components/settings/CodexWatchCard.tsx` / `lib/codexObserverHealth.ts` | 本机 General 观察员运行诊断、来源复核、状态时效和刷新隔离；[观测合同](OBSERVATION_ORDER.md) | 启动或重启引擎、自动接管、保存凭据、使用远端状态冒充本机健康 |
 | `src/agents/main_agent.py` | 标准主 Agent 工具装配、旧导入兼容 | 开发流水线和角色执行实现 |
 | `src/agents/dev_policy.py` | 环境预检、重试策略、测试改动与诚实结果摘要 | 模型执行、客户端通知 |
 | `src/agents/dev_tools.py` | 隔离实现、并行/依赖接力、集成验证、审查与 PR 门 | 会话和角色注册 |

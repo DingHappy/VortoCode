@@ -1,0 +1,5 @@
+html:has(.location-qa),body:has(.location-qa),#root:has(.location-qa) { min-width: 0; }
+.location-qa { height: 100dvh; display: flex; flex-direction: column; }
+.location-qa>header { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 10px 16px; font-size: 12px; border-bottom: 1px solid var(--n5); }
+.location-qa>.conversation { flex: 1; min-height: 0; }
+.location-qa-note { padding: 12px 24px; color: var(--n9); font-size: 12px; }

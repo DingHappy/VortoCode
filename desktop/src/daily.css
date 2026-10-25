@@ -228,6 +228,16 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 .activity-feed-item.waiting .activity-feed-text > span { color: var(--amber-text); }
 .activity-feed-item.failed .activity-feed-text > span { color: var(--red-text); }
 .activity-feed-text small { margin-top: 1px; font-size: 11.5px; font-variant-numeric: tabular-nums; color: var(--n9); }
+.activity-feed-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 3px 8px; line-height: 1.6; overflow-wrap: anywhere; }
+.activity-feed-status { color: var(--n11); }
+.activity-feed-item.waiting .activity-feed-status { color: var(--amber-text); }
+.activity-feed-item.running .activity-feed-status { color: var(--daily-accent-text); }
+.activity-feed-item.failed .activity-feed-status { color: var(--red-text); }
+.activity-feed-chevron { flex: none; margin: 7px 0 0 auto; color: var(--n9); }
+.activity-feed-record > summary { list-style: none; }
+.activity-feed-record > summary::-webkit-details-marker { display: none; }
+.activity-feed-record[open] > summary .activity-feed-chevron { transform: rotate(180deg); }
+.activity-feed-detail { margin: 0 8px 12px 50px; padding: 10px 12px; border-left: 2px solid var(--n5); font-size: 12.5px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--n11); }
 .workbench-toggle-dot.waiting { background: var(--amber-text); animation: none; }
 .inspector-body > .activity-feed { margin: -20px; }
 
@@ -290,6 +300,8 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 .mode-switch button.active, .assistant-tabs button.active { font-weight: 600; color: var(--n13); background: var(--n0); box-shadow: 0 1px 2px rgba(var(--ink-rgb), .1), 0 0 0 .5px rgba(var(--ink-rgb), .06); }
 .assistant-tabs button svg { flex: 0 0 auto; }
 .assistant-tabs .assistant-tab-badge { position: static; min-width: 17px; height: 17px; margin-left: 2px; padding: 0 5px; border-radius: 999px; font-size: 10.5px; font-style: normal; font-weight: 600; line-height: 17px; color: var(--amber-text); background: var(--amber-bg); }
+.assistant-tabs.labeled button { position: relative; }
+.assistant-tabs.labeled .assistant-tab-badge { position: absolute; top: 3px; right: 3px; min-width: 14px; height: 14px; margin: 0; padding: 0 3px; font-size: 10px; line-height: 14px; }
 /* 窄窗口：助理面板与原侧栏一样改为覆盖层，不挤到下一行 */
 @media (max-width: 1100px) {
   .workbench > .assistant-panel { position: absolute; z-index: 15; right: 0; top: 0; bottom: 0; width: min(360px, calc(100% - 220px)); box-shadow: -8px 0 24px rgba(var(--ink-rgb), .08); }
@@ -369,13 +381,6 @@ button.timeline-heading { display: flex; align-items: center; gap: 8px; flex-wra
 
 /* 手机上的聊天（只读） */
 .assistant-side-chat.phone svg { color: var(--daily-accent-text); }
-.phone-chat-dialog { display: flex; flex-direction: column; width: min(760px, calc(100vw - 32px)); max-height: min(80vh, 760px); }
-.phone-chat-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.phone-chat-dialog header h2 { display: flex; align-items: center; gap: 6px; margin: 0; }
-.phone-chat-dialog header button { display: inline-flex; padding: 5px; border: 0; border-radius: 7px; color: var(--n10); background: transparent; cursor: pointer; }
-.phone-chat-dialog header button:hover { background: var(--n3); }
-.phone-chat-note { margin: 6px 0 10px; font-size: 12.5px; color: var(--n9); }
-.phone-chat-messages { flex: 1; min-height: 0; overflow-y: auto; padding-right: 4px; }
 .assistant-proposal-title { margin: 0 4px 4px; font-size: 12px; color: var(--amber-text); }
 .assistant-memories.proposals { padding-top: 0; margin-bottom: 8px; }
 .assistant-memories.proposals li { background: var(--n2); border-radius: 8px; border-bottom: 0; margin-bottom: 4px; }

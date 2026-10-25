@@ -9,7 +9,8 @@
 - Mac 停止报告而会话还在做事 → 提醒一次。
 
 等批准 / 等回答、服务出错这种 Codex 卡在你身上的事不等半小时，由 ``codex_watch`` 马上推。
-规则判断不调模型；只有「推进」那一步调模型，每轮最多一次。Codex 的内容是数据不是指令，
+规则判断不调模型；每个 Codex 轮次最多尝试判断一次，每次巡视最多判断两个，合计等待最多90秒。
+按完成时间优先处理较早的轮次，额度外的不记为已判断，留到下次巡视。Codex 的内容是数据不是指令，
 据此拟出的动作标为读过外部内容（通知里会提示看清楚再批）。夜间安静时段由通知投递器统一处理。
 
 你正在 Mac 前（观察员报的键盘鼠标空闲不到 ``OWNER_PRESENT_IDLE``）时，纯进度汇报只记台账、不推手机——
@@ -23,6 +24,7 @@ import json
 import logging
 import re
 import tempfile
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -35,6 +37,8 @@ DEFAULTS: Dict[str, Any] = {"interval_minutes": 30, "nudge": True}
 _LIMITS = {"interval_minutes": (10, 24 * 60)}
 NUDGE_AFTER_IDLE = timedelta(minutes=15)    # 做完一轮后空这么久才判断下一步
 OWNER_PRESENT_IDLE = timedelta(minutes=5)   # Mac 上键盘鼠标这么久内动过 = 你在电脑前
+MAX_REVIEWS_PER_CHECK = 2
+REVIEW_BUDGET_SECONDS = 90.0  # 给外层120秒巡检时限留出汇报时间；不是 token/账单硬预算。
 
 
 PRESENCE_REPORT_FRESH = timedelta(minutes=12)   # 观察员心跳 10 分钟 + 余量：更久没报 = 观察员可能不在了
@@ -73,6 +77,14 @@ def _save(root: str, data: Dict[str, Any]) -> None:
         json.dump(data, handle, ensure_ascii=False)
         temp = Path(handle.name)
     temp.replace(path)
+
+
+def _save_progress(root: str, data: Dict[str, Any]) -> None:
+    """观察写入保留用户刚保存的设置；配置写入仍由 save_config 完成。"""
+    latest = _load(root)
+    if "config" in latest:
+        data["config"] = latest["config"]
+    _save(root, data)
 
 
 def load_config(root: str) -> Dict[str, Any]:
@@ -143,6 +155,21 @@ def _review_material(thread: dict) -> str:
             f"Codex 最后说：{turn.get('reply') or '（无）'}")
 
 
+def _review_current(root: str, thread: dict, now: datetime) -> bool:
+    """模型等待期间的心跳可以更新；轮次、实际审阅内容或授权变化后不采用旧结论。"""
+    state = codex_watch.load_state(root)
+    received = codex_watch._parse(state.get("received_at"))
+    if (received is None or received.tzinfo is None
+            or not timedelta(0) <= now - received <= codex_watch.STALE_AFTER):
+        return False
+    current = next((item for item in state.get("threads") or [] if item.get("id") == thread["id"]), None)
+    return (current is not None and codex_watch.execution_is_current(current, now)
+            and (current.get("execution") or {}).get("ref") == (thread.get("execution") or {}).get("ref")
+            and _signature(current) == _signature(thread)
+            and _review_material(current) == _review_material(thread)
+            and load_config(root)["nudge"] is True)
+
+
 def _parse_review(text: str) -> Optional[Dict[str, str]]:
     match = re.search(r"\{.*\}", text or "", re.S)
     if not match:
@@ -151,11 +178,15 @@ def _parse_review(text: str) -> Optional[Dict[str, str]]:
         data = json.loads(match.group(0))
     except ValueError:
         return None
-    verdict = str(data.get("verdict") or "").strip()
+    if not all(isinstance(data.get(key, ""), str) for key in ("verdict", "assessment", "next")):
+        return None
+    verdict = data.get("verdict", "").strip()
     if verdict not in {"done", "continue", "ask"}:
         return None
     review = {"verdict": verdict, "assessment": str(data.get("assessment") or "").strip()[:400],
               "next": str(data.get("next") or "").strip()[:1500]}
+    if not review["assessment"]:
+        return None
     if verdict == "continue" and not review["next"]:
         review["verdict"] = "ask"
     return review
@@ -176,6 +207,25 @@ async def review_turn(thread: dict, *, llm: Any = None) -> Optional[Dict[str, st
 def _pending_action(root: str, thread_id: str) -> bool:
     return any(item.get("thread_id") == thread_id and item.get("status") in {"proposed", "approved", "sending"}
                for item in codex_watch.load_actions(root))
+
+
+def _review_order(root: str, state: dict, marks: dict, now: datetime) -> List[str]:
+    """仅从原有完成事件选候选，不另建队列；同名 turn_id 也必须属于同一会话。"""
+    pending = {item.get("thread_id") for item in codex_watch.load_actions(root)
+               if item.get("status") in {"proposed", "approved", "sending"}}
+    candidates = []
+    for thread in state.get("threads") or []:
+        tid, turn = thread["id"], thread.get("turn") or {}
+        if (thread.get("status") != "idle" or turn.get("status") != "completed" or not turn.get("id")
+                or not codex_watch.execution_is_current(thread, now)
+                or codex_watch._waiting(thread) or tid in pending
+                or (marks.get(tid) or {}).get("reviewed_turn") == turn["id"]):
+            continue
+        finished = next((codex_watch._parse(event.get("at")) for event in reversed(state.get("events") or [])
+                         if event.get("thread_id") == tid and event.get("turn_id") == turn["id"]), None)
+        if finished is not None and now - finished >= NUDGE_AFTER_IDLE:
+            candidates.append((finished, tid))
+    return [tid for _, tid in sorted(candidates)[:MAX_REVIEWS_PER_CHECK]]
 
 
 async def _send(notify, text: str, confirm_id: str = "") -> bool:
@@ -266,9 +316,10 @@ def _progress_line(thread: dict, finished: List[dict], assessment: str) -> str:
 async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -> None:
     """到点才检查一次。没收到过 Codex 报告就什么也不做。"""
     now = now if now.tzinfo else now.astimezone()
+    started = time.monotonic()
     state = codex_watch.load_state(root)
     received = codex_watch._parse(state.get("received_at"))
-    if not received:
+    if not received or received > now:
         return
     data = _load(root)
     config = load_config(root)
@@ -280,7 +331,7 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
     data["last_check"] = now.isoformat()
     if last_check is None:          # 第一次只记下现状，不把旧账推一遍
         data["marks"] = {thread["id"]: {"sig": _signature(thread)} for thread in threads}
-        _save(root, data)
+        _save_progress(root, data)
         return
 
     received_key = received.isoformat()
@@ -289,7 +340,7 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
             if await _send(notify, f"📡 Mac 上的 Codex 观察员已经 {_minutes(now - received)} 分钟没报进度了"
                                    "（合盖、断网或 Desktop 关了），Codex 的活现在没人看着。"):
                 data["stale_notified"] = received_key
-        _save(root, data)
+        _save_progress(root, data)
         return
 
     events = [event for event in state.get("events") or []
@@ -298,7 +349,12 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
     needs_you: List[str] = []
     on_mac: List[str] = []            # 只能你在 Mac 上处理的（登录、额度），不提「我拟好话给 Codex」
     drafts: List[tuple] = []          # (正文, 动作)
-    for thread in threads:
+    review_order = _review_order(root, state, marks, now) if config["nudge"] else []
+    review_rank = {tid: rank for rank, tid in enumerate(review_order)}
+    review_deadline = started + REVIEW_BUDGET_SECONDS
+    reviews = 0
+    # 较早完成的候选先处理，其余会话仍照常做规则检查和汇报。
+    for thread in sorted(threads, key=lambda item: review_rank.get(item["id"], len(review_rank))):
         tid = thread["id"]
         mark = dict(marks.get(tid) or {})
         turn = thread.get("turn") or {}
@@ -308,6 +364,11 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
         finished = [event for event in events if event.get("thread_id") == tid]
         label = f"「{thread.get('name')}」"
         assessment = ""
+
+        if not codex_watch.execution_is_current(thread, now):
+            marks[tid] = mark
+            lines.append(f"· {label}状态待核对；上次观察不作为当前执行或继续建议的依据。")
+            continue
 
         for event in finished:
             if event.get("pushed"):
@@ -335,36 +396,35 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
                     + (f"，一直停在：\n$ {command[:200]}" if command else "。"))
             if not _pending_action(root, tid):
                 try:
-                    action = codex_watch.propose_action(root, thread=tid, kind="interrupt")
+                    action = codex_watch.propose_action(root, thread=tid, kind="interrupt", expected_turn_id=turn.get("id") or "")
                     drafts.append((text + "\n要叫停这一轮就点「批准」，让它继续跑就点「拒绝」。", action))
                 except codex_watch.CodexActionError:
                     needs_you.append(text[2:])
             else:
                 needs_you.append(text[2:])
 
-        # 推进：最近一轮做完、会话空着、还没判断过 → 请模型看下一步；只看在眼前做完的轮次（有结束事件），刚打开的旧会话不算
-        finish_at = next((codex_watch._parse(event.get("at")) for event in reversed(state.get("events") or [])
-                          if event.get("turn_id") == turn.get("id")), None)
-        # 刚做完的先不判断：你可能正在跟它来回说，下次检查再看（它还空着才说明真停下了）
-        seen_finish = finish_at is not None and now - finish_at >= NUDGE_AFTER_IDLE
-        if (config["nudge"] and turn.get("status") == "completed" and thread.get("status") == "idle"
-                and not codex_watch._waiting(thread) and turn.get("id") and seen_finish
-                and mark.get("reviewed_turn") != turn["id"] and not _pending_action(root, tid)):
+        remaining = review_deadline - time.monotonic()
+        if (tid in review_rank and reviews < MAX_REVIEWS_PER_CHECK and remaining > 0
+                and _review_current(root, thread, now + timedelta(seconds=time.monotonic() - started))):
+            reviews += 1
             mark["reviewed_turn"] = turn["id"]        # 先记下：模型失败也不反复花钱
             marks[tid] = mark
             data["marks"] = marks
-            _save(root, data)
+            _save_progress(root, data)
             try:
-                review = await review_turn(thread, llm=llm)
+                review = await asyncio.wait_for(review_turn(thread, llm=llm), timeout=remaining)
             except Exception as error:  # noqa: BLE001 —— 判断不出来就算了，不挡其它检查
                 logger.warning("Codex 推进判断失败：%s", type(error).__name__)
+                review = None
+            if review and not _review_current(root, thread, now + timedelta(seconds=time.monotonic() - started)):
+                logger.info("Codex 推进判断已过期，不采用旧结论")
                 review = None
             if review:
                 assessment = review["assessment"]
                 if review["verdict"] == "continue":
                     try:
                         action = codex_watch.propose_action(root, thread=tid, kind="message", text=review["next"],
-                                                            tainted=True)
+                                                            tainted=True, expected_turn_id=turn["id"])
                         drafts.append((f"🧭 Codex{label}做完了一轮。{assessment}\n\n" + codex_watch.action_notice(action),
                                        action))
                     except codex_watch.CodexActionError as error:
@@ -378,7 +438,7 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
 
     live = {thread["id"] for thread in threads}
     data["marks"] = {key: value for key, value in marks.items() if key in live}
-    _save(root, data)
+    _save_progress(root, data)
     if lines or needs_you or on_mac:
         text = "🧭 Codex 进度（半小时巡视）" if config["interval_minutes"] == 30 else \
             f"🧭 Codex 进度（每 {config['interval_minutes']} 分钟巡视）"

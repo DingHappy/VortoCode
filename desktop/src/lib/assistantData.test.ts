@@ -31,6 +31,28 @@ it("publishes available data independently and does not wipe a previous snapshot
   expect(sinks.dispatches).not.toHaveBeenCalled();
 });
 
+it("distinguishes a successful empty source from a failed source without clearing prior records", async () => {
+  const client = { listAgentActivity: async () => [], listDispatches: async () => { throw new Error("private transport detail"); },
+    listCodexActions: async () => { throw new Error("404"); }, getAssistantProfile: async () => ({ name: "x" }), listPhoneChats: async () => [] } as unknown as GatewayClient;
+  const sourceRead = vi.fn(), dispatches = vi.fn(), codexActions = vi.fn();
+  await loadAssistantData(client, () => true, { turns: vi.fn(), dispatches, codexActions, sourceRead, profile: vi.fn(), chats: vi.fn() });
+  expect(sourceRead).toHaveBeenCalledWith("turns", { status: "current", checkedAt: expect.any(Number) });
+  expect(sourceRead).toHaveBeenCalledWith("dispatches", { status: "unavailable" });
+  expect(sourceRead).toHaveBeenCalledWith("codexActions", { status: "unavailable" });
+  expect(dispatches).not.toHaveBeenCalled(); expect(codexActions).not.toHaveBeenCalled();
+  expect(JSON.stringify(sourceRead.mock.calls)).not.toContain("private transport detail");
+});
+
+it("late reads cannot publish success or failure metadata into a different source", async () => {
+  const slow = deferred<any>(); let current = true;
+  const client = { listAgentActivity: () => slow.promise, listDispatches: () => slow.promise, listCodexActions: () => slow.promise,
+    getAssistantProfile: async () => ({ name: "x" }), listPhoneChats: async () => [] } as unknown as GatewayClient;
+  const sourceRead = vi.fn();
+  const loading = loadAssistantData(client, () => current, { turns: vi.fn(), dispatches: vi.fn(), codexActions: vi.fn(), sourceRead, profile: vi.fn(), chats: vi.fn() });
+  current = false; slow.resolve([]); await loading;
+  expect(sourceRead.mock.calls.every(([, state]) => state.status === "loading")).toBe(true);
+});
+
 it("a newer refresh wins over an older refresh on the same host", async () => {
   const slow = deferred<any>();
   let epoch = 1;

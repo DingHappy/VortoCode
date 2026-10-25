@@ -4,16 +4,27 @@ import { WorkbenchLauncher, WorkbenchTabs, type WorkbenchTool } from "./componen
 import { ActivityFeed } from "./components/ActivityFeed";
 import { AssistantTaskCard } from "./components/AssistantTaskCard";
 import { CodexActionCard } from "./components/CodexActionCard";
+import { AssistantWorkday } from "./components/AssistantWorkday";
 import { loadAssistantData } from "./lib/assistantData";
+import { activityCoverage, type ActivityRead, type ActivitySource, type ActivitySourceName } from "./lib/activitySources";
 import { prepareAvatar } from "./lib/avatar";
-import { resolveMainChat, sourceLabel } from "./lib/mainChat";
+import { resolveMainChat } from "./lib/mainChat";
+import { ChatHistory } from "./components/ChatHistory";
+import { ConversationLocation } from "./components/ConversationLocation";
+import { useConversationLocation } from "./hooks/useConversationLocation";
+import { startPolling } from "./lib/polling";
+import { mergeRuntimeInboxes, observeRuntimeInboxes } from "./lib/runtimeInboxReads";
 import { AssistantRefreshQueue } from "./lib/assistantRefresh";
 import { AssistantActionGate, type AssistantTaskAction } from "./lib/assistantTask";
 import { ConnectorStatusReads } from "./lib/connectorStatus";
 import { openAssistantTask } from "./lib/assistantNavigation";
 import { AssistantAudit, AssistantAvatarImage, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantPlugins, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PhoneChatDialog, type AppMode, type AssistantTab } from "./components/AssistantMode";
 import { AssistantGoals } from "./components/AssistantGoals";
-import { dispatchFeedItem, isPhoneSession, noticeFeedItem, taskFeedItem, turnFeedItem, type FeedItem } from "./lib/activityFeed";
+import { codexActionFeedItem, confirmationFeedItem, dispatchFeedItem, isPhoneSession, noticeFeedItems, taskFeedItem, turnFeedItem, type FeedItem } from "./lib/activityFeed";
+import { AssistantActivity, AssistantActivityDetail } from "./components/AssistantActivity";
+import { ComputerLauncher, ComputerWorkspacePanel } from "./components/ComputerWorkspace";
+import { useComputerWorkspace } from "./hooks/useComputerWorkspace";
+import { dispatchDetailSteps } from "./components/ActivityRecordDialog";
 import { createConfirmationReply } from "./lib/confirm";
 import { ComposerCommands } from "./components/ComposerCommands";
 import { ContextStatus, SessionInfo } from "./components/SessionInfo";
@@ -44,7 +55,7 @@ import {
   SquareTerminal,
   X,
 } from "lucide-react";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import "./App.css";
 import "./daily.css";
@@ -128,6 +139,7 @@ import { ProjectAssetsPanel } from "./components/ProjectAssetsPanel";
 import { RunsPanel } from "./components/RunsPanel";
 import { RuntimeInboxPanel } from "./components/RuntimeInboxPanel";
 import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
+import { readLocalCodexObserver } from "./lib/codexObserverHealth";
 import { BuildVersion } from "./components/BuildVersion";
 import { ArtifactCenter } from "./components/ArtifactCenter";
 import { PluginsPage } from "./components/PluginsPage";
@@ -242,6 +254,8 @@ function App() {
   const projectRestoreDoneRef = useRef(false);
   const supervisionGenerationRef = useRef(0);
   const runtimeInboxGenerationRef = useRef(0);
+  const runtimeInboxKeyRef = useRef("");
+  const runtimeInboxPendingRef = useRef<{ key: string; generation: number; promise: Promise<boolean> } | null>(null);
   const runtimeTokensRef = useRef<Map<string, string>>(new Map());
   const runtimeInboxSourcesRef = useRef<Array<Omit<DesktopRuntimeInbox, "snapshot" | "error" | "checkedAt">>>([]);
   const projectSwitchingRef = useRef(false);
@@ -280,6 +294,8 @@ function App() {
 
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const conversationLocation = useConversationLocation({ client: clientRef.current, sid: activeSid,
+    messages, container: conversationScrollRef, autoScroll: autoScrollRef });
   const [plan, setPlan] = useState<PlanItem[]>([]);
   const [activities, setActivities] = useState<TurnActivity[]>([]);
   const [previewView, setPreviewView] = useState<PreviewView>("plan");
@@ -342,6 +358,8 @@ function App() {
   });
   const [mainChatSid, setMainChatSid] = useState(() => { try { return localStorage.getItem(STORAGE_KEYS.mainChatSid) ?? ""; } catch { return ""; } });
   const [assistantTab, setAssistantTab] = useState<AssistantTab>("feed");
+  const computerWorkspace = useComputerWorkspace(appMode === "assistant" && mainView === "chat" && inspectorOpen);
+  const [assistantGoalFocus, setAssistantGoalFocus] = useState<{ client: GatewayClient | null; scope: string; id: string } | null>(null);
   // 助理的名字 / 关于你，以及它记住的事（都在助理所在的那台电脑上）
   const [assistantProfile, setAssistantProfile] = useState<AssistantProfile>({ name: "VortoCode", soul: "", about_you: "" });
   const [assistantAvatar, setAssistantAvatar] = useState<AssistantAvatar | null>(null);
@@ -357,11 +375,30 @@ function App() {
   // 手机上和助理的聊天：只读查看（不接管——两个进程同时写一段对话会互相覆盖）
   const [phoneChats, setPhoneChats] = useState<PhoneChat[]>([]);
   const [phoneChatSid, setPhoneChatSid] = useState<string | null>(null);
+  const [phoneChatRid, setPhoneChatRid] = useState<string | undefined>();
+  const openPhoneChat = (sid: string, rid?: string) => {
+    if (!phoneChats.some(chat => chat.sid === sid)) {
+      setBanner("当前尚未取得这段手机聊天记录，请刷新动态后再试；这不表示记录已删除。");
+      return;
+    }
+    setPhoneChatSid(sid); setPhoneChatRid(rid);
+  };
   const [agentTurns, setAgentTurns] = useState<AgentTurn[]>([]);
   // Snapshots are bound to the loaded host before they can expose actions.
   const assistantScope = `${baseUrl}:${repoRoot}:${processStatus.runtimeId}:${connection}`;
   const assistantScopeRef = useRef(assistantScope);
   assistantScopeRef.current = assistantScope;
+  const [activityReads, setActivityReads] = useState<{ client: GatewayClient; scope: string; sources: Partial<Record<ActivitySourceName, ActivityRead>> } | null>(null);
+  const publishActivityRead = useCallback((client: GatewayClient, scope: string, name: ActivitySourceName, state: ActivityRead) => {
+    if (clientRef.current !== client || assistantScopeRef.current !== scope) return;
+    setActivityReads(previous => {
+      if (clientRef.current !== client || assistantScopeRef.current !== scope) return previous;
+      const sources = previous?.client === client && previous.scope === scope ? previous.sources : {};
+      const prior = sources[name] ?? { status: "loading" as const };
+      const next = state.status === "loading" ? { ...prior, checking: true } : { ...prior, ...state, checking: false };
+      return { client, scope, sources: { ...sources, [name]: next } };
+    });
+  }, []);
   const connectors = connectorSnapshotScope === assistantScope ? connectorSnapshot : [];
   const connectorAuthorizing = connectors.some((item) => item.authorizing);
   const refreshConnectorStatus = useCallback((client: GatewayClient, scope: string) => {
@@ -379,8 +416,9 @@ function App() {
   useEffect(() => {
     const client = clientRef.current;
     if (!client || connection !== "connected" || !connectorAuthorizing || assistantTab !== "identity") return;
-    const timer = window.setInterval(() => { void refreshConnectorStatus(client, assistantScope).catch(() => undefined); }, 4000);
-    return () => window.clearInterval(timer);
+    return startPolling(() => refreshConnectorStatus(client, assistantScope), {
+      intervalMs: 4_000, hiddenIntervalMs: 15_000, visibility: document,
+    });
   }, [connectorAuthorizing, assistantTab, assistantScope, connection, refreshConnectorStatus]);
   // 插件（日历、Notion…）：打开身份页时读一次状态；检查结果只留在本次查看里
   const [pluginSnapshot, setPlugins] = useState<{ scope: string; items: AssistantPlugin[] } | null>(null);
@@ -446,18 +484,18 @@ function App() {
   const [codexActions, setCodexActions] = useState<CodexAction[]>([]);
   const [dispatchSnapshotScope, setDispatchSnapshotScope] = useState<string | null>(null);
   const dispatches = dispatchSnapshotScope === assistantScope ? dispatchSnapshot : [];
-  const trackingDispatches = dispatches.some((item) => ["running", "waiting", "sending", "submission_unknown"].includes(item.status));
   const [selectedDispatchId, setSelectedDispatchId] = useState<string | null>(null);
+  const [selectedCodexAction, setSelectedCodexAction] = useState<{ client: GatewayClient | null; scope: string; id: string } | null>(null);
   const assistantLoadEpoch = useRef(0);
   const assistantRefreshQueue = useRef(new AssistantRefreshQueue());
   const assistantActionGate = useRef(new AssistantActionGate());
   useEffect(() => {
     assistantLoadEpoch.current += 1;
-    setAgentTurns([]); setDispatches([]); setCodexActions([]); setDispatchSnapshotScope(null); setPhoneChats([]); setPhoneChatSid(null);
+    setAgentTurns([]); setDispatches([]); setCodexActions([]); setDispatchSnapshotScope(null); setPhoneChats([]); setPhoneChatSid(null); setPhoneChatRid(undefined);
     setAssistantProfile({ name: "VortoCode", soul: "", about_you: "" }); setAssistantAvatar(null);
     setAssistantSchedule([]); setAssistantMemories([]); setMemoryProposals([]);
     setConnectors([]); setConnectorSnapshotScope(null); setPluginBusy("");
-    setSelectedDispatchId(null); setProfileDialogOpen(false);
+    setSelectedDispatchId(null); setSelectedCodexAction(null); setAssistantGoalFocus(null); setProfileDialogOpen(false);
   }, [assistantScope]);
   const [tabsNeedingAttention, setTabsNeedingAttention] = useState<ReadonlySet<InspectorTab>>(
     () => new Set());
@@ -510,6 +548,7 @@ function App() {
   } = useIsolatedDeliveries(clientRef);
   const [runs, setRuns] = useState<CommandRunItem[]>([]);
   const [notices, setNotices] = useState<NoticeItem[]>([]);
+  const noticeReadRef = useRef(0), noticeRevisionRef = useRef(0);
   // Hook 信任 + 扩展清单已收进 useExtensionsStatus；跨域的 toggleHookTrust 留在 App。
   const {
     hookStatus, setHookStatus, hookTrustBusy, setHookTrustBusy,
@@ -517,6 +556,10 @@ function App() {
     refreshHookStatus, refreshExtensionsInspect,
   } = useExtensionsStatus(clientRef);
   const [decisions, setDecisions] = useState<DecisionItem[]>([]);
+  const decisionScopeRef = useRef(activeSid);
+  decisionScopeRef.current = activeSid;
+  const decisionReadRef = useRef(0);
+  const auditReadRef = useRef(0);
   const [auditEntries, setAuditEntries] = useState<AuditEntry[]>([]);
   // auditFilter（审计类别筛选）是纯本地 UI 态，已下移到 <DecisionsPanel> 自持。
   // journal 域 8 个 state + 全部读写回调已收进 useJournal（hook 试点，hooks/useJournal.ts）；
@@ -530,7 +573,7 @@ function App() {
   const { attachments, setAttachments, addFiles, removeAttachment } = useAttachments(setBanner);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
-  const { tasks, focusedTaskId, worktreeWorkspace, setFocusedTaskId, refreshTasks,
+  const { tasks, taskRead, focusedTaskId, worktreeWorkspace, setFocusedTaskId, refreshTasks,
     refreshWorktrees, resetTasks, upsertTask, acceptTaskEvent, captureTaskScope, cancelTask, pauseTask,
     resumeTask } = useTasks(clientRef, setBanner);
   const {
@@ -593,9 +636,9 @@ function App() {
   // 发给 Agent 的两个回调与协议事件对 setGitReviewRevision 的写入留在 App。
   const {
     gitReview, gitReviewDiff, gitSelectedPath, gitReviewScope, gitReviewLoading, gitReviewError,
-    gitReviewRevision, setGitReviewRevision, gitActionBusy, taskReviewTask, setTaskReviewTask,
-    taskBranchReview, setTaskBranchReview, taskBranchDiff, setTaskBranchDiff,
-    taskBranchSelectedPath, setTaskBranchSelectedPath, taskReviewVerifying, gitComments,
+    gitReviewRevision, setGitReviewRevision, gitActionBusy, taskReviewTask,
+    taskBranchReview, taskBranchDiff,
+    taskBranchSelectedPath, taskReviewVerifying, gitComments,
     setGitComments, pendingGitComment, setPendingGitComment, gitCommentDraft, setGitCommentDraft,
     gitCommentSaving, gitCommitMessage, setGitCommitMessage, gitPrTitle, setGitPrTitle, gitPrBase,
     setGitPrBase, gitDeliveryBusy, prDelivery, prDeliveryLoading, prCheckLogs, openGitComments,
@@ -766,9 +809,11 @@ function App() {
     }))), [projects, runtimeProcesses]);
   runtimeInboxSourcesRef.current = runtimeInboxSources;
   const runtimeInboxSourceKey = useMemo(
-    () => runtimeInboxSources.map((item) => `${item.runtimeId}:${item.baseUrl}:${item.label}`).sort().join("|"),
+    () => runtimeInboxSources.map(item => JSON.stringify([item.runtimeId, item.baseUrl, item.label,
+      item.scope, item.projectId, item.workspaceId, item.repoRoot])).sort().join("|"),
     [runtimeInboxSources],
   );
+  runtimeInboxKeyRef.current = runtimeInboxSourceKey;
   const runtimeInboxSummary = useMemo(() => {
     const summary = summarizeRuntimeInboxes(runtimeInboxes.map((item) => ({
       error: item.error,
@@ -795,13 +840,15 @@ function App() {
   const refreshSessions = useCallback(async () => {
     const attempt = ++sessionRefreshAttemptRef.current;
     const client = clientRef.current;
-    if (!client) return;
+    if (!client) return false;
     try {
       const result = await client.listSessions();
-      if (client !== clientRef.current || attempt !== sessionRefreshAttemptRef.current) return;
+      if (client !== clientRef.current || attempt !== sessionRefreshAttemptRef.current) return false;
       setSessions(result);
+      return true;
     } catch (error) {
       if (client === clientRef.current && attempt === sessionRefreshAttemptRef.current) setConnectionNote(errorText(error, "读取会话失败"));
+      return false;
     }
   }, []);
 
@@ -826,52 +873,81 @@ function App() {
     void refreshWorktrees();
   }, [openInspector, refreshTasks, refreshWorktrees]);
 
+  const runRefreshAttemptRef = useRef(0);
   const refreshRuns = useCallback(async () => {
+    const attempt = ++runRefreshAttemptRef.current;
     const client = clientRef.current;
-    if (!client) return;
+    if (!client) return false;
+    const current = () => client === clientRef.current && attempt === runRefreshAttemptRef.current;
     try {
       const nextRuns = await client.listRuns();
+      if (!current()) return false;
       setRuns(nextRuns);
       const linkedFingerprint = nextRuns
         .filter((run) => run.goal_id)
         .map((run) => `${run.id}:${run.status}:${run.updated ?? ""}`)
         .join("|");
       if (linkedFingerprint !== goalRunSyncRef.current) {
+        if (linkedFingerprint) {
+          const nextGoals = await client.listGoals();
+          if (!current()) return false;
+          setGoals(nextGoals);
+        }
         goalRunSyncRef.current = linkedFingerprint;
-        if (linkedFingerprint) setGoals(await client.listGoals());
       }
+      return true;
     } catch {
       // 运行控制台是 Desktop 增量能力；旧 runtime 不支持时保持空态。
+      return false;
     }
   }, []);
 
   const refreshNotices = useCallback(async () => {
     const client = clientRef.current;
     if (!client) return;
+    const scope = assistantScopeRef.current, serial = ++noticeReadRef.current, revision = noticeRevisionRef.current;
+    const current = () => clientRef.current === client && assistantScopeRef.current === scope && noticeReadRef.current === serial;
+    publishActivityRead(client, scope, "notices", { status: "loading" });
     try {
-      setNotices(await client.listNotices());
+      const next = await client.listNotices();
+      if (!current()) return;
+      if (!Array.isArray(next) || noticeRevisionRef.current !== revision) {
+        publishActivityRead(client, scope, "notices", { status: "unavailable" }); return;
+      }
+      setNotices(next);
+      publishActivityRead(client, scope, "notices", { status: "current", checkedAt: Date.now() });
     } catch {
-      // 通知不是对话主链路，失败不阻断连接。
+      if (current()) publishActivityRead(client, scope, "notices", { status: "unavailable" });
     }
-  }, []);
+  }, [publishActivityRead]);
 
   const refreshDecisions = useCallback(async (sid = activeSid) => {
+    const attempt = ++decisionReadRef.current;
     const client = clientRef.current;
-    if (!client) return;
+    if (!client) return false;
     try {
-      setDecisions(await client.listDecisions(`sid-${sid}`));
+      const next = await client.listDecisions(`sid-${sid}`);
+      if (client !== clientRef.current || attempt !== decisionReadRef.current || sid !== decisionScopeRef.current) return false;
+      setDecisions(next);
+      return true;
     } catch {
       // 旧 runtime 没有决策队列时，PR/CI 决策仍由 Desktop 本地聚合。
+      return false;
     }
   }, [activeSid]);
 
   const refreshAudit = useCallback(async () => {
+    const attempt = ++auditReadRef.current;
     const client = clientRef.current;
-    if (!client) return;
+    if (!client) return false;
     try {
-      setAuditEntries(await client.listAudit(120));
+      const next = await client.listAudit(120);
+      if (client !== clientRef.current || attempt !== auditReadRef.current) return false;
+      setAuditEntries(next);
+      return true;
     } catch {
       // 审计时间线不是对话链路的硬依赖。
+      return false;
     }
   }, []);
 
@@ -1027,7 +1103,7 @@ function App() {
           );
           break;
         case "agent_activity_history":
-          setActivities(hydrateActivities(event.items ?? []));
+          setActivities(hydrateActivities(event.items ?? [], { missingStatus: "unknown" }));
           break;
         case "agent_plan":
           setPlan((event.items ?? []) as PlanItem[]);
@@ -1289,6 +1365,7 @@ function App() {
         }
         case "notice": {
           const notice = event.data as NoticeItem;
+          noticeRevisionRef.current++;
           setNotices((previous) => [{ ...notice, text: String(notice?.text ?? "") }, ...previous].slice(0, 100));
           break;
         }
@@ -1559,21 +1636,31 @@ function App() {
         }
       } catch {
         // 监督器只观察 Desktop 自己的子进程；瞬时 IPC 失败留到下一轮重试。
+        return false;
       }
     };
-    const timer = window.setInterval(() => void supervise(), 2_000);
+    const stop = startPolling(supervise, { intervalMs: 2_000, hiddenIntervalMs: 10_000, visibility: document });
     return () => {
       disposed = true;
-      window.clearInterval(timer);
+      stop();
     };
   }, [activeScope, disconnect, processStatus.runtimeId]);
 
-  const refreshRuntimeInboxes = useCallback(async () => {
+  const readCodexObserver = useCallback(() => readLocalCodexObserver({
+    runtimes: () => invoke<GatewayProcessStatus[]>("list_gateway_processes"),
+    read: source => new GatewayClient({ baseUrl: source.baseUrl!,
+      token: runtimeTokensRef.current.get(source.runtimeId!) ?? "" }).getCodexObserverStatus(),
+  }), []);
+
+  const refreshRuntimeInboxes = useCallback((): Promise<boolean> => {
+    const pending = runtimeInboxPendingRef.current;
+    if (pending?.key === runtimeInboxSourceKey && pending.generation === runtimeInboxGenerationRef.current) return pending.promise;
     const generation = ++runtimeInboxGenerationRef.current;
+    const current = () => generation === runtimeInboxGenerationRef.current && runtimeInboxSourceKey === runtimeInboxKeyRef.current;
     const sources = runtimeInboxSourcesRef.current;
     if (sources.length === 0) {
       setRuntimeInboxes([]);
-      return;
+      return Promise.resolve(true);
     }
     const checkedAt = Date.now();
     // 首见时间 + 连上过没有：用来把"还在启动"和"连上过又断了"分开（见 lib/runtimeInbox.ts）。
@@ -1582,55 +1669,43 @@ function App() {
         runtimeFirstSeenRef.current.set(source.runtimeId, checkedAt);
       }
     });
-    const results = await Promise.all(sources.map(async (source): Promise<DesktopRuntimeInbox> => {
-      try {
-        const client = new GatewayClient({
-          baseUrl: source.baseUrl,
-          token: runtimeTokensRef.current.get(source.runtimeId) ?? "",
-          remoteProjectId: source.runtimeId.startsWith("remote:") ? source.projectId : undefined,
-        });
-        const snapshot = await client.getRuntimeInbox();
-        runtimeEverReachableRef.current.add(source.runtimeId);
-        return { ...source, snapshot, error: "", checkedAt };
-      } catch (error) {
-        return {
-          ...source,
-          snapshot: null,
-          error: errorText(error, "runtime 暂时无法访问"),
-          checkedAt,
-        };
-      }
-    }));
-    if (generation !== runtimeInboxGenerationRef.current) return;
-    setRuntimeInboxes((previous) => {
-      const previousByRuntime = new Map(previous.map((item) => [item.runtimeId, item]));
-      return results.map((item) => item.snapshot ? item : {
-        ...item,
-        snapshot: previousByRuntime.get(item.runtimeId)?.snapshot ?? null,
+    setRuntimeInboxes(previous => current() ? mergeRuntimeInboxes(previous, sources) : previous);
+    const promise = observeRuntimeInboxes(sources, source => {
+      const client = new GatewayClient({
+        baseUrl: source.baseUrl,
+        token: runtimeTokensRef.current.get(source.runtimeId) ?? "",
+        remoteProjectId: source.runtimeId.startsWith("remote:") ? source.projectId : undefined,
       });
+      return client.getRuntimeInbox();
+    }, current, item => {
+      if (item.snapshot) runtimeEverReachableRef.current.add(item.runtimeId);
+      setRuntimeInboxes(previous => current() ? mergeRuntimeInboxes(previous, sources, item) : previous);
+    }).finally(() => {
+      if (runtimeInboxPendingRef.current?.generation === generation) runtimeInboxPendingRef.current = null;
     });
+    runtimeInboxPendingRef.current = { key: runtimeInboxSourceKey, generation, promise };
+    return promise;
   }, [runtimeInboxSourceKey]);
 
   useEffect(() => {
-    void refreshRuntimeInboxes();
-    const timer = window.setInterval(() => void refreshRuntimeInboxes(), 4_000);
+    const stop = startPolling(refreshRuntimeInboxes, {
+      intervalMs: 4_000, hiddenIntervalMs: 15_000, immediate: true, visibility: document,
+    });
     return () => {
       runtimeInboxGenerationRef.current += 1;
-      window.clearInterval(timer);
+      stop();
     };
   }, [refreshRuntimeInboxes]);
 
   useEffect(() => {
     if (connection !== "connected" || activeScope === "general") return undefined;
-    const timer = window.setInterval(() => void refreshRuns(), 900);
-    return () => window.clearInterval(timer);
-  }, [activeScope, connection, refreshRuns]);
+    return startPolling(refreshRuns, { intervalMs: 900, hiddenIntervalMs: 15_000, visibility: document });
+  }, [activeScope, connection, processStatus.runtimeId, refreshRuns]);
 
   useEffect(() => {
     if (connection !== "connected") return undefined;
-    const timer = window.setInterval(() => void refreshSessions(), 2_500);
-    return () => window.clearInterval(timer);
-  }, [connection, refreshSessions]);
+    return startPolling(refreshSessions, { intervalMs: 2_500, hiddenIntervalMs: 10_000, visibility: document });
+  }, [connection, processStatus.runtimeId, refreshSessions]);
 
   const handledPublishRef = useRef(0);
   useEffect(() => {
@@ -1657,12 +1732,11 @@ function App() {
 
   useEffect(() => {
     if (connection !== "connected") return undefined;
-    const timer = window.setInterval(() => {
-      void refreshDecisions();
-      void refreshAudit();
-    }, 4_000);
-    return () => window.clearInterval(timer);
-  }, [connection, refreshAudit, refreshDecisions]);
+    return startPolling(async () => {
+      const results = await Promise.all([refreshDecisions(), refreshAudit()]);
+      return results.some(Boolean);
+    }, { intervalMs: 4_000, hiddenIntervalMs: 15_000, visibility: document });
+  }, [connection, processStatus.runtimeId, refreshAudit, refreshDecisions]);
 
   useEffect(() => {
     if (!settingsOpen || connection !== "connected" || activeScope !== "project") return;
@@ -1711,6 +1785,8 @@ function App() {
   }, [globalNotificationItems, notificationSyncVersion, notificationsEnabled]);
 
   const clearSessionView = () => {
+    conversationLocation.reset();
+    autoScrollRef.current = true;
     confirmationReplyRef.current?.close();
     confirmationCheckRef.current = null;
     setMessages([]);
@@ -1741,6 +1817,7 @@ function App() {
     resetGoalNavigation();
     setGoals([]);
     setNotices([]);
+    noticeReadRef.current++; noticeRevisionRef.current++;
     setDecisions([]);
     setAuditEntries([]);
     resetJournal();
@@ -2172,11 +2249,11 @@ function App() {
           dispatchError: () => setDispatches(previous => previous.map(item => ({ ...item,
             sync_state: "unreachable", sync_error: "无法读取最新任务单，请恢复连接后核对" }))),
           profile: setAssistantProfile, chats: setPhoneChats, avatar: setAssistantAvatar,
-          codexActions: setCodexActions }, refreshId);
+          codexActions: setCodexActions, sourceRead: (name, state) => publishActivityRead(client, scope, name, state) }, refreshId);
     });
     if (refreshId) await request;
     else await request.catch(() => {}); // Background polling reports failures through snapshot freshness.
-  }, []);
+  }, [publishActivityRead]);
 
   /** 打开「主要聊天」：每台电脑第一次进助理模式时生成一个固定会话并记住，之后一直用它。 */
   const openMainChat = async (hostId: string | null = remoteProjectRef.current && remoteProjectRef.current === assistantHostRef.current ? remoteProjectRef.current : null) => {
@@ -2367,6 +2444,7 @@ function App() {
       recordAssistantSend();
       setShowStarterTips(shouldShowStarterTips());
     }
+    conversationLocation.reset();
     autoScrollRef.current = true;
     if (!willQueue) {
       setBusy(true);
@@ -3114,25 +3192,54 @@ function App() {
   }, [activities, messages]);
 
   useEffect(() => {
-    if (!autoScrollRef.current) return;
+    if (conversationLocation.rid || !autoScrollRef.current) return;
     const frame = window.requestAnimationFrame(() => {
       const container = conversationScrollRef.current;
       if (container) container.scrollTop = container.scrollHeight;
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [activities, busy, messages, pendingConfirm, streaming]);
+  }, [activities, busy, messages, pendingConfirm, streaming, conversationLocation.rid]);
 
   // 会话侧栏的工具：标签栏与工具列表共用。点击动作沿用原标签按钮的（含变更/上下文的刷新）。
   const planDone = plan.filter((item) => item.status === "completed").length;
   const scoped = activeScope !== "general";
   // 任务动态：后台任务台账的投影（useTasks 已随 task_update 推送实时更新）。
   const feedItems = tasks.map(taskFeedItem);
-  const feedWaiting = feedItems.filter((item) => item.status === "waiting").length;
-  const dispatchItems = [...dispatches.map(dispatchFeedItem), ...notices.map(noticeFeedItem)]
+  const feedWaiting = feedItems.filter(item => item.status === "waiting").length;
+  const dispatchItems = [...dispatches.map(dispatchFeedItem), ...noticeFeedItems(notices)]
     .filter((item): item is FeedItem => item !== null);
-  const assistantWaiting = feedWaiting + dispatchItems.filter((item) => item.status === "waiting").length;
+  const assistantFeedItems = [...agentTurns.map(turnFeedItem), ...dispatchItems, ...feedItems,
+    ...codexActions.map(codexActionFeedItem).filter((item): item is FeedItem => item !== null),
+    ...(pendingConfirm ? [confirmationFeedItem(pendingConfirm)] : [])];
+  const assistantWaiting = assistantFeedItems.filter(item => item.status === "waiting").length;
+  const readSources = activityReads?.client === clientRef.current && activityReads?.scope === assistantScope ? activityReads.sources : {};
+  const activitySources: ActivitySource[] = (["turns", "dispatches", "codexActions", "notices"] as const)
+    .map(name => ({ name, ...(readSources[name] ?? { status: "loading" as const }) }));
+  if (activeScope !== "general") activitySources.push({ name: "tasks", ...taskRead });
+  const activityComplete = activityCoverage(activitySources, connection === "connected", Date.now()).complete;
+  const refreshActivity = useCallback(async () => {
+    await Promise.allSettled([refreshAgentTurns(), refreshNotices(), ...(activeScope !== "general" ? [refreshTasks()] : [])]);
+  }, [refreshAgentTurns, refreshNotices, refreshTasks, activeScope]);
+  const activityCodexAction = selectedCodexAction?.client === clientRef.current && selectedCodexAction?.scope === assistantScope
+    ? codexActions.find(item => item.id === selectedCodexAction.id && item.status !== "cancelled") : null;
+  const focusConfirmation = (id?: string) => {
+    if (!pendingConfirm || (id && pendingConfirm.id !== id)) return;
+    const card = document.getElementById("active-confirmation");
+    card?.scrollIntoView({ block: "nearest", behavior: "smooth" }); card?.focus({ preventScroll: true });
+  };
+
+  const decideCodexAction = async (action: CodexAction, decision: "approve" | "cancel") => {
+    const client = clientRef.current, scope = assistantScope;
+    const current = () => clientRef.current === client && assistantScopeRef.current === scope;
+    if (!client || !current()) throw new Error("请先恢复连接");
+    await assistantActionGate.current.run(client, scope, `codex:${action.id}`, current, async () => {
+      await client.decideCodexAction(action.id, decision);
+      if (current()) await refreshAgentTurns();
+    });
+  };
 
   const openDispatch = async (id: string) => {
+    setSelectedCodexAction(null);
     setSelectedDispatchId(id);
     setAssistantTab("feed"); setInspectorOpen(true);
   };
@@ -3194,7 +3301,7 @@ function App() {
     scoped && { id: "files", label: "代码", icon: <FileCode2 size={15} />, badge: String(filteredWorkspaceFiles.length),
       open: () => openInspector("files") },
     scoped && { id: "diff", label: "变更", icon: <GitCompareArrows size={15} />, badge: String((gitReview?.files.length ?? 0) + isolatedDeliveries.length),
-      open: () => { setTaskReviewTask(null); setTaskBranchReview(null); setTaskBranchDiff(null); setTaskBranchSelectedPath(""); openInspector("diff"); void refreshGitReview(); void refreshPrDelivery(); void refreshIsolatedDeliveries(); } },
+      open: () => { openInspector("diff"); void closeTaskBranchReview(); void refreshPrDelivery(); void refreshIsolatedDeliveries(); } },
     scoped && { id: "runs", label: "控制台", icon: <SquareTerminal size={15} />, badge: String(activeRuns.length),
       open: () => openInspector("runs") },
     (inspectorTab === "project" || activeScope === "general" || artifacts.length > 0 || (repoMemory?.total_entries ?? 0) > 0)
@@ -3233,13 +3340,12 @@ function App() {
   }, [connection]);
 
   useEffect(() => {
-    if (appMode !== "assistant" || connection !== "connected" || busy) return;
-    void refreshAgentTurns();
-    const later = window.setTimeout(() => void refreshAgentTurns(), 8000);
-    // 常驻电脑上还有任务在做：每 30 秒看一次进度（台账刷新时顺带查项目运行时）
-    const tracking = trackingDispatches ? window.setInterval(() => void refreshAgentTurns(), 30_000) : undefined;
-    return () => { window.clearTimeout(later); if (tracking) window.clearInterval(tracking); };
-  }, [appMode, connection, busy, activeSid, refreshAgentTurns, trackingDispatches]);
+    if (appMode !== "assistant" || connection !== "connected") return;
+    void refreshActivity();
+    const later = window.setTimeout(() => void refreshActivity(), 8000);
+    const stop = startPolling(refreshActivity, { intervalMs: 30_000, hiddenIntervalMs: 120_000, immediate: false, visibility: document });
+    return () => { window.clearTimeout(later); stop(); };
+  }, [appMode, connection, busy, activeSid, refreshActivity]);
 
   // 助理面板的操作：每次渲染按此刻的 scope 现装（点下去绑定的就是这一刻的会话和电脑）
   const panelActions = assistantPanelActions({
@@ -3285,7 +3391,7 @@ function App() {
         )}
       </div>
 
-      <div className={`workbench ${mainView === "chat" && inspectorOpen ? "inspector-open" : "inspector-closed"} ${mainView === "chat" && inspectorOpen && appMode !== "assistant" && !showWorkbenchLauncher && ["files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
+      <div className={`workbench ${computerWorkspace.view ? "computer-open" : ""} ${mainView === "chat" && inspectorOpen ? "inspector-open" : "inspector-closed"} ${mainView === "chat" && inspectorOpen && appMode !== "assistant" && !showWorkbenchLauncher && ["files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
         <aside className="sidebar">
           <div className="sidebar-brand">
             <strong>VortoCode</strong>
@@ -3317,7 +3423,7 @@ function App() {
               current={activeSid}
               onSelect={(sid) => { setMainView("chat"); void (sid === mainChatSid ? openMainChat() : switchSession(sid)); }}
               phoneChats={phoneChats.map((chat) => ({ sid: chat.sid, title: chat.title }))}
-              onOpenPhoneChat={(sid) => setPhoneChatSid(sid)}
+              onOpenPhoneChat={openPhoneChat}
               onNewSideChat={() => void newSideChat()}
             />
           ) : <>
@@ -3463,9 +3569,12 @@ function App() {
             </div>
           </div>
 
+          <div className="conversation-body">
+            <ConversationLocation status={conversationLocation.status} onLatest={conversationLocation.latest} onRetry={conversationLocation.retry} />
           <div
             className="conversation-scroll"
             ref={conversationScrollRef}
+            tabIndex={-1}
             onScroll={(event) => {
               const node = event.currentTarget;
               autoScrollRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 96;
@@ -3520,26 +3629,8 @@ function App() {
               </button>
             )}
 
-            {messages.map((message) => (
-              <Fragment key={message.id}>
-                <article className={`message ${message.role}`}>
-                  {appMode === "assistant" && message.role === "assistant"
-                    ? <div className="message-author with-avatar"><AssistantAvatarImage name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} size={22} />{assistantProfile.name || "VortoCode"}
-                      {message.source && <span className="message-source">回复在手机上</span>}</div>
-                    : <div className="message-author">{message.role === "user" ? "你" : message.role === "assistant" ? "VortoCode" : "Runtime"}</div>}
-                  <div className="message-body">
-                    {message.role === "user" && sourceLabel(message.source) && <div className="message-source">{sourceLabel(message.source)}</div>}
-                    {message.images && message.images.length > 0 && <div className="message-images">
-                      {message.images.map((src, index) => <img key={index} src={src} alt={`发送的图片 ${index + 1}`} />)}
-                    </div>}
-                    {message.role === "assistant" ? <MarkdownMessage text={message.text} /> : message.text}
-                  </div>
-                </article>
-                {message.role === "user" && message.rid && activityGroups.has(message.rid) && (
-                  <TurnTimeline items={activityGroups.get(message.rid) ?? []} active={busy && activeTurnRid === message.rid} hasOutput={messages.some(reply => reply.role === "assistant" && reply.rid === message.rid && reply.text.trim().length > 0)} />
-                )}
-              </Fragment>
-            ))}
+            <ChatHistory messages={messages} activityGroups={activityGroups} busy={busy} activeTurnRid={activeTurnRid}
+              assistant={appMode === "assistant"} name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} focusedRid={conversationLocation.rid} />
 
             {appMode === "assistant" && dispatches.filter(item => item.session?.replace(/^sid-/, "") === activeSid
               && item.status !== "cancelled").slice(0, 8).map(item => <AssistantTaskCard
@@ -3551,12 +3642,7 @@ function App() {
               ? action.session.replace(/^sid-/, "") === activeSid
               : action.status === "proposed") && action.status !== "cancelled").slice(0, 6).map(action => <CodexActionCard
                 key={`${assistantScope}:${action.id}`} action={action} connected={connection === "connected"}
-                onDecide={async (decision) => {
-                  const client = clientRef.current;
-                  if (!client) throw new Error("请先恢复连接");
-                  await client.decideCodexAction(action.id, decision);
-                  await refreshAgentTurns();
-                }} />)}
+                onDecide={decision => decideCodexAction(action, decision)} />)}
 
             {orphanActivities.length > 0 && <TurnTimeline items={orphanActivities} active={busy && !activeTurnRid} />}
 
@@ -3571,6 +3657,7 @@ function App() {
 
           </div>
 
+          </div>
           <div className="composer-wrap">
             {residentMissed && (
               <div className="composer-notice" role="status">
@@ -3717,16 +3804,25 @@ function App() {
         )}
 
         {mainView === "chat" && inspectorOpen && appMode === "assistant" && (
-          <AssistantPanel name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} connected={connection === "connected"}
+          computerWorkspace.view ? <ComputerWorkspacePanel view={computerWorkspace.view} onClose={computerWorkspace.close} onRetry={() => void computerWorkspace.open()} />
+          : <AssistantPanel name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} connected={connection === "connected"}
+            computer={<ComputerLauncher onOpen={() => void computerWorkspace.open()} onSettings={() => { setSettingsSection("abilities"); setSettingsOpen(true); }} />}
             onEditProfile={() => setProfileDialogOpen(true)}
             host={onAssistantHost() ? { kind: "resident", name: findAssistantHost(projects)?.name ?? "常驻电脑", reachable: connection === "connected" } : { kind: "local", canAddResident: !findAssistantHost(projects) }}
             onAddResident={() => setRemoteDialogOpen("assistant")}
             onRetryResident={() => void changeAppMode("assistant")}
             modelLabel={onAssistantHost() ? runtime.model : llmProfile?.configured ? composerModelChoices.find(item => item.value === modelChoice)?.label : "未连接模型"}
-            tab={assistantTab} onClose={() => setInspectorOpen(false)} waiting={assistantWaiting}
-            onTab={(tab) => { setAssistantTab(tab); panelActions.tabOpened(tab); }}>
+            tab={assistantTab} onClose={() => setInspectorOpen(false)} waiting={assistantWaiting} waitingUncertain={!activityComplete}
+            onTab={(tab) => { if (tab === "goals") setAssistantGoalFocus(null); setAssistantTab(tab); panelActions.tabOpened(tab); }}>
             {assistantTab === "audit" ? <AssistantAudit entries={auditEntries} />
-              : assistantTab === "goals" ? <AssistantGoals key={assistantScope} client={clientRef.current} connected={connection === "connected"} />
+              : assistantTab === "goals" ? <AssistantGoals key={assistantScope} client={clientRef.current} connected={connection === "connected"}
+                  focusId={assistantGoalFocus?.client === clientRef.current && assistantGoalFocus?.scope === assistantScope ? assistantGoalFocus.id : undefined}
+                  onFocusGoal={(id, owner) => {
+                    if (clientRef.current === owner && assistantScopeRef.current === assistantScope) {
+                      setAssistantGoalFocus({ client: clientRef.current, scope: assistantScope, id });
+                    }
+                  }}
+                  onClearFocus={() => setAssistantGoalFocus(null)} />
               : assistantTab === "schedule" ? <AssistantSchedule key={assistantScope} items={assistantSchedule} connected={connection === "connected"} local={!onAssistantHost()}
                   onRefresh={panelActions.scheduleRefresh}
                   onToggle={panelActions.scheduleToggle}
@@ -3745,23 +3841,47 @@ function App() {
                   onDecideProposal={(proposal, approve, replace) => void panelActions.decideProposal(proposal, approve, replace)}
                   onEdit={() => setProfileDialogOpen(true)}
                   onDeleteMemory={(memory) => void panelActions.deleteMemory(memory)} />
-              : <><section className="assistant-task-cards" aria-label="交互任务单">
-                  {selectedDispatchId && dispatches.find(item => item.id === selectedDispatchId) && <AssistantTaskCard
-                    key={`${assistantScope}:${selectedDispatchId}`} task={dispatches.find(item => item.id === selectedDispatchId)!}
-                    connected={connection === "connected"} onAction={(action, answer) => actOnDispatch(dispatches.find(item => item.id === selectedDispatchId)!, action, answer)} />}
-                  {!selectedDispatchId && dispatches.filter(item => item.status === "proposed" || item.status === "submission_unknown").slice(0, 3).map(item =>
-                    <AssistantTaskCard key={`${assistantScope}:${item.id}`} task={item} connected={connection === "connected"}
-                      onAction={(action, answer) => actOnDispatch(item, action, answer)} />)}
-                  {selectedDispatchId && <button onClick={() => setSelectedDispatchId(null)}>收起任务详情</button>}
-                </section><ActivityFeed items={[...agentTurns.map(turnFeedItem), ...dispatchItems, ...feedItems]} scope="all" onScope={() => {}}
-                  currentSession={activeSid}
+              : <AssistantActivity key={assistantScope} items={assistantFeedItems}
+                  client={clientRef.current}
+                  currentSession={activeSid} connected={connection === "connected"} sources={activitySources} onRefresh={() => void refreshActivity()}
                   onOpen={(item) => {
+                    if (item.confirmationId) { focusConfirmation(item.confirmationId); return; }
+                    if (item.codexActionId) {
+                      setSelectedDispatchId(null);
+                      setSelectedCodexAction({ client: clientRef.current, scope: assistantScope, id: item.codexActionId }); return;
+                    }
                     if (item.dispatchId) { void openDispatch(item.dispatchId); return; }
                     if (item.taskId) { focusTask(item.taskId); return; }
                     const sid = item.session?.replace(/^sid-/, "");
-                    if (sid && isPhoneSession(sid)) { setPhoneChatSid(sid); return; }
-                    if (sid) { setMainView("chat"); void switchSession(sid); }
-                  }} /></>}
+                    if (sid && isPhoneSession(sid)) { openPhoneChat(sid, item.rid); return; }
+                    if (sid) {
+                      setMainView("chat");
+                      void switchSession(sid).then(opened => {
+                        const client = clientRef.current;
+                        if (opened && client && item.rid && mainViewRef.current === "chat") conversationLocation.locate({ client, sid, rid: item.rid });
+                      });
+                    }
+                  }} overview={<AssistantWorkday client={clientRef.current} scope={assistantScope}
+                  connected={connection === "connected"} resident={onAssistantHost()} dispatches={dispatches}
+                  dispatchesLoaded={dispatchSnapshotScope === assistantScope} codexActions={codexActions}
+                  confirmation={pendingConfirm} onConfirmation={() => focusConfirmation()}
+                  onDispatch={id => void openDispatch(id)} onGoals={id => {
+                    setAssistantGoalFocus({ client: clientRef.current, scope: assistantScope, id }); setAssistantTab("goals");
+                  }}
+                  onRefreshTasks={() => refreshAgentTurns()} onCodexDecision={decideCodexAction} />}>
+                <section className="assistant-task-cards" aria-label="交互任务单">
+                  {activityCodexAction && <AssistantActivityDetail key={`${assistantScope}:codex:${activityCodexAction.id}`}
+                    title={`Codex 动作详情：${activityCodexAction.thread_name}`} statusLabel="动作记录"
+                    steps={[{id:"request",title:"请求正文",status:"recorded",detail:activityCodexAction.text}]} onClose={() => setSelectedCodexAction(null)}>
+                    <CodexActionCard action={activityCodexAction} connected={connection === "connected"}
+                      onDecide={decision => decideCodexAction(activityCodexAction, decision)} />
+                  </AssistantActivityDetail>}
+                  {selectedDispatchId && dispatches.find(item => item.id === selectedDispatchId) && <AssistantActivityDetail
+                    key={`${assistantScope}:dispatch:${selectedDispatchId}`} title={dispatches.find(item => item.id === selectedDispatchId)!.title}
+                    steps={dispatchDetailSteps(dispatches.find(item => item.id === selectedDispatchId)!)} statusLabel="任务单记录" onClose={() => setSelectedDispatchId(null)}><AssistantTaskCard
+                    key={`${assistantScope}:${selectedDispatchId}`} task={dispatches.find(item => item.id === selectedDispatchId)!}
+                    connected={connection === "connected"} onAction={(action, answer) => actOnDispatch(dispatches.find(item => item.id === selectedDispatchId)!, action, answer)} /></AssistantActivityDetail>}
+                </section></AssistantActivity>}
           </AssistantPanel>
         )}
         {(mainView === "management" || (mainView === "chat" && inspectorOpen && appMode !== "assistant")) && (
@@ -4059,7 +4179,9 @@ function App() {
       </div>
 
       {phoneChatSid && phoneChats.some((chat) => chat.sid === phoneChatSid) && <PhoneChatDialog
-        chat={phoneChats.find((chat) => chat.sid === phoneChatSid)!} onClose={() => setPhoneChatSid(null)} />}
+        key={`${assistantScope}:${phoneChatSid}`} chat={phoneChats.find((chat) => chat.sid === phoneChatSid)!}
+        owner={clientRef.current} focusedRid={phoneChatRid} name={assistantProfile.name || "VortoCode"}
+        onClose={() => { setPhoneChatSid(null); setPhoneChatRid(undefined); }} />}
       {profileDialogOpen && <AssistantProfileDialog profile={assistantProfile} onClose={() => setProfileDialogOpen(false)}
         onSave={async (next) => {
           const client = clientRef.current;
@@ -4079,6 +4201,7 @@ function App() {
       }} />}
       {settingsOpen && (
         <SettingsModal
+          readCodexObserver={readCodexObserver}
           activeScope={activeScope}
           connection={connection}
           connectionText={connectionText}

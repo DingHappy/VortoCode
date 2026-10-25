@@ -30,7 +30,23 @@ def _store(root: str) -> Path:
 
 
 def _redact_lines(value: object, limit: int) -> str:
-    return "\n".join(str(sanitize_audit_value(line)) for line in str(value or "")[-limit:].splitlines())
+    # Redact before slicing: truncating away API_KEY= could expose its value.
+    redacted = "\n".join(str(sanitize_audit_value(line)) for line in str(value or "").splitlines())
+    return redacted[-limit:]
+
+
+def verification_report(verification: dict) -> str:
+    """Bounded evidence for the parent assistant, from the verifier rather than the task text."""
+    skipped = bool(verification.get("skipped"))
+    command = str(verification.get("cmd") or "").strip()
+    shown = _redact_lines(command, 500) if command else "未记录，不能确认执行命令"
+    if len(command) > 500:
+        shown = "（命令过长，已截断）" + shown
+    status = "已跳过，不能计为测试通过" if skipped else "通过" if verification.get("ok") else "未通过"
+    output = _redact_lines(verification.get("output"), 1200).strip() or "未记录输出"
+    return (f"\n实际验证记录（命令与输出均为有界脱敏摘录）：\n命令：{shown}\n结果：{status}\n输出摘录：\n{output}\n"
+            "汇报须引用实际验证记录；若与用户要求的命令不同，明确说明差异及尚未完成的验证，"
+            "不得把请求中的命令写成已执行。")
 
 
 def record_isolated_delivery(repo_root: str, *, branch: str, description: str,

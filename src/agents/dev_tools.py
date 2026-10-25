@@ -113,6 +113,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         import re
         import uuid
         from src.agents.worktree import apply_diff_to_branch
+        from src.workflow.review.isolated_deliveries import record_isolated_delivery, verification_report
 
         desc = str(args.get("description") or args.get("task") or "").strip()
         if not desc:
@@ -136,10 +137,15 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
         if not diff.strip():
             err = str(last.get("err") or "").strip()
             if err:
+                if last.get("failure_kind") == "model_capacity":
+                    return {"ok": False, "text": (
+                        f"❌ 隔离实现被阻塞：实现角色的模型超出服务端动态内存上限（尝试 {attempts} 次）。"
+                        "已停止同配置自动重试；需要用户选择更小的实现模型或处理模型服务的容量限制后再运行。"
+                        "主聊天模型与实现角色模型可不同；未自动切换模型、服务或修改内存上限，未交付分支。")}
                 # ok=False：台账/UI 据此记 failed。没有它，一条以 ❌ 开头的结果会被记成 succeeded。
                 return {"ok": False, "text": (
                     f"❌ 隔离实现失败：LLM 通道故障（{err[:160]}），试了 {attempts} 次。"
-                    f"多为中转站/网络抖动——确认中转站健康后重试即可，不必改任务描述。")}
+                    "需根据错误核对模型服务、连接或配置后再决定是否重试。")}
             return {"ok": False, "text": (
                 f"❌ 隔离实现未产生任何改动（试了 {attempts} 次，子 agent 始终没真正修改文件）。"
                 f"请把任务描述写得更具体、可执行（明确要改哪个文件、加什么）后再调 dev_isolated。")}
@@ -160,22 +166,25 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             if res["ok"]:
                 delivery_note = ""
                 try:
-                    from src.workflow.review.isolated_deliveries import record_isolated_delivery
-                    await await_thread(
+                    delivery = await await_thread(
                         record_isolated_delivery, repo_root, branch=branch, description=desc,
                         base_oid=base_oid, verification=ver, attempts=attempts)
+                    delivery_note = f"\n固定基线：{delivery['base_oid']}\n交付提交：{delivery['head_oid']}"
                 except Exception as error:  # noqa: BLE001
                     delivery_note = f"（Desktop 交付记录未保存：{_exc_text(error)}；分支仍可用）"
                 return (f"✅ {verdict}{fixed}，落到新分支 {branch}（{change_size}，"
                         f"git checkout {branch} 查看，未碰 main）。" + baseline_note(ver)
                         + included_note(await await_thread(local_includes, repo_root))
                         + followup_note(last.get("followups") or [])
-                        + _test_delta_note(diff) + _dropped_tests_note(diff, desc) + delivery_note)
-            return f"✅ {verdict}{fixed}，但落分支失败：{res['error']}。diff {change_size}。"
-        tail = (ver or {}).get("output", "")[-1000:]
+                        + _test_delta_note(diff) + _dropped_tests_note(diff, desc) + delivery_note
+                        + verification_report(ver))
+            return {"ok": False, "text": (
+                f"❌ {verdict}{fixed}，但落分支失败：{res['error']}。diff {change_size}，未交付分支。"
+                + verification_report(ver))}
         return {"ok": False, "text": (
             f"❌ 隔离实现完成但测试未过（试了 {attempts} 次）。"
-            f"{included_note(await await_thread(local_includes, repo_root))}失败输出尾部：\n{tail}\n"
+            f"{included_note(await await_thread(local_includes, repo_root))}"
+            f"{verification_report(ver or {})}\n"
             f"据此修正后重试（再调 dev_isolated）。diff {change_size}，未落地。"
             + followup_note(last.get("followups") or []))}
 
@@ -272,6 +281,11 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 # KeyError/TimeoutError 这类只剩一个键名或空串，人拿到等于没拿到。
                 last = {"desc": desc, "diff": "", "ver": None, "attempts": attempt,
                         "err": _exc_text(e)}
+                from src.llm.failures import is_model_capacity_error
+                if is_model_capacity_error(e):
+                    last["failure_kind"] = "model_capacity"
+                    _progress(f"⛔ 「{desc[:32]}」实现模型超出服务端动态内存上限，停止同配置自动重试。")
+                    break
                 continue
             # **留住子 agent 的结论**。此前它被丢进 `_c` 直接扔掉，于是"没产出任何改动"
             # 只剩五个字「无改动/出错」——人拿不到任何可行动的线索。
@@ -313,7 +327,7 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
             # 为补测试多试的那几轮都没成，但先前那份绿的实现照样有效——交它，并保留 ⚠ 测试增量提示。
             _progress(f"✅ 「{desc[:32]}」实现并自测通过（未补上要求的测试）")
             return {**best_green, "followups": list(mk.followups)}
-        _progress(f"❌ 「{desc[:32]}」试了 {_dev_attempts()} 次仍未过")
+        _progress(f"❌ 「{desc[:32]}」试了 {last['attempts']} 次仍未过")
         return {**last, "followups": list(mk.followups)}
 
     async def _implement_parallel(descs, test_cmd):
@@ -349,7 +363,9 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
                 lines.append(f"· {r['desc']}：✅ 通过" + (f"（修复 {att - 1} 次后）" if att > 1 else ""))
                 greens.append(r)
             elif r.get("err"):
-                lines.append(f"· {r['desc']}：❌ LLM 通道故障（{str(r['err'])[:80]}）"
+                reason = ("实现模型容量不足，已停止同配置重试" if r.get("failure_kind") == "model_capacity"
+                          else f"LLM 通道故障（{str(r['err'])[:80]}）")
+                lines.append(f"· {r['desc']}：❌ {reason}"
                              + (f"（试了 {att} 次）" if att > 1 else ""))
             elif not (r.get("diff") or "").strip():
                 lines.append(f"· {r['desc']}：{_noop_note(r.get('conclusion'))}"
@@ -925,9 +941,10 @@ def build_dev_tools(repo_root: str, on_progress: Optional[Callable[[str], None]]
     return [
         Tool("dev_isolated",
              "在隔离 git worktree 里实现一个独立子任务 + 自测 + 跑测试验证；✅通过就自动落到一个"
-             "vorto/<id> 新分支（绝不碰 main/工作区），❌带失败输出供修正。仅 build",
+             "vorto/<id> 新分支（绝不碰 main/工作区），返回实际验证命令与输出。"
+             "❌带失败输出供修正。仅 build",
              {"description": "要在隔离工作区实现的子任务",
-              "test": "可选，pytest 文件/节点路径或 test_函数名；省略则跑全量 tests/"},
+              "test": "可选，pytest 文件/节点路径或 test_函数名，不是 shell 命令；实际命令由仓库探测决定，以返回的验证记录为准"},
              _dev_isolated, read_only=False, required_capabilities=("host_process",)),
         Tool("dev_parallel",
              "并行实现：多个**相互独立**的子任务各起隔离 worktree 同时实现+自测+验证（互不冲突，"

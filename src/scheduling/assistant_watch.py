@@ -539,10 +539,10 @@ PATROLS: List[Patrol] = [
            _patrol_ops, visible=_has_ops),
     Patrol("goals", "个人目标提醒", "到点推你批准过的目标提醒", _patrol_goals, visible=lambda _root: False),
     Patrol("codex", "监管 Codex", "看着 Mac 上的 Codex：卡住、出错、要你定方向时找你，定时汇报进度",
-           _patrol_codex, visible=_has_codex, schedule=_codex_schedule),
+           _patrol_codex, visible=_has_codex, schedule=_codex_schedule, timeout_seconds=120),
     Patrol("usage", "模型用量报警", "当天用量超过 200 万 token 且是前 7 天日均的 3 倍时提醒一次", _patrol_usage),
     Patrol("plugins", "日程与新邮件提醒", "日程开始前、刚收到的私人邮件，推到手机",
-           _patrol_plugins, visible=_has_reminder_plugins),
+           _patrol_plugins, visible=_has_reminder_plugins, timeout_seconds=60),
 ]
 
 

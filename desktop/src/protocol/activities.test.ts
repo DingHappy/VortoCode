@@ -102,6 +102,28 @@ describe("upsertActivity", () => {
 });
 
 describe("hydrateActivities", () => {
+  it("keeps missing archive states unknown and sparse updates preserve the last explicit state", () => {
+    const frames = [
+      { id: "unknown", rid: "r", type: "agent_tool", name: "read_file" },
+      { id: "done", rid: "r", type: "agent_tool", name: "grep", status: "completed", result: "记录结果" },
+      { id: "done", rid: "r", type: "agent_tool", name: "grep", summary: "补充的摘要" },
+      { id: "future", rid: "r", type: "agent_tool", name: "other", status: "future-state" },
+    ];
+    const archive = hydrateActivities(frames, { missingStatus: "unknown" });
+    expect(archive.map(item => item.status)).toEqual(["unknown", "completed", "future-state"]);
+    expect(archive[1].result).toBe("记录结果");
+    expect(hydrateActivities(frames)[0].status).toBe("running"); // existing live/history contract unchanged
+  });
+
+  it("keeps start arguments when a sparse failure frame arrives and preserves the recorded error", () => {
+    const result = hydrateActivities([
+      { id: "t1", rid: "r", type: "agent_tool", name: "read_file", status: "running", args: { path: "README.md" } },
+      { id: "t1", rid: "r", type: "agent_tool", name: "read_file", status: "failed", error: "文件不可读", result: "" },
+    ]);
+    expect(result[0]).toMatchObject({ status: "failed", args: { path: "README.md" }, error: "文件不可读", result: "" });
+    expect(result).toHaveLength(1);
+  });
+
   it("把历史帧折叠成时间线（同 id 去重更新）", () => {
     const result = hydrateActivities([
       { id: "t1", type: "agent_tool", name: "grep", status: "running" },

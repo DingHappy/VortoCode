@@ -98,6 +98,9 @@ files = [
     "src/agents/capabilities.py",
     "src/agents/gate.py",          # 确认门内核：安全模型的心脏，必须被类型钉死
     "src/agents/trust.py",         # 授权档位：喂给确认门的 pre_authorized，同属内核
+    "src/agents/tool.py",          # Agent 无关的工具定义和 schema 适配
+    "src/agents/tool_runtime.py",  # 各 Agent 共用的工具执行边界
+    "src/agents/backends",         # Agent 核心控制合同与协议适配
 ]
 follow_imports = "silent"
 ignore_missing_imports = true      # 可选依赖（openai/yaml/qdrant…）无 stub，不为此挂门禁

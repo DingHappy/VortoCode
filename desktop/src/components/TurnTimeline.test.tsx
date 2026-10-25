@@ -25,8 +25,18 @@ it("shows a recap of the finished round in the collapsed heading, and a plain co
     { id: "t1", kind: "tool", status: "completed", label: "测试", name: "run_tests", result: "测试未过 ✗（pytest）" },
   ];
   const done = renderToStaticMarkup(<TurnTimeline items={round} active={false} hasOutput />);
-  expect(done).toContain("改了 1 个文件 · 跑测试 1 次（1 次没过）");
+  expect(done).toContain("文件写入记录 1 项 · 测试记录 1 条（1 条异常）");
   const working = renderToStaticMarkup(<TurnTimeline items={round} active hasOutput={false} />);
   expect(working).toContain("2 个工具");
-  expect(working).not.toContain("改了 1 个文件");
+  expect(working).not.toContain("文件写入记录");
+});
+
+it("keeps unknown history visible and does not animate an unverified historical running state", () => {
+  const unknown: TurnActivity = { id: "phase", kind: "phase", status: "unknown", label: "历史阶段" };
+  expect(timelineExpanded([unknown], false, true)).toBe(true);
+  const html = renderToStaticMarkup(<TurnTimeline items={[unknown, { ...items[0], status: "running" }]} active={false} hasOutput />);
+  expect(html).toContain("状态待核对"); expect(html).toContain("记录为执行中");
+  expect(html).not.toContain("activity-spinner");
+  const live = renderToStaticMarkup(<TurnTimeline items={[{ ...items[0], status: "running" }]} active hasOutput={false} />);
+  expect(live).toContain("activity-spinner");
 });

@@ -1,0 +1,33 @@
+.assistant-workday { min-width: 0; padding: 18px 16px 12px; color: var(--n12); }
+.workday-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 16px; }
+.workday-heading > div > span { color: var(--n10); font-size: 11px; }
+.workday-heading h3 { margin: 4px 0; color: var(--n13); font-size: 20px; letter-spacing: -.4px; }
+.workday-heading time { color: var(--n10); font-size: 12px; }
+.workday-heading > button { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--n5); border-radius: 9px; background: var(--n2); cursor: pointer; }
+.workday-heading > button:disabled { opacity: .5; cursor: default; }
+.workday-counts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.workday-counts button { display: grid; grid-template-columns: 16px 1fr; gap: 7px; align-items: center; min-width: 0; padding: 12px; border: 1px solid var(--n5); border-radius: 10px; color: var(--n10); background: var(--n2); text-align: left; cursor: pointer; }
+.workday-counts button > span { font-size: 12px; }
+.workday-counts button > strong { grid-column: 1 / -1; font-size: 26px; font-weight: 600; line-height: 1.1; color: var(--n13); }
+.workday-counts button.active { border-color: var(--daily-accent); background: var(--daily-accent-soft); color: var(--daily-accent); }
+.workday-explainer, .workday-empty { color: var(--n10); font-size: 12px; line-height: 1.6; margin: 13px 0; }
+.workday-warnings { margin: 12px 0; border: 1px solid var(--n5); border-radius: 8px; padding: 9px 10px; color: var(--n11); background: var(--n2); font-size: 11px; line-height: 1.6; }
+.workday-warnings summary { cursor: pointer; }
+.workday-warnings ul { margin: 7px 0 0; padding-left: 15px; }
+.workday-items { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 8px; }
+.workday-items li { min-width: 0; }
+.workday-item { display: flex; flex-direction: column; gap: 7px; width: 100%; min-width: 0; padding: 12px; border: 1px solid var(--n5); border-radius: 10px; text-align: left; color: var(--n12); background: var(--n1); cursor: pointer; overflow-wrap: anywhere; }
+.workday-item:hover { background: var(--n2); border-color: var(--n7); }
+.workday-item-top { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 5px; align-items: center; color: var(--n10); font-size: 11px; }
+.workday-item-top > span { padding: 2px 6px; border-radius: 4px; background: var(--n3); color: var(--n11); }
+.workday-item > strong { font-size: 13px; line-height: 1.5; color: var(--n13); }
+.workday-item-detail { font-size: 12px; line-height: 1.6; white-space: pre-line; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; color: var(--n10); }
+.workday-item-link { display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--daily-accent); }
+.workday-more { display: block; margin: 10px auto; padding: 6px 10px; border: 0; border-radius: 6px; background: var(--n3); color: var(--n11); font-size: 12px; cursor: pointer; }
+.workday-codex-detail { margin: 12px 16px; font-size: 12px; }
+.resident-computer-card { margin: 0 16px 16px; padding: 12px; border: 1px solid var(--n5); border-radius: 10px; background: var(--n2); color: var(--n12); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.resident-computer-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.resident-computer-heading button { border: 1px solid var(--n5); border-radius: 6px; padding: 4px 8px; background: var(--n1); color: var(--n11); cursor: pointer; }
+.resident-computer-heading button:disabled { opacity: .5; cursor: default; }
+.resident-computer-card p { margin: 8px 0 0; }
+.resident-computer-card .resident-computer-note, .resident-computer-card small { color: var(--n10); font-size: 11px; }

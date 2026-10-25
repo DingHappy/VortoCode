@@ -28,3 +28,12 @@ it("personal reminders direct management to the goal card and do not expose cron
   expect(html).not.toContain("<button");
   expect(html).not.toContain("调度总开关未开启");
 });
+it.each([
+  ["timed_out", "上次巡检超时"],
+  ["cancelled", "上次巡检被中断"],
+  ["running", "可能仍在执行或已中断"],
+] as const)("shows %s without assuming a saved run is still live", (last_status, text) => {
+  const html = renderToStaticMarkup(<AssistantScheduleCard item={{ ...item, kind: "watch", last_status }} {...props} />);
+  expect(html).toContain(text);
+  expect(html).not.toContain("<button");
+});

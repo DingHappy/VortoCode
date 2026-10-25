@@ -4,8 +4,8 @@ import { ArrowLeft, Smartphone, Check, Clock3, Fingerprint, Laptop, List, Messag
 import { useRef, useState } from "react";
 import { avatarHue, avatarInitial, avatarSrc } from "../lib/avatar";
 import { connectorCredentialView } from "../lib/connectorStatus";
-import type { AssistantAvatar, AssistantConnector, AssistantMemory, AssistantPlugin, PluginCheck, AssistantProfile, AssistantScheduleItem, AuditEntry, MemoryProposal, PhoneChat } from "../types";
-import { MarkdownMessage } from "./MarkdownMessage";
+import type { AssistantAvatar, AssistantConnector, AssistantMemory, AssistantPlugin, PluginCheck, AssistantProfile, AssistantScheduleItem, AuditEntry, MemoryProposal } from "../types";
+export { PhoneChatDialog } from "./PhoneChatDialog";
 
 export type AppMode = "assistant" | "work";
 
@@ -66,7 +66,7 @@ const TABS: Array<{ id: AssistantTab; label: string; icon: ReactNode }> = [
   { id: "identity", label: "身份", icon: <Fingerprint size={16} aria-hidden="true" /> },
 ];
 
-export function AssistantPanel({ name, avatar, connected, host, onAddResident, onRetryResident, onEditProfile, modelLabel, tab, onTab, onClose, waiting, children }: {
+export function AssistantPanel({ name, avatar, connected, host, onAddResident, onRetryResident, onEditProfile, modelLabel, tab, onTab, onClose, waiting, waitingUncertain = false, children, computer }: {
   name: string; connected: boolean; modelLabel?: string;
   avatar?: AssistantAvatar | null;
   host: AssistantHostInfo;
@@ -79,7 +79,9 @@ export function AssistantPanel({ name, avatar, connected, host, onAddResident, o
   tab: AssistantTab; onTab: (tab: AssistantTab) => void; onClose: () => void;
   /** 等你处理的件数：动态图标上的提示 */
   waiting?: number;
+  waitingUncertain?: boolean;
   children: ReactNode;
+  computer?: ReactNode;
 }) {
   return <aside className="assistant-panel" aria-label="助理">
     <button className="assistant-panel-close" aria-label="收起侧栏" title="收起侧栏" onClick={onClose}><X size={16} /></button>
@@ -103,11 +105,14 @@ export function AssistantPanel({ name, avatar, connected, host, onAddResident, o
           ? <button className="assistant-host-action" onClick={onAddResident}>连接常驻电脑</button>
           : <button className="assistant-host-action" onClick={onRetryResident}>重新连接常驻电脑</button>}
     </div>
+    {computer}
     <div className="assistant-tabs labeled" role="tablist" aria-label="助理面板">
       {TABS.map((item) => <button key={item.id} role="tab" aria-selected={tab === item.id} aria-label={item.label} title={item.label}
         className={tab === item.id ? "active" : ""} onClick={() => onTab(item.id)}>
         {item.icon}<span>{item.label}</span>
-        {item.id === "feed" && waiting ? <i className="assistant-tab-badge" aria-label={`${waiting} 件等你处理`}>{waiting}</i> : null}
+        {item.id === "feed" && (waiting || waitingUncertain) ? <i className="assistant-tab-badge"
+          aria-label={waitingUncertain ? `已读取 ${waiting ?? 0} 件待处理，部分来源待核对` : `${waiting} ${connected ? "件等你处理" : "条历史待处理"}`}>
+          {waitingUncertain ? waiting ? `${waiting}+` : "?" : waiting}</i> : null}
       </button>)}
     </div>
     <div className="assistant-panel-body">{children}</div>
@@ -297,22 +302,6 @@ export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposa
     {connectors.length > 0 && <AssistantConnectors connectors={connectors} onAction={onConnector} />}
     {plugins}
   </section>;
-}
-
-/** 手机上的聊天（只读）：两个进程同时写一段对话会互相覆盖，所以 Desktop 只看不接管。 */
-export function PhoneChatDialog({ chat, onClose }: { chat: PhoneChat; onClose: () => void }) {
-  return <div className="modal-backdrop" onClick={onClose}><section className="settings-modal phone-chat-dialog" role="dialog" aria-modal="true"
-    aria-label={chat.title} onClick={(event) => event.stopPropagation()}>
-    <header><h2><Smartphone size={16} />{chat.title.replace(/^📱\s*/, "")} · 手机上的聊天</h2>
-      <button aria-label="关闭" onClick={onClose}><X size={16} /></button></header>
-    <p className="phone-chat-note">这里只读。要接着聊，在手机上回复——记忆、任务单、动态两边是同一份。</p>
-    <div className="phone-chat-messages">
-      {chat.transcript.length === 0 && <p className="assistant-memory-empty">还没有聊过。</p>}
-      {chat.transcript.map((item, index) => <article key={`${item.rid ?? index}:${item.role}:${index}`} className={`message ${item.role === "user" ? "user" : "assistant"}`}>
-        <div className="message-body">{item.role === "user" ? item.text : <MarkdownMessage text={item.text} />}</div>
-      </article>)}
-    </div>
-  </section></div>;
 }
 
 const PLUGIN_STATUS: Record<AssistantPlugin["status"], string> = {
