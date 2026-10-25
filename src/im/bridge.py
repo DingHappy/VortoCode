@@ -1014,7 +1014,11 @@ class IMBridge:
             finally:
                 q.put_nowait(("__done__", None))
 
-        await self._drain(q, asyncio.create_task(_inner()))
+        try:
+            await self._drain(q, asyncio.create_task(_inner()))
+        finally:
+            # 与 agent 回合同一规矩：推进结束后不再指向这条事件流（迟到的确认立即拒绝，进度丢弃）。
+            self._bindings.unbind("confirm", "progress")
 
     # ------------------------------------------------------------ 后台任务（不占回合）
     def _get_runner(self):

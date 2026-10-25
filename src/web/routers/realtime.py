@@ -1518,7 +1518,10 @@ async def _run_agent_turn(websocket, text: str, mode: str, images: Optional[list
     finally:
         key = _session_key(websocket)
         stop_reason = _ACTORS.release(key, asyncio.current_task())
-        bindings.unbind("tool_event")
+        # 这一轮的回调都指向本回合的 q：回合结束后没人再取，留着只会让迟到的进度堆进死队列、
+        # 迟到的确认在前端看不见地挂到超时。全部解绑——确认按 TurnBindings 语义立即拒绝，事件丢弃。
+        # release 与这里之间没有 await，下一回合要到 _advance_prompt_queue 才会重新绑定。
+        bindings.unbind()
         _persist_session(websocket)           # 回合收尾存盘（含中断）：跨服务器重启不丢对话
         _schedule_turn_digest(key, rid)       # 后台写工作记录摘要（助理模式的动态流）
         await _advance_prompt_queue(websocket, reason=stop_reason)

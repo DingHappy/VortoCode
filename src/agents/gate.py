@@ -13,7 +13,10 @@ CLI 的 `--yes` 和 Web 的确认门完全不查；attach 又自己手搓了一�
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Awaitable, Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 # 判定三态。
 ALLOW = "allow"          # 免确认放行（但调用方**必须留痕**，见 on_decision）
@@ -131,8 +134,8 @@ def make_confirm_gate(
             return
         try:
             on_decision(operation, decision, tainted)
-        except Exception:  # noqa: BLE001 —— 交代/审计失败不该影响决定本身
-            pass
+        except Exception:  # noqa: BLE001 —— 交代/审计失败不该影响决定本身，但不能无声地丢掉审计
+            logger.warning("确认决定的审计回调失败：%s", operation[:200], exc_info=True)
 
     async def gated(message: str, kind: Optional[str] = None) -> bool:
         operation = str(message)                   # 原始操作文案（端展示"拒了什么"用这个）
