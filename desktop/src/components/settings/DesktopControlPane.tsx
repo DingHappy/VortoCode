@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { errorText } from "../../lib/errorText";
 import type { DesktopControlStatus } from "../../types";
 
-export function DesktopControlPane({ onRestartRuntime }: { onRestartRuntime: () => Promise<boolean> }) {
+export function DesktopControlPane({ onRestartRuntime, onDraftStateChange }: { onRestartRuntime: () => Promise<boolean>; onDraftStateChange?: (state: { dirty: boolean; busy: boolean }) => void }) {
   const [status, setStatus] = useState<DesktopControlStatus | null>(null);
   const [target, setTarget] = useState("");
   const [apps, setApps] = useState("");
@@ -22,6 +22,8 @@ export function DesktopControlPane({ onRestartRuntime }: { onRestartRuntime: () 
   }, []);
 
   const dirty = !!status && (target.trim() !== status.target || apps.trim() !== status.apps);
+
+  useEffect(() => { onDraftStateChange?.({ dirty, busy }); }, [dirty, busy, onDraftStateChange]);
 
   const save = async (enabled: boolean) => {
     setBusy(true);

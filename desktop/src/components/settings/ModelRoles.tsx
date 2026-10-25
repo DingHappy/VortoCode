@@ -103,7 +103,7 @@ export function ModelRoles({ profile, value, onChange, disabled = false, engine 
     })}
     <datalist id="llm-role-model-options">{options.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</datalist>
     {experimental && <datalist id="llm-role-cli-options">{[...externalWorkerOptions(workers), ...options].map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</datalist>}
-    <p className="llm-profile-note">跨渠道模型先在「其他模型供应商」登记。每家使用自己的 Key。此处随上方保存生效，仅配置本机引擎；常驻电脑须在对应实例配置。角色文件中的明确 model 优先。</p>
+    <p className="llm-profile-note">跨渠道模型先通过「添加模型服务」登记。每家使用自己的 Key。此处随底部「保存模型配置」生效，仅配置本机引擎；常驻电脑须在对应实例配置。角色文件中的明确 model 优先。</p>
     <ExperimentalWorkersToggle enabled={experimental} busy={experimentalBusy} note={experimentalNote} onToggle={onExperimentalToggle} />
     {experimental && <p className="llm-profile-note">本机引擎：实现、审查选 cli:codex 或 cli:claude 时，交给这台电脑上你本人登录的 CLI 在隔离工作区里执行（审查只读），只沿用你个人配置里的模型选择；拆解、自测、验证、确认和开 PR 仍由 VortoCode 负责，CLI 拿不到 GitHub 令牌。执行者不可用时自动改由内置子 Agent 接手。</p>}
     {resident && <ResidentWorkers view={resident} />}

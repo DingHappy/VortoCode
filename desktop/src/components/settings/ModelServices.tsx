@@ -39,13 +39,14 @@ type Props = {
   onSetupDefault: (preset: ProviderPreset | null) => void;
   /** 去「常规」登录 VortoCode 账号 */
   onOpenAccount: () => void;
+  onDraftStateChange?: (state: { dirty: boolean; busy: boolean }) => void;
 };
 
 function host(url: string): string {
   try { return new URL(url).host; } catch { return url; }
 }
 
-export function ModelServices({ profile, onProfile, onRestartRuntime, editingDefault, onEditDefault, onSetupDefault, onOpenAccount }: Props) {
+export function ModelServices({ profile, onProfile, onRestartRuntime, editingDefault, onEditDefault, onSetupDefault, onOpenAccount, onDraftStateChange }: Props) {
   const providers = profile?.providers ?? [];
   const hasDefault = Boolean(profile?.configured);
   const defaultIsMember = profile?.account?.keySource === MEMBER_KEY_SOURCE;
@@ -66,6 +67,12 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
     })();
     return () => { alive = false; };
   }, [profile?.configured, providers.length]);
+
+  const original = draft?.editing ? providers.find(provider => provider.id === draft.id) : null;
+  const dirty = Boolean(draft && (draft.editing
+    ? draft.name !== original?.name || draft.baseUrl !== original?.baseUrl || draft.apiKey.trim()
+    : draft.id.trim() || draft.name.trim() || draft.baseUrl.trim() || draft.apiKey.trim()));
+  useEffect(() => { onDraftStateChange?.({ dirty, busy }); }, [dirty, busy, onDraftStateChange]);
 
   const applied = async (next: DesktopLlmProfileStatus, done: string) => {
     onProfile(next);

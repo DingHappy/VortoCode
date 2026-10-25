@@ -26,9 +26,11 @@ export function useLlmProfile(
   const [llmStrongInput, setLlmStrongInput] = useState("");
   const [llmRolesInput, setLlmRolesInput] = useState<Record<string, string>>({});
   const [llmProfileBusy, setLlmProfileBusy] = useState(false);
+  const [llmSaveNote, setLlmSaveNote] = useState("");
   // 读过一次（成功或失败）。失败时不能让引导卡永远停在"检查中"：显示为待配置，点进设置会重读。
   const [llmProfileChecked, setLlmProfileChecked] = useState(false);
   const loadedOnceRef = useRef(false);
+  useEffect(() => { setLlmSaveNote(""); }, [llmProfile, llmBaseInput, llmModelInput, llmKeyInput, llmFastInput, llmStrongInput, llmRolesInput]);
 
   /** 原生层返回了新的配置（登录、供应商变化）：同步状态和表单，免得表单拿旧地址覆盖回去。 */
   const applyLlmProfile = (profile: DesktopLlmProfileStatus) => {
@@ -61,6 +63,7 @@ export function useLlmProfile(
   const saveLlmProfile = async () => {
     if (llmProfileBusy || !llmBaseInput.trim() || !llmModelInput.trim()) return;
     setLlmProfileBusy(true);
+    setLlmSaveNote("");
     try {
       const profile = await invoke<DesktopLlmProfileStatus>("set_llm_profile", {
         baseUrl: llmBaseInput.trim(),
@@ -70,13 +73,13 @@ export function useLlmProfile(
         strongModel: llmStrongInput.trim() || null,
         roleModels: llmRolesInput,
       });
-      setLlmProfile(profile);
-      setLlmKeyInput("");
-      setLlmRolesInput(profile.roleModels ?? {});
+      applyLlmProfile(profile);
       const restarted = await onRestartRuntime();
+      setLlmSaveNote(restarted ? "模型配置已保存，本机引擎已重启" : "模型配置已保存，下次启动本机引擎时生效");
       if (restarted) onBanner(`${profile.provider === "vortocode" ? "VortoCode Relay" : profile.provider === "local" ? "本机模型服务" : "自定义模型服务"}已保存到本机配置文件，当前 runtime 已重启`);
     } catch (error) {
-      onBanner(errorText(error, "保存模型服务失败"));
+      const message = errorText(error, "保存模型服务失败");
+      setLlmSaveNote(message); onBanner(message);
     } finally {
       setLlmProfileBusy(false);
     }
@@ -85,6 +88,7 @@ export function useLlmProfile(
   const clearLlmProfile = async () => {
     if (llmProfileBusy || !await confirmAction("清除本机保存的模型服务配置？当前 runtime 会重启。")) return;
     setLlmProfileBusy(true);
+    setLlmSaveNote("");
     try {
       const profile = await invoke<DesktopLlmProfileStatus>("clear_llm_profile");
       setLlmProfile(profile);
@@ -95,9 +99,11 @@ export function useLlmProfile(
       setLlmRolesInput({});
       setLlmKeyInput("");
       const restarted = await onRestartRuntime();
+      setLlmSaveNote(restarted ? "模型配置已清除，本机引擎已重启" : "模型配置已清除，下次启动本机引擎时生效");
       if (restarted) onBanner("模型服务配置已清除；需要对话时可随时重新设置");
     } catch (error) {
-      onBanner(errorText(error, "清除模型服务失败"));
+      const message = errorText(error, "清除模型服务失败");
+      setLlmSaveNote(message); onBanner(message);
     } finally {
       setLlmProfileBusy(false);
     }
@@ -107,6 +113,6 @@ export function useLlmProfile(
     llmProfile, applyLlmProfile, llmProfileChecked, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput,
     llmKeyInput, setLlmKeyInput, llmFastInput, setLlmFastInput, llmStrongInput, setLlmStrongInput,
     llmRolesInput, setLlmRolesInput,
-    llmProfileBusy, saveLlmProfile, clearLlmProfile,
+    llmProfileBusy, llmSaveNote, saveLlmProfile, clearLlmProfile,
   };
 }

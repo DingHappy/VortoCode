@@ -439,7 +439,7 @@ function App() {
     llmProfile, applyLlmProfile, llmProfileChecked, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput,
     llmFastInput, setLlmFastInput, llmStrongInput, setLlmStrongInput,
     llmRolesInput, setLlmRolesInput,
-    llmKeyInput, setLlmKeyInput, llmProfileBusy, saveLlmProfile, clearLlmProfile,
+    llmKeyInput, setLlmKeyInput, llmProfileBusy, llmSaveNote, saveLlmProfile, clearLlmProfile,
   } = useLlmProfile(settingsOpen, setBanner, () => restartCurrentRuntimeForLlmProfile());
   const [savedModelChoice, setSavedModelChoice] = useState<string | null>(() => loadModelChoice());
   const [modelPicks, setModelPicks] = useState<string[] | null>(() => loadModelPicks());
@@ -2014,7 +2014,7 @@ function App() {
   };
 
   const restartCurrentRuntimeForLlmProfile = async (): Promise<boolean> => {
-    if (!processStatus.runtimeId || !processStatus.running) return true;
+    if (!processStatus.runtimeId || !processStatus.running) return false;
     const previous = {
       runtimeId: processStatus.runtimeId,
       scope: activeScope,
@@ -2591,7 +2591,7 @@ function App() {
               />
             )}
             onChooseProject={() => void chooseRepo()}
-            onOpenBrowserSettings={() => { setSettingsSection("abilities"); setSettingsOpen(true); }}
+            onOpenBrowserSettings={() => { setSettingsSection("permissions"); setSettingsOpen(true); }}
           />
         ) : mainView === "management" ? null : mainView === "artifacts" ? (
           <ArtifactCenter
@@ -2798,7 +2798,7 @@ function App() {
         {mainView === "chat" && inspectorOpen && appMode === "assistant" && (
           computerWorkspace.view ? <ComputerWorkspacePanel view={computerWorkspace.view} onClose={computerWorkspace.close} onRetry={() => void computerWorkspace.open()} />
           : <AssistantPanel name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} connected={connection === "connected"}
-            computer={<ComputerLauncher onOpen={() => void computerWorkspace.open()} onSettings={() => { setSettingsSection("abilities"); setSettingsOpen(true); }} />}
+            computer={<ComputerLauncher onOpen={() => void computerWorkspace.open()} onSettings={() => { setSettingsSection("computer"); setSettingsOpen(true); }} />}
             onEditProfile={() => setProfileDialogOpen(true)}
             host={onAssistantHost() ? { kind: "resident", name: findAssistantHost(projects)?.name ?? "常驻电脑", reachable: connection === "connected" } : { kind: "local", canAddResident: !findAssistantHost(projects) }}
             onAddResident={() => setRemoteDialogOpen("assistant")}
@@ -3230,6 +3230,12 @@ function App() {
           initialSection={settingsSection}
           onOpenPlugins={() => { setMainView("plugins"); }}
           hasResident={Boolean(findAssistantHost(projects))}
+          residentName={findAssistantHost(projects)?.name}
+          residentConnected={onAssistantHost() && connection === "connected"}
+          onOpenResidentSetup={() => setRemoteDialogOpen("assistant")}
+          onConnectResident={() => { const host = findAssistantHost(projects); if (host) void connectAssistantHost(host).then(ok => { if (ok) { setAppMode("assistant"); void openMainChat(host.id); } }); }}
+          onOpenSchedule={() => { setAppMode("assistant"); setMainView("chat"); setAssistantTab("schedule"); setInspectorOpen(true); }}
+          llmSaveNote={llmSaveNote}
           onEditAssistant={() => setProfileDialogOpen(true)}
           onLlmKeyChange={setLlmKeyInput}
           onSaveLlmProfile={saveLlmProfile}

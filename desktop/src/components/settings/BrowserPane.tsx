@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { errorText } from "../../lib/errorText";
 import type { BrowserControlStatus } from "../../types";
 
-export function BrowserPane({ onRestartRuntime }: { onRestartRuntime: () => Promise<boolean> }) {
+export function BrowserPane({ onRestartRuntime, onDraftStateChange }: { onRestartRuntime: () => Promise<boolean>; onDraftStateChange?: (state: { dirty: boolean; busy: boolean }) => void }) {
   const [status, setStatus] = useState<BrowserControlStatus | null>(null);
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
@@ -18,6 +18,8 @@ export function BrowserPane({ onRestartRuntime }: { onRestartRuntime: () => Prom
       .catch((failure) => { if (alive) setNote(errorText(failure, "读取浏览器操控设置失败")); });
     return () => { alive = false; };
   }, []);
+
+  useEffect(() => { onDraftStateChange?.({ dirty: false, busy }); }, [busy, onDraftStateChange]);
 
   const toggle = async () => {
     if (!status) return;

@@ -8,7 +8,7 @@ import type { UserInstructions } from "../../types";
 
 const MAX_CHARS = 20_000;
 
-export function PersonalizePane() {
+export function PersonalizePane({ onDraftStateChange }: { onDraftStateChange?: (state: { dirty: boolean; busy: boolean }) => void }) {
   const [loaded, setLoaded] = useState<UserInstructions | null>(null);
   const [draft, setDraft] = useState("");
   const [status, setStatus] = useState("");
@@ -37,6 +37,7 @@ export function PersonalizePane() {
   };
 
   const dirty = loaded !== null && draft !== loaded.content;
+  useEffect(() => { onDraftStateChange?.({ dirty, busy: saving }); }, [dirty, saving, onDraftStateChange]);
   return (
     <div className="settings-stack">
       <p className="settings-intro">为你与 VortoCode 的所有对话和任务提供额外说明和上下文（包括通用会话与自动化任务），新会话生效。</p>
