@@ -1170,5 +1170,185 @@
     "methods": [
       "GET"
     ]
+  },
+  {
+    "path": "/api/mobile/account/callback",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/account/connect",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/account/login",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/account/registration",
+    "methods": [
+      "DELETE"
+    ]
+  },
+  {
+    "path": "/api/mobile/account/registration",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/account/registration",
+    "methods": [
+      "PUT"
+    ]
+  },
+  {
+    "path": "/api/mobile/browser/bootstrap",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/browser/logout",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/browser/snapshot",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/browser/status",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/devices",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/devices",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/devices/{device_id}",
+    "methods": [
+      "DELETE"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/authorize",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/bootstrap",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/exchange",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/logout",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/native/snapshot",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/pairing-window",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/pairing/cancel",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/pairing/start",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/pairing/status",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/pairings",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/pairings/{request_id}/decision",
+    "methods": [
+      "POST"
+    ]
+  },
+  {
+    "path": "/api/mobile/v1/bootstrap",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/api/mobile/v1/snapshot",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/mobile",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/mobile/",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/mobile/manage",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
+    "path": "/static/mobile/{asset:path}",
+    "methods": [
+      "GET"
+    ]
   }
 ]
