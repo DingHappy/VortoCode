@@ -82,6 +82,7 @@ import type {
   DesktopLlmProfileStatus,
   ProjectSessionSummary, CodexAction} from "./types";
 import { DecisionsPanel } from "./components/DecisionsPanel";
+import { ConnectionCoordinator, placeAssistant } from "./connection/connectionCoordinator";
 import { SessionConnection } from "./connection/sessionConnection";
 import { TasksPanel } from "./tasks/TasksPanel";
 import { useTasks } from "./hooks/useTasks";
@@ -190,13 +191,14 @@ function App() {
   const sessionConnectionRef = useRef<SessionConnection<GatewayClient> | null>(null);
   if (!sessionConnectionRef.current) sessionConnectionRef.current = new SessionConnection(clientRef);
   const goalRunSyncRef = useRef("");
-  const runtimeStartingRef = useRef(false);
   const initializationStartedRef = useRef(false);
   const projectRestoreDoneRef = useRef(false);
-  const projectSwitchingRef = useRef(false);
-  const remoteProjectRef = useRef<string | null>(null);
-  // 当前连着的远端若是常驻助理（通用范围）就记下它的 id；与 remoteProjectRef 相等才算「在常驻电脑上」。
-  const assistantHostRef = useRef<string | null>(null);
+  // 谁在切换、本机引擎是否在启动、现在连在哪：规则见 connection/connectionCoordinator.ts。
+  const coordinatorRef = useRef<ConnectionCoordinator | null>(null);
+  if (!coordinatorRef.current) coordinatorRef.current = new ConnectionCoordinator();
+  const coordinator = coordinatorRef.current;
+  const remoteProjectRef = coordinator.remote;
+  const assistantHostRef = coordinator.assistantHost;
   // 进助理模式前工作台停在哪个项目：切回工作台时回到那里，而不是丢在通用工作区。
   const workReturnRef = useRef<string | null>(null);
   const [remoteDialogOpen, setRemoteDialogOpen] = useState<false | "project" | "assistant">(false);
@@ -220,6 +222,7 @@ function App() {
   const showHomeStarting = useDelayedFlag(homeStarting, 400);
   const [projects, setProjects] = useState<DesktopProjectProfile[]>([]);
   const [projectSwitching, setProjectSwitching] = useState(false);
+  coordinator.listen({ switching: setProjectSwitching, starting: setRuntimeStarting });
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -962,12 +965,10 @@ function App() {
     await Promise.allSettled([...common, ...workspace]);
   }, [refreshSessions, refreshNotices, refreshDecisions, refreshAudit, snapshotTodayJournal, refreshWeeklyJournal, refreshProjectAssets, refreshTasks, refreshWorktrees, refreshRuns, refreshGoals, refreshGitReview, refreshIsolatedDeliveries, refreshPrDelivery, refreshHookStatus, refreshExtensionsInspect]);
 
-  /** 最近一次连接是真的失败了（而不是被更新的连接取代）：只有这时才提示用户。 */
-  const connectFailedRef = useRef(false);
   const connectToRuntime = useCallback(
     async (sid = activeSid, options: RuntimeConnectionOptions = {}): Promise<boolean> => {
       const attempt = sessionConnectionRef.current!.begin();
-      connectFailedRef.current = false;
+      coordinator.connectBegan();
       const requestedBaseUrl = options.baseUrl ?? baseUrl;
       const requestedRepoRoot = options.repoRoot ?? repoRoot;
       const requestedToken = options.token ?? token;
@@ -1018,18 +1019,18 @@ function App() {
         return true;
       } catch (error) {
         if (!attempt.current()) return false;
-        connectFailedRef.current = true;
+        coordinator.connectFailed();
         endNotificationSync();
         clientRef.current = null;
         setConnection("error");
         setConnectionNote(errorText(error, "连接失败"));
         return false;
       }
-    }, [activeSid, baseUrl, beginNotificationSync, endNotificationSync, handleProtocolEvent, refreshAllForScope, rememberProject, repoRoot, runtime.scope, token],
+    }, [activeSid, baseUrl, beginNotificationSync, coordinator, endNotificationSync, handleProtocolEvent, refreshAllForScope, rememberProject, repoRoot, runtime.scope, token],
   );
 
   const startWorkspace = useCallback(async (options: StartWorkspaceOptions): Promise<boolean> => {
-    if (runtimeStartingRef.current) return false;
+    if (coordinator.starting) return false;
     const scope = options.scope ?? "project";
     const root = options.repoRoot?.trim() ?? "";
     if (scope === "project" && !root) {
@@ -1037,61 +1038,58 @@ function App() {
       return false;
     }
 
-    runtimeStartingRef.current = true;
-    setRuntimeStarting(true);
-    setConnection("connecting");
-    setConnectionNote(scope === "general" ? "正在启动通用会话…" : scope === "scratch" ? "正在创建隔离 Scratch…" : "正在启动项目引擎…");
-    if (options.announce !== false) setBanner(scope === "general" ? "正在准备通用会话…" : scope === "scratch" ? "正在准备隔离 Scratch…" : "正在准备项目工作区；首次启动可能需要约 20 秒…");
-    runtimes.invalidate();
-    try {
-      const preferredUrl = normalizeLocalBaseUrl(remoteProjectRef.current ? "http://127.0.0.1:8080" : options.baseUrl);
-      remoteProjectRef.current = null;
-      const parsed = new URL(preferredUrl);
-      const preferredPort = Number(parsed.port || "8080");
-      const status = await runtimes.launch({
-        repoRoot: scope === "project" ? root : null,
-        scope,
-        workspaceId: options.workspaceId ?? options.sid,
-        port: preferredPort,
-        token: options.token?.trim() || null,
-      });
-      const actualUrl = normalizeLocalBaseUrl(status.baseUrl || preferredUrl);
-      setBaseUrl(actualUrl);
-      if (scope === "project") localStorage.setItem(STORAGE_KEYS.repoRoot, root);
-      else localStorage.removeItem(STORAGE_KEYS.repoRoot);
-      localStorage.setItem(STORAGE_KEYS.baseUrl, actualUrl);
-      const probe = new GatewayClient({ baseUrl: actualUrl, token: options.token ?? "" });
-      await probe.waitUntilReady(750, 100);
-      const connected = await connectToRuntime(options.sid, {
-        baseUrl: actualUrl,
-        repoRoot: scope === "project" ? root : "",
-        token: options.token ?? "",
-        scope,
-      });
-      if (!connected) {
-        // 被更新的连接取代（比如启动时紧接着切到常驻电脑）不是失败，不提示
-        if (connectFailedRef.current) setBanner("本地引擎已经启动，但工作区连接失败；可在 设置 → 高级 里查看连接参数");
+    return coordinator.exclusiveStart(async () => {
+      setConnection("connecting");
+      setConnectionNote(scope === "general" ? "正在启动通用会话…" : scope === "scratch" ? "正在创建隔离 Scratch…" : "正在启动项目引擎…");
+      if (options.announce !== false) setBanner(scope === "general" ? "正在准备通用会话…" : scope === "scratch" ? "正在准备隔离 Scratch…" : "正在准备项目工作区；首次启动可能需要约 20 秒…");
+      runtimes.invalidate();
+      try {
+        const preferredUrl = normalizeLocalBaseUrl(remoteProjectRef.current ? "http://127.0.0.1:8080" : options.baseUrl);
+        remoteProjectRef.current = null;
+        const parsed = new URL(preferredUrl);
+        const preferredPort = Number(parsed.port || "8080");
+        const status = await runtimes.launch({
+          repoRoot: scope === "project" ? root : null,
+          scope,
+          workspaceId: options.workspaceId ?? options.sid,
+          port: preferredPort,
+          token: options.token?.trim() || null,
+        });
+        const actualUrl = normalizeLocalBaseUrl(status.baseUrl || preferredUrl);
+        setBaseUrl(actualUrl);
+        if (scope === "project") localStorage.setItem(STORAGE_KEYS.repoRoot, root);
+        else localStorage.removeItem(STORAGE_KEYS.repoRoot);
+        localStorage.setItem(STORAGE_KEYS.baseUrl, actualUrl);
+        const probe = new GatewayClient({ baseUrl: actualUrl, token: options.token ?? "" });
+        await probe.waitUntilReady(750, 100);
+        const connected = await connectToRuntime(options.sid, {
+          baseUrl: actualUrl,
+          repoRoot: scope === "project" ? root : "",
+          token: options.token ?? "",
+          scope,
+        });
+        if (!connected) {
+          // 被更新的连接取代（比如启动时紧接着切到常驻电脑）不是失败，不提示
+          if (coordinator.lastConnectFailed) setBanner("本地引擎已经启动，但工作区连接失败；可在 设置 → 高级 里查看连接参数");
+          return false;
+        }
+        setBanner(null);
+        return true;
+      } catch (error) {
+        runtimes.invalidate();
+        setConnection("error");
+        setConnectionNote(errorText(error, "工作区启动失败"));
+        setBanner(errorText(error, "工作区启动失败"));
+        await runtimes.reloadAfterFailure(processStatus.runtimeId);
         return false;
       }
-      setBanner(null);
-      return true;
-    } catch (error) {
-      runtimes.invalidate();
-      setConnection("error");
-      setConnectionNote(errorText(error, "工作区启动失败"));
-      setBanner(errorText(error, "工作区启动失败"));
-      await runtimes.reloadAfterFailure(processStatus.runtimeId);
-      return false;
-    } finally {
-      runtimeStartingRef.current = false;
-      setRuntimeStarting(false);
-    }
-  }, [connectToRuntime, processStatus.runtimeId, runtimes]);
+    });
+  }, [connectToRuntime, coordinator, processStatus.runtimeId, runtimes]);
 
   const localRuntimeControls = useLocalRuntimeControls({
     processStatus, scope: activeScope, runtime, repoRoot, baseUrl, sid: activeSid, token, runtimes, disconnect, startWorkspace,
-    remote: () => Boolean(remoteProjectRef.current), starting: () => runtimeStartingRef.current,
-    switching: () => projectSwitchingRef.current, client: () => clientRef.current,
+    remote: () => Boolean(remoteProjectRef.current), starting: () => coordinator.starting,
+    switching: () => coordinator.switching, client: () => clientRef.current,
     readActivity: (status, checkedToken) => new GatewayClient({ baseUrl: status.baseUrl!, token: checkedToken }).getRuntimeActivity(),
     onBanner: setBanner,
   });
@@ -1233,29 +1231,27 @@ function App() {
   };
 
   /**
-   * 切项目 / 范围 / 常驻电脑的共同骨架：同一时刻只允许一个切换（调用方先查 projectSwitchingRef）；
-   * 前后各作废一次监督器的旧轮次；先断开、清视图，再由 body 连到新的地方。
+   * 切项目 / 范围 / 常驻电脑的共同骨架：同一时刻只允许一个切换（进门时由协调器再查一次，
+   * 调用方前面的确认框期间另一次切换抢先进来也不会叠上）；前后各作废一次监督器的旧轮次；
+   * 先断开、清视图，再由 body 连到新的地方。
    */
-  const runWorkspaceSwitch = async (failure: string, body: () => Promise<boolean>): Promise<boolean> => {
-    projectSwitchingRef.current = true;
-    setProjectSwitching(true);
-    runtimes.invalidate();
-    try {
-      await disconnect();
-      clearProjectView();
-      return await body();
-    } catch (error) {
-      setBanner(errorText(error, failure));
-      return false;
-    } finally {
+  const runWorkspaceSwitch = (failure: string, body: () => Promise<boolean>): Promise<boolean> =>
+    coordinator.exclusiveSwitch(async () => {
       runtimes.invalidate();
-      projectSwitchingRef.current = false;
-      setProjectSwitching(false);
-    }
-  };
+      try {
+        await disconnect();
+        clearProjectView();
+        return await body();
+      } catch (error) {
+        setBanner(errorText(error, failure));
+        return false;
+      } finally {
+        runtimes.invalidate();
+      }
+    });
 
   const switchProject = async (project: DesktopProjectProfile, options: { fresh?: boolean; sid?: string } = {}): Promise<boolean> => {
-    if (projectSwitchingRef.current) return false;
+    if (coordinator.switching) return false;
     if (project.kind !== "remote" && !remoteProjectRef.current && project.repoRoot === repoRoot.trim()) {
       setBaseUrl(project.baseUrl);
       localStorage.setItem(STORAGE_KEYS.baseUrl, project.baseUrl);
@@ -1270,7 +1266,7 @@ function App() {
       setBanner("请先完成或拒绝当前源码保存确认");
       return false;
     }
-    if (runtimeStartingRef.current) {
+    if (coordinator.starting) {
       setBanner("本地引擎正在启动，请稍候再切换项目");
       return false;
     }
@@ -1373,7 +1369,7 @@ function App() {
     scope: "general" | "scratch",
     managedRuntime?: GatewayProcessStatus,
   ): Promise<boolean> => {
-    if (projectSwitchingRef.current) return false;
+    if (coordinator.switching) return false;
     if (activeScope === scope && connection === "connected" && !remoteProjectRef.current
       && (!managedRuntime || managedRuntime.runtimeId === processStatus.runtimeId)) return true;
     if (savingFile) {
@@ -1381,7 +1377,7 @@ function App() {
       return false;
     }
     // 先拒绝再断开：startWorkspace 在引擎启动中会直接返回 false，断开之后才发现就回不去了。
-    if (runtimeStartingRef.current) {
+    if (coordinator.starting) {
       setBanner("本地引擎正在启动，请稍候再切换工作区范围");
       return false;
     }
@@ -1416,7 +1412,7 @@ function App() {
   };
 
   const forgetProject = async (project: DesktopProjectProfile) => {
-    if (projectSwitchingRef.current) return;
+    if (coordinator.switching) return;
     if (project.kind === "remote" ? remoteProjectRef.current === project.id : !remoteProjectRef.current && project.repoRoot === repoRoot.trim()) {
       setBanner("当前项目不能从最近项目中移除，请先切换到其他项目");
       return;
@@ -1634,11 +1630,7 @@ function App() {
     // 启动时本机引擎还在拉起（正在切换，或启动流程还在装填数据）：等它走完再连常驻电脑。
     // 否则两次连接交错：本机那次被顶掉，常驻电脑又连不上时，回落会撞上「引擎正在启动」被丢弃，
     // 结果两头都没连上（启动时常驻电脑离线即复现）。
-    const localBusy = () => projectSwitchingRef.current || runtimeStartingRef.current;
-    for (let waited = 0; localBusy() && waited < 15_000; waited += 200) {
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-    if (localBusy()) return false;
+    if (!await coordinator.waitUntilIdle()) return false;
     if (savingFile) {
       setBanner("请先完成或拒绝当前源码保存确认");
       return false;
@@ -1676,7 +1668,7 @@ function App() {
     await connectToRuntime(sid);
   };
 
-  const onAssistantHost = () => Boolean(remoteProjectRef.current) && remoteProjectRef.current === assistantHostRef.current;
+  const onAssistantHost = () => coordinator.onAssistantHost;
 
   // 登记了常驻电脑、在助理模式、却连在本机：明着提示，并在后台自动重连（正在回复时不切）
   const residentMissed = appMode === "assistant" && Boolean(findAssistantHost(projects)) && !onAssistantHost()
@@ -1711,13 +1703,12 @@ function App() {
       try { workReturnRef.current = activeScope === "project" ? localStorage.getItem(STORAGE_KEYS.lastProjectId) : null; } catch { workReturnRef.current = null; }
     }
     // 助理默认住在常驻电脑上（合上笔记本也照常干活）；没登记或连不上，才用本机通用工作区兜底。
-    const host = findAssistantHost(known);
-    let hostId: string | null = null;
-    if (host) {
-      if (await connectAssistantHost(host)) hostId = host.id;
-      else setBanner(`常驻电脑「${host.name}」暂时连不上，先用本机助理；它不在时你交代的事不会继续做。`);
-    }
-    if (!hostId && (remoteProjectRef.current || activeScope !== "general") && !await switchManagedScope("general")) return;
+    const hostId = await placeAssistant({
+      host: findAssistantHost(known), connectHost: connectAssistantHost, notify: setBanner,
+      awayFromLocalGeneral: () => Boolean(remoteProjectRef.current) || activeScope !== "general",
+      switchToLocalGeneral: () => switchManagedScope("general"),
+    });
+    if (hostId === undefined) return;
     setInspectorOpen(true);
     setAssistantTab("feed");
     await openMainChat(hostId);
@@ -1758,7 +1749,7 @@ function App() {
     if ((!text && selectedContext.length === 0 && selectedAttachments.length === 0) || savingFile) return false;
 
     if (connection !== "connected" || !clientRef.current) {
-      if (runtimeStartingRef.current || projectSwitchingRef.current) {
+      if (coordinator.starting || coordinator.switching) {
         setBanner("工作区正在准备，请稍候发送");
         return false;
       }
@@ -1952,7 +1943,7 @@ function App() {
   const restoreRecoveryConfig = async () => {
     const record = recoveryRecord;
     if (!record) return;
-    if (busy || savingFile || connection === "connecting" || runtimeStartingRef.current) {
+    if (busy || savingFile || connection === "connecting" || coordinator.starting) {
       setBanner("当前仍有操作进行中，暂时不能切换到恢复配置");
       return;
     }
