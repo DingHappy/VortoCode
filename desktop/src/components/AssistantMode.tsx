@@ -1,6 +1,6 @@
 import { AssistantScheduleCard } from "./AssistantScheduleCard";
 import type { ReactNode } from "react";
-import { ArrowLeft, Smartphone, Check, Clock3, Fingerprint, Laptop, List, MessageCircle, MessagesSquare, PencilLine, Plus, RefreshCw, Server, ShieldCheck, Target, Trash2, X } from "lucide-react";
+import { ArrowLeft, Smartphone, Check, ChevronRight, Clock3, Fingerprint, ImagePlus, Laptop, List, MessageCircle, MessagesSquare, PencilLine, Plus, RefreshCw, Server, ShieldCheck, Target, Trash2, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { avatarHue, avatarInitial, avatarSrc } from "../lib/avatar";
 import { connectorCredentialView } from "../lib/connectorStatus";
@@ -195,8 +195,8 @@ export function AssistantAudit({ entries, now }: { entries: AuditEntry[]; now?: 
 }
 
 /** 「定时」：它按时间自己会做的事（早晚报、跟进、Heartbeat、定时作业）。 */
-export function AssistantSchedule({ items, connected = false, local = false, onToggle, onHistory, onRefresh }: {
-  items: AssistantScheduleItem[]; connected?: boolean;
+export function AssistantSchedule({ items, connected = false, local = false, now, onToggle, onHistory, onRefresh }: {
+  items: AssistantScheduleItem[]; connected?: boolean; now?: Date;
   /** 助理在本机运行：本机引擎不开调度，定时的事不会按时自动跑——空状态别再引导去建定时汇报。 */
   local?: boolean;
   onRefresh?: () => Promise<void>;
@@ -205,20 +205,22 @@ export function AssistantSchedule({ items, connected = false, local = false, onT
 }) {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
+  const readOnly = items.some((item) => item.kind !== "goal" && !(item.kind === "cron" && item.revision));
   return <section className="assistant-section">
-    <h5>定时 {onRefresh && <button disabled={!connected || refreshing} onClick={() => {
+    <h5>定时{onRefresh && <button className="assistant-section-refresh" aria-label="刷新定时" title="刷新" disabled={!connected || refreshing} onClick={() => {
       setRefreshing(true); setError("");
       void onRefresh().catch(error => setError(String(error))).finally(() => setRefreshing(false));
-    }}>刷新</button>}</h5>
+    }}><RefreshCw size={13} aria-hidden="true" className={refreshing ? "session-step-spin" : ""} /></button>}</h5>
     {error && <p role="alert">{error}</p>}
     {items.length === 0 && <p className="assistant-memory-empty">{local
       ? "助理现在在本机运行：只在 Desktop 开着时工作，不会按时自动跑定时的事。要每天定时汇报、提醒，需要连接一台一直开着的常驻电脑。"
       : "还没有定时的事。比如让它「每天早上给我一份简报」，或者在常驻电脑上打开早晚报。"}</p>}
     <ul className="assistant-schedule">
-      {items.map(item => <AssistantScheduleCard key={item.id} item={item} connected={connected}
+      {items.map(item => <AssistantScheduleCard key={item.id} item={item} connected={connected} now={now}
         onToggle={onToggle || (async () => { throw new Error("当前界面不支持管理"); })}
         onHistory={onHistory || (async () => [])} />)}
     </ul>
+    {readOnly && <p className="assistant-schedule-note">标「只读」的由助理所在电脑的配置决定，这里只能查看。</p>}
   </section>;
 }
 
@@ -270,35 +272,35 @@ export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposa
       <AssistantMemories memories={memories} onDelete={onDeleteMemory} />
     </section>;
   }
-  const latest = memories[0]?.created_at?.slice(0, 10).replace(/-/g, ".").slice(2);
+  const latest = memories[0]?.created_at?.slice(0, 10);
+  const rows: Array<{ id: string; label: string; status: string; preview: string; filled: boolean; pending?: string; onClick: () => void }> = [
+    { id: "soul", label: "SOUL", status: profile.soul ? "它的性格与说话方式" : "还没写", preview: profile.soul || "点这里定它的性格和说话方式", filled: Boolean(profile.soul), onClick: onEdit },
+    { id: "about", label: "关于你", status: profile.about_you ? "每次对话都带上" : "还没写", preview: profile.about_you || "在哪、做什么、习惯怎么被汇报", filled: Boolean(profile.about_you), onClick: onEdit },
+    { id: "memory", label: "记忆", status: memories.length ? `记得 ${memories.length} 件事` : "还没有",
+      preview: memories[0]?.content || "聊天时说「记住……」，它就会记下来", filled: memories.length > 0, pending: proposals.length ? `${proposals.length} 条待确认` : undefined,
+      onClick: () => setShowMemories(true) },
+  ];
   return <section className="assistant-section">
-    <div className="assistant-profile-card">
-      <div className="assistant-profile-head">
-        <AssistantAvatarImage name={profile.name} avatar={avatar} size={44} />
-        <strong>{profile.name}</strong>
-      </div>
-      <button onClick={onEdit}><PencilLine size={13} />编辑</button>
-      {onAvatar && <div className="assistant-avatar-actions">
-        <button onClick={() => fileRef.current?.click()}>换头像</button>
+    <div className="assistant-profile-actions">
+      <button onClick={onEdit}><PencilLine size={13} aria-hidden="true" />编辑资料</button>
+      {onAvatar && <>
+        <button onClick={() => fileRef.current?.click()}><ImagePlus size={13} aria-hidden="true" />换头像</button>
         {avatar && <button onClick={() => onAvatar(null)}>用名字首字</button>}
         <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden
           onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) onAvatar(file); }} />
-      </div>}
+      </>}
     </div>
-    <div className="assistant-cards">
-      <button className="assistant-card soul" onClick={onEdit}>
-        <b>SOUL</b><small>{profile.soul ? "它的性格与说话方式" : "还没写，点这里定它的性格"}</small>
-        <span>{profile.soul.slice(0, 40)}</span>
-      </button>
-      <button className="assistant-card about" onClick={onEdit}>
-        <b>关于你</b><small>{profile.about_you ? "每次对话都带上" : "还没写"}</small>
-        <span>{profile.about_you.slice(0, 40)}</span>
-      </button>
-      <button className="assistant-card memory" onClick={() => setShowMemories(true)}>
-        <b>记忆</b><small>{memories.length ? `记得 ${memories.length} 件事` : "还没有"}{proposals.length ? ` · ${proposals.length} 条待确认` : ""}</small>
-        <span>{latest ? `最近 ${latest}` : ""}</span>
-      </button>
-    </div>
+    <ul className="assistant-identity-list">
+      {rows.map((row) => <li key={row.id}><button className={`assistant-identity-row ${row.id}`} onClick={row.onClick}>
+        <span className="assistant-identity-text">
+          <span className="assistant-identity-head"><b>{row.label}</b><small>{row.status}</small>
+            {row.pending && <small className="assistant-identity-pending">{row.pending}</small>}</span>
+          <span className={`assistant-identity-preview${row.filled ? "" : " empty"}`}>{row.preview}</span>
+          {row.id === "memory" && latest && <small className="assistant-identity-meta">最近一条记于 {latest}</small>}
+        </span>
+        <ChevronRight size={15} aria-hidden="true" />
+      </button></li>)}
+    </ul>
     {connectors.length > 0 && <AssistantConnectors connectors={connectors} onAction={onConnector} />}
     {plugins}
   </section>;

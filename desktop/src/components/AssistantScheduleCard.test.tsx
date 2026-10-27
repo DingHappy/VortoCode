@@ -37,3 +37,10 @@ it.each([
   expect(html).toContain(text);
   expect(html).not.toContain("<button");
 });
+it("reads schedule and run times in local words and marks environment items read-only once", () => {
+  const now = new Date(2026, 9, 27, 21, 0);
+  const html = renderToStaticMarkup(<AssistantScheduleCard now={now}
+    item={{ ...item, kind: "watch", revision: undefined, scheduler_enabled: true, failures: 0, schedule: "每 1 分钟", last: "2026-10-27T20:25:00", next: "2026-10-28T09:00:00" }} {...props} />);
+  for (const text of ["每分钟", "上次 今天 20:25 · 下次 明天 09:00", "只读", "已启用"]) expect(html).toContain(text);
+  expect(html).not.toContain("T20:25");
+});
