@@ -86,6 +86,7 @@ vc --help                        # 全部子命令：server/agent/im/cron/heartb
 - **改 Web/安全/Agent 前后必跑测试**。`tests/integration/` 是**路由契约安全网**：冻结 API 路由集合 + WS + 鉴权/执行闸/路径穿越。新增 API 路由要同步更新 `tests/integration/server_routes_baseline.json` 基线，否则契约测试红。
 - 修 bug 尽量补回归测试（见 `tests/unit/test_bugfix_regressions.py`）。
 - **多个 Agent 同时在本仓库工作（2026-10-27 定）**：每个 Agent 用自己的 `vorto/*` 或 `codex/*` 分支，只走 PR；不在别人的 PR 分支上叠提交，也不在别人未提交的工作区里改文件（需要时另开 worktree）。v0.2.21～0.2.23 曾在一个未合并的 PR 分支上叠提交并直接发版，main 因此落后好几天。
+- **Desktop 界面（2026-10-27 定）**：界面改动以 `docs/DESIGN_SYSTEM.md` 为准：功能按五层入口放（侧栏一级入口不超过 5 个，不新增右侧常驻面板），颜色只表达状态，字号、圆角、颜色用变量不写死。现有界面按其第 8 节分批迁移。
 - **发版（2026-10-27 定）**：只从 main 发，需要时就发、不按固定周期；先合并再打包，`npm run release:verify -- --mode release` 的 `commitOnMain` 关卡会拦下不在 main 上的提交。装好后跑 `npm run check:installed`；改到连接、恢复或 Codex 控制时，按 `docs/P1_ACCEPTANCE.md` 跑对应场景。
 - **测试必须离线、确定性**：live/联网/烧 token 的测试默认跳过；不要引入真实 API 依赖。
 - **契约测试断行为、不断源码**：不要用 `inspect.getsource` 查子串来"证明"某个防护存在——那种测试会在它声称要防的回归里保持绿色（本仓已清理过一轮此类安慰剂）。
