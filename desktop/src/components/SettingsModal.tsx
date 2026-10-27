@@ -633,7 +633,8 @@ export function SettingsModal({
           {visited.has("advanced") && <div hidden={section !== "advanced"} className="settings-page">
             <div id="setting-version" className={anchorClass("version")} tabIndex={-1}>
               <UpdateCard /><details className="advanced-settings settings-about"><summary>版本与构建信息</summary><BuildVersion details /></details>
-            </div><div id="setting-files" className={anchorClass("files")} tabIndex={-1}><h3 className="settings-subhead">配置文件</h3><ConfigPane llmProfilePath={llmProfile?.configPath} /></div>
+            </div><div id="setting-diagnostics" tabIndex={-1}><h3 className="settings-subhead">诊断日志</h3><DiagnosticsPane /></div>
+            <div id="setting-files" className={anchorClass("files")} tabIndex={-1}><h3 className="settings-subhead">配置文件</h3><ConfigPane llmProfilePath={llmProfile?.configPath} /></div>
           </div>}
         </div>
         <footer className={`settings-savebar${section === "model" && modelDirty ? " settings-savebar-model-dirty" : ""}`}><div className="settings-save-summary">
@@ -670,4 +671,17 @@ function UnsavedSettingsDialog({ labels, onStay, onDiscard }: { labels: string[]
     <div><button onClick={onDiscard}>放弃草稿并关闭</button><button className="primary" autoFocus onClick={onStay}>继续编辑</button></div>
   </dialog>;
   return typeof document === "undefined" ? content : createPortal(content, document.body);
+}
+
+/** 诊断日志：连接、切换、重连和界面报错记在本机，出问题时把文件发过来就能查。 */
+function DiagnosticsPane() {
+  const [note, setNote] = useState("");
+  return <div className="settings-diagnostics">
+    <p>连接常驻电脑、切换工作区、自动重连和界面报错会记在本机的 <code>~/Library/Logs/VortoCode/desktop.log</code>，
+      不含对话内容和密钥。遇到连不上、没反应这类问题时，把这个文件发过来就能排查。</p>
+    <button onClick={() => void invoke<string>("reveal_diagnostics_log")
+      .then(() => setNote("已在 Finder 中显示"))
+      .catch((error) => setNote(error instanceof Error ? error.message : String(error)))}>在 Finder 中显示</button>
+    {note && <small role="status">{note}</small>}
+  </div>;
 }

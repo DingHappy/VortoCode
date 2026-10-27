@@ -42,7 +42,7 @@ import {
   SquareTerminal,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 
 import "./App.css";
 import "./daily.css";
@@ -115,6 +115,7 @@ import { RunsPanel } from "./components/RunsPanel";
 import { RuntimeInboxPanel } from "./components/RuntimeInboxPanel";
 import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
 import { localGeneral, readLocalCodexObserver } from "./lib/codexObserverHealth";
+import { diag } from "./lib/diagnostics";
 import { checkAttachment } from "./lib/attachments";
 import { dismissOfflineChat, listOfflineChats, offlineChatAttachment, recordOfflineChat } from "./lib/offlineChats";
 import { BuildVersion } from "./components/BuildVersion";
@@ -395,7 +396,12 @@ function App() {
   // journal 域 8 个 state + 全部读写回调已收进 useJournal（hook 试点，hooks/useJournal.ts）；
   // 实例在 banner 声明之后挂载——保存快照/添加记录的结果提示要注入 setBanner。
   const [backgroundPrompt, setBackgroundPrompt] = useState("");
-  const [banner, setBanner] = useState<string | null>(null);
+  const [banner, setBannerState] = useState<string | null>(null);
+  // 顶部横幅就是用户看得到的报错：顺手记进诊断日志（横幅常被后续提示盖掉，事后只能靠日志）
+  const setBanner = useCallback((value: SetStateAction<string | null>) => {
+    if (typeof value === "string" && value) diag("ui.banner", value, "warn");
+    setBannerState(value);
+  }, []);
   const { attachments, setAttachments, addFiles, removeAttachment } = useAttachments(setBanner);
   const { plugins, pluginBusy, pluginChecks, savePlugin, pluginAction } = usePlugins(
     clientRef, assistantScopeRef, assistantScope, connection, assistantTab, setBanner);
@@ -1000,6 +1006,7 @@ function App() {
             expectedScope: remoteAssistant ? "general" : undefined }), sid, handleProtocolEvent,
         );
         if (!client) return false;
+        diag("connect.ok", `${remoteAssistant ? "resident" : remoteId ? "remote" : "local"} scope=${requestedScope}`);
         setConnection("connected");
         setConnectionNote(remoteAssistant ? "常驻电脑已连接；合上笔记本它也照常干活" : remoteId ? "远端工作区已连接；离开 Desktop 后服务器任务继续运行" : requestedScope === "general" ? "通用会话已就绪" : requestedScope === "scratch" ? "隔离 Scratch 已就绪" : "项目工作区已就绪");
         if (remoteId) localStorage.setItem(projectSessionKey(remoteId), sid);
@@ -1026,6 +1033,7 @@ function App() {
       } catch (error) {
         if (!attempt.current()) return false;
         coordinator.connectFailed(errorText(error, "连接失败"));
+        diag("connect.failed", `${remoteAssistant ? "resident" : options.remoteProjectId ?? remoteProjectRef.current ? "remote" : "local"}: ${errorText(error, "连接失败")}`, "warn");
         endNotificationSync();
         clientRef.current = null;
         setConnection("error");
@@ -1729,7 +1737,7 @@ function App() {
       void retryResident({
         reachable: () => probeAssistantHost(host.id),
         connect: async () => { await changeAppMode("assistant"); return onAssistantHost(); },
-        onUnreachable: setResidentFailure,
+        onUnreachable: (reason) => { diag("resident.retry_unreachable", `第 ${residentRetryRef.current} 次：${reason}`, "warn"); setResidentFailure(reason); },
       }).finally(() => setResidentRetryRound((round) => round + 1));
     }, residentRetryDelay(residentRetryRef.current));
     return () => window.clearTimeout(timer);
@@ -1756,6 +1764,7 @@ function App() {
     const hostId = await placeAssistant({
       host: findAssistantHost(known), connectHost: connectAssistantHost,
       onHostFailure: (host, reason) => {
+        diag("resident.unreachable", reason, "warn");
         setResidentFailure(reason);
         setBanner(`常驻电脑「${host.name}」暂时连不上（${reason}），先用本机助理；它不在时你交代的事不会继续做。`);
       },
