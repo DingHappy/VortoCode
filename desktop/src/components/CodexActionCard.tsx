@@ -5,6 +5,7 @@ import type { CodexAction } from "../types";
 
 const STATUS: Record<CodexAction["status"], string> = {
   proposed: "等你批准", approved: "已批准，尚未确认交给 Codex", sending: "动作已被认领，发送结果待核对",
+  unknown: "结果无法确认，以 Codex 会话的最新状态为准",
   sent: "请求已获 Codex 受理", failed: "动作未能确认送达", cancelled: "已撤回", expired: "已过时，没发",
 };
 
@@ -34,6 +35,7 @@ export function CodexActionCard({ action, connected, onDecide }: {
       : <p className="assistant-task-text">{action.text}</p>}
     {action.tainted && <p className="assistant-task-warning">助理是在读过外部内容后拟的，发之前看清楚。</p>}
     {(action.status === "failed" || action.status === "expired") && action.error && <p className="task-error">{action.error}</p>}
+    {action.status === "unknown" && <p className="assistant-task-warning">{action.error || "没收到回执：可能已经发出，也可能没有。"}去 Codex 窗口看一眼再决定，不要重复发送。</p>}
     {!connected && <small>连接中断，恢复后可继续处理。</small>}
     {error && <p role="alert" className="task-error">{error}</p>}
   </article>;

@@ -39,3 +39,11 @@ it.each(["approved", "sending", "failed", "sent"] as const)("shows receipt state
   expect(html).not.toContain("已停止");
   expect(html).toContain(status === "sent" ? "受理" : status === "approved" ? "尚未确认" : status === "sending" ? "待核对" : "未能确认");
 });
+
+it("unknown outcomes say so, point at the Codex session, and offer no buttons", () => {
+  const html = renderToStaticMarkup(<CodexActionCard action={{ ...action, status: "unknown", tainted: false,
+    error: "交给 Codex 后一直没收到回执：可能已经发出，也可能没有。" }} connected onDecide={async () => {}} />);
+  expect(html).toContain("结果无法确认");
+  expect(html).toContain("去 Codex 窗口看一眼");
+  expect(html).not.toContain("批准发送");
+});

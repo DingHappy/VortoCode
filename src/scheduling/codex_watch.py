@@ -337,6 +337,7 @@ def _record_report(root: str, payload: Any, threads: List[dict], previous: dict,
             state["presence_reports"] = True        # 观察员会在主人到/离 Mac 时补报（v0.2.13 起）
     _save_state(root, state)
     expire_stale_actions(root, threads)
+    notices += [action_result_notice(action) for action in settle_unconfirmed_actions(root, now)]
     return notices
 
 
@@ -553,6 +554,7 @@ def _change(root: str, action_id: str, allowed: set, **updates) -> dict:
                     raise CodexActionError(f"这条已经过时了：{item.get('error') or '情况变了'}")
                 raise CodexActionError({"proposed": "这条还在等你批准", "approved": "已经批准，等 Mac 执行",
                                         "sending": "正在交给 Codex", "sent": "已经发给 Codex 了",
+                                        "unknown": "这条的结果无法确认，以 Codex 会话的最新状态为准",
                                         "failed": "这条已经失败了", "cancelled": "这条已经撤回了"}
                                        .get(item.get("status"), "状态不允许这个操作"))
             item.update(updates, updated_at=_now().isoformat())
@@ -607,7 +609,33 @@ def claim_action(root: str, action_id: str) -> dict:
 
 
 def finish_action(root: str, action_id: str, *, ok: bool, error: str = "") -> dict:
-    return _change(root, action_id, {"sending"}, status="sent" if ok else "failed", error=str(error or "")[:300])
+    # unknown 也收：Mac 恢复后补报的迟到回执比「无法确认」更准
+    return _change(root, action_id, {"sending", "unknown"}, status="sent" if ok else "failed", error=str(error or "")[:300])
+
+
+SENDING_TIMEOUT = timedelta(minutes=10)
+UNCONFIRMED_ERROR = ("交给 Codex 后一直没收到回执（Mac 断线或观察员重启）：可能已经发出，也可能没有。"
+                     "不会自动重发；以 Codex 会话的最新状态为准。")
+
+
+def settle_unconfirmed_actions(root: str, now: Optional[datetime] = None) -> List[dict]:
+    """认领后超过 SENDING_TIMEOUT 还没回执的动作标成 unknown（结果无法确认），返回这次标的。
+
+    不当成功也不当失败，更不重发：认领后 Mac 可能已经交给 Codex 才断的线。以前它们会永远停在
+    sending，监管把这个会话当成「还有动作没办完」，再也不给它拟下一步。"""
+    now = now or _now()
+    items = load_actions(root)
+    settled = []
+    for item in items:
+        if item.get("status") != "sending":
+            continue
+        claimed = _parse(item.get("updated_at"))
+        if claimed is None or now - claimed >= SENDING_TIMEOUT:
+            item.update(status="unknown", error=UNCONFIRMED_ERROR, updated_at=now.isoformat())
+            settled.append(dict(item))
+    if settled:
+        _save_actions(root, items)
+    return settled
 
 
 def action_notice(action: dict) -> str:
@@ -620,6 +648,10 @@ def action_notice(action: dict) -> str:
 
 def action_result_notice(action: dict) -> str:
     label = f"Codex「{action.get('thread_name')}」"
+    if action.get("status") == "unknown":
+        verb = "叫停" if action.get("kind") == "interrupt" else "发话"
+        return (f"⚠️ 给 {label} 的{verb}没收到回执：可能已经发出，也可能没有。"
+                "去 Codex 窗口看一眼，不会自动重发。")
     if action.get("status") == "sent":
         return (f"✅ 已向 {label} 提交叫停请求；是否已停止以最新状态为准。" if action.get("kind") == "interrupt"
                 else f"✅ 已发给 {label}。")
