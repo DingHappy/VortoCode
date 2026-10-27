@@ -13,6 +13,7 @@ use tauri::{webview::PageLoadEvent, AppHandle, Manager, State};
 use url::{Host, Url};
 
 mod account;
+mod account_runtime;
 mod profile_store;
 mod configuration_state;
 use configuration_state::*;
@@ -2406,6 +2407,8 @@ pub fn run() {
             install_update,
             restart_after_update,
             account::account_status,
+            account_runtime::resident_account_status,
+            account_runtime::resident_account_update,
             account::account_login,
             account::account_login_cancel,
             account::account_logout,

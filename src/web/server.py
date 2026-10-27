@@ -94,6 +94,11 @@ from src.web.routers.personal_goals import router as personal_goals_router
 from src.web.routers.voice import router as voice_router
 from src.web.routers.ops_heartbeat import router as ops_heartbeat_router
 from src.web.routers.codex import router as codex_router
+from src.web.routers.mobile import router as mobile_router
+from src.web.routers.mobile_pages import router as mobile_pages_router
+from src.web.routers.account_access import router as account_access_router
+from src.web.routers.mobile_browser import router as mobile_browser_router
+from src.web.routers.mobile_native import router as mobile_native_router
 
 for _router in (
     pages_router, git_router, context_router,
@@ -101,7 +106,7 @@ for _router in (
     artifacts_router, auth_router, tasks_router, delegations_router, task_inbox_router, goals_router, runs_router, terminals_router, decisions_router,
     journal_router, hooks_router, extensions_router, cron_router, dev_plans_router,
     pipelines_router, trust_router, resident_router, assistant_router, personal_goals_router, voice_router, ops_heartbeat_router,
-    codex_router,
+    codex_router, mobile_router, mobile_pages_router, account_access_router, mobile_browser_router, mobile_native_router,
 ):
     app.include_router(_router)
 

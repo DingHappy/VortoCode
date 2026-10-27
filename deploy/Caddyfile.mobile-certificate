@@ -1,0 +1,28 @@
+# Alternative when public TCP 80/443 are unavailable.
+# DNS-01 certificate issuance/renewal is managed separately.
+# Forward the chosen public TLS port to this host's TCP 18443.
+{
+	admin off
+	auto_https off
+}
+
+https://{$VORTOCODE_HTTPS_HOST}:18443 {
+	tls {$VORTOCODE_TLS_CERT} {$VORTOCODE_TLS_KEY}
+	header {
+		Cache-Control "no-store"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+		-Server
+	}
+
+	handle /healthz {
+		header Content-Type application/json
+		respond `{"service":"vortocode-mobile-ingress","backend_ready":false}` 200
+	}
+
+	handle {
+		header Content-Type "text/plain; charset=utf-8"
+		respond "VortoCode 手机入口正在准备，请稍后再试。" 503
+	}
+}

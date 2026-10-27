@@ -24,6 +24,7 @@ import { AccountPane } from "./settings/AccountPane";
 import { BrowserPane } from "./settings/BrowserPane";
 import { UpdateCard } from "./settings/UpdateCard";
 import { VortoAccountCard } from "./settings/VortoAccountCard";
+import { ResidentAccountCard } from "./settings/ResidentAccountCard";
 import { MEMBER_KEY_SOURCE } from "../lib/vortoAccount";
 import { DesktopControlPane } from "./settings/DesktopControlPane";
 import { ResidentDesktopPane } from "./ResidentDesktopPane";
@@ -87,6 +88,7 @@ type SettingsModalProps = {
   /** 打开助理资料（名字、SOUL、关于你） */
   onEditAssistant?: () => void;
   residentName?: string;
+  residentAccountProjectId?: string;
   residentConnected?: boolean;
   onOpenResidentSetup?: () => void;
   onConnectResident?: () => void;
@@ -156,7 +158,7 @@ export function SettingsModal({
   hasResident = false,
   readCodexObserver,
   onEditAssistant,
-  residentName, residentConnected = false, onOpenResidentSetup, onConnectResident, onOpenSchedule, llmSaveNote = "", llmSaveKind = "idle", llmProfileLoading = false, llmProfileError = "", llmProfileConflict = false, onReloadLlmProfile,
+  residentName, residentAccountProjectId, residentConnected = false, onOpenResidentSetup, onConnectResident, onOpenSchedule, llmSaveNote = "", llmSaveKind = "idle", llmProfileLoading = false, llmProfileError = "", llmProfileConflict = false, onReloadLlmProfile,
   activeScope,
   connection,
   connectionText,
@@ -340,6 +342,9 @@ export function SettingsModal({
                 onRestartRuntime={onRestartRuntime}
                 onProfileCleared={async () => onLlmProfileChange(await invoke<DesktopLlmProfileStatus>("get_llm_profile"))}
               />
+              <div id="setting-mobile-account" className={anchorClass("mobile-account")} tabIndex={-1}>
+                <ResidentAccountCard key={residentAccountProjectId ?? "no-resident"} projectId={residentAccountProjectId} />
+              </div>
               {settingsBlockVisible("relayLogin", llmProfile) && (
                 <AccountPane
                   profile={llmProfile}

@@ -215,3 +215,28 @@ jobs:
         run: npx --no-install tsc --noEmit
       - name: Vitest
         run: npx --no-install vitest run
+
+  # Separate client gate inside the monorepo; no Desktop/native packaging required.
+  mobile-client:
+    runs-on: ${{ github.event.repository.private && vars.CI_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: packages/mobile-client
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+      - name: Install client development dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Check client types
+        run: npm run check
+      - name: Check protocol, authorization and reconnect behavior
+        run: npm test
+      - name: Install mobile reader build dependencies
+        working-directory: mobile
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Build mobile reader
+        working-directory: mobile
+        run: npm run build

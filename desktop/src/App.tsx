@@ -3143,6 +3143,7 @@ function App() {
       }} />}
       {settingsOpen && (
         <SettingsModal
+          residentAccountProjectId={residentHost?.id}
           readCodexObserver={readCodexObserver}
           activeScope={activeScope}
           connection={connection}

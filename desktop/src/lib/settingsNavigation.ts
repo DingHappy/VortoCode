@@ -17,6 +17,7 @@ export function settingsPage(section: SettingsSection): SettingsPage {
 
 export const SETTINGS_ITEMS: Array<{ id: string; page: SettingsPage; label: string; keywords: string }> = [
   { id: "account", page: "account", label: "VortoCode 账号与会员", keywords: "登录 退出 注册 套餐 额度 token plan quota usage 用量 计费" },
+  { id: "mobile-account", page: "account", label: "手机与常驻助手", keywords: "手机 同账号 关联 解除 配对 移动端" },
   { id: "services", page: "model", label: "模型服务与 API Key", keywords: "供应商 omlx 本地 端侧 openai deepseek kimi glm minimax relay https 默认 地址" },
   { id: "roles", page: "model", label: "模型与执行者分工", keywords: "研究 实现 审查 评判器 codex claude cli 核心 子 agent 实验" },
   { id: "routing", page: "model", label: "自动调度与常用模型", keywords: "快速 强力 名单 picks 智能" },

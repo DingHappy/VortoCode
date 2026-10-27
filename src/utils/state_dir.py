@@ -51,6 +51,7 @@ _STATE_ENTRIES = [
     "worktree_bindings.json",
     "task_reviews/",
     "im-pairings/",
+    "mobile-devices/",         # hashed mobile device grants; never part of task/session state
     "isolated_deliveries/",
     "runtime.lock",
     "main_chat.json",          # 常驻助理的主要聊天登记（Desktop 连上时写，手机/电脑共用）
