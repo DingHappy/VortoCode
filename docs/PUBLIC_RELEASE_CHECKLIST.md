@@ -80,6 +80,9 @@ history rewriting does not make a still-valid credential safe.
   hash. Review every source change as a supply-chain update.
 - Run `npm run check` and `npm run bundle:preview`; run
   `npm run release:verify -- --mode release` before publishing an artifact.
+- Release only from a commit already on `main`: merge the release PR first, then build.
+  `release:verify` fetches `origin/main` and fails the `commitOnMain` gate otherwise, and
+  `gh release create --target` takes that full commit SHA.
   Among its gates, `versionsAligned` requires `desktop/package.json`, `tauri.conf.json`,
   `Cargo.toml` and `pyproject.toml` to carry the same version.
 - After the app is notarized and stapled, run `npm run release:dmg`. It stages the app
