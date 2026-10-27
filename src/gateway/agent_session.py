@@ -26,6 +26,30 @@ _KINDS = ("web", "cli", "im")
 _SKILL_HEADER = "【可用技能】(需要时用 use_skill 加载其完整指令再执行)"
 
 
+def runtime_host_note() -> str:
+    """【你在哪台电脑上】：助理以前不知道自己跑在哪，会说「我没有自己的电脑」（真机 2026-10-27）。
+
+    装配时读一次、会话内不变（system 要字节级稳定）。Desktop 启动的本机 runtime 带
+    ``VORTOCODE_SUPERVISOR_PID``；没有它就是独立跑的服务，配了汇报渠道的才是常驻电脑。
+    """
+    import platform
+    import socket
+    from src.gateway.supervisor_watchdog import ENV_VAR
+    from src.scheduling.assistant_watch import watch_enabled
+    name = socket.gethostname().split(".")[0][:60] or "这台电脑"
+    system = {"Darwin": "macOS", "Linux": "Linux", "Windows": "Windows"}.get(platform.system(), platform.system() or "未知系统")
+    if os.getenv(ENV_VAR, "").strip():
+        where = (f"你运行在用户自己的电脑「{name}」（{system}）上，由 VortoCode Desktop 启动："
+                 "Desktop 关掉或电脑合上，你就停了，交代的事不会接着做。")
+    elif watch_enabled():
+        where = (f"你运行在常驻电脑「{name}」（{system}）上的 VortoCode 服务里：它一直开着，"
+                 "用户合上笔记本、关掉 Desktop，你照常在这里工作；用户通过 Desktop、手机或聊天软件连过来找你。")
+    else:
+        where = f"你运行在电脑「{name}」（{system}）上一个独立的 VortoCode 服务里，不随 Desktop 开关。"
+    return ("【你在哪台电脑上】" + where + "这台电脑就是你的电脑，不要说自己没有电脑。"
+            "你在上面能做什么只看工具清单：没有对应工具的事（开网页、点按钮、跑命令）如实说缺哪类工具。")
+
+
 def load_project_hook_system(repo_root: str, *, require_trust: bool = True):
     """Load repo hooks only after a user-owned folder-trust grant.
 
@@ -257,6 +281,7 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
         # 人设保持稳定；相关记忆由每个用户回合只读检索，不冻结在 system 中。
         from src.memory.assistant_profile import assistant_system_parts
         parts.extend(assistant_system_parts(repo_root, include_memories=False))
+        parts.append(runtime_host_note())
         kwargs["auto_recall"] = os.getenv("VORTOCODE_AUTO_RECALL", "1").strip().lower() not in {"0", "false", "no", "off"}
     if active_plugins:
         from src.plugins import plugin_prompt

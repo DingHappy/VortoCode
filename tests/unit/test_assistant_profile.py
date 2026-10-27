@@ -192,3 +192,25 @@ def test_memory_proposal_replace_route_validates_input(tmp_path, monkeypatch):
     assert client.post(f"/api/assistant/memory-proposals/{pid}", json={"action": "approve", "replace": "x"}).status_code == 400
     r = client.post(f"/api/assistant/memory-proposals/{pid}", json={"action": "approve", "replace": [old_home]})
     assert r.status_code == 200 and r.json()["replaced"] == [old_home]
+
+
+def test_general_assistant_knows_which_computer_it_runs_on(tmp_path, monkeypatch):
+    import socket
+    from src.gateway.agent_session import runtime_host_note
+    monkeypatch.setattr(socket, "gethostname", lambda: "vorto-code.lan")
+    monkeypatch.delenv("VORTOCODE_SUPERVISOR_PID", raising=False)
+    monkeypatch.delenv("VORTOCODE_IM", raising=False)
+    monkeypatch.delenv("VORTOCODE_OWNER_NOTIFY_URL", raising=False)
+    system = build_session(str(tmp_path), kind="web", workspace_scope="general")._system("plan")
+    assert "【你在哪台电脑上】" in system and "「vorto-code」" in system and "不要说自己没有电脑" in system
+    assert build_session(str(tmp_path), kind="web", workspace_scope="general")._system("plan") == system   # 会话间稳定
+    monkeypatch.setenv("VORTOCODE_IM", "telegram")
+    assert "常驻电脑「vorto-code」" in runtime_host_note()           # 有汇报渠道：一直开着的常驻电脑
+    monkeypatch.setenv("VORTOCODE_SUPERVISOR_PID", "123")
+    note = runtime_host_note()
+    assert "用户自己的电脑「vorto-code」" in note and "Desktop 关掉" in note   # Desktop 启动的本机 runtime
+
+
+def test_project_sessions_do_not_get_the_assistant_host_note(tmp_path):
+    system = build_session(str(tmp_path), kind="web", workspace_scope="project")._system("plan")
+    assert "【你在哪台电脑上】" not in system
