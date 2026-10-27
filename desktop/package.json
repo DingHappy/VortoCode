@@ -16,6 +16,7 @@
     "check:ci": "tsc --noEmit && vitest run && cargo test --manifest-path src-tauri/Cargo.toml --lib --offline && cargo check --manifest-path src-tauri/Cargo.toml --offline",
     "preview": "vite preview",
     "tauri": "npm run sidecar:build && tauri",
+    "dev:app": "npm run tauri -- dev --config src-tauri/tauri.dev.conf.json",
     "bundle:app": "npm run sidecar:build && npm run sidecar:smoke && tauri build --bundles app",
     "bundle:dmg": "npm run sidecar:build && npm run sidecar:smoke && tauri build --bundles dmg",
     "bundle:preview": "npm run sidecar:build && npm run sidecar:smoke && tauri build --bundles dmg && tauri build --bundles app && npm run smoke:bundle && npm run release:verify -- --mode preview",

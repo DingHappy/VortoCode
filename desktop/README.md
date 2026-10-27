@@ -36,8 +36,14 @@ VortoCode Desktop 是当前默认产品与首要分发入口，也是现有 Gate
 ```bash
 cd desktop
 npm install
-npm run tauri dev
+npm run dev:app
 ```
+
+`dev:app` 用单独的应用标识 `com.vorto.vortocode.dev` 启动开发版，可以和已安装的正式版同时开着：
+单实例锁、配置目录（`llm-profile.json`、项目登记、恢复记录、日志）和 WebView 存储都与正式版分开，
+开发版不会改到正式版的模型配置或项目列表。第一次启动是空白配置，需要在开发版里自己配模型服务、
+添加项目。直接 `npm run tauri dev` 仍沿用正式标识：正式版开着时它会被单实例保护直接退出，
+关着时则读写正式版的配置目录。
 
 也可以先在浏览器壳中验证静态界面：
 
