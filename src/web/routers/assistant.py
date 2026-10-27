@@ -176,6 +176,23 @@ async def phone_chats(limit: int = 200):
     return {"chats": chats}
 
 
+@router.get("/api/assistant/transcript/{sid}")
+async def transcript(sid: str, limit: int = 400):
+    """一段会话的聊天记录，**只读**。常驻电脑连不上时在本机助理里聊的内容只存在本机引擎里；
+    连回常驻电脑后 Desktop 用它读出来给用户看，由用户决定要不要带过去，不做任何合并。"""
+    from src.gateway.session_store import load_session, title_from_transcript
+
+    if sid.startswith(_IM_PREFIXES):
+        raise HTTPException(status_code=404, detail="手机上的聊天请在手机聊天里看")
+    data = load_session(os.getcwd(), f"sid-{sid}")
+    if not data:
+        raise HTTPException(status_code=404, detail="没有这段会话")
+    items = [{key: item.get(key) for key in ("role", "text", "rid", "at")}
+             for item in data.get("transcript") or [] if isinstance(item, dict)]
+    return {"sid": sid, "title": data.get("title") or title_from_transcript(items),
+            "transcript": items[-max(1, min(int(limit), 400)):]}
+
+
 @router.get("/api/assistant/memory-proposals")
 async def memory_proposals():
     """聊天里提炼出的「关于你」候选，等你确认。"""

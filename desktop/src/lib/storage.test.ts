@@ -36,7 +36,7 @@ afterEach(() => {
 });
 
 describe("STORAGE_KEYS", () => {
-  it("固定住全部 14 个 key 字面量（防拼写漂移）", () => {
+  it("固定住全部 15 个 key 字面量（防拼写漂移）", () => {
     expect(STORAGE_KEYS).toEqual({
       baseUrl: "vortocode.desktop.baseUrl",
       sid: "vortocode.desktop.sid",
@@ -54,6 +54,7 @@ describe("STORAGE_KEYS", () => {
       modelPicks: "vortocode.desktop.modelPicks",
       starterTips: "vortocode.desktop.starterTips",
       updateCheckedAt: "vortocode.desktop.updateCheckedAt",
+      offlineAssistantChats: "vortocode.desktop.offlineAssistantChats",
     });
   });
 });

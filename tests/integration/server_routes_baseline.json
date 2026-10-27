@@ -902,6 +902,12 @@
     ]
   },
   {
+    "path": "/api/assistant/transcript/{sid}",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
     "path": "/api/assistant/memory-proposals",
     "methods": [
       "GET"

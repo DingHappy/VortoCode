@@ -94,3 +94,27 @@ def test_liveness_reports_inbound_gate_without_ids(tmp_path):
         live = bridge.liveness()
         assert live["inbound"] == expected and live["ignored"] == 3
         assert "42" not in str({k: v for k, v in live.items() if k != "channel"})
+
+
+def test_transcript_route_reads_one_local_session_read_only(tmp_path, monkeypatch):
+    """常驻电脑连不上时在本机聊的：连回去后 Desktop 只读取出，由用户决定要不要带过去。"""
+    from fastapi.testclient import TestClient
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("VORTOCODE_API_TOKEN", raising=False)
+    save_session(str(tmp_path), "sid-desk-1", [{"role": "user", "text": "帮我记下周三开会", "rid": "r1", "secret": 1},
+                                              {"role": "assistant", "text": "记下了"}],
+                 [{"role": "user", "content": "帮我记下周三开会"}], None, title="周三开会")
+    save_session(str(tmp_path), "sid-telegram-42", [{"role": "user", "text": "在吗"}], [], None)
+    from src.web.server import app
+
+    client = TestClient(app)
+    before = (tmp_path / ".vortocode").stat().st_mtime_ns
+    body = client.get("/api/assistant/transcript/desk-1").json()
+    assert body["title"] == "周三开会"
+    assert body["transcript"] == [{"role": "user", "text": "帮我记下周三开会", "rid": "r1", "at": None},
+                                  {"role": "assistant", "text": "记下了", "rid": None, "at": None}]
+    assert client.get("/api/assistant/transcript/telegram-42").status_code == 404     # 手机聊天走自己的只读入口
+    assert client.get("/api/assistant/transcript/nope").status_code == 404
+    assert client.get("/api/assistant/transcript/..%2Fx").status_code == 404
+    assert (tmp_path / ".vortocode").stat().st_mtime_ns == before

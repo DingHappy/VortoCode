@@ -80,7 +80,7 @@ import type {
   TurnActivity,
   WorkspaceScope,
   DesktopLlmProfileStatus,
-  ProjectSessionSummary, CodexAction} from "./types";
+  ProjectSessionSummary, CodexAction, PhoneChat} from "./types";
 import { DecisionsPanel } from "./components/DecisionsPanel";
 import { ConnectionCoordinator, placeAssistant, residentRetryDelay, retryResident } from "./connection/connectionCoordinator";
 import { SessionConnection } from "./connection/sessionConnection";
@@ -114,7 +114,9 @@ import { ProjectAssetsPanel } from "./components/ProjectAssetsPanel";
 import { RunsPanel } from "./components/RunsPanel";
 import { RuntimeInboxPanel } from "./components/RuntimeInboxPanel";
 import { SettingsModal, type SettingsSection } from "./components/SettingsModal";
-import { readLocalCodexObserver } from "./lib/codexObserverHealth";
+import { localGeneral, readLocalCodexObserver } from "./lib/codexObserverHealth";
+import { checkAttachment } from "./lib/attachments";
+import { dismissOfflineChat, listOfflineChats, offlineChatAttachment, recordOfflineChat } from "./lib/offlineChats";
 import { BuildVersion } from "./components/BuildVersion";
 import { ArtifactCenter } from "./components/ArtifactCenter";
 import { PluginsPage } from "./components/PluginsPage";
@@ -294,6 +296,10 @@ function App() {
   const [assistantGoalFocus, setAssistantGoalFocus] = useState<{ client: GatewayClient | null; scope: string; id: string } | null>(null);
   const [profileDialogOpen, setProfileDialogOpen] = useState(false);
   const [phoneChatSid, setPhoneChatSid] = useState<string | null>(null);
+  // 常驻电脑连不上时在本机聊过的会话：连回常驻电脑后列在「本机（离线时）」，见 lib/offlineChats.ts
+  const [offlineChatIds, setOfflineChatIds] = useState(() => listOfflineChats());
+  const [offlineChats, setOfflineChats] = useState<PhoneChat[]>([]);
+  const [offlineChatSid, setOfflineChatSid] = useState<string | null>(null);
   const [phoneChatRid, setPhoneChatRid] = useState<string | undefined>();
   // Snapshots are bound to the loaded host before they can expose actions.
   const assistantScope = `${baseUrl}:${repoRoot}:${processStatus.runtimeId}:${connection}`;
@@ -1674,6 +1680,34 @@ function App() {
 
   const onAssistantHost = () => coordinator.onAssistantHost;
 
+  // 连回常驻电脑后，从本机引擎只读取出离线时聊过的会话（本机引擎一直在跑，不用切换过去）
+  const onResidentNow = appMode === "assistant" && connection === "connected" && onAssistantHost();
+  useEffect(() => {
+    if (!onResidentNow || offlineChatIds.length === 0) { setOfflineChats([]); return; }
+    let current = true;
+    void (async () => {
+      const source = localGeneral(await invoke<GatewayProcessStatus[]>("list_gateway_processes").catch(() => []));
+      if (!source) return;
+      const local = new GatewayClient({ baseUrl: source.baseUrl!, token: runtimes.tokenFor(source.runtimeId!) });
+      const chats = await Promise.all(offlineChatIds.map((item) => local.getAssistantTranscript(item.sid).catch(() => null)));
+      if (current) setOfflineChats(chats.filter((chat): chat is PhoneChat => Boolean(chat && chat.transcript.length)));
+    })();
+    return () => { current = false; };
+  }, [onResidentNow, offlineChatIds, runtimes]);
+
+  /** 「带回常驻电脑」：把本机这段对话作为文本附件放进输入框，用户补一句话再发；不自动发送、不合并。 */
+  const bringOfflineChat = (chat: PhoneChat) => {
+    const attachment = offlineChatAttachment(chat);
+    const others = attachments.filter((item) => item.id !== attachment.id);
+    const check = checkAttachment(attachment, others);
+    if (!check.ok) { setBanner(check.reason); return; }
+    setAttachments([...others, attachment]);
+    setOfflineChatIds(dismissOfflineChat(chat.sid));
+    setOfflineChatSid(null);
+    setMainView("chat");
+    setBanner("已把这段本机对话放进输入框，补一句话再发给常驻助理");
+  };
+
   // 登记了常驻电脑、在助理模式、却连在本机：明着提示，并在后台自动重连（正在回复时不切）
   const residentMissed = appMode === "assistant" && Boolean(findAssistantHost(projects)) && !onAssistantHost()
     && connection === "connected" && !projectSwitching;
@@ -1807,6 +1841,7 @@ function App() {
     }
     try {
       await client.send(agentFrame(outgoing, requestedMode, modelChoice && !onAssistantHost() ? modelChoice : null));
+      if (appMode === "assistant" && !onAssistantHost() && findAssistantHost(projects)) setOfflineChatIds(recordOfflineChat(activeSid));
       return true;
     } catch (error) {
       if (!willQueue) {
@@ -2472,6 +2507,8 @@ function App() {
               onSelect={(sid) => { setMainView("chat"); void (sid === mainChatSid ? openMainChat() : switchSession(sid)); }}
               phoneChats={phoneChats.map((chat) => ({ sid: chat.sid, title: chat.title }))}
               onOpenPhoneChat={openPhoneChat}
+              offlineChats={onResidentNow ? offlineChats.map((chat) => ({ sid: chat.sid, title: chat.title })) : []}
+              onOpenOfflineChat={setOfflineChatSid}
               onNewSideChat={() => void newSideChat()}
             />
           ) : <>
@@ -3145,6 +3182,15 @@ function App() {
         key={`${assistantScope}:${phoneChatSid}`} chat={phoneChats.find((chat) => chat.sid === phoneChatSid)!}
         owner={clientRef.current} focusedRid={phoneChatRid} name={assistantProfile.name || "VortoCode"}
         onClose={() => { setPhoneChatSid(null); setPhoneChatRid(undefined); }} />}
+      {onResidentNow && offlineChatSid && offlineChats.some((chat) => chat.sid === offlineChatSid) && (() => {
+        const chat = offlineChats.find((item) => item.sid === offlineChatSid)!;
+        return <PhoneChatDialog key={`offline:${chat.sid}`} variant="offline" chat={chat} owner={null}
+          name={assistantProfile.name || "VortoCode"} onClose={() => setOfflineChatSid(null)}
+          actions={<>
+            <button onClick={() => { setOfflineChatIds(dismissOfflineChat(chat.sid)); setOfflineChatSid(null); }}>从列表移除</button>
+            <button className="primary" onClick={() => bringOfflineChat(chat)}>带回常驻电脑</button>
+          </>} />;
+      })()}
       {profileDialogOpen && <AssistantProfileDialog profile={assistantProfile} onClose={() => setProfileDialogOpen(false)}
         onSave={async (next) => {
           const client = clientRef.current;

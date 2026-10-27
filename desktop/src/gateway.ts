@@ -499,6 +499,12 @@ export class GatewayClient {
     return payload.sid ?? sid;
   }
 
+  /** 一段会话的聊天记录（只读）：常驻电脑连不上时在本机聊的，连回去后从本机引擎读出来。 */
+  async getAssistantTranscript(sid: string): Promise<PhoneChat> {
+    const payload = await this.request<Partial<PhoneChat>>(`/api/assistant/transcript/${encodeURIComponent(sid)}`);
+    return { sid, title: String(payload.title || ""), transcript: Array.isArray(payload.transcript) ? payload.transcript : [] };
+  }
+
   /** 手机上和助理的聊天（只读）。 */
   async listPhoneChats(): Promise<PhoneChat[]> {
     const payload = await this.request<{ chats?: PhoneChat[] }>("/api/assistant/phone-chats");
