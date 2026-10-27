@@ -11,6 +11,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { commitOnMain } from "./release-commit.mjs";
 import { releaseVersions, versionMismatches } from "./release-versions.mjs";
 import { RUNTIME_DIR_NAME, filesBelow, machOFiles, runtimeExecutableName, sha256Tree, treeSize } from "./runtime-tree.mjs";
 
@@ -206,7 +207,12 @@ const mismatchedVersions = versionMismatches(versions);
 const versionsAligned = mismatchedVersions.length === 0;
 if (!versionsAligned) warnings.push(`Version numbers differ: ${mismatchedVersions.join(", ")}`);
 
+const mainCheck = commitOnMain((args) => command("git", args), commit);
+const commitOnMainBranch = mainCheck.onMain;
+if (!commitOnMainBranch) warnings.push(`Release commit is not on main: ${mainCheck.reason}`);
+
 const releaseReady = versionsAligned
+  && commitOnMainBranch
   && signed
   && notarized
   && gatekeeperAccepted
@@ -237,10 +243,11 @@ const evidence = {
   },
   formatVersion: 1,
   generatedAt: new Date().toISOString(),
-  git: { cleanWorktree, commit },
+  git: { cleanWorktree, commit, onMain: commitOnMainBranch },
   mode,
   product: { identifier: tauriConfig.identifier, name: tauriConfig.productName, version: tauriConfig.version, versions },
   releaseGates: {
+    commitOnMain: commitOnMainBranch,
     gatekeeperAccepted,
     noHomePath,
     notarized,
