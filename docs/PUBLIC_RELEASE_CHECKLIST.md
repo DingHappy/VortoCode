@@ -80,6 +80,15 @@ history rewriting does not make a still-valid credential safe.
   hash. Review every source change as a supply-chain update.
 - Run `npm run check` and `npm run bundle:preview`; run
   `npm run release:verify -- --mode release` before publishing an artifact.
+  Among its gates, `versionsAligned` requires `desktop/package.json`, `tauri.conf.json`,
+  `Cargo.toml` and `pyproject.toml` to carry the same version.
+- After the app is notarized and stapled, run `npm run release:dmg`. It stages the app
+  with an `/Applications` link, creates the DMG and signs it with the app's Developer ID.
+  It then notarizes (profile `VORTOCODE_NOTARY_PROFILE`, default `vortocode-notary`),
+  staples, runs the Gatekeeper check and prints the SHA-256. `hdiutil create` can leave
+  the new image mounted, and the mount's lock makes `notarytool` hang at file open with
+  no network activity. The script detaches any such mount and refuses to submit a file
+  that is still held open.
 - After the app is notarized and stapled, run `npm run release:updater -- <notes file>`.
   It packs the app into `VortoCode_<version>_aarch64.app.tar.gz`, signs it with the
   updater key (`VORTOCODE_UPDATER_KEY`, default `~/.vortocode/updater.key`, never in
