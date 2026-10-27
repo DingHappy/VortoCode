@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ConnectionCoordinator, placeAssistant } from "./connectionCoordinator";
+import { ConnectionCoordinator, placeAssistant, residentRetryDelay, retryResident } from "./connectionCoordinator";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -57,14 +57,16 @@ describe("ConnectionCoordinator", () => {
     expect(await idle).toBe(true);
   });
 
-  it("只有真失败才记下；新一轮连接清掉旧记录", () => {
+  it("只有真失败才记下（连同原因）；新一轮连接清掉旧记录", () => {
     const coordinator = new ConnectionCoordinator();
     coordinator.connectBegan();
     expect(coordinator.lastConnectFailed).toBe(false);
-    coordinator.connectFailed();
+    coordinator.connectFailed("远程 WebSocket 连接失败：本地网络");
     expect(coordinator.lastConnectFailed).toBe(true);
+    expect(coordinator.lastConnectError).toContain("本地网络");
     coordinator.connectBegan();
     expect(coordinator.lastConnectFailed).toBe(false);
+    expect(coordinator.lastConnectError).toBeNull();
   });
 
   it("连着的远端就是常驻助理时才算在常驻电脑上", () => {
@@ -82,21 +84,21 @@ describe("ConnectionCoordinator", () => {
 describe("placeAssistant", () => {
   const host = { id: "resident", name: "家里服务器" };
   const base = () => ({
-    connectHost: vi.fn(async () => true), awayFromLocalGeneral: vi.fn(() => true),
-    switchToLocalGeneral: vi.fn(async () => true), notify: vi.fn(),
+    connectHost: vi.fn(async (): Promise<true | string> => true), awayFromLocalGeneral: vi.fn(() => true),
+    switchToLocalGeneral: vi.fn(async () => true), onHostFailure: vi.fn(),
   });
 
   it("常驻电脑连上就住在那里，不碰本机", async () => {
     const deps = base();
     expect(await placeAssistant({ ...deps, host })).toBe("resident");
     expect(deps.switchToLocalGeneral).not.toHaveBeenCalled();
-    expect(deps.notify).not.toHaveBeenCalled();
+    expect(deps.onHostFailure).not.toHaveBeenCalled();
   });
 
-  it("常驻电脑连不上：提示并退回本机通用工作区", async () => {
-    const deps = { ...base(), connectHost: vi.fn(async () => false) };
+  it("常驻电脑连不上：把真实原因交出去，并退回本机通用工作区", async () => {
+    const deps = { ...base(), connectHost: vi.fn(async (): Promise<true | string> => "macOS「本地网络」权限没开") };
     expect(await placeAssistant({ ...deps, host })).toBeNull();
-    expect(deps.notify).toHaveBeenCalledWith(expect.stringContaining("先用本机助理"));
+    expect(deps.onHostFailure).toHaveBeenCalledWith(host, "macOS「本地网络」权限没开");
     expect(deps.switchToLocalGeneral).toHaveBeenCalledOnce();
   });
 
@@ -108,7 +110,7 @@ describe("placeAssistant", () => {
   });
 
   it("两边都没落下返回 undefined", async () => {
-    const deps = { ...base(), connectHost: vi.fn(async () => false), switchToLocalGeneral: vi.fn(async () => false) };
+    const deps = { ...base(), connectHost: vi.fn(async (): Promise<true | string> => "离线"), switchToLocalGeneral: vi.fn(async () => false) };
     expect(await placeAssistant({ ...deps, host })).toBeUndefined();
   });
 });
@@ -117,9 +119,9 @@ describe("placeAssistant", () => {
 describe("切换场景", () => {
   function app(coordinator: ConnectionCoordinator, residentOnline: boolean) {
     const log: string[] = [];
-    const connectHost = async () => {
-      if (!await coordinator.waitUntilIdle(1_000, 1)) return false;
-      return coordinator.exclusiveSwitch(async () => { log.push("resident"); return residentOnline; });
+    const connectHost = async (): Promise<true | string> => {
+      if (!await coordinator.waitUntilIdle(1_000, 1)) return "本机忙";
+      return await coordinator.exclusiveSwitch(async () => { log.push("resident"); return residentOnline; }) || "离线";
     };
     const switchToLocalGeneral = async () => {
       if (coordinator.starting) { log.push("refused: starting"); return false; }
@@ -134,7 +136,7 @@ describe("切换场景", () => {
     const startup = coordinator.exclusiveStart(() => launch.promise);
     const { log, connectHost, switchToLocalGeneral } = app(coordinator, false);
     const placed = placeAssistant({ host: { id: "resident", name: "家里服务器" }, connectHost, switchToLocalGeneral,
-      awayFromLocalGeneral: () => true, notify: () => {} });
+      awayFromLocalGeneral: () => true, onHostFailure: () => {} });
     await tick(5);
     expect(log).toEqual([]);   // 本机还在启动：不去抢
     launch.resolve(true);
@@ -157,5 +159,25 @@ describe("切换场景", () => {
     confirm.resolve();
     expect((await Promise.all([a, b])).sort()).toEqual([false, true]);
     expect(bodies).toHaveLength(1);
+  });
+});
+
+describe("常驻电脑后台重连", () => {
+  it("退避 10 秒、30 秒、1 分钟，之后每 2 分钟一直试", () => {
+    expect([0, 1, 2, 3, 4, 50].map(residentRetryDelay)).toEqual([10_000, 30_000, 60_000, 120_000, 120_000, 120_000]);
+  });
+
+  it("测不通就只记原因，不断开本机、不切换", async () => {
+    const connect = vi.fn(async () => true);
+    const onUnreachable = vi.fn();
+    expect(await retryResident({ reachable: async () => "这台 Mac 拒绝直连过去", connect, onUnreachable })).toBe(false);
+    expect(connect).not.toHaveBeenCalled();
+    expect(onUnreachable).toHaveBeenCalledWith("这台 Mac 拒绝直连过去");
+  });
+
+  it("测通了才走完整切换", async () => {
+    const connect = vi.fn(async () => true);
+    expect(await retryResident({ reachable: async () => null, connect, onUnreachable: vi.fn() })).toBe(true);
+    expect(connect).toHaveBeenCalledOnce();
   });
 });
