@@ -1,9 +1,11 @@
 #!/usr/bin/env node
 // 装好新版之后的真机检查：只读，不另起 App、不点界面，查的是你此刻正在用的那个 App。
 //   版本对不对 · 签名 / 公证 / Gatekeeper · App 和内置引擎在不在跑 · 引擎接口通不通 · 有没有残留的旧引擎 · 更新通道是不是指向这一版
+//   · 登记的常驻电脑通不通 · macOS 有没有在拦本地网络（2026-10-27 更新后 App 被静默拦截，前面几项全绿也连不上）
 // 看界面才能确认的几项，最后列成一份一分钟能点完的清单。
 // 用法：npm run check:installed [-- 期望版本]（默认取 tauri.conf.json 的版本）
 import { spawnSync } from "node:child_process";
+import { connect } from "node:net";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -38,6 +40,39 @@ export function parseProcesses(text) {
     } else if (/\/vortocode-runtime server\b/.test(command)) strays.push({ pid: Number(pid), command: command.slice(0, 160) });
   }
   return { app, runtimes, strays };
+}
+
+/** 常驻电脑在注册表里的「目录」标记（与 App 的 ASSISTANT_HOST_ROOT 一致）。 */
+const ASSISTANT_HOST_ROOT = "@assistant";
+
+/** 从 projects.json 里找登记的常驻电脑，返回 { name, baseUrl }；没有就返回 null。 */
+export function findResidentHost(registry) {
+  const host = (registry?.projects || []).find((item) => item?.kind === "remote" && item?.repoRoot === ASSISTANT_HOST_ROOT);
+  return host?.baseUrl ? { name: String(host.name || "常驻电脑"), baseUrl: String(host.baseUrl) } : null;
+}
+
+/** 数系统日志里「本地网络被拦」的条数，顺带收集被拦的 pid（可能是旧进程号，只作参考）。 */
+export function parseLocalNetworkBlocks(text) {
+  const pids = new Set();
+  let count = 0;
+  for (const line of String(text).split("\n")) {
+    if (!line.includes("local network blocked")) continue;
+    count += 1;
+    const pid = line.match(/pid: (\d+)/);
+    if (pid) pids.add(Number(pid[1]));
+  }
+  return { count, pids: [...pids] };
+}
+
+/** 直连一下 host:port（和 App 的 WebSocket 同路、不走代理），通返回 null，不通返回原因。 */
+function tcpProbe(host, port, timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    const socket = connect({ host, port });
+    const done = (reason) => { socket.destroy(); resolve(reason); };
+    socket.setTimeout(timeoutMs, () => done("超时"));
+    socket.once("connect", () => done(null));
+    socket.once("error", (error) => done(error.code || error.message));
+  });
 }
 
 /** 把一组检查结果排成给人看的几行；任何一项没过就算失败。 */
@@ -98,6 +133,34 @@ async function main() {
   } catch {
     add("恢复记录", false, "读不到 gateway-recovery.json", true);
   }
+
+  let registry = null;
+  try {
+    registry = JSON.parse(readFileSync(join(homedir(), "Library/Application Support/com.vorto.vortocode/projects.json"), "utf8"));
+  } catch { /* 没有注册表：当作没登记常驻电脑 */ }
+  const resident = findResidentHost(registry);
+  if (resident) {
+    // 这是从终端直连：终端通而 App 不通，多半是下一项的本地网络权限
+    const url = new URL(resident.baseUrl);
+    const port = Number(url.port || (url.protocol === "https:" ? 443 : 80));
+    const reason = await tcpProbe(url.hostname, port);
+    if (reason) add("常驻电脑", false, `「${resident.name}」${url.host} 连不上（${reason}）：看它是否开机、服务是否在跑、隧道是否通`, true);
+    else {
+      try {
+        const health = await fetch(`${resident.baseUrl.replace(/\/$/, "")}/api/health`, { signal: AbortSignal.timeout(8000) });
+        add("常驻电脑", health.ok, `「${resident.name}」${url.host} ${health.ok ? "在线" : `回了 HTTP ${health.status}`}`, !health.ok);
+      } catch (error) {
+        add("常驻电脑", false, `「${resident.name}」端口通但接口没回（${error.message}）`, true);
+      }
+    }
+  }
+
+  const blocked = parseLocalNetworkBlocks(run("/usr/bin/log", ["show", "--last", "30m", "--style", "compact", "--info",
+    "--predicate", 'subsystem == "com.apple.networkextension" AND eventMessage CONTAINS "local network blocked"']).out);
+  add("本地网络权限", blocked.count === 0, blocked.count
+    ? `最近 30 分钟系统拦了 ${blocked.count} 次本地网络连接（pid ${blocked.pids.join(", ")}，可能是 VortoCode）：`
+      + "系统设置 → 隐私与安全性 → 本地网络 → VortoCode 打开（或关掉再打开），然后重开 App"
+    : "最近 30 分钟没有被拦的记录", blocked.count > 0);
 
   try {
     const latest = await getJson(LATEST_URL);
