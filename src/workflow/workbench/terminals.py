@@ -281,6 +281,10 @@ class TerminalManager:
             items = list(self._items.values())
         return [item.snapshot().to_dict() for item in reversed(items)]
 
+    def active_count(self) -> int:
+        with self._lock:
+            return sum(item.process.poll() is None for item in self._items.values())
+
     def get(self, terminal_id: str) -> Optional[_TerminalProcess]:
         clean = self._clean_id(terminal_id)
         with self._lock:

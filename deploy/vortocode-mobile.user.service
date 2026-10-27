@@ -1,0 +1,22 @@
+[Unit]
+Description=VortoCode non-executing mobile gateway
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/assistant
+EnvironmentFile=%h/.config/vortocode-mobile/environment
+Environment=PYTHONDONTWRITEBYTECODE=1
+ExecStart=%h/personal_project/VortoCode/.venv/bin/python -m uvicorn src.web.mobile_server:create_app --factory --host 127.0.0.1 --port 18081 --workers 1 --proxy-headers --forwarded-allow-ips=127.0.0.1 --no-access-log
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/assistant/.vortocode/mobile-devices
+
+[Install]
+WantedBy=default.target

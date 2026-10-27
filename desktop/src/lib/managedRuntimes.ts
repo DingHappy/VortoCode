@@ -87,10 +87,21 @@ export class ManagedRuntimes {
     this.sink.setProcessStatus(status);
   };
 
-  /** 用户点了停止：停掉当前 runtime，刷新列表，清掉恢复记录。 */
-  stopCurrent = async (runtimeId: string | undefined) => {
+  private stopOwned = async (runtimeId: string | undefined, expectedLaunchId?: string) => {
+    const wasRunning = this.running;
     this.running = false;
-    this.sink.setProcessStatus(await this.invoke<GatewayProcessStatus>("stop_gateway", { runtimeId: runtimeId ?? null }));
+    try {
+      const stopped = await this.invoke<GatewayProcessStatus>("stop_gateway", {
+        runtimeId: runtimeId ?? null, ...(expectedLaunchId !== undefined ? { expectedLaunchId } : {}),
+      });
+      if (stopped.running) throw new Error("当前 runtime 未能停止，模型配置尚未生效");
+      return stopped;
+    } catch (error) { this.running = wasRunning; throw error; }
+  };
+
+  /** 用户点了停止：停掉当前 runtime，刷新列表，清掉恢复记录。 */
+  stopCurrent = async (runtimeId: string | undefined, expectedLaunchId?: string) => {
+    this.sink.setProcessStatus(await this.stopOwned(runtimeId, expectedLaunchId));
     if (runtimeId) this.tokens.delete(runtimeId);
     this.sink.setRuntimeProcesses(await this.invoke<GatewayProcessStatus[]>("list_gateway_processes").catch(() => []));
     this.sink.setRuntimeRecoveries(await this.invoke<GatewayRecoveryRecord[]>("list_gateway_recoveries").catch(() => []));
@@ -98,10 +109,8 @@ export class ManagedRuntimes {
   };
 
   /** 换模型配置要重启：必须真停下来才继续，否则新配置不会生效。 */
-  stopForRestart = async (runtimeId: string) => {
-    this.running = false;
-    const stopped = await this.invoke<GatewayProcessStatus>("stop_gateway", { runtimeId });
-    if (stopped.running) throw new Error("当前 runtime 未能停止，模型配置尚未生效");
+  stopForRestart = async (runtimeId: string, expectedLaunchId?: string) => {
+    const stopped = await this.stopOwned(runtimeId, expectedLaunchId);
     this.tokens.delete(runtimeId);
     this.sink.setProcessStatus(stopped);
     this.sink.setRuntimeProcesses(await this.invoke<GatewayProcessStatus[]>("list_gateway_processes").catch(() => []));

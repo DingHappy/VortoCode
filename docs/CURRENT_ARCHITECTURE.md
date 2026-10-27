@@ -48,6 +48,8 @@ flowchart LR
 
 Desktop 本机可管理多个 General / Scratch / Project runtime；常驻电脑上的助理与 Mac 上的 Codex 可以处于不同进程、不同主机。共享代码与合同不等于所有工作运行在一个进程。
 
+设置的本机控制由独立 `useLocalRuntimeControls` 编排，复用原托管进程与执行所有者；停止前读取当前活动并核对精确启动身份，不新增任务库。配置内容未变时保留模型版本与引擎状态。合同与并发边界见[模型配置](MODEL_CONFIGURATION.md)和[本机引擎控制](LOCAL_RUNTIME_CONTROL.md)。
+
 ## 已接入的执行能力
 
 | 接入 | 当前已实现 | 尚未实现或确认 |

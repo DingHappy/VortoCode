@@ -6,9 +6,13 @@
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { Eye, EyeOff, Plus, RefreshCw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
+import { providerDraftState, type ProviderDraft } from "../../lib/providerDraft";
 import { confirmAction } from "../../lib/confirm";
+import { isModelProfileConflict } from "../../lib/modelProfileConflict";
+import { unchangedModelRevision } from "../../lib/modelProfileSave";
+import { ModelProfileConflict } from "./ModelProfileConflict";
 import { errorText } from "../../lib/errorText";
 import { formatTokenCount } from "../../lib/labels";
 import { defaultServiceLabel } from "../../lib/modelChoice";
@@ -22,7 +26,7 @@ import { LlmConnectionCheck } from "./LlmConnectionCheck";
 /** 与 Rust 侧 MEMBER_PROVIDER_ID 一致：会员模型作为列表里的一个服务时的 ID。 */
 export const MEMBER_PROVIDER_ID = "vortocode_member";
 
-type Draft = { id: string; name: string; baseUrl: string; apiKey: string; editing: boolean };
+type Draft = ProviderDraft;
 
 const EMPTY_DRAFT: Draft = { id: "", name: "", baseUrl: "", apiKey: "", editing: false };
 const LOCAL_PRESETS = PROVIDER_PRESETS.filter((preset) => !preset.requiresKey);
@@ -39,21 +43,36 @@ type Props = {
   onSetupDefault: (preset: ProviderPreset | null) => void;
   /** 去「常规」登录 VortoCode 账号 */
   onOpenAccount: () => void;
+  onDraftStateChange?: (state: { dirty: boolean; busy: boolean; conflict?: boolean }) => void;
 };
 
 function host(url: string): string {
   try { return new URL(url).host; } catch { return url; }
 }
 
-export function ModelServices({ profile, onProfile, onRestartRuntime, editingDefault, onEditDefault, onSetupDefault, onOpenAccount }: Props) {
+export function ModelServices({ profile, onProfile, onRestartRuntime, editingDefault, onEditDefault, onSetupDefault, onOpenAccount, onDraftStateChange }: Props) {
   const providers = profile?.providers ?? [];
   const hasDefault = Boolean(profile?.configured);
   const defaultIsMember = profile?.account?.keySource === MEMBER_KEY_SOURCE;
+  const [conflict, setConflict] = useState(false);
   const [draft, setDraft] = useState<Draft | null>(null);
+  const draftRevision = useRef<string | undefined>(undefined);
+  const focusEditor = useRef(false);
+  const nameInput = useRef<HTMLInputElement>(null);
+  const openEditor = (next: Draft) => { draftRevision.current = profile?.revision; focusEditor.current = true; setDraft(next); };
   // 一个服务都没有时直接摆出「添加」的几种选择，省掉一次点击
   const [adding, setAdding] = useState(!profile?.configured && (profile?.providers?.length ?? 0) === 0);
   const [showKey, setShowKey] = useState(false);
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  // The containing settings fieldset also follows busy state; wait until both have unlocked.
+  useEffect(() => {
+    const input = nameInput.current;
+    if (focusEditor.current && !busy && input && !input.matches(":disabled")) {
+      focusEditor.current = false;
+      input.focus();
+    }
+  });
   const [note, setNote] = useState("");
   const [account, setAccount] = useState<{ status: VortoAccountStatus | null; membership: VortoMembership | null }>({ status: null, membership: null });
 
@@ -67,32 +86,55 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
     return () => { alive = false; };
   }, [profile?.configured, providers.length]);
 
+  const draftState = draft ? providerDraftState(draft, providers) : null;
+  const dirty = draftState?.dirty ?? false;
+  useEffect(() => { onDraftStateChange?.({ dirty, busy, conflict }); }, [dirty, busy, conflict, onDraftStateChange]);
+
   const applied = async (next: DesktopLlmProfileStatus, done: string) => {
     onProfile(next);
-    const restarted = await onRestartRuntime();
-    setNote(restarted ? `${done}，当前引擎已重启` : `${done}，下次启动引擎时生效`);
+    setConflict(false);
+    setDraft(null); setShowKey(false); setAdding(false);
+    if (unchangedModelRevision(profile?.revision, next.revision)) {
+      setNote(`${done}；配置内容未变化，保留当前引擎状态`);
+      return;
+    }
+    try {
+      const restarted = await onRestartRuntime();
+      setNote(restarted ? `${done}，本机引擎已重启` : `${done}，下次启动本机引擎时生效`);
+    } catch {
+      setNote(`${done}；重启失败，请稍后重新启动本机引擎`);
+    }
   };
 
   const run = async (work: () => Promise<void>, failure: string) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
     setBusy(true);
     setNote("");
     try {
       await work();
     } catch (error) {
+      setConflict(isModelProfileConflict(error));
       setNote(errorText(error, failure));
     } finally {
+      busyRef.current = false;
       setBusy(false);
     }
   };
 
+  const changeEditor = (action: () => void) => run(async () => {
+    if (dirty && !await confirmAction("放弃当前尚未保存的模型服务修改？选择取消会保留全部输入。")) return;
+    setShowKey(false);
+    action();
+  }, "切换编辑失败");
+
   const save = () => run(async () => {
-    if (!draft) return;
+    if (conflict || !draft || !draftState?.canSave) return;
     const next = await invoke<DesktopLlmProfileStatus>("save_llm_provider", {
+      expectedRevision: draftRevision.current ?? null,
       id: draft.id, name: draft.name, baseUrl: draft.baseUrl, apiKey: draft.apiKey,
     });
     const saved = next.providers?.find((item) => item.id === draft.id.trim().toLowerCase());
-    setDraft(null);
-    setShowKey(false);
     await applied(next, saved?.models.length
       ? `已保存 ${saved.name}，可用 ${saved.models.length} 个模型`
       : `已保存 ${saved?.name ?? draft.id}（没有拉到模型列表，可稍后刷新）`);
@@ -103,15 +145,18 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
     if (!await confirmAction(member
       ? "把会员模型移出列表？以后可以在 设置 → 常规 →「VortoCode 账号」里重新加入。"
       : `删除「${provider.name}」？它的 Key 会从本机配置中移除。`)) return;
-    await applied(await invoke<DesktopLlmProfileStatus>("remove_llm_provider", { id: provider.id }), member ? "已移出会员模型" : `已删除 ${provider.name}`);
+    await applied(await invoke<DesktopLlmProfileStatus>("remove_llm_provider", { id: provider.id, expectedRevision: profile?.revision ?? null }), member ? "已移出会员模型" : `已删除 ${provider.name}`);
   }, "删除失败");
 
   const makeDefault = (provider: DesktopLlmProviderStatus) => run(async () => {
     const current = defaultServiceLabel(profile);
-    if (!await confirmAction(`把「${provider.name}」设为默认？新对话和后台任务会用它；「${current}」会留在列表里，随时可以切回来。`)) return;
+    const routingNotice = profile?.fastModel || profile?.strongModel || Object.values(profile?.roleModels ?? {}).some(Boolean)
+      ? provider.id === MEMBER_PROVIDER_ID ? "\n\n切换后请重新核对模型分工与自动调度配置。"
+        : "\n\n切换会清除原服务的快速 / 强力模型和角色分工；请在新默认服务下重新配置。" : "";
+    if (!await confirmAction(`把「${provider.name}」设为默认？新对话和后台任务会用它；「${current}」会留在列表里，随时可以切回来。${routingNotice}`)) return;
     const next = provider.id === MEMBER_PROVIDER_ID
       ? await invoke<DesktopLlmProfileStatus>("account_use_membership", { asDefault: true })
-      : await invoke<DesktopLlmProfileStatus>("promote_llm_provider", { id: provider.id });
+      : await invoke<DesktopLlmProfileStatus>("promote_llm_provider", { id: provider.id, expectedRevision: profile?.revision ?? null });
     onEditDefault(false);
     await applied(next, `已把 ${provider.name} 设为默认`);
   }, "设为默认失败");
@@ -123,21 +168,20 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
   }, "加入会员模型失败");
 
   const refresh = () => run(async () => {
-    onProfile(await invoke<DesktopLlmProfileStatus>("refresh_llm_providers"));
-    setNote("模型列表已刷新");
+    onProfile(await invoke<DesktopLlmProfileStatus>("refresh_llm_providers", { expectedRevision: profile?.revision ?? null }));
+    setNote("已重新查询模型列表；未能获取的服务保留原列表。");
   }, "刷新模型列表失败");
 
   const choosePreset = (preset: ProviderPreset | null) => {
     setAdding(false);
     if (!hasDefault) { onSetupDefault(preset); return; }
-    setDraft(preset
+    openEditor(preset
       ? { id: preset.id, name: preset.label, baseUrl: preset.baseUrl, apiKey: "", editing: false }
       : { ...EMPTY_DRAFT });
   };
 
-  const taken = Boolean(draft && !draft.editing && providers.some((item) => item.id === draft.id.trim().toLowerCase()));
-  const canSave = Boolean(draft && draft.id.trim() && draft.baseUrl.trim() && !taken
-    && (draft.apiKey.trim() || draft.editing || isLocalModelBase(draft.baseUrl)));
+  const canSave = Boolean(draftState?.canSave);
+  const finishDraftHint = dirty ? "请先保存或取消当前服务草稿" : undefined;
   const membership = account.membership;
   const memberListed = defaultIsMember || providers.some((item) => item.id === MEMBER_PROVIDER_ID);
 
@@ -161,7 +205,7 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
             <div className="model-service-actions">
               {defaultIsMember
                 ? <button onClick={() => void openUrl(ACCOUNT_MANAGE_URL.replace(/\/account$/, "/membership"))}>管理会员</button>
-                : <button aria-expanded={editingDefault} onClick={() => onEditDefault(!editingDefault)}>{editingDefault ? "收起" : "编辑"}</button>}
+                : <button aria-expanded={editingDefault} disabled={busy || dirty} title={finishDraftHint} onClick={() => onEditDefault(!editingDefault)}>{editingDefault ? "收起" : "编辑"}</button>}
             </div>
           </li>
         )}
@@ -178,10 +222,10 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
                 </span>
               </div>
               <div className="model-service-actions">
-                <button onClick={() => void makeDefault(provider)} disabled={busy || provider.models.length === 0}
-                  title={provider.models.length === 0 ? "还没有模型列表：先刷新，或检查地址和 Key" : undefined}>设为默认</button>
-                {!member && <button onClick={() => { setAdding(false); setDraft({ id: provider.id, name: provider.name, baseUrl: provider.baseUrl, apiKey: "", editing: true }); }} disabled={busy}>编辑</button>}
-                <button onClick={() => void remove(provider)} disabled={busy}>{member ? "移出" : "删除"}</button>
+                <button onClick={() => void makeDefault(provider)} disabled={busy || dirty || provider.models.length === 0}
+                  title={dirty ? finishDraftHint : provider.models.length === 0 ? "还没有模型列表：先刷新，或检查地址和 Key" : undefined}>设为默认</button>
+                {!member && <button aria-label={`编辑服务 ${provider.name}`} onClick={() => void changeEditor(() => { setAdding(false); openEditor({ id: provider.id, name: provider.name, baseUrl: provider.baseUrl, apiKey: "", editing: true }); })} disabled={busy}>编辑</button>}
+                <button onClick={() => void remove(provider)} disabled={busy || dirty} title={finishDraftHint}>{member ? "移出" : "删除"}</button>
               </div>
             </li>
           );
@@ -195,12 +239,12 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
       </ul>
 
       <div className="model-services-toolbar">
-        <button className="primary" onClick={() => { setAdding(!adding); setDraft(null); }} disabled={busy} aria-expanded={adding}><Plus size={14} />添加模型服务</button>
-        {providers.length > 0 && <button aria-label="刷新模型列表" title="刷新各服务的模型列表" onClick={() => void refresh()} disabled={busy}><RefreshCw size={14} /></button>}
+        <button className="primary" onClick={() => void changeEditor(() => { setAdding(!adding); setDraft(null); })} disabled={busy} aria-expanded={adding}><Plus size={14} />添加模型服务</button>
+        {providers.length > 0 && <button aria-label="刷新模型列表" title="刷新各服务的模型列表" onClick={() => void refresh()} disabled={busy || dirty}><RefreshCw size={14} /></button>}
       </div>
 
       {adding && (
-        <div className="model-service-chooser" role="dialog" aria-label="选择要添加的服务">
+        <div className="model-service-chooser" role="group" aria-label="选择要添加的服务">
           <div className="model-service-kind">
             <strong>VortoCode 会员</strong>
             <span>登录账号即可使用，不用填地址和 Key</span>
@@ -227,39 +271,49 @@ export function ModelServices({ profile, onProfile, onRestartRuntime, editingDef
         </div>
       )}
 
+      {conflict && <ModelProfileConflict onUseLatest={next => {
+        onProfile(next); setDraft(null); setConflict(false); setNote(""); setShowKey(false); setAdding(false);
+      }} onBusyChange={next => { busyRef.current = next; setBusy(next); }} />}
       {draft && (
-        <div className="custom-provider-editor">
-          <div className="custom-provider-form">
+        <div id="setting-provider-editor" tabIndex={-1} className="custom-provider-editor settings-anchor"
+          onFocus={event => { if (event.target === event.currentTarget) nameInput.current?.focus({ preventScroll: true }); }}>
+          <div className="provider-editor-heading"><strong>{draft.editing ? `编辑服务 · ${providers.find(provider => provider.id === draft.id)?.name ?? draft.id}` : "添加模型服务"}</strong><small>这台 Mac</small></div>
+          <fieldset className="settings-model-fields" disabled={busy}><div className="custom-provider-form">
             <label><span>名称</span>
-              <input value={draft.name} placeholder="显示名称，例如 DeepSeek" onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
+              <input ref={nameInput} value={draft.name} maxLength={80} aria-label="服务名称" placeholder="显示名称，例如 DeepSeek" onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
             </label>
-            <label><span>ID <em>菜单里以「ID:模型」区分，只能用小写字母、数字和下划线</em></span>
-              <input value={draft.id} disabled={draft.editing} placeholder="my_service" onChange={(event) => setDraft({ ...draft, id: event.target.value })} />
+            <label><span>ID</span>
+              <input value={draft.id} aria-label="服务 ID" aria-describedby="provider-id-hint" maxLength={24} disabled={draft.editing} placeholder="my_service" onChange={(event) => setDraft({ ...draft, id: event.target.value })} />
+              <small id="provider-id-hint">字母开头，字母、数字和下划线，最长 24 位；保存后不可修改。</small>
             </label>
-            {taken && <p className="custom-providers-note danger">已有同 ID 的服务；要修改请点它的「编辑」。</p>}
             <label><span>接口地址</span>
-              <input value={draft.baseUrl} placeholder="https://api.example.com/v1" onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })} />
+              <input value={draft.baseUrl} aria-label="服务接口地址" maxLength={512} placeholder="https://api.example.com/v1" onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })} />
             </label>
             <label><span>API Key</span>
               <span className="custom-provider-key">
                 <input
                   type={showKey ? "text" : "password"}
                   value={draft.apiKey}
+                  aria-label="服务 API Key"
+                  aria-describedby="provider-key-hint"
+                  maxLength={2048}
                   autoComplete="new-password"
-                  placeholder={isLocalModelBase(draft.baseUrl) ? "本机无需鉴权时可留空" : draft.editing ? "已保存；修改时输入新 Key" : "API Key"}
+                  placeholder={isLocalModelBase(draft.baseUrl) ? "本机无需鉴权时可留空" : draftState?.canKeepKey ? "留空保留此服务已保存的 Key" : "API Key"}
                   onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })}
                 />
                 <button aria-label={showKey ? "隐藏 Key" : "显示 Key"} onClick={() => setShowKey(!showKey)}>{showKey ? <EyeOff size={14} /> : <Eye size={14} />}</button>
               </span>
+              <small id="provider-key-hint">{draftState?.canKeepKey ? "留空沿用同一地址已保存的 Key。" : isLocalModelBase(draft.baseUrl) ? "本机服务如需鉴权，请填写 Key。" : "新地址需填写对应服务的 Key。"}</small>
             </label>
             <div className="custom-provider-test"><span>连接测试</span>
-              <LlmConnectionCheck baseUrl={draft.baseUrl} apiKey={draft.apiKey} model="" onModels={() => undefined} />
+              <LlmConnectionCheck baseUrl={draft.baseUrl} apiKey={draft.apiKey} model="" providerId={draft.id} onModels={() => undefined} />
             </div>
           </div>
+          <p className={`custom-providers-note ${draftState?.missing ? "danger" : ""}`} role="status">{draftState?.missing || (dirty ? "服务修改尚未保存。" : "与已保存的服务一致。")}</p>
           <div className="custom-provider-actions">
-            <button onClick={() => { setDraft(null); setShowKey(false); }} disabled={busy}>取消</button>
-            <button className="primary" onClick={() => void save()} disabled={busy || !canSave}>{busy ? "保存中…" : draft.editing ? "保存修改" : "添加"}</button>
-          </div>
+            <button onClick={() => void changeEditor(() => setDraft(null))} disabled={busy}>取消</button>
+            <button className="primary" onClick={() => void save()} disabled={busy || conflict || !canSave}>{busy ? "保存中…" : draft.editing ? "保存修改" : "添加"}</button>
+          </div></fieldset>
         </div>
       )}
 

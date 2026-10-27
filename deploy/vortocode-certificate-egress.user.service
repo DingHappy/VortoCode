@@ -1,0 +1,21 @@
+# Optional: only install after approving a certificate-only egress dependency.
+# This is outbound SOCKS over SSH, not the public mobile ingress.
+[Unit]
+Description=Restricted outbound network for VortoCode certificate requests
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/vortocode-https/egress/environment
+ExecStart=/usr/bin/ssh -NT -D 127.0.0.1:17890 -i %h/.config/vortocode-https/egress/id_ed25519 -o UserKnownHostsFile=%h/.config/vortocode-https/egress/known_hosts -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes -o BatchMode=yes -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ConnectTimeout=10 ${VORTOCODE_CERT_EGRESS_DESTINATION}
+Restart=always
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+
+[Install]
+WantedBy=default.target

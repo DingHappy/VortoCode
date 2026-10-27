@@ -1489,6 +1489,7 @@ export interface PrDeliveryCheckLog {
 }
 
 export interface GatewayProcessStatus {
+  launchId?: string | null;
   running: boolean;
   pid?: number;
   runtimeId?: string;
@@ -1503,6 +1504,8 @@ export interface GatewayProcessStatus {
 }
 
 export interface DesktopLlmProfileStatus {
+  /** Opaque native revision; never derived from a credential hash. */
+  revision?: string;
   configured: boolean;
   baseUrl: string;
   model: string;

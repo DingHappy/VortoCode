@@ -1,10 +1,10 @@
 import type { LlmConnectionTest } from "../types";
 import { errorText } from "./errorText";
 
-export type ConnectionDraft = { baseUrl: string; apiKey: string; model: string };
+export type ConnectionDraft = { baseUrl: string; apiKey: string; model: string; providerId?: string };
 export type ConnectionCheckState = { draft: ConnectionDraft; testing: boolean; result: LlmConnectionTest | null; error: string };
 export const sameConnectionDraft = (a: ConnectionDraft, b: ConnectionDraft) =>
-  a.baseUrl === b.baseUrl && a.apiKey === b.apiKey && a.model === b.model;
+  a.baseUrl === b.baseUrl && a.apiKey === b.apiKey && a.model === b.model && a.providerId === b.providerId;
 
 /** Only the current draft and attempt may receive model candidates or status. */
 export function createConnectionCheck(

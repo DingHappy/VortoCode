@@ -12,13 +12,22 @@ VortoCode 读取的全部 `VORTOCODE_*` 环境变量。常用项的示例与注�
 
 | 变量 | 默认 | 作用 | 读取位置 |
 | --- | --- | --- | --- |
-| `VORTOCODE_API_TOKEN` | — | 设了则所有 `/api/*` 与 `/ws` 强制鉴权。对外暴露服务前必须设为强随机值。 | `web/auth.py`、`cli.py`、`gateway/doctor.py` 等 |
+| `VORTOCODE_API_TOKEN` | — | 主 API 与 `/ws` 的管理员鉴权。手机读取使用独立授权，账号管理桥仍需此令牌。对外暴露服务前必须设为强随机值。 | `web/auth.py`、`cli.py`、`gateway/doctor.py` 等 |
 | `VORTOCODE_ALLOW_INSECURE_BIND` | `0` | 没设 API 令牌却绑定非本机地址时，服务默认拒绝启动；设 `1` 显式放行（如前面有已鉴权的反向代理）。 | `web/server.py` |
 | `VORTOCODE_ENABLE_SHELL` | `0` | 宿主机命令执行的唯一总开关（`sandbox/policy.py:shell_enabled`）。Web 的 `require_shell`、cron 命令作业、终端都只认它。 | `sandbox/policy.py` 等 |
 | `VORTOCODE_SANDBOX` | `auto` | OS 沙箱（seatbelt / bwrap）策略。`off` 只应在可信环境里显式放开宿主机执行。 | `sandbox/policy.py`、`agents/shell.py` 等 |
 | `VORTOCODE_ENV_PASSTHROUGH` | — | 逗号分隔的变量名，准许穿透到子进程（默认会被剥掉的密钥类变量）。刻意只认进程环境、不认仓库文件，避免被投毒的仓库把密钥放行。 | `sandbox/policy.py` |
 | `VORTOCODE_OPS_TOKEN` | — | 运维报到端点的专用令牌。只在常驻助理（通用范围）开放，不设则端点不存在。 | `web/routers/ops_heartbeat.py` |
 | `VORTOCODE_VOICE_MCP_TOKEN` | — | 语音 MCP 端点的专用令牌。只在常驻助理开放，不设则端点不存在。 | `web/routers/voice.py` |
+
+## 手机账号与独立网关
+
+| 变量 | 默认 | 作用 | 读取位置 |
+| --- | --- | --- | --- |
+| `VORTOCODE_ACCOUNT_URL` | `https://account.vortotech.com` | 服务端可信账号来源，只接受规范 HTTPS origin 或开发用 HTTP 回环地址。手机身份必须由该来源核验；不按邮箱匹配归属。 | `gateway/account_service.py` |
+| `VORTOCODE_MOBILE_PUBLIC_ORIGIN` | — | 手机入口的完整 origin，包含实际公开端口，不含路径、查询或账号密码；精确用于来源检查和账号回调。不设时手机账号登录未就绪，独立网关拒绝启动。 | `gateway/mobile_browser.py`、`web/mobile_server.py`、`web/routers/account_access.py` |
+| `VORTOCODE_MOBILE_STATE_ROOT` | — | 独立手机网关必填的绝对状态根目录，必须与进程当前工作目录一致。读取原助手资料、主聊天登记和目标，不启动执行内核。 | `web/mobile_server.py` |
+| `VORTOCODE_MOBILE_RELEASE` | `dev` | 独立网关发布标识，限定小写字母、数字、点、下划线与连字符，用于健康检查核对；标识本身不证明源码、部署或验收完成。 | `web/mobile_server.py` |
 
 ## 模型与上下文
 
@@ -172,6 +181,8 @@ VortoCode 读取的全部 `VORTOCODE_*` 环境变量。常用项的示例与注�
 | `VORTOCODE_DESKTOP_SIDECAR` | Desktop | 标记 runtime 由 Desktop 托管，放开本机文件等 Desktop 专属能力。 | `web/routers/realtime.py`、`agents/tools/browser.py` 等 |
 | `VORTOCODE_WORKSPACE_SCOPE` | Desktop | 工作区范围：`general` / `scratch` / `project`（不设按 `project`）。 | `gateway/workspace_scope.py` |
 | `VORTOCODE_SUPERVISOR_PID` | Desktop | 监护进程 pid；它退出时 runtime 随之退出，不留孤儿。 | `gateway/supervisor_watchdog.py` |
+| `VORTOCODE_MODEL_CONFIGURATION_REVISION` | Desktop | 不含凭据的模型配置版本。运行时就绪后回传启动回执；不代表模型服务可用或推理成功。 | `gateway/configuration_receipt.py` |
+| `VORTOCODE_CONFIGURATION_LAUNCH_ID` | Desktop | 每次启动独有的身份，与配置版本共同核对，防止旧进程响应被当作新进程的回执。 | `gateway/configuration_receipt.py` |
 | `VORTOCODE_MODEL_CHOICES` | Desktop | 默认服务上允许点名的模型列表。 | `llm/routing.py` |
 | `VORTOCODE_MODEL_CONTEXT_WINDOW_SOURCE` | Desktop | 窗口值的来源标记，供设置页显示。 | `llm/client.py` |
 | `VORTOCODE_CODEX_REPORT_URL` / `VORTOCODE_CODEX_REPORT_TOKEN` | Desktop | 本机 Codex 观察结果的上报地址与令牌。 | `scheduling/codex_observer.py` |

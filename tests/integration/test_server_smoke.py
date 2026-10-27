@@ -113,10 +113,34 @@ def test_websocket_basic(client):
 
 
 def test_all_readonly_endpoints_no_500(client):
-    """广扫所有无参 GET 端点：任何 500 都说明某 router 有未定义名/import 断裂。"""
+    """广扫 GET；仅手机未安装/配置时的明确 503 是预期未就绪状态。"""
     gettable = [x["path"] for x in json.loads(BASELINE.read_text())
                 if "GET" in x["methods"] and "{" not in x["path"]
                 and not x["path"].startswith(("/docs", "/openapi", "/redoc"))]
-    failures = {p: client.get(p).status_code
-                for p in gettable if client.get(p).status_code >= 500}
+    # These optional surfaces have dedicated unready checks below. Never permit
+    # a 500, or a 503 from any other endpoint, to pass this import/smoke guard.
+    unready_paths = {"/mobile", "/mobile/", "/mobile/manage", "/api/mobile/native/authorize"}
+    failures = {}
+    for path in gettable:
+        status = client.get(path).status_code
+        if status >= 500 and not (status == 503 and path in unready_paths):
+            failures[path] = status
     assert not failures, f"以下端点返回 5xx: {failures}"
+
+
+def test_optional_mobile_entry_reports_unready_without_build_or_account(client, monkeypatch, tmp_path):
+    from src.web.routers import mobile_pages
+
+    monkeypatch.setattr(mobile_pages, "_DIRECTORY", tmp_path)
+    monkeypatch.delenv("VORTOCODE_MOBILE_PUBLIC_ORIGIN", raising=False)
+    for path in ("/mobile", "/mobile/", "/mobile/manage"):
+        response = client.get(path)
+        assert response.status_code == 503
+        assert response.json()["detail"] == "手机入口尚未构建"
+        assert response.headers["cache-control"] == "no-store"
+    response = client.get("/api/mobile/native/authorize")
+    assert response.status_code == 503
+    assert response.json()["detail"] == "账号连接暂不可用，请稍后重试"
+    response = client.get("/api/mobile/browser/status")
+    assert response.status_code == 200
+    assert response.json()["ready"] is False and response.json()["signed_in"] is False

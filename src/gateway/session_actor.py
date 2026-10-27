@@ -104,6 +104,10 @@ class SessionActors:
             return False
         return key in self._operation_kind or not task.done()
 
+    def active_count(self) -> int:
+        """Include execution and cancellation cleanup, without reading transcripts."""
+        return sum(self.busy(key) for key in list(self.tasks))
+
     def queue(self, context: ActorContext) -> list[Prompt]:
         session = context.get_session()
         raw = session.get("prompt_queue")

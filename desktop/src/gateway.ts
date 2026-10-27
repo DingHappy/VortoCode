@@ -380,6 +380,19 @@ export class GatewayClient {
     throw lastError instanceof Error ? lastError : new Error("runtime 未在预期时间内就绪");
   }
 
+  /** Lifecycle checks are never coalesced with earlier snapshot reads. */
+  async getRuntimeActivity(): Promise<unknown> {
+    const controller = new AbortController();
+    let expired = false;
+    const timer = setTimeout(() => { expired = true; controller.abort(); }, 5000);
+    try {
+      const value = await this.request<unknown>("/api/runtime-activity", { signal: controller.signal });
+      if (expired) throw new Error("引擎活动核对超时");
+      return value;
+    }
+    finally { clearTimeout(timer); }
+  }
+
   async listSessions(): Promise<SessionSummary[]> {
     const payload = await this.readSnapshot<{ sessions?: SessionSummary[] }>("/api/agent/sessions");
     return payload.sessions ?? [];

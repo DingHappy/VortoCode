@@ -17,6 +17,7 @@ credentials.*
 # .vortocode/ 内含 sessions.db / memory / projects / logs 等
 # ─────────────────────────────────────────────────────────────
 .vortocode/
+web/mobile/
 *.db
 *.sqlite
 *.sqlite3
@@ -75,6 +76,10 @@ coverage.xml
 node_modules/
 .next/
 *.tsbuildinfo
+**/.build/
+**/DerivedData/
+**/xcuserdata/
+*.xcuserstate
 
 # ─────────────────────────────────────────────────────────────
 # 编辑器 / 操作系统

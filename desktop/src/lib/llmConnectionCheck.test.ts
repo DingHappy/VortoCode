@@ -50,3 +50,9 @@ it("current failures remain retryable without publishing model candidates", asyn
   expect(f.states[f.states.length - 1]).toMatchObject({testing: false, result: null, error: "401 unauthorized"});
   expect(f.candidates).toEqual([]);
 });
+it("discards a model list after the selected saved provider changes at the same endpoint", async () => {
+  const f = fixture(); f.change({ providerId: "first" });
+  const request = f.check.test(); f.change({ providerId: "second" });
+  f.pending.resolve(result); await request;
+  expect(f.states).toHaveLength(1); expect(f.candidates).toEqual([]);
+});

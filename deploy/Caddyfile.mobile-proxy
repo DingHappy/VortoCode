@@ -1,0 +1,75 @@
+# Mobile-only ingress. Pair with the private account-registration/admin bridge.
+# Keep the backend on the resident assistant instance; never proxy all /api.
+{
+	admin off
+	auto_https off
+	# Runtime error logs can otherwise include OAuth callback queries/cookies.
+	log {
+		format filter {
+			wrap json
+			fields {
+				request>uri delete
+				request>headers delete
+				resp_headers delete
+			}
+		}
+	}
+}
+
+(mobile_backend) {
+	reverse_proxy 127.0.0.1:18081 {
+		header_up Host {http.request.hostport}
+		header_up X-Forwarded-Proto https
+		header_up -X-API-Token
+	}
+}
+
+https://{$VORTOCODE_HTTPS_HOST}:18443 {
+	tls {$VORTOCODE_TLS_CERT} {$VORTOCODE_TLS_KEY}
+	header {
+		Cache-Control "no-store"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+	request_body {
+		max_size 8KB
+	}
+
+	# Transport probe only. Account readiness is reported by the status route.
+	handle /healthz {
+		header Content-Type application/json
+		respond `{"service":"vortocode-mobile-ingress","readiness_check":"/api/mobile/browser/status"}` 200
+	}
+	@home {
+		method GET
+		path /
+	}
+	redir @home /mobile 303
+
+	@mobile_get {
+		method GET
+		path /mobile /mobile/ /api/mobile/browser/status /api/mobile/browser/bootstrap /api/mobile/browser/snapshot /api/mobile/account/callback /api/mobile/native/authorize /api/mobile/native/bootstrap /api/mobile/native/snapshot
+	}
+	handle @mobile_get {
+		import mobile_backend
+	}
+	@mobile_assets {
+		method GET
+		path_regexp mobile_assets ^/static/mobile/(vorto\.png|assets/[A-Za-z0-9_-]+\.(js|css))$
+	}
+	handle @mobile_assets {
+		import mobile_backend
+	}
+	@mobile_post {
+		method POST
+		path /api/mobile/account/login /api/mobile/browser/logout /api/mobile/native/exchange /api/mobile/native/logout
+	}
+	handle @mobile_post {
+		import mobile_backend
+	}
+	handle {
+		header Content-Type "text/plain; charset=utf-8"
+		respond "Not found" 404
+	}
+}

@@ -17,7 +17,8 @@ _WEB_DIR = _PROJECT_ROOT / "web"
 async def root():
     """服务首页：浏览器对话台已于 2026-10-17 退役，入口是 Desktop 与无头 CLI。"""
     return {"message": "VortoCode API", "version": "0.1.0",
-            "clients": "Desktop 或 vc agent；流水线审批台在 /review"}
+            "clients": "Desktop 或 vc agent；流水线审批台在 /review",
+            "mobile": {"reader": "/mobile", "devices": "/mobile/manage", "mode": "read_only"}}
 
 
 @router.get("/review")

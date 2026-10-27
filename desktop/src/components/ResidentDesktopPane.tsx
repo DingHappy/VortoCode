@@ -3,27 +3,29 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { desktopConnectionLabel, residentDesktop, watchResidentDesktop } from "../lib/residentDesktop";
 import "./ResidentDesktopPane.css";
 
-export function ResidentDesktopPane({ compact = false }: { compact?: boolean }) {
-  return isTauri() ? <DesktopPane compact={compact} /> : null;
+type Props = { compact?: boolean; onDraftStateChange?: (state: { dirty: boolean; busy: boolean }) => void };
+export function ResidentDesktopPane({ compact = false, onDraftStateChange }: Props) {
+  return isTauri() ? <DesktopPane compact={compact} onDraftStateChange={onDraftStateChange} /> : null;
 }
 
-function DesktopPane({ compact }: { compact: boolean }) {
+function DesktopPane({ compact, onDraftStateChange }: Props) {
   const { status, busy, note } = useSyncExternalStore(residentDesktop.subscribe, residentDesktop.getSnapshot);
   const [target, setTarget] = useState("");
   const [editing, setEditing] = useState(false);
   const [now, setNow] = useState(Date.now);
   useEffect(watchResidentDesktop, []);
   useEffect(() => { setNow(Date.now()); }, [status?.checkedAt]);
-  useEffect(() => { if (!editing) setTarget(status?.target.replace(/^ssh:/, "") ?? ""); }, [status?.target, editing]);
+  useEffect(() => { setTarget(status?.target.replace(/^ssh:/, "") ?? ""); }, [status?.target]);
   useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 10_000); return () => clearInterval(timer); }, []);
   const dirty = target.trim().replace(/^ssh:/, "") !== (status?.target.replace(/^ssh:/, "") ?? "");
-  const configure = !compact || editing || (status !== null && !status.target);
+  useEffect(() => { onDraftStateChange?.({ dirty, busy }); }, [dirty, busy, onDraftStateChange]);
+  const configure = editing || (status !== null && !status.target);
   const run = (command: Parameters<typeof residentDesktop.act>[0]) => { void residentDesktop.act(command); };
   const current = !!status?.sshConnected && !status.error && status.checkedAt !== null
     && now >= status.checkedAt && now - status.checkedAt < 60_000;
   return <section className={`resident-desktop-pane ${compact ? "compact" : "settings-card"}`} aria-label="远程桌面连接">
     <div className="resident-desktop-heading"><strong>远程桌面</strong>
-      {compact && <button disabled={busy} onClick={() => setEditing(!editing)}>{editing ? "收起设置" : "连接设置"}</button>}</div>
+      <button disabled={busy} onClick={() => setEditing(!editing)}>{editing ? "收起设置" : compact ? "连接设置" : "编辑目标"}</button></div>
     <p>{status?.target ? `${status.target.replace(/^ssh:/, "")} · ` : ""}{desktopConnectionLabel(status, now)}</p>
     {status?.checkedAt !== null && status?.checkedAt !== undefined && <p className="resident-desktop-note">最近核对：{new Date(status.checkedAt).toLocaleTimeString()}</p>}
     {configure && <form onSubmit={event => { event.preventDefault(); void residentDesktop.act("save_resident_desktop_target", { target }); }}>
@@ -33,7 +35,7 @@ function DesktopPane({ compact }: { compact: boolean }) {
       <button disabled={busy || !status || !target.trim() || !dirty}>保存目标</button>
     </form>}
     <div className="resident-desktop-actions">
-      <button disabled={busy || !status?.target || dirty} onClick={() => run("open_resident_desktop")}>{busy ? "处理中…" : status?.viewerUrl ? "显示远程画面" : "打开远程画面"}</button>
+      <button className="primary" disabled={busy || !status?.target || dirty} onClick={() => run("open_resident_desktop")}>{busy ? "处理中…" : status?.viewerUrl ? "显示远程画面" : "打开远程画面"}</button>
       <button disabled={busy || !status?.target || dirty} onClick={() => run("check_resident_desktop")}>检查连接</button>
       {status?.sshConnected && <button disabled={busy} onClick={() => run("close_resident_desktop")}>断开连接</button>}
     </div>

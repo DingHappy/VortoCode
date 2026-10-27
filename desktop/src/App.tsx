@@ -1,3 +1,4 @@
+import { useLocalRuntimeControls } from "./hooks/useLocalRuntimeControls";
 import { ManagementNav } from "./components/ManagementNav";
 import { isManagementTab } from "./lib/inspector";
 import { WorkbenchLauncher, WorkbenchTabs, type WorkbenchTool } from "./components/WorkbenchTabs";
@@ -439,7 +440,7 @@ function App() {
     llmProfile, applyLlmProfile, llmProfileChecked, llmBaseInput, setLlmBaseInput, llmModelInput, setLlmModelInput,
     llmFastInput, setLlmFastInput, llmStrongInput, setLlmStrongInput,
     llmRolesInput, setLlmRolesInput,
-    llmKeyInput, setLlmKeyInput, llmProfileBusy, saveLlmProfile, clearLlmProfile,
+    llmKeyInput, setLlmKeyInput, llmProfileBusy, llmSaveNote, llmSaveKind, llmProfileLoading, llmProfileError, llmProfileConflict, reloadLlmProfile, saveLlmProfile, clearLlmProfile,
   } = useLlmProfile(settingsOpen, setBanner, () => restartCurrentRuntimeForLlmProfile());
   const [savedModelChoice, setSavedModelChoice] = useState<string | null>(() => loadModelChoice());
   const [modelPicks, setModelPicks] = useState<string[] | null>(() => loadModelPicks());
@@ -1087,6 +1088,16 @@ function App() {
     }
   }, [connectToRuntime, processStatus.runtimeId, runtimes]);
 
+  const localRuntimeControls = useLocalRuntimeControls({
+    processStatus, scope: activeScope, runtime, repoRoot, baseUrl, sid: activeSid, token, runtimes, disconnect, startWorkspace,
+    remote: () => Boolean(remoteProjectRef.current), starting: () => runtimeStartingRef.current,
+    switching: () => projectSwitchingRef.current, client: () => clientRef.current,
+    readActivity: (status, checkedToken) => new GatewayClient({ baseUrl: status.baseUrl!, token: checkedToken }).getRuntimeActivity(),
+    onBanner: setBanner,
+  });
+  const { target: runtimeControlStatus, busy: runtimeActionBusy, note: runtimeActionNote,
+    start: startRuntime, stop: stopRuntime, reload: reloadRuntime, restartIfRunning: restartCurrentRuntimeForLlmProfile } = localRuntimeControls;
+
   useEffect(() => {
     if (initializationStartedRef.current) return;
     initializationStartedRef.current = true;
@@ -1677,6 +1688,7 @@ function App() {
   }, [residentMissed, busy]);
 
   const changeAppMode = async (mode: AppMode, known: DesktopProjectProfile[] = projects) => {
+    if (localRuntimeControls.isOperating()) { setBanner("正在核对本机引擎，请等待操作完成后再切换"); return; }
     setAppMode(mode);
     try { localStorage.setItem(STORAGE_KEYS.appMode, mode); } catch { /* 只影响下次启动记不住 */ }
     if (mode !== "assistant") {
@@ -1982,68 +1994,6 @@ function App() {
     }
   };
 
-  const startRuntime = async () => {
-    if (remoteProjectRef.current) {
-      await connectToRuntime(activeSid);
-      return;
-    }
-    await startWorkspace({
-      repoRoot: repoRoot.trim(),
-      baseUrl,
-      sid: activeSid,
-      token,
-    });
-  };
-
-  const stopRuntime = async () => {
-    if (remoteProjectRef.current) {
-      await disconnect();
-      setBanner("已断开远端连接；服务器和后台任务继续运行");
-      return;
-    }
-    const runtimeId = processStatus.runtimeId;
-    runtimes.invalidate();
-    await disconnect();
-    try {
-      await runtimes.stopCurrent(runtimeId);
-    } catch (error) {
-      setBanner(errorText(error, "停止本地引擎失败"));
-    } finally {
-      runtimes.invalidate();
-    }
-  };
-
-  const restartCurrentRuntimeForLlmProfile = async (): Promise<boolean> => {
-    if (!processStatus.runtimeId || !processStatus.running) return true;
-    const previous = {
-      runtimeId: processStatus.runtimeId,
-      scope: activeScope,
-      workspaceId: processStatus.workspaceId,
-      repoRoot: repoRoot.trim(),
-      baseUrl,
-      sid: activeSid,
-      token,
-    };
-    runtimes.invalidate();
-    await disconnect();
-    try {
-      await runtimes.stopForRestart(previous.runtimeId);
-      return await startWorkspace({
-        scope: previous.scope,
-        repoRoot: previous.scope === "project" ? previous.repoRoot : undefined,
-        workspaceId: previous.scope === "scratch" ? previous.workspaceId || previous.sid : undefined,
-        baseUrl: previous.baseUrl,
-        sid: previous.sid,
-        token: previous.token,
-        announce: false,
-      });
-    } catch (error) {
-      setBanner(errorText(error, "模型配置已保存，但当前 runtime 重启失败"));
-      return false;
-    } finally {
-      runtimes.invalidate();
-    }
-  };
 
 
   const runGoal = async (goal: GoalItem, resume = false) => {
@@ -2591,7 +2541,7 @@ function App() {
               />
             )}
             onChooseProject={() => void chooseRepo()}
-            onOpenBrowserSettings={() => { setSettingsSection("abilities"); setSettingsOpen(true); }}
+            onOpenBrowserSettings={() => { setSettingsSection("permissions"); setSettingsOpen(true); }}
           />
         ) : mainView === "management" ? null : mainView === "artifacts" ? (
           <ArtifactCenter
@@ -2798,7 +2748,7 @@ function App() {
         {mainView === "chat" && inspectorOpen && appMode === "assistant" && (
           computerWorkspace.view ? <ComputerWorkspacePanel view={computerWorkspace.view} onClose={computerWorkspace.close} onRetry={() => void computerWorkspace.open()} />
           : <AssistantPanel name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} connected={connection === "connected"}
-            computer={<ComputerLauncher onOpen={() => void computerWorkspace.open()} onSettings={() => { setSettingsSection("abilities"); setSettingsOpen(true); }} />}
+            computer={<ComputerLauncher onOpen={() => void computerWorkspace.open()} onSettings={() => { setSettingsSection("computer"); setSettingsOpen(true); }} />}
             onEditProfile={() => setProfileDialogOpen(true)}
             host={onAssistantHost() ? { kind: "resident", name: findAssistantHost(projects)?.name ?? "常驻电脑", reachable: connection === "connected" } : { kind: "local", canAddResident: !findAssistantHost(projects) }}
             onAddResident={() => setRemoteDialogOpen("assistant")}
@@ -3193,6 +3143,7 @@ function App() {
       }} />}
       {settingsOpen && (
         <SettingsModal
+          residentAccountProjectId={residentHost?.id}
           readCodexObserver={readCodexObserver}
           activeScope={activeScope}
           connection={connection}
@@ -3200,7 +3151,11 @@ function App() {
           connectionNote={connectionNote}
           runtimeStarting={runtimeStarting}
           projectSwitching={projectSwitching}
-          processStatus={processStatus}
+          processStatus={runtimeControlStatus}
+          runtimeActionBusy={runtimeActionBusy}
+          runtimeActionNote={runtimeActionNote}
+          runtimeIsRemote={Boolean(remoteProjectRef.current)}
+          onReloadRuntime={reloadRuntime}
           recoveryRecord={recoveryRecord}
           llmProfile={llmProfile}
           llmBaseInput={llmBaseInput}
@@ -3230,6 +3185,16 @@ function App() {
           initialSection={settingsSection}
           onOpenPlugins={() => { setMainView("plugins"); }}
           hasResident={Boolean(findAssistantHost(projects))}
+          residentName={findAssistantHost(projects)?.name}
+          residentConnected={onAssistantHost() && connection === "connected"}
+          onOpenResidentSetup={() => setRemoteDialogOpen("assistant")}
+          onConnectResident={() => { const host = findAssistantHost(projects); if (host) void connectAssistantHost(host).then(ok => { if (ok) { setAppMode("assistant"); void openMainChat(host.id); } }); }}
+          onOpenSchedule={() => { setAppMode("assistant"); setMainView("chat"); setAssistantTab("schedule"); setInspectorOpen(true); }}
+          llmSaveNote={llmSaveNote}
+          llmSaveKind={llmSaveKind}
+          llmProfileLoading={llmProfileLoading}
+          llmProfileError={llmProfileError} llmProfileConflict={llmProfileConflict}
+          onReloadLlmProfile={reloadLlmProfile}
           onEditAssistant={() => setProfileDialogOpen(true)}
           onLlmKeyChange={setLlmKeyInput}
           onSaveLlmProfile={saveLlmProfile}
@@ -3242,7 +3207,15 @@ function App() {
           onStopRuntime={stopRuntime}
           onConnectExisting={() => void connectToRuntime(activeSid)}
           onStartRuntime={startRuntime}
-          onSwitchScope={(scope) => void switchManagedScope(scope)}
+          onSwitchScope={(scope) => void (async () => {
+            // An explicit local settings action leaves Assistant mode; otherwise
+            // its resident retry would reconnect the remote host after 10 seconds.
+            const leavingAssistant = appMode === "assistant";
+            if (!await switchManagedScope(scope) || !leavingAssistant) return;
+            workReturnRef.current = null;
+            setAppMode("work");
+            try { localStorage.setItem(STORAGE_KEYS.appMode, "work"); } catch { /* next launch only */ }
+          })()}
         >
           {activeScope === "project" && (
             <ExtensionsInspector

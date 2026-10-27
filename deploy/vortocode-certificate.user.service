@@ -1,0 +1,15 @@
+[Unit]
+Description=Renew VortoCode mobile ingress certificate
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/vortocode-certificate renew
+UMask=0077
+TimeoutStartSec=20min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.config/vortocode-https %h/.local/share/vortocode-https
