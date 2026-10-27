@@ -280,8 +280,14 @@ class MobileBrowserSessions:
                 pass  # BFF session is unusable; any remaining read lease expires within five minutes.
 
     def begin(
-        self, config: BrowserConfig, context_secret: str, previous_proof: str = ""
+        self,
+        config: BrowserConfig,
+        context_secret: str,
+        previous_proof: str = "",
+        *,
+        native: tuple[str, str] | None = None,
     ) -> tuple[str, str]:
+        """Start an account login; ``native`` binds the app's (challenge, state) for handoff."""
         context_key = _digest(context_secret)
         context = self.contexts.get(context_key)
         if not context or context.root != config.root or context.expires <= self.clock():
@@ -305,8 +311,16 @@ class MobileBrowserSessions:
             secrets.token_urlsafe(32),
             secrets.token_urlsafe(32),
         )
+        native_challenge, native_state = native or (None, None)
         self.pending[_digest(state)] = Pending(
-            config, _digest(proof), verifier, now + PENDING_TTL, context_key, context.generation
+            config,
+            _digest(proof),
+            verifier,
+            now + PENDING_TTL,
+            context_key,
+            context.generation,
+            native_challenge,
+            native_state,
         )
         challenge = (
             base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest())
