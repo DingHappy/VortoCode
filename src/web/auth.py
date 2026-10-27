@@ -52,6 +52,26 @@ _EXEMPT_EXACT = {"/", "/review", "/mobile", "/mobile/", "/mobile/manage",
                  "/api/ops/heartbeat", "/api/ops/notice"}
 
 
+# 手机端自带凭据的路由：不走管理员令牌，改由路由自己的依赖校验（设备令牌、配对窗口 + 逐次证明、
+# 账号登录 Cookie 或原生会话）。只放精确的 (方法, 路径)，绝不按 /api/mobile 前缀放行；
+# 设备管理、配对审批与账号登记始终只认管理员。tests/unit/test_mobile_auth_exemptions.py 钉住。
+MOBILE_SELF_AUTHENTICATED = frozenset({
+    # 已配对设备的只读概览（设备令牌）
+    ("GET", "/api/mobile/v1/bootstrap"), ("GET", "/api/mobile/v1/snapshot"),
+    # 配对：限时窗口 + 每次请求的凭据证明
+    ("POST", "/api/mobile/pairing/start"), ("POST", "/api/mobile/pairing/status"),
+    ("POST", "/api/mobile/pairing/cancel"),
+    # 手机浏览器：账号登录回调与 HttpOnly 会话
+    ("GET", "/api/mobile/browser/status"), ("GET", "/api/mobile/browser/bootstrap"),
+    ("GET", "/api/mobile/browser/snapshot"), ("POST", "/api/mobile/browser/logout"),
+    ("POST", "/api/mobile/account/login"), ("GET", "/api/mobile/account/callback"),
+    # 原生 App：PKCE 交接票据与原生会话
+    ("GET", "/api/mobile/native/authorize"), ("POST", "/api/mobile/native/exchange"),
+    ("GET", "/api/mobile/native/bootstrap"), ("GET", "/api/mobile/native/snapshot"),
+    ("POST", "/api/mobile/native/logout"),
+})
+
+
 def ct_eq(candidate: str, token: str) -> bool:
     """常时比较（防时序侧信道）——token 校验点专用。
 
@@ -84,23 +104,13 @@ def is_authed(request) -> bool:
 async def auth_middleware(request, call_next):
     """仅当配置了 VORTOCODE_API_TOKEN 时，对非豁免路径强制校验。"""
     path = request.url.path
-    # Exact read-only mobile routes have their own device-token dependency.
-    # Never exempt device management or a broad /api/mobile prefix.
-    mobile_read = request.method == "GET" and path in {"/api/mobile/v1/bootstrap", "/api/mobile/v1/snapshot"}
-    # A bounded pairing window + per-request credential proof replace admin auth
-    # only for these POSTs. Management always remains administrator-only.
-    mobile_pairing = request.method == "POST" and path in {"/api/mobile/pairing/start", "/api/mobile/pairing/status", "/api/mobile/pairing/cancel"}
-    browser_get = request.method == "GET" and path in {"/api/mobile/browser/status", "/api/mobile/browser/bootstrap",
-                                                      "/api/mobile/browser/snapshot", "/api/mobile/account/callback"}
-    browser_post = request.method == "POST" and path in {"/api/mobile/account/login", "/api/mobile/browser/logout"}
-    native_read = request.method == "GET" and path in {"/api/mobile/native/authorize", "/api/mobile/native/bootstrap", "/api/mobile/native/snapshot"}
-    native_post = request.method == "POST" and path in {"/api/mobile/native/exchange", "/api/mobile/native/logout"}
-    exempt = mobile_read or mobile_pairing or browser_get or browser_post or native_read or native_post or path in _EXEMPT_EXACT or path.startswith(_EXEMPT_PREFIXES)
+    exempt = (path in _EXEMPT_EXACT or path.startswith(_EXEMPT_PREFIXES)
+              or (request.method, path) in MOBILE_SELF_AUTHENTICATED)
     if not exempt and not _token_ok(request):
         response = JSONResponse({"detail": "Unauthorized"}, status_code=401)
     else:
         response = await call_next(request)
-    if path.startswith("/api/mobile/"):
+    if path.startswith("/api/mobile/"):  # 手机数据一律不进浏览器/代理缓存
         response.headers["Cache-Control"] = "no-store"
         response.headers["Pragma"] = "no-cache"
     return response

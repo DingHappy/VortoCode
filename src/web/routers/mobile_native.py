@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import re
-from urllib.parse import parse_qs, urlsplit
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -35,12 +34,7 @@ async def authorize(request: Request):
             raise BrowserDenied()
         sessions = manager(request)
         context = sessions.context(current)  # Isolated from any pre-existing web/native login.
-        url, proof = sessions.begin(current, context)
-        oauth_state = parse_qs(urlsplit(url).query)["state"][0]
-        from src.gateway.mobile_browser import _digest
-
-        pending = sessions.pending[_digest(oauth_state)]
-        pending.native_challenge, pending.native_state = challenge, state
+        url, proof = sessions.begin(current, context, native=(challenge, state))
         response = RedirectResponse(url, status_code=303, headers=_PRIVATE)
         secure = current.origin.startswith("https:")
         response.set_cookie(
