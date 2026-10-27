@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
-import { AssistantPanel, AssistantSchedule, AssistantSidebar, MemoryProposals, ModeSwitch } from "./AssistantMode";
+import { AssistantIdentity, AssistantPanel, AssistantSchedule, AssistantSidebar, MemoryProposals, ModeSwitch } from "./AssistantMode";
 
 it("模式切换：两个选项，当前项 aria-checked", () => {
   const html = renderToStaticMarkup(<ModeSwitch mode="assistant" onChange={() => {}} />);
@@ -132,4 +132,20 @@ it("插件：能在 Desktop 填凭据——没接的给「填写」，接上的�
   const readOnly = renderToStaticMarkup(<AssistantPlugins plugins={plugins} />);
   expect(readOnly).not.toContain("填写</button>");
   expect(readOnly).not.toContain("更换</button>");
+});
+
+it("identity page lists SOUL, about-you and memory without repeating the panel header", () => {
+  const html = renderToStaticMarkup(<AssistantIdentity profile={{ name: "VortoCode", soul: "", about_you: "在杭州写代码" }}
+    memories={[{ id: "m1", content: "装 VortoCode 的服务器就是助理的电脑", created_at: "2026-10-27T10:00:00" }]}
+    proposals={[{ id: "p1", content: "x" } as never]} onAvatar={() => {}} onEdit={() => {}} onDeleteMemory={() => {}} />);
+  expect(html).not.toContain("assistant-profile-head");
+  for (const text of ["编辑资料", "换头像", "SOUL", "还没写", "在杭州写代码", "记得 1 件事", "1 条待确认", "装 VortoCode 的服务器就是助理的电脑"]) expect(html).toContain(text);
+  expect(html.match(/assistant-identity-preview empty/g)).toHaveLength(1);
+});
+
+it("schedule section explains read-only items once", () => {
+  const items = [{ id: "a", kind: "report", title: "早报", schedule: "每天 09:00", enabled: true }, { id: "b", kind: "report", title: "晚报", schedule: "每天 21:00", enabled: true }] as const;
+  const html = renderToStaticMarkup(<AssistantSchedule items={[...items]} connected />);
+  expect(html.match(/这里只能查看/g)).toHaveLength(1);
+  expect(html.match(/>只读</g)).toHaveLength(2);
 });
