@@ -26,6 +26,8 @@ export const STORAGE_KEYS = {
   starterTips: "vortocode.desktop.starterTips",
   // 上次自动检查更新的时间（毫秒）：每天最多问 GitHub 一次。
   updateCheckedAt: "vortocode.desktop.updateCheckedAt",
+  // 常驻电脑连不上时在本机助理里聊过的会话 id：连回常驻电脑后列在「本机（离线时）」。
+  offlineAssistantChats: "vortocode.desktop.offlineAssistantChats",
 } as const;
 
 // 每个项目一个会话 id，key 由项目 id 拼出前缀。

@@ -43,3 +43,15 @@ it("uses a snapshot-specific empty message without claiming the phone never had 
   const html = renderToStaticMarkup(<PhoneChatDialog chat={{ ...chat, transcript: [] }} onClose={() => {}} />);
   expect(html).toContain("当前没有可显示的聊天记录"); expect(html).not.toContain("还没有聊过");
 });
+
+it("offline variant explains where the chat lives and carries its own actions", () => {
+  const html = renderToStaticMarkup(<PhoneChatDialog variant="offline" owner={null} onClose={() => {}}
+    chat={{ sid: "desk-1", title: "周三开会", transcript: [{ role: "user", text: "帮我记下" }] }}
+    actions={<button>带回常驻电脑</button>} />);
+  expect(html).toContain("周三开会 · 本机离线时的聊天");
+  expect(html).toContain("常驻助理不知道");
+  expect(html).toContain('aria-label="关闭本机聊天"');
+  expect(html).toContain("带回常驻电脑");
+  expect(html).not.toContain("请在手机上回复");
+  for (const input of ["<textarea", "<input", "<form"]) expect(html).not.toContain(input);
+});

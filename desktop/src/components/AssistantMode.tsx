@@ -24,12 +24,15 @@ export function ModeSwitch({ mode, resident = true, onChange }: { mode: AppMode;
 export interface SideChat { sid: string; title: string; at?: string; busy?: boolean }
 
 /** 助理模式左侧：「主要聊天」常驻置顶，岔开的话题放「旁聊」。 */
-export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], current, onSelect, onOpenPhoneChat, onNewSideChat }: {
+export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offlineChats = [], current, onSelect, onOpenPhoneChat, onOpenOfflineChat, onNewSideChat }: {
   mainChat: { sid: string; preview?: string; busy?: boolean };
   sideChats: SideChat[];
   /** 手机上和助理的聊天：点开只读查看 */
   phoneChats?: Array<{ sid: string; title: string }>;
   onOpenPhoneChat?: (sid: string) => void;
+  /** 常驻电脑连不上时在本机聊的（连回常驻电脑后才列出）：点开只读查看，可带回常驻电脑 */
+  offlineChats?: Array<{ sid: string; title: string }>;
+  onOpenOfflineChat?: (sid: string) => void;
   current: string;
   onSelect: (sid: string) => void;
   onNewSideChat: () => void;
@@ -44,6 +47,13 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], current
       title="手机上和助理的聊天（这里只读，在手机上回复）">
       <Smartphone size={15} /><span>{chat.title.replace(/^📱\s*/, "")} · 手机</span>
     </button>)}
+    {offlineChats.length > 0 && <>
+      <div className="assistant-section-title"><span>本机（离线时）</span></div>
+      {offlineChats.map((chat) => <button key={chat.sid} className="assistant-side-chat offline" onClick={() => onOpenOfflineChat?.(chat.sid)}
+        title="常驻电脑连不上时在这台 Mac 上聊的（只读，可带回常驻电脑）">
+        <Laptop size={15} /><span>{chat.title || "本机对话"}</span>
+      </button>)}
+    </>}
     <div className="assistant-section-title"><span>旁聊</span><button aria-label="新建旁聊" title="新建旁聊" onClick={onNewSideChat}><Plus size={15} /></button></div>
     {sideChats.length === 0 && <p className="assistant-side-empty">岔开的话题可以开一个旁聊，不打扰主要聊天。</p>}
     {sideChats.map((chat) => <button key={chat.sid} className={`assistant-side-chat${current === chat.sid ? " active" : ""}`} onClick={() => onSelect(chat.sid)}>

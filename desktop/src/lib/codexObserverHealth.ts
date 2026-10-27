@@ -24,7 +24,8 @@ export function parseCodexObserverHealth(raw: unknown): CodexObserverHealth | nu
     pending: raw.pending, error_code: raw.error_code };
 }
 
-function localGeneral(items: GatewayProcessStatus[]): GatewayProcessStatus | null {
+/** 本机唯一在跑的通用引擎（不是远端）；拿不准就返回 null。 */
+export function localGeneral(items: GatewayProcessStatus[]): GatewayProcessStatus | null {
   const sources = items.filter(item => item.running && item.scope === "general");
   if (sources.length !== 1) return null;
   const source = sources[0];

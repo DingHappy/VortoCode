@@ -149,3 +149,14 @@ it("schedule section explains read-only items once", () => {
   expect(html.match(/这里只能查看/g)).toHaveLength(1);
   expect(html.match(/>只读</g)).toHaveLength(2);
 });
+
+it("sidebar lists offline chats in their own read-only group only when given", () => {
+  const opened: string[] = [];
+  const html = renderToStaticMarkup(<AssistantSidebar mainChat={{ sid: "m" }} sideChats={[]} current="m" onSelect={() => {}}
+    onNewSideChat={() => {}} offlineChats={[{ sid: "o1", title: "周三开会" }, { sid: "o2", title: "" }]} onOpenOfflineChat={(sid) => opened.push(sid)} />);
+  expect(html).toContain("本机（离线时）");
+  expect(html).toContain("周三开会");
+  expect(html).toContain("本机对话");
+  const none = renderToStaticMarkup(<AssistantSidebar mainChat={{ sid: "m" }} sideChats={[]} current="m" onSelect={() => {}} onNewSideChat={() => {}} />);
+  expect(none).not.toContain("本机（离线时）");
+});
