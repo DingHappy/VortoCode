@@ -85,6 +85,8 @@ vc --help                        # 全部子命令：server/agent/im/cron/heartb
 - **任务协作高级功能已冻结（2026-10-22，ADR-008）**：`workflow/tasks` 下的 `task_scan`、`task_dependents`、`task_dependencies`、`task_chain_budget`、`continuations`、`continuation_checks`、`check_reports`、`model_evidence`、`model_comparison`、`runtime_inbox`、`dashboard` 不加新功能，只修安全问题和明确的 bug。隔离开发流水线和助理派活照常维护。新需求先看能不能放进常驻助理或 Codex 监管。
 - **改 Web/安全/Agent 前后必跑测试**。`tests/integration/` 是**路由契约安全网**：冻结 API 路由集合 + WS + 鉴权/执行闸/路径穿越。新增 API 路由要同步更新 `tests/integration/server_routes_baseline.json` 基线，否则契约测试红。
 - 修 bug 尽量补回归测试（见 `tests/unit/test_bugfix_regressions.py`）。
+- **多个 Agent 同时在本仓库工作（2026-10-27 定）**：每个 Agent 用自己的 `vorto/*` 或 `codex/*` 分支，只走 PR；不在别人的 PR 分支上叠提交，也不在别人未提交的工作区里改文件（需要时另开 worktree）。v0.2.21～0.2.23 曾在一个未合并的 PR 分支上叠提交并直接发版，main 因此落后好几天。
+- **发版（2026-10-27 定）**：一周一次，只从 main 发；先合并再打包，`npm run release:verify -- --mode release` 的 `commitOnMain` 关卡会拦下不在 main 上的提交。装好后跑 `npm run check:installed`；改到连接、恢复或 Codex 控制时，按 `docs/P1_ACCEPTANCE.md` 跑对应场景。
 - **测试必须离线、确定性**：live/联网/烧 token 的测试默认跳过；不要引入真实 API 依赖。
 - **契约测试断行为、不断源码**：不要用 `inspect.getsource` 查子串来"证明"某个防护存在——那种测试会在它声称要防的回归里保持绿色（本仓已清理过一轮此类安慰剂）。
 - README 里带 "已退役删除" 标注的子系统（5 角色批处理编排引擎、workspaces、独立 verification_loop、终端执行接口等）**已删除**，别照着那些历史设计写代码；当前真实能力以 README「核心特性」+ 实际代码为准。
