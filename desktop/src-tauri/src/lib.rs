@@ -1634,6 +1634,7 @@ pub fn run() {
             fetch_resident_branch,
             remote_http_request,
             remote_ws_connect,
+            remote_reachable,
             remote_ws_send,
             remote_ws_close,
             pick_desktop_project,
@@ -3119,6 +3120,17 @@ mod tests {
             "错误串泄漏了 token：{reason}"
         );
         assert!(reason.contains("网络不可达"));
+    }
+
+    #[test]
+    fn network_failure_reason_points_at_local_network_permission() {
+        use std::io::{Error, ErrorKind};
+        let blocked = network_failure_reason(&Error::from_raw_os_error(65));
+        assert!(blocked.contains("本地网络") && blocked.contains("隐私与安全性"));
+        assert!(network_failure_reason(&Error::from_raw_os_error(1)).contains("本地网络"));
+        assert!(network_failure_reason(&Error::from(ErrorKind::ConnectionRefused)).contains("没在运行"));
+        assert!(network_failure_reason(&Error::from(ErrorKind::TimedOut)).contains("超时"));
+        assert_eq!(network_failure_reason(&Error::new(ErrorKind::Other, "Bearer sk-x")), "网络不可达或被拒绝");
     }
 
     #[test]

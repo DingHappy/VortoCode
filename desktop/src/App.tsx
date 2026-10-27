@@ -82,7 +82,7 @@ import type {
   DesktopLlmProfileStatus,
   ProjectSessionSummary, CodexAction, PhoneChat} from "./types";
 import { DecisionsPanel } from "./components/DecisionsPanel";
-import { ConnectionCoordinator, placeAssistant } from "./connection/connectionCoordinator";
+import { ConnectionCoordinator, placeAssistant, residentRetryDelay, retryResident } from "./connection/connectionCoordinator";
 import { SessionConnection } from "./connection/sessionConnection";
 import { TasksPanel } from "./tasks/TasksPanel";
 import { useTasks } from "./hooks/useTasks";
@@ -123,7 +123,7 @@ import { PluginsPage } from "./components/PluginsPage";
 import { PersonalSkillsCard } from "./components/PersonalSkillsCard";
 import { ProjectPicker } from "./components/ProjectPicker";
 import { RemoteProjectDialog } from "./components/RemoteProjectDialog";
-import { findAssistantHost, isAssistantHost, mainChatKey, workProjects } from "./lib/assistantHost";
+import { findAssistantHost, isAssistantHost, mainChatKey, probeAssistantHost, workProjects } from "./lib/assistantHost";
 import { dismissStarterTips, recordAssistantSend, shouldShowStarterTips, starterTips } from "./lib/starterTips";
 import { listedProjects, localTwin, residentEntry, residentTwin, type ResidentProject, type WorkPlace } from "./lib/residentPlace";
 import { TurnTimeline } from "./components/TurnTimeline";
@@ -1025,7 +1025,7 @@ function App() {
         return true;
       } catch (error) {
         if (!attempt.current()) return false;
-        coordinator.connectFailed();
+        coordinator.connectFailed(errorText(error, "连接失败"));
         endNotificationSync();
         clientRef.current = null;
         setConnection("error");
@@ -1630,18 +1630,21 @@ function App() {
     await switchSession(sid);
   };
 
-  /** 连到常驻电脑上的助理（通用范围）。已经连着就直接返回。 */
-  const connectAssistantHost = async (host: DesktopProjectProfile): Promise<boolean> => {
+  /** 连到常驻电脑上的助理（通用范围）。已经连着就直接返回；连不上返回原因。 */
+  const connectAssistantHost = async (host: DesktopProjectProfile): Promise<true | string> => {
     if (remoteProjectRef.current === host.id && assistantHostRef.current === host.id && connection === "connected") return true;
     // 启动时本机引擎还在拉起（正在切换，或启动流程还在装填数据）：等它走完再连常驻电脑。
     // 否则两次连接交错：本机那次被顶掉，常驻电脑又连不上时，回落会撞上「引擎正在启动」被丢弃，
     // 结果两头都没连上（启动时常驻电脑离线即复现）。
-    if (!await coordinator.waitUntilIdle()) return false;
+    if (!await coordinator.waitUntilIdle()) return "本机引擎还在启动或切换，稍后会自动再试";
     if (savingFile) {
       setBanner("请先完成或拒绝当前源码保存确认");
-      return false;
+      return "有一个源码保存确认还没处理";
     }
-    return runWorkspaceSwitch("连接常驻电脑失败", async () => {
+    // 先只测通不通：连不上就别断开本机——断开再回落会清掉当前对话，而且真实原因会被回落提示盖掉
+    const unreachable = await probeAssistantHost(host.id);
+    if (unreachable) return unreachable;
+    const switched = await runWorkspaceSwitch("连接常驻电脑失败", async () => {
       const key = mainChatKey(host.id);
       let sid = "";
       try { sid = localStorage.getItem(key) ?? ""; } catch { /* 读不到就新开一个 */ }
@@ -1659,6 +1662,7 @@ function App() {
       return await connectToRuntime(sid, { baseUrl: host.baseUrl, repoRoot: "", scope: "general",
         remoteProjectId: host.id, token: "" });
     });
+    return switched || (coordinator.lastConnectError ?? "连接常驻电脑失败");
   };
 
   /** 新建旁聊。从主要聊天出发时必须换新会话——newSession 对空草稿只清界面不换 id，会把旁聊并进主要聊天。 */
@@ -1708,18 +1712,30 @@ function App() {
   const residentMissed = appMode === "assistant" && Boolean(findAssistantHost(projects)) && !onAssistantHost()
     && connection === "connected" && !projectSwitching;
   const residentRetryRef = useRef(0);
+  // 每次重试结束都 +1，定时器据此重排：以前只按状态变化排，失败一次之后就再也不试了
+  const [residentRetryRound, setResidentRetryRound] = useState(0);
+  /** 常驻电脑最近一次连不上的原因：显示在提示条里（横幅会被随后的本机连接清掉） */
+  const [residentFailure, setResidentFailure] = useState<string | null>(null);
   useEffect(() => {
-    if (!residentMissed) { if (onAssistantHost()) residentRetryRef.current = 0; return; }
+    if (!residentMissed) {
+      if (onAssistantHost()) { residentRetryRef.current = 0; setResidentFailure(null); }
+      return;
+    }
     if (busy) return;
-    const delays = [10_000, 30_000, 60_000, 120_000];
     const timer = window.setTimeout(() => {
       residentRetryRef.current += 1;
-      void changeAppMode("assistant");
-    }, delays[Math.min(residentRetryRef.current, delays.length - 1)]);
+      const host = findAssistantHost(projects);
+      if (!host) return;
+      void retryResident({
+        reachable: () => probeAssistantHost(host.id),
+        connect: async () => { await changeAppMode("assistant"); return onAssistantHost(); },
+        onUnreachable: setResidentFailure,
+      }).finally(() => setResidentRetryRound((round) => round + 1));
+    }, residentRetryDelay(residentRetryRef.current));
     return () => window.clearTimeout(timer);
     // changeAppMode 每次渲染都是新函数；只按状态变化重排定时器
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [residentMissed, busy]);
+  }, [residentMissed, busy, residentRetryRound]);
 
   const changeAppMode = async (mode: AppMode, known: DesktopProjectProfile[] = projects) => {
     if (localRuntimeControls.isOperating()) { setBanner("正在核对本机引擎，请等待操作完成后再切换"); return; }
@@ -1738,10 +1754,15 @@ function App() {
     }
     // 助理默认住在常驻电脑上（合上笔记本也照常干活）；没登记或连不上，才用本机通用工作区兜底。
     const hostId = await placeAssistant({
-      host: findAssistantHost(known), connectHost: connectAssistantHost, notify: setBanner,
+      host: findAssistantHost(known), connectHost: connectAssistantHost,
+      onHostFailure: (host, reason) => {
+        setResidentFailure(reason);
+        setBanner(`常驻电脑「${host.name}」暂时连不上（${reason}），先用本机助理；它不在时你交代的事不会继续做。`);
+      },
       awayFromLocalGeneral: () => Boolean(remoteProjectRef.current) || activeScope !== "general",
       switchToLocalGeneral: () => switchManagedScope("general"),
     });
+    if (hostId) setResidentFailure(null);
     if (hostId === undefined) return;
     setInspectorOpen(true);
     setAssistantTab("feed");
@@ -2675,6 +2696,7 @@ function App() {
             {residentMissed && (
               <div className="composer-notice" role="status">
                 常驻电脑没连上，现在是这台电脑上的本机助理：派活、简报和合上笔记本后继续做，都要连上常驻电脑。
+                {residentFailure && <> 原因：{residentFailure}</>}
                 <button onClick={() => void changeAppMode("assistant")} disabled={projectSwitching}>重新连接</button>
               </div>
             )}

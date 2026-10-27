@@ -493,6 +493,7 @@ pub(crate) fn remote_ws_url(base: &str, sid: &str) -> Result<Url, String> {
 
 pub(crate) const MAX_REMOTE_WS_CONNECTIONS: usize = 8;
 pub(crate) const REMOTE_WS_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+pub(crate) const REMOTE_REACHABLE_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const REMOTE_WS_SEND_QUEUE: usize = 256;
 // 与本地路径（gateway.ts 显式设的 16/32 MiB）及 HTTP 侧 32MB 封顶同口径——
 // tungstenite 默认 64 MiB 比两者都松，不能就这么用。
@@ -528,13 +529,57 @@ pub(crate) struct RemoteWsClosed {
 
 /// 底层握手错误**不能原样回给 webview**：tungstenite 会把请求头值的 Debug 写进错误串，
 /// token 就这么泄出去（F-6 实测可 100% 还原）。这里只回粗粒度原因，明细进应用日志。
+/// 直连失败的粗粒度原因：只按 errno / 种类说人话，不带底层错误串（握手错误里可能有头值原文）。
+pub(crate) fn network_failure_reason(error: &std::io::Error) -> String {
+    use std::io::ErrorKind;
+    match error.raw_os_error() {
+        // EPERM / EHOSTUNREACH：macOS 没给「本地网络」权限时，直连内网地址就是这样被系统拦下，
+        // 而且不弹窗（真机 2026-10-27：App 更新后系统认不出新版本，静默拦截）。
+        Some(1) | Some(65) => "这台 Mac 拒绝直连过去（No route to host）。如果终端或别的程序能连上，\
+            多半是 macOS「本地网络」权限没给 VortoCode：系统设置 → 隐私与安全性 → 本地网络，\
+            打开（或关掉再打开）后重开 App"
+            .into(),
+        Some(51) => "网络不通（Network is unreachable）：检查网络或隧道".into(),
+        _ => match error.kind() {
+            ErrorKind::ConnectionRefused => "常驻电脑拒绝连接：VortoCode 服务可能没在运行".into(),
+            ErrorKind::TimedOut => "连接超时：常驻电脑可能关机或网络不通".into(),
+            _ => "网络不可达或被拒绝".into(),
+        },
+    }
+}
+
+/// 只测「这台 Mac 能不能直连登记的远端」：与 WebSocket 同一条路（直连、不走系统代理），
+/// 不带 token、不发请求。前端据此决定要不要断开本机去切换——连不上就别先断。
+#[tauri::command]
+pub(crate) async fn remote_reachable(app: AppHandle, project_id: String) -> Result<(), String> {
+    let base = resolve_remote_base(&project_registry_path(&app)?, &project_id)?;
+    let parsed = Url::parse(&base).map_err(|_| "已注册的服务器地址无法解析".to_string())?;
+    let host = parsed
+        .host_str()
+        .ok_or("已注册的服务器地址缺少主机名")?
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .to_string();
+    let port = parsed.port_or_known_default().ok_or("已注册的服务器地址缺少端口")?;
+    match tokio::time::timeout(
+        REMOTE_REACHABLE_TIMEOUT,
+        tokio::net::TcpStream::connect((host.as_str(), port)),
+    )
+    .await
+    {
+        Err(_) => Err("连接超时：常驻电脑可能关机或网络不通".into()),
+        Ok(Err(error)) => Err(network_failure_reason(&error)),
+        Ok(Ok(_)) => Ok(()),
+    }
+}
+
 pub(crate) fn remote_ws_failure_reason(error: &tokio_tungstenite::tungstenite::Error) -> String {
     use tokio_tungstenite::tungstenite::Error;
     match error {
         Error::Http(response) => {
             format!("远程 WebSocket 连接失败：服务器返回 HTTP {}", response.status())
         }
-        Error::Io(_) => "远程 WebSocket 连接失败：网络不可达或被拒绝".into(),
+        Error::Io(io) => format!("远程 WebSocket 连接失败：{}", network_failure_reason(io)),
         Error::Url(_) => "远程 WebSocket 连接失败：地址无效".into(),
         Error::Protocol(_) => "远程 WebSocket 连接失败：协议握手失败".into(),
         _ => "远程 WebSocket 连接失败（详情见应用日志）".into(),
