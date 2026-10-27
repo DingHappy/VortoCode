@@ -1380,6 +1380,11 @@ function App() {
       setBanner("请先完成或拒绝当前源码保存确认，再切换工作区范围");
       return false;
     }
+    // 先拒绝再断开：startWorkspace 在引擎启动中会直接返回 false，断开之后才发现就回不去了。
+    if (runtimeStartingRef.current) {
+      setBanner("本地引擎正在启动，请稍候再切换工作区范围");
+      return false;
+    }
     if (editorDirty && !await confirmAction("当前文件有未保存修改，切换范围会放弃这些修改。确定继续吗？")) {
       return false;
     }
@@ -1626,11 +1631,14 @@ function App() {
   /** 连到常驻电脑上的助理（通用范围）。已经连着就直接返回。 */
   const connectAssistantHost = async (host: DesktopProjectProfile): Promise<boolean> => {
     if (remoteProjectRef.current === host.id && assistantHostRef.current === host.id && connection === "connected") return true;
-    // 启动时本机引擎还在拉起（正在切换）：等它切完再连常驻电脑，别直接判失败退回本机
-    for (let waited = 0; projectSwitchingRef.current && waited < 15_000; waited += 200) {
+    // 启动时本机引擎还在拉起（正在切换，或启动流程还在装填数据）：等它走完再连常驻电脑。
+    // 否则两次连接交错：本机那次被顶掉，常驻电脑又连不上时，回落会撞上「引擎正在启动」被丢弃，
+    // 结果两头都没连上（启动时常驻电脑离线即复现）。
+    const localBusy = () => projectSwitchingRef.current || runtimeStartingRef.current;
+    for (let waited = 0; localBusy() && waited < 15_000; waited += 200) {
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
-    if (projectSwitchingRef.current) return false;
+    if (localBusy()) return false;
     if (savingFile) {
       setBanner("请先完成或拒绝当前源码保存确认");
       return false;
