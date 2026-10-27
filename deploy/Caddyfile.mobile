@@ -1,0 +1,34 @@
+# Public 80/443 must be forwarded to this host's 18080/18443 respectively.
+# Run as the existing unprivileged user; keep certificate data outside the repo.
+{
+	admin off
+	http_port 18080
+	https_port 18443
+	auto_https disable_redirects
+}
+
+http://{$VORTOCODE_HTTPS_HOST} {
+	redir https://{$VORTOCODE_HTTPS_HOST}{uri} 308
+}
+
+https://{$VORTOCODE_HTTPS_HOST} {
+	header {
+		Cache-Control "no-store"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		Content-Security-Policy "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+		-Server
+	}
+
+	# Deliberately no reverse_proxy until the mobile backend is deployed and checked.
+	# This independent probe establishes TLS/ingress, not backend or account health.
+	handle /healthz {
+		header Content-Type application/json
+		respond `{"service":"vortocode-mobile-ingress","backend_ready":false}` 200
+	}
+
+	handle {
+		header Content-Type "text/plain; charset=utf-8"
+		respond "VortoCode 手机入口正在准备，请稍后再试。" 503
+	}
+}

@@ -72,6 +72,11 @@ _GENERAL_HTTP_PREFIXES = (
 # 只放行精确形状（不是 /api/cron 前缀）：助理「定时」页的启停与执行历史。启停只认已有作业名+版本、
 # 不收命令/提示词；手动触发 /run 与作业表全景仍需工作区（真机 2026-10-13：常驻助理上点历史 409）。
 _GENERAL_HTTP_PATTERNS = (
+    re.compile(r"/api/mobile/native/(authorize|exchange|bootstrap|snapshot|logout)"),
+    re.compile(r"/api/mobile/(browser/(status|bootstrap|snapshot|logout)|account/(login|callback))"),
+    re.compile(r"/api/mobile/account/(registration|connect)"),
+    re.compile(r"/api/mobile/(v1/(bootstrap|snapshot)|devices(?:/[a-f0-9]{32})?|pairing/(start|status|cancel)|pairing-window|pairings(?:/[a-f0-9]{32}/decision)?)"),
+    re.compile(r"/api/runtime-activity"),  # 只读进程活动计数，不授予任务、文件或命令能力。
     re.compile(r"/api/cron/[^/]+/(enabled|history)"),
 )
 _PROJECT_HTTP_PREFIXES = (
@@ -100,7 +105,7 @@ def http_workspace_requirement(path: str, scope: str | None = None) -> str | Non
     normalized = "/" + str(path or "").lstrip("/")
     if normalized == "/api/trust" and os.getenv("VORTOCODE_DESKTOP_SIDECAR") == "1":
         return None  # Desktop General can select read approval without gaining a project.
-    if normalized in ("/", "/ws", "/api/extensions/mcp", "/api/extensions/mcp/connect"):
+    if normalized in ("/", "/mobile", "/mobile/", "/mobile/manage", "/ws", "/api/extensions/mcp", "/api/extensions/mcp/connect"):
         return None
     if any(normalized == prefix.rstrip("/") or normalized.startswith(prefix)
            for prefix in _GENERAL_HTTP_PREFIXES):

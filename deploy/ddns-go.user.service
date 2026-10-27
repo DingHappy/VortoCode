@@ -1,0 +1,16 @@
+[Unit]
+Description=VortoCode independent DDNS updater
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/.config/vortocode-ddns
+UMask=0077
+ExecStart=%h/.local/bin/vortocode-ddns-go -l 127.0.0.1:9876 -c %h/.config/vortocode-ddns/config.yaml -f 300
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

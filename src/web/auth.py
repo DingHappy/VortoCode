@@ -43,7 +43,7 @@ SESSION_COOKIE = "vortocode_session"
 # 登录/状态端点（必须能在鉴权前访问，否则没法登录）。
 # 浏览器对话台与 PWA 已于 2026-10-17 退役；剩下的页面只有服务首页 / 与流水线审批台 /review。
 _EXEMPT_PREFIXES = ("/docs", "/redoc", "/openapi.json", "/static")
-_EXEMPT_EXACT = {"/", "/review",
+_EXEMPT_EXACT = {"/", "/review", "/mobile", "/mobile/", "/mobile/manage",
                  "/api/health", "/api/health/quick",
                  "/api/auth/login", "/api/auth/logout", "/api/auth/status",
                  # 小智语音端点用自己的专用令牌（routers/voice.py），不收也不放行主 API 令牌
@@ -84,10 +84,26 @@ def is_authed(request) -> bool:
 async def auth_middleware(request, call_next):
     """仅当配置了 VORTOCODE_API_TOKEN 时，对非豁免路径强制校验。"""
     path = request.url.path
-    exempt = path in _EXEMPT_EXACT or path.startswith(_EXEMPT_PREFIXES)
+    # Exact read-only mobile routes have their own device-token dependency.
+    # Never exempt device management or a broad /api/mobile prefix.
+    mobile_read = request.method == "GET" and path in {"/api/mobile/v1/bootstrap", "/api/mobile/v1/snapshot"}
+    # A bounded pairing window + per-request credential proof replace admin auth
+    # only for these POSTs. Management always remains administrator-only.
+    mobile_pairing = request.method == "POST" and path in {"/api/mobile/pairing/start", "/api/mobile/pairing/status", "/api/mobile/pairing/cancel"}
+    browser_get = request.method == "GET" and path in {"/api/mobile/browser/status", "/api/mobile/browser/bootstrap",
+                                                      "/api/mobile/browser/snapshot", "/api/mobile/account/callback"}
+    browser_post = request.method == "POST" and path in {"/api/mobile/account/login", "/api/mobile/browser/logout"}
+    native_read = request.method == "GET" and path in {"/api/mobile/native/authorize", "/api/mobile/native/bootstrap", "/api/mobile/native/snapshot"}
+    native_post = request.method == "POST" and path in {"/api/mobile/native/exchange", "/api/mobile/native/logout"}
+    exempt = mobile_read or mobile_pairing or browser_get or browser_post or native_read or native_post or path in _EXEMPT_EXACT or path.startswith(_EXEMPT_PREFIXES)
     if not exempt and not _token_ok(request):
-        return JSONResponse({"detail": "Unauthorized"}, status_code=401)
-    return await call_next(request)
+        response = JSONResponse({"detail": "Unauthorized"}, status_code=401)
+    else:
+        response = await call_next(request)
+    if path.startswith("/api/mobile/"):
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Pragma"] = "no-cache"
+    return response
 
 
 def require_shell() -> None:

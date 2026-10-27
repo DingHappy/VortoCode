@@ -1,0 +1,24 @@
+[Unit]
+Description=VortoCode mobile HTTPS ingress
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/vortocode-https/environment
+Environment=XDG_DATA_HOME=%h/.local/share/vortocode-https
+Environment=XDG_CONFIG_HOME=%h/.config/vortocode-https
+WorkingDirectory=%h/.config/vortocode-https
+UMask=0077
+ExecStartPre=%h/.local/bin/vortocode-caddy validate --config %h/.config/vortocode-https/Caddyfile --adapter caddyfile
+ExecStart=%h/.local/bin/vortocode-caddy run --config %h/.config/vortocode-https/Caddyfile --adapter caddyfile
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/vortocode-https %h/.config/vortocode-https
+
+[Install]
+WantedBy=default.target

@@ -6,6 +6,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useState } from "react";
 
 import { confirmAction } from "../../lib/confirm";
+import { restartSavedSetting } from "../../lib/settingsApply";
 import { errorText } from "../../lib/errorText";
 import { ACCOUNT_MANAGE_URL, MEMBER_KEY_SOURCE } from "../../lib/vortoAccount";
 import type { DesktopLlmProfileStatus, RelayLoginOutcome } from "../../types";
@@ -50,8 +51,7 @@ export function AccountPane({ profile, onProfile, onRestartRuntime, onOpenModelS
       setPassword("");
       setNeedsPlan(false);
       onProfile(outcome.status);
-      const restarted = await onRestartRuntime();
-      setNote(restarted ? `${outcome.message}，当前引擎已重启` : outcome.message);
+      setNote((await restartSavedSetting(onRestartRuntime, outcome.message)).message);
     } catch (error) {
       setNote(errorText(error, "登录失败"));
     } finally {
@@ -65,8 +65,7 @@ export function AccountPane({ profile, onProfile, onRestartRuntime, onOpenModelS
     setNote("");
     try {
       onProfile(await invoke<DesktopLlmProfileStatus>("relay_logout"));
-      await onRestartRuntime();
-      setNote("已退出登录");
+      setNote((await restartSavedSetting(onRestartRuntime, "已退出登录")).message);
     } catch (error) {
       setNote(errorText(error, "退出登录失败"));
     } finally {

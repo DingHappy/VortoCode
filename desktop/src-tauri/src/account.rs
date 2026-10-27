@@ -10,14 +10,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, State};
 
-use crate::platform_keychain;
+use crate::{keychain_service, platform_keychain};
 use crate::{DesktopAccount, DesktopLlmProfileStatus, DesktopLlmProfileStore};
 
 pub const DEFAULT_ACCOUNT_URL: &str = "https://account.vortotech.com";
 /// 模型配置里标记「这把 Key 是 VortoCode 会员给的」：退出账号时一并清掉。
 pub const MEMBER_KEY_SOURCE: &str = "vortocode_member";
 const CLIENT_ID: &str = "vortocode-desktop";
-const KEYCHAIN_SERVICE: &[u8] = b"com.vortocode.desktop.account";
+const KEYCHAIN_SERVICE: &str = "com.vortocode.desktop.account";
 const KEYCHAIN_ACCOUNT: &[u8] = b"session";
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
 // 访问令牌提前一分钟当作过期，免得请求在路上过期
@@ -107,9 +107,16 @@ pub fn account_base_url(override_value: Option<&str>) -> Result<String, String> 
         return Ok(DEFAULT_ACCOUNT_URL.to_string());
     };
     let url = url::Url::parse(raw).map_err(|_| "VORTOCODE_ACCOUNT_URL 不是合法地址".to_string())?;
-    let loopback = matches!(url.host_str(), Some("127.0.0.1") | Some("localhost"));
-    if url.scheme() == "https" || (url.scheme() == "http" && loopback) {
-        Ok(raw.trim_end_matches('/').to_string())
+    let loopback = matches!(
+        url.host_str(), Some("127.0.0.1") | Some("localhost") | Some("[::1]")
+    );
+    if url.host_str().is_some()
+        && url.username().is_empty() && url.password().is_none()
+        && url.path() == "/" && url.query().is_none() && url.fragment().is_none()
+        && url.port() != Some(0)
+        && (url.scheme() == "https" || (url.scheme() == "http" && loopback))
+    {
+        Ok(url.origin().ascii_serialization())
     } else {
         Err("VORTOCODE_ACCOUNT_URL 只能是 https 地址或本机 http 地址".into())
     }
@@ -278,6 +285,8 @@ fn platform() -> String {
 fn http_client(version: &str) -> Result<reqwest::Client, String> {
     reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
         .user_agent(format!("VortoCode-Desktop/{version}"))
         .build()
         .map_err(|error| error.to_string())
@@ -288,7 +297,7 @@ fn http(app: &AppHandle) -> Result<reqwest::Client, String> {
 }
 
 fn load_session() -> Result<Option<StoredSession>, String> {
-    let Some(raw) = platform_keychain::read(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)? else {
+    let Some(raw) = platform_keychain::read(keychain_service(KEYCHAIN_SERVICE).as_bytes(), KEYCHAIN_ACCOUNT)? else {
         return Ok(None);
     };
     Ok(serde_json::from_str(&raw).ok())
@@ -296,11 +305,11 @@ fn load_session() -> Result<Option<StoredSession>, String> {
 
 fn save_session(session: &StoredSession) -> Result<(), String> {
     let raw = serde_json::to_string(session).map_err(|error| error.to_string())?;
-    platform_keychain::write(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT, &raw)
+    platform_keychain::write(keychain_service(KEYCHAIN_SERVICE).as_bytes(), KEYCHAIN_ACCOUNT, &raw)
 }
 
 fn clear_session() -> Result<(), String> {
-    platform_keychain::delete(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT)
+    platform_keychain::delete(keychain_service(KEYCHAIN_SERVICE).as_bytes(), KEYCHAIN_ACCOUNT)
 }
 
 #[derive(Deserialize)]
@@ -399,6 +408,39 @@ async fn fetch_me(
             .unwrap_or_default()
             .to_string(),
     ))
+}
+
+/// Internal native proof for an explicitly confirmed resident association. Never serialized to JS.
+pub(super) struct RuntimeProof {
+    pub issuer: String,
+    pub access: String,
+    pub subject: String,
+}
+
+fn runtime_subject(body: &[u8]) -> Result<String, String> {
+    let body: serde_json::Value = serde_json::from_slice(body).map_err(|_| "账号响应无法核验")?;
+    body["user_id"].as_u64().filter(|id| *id > 0).map(|id| id.to_string())
+        .ok_or("账号服务缺少稳定身份，请更新账号服务".into())
+}
+
+pub(super) async fn runtime_proof(app: &AppHandle, state: &AccountState) -> Result<RuntimeProof, String> {
+    let base = base_url()?;
+    let mut slot = state.access.lock().await;
+    let mut session = load_session()?
+        .filter(|session| session.base_url == base)
+        .ok_or("请先登录当前 VortoCode 账号")?;
+    let access = ensure_access(app, &base, &mut slot, &mut session).await
+        .map_err(|_| "当前账号暂时无法核验，请重新检查登录状态")?;
+    let mut response = http(app)?.get(format!("{base}/api/me")).bearer_auth(&access).send().await
+        .map_err(|_| "当前账号暂时无法核验")?;
+    if !response.status().is_success() { return Err("当前账号登录已失效".into()); }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|_| "账号响应读取失败")? {
+        if bytes.len() + chunk.len() > 16_384 { return Err("账号响应超出限制".into()); }
+        bytes.extend_from_slice(&chunk);
+    }
+    let subject = runtime_subject(&bytes)?;
+    Ok(RuntimeProof { issuer: base, access, subject })
 }
 
 #[tauri::command]
@@ -749,6 +791,17 @@ mod tests {
         );
         assert!(account_base_url(Some("http://account.example.com")).is_err());
         assert!(account_base_url(Some("file:///etc/passwd")).is_err());
+        for raw in ["https://user:password@account.test", "https://account.test/prefix", "https://account.test/?secret=x", "https://account.test/#x", "https://account.test:0"] {
+            assert!(account_base_url(Some(raw)).is_err());
+        }
+    }
+
+    #[test]
+    fn runtime_identity_never_falls_back_to_email_or_non_integer_ids() {
+        assert_eq!(runtime_subject(br#"{"user_id":12}"#).unwrap(), "12");
+        for raw in [br#"{"email":"same@example.test"}"#.as_slice(), br#"{"user_id":true}"#, br#"{"user_id":0}"#, br#"{"user_id":"12"}"#] {
+            assert!(runtime_subject(raw).is_err());
+        }
     }
 
     #[test]

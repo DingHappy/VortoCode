@@ -166,6 +166,16 @@ def pending_confirmations(session: str = "") -> list[dict]:
     return output
 
 
+def runtime_session_activity_counts() -> dict[str, int]:
+    """Only count owned in-memory work; never expose prompts or confirmations."""
+    return {
+        "turns": _ACTORS.active_count(),
+        "queued_inputs": sum(len(session.get("prompt_queue") or [])
+                             for session in _SESSIONS.values() if isinstance(session, dict)) + len(_ACTORS.priority),
+        "confirmations": len(_PENDING_CONFIRMS),
+    }
+
+
 def _make_ws_confirm(websocket, q):
     """造一个 async confirm(message)->bool：发 agent_confirm 事件给前端、等其应答。
 

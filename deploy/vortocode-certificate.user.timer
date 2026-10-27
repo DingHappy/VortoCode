@@ -1,0 +1,11 @@
+[Unit]
+Description=Check VortoCode mobile certificate twice daily
+
+[Timer]
+OnCalendar=*-*-* 03,15:00:00
+RandomizedDelaySec=30min
+Persistent=true
+Unit=vortocode-certificate.service
+
+[Install]
+WantedBy=timers.target

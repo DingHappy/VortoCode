@@ -1,0 +1,594 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		024E6373151424E70FD830E5 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 3EB792A0C534885E3B055106 /* PrivacyInfo.xcprivacy */; };
+		1626BBC0485B564C99C6F62A /* AssistantServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2249537C527A9D101C9749A3 /* AssistantServices.swift */; };
+		16B67161C291FF59CF511F97 /* NativeFlowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B412F3F554FC472C1EDED98F /* NativeFlowUITests.swift */; };
+		223A5F3691C2D4300A3D8F67 /* VortoCodeMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4075440C0A6B411FA0DE3BBA /* VortoCodeMobileApp.swift */; };
+		2BB80E7536A9029461C3F90D /* NativeAuthentication.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B8A7F5E95B4F1F07C5AFF93 /* NativeAuthentication.swift */; };
+		43A52D33DA758DA64FEED9FF /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCA5CB1939BF36840106DF36 /* HomeView.swift */; };
+		5024BC2D5CCE34DEB1008E89 /* AssistantSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = E59862E33085E5E53BBF5B0A /* AssistantSession.swift */; };
+		53EB19FD43C03A0EC7E10893 /* GoalViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A86C0108C1BDF94ED5657255 /* GoalViews.swift */; };
+		7799569DE44BCD5A86C8EAC5 /* EntryUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76E92810A89CA01863E62F84 /* EntryUITests.swift */; };
+		8E4CE712F816EE6816CD7D24 /* MobileCore in Frameworks */ = {isa = PBXBuildFile; productRef = CF354889F2FC92AA0AE9EF7D /* MobileCore */; };
+		94C12EA28AF9BF52B67ED44F /* ConnectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B89328018B06374EAEC8B217 /* ConnectionView.swift */; };
+		B1753AC012F712ABF4C8340D /* AssistantSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D4EA19EA103EB5031114A46 /* AssistantSessionTests.swift */; };
+		D6CAB7BFB8CCC5F29C98B6D7 /* SessionVault.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BF655D769150ADBD882F7C8 /* SessionVault.swift */; };
+		E3264189BCA4A4673CFDED02 /* EntryPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F795C627616253A1BF93353 /* EntryPolicy.swift */; };
+		E466647D442B2600B9AE6285 /* AssistantTabs.swift in Sources */ = {isa = PBXBuildFile; fileRef = 827C48F7E3DD70604AC2DCA9 /* AssistantTabs.swift */; };
+		E93746F818C72585711F409A /* PendingLogoutView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 704EF6472F7F4D23B05FBC47 /* PendingLogoutView.swift */; };
+		F547232163E02F127BB9B4E7 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 2149DC03112E2DF03E1EDD0D /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		37B7166E43AA0E74956F9A29 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D36F6BB1CC451EB23072AE70 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 55DFE418EE0F6CBBB100CB6B;
+			remoteInfo = VortoCodeMobile;
+		};
+		BE446DC309A5BEB4C6AE4841 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = D36F6BB1CC451EB23072AE70 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 55DFE418EE0F6CBBB100CB6B;
+			remoteInfo = VortoCodeMobile;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0D4EA19EA103EB5031114A46 /* AssistantSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantSessionTests.swift; sourceTree = "<group>"; };
+		1B8A7F5E95B4F1F07C5AFF93 /* NativeAuthentication.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeAuthentication.swift; sourceTree = "<group>"; };
+		2149DC03112E2DF03E1EDD0D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		2249537C527A9D101C9749A3 /* AssistantServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantServices.swift; sourceTree = "<group>"; };
+		2BD0625BA88673B05964D7FE /* VortoCodeMobileTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = VortoCodeMobileTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		2BF655D769150ADBD882F7C8 /* SessionVault.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionVault.swift; sourceTree = "<group>"; };
+		3EB792A0C534885E3B055106 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		4075440C0A6B411FA0DE3BBA /* VortoCodeMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VortoCodeMobileApp.swift; sourceTree = "<group>"; };
+		481B5B0A02A7DCF3FC4FF0BD /* VortoCodeMobileUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = VortoCodeMobileUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		5F795C627616253A1BF93353 /* EntryPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EntryPolicy.swift; sourceTree = "<group>"; };
+		6F350C3C9645BBF1EAB61812 /* MobileCore */ = {isa = PBXFileReference; lastKnownFileType = folder; name = MobileCore; path = Packages/MobileCore; sourceTree = SOURCE_ROOT; };
+		704EF6472F7F4D23B05FBC47 /* PendingLogoutView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PendingLogoutView.swift; sourceTree = "<group>"; };
+		76E92810A89CA01863E62F84 /* EntryUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EntryUITests.swift; sourceTree = "<group>"; };
+		827C48F7E3DD70604AC2DCA9 /* AssistantTabs.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantTabs.swift; sourceTree = "<group>"; };
+		A86C0108C1BDF94ED5657255 /* GoalViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoalViews.swift; sourceTree = "<group>"; };
+		B412F3F554FC472C1EDED98F /* NativeFlowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeFlowUITests.swift; sourceTree = "<group>"; };
+		B89328018B06374EAEC8B217 /* ConnectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionView.swift; sourceTree = "<group>"; };
+		DCA5CB1939BF36840106DF36 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		DEDEE7D7C370373ABF11A706 /* VortoCodeMobile.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = VortoCodeMobile.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E59862E33085E5E53BBF5B0A /* AssistantSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AssistantSession.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		321D5EEF95DC104A5E79CC7B /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				8E4CE712F816EE6816CD7D24 /* MobileCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0C3C8466747B2868E8BDA79B = {
+			isa = PBXGroup;
+			children = (
+				4102BBBD32CC5C9983D86C4E /* Packages */,
+				50582D4C217D6F27F59EEFA8 /* VortoCodeMobile */,
+				AAC53DF7DCB9034F7C186057 /* VortoCodeMobileTests */,
+				1A197C96448861968C32FF79 /* VortoCodeMobileUITests */,
+				C43FEEED5FCA41ED0F36B896 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		1A197C96448861968C32FF79 /* VortoCodeMobileUITests */ = {
+			isa = PBXGroup;
+			children = (
+				76E92810A89CA01863E62F84 /* EntryUITests.swift */,
+				B412F3F554FC472C1EDED98F /* NativeFlowUITests.swift */,
+			);
+			path = VortoCodeMobileUITests;
+			sourceTree = "<group>";
+		};
+		4102BBBD32CC5C9983D86C4E /* Packages */ = {
+			isa = PBXGroup;
+			children = (
+				6F350C3C9645BBF1EAB61812 /* MobileCore */,
+			);
+			path = Packages;
+			sourceTree = "<group>";
+		};
+		50582D4C217D6F27F59EEFA8 /* VortoCodeMobile */ = {
+			isa = PBXGroup;
+			children = (
+				2149DC03112E2DF03E1EDD0D /* Assets.xcassets */,
+				2249537C527A9D101C9749A3 /* AssistantServices.swift */,
+				E59862E33085E5E53BBF5B0A /* AssistantSession.swift */,
+				827C48F7E3DD70604AC2DCA9 /* AssistantTabs.swift */,
+				B89328018B06374EAEC8B217 /* ConnectionView.swift */,
+				5F795C627616253A1BF93353 /* EntryPolicy.swift */,
+				A86C0108C1BDF94ED5657255 /* GoalViews.swift */,
+				DCA5CB1939BF36840106DF36 /* HomeView.swift */,
+				1B8A7F5E95B4F1F07C5AFF93 /* NativeAuthentication.swift */,
+				704EF6472F7F4D23B05FBC47 /* PendingLogoutView.swift */,
+				3EB792A0C534885E3B055106 /* PrivacyInfo.xcprivacy */,
+				2BF655D769150ADBD882F7C8 /* SessionVault.swift */,
+				4075440C0A6B411FA0DE3BBA /* VortoCodeMobileApp.swift */,
+			);
+			path = VortoCodeMobile;
+			sourceTree = "<group>";
+		};
+		AAC53DF7DCB9034F7C186057 /* VortoCodeMobileTests */ = {
+			isa = PBXGroup;
+			children = (
+				0D4EA19EA103EB5031114A46 /* AssistantSessionTests.swift */,
+			);
+			path = VortoCodeMobileTests;
+			sourceTree = "<group>";
+		};
+		C43FEEED5FCA41ED0F36B896 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				DEDEE7D7C370373ABF11A706 /* VortoCodeMobile.app */,
+				2BD0625BA88673B05964D7FE /* VortoCodeMobileTests.xctest */,
+				481B5B0A02A7DCF3FC4FF0BD /* VortoCodeMobileUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		404C3EEBFA4F16233983E17D /* VortoCodeMobileTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F6CF00844056571C2B877673 /* Build configuration list for PBXNativeTarget "VortoCodeMobileTests" */;
+			buildPhases = (
+				CCFE3BD9311D47A2764077A0 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				222804FE931E9CD1A7C59748 /* PBXTargetDependency */,
+			);
+			name = VortoCodeMobileTests;
+			packageProductDependencies = (
+			);
+			productName = VortoCodeMobileTests;
+			productReference = 2BD0625BA88673B05964D7FE /* VortoCodeMobileTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		55DFE418EE0F6CBBB100CB6B /* VortoCodeMobile */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 564752045F1C264530E7E049 /* Build configuration list for PBXNativeTarget "VortoCodeMobile" */;
+			buildPhases = (
+				F51C7849F715AC7ED0A6D880 /* Sources */,
+				E367BE3C6979AE4E061766E1 /* Resources */,
+				321D5EEF95DC104A5E79CC7B /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = VortoCodeMobile;
+			packageProductDependencies = (
+				CF354889F2FC92AA0AE9EF7D /* MobileCore */,
+			);
+			productName = VortoCodeMobile;
+			productReference = DEDEE7D7C370373ABF11A706 /* VortoCodeMobile.app */;
+			productType = "com.apple.product-type.application";
+		};
+		F136E98EC8F001F0849F7FB0 /* VortoCodeMobileUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = D32B1CDB450F867FF2E721DB /* Build configuration list for PBXNativeTarget "VortoCodeMobileUITests" */;
+			buildPhases = (
+				A68C995987E5E76BC30DD8DF /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				965DFE2B87C7C08EF9FBA3F5 /* PBXTargetDependency */,
+			);
+			name = VortoCodeMobileUITests;
+			packageProductDependencies = (
+			);
+			productName = VortoCodeMobileUITests;
+			productReference = 481B5B0A02A7DCF3FC4FF0BD /* VortoCodeMobileUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		D36F6BB1CC451EB23072AE70 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					55DFE418EE0F6CBBB100CB6B = {
+						ProvisioningStyle = Automatic;
+					};
+					F136E98EC8F001F0849F7FB0 = {
+						TestTargetID = 55DFE418EE0F6CBBB100CB6B;
+					};
+				};
+			};
+			buildConfigurationList = FF2CF356A4887ACACFFA91E9 /* Build configuration list for PBXProject "VortoCodeMobile" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 0C3C8466747B2868E8BDA79B;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				1F8E47A51AB26585496339AE /* XCLocalSwiftPackageReference "Packages/MobileCore" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = C43FEEED5FCA41ED0F36B896 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				55DFE418EE0F6CBBB100CB6B /* VortoCodeMobile */,
+				404C3EEBFA4F16233983E17D /* VortoCodeMobileTests */,
+				F136E98EC8F001F0849F7FB0 /* VortoCodeMobileUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		E367BE3C6979AE4E061766E1 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F547232163E02F127BB9B4E7 /* Assets.xcassets in Resources */,
+				024E6373151424E70FD830E5 /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A68C995987E5E76BC30DD8DF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7799569DE44BCD5A86C8EAC5 /* EntryUITests.swift in Sources */,
+				16B67161C291FF59CF511F97 /* NativeFlowUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		CCFE3BD9311D47A2764077A0 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B1753AC012F712ABF4C8340D /* AssistantSessionTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F51C7849F715AC7ED0A6D880 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1626BBC0485B564C99C6F62A /* AssistantServices.swift in Sources */,
+				5024BC2D5CCE34DEB1008E89 /* AssistantSession.swift in Sources */,
+				E466647D442B2600B9AE6285 /* AssistantTabs.swift in Sources */,
+				94C12EA28AF9BF52B67ED44F /* ConnectionView.swift in Sources */,
+				E3264189BCA4A4673CFDED02 /* EntryPolicy.swift in Sources */,
+				53EB19FD43C03A0EC7E10893 /* GoalViews.swift in Sources */,
+				43A52D33DA758DA64FEED9FF /* HomeView.swift in Sources */,
+				2BB80E7536A9029461C3F90D /* NativeAuthentication.swift in Sources */,
+				E93746F818C72585711F409A /* PendingLogoutView.swift in Sources */,
+				D6CAB7BFB8CCC5F29C98B6D7 /* SessionVault.swift in Sources */,
+				223A5F3691C2D4300A3D8F67 /* VortoCodeMobileApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		222804FE931E9CD1A7C59748 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 55DFE418EE0F6CBBB100CB6B /* VortoCodeMobile */;
+			targetProxy = BE446DC309A5BEB4C6AE4841 /* PBXContainerItemProxy */;
+		};
+		965DFE2B87C7C08EF9FBA3F5 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 55DFE418EE0F6CBBB100CB6B /* VortoCodeMobile */;
+			targetProxy = 37B7166E43AA0E74956F9A29 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		13AA406CCF8120B578D01C20 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.vortocode.mobile.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/VortoCodeMobile.app/VortoCodeMobile";
+			};
+			name = Release;
+		};
+		1A9FC9A19E9AF31017DEC678 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = VortoCodeMobile/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.vortocode.mobile;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		6BE3F3773739EAB0DE96D787 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.2.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		938D0258FD43D46EE774E4AC /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.2.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		E12BCE12F3A2F08E26C24869 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.vortocode.mobile.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/VortoCodeMobile.app/VortoCodeMobile";
+			};
+			name = Debug;
+		};
+		F51B4FDC33BEB8AB1EC42D95 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.vortocode.mobile.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = VortoCodeMobile;
+			};
+			name = Debug;
+		};
+		F61A491BF41D9470D80EA967 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.vortocode.mobile.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = VortoCodeMobile;
+			};
+			name = Release;
+		};
+		FA173D0965C2F504EB781740 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = VortoCodeMobile/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.vortocode.mobile;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		564752045F1C264530E7E049 /* Build configuration list for PBXNativeTarget "VortoCodeMobile" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				FA173D0965C2F504EB781740 /* Debug */,
+				1A9FC9A19E9AF31017DEC678 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		D32B1CDB450F867FF2E721DB /* Build configuration list for PBXNativeTarget "VortoCodeMobileUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F51B4FDC33BEB8AB1EC42D95 /* Debug */,
+				F61A491BF41D9470D80EA967 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		F6CF00844056571C2B877673 /* Build configuration list for PBXNativeTarget "VortoCodeMobileTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E12BCE12F3A2F08E26C24869 /* Debug */,
+				13AA406CCF8120B578D01C20 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		FF2CF356A4887ACACFFA91E9 /* Build configuration list for PBXProject "VortoCodeMobile" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6BE3F3773739EAB0DE96D787 /* Debug */,
+				938D0258FD43D46EE774E4AC /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		1F8E47A51AB26585496339AE /* XCLocalSwiftPackageReference "Packages/MobileCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = Packages/MobileCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		CF354889F2FC92AA0AE9EF7D /* MobileCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MobileCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = D36F6BB1CC451EB23072AE70 /* Project object */;
+}

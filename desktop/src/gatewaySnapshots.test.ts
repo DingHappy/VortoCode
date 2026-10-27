@@ -18,6 +18,20 @@ const deferred = <T,>() => {
 beforeEach(() => { vi.resetAllMocks(); vi.useFakeTimers(); });
 afterEach(() => vi.useRealTimers());
 
+it("does not coalesce lifecycle preflight reads and rejects late replies after the deadline", async () => {
+  const slow = deferred<Response>();
+  vi.mocked(tauriFetch).mockReturnValueOnce(slow.promise).mockResolvedValueOnce(reply({ ready: true }));
+  const client = new GatewayClient(settings);
+  const first = client.getRuntimeActivity();
+  const rejected = expect(first).rejects.toThrow("超时");
+  expect(await client.getRuntimeActivity()).toEqual({ ready: true });
+  expect(tauriFetch).toHaveBeenCalledTimes(2);
+  await vi.advanceTimersByTimeAsync(5000);
+  slow.resolve(reply({ ready: true }));
+  await rejected;
+  expect(vi.getTimerCount()).toBe(0);
+});
+
 it("coalesces only concurrent identical snapshots and fetches fresh data on the next read", async () => {
   const slow = deferred<Response>();
   vi.mocked(tauriFetch).mockReturnValueOnce(slow.promise).mockResolvedValueOnce(reply({ sessions: [] }));

@@ -61,6 +61,7 @@ async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
     im_adapter = None
     run_manager = None
     terminal_manager = None
+    receipt_started = False
     try:
         ledger = getattr(runner, "ledger", None)
         if ledger is not None and Path(ledger.repo_root).resolve() != Path(root).resolve():
@@ -99,8 +100,14 @@ async def runtime_lifespan(root, *, runner, scheduler, audit_dependencies,
             bridge, im_adapter = im_service.start_embedded(
                 im_channel, root, runner=runner, register_worker=register_im_worker)
             im_task = asyncio.create_task(bridge.run())
+        from src.gateway.configuration_receipt import begin_configuration_receipt
+        begin_configuration_receipt()
+        receipt_started = True
         yield
     finally:
+        from src.gateway.configuration_receipt import end_configuration_receipt
+        if receipt_started:
+            end_configuration_receipt()
         # Every cleanup runs even if another manager raises during shutdown.
         async with AsyncExitStack() as cleanup:
             cleanup.callback(lease.release)
