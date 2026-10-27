@@ -424,11 +424,15 @@ pub(crate) async fn remote_http_request(
             .header("content-type", "application/json")
             .body(payload);
     }
-    let mut response = request
-        .send()
-        .await
-        .map_err(|error| format!("远程请求失败：{error}"))?;
+    let mut response = request.send().await.map_err(|error| {
+        // reqwest 的错误串带 URL、不带请求头；写日志前仍统一脱敏
+        diag("warn", "remote.http_failed", &format!("{error}"));
+        format!("远程请求失败：{error}")
+    })?;
     let status = response.status();
+    if status.is_server_error() {
+        diag("warn", "remote.http_status", &format!("HTTP {}", status.as_u16()));
+    }
     // 响应体封顶：只有 30s 总 deadline 兜着的话，内网千兆下一个被攻陷/发疯的已注册 server
     // 就能把数 GB 灌进内存（再经 IPC 序列化成 JSON 还要放大几倍）→ 单请求打爆 Desktop。
     let mut body = Vec::new();
@@ -567,8 +571,15 @@ pub(crate) async fn remote_reachable(app: AppHandle, project_id: String) -> Resu
     )
     .await
     {
-        Err(_) => Err("连接超时：常驻电脑可能关机或网络不通".into()),
-        Ok(Err(error)) => Err(network_failure_reason(&error)),
+        Err(_) => {
+            diag("warn", "remote.probe_failed", "连接超时");
+            Err("连接超时：常驻电脑可能关机或网络不通".into())
+        }
+        Ok(Err(error)) => {
+            let reason = network_failure_reason(&error);
+            diag("warn", "remote.probe_failed", &format!("os error {:?}：{reason}", error.raw_os_error()));
+            Err(reason)
+        }
         Ok(Ok(_)) => Ok(()),
     }
 }
@@ -661,10 +672,15 @@ pub(crate) async fn remote_ws_connect(
         tokio_tungstenite::connect_async_with_config(request, Some(config), false),
     )
     .await
-    .map_err(|_| "远程 WebSocket 连接超时".to_string())?;
+    .map_err(|_| {
+        diag("warn", "remote.ws.connect_timeout", "远程 WebSocket 连接超时");
+        "远程 WebSocket 连接超时".to_string()
+    })?;
     let (stream, _response) = connected.map_err(|error| {
-        eprintln!("[remote-ws] connect failed: {error}");
-        remote_ws_failure_reason(&error)
+        // 只记粗粒度原因：底层错误串可能带头值原文（含 token）
+        let reason = remote_ws_failure_reason(&error);
+        diag("warn", "remote.ws.connect_failed", &reason);
+        reason
     })?;
     let (mut sink, mut source) = stream.split();
 

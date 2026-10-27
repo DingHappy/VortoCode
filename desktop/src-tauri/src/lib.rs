@@ -25,9 +25,11 @@ mod workspace_files;
 mod llm_profile;
 mod llm_services;
 mod updater;
+mod diagnostics;
 use llm_profile::*;
 use llm_services::*;
 use updater::*;
+use diagnostics::*;
 use gateway_process::*;
 use remote::*;
 use resident_desktop::*;
@@ -1477,7 +1479,7 @@ fn present_main_window(app: &AppHandle, explicit: bool) {
             return;
         }
         let Some(window) = handle.get_webview_window("main") else {
-            eprintln!("VortoCode Desktop 主窗口不存在，无法切换到前台");
+            diag("warn", "window.missing", "主窗口不存在，无法切换到前台");
             return;
         };
         if !explicit && window.is_minimized().unwrap_or(true) {
@@ -1493,10 +1495,10 @@ fn present_main_window(app: &AppHandle, explicit: bool) {
             Ok(())
         })();
         if let Err(error) = result {
-            eprintln!("VortoCode Desktop 切换到前台失败：{error}");
+            diag("warn", "window.focus_failed", &format!("切换到前台失败：{error}"));
         }
     }) {
-        eprintln!("VortoCode Desktop 窗口呈现调度失败：{error}");
+        diag("warn", "window.present_failed", &format!("窗口呈现调度失败：{error}"));
     }
 }
 
@@ -1517,7 +1519,7 @@ pub fn run() {
                     state.set_user_hidden(true);
                     if let Err(error) = window.hide() {
                         state.set_user_hidden(false);
-                        eprintln!("VortoCode Desktop 隐藏失败，窗口保持打开：{error}");
+                        diag("warn", "window.hide_failed", &format!("隐藏失败，窗口保持打开：{error}"));
                     }
                 }
             }
@@ -1635,6 +1637,8 @@ pub fn run() {
             remote_http_request,
             remote_ws_connect,
             remote_reachable,
+            diag_log,
+            reveal_diagnostics_log,
             remote_ws_send,
             remote_ws_close,
             pick_desktop_project,
