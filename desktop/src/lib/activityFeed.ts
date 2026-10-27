@@ -198,11 +198,12 @@ export function dispatchFeedItem(item: AssistantDispatch): FeedItem | null {
 /** 只投影已有动作；查看记录不会批准、发送或停止 Codex。 */
 export function codexActionFeedItem(action: CodexAction): FeedItem | null {
   if (action.status === "cancelled") return null;
-  const uncertain = action.status === "approved" || action.status === "sending";
+  const uncertain = action.status === "approved" || action.status === "sending" || action.status === "unknown";
   return {
     id: `codex_action:${action.id}`, kind: "code", codexActionId: action.id,
     title: `${action.kind === "interrupt" ? "建议叫停" : "拟发消息"}：${action.thread_name}`,
-    summary: uncertain ? "发送结果尚未核实，请查看原动作；不要重复发送"
+    summary: action.status === "unknown" ? "没收到回执，可能已发出也可能没有；以 Codex 会话为准，不要重复发送"
+      : uncertain ? "发送结果尚未核实，请查看原动作；不要重复发送"
       : action.status === "failed" ? firstSentence(action.error, MAX_SUMMARY) || "未能确认送达，请查看原动作"
       : action.status === "expired" ? "动作已经过时，没有发送"
       : action.status === "sent" ? "请求已获受理，不代表 Codex 已完成任务"
@@ -210,7 +211,7 @@ export function codexActionFeedItem(action: CodexAction): FeedItem | null {
       : "动作状态待核对，请查看原动作",
     status: action.status === "proposed" || uncertain ? "waiting"
       : action.status === "failed" ? "failed" : action.status === "sent" ? "done" : "stopped",
-    statusLabel: uncertain ? "发送结果待核对" : action.status === "proposed" ? "待审阅批准"
+    statusLabel: action.status === "unknown" ? "结果无法确认" : uncertain ? "发送结果待核对" : action.status === "proposed" ? "待审阅批准"
       : action.status === "sent" ? "请求已受理" : action.status === "expired" ? "已过时"
       : action.status === "failed" ? "未确认送达" : "状态待核对",
     sourceLabel: "Codex 动作", at: action.updated_at || action.created_at,

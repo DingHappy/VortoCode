@@ -180,6 +180,12 @@ it.each(["approved", "sending"] as const)("%s 动作保留待核对入口，不�
   expect(item.summary).toContain("不要重复发送");
 });
 
+it("没收到回执的动作显示结果无法确认，不当成功也不当失败", () => {
+  const item = codexActionFeedItem(action({ status: "unknown" }))!;
+  expect(item).toMatchObject({ status: "waiting", statusLabel: "结果无法确认" });
+  expect(item.summary).toContain("以 Codex 会话为准");
+});
+
 it("受理、失败、过时分别显示；撤回动作不计入动态，未知状态不冒充完成", () => {
   expect(codexActionFeedItem(action({ status: "sent" }))).toMatchObject({ statusLabel: "请求已受理", summary: "请求已获受理，不代表 Codex 已完成任务" });
   expect(codexActionFeedItem(action({ status: "failed", error: "连接中断" }))).toMatchObject({ status: "failed", summary: "连接中断" });

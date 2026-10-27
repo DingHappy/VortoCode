@@ -360,3 +360,129 @@ async def test_observer_explicit_user_message_uses_live_turn_without_replaying_o
 def test_interrupt_receipt_does_not_claim_the_turn_has_finished():
     notice = watch.action_result_notice({"status": "sent", "kind": "interrupt", "thread_name": "coding"})
     assert "提交叫停请求" in notice and "最新状态" in notice and "已叫停" not in notice
+
+
+def _claimed(root):
+    _seed(root)
+    action = watch.propose_action(root, thread="改登录超时", kind="message", text="继续", session="sid")
+    watch.decide_action(root, action["id"], True)
+    watch.claim_action(root, action["id"])
+    return action["id"]
+
+
+def test_claimed_action_without_receipt_becomes_unknown_not_failed_or_resent(tmp_path):
+    from src.scheduling import codex_supervisor as sup
+    root = str(tmp_path)
+    action_id = _claimed(root)
+    claimed_at = watch._now()
+    assert watch.settle_unconfirmed_actions(root, claimed_at + timedelta(minutes=5)) == []   # 还在正常回执时间内
+    assert sup._pending_action(root, "th1")
+    settled = watch.settle_unconfirmed_actions(root, claimed_at + watch.SENDING_TIMEOUT + timedelta(minutes=1))
+    assert [item["id"] for item in settled] == [action_id]
+    action = watch.load_actions(root)[0]
+    assert action["status"] == "unknown" and "可能已经发出，也可能没有" in action["error"]
+    assert "不会自动重发" in watch.action_result_notice(action)
+    assert not sup._pending_action(root, "th1")            # 不再把这个会话永远挡在「还有动作没办完」
+    with pytest.raises(watch.CodexActionError, match="无法确认"):
+        watch.claim_action(root, action_id)                # 不会被重新认领、重发
+    assert watch.settle_unconfirmed_actions(root, claimed_at + timedelta(hours=1)) == []      # 只标一次
+
+
+def test_late_receipt_overrides_unknown(tmp_path):
+    root = str(tmp_path)
+    action_id = _claimed(root)
+    watch.settle_unconfirmed_actions(root, watch._now() + watch.SENDING_TIMEOUT)
+    assert watch.finish_action(root, action_id, ok=True)["status"] == "sent"
+
+
+def test_report_and_supervisor_both_surface_unknown_outcomes(tmp_path):
+    import asyncio
+    from src.scheduling import codex_supervisor as sup
+    root = str(tmp_path)
+    _claimed(root)
+    later = watch._now() + watch.SENDING_TIMEOUT
+    notices = watch.record_report(root, {"threads": [_thread(turn=_turn(tid="t9"))]}, now=later)
+    assert any("没收到回执" in text for text in notices)
+
+    root2 = str(tmp_path / "offline")
+    _claimed(root2)
+    sent = []
+
+    async def notify(text):
+        sent.append(text)
+        return True
+    asyncio.run(sup.supervise_once(root2, watch._now() + watch.SENDING_TIMEOUT, notify=notify))
+    assert len(sent) == 1 and "没收到回执" in sent[0]       # Mac 不再报到时监管巡检也会落定
+
+
+@pytest.mark.asyncio
+async def test_observer_keeps_unreported_receipts_and_never_resends(monkeypatch):
+    monkeypatch.setattr(observer, "_UNREPORTED", {})
+    calls = []
+    online = {"value": False}
+
+    async def resident(method, path, payload=None):
+        calls.append((method, path, payload))
+        if path.endswith("/result") and not online["value"]:
+            raise OSError("network down")
+        if path.startswith("/api/codex/actions?"):
+            return {"actions": [{"id": "cdx-a", "kind": "message", "thread_id": "th1", "text": "继续"}]
+                    if not online["value"] else []}
+        return {}
+    codex = _FakeCodex()
+    threads = [_thread(status="idle", turn=_turn(status="completed"))]
+    with pytest.raises(OSError):
+        await observer.run_approved_actions(codex, threads, resident=resident)
+    assert observer._UNREPORTED == {"cdx-a": {"ok": True, "error": ""}}
+    sends = sum(1 for call in codex.calls if call[0] == "turn/start")
+    online["value"] = True
+    await observer.run_approved_actions(codex, threads, resident=resident)
+    assert observer._UNREPORTED == {}
+    assert [call[1] for call in calls if call[1].endswith("/result")] == ["/api/codex/actions/cdx-a/result"] * 2
+    assert sum(1 for call in codex.calls if call[0] == "turn/start") == sends == 1   # 只补报结果，没重发
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,kept", [(409, False), (404, False), (500, True)])
+async def test_observer_drops_receipts_only_when_resident_rejects_them(monkeypatch, status, kept):
+    monkeypatch.setattr(observer, "_UNREPORTED", {"cdx-a": {"ok": True, "error": ""}})
+
+    async def resident(method, path, payload=None):
+        if path.endswith("/result"):
+            raise observer.ResidentHTTPError(status)
+        return {"actions": []}
+    if kept:
+        with pytest.raises(observer.ResidentHTTPError):
+            await observer.run_approved_actions(_FakeCodex(), [], resident=resident)
+    else:
+        await observer.run_approved_actions(_FakeCodex(), [], resident=resident)
+    assert ("cdx-a" in observer._UNREPORTED) is kept
+
+
+@pytest.mark.asyncio
+async def test_listing_actions_settles_stale_claims_while_the_mac_is_offline(tmp_path, monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+    import src.scheduling.notices as notices
+    from src.web.routers import codex
+    root = str(tmp_path)
+    _claimed(root)
+    items = watch.load_actions(root)
+    items[0]["updated_at"] = (watch._now() - watch.SENDING_TIMEOUT).isoformat()      # 认领后 Mac 就没了消息
+    watch._save_actions(root, items)
+    sent = []
+
+    def fake_notifier(_root, **_kw):
+        async def notify(text, confirm_id=""):
+            sent.append(text)
+            return True
+        return notify
+    monkeypatch.setattr(notices, "make_notifier", fake_notifier)
+    monkeypatch.setattr(codex, "_general_root", lambda: root)
+    app = FastAPI()
+    app.include_router(codex.router)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        first = (await client.get("/api/codex/actions")).json()["actions"]
+        again = (await client.get("/api/codex/actions")).json()["actions"]
+    assert first[0]["status"] == again[0]["status"] == "unknown"
+    assert len(sent) == 1 and "没收到回执" in sent[0]

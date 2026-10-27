@@ -476,8 +476,30 @@ async def execute_action(client: CodexClient, action: dict, threads: List[dict])
         return False, str(error)[:200]
 
 
+# 已经交给 Codex、结果却没报上去的回执（常驻助理连不上）：下一轮先补报。只补报结果，绝不重发指令；
+# 观察员进程重启就丢了，常驻助理那边超时后会标成「结果无法确认」。
+_UNREPORTED: dict = {}
+
+
+async def _report_result(resident, action_id: str, result: dict) -> None:
+    try:
+        await resident("POST", f"/api/codex/actions/{action_id}/result", result)
+    except ResidentHTTPError as error:
+        if error.status in (404, 409):        # 对方明确拒收（已有定论或已清理）：不再补报
+            _UNREPORTED.pop(action_id, None)
+            return
+        _UNREPORTED[action_id] = result
+        raise
+    except Exception:  # noqa: BLE001 —— 网络断了：留着下一轮补报
+        _UNREPORTED[action_id] = result
+        raise
+    _UNREPORTED.pop(action_id, None)
+
+
 async def run_approved_actions(client: CodexClient, threads: List[dict], *, resident=resident_call) -> int:
     """取你批准过的动作 → 先认领（防止重复发）→ 交给 Codex → 报结果。返回处理了几条。"""
+    for action_id, result in list(_UNREPORTED.items()):
+        await _report_result(resident, action_id, result)
     data = await resident("GET", "/api/codex/actions?status=approved")
     done = 0
     for action in (data or {}).get("actions") or []:
@@ -489,7 +511,7 @@ async def run_approved_actions(client: CodexClient, threads: List[dict], *, resi
         except Exception:  # noqa: BLE001 —— 别处已认领或状态变了：跳过
             continue
         ok, error = await execute_action(client, action, threads)
-        await resident("POST", f"/api/codex/actions/{action_id}/result", {"ok": ok, "error": error})
+        await _report_result(resident, action_id, {"ok": ok, "error": error})
         done += 1
     return done
 
