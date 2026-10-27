@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { APP_BINARY, MANUAL_CHECKS, RUNTIME_BINARY, parseProcesses, summarize } from "./check-installed.mjs";
+import { APP_BINARY, MANUAL_CHECKS, RUNTIME_BINARY, findResidentHost, parseLocalNetworkBlocks, parseProcesses, summarize } from "./check-installed.mjs";
 
 test("finds the installed app, its runtimes with ports, and stray runtimes from elsewhere", () => {
   const ps = [
@@ -30,4 +30,25 @@ test("warnings do not fail the check, failures do", () => {
 
 test("manual checklist stays short", () => {
   assert.ok(MANUAL_CHECKS.length <= 5);
+});
+
+test("finds the registered resident computer and ignores plain remote projects", () => {
+  const registry = { projects: [
+    { kind: "remote", repoRoot: "/srv/app", name: "项目", baseUrl: "http://10.0.0.2:8082" },
+    { kind: "remote", repoRoot: "@assistant", name: "常驻电脑", baseUrl: "http://10.0.0.2:8081" },
+  ] };
+  assert.deepEqual(findResidentHost(registry), { name: "常驻电脑", baseUrl: "http://10.0.0.2:8081" });
+  assert.equal(findResidentHost({ projects: [registry.projects[0]] }), null);
+  assert.equal(findResidentHost(null), null);
+});
+
+test("counts local network blocks from the unified log", () => {
+  const log = [
+    "Timestamp               Ty Process[PID:TID]",
+    "2026-10-27 09:44:50.797 I  UserEventAgent[538:1] [com.apple.networkextension:] Got local network blocked notification: pid: 18894, uuid: 2455E26F, bundle_id: (null)",
+    "2026-10-27 09:44:50.797 I  UserEventAgent[538:1] [com.apple.networkextension:] LocalNetwork: did not find bundle ID for UUID 2455E26F",
+    "2026-10-27 09:45:04.057 I  UserEventAgent[538:2] [com.apple.networkextension:] Got local network blocked notification: pid: 18894, uuid: 2455E26F, bundle_id: (null)",
+  ].join("\n");
+  assert.deepEqual(parseLocalNetworkBlocks(log), { count: 2, pids: [18894] });
+  assert.deepEqual(parseLocalNetworkBlocks(""), { count: 0, pids: [] });
 });
