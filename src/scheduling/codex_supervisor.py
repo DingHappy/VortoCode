@@ -316,6 +316,9 @@ def _progress_line(thread: dict, finished: List[dict], assessment: str) -> str:
 async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -> None:
     """到点才检查一次。没收到过 Codex 报告就什么也不做。"""
     now = now if now.tzinfo else now.astimezone()
+    # Mac 不再报到时 record_report 不会跑：认领后断线的动作在这里也要落到「结果无法确认」
+    for action in codex_watch.settle_unconfirmed_actions(root, now):
+        await _send(notify, codex_watch.action_result_notice(action))
     started = time.monotonic()
     state = codex_watch.load_state(root)
     received = codex_watch._parse(state.get("received_at"))

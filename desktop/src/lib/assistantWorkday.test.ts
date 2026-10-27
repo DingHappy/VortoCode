@@ -81,6 +81,16 @@ it("keeps terminal action failures in history rather than carrying them indefini
   expect(buildAssistantWorkday(data).decisions).toHaveLength(0);
 });
 
+it("shows an unknown Codex outcome as unconfirmed today, without carrying it forever", () => {
+  const data = input();
+  data.codexActions = [{ id: "a1", status: "unknown", kind: "message", thread_name: "Review", error: "", updated_at: at } as CodexAction];
+  const [decision] = buildAssistantWorkday(data).decisions;
+  expect(decision).toMatchObject({ state: "unknown", target: { kind: "codex_action", id: "a1" } });
+  expect(decision.detail).toContain("不要重复发送");
+  data.codexActions = [{ ...data.codexActions[0], updated_at: yesterday }];
+  expect(buildAssistantWorkday(data).decisions).toHaveLength(0);
+});
+
 class Visibility extends EventTarget { hidden = false; }
 it("expires completion evidence while network refresh is still pending", async () => {
   vi.useFakeTimers(); vi.setSystemTime(now);

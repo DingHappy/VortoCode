@@ -55,6 +55,12 @@ def _action_error(error: Exception) -> HTTPException:
 async def codex_actions(status: str | None = None):
     """Desktop 卡片列全部；Mac 观察员带 status=approved 取待执行的。"""
     root = _general_root()
+    settled = codex_watch.settle_unconfirmed_actions(root)
+    if settled:
+        from src.scheduling.notices import make_notifier
+        notify = make_notifier(root, source="codex")
+        for action in settled:
+            await notify(codex_watch.action_result_notice(action))
     items = codex_watch.load_actions(root)
     if status:
         items = [item for item in items if item.get("status") == status]
