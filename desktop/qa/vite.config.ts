@@ -26,6 +26,7 @@ export default defineConfig({
       assistantActivity: new URL("assistant-activity.html", import.meta.url).pathname,
       library: new URL("library.html", import.meta.url).pathname,
       customize: new URL("customize.html", import.meta.url).pathname,
+      accountMenu: new URL("account-menu.html", import.meta.url).pathname,
     } },
   },
 });

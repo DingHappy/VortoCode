@@ -1950,3 +1950,229 @@
   background: var(--vc-surface);
   color: var(--vc-text);
 }
+
+/* ── 设置：沿用原来的分区和内容，换成同一套变量（docs/DESIGN_SYSTEM.md 第 5、6 节） ──
+   主按钮墨黑、选中项用选中底色，蓝色只留给链接和进行中；说明条不再用蓝底。 */
+dialog.settings-modal.settings-redesign.settings-layout {
+  --settings-accent: var(--vc-ink);
+  --settings-accent-bg: var(--vc-selected);
+  --settings-accent-text: var(--vc-text);
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-card);
+  background: var(--vc-bg);
+  color: var(--vc-text);
+  box-shadow: var(--vc-shadow-pop);
+  font-family: var(--vc-font-sans);
+  font-size: var(--vc-size-body);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout .settings-nav {
+  background: var(--vc-sidebar);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout .settings-brand h2 {
+  font-size: var(--vc-size-heading);
+  font-weight: var(--vc-weight-strong);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout .settings-brand > span,
+dialog.settings-modal.settings-redesign.settings-layout .settings-nav-footer,
+dialog.settings-modal.settings-redesign.settings-layout .settings-nav-footer small,
+dialog.settings-modal.settings-redesign.settings-layout .settings-search-result small,
+dialog.settings-modal.settings-redesign.settings-layout .settings-scope-tag,
+dialog.settings-modal.settings-redesign.settings-layout .provider-editor-heading small,
+dialog.settings-modal.settings-redesign.settings-layout .custom-provider-form label > small,
+dialog.settings-modal.settings-redesign.settings-layout .settings-savebar small {
+  color: var(--vc-muted);
+  font-size: var(--vc-size-caption);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout .settings-search-wrap input.settings-search {
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-surface);
+  color: var(--vc-text);
+  font-size: var(--vc-size-small);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout .settings-nav-group button {
+  min-height: var(--vc-nav-item-h);
+  padding: 0 var(--vc-space-3);
+  border-radius: var(--vc-radius-control);
+  background: transparent;
+  color: var(--vc-text);
+  font-size: var(--vc-size-body);
+  font-weight: var(--vc-weight-regular);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout .settings-nav-group button:hover:not(.active) {
+  background: var(--vc-hover);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout .settings-nav-group button.active {
+  background: var(--vc-selected);
+  color: var(--vc-text);
+  font-weight: var(--vc-weight-medium);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout .settings-nav-group button.active svg {
+  color: var(--vc-text);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout .settings-heading {
+  border-bottom-color: var(--vc-divider);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout .settings-heading h2 {
+  font-size: var(--vc-size-title);
+  font-weight: var(--vc-weight-strong);
+  letter-spacing: 0;
+}
+
+dialog.settings-modal.settings-redesign.settings-layout .settings-heading p,
+dialog.settings-modal.settings-redesign.settings-layout .settings-card-note,
+dialog.settings-modal.settings-redesign.settings-layout .settings-intro,
+dialog.settings-modal.settings-redesign.settings-layout .settings-connection-row p,
+dialog.settings-modal.settings-redesign.settings-layout .settings-read-feedback p {
+  color: var(--vc-muted);
+  font-size: var(--vc-size-small);
+}
+
+/* 「保存在这台 Mac」这类适用范围说明：中性浅底，不用强调色 */
+dialog.settings-modal.settings-redesign.settings-layout .settings-scope {
+  border: 0;
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-fill);
+  color: var(--vc-text-secondary);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout .settings-scope p {
+  font-size: var(--vc-size-small);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout .settings-card,
+dialog.settings-modal.settings-redesign.settings-layout .trust-card,
+dialog.settings-modal.settings-redesign.settings-layout .llm-profile-card,
+dialog.settings-modal.settings-redesign.settings-layout .appearance-card,
+dialog.settings-modal.settings-redesign.settings-layout .resident-desktop-pane,
+dialog.settings-modal.settings-redesign.settings-layout .settings-read-feedback,
+dialog.settings-modal.settings-redesign.settings-layout .model-advanced {
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-card);
+  background: var(--vc-surface);
+  box-shadow: none;
+}
+
+dialog.settings-modal.settings-redesign.settings-layout .settings-card-head strong,
+dialog.settings-modal.settings-redesign.settings-layout .settings-subhead {
+  color: var(--vc-text);
+  font-size: var(--vc-size-body);
+  font-weight: var(--vc-weight-strong);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout button {
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-control);
+  background: transparent;
+  color: var(--vc-text);
+  font-size: var(--vc-size-small);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout button:hover:not(:disabled) {
+  background: var(--vc-hover);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout button.primary {
+  border-color: var(--vc-ink);
+  background: var(--vc-ink);
+  color: var(--vc-on-ink);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout button.primary:hover:not(:disabled) {
+  background: var(--vc-ink);
+  opacity: 0.88;
+}
+
+dialog.settings-modal.settings-redesign.settings-layout button.danger {
+  border-color: var(--vc-danger-border);
+  color: var(--vc-danger-text);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout button.danger:hover:not(:disabled) {
+  background: var(--vc-danger-bg);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout .settings-nav-group button,
+dialog.settings-modal.settings-redesign.settings-layout .settings-close,
+dialog.settings-modal.settings-redesign.settings-layout .settings-pending-links button {
+  border: 0;
+}
+
+dialog.settings-modal.settings-redesign.settings-layout .settings-close {
+  color: var(--vc-muted);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout .settings-pending-links button {
+  color: var(--vc-accent);
+  font-size: var(--vc-size-caption);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout input:not([type="checkbox"]):not([type="radio"]),
+dialog.settings-modal.settings-redesign.settings-layout textarea,
+dialog.settings-modal.settings-redesign.settings-layout select {
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-surface);
+  color: var(--vc-text);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout button:focus-visible,
+dialog.settings-modal.settings-redesign.settings-layout input:focus-visible,
+dialog.settings-modal.settings-redesign.settings-layout summary:focus-visible,
+dialog.settings-modal.settings-redesign.settings-layout .settings-anchor:focus,
+dialog.settings-modal.settings-redesign.settings-layout .settings-highlight {
+  outline: 2px solid var(--vc-focus-ring);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout .settings-savebar {
+  border-top-color: var(--vc-divider);
+  background: var(--vc-bg);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout .settings-savebar strong {
+  font-size: var(--vc-size-small);
+}
+
+/* 头像菜单：从账号行向上弹出（画布 E4） */
+.vc-side-account-row {
+  position: relative;
+}
+
+.vc-side-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--vc-space-1));
+  left: 0;
+  z-index: 30;
+  min-width: 0;
+}
+
+.vc-side-menu .vc-menu-item > span {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--vc-space-2);
+}
+
+.vc-side-menu kbd {
+  color: var(--vc-muted);
+  font-family: var(--vc-font-sans);
+  font-size: var(--vc-size-caption);
+}
+
+dialog.settings-modal.settings-redesign.settings-layout .llm-routing-fields > p em {
+  color: var(--vc-muted);
+  font-size: var(--vc-size-caption);
+  font-style: normal;
+}
