@@ -1,4 +1,4 @@
-import type { AssistantDispatch, CodexAction, CodexProgressSnapshot, PendingConfirmation, PersonalGoal } from "../types";
+import type { AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgressSnapshot, MemoryProposal, PendingConfirmation, PersonalGoal } from "../types";
 import { progressLine } from "./assistantTask";
 import { readExecutionObservation } from "./executionObservation";
 import { hasConfirmedPersonalGoal } from "./personalGoalSnapshot";
@@ -9,7 +9,7 @@ export interface WorkdaySource<T> {
   data: T;
   checkedAt?: number;
 }
-export type WorkdayTarget = { kind: "dispatch" | "goal" | "codex" | "codex_action" | "confirmation"; id: string };
+export type WorkdayTarget = { kind: "dispatch" | "goal" | "codex" | "codex_action" | "confirmation" | "schedule" | "memory"; id: string };
 export interface WorkdayItem {
   id: string; title: string; detail: string; source: string; at: string;
   state: "running" | "decision" | "review" | "verified" | "unknown";
@@ -34,6 +34,8 @@ export function buildAssistantWorkday(input: {
   dispatches: AssistantDispatch[]; dispatchesLoaded: boolean; codexActions: CodexAction[];
   goals: WorkdaySource<PersonalGoal[]>; codex: WorkdaySource<CodexProgressSnapshot | null>;
   confirmation?: PendingConfirmation | null;
+  /** 不传 = 这一版还没接这个来源，不提示；传了就按读取状态说清楚 */
+  schedule?: WorkdaySource<AssistantScheduleItem[]>; proposals?: WorkdaySource<MemoryProposal[]>;
   connected: boolean; now: Date;
 }): AssistantWorkday {
   const { now } = input, ms = now.getTime();
@@ -136,6 +138,34 @@ export function buildAssistantWorkday(input: {
         : action.kind === "interrupt" ? "助理建议停止本轮，等你审阅" : "助理拟好下一步，等你审阅发送正文",
       source: "Codex 动作", state: unconfirmed ? "unknown" : "decision", at: action.updated_at,
       target: { kind: "codex_action", id: action.id } });
+  }
+  // 定时任务：还开着、最近一次失败或超时的，到下一次成功之前一直算「等你决定」，不因跨天消失
+  if (input.schedule) {
+    const fresh = input.connected && input.schedule.status === "current" && freshAt(input.schedule.checkedAt, ms);
+    if (!fresh) result.warnings.push(input.schedule.status === "loading" ? "定时任务正在读取。" : "定时任务未能取得最新状态，失败的作业可能没有列出。");
+    for (const job of input.schedule.data) {
+      if (!job.enabled || (job.last_status !== "failed" && job.last_status !== "timed_out")) continue;
+      const what = job.last_status === "timed_out" ? "超时" : "失败";
+      const streak = (job.failures ?? 0) > 1 ? `，已连续 ${job.failures} 次` : "";
+      add({ id: `schedule:${job.id}`, title: job.title, source: "定时", at: job.last || "",
+        state: fresh ? "decision" : "unknown", target: { kind: "schedule", id: job.id },
+        detail: fresh ? `最近一次${what}${streak}，下次还会照常运行；请看运行记录决定要不要处理`
+          : `上次记录：最近一次${what}，当前状态待核对` }, true);
+    }
+  }
+  // 候选记忆合成一条：你点 ✓ 才会记下，不确认就一直挂着
+  if (input.proposals) {
+    const fresh = input.connected && input.proposals.status === "current" && freshAt(input.proposals.checkedAt, ms);
+    if (!fresh) result.warnings.push(input.proposals.status === "loading" ? "待确认的记忆正在读取。" : "待确认的记忆未能取得最新状态。");
+    const pending = input.proposals.data;
+    if (pending.length) {
+      const latest = pending.map(item => item.created_at).filter(Boolean).sort().pop() ?? "";
+      const tainted = pending.filter(item => item.tainted).length;
+      add({ id: "memory:proposals", title: `${pending.length} 条记忆等你确认`, source: "记忆", at: latest,
+        state: fresh ? "decision" : "unknown", target: { kind: "memory", id: "proposals" },
+        detail: !fresh ? "上次记录，当前数量待核对"
+          : tainted ? `其中 ${tainted} 条来自读过外部内容的对话，确认前看仔细` : `例如：${pending[0].content}` }, true);
+    }
   }
   if (input.confirmation) result.decisions.unshift({ id: `confirmation:${input.confirmation.id}`,
     title: "当前对话有操作等你确认", detail: input.confirmation.tainted

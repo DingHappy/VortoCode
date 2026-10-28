@@ -138,3 +138,22 @@ it.each(["goal id", "criterion id", "evidence reference", "evidence id", "duplic
     await h.reads.refresh();
     expect(h.goals).toHaveBeenLastCalledWith({ status: "unavailable", data: [personal], checkedAt: 100 });
   });
+
+it("reads schedule and memory proposals alongside goals; an older server without them is unavailable, not empty", async () => {
+  const base = { listPersonalGoals: async () => [] as PersonalGoal[], getCodexProgress: async () => ({ overview: "", received_at: "", threads: [] }) as CodexProgressSnapshot };
+  const seen: Record<string, unknown> = {};
+  const reads = assistantWorkdayReads({ client: () => client, current: () => true, now: () => 5,
+    goals: () => {}, codex: () => {}, schedule: source => { seen.schedule = source; }, proposals: source => { seen.proposals = source; } });
+  let client: Parameters<typeof assistantWorkdayReads>[0]["client"] extends () => infer C ? C : never = {
+    ...base,
+    getAssistantSchedule: async () => [{ id: "j", kind: "cron", title: "早报", schedule: "", enabled: true, last_status: "failed" }],
+    listMemoryProposals: async () => [{ id: "m", content: "记住", created_at: "", tainted: false }],
+  };
+  await reads.refresh();
+  expect(seen.schedule).toMatchObject({ status: "current", checkedAt: 5, data: [{ id: "j" }] });
+  expect(seen.proposals).toMatchObject({ status: "current", data: [{ id: "m" }] });
+  client = { ...base };
+  await reads.refresh();
+  expect(seen.schedule).toMatchObject({ status: "unavailable" });
+  expect(seen.proposals).toMatchObject({ status: "unavailable" });
+});

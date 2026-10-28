@@ -31,3 +31,11 @@ it("connected pending reads ask the user to wait instead of reconnecting", () =>
   expect(html).toContain("正在核对来源，请稍候");
   expect(html).not.toContain("恢复连接后");
 });
+it("failed schedules and pending memories link to where they are handled", () => {
+  const schedule = { id: "schedule:j", title: "早报", detail: "最近一次失败", source: "定时", at: now.toISOString(),
+    state: "decision" as const, target: { kind: "schedule" as const, id: "j" } };
+  const memory = { id: "memory:proposals", title: "2 条记忆等你确认", detail: "例如：x", source: "记忆", at: now.toISOString(),
+    state: "decision" as const, target: { kind: "memory" as const, id: "proposals" } };
+  const html = render({ today: [schedule, memory], progress: [], completed: [], decisions: [schedule, memory], warnings: [] });
+  expect(html).toContain("查看定时与运行记录"); expect(html).toContain("去确认记忆");
+});
