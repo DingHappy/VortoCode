@@ -27,6 +27,16 @@ export function mainChatKey(hostId?: string | null): string {
   return hostId ? `${STORAGE_KEYS.mainChatSid}:${hostId}` : STORAGE_KEYS.mainChatSid;
 }
 
+/** 原因是 macOS「本地网络」拦截（Rust 侧 network_failure_reason 的那段话）：提示条据此给「重新打开 VortoCode」。 */
+export function isLocalNetworkBlocked(reason: string | null | undefined): boolean {
+  return Boolean(reason?.includes("本地网络"));
+}
+
+/** 退出并经系统重新打开整个 App（和从程序坞点开一样），macOS 会据此更新「本地网络」放行记录。 */
+export function relaunchApp(): Promise<void> {
+  return invoke("relaunch_app");
+}
+
 /**
  * 只测这台 Mac 能不能直连常驻电脑（与 WebSocket 同一条路，不走系统代理、不带 token、不切换）。
  * 通返回 null，不通返回原因——macOS 没给「本地网络」权限时，原因里会直接指出去哪开。
