@@ -10806,17 +10806,6 @@ ul.trust-note {
   line-height: 1.5;
 }
 
-/* 助理面板标签：图标 + 文字 */
-.assistant-tabs.labeled button {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  height: auto;
-  padding: 6px 0 5px;
-  font-size: 11px;
-}
-
 /* 新用户：还没有模型时的第一步 */
 .first-run-card {
   max-width: 560px;
