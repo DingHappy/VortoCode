@@ -1,5 +1,5 @@
 import type { GatewayClient } from "../gateway";
-import type { AssistantScheduleItem, CodexProgressSnapshot, MemoryProposal, PersonalGoal } from "../types";
+import type { AssistantScheduleItem, CodexProgressSnapshot, MemoryProposal, PersonalGoal, SessionSummary } from "../types";
 import type { WorkdaySource } from "./assistantWorkday";
 import { startPolling } from "./polling";
 import { readPersonalGoalSnapshot } from "./personalGoalSnapshot";
@@ -14,7 +14,7 @@ export function startWorkdayClock(update: (now: Date) => void,
 
 export function assistantWorkdayReads(deps: {
   client: () => (Pick<GatewayClient, "listPersonalGoals" | "getCodexProgress">
-    & Partial<Pick<GatewayClient, "getAssistantSchedule" | "listMemoryProposals">>) | null;
+    & Partial<Pick<GatewayClient, "getAssistantSchedule" | "listMemoryProposals" | "listSessions">>) | null;
   current: () => boolean;
   goals: (source: WorkdaySource<PersonalGoal[]>) => void;
   codex: (source: WorkdaySource<CodexProgressSnapshot | null>) => void;
@@ -22,6 +22,8 @@ export function assistantWorkdayReads(deps: {
   schedule?: (source: WorkdaySource<AssistantScheduleItem[]>) => void;
   /** 等你确认的候选记忆 */
   proposals?: (source: WorkdaySource<MemoryProposal[]>) => void;
+  /** 这台运行端上的对话列表：别的对话里等你确认的操作要列出来 */
+  sessions?: (source: WorkdaySource<SessionSummary[]>) => void;
   now?: () => number;
 }) {
   let epoch = 0, pending: Promise<void> | null = null;
@@ -30,6 +32,7 @@ export function assistantWorkdayReads(deps: {
   let codex: WorkdaySource<CodexProgressSnapshot | null> = { status: "loading", data: null };
   let schedule: WorkdaySource<AssistantScheduleItem[]> = { status: "loading", data: [] };
   let proposals: WorkdaySource<MemoryProposal[]> = { status: "loading", data: [] };
+  let sessions: WorkdaySource<SessionSummary[]> = { status: "loading", data: [] };
   const refresh = () => {
     const client = deps.client();
     if (!client || !deps.current()) return Promise.resolve();
@@ -37,6 +40,7 @@ export function assistantWorkdayReads(deps: {
       owner = client; epoch++; pending = null;
       goals = { status: "loading", data: [] }; codex = { status: "loading", data: null };
       schedule = { status: "loading", data: [] }; proposals = { status: "loading", data: [] };
+      sessions = { status: "loading", data: [] };
     }
     if (pending) return pending;
     const version = epoch;
@@ -74,6 +78,16 @@ export function assistantWorkdayReads(deps: {
           if (current()) deps.proposals!(proposals = { status: "current", data, checkedAt: checked() });
         });
       }).catch(() => { if (current()) deps.proposals?.(proposals = { ...proposals, status: "unavailable" }); }),
+      Promise.resolve().then(() => {
+        if (!deps.sessions) return;
+        if (!client.listSessions) throw new Error("unsupported");
+        return client.listSessions().then(data => {
+          if (!Array.isArray(data) || data.some(item => !item || typeof item.sid !== "string"
+              || (item.pending_input_count !== undefined && typeof item.pending_input_count !== "number")))
+            throw new Error("Invalid session snapshot");
+          if (current()) deps.sessions!(sessions = { status: "current", data, checkedAt: checked() });
+        });
+      }).catch(() => { if (current()) deps.sessions?.(sessions = { ...sessions, status: "unavailable" }); }),
     ]).then(() => {}).finally(() => { if (pending === task) pending = null; });
     pending = task;
     return task;

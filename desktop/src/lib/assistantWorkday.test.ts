@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import type { AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgressSnapshot, MemoryProposal, PersonalGoal } from "../types";
+import type { AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgressSnapshot, MemoryProposal, PendingConfirmation, PersonalGoal, SessionSummary } from "../types";
 import { buildAssistantWorkday } from "./assistantWorkday";
 import executionWire from "../../../tests/fixtures/execution_observation_v1.json";
 import { vi } from "vitest";
@@ -321,4 +321,33 @@ it("pending memory proposals become one decision, flagging those from turns that
 
 it("sources the caller does not wire in are neither listed nor warned about", () => {
   expect(buildAssistantWorkday(input()).warnings).toEqual([]);
+});
+
+it("other conversations stuck on a confirmation are listed; the current one and phone chats are not", () => {
+  const session = (sid: string, pending: number, title = sid): SessionSummary =>
+    ({ sid, title, messages: 3, updated: now.getTime() / 1000 - 60, pending_input_count: pending, status: pending ? "needs_input" : "idle" });
+  const confirmation = { id: "c1", text: "写文件", tainted: false } as PendingConfirmation;
+  const model = buildAssistantWorkday({ ...input(), confirmation, activeSid: "current", mainSid: "main",
+    sessions: { status: "current", checkedAt: now.getTime(), data: [
+      session("main", 1), session("side", 2, "整理周报"), session("current", 1), session("idle", 0), session("telegram-123", 1),
+    ] } });
+  const titles = model.decisions.map(item => item.title);
+  expect(titles).toContain("主要聊天有操作等你确认");
+  expect(titles).toContain("旁聊「整理周报」有操作等你确认");
+  expect(model.decisions.filter(item => item.id.startsWith("session:")).map(item => item.id)).toEqual(expect.arrayContaining(["session:main", "session:side"]));
+  expect(model.decisions.filter(item => item.id.startsWith("session:"))).toHaveLength(2);   // 当前对话由确认卡那条代表
+  expect(model.decisions.find(item => item.id === "session:side")).toMatchObject({
+    detail: "2 件，打开对话查看确认卡；不确认它会一直等着", target: { kind: "session", id: "side" }, state: "decision" });
+  expect(model.today.map(item => item.id)).toContain("session:main");
+  // 当前对话的确认卡还没读到时，靠列表兜底，不漏掉
+  const fallback = buildAssistantWorkday({ ...input(), activeSid: "current",
+    sessions: { status: "current", checkedAt: now.getTime(), data: [session("current", 1)] } });
+  expect(fallback.decisions.map(item => item.id)).toEqual(["session:current"]);
+});
+
+it("an unread or stale session list is reported instead of implying nothing is waiting", () => {
+  const stale = buildAssistantWorkday({ ...input(), sessions: { status: "unavailable", checkedAt: now.getTime() - 600_000,
+    data: [{ sid: "s", title: "x", messages: 1, updated: 0, pending_input_count: 1 }] } });
+  expect(stale.warnings).toContain("对话列表未能取得最新状态，其他对话里等你确认的操作可能没有列出。");
+  expect(stale.decisions[0]).toMatchObject({ state: "unknown", detail: "上次记录，当前是否仍在等待待核对", at: "" });
 });

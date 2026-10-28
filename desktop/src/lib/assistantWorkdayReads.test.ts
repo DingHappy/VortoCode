@@ -143,17 +143,21 @@ it("reads schedule and memory proposals alongside goals; an older server without
   const base = { listPersonalGoals: async () => [] as PersonalGoal[], getCodexProgress: async () => ({ overview: "", received_at: "", threads: [] }) as CodexProgressSnapshot };
   const seen: Record<string, unknown> = {};
   const reads = assistantWorkdayReads({ client: () => client, current: () => true, now: () => 5,
-    goals: () => {}, codex: () => {}, schedule: source => { seen.schedule = source; }, proposals: source => { seen.proposals = source; } });
+    goals: () => {}, codex: () => {}, schedule: source => { seen.schedule = source; }, proposals: source => { seen.proposals = source; },
+    sessions: source => { seen.sessions = source; } });
   let client: Parameters<typeof assistantWorkdayReads>[0]["client"] extends () => infer C ? C : never = {
     ...base,
     getAssistantSchedule: async () => [{ id: "j", kind: "cron", title: "早报", schedule: "", enabled: true, last_status: "failed" }],
     listMemoryProposals: async () => [{ id: "m", content: "记住", created_at: "", tainted: false }],
+    listSessions: async () => [{ sid: "s", title: "旁聊", messages: 1, updated: 1, pending_input_count: 1 }],
   };
   await reads.refresh();
   expect(seen.schedule).toMatchObject({ status: "current", checkedAt: 5, data: [{ id: "j" }] });
   expect(seen.proposals).toMatchObject({ status: "current", data: [{ id: "m" }] });
+  expect(seen.sessions).toMatchObject({ status: "current", data: [{ sid: "s", pending_input_count: 1 }] });
   client = { ...base };
   await reads.refresh();
   expect(seen.schedule).toMatchObject({ status: "unavailable" });
   expect(seen.proposals).toMatchObject({ status: "unavailable" });
+  expect(seen.sessions).toMatchObject({ status: "unavailable" });
 });

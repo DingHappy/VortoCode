@@ -2891,6 +2891,8 @@ function App() {
                   }}
                   onSchedule={() => { setAssistantTab("schedule"); panelActions.tabOpened("schedule"); }}
                   onMemory={() => { setMemoryFocus((count) => count + 1); setAssistantTab("identity"); panelActions.tabOpened("identity"); }}
+                  activeSid={activeSid} mainSid={mainChatSid}
+                  onSession={(sid) => { setMainView("chat"); void (sid === mainChatSid ? openMainChat() : switchSession(sid)); }}
                   onRefreshTasks={() => refreshAgentTurns()} onCodexDecision={decideCodexAction} />} />
               : assistantTab === "schedule" ? <AssistantSchedule key={assistantScope} items={assistantSchedule} connected={connection === "connected"} local={!onAssistantHost()}
                   onRefresh={panelActions.scheduleRefresh}
