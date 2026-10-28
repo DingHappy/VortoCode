@@ -537,11 +537,12 @@ pub(crate) struct RemoteWsClosed {
 pub(crate) fn network_failure_reason(error: &std::io::Error) -> String {
     use std::io::ErrorKind;
     match error.raw_os_error() {
-        // EPERM / EHOSTUNREACH：macOS 没给「本地网络」权限时，直连内网地址就是这样被系统拦下，
-        // 而且不弹窗（真机 2026-10-27：App 更新后系统认不出新版本，静默拦截）。
+        // EPERM / EHOSTUNREACH：macOS「本地网络」不放行时，直连内网地址就是这样被系统拦下，而且不弹窗。
+        // 真机 2026-10-27、10-28：App 内更新后放行记录还停在旧版，重新打开 App 就恢复；从没授权过才要去系统设置。
+        // 前端按「本地网络」四个字给提示条加「重新打开 VortoCode」按钮，改这段话时要留着它。
         Some(1) | Some(65) => "这台 Mac 拒绝直连过去（No route to host）。如果终端或别的程序能连上，\
-            多半是 macOS「本地网络」权限没给 VortoCode：系统设置 → 隐私与安全性 → 本地网络，\
-            打开（或关掉再打开）后重开 App"
+            多半是 macOS「本地网络」没放行 VortoCode，更新后常见：重新打开 VortoCode 一般就好；\
+            还不行，到系统设置 → 隐私与安全性 → 本地网络，把 VortoCode 打开"
             .into(),
         Some(51) => "网络不通（Network is unreachable）：检查网络或隧道".into(),
         _ => match error.kind() {

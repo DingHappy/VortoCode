@@ -100,11 +100,22 @@ pub(crate) async fn install_update(app: AppHandle) -> Result<String, String> {
 }
 
 /// 装好更新后重启：走 RunEvent::Exit，托管的引擎进程照常回收。
-/// macOS 上不能像 Tauri 默认那样直接拉起新的可执行文件：那样新进程的「责任进程」还是已经退出的旧版，
-/// 系统按旧版查「本地网络」权限查不到，就静默拦掉连常驻电脑的直连。改成等本进程退出后
-/// 用 open 交给 LaunchServices 重新打开整个 App；拿不到 .app 路径或起不来时退回默认重启。
 #[tauri::command]
 pub(crate) fn restart_after_update(app: AppHandle) {
+    relaunch(app);
+}
+
+/// 连不上常驻电脑、原因是 macOS「本地网络」拦截时，提示条上的「重新打开 VortoCode」。
+#[tauri::command]
+pub(crate) fn relaunch_app(app: AppHandle) {
+    relaunch(app);
+}
+
+/// macOS 上不像 Tauri 默认那样直接拉起新的可执行文件，而是等本进程退出后用 open 交给 LaunchServices
+/// 重新打开整个 App，和从程序坞点开一样。真机 2026-10-28：App 内更新后直接拉起的新版，系统的「本地网络」
+/// 放行记录还停在旧版的可执行文件指纹上，连常驻电脑被静默拦下；从程序坞重新打开后记录换成新版，立即恢复。
+/// 拿不到 .app 路径（开发构建）或脚本起不来时退回默认重启。
+fn relaunch(app: AppHandle) {
     #[cfg(target_os = "macos")]
     if let Some(bundle) = std::env::current_exe().ok().as_deref().and_then(app_bundle_of) {
         match Command::new("/bin/sh")

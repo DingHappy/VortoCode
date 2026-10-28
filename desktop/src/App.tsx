@@ -128,7 +128,7 @@ import { PluginsPage } from "./components/PluginsPage";
 import { PersonalSkillsCard } from "./components/PersonalSkillsCard";
 import { ProjectPicker } from "./components/ProjectPicker";
 import { RemoteProjectDialog } from "./components/RemoteProjectDialog";
-import { findAssistantHost, isAssistantHost, mainChatKey, probeAssistantHost, workProjects } from "./lib/assistantHost";
+import { findAssistantHost, isAssistantHost, isLocalNetworkBlocked, mainChatKey, probeAssistantHost, relaunchApp, workProjects } from "./lib/assistantHost";
 import { dismissStarterTips, recordAssistantSend, shouldShowStarterTips, starterTips } from "./lib/starterTips";
 import { listedProjects, localTwin, residentEntry, residentTwin, type ResidentProject, type WorkPlace } from "./lib/residentPlace";
 import { TurnTimeline } from "./components/TurnTimeline";
@@ -2734,7 +2734,9 @@ function App() {
               <div className="composer-notice" role="status">
                 常驻电脑没连上，现在是这台电脑上的本机助理：派活、简报和合上笔记本后继续做，都要连上常驻电脑。
                 {residentFailure && <> 原因：{residentFailure}</>}
-                <button onClick={() => void changeAppMode("assistant")} disabled={projectSwitching}>重新连接</button>
+                {isLocalNetworkBlocked(residentFailure)
+                  ? <button onClick={() => void relaunchApp().catch((error) => setBanner(`没能重新打开：${String(error)}`))}>重新打开 VortoCode</button>
+                  : <button onClick={() => void changeAppMode("assistant")} disabled={projectSwitching}>重新连接</button>}
               </div>
             )}
             {llmProfileChecked && !llmProfile?.configured && !onAssistantHost() && messages.length > 0 && (

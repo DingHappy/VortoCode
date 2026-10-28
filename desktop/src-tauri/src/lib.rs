@@ -1608,6 +1608,7 @@ pub fn run() {
             check_for_update,
             install_update,
             restart_after_update,
+            relaunch_app,
             account::account_status,
             account_runtime::resident_account_status,
             account_runtime::resident_account_update,
@@ -3130,7 +3131,7 @@ mod tests {
     fn network_failure_reason_points_at_local_network_permission() {
         use std::io::{Error, ErrorKind};
         let blocked = network_failure_reason(&Error::from_raw_os_error(65));
-        assert!(blocked.contains("本地网络") && blocked.contains("隐私与安全性"));
+        assert!(blocked.contains("本地网络") && blocked.contains("隐私与安全性") && blocked.contains("重新打开"));
         assert!(network_failure_reason(&Error::from_raw_os_error(1)).contains("本地网络"));
         assert!(network_failure_reason(&Error::from(ErrorKind::ConnectionRefused)).contains("没在运行"));
         assert!(network_failure_reason(&Error::from(ErrorKind::TimedOut)).contains("超时"));
