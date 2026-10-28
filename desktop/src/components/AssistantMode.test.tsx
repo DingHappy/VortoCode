@@ -38,34 +38,44 @@ it("左侧「最近」：主要聊天置顶在旁聊之前；没有旁聊时给�
   expect(empty).toContain("开个旁聊，不打扰主要聊天");
 });
 
-it("右侧：身份卡显示连接状态与模型；等你处理的件数跟在「动态」后面", () => {
+it("右侧名片：一行状态写连接和住在哪，模型单独一行；等你处理的件数挂在「动态」的圆点上", () => {
   const online = renderToStaticMarkup(<AssistantPanel name="VortoCode" connected modelLabel="Qwen3.6" host={{ kind: "local", canAddResident: true }} onAddResident={() => {}} onRetryResident={() => {}} tab="feed" onTab={() => {}} onClose={() => {}} waiting={2}><p>内容</p></AssistantPanel>);
-  expect(online).toContain("已连接 · Qwen3.6");
-  expect(online).toContain("2 件等你处理");
+  expect(online).toContain("已连接 · 在本机运行");
+  expect(online).toContain('<small class="vc-panel-model">Qwen3.6</small>');
+  expect(online).toContain('aria-label="2 件等你处理"');
   const offline = renderToStaticMarkup(<AssistantPanel name="VortoCode" connected={false} host={{ kind: "local", canAddResident: true }} onAddResident={() => {}} onRetryResident={() => {}} tab="audit" onTab={() => {}} onClose={() => {}}><p>内容</p></AssistantPanel>);
   expect(offline).toContain("连接中断");
+  expect(offline).not.toContain("vc-panel-model");
   expect(offline).not.toContain("等你处理");
+  const noModel = renderToStaticMarkup(<AssistantPanel name="VortoCode" connected modelLabel="未连接模型" host={{ kind: "local", canAddResident: true }} onAddResident={() => {}} onRetryResident={() => {}} tab="feed" onTab={() => {}} onClose={() => {}}><p /></AssistantPanel>);
+  expect(noModel).toContain(">还没连接模型<");
 });
 
-it("身份卡说明助理住在哪：常驻电脑 / 本机；本机时给出连接或重连常驻电脑的入口", () => {
-  const panel = (host: import("./AssistantMode").AssistantHostInfo) => renderToStaticMarkup(
-    <AssistantPanel name="VortoCode" connected host={host} onAddResident={() => {}} onRetryResident={() => {}} tab="feed" onTab={() => {}} onClose={() => {}}><p /></AssistantPanel>);
+it("名片说明助理住在哪：常驻电脑 / 本机；连不上常驻电脑时说清楚并给「重新连接」", () => {
+  const panel = (host: import("./AssistantMode").AssistantHostInfo, connected = true) => renderToStaticMarkup(
+    <AssistantPanel name="VortoCode" connected={connected} host={host} onAddResident={() => {}} onRetryResident={() => {}} tab="feed" onTab={() => {}} onClose={() => {}}
+      computer={<button>打开电脑看</button>}><p /></AssistantPanel>);
   const resident = panel({ kind: "resident", name: "home-server" });
-  expect(resident).toContain("住在常驻电脑「home-server」");
-  expect(resident).toContain("合上笔记本它也照常干活");
+  expect(resident).toContain("已连接 · 住在常驻电脑「home-server」");
+  expect(resident).toContain(">打开电脑看</button>");
   expect(resident).not.toContain("连接常驻电脑</button>");
-  expect(panel({ kind: "resident", name: "常驻电脑" })).toContain("住在常驻电脑</span>");   // 名字就叫常驻电脑时不重复
-  expect(panel({ kind: "resident", name: "home-server", reachable: false })).toContain(">重新连接常驻电脑</button>");
+  expect(panel({ kind: "resident", name: "常驻电脑" })).toContain("已连接 · 住在常驻电脑</span>");   // 名字就叫常驻电脑时不重复
+  const down = panel({ kind: "resident", name: "home-server", reachable: false }, false);
+  expect(down).toContain('class="vc-panel-status is-down">连不上常驻电脑<');
+  expect(down).toContain("它可能还在干活，只是这台电脑看不到");
+  expect(down).toContain(">重新连接</button>");
+  expect(down).not.toContain("打开电脑看");
   expect(panel({ kind: "local", canAddResident: true })).toContain(">连接常驻电脑</button>");
   expect(panel({ kind: "local", canAddResident: false })).toContain(">重新连接常驻电脑</button>");
 });
 
-it("右侧五个图标标签：动态 / 目标 / 审核记录 / 定时 / 身份，等你处理的件数挂在动态上", () => {
+it("右侧五个标签只显示图标，名字在 aria-label 和悬停提示里；等你处理的件数挂在动态上", () => {
   const html = renderToStaticMarkup(<AssistantPanel name="小V" connected host={{ kind: "local", canAddResident: false }} onAddResident={() => {}} onRetryResident={() => {}} tab="identity" onTab={() => {}} onClose={() => {}} waiting={3}><p /></AssistantPanel>);
-  for (const label of ["动态", "目标", "审核记录", "定时", "身份"]) expect(html).toContain(`aria-label="${label}"`);
+  for (const label of ["动态", "目标", "审核记录", "定时", "身份"]) expect(html).toContain(`aria-label="${label}" title="${label}"`);
   expect(html).not.toContain('aria-label="今日"');
   expect(html).toContain('aria-selected="true" aria-label="身份"');
-  expect(html).toContain("3 件等你处理");
+  expect(html).toContain('class="vc-panel-tab-dot" role="img" aria-label="3 件等你处理"');
+  expect(html).toContain('aria-label="收起面板"');
 });
 
 it("离线的动态徽标明确表示历史待处理数量", () => {
@@ -78,8 +88,10 @@ it("离线的动态徽标明确表示历史待处理数量", () => {
 it("来源不完整时，零条已读记录不会伪装成没有待处理事项", () => {
   const html = renderToStaticMarkup(<AssistantPanel name="小V" connected host={{ kind: "local", canAddResident: false }}
     onAddResident={() => {}} onRetryResident={() => {}} tab="feed" onTab={() => {}} onClose={() => {}} waiting={0} waitingUncertain><p /></AssistantPanel>);
-  expect(html).toContain("部分来源待核对");
-  expect(html).toContain('>?<');
+  expect(html).toContain('class="vc-panel-tab-dot is-unknown" role="img" aria-label="已读取 0 件待处理，部分来源待核对"');
+  const none = renderToStaticMarkup(<AssistantPanel name="小V" connected host={{ kind: "local", canAddResident: false }}
+    onAddResident={() => {}} onRetryResident={() => {}} tab="feed" onTab={() => {}} onClose={() => {}} waiting={0}><p /></AssistantPanel>);
+  expect(none).not.toContain("vc-panel-tab-dot");
 });
 
 it("审核记录只列决策，写明允许/拒绝与是否读过外部内容", async () => {

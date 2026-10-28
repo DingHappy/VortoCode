@@ -1,17 +1,18 @@
 import { isTauri } from "@tauri-apps/api/core";
-import { ArrowUpRight, Monitor, Settings2, X } from "lucide-react";
+import { ArrowUpRight, Monitor, X } from "lucide-react";
 import { useEffect, useSyncExternalStore } from "react";
 import { desktopConnectionLabel, residentDesktop, watchResidentDesktop, type ResidentDesktopStatus } from "../lib/residentDesktop";
 import type { ComputerWorkspace as Workspace } from "../hooks/useComputerWorkspace";
 import "./ComputerWorkspace.css";
 
+/** 助理面板名片下的小按钮：设置过远程电脑就打开它，没设置就去设置。连接细节放在悬停提示里。 */
 export function ComputerLauncherView({ status, busy, onOpen, onSettings }: {
   status: ResidentDesktopStatus | null; busy: boolean; onOpen: () => void; onSettings: () => void;
 }) {
-  return <div className="computer-launcher"><button className="computer-launcher-main" onClick={status?.target ? onOpen : onSettings} disabled={busy}>
-    <Monitor size={22} aria-hidden="true" /><span><strong>{status?.target.replace(/^ssh:/, "") || "连接你的电脑"}</strong>
-      <small>{busy ? "正在连接…" : desktopConnectionLabel(status, Date.now())} · {status?.target ? "打开电脑" : "设置连接"}</small></span></button>
-    <button className="computer-launcher-settings" aria-label="电脑连接设置" onClick={onSettings}><Settings2 size={15} /></button></div>;
+  const target = status?.target.replace(/^ssh:/, "");
+  return <button className="vc-panel-computer" onClick={status?.target ? onOpen : onSettings} disabled={busy}
+    title={target ? `${target} · ${desktopConnectionLabel(status, Date.now())}` : "设置要连接的电脑"}>
+    <Monitor aria-hidden="true" />{busy ? "正在连接…" : target ? "打开电脑看" : "连接电脑"}</button>;
 }
 export function ComputerLauncher(props: { onOpen: () => void; onSettings: () => void }) {
   const { status, busy } = useSyncExternalStore(residentDesktop.subscribe, residentDesktop.getSnapshot);

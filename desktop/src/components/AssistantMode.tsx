@@ -1,7 +1,7 @@
 import { AssistantScheduleCard } from "./AssistantScheduleCard";
 import type { ReactNode } from "react";
-import { Archive, ArrowLeft, Check, ChevronRight, Clock3, Fingerprint, ImagePlus, Laptop, List, ListChecks, PencilLine, Puzzle, RefreshCw, Server, ShieldCheck, SquarePen, Star, Target, Trash2, X } from "lucide-react";
-import { GroupTitle, NavItem } from "./ui";
+import { Archive, ArrowLeft, Check, ChevronRight, Clock3, Fingerprint, ImagePlus, List, ListChecks, PencilLine, Puzzle, RefreshCw, ShieldCheck, SquarePen, Star, Target, Trash2, X } from "lucide-react";
+import { Button, GroupTitle, IconButton, NavItem } from "./ui";
 import { useRef, useState } from "react";
 import { avatarHue, avatarInitial, avatarSrc } from "../lib/avatar";
 import { connectorCredentialView } from "../lib/connectorStatus";
@@ -109,11 +109,11 @@ export const PANEL_PAGE: Record<AssistantTab, AssistantPage | null> = {
 };
 
 const TABS: Array<{ id: AssistantTab; label: string; icon: ReactNode }> = [
-  { id: "feed", label: "动态", icon: <List size={16} aria-hidden="true" /> },
-  { id: "goals", label: "目标", icon: <Target size={16} aria-hidden="true" /> },
-  { id: "audit", label: "审核记录", icon: <ShieldCheck size={16} aria-hidden="true" /> },
-  { id: "schedule", label: "定时", icon: <Clock3 size={16} aria-hidden="true" /> },
-  { id: "identity", label: "身份", icon: <Fingerprint size={16} aria-hidden="true" /> },
+  { id: "feed", label: "动态", icon: <List aria-hidden="true" /> },
+  { id: "goals", label: "目标", icon: <Target aria-hidden="true" /> },
+  { id: "audit", label: "审核记录", icon: <ShieldCheck aria-hidden="true" /> },
+  { id: "schedule", label: "定时", icon: <Clock3 aria-hidden="true" /> },
+  { id: "identity", label: "身份", icon: <Fingerprint aria-hidden="true" /> },
 ];
 
 export function AssistantPanel({ name, avatar, connected, host, onAddResident, onRetryResident, onEditProfile, modelLabel, tab, onTab, onClose, waiting, waitingUncertain = false, children, computer }: {
@@ -133,36 +133,39 @@ export function AssistantPanel({ name, avatar, connected, host, onAddResident, o
   children: ReactNode;
   computer?: ReactNode;
 }) {
-  return <aside className="assistant-panel" aria-label="助理">
-    <button className="assistant-panel-close" aria-label="收起侧栏" title="收起侧栏" onClick={onClose}><X size={16} /></button>
-    <div className="assistant-identity">
-      <div className="assistant-avatar">
-        <AssistantAvatarImage name={name} avatar={avatar} />
-        {onEditProfile && <button aria-label="修改助理资料" title="名字、SOUL 与「关于你」" onClick={onEditProfile}><PencilLine size={12} /></button>}
+  // 连不上通常是隧道没开或网络断了：服务器上的助理还在干活，只是这台电脑看不到
+  const unreachable = host.kind === "resident" && (!connected || host.reachable === false);
+  const where = host.kind === "resident"
+    ? `住在常驻电脑${host.name && host.name !== "常驻电脑" ? `「${host.name}」` : ""}` : "在本机运行";
+  const status = unreachable ? "连不上常驻电脑" : !connected ? "连接中断" : `已连接 · ${where}`;
+  const model = !connected ? "" : modelLabel === "未连接模型" ? "还没连接模型" : modelLabel ?? "";
+  const badge = waiting || waitingUncertain
+    ? waitingUncertain ? `已读取 ${waiting ?? 0} 件待处理，部分来源待核对` : `${waiting} ${connected ? "件等你处理" : "条历史待处理"}` : "";
+  return <aside className="assistant-panel vc-panel" aria-label="助理">
+    <IconButton className="vc-panel-close" label="收起面板" icon={<X />} onClick={onClose} />
+    <div className="vc-panel-card">
+      <div className="vc-panel-avatar">
+        <AssistantAvatarImage name={name} avatar={avatar} size={120} />
+        {onEditProfile && <button className="vc-panel-avatar-edit" aria-label="修改助理资料" title="名字、头像与「关于你」" onClick={onEditProfile}><PencilLine aria-hidden="true" /></button>}
       </div>
-      <strong className="assistant-name">{name}</strong>
-      <span className={`assistant-status${connected ? " online" : ""}`}>{!connected ? "连接中断" : modelLabel === "未连接模型" ? "还没连接模型" : `已连接${modelLabel ? ` · ${modelLabel}` : ""}`}</span>
-      <span className={`assistant-host ${host.kind}`}>
-        {host.kind === "resident" ? <Server size={13} aria-hidden="true" /> : <Laptop size={13} aria-hidden="true" />}
-        {host.kind === "resident" ? `住在常驻电脑${host.name && host.name !== "常驻电脑" ? `「${host.name}」` : ""}` : "在本机运行"}
-      </span>
-      {host.kind === "resident"
-        ? host.reachable === false
-          // 连不上通常是隧道没开或网络断了：服务器上的助理还在干活，只是这台电脑看不到
-          ? <button className="assistant-host-action" onClick={onRetryResident}>重新连接常驻电脑</button>
-          : <small className="assistant-host-note">合上笔记本它也照常干活。</small>
-        : host.canAddResident
-          ? <button className="assistant-host-action" onClick={onAddResident}>连接常驻电脑</button>
-          : <button className="assistant-host-action" onClick={onRetryResident}>重新连接常驻电脑</button>}
+      <strong className="vc-panel-name">{name}</strong>
+      <span className={`vc-panel-status${unreachable || !connected ? " is-down" : ""}`}>{status}</span>
+      {model && <small className="vc-panel-model">{model}</small>}
+      {unreachable
+        ? <>
+          <small className="vc-panel-note">它可能还在干活，只是这台电脑看不到</small>
+          <Button variant="primary" className="vc-panel-action" onClick={onRetryResident}>重新连接</Button>
+        </>
+        : host.kind === "local"
+          ? <Button className="vc-panel-action" onClick={host.canAddResident ? onAddResident : onRetryResident}>
+            {host.canAddResident ? "连接常驻电脑" : "重新连接常驻电脑"}</Button>
+          : computer}
     </div>
-    {computer}
-    <div className="assistant-tabs labeled" role="tablist" aria-label="助理面板">
+    <div className="vc-panel-tabs" role="tablist" aria-label="助理面板">
       {TABS.map((item) => <button key={item.id} role="tab" aria-selected={tab === item.id} aria-label={item.label} title={item.label}
-        className={tab === item.id ? "active" : ""} onClick={() => onTab(item.id)}>
-        {item.icon}<span>{item.label}</span>
-        {item.id === "feed" && (waiting || waitingUncertain) ? <i className="assistant-tab-badge"
-          aria-label={waitingUncertain ? `已读取 ${waiting ?? 0} 件待处理，部分来源待核对` : `${waiting} ${connected ? "件等你处理" : "条历史待处理"}`}>
-          {waitingUncertain ? waiting ? `${waiting}+` : "?" : waiting}</i> : null}
+        className="vc-panel-tab" onClick={() => onTab(item.id)}>
+        {item.icon}
+        {item.id === "feed" && badge ? <i className={`vc-panel-tab-dot${waitingUncertain && !waiting ? " is-unknown" : ""}`} role="img" aria-label={badge} /> : null}
       </button>)}
     </div>
     <div className="assistant-panel-body">{children}</div>

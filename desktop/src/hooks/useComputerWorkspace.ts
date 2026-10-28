@@ -21,7 +21,7 @@ export function useComputerWorkspace(visible: boolean) {
     generation.current++; const previous = current.current; current.current = null; setView(null);
     if (previous?.id !== undefined) releaseComputerWorkspace(previous.id);
     if (restore) requestAnimationFrame(() => {
-      if (document.activeElement === document.body) document.querySelector<HTMLElement>(".computer-launcher-main")?.focus();
+      if (document.activeElement === document.body) document.querySelector<HTMLElement>(".vc-panel-computer")?.focus();
     });
   }, []);
   const open = useCallback(async () => {
