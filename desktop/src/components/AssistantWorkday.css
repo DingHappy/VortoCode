@@ -31,3 +31,34 @@
 .resident-computer-heading button:disabled { opacity: .5; cursor: default; }
 .resident-computer-card p { margin: 8px 0 0; }
 .resident-computer-card .resident-computer-note, .resident-computer-card small { color: var(--n10); font-size: 11px; }
+
+/* 助理面板「目标」页底部的今日概览：去掉框线，计数用浅底小块，事项用面板列表行（docs/DESIGN_SYSTEM.md 第 4 节） */
+.vc-panel .assistant-workday { padding: 0; color: var(--vc-text); font-family: var(--vc-font-sans); }
+.vc-panel .workday-heading { margin-bottom: var(--vc-space-3); }
+.vc-panel .workday-heading time { font-size: var(--vc-size-caption); color: var(--vc-muted); }
+.vc-panel .workday-heading > button { width: 28px; height: 28px; border: 0; border-radius: var(--vc-radius-control); background: transparent; color: var(--vc-muted); }
+.vc-panel .workday-heading > button:hover:not(:disabled) { background: var(--vc-hover); color: var(--vc-text); }
+.vc-panel .workday-counts { gap: var(--vc-space-2); }
+.vc-panel .workday-counts button { padding: 10px var(--vc-space-3); border: 0; border-radius: var(--vc-radius-control); background: var(--vc-fill); color: var(--vc-text-secondary); font-family: var(--vc-font-sans); }
+.vc-panel .workday-counts button > span { font-size: var(--vc-size-caption); }
+.vc-panel .workday-counts button > strong { font-size: var(--vc-size-heading); font-weight: var(--vc-weight-strong); color: var(--vc-text); }
+.vc-panel .workday-counts button.active { background: var(--vc-accent-bg); color: var(--vc-accent); }
+.vc-panel .workday-counts button.active > strong { color: var(--vc-accent); }
+.vc-panel .workday-explainer, .vc-panel .workday-empty { font-size: var(--vc-size-caption); color: var(--vc-muted); }
+.vc-panel .workday-warnings { border: 0; border-radius: var(--vc-radius-control); background: var(--vc-wait-bg); color: var(--vc-wait-text); font-size: var(--vc-size-caption); }
+.vc-panel .workday-items { gap: 0; }
+.vc-panel .workday-item { gap: 2px; padding: 9px var(--vc-space-2); margin: 0 calc(-1 * var(--vc-space-2)); width: calc(100% + var(--vc-space-4)); border: 0; border-radius: var(--vc-radius-control); background: transparent; }
+.vc-panel .workday-item:hover { background: var(--vc-hover); }
+.vc-panel .workday-item-top { font-size: var(--vc-size-caption); color: var(--vc-muted); }
+.vc-panel .workday-item-top > span { padding: 0; background: transparent; color: var(--vc-muted); }
+.vc-panel .workday-item.decision .workday-item-top > span { color: var(--vc-wait-text); }
+.vc-panel .workday-item.running .workday-item-top > span { color: var(--vc-accent); }
+.vc-panel .workday-item.verified .workday-item-top > span { color: var(--vc-done-text); }
+.vc-panel .workday-item > strong { font-size: var(--vc-size-body); font-weight: var(--vc-weight-medium); color: var(--vc-text); }
+.vc-panel .workday-item-detail { font-size: var(--vc-size-small); color: var(--vc-muted); -webkit-line-clamp: 2; }
+.vc-panel .workday-item-link { font-size: var(--vc-size-caption); color: var(--vc-accent); }
+.vc-panel .workday-more { background: var(--vc-fill); color: var(--vc-text-secondary); font-size: var(--vc-size-caption); border-radius: var(--vc-radius-control); }
+.vc-panel .resident-computer-card { margin: var(--vc-space-4) 0 0; border: 0; border-radius: var(--vc-radius-card); background: var(--vc-fill); color: var(--vc-text-secondary); font-size: var(--vc-size-caption); }
+.vc-panel .resident-computer-heading strong { font-size: var(--vc-size-small); font-weight: var(--vc-weight-medium); color: var(--vc-text); }
+.vc-panel .resident-computer-heading button { height: 28px; border: 0; border-radius: var(--vc-radius-control); background: var(--vc-surface); box-shadow: inset 0 0 0 1px var(--vc-border); color: var(--vc-text-secondary); }
+.vc-panel .resident-computer-card .resident-computer-note, .vc-panel .resident-computer-card small { color: var(--vc-muted); font-size: var(--vc-size-caption); }
