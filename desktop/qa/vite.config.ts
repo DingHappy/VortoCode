@@ -24,6 +24,7 @@ export default defineConfig({
       goalRecovery: new URL("goal-recovery.html", import.meta.url).pathname,
       goalIntegration: new URL("goal-integration.html", import.meta.url).pathname,
       assistantActivity: new URL("assistant-activity.html", import.meta.url).pathname,
+      library: new URL("library.html", import.meta.url).pathname,
     } },
   },
 });

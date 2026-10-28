@@ -2648,13 +2648,14 @@ function App() {
             loading={projectAssetsLoading}
             error={projectAssetsError}
             selectedId={selectedArtifactId}
+            version={artifactVersion}
+            versions={artifactVersions}
+            previewLoading={artifactPreviewLoading}
+            previewHtml={securedArtifactHtml}
             onRefresh={() => void refreshProjectAssets(activeScope !== "general")}
-            onOpen={(id) => {
-              setSelectedArtifactId(id);
-              void loadArtifactPreview(id);
-              setPreviewView("artifacts");
-              openInspector("preview");
-            }}
+            onOpen={(id) => { setSelectedArtifactId(id); void loadArtifactPreview(id); }}
+            onVersion={(id, version) => void loadArtifactPreview(id, version)}
+            onOpenExternal={() => void openSelectedArtifact()}
           />
         ) : (
         <section className={`conversation ${messages.length === 0 && !streaming ? "empty-state" : ""}`}>

@@ -1405,3 +1405,211 @@
   border-radius: var(--vc-radius-full);
   background: currentColor;
 }
+
+/* ── 资料库：按天分组的列表 + 页内预览（docs/DESIGN_SYSTEM.md 第 3 节「列表页」） ── */
+.vc-library {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  background: var(--vc-bg);
+}
+
+.vc-library.has-detail {
+  grid-template-columns: minmax(300px, 400px) minmax(0, 1fr);
+}
+
+.vc-library-list {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: calc(var(--vc-chat-max-w) + 2 * var(--vc-space-10));
+  min-height: 0;
+  margin: 0 auto;
+  padding: var(--vc-space-8) var(--vc-space-10);
+  overflow-y: auto;
+}
+
+.vc-library.has-detail .vc-library-list {
+  max-width: none;
+  padding: var(--vc-space-8) var(--vc-space-5) var(--vc-space-8) var(--vc-space-8);
+}
+
+.vc-page-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--vc-space-4);
+  margin-bottom: var(--vc-space-4);
+}
+
+.vc-page-head h1 {
+  margin: 0;
+  color: var(--vc-text);
+  font-size: var(--vc-size-title);
+  font-weight: var(--vc-weight-strong);
+}
+
+.vc-page-head p {
+  margin: var(--vc-space-1) 0 0;
+  color: var(--vc-muted);
+  font-size: var(--vc-size-small);
+}
+
+.vc-page-error {
+  margin: 0 0 var(--vc-space-3);
+  color: var(--vc-danger-text);
+  font-size: var(--vc-size-small);
+}
+
+.vc-library-group .vc-group-title {
+  padding-left: 0;
+}
+
+.vc-library-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--vc-space-3);
+  width: calc(100% + var(--vc-space-4));
+  margin: 0 calc(-1 * var(--vc-space-2));
+  padding: var(--vc-space-2);
+  border: 0;
+  border-radius: var(--vc-radius-control);
+  background: transparent;
+  color: var(--vc-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.vc-library-row:hover {
+  background: var(--vc-hover);
+}
+
+.vc-library-row[aria-pressed="true"] {
+  background: var(--vc-selected);
+}
+
+.vc-library-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-fill);
+  color: var(--vc-text-secondary);
+}
+
+.vc-library-icon svg {
+  width: var(--vc-icon);
+  height: var(--vc-icon);
+  stroke-width: var(--vc-icon-stroke);
+}
+
+.vc-library-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.vc-library-title,
+.vc-library-desc {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vc-library-title {
+  font-size: var(--vc-size-body);
+  font-weight: var(--vc-weight-medium);
+}
+
+.vc-library-desc,
+.vc-library-time {
+  color: var(--vc-muted);
+  font-size: var(--vc-size-caption);
+}
+
+.vc-library-detail {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--vc-divider);
+  background: var(--vc-surface);
+}
+
+.vc-library-detail > header {
+  display: flex;
+  align-items: center;
+  gap: var(--vc-space-2);
+  padding: var(--vc-space-3) var(--vc-space-3) var(--vc-space-3) var(--vc-space-5);
+  border-bottom: 1px solid var(--vc-divider);
+}
+
+.vc-library-detail > header > div {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.vc-library-detail > header strong {
+  overflow: hidden;
+  color: var(--vc-text);
+  font-size: var(--vc-size-body);
+  font-weight: var(--vc-weight-strong);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vc-library-detail > header span {
+  color: var(--vc-muted);
+  font-size: var(--vc-size-caption);
+}
+
+.vc-library-detail select {
+  height: var(--vc-control-h);
+  padding: 0 var(--vc-space-2);
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-surface);
+  color: var(--vc-text);
+  font: inherit;
+  font-size: var(--vc-size-small);
+}
+
+.vc-library-frame {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.vc-library-frame iframe {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  background: var(--vc-paper);
+}
+
+.vc-library-frame p {
+  margin: var(--vc-space-6) var(--vc-space-5);
+  color: var(--vc-muted);
+  font-size: var(--vc-size-small);
+}
+
+/* 侧栏收起时页面标题让开左上角的红绿灯和「展开侧栏」 */
+:root[data-window="overlay"] .workbench.vc-sidebar-collapsed .vc-library-list {
+  padding-top: 64px;
+}
+
+/* 窄窗口：预览盖住列表，关掉回到列表 */
+@media (max-width: 900px) {
+  .vc-library.has-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .vc-library.has-detail .vc-library-list {
+    display: none;
+  }
+}

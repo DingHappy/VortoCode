@@ -9584,7 +9584,7 @@ input::placeholder {
   gap: 8px;
 }
 
-/* 侧边栏打开的主区域页面：插件 / 产物中心 */
+/* 侧边栏打开的主区域页面：插件 */
 .main-page {
   min-width: 0;
   min-height: 0;
@@ -9678,8 +9678,7 @@ input::placeholder {
   cursor: pointer;
 }
 
-.plugin-builtins button:hover,
-.artifact-grid button:hover {
+.plugin-builtins button:hover {
   border-color: var(--n7);
 }
 
@@ -9704,56 +9703,6 @@ input::placeholder {
   color: var(--n12);
   font-size: 14px;
   font-weight: 600;
-}
-
-.artifact-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 12px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.artifact-grid button {
-  display: grid;
-  width: 100%;
-  gap: 4px;
-  padding: 14px;
-  border: 1px solid var(--n5);
-  border-radius: 12px;
-  color: var(--n11);
-  background: var(--n0);
-  text-align: left;
-  cursor: pointer;
-}
-
-.artifact-grid button.active {
-  border-color: var(--n13);
-}
-
-.artifact-grid-icon {
-  display: grid;
-  place-items: center;
-  width: 34px;
-  height: 34px;
-  margin-bottom: 6px;
-  border-radius: 9px;
-  color: var(--n11);
-  background: var(--n3);
-}
-
-.artifact-grid strong {
-  overflow: hidden;
-  color: var(--n13);
-  font-size: 13.5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.artifact-grid small {
-  color: var(--n9);
-  font-size: 11.5px;
 }
 
 /* 账号：侧边栏左下角 + 设置 → 账号 */
