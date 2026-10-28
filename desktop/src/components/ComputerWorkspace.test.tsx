@@ -17,3 +17,14 @@ it("removes a frame after the connection is replaced and does not invoke any act
     onClose={act} onRetry={act} onWindow={act}/>);
   expect(live).toContain('sandbox="allow-scripts allow-same-origin"'); expect(live).not.toContain("allow-top-navigation");
 });
+it("助理面板里的电脑入口是一个小按钮：设置过就「打开电脑看」，没设置就「连接电脑」", async () => {
+  const { ComputerLauncherView } = await import("./ComputerWorkspace");
+  type Status = Parameters<typeof ComputerLauncherView>[0]["status"];
+  const set = { target: "ssh:vorto-code", sshConnected: false, error: null, checkedAt: null } as unknown as Status;
+  const html = renderToStaticMarkup(<ComputerLauncherView status={set} busy={false} onOpen={() => {}} onSettings={() => {}} />);
+  expect(html).toContain('class="vc-panel-computer"');
+  expect(html).toContain('title="vorto-code · 未连接"');
+  expect(html).toContain("打开电脑看</button>");
+  expect(renderToStaticMarkup(<ComputerLauncherView status={null} busy={false} onOpen={() => {}} onSettings={() => {}} />)).toContain("连接电脑</button>");
+  expect(renderToStaticMarkup(<ComputerLauncherView status={set} busy onOpen={() => {}} onSettings={() => {}} />)).toContain("正在连接…</button>");
+});
