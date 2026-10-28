@@ -13,8 +13,9 @@ it("the search box starts closed", () => {
 
 it("work nav marks the open page and needs a connection for a new chat", () => {
   const html = renderToStaticMarkup(<WorkNav view="artifacts" connected={false} onNewChat={noop} onWork={noop} onArtifacts={noop} />);
-  expect(html).toContain('<button disabled=""><svg');
-  expect(html).toMatch(/class="active" title="Agent 做出来的网页和文档"/);
+  expect(html).toMatch(/disabled=""[^>]*class="vc-nav-item"><svg/);
+  expect(html).toMatch(/title="Agent 做出来的网页和文档" type="button" aria-current="page"/);
+  expect(html.match(/aria-current/g)).toHaveLength(1);
 });
 
 it("a folded section says so and keeps its actions", () => {

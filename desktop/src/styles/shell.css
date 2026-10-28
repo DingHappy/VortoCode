@@ -1,0 +1,255 @@
+/* ── 侧栏骨架与任务胶囊（docs/DESIGN_SYSTEM.md 第 8 节迁移第 2 步）────────────
+   只用 tokens.css 的变量。在 App.tsx 里排在旧样式之后加载。
+   工作台的项目和会话列表还是旧样式，迁移工作台时再换。 */
+
+.sidebar.vc-sidebar {
+  border-right: 1px solid var(--vc-border);
+  background: var(--vc-sidebar);
+  color: var(--vc-text);
+  font-family: var(--vc-font-sans);
+}
+
+.vc-side-brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--vc-space-5) var(--vc-space-3) var(--vc-space-3) var(--vc-space-5);
+}
+
+.vc-side-brand strong {
+  color: var(--vc-text);
+  font-size: var(--vc-size-heading);
+  font-weight: var(--vc-weight-strong);
+}
+
+.vc-side-brand .vc-btn--icon[aria-pressed="true"] {
+  background: var(--vc-selected);
+  color: var(--vc-text);
+}
+
+/* 助理 / 工作台：分段切换，选中段用卡片底色加描边，不用阴影 */
+.vc-segmented {
+  display: flex;
+  gap: var(--vc-space-1);
+  margin: 0 var(--vc-space-3) var(--vc-space-3);
+  padding: var(--vc-space-1);
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-selected);
+}
+
+.vc-segmented button {
+  flex: 1 1 0;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: var(--vc-radius-control);
+  background: transparent;
+  color: var(--vc-muted);
+  font-family: var(--vc-font-sans);
+  font-size: var(--vc-size-small);
+  font-weight: var(--vc-weight-medium);
+  cursor: pointer;
+}
+
+.vc-segmented button:hover:not([aria-checked="true"]) {
+  color: var(--vc-text);
+}
+
+.vc-segmented button[aria-checked="true"] {
+  border-color: var(--vc-border);
+  background: var(--vc-surface);
+  color: var(--vc-text);
+}
+
+.vc-segmented button:focus-visible {
+  outline: 2px solid var(--vc-focus-ring);
+  outline-offset: 1px;
+}
+
+.vc-side-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 var(--vc-space-3);
+}
+
+.vc-side-recent {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--vc-space-1) var(--vc-space-3) var(--vc-space-3);
+}
+
+.vc-side-recent .vc-nav-item {
+  margin-bottom: 2px;
+}
+
+.vc-side-recent .vc-group-title {
+  padding-top: var(--vc-space-3);
+}
+
+.vc-side-recent .vc-pill {
+  height: 20px;
+  padding: 0 var(--vc-space-2);
+  font-weight: var(--vc-weight-regular);
+}
+
+.vc-side-hint {
+  margin: var(--vc-space-1) var(--vc-space-3);
+  color: var(--vc-muted);
+  font-size: var(--vc-size-caption);
+  line-height: 1.6;
+}
+
+/* 「任务」角标：只计等你处理的件数 */
+.vc-count {
+  display: inline-block;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 var(--vc-space-1);
+  border-radius: var(--vc-radius-full);
+  background: var(--vc-wait-bg);
+  color: var(--vc-wait-text);
+  font-size: var(--vc-size-caption);
+  font-weight: var(--vc-weight-medium);
+  line-height: 20px;
+  text-align: center;
+}
+
+/* 有来源没读到、也没读到等你的事：只提示待核对，不用琥珀色 */
+.vc-count--unknown {
+  background: var(--vc-unknown-bg);
+  color: var(--vc-unknown-text);
+}
+
+.vc-live-dot {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--vc-radius-full);
+  background: var(--vc-accent);
+}
+
+/* 底部：常驻电脑状态、更新、账号与设置 */
+.vc-side-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: auto;
+  padding: var(--vc-space-2) var(--vc-space-3) var(--vc-space-3);
+  border-top: 1px solid var(--vc-divider);
+}
+
+.vc-side-resident .vc-nav-item__label {
+  color: var(--vc-text-secondary);
+  font-size: var(--vc-size-small);
+}
+
+.vc-status-dot {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--vc-radius-full);
+  background: var(--vc-muted);
+}
+
+.vc-side-resident.online .vc-status-dot {
+  background: var(--vc-done-text);
+}
+
+.vc-side-resident.offline .vc-status-dot {
+  background: var(--vc-danger-text);
+}
+
+.vc-side-update {
+  width: 100%;
+}
+
+.vc-side-account-row {
+  display: flex;
+  align-items: center;
+  gap: var(--vc-space-1);
+}
+
+.vc-side-account {
+  display: flex;
+  align-items: center;
+  gap: var(--vc-space-3);
+  min-width: 0;
+  flex: 1 1 auto;
+  height: 40px;
+  padding: 0 var(--vc-space-2);
+  border: 0;
+  border-radius: var(--vc-radius-control);
+  background: transparent;
+  color: var(--vc-text);
+  font-family: var(--vc-font-sans);
+  text-align: left;
+  cursor: pointer;
+}
+
+.vc-side-account:hover {
+  background: var(--vc-hover);
+}
+
+.vc-side-account:focus-visible {
+  outline: 2px solid var(--vc-focus-ring);
+  outline-offset: 1px;
+}
+
+.vc-avatar {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--vc-radius-full);
+  background: var(--vc-ink);
+  color: var(--vc-on-ink);
+  font-size: var(--vc-size-caption);
+  font-weight: var(--vc-weight-strong);
+}
+
+.vc-avatar svg {
+  width: 14px;
+  height: 14px;
+}
+
+.vc-side-identity {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.vc-side-identity > span,
+.vc-side-identity > small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vc-side-identity > span {
+  font-size: var(--vc-size-small);
+  font-weight: var(--vc-weight-medium);
+}
+
+.vc-side-identity > small {
+  color: var(--vc-muted);
+  font-size: var(--vc-size-caption);
+}
+
+/* 顶栏右上角的任务胶囊 */
+.vc-task-pill {
+  height: 28px;
+  border: 0;
+  font-family: var(--vc-font-sans);
+  cursor: pointer;
+}
+
+.vc-task-pill:not(.vc-pill--wait):hover {
+  background: var(--vc-hover);
+}
+
+.vc-task-pill:focus-visible {
+  outline: 2px solid var(--vc-focus-ring);
+  outline-offset: 2px;
+}

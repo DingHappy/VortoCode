@@ -1,6 +1,7 @@
 import { AssistantScheduleCard } from "./AssistantScheduleCard";
 import type { ReactNode } from "react";
-import { ArrowLeft, Smartphone, Check, ChevronRight, Clock3, Fingerprint, ImagePlus, Laptop, List, MessageCircle, MessagesSquare, PencilLine, Plus, RefreshCw, Server, ShieldCheck, Target, Trash2, X } from "lucide-react";
+import { Archive, ArrowLeft, Smartphone, Check, ChevronRight, Clock3, Fingerprint, ImagePlus, Laptop, List, ListChecks, MessagesSquare, PencilLine, Puzzle, RefreshCw, Server, ShieldCheck, SquarePen, Star, Target, Trash2, X } from "lucide-react";
+import { GroupTitle, NavItem, Tag } from "./ui";
 import { useRef, useState } from "react";
 import { avatarHue, avatarInitial, avatarSrc } from "../lib/avatar";
 import { connectorCredentialView } from "../lib/connectorStatus";
@@ -9,22 +10,34 @@ export { PhoneChatDialog } from "./PhoneChatDialog";
 
 export type AppMode = "assistant" | "work";
 
-/** 左上角模式切换：助理（个人助理，一个常驻主聊天）/ 工作台（按项目开对话写代码）。 */
-export function ModeSwitch({ mode, resident = true, onChange }: { mode: AppMode; resident?: boolean; onChange: (mode: AppMode) => void }) {
-  return <><div className="mode-switch" role="radiogroup" aria-label="界面模式">
-    <button role="radio" aria-checked={mode === "assistant"} className={mode === "assistant" ? "active" : ""} onClick={() => onChange("assistant")}>助理</button>
-    <button role="radio" aria-checked={mode === "work"} className={mode === "work" ? "active" : ""} onClick={() => onChange("work")}>工作台</button>
-  </div>
-  <p className="mode-caption">{mode === "assistant"
-      ? resident ? "常驻电脑上的个人助理：交代事情、看简报，合上笔记本也在做" : "你的个人助理：交代事情、看简报。连上常驻电脑后，合上笔记本也能接着做"
-      : "在这台电脑的项目里写代码：开对话、派任务、看产物"}</p>
-  </>;
+/** 左上角模式切换：助理（个人助理，一个常驻主聊天）/ 工作台（按项目开对话写代码）。全局只有这一处模式切换。 */
+export function ModeSwitch({ mode, onChange }: { mode: AppMode; onChange: (mode: AppMode) => void }) {
+  return <div className="vc-segmented" role="radiogroup" aria-label="界面模式">
+    <button role="radio" aria-checked={mode === "assistant"} onClick={() => onChange("assistant")}>助理</button>
+    <button role="radio" aria-checked={mode === "work"} onClick={() => onChange("work")}>工作台</button>
+  </div>;
 }
 
 export interface SideChat { sid: string; title: string; at?: string; busy?: boolean }
 
-/** 助理模式左侧：「主要聊天」常驻置顶，岔开的话题放「旁聊」。 */
-export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offlineChats = [], current, onSelect, onOpenPhoneChat, onOpenOfflineChat, onNewSideChat }: {
+/** 侧栏一级入口（docs/DESIGN_SYSTEM.md 第 2 节）：最多 5 个，「任务」的角标只计等你处理的件数。 */
+export type AssistantPage = "tasks" | "schedule" | "goals" | "library" | "customize";
+
+export const ASSISTANT_PAGES: Array<{ id: AssistantPage; label: string; icon: ReactNode; hint: string }> = [
+  { id: "tasks", label: "任务", icon: <ListChecks aria-hidden="true" />, hint: "派出去的事、等你处理的事和 Codex 进度" },
+  { id: "schedule", label: "定时", icon: <Clock3 aria-hidden="true" />, hint: "早晚报、签到和定时作业" },
+  { id: "goals", label: "目标", icon: <Target aria-hidden="true" />, hint: "交给助理盯着的个人目标" },
+  { id: "library", label: "资料库", icon: <Archive aria-hidden="true" />, hint: "做出来的网页、文档和文件" },
+  { id: "customize", label: "定制", icon: <Puzzle aria-hidden="true" />, hint: "插件、连接的服务、性格与记忆" },
+];
+
+function LiveDot() {
+  return <i className="vc-live-dot" aria-label="进行中" />;
+}
+
+/** 助理模式左侧：新对话 + 一级入口，下面是「最近」：主要聊天置顶带星标，旁聊、手机和本机的聊天按条目标注来源。 */
+export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offlineChats = [], current, page = null, waiting = 0, waitingUncertain = false,
+  onSelect, onPage, onOpenPhoneChat, onOpenOfflineChat, onNewSideChat }: {
   mainChat: { sid: string; preview?: string; busy?: boolean };
   sideChats: SideChat[];
   /** 手机上和助理的聊天：点开只读查看 */
@@ -34,32 +47,37 @@ export function AssistantSidebar({ mainChat, sideChats, phoneChats = [], offline
   offlineChats?: Array<{ sid: string; title: string }>;
   onOpenOfflineChat?: (sid: string) => void;
   current: string;
+  /** 当前打开的一级入口；null = 在看对话 */
+  page?: AssistantPage | null;
+  /** 等你处理的件数：「任务」的角标 */
+  waiting?: number;
+  waitingUncertain?: boolean;
   onSelect: (sid: string) => void;
+  onPage?: (page: AssistantPage) => void;
   onNewSideChat: () => void;
 }) {
-  return <nav className="assistant-sidebar" aria-label="助理对话">
-    <button className={`assistant-main-chat${current === mainChat.sid ? " active" : ""}`} onClick={() => onSelect(mainChat.sid)}>
-      <span className="assistant-main-chat-icon"><MessageCircle size={16} /></span>
-      <span className="assistant-main-chat-text"><strong>主要聊天</strong>{mainChat.preview && <small>{mainChat.preview}</small>}</span>
-      {mainChat.busy && <i className="workbench-tab-live" aria-label="进行中" />}
-    </button>
-    {phoneChats.map((chat) => <button key={chat.sid} className="assistant-side-chat phone" onClick={() => onOpenPhoneChat?.(chat.sid)}
-      title="手机上和助理的聊天（这里只读，在手机上回复）">
-      <Smartphone size={15} /><span>{chat.title.replace(/^📱\s*/, "")} · 手机</span>
-    </button>)}
-    {offlineChats.length > 0 && <>
-      <div className="assistant-section-title"><span>本机（离线时）</span></div>
-      {offlineChats.map((chat) => <button key={chat.sid} className="assistant-side-chat offline" onClick={() => onOpenOfflineChat?.(chat.sid)}
-        title="常驻电脑连不上时在这台 Mac 上聊的（只读，可带回常驻电脑）">
-        <Laptop size={15} /><span>{chat.title || "本机对话"}</span>
-      </button>)}
-    </>}
-    <div className="assistant-section-title"><span>旁聊</span><button aria-label="新建旁聊" title="新建旁聊" onClick={onNewSideChat}><Plus size={15} /></button></div>
-    {sideChats.length === 0 && <p className="assistant-side-empty">岔开的话题可以开一个旁聊，不打扰主要聊天。</p>}
-    {sideChats.map((chat) => <button key={chat.sid} className={`assistant-side-chat${current === chat.sid ? " active" : ""}`} onClick={() => onSelect(chat.sid)}>
-      <MessagesSquare size={15} /><span>{chat.title || "新的旁聊"}</span>{chat.busy && <i className="workbench-tab-live" aria-label="进行中" />}
-    </button>)}
-  </nav>;
+  const badge = waitingUncertain ? waiting ? `${waiting}+` : "?" : waiting ? String(waiting) : null;
+  return <>
+    <nav className="vc-side-nav" aria-label="助理">
+      <NavItem icon={<SquarePen aria-hidden="true" />} label="新对话" title="开一个旁聊，不打扰主要聊天" onClick={onNewSideChat} />
+      {ASSISTANT_PAGES.map((item) => <NavItem key={item.id} icon={item.icon} label={item.label} title={item.hint}
+        current={page === item.id} onClick={() => onPage?.(item.id)}
+        meta={item.id === "tasks" && badge ? <span className={waiting ? "vc-count" : "vc-count vc-count--unknown"}
+          aria-label={waitingUncertain ? `已读取 ${waiting} 件等你处理，部分来源待核对` : `${waiting} 件等你处理`}>{badge}</span> : undefined} />)}
+    </nav>
+    <div className="vc-side-recent">
+      <GroupTitle>最近</GroupTitle>
+      <NavItem icon={<Star aria-hidden="true" />} label="主要聊天" title={mainChat.preview || "主要聊天"}
+        current={!page && current === mainChat.sid} onClick={() => onSelect(mainChat.sid)} meta={mainChat.busy ? <LiveDot /> : undefined} />
+      {sideChats.map((chat) => <NavItem key={chat.sid} icon={<MessagesSquare aria-hidden="true" />} label={chat.title || "新的旁聊"}
+        current={!page && current === chat.sid} onClick={() => onSelect(chat.sid)} meta={chat.busy ? <LiveDot /> : undefined} />)}
+      {phoneChats.map((chat) => <NavItem key={chat.sid} icon={<Smartphone aria-hidden="true" />} label={chat.title.replace(/^📱\s*/, "")}
+        title="手机上和助理的聊天（这里只读，在手机上回复）" onClick={() => onOpenPhoneChat?.(chat.sid)} meta={<Tag>手机</Tag>} />)}
+      {offlineChats.map((chat) => <NavItem key={chat.sid} icon={<Laptop aria-hidden="true" />} label={chat.title || "本机对话"}
+        title="常驻电脑连不上时在这台 Mac 上聊的（只读，可带回常驻电脑）" onClick={() => onOpenOfflineChat?.(chat.sid)} meta={<Tag>本机</Tag>} />)}
+      {sideChats.length === 0 && <p className="vc-side-hint">岔开的话题点「新对话」开个旁聊，不打扰主要聊天。</p>}
+    </div>
+  </>;
 }
 
 /** 助理住在哪：常驻电脑（一直开着）或本机兜底（合上笔记本就停）。 */
@@ -67,6 +85,14 @@ export type AssistantHostInfo = { kind: "resident"; name: string; reachable?: bo
 
 /** 助理模式右侧：动态 / 目标 / 审核记录 / 定时 / 身份（SOUL、关于你、记忆）。 */
 export type AssistantTab = "feed" | "goals" | "audit" | "schedule" | "identity";
+
+/** 一级入口和右侧面板标签的对应。各页迁好之前，入口先打开面板的对应标签；「资料库」是独立页面。 */
+export const PAGE_PANEL: Record<Exclude<AssistantPage, "library">, AssistantTab> = {
+  tasks: "feed", schedule: "schedule", goals: "goals", customize: "identity",
+};
+export const PANEL_PAGE: Record<AssistantTab, AssistantPage | null> = {
+  feed: "tasks", schedule: "schedule", goals: "goals", identity: "customize", audit: null,
+};
 
 const TABS: Array<{ id: AssistantTab; label: string; icon: ReactNode }> = [
   { id: "feed", label: "动态", icon: <List size={16} aria-hidden="true" /> },

@@ -20,3 +20,10 @@ it("the panel toggle prefers waiting items over plan progress, and dots while bu
   expect(header({ waiting: 1 })).toContain("workbench-toggle-dot waiting");
   expect(header({ busy: true })).toContain("停止");
 });
+
+it("a task pill replaces the panel toggle but keeps the stop button", () => {
+  const html = header({ taskPill: <button>2 件在忙</button>, busy: true });
+  expect(html).toContain("2 件在忙");
+  expect(html).not.toContain("workbench-toggle");
+  expect(html).toContain("停止");
+});

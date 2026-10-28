@@ -15,7 +15,8 @@ import { useConversationLocation } from "./hooks/useConversationLocation";
 import { startPolling } from "./lib/polling";
 import { AssistantActionGate, type AssistantTaskAction } from "./lib/assistantTask";
 import { openAssistantTask } from "./lib/assistantNavigation";
-import { AssistantAudit, AssistantAvatarImage, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantPlugins, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PhoneChatDialog, type AppMode, type AssistantTab } from "./components/AssistantMode";
+import { AssistantAudit, AssistantAvatarImage, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantPlugins, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PAGE_PANEL, PANEL_PAGE, PhoneChatDialog, type AppMode, type AssistantPage, type AssistantTab } from "./components/AssistantMode";
+import { TaskPill } from "./components/TaskPill";
 import { AssistantGoals } from "./components/AssistantGoals";
 import { assistantFeed, isPhoneSession, taskFeedItem } from "./lib/activityFeed";
 import { AssistantActivity, AssistantActivityDetail } from "./components/AssistantActivity";
@@ -46,6 +47,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction 
 
 import "./App.css";
 import "./daily.css";
+// 已按 docs/DESIGN_SYSTEM.md 迁移的部分放在旧样式之后，同等优先级时以新样式为准。
+import "./styles/shell.css";
 import {
   createSessionId,
   DESKTOP_PROTOCOL_VERSION,
@@ -2324,6 +2327,7 @@ function App() {
   const assistantFeedItems = assistantFeed({ turns: agentTurns, dispatches, notices, taskItems: feedItems, codexActions,
     confirmation: pendingConfirm });
   const assistantWaiting = assistantFeedItems.filter(item => item.status === "waiting").length;
+  const assistantBusy = assistantFeedItems.filter(item => item.status === "running").length;
   const readSources = activityReads?.client === clientRef.current && activityReads?.scope === assistantScope ? activityReads.sources : {};
   const activitySources: ActivitySource[] = (["turns", "dispatches", "codexActions", "notices"] as const)
     .map(name => ({ name, ...(readSources[name] ?? { status: "loading" as const }) }));
@@ -2348,6 +2352,21 @@ function App() {
       await client.decideCodexAction(action.id, decision);
       if (current()) await refreshAgentTurns();
     });
+  };
+
+  // 侧栏一级入口。任务 / 定时 / 目标 / 定制各自的页面迁好之前，先打开右侧面板的对应标签；再点一次收起。
+  const assistantPage: AssistantPage | null = mainView === "artifacts" ? "library"
+    : mainView === "chat" && inspectorOpen && !computerWorkspace.view ? PANEL_PAGE[assistantTab] : null;
+  const openAssistantPage = (page: AssistantPage) => {
+    if (page === "library") {
+      setMainView("artifacts"); void refreshProjectAssets(activeScope !== "general"); return;
+    }
+    const tab = PAGE_PANEL[page];
+    setMainView("chat");
+    if (assistantPage === page) { setInspectorOpen(false); return; }
+    if (computerWorkspace.view) computerWorkspace.close();
+    if (tab === "goals") setAssistantGoalFocus(null);
+    setAssistantTab(tab); setInspectorOpen(true); panelActions.tabOpened(tab);
   };
 
   const openDispatch = async (id: string) => {
@@ -2504,16 +2523,20 @@ function App() {
       </div>
 
       <div className={`workbench ${computerWorkspace.view ? "computer-open" : ""} ${mainView === "chat" && inspectorOpen ? "inspector-open" : "inspector-closed"} ${mainView === "chat" && inspectorOpen && appMode !== "assistant" && !showWorkbenchLauncher && ["files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
-        <aside className="sidebar">
+        <aside className="sidebar vc-sidebar">
           <SidebarBrand query={sidebarQuery} onQuery={setSidebarQuery} />
-          <ModeSwitch mode={appMode} resident={Boolean(findAssistantHost(projects))} onChange={(mode) => void changeAppMode(mode)} />
+          <ModeSwitch mode={appMode} onChange={(mode) => void changeAppMode(mode)} />
           {appMode === "assistant" ? (
             <AssistantSidebar
               mainChat={{ sid: mainChatSid, preview: agentTurns.find((turn) => turn.sid === mainChatSid)?.outcome, busy: busy && activeSid === mainChatSid }}
               sideChats={sessions.filter((session) => session.sid !== mainChatSid && !isPhoneSession(session.sid) && (session.messages > 0 || session.sid === activeSid))
                 .map((session) => ({ sid: session.sid, title: session.title, busy: session.status === "working" }))}
               current={activeSid}
-              onSelect={(sid) => { setMainView("chat"); void (sid === mainChatSid ? openMainChat() : switchSession(sid)); }}
+              page={assistantPage}
+              waiting={assistantWaiting}
+              waitingUncertain={!activityComplete}
+              onPage={openAssistantPage}
+              onSelect={(sid) => { setMainView("chat"); setInspectorOpen(false); void (sid === mainChatSid ? openMainChat() : switchSession(sid)); }}
               phoneChats={phoneChats.map((chat) => ({ sid: chat.sid, title: chat.title }))}
               onOpenPhoneChat={openPhoneChat}
               offlineChats={onResidentNow ? offlineChats.map((chat) => ({ sid: chat.sid, title: chat.title })) : []}
@@ -2581,6 +2604,10 @@ function App() {
           <SidebarFooter
             identity={identity}
             update={availableUpdate}
+            resident={appMode !== "assistant" ? undefined : onAssistantHost()
+              ? { state: connection === "connected" ? "online" : "offline", name: findAssistantHost(projects)?.name,
+                onClick: () => connection === "connected" ? openAssistantPage("tasks") : void changeAppMode("assistant") }
+              : { state: "local", onClick: () => findAssistantHost(projects) ? void changeAppMode("assistant") : setRemoteDialogOpen("assistant") }}
             onOpenAccount={() => { setSettingsSection("account"); setSettingsOpen(true); }}
             onOpenSettings={() => setSettingsOpen(true)}
           />
@@ -2629,6 +2656,8 @@ function App() {
             title={appMode === "assistant" && activeSid === mainChatSid ? "主要聊天" : currentSession?.title || "新对话"}
             place={appMode !== "assistant" && residentHost && currentWorkProject() ? (remoteProjectRef.current ? "resident" : "local") : null}
             panelOpen={inspectorOpen} waiting={feedWaiting} plan={{ done: planDone, total: plan.length }} busy={busy}
+            taskPill={appMode === "assistant" ? <TaskPill waiting={assistantWaiting} busy={assistantBusy} uncertain={!activityComplete}
+              open={assistantPage === "tasks"} onOpen={() => openAssistantPage("tasks")} /> : undefined}
             onTogglePanel={() => inspectorOpen ? setInspectorOpen(false)
               : appMode === "assistant" || (workbenchTabs.length > 0 && !isManagementTab(inspectorTab)) ? setInspectorOpen(true) : openInspector("feed")}
             onStop={() => void cancelTurn()} />

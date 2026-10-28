@@ -1,7 +1,8 @@
-// 对话区标题栏：会话名、在哪台电脑上做（登记了常驻电脑时）、右侧面板开关与停止按钮。只负责显示。
+// 对话区标题栏：会话名、在哪台电脑上做（登记了常驻电脑时）、右侧面板开关或任务胶囊、停止按钮。只负责显示。
+import type { ReactNode } from "react";
 import { Laptop, PanelRight, Server } from "lucide-react";
 
-export function ConversationHeader({ title, place, panelOpen, waiting, plan, busy, onTogglePanel, onStop }: {
+export function ConversationHeader({ title, place, panelOpen, waiting, plan, busy, taskPill, onTogglePanel, onStop }: {
   title: string;
   /** 登记了常驻电脑、又在工作台项目里时才显示 */
   place: "resident" | "local" | null;
@@ -10,6 +11,8 @@ export function ConversationHeader({ title, place, panelOpen, waiting, plan, bus
   waiting: number;
   plan: { done: number; total: number };
   busy: boolean;
+  /** 助理模式用任务胶囊代替右侧面板开关（docs/DESIGN_SYSTEM.md 第 4 节） */
+  taskPill?: ReactNode;
   onTogglePanel: () => void;
   onStop: () => void;
 }) {
@@ -23,7 +26,7 @@ export function ConversationHeader({ title, place, panelOpen, waiting, plan, bus
           </span>)}
       </div>
       <div className="conversation-actions">
-        <button
+        {taskPill ?? <button
           className={`context-toggle workbench-toggle icon-only ${panelOpen ? "active" : ""}`}
           aria-expanded={panelOpen}
           aria-label="任务动态"
@@ -32,7 +35,7 @@ export function ConversationHeader({ title, place, panelOpen, waiting, plan, bus
         >
           <PanelRight size={16} />
           {(busy || waiting > 0) && <i className={`workbench-toggle-dot${!busy ? " waiting" : ""}`} aria-hidden="true" />}
-        </button>
+        </button>}
         {busy && <button className="stop-button" onClick={onStop}>停止</button>}
       </div>
     </div>

@@ -46,3 +46,13 @@ it("footer shows the account, settings, and the update button only when there is
   const html = renderToStaticMarkup(<SidebarFooter identity={identity} update={update} onOpenAccount={noop} onOpenSettings={noop} />);
   expect(html).toContain("新版本 0.2.15"); expect(html).toContain("点击更新并重启");
 });
+
+it("footer shows where the assistant lives only when given", () => {
+  const identity = { initial: "D", name: "me@example.com", detail: "", title: "VortoCode 账号" };
+  const footer = (resident?: Parameters<typeof SidebarFooter>[0]["resident"]) =>
+    renderToStaticMarkup(<SidebarFooter identity={identity} update={null} resident={resident} onOpenAccount={noop} onOpenSettings={noop} />);
+  expect(footer()).not.toContain("vc-side-resident");
+  expect(footer({ state: "online", name: "home", onClick: noop })).toContain("常驻电脑「home」 · 在线");
+  expect(footer({ state: "offline", name: "常驻电脑", onClick: noop })).toContain("常驻电脑 · 连不上");
+  expect(footer({ state: "local", onClick: noop })).toContain("在本机运行");
+});

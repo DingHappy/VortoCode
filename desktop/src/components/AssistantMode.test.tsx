@@ -1,21 +1,41 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
-import { AssistantIdentity, AssistantPanel, AssistantSchedule, AssistantSidebar, MemoryProposals, ModeSwitch } from "./AssistantMode";
+import { ASSISTANT_PAGES, AssistantIdentity, AssistantPanel, AssistantSchedule, AssistantSidebar, MemoryProposals, ModeSwitch, PAGE_PANEL, PANEL_PAGE } from "./AssistantMode";
 
 it("模式切换：两个选项，当前项 aria-checked", () => {
   const html = renderToStaticMarkup(<ModeSwitch mode="assistant" onChange={() => {}} />);
-  expect(html).toContain('aria-checked="true" class="active">助理');
-  expect(html).toContain('aria-checked="false" class="">工作台');
+  expect(html).toContain('aria-checked="true">助理');
+  expect(html).toContain('aria-checked="false">工作台');
 });
 
-it("左侧：主要聊天置顶在旁聊之前；没有旁聊时给一句说明", () => {
+it("左侧：一级入口不超过 5 个，「任务」角标只计等你处理的件数", () => {
+  expect(ASSISTANT_PAGES.length).toBeLessThanOrEqual(5);
+  const html = renderToStaticMarkup(<AssistantSidebar mainChat={{ sid: "m" }} sideChats={[]} current="m" page="schedule" waiting={3}
+    onSelect={() => {}} onNewSideChat={() => {}} />);
+  expect(html).toContain('aria-label="3 件等你处理">3</span>');
+  expect(html.match(/aria-current="page"/g)).toHaveLength(1);   // 打开定时时，主要聊天不再同时高亮
+  expect(html).toMatch(/aria-current="page"[^>]*>.*?定时/);
+  const uncertain = renderToStaticMarkup(<AssistantSidebar mainChat={{ sid: "m" }} sideChats={[]} current="m" waiting={0} waitingUncertain
+    onSelect={() => {}} onNewSideChat={() => {}} />);
+  expect(uncertain).toContain('class="vc-count vc-count--unknown"');
+  expect(uncertain).toContain(">?</span>");
+  const calm = renderToStaticMarkup(<AssistantSidebar mainChat={{ sid: "m" }} sideChats={[]} current="m" onSelect={() => {}} onNewSideChat={() => {}} />);
+  expect(calm).not.toContain("vc-count");
+});
+
+it("每个面板入口都对得上一个标签，审核记录不占一级入口", () => {
+  for (const [page, tab] of Object.entries(PAGE_PANEL)) expect(PANEL_PAGE[tab]).toBe(page);
+  expect(PANEL_PAGE.audit).toBeNull();
+});
+
+it("左侧「最近」：主要聊天置顶在旁聊之前；没有旁聊时给一句说明", () => {
   const withSide = renderToStaticMarkup(<AssistantSidebar mainChat={{ sid: "m", preview: "完成静态审查" }}
     sideChats={[{ sid: "s1", title: "整理周报" }]} current="m" onSelect={() => {}} onNewSideChat={() => {}} />);
   expect(withSide.indexOf("主要聊天")).toBeLessThan(withSide.indexOf("整理周报"));
-  expect(withSide).toContain("完成静态审查");
-  expect(withSide).toContain("新建旁聊");
+  expect(withSide).toContain('title="完成静态审查"');
+  expect(withSide).toContain("新对话");
   const empty = renderToStaticMarkup(<AssistantSidebar mainChat={{ sid: "m" }} sideChats={[]} current="m" onSelect={() => {}} onNewSideChat={() => {}} />);
-  expect(empty).toContain("岔开的话题可以开一个旁聊");
+  expect(empty).toContain("开个旁聊，不打扰主要聊天");
 });
 
 it("右侧：身份卡显示连接状态与模型；等你处理的件数跟在「动态」后面", () => {
@@ -150,13 +170,14 @@ it("schedule section explains read-only items once", () => {
   expect(html.match(/>只读</g)).toHaveLength(2);
 });
 
-it("sidebar lists offline chats in their own read-only group only when given", () => {
-  const opened: string[] = [];
+it("sidebar marks phone and offline chats inline instead of grouping them", () => {
   const html = renderToStaticMarkup(<AssistantSidebar mainChat={{ sid: "m" }} sideChats={[]} current="m" onSelect={() => {}}
-    onNewSideChat={() => {}} offlineChats={[{ sid: "o1", title: "周三开会" }, { sid: "o2", title: "" }]} onOpenOfflineChat={(sid) => opened.push(sid)} />);
-  expect(html).toContain("本机（离线时）");
-  expect(html).toContain("周三开会");
+    onNewSideChat={() => {}} phoneChats={[{ sid: "p1", title: "📱 买菜" }]}
+    offlineChats={[{ sid: "o1", title: "周三开会" }, { sid: "o2", title: "" }]} onOpenOfflineChat={() => {}} />);
+  expect(html).not.toContain("本机（离线时）");
+  expect(html).toMatch(/买菜<\/span>.*?>手机<\/span>/);
+  expect(html).toMatch(/周三开会<\/span>.*?>本机<\/span>/);
   expect(html).toContain("本机对话");
   const none = renderToStaticMarkup(<AssistantSidebar mainChat={{ sid: "m" }} sideChats={[]} current="m" onSelect={() => {}} onNewSideChat={() => {}} />);
-  expect(none).not.toContain("本机（离线时）");
+  expect(none).not.toContain(">本机<");
 });
