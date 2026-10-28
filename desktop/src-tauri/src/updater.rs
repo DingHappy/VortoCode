@@ -1,8 +1,10 @@
 // 检查更新与一键更新。从 lib.rs 原样搬出。
 use super::*;
 
-// ── 检查更新：问 GitHub 最新正式版，比版本号；不下载、不安装，只把下载页交给用户 ──
-pub(crate) const RELEASES_API: &str = "https://api.github.com/repos/DingHappy/VortoCode/releases/latest";
+// ── 检查更新：读发布页上的 latest.json（一键更新用的同一份清单），比版本号；不下载、不安装 ──
+// 不走 api.github.com：未登录每个出口 IP 每小时只有 60 次，代理出口共用时很快用完，用户看到 403。
+// releases/latest/download/ 是下载链接，不计 API 限额；「latest」同样排除了草稿和预发布。
+pub(crate) const LATEST_MANIFEST: &str = "https://github.com/DingHappy/VortoCode/releases/latest/download/latest.json";
 pub(crate) const RELEASES_PAGE_PREFIX: &str = "https://github.com/DingHappy/VortoCode/releases/";
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -22,22 +24,18 @@ pub(crate) fn parse_version(raw: &str) -> Option<(u64, u64, u64)> {
     parts.next().is_none().then_some(version)
 }
 
-/// GitHub 的 releases/latest 已经排除了草稿和预发布；这里只认本仓库的发布页链接，
-/// 响应异常时宁可当没有新版，也不把别的地址交给用户去打开。
-pub(crate) fn update_from_release(current: &str, release: &serde_json::Value) -> Result<UpdateCheck, String> {
-    let tag = release.get("tag_name").and_then(|value| value.as_str()).unwrap_or_default();
-    let latest = parse_version(tag).ok_or_else(|| format!("最新版本号无法识别：{tag}"))?;
+/// 清单里只取版本号和发布时间；发布页地址由版本号拼出，不用清单里的任何链接。
+pub(crate) fn update_from_manifest(current: &str, manifest: &serde_json::Value) -> Result<UpdateCheck, String> {
+    let raw = manifest.get("version").and_then(|value| value.as_str()).unwrap_or_default();
+    let latest = parse_version(raw).ok_or_else(|| format!("最新版本号无法识别：{raw}"))?;
     let installed = parse_version(current).ok_or_else(|| format!("当前版本号无法识别：{current}"))?;
-    let url = release.get("html_url").and_then(|value| value.as_str()).unwrap_or_default();
-    if !url.starts_with(RELEASES_PAGE_PREFIX) {
-        return Err("发布页地址不是本项目的 GitHub Releases，已忽略".into());
-    }
+    let latest_text = format!("{}.{}.{}", latest.0, latest.1, latest.2);
     Ok(UpdateCheck {
         current: current.into(),
-        latest: format!("{}.{}.{}", latest.0, latest.1, latest.2),
+        url: format!("{RELEASES_PAGE_PREFIX}tag/v{latest_text}"),
+        latest: latest_text,
         newer: latest > installed,
-        url: url.into(),
-        published_at: release.get("published_at").and_then(|value| value.as_str()).unwrap_or_default().into(),
+        published_at: manifest.get("pub_date").and_then(|value| value.as_str()).unwrap_or_default().into(),
     })
 }
 
@@ -45,20 +43,19 @@ pub(crate) fn update_from_release(current: &str, release: &serde_json::Value) ->
 pub(crate) async fn check_for_update(app: AppHandle) -> Result<UpdateCheck, String> {
     let current = app.package_info().version.to_string();
     let response = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(15))
         .user_agent(format!("VortoCode-Desktop/{current}"))
         .build()
         .map_err(|error| format!("无法检查更新：{error}"))?
-        .get(RELEASES_API)
-        .header("Accept", "application/vnd.github+json")
+        .get(LATEST_MANIFEST)
         .send()
         .await
         .map_err(|error| format!("连不上 GitHub，稍后再试：{error}"))?;
     if !response.status().is_success() {
         return Err(format!("GitHub 返回 {}，稍后再试", response.status()));
     }
-    let release: serde_json::Value = response.json().await.map_err(|error| format!("GitHub 的响应无法解析：{error}"))?;
-    update_from_release(&current, &release)
+    let manifest: serde_json::Value = response.json().await.map_err(|error| format!("更新清单无法解析：{error}"))?;
+    update_from_manifest(&current, &manifest)
 }
 
 // ── 一键更新：发布页上的 latest.json 指向更新包，用内置公钥验签通过才替换自己，然后走正常退出流程重启 ──

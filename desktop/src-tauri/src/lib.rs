@@ -4257,17 +4257,18 @@ mod tests {
     }
 
     #[test]
-    fn update_check_compares_versions_and_only_trusts_our_release_page() {
-        let release = |tag: &str, url: &str| serde_json::json!({
-            "tag_name": tag, "html_url": url, "published_at": "2026-10-20T00:00:00Z" });
-        let page = "https://github.com/DingHappy/VortoCode/releases/tag/v0.2.1";
-        let newer = update_from_release("0.2.0", &release("v0.2.1", page)).unwrap();
-        assert!(newer.newer && newer.latest == "0.2.1" && newer.url == page);
-        assert!(!update_from_release("0.2.0", &release("v0.2.0", page)).unwrap().newer);
-        assert!(!update_from_release("0.10.0", &release("v0.9.9", page)).unwrap().newer);   // 数字比较，不是字符串
-        assert!(update_from_release("0.2.0", &release("v1.0", page)).unwrap().newer);
-        assert!(update_from_release("0.2.0", &release("v0.3.0", "https://evil.example/download")).is_err());
-        assert!(update_from_release("0.2.0", &release("nightly", page)).is_err());
+    fn update_check_compares_versions_and_builds_our_release_page() {
+        let manifest = |version: &str| serde_json::json!({
+            "version": version, "pub_date": "2026-10-20T00:00:00Z", "notes": "x",
+            "platforms": { "darwin-aarch64": { "url": "https://evil.example/download" } } });
+        let newer = update_from_manifest("0.2.0", &manifest("0.2.1")).unwrap();
+        assert!(newer.newer && newer.latest == "0.2.1" && newer.published_at == "2026-10-20T00:00:00Z");
+        assert_eq!(newer.url, "https://github.com/DingHappy/VortoCode/releases/tag/v0.2.1");   // 不用清单里的链接
+        assert!(!update_from_manifest("0.2.0", &manifest("0.2.0")).unwrap().newer);
+        assert!(!update_from_manifest("0.10.0", &manifest("0.9.9")).unwrap().newer);   // 数字比较，不是字符串
+        assert!(update_from_manifest("0.2.0", &manifest("v1.0")).unwrap().newer);
+        assert!(update_from_manifest("0.2.0", &manifest("nightly")).is_err());
+        assert!(update_from_manifest("0.2.0", &serde_json::json!({})).is_err());
         assert_eq!(parse_version("v0.2.0-beta.1"), Some((0, 2, 0)));
         assert_eq!(parse_version("0.2.0.1"), None);
         let old: DesktopPreferences = serde_json::from_str(r#"{"browserControl": true}"#).unwrap();
