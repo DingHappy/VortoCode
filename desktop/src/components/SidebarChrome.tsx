@@ -8,7 +8,7 @@ import { IconButton, NavItem } from "./ui";
 
 export function SidebarBrand({ onCollapse }: { onCollapse: () => void }) {
   return (
-    <div className="vc-side-brand">
+    <div className="vc-side-brand" data-tauri-drag-region="deep">
       <span className="vc-side-logo" aria-hidden="true">V</span>
       <strong>VortoCode</strong>
       <IconButton label="收起侧栏" icon={<PanelLeft />} onClick={onCollapse} />

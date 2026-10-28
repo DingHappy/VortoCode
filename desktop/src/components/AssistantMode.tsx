@@ -143,7 +143,7 @@ export function AssistantPanel({ name, avatar, connected, host, onAddResident, o
     ? waitingUncertain ? `已读取 ${waiting ?? 0} 件待处理，部分来源待核对` : `${waiting} ${connected ? "件等你处理" : "条历史待处理"}` : "";
   return <aside className="assistant-panel vc-panel" aria-label="助理">
     <IconButton className="vc-panel-close" label="收起面板" icon={<X />} onClick={onClose} />
-    <div className="vc-panel-card">
+    <div className="vc-panel-card" data-tauri-drag-region="deep">
       <div className="vc-panel-avatar">
         <AssistantAvatarImage name={name} avatar={avatar} size={120} />
         {onEditProfile && <button className="vc-panel-avatar-edit" aria-label="修改助理资料" title="名字、头像与「关于你」" onClick={onEditProfile}><PencilLine aria-hidden="true" /></button>}
