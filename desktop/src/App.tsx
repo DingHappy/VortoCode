@@ -2879,7 +2879,15 @@ function App() {
                       setAssistantGoalFocus({ client: clientRef.current, scope: assistantScope, id });
                     }
                   }}
-                  onClearFocus={() => setAssistantGoalFocus(null)} />
+                  onClearFocus={() => setAssistantGoalFocus(null)}
+                  overview={<AssistantWorkday client={clientRef.current} scope={assistantScope}
+                  connected={connection === "connected"} resident={onAssistantHost()} dispatches={dispatches}
+                  dispatchesLoaded={dispatchSnapshotScope === assistantScope} codexActions={codexActions}
+                  confirmation={pendingConfirm} onConfirmation={() => focusConfirmation()}
+                  onDispatch={id => void openDispatch(id)} onGoals={id => {
+                    setAssistantGoalFocus({ client: clientRef.current, scope: assistantScope, id }); setAssistantTab("goals");
+                  }}
+                  onRefreshTasks={() => refreshAgentTurns()} onCodexDecision={decideCodexAction} />} />
               : assistantTab === "schedule" ? <AssistantSchedule key={assistantScope} items={assistantSchedule} connected={connection === "connected"} local={!onAssistantHost()}
                   onRefresh={panelActions.scheduleRefresh}
                   onToggle={panelActions.scheduleToggle}
@@ -2918,14 +2926,7 @@ function App() {
                         if (opened && client && item.rid && mainViewRef.current === "chat") conversationLocation.locate({ client, sid, rid: item.rid });
                       });
                     }
-                  }} overview={<AssistantWorkday client={clientRef.current} scope={assistantScope}
-                  connected={connection === "connected"} resident={onAssistantHost()} dispatches={dispatches}
-                  dispatchesLoaded={dispatchSnapshotScope === assistantScope} codexActions={codexActions}
-                  confirmation={pendingConfirm} onConfirmation={() => focusConfirmation()}
-                  onDispatch={id => void openDispatch(id)} onGoals={id => {
-                    setAssistantGoalFocus({ client: clientRef.current, scope: assistantScope, id }); setAssistantTab("goals");
-                  }}
-                  onRefreshTasks={() => refreshAgentTurns()} onCodexDecision={decideCodexAction} />}>
+                  }}>
                 <section className="assistant-task-cards" aria-label="交互任务单">
                   {activityCodexAction && <AssistantActivityDetail key={`${assistantScope}:codex:${activityCodexAction.id}`}
                     title={`Codex 动作详情：${activityCodexAction.thread_name}`} statusLabel="动作记录"

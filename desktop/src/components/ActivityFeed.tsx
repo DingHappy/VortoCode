@@ -76,7 +76,7 @@ export function ActivityFeed({ items, scope, onScope, currentSession, onOpen, on
       {emptyMessage ?? (scope === "session" ? "这个对话还没有交代出去的任务。" : "还没有任务。在对话里交代一件事，它会出现在这里，做完了会回报结果。")}
     </p>}
     {groups.map((group) => <section key={group.key} className={`activity-feed-group ${group.key === "waiting" ? "waiting" : ""}`}>
-      <h5>{group.label}</h5>
+      <h5>{group.label}{group.key === "waiting" ? ` · ${group.items.length}` : ""}</h5>
       <ul>{group.items.map((item) => <li key={item.id}>
         <FeedEntry item={item} onOpen={onOpen} onInspect={onInspect} now={now} recordExpansion={recordExpansion} />
       </li>)}</ul>

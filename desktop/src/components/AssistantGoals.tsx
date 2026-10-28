@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { goalDate, goalFollowUpLabel, localGoalDate, personalGoalActions, type PersonalGoalClient, type PersonalGoalOperation } from "../lib/personalGoals";
 import type { PersonalGoal } from "../types";
-import type { Ref } from "react";
+import type { ReactNode, Ref } from "react";
 import { hasConfirmedPersonalCriterion, hasConfirmedPersonalGoal } from "../lib/personalGoalSnapshot";
 import { emptyPersonalGoalDraft, personalGoalDraft } from "../lib/personalGoalDraft";
 import { freshAt } from "../lib/readFreshness";
 import { startWorkdayClock } from "../lib/assistantWorkdayReads";
 
-export function AssistantGoals({ client, connected, focusId, onClearFocus, onFocusGoal }: {
+export function AssistantGoals({ client, connected, focusId, onClearFocus, onFocusGoal, overview }: {
   client: PersonalGoalClient | null; connected: boolean; focusId?: string; onClearFocus?: () => void;
   onFocusGoal?: (id: string, owner: PersonalGoalClient) => void;
+  /** 今日概览：放在目标列表下面 */
+  overview?: ReactNode;
 }) {
   const source = useMemo(() => ({ client, connected }), [client, connected]);
   const identity = useRef(source);
@@ -126,6 +128,7 @@ export function AssistantGoals({ client, connected, focusId, onClearFocus, onFoc
       onConfirm={async (id, summary, passed) => { if (client) await writeGoal(() => client.confirmPersonalGoal(goal, id, summary, passed), goal.id); }}
       onFollowUp={async (enabled, uncertain) => { if (client) await writeGoal(() => client.configurePersonalGoalFollowUp(goal, enabled, uncertain), goal.id); }}
       onAcknowledge={async () => { if (client) await writeGoal(() => client.acknowledgePersonalGoalFollowUp(goal), goal.id); }} />)}
+    {overview && <section className="assistant-goals-overview" aria-label="今日概览"><h3>今日概览</h3>{overview}</section>}
   </section>;
 }
 

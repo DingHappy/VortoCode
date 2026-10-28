@@ -3,7 +3,17 @@ import { createRoot } from "react-dom/client";
 import { AssistantActivity, AssistantActivityDetail } from "../src/components/AssistantActivity";
 import { CodexActionCard } from "../src/components/CodexActionCard";
 import { ConfirmCard } from "../src/components/ComposerPanels";
-import { AssistantPanel, type AssistantTab } from "../src/components/AssistantMode";
+import { AssistantAudit, AssistantIdentity, AssistantPanel, AssistantSchedule, type AssistantTab } from "../src/components/AssistantMode";
+import type { AssistantScheduleItem, AuditEntry } from "../src/types";
+
+const qaAudit: AuditEntry[] = [
+  { id: "a1", category: "decision", operation: "推送分支到远端\n合成记录：把演示分支推上去，开 PR 给你看。", decision: "allowed", ts: "2026-10-27T10:00:00Z" },
+  { id: "a2", category: "decision", operation: "删除下载目录里的旧安装包\n合成记录：清理 3 个旧版本。", decision: "denied", ts: "2026-10-26T09:00:00Z" },
+];
+const qaSchedule: AssistantScheduleItem[] = [
+  { id: "s1", kind: "heartbeat", title: "心跳巡检", schedule: "every 30m", enabled: true },
+  { id: "s2", kind: "report", title: "早报", schedule: "0 9 * * *", enabled: true },
+];
 import { AssistantWorkdayView } from "../src/components/AssistantWorkday";
 import { ComputerLauncherView, ComputerWorkspaceView } from "../src/components/ComputerWorkspace";
 import type { FeedItem } from "../src/lib/activityFeed";
@@ -11,8 +21,11 @@ import { codexActionFeedItem, confirmationFeedItem, noticeFeedItems } from "../s
 import type { CodexAction, NoticeItem, PendingConfirmation } from "../src/types";
 import type { AssistantWorkday } from "../src/lib/assistantWorkday";
 import { activityCoverage, type ActivitySource } from "../src/lib/activitySources";
+import "../src/styles/tokens.css";
+import "../src/styles/components.css";
 import "../src/App.css";
 import "../src/daily.css";
+import "../src/styles/shell.css";
 import "./assistant-activity.css";
 
 const now = new Date();
@@ -94,7 +107,6 @@ function Fixture() {
         {tab === "feed" ? <AssistantActivity key={source} items={feed} currentSession="qa-main" connected={connected} sources={sources}
           client={detailUnavailable ? qaUnavailableClient : qaRecordMode ? qaRefreshClient : qaTurnClient}
           onRefresh={() => { setCheckedAt(Date.now()); setSourceFailed(false); }}
-          overview={<AssistantWorkdayView model={model} now={now} connected={connected} onRefresh={() => {}} onOpen={() => setTab("goals")} />}
           onOpen={item => {
             if (item.confirmationId) { const card = document.getElementById("active-confirmation"); card?.scrollIntoView({ block: "nearest" }); card?.focus({ preventScroll: true }); }
             else setSelected(item);
@@ -107,8 +119,15 @@ function Fixture() {
               : <><strong>已打开：{selected.title}</strong><p>{selected.summary}</p>
                 <label>临时备注（合成，不保存）<input aria-label="详情临时备注" /></label></>}
           </AssistantActivityDetail>}
-        </AssistantActivity> : <section className="assistant-section"><h5>{tab === "goals" ? "个人目标" : tab === "audit" ? "审核记录" : tab === "schedule" ? "定时事项" : "助理身份"}</h5>
-          <p>合成记录；切回动态可继续查看时间线。</p></section>}
+        </AssistantActivity>
+        : tab === "audit" ? <AssistantAudit entries={qaAudit} />
+        : tab === "schedule" ? <AssistantSchedule items={qaSchedule} connected={connected} />
+        : tab === "identity" ? <AssistantIdentity profile={{ name: "VortoCode", soul: "说话直接，先给结论；拿不准的事先问。", about_you: "合成资料：晚上写代码，常用 Mac 和一台常驻电脑。" }}
+          memories={[{ id: "m1", content: "合成记忆：回复用中文，先给结论", created_at: "2026-10-26T10:00:00" }]} proposals={[]}
+          onAvatar={() => {}} onEdit={() => {}} onDeleteMemory={() => {}} />
+        : <section className="assistant-section"><h5>个人目标</h5><p>合成记录；目标列表需要连接运行端。</p>
+          <section className="assistant-goals-overview" aria-label="今日概览"><h3>今日概览</h3>
+            <AssistantWorkdayView model={model} now={now} connected={connected} onRefresh={() => {}} onOpen={() => setTab("goals")} /></section></section>}
       </AssistantPanel>}
     </main>
   </div>;

@@ -1,6 +1,6 @@
 import { AssistantScheduleCard } from "./AssistantScheduleCard";
 import type { ReactNode } from "react";
-import { Archive, ArrowLeft, Check, ChevronRight, Clock3, Fingerprint, ImagePlus, List, ListChecks, PencilLine, Puzzle, RefreshCw, ShieldCheck, SquarePen, Star, Target, Trash2, X } from "lucide-react";
+import { Archive, ArrowLeft, ArrowUpRight, Check, Clock3, Fingerprint, ImagePlus, List, ListChecks, PencilLine, Puzzle, RefreshCw, ShieldCheck, SquarePen, Star, Target, Trash2, X } from "lucide-react";
 import { Button, GroupTitle, IconButton, NavItem } from "./ui";
 import { useRef, useState } from "react";
 import { avatarHue, avatarInitial, avatarSrc } from "../lib/avatar";
@@ -325,35 +325,34 @@ export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposa
       <AssistantMemories memories={memories} onDelete={onDeleteMemory} />
     </section>;
   }
-  const latest = memories[0]?.created_at?.slice(0, 10);
-  const rows: Array<{ id: string; label: string; status: string; preview: string; filled: boolean; pending?: string; onClick: () => void }> = [
-    { id: "soul", label: "SOUL", status: profile.soul ? "它的性格与说话方式" : "还没写", preview: profile.soul || "点这里定它的性格和说话方式", filled: Boolean(profile.soul), onClick: onEdit },
-    { id: "about", label: "关于你", status: profile.about_you ? "每次对话都带上" : "还没写", preview: profile.about_you || "在哪、做什么、习惯怎么被汇报", filled: Boolean(profile.about_you), onClick: onEdit },
-    { id: "memory", label: "记忆", status: memories.length ? `记得 ${memories.length} 件事` : "还没有",
-      preview: memories[0]?.content || "聊天时说「记住……」，它就会记下来", filled: memories.length > 0, pending: proposals.length ? `${proposals.length} 条待确认` : undefined,
-      onClick: () => setShowMemories(true) },
-  ];
-  return <section className="assistant-section">
-    <div className="assistant-profile-actions">
-      <button onClick={onEdit}><PencilLine size={13} aria-hidden="true" />编辑资料</button>
-      {onAvatar && <>
-        <button onClick={() => fileRef.current?.click()}><ImagePlus size={13} aria-hidden="true" />换头像</button>
+  const latest = memories[0]?.created_at?.slice(5, 10).replace("-", ".");
+  // 名片卡写名字和「关于你」；SOUL、记忆是两张彩色卡，代表助理本身（设计规范里唯一允许渐变的地方）
+  return <section className="assistant-section vc-identity">
+    <div className="vc-identity-card">
+      <span className="vc-identity-name">{profile.name || "VortoCode"}</span>
+      <span className={`vc-identity-about${profile.about_you ? "" : " empty"}`}>{profile.about_you || "关于你：在哪、做什么、习惯怎么被汇报"}</span>
+      <button className="vc-identity-edit" onClick={onEdit}><PencilLine aria-hidden="true" />编辑资料</button>
+      {onAvatar && <div className="vc-identity-avatar-actions">
+        <button onClick={() => fileRef.current?.click()}><ImagePlus aria-hidden="true" />换头像</button>
         {avatar && <button onClick={() => onAvatar(null)}>用名字首字</button>}
         <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden
           onChange={(event) => { const file = event.target.files?.[0]; event.target.value = ""; if (file) onAvatar(file); }} />
-      </>}
+      </div>}
     </div>
-    <ul className="assistant-identity-list">
-      {rows.map((row) => <li key={row.id}><button className={`assistant-identity-row ${row.id}`} onClick={row.onClick}>
-        <span className="assistant-identity-text">
-          <span className="assistant-identity-head"><b>{row.label}</b><small>{row.status}</small>
-            {row.pending && <small className="assistant-identity-pending">{row.pending}</small>}</span>
-          <span className={`assistant-identity-preview${row.filled ? "" : " empty"}`}>{row.preview}</span>
-          {row.id === "memory" && latest && <small className="assistant-identity-meta">最近一条记于 {latest}</small>}
-        </span>
-        <ChevronRight size={15} aria-hidden="true" />
-      </button></li>)}
-    </ul>
+    <div className="vc-identity-tiles">
+      <button className="vc-identity-tile soul" onClick={onEdit}>
+        <b>SOUL</b>
+        <small>{profile.soul ? "它的性格与说话方式" : "还没写"}</small>
+        <span className="vc-identity-tile-preview">{profile.soul || "点这里定它的性格和说话方式"}</span>
+        <span className="vc-identity-tile-foot">{profile.soul ? "去改" : "去写"}<ArrowUpRight aria-hidden="true" /></span>
+      </button>
+      <button className="vc-identity-tile memory" onClick={() => setShowMemories(true)}>
+        <b>记忆</b>
+        <small>{memories.length ? `记得 ${memories.length} 件事` : "还没有"}</small>
+        <span className="vc-identity-tile-preview">{memories[0]?.content || "聊天时说「记住……」，它就会记下来"}</span>
+        <span className="vc-identity-tile-foot">{proposals.length ? `${proposals.length} 条待确认` : latest ?? ""}<ArrowUpRight aria-hidden="true" /></span>
+      </button>
+    </div>
     {connectors.length > 0 && <AssistantConnectors connectors={connectors} onAction={onConnector} />}
     {plugins}
   </section>;
