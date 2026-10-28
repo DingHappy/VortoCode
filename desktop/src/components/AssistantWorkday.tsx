@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUpRight, CheckCircle2, CircleHelp, ListChecks, LoaderCircle, RefreshCw } from "lucide-react";
 import type { GatewayClient } from "../gateway";
-import type { AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgressSnapshot, MemoryProposal, PendingConfirmation, PersonalGoal, SessionSummary, DesktopRuntimeInbox } from "../types";
+import type { AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgressSnapshot, MemoryProposal, PendingConfirmation, PersonalGoal, SessionSummary, DesktopRuntimeInbox, NoticeItem, OpsHeartbeat } from "../types";
 import { buildAssistantWorkday, type AssistantWorkday as Workday, type WorkdayBucket, type WorkdayItem, type WorkdaySource, type WorkdayTarget } from "../lib/assistantWorkday";
 import { assistantWorkdayReads, startWorkdayClock } from "../lib/assistantWorkdayReads";
 import { startPolling } from "../lib/polling";
@@ -52,7 +52,8 @@ export function AssistantWorkdayView({ model, now, busy = false, connected, onRe
         <strong>{item.title}</strong><span className="workday-item-detail">{item.detail}</span>
         <span className="workday-item-link">{item.target.kind === "goal" ? "查看目标与验收" : item.target.kind === "dispatch" ? "查看任务单" : item.target.kind === "confirmation" ? "查看原确认卡"
           : item.target.kind === "schedule" ? "查看定时与运行记录" : item.target.kind === "memory" ? "去确认记忆"
-          : item.target.kind === "session" ? "打开对话" : item.target.kind === "project" ? "去工作台任务" : "查看进度与建议"}<ArrowUpRight size={13} /></span>
+          : item.target.kind === "session" ? "打开对话" : item.target.kind === "project" ? "去工作台任务"
+          : item.target.kind === "ops" ? "查看报到详情" : item.target.kind === "notice" ? "查看全文" : "查看进度与建议"}<ArrowUpRight size={13} /></span>
       </button>
     </li>)}</ul> : <p className="workday-empty">{model.warnings.length ? !connected
       ? "暂未取得可展示的记录；恢复连接后再核对。"
@@ -65,9 +66,9 @@ export function AssistantWorkdayView({ model, now, busy = false, connected, onRe
   </section>;
 }
 
-export function AssistantWorkday({ client, scope, connected, resident = false, dispatches, dispatchesLoaded, codexActions, confirmation, onConfirmation, onDispatch, onGoals, onSchedule, onMemory, onSession, activeSid, mainSid, projectSources, onProjects, onRefreshTasks, onCodexDecision }: {
+export function AssistantWorkday({ client, scope, connected, resident = false, dispatches, dispatchesLoaded, codexActions, confirmation, onConfirmation, onDispatch, onGoals, onSchedule, onMemory, onSession, activeSid, mainSid, projectSources, onProjects, ops: withOps = false, onRefreshTasks, onCodexDecision }: {
   client: (Pick<GatewayClient, "listPersonalGoals" | "getCodexProgress">
-    & Partial<Pick<GatewayClient, "getResidentComputer" | "getAssistantSchedule" | "listMemoryProposals" | "listSessions">>) | null;
+    & Partial<Pick<GatewayClient, "getResidentComputer" | "getAssistantSchedule" | "listMemoryProposals" | "listSessions" | "getOpsHeartbeats" | "listNotices">>) | null;
   scope: string; connected: boolean; resident?: boolean; dispatches: AssistantDispatch[];
   dispatchesLoaded: boolean; codexActions: CodexAction[];
   confirmation?: PendingConfirmation | null; onConfirmation?: () => void;
@@ -81,6 +82,8 @@ export function AssistantWorkday({ client, scope, connected, resident = false, d
   activeSid?: string; mainSid?: string;
   /** 各项目运行端的工作快照；onProjects 打开工作台「任务」页 */
   projectSources?: DesktopRuntimeInbox[]; onProjects?: () => void;
+  /** 读运维报到和自愈记录（只在常驻助理上有意义）；详情在概览里原地展开 */
+  ops?: boolean;
   onCodexDecision: (action: CodexAction, decision: "approve" | "cancel") => Promise<void>;
 }) {
   const owner = useMemo(() => ({ client, scope }), [client, scope]);
@@ -91,6 +94,8 @@ export function AssistantWorkday({ client, scope, connected, resident = false, d
   const [scheduleSnapshot, setSchedule] = useState<{ owner: typeof owner; source: WorkdaySource<AssistantScheduleItem[]> } | null>(null);
   const [proposalSnapshot, setProposals] = useState<{ owner: typeof owner; source: WorkdaySource<MemoryProposal[]> } | null>(null);
   const [sessionSnapshot, setSessions] = useState<{ owner: typeof owner; source: WorkdaySource<SessionSummary[]> } | null>(null);
+  const [opsSnapshot, setOps] = useState<{ owner: typeof owner; source: WorkdaySource<OpsHeartbeat[]> } | null>(null);
+  const [noticeSnapshot, setNotices] = useState<{ owner: typeof owner; source: WorkdaySource<NoticeItem[]> } | null>(null);
   const withSchedule = Boolean(onSchedule), withMemory = Boolean(onMemory), withSessions = Boolean(onSession);
   const [now, setNow] = useState(() => new Date());
   const [busy, setBusy] = useState(false);
@@ -108,7 +113,9 @@ export function AssistantWorkday({ client, scope, connected, resident = false, d
       codex: source => { setCodex({ owner, source }); setNow(new Date()); },
       schedule: withSchedule ? source => { setSchedule({ owner, source }); setNow(new Date()); } : undefined,
       proposals: withMemory ? source => { setProposals({ owner, source }); setNow(new Date()); } : undefined,
-      sessions: withSessions ? source => { setSessions({ owner, source }); setNow(new Date()); } : undefined });
+      sessions: withSessions ? source => { setSessions({ owner, source }); setNow(new Date()); } : undefined,
+      ops: withOps ? source => { setOps({ owner, source }); setNow(new Date()); } : undefined,
+      notices: withOps ? source => { setNotices({ owner, source }); setNow(new Date()); } : undefined });
     const refresh = async () => {
       if (!current()) return;
       setNow(new Date()); setBusy(true);
@@ -118,16 +125,20 @@ export function AssistantWorkday({ client, scope, connected, resident = false, d
     refreshRef.current = refresh;
     const stop = startPolling(refresh, { intervalMs: 30_000, hiddenIntervalMs: 120_000, immediate: true, visibility: document });
     return () => { active = false; stop(); reads.invalidate(); if (refreshRef.current === refresh) refreshRef.current = null; };
-  }, [owner, client, connected, withSchedule, withMemory, withSessions]);
+  }, [owner, client, connected, withSchedule, withMemory, withSessions, withOps]);
   const goals = goalSnapshot?.owner === owner ? goalSnapshot.source : { status: "loading" as const, data: [] };
   const codex = codexSnapshot?.owner === owner ? codexSnapshot.source : { status: "loading" as const, data: null };
   const schedule = !withSchedule ? undefined : scheduleSnapshot?.owner === owner ? scheduleSnapshot.source : { status: "loading" as const, data: [] };
   const proposals = !withMemory ? undefined : proposalSnapshot?.owner === owner ? proposalSnapshot.source : { status: "loading" as const, data: [] };
+  const ops = !withOps ? undefined : opsSnapshot?.owner === owner ? opsSnapshot.source : { status: "loading" as const, data: [] };
+  const notices = !withOps ? undefined : noticeSnapshot?.owner === owner ? noticeSnapshot.source : { status: "loading" as const, data: [] };
   const sessions = !withSessions ? undefined : sessionSnapshot?.owner === owner ? sessionSnapshot.source : { status: "loading" as const, data: [] };
   const model = buildAssistantWorkday({ dispatches, dispatchesLoaded, codexActions, confirmation, goals, codex, schedule, proposals,
-    sessions, activeSid, mainSid, projectSources, connected, now });
+    sessions, activeSid, mainSid, projectSources, ops, notices, connected, now });
   const action = selected?.kind === "codex_action" ? codexActions.find(item => item.id === selected.id) : null;
   const thread = selected?.kind === "codex" ? codex.data?.threads.find(item => item.id === selected.id) : null;
+  const opsRow = selected?.kind === "ops" ? ops?.data.find(item => item.source === selected.id) : null;
+  const notice = selected?.kind === "notice" ? notices?.data.find(item => JSON.stringify([item.ts, item.source, item.text]) === selected.id) : null;
   return <>
     <AssistantWorkdayView model={model} now={now} connected={connected} busy={busy}
       onRefresh={() => { void refreshRef.current?.(); void onRefreshTasks(); }}
@@ -146,6 +157,17 @@ export function AssistantWorkday({ client, scope, connected, resident = false, d
       {thread.turn?.reply && <details><summary>Codex 最近回复</summary><p>{thread.turn.reply}</p></details>}
       <p>等待批准或回答时，请到 Codex 处理；此处的报告不替代交付验收。</p>
     </article>}
-    {selected && <button className="workday-more" onClick={() => setSelected(null)}>收起进度详情</button>}
+    {opsRow && <article className="assistant-task-card workday-codex-detail" aria-label={`运维报到：${opsRow.source}`}>
+      <header><strong>运维 · {opsRow.source}</strong></header>
+      <p>{opsRow.status === "failed" ? `最近一次报失败：${opsRow.text || "没有附带原因"}` : opsRow.status === "overdue" ? "超过约定间隔没有报到成功" : "报到正常"}</p>
+      <p>上次报到：{opsRow.last_report ? new Date(opsRow.last_report).toLocaleString() : "没有记录"}；上次成功：{opsRow.last_ok ? new Date(opsRow.last_ok).toLocaleString() : "没有记录"}；约定每 {opsRow.expect_hours} 小时内一次。</p>
+      <p>要到出问题的那台机器上处理；它下次报到成功后，这条会自己消失。</p>
+    </article>}
+    {notice && <article className="assistant-task-card workday-codex-detail" aria-label="自愈记录">
+      <header><strong>自动修复没有成功</strong></header>
+      <p>{notice.ts ? new Date(notice.ts).toLocaleString() : ""} · {notice.source}</p>
+      <p style={{ whiteSpace: "pre-wrap" }}>{notice.text}</p>
+    </article>}
+    {selected && <button className="workday-more" onClick={() => setSelected(null)}>收起详情</button>}
   </>;
 }

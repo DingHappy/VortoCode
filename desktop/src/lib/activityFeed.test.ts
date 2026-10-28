@@ -159,6 +159,15 @@ describe("noticeFeedItem", () => {
       .toMatchObject({ title: "🗒 晚报", summary: "有 1 件等你确认。" });
     expect(noticeFeedItem({ ts: "2026-10-11T12:25:27Z", source: "assistant", text: "测试：推送通道已接通" })).toBeNull();
     expect(noticeFeedItem({ ts: "2026-10-11T12:25:27Z", source: "relay", text: "x" })).toBeNull();
+    const failed = noticeFeedItem({ ts: "2026-10-11T12:25:27Z", source: "ops:nas-backup", text: "🔴 nas-backup 失败：NAS 未挂载" })!;
+    expect(failed).toMatchObject({ title: "运维 · nas-backup", status: "failed", statusLabel: "报失败", sourceLabel: "运维报到" });
+    expect(noticeFeedItem({ ts: "2026-10-11T12:25:27Z", source: "ops:restore-drill", text: "🔺 restore-drill 已经 40 小时没有报到成功" }))
+      .toMatchObject({ status: "failed", statusLabel: "没报到" });
+    expect(noticeFeedItem({ ts: "2026-10-11T12:25:27Z", source: "ops:nas-backup", text: "✅ nas-backup 已恢复：同步完成" }))
+      .toMatchObject({ status: "done", statusLabel: "已恢复" });
+    expect(noticeFeedItem({ ts: "2026-10-11T12:25:27Z", source: "self-heal:relay", text: "⚠ 自愈未成功 [restart]：端口仍不通" }))
+      .toMatchObject({ title: "自愈 · relay", status: "failed", statusLabel: "未成功" });
+    expect(noticeFeedItem({ ts: "2026-10-11T12:25:27Z", source: "delivery", text: "⚠ 该通知未能推到 IM" })).toBeNull();
   });
 });
 

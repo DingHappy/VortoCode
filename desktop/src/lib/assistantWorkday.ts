@@ -1,4 +1,4 @@
-import type { AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgressSnapshot, DesktopRuntimeInbox, MemoryProposal, PendingConfirmation, PersonalGoal, SessionSummary } from "../types";
+import type { AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgressSnapshot, DesktopRuntimeInbox, MemoryProposal, NoticeItem, OpsHeartbeat, PendingConfirmation, PersonalGoal, SessionSummary } from "../types";
 import { progressLine } from "./assistantTask";
 import { readExecutionObservation } from "./executionObservation";
 import { hasConfirmedPersonalGoal } from "./personalGoalSnapshot";
@@ -10,7 +10,7 @@ export interface WorkdaySource<T> {
   data: T;
   checkedAt?: number;
 }
-export type WorkdayTarget = { kind: "dispatch" | "goal" | "codex" | "codex_action" | "confirmation" | "schedule" | "memory" | "session" | "project"; id: string };
+export type WorkdayTarget = { kind: "dispatch" | "goal" | "codex" | "codex_action" | "confirmation" | "schedule" | "memory" | "session" | "project" | "ops" | "notice"; id: string };
 export interface WorkdayItem {
   id: string; title: string; detail: string; source: string; at: string;
   state: "running" | "decision" | "review" | "verified" | "unknown";
@@ -41,6 +41,8 @@ export function buildAssistantWorkday(input: {
   sessions?: WorkdaySource<SessionSummary[]>; activeSid?: string; mainSid?: string;
   /** 各项目运行端的工作快照（工作台看板读的那一份）；不传 = 不看项目 */
   projectSources?: DesktopRuntimeInbox[];
+  /** 运维报到状态；notices 只用来找 24 小时内「自愈未成功」的记录 */
+  ops?: WorkdaySource<OpsHeartbeat[]>; notices?: WorkdaySource<NoticeItem[]>;
   connected: boolean; now: Date;
 }): AssistantWorkday {
   const { now } = input, ms = now.getTime();
@@ -216,6 +218,36 @@ export function buildAssistantWorkday(input: {
         detail: !fresh ? `上次记录：${item.status}，当前状态待核对`
           : session ? (session.status === "needs_input" ? "这个对话在等你确认或回答" : "这个对话有任务出错或 Hook 报了问题")
           : `${item.status}；到工作台「任务」里查看原任务` }, true);
+    }
+  }
+  // 运维报到：读的是状态不是通知，失败中、超时没报到的一直列着，直到那台机器报到成功
+  if (input.ops) {
+    const fresh = input.connected && input.ops.status === "current" && freshAt(input.ops.checkedAt, ms);
+    if (!fresh) result.warnings.push(input.ops.status === "loading" ? "运维报到正在读取。"
+      : "运维报到未能取得最新状态（常驻电脑上的服务可能还没升级），备份等定时活的失败可能没有列出。");
+    for (const row of input.ops.data) {
+      if (row.status === "ok") continue;
+      const sinceOk = time(row.last_ok);
+      const hours = Number.isFinite(sinceOk) ? Math.floor((ms - sinceOk) / 3_600_000) : null;
+      add({ id: `ops:${row.source}`, title: `运维 · ${row.source}`, source: "运维报到",
+        at: row.last_report || row.last_ok || "", state: fresh ? "decision" : "unknown", target: { kind: "ops", id: row.source },
+        detail: !fresh ? "上次记录，当前状态待核对"
+          : row.status === "failed" ? `最近一次报失败：${row.text || "没有附带原因"}`
+          : hours === null ? `从没报到成功（约定每 ${row.expect_hours} 小时内一次）`
+          : `已经 ${hours} 小时没有报到成功（约定每 ${row.expect_hours} 小时内一次），可能机器停了或定时任务没跑` }, true);
+    }
+  }
+  // 自愈没成功：只有通知这一份记录，按事件看最近 24 小时
+  if (input.notices) {
+    const fresh = input.connected && input.notices.status === "current" && freshAt(input.notices.checkedAt, ms);
+    if (!fresh) result.warnings.push(input.notices.status === "loading" ? "通知正在读取。" : "通知未能取得最新状态，自愈失败的记录可能没有列出。");
+    for (const notice of input.notices.data) {
+      const source = String(notice.source ?? "");
+      const at = time(notice.ts);
+      if (!source.startsWith("self-heal:") || !notice.text.startsWith("⚠") || !Number.isFinite(at) || at > ms || ms - at > 86_400_000) continue;
+      add({ id: `notice:${JSON.stringify([notice.ts, source, notice.text])}`, title: "自动修复没有成功", source: "自愈",
+        at: notice.ts!, state: fresh ? "decision" : "unknown", target: { kind: "notice", id: JSON.stringify([notice.ts, source, notice.text]) },
+        detail: notice.text.replace(/^⚠\s*自愈未成功\s*/, "") || notice.text }, true);
     }
   }
   if (input.confirmation) result.decisions.unshift({ id: `confirmation:${input.confirmation.id}`,

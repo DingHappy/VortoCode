@@ -252,6 +252,20 @@ export function noticeFeedItem(notice: NoticeItem): FeedItem | null {
       sourceLabel: "定时任务", statusLabel: failed ? "执行失败" : "执行结束", detail: text,
     };
   }
+  // 家里其它机器的运维报到（🔴 报失败 / 🔺 超时没报到 / ✅ 已恢复）和自动修复的结果：原来只推手机，动态里看不到
+  if (source.startsWith("ops:") || source.startsWith("self-heal:")) {
+    const ops = source.startsWith("ops:");
+    const name = source.slice(source.indexOf(":") + 1) || (ops ? "运维" : "自愈");
+    const failed = /^(🔴|🔺|⚠)/.test(text);
+    const recovered = /^(✅|🔧)/.test(text);
+    return {
+      id, kind: "task", title: `${ops ? "运维" : "自愈"} · ${name}`,
+      summary: firstSentence(text.replace(/^(🔴|🔺|⚠|✅|🔧)\s*/u, ""), MAX_SUMMARY), at: notice.ts,
+      status: failed ? "failed" : "done", sourceLabel: ops ? "运维报到" : "自动修复",
+      statusLabel: failed ? (text.startsWith("🔺") ? "没报到" : ops ? "报失败" : "未成功") : recovered ? (ops ? "已恢复" : "已修复") : "消息",
+      detail: text,
+    };
+  }
   if (source === "assistant" && text.startsWith("🗒")) {
     return {
       id, kind: "chat", title: firstSentence(lines[0], MAX_TITLE),

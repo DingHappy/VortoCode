@@ -144,20 +144,26 @@ it("reads schedule and memory proposals alongside goals; an older server without
   const seen: Record<string, unknown> = {};
   const reads = assistantWorkdayReads({ client: () => client, current: () => true, now: () => 5,
     goals: () => {}, codex: () => {}, schedule: source => { seen.schedule = source; }, proposals: source => { seen.proposals = source; },
-    sessions: source => { seen.sessions = source; } });
+    sessions: source => { seen.sessions = source; }, ops: source => { seen.ops = source; }, notices: source => { seen.notices = source; } });
   let client: Parameters<typeof assistantWorkdayReads>[0]["client"] extends () => infer C ? C : never = {
     ...base,
     getAssistantSchedule: async () => [{ id: "j", kind: "cron", title: "早报", schedule: "", enabled: true, last_status: "failed" }],
     listMemoryProposals: async () => [{ id: "m", content: "记住", created_at: "", tainted: false }],
     listSessions: async () => [{ sid: "s", title: "旁聊", messages: 1, updated: 1, pending_input_count: 1 }],
+    getOpsHeartbeats: async () => [{ source: "nas-backup", status: "failed" as const, text: "", last_ok: "", last_report: "", expect_hours: 26 }],
+    listNotices: async () => [{ ts: "", source: "self-heal:x", text: "⚠" }],
   };
   await reads.refresh();
   expect(seen.schedule).toMatchObject({ status: "current", checkedAt: 5, data: [{ id: "j" }] });
   expect(seen.proposals).toMatchObject({ status: "current", data: [{ id: "m" }] });
   expect(seen.sessions).toMatchObject({ status: "current", data: [{ sid: "s", pending_input_count: 1 }] });
+  expect(seen.ops).toMatchObject({ status: "current", data: [{ source: "nas-backup", status: "failed" }] });
+  expect(seen.notices).toMatchObject({ status: "current" });
   client = { ...base };
   await reads.refresh();
   expect(seen.schedule).toMatchObject({ status: "unavailable" });
   expect(seen.proposals).toMatchObject({ status: "unavailable" });
   expect(seen.sessions).toMatchObject({ status: "unavailable" });
+  expect(seen.ops).toMatchObject({ status: "unavailable" });               // 旧版常驻服务没有这个接口
+  expect(seen.notices).toMatchObject({ status: "unavailable" });
 });

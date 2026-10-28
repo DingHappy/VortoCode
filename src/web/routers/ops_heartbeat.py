@@ -3,6 +3,9 @@
 
 专用令牌 ``VORTOCODE_OPS_TOKEN``，不收主 API 令牌，这个令牌也进不了别的接口；不设令牌 = 端点不存在（404）。
 只在常驻助理（通用范围）开放。失败与「失败后恢复」立刻推到手机；「该报没报」由常驻助理的巡检发现。
+
+GET ``/api/ops/heartbeats`` 是给 Desktop 今日概览的只读状态，走主 API 令牌（和其它 /api 一样），
+专用令牌进不来；只读，不写状态、不推通知。
 """
 from __future__ import annotations
 
@@ -13,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Request
 router = APIRouter()
 
 PATH = "/api/ops/heartbeat"
+STATUS_PATH = "/api/ops/heartbeats"
 NOTICE_PATH = "/api/ops/notice"
 TOKEN_ENV = "VORTOCODE_OPS_TOKEN"
 
@@ -47,6 +51,14 @@ async def ops_heartbeat(request: Request):
         from src.scheduling.notices import make_notifier
         await make_notifier(root, source=f"ops:{body.get('source')}")(message)
     return {"ok": True, "notified": bool(message)}
+
+
+@router.get(STATUS_PATH)
+async def ops_heartbeat_status():
+    """各报到来源的当前状态（ok / failed / overdue），给 Desktop 今日概览；没配运维心跳就是空列表。"""
+    from datetime import datetime, timezone
+    from src.scheduling.ops_heartbeats import status_rows
+    return {"items": status_rows(os.getcwd()), "checked_at": datetime.now(timezone.utc).isoformat()}
 
 
 @router.post(NOTICE_PATH)

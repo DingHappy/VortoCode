@@ -1166,6 +1166,12 @@
     ]
   },
   {
+    "path": "/api/ops/heartbeats",
+    "methods": [
+      "GET"
+    ]
+  },
+  {
     "path": "/api/ops/notice",
     "methods": [
       "POST"
