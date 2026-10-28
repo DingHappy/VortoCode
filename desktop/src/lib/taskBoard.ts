@@ -1,11 +1,12 @@
 import { statusLabel } from "./labels";
 import type { DesktopRuntimeInbox, RuntimeInboxTask, TaskLifecycleSummary } from "../types";
 
+// 列名用设计规范第 7 节的状态词；要你处理的排最前（画布 E13）。
 export const BOARD_COLUMNS = [
+  { id: "attention", label: "等你" },
+  { id: "working", label: "在忙" },
   { id: "queued", label: "待开始" },
-  { id: "working", label: "执行中" },
-  { id: "attention", label: "待处理" },
-  { id: "completed", label: "已完成" },
+  { id: "completed", label: "办好了" },
 ] as const;
 export type BoardColumn = typeof BOARD_COLUMNS[number]["id"] | "history";
 export type BoardKind = "session" | "task" | "goal" | "decision";

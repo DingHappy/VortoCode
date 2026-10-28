@@ -1,5 +1,5 @@
 import { useLocalRuntimeControls } from "./hooks/useLocalRuntimeControls";
-import { ManagementNav } from "./components/ManagementNav";
+import { ManagementHead, ManagementNav } from "./components/ManagementNav";
 import { isManagementTab } from "./lib/inspector";
 import { WorkbenchLauncher, WorkbenchTabs, type WorkbenchTool } from "./components/WorkbenchTabs";
 import { ActivityFeed } from "./components/ActivityFeed";
@@ -176,22 +176,6 @@ import {
 type RuntimeConnectionOptions = { baseUrl?: string; repoRoot?: string; token?: string; scope?: WorkspaceScope; remoteProjectId?: string };
 type StartWorkspaceOptions = RuntimeConnectionOptions & { baseUrl: string; sid: string; announce?: boolean; workspaceId?: string };
 type WorkspaceRequest = { scope: Exclude<WorkspaceScope, "general">; reason: string; task: string };
-
-function inspectorTabLabel(tab: InspectorTab): string {
-  return {
-    feed: "任务动态",
-    info: "任务步骤",
-    inbox: "工作看板",
-    preview: "预览",
-    files: "代码",
-    diff: "变更",
-    runs: "命令控制台",
-    goals: "完成标准",
-    tasks: "后台工作",
-    decisions: "待处理",
-    project: "上下文",
-  }[tab];
-}
 
 function App() {
   const clientRef = useRef<GatewayClient | null>(null);
@@ -2555,10 +2539,16 @@ function App() {
               onNewSideChat={() => void newSideChat()}
             />
           ) : <>
-          <WorkNav view={mainView === "customize" ? "chat" : mainView} connected={connection === "connected"} search={sidebarSearch("搜索会话和项目")}
+          <WorkNav connected={connection === "connected"} search={sidebarSearch("搜索会话和项目")} waiting={feedWaiting}
+            page={mainView === "artifacts" ? "library" : mainView === "plugins" ? "extensions"
+              : mainView === "management" ? inspectorTab === "goals" ? "goals" : "tasks" : null}
             onNewChat={() => { setMainView("chat"); void newSession(); }}
-            onWork={() => { openInspector("inbox"); void refreshRuntimeInboxes(); }}
-            onArtifacts={() => { setMainView("artifacts"); void refreshProjectAssets(activeScope !== "general"); }} />
+            onPage={(page) => {
+              if (page === "tasks") { openInspector("inbox"); void refreshRuntimeInboxes(); }
+              else if (page === "goals") { openInspector("goals"); void refreshGoals(); }
+              else if (page === "library") { setMainView("artifacts"); void refreshProjectAssets(activeScope !== "general"); }
+              else setMainView("plugins");
+            }} />
           <SidebarSectionTitle label="项目" className="project-section-title sidebar-first-section"
             open={projectsOpen} onToggle={() => setProjectsOpen(!projectsOpen)}>
             <button aria-label="连接远端工作区" title="连接远端工作区（另一台电脑上的项目）" onClick={() => setRemoteDialogOpen("project")} disabled={projectSwitching}><Server size={15} /></button>
@@ -2948,11 +2938,8 @@ function App() {
         {(mainView === "management" || (mainView === "chat" && inspectorOpen && appMode !== "assistant")) && (
         <aside className={mainView === "management" ? "inspector management-page" : "inspector"}>
           {mainView === "management" ? <>
-            <div className="inspector-context-head">
-              <div><span>任务中心</span><strong>{inspectorTabLabel(inspectorTab)}</strong></div>
-              <button aria-label="返回对话" onClick={() => {setMainView("chat");setInspectorOpen(false);}}><X size={16} /></button>
-            </div>
-            <ManagementNav current={inspectorTab} onSelect={openInspector}/>
+            <ManagementHead current={inspectorTab} onClose={() => { setMainView("chat"); setInspectorOpen(false); }} />
+            {inspectorTab !== "goals" && <ManagementNav current={inspectorTab} onSelect={openInspector} />}
           </> : <WorkbenchTabs tools={workbenchTools} tabs={shownWorkbenchTabs} current={inspectorTab} launcher={showWorkbenchLauncher}
             onShowLauncher={() => setWorkbenchLauncher(true)} onCloseTab={closeWorkbenchTool} onClosePanel={() => setInspectorOpen(false)} />}
           {mainView === "chat" && showWorkbenchLauncher && <WorkbenchLauncher tools={workbenchTools} />}

@@ -2176,3 +2176,211 @@ dialog.settings-modal.settings-redesign.settings-layout .llm-routing-fields > p 
   font-size: var(--vc-size-caption);
   font-style: normal;
 }
+
+/* ── 工作台「任务 / 目标」整页（画布 E13）：页头 + 视图标签 + 看板，沿用原来的看板和面板内容 ── */
+.workbench > .management-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--vc-bg);
+}
+
+.management-page .vc-work-head {
+  flex: none;
+  margin: 0;
+  padding: var(--vc-space-8) var(--vc-space-8) var(--vc-space-3);
+}
+
+:root[data-window="overlay"] .workbench.vc-sidebar-collapsed > .management-page .vc-work-head {
+  padding-top: 64px;
+}
+
+.vc-work-tabs {
+  display: flex;
+  flex: none;
+  gap: var(--vc-space-5);
+  margin: 0 var(--vc-space-8);
+  border-bottom: 1px solid var(--vc-divider);
+}
+
+.vc-work-tabs button {
+  height: 36px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--vc-muted);
+  font: inherit;
+  font-size: var(--vc-size-body);
+  cursor: pointer;
+}
+
+.vc-work-tabs button.active {
+  color: var(--vc-text);
+  font-weight: var(--vc-weight-medium);
+  box-shadow: inset 0 -2px 0 var(--vc-ink);
+}
+
+.workbench > .management-page .inspector-body {
+  padding: var(--vc-space-5) var(--vc-space-8) var(--vc-space-8);
+}
+
+.management-page .runtime-inbox-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vc-space-4);
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.management-page .runtime-inbox-metrics > div {
+  border: 0;
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-fill);
+}
+
+.management-page .runtime-inbox-metrics > div.attention {
+  background: var(--vc-wait-bg);
+}
+
+.management-page .runtime-inbox-metrics strong {
+  color: var(--vc-text);
+  font-size: var(--vc-size-heading);
+  font-weight: var(--vc-weight-strong);
+}
+
+.management-page .runtime-inbox-metrics .attention strong {
+  color: var(--vc-wait-text);
+}
+
+.management-page .runtime-inbox-metrics span,
+.management-page .task-board-source,
+.management-page .task-board-filters label {
+  color: var(--vc-muted);
+  font-size: var(--vc-size-caption);
+}
+
+.management-page .task-board-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--vc-space-2);
+}
+
+.management-page .task-board-view-switch {
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-fill);
+}
+
+.management-page .task-board-view-switch button {
+  height: 28px;
+  padding: 0 var(--vc-space-3);
+  border: 0;
+  border-radius: var(--vc-radius-inner);
+  background: transparent;
+  color: var(--vc-muted);
+  font-size: var(--vc-size-small);
+}
+
+.management-page .task-board-view-switch button[aria-pressed="true"] {
+  background: var(--vc-surface);
+  color: var(--vc-text);
+  font-weight: var(--vc-weight-medium);
+  box-shadow: var(--vc-shadow-raised);
+}
+
+.management-page .task-board-toolbar > button,
+.management-page .task-board-filters button,
+.management-page .task-board-card button {
+  height: var(--vc-control-h);
+  padding: 0 var(--vc-space-3);
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-control);
+  background: transparent;
+  color: var(--vc-text);
+  font-size: var(--vc-size-small);
+}
+
+.management-page .task-board-filters select {
+  height: var(--vc-control-h);
+  padding: 0 var(--vc-space-2);
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-surface);
+  color: var(--vc-text);
+  font-size: var(--vc-size-small);
+}
+
+.management-page .task-board-column {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.management-page .task-board-column h3 {
+  margin: 0 0 var(--vc-space-1);
+  padding: 0 var(--vc-space-1);
+  color: var(--vc-muted);
+  font-size: var(--vc-size-caption);
+  font-weight: var(--vc-weight-medium);
+}
+
+.management-page .task-board-column h3 i {
+  display: none;
+}
+
+.management-page .task-board-column.attention h3 {
+  color: var(--vc-wait-text);
+}
+
+.management-page .task-board-column h3 span {
+  color: inherit;
+  font-size: var(--vc-size-caption);
+}
+
+.management-page .task-board-card {
+  margin-top: var(--vc-space-2);
+  padding: var(--vc-space-3) var(--vc-space-4);
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-card);
+  background: var(--vc-surface);
+}
+
+.management-page .task-board-column.completed .task-board-card {
+  border-color: var(--vc-divider);
+  background: transparent;
+}
+
+.management-page .task-board-card h4 {
+  margin: var(--vc-space-1) 0;
+  color: var(--vc-text);
+  font-size: var(--vc-size-body);
+  font-weight: var(--vc-weight-medium);
+}
+
+.management-page .task-board-card small,
+.management-page .task-board-card footer span {
+  color: var(--vc-muted);
+  font-size: var(--vc-size-caption);
+}
+
+.management-page .task-board-card p,
+.management-page .task-board-empty {
+  color: var(--vc-text-secondary);
+  font-size: var(--vc-size-small);
+}
+
+.management-page .task-board-empty {
+  margin: var(--vc-space-2) var(--vc-space-1);
+  color: var(--vc-muted);
+}
+
+/* 工作台侧栏：当前项目、当前会话都用选中底色，不用蓝底 */
+.vc-mode-work .vc-sidebar .project-row.active,
+.vc-mode-work .vc-sidebar .session-row.active,
+.vc-mode-work .vc-sidebar .project-session.active {
+  background: var(--vc-selected);
+  color: var(--vc-text);
+}

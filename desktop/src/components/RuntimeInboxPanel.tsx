@@ -32,17 +32,10 @@ export function RuntimeInboxPanel({
   onOpenSession,
   onOpenPanel,
 }: RuntimeInboxPanelProps) {
-  const [expanded, setExpanded] = useState(false);
   const [view, setView] = useState<"board" | "list">("board");
+  // 标题和说明在任务页页头（ManagementHead）；这里是整页，不再需要「全屏查看」
   return (
-    <div className={`runtime-inbox-panel ${expanded ? "board-expanded" : ""}`}>
-      <div className="runtime-inbox-hero">
-        <div>
-          <h2>所有工作，一处处理</h2>
-          <p>派给 VortoCode 的工作都在这里：等你确认的、正在做的、做完的。关掉窗口它们也会在后台继续。</p>
-        </div>
-<div className="task-board-toolbar"><button onClick={() => setExpanded(!expanded)}>{expanded ? "收起" : "全屏查看"}</button><button onClick={onRefresh} title="立即刷新各项目的工作状态">刷新</button></div>
-      </div>
+    <div className="runtime-inbox-panel">
       <div className="runtime-inbox-metrics">
         <div className={summary.actionable > 0 ? "attention" : ""}><strong>{summary.actionable}</strong><span>需要处理</span></div>
         <div><strong>{summary.working}</strong><span>正在执行</span></div>
@@ -50,9 +43,12 @@ export function RuntimeInboxPanel({
         <div><strong>{summary.goals}</strong><span>活跃目标</span></div>
       </div>
 
-      <div className="task-board-view-switch" aria-label="工作视图">
-        <button aria-pressed={view === "board"} onClick={() => setView("board")}>按状态</button>
-        <button aria-pressed={view === "list"} onClick={() => setView("list")}>按项目</button>
+      <div className="task-board-toolbar">
+        <div className="task-board-view-switch" aria-label="工作视图">
+          <button aria-pressed={view === "board"} onClick={() => setView("board")}>按状态</button>
+          <button aria-pressed={view === "list"} onClick={() => setView("list")}>按项目</button>
+        </div>
+        <button onClick={onRefresh} title="立即刷新各项目的工作状态">刷新</button>
       </div>
       {view === "board" ? <TaskBoard sources={runtimeInboxes} currentRuntimeId={currentRuntimeId}
         onOpenGoals={(source, goalId) => onOpenPanel(source, "goals", undefined, undefined, goalId)}

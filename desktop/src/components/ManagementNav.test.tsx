@@ -12,5 +12,7 @@ it("keeps board and task management out of conversation navigation",()=>{
  const local=renderToStaticMarkup(<><WorkbenchTabs tools={tools} tabs={['info']} current="info" launcher={false} onShowLauncher={()=>{}} onCloseTab={()=>{}} onClosePanel={()=>{}}/><WorkbenchLauncher tools={tools}/></>);
  expect(local).toContain('任务步骤');expect(local).toContain('关闭任务步骤');for(const text of ['看板','目标','后台任务','待处理'])expect(local).not.toContain(text);
  const global=renderToStaticMarkup(<ManagementNav current="inbox" onSelect={()=>{}}/>);
- for(const text of ['看板','任务','目标','待处理'])expect(global).toContain(text);
+ for(const text of ['看板','后台任务','待处理'])expect(global).toContain(text);
+ expect(global).not.toContain('目标');                                   // 目标走侧栏自己的入口
+ expect(global).toContain('aria-current="page" class="active">看板');
 });

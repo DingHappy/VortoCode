@@ -3,7 +3,7 @@
 // 搜索框开合由 App 持有：⌘K 在侧栏收起时也要能打开它。查询词给项目与会话列表共用。
 // 分区的折叠状态也留在 App：切到助理模式再切回来，工作台的分区要保持原样，而那时分区已经卸载过。
 import type { ReactNode } from "react";
-import { ChevronDown, ListChecks, Package, PanelLeft, Search, SquarePen } from "lucide-react";
+import { ChevronDown, Library, ListChecks, PanelLeft, Puzzle, Search, SquarePen, Target } from "lucide-react";
 import { IconButton, NavItem } from "./ui";
 
 export function SidebarBrand({ onCollapse }: { onCollapse: () => void }) {
@@ -43,21 +43,34 @@ export function SidebarSearch({ open, query, placeholder, onOpenChange, onQuery 
   );
 }
 
-export function WorkNav({ view, connected, search, onNewChat, onWork, onArtifacts }: {
-  view: "chat" | "plugins" | "artifacts" | "management";
+/** 工作台的一级入口（docs/DESIGN_SYSTEM.md 第 2 节；画布 E11）：任务、目标、资料库、扩展。 */
+export type WorkPage = "tasks" | "goals" | "library" | "extensions";
+
+const WORK_PAGES: Array<{ id: WorkPage; label: string; icon: ReactNode; hint: string }> = [
+  { id: "tasks", label: "任务", icon: <ListChecks />, hint: "派出去的活、会话和等你确认的事" },
+  { id: "goals", label: "目标", icon: <Target />, hint: "项目目标和完成标准" },
+  { id: "library", label: "资料库", icon: <Library />, hint: "Agent 做出来的网页和文档" },
+  { id: "extensions", label: "扩展", icon: <Puzzle />, hint: "MCP 工具、项目技能、Hook 和规则" },
+];
+
+export function WorkNav({ page, connected, search, waiting = 0, onNewChat, onPage }: {
+  /** 当前打开的一级页面；在对话里时为 null */
+  page: WorkPage | null;
   connected: boolean;
   search?: ReactNode;
+  /** 「任务」上的角标：等你处理的件数 */
+  waiting?: number;
   onNewChat: () => void;
-  onWork: () => void;
-  onArtifacts: () => void;
+  onPage: (page: WorkPage) => void;
 }) {
   return (
     <nav className="vc-side-nav" aria-label="主导航">
       <NavItem icon={<SquarePen />} label="新对话" onClick={onNewChat} disabled={!connected} />
       {search}
       <span className="vc-side-gap" aria-hidden="true" />
-      <NavItem icon={<ListChecks />} label="工作" title="派出去的任务、目标和等你确认的事" current={view === "management"} onClick={onWork} />
-      <NavItem icon={<Package />} label="产物" title="Agent 做出来的网页和文档" current={view === "artifacts"} onClick={onArtifacts} />
+      {WORK_PAGES.map((item) => <NavItem key={item.id} icon={item.icon} label={item.label} title={item.hint}
+        current={page === item.id} onClick={() => onPage(item.id)}
+        meta={item.id === "tasks" && waiting > 0 ? <span className="vc-count" aria-label={`${waiting} 件等你处理`}>{waiting}</span> : undefined} />)}
     </nav>
   );
 }

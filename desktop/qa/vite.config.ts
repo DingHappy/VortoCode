@@ -27,6 +27,7 @@ export default defineConfig({
       library: new URL("library.html", import.meta.url).pathname,
       customize: new URL("customize.html", import.meta.url).pathname,
       accountMenu: new URL("account-menu.html", import.meta.url).pathname,
+      workbenchTasks: new URL("workbench-tasks.html", import.meta.url).pathname,
     } },
   },
 });

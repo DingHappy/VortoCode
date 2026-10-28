@@ -6466,57 +6466,6 @@ button.worktree-live:not(:disabled):hover {
   background: var(--n2);
 }
 
-.runtime-inbox-hero {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 18px;
-  padding: 2px 2px 15px;
-}
-
-.runtime-inbox-hero > div {
-  min-width: 0;
-}
-
-.runtime-inbox-hero span {
-  color: var(--muted);
-  font-size: 11.5px;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-}
-
-.runtime-inbox-hero h2 {
-  margin: 4px 0 5px;
-  color: var(--n13);
-  font-size: 19px;
-  font-weight: 660;
-  letter-spacing: -0.02em;
-}
-
-.runtime-inbox-hero p {
-  max-width: 520px;
-  margin: 0;
-  color: var(--muted);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.runtime-inbox-hero > button {
-  flex: 0 0 auto;
-  padding: 6px 10px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  color: var(--n12);
-  background: var(--surface-2);
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.runtime-inbox-hero > button:hover {
-  color: var(--n13);
-  border-color: var(--n6);
-}
-
 .runtime-inbox-metrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -10274,8 +10223,6 @@ input::placeholder {
 .task-board-card button { font-size: 11px; }
 .task-board-toolbar { display: flex; gap: 6px; flex-shrink: 0; }
 .task-board-toolbar button { border: 1px solid var(--n6); border-radius: 8px; padding: 7px 10px; background: var(--n3); color: var(--n12); cursor: pointer; }
-.runtime-inbox-panel.board-expanded { position: fixed; inset: 48px 12px 12px; z-index: 60; overflow: auto; border: 1px solid var(--n6); border-radius: 12px; box-shadow: 0 16px 60px #0003; }
-.board-expanded .task-board-columns { grid-template-columns: repeat(4, minmax(240px, 1fr)); }
 .task-board-view-switch { margin: 12px 0; }
 
 .goal-focus-notice { padding: 12px; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; }
