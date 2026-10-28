@@ -1318,3 +1318,90 @@
   color: var(--vc-text-secondary);
   font-size: var(--vc-size-caption);
 }
+
+/* 没有顶部那条：窗口从侧栏和对话顶栏开始，拖动靠顶栏、品牌行和面板名片的空白处 */
+.app-shell {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+/* 提示条浮在窗口顶部中间，不再占一整行，也不会压到左上角的红黄绿按钮 */
+.banner-slot {
+  position: fixed;
+  z-index: 40;
+  /* 顶栏高 56，提示条放在它下面，不挡顶栏里的按钮 */
+  top: 64px;
+  left: 50%;
+  width: min(560px, calc(100% - 2 * var(--vc-space-4)));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.banner-slot .banner {
+  gap: var(--vc-space-3);
+  min-height: 0;
+  padding: 10px var(--vc-space-3) 10px var(--vc-space-4);
+  border: 0;
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-wait-bg);
+  color: var(--vc-wait-text);
+  box-shadow: var(--vc-shadow-pop);
+  font-family: var(--vc-font-sans);
+  font-size: var(--vc-size-small);
+  line-height: 1.5;
+  pointer-events: auto;
+}
+
+.banner-slot .banner button {
+  flex: none;
+  color: var(--vc-wait-text);
+}
+
+/* 品牌行和对话顶栏同高（56），中线对齐 */
+.sidebar.vc-sidebar {
+  padding-top: 7px;
+}
+
+/* macOS：红黄绿三个按钮放在品牌行左侧（tauri.conf 的 trafficLightPosition 是 18, 21），字标让到它们右边 */
+:root[data-window="overlay"] .vc-side-brand {
+  padding-left: 84px;
+}
+
+:root[data-window="overlay"] .vc-side-logo {
+  display: none;
+}
+
+:root[data-window="overlay"] .vc-sidebar-reopen.vc-btn--icon {
+  top: 12px;
+  left: 84px;
+}
+
+:root[data-window="overlay"] .workbench.vc-sidebar-collapsed .conversation-header {
+  padding-left: 128px;
+}
+
+/* 连接状态从顶部那条挪到对话顶栏右侧：只在没连上时出现 */
+.conversation-actions .connection-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--vc-radius-full);
+  background: var(--vc-fill);
+  color: var(--vc-text-secondary);
+  font-family: var(--vc-font-sans);
+  font-size: var(--vc-size-caption);
+}
+
+.conversation-actions .connection-pill.error {
+  background: var(--vc-danger-bg);
+  color: var(--vc-danger-text);
+}
+
+.conversation-actions .connection-pill .connection-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--vc-radius-full);
+  background: currentColor;
+}

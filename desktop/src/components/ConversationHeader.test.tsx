@@ -27,3 +27,10 @@ it("a task pill replaces the panel toggle but keeps the stop button", () => {
   expect(html).not.toContain("workbench-toggle");
   expect(html).toContain("停止");
 });
+
+it("the header doubles as the window drag area and shows connection status before the pill only when given", () => {
+  const html = header({ taskPill: <button>任务</button>, status: <span className="connection-pill error">需要处理</span> });
+  expect(html).toContain('class="conversation-header" data-tauri-drag-region="deep"');
+  expect(html.indexOf("需要处理")).toBeLessThan(html.indexOf("任务</button>"));
+  expect(header({ taskPill: <button>任务</button> })).not.toContain("connection-pill");
+});
