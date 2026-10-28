@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ConnectionCoordinator, placeAssistant, residentRetryDelay, retryResident } from "./connectionCoordinator";
+import { residentRetryReason, ConnectionCoordinator, placeAssistant, residentRetryDelay, retryResident } from "./connectionCoordinator";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -179,5 +179,22 @@ describe("常驻电脑后台重连", () => {
     const connect = vi.fn(async () => true);
     expect(await retryResident({ reachable: async () => null, connect, onUnreachable: vi.fn() })).toBe(true);
     expect(connect).toHaveBeenCalledOnce();
+  });
+});
+
+describe("residentRetryReason", () => {
+  const base = { assistantMode: true, hasHost: true, onHost: true, connection: "connected" as const, switching: false };
+  it("retries when the assistant fell back to this Mac, and when a resident connection dropped", () => {
+    expect(residentRetryReason({ ...base, onHost: false })).toBe("missed");
+    expect(residentRetryReason({ ...base, connection: "error" })).toBe("dropped");
+  });
+  it("leaves healthy, intentionally left, switching, workbench and unregistered states alone", () => {
+    expect(residentRetryReason(base)).toBeNull();
+    expect(residentRetryReason({ ...base, connection: "disconnected" })).toBeNull();
+    expect(residentRetryReason({ ...base, connection: "connecting" })).toBeNull();
+    expect(residentRetryReason({ ...base, connection: "error", switching: true })).toBeNull();
+    expect(residentRetryReason({ ...base, connection: "error", assistantMode: false })).toBeNull();
+    expect(residentRetryReason({ ...base, onHost: false, hasHost: false })).toBeNull();
+    expect(residentRetryReason({ ...base, onHost: false, connection: "error" })).toBeNull();   // 本机也断了：先由连接本身处理
   });
 });

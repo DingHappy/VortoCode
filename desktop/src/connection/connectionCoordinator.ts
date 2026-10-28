@@ -16,6 +16,23 @@ export function residentRetryDelay(attempt: number): number {
 }
 
 /**
+ * 要不要在后台自动重连常驻电脑，以及为什么：
+ * - missed：登记了常驻电脑、在助理模式，却连在本机（启动时或之前连不上，回落了）；
+ * - dropped：本来连着常驻电脑，连接断了（服务重启、网络抖动、电脑睡醒）。以前只标成断开，
+ *   要等人点「重新连接」——真机 2026-10-28：服务好好的，App 停在「连不上常驻电脑」不再试。
+ * 正在切换时都不动，等切换走完再看。
+ */
+export function residentRetryReason(state: {
+  assistantMode: boolean; hasHost: boolean; onHost: boolean;
+  connection: "connected" | "connecting" | "disconnected" | "error"; switching: boolean;
+}): "missed" | "dropped" | null {
+  if (!state.assistantMode || !state.hasHost || state.switching) return null;
+  if (!state.onHost) return state.connection === "connected" ? "missed" : null;
+  // 只认「断了」（error）；disconnected 是主动离开或切换中的中间态，不替人连回去
+  return state.connection === "error" ? "dropped" : null;
+}
+
+/**
  * 后台重连一次：先只测通不通，不通就把原因交出去、什么都不动（不断开本机，不清当前对话）；
  * 通了才走完整切换。返回是否切过去了。
  */

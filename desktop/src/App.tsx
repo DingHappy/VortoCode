@@ -86,7 +86,7 @@ import type {
   DesktopLlmProfileStatus,
   ProjectSessionSummary, CodexAction, PhoneChat} from "./types";
 import { DecisionsPanel } from "./components/DecisionsPanel";
-import { ConnectionCoordinator, placeAssistant, residentRetryDelay, retryResident } from "./connection/connectionCoordinator";
+import { ConnectionCoordinator, placeAssistant, residentRetryDelay, residentRetryReason, retryResident } from "./connection/connectionCoordinator";
 import { SessionConnection } from "./connection/sessionConnection";
 import { TasksPanel } from "./tasks/TasksPanel";
 import { useTasks } from "./hooks/useTasks";
@@ -1723,15 +1723,16 @@ function App() {
   };
 
   // 登记了常驻电脑、在助理模式、却连在本机：明着提示，并在后台自动重连（正在回复时不切）
-  const residentMissed = appMode === "assistant" && Boolean(findAssistantHost(projects)) && !onAssistantHost()
-    && connection === "connected" && !projectSwitching;
+  const residentRetry = residentRetryReason({ assistantMode: appMode === "assistant", hasHost: Boolean(findAssistantHost(projects)),
+    onHost: onAssistantHost(), connection, switching: projectSwitching });
+  const residentMissed = residentRetry === "missed";
   const residentRetryRef = useRef(0);
   // 每次重试结束都 +1，定时器据此重排：以前只按状态变化排，失败一次之后就再也不试了
   const [residentRetryRound, setResidentRetryRound] = useState(0);
   /** 常驻电脑最近一次连不上的原因：显示在提示条里（横幅会被随后的本机连接清掉） */
   const [residentFailure, setResidentFailure] = useState<string | null>(null);
   useEffect(() => {
-    if (!residentMissed) {
+    if (!residentRetry) {
       if (onAssistantHost()) { residentRetryRef.current = 0; setResidentFailure(null); }
       return;
     }
@@ -1743,13 +1744,13 @@ function App() {
       void retryResident({
         reachable: () => probeAssistantHost(host.id),
         connect: async () => { await changeAppMode("assistant"); return onAssistantHost(); },
-        onUnreachable: (reason) => { diag("resident.retry_unreachable", `第 ${residentRetryRef.current} 次：${reason}`, "warn"); setResidentFailure(reason); },
+        onUnreachable: (reason) => { diag("resident.retry_unreachable", `${residentRetry === "dropped" ? "断线后" : ""}第 ${residentRetryRef.current} 次：${reason}`, "warn"); setResidentFailure(reason); },
       }).finally(() => setResidentRetryRound((round) => round + 1));
     }, residentRetryDelay(residentRetryRef.current));
     return () => window.clearTimeout(timer);
     // changeAppMode 每次渲染都是新函数；只按状态变化重排定时器
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [residentMissed, busy, residentRetryRound]);
+  }, [residentRetry, busy, residentRetryRound]);
 
   const changeAppMode = async (mode: AppMode, known: DesktopProjectProfile[] = projects) => {
     if (localRuntimeControls.isOperating()) { setBanner("正在核对本机引擎，请等待操作完成后再切换"); return; }
