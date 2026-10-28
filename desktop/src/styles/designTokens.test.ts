@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 import tokensCss from "./tokens.css?raw";
 import componentsCss from "./components.css?raw";
+import shellCss from "./shell.css?raw";
+import taskPillSource from "../components/TaskPill.tsx?raw";
+import sidebarFooterSource from "../components/SidebarFooter.tsx?raw";
 
 // 已按 docs/DESIGN_SYSTEM.md 迁移的文件：这里面不许写死颜色、字号、字重和圆角，一律用 --vc-* 变量。
 // 每迁完一屏，把它的样式和组件文件加进来，检查范围就跟着扩大。
 const MIGRATED: Record<string, string> = {
   "styles/components.css": componentsCss,
+  "styles/shell.css": shellCss,
+  "components/TaskPill.tsx": taskPillSource,
+  "components/SidebarFooter.tsx": sidebarFooterSource,
   ...Object.fromEntries(
     Object.entries(
       import.meta.glob(["../components/ui/*.tsx", "!../components/ui/*.test.tsx"], { query: "?raw", import: "default", eager: true }) as Record<string, string>,
