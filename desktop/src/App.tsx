@@ -1779,10 +1779,10 @@ function App() {
     // 助理默认住在常驻电脑上（合上笔记本也照常干活）；没登记或连不上，才用本机通用工作区兜底。
     const hostId = await placeAssistant({
       host: findAssistantHost(known), connectHost: connectAssistantHost,
-      onHostFailure: (host, reason) => {
+      // 不再弹横幅：落到本机后输入框上方的提示条会写明原因并带「重新连接」，两处同一段话只留一处
+      onHostFailure: (_host, reason) => {
         diag("resident.unreachable", reason, "warn");
         setResidentFailure(reason);
-        setBanner(`常驻电脑「${host.name}」暂时连不上（${reason}），先用本机助理；它不在时你交代的事不会继续做。`);
       },
       awayFromLocalGeneral: () => Boolean(remoteProjectRef.current) || activeScope !== "general",
       switchToLocalGeneral: () => switchManagedScope("general"),
