@@ -53,7 +53,6 @@ export function assistantPanelActions(deps: AssistantPanelDeps) {
     if (tab === "identity") {
       void client?.listAssistantMemories().then(items => { if (current()) deps.setMemories(items); }).catch(() => {});
       void client?.listMemoryProposals().then(items => { if (current()) deps.setProposals(items); }).catch(() => {});
-      if (client) void deps.refreshConnectorStatus(client, scope).catch(() => {});
     }
   };
 

@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AssistantConnectors } from "../components/AssistantMode";
+import { CustomizePage } from "../components/CustomizePage";
 import type { AssistantConnector } from "../types";
 import { connectorCredentialView, connectorDisconnectMessage, ConnectorStatusReads } from "./connectorStatus";
+
+const detail = (connector: AssistantConnector) => renderToStaticMarkup(<CustomizePage plugins={[]} checks={{}} busy=""
+  onCheck={() => {}} onRemove={() => {}} onSave={async () => true} connectors={[connector]} onConnector={() => {}}
+  skills={null} connected initialTab="connections" initialSelected={`connector:${connector.name}`} />);
 
 const saved: AssistantConnector = {
   name: "fixture", provider: "github", read_only: true, connected: true, expired: false,
@@ -12,16 +16,15 @@ const saved: AssistantConnector = {
 
 describe("connector credential evidence", () => {
   it("offers actual local disconnection only when the runtime advertises it", () => {
-    const html = renderToStaticMarkup(<AssistantConnectors connectors={[{ ...saved, local_revocation_supported: true }]} />);
+    const html = detail({ ...saved, local_revocation_supported: true });
     expect(html).toContain("断开本机连接");
-    const legacy = renderToStaticMarkup(<AssistantConnectors connectors={[saved]} />);
+    const legacy = detail(saved);
     expect(legacy).toContain("移除凭据");
   });
   it("renders valid credentials without claiming a service connection", () => {
-    const html = renderToStaticMarkup(<AssistantConnectors connectors={[saved]} />);
+    const html = detail(saved);
     expect(html).toContain("凭据可用");
     expect(html).not.toContain("已连接");
-    expect(html).toContain("插件页");
     expect(html).toContain("移除凭据");
     expect(html).not.toContain("不能改任何东西");
   });

@@ -4,8 +4,7 @@ import { Archive, ArrowLeft, ArrowUpRight, Check, Clock3, Fingerprint, ImagePlus
 import { Button, GroupTitle, IconButton, NavItem } from "./ui";
 import { useRef, useState } from "react";
 import { avatarHue, avatarInitial, avatarSrc } from "../lib/avatar";
-import { connectorCredentialView } from "../lib/connectorStatus";
-import type { AssistantAvatar, AssistantConnector, AssistantMemory, AssistantPlugin, PluginCheck, AssistantProfile, AssistantScheduleItem, AuditEntry, MemoryProposal } from "../types";
+import type { AssistantAvatar, AssistantMemory, AssistantProfile, AssistantScheduleItem, AuditEntry, MemoryProposal } from "../types";
 export { PhoneChatDialog } from "./PhoneChatDialog";
 
 export type AppMode = "assistant" | "work";
@@ -28,7 +27,7 @@ export const ASSISTANT_PAGES: Array<{ id: AssistantPage; label: string; icon: Re
   { id: "schedule", label: "定时", icon: <Clock3 aria-hidden="true" />, hint: "早晚报、签到和定时作业" },
   { id: "goals", label: "目标", icon: <Target aria-hidden="true" />, hint: "交给助理盯着的个人目标" },
   { id: "library", label: "资料库", icon: <Archive aria-hidden="true" />, hint: "做出来的网页、文档和文件" },
-  { id: "customize", label: "定制", icon: <Puzzle aria-hidden="true" />, hint: "插件、连接的服务、性格与记忆" },
+  { id: "customize", label: "定制", icon: <Puzzle aria-hidden="true" />, hint: "插件、连接的服务、个人技能" },
 ];
 
 function LiveDot() {
@@ -100,12 +99,12 @@ export type AssistantHostInfo = { kind: "resident"; name: string; reachable?: bo
 /** 助理模式右侧：动态 / 目标 / 审核记录 / 定时 / 身份（SOUL、关于你、记忆）。 */
 export type AssistantTab = "feed" | "goals" | "audit" | "schedule" | "identity";
 
-/** 一级入口和右侧面板标签的对应。各页迁好之前，入口先打开面板的对应标签；「资料库」是独立页面。 */
-export const PAGE_PANEL: Record<Exclude<AssistantPage, "library">, AssistantTab> = {
-  tasks: "feed", schedule: "schedule", goals: "goals", customize: "identity",
+/** 一级入口和右侧面板标签的对应。「资料库」「定制」是独立页面，其余入口打开面板的对应标签。 */
+export const PAGE_PANEL: Record<Exclude<AssistantPage, "library" | "customize">, AssistantTab> = {
+  tasks: "feed", schedule: "schedule", goals: "goals",
 };
 export const PANEL_PAGE: Record<AssistantTab, AssistantPage | null> = {
-  feed: "tasks", schedule: "schedule", goals: "goals", identity: "customize", audit: null,
+  feed: "tasks", schedule: "schedule", goals: "goals", identity: null, audit: null,
 };
 
 const TABS: Array<{ id: AssistantTab; label: string; icon: ReactNode }> = [
@@ -299,7 +298,7 @@ export function MemoryProposals({ proposals, onDecide }: {
   </>;
 }
 
-export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposals = [], connectors = [], onEdit, onDeleteMemory, onDecideProposal, onConnector, plugins }: {
+export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposals = [], onEdit, onDeleteMemory, onDecideProposal }: {
   profile: AssistantProfile;
   /** 头像：选了文件就换，null 恢复成名字首字 */
   avatar?: AssistantAvatar | null;
@@ -310,11 +309,6 @@ export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposa
   onEdit: () => void;
   onDeleteMemory: (memory: AssistantMemory) => void;
   onDecideProposal?: (proposal: MemoryProposal, approve: boolean, replace?: string[]) => void;
-  /** 连接的服务（GitHub 等） */
-  connectors?: AssistantConnector[];
-  onConnector?: (action: "connect" | "disconnect" | "open" | "copy", connector: AssistantConnector) => void;
-  /** 插件区块（日历、Notion…），由上层装好状态后传进来 */
-  plugins?: ReactNode;
 }) {
   const [showMemories, setShowMemories] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -353,115 +347,7 @@ export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposa
         <span className="vc-identity-tile-foot">{proposals.length ? `${proposals.length} 条待确认` : latest ?? ""}<ArrowUpRight aria-hidden="true" /></span>
       </button>
     </div>
-    {connectors.length > 0 && <AssistantConnectors connectors={connectors} onAction={onConnector} />}
-    {plugins}
   </section>;
-}
-
-const PLUGIN_STATUS: Record<AssistantPlugin["status"], string> = {
-  available: "已接上", missing: "未接入", invalid: "凭据文件不可用", revoked: "已在本机撤销",
-};
-
-/** 插件：日历、Notion 这类外部数据。凭据在助理所在电脑上放文件，这里只看状态、检查、移除。 */
-const PLUGIN_INPUT: Record<string, { label: string; placeholder: string; help: string }> = {
-  calendar: { label: "日历订阅链接", placeholder: "https://… 或 webcal://…",
-    help: "Google 日历：设置 → 该日历 →「iCal 格式的私密地址」；iCloud：共享日历 → 公开日历 → 复制链接。" },
-  caldav: { label: "邮箱:App 专用密码", placeholder: "you@icloud.com:xxxx-xxxx-xxxx-xxxx",
-    help: "iCloud：appleid.apple.com → 登录与安全 → App 专用密码。其他支持 CalDAV 的日历写成 https://账号:密码@服务器；末尾加 #日历名 可指定写进哪个日历。只会在你确认后新建日程。" },
-  mail: { label: "邮箱:授权码", placeholder: "you@qq.com:授权码",
-    help: "在邮箱设置里开 IMAP 并生成授权码（客户端专用密码，不是登录密码）。QQ/163/126/iCloud/Gmail 自动识别服务器，其他写成 imaps://邮箱:授权码@服务器。" },
-  notion: { label: "Notion 集成令牌", placeholder: "ntn_…",
-    help: "notion.so/profile/integrations 新建内部集成（只勾读取内容），再在要给助理看的页面「连接」里加上它。" },
-};
-
-export function AssistantPlugins({ plugins, checks = {}, busy = "", onCheck, onRemove, onSave }: {
-  plugins: AssistantPlugin[];
-  checks?: Record<string, PluginCheck>;
-  /** 正在检查、保存或移除的插件名 */
-  busy?: string;
-  onCheck?: (plugin: AssistantPlugin) => void;
-  onRemove?: (plugin: AssistantPlugin) => void;
-  /** 保存凭据；成功返回 true，输入框随之清空收起 */
-  onSave?: (plugin: AssistantPlugin, credential: string) => Promise<boolean>;
-}) {
-  const [editing, setEditing] = useState("");
-  const [draft, setDraft] = useState("");
-  if (!plugins.length) return null;
-  return <div className="assistant-connectors assistant-plugins">
-    <h5>插件</h5>
-    <ul>
-      {plugins.map((item) => {
-        const check = checks[item.name];
-        const ready = item.status === "available";
-        return <li key={item.name}>
-          <div className="assistant-connector-head">
-            <strong>{item.title}</strong>
-            <small>{busy === item.name ? "处理中…" : PLUGIN_STATUS[item.status] ?? item.status}</small>
-            {ready && item.checkable && <button disabled={busy === item.name} onClick={() => onCheck?.(item)}>检查</button>}
-            {onSave && editing !== item.name && <button className={ready ? "" : "primary"} disabled={busy === item.name}
-              onClick={() => { setEditing(item.name); setDraft(""); }}>{ready ? "更换" : "填写"}</button>}
-            {item.status !== "missing" && <button disabled={busy === item.name} onClick={() => onRemove?.(item)}>移除凭据</button>}
-          </div>
-          {editing === item.name && <form className="assistant-plugin-form" onSubmit={(event) => {
-            event.preventDefault();
-            const value = draft.trim();
-            if (!value || !onSave) return;
-            void onSave(item, value).then((ok) => { if (ok) { setEditing(""); setDraft(""); } });
-          }}>
-            <label>{PLUGIN_INPUT[item.name]?.label ?? "凭据"}
-              <input type="password" autoComplete="off" spellCheck={false} value={draft} autoFocus
-                placeholder={PLUGIN_INPUT[item.name]?.placeholder} onChange={(event) => setDraft(event.target.value)} />
-            </label>
-            {PLUGIN_INPUT[item.name] && <p className="assistant-connector-note">{PLUGIN_INPUT[item.name].help}</p>}
-            <div>
-              <button type="button" onClick={() => { setEditing(""); setDraft(""); }}>取消</button>
-              <button type="submit" className="primary" disabled={!draft.trim() || busy === item.name}>保存并检查</button>
-            </div>
-          </form>}
-          {check && <p className={check.ok ? "assistant-connector-note" : "assistant-connector-error"} role={check.ok ? undefined : "alert"}>{check.detail}</p>}
-          {!ready && editing !== item.name && <p className="assistant-connector-note">点「填写」把凭据存到助理所在的电脑（<code>{item.credential_file}</code>，权限 600），新开对话生效。</p>}
-        </li>;
-      })}
-    </ul>
-    <p className="assistant-connector-note">插件都只读，带回来的内容当外部资料处理。凭据只存在助理所在的电脑上，填完不会再显示；移除后立即停用。</p>
-  </div>;
-}
-
-const PROVIDER_NAMES: Record<string, string> = { github: "GitHub" };
-
-/** 设备授权只保存凭据；实际 MCP 连接由当前会话的插件页观察。 */
-export function AssistantConnectors({ connectors, onAction }: {
-  connectors: AssistantConnector[];
-  onAction?: (action: "connect" | "disconnect" | "open" | "copy", connector: AssistantConnector) => void;
-}) {
-  return <div className="assistant-connectors">
-    <h5>连接的服务</h5>
-    <ul>
-      {connectors.map((item) => {
-        const label = PROVIDER_NAMES[item.provider] ?? item.name;
-        const credential = connectorCredentialView(item);
-        return <li key={item.name}>
-          <div className="assistant-connector-head">
-            <strong>{label}</strong>
-            <small>{credential.label}</small>
-            {credential.canClear && <button onClick={() => onAction?.("disconnect", item)}>{item.authorizing ? "取消授权" : item.local_revocation_supported ? "断开本机连接" : "移除凭据"}</button>}
-            {!credential.available && !item.authorizing && <button className="primary" onClick={() => onAction?.("connect", item)}>授权</button>}
-          </div>
-          {item.authorizing && <div className="assistant-connector-code">
-            <p>在浏览器打开 GitHub 授权页，输入下面的验证码，点 Authorize：</p>
-            <code aria-label="验证码">{item.authorizing.user_code}</code>
-            <div>
-              <button onClick={() => onAction?.("copy", item)}>复制验证码</button>
-              <button className="primary" onClick={() => onAction?.("open", item)}>打开 GitHub</button>
-            </div>
-          </div>}
-          {(item.error || item.credential_error) && !credential.available && <p className="assistant-connector-error" role="alert">{item.error || item.credential_error}</p>}
-          {credential.available && <p className="assistant-connector-note">凭据已保存。到插件页连接当前会话并查看连接状态；工具调用仍受会话权限控制。</p>}
-        </li>;
-      })}
-    </ul>
-    <p className="assistant-connector-note">凭据可用不代表服务在线。断开以本地回执为准；GitHub 授权和远端已发请求仍需单独核对。</p>
-  </div>;
 }
 
 /** 空白对话里的上手示例：点一下填进输入框，改一改再发。 */

@@ -15,7 +15,7 @@ import { useConversationLocation } from "./hooks/useConversationLocation";
 import { startPolling } from "./lib/polling";
 import { AssistantActionGate, type AssistantTaskAction } from "./lib/assistantTask";
 import { openAssistantTask } from "./lib/assistantNavigation";
-import { AssistantAudit, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantPlugins, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PAGE_PANEL, PANEL_PAGE, PhoneChatDialog, type AppMode, type AssistantPage, type AssistantTab } from "./components/AssistantMode";
+import { AssistantAudit, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PAGE_PANEL, PANEL_PAGE, PhoneChatDialog, type AppMode, type AssistantPage, type AssistantTab } from "./components/AssistantMode";
 import { TaskPill } from "./components/TaskPill";
 import { AssistantGoals } from "./components/AssistantGoals";
 import { assistantFeed, isPhoneSession, taskFeedItem } from "./lib/activityFeed";
@@ -126,6 +126,7 @@ import { dismissOfflineChat, listOfflineChats, offlineChatAttachment, recordOffl
 import { ArtifactCenter } from "./components/ArtifactCenter";
 import { PluginsPage } from "./components/PluginsPage";
 import { PersonalSkillsCard } from "./components/PersonalSkillsCard";
+import { CustomizePage } from "./components/CustomizePage";
 import { ProjectPicker } from "./components/ProjectPicker";
 import { RemoteProjectDialog } from "./components/RemoteProjectDialog";
 import { findAssistantHost, isAssistantHost, isLocalNetworkBlocked, mainChatKey, probeAssistantHost, relaunchApp, workProjects } from "./lib/assistantHost";
@@ -240,7 +241,7 @@ function App() {
   const [activities, setActivities] = useState<TurnActivity[]>([]);
   const [previewView, setPreviewView] = useState<PreviewView>("plan");
   // 主区域：对话，或侧边栏打开的「插件」「产物中心」页面。切换会话时回到对话。
-  const [mainView, setMainView] = useState<"chat" | "plugins" | "artifacts" | "management">("chat");
+  const [mainView, setMainView] = useState<"chat" | "plugins" | "artifacts" | "customize" | "management">("chat");
   const mainViewRef = useRef(mainView);
   mainViewRef.current = mainView;
   const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined);
@@ -327,7 +328,7 @@ function App() {
     assistantMemories, setAssistantMemories, memoryProposals, setMemoryProposals,
     connectors, connectorReads, refreshConnectorStatus, phoneChats, agentTurns, activityReads, publishActivityRead,
     dispatches, dispatchSnapshotScope, codexActions, refreshAgentTurns, setAssistantProfile, invalidateAssistantReads,
-  } = useAssistantSnapshot({ clientRef, assistantScope, assistantScopeRef, connection, assistantTab });
+  } = useAssistantSnapshot({ clientRef, assistantScope, assistantScopeRef, connection, connectorsOpen: mainView === "customize" });
   // 手机上和助理的聊天：只读查看（不接管——两个进程同时写一段对话会互相覆盖）
   const openPhoneChat = (sid: string, rid?: string) => {
     if (!phoneChats.some(chat => chat.sid === sid)) {
@@ -420,7 +421,7 @@ function App() {
   }, []);
   const { attachments, setAttachments, addFiles, removeAttachment } = useAttachments(setBanner);
   const { plugins, pluginBusy, pluginChecks, savePlugin, pluginAction } = usePlugins(
-    clientRef, assistantScopeRef, assistantScope, connection, assistantTab, setBanner);
+    clientRef, assistantScopeRef, assistantScope, connection, mainView === "customize", setBanner);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const { tasks, taskRead, focusedTaskId, worktreeWorkspace, setFocusedTaskId, refreshTasks,
@@ -2368,7 +2369,7 @@ function App() {
   };
 
   // 侧栏一级入口。任务 / 定时 / 目标 / 定制各自的页面迁好之前，先打开右侧面板的对应标签；再点一次收起。
-  const assistantPage: AssistantPage | null = mainView === "artifacts" ? "library"
+  const assistantPage: AssistantPage | null = mainView === "artifacts" ? "library" : mainView === "customize" ? "customize"
     : mainView === "chat" && inspectorOpen && !computerWorkspace.view ? PANEL_PAGE[assistantTab] : null;
   const sidebarSearch = (placeholder: string) => <SidebarSearch open={sidebarSearchOpen} query={sidebarQuery} placeholder={placeholder}
     onOpenChange={setSidebarSearchOpen} onQuery={setSidebarQuery} />;
@@ -2376,6 +2377,7 @@ function App() {
     if (page === "library") {
       setMainView("artifacts"); void refreshProjectAssets(activeScope !== "general"); return;
     }
+    if (page === "customize") { setMainView("customize"); return; }
     const tab = PAGE_PANEL[page];
     setMainView("chat");
     if (assistantPage === page) { setInspectorOpen(false); return; }
@@ -2550,7 +2552,7 @@ function App() {
               onNewSideChat={() => void newSideChat()}
             />
           ) : <>
-          <WorkNav view={mainView} connected={connection === "connected"} search={sidebarSearch("搜索会话和项目")}
+          <WorkNav view={mainView === "customize" ? "chat" : mainView} connected={connection === "connected"} search={sidebarSearch("搜索会话和项目")}
             onNewChat={() => { setMainView("chat"); void newSession(); }}
             onWork={() => { openInspector("inbox"); void refreshRuntimeInboxes(); }}
             onArtifacts={() => { setMainView("artifacts"); void refreshProjectAssets(activeScope !== "general"); }} />
@@ -2642,6 +2644,15 @@ function App() {
             onChooseProject={() => void chooseRepo()}
             onOpenBrowserSettings={() => { setSettingsSection("permissions"); setSettingsOpen(true); }}
           />
+        ) : mainView === "customize" && appMode === "assistant" ? (
+          <CustomizePage plugins={plugins} checks={pluginChecks} busy={pluginBusy}
+            onCheck={(plugin) => pluginAction("check", plugin)}
+            onRemove={(plugin) => pluginAction("remove", plugin)}
+            onSave={(plugin, credential) => savePlugin(plugin, credential)}
+            connectors={connectors}
+            onConnector={(action, connector) => void panelActions.connector(action, connector)}
+            skills={<PersonalSkillsCard client={clientRef.current} connection={connection} />}
+            connected={connection === "connected"} />
         ) : mainView === "management" ? null : mainView === "artifacts" ? (
           <ArtifactCenter
             artifacts={artifacts}
@@ -2893,13 +2904,6 @@ function App() {
                   avatar={assistantAvatar}
                   onAvatar={(file) => void panelActions.avatar(file)}
                   proposals={memoryProposals}
-                  connectors={connectors}
-                  plugins={<AssistantPlugins plugins={plugins} busy={pluginBusy}
-                    checks={pluginChecks}
-                    onCheck={(plugin) => pluginAction("check", plugin)}
-                    onRemove={(plugin) => pluginAction("remove", plugin)}
-                    onSave={(plugin, credential) => savePlugin(plugin, credential)} />}
-                  onConnector={(action, connector) => void panelActions.connector(action, connector)}
                   onDecideProposal={(proposal, approve, replace) => void panelActions.decideProposal(proposal, approve, replace)}
                   onEdit={() => setProfileDialogOpen(true)}
                   onDeleteMemory={(memory) => void panelActions.deleteMemory(memory)} />

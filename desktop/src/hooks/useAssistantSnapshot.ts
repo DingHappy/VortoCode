@@ -7,7 +7,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
 
-import type { AssistantTab } from "../components/AssistantMode";
 import type { GatewayClient } from "../gateway";
 import type { ActivityRead, ActivitySourceName } from "../lib/activitySources";
 import { loadAssistantData } from "../lib/assistantData";
@@ -21,12 +20,13 @@ import type {
 
 const DEFAULT_PROFILE: AssistantProfile = { name: "VortoCode", soul: "", about_you: "" };
 
-export function useAssistantSnapshot({ clientRef, assistantScope, assistantScopeRef, connection, assistantTab }: {
+export function useAssistantSnapshot({ clientRef, assistantScope, assistantScopeRef, connection, connectorsOpen }: {
   clientRef: RefObject<GatewayClient | null>;
   assistantScope: string;
   assistantScopeRef: RefObject<string>;
   connection: ConnectionState;
-  assistantTab: AssistantTab;
+  /** 「定制」页开着：读连接的服务、授权中轮询 */
+  connectorsOpen: boolean;
 }) {
   // 助理的名字 / 关于你，以及它记住的事（都在助理所在的那台电脑上）
   const [assistantProfile, setAssistantProfile] = useState<AssistantProfile>(DEFAULT_PROFILE);
@@ -63,17 +63,17 @@ export function useAssistantSnapshot({ clientRef, assistantScope, assistantScope
   }, [clientRef, assistantScopeRef]);
   useEffect(() => {
     const client = clientRef.current;
-    if (client && connection === "connected" && assistantTab === "identity") {
+    if (client && connection === "connected" && connectorsOpen) {
       void refreshConnectorStatus(client, assistantScope).catch(() => undefined);
     }
-  }, [assistantTab, assistantScope, connection, refreshConnectorStatus, clientRef]);
+  }, [connectorsOpen, assistantScope, connection, refreshConnectorStatus, clientRef]);
   useEffect(() => {
     const client = clientRef.current;
-    if (!client || connection !== "connected" || !connectorAuthorizing || assistantTab !== "identity") return;
+    if (!client || connection !== "connected" || !connectorAuthorizing || !connectorsOpen) return;
     return startPolling(() => refreshConnectorStatus(client, assistantScope), {
       intervalMs: 4_000, hiddenIntervalMs: 15_000, visibility: document,
     });
-  }, [connectorAuthorizing, assistantTab, assistantScope, connection, refreshConnectorStatus, clientRef]);
+  }, [connectorAuthorizing, connectorsOpen, assistantScope, connection, refreshConnectorStatus, clientRef]);
   const [dispatchSnapshot, setDispatches] = useState<AssistantDispatch[]>([]);
   const [codexActions, setCodexActions] = useState<CodexAction[]>([]);
   const [dispatchSnapshotScope, setDispatchSnapshotScope] = useState<string | null>(null);
