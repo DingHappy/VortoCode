@@ -298,7 +298,7 @@ export function MemoryProposals({ proposals, onDecide }: {
   </>;
 }
 
-export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposals = [], onEdit, onDeleteMemory, onDecideProposal }: {
+export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposals = [], onEdit, onDeleteMemory, onDecideProposal, initialMemories = false }: {
   profile: AssistantProfile;
   /** 头像：选了文件就换，null 恢复成名字首字 */
   avatar?: AssistantAvatar | null;
@@ -309,8 +309,10 @@ export function AssistantIdentity({ profile, avatar, onAvatar, memories, proposa
   onEdit: () => void;
   onDeleteMemory: (memory: AssistantMemory) => void;
   onDecideProposal?: (proposal: MemoryProposal, approve: boolean, replace?: string[]) => void;
+  /** 从今日概览「去确认记忆」进来：直接打开记忆页 */
+  initialMemories?: boolean;
 }) {
-  const [showMemories, setShowMemories] = useState(false);
+  const [showMemories, setShowMemories] = useState(initialMemories);
   const fileRef = useRef<HTMLInputElement>(null);
   if (showMemories) {
     return <section className="assistant-section">

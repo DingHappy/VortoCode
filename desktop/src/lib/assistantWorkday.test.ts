@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import type { AssistantDispatch, CodexAction, CodexProgressSnapshot, PersonalGoal } from "../types";
+import type { AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgressSnapshot, MemoryProposal, PersonalGoal } from "../types";
 import { buildAssistantWorkday } from "./assistantWorkday";
 import executionWire from "../../../tests/fixtures/execution_observation_v1.json";
 import { vi } from "vitest";
@@ -281,3 +281,44 @@ it.each(["null", "version", "malformed", "backend", "session", "turn", "run", "t
     expect(result.progress).toHaveLength(0); expect(result.completed).toHaveLength(0);
     expect(result.today[0].state).toBe("unknown");
   });
+
+it("enabled scheduled jobs whose last run failed or timed out need a decision until a run succeeds, across days", () => {
+  const job = (id: string, changes: Partial<AssistantScheduleItem> = {}): AssistantScheduleItem =>
+    ({ id, kind: "cron", title: id, schedule: "0 9 * * *", enabled: true, last: yesterday, last_status: "failed", ...changes });
+  const model = buildAssistantWorkday({ ...input(), schedule: { status: "current", checkedAt: now.getTime(), data: [
+    job("早报", { failures: 3 }), job("巡检", { last_status: "timed_out" }), job("ok", { last_status: "done" }),
+    job("off", { enabled: false }), job("running", { last_status: "running" }),
+  ] } });
+  expect(model.decisions.map(item => item.title)).toEqual(["早报", "巡检"]);
+  expect(model.today.map(item => item.title)).toEqual(["早报", "巡检"]);       // 昨天失败的今天照样列着
+  expect(model.decisions[0].detail).toContain("最近一次失败，已连续 3 次");
+  expect(model.decisions[1].detail).toContain("最近一次超时");
+  expect(model.decisions[0].target).toEqual({ kind: "schedule", id: "早报" });
+  expect(model.warnings).toEqual([]);
+});
+
+it("an unread or stale schedule is reported, and old failures stay as unknown instead of disappearing", () => {
+  const failed: AssistantScheduleItem = { id: "j", kind: "report", title: "早报", schedule: "", enabled: true, last_status: "failed", last: at };
+  const stale = buildAssistantWorkday({ ...input(), schedule: { status: "unavailable", checkedAt: now.getTime() - 600_000, data: [failed] } });
+  expect(stale.warnings).toContain("定时任务未能取得最新状态，失败的作业可能没有列出。");
+  expect(stale.decisions[0]).toMatchObject({ state: "unknown", detail: "上次记录：最近一次失败，当前状态待核对" });
+  expect(buildAssistantWorkday({ ...input(), schedule: { status: "loading", data: [] } }).warnings).toContain("定时任务正在读取。");
+});
+
+it("pending memory proposals become one decision, flagging those from turns that read outside content", () => {
+  const proposal = (id: string, tainted = false): MemoryProposal => ({ id, content: `内容 ${id}`, created_at: at, tainted });
+  const model = buildAssistantWorkday({ ...input(), proposals: { status: "current", checkedAt: now.getTime(),
+    data: [proposal("a"), proposal("b", true)] } });
+  expect(model.decisions).toHaveLength(1);
+  expect(model.decisions[0]).toMatchObject({ title: "2 条记忆等你确认", source: "记忆", state: "decision",
+    target: { kind: "memory", id: "proposals" } });
+  expect(model.decisions[0].detail).toContain("其中 1 条来自读过外部内容的对话");
+  const none = buildAssistantWorkday({ ...input(), proposals: { status: "current", checkedAt: now.getTime(), data: [] } });
+  expect(none.decisions).toEqual([]); expect(none.warnings).toEqual([]);
+  expect(buildAssistantWorkday({ ...input(), proposals: { status: "unavailable", data: [] } }).warnings)
+    .toContain("待确认的记忆未能取得最新状态。");
+});
+
+it("sources the caller does not wire in are neither listed nor warned about", () => {
+  expect(buildAssistantWorkday(input()).warnings).toEqual([]);
+});

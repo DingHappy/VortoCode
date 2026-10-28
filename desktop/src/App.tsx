@@ -229,6 +229,8 @@ function App() {
   const mainViewRef = useRef(mainView);
   mainViewRef.current = mainView;
   const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined);
+  /** 从今日概览「去确认记忆」进身份标签的次数：>0 时身份标签直接打开记忆页，点标签条清零 */
+  const [memoryFocus, setMemoryFocus] = useState(0);
   const [settingsAnchor, setSettingsAnchor] = useState<string | undefined>(undefined);
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [projectSessions, setProjectSessions] = useState<ProjectSessionSummary[]>([]);
@@ -2870,7 +2872,7 @@ function App() {
             onRetryResident={() => void changeAppMode("assistant")}
             modelLabel={onAssistantHost() ? runtime.model : llmProfile?.configured ? composerModelChoices.find(item => item.value === modelChoice)?.label : "未连接模型"}
             tab={assistantTab} onClose={() => setInspectorOpen(false)} waiting={assistantWaiting} waitingUncertain={!activityComplete}
-            onTab={(tab) => { if (tab === "goals") setAssistantGoalFocus(null); setAssistantTab(tab); panelActions.tabOpened(tab); }}>
+            onTab={(tab) => { if (tab === "goals") setAssistantGoalFocus(null); setMemoryFocus(0); setAssistantTab(tab); panelActions.tabOpened(tab); }}>
             {assistantTab === "audit" ? <AssistantAudit entries={auditEntries} />
               : assistantTab === "goals" ? <AssistantGoals key={assistantScope} client={clientRef.current} connected={connection === "connected"}
                   focusId={assistantGoalFocus?.client === clientRef.current && assistantGoalFocus?.scope === assistantScope ? assistantGoalFocus.id : undefined}
@@ -2887,12 +2889,15 @@ function App() {
                   onDispatch={id => void openDispatch(id)} onGoals={id => {
                     setAssistantGoalFocus({ client: clientRef.current, scope: assistantScope, id }); setAssistantTab("goals");
                   }}
+                  onSchedule={() => { setAssistantTab("schedule"); panelActions.tabOpened("schedule"); }}
+                  onMemory={() => { setMemoryFocus((count) => count + 1); setAssistantTab("identity"); panelActions.tabOpened("identity"); }}
                   onRefreshTasks={() => refreshAgentTurns()} onCodexDecision={decideCodexAction} />} />
               : assistantTab === "schedule" ? <AssistantSchedule key={assistantScope} items={assistantSchedule} connected={connection === "connected"} local={!onAssistantHost()}
                   onRefresh={panelActions.scheduleRefresh}
                   onToggle={panelActions.scheduleToggle}
                   onHistory={panelActions.scheduleHistory} />
-              : assistantTab === "identity" ? <AssistantIdentity profile={assistantProfile} memories={assistantMemories}
+              : assistantTab === "identity" ? <AssistantIdentity key={`identity-${memoryFocus}`} initialMemories={memoryFocus > 0}
+                  profile={assistantProfile} memories={assistantMemories}
                   avatar={assistantAvatar}
                   onAvatar={(file) => void panelActions.avatar(file)}
                   proposals={memoryProposals}
