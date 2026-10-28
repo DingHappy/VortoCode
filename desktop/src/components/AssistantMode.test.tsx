@@ -205,3 +205,13 @@ it("search narrows only the recent list", () => {
   expect(html).not.toContain("主要聊天</span>");
   expect(html).toContain("定时");   // 一级入口不受影响
 });
+
+it("首页建议是输入框下面的一排小按钮：显示短名字，整句话放在悬停提示里", async () => {
+  const { AssistantStarterTips } = await import("./AssistantMode");
+  const html = renderToStaticMarkup(<AssistantStarterTips tips={[{ id: "t1", label: "看看这周的日程", prompt: "帮我看看这周的日程，有冲突提醒我" }]}
+    onPick={() => {}} onDismiss={() => {}} />);
+  expect(html).toContain('role="group" aria-label="可以这样用"');
+  expect(html).toContain('<button class="vc-starter-chip" title="帮我看看这周的日程，有冲突提醒我">看看这周的日程</button>');
+  expect(html).toContain(">不再显示</button>");
+  expect(renderToStaticMarkup(<AssistantStarterTips tips={[]} onPick={() => {}} onDismiss={() => {}} />)).toBe("");
+});

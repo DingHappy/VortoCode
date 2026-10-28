@@ -22,8 +22,8 @@ export function phoneConversationMessages(chat: PhoneChat): ConversationMessage[
 
 /** Read recorded IM history without attaching Desktop to the phone's live session.
  * variant="offline"：常驻电脑连不上时在本机聊的，同样只读，底部放「带回常驻电脑」等操作。 */
-export function PhoneChatDialog({ chat, onClose, focusedRid, owner, name = "VortoCode", variant = "phone", actions }: {
-  chat: PhoneChat; onClose: () => void; focusedRid?: string; owner?: object | null; name?: string;
+export function PhoneChatDialog({ chat, onClose, focusedRid, owner, variant = "phone", actions }: {
+  chat: PhoneChat; onClose: () => void; focusedRid?: string; owner?: object | null;
   variant?: "phone" | "offline"; actions?: ReactNode;
 }) {
   const offline = variant === "offline";
@@ -60,7 +60,7 @@ export function PhoneChatDialog({ chat, onClose, focusedRid, owner, name = "Vort
       }}>
         {messages.length === 0 && <p className="assistant-memory-empty">当前没有可显示的聊天记录。</p>}
         <ChatHistory messages={messages} activityGroups={new Map()} busy={false} activeTurnRid={null}
-          assistant name={name} avatar={null} focusedRid={location.rid} />
+          assistant focusedRid={location.rid} />
       </div>
     </div>
     {actions && <footer className="phone-chat-actions">{actions}</footer>}

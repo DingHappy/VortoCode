@@ -9,13 +9,17 @@ const messages: ConversationMessage[] = [
 ];
 const activity: TurnActivity = { id: "t1", kind: "tool", status: "completed", label: "读取配置", result: "读取结果" };
 const props = { messages, activityGroups: new Map([["r1", [activity]]]), busy: false,
-  activeTurnRid: null, assistant: true, name: "助理", avatar: null };
+  activeTurnRid: null, assistant: true };
 
 it("preserves phone attribution, attachments, Markdown and the completed turn timeline", () => {
   const html = renderToStaticMarkup(<ChatHistory {...props} />);
-  for (const text of ["Telegram", "回复在手机上", "发送的图片 1", "<strong>检查完成</strong>", "助理", 'aria-expanded="false"']) {
+  for (const text of ["Telegram", "回复在手机上", "发送的图片 1", "<strong>检查完成</strong>", 'aria-expanded="false"']) {
     expect(html).toContain(text);
   }
+  // 助理模式不写「你」和助理名字，左右位置已经说明是谁说的
+  expect(html).not.toContain(">你<");
+  expect(renderToStaticMarkup(<ChatHistory {...props} messages={[{ ...messages[1], source: undefined }]} />)).not.toContain("message-author");
+  expect(renderToStaticMarkup(<ChatHistory {...props} assistant={false} />)).toContain('<div class="message-author">你</div>');
   expect(html).not.toContain("读取结果");
 });
 

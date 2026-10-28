@@ -15,7 +15,7 @@ import { useConversationLocation } from "./hooks/useConversationLocation";
 import { startPolling } from "./lib/polling";
 import { AssistantActionGate, type AssistantTaskAction } from "./lib/assistantTask";
 import { openAssistantTask } from "./lib/assistantNavigation";
-import { AssistantAudit, AssistantAvatarImage, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantPlugins, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PAGE_PANEL, PANEL_PAGE, PhoneChatDialog, type AppMode, type AssistantPage, type AssistantTab } from "./components/AssistantMode";
+import { AssistantAudit, AssistantStarterTips, AssistantIdentity, AssistantPanel, AssistantPlugins, AssistantProfileDialog, AssistantSchedule, AssistantSidebar, ModeSwitch, PAGE_PANEL, PANEL_PAGE, PhoneChatDialog, type AppMode, type AssistantPage, type AssistantTab } from "./components/AssistantMode";
 import { TaskPill } from "./components/TaskPill";
 import { AssistantGoals } from "./components/AssistantGoals";
 import { assistantFeed, isPhoneSession, taskFeedItem } from "./lib/activityFeed";
@@ -2538,7 +2538,7 @@ function App() {
         )}
       </div>
 
-      <div className={`workbench ${sidebarCollapsed ? "vc-sidebar-collapsed" : ""} ${computerWorkspace.view ? "computer-open" : ""} ${mainView === "chat" && inspectorOpen ? "inspector-open" : "inspector-closed"} ${mainView === "chat" && inspectorOpen && appMode !== "assistant" && !showWorkbenchLauncher && ["files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
+      <div className={`workbench vc-mode-${appMode} ${sidebarCollapsed ? "vc-sidebar-collapsed" : ""} ${computerWorkspace.view ? "computer-open" : ""} ${mainView === "chat" && inspectorOpen ? "inspector-open" : "inspector-closed"} ${mainView === "chat" && inspectorOpen && appMode !== "assistant" && !showWorkbenchLauncher && ["files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
         {sidebarCollapsed && <IconButton className="vc-sidebar-reopen" label="展开侧栏" icon={<PanelLeft />} onClick={() => setSidebarCollapsed(false)} />}
         <aside className="sidebar vc-sidebar">
           <SidebarBrand onCollapse={() => setSidebarCollapsed(true)} />
@@ -2693,19 +2693,7 @@ function App() {
             }}
           >
             {messages.length === 0 && !streaming && (
-              <ConversationHome starting={homeStarting} showStarting={showHomeStarting} assistant={appMode === "assistant"}
-                resident={onAssistantHost()}
-                tips={showStarterTips && llmProfile?.configured && <AssistantStarterTips
-                  tips={starterTips({ resident: onAssistantHost(), projects: residentProjects.map((item) => item.name) })}
-                  onDismiss={() => { dismissStarterTips(); setShowStarterTips(false); }}
-                  onPick={(tip) => {
-                    setPrompt(tip.prompt);
-                    window.requestAnimationFrame(() => {
-                      const input = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="任务输入"]');
-                      input?.focus();
-                      input?.setSelectionRange(tip.prompt.length, tip.prompt.length);
-                    });
-                  }} />}>
+              <ConversationHome starting={homeStarting} showStarting={showHomeStarting} assistant={appMode === "assistant"}>
                 {llmProfileChecked && !llmProfile?.configured && !onAssistantHost() && (
                   <FirstRunCard signedIn={Boolean(vortoAccount.status?.signedIn)}
                     onAccount={() => { setSettingsSection("account"); setSettingsOpen(true); }}
@@ -2721,7 +2709,7 @@ function App() {
             )}
 
             <ChatHistory messages={messages} activityGroups={activityGroups} busy={busy} activeTurnRid={activeTurnRid}
-              assistant={appMode === "assistant"} name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} focusedRid={conversationLocation.rid} />
+              assistant={appMode === "assistant"} focusedRid={conversationLocation.rid} />
 
             {appMode === "assistant" && dispatches.filter(item => item.session?.replace(/^sid-/, "") === activeSid
               && item.status !== "cancelled").slice(0, 8).map(item => <AssistantTaskCard
@@ -2739,9 +2727,7 @@ function App() {
 
             {streaming && (
               <article className="message assistant streaming">
-                {appMode === "assistant"
-                  ? <div className="message-author with-avatar"><AssistantAvatarImage name={assistantProfile.name || "VortoCode"} avatar={assistantAvatar} size={22} />{assistantProfile.name || "VortoCode"} <span>正在回复</span></div>
-                  : <div className="message-author">VortoCode <span>正在回复</span></div>}
+                {appMode !== "assistant" && <div className="message-author">VortoCode <span>正在回复</span></div>}
                 <div className="message-body"><MarkdownMessage text={streaming} /><i className="cursor" data-rid={streamingRid} /></div>
               </article>
             )}
@@ -2817,6 +2803,8 @@ function App() {
               <ContextChips items={contextItems}
                 onRemove={(item) => setContextItems((previous) => previous.filter((candidate) => contextItemKey(candidate) !== contextItemKey(item)))} />
               <ComposerCommands key={activeSid} prompt={prompt} onPrompt={setPrompt} project={activeScope !== "general"}
+                placeholder={appMode !== "assistant" ? undefined : onAssistantHost()
+                  ? "交代一件事，它会在常驻电脑上接着做，做完了在右侧「动态」里回报…" : "交代一件事，做完了在右侧「动态」里回报…"}
                 disabled={runtimeStarting || projectSwitching} onSend={() => void sendPrompt()}
                 onPaste={(event) => { const files = Array.from(event.clipboardData.files); if (files.length) { event.preventDefault(); void addFiles(files); } }}
                 onAction={(command) => {
@@ -2855,6 +2843,18 @@ function App() {
               </div>
               </ComposerCommands>
             </div>
+            {/* 首页的建议放在输入框下面 */}
+            {appMode === "assistant" && messages.length === 0 && !streaming && !homeStarting && showStarterTips && llmProfile?.configured && <AssistantStarterTips
+              tips={starterTips({ resident: onAssistantHost(), projects: residentProjects.map((item) => item.name) })}
+              onDismiss={() => { dismissStarterTips(); setShowStarterTips(false); }}
+              onPick={(tip) => {
+                setPrompt(tip.prompt);
+                window.requestAnimationFrame(() => {
+                  const input = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="任务输入"]');
+                  input?.focus();
+                  input?.setSelectionRange(tip.prompt.length, tip.prompt.length);
+                });
+              }} />}
 
           </div>
         </section>
@@ -3238,12 +3238,11 @@ function App() {
 
       {phoneChatSid && phoneChats.some((chat) => chat.sid === phoneChatSid) && <PhoneChatDialog
         key={`${assistantScope}:${phoneChatSid}`} chat={phoneChats.find((chat) => chat.sid === phoneChatSid)!}
-        owner={clientRef.current} focusedRid={phoneChatRid} name={assistantProfile.name || "VortoCode"}
+        owner={clientRef.current} focusedRid={phoneChatRid}
         onClose={() => { setPhoneChatSid(null); setPhoneChatRid(undefined); }} />}
       {onResidentNow && offlineChatSid && offlineChats.some((chat) => chat.sid === offlineChatSid) && (() => {
         const chat = offlineChats.find((item) => item.sid === offlineChatSid)!;
-        return <PhoneChatDialog key={`offline:${chat.sid}`} variant="offline" chat={chat} owner={null}
-          name={assistantProfile.name || "VortoCode"} onClose={() => setOfflineChatSid(null)}
+        return <PhoneChatDialog key={`offline:${chat.sid}`} variant="offline" chat={chat} owner={null} onClose={() => setOfflineChatSid(null)}
           actions={<>
             <button onClick={() => { setOfflineChatIds(dismissOfflineChat(chat.sid)); setOfflineChatSid(null); }}>从列表移除</button>
             <button className="primary" onClick={() => bringOfflineChat(chat)}>带回常驻电脑</button>

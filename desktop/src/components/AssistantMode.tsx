@@ -471,17 +471,10 @@ export function AssistantStarterTips({ tips, onPick, onDismiss }: {
   onDismiss: () => void;
 }) {
   if (tips.length === 0) return null;
-  return <div className="assistant-starter-tips">
-    <div className="assistant-starter-head">
-      <span>可以这样用</span>
-      <button onClick={onDismiss}>不再显示</button>
-    </div>
-    <div className="assistant-starter-list">
-      {tips.map((tip) => <button key={tip.id} onClick={() => onPick(tip)}>
-        <strong>{tip.label}</strong>
-        <span>{tip.prompt}</span>
-      </button>)}
-    </div>
+  // 首页输入框下面的一排建议：点了把整句话填进输入框，完整内容放在悬停提示里
+  return <div className="vc-starter" role="group" aria-label="可以这样用">
+    {tips.map((tip) => <button key={tip.id} className="vc-starter-chip" title={tip.prompt} onClick={() => onPick(tip)}>{tip.label}</button>)}
+    <button className="vc-starter-dismiss" onClick={onDismiss}>不再显示</button>
   </div>;
 }
 
