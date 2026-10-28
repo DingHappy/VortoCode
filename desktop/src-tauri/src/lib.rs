@@ -4274,6 +4274,33 @@ mod tests {
     }
 
     #[test]
+    fn relaunch_after_update_reopens_the_whole_app_bundle() {
+        assert_eq!(app_bundle_of(Path::new("/Applications/VortoCode.app/Contents/MacOS/vortocode-desktop")),
+            Some(PathBuf::from("/Applications/VortoCode.app")));
+        // 开发构建不在 .app 里：退回 Tauri 默认重启
+        assert_eq!(app_bundle_of(Path::new("/repo/desktop/src-tauri/target/debug/vortocode-desktop")), None);
+        assert_eq!(app_bundle_of(Path::new("/x/Contents/MacOS/vortocode-desktop")), None);
+        assert_eq!(app_bundle_of(Path::new("/x/VortoCode.app/MacOS/vortocode-desktop")), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn relaunch_script_waits_for_the_old_process_then_opens_the_bundle() {
+        // 只跑等待段（不真的 open）：旧进程还在就等，退出后马上往下走
+        let waiter = RELAUNCH_SCRIPT.split("; exec ").next().unwrap();
+        let mut sleeper = Command::new("/bin/sleep").arg("0.4").spawn().unwrap();
+        let pid = sleeper.id();
+        let reaper = std::thread::spawn(move || sleeper.wait());   // 不回收的话僵尸进程对 kill -0 仍然有回应
+        let started = std::time::Instant::now();
+        let status = Command::new("/bin/sh").args(["-c", waiter])
+            .env("VC_RELAUNCH_PID", pid.to_string()).status().unwrap();
+        reaper.join().unwrap().unwrap();
+        assert!(status.success());
+        assert!(started.elapsed() >= Duration::from_millis(300), "应等到旧进程退出");
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
     fn desktop_target_and_apps_are_validated() {
         for good in ["ssh:dev@desktop-vm.lan", "ssh:desktop-vm", "ssh:user_1@10.0.0.5"] {
             assert_eq!(normalize_desktop_target(good).unwrap(), good);

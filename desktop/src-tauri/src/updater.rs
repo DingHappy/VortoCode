@@ -100,9 +100,37 @@ pub(crate) async fn install_update(app: AppHandle) -> Result<String, String> {
 }
 
 /// 装好更新后重启：走 RunEvent::Exit，托管的引擎进程照常回收。
+/// macOS 上不能像 Tauri 默认那样直接拉起新的可执行文件：那样新进程的「责任进程」还是已经退出的旧版，
+/// 系统按旧版查「本地网络」权限查不到，就静默拦掉连常驻电脑的直连。改成等本进程退出后
+/// 用 open 交给 LaunchServices 重新打开整个 App；拿不到 .app 路径或起不来时退回默认重启。
 #[tauri::command]
 pub(crate) fn restart_after_update(app: AppHandle) {
+    #[cfg(target_os = "macos")]
+    if let Some(bundle) = std::env::current_exe().ok().as_deref().and_then(app_bundle_of) {
+        match Command::new("/bin/sh")
+            .args(["-c", RELAUNCH_SCRIPT])
+            .env("VC_RELAUNCH_PID", std::process::id().to_string())
+            .env("VC_RELAUNCH_BUNDLE", &bundle)
+            .stdin(Stdio::null())
+            .spawn()
+        {
+            Ok(_) => return app.exit(0),
+            Err(error) => diag("warn", "update.relaunch_failed", &format!("改用默认重启：{error}")),
+        }
+    }
     app.request_restart();
+}
+
+/// 最多等 30 秒旧进程退出；超时也照样 open，App 还开着时 open 只会把它叫到前台。
+pub(crate) const RELAUNCH_SCRIPT: &str = r#"i=0; while kill -0 "$VC_RELAUNCH_PID" 2>/dev/null && [ $i -lt 150 ]; do sleep 0.2; i=$((i+1)); done; exec /usr/bin/open "$VC_RELAUNCH_BUNDLE""#;
+
+/// …/VortoCode.app/Contents/MacOS/vortocode-desktop → …/VortoCode.app；不在 .app 里（开发构建）就是 None。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn app_bundle_of(exe: &Path) -> Option<PathBuf> {
+    let macos = exe.parent().filter(|dir| dir.file_name() == Some("MacOS".as_ref()))?;
+    let contents = macos.parent().filter(|dir| dir.file_name() == Some("Contents".as_ref()))?;
+    let bundle = contents.parent().filter(|dir| dir.extension() == Some("app".as_ref()))?;
+    Some(bundle.to_path_buf())
 }
 
 #[tauri::command(async)]
