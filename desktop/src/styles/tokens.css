@@ -49,6 +49,8 @@
   --vc-tile-soul: linear-gradient(150deg, #f0425b, #b3122e);
   --vc-tile-memory: linear-gradient(150deg, #5b6cf0, #2a2fa8);
   --vc-on-tile: #ffffff;
+  /* 制品预览的纸面：发布的网页按白底写，深色模式下也保持白底，否则没写底色的页面黑字压黑底 */
+  --vc-paper: #ffffff;
 
   /* 字体 */
   --vc-font-sans: Inter, "Noto Sans SC", "PingFang SC", -apple-system, BlinkMacSystemFont,
@@ -137,6 +139,7 @@
     --vc-tile-soul: linear-gradient(150deg, #d93a52, #8f0f26);
     --vc-tile-memory: linear-gradient(150deg, #4c5ce0, #22268c);
     --vc-on-tile: #ffffff;
+    --vc-paper: #ffffff;
   }
 }
 
@@ -173,4 +176,5 @@
   --vc-tile-soul: linear-gradient(150deg, #d93a52, #8f0f26);
   --vc-tile-memory: linear-gradient(150deg, #4c5ce0, #22268c);
   --vc-on-tile: #ffffff;
+  --vc-paper: #ffffff;
 }
