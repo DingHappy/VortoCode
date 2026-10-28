@@ -38,4 +38,7 @@ it("failed schedules and pending memories link to where they are handled", () =>
     state: "decision" as const, target: { kind: "memory" as const, id: "proposals" } };
   const html = render({ today: [schedule, memory], progress: [], completed: [], decisions: [schedule, memory], warnings: [] });
   expect(html).toContain("查看定时与运行记录"); expect(html).toContain("去确认记忆");
+  const session = { id: "session:s", title: "旁聊「x」有操作等你确认", detail: "1 件", source: "对话", at: "",
+    state: "decision" as const, target: { kind: "session" as const, id: "s" } };
+  expect(render({ today: [session], progress: [], completed: [], decisions: [session], warnings: [] })).toContain("打开对话");
 });

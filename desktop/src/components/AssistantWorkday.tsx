@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUpRight, CheckCircle2, CircleHelp, ListChecks, LoaderCircle, RefreshCw } from "lucide-react";
 import type { GatewayClient } from "../gateway";
-import type { AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgressSnapshot, MemoryProposal, PendingConfirmation, PersonalGoal } from "../types";
+import type { AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgressSnapshot, MemoryProposal, PendingConfirmation, PersonalGoal, SessionSummary } from "../types";
 import { buildAssistantWorkday, type AssistantWorkday as Workday, type WorkdayBucket, type WorkdayItem, type WorkdaySource, type WorkdayTarget } from "../lib/assistantWorkday";
 import { assistantWorkdayReads, startWorkdayClock } from "../lib/assistantWorkdayReads";
 import { startPolling } from "../lib/polling";
@@ -51,7 +51,8 @@ export function AssistantWorkdayView({ model, now, busy = false, connected, onRe
         <span className="workday-item-top"><small>{item.source}</small><span>{STATE[item.state]}</span></span>
         <strong>{item.title}</strong><span className="workday-item-detail">{item.detail}</span>
         <span className="workday-item-link">{item.target.kind === "goal" ? "查看目标与验收" : item.target.kind === "dispatch" ? "查看任务单" : item.target.kind === "confirmation" ? "查看原确认卡"
-          : item.target.kind === "schedule" ? "查看定时与运行记录" : item.target.kind === "memory" ? "去确认记忆" : "查看进度与建议"}<ArrowUpRight size={13} /></span>
+          : item.target.kind === "schedule" ? "查看定时与运行记录" : item.target.kind === "memory" ? "去确认记忆"
+          : item.target.kind === "session" ? "打开对话" : "查看进度与建议"}<ArrowUpRight size={13} /></span>
       </button>
     </li>)}</ul> : <p className="workday-empty">{model.warnings.length ? !connected
       ? "暂未取得可展示的记录；恢复连接后再核对。"
@@ -64,9 +65,9 @@ export function AssistantWorkdayView({ model, now, busy = false, connected, onRe
   </section>;
 }
 
-export function AssistantWorkday({ client, scope, connected, resident = false, dispatches, dispatchesLoaded, codexActions, confirmation, onConfirmation, onDispatch, onGoals, onSchedule, onMemory, onRefreshTasks, onCodexDecision }: {
+export function AssistantWorkday({ client, scope, connected, resident = false, dispatches, dispatchesLoaded, codexActions, confirmation, onConfirmation, onDispatch, onGoals, onSchedule, onMemory, onSession, activeSid, mainSid, onRefreshTasks, onCodexDecision }: {
   client: (Pick<GatewayClient, "listPersonalGoals" | "getCodexProgress">
-    & Partial<Pick<GatewayClient, "getResidentComputer" | "getAssistantSchedule" | "listMemoryProposals">>) | null;
+    & Partial<Pick<GatewayClient, "getResidentComputer" | "getAssistantSchedule" | "listMemoryProposals" | "listSessions">>) | null;
   scope: string; connected: boolean; resident?: boolean; dispatches: AssistantDispatch[];
   dispatchesLoaded: boolean; codexActions: CodexAction[];
   confirmation?: PendingConfirmation | null; onConfirmation?: () => void;
@@ -75,6 +76,9 @@ export function AssistantWorkday({ client, scope, connected, resident = false, d
   onSchedule?: (id: string) => void;
   /** 打开身份里的记忆确认；不给就不读候选记忆 */
   onMemory?: () => void;
+  /** 切到某个对话；不给就不读对话列表 */
+  onSession?: (sid: string) => void;
+  activeSid?: string; mainSid?: string;
   onCodexDecision: (action: CodexAction, decision: "approve" | "cancel") => Promise<void>;
 }) {
   const owner = useMemo(() => ({ client, scope }), [client, scope]);
@@ -84,7 +88,8 @@ export function AssistantWorkday({ client, scope, connected, resident = false, d
   const [codexSnapshot, setCodex] = useState<{ owner: typeof owner; source: WorkdaySource<CodexProgressSnapshot | null> } | null>(null);
   const [scheduleSnapshot, setSchedule] = useState<{ owner: typeof owner; source: WorkdaySource<AssistantScheduleItem[]> } | null>(null);
   const [proposalSnapshot, setProposals] = useState<{ owner: typeof owner; source: WorkdaySource<MemoryProposal[]> } | null>(null);
-  const withSchedule = Boolean(onSchedule), withMemory = Boolean(onMemory);
+  const [sessionSnapshot, setSessions] = useState<{ owner: typeof owner; source: WorkdaySource<SessionSummary[]> } | null>(null);
+  const withSchedule = Boolean(onSchedule), withMemory = Boolean(onMemory), withSessions = Boolean(onSession);
   const [now, setNow] = useState(() => new Date());
   const [busy, setBusy] = useState(false);
   const [selection, setSelected] = useState<{ owner: typeof owner; target: WorkdayTarget } | null>(null);
@@ -100,7 +105,8 @@ export function AssistantWorkday({ client, scope, connected, resident = false, d
       goals: source => { setGoals({ owner, source }); setNow(new Date()); },
       codex: source => { setCodex({ owner, source }); setNow(new Date()); },
       schedule: withSchedule ? source => { setSchedule({ owner, source }); setNow(new Date()); } : undefined,
-      proposals: withMemory ? source => { setProposals({ owner, source }); setNow(new Date()); } : undefined });
+      proposals: withMemory ? source => { setProposals({ owner, source }); setNow(new Date()); } : undefined,
+      sessions: withSessions ? source => { setSessions({ owner, source }); setNow(new Date()); } : undefined });
     const refresh = async () => {
       if (!current()) return;
       setNow(new Date()); setBusy(true);
@@ -110,12 +116,14 @@ export function AssistantWorkday({ client, scope, connected, resident = false, d
     refreshRef.current = refresh;
     const stop = startPolling(refresh, { intervalMs: 30_000, hiddenIntervalMs: 120_000, immediate: true, visibility: document });
     return () => { active = false; stop(); reads.invalidate(); if (refreshRef.current === refresh) refreshRef.current = null; };
-  }, [owner, client, connected, withSchedule, withMemory]);
+  }, [owner, client, connected, withSchedule, withMemory, withSessions]);
   const goals = goalSnapshot?.owner === owner ? goalSnapshot.source : { status: "loading" as const, data: [] };
   const codex = codexSnapshot?.owner === owner ? codexSnapshot.source : { status: "loading" as const, data: null };
   const schedule = !withSchedule ? undefined : scheduleSnapshot?.owner === owner ? scheduleSnapshot.source : { status: "loading" as const, data: [] };
   const proposals = !withMemory ? undefined : proposalSnapshot?.owner === owner ? proposalSnapshot.source : { status: "loading" as const, data: [] };
-  const model = buildAssistantWorkday({ dispatches, dispatchesLoaded, codexActions, confirmation, goals, codex, schedule, proposals, connected, now });
+  const sessions = !withSessions ? undefined : sessionSnapshot?.owner === owner ? sessionSnapshot.source : { status: "loading" as const, data: [] };
+  const model = buildAssistantWorkday({ dispatches, dispatchesLoaded, codexActions, confirmation, goals, codex, schedule, proposals,
+    sessions, activeSid, mainSid, connected, now });
   const action = selected?.kind === "codex_action" ? codexActions.find(item => item.id === selected.id) : null;
   const thread = selected?.kind === "codex" ? codex.data?.threads.find(item => item.id === selected.id) : null;
   return <>
@@ -124,6 +132,7 @@ export function AssistantWorkday({ client, scope, connected, resident = false, d
       onOpen={target => { if (target.kind === "dispatch") onDispatch(target.id);
         else if (target.kind === "goal") onGoals(target.id); else if (target.kind === "confirmation") onConfirmation?.();
         else if (target.kind === "schedule") onSchedule?.(target.id); else if (target.kind === "memory") onMemory?.();
+        else if (target.kind === "session") onSession?.(target.id);
         else setSelected({ owner, target }); }} />
     <ResidentComputerCard client={client} scope={scope} connected={connected} resident={resident} now={now.getTime()} />
     {action && <CodexActionCard key={action.id} action={action} connected={connected}

@@ -1,4 +1,4 @@
-import type { AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgressSnapshot, MemoryProposal, PendingConfirmation, PersonalGoal } from "../types";
+import type { AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgressSnapshot, MemoryProposal, PendingConfirmation, PersonalGoal, SessionSummary } from "../types";
 import { progressLine } from "./assistantTask";
 import { readExecutionObservation } from "./executionObservation";
 import { hasConfirmedPersonalGoal } from "./personalGoalSnapshot";
@@ -9,7 +9,7 @@ export interface WorkdaySource<T> {
   data: T;
   checkedAt?: number;
 }
-export type WorkdayTarget = { kind: "dispatch" | "goal" | "codex" | "codex_action" | "confirmation" | "schedule" | "memory"; id: string };
+export type WorkdayTarget = { kind: "dispatch" | "goal" | "codex" | "codex_action" | "confirmation" | "schedule" | "memory" | "session"; id: string };
 export interface WorkdayItem {
   id: string; title: string; detail: string; source: string; at: string;
   state: "running" | "decision" | "review" | "verified" | "unknown";
@@ -36,6 +36,8 @@ export function buildAssistantWorkday(input: {
   confirmation?: PendingConfirmation | null;
   /** 不传 = 这一版还没接这个来源，不提示；传了就按读取状态说清楚 */
   schedule?: WorkdaySource<AssistantScheduleItem[]>; proposals?: WorkdaySource<MemoryProposal[]>;
+  /** 这台运行端的对话列表；activeSid 是当前打开的对话（它的确认卡已由 confirmation 列出），mainSid 用来叫「主要聊天」 */
+  sessions?: WorkdaySource<SessionSummary[]>; activeSid?: string; mainSid?: string;
   connected: boolean; now: Date;
 }): AssistantWorkday {
   const { now } = input, ms = now.getTime();
@@ -165,6 +167,24 @@ export function buildAssistantWorkday(input: {
         state: fresh ? "decision" : "unknown", target: { kind: "memory", id: "proposals" },
         detail: !fresh ? "上次记录，当前数量待核对"
           : tainted ? `其中 ${tainted} 条来自读过外部内容的对话，确认前看仔细` : `例如：${pending[0].content}` }, true);
+    }
+  }
+  // 别的对话里卡在确认上的操作：列表只有件数没有正文，点进去才看得到确认卡。
+  // 手机（Telegram / 钉钉）对话的确认在手机那头处理，Desktop 对它们只读，不列。
+  if (input.sessions) {
+    const fresh = input.connected && input.sessions.status === "current" && freshAt(input.sessions.checkedAt, ms);
+    if (!fresh) result.warnings.push(input.sessions.status === "loading" ? "对话列表正在读取。"
+      : "对话列表未能取得最新状态，其他对话里等你确认的操作可能没有列出。");
+    for (const session of input.sessions.data) {
+      const count = session.pending_input_count ?? 0;
+      if (count <= 0 || /^(telegram|dingtalk)-/.test(session.sid)) continue;
+      if (session.sid === input.activeSid && input.confirmation) continue;
+      const name = session.sid === input.mainSid ? "主要聊天" : `旁聊「${session.title || "新对话"}」`;
+      const updated = Number.isFinite(session.updated) && session.updated > 0 && session.updated * 1000 <= ms
+        ? new Date(session.updated * 1000).toISOString() : "";
+      add({ id: `session:${session.sid}`, title: `${name}有操作等你确认`, source: "对话", at: updated,
+        state: fresh ? "decision" : "unknown", target: { kind: "session", id: session.sid },
+        detail: fresh ? `${count} 件，打开对话查看确认卡；不确认它会一直等着` : "上次记录，当前是否仍在等待待核对" }, true);
     }
   }
   if (input.confirmation) result.decisions.unshift({ id: `confirmation:${input.confirmation.id}`,
