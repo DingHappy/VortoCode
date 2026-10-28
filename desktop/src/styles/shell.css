@@ -1613,3 +1613,340 @@
     display: none;
   }
 }
+
+/* ── 定制：插件 / 连接 / 技能（docs/DESIGN_SYSTEM.md 第 3 节「定制」，画布 E5） ── */
+.vc-customize {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  background: var(--vc-bg);
+}
+
+.vc-customize.has-detail {
+  grid-template-columns: minmax(0, 1fr) var(--vc-detail-w);
+}
+
+.vc-customize-main {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: calc(760px + 2 * var(--vc-space-10));
+  min-height: 0;
+  margin: 0 auto;
+  padding: var(--vc-space-8) var(--vc-space-10);
+  overflow-y: auto;
+}
+
+.vc-customize.has-detail .vc-customize-main {
+  margin: 0;
+}
+
+.vc-customize-tabs {
+  display: flex;
+  gap: var(--vc-space-5);
+  margin-bottom: var(--vc-space-5);
+  border-bottom: 1px solid var(--vc-divider);
+}
+
+.vc-customize-tabs button {
+  height: 36px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--vc-muted);
+  font: inherit;
+  font-size: var(--vc-size-body);
+  cursor: pointer;
+}
+
+.vc-customize-tabs button[aria-selected="true"] {
+  color: var(--vc-text);
+  font-weight: var(--vc-weight-medium);
+  box-shadow: inset 0 -2px 0 var(--vc-ink);
+}
+
+.vc-customize-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--vc-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vc-customize-card {
+  display: flex;
+  gap: var(--vc-space-3);
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  padding: var(--vc-space-4);
+}
+
+.vc-customize-icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-fill);
+  color: var(--vc-text);
+}
+
+.vc-customize-icon.large {
+  width: 40px;
+  height: 40px;
+}
+
+.vc-customize-icon svg {
+  width: 18px;
+  height: 18px;
+  stroke-width: var(--vc-icon-stroke);
+}
+
+.vc-customize-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.vc-customize-text strong {
+  color: var(--vc-text);
+  font-size: var(--vc-size-body);
+  font-weight: var(--vc-weight-medium);
+}
+
+.vc-customize-text > span {
+  color: var(--vc-muted);
+  font-size: var(--vc-size-small);
+}
+
+.vc-customize-text small,
+.vc-customize-detail-head span {
+  font-size: var(--vc-size-caption);
+}
+
+.vc-customize .tone-done { color: var(--vc-done-text); }
+.vc-customize .tone-wait { color: var(--vc-wait-text); }
+.vc-customize .tone-danger { color: var(--vc-danger-text); }
+.vc-customize .tone-muted { color: var(--vc-muted); }
+
+.vc-customize-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vc-space-5);
+  box-sizing: border-box;
+  min-height: 0;
+  padding: var(--vc-space-6) var(--vc-space-5);
+  overflow-y: auto;
+  border-left: 1px solid var(--vc-divider);
+  background: var(--vc-surface);
+}
+
+.vc-customize-detail-head {
+  display: flex;
+  align-items: center;
+  gap: var(--vc-space-3);
+}
+
+.vc-customize-detail-head > div {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.vc-customize-detail-head strong {
+  color: var(--vc-text);
+  font-size: var(--vc-size-body);
+  font-weight: var(--vc-weight-strong);
+}
+
+.vc-customize-detail h2 {
+  margin: 0 0 var(--vc-space-2);
+  color: var(--vc-muted);
+  font-size: var(--vc-size-small);
+  font-weight: var(--vc-weight-medium);
+}
+
+.vc-customize-actions {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vc-customize-actions li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--vc-space-3);
+  padding: var(--vc-space-2) 0;
+  border-bottom: 1px solid var(--vc-divider);
+  color: var(--vc-text);
+  font-size: var(--vc-size-body);
+}
+
+.vc-customize-actions li:last-child {
+  border-bottom: 0;
+}
+
+.vc-customize-actions li > span:first-child {
+  display: flex;
+  flex-direction: column;
+}
+
+.vc-customize-actions small {
+  color: var(--vc-muted);
+  font-size: var(--vc-size-caption);
+}
+
+.vc-customize-level {
+  flex: none;
+  padding: 2px var(--vc-space-2);
+  border-radius: var(--vc-radius-full);
+  background: var(--vc-fill);
+  color: var(--vc-text-secondary);
+  font-size: var(--vc-size-caption);
+}
+
+.vc-customize-level.never {
+  background: var(--vc-danger-bg);
+  color: var(--vc-danger-text);
+}
+
+.vc-customize-note {
+  margin: var(--vc-space-2) 0 0;
+  color: var(--vc-muted);
+  font-size: var(--vc-size-small);
+  line-height: 1.5;
+}
+
+.vc-customize-note code {
+  font-family: var(--vc-font-mono);
+  font-size: var(--vc-size-caption);
+  overflow-wrap: anywhere;
+}
+
+.vc-customize-form {
+  display: grid;
+  gap: var(--vc-space-2);
+}
+
+.vc-customize-form label {
+  display: grid;
+  gap: var(--vc-space-1);
+  color: var(--vc-text-secondary);
+  font-size: var(--vc-size-small);
+}
+
+.vc-customize-form input {
+  height: var(--vc-control-h);
+  padding: 0 var(--vc-space-3);
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-surface);
+  color: var(--vc-text);
+  font: inherit;
+  font-size: var(--vc-size-body);
+}
+
+.vc-customize-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--vc-space-2);
+}
+
+.vc-customize-buttons.end {
+  margin-top: auto;
+}
+
+.vc-customize-code code {
+  display: block;
+  margin: var(--vc-space-2) 0 var(--vc-space-3);
+  padding: var(--vc-space-2);
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-fill);
+  color: var(--vc-text);
+  font-family: var(--vc-font-mono);
+  font-size: var(--vc-size-heading);
+  font-weight: var(--vc-weight-strong);
+  letter-spacing: 0.12em;
+  text-align: center;
+}
+
+:root[data-window="overlay"] .workbench.vc-sidebar-collapsed .vc-customize-main {
+  padding-top: 64px;
+}
+
+@media (max-width: 900px) {
+  .vc-customize.has-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .vc-customize.has-detail .vc-customize-main {
+    display: none;
+  }
+}
+
+/* 技能标签：沿用个人技能卡的内容和流程，只换成同一套卡片、字号和按钮 */
+.vc-customize-skills .personal-skills-card {
+  margin: 0;
+  padding: var(--vc-space-5);
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-card);
+  background: var(--vc-surface);
+  color: var(--vc-text-secondary);
+  font-size: var(--vc-size-small);
+}
+
+.vc-customize-skills .extensions-inspect-heading strong {
+  color: var(--vc-text);
+  font-size: var(--vc-size-body);
+  font-weight: var(--vc-weight-strong);
+}
+
+.vc-customize-skills .personal-skills-card p {
+  margin: 0;
+  color: var(--vc-muted);
+  font-size: var(--vc-size-small);
+}
+
+.vc-customize-skills .personal-skills-card button {
+  justify-self: start;
+  height: var(--vc-control-h);
+  padding: 0 var(--vc-space-3);
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-control);
+  background: transparent;
+  color: var(--vc-text);
+  font: inherit;
+  font-size: var(--vc-size-body);
+  cursor: pointer;
+}
+
+.vc-customize-skills .personal-skills-card button:hover:not(:disabled) {
+  background: var(--vc-hover);
+}
+
+.vc-customize-skills .personal-skills-card button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.vc-customize-skills .extensions-inspect-item,
+.vc-customize-skills .personal-skill-review {
+  padding: var(--vc-space-3) 0;
+  border: 0;
+  border-bottom: 1px solid var(--vc-divider);
+  border-radius: 0;
+}
+
+.vc-customize-skills .personal-skill-editor input,
+.vc-customize-skills .personal-skill-editor textarea {
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-surface);
+  color: var(--vc-text);
+}

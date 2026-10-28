@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { RefObject } from "react";
 
-import type { AssistantTab } from "../components/AssistantMode";
 import type { GatewayClient } from "../gateway";
 import { confirmAction } from "../lib/confirm";
 import { pluginActions, refreshPlugins as readPlugins, type PluginChecks, type PluginSnapshot } from "../lib/pluginActions";
@@ -14,7 +13,8 @@ export function usePlugins(
   assistantScopeRef: RefObject<string>,
   assistantScope: string,
   connection: ConnectionState,
-  assistantTab: AssistantTab,
+  /** 「定制」页开着才去读插件状态 */
+  open: boolean,
   onBanner: (text: string) => void,
 ) {
   const [pluginSnapshot, setPlugins] = useState<PluginSnapshot | null>(null);
@@ -26,10 +26,10 @@ export function usePlugins(
   }, client, scope), [clientRef, assistantScopeRef]);
   useEffect(() => {
     const client = clientRef.current;
-    if (client && connection === "connected" && assistantTab === "identity") {
+    if (client && connection === "connected" && open) {
       void refreshPlugins(client, assistantScope).catch(() => undefined);   // 旧版服务没有这个接口：不显示插件区
     }
-  }, [assistantTab, assistantScope, connection, refreshPlugins, clientRef]);
+  }, [open, assistantScope, connection, refreshPlugins, clientRef]);
   useEffect(() => { setPluginBusy(""); }, [assistantScope]);
   const actions = pluginActions({
     client: () => clientRef.current, scope: () => assistantScopeRef.current, renderScope: assistantScope,

@@ -26,6 +26,8 @@ it("左侧：一级入口不超过 5 个，「任务」角标只计等你处理�
 it("每个面板入口都对得上一个标签，审核记录不占一级入口", () => {
   for (const [page, tab] of Object.entries(PAGE_PANEL)) expect(PANEL_PAGE[tab]).toBe(page);
   expect(PANEL_PAGE.audit).toBeNull();
+  expect(PANEL_PAGE.identity).toBeNull();                       // 「定制」是独立页面，不再打开身份标签
+  expect("customize" in PAGE_PANEL).toBe(false);
 });
 
 it("左侧「最近」：主要聊天置顶在旁聊之前；没有旁聊时给一句说明", () => {
@@ -122,48 +124,6 @@ it("does not point a local-only user at schedules that will never run", () => {
   expect(local).toContain("不会按时自动跑"); expect(local).not.toContain("每天早上给我一份简报");
   const resident = renderToStaticMarkup(<AssistantSchedule items={[]} connected />);
   expect(resident).toContain("每天早上给我一份简报");
-});
-
-it("插件：已接上的能检查、能移除；没接的说凭据放哪；检查结果成功/失败分开显示", async () => {
-  const { AssistantPlugins } = await import("./AssistantMode");
-  const plugins = [
-    { name: "calendar", title: "日历（只读）", status: "available" as const, credential_file: "~/.vortocode/connectors/calendar.token", checkable: true },
-    { name: "notion", title: "Notion（只读）", status: "missing" as const, credential_file: "~/.vortocode/connectors/notion.token", checkable: true },
-    { name: "mail", title: "邮件", status: "invalid" as const, credential_file: "~/.vortocode/connectors/mail.token", checkable: true },
-  ];
-  const html = renderToStaticMarkup(<AssistantPlugins plugins={plugins} checks={{
-    calendar: { ok: true, status: "available", detail: "能读到，共 12 条日程" },
-    mail: { ok: false, status: "invalid", detail: "凭据文件不可用" },
-  }} />);
-  const [calendar, notion, mail] = html.split("<li>").slice(1);
-  expect(calendar).toContain("已接上");
-  expect(calendar).toContain(">检查</button>");
-  expect(calendar).toContain(">移除凭据</button>");
-  expect(calendar).toContain("能读到，共 12 条日程");
-  expect(notion).toContain("未接入");
-  expect(notion).not.toContain("</button>");
-  expect(notion).toContain("<code>~/.vortocode/connectors/notion.token</code>");
-  expect(mail).not.toContain(">检查</button>");
-  expect(mail).toContain('role="alert"');
-  expect(renderToStaticMarkup(<AssistantPlugins plugins={[]} />)).toBe("");
-  expect(renderToStaticMarkup(<AssistantPlugins plugins={plugins} busy="calendar" />)).toContain("处理中…");
-});
-
-it("插件：能在 Desktop 填凭据——没接的给「填写」，接上的给「更换」；不给保存入口时不显示", async () => {
-  const { AssistantPlugins } = await import("./AssistantMode");
-  const plugins = [
-    { name: "calendar", title: "日历（只读）", status: "available" as const, credential_file: "~/.vortocode/connectors/calendar.token", checkable: true },
-    { name: "notion", title: "Notion（只读）", status: "missing" as const, credential_file: "~/.vortocode/connectors/notion.token", checkable: true },
-  ];
-  const html = renderToStaticMarkup(<AssistantPlugins plugins={plugins} onSave={async () => true} />);
-  const [calendar, notion] = html.split("<li>").slice(1);
-  expect(calendar).toContain(">更换</button>");
-  expect(notion).toContain('class="primary">填写</button>');
-  expect(notion).toContain("点「填写」把凭据存到助理所在的电脑");
-  expect(html).not.toContain("<input");                       // 输入框要点了才出现
-  const readOnly = renderToStaticMarkup(<AssistantPlugins plugins={plugins} />);
-  expect(readOnly).not.toContain("填写</button>");
-  expect(readOnly).not.toContain("更换</button>");
 });
 
 it("identity page lists SOUL, about-you and memory without repeating the panel header", () => {
