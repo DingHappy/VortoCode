@@ -172,7 +172,10 @@ it("identity page lists SOUL, about-you and memory without repeating the panel h
     proposals={[{ id: "p1", content: "x" } as never]} onAvatar={() => {}} onEdit={() => {}} onDeleteMemory={() => {}} />);
   expect(html).not.toContain("assistant-profile-head");
   for (const text of ["编辑资料", "换头像", "SOUL", "还没写", "在杭州写代码", "记得 1 件事", "1 条待确认", "装 VortoCode 的服务器就是助理的电脑"]) expect(html).toContain(text);
-  expect(html.match(/assistant-identity-preview empty/g)).toHaveLength(1);
+  // 名片卡在前，SOUL 和记忆是两张卡
+  expect(html.indexOf("vc-identity-card")).toBeLessThan(html.indexOf("vc-identity-tile soul"));
+  expect(html).toContain('class="vc-identity-tile memory"');
+  expect(html).not.toContain("vc-identity-about empty");
 });
 
 it("schedule section explains read-only items once", () => {

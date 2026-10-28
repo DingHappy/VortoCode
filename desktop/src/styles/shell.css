@@ -566,3 +566,299 @@
 .vc-panel-tab-dot.is-unknown {
   background: var(--vc-muted);
 }
+
+/* 助理面板各标签页：粗标题 + 统一的列表行（图标 34 + 标题 + 一行说明 + 时间），行间不加分隔线 */
+.vc-panel .activity-feed {
+  padding: var(--vc-space-1) var(--vc-space-4) var(--vc-space-6);
+}
+
+.vc-panel .assistant-section {
+  padding: var(--vc-space-1) var(--vc-space-4) var(--vc-space-6);
+}
+
+.vc-panel .activity-feed-group h5,
+.vc-panel .assistant-section > h5,
+.vc-panel .assistant-goals-overview > h3 {
+  margin: var(--vc-space-5) 0 var(--vc-space-2);
+  font-size: var(--vc-size-chat);
+  font-weight: var(--vc-weight-strong);
+  color: var(--vc-text);
+}
+
+.vc-panel .activity-feed-group.waiting h5 {
+  color: var(--vc-wait-text);
+}
+
+.vc-panel .activity-feed-item {
+  gap: var(--vc-space-3);
+  padding: 9px var(--vc-space-2);
+  margin: 0 calc(-1 * var(--vc-space-2));
+  width: calc(100% + var(--vc-space-4));
+  border-radius: var(--vc-radius-control);
+}
+
+.vc-panel .activity-feed-item:hover {
+  background: var(--vc-hover);
+}
+
+.vc-panel .activity-feed-icon,
+.vc-panel .assistant-audit-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-fill);
+  color: var(--vc-text-secondary);
+}
+
+.vc-panel .activity-feed-item.done .activity-feed-icon,
+.vc-panel .activity-feed-item.stopped .activity-feed-icon {
+  background: var(--vc-fill);
+  color: var(--vc-text-secondary);
+}
+
+.vc-panel .activity-feed-item.waiting .activity-feed-icon {
+  background: var(--vc-wait-bg);
+  color: var(--vc-wait-text);
+}
+
+.vc-panel .activity-feed-item.running .activity-feed-icon {
+  background: var(--vc-accent-bg);
+  color: var(--vc-accent);
+}
+
+.vc-panel .activity-feed-item.failed .activity-feed-icon,
+.vc-panel .assistant-audit-icon.denied {
+  background: var(--vc-danger-bg);
+  color: var(--vc-danger-text);
+}
+
+.vc-panel .activity-feed-text strong,
+.vc-panel .assistant-audit-text strong {
+  font-size: var(--vc-size-body);
+  font-weight: var(--vc-weight-medium);
+  color: var(--vc-text);
+}
+
+.vc-panel .activity-feed-text > span,
+.vc-panel .assistant-audit-text span {
+  font-size: var(--vc-size-small);
+  color: var(--vc-muted);
+}
+
+.vc-panel .activity-feed-item.waiting .activity-feed-text > span {
+  color: var(--vc-text-secondary);
+}
+
+.vc-panel .activity-feed-text small,
+.vc-panel .assistant-audit-text small {
+  font-size: var(--vc-size-caption);
+  color: var(--vc-muted);
+}
+
+.vc-panel .activity-feed-status {
+  color: var(--vc-muted);
+}
+
+.vc-panel .activity-feed-item.waiting .activity-feed-status {
+  color: var(--vc-wait-text);
+}
+
+.vc-panel .activity-feed-item.failed .activity-feed-status {
+  color: var(--vc-danger-text);
+}
+
+.vc-panel .activity-feed-chevron {
+  display: none;
+}
+
+.vc-panel .assistant-audit li {
+  gap: var(--vc-space-3);
+  padding: 9px 0;
+  border: 0;
+}
+
+.vc-panel .assistant-activity-offline {
+  margin: var(--vc-space-3) var(--vc-space-4) 0;
+  padding: 10px var(--vc-space-3);
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-danger-bg);
+  color: var(--vc-danger-text);
+  font-size: var(--vc-size-caption);
+}
+
+.vc-panel .activity-sources {
+  margin: var(--vc-space-3) var(--vc-space-4) 0;
+  font-size: var(--vc-size-caption);
+}
+
+.vc-panel .activity-sources.uncertain {
+  border: 0;
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-wait-bg);
+  color: var(--vc-wait-text);
+}
+
+/* 身份：名片卡 + SOUL、记忆两张彩色卡 */
+.vc-identity-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--vc-space-1);
+  margin-top: var(--vc-space-5);
+  padding: 14px;
+  border-radius: var(--vc-radius-card);
+  background: var(--vc-fill);
+}
+
+.vc-identity-name {
+  font-weight: var(--vc-weight-medium);
+}
+
+.vc-identity-about {
+  font-size: var(--vc-size-caption);
+  line-height: 1.5;
+  color: var(--vc-muted);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.vc-identity-edit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 34px;
+  margin-top: var(--vc-space-2);
+  border: 0;
+  border-radius: var(--vc-radius-full);
+  background: var(--vc-selected);
+  color: var(--vc-text);
+  font-family: var(--vc-font-sans);
+  font-size: var(--vc-size-small);
+  font-weight: var(--vc-weight-medium);
+  cursor: pointer;
+}
+
+.vc-identity-edit svg,
+.vc-identity-avatar-actions svg {
+  width: 14px;
+  height: 14px;
+}
+
+.vc-identity-edit:hover {
+  background: var(--vc-hover);
+}
+
+.vc-identity-avatar-actions {
+  display: flex;
+  justify-content: center;
+  gap: var(--vc-space-4);
+}
+
+.vc-identity-avatar-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--vc-muted);
+  font-family: var(--vc-font-sans);
+  font-size: var(--vc-size-caption);
+  cursor: pointer;
+}
+
+.vc-identity-avatar-actions button:hover {
+  color: var(--vc-text);
+}
+
+.vc-identity-tiles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--vc-space-3);
+  margin: 14px 0 var(--vc-space-5);
+}
+
+.vc-identity-tile {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 14px;
+  border: 0;
+  border-radius: var(--vc-radius-card);
+  color: var(--vc-on-tile);
+  text-align: left;
+  font-family: var(--vc-font-sans);
+  cursor: pointer;
+  overflow: hidden;
+  box-shadow: var(--vc-shadow-input);
+}
+
+.vc-identity-tile.soul {
+  background: var(--vc-tile-soul);
+}
+
+.vc-identity-tile.memory {
+  background: var(--vc-tile-memory);
+}
+
+.vc-identity-tile b {
+  font-size: var(--vc-size-chat);
+  font-weight: var(--vc-weight-strong);
+}
+
+.vc-identity-tile small {
+  font-size: var(--vc-size-caption);
+  opacity: .85;
+}
+
+.vc-identity-tile-preview {
+  margin-top: var(--vc-space-2);
+  font-size: var(--vc-size-caption);
+  line-height: 1.5;
+  opacity: .8;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+
+.vc-identity-tile-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: auto;
+  font-size: var(--vc-size-small);
+  font-variant-numeric: tabular-nums;
+}
+
+.vc-identity-tile-foot svg {
+  width: var(--vc-icon);
+  height: var(--vc-icon);
+}
+
+.vc-identity-tile:hover {
+  filter: brightness(1.05);
+}
+
+.vc-identity-tile:focus-visible,
+.vc-identity-edit:focus-visible,
+.vc-identity-avatar-actions button:focus-visible {
+  outline: 2px solid var(--vc-focus-ring);
+  outline-offset: 2px;
+}
+
+.vc-panel .assistant-goals-overview {
+  margin-top: var(--vc-space-2);
+}
+
+/* 目标页底部的今日概览已有标题，不再重复「你的工作简报 / 今日工作」 */
+.vc-panel .assistant-goals-overview .workday-heading > div > span,
+.vc-panel .assistant-goals-overview .workday-heading h3 {
+  display: none;
+}

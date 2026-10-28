@@ -24,7 +24,8 @@ export function useDialogSurface() {
       node?.close();
       if (!ownedFocus || document.querySelector("dialog[open]")) return;
       const target = previous instanceof HTMLElement && previous.isConnected ? previous
-        : activity?.isConnected ? activity.querySelector<HTMLElement>('.assistant-activity-filters button[aria-pressed="true"]') : null;
+        // 原来的条目没了（比如处理完离开了列表），就回到面板上当前选中的标签
+        : activity?.isConnected ? activity.closest(".vc-panel")?.querySelector<HTMLElement>('.vc-panel-tab[aria-selected="true"]') ?? null : null;
       target?.focus({ preventScroll: true });
     };
   }, []);

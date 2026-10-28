@@ -46,6 +46,9 @@
   --vc-shadow-raised: 0 1px 2px rgba(24, 24, 27, 0.06);
   --vc-shadow-input: 0 1px 2px rgba(24, 24, 27, 0.04), 0 8px 28px rgba(24, 24, 27, 0.07);
   --vc-shadow-pop: 0 12px 32px rgba(24, 24, 27, 0.14);
+  --vc-tile-soul: linear-gradient(150deg, #f0425b, #b3122e);
+  --vc-tile-memory: linear-gradient(150deg, #5b6cf0, #2a2fa8);
+  --vc-on-tile: #ffffff;
 
   /* 字体 */
   --vc-font-sans: Inter, "Noto Sans SC", "PingFang SC", -apple-system, BlinkMacSystemFont,
@@ -130,6 +133,9 @@
     --vc-shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.4);
   --vc-shadow-input: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 28px rgba(0, 0, 0, 0.35);
     --vc-shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.5);
+    --vc-tile-soul: linear-gradient(150deg, #d93a52, #8f0f26);
+    --vc-tile-memory: linear-gradient(150deg, #4c5ce0, #22268c);
+    --vc-on-tile: #ffffff;
   }
 }
 
@@ -163,4 +169,7 @@
   --vc-shadow-raised: 0 1px 2px rgba(0, 0, 0, 0.4);
   --vc-shadow-input: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 28px rgba(0, 0, 0, 0.35);
   --vc-shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.5);
+  --vc-tile-soul: linear-gradient(150deg, #d93a52, #8f0f26);
+  --vc-tile-memory: linear-gradient(150deg, #4c5ce0, #22268c);
+  --vc-on-tile: #ffffff;
 }

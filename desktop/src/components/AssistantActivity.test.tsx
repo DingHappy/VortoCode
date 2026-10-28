@@ -11,51 +11,47 @@ const items: FeedItem[] = [
   { id: "waiting", title: "确认下一步", summary: "等你确认范围", status: "waiting", at: "2026-10-23T10:00:00Z" },
 ];
 
-it("keeps activity and pending actions outside the initially closed workday overview", () => {
+it("lists waiting items first with their count, without an overview fold or filter row", () => {
   const open = vi.fn();
-  const html = renderToStaticMarkup(<AssistantActivity items={items} sources={sources} connected onOpen={open}
-    overview={<p>概览中的数量与验收依据</p>}><button>原有任务操作</button></AssistantActivity>);
-  expect(html).toContain('<details class="assistant-activity-overview"><summary>');
-  expect(html).toContain("今日概览");
-  expect(html).toContain("1 件待处理");
-  expect(html.indexOf("概览中的数量与验收依据")).toBeLessThan(html.indexOf("</details>"));
-  expect(html.indexOf("原有任务操作")).toBeGreaterThan(html.indexOf("</details>"));
-  expect(html.indexOf("确认下一步")).toBeGreaterThan(html.indexOf("</details>"));
+  const html = renderToStaticMarkup(<AssistantActivity items={items} sources={sources} connected onOpen={open}>
+    <button>原有任务操作</button></AssistantActivity>);
+  expect(html).not.toContain("今日概览");
+  expect(html).not.toContain("<details");
+  expect(html).not.toContain('aria-label="动态筛选"');
+  expect(html).not.toContain("最近完整核对");
+  expect(html).toContain("<h5>等你处理 · 1</h5>");
+  expect(html.indexOf("原有任务操作")).toBeLessThan(html.indexOf("确认下一步"));
   expect(html.indexOf("确认下一步")).toBeLessThan(html.indexOf("正在核对构建"));
-  expect(html).not.toContain("历史动态与对话记录");
-  expect(html).not.toContain('role="radiogroup"');
-  expect(html).toContain('aria-label="动态筛选"');
-  expect(html).toContain('aria-pressed="true">全部动态');
-  expect(html).toContain('aria-pressed="false">待处理');
   expect(open).not.toHaveBeenCalled();
 });
 
-it("counts the same visible pending records, including confirmations and Codex actions outside the overview", () => {
+it("counts confirmations and Codex actions in the same waiting group", () => {
   const open = vi.fn();
   const pending = [...items, confirmationFeedItem({ id: "c1", text: "继续？", tainted: false }),
     { id: "codex_action:a1", title: "拟发消息", summary: "待你审阅", at: "", status: "waiting" as const, codexActionId: "a1" }];
-  const html = renderToStaticMarkup(<AssistantActivity items={pending} sources={sources} connected overview={<p>折叠概览</p>} onOpen={open} />);
-  expect(html).toContain("3 件待处理");
-  const visible = html.slice(html.indexOf("</details>") + "</details>".length);
-  expect(visible).toContain("当前对话有操作需要确认");
-  expect(visible).toContain("拟发消息");
-  expect(visible.match(/<button class="activity-feed-item waiting"/g)).toHaveLength(3);
+  const html = renderToStaticMarkup(<AssistantActivity items={pending} sources={sources} connected onOpen={open} />);
+  expect(html).toContain("<h5>等你处理 · 3</h5>");
+  expect(html).toContain("当前对话有操作需要确认");
+  expect(html).toContain("拟发消息");
+  expect(html.match(/<button class="activity-feed-item waiting"/g)).toHaveLength(3);
   expect(open).not.toHaveBeenCalled();
 });
 
-it("marks retained history as unverified while offline without hiding it", () => {
+it("marks retained history with the time it was read while offline, without hiding it", () => {
+  const read = new Date(2026, 9, 27, 10, 42).getTime();
   const html = renderToStaticMarkup(<AssistantActivity items={items} connected={false}
-    overview={<p>概览</p>} onOpen={() => {}} />);
-  expect(html).toContain("连接中断，以下动态为历史记录");
+    sources={[{ name: "turns", status: "current", checkedAt: read }]} onOpen={() => {}} />);
+  expect(html).toContain("下面是 10:42 读到的动态，连上之后再核对现在的进度。");
   expect(html).toContain("正在核对构建");
-  expect(html).not.toContain("件待处理");
-  expect(html).toContain("1+ 条历史待处理");
+  expect(html).not.toContain("动态来源待核对");
+  const unknown = renderToStaticMarkup(<AssistantActivity items={items} connected={false} onOpen={() => {}} />);
+  expect(unknown).toContain("下面是上次读到的动态");
 });
 
 it("does not turn a failed empty read into a claim that there is no work", () => {
   const refresh = vi.fn();
   const html = renderToStaticMarkup(<AssistantActivity items={[]} sources={[{ name: "dispatches", status: "unavailable" }]}
-    connected overview={<p>概览</p>} onOpen={() => {}} onRefresh={refresh} />);
+    connected onOpen={() => {}} onRefresh={refresh} />);
   expect(html).toContain("数量可能不完整");
   expect(html).toContain("助理任务单：未能取得最新记录");
   expect(html).toContain("不能据此判断没有事项");
