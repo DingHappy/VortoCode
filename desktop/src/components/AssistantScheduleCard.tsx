@@ -1,6 +1,12 @@
+import { Clock3, Eye, HeartPulse, Newspaper, Target } from "lucide-react";
 import { useRef, useState } from "react";
 import { scheduleLabel, whenLabel } from "../lib/time";
 import type { AssistantScheduleItem, AssistantScheduleRun } from "../types";
+
+// 每种定时一个图标，和面板里其它列表行一样放在左侧
+const KIND_ICON: Record<AssistantScheduleItem["kind"], typeof Clock3> = {
+  heartbeat: HeartPulse, report: Newspaper, watch: Eye, goal: Target, cron: Clock3,
+};
 
 export function AssistantScheduleCard({ item, connected, now, onToggle, onHistory }: {
   item: AssistantScheduleItem; connected: boolean; now?: Date;
@@ -21,7 +27,10 @@ export function AssistantScheduleCard({ item, connected, now, onToggle, onHistor
   const managed = item.kind === "cron" && Boolean(item.revision);
   const unscheduled = item.scheduler_enabled === false;
   const times = [item.last && `上次 ${whenLabel(item.last, now)}`, !unscheduled && item.next && `下次 ${whenLabel(item.next, now)}`].filter(Boolean);
-  return <li className={`assistant-schedule-card${item.enabled ? "" : " disabled"}`}>
+  const Icon = KIND_ICON[item.kind] ?? Clock3;
+  return <li className={`assistant-schedule-card ${item.kind}${item.enabled ? "" : " disabled"}`}>
+    <span className="assistant-schedule-icon" aria-hidden="true"><Icon /></span>
+    <div className="assistant-schedule-main">
     <header>
       <strong>{item.title}</strong>
       {!managed && item.kind !== "goal" && <span className="assistant-schedule-tag" title="由运行端配置管理">只读</span>}
@@ -49,5 +58,6 @@ export function AssistantScheduleCard({ item, connected, now, onToggle, onHistor
         <p>{run.summary || "无结果摘要"}</p>{run.error && <p role="alert">{run.error}</p>}
       </article>)}
     </div>}
+    </div>
   </li>;
 }
