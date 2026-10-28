@@ -37,24 +37,34 @@ it("shows what needs the owner: background work, hooks and the work queue", () =
     expect(html).toContain(text);
 });
 
-it("footer shows the account, settings, and the update button only when there is one", () => {
+it("footer shows the account as a menu button, and the update button only when there is one", () => {
   const identity = { initial: "D", name: "me@example.com", detail: "专业版会员", title: "VortoCode 账号" };
-  const none = renderToStaticMarkup(<SidebarFooter identity={identity} update={null} onOpenAccount={noop} onOpenSettings={noop} />);
-  expect(none).toContain("me@example.com"); expect(none).toContain("专业版会员"); expect(none).toContain('aria-label="设置"');
+  const none = renderToStaticMarkup(<SidebarFooter identity={identity} update={null} onOpenSettings={noop} />);
+  expect(none).toContain("me@example.com"); expect(none).toContain("专业版会员");
+  expect(none).toContain('aria-haspopup="menu"'); expect(none).toContain('aria-expanded="false"');
+  expect(none).not.toContain('role="menu"');                    // 点了才弹出
   expect(none).not.toContain("新版本");
   const update = { current: "0.2.14", latest: "0.2.15", newer: true, url: "https://github.com/DingHappy/VortoCode/releases/tag/v0.2.15", publishedAt: "" };
-  const html = renderToStaticMarkup(<SidebarFooter identity={identity} update={update} onOpenAccount={noop} onOpenSettings={noop} />);
+  const html = renderToStaticMarkup(<SidebarFooter identity={identity} update={update} onOpenSettings={noop} />);
   expect(html).toContain("新版本 0.2.15"); expect(html).toContain("点击更新并重启");
 });
 
 it("footer shows where the assistant lives only when given", () => {
   const identity = { initial: "D", name: "me@example.com", detail: "", title: "VortoCode 账号" };
   const footer = (resident?: Parameters<typeof SidebarFooter>[0]["resident"]) =>
-    renderToStaticMarkup(<SidebarFooter identity={identity} update={null} resident={resident} onOpenAccount={noop} onOpenSettings={noop} />);
+    renderToStaticMarkup(<SidebarFooter identity={identity} update={null} resident={resident} onOpenSettings={noop} />);
   expect(footer()).not.toContain("vc-side-resident");
   const online = footer({ state: "online", name: "home", onClick: noop });
   expect(online).toContain("「home」");
   expect(online).toMatch(/常驻电脑<\/span>.*在线/);
   expect(footer({ state: "offline", onClick: noop })).toContain("连不上");
   expect(footer({ state: "local", onClick: noop })).toContain("未连接");
+});
+
+it("avatar menu holds the set-once things: account, phone and devices, updates and diagnostics, settings", () => {
+  const identity = { initial: "D", name: "me@example.com", detail: "", title: "VortoCode 账号" };
+  const html = renderToStaticMarkup(<SidebarFooter identity={identity} update={null} onOpenSettings={noop} menuOpen />);
+  expect(html).toContain('role="menu"'); expect(html).toContain('aria-expanded="true"');
+  const items = [...html.matchAll(/role="menuitem"[^>]*>.*?<span>(.*?)<\/span><\/button>/g)].map((match) => match[1].replace(/<[^>]+>/g, ""));
+  expect(items).toEqual(["账号与会员", "手机与设备", "检查更新 · 诊断日志", "设置⌘,"]);
 });

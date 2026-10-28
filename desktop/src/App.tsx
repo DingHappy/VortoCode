@@ -245,15 +245,18 @@ function App() {
   const mainViewRef = useRef(mainView);
   mainViewRef.current = mainView;
   const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined);
+  const [settingsAnchor, setSettingsAnchor] = useState<string | undefined>(undefined);
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [projectSessions, setProjectSessions] = useState<ProjectSessionSummary[]>([]);
   const [sidebarQuery, setSidebarQuery] = useState("");
   const [sidebarSearchOpen, setSidebarSearchOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  // ⌘K：侧栏收起时也能直接搜（docs/DESIGN_SYSTEM.md 第 2 节「搜索与 ⌘K」）。
+  // ⌘K：侧栏收起时也能直接搜（docs/DESIGN_SYSTEM.md 第 2 节「搜索与 ⌘K」）；⌘, 打开设置。
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (event.key === ",") { event.preventDefault(); setSettingsOpen(true); return; }
+      if (event.key.toLowerCase() !== "k") return;
       event.preventDefault();
       setSidebarCollapsed(false); setSidebarSearchOpen(true);
     };
@@ -2616,8 +2619,7 @@ function App() {
               ? { state: connection === "connected" ? "online" : "offline", name: findAssistantHost(projects)?.name,
                 onClick: () => connection === "connected" ? openAssistantPage("tasks") : void changeAppMode("assistant") }
               : { state: "local", onClick: () => findAssistantHost(projects) ? void changeAppMode("assistant") : setRemoteDialogOpen("assistant") }}
-            onOpenAccount={() => { setSettingsSection("account"); setSettingsOpen(true); }}
-            onOpenSettings={() => setSettingsOpen(true)}
+            onOpenSettings={(target) => { setSettingsSection(target?.section); setSettingsAnchor(target?.anchor); setSettingsOpen(true); }}
           />
         </aside>
 
@@ -3298,7 +3300,7 @@ function App() {
           trust={trust}
           trustBusy={trustBusy}
           onTrustChange={changeTrustLevel}
-          onClose={() => { setSettingsOpen(false); setSettingsSection(undefined); }}
+          onClose={() => { setSettingsOpen(false); setSettingsSection(undefined); setSettingsAnchor(undefined); }}
           onLlmBaseChange={setLlmBaseInput}
           onLlmModelChange={setLlmModelInput}
           onLlmFastChange={setLlmFastInput}
@@ -3308,6 +3310,7 @@ function App() {
           modelPicks={modelPicks}
           onModelPicksChange={changeModelPicks}
           initialSection={settingsSection}
+          initialAnchor={settingsAnchor}
           onOpenPlugins={() => { setMainView("plugins"); }}
           hasResident={Boolean(findAssistantHost(projects))}
           residentName={findAssistantHost(projects)?.name}

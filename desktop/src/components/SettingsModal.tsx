@@ -136,6 +136,8 @@ type SettingsModalProps = {
   modelPicks: string[] | null;
   onModelPicksChange: (picks: string[] | null) => void;
   initialSection?: SettingsSection;
+  /** 打开时滚到并高亮的条目（settingsNavigation 的条目 id） */
+  initialAnchor?: string;
   onLlmKeyChange: (value: string) => void;
   onSaveLlmProfile: () => void;
   onClearLlmProfile: () => void;
@@ -191,6 +193,7 @@ export function SettingsModal({
   modelPicks,
   onModelPicksChange,
   initialSection,
+  initialAnchor,
   onLlmKeyChange,
   onSaveLlmProfile,
   onClearLlmProfile,
@@ -212,7 +215,7 @@ export function SettingsModal({
   const [section, setSection] = useState<SettingsPage>(settingsPage(
     initialSection ?? (llmProfile && !llmProfile.configured ? "model" : "account")));
   const [visited, setVisited] = useState<Set<SettingsPage>>(() => new Set([section]));
-  const [highlight, setHighlight] = useState("");
+  const [highlight, setHighlight] = useState(initialAnchor ?? "");
   const dialog = useDialogSurface();
   const contentRef = useRef<HTMLDivElement>(null);
   const [closeAction, setCloseAction] = useState<(() => void) | null>(null);
