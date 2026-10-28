@@ -47,7 +47,7 @@ export function UpdateCard() {
           const enabled = event.target.checked;
           void invoke<boolean>("set_update_check_enabled", { enabled }).then(setAuto).catch((error) => setNote(errorText(error, "保存失败")));
         }} />
-      <span>启动时自动检查（每天最多一次，只问 GitHub 最新版本号）</span>
+      <span>启动时自动检查（每天最多一次，只读 GitHub 发布页上的版本清单）</span>
     </label>
     <p className="settings-card-note">不会自己装：点「更新并重启」并在弹窗里确认后才下载，签名核对通过才替换，装好自动重启。
       一键更新不成功时，也可以从更新内容页下载 DMG 手动替换。</p>

@@ -1,10 +1,10 @@
 // 检查更新与一键更新。从 lib.rs 原样搬出。
 use super::*;
 
-// ── 检查更新：读发布页上的 latest.json（一键更新用的同一份清单），比版本号；不下载、不安装 ──
+// ── 检查更新：交给一键更新用的同一个更新组件去读发布页上的 latest.json；只看版本，不下载、不安装 ──
 // 不走 api.github.com：未登录每个出口 IP 每小时只有 60 次，代理出口共用时很快用完，用户看到 403。
-// releases/latest/download/ 是下载链接，不计 API 限额；「latest」同样排除了草稿和预发布。
-pub(crate) const LATEST_MANIFEST: &str = "https://github.com/DingHappy/VortoCode/releases/latest/download/latest.json";
+// latest.json 走 releases/latest/download/ 下载链接，不计 API 限额，「latest」同样排除了草稿和预发布；
+// 和「更新并重启」同一份清单、同一套平台匹配，不会出现「检查说有新版、点了却装不上」。
 pub(crate) const RELEASES_PAGE_PREFIX: &str = "https://github.com/DingHappy/VortoCode/releases/";
 
 #[derive(Clone, Debug, Serialize, PartialEq)]
@@ -41,21 +41,24 @@ pub(crate) fn update_from_manifest(current: &str, manifest: &serde_json::Value) 
 
 #[tauri::command]
 pub(crate) async fn check_for_update(app: AppHandle) -> Result<UpdateCheck, String> {
+    use tauri_plugin_updater::UpdaterExt;
     let current = app.package_info().version.to_string();
-    let response = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .user_agent(format!("VortoCode-Desktop/{current}"))
-        .build()
-        .map_err(|error| format!("无法检查更新：{error}"))?
-        .get(LATEST_MANIFEST)
-        .send()
+    let found = app
+        .updater()
+        .map_err(|error| format!("更新组件不可用：{error}"))?
+        .check()
         .await
         .map_err(|error| format!("连不上 GitHub，稍后再试：{error}"))?;
-    if !response.status().is_success() {
-        return Err(format!("GitHub 返回 {}，稍后再试", response.status()));
+    match found {
+        Some(update) => update_from_manifest(&current, &update.raw_json),
+        None => Ok(UpdateCheck {
+            url: format!("{RELEASES_PAGE_PREFIX}tag/v{current}"),
+            latest: current.clone(),
+            current,
+            newer: false,
+            published_at: String::new(),
+        }),
     }
-    let manifest: serde_json::Value = response.json().await.map_err(|error| format!("更新清单无法解析：{error}"))?;
-    update_from_manifest(&current, &manifest)
 }
 
 // ── 一键更新：发布页上的 latest.json 指向更新包，用内置公钥验签通过才替换自己，然后走正常退出流程重启 ──
