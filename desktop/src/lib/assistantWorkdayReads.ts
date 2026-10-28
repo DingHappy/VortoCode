@@ -1,5 +1,5 @@
 import type { GatewayClient } from "../gateway";
-import type { AssistantScheduleItem, CodexProgressSnapshot, MemoryProposal, PersonalGoal, SessionSummary } from "../types";
+import type { AssistantScheduleItem, CodexProgressSnapshot, MemoryProposal, NoticeItem, OpsHeartbeat, PersonalGoal, SessionSummary } from "../types";
 import type { WorkdaySource } from "./assistantWorkday";
 import { startPolling } from "./polling";
 import { readPersonalGoalSnapshot } from "./personalGoalSnapshot";
@@ -14,7 +14,7 @@ export function startWorkdayClock(update: (now: Date) => void,
 
 export function assistantWorkdayReads(deps: {
   client: () => (Pick<GatewayClient, "listPersonalGoals" | "getCodexProgress">
-    & Partial<Pick<GatewayClient, "getAssistantSchedule" | "listMemoryProposals" | "listSessions">>) | null;
+    & Partial<Pick<GatewayClient, "getAssistantSchedule" | "listMemoryProposals" | "listSessions" | "getOpsHeartbeats" | "listNotices">>) | null;
   current: () => boolean;
   goals: (source: WorkdaySource<PersonalGoal[]>) => void;
   codex: (source: WorkdaySource<CodexProgressSnapshot | null>) => void;
@@ -24,6 +24,10 @@ export function assistantWorkdayReads(deps: {
   proposals?: (source: WorkdaySource<MemoryProposal[]>) => void;
   /** 这台运行端上的对话列表：别的对话里等你确认的操作要列出来 */
   sessions?: (source: WorkdaySource<SessionSummary[]>) => void;
+  /** 运维报到状态（失败 / 超时没报到） */
+  ops?: (source: WorkdaySource<OpsHeartbeat[]>) => void;
+  /** 通知台账：只用来找「自愈未成功」 */
+  notices?: (source: WorkdaySource<NoticeItem[]>) => void;
   now?: () => number;
 }) {
   let epoch = 0, pending: Promise<void> | null = null;
@@ -33,6 +37,8 @@ export function assistantWorkdayReads(deps: {
   let schedule: WorkdaySource<AssistantScheduleItem[]> = { status: "loading", data: [] };
   let proposals: WorkdaySource<MemoryProposal[]> = { status: "loading", data: [] };
   let sessions: WorkdaySource<SessionSummary[]> = { status: "loading", data: [] };
+  let ops: WorkdaySource<OpsHeartbeat[]> = { status: "loading", data: [] };
+  let notices: WorkdaySource<NoticeItem[]> = { status: "loading", data: [] };
   const refresh = () => {
     const client = deps.client();
     if (!client || !deps.current()) return Promise.resolve();
@@ -40,7 +46,7 @@ export function assistantWorkdayReads(deps: {
       owner = client; epoch++; pending = null;
       goals = { status: "loading", data: [] }; codex = { status: "loading", data: null };
       schedule = { status: "loading", data: [] }; proposals = { status: "loading", data: [] };
-      sessions = { status: "loading", data: [] };
+      sessions = { status: "loading", data: [] }; ops = { status: "loading", data: [] }; notices = { status: "loading", data: [] };
     }
     if (pending) return pending;
     const version = epoch;
@@ -88,6 +94,23 @@ export function assistantWorkdayReads(deps: {
           if (current()) deps.sessions!(sessions = { status: "current", data, checkedAt: checked() });
         });
       }).catch(() => { if (current()) deps.sessions?.(sessions = { ...sessions, status: "unavailable" }); }),
+      Promise.resolve().then(() => {
+        if (!deps.ops) return;
+        if (!client.getOpsHeartbeats) throw new Error("unsupported");
+        return client.getOpsHeartbeats().then(data => {
+          if (!Array.isArray(data) || data.some(item => !item || typeof item.source !== "string"
+              || !["ok", "failed", "overdue"].includes(item.status))) throw new Error("Invalid ops snapshot");
+          if (current()) deps.ops!(ops = { status: "current", data, checkedAt: checked() });
+        });
+      }).catch(() => { if (current()) deps.ops?.(ops = { ...ops, status: "unavailable" }); }),
+      Promise.resolve().then(() => {
+        if (!deps.notices) return;
+        if (!client.listNotices) throw new Error("unsupported");
+        return client.listNotices().then(data => {
+          if (!Array.isArray(data) || data.some(item => !item || typeof item.text !== "string")) throw new Error("Invalid notices");
+          if (current()) deps.notices!(notices = { status: "current", data, checkedAt: checked() });
+        });
+      }).catch(() => { if (current()) deps.notices?.(notices = { ...notices, status: "unavailable" }); }),
     ]).then(() => {}).finally(() => { if (pending === task) pending = null; });
     pending = task;
     return task;

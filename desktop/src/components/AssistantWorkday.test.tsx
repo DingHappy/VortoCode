@@ -43,4 +43,6 @@ it("failed schedules and pending memories link to where they are handled", () =>
   expect(render({ today: [session], progress: [], completed: [], decisions: [session], warnings: [] })).toContain("打开对话");
   const project = { ...session, id: "project:x", target: { kind: "project" as const, id: "x" } };
   expect(render({ today: [project], progress: [], completed: [], decisions: [project], warnings: [] })).toContain("去工作台任务");
+  const ops = { ...session, id: "ops:x", target: { kind: "ops" as const, id: "x" } };
+  expect(render({ today: [ops], progress: [], completed: [], decisions: [ops], warnings: [] })).toContain("查看报到详情");
 });

@@ -47,7 +47,7 @@ import type {
   IsolatedDeliverySnapshot,
   IsolatedDeliveryDiff,
   JournalSnapshot,
-  NoticeItem,
+  NoticeItem, OpsHeartbeat,
   WeeklyJournalSnapshot,
   ProtocolEvent,
   PrDeliveryCheckLog,
@@ -1175,6 +1175,13 @@ export class GatewayClient {
 
   async openTaskPr(id: string): Promise<{ ok?: boolean; url?: string; error?: string }> {
     return this.request(`/api/tasks/${encodeURIComponent(id)}/open_pr`, { method: "POST" });
+  }
+
+  /** 运维报到状态（只读）；旧版服务没有这个接口会抛错，调用方按「读不到」处理 */
+  async getOpsHeartbeats(): Promise<OpsHeartbeat[]> {
+    const payload = await this.request<{ items?: OpsHeartbeat[] }>("/api/ops/heartbeats");
+    if (!Array.isArray(payload.items)) throw new Error("运维状态格式不对");
+    return payload.items;
   }
 
   async listNotices(): Promise<NoticeItem[]> {

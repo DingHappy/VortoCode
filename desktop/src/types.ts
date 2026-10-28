@@ -1000,6 +1000,17 @@ export interface PersonalGoalInput {
   follow_up_at?: string;
 }
 
+/** 家里其它机器的定时活（备份、恢复演练、中转站…）的报到状态；只读，见 /api/ops/heartbeats。 */
+export interface OpsHeartbeat {
+  source: string;
+  /** ok；failed = 最近一次报失败；overdue = 超过约定间隔没报到成功 */
+  status: "ok" | "failed" | "overdue";
+  text: string;
+  last_ok: string;
+  last_report: string;
+  expect_hours: number;
+}
+
 export interface NoticeItem {
   ts?: string;
   source?: string;

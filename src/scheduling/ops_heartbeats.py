@@ -175,5 +175,28 @@ def brief_line(root: str, now: Optional[datetime] = None) -> str:
     return head + "\n" + "\n".join(f"· {item}" for item in problems)
 
 
+def status_rows(root: str, now: Optional[datetime] = None) -> List[Dict[str, Any]]:
+    """每个报到来源的当前状态，给 Desktop 今日概览读：ok / failed（最近一次报失败）/ overdue（超过约定间隔
+    没报到成功）。和 brief_line 同一套判断，但不写状态、不记「已提醒」——读多少次都不改变任何东西。
+    事件型报到不约定间隔，不在其中。"""
+    now = now or datetime.now(timezone.utc)
+    rows: List[Dict[str, Any]] = []
+    for source, entry in sorted(_load(root).items()):
+        if entry.get("event"):
+            continue
+        last_ok = _parse(entry.get("last_ok"))
+        expect = float(entry.get("expect_hours") or 26)
+        if entry.get("status") == "failed":
+            status = "failed"
+        elif last_ok is None or now - last_ok > timedelta(hours=expect):
+            status = "overdue"
+        else:
+            status = "ok"
+        rows.append({"source": source, "status": status, "text": str(entry.get("text") or "")[:_MAX_TEXT],
+                     "last_ok": entry.get("last_ok") or "", "last_report": entry.get("last_report") or "",
+                     "expect_hours": expect})
+    return rows
+
+
 def snapshot(root: str) -> Dict[str, Dict[str, Any]]:
     return _load(root)

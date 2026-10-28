@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import type { AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgressSnapshot, DesktopRuntimeInbox, MemoryProposal, PendingConfirmation, PersonalGoal, RuntimeInboxSession, RuntimeInboxTask, SessionSummary } from "../types";
+import type { AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgressSnapshot, DesktopRuntimeInbox, MemoryProposal, OpsHeartbeat, PendingConfirmation, PersonalGoal, RuntimeInboxSession, RuntimeInboxTask, SessionSummary } from "../types";
 import { buildAssistantWorkday } from "./assistantWorkday";
 import executionWire from "../../../tests/fixtures/execution_observation_v1.json";
 import { vi } from "vitest";
@@ -387,4 +387,33 @@ it("an unreachable or unread project is reported, and its old items become unkno
   expect(stale.warnings).toContain("项目「示例项目」暂时读不到最新状态，那边等你处理的事可能没有列全。");
   expect(stale.warnings).toContain("还没读到 「个人博客」，那边等你处理的事暂未列出。");
   expect(stale.decisions.find(item => item.title === "broken")).toMatchObject({ state: "unknown" });
+});
+
+it("ops check-ins that failed or went quiet stay listed from their state until the machine reports in", () => {
+  const row = (source: string, status: OpsHeartbeat["status"], changes: Partial<OpsHeartbeat> = {}): OpsHeartbeat =>
+    ({ source, status, text: "", last_ok: yesterday, last_report: yesterday, expect_hours: 26, ...changes });
+  const model = buildAssistantWorkday({ ...input(), ops: { status: "current", checkedAt: now.getTime(), data: [
+    row("nas-backup", "failed", { text: "NAS 未挂载" }), row("restore-drill", "overdue", { last_ok: new Date(now.getTime() - 40 * 3_600_000).toISOString() }),
+    row("relay", "ok"), row("new-box", "overdue", { last_ok: "" }),
+  ] } });
+  expect(model.decisions.map(item => item.title)).toEqual(expect.arrayContaining(["运维 · nas-backup", "运维 · restore-drill", "运维 · new-box"]));
+  expect(model.decisions.map(item => item.title)).not.toContain("运维 · relay");
+  expect(model.decisions.find(item => item.title === "运维 · nas-backup")?.detail).toBe("最近一次报失败：NAS 未挂载");
+  expect(model.decisions.find(item => item.title === "运维 · restore-drill")?.detail).toContain("已经 40 小时没有报到成功");
+  expect(model.decisions.find(item => item.title === "运维 · new-box")?.detail).toContain("从没报到成功");
+  expect(model.today.map(item => item.id)).toContain("ops:nas-backup");                   // 昨天坏的今天照样列着
+  const old = buildAssistantWorkday({ ...input(), ops: { status: "unavailable", data: [] } });
+  expect(old.warnings).toContain("运维报到未能取得最新状态（常驻电脑上的服务可能还没升级），备份等定时活的失败可能没有列出。");
+});
+
+it("self-heal failures from the last 24 hours need a decision; successes and older ones do not", () => {
+  const recent = new Date(now.getTime() - 3_600_000).toISOString();
+  const model = buildAssistantWorkday({ ...input(), notices: { status: "current", checkedAt: now.getTime(), data: [
+    { ts: recent, source: "self-heal:relay", text: "⚠ 自愈未成功 [restart]：端口仍不通" },
+    { ts: recent, source: "self-heal:relay", text: "🔧 自愈成功 [restart]：已重启" },
+    { ts: new Date(now.getTime() - 30 * 3_600_000).toISOString(), source: "self-heal:disk", text: "⚠ 自愈未成功 [clean]：空间仍不足" },
+    { ts: recent, source: "ops:nas-backup", text: "🔴 nas-backup 失败" },
+  ] } });
+  expect(model.decisions.map(item => item.title)).toEqual(["自动修复没有成功"]);
+  expect(model.decisions[0].detail).toBe("[restart]：端口仍不通");
 });

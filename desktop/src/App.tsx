@@ -2893,7 +2893,7 @@ function App() {
                   onMemory={() => { setMemoryFocus((count) => count + 1); setAssistantTab("identity"); panelActions.tabOpened("identity"); }}
                   activeSid={activeSid} mainSid={mainChatSid}
                   onSession={(sid) => { setMainView("chat"); void (sid === mainChatSid ? openMainChat() : switchSession(sid)); }}
-                  projectSources={runtimeInboxes}
+                  projectSources={runtimeInboxes} ops={onAssistantHost()}
                   onProjects={() => { void changeAppMode("work").then(() => { openInspector("inbox"); void refreshRuntimeInboxes(); }); }}
                   onRefreshTasks={() => refreshAgentTurns()} onCodexDecision={decideCodexAction} />} />
               : assistantTab === "schedule" ? <AssistantSchedule key={assistantScope} items={assistantSchedule} connected={connection === "connected"} local={!onAssistantHost()}
