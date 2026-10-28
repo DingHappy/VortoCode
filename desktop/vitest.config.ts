@@ -24,6 +24,8 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    // 默认不处理 CSS，`?raw` 读到的是空串；设计变量的检查要读 styles/ 下的原文。
+    css: { include: [/src\/styles\/.+\.css/] },
     // 兜底：脚本里一律用 `vitest run`，裸 `vitest` 是 watch 模式会把门禁挂死。
     // 万一有人漏了 run，这里也不会进 watch。
     watch: false,

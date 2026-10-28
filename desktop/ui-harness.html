@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VortoCode UI harness</title>
+  </head>
+  <body>
+    <!--
+      设计变量和基础组件的独立预览页：`npm run dev` 后开 http://localhost:1420/ui-harness.html
+
+      用来对照 docs/DESIGN_SYSTEM.md 截图检查颜色、字号和组件，浅色/深色都要看。
+      **不进生产包**：vite build 只以 index.html 为入口，本文件不在其中。
+    -->
+    <div id="root"></div>
+    <script type="module" src="/src/ui-harness.tsx"></script>
+  </body>
+</html>
