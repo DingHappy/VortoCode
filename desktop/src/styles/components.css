@@ -1,0 +1,392 @@
+/* ── 基础组件（docs/DESIGN_SYSTEM.md 第 6 节）──────────────────────────────
+   只用 tokens.css 里的变量。对应的 React 组件在 components/ui/。
+   类名统一 vc- 前缀，和旧样式互不影响；界面迁移时换上这些类，再删掉被覆盖的旧样式。 */
+
+/* 线性图标统一描边 1.75（CSS 属性会盖过 lucide 写在 svg 上的 stroke-width） */
+.vc-btn svg,
+.vc-nav-item svg,
+.vc-menu-item svg,
+.vc-row__lead svg {
+  stroke-width: var(--vc-icon-stroke);
+}
+
+/* 按钮：主要 / 次要 / 文字 / 危险，高 32，大按钮 34 */
+.vc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--vc-space-2);
+  height: var(--vc-control-h);
+  padding: 0 var(--vc-space-3);
+  border: 1px solid transparent;
+  border-radius: var(--vc-radius-control);
+  background: transparent;
+  color: var(--vc-text);
+  font-family: var(--vc-font-sans);
+  font-size: var(--vc-size-body);
+  font-weight: var(--vc-weight-medium);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.vc-btn svg {
+  width: var(--vc-icon);
+  height: var(--vc-icon);
+  flex: 0 0 auto;
+}
+
+.vc-btn:focus-visible,
+.vc-nav-item:focus-visible,
+.vc-menu-item:focus-visible,
+.vc-switch:focus-visible,
+.vc-card--selectable:focus-visible {
+  outline: 2px solid var(--vc-focus-ring);
+  outline-offset: 1px;
+}
+
+.vc-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.vc-btn--lg {
+  height: var(--vc-control-h-lg);
+  padding: 0 var(--vc-space-4);
+}
+
+.vc-btn--primary {
+  background: var(--vc-ink);
+  color: var(--vc-on-ink);
+}
+
+.vc-btn--primary:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+.vc-btn--secondary {
+  border-color: var(--vc-border);
+}
+
+.vc-btn--secondary:hover:not(:disabled),
+.vc-btn--text:hover:not(:disabled) {
+  background: var(--vc-hover);
+}
+
+.vc-btn--danger {
+  border-color: var(--vc-danger-border);
+  color: var(--vc-danger-text);
+}
+
+.vc-btn--danger:hover:not(:disabled) {
+  background: var(--vc-danger-bg);
+}
+
+/* 只有图标的按钮：正方形，必须带 aria-label */
+.vc-btn--icon {
+  width: var(--vc-control-h);
+  padding: 0;
+  color: var(--vc-muted);
+}
+
+.vc-btn--icon:hover:not(:disabled) {
+  background: var(--vc-hover);
+  color: var(--vc-text);
+}
+
+/* 侧栏项：高 34；当前项选中底色 + 500，悬停只换浅底 */
+.vc-nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--vc-space-3);
+  width: 100%;
+  height: var(--vc-nav-item-h);
+  padding: 0 var(--vc-space-3);
+  border: 0;
+  border-radius: var(--vc-radius-control);
+  background: transparent;
+  color: var(--vc-text-secondary);
+  font-family: var(--vc-font-sans);
+  font-size: var(--vc-size-body);
+  font-weight: var(--vc-weight-regular);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.vc-nav-item svg {
+  width: var(--vc-icon);
+  height: var(--vc-icon);
+  flex: 0 0 auto;
+  color: var(--vc-muted);
+}
+
+.vc-nav-item:hover {
+  background: var(--vc-hover);
+}
+
+.vc-nav-item[aria-current="page"],
+.vc-nav-item[aria-current="true"] {
+  background: var(--vc-selected);
+  color: var(--vc-text);
+  font-weight: var(--vc-weight-medium);
+}
+
+.vc-nav-item__label {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vc-nav-item__meta {
+  flex: 0 0 auto;
+  color: var(--vc-muted);
+  font-size: var(--vc-size-caption);
+}
+
+/* 分组标题：12 号说明色，不大写不装饰 */
+.vc-group-title {
+  margin: 0;
+  padding: var(--vc-space-4) var(--vc-space-3) var(--vc-space-1);
+  color: var(--vc-muted);
+  font-size: var(--vc-size-caption);
+  font-weight: var(--vc-weight-medium);
+}
+
+/* 列表行：左状态符号，中间标题 + 一行说明，右侧状态词或耗时，行间分隔线 */
+.vc-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vc-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--vc-space-3);
+  padding: var(--vc-space-3) 0;
+  border-bottom: 1px solid var(--vc-divider);
+}
+
+.vc-row:last-child {
+  border-bottom: 0;
+}
+
+.vc-row__lead {
+  display: grid;
+  place-items: center;
+  width: var(--vc-icon-step);
+  height: var(--vc-icon-step);
+  color: var(--vc-muted);
+}
+
+.vc-row__lead svg {
+  width: var(--vc-icon-step);
+  height: var(--vc-icon-step);
+}
+
+.vc-row__body {
+  min-width: 0;
+}
+
+.vc-row__title {
+  overflow: hidden;
+  color: var(--vc-text);
+  font-size: var(--vc-size-body);
+  font-weight: var(--vc-weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vc-row__desc {
+  overflow: hidden;
+  margin-top: 2px;
+  color: var(--vc-muted);
+  font-size: var(--vc-size-small);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vc-row__trail {
+  color: var(--vc-muted);
+  font-size: var(--vc-size-caption);
+}
+
+/* 卡片：白底、1px 描边、圆角 14，不用阴影；可选中的卡片选中时 2px 墨黑描边 */
+.vc-card {
+  padding: var(--vc-space-4);
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-card);
+  background: var(--vc-surface);
+  color: var(--vc-text-secondary);
+  font-size: var(--vc-size-small);
+}
+
+.vc-card--selectable {
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+
+.vc-card--selectable[aria-pressed="true"],
+.vc-card--selectable[aria-checked="true"] {
+  border-color: var(--vc-ink);
+  box-shadow: inset 0 0 0 1px var(--vc-ink);
+}
+
+/* 胶囊 / 标签：全圆，状态色浅底深字 */
+.vc-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--vc-space-2);
+  height: 24px;
+  padding: 0 var(--vc-space-3);
+  border-radius: var(--vc-radius-full);
+  background: var(--vc-fill);
+  color: var(--vc-text-secondary);
+  font-size: var(--vc-size-caption);
+  font-weight: var(--vc-weight-medium);
+  white-space: nowrap;
+}
+
+.vc-pill--wait {
+  background: var(--vc-wait-bg);
+  color: var(--vc-wait-text);
+}
+
+.vc-pill--busy {
+  background: var(--vc-accent-bg);
+  color: var(--vc-accent);
+}
+
+.vc-pill--done {
+  background: var(--vc-done-bg);
+  color: var(--vc-done-text);
+}
+
+.vc-pill--unknown {
+  background: var(--vc-unknown-bg);
+  color: var(--vc-unknown-text);
+}
+
+.vc-pill--failed {
+  background: var(--vc-danger-bg);
+  color: var(--vc-danger-text);
+}
+
+.vc-pill__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--vc-radius-full);
+  background: currentColor;
+}
+
+.vc-pill--wait .vc-pill__dot {
+  background: var(--vc-wait-dot);
+}
+
+/* 菜单：白底、圆角 14、浮层阴影；项高 34～36；分组之间细线 */
+.vc-menu {
+  min-width: 220px;
+  padding: var(--vc-space-1);
+  border: 1px solid var(--vc-border);
+  border-radius: var(--vc-radius-card);
+  background: var(--vc-surface);
+  box-shadow: var(--vc-shadow-pop);
+}
+
+.vc-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--vc-space-3);
+  width: 100%;
+  height: var(--vc-nav-item-h);
+  padding: 0 var(--vc-space-3);
+  border: 0;
+  border-radius: var(--vc-radius-control);
+  background: transparent;
+  color: var(--vc-text);
+  font-family: var(--vc-font-sans);
+  font-size: var(--vc-size-body);
+  text-align: left;
+  cursor: pointer;
+}
+
+.vc-menu-item svg {
+  width: var(--vc-icon);
+  height: var(--vc-icon);
+  color: var(--vc-muted);
+}
+
+.vc-menu-item:hover {
+  background: var(--vc-hover);
+}
+
+.vc-menu-sep {
+  height: 1px;
+  margin: var(--vc-space-1) var(--vc-space-2);
+  border: 0;
+  background: var(--vc-divider);
+}
+
+/* 开关：30×18，开启时强调蓝 */
+.vc-switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--vc-radius-full);
+  background: var(--vc-selected);
+  cursor: pointer;
+}
+
+.vc-switch::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: var(--vc-radius-full);
+  background: var(--vc-surface);
+  content: "";
+  transition: transform 0.15s ease;
+}
+
+.vc-switch[aria-checked="true"] {
+  background: var(--vc-accent);
+}
+
+.vc-switch[aria-checked="true"]::after {
+  transform: translateX(12px);
+}
+
+.vc-switch:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* 空状态：一句话说明现状 + 一个下一步动作 */
+.vc-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--vc-space-3);
+  padding: var(--vc-space-6) 0;
+  color: var(--vc-muted);
+  font-size: var(--vc-size-body);
+}
+
+.vc-empty p {
+  margin: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vc-switch::after {
+    transition: none;
+  }
+}

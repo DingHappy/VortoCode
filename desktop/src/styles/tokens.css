@@ -1,0 +1,162 @@
+/* ── 设计变量（docs/DESIGN_SYSTEM.md 第 5 节）──────────────────────────────
+   新写和迁移过的界面只用这里的 --vc-* 变量，不写死颜色、字号、圆角。
+   颜色按用途命名，深色模式按同一组用途重新取值：跟随系统时走 prefers-color-scheme，
+   用户手动选了浅色/深色时由 <html data-theme> 决定（见 lib/theme.ts）。
+   旧样式里的 --n*、--surface-* 等变量在对应界面迁移完之前保持不动。 */
+
+:root {
+  /* 底色与表面 */
+  --vc-bg: #fafaf9;
+  --vc-sidebar: #f3f3f1;
+  --vc-surface: #ffffff;
+  --vc-selected: #e7e7e4;
+  --vc-fill: #f0f0ee;
+  --vc-hover: #ececea;
+  --vc-border: #e4e4e1;
+  --vc-divider: #ecece9;
+
+  /* 文字 */
+  --vc-text: #18181b;
+  --vc-text-secondary: #3f3f46;
+  --vc-muted: #6b6b70;
+
+  /* 主按钮（墨黑底） */
+  --vc-ink: #18181b;
+  --vc-on-ink: #ffffff;
+
+  /* 强调 / 进行中 */
+  --vc-accent: #3355d1;
+  --vc-accent-bg: #eef1fc;
+
+  /* 状态：等你 / 失败 / 完成 / 无法确认 */
+  --vc-wait-text: #92400e;
+  --vc-wait-bg: #fef3c7;
+  --vc-wait-dot: #d97706;
+  --vc-danger-text: #b91c1c;
+  --vc-danger-bg: #fdecec;
+  --vc-danger-border: #f5d0d0;
+  --vc-done-text: #15803d;
+  --vc-done-bg: #eaf5ee;
+  --vc-unknown-text: #52525b;
+  --vc-unknown-bg: #f0f0ee;
+
+  --vc-focus-ring: rgba(51, 85, 209, 0.45);
+
+  /* 阴影：只有两种，卡片不用阴影 */
+  --vc-shadow-input: 0 1px 2px rgba(24, 24, 27, 0.04), 0 8px 28px rgba(24, 24, 27, 0.07);
+  --vc-shadow-pop: 0 12px 32px rgba(24, 24, 27, 0.14);
+
+  /* 字体 */
+  --vc-font-sans: Inter, "Noto Sans SC", "PingFang SC", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  --vc-font-serif: "Noto Serif SC", "Songti SC", Georgia, serif;
+  --vc-font-mono: "JetBrains Mono", "SF Mono", Menlo, monospace;
+
+  /* 字号：7 级，不用 12 号以下，不用半号 */
+  --vc-size-greeting: 34px;
+  --vc-size-title: 22px;
+  --vc-size-heading: 18px;
+  --vc-size-chat: 15px;
+  --vc-size-body: 14px;
+  --vc-size-small: 13px;
+  --vc-size-caption: 12px;
+
+  /* 字重：只用三种 */
+  --vc-weight-regular: 400;
+  --vc-weight-medium: 500;
+  --vc-weight-strong: 600;
+
+  /* 间距：4 的倍数 */
+  --vc-space-1: 4px;
+  --vc-space-2: 8px;
+  --vc-space-3: 12px;
+  --vc-space-4: 16px;
+  --vc-space-5: 20px;
+  --vc-space-6: 24px;
+  --vc-space-8: 32px;
+  --vc-space-10: 40px;
+
+  /* 圆角 */
+  --vc-radius-control: 8px;
+  --vc-radius-card: 14px;
+  --vc-radius-input: 22px;
+  --vc-radius-full: 999px;
+
+  /* 图标与控件尺寸 */
+  --vc-icon: 16px;
+  --vc-icon-step: 18px;
+  --vc-icon-stroke: 1.75;
+  --vc-control-h: 32px;
+  --vc-control-h-lg: 34px;
+  --vc-nav-item-h: 34px;
+
+  /* 区域宽度 */
+  --vc-sidebar-w: 256px;
+  --vc-chat-max-w: 736px;
+  --vc-detail-w: 352px;
+  --vc-page-pad: 32px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --vc-bg: #1a1a19;
+    --vc-sidebar: #141413;
+    --vc-surface: #222221;
+    --vc-selected: #2e2e2c;
+    --vc-fill: #262625;
+    --vc-hover: #2a2a28;
+    --vc-border: #353533;
+    --vc-divider: #2a2a28;
+    --vc-text: #ececea;
+    --vc-text-secondary: #c9c9c4;
+    --vc-muted: #9a9a96;
+    --vc-ink: #ececea;
+    --vc-on-ink: #18181b;
+    --vc-accent: #8aa0f2;
+    --vc-accent-bg: #1f2540;
+    --vc-wait-text: #fcd34d;
+    --vc-wait-bg: #3a2e12;
+    --vc-wait-dot: #f59e0b;
+    --vc-danger-text: #f87171;
+    --vc-danger-bg: #3b1d1d;
+    --vc-danger-border: #6b2c2c;
+    --vc-done-text: #4ade80;
+    --vc-done-bg: #16301f;
+    --vc-unknown-text: #a1a1aa;
+    --vc-unknown-bg: #262625;
+    --vc-focus-ring: rgba(138, 160, 242, 0.55);
+    --vc-shadow-input: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 28px rgba(0, 0, 0, 0.35);
+    --vc-shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.5);
+  }
+}
+
+:root[data-theme="dark"] {
+  --vc-bg: #1a1a19;
+  --vc-sidebar: #141413;
+  --vc-surface: #222221;
+  --vc-selected: #2e2e2c;
+  --vc-fill: #262625;
+  --vc-hover: #2a2a28;
+  --vc-border: #353533;
+  --vc-divider: #2a2a28;
+  --vc-text: #ececea;
+  --vc-text-secondary: #c9c9c4;
+  --vc-muted: #9a9a96;
+  --vc-ink: #ececea;
+  --vc-on-ink: #18181b;
+  --vc-accent: #8aa0f2;
+  --vc-accent-bg: #1f2540;
+  --vc-wait-text: #fcd34d;
+  --vc-wait-bg: #3a2e12;
+  --vc-wait-dot: #f59e0b;
+  --vc-danger-text: #f87171;
+  --vc-danger-bg: #3b1d1d;
+  --vc-danger-border: #6b2c2c;
+  --vc-done-text: #4ade80;
+  --vc-done-bg: #16301f;
+  --vc-unknown-text: #a1a1aa;
+  --vc-unknown-bg: #262625;
+  --vc-focus-ring: rgba(138, 160, 242, 0.55);
+  --vc-shadow-input: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 28px rgba(0, 0, 0, 0.35);
+  --vc-shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
