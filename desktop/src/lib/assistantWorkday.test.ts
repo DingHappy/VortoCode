@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import type { AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgressSnapshot, MemoryProposal, PendingConfirmation, PersonalGoal, SessionSummary } from "../types";
+import type { AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgressSnapshot, DesktopRuntimeInbox, MemoryProposal, PendingConfirmation, PersonalGoal, RuntimeInboxSession, RuntimeInboxTask, SessionSummary } from "../types";
 import { buildAssistantWorkday } from "./assistantWorkday";
 import executionWire from "../../../tests/fixtures/execution_observation_v1.json";
 import { vi } from "vitest";
@@ -350,4 +350,41 @@ it("an unread or stale session list is reported instead of implying nothing is w
     data: [{ sid: "s", title: "x", messages: 1, updated: 0, pending_input_count: 1 }] } });
   expect(stale.warnings).toContain("对话列表未能取得最新状态，其他对话里等你确认的操作可能没有列出。");
   expect(stale.decisions[0]).toMatchObject({ state: "unknown", detail: "上次记录，当前是否仍在等待待核对", at: "" });
+});
+
+function projectSource(changes: Partial<DesktopRuntimeInbox> = {}, tasks: RuntimeInboxTask[] = [], sessions: RuntimeInboxSession[] = []): DesktopRuntimeInbox {
+  return { runtimeId: "remote:p1", projectId: "p1", scope: "project", label: "示例项目", baseUrl: "", error: "", checkedAt: now.getTime(),
+    snapshot: { version: 1, scope: "project", generated_at: at, counts: {} as never, goals: [], decisions: [], sessions, tasks }, ...changes };
+}
+const projectTask = (id: string, changes: Partial<RuntimeInboxTask> = {}): RuntimeInboxTask =>
+  ({ id, status: "failed", prompt: id, detail: "", owner_session: "sid-s1", goal_id: "", plan_id: "", branch: "", updated: at, ...changes });
+
+it("project work waiting on you is listed once, without assistant dispatches, cancellations or old legacy completions", () => {
+  const session = { sid: "s9", title: "迁移脚本", status: "needs_input", updated: now.getTime() / 1000 - 30 } as RuntimeInboxSession;
+  const model = buildAssistantWorkday({ ...input(),
+    dispatches: [dispatch({ remote_task_id: "via-dispatch", status: "running" })],
+    projectSources: [
+      projectSource({}, [
+        projectTask("broken"), projectTask("finished-today", { status: "done" }),
+        projectTask("finished-last-week", { status: "done", updated: yesterday }), projectTask("cancelled", { status: "cancelled" }),
+        projectTask("via-dispatch"), projectTask("running", { status: "running" }),
+      ], [session]),
+      projectSource({ runtimeId: "general", scope: "general", label: "通用会话" }, [projectTask("assistant-own")]),
+    ] });
+  const project = model.decisions.filter(item => item.target.kind === "project");
+  expect(project.map(item => item.title).sort()).toEqual(["broken", "finished-today", "迁移脚本"]);
+  expect(project.every(item => item.source === "示例项目")).toBe(true);
+  expect(project.find(item => item.title === "finished-today")?.state).toBe("review");
+  expect(project.find(item => item.title === "迁移脚本")?.detail).toBe("这个对话在等你确认或回答");
+  expect(model.warnings).toEqual([]);
+});
+
+it("an unreachable or unread project is reported, and its old items become unknown", () => {
+  const stale = buildAssistantWorkday({ ...input(), projectSources: [
+    projectSource({ error: "offline", checkedAt: now.getTime() - 600_000 }, [projectTask("broken")]),
+    projectSource({ runtimeId: "remote:p2", label: "个人博客", snapshot: null }),
+  ] });
+  expect(stale.warnings).toContain("项目「示例项目」暂时读不到最新状态，那边等你处理的事可能没有列全。");
+  expect(stale.warnings).toContain("还没读到 「个人博客」，那边等你处理的事暂未列出。");
+  expect(stale.decisions.find(item => item.title === "broken")).toMatchObject({ state: "unknown" });
 });

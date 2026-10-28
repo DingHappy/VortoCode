@@ -1,15 +1,16 @@
-import type { AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgressSnapshot, MemoryProposal, PendingConfirmation, PersonalGoal, SessionSummary } from "../types";
+import type { AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgressSnapshot, DesktopRuntimeInbox, MemoryProposal, PendingConfirmation, PersonalGoal, SessionSummary } from "../types";
 import { progressLine } from "./assistantTask";
 import { readExecutionObservation } from "./executionObservation";
 import { hasConfirmedPersonalGoal } from "./personalGoalSnapshot";
 import { freshAt } from "./readFreshness";
+import { buildTaskBoard } from "./taskBoard";
 
 export interface WorkdaySource<T> {
   status: "loading" | "current" | "unavailable";
   data: T;
   checkedAt?: number;
 }
-export type WorkdayTarget = { kind: "dispatch" | "goal" | "codex" | "codex_action" | "confirmation" | "schedule" | "memory" | "session"; id: string };
+export type WorkdayTarget = { kind: "dispatch" | "goal" | "codex" | "codex_action" | "confirmation" | "schedule" | "memory" | "session" | "project"; id: string };
 export interface WorkdayItem {
   id: string; title: string; detail: string; source: string; at: string;
   state: "running" | "decision" | "review" | "verified" | "unknown";
@@ -38,6 +39,8 @@ export function buildAssistantWorkday(input: {
   schedule?: WorkdaySource<AssistantScheduleItem[]>; proposals?: WorkdaySource<MemoryProposal[]>;
   /** 这台运行端的对话列表；activeSid 是当前打开的对话（它的确认卡已由 confirmation 列出），mainSid 用来叫「主要聊天」 */
   sessions?: WorkdaySource<SessionSummary[]>; activeSid?: string; mainSid?: string;
+  /** 各项目运行端的工作快照（工作台看板读的那一份）；不传 = 不看项目 */
+  projectSources?: DesktopRuntimeInbox[];
   connected: boolean; now: Date;
 }): AssistantWorkday {
   const { now } = input, ms = now.getTime();
@@ -185,6 +188,34 @@ export function buildAssistantWorkday(input: {
       add({ id: `session:${session.sid}`, title: `${name}有操作等你确认`, source: "对话", at: updated,
         state: fresh ? "decision" : "unknown", target: { kind: "session", id: session.sid },
         detail: fresh ? `${count} 件，打开对话查看确认卡；不确认它会一直等着` : "上次记录，当前是否仍在等待待核对" }, true);
+    }
+  }
+  // 项目里等你处理的：工作台看板「等你」列里的任务和会话。助理任务单派出去的已在上面列过，不重复；
+  // 通用会话（助理自己）由上面几类来源代表。取消的不算；没有生命周期记录的旧任务只把今天结束的当作待验收。
+  if (input.projectSources) {
+    const dispatched = new Set(input.dispatches.map(task => task.remote_task_id).filter(Boolean));
+    const sources = input.projectSources.filter(source => source.scope !== "general");
+    for (const source of sources.filter(source => source.snapshot)) {
+      const fresh = !source.error && source.snapshot?.version === 1 && freshAt(source.checkedAt, ms);
+      if (!fresh) result.warnings.push(`项目「${source.label}」暂时读不到最新状态，那边等你处理的事可能没有列全。`);
+    }
+    const unread = sources.filter(source => !source.snapshot);
+    if (unread.length) result.warnings.push(`还没读到 ${unread.map(source => `「${source.label}」`).join("、")}，那边等你处理的事暂未列出。`);
+    for (const item of buildTaskBoard(sources)) {
+      if (item.column !== "attention" || (item.kind !== "task" && item.kind !== "session")) continue;
+      const task = item.kind === "task" ? item.source.snapshot!.tasks.find(entry => entry.id === item.id) : undefined;
+      if (task && (dispatched.has(task.id) || task.status === "cancelled")) continue;
+      if (task && !item.lifecycle && task.status === "done" && !today(task.updated, now)) continue;
+      const session = item.kind === "session" ? item.source.snapshot!.sessions.find(entry => entry.sid === item.id) : undefined;
+      if (session && session.status !== "needs_input" && session.status !== "failed") continue;
+      const fresh = !item.source.error && freshAt(item.source.checkedAt, ms);
+      const at = task?.updated || (session && session.updated > 0 && session.updated * 1000 <= ms ? new Date(session.updated * 1000).toISOString() : "");
+      add({ id: `project:${item.key}`, title: item.title, source: item.source.label, at,
+        state: fresh ? (task?.status === "done" ? "review" : "decision") : "unknown",
+        target: { kind: "project", id: item.key },
+        detail: !fresh ? `上次记录：${item.status}，当前状态待核对`
+          : session ? (session.status === "needs_input" ? "这个对话在等你确认或回答" : "这个对话有任务出错或 Hook 报了问题")
+          : `${item.status}；到工作台「任务」里查看原任务` }, true);
     }
   }
   if (input.confirmation) result.decisions.unshift({ id: `confirmation:${input.confirmation.id}`,
