@@ -1082,3 +1082,239 @@
 .vc-mode-assistant .empty-state .composer-wrap {
   padding-top: var(--vc-space-5);
 }
+
+/* 对话里的确认卡：白底卡片，标题写要做什么，正文写具体内容，按钮靠右、主按钮在最右。
+   读过外部内容的回合整张卡用红色描边，提示优先级最高 */
+.vc-mode-assistant .confirm-card {
+  display: flex;
+  gap: var(--vc-space-3);
+  width: 100%;
+  max-width: var(--vc-chat-max-w);
+  box-sizing: border-box;
+  margin: 0 auto var(--vc-space-3);
+  padding: 14px var(--vc-space-4);
+  border: 0;
+  border-radius: var(--vc-radius-card);
+  background: var(--vc-surface);
+  box-shadow: inset 0 0 0 1px var(--vc-border);
+  color: var(--vc-text);
+  font-family: var(--vc-font-sans);
+}
+
+.vc-mode-assistant .confirm-card.tainted {
+  box-shadow: inset 0 0 0 1px var(--vc-danger-border);
+}
+
+.vc-mode-assistant .confirm-icon {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--vc-radius-full);
+  background: var(--vc-wait-bg);
+  color: var(--vc-wait-text);
+  font-size: var(--vc-size-small);
+  font-weight: var(--vc-weight-strong);
+}
+
+.vc-mode-assistant .confirm-card.tainted .confirm-icon {
+  background: var(--vc-danger-bg);
+  color: var(--vc-danger-text);
+}
+
+.vc-mode-assistant .confirm-copy {
+  min-width: 0;
+}
+
+.vc-mode-assistant .confirm-copy strong {
+  display: block;
+  padding-top: 3px;
+  font-size: var(--vc-size-body);
+  font-weight: var(--vc-weight-medium);
+  color: var(--vc-text);
+}
+
+.vc-mode-assistant .confirm-card.tainted .confirm-copy strong {
+  color: var(--vc-danger-text);
+}
+
+.vc-mode-assistant .confirm-copy p {
+  margin: var(--vc-space-2) 0 var(--vc-space-3);
+  font-size: var(--vc-size-body);
+  line-height: 1.6;
+  color: var(--vc-text-secondary);
+}
+
+.vc-mode-assistant .confirm-copy > div,
+.vc-mode-assistant .confirmation-reply > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--vc-space-2);
+}
+
+.vc-mode-assistant .confirmation-reply > p {
+  margin: 0 0 var(--vc-space-2);
+  font-size: var(--vc-size-caption);
+  color: var(--vc-muted);
+}
+
+.vc-mode-assistant .confirm-copy button {
+  height: var(--vc-control-h);
+  padding: 0 var(--vc-space-3);
+  border: 0;
+  border-radius: var(--vc-radius-control);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--vc-border);
+  color: var(--vc-text-secondary);
+  font-family: var(--vc-font-sans);
+  font-size: var(--vc-size-small);
+  cursor: pointer;
+}
+
+.vc-mode-assistant .confirm-copy button:hover:not(:disabled) {
+  background: var(--vc-hover);
+  color: var(--vc-text);
+}
+
+.vc-mode-assistant .confirm-copy button.allow {
+  padding: 0 14px;
+  background: var(--vc-ink);
+  box-shadow: none;
+  color: var(--vc-on-ink);
+  font-weight: var(--vc-weight-medium);
+}
+
+.vc-mode-assistant .confirm-copy button.allow:hover:not(:disabled) {
+  background: var(--vc-ink);
+  color: var(--vc-on-ink);
+  opacity: .88;
+}
+
+.vc-mode-assistant .confirm-copy button:disabled {
+  cursor: default;
+  opacity: .5;
+}
+
+.vc-mode-assistant .confirm-copy button:focus-visible {
+  outline: 2px solid var(--vc-focus-ring);
+  outline-offset: 2px;
+}
+
+.vc-mode-assistant .confirmation-trust {
+  margin: 0 0 var(--vc-space-3);
+  padding-top: var(--vc-space-3);
+  border-top: 1px solid var(--vc-divider);
+  font-size: var(--vc-size-caption);
+  color: var(--vc-text-secondary);
+}
+
+.vc-mode-assistant .confirmation-trust small {
+  color: var(--vc-muted);
+}
+
+.vc-mode-assistant .confirmation-trust select {
+  height: 28px;
+  border: 0;
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-fill);
+  color: var(--vc-text);
+  font-size: var(--vc-size-caption);
+}
+
+.vc-mode-assistant .confirmation-trust-actions button {
+  height: 28px;
+  font-size: var(--vc-size-caption);
+}
+
+/* 定时：和其它标签页同一种列表行，左侧按种类放图标；心跳巡检用红色图标 */
+.vc-panel .assistant-schedule {
+  gap: 0;
+}
+
+.vc-panel .assistant-schedule > .assistant-schedule-card {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: var(--vc-space-3);
+  padding: 9px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.vc-panel .assistant-schedule-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--vc-radius-full);
+  background: var(--vc-fill);
+  color: var(--vc-text-secondary);
+}
+
+.vc-panel .assistant-schedule-icon svg {
+  width: var(--vc-icon);
+  height: var(--vc-icon);
+}
+
+.vc-panel .assistant-schedule-card.heartbeat .assistant-schedule-icon {
+  background: var(--vc-danger-bg);
+  color: var(--vc-danger-text);
+}
+
+.vc-panel .assistant-schedule-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.vc-panel .assistant-schedule-card header strong {
+  font-size: var(--vc-size-body);
+  font-weight: var(--vc-weight-medium);
+  color: var(--vc-text);
+}
+
+.vc-panel .assistant-schedule-state,
+.vc-panel .assistant-schedule-tag {
+  background: transparent;
+  padding: 0;
+  font-size: var(--vc-size-caption);
+  color: var(--vc-muted);
+}
+
+.vc-panel .assistant-schedule-state.on {
+  color: var(--vc-done-text);
+}
+
+.vc-panel .assistant-schedule-card .assistant-schedule-when {
+  font-size: var(--vc-size-small);
+  font-weight: var(--vc-weight-regular);
+  color: var(--vc-muted);
+}
+
+.vc-panel .assistant-schedule-card p {
+  font-size: var(--vc-size-small);
+  color: var(--vc-text-secondary);
+}
+
+.vc-panel .assistant-schedule-card small {
+  font-size: var(--vc-size-caption);
+  color: var(--vc-muted);
+}
+
+.vc-panel .assistant-schedule-card small.assistant-schedule-warn {
+  color: var(--vc-wait-text);
+}
+
+.vc-panel .assistant-schedule-card .assistant-task-actions button {
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--vc-radius-control);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--vc-border);
+  color: var(--vc-text-secondary);
+  font-size: var(--vc-size-caption);
+}
