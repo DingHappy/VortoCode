@@ -7,14 +7,14 @@ import { installUpdate, type UpdateCheck } from "../lib/updateCheck";
 import type { SidebarIdentity } from "../lib/vortoAccount";
 import { Button, IconButton, NavItem } from "./ui";
 
-/** 助理住在哪：在线 / 连不上 / 只在本机。 */
+/** 助理住在哪：在线 / 连不上 / 没连（只在本机运行）。 */
 export type SidebarResident = { state: "online" | "offline" | "local"; name?: string; onClick: () => void };
 
-function residentText(resident: SidebarResident): string {
-  if (resident.state === "local") return "在本机运行";
-  const name = resident.name && resident.name !== "常驻电脑" ? `「${resident.name}」` : "";
-  return resident.state === "online" ? `常驻电脑${name} · 在线` : `常驻电脑${name} · 连不上`;
-}
+const RESIDENT_STATE: Record<SidebarResident["state"], { word: string; title: string }> = {
+  online: { word: "在线", title: "合上笔记本它也照常干活" },
+  offline: { word: "连不上", title: "点击重新连接常驻电脑" },
+  local: { word: "未连接", title: "助理现在在本机运行，合上笔记本就会停；点击连接常驻电脑" },
+};
 
 export function SidebarFooter({ identity, update, resident, onOpenAccount, onOpenSettings, install = installUpdate }: {
   identity: SidebarIdentity;
@@ -35,9 +35,9 @@ export function SidebarFooter({ identity, update, resident, onOpenAccount, onOpe
         <NavItem
           className={`vc-side-resident ${resident.state}`}
           icon={resident.state === "local" ? <Laptop /> : <Server />}
-          label={residentText(resident)}
-          title={resident.state === "offline" ? "点击重新连接常驻电脑" : resident.state === "local" ? "合上笔记本就会停；可以连接常驻电脑" : "合上笔记本它也照常干活"}
-          meta={<i className="vc-status-dot" aria-hidden="true" />}
+          label="常驻电脑"
+          title={`${resident.name && resident.name !== "常驻电脑" ? `「${resident.name}」 · ` : ""}${RESIDENT_STATE[resident.state].title}`}
+          meta={<span className="vc-side-resident-state"><i aria-hidden="true" />{RESIDENT_STATE[resident.state].word}</span>}
           onClick={resident.onClick}
         />
       )}

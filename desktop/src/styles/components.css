@@ -98,14 +98,14 @@
 .vc-nav-item {
   display: flex;
   align-items: center;
-  gap: var(--vc-space-3);
+  gap: 10px;
   width: 100%;
   height: var(--vc-nav-item-h);
-  padding: 0 var(--vc-space-3);
+  padding: 0 10px;
   border: 0;
   border-radius: var(--vc-radius-control);
   background: transparent;
-  color: var(--vc-text-secondary);
+  color: var(--vc-text);
   font-family: var(--vc-font-sans);
   font-size: var(--vc-size-body);
   font-weight: var(--vc-weight-regular);
@@ -118,10 +118,14 @@
   width: var(--vc-icon);
   height: var(--vc-icon);
   flex: 0 0 auto;
-  color: var(--vc-muted);
 }
 
-.vc-nav-item:hover {
+.vc-nav-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.vc-nav-item:hover:not(:disabled) {
   background: var(--vc-hover);
 }
 

@@ -175,9 +175,18 @@ it("sidebar marks phone and offline chats inline instead of grouping them", () =
     onNewSideChat={() => {}} phoneChats={[{ sid: "p1", title: "📱 买菜" }]}
     offlineChats={[{ sid: "o1", title: "周三开会" }, { sid: "o2", title: "" }]} onOpenOfflineChat={() => {}} />);
   expect(html).not.toContain("本机（离线时）");
-  expect(html).toMatch(/买菜<\/span>.*?>手机<\/span>/);
-  expect(html).toMatch(/周三开会<\/span>.*?>本机<\/span>/);
+  expect(html).toMatch(/买菜<\/span><span class="vc-nav-item__meta">手机<\/span>/);
+  expect(html).toMatch(/周三开会<\/span><span class="vc-nav-item__meta">本机<\/span>/);
   expect(html).toContain("本机对话");
   const none = renderToStaticMarkup(<AssistantSidebar mainChat={{ sid: "m" }} sideChats={[]} current="m" onSelect={() => {}} onNewSideChat={() => {}} />);
   expect(none).not.toContain(">本机<");
+});
+
+it("search narrows only the recent list", () => {
+  const html = renderToStaticMarkup(<AssistantSidebar mainChat={{ sid: "m" }} query="周报"
+    sideChats={[{ sid: "s1", title: "整理周报" }, { sid: "s2", title: "签到脚本" }]} current="m" onSelect={() => {}} onNewSideChat={() => {}} />);
+  expect(html).toContain("整理周报");
+  expect(html).not.toContain("签到脚本");
+  expect(html).not.toContain("主要聊天</span>");
+  expect(html).toContain("定时");   // 一级入口不受影响
 });

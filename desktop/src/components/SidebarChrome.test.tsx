@@ -1,14 +1,22 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, it } from "vitest";
 
-import { SidebarBrand, SidebarSectionTitle, WorkNav } from "./SidebarChrome";
+import { SidebarBrand, SidebarSearch, SidebarSectionTitle, WorkNav } from "./SidebarChrome";
 
 const noop = () => {};
 
-it("the search box starts closed", () => {
-  const html = renderToStaticMarkup(<SidebarBrand query="" onQuery={noop} />);
-  expect(html).toContain('aria-label="搜索会话和项目"');
-  expect(html).not.toContain("sidebar-search");
+it("the brand row offers collapsing the sidebar", () => {
+  expect(renderToStaticMarkup(<SidebarBrand onCollapse={noop} />)).toContain('aria-label="收起侧栏"');
+});
+
+it("search is a nav item with its shortcut until opened", () => {
+  const closed = renderToStaticMarkup(<SidebarSearch open={false} query="" placeholder="搜索聊天" onOpenChange={noop} onQuery={noop} />);
+  expect(closed).toContain("搜索");
+  expect(closed).toContain("⌘K");
+  expect(closed).not.toContain("<input");
+  const open = renderToStaticMarkup(<SidebarSearch open query="周报" placeholder="搜索聊天" onOpenChange={noop} onQuery={noop} />);
+  expect(open).toContain('aria-label="搜索聊天"');
+  expect(open).toContain('value="周报"');
 });
 
 it("work nav marks the open page and needs a connection for a new chat", () => {

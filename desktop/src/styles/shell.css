@@ -1,52 +1,67 @@
 /* ── 侧栏骨架与任务胶囊（docs/DESIGN_SYSTEM.md 第 8 节迁移第 2 步）────────────
-   只用 tokens.css 的变量。在 App.tsx 里排在旧样式之后加载。
+   取值对照设计稿 E4「功能放哪」的侧栏。只用 tokens.css 的变量，在 App.tsx 里排在旧样式之后加载。
    工作台的项目和会话列表还是旧样式，迁移工作台时再换。 */
 
 .sidebar.vc-sidebar {
+  padding-top: var(--vc-space-3);
   border-right: 1px solid var(--vc-border);
   background: var(--vc-sidebar);
   color: var(--vc-text);
   font-family: var(--vc-font-sans);
 }
 
+/* 品牌行：方形字标 + 名字，右侧收起侧栏 */
 .vc-side-brand {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: var(--vc-space-5) var(--vc-space-3) var(--vc-space-3) var(--vc-space-5);
+  gap: var(--vc-space-2);
+  padding: 6px 10px 10px 18px;
 }
 
-.vc-side-brand strong {
-  color: var(--vc-text);
-  font-size: var(--vc-size-heading);
+.vc-side-logo {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--vc-radius-inner);
+  background: var(--vc-ink);
+  color: var(--vc-on-ink);
+  font-size: var(--vc-size-caption);
   font-weight: var(--vc-weight-strong);
 }
 
-.vc-side-brand .vc-btn--icon[aria-pressed="true"] {
-  background: var(--vc-selected);
+.vc-side-brand strong {
+  flex: 1 1 auto;
   color: var(--vc-text);
+  font-size: var(--vc-size-body);
+  font-weight: var(--vc-weight-strong);
 }
 
-/* 助理 / 工作台：分段切换，选中段用卡片底色加描边，不用阴影 */
+.vc-side-brand .vc-btn--icon {
+  width: 30px;
+  height: 30px;
+}
+
+/* 助理 / 工作台：分段切换 */
 .vc-segmented {
-  display: flex;
-  gap: var(--vc-space-1);
-  margin: 0 var(--vc-space-3) var(--vc-space-3);
-  padding: var(--vc-space-1);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 0 14px var(--vc-space-2);
+  padding: 3px;
   border-radius: var(--vc-radius-control);
   background: var(--vc-selected);
 }
 
 .vc-segmented button {
-  flex: 1 1 0;
   height: 28px;
-  border: 1px solid transparent;
-  border-radius: var(--vc-radius-control);
+  border: 0;
+  border-radius: var(--vc-radius-inner);
   background: transparent;
   color: var(--vc-muted);
   font-family: var(--vc-font-sans);
-  font-size: var(--vc-size-small);
-  font-weight: var(--vc-weight-medium);
+  font-size: var(--vc-size-body);
+  font-weight: var(--vc-weight-regular);
   cursor: pointer;
 }
 
@@ -55,9 +70,10 @@
 }
 
 .vc-segmented button[aria-checked="true"] {
-  border-color: var(--vc-border);
   background: var(--vc-surface);
   color: var(--vc-text);
+  font-weight: var(--vc-weight-medium);
+  box-shadow: var(--vc-shadow-raised);
 }
 
 .vc-segmented button:focus-visible {
@@ -69,32 +85,67 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 0 var(--vc-space-3);
+  padding: 0 10px;
+}
+
+/* 新对话、搜索 与 一级入口 之间的空隙 */
+.vc-side-gap {
+  height: var(--vc-space-2);
+}
+
+.vc-side-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: var(--vc-nav-item-h);
+  padding: 0 10px;
+  border-radius: var(--vc-radius-control);
+  background: var(--vc-surface);
+  box-shadow: inset 0 0 0 1px var(--vc-border);
+  color: var(--vc-muted);
+}
+
+.vc-side-search svg {
+  width: var(--vc-icon);
+  height: var(--vc-icon);
+  flex: 0 0 auto;
+  stroke-width: var(--vc-icon-stroke);
+}
+
+.vc-side-search input {
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--vc-text);
+  font-family: var(--vc-font-sans);
+  font-size: var(--vc-size-body);
 }
 
 .vc-side-recent {
+  display: flex;
   flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--vc-space-1) var(--vc-space-3) var(--vc-space-3);
-}
-
-.vc-side-recent .vc-nav-item {
-  margin-bottom: 2px;
+  padding: 0 10px var(--vc-space-3);
 }
 
 .vc-side-recent .vc-group-title {
-  padding-top: var(--vc-space-3);
-}
-
-.vc-side-recent .vc-pill {
-  height: 20px;
-  padding: 0 var(--vc-space-2);
+  padding: var(--vc-space-4) 10px var(--vc-space-1);
   font-weight: var(--vc-weight-regular);
 }
 
+/* 「最近」里的条目：高 32，除主要聊天外不带图标 */
+.vc-nav-item.vc-nav-item--recent {
+  height: var(--vc-control-h);
+  gap: var(--vc-space-2);
+}
+
 .vc-side-hint {
-  margin: var(--vc-space-1) var(--vc-space-3);
+  margin: var(--vc-space-1) 10px;
   color: var(--vc-muted);
   font-size: var(--vc-size-caption);
   line-height: 1.6;
@@ -102,17 +153,17 @@
 
 /* 「任务」角标：只计等你处理的件数 */
 .vc-count {
-  display: inline-block;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 var(--vc-space-1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
   border-radius: var(--vc-radius-full);
   background: var(--vc-wait-bg);
   color: var(--vc-wait-text);
   font-size: var(--vc-size-caption);
-  font-weight: var(--vc-weight-medium);
-  line-height: 20px;
-  text-align: center;
+  font-weight: var(--vc-weight-strong);
 }
 
 /* 有来源没读到、也没读到等你的事：只提示待核对，不用琥珀色 */
@@ -134,30 +185,32 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin-top: auto;
-  padding: var(--vc-space-2) var(--vc-space-3) var(--vc-space-3);
-  border-top: 1px solid var(--vc-divider);
+  margin: auto 10px 0;
+  padding: var(--vc-space-2) 0 var(--vc-space-3);
+  border-top: 1px solid var(--vc-selected);
 }
 
-.vc-side-resident .vc-nav-item__label {
-  color: var(--vc-text-secondary);
-  font-size: var(--vc-size-small);
+.vc-side-resident-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--vc-muted);
+  font-size: var(--vc-size-caption);
 }
 
-.vc-status-dot {
-  display: block;
-  width: 8px;
-  height: 8px;
+.vc-side-resident-state i {
+  width: 6px;
+  height: 6px;
   border-radius: var(--vc-radius-full);
-  background: var(--vc-muted);
+  background: currentColor;
 }
 
-.vc-side-resident.online .vc-status-dot {
-  background: var(--vc-done-text);
+.vc-side-resident.online .vc-side-resident-state {
+  color: var(--vc-done-text);
 }
 
-.vc-side-resident.offline .vc-status-dot {
-  background: var(--vc-danger-text);
+.vc-side-resident.offline .vc-side-resident-state {
+  color: var(--vc-danger-text);
 }
 
 .vc-side-update {
@@ -173,11 +226,10 @@
 .vc-side-account {
   display: flex;
   align-items: center;
-  gap: var(--vc-space-3);
+  gap: 10px;
   min-width: 0;
   flex: 1 1 auto;
-  height: 40px;
-  padding: 0 var(--vc-space-2);
+  padding: 6px var(--vc-space-2);
   border: 0;
   border-radius: var(--vc-radius-control);
   background: transparent;
@@ -203,8 +255,8 @@
   width: 26px;
   height: 26px;
   border-radius: var(--vc-radius-full);
-  background: var(--vc-ink);
-  color: var(--vc-on-ink);
+  background: var(--vc-accent-bg);
+  color: var(--vc-accent);
   font-size: var(--vc-size-caption);
   font-weight: var(--vc-weight-strong);
 }
@@ -218,6 +270,7 @@
   display: flex;
   min-width: 0;
   flex-direction: column;
+  line-height: 1.3;
 }
 
 .vc-side-identity > span,
@@ -228,7 +281,7 @@
 }
 
 .vc-side-identity > span {
-  font-size: var(--vc-size-small);
+  font-size: var(--vc-size-body);
   font-weight: var(--vc-weight-medium);
 }
 
@@ -237,12 +290,58 @@
   font-size: var(--vc-size-caption);
 }
 
-/* 顶栏右上角的任务胶囊 */
-.vc-task-pill {
-  height: 28px;
+/* 收起侧栏：左上角留一个展开按钮 */
+.workbench.vc-sidebar-collapsed > .sidebar {
+  display: none;
+}
+
+.workbench.vc-sidebar-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.workbench.vc-sidebar-collapsed.inspector-open {
+  grid-template-columns: minmax(0, 1fr) 340px;
+}
+
+.workbench.vc-sidebar-collapsed.inspector-open.inspector-wide {
+  grid-template-columns: minmax(0, 1fr) minmax(380px, 44%);
+}
+
+.workbench.vc-sidebar-collapsed.inspector-open.computer-open {
+  grid-template-columns: minmax(300px, 1fr) minmax(440px, 48%);
+}
+
+@media (max-width: 1100px) {
+  .workbench.vc-sidebar-collapsed.inspector-open,
+  .workbench.vc-sidebar-collapsed.inspector-open.inspector-wide {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.vc-sidebar-reopen.vc-btn--icon {
+  position: absolute;
+  z-index: 16;
+  top: 12px;
+  left: 12px;
+}
+
+.workbench.vc-sidebar-collapsed .conversation-header {
+  padding-left: 56px;
+}
+
+/* 顶栏右上角的任务胶囊：高 32、13 号字 */
+.vc-pill.vc-task-pill {
+  height: var(--vc-control-h);
+  padding: 0 var(--vc-space-3);
   border: 0;
   font-family: var(--vc-font-sans);
+  font-size: var(--vc-size-small);
   cursor: pointer;
+}
+
+.vc-task-pill .vc-pill__dot {
+  width: 7px;
+  height: 7px;
 }
 
 .vc-task-pill:not(.vc-pill--wait):hover {

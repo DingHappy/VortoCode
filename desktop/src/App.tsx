@@ -36,6 +36,7 @@ import {
   GitCompareArrows,
   Inbox,
   Library,
+  PanelLeft,
   ListChecks,
   Server,
   FolderPlus,
@@ -99,7 +100,8 @@ import { autoCheckForUpdate, type UpdateCheck } from "./lib/updateCheck";
 import { SidebarFooter } from "./components/SidebarFooter";
 import { AttachmentChips, ComposerModelPicker, ConfirmCard, ContextChips, PromptQueuePanel, TrustChip, WorkspaceRequestCard } from "./components/ComposerPanels";
 import { ConversationHome, FirstRunCard } from "./components/ConversationHome";
-import { SidebarBrand, SidebarSectionTitle, WorkNav } from "./components/SidebarChrome";
+import { SidebarBrand, SidebarSearch, SidebarSectionTitle, WorkNav } from "./components/SidebarChrome";
+import { IconButton } from "./components/ui";
 import { ConversationHeader } from "./components/ConversationHeader";
 import { assistantPanelActions } from "./lib/assistantPanelActions";
 import { SidebarProjects } from "./components/SidebarProjects";
@@ -246,6 +248,18 @@ function App() {
   const [projectsOpen, setProjectsOpen] = useState(true);
   const [projectSessions, setProjectSessions] = useState<ProjectSessionSummary[]>([]);
   const [sidebarQuery, setSidebarQuery] = useState("");
+  const [sidebarSearchOpen, setSidebarSearchOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // ⌘K：侧栏收起时也能直接搜（docs/DESIGN_SYSTEM.md 第 2 节「搜索与 ⌘K」）。
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "k") return;
+      event.preventDefault();
+      setSidebarCollapsed(false); setSidebarSearchOpen(true);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   // 当前工作区的会话有变化（新开、发了消息）时，顺带刷新各项目下列出的最近会话。
   const sessionsSignature = sessions.map((item) => `${item.sid}:${item.messages}`).join("|");
   useEffect(() => {
@@ -2357,6 +2371,8 @@ function App() {
   // 侧栏一级入口。任务 / 定时 / 目标 / 定制各自的页面迁好之前，先打开右侧面板的对应标签；再点一次收起。
   const assistantPage: AssistantPage | null = mainView === "artifacts" ? "library"
     : mainView === "chat" && inspectorOpen && !computerWorkspace.view ? PANEL_PAGE[assistantTab] : null;
+  const sidebarSearch = (placeholder: string) => <SidebarSearch open={sidebarSearchOpen} query={sidebarQuery} placeholder={placeholder}
+    onOpenChange={setSidebarSearchOpen} onQuery={setSidebarQuery} />;
   const openAssistantPage = (page: AssistantPage) => {
     if (page === "library") {
       setMainView("artifacts"); void refreshProjectAssets(activeScope !== "general"); return;
@@ -2522,9 +2538,10 @@ function App() {
         )}
       </div>
 
-      <div className={`workbench ${computerWorkspace.view ? "computer-open" : ""} ${mainView === "chat" && inspectorOpen ? "inspector-open" : "inspector-closed"} ${mainView === "chat" && inspectorOpen && appMode !== "assistant" && !showWorkbenchLauncher && ["files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
+      <div className={`workbench ${sidebarCollapsed ? "vc-sidebar-collapsed" : ""} ${computerWorkspace.view ? "computer-open" : ""} ${mainView === "chat" && inspectorOpen ? "inspector-open" : "inspector-closed"} ${mainView === "chat" && inspectorOpen && appMode !== "assistant" && !showWorkbenchLauncher && ["files", "diff", "runs", "project"].includes(inspectorTab) ? "inspector-wide" : ""}`}>
+        {sidebarCollapsed && <IconButton className="vc-sidebar-reopen" label="展开侧栏" icon={<PanelLeft />} onClick={() => setSidebarCollapsed(false)} />}
         <aside className="sidebar vc-sidebar">
-          <SidebarBrand query={sidebarQuery} onQuery={setSidebarQuery} />
+          <SidebarBrand onCollapse={() => setSidebarCollapsed(true)} />
           <ModeSwitch mode={appMode} onChange={(mode) => void changeAppMode(mode)} />
           {appMode === "assistant" ? (
             <AssistantSidebar
@@ -2533,6 +2550,8 @@ function App() {
                 .map((session) => ({ sid: session.sid, title: session.title, busy: session.status === "working" }))}
               current={activeSid}
               page={assistantPage}
+              search={sidebarSearch("搜索聊天")}
+              query={sidebarQuery}
               waiting={assistantWaiting}
               waitingUncertain={!activityComplete}
               onPage={openAssistantPage}
@@ -2544,7 +2563,7 @@ function App() {
               onNewSideChat={() => void newSideChat()}
             />
           ) : <>
-          <WorkNav view={mainView} connected={connection === "connected"}
+          <WorkNav view={mainView} connected={connection === "connected"} search={sidebarSearch("搜索会话和项目")}
             onNewChat={() => { setMainView("chat"); void newSession(); }}
             onWork={() => { openInspector("inbox"); void refreshRuntimeInboxes(); }}
             onArtifacts={() => { setMainView("artifacts"); void refreshProjectAssets(activeScope !== "general"); }} />

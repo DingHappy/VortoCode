@@ -52,7 +52,9 @@ it("footer shows where the assistant lives only when given", () => {
   const footer = (resident?: Parameters<typeof SidebarFooter>[0]["resident"]) =>
     renderToStaticMarkup(<SidebarFooter identity={identity} update={null} resident={resident} onOpenAccount={noop} onOpenSettings={noop} />);
   expect(footer()).not.toContain("vc-side-resident");
-  expect(footer({ state: "online", name: "home", onClick: noop })).toContain("常驻电脑「home」 · 在线");
-  expect(footer({ state: "offline", name: "常驻电脑", onClick: noop })).toContain("常驻电脑 · 连不上");
-  expect(footer({ state: "local", onClick: noop })).toContain("在本机运行");
+  const online = footer({ state: "online", name: "home", onClick: noop });
+  expect(online).toContain("「home」");
+  expect(online).toMatch(/常驻电脑<\/span>.*在线/);
+  expect(footer({ state: "offline", onClick: noop })).toContain("连不上");
+  expect(footer({ state: "local", onClick: noop })).toContain("未连接");
 });
