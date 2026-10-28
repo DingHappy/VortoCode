@@ -123,7 +123,6 @@ import { localGeneral, readLocalCodexObserver } from "./lib/codexObserverHealth"
 import { diag } from "./lib/diagnostics";
 import { checkAttachment } from "./lib/attachments";
 import { dismissOfflineChat, listOfflineChats, offlineChatAttachment, recordOfflineChat } from "./lib/offlineChats";
-import { BuildVersion } from "./components/BuildVersion";
 import { ArtifactCenter } from "./components/ArtifactCenter";
 import { PluginsPage } from "./components/PluginsPage";
 import { PersonalSkillsCard } from "./components/PersonalSkillsCard";
@@ -2517,18 +2516,6 @@ function App() {
 
   return (
     <main className="app-shell">
-      <header className="topbar" data-tauri-drag-region="deep">
-        <div className="topbar-spacer" />
-        <BuildVersion />
-        {/* 平时不摆状态字（MiMo 式干净顶栏）；只有没连上时才露出连接状态。 */}
-        {connection !== "connected" && (
-          <div className={`connection-pill ${connection}`} title={`${runtime.workdir || repoRoot || "通用会话"} · 协议 ${protocolVersion ?? "—"}`}>
-            <span className="connection-dot" />
-            {connectionText}
-          </div>
-        )}
-      </header>
-
       <div className="banner-slot">
         {banner && (
           <div className="banner">
@@ -2677,6 +2664,13 @@ function App() {
             panelOpen={inspectorOpen} waiting={feedWaiting} plan={{ done: planDone, total: plan.length }} busy={busy}
             taskPill={appMode === "assistant" ? <TaskPill waiting={assistantWaiting} busy={assistantBusy} uncertain={!activityComplete}
               open={assistantPage === "tasks"} onOpen={() => openAssistantPage("tasks")} /> : undefined}
+            // 版本号只在「设置 → 关于」里；顶栏平时不摆状态字，只有没连上时才露出连接状态
+            status={connection !== "connected" && (
+              <span className={`connection-pill ${connection}`} title={`${runtime.workdir || repoRoot || "通用会话"} · 协议 ${protocolVersion ?? "—"}`}>
+                <span className="connection-dot" />
+                {connectionText}
+              </span>
+            )}
             onTogglePanel={() => inspectorOpen ? setInspectorOpen(false)
               : appMode === "assistant" || (workbenchTabs.length > 0 && !isManagementTab(inspectorTab)) ? setInspectorOpen(true) : openInspector("feed")}
             onStop={() => void cancelTurn()} />
