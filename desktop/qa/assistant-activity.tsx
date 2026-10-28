@@ -91,10 +91,10 @@ function Fixture() {
       <span>合成批准次数：{decisions}</span>
       {closed && <button onClick={() => setClosed(false)}>打开助理面板</button>}
     </header>
-    <main className={`activity-qa-layout ${computer ? "computer-demo" : ""}`}>
+    <main className={`activity-qa-layout vc-mode-assistant ${computer ? "computer-demo" : ""}`}>
       <section className="conversation"><div className="conversation-header"><strong>主要聊天</strong></div>
         <div className="conversation-scroll"><article className="message user"><div className="message-body">帮我看看本周有哪些事需要跟进。</div></article>
-          <article className="message assistant"><div className="message-author">VortoCode</div><div className="message-body">发布结果正在核对，下一次更新的范围还需要你确认。右侧动态保留每件事的进展与结果。</div></article></div>
+          <article className="message assistant"><div className="message-body">发布结果正在核对，下一次更新的范围还需要你确认。右侧动态保留每件事的进展与结果。</div></article></div>
         {!resolved && <ConfirmCard confirm={confirmation} connected={connected} trust={null} trustBusy={false} onTrust={() => {}} onCheck={() => {}} onAnswer={() => setDecisions(value => value + 1)} />}
         <p className="activity-qa-note">聊天和动态使用合成数据，不提交任务。电脑工作区连接专用远程桌面的只读画面。</p>
       </section>

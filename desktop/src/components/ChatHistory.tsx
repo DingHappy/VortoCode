@@ -1,20 +1,17 @@
 import { Fragment, memo, useMemo } from "react";
 import { sourceLabel } from "../lib/mainChat";
-import type { AssistantAvatar, ConversationMessage, TurnActivity } from "../types";
-import { AssistantAvatarImage } from "./AssistantMode";
+import type { ConversationMessage, TurnActivity } from "../types";
 import { MarkdownMessage } from "./MarkdownMessage";
 import { TurnTimeline } from "./TurnTimeline";
 
 /** 流式正文与输入草稿更新时，历史消息不重新解析；时间线状态仍由原回合资料驱动。 */
 export const ChatHistory = memo(function ChatHistory({ messages, activityGroups, busy, activeTurnRid,
-  assistant, name, avatar, focusedRid }: {
+  assistant, focusedRid }: {
   messages: ConversationMessage[];
   activityGroups: Map<string, TurnActivity[]>;
   busy: boolean;
   activeTurnRid: string | null;
   assistant: boolean;
-  name: string;
-  avatar: AssistantAvatar | null;
   focusedRid?: string | null;
 }) {
   const outputRids = useMemo(() => new Set(messages
@@ -24,9 +21,9 @@ export const ChatHistory = memo(function ChatHistory({ messages, activityGroups,
     <article className={`message ${message.role}${focusedRid && message.rid === focusedRid ? " located-turn" : ""}`}
       data-turn-rid={message.rid} data-message-role={message.role}
       tabIndex={focusedRid && message.rid === focusedRid ? -1 : undefined}>
-      {assistant && message.role === "assistant"
-        ? <div className="message-author with-avatar"><AssistantAvatarImage name={name} avatar={avatar} size={22} />{name}
-          {message.source && <span className="message-source">回复在手机上</span>}</div>
+      {/* 助理模式不写「你」和助理名字：左右位置已经说明是谁说的，只在回复来自手机时标一句 */}
+      {assistant
+        ? message.role === "assistant" && message.source ? <div className="message-author"><span className="message-source">回复在手机上</span></div> : null
         : <div className="message-author">{message.role === "user" ? "你" : message.role === "assistant" ? "VortoCode" : "Runtime"}</div>}
       <div className="message-body">
         {message.role === "user" && sourceLabel(message.source) && <div className="message-source">{sourceLabel(message.source)}</div>}

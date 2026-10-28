@@ -15,8 +15,8 @@ export function matchingCommands(prompt: string, project: boolean) {
   return COMPOSER_COMMANDS.filter(item => (project || item.id !== "files") && `${item.id} ${item.label} ${item.description}`.toLowerCase().includes(query));
 }
 
-export function ComposerCommands({ prompt, onPrompt, project, disabled, onAction, onSend, onPaste, children }: {
-  prompt: string; onPrompt: (value: string) => void; project: boolean; disabled: boolean;
+export function ComposerCommands({ prompt, onPrompt, project, disabled, onAction, onSend, onPaste, placeholder = "描述任务，输入 / 查看快捷操作，Shift+Enter 换行…", children }: {
+  prompt: string; onPrompt: (value: string) => void; project: boolean; disabled: boolean; placeholder?: string;
   onAction: (command: ComposerCommand) => void; onSend: () => void; onPaste?: (event: ClipboardEvent<HTMLTextAreaElement>) => void; children?: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -60,9 +60,9 @@ export function ComposerCommands({ prompt, onPrompt, project, disabled, onAction
       </button>)}
       {!choices.length && <p>没有匹配的快捷操作；Esc 关闭后可发送原文。</p>}
     </div>}
-    <textarea ref={textarea} onPaste={onPaste} aria-label="任务输入" value={prompt} onChange={event => onPrompt(event.target.value)} placeholder="描述任务，输入 / 查看快捷操作，Shift+Enter 换行…" />
+    <textarea ref={textarea} onPaste={onPaste} aria-label="任务输入" value={prompt} onChange={event => onPrompt(event.target.value)} placeholder={placeholder} />
     <div className="composer-command-toolbar">
-      <button className="composer-attach" aria-label="添加与快捷操作" title="添加附件、引用源码或选择项目" aria-expanded={open} disabled={disabled} onClick={() => { setExpanded(value => !value); setDismissed(false); }}><Plus size={17} /><span>添加</span></button>
+      <button className="composer-attach" aria-label="添加与快捷操作" title="添加附件、引用源码或选择项目" aria-expanded={open} disabled={disabled} onClick={() => { setExpanded(value => !value); setDismissed(false); }}><Plus size={17} aria-hidden="true" /></button>
       {children}
     </div>
   </div>;

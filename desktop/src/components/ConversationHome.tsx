@@ -3,15 +3,19 @@
 import type { ReactNode } from "react";
 import { LoaderCircle } from "lucide-react";
 
-export function ConversationHome({ starting, showStarting, assistant, resident, tips, children }: {
+/** 按时段问候：首页唯一用衬线字的地方。 */
+export function greeting(now: Date = new Date()): string {
+  const hour = now.getHours();
+  return hour >= 5 && hour < 11 ? "上午好" : hour >= 11 && hour < 13 ? "中午好" : hour >= 13 && hour < 18 ? "下午好" : "晚上好";
+}
+
+export function ConversationHome({ starting, showStarting, assistant, now, children }: {
   /** 本地引擎还没连上（冷启动、正在拉起或连接中） */
   starting: boolean;
   /** 延后 400ms 才露出「正在启动」，连得快就不闪 */
   showStarting: boolean;
   assistant: boolean;
-  /** 助理在常驻电脑上 */
-  resident: boolean;
-  tips?: ReactNode;
+  now?: Date;
   children?: ReactNode;
 }) {
   return (
@@ -23,10 +27,8 @@ export function ConversationHome({ starting, showStarting, assistant, resident, 
       {starting
         ? <h1 className={`home-starting ${showStarting ? "" : "pending"}`} aria-hidden={!showStarting}><LoaderCircle className="activity-spinner" size={20} />正在启动本地引擎…</h1>
         : assistant
-          ? <><h1>有什么要交代的？</h1><p>{resident
-            ? "交代完就可以合上电脑：它在常驻电脑上接着做，做完了在右侧「动态」里回报。"
-            : "说一件要办的事，做完了会在右侧「动态」里回报。"}</p>
-          {tips}</>
+          // 在哪做、做完在哪看，写在输入框的占位文字里，这里只留一句问候
+          ? <h1 className="vc-greeting">{greeting(now)}，今天想交代点什么？</h1>
           : <><h1>开始一项工作</h1><p>描述你要解决的问题，或选择工作区域开始。</p></>}
       {children}
     </div>

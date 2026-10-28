@@ -862,3 +862,223 @@
 .vc-panel .assistant-goals-overview .workday-heading h3 {
   display: none;
 }
+
+/* 侧栏和助理面板的宽度按规范：256 / 352。窄窗口沿用原来的覆盖层布局 */
+@media (min-width: 1101px) {
+  .workbench {
+    grid-template-columns: var(--vc-sidebar-w) minmax(0, 1fr);
+  }
+
+  .workbench.inspector-open {
+    grid-template-columns: var(--vc-sidebar-w) minmax(0, 1fr) var(--vc-detail-w);
+  }
+
+  .workbench.inspector-open.inspector-wide {
+    grid-template-columns: var(--vc-sidebar-w) minmax(0, 1fr) minmax(380px, 44%);
+  }
+}
+
+/* 助理模式的首页：一句衬线问候，下面是输入框和一排建议，整组在页面中间 */
+.vc-mode-assistant .conversation,
+.vc-mode-assistant .conversation.empty-state {
+  background: var(--vc-bg);
+}
+
+.vc-mode-assistant .conversation.empty-state {
+  grid-template-rows: 56px minmax(max-content, 1fr) auto minmax(80px, 1fr);
+}
+
+.vc-mode-assistant .home-greeting {
+  justify-content: flex-end;
+  height: auto;
+  min-height: 100%;
+  padding: var(--vc-space-6) 0;
+}
+
+/* 首次接模型的卡片会让问候区变高：在问候区里滚动，别顶到顶栏后面 */
+.vc-mode-assistant .empty-state .conversation-scroll {
+  overflow: auto;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.home-greeting h1.vc-greeting {
+  margin: 0;
+  font-family: var(--vc-font-serif);
+  font-size: var(--vc-size-greeting);
+  font-weight: var(--vc-weight-medium);
+  letter-spacing: 0;
+  line-height: 1.3;
+  color: var(--vc-text);
+}
+
+.vc-starter {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: var(--vc-space-2);
+  max-width: var(--vc-chat-max-w);
+  margin: var(--vc-space-4) auto 0;
+}
+
+.vc-starter-chip {
+  height: var(--vc-control-h);
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--vc-radius-full);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--vc-border);
+  color: var(--vc-text-secondary);
+  font-family: var(--vc-font-sans);
+  font-size: var(--vc-size-small);
+  cursor: pointer;
+}
+
+.vc-starter-chip:hover {
+  background: var(--vc-hover);
+  color: var(--vc-text);
+}
+
+.vc-starter-dismiss {
+  height: var(--vc-control-h);
+  padding: 0 var(--vc-space-2);
+  border: 0;
+  background: transparent;
+  color: var(--vc-muted);
+  font-family: var(--vc-font-sans);
+  font-size: var(--vc-size-caption);
+  cursor: pointer;
+}
+
+.vc-starter-dismiss:hover {
+  color: var(--vc-text);
+}
+
+.vc-starter-chip:focus-visible,
+.vc-starter-dismiss:focus-visible {
+  outline: 2px solid var(--vc-focus-ring);
+  outline-offset: 2px;
+}
+
+/* 助理模式的对话：顶栏不画分隔线；用户的话是右侧浅灰气泡，回复不写名字，正文 15 号 */
+.vc-mode-assistant .conversation-header {
+  border-bottom-color: transparent;
+}
+
+.vc-mode-assistant .conversation-header strong {
+  font-size: var(--vc-size-body);
+  font-weight: var(--vc-weight-medium);
+  color: var(--vc-text);
+}
+
+.vc-mode-assistant .conversation-scroll {
+  padding: var(--vc-space-4) max(var(--vc-page-pad), calc((100% - var(--vc-chat-max-w)) / 2)) var(--vc-space-6);
+}
+
+.vc-mode-assistant .message {
+  margin-bottom: var(--vc-space-6);
+}
+
+.vc-mode-assistant .message.user {
+  width: fit-content;
+  max-width: 76%;
+  margin-left: auto;
+  padding: 10px var(--vc-space-4);
+  border-radius: var(--vc-radius-bubble);
+  background: var(--vc-fill);
+  color: var(--vc-text);
+}
+
+.vc-mode-assistant .message-body {
+  font-size: var(--vc-size-chat);
+  line-height: 1.7;
+  color: var(--vc-text);
+}
+
+.vc-mode-assistant .message.user .message-body {
+  line-height: 1.6;
+}
+
+.vc-mode-assistant .message-author {
+  margin-bottom: var(--vc-space-1);
+  font-size: var(--vc-size-caption);
+  color: var(--vc-muted);
+}
+
+/* 输入框：圆角 22、输入框阴影，最宽 736；「+」和发送是圆形按钮 */
+.vc-mode-assistant .composer-wrap,
+.vc-mode-assistant .empty-state .composer-wrap {
+  padding: 0 max(var(--vc-page-pad), calc((100% - var(--vc-chat-max-w)) / 2)) var(--vc-space-6);
+  background: transparent;
+}
+
+.vc-mode-assistant .composer,
+.vc-mode-assistant .empty-state .composer {
+  max-width: var(--vc-chat-max-w);
+  border: 0;
+  border-radius: var(--vc-radius-input);
+  background: var(--vc-surface);
+  box-shadow: var(--vc-shadow-input), inset 0 0 0 1px var(--vc-border);
+}
+
+.vc-mode-assistant .composer:focus-within {
+  box-shadow: var(--vc-shadow-input), inset 0 0 0 1px var(--vc-muted);
+}
+
+.vc-mode-assistant .composer textarea,
+.vc-mode-assistant .empty-state .composer textarea {
+  min-height: 56px;
+  padding: 14px 18px 4px;
+  font-family: var(--vc-font-sans);
+  font-size: var(--vc-size-chat);
+  color: var(--vc-text);
+}
+
+.vc-mode-assistant .empty-state .composer textarea {
+  min-height: 72px;
+}
+
+.vc-mode-assistant .composer-command-toolbar {
+  padding: 0 var(--vc-space-3) var(--vc-space-3);
+}
+
+.vc-mode-assistant .composer-command-toolbar > .composer-attach {
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--vc-radius-full);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--vc-border);
+  color: var(--vc-text-secondary);
+}
+
+.vc-mode-assistant .composer-command-toolbar > .composer-attach:hover:not(:disabled) {
+  background: var(--vc-hover);
+  color: var(--vc-text);
+}
+
+.vc-mode-assistant .composer-footer {
+  min-height: 0;
+  padding: 0;
+}
+
+.vc-mode-assistant .composer-footer button.composer-send {
+  width: 34px;
+  height: 34px;
+  border-radius: var(--vc-radius-full);
+  background: var(--vc-ink);
+  color: var(--vc-on-ink);
+  box-shadow: none;
+}
+
+.vc-mode-assistant .composer-footer button.composer-send:disabled {
+  background: var(--vc-fill);
+  color: var(--vc-muted);
+}
+
+.vc-mode-assistant .empty-state .composer-wrap {
+  padding-top: var(--vc-space-5);
+}

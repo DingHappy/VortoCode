@@ -62,7 +62,7 @@ function Fixture() {
         <ConversationLocation status={location.status} onLatest={location.latest} onRetry={location.retry} />
       <div ref={container} className="conversation-scroll" tabIndex={-1}>
         <ChatHistory messages={messages} activityGroups={activityGroups} busy={false} activeTurnRid={null}
-          assistant name="VortoCode" avatar={null} focusedRid={location.rid} />
+          assistant focusedRid={location.rid} />
       </div></div><p className="location-qa-note">只使用本地合成消息，不连接模型、远端桌面或真实会话。</p></section>
     {selected && <ActivityRecordDialog item={selected} client={detailClient} onClose={() => setSelected(null)}
       onNavigate={() => selected.session === "telegram-qa" ? setPhone({ rid: selected.rid }) : location.locate({ client: clients[sid], sid, rid: selected.rid! })} />}
