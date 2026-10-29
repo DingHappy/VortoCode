@@ -5,6 +5,7 @@ import { WorkbenchLauncher, WorkbenchTabs, type WorkbenchTool } from "./componen
 import { ActivityFeed } from "./components/ActivityFeed";
 import { AssistantTaskCard } from "./components/AssistantTaskCard";
 import { CodexActionCard } from "./components/CodexActionCard";
+import { chatCodexActions } from "./lib/codexActionOutcome";
 import { AssistantWorkday } from "./components/AssistantWorkday";
 import { activityCoverage, type ActivitySource } from "./lib/activitySources";
 import { prepareAvatar } from "./lib/avatar";
@@ -2753,10 +2754,8 @@ function App() {
                 key={`${assistantScope}:${item.id}`} task={item} connected={connection === "connected"}
                 onAction={(action, answer) => actOnDispatch(item, action, answer)} />)}
 
-            {/* 定时监管拟的动作不属于哪段对话：还在等你批时，出现在当前助理对话里 */}
-            {appMode === "assistant" && codexActions.filter(action => (action.session
-              ? action.session.replace(/^sid-/, "") === activeSid
-              : action.status === "proposed") && action.status !== "cancelled").slice(0, 6).map(action => <CodexActionCard
+            {/* 还要你处理的和刚有结果的动作；办完的去「动态」里看（规则见 chatCodexActions） */}
+            {appMode === "assistant" && chatCodexActions(codexActions, activeSid).map(action => <CodexActionCard
                 key={`${assistantScope}:${action.id}`} action={action} connected={connection === "connected"}
                 onDecide={decision => decideCodexAction(action, decision)} />)}
 
