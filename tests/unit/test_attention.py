@@ -66,3 +66,28 @@ def test_a_broken_ledger_does_not_hide_the_others(tmp_path):
     runs_dir.mkdir(parents=True, exist_ok=True)
     (runs_dir / "run-broken.json").write_text("{not json")
     assert [item["kind"] for item in attention_items(root)] == ["dispatch"]
+
+
+def _codex_actions(tmp_path, items):
+    path = tmp_path / ".vortocode" / "codex" / "actions.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(items, ensure_ascii=False))
+
+
+def test_codex_drafts_waiting_for_approval_are_on_the_list(tmp_path):
+    """真机 2026-10-29 晚报：唯一等批的 Codex 话不在「等你处理」里，报成了「没有等你处理的事」。"""
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    fresh, old = now.isoformat(), (now - timedelta(days=2)).isoformat()
+    _codex_actions(tmp_path, [
+        {"id": "cdx-1", "status": "proposed", "kind": "message", "text": "实现 div", "thread_name": "",
+         "thread_cwd": "/work/codex-p1", "updated_at": fresh},
+        {"id": "cdx-2", "status": "unknown", "kind": "message", "text": "x", "thread_name": "改文档", "updated_at": fresh},
+        {"id": "cdx-3", "status": "unknown", "kind": "message", "text": "x", "updated_at": old},
+        {"id": "cdx-4", "status": "sent", "kind": "message", "text": "x", "updated_at": fresh},
+        {"id": "cdx-5", "status": "proposed", "kind": "interrupt", "thread_name": "跑测试", "updated_at": old},
+    ])
+    items = attention_items(str(tmp_path))
+    assert [item["target_id"] for item in items] == ["cdx-2", "cdx-1", "cdx-5"]    # 结果不明的最急；过时一天的不明不挂
+    assert items[1]["title"] == "等你批准给 Codex 发话 · codex-p1「未命名」" and items[1]["detail"] == "实现 div"
+    assert items[2]["title"].startswith("等你批准叫停 Codex")

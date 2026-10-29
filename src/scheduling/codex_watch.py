@@ -757,7 +757,7 @@ def _action_label(action: dict) -> str:
     return f"Codex「{action.get('thread_name')}」{where}"
 
 
-_ACTION_STATUS_TEXT = {"proposed": "等主人批准", "approved": "已批准，等 Mac 交给 Codex", "sending": "正在交给 Codex，结果待核对",
+ACTION_STATUS_TEXT = {"proposed": "等主人批准", "approved": "已批准，等 Mac 交给 Codex", "sending": "正在交给 Codex，结果待核对",
                        "sent": "Codex 已受理（不代表已做完）", "failed": "没发出去", "unknown": "结果无法确认",
                        "cancelled": "主人拒绝了", "expired": "已过时，没发"}
 
@@ -782,7 +782,7 @@ def action_overview(root: str, *, now: Optional[datetime] = None, limit: int = 4
         for item in items[-limit:]:
             verb = "叫停" if item.get("kind") == "interrupt" else f"发话「{str(item.get('text') or '')[:40]}」"
             detail = f"：{str(item.get('error') or '')[:80]}" if item.get("status") in {"failed", "expired"} and item.get("error") else ""
-            lines.append(f"  · {item.get('id')} {verb} → {_ACTION_STATUS_TEXT.get(item.get('status'), item.get('status'))}{detail}")
+            lines.append(f"  · {item.get('id')} {verb} → {ACTION_STATUS_TEXT.get(item.get('status'), item.get('status'))}{detail}")
     return "\n".join(lines)
 
 
