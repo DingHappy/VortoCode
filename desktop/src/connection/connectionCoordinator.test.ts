@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { residentRetryReason, ConnectionCoordinator, localConnectUrl, placeAssistant, residentRetryDelay, retryResident } from "./connectionCoordinator";
+import { residentRetryReason, residentRetrySettled, ConnectionCoordinator, localConnectUrl, placeAssistant, residentRetryDelay, retryResident } from "./connectionCoordinator";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -211,5 +211,14 @@ describe("localConnectUrl", () => {
   it("leaves any other address for the connection to validate", () => {
     expect(localConnectUrl("http://127.0.0.1:8091", ["http://192.168.1.2:8081"], "http://127.0.0.1:8090")).toBe("http://127.0.0.1:8091");
     expect(localConnectUrl("http://10.0.0.9:8080", ["http://192.168.1.2:8081"], "http://127.0.0.1:8090")).toBe("http://10.0.0.9:8080");
+  });
+});
+
+describe("residentRetrySettled", () => {
+  it("重连途中经过「连接中」不算连上，次数不清零，退避才会变长", () => {
+    expect(residentRetrySettled({ onHost: true, connection: "connecting" })).toBe(false);
+    expect(residentRetrySettled({ onHost: true, connection: "error" })).toBe(false);
+    expect(residentRetrySettled({ onHost: false, connection: "connected" })).toBe(false);
+    expect(residentRetrySettled({ onHost: true, connection: "connected" })).toBe(true);
   });
 });

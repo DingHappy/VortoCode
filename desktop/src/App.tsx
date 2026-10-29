@@ -13,6 +13,7 @@ import { resolveMainChat } from "./lib/mainChat";
 import { ChatHistory } from "./components/ChatHistory";
 import { ConversationLocation } from "./components/ConversationLocation";
 import { useConversationLocation } from "./hooks/useConversationLocation";
+import { useStickToBottom } from "./hooks/useStickToBottom";
 import { startPolling } from "./lib/polling";
 import { AssistantActionGate, type AssistantTaskAction } from "./lib/assistantTask";
 import { openAssistantTask } from "./lib/assistantNavigation";
@@ -87,7 +88,7 @@ import type {
   DesktopLlmProfileStatus,
   ProjectSessionSummary, CodexAction, PhoneChat} from "./types";
 import { DecisionsPanel } from "./components/DecisionsPanel";
-import { ConnectionCoordinator, localConnectUrl, placeAssistant, residentRetryDelay, residentRetryReason, retryResident } from "./connection/connectionCoordinator";
+import { ConnectionCoordinator, localConnectUrl, placeAssistant, residentRetryDelay, residentRetryReason, residentRetrySettled, retryResident } from "./connection/connectionCoordinator";
 import { SessionConnection } from "./connection/sessionConnection";
 import { TasksPanel } from "./tasks/TasksPanel";
 import { useTasks } from "./hooks/useTasks";
@@ -227,6 +228,7 @@ function App() {
   const [previewView, setPreviewView] = useState<PreviewView>("plan");
   // 主区域：对话，或侧边栏打开的「插件」「产物中心」页面。切换会话时回到对话。
   const [mainView, setMainView] = useState<"chat" | "plugins" | "artifacts" | "customize" | "management">("chat");
+  useStickToBottom(conversationScrollRef, autoScrollRef, mainView);
   const mainViewRef = useRef(mainView);
   mainViewRef.current = mainView;
   const [settingsSection, setSettingsSection] = useState<SettingsSection | undefined>(undefined);
@@ -1741,12 +1743,12 @@ function App() {
   const [residentRetryRound, setResidentRetryRound] = useState(0);
   /** 常驻电脑最近一次连不上的原因：显示在提示条里（横幅会被随后的本机连接清掉） */
   const [residentFailure, setResidentFailure] = useState<string | null>(null);
+  const residentSettled = residentRetrySettled({ onHost: onAssistantHost(), connection });
   useEffect(() => {
-    if (!residentRetry) {
-      if (onAssistantHost()) { residentRetryRef.current = 0; setResidentFailure(null); }
-      return;
-    }
-    if (busy) return;
+    if (residentSettled) { residentRetryRef.current = 0; setResidentFailure(null); }
+  }, [residentSettled]);
+  useEffect(() => {
+    if (!residentRetry || busy) return;
     const timer = window.setTimeout(() => {
       residentRetryRef.current += 1;
       const host = findAssistantHost(projects);
