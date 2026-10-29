@@ -27,9 +27,18 @@ export function residentRetryReason(state: {
   connection: "connected" | "connecting" | "disconnected" | "error"; switching: boolean;
 }): "missed" | "dropped" | null {
   if (!state.assistantMode || !state.hasHost || state.switching) return null;
-  if (!state.onHost) return state.connection === "connected" ? "missed" : null;
+  // 落在本机且本机也连坏了，同样回头试常驻电脑：以前这里只认「本机已连上」，两头都没连上时就再也不试
+  if (!state.onHost) return state.connection === "connected" || state.connection === "error" ? "missed" : null;
   // 只认「断了」（error）；disconnected 是主动离开或切换中的中间态，不替人连回去
   return state.connection === "error" ? "dropped" : null;
+}
+
+/**
+ * 连本机时用哪个地址。刚从远端退回本机的那一轮渲染里，界面状态里的地址还是远端的：
+ * 认出是登记过的远端地址，就改用上次连本机的地址；别的地址原样交给连接去校验。
+ */
+export function localConnectUrl(current: string, remoteUrls: string[], lastLocal: string | null): string {
+  return remoteUrls.includes(current) ? lastLocal || "http://127.0.0.1:8080" : current;
 }
 
 /**

@@ -19,6 +19,8 @@ import { listen } from "@tauri-apps/api/event";
 import {
   DESKTOP_PROTOCOL_VERSION,
   GatewayClient,
+  HEARTBEAT_DEAD_MS,
+  HEARTBEAT_INTERVAL_MS,
   createSessionId,
   normalizeLocalBaseUrl,
 } from "./gateway";
@@ -70,6 +72,61 @@ describe("registered remote transport", () => {
     await client.disconnect();
     expect(invoke).toHaveBeenLastCalledWith("remote_ws_close", { connId: "native-1" });
     expect(unlisten).toHaveBeenCalledTimes(2);
+  });
+
+  it("confirms delivery only with the pong for its own ping, and drops a connection that stays silent", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal("localStorage", memoryStorage());
+      const handlers = new Map<string, (event: { payload: unknown }) => void>();
+      vi.mocked(listen).mockImplementation(async (name, handler) => {
+        handlers.set(name, handler as (event: { payload: unknown }) => void); return () => undefined;
+      });
+      vi.mocked(invoke).mockImplementation(async (command) => command === "remote_ws_connect" ? "native-2" : undefined);
+      const frame = (data: object) => handlers.get("remote-ws-message")!({ payload: { connId: "native-2", data: JSON.stringify(data) } });
+      const client = new GatewayClient({ baseUrl: "http://192.168.1.2:8080", token: "", remoteProjectId: "registered" });
+      const events: ProtocolEvent[] = [];
+      await client.connect("sid-heartbeat", (event) => events.push(event));
+
+      // 心跳的 ping 先发出去，它的 pong 不能替后发的消息作证
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS);
+      let delivered: boolean | null = null;
+      void client.confirmDelivery(5_000).then((ok) => { delivered = ok; });
+      await Promise.resolve();
+      frame({ type: "pong" });
+      await Promise.resolve();
+      expect(delivered).toBeNull();
+      frame({ type: "pong" });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(delivered).toBe(true);
+      expect(events.some((event) => event.type === "pong")).toBe(false);
+
+      // 一直收不到任何帧：当作连接已死，关掉它并通报断开
+      await vi.advanceTimersByTimeAsync(HEARTBEAT_DEAD_MS + HEARTBEAT_INTERVAL_MS);
+      expect(events[events.length - 1]).toEqual({ type: "runtime_disconnected", reason: "heartbeat" });
+      expect(invoke).toHaveBeenCalledWith("remote_ws_close", { connId: "native-2" });
+      await expect(client.send({ type: "ping" })).rejects.toThrow();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("treats an unanswered delivery check as a dropped connection", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal("localStorage", memoryStorage());
+      vi.mocked(listen).mockImplementation(async () => () => undefined);
+      vi.mocked(invoke).mockImplementation(async (command) => command === "remote_ws_connect" ? "native-3" : undefined);
+      const client = new GatewayClient({ baseUrl: "http://192.168.1.2:8080", token: "", remoteProjectId: "registered" });
+      const events: ProtocolEvent[] = [];
+      await client.connect("sid-silent", (event) => events.push(event));
+      const result = client.confirmDelivery(2_000);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(await result).toBe(false);
+      expect(events[events.length - 1]).toEqual({ type: "runtime_disconnected", reason: "unconfirmed" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("refuses a mismatched remote workspace before sending any task", async () => {

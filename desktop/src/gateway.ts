@@ -72,6 +72,15 @@ import type { ResidentProject } from "./lib/residentPlace";
 
 export const DESKTOP_PROTOCOL_VERSION = 10;
 const SNAPSHOT_TIMEOUT_MS = 15_000;
+/**
+ * 远端连接的心跳：每 10 秒发一个 ping，30 秒什么都没收到就当连接已死。
+ * 真机 2026-10-28：网络断了一分多钟，服务端早已断开，本机这头的 socket 没有任何报错，
+ * 界面一直「已连接」，期间发的消息直接丢了。
+ */
+export const HEARTBEAT_INTERVAL_MS = 10_000;
+export const HEARTBEAT_DEAD_MS = 30_000;
+/** 发完消息等 pong 的时限：服务端按顺序处理入站帧，pong 回来说明前面发的都收到了。 */
+export const DELIVERY_TIMEOUT_MS = 10_000;
 const EVENT_CURSOR_PREFIX = "vortocode.desktop.eventCursor:";
 
 export function createSessionId(): string {
@@ -137,6 +146,13 @@ export class GatewayClient {
   private snapshotReads = new Map<string, Promise<unknown>>();
   private snapshotControllers = new Set<AbortController>();
   private snapshotEpoch = 0;
+  private lastHeard = 0;
+  private heartbeat: ReturnType<typeof setInterval> | null = null;
+  // ping 与 pong 按序一一对应：第 n 个 pong 回来，说明第 n 个 ping 之前发的都已送到
+  private pingsSent = 0;
+  private pongsHeard = 0;
+  private pongWaiters = new Set<{ index: number; finish: (ok: boolean) => void }>();
+  private dropRemote: ((reason: string) => void) | null = null;
 
   constructor(private readonly settings: ConnectionSettings) {}
 
@@ -146,6 +162,8 @@ export class GatewayClient {
 
   async connect(sid: string, onEvent: (event: ProtocolEvent) => void): Promise<void> {
     await this.disconnect();
+    this.pingsSent = 0;
+    this.pongsHeard = 0;
     this.sessionId = sid;
     const cursorKey = `${EVENT_CURSOR_PREFIX}${this.settings.remoteProjectId ? `${this.settings.remoteProjectId}:` : ""}${sid}`;
     const storedCursor = Number.parseInt(localStorage.getItem(cursorKey) ?? "", 10);
@@ -221,13 +239,16 @@ export class GatewayClient {
         if (frame.connId !== this.remoteConnection) return;
         if (frame.reason) {
           this.remoteConnection = null;
+          this.stopHeartbeat();
           identityReject?.(new Error("远端连接已关闭"));
           onEvent({ type: "runtime_disconnected", reason: frame.reason });
           return;
         }
+        this.lastHeard = Date.now();
         try {
           const event = JSON.parse(frame.data || "") as ProtocolEvent;
-          if (typeof event.type === "string") deliver(event);
+          if (event.type === "pong") this.heardPong();
+          else if (typeof event.type === "string") deliver(event);
         } catch { /* Invalid frames never drive the client. */ }
       };
       try {
@@ -237,6 +258,15 @@ export class GatewayClient {
         attaching = false;
         early.forEach(receive);
         if (identity) await identity;
+        const connection = this.remoteConnection;
+        this.dropRemote = (reason) => {
+          if (!connection || this.remoteConnection !== connection) return;
+          this.remoteConnection = null;
+          this.stopHeartbeat();
+          void invoke("remote_ws_close", { connId: connection }).catch(() => undefined);
+          onEvent({ type: "runtime_disconnected", reason });
+        };
+        this.startHeartbeat();
       } catch (error) {
         await this.disconnect();
         throw error;
@@ -252,9 +282,11 @@ export class GatewayClient {
     });
     this.removeListener = this.socket.addListener((message: WebSocketMessage) => {
       if (message.type !== "Text") return;
+      this.lastHeard = Date.now();
       try {
         const event = JSON.parse(message.data) as ProtocolEvent;
-        if (event && typeof event.type === "string") deliver(event);
+        if (event?.type === "pong") this.heardPong();
+        else if (event && typeof event.type === "string") deliver(event);
       } catch {
         // Gateway 的协议是 JSON；坏帧不应让 Desktop 崩溃。
       }
@@ -269,6 +301,8 @@ export class GatewayClient {
   }
 
   async disconnect(): Promise<void> {
+    this.stopHeartbeat();
+    this.dropRemote = null;
     this.snapshotEpoch++;
     this.snapshotReads.clear();
     this.snapshotControllers.forEach(controller => controller.abort());
@@ -283,6 +317,48 @@ export class GatewayClient {
       this.socket = null;
     }
     this.sessionId = "";
+  }
+
+  /**
+   * 确认之前发出的帧已经送到：发一个 ping 等对应的 pong。超时或发不出去返回 false；
+   * 远端连接这时也一并当作已断开处理（交给断线重连），不再往一条死连接里写。
+   */
+  async confirmDelivery(timeoutMs = DELIVERY_TIMEOUT_MS): Promise<boolean> {
+    const delivered = await this.ping(timeoutMs);
+    if (!delivered) this.dropRemote?.("unconfirmed");
+    return delivered;
+  }
+
+  private ping(timeoutMs: number): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      const waiter = {
+        index: ++this.pingsSent,
+        finish: (ok: boolean) => { clearTimeout(timer); this.pongWaiters.delete(waiter); resolve(ok); },
+      };
+      const timer = setTimeout(() => waiter.finish(false), timeoutMs);
+      this.pongWaiters.add(waiter);
+      this.send({ type: "ping" }).catch(() => waiter.finish(false));
+    });
+  }
+
+  private heardPong() {
+    this.pongsHeard += 1;
+    this.pongWaiters.forEach((waiter) => { if (waiter.index <= this.pongsHeard) waiter.finish(true); });
+  }
+
+  private startHeartbeat() {
+    this.stopHeartbeat();
+    this.lastHeard = Date.now();
+    this.heartbeat = setInterval(() => {
+      if (Date.now() - this.lastHeard > HEARTBEAT_DEAD_MS) { this.dropRemote?.("heartbeat"); return; }
+      void this.ping(HEARTBEAT_DEAD_MS);
+    }, HEARTBEAT_INTERVAL_MS);
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeat) clearInterval(this.heartbeat);
+    this.heartbeat = null;
+    this.pongWaiters.forEach((waiter) => waiter.finish(false));
   }
 
   async send(event: Record<string, unknown>): Promise<void> {
