@@ -86,7 +86,7 @@ import type {
   DesktopLlmProfileStatus,
   ProjectSessionSummary, CodexAction, PhoneChat} from "./types";
 import { DecisionsPanel } from "./components/DecisionsPanel";
-import { ConnectionCoordinator, placeAssistant, residentRetryDelay, residentRetryReason, retryResident } from "./connection/connectionCoordinator";
+import { ConnectionCoordinator, localConnectUrl, placeAssistant, residentRetryDelay, residentRetryReason, retryResident } from "./connection/connectionCoordinator";
 import { SessionConnection } from "./connection/sessionConnection";
 import { TasksPanel } from "./tasks/TasksPanel";
 import { useTasks } from "./hooks/useTasks";
@@ -716,7 +716,9 @@ function App() {
       switch (event.type) {
         case "runtime_disconnected":
           setConnection("error");
-          setConnectionNote("远端连接已断开；服务器任务继续运行，点击项目可重新连接");
+          setConnectionNote(remoteProjectRef.current && remoteProjectRef.current === assistantHostRef.current
+            ? "和常驻电脑的连接断了，正在后台重连；那边的任务照常在跑"
+            : "远端连接已断开；服务器任务继续运行，点击项目可重新连接");
           setBusy(false);
           break;
         case "init": {
@@ -987,11 +989,16 @@ function App() {
     async (sid = activeSid, options: RuntimeConnectionOptions = {}): Promise<boolean> => {
       const attempt = sessionConnectionRef.current!.begin();
       coordinator.connectBegan();
-      const requestedBaseUrl = options.baseUrl ?? baseUrl;
       const requestedRepoRoot = options.repoRoot ?? repoRoot;
       const requestedToken = options.token ?? token;
       const remoteAssistant = Boolean(options.remoteProjectId ?? remoteProjectRef.current)
         && assistantHostRef.current === (options.remoteProjectId ?? remoteProjectRef.current);
+      // 刚从常驻电脑退回本机时，这一轮渲染里的 baseUrl 还是常驻电脑的地址：连本机就用本机最近一次的地址。
+      // 真机 2026-10-28：断线后退回本机、再打开主要聊天，拿常驻电脑地址连本机，报「V0 只允许连接 127.0.0.1」。
+      const requestedBaseUrl = options.baseUrl
+        ?? (options.remoteProjectId ?? remoteProjectRef.current ? baseUrl : localConnectUrl(baseUrl,
+          projects.filter((project) => project.kind === "remote").map((project) => project.baseUrl),
+          localStorage.getItem(STORAGE_KEYS.baseUrl)));
       const requestedScope = remoteAssistant ? "general"
         : options.scope ?? runtime.scope ?? (requestedRepoRoot.trim() ? "project" : "general");
       setBanner(null);
@@ -1046,7 +1053,7 @@ function App() {
         setConnectionNote(errorText(error, "连接失败"));
         return false;
       }
-    }, [activeSid, baseUrl, beginNotificationSync, coordinator, endNotificationSync, handleProtocolEvent, refreshAllForScope, rememberProject, repoRoot, runtime.scope, token],
+    }, [activeSid, baseUrl, beginNotificationSync, coordinator, endNotificationSync, handleProtocolEvent, projects, refreshAllForScope, rememberProject, repoRoot, runtime.scope, token],
   );
 
   const startWorkspace = useCallback(async (options: StartWorkspaceOptions): Promise<boolean> => {
@@ -1727,6 +1734,8 @@ function App() {
     onHost: onAssistantHost(), connection, switching: projectSwitching });
   const residentMissed = residentRetry === "missed";
   const residentRetryRef = useRef(0);
+  const residentRetryDiag = (reason: string) => diag("resident.retry_unreachable",
+    `${residentRetry === "dropped" ? "断线后" : ""}第 ${residentRetryRef.current} 次：${reason}`, "warn");
   // 每次重试结束都 +1，定时器据此重排：以前只按状态变化排，失败一次之后就再也不试了
   const [residentRetryRound, setResidentRetryRound] = useState(0);
   /** 常驻电脑最近一次连不上的原因：显示在提示条里（横幅会被随后的本机连接清掉） */
@@ -1743,8 +1752,20 @@ function App() {
       if (!host) return;
       void retryResident({
         reachable: () => probeAssistantHost(host.id),
-        connect: async () => { await changeAppMode("assistant"); return onAssistantHost(); },
-        onUnreachable: (reason) => { diag("resident.retry_unreachable", `${residentRetry === "dropped" ? "断线后" : ""}第 ${residentRetryRef.current} 次：${reason}`, "warn"); setResidentFailure(reason); },
+        connect: residentRetry === "dropped"
+          // 断线后只连回常驻电脑，连不上就留在原处等下一轮；不走启动时那条「退回本机」的路——
+          // 退回会把主要聊天换成本机的，网络一好又得切回来（真机 2026-10-28 还因此卡死在本机）。
+          ? async () => {
+            const result = await connectAssistantHost(host);
+            if (result === true) return true;
+            residentRetryDiag(result);
+            setResidentFailure(result);
+            setConnection("error");
+            setConnectionNote(result);
+            return false;
+          }
+          : async () => { await changeAppMode("assistant"); return onAssistantHost(); },
+        onUnreachable: (reason) => { residentRetryDiag(reason); setResidentFailure(reason); },
       }).finally(() => setResidentRetryRound((round) => round + 1));
     }, residentRetryDelay(residentRetryRef.current));
     return () => window.clearTimeout(timer);
@@ -1858,6 +1879,21 @@ function App() {
     try {
       await client.send(agentFrame(outgoing, requestedMode, modelChoice && !onAssistantHost() ? modelChoice : null));
       if (appMode === "assistant" && !onAssistantHost() && findAssistantHost(projects)) setOfflineChatIds(recordOfflineChat(activeSid));
+      // 写进 socket 不等于送到：连接半死时写进去也不报错。等对应的 pong，等不到就把文字放回输入框。
+      void client.confirmDelivery().then((delivered) => {
+        if (delivered) return;
+        diag("send.unconfirmed", `rid=${rid}`, "warn");
+        if (activeTurnRidRef.current === rid) {
+          setBusy(false);
+          updateActiveTurnRid(null);
+        }
+        setActivities((previous) => upsertActivity(previous, {
+          id: `${rid}:thinking`, rid, kind: "phase", phase: "thinking", status: "failed", label: "没确认送达",
+        }));
+        setPrompt((current) => current.trim() ? current : text);
+        setAttachments((current) => current.length > 0 ? current : selectedAttachments);
+        setBanner("这条消息没确认送达，连接可能断了；文字已放回输入框。连上后先看看对话里有没有它，再决定要不要重发");
+      });
       return true;
     } catch (error) {
       if (!willQueue) {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { residentRetryReason, ConnectionCoordinator, placeAssistant, residentRetryDelay, retryResident } from "./connectionCoordinator";
+import { residentRetryReason, ConnectionCoordinator, localConnectUrl, placeAssistant, residentRetryDelay, retryResident } from "./connectionCoordinator";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -195,6 +195,21 @@ describe("residentRetryReason", () => {
     expect(residentRetryReason({ ...base, connection: "error", switching: true })).toBeNull();
     expect(residentRetryReason({ ...base, connection: "error", assistantMode: false })).toBeNull();
     expect(residentRetryReason({ ...base, onHost: false, hasHost: false })).toBeNull();
-    expect(residentRetryReason({ ...base, onHost: false, connection: "error" })).toBeNull();   // 本机也断了：先由连接本身处理
+    expect(residentRetryReason({ ...base, onHost: false, connection: "disconnected" })).toBeNull();
+  });
+  it("keeps retrying the resident computer when the local fallback is broken too", () => {
+    // 真机 2026-10-28：断线后退回本机又连坏了，两头都没连上，网络恢复后也不再试
+    expect(residentRetryReason({ ...base, onHost: false, connection: "error" })).toBe("missed");
+  });
+});
+
+describe("localConnectUrl", () => {
+  it("replaces a stale resident address with the last local one", () => {
+    expect(localConnectUrl("http://192.168.1.2:8081", ["http://192.168.1.2:8081"], "http://127.0.0.1:8090")).toBe("http://127.0.0.1:8090");
+    expect(localConnectUrl("http://192.168.1.2:8081", ["http://192.168.1.2:8081"], null)).toBe("http://127.0.0.1:8080");
+  });
+  it("leaves any other address for the connection to validate", () => {
+    expect(localConnectUrl("http://127.0.0.1:8091", ["http://192.168.1.2:8081"], "http://127.0.0.1:8090")).toBe("http://127.0.0.1:8091");
+    expect(localConnectUrl("http://10.0.0.9:8080", ["http://192.168.1.2:8081"], "http://127.0.0.1:8090")).toBe("http://10.0.0.9:8080");
   });
 });
