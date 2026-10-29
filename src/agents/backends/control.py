@@ -17,6 +17,12 @@ class BackendControlError(RuntimeError):
     """An operation was refused or its receipt cannot be verified."""
 
 
+class ControlOutcomeUnknown(BackendControlError):
+    """The request may have reached the core, but its receipt cannot be verified.
+
+    Distinct from a refusal: the caller must not report it as "not sent", and must not retry it."""
+
+
 @dataclass(frozen=True)
 class SessionState:
     backend_id: str
@@ -92,12 +98,12 @@ async def control_session(backend: SessionControlBackend, session_id: str, *,
     if (receipt.backend_id != backend.backend_id or receipt.session_id != session_id
             or receipt.operation != operation or not receipt.turn_id
             or (operation != "start" and receipt.turn_id != state.turn_id)):
-        raise BackendControlError("请求可能已送达，但回执身份不匹配；请先核对会话，不要重复发送")
+        raise ControlOutcomeUnknown("请求可能已送达，但回执身份不匹配；请先核对会话，不要重复发送")
     if receipt.execution_ref is not None:
         ref = receipt.execution_ref
         if (ref.backend_id != backend.backend_id or ref.session_id != session_id or ref.turn_id != receipt.turn_id
                 or (state.execution is not None and (ref.instance_id != state.execution.ref.instance_id
                     or ref.scope != state.execution.ref.scope
                     or (operation != "start" and ref.key != state.execution.ref.key)))):
-            raise BackendControlError("请求可能已送达，但执行来源回执不匹配；请先核对会话，不要重复发送")
+            raise ControlOutcomeUnknown("请求可能已送达，但执行来源回执不匹配；请先核对会话，不要重复发送")
     return receipt

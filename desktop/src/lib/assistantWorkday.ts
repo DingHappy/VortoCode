@@ -2,6 +2,7 @@ import type { AssistantDispatch, AssistantScheduleItem, CodexAction, CodexProgre
 import { progressLine } from "./assistantTask";
 import { readExecutionObservation } from "./executionObservation";
 import { hasConfirmedPersonalGoal } from "./personalGoalSnapshot";
+import { codexActionOutcome } from "./codexActionOutcome";
 import { freshAt } from "./readFreshness";
 import { buildTaskBoard } from "./taskBoard";
 
@@ -136,12 +137,13 @@ export function buildAssistantWorkday(input: {
   for (const action of input.codexActions) {
     if (!["proposed", "approved", "sending", "unknown", "failed"].includes(action.status)) continue;
     if ((action.status === "failed" || action.status === "unknown") && !today(action.updated_at, now)) continue;
-    const unconfirmed = action.status === "approved" || action.status === "sending" || action.status === "unknown";
+    const outcome = codexActionOutcome(action);
+    const unconfirmed = outcome === "approved" || outcome === "sending" || outcome === "unknown";
     result.decisions.push({ id: `codex_action:${action.id}`, title: action.thread_name,
       detail: action.status === "approved" ? "动作已批准，尚未确认交给 Codex；请核对原动作，不要重复发送"
         : action.status === "sending" ? "动作已被认领，发送结果仍待核对；请勿重复发送"
-        : action.status === "unknown" ? "交给 Codex 后没收到回执，结果无法确认；请看 Codex 会话，不要重复发送"
-        : action.status === "failed" ? action.error || "动作未能确认送达，请核对原因与原会话"
+        : outcome === "unknown" ? `结果无法确认：${action.error || "交给 Codex 后没收到回执"}；请看 Codex 会话，不要重复发送`
+        : outcome === "failed" ? `没发出去：${action.error || "请核对原因与原会话"}`
         : action.kind === "interrupt" ? "助理建议停止本轮，等你审阅" : "助理拟好下一步，等你审阅发送正文",
       source: "Codex 动作", state: unconfirmed ? "unknown" : "decision", at: action.updated_at,
       target: { kind: "codex_action", id: action.id } });

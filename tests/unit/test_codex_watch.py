@@ -282,7 +282,7 @@ async def test_observer_claims_before_sending_and_reports_results():
     codex = _FakeCodex()
     done = await observer.run_approved_actions(codex, [_thread(status="idle", turn=_turn(status="completed"))], resident=resident)
     assert done == 1 and [call[0] for call in codex.calls] == ["thread/read", "thread/turns/list", "turn/start"]
-    assert ("POST", "/api/codex/actions/cdx-a/result", {"ok": True, "error": ""}) in calls
+    assert ("POST", "/api/codex/actions/cdx-a/result", {"ok": True, "error": "", "uncertain": False}) in calls
     assert not any("cdx-b/result" in call[1] for call in calls)
 
 
@@ -446,7 +446,7 @@ async def test_observer_keeps_unreported_receipts_and_never_resends(monkeypatch)
     threads = [_thread(status="idle", turn=_turn(status="completed"))]
     with pytest.raises(OSError):
         await observer.run_approved_actions(codex, threads, resident=resident)
-    assert observer._UNREPORTED == {"cdx-a": {"ok": True, "error": ""}}
+    assert observer._UNREPORTED == {"cdx-a": {"ok": True, "error": "", "uncertain": False}}
     sends = sum(1 for call in codex.calls if call[0] == "turn/start")
     online["value"] = True
     await observer.run_approved_actions(codex, threads, resident=resident)

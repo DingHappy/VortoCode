@@ -19,7 +19,7 @@ it("shows the exact text and lets you approve on the card itself", () => {
 it("finished actions show their outcome without buttons", () => {
   const html = renderToStaticMarkup(<CodexActionCard action={{ ...action, status: "failed", error: "它已经停了", tainted: false }}
     connected onDecide={async () => {}} />);
-  expect(html).toContain("动作未能确认送达");
+  expect(html).toContain("没发出去");
   expect(html).toContain("它已经停了");
   expect(html).not.toContain("批准发送");
 });
@@ -37,7 +37,14 @@ it.each(["approved", "sending", "failed", "sent"] as const)("shows receipt state
   const html = renderToStaticMarkup(<CodexActionCard action={action} connected onDecide={async () => {}} />);
   expect(html).not.toContain("批准叫停");
   expect(html).not.toContain("已停止");
-  expect(html).toContain(status === "sent" ? "受理" : status === "approved" ? "尚未确认" : status === "sending" ? "待核对" : "未能确认");
+  expect(html).toContain(status === "sent" ? "受理" : status === "approved" ? "尚未确认" : status === "sending" ? "待核对" : "没发出去");
+});
+
+it("an older host's uncertain failure is shown as unknown, not as not sent", () => {
+  const html = renderToStaticMarkup(<CodexActionCard action={{ ...action, status: "failed", tainted: false,
+    error: "Codex 响应超时，发送结果无法确认；请先核对会话，不要重复发送" }} connected onDecide={async () => {}} />);
+  expect(html).toContain("结果无法确认");
+  expect(html).not.toContain("没发出去");
 });
 
 it("unknown outcomes say so, point at the Codex session, and offer no buttons", () => {
