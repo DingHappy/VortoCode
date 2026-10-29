@@ -174,3 +174,71 @@ async def test_handover_ends_when_the_session_closes_or_the_work_is_done(tmp_pat
     assert watch.load_handovers(root) == {}
     digest = notes.texts()[0]
     assert "「临时会话」" in digest and "交接自动收回" in digest and "交接已收回" in digest
+
+
+def test_a_session_that_never_started_cannot_be_drafted_for(tmp_path):
+    """真机 2026-10-28：Codex 拒绝给还没收到第一句话的会话发消息（not materialized），批了也只会失败。"""
+    root = str(tmp_path)
+    fresh = _thread()
+    fresh["turn"] = None
+    _report(root, [fresh], T0)
+    watch.hand_over(root, watch.load_state(root)["threads"][0], now=T0)
+    with pytest.raises(watch.CodexActionError, match="还没开始过"):
+        watch.propose_action(root, thread="#000001", kind="message", text="写 add")
+    assert not watch.load_actions(root)
+
+
+def _sending(root):
+    _report(root, [_done()], T0)
+    watch.hand_over(root, watch.load_state(root)["threads"][0], now=T0)
+    action = watch.propose_action(root, thread="#000001", kind="message", text="补测试")
+    watch.decide_action(root, action["id"], True)
+    watch.claim_action(root, action["id"])
+    return action["id"]
+
+
+def test_a_refusal_is_not_sent_but_an_unverifiable_receipt_is_unknown(tmp_path):
+    root = str(tmp_path)
+    refused = watch.finish_action(root, _sending(root), ok=False, error="Codex 拒绝 thread/turns/list")
+    assert refused["status"] == "failed"
+    assert watch.finish_action(root, _sending(root), ok=False, error="超时", uncertain=True)["status"] == "unknown"
+    # 旧版观察员不带 uncertain：按原因认出来
+    legacy = watch.finish_action(root, _sending(root), ok=False, error="Codex 响应超时，发送结果无法确认；请先核对会话")
+    assert legacy["status"] == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_observer_tells_a_refusal_from_an_unverifiable_receipt():
+    from src.scheduling import codex_observer as observer
+
+    class Codex:
+        def __init__(self, start):
+            self.start = start
+
+        async def call(self, method, params):
+            if method == "thread/read":
+                return {"thread": {"id": "th-test-000001", "status": {"type": "idle"}}}
+            if method == "thread/turns/list":
+                return {"data": [{"id": "t1", "status": "completed"}]}
+            return self.start()
+
+    def refuse():
+        raise RuntimeError("thread is not materialized yet")
+
+    def time_out():
+        raise TimeoutError
+
+    threads = [_done()]
+    action = {"kind": "message", "thread_id": "th-test-000001", "text": "补测试", "session": "user"}
+    refused = await observer.run_action(Codex(refuse), action, threads)
+    assert refused["ok"] is False and refused["uncertain"] is False and "materialized" in refused["error"]
+    unknown = await observer.run_action(Codex(time_out), action, threads)
+    assert unknown["ok"] is False and unknown["uncertain"] is True and "无法确认" in unknown["error"]
+
+    def drop():
+        raise ConnectionError("socket closed")      # 发出去之后连接断了：可能已送达
+
+    dropped = await observer.run_action(Codex(drop), action, threads)
+    assert dropped["uncertain"] is True and "连接中断" in dropped["error"]
+    assert await observer.run_action(Codex(lambda: {"turn": {"id": "t2"}}), action, threads) == \
+        {"ok": True, "error": "", "uncertain": False}

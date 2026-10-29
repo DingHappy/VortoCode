@@ -197,7 +197,10 @@ it("没收到回执的动作显示结果无法确认，不当成功也不当失�
 
 it("受理、失败、过时分别显示；撤回动作不计入动态，未知状态不冒充完成", () => {
   expect(codexActionFeedItem(action({ status: "sent" }))).toMatchObject({ statusLabel: "请求已受理", summary: "请求已获受理，不代表 Codex 已完成任务" });
-  expect(codexActionFeedItem(action({ status: "failed", error: "连接中断" }))).toMatchObject({ status: "failed", summary: "连接中断" });
+  expect(codexActionFeedItem(action({ status: "failed", error: "Codex 拒绝 thread/turns/list" })))
+    .toMatchObject({ status: "failed", statusLabel: "没发出去", summary: "没发出去：Codex 拒绝 thread/turns/list" });
+  expect(codexActionFeedItem(action({ status: "failed", error: "请求可能已送达，但 Codex 回执无法确认" })))
+    .toMatchObject({ status: "waiting", statusLabel: "结果无法确认" });
   expect(codexActionFeedItem(action({ status: "expired" }))).toMatchObject({ status: "stopped", statusLabel: "已过时" });
   expect(codexActionFeedItem(action({ status: "cancelled" }))).toBeNull();
   expect(codexActionFeedItem(action({ status: "future" as CodexAction["status"] }))).toMatchObject({ status: "stopped", statusLabel: "状态待核对" });
