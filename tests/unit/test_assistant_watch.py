@@ -443,3 +443,25 @@ async def test_report_never_talks_about_its_material(tmp_path, monkeypatch):
     text = await watch.compose_report(str(tmp_path), datetime(2026, 10, 22, 9, 0, tzinfo=TZ), "早报", llm=_LLM())
     assert text == "🗒 早报\n修登录的任务单等你确认。"
     assert "不要提「素材」" in seen[0]
+
+
+def test_report_tells_what_became_of_codex_drafts_mentioned_in_chat(tmp_path, monkeypatch):
+    """真机 2026-10-29 晚报：白天对话的结局写着「待批准」，晚上早已发出，模型却报成还有 3 条在等。"""
+    from src.gateway import turn_digest
+    root = str(tmp_path)
+    now = datetime(2026, 10, 29, 21, 0, tzinfo=TZ)
+    path = tmp_path / ".vortocode" / "codex" / "actions.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps([
+        {"id": "cdx-99facbd71d", "status": "sent", "kind": "message", "updated_at": now.isoformat()},
+        {"id": "cdx-882fbc8437", "status": "expired", "kind": "interrupt", "updated_at": now.isoformat()},
+    ]))
+    monkeypatch.setattr(turn_digest, "recent_turns", lambda *_a: [
+        {"title": "拟指令待批准", "outcome": "拟好 cdx-99facbd71d，待批准后发送", "at": now.isoformat()},
+        {"title": "拟叫停 cdx-882fbc8437", "outcome": "待批准", "at": now.isoformat()},
+        {"title": "闲聊", "outcome": "聊完了", "at": now.isoformat()},
+    ])
+    facts = watch._scrub_ids(watch.build_report(root, now, "晚报"))
+    assert "待批准后发送（现在：Codex 已受理（不代表已做完））" in facts
+    assert "待批准（现在：已过时，没发）" in facts
+    assert "聊完了\n" in facts and "cdx-" not in facts

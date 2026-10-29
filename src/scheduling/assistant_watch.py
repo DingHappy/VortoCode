@@ -253,14 +253,33 @@ def report_material(root: str, now: datetime):
     return turns, active, waiting
 
 
+_CODEX_ACTION_ID = re.compile(r"(?<![0-9A-Za-z-])cdx-[0-9a-f]{6,}(?![0-9a-f])")   # 紧贴汉字时 \b 不算边界
+
+
+def _codex_now_status(root: str) -> Callable[[str], str]:
+    """对话结局是当时写的（「拟好了，待批准」），到晚报时早就发出或过时了。
+    真机 2026-10-29 晚报：把白天三条「待批准」当成现在还在等，其实都已发出。
+    这里按编号补上现在的状态；编号随后被 _scrub_ids 去掉，留下的是状态。"""
+    from src.scheduling.codex_watch import ACTION_STATUS_TEXT, load_actions
+    status = {str(item.get("id")): str(item.get("status") or "") for item in load_actions(root)}
+
+    def describe(text: str) -> str:
+        found = [ACTION_STATUS_TEXT.get(status[action_id], status[action_id])
+                 for action_id in dict.fromkeys(_CODEX_ACTION_ID.findall(text)) if action_id in status]
+        return f"（现在：{'；'.join(found)}）" if found else ""
+    return describe
+
+
 def build_report(root: str, now: datetime, label: str) -> str:
     """早报 / 晚报正文：今天的对话、任务单状态、等你处理的。"""
     turns, active, waiting = report_material(root, now)
     lines = [f"🗒 {label}（{now:%m月%d日 %H:%M}）"]
     if turns:
         lines.append(f"今天聊了 {len(turns)} 件事。")
+    now_status = _codex_now_status(root)
     for turn in turns[:5]:
-        lines.append(f"· {turn.get('title')}：{turn.get('outcome') or '—'}")
+        title, outcome = turn.get("title"), str(turn.get("outcome") or "—")
+        lines.append(f"· {title}：{outcome}{now_status(f'{title} {outcome}')}")
     names = STATUS_NAMES
     if active:
         lines.append("")
@@ -312,6 +331,7 @@ _REPORT_SYSTEM = (
     "还在进行什么。最多 5 行，每行不超过 40 个字；素材里没有的类别直接不提，不写「暂无」；"
     "不用标题、表情符号和加粗。口语、具体；只依据素材，不要编造素材里没有的结果。"
     "同一件事在素材里可能出现好几次（聊过、任务单、等你处理），只说一次；不写内部编号。"
+    "对话结局是当时写的，后来可能变了：括号里「现在：」和「等你处理」才是现在的状态，以它们为准。"
     "直接对用户说事，不要提「素材」这个词，也不要写「没有别的可说」这类话（没有就不写）。"
 )
 
