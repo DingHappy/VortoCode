@@ -1,6 +1,7 @@
 """Codex 观察员（Mac）→ 常驻助理：进度怎么压缩、什么时候提醒、助理怎么回答。"""
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -11,6 +12,18 @@ from src.scheduling import codex_watch as watch
 
 NOW = datetime(2026, 10, 20, 9, 0, tzinfo=timezone.utc)
 HOME = os.path.expanduser("~")
+
+@pytest.fixture(autouse=True)
+def _every_session_handed_over(monkeypatch):
+    """这些用例验的是交接之后的规则（拟话、叫停、过期、回执）；交接本身另有用例（test_codex_handover.py）。"""
+    def handed(root):
+        try:
+            threads = json.loads(watch._state_path(root).read_text(encoding="utf-8")).get("threads") or []
+        except OSError:
+            threads = []
+        return {thread["id"]: {"since": 1e18} for thread in threads}
+    monkeypatch.setattr(watch, "load_handovers", handed)
+
 
 
 def _turn(status="inProgress", tid="t1", **extra):
@@ -117,7 +130,7 @@ def test_overview_and_brief_explain_what_the_assistant_can_see(tmp_path):
     assert watch.brief(root, now=NOW) == ""
     watch.record_report(root, {"threads": [_thread(flags=["waitingOnApproval"], turn=_turn())]}, now=NOW)
     text = watch.overview(root, now=NOW + timedelta(minutes=5))
-    assert "「改登录超时」（~/proj）：在等你批准" in text and "正在跑：git push origin main" in text
+    assert "「改登录超时」（~/proj，#th1）【已交给助理】：在等你批准" in text and "正在跑：git push origin main" in text
     assert "Mac 可能合盖" in watch.overview(root, now=NOW + timedelta(hours=1))
     assert "状态待核对" in watch.brief(root, now=NOW + timedelta(hours=1))
     assert watch.brief(root, now=NOW + timedelta(hours=13)) == ""

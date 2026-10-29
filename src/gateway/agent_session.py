@@ -222,7 +222,8 @@ def build_session(repo_root: str, *, kind: str, confirm=None, on_progress=None,
             tools += build_codex_tools(repo_root)
             from src.scheduling.codex_supervisor import build_supervisor_tools
             tools += build_supervisor_tools(repo_root)
-            tools += build_codex_action_tools(repo_root, is_tainted=is_tainted, session=task_owner or "")
+            tools += build_codex_action_tools(repo_root, is_tainted=is_tainted, session=task_owner or "",
+                                              confirm=gated_confirm)
             # 插件（日历等外部数据）：放了凭据才挂，带回来的内容按外部不可信处理；
             # 写入（存邮件草稿）每次过内核确认门
             from src.plugins import build_plugin_tools, enabled_plugins

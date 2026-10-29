@@ -168,7 +168,9 @@ def progress_snapshot(root: str) -> dict:
     """Existing API projection; recheck stored observations without changing state."""
     state = load_state(root)
     threads = _clean_threads({"threads": state.get("threads") or []})
-    return {"overview": _overview({**state, "threads": threads}, _now()), "threads": threads,
+    handed = set(load_handovers(root))
+    return {"overview": _overview({**state, "threads": threads}, _now(), handed), "threads": threads,
+            "handed_over": sorted(handed & {thread["id"] for thread in threads}),
             "received_at": state.get("received_at"), "report_protocol": 1,
             "report_cursor": state.get("report_cursor")}
 
@@ -355,10 +357,10 @@ STATUS_TEXT = {"active": "正在做", "idle": "空闲", "systemError": "出错",
 
 def overview(root: str, *, now: Optional[datetime] = None) -> str:
     """给助理和早晚报用的一段 Codex 进度。没有报告就说明为什么看不到。"""
-    return _overview(load_state(root), now or _now())
+    return _overview(load_state(root), now or _now(), set(load_handovers(root)))
 
 
-def _overview(state: dict, now: datetime) -> str:
+def _overview(state: dict, now: datetime, handed: Optional[set] = None) -> str:
     """Render one observation, so overview and details cannot mix report versions."""
     received = _parse(state.get("received_at"))
     if not received:
@@ -378,7 +380,7 @@ def _overview(state: dict, now: datetime) -> str:
         waiting = _waiting(thread) if current else ""
         if waiting:
             status = "在等你批准" if waiting == "approval" else "在问你问题"
-        line = f"- 「{thread.get('name')}」（{thread.get('cwd')}）：{status}"
+        line = f"- {thread_label(thread)}{'【已交给助理】' if thread.get('id') in (handed or set()) else ''}：{status}"
         if turn.get("request"):
             line += f"；这一轮的要求：{turn['request'][:120]}"
         if turn.get("running_command"):
@@ -468,7 +470,7 @@ def build_codex_tools(root: str) -> list:
 
     return [Tool("codex_status",
                  "查看用户 Mac 上 Codex（OpenAI 的编码助手）在做什么：每个打开的会话的任务、状态"
-                 "（正在做 / 空闲 / 在等批准 / 在问问题）、跑的命令、改的文件、最后的说明。"
+                 "（正在做 / 空闲 / 在等批准 / 在问问题）、跑的命令、改的文件、最后的说明，以及哪些会话已交给助理。"
                  "用户问 Codex 进度、或让你检查 / 提醒 Codex 的活时先调它。",
                  {}, _status, untrusted_source=True)]
 
@@ -508,22 +510,122 @@ class CodexActionError(ValueError):
     """动作不合法，或当前状态不允许这个操作。"""
 
 
+def thread_label(thread: dict) -> str:
+    """会话的完整称呼：名字 + 目录 + id 尾号。名字常常相同（同一句任务起的名），只靠名字分不清。"""
+    return f"「{thread.get('name') or '未命名'}」（{thread.get('cwd') or '目录未知'}，#{str(thread.get('id') or '')[-6:]}）"
+
+
 def _find_thread(root: str, wanted: str) -> dict:
+    """按 id 找；按名字只在唯一时才认。同名的不挑第一个——真机 2026-10-28：两个会话都叫
+    「编写 add 函数」，一个在测试目录、一个在主人的工作仓库，挑错了就把话发进别人的活里。"""
     wanted = str(wanted or "").strip()
     threads = load_state(root).get("threads") or []
     for thread in threads:
-        if thread.get("id") == wanted or str(thread.get("name") or "") == wanted:
+        if wanted and thread.get("id") == wanted:
             return thread
-    matches = [thread for thread in threads if wanted and wanted in str(thread.get("name") or "")]
+    tail = wanted.lstrip("#")
+    by_tail = [thread for thread in threads if len(tail) >= 6 and str(thread.get("id") or "").endswith(tail)]
+    if len(by_tail) == 1:                 # 进度里写的是 id 尾号（#xxxxxx）
+        return by_tail[0]
+    matches = [thread for thread in threads if wanted and str(thread.get("name") or "") == wanted] \
+        or [thread for thread in threads if wanted and wanted in str(thread.get("name") or "")]
     if len(matches) == 1:
         return matches[0]
-    names = "、".join(f"「{thread.get('name')}」" for thread in threads) or "（现在没有打开的 Codex 会话）"
+    if matches:
+        listed = "、".join(f"{thread_label(thread)} id={thread.get('id')}" for thread in matches)
+        raise CodexActionError(f"有 {len(matches)} 个 Codex 会话都对得上「{wanted}」：{listed}。请用会话 id 指定，"
+                               "拿不准就问主人是哪一个。")
+    names = "、".join(thread_label(thread) for thread in threads) or "（现在没有打开的 Codex 会话）"
     raise CodexActionError(f"找不到这个 Codex 会话：{wanted}。打开着的有：{names}")
+
+
+# ── ② 交接：默认只看，主人逐个会话交给助理后才插手（2026-10-28 定，见 DECISIONS.md ADR-010） ──────
+#
+# Codex 是主人自己在驾驶的工具，Mac 上打开的会话大多是主人正在亲手干的活。助理对所有会话都可以看
+# （进度、失败、在等批准），但拟话 / 叫停只对交接过的会话：交接过确认门，收回不问；会话关了、
+# 监管判断已经做完，就自动收回。
+
+def _handover_path(root: str) -> Path:
+    return Path(root) / ".vortocode" / "codex" / "handover.json"
+
+
+def load_handovers(root: str) -> Dict[str, dict]:
+    try:
+        data = json.loads(_handover_path(root).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {key: value for key, value in data.items() if isinstance(value, dict)} if isinstance(data, dict) else {}
+
+
+def _save_handovers(root: str, items: Dict[str, dict]) -> None:
+    path = _handover_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+        json.dump(items, handle, ensure_ascii=False)
+        temp = Path(handle.name)
+    temp.replace(path)
+
+
+def is_handed_over(root: str, thread_id: str) -> bool:
+    return bool(thread_id) and thread_id in load_handovers(root)
+
+
+def hand_over(root: str, thread: dict, *, now: Optional[datetime] = None) -> dict:
+    """把一个会话交给助理。调用方负责先问过主人（确认门）。"""
+    items = load_handovers(root)
+    record = {"name": str(thread.get("name") or "")[:80], "cwd": str(thread.get("cwd") or "")[:200],
+              "since": (now or _now()).timestamp()}
+    items[str(thread["id"])] = record
+    _save_handovers(root, items)
+    return record
+
+
+def take_back(root: str, thread_id: str) -> bool:
+    items = load_handovers(root)
+    if items.pop(thread_id, None) is None:
+        return False
+    _save_handovers(root, items)
+    return True
+
+
+def prune_handovers(root: str, threads: List[dict]) -> List[dict]:
+    """会话关了就收回交接（下次同名的新会话不会继承）；返回这次收回的。"""
+    items = load_handovers(root)
+    live = {thread.get("id") for thread in threads}
+    gone = [dict(value, id=key) for key, value in items.items() if key not in live]
+    if gone:
+        _save_handovers(root, {key: value for key, value in items.items() if key in live})
+    return gone
+
+
+def _epoch(value: Any) -> Optional[float]:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    return value / 1000 if value > 1e12 else float(value)
+
+
+def owner_driving(root: str, thread: dict) -> bool:
+    """主人在亲手推进这个会话：交接之后的最新一轮是主人自己在 Codex 里发起的（不是助理发的话）。
+    这时助理不替它拟下一步——主人就在方向盘前。"""
+    record = load_handovers(root).get(str(thread.get("id") or ""))
+    turn = thread.get("turn") or {}
+    started = _epoch(turn.get("started_at"))
+    if record is None or started is None or started <= float(record.get("since") or 0):
+        return False
+    request = " ".join(str(turn.get("request") or "").split())[:200]
+    ours = [" ".join(str(item.get("text") or "").split())[:200] for item in load_actions(root)
+            if item.get("thread_id") == thread.get("id") and item.get("kind") == "message"
+            and item.get("status") in {"sending", "sent", "unknown"}]
+    return not any(text and request and (request.startswith(text[:120]) or text.startswith(request[:120]))
+                   for text in ours)
 
 
 def propose_action(root: str, *, thread: str, kind: str, text: str = "", session: str = "",
                    tainted: bool = False, expected_turn_id: Optional[str] = None) -> dict:
     target = _find_thread(root, thread)
+    if not is_handed_over(root, target["id"]):
+        raise CodexActionError(f"{thread_label(target)}没交给助理：默认只看不插手。要替它拟话或叫停，"
+                               "先请主人把这个会话交接给你（codex_handover）。")
     if expected_turn_id is not None and (target.get("turn") or {}).get("id", "") != expected_turn_id:
         raise CodexActionError("Codex 轮次已经变化，旧建议不再适用")
     text = str(text or "").strip()
@@ -536,6 +638,7 @@ def propose_action(root: str, *, thread: str, kind: str, text: str = "", session
     import uuid
     now = _now().isoformat()
     action = {"id": f"cdx-{uuid.uuid4().hex[:10]}", "thread_id": target["id"], "thread_name": target.get("name") or "",
+              "thread_cwd": target.get("cwd") or "",
               "kind": kind, "text": text[:_ACTION_TEXT_MAX], "status": "proposed", "tainted": bool(tainted),
               "session": str(session or "")[:80], "turn_id": (target.get("turn") or {}).get("id") or "",
               "created_at": now, "updated_at": now, "error": ""}
@@ -638,8 +741,13 @@ def settle_unconfirmed_actions(root: str, now: Optional[datetime] = None) -> Lis
     return settled
 
 
+def _action_label(action: dict) -> str:
+    where = f"（{action['thread_cwd']}）" if action.get("thread_cwd") else ""
+    return f"Codex「{action.get('thread_name')}」{where}"
+
+
 def action_notice(action: dict) -> str:
-    label = f"Codex「{action.get('thread_name')}」"
+    label = _action_label(action)
     warning = "\n⚠ 助理是在读过外部内容后拟的，发之前看清楚。" if action.get("tainted") else ""
     if action.get("kind") == "interrupt":
         return f"🤖 助理建议叫停 {label} 正在做的这一轮。{warning}\n点「批准」叫停，「拒绝」不动。"
@@ -647,7 +755,7 @@ def action_notice(action: dict) -> str:
 
 
 def action_result_notice(action: dict) -> str:
-    label = f"Codex「{action.get('thread_name')}」"
+    label = _action_label(action)
     if action.get("status") == "unknown":
         verb = "叫停" if action.get("kind") == "interrupt" else "发话"
         return (f"⚠️ 给 {label} 的{verb}没收到回执：可能已经发出，也可能没有。"
@@ -658,9 +766,27 @@ def action_result_notice(action: dict) -> str:
     return f"❌ 没能{'叫停' if action.get('kind') == 'interrupt' else '发给'} {label}：{action.get('error') or '原因不明'}"
 
 
-def build_codex_action_tools(root: str, *, is_tainted=lambda: False, session=None) -> list:
-    """助理替你给 Codex 发话 / 叫停：只能提议，批准由人做（手机按钮或 Desktop 卡片）。"""
+def build_codex_action_tools(root: str, *, is_tainted=lambda: False, session=None, confirm=None) -> list:
+    """助理替你给 Codex 发话 / 叫停：只能提议，批准由人做（手机按钮或 Desktop 卡片）。
+    只对交接过的会话；交接过确认门（扩大助理能插手的范围），收回不问。"""
     from src.agents.tool import Tool
+
+    async def _handover(args: dict) -> str:
+        try:
+            target = _find_thread(root, str(args.get("thread") or ""))
+        except CodexActionError as error:
+            return f"没有交接：{error}"
+        label = thread_label(target)
+        if str(args.get("take_back") or "").strip().lower() in {"1", "true", "yes", "on", "是", "收回"}:
+            return f"已收回 {label}：之后只看不插手。" if take_back(root, target["id"]) else f"{label}本来就没交接。"
+        if is_handed_over(root, target["id"]):
+            return f"{label}已经交给助理了。"
+        question = (f"把 Codex 会话{label}交给助理盯？\n交接后助理会替它拟下一步、补充要求或叫停，"
+                    "每一条仍要你批准；你在 Codex 里亲手发话时它不插话。会话关了或做完就自动收回。")
+        if confirm is None or not await confirm(question):
+            return f"主人没同意交接 {label}，仍然只看不插手。"
+        hand_over(root, target)
+        return f"已交接 {label}。"
 
     async def _propose(kind: str, args: dict) -> str:
         try:
@@ -683,12 +809,17 @@ def build_codex_action_tools(root: str, *, is_tainted=lambda: False, session=Non
         return await _propose("interrupt", args)
 
     return [
+        Tool("codex_handover",
+             "把 Mac 上某个 Codex 会话交给助理盯，或收回。默认助理对 Codex 只看不插手；只有交接过的会话才能拟话或叫停。"
+             "只在主人明确要求时调用；用会话 id 指定（codex_status 里有），同名时不要猜。交接要主人确认，收回直接生效。",
+             {"thread": "会话 id 或进度里的尾号 #xxxxxx（会话名只在唯一时可用）", "take_back": "true = 收回交接；不填 = 交接"},
+             _handover, read_only=False, serial=True),
         Tool("propose_codex_message",
-             "替用户给 Mac 上某个 Codex 会话拟一句话（下一步指令、补充要求、回答它的问题）。只是提议，"
+             "替用户给 Mac 上某个已交接的 Codex 会话拟一句话（下一步指令、补充要求、回答它的问题）。只是提议，"
              "用户批准后才发：Codex 空闲就开始新的一轮，正在做就作为补充插进当前这一轮。先用 codex_status 看清会话。",
-             {"thread": "会话名（或 id），只能是 codex_status 里列出的", "text": "要发给 Codex 的话，写清楚、具体"},
+             {"thread": "会话 id 或进度里的尾号 #xxxxxx（会话名只在唯一时可用），只能是 codex_status 里列出的", "text": "要发给 Codex 的话，写清楚、具体"},
              _message, read_only=False, serial=True),
         Tool("propose_codex_interrupt",
              "建议叫停某个 Codex 会话正在做的这一轮（方向错了、在做危险的事、卡住了）。只是提议，用户批准后才叫停。",
-             {"thread": "会话名（或 id）"}, _interrupt, read_only=False, serial=True),
+             {"thread": "会话 id 或进度里的尾号 #xxxxxx（会话名只在唯一时可用）"}, _interrupt, read_only=False, serial=True),
     ]

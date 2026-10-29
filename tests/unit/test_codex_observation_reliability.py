@@ -1,6 +1,7 @@
 """Observation ownership, reminder scope and one-snapshot read consistency."""
 from __future__ import annotations
 
+import json
 import asyncio
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
@@ -14,6 +15,18 @@ from src.scheduling import codex_supervisor as supervisor
 from src.scheduling import codex_watch as watch
 
 NOW = datetime(2026, 10, 23, 9, tzinfo=timezone.utc)
+
+@pytest.fixture(autouse=True)
+def _every_session_handed_over(monkeypatch):
+    """这些用例验的是交接之后的规则（拟话、叫停、过期、回执）；交接本身另有用例（test_codex_handover.py）。"""
+    def handed(root):
+        try:
+            threads = json.loads(watch._state_path(root).read_text(encoding="utf-8")).get("threads") or []
+        except OSError:
+            threads = []
+        return {thread["id"]: {"since": 1e18} for thread in threads}
+    monkeypatch.setattr(watch, "load_handovers", handed)
+
 
 
 def thread(at=NOW, *, tid="t1", state="waiting", instance="observer-A", legacy=False):

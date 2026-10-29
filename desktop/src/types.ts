@@ -257,6 +257,8 @@ export interface CodexAction {
   id: string;
   thread_id: string;
   thread_name: string;
+  /** 会话所在目录；旧版常驻电脑不带 */
+  thread_cwd?: string;
   kind: "message" | "interrupt";
   text: string;
   status: "proposed" | "approved" | "sending" | "unknown" | "sent" | "failed" | "cancelled" | "expired";
