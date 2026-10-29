@@ -1,6 +1,7 @@
 """助理每半小时监管一次 Codex：有进展才汇报、卡住 / 失败 / 要拿主意时找你、做完后拟下一步等你批。全部离线。"""
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 import asyncio
 from types import SimpleNamespace
@@ -11,6 +12,18 @@ from src.scheduling import codex_supervisor as sup
 from src.scheduling import codex_watch as watch
 
 T0 = datetime(2026, 10, 20, 9, 0, tzinfo=timezone.utc)
+
+@pytest.fixture(autouse=True)
+def _every_session_handed_over(monkeypatch):
+    """这些用例验的是交接之后的规则（拟话、叫停、过期、回执）；交接本身另有用例（test_codex_handover.py）。"""
+    def handed(root):
+        try:
+            threads = json.loads(watch._state_path(root).read_text(encoding="utf-8")).get("threads") or []
+        except OSError:
+            threads = []
+        return {thread["id"]: {"since": 1e18} for thread in threads}
+    monkeypatch.setattr(watch, "load_handovers", handed)
+
 
 
 def _thread(status="active", turn_status="inProgress", tid="t1", commands=1, reply="", error="", flags=()):

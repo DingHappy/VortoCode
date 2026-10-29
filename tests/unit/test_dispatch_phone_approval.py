@@ -133,6 +133,7 @@ async def test_codex_action_buttons_approve_or_drop_without_the_model(tmp_path, 
     root = str(tmp_path)
     thread = {"id": "th1", "name": "改登录超时", "status": "active", "flags": [], "turn": {"id": "t1", "status": "inProgress"}}
     codex_watch.record_report(root, {"threads": [thread]})
+    codex_watch.hand_over(root, thread)                 # 只有交接过的会话才能拟动作（ADR-010）
     keep = codex_watch.propose_action(root, thread="改登录超时", kind="message", text="开个分支再推")
     drop = codex_watch.propose_action(root, thread="改登录超时", kind="interrupt")
     adapter = FakeAdapter()

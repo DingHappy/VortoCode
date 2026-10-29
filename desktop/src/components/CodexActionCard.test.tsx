@@ -47,3 +47,11 @@ it("unknown outcomes say so, point at the Codex session, and offer no buttons", 
   expect(html).toContain("去 Codex 窗口看一眼");
   expect(html).not.toContain("批准发送");
 });
+
+it("names the session's directory and id so same-named sessions can be told apart", () => {
+  const html = renderToStaticMarkup(<CodexActionCard action={{ ...action, thread_id: "019a-test-5f3c2e", thread_cwd: "/tmp/codex-p1" }}
+    connected onDecide={async () => {}} />);
+  expect(html).toContain("/tmp/codex-p1");
+  expect(html).toContain("#5f3c2e");
+  expect(renderToStaticMarkup(<CodexActionCard action={action} connected onDecide={async () => {}} />)).toContain("目录未知");
+});

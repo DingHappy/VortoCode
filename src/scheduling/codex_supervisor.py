@@ -15,6 +15,10 @@
 
 你正在 Mac 前（观察员报的键盘鼠标空闲不到 ``OWNER_PRESENT_IDLE``）时，纯进度汇报只记台账、不推手机——
 你自己看着屏幕。有要你处理的事（失败、卡住、要拿主意）或拟好的动作照推。
+
+插手只对交接过的会话（2026-10-28 定，ADR-010）：所有会话照常看、照常汇报和提醒；判断下一步、拟话、
+拟叫停只对你交给助理的会话。交接后你又在 Codex 里亲手发了话，那一轮不替你拟下一步（你在驾驶）。
+会话关了或判断已经做完，交接自动收回。
 """
 from __future__ import annotations
 
@@ -214,9 +218,11 @@ def _review_order(root: str, state: dict, marks: dict, now: datetime) -> List[st
     pending = {item.get("thread_id") for item in codex_watch.load_actions(root)
                if item.get("status") in {"proposed", "approved", "sending"}}
     candidates = []
+    handed = codex_watch.load_handovers(root)
     for thread in state.get("threads") or []:
         tid, turn = thread["id"], thread.get("turn") or {}
-        if (thread.get("status") != "idle" or turn.get("status") != "completed" or not turn.get("id")
+        if (tid not in handed or codex_watch.owner_driving(root, thread)
+                or thread.get("status") != "idle" or turn.get("status") != "completed" or not turn.get("id")
                 or not codex_watch.execution_is_current(thread, now)
                 or codex_watch._waiting(thread) or tid in pending
                 or (marks.get(tid) or {}).get("reviewed_turn") == turn["id"]):
@@ -330,6 +336,7 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
     if last_check and now - last_check < timedelta(minutes=int(config["interval_minutes"])):
         return
     threads = state.get("threads") or []
+    released = codex_watch.prune_handovers(root, threads)
     marks: Dict[str, dict] = data.get("marks") if isinstance(data.get("marks"), dict) else {}
     data["last_check"] = now.isoformat()
     if last_check is None:          # 第一次只记下现状，不把旧账推一遍
@@ -348,7 +355,8 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
 
     events = [event for event in state.get("events") or []
               if (codex_watch._parse(event.get("at")) or now) > last_check]
-    lines: List[str] = []
+    lines: List[str] = [f"· 「{item.get('name') or '未命名'}」（{item.get('cwd')}）已经关了，交接自动收回。"
+                        for item in released]
     needs_you: List[str] = []
     on_mac: List[str] = []            # 只能你在 Mac 上处理的（登录、额度），不提「我拟好话给 Codex」
     drafts: List[tuple] = []          # (正文, 动作)
@@ -397,7 +405,7 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
             command = turn.get("running_command") or turn.get("last_command") or ""
             text = (f"🐢 Codex{label}至少 {config['interval_minutes']} 分钟没有新动作了，可能卡住"
                     + (f"，一直停在：\n$ {command[:200]}" if command else "。"))
-            if not _pending_action(root, tid):
+            if codex_watch.is_handed_over(root, tid) and not _pending_action(root, tid):
                 try:
                     action = codex_watch.propose_action(root, thread=tid, kind="interrupt", expected_turn_id=turn.get("id") or "")
                     drafts.append((text + "\n要叫停这一轮就点「批准」，让它继续跑就点「拒绝」。", action))
@@ -434,6 +442,8 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
                         logger.warning("Codex 推进动作没拟成：%s", error)
                 elif review["verdict"] == "ask":
                     needs_you.append(f"{label}要你定方向：{assessment}")
+                elif review["verdict"] == "done" and codex_watch.take_back(root, tid):
+                    assessment += "（看起来做完了，交接已收回；要继续盯就再交给我）"
 
         marks[tid] = mark
         if finished or thread.get("status") == "active" or codex_watch._waiting(thread) or assessment:
