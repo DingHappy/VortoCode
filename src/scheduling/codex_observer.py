@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 from src.agents.backends.codex import CodexBackend, codex_execution_state
-from src.agents.backends.control import control_session
+from src.agents.backends.control import ControlOutcomeUnknown, control_session
 from src.agents.backends.execution import (
     ExecutionProgress, ExecutionRef, ExecutionSnapshot, process_instance,
 )
@@ -447,6 +447,20 @@ class ReportPublisher:
 
 async def execute_action(client: CodexClient, action: dict, threads: List[dict]) -> tuple:
     """把一条已批准的动作交给 Codex。返回 (成功?, 失败原因)。"""
+    result = await run_action(client, action, threads)
+    return result["ok"], result["error"]
+
+
+async def run_action(client: CodexClient, action: dict, threads: List[dict]) -> dict:
+    """同 execute_action，另外分清「没发出去」和「说不准」：后者 uncertain=True，常驻助理记成结果无法确认。"""
+    try:
+        ok, error = await _execute(client, action, threads)
+    except ControlOutcomeUnknown as error:
+        return {"ok": False, "error": str(error)[:200], "uncertain": True}
+    return {"ok": ok, "error": error, "uncertain": False}
+
+
+async def _execute(client: CodexClient, action: dict, threads: List[dict]) -> tuple:
     thread = next((item for item in threads if item.get("id") == action.get("thread_id")), None)
     if thread is None:
         return False, "这个 Codex 会话已经关了"
@@ -472,7 +486,9 @@ async def execute_action(client: CodexClient, action: dict, threads: List[dict])
         await control_session(CodexBackend(client), str(thread["id"]), action=kind,
                               text=text, expected_turn_id=expected)
         return True, ""
-    except Exception as error:  # noqa: BLE001 —— Codex 拒绝或超时：如实报回去
+    except ControlOutcomeUnknown:
+        raise
+    except Exception as error:  # noqa: BLE001 —— Codex 拒绝：如实报回去
         return False, str(error)[:200]
 
 
@@ -510,8 +526,7 @@ async def run_approved_actions(client: CodexClient, threads: List[dict], *, resi
             await resident("POST", f"/api/codex/actions/{action_id}/claim")
         except Exception:  # noqa: BLE001 —— 别处已认领或状态变了：跳过
             continue
-        ok, error = await execute_action(client, action, threads)
-        await _report_result(resident, action_id, {"ok": ok, "error": error})
+        await _report_result(resident, action_id, await run_action(client, action, threads))
         done += 1
     return done
 

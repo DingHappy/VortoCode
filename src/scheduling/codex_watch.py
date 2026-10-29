@@ -633,6 +633,10 @@ def propose_action(root: str, *, thread: str, kind: str, text: str = "", session
         raise CodexActionError("只能拟「发消息」或「叫停」")
     if kind == "message" and not text:
         raise CodexActionError("要发给 Codex 的话不能是空的")
+    if kind == "message" and not (target.get("turn") or {}).get("id"):
+        # Codex 不接受外部给还没收到过第一句话的会话发消息（thread not materialized），批了也只会失败
+        raise CodexActionError(f"{thread_label(target)}还没开始过（或读不到它的轮次）：Codex 要求第一句由人在它的窗口里发。"
+                               "请主人先在 Codex 里说第一句，之后再拟。")
     if kind == "interrupt" and target.get("status") != "active":
         raise CodexActionError(f"「{target.get('name')}」现在没在做事，不需要叫停")
     import uuid
@@ -711,9 +715,15 @@ def claim_action(root: str, action_id: str) -> dict:
     return _change(root, action_id, {"approved"}, status="sending")
 
 
-def finish_action(root: str, action_id: str, *, ok: bool, error: str = "") -> dict:
+def finish_action(root: str, action_id: str, *, ok: bool, error: str = "", uncertain: bool = False) -> dict:
+    """failed 只表示确定没发出去（被拒绝、会话不对、没开始过）。可能已送达却核对不了回执的记成 unknown：
+    真机 2026-10-28，被 Codex 明确拒绝的一条也显示成「未能确认送达」，读起来像发没发都不一定。
+    旧版观察员不带 uncertain，按它报的原因里「无法确认」认出来。"""
     # unknown 也收：Mac 恢复后补报的迟到回执比「无法确认」更准
-    return _change(root, action_id, {"sending", "unknown"}, status="sent" if ok else "failed", error=str(error or "")[:300])
+    error = str(error or "")[:300]
+    if not ok and (uncertain or "无法确认" in error):
+        return _change(root, action_id, {"sending", "unknown"}, status="unknown", error=error or UNCONFIRMED_ERROR)
+    return _change(root, action_id, {"sending", "unknown"}, status="sent" if ok else "failed", error=error)
 
 
 SENDING_TIMEOUT = timedelta(minutes=10)

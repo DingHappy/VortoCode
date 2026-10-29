@@ -5,11 +5,12 @@ The observer owns the existing socket connection and action authorization.
 """
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any, Literal, Protocol
 
 from src.agents.backends.control import (
-    BackendControlError, ControlReceipt, Operation, SessionState,
+    BackendControlError, ControlOutcomeUnknown, ControlReceipt, Operation, SessionState,
 )
 from src.agents.backends.execution import (
     ExecutionProgress, ExecutionRef, ExecutionSnapshot, ExecutionState, process_instance,
@@ -101,10 +102,14 @@ class CodexBackend:
                 params["expectedTurnId"] = turn_id
         try:
             result = await self.client.call(f"turn/{operation}", params)
-        except TimeoutError as error:
-            raise BackendControlError("Codex 响应超时，发送结果无法确认；请先核对会话，不要重复发送") from error
+        except (TimeoutError, asyncio.TimeoutError) as error:
+            raise ControlOutcomeUnknown("Codex 响应超时，发送结果无法确认；请先核对会话，不要重复发送") from error
+        except RuntimeError:
+            raise                      # Codex 回了错误：明确拒绝，没有执行
+        except Exception as error:     # noqa: BLE001 —— 发出后连接断了：可能已送达
+            raise ControlOutcomeUnknown("发送时与 Codex 的连接中断，结果无法确认；请先核对会话，不要重复发送") from error
         if not isinstance(result, dict):
-            raise BackendControlError("请求可能已送达，但 Codex 回执无法确认；请先核对会话，不要重复发送")
+            raise ControlOutcomeUnknown("请求可能已送达，但 Codex 回执无法确认；请先核对会话，不要重复发送")
         if operation == "start":
             turn = result.get("turn")
             accepted_turn = turn.get("id") if isinstance(turn, dict) else None
@@ -113,7 +118,7 @@ class CodexBackend:
         else:
             accepted_turn = turn_id  # {} acknowledges the request, not completed cancellation.
         if not isinstance(accepted_turn, str) or not accepted_turn or (operation != "start" and accepted_turn != turn_id):
-            raise BackendControlError("请求可能已送达，但 Codex 轮次回执不匹配；请先核对会话，不要重复发送")
+            raise ControlOutcomeUnknown("请求可能已送达，但 Codex 轮次回执不匹配；请先核对会话，不要重复发送")
         return ControlReceipt(self.backend_id, session_id, accepted_turn, operation,
                               self._ref(session_id, accepted_turn))
 

@@ -2,6 +2,7 @@
 // 纯函数、零请求：复用已有任务、对话回合、任务单和通知，只决定「显示成什么样」。
 import type { AgentTurn, AssistantDispatch, CodexAction, NoticeItem, PendingConfirmation, TaskItem } from "../types";
 import { progressLine } from "./assistantTask";
+import { codexActionOutcome } from "./codexActionOutcome";
 
 /** 展示用的五档：等你处理 / 进行中 / 完成 / 失败 / 已停下（暂停、中断，可续跑）。 */
 export type FeedStatus = "waiting" | "running" | "done" | "failed" | "stopped";
@@ -198,22 +199,23 @@ export function dispatchFeedItem(item: AssistantDispatch): FeedItem | null {
 /** 只投影已有动作；查看记录不会批准、发送或停止 Codex。 */
 export function codexActionFeedItem(action: CodexAction): FeedItem | null {
   if (action.status === "cancelled") return null;
-  const uncertain = action.status === "approved" || action.status === "sending" || action.status === "unknown";
+  const outcome = codexActionOutcome(action);
+  const uncertain = outcome === "approved" || outcome === "sending" || outcome === "unknown";
   return {
     id: `codex_action:${action.id}`, kind: "code", codexActionId: action.id,
     title: `${action.kind === "interrupt" ? "建议叫停" : "拟发消息"}：${action.thread_name}`,
-    summary: action.status === "unknown" ? "没收到回执，可能已发出也可能没有；以 Codex 会话为准，不要重复发送"
+    summary: outcome === "unknown" ? "没收到回执，可能已发出也可能没有；以 Codex 会话为准，不要重复发送"
       : uncertain ? "发送结果尚未核实，请查看原动作；不要重复发送"
-      : action.status === "failed" ? firstSentence(action.error, MAX_SUMMARY) || "未能确认送达，请查看原动作"
+      : outcome === "failed" ? `没发出去：${firstSentence(action.error, MAX_SUMMARY) || "请查看原动作"}`
       : action.status === "expired" ? "动作已经过时，没有发送"
       : action.status === "sent" ? "请求已获受理，不代表 Codex 已完成任务"
       : action.status === "proposed" ? `${firstSentence(action.text, MAX_SUMMARY) || "请查看动作正文"}${action.tainted ? " · 含外部内容，请细看" : ""}`
       : "动作状态待核对，请查看原动作",
     status: action.status === "proposed" || uncertain ? "waiting"
-      : action.status === "failed" ? "failed" : action.status === "sent" ? "done" : "stopped",
-    statusLabel: action.status === "unknown" ? "结果无法确认" : uncertain ? "发送结果待核对" : action.status === "proposed" ? "待审阅批准"
+      : outcome === "failed" ? "failed" : action.status === "sent" ? "done" : "stopped",
+    statusLabel: outcome === "unknown" ? "结果无法确认" : uncertain ? "发送结果待核对" : action.status === "proposed" ? "待审阅批准"
       : action.status === "sent" ? "请求已受理" : action.status === "expired" ? "已过时"
-      : action.status === "failed" ? "未确认送达" : "状态待核对",
+      : outcome === "failed" ? "没发出去" : "状态待核对",
     sourceLabel: "Codex 动作", at: action.updated_at || action.created_at,
   };
 }

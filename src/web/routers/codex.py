@@ -103,7 +103,8 @@ async def claim_codex_action(action_id: str):
 async def codex_action_result(action_id: str, payload: dict = Body(...)):
     root = _general_root()
     try:
-        action = codex_watch.finish_action(root, action_id, ok=bool(payload.get("ok")), error=str(payload.get("error") or ""))
+        action = codex_watch.finish_action(root, action_id, ok=bool(payload.get("ok")), error=str(payload.get("error") or ""),
+                                           uncertain=bool(payload.get("uncertain")))
     except codex_watch.CodexActionError as error:
         raise _action_error(error) from error
     from src.scheduling.notices import make_notifier
