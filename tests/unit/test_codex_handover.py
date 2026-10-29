@@ -242,3 +242,33 @@ async def test_observer_tells_a_refusal_from_an_unverifiable_receipt():
     assert dropped["uncertain"] is True and "连接中断" in dropped["error"]
     assert await observer.run_action(Codex(lambda: {"turn": {"id": "t2"}}), action, threads) == \
         {"ok": True, "error": "", "uncertain": False}
+
+
+@pytest.mark.asyncio
+async def test_the_assistant_sees_what_became_of_its_own_actions(tmp_path, monkeypatch):
+    """真机 2026-10-29：上一条早已受理，助理仍两次提醒主人「按顺序批准」——它看不到自己拟的动作现在怎样。"""
+    root = str(tmp_path)
+    monkeypatch.setattr(watch, "_now", lambda: _m(10))
+    _report(root, [_done()], T0)
+    watch.hand_over(root, watch.load_state(root)["threads"][0], now=T0)
+    sent = watch.propose_action(root, thread="#000001", kind="message", text="加 docstring")
+    watch.decide_action(root, sent["id"], True)
+    watch.claim_action(root, sent["id"])
+    watch.finish_action(root, sent["id"], ok=True)
+    status = {tool.name: tool for tool in watch.build_codex_tools(root)}["codex_status"]
+    text = await status.handler({})
+    assert "没有等批的" in text and f"{sent['id']} 发话「加 docstring」 → Codex 已受理（不代表已做完）" in text
+    watch.propose_action(root, thread="#000001", kind="message", text="再写 mul")
+    assert "有 1 条等主人批准" in await status.handler({})
+
+
+@pytest.mark.asyncio
+async def test_a_drafted_message_says_whether_it_will_join_the_running_turn(tmp_path):
+    root = str(tmp_path)
+    _report(root, [_thread()], T0)
+    watch.hand_over(root, watch.load_state(root)["threads"][0], now=T0)
+    tool = {tool.name: tool for tool in watch.build_codex_action_tools(root)}["propose_codex_message"]
+    running = await tool.handler({"thread": "#000001", "text": "顺便补个测试"})
+    assert "插进当前这一轮" in running and "不要猜" in running
+    _report(root, [_done()], _m(5))
+    assert "开始新的一轮" in await tool.handler({"thread": "#000001", "text": "再写 mul"})

@@ -466,7 +466,8 @@ def build_codex_tools(root: str) -> list:
     from src.agents.tool import Tool
 
     async def _status(_args: dict) -> str:
-        return overview(root)
+        actions = action_overview(root)
+        return overview(root) + (f"\n\n{actions}" if actions else "")
 
     return [Tool("codex_status",
                  "查看用户 Mac 上 Codex（OpenAI 的编码助手）在做什么：每个打开的会话的任务、状态"
@@ -756,6 +757,45 @@ def _action_label(action: dict) -> str:
     return f"Codex「{action.get('thread_name')}」{where}"
 
 
+_ACTION_STATUS_TEXT = {"proposed": "等主人批准", "approved": "已批准，等 Mac 交给 Codex", "sending": "正在交给 Codex，结果待核对",
+                       "sent": "Codex 已受理（不代表已做完）", "failed": "没发出去", "unknown": "结果无法确认",
+                       "cancelled": "主人拒绝了", "expired": "已过时，没发"}
+
+
+def action_overview(root: str, *, now: Optional[datetime] = None, limit: int = 4, within: timedelta = timedelta(hours=24)) -> str:
+    """助理自己拟过的动作现在怎样了。没有它，助理只能猜「上一条可能还在等批」——
+    真机 2026-10-29：上一条早已受理、正在跑，它两次提醒主人「按顺序批准」。只给助理工具看，不进早晚报。"""
+    now = now or _now()
+    recent = [item for item in load_actions(root)
+              if (_parse(item.get("updated_at")) or now) >= now - within]
+    if not recent:
+        return ""
+    threads = {thread.get("id"): thread for thread in load_state(root).get("threads") or []}
+    lines = ["助理拟过的 Codex 动作（最近 24 小时，以这里的状态为准，不要猜）："]
+    by_thread: Dict[str, List[dict]] = {}
+    for item in recent:
+        by_thread.setdefault(str(item.get("thread_id") or ""), []).append(item)
+    for thread_id, items in by_thread.items():
+        thread = threads.get(thread_id) or {"id": thread_id, "name": items[-1].get("thread_name"), "cwd": items[-1].get("thread_cwd")}
+        waiting = sum(1 for item in items if item.get("status") == "proposed")
+        lines.append(f"- {thread_label(thread)}：{'有 ' + str(waiting) + ' 条等主人批准' if waiting else '没有等批的'}")
+        for item in items[-limit:]:
+            verb = "叫停" if item.get("kind") == "interrupt" else f"发话「{str(item.get('text') or '')[:40]}」"
+            detail = f"：{str(item.get('error') or '')[:80]}" if item.get("status") in {"failed", "expired"} and item.get("error") else ""
+            lines.append(f"  · {item.get('id')} {verb} → {_ACTION_STATUS_TEXT.get(item.get('status'), item.get('status'))}{detail}")
+    return "\n".join(lines)
+
+
+def _delivery_hint(target: dict, kind: str) -> str:
+    """批准后会发生什么，按此刻观察到的状态说；批准时还会重新核对。"""
+    if kind == "interrupt":
+        return "批准后叫停它正在做的这一轮。"
+    turn = target.get("turn") or {}
+    if target.get("status") == "active" and turn.get("status") == "inProgress":
+        return "它此刻正在做一轮：批准时如果还在做，这句会作为补充插进当前这一轮；做完了就开新的一轮。"
+    return "它此刻空闲：批准后开始新的一轮。"
+
+
 def action_notice(action: dict) -> str:
     label = _action_label(action)
     warning = "\n⚠ 助理是在读过外部内容后拟的，发之前看清楚。" if action.get("tainted") else ""
@@ -809,8 +849,13 @@ def build_codex_action_tools(root: str, *, is_tainted=lambda: False, session=Non
             await make_notifier(root, source="codex")(action_notice(action), confirm_id=action["id"])
         except Exception:  # noqa: BLE001 —— 推送失败不影响 Desktop 卡片上批准
             pass
+        hint = ""
+        try:
+            hint = _delivery_hint(_find_thread(root, action["thread_id"]), kind)
+        except CodexActionError:
+            pass
         return (f"已拟好（{action['id']}），等用户在手机通知或 Desktop 卡片上批准；**还没有发给 Codex**，"
-                "不要声称已经发了。")
+                f"不要声称已经发了。{hint}这个会话其它动作的状态用 codex_status 查，不要猜。")
 
     async def _message(args: dict) -> str:
         return await _propose("message", args)
