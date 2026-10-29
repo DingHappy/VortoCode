@@ -3139,6 +3139,17 @@ mod tests {
     }
 
     #[test]
+    fn remote_health_needs_a_vortocode_reply_not_just_a_connection() {
+        // 断网时接管流量的代理会把 TCP 接下来，再回 502 或别的页面：都不能当成常驻电脑在线
+        assert!(remote_health_ok(200, r#"{"healthy":true,"checks":{}}"#));
+        assert!(remote_health_ok(200, r#"{"healthy":false}"#));
+        assert!(!remote_health_ok(502, r#"{"healthy":true}"#));
+        assert!(!remote_health_ok(200, "<html>proxy</html>"));
+        assert!(!remote_health_ok(200, r#"{"ok":true}"#));
+        assert!(!remote_health_ok(200, ""));
+    }
+
+    #[test]
     fn project_registration_gate_flags_only_new_roots() {
         let root = temp_workspace("registry-gate");
         init_git(&root);

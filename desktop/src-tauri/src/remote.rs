@@ -554,7 +554,11 @@ pub(crate) fn network_failure_reason(error: &std::io::Error) -> String {
 }
 
 /// 只测「这台 Mac 能不能直连登记的远端」：与 WebSocket 同一条路（直连、不走系统代理），
-/// 不带 token、不发请求。前端据此决定要不要断开本机去切换——连不上就别先断。
+/// 不带 token。前端据此决定要不要断开本机去切换——连不上就别先断。
+///
+/// TCP 连上还不够：本机开着接管全部流量的代理（TUN / fake-IP）时，断网后代理在本地就把握手接了，
+/// 探测永远「通」，于是每轮都断开本机去切、再撞上 WebSocket 握手失败、把界面清空（真机 2026-10-29 场景 C）。
+/// 所以连上后再要一次免鉴权的 /api/health，得是 VortoCode 的应答才算通。
 #[tauri::command]
 pub(crate) async fn remote_reachable(app: AppHandle, project_id: String) -> Result<(), String> {
     let base = resolve_remote_base(&project_registry_path(&app)?, &project_id)?;
@@ -581,8 +585,48 @@ pub(crate) async fn remote_reachable(app: AppHandle, project_id: String) -> Resu
             diag("warn", "remote.probe_failed", &format!("os error {:?}：{reason}", error.raw_os_error()));
             Err(reason)
         }
-        Ok(Ok(_)) => Ok(()),
+        Ok(Ok(_)) => remote_health(&base).await,
     }
+}
+
+const REMOTE_NOT_ANSWERING: &str =
+    "常驻电脑没有正常应答：网络可能断了，或者中间有代理接管了连接（例如开着全局 / TUN 模式的代理）";
+
+async fn remote_health(base: &str) -> Result<(), String> {
+    let url = build_remote_url(base, "/api/health")?;
+    let client = reqwest::Client::builder()
+        .timeout(REMOTE_REACHABLE_TIMEOUT)
+        .redirect(reqwest::redirect::Policy::none())
+        // 与 remote_http 同口径：不读环境变量代理，走 WebSocket 那条直连的路
+        .no_proxy()
+        .build()
+        .map_err(|error| format!("无法创建远程请求客户端：{error}"))?;
+    let reply = match client.get(url).send().await {
+        Ok(response) => {
+            let status = response.status().as_u16();
+            let body = response.text().await.unwrap_or_default();
+            remote_health_ok(status, &body)
+        }
+        Err(error) => {
+            diag("warn", "remote.probe_failed", &format!("health：{error}"));
+            false
+        }
+    };
+    if reply {
+        Ok(())
+    } else {
+        diag("warn", "remote.probe_failed", "health 应答不是 VortoCode 的");
+        Err(REMOTE_NOT_ANSWERING.into())
+    }
+}
+
+/// 应答得是 VortoCode 的健康检查：200 且是带 healthy 字段的 JSON。代理替断网的目标回 502、
+/// 或者回一个别的网页，都不算。不看 healthy 的值：服务在应答，就该连过去看具体问题。
+pub(crate) fn remote_health_ok(status: u16, body: &str) -> bool {
+    status == 200
+        && serde_json::from_str::<serde_json::Value>(body)
+            .map(|value| value.get("healthy").is_some())
+            .unwrap_or(false)
 }
 
 pub(crate) fn remote_ws_failure_reason(error: &tokio_tungstenite::tungstenite::Error) -> String {

@@ -34,6 +34,15 @@ export function residentRetryReason(state: {
 }
 
 /**
+ * 什么时候把重连次数清零：真的连上了常驻电脑才算。重连途中状态会经过「连接中」，
+ * 那一刻 residentRetryReason 也是 null——以前一见 null 就清零，断线后每轮都从第 0 次、10 秒重来，
+ * 退避永远不变长（真机 2026-10-29 日志：「断线后第 0 次」每 20 秒一条）。
+ */
+export function residentRetrySettled(state: { onHost: boolean; connection: "connected" | "connecting" | "disconnected" | "error" }): boolean {
+  return state.onHost && state.connection === "connected";
+}
+
+/**
  * 连本机时用哪个地址。刚从远端退回本机的那一轮渲染里，界面状态里的地址还是远端的：
  * 认出是登记过的远端地址，就改用上次连本机的地址；别的地址原样交给连接去校验。
  */
