@@ -2384,3 +2384,12 @@ dialog.settings-modal.settings-redesign.settings-layout .llm-routing-fields > p 
   background: var(--vc-selected);
   color: var(--vc-text);
 }
+
+/* Codex 动作卡片上的会话位置：用来分清同名会话，不是正文，小号灰字、长路径可断行 */
+.codex-action-where {
+  margin: 2px 0 6px;
+  color: var(--vc-muted);
+  font-size: var(--vc-size-caption);
+  font-weight: var(--vc-weight-regular);
+  overflow-wrap: anywhere;
+}

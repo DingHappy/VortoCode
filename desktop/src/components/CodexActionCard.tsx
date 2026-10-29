@@ -28,7 +28,7 @@ export function CodexActionCard({ action, connected, onDecide }: {
   return <article className="assistant-task-card codex-action-card" aria-label={`Codex 动作：${action.thread_name}`}>
     <header><strong>{interrupt ? "建议叫停 Codex" : "替你给 Codex 发话"}</strong><span>「{action.thread_name}」</span></header>
     {/* 同名会话常见（同一句任务起的名），批之前要能看出是哪一个 */}
-    <p className="assistant-task-status">{action.thread_cwd || "目录未知"} · #{(action.thread_id ?? "").slice(-6)}</p>
+    <p className="codex-action-where">{action.thread_cwd || "目录未知"} · #{(action.thread_id ?? "").slice(-6)}</p>
     <p className="assistant-task-status">{STATUS[status] ?? status}</p>
     {action.status === "proposed" && <div className="task-actions">
       <button className="primary" disabled={busy || !connected} onClick={() => void decide("approve")}>{interrupt ? "批准叫停" : "批准发送"}</button>
