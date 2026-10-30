@@ -9,8 +9,12 @@ introducing a second autonomous executor.
 from __future__ import annotations
 
 import json
+import hashlib
+import re
 import subprocess
 import uuid
+from contextlib import contextmanager
+from functools import wraps
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +25,14 @@ _DIRNAME = "goals"
 _GOAL_STATUSES = {"draft", "active", "blocked", "achieved", "failed"}
 _CRITERION_STATUSES = {"pending", "passed", "failed"}
 _VERIFIER_KINDS = {"test", "build", "lint", "file"}
+
+
+def _goal_mutation(method):
+    @wraps(method)
+    def locked(self, goal_id, *args, **kwargs):
+        with self.transaction(goal_id):
+            return method(self, goal_id, *args, **kwargs)
+    return locked
 
 
 def _now() -> str:
@@ -317,6 +329,19 @@ class GoalLedger:
     def _path(self, goal_id: str) -> Path:
         return self._dir() / f"{goal_id}.json"
 
+    @contextmanager
+    def transaction(self, goal_id: str):
+        from src.workflow.pipeline.pipeline_storage import pipeline_lock
+        from src.workflow.tasks.tasks import TASK_STATE_LOCK
+        if not isinstance(goal_id, str) or _clean_id(goal_id) != goal_id:
+            raise ValueError("目标 ID 无效")
+        with TASK_STATE_LOCK, pipeline_lock(self.repo_root, goal_id, kind="goal"):
+            yield
+
+    def save_required(self, goal: Goal) -> None:
+        if not self.save(goal):
+            raise OSError("目标未能持久化，请刷新核对；未报告保存成功")
+
     def create(
         self,
         objective: str,
@@ -324,15 +349,33 @@ class GoalLedger:
         *,
         constraints: Optional[List[str]] = None,
         non_goals: Optional[List[str]] = None,
+        request_id: Optional[str] = None,
     ) -> Goal:
+        if request_id is not None and (not isinstance(request_id, str)
+                                      or not re.fullmatch(r"[A-Za-z0-9._-]{1,120}", request_id)):
+            raise ValueError("request_id 需要 1–120 位字母、数字、点、下划线或连字符")
+        goal_id = "goal-request-" + hashlib.sha256(request_id.encode()).hexdigest()[:32] if request_id else None
         goal = Goal.new(
             objective,
             acceptance_criteria,
             constraints=constraints,
             non_goals=non_goals,
+            goal_id=goal_id,
         )
-        self.save(goal)
-        return goal
+        if request_id:
+            goal.request_fingerprint = hashlib.sha256(json.dumps(
+                [goal.objective, [item.text for item in goal.acceptance_criteria], goal.constraints, goal.non_goals],
+                ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+        with self.transaction(goal.id):
+            if goal_id and self._path(goal.id).exists():
+                previous = self.load(goal.id)
+                if previous is None:
+                    raise OSError("原创建记录无法读取；未覆盖或重新创建目标")
+                if previous.request_fingerprint != goal.request_fingerprint:
+                    raise ValueError("request_id 已用于不同的目标合同")
+                return previous
+            self.save_required(goal)
+            return goal
 
     def save(self, goal: Goal) -> bool:
         if goal.kind != self.kind:
@@ -348,14 +391,8 @@ class GoalLedger:
 
             ensure_state_gitignore(self.repo_root)
             path.parent.mkdir(parents=True, exist_ok=True)
-            if self.kind == "personal":
-                from src.workflow.pipeline.pipeline_storage import write_json
-
-                write_json(path, goal.to_dict())
-                return True
-            temp = path.with_suffix(".json.tmp")
-            temp.write_text(json.dumps(goal.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
-            temp.replace(path)
+            from src.workflow.pipeline.pipeline_storage import write_json
+            write_json(path, goal.to_dict())
             return True
         except (OSError, TypeError, ValueError):
             return False
@@ -378,6 +415,13 @@ class GoalLedger:
             if not isinstance(data, dict):
                 return None
             if data.get("kind", "development") != self.kind or data.get("id") != clean:
+                return None
+            if self.kind == "development" and (
+                data.get("status") not in _GOAL_STATUSES
+                or not isinstance(data.get("task_ids"), list)
+                or any(not isinstance(tid, str) or _clean_id(tid) != tid for tid in data["task_ids"])
+                or len(set(data["task_ids"])) != len(data["task_ids"])
+            ):
                 return None
             goal = Goal.from_dict(data)
             self.refresh_evidence(goal, revision_cache=_revision_cache)
@@ -436,6 +480,7 @@ class GoalLedger:
         goals.sort(key=lambda item: item[0], reverse=True)
         return [goal for _mtime, goal in goals]
 
+    @_goal_mutation
     def update_contract(
         self,
         goal_id: str,
@@ -466,9 +511,10 @@ class GoalLedger:
         goal.non_goals = [str(item).strip() for item in (non_goals or []) if str(item).strip()]
         goal.blocker = ""
         goal.next_action = "确认目标合同并开始执行"
-        self.save(goal)
+        self.save_required(goal)
         return goal
 
+    @_goal_mutation
     def delete_draft(self, goal_id: str) -> bool:
         """Delete only a pristine draft; started/evidenced goals remain as an audit trail."""
         goal = self.load(goal_id)
@@ -485,6 +531,7 @@ class GoalLedger:
         except OSError:
             return False
 
+    @_goal_mutation
     def set_verifier(
         self,
         goal_id: str,
@@ -504,7 +551,7 @@ class GoalLedger:
             raise ValueError(f"未知验收标准 {criterion_id}")
         if verifier is None or str(verifier.get("kind") or "manual").strip() == "manual":
             criterion.verifier = None
-            self.save(goal)
+            self.save_required(goal)
             return goal
         kind = str(verifier.get("kind") or "").strip().lower()
         if kind not in _VERIFIER_KINDS:
@@ -534,9 +581,10 @@ class GoalLedger:
             contains=contains,
             timeout=timeout,
         )
-        self.save(goal)
+        self.save_required(goal)
         return goal
 
+    @_goal_mutation
     def record_evidence(
         self,
         goal_id: str,
@@ -569,7 +617,7 @@ class GoalLedger:
             stale_reason=(verification_error or reason) if passed else "",
         )
         goal.evaluate(default_active=True)
-        self.save(goal)
+        self.save_required(goal)
         return goal
 
 
@@ -606,6 +654,12 @@ def sync_goal_from_task(repo_root: str, task: Any) -> Optional[Goal]:
     if not goal_id:
         return None
     ledger = GoalLedger(repo_root)
+    with ledger.transaction(goal_id):
+        return _sync_goal_from_task(ledger, task, goal_id)
+
+
+def _sync_goal_from_task(ledger: GoalLedger, task: Any, goal_id: str) -> Optional[Goal]:
+    repo_root = ledger.repo_root
     goal = ledger.load(goal_id)
     if goal is None:
         return None
@@ -694,5 +748,5 @@ def sync_goal_from_task(repo_root: str, task: Any) -> Optional[Goal]:
             changed = changed or previous != (goal.status, goal.blocker, goal.next_action)
 
     if changed:
-        ledger.save(goal)
+        ledger.save_required(goal)
     return goal

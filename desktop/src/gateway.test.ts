@@ -274,6 +274,27 @@ describe("task dispatch HTTP contracts", () => {
     vi.mocked(tauriFetch).mockResolvedValue({ ok: true, json: async () => ({ id: "task-dispatch-test" }) } as Response);
   });
 
+  it("binds Goal retries to the same observed predecessor without an automatic retry", async () => {
+    const client = new GatewayClient(SETTINGS);
+    vi.mocked(tauriFetch).mockRejectedValueOnce(new Error("response lost"));
+    await expect(client.runGoal("goal-1", false, "task-before")).rejects.toThrow("response lost");
+    expect(tauriFetch).toHaveBeenCalledTimes(1);
+    await client.runGoal("goal-1", false, "task-before");
+    const calls = vi.mocked(tauriFetch).mock.calls;
+    expect(calls[0][0]).toBe(`${SETTINGS.baseUrl}/api/goals/goal-1/run`);
+    expect(JSON.parse(String(calls[0][1]?.body))).toEqual({ resume: false, expected_task_id: "task-before" });
+    expect(calls[1][1]?.body).toBe(calls[0][1]?.body);
+  });
+
+  it("uses a refreshed predecessor only when the caller explicitly starts the next round", async () => {
+    const client = new GatewayClient(SETTINGS);
+    await client.runGoal("goal-1", false, "task-before");
+    await client.runGoal("goal-1", true, "task-finished");
+    expect(JSON.parse(String(vi.mocked(tauriFetch).mock.calls[1][1]?.body))).toEqual({
+      resume: true, expected_task_id: "task-finished",
+    });
+  });
+
   it("preserves the caller's retry ID and explicit owner session", async () => {
     const client = new GatewayClient(SETTINGS);
     const input = { request_id: "req-stable", prompt: "分析", agent: "reader", acceptance: ["证据"], max_steps: 4, timeout_seconds: 300 };
