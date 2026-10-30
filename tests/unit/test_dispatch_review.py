@@ -111,3 +111,58 @@ async def test_bad_or_broken_review_still_notifies_plainly(tmp_path):
     assert await review.follow_up(root, done, boom) is done
     unsure = review.parse_outcome(json.dumps({"criteria": [{"text": "x", "verdict": "probably"}]}), done)
     assert unsure is None                                                   # 读不懂的判定不当真
+
+
+def test_invented_acceptance_cannot_replace_original_criteria():
+    item = {"status": "done", "criteria": ["只增加测试文件", "全量测试通过"]}
+    outcome = review.parse_outcome(json.dumps({"criteria": [
+        {"text": "任务已经完成", "verdict": "met", "evidence": "完成了"}], "summary": "全部完成"}), item)
+    assert [row["text"] for row in outcome["criteria"]] == item["criteria"]
+    assert all(row["verdict"] == "unknown" for row in outcome["criteria"])
+    assert outcome["summary"] != "全部完成"
+    assert "0/2 条对上" in watch._acceptance_lines({**item, "outcome": outcome})
+
+
+def test_partial_acceptance_preserves_denominator_and_original_order():
+    item = {"status": "done", "criteria": ["标准一", "标准二", "标准三"]}
+    outcome = review.parse_outcome(json.dumps({"criteria": [
+        {"text": "标准三", "verdict": "met", "evidence": "验证三"},
+        {"text": "标准一", "verdict": "met", "evidence": "验证一"}]}), item)
+    assert [row["text"] for row in outcome["criteria"]] == item["criteria"]
+    assert [row["verdict"] for row in outcome["criteria"]] == ["met", "unknown", "met"]
+    assert "2/3 条对上" in watch._acceptance_lines({**item, "outcome": outcome})
+
+
+@pytest.mark.parametrize("original,rows", [
+    (["标准"], [{"text": "标准", "verdict": "met", "evidence": "通过"},
+                {"text": "标准", "verdict": "unmet", "evidence": "失败"}]),
+    (["标准", "标准"], [{"text": "标准", "verdict": "met", "evidence": "通过"}]),
+    (["标准"], [{"text": "标准", "verdict": "met", "evidence": "  "}]),
+])
+def test_ambiguous_or_unsupported_acceptance_is_unknown(original, rows):
+    outcome = review.parse_outcome(json.dumps({"criteria": rows}), {"status": "done", "criteria": original})
+    assert len(outcome["criteria"]) == len(original)
+    assert all(row["verdict"] == "unknown" for row in outcome["criteria"])
+
+
+@pytest.mark.parametrize("retry", ["false", "true", 0, 1, None, [], {}])
+def test_retry_requires_a_real_boolean(retry):
+    assert review.parse_outcome(json.dumps({"diagnosis": "需要核对", "retry": retry, "change": "再试一次"}),
+                                {"status": "failed"}) is None
+
+
+async def test_malformed_retry_does_not_create_a_task_draft(tmp_path):
+    root = str(tmp_path)
+    failed = _ended(root, "failed", error="需用户决定")
+    llm = FakeLLM(json.dumps({"diagnosis": "需用户决定", "retry": "false", "change": "再试一次"}))
+    result = await review.follow_up(root, failed, lambda item: review.review_outcome(item, llm=llm))
+    assert "outcome" not in result and len(dispatch.list_dispatches(root)) == 1
+
+
+@pytest.mark.parametrize("field,value", [
+    ("diagnosis", {"reason": "failed"}), ("diagnosis", ["failed"]),
+    ("change", {"command": "retry"}), ("change", ["retry"]), ("change", False), ("change", None),
+])
+def test_retry_diagnosis_and_change_cannot_be_coerced_from_structured_data(field, value):
+    response = {"diagnosis": "原因待核对", "retry": True, "change": "补齐依赖后再试", field: value}
+    assert review.parse_outcome(json.dumps(response), {"status": "failed"}) is None

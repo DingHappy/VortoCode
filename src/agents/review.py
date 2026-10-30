@@ -68,6 +68,7 @@ def parse_findings(text: str) -> List[dict]:
         except Exception:  # noqa: BLE001
             continue
         if isinstance(data, list) and all(isinstance(d, dict) for d in data):
+            _validate_findings(data)
             return data
     raise ValueError("审查 findings 格式无效")
 
@@ -82,22 +83,46 @@ def _json_array_candidates(text: str) -> List[str]:
     return cands
 
 
+def _validate_findings(findings: List[dict]) -> None:
+    for finding in findings:
+        if not isinstance(finding.get("evidence", ""), str):
+            raise ValueError("审查 evidence 必须是字符串")
+
+
 def confirmed_findings(findings: List[dict]) -> List[dict]:
     """confirmed = severity ∈ {P0,P1} **且** evidence 非空。evidence 为空的只当噪音、不拦 PR。"""
     out = []
     for f in findings or []:
         sev = str(f.get("severity", "")).upper().strip()
-        ev = str(f.get("evidence", "")).strip()
-        if sev in _SEVERITIES and ev:
+        ev = f.get("evidence", "")
+        if sev in _SEVERITIES and isinstance(ev, str) and ev.strip():
             out.append(f)
     return out
+
+
+def _merge_findings(*groups: List[dict]) -> List[dict]:
+    """去重保留全部已确认报告者；无证据的同名发现不能盖掉有效发现。"""
+    merged: Dict[tuple, dict] = {}
+    for group in groups:
+        for finding in group:
+            key = (str(finding.get("file", "")), str(finding.get("issue", "")).strip())
+            old = merged.get(key)
+            if old is None or (not confirmed_findings([old]) and confirmed_findings([finding])):
+                merged[key] = dict(finding)
+            elif confirmed_findings([old]) and confirmed_findings([finding]):
+                sources = [*old.get("perspectives", [old.get("perspective", "")]),
+                           *finding.get("perspectives", [finding.get("perspective", "")])]
+                old["perspectives"] = list(dict.fromkeys(sources))
+                if str(finding.get("severity", "")).upper().strip() == "P0":
+                    old["severity"] = "P0"
+    return list(merged.values())
 
 
 def format_findings(findings: List[dict]) -> str:
     lines = []
     for f in findings:
         sev = str(f.get("severity", "?")).upper()
-        persp = str(f.get("perspective", "")).strip()
+        persp = "、".join(name for name in f.get("perspectives", [f.get("perspective", "")]) if name)
         tag = f"[{sev}]" + (f"[{persp}]" if persp else "")
         loc = str(f.get("file", "?"))
         issue = str(f.get("issue", "")).strip()
@@ -170,7 +195,6 @@ async def _review_round(reviewers: dict, repo_root: str, branch: str, base: str,
         return_exceptions=True)
     errors: Dict[str, str] = {}
     merged: List[dict] = []
-    seen: set = set()
     for name, res in zip(names, results):
         if isinstance(res, BaseException):
             errors[name] = str(res)
@@ -179,13 +203,15 @@ async def _review_round(reviewers: dict, repo_root: str, branch: str, base: str,
         if not isinstance(res, list) or any(not isinstance(f, dict) for f in res):
             errors[name] = "findings 格式无效"
             continue
+        try:
+            _validate_findings(res)
+        except ValueError as error:
+            errors[name] = str(error)
+            continue
         for f in res:
-            key = (str(f.get("file", "")), str(f.get("issue", "")).strip())
-            if key in seen:
-                continue
-            seen.add(key)
-            merged.append({**f, "perspective": name} if name else dict(f))
-    return merged, errors
+            # 来源由编排层赋值，忽略模型自行声称的报告者。
+            merged.append({**f, "perspective": name, "perspectives": [name]})
+    return _merge_findings(merged), errors
 
 
 def _error_text(errors: Dict[str, str]) -> str:
@@ -210,10 +236,7 @@ async def _review_round_retrying(reviewers: dict, repo_root: str, branch: str, b
     log(f"（{_names_text(errors)} 视角出错，重试一次）")
     again, errors = await _review_round({n: reviewers[n] for n in errors}, repo_root, branch, base,
                                         test_cmd=test_cmd, guidelines=guidelines, log=log)
-    seen = {(str(f.get("file", "")), str(f.get("issue", "")).strip()) for f in merged}
-    merged.extend(f for f in again
-                  if (str(f.get("file", "")), str(f.get("issue", "")).strip()) not in seen)
-    return merged, errors
+    return _merge_findings(merged, again), errors
 
 
 async def run_gate(repo_root: str, branch: str, base: str, *, test_cmd=None, repair,
@@ -273,7 +296,8 @@ async def run_gate(repo_root: str, branch: str, base: str, *, test_cmd=None, rep
     _report("rereview", errors)
     confirmed2 = confirmed_findings(findings2)
     # 谁报出的问题，谁负责确认修好了。报出者自己没复审成功 → 拦；其余视角挂了不影响判定。
-    unverified = [name for name in {str(f.get("perspective", "")) for f in confirmed}
+    unverified = [name for name in {name for f in confirmed
+                                   for name in f.get("perspectives", [f.get("perspective", "")])}
                   if name in errors]
     if unverified:
         return (f"\n⚠️ 已尝试修复，但复审未能完成（{_names_text(unverified)}）：{_error_text(errors)}；"
