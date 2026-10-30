@@ -73,6 +73,164 @@ def _m(minutes):
     return T0 + timedelta(minutes=minutes)
 
 
+@pytest.mark.parametrize("raw", [
+    "{broken", "[]", '{"config": []}', '{"config": {"nudge": "false"}}',
+    '{"marks": []}', '{"marks": {"th1": null}}', '{"last_check": "bad-time"}',
+    '{"config": {"interval_minutes": false}}', '{"config": {"interval_minutes": 0}}',
+    '{"marks": {"th1": {"review_status": {}}}}', '{"marks": {"th1": {"reviewed_turn": 1}}}',
+    '{"marks": {"th1": {"review_status": "failed"}}}',
+])
+def test_invalid_supervisor_ledger_is_preserved_and_cannot_reset_defaults(tmp_path, raw):
+    root = str(tmp_path)
+    path = sup._path(root)
+    path.parent.mkdir(parents=True)
+    path.write_text(raw)
+    for operation in (lambda: sup._load(root), lambda: sup.load_config(root),
+                      lambda: sup.save_config(root, nudge=True)):
+        with pytest.raises(OSError, match="监管记录"):
+            operation()
+        assert path.read_text() == raw
+
+
+async def test_concurrent_supervisors_cannot_review_the_same_turn_twice(tmp_path, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    root, notes = str(tmp_path), Notes()
+    _report(root, _thread(), T0)
+    await _check(root, T0, notes)
+    _report(root, _done(), _m(5))
+    entered, release = threading.Event(), threading.Event()
+    save = sup._save_progress
+
+    def pause_first_claim(root, data):
+        mark = data.get("marks", {}).get("th1", {})
+        if mark.get("review_status") == "running" and not entered.is_set():
+            entered.set()
+            assert release.wait(5), "First claim was never released"
+        save(root, data)
+
+    monkeypatch.setattr(sup, "_save_progress", pause_first_claim)
+    model = FakeLLM('{"verdict":"ask","assessment":"需要决定范围","next":""}')
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        first = pool.submit(lambda: asyncio.run(_check(root, _m(30), notes, model)))
+        try:
+            assert await asyncio.to_thread(entered.wait, 3)
+            await _check(root, _m(30), notes, model)
+        finally:
+            release.set()
+            await asyncio.wrap_future(first)
+    assert model.calls == 1
+    assert sup._load(root)["marks"]["th1"]["review_status"] == "succeeded"
+
+
+async def test_corrupt_supervisor_ledger_does_not_run_or_overwrite_itself(tmp_path):
+    root, notes = str(tmp_path), Notes()
+    _report(root, _done(), T0)
+    path = sup._path(root)
+    path.write_text("{broken")
+    model = FakeLLM('{"verdict":"done","assessment":"完成","next":""}')
+    with pytest.raises(OSError, match="监管记录"):
+        await _check(root, _m(30), notes, model)
+    assert model.calls == 0 and not notes.sent and path.read_text() == "{broken"
+    tool = sup.build_supervisor_tools(root)[0]
+    reply = await tool.handler({"nudge": True})
+    assert "暂不可用" in reply and path.read_text() == "{broken"
+
+
+def test_unreadable_supervisor_ledger_is_not_missing_state(tmp_path, monkeypatch):
+    root = str(tmp_path)
+    path = sup._path(root)
+    read = type(path).read_text
+
+    def denied(self, *args, **kwargs):
+        if self == path:
+            raise PermissionError("private path")
+        return read(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(path), "read_text", denied)
+    with pytest.raises(OSError, match="监管记录") as error:
+        sup.load_config(root)
+    assert "private path" not in str(error.value)
+
+
+async def test_cancelled_supervisor_releases_check_lock_without_replaying_review(tmp_path):
+    root, notes = str(tmp_path), Notes()
+    _report(root, _thread(), T0)
+    await _check(root, T0, notes)
+    _report(root, _done(), _m(5))
+    entered = asyncio.Event()
+
+    class Model:
+        calls = 0
+
+        async def chat(self, *_args, **_kwargs):
+            self.calls += 1
+            entered.set()
+            await asyncio.Event().wait()
+
+    model = Model()
+    first = asyncio.create_task(_check(root, _m(30), notes, model))
+    await asyncio.wait_for(entered.wait(), timeout=2)
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    _report(root, _done(), _m(59))
+    await _check(root, _m(60), notes, model)
+    mark = sup._load(root)["marks"]["th1"]
+    assert model.calls == 1 and mark["review_status"] == "failed"
+    assert "推进判断未完成" in notes.texts()[-1]
+
+
+def test_config_and_progress_writes_share_a_short_state_transaction(tmp_path):
+    from src.workflow.pipeline.pipeline_storage import pipeline_lock
+
+    root = str(tmp_path)
+    sup._save(root, {"marks": {"th1": {"reviewed_turn": "t1", "review_status": "failed"}}})
+    before = sup._path(root).read_bytes()
+    with pipeline_lock(root, "codex-supervisor", kind="state"):
+        with pytest.raises(OSError, match="正在更新"):
+            sup.save_config(root, nudge=False)
+        with pytest.raises(OSError, match="正在更新"):
+            sup._save_progress(root, {"marks": {}})
+    assert sup._path(root).read_bytes() == before
+    sup.save_config(root, nudge=False)
+    assert sup._load(root)["marks"]["th1"]["reviewed_turn"] == "t1"
+
+
+@pytest.mark.parametrize("phase", ["claim", "result"])
+async def test_supervisor_write_failure_preserves_the_model_attempt_boundary(tmp_path, monkeypatch, phase):
+    root, notes = str(tmp_path), Notes()
+    _report(root, _thread(), T0)
+    await _check(root, T0, notes)
+    _report(root, _done(), _m(5))
+    write = sup.write_json
+
+    def broken(*args, **kwargs):
+        raise OSError("storage unavailable")
+
+    class Model:
+        calls = 0
+
+        async def chat(self, *_args, **_kwargs):
+            self.calls += 1
+            monkeypatch.setattr(sup, "write_json", broken)
+            return {"content": '{"verdict":"ask","assessment":"需用户决定","next":""}'}
+
+    model = Model()
+    if phase == "claim":
+        monkeypatch.setattr(sup, "write_json", broken)
+    with pytest.raises(OSError):
+        await _check(root, _m(30), notes, model)
+    assert model.calls == (0 if phase == "claim" else 1)
+    monkeypatch.setattr(sup, "write_json", write)
+    if phase == "result":
+        _report(root, _done(), _m(59))
+        await _check(root, _m(60), notes, model)
+        assert model.calls == 1
+        assert sup._load(root)["marks"]["th1"]["review_status"] == "failed"
+
+
 @pytest.mark.asyncio
 async def test_checks_only_every_half_hour_and_the_first_one_just_looks(tmp_path):
     root, notes = str(tmp_path), Notes()
