@@ -9,7 +9,8 @@
 - Mac 停止报告而会话还在做事 → 提醒一次。
 
 等批准 / 等回答、服务出错这种 Codex 卡在你身上的事不等半小时，由 ``codex_watch`` 马上推。
-规则判断不调模型；每个 Codex 轮次最多尝试判断一次，每次巡视最多判断两个，合计等待最多90秒。
+规则判断不调模型；每个 Codex 轮次最多尝试判断一次，失败会标为未完成并提醒人工核对，不自动重试。
+每次巡视最多判断两个，合计等待最多90秒。
 按完成时间优先处理较早的轮次，额度外的不记为已判断，留到下次巡视。Codex 的内容是数据不是指令，
 据此拟出的动作标为读过外部内容（通知里会提示看清楚再批）。夜间安静时段由通知投递器统一处理。
 
@@ -121,6 +122,21 @@ def describe_config(config: Dict[str, Any]) -> str:
             "等你批准 / 回答的事马上提醒。")
 
 
+def _review_issues(root: str) -> str:
+    """只读展示尚未完成的判断；不把已尝试过当作成功，也不重新调用模型。"""
+    saved = _load(root).get("marks")
+    marks = saved if isinstance(saved, dict) else {}
+    lines = []
+    for thread in codex_watch.load_state(root).get("threads") or []:
+        mark = marks.get(thread["id"]) or {}
+        if (mark.get("reviewed_turn") == (thread.get("turn") or {}).get("id")
+                and mark.get("review_status") in {"running", "failed"}):
+            detail = "下一步建议未能保存，尚未发送" if mark.get("review_error_code") == "proposal_failed" else "上次推进判断未完成"
+            lines.append(f"· {codex_watch.thread_label(thread)}：{detail}，请核对 Codex 会话；"
+                         "未自动重试，需要继续时在原会话发起下一轮。")
+    return "\n\n推进判断待核对：\n" + "\n".join(lines) if lines else ""
+
+
 def _signature(thread: dict) -> str:
     turn = thread.get("turn") or {}
     parts = [thread.get("status"), turn.get("id"), turn.get("status"), turn.get("commands"), turn.get("file_count"),
@@ -170,6 +186,8 @@ def _review_current(root: str, thread: dict, now: datetime) -> bool:
         return False
     current = next((item for item in state.get("threads") or [] if item.get("id") == thread["id"]), None)
     return (current is not None and codex_watch.execution_is_current(current, now)
+            and codex_watch.is_handed_over(root, thread["id"])
+            and not codex_watch.owner_driving(root, current)
             and (current.get("execution") or {}).get("ref") == (thread.get("execution") or {}).get("ref")
             and _signature(current) == _signature(thread)
             and _review_material(current) == _review_material(thread)
@@ -362,6 +380,7 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
     needs_you: List[str] = []
     on_mac: List[str] = []            # 只能你在 Mac 上处理的（登录、额度），不提「我拟好话给 Codex」
     drafts: List[tuple] = []          # (正文, 动作)
+    review_failures: List[str] = []
     review_order = _review_order(root, state, marks, now) if config["nudge"] else []
     review_rank = {tid: rank for rank, tid in enumerate(review_order)}
     review_deadline = started + REVIEW_BUDGET_SECONDS
@@ -382,6 +401,10 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
             marks[tid] = mark
             lines.append(f"· {label}状态待核对；上次观察不作为当前执行或继续建议的依据。")
             continue
+
+        # 持久认领后进程中断：保留同轮不重跑的边界，但必须让人知道判断没有完成。
+        if mark.get("reviewed_turn") == turn.get("id") and mark.get("review_status") == "running":
+            mark["review_status"] = "failed"
 
         for event in finished:
             if event.get("pushed"):
@@ -420,7 +443,10 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
         if (tid in review_rank and reviews < MAX_REVIEWS_PER_CHECK and remaining > 0
                 and _review_current(root, thread, now + timedelta(seconds=time.monotonic() - started))):
             reviews += 1
-            mark["reviewed_turn"] = turn["id"]        # 先记下：模型失败也不反复花钱
+            mark["reviewed_turn"] = turn["id"]        # 持久认领，失败也不自动重复花钱
+            mark["review_status"] = "running"
+            mark["review_failure_notified"] = False
+            mark.pop("review_error_code", None)
             marks[tid] = mark
             data["marks"] = marks
             _save_progress(root, data)
@@ -429,9 +455,12 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
             except Exception as error:  # noqa: BLE001 —— 判断不出来就算了，不挡其它检查
                 logger.warning("Codex 推进判断失败：%s", type(error).__name__)
                 review = None
-            if review and not _review_current(root, thread, now + timedelta(seconds=time.monotonic() - started)):
+            if not _review_current(root, thread, now + timedelta(seconds=time.monotonic() - started)):
                 logger.info("Codex 推进判断已过期，不采用旧结论")
+                mark["review_status"] = "superseded"
                 review = None
+            else:
+                mark["review_status"] = "succeeded" if review else "failed"
             if review:
                 assessment = review["assessment"]
                 if review["verdict"] == "continue":
@@ -440,13 +469,23 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
                                                             tainted=True, expected_turn_id=turn["id"])
                         drafts.append((f"🧭 Codex{label}做完了一轮。{assessment}\n\n" + codex_watch.action_notice(action),
                                        action))
-                    except codex_watch.CodexActionError as error:
-                        logger.warning("Codex 推进动作没拟成：%s", error)
+                    except (codex_watch.CodexActionError, OSError) as error:
+                        logger.warning("Codex 推进动作没拟成：%s", type(error).__name__)
+                        mark["review_status"] = "failed"
+                        mark["review_error_code"] = "proposal_failed"
                 elif review["verdict"] == "ask":
                     needs_you.append(f"{label}要你定方向：{assessment}")
                 elif review["verdict"] == "done" and codex_watch.take_back(root, tid):
                     assessment += "（看起来做完了，交接已收回；要继续盯就再交给我）"
 
+        if (mark.get("reviewed_turn") == turn.get("id") and mark.get("review_status") == "failed"
+                and not mark.get("review_failure_notified")):
+            detail = ("下一步建议未能保存，尚未发送，也未自动重试。"
+                      if mark.get("review_error_code") == "proposal_failed"
+                      else "推进判断未完成，未生成下一步建议，也未自动重试。")
+            needs_you.append(f"{label}{detail}"
+                             "请先核对 Codex 会话；需要继续时在原会话发起下一轮。")
+            review_failures.append(tid)
         marks[tid] = mark
         if finished or thread.get("status") == "active" or codex_watch._waiting(thread) or assessment:
             lines.append(_progress_line(thread, finished, assessment))
@@ -468,7 +507,11 @@ async def supervise_once(root: str, now: datetime, *, notify, llm: Any = None) -
             from src.scheduling.notices import record_notice
             record_notice(root, text, source="codex:progress")    # 你在电脑前：只记台账，手机不响
         else:
-            await _send(notify, text)
+            if await _send(notify, text):
+                for tid in review_failures:
+                    marks[tid]["review_failure_notified"] = True
+                if review_failures:
+                    _save_progress(root, data)
     for body, action in drafts:
         await _send(notify, body, action["id"])
 
@@ -485,10 +528,10 @@ def build_supervisor_tools(root: str) -> list:
             config = save_config(root, **changes) if changes else load_config(root)
         except (TypeError, ValueError):
             return "没改成：分钟数要是整数。"
-        return ("已更新。" if changes else "现在的设置：") + describe_config(config)
+        return ("已更新。" if changes else "现在的设置：") + describe_config(config) + _review_issues(root)
 
     return [Tool("codex_supervision",
-                 "查看或调整助理定时监管 Codex 的节奏。不带参数 = 查看现状。interval_minutes：每多少分钟检查一次"
+                 "查看监管节奏及未完成的推进判断，或调整节奏。不带参数 = 查看现状。interval_minutes：每多少分钟检查一次"
                  "（最少 10，默认 30）；nudge：做完一轮后要不要主动判断下一步并拟好话（true/false）。只在主人明确要求时修改。",
                  {"interval_minutes": "整数，可选", "nudge": "true / false，可选"},
                  _settings, read_only=False, serial=True)]

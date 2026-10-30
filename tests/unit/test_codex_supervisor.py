@@ -96,6 +96,102 @@ async def test_quiet_half_hours_send_nothing(tmp_path):
     assert not notes.sent
 
 
+@pytest.mark.parametrize("response", ["exception", "invalid output"])
+async def test_failed_review_is_visible_durable_and_not_automatically_retried(tmp_path, response):
+    root, notes = str(tmp_path), Notes()
+
+    class Model:
+        calls = 0
+
+        async def chat(self, *_args, **_kwargs):
+            self.calls += 1
+            if response == "exception":
+                raise RuntimeError("private provider details")
+            return {"content": "invalid output"}
+
+    model = Model()
+    _report(root, _thread(), T0)
+    await _check(root, T0, notes)
+    _report(root, _done(), _m(5))
+    await _check(root, _m(30), notes, model)
+    mark = sup._load(root)["marks"]["th1"]
+    assert mark["review_status"] == "failed" and mark["review_failure_notified"] is True
+    assert "推进判断未完成" in notes.texts()[-1] and "未自动重试" in notes.texts()[-1]
+    assert "private provider details" not in notes.texts()[-1]
+    assert not watch.load_actions(root)
+    previous = len(notes.sent)
+    _report(root, _done(), _m(59))
+    await _check(root, _m(60), notes, model)
+    assert model.calls == 1 and len(notes.sent) == previous
+    [tool] = sup.build_supervisor_tools(root)
+    assert "推进判断待核对" in await tool.handler({})
+
+
+async def test_interrupted_review_is_reported_without_replaying_the_model(tmp_path):
+    root, notes = str(tmp_path), Notes()
+    _report(root, _thread(), T0)
+    await _check(root, T0, notes)
+    data = sup._load(root)
+    data["marks"]["th1"].update(reviewed_turn="t1", review_status="running")
+    sup._save(root, data)
+    _report(root, _done(), _m(5))
+    model = FakeLLM('{"verdict":"continue","assessment":"不应调用","next":"不应发送"}')
+    await _check(root, _m(30), notes, model)
+    assert model.calls == 0 and "推进判断未完成" in notes.texts()[-1]
+    assert sup._load(root)["marks"]["th1"]["review_status"] == "failed"
+
+
+async def test_unaccepted_review_failure_notice_can_be_reported_without_new_model_calls(tmp_path):
+    root, sent = str(tmp_path), []
+
+    async def notify(text, **_kwargs):
+        sent.append(text)
+        return len(sent) > 1
+
+    class Model:
+        calls = 0
+
+        async def chat(self, *_args, **_kwargs):
+            self.calls += 1
+            raise TimeoutError
+
+    model = Model()
+    _report(root, _thread(), T0)
+    await sup.supervise_once(root, T0, notify=notify, llm=model)
+    _report(root, _done(), _m(5))
+    await sup.supervise_once(root, _m(30), notify=notify, llm=model)
+    assert sup._load(root)["marks"]["th1"]["review_failure_notified"] is False
+    _report(root, _done(), _m(59))
+    await sup.supervise_once(root, _m(60), notify=notify, llm=model)
+    assert model.calls == 1 and len(sent) == 2
+    assert sup._load(root)["marks"]["th1"]["review_failure_notified"] is True
+
+
+@pytest.mark.parametrize("error", [watch.CodexActionError("rejected"), OSError("private path")])
+async def test_a_failed_proposal_is_visible_and_is_not_redrafted(tmp_path, monkeypatch, error):
+    root, notes = str(tmp_path), Notes()
+    model = FakeLLM('{"verdict":"continue","assessment":"还差测试","next":"补测试"}')
+
+    def fail_proposal(*_args, **_kwargs):
+        raise error
+
+    monkeypatch.setattr(watch, "propose_action", fail_proposal)
+    _report(root, _thread(), T0)
+    await _check(root, T0, notes)
+    _report(root, _done(), _m(5))
+    await _check(root, _m(30), notes, model)
+    mark = sup._load(root)["marks"]["th1"]
+    assert mark["review_status"] == "failed" and mark["review_error_code"] == "proposal_failed"
+    assert "下一步建议未能保存，尚未发送" in notes.texts()[-1]
+    assert "private path" not in notes.texts()[-1]
+    [tool] = sup.build_supervisor_tools(root)
+    assert "下一步建议未能保存，尚未发送" in await tool.handler({})
+    count = len(notes.sent)
+    _report(root, _done(), _m(59))
+    await _check(root, _m(60), notes, model)
+    assert model.calls == 1 and len(notes.sent) == count and not watch.load_actions(root)
+
+
 @pytest.mark.asyncio
 async def test_no_movement_between_checks_is_called_stuck_once_with_a_stop_button(tmp_path):
     root, notes = str(tmp_path), Notes()
@@ -666,7 +762,7 @@ async def test_a_stop_you_followed_up_on_is_not_a_to_do(tmp_path):
     _report(root, _interrupted("t1"), _m(5))
     _report(root, _thread(tid="t2"), _m(6))
     _report(root, _done("t2"), _m(10))
-    await _check(root, _m(30), notes)
+    await _check(root, _m(30), notes, FakeLLM('{"verdict":"done","assessment":"完成","next":""}'))
     text = notes.texts()[0]
     assert "要你处理" not in text and "被中断" not in text
     assert "这段时间做完 1 轮，中途停了 1 轮" in text

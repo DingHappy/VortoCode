@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import re
+from collections import Counter
 from typing import Any, Dict, List, Optional
 
 from src.workflow.tasks import assistant_dispatch
@@ -61,20 +62,47 @@ def parse_outcome(text: str, item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if not isinstance(data, dict):
         return None
     if item.get("status") == "done":
-        rows: List[Dict[str, str]] = []
-        for row in data.get("criteria") or []:
-            if not isinstance(row, dict) or row.get("verdict") not in _VERDICTS:
-                continue
-            rows.append({"text": str(row.get("text") or "")[:300], "verdict": str(row["verdict"]),
-                         "evidence": str(row.get("evidence") or "")[:300]})
-        if not rows and item.get("criteria"):
+        original = item.get("criteria") or []
+        supplied = data.get("criteria")
+        if (not original or not isinstance(original, list)
+                or any(not isinstance(value, str) for value in original)
+                or not isinstance(supplied, list)):
             return None
-        return {"kind": "acceptance", "criteria": rows[:12], "summary": str(data.get("summary") or "")[:300]}
-    diagnosis = str(data.get("diagnosis") or "").strip()[:400]
+        candidates: Dict[str, list] = {}
+        for row in supplied:
+            if (not isinstance(row, dict) or not isinstance(row.get("text"), str)
+                    or not isinstance(row.get("verdict"), str) or row["verdict"] not in _VERDICTS
+                    or not isinstance(row.get("evidence"), str)):
+                continue
+            candidates.setdefault(row["text"].strip(), []).append(row)
+        if not candidates:
+            return None
+        counts = Counter(value.strip() for value in original)
+        rows: List[Dict[str, str]] = []
+        incomplete = False
+        for text in original:
+            matches = candidates.get(text.strip(), [])
+            if len(matches) != 1 or counts[text.strip()] != 1:
+                rows.append({"text": text, "verdict": "unknown", "evidence": "未取得唯一对应的验收对照"})
+                incomplete = True
+                continue
+            row = matches[0]
+            verdict, evidence = row["verdict"], row["evidence"].strip()
+            if verdict != "unknown" and not evidence:
+                verdict, incomplete = "unknown", True
+            rows.append({"text": text, "verdict": verdict, "evidence": evidence[:300]})
+        summary = ("验收对照不完整，请核对未确认的原始标准" if incomplete
+                   else str(data.get("summary") or "")[:300])
+        return {"kind": "acceptance", "criteria": rows, "summary": summary}
+    if type(data.get("retry")) is not bool:
+        return None
+    if not isinstance(data.get("diagnosis"), str) or not isinstance(data.get("change", ""), str):
+        return None
+    diagnosis = data["diagnosis"].strip()[:400]
     if not diagnosis:
         return None
-    change = str(data.get("change") or "").strip()[:600]
-    return {"kind": "diagnosis", "diagnosis": diagnosis, "retry": bool(data.get("retry")) and bool(change),
+    change = data.get("change", "").strip()[:600]
+    return {"kind": "diagnosis", "diagnosis": diagnosis, "retry": data["retry"] and bool(change),
             "change": change}
 
 
